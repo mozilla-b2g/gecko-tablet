@@ -5170,8 +5170,22 @@ IonBuilder::makeCallHelper(JSFunction *target, CallInfo &callInfo, bool cloneAtC
     if (target && !target->isNative())
         targetArgs = Max<uint32_t>(target->nargs(), callInfo.argc());
 
-    MCall *call =
-        MCall::New(alloc(), target, targetArgs + 1, callInfo.argc(), callInfo.constructing());
+    bool isDOMCall = false;
+    if (target && !callInfo.constructing()) {
+        // We know we have a single call target.  Check whether the "this" types
+        // are DOM types and our function a DOM function, and if so flag the
+        // MCall accordingly.
+        types::TemporaryTypeSet *thisTypes = callInfo.thisArg()->resultTypeSet();
+        if (thisTypes &&
+            thisTypes->isDOMClass() &&
+            testShouldDOMCall(thisTypes, target, JSJitInfo::Method))
+        {
+            isDOMCall = true;
+        }
+    }
+
+    MCall *call = MCall::New(alloc(), target, targetArgs + 1, callInfo.argc(),
+                             callInfo.constructing(), isDOMCall);
     if (!call)
         return nullptr;
 
@@ -5187,6 +5201,9 @@ IonBuilder::makeCallHelper(JSFunction *target, CallInfo &callInfo, bool cloneAtC
     // Skip addArg(0) because it is reserved for this
     for (int32_t i = callInfo.argc() - 1; i >= 0; i--)
         call->addArg(i + 1, callInfo.getArg(i));
+
+    // Now that we've told it about all the args, compute whether it's movable
+    call->computeMovable();
 
     // Inline the constructor on the caller-side.
     if (callInfo.constructing()) {
@@ -5209,19 +5226,6 @@ IonBuilder::makeCallHelper(JSFunction *target, CallInfo &callInfo, bool cloneAtC
     if (cloneAtCallsite) {
         MDefinition *fun = makeCallsiteClone(target, callInfo.fun());
         callInfo.setFun(fun);
-    }
-
-    if (target && JSOp(*pc) == JSOP_CALL) {
-        // We know we have a single call target.  Check whether the "this" types
-        // are DOM types and our function a DOM function, and if so flag the
-        // MCall accordingly.
-        types::TemporaryTypeSet *thisTypes = thisArg->resultTypeSet();
-        if (thisTypes &&
-            thisTypes->isDOMClass() &&
-            testShouldDOMCall(thisTypes, target, JSJitInfo::Method))
-        {
-            call->setDOMFunction();
-        }
     }
 
     if (target && !testNeedsArgumentCheck(target, callInfo))
@@ -5263,12 +5267,12 @@ IonBuilder::makeCall(JSFunction *target, CallInfo &callInfo, bool cloneAtCallsit
         return false;
 
     current->push(call);
-    if (!resumeAfter(call))
+    if (call->isEffectful() && !resumeAfter(call))
         return false;
 
     types::TemporaryTypeSet *types = bytecodeTypes(pc);
 
-    if (call->isDOMFunction())
+    if (call->isCallDOMNative())
         return pushDOMTypeBarrier(call, types, call->getSingleTarget());
 
     return pushTypeBarrier(call, types, true);
