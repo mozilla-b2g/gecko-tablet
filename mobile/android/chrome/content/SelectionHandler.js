@@ -75,13 +75,7 @@ var SelectionHandler = {
   observe: function sh_observe(aSubject, aTopic, aData) {
     switch (aTopic) {
       case "Gesture:SingleTap": {
-        if (this._activeType == this.TYPE_SELECTION) {
-          let data = JSON.parse(aData);
-          if (this._pointInSelection(data.x, data.y))
-            this.copySelection();
-          else
-            this._closeSelection();
-        } else if (this._activeType == this.TYPE_CURSOR) {
+        if (this._activeType == this.TYPE_CURSOR) {
           // attachCaret() is called in the "Gesture:SingleTap" handler in BrowserEventHandler
           // We're guaranteed to call this first, because this observer was added last
           this._deactivate();
@@ -547,6 +541,10 @@ var SelectionHandler = {
     // in editable targets. We should factor out the logic that's currently in _sendMouseEvents.
     let viewOffset = this._getViewOffset();
     let caretPos = this._contentWindow.document.caretPositionFromPoint(aX - viewOffset.x, aY - viewOffset.y);
+    if (!caretPos) {
+      // User moves handle offscreen while positioning
+      return;
+    }
 
     // Constrain text selection within editable elements.
     let targetIsEditable = this._targetElement instanceof Ci.nsIDOMNSEditableElement;
