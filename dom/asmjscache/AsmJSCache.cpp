@@ -1029,7 +1029,7 @@ private:
   bool
   Recv__delete__() MOZ_OVERRIDE
   {
-    //MOZ_ASSERT(mOpened);
+    MOZ_ASSERT(mOpened);
 
     MOZ_ASSERT(!mFinished);
     mFinished = true;
