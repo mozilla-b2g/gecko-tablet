@@ -490,7 +490,6 @@
     "layout/style/test/test_value_cloning.html": "debug-only failure; timed out",
     "layout/style/test/test_value_computation.html": "debug-only failure",
     "layout/style/test/test_value_storage.html": "debug-only failure",
-    "layout/style/test/test_pseudoelement_state.html": "debug-only failure",
-    "layout/style/test/test_extra_inherit_initial.html": "Timeout"
+    "layout/style/test/test_pseudoelement_state.html": "debug-only failure"
   }
 }
