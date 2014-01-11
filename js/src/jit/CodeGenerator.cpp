@@ -3401,7 +3401,8 @@ CodeGenerator::visitNewDeclEnvObject(LNewDeclEnvObject *lir)
 
     // If we have a template object, we can inline call object creation.
     OutOfLineCode *ool = oolCallVM(NewDeclEnvObjectInfo, lir,
-                                   (ArgList(), ImmGCPtr(info.fun()), Imm32(gc::DefaultHeap)),
+                                   (ArgList(), ImmGCPtr(info.funMaybeLazy()),
+                                    Imm32(gc::DefaultHeap)),
                                    StoreRegisterTo(obj));
     if (!ool)
         return false;
@@ -6411,11 +6412,11 @@ CodeGenerator::visitNameIC(OutOfLineUpdateCache *ool, DataPtr<NameIC> &ic)
 bool
 CodeGenerator::addGetPropertyCache(LInstruction *ins, RegisterSet liveRegs, Register objReg,
                                    PropertyName *name, TypedOrValueRegister output,
-                                   bool allowGetters)
+                                   bool allowGetters, bool monitoredResult)
 {
     switch (gen->info().executionMode()) {
       case SequentialExecution: {
-        GetPropertyIC cache(liveRegs, objReg, name, output, allowGetters);
+        GetPropertyIC cache(liveRegs, objReg, name, output, allowGetters, monitoredResult);
         return addCache(ins, allocateCache(cache));
       }
       case ParallelExecution: {
@@ -6474,9 +6475,10 @@ CodeGenerator::visitGetPropertyCacheV(LGetPropertyCacheV *ins)
     Register objReg = ToRegister(ins->getOperand(0));
     PropertyName *name = ins->mir()->name();
     bool allowGetters = ins->mir()->allowGetters();
+    bool monitoredResult = ins->mir()->monitoredResult();
     TypedOrValueRegister output = TypedOrValueRegister(GetValueOutput(ins));
 
-    return addGetPropertyCache(ins, liveRegs, objReg, name, output, allowGetters);
+    return addGetPropertyCache(ins, liveRegs, objReg, name, output, allowGetters, monitoredResult);
 }
 
 bool
@@ -6486,9 +6488,10 @@ CodeGenerator::visitGetPropertyCacheT(LGetPropertyCacheT *ins)
     Register objReg = ToRegister(ins->getOperand(0));
     PropertyName *name = ins->mir()->name();
     bool allowGetters = ins->mir()->allowGetters();
+    bool monitoredResult = ins->mir()->monitoredResult();
     TypedOrValueRegister output(ins->mir()->type(), ToAnyRegister(ins->getDef(0)));
 
-    return addGetPropertyCache(ins, liveRegs, objReg, name, output, allowGetters);
+    return addGetPropertyCache(ins, liveRegs, objReg, name, output, allowGetters, monitoredResult);
 }
 
 typedef bool (*GetPropertyICFn)(JSContext *, size_t, HandleObject, MutableHandleValue);

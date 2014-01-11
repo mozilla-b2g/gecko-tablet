@@ -185,6 +185,18 @@ ArrayBufferObject::fun_slice(JSContext *cx, unsigned argc, Value *vp)
 }
 
 /*
+ * ArrayBuffer.isView(obj); ES6 (Dec 2013 draft) 24.1.3.1
+ */
+bool
+ArrayBufferObject::fun_isView(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    args.rval().setBoolean(args.get(0).isObject() &&
+                           JS_IsArrayBufferViewObject(&args.get(0).toObject()));
+    return true;
+}
+
+/*
  * new ArrayBuffer(byteLength)
  */
 bool
@@ -249,7 +261,7 @@ AllocateArrayBufferContents(JSContext *maybecx, uint32_t nbytes, void *oldptr = 
 }
 
 bool
-ArrayBufferObject::allocateSlots(JSContext *maybecx, uint32_t bytes)
+ArrayBufferObject::allocateSlots(JSContext *maybecx, uint32_t bytes, bool clear)
 {
     /*
      * ArrayBufferObjects delegate added properties to another JSObject, so
@@ -267,6 +279,8 @@ ArrayBufferObject::allocateSlots(JSContext *maybecx, uint32_t bytes)
         elements = header->elements();
     } else {
         setFixedElements();
+        if (clear)
+            memset(dataPointer(), 0, bytes);
     }
 
     initElementsHeader(getElementsHeader(), bytes);
@@ -631,11 +645,8 @@ ArrayBufferObject::create(JSContext *cx, uint32_t nbytes, bool clear /* = true *
      * The beginning stores an ObjectElements header structure holding the
      * length. The rest of it is a flat data store for the array buffer.
      */
-    if (!obj->as<ArrayBufferObject>().allocateSlots(cx, nbytes))
+    if (!obj->as<ArrayBufferObject>().allocateSlots(cx, nbytes, clear))
         return nullptr;
-
-    if (clear)
-        memset(obj->as<ArrayBufferObject>().dataPointer(), 0, nbytes);
 
     return obj;
 }
@@ -3473,6 +3484,11 @@ const JSFunctionSpec ArrayBufferObject::jsfuncs[] = {
     JS_FS_END
 };
 
+const JSFunctionSpec ArrayBufferObject::jsstaticfuncs[] = {
+    JS_FN("isView", ArrayBufferObject::fun_isView, 1, 0),
+    JS_FS_END
+};
+
 /*
  * TypedArrayObject boilerplate
  */
@@ -3762,6 +3778,9 @@ InitArrayBufferClass(JSContext *cx)
     RootedValue value(cx, UndefinedValue());
     if (!DefineNativeProperty(cx, arrayBufferProto, byteLengthId, value,
                               JS_DATA_TO_FUNC_PTR(PropertyOp, getter), nullptr, flags, 0, 0))
+        return nullptr;
+
+    if (!JS_DefineFunctions(cx, ctor, ArrayBufferObject::jsstaticfuncs))
         return nullptr;
 
     if (!JS_DefineFunctions(cx, arrayBufferProto, ArrayBufferObject::jsfuncs))
