@@ -12,9 +12,13 @@
  */
 
 #include "builtin/SIMD.h"
+
 #include "jsapi.h"
 #include "jsfriendapi.h"
+
 #include "builtin/TypedObject.h"
+#include "js/Value.h"
+
 #include "jsobjinlines.h"
 
 using namespace js;
@@ -48,7 +52,7 @@ struct Float32x4 {
         *out = v.toNumber();
     }
     static void setReturn(CallArgs &args, float value) {
-        args.rval().setDouble(value);
+        args.rval().setDouble(JS::CanonicalizeNaN(value));
     }
 };
 
@@ -358,8 +362,6 @@ SIMDObject::initClass(JSContext *cx, Handle<GlobalObject *> global)
     if (!float32x4Object)
         return nullptr;
 
-    // Define float32x4 functions and install as a property of the SIMD object.
-    global->setFloat32x4TypeObject(*float32x4Object);
     RootedValue float32x4Value(cx, ObjectValue(*float32x4Object));
     if (!JS_DefineFunctions(cx, float32x4Object, Float32x4Methods) ||
         !JSObject::defineProperty(cx, SIMD, cx->names().float32x4,
@@ -375,8 +377,6 @@ SIMDObject::initClass(JSContext *cx, Handle<GlobalObject *> global)
     if (!int32x4Object)
         return nullptr;
 
-    // Define int32x4 functions and install as a property of the SIMD object.
-    global->setInt32x4TypeObject(*int32x4Object);
     RootedValue int32x4Value(cx, ObjectValue(*int32x4Object));
     if (!JS_DefineFunctions(cx, int32x4Object, Int32x4Methods) ||
         !JSObject::defineProperty(cx, SIMD, cx->names().int32x4,
@@ -387,12 +387,19 @@ SIMDObject::initClass(JSContext *cx, Handle<GlobalObject *> global)
     }
 
     RootedValue SIMDValue(cx, ObjectValue(*SIMD));
-    global->setConstructor(JSProto_SIMD, SIMDValue);
 
     // Everything is set up, install SIMD on the global object.
     if (!JSObject::defineProperty(cx, global, cx->names().SIMD,  SIMDValue, nullptr, nullptr, 0)) {
         return nullptr;
     }
+
+    global->setConstructor(JSProto_SIMD, SIMDValue);
+
+    // Define float32x4 functions and install as a property of the SIMD object.
+    global->setFloat32x4TypeObject(*float32x4Object);
+
+    // Define int32x4 functions and install as a property of the SIMD object.
+    global->setInt32x4TypeObject(*int32x4Object);
 
     return SIMD;
 }
