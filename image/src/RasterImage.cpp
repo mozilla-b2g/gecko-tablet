@@ -953,9 +953,10 @@ RasterImage::GetCurrentImage()
   }
 
   CairoImage::Data cairoData;
-  cairoData.mSurface = imageSurface;
+  cairoData.mDeprecatedSurface = imageSurface;
   GetWidth(&cairoData.mSize.width);
   GetHeight(&cairoData.mSize.height);
+  cairoData.mSourceSurface = gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(nullptr, imageSurface);
 
   ImageFormat cairoFormat = CAIRO_SURFACE;
   nsRefPtr<layers::Image> image = mImageContainer->CreateImage(&cairoFormat, 1);
@@ -2601,7 +2602,7 @@ RasterImage::Draw(gfxContext *aContext,
 
   // We can only draw with the default decode flags
   if (mFrameDecodeFlags != DECODE_FLAGS_DEFAULT) {
-    if (!CanForciblyDiscard())
+    if (!CanForciblyDiscard() || mDecoder || mAnim)
       return NS_ERROR_NOT_AVAILABLE;
     ForceDiscard();
 
@@ -2724,7 +2725,7 @@ RasterImage::UnlockImage()
 NS_IMETHODIMP
 RasterImage::RequestDiscard()
 {
-  if (CanDiscard()) {
+  if (CanDiscard() && !mDecoder && !mAnim) {
     ForceDiscard();
   }
 
@@ -2926,7 +2927,7 @@ RasterImage::RequestDecodeIfNeeded(nsresult aStatus,
 
   // If we were a size decode and a full decode was requested, now's the time.
   if (NS_SUCCEEDED(aStatus) &&
-      aIntent != eShutdownIntent_Error &&
+      aIntent == eShutdownIntent_Done &&
       aDone &&
       aWasSize &&
       mWantFullDecode) {

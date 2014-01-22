@@ -6203,6 +6203,21 @@ nsIFrame* GetNearestFrameContainingPresShell(nsIPresShell* aPresShell)
   return frame;
 }
 
+static bool
+FlushThrottledStyles(nsIDocument *aDocument, void *aData)
+{
+  nsIPresShell* shell = aDocument->GetShell();
+  if (shell && shell->IsVisible()) {
+    nsPresContext* presContext = shell->GetPresContext();
+    if (presContext) {
+      presContext->TransitionManager()->UpdateAllThrottledStyles();
+      presContext->AnimationManager()->UpdateAllThrottledStyles();
+    }
+  }
+
+  return true;
+}
+
 nsresult
 PresShell::HandleEvent(nsIFrame* aFrame,
                        WidgetGUIEvent* aEvent,
@@ -6299,14 +6314,21 @@ PresShell::HandleEvent(nsIFrame* aFrame,
 
   nsIFrame* frame = aFrame;
 
-  if (aEvent->eventStructType == NS_TOUCH_EVENT) {
-    nsIDocument::UnlockPointer();
-    FlushPendingNotifications(Flush_Layout);
-    frame = GetNearestFrameContainingPresShell(this);
-  }
-
   bool dispatchUsingCoordinates = aEvent->IsUsingCoordinates();
   if (dispatchUsingCoordinates) {
+    if (nsLayoutUtils::AreAsyncAnimationsEnabled() && mDocument) {
+      if (aEvent->eventStructType == NS_TOUCH_EVENT) {
+        nsIDocument::UnlockPointer();
+      }
+
+      {  // scope for scriptBlocker.
+        nsAutoScriptBlocker scriptBlocker;
+        GetRootPresShell()->GetDocument()->
+          EnumerateSubDocuments(FlushThrottledStyles, nullptr);
+      }
+      frame = GetNearestFrameContainingPresShell(this);
+    }
+
     NS_WARN_IF_FALSE(frame, "Nothing to handle this event!");
     if (!frame)
       return NS_OK;
@@ -8033,9 +8055,12 @@ PresShell::DoReflow(nsIFrame* target, bool aInterruptible)
   // Don't pass size directly to the reflow state, since a
   // constrained height implies page/column breaking.
   nsSize reflowSize(size.width, NS_UNCONSTRAINEDSIZE);
-  nsHTMLReflowState reflowState(mPresContext, target, rcx, reflowSize);
+  nsHTMLReflowState reflowState(mPresContext, target, rcx, reflowSize,
+                                nsHTMLReflowState::CALLER_WILL_INIT);
 
   if (rootFrame == target) {
+    reflowState.Init(mPresContext);
+
     // When the root frame is being reflowed with unconstrained height
     // (which happens when we're called from
     // nsDocumentViewer::SizeToContent), we're effectively doing a
@@ -8050,6 +8075,13 @@ PresShell::DoReflow(nsIFrame* target, bool aInterruptible)
     }
 
     mLastRootReflowHadUnconstrainedHeight = hasUnconstrainedHeight;
+  } else {
+    // Initialize reflow state with current used border and padding,
+    // in case this was set specially by the parent frame when the reflow root
+    // was reflowed by its parent.
+    nsMargin currentBorder = target->GetUsedBorder();
+    nsMargin currentPadding = target->GetUsedPadding();
+    reflowState.Init(mPresContext, -1, -1, &currentBorder, &currentPadding);
   }
 
   // fix the computed height

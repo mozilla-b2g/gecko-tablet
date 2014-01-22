@@ -2530,8 +2530,7 @@ function getWebNavigation()
 
 function BrowserReloadWithFlags(reloadFlags) {
   let url = gBrowser.currentURI.spec;
-  if (gBrowser._updateBrowserRemoteness(gBrowser.selectedBrowser,
-                                        gBrowser._shouldBrowserBeRemote(url))) {
+  if (gBrowser.updateBrowserRemoteness(gBrowser.selectedBrowser, url)) {
     // If the remoteness has changed, the new browser doesn't have any
     // information of what was loaded before, so we need to load the previous
     // URL again.
@@ -3710,11 +3709,11 @@ var XULBrowserWindow = {
       // Try not to instantiate gCustomizeMode as much as possible,
       // so don't use CustomizeMode.jsm to check for URI or customizing.
       let customizingURI = "about:customizing";
-      if (location == customizingURI &&
-          !CustomizationHandler.isCustomizing()) {
+      if (location == customizingURI) {
         gCustomizeMode.enter();
       } else if (location != customizingURI &&
-                 CustomizationHandler.isCustomizing()) {
+                 (CustomizationHandler.isEnteringCustomizeMode ||
+                  CustomizationHandler.isCustomizing())) {
         gCustomizeMode.exit();
       }
     }
@@ -4229,6 +4228,13 @@ nsBrowserAccess.prototype = {
   }
 }
 
+function getTogglableToolbars() {
+  let toolbarNodes = Array.slice(gNavToolbox.childNodes);
+  toolbarNodes = toolbarNodes.concat(gNavToolbox.externalToolbars);
+  toolbarNodes = toolbarNodes.filter(node => node.getAttribute("toolbarname"));
+  return toolbarNodes;
+}
+
 function onViewToolbarsPopupShowing(aEvent, aInsertPoint) {
   var popup = aEvent.target;
   if (popup != aEvent.currentTarget)
@@ -4243,28 +4249,24 @@ function onViewToolbarsPopupShowing(aEvent, aInsertPoint) {
 
   var firstMenuItem = aInsertPoint || popup.firstChild;
 
-  let toolbarNodes = Array.slice(gNavToolbox.childNodes);
-  toolbarNodes = toolbarNodes.concat(gNavToolbox.externalToolbars);
+  let toolbarNodes = getTogglableToolbars();
 
   for (let toolbar of toolbarNodes) {
-    let toolbarName = toolbar.getAttribute("toolbarname");
-    if (toolbarName) {
-      let menuItem = document.createElement("menuitem");
-      let hidingAttribute = toolbar.getAttribute("type") == "menubar" ?
-                            "autohide" : "collapsed";
-      menuItem.setAttribute("id", "toggle_" + toolbar.id);
-      menuItem.setAttribute("toolbarId", toolbar.id);
-      menuItem.setAttribute("type", "checkbox");
-      menuItem.setAttribute("label", toolbarName);
-      menuItem.setAttribute("checked", toolbar.getAttribute(hidingAttribute) != "true");
-      menuItem.setAttribute("accesskey", toolbar.getAttribute("accesskey"));
-      if (popup.id != "toolbar-context-menu")
-        menuItem.setAttribute("key", toolbar.getAttribute("key"));
+    let menuItem = document.createElement("menuitem");
+    let hidingAttribute = toolbar.getAttribute("type") == "menubar" ?
+                          "autohide" : "collapsed";
+    menuItem.setAttribute("id", "toggle_" + toolbar.id);
+    menuItem.setAttribute("toolbarId", toolbar.id);
+    menuItem.setAttribute("type", "checkbox");
+    menuItem.setAttribute("label", toolbar.getAttribute("toolbarname"));
+    menuItem.setAttribute("checked", toolbar.getAttribute(hidingAttribute) != "true");
+    menuItem.setAttribute("accesskey", toolbar.getAttribute("accesskey"));
+    if (popup.id != "toolbar-context-menu")
+      menuItem.setAttribute("key", toolbar.getAttribute("key"));
 
-      popup.insertBefore(menuItem, firstMenuItem);
+    popup.insertBefore(menuItem, firstMenuItem);
 
-      menuItem.addEventListener("command", onViewToolbarCommand, false);
-    }
+    menuItem.addEventListener("command", onViewToolbarCommand, false);
   }
 
 

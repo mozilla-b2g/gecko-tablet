@@ -8,6 +8,7 @@
 #define jsfriendapi_h
 
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/TypedEnum.h"
 
 #include "jsbytecode.h"
 #include "jspubtd.h"
@@ -1451,7 +1452,9 @@ struct JSJitInfo {
         Getter,
         Setter,
         Method,
-        OpType_None
+        ParallelNative,
+        // Must be last
+        OpTypeCount
     };
 
     enum ArgType {
@@ -1475,6 +1478,13 @@ struct JSJitInfo {
         ArgTypeListEnd = (1 << 31)
     };
 
+    static_assert(Any & String, "Any must include String.");
+    static_assert(Any & Integer, "Any must include Integer.");
+    static_assert(Any & Double, "Any must include Double.");
+    static_assert(Any & Boolean, "Any must include Boolean.");
+    static_assert(Any & Object, "Any must include Object.");
+    static_assert(Any & Null, "Any must include Null.");
+
     enum AliasSet {
         // An enum that describes what this getter/setter/method aliases.  This
         // determines what things can be hoisted past this call, and if this
@@ -1490,67 +1500,164 @@ struct JSJitInfo {
 
         // Alias the world.  Calling this can change arbitrary values anywhere
         // in the system.  Most things fall in this bucket.
-        AliasEverything
+        AliasEverything,
+
+        // Must be last.
+        AliasSetCount
     };
+
+    bool hasParallelNative() const
+    {
+        return type() == ParallelNative;
+    }
 
     bool isDOMJitInfo() const
     {
-        return type != OpType_None;
+        return type() != ParallelNative;
+    }
+
+    bool isTypedMethodJitInfo() const
+    {
+        return isTypedMethod;
+    }
+
+    OpType type() const
+    {
+        return OpType(type_);
+    }
+
+    AliasSet aliasSet() const
+    {
+        return AliasSet(aliasSet_);
+    }
+
+    JSValueType returnType() const
+    {
+        return JSValueType(returnType_);
     }
 
     union {
         JSJitGetterOp getter;
         JSJitSetterOp setter;
         JSJitMethodOp method;
+        /* An alternative native that's safe to call in parallel mode. */
+        JSParallelNative parallelNative;
     };
 
-    uint32_t protoID;
-    uint32_t depth;
-    // type not being OpType_None means this is a DOM method.  If you
-    // change that, come up with a different way of implementing
+    uint16_t protoID;
+    uint16_t depth;
+
+    // These fields are carefully packed to take up 4 bytes.  If you need more
+    // bits for whatever reason, please see if you can steal bits from existing
+    // fields before adding more members to this structure.
+
+#define JITINFO_OP_TYPE_BITS 4
+#define JITINFO_ALIAS_SET_BITS 4
+#define JITINFO_RETURN_TYPE_BITS 8
+
+    // If this field is not ParallelNative, then this is a DOM method.
+    // If you change that, come up with a different way of implementing
     // isDOMJitInfo().
-    OpType type;
-    bool isInfallible;      /* Is op fallible? False in setters. */
-    bool isMovable;         /* Is op movable?  To be movable the op must not
-                               AliasEverything, but even that might not be
-                               enough (e.g. in cases when it can throw). */
-    AliasSet aliasSet;      /* The alias set for this op.  This is a _minimal_
-                               alias set; in particular for a method it does not
-                               include whatever argument conversions might do.
-                               That's covered by argTypes and runtime analysis
-                               of the actual argument types being passed in. */
-    // XXXbz should we have a JSGetterJitInfo subclass or something?
+    uint32_t type_ : JITINFO_OP_TYPE_BITS;
+
+    // The alias set for this op.  This is a _minimal_ alias set; in
+    // particular for a method it does not include whatever argument
+    // conversions might do.  That's covered by argTypes and runtime
+    // analysis of the actual argument types being passed in.
+    uint32_t aliasSet_ : JITINFO_ALIAS_SET_BITS;
+
+    // The return type tag.  Might be JSVAL_TYPE_UNKNOWN.
+    uint32_t returnType_ : JITINFO_RETURN_TYPE_BITS;
+
+    static_assert(OpTypeCount <= (1 << JITINFO_OP_TYPE_BITS),
+                  "Not enough space for OpType");
+    static_assert(AliasSetCount <= (1 << JITINFO_ALIAS_SET_BITS),
+                  "Not enough space for AliasSet");
+    static_assert((sizeof(JSValueType) * 8) <= JITINFO_RETURN_TYPE_BITS,
+                  "Not enough space for JSValueType");
+
+#undef JITINFO_RETURN_TYPE_BITS
+#undef JITINFO_ALIAS_SET_BITS
+#undef JITINFO_OP_TYPE_BITS
+
+    uint32_t isInfallible : 1; /* Is op fallible? False in setters. */
+    uint32_t isMovable : 1;    /* Is op movable?  To be movable the op must
+                                  not AliasEverything, but even that might
+                                  not be enough (e.g. in cases when it can
+                                  throw). */
     // XXXbz should we have a JSValueType for the type of the member?
-    bool isInSlot;          /* True if this is a getter that can get a member
-                               from a slot of the "this" object directly. */
-    size_t slotIndex;       /* If isMember is true, the index of the slot to get
-                               the value from.  Otherwise 0. */
-    JSValueType returnType; /* The return type tag.  Might be JSVAL_TYPE_UNKNOWN */
-
-    const ArgType* const argTypes; /* For a method, a list of sets of types that
-                                      the function expects.  This can be used,
-                                      for example, to figure out when argument
-                                      coercions can have side-effects. nullptr
-                                      if we have no type information for
-                                      arguments. */
-
-    /* An alternative native that's safe to call in parallel mode. */
-    JSParallelNative parallelNative;
-
-private:
-    static void staticAsserts()
-    {
-        JS_STATIC_ASSERT(Any & String);
-        JS_STATIC_ASSERT(Any & Integer);
-        JS_STATIC_ASSERT(Any & Double);
-        JS_STATIC_ASSERT(Any & Boolean);
-        JS_STATIC_ASSERT(Any & Object);
-        JS_STATIC_ASSERT(Any & Null);
-    }
+    uint32_t isInSlot : 1;     /* True if this is a getter that can get a member
+                                  from a slot of the "this" object directly. */
+    uint32_t isTypedMethod : 1; /* True if this is an instance of
+                                   JSTypedMethodJitInfo. */
+    uint32_t slotIndex : 12;   /* If isInSlot is true, the index of the slot to
+                                  get the value from.  Otherwise 0. */
 };
 
-#define JS_JITINFO_NATIVE_PARALLEL(op)                                         \
-    {{nullptr},0,0,JSJitInfo::OpType_None,false,false,JSJitInfo::AliasEverything,false,0,JSVAL_TYPE_MISSING,nullptr,op}
+static_assert(sizeof(JSJitInfo) == (sizeof(void*) + 2 * sizeof(uint32_t)),
+              "There are several thousand instances of JSJitInfo stored in "
+              "a binary. Please don't increase its space requirements without "
+              "verifying that there is no other way forward (better packing, "
+              "smaller datatypes for fields, subclassing, etc.).");
+
+struct JSTypedMethodJitInfo
+{
+    // We use C-style inheritance here, rather than C++ style inheritance
+    // because not all compilers support brace-initialization for non-aggregate
+    // classes. Using C++ style inheritance and constructors instead of
+    // brace-initialization would also force the creation of static
+    // constructors (on some compilers) when JSJitInfo and JSTypedMethodJitInfo
+    // structures are declared. Since there can be several thousand of these
+    // structures present and we want to have roughly equivalent performance
+    // across a range of compilers, we do things manually.
+    JSJitInfo base;
+
+    const JSJitInfo::ArgType* const argTypes; /* For a method, a list of sets of
+                                                 types that the function
+                                                 expects.  This can be used,
+                                                 for example, to figure out
+                                                 when argument coercions can
+                                                 have side-effects. */
+};
+
+namespace JS {
+namespace detail {
+
+/* NEVER DEFINED, DON'T USE.  For use by JS_CAST_PARALLEL_NATIVE_TO only. */
+inline int CheckIsParallelNative(JSParallelNative parallelNative);
+
+} // namespace detail
+} // namespace JS
+
+#define JS_CAST_PARALLEL_NATIVE_TO(v, To) \
+    (static_cast<void>(sizeof(JS::detail::CheckIsParallelNative(v))), \
+     reinterpret_cast<To>(v))
+
+/*
+ * You may ask yourself: why do we define a wrapper around a wrapper here?
+ * The answer is that some compilers don't understand initializing a union
+ * as we do below with a construct like:
+ *
+ * reinterpret_cast<JSJitGetterOp>(JSParallelNativeThreadSafeWrapper<op>)
+ *
+ * (We need the reinterpret_cast because we must initialize the union with
+ * a datum of the type of the union's first member.)
+ *
+ * Presumably this has something to do with template instantiation.
+ * Initializing with a normal function pointer seems to work fine. Hence
+ * the ugliness that you see before you.
+ */
+#define JS_JITINFO_NATIVE_PARALLEL(infoName, parallelOp)                \
+    const JSJitInfo infoName =                                          \
+        {{JS_CAST_PARALLEL_NATIVE_TO(parallelOp, JSJitGetterOp)},0,0,JSJitInfo::ParallelNative,JSJitInfo::AliasEverything,JSVAL_TYPE_MISSING,false,false,false,false,0}
+
+#define JS_JITINFO_NATIVE_PARALLEL_THREADSAFE(infoName, wrapperName, serialOp) \
+    bool wrapperName##_ParallelNativeThreadSafeWrapper(js::ForkJoinSlice *slice, unsigned argc, \
+                                                       JS::Value *vp)   \
+    {                                                                   \
+        return JSParallelNativeThreadSafeWrapper<serialOp>(slice, argc, vp); \
+    }                                                                   \
+    JS_JITINFO_NATIVE_PARALLEL(infoName, wrapperName##_ParallelNativeThreadSafeWrapper)
 
 static JS_ALWAYS_INLINE const JSJitInfo *
 FUNCTION_VALUE_TO_JITINFO(const JS::Value& v)
@@ -1653,12 +1760,6 @@ IdToValue(jsid id)
         return JS::ObjectValue(*JSID_TO_OBJECT(id));
     JS_ASSERT(JSID_IS_VOID(id));
     return JS::UndefinedValue();
-}
-
-static JS_ALWAYS_INLINE jsval
-IdToJsval(jsid id)
-{
-    return IdToValue(id);
 }
 
 extern JS_FRIEND_API(bool)
@@ -1787,22 +1888,22 @@ js_ReportIsNotFunction(JSContext *cx, JS::HandleValue v);
 #ifdef JSGC_GENERATIONAL
 extern JS_FRIEND_API(void)
 JS_StoreObjectPostBarrierCallback(JSContext* cx,
-                                  void (*callback)(JSTracer *trc, void *key, void *data),
+                                  void (*callback)(JSTracer *trc, JSObject *key, void *data),
                                   JSObject *key, void *data);
 
 extern JS_FRIEND_API(void)
 JS_StoreStringPostBarrierCallback(JSContext* cx,
-                                  void (*callback)(JSTracer *trc, void *key, void *data),
+                                  void (*callback)(JSTracer *trc, JSString *key, void *data),
                                   JSString *key, void *data);
 #else
 inline void
 JS_StoreObjectPostBarrierCallback(JSContext* cx,
-                                  void (*callback)(JSTracer *trc, void *key, void *data),
+                                  void (*callback)(JSTracer *trc, JSObject *key, void *data),
                                   JSObject *key, void *data) {}
 
 inline void
 JS_StoreStringPostBarrierCallback(JSContext* cx,
-                                  void (*callback)(JSTracer *trc, void *key, void *data),
+                                  void (*callback)(JSTracer *trc, JSString *key, void *data),
                                   JSString *key, void *data) {}
 #endif /* JSGC_GENERATIONAL */
 

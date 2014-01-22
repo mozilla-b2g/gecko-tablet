@@ -102,6 +102,10 @@ pref("network.http.spdy.push-allowance", 32768);
 pref("network.buffer.cache.count", 24);
 pref("network.buffer.cache.size",  16384);
 
+// predictive actions
+pref("network.seer.max-db-size", 2097152); // bytes
+pref("network.seer.preserve", 50); // percentage of seer data to keep when cleaning up
+
 /* history max results display */
 pref("browser.display.history.maxresults", 100);
 
@@ -269,6 +273,9 @@ pref("browser.search.noCurrentEngine", true);
 // {moz:official} expands to "official"
 pref("browser.search.official", true);
 #endif
+
+// Control media casting feature
+pref("browser.casting.enabled", false);
 
 // Enable sparse localization by setting a few package locale overrides
 pref("chrome.override_package.global", "browser");
@@ -585,17 +592,16 @@ pref("browser.safebrowsing.enabled", true);
 pref("browser.safebrowsing.malware.enabled", true);
 pref("browser.safebrowsing.debug", false);
 
-pref("browser.safebrowsing.updateURL", "http://safebrowsing.clients.google.com/safebrowsing/downloads?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
-pref("browser.safebrowsing.keyURL", "https://sb-ssl.google.com/safebrowsing/newkey?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
-pref("browser.safebrowsing.gethashURL", "http://safebrowsing.clients.google.com/safebrowsing/gethash?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
-pref("browser.safebrowsing.reportURL", "http://safebrowsing.clients.google.com/safebrowsing/report?");
+pref("browser.safebrowsing.updateURL", "https://safebrowsing.google.com/safebrowsing/downloads?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2&key=%GOOGLE_API_KEY%");
+pref("browser.safebrowsing.gethashURL", "https://safebrowsing.google.com/safebrowsing/gethash?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
+pref("browser.safebrowsing.reportURL", "https://safebrowsing.google.com/safebrowsing/report?");
 pref("browser.safebrowsing.reportGenericURL", "http://%LOCALE%.phish-generic.mozilla.com/?hl=%LOCALE%");
 pref("browser.safebrowsing.reportErrorURL", "http://%LOCALE%.phish-error.mozilla.com/?hl=%LOCALE%");
 pref("browser.safebrowsing.reportPhishURL", "http://%LOCALE%.phish-report.mozilla.com/?hl=%LOCALE%");
 pref("browser.safebrowsing.reportMalwareURL", "http://%LOCALE%.malware-report.mozilla.com/?hl=%LOCALE%");
 pref("browser.safebrowsing.reportMalwareErrorURL", "http://%LOCALE%.malware-error.mozilla.com/?hl=%LOCALE%");
 
-pref("browser.safebrowsing.malware.reportURL", "http://safebrowsing.clients.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
+pref("browser.safebrowsing.malware.reportURL", "https://safebrowsing.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
 
 pref("browser.safebrowsing.id", @MOZ_APP_UA_NAME@);
 
@@ -811,11 +817,12 @@ pref("browser.snippets.geoUrl", "https://geo.mozilla.org/country.json");
 // URL used to ping metrics with stats about which snippets have been shown
 pref("browser.snippets.statsUrl", "https://snippets-stats.mozilla.org/mobile");
 
-// This pref requires a restart to take effect.
+// These prefs require a restart to take effect.
 pref("browser.snippets.enabled", false);
+pref("browser.snippets.syncPromo.enabled", false);
 
 #ifdef MOZ_ANDROID_SYNTHAPKS
 // The URL of the APK factory from which we obtain APKs for webapps.
-// XXX This currently points to jhugman's prototype server.
-pref("browser.webapps.apkFactoryUrl", "http://107.22.148.17:8080/application.apk");
+// This currently points to the development server.
+pref("browser.webapps.apkFactoryUrl", "http://dapk.net/application.apk");
 #endif

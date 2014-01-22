@@ -376,6 +376,7 @@ nsChildView::nsChildView() : nsBaseWidget()
 , mShowsResizeIndicator(false)
 , mHasRoundedBottomCorners(false)
 , mIsCoveringTitlebar(false)
+, mIsFullscreen(false)
 , mTitlebarCGContext(nullptr)
 , mBackingScaleFactor(0.0)
 , mVisible(false)
@@ -1580,6 +1581,18 @@ NS_IMETHODIMP nsChildView::Invalidate(const nsIntRect &aRect)
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
 }
 
+void
+nsChildView::Update()
+{
+  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+
+  if (!ShouldUseOffMainThreadCompositing() && mView) {
+    [mView displayIfNeeded];
+  }
+
+  NS_OBJC_END_TRY_ABORT_BLOCK;
+}
+
 bool
 nsChildView::ComputeShouldAccelerate(bool aDefault)
 {
@@ -2059,6 +2072,7 @@ nsChildView::PrepareWindowEffects()
   CGFloat cornerRadius = [(ChildView*)mView cornerRadius];
   mDevPixelCornerRadius = cornerRadius * BackingScaleFactor();
   mIsCoveringTitlebar = [(ChildView*)mView isCoveringTitlebar];
+  mIsFullscreen = ([[mView window] styleMask] & NSFullScreenWindowMask) != 0;
   if (mIsCoveringTitlebar) {
     mTitlebarRect = RectContainingTitlebarControls();
     UpdateTitlebarCGContext();
@@ -2363,7 +2377,7 @@ void
 nsChildView::MaybeDrawTitlebar(GLManager* aManager, const nsIntRect& aRect)
 {
   MutexAutoLock lock(mEffectsLock);
-  if (!mIsCoveringTitlebar) {
+  if (!mIsCoveringTitlebar || mIsFullscreen) {
     return;
   }
 
@@ -2416,13 +2430,13 @@ nsChildView::MaybeDrawRoundedCorners(GLManager* aManager, const nsIntRect& aRect
   gfx3DMatrix flipX = gfx3DMatrix::ScalingMatrix(-1, 1, 1);
   gfx3DMatrix flipY = gfx3DMatrix::ScalingMatrix(1, -1, 1);
 
-  if (mIsCoveringTitlebar) {
+  if (mIsCoveringTitlebar && !mIsFullscreen) {
     // Mask the top corners.
     mCornerMaskImage->Draw(aManager, aRect.TopLeft());
     mCornerMaskImage->Draw(aManager, aRect.TopRight(), flipX);
   }
 
-  if (mHasRoundedBottomCorners) {
+  if (mHasRoundedBottomCorners && !mIsFullscreen) {
     // Mask the bottom corners.
     mCornerMaskImage->Draw(aManager, aRect.BottomLeft(), flipY);
     mCornerMaskImage->Draw(aManager, aRect.BottomRight(), flipY * flipX);

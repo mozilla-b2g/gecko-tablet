@@ -10,6 +10,7 @@
 
 #include "jsscriptinlines.h"
 
+#include "mozilla/MathAlgorithms.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/PodOperations.h"
 
@@ -33,6 +34,7 @@
 #include "jit/IonCode.h"
 #include "js/OldDebugAPI.h"
 #include "vm/ArgumentsObject.h"
+#include "vm/Compression.h"
 #include "vm/Debugger.h"
 #include "vm/Shape.h"
 #include "vm/Xdr.h"
@@ -50,10 +52,11 @@ using namespace js::frontend;
 
 using mozilla::PodCopy;
 using mozilla::PodZero;
+using mozilla::RotateLeft;
 
 typedef Rooted<GlobalObject *> RootedGlobalObject;
 
-/* static */ unsigned
+/* static */ uint32_t
 Bindings::argumentsVarIndex(ExclusiveContext *cx, InternalBindingsHandle bindings)
 {
     HandlePropertyName arguments = cx->names().arguments;
@@ -65,23 +68,16 @@ Bindings::argumentsVarIndex(ExclusiveContext *cx, InternalBindingsHandle binding
 
 bool
 Bindings::initWithTemporaryStorage(ExclusiveContext *cx, InternalBindingsHandle self,
-                                   unsigned numArgs, unsigned numVars,
+                                   unsigned numArgs, uint32_t numVars,
                                    Binding *bindingArray)
 {
     JS_ASSERT(!self->callObjShape_);
     JS_ASSERT(self->bindingArrayAndFlag_ == TEMPORARY_STORAGE_BIT);
-
-    if (numArgs > UINT16_MAX || numVars > UINT16_MAX) {
-        if (cx->isJSContext()) {
-            JS_ReportErrorNumber(cx->asJSContext(), js_GetErrorMessage, nullptr,
-                                 self->numArgs_ > self->numVars_ ?
-                                 JSMSG_TOO_MANY_FUN_ARGS :
-                                 JSMSG_TOO_MANY_LOCALS);
-        }
-        return false;
-    }
-
     JS_ASSERT(!(uintptr_t(bindingArray) & TEMPORARY_STORAGE_BIT));
+    JS_ASSERT(numArgs <= ARGC_LIMIT);
+    JS_ASSERT(numVars <= LOCALNO_LIMIT);
+    JS_ASSERT(UINT32_MAX - numArgs >= numVars);
+
     self->bindingArrayAndFlag_ = uintptr_t(bindingArray) | TEMPORARY_STORAGE_BIT;
     self->numArgs_ = numArgs;
     self->numVars_ = numVars;
@@ -99,7 +95,7 @@ Bindings::initWithTemporaryStorage(ExclusiveContext *cx, InternalBindingsHandle 
     gc::AllocKind allocKind = gc::FINALIZE_OBJECT2_BACKGROUND;
     JS_ASSERT(gc::GetGCKindSlots(allocKind) == CallObject::RESERVED_SLOTS);
     RootedShape initial(cx,
-        EmptyShape::getInitialShape(cx, &CallObject::class_, nullptr, cx->global(), nullptr,
+        EmptyShape::getInitialShape(cx, &CallObject::class_, nullptr, nullptr, nullptr,
                                     allocKind, BaseShape::VAROBJ | BaseShape::DELEGATE));
     if (!initial)
         return false;
@@ -112,8 +108,8 @@ Bindings::initWithTemporaryStorage(ExclusiveContext *cx, InternalBindingsHandle 
 #endif
 
     BindingIter bi(self);
-    unsigned slot = CallObject::RESERVED_SLOTS;
-    for (unsigned i = 0, n = self->count(); i < n; i++, bi++) {
+    uint32_t slot = CallObject::RESERVED_SLOTS;
+    for (uint32_t i = 0, n = self->count(); i < n; i++, bi++) {
         if (!bi->aliased())
             continue;
 
@@ -132,17 +128,21 @@ Bindings::initWithTemporaryStorage(ExclusiveContext *cx, InternalBindingsHandle 
             return false;
 
         RootedId id(cx, NameToId(bi->name()));
+        uint32_t nfixed = gc::GetGCKindSlots(gc::GetGCObjectKind(slot + 1));
         unsigned attrs = JSPROP_PERMANENT | JSPROP_ENUMERATE |
                          (bi->kind() == CONSTANT ? JSPROP_READONLY : 0);
-        unsigned frameIndex = bi.frameIndex();
-        StackShape child(nbase, id, slot++, 0, attrs, Shape::HAS_SHORTID, frameIndex);
 
-        Shape *shape = self->callObjShape_->getChildBinding(cx, child);
+        StackShape child(nbase, id, slot, nfixed, attrs, 0, 0);
+
+        Shape *shape = cx->compartment()->propertyTree.getChild(cx, self->callObjShape_, child);
         if (!shape)
             return false;
 
         self->callObjShape_ = shape;
+        slot++;
     }
+
+    JS_ASSERT(!self->callObjShape_->inDictionary());
     JS_ASSERT(!bi);
 
     return true;
@@ -188,7 +188,7 @@ GCMethods<Bindings>::initial()
 
 template<XDRMode mode>
 static bool
-XDRScriptBindings(XDRState<mode> *xdr, LifoAllocScope &las, unsigned numArgs, unsigned numVars,
+XDRScriptBindings(XDRState<mode> *xdr, LifoAllocScope &las, unsigned numArgs, uint32_t numVars,
                   HandleScript script)
 {
     JSContext *cx = xdr->cx();
@@ -206,12 +206,12 @@ XDRScriptBindings(XDRState<mode> *xdr, LifoAllocScope &las, unsigned numArgs, un
                 return false;
         }
     } else {
-        unsigned nameCount = numArgs + numVars;
+        uint32_t nameCount = numArgs + numVars;
 
         AutoValueVector atoms(cx);
         if (!atoms.resize(nameCount))
             return false;
-        for (unsigned i = 0; i < nameCount; i++) {
+        for (uint32_t i = 0; i < nameCount; i++) {
             RootedAtom atom(cx);
             if (!XDRAtom(xdr, &atom))
                 return false;
@@ -221,7 +221,7 @@ XDRScriptBindings(XDRState<mode> *xdr, LifoAllocScope &las, unsigned numArgs, un
         Binding *bindingArray = las.alloc().newArrayUninitialized<Binding>(nameCount);
         if (!bindingArray)
             return false;
-        for (unsigned i = 0; i < nameCount; i++) {
+        for (uint32_t i = 0; i < nameCount; i++) {
             uint8_t u8;
             if (!xdr->codeUint8(&u8))
                 return false;
@@ -242,7 +242,7 @@ XDRScriptBindings(XDRState<mode> *xdr, LifoAllocScope &las, unsigned numArgs, un
 }
 
 bool
-Bindings::bindingIsAliased(unsigned bindingIndex)
+Bindings::bindingIsAliased(uint32_t bindingIndex)
 {
     JS_ASSERT(bindingIndex < count());
     return bindingArray()[bindingIndex].aliased();
@@ -464,7 +464,7 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
     if (mode == XDR_ENCODE) {
         prologLength = script->mainOffset();
         JS_ASSERT(script->getVersion() != JSVERSION_UNKNOWN);
-        version = (uint32_t)script->getVersion() | (script->nfixed() << 16);
+        version = script->getVersion();
         lineno = script->lineno();
         column = script->column();
         nslots = (uint32_t)script->nslots();
@@ -553,8 +553,7 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
         return false;
 
     if (mode == XDR_DECODE) {
-        /* Note: version is packed into the 32b space with another 16b value. */
-        JSVersion version_ = JSVersion(version & JS_BITMASK(16));
+        JSVersion version_ = JSVersion(version);
         JS_ASSERT((version_ & VersionFlags::MASK) == unsigned(version_));
 
         // staticLevel is set below.
@@ -606,7 +605,6 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
         JS_ASSERT(!script->mainOffset());
         script->mainOffset_ = prologLength;
         script->setLength(length);
-        script->nfixed_ = uint16_t(version >> 16);
         script->funLength_ = funLength;
 
         scriptp.set(script);
@@ -801,32 +799,16 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
     }
 
     if (ntrynotes != 0) {
-        /*
-         * We combine tn->kind and tn->stackDepth when serializing as XDR is not
-         * efficient when serializing small integer types.
-         */
-        JSTryNote *tn, *tnfirst;
-        uint32_t kindAndDepth;
-        JS_STATIC_ASSERT(sizeof(tn->kind) == sizeof(uint8_t));
-        JS_STATIC_ASSERT(sizeof(tn->stackDepth) == sizeof(uint16_t));
-
-        tnfirst = script->trynotes()->vector;
+        JSTryNote *tnfirst = script->trynotes()->vector;
         JS_ASSERT(script->trynotes()->length == ntrynotes);
-        tn = tnfirst + ntrynotes;
+        JSTryNote *tn = tnfirst + ntrynotes;
         do {
             --tn;
-            if (mode == XDR_ENCODE) {
-                kindAndDepth = (uint32_t(tn->kind) << 16)
-                               | uint32_t(tn->stackDepth);
-            }
-            if (!xdr->codeUint32(&kindAndDepth) ||
+            if (!xdr->codeUint8(&tn->kind) ||
+                !xdr->codeUint32(&tn->stackDepth) ||
                 !xdr->codeUint32(&tn->start) ||
                 !xdr->codeUint32(&tn->length)) {
                 return false;
-            }
-            if (mode == XDR_DECODE) {
-                tn->kind = uint8_t(kindAndDepth >> 16);
-                tn->stackDepth = uint16_t(kindAndDepth);
             }
         } while (tn != tnfirst);
     }
@@ -1265,7 +1247,7 @@ ScriptSource::setSource(const jschar *src, size_t length)
 }
 
 bool
-SourceCompressionTask::compress()
+SourceCompressionTask::work()
 {
     // A given compression token can be compressed on any thread, and the ss
     // not being ready indicates to other threads that its fields might change
@@ -2018,15 +2000,6 @@ JSScript::fullyInitFromEmitter(ExclusiveContext *cx, HandleScript script, Byteco
     if (!SaveSharedScriptData(cx, script, ssd, nsrcnotes))
         return false;
 
-    uint32_t nfixed = bce->sc->isFunctionBox() ? script->bindings.numVars() : 0;
-    JS_ASSERT(nfixed < SLOTNO_LIMIT);
-    script->nfixed_ = uint16_t(nfixed);
-    if (script->nfixed() + bce->maxStackDepth >= JS_BIT(16)) {
-        bce->reportError(nullptr, JSMSG_NEED_DIET, "script");
-        return false;
-    }
-    script->nslots_ = script->nfixed() + bce->maxStackDepth;
-
     FunctionBox *funbox = bce->sc->isFunctionBox() ? bce->sc->asFunctionBox() : nullptr;
 
     if (bce->constList.length() != 0)
@@ -2066,6 +2039,13 @@ JSScript::fullyInitFromEmitter(ExclusiveContext *cx, HandleScript script, Byteco
         script->setGeneratorKind(funbox->generatorKind());
         script->setFunction(funbox->function());
     }
+
+    // The call to nfixed() depends on the above setFunction() call.
+    if (UINT32_MAX - script->nfixed() < bce->maxStackDepth) {
+        bce->reportError(nullptr, JSMSG_NEED_DIET, "script");
+        return false;
+    }
+    script->nslots_ = script->nfixed() + bce->maxStackDepth;
 
     for (unsigned i = 0, n = script->bindings.numArgs(); i < n; ++i) {
         if (script->formalIsAliased(i)) {
@@ -2527,7 +2507,6 @@ js::CloneScript(JSContext *cx, HandleObject enclosingScope, HandleFunction fun, 
     dst->mainOffset_ = src->mainOffset();
     dst->natoms_ = src->natoms();
     dst->funLength_ = src->funLength();
-    dst->nfixed_ = src->nfixed();
     dst->nTypeSets_ = src->nTypeSets();
     dst->nslots_ = src->nslots();
     if (src->argumentsHasVarBinding()) {
@@ -3003,7 +2982,7 @@ js::SetFrameArgumentsObject(JSContext *cx, AbstractFramePtr frame,
      */
 
     InternalBindingsHandle bindings(script, &script->bindings);
-    const unsigned var = Bindings::argumentsVarIndex(cx, bindings);
+    const uint32_t var = Bindings::argumentsVarIndex(cx, bindings);
 
     if (script->varIsAliased(var)) {
         /*
@@ -3104,7 +3083,7 @@ JSScript::argumentsOptimizationFailed(JSContext *cx, HandleScript script)
 }
 
 bool
-JSScript::varIsAliased(unsigned varSlot)
+JSScript::varIsAliased(uint32_t varSlot)
 {
     AutoThreadSafeAccess ts(this);
     return bindings.bindingIsAliased(bindings.numArgs() + varSlot);
@@ -3254,13 +3233,13 @@ LazyScriptHash(uint32_t lineno, uint32_t column, uint32_t begin, uint32_t end,
                HashNumber hashes[3])
 {
     HashNumber hash = lineno;
-    hash = JS_ROTATE_LEFT32(hash, 4) ^ column;
-    hash = JS_ROTATE_LEFT32(hash, 4) ^ begin;
-    hash = JS_ROTATE_LEFT32(hash, 4) ^ end;
+    hash = RotateLeft(hash, 4) ^ column;
+    hash = RotateLeft(hash, 4) ^ begin;
+    hash = RotateLeft(hash, 4) ^ end;
 
     hashes[0] = hash;
-    hashes[1] = JS_ROTATE_LEFT32(hashes[0], 4) ^ begin;
-    hashes[2] = JS_ROTATE_LEFT32(hashes[1], 4) ^ end;
+    hashes[1] = RotateLeft(hashes[0], 4) ^ begin;
+    hashes[2] = RotateLeft(hashes[1], 4) ^ end;
 }
 
 void

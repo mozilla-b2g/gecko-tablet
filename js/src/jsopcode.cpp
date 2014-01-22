@@ -304,8 +304,8 @@ AssertStackDepth(JSScript *script, uint32_t offset, uint32_t stackDepth) {
      *
      *     call js_DumpScriptDepth(cx, script, pc)
      */
-    JS_ASSERT_IF(script->hasAnalysis() && script->analysis()->maybeCode(offset),
-                 script->analysis()->getCode(offset).stackDepth == stackDepth);
+    if (script->hasAnalysis())
+        script->analysis()->assertMatchingStackDepthAtOffset(offset, stackDepth);
 }
 
 namespace {
@@ -875,7 +875,8 @@ ToDisassemblySource(JSContext *cx, HandleValue v, JSAutoByteString *bytes)
         }
 
         if (obj->is<JSFunction>()) {
-            JSString *str = JS_DecompileFunction(cx, &obj->as<JSFunction>(), JS_DONT_PRETTY_PRINT);
+            RootedFunction fun(cx, &obj->as<JSFunction>());
+            JSString *str = JS_DecompileFunction(cx, fun, JS_DONT_PRETTY_PRINT);
             if (!str)
                 return false;
             return bytes->encodeLatin1(cx, str);
@@ -942,12 +943,12 @@ js_Disassemble1(JSContext *cx, HandleScript script, jsbytecode *pc,
 
       case JOF_SCOPECOORD: {
         RootedValue v(cx,
-                      StringValue(ScopeCoordinateName(cx->runtime()->scopeCoordinateNameCache, script, pc)));
+            StringValue(ScopeCoordinateName(cx->runtime()->scopeCoordinateNameCache, script, pc)));
         JSAutoByteString bytes;
         if (!ToDisassemblySource(cx, v, &bytes))
             return 0;
         ScopeCoordinate sc(pc);
-        Sprint(sp, " %s (hops = %u, slot = %u)", bytes.ptr(), sc.hops, sc.slot);
+        Sprint(sp, " %s (hops = %u, slot = %u)", bytes.ptr(), sc.hops(), sc.slot());
         break;
       }
 
@@ -1022,28 +1023,11 @@ js_Disassemble1(JSContext *cx, HandleScript script, jsbytecode *pc,
         break;
 
       case JOF_LOCAL:
-        Sprint(sp, " %u", GET_SLOTNO(pc));
+        Sprint(sp, " %u", GET_LOCALNO(pc));
         break;
-
-      case JOF_SLOTOBJECT: {
-        Sprint(sp, " %u", GET_SLOTNO(pc));
-        JSObject *obj = script->getObject(GET_UINT32_INDEX(pc + SLOTNO_LEN));
-        JSAutoByteString bytes;
-        RootedValue v(cx, ObjectValue(*obj));
-        if (!ToDisassemblySource(cx, v, &bytes))
-            return 0;
-        Sprint(sp, " %s", bytes.ptr());
-        break;
-      }
 
       {
         int i;
-
-      case JOF_UINT16PAIR:
-        i = (int)GET_UINT16(pc);
-        Sprint(sp, " %d", i);
-        pc += UINT16_LEN;
-        /* FALL THROUGH */
 
       case JOF_UINT16:
         i = (int)GET_UINT16(pc);
@@ -1461,7 +1445,7 @@ struct ExpressionDecompiler
     bool init();
     bool decompilePCForStackOperand(jsbytecode *pc, int i);
     bool decompilePC(jsbytecode *pc);
-    JSAtom *getVar(unsigned slot);
+    JSAtom *getVar(uint32_t slot);
     JSAtom *getArg(unsigned slot);
     JSAtom *findLetVar(jsbytecode *pc, unsigned depth);
     JSAtom *loadAtom(jsbytecode *pc);
@@ -1528,7 +1512,7 @@ ExpressionDecompiler::decompilePC(jsbytecode *pc)
       }
       case JSOP_GETLOCAL:
       case JSOP_CALLLOCAL: {
-        unsigned i = GET_SLOTNO(pc);
+        uint32_t i = GET_LOCALNO(pc);
         JSAtom *atom;
         if (i >= script->nfixed()) {
             i -= script->nfixed();
@@ -1666,7 +1650,7 @@ ExpressionDecompiler::loadAtom(jsbytecode *pc)
 }
 
 JSAtom *
-ExpressionDecompiler::findLetVar(jsbytecode *pc, unsigned depth)
+ExpressionDecompiler::findLetVar(jsbytecode *pc, uint32_t depth)
 {
     for (JSObject *chain = script->getBlockScope(pc); chain; chain = chain->getParent()) {
         StaticBlockObject &block = chain->as<StaticBlockObject>();
@@ -1692,7 +1676,7 @@ ExpressionDecompiler::getArg(unsigned slot)
 }
 
 JSAtom *
-ExpressionDecompiler::getVar(unsigned slot)
+ExpressionDecompiler::getVar(uint32_t slot)
 {
     JS_ASSERT(fun);
     slot += fun->nargs();

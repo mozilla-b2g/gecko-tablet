@@ -28,9 +28,10 @@
 using namespace js;
 using namespace js::gc;
 
+using mozilla::CeilingLog2Size;
 using mozilla::DebugOnly;
 using mozilla::PodZero;
-using mozilla::CeilingLog2Size;
+using mozilla::RotateLeft;
 
 bool
 ShapeTable::init(ThreadSafeContext *cx, Shape *lastProp)
@@ -304,19 +305,6 @@ ShapeTable::grow(ThreadSafeContext *cx)
     return true;
 }
 
-Shape *
-Shape::getChildBinding(ExclusiveContext *cx, const StackShape &child)
-{
-    JS_ASSERT(!inDictionary());
-
-    /* Try to allocate all slots inline. */
-    uint32_t slots = child.slotSpan();
-    gc::AllocKind kind = gc::GetGCObjectKind(slots);
-    uint32_t nfixed = gc::GetGCKindSlots(kind);
-
-    return cx->compartment()->propertyTree.getChild(cx, this, nfixed, child);
-}
-
 /* static */ Shape *
 Shape::replaceLastProperty(ExclusiveContext *cx, const StackBaseShape &base,
                            TaggedProto proto, HandleShape shape)
@@ -338,8 +326,7 @@ Shape::replaceLastProperty(ExclusiveContext *cx, const StackBaseShape &base,
     StackShape child(shape);
     child.base = nbase;
 
-    return cx->compartment()->propertyTree.getChild(cx, shape->parent,
-                                                    shape->numFixedSlots(), child);
+    return cx->compartment()->propertyTree.getChild(cx, shape->parent, child);
 }
 
 /*
@@ -398,7 +385,7 @@ JSObject::getChildProperty(ExclusiveContext *cx,
     RootedShape shape(cx, getChildPropertyOnDictionary(cx, obj, parent, child));
 
     if (!obj->inDictionaryMode()) {
-        shape = cx->compartment()->propertyTree.getChild(cx, parent, obj->numFixedSlots(), child);
+        shape = cx->compartment()->propertyTree.getChild(cx, parent, child);
         if (!shape)
             return nullptr;
         //JS_ASSERT(shape->parent == parent);
@@ -718,7 +705,7 @@ js::NewReshapedObject(JSContext *cx, HandleTypeObject type, JSObject *parent,
         }
 
         StackShape child(nbase, id, i, res->numFixedSlots(), JSPROP_ENUMERATE, 0, 0);
-        newShape = cx->compartment()->propertyTree.getChild(cx, newShape, res->numFixedSlots(), child);
+        newShape = cx->compartment()->propertyTree.getChild(cx, newShape, child);
         if (!newShape)
             return nullptr;
         if (!JSObject::setLastProperty(cx, res, newShape))
@@ -853,7 +840,7 @@ JSObject::putProperty(typename ExecutionModeTraits<mode>::ExclusiveContextType c
      * Now that we've possibly preserved slot, check whether all members match.
      * If so, this is a redundant "put" and we can return without more work.
      */
-    if (shape->matchesParamsAfterId(nbase, slot, attrs, flags, shortid))
+    if (shape->matchesParamsAfterId(nbase, slot, obj->numFixedSlots(), attrs, flags, shortid))
         return shape;
 
     /*
@@ -1432,11 +1419,11 @@ Shape::setObjectFlag(ExclusiveContext *cx, BaseShape::Flag flag, TaggedProto pro
 StackBaseShape::hash(const StackBaseShape *base)
 {
     HashNumber hash = base->flags;
-    hash = JS_ROTATE_LEFT32(hash, 4) ^ (uintptr_t(base->clasp) >> 3);
-    hash = JS_ROTATE_LEFT32(hash, 4) ^ (uintptr_t(base->parent) >> 3);
-    hash = JS_ROTATE_LEFT32(hash, 4) ^ (uintptr_t(base->metadata) >> 3);
-    hash = JS_ROTATE_LEFT32(hash, 4) ^ uintptr_t(base->rawGetter);
-    hash = JS_ROTATE_LEFT32(hash, 4) ^ uintptr_t(base->rawSetter);
+    hash = RotateLeft(hash, 4) ^ (uintptr_t(base->clasp) >> 3);
+    hash = RotateLeft(hash, 4) ^ (uintptr_t(base->parent) >> 3);
+    hash = RotateLeft(hash, 4) ^ (uintptr_t(base->metadata) >> 3);
+    hash = RotateLeft(hash, 4) ^ uintptr_t(base->rawGetter);
+    hash = RotateLeft(hash, 4) ^ uintptr_t(base->rawSetter);
     return hash;
 }
 
@@ -1575,9 +1562,9 @@ InitialShapeEntry::getLookup() const
 InitialShapeEntry::hash(const Lookup &lookup)
 {
     HashNumber hash = uintptr_t(lookup.clasp) >> 3;
-    hash = JS_ROTATE_LEFT32(hash, 4) ^
+    hash = RotateLeft(hash, 4) ^
         (uintptr_t(lookup.hashProto.toWord()) >> 3);
-    hash = JS_ROTATE_LEFT32(hash, 4) ^
+    hash = RotateLeft(hash, 4) ^
         (uintptr_t(lookup.hashParent) >> 3) ^
         (uintptr_t(lookup.hashMetadata) >> 3);
     return hash + lookup.nfixed;
@@ -1660,7 +1647,7 @@ class InitialShapeSetRef : public BufferableRef
     }
 };
 
-#ifdef DEBUG
+#ifdef JS_GC_ZEAL
 void
 JSCompartment::checkInitialShapesTableAfterMovingGC()
 {

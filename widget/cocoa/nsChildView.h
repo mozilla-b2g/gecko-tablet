@@ -185,6 +185,10 @@ enum {
 };
 typedef NSUInteger NSEventPhase;
 
+enum {
+   NSFullScreenWindowMask = 1 << 14
+};
+
 @interface NSWindow (LionWindowFeatures)
 - (NSRect)convertRectToScreen:(NSRect)aRect;
 @end
@@ -486,6 +490,7 @@ public:
   virtual int32_t         RoundsWidgetCoordinatesTo() MOZ_OVERRIDE;
 
   NS_IMETHOD              Invalidate(const nsIntRect &aRect);
+  virtual void            Update() MOZ_OVERRIDE;
 
   virtual void*           GetNativeData(uint32_t aDataType);
   virtual nsresult        ConfigureChildren(const nsTArray<Configuration>& aConfigurations);
@@ -680,6 +685,7 @@ protected:
   bool mHasRoundedBottomCorners;
   int mDevPixelCornerRadius;
   bool mIsCoveringTitlebar;
+  bool mIsFullscreen;
   nsIntRect mTitlebarRect;
 
   // The area of mTitlebarCGContext that needs to be redrawn during the next

@@ -585,7 +585,7 @@ Blob(JSContext *cx, unsigned argc, jsval *vp)
   JSObject* global = JS::CurrentGlobalOrNull(cx);
   rv = xpc->WrapNativeToJSVal(cx, global, native, nullptr,
                               &NS_GET_IID(nsISupports), true,
-                              args.rval().address());
+                              args.rval());
   if (NS_FAILED(rv)) {
     JS_ReportError(cx, "Could not wrap native object!");
     return false;
@@ -624,7 +624,7 @@ File(JSContext *cx, unsigned argc, jsval *vp)
   JSObject* global = JS::CurrentGlobalOrNull(cx);
   rv = xpc->WrapNativeToJSVal(cx, global, native, nullptr,
                               &NS_GET_IID(nsISupports), true,
-                              args.rval().address());
+                              args.rval());
   if (NS_FAILED(rv)) {
     JS_ReportError(cx, "Could not wrap native object!");
     return false;
@@ -731,7 +731,7 @@ env_setProperty(JSContext *cx, HandleObject obj, HandleId id, bool strict, Mutab
     int rv;
 
     RootedValue idval(cx);
-    if (!JS_IdToValue(cx, id, idval.address()))
+    if (!JS_IdToValue(cx, id, &idval))
         return false;
 
     idstr = ToString(cx, idval);
@@ -814,7 +814,7 @@ env_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
     JSString *idstr, *valstr;
 
     RootedValue idval(cx);
-    if (!JS_IdToValue(cx, id, idval.address()))
+    if (!JS_IdToValue(cx, id, &idval))
         return false;
 
     idstr = ToString(cx, idval);

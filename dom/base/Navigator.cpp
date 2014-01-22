@@ -40,7 +40,7 @@
 #ifdef MOZ_B2G_RIL
 #include "mozilla/dom/IccManager.h"
 #include "mozilla/dom/CellBroadcast.h"
-#include "mozilla/dom/network/MobileConnectionArray.h"
+#include "mozilla/dom/MobileConnectionArray.h"
 #include "mozilla/dom/Voicemail.h"
 #endif
 #include "nsIIdleObserver.h"
@@ -1180,7 +1180,7 @@ Navigator::GetMozTelephony(ErrorResult& aRv)
 
 #ifdef MOZ_B2G_RIL
 
-network::MobileConnectionArray*
+MobileConnectionArray*
 Navigator::GetMozMobileConnections(ErrorResult& aRv)
 {
   if (!mMobileConnections) {
@@ -1188,7 +1188,7 @@ Navigator::GetMozMobileConnections(ErrorResult& aRv)
       aRv.Throw(NS_ERROR_UNEXPECTED);
       return nullptr;
     }
-    mMobileConnections = new network::MobileConnectionArray(mWindow);
+    mMobileConnections = new MobileConnectionArray(mWindow);
   }
 
   return mMobileConnections;
@@ -1265,13 +1265,14 @@ Navigator::GetGamepads(nsTArray<nsRefPtr<Gamepad> >& aGamepads,
 //*****************************************************************************
 
 NS_IMETHODIMP
-Navigator::GetMozConnection(nsIDOMMozConnection** aConnection)
+Navigator::GetMozConnection(nsISupports** aConnection)
 {
-  NS_IF_ADDREF(*aConnection = GetMozConnection());
+  nsCOMPtr<nsINetworkProperties> properties = GetMozConnection();
+  properties.forget(aConnection);
   return NS_OK;
 }
 
-nsIDOMMozConnection*
+network::Connection*
 Navigator::GetMozConnection()
 {
   if (!mConnection) {
@@ -1321,7 +1322,7 @@ Navigator::EnsureMessagesManager()
   // We don't do anything with the return value.
   AutoJSContext cx;
   JS::Rooted<JS::Value> prop_val(cx);
-  rv = gpi->Init(mWindow, prop_val.address());
+  rv = gpi->Init(mWindow, &prop_val);
   NS_ENSURE_SUCCESS(rv, rv);
 
   mMessagesManager = messageManager.forget();
@@ -1578,7 +1579,7 @@ Navigator::DoNewResolve(JSContext* aCx, JS::Handle<JSObject*> aObject,
       return Throw(aCx, NS_ERROR_UNEXPECTED);
     }
 
-    rv = gpi->Init(mWindow, prop_val.address());
+    rv = gpi->Init(mWindow, &prop_val);
     if (NS_FAILED(rv)) {
       return Throw(aCx, rv);
     }
@@ -1822,6 +1823,14 @@ Navigator::HasNfcPeerSupport(JSContext* /* unused */, JSObject* aGlobal)
 {
   nsCOMPtr<nsPIDOMWindow> win = GetWindowFromGlobal(aGlobal);
   return win && CheckPermission(win, "nfc-write");
+}
+
+/* static */
+bool
+Navigator::HasNfcManagerSupport(JSContext* /* unused */, JSObject* aGlobal)
+{
+  nsCOMPtr<nsPIDOMWindow> win = GetWindowFromGlobal(aGlobal);
+  return win && CheckPermission(win, "nfc-manager");
 }
 #endif // MOZ_NFC
 

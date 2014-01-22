@@ -508,13 +508,16 @@ class Marionette(object):
                                 gecko_path=gecko_path,
                                 busybox=busybox)
 
-    def __del__(self):
+    def cleanup(self):
         if self.emulator:
             self.emulator.close()
         if self.instance:
             self.instance.close()
         for qemu in self.extra_emulators:
             qemu.emulator.close()
+
+    def __del__(self):
+        self.cleanup()
 
     @staticmethod
     def is_port_available(port, host=''):
@@ -758,10 +761,18 @@ class Marionette(object):
 
     @property
     def current_window_handle(self):
-        '''
-        A reference to the current window.
-        '''
-        self.window = self._send_message('getWindow', 'value')
+        """Get the current window's handle.
+
+        Return an opaque server-assigned identifier to this window
+        that uniquely identifies it within this Marionette instance.
+        This can be used to switch to this window at a later point.
+
+        :returns: unique window handle
+        :rtype: string
+
+        """
+
+        self.window = self._send_message("getCurrentWindowHandle", "value")
         return self.window
 
     @property
@@ -791,15 +802,15 @@ class Marionette(object):
         response = self._send_message('getPageSource', 'value')
         return response
 
-    def close(self, window_id=None):
-        '''
-        Closes the window that is in use by Marionette.
+    def close(self):
+        """Close the current window, ending the session if it's the last
+        window currently open.
 
-        :param window_id: id of the window you wish to closed
-        '''
-        if not window_id:
-            window_id = self.current_window_handle
-        response = self._send_message('closeWindow', 'ok', value=window_id)
+        On B2G this method is a noop and will return immediately.
+
+        """
+
+        response = self._send_message("close", "ok")
         return response
 
     def set_context(self, context):
@@ -1272,10 +1283,16 @@ class Marionette(object):
         return None
 
     def get_cookies(self):
-        '''
-        Gets all cookies in the scope of the current session.
-        '''
-        return self._send_message("getAllCookies", "value")
+        """Get all the cookies for the current domain.
+
+        This is the equivalent of calling `document.cookie` and
+        parsing the result.
+
+        :returns: A set of cookies for the current domain.
+
+        """
+
+        return self._send_message("getCookies", "value")
 
     @property
     def application_cache(self):

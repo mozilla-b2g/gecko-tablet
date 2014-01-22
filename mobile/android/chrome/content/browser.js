@@ -16,8 +16,6 @@ Cu.import("resource://gre/modules/AddonManager.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
 Cu.import("resource://gre/modules/JNI.jsm");
 Cu.import('resource://gre/modules/Payment.jsm');
-Cu.import("resource://gre/modules/PermissionPromptHelper.jsm");
-Cu.import("resource://gre/modules/ContactService.jsm");
 Cu.import("resource://gre/modules/NotificationDB.jsm");
 Cu.import("resource://gre/modules/SpatialNavigation.jsm");
 Cu.import("resource://gre/modules/UITelemetry.jsm");
@@ -65,6 +63,9 @@ XPCOMUtils.defineLazyServiceGetter(this, "uuidgen",
                                    "@mozilla.org/uuid-generator;1",
                                    "nsIUUIDGenerator");
 
+XPCOMUtils.defineLazyModuleGetter(this, "SimpleServiceDiscovery",
+                                  "resource://gre/modules/SimpleServiceDiscovery.jsm");
+
 #ifdef NIGHTLY_BUILD
 XPCOMUtils.defineLazyModuleGetter(this, "ShumwayUtils",
                                   "resource://shumway/ShumwayUtils.jsm");
@@ -84,6 +85,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "WebappManager",
   ["PluginHelper", "chrome://browser/content/PluginHelper.js"],
   ["OfflineApps", "chrome://browser/content/OfflineApps.js"],
   ["Linkifier", "chrome://browser/content/Linkify.js"],
+  ["CastingApps", "chrome://browser/content/CastingApps.js"],
 ].forEach(function (aScript) {
   let [name, script] = aScript;
   XPCOMUtils.defineLazyGetter(window, name, function() {
@@ -388,6 +390,7 @@ var BrowserApp = {
     Reader.init();
     UserAgentOverrides.init();
     DesktopUserAgent.init();
+    CastingApps.init();
     Distribution.init();
     Tabs.init();
 #ifdef ACCESSIBILITY
@@ -729,6 +732,7 @@ var BrowserApp = {
     UserAgentOverrides.uninit();
     DesktopUserAgent.uninit();
     ExternalApps.uninit();
+    CastingApps.uninit();
     Distribution.uninit();
     Tabs.uninit();
   },
@@ -7015,7 +7019,9 @@ var SearchEngines = {
       mDBConn.executeAsync(stmts, stmts.length, {
         handleResult: function (results) {
           let bytes = results.getNextRow().getResultByName("favicon");
-          favicon = "data:image/png;base64," + btoa(String.fromCharCode.apply(null, bytes));
+          if (bytes && bytes.length) {
+            favicon = "data:image/x-icon;base64," + btoa(String.fromCharCode.apply(null, bytes));
+          }
         },
         handleCompletion: function (reason) {
           // if there's already an engine with this name, add a number to

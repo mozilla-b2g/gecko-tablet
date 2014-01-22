@@ -1104,12 +1104,6 @@ public:
   // quality.
   bool CanUseOpaqueSurface();
 
-  enum SurfaceMode {
-    SURFACE_NONE = 0,
-    SURFACE_OPAQUE,
-    SURFACE_SINGLE_CHANNEL_ALPHA,
-    SURFACE_COMPONENT_ALPHA
-  };
   SurfaceMode GetSurfaceMode()
   {
     if (CanUseOpaqueSurface())
@@ -1255,7 +1249,7 @@ public:
    * aWorldTransform is non-null.
    */
   nsIntRect CalculateScissorRect(const nsIntRect& aCurrentScissorRect,
-                                 const gfxMatrix* aWorldTransform);
+                                 const gfx::Matrix* aWorldTransform);
 
   virtual const char* Name() const =0;
   virtual LayerType GetType() const =0;

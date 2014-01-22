@@ -2591,15 +2591,16 @@ nsDocument::InitCSP(nsIChannel* aChannel)
     cspROHeaderValue.Truncate();
   }
 
-  // If the old header is present, warn that it will be deprecated.
-  if (!cspOldHeaderValue.IsEmpty() || !cspOldROHeaderValue.IsEmpty()) {
-    mCSPWebConsoleErrorQueue.Add("OldCSPHeaderDeprecated");
+  // If both the new header AND the old header are present, warn that
+  // the old header will be ignored. Otherwise, if the old header is
+  // present, warn that it will be deprecated.
+  bool oldHeaderIsPresent = !cspOldHeaderValue.IsEmpty() || !cspOldROHeaderValue.IsEmpty();
+  bool newHeaderIsPresent = !cspHeaderValue.IsEmpty() || !cspROHeaderValue.IsEmpty();
 
-    // Also, if the new headers AND the old headers were present, warn
-    // that the old headers will be ignored.
-    if (!cspHeaderValue.IsEmpty() || !cspROHeaderValue.IsEmpty()) {
-      mCSPWebConsoleErrorQueue.Add("BothCSPHeadersPresent");
-    }
+  if (oldHeaderIsPresent && newHeaderIsPresent) {
+    mCSPWebConsoleErrorQueue.Add("BothCSPHeadersPresent");
+  } else if (oldHeaderIsPresent) {
+    mCSPWebConsoleErrorQueue.Add("OldCSPHeaderDeprecated");
   }
 
   // Figure out if we need to apply an app default CSP or a CSP from an app manifest
@@ -2690,7 +2691,7 @@ nsDocument::InitCSP(nsIChannel* aChannel)
   aChannel->GetURI(getter_AddRefs(selfURI));
 
   // Store the request context for violation reports
-  csp->ScanRequestData(httpChannel);
+  csp->ScanRequestData(aChannel);
 
   // ----- if the doc is an app and we want a default CSP, apply it.
   if (applyAppDefaultCSP) {
@@ -4257,10 +4258,7 @@ nsIDocument::SetContainer(nsDocShell* aContainer)
   }
 
   // Get the Docshell
-  int32_t itemType;
-  aContainer->GetItemType(&itemType);
-  // check itemtype
-  if (itemType == nsIDocShellTreeItem::typeContent) {
+  if (aContainer->ItemType() == nsIDocShellTreeItem::typeContent) {
     // check if same type root
     nsCOMPtr<nsIDocShellTreeItem> sameTypeRoot;
     aContainer->GetSameTypeRootTreeItem(getter_AddRefs(sameTypeRoot));
@@ -5286,7 +5284,7 @@ nsDocument::Register(JSContext* aCx, const nsAString& aName,
 
   JS::Rooted<JSObject*> protoObject(aCx);
   if (!aOptions.mPrototype) {
-    protoObject = JS_NewObject(aCx, nullptr, htmlProto, nullptr);
+    protoObject = JS_NewObject(aCx, nullptr, htmlProto, JS::NullPtr());
     if (!protoObject) {
       rv.Throw(NS_ERROR_UNEXPECTED);
       return nullptr;
@@ -5385,7 +5383,7 @@ nsDocument::Register(JSContext* aCx, const nsAString& aName,
   // Create constructor to return. Store the name of the custom element as the
   // name of the function.
   JSFunction* constructor = JS_NewFunction(aCx, CustomElementConstructor, 0,
-                                           JSFUN_CONSTRUCTOR, nullptr,
+                                           JSFUN_CONSTRUCTOR, JS::NullPtr(),
                                            NS_ConvertUTF16toUTF8(lcName).get());
   JSObject* constructorObject = JS_GetFunctionObject(constructor);
   return constructorObject;

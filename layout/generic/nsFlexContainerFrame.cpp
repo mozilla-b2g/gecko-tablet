@@ -11,6 +11,7 @@
 #include "nsContentUtils.h"
 #include "nsCSSAnonBoxes.h"
 #include "nsDisplayList.h"
+#include "nsIFrameInlines.h"
 #include "nsLayoutUtils.h"
 #include "nsPlaceholderFrame.h"
 #include "nsPresContext.h"
@@ -953,7 +954,7 @@ nsFlexContainerFrame::
              "should be complete");
 
   rv = FinishReflowChild(aFlexItem.Frame(), aPresContext,
-                         &childRSForMeasuringHeight, childDesiredSize,
+                         childDesiredSize, &childRSForMeasuringHeight,
                          0, 0, flags);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -2526,7 +2527,7 @@ nsFlexContainerFrame::SizeItemInCrossAxis(
   // Tell the child we're done with its initial reflow.
   // (Necessary for e.g. GetBaseline() to work below w/out asserting)
   rv = FinishReflowChild(aItem.Frame(), aPresContext,
-                         &aChildReflowState, childDesiredSize, 0, 0, flags);
+                         childDesiredSize, &aChildReflowState, 0, 0, flags);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Save the sizing info that we learned from this reflow
@@ -2863,7 +2864,7 @@ nsFlexContainerFrame::Reflow(nsPresContext*           aPresContext,
       childReflowState.ApplyRelativePositioning(&physicalPosn);
 
       rv = FinishReflowChild(curItem.Frame(), aPresContext,
-                             &childReflowState, childDesiredSize,
+                             childDesiredSize, &childReflowState,
                              physicalPosn.x, physicalPosn.y, 0);
       NS_ENSURE_SUCCESS(rv, rv);
 

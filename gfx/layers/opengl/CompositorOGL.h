@@ -112,7 +112,7 @@ public:
 
 
   virtual void EndFrame() MOZ_OVERRIDE;
-  virtual void EndFrameForExternalComposition(const gfxMatrix& aTransform) MOZ_OVERRIDE;
+  virtual void EndFrameForExternalComposition(const gfx::Matrix& aTransform) MOZ_OVERRIDE;
   virtual void AbortFrame() MOZ_OVERRIDE;
 
   virtual bool SupportsPartialTextureUpdate() MOZ_OVERRIDE;
@@ -252,13 +252,18 @@ private:
    */
   bool mFrameInProgress;
 
+  /*
+   * Clear aRect on FrameBuffer.
+   */
+  virtual void clearFBRect(const gfx::Rect* aRect);
+
   /* Start a new frame. If aClipRectIn is null and aClipRectOut is non-null,
    * sets *aClipRectOut to the screen dimensions.
    */
   virtual void BeginFrame(const nsIntRegion& aInvalidRegion,
                           const gfx::Rect *aClipRectIn,
-                          const gfxMatrix& aTransform,
-                          const gfx::Rect& aRenderBounds, 
+                          const gfx::Matrix& aTransform,
+                          const gfx::Rect& aRenderBounds,
                           gfx::Rect *aClipRectOut = nullptr,
                           gfx::Rect *aRenderBoundsOut = nullptr) MOZ_OVERRIDE;
 

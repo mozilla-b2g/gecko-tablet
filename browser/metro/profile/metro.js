@@ -87,7 +87,11 @@ pref("browser.chromeURL", "chrome://browser/content/");
 pref("browser.tabs.remote", false);
 
 // Telemetry
+#ifdef MOZ_TELEMETRY_ON_BY_DEFAULT
+pref("toolkit.telemetry.enabledPreRelease", true);
+#else
 pref("toolkit.telemetry.enabled", true);
+#endif
 pref("toolkit.telemetry.prompted", 2);
 
 pref("toolkit.screen.lock", false);
@@ -134,8 +138,8 @@ pref("browser.backspace_action", 0);
 /* session history */
 pref("browser.sessionhistory.max_entries", 50);
 
-// On startup, automatically restore tabs from last time?
-pref("browser.startup.sessionRestore", false);
+// On startup, don't automatically restore tabs
+pref("browser.startup.page", 1);
 
 /* session store */
 pref("browser.sessionstore.resume_from_crash", true);
@@ -526,7 +530,6 @@ pref("editor.singleLine.pasteNewlines", 2);
 pref("services.sync.registerEngines", "Tab,Bookmarks,Form,History,Password,Prefs");
 
 // prefs to sync by default
-pref("services.sync.prefs.sync.browser.startup.sessionRestore", true);
 pref("services.sync.prefs.sync.browser.tabs.warnOnClose", true);
 pref("services.sync.prefs.sync.devtools.errorconsole.enabled", true);
 pref("services.sync.prefs.sync.lightweightThemes.isThemeSelected", true);
@@ -580,15 +583,14 @@ pref("browser.safebrowsing.enabled", true);
 pref("browser.safebrowsing.malware.enabled", true);
 
 // Non-enhanced mode (local url lists) URL list to check for updates
-pref("browser.safebrowsing.provider.0.updateURL", "http://safebrowsing.clients.google.com/safebrowsing/downloads?client={moz:client}&appver={moz:version}&pver=2.2");
+pref("browser.safebrowsing.provider.0.updateURL", "https://safebrowsing.google.com/safebrowsing/downloads?client={moz:client}&appver={moz:version}&pver=2.2&key=%GOOGLE_API_KEY%");
 
 pref("browser.safebrowsing.dataProvider", 0);
 
 // Does the provider name need to be localizable?
 pref("browser.safebrowsing.provider.0.name", "Google");
-pref("browser.safebrowsing.provider.0.keyURL", "https://sb-ssl.google.com/safebrowsing/newkey?client={moz:client}&appver={moz:version}&pver=2.2");
-pref("browser.safebrowsing.provider.0.reportURL", "http://safebrowsing.clients.google.com/safebrowsing/report?");
-pref("browser.safebrowsing.provider.0.gethashURL", "http://safebrowsing.clients.google.com/safebrowsing/gethash?client={moz:client}&appver={moz:version}&pver=2.2");
+pref("browser.safebrowsing.provider.0.reportURL", "https://safebrowsing.google.com/safebrowsing/report?");
+pref("browser.safebrowsing.provider.0.gethashURL", "https://safebrowsing.google.com/safebrowsing/gethash?client={moz:client}&appver={moz:version}&pver=2.2");
 
 // HTML report pages
 pref("browser.safebrowsing.provider.0.reportGenericURL", "http://{moz:locale}.phish-generic.mozilla.com/?hl={moz:locale}");
@@ -616,7 +618,7 @@ pref("urlclassifier.max-complete-age", 2700);
 pref("urlclassifier.updatecachemax", 41943040);
 
 // URL for checking the reason for a malware warning.
-pref("browser.safebrowsing.malware.reportURL", "http://safebrowsing.clients.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
+pref("browser.safebrowsing.malware.reportURL", "https://safebrowsing.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
 #endif
 
 // True if this is the first time we are showing about:firstrun

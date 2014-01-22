@@ -231,27 +231,27 @@ namespace {
  *        _array's length.
  */
 nsresult
-GetJSArrayFromJSValue(const JS::Value& aValue,
+GetJSArrayFromJSValue(JS::Handle<JS::Value> aValue,
                       JSContext* aCtx,
-                      JSObject** _array,
+                      JS::MutableHandle<JSObject*> _array,
                       uint32_t* _arrayLength) {
   if (aValue.isObjectOrNull()) {
     JS::Rooted<JSObject*> val(aCtx, aValue.toObjectOrNull());
     if (JS_IsArrayObject(aCtx, val)) {
-      *_array = val;
-      (void)JS_GetArrayLength(aCtx, *_array, _arrayLength);
+      _array.set(val);
+      (void)JS_GetArrayLength(aCtx, _array, _arrayLength);
       NS_ENSURE_ARG(*_arrayLength > 0);
       return NS_OK;
     }
   }
-  
+
   // Build a temporary array to store this one item so the code below can
   // just loop.
   *_arrayLength = 1;
-  *_array = JS_NewArrayObject(aCtx, 0, nullptr);
-  NS_ENSURE_TRUE(*_array, NS_ERROR_OUT_OF_MEMORY);
+  _array.set(JS_NewArrayObject(aCtx, 0, nullptr));
+  NS_ENSURE_TRUE(_array, NS_ERROR_OUT_OF_MEMORY);
 
-  bool rc = JS_DefineElement(aCtx, *_array, 0, aValue, nullptr, nullptr, 0);
+  bool rc = JS_DefineElement(aCtx, _array, 0, aValue, nullptr, nullptr, 0);
   NS_ENSURE_TRUE(rc, NS_ERROR_UNEXPECTED);
   return NS_OK;
 }
@@ -2677,7 +2677,7 @@ History::RemoveAllDownloads()
 //// mozIAsyncHistory
 
 NS_IMETHODIMP
-History::GetPlacesInfo(const JS::Value& aPlaceIdentifiers,
+History::GetPlacesInfo(JS::Handle<JS::Value> aPlaceIdentifiers,
                        mozIVisitInfoCallback* aCallback,
                        JSContext* aCtx) {
   nsNavHistory* navHistory = nsNavHistory::GetHistoryService();
@@ -2686,7 +2686,7 @@ History::GetPlacesInfo(const JS::Value& aPlaceIdentifiers,
   uint32_t placesIndentifiersLength;
   JS::Rooted<JSObject*> placesIndentifiers(aCtx);
   nsresult rv = GetJSArrayFromJSValue(aPlaceIdentifiers, aCtx,
-                                      placesIndentifiers.address(),
+                                      &placesIndentifiers,
                                       &placesIndentifiersLength);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -2745,7 +2745,7 @@ History::GetPlacesInfo(const JS::Value& aPlaceIdentifiers,
 }
 
 NS_IMETHODIMP
-History::UpdatePlaces(const JS::Value& aPlaceInfos,
+History::UpdatePlaces(JS::Handle<JS::Value> aPlaceInfos,
                       mozIVisitInfoCallback* aCallback,
                       JSContext* aCtx)
 {
@@ -2754,7 +2754,7 @@ History::UpdatePlaces(const JS::Value& aPlaceInfos,
 
   uint32_t infosLength;
   JS::Rooted<JSObject*> infos(aCtx);
-  nsresult rv = GetJSArrayFromJSValue(aPlaceInfos, aCtx, infos.address(), &infosLength);
+  nsresult rv = GetJSArrayFromJSValue(aPlaceInfos, aCtx, &infos, &infosLength);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsTArray<VisitData> visitData;

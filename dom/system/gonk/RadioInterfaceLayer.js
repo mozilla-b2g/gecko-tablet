@@ -2771,12 +2771,27 @@ RadioInterface.prototype = {
         break;
       case kNetworkInterfaceStateChangedTopic:
         let network = subject.QueryInterface(Ci.nsINetworkInterface);
-        if (network.state == Ci.nsINetworkInterface.NETWORK_STATE_CONNECTED) {
-          // Check SNTP when we have data connection, this may not take
-          // effect immediately before the setting get enabled.
-          if (this._sntp.isExpired()) {
-            this._sntp.request();
+        if (network.state != Ci.nsINetworkInterface.NETWORK_STATE_CONNECTED) {
+          return;
+        }
+
+        // SNTP can only update when we have mobile or Wifi connections.
+        if (network.type != Ci.nsINetworkInterface.NETWORK_TYPE_WIFI &&
+            network.type != Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE) {
+          return;
+        }
+
+        // If the network comes from RIL, make sure the RIL service is matched.
+        if (subject instanceof Ci.nsIRilNetworkInterface) {
+          network = subject.QueryInterface(Ci.nsIRilNetworkInterface);
+          if (network.serviceId != this.clientId) {
+            return;
           }
+        }
+
+        // SNTP won't update unless the SNTP is already expired.
+        if (this._sntp.isExpired()) {
+          this._sntp.request();
         }
         break;
       case kScreenStateChangedTopic:
@@ -3318,6 +3333,15 @@ RadioInterface.prototype = {
   _fragmentText7Bit: function(text, langTable, langShiftTable, segmentSeptets, strict7BitEncoding) {
     let ret = [];
     let body = "", len = 0;
+    // If the message is empty, we only push the empty message to ret.
+    if (text.length === 0) {
+      ret.push({
+        body: text,
+        encodedBodyLength: text.length,
+      });
+      return ret;
+    }
+
     for (let i = 0, inc = 0; i < text.length; i++) {
       let c = text.charAt(i);
       if (strict7BitEncoding) {
@@ -3387,6 +3411,15 @@ RadioInterface.prototype = {
    */
   _fragmentTextUCS2: function(text, segmentChars) {
     let ret = [];
+    // If the message is empty, we only push the empty message to ret.
+    if (text.length === 0) {
+      ret.push({
+        body: text,
+        encodedBodyLength: text.length,
+      });
+      return ret;
+    }
+
     for (let offset = 0; offset < text.length; offset += segmentChars) {
       let str = text.substr(offset, segmentChars);
       ret.push({

@@ -9,6 +9,7 @@ const { Cu, Cc, Ci, components } = require("chrome");
 
 const TAB_SIZE    = "devtools.editor.tabsize";
 const EXPAND_TAB  = "devtools.editor.expandtab";
+const KEYMAP      = "devtools.editor.keymap";
 const L10N_BUNDLE = "chrome://browser/locale/devtools/sourceeditor.properties";
 const XUL_NS      = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 
@@ -30,7 +31,8 @@ const CM_STYLES   = [
   "chrome://browser/skin/devtools/common.css",
   "chrome://browser/content/devtools/codemirror/codemirror.css",
   "chrome://browser/content/devtools/codemirror/dialog.css",
-  "chrome://browser/content/devtools/codemirror/mozilla.css"
+  "chrome://browser/content/devtools/codemirror/mozilla.css",
+  "chrome://browser/content/devtools/codemirror/foldgutter.css"
 ];
 
 const CM_SCRIPTS  = [
@@ -48,7 +50,14 @@ const CM_SCRIPTS  = [
   "chrome://browser/content/devtools/codemirror/htmlmixed.js",
   "chrome://browser/content/devtools/codemirror/clike.js",
   "chrome://browser/content/devtools/codemirror/activeline.js",
-  "chrome://browser/content/devtools/codemirror/trailingspace.js"
+  "chrome://browser/content/devtools/codemirror/trailingspace.js",
+  "chrome://browser/content/devtools/codemirror/emacs.js",
+  "chrome://browser/content/devtools/codemirror/vim.js",
+  "chrome://browser/content/devtools/codemirror/foldcode.js",
+  "chrome://browser/content/devtools/codemirror/brace-fold.js",
+  "chrome://browser/content/devtools/codemirror/comment-fold.js",
+  "chrome://browser/content/devtools/codemirror/xml-fold.js",
+  "chrome://browser/content/devtools/codemirror/foldgutter.js"
 ];
 
 const CM_IFRAME   =
@@ -121,6 +130,7 @@ Editor.modes = {
 function Editor(config) {
   const tabSize = Services.prefs.getIntPref(TAB_SIZE);
   const useTabs = !Services.prefs.getBoolPref(EXPAND_TAB);
+  const keyMap = Services.prefs.getCharPref(KEYMAP);
 
   this.version = null;
   this.config = {
@@ -138,14 +148,18 @@ function Editor(config) {
   };
 
   // Additional shortcuts.
-  this.config.extraKeys[Editor.keyFor("jumpToLine")] = (cm) => this.jumpToLine(cm);
-  this.config.extraKeys[Editor.keyFor("moveLineUp")] = (cm) => this.moveLineUp();
-  this.config.extraKeys[Editor.keyFor("moveLineDown")] = (cm) => this.moveLineDown();
+  this.config.extraKeys[Editor.keyFor("jumpToLine")] = () => this.jumpToLine();
+  this.config.extraKeys[Editor.keyFor("moveLineUp")] = () => this.moveLineUp();
+  this.config.extraKeys[Editor.keyFor("moveLineDown")] = () => this.moveLineDown();
   this.config.extraKeys[Editor.keyFor("toggleComment")] = "toggleComment";
 
   // Disable ctrl-[ and ctrl-] because toolbox uses those shortcuts.
   this.config.extraKeys[Editor.keyFor("indentLess")] = false;
   this.config.extraKeys[Editor.keyFor("indentMore")] = false;
+
+  // If alternative keymap is provided, use it.
+  if (keyMap === "emacs" || keyMap === "vim")
+    this.config.keyMap = keyMap;
 
   // Overwrite default config with user-provided, if needed.
   Object.keys(config).forEach((k) => {
@@ -161,6 +175,16 @@ function Editor(config) {
       this.config.extraKeys[key] = config.extraKeys[key];
     });
   });
+
+  // Set the code folding gutter, if needed.
+  if (this.config.enableCodeFolding) {
+    this.config.foldGutter = true;
+
+    if (!this.config.gutters) {
+      this.config.gutters = this.config.lineNumbers ? ["CodeMirror-linenumbers"] : [];
+      this.config.gutters.push("CodeMirror-foldgutter");
+    }
+  }
 
   // Overwrite default tab behavior. If something is selected,
   // indent those lines. If nothing is selected and we're
@@ -234,6 +258,8 @@ Editor.prototype = {
       scssSpec.valueKeywords = cssValues;
       win.CodeMirror.defineMIME("text/x-scss", scssSpec);
 
+      win.CodeMirror.commands.save = () => this.emit("save");
+
       // Create a CodeMirror instance add support for context menus,
       // overwrite the default controller (otherwise items in the top and
       // context menus won't work).
@@ -241,7 +267,9 @@ Editor.prototype = {
       cm = win.CodeMirror(win.document.body, this.config);
       cm.getWrapperElement().addEventListener("contextmenu", (ev) => {
         ev.preventDefault();
-        this.showContextMenu(el.ownerDocument, ev.screenX, ev.screenY);
+        if (!this.config.contextMenu) return;
+        let popup = el.ownerDocument.getElementById(this.config.contextMenu);
+        popup.openPopupAtScreen(ev.screenX, ev.screenY, true);
       }, false);
 
       cm.on("focus", () => this.emit("focus"));
@@ -644,32 +672,11 @@ Editor.prototype = {
   },
 
   /**
-   * True if the editor is in the read-only mode, false otherwise.
-   */
-  isReadOnly: function () {
-    return this.getOption("readOnly");
-  },
-
-  /**
-   * Displays a context menu at the point x:y. The first
-   * argument, container, should be a DOM node that contains
-   * a context menu element specified by the ID from
-   * config.contextMenu.
-   */
-  showContextMenu: function (container, x, y) {
-    if (this.config.contextMenu == null)
-      return;
-
-    let popup = container.getElementById(this.config.contextMenu);
-    popup.openPopupAtScreen(x, y, true);
-  },
-
-  /**
    * This method opens an in-editor dialog asking for a line to
    * jump to. Once given, it changes cursor to that line.
    */
-  jumpToLine: function (cm) {
-    let doc = cm.getWrapperElement().ownerDocument;
+  jumpToLine: function () {
+    let doc = editors.get(this).getWrapperElement().ownerDocument;
     let div = doc.createElement("div");
     let inp = doc.createElement("input");
     let txt = doc.createTextNode(L10N.GetStringFromName("gotoLineCmd.promptTitle"));
@@ -917,7 +924,7 @@ function controller(ed) {
       }
 
       if (cmd == "cmd_gotoLine")
-        ed.jumpToLine(cm);
+        ed.jumpToLine();
     },
 
     onEvent: function () {}

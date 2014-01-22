@@ -100,8 +100,8 @@ typedef void* nsNativeWidget;
 #endif
 
 #define NS_IWIDGET_IID \
-{ 0x67da44c4, 0xe21b, 0x4742, \
-  { 0x9c, 0x2b, 0x26, 0xc7, 0x70, 0x21, 0xde, 0x87 } }
+{ 0x7a4ece50, 0x5c52, 0x47c2, \
+  { 0x8c, 0x9e, 0x32, 0xd2, 0x5a, 0x27, 0x53, 0x34 } }
 
 /*
  * Window shadow styles
@@ -214,6 +214,8 @@ enum nsTopLevelWidgetZPlacement { // for PlaceBehind()
  * If the IME implementation on a particular platform doesn't care about
  * NotifyIMEOfTextChange() and/or NotifyIME(NOTIFY_IME_OF_SELECTION_CHANGE),
  * they should set mWantUpdates to NOTIFY_NOTHING to avoid the cost.
+ * If the IME implementation needs notifications even while our process is
+ * deactive, it should also set NOTIFY_DURING_DEACTIVE.
  *
  * If mWantHints is true, PuppetWidget will forward the content of text fields
  * to the chrome process to be cached. This way we return the cached content
@@ -224,13 +226,14 @@ enum nsTopLevelWidgetZPlacement { // for PlaceBehind()
  */
 struct nsIMEUpdatePreference {
 
-  typedef int8_t Notifications;
+  typedef uint8_t Notifications;
 
   enum
   {
-    NOTIFY_NOTHING           = 0x0000,
-    NOTIFY_SELECTION_CHANGE  = 0x0001,
-    NOTIFY_TEXT_CHANGE       = 0x0002
+    NOTIFY_NOTHING           = 0x00,
+    NOTIFY_SELECTION_CHANGE  = 0x01,
+    NOTIFY_TEXT_CHANGE       = 0x02,
+    NOTIFY_DURING_DEACTIVE   = 0x80
   };
 
   nsIMEUpdatePreference()
@@ -450,7 +453,9 @@ enum NotificationToIME {
   // Selection in the focused editable content is changed
   NOTIFY_IME_OF_SELECTION_CHANGE,
   REQUEST_TO_COMMIT_COMPOSITION,
-  REQUEST_TO_CANCEL_COMPOSITION
+  REQUEST_TO_CANCEL_COMPOSITION,
+  // Composition string has been updated
+  NOTIFY_IME_OF_COMPOSITION_UPDATE
 };
 
 } // namespace widget
@@ -1176,6 +1181,11 @@ class nsIWidget : public nsISupports {
      * later.
      */
     NS_IMETHOD Invalidate(const nsIntRect & aRect) = 0;
+
+    /**
+     * Widget implementation may support synchronous painting.
+     */
+   virtual void Update() { }
 
     enum LayerManagerPersistence
     {

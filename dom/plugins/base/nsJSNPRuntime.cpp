@@ -899,7 +899,7 @@ nsJSObjWrapper::NP_Enumerate(NPObject *npobj, NPIdentifier **idarray,
 
   for (uint32_t i = 0; i < *count; i++) {
     JS::Rooted<JS::Value> v(cx);
-    if (!JS_IdToValue(cx, ida[i], v.address())) {
+    if (!JS_IdToValue(cx, ida[i], &v)) {
       PR_Free(*idarray);
       return false;
     }
@@ -938,15 +938,23 @@ nsJSObjWrapper::NP_Construct(NPObject *npobj, const NPVariant *args,
 /*
  * This function is called during minor GCs for each key in the sJSObjWrappers
  * table that has been moved.
+ *
+ * Note that the wrapper may be dead at this point, and even the table may have
+ * been finalized if all wrappers have died.
  */
 static void
-JSObjWrapperKeyMarkCallback(JSTracer *trc, void *key, void *data) {
-  JSObject *obj = static_cast<JSObject*>(key);
-  nsJSObjWrapper* wrapper = static_cast<nsJSObjWrapper*>(data);
+JSObjWrapperKeyMarkCallback(JSTracer *trc, JSObject *obj, void *data) {
+  NPP npp = static_cast<NPP>(data);
+  if (!sJSObjWrappers.initialized())
+    return;
+
   JSObject *prior = obj;
-  JS_CallObjectTracer(trc, &obj, "sJSObjWrappers key object");
-  NPP npp = wrapper->mNpp;
   nsJSObjWrapperKey oldKey(prior, npp);
+  JSObjWrapperTable::Ptr p = sJSObjWrappers.lookup(oldKey);
+  if (!p)
+    return;
+
+  JS_CallObjectTracer(trc, &obj, "sJSObjWrappers key object");
   nsJSObjWrapperKey newKey(obj, npp);
   sJSObjWrappers.rekeyIfMoved(oldKey, newKey);
 }
@@ -1048,7 +1056,7 @@ nsJSObjWrapper::GetNewOrUsed(NPP npp, JSContext *cx, JS::Handle<JSObject*> obj)
   }
 
   // Add postbarrier for the hashtable key
-  JS_StoreObjectPostBarrierCallback(cx, JSObjWrapperKeyMarkCallback, obj, wrapper);
+  JS_StoreObjectPostBarrierCallback(cx, JSObjWrapperKeyMarkCallback, obj, wrapper->mNpp);
 
   return wrapper;
 }
@@ -1770,7 +1778,8 @@ nsNPObjWrapper::GetNewOrUsed(NPP npp, JSContext *cx, NPObject *npobj)
 
   // No existing JSObject, create one.
 
-  JS::Rooted<JSObject*> obj(cx, ::JS_NewObject(cx, &sNPObjectJSWrapperClass, nullptr, nullptr));
+  JS::Rooted<JSObject*> obj(cx, ::JS_NewObject(cx, &sNPObjectJSWrapperClass, JS::NullPtr(),
+                                               JS::NullPtr()));
 
   if (generation != sNPObjWrappers.generation) {
       // Reload entry if the JS_NewObject call caused a GC and reallocated
@@ -1932,7 +1941,7 @@ CreateNPObjectMember(NPP npp, JSContext *cx, JSObject *obj, NPObject* npobj,
   // during initialization.
   memset(memberPrivate, 0, sizeof(NPObjectMemberPrivate));
 
-  JSObject *memobj = ::JS_NewObject(cx, &sNPObjectMemberClass, nullptr, nullptr);
+  JSObject *memobj = ::JS_NewObject(cx, &sNPObjectMemberClass, JS::NullPtr(), JS::NullPtr());
   if (!memobj) {
     PR_Free(memberPrivate);
     return false;
@@ -2003,8 +2012,9 @@ NPObjectMember_Convert(JSContext *cx, JS::Handle<JSObject*> obj, JSType type, JS
   case JSTYPE_STRING:
   case JSTYPE_NUMBER:
     vp.set(memberPrivate->fieldValue);
-    if (!JSVAL_IS_PRIMITIVE(vp)) {
-      return JS_DefaultValue(cx, JSVAL_TO_OBJECT(vp), type, vp.address());
+    if (vp.isObject()) {
+      JS::Rooted<JSObject*> objVal(cx, &vp.toObject());
+      return JS_DefaultValue(cx, objVal, type, vp);
     }
     return true;
   case JSTYPE_BOOLEAN:
@@ -2035,7 +2045,7 @@ NPObjectMember_Finalize(JSFreeOp *fop, JSObject *obj)
 static bool
 NPObjectMember_Call(JSContext *cx, unsigned argc, JS::Value *vp)
 {
-  JSObject *memobj = JSVAL_TO_OBJECT(JS_CALLEE(cx, vp));
+  JS::Rooted<JSObject*> memobj(cx, JSVAL_TO_OBJECT(JS_CALLEE(cx, vp)));
   NS_ENSURE_TRUE(memobj, false);
 
   NPObjectMemberPrivate *memberPrivate =

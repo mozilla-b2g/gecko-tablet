@@ -28,13 +28,6 @@ static bool gDisableOptimize = false;
 /* Whether to use the windows surface; only for desktop win32 */
 #define USE_WIN_SURFACE 1
 
-static uint32_t gTotalDDBs = 0;
-static uint32_t gTotalDDBSize = 0;
-// only use up a maximum of 64MB in DDBs
-#define kMaxDDBSize (64*1024*1024)
-// and don't let anything in that's bigger than 4MB
-#define kMaxSingleDDBSize (4*1024*1024)
-
 #endif
 
 using namespace mozilla;
@@ -110,13 +103,9 @@ imgFrame::imgFrame() :
   mLockCount(0),
   mBlendMethod(1), /* imgIContainer::kBlendOver */
   mSinglePixel(false),
-  mNeverUseDeviceSurface(false),
   mFormatChanged(false),
   mCompositingFailed(false),
   mNonPremult(false),
-#ifdef USE_WIN_SURFACE
-  mIsDDBSurface(false),
-#endif
   mInformedDiscardTracker(false),
   mDirty(false)
 {
@@ -133,12 +122,6 @@ imgFrame::~imgFrame()
 {
   moz_free(mPalettedImageData);
   mPalettedImageData = nullptr;
-#ifdef USE_WIN_SURFACE
-  if (mIsDDBSurface) {
-      gTotalDDBs--;
-      gTotalDDBSize -= mSize.width * mSize.height * 4;
-  }
-#endif
 
   if (mInformedDiscardTracker) {
     DiscardTracker::InformAllocation(-4 * mSize.height * mSize.width);
@@ -178,7 +161,7 @@ nsresult imgFrame::Init(int32_t aX, int32_t aY, int32_t aWidth, int32_t aHeight,
     // going to) so that the image surface can wrap it.  Can't be done
     // the other way around.
 #ifdef USE_WIN_SURFACE
-    if (!mNeverUseDeviceSurface && !ShouldUseImageSurfaces()) {
+    if (!ShouldUseImageSurfaces()) {
       mWinSurface = new gfxWindowsSurface(gfxIntSize(mSize.width, mSize.height), mFormat);
       if (mWinSurface && mWinSurface->CairoStatus() == 0) {
         // no error
@@ -208,7 +191,7 @@ nsresult imgFrame::Init(int32_t aX, int32_t aY, int32_t aWidth, int32_t aHeight,
     }
 
 #ifdef XP_MACOSX
-    if (!mNeverUseDeviceSurface && !ShouldUseImageSurfaces()) {
+    if (!ShouldUseImageSurfaces()) {
       mQuartzSurface = new gfxQuartzImageSurface(mImageSurface);
     }
 #endif
@@ -291,46 +274,14 @@ nsresult imgFrame::Optimize()
 
   // if we're being forced to use image surfaces due to
   // resource constraints, don't try to optimize beyond same-pixel.
-  if (mNeverUseDeviceSurface || ShouldUseImageSurfaces())
+  if (ShouldUseImageSurfaces())
     return NS_OK;
 
   mOptSurface = nullptr;
 
 #ifdef USE_WIN_SURFACE
-  // we need to special-case windows here, because windows has
-  // a distinction between DIB and DDB and we want to use DDBs as much
-  // as we can.
   if (mWinSurface) {
-    // Don't do DDBs for large images; see bug 359147
-    // Note that we bother with DDBs at all because they are much faster
-    // on some systems; on others there isn't much of a speed difference
-    // between DIBs and DDBs.
-    //
-    // Originally this just limited to 1024x1024; but that still
-    // had us hitting overall total memory usage limits (which was
-    // around 220MB on my intel shared memory system with 2GB RAM
-    // and 16-128mb in use by the video card, so I can't make
-    // heads or tails out of this limit).
-    //
-    // So instead, we clamp the max size to 64MB (this limit shuld
-    // be made dynamic based on.. something.. as soon a we figure
-    // out that something) and also limit each individual image to
-    // be less than 4MB to keep very large images out of DDBs.
-
-    // assume (almost -- we don't quadword-align) worst-case size
-    uint32_t ddbSize = mSize.width * mSize.height * 4;
-    if (ddbSize <= kMaxSingleDDBSize &&
-        ddbSize + gTotalDDBSize <= kMaxDDBSize)
-    {
-      nsRefPtr<gfxWindowsSurface> wsurf = mWinSurface->OptimizeToDDB(nullptr, gfxIntSize(mSize.width, mSize.height), mFormat);
-      if (wsurf) {
-        gTotalDDBs++;
-        gTotalDDBSize += ddbSize;
-        mIsDDBSurface = true;
-        mOptSurface = wsurf;
-      }
-    }
-    if (!mOptSurface && !mFormatChanged) {
+    if (!mFormatChanged) {
       // just use the DIB if the format has not changed
       mOptSurface = mWinSurface;
     }

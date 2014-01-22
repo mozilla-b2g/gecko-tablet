@@ -65,10 +65,11 @@ nsEventListenerInfo::GetInSystemEventGroup(bool* aInSystemEventGroup)
 }
 
 NS_IMETHODIMP
-nsEventListenerInfo::GetListenerObject(JSContext* aCx, JS::Value* aObject)
+nsEventListenerInfo::GetListenerObject(JSContext* aCx,
+                                       JS::MutableHandle<JS::Value> aObject)
 {
   mozilla::Maybe<JSAutoCompartment> ac;
-  GetJSVal(aCx, ac, aObject);
+  GetJSVal(aCx, ac, aObject.address());
   return NS_OK;
 }
 
@@ -93,7 +94,7 @@ nsEventListenerInfo::GetJSVal(JSContext* aCx,
   }
 
   nsCOMPtr<nsIJSEventListener> jsl = do_QueryInterface(mListener);
-  if (jsl) {
+  if (jsl && jsl->GetHandler().HasEventHandler()) {
     JS::Handle<JSObject*> handler(jsl->GetHandler().Ptr()->Callable());
     if (handler) {
       aAc.construct(aCx, handler);

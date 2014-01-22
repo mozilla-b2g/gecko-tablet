@@ -178,7 +178,7 @@ WrapperFactory::PrepareForWrapping(JSContext *cx, HandleObject scope,
         }
         if (key != JSProto_Null) {
             RootedObject homeProto(cx);
-            if (!JS_GetClassPrototype(cx, key, homeProto.address()))
+            if (!JS_GetClassPrototype(cx, key, &homeProto))
                 return nullptr;
             MOZ_ASSERT(homeProto);
             // No need to double-wrap here. We should never have waivers to
@@ -282,8 +282,7 @@ WrapperFactory::PrepareForWrapping(JSContext *cx, HandleObject scope,
     RootedValue v(cx);
     nsresult rv =
         nsXPConnect::XPConnect()->WrapNativeToJSVal(cx, wrapScope, wn->Native(), nullptr,
-                                                    &NS_GET_IID(nsISupports), false,
-                                                    v.address());
+                                                    &NS_GET_IID(nsISupports), false, &v);
     NS_ENSURE_SUCCESS(rv, nullptr);
 
     obj = JSVAL_TO_OBJECT(v);
@@ -495,22 +494,9 @@ WrapperFactory::WrapForSameCompartment(JSContext *cx, HandleObject objArg)
     obj = JS_ObjectToOuterObject(cx, obj);
     NS_ENSURE_TRUE(obj, nullptr);
 
-    if (dom::GetSameCompartmentWrapperForDOMBinding(*obj.address())) {
-        return obj;
-    }
-
-    MOZ_ASSERT(!dom::IsDOMObject(obj));
-
-    if (!IS_WN_REFLECTOR(obj))
-        return obj;
-
-    // Extract the WN. It should exist.
-    XPCWrappedNative *wn = XPCWrappedNative::Get(obj);
-    MOZ_ASSERT(wn, "Trying to wrap a dead WN!");
-
-    // The WN knows what to do.
-    RootedObject wrapper(cx, wn->GetSameCompartmentSecurityWrapper(cx));
-    return wrapper;
+    // The method below is a no-op for non-DOM objects.
+    dom::GetSameCompartmentWrapperForDOMBinding(*obj.address());
+    return obj;
 }
 
 // Call WaiveXrayAndWrap when you have a JS object that you don't want to be

@@ -974,6 +974,7 @@ var BrowserUI = {
       case "cmd_undoCloseTab":
       case "cmd_actions":
       case "cmd_panel":
+      case "cmd_reportingCrashesSubmitURLs":
       case "cmd_flyout_back":
       case "cmd_sanitize":
       case "cmd_volumeLeft":
@@ -1081,6 +1082,10 @@ var BrowserUI = {
       case "cmd_flyout_back":
         FlyoutPanelsUI.onBackButton();
         break;
+      case "cmd_reportingCrashesSubmitURLs":
+        let urlCheckbox = document.getElementById("prefs-reporting-submitURLs");
+        Services.prefs.setBoolPref('app.crashreporter.submitURLs', urlCheckbox.checked);
+        break;
       case "cmd_panel":
         PanelUI.toggle();
         break;
@@ -1099,6 +1104,9 @@ var BrowserUI = {
     let message = bundle.GetStringFromName("clearPrivateData.message");
     let clearbutton = bundle.GetStringFromName("clearPrivateData.clearButton");
 
+    let prefsClearButton = document.getElementById("prefs-clear-data");
+    prefsClearButton.disabled = true; 
+
     let buttonPressed = Services.prompt.confirmEx(
                           null,
                           title,
@@ -1115,6 +1123,8 @@ var BrowserUI = {
     if (buttonPressed === 0) {
       SanitizeUI.onSanitize();
     }
+
+    prefsClearButton.disabled = false;
   },
 };
 

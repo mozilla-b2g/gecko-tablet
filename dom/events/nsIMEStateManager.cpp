@@ -68,6 +68,10 @@ public:
                 nsIContent* aContent);
   void     Destroy(void);
   bool     IsManaging(nsPresContext* aPresContext, nsIContent* aContent);
+  bool     KeepAliveDuringDeactive() const
+  {
+    return !!(mObserving & nsIMEUpdatePreference::NOTIFY_DURING_DEACTIVE);
+  }
 
   nsCOMPtr<nsIWidget>            mWidget;
   nsCOMPtr<nsISelection>         mSel;
@@ -226,6 +230,7 @@ nsIMEStateManager::OnChangeFocusInternal(nsPresContext* aPresContext,
   }
 
   if (sTextStateObserver &&
+      (aPresContext || !sTextStateObserver->KeepAliveDuringDeactive()) &&
       !sTextStateObserver->IsManaging(aPresContext, aContent)) {
     DestroyTextStateManager();
   }
@@ -598,6 +603,7 @@ nsIMEStateManager::NotifyIME(NotificationToIME aNotification,
         return aWidget->NotifyIME(aNotification);
       case REQUEST_TO_COMMIT_COMPOSITION:
       case REQUEST_TO_CANCEL_COMPOSITION:
+      case NOTIFY_IME_OF_COMPOSITION_UPDATE:
         return composition ? aWidget->NotifyIME(aNotification) : NS_OK;
       default:
         MOZ_CRASH("Unsupported notification");
@@ -1124,4 +1130,10 @@ nsIMEStateManager::GetFocusSelectionAndRoot(nsISelection** aSel,
   NS_ADDREF(*aSel = sTextStateObserver->mSel);
   NS_ADDREF(*aRoot = sTextStateObserver->mRootContent);
   return NS_OK;
+}
+
+TextComposition*
+nsIMEStateManager::GetTextComposition(nsIWidget* aWidget)
+{
+  return sTextCompositions->GetCompositionFor(aWidget);
 }
