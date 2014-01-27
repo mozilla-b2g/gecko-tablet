@@ -129,6 +129,7 @@
                oncommand="gotoHistoryIndex(event); event.stopPropagation();"
                onclick="checkForMiddleClick(this, event);"/>
     <tooltip id="aHTMLTooltip" page="true"/>
+    <tooltip id="remoteBrowserTooltip"/>
 
     <!-- for search and content formfill/pw manager -->
     <panel type="autocomplete" id="PopupAutoComplete" noautofocus="true" hidden="true"/>
@@ -217,6 +218,7 @@
            hidden="true"
            noautofocus="true"
            noautohide="true"
+           flip="none"
            consumeoutsideclicks="false">
       <box id="UITourHighlight"></box>
     </panel>
@@ -377,6 +379,18 @@
       </hbox>
       <hbox pack="center">
         <button id="ctrlTab-showAll" class="ctrlTab-preview" noicon="true"/>
+      </hbox>
+    </panel>
+
+    <!-- Sync Panel -->
+    <panel id="sync-popup" type="arrow" hidden="true" noautofocus="true"
+           level="top" onclick="this.hidePopup();">
+      <hbox id="sync-popup-outer">
+        <image id="sync-popup-icon"/>
+        <vbox id="sync-popup-inner">
+          <description id="sync-popup-desc-syncing" value="&syncPanel.descriptionSyncing;"/>
+          <description id="sync-popup-desc-prefs">&syncPanel.descriptionPrefs;</description>
+        </vbox>
       </hbox>
     </panel>
 

@@ -16,7 +16,7 @@ namespace layers {
 
 ImageLayer::ImageLayer(LayerManager* aManager, void* aImplData)
 : Layer(aManager, aImplData), mFilter(GraphicsFilter::FILTER_GOOD)
-, mScaleMode(SCALE_NONE), mDisallowBigImage(false)
+, mScaleMode(ScaleMode::SCALE_NONE), mDisallowBigImage(false)
 {}
 
 ImageLayer::~ImageLayer()
@@ -35,9 +35,9 @@ void ImageLayer::ComputeEffectiveTransforms(const gfx3DMatrix& aTransformToSurfa
   gfxRect sourceRect(0, 0, 0, 0);
   if (mContainer) {
     sourceRect.SizeTo(gfx::ThebesIntSize(mContainer->GetCurrentSize()));
-    if (mScaleMode != SCALE_NONE &&
+    if (mScaleMode != ScaleMode::SCALE_NONE &&
         sourceRect.width != 0.0 && sourceRect.height != 0.0) {
-      NS_ASSERTION(mScaleMode == SCALE_STRETCH,
+      NS_ASSERTION(mScaleMode == ScaleMode::STRETCH,
                    "No other scalemodes than stretch and none supported yet.");
       local.Scale(mScaleToSize.width / sourceRect.width,
                   mScaleToSize.height / sourceRect.height, 1.0);
@@ -47,9 +47,10 @@ void ImageLayer::ComputeEffectiveTransforms(const gfx3DMatrix& aTransformToSurfa
   // This makes our snapping equivalent to what would happen if our content
   // was drawn into a ThebesLayer (gfxContext would snap using the local
   // transform, then we'd snap again when compositing the ThebesLayer).
-  mEffectiveTransform =
+  gfx3DMatrix snappedTransform =
       SnapTransform(local, sourceRect, nullptr) *
       SnapTransformTranslation(aTransformToSurface, nullptr);
+  gfx::ToMatrix4x4(snappedTransform, mEffectiveTransform);
   ComputeEffectiveTransformForMaskLayer(aTransformToSurface);
 }
 

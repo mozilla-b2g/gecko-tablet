@@ -28,7 +28,7 @@ import java.util.ArrayList;
 
 public class UninstallListener extends BroadcastReceiver {
 
-    private static String LOGTAG = "GeckoUninstallListener";
+    private static String LOGTAG = "GeckoWebAppUninstallListener";
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -39,7 +39,7 @@ public class UninstallListener extends BroadcastReceiver {
             return;
         }
 
-        WebAppAllocator allocator = WebAppAllocator.getInstance(context);
+        Allocator allocator = Allocator.getInstance(context);
         ArrayList<String> installedPackages = allocator.getInstalledPackageNames();
 
         if (installedPackages.contains(packageName)) {
@@ -47,7 +47,7 @@ public class UninstallListener extends BroadcastReceiver {
             JSONArray packageNames = new JSONArray();
             try {
                 packageNames.put(packageName);
-                message.put("packages", packageNames);
+                message.put("apkPackageNames", packageNames);
                 GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Webapps:AutoUninstall", message.toString()));
             } catch (JSONException e) {
                 Log.e(LOGTAG, "JSON EXCEPTION " + e);
@@ -57,7 +57,7 @@ public class UninstallListener extends BroadcastReceiver {
 
     public static void initUninstallPackageScan(Context context) {
         // get list of packages we think are installed
-        WebAppAllocator allocator = WebAppAllocator.getInstance(context);
+        Allocator allocator = Allocator.getInstance(context);
         ArrayList<String> fennecPackages = allocator.getInstalledPackageNames();
         ArrayList<String> uninstalledPackages = new ArrayList<String>();
 
@@ -84,7 +84,7 @@ public class UninstallListener extends BroadcastReceiver {
                 for (String packageName : uninstalledPackages) {
                     packageNames.put(packageName);
                 }
-                message.put("packages", packageNames);
+                message.put("apkPackageNames", packageNames);
                 GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Webapps:AutoUninstall", message.toString()));
             } catch (JSONException e) {
                 Log.e(LOGTAG, "JSON EXCEPTION " + e);

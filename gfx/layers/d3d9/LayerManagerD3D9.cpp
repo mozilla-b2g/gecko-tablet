@@ -22,8 +22,6 @@
 namespace mozilla {
 namespace layers {
 
-DeviceManagerD3D9 *LayerManagerD3D9::mDefaultDeviceManager = nullptr;
-
 LayerManagerD3D9::LayerManagerD3D9(nsIWidget *aWidget)
   : mWidget(aWidget)
   , mDeviceResetCount(0)
@@ -57,15 +55,9 @@ LayerManagerD3D9::Initialize(bool force)
     }
   }
 
-  if (!mDefaultDeviceManager) {
-    mDeviceManager = gfxWindowsPlatform::GetPlatform()->GetD3D9DeviceManager();
-    if (!mDeviceManager) {
-      return false;
-    }
-
-    mDefaultDeviceManager = mDeviceManager;
-  } else {
-    mDeviceManager = mDefaultDeviceManager;
+  mDeviceManager = gfxWindowsPlatform::GetPlatform()->GetD3D9DeviceManager();
+  if (!mDeviceManager) {
+    return false;
   }
 
   mSwapChain = mDeviceManager->
@@ -233,10 +225,10 @@ LayerManagerD3D9::ReportFailure(const nsACString &aMsg, HRESULT aCode)
 void
 LayerManagerD3D9::Render()
 {
-  DeviceManagerState state = mSwapChain->PrepareForRendering();
-  if (state != DeviceOK) {
+  if (mSwapChain->PrepareForRendering() != DeviceOK) {
     return;
   }
+
   deviceManager()->SetupRenderState();
 
   SetupPipeline();
@@ -347,7 +339,7 @@ LayerManagerD3D9::PaintToTarget()
     new gfxImageSurface((unsigned char*)rect.pBits,
                         gfxIntSize(desc.Width, desc.Height),
                         rect.Pitch,
-                        gfxImageFormatARGB32);
+                        gfxImageFormat::ARGB32);
 
   mTarget->SetSource(imageSurface);
   mTarget->SetOperator(gfxContext::OPERATOR_OVER);

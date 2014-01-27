@@ -94,13 +94,11 @@ ImageLayerComposite::RenderLayer(const nsIntRect& aClipRect)
   EffectChain effectChain;
   LayerManagerComposite::AutoAddMaskEffect autoMaskEffect(mMaskLayer, effectChain);
 
-  gfx::Matrix4x4 transform;
-  ToMatrix4x4(GetEffectiveTransform(), transform);
   gfx::Rect clipRect(aClipRect.x, aClipRect.y, aClipRect.width, aClipRect.height);
   mImageHost->SetCompositor(mCompositor);
   mImageHost->Composite(effectChain,
                         GetEffectiveOpacity(),
-                        transform,
+                        GetEffectiveTransform(),
                         gfx::ToFilter(mFilter),
                         clipRect);
 }
@@ -119,9 +117,9 @@ ImageLayerComposite::ComputeEffectiveTransforms(const gfx3DMatrix& aTransformToS
       mImageHost->GetAsTextureHost() ? mImageHost->GetAsTextureHost()->GetSize()
                                      : mImageHost->GetDeprecatedTextureHost()->GetSize();
     sourceRect.SizeTo(size.width, size.height);
-    if (mScaleMode != SCALE_NONE &&
+    if (mScaleMode != ScaleMode::SCALE_NONE &&
         sourceRect.width != 0.0 && sourceRect.height != 0.0) {
-      NS_ASSERTION(mScaleMode == SCALE_STRETCH,
+      NS_ASSERTION(mScaleMode == ScaleMode::STRETCH,
                    "No other scalemodes than stretch and none supported yet.");
       local.Scale(mScaleToSize.width / sourceRect.width,
                   mScaleToSize.height / sourceRect.height, 1.0);
@@ -131,9 +129,10 @@ ImageLayerComposite::ComputeEffectiveTransforms(const gfx3DMatrix& aTransformToS
   // This makes our snapping equivalent to what would happen if our content
   // was drawn into a ThebesLayer (gfxContext would snap using the local
   // transform, then we'd snap again when compositing the ThebesLayer).
-  mEffectiveTransform =
+  gfx3DMatrix snappedTransform =
       SnapTransform(local, sourceRect, nullptr) *
       SnapTransformTranslation(aTransformToSurface, nullptr);
+  gfx::ToMatrix4x4(snappedTransform, mEffectiveTransform);
   ComputeEffectiveTransformForMaskLayer(aTransformToSurface);
 }
 

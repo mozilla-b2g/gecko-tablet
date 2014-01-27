@@ -1700,7 +1700,6 @@ const Class Debugger::jsclass = {
     JSCLASS_HAS_RESERVED_SLOTS(JSSLOT_DEBUG_COUNT),
     JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
     JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Debugger::finalize,
-    nullptr,              /* checkAccess */
     nullptr,              /* call        */
     nullptr,              /* hasInstance */
     nullptr,              /* construct   */
@@ -2818,7 +2817,6 @@ const Class DebuggerScript_class = {
     JSCLASS_HAS_RESERVED_SLOTS(JSSLOT_DEBUGSCRIPT_COUNT),
     JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
     JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, nullptr,
-    nullptr,              /* checkAccess */
     nullptr,              /* call        */
     nullptr,              /* hasInstance */
     nullptr,              /* construct   */
@@ -3000,6 +2998,19 @@ DebuggerScript_getSourceMapUrl(JSContext *cx, unsigned argc, Value *vp)
         args.rval().setNull();
     }
 
+    return true;
+}
+
+static bool
+DebuggerScript_getGlobal(JSContext *cx, unsigned argc, Value *vp)
+{
+    THIS_DEBUGSCRIPT_SCRIPT(cx, argc, vp, "(get global)", args, obj, script);
+    Debugger *dbg = Debugger::fromChildJSObject(obj);
+
+    RootedValue v(cx, ObjectValue(script->global()));
+    if (!dbg->wrapDebuggeeValue(cx, &v))
+        return false;
+    args.rval().set(v);
     return true;
 }
 
@@ -3666,6 +3677,7 @@ static const JSPropertySpec DebuggerScript_properties[] = {
     JS_PSG("sourceLength", DebuggerScript_getSourceLength, 0),
     JS_PSG("staticLevel", DebuggerScript_getStaticLevel, 0),
     JS_PSG("sourceMapURL", DebuggerScript_getSourceMapUrl, 0),
+    JS_PSG("global", DebuggerScript_getGlobal, 0),
     JS_PS_END
 };
 
@@ -3712,7 +3724,6 @@ const Class DebuggerSource_class = {
     JSCLASS_HAS_RESERVED_SLOTS(JSSLOT_DEBUGSOURCE_COUNT),
     JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
     JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, nullptr,
-    nullptr,              /* checkAccess */
     nullptr,              /* call        */
     nullptr,              /* hasInstance */
     nullptr,              /* construct   */
@@ -3878,8 +3889,8 @@ DebuggerSource_getElement(JSContext *cx, unsigned argc, Value *vp)
 static bool
 DebuggerSource_getElementProperty(JSContext *cx, unsigned argc, Value *vp)
 {
-    THIS_DEBUGSOURCE_REFERENT(cx, argc, vp, "(get elementProperty)", args, obj, sourceObject);
-    args.rval().set(sourceObject->elementProperty());
+    THIS_DEBUGSOURCE_REFERENT(cx, argc, vp, "(get elementAttributeName)", args, obj, sourceObject);
+    args.rval().set(sourceObject->elementAttributeName());
     return Debugger::fromChildJSObject(obj)->wrapDebuggeeValue(cx, args.rval());
 }
 
@@ -3888,7 +3899,7 @@ static const JSPropertySpec DebuggerSource_properties[] = {
     JS_PSG("url", DebuggerSource_getUrl, 0),
     JS_PSG("element", DebuggerSource_getElement, 0),
     JS_PSG("displayURL", DebuggerSource_getDisplayURL, 0),
-    JS_PSG("elementProperty", DebuggerSource_getElementProperty, 0),
+    JS_PSG("elementAttributeName", DebuggerSource_getElementProperty, 0),
     JS_PS_END
 };
 
@@ -4606,7 +4617,6 @@ const Class DebuggerObject_class = {
     JSCLASS_HAS_RESERVED_SLOTS(JSSLOT_DEBUGOBJECT_COUNT),
     JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
     JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, nullptr,
-    nullptr,              /* checkAccess */
     nullptr,              /* call        */
     nullptr,              /* hasInstance */
     nullptr,              /* construct   */
@@ -5447,7 +5457,6 @@ const Class DebuggerEnv_class = {
     JSCLASS_HAS_RESERVED_SLOTS(JSSLOT_DEBUGENV_COUNT),
     JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
     JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, nullptr,
-    nullptr,              /* checkAccess */
     nullptr,              /* call        */
     nullptr,              /* hasInstance */
     nullptr,              /* construct   */

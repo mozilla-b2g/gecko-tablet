@@ -45,6 +45,7 @@
 #include "nsTArrayForwardDeclare.h"     // for InfallibleTArray
 #include "nscore.h"                     // for nsACString, nsAString
 #include "prlog.h"                      // for PRLogModuleInfo
+#include "gfx2DGlue.h"
 
 class gfxASurface;
 class gfxContext;
@@ -295,7 +296,7 @@ public:
 
   /**
    * Returns true if this LayerManager can properly support layers with
-   * SURFACE_COMPONENT_ALPHA. This can include disabling component
+   * SurfaceMode::SURFACE_COMPONENT_ALPHA. This can include disabling component
    * alpha if required.
    */
   virtual bool AreComponentAlphaLayersEnabled() { return true; }
@@ -585,9 +586,9 @@ public:
 
   bool IsCompositingCheap(LayersBackend aBackend)
   {
-    // LAYERS_NONE is an error state, but in that case we should try to
+    // LayersBackend::LAYERS_NONE is an error state, but in that case we should try to
     // avoid loading the compositor!
-    return LAYERS_BASIC != aBackend && LAYERS_NONE != aBackend;
+    return LayersBackend::LAYERS_BASIC != aBackend && LayersBackend::LAYERS_NONE != aBackend;
   }
 
   virtual bool IsCompositingCheap() { return true; }
@@ -1107,10 +1108,10 @@ public:
   SurfaceMode GetSurfaceMode()
   {
     if (CanUseOpaqueSurface())
-      return SURFACE_OPAQUE;
+      return SurfaceMode::SURFACE_OPAQUE;
     if (mContentFlags & CONTENT_COMPONENT_ALPHA)
-      return SURFACE_COMPONENT_ALPHA;
-    return SURFACE_SINGLE_CHANNEL_ALPHA;
+      return SurfaceMode::SURFACE_COMPONENT_ALPHA;
+    return SurfaceMode::SURFACE_SINGLE_CHANNEL_ALPHA;
   }
 
   /**
@@ -1218,7 +1219,7 @@ public:
    * ancestor with UseIntermediateSurface() (or to the root, if there is no
    * such ancestor), but for BasicLayers it's different.
    */
-  const gfx3DMatrix& GetEffectiveTransform() const { return mEffectiveTransform; }
+  const gfx::Matrix4x4& GetEffectiveTransform() const { return mEffectiveTransform; }
 
   /**
    * @param aTransformToSurface the composition of the transforms
@@ -1405,7 +1406,7 @@ protected:
   nsAutoPtr<gfx3DMatrix> mPendingTransform;
   float mPostXScale;
   float mPostYScale;
-  gfx3DMatrix mEffectiveTransform;
+  gfx::Matrix4x4 mEffectiveTransform;
   AnimationArray mAnimations;
   InfallibleTArray<AnimData> mAnimationData;
   float mOpacity;
@@ -1481,8 +1482,9 @@ public:
   {
     gfx3DMatrix idealTransform = GetLocalTransform()*aTransformToSurface;
     gfxMatrix residual;
-    mEffectiveTransform = SnapTransformTranslation(idealTransform,
+    gfx3DMatrix snappedTransform = SnapTransformTranslation(idealTransform,
         mAllowResidualTranslation ? &residual : nullptr);
+    gfx::ToMatrix4x4(snappedTransform, mEffectiveTransform);
     // The residual can only be a translation because SnapTransformTranslation
     // only changes the transform if it's a translation
     NS_ASSERTION(!residual.HasNonTranslation(),
@@ -1752,7 +1754,8 @@ public:
   virtual void ComputeEffectiveTransforms(const gfx3DMatrix& aTransformToSurface)
   {
     gfx3DMatrix idealTransform = GetLocalTransform()*aTransformToSurface;
-    mEffectiveTransform = SnapTransformTranslation(idealTransform, nullptr);
+    gfx3DMatrix snappedTransform = SnapTransformTranslation(idealTransform, nullptr);
+    gfx::ToMatrix4x4(snappedTransform, mEffectiveTransform);
     ComputeEffectiveTransformForMaskLayer(aTransformToSurface);
   }
 
@@ -1895,10 +1898,11 @@ public:
     // This makes our snapping equivalent to what would happen if our content
     // was drawn into a ThebesLayer (gfxContext would snap using the local
     // transform, then we'd snap again when compositing the ThebesLayer).
-    mEffectiveTransform =
+    gfx3DMatrix snappedTransform =
         SnapTransform(GetLocalTransform(), gfxRect(0, 0, mBounds.width, mBounds.height),
                       nullptr)*
         SnapTransformTranslation(aTransformToSurface, nullptr);
+    gfx::ToMatrix4x4(snappedTransform, mEffectiveTransform);
     ComputeEffectiveTransformForMaskLayer(aTransformToSurface);
   }
 
