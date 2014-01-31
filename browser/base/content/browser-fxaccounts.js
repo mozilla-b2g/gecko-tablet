@@ -6,19 +6,61 @@ XPCOMUtils.defineLazyGetter(this, "FxAccountsCommon", function () {
   return Cu.import("resource://gre/modules/FxAccountsCommon.js", {});
 });
 
+const PREF_SYNC_START_DOORHANGER = "services.sync.ui.showSyncStartDoorhanger";
+
 let gFxAccounts = {
 
   _initialized: false,
+  _inCustomizationMode: false,
+
+  get weave() {
+    delete this.weave;
+    return this.weave = Cc["@mozilla.org/weave/service;1"]
+                          .getService(Ci.nsISupports)
+                          .wrappedJSObject;
+  },
 
   get topics() {
+    // Do all this dance to lazy-load FxAccountsCommon.
     delete this.topics;
     return this.topics = [
-      FxAccountsCommon.ONVERIFIED_NOTIFICATION
+      "weave:service:sync:start",
+      "weave:service:login:error",
+      FxAccountsCommon.ONLOGIN_NOTIFICATION,
+      FxAccountsCommon.ONVERIFIED_NOTIFICATION,
+      FxAccountsCommon.ONLOGOUT_NOTIFICATION
     ];
   },
 
+  // The set of topics that only the active window should handle.
+  get activeWindowTopics() {
+    // Do all this dance to lazy-load FxAccountsCommon.
+    delete this.activeWindowTopics;
+    return this.activeWindowTopics = new Set([
+      "weave:service:sync:start",
+      FxAccountsCommon.ONVERIFIED_NOTIFICATION
+    ]);
+  },
+
+  get button() {
+    delete this.button;
+    return this.button = document.getElementById("PanelUI-fxa-status");
+  },
+
+  get loginFailed() {
+    return Weave.Service.identity.readyToAuthenticate &&
+           Weave.Status.login != Weave.LOGIN_SUCCEEDED;
+  },
+
+  get isActiveWindow() {
+    let mostRecentNonPopupWindow =
+      RecentWindow.getMostRecentBrowserWindow({allowPopups: false});
+    return window == mostRecentNonPopupWindow;
+  },
+
   init: function () {
-    if (this._initialized) {
+    // Bail out if we're already initialized and for pop-up windows.
+    if (this._initialized || !window.toolbar.visible) {
       return;
     }
 
@@ -26,7 +68,12 @@ let gFxAccounts = {
       Services.obs.addObserver(this, topic, false);
     }
 
+    gNavToolbox.addEventListener("customizationstarting", this);
+    gNavToolbox.addEventListener("customizationending", this);
+
     this._initialized = true;
+
+    this.updateUI();
   },
 
   uninit: function () {
@@ -42,11 +89,44 @@ let gFxAccounts = {
   },
 
   observe: function (subject, topic) {
-    this.showDoorhanger();
+    // Ignore certain topics if we're not the active window.
+    if (this.activeWindowTopics.has(topic) && !this.isActiveWindow) {
+      return;
+    }
+
+    switch (topic) {
+      case FxAccountsCommon.ONVERIFIED_NOTIFICATION:
+        Services.prefs.setBoolPref(PREF_SYNC_START_DOORHANGER, true);
+        break;
+      case "weave:service:sync:start":
+        this.onSyncStart();
+        break;
+      default:
+        this.updateUI();
+        break;
+    }
   },
 
-  showDoorhanger: function () {
-    let panel = document.getElementById("sync-popup");
+  onSyncStart: function () {
+    let showDoorhanger = false;
+
+    try {
+      showDoorhanger = Services.prefs.getBoolPref(PREF_SYNC_START_DOORHANGER);
+    } catch (e) { /* The pref might not exist. */ }
+
+    if (showDoorhanger) {
+      Services.prefs.clearUserPref(PREF_SYNC_START_DOORHANGER);
+      this.showSyncStartedDoorhanger();
+    }
+  },
+
+  handleEvent: function (event) {
+    this._inCustomizationMode = event.type == "customizationstarting";
+    this.updateUI();
+  },
+
+  showDoorhanger: function (id) {
+    let panel = document.getElementById(id);
     let anchor = document.getElementById("PanelUI-menu-button");
 
     let iconAnchor =
@@ -55,5 +135,72 @@ let gFxAccounts = {
 
     panel.hidden = false;
     panel.openPopup(iconAnchor || anchor, "bottomcenter topright");
+  },
+
+  showSyncStartedDoorhanger: function () {
+    this.showDoorhanger("sync-start-panel");
+  },
+
+  showSyncFailedDoorhanger: function () {
+    this.showDoorhanger("sync-error-panel");
+  },
+
+  updateUI: function () {
+    // Bail out if FxA is disabled.
+    if (!this.weave.fxAccountsEnabled) {
+      return;
+    }
+
+    // FxA is enabled, show the widget.
+    this.button.removeAttribute("hidden");
+
+    // Make sure the button is disabled in customization mode.
+    if (this._inCustomizationMode) {
+      this.button.setAttribute("disabled", "true");
+    } else {
+      this.button.removeAttribute("disabled");
+    }
+
+    let defaultLabel = this.button.getAttribute("defaultlabel");
+    let errorLabel = this.button.getAttribute("errorlabel");
+
+    // If the user is signed into their Firefox account and we are not
+    // currently in customization mode, show their email address.
+    fxAccounts.getSignedInUser().then(userData => {
+      // Reset the button to its original state.
+      this.button.setAttribute("label", defaultLabel);
+      this.button.removeAttribute("tooltiptext");
+      this.button.removeAttribute("signedin");
+      this.button.removeAttribute("failed");
+
+      if (!this._inCustomizationMode) {
+        if (this.loginFailed) {
+          this.button.setAttribute("failed", "true");
+          this.button.setAttribute("label", errorLabel);
+        } else if (userData) {
+          this.button.setAttribute("signedin", "true");
+          this.button.setAttribute("label", userData.email);
+          this.button.setAttribute("tooltiptext", userData.email);
+        }
+      }
+    });
+  },
+
+  toggle: function (event) {
+    if (event.originalTarget.hasAttribute("signedin")) {
+      this.openPreferences();
+    } else {
+      this.openSignInPage();
+    }
+
+    PanelUI.hide();
+  },
+
+  openPreferences: function () {
+    openPreferences("paneSync");
+  },
+
+  openSignInPage: function () {
+    switchToTabHavingURI("about:accounts", true);
   }
 };

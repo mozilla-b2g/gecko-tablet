@@ -109,7 +109,6 @@ public:
                 bool aUpdateNCArea = false,
                 bool aIncludeChildren = false);
   NS_IMETHOD    Invalidate(const nsIntRect & aRect);
-  virtual void  Update() MOZ_OVERRIDE;
   NS_IMETHOD    DispatchEvent(mozilla::WidgetGUIEvent* aEvent,
                               nsEventStatus& aStatus);
   NS_IMETHOD    ConstrainPosition(bool aAllowSlop, int32_t *aX, int32_t *aY);
@@ -143,6 +142,7 @@ public:
   float         GetDPI();
   mozilla::LayoutDeviceIntPoint CSSIntPointToLayoutDeviceIntPoint(const mozilla::CSSIntPoint &aCSSPoint);
   void          ChangedDPI();
+  virtual uint32_t GetMaxTouchPoints() const MOZ_OVERRIDE;
   virtual bool  IsVisible() const;
   virtual bool  IsEnabled() const;
   // ShouldUseOffMainThreadCompositing is defined in base widget

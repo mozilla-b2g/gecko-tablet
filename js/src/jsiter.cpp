@@ -39,6 +39,7 @@
 
 using namespace js;
 using namespace js::gc;
+using JS::ForOfIterator;
 
 using mozilla::ArrayLength;
 #ifdef JS_MORE_DETERMINISTIC
@@ -729,9 +730,9 @@ bool
 js_ThrowStopIteration(JSContext *cx)
 {
     JS_ASSERT(!JS_IsExceptionPending(cx));
-    RootedValue v(cx);
-    if (js_FindClassObject(cx, JSProto_StopIteration, &v))
-        cx->setPendingException(v);
+    RootedObject ctor(cx);
+    if (js_GetClassObject(cx, JSProto_StopIteration, &ctor) && ctor)
+        cx->setPendingException(ObjectValue(*ctor));
     return false;
 }
 
@@ -1253,8 +1254,7 @@ stopiter_hasInstance(JSContext *cx, HandleObject obj, MutableHandleValue v, bool
 
 const Class StopIterationObject::class_ = {
     "StopIteration",
-    JSCLASS_HAS_CACHED_PROTO(JSProto_StopIteration) |
-    JSCLASS_FREEZE_PROTO,
+    JSCLASS_HAS_CACHED_PROTO(JSProto_StopIteration),
     JS_PropertyStub,         /* addProperty */
     JS_DeletePropertyStub,   /* delProperty */
     JS_PropertyStub,         /* getProperty */
@@ -1269,8 +1269,9 @@ const Class StopIterationObject::class_ = {
 };
 
 bool
-ForOfIterator::init(HandleValue iterable)
+ForOfIterator::init(HandleValue iterable, NonIterableBehavior nonIterableBehavior)
 {
+    JSContext *cx = cx_;
     RootedObject iterableObj(cx, ToObject(cx, iterable));
     if (!iterableObj)
         return false;
@@ -1285,10 +1286,13 @@ ForOfIterator::init(HandleValue iterable)
     if (!JSObject::getProperty(cx, iterableObj, iterableObj, cx->names().std_iterator, &callee))
         return false;
 
-    // Throw if obj[@@iterator] isn't callable. js::Invoke is about to check
-    // for this kind of error anyway, but it would throw an inscrutable
-    // error message about |method| rather than this nice one about |obj|.
+    // Throw if obj[@@iterator] isn't callable if we were asked to do so.
+    // js::Invoke is about to check for this kind of error anyway, but it would
+    // throw an inscrutable error message about |method| rather than this nice
+    // one about |obj|.
     if (!callee.isObject() || !callee.toObject().isCallable()) {
+        if (nonIterableBehavior == AllowNonIterable)
+            return true;
         char *bytes = DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, iterable, NullPtr());
         if (!bytes)
             return false;
@@ -1313,6 +1317,7 @@ ForOfIterator::next(MutableHandleValue vp, bool *done)
 {
     JS_ASSERT(iterator);
 
+    JSContext *cx = cx_;
     RootedValue method(cx);
     if (!JSObject::getProperty(cx, iterator, iterator, cx->names().next, &method))
         return false;

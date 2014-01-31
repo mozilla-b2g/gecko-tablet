@@ -24,6 +24,10 @@ function debug(msg) {
  * The external API exported by this module.
  */
 this.SessionHistory = Object.freeze({
+  isEmpty: function (docShell) {
+    return SessionHistoryInternal.isEmpty(docShell);
+  },
+
   collect: function (docShell) {
     return SessionHistoryInternal.collect(docShell);
   },
@@ -37,6 +41,19 @@ this.SessionHistory = Object.freeze({
  * The internal API for the SessionHistory module.
  */
 let SessionHistoryInternal = {
+  /**
+   * Returns whether the given docShell's session history is empty.
+   *
+   * @param docShell
+   *        The docShell that owns the session history.
+   */
+  isEmpty: function (docShell) {
+    let webNavigation = docShell.QueryInterface(Ci.nsIWebNavigation);
+    let history = webNavigation.sessionHistory;
+    let uri = webNavigation.currentURI.spec;
+    return uri == "about:blank" && history.count == 0;
+  },
+
   /**
    * Collects session history data for a given docShell.
    *
@@ -86,6 +103,21 @@ let SessionHistoryInternal = {
     }
 
     return data;
+  },
+
+  /**
+   * Determines whether a given session history entry has been added dynamically.
+   *
+   * @param shEntry
+   *        The session history entry.
+   * @return bool
+   */
+  isDynamic: function (shEntry) {
+    // shEntry.isDynamicallyAdded() is true for dynamically added
+    // <iframe> and <frameset>, but also for <html> (the root of the
+    // document) so we use shEntry.parent to ensure that we're not looking
+    // at the root of the document
+    return shEntry.parent && shEntry.isDynamicallyAdded();
   },
 
   /**
@@ -166,7 +198,7 @@ let SessionHistoryInternal = {
       for (let i = 0; i < shEntry.childCount; i++) {
         let child = shEntry.GetChildAt(i);
 
-        if (child) {
+        if (child && !this.isDynamic(child)) {
           // Don't try to restore framesets containing wyciwyg URLs.
           // (cf. bug 424689 and bug 450595)
           if (child.URI.schemeIs("wyciwyg")) {

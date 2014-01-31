@@ -761,11 +761,11 @@ toolbar .toolbarbutton-1:not([type="menu-button"]),
   }
 
   #email-link-button[cui-areatype="toolbar"] {
-    -moz-image-region: rect(0, 612px, 36px, 576px);
+    -moz-image-region: rect(0, 1332px, 36px, 1296px);
   }
 
   #email-link-button[cui-areatype="toolbar"]:hover:active:not([disabled="true"]) {
-    -moz-image-region: rect(36px, 612px, 72px, 576px);
+    -moz-image-region: rect(36px, 1368px, 72px, 1332px);
   }
 
   #characterencoding-button[cui-areatype="toolbar"] {
@@ -1054,12 +1054,7 @@ toolbar .toolbarbutton-1:not([type="menu-button"]),
 
   #email-link-button[cui-areatype="menu-panel"],
   toolbarpaletteitem[place="palette"] > #email-link-button {
-    -moz-image-region: rect(0px, 896px, 64px, 832px);
-  }
-
-  /* This is temporary until we have an email-link icon (Bug 932235) */
-  #email-link-button > image {
-    transform: scale(-1, -1);
+    -moz-image-region: rect(0px, 1600px, 64px, 1536px);
   }
 
   /* Footer and wide panel control icons */
@@ -3596,30 +3591,54 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
   margin-top: .5em;
 }
 
-/* Sync Panel */
+/* Sync Panels */
 
-#sync-popup {
+.sync-panel {
   padding: 10px;
 }
 
-#sync-popup-icon {
+.sync-panel-icon {
   width: 32px;
-  background: url("chrome://browser/content/abouthome/sync.png") center center no-repeat;
+  background: url("chrome://browser/content/abouthome/sync.png") top left no-repeat;
 }
 
 @media (min-resolution: 2dppx) {
-  #sync-popup-icon {
-    background: url("chrome://browser/content/abouthome/sync@2x.png") center center no-repeat;
+  .sync-panel-icon {
+    background: url("chrome://browser/content/abouthome/sync@2x.png") top left no-repeat;
     background-size: 32px 32px;
   }
 }
 
-#sync-popup-inner {
+.sync-panel-inner {
   width: 0;
   padding-left: 10px;
 }
 
-#sync-popup-desc-prefs {
+.sync-panel-button-box {
+  margin-top: 1em;
+}
+
+.sync-panel-button {
+  @hudButton@
+  margin: 0;
+  min-width: 72px;
+  min-height: 22px;
+}
+
+.sync-panel-button:hover:active {
+  @hudButtonPressed@
+}
+
+.sync-panel-button:-moz-focusring {
+  @hudButtonFocused@
+}
+
+#sync-error-panel-title {
+  font-weight: bold;
+}
+
+#sync-start-panel-subtitle,
+#sync-error-panel-subtitle {
   margin: 0;
 }
 
@@ -4032,6 +4051,21 @@ window > chatbox {
   border-left: 3px solid transparent;
 }
 
+@media (min-resolution: 2dppx) {
+  #customization-titlebar-visibility-button {
+    list-style-image: url("chrome://browser/skin/customizableui/customize-titleBar-toggle@2x.png");
+    -moz-image-region: rect(0, 48px, 48px, 0);
+  }
+
+  #customization-titlebar-visibility-button[checked] {
+    -moz-image-region: rect(0, 96px, 48px, 48px);
+  }
+
+  #customization-titlebar-visibility-button > .button-box > .button-icon {
+    width: 24px;
+  }
+}
+
 /* End customization mode */
 
 #main-window[privatebrowsingmode=temporary] {
@@ -4090,3 +4124,17 @@ window > chatbox {
 }
 
 %include ../shared/UITour.inc.css
+
+#UITourTooltipIcon {
+  -moz-margin-start: 0;
+}
+
+#UITourTooltipDescription {
+  font-size: 1.1rem;
+  line-height: 1.9rem;
+}
+
+#UITourTooltipClose {
+  -moz-margin-end: -15px;
+  margin-top: -12px;
+}

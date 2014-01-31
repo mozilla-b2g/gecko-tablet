@@ -159,7 +159,8 @@ let HomePanels = {
 
   // Valid types of views for a dataset.
   View: {
-    LIST: "list"
+    LIST: "list",
+    GRID: "grid"
   },
 
   // Holds the currrent set of registered panels.
@@ -217,7 +218,7 @@ let HomePanels = {
 
     sendMessageToJava({
       type: "HomePanels:Remove",
-      id: panel.id
+      id: id
     });
   },
 

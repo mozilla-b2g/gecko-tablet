@@ -244,28 +244,6 @@ Promise::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
   return PromiseBinding::Wrap(aCx, aScope, this);
 }
 
-/* static */ bool
-Promise::EnabledForScope(JSContext* aCx, JSObject* /* unused */)
-{
-  if (NS_IsMainThread()) {
-    // No direct return so the chrome/certified app checks happen below.
-    if (Preferences::GetBool("dom.promise.enabled", false)) {
-      return true;
-    }
-  } else {
-    WorkerPrivate* workerPrivate = GetWorkerPrivateFromContext(aCx);
-    return workerPrivate->PromiseEnabled() || workerPrivate->UsesSystemPrincipal();
-  }
-  // Enable if the pref is enabled or if we're chrome or if we're a
-  // certified app.
-  // Note that we have no concept of a certified app in workers.
-  // XXXbz well, why not?
-  // FIXME(nsm): Remove these checks once promises are enabled by default.
-  nsIPrincipal* prin = nsContentUtils::GetSubjectPrincipal();
-  return nsContentUtils::IsSystemPrincipal(prin) ||
-    prin->GetAppStatus() == nsIPrincipal::APP_STATUS_CERTIFIED;
-}
-
 void
 Promise::MaybeResolve(JSContext* aCx,
                       JS::Handle<JS::Value> aValue)
@@ -579,24 +557,15 @@ Promise::Reject(nsPIDOMWindow* aWindow, JSContext* aCx,
 }
 
 already_AddRefed<Promise>
-Promise::Then(const Optional<nsRefPtr<AnyCallback>>& aResolveCallback,
-              const Optional<nsRefPtr<AnyCallback>>& aRejectCallback)
+Promise::Then(AnyCallback* aResolveCallback, AnyCallback* aRejectCallback)
 {
   nsRefPtr<Promise> promise = new Promise(GetParentObject());
 
   nsRefPtr<PromiseCallback> resolveCb =
-    PromiseCallback::Factory(promise,
-                             aResolveCallback.WasPassed()
-                               ? aResolveCallback.Value()
-                               : nullptr,
-                             PromiseCallback::Resolve);
+    PromiseCallback::Factory(promise, aResolveCallback, PromiseCallback::Resolve);
 
   nsRefPtr<PromiseCallback> rejectCb =
-    PromiseCallback::Factory(promise,
-                             aRejectCallback.WasPassed()
-                               ? aRejectCallback.Value()
-                               : nullptr,
-                             PromiseCallback::Reject);
+    PromiseCallback::Factory(promise, aRejectCallback, PromiseCallback::Reject);
 
   AppendCallbacks(resolveCb, rejectCb);
 
@@ -604,9 +573,9 @@ Promise::Then(const Optional<nsRefPtr<AnyCallback>>& aResolveCallback,
 }
 
 already_AddRefed<Promise>
-Promise::Catch(const Optional<nsRefPtr<AnyCallback>>& aRejectCallback)
+Promise::Catch(AnyCallback* aRejectCallback)
 {
-  Optional<nsRefPtr<AnyCallback>> resolveCb;
+  nsRefPtr<AnyCallback> resolveCb;
   return Then(resolveCb, aRejectCallback);
 }
 
@@ -903,12 +872,19 @@ Promise::MaybeReportRejected()
     return;
   }
 
-  JSErrorReport* report = js::ErrorFromException(mResult);
+  // Technically we should push this JSContext, but in reality the JS engine
+  // just uses it for string allocation here, so we can get away without it.
+  if (!mResult.isObject()) {
+    return;
+  }
+  JSContext* cx = nsContentUtils::GetDefaultJSContextForThread();
+  JSAutoRequest ar(cx);
+  JS::Rooted<JSObject*> obj(cx, &mResult.toObject());
+  JSAutoCompartment ac(cx, obj);
+  JSErrorReport* report = JS_ErrorFromException(cx, obj);
   if (!report) {
     return;
   }
-
-  MOZ_ASSERT(mResult.isObject(), "How did we get a JSErrorReport?");
 
   // Remains null in case of worker.
   nsCOMPtr<nsPIDOMWindow> win;
@@ -916,8 +892,8 @@ Promise::MaybeReportRejected()
 
   if (MOZ_LIKELY(NS_IsMainThread())) {
     win =
-      do_QueryInterface(nsJSUtils::GetStaticScriptGlobal(&mResult.toObject()));
-    nsIPrincipal* principal = nsContentUtils::GetObjectPrincipal(&mResult.toObject());
+      do_QueryInterface(nsJSUtils::GetStaticScriptGlobal(obj));
+    nsIPrincipal* principal = nsContentUtils::GetObjectPrincipal(obj);
     isChromeError = nsContentUtils::IsSystemPrincipal(principal);
   } else {
     WorkerPrivate* worker = GetCurrentThreadWorkerPrivate();
@@ -930,7 +906,7 @@ Promise::MaybeReportRejected()
   // AsyncErrorReporter, otherwise if the call to DispatchToMainThread fails, it
   // will leak. See Bug 958684.
   nsRefPtr<AsyncErrorReporter> r =
-    new AsyncErrorReporter(JS_GetObjectRuntime(&mResult.toObject()),
+    new AsyncErrorReporter(JS_GetObjectRuntime(obj),
                            report,
                            nullptr,
                            isChromeError,

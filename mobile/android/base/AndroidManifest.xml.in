@@ -87,6 +87,8 @@
              setSoftInputMode call in BrowserSearch#onStop must also be updated. -->
         <activity android:name=".App"
                   android:label="@MOZ_APP_DISPLAYNAME@"
+                  android:taskAffinity="@ANDROID_PACKAGE_NAME@.BROWSER"
+                  android:alwaysRetainTaskState="true"
                   android:configChanges="keyboard|keyboardHidden|mcc|mnc|orientation|screenSize"
                   android:windowSoftInputMode="stateUnspecified|adjustResize"
                   android:launchMode="singleTask"
@@ -301,7 +303,7 @@
                   android:permission="@ANDROID_PACKAGE_NAME@.permissions.BROWSER_PROVIDER"/>
 
         <provider android:name="org.mozilla.gecko.db.HomeProvider"
-                  android:authorities="@ANDROID_PACKAGE_NAME@.db.homelists"
+                  android:authorities="@ANDROID_PACKAGE_NAME@.db.home"
                   android:permission="@ANDROID_PACKAGE_NAME@.permissions.BROWSER_PROVIDER"/>
 
         <service

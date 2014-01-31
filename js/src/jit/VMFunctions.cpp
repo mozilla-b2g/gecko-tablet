@@ -8,6 +8,7 @@
 
 #include "builtin/TypedObject.h"
 #include "frontend/BytecodeCompiler.h"
+#include "jit/arm/Simulator-arm.h"
 #include "jit/BaselineIC.h"
 #include "jit/IonFrames.h"
 #include "jit/JitCompartment.h"
@@ -119,7 +120,11 @@ CheckOverRecursed(JSContext *cx)
     // has not yet been set to 1. That's okay; it will be set to 1 very shortly,
     // and in the interim we might just fire a few useless calls to
     // CheckOverRecursed.
+#ifdef JS_ARM_SIMULATOR
+    JS_CHECK_SIMULATOR_RECURSION_WITH_EXTRA(cx, 0, return false);
+#else
     JS_CHECK_RECURSION(cx, return false);
+#endif
 
     if (cx->runtime()->interrupt)
         return InterruptCheck(cx);
@@ -148,7 +153,12 @@ CheckOverRecursedWithExtra(JSContext *cx, BaselineFrame *frame,
     uint8_t spDummy;
     uint8_t *checkSp = (&spDummy) - extra;
     if (earlyCheck) {
+#ifdef JS_ARM_SIMULATOR
+        (void)checkSp;
+        JS_CHECK_SIMULATOR_RECURSION_WITH_EXTRA(cx, extra, frame->setOverRecursed());
+#else
         JS_CHECK_RECURSION_WITH_SP(cx, checkSp, frame->setOverRecursed());
+#endif
         return true;
     }
 
@@ -157,7 +167,11 @@ CheckOverRecursedWithExtra(JSContext *cx, BaselineFrame *frame,
     if (frame->overRecursed())
         return false;
 
+#ifdef JS_ARM_SIMULATOR
+    JS_CHECK_SIMULATOR_RECURSION_WITH_EXTRA(cx, extra, return false);
+#else
     JS_CHECK_RECURSION_WITH_SP(cx, checkSp, return false);
+#endif
 
     if (cx->runtime()->interrupt)
         return InterruptCheck(cx);
@@ -190,11 +204,17 @@ SetConst(JSContext *cx, HandlePropertyName name, HandleObject scopeChain, Handle
 bool
 MutatePrototype(JSContext *cx, HandleObject obj, HandleValue value)
 {
-    // Copy the incoming value. This may be overwritten; the return value is discarded.
-    RootedValue rval(cx, value);
+    MOZ_ASSERT(obj->is<JSObject>(), "must only be used with object literals");
+    if (!value.isObjectOrNull())
+        return true;
 
-    RootedId id(cx, NameToId(cx->names().proto));
-    return baseops::SetPropertyHelper<SequentialExecution>(cx, obj, obj, id, 0, &rval, false);
+    RootedObject newProto(cx, value.toObjectOrNull());
+
+    bool succeeded;
+    if (!JSObject::setProto(cx, obj, newProto, &succeeded))
+        return false;
+    MOZ_ASSERT(succeeded);
+    return true;
 }
 
 bool
@@ -351,12 +371,12 @@ ArrayPopDense(JSContext *cx, HandleObject obj, MutableHandleValue rval)
 
     Value argv[] = { UndefinedValue(), ObjectValue(*obj) };
     AutoValueArray ava(cx, argv, 2);
-    if (!js::array_pop(cx, 0, argv))
+    if (!js::array_pop(cx, 0, ava.start()))
         return false;
 
     // If the result is |undefined|, the array was probably empty and we
     // have to monitor the return value.
-    rval.set(argv[0]);
+    rval.set(ava[0]);
     if (rval.isUndefined())
         types::TypeScript::Monitor(cx, rval);
     return true;
@@ -369,10 +389,10 @@ ArrayPushDense(JSContext *cx, HandleObject obj, HandleValue v, uint32_t *length)
 
     Value argv[] = { UndefinedValue(), ObjectValue(*obj), v };
     AutoValueArray ava(cx, argv, 3);
-    if (!js::array_push(cx, 1, argv))
+    if (!js::array_push(cx, 1, ava.start()))
         return false;
 
-    *length = argv[0].toInt32();
+    *length = ava[0].toInt32();
     return true;
 }
 
@@ -385,12 +405,12 @@ ArrayShiftDense(JSContext *cx, HandleObject obj, MutableHandleValue rval)
 
     Value argv[] = { UndefinedValue(), ObjectValue(*obj) };
     AutoValueArray ava(cx, argv, 2);
-    if (!js::array_shift(cx, 0, argv))
+    if (!js::array_shift(cx, 0, ava.start()))
         return false;
 
     // If the result is |undefined|, the array was probably empty and we
     // have to monitor the return value.
-    rval.set(argv[0]);
+    rval.set(ava[0]);
     if (rval.isUndefined())
         types::TypeScript::Monitor(cx, rval);
     return true;
@@ -412,9 +432,9 @@ ArrayConcatDense(JSContext *cx, HandleObject obj1, HandleObject obj2, HandleObje
 
     Value argv[] = { UndefinedValue(), ObjectValue(*arr1), ObjectValue(*arr2) };
     AutoValueArray ava(cx, argv, 3);
-    if (!js::array_concat(cx, 1, argv))
+    if (!js::array_concat(cx, 1, ava.start()))
         return nullptr;
-    return &argv[0].toObject();
+    return &ava[0].toObject();
 }
 
 bool
