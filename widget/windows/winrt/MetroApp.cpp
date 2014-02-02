@@ -85,9 +85,9 @@ MetroApp::Run()
     this, &MetroApp::OnResuming).Get(), &mResumeEvent);
   AssertHRESULT(hr);
 
-  WinUtils::Log("XPCOM startup initialization began");
+  WinUtils::Log("Calling XRE_metroStartup.");
   nsresult rv = XRE_metroStartup(true);
-  WinUtils::Log("XPCOM startup initialization complete");
+  WinUtils::Log("Exiting XRE_metroStartup.");
   if (NS_FAILED(rv)) {
     WinUtils::Log("XPCOM startup initialization failed, bailing. rv=%X", rv);
     CoreExit();
@@ -158,6 +158,7 @@ MetroApp::OnAsyncTileCreated(ABI::Windows::Foundation::IAsyncOperation<bool>* aO
                              AsyncStatus aStatus)
 {
   WinUtils::Log("Async operation status: %d", aStatus);
+  MetroUtils::FireObserver("metro_on_async_tile_created");
   return S_OK;
 }
 

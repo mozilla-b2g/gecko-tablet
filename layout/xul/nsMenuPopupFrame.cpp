@@ -96,7 +96,7 @@ nsMenuPopupFrame::nsMenuPopupFrame(nsIPresShell* aShell, nsStyleContext* aContex
   mShouldAutoPosition(true),
   mInContentShell(true),
   mIsMenuLocked(false),
-  mIsDragPopup(false),
+  mMouseTransparent(false),
   mHFlip(false),
   mVFlip(false)
 {
@@ -139,12 +139,6 @@ nsMenuPopupFrame::Init(nsIContent*      aContent,
       mPopupType = ePopupTypeMenu;
     else if (tag == nsGkAtoms::tooltip)
       mPopupType = ePopupTypeTooltip;
-  }
-
-  if (mPopupType == ePopupTypePanel &&
-      aContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::type,
-                            nsGkAtoms::drag, eIgnoreCase)) {
-    mIsDragPopup = true;
   }
 
   nsCOMPtr<nsIDocShellTreeItem> dsti = PresContext()->GetDocShell();
@@ -243,7 +237,20 @@ nsMenuPopupFrame::CreateWidgetForView(nsView* aView)
   widgetData.clipSiblings = true;
   widgetData.mPopupHint = mPopupType;
   widgetData.mNoAutoHide = IsNoAutoHide();
-  widgetData.mIsDragPopup = mIsDragPopup;
+
+  if (!mInContentShell) {
+    // A drag popup may be used for non-static translucent drag feedback
+    if (mPopupType == ePopupTypePanel &&
+        mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::type,
+                              nsGkAtoms::drag, eIgnoreCase)) {
+      widgetData.mIsDragPopup = true;
+    }
+
+    // If mousethrough="always" is set directly on the popup, then the widget
+    // should ignore mouse events, passing them through to the content behind.
+    mMouseTransparent = GetStateBits() & NS_FRAME_MOUSE_THROUGH_ALWAYS;
+    widgetData.mMouseTransparent = mMouseTransparent;
+  }
 
   nsAutoString title;
   if (mContent && widgetData.mNoAutoHide) {
@@ -904,22 +911,22 @@ nsMenuPopupFrame::AdjustPositionForAnchorAlign(nsRect& anchorRect,
     case POPUPALIGNMENT_LEFTCENTER:
       pnt = nsPoint(anchorRect.x, anchorRect.y + anchorRect.height / 2);
       anchorRect.y = pnt.y;
-      anchorRect.height = 0;
+      anchorRect.height = 1;
       break;
     case POPUPALIGNMENT_RIGHTCENTER:
       pnt = nsPoint(anchorRect.XMost(), anchorRect.y + anchorRect.height / 2);
       anchorRect.y = pnt.y;
-      anchorRect.height = 0;
+      anchorRect.height = 1;
       break;
     case POPUPALIGNMENT_TOPCENTER:
       pnt = nsPoint(anchorRect.x + anchorRect.width / 2, anchorRect.y);
       anchorRect.x = pnt.x;
-      anchorRect.width = 0;
+      anchorRect.width = 1;
       break;
     case POPUPALIGNMENT_BOTTOMCENTER:
       pnt = nsPoint(anchorRect.x + anchorRect.width / 2, anchorRect.YMost());
       anchorRect.x = pnt.x;
-      anchorRect.width = 0;
+      anchorRect.width = 1;
       break;
     case POPUPALIGNMENT_TOPRIGHT:
       pnt = anchorRect.TopRight();
@@ -1812,19 +1819,6 @@ void
 nsMenuPopupFrame::AttachedDismissalListener()
 {
   mConsumeRollupEvent = nsIPopupBoxObject::ROLLUP_DEFAULT;
-}
-
-void
-nsMenuPopupFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                   const nsRect&           aDirtyRect,
-                                   const nsDisplayListSet& aLists)
-{
-  // don't pass events to drag popups
-  if (aBuilder->IsForEventDelivery() && mIsDragPopup) {
-    return;
-  }
-
-  nsBoxFrame::BuildDisplayList(aBuilder, aDirtyRect, aLists);
 }
 
 // helpers /////////////////////////////////////////////////////////////

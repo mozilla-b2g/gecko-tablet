@@ -495,7 +495,7 @@ AsyncPanZoomController::IsDestroyed()
 /* static */float
 AsyncPanZoomController::GetTouchStartTolerance()
 {
-  return gTouchStartTolerance;
+  return (gTouchStartTolerance * APZCTreeManager::GetDPI());
 }
 
 /* static */AsyncPanZoomController::AxisLockMode AsyncPanZoomController::GetAxisLockMode()
@@ -652,7 +652,7 @@ nsEventStatus AsyncPanZoomController::OnTouchMove(const MultiTouchInput& aEvent)
       return nsEventStatus_eIgnore;
 
     case TOUCHING: {
-      float panThreshold = gTouchStartTolerance * APZCTreeManager::GetDPI();
+      float panThreshold = GetTouchStartTolerance();
       UpdateWithTouchAtDevicePoint(aEvent);
 
       if (PanDistance() < panThreshold) {
@@ -853,17 +853,8 @@ nsEventStatus AsyncPanZoomController::OnScale(const PinchGestureInput& aEvent) {
 
 nsEventStatus AsyncPanZoomController::OnScaleEnd(const PinchGestureInput& aEvent) {
   APZC_LOG("%p got a scale-end in state %d\n", this, mState);
-  // When a pinch ends, it might either turn into a pan (if only one finger
-  // was lifted) or not (if both fingers were lifted). GestureEventListener
-  // sets mCurrentSpan to a negative value in the latter case, and sets
-  // mFocusPoint to the remaining touch point in the former case.
-  if (aEvent.mCurrentSpan >= 0) {
-    SetState(PANNING);
-    mX.StartTouch(aEvent.mFocusPoint.x);
-    mY.StartTouch(aEvent.mFocusPoint.y);
-  } else {
-    SetState(NOTHING);
-  }
+
+  SetState(NOTHING);
 
   {
     ReentrantMonitorAutoEnter lock(mMonitor);
@@ -1308,6 +1299,15 @@ const CSSRect AsyncPanZoomController::CalculatePendingDisplayPort(
   CSSPoint scrollOffset = aFrameMetrics.mScrollOffset;
   CSSRect displayPort(scrollOffset, compositionBounds.Size());
   CSSPoint velocity = aVelocity / aFrameMetrics.mZoom;
+
+  // If scrolling is disabled here then our actual velocity is going
+  // to be zero, so treat the displayport accordingly.
+  if (aFrameMetrics.GetDisableScrollingX()) {
+    velocity.x = 0;
+  }
+  if (aFrameMetrics.GetDisableScrollingY()) {
+    velocity.y = 0;
+  }
 
   // Enlarge the displayport along both axes depending on how fast we're moving
   // on that axis and how long it takes to paint. Apply some heuristics to try

@@ -142,6 +142,7 @@ public class BrowserToolbar extends GeckoRelativeLayout
     private OnFilterListener mFilterListener;
     private OnStartEditingListener mStartEditingListener;
     private OnStopEditingListener mStopEditingListener;
+    private OnFocusChangeListener mFocusChangeListener;
 
     final private BrowserApp mActivity;
     private boolean mHasSoftMenuButton;
@@ -315,6 +316,9 @@ public class BrowserToolbar extends GeckoRelativeLayout
             @Override
             public void onFocusChange(View v, boolean hasFocus) {
                 setSelected(hasFocus);
+                if (mFocusChangeListener != null) {
+                    mFocusChangeListener.onFocusChange(v, hasFocus);
+                }
             }
         });
 
@@ -638,7 +642,7 @@ public class BrowserToolbar extends GeckoRelativeLayout
         }
 
         // Set TabCounter based on visibility
-        if (isVisible() && ViewHelper.getAlpha(mTabsCounter) != 0) {
+        if (isVisible() && ViewHelper.getAlpha(mTabsCounter) != 0 && !isEditing()) {
             mTabsCounter.setCountWithAnimation(count);
         } else {
             mTabsCounter.setCount(count);
@@ -793,6 +797,10 @@ public class BrowserToolbar extends GeckoRelativeLayout
         mStopEditingListener = listener;
     }
 
+    public void setOnFocusChangeListener(OnFocusChangeListener listener) {
+        mFocusChangeListener = listener;
+    }
+
     private void showUrlEditLayout() {
         setUrlEditLayoutVisibility(true, null);
     }
@@ -862,6 +870,10 @@ public class BrowserToolbar extends GeckoRelativeLayout
         // This alpha value has to be in sync with the one used
         // in setButtonEnabled().
         final float alpha = (enabled ? 1.0f : 0.24f);
+
+        if (!enabled) {
+            mTabsCounter.onEnterEditingMode();
+        }
 
         mTabs.setEnabled(enabled);
         ViewHelper.setAlpha(mTabsCounter, alpha);

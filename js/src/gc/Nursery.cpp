@@ -129,6 +129,37 @@ js::Nursery::isEmpty() const
     return position() == currentStart_;
 }
 
+JSObject *
+js::Nursery::allocateObject(JSContext *cx, size_t size, size_t numDynamic)
+{
+    /* Attempt to allocate slots contiguously after object, if possible. */
+    if (numDynamic && numDynamic <= MaxNurserySlots) {
+        size_t totalSize = size + sizeof(HeapSlot) * numDynamic;
+        JSObject *obj = static_cast<JSObject *>(allocate(totalSize));
+        if (obj) {
+            obj->setInitialSlots(reinterpret_cast<HeapSlot *>(size_t(obj) + size));
+            return obj;
+        }
+        /* If we failed to allocate as a block, retry with out-of-line slots. */
+    }
+
+    HeapSlot *slots = nullptr;
+    if (numDynamic) {
+        slots = allocateHugeSlots(cx, numDynamic);
+        if (MOZ_UNLIKELY(!slots))
+            return nullptr;
+    }
+
+    JSObject *obj = static_cast<JSObject *>(allocate(size));
+
+    if (obj)
+        obj->setInitialSlots(slots);
+    else
+        freeSlots(cx, slots);
+
+    return obj;
+}
+
 void *
 js::Nursery::allocate(size_t size)
 {
@@ -590,13 +621,15 @@ js::Nursery::moveElementsToTenured(JSObject *dst, JSObject *src, AllocKind dstKi
 
     /* ArrayBuffer stores byte-length, not Value count. */
     if (src->is<ArrayBufferObject>()) {
-        size_t nbytes = sizeof(ObjectElements) + srcHeader->initializedLength;
+        size_t nbytes;
         if (src->hasDynamicElements()) {
+            nbytes = sizeof(ObjectElements) + srcHeader->initializedLength;
             dstHeader = static_cast<ObjectElements *>(zone->malloc_(nbytes));
             if (!dstHeader)
                 CrashAtUnhandlableOOM("Failed to allocate array buffer elements while tenuring.");
         } else {
             dst->setFixedElements();
+            nbytes = GetGCKindSlots(dst->tenuredGetAllocKind()) * sizeof(HeapSlot);
             dstHeader = dst->getElementsHeader();
         }
         js_memcpy(dstHeader, srcHeader, nbytes);

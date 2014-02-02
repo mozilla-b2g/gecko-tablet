@@ -50,10 +50,10 @@ function SelectorSearch(aInspector, aContentDocument, aInputNode) {
   let options = {
     panelId: "inspector-searchbox-panel",
     listBoxId: "searchbox-panel-listbox",
-    fixedWidth: true,
     autoSelect: true,
     position: "before_start",
     direction: "ltr",
+    theme: "auto",
     onClick: this._onListBoxKeypress,
     onKeypress: this._onListBoxKeypress,
   };

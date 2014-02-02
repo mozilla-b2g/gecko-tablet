@@ -342,6 +342,7 @@ BreakpointSite::hasBreakpoint(Breakpoint *bp)
 Breakpoint::Breakpoint(Debugger *debugger, BreakpointSite *site, JSObject *handler)
     : debugger(debugger), site(site), handler(handler)
 {
+    JS_ASSERT(handler->compartment() == debugger->object->compartment());
     JS_APPEND_LINK(&debuggerLinks, &debugger->breakpoints);
     JS_APPEND_LINK(&siteLinks, &site->breakpoints);
 }
@@ -2304,6 +2305,15 @@ Debugger::removeDebuggeeGlobal(FreeOp *fop, GlobalObject *global,
     else
         debuggees.remove(global);
 
+    /* Remove all breakpoints for the debuggee. */
+    Breakpoint *nextbp;
+    for (Breakpoint *bp = firstBreakpoint(); bp; bp = nextbp) {
+        nextbp = bp->nextInDebugger();
+        if (bp->site->script->compartment() == global->compartment())
+            bp->destroy(fop);
+    }
+    JS_ASSERT_IF(debuggees.empty(), !firstBreakpoint());
+
     /*
      * The debuggee needs to be removed from the compartment last, as this can
      * trigger GCs if the compartment's debug mode is being changed, and the
@@ -4196,9 +4206,8 @@ DebuggerFrame_getArguments(JSContext *cx, unsigned argc, Value *vp)
     RootedObject argsobj(cx);
     if (frame.hasArgs()) {
         /* Create an arguments object. */
-        Rooted<GlobalObject*> global(cx);
-        global = &args.callee().global();
-        JSObject *proto = global->getOrCreateArrayPrototype(cx);
+        Rooted<GlobalObject*> global(cx, &args.callee().global());
+        JSObject *proto = GlobalObject::getOrCreateArrayPrototype(cx, global);
         if (!proto)
             return false;
         argsobj = NewObjectWithGivenProto(cx, &DebuggerArguments_class, proto, global);

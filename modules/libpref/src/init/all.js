@@ -365,17 +365,9 @@ pref("gfx.font_rendering.graphite.enabled", true);
 // (see http://mxr.mozilla.org/mozilla-central/ident?i=ShapingType)
 // Scripts not listed are grouped in the default category.
 // Set the pref to 255 to have all text shaped via the harfbuzz backend.
-#ifdef XP_WIN
-// Use harfbuzz for everything except Hangul (0x08). Harfbuzz doesn't yet
-// have a Hangul shaper, which means that the marks U+302E/302F would not
-// reorder properly in Malgun Gothic or similar fonts.
-pref("gfx.font_rendering.harfbuzz.scripts", 247);
-#else
-// Use harfbuzz for all scripts (except when using AAT fonts on OS X).
-// AFAICT, Core Text doesn't support full OpenType Hangul shaping anyway,
-// so there's no benefit to excluding it here.
+// Default setting:
+// We use harfbuzz for all scripts (except when using AAT fonts on OS X).
 pref("gfx.font_rendering.harfbuzz.scripts", 255);
-#endif
 
 #ifdef XP_WIN
 pref("gfx.font_rendering.directwrite.enabled", false);
@@ -1763,6 +1755,9 @@ pref("layout.css.sticky.enabled", false);
 pref("layout.css.sticky.enabled", true);
 #endif
 
+// Is support for CSS "will-change" enabled?
+pref("layout.css.will-change.enabled", false);
+
 // Is support for CSS "text-align: true X" enabled?
 pref("layout.css.text-align-true-value.enabled", false);
 
@@ -1876,13 +1871,6 @@ pref("dom.max_script_run_time", 10);
 
 // If true, ArchiveReader will be enabled
 pref("dom.archivereader.enabled", false);
-
-// If true, Promise will be enabled
-#ifdef RELEASE_BUILD
-pref("dom.promise.enabled", false);
-#else
-pref("dom.promise.enabled", true);
-#endif
 
 // Hang monitor timeout after which we kill the browser, in seconds
 // (0 is disabled)
@@ -2568,6 +2556,11 @@ pref("intl.tsf.support_imm", true);
 // We need to notify the layout change to TSF, but we cannot check the actual
 // change now, therefore, we always notify it by this fequency.
 pref("intl.tsf.on_layout_change_interval", 100);
+
+// Enables/Disables hack for specific TIP.
+
+// Whether creates native caret for ATOK or not.
+pref("intl.tsf.hack.atok.create_native_caret", true);
 #endif
 
 // See bug 448927, on topmost panel, some IMEs are not usable on Windows.
@@ -4090,6 +4083,11 @@ pref("layers.scroll-graph", false);
 
 // Set the default values, and then override per-platform as needed
 pref("layers.offmainthreadcomposition.enabled", false);
+// Compositor target frame rate. NOTE: If vsync is enabled the compositor
+// frame rate will still be capped.
+// -1 -> default (match layout.frame_rate or 60 FPS)
+// 0  -> full-tilt mode: Recomposite even if not transaction occured.
+pref("layers.offmainthreadcomposition.frame-rate", -1);
 // Whether to use the deprecated texture architecture rather than the new one.
 pref("layers.use-deprecated-textures", true);
 #ifndef XP_WIN
@@ -4097,6 +4095,12 @@ pref("layers.use-deprecated-textures", true);
 // requires off-main-thread compositing.
 // Never works on Windows, so no point pref'ing it on.
 pref("layers.async-video.enabled",false);
+#endif
+
+#ifdef MOZ_X11
+// OMTC off by default on Linux, but if activated, use new textures and async-video.
+pref("layers.use-deprecated-textures", false);
+pref("layers.async-video.enabled", true);
 #endif
 
 #ifdef XP_MACOSX
@@ -4121,8 +4125,6 @@ pref("layers.offmainthreadcomposition.force-basic", false);
 
 // Whether to animate simple opacity and transforms on the compositor
 pref("layers.offmainthreadcomposition.async-animations", false);
-// Whether to prefer normal memory over shared memory. Ignored with cross-process compositing
-pref("layers.prefer-memory-over-shmem", true);
 
 pref("layers.bufferrotation.enabled", true);
 

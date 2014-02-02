@@ -725,8 +725,11 @@ menuitem.bookmark-item {
   list-style-image: url("chrome://browser/skin/Toolbar-inverted.png");
 }
 
-#sync-button[status="active"] {
-  list-style-image: url("chrome://browser/skin/sync-throbber.png");
+#sync-button[cui-areatype="toolbar"][status="active"] {
+  /* !important because we need to override the glass selectors that trigger
+   * use of the Toolbar-inverted image. Those use a list of all primary toolbar
+   * buttons, so we can't easily fix those selectors. */
+  list-style-image: url("chrome://browser/skin/sync-throbber.png") !important;
   -moz-image-region: rect(0, 18px, 18px, 0);
 }
 
@@ -1476,7 +1479,7 @@ toolbarbutton[type="socialmark"] > .toolbarbutton-icon {
   padding: 0;
 }
 
-#TabsToolbar:not(:-moz-lwtheme) {
+#main-window:not([customizing]) #TabsToolbar:not(:-moz-lwtheme) {
   background-image: linear-gradient(to top, @toolbarShadowColor@ 2px, rgba(0,0,0,.05) 2px, transparent 50%);
 }
 
@@ -2141,21 +2144,27 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
 
 /* Sync Panel */
 
-#sync-popup {
-  padding: 10px;
-}
-
-#sync-popup-icon {
+.sync-panel-icon {
   width: 32px;
-  background: url("chrome://browser/content/abouthome/sync.png") center center no-repeat;
+  background: url("chrome://browser/content/abouthome/sync.png") top left no-repeat;
 }
 
-#sync-popup-inner {
+.sync-panel-inner {
   width: 0;
   padding-left: 10px;
 }
 
-#sync-popup-desc-prefs {
+.sync-panel-button-box {
+  margin-top: 1em;
+}
+
+#sync-error-panel-title,
+#sync-start-panel-title {
+  font-weight: bold;
+}
+
+#sync-start-panel-subtitle,
+#sync-error-panel-subtitle {
   margin: 0;
 }
 
@@ -2429,14 +2438,15 @@ chatbox {
   background-attachment: fixed;
 }
 
-#main-window:-moz-any([customize-entering],[customize-entered]) #tab-view-deck {
-  padding: 0 2em 2em;
-}
-
 #customization-container {
   border-left: 1px solid @toolbarShadowColor@;
   border-right: 1px solid @toolbarShadowColor@;
   background-clip: padding-box;
+}
+
+#main-window[customizing] #navigator-toolbox::after {
+  margin-left: 2em;
+  margin-right: 2em;
 }
 
 /* End customization mode */

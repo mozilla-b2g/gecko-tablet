@@ -959,13 +959,14 @@ class MessageEventRunnable MOZ_FINAL : public WorkerRunnable
 public:
   MessageEventRunnable(WorkerPrivate* aWorkerPrivate,
                        TargetAndBusyBehavior aBehavior,
-                       JSAutoStructuredCloneBuffer& aData,
+                       JSAutoStructuredCloneBuffer&& aData,
                        nsTArray<nsCOMPtr<nsISupports> >& aClonedObjects,
                        bool aToMessagePort, uint64_t aMessagePortSerial)
-  : WorkerRunnable(aWorkerPrivate, aBehavior),
-    mMessagePortSerial(aMessagePortSerial), mToMessagePort(aToMessagePort)
+  : WorkerRunnable(aWorkerPrivate, aBehavior)
+  , mBuffer(Move(aData))
+  , mMessagePortSerial(aMessagePortSerial)
+  , mToMessagePort(aToMessagePort)
   {
-    mBuffer.swap(aData);
     mClonedObjects.SwapElements(aClonedObjects);
   }
 
@@ -1026,7 +1027,7 @@ private:
         return
           aWorkerPrivate->DispatchMessageEventToMessagePort(aCx,
                                                             mMessagePortSerial,
-                                                            mBuffer,
+                                                            Move(mBuffer),
                                                             mClonedObjects);
       }
 
@@ -1679,7 +1680,7 @@ class OfflineStatusChangeRunnable : public WorkerRunnable
 {
 public:
   OfflineStatusChangeRunnable(WorkerPrivate* aWorkerPrivate, bool aIsOffline)
-    : WorkerRunnable(aWorkerPrivate, WorkerThreadUnchangedBusyCount),
+    : WorkerRunnable(aWorkerPrivate, WorkerThreadModifyBusyCount),
       mIsOffline(aIsOffline)
   {
   }
@@ -2788,7 +2789,7 @@ WorkerPrivateParent<Derived>::PostMessageInternal(
   nsRefPtr<MessageEventRunnable> runnable =
     new MessageEventRunnable(ParentAsWorkerPrivate(),
                              WorkerRunnable::WorkerThreadModifyBusyCount,
-                             buffer, clonedObjects, aToMessagePort,
+                             Move(buffer), clonedObjects, aToMessagePort,
                              aMessagePortSerial);
   if (!runnable->Dispatch(aCx)) {
     aRv.Throw(NS_ERROR_FAILURE);
@@ -2814,13 +2815,12 @@ template <class Derived>
 bool
 WorkerPrivateParent<Derived>::DispatchMessageEventToMessagePort(
                                 JSContext* aCx, uint64_t aMessagePortSerial,
-                                JSAutoStructuredCloneBuffer& aBuffer,
+                                JSAutoStructuredCloneBuffer&& aBuffer,
                                 nsTArray<nsCOMPtr<nsISupports>>& aClonedObjects)
 {
   AssertIsOnMainThread();
 
-  JSAutoStructuredCloneBuffer buffer;
-  buffer.swap(aBuffer);
+  JSAutoStructuredCloneBuffer buffer(Move(aBuffer));
 
   nsTArray<nsCOMPtr<nsISupports>> clonedObjects;
   clonedObjects.SwapElements(aClonedObjects);
@@ -3445,6 +3445,8 @@ WorkerPrivateParent<Derived>::SetBaseURI(nsIURI* aBaseURI)
   else {
     mLocationInfo.mHost.Assign(mLocationInfo.mHostname);
   }
+
+  nsContentUtils::GetUTFNonNullOrigin(aBaseURI, mLocationInfo.mOrigin);
 }
 
 template <class Derived>
@@ -4991,7 +4993,7 @@ WorkerPrivate::PostMessageToParentInternal(
   nsRefPtr<MessageEventRunnable> runnable =
     new MessageEventRunnable(this,
                              WorkerRunnable::ParentThreadUnchangedBusyCount,
-                             buffer, clonedObjects, aToMessagePort,
+                             Move(buffer), clonedObjects, aToMessagePort,
                              aMessagePortSerial);
   if (!runnable->Dispatch(aCx)) {
     aRv = NS_ERROR_FAILURE;
@@ -5184,8 +5186,18 @@ WorkerPrivate::ReportError(JSContext* aCx, const char* aMessage,
   uint32_t lineNumber, columnNumber, flags, errorNumber;
 
   if (aReport) {
-    if (aReport->ucmessage) {
-      message = aReport->ucmessage;
+    // ErrorEvent objects don't have a |name| field the way ES |Error| objects
+    // do. Traditionally (and mostly by accident), the |message| field of
+    // ErrorEvent has corresponded to |Name: Message| of the original Error
+    // object. Things have been cleaned up in the JS engine, so now we need to
+    // format this string explicitly.
+    JS::Rooted<JSString*> messageStr(aCx,
+                                     js::ErrorReportToString(aCx, aReport));
+    if (messageStr) {
+      nsDependentJSString depStr;
+      if (depStr.init(aCx, messageStr)) {
+        message = depStr;
+      }
     }
     filename = NS_ConvertUTF8toUTF16(aReport->filename);
     line = aReport->uclinebuf;

@@ -131,6 +131,7 @@ public:
     nsCString mPathname;
     nsCString mSearch;
     nsCString mHash;
+    nsString mOrigin;
   };
 
   struct LoadInfo
@@ -376,7 +377,7 @@ public:
   DispatchMessageEventToMessagePort(
                                JSContext* aCx,
                                uint64_t aMessagePortSerial,
-                               JSAutoStructuredCloneBuffer& aBuffer,
+                               JSAutoStructuredCloneBuffer&& aBuffer,
                                nsTArray<nsCOMPtr<nsISupports>>& aClonedObjects);
 
   uint64_t
@@ -990,13 +991,6 @@ public:
   {
     AssertIsOnWorkerThread();
     return mPreferences[WORKERPREF_DUMP];
-  }
-
-  bool
-  PromiseEnabled() const
-  {
-    AssertIsOnWorkerThread();
-    return mPreferences[WORKERPREF_PROMISE];
   }
 
   bool

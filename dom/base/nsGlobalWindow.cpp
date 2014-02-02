@@ -34,6 +34,7 @@
 #include "nsIScriptContext.h"
 #include "nsIScriptTimeoutHandler.h"
 #include "nsIController.h"
+#include "nsScriptNameSpaceManager.h"
 
 // Helper Classes
 #include "nsJSUtils.h"
@@ -587,10 +588,6 @@ class nsOuterWindowProxy : public js::Wrapper
 public:
   nsOuterWindowProxy() : js::Wrapper(0) { }
 
-  virtual bool isOuterWindow() {
-    return true;
-  }
-
   virtual bool finalizeInBackground(JS::Value priv) {
     return false;
   }
@@ -677,6 +674,20 @@ protected:
   bool AppendIndexedPropertyNames(JSContext *cx, JSObject *proxy,
                                   JS::AutoIdVector &props);
 };
+
+const js::Class OuterWindowProxyClass =
+    PROXY_CLASS_WITH_EXT(
+        "Proxy",
+        0, /* additional slots */
+        0, /* additional class flags */
+        nullptr, /* call */
+        nullptr, /* construct */
+        PROXY_MAKE_EXT(
+            nullptr, /* outerObject */
+            js::proxy_innerObject,
+            nullptr, /* iteratorObject */
+            false   /* isWrappedNative */
+        ));
 
 bool
 nsOuterWindowProxy::isExtensible(JSContext *cx, JS::Handle<JSObject*> proxy,
@@ -1024,9 +1035,13 @@ static JSObject*
 NewOuterWindowProxy(JSContext *cx, JS::Handle<JSObject*> parent, bool isChrome)
 {
   JSAutoCompartment ac(cx, parent);
+  js::WrapperOptions options;
+  options.setClass(&OuterWindowProxyClass);
+  options.setSingleton(true);
   JSObject *obj = js::Wrapper::New(cx, parent, parent,
                                    isChrome ? &nsChromeOuterWindowProxy::singleton
-                                            : &nsOuterWindowProxy::singleton);
+                                            : &nsOuterWindowProxy::singleton,
+                                   &options);
 
   NS_ASSERTION(js::GetObjectClass(obj)->ext.innerObject, "bad class");
   return obj;
@@ -4038,6 +4053,43 @@ nsGlobalWindow::GetSupportedNames(nsTArray<nsString>& aNames)
   }
 }
 
+bool
+nsGlobalWindow::DoNewResolve(JSContext* aCx, JS::Handle<JSObject*> aObj,
+                             JS::Handle<jsid> aId,
+                             JS::MutableHandle<JSPropertyDescriptor> aDesc)
+{
+  MOZ_ASSERT(IsInnerWindow());
+
+  if (!JSID_IS_STRING(aId)) {
+    return true;
+  }
+
+  nsresult rv = nsWindowSH::GlobalResolve(this, aCx, aObj, aId, aDesc);
+  if (NS_FAILED(rv)) {
+    return Throw(aCx, rv);
+  }
+
+  return true;
+}
+
+static PLDHashOperator
+EnumerateGlobalName(const nsAString& aName, void* aClosure)
+{
+  nsTArray<nsString>* arr = static_cast<nsTArray<nsString>*>(aClosure);
+  arr->AppendElement(aName);
+  return PL_DHASH_NEXT;
+}
+
+void
+nsGlobalWindow::GetOwnPropertyNames(JSContext* aCx, nsTArray<nsString>& aNames,
+                                    ErrorResult& aRv)
+{
+  nsScriptNameSpaceManager* nameSpaceManager = GetNameSpaceManager();
+  if (nameSpaceManager) {
+    nameSpaceManager->EnumerateGlobalNames(EnumerateGlobalName, &aNames);
+  }
+}
+
 nsIDOMOfflineResourceList*
 nsGlobalWindow::GetApplicationCache(ErrorResult& aError)
 {
@@ -4114,13 +4166,6 @@ nsGlobalWindow::GetCrypto(nsIDOMCrypto** aCrypto)
   crypto.forget(aCrypto);
 
   return rv.ErrorCode();
-}
-
-NS_IMETHODIMP
-nsGlobalWindow::GetPkcs11(nsIDOMPkcs11** aPkcs11)
-{
-  *aPkcs11 = nullptr;
-  return NS_OK;
 }
 
 nsIControllers*
@@ -5956,14 +6001,18 @@ nsGlobalWindow::CanMoveResizeWindows()
   return true;
 }
 
-void
-nsGlobalWindow::Alert(const nsAString& aMessage, mozilla::ErrorResult& aError)
+bool
+nsGlobalWindow::AlertOrConfirm(bool aAlert,
+                               const nsAString& aMessage,
+                               mozilla::ErrorResult& aError)
 {
-  FORWARD_TO_OUTER_OR_THROW(Alert, (aMessage, aError), aError, );
+  // XXX This method is very similar to nsGlobalWindow::Prompt, make
+  // sure any modifications here don't need to happen over there!
+  MOZ_ASSERT(IsOuterWindow());
 
   if (!AreDialogsEnabled()) {
     aError.Throw(NS_ERROR_NOT_AVAILABLE);
-    return;
+    return false;
   }
 
   // Reset popup state while opening a modal dialog, and firing events
@@ -5992,36 +6041,50 @@ nsGlobalWindow::Alert(const nsAString& aMessage, mozilla::ErrorResult& aError)
     do_GetService("@mozilla.org/prompter;1", &rv);
   if (NS_FAILED(rv)) {
     aError.Throw(rv);
-    return;
+    return false;
   }
 
   nsCOMPtr<nsIPrompt> prompt;
   aError = promptFac->GetPrompt(this, NS_GET_IID(nsIPrompt),
-                                reinterpret_cast<void**>(&prompt));
+                                getter_AddRefs(prompt));
   if (aError.Failed()) {
-    return;
+    return false;
   }
 
   nsCOMPtr<nsIWritablePropertyBag2> promptBag = do_QueryInterface(prompt);
   if (promptBag)
     promptBag->SetPropertyAsBool(NS_LITERAL_STRING("allowTabModal"), allowTabModal);
 
-  nsAutoSyncOperation sync(GetCurrentInnerWindowInternal() ? 
-                             GetCurrentInnerWindowInternal()->mDoc :
-                             nullptr);
+  bool result = false;
+  nsAutoSyncOperation sync(mDoc);
   if (ShouldPromptToBlockDialogs()) {
     bool disallowDialog = false;
     nsXPIDLString label;
     nsContentUtils::GetLocalizedString(nsContentUtils::eCOMMON_DIALOG_PROPERTIES,
                                        "ScriptDialogLabel", label);
 
-    aError = prompt->AlertCheck(title.get(), final.get(), label.get(),
-                                &disallowDialog);
+    aError = aAlert ?
+               prompt->AlertCheck(title.get(), final.get(), label.get(),
+                                  &disallowDialog) :
+               prompt->ConfirmCheck(title.get(), final.get(), label.get(),
+                                    &disallowDialog, &result);
+
     if (disallowDialog)
       DisableDialogs();
   } else {
-    aError = prompt->Alert(title.get(), final.get());
+    aError = aAlert ?
+               prompt->Alert(title.get(), final.get()) :
+               prompt->Confirm(title.get(), final.get(), &result);
   }
+
+  return result;
+}
+
+void
+nsGlobalWindow::Alert(const nsAString& aMessage, mozilla::ErrorResult& aError)
+{
+  FORWARD_TO_OUTER_OR_THROW(Alert, (aMessage, aError), aError, );
+  AlertOrConfirm(/* aAlert = */ true, aMessage, aError);
 }
 
 NS_IMETHODIMP
@@ -6038,70 +6101,7 @@ nsGlobalWindow::Confirm(const nsAString& aMessage, ErrorResult& aError)
 {
   FORWARD_TO_OUTER_OR_THROW(Confirm, (aMessage, aError), aError, false);
 
-  if (!AreDialogsEnabled()) {
-    aError.Throw(NS_ERROR_NOT_AVAILABLE);
-    return false;
-  }
-
-  // Reset popup state while opening a modal dialog, and firing events
-  // about the dialog, to prevent the current state from being active
-  // the whole time a modal dialog is open.
-  nsAutoPopupStatePusher popupStatePusher(openAbused, true);
-
-  // Before bringing up the window, unsuppress painting and flush
-  // pending reflows.
-  EnsureReflowFlushAndPaint();
-
-  nsAutoString title;
-  MakeScriptDialogTitle(title);
-
-  // Remove non-terminating null characters from the 
-  // string. See bug #310037. 
-  nsAutoString final;
-  nsContentUtils::StripNullChars(aMessage, final);
-
-  // Check if we're being called at a point where we can't use tab-modal
-  // prompts, because something doesn't want reentrancy.
-  bool allowTabModal = GetIsTabModalPromptAllowed();
-
-  nsresult rv;
-  nsCOMPtr<nsIPromptFactory> promptFac =
-    do_GetService("@mozilla.org/prompter;1", &rv);
-  if (NS_FAILED(rv)) {
-    aError.Throw(rv);
-    return false;
-  }
-
-  nsCOMPtr<nsIPrompt> prompt;
-  aError = promptFac->GetPrompt(this, NS_GET_IID(nsIPrompt),
-                                reinterpret_cast<void**>(&prompt));
-  if (aError.Failed()) {
-    return false;
-  }
-
-  nsCOMPtr<nsIWritablePropertyBag2> promptBag = do_QueryInterface(prompt);
-  if (promptBag)
-    promptBag->SetPropertyAsBool(NS_LITERAL_STRING("allowTabModal"), allowTabModal);
-
-  bool result = false;
-  nsAutoSyncOperation sync(GetCurrentInnerWindowInternal() ? 
-                             GetCurrentInnerWindowInternal()->mDoc :
-                             nullptr);
-  if (ShouldPromptToBlockDialogs()) {
-    bool disallowDialog = false;
-    nsXPIDLString label;
-    nsContentUtils::GetLocalizedString(nsContentUtils::eCOMMON_DIALOG_PROPERTIES,
-                                       "ScriptDialogLabel", label);
-
-    aError = prompt->ConfirmCheck(title.get(), final.get(), label.get(),
-                                  &disallowDialog, &result);
-    if (disallowDialog)
-      DisableDialogs();
-  } else {
-    aError = prompt->Confirm(title.get(), final.get(), &result);
-  }
-
-  return result;
+  return AlertOrConfirm(/* aAlert = */ false, aMessage, aError);
 }
 
 NS_IMETHODIMP
@@ -6117,6 +6117,8 @@ void
 nsGlobalWindow::Prompt(const nsAString& aMessage, const nsAString& aInitial,
                        nsAString& aReturn, ErrorResult& aError)
 {
+  // XXX This method is very similar to nsGlobalWindow::AlertOrConfirm, make
+  // sure any modifications here don't need to happen over there!
   FORWARD_TO_OUTER_OR_THROW(Prompt, (aMessage, aInitial, aReturn, aError),
                             aError, );
 
@@ -6159,7 +6161,7 @@ nsGlobalWindow::Prompt(const nsAString& aMessage, const nsAString& aInitial,
 
   nsCOMPtr<nsIPrompt> prompt;
   aError = promptFac->GetPrompt(this, NS_GET_IID(nsIPrompt),
-                                reinterpret_cast<void**>(&prompt));
+                                getter_AddRefs(prompt));
   if (aError.Failed()) {
     return;
   }
@@ -6178,9 +6180,7 @@ nsGlobalWindow::Prompt(const nsAString& aMessage, const nsAString& aInitial,
                                        "ScriptDialogLabel", label);
   }
 
-  nsAutoSyncOperation sync(GetCurrentInnerWindowInternal() ? 
-                             GetCurrentInnerWindowInternal()->mDoc :
-                             nullptr);
+  nsAutoSyncOperation sync(mDoc);
   bool ok;
   aError = prompt->Prompt(title.get(), fixedMessage.get(),
                           &inoutValue, label.get(), &disallowDialog, &ok);
@@ -8225,10 +8225,20 @@ nsGlobalWindow::EnterModalState()
     }
   }
 
+  // Clear the capturing content if it is under topDoc.
+  // Usually the activeESM check above does that, but there are cases when
+  // we don't have activeESM, or it is for different document.
+  nsIDocument* topDoc = topWin->GetExtantDoc();
+  nsIContent* capturingContent = nsIPresShell::GetCapturingContent();
+  if (capturingContent && topDoc &&
+      nsContentUtils::ContentIsCrossDocDescendantOf(capturingContent, topDoc)) {
+    nsIPresShell::SetCapturingContent(nullptr, 0);
+  }
+
   if (topWin->mModalStateDepth == 0) {
     NS_ASSERTION(!mSuspendedDoc, "Shouldn't have mSuspendedDoc here!");
 
-    mSuspendedDoc = topWin->GetExtantDoc();
+    mSuspendedDoc = topDoc;
     if (mSuspendedDoc) {
       mSuspendedDoc->SuppressEventHandling();
     }
@@ -10464,6 +10474,11 @@ nsGlobalWindow::ShowSlowScriptDialog()
   // script and report a warning.
   if (!nsContentUtils::IsSafeToRunScript()) {
     JS_ReportWarning(cx, "A long running script was terminated");
+    return KillSlowScript;
+  }
+
+  // If our document is not active, just kill the script: we've been unloaded
+  if (!HasActiveDocument()) {
     return KillSlowScript;
   }
 
