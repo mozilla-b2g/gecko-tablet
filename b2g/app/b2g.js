@@ -401,7 +401,7 @@ pref("dom.mozBrowserFramesEnabled", true);
 pref("dom.ipc.processCount", 100000);
 
 pref("dom.ipc.browser_frames.oop_by_default", false);
-pref("dom.browser_frames.useAsyncPanZoom", false);
+pref("dom.browser_frames.useAsyncPanZoom", true);
 
 // SMS/MMS
 pref("dom.sms.enabled", true);
@@ -816,11 +816,7 @@ pref("network.sntp.port", 123);
 pref("network.sntp.timeout", 30); // In seconds.
 
 // Enable dataStore
-#ifdef RELEASE_BUILD
-pref("dom.datastore.enabled", false);
-#else
 pref("dom.datastore.enabled", true);
-#endif
 
 // DOM Inter-App Communication API.
 pref("dom.inter-app-communication-api.enabled", true);
@@ -874,6 +870,7 @@ pref("identity.fxaccounts.auth.uri", "https://api-accounts.dev.lcip.org/v1");
 // Gaia relies heavily on scroll events for now, so lets fire them
 // more often than the default value (100).
 pref("apz.asyncscroll.throttle", 40);
+pref("apz.pan_repaint_interval", 40);
 
 // This preference allows FirefoxOS apps (and content, I think) to force
 // the use of software (instead of hardware accelerated) 2D canvases by
