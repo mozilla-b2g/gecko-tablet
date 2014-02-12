@@ -1152,6 +1152,7 @@ pref("devtools.netmonitor.enabled", true);
 pref("devtools.netmonitor.panes-network-details-width", 450);
 pref("devtools.netmonitor.panes-network-details-height", 450);
 pref("devtools.netmonitor.statistics", true);
+pref("devtools.netmonitor.filters", "[\"all\"]");
 
 // Enable the Tilt inspector
 pref("devtools.tilt.enabled", true);
@@ -1181,7 +1182,7 @@ pref("devtools.shadereditor.enabled", false);
 pref("devtools.chrome.enabled", false);
 
 // Default theme ("dark" or "light")
-pref("devtools.theme", "light");
+pref("devtools.theme", "dark");
 
 // Display the introductory text
 pref("devtools.gcli.hideIntro", false);
