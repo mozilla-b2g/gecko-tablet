@@ -560,6 +560,11 @@ menuitem:not([type]):not(.menuitem-tooltip):not(.menuitem-iconic-tooltip) {
   -moz-appearance: none;
 }
 
+:-moz-any(#TabsToolbar, #nav-bar) .toolbarbutton-1[open="true"],
+:-moz-any(#TabsToolbar, #nav-bar) .toolbarbutton-1:hover:active {
+  padding: 3px;
+}
+
 :-moz-any(#TabsToolbar, #nav-bar) .toolbarbutton-1 > .toolbarbutton-menubutton-button > .toolbarbutton-icon,
 :-moz-any(#TabsToolbar, #nav-bar) .toolbarbutton-1 > .toolbarbutton-menubutton-dropmarker > .dropmarker-icon,
 :-moz-any(#TabsToolbar, #nav-bar) .toolbarbutton-1 > .toolbarbutton-icon {
@@ -692,9 +697,13 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
 #sync-button {
   -moz-image-region: rect(0px 144px 24px 120px);
 }
-#sync-button[status="active"] {
-  list-style-image: url("chrome://browser/skin/sync-24-throbber.png");
-  -moz-image-region: rect(0px 24px 24px 0px);
+#sync-button[cui-areatype="toolbar"][status="active"] {
+  list-style-image: url("chrome://browser/skin/syncProgress-toolbar.png");
+  -moz-image-region: rect(0px 18px 18px 0px);
+}
+#sync-button[cui-areatype="menu-panel"][status="active"] {
+  list-style-image: url("chrome://browser/skin/syncProgress-menuPanel.png");
+  -moz-image-region: rect(0px 32px 32px 0px);
 }
 
 #feed-button {

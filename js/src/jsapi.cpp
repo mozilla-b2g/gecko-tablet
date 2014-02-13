@@ -1139,7 +1139,7 @@ JS_InitStandardClasses(JSContext *cx, HandleObject obj)
 
 #define CLASP(name)                 (&name##Class)
 #define OCLASP(name)                (&name##Object::class_)
-#define TYPED_ARRAY_CLASP(type)     (&TypedArrayObject::classes[ScalarTypeRepresentation::type])
+#define TYPED_ARRAY_CLASP(type)     (&TypedArrayObject::classes[ScalarTypeDescr::type])
 #define EAGER_ATOM(name)            NAME_OFFSET(name)
 #define EAGER_CLASS_ATOM(name)      NAME_OFFSET(name)
 
@@ -2354,7 +2354,8 @@ JS_SetPrototype(JSContext *cx, JS::Handle<JSObject*> obj, JS::Handle<JSObject*> 
         return false;
 
     if (!succeeded) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_SETPROTOTYPEOF_FAIL);
+        RootedValue val(cx, ObjectValue(*obj));
+        js_ReportValueError(cx, JSMSG_SETPROTOTYPEOF_FAIL, JSDVG_IGNORE_STACK, val, js::NullPtr());
         return false;
     }
 
@@ -3773,16 +3774,24 @@ JS_SetReservedSlot(JSObject *obj, uint32_t index, Value value)
 }
 
 JS_PUBLIC_API(JSObject *)
-JS_NewArrayObject(JSContext *cx, int length, jsval *vector)
+JS_NewArrayObject(JSContext *cx, const JS::HandleValueArray& contents)
 {
-    AutoArrayRooter tvr(cx, length, vector);
-
     JS_ASSERT(!cx->runtime()->isAtomsCompartment(cx->compartment()));
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
 
-    assertSameCompartment(cx, JSValueArray(vector, vector ? (uint32_t)length : 0));
-    return NewDenseCopiedArray(cx, (uint32_t)length, vector);
+    assertSameCompartment(cx, contents);
+    return NewDenseCopiedArray(cx, contents.length(), contents.begin());
+}
+
+JS_PUBLIC_API(JSObject *)
+JS_NewArrayObject(JSContext *cx, size_t length)
+{
+    JS_ASSERT(!cx->runtime()->isAtomsCompartment(cx->compartment()));
+    AssertHeapIsIdle(cx);
+    CHECK_REQUEST(cx);
+
+    return NewDenseAllocatedArray(cx, length);
 }
 
 JS_PUBLIC_API(bool)

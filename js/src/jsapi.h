@@ -626,7 +626,7 @@ class HandleValueArray
         return HandleValueArray(len, elements);
     }
 
-    static HandleValueArray subarray(const AutoValueVector& values, size_t startIndex, size_t len) {
+    static HandleValueArray subarray(const HandleValueArray& values, size_t startIndex, size_t len) {
         JS_ASSERT(startIndex + len <= values.length());
         return HandleValueArray(len, values.begin() + startIndex);
     }
@@ -3070,7 +3070,10 @@ JS_DeleteUCProperty2(JSContext *cx, JS::HandleObject obj, const jschar *name, si
                      bool *succeeded);
 
 extern JS_PUBLIC_API(JSObject *)
-JS_NewArrayObject(JSContext *cx, int length, jsval *vector);
+JS_NewArrayObject(JSContext *cx, const JS::HandleValueArray& contents);
+
+extern JS_PUBLIC_API(JSObject *)
+JS_NewArrayObject(JSContext *cx, size_t length);
 
 extern JS_PUBLIC_API(bool)
 JS_IsArrayObject(JSContext *cx, JS::HandleValue value);
@@ -3165,15 +3168,17 @@ JS_StealArrayBufferContents(JSContext *cx, JS::HandleObject obj, void **contents
 
 /*
  * Allocate memory that may be eventually passed to
- * JS_NewArrayBufferWithContents. |nbytes| is the number of payload bytes
- * required. The pointer to pass to JS_NewArrayBufferWithContents is returned
- * in |contents|. The pointer to the |nbytes| of usable memory is returned in
- * |data|. (*|contents| will contain a header before |data|.) The only legal
- * operations on *|contents| is to free it, or pass it to
- * JS_NewArrayBufferWithContents or JS_ReallocateArrayBufferContents.
+ * JS_NewArrayBufferWithContents. |maybecx| is optional; if a non-nullptr cx is
+ * given, it will be used for memory accounting and OOM reporting. |nbytes| is
+ * the number of payload bytes required. The pointer to pass to
+ * JS_NewArrayBufferWithContents is returned in |contents|. The pointer to the
+ * |nbytes| of usable memory is returned in |data|. (*|contents| will contain a
+ * header before |data|.) The only legal operations on *|contents| is to free
+ * it, or pass it to JS_NewArrayBufferWithContents or
+ * JS_ReallocateArrayBufferContents.
  */
 extern JS_PUBLIC_API(bool)
-JS_AllocateArrayBufferContents(JSContext *cx, uint32_t nbytes, void **contents, uint8_t **data);
+JS_AllocateArrayBufferContents(JSContext *maybecx, uint32_t nbytes, void **contents, uint8_t **data);
 
 /*
  * Reallocate memory allocated by JS_AllocateArrayBufferContents, growing or
