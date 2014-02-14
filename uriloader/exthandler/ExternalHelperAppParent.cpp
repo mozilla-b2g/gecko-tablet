@@ -48,6 +48,8 @@ void
 ExternalHelperAppParent::Init(ContentParent *parent,
                               const nsCString& aMimeContentType,
                               const nsCString& aContentDispositionHeader,
+                              const uint32_t& aContentDispositionHint,
+                              const nsString& aContentDispositionFilename,
                               const bool& aForceSave,
                               const OptionalURIParams& aReferrer,
                               PBrowserParent* aBrowser)
@@ -61,8 +63,17 @@ ExternalHelperAppParent::Init(ContentParent *parent,
     SetPropertyAsInterface(NS_LITERAL_STRING("docshell.internalReferrer"), referrer);
 
   mContentDispositionHeader = aContentDispositionHeader;
-  NS_GetFilenameFromDisposition(mContentDispositionFilename, mContentDispositionHeader, mURI);
-  mContentDisposition = NS_GetContentDispositionFromHeader(mContentDispositionHeader, this);
+  if (!mContentDispositionHeader.IsEmpty()) {  
+    NS_GetFilenameFromDisposition(mContentDispositionFilename, 
+                                  mContentDispositionHeader, 
+                                  mURI);
+    mContentDisposition = 
+      NS_GetContentDispositionFromHeader(mContentDispositionHeader, this);
+  }
+  else {
+    mContentDisposition = aContentDispositionHint;
+    mContentDispositionFilename = aContentDispositionFilename;
+  }
 
   nsCOMPtr<nsIInterfaceRequestor> window;
   if (aBrowser) {

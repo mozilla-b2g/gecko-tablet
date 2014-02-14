@@ -8,6 +8,7 @@
 #define vm_Runtime_h
 
 #include "mozilla/Atomics.h"
+#include "mozilla/Attributes.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/PodOperations.h"
@@ -625,7 +626,7 @@ class PerThreadData : public PerThreadDataFriendFields
 
     // For threads which may be associated with different runtimes, depending
     // on the work they are doing.
-    class AutoEnterRuntime
+    class MOZ_STACK_CLASS AutoEnterRuntime
     {
         PerThreadData *pt;
 
@@ -1787,6 +1788,34 @@ struct JSRuntime : public JS::shadow::Runtime,
   public:
     js::AutoEnterPolicy *enteredPolicy;
 #endif
+
+    /*
+     * These variations of malloc/calloc/realloc will call the
+     * large-allocation-failure callback on OOM and retry the allocation.
+     */
+    JS::LargeAllocationFailureCallback largeAllocationFailureCallback;
+
+    static const unsigned LARGE_ALLOCATION = 25 * 1024 * 1024;
+
+    void *callocCanGC(size_t bytes) {
+        void *p = calloc_(bytes);
+        if (MOZ_LIKELY(!!p))
+            return p;
+        if (!largeAllocationFailureCallback || bytes < LARGE_ALLOCATION)
+            return nullptr;
+        largeAllocationFailureCallback();
+        return js_calloc(bytes);
+    }
+
+    void *reallocCanGC(void *p, size_t bytes) {
+        void *p2 = realloc_(p, bytes);
+        if (MOZ_LIKELY(!!p2))
+            return p2;
+        if (!largeAllocationFailureCallback || bytes < LARGE_ALLOCATION)
+            return nullptr;
+        largeAllocationFailureCallback();
+        return js_realloc(p, bytes);
+    }
 };
 
 namespace js {

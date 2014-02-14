@@ -421,6 +421,9 @@ class TreeMetadataEmitter(LoggingMixin):
         for name, jar in sandbox.get('JAVA_JAR_TARGETS', {}).items():
             yield SandboxWrapped(sandbox, jar)
 
+        for name, data in sandbox.get('ANDROID_ECLIPSE_PROJECT_TARGETS', {}).items():
+            yield SandboxWrapped(sandbox, data)
+
         if passthru.variables:
             yield passthru
 
@@ -502,7 +505,7 @@ class TreeMetadataEmitter(LoggingMixin):
 
                 process_support_files(test)
 
-            if not m.tests:
+            if not filtered:
                 # If there are no tests, look for support-files under DEFAULT.
                 process_support_files(defaults)
 

@@ -85,6 +85,7 @@ static const char *sExtensionNames[] = {
     "GL_OES_texture_float_linear",
     "GL_ARB_texture_float",
     "GL_OES_texture_half_float",
+    "GL_OES_texture_half_float_linear",
     "GL_NV_half_float",
     "GL_EXT_unpack_subimage",
     "GL_OES_standard_derivatives",
@@ -132,6 +133,7 @@ static const char *sExtensionNames[] = {
     "GL_EXT_framebuffer_sRGB",
     "GL_KHR_debug",
     "GL_ARB_half_float_pixel",
+    "GL_EXT_frag_depth",
     nullptr
 };
 
