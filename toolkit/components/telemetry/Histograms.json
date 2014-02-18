@@ -4014,6 +4014,11 @@
     "extended_statistics_ok": true,
     "description": "Number of sites blocked from the new tab page."
   },
+  "NEWTAB_PAGE_SHOWN": {
+    "expires_in_version": "35",
+    "kind": "boolean",
+    "description": "Number of times about:newtab was shown from opening a new tab or window."
+  },
   "PANORAMA_INITIALIZATION_TIME_MS": {
     "expires_in_version": "never",
     "kind": "exponential",
@@ -5701,6 +5706,12 @@
     "kind": "enumerated",
     "n_values": 8,
     "description": "For non-stapling cases, is OCSP fetching a possibility? (0=yes, 1=no because missing/invalid OCSP URI, 2=no because fetching disabled, 3=no because both)"
+  },
+  "SSL_CERT_ERROR_OVERRIDES": {
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 24,
+    "description": "Was a certificate error overridden on this handshake? What was it? (0=unknown error (indicating bug), 1=no, >1=a specific error)"
   },
   "TELEMETRY_TEST_EXPIRED": {
     "expires_in_version": "4.0a1",
