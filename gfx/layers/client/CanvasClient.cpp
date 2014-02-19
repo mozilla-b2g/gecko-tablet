@@ -76,12 +76,16 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
     return;
   }
 
-  RefPtr<DrawTarget> drawTarget =
-    mBuffer->AsTextureClientDrawTarget()->GetAsDrawTarget();
-  if (drawTarget) {
-    aLayer->UpdateTarget(drawTarget);
+  bool updated = false;
+  {
+    // Restrict drawTarget to a scope so that terminates before Unlock.
+    RefPtr<DrawTarget> drawTarget =
+      mBuffer->AsTextureClientDrawTarget()->GetAsDrawTarget();
+    if (drawTarget) {
+      aLayer->UpdateTarget(drawTarget);
+      updated = true;
+    }
   }
-
   mBuffer->Unlock();
 
   if (bufferCreated && !AddTextureClient(mBuffer)) {
@@ -89,7 +93,7 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
     return;
   }
 
-  if (drawTarget) {
+  if (updated) {
     GetForwarder()->UpdatedTexture(this, mBuffer, nullptr);
     GetForwarder()->UseTexture(this, mBuffer);
   }
@@ -132,7 +136,7 @@ CanvasClientSurfaceStream::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 
     SharedSurface_Gralloc* grallocSurf = SharedSurface_Gralloc::Cast(surf);
 
-    GrallocTextureClientOGL* grallocTextureClient =
+    RefPtr<GrallocTextureClientOGL> grallocTextureClient =
       static_cast<GrallocTextureClientOGL*>(grallocSurf->GetTextureClient());
 
     // If IPDLActor is null means this TextureClient didn't AddTextureClient yet

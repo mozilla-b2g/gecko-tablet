@@ -24,6 +24,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "jwcrypto",
 
 // All properties exposed by the public FxAccounts API.
 let publicProperties = [
+  "getAccountsSignInURI",
   "getAccountsURI",
   "getAssertion",
   "getKeys",
@@ -172,6 +173,8 @@ FxAccountsInternal.prototype = {
    *          kA: An encryption key from the FxA server
    *          kB: An encryption key derived from the user's FxA password
    *          verified: email verification status
+   *          authAt: The time (seconds since epoch) that this record was
+   *                  authenticated
    *        }
    *        or null if no user is signed in.
    */
@@ -202,6 +205,8 @@ FxAccountsInternal.prototype = {
    *          sessionToken: Session for the FxA server
    *          keyFetchToken: an unused keyFetchToken
    *          verified: true/false
+   *          authAt: The time (seconds since epoch) that this record was
+   *                  authenticated
    *        }
    * @return Promise
    *         The promise resolves to null when the data is saved
@@ -609,6 +614,15 @@ FxAccountsInternal.prototype = {
   // Return the URI of the remote UI flows.
   getAccountsURI: function() {
     let url = Services.urlFormatter.formatURLPref("identity.fxaccounts.remote.uri");
+    if (!/^https:/.test(url)) { // Comment to un-break emacs js-mode highlighting
+      throw new Error("Firefox Accounts server must use HTTPS");
+    }
+    return url;
+  },
+
+  // Return the URI of the remote UI flows.
+  getAccountsSignInURI: function() {
+    let url = Services.urlFormatter.formatURLPref("identity.fxaccounts.remote.signin.uri");
     if (!/^https:/.test(url)) { // Comment to un-break emacs js-mode highlighting
       throw new Error("Firefox Accounts server must use HTTPS");
     }

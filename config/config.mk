@@ -334,9 +334,9 @@ _ENABLE_PIC=1
 # Determine if module being compiled is destined
 # to be merged into libxul
 
-ifeq ($(FINAL_LIBRARY),xul)
+ifneq (,$(filter xul,$(FINAL_LIBRARY) $(LIBRARY_NAME)))
   ifdef LIBXUL_LIBRARY
-    $(error FINAL_LIBRARY is "xul", LIBXUL_LIBRARY is implied)
+    $(error LIBRARY_NAME or FINAL_LIBRARY is "xul", LIBXUL_LIBRARY is implied)
   endif
   LIBXUL_LIBRARY := 1
 endif
@@ -420,8 +420,7 @@ ifdef _MSC_VER
 OS_LDFLAGS += $(DELAYLOAD_LDFLAGS)
 endif # _MSC_VER
 
-# Does the makefile specifies the internal XPCOM API linkage?
-ifneq (,$(MOZILLA_INTERNAL_API)$(LIBXUL_LIBRARY))
+ifneq (,$(LIBXUL_LIBRARY))
 DEFINES += -DMOZILLA_INTERNAL_API
 endif
 

@@ -65,6 +65,9 @@ const COMPAT = {
 
   // The indent of a console group in pixels.
   GROUP_INDENT: 12,
+
+  // The default indent in pixels, applied even without any groups.
+  GROUP_INDENT_DEFAULT: 6,
 };
 
 // A map from the console API call levels to the Web Console severities.
@@ -82,7 +85,8 @@ const CONSOLE_API_LEVELS_TO_SEVERITIES = {
   groupCollapsed: "log",
   groupEnd: "log",
   time: "log",
-  timeEnd: "log"
+  timeEnd: "log",
+  count: "log"
 };
 
 // Array of known message source URLs we need to hide from output.
@@ -775,6 +779,12 @@ Messages.Simple.prototype = Heritage.extend(Messages.BaseMessage.prototype,
     let icon = this.document.createElementNS(XHTML_NS, "span");
     icon.className = "icon";
 
+    // Apply the current group by indenting appropriately.
+    // TODO: remove this once bug 778766 is fixed.
+    let iconMarginLeft = this._groupDepthCompat * COMPAT.GROUP_INDENT +
+                         COMPAT.GROUP_INDENT_DEFAULT;
+    icon.style.marginLeft = iconMarginLeft + "px";
+
     let body = this._renderBody();
     this._repeatID.textContent += "|" + body.textContent;
 
@@ -1077,7 +1087,20 @@ Messages.ConsoleGeneric = function(packet)
       line: packet.lineNumber,
     },
   };
-  Messages.Extended.call(this, packet.arguments, options);
+  switch (packet.level) {
+    case "count": {
+      let counter = packet.counter, label = counter.label;
+      if (!label) {
+        label = l10n.getStr("noCounterLabel");
+      }
+      Messages.Extended.call(this, [label+ ": " + counter.count], options);
+      break;
+    }
+    default:
+      Messages.Extended.call(this, packet.arguments, options);
+      break;
+  }
+
   this._repeatID.consoleApiLevel = packet.level;
 };
 
@@ -1304,11 +1327,6 @@ Widgets.MessageTimestamp.prototype = Heritage.extend(Widgets.BaseWidget.prototyp
     this.element = this.document.createElementNS(XHTML_NS, "span");
     this.element.className = "timestamp devtools-monospace";
     this.element.textContent = l10n.timestampString(this.timestamp) + " ";
-
-    // Apply the current group by indenting appropriately.
-    // TODO: remove this once bug 778766 is fixed.
-    this.element.style.marginRight = this.message._groupDepthCompat *
-                                     COMPAT.GROUP_INDENT + "px";
 
     return this;
   },

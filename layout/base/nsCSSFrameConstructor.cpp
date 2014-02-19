@@ -2463,9 +2463,6 @@ nsCSSFrameConstructor::ConstructDocElementFrame(Element*                 aDocEle
   MOZ_ASSERT(newFrame);
   MOZ_ASSERT(contentFrame);
 
-  // set the primary frame
-  aDocElement->SetPrimaryFrame(contentFrame);
-
   NS_ASSERTION(processChildren ? !mRootElementFrame :
                  mRootElementFrame == contentFrame,
                "unexpected mRootElementFrame");
@@ -2495,6 +2492,9 @@ nsCSSFrameConstructor::ConstructDocElementFrame(Element*                 aDocEle
     // Set the initial child lists
     contentFrame->SetInitialChildList(kPrincipalList, childItems);
   }
+
+  // set the primary frame
+  aDocElement->SetPrimaryFrame(contentFrame);
 
   SetInitialSingleChild(mDocElementContainingBlock, newFrame);
 
@@ -10102,13 +10102,19 @@ nsCSSFrameConstructor::RemoveFloatingFirstLetterFrames(
   textContent->SetPrimaryFrame(newTextFrame);
 
   // Wallpaper bug 822910.
-  if (prevSibling && prevSibling->GetType() == nsGkAtoms::textFrame) {
-    prevSibling->AddStateBits(NS_FRAME_IS_DIRTY);
+  bool offsetsNeedFixing =
+    prevSibling && prevSibling->GetType() == nsGkAtoms::textFrame;
+  if (offsetsNeedFixing) {
+    prevSibling->AddStateBits(TEXT_OFFSETS_NEED_FIXING);
   }
 
   // Insert text frame in its place
   nsFrameList textList(newTextFrame, newTextFrame);
   InsertFrames(parentFrame, kPrincipalList, prevSibling, textList);
+
+  if (offsetsNeedFixing) {
+    prevSibling->RemoveStateBits(TEXT_OFFSETS_NEED_FIXING);
+  }
 
   return NS_OK;
 }
@@ -10153,13 +10159,19 @@ nsCSSFrameConstructor::RemoveFirstLetterFrames(nsPresContext* aPresContext,
       textContent->SetPrimaryFrame(textFrame);
 
       // Wallpaper bug 822910.
-      if (prevSibling && prevSibling->GetType() == nsGkAtoms::textFrame) {
-        prevSibling->AddStateBits(NS_FRAME_IS_DIRTY);
+      bool offsetsNeedFixing =
+        prevSibling && prevSibling->GetType() == nsGkAtoms::textFrame;
+      if (offsetsNeedFixing) {
+        prevSibling->AddStateBits(TEXT_OFFSETS_NEED_FIXING);
       }
 
       // Insert text frame in its place
       nsFrameList textList(textFrame, textFrame);
       InsertFrames(aFrame, kPrincipalList, prevSibling, textList);
+
+      if (offsetsNeedFixing) {
+        prevSibling->RemoveStateBits(TEXT_OFFSETS_NEED_FIXING);
+      }
 
       *aStopLooking = true;
       NS_ASSERTION(!aBlockFrame->GetPrevContinuation(),

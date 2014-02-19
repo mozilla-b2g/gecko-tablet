@@ -461,18 +461,19 @@ CompositorD3D11::SetRenderTarget(CompositingRenderTarget* aRenderTarget)
 }
 
 void
-CompositorD3D11::SetPSForEffect(Effect* aEffect, MaskType aMaskType)
+CompositorD3D11::SetPSForEffect(Effect* aEffect, MaskType aMaskType, gfx::SurfaceFormat aFormat)
 {
   switch (aEffect->mType) {
   case EFFECT_SOLID_COLOR:
     mContext->PSSetShader(mAttachments->mSolidColorShader[aMaskType], nullptr, 0);
     return;
-  case EFFECT_BGRA:
   case EFFECT_RENDER_TARGET:
     mContext->PSSetShader(mAttachments->mRGBAShader[aMaskType], nullptr, 0);
     return;
-  case EFFECT_BGRX:
-    mContext->PSSetShader(mAttachments->mRGBShader[aMaskType], nullptr, 0);
+  case EFFECT_RGB:
+    mContext->PSSetShader((aFormat == SurfaceFormat::B8G8R8A8 || aFormat == SurfaceFormat::R8G8B8A8)
+                          ? mAttachments->mRGBAShader[aMaskType]
+                          : mAttachments->mRGBShader[aMaskType], nullptr, 0);
     return;
   case EFFECT_YCBCR:
     mContext->PSSetShader(mAttachments->mYCbCrShader[aMaskType], nullptr, 0);
@@ -510,7 +511,7 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
     if (aTransform.Is2D()) {
       maskType = Mask2d;
     } else {
-      MOZ_ASSERT(aEffectChain.mPrimaryEffect->mType == EFFECT_BGRA);
+      MOZ_ASSERT(aEffectChain.mPrimaryEffect->mType == EFFECT_RGB);
       maskType = Mask3d;
     }
 
@@ -546,10 +547,11 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
   mContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
   mContext->VSSetShader(mAttachments->mVSQuadShader[maskType], nullptr, 0);
 
-  SetPSForEffect(aEffectChain.mPrimaryEffect, maskType);
 
   switch (aEffectChain.mPrimaryEffect->mType) {
   case EFFECT_SOLID_COLOR: {
+      SetPSForEffect(aEffectChain.mPrimaryEffect, maskType, SurfaceFormat::UNKNOWN);
+
       Color color =
         static_cast<EffectSolidColor*>(aEffectChain.mPrimaryEffect.get())->mColor;
       mPSConstants.layerColor[0] = color.r * color.a * aOpacity;
@@ -558,8 +560,7 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
       mPSConstants.layerColor[3] = color.a * aOpacity;
     }
     break;
-  case EFFECT_BGRX:
-  case EFFECT_BGRA:
+  case EFFECT_RGB:
   case EFFECT_RENDER_TARGET:
     {
       TexturedEffect* texturedEffect =
@@ -573,6 +574,8 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
         NS_WARNING("Missing texture source!");
         return;
       }
+
+      SetPSForEffect(aEffectChain.mPrimaryEffect, maskType, texturedEffect->mTexture->GetFormat());
 
       RefPtr<ID3D11ShaderResourceView> view;
       mDevice->CreateShaderResourceView(source->GetD3D11Texture(), nullptr, byRef(view));
@@ -604,6 +607,8 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
         return;
       }
 
+      SetPSForEffect(aEffectChain.mPrimaryEffect, maskType, ycbcrEffect->mTexture->GetFormat());
+
       if (!source->GetSubSource(Y) || !source->GetSubSource(Cb) || !source->GetSubSource(Cr)) {
         // This can happen if we failed to upload the textures, most likely
         // because of unsupported dimensions (we don't tile YCbCr textures).
@@ -632,6 +637,7 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
       MOZ_ASSERT(mAttachments->mComponentBlendState);
       EffectComponentAlpha* effectComponentAlpha =
         static_cast<EffectComponentAlpha*>(aEffectChain.mPrimaryEffect.get());
+
       TextureSourceD3D11* sourceOnWhite = effectComponentAlpha->mOnWhite->AsSourceD3D11();
       TextureSourceD3D11* sourceOnBlack = effectComponentAlpha->mOnBlack->AsSourceD3D11();
 
@@ -639,6 +645,8 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
         NS_WARNING("Missing texture source(s)!");
         return;
       }
+
+      SetPSForEffect(aEffectChain.mPrimaryEffect, maskType, effectComponentAlpha->mOnWhite->GetFormat());
 
       SetSamplerForFilter(effectComponentAlpha->mFilter);
 
