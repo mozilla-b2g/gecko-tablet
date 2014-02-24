@@ -3752,6 +3752,7 @@ class MPow
     static MPow *New(TempAllocator &alloc, MDefinition *input, MDefinition *power,
                      MIRType powerType)
     {
+        JS_ASSERT(powerType == MIRType_Double || powerType == MIRType_Int32);
         return new(alloc) MPow(input, power, powerType);
     }
 
@@ -5532,6 +5533,41 @@ class MTypedArrayElements
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
+    AliasSet getAliasSet() const {
+        return AliasSet::Load(AliasSet::ObjectFields);
+    }
+};
+
+// Checks whether a typed object is neutered.
+class MNeuterCheck
+  : public MUnaryInstruction
+{
+  private:
+    MNeuterCheck(MDefinition *object)
+      : MUnaryInstruction(object)
+    {
+        JS_ASSERT(object->type() == MIRType_Object);
+        setResultType(MIRType_Object);
+        setResultTypeSet(object->resultTypeSet());
+        setGuard();
+        setMovable();
+    }
+
+  public:
+    INSTRUCTION_HEADER(NeuterCheck)
+
+    static MNeuterCheck *New(TempAllocator &alloc, MDefinition *object) {
+        return new(alloc) MNeuterCheck(object);
+    }
+
+    MDefinition *object() const {
+        return getOperand(0);
+    }
+
+    bool congruentTo(MDefinition *ins) const {
+        return congruentIfOperandsEqual(ins);
+    }
+
     AliasSet getAliasSet() const {
         return AliasSet::Load(AliasSet::ObjectFields);
     }

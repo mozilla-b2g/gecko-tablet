@@ -226,7 +226,7 @@ InitProp(JSContext *cx, HandleObject obj, HandlePropertyName name, HandleValue v
 
     MOZ_ASSERT(name != cx->names().proto,
                "__proto__ should have been handled by JSOP_MUTATEPROTO");
-    return DefineNativeProperty(cx, obj, id, rval, nullptr, nullptr, JSPROP_ENUMERATE, 0, 0, 0);
+    return DefineNativeProperty(cx, obj, id, rval, nullptr, nullptr, JSPROP_ENUMERATE, 0, 0);
 }
 
 template<bool Equal>
@@ -956,13 +956,14 @@ InitBaselineFrameForOsr(BaselineFrame *frame, StackFrame *interpFrame, uint32_t 
     return frame->initForOsr(interpFrame, numStackValues);
 }
 
-JSObject *CreateDerivedTypedObj(JSContext *cx, HandleObject descr,
-                                HandleObject owner, int32_t offset)
+JSObject *
+CreateDerivedTypedObj(JSContext *cx, HandleObject descr,
+                      HandleObject owner, int32_t offset)
 {
     JS_ASSERT(descr->is<SizedTypeDescr>());
-    JS_ASSERT(owner->is<TypedDatum>());
+    JS_ASSERT(owner->is<TypedObject>());
     Rooted<SizedTypeDescr*> descr1(cx, &descr->as<SizedTypeDescr>());
-    Rooted<TypedDatum*> owner1(cx, &owner->as<TypedDatum>());
+    Rooted<TypedObject*> owner1(cx, &owner->as<TypedObject>());
     return TypedObject::createDerived(cx, descr1, owner1, offset);
 }
 

@@ -54,7 +54,7 @@ DEFINES['SK_R32_SHIFT'] = 16
 DEFINES['SK_G32_SHIFT'] = 8
 DEFINES['SK_B32_SHIFT'] = 0
 
-if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('android', 'gtk2', 'gtk3', 'gonk', 'cocoa'):
+if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('android', 'gtk2', 'gtk3', 'qt', 'gonk', 'cocoa'):
     DEFINES['SK_USE_POSIX_THREADS'] = 1
 
 if CONFIG['INTEL_ARCHITECTURE'] and CONFIG['HAVE_TOOLCHAIN_SUPPORT_MSSSE3']:
@@ -63,6 +63,7 @@ if CONFIG['INTEL_ARCHITECTURE'] and CONFIG['HAVE_TOOLCHAIN_SUPPORT_MSSSE3']:
 if (CONFIG['MOZ_WIDGET_TOOLKIT'] == 'android') or \
    (CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa') or \
    (CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk') or \
+   CONFIG['MOZ_WIDGET_QT'] or \
    CONFIG['MOZ_WIDGET_GTK']:
     DEFINES['SK_FONTHOST_DOES_NOT_USE_FONTMGR'] = 1
 
@@ -131,6 +132,7 @@ def generate_separated_sources(platform_sources):
     'GrGLCreateNativeInterface',
     'fontconfig',
     '_neon',
+    'SkThreadUtils_pthread_',
     'SkImage_Codec',
     'SkBitmapChecksummer',
     'SkNativeGLContext',
@@ -175,7 +177,6 @@ def generate_separated_sources(platform_sources):
       # 'trunk/src/ports/SkPurgeableMemoryBlock_android.cpp',
       # 'trunk/src/ports/SkTime_Unix.cpp',
       # 'trunk/src/utils/SkThreadUtils_pthread.cpp',
-      # 'trunk/src/utils/SkThreadUtils_pthread_other.cpp',
       # 'trunk/src/images/SkImageRef_ashmem.cpp',
       # 'trunk/src/utils/android/ashmem.cpp',
     },
@@ -270,6 +271,9 @@ def write_mozbuild(includes, sources):
   write_list(f, 'SOURCES', sources['mac'], 4)
 
   f.write("if CONFIG['MOZ_WIDGET_GTK']:\n")
+  write_list(f, 'SOURCES', sources['linux'], 4)
+
+  f.write("if CONFIG['MOZ_WIDGET_QT']:\n")
   write_list(f, 'SOURCES', sources['linux'], 4)
 
   f.write("if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':\n")
