@@ -12,7 +12,7 @@ Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
 
 const NETWORKSERVICE_CONTRACTID = "@mozilla.org/network/service;1";
-const NETWORKSERVICE_CID = Components.ID("{c14cabaf-bb8e-470d-a2f1-2cb6de6c5e5c}");
+const NETWORKSERVICE_CID = Components.ID("{baec696c-c78d-42db-8b44-603f8fbfafb4}");
 
 XPCOMUtils.defineLazyServiceGetter(this, "gNetworkWorker",
                                    "@mozilla.org/network/worker;1",
@@ -283,6 +283,7 @@ NetworkService.prototype = {
     let options = {
       cmd: "setDNS",
       ifname: networkInterface.name,
+      domain: "mozilla." + networkInterface.name + ".doman",
       dns1_str: networkInterface.dns1,
       dns2_str: networkInterface.dns2
     };
@@ -296,6 +297,7 @@ NetworkService.prototype = {
       ifname: network.name,
       oldIfname: (oldInterface && oldInterface !== network) ? oldInterface.name : null,
       gateway_str: network.gateway,
+      domain: "mozilla." + network.name + ".doman",
       dns1_str: network.dns1,
       dns2_str: network.dns2
     };
@@ -361,6 +363,30 @@ NetworkService.prototype = {
       ifname: network.name,
       gateway: network.gateway,
       hostnames: hosts
+    };
+    this.controlMessage(options, function() {});
+  },
+
+  addSecondaryRoute: function(ifname, route) {
+    if(DEBUG) debug("Going to add route to secondary table on " + ifname);
+    let options = {
+      cmd: "addSecondaryRoute",
+      ifname: ifname,
+      ip: route.ip,
+      prefix: route.prefix,
+      gateway: route.gateway
+    };
+    this.controlMessage(options, function() {});
+  },
+
+  removeSecondaryRoute: function(ifname, route) {
+    if(DEBUG) debug("Going to remove route from secondary table on " + ifname);
+    let options = {
+      cmd: "removeSecondaryRoute",
+      ifname: ifname,
+      ip: route.ip,
+      prefix: route.prefix,
+      gateway: route.gateway
     };
     this.controlMessage(options, function() {});
   },

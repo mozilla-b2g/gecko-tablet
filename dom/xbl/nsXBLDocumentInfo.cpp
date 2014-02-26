@@ -397,7 +397,11 @@ void
 nsXBLDocumentInfo::RemovePrototypeBinding(const nsACString& aRef)
 {
   if (mBindingTable) {
-    mBindingTable->Remove(aRef);
+    nsAutoPtr<nsXBLPrototypeBinding> bindingToRemove;
+    mBindingTable->RemoveAndForget(aRef, bindingToRemove);
+
+    // We do not want to destroy the binding, so just forget it.
+    bindingToRemove.forget();
   }
 }
 

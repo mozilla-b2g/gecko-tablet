@@ -4243,7 +4243,7 @@ function onViewToolbarsPopupShowing(aEvent, aInsertPoint) {
 
   if (toolbarItem && toolbarItem.localName == "toolbarpaletteitem") {
     toolbarItem = toolbarItem.firstChild;
-  } else {
+  } else if (toolbarItem && toolbarItem.localName != "toolbar") {
     while (toolbarItem && toolbarItem.parentNode) {
       let parent = toolbarItem.parentNode;
       if ((parent.classList && parent.classList.contains("customization-target")) ||
@@ -4253,6 +4253,8 @@ function onViewToolbarsPopupShowing(aEvent, aInsertPoint) {
         break;
       toolbarItem = parent;
     }
+  } else {
+    toolbarItem = null;
   }
 
   // Right-clicking on an empty part of the tabstrip will exit
@@ -4278,8 +4280,15 @@ function onViewToolbarCommand(aEvent) {
 }
 
 function setToolbarVisibility(toolbar, isVisible) {
-  var hidingAttribute = toolbar.getAttribute("type") == "menubar" ?
-                        "autohide" : "collapsed";
+  let hidingAttribute;
+  if (toolbar.getAttribute("type") == "menubar") {
+    hidingAttribute = "autohide";
+#ifdef MOZ_WIDGET_GTK
+    Services.prefs.setBoolPref("ui.key.menuAccessKeyFocuses", !isVisible);
+#endif
+  } else {
+    hidingAttribute = "collapsed";
+  }
 
   toolbar.setAttribute(hidingAttribute, !isVisible);
   document.persist(toolbar.id, hidingAttribute);
