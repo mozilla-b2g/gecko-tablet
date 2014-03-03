@@ -443,6 +443,10 @@ abstract public class BrowserApp extends GeckoApp
             GeckoProfile.maybeCleanupGuestProfile(this);
         }
 
+        // This has to be prepared prior to calling GeckoApp.onCreate, because
+        // widget code and BrowserToolbar need it, and they're created by the
+        // layout, which GeckoApp takes care of.
+        ((GeckoApplication) getApplication()).prepareLightweightTheme();
         super.onCreate(savedInstanceState);
 
         mViewFlipper = (ViewFlipper) findViewById(R.id.browser_actionbar);
@@ -450,7 +454,7 @@ abstract public class BrowserApp extends GeckoApp
 
         mBrowserToolbar = (BrowserToolbar) findViewById(R.id.browser_toolbar);
         if (Intent.ACTION_VIEW.equals(intent.getAction())) {
-            // Show the target URL immediately in the toolbar
+            // Show the target URL immediately in the toolbar.
             mBrowserToolbar.setTitle(intent.getDataString());
         }
 
@@ -2401,7 +2405,7 @@ abstract public class BrowserApp extends GeckoApp
                             GeckoProfile.leaveGuestSession(BrowserApp.this);
                         }
                         doRestart(args);
-                        System.exit(0);
+                        GeckoAppShell.systemExit();
                     }
                 } catch(JSONException ex) {
                     Log.e(LOGTAG, "Exception reading guest mode prompt result", ex);

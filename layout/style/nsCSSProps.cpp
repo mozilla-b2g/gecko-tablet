@@ -654,6 +654,7 @@ const KTableValue nsCSSProps::kAppearanceKTable[] = {
   eCSSKeyword__moz_win_borderless_glass,      NS_THEME_WIN_BORDERLESS_GLASS,
   eCSSKeyword__moz_mac_unified_toolbar,       NS_THEME_MOZ_MAC_UNIFIED_TOOLBAR,
   eCSSKeyword__moz_mac_fullscreen_button,     NS_THEME_MOZ_MAC_FULLSCREEN_BUTTON,
+  eCSSKeyword__moz_mac_help_button,           NS_THEME_MOZ_MAC_HELP_BUTTON,
   eCSSKeyword__moz_window_titlebar,           NS_THEME_WINDOW_TITLEBAR,
   eCSSKeyword__moz_window_titlebar_maximized, NS_THEME_WINDOW_TITLEBAR_MAXIMIZED,
   eCSSKeyword__moz_window_frame_left,         NS_THEME_WINDOW_FRAME_LEFT,
@@ -834,7 +835,7 @@ const KTableValue nsCSSProps::kClearKTable[] = {
   eCSSKeyword_none, NS_STYLE_CLEAR_NONE,
   eCSSKeyword_left, NS_STYLE_CLEAR_LEFT,
   eCSSKeyword_right, NS_STYLE_CLEAR_RIGHT,
-  eCSSKeyword_both, NS_STYLE_CLEAR_LEFT_AND_RIGHT,
+  eCSSKeyword_both, NS_STYLE_CLEAR_BOTH,
   eCSSKeyword_UNKNOWN,-1
 };
 

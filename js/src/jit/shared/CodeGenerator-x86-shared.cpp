@@ -21,12 +21,10 @@
 using namespace js;
 using namespace js::jit;
 
-using mozilla::DoubleSignificandBits;
-using mozilla::FloatSignificandBits;
+using mozilla::FloatingPoint;
 using mozilla::FloorLog2;
 using mozilla::NegativeInfinity;
 using mozilla::SpecificNaN;
-using mozilla::SpecificFloatNaN;
 
 namespace js {
 namespace jit {
@@ -512,7 +510,8 @@ CodeGeneratorX86Shared::visitAbsD(LAbsD *ins)
     FloatRegister input = ToFloatRegister(ins->input());
     JS_ASSERT(input == ToFloatRegister(ins->output()));
     // Load a value which is all ones except for the sign bit.
-    masm.loadConstantDouble(SpecificNaN(0, DoubleSignificandBits), ScratchFloatReg);
+    masm.loadConstantDouble(SpecificNaN<double>(0, FloatingPoint<double>::SignificandBits),
+                            ScratchFloatReg);
     masm.andpd(ScratchFloatReg, input);
     return true;
 }
@@ -523,7 +522,8 @@ CodeGeneratorX86Shared::visitAbsF(LAbsF *ins)
     FloatRegister input = ToFloatRegister(ins->input());
     JS_ASSERT(input == ToFloatRegister(ins->output()));
     // Same trick as visitAbsD above.
-    masm.loadConstantFloat32(SpecificFloatNaN(0, FloatSignificandBits), ScratchFloatReg);
+    masm.loadConstantFloat32(SpecificNaN<float>(0, FloatingPoint<float>::SignificandBits),
+                             ScratchFloatReg);
     masm.andps(ScratchFloatReg, input);
     return true;
 }
@@ -556,7 +556,7 @@ CodeGeneratorX86Shared::visitPowHalfD(LPowHalfD *ins)
 
     if (!ins->mir()->operandIsNeverNegativeInfinity()) {
         // Branch if not -Infinity.
-        masm.loadConstantDouble(NegativeInfinity(), ScratchFloatReg);
+        masm.loadConstantDouble(NegativeInfinity<double>(), ScratchFloatReg);
 
         Assembler::DoubleCondition cond = Assembler::DoubleNotEqualOrUnordered;
         if (ins->mir()->operandIsNeverNaN())
@@ -1654,6 +1654,93 @@ CodeGeneratorX86Shared::visitRound(LRound *lir)
             // Test whether the truncated double was integer-valued.
             masm.convertInt32ToDouble(output, scratch);
             masm.branchDouble(Assembler::DoubleEqualOrUnordered, temp, scratch, &end);
+
+            // Input is not integer-valued, so we rounded off-by-one in the
+            // wrong direction. Correct by subtraction.
+            masm.subl(Imm32(1), output);
+            // Cannot overflow: output was already checked against INT_MIN.
+        }
+    }
+
+    masm.bind(&end);
+    return true;
+}
+
+bool
+CodeGeneratorX86Shared::visitRoundF(LRoundF *lir)
+{
+    FloatRegister input = ToFloatRegister(lir->input());
+    FloatRegister temp = ToFloatRegister(lir->temp());
+    FloatRegister scratch = ScratchFloatReg;
+    Register output = ToRegister(lir->output());
+
+    Label negative, end;
+
+    // Load 0.5 in the temp register.
+    masm.loadConstantFloat32(0.5f, temp);
+
+    // Branch to a slow path for negative inputs. Doesn't catch NaN or -0.
+    masm.xorps(scratch, scratch);
+    masm.branchFloat(Assembler::DoubleLessThan, input, scratch, &negative);
+
+    // Bail on negative-zero.
+    Assembler::Condition bailCond = masm.testNegativeZeroFloat32(input, output);
+    if (!bailoutIf(bailCond, lir->snapshot()))
+        return false;
+
+    // Input is non-negative. Add 0.5 and truncate, rounding down. Note that we
+    // have to add the input to the temp register (which contains 0.5) because
+    // we're not allowed to modify the input register.
+    masm.addss(input, temp);
+
+    masm.cvttss2si(temp, output);
+    masm.cmp32(output, Imm32(INT_MIN));
+    if (!bailoutIf(Assembler::Equal, lir->snapshot()))
+        return false;
+
+    masm.jump(&end);
+
+
+    // Input is negative, but isn't -0.
+    masm.bind(&negative);
+
+    if (AssemblerX86Shared::HasSSE41()) {
+        // Add 0.5 and round toward -Infinity. The result is stored in the temp
+        // register (currently contains 0.5).
+        masm.addss(input, temp);
+        masm.roundss(temp, scratch, JSC::X86Assembler::RoundDown);
+
+        // Truncate.
+        masm.cvttss2si(scratch, output);
+        masm.cmp32(output, Imm32(INT_MIN));
+        if (!bailoutIf(Assembler::Equal, lir->snapshot()))
+            return false;
+
+        // If the result is positive zero, then the actual result is -0. Bail.
+        // Otherwise, the truncation will have produced the correct negative integer.
+        masm.testl(output, output);
+        if (!bailoutIf(Assembler::Zero, lir->snapshot()))
+            return false;
+
+    } else {
+        masm.addss(input, temp);
+        // Round toward -Infinity without the benefit of ROUNDSS.
+        {
+            // If input + 0.5 >= 0, input is a negative number >= -0.5 and the result is -0.
+            masm.compareFloat(Assembler::DoubleGreaterThanOrEqual, temp, scratch);
+            if (!bailoutIf(Assembler::DoubleGreaterThanOrEqual, lir->snapshot()))
+                return false;
+
+            // Truncate and round toward zero.
+            // This is off-by-one for everything but integer-valued inputs.
+            masm.cvttss2si(temp, output);
+            masm.cmp32(output, Imm32(INT_MIN));
+            if (!bailoutIf(Assembler::Equal, lir->snapshot()))
+                return false;
+
+            // Test whether the truncated double was integer-valued.
+            masm.convertInt32ToFloat32(output, scratch);
+            masm.branchFloat(Assembler::DoubleEqualOrUnordered, temp, scratch, &end);
 
             // Input is not integer-valued, so we rounded off-by-one in the
             // wrong direction. Correct by subtraction.

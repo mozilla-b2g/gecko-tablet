@@ -8,7 +8,7 @@
 #include "nsCOMPtr.h"
 #include "nsIAtom.h"
 #include "nsIInputStream.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsIURI.h"
 #include "nsIURL.h"
 #include "nsIChannel.h"
@@ -1037,6 +1037,23 @@ nsXBLPrototypeBinding::Read(nsIObjectInputStream* aStream,
 
   cleanup.Disconnect();
   return NS_OK;
+}
+
+// static
+nsresult
+nsXBLPrototypeBinding::ReadNewBinding(nsIObjectInputStream* aStream,
+                                      nsXBLDocumentInfo* aDocInfo,
+                                      nsIDocument* aDocument,
+                                      uint8_t aFlags)
+{
+  // If the Read() succeeds, |binding| will end up being owned by aDocInfo's
+  // binding table. Otherwise, we must manually delete it.
+  nsXBLPrototypeBinding* binding = new nsXBLPrototypeBinding();
+  nsresult rv = binding->Read(aStream, aDocInfo, aDocument, aFlags);
+  if (NS_FAILED(rv)) {
+    delete binding;
+  }
+  return rv;
 }
 
 static PLDHashOperator

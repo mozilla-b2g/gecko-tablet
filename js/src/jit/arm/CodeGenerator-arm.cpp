@@ -1016,7 +1016,7 @@ CodeGeneratorARM::visitPowHalfD(LPowHalfD *ins)
     Label done;
 
     // Masm.pow(-Infinity, 0.5) == Infinity.
-    masm.ma_vimm(NegativeInfinity(), ScratchFloatReg);
+    masm.ma_vimm(NegativeInfinity<double>(), ScratchFloatReg);
     masm.compareDouble(input, ScratchFloatReg);
     masm.ma_vneg(ScratchFloatReg, output, Assembler::Equal);
     masm.ma_b(&done, Assembler::Equal);
@@ -1239,6 +1239,21 @@ CodeGeneratorARM::visitRound(LRound *lir)
     // Output is either correct, or clamped.  All -0 cases have been translated to a clamped
     // case.a
     masm.round(input, output, &bail, tmp);
+    if (!bailoutFrom(&bail, lir->snapshot()))
+        return false;
+    return true;
+}
+
+bool
+CodeGeneratorARM::visitRoundF(LRoundF *lir)
+{
+    FloatRegister input = ToFloatRegister(lir->input());
+    Register output = ToRegister(lir->output());
+    FloatRegister tmp = ToFloatRegister(lir->temp());
+    Label bail;
+    // Output is either correct, or clamped.  All -0 cases have been translated to a clamped
+    // case.a
+    masm.roundf(input, output, &bail, tmp);
     if (!bailoutFrom(&bail, lir->snapshot()))
         return false;
     return true;

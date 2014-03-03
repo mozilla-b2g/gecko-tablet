@@ -44,7 +44,7 @@
 #include "nsIDocument.h"
 #include "nsCSSStyleSheet.h"
 #include "nsAnimationManager.h"
-#include "nsINameSpaceManager.h"  // for Pref-related rule management (bugs 22963,20760,31816)
+#include "nsNameSpaceManager.h"  // for Pref-related rule management (bugs 22963,20760,31816)
 #include "nsFrame.h"
 #include "FrameLayerBuilder.h"
 #include "nsViewManager.h"
@@ -5261,11 +5261,6 @@ void PresShell::SetIgnoreViewportScrolling(bool aIgnore)
   state.mRenderFlags = ChangeFlag(state.mRenderFlags, aIgnore,
                                   STATE_IGNORING_VIEWPORT_SCROLLING);
   SetRenderingState(state);
-}
-
-void PresShell::SetDisplayPort(const nsRect& aDisplayPort)
-{
-  NS_ABORT_IF_FALSE(false, "SetDisplayPort is deprecated");
 }
 
 nsresult PresShell::SetResolution(float aXResolution, float aYResolution)

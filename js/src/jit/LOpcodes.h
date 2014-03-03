@@ -179,7 +179,6 @@
     _(MonitorTypes)                 \
     _(PostWriteBarrierO)            \
     _(PostWriteBarrierV)            \
-    _(PostWriteBarrierAllSlots)     \
     _(InitializedLength)            \
     _(SetInitializedLength)         \
     _(NeuterCheck)                  \
@@ -262,6 +261,7 @@
     _(Floor)                        \
     _(FloorF)                       \
     _(Round)                        \
+    _(RoundF)                       \
     _(In)                           \
     _(InArray)                      \
     _(InstanceOfO)                  \

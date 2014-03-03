@@ -568,6 +568,7 @@ JSFunction::trace(JSTracer *trc)
             // - their compartment isn't currently executing scripts or being
             //   debugged
             // - they are not in the self-hosting compartment
+            // - their 'arguments' object can't escape
             // - they aren't generators
             // - they don't have JIT code attached
             // - they don't have child functions
@@ -1532,7 +1533,7 @@ FunctionConstructor(JSContext *cx, unsigned argc, Value *vp, GeneratorKind gener
            .setFileAndLine(filename, 1)
            .setNoScriptRval(false)
            .setCompileAndGo(true)
-           .setIntroductionInfo(introducerFilename, introductionType, lineno, pcOffset);
+           .setIntroductionInfo(introducerFilename, introductionType, lineno, script, pcOffset);
 
     unsigned n = args.length() ? args.length() - 1 : 0;
     if (n > 0) {

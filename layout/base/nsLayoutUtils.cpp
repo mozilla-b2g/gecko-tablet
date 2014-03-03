@@ -2075,7 +2075,7 @@ nsLayoutUtils::TranslateWidgetToView(nsPresContext* aPresContext,
 }
 
 // Combine aNewBreakType with aOrigBreakType, but limit the break types
-// to NS_STYLE_CLEAR_LEFT, RIGHT, LEFT_AND_RIGHT.
+// to NS_STYLE_CLEAR_LEFT, RIGHT, BOTH.
 uint8_t
 nsLayoutUtils::CombineBreakType(uint8_t aOrigBreakType,
                                 uint8_t aNewBreakType)
@@ -2083,21 +2083,21 @@ nsLayoutUtils::CombineBreakType(uint8_t aOrigBreakType,
   uint8_t breakType = aOrigBreakType;
   switch(breakType) {
   case NS_STYLE_CLEAR_LEFT:
-    if ((NS_STYLE_CLEAR_RIGHT          == aNewBreakType) ||
-        (NS_STYLE_CLEAR_LEFT_AND_RIGHT == aNewBreakType)) {
-      breakType = NS_STYLE_CLEAR_LEFT_AND_RIGHT;
+    if (NS_STYLE_CLEAR_RIGHT == aNewBreakType ||
+        NS_STYLE_CLEAR_BOTH == aNewBreakType) {
+      breakType = NS_STYLE_CLEAR_BOTH;
     }
     break;
   case NS_STYLE_CLEAR_RIGHT:
-    if ((NS_STYLE_CLEAR_LEFT           == aNewBreakType) ||
-        (NS_STYLE_CLEAR_LEFT_AND_RIGHT == aNewBreakType)) {
-      breakType = NS_STYLE_CLEAR_LEFT_AND_RIGHT;
+    if (NS_STYLE_CLEAR_LEFT == aNewBreakType ||
+        NS_STYLE_CLEAR_BOTH == aNewBreakType) {
+      breakType = NS_STYLE_CLEAR_BOTH;
     }
     break;
   case NS_STYLE_CLEAR_NONE:
-    if ((NS_STYLE_CLEAR_LEFT           == aNewBreakType) ||
-        (NS_STYLE_CLEAR_RIGHT          == aNewBreakType) ||
-        (NS_STYLE_CLEAR_LEFT_AND_RIGHT == aNewBreakType)) {
+    if (NS_STYLE_CLEAR_LEFT == aNewBreakType ||
+        NS_STYLE_CLEAR_RIGHT == aNewBreakType ||
+        NS_STYLE_CLEAR_BOTH == aNewBreakType) {
       breakType = aNewBreakType;
     }
   }
@@ -2226,8 +2226,6 @@ nsLayoutUtils::PaintFrame(nsRenderingContext* aRenderingContext, nsIFrame* aFram
     }
   }
 
-  bool ignoreViewportScrolling =
-    aFrame->GetParent() ? false : presShell->IgnoringViewportScrolling();
   nsRegion visibleRegion;
   if (aFlags & PAINT_WIDGET_LAYERS) {
     // This layer tree will be reused, so we'll need to calculate it
@@ -2275,6 +2273,8 @@ nsLayoutUtils::PaintFrame(nsRenderingContext* aRenderingContext, nsIFrame* aFram
   }
   nsRect canvasArea(nsPoint(0, 0), aFrame->GetSize());
 
+  bool ignoreViewportScrolling =
+    aFrame->GetParent() ? false : presShell->IgnoringViewportScrolling();
   if (ignoreViewportScrolling && rootScrollFrame) {
     nsIScrollableFrame* rootScrollableFrame =
       presShell->GetRootScrollFrameAsScrollable();

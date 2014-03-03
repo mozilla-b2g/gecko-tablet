@@ -22,7 +22,7 @@
 #include "nsHTMLParts.h"
 #include "nsRenderingContext.h"
 #include "nsIDOMMutationEvent.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsCSSAnonBoxes.h"
 #include "nsAutoPtr.h"
 #include "nsStyleSet.h"
@@ -1137,6 +1137,7 @@ nsHTMLFramesetFrame::Reflow(nsPresContext*           aPresContext,
   mDrag.UnSet();
 
   aDesiredSize.SetOverflowAreasToDesiredBounds();
+  FinishAndStoreOverflow(&aDesiredSize);
 
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aDesiredSize);
   return NS_OK;
