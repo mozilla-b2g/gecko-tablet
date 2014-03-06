@@ -318,7 +318,7 @@ JS_SetWatchPoint(JSContext *cx, JSObject *obj_, jsid id_,
             return false;
     }
 
-    if (!obj->isNative()) {
+    if (!obj->isNative() || obj->is<TypedArrayObject>()) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_CANT_WATCH,
                              obj->getClass()->name);
         return false;
@@ -939,7 +939,10 @@ JS::DescribeStack(JSContext *cx, unsigned maxFrames)
 {
     Vector<FrameDescription> frames(cx);
 
-    for (NonBuiltinScriptFrameIter i(cx); !i.done(); ++i) {
+    NonBuiltinScriptFrameIter i(cx, ScriptFrameIter::ALL_CONTEXTS,
+                                ScriptFrameIter::GO_THROUGH_SAVED,
+                                cx->compartment()->principals);
+    for ( ; !i.done(); ++i) {
         if (!frames.append(i))
             return nullptr;
         if (frames.length() == maxFrames)

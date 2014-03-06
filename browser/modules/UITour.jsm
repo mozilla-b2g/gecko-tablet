@@ -42,6 +42,7 @@ const SEENPAGEID_EXPIRY  = 2 * 7 * 24 * 60 * 60 * 1000; // 2 weeks.
 
 
 this.UITour = {
+  url: null,
   seenPageIDs: null,
   pageIDSourceTabs: new WeakMap(),
   pageIDSourceWindows: new WeakMap(),
@@ -51,6 +52,7 @@ this.UITour = {
   pinnedTabs: new WeakMap(),
   urlbarCapture: new WeakMap(),
   appMenuOpenForAnnotation: new Set(),
+  availableTargetsCache: new WeakMap(),
 
   _detachingTab: false,
   _queuedEvents: [],
@@ -105,7 +107,7 @@ this.UITour = {
         let element = aDocument.getAnonymousElementByAttribute(selectedtab,
                                                                "anonid",
                                                                "tab-icon-image");
-        if (!element || !this.isElementVisible(element)) {
+        if (!element || !UITour.isElementVisible(element)) {
           return null;
         }
         return element;
@@ -126,8 +128,26 @@ this.UITour = {
       configurable: true,
     });
 
+    delete this.url;
+    XPCOMUtils.defineLazyGetter(this, "url", function () {
+      return Services.urlFormatter.formatURLPref("browser.uitour.url");
+    });
+
     UITelemetry.addSimpleMeasureFunction("UITour",
                                          this.getTelemetry.bind(this));
+
+    // Clear the availableTargetsCache on widget changes.
+    let listenerMethods = [
+      "onWidgetAdded",
+      "onWidgetMoved",
+      "onWidgetRemoved",
+      "onWidgetReset",
+      "onAreaReset",
+    ];
+    CustomizableUI.addListener(listenerMethods.reduce((listener, method) => {
+      listener[method] = () => this.availableTargetsCache.clear();
+      return listener;
+    }, {}));
   },
 
   restoreSeenPageIDs: function() {
@@ -920,8 +940,8 @@ this.UITour = {
   },
 
   showMenu: function(aWindow, aMenuName, aOpenCallback = null) {
-    function openMenuButton(aId) {
-      let menuBtn = aWindow.document.getElementById(aId);
+    function openMenuButton(aID) {
+      let menuBtn = aWindow.document.getElementById(aID);
       if (!menuBtn || !menuBtn.boxObject) {
         aOpenCallback();
         return;
@@ -953,8 +973,8 @@ this.UITour = {
   },
 
   hideMenu: function(aWindow, aMenuName) {
-    function closeMenuButton(aId) {
-      let menuBtn = aWindow.document.getElementById(aId);
+    function closeMenuButton(aID) {
+      let menuBtn = aWindow.document.getElementById(aID);
       if (menuBtn && menuBtn.boxObject)
         menuBtn.boxObject.QueryInterface(Ci.nsIMenuBoxObject).openMenu(false);
     }
@@ -1042,19 +1062,53 @@ this.UITour = {
     aWindow.gBrowser.selectedTab = tab;
   },
 
-  getConfiguration: function(aContentDocument, aConfiguration, aCallbackId) {
-    let config = null;
+  getConfiguration: function(aContentDocument, aConfiguration, aCallbackID) {
     switch (aConfiguration) {
+      case "availableTargets":
+        this.getAvailableTargets(aContentDocument, aCallbackID);
+        break;
       case "sync":
-        config = {
+        this.sendPageCallback(aContentDocument, aCallbackID, {
           setup: Services.prefs.prefHasUserValue("services.sync.username"),
-        };
+        });
         break;
       default:
         Cu.reportError("getConfiguration: Unknown configuration requested: " + aConfiguration);
         break;
     }
-    this.sendPageCallback(aContentDocument, aCallbackId, config);
+  },
+
+  getAvailableTargets: function(aContentDocument, aCallbackID) {
+    let window = this.getChromeWindow(aContentDocument);
+    let data = this.availableTargetsCache.get(window);
+    if (data) {
+      this.sendPageCallback(aContentDocument, aCallbackID, data);
+      return;
+    }
+
+    let promises = [];
+    for (let targetName of this.targets.keys()) {
+      promises.push(this.getTarget(window, targetName));
+    }
+    Promise.all(promises).then((targetObjects) => {
+      let targetNames = [
+        "pinnedTab",
+      ];
+      for (let targetObject of targetObjects) {
+        if (targetObject.node)
+          targetNames.push(targetObject.targetName);
+      }
+      let data = {
+        targets: targetNames,
+      };
+      this.availableTargetsCache.set(window, data);
+      this.sendPageCallback(aContentDocument, aCallbackID, data);
+    }, (err) => {
+      Cu.reportError(err);
+      this.sendPageCallback(aContentDocument, aCallbackID, {
+        targets: [],
+      });
+    });
   },
 };
 

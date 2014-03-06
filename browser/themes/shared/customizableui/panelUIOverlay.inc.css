@@ -28,6 +28,10 @@
   background-repeat: no-repeat;
 }
 
+#PanelUI-button:-moz-locale-dir(rtl) {
+  background-position: 100% 0, calc(100% - 1px) 0, calc(100% - 2px) 0;
+}
+
 .panel-subviews {
   padding: 4px;
   background-color: hsla(0,0%,100%,.97);
@@ -84,6 +88,7 @@
 
 .cui-widget-panelview .subviewbutton.panel-subview-footer {
   margin: 4px 0 0;
+  -moz-box-pack: center;
 }
 
 #PanelUI-mainView {
@@ -119,7 +124,6 @@
 
 .panelUI-grid .toolbarbutton-menubutton-button > .toolbarbutton-multiline-text,
 .panelUI-grid .toolbarbutton-1 > .toolbarbutton-multiline-text {
-  text-align: center;
   -moz-hyphens: auto;
   min-height: 3.5em;
 }
@@ -129,11 +133,14 @@
   mask: url(chrome://browser/content/browser.xul#menuPanelButtonTextFadeOutMask);
 }
 
+.panelUI-grid .toolbarbutton-1 > .toolbarbutton-text,
 .panelUI-grid .toolbarbutton-1 > .toolbarbutton-multiline-text {
+  text-align: center;
   margin: 2px 0 0;
 }
 
 .panelUI-grid .toolbarbutton-menubutton-button > .toolbarbutton-multiline-text {
+  text-align: center;
   margin: -1px 0 0;
 }
 
@@ -231,6 +238,20 @@ toolbaritem[cui-areatype="menu-panel"][sdkstylewidget="true"]:not(.panel-wide-it
   border: 1px solid transparent;
 }
 
+.panelUI-grid .toolbarbutton-1[type="menu"] {
+  background-image: url("chrome://browser/skin/toolbarbutton-dropdown-arrow.png");
+  background-position: right 3px top 16px;
+  background-repeat: no-repeat;
+}
+
+.panelUI-grid .toolbarbutton-1[type="menu"]:-moz-locale-dir(rtl) {
+  background-position: left 3px top 16px;
+}
+
+.panelUI-grid .toolbarbutton-1 > .toolbarbutton-menu-dropmarker {
+  display: none;
+}
+
 .panelUI-grid .toolbarbutton-1 > .toolbarbutton-menubutton-dropmarker {
   -moz-box-align: center;
   width: 16px;
@@ -249,7 +270,7 @@ toolbaritem[cui-areatype="menu-panel"][sdkstylewidget="true"]:not(.panel-wide-it
   border-radius: 0 0 2px 0;
 }
 
-.panel-combined-button[disabled] > .toolbarbutton-icon {
+#main-window:not([customizing]) .panel-combined-button[disabled] > .toolbarbutton-icon {
   opacity: .5;
 }
 
@@ -535,7 +556,8 @@ panelview .toolbarbutton-1,
 .subviewbutton.panel-subview-footer > .toolbarbutton-text,
 .subviewbutton.panel-subview-footer > .menu-text {
   -moz-padding-start: 0;
-  text-align: center;
+  -moz-padding-end: 12px;
+  -moz-box-flex: 0;
 }
 
 .subviewbutton:not(.panel-subview-footer) {
@@ -577,8 +599,8 @@ menuitem.subviewbutton@menuStateHover@,
 
 panelview .toolbarbutton-1@buttonStateActive@,
 toolbarbutton.subviewbutton@buttonStateActive@,
-menu.subviewbutton@menuStateActive@
-menuitem.subviewbutton@menuStateActive@
+menu.subviewbutton@menuStateActive@,
+menuitem.subviewbutton@menuStateActive@,
 .widget-overflow-list .toolbarbutton-1@buttonStateActive@,
 #edit-controls@inAnyPanel@ > toolbarbutton@buttonStateActive@,
 #zoom-controls@inAnyPanel@ > toolbarbutton@buttonStateActive@ {
@@ -671,22 +693,22 @@ menuitem.subviewbutton@menuStateActive@
   height: 16px;
 }
 
-#PanelUI-footer > #PanelUI-footer-inner.panel-multiview-anchor,
-toolbarbutton.panel-multiview-anchor {
+#PanelUI-footer > #PanelUI-footer-inner[panel-multiview-anchor=true],
+toolbarbutton[panel-multiview-anchor=true] {
   background-color: Highlight;
   background-image: linear-gradient(rgba(255,255,255,0.3), rgba(255,255,255,0));
 }
 
-toolbarbutton.panel-multiview-anchor {
+toolbarbutton[panel-multiview-anchor=true] {
   background-image: url(chrome://browser/skin/customizableui/subView-arrow-back-inverted.png),
                     linear-gradient(rgba(255,255,255,0.3), rgba(255,255,255,0));
   background-position: right 5px center;
   background-repeat: no-repeat;
 }
 
-#PanelUI-footer > #PanelUI-footer-inner.panel-multiview-anchor,
-toolbarbutton.panel-multiview-anchor,
-toolbarbutton.panel-multiview-anchor > .toolbarbutton-menubutton-button {
+#PanelUI-footer > #PanelUI-footer-inner[panel-multiview-anchor=true],
+toolbarbutton[panel-multiview-anchor=true],
+toolbarbutton[panel-multiview-anchor=true] > .toolbarbutton-menubutton-button {
   color: HighlightText;
 }
 
@@ -746,8 +768,8 @@ toolbarpaletteitem[place="palette"] > #search-container {
   max-width: calc(@menuPanelButtonWidth@ - 2px);
 }
 
-#edit-controls@inAnyPanel@ > toolbarbutton[disabled] > .toolbarbutton-icon,
-#zoom-controls@inAnyPanel@ > toolbarbutton[disabled] > .toolbarbutton-icon {
+#main-window:not([customizing]) #edit-controls@inAnyPanel@ > toolbarbutton[disabled] > .toolbarbutton-icon,
+#main-window:not([customizing]) #zoom-controls@inAnyPanel@ > toolbarbutton[disabled] > .toolbarbutton-icon {
   opacity: .25;
 }
 
@@ -788,7 +810,13 @@ toolbarpaletteitem[place="palette"] > #search-container {
 }
 
 .toolbaritem-combined-buttons@inAnyPanel@ > separator {
-  margin: .5em 0;
+  /**
+   * The calculation below is a layout hack. Without it, when hovering over
+   * a .toolbaritem-combined-buttons element in the menu panel, the disappearance
+   * of the separator margins causes things in the menu panel to shift by a few
+   * pixels on Linux. See bug 978767.
+   */
+  margin: calc(0.5em - 1px) 0;
   width: 1px;
   background: hsla(210,4%,10%,.15);
   transition-property: margin;
@@ -822,7 +850,8 @@ toolbarpaletteitem[place="palette"] > #search-container {
   padding-right: 10px;
 }
 
-#widget-overflow-list > .overflowedItem {
+toolbaritem[overflowedItem=true],
+toolbarbutton[overflowedItem=true] {
   width: 100%;
   max-width: @menuPanelWidth@;
   min-height: 36px;

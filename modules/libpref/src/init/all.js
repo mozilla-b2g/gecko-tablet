@@ -228,16 +228,18 @@ pref("media.apple.mp3.enabled", true);
 pref("media.navigator.enabled", true);
 pref("media.navigator.video.enabled", true);
 pref("media.navigator.load_adapt", false);
-pref("media.navigator.video.default_width",640);
-pref("media.navigator.video.default_height",480);
 pref("media.navigator.video.default_fps",30);
 pref("media.navigator.video.default_minfps",10);
 #ifdef MOZ_WIDGET_GONK
+pref("media.navigator.video.default_width",320);
+pref("media.navigator.video.default_height",240);
 pref("media.peerconnection.enabled", true);
 pref("media.peerconnection.video.enabled", true);
 pref("media.navigator.video.max_fs", 1200); // 640x480 == 1200mb
 pref("media.navigator.video.max_fr", 30);
 #else
+pref("media.navigator.video.default_width",640);
+pref("media.navigator.video.default_height",480);
 pref("media.peerconnection.enabled", true);
 pref("media.peerconnection.video.enabled", true);
 pref("media.navigator.video.max_fs", 0); // unrestricted
@@ -320,6 +322,9 @@ pref("media.audio_data.enabled", false);
 // 1 = STANDARD (Once locked, remain locked until scrolling ends)
 // 2 = STICKY (Allow lock to be broken, with hysteresis)
 pref("apz.axis_lock_mode", 0);
+
+// Whether to print the APZC tree for debugging
+pref("apz.printtree", false);
 
 #ifdef XP_MACOSX
 // Whether to run in native HiDPI mode on machines with "Retina"/HiDPI display;
@@ -549,8 +554,6 @@ pref("devtools.debugger.remote-port", 6000);
 pref("devtools.debugger.force-local", true);
 // Display a prompt when a new connection starts to accept/reject it
 pref("devtools.debugger.prompt-connection", true);
-// Temporary setting to enable webapps actors
-pref("devtools.debugger.enable-content-actors", true);
 // Block tools from seeing / interacting with certified apps
 pref("devtools.debugger.forbid-certified-apps", true);
 
@@ -3972,6 +3975,9 @@ pref("layers.offmainthreadcomposition.force-basic", false);
 
 // Whether to animate simple opacity and transforms on the compositor
 pref("layers.offmainthreadcomposition.async-animations", false);
+
+// Whether to log information about off main thread animations to stderr
+pref("layers.offmainthreadcomposition.log-animations", false);
 
 pref("layers.bufferrotation.enabled", true);
 

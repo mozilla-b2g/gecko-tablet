@@ -39,6 +39,7 @@ class nsDisplayLayerEventRegions;
 
 namespace mozilla {
 namespace layers {
+class Layer;
 class ImageLayer;
 class ImageContainer;
 } //namepsace
@@ -112,6 +113,7 @@ public:
   typedef mozilla::DisplayItemClip DisplayItemClip;
   typedef mozilla::DisplayListClipState DisplayListClipState;
   typedef nsIWidget::ThemeGeometry ThemeGeometry;
+  typedef mozilla::layers::Layer Layer;
 
   /**
    * @param aReferenceFrame the frame at the root of the subtree; its origin
@@ -482,6 +484,18 @@ public:
   const DisplayItemClip* AllocateDisplayItemClip(const DisplayItemClip& aOriginal);
 
   /**
+   * Transfer off main thread animations to the layer.  May be called
+   * with aBuilder and aItem both null, but only if the caller has
+   * already checked that off main thread animations should be sent to
+   * the layer.  When they are both null, the animations are added to
+   * the layer as pending animations.
+   */
+  static void AddAnimationsAndTransitionsToLayer(Layer* aLayer,
+                                                 nsDisplayListBuilder* aBuilder,
+                                                 nsDisplayItem* aItem,
+                                                 nsIFrame* aFrame,
+                                                 nsCSSProperty aProperty);
+  /**
    * A helper class to temporarily set the value of
    * mIsAtRootOfPseudoStackingContext, and temporarily
    * update mCachedOffsetFrame/mCachedOffset from a frame to its child.
@@ -627,6 +641,10 @@ public:
 
   DisplayListClipState& ClipState() { return mClipState; }
 
+  void AddRegionToClear(const nsIntRegion& aRegion) { mRegionToClear.Or(mRegionToClear, aRegion); }
+  const nsIntRegion& GetRegionToClear() { return mRegionToClear; }
+  void ResetRegionToClear() { mRegionToClear.SetEmpty(); }
+
 private:
   void MarkOutOfFlowFrameForDisplay(nsIFrame* aDirtyFrame, nsIFrame* aFrame,
                                     const nsRect& aDirtyRect);
@@ -660,6 +678,8 @@ private:
   const nsIFrame*                mCachedReferenceFrame;
   nsPoint                        mCachedOffset;
   nsRegion                       mExcludedGlassRegion;
+  // Area of the window (in pixels) to clear so the OS can draw them.
+  nsIntRegion                    mRegionToClear;
   // The display item for the Windows window glass background, if any
   nsDisplayItem*                 mGlassDisplayItem;
   nsTArray<DisplayItemClip*>     mDisplayItemClipsToDestroy;
@@ -1919,6 +1939,9 @@ public:
   virtual void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
                                          const nsDisplayItemGeometry* aGeometry,
                                          nsRegion* aInvalidRegion) MOZ_OVERRIDE;
+
+protected:
+  nsRect CalculateBounds(const nsStyleBorder& aStyleBorder);
 };
 
 /**

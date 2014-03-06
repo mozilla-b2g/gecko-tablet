@@ -151,6 +151,7 @@ class TestEmitterBasic(unittest.TestCase):
             CMMSRCS=['fans.mm', 'tans.mm'],
             CSRCS=['fans.c', 'tans.c'],
             CPP_UNIT_TESTS=['foo.cpp'],
+            DISABLE_STL_WRAPPING=True,
             EXPORT_LIBRARY=True,
             EXTRA_COMPONENTS=['fans.js', 'tans.js'],
             EXTRA_PP_COMPONENTS=['fans.pp.js', 'tans.pp.js'],
@@ -174,6 +175,7 @@ class TestEmitterBasic(unittest.TestCase):
             USE_DELAYIMP=True,
             RCFILE='foo.rc',
             RESFILE='bar.res',
+            RCINCLUDE='bar.rc',
             DEFFILE='baz.def',
             USE_STATIC_LIBS=True,
             MOZBUILD_CFLAGS=['-fno-exceptions', '-w'],
@@ -473,6 +475,14 @@ class TestEmitterBasic(unittest.TestCase):
         self.assertIn(expected, o.installs)
         self.assertEqual(o.installs[expected],
             ('testing/mochitest/tests/child/support-file.txt', False))
+
+    def test_test_manifest_missing_test_error(self):
+        """Missing test files should result in error."""
+        reader = self.reader('test-manifest-missing-test-file')
+
+        with self.assertRaisesRegexp(SandboxValidationError,
+            'lists test that does not exist: test_missing.html'):
+            self.read_topsrcdir(reader)
 
     def test_ipdl_sources(self):
         reader = self.reader('ipdl_sources')

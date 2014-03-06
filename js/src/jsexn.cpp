@@ -32,6 +32,8 @@
 
 #include "jsobjinlines.h"
 
+#include "vm/ErrorObject-inl.h"
+
 using namespace js;
 using namespace js::gc;
 using namespace js::types;
@@ -210,10 +212,8 @@ js::ComputeStackString(JSContext *cx)
     {
         RootedAtom atom(cx);
         SuppressErrorsGuard seg(cx);
-        // We should get rid of the CURRENT_CONTEXT and STOP_AT_SAVED here.
-        // See bug 960820.
-        for (NonBuiltinScriptFrameIter i(cx, ScriptFrameIter::CURRENT_CONTEXT,
-                                         ScriptFrameIter::STOP_AT_SAVED,
+        for (NonBuiltinScriptFrameIter i(cx, ScriptFrameIter::ALL_CONTEXTS,
+                                         ScriptFrameIter::GO_THROUGH_SAVED,
                                          cx->compartment()->principals);
             !i.done(); ++i)
         {
@@ -895,10 +895,10 @@ js_CopyErrorObject(JSContext *cx, Handle<ErrorObject*> err, HandleObject scope)
     RootedString message(cx, err->getMessage());
     if (message && !cx->compartment()->wrap(cx, message.address()))
         return nullptr;
-    RootedString fileName(cx, err->fileName());
+    RootedString fileName(cx, err->fileName(cx));
     if (!cx->compartment()->wrap(cx, fileName.address()))
         return nullptr;
-    RootedString stack(cx, err->stack());
+    RootedString stack(cx, err->stack(cx));
     if (!cx->compartment()->wrap(cx, stack.address()))
         return nullptr;
     uint32_t lineNumber = err->lineNumber();
