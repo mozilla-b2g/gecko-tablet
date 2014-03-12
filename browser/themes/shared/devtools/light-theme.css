@@ -321,6 +321,10 @@ div.CodeMirror span.eval-text {
   border-bottom: 1px solid #d9e1e8;
 }
 
+.theme-tooltip-panel .devtools-tooltip-font-previewer-text {
+  color: black;
+}
+
 .theme-tooltip-panel .devtools-tooltip-simple-text:last-child {
   border-bottom: 0;
 }
@@ -331,10 +335,7 @@ div.CodeMirror span.eval-text {
 
 .devtools-side-splitter {
   -moz-border-end: 1px solid #aaa;
-}
-
-.devtools-responsive-container > .devtools-side-splitter {
-  border-top: 1px solid #aaa;
+  border-color: #aaa; /* Needed for responsive container at low width. */
 }
 
 %include toolbars.inc.css

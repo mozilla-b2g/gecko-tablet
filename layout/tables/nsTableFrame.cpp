@@ -27,12 +27,14 @@
 #include "FixedTableLayoutStrategy.h"
 
 #include "nsPresContext.h"
+#include "nsContentUtils.h"
 #include "nsCSSRendering.h"
 #include "nsGkAtoms.h"
 #include "nsCSSAnonBoxes.h"
 #include "nsIPresShell.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMHTMLElement.h"
+#include "nsIScriptError.h"
 #include "nsFrameManager.h"
 #include "nsError.h"
 #include "nsAutoPtr.h"
@@ -265,6 +267,23 @@ nsTableFrame::DestroyPositionedTablePartArray(void* aPropertyValue)
 /* static */ void
 nsTableFrame::RegisterPositionedTablePart(nsIFrame* aFrame)
 {
+  // Supporting relative positioning for table parts other than table cells has
+  // the potential to break sites that apply 'position: relative' to those
+  // parts, expecting nothing to happen. We warn at the console to make tracking
+  // down the issue easy.
+  if (nsGkAtoms::tableCellFrame != aFrame->GetType()) {
+    nsIContent* content = aFrame->GetContent();
+    nsPresContext* presContext = aFrame->PresContext();
+    if (content && !presContext->HasWarnedAboutPositionedTableParts()) {
+      presContext->SetHasWarnedAboutPositionedTableParts();
+      nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
+                                      NS_LITERAL_CSTRING("Layout: Tables"),
+                                      content->OwnerDoc(),
+                                      nsContentUtils::eLAYOUT_PROPERTIES,
+                                      "TablePartRelPosWarning");
+    }
+  }
+
   nsTableFrame* tableFrame = nsTableFrame::GetTableFrame(aFrame);
   MOZ_ASSERT(tableFrame, "Should have a table frame here");
   tableFrame = static_cast<nsTableFrame*>(tableFrame->FirstContinuation());
@@ -2798,7 +2817,7 @@ nsTableFrame::SetupHeaderFooterChild(const nsTableReflowState& aReflowState,
                                    -1, -1, nsHTMLReflowState::CALLER_WILL_INIT);
   InitChildReflowState(kidReflowState);
   kidReflowState.mFlags.mIsTopOfPage = true;
-  nsHTMLReflowMetrics desiredSize(aReflowState.reflowState.GetWritingMode());
+  nsHTMLReflowMetrics desiredSize(aReflowState.reflowState);
   desiredSize.Width() = desiredSize.Height() = 0;
   nsReflowStatus status;
   nsresult rv = ReflowChild(aFrame, presContext, desiredSize, kidReflowState,
@@ -2831,7 +2850,7 @@ nsTableFrame::PlaceRepeatedFooter(nsTableReflowState& aReflowState,
   nsRect origTfootVisualOverflow = aTfoot->GetVisualOverflowRect();
           
   nsReflowStatus footerStatus;
-  nsHTMLReflowMetrics desiredSize(aReflowState.reflowState.GetWritingMode());
+  nsHTMLReflowMetrics desiredSize(aReflowState.reflowState);
   desiredSize.Width() = desiredSize.Height() = 0;
   ReflowChild(aTfoot, presContext, desiredSize, footerReflowState,
               aReflowState.x, aReflowState.y, 0, footerStatus);
@@ -2937,7 +2956,7 @@ nsTableFrame::ReflowChildren(nsTableReflowState& aReflowState,
       nsRect oldKidRect = kidFrame->GetRect();
       nsRect oldKidVisualOverflow = kidFrame->GetVisualOverflowRect();
 
-      nsHTMLReflowMetrics desiredSize(aReflowState.reflowState.GetWritingMode());
+      nsHTMLReflowMetrics desiredSize(aReflowState.reflowState);
       desiredSize.Width() = desiredSize.Height() = 0;
 
       // Reflow the child into the available space
@@ -3568,19 +3587,20 @@ nsTableFrame::GetTableFramePassingThrough(nsIFrame* aMustPassThrough,
 
   // Retrieve the table frame, and ensure that we hit aMustPassThrough on the
   // way.  If we don't, just return null.
+  bool hitPassThroughFrame = false;
   nsTableFrame* tableFrame = nullptr;
   for (nsIFrame* ancestor = aFrame; ancestor; ancestor = ancestor->GetParent()) {
+    if (ancestor == aMustPassThrough) {
+      hitPassThroughFrame = true;
+    }
     if (nsGkAtoms::tableFrame == ancestor->GetType()) {
       tableFrame = static_cast<nsTableFrame*>(ancestor);
       break;
     }
-    if (ancestor == aMustPassThrough) {
-      return nullptr;
-    }
   }
 
   MOZ_ASSERT(tableFrame, "Should have a table frame here");
-  return tableFrame;
+  return hitPassThroughFrame ? tableFrame : nullptr;
 }
 
 bool

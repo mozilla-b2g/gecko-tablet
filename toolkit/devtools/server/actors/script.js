@@ -1892,8 +1892,7 @@ ThreadActor.prototype = {
    * @return The EnvironmentActor for aEnvironment or undefined for host
    *         functions or functions scoped to a non-debuggee global.
    */
-  createEnvironmentActor:
-  function (aEnvironment, aPool) {
+  createEnvironmentActor: function (aEnvironment, aPool) {
     if (!aEnvironment) {
       return undefined;
     }
@@ -1954,8 +1953,7 @@ ThreadActor.prototype = {
    * Return a protocol completion value representing the given
    * Debugger-provided completion value.
    */
-  createProtocolCompletionValue:
-  function (aCompletion) {
+  createProtocolCompletionValue: function (aCompletion) {
     let protoValue = {};
     if ("return" in aCompletion) {
       protoValue.return = this.createValueGrip(aCompletion.return);
@@ -2194,6 +2192,14 @@ ThreadActor.prototype = {
    */
   onNewScript: function (aScript, aGlobal) {
     this._addScript(aScript);
+
+    // |onNewScript| is only fired for top level scripts (AKA staticLevel == 0),
+    // so we have to make sure to call |_addScript| on every child script as
+    // well to restore breakpoints in those scripts.
+    for (let s of aScript.getChildScripts()) {
+      this._addScript(s);
+    }
+
     this.sources.sourcesForScript(aScript);
   },
 
@@ -3308,6 +3314,41 @@ ObjectActor.prototype.requestTypes = {
  * information for the debugger object, or true otherwise.
  */
 DebuggerServer.ObjectActorPreviewers = {
+  String: [function({obj, threadActor}, aGrip) {
+    let result = genericObjectPreviewer("String", String, obj, threadActor);
+    if (result) {
+      let length = DevToolsUtils.getProperty(obj, "length");
+      if (typeof length != "number") {
+        return false;
+      }
+
+      aGrip.displayString = result.value;
+      return true;
+    }
+
+    return true;
+  }],
+
+  Boolean: [function({obj, threadActor}, aGrip) {
+    let result = genericObjectPreviewer("Boolean", Boolean, obj, threadActor);
+    if (result) {
+      aGrip.preview = result;
+      return true;
+    }
+
+    return false;
+  }],
+
+  Number: [function({obj, threadActor}, aGrip) {
+    let result = genericObjectPreviewer("Number", Number, obj, threadActor);
+    if (result) {
+      aGrip.preview = result;
+      return true;
+    }
+
+    return false;
+  }],
+
   Function: [function({obj, threadActor}, aGrip) {
     if (obj.name) {
       aGrip.name = obj.name;
@@ -3484,6 +3525,45 @@ DebuggerServer.ObjectActorPreviewers = {
     return true;
   }], // DOMStringMap
 }; // DebuggerServer.ObjectActorPreviewers
+
+/**
+ * Generic previewer for "simple" classes like String, Number and Boolean.
+ *
+ * @param string aClassName
+ *        Class name to expect.
+ * @param object aClass
+ *        The class to expect, eg. String. The valueOf() method of the class is
+ *        invoked on the given object.
+ * @param Debugger.Object aObj
+ *        The debugger object we need to preview.
+ * @param object aThreadActor
+ *        The thread actor to use to create a value grip.
+ * @return object|null
+ *         An object with one property, "value", which holds the value grip that
+ *         represents the given object. Null is returned if we cant preview the
+ *         object.
+ */
+function genericObjectPreviewer(aClassName, aClass, aObj, aThreadActor) {
+  if (!aObj.proto || aObj.proto.class != aClassName) {
+    return null;
+  }
+
+  let raw = aObj.unsafeDereference();
+  let v = null;
+  try {
+    v = aClass.prototype.valueOf.call(raw);
+  } catch (ex) {
+    // valueOf() can throw if the raw JS object is "misbehaved".
+    return null;
+  }
+
+  if (v !== null) {
+    v = aThreadActor.createValueGrip(makeDebuggeeValueIfNeeded(aObj, v));
+    return { value: v };
+  }
+
+  return null;
+}
 
 // Preview functions that do not rely on the object class.
 DebuggerServer.ObjectActorPreviewers.Object = [
@@ -4482,6 +4562,96 @@ update(ChromeDebuggerActor.prototype, {
   }
 });
 
+/**
+ * Creates an actor for handling add-on debugging. AddonThreadActor is
+ * a thin wrapper over ThreadActor.
+ *
+ * @param aConnection object
+ *        The DebuggerServerConnection with which this AddonThreadActor
+ *        is associated. (Currently unused, but required to make this
+ *        constructor usable with addGlobalActor.)
+ *
+ * @param aHooks object
+ *        An object with preNest and postNest methods for calling
+ *        when entering and exiting a nested event loops.
+ *
+ * @param aAddonID string
+ *        ID of the add-on this actor will debug. It will be used to
+ *        filter out globals marked for debugging.
+ */
+
+function AddonThreadActor(aConnect, aHooks, aAddonID) {
+  this.addonID = aAddonID;
+  ThreadActor.call(this, aHooks);
+}
+
+AddonThreadActor.prototype = Object.create(ThreadActor.prototype);
+
+update(AddonThreadActor.prototype, {
+  constructor: AddonThreadActor,
+
+  // A constant prefix that will be used to form the actor ID by the server.
+  actorPrefix: "addonThread",
+
+  /**
+   * Override the eligibility check for scripts and sources to make
+   * sure every script and source with a URL is stored when debugging
+   * add-ons.
+   */
+  _allowSource: (aSourceURL) => !!aSourceURL,
+
+  /**
+   * An object that will be used by ThreadActors to tailor their
+   * behaviour depending on the debugging context being required (chrome,
+   * addon or content). The methods that this object provides must
+   * be bound to the ThreadActor before use.
+   */
+  globalManager: {
+    findGlobals: function ADA_findGlobals() {
+      for (let global of this.dbg.findAllGlobals()) {
+        if (this._checkGlobal(global)) {
+          this.dbg.addDebuggee(global);
+        }
+      }
+    },
+
+    /**
+     * A function that the engine calls when a new global object
+     * has been created.
+     *
+     * @param aGlobal Debugger.Object
+     *        The new global object that was created.
+     */
+    onNewGlobal: function ADA_onNewGlobal(aGlobal) {
+      if (this._checkGlobal(aGlobal)) {
+        this.addDebuggee(aGlobal);
+        // Notify the client.
+        this.conn.send({
+          from: this.actorID,
+          type: "newGlobal",
+          // TODO: after bug 801084 lands see if we need to JSONify this.
+          hostAnnotations: aGlobal.hostAnnotations
+        });
+      }
+    }
+  },
+
+  /**
+   * Checks if the provided global belongs to the debugged add-on.
+   *
+   * @param aGlobal Debugger.Object
+   */
+  _checkGlobal: function ADA_checkGlobal(aGlobal) {
+    let metadata;
+    try {
+      // This will fail for non-Sandbox objects, hence the try-catch block.
+      metadata = Cu.getSandboxMetadata(aGlobal.unsafeDereference());
+    } catch (e) {
+    }
+
+    return metadata && metadata.addonID === this.addonID;
+  }
+});
 
 /**
  * Manages the sources for a thread. Handles source maps, locations in the

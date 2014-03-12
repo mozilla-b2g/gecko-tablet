@@ -214,8 +214,6 @@ CustomizeMode.prototype = {
       customizeButton.setAttribute("label", customizeButton.getAttribute("exitLabel"));
       customizeButton.setAttribute("enterTooltiptext", customizeButton.getAttribute("tooltiptext"));
       customizeButton.setAttribute("tooltiptext", customizeButton.getAttribute("exitTooltiptext"));
-      document.getElementById("PanelUI-help").setAttribute("disabled", true);
-      document.getElementById("PanelUI-quit").setAttribute("disabled", true);
 
       this._transitioning = true;
 
@@ -245,6 +243,9 @@ CustomizeMode.prototype = {
       this.visiblePalette.addEventListener("dragend", this, true);
 
       window.gNavToolbox.addEventListener("toolbarvisibilitychange", this);
+
+      document.getElementById("PanelUI-help").setAttribute("disabled", true);
+      document.getElementById("PanelUI-quit").setAttribute("disabled", true);
 
       this._updateResetButton();
       this._updateUndoResetButton();
@@ -569,6 +570,7 @@ CustomizeMode.prototype = {
       });
     }
 
+    this.tipPanel.hidden = false;
     this.tipPanel.openPopup(anchorNode);
     Services.prefs.setBoolPref(kShownPref, true);
   },
@@ -664,7 +666,7 @@ CustomizeMode.prototype = {
   //       while still getting rid of the need for overlays.
   makePaletteItem: function(aWidget, aPlace) {
     let widgetNode = aWidget.forWindow(this.window).node;
-    let wrapper = this.createWrapper(widgetNode, aPlace);
+    let wrapper = this.createOrUpdateWrapper(widgetNode, aPlace);
     wrapper.appendChild(widgetNode);
     return wrapper;
   },
@@ -726,7 +728,8 @@ CustomizeMode.prototype = {
     if (!this.isCustomizableItem(aNode)) {
       return aNode;
     }
-    let wrapper = this.createWrapper(aNode, aPlace);
+    let wrapper = this.createOrUpdateWrapper(aNode, aPlace);
+
     // It's possible that this toolbar node is "mid-flight" and doesn't have
     // a parent, in which case we skip replacing it. This can happen if a
     // toolbar item has been dragged into the palette. In that case, we tell
@@ -739,13 +742,19 @@ CustomizeMode.prototype = {
     return wrapper;
   },
 
-  createWrapper: function(aNode, aPlace) {
-    let wrapper = this.document.createElement("toolbarpaletteitem");
+  createOrUpdateWrapper: function(aNode, aPlace, aIsUpdate) {
+    let wrapper;
+    if (aIsUpdate && aNode.parentNode && aNode.parentNode.localName == "toolbarpaletteitem") {
+      wrapper = aNode.parentNode;
+      aPlace = wrapper.getAttribute("place");
+    } else {
+      wrapper = this.document.createElement("toolbarpaletteitem");
+      // "place" is used by toolkit to add the toolbarpaletteitem-palette
+      // binding to a toolbarpaletteitem, which gives it a label node for when
+      // it's sitting in the palette.
+      wrapper.setAttribute("place", aPlace);
+    }
 
-    // "place" is used by toolkit to add the toolbarpaletteitem-palette
-    // binding to a toolbarpaletteitem, which gives it a label node for when
-    // it's sitting in the palette.
-    wrapper.setAttribute("place", aPlace);
 
     // Ensure the wrapped item doesn't look like it's in any special state, and
     // can't be interactved with when in the customization palette.
@@ -800,8 +809,11 @@ CustomizeMode.prototype = {
       aNode.removeAttribute(contextMenuAttrName);
     }
 
-    wrapper.addEventListener("mousedown", this);
-    wrapper.addEventListener("mouseup", this);
+    // Only add listeners for newly created wrappers:
+    if (!aIsUpdate) {
+      wrapper.addEventListener("mousedown", this);
+      wrapper.addEventListener("mouseup", this);
+    }
 
     return wrapper;
   },
@@ -1302,20 +1314,22 @@ CustomizeMode.prototype = {
     if (targetNode == targetArea.customizationTarget) {
       // We'll assume if the user is dragging directly over the target, that
       // they're attempting to append a child to that target.
-      dragOverItem = targetNode.lastChild || targetNode;
+      dragOverItem = (targetIsToolbar ? this._findVisiblePreviousSiblingNode(targetNode.lastChild) :
+                                        targetNode.lastChild) || targetNode;
       dragValue = "after";
     } else {
       let targetParent = targetNode.parentNode;
       let position = Array.indexOf(targetParent.children, targetNode);
       if (position == -1) {
-        dragOverItem = targetParent.lastChild;
+        dragOverItem = targetIsToolbar ? this._findVisiblePreviousSiblingNode(targetNode.lastChild) :
+                                         targetParent.lastChild;
         dragValue = "after";
       } else {
         dragOverItem = targetParent.children[position];
         if (!targetIsToolbar) {
           dragValue = "before";
-          dragOverItem = position == -1 ? targetParent.firstChild : targetParent.children[position];
         } else {
+          dragOverItem = this._findVisiblePreviousSiblingNode(targetParent.children[position]);
           // Check if the aDraggedItem is hovered past the first half of dragOverItem
           let window = dragOverItem.ownerDocument.defaultView;
           let direction = window.getComputedStyle(dragOverItem, null).direction;
@@ -1340,6 +1354,8 @@ CustomizeMode.prototype = {
     if (dragOverItem != this._dragOverItem || dragValue != dragOverItem.getAttribute("dragover")) {
       if (dragOverItem != targetArea.customizationTarget) {
         this._setDragActive(dragOverItem, dragValue, draggedItemId, targetIsToolbar);
+      } else if (targetIsToolbar) {
+        this._updateToolbarCustomizationOutline(this.window, targetArea);
       }
       this._dragOverItem = dragOverItem;
     }
@@ -1739,10 +1755,7 @@ CustomizeMode.prototype = {
     if (targetArea != currentArea) {
       this.unwrapToolbarItem(aDraggedItem.parentNode);
       // Put the item back into its previous position.
-      if (currentSibling)
-        currentParent.insertBefore(aDraggedItem, currentSibling);
-      else
-        currentParent.appendChild(aDraggedItem);
+      currentParent.insertBefore(aDraggedItem, currentSibling);
       // restore the areaType
       if (areaType) {
         if (currentType === false)
@@ -1750,6 +1763,7 @@ CustomizeMode.prototype = {
         else
           aDraggedItem.setAttribute(kAreaType, currentType);
       }
+      this.createOrUpdateWrapper(aDraggedItem, null, true);
       CustomizableUI.onWidgetDrag(aDraggedItem.id);
     } else {
       aDraggedItem.parentNode.hidden = true;
@@ -1924,6 +1938,14 @@ CustomizeMode.prototype = {
     }
   },
 
+  _findVisiblePreviousSiblingNode: function(aReferenceNode) {
+    while (aReferenceNode &&
+           aReferenceNode.localName == "toolbarpaletteitem" &&
+           aReferenceNode.firstChild.hidden) {
+      aReferenceNode = aReferenceNode.previousSibling;
+    }
+    return aReferenceNode;
+  },
 };
 
 function __dumpDragData(aEvent, caller) {

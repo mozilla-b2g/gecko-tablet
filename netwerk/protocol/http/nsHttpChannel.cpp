@@ -220,6 +220,7 @@ nsHttpChannel::nsHttpChannel()
     , mIsPartialRequest(0)
     , mHasAutoRedirectVetoNotifier(0)
     , mDidReval(false)
+    , mForcePending(false)
 {
     LOG(("Creating nsHttpChannel [this=%p]\n", this));
     mChannelCreationTime = PR_Now();
@@ -2831,7 +2832,6 @@ nsHttpChannel::OnCacheEntryCheck(nsICacheEntry* entry, nsIApplicationCache* appC
         LOG(("Validating based on MustValidate() returning TRUE\n"));
         doValidation = true;
     }
-
     else if (MustValidateBasedOnQueryUrl()) {
         LOG(("Validating based on RFC 2616 section 13.9 "
              "(query-url w/o explicit expiration-time)\n"));
@@ -2942,21 +2942,37 @@ nsHttpChannel::OnCacheEntryCheck(nsICacheEntry* entry, nsIApplicationCache* appC
             (mRequestHead.Method() == nsHttp::Get ||
              mRequestHead.Method() == nsHttp::Head) &&
              !mCustomConditionalRequest) {
-            const char *val;
-            // Add If-Modified-Since header if a Last-Modified was given
-            // and we are allowed to do this (see bugs 510359 and 269303)
-            if (canAddImsHeader) {
-                val = mCachedResponseHead->PeekHeader(nsHttp::Last_Modified);
+
+            if (mConcurentCacheAccess) {
+                // In case of concurrent read and also validation request we
+                // must wait for the current writer to close the output stream
+                // first.  Otherwise, when the writer's job would have been interrupted
+                // before all the data were downloaded, we'd have to do a range request
+                // which would be a second request in line during this channel's
+                // life-time.  nsHttpChannel is not designed to do that, so rather
+                // turn off concurrent read and wait for entry's completion.
+                // Then only re-validation or range-re-validation request will go out.
+                mConcurentCacheAccess = 0;
+                // This will cause that OnCacheEntryCheck is called again with the same
+                // entry after the writer is done.
+                wantCompleteEntry = true;
+            } else {
+                const char *val;
+                // Add If-Modified-Since header if a Last-Modified was given
+                // and we are allowed to do this (see bugs 510359 and 269303)
+                if (canAddImsHeader) {
+                    val = mCachedResponseHead->PeekHeader(nsHttp::Last_Modified);
+                    if (val)
+                        mRequestHead.SetHeader(nsHttp::If_Modified_Since,
+                                               nsDependentCString(val));
+                }
+                // Add If-None-Match header if an ETag was given in the response
+                val = mCachedResponseHead->PeekHeader(nsHttp::ETag);
                 if (val)
-                    mRequestHead.SetHeader(nsHttp::If_Modified_Since,
+                    mRequestHead.SetHeader(nsHttp::If_None_Match,
                                            nsDependentCString(val));
+                mDidReval = true;
             }
-            // Add If-None-Match header if an ETag was given in the response
-            val = mCachedResponseHead->PeekHeader(nsHttp::ETag);
-            if (val)
-                mRequestHead.SetHeader(nsHttp::If_None_Match,
-                                       nsDependentCString(val));
-            mDidReval = true;
         }
     }
 
@@ -6183,6 +6199,24 @@ nsHttpChannel::SetNotificationCallbacks(nsIInterfaceRequestor *aCallbacks)
         UpdateAggregateCallbacks();
     }
     return rv;
+}
+
+void
+nsHttpChannel::ForcePending(bool aForcePending)
+{
+    // Set true here so IsPending will return true.
+    // Required for callback diversion from child back to parent. In such cases
+    // OnStopRequest can be called in the parent before callbacks are diverted
+    // back from the child to the listener in the parent.
+    mForcePending = aForcePending;
+}
+
+NS_IMETHODIMP
+nsHttpChannel::IsPending(bool *aIsPending)
+{
+    NS_ENSURE_ARG_POINTER(aIsPending);
+    *aIsPending = mIsPending || mForcePending;
+    return NS_OK;
 }
 
 } } // namespace mozilla::net

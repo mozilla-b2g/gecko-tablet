@@ -11,6 +11,7 @@
 #include "DeviceStorage.h"
 #include "DeviceStorageFileDescriptor.h"
 #include "mozilla/dom/TabChild.h"
+#include "mozilla/ipc/FileDescriptorUtils.h"
 #include "mozilla/MediaManager.h"
 #include "mozilla/Services.h"
 #include "mozilla/unused.h"
@@ -23,7 +24,6 @@
 #include "DOMCameraManager.h"
 #include "DOMCameraCapabilities.h"
 #include "CameraCommon.h"
-#include "DictionaryHelpers.h"
 #include "nsGlobalWindow.h"
 #include "CameraPreviewMediaStream.h"
 #include "mozilla/dom/CameraControlBinding.h"
@@ -33,7 +33,7 @@
 
 using namespace mozilla;
 using namespace mozilla::dom;
-using namespace mozilla::idl;
+using namespace mozilla::ipc;
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(nsDOMCameraControl)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
@@ -397,6 +397,19 @@ nsDOMCameraControl::SetFocusMode(const nsAString& aFocusMode, ErrorResult& aRv)
   aRv = mCameraControl->Set(CAMERA_PARAM_FOCUSMODE, aFocusMode);
 }
 
+void
+nsDOMCameraControl::GetIsoMode(nsString& aIsoMode, ErrorResult& aRv)
+{
+  MOZ_ASSERT(mCameraControl);
+  aRv = mCameraControl->Get(CAMERA_PARAM_ISOMODE, aIsoMode);
+}
+void
+nsDOMCameraControl::SetIsoMode(const nsAString& aIsoMode, ErrorResult& aRv)
+{
+  MOZ_ASSERT(mCameraControl);
+  aRv = mCameraControl->Set(CAMERA_PARAM_ISOMODE, aIsoMode);
+}
+
 double
 nsDOMCameraControl::GetZoom(ErrorResult& aRv)
 {
@@ -686,7 +699,7 @@ nsDOMCameraControl::StartRecording(const CameraStartRecordingOptions& aOptions,
     mAudioChannelAgent = do_CreateInstance("@mozilla.org/audiochannelagent;1");
     if (mAudioChannelAgent) {
       // Camera app will stop recording when it falls to the background, so no callback is necessary.
-      mAudioChannelAgent->Init(AUDIO_CHANNEL_CONTENT, nullptr);
+      mAudioChannelAgent->Init(mWindow, AUDIO_CHANNEL_CONTENT, nullptr);
       // Video recording doesn't output any sound, so it's not necessary to check canPlay.
       int32_t canPlay;
       mAudioChannelAgent->StartPlaying(&canPlay);
@@ -728,8 +741,16 @@ nsDOMCameraControl::OnCreatedFileDescriptor(bool aSucceeded)
       return;
     }
   }
-
   OnError(CameraControlListener::kInStartRecording, NS_LITERAL_STRING("FAILURE"));
+
+  if (mDSFileDescriptor->mFileDescriptor.IsValid()) {
+    // An error occured. We need to manually close the file associated with the
+    // FileDescriptor, and we shouldn't do this on the main thread, so we
+    // use a little helper.
+    nsRefPtr<CloseFileRunnable> closer =
+      new CloseFileRunnable(mDSFileDescriptor->mFileDescriptor);
+    closer->Dispatch();
+  }
 }
 
 void
@@ -807,8 +828,10 @@ nsDOMCameraControl::AutoFocus(CameraAutoFocusCallback& aOnSuccess,
     // we have a callback, which means we're already in the process of
     // auto-focusing--cancel the old callback
     nsCOMPtr<CameraErrorCallback> ecb = mAutoFocusOnErrorCb.forget();
-    ErrorResult ignored;
-    ecb->Call(NS_LITERAL_STRING("Interrupted"), ignored);
+    if (ecb) {
+      ErrorResult ignored;
+      ecb->Call(NS_LITERAL_STRING("Interrupted"), ignored);
+    }
     cancel = true;
   }
 

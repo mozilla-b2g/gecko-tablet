@@ -221,11 +221,14 @@ class AsmJSModule
         struct Pod {
             ReturnType returnType_;
             uint32_t codeOffset_;
+            uint32_t line_;
+            uint32_t column_;
         } pod;
 
         friend class AsmJSModule;
 
         ExportedFunction(PropertyName *name,
+                         uint32_t line, uint32_t column,
                          PropertyName *maybeFieldName,
                          ArgCoercionVector &&argCoercions,
                          ReturnType returnType)
@@ -235,6 +238,8 @@ class AsmJSModule
             argCoercions_ = mozilla::Move(argCoercions);
             pod.returnType_ = returnType;
             pod.codeOffset_ = UINT32_MAX;
+            pod.line_ = line;
+            pod.column_ = column;
             JS_ASSERT_IF(maybeFieldName_, name_->isTenured());
         }
 
@@ -260,6 +265,12 @@ class AsmJSModule
 
         PropertyName *name() const {
             return name_;
+        }
+        uint32_t line() const {
+            return pod.line_;
+        }
+        uint32_t column() const {
+            return pod.column_;
         }
         PropertyName *maybeFieldName() const {
             return maybeFieldName_;
@@ -350,7 +361,7 @@ class AsmJSModule
     // AsmJSModule).
     struct StaticLinkData
     {
-        uint32_t operationCallbackExitOffset;
+        uint32_t interruptExitOffset;
         RelativeLinkVector relativeLinks;
         AbsoluteLinkVector absoluteLinks;
 
@@ -404,7 +415,7 @@ class AsmJSModule
     } pod;
 
     uint8_t *                             code_;
-    uint8_t *                             operationCallbackExit_;
+    uint8_t *                             interruptExit_;
 
     StaticLinkData                        staticLinkData_;
     bool                                  dynamicallyLinked_;
@@ -416,9 +427,8 @@ class AsmJSModule
 
     FunctionCountsVector                  functionCounts_;
 
-    // This field is accessed concurrently when triggering the operation
-    // callback and access must be synchronized via the runtime's operation
-    // callback lock.
+    // This field is accessed concurrently when requesting an interrupt.
+    // Access must be synchronized via the runtime's interrupt lock.
     mutable bool                          codeIsProtected_;
 
   public:
@@ -540,11 +550,12 @@ class AsmJSModule
         return functionCounts_.append(counts);
     }
 
-    bool addExportedFunction(PropertyName *name, PropertyName *maybeFieldName,
+    bool addExportedFunction(PropertyName *name, uint32_t line, uint32_t column,
+                             PropertyName *maybeFieldName,
                              ArgCoercionVector &&argCoercions,
                              ReturnType returnType)
     {
-        ExportedFunction func(name, maybeFieldName, mozilla::Move(argCoercions), returnType);
+        ExportedFunction func(name, line, column, maybeFieldName, mozilla::Move(argCoercions), returnType);
         return exports_.append(mozilla::Move(func));
     }
     unsigned numExportedFunctions() const {
@@ -739,8 +750,8 @@ class AsmJSModule
     bool addAbsoluteLink(AbsoluteLink link) {
         return staticLinkData_.absoluteLinks.append(link);
     }
-    void setOperationCallbackOffset(uint32_t offset) {
-        staticLinkData_.operationCallbackExitOffset = offset;
+    void setInterruptOffset(uint32_t offset) {
+        staticLinkData_.interruptExitOffset = offset;
     }
 
     void restoreToInitialState(ArrayBufferObject *maybePrevBuffer, ExclusiveContext *cx);
@@ -752,8 +763,8 @@ class AsmJSModule
         return code_;
     }
 
-    uint8_t *operationCallbackExit() const {
-        return operationCallbackExit_;
+    uint8_t *interruptExit() const {
+        return interruptExit_;
     }
 
     void setIsDynamicallyLinked() {
@@ -813,8 +824,8 @@ class AsmJSModule
 
     bool clone(JSContext *cx, ScopedJSDeletePtr<AsmJSModule> *moduleOut) const;
 
-    // These methods may only be called while holding the Runtime's operation
-    // callback lock.
+    // These methods may only be called while holding the Runtime's interrupt
+    // lock.
     void protectCode(JSRuntime *rt) const;
     void unprotectCode(JSRuntime *rt) const;
     bool codeIsProtected(JSRuntime *rt) const;
