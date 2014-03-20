@@ -14,7 +14,6 @@
 #include "nsSVGNumber2.h"
 #include "nsSVGNumberPair.h"
 #include "FilterSupport.h"
-#include "gfxASurface.h"
 
 class nsSVGFilterInstance;
 class nsSVGFilterResource;
@@ -51,7 +50,8 @@ protected:
   typedef mozilla::gfx::ColorSpace ColorSpace;
   typedef mozilla::gfx::FilterPrimitiveDescription FilterPrimitiveDescription;
 
-  nsSVGFE(already_AddRefed<nsINodeInfo> aNodeInfo) : nsSVGFEBase(aNodeInfo) {}
+  nsSVGFE(already_AddRefed<nsINodeInfo>& aNodeInfo)
+    : nsSVGFEBase(aNodeInfo) {}
 
 public:
   typedef mozilla::gfx::AttributeMap AttributeMap;
@@ -152,7 +152,7 @@ typedef nsSVGElement SVGFEUnstyledElementBase;
 class SVGFEUnstyledElement : public SVGFEUnstyledElementBase
 {
 protected:
-  SVGFEUnstyledElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+  SVGFEUnstyledElement(already_AddRefed<nsINodeInfo>& aNodeInfo)
     : SVGFEUnstyledElementBase(aNodeInfo) {}
 
 public:
@@ -171,7 +171,7 @@ typedef nsSVGFE nsSVGFELightingElementBase;
 class nsSVGFELightingElement : public nsSVGFELightingElementBase
 {
 protected:
-  nsSVGFELightingElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+  nsSVGFELightingElement(already_AddRefed<nsINodeInfo>& aNodeInfo)
     : nsSVGFELightingElementBase(aNodeInfo) {}
 
 public:
@@ -221,7 +221,7 @@ typedef SVGFEUnstyledElement SVGFELightElementBase;
 class SVGFELightElement : public SVGFELightElementBase
 {
 protected:
-  SVGFELightElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+  SVGFELightElement(already_AddRefed<nsINodeInfo>& aNodeInfo)
     : SVGFELightElementBase(aNodeInfo) {}
 
 public:

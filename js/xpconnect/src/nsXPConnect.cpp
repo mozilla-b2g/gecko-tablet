@@ -1354,8 +1354,11 @@ WriteScriptOrFunction(nsIObjectOutputStream *stream, JSContext *cx,
     // Exactly one of script or functionObj must be given
     MOZ_ASSERT(!scriptArg != !functionObj);
 
-    RootedScript script(cx, scriptArg ? scriptArg :
-                                        JS_GetFunctionScript(cx, JS_GetObjectFunction(functionObj)));
+    RootedScript script(cx, scriptArg);
+    if (!script) {
+        RootedFunction fun(cx, JS_GetObjectFunction(functionObj));
+        script.set(JS_GetFunctionScript(cx, fun));
+    }
 
     nsIPrincipal *principal =
         nsJSPrincipals::get(JS_GetScriptPrincipals(script));
@@ -1423,18 +1426,22 @@ ReadScriptOrFunction(nsIObjectInputStream *stream, JSContext *cx,
     nsJSPrincipals* principal = nullptr;
     nsCOMPtr<nsIPrincipal> readPrincipal;
     if (flags & HAS_PRINCIPALS_FLAG) {
-        rv = stream->ReadObject(true, getter_AddRefs(readPrincipal));
+        nsCOMPtr<nsISupports> supports;
+        rv = stream->ReadObject(true, getter_AddRefs(supports));
         if (NS_FAILED(rv))
             return rv;
+        readPrincipal = do_QueryInterface(supports);
         principal = nsJSPrincipals::get(readPrincipal);
     }
 
     nsJSPrincipals* originPrincipal = nullptr;
     nsCOMPtr<nsIPrincipal> readOriginPrincipal;
     if (flags & HAS_ORIGIN_PRINCIPALS_FLAG) {
-        rv = stream->ReadObject(true, getter_AddRefs(readOriginPrincipal));
+        nsCOMPtr<nsISupports> supports;
+        rv = stream->ReadObject(true, getter_AddRefs(supports));
         if (NS_FAILED(rv))
             return rv;
+        readOriginPrincipal = do_QueryInterface(supports);
         originPrincipal = nsJSPrincipals::get(readOriginPrincipal);
     }
 

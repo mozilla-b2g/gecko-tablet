@@ -577,6 +577,9 @@ class TypeSet
     TemporaryTypeSet *clone(LifoAlloc *alloc) const;
     bool clone(LifoAlloc *alloc, TemporaryTypeSet *result) const;
 
+    // Create a new TemporaryTypeSet where undefined and/or null has been filtered out.
+    TemporaryTypeSet *filter(LifoAlloc *alloc, bool filterUndefined, bool filterNull) const;
+
   protected:
     uint32_t baseObjectCount() const {
         return (flags & TYPE_FLAG_OBJECT_COUNT_MASK) >> TYPE_FLAG_OBJECT_COUNT_SHIFT;
@@ -1560,12 +1563,8 @@ struct TypeZone
     /* Pending recompilations to perform before execution of JIT code can resume. */
     Vector<RecompileInfo> *pendingRecompiles;
 
-    /* Whether type inference is enabled in this compartment. */
-    bool                         inferenceEnabled;
-
     TypeZone(JS::Zone *zone);
     ~TypeZone();
-    void init(JSContext *cx);
 
     JS::Zone *zone() const { return zone_; }
 

@@ -11,6 +11,8 @@ Cu.import("resource://gre/modules/NotificationDB.jsm");
 Cu.import("resource:///modules/RecentWindow.jsm");
 Cu.import("resource://gre/modules/WindowsPrefSync.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "BrowserUtils",
+                                  "resource://gre/modules/BrowserUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Task",
                                   "resource://gre/modules/Task.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "CharsetMenu",
@@ -1182,13 +1184,6 @@ var gBrowserInit = {
     if (typeof WindowsPrefSync !== 'undefined') {
       // Pulls in Metro controlled prefs and pushes out Desktop controlled prefs
       WindowsPrefSync.init();
-    }
-
-    if (gMultiProcessBrowser) {
-      // Bug 862519 - Backspace doesn't work in electrolysis builds.
-      // We bypass the problem by disabling the backspace-to-go-back command.
-      document.getElementById("cmd_handleBackspace").setAttribute("disabled", true);
-      document.getElementById("key_delete").setAttribute("disabled", true);
     }
 
     SessionStore.promiseInitialized.then(() => {
@@ -4840,13 +4835,11 @@ function getBrowserSelection(aCharLen) {
   // selections of more than 150 characters aren't useful
   const kMaxSelectionLen = 150;
   const charLen = Math.min(aCharLen || kMaxSelectionLen, kMaxSelectionLen);
-  let commandDispatcher = document.commandDispatcher;
 
-  var focusedWindow = commandDispatcher.focusedWindow;
+  let [element, focusedWindow] = BrowserUtils.getFocusSync(document);
   var selection = focusedWindow.getSelection().toString();
   // try getting a selected text in text input.
   if (!selection) {
-    let element = commandDispatcher.focusedElement;
     var isOnTextInput = function isOnTextInput(elem) {
       // we avoid to return a value if a selection is in password field.
       // ref. bug 565717

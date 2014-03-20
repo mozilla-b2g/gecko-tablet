@@ -165,7 +165,7 @@ MarkupView.prototype = {
   },
 
   _onMouseLeave: function() {
-    this._hideBoxModel();
+    this._hideBoxModel(true);
     if (this._hoveredNode) {
       this._containers.get(this._hoveredNode).hovered = false;
     }
@@ -176,8 +176,8 @@ MarkupView.prototype = {
     this._inspector.toolbox.highlighterUtils.highlightNodeFront(nodeFront, options);
   },
 
-  _hideBoxModel: function() {
-    this._inspector.toolbox.highlighterUtils.unhighlight();
+  _hideBoxModel: function(forceHide) {
+    return this._inspector.toolbox.highlighterUtils.unhighlight(forceHide);
   },
 
   _briefBoxModelTimer: null,
@@ -1044,9 +1044,13 @@ MarkupView.prototype = {
    * Tear down the markup panel.
    */
   destroy: function() {
+    if (this._destroyer) {
+      return this._destroyer;
+    }
+
     // Note that if the toolbox is closed, this will work fine, but will fail
     // in case the browser is closed and will trigger a noSuchActor message.
-    this._hideBoxModel();
+    this._destroyer = this._hideBoxModel();
 
     this._hoveredNode = null;
     this._inspector.toolbox.off("picker-node-hovered", this._onToolboxPickerHover);
@@ -1100,6 +1104,8 @@ MarkupView.prototype = {
 
     this.tooltip.destroy();
     this.tooltip = null;
+
+    return this._destroyer;
   },
 
   /**
@@ -1545,8 +1551,6 @@ MarkupContainer.prototype = {
 
     // Remove event listeners
     this.elt.removeEventListener("dblclick", this._onToggle, false);
-    this.elt.removeEventListener("mouseover", this._onMouseOver, false);
-    this.elt.removeEventListener("mouseout", this._onMouseOut, false);
     this.elt.removeEventListener("mousedown", this._onMouseDown, false);
     this.expander.removeEventListener("click", this._onToggle, false);
 

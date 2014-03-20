@@ -60,10 +60,6 @@ MediaEngineWebRTC::MediaEngineWebRTC(MediaEnginePrefs &aPrefs)
 #else
   AsyncLatencyLogger::Get()->AddRef();
 #endif
-  if (aPrefs.mLoadAdapt) {
-      mLoadMonitor = new LoadMonitor();
-      mLoadMonitor->Init(mLoadMonitor);
-  }
 }
 
 void
@@ -125,10 +121,6 @@ MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSourc
     return;
   }
 #endif
-
-  if (mHasTabVideoSource)
-    aVSources->AppendElement(new MediaEngineTabVideoSource());
-
   if (!mVideoEngine) {
     if (!(mVideoEngine = webrtc::VideoEngine::Create())) {
       return;
@@ -232,6 +224,9 @@ MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSourc
       aVSources->AppendElement(vSource);
     }
   }
+
+  if (mHasTabVideoSource)
+    aVSources->AppendElement(new MediaEngineTabVideoSource());
 
   return;
 #endif
@@ -354,9 +349,6 @@ MediaEngineWebRTC::Shutdown()
 
   mVideoEngine = nullptr;
   mVoiceEngine = nullptr;
-
-  if (mLoadMonitor)
-    mLoadMonitor->Shutdown();
 }
 
 }

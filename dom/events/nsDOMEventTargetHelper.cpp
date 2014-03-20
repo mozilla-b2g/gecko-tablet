@@ -5,11 +5,12 @@
 
 #include "nsDOMEventTargetHelper.h"
 #include "nsContentUtils.h"
-#include "nsEventDispatcher.h"
 #include "nsIDocument.h"
 #include "prprf.h"
 #include "nsGlobalWindow.h"
 #include "ScriptSettings.h"
+#include "mozilla/EventDispatcher.h"
+#include "mozilla/EventListenerManager.h"
 #include "mozilla/Likely.h"
 
 using namespace mozilla;
@@ -156,7 +157,7 @@ nsDOMEventTargetHelper::RemoveEventListener(const nsAString& aType,
                                             nsIDOMEventListener* aListener,
                                             bool aUseCapture)
 {
-  nsEventListenerManager* elm = GetExistingListenerManager();
+  EventListenerManager* elm = GetExistingListenerManager();
   if (elm) {
     elm->RemoveEventListener(aType, aListener, aUseCapture);
   }
@@ -183,7 +184,7 @@ nsDOMEventTargetHelper::AddEventListener(const nsAString& aType,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  nsEventListenerManager* elm = GetOrCreateListenerManager();
+  EventListenerManager* elm = GetOrCreateListenerManager();
   NS_ENSURE_STATE(elm);
   elm->AddEventListener(aType, aListener, aUseCapture, aWantsUntrusted);
   return NS_OK;
@@ -207,7 +208,7 @@ nsDOMEventTargetHelper::AddEventListener(const nsAString& aType,
     wantsUntrusted = aWantsUntrusted.Value();
   }
 
-  nsEventListenerManager* elm = GetOrCreateListenerManager();
+  EventListenerManager* elm = GetOrCreateListenerManager();
   if (!elm) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
     return;
@@ -241,7 +242,7 @@ nsDOMEventTargetHelper::DispatchEvent(nsIDOMEvent* aEvent, bool* aRetVal)
 {
   nsEventStatus status = nsEventStatus_eIgnore;
   nsresult rv =
-    nsEventDispatcher::DispatchDOMEvent(this, nullptr, aEvent, nullptr, &status);
+    EventDispatcher::DispatchDOMEvent(this, nullptr, aEvent, nullptr, &status);
 
   *aRetVal = (status != nsEventStatus_eConsumeNoDefault);
   return rv;
@@ -296,7 +297,7 @@ nsDOMEventTargetHelper::GetEventHandler(nsIAtom* aType,
 }
 
 nsresult
-nsDOMEventTargetHelper::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
+nsDOMEventTargetHelper::PreHandleEvent(EventChainPreVisitor& aVisitor)
 {
   aVisitor.mCanHandle = true;
   aVisitor.mParentTarget = nullptr;
@@ -304,7 +305,7 @@ nsDOMEventTargetHelper::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
 }
 
 nsresult
-nsDOMEventTargetHelper::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
+nsDOMEventTargetHelper::PostHandleEvent(EventChainPostVisitor& aVisitor)
 {
   return NS_OK;
 }
@@ -315,22 +316,21 @@ nsDOMEventTargetHelper::DispatchDOMEvent(WidgetEvent* aEvent,
                                          nsPresContext* aPresContext,
                                          nsEventStatus* aEventStatus)
 {
-  return
-    nsEventDispatcher::DispatchDOMEvent(this, aEvent, aDOMEvent, aPresContext,
-                                        aEventStatus);
+  return EventDispatcher::DispatchDOMEvent(this, aEvent, aDOMEvent,
+                                           aPresContext, aEventStatus);
 }
 
-nsEventListenerManager*
+EventListenerManager*
 nsDOMEventTargetHelper::GetOrCreateListenerManager()
 {
   if (!mListenerManager) {
-    mListenerManager = new nsEventListenerManager(this);
+    mListenerManager = new EventListenerManager(this);
   }
 
   return mListenerManager;
 }
 
-nsEventListenerManager*
+EventListenerManager*
 nsDOMEventTargetHelper::GetExistingListenerManager() const
 {
   return mListenerManager;

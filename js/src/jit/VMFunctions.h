@@ -617,9 +617,9 @@ bool SetProperty(JSContext *cx, HandleObject obj, HandlePropertyName name, Handl
 
 bool InterruptCheck(JSContext *cx);
 
-HeapSlot *NewSlots(JSRuntime *rt, unsigned nslots);
+void *MallocWrapper(JSRuntime *rt, size_t nbytes);
 JSObject *NewCallObject(JSContext *cx, HandleScript script,
-                        HandleShape shape, HandleTypeObject type, HeapSlot *slots);
+                        HandleShape shape, HandleTypeObject type);
 JSObject *NewStringObject(JSContext *cx, HandleString str);
 
 bool SPSEnter(JSContext *cx, HandleScript script);
@@ -665,7 +665,7 @@ bool PushBlockScope(JSContext *cx, BaselineFrame *frame, Handle<StaticBlockObjec
 bool PopBlockScope(JSContext *cx, BaselineFrame *frame);
 bool DebugLeaveBlock(JSContext *cx, BaselineFrame *frame, jsbytecode *pc);
 
-bool InitBaselineFrameForOsr(BaselineFrame *frame, StackFrame *interpFrame,
+bool InitBaselineFrameForOsr(BaselineFrame *frame, InterpreterFrame *interpFrame,
                              uint32_t numStackValues);
 
 JSObject *CreateDerivedTypedObj(JSContext *cx, HandleObject descr,

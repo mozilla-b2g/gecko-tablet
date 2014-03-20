@@ -608,6 +608,8 @@ ArrayMetaTypeDescr::create(JSContext *cx,
     if (!prototypeObj)
         return nullptr;
 
+    obj->initReservedSlot(JS_DESCR_SLOT_PROTO, ObjectValue(*prototypeObj));
+
     if (!LinkConstructorAndPrototype(cx, obj, prototypeObj))
         return nullptr;
 
@@ -731,6 +733,15 @@ UnsizedArrayTypeDescr::dimension(JSContext *cx, unsigned int argc, jsval *vp)
 
     args.rval().setObject(*obj);
     return true;
+}
+
+bool
+js::IsTypedObjectArray(JSObject &obj)
+{
+    if (!obj.is<TypedObject>())
+        return false;
+    TypeDescr& d = obj.as<TypedObject>().typeDescr();
+    return d.is<SizedArrayTypeDescr>() || d.is<UnsizedArrayTypeDescr>();
 }
 
 /*********************************
@@ -969,6 +980,8 @@ StructMetaTypeDescr::create(JSContext *cx,
         cx, CreatePrototypeObjectForComplexTypeInstance(cx, structTypePrototype));
     if (!prototypeObj)
         return nullptr;
+
+    descr->initReservedSlot(JS_DESCR_SLOT_PROTO, ObjectValue(*prototypeObj));
 
     if (!LinkConstructorAndPrototype(cx, descr, prototypeObj))
         return nullptr;
@@ -1397,14 +1410,12 @@ TypedObject::createUnattachedWithClass(JSContext *cx,
     obj->initReservedSlot(JS_TYPEDOBJ_SLOT_BYTELENGTH, Int32Value(0));
     obj->initReservedSlot(JS_TYPEDOBJ_SLOT_OWNER, NullValue());
     obj->initReservedSlot(JS_TYPEDOBJ_SLOT_NEXT_VIEW, PrivateValue(nullptr));
-    obj->initReservedSlot(JS_TYPEDOBJ_SLOT_NEXT_BUFFER, PrivateValue(UNSET_BUFFER_LINK));
     obj->initReservedSlot(JS_TYPEDOBJ_SLOT_LENGTH, Int32Value(length));
     obj->initReservedSlot(JS_TYPEDOBJ_SLOT_TYPE_DESCR, ObjectValue(*type));
 
     // Tag the type object for this instance with the type
     // representation, if that has not been done already.
-    if (cx->typeInferenceEnabled() && !type->is<SimpleTypeDescr>()) {
-        // FIXME Bug 929651           ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+    if (!type->is<SimpleTypeDescr>()) { // FIXME Bug 929651
         RootedTypeObject typeObj(cx, obj->getType(cx));
         if (typeObj) {
             if (!typeObj->addTypedObjectAddendum(cx, type))
@@ -1499,7 +1510,7 @@ TypedObject::createZeroed(JSContext *cx,
       {
         size_t totalSize = descr->as<SizedTypeDescr>().size();
         Rooted<ArrayBufferObject*> buffer(cx);
-        buffer = ArrayBufferObject::create(cx, totalSize, false);
+        buffer = ArrayBufferObject::create(cx, totalSize);
         if (!buffer)
             return nullptr;
         typeRepr->asSized()->initInstance(cx->runtime(), buffer->dataPointer(), 1);
@@ -1520,7 +1531,7 @@ TypedObject::createZeroed(JSContext *cx,
         }
 
         Rooted<ArrayBufferObject*> buffer(cx);
-        buffer = ArrayBufferObject::create(cx, totalSize, false);
+        buffer = ArrayBufferObject::create(cx, totalSize);
         if (!buffer)
             return nullptr;
 
@@ -1714,11 +1725,10 @@ TypedObject::obj_defineElement(JSContext *cx, HandleObject obj, uint32_t index, 
                                PropertyOp getter, StrictPropertyOp setter, unsigned attrs)
 {
     AutoRooterGetterSetter gsRoot(cx, attrs, &getter, &setter);
-
-    RootedObject delegate(cx, ArrayBufferDelegate(cx, obj));
-    if (!delegate)
+    Rooted<jsid> id(cx);
+    if (!IndexToId(cx, index, &id))
         return false;
-    return baseops::DefineElement(cx, delegate, index, v, getter, setter, attrs);
+    return obj_defineGeneric(cx, obj, id, v, getter, setter, attrs);
 }
 
 bool
@@ -2292,6 +2302,12 @@ TypedObject::constructSized(JSContext *cx, unsigned int argc, Value *vp)
         Rooted<ArrayBufferObject*> buffer(cx);
         buffer = &args[0].toObject().as<ArrayBufferObject>();
 
+        if (buffer->isNeutered()) {
+            JS_ReportErrorNumber(cx, js_GetErrorMessage,
+                                 nullptr, JSMSG_TYPEDOBJECT_BAD_ARGS);
+            return false;
+        }
+
         int32_t offset;
         if (args.length() >= 2 && !args[1].isUndefined()) {
             if (!args[1].isInt32()) {
@@ -2397,6 +2413,12 @@ TypedObject::constructUnsized(JSContext *cx, unsigned int argc, Value *vp)
     if (args[0].isObject() && args[0].toObject().is<ArrayBufferObject>()) {
         Rooted<ArrayBufferObject*> buffer(cx);
         buffer = &args[0].toObject().as<ArrayBufferObject>();
+
+        if (buffer->isNeutered()) {
+            JS_ReportErrorNumber(cx, js_GetErrorMessage,
+                                 nullptr, JSMSG_TYPEDOBJECT_BAD_ARGS);
+            return false;
+        }
 
         int32_t offset;
         if (args.length() >= 2 && !args[1].isUndefined()) {

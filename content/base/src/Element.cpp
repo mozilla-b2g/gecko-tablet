@@ -22,7 +22,6 @@
 #include "nsIDOMNodeList.h"
 #include "nsIDOMDocument.h"
 #include "nsIContentIterator.h"
-#include "nsEventListenerManager.h"
 #include "nsFocusManager.h"
 #include "nsILinkHandler.h"
 #include "nsIScriptGlobalObject.h"
@@ -49,7 +48,10 @@
 #include "nsDOMString.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIDOMMutationEvent.h"
+#include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/ContentEvents.h"
+#include "mozilla/EventDispatcher.h"
+#include "mozilla/EventListenerManager.h"
 #include "mozilla/InternalMutationEvent.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/TextEvents.h"
@@ -90,7 +92,6 @@
 #include "nsGenericHTMLElement.h"
 #include "nsIEditor.h"
 #include "nsIEditorIMESupport.h"
-#include "nsEventDispatcher.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsIControllers.h"
 #include "nsView.h"
@@ -99,7 +100,6 @@
 #include "mozilla/css/StyleRule.h" /* For nsCSSSelectorList */
 #include "nsCSSRuleProcessor.h"
 #include "nsRuleProcessorData.h"
-#include "nsAsyncDOMEvent.h"
 #include "nsTextNode.h"
 
 #ifdef MOZ_XUL
@@ -478,7 +478,7 @@ void
 Element::GetElementsByTagName(const nsAString& aLocalName,
                               nsIDOMHTMLCollection** aResult)
 {
-  *aResult = GetElementsByTagName(aLocalName).get();
+  *aResult = GetElementsByTagName(aLocalName).take();
 }
 
 nsIFrame*
@@ -1052,7 +1052,8 @@ nsresult
 Element::GetElementsByClassName(const nsAString& aClassNames,
                                 nsIDOMHTMLCollection** aResult)
 {
-  *aResult = nsContentUtils::GetElementsByClassName(this, aClassNames).get();
+  *aResult =
+    nsContentUtils::GetElementsByClassName(this, aClassNames).take();
   return NS_OK;
 }
 
@@ -1659,8 +1660,8 @@ Element::SetEventHandler(nsIAtom* aEventName,
 
   NS_PRECONDITION(aEventName, "Must have event name!");
   bool defer = true;
-  nsEventListenerManager* manager = GetEventListenerManagerForAttr(aEventName,
-                                                                   &defer);
+  EventListenerManager* manager =
+    GetEventListenerManagerForAttr(aEventName, &defer);
   if (!manager) {
     return NS_OK;
   }
@@ -1945,7 +1946,7 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
     mutation.mAttrChange = aModType;
 
     mozAutoSubtreeModified subtree(OwnerDoc(), this);
-    (new nsAsyncDOMEvent(this, mutation))->RunDOMEventWhenSafe();
+    (new AsyncEventDispatcher(this, mutation))->RunDOMEventWhenSafe();
   }
 
   return NS_OK;
@@ -1970,7 +1971,7 @@ Element::SetMappedAttribute(nsIDocument* aDocument,
   return false;
 }
 
-nsEventListenerManager*
+EventListenerManager*
 Element::GetEventListenerManagerForAttr(nsIAtom* aAttrName,
                                         bool* aDefer)
 {
@@ -2130,7 +2131,7 @@ Element::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aName,
     mutation.mAttrChange = nsIDOMMutationEvent::REMOVAL;
 
     mozAutoSubtreeModified subtree(OwnerDoc(), this);
-    (new nsAsyncDOMEvent(this, mutation))->RunDOMEventWhenSafe();
+    (new AsyncEventDispatcher(this, mutation))->RunDOMEventWhenSafe();
   }
 
   return NS_OK;
@@ -2316,7 +2317,7 @@ Element::Describe(nsAString& aOutDescription) const
 }
 
 bool
-Element::CheckHandleEventForLinksPrecondition(nsEventChainVisitor& aVisitor,
+Element::CheckHandleEventForLinksPrecondition(EventChainVisitor& aVisitor,
                                               nsIURI** aURI) const
 {
   if (aVisitor.mEventStatus == nsEventStatus_eConsumeNoDefault ||
@@ -2334,7 +2335,7 @@ Element::CheckHandleEventForLinksPrecondition(nsEventChainVisitor& aVisitor,
 }
 
 nsresult
-Element::PreHandleEventForLinks(nsEventChainPreVisitor& aVisitor)
+Element::PreHandleEventForLinks(EventChainPreVisitor& aVisitor)
 {
   // Optimisation: return early if this event doesn't interest us.
   // IMPORTANT: this switch and the switch below it must be kept in sync!
@@ -2395,7 +2396,7 @@ Element::PreHandleEventForLinks(nsEventChainPreVisitor& aVisitor)
 }
 
 nsresult
-Element::PostHandleEventForLinks(nsEventChainPostVisitor& aVisitor)
+Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor)
 {
   // Optimisation: return early if this event doesn't interest us.
   // IMPORTANT: this switch and the switch below it must be kept in sync!
@@ -2617,12 +2618,12 @@ Element::MozRequestFullScreen()
                                     NS_LITERAL_CSTRING("DOM"), OwnerDoc(),
                                     nsContentUtils::eDOM_PROPERTIES,
                                     error);
-    nsRefPtr<nsAsyncDOMEvent> e =
-      new nsAsyncDOMEvent(OwnerDoc(),
-                          NS_LITERAL_STRING("mozfullscreenerror"),
-                          true,
-                          false);
-    e->PostDOMEvent();
+    nsRefPtr<AsyncEventDispatcher> asyncDispatcher =
+      new AsyncEventDispatcher(OwnerDoc(),
+                               NS_LITERAL_STRING("mozfullscreenerror"),
+                               true,
+                               false);
+    asyncDispatcher->PostDOMEvent();
     return;
   }
 

@@ -48,9 +48,9 @@
 #include "ScriptSettings.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Likely.h"
+#include "mozilla/unused.h"
 
 // Other Classes
-#include "nsEventListenerManager.h"
 #include "mozilla/dom/BarProps.h"
 #include "nsContentCID.h"
 #include "nsLayoutStatics.h"
@@ -59,6 +59,7 @@
 #include "nsJSPrincipals.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Debug.h"
+#include "mozilla/EventListenerManager.h"
 #include "mozilla/MouseEvents.h"
 #include "AudioChannelService.h"
 
@@ -129,7 +130,7 @@
 #include "nsToolkitCompsCID.h"
 #endif
 #include "nsCDefaultURIFixup.h"
-#include "nsEventDispatcher.h"
+#include "mozilla/EventDispatcher.h"
 #include "nsIObserverService.h"
 #include "nsFocusManager.h"
 #include "nsIXULWindow.h"
@@ -1673,7 +1674,7 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsGlobalWindow)
     if (tmp->mCachedXBLPrototypeHandlers) {
       tmp->mCachedXBLPrototypeHandlers->Enumerate(MarkXBLHandlers, nullptr);
     }
-    if (nsEventListenerManager* elm = tmp->GetExistingListenerManager()) {
+    if (EventListenerManager* elm = tmp->GetExistingListenerManager()) {
       elm->MarkForCC();
     }
     tmp->UnmarkGrayTimers();
@@ -2950,7 +2951,7 @@ nsGlobalWindow::GetTargetForEventTargetChain()
 }
 
 nsresult
-nsGlobalWindow::WillHandleEvent(nsEventChainPostVisitor& aVisitor)
+nsGlobalWindow::WillHandleEvent(EventChainPostVisitor& aVisitor)
 {
   return NS_OK;
 }
@@ -2962,7 +2963,7 @@ nsGlobalWindow::GetJSContextForEventHandlers()
 }
 
 nsresult
-nsGlobalWindow::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
+nsGlobalWindow::PreHandleEvent(EventChainPreVisitor& aVisitor)
 {
   NS_PRECONDITION(IsInnerWindow(), "PreHandleEvent is used on outer window!?");
   static uint32_t count = 0;
@@ -3161,7 +3162,7 @@ nsGlobalWindow::EnableDialogs()
 }
 
 nsresult
-nsGlobalWindow::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
+nsGlobalWindow::PostHandleEvent(EventChainPostVisitor& aVisitor)
 {
   NS_PRECONDITION(IsInnerWindow(), "PostHandleEvent is used on outer window!?");
 
@@ -3213,7 +3214,7 @@ nsGlobalWindow::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
       // be a pres context available). Since we're not firing a GUI
       // event we don't need a pres context anyway so we just pass
       // null as the pres context all the time here.
-      nsEventDispatcher::Dispatch(element, nullptr, &event, nullptr, &status);
+      EventDispatcher::Dispatch(element, nullptr, &event, nullptr, &status);
     }
   }
 
@@ -3226,10 +3227,9 @@ nsGlobalWindow::DispatchDOMEvent(WidgetEvent* aEvent,
                                  nsPresContext* aPresContext,
                                  nsEventStatus* aEventStatus)
 {
-  return
-    nsEventDispatcher::DispatchDOMEvent(static_cast<nsPIDOMWindow*>(this),
-                                       aEvent, aDOMEvent, aPresContext,
-                                       aEventStatus);
+  return EventDispatcher::DispatchDOMEvent(static_cast<nsPIDOMWindow*>(this),
+                                           aEvent, aDOMEvent, aPresContext,
+                                           aEventStatus);
 }
 
 void
@@ -3942,7 +3942,7 @@ NS_IMETHODIMP
 nsGlobalWindow::GetContent(nsIDOMWindow** aContent)
 {
   ErrorResult rv;
-  *aContent = GetContentInternal(rv).get();
+  *aContent = GetContentInternal(rv).take();
 
   return rv.ErrorCode();
 }
@@ -5032,7 +5032,7 @@ nsGlobalWindow::GetDevicePixelRatio(ErrorResult& aError)
     return 1.0;
   }
 
-  nsCOMPtr<nsPresContext> presContext;
+  nsRefPtr<nsPresContext> presContext;
   mDocShell->GetPresContext(getter_AddRefs(presContext));
   if (!presContext) {
     return 1.0;
@@ -7599,16 +7599,19 @@ nsGlobalWindow::CallerInnerWindow()
   }
   JSAutoCompartment ac(cx, scope);
 
-  nsCOMPtr<nsIXPConnectWrappedNative> wrapper;
-  nsContentUtils::XPConnect()->
-    GetWrappedNativeOfJSObject(cx, scope, getter_AddRefs(wrapper));
-  if (!wrapper)
+  // We don't use xpc::WindowOrNull here because we want to be able to tell
+  // apart the cases of "scope is not an nsISupports at all" and "scope is an
+  // nsISupports that's not a window". It's not clear whether that's desirable,
+  // see bug 984467.
+  nsISupports* native =
+    nsContentUtils::XPConnect()->GetNativeOfWrapper(cx, scope);
+  if (!native)
     return nullptr;
 
   // The calling window must be holding a reference, so we can just return a
   // raw pointer here and let the QI's addref be balanced by the nsCOMPtr
   // destructor's release.
-  nsCOMPtr<nsPIDOMWindow> win = do_QueryWrappedNative(wrapper);
+  nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(native);
   if (!win)
     return GetCurrentInnerWindowInternal();
   return static_cast<nsGlobalWindow*>(win.get());
@@ -7888,11 +7891,11 @@ PostMessageEvent::Run()
   WidgetEvent* internalEvent = message->GetInternalNSEvent();
 
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsEventDispatcher::Dispatch(static_cast<nsPIDOMWindow*>(mTargetWindow),
-                              presContext,
-                              internalEvent,
-                              message,
-                              &status);
+  EventDispatcher::Dispatch(static_cast<nsPIDOMWindow*>(mTargetWindow),
+                            presContext,
+                            internalEvent,
+                            message,
+                            &status);
   return NS_OK;
 }
 
@@ -9158,7 +9161,7 @@ nsGlobalWindow::RemoveEventListener(const nsAString& aType,
                                     nsIDOMEventListener* aListener,
                                     bool aUseCapture)
 {
-  if (nsRefPtr<nsEventListenerManager> elm = GetExistingListenerManager()) {
+  if (nsRefPtr<EventListenerManager> elm = GetExistingListenerManager()) {
     elm->RemoveEventListener(aType, aListener, aUseCapture);
   }
   return NS_OK;
@@ -9191,8 +9194,8 @@ nsGlobalWindow::DispatchEvent(nsIDOMEvent* aEvent, bool* aRetVal)
 
   nsEventStatus status = nsEventStatus_eIgnore;
   nsresult rv =
-    nsEventDispatcher::DispatchDOMEvent(GetOuterWindow(), nullptr, aEvent,
-                                        presContext, &status);
+    EventDispatcher::DispatchDOMEvent(GetOuterWindow(), nullptr, aEvent,
+                                      presContext, &status);
 
   *aRetVal = (status != nsEventStatus_eConsumeNoDefault);
   return rv;
@@ -9219,7 +9222,7 @@ nsGlobalWindow::AddEventListener(const nsAString& aType,
     aWantsUntrusted = true;
   }
 
-  nsEventListenerManager* manager = GetOrCreateListenerManager();
+  EventListenerManager* manager = GetOrCreateListenerManager();
   NS_ENSURE_STATE(manager);
   manager->AddEventListener(aType, aListener, aUseCapture, aWantsUntrusted);
   return NS_OK;
@@ -9245,7 +9248,7 @@ nsGlobalWindow::AddEventListener(const nsAString& aType,
     wantsUntrusted = aWantsUntrusted.Value();
   }
 
-  nsEventListenerManager* manager = GetOrCreateListenerManager();
+  EventListenerManager* manager = GetOrCreateListenerManager();
   if (!manager) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
     return;
@@ -9279,20 +9282,20 @@ nsGlobalWindow::AddSystemEventListener(const nsAString& aType,
                                    aWantsUntrusted);
 }
 
-nsEventListenerManager*
+EventListenerManager*
 nsGlobalWindow::GetOrCreateListenerManager()
 {
   FORWARD_TO_INNER_CREATE(GetOrCreateListenerManager, (), nullptr);
 
   if (!mListenerManager) {
     mListenerManager =
-      new nsEventListenerManager(static_cast<EventTarget*>(this));
+      new EventListenerManager(static_cast<EventTarget*>(this));
   }
 
   return mListenerManager;
 }
 
-nsEventListenerManager*
+EventListenerManager*
 nsGlobalWindow::GetExistingListenerManager() const
 {
   FORWARD_TO_INNER(GetExistingListenerManager, (), nullptr);
@@ -9829,9 +9832,9 @@ nsGlobalWindow::FireHashchange(const nsAString &aOldURL,
   // Create a new hashchange event.
   nsCOMPtr<nsIDOMEvent> domEvent;
   nsresult rv =
-    nsEventDispatcher::CreateEvent(this, presContext, nullptr,
-                                   NS_LITERAL_STRING("hashchangeevent"),
-                                   getter_AddRefs(domEvent));
+    EventDispatcher::CreateEvent(this, presContext, nullptr,
+                                 NS_LITERAL_STRING("hashchangeevent"),
+                                 getter_AddRefs(domEvent));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIDOMHashChangeEvent> hashchangeEvent = do_QueryInterface(domEvent);
@@ -9885,9 +9888,9 @@ nsGlobalWindow::DispatchSyncPopState()
 
   // Create a new popstate event
   nsCOMPtr<nsIDOMEvent> domEvent;
-  rv = nsEventDispatcher::CreateEvent(this, presContext, nullptr,
-                                      NS_LITERAL_STRING("popstateevent"),
-                                      getter_AddRefs(domEvent));
+  rv = EventDispatcher::CreateEvent(this, presContext, nullptr,
+                                    NS_LITERAL_STRING("popstateevent"),
+                                    getter_AddRefs(domEvent));
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Initialize the popstate event, which does bubble but isn't cancellable.
@@ -11667,7 +11670,7 @@ nsGlobalWindow::SetTimeoutOrInterval(nsIScriptTimeoutHandler *aHandler,
     }
 
     // The timeout is now also held in the timer's closure.
-    copy.forget();
+    unused << copy.forget();
   } else {
     // If we are frozen, however, then we instead simply set
     // timeout->mTimeRemaining to be the "time remaining" in the timeout (i.e.,
@@ -12400,14 +12403,12 @@ nsGlobalWindow::GetScrollFrame()
 
 nsresult
 nsGlobalWindow::BuildURIfromBase(const char *aURL, nsIURI **aBuiltURI,
-                                 bool *aFreeSecurityPass,
                                  JSContext **aCXused)
 {
   nsIScriptContext *scx = GetContextInternal();
   JSContext *cx = nullptr;
 
   *aBuiltURI = nullptr;
-  *aFreeSecurityPass = false;
   if (aCXused)
     *aCXused = nullptr;
 
@@ -12448,15 +12449,12 @@ nsGlobalWindow::BuildURIfromBase(const char *aURL, nsIURI **aBuiltURI,
 
   if (!sourceWindow) {
     sourceWindow = this;
-    *aFreeSecurityPass = true;
   }
 
-  if (sourceWindow) {
-    nsCOMPtr<nsIDocument> doc = sourceWindow->GetDoc();
-    if (doc) {
-      baseURI = doc->GetDocBaseURI();
-      charset = doc->GetDocumentCharacterSet();
-    }
+  nsCOMPtr<nsIDocument> doc = sourceWindow->GetDoc();
+  if (doc) {
+    baseURI = doc->GetDocBaseURI();
+    charset = doc->GetDocumentCharacterSet();
   }
 
   if (aCXused)
@@ -12468,17 +12466,22 @@ nsresult
 nsGlobalWindow::SecurityCheckURL(const char *aURL)
 {
   JSContext       *cxUsed;
-  bool             freePass;
   nsCOMPtr<nsIURI> uri;
 
-  if (NS_FAILED(BuildURIfromBase(aURL, getter_AddRefs(uri), &freePass, &cxUsed)))
+  if (NS_FAILED(BuildURIfromBase(aURL, getter_AddRefs(uri), &cxUsed))) {
     return NS_ERROR_FAILURE;
+  }
+
+  if (!cxUsed) {
+    return NS_OK;
+  }
 
   AutoPushJSContext cx(cxUsed);
 
-  if (!freePass && NS_FAILED(nsContentUtils::GetSecurityManager()->
-        CheckLoadURIFromScript(cx, uri)))
+  if (NS_FAILED(nsContentUtils::GetSecurityManager()->
+        CheckLoadURIFromScript(cx, uri))) {
     return NS_ERROR_FAILURE;
+  }
 
   return NS_OK;
 }
@@ -12868,7 +12871,7 @@ CollectSizeAndListenerCount(
       iSizeOf->SizeOfEventTargetIncludingThis(windowSizes->mMallocSizeOf);
   }
 
-  if (nsEventListenerManager* elm = et->GetExistingListenerManager()) {
+  if (EventListenerManager* elm = et->GetExistingListenerManager()) {
     windowSizes->mDOMEventListenersCount += elm->ListenerCount();
   }
 
@@ -12881,7 +12884,7 @@ nsGlobalWindow::AddSizeOfIncludingThis(nsWindowSizes* aWindowSizes) const
   aWindowSizes->mDOMOtherSize += aWindowSizes->mMallocSizeOf(this);
 
   if (IsInnerWindow()) {
-    nsEventListenerManager* elm = GetExistingListenerManager();
+    EventListenerManager* elm = GetExistingListenerManager();
     if (elm) {
       aWindowSizes->mDOMOtherSize +=
         elm->SizeOfIncludingThis(aWindowSizes->mMallocSizeOf);
@@ -13596,7 +13599,7 @@ nsGlobalWindow::DisableNetworkEvent(uint32_t aType)
 #define ERROR_EVENT(name_, id_, type_, struct_)                              \
   NS_IMETHODIMP nsGlobalWindow::GetOn##name_(JSContext *cx,                  \
                                              JS::MutableHandle<JS::Value> vp) { \
-    nsEventListenerManager *elm = GetExistingListenerManager();              \
+    EventListenerManager *elm = GetExistingListenerManager();                \
     if (elm) {                                                               \
       OnErrorEventHandlerNonNull* h = elm->GetOnErrorEventHandler();         \
       if (h) {                                                               \
@@ -13609,7 +13612,7 @@ nsGlobalWindow::DisableNetworkEvent(uint32_t aType)
   }                                                                          \
   NS_IMETHODIMP nsGlobalWindow::SetOn##name_(JSContext *cx,                  \
                                              JS::Handle<JS::Value> v) {      \
-    nsEventListenerManager *elm = GetOrCreateListenerManager();              \
+    EventListenerManager *elm = GetOrCreateListenerManager();                \
     if (!elm) {                                                              \
       return NS_ERROR_OUT_OF_MEMORY;                                         \
     }                                                                        \
@@ -13626,7 +13629,7 @@ nsGlobalWindow::DisableNetworkEvent(uint32_t aType)
 #define BEFOREUNLOAD_EVENT(name_, id_, type_, struct_)                       \
   NS_IMETHODIMP nsGlobalWindow::GetOn##name_(JSContext *cx,                  \
                                              JS::MutableHandle<JS::Value> vp) { \
-    nsEventListenerManager *elm = GetExistingListenerManager();              \
+    EventListenerManager *elm = GetExistingListenerManager();                \
     if (elm) {                                                               \
       OnBeforeUnloadEventHandlerNonNull* h =                                 \
         elm->GetOnBeforeUnloadEventHandler();                                \
@@ -13640,7 +13643,7 @@ nsGlobalWindow::DisableNetworkEvent(uint32_t aType)
   }                                                                          \
   NS_IMETHODIMP nsGlobalWindow::SetOn##name_(JSContext *cx,                  \
                                              JS::Handle<JS::Value> v) {      \
-    nsEventListenerManager *elm = GetOrCreateListenerManager();              \
+    EventListenerManager *elm = GetOrCreateListenerManager();                \
     if (!elm) {                                                              \
       return NS_ERROR_OUT_OF_MEMORY;                                         \
     }                                                                        \

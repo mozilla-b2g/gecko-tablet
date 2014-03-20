@@ -60,7 +60,7 @@ nsCSSValue::nsCSSValue(const nsString& aValue, nsCSSUnit aUnit)
 {
   NS_ABORT_IF_FALSE(UnitHasStringValue(), "not a string value");
   if (UnitHasStringValue()) {
-    mValue.mString = BufferFromString(aValue).get();
+    mValue.mString = BufferFromString(aValue).take();
   }
   else {
     mUnit = eCSSUnit_Null;
@@ -387,7 +387,7 @@ void nsCSSValue::SetStringValue(const nsString& aValue,
   mUnit = aUnit;
   NS_ABORT_IF_FALSE(UnitHasStringValue(), "not a string unit");
   if (UnitHasStringValue()) {
-    mValue.mString = BufferFromString(aValue).get();
+    mValue.mString = BufferFromString(aValue).take();
   } else
     mUnit = eCSSUnit_Null;
 }
@@ -674,10 +674,9 @@ void nsCSSValue::StartImageLoad(nsIDocument* aDocument) const
                                  mValue.mURL->mReferrer,
                                  mValue.mURL->mOriginPrincipal,
                                  aDocument);
-  if (image) {
-    nsCSSValue* writable = const_cast<nsCSSValue*>(this);
-    writable->SetImageValue(image);
-  }
+
+  nsCSSValue* writable = const_cast<nsCSSValue*>(this);
+  writable->SetImageValue(image);
 }
 
 nscolor nsCSSValue::GetColorValue() const

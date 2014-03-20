@@ -92,8 +92,9 @@ GrallocTextureClientOGL::DropTextureData()
 
 GrallocTextureClientOGL::GrallocTextureClientOGL(GrallocBufferActor* aActor,
                                                  gfx::IntSize aSize,
+                                                 gfx::BackendType aMoz2dBackend,
                                                  TextureFlags aFlags)
-: BufferTextureClient(nullptr, gfx::SurfaceFormat::UNKNOWN, aFlags)
+: BufferTextureClient(nullptr, gfx::SurfaceFormat::UNKNOWN, aMoz2dBackend, aFlags)
 , mMappedBuffer(nullptr)
 {
   InitWith(aActor, aSize);
@@ -102,8 +103,9 @@ GrallocTextureClientOGL::GrallocTextureClientOGL(GrallocBufferActor* aActor,
 
 GrallocTextureClientOGL::GrallocTextureClientOGL(ISurfaceAllocator* aAllocator,
                                                  gfx::SurfaceFormat aFormat,
+                                                 gfx::BackendType aMoz2dBackend,
                                                  TextureFlags aFlags)
-: BufferTextureClient(aAllocator, aFormat, aFlags)
+: BufferTextureClient(aAllocator, aFormat, aMoz2dBackend, aFlags)
 , mMappedBuffer(nullptr)
 {
   MOZ_COUNT_CTOR(GrallocTextureClientOGL);
@@ -167,18 +169,10 @@ GrallocTextureClientOGL::UpdateSurface(gfxASurface* aSurface)
     return false;
   }
 
-  if (gfxPlatform::GetPlatform()->SupportsAzureContent()) {
-    RefPtr<DrawTarget> dt = GetAsDrawTarget();
-    RefPtr<SourceSurface> source = gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(dt, aSurface);
+  RefPtr<DrawTarget> dt = GetAsDrawTarget();
+  RefPtr<SourceSurface> source = gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(dt, aSurface);
 
-    dt->CopySurface(source, IntRect(IntPoint(), GetSize()), IntPoint());
-  } else {
-    nsRefPtr<gfxASurface> surf = GetAsSurface();
-    nsRefPtr<gfxContext> tmpCtx = new gfxContext(surf.get());
-    tmpCtx->SetOperator(gfxContext::OPERATOR_SOURCE);
-    tmpCtx->DrawSurface(aSurface, gfxSize(GetSize().width,
-                                          GetSize().height));
-  }
+  dt->CopySurface(source, IntRect(IntPoint(), GetSize()), IntPoint());
 
   return true;
 }

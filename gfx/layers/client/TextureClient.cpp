@@ -248,29 +248,8 @@ DisableGralloc(SurfaceFormat aFormat)
   if (aFormat == gfx::SurfaceFormat::A8) {
     return true;
   }
-#if ANDROID_VERSION <= 15
-  static bool checkedDevice = false;
-  static bool disableGralloc = false;
 
-  if (!checkedDevice) {
-    char propValue[PROPERTY_VALUE_MAX];
-    property_get("ro.product.device", propValue, "None");
-
-    if (strcmp("crespo",propValue) == 0) {
-      NS_WARNING("Nexus S has issues with gralloc, falling back to shmem");
-      disableGralloc = true;
-    }
-
-    checkedDevice = true;
-  }
-
-  if (disableGralloc) {
-    return true;
-  }
   return false;
-#else
-  return false;
-#endif
 }
 #endif
 
@@ -278,17 +257,28 @@ DisableGralloc(SurfaceFormat aFormat)
 TemporaryRef<TextureClient>
 TextureClient::CreateTextureClientForDrawing(ISurfaceAllocator* aAllocator,
                                              SurfaceFormat aFormat,
-                                             TextureFlags aTextureFlags)
+                                             TextureFlags aTextureFlags,
+                                             gfx::BackendType aMoz2DBackend,
+                                             const gfx::IntSize& aSizeHint)
 {
+  if (aMoz2DBackend == gfx::BackendType::NONE) {
+    aMoz2DBackend = gfxPlatform::GetPlatform()->GetContentBackend();
+  }
+
   RefPtr<TextureClient> result;
 
 #ifdef XP_WIN
   LayersBackend parentBackend = aAllocator->GetCompositorBackendType();
-  if (parentBackend == LayersBackend::LAYERS_D3D11 && gfxWindowsPlatform::GetPlatform()->GetD2DDevice() &&
+  if (parentBackend == LayersBackend::LAYERS_D3D11 &&
+      (aMoz2DBackend == gfx::BackendType::DIRECT2D ||
+        aMoz2DBackend == gfx::BackendType::DIRECT2D1_1) &&
+      gfxWindowsPlatform::GetPlatform()->GetD2DDevice() &&
+
       !(aTextureFlags & TEXTURE_ALLOC_FALLBACK)) {
     result = new TextureClientD3D11(aFormat, aTextureFlags);
   }
   if (parentBackend == LayersBackend::LAYERS_D3D9 &&
+      aMoz2DBackend == gfx::BackendType::CAIRO &&
       aAllocator->IsSameProcess() &&
       !(aTextureFlags & TEXTURE_ALLOC_FALLBACK)) {
     if (!gfxWindowsPlatform::GetPlatform()->GetD3D9Device()) {
@@ -305,6 +295,7 @@ TextureClient::CreateTextureClientForDrawing(ISurfaceAllocator* aAllocator,
     gfxPlatform::GetPlatform()->ScreenReferenceSurface()->GetType();
 
   if (parentBackend == LayersBackend::LAYERS_BASIC &&
+      aMoz2DBackend == gfx::BackendType::CAIRO &&
       type == gfxSurfaceType::Xlib &&
       !(aTextureFlags & TEXTURE_ALLOC_FALLBACK))
   {
@@ -327,13 +318,19 @@ TextureClient::CreateTextureClientForDrawing(ISurfaceAllocator* aAllocator,
 
 #ifdef MOZ_WIDGET_GONK
   if (!DisableGralloc(aFormat)) {
-    result = new GrallocTextureClientOGL(aAllocator, aFormat, aTextureFlags);
+    // Don't allow Gralloc texture clients to exceed the maximum texture size.
+    // BufferTextureClients have code to handle tiling the surface client-side.
+    int32_t maxTextureSize = aAllocator->GetMaxTextureSize();
+    if (aSizeHint.width <= maxTextureSize && aSizeHint.height <= maxTextureSize) {
+      result = new GrallocTextureClientOGL(aAllocator, aFormat, aMoz2DBackend,
+                                           aTextureFlags);
+    }
   }
 #endif
 
   // Can't do any better than a buffer texture client.
   if (!result) {
-    result = CreateBufferTextureClient(aAllocator, aFormat, aTextureFlags);
+    result = CreateBufferTextureClient(aAllocator, aFormat, aTextureFlags, aMoz2DBackend);
   }
 
   MOZ_ASSERT(!result || result->AsTextureClientDrawTarget(),
@@ -345,14 +342,17 @@ TextureClient::CreateTextureClientForDrawing(ISurfaceAllocator* aAllocator,
 TemporaryRef<BufferTextureClient>
 TextureClient::CreateBufferTextureClient(ISurfaceAllocator* aAllocator,
                                          SurfaceFormat aFormat,
-                                         TextureFlags aTextureFlags)
+                                         TextureFlags aTextureFlags,
+                                         gfx::BackendType aMoz2DBackend)
 {
   if (gfxPlatform::GetPlatform()->PreferMemoryOverShmem()) {
     RefPtr<BufferTextureClient> result = new MemoryTextureClient(aAllocator, aFormat,
+                                                                 aMoz2DBackend,
                                                                  aTextureFlags);
     return result.forget();
   }
   RefPtr<BufferTextureClient> result = new ShmemTextureClient(aAllocator, aFormat,
+                                                              aMoz2DBackend,
                                                               aTextureFlags);
   return result.forget();
 }
@@ -556,8 +556,9 @@ ShmemTextureClient::GetBufferSize() const
 
 ShmemTextureClient::ShmemTextureClient(ISurfaceAllocator* aAllocator,
                                        gfx::SurfaceFormat aFormat,
+                                       gfx::BackendType aMoz2DBackend,
                                        TextureFlags aFlags)
-  : BufferTextureClient(aAllocator, aFormat, aFlags)
+  : BufferTextureClient(aAllocator, aFormat, aMoz2DBackend, aFlags)
   , mAllocated(false)
 {
   MOZ_COUNT_CTOR(ShmemTextureClient);
@@ -602,8 +603,9 @@ MemoryTextureClient::Allocate(uint32_t aSize)
 
 MemoryTextureClient::MemoryTextureClient(ISurfaceAllocator* aAllocator,
                                          gfx::SurfaceFormat aFormat,
+                                         gfx::BackendType aMoz2DBackend,
                                          TextureFlags aFlags)
-  : BufferTextureClient(aAllocator, aFormat, aFlags)
+  : BufferTextureClient(aAllocator, aFormat, aMoz2DBackend, aFlags)
   , mBuffer(nullptr)
   , mBufSize(0)
 {
@@ -623,10 +625,13 @@ MemoryTextureClient::~MemoryTextureClient()
 
 BufferTextureClient::BufferTextureClient(ISurfaceAllocator* aAllocator,
                                          gfx::SurfaceFormat aFormat,
+                                         gfx::BackendType aMoz2DBackend,
                                          TextureFlags aFlags)
   : TextureClient(aFlags)
   , mAllocator(aAllocator)
   , mFormat(aFormat)
+  , mBackend(aMoz2DBackend)
+  , mOpenMode(0)
   , mUsingFallbackDrawTarget(false)
   , mLocked(false)
 {}
@@ -652,25 +657,13 @@ BufferTextureClient::UpdateSurface(gfxASurface* aSurface)
     return false;
   }
 
-  if (gfxPlatform::GetPlatform()->SupportsAzureContent()) {
-    RefPtr<DrawTarget> dt = GetAsDrawTarget();
-    RefPtr<SourceSurface> source = gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(dt, aSurface);
+  RefPtr<DrawTarget> dt = GetAsDrawTarget();
+  RefPtr<SourceSurface> source = gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(dt, aSurface);
 
-    dt->CopySurface(source, IntRect(IntPoint(), serializer.GetSize()), IntPoint());
-    // XXX - if the Moz2D backend is D2D, we would be much better off memcpying
-    // the content of the surface directly because with D2D, GetAsDrawTarget is
-    // very expensive.
-  } else {
-    RefPtr<gfxImageSurface> surf = serializer.GetAsThebesSurface();
-    if (!surf) {
-      return false;
-    }
-
-    nsRefPtr<gfxContext> tmpCtx = new gfxContext(surf.get());
-    tmpCtx->SetOperator(gfxContext::OPERATOR_SOURCE);
-    tmpCtx->DrawSurface(aSurface, gfxSize(serializer.GetSize().width,
-                                          serializer.GetSize().height));
-  }
+  dt->CopySurface(source, IntRect(IntPoint(), serializer.GetSize()), IntPoint());
+  // XXX - if the Moz2D backend is D2D, we would be much better off memcpying
+  // the content of the surface directly because with D2D, GetAsDrawTarget is
+  // very expensive.
 
   if (TextureRequiresLocking(mFlags) && !ImplementsLocking()) {
     // We don't have support for proper locking yet, so we'll
@@ -735,15 +728,15 @@ BufferTextureClient::GetAsDrawTarget()
   }
 
   MOZ_ASSERT(mUsingFallbackDrawTarget == false);
-  mDrawTarget = serializer.GetAsDrawTarget();
+  mDrawTarget = serializer.GetAsDrawTarget(mBackend);
   if (mDrawTarget) {
     return mDrawTarget;
   }
 
   // fallback path, probably because the Moz2D backend can't create a
   // DrawTarget around raw memory. This is going to be slow :(
-  mDrawTarget = gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(
-    serializer.GetSize(), serializer.GetFormat());
+  mDrawTarget = gfx::Factory::CreateDrawTarget(mBackend, serializer.GetSize(),
+                                               serializer.GetFormat());
   if (!mDrawTarget) {
     return nullptr;
   }

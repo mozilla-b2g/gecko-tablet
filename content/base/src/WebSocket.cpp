@@ -17,7 +17,6 @@
 #include "nsIXPConnect.h"
 #include "nsContentUtils.h"
 #include "nsCxPusher.h"
-#include "nsEventDispatcher.h"
 #include "nsError.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsIURL.h"
@@ -1412,7 +1411,7 @@ WebSocket::GetLoadGroup(nsILoadGroup** aLoadGroup)
     nsContentUtils::GetDocumentFromScriptContext(sc);
 
   if (doc) {
-    *aLoadGroup = doc->GetDocumentLoadGroup().get();  // already_AddRefed
+    *aLoadGroup = doc->GetDocumentLoadGroup().take();
   }
 
   return NS_OK;

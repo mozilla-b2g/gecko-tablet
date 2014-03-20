@@ -24,13 +24,14 @@ public:
 
   GrallocTextureSourceOGL(CompositorOGL* aCompositor,
                           android::GraphicBuffer* aGraphicBuffer,
-                          gfx::SurfaceFormat aFormat);
+                          gfx::SurfaceFormat aFormat,
+                          TextureFlags aFlags);
 
   virtual ~GrallocTextureSourceOGL();
 
   virtual bool IsValid() const MOZ_OVERRIDE;
 
-  virtual void BindTexture(GLenum aTextureUnit) MOZ_OVERRIDE;
+  virtual void BindTexture(GLenum aTextureUnit, gfx::Filter aFilter) MOZ_OVERRIDE;
 
   virtual gfx::IntSize GetSize() const MOZ_OVERRIDE;
 
@@ -71,6 +72,7 @@ protected:
   GLuint mTexture;
   gfx::SurfaceFormat mFormat;
   bool mNeedsReset;
+  TextureFlags mFlags;
 };
 
 class GrallocTextureHostOGL : public TextureHost

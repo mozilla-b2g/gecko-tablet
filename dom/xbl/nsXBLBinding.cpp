@@ -35,7 +35,7 @@
 #include "nsCRT.h"
 
 // Event listeners
-#include "nsEventListenerManager.h"
+#include "mozilla/EventListenerManager.h"
 #include "nsIDOMEventListener.h"
 #include "nsAttrName.h"
 
@@ -75,7 +75,7 @@ XBLFinalize(JSFreeOp *fop, JSObject *obj)
   nsXBLDocumentInfo* docInfo =
     static_cast<nsXBLDocumentInfo*>(::JS_GetPrivate(obj));
   nsContentUtils::DeferredFinalize(docInfo);
-  
+
   nsXBLJSClass* c = nsXBLJSClass::fromJSClass(::JS_GetClass(obj));
   c->Drop();
 }
@@ -121,8 +121,7 @@ nsXBLJSClass::Destroy()
                "referenced nsXBLJSClass is on LRU list already!?");
 
   if (nsXBLService::gClassTable) {
-    nsCStringKey key(mKey);
-    (nsXBLService::gClassTable)->Remove(&key);
+    nsXBLService::gClassTable->Remove(mKey);
     mKey.Truncate();
   }
 
@@ -141,14 +140,7 @@ nsXBLJSClass::Destroy()
 nsXBLJSClass*
 nsXBLService::getClass(const nsCString& k)
 {
-  nsCStringKey key(k);
-  return getClass(&key);
-}
-
-nsXBLJSClass*
-nsXBLService::getClass(nsCStringKey *k)
-{
-  return static_cast<nsXBLJSClass*>(nsXBLService::gClassTable->Get(k));
+  return nsXBLService::gClassTable->Get(k);
 }
 
 // Implementation /////////////////////////////////////////////////////////////////
@@ -265,7 +257,7 @@ nsXBLBinding::InstallAnonymousContent(nsIContent* aAnonParent, nsIContent* aElem
       // XXXbz This really shouldn't be a void method!
       child->UnbindFromTree();
       return;
-    }        
+    }
 
     child->SetFlags(NODE_IS_ANONYMOUS_ROOT);
 
@@ -360,7 +352,7 @@ nsXBLBinding::GenerateAnonymousContent()
 
     return;
   }
-     
+
   // Find out if we're really building kids or if we're just
   // using the attribute-setting shorthand hack.
   uint32_t contentCount = content->GetChildCount();
@@ -478,7 +470,7 @@ nsXBLBinding::FindInsertionPointFor(nsIContent* aChild)
   if (mContent) {
     return FindInsertionPointForInternal(aChild);
   }
-  
+
   return mNextBinding ? mNextBinding->FindInsertionPointFor(aChild)
                       : nullptr;
 }
@@ -492,7 +484,7 @@ nsXBLBinding::FindInsertionPointForInternal(nsIContent* aChild)
       return point;
     }
   }
-  
+
   return mDefaultInsertionPoint;
 }
 
@@ -531,7 +523,7 @@ nsXBLBinding::InstallEventHandlers()
     nsXBLPrototypeHandler* handlerChain = mPrototypeBinding->GetPrototypeHandlers();
 
     if (handlerChain) {
-      nsEventListenerManager* manager = mBoundElement->GetOrCreateListenerManager();
+      EventListenerManager* manager = mBoundElement->GetOrCreateListenerManager();
       if (!manager)
         return;
 
@@ -551,7 +543,7 @@ nsXBLBinding::InstallEventHandlers()
         nsXBLEventHandler* handler = curr->GetEventHandler();
         if (handler) {
           // Figure out if we're using capturing or not.
-          dom::EventListenerFlags flags;
+          EventListenerFlags flags;
           flags.mCapture = (curr->GetPhase() == NS_PHASE_CAPTURING);
 
           // If this is a command, add it in the system event group
@@ -584,11 +576,11 @@ nsXBLBinding::InstallEventHandlers()
         nsAutoString type;
         handler->GetEventName(type);
 
-        // If this is a command, add it in the system event group, otherwise 
+        // If this is a command, add it in the system event group, otherwise
         // add it to the standard event group.
 
         // Figure out if we're using capturing or not.
-        dom::EventListenerFlags flags;
+        EventListenerFlags flags;
         flags.mCapture = (handler->GetPhase() == NS_PHASE_CAPTURING);
 
         if ((handler->GetType() & (NS_HANDLER_TYPE_XBL_COMMAND |
@@ -680,12 +672,11 @@ nsXBLBinding::UnhookEventHandlers()
   nsXBLPrototypeHandler* handlerChain = mPrototypeBinding->GetPrototypeHandlers();
 
   if (handlerChain) {
-    nsEventListenerManager* manager =
-      mBoundElement->GetExistingListenerManager();
+    EventListenerManager* manager = mBoundElement->GetExistingListenerManager();
     if (!manager) {
       return;
     }
-                                      
+
     bool isChromeBinding = mPrototypeBinding->IsChrome();
     nsXBLPrototypeHandler* curr;
     for (curr = handlerChain; curr; curr = curr->GetNextHandler()) {
@@ -693,7 +684,7 @@ nsXBLBinding::UnhookEventHandlers()
       if (!handler) {
         continue;
       }
-      
+
       nsCOMPtr<nsIAtom> eventAtom = curr->GetEventName();
       if (!eventAtom ||
           eventAtom == nsGkAtoms::keyup ||
@@ -702,7 +693,7 @@ nsXBLBinding::UnhookEventHandlers()
         continue;
 
       // Figure out if we're using capturing or not.
-      dom::EventListenerFlags flags;
+      EventListenerFlags flags;
       flags.mCapture = (curr->GetPhase() == NS_PHASE_CAPTURING);
 
       // If this is a command, remove it from the system event group,
@@ -729,10 +720,10 @@ nsXBLBinding::UnhookEventHandlers()
       handler->GetEventName(type);
 
       // Figure out if we're using capturing or not.
-      dom::EventListenerFlags flags;
+      EventListenerFlags flags;
       flags.mCapture = (handler->GetPhase() == NS_PHASE_CAPTURING);
 
-      // If this is a command, remove it from the system event group, otherwise 
+      // If this is a command, remove it from the system event group, otherwise
       // remove it from the standard event group.
 
       if ((handler->GetType() & (NS_HANDLER_TYPE_XBL_COMMAND | NS_HANDLER_TYPE_SYSTEM)) &&
@@ -906,7 +897,7 @@ nsXBLBinding::InheritsStyle() const
   // XXX What about bindings with <content> but no kids, e.g., my treecell-text binding?
   if (mContent)
     return mPrototypeBinding->InheritsStyle();
-  
+
   if (mNextBinding)
     return mNextBinding->InheritsStyle();
 
@@ -996,9 +987,8 @@ nsXBLBinding::DoInitJSClass(JSContext *cx, JS::Handle<JSObject*> global,
     // We need to initialize the class.
     *aNew = true;
 
-    nsCStringKey key(xblKey);
     if (!c) {
-      c = nsXBLService::getClass(&key);
+      c = nsXBLService::getClass(xblKey);
     }
     if (c) {
       // If c is on the LRU list, remove it now!
@@ -1016,8 +1006,7 @@ nsXBLBinding::DoInitJSClass(JSContext *cx, JS::Handle<JSObject*> global,
         nsXBLService::gClassLRUListLength--;
 
         // Remove any mapping from the old name to the class struct.
-        nsCStringKey oldKey(c->Key());
-        (nsXBLService::gClassTable)->Remove(&oldKey);
+        nsXBLService::gClassTable->Remove(c->Key());
 
         // Change the class name and we're done.
         nsMemory::Free((void*) c->name);
@@ -1026,7 +1015,7 @@ nsXBLBinding::DoInitJSClass(JSContext *cx, JS::Handle<JSObject*> global,
       }
 
       // Add c to our table.
-      (nsXBLService::gClassTable)->Put(&key, (void*)c);
+      nsXBLService::gClassTable->Put(xblKey, c);
     }
 
     // The prototype holds a strong reference to its class struct.
@@ -1035,7 +1024,7 @@ nsXBLBinding::DoInitJSClass(JSContext *cx, JS::Handle<JSObject*> global,
     // Make a new object prototyped by parent_proto and parented by global.
     proto = ::JS_InitClass(cx,                  // context
                            global,              // global object
-                           parent_proto,        // parent proto 
+                           parent_proto,        // parent proto
                            c,                   // JSClass
                            nullptr,              // JSNative ctor
                            0,                   // ctor args
@@ -1047,7 +1036,7 @@ nsXBLBinding::DoInitJSClass(JSContext *cx, JS::Handle<JSObject*> global,
       // This will happen if we're OOM or if the security manager
       // denies defining the new class...
 
-      (nsXBLService::gClassTable)->Remove(&key);
+      nsXBLService::gClassTable->Remove(xblKey);
 
       c->Drop();
 
@@ -1186,9 +1175,8 @@ nsXBLBinding::LookupMemberInternal(JSContext* aCx, nsString& aName,
   // Look for the property on this binding. If it's not there, try the next
   // binding on the chain.
   nsXBLProtoImpl* impl = mPrototypeBinding->GetImplementation();
-  if (impl && !impl->LookupMember(aCx, aName, aNameAsId, aDesc,
-                                  &classObject.toObject()))
-  {
+  JS::Rooted<JSObject*> object(aCx, &classObject.toObject());
+  if (impl && !impl->LookupMember(aCx, aName, aNameAsId, aDesc, object)) {
     return false;
   }
   if (aDesc.object() || !mNextBinding) {

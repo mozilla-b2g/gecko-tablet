@@ -368,6 +368,8 @@ JS_PUBLIC_API(void)
 JS::HeapValuePostBarrier(JS::Value *valuep)
 {
     JS_ASSERT(JSVAL_IS_TRACEABLE(*valuep));
+    if (valuep->isString() && StringIsPermanentAtom(valuep->toString()))
+        return;
     JSRuntime *runtime = static_cast<js::gc::Cell *>(valuep->toGCThing())->runtimeFromMainThread();
     runtime->gcStoreBuffer.putRelocatableValue(valuep);
 }
@@ -377,6 +379,8 @@ JS::HeapValueRelocate(JS::Value *valuep)
 {
     /* Called with old contents of *valuep before overwriting. */
     JS_ASSERT(JSVAL_IS_TRACEABLE(*valuep));
+    if (valuep->isString() && StringIsPermanentAtom(valuep->toString()))
+        return;
     JSRuntime *runtime = static_cast<js::gc::Cell *>(valuep->toGCThing())->runtimeFromMainThread();
     runtime->gcStoreBuffer.removeRelocatableValue(valuep);
 }

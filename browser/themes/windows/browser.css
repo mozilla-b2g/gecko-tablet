@@ -6,6 +6,7 @@
 
 @namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
 @namespace html url("http://www.w3.org/1999/xhtml");
+@namespace svg url("http://www.w3.org/2000/svg");
 
 %include ../shared/browser.inc
 %include windowsShared.inc
@@ -14,7 +15,7 @@
 %define navbarTextboxCustomBorder border-color: rgba(0,0,0,.32);
 %define forwardTransitionLength 150ms
 %define conditionalForwardWithUrlbar window:not([chromehidden~="toolbar"]) #urlbar-container
-%define conditionalForwardWithUrlbarWidth 27
+%define conditionalForwardWithUrlbarWidth 30
 
 #menubar-items {
   -moz-box-orient: vertical; /* for flex hack */
@@ -116,18 +117,59 @@
 /**
  * In the classic themes, the titlebar has a horizontal gradient, which is
  * problematic for reading the text of background tabs when they're in the
- * titlebar. We side-step this issue by layering our own gradient underneath
- * the tabs.
+ * titlebar. We side-step this issue by layering our own background underneath
+ * the tabs. Unfortunately, this requires a bunch of positioning in order to get
+ * text and icons to not appear fuzzy.
  */
 @media (-moz-windows-classic) {
-  #main-window[tabsintitlebar]:not([inFullscreen]) #TabsToolbar:not(:-moz-lwtheme) {
-    background: linear-gradient(to top, @toolbarShadowColor@ 2px, transparent 2px),
-                linear-gradient(rgba(50%,50%,50%,0), ActiveCaption 85%);
+  #main-window[tabsintitlebar]:not([sizemode=fullscreen]) .tabbrowser-tab:not([selected=true]),
+  #main-window[tabsintitlebar]:not([sizemode=fullscreen]) .tabs-newtab-button {
+    position: relative;
+    z-index: 1;
   }
 
-  #main-window[tabsintitlebar]:not([inFullscreen]) #TabsToolbar:not(:-moz-lwtheme):-moz-window-inactive {
-    background: linear-gradient(to top, @toolbarShadowColor@ 2px, transparent 2px),
-                linear-gradient(rgba(50%,50%,50%,0), InactiveCaption 85%);
+  #main-window[tabsintitlebar] #TabsToolbar:not(:-moz-lwtheme) {
+    background-image: none;
+    position: relative;
+  }
+
+  #main-window[tabsintitlebar]:not([sizemode=fullscreen]) #TabsToolbar:not(:-moz-lwtheme)::after {
+    /* Because we use placeholders for window controls etc. in the tabstrip,
+     * and position those with ordinal attributes, and because our layout code
+     * expects :before/:after nodes to come first/last in the frame list,
+     * we have to reorder this element to come last, hence the
+     * ordinal group value (see bug 853415). */
+    -moz-box-ordinal-group: 1001;
+    box-shadow: 0 0 50px 8px ActiveCaption;
+    content: "";
+    display: -moz-box;
+    height: 0;
+    margin: 0 50px;
+    position: absolute;
+    pointer-events: none;
+    top: 100%;
+    width: -moz-available;
+    z-index: 0;
+  }
+
+  #main-window[tabsintitlebar]:not([sizemode=fullscreen]) #TabsToolbar:not(:-moz-lwtheme):-moz-window-inactive::after {
+    box-shadow: 0 0 50px 8px InactiveCaption;
+  }
+
+  /* Need to constrain the box shadow fade to avoid overlapping layers, see bug 886281. */
+  #main-window[tabsintitlebar]:not([sizemode=fullscreen]) #navigator-toolbox:not(:-moz-lwtheme) {
+    overflow: -moz-hidden-unscrollable;
+  }
+
+  #main-window[tabsintitlebar][sizemode=normal] .tabbrowser-arrowscrollbox > .arrowscrollbox-scrollbox > .scrollbox-innerbox:not(:-moz-lwtheme) {
+    position: relative;
+  }
+
+  #main-window[tabsintitlebar]:not([sizemode=fullscreen]) #TabsToolbar .toolbarbutton-1,
+  #main-window[tabsintitlebar]:not([sizemode=fullscreen]) .tabbrowser-arrowscrollbox > .scrollbutton-up,
+  #main-window[tabsintitlebar]:not([sizemode=fullscreen]) .tabbrowser-arrowscrollbox > .scrollbutton-down {
+    position: relative;
+    z-index: 1;
   }
 
   #main-window[tabsintitlebar][sizemode="normal"] #titlebar-content:-moz-lwtheme {
@@ -286,13 +328,13 @@
 
 /* ::::: bookmark buttons ::::: */
 
-toolbarbutton.bookmark-item,
+toolbarbutton.bookmark-item:not(.subviewbutton),
 #personal-bookmarks[cui-areatype="toolbar"]:not([overflowedItem=true]) > #bookmarks-toolbar-placeholder {
   margin: 0;
   padding: 2px 3px;
 }
 
-toolbarbutton.bookmark-item:hover:active:not([disabled="true"]),
+toolbarbutton.bookmark-item:not([disabled="true"]):not(.subviewbutton):hover:active,
 toolbarbutton.bookmark-item[open="true"] {
   padding-top: 3px;
   padding-bottom: 1px;
@@ -378,7 +420,7 @@ menuitem.bookmark-item {
   max-width: 32em;
 }
 
-.bookmark-item > .menu-iconic-left {
+.bookmark-item:not(.subviewbutton) > .menu-iconic-left {
   margin-top: 0;
   margin-bottom: 0;
 }
@@ -777,10 +819,10 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
   background-clip: padding-box !important;
   /*mask: url(keyhole-forward-mask.svg#mask); XXX: this regresses twinopen */
   clip-path: url(chrome://browser/content/browser.xul#windows-keyhole-forward-clip-path) !important;
-  margin-left: -7px !important;
+  margin-left: -6px !important;
   border-left-style: none !important;
   border-radius: 0 !important;
-  padding-left: 7px !important;
+  padding-left: 9px !important;
   padding-right: 3px !important;
 }
 
@@ -829,7 +871,7 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
   border-radius: 10000px !important;
   background-clip: padding-box !important;
   background-color: hsla(210,25%,98%,.08) !important;
-  padding: 5px !important;
+  padding: 6px !important;
   border-color: hsla(210,4%,10%,.25) !important;
   transition-property: background-color, border-color !important;
   transition-duration: 250ms !important;
@@ -921,6 +963,8 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
 #main-window[tabsintitlebar]:not([inFullscreen]) :-moz-any(#TabsToolbar, #toolbar-menubar) > toolbarpaletteitem > :-moz-any(@primaryToolbarButtons@):-moz-system-metric(windows-classic):not(:-moz-lwtheme),
 #main-window[tabsintitlebar]:not([inFullscreen]) :-moz-any(#TabsToolbar, #toolbar-menubar) > :-moz-any(@primaryToolbarButtons@):-moz-system-metric(windows-classic):not(:-moz-lwtheme),
 #home-button.bookmark-item:-moz-lwtheme-brighttext {
+  position: relative;
+  z-index: 1;
   list-style-image: url("chrome://browser/skin/Toolbar-inverted.png");
 }
 
@@ -1300,9 +1344,14 @@ html|*.urlbar-input:-moz-lwtheme::-moz-placeholder,
 .ac-result-type-bookmark,
 .autocomplete-treebody::-moz-tree-image(bookmark, treecolAutoCompleteImage) {
   list-style-image: url("chrome://browser/skin/places/bookmark.png");
-  -moz-image-region: rect(0px 48px 16px 32px);
+  -moz-image-region: rect(0px 32px 16px 16px);
   width: 16px;
   height: 16px;
+}
+
+richlistitem[selected="true"][current="true"] > .ac-title-box > .ac-result-type-bookmark,
+.autocomplete-treebody::-moz-tree-image(selected, current, bookmark, treecolAutoCompleteImage) {
+  -moz-image-region: rect(0px 48px 16px 32px);
 }
 
 .ac-result-type-keyword,
@@ -1580,7 +1629,7 @@ toolbarbutton[type="socialmark"] > .toolbarbutton-icon {
 }
 
 #bookmarks-menu-button.bookmark-item[starred] {
-  -moz-image-region: rect(0px 48px 16px 32px);
+  -moz-image-region: rect(0px 32px 16px 16px);
 }
 
 #bookmarks-menu-button.bookmark-item > .toolbarbutton-menubutton-button > .toolbarbutton-icon {
@@ -2136,6 +2185,19 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
 }
 
 /* Notification icon box */
+#notification-popup > .panel-arrowcontainer > .panel-arrowcontent {
+  padding: 10px;
+}
+
+#notification-popup .popup-notification-closebutton {
+  -moz-margin-end: -14px;
+  margin-top: -10px;
+}
+
+#notification-popup .panel-promo-box {
+  margin: 10px -10px -10px;
+}
+
 #notification-popup-box {
   position: relative;
   background-color: #fff;
@@ -2372,6 +2434,7 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
 /* Sync Panel */
 
 .sync-panel-icon {
+  height:32px;
   width: 32px;
   background: url("chrome://browser/content/abouthome/sync.png") top left no-repeat;
 }
@@ -2387,7 +2450,9 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
 
 #sync-error-panel-title,
 #sync-start-panel-title {
+  font-size: 120%;
   font-weight: bold;
+  margin-bottom: 5px;
 }
 
 #sync-start-panel-subtitle,
@@ -2696,3 +2761,7 @@ chatbox {
 }
 
 %include ../shared/UITour.inc.css
+
+#UITourTooltipButtons {
+  margin: 24px -4px -4px;
+}

@@ -105,13 +105,4 @@
                android:background="@color/url_bar_shadow"
                android:contentDescription="@null"/>
 
-    <org.mozilla.gecko.toolbar.ToolbarProgressView android:id="@+id/progress"
-                                                   android:layout_width="fill_parent"
-                                                   android:layout_height="14dp"
-                                                   android:layout_marginBottom="-7dp"
-                                                   android:layout_alignBottom="@id/shadow"
-                                                   android:src="@drawable/progress"
-                                                   android:background="@null"
-                                                   android:visibility="gone" />
-
 </merge>

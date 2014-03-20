@@ -15,14 +15,16 @@
 #include "nsImageLoadingContent.h"
 #include "imgIRequest.h"
 #include "nsEventStates.h"
-#include "nsEventDispatcher.h"
 #include "mozilla/BasicEvents.h"
+#include "mozilla/EventDispatcher.h"
+
+using namespace mozilla;
 
 class nsGenConImageContent MOZ_FINAL : public nsXMLElement,
                                        public nsImageLoadingContent
 {
 public:
-  nsGenConImageContent(already_AddRefed<nsINodeInfo> aNodeInfo)
+  nsGenConImageContent(already_AddRefed<nsINodeInfo>& aNodeInfo)
     : nsXMLElement(aNodeInfo)
   {
     // nsImageLoadingContent starts out broken, so we start out
@@ -43,7 +45,7 @@ public:
   virtual void UnbindFromTree(bool aDeep, bool aNullParent);
   virtual nsEventStates IntrinsicState() const;
 
-  virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor)
+  virtual nsresult PreHandleEvent(EventChainPreVisitor& aVisitor)
   {
     MOZ_ASSERT(IsInNativeAnonymousSubtree());
     if (aVisitor.mEvent->message == NS_LOAD ||
@@ -68,7 +70,7 @@ NS_IMPL_ISUPPORTS_INHERITED3(nsGenConImageContent,
                              imgIOnloadBlocker)
 
 nsresult
-NS_NewGenConImageContent(nsIContent** aResult, already_AddRefed<nsINodeInfo> aNodeInfo,
+NS_NewGenConImageContent(nsIContent** aResult, already_AddRefed<nsINodeInfo>&& aNodeInfo,
                          imgRequestProxy* aImageRequest)
 {
   NS_PRECONDITION(aImageRequest, "Must have request!");

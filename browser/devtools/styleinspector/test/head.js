@@ -9,11 +9,6 @@ const TEST_BASE_HTTPS = "https://example.com/browser/browser/devtools/styleinspe
 //Services.prefs.setBoolPref("devtools.dump.emit", true);
 Services.prefs.setBoolPref("devtools.debugger.log", true);
 
-SimpleTest.registerCleanupFunction(() => {
-  Services.prefs.clearUserPref("devtools.debugger.log");
-  Services.prefs.clearUserPref("devtools.dump.emit");
-});
-
 let tempScope = {};
 
 Cu.import("resource:///modules/devtools/gDevTools.jsm", tempScope);
@@ -29,6 +24,16 @@ let {CssRuleView, _ElementStyle} = devtools.require("devtools/styleinspector/rul
 let {CssLogic, CssSelector} = devtools.require("devtools/styleinspector/css-logic");
 
 let promise = devtools.require("sdk/core/promise");
+
+gDevTools.testing = true;
+SimpleTest.registerCleanupFunction(() => {
+  gDevTools.testing = false;
+});
+
+SimpleTest.registerCleanupFunction(() => {
+  Services.prefs.clearUserPref("devtools.debugger.log");
+  Services.prefs.clearUserPref("devtools.dump.emit");
+});
 
 let {
   editableField,
@@ -60,26 +65,31 @@ function getActiveInspector()
   return gDevTools.getToolbox(target).getPanel("inspector");
 }
 
-function openRuleView(callback)
+function openView(name, callback)
 {
   openInspector(inspector => {
-    inspector.sidebar.once("ruleview-ready", () => {
-      inspector.sidebar.select("ruleview");
-      let ruleView = inspector.sidebar.getWindowForTab("ruleview").ruleview.view;
-      callback(inspector, ruleView);
-    })
+    function onReady() {
+      inspector.sidebar.select(name);
+      let { view } = inspector.sidebar.getWindowForTab(name)[name];
+      callback(inspector, view);
+    }
+
+    if (inspector.sidebar.getTab(name)) {
+      onReady();
+    } else {
+      inspector.sidebar.once(name + "-ready", onReady);
+    }
   });
+}
+
+function openRuleView(callback)
+{
+  openView("ruleview", callback);
 }
 
 function openComputedView(callback)
 {
-  openInspector(inspector => {
-    inspector.sidebar.once("computedview-ready", () => {
-      inspector.sidebar.select("computedview");
-      let computedView = inspector.sidebar.getWindowForTab("computedview").computedview.view;
-      callback(inspector, computedView);
-    })
-  });
+  openView("computedview", callback);
 }
 
 /**

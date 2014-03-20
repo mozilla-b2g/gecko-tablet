@@ -641,10 +641,6 @@ public:
 
   DisplayListClipState& ClipState() { return mClipState; }
 
-  void AddRegionToClear(const nsIntRegion& aRegion) { mRegionToClear.Or(mRegionToClear, aRegion); }
-  const nsIntRegion& GetRegionToClear() { return mRegionToClear; }
-  void ResetRegionToClear() { mRegionToClear.SetEmpty(); }
-
 private:
   void MarkOutOfFlowFrameForDisplay(nsIFrame* aDirtyFrame, nsIFrame* aFrame,
                                     const nsRect& aDirtyRect);
@@ -678,8 +674,6 @@ private:
   const nsIFrame*                mCachedReferenceFrame;
   nsPoint                        mCachedOffset;
   nsRegion                       mExcludedGlassRegion;
-  // Area of the window (in pixels) to clear so the OS can draw them.
-  nsIntRegion                    mRegionToClear;
   // The display item for the Windows window glass background, if any
   nsDisplayItem*                 mGlassDisplayItem;
   nsTArray<DisplayItemClip*>     mDisplayItemClipsToDestroy;
@@ -1470,12 +1464,16 @@ public:
    * I.e., opaque contents of this list are subtracted from aVisibleRegion.
    * @param aListVisibleBounds must be equal to the bounds of the intersection
    * of aVisibleRegion and GetBounds() for this list.
+   * @param aDisplayPortFrame If the item for which this list corresponds is
+   * within a displayport, the scroll frame for which that display port
+   * applies. For root scroll frames, you can pass the the root frame instead.
    * @return true if any item in the list is visible.
    */
   bool ComputeVisibilityForSublist(nsDisplayListBuilder* aBuilder,
                                    nsRegion* aVisibleRegion,
                                    const nsRect& aListVisibleBounds,
-                                   const nsRect& aAllowVisibleRegionExpansion);
+                                   const nsRect& aAllowVisibleRegionExpansion,
+                                   nsIFrame* aDisplayPortFrame = nullptr);
 
   /**
    * As ComputeVisibilityForSublist, but computes visibility for a root
@@ -1483,9 +1481,11 @@ public:
    * This method needs to be idempotent.
    *
    * @param aVisibleRegion the area that is visible
+   * @param aDisplayPortFrame The root scroll frame, if a displayport is set
    */
   bool ComputeVisibilityForRoot(nsDisplayListBuilder* aBuilder,
-                                nsRegion* aVisibleRegion);
+                                nsRegion* aVisibleRegion,
+                                nsIFrame* aDisplayPortFrame = nullptr);
 
   /**
    * Returns true if the visible region output from ComputeVisiblity was

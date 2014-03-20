@@ -330,10 +330,8 @@ class TypedArrayObjectTemplate : public TypedArrayObject
         Rooted<TypedArrayObject*> obj(cx);
         if (proto)
             obj = makeProtoInstance(cx, proto);
-        else if (cx->typeInferenceEnabled())
-            obj = makeTypedInstance(cx, len);
         else
-            obj = &NewBuiltinClassInstance(cx, fastClass())->as<TypedArrayObject>();
+            obj = makeTypedInstance(cx, len);
         if (!obj)
             return nullptr;
         JS_ASSERT_IF(obj->isTenured(),
@@ -349,7 +347,6 @@ class TypedArrayObjectTemplate : public TypedArrayObject
         obj->setSlot(BYTEOFFSET_SLOT, Int32Value(byteOffset));
         obj->setSlot(BYTELENGTH_SLOT, Int32Value(len * sizeof(NativeType)));
         obj->setSlot(NEXT_VIEW_SLOT, PrivateValue(nullptr));
-        obj->setSlot(NEXT_BUFFER_SLOT, PrivateValue(UNSET_BUFFER_LINK));
 
         js::Shape *empty = EmptyShape::getInitialShape(cx, fastClass(),
                                                        obj->getProto(), obj->getParent(), obj->getMetadata(),
@@ -362,7 +359,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject
         uint32_t bufferByteLength = buffer->byteLength();
         uint32_t arrayByteLength = obj->byteLength();
         uint32_t arrayByteOffset = obj->byteOffset();
-        JS_ASSERT(buffer->dataPointer() <= obj->viewData());
+        JS_ASSERT_IF(!buffer->isNeutered(), buffer->dataPointer() <= obj->viewData());
         JS_ASSERT(bufferByteLength - arrayByteOffset >= arrayByteLength);
         JS_ASSERT(arrayByteOffset <= bufferByteLength);
 
@@ -907,14 +904,20 @@ class TypedArrayObjectTemplate : public TypedArrayObject
     copyFromArray(JSContext *cx, HandleObject thisTypedArrayObj,
                   HandleObject ar, uint32_t len, uint32_t offset = 0)
     {
+        // Exit early if nothing to copy, to simplify loop conditions below.
+        if (len == 0)
+            return true;
+
         Rooted<TypedArrayObject*> thisTypedArray(cx, &thisTypedArrayObj->as<TypedArrayObject>());
         JS_ASSERT(offset <= thisTypedArray->length());
         JS_ASSERT(len <= thisTypedArray->length() - offset);
         if (ar->is<TypedArrayObject>())
             return copyFromTypedArray(cx, thisTypedArray, ar, offset);
 
+#ifdef DEBUG
         JSRuntime *runtime = cx->runtime();
         uint64_t gcNumber = runtime->gcNumber;
+#endif
 
         NativeType *dest = static_cast<NativeType*>(thisTypedArray->viewData()) + offset;
         SkipRoot skipDest(cx, &dest);
@@ -929,33 +932,33 @@ class TypedArrayObjectTemplate : public TypedArrayObject
              */
             const Value *src = ar->getDenseElements();
             SkipRoot skipSrc(cx, &src);
-            for (uint32_t i = 0; i < len; ++i) {
+            uint32_t i = 0;
+            do {
                 NativeType n;
                 if (!nativeFromValue(cx, src[i], &n))
                     return false;
                 dest[i] = n;
-            }
+            } while (++i < len);
             JS_ASSERT(runtime->gcNumber == gcNumber);
         } else {
             RootedValue v(cx);
 
-            for (uint32_t i = 0; i < len; ++i) {
+            uint32_t i = 0;
+            do {
                 if (!JSObject::getElement(cx, ar, ar, i, &v))
                     return false;
                 NativeType n;
                 if (!nativeFromValue(cx, v, &n))
                     return false;
 
-                /*
-                 * Detect when a GC has occurred so we can update the dest
-                 * pointers in case it has been moved.
-                 */
-                if (runtime->gcNumber != gcNumber) {
-                    dest = static_cast<NativeType*>(thisTypedArray->viewData()) + offset;
-                    gcNumber = runtime->gcNumber;
-                }
+                len = Min(len, thisTypedArray->length());
+                if (i >= len)
+                    break;
+
+                // Compute every iteration in case getElement acts wacky.
+                dest = static_cast<NativeType*>(thisTypedArray->viewData()) + offset;
                 dest[i] = n;
-            }
+            } while (++i < len);
         }
 
         return true;
@@ -1320,16 +1323,14 @@ DataViewObject::create(JSContext *cx, uint32_t byteOffset, uint32_t byteLength,
         if (!type)
             return nullptr;
         obj->setType(type);
-    } else if (cx->typeInferenceEnabled()) {
-        if (byteLength >= TypedArrayObject::SINGLETON_TYPE_BYTE_LENGTH) {
-            JS_ASSERT(obj->hasSingletonType());
-        } else {
-            jsbytecode *pc;
-            RootedScript script(cx, cx->currentScript(&pc));
-            if (script) {
-                if (!types::SetInitializerObjectType(cx, script, pc, obj, newKind))
-                    return nullptr;
-            }
+    } else if (byteLength >= TypedArrayObject::SINGLETON_TYPE_BYTE_LENGTH) {
+        JS_ASSERT(obj->hasSingletonType());
+    } else {
+        jsbytecode *pc;
+        RootedScript script(cx, cx->currentScript(&pc));
+        if (script) {
+            if (!types::SetInitializerObjectType(cx, script, pc, obj, newKind))
+                return nullptr;
         }
     }
 
@@ -1338,7 +1339,6 @@ DataViewObject::create(JSContext *cx, uint32_t byteOffset, uint32_t byteLength,
     dvobj.setFixedSlot(BYTELENGTH_SLOT, Int32Value(byteLength));
     dvobj.setFixedSlot(BUFFER_SLOT, ObjectValue(*arrayBuffer));
     dvobj.setFixedSlot(NEXT_VIEW_SLOT, PrivateValue(nullptr));
-    dvobj.setFixedSlot(NEXT_BUFFER_SLOT, PrivateValue(UNSET_BUFFER_LINK));
     InitArrayBufferViewDataPointer(&dvobj, arrayBuffer, byteOffset);
     JS_ASSERT(byteOffset + byteLength <= arrayBuffer->byteLength());
 

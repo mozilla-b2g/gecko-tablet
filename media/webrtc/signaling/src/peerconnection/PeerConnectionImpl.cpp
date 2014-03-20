@@ -50,6 +50,7 @@
 #include "nsDOMDataChannel.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/PublicSSL.h"
 #include "nsXULAppAPI.h"
 #include "nsContentUtils.h"
@@ -478,6 +479,7 @@ PeerConnectionImpl::PeerConnectionImpl(const GlobalObject* aGlobal)
   , mWindow(nullptr)
   , mIdentity(nullptr)
   , mSTSThread(nullptr)
+  , mLoadManager(nullptr)
   , mMedia(nullptr)
   , mNumAudioStreams(0)
   , mNumVideoStreams(0)
@@ -524,6 +526,10 @@ PeerConnectionImpl::~PeerConnectionImpl()
       destructorSafeDestroyNSSReference();
       shutdown(calledFromObject);
     }
+  }
+  if (mLoadManager) {
+      mozilla::LoadManagerDestroy(mLoadManager);
+      mLoadManager = nullptr;
   }
 #endif
 
@@ -848,6 +854,12 @@ PeerConnectionImpl::Initialize(PeerConnectionObserver& aObserver,
     return res;
   }
 
+#ifdef MOZILLA_INTERNAL_API
+  if (mozilla::Preferences::GetBool("media.navigator.load_adapt", false)) {
+    mLoadManager = mozilla::LoadManagerBuild();
+  }
+#endif
+
   return NS_OK;
 }
 
@@ -931,7 +943,7 @@ PeerConnectionImpl::CreateFakeMediaStream(uint32_t aHint, nsIDOMMediaStream** aR
     }
   }
 
-  *aRetval = stream.forget().get();
+  stream.forget(aRetval);
   return NS_OK;
 }
 
@@ -1155,14 +1167,21 @@ void
 PeerConnectionImpl::NotifyDataChannel(already_AddRefed<DataChannel> aChannel)
 {
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
-  MOZ_ASSERT(aChannel.get());
 
-  CSFLogDebug(logTag, "%s: channel: %p", __FUNCTION__, aChannel.get());
+  // XXXkhuey this is completely fucked up.  We can't use nsRefPtr<DataChannel>
+  // here because DataChannel's AddRef/Release are non-virtual and not visible
+  // if !MOZILLA_INTERNAL_API, but this function leaks the DataChannel if
+  // !MOZILLA_INTERNAL_API because it never transfers the ref to
+  // NS_NewDOMDataChannel.
+  DataChannel* channel = aChannel.take();
+  MOZ_ASSERT(channel);
+
+  CSFLogDebug(logTag, "%s: channel: %p", __FUNCTION__, channel);
 
 #ifdef MOZILLA_INTERNAL_API
   nsCOMPtr<nsIDOMDataChannel> domchannel;
-  nsresult rv = NS_NewDOMDataChannel(aChannel, mWindow,
-                                     getter_AddRefs(domchannel));
+  nsresult rv = NS_NewDOMDataChannel(already_AddRefed<DataChannel>(channel),
+                                     mWindow, getter_AddRefs(domchannel));
   NS_ENSURE_SUCCESS_VOID(rv);
 
   nsRefPtr<PeerConnectionObserver> pco = do_QueryObjectReferent(mPCObserver);
@@ -1630,7 +1649,7 @@ PeerConnectionImpl::ShutdownMedia()
 
   // Forget the reference so that we can transfer it to
   // SelfDestruct().
-  mMedia.forget().get()->SelfDestruct();
+  mMedia.forget().take()->SelfDestruct();
 }
 
 #ifdef MOZILLA_INTERNAL_API
@@ -2129,7 +2148,8 @@ PeerConnectionImpl::ExecuteStatsQuery_s(RTCStatsQuery *query) {
 
   for (size_t p = 0; p < query->pipelines.Length(); ++p) {
     const MediaPipeline& mp = *query->pipelines[p];
-    nsString idstr = (mp.Conduit()->type() == MediaSessionConduit::AUDIO) ?
+    bool isAudio = (mp.Conduit()->type() == MediaSessionConduit::AUDIO);
+    nsString idstr = isAudio ?
         NS_LITERAL_STRING("audio_") : NS_LITERAL_STRING("video_");
     idstr.AppendInt(mp.trackid());
 
@@ -2151,10 +2171,12 @@ PeerConnectionImpl::ExecuteStatsQuery_s(RTCStatsQuery *query) {
           uint32_t packetsReceived;
           uint64_t bytesReceived;
           uint32_t packetsLost;
+          int32_t rtt;
           if (mp.Conduit()->GetRTCPReceiverReport(&timestamp, &jitterMs,
                                                   &packetsReceived,
                                                   &bytesReceived,
-                                                  &packetsLost)) {
+                                                  &packetsLost,
+                                                  &rtt)) {
             remoteId = NS_LITERAL_STRING("outbound_rtcp_") + idstr;
             RTCInboundRTPStreamStats s;
             s.mTimestamp.Construct(timestamp);
@@ -2169,6 +2191,7 @@ PeerConnectionImpl::ExecuteStatsQuery_s(RTCStatsQuery *query) {
             s.mPacketsReceived.Construct(packetsReceived);
             s.mBytesReceived.Construct(bytesReceived);
             s.mPacketsLost.Construct(packetsLost);
+            s.mMozRtt.Construct(rtt);
             query->report.mInboundRTPStreamStats.Value().AppendElement(s);
           }
         }
@@ -2238,6 +2261,18 @@ PeerConnectionImpl::ExecuteStatsQuery_s(RTCStatsQuery *query) {
         s.mIsRemote = false;
         s.mPacketsReceived.Construct(mp.rtp_packets_received());
         s.mBytesReceived.Construct(mp.rtp_bytes_received());
+
+        if (query->internalStats && isAudio) {
+          int32_t jitterBufferDelay;
+          int32_t playoutBufferDelay;
+          int32_t avSyncDelta;
+          if (mp.Conduit()->GetAVStats(&jitterBufferDelay,
+                                       &playoutBufferDelay,
+                                       &avSyncDelta)) {
+            s.mMozJitterBufferDelay.Construct(jitterBufferDelay);
+            s.mMozAvSyncDelay.Construct(avSyncDelta);
+          }
+        }
         query->report.mInboundRTPStreamStats.Value().AppendElement(s);
         break;
       }

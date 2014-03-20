@@ -52,7 +52,9 @@ function add_tests_in_mode(useInsanity, certDB, otherTestCA) {
                 getXPCOMStatusFromNSS(SEC_ERROR_REVOKED_CERTIFICATE), true);
 
   // SEC_ERROR_OCSP_INVALID_SIGNING_CERT vs SEC_ERROR_OCSP_UNAUTHORIZED_RESPONSE
-  // depends on whether the CA that signed the response is a trusted CA.
+  // depends on whether the CA that signed the response is a trusted CA
+  // (but only with the classic implementation - insanity::pkix always
+  // results in the error SEC_ERROR_OCSP_INVALID_SIGNING_CERT).
 
   // This stapled response is from a CA that is untrusted and did not issue
   // the server's certificate.
@@ -106,8 +108,11 @@ function add_tests_in_mode(useInsanity, certDB, otherTestCA) {
       Services.prefs.setBoolPref("security.ssl.enable_ocsp_stapling", true);
     }
   );
+  // TODO(bug 977870): this should not result in SEC_ERROR_BAD_DER
   add_ocsp_test("ocsp-stapling-empty.example.com",
-                getXPCOMStatusFromNSS(SEC_ERROR_OCSP_MALFORMED_RESPONSE), true);
+                getXPCOMStatusFromNSS(
+                  useInsanity ? SEC_ERROR_BAD_DER
+                              : SEC_ERROR_OCSP_MALFORMED_RESPONSE), true);
   // ocsp-stapling-expired.example.com and
   // ocsp-stapling-expired-fresh-ca.example.com are handled in
   // test_ocsp_stapling_expired.js

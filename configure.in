@@ -71,7 +71,7 @@ GCONF_VERSION=1.2.1
 GIO_VERSION=2.20
 STARTUP_NOTIFICATION_VERSION=0.8
 DBUS_VERSION=0.60
-SQLITE_VERSION=3.8.3.1
+SQLITE_VERSION=3.8.4.1
 
 MSMANIFEST_TOOL=
 
@@ -7410,6 +7410,14 @@ fi
 AC_SUBST(MOZ_AUDIO_CHANNEL_MANAGER)
 
 dnl ========================================================
+dnl = Enable Support for Firefox Accounts in B2G
+dnl ========================================================
+if test -n "$MOZ_SERVICES_FXACCOUNTS"; then
+    AC_DEFINE(MOZ_SERVICES_FXACCOUNTS)
+fi
+AC_SUBST(MOZ_SERVICES_FXACCOUNTS)
+
+dnl ========================================================
 dnl = Support for demangling undefined symbols
 dnl ========================================================
 if test -z "$SKIP_LIBRARY_CHECKS"; then
@@ -7888,7 +7896,13 @@ dnl ========================================================
 dnl Check for pixman and cairo
 dnl ========================================================
 
-MOZ_TREE_CAIRO=1
+if test "$MOZ_WIDGET_TOOLKIT" = "gtk3" ; then
+  # cairo-gtk3 can be build with system-cairo only
+  MOZ_TREE_CAIRO=
+else
+  MOZ_TREE_CAIRO=1
+fi
+
 MOZ_ARG_ENABLE_BOOL(system-cairo,
 [  --enable-system-cairo   Use system cairo (located with pkgconfig)],
 MOZ_TREE_CAIRO=,
@@ -7977,6 +7991,9 @@ if test "$MOZ_TREE_CAIRO"; then
         if test -n "$WIN32_D2D_SURFACE_FEATURE"; then
           MOZ_CHECK_HEADER(d3d10.h, MOZ_ENABLE_D3D10_LAYER=1)
         fi
+        ;;
+      gtk3)
+        AC_MSG_ERROR([cairo-gtk3 toolkit is incompatible with in-tree cairo. Please add --enable-system-cairo to your build config.])
         ;;
     esac
     if test "$USE_FC_FREETYPE"; then
@@ -8916,9 +8933,9 @@ if test "$MOZ_TREE_FREETYPE"; then
    export CXXFLAGS="$CXXFLAGS $MOZ_DEBUG_FLAGS"
    export LDFLAGS="$LDFLAGS $MOZ_DEBUG_LDFLAGS"
    export LIBPNG_CFLAGS="$MOZ_PNG_CFLAGS"
-   export LIBPNG_LDFLAGS="$MOZ_PNG_LIBS"
+   export LIBPNG_LIBS="$MOZ_PNG_LIBS"
    export CONFIG_FILES="unix-cc.mk:unix-cc.in unix-def.mk:unix-def.in freetype-config freetype2.pc:freetype2.in"
-   ac_configure_args="$ac_configure_args --host=$target --disable-shared --with-pic=yes"
+   ac_configure_args="$ac_configure_args --host=$target --disable-shared --with-pic=yes --with-png=yes"
 
    if ! test -e modules; then
      mkdir modules

@@ -9,7 +9,7 @@ const { 'classes': Cc, 'interfaces': Ci, 'utils': Cu, 'results': Cr } = Componen
 let { NetUtil } = Cu.import("resource://gre/modules/NetUtil.jsm", {});
 let { FileUtils } = Cu.import("resource://gre/modules/FileUtils.jsm", {});
 let { Services } = Cu.import("resource://gre/modules/Services.jsm", {});
-let { Promise } = Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js", {});
+let { Promise } = Cu.import("resource://gre/modules/Promise.jsm", {});
 let { HttpServer } = Cu.import("resource://testing-common/httpd.js", {});
 let { ctypes } = Cu.import("resource://gre/modules/ctypes.jsm");
 
@@ -22,6 +22,7 @@ const SEC_ERROR_BASE = Ci.nsINSSErrorsService.NSS_SEC_ERROR_BASE;
 const SSL_ERROR_BASE = Ci.nsINSSErrorsService.NSS_SSL_ERROR_BASE;
 
 // Sort in numerical order
+const SEC_ERROR_BAD_DER                                 = SEC_ERROR_BASE +   9;
 const SEC_ERROR_EXPIRED_CERTIFICATE                     = SEC_ERROR_BASE +  11;
 const SEC_ERROR_REVOKED_CERTIFICATE                     = SEC_ERROR_BASE +  12; // -8180
 const SEC_ERROR_UNKNOWN_ISSUER                          = SEC_ERROR_BASE +  13;
@@ -118,11 +119,9 @@ function _getLibraryFunctionWithNoArguments(functionName, libraryName) {
 }
 
 function clearOCSPCache() {
-  let CERT_ClearOCSPCache =
-    _getLibraryFunctionWithNoArguments("CERT_ClearOCSPCache", "nss3");
-  if (CERT_ClearOCSPCache() != 0) {
-    throw "Failed to clear OCSP cache";
-  }
+  let certdb = Cc["@mozilla.org/security/x509certdb;1"]
+                 .getService(Ci.nsIX509CertDB);
+  certdb.clearOCSPCache();
 }
 
 function clearSessionCache() {

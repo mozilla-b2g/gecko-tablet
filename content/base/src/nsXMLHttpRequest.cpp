@@ -8,6 +8,8 @@
 
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/dom/XMLHttpRequestUploadBinding.h"
+#include "mozilla/EventDispatcher.h"
+#include "mozilla/EventListenerManager.h"
 #include "mozilla/MemoryReporting.h"
 #include "nsDOMBlobBuilder.h"
 #include "nsIDOMDocument.h"
@@ -35,7 +37,6 @@
 #include "nsICachingChannel.h"
 #include "nsContentUtils.h"
 #include "nsCxPusher.h"
-#include "nsEventDispatcher.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsIContentPolicy.h"
 #include "nsContentPolicyUtils.h"
@@ -1392,9 +1393,9 @@ nsXMLHttpRequest::GetLoadGroup() const
 nsresult
 nsXMLHttpRequest::CreateReadystatechangeEvent(nsIDOMEvent** aDOMEvent)
 {
-  nsresult rv = nsEventDispatcher::CreateEvent(this, nullptr, nullptr,
-                                               NS_LITERAL_STRING("Events"),
-                                               aDOMEvent);
+  nsresult rv = EventDispatcher::CreateEvent(this, nullptr, nullptr,
+                                             NS_LITERAL_STRING("Events"),
+                                             aDOMEvent);
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -2157,11 +2158,11 @@ nsXMLHttpRequest::OnStopRequest(nsIRequest *request, nsISupports *ctxt, nsresult
     NS_ASSERTION(!(mState & XML_HTTP_REQUEST_SYNCLOOPING),
       "We weren't supposed to support HTML parsing with XHR!");
     nsCOMPtr<EventTarget> eventTarget = do_QueryInterface(mResponseXML);
-    nsEventListenerManager* manager =
+    EventListenerManager* manager =
       eventTarget->GetOrCreateListenerManager();
     manager->AddEventListenerByType(new nsXHRParseEndListener(this),
                                     NS_LITERAL_STRING("DOMContentLoaded"),
-                                    dom::TrustedEventsAtSystemGroupBubble());
+                                    TrustedEventsAtSystemGroupBubble());
     return NS_OK;
   }
   // We might have been sent non-XML data. If that was the case,
@@ -3516,11 +3517,11 @@ nsXMLHttpRequest::GetInterface(const nsIID & aIID, void **aResult)
   // need to see these notifications for proper functioning.
   if (aIID.Equals(NS_GET_IID(nsIChannelEventSink))) {
     mChannelEventSink = do_GetInterface(mNotificationCallbacks);
-    *aResult = static_cast<nsIChannelEventSink*>(EnsureXPCOMifier().get());
+    *aResult = static_cast<nsIChannelEventSink*>(EnsureXPCOMifier().take());
     return NS_OK;
   } else if (aIID.Equals(NS_GET_IID(nsIProgressEventSink))) {
     mProgressEventSink = do_GetInterface(mNotificationCallbacks);
-    *aResult = static_cast<nsIProgressEventSink*>(EnsureXPCOMifier().get());
+    *aResult = static_cast<nsIProgressEventSink*>(EnsureXPCOMifier().take());
     return NS_OK;
   }
 
@@ -3619,15 +3620,15 @@ nsXMLHttpRequest::GetInterface(const nsIID & aIID, void **aResult)
   // nsIProgressEventSink and nsIChannelEventSink which we already
   // handled above.
   else if (aIID.Equals(NS_GET_IID(nsIStreamListener))) {
-    *aResult = static_cast<nsIStreamListener*>(EnsureXPCOMifier().get());
+    *aResult = static_cast<nsIStreamListener*>(EnsureXPCOMifier().take());
     return NS_OK;
   }
   else if (aIID.Equals(NS_GET_IID(nsIRequestObserver))) {
-    *aResult = static_cast<nsIRequestObserver*>(EnsureXPCOMifier().get());
+    *aResult = static_cast<nsIRequestObserver*>(EnsureXPCOMifier().take());
     return NS_OK;
   }
   else if (aIID.Equals(NS_GET_IID(nsITimerCallback))) {
-    *aResult = static_cast<nsITimerCallback*>(EnsureXPCOMifier().get());
+    *aResult = static_cast<nsITimerCallback*>(EnsureXPCOMifier().take());
     return NS_OK;
   }
 
@@ -3816,8 +3817,7 @@ nsXMLHttpRequestXPCOMifier::GetInterface(const nsIID & aIID, void **aResult)
 namespace mozilla {
 
 ArrayBufferBuilder::ArrayBufferBuilder()
-  : mRawContents(nullptr),
-    mDataPtr(nullptr),
+  : mDataPtr(nullptr),
     mCapacity(0),
     mLength(0)
 {
@@ -3831,20 +3831,22 @@ ArrayBufferBuilder::~ArrayBufferBuilder()
 void
 ArrayBufferBuilder::reset()
 {
-  if (mRawContents) {
-    JS_free(nullptr, mRawContents);
+  if (mDataPtr) {
+    JS_free(nullptr, mDataPtr);
   }
-  mRawContents = mDataPtr = nullptr;
+  mDataPtr = nullptr;
   mCapacity = mLength = 0;
 }
 
 bool
 ArrayBufferBuilder::setCapacity(uint32_t aNewCap)
 {
-  if (!JS_ReallocateArrayBufferContents(nullptr, aNewCap, &mRawContents, &mDataPtr)) {
+  uint8_t *newdata = (uint8_t *) JS_ReallocateArrayBufferContents(nullptr, aNewCap, mDataPtr, mCapacity);
+  if (!newdata) {
     return false;
   }
 
+  mDataPtr = newdata;
   mCapacity = aNewCap;
   if (mLength > aNewCap) {
     mLength = aNewCap;
@@ -3902,12 +3904,12 @@ ArrayBufferBuilder::getArrayBuffer(JSContext* aCx)
     }
   }
 
-  JSObject* obj = JS_NewArrayBufferWithContents(aCx, mRawContents);
+  JSObject* obj = JS_NewArrayBufferWithContents(aCx, mLength, mDataPtr);
   if (!obj) {
     return nullptr;
   }
 
-  mRawContents = mDataPtr = nullptr;
+  mDataPtr = nullptr;
   mLength = mCapacity = 0;
 
   return obj;

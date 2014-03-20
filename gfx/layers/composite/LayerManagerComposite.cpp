@@ -509,6 +509,7 @@ LayerManagerComposite::Render()
   {
     PROFILER_LABEL("LayerManagerComposite", "EndFrame");
     mCompositor->EndFrame();
+    mCompositor->SetFBAcquireFence(mRoot);
   }
 
   mCompositor->GetWidget()->PostRender(this);
@@ -686,8 +687,8 @@ LayerManagerComposite::ComputeRenderIntegrity()
 
     // Clip the screen rect to the document bounds
     gfxRect documentBounds =
-      transform.TransformBounds(gfxRect(metrics.mScrollableRect.x - metrics.mScrollOffset.x,
-                                        metrics.mScrollableRect.y - metrics.mScrollOffset.y,
+      transform.TransformBounds(gfxRect(metrics.mScrollableRect.x - metrics.GetScrollOffset().x,
+                                        metrics.mScrollableRect.y - metrics.GetScrollOffset().y,
                                         metrics.mScrollableRect.width,
                                         metrics.mScrollableRect.height));
     documentBounds.RoundOut();

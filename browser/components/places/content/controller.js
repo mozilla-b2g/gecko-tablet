@@ -124,11 +124,38 @@ PlacesController.prototype = {
   },
 
   isCommandEnabled: function PC_isCommandEnabled(aCommand) {
+    if (PlacesUIUtils.useAsyncTransactions) {
+      switch (aCommand) {
+      case "cmd_cut":
+      case "placesCmd_cut":
+      case "cmd_copy":
+      case "cmd_paste":
+      case "cmd_delete":
+      case "placesCmd_delete":
+      case "placesCmd_moveBookmarks":
+      case "cmd_paste":
+      case "placesCmd_paste":
+      case "placesCmd_new:folder":
+      case "placesCmd_new:livemark":
+      case "placesCmd_new:bookmark":
+      case "placesCmd_new:separator":
+      case "placesCmd_sortBy:name":
+      case "placesCmd_createBookmark":
+        return false;
+      }
+    }
+
     switch (aCommand) {
     case "cmd_undo":
-      return PlacesUtils.transactionManager.numberOfUndoItems > 0;
+      if (!PlacesUIUtils.useAsyncTransactions)
+        return PlacesUtils.transactionManager.numberOfUndoItems > 0;
+
+      return PlacesTransactions.topUndoEntry != null;
     case "cmd_redo":
-      return PlacesUtils.transactionManager.numberOfRedoItems > 0;
+      if (!PlacesUIUtils.useAsyncTransactions)
+        return PlacesUtils.transactionManager.numberOfRedoItems > 0;
+
+      return PlacesTransactions.topRedoEntry != null;
     case "cmd_cut":
     case "placesCmd_cut":
       var nodes = this._view.selectedNodes;
@@ -694,14 +721,10 @@ PlacesController.prototype = {
     var selectedNode = this._view.selectedNode;
     if (selectedNode) {
       let itemId = selectedNode.itemId;
-      PlacesUtils.livemarks.getLivemark(
-        { id: itemId },
-        (function(aStatus, aLivemark) {
-          if (Components.isSuccessCode(aStatus)) {
-            aLivemark.reload(true);
-          }
-        }).bind(this)
-      );
+      PlacesUtils.livemarks.getLivemark({ id: itemId })
+        .then(aLivemark => {
+          aLivemark.reload(true);
+        }, Components.utils.reportError);
     }
   },
 

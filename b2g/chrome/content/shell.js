@@ -23,7 +23,10 @@ Cu.import('resource://gre/modules/NetworkStatsService.jsm');
 // Identity
 Cu.import('resource://gre/modules/SignInToWebsite.jsm');
 SignInToWebsiteController.init();
+
+#ifdef MOZ_SERVICES_FXACCOUNTS
 Cu.import('resource://gre/modules/FxAccountsMgmtService.jsm');
+#endif
 
 Cu.import('resource://gre/modules/DownloadsAPI.jsm');
 
@@ -199,7 +202,7 @@ var shell = {
 
         Services.obs.removeObserver(observer, topic);
       }
-    }, "network-interface-state-changed", false);
+    }, "network-connection-state-changed", false);
   },
 
   get contentBrowser() {
@@ -1146,7 +1149,8 @@ let RemoteDebugger = {
           // unexpected actors
           globalActorFactories: restrictPrivileges ? {
             webappsActor: DebuggerServer.globalActorFactories.webappsActor,
-            deviceActor: DebuggerServer.globalActorFactories.deviceActor
+            deviceActor: DebuggerServer.globalActorFactories.deviceActor,
+            preferenceActor: DebuggerServer.globalActorFactories.preferenceActor,
           } : DebuggerServer.globalActorFactories
         };
         let root = new DebuggerServer.RootActor(connection, parameters);

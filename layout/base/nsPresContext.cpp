@@ -7,6 +7,7 @@
 
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/EventDispatcher.h"
 
 #include "base/basictypes.h"
 
@@ -34,11 +35,10 @@
 #include "RestyleManager.h"
 #include "nsCSSRuleProcessor.h"
 #include "nsRuleNode.h"
-#include "nsEventDispatcher.h"
 #include "gfxPlatform.h"
 #include "nsCSSRules.h"
 #include "nsFontFaceLoader.h"
-#include "nsEventListenerManager.h"
+#include "mozilla/EventListenerManager.h"
 #include "prenv.h"
 #include "nsObjectFrame.h"
 #include "nsTransitionManager.h"
@@ -2272,7 +2272,8 @@ nsPresContext::FireDOMPaintEvent(nsInvalidateRequestList* aList)
   // logically the event target.
   event->SetTarget(eventTarget);
   event->SetTrusted(true);
-  nsEventDispatcher::DispatchDOMEvent(dispatchTarget, nullptr, event, this, nullptr);
+  EventDispatcher::DispatchDOMEvent(dispatchTarget, nullptr, event, this,
+                                    nullptr);
 }
 
 static bool
@@ -2305,7 +2306,7 @@ MayHavePaintEventListener(nsPIDOMWindow* aInnerWindow)
   if (!parentTarget)
     return false;
 
-  nsEventListenerManager* manager = nullptr;
+  EventListenerManager* manager = nullptr;
   if ((manager = parentTarget->GetExistingListenerManager()) &&
       manager->MayHavePaintEventListener()) {
     return true;

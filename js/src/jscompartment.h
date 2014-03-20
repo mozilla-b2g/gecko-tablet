@@ -229,8 +229,7 @@ struct JSCompartment
                                 size_t *shapesCompartmentTables,
                                 size_t *crossCompartmentWrappers,
                                 size_t *regexpCompartment,
-                                size_t *debuggeesSet,
-                                size_t *baselineStubsOptimized);
+                                size_t *debuggeesSet);
 
     /*
      * Shared scope property tree, and arena-pool for allocating its nodes.
@@ -281,8 +280,8 @@ struct JSCompartment
      */
     JSObject                     *gcIncomingGrayPointers;
 
-    /* Linked list of live array buffers with >1 view. */
-    js::ArrayBufferObject        *gcLiveArrayBuffers;
+    /* During GC, list of live array buffers with >1 view accumulated during tracing. */
+    js::ArrayBufferVector        gcLiveArrayBuffers;
 
     /* Linked list of live weakmaps in this compartment. */
     js::WeakMapBase              *gcWeakMapList;
@@ -517,12 +516,6 @@ class js::AutoDebugModeInvalidation
 };
 
 namespace js {
-
-inline bool
-ExclusiveContext::typeInferenceEnabled() const
-{
-    return zone()->types.inferenceEnabled;
-}
 
 inline js::Handle<js::GlobalObject*>
 ExclusiveContext::global() const

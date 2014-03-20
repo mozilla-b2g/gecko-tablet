@@ -228,6 +228,10 @@ pref("media.apple.mp3.enabled", true);
 pref("media.navigator.enabled", true);
 pref("media.navigator.video.enabled", true);
 pref("media.navigator.load_adapt", false);
+pref("media.navigator.load_adapt.measure_interval",1000);
+pref("media.navigator.load_adapt.avg_seconds",3);
+pref("media.navigator.load_adapt.high_load","0.90");
+pref("media.navigator.load_adapt.low_load","0.40");
 pref("media.navigator.video.default_fps",30);
 pref("media.navigator.video.default_minfps",10);
 #ifdef MOZ_WIDGET_GONK
@@ -290,6 +294,7 @@ pref("media.tabstreaming.time_per_frame", 40);
 
 // TextTrack support
 pref("media.webvtt.enabled", true);
+pref("media.webvtt.regions.enabled", false);
 
 // Whether to enable MediaSource support
 pref("media.mediasource.enabled", false);
@@ -455,6 +460,8 @@ pref("accessibility.tabfocus_applies_to_xul", true);
 pref("canvas.focusring.enabled", false);
 pref("canvas.customfocusring.enabled", false);
 pref("canvas.hitregions.enabled", false);
+// Add support for canvas path objects
+pref("canvas.path.enabled", false);
 
 // We want the ability to forcibly disable platform a11y, because
 // some non-a11y-related components attempt to bring it up.  See bug
@@ -559,6 +566,9 @@ pref("devtools.debugger.forbid-certified-apps", true);
 
 // DevTools default color unit
 pref("devtools.defaultColorUnit", "hex");
+
+// Used for devtools debugging
+pref("devtools.dump.emit", false);
 
 // view source
 pref("view_source.syntax_highlight", true);
@@ -761,7 +771,6 @@ pref("javascript.options.ion",              true);
 pref("javascript.options.asmjs",            true);
 pref("javascript.options.parallel_parsing", true);
 pref("javascript.options.ion.parallel_compilation", true);
-pref("javascript.options.typeinference",    true);
 // This preference limits the memory usage of javascript.
 // If you want to change these values for your device,
 // please find Bug 417052 comment 17 and Bug 456721
@@ -1256,7 +1265,7 @@ pref("network.dnsCacheEntries", 400);
 pref("network.dnsCacheExpiration", 60);
 
 // The grace period allows the DNS cache to use expired entries, while kicking off
-// a revalidation in the background. In seconds, but rounded to minutes in gecko.
+// a revalidation in the background.
 pref("network.dnsCacheExpirationGracePeriod", 60);
 
 // This preference can be used to turn off DNS prefetch.
@@ -3928,6 +3937,7 @@ pref("layers.draw-borders", false);
 pref("layers.draw-tile-borders", false);
 pref("layers.draw-bigimage-borders", false);
 pref("layers.frame-counter", false);
+pref("layers.enable-tiles", false);
 // Max number of layers per container. See Overwrite in mobile prefs.
 pref("layers.max-active", -1);
 // When a layer is moving it will add a scroll graph to measure the smoothness

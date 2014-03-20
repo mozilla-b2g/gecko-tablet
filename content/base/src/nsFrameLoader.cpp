@@ -45,7 +45,6 @@
 #include "nsIScrollableFrame.h"
 #include "nsSubDocumentFrame.h"
 #include "nsError.h"
-#include "nsEventDispatcher.h"
 #include "nsISHistory.h"
 #include "nsISHistoryInternal.h"
 #include "nsIDOMHTMLDocument.h"
@@ -57,7 +56,6 @@
 
 #include "nsLayoutUtils.h"
 #include "nsView.h"
-#include "nsAsyncDOMEvent.h"
 
 #include "nsIURI.h"
 #include "nsIURL.h"
@@ -76,6 +74,7 @@
 #include "AppProcessChecker.h"
 #include "ContentParent.h"
 #include "TabParent.h"
+#include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/GuardObjects.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/unused.h"
@@ -375,12 +374,14 @@ nsFrameLoader::LoadFrame()
 void
 nsFrameLoader::FireErrorEvent()
 {
-  if (mOwnerContent) {
-    nsRefPtr<nsAsyncDOMEvent> event =
-      new nsLoadBlockingAsyncDOMEvent(mOwnerContent, NS_LITERAL_STRING("error"),
-                                      false, false);
-    event->PostDOMEvent();
+  if (!mOwnerContent) {
+    return;
   }
+  nsRefPtr<AsyncEventDispatcher > loadBlockingAsyncDispatcher =
+    new LoadBlockingAsyncEventDispatcher(mOwnerContent,
+                                         NS_LITERAL_STRING("error"),
+                                         false, false);
+  loadBlockingAsyncDispatcher->PostDOMEvent();
 }
 
 NS_IMETHODIMP
@@ -2235,7 +2236,8 @@ nsFrameLoader::DoLoadFrameScript(const nsAString& aURL, bool aRunInGlobalScope)
   return true;
 }
 
-class nsAsyncMessageToChild : public nsRunnable
+class nsAsyncMessageToChild : public nsSameProcessAsyncMessageBase,
+                              public nsRunnable
 {
 public:
   nsAsyncMessageToChild(JSContext* aCx,
@@ -2244,23 +2246,9 @@ public:
                         const StructuredCloneData& aData,
                         JS::Handle<JSObject *> aCpows,
                         nsIPrincipal* aPrincipal)
-    : mRuntime(js::GetRuntime(aCx)), mFrameLoader(aFrameLoader)
-    , mMessage(aMessage), mCpows(aCpows), mPrincipal(aPrincipal)
+    : nsSameProcessAsyncMessageBase(aCx, aMessage, aData, aCpows, aPrincipal)
+    , mFrameLoader(aFrameLoader)
   {
-    if (aData.mDataLength && !mData.copy(aData.mData, aData.mDataLength)) {
-      NS_RUNTIMEABORT("OOM");
-    }
-    if (mCpows && !js_AddObjectRoot(mRuntime, &mCpows)) {
-      NS_RUNTIMEABORT("OOM");
-    }
-    mClosure = aData.mClosure;
-  }
-
-  ~nsAsyncMessageToChild()
-  {
-    if (mCpows) {
-      JS_RemoveObjectRootRT(mRuntime, &mCpows);
-    }
   }
 
   NS_IMETHOD Run()
@@ -2269,26 +2257,12 @@ public:
       static_cast<nsInProcessTabChildGlobal*>(mFrameLoader->mChildMessageManager.get());
     if (tabChild && tabChild->GetInnerManager()) {
       nsCOMPtr<nsIXPConnectJSObjectHolder> kungFuDeathGrip(tabChild->GetGlobal());
-      StructuredCloneData data;
-      data.mData = mData.data();
-      data.mDataLength = mData.nbytes();
-      data.mClosure = mClosure;
-
-      SameProcessCpowHolder cpows(mRuntime, JS::Handle<JSObject *>::fromMarkedLocation(&mCpows));
-
-      nsRefPtr<nsFrameMessageManager> mm = tabChild->GetInnerManager();
-      mm->ReceiveMessage(static_cast<EventTarget*>(tabChild), mMessage,
-                         false, &data, &cpows, mPrincipal, nullptr);
+      ReceiveMessage(static_cast<EventTarget*>(tabChild),
+                     tabChild->GetInnerManager());
     }
     return NS_OK;
   }
-  JSRuntime* mRuntime;
   nsRefPtr<nsFrameLoader> mFrameLoader;
-  nsString mMessage;
-  JSAutoStructuredCloneBuffer mData;
-  StructuredCloneClosure mClosure;
-  JSObject* mCpows;
-  nsCOMPtr<nsIPrincipal> mPrincipal;
 };
 
 bool

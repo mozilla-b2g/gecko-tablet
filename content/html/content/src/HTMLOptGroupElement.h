@@ -11,13 +11,14 @@
 #include "nsGenericHTMLElement.h"
 
 namespace mozilla {
+class EventChainPreVisitor;
 namespace dom {
 
 class HTMLOptGroupElement MOZ_FINAL : public nsGenericHTMLElement,
                                       public nsIDOMHTMLOptGroupElement
 {
 public:
-  HTMLOptGroupElement(already_AddRefed<nsINodeInfo> aNodeInfo);
+  HTMLOptGroupElement(already_AddRefed<nsINodeInfo>& aNodeInfo);
   virtual ~HTMLOptGroupElement();
 
   NS_IMPL_FROMCONTENT_HTML_WITH_TAG(HTMLOptGroupElement, optgroup)
@@ -34,7 +35,7 @@ public:
   virtual void RemoveChildAt(uint32_t aIndex, bool aNotify) MOZ_OVERRIDE;
 
   // nsIContent
-  virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
+  virtual nsresult PreHandleEvent(EventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
 
   virtual nsEventStates IntrinsicState() const MOZ_OVERRIDE;
  

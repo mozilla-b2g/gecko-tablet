@@ -17,9 +17,12 @@
 
 class nsIInputStream;
 
+namespace mozilla {
+class EventChainPreVisitor;
+} // namespace mozilla
+
 BEGIN_FILE_NAMESPACE
 
-class DOMFileRequest;
 class FileHandle;
 class FileRequest;
 class MetadataHelper;
@@ -61,7 +64,7 @@ public:
 
   // nsIDOMEventTarget
   virtual nsresult
-  PreHandleEvent(nsEventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
+  PreHandleEvent(EventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
 
   nsresult
   CreateParallelStream(nsISupports** aStream);
@@ -98,7 +101,7 @@ private:
   void
   OnRequestFinished();
 
-  inline already_AddRefed<DOMFileRequest>
+  already_AddRefed<FileRequest>
   GenerateFileRequest();
 
   nsresult

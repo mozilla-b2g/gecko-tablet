@@ -22,6 +22,7 @@
 #include "nsContentUtils.h"
 #include "nsIURI.h"
 
+#include "mozilla/EventDispatcher.h"
 #include "mozilla/dom/ElementBinding.h"
 
 using namespace mozilla;
@@ -71,7 +72,14 @@ ReportParseErrorNoTag(const nsString& aValue,
                          "AttributeParsingErrorNoTag", argv, 2);
 }
 
-nsMathMLElement::nsMathMLElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+nsMathMLElement::nsMathMLElement(already_AddRefed<nsINodeInfo>& aNodeInfo)
+: nsMathMLElementBase(aNodeInfo),
+  ALLOW_THIS_IN_INITIALIZER_LIST(Link(this)),
+  mIncrementScriptLevel(false)
+{
+}
+
+nsMathMLElement::nsMathMLElement(already_AddRefed<nsINodeInfo>&& aNodeInfo)
 : nsMathMLElementBase(aNodeInfo),
   ALLOW_THIS_IN_INITIALIZER_LIST(Link(this)),
   mIncrementScriptLevel(false)
@@ -890,7 +898,7 @@ nsMathMLElement::MapMathMLAttributesInto(const nsMappedAttributes* aAttributes,
 }
 
 nsresult
-nsMathMLElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
+nsMathMLElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
 {
   nsresult rv = Element::PreHandleEvent(aVisitor);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -899,7 +907,7 @@ nsMathMLElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
 }
 
 nsresult
-nsMathMLElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
+nsMathMLElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
 {
   return PostHandleEventForLinks(aVisitor);
 }

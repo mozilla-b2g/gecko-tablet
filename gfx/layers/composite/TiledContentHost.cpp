@@ -34,7 +34,6 @@ TiledLayerBufferComposite::TiledLayerBufferComposite()
 TiledLayerBufferComposite::TiledLayerBufferComposite(ISurfaceAllocator* aAllocator,
                                                      const SurfaceDescriptorTiles& aDescriptor,
                                                      const nsIntRegion& aOldPaintedRegion)
-  : mFrameResolution(1.0)
 {
   mUninitialized = false;
   mHasDoubleBufferedTiles = false;
@@ -43,6 +42,7 @@ TiledLayerBufferComposite::TiledLayerBufferComposite(ISurfaceAllocator* aAllocat
   mRetainedWidth = aDescriptor.retainedWidth();
   mRetainedHeight = aDescriptor.retainedHeight();
   mResolution = aDescriptor.resolution();
+  mFrameResolution = CSSToScreenScale(aDescriptor.frameResolution());
 
   // Combine any valid content that wasn't already uploaded
   nsIntRegion oldPaintedRegion(aOldPaintedRegion);
@@ -58,8 +58,8 @@ TiledLayerBufferComposite::TiledLayerBufferComposite(ISurfaceAllocator* aAllocat
         texture = TextureHost::AsTextureHost(tileDesc.get_TexturedTileDescriptor().textureParent());
         const TileLock& ipcLock = tileDesc.get_TexturedTileDescriptor().sharedLock();
         nsRefPtr<gfxSharedReadLock> sharedLock;
-        if (ipcLock.type() == TileLock::TShmem) {
-          sharedLock = gfxShmSharedReadLock::Open(aAllocator, ipcLock.get_Shmem());
+        if (ipcLock.type() == TileLock::TShmemSection) {
+          sharedLock = gfxShmSharedReadLock::Open(aAllocator, ipcLock.get_ShmemSection());
         } else {
           sharedLock = reinterpret_cast<gfxMemorySharedReadLock*>(ipcLock.get_uintptr_t());
           if (sharedLock) {
@@ -318,9 +318,8 @@ TiledContentHost::RenderTile(const TileHost& aTile,
   }
 
   nsIntRect screenBounds = aScreenRegion.GetBounds();
-  Matrix mat = aTransform.As2D();
   Rect quad(screenBounds.x, screenBounds.y, screenBounds.width, screenBounds.height);
-  quad = mat.TransformBounds(quad);
+  quad = aTransform.TransformBounds(quad);
 
   if (!quad.Intersects(mCompositor->ClipRectInLayersCoordinates(aClipRect))) {
     return;

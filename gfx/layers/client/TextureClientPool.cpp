@@ -30,6 +30,11 @@ TextureClientPool::TextureClientPool(gfx::SurfaceFormat aFormat, gfx::IntSize aS
   mTimer = do_CreateInstance("@mozilla.org/timer;1");
 }
 
+TextureClientPool::~TextureClientPool()
+{
+  mTimer->Cancel();
+}
+
 TemporaryRef<TextureClient>
 TextureClientPool::GetTextureClient()
 {
@@ -49,9 +54,12 @@ TextureClientPool::GetTextureClient()
 
   // No unused clients in the pool, create one
   if (gfxPrefs::ForceShmemTiles()) {
-    textureClient = TextureClient::CreateBufferTextureClient(mSurfaceAllocator, mFormat, TEXTURE_IMMEDIATE_UPLOAD);
+    // gfx::BackendType::NONE means use the content backend
+    textureClient = TextureClient::CreateBufferTextureClient(mSurfaceAllocator,
+      mFormat, TEXTURE_IMMEDIATE_UPLOAD, gfx::BackendType::NONE);
   } else {
-    textureClient = TextureClient::CreateTextureClientForDrawing(mSurfaceAllocator, mFormat, TEXTURE_IMMEDIATE_UPLOAD);
+    textureClient = TextureClient::CreateTextureClientForDrawing(mSurfaceAllocator,
+      mFormat, TEXTURE_IMMEDIATE_UPLOAD, gfx::BackendType::NONE, mSize);
   }
   textureClient->AsTextureClientDrawTarget()->AllocateForSurface(mSize, ALLOC_DEFAULT);
 

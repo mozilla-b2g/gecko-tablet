@@ -3,8 +3,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/ContentEvents.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/EventDispatcher.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/Likely.h"
@@ -23,7 +25,6 @@
 #include "nsIContent.h"
 #include "nsStyleContext.h"
 #include "nsIBoxObject.h"
-#include "nsAsyncDOMEvent.h"
 #include "nsIDOMDataContainerEvent.h"
 #include "nsIDOMMouseEvent.h"
 #include "nsIDOMElement.h"
@@ -54,7 +55,6 @@
 #include "nsContentUtils.h"
 #include "nsLayoutUtils.h"
 #include "nsIScrollableFrame.h"
-#include "nsEventDispatcher.h"
 #include "nsDisplayList.h"
 #include "nsTreeBoxObject.h"
 #include "nsRenderingContext.h"
@@ -930,7 +930,7 @@ nsTreeBodyFrame::CheckOverflow(const ScrollParts& aParts)
       mVerticalOverflow ? NS_SCROLLPORT_OVERFLOW : NS_SCROLLPORT_UNDERFLOW,
       nullptr);
     event.orient = InternalScrollPortEvent::vertical;
-    nsEventDispatcher::Dispatch(content, presContext, &event);
+    EventDispatcher::Dispatch(content, presContext, &event);
   }
 
   if (horizontalOverflowChanged) {
@@ -938,7 +938,7 @@ nsTreeBodyFrame::CheckOverflow(const ScrollParts& aParts)
       mHorizontalOverflow ? NS_SCROLLPORT_OVERFLOW : NS_SCROLLPORT_UNDERFLOW,
       nullptr);
     event.orient = InternalScrollPortEvent::horizontal;
-    nsEventDispatcher::Dispatch(content, presContext, &event);
+    EventDispatcher::Dispatch(content, presContext, &event);
   }
 
   // The synchronous event dispatch above can trigger reflow notifications.
@@ -4473,7 +4473,7 @@ nsTreeBodyFrame::FireScrollEvent()
   WidgetGUIEvent event(true, NS_SCROLL_EVENT, nullptr);
   // scroll events fired at elements don't bubble
   event.mFlags.mBubbles = false;
-  nsEventDispatcher::Dispatch(GetContent(), PresContext(), &event);
+  EventDispatcher::Dispatch(GetContent(), PresContext(), &event);
 }
 
 void
@@ -4562,11 +4562,9 @@ nsTreeBodyFrame::FireRowCountChangedEvent(int32_t aIndex, int32_t aCount)
 
   event->SetTrusted(true);
 
-  nsRefPtr<nsAsyncDOMEvent> plevent = new nsAsyncDOMEvent(content, event);
-  if (!plevent)
-    return;
-
-  plevent->PostDOMEvent();
+  nsRefPtr<AsyncEventDispatcher> asyncDispatcher =
+    new AsyncEventDispatcher(content, event);
+  asyncDispatcher->PostDOMEvent();
 }
 
 void
@@ -4644,9 +4642,9 @@ nsTreeBodyFrame::FireInvalidateEvent(int32_t aStartRowIdx, int32_t aEndRowIdx,
 
   event->SetTrusted(true);
 
-  nsRefPtr<nsAsyncDOMEvent> plevent = new nsAsyncDOMEvent(content, event);
-  if (plevent)
-    plevent->PostDOMEvent();
+  nsRefPtr<AsyncEventDispatcher> asyncDispatcher =
+    new AsyncEventDispatcher(content, event);
+  asyncDispatcher->PostDOMEvent();
 }
 #endif
 

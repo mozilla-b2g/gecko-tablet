@@ -2669,7 +2669,7 @@ js::PCToLineNumber(unsigned startLine, jssrcnote *notes, jsbytecode *code, jsbyt
 unsigned
 js::PCToLineNumber(JSScript *script, jsbytecode *pc, unsigned *columnp)
 {
-    /* Cope with StackFrame.pc value prior to entering js_Interpret. */
+    /* Cope with InterpreterFrame.pc value prior to entering Interpret. */
     if (!pc)
         return 0;
 
@@ -3482,10 +3482,8 @@ JSScript::argumentsOptimizationFailed(JSContext *cx, HandleScript script)
          * We cannot reliably create an arguments object for Ion activations of
          * this script.  To maintain the invariant that "script->needsArgsObj
          * implies fp->hasArgsObj", the Ion bail mechanism will create an
-         * arguments object right after restoring the StackFrame and before
-         * entering the interpreter (in jit::ThunkToInterpreter).  This delay is
-         * safe since the engine avoids any observation of a StackFrame when it's
-         * runningInJit (see ScriptFrameIter::interpFrame comment).
+         * arguments object right after restoring the BaselineFrame and before
+         * entering Baseline code (in jit::FinishBailoutToBaseline).
          */
         if (i.isIon())
             continue;
@@ -3671,6 +3669,24 @@ LazyScript::initRuntimeFields(uint64_t packedFields)
     packed = packedFields;
     p_.hasBeenCloned = p.hasBeenCloned;
     p_.treatAsRunOnce = p.treatAsRunOnce;
+}
+
+bool
+LazyScript::hasUncompiledEnclosingScript() const
+{
+    // It can happen that we created lazy scripts while compiling an enclosing
+    // script, but we errored out while compiling that script. When we iterate
+    // over lazy script in a compartment, we might see lazy scripts that never
+    // escaped to script and should be ignored.
+    //
+    // If the enclosing scope is a function with a null script or has a script
+    // without code, it was not successfully compiled.
+
+    if (!enclosingScope() || !enclosingScope()->is<JSFunction>())
+        return false;
+
+    JSFunction &fun = enclosingScope()->as<JSFunction>();
+    return fun.isInterpreted() && (!fun.mutableScript() || !fun.nonLazyScript()->code());
 }
 
 uint32_t

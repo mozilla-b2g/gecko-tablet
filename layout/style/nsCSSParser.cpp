@@ -45,6 +45,7 @@
 #include "mozilla/Preferences.h"
 #include "nsRuleData.h"
 #include "mozilla/CSSVariableValues.h"
+#include "mozilla/dom/URL.h"
 
 using namespace mozilla;
 
@@ -248,9 +249,17 @@ public:
                                            uint32_t aLineOffset);
 
   nsCSSProperty LookupEnabledProperty(const nsAString& aProperty) {
-    return nsCSSProps::LookupProperty(aProperty, mUnsafeRulesEnabled ?
-                                                   nsCSSProps::eEnabledInUASheets :
-                                                   nsCSSProps::eEnabled);
+    static_assert(nsCSSProps::eEnabledForAllContent == 0,
+                  "nsCSSProps::eEnabledForAllContent should be zero for "
+                  "this bitfield to work");
+    nsCSSProps::EnabledState enabledState = nsCSSProps::eEnabledForAllContent;
+    if (mUnsafeRulesEnabled) {
+      enabledState |= nsCSSProps::eEnabledInUASheets;
+    }
+    if (mIsChromeOrCertifiedApp) {
+      enabledState |= nsCSSProps::eEnabledInChromeOrCertifiedApp;
+    }
+    return nsCSSProps::LookupProperty(aProperty, enabledState);
   }
 
 protected:
@@ -629,10 +638,12 @@ protected:
   bool ParseGridTrackSize(nsCSSValue& aValue);
   bool ParseGridAutoColumnsRows(nsCSSProperty aPropID);
   bool ParseGridTrackList(nsCSSProperty aPropID);
+
+  // |aAreaIndices| is a lookup table to help us parse faster,
+  // mapping area names to indices in |aResult.mNamedAreas|.
   bool ParseGridTemplateAreasLine(const nsAutoString& aInput,
-                                  nsTArray<nsCSSGridNamedArea>& aNamedAreas,
-                                  uint32_t aRow,
-                                  uint32_t& aColumns);
+                                  nsCSSValueGridTemplateAreas& aResult,
+                                  nsDataHashtable<nsStringHashKey, uint32_t>& aAreaIndices);
   bool ParseGridTemplateAreas();
   bool ParseGridLine(nsCSSValue& aValue);
   bool ParseGridAutoPosition();
@@ -913,6 +924,12 @@ protected:
   // True if unsafe rules should be allowed
   bool mUnsafeRulesEnabled : 1;
 
+  // True if we are in parsing rules for Chrome or Certified App content,
+  // in which case CSS properties with the
+  // CSS_PROPERTY_ALWAYS_ENABLED_IN_CHROME_OR_CERTIFIED_APP
+  // flag should be allowed.
+  bool mIsChromeOrCertifiedApp : 1;
+
   // True if viewport units should be allowed.
   bool mViewportUnitsEnabled : 1;
 
@@ -1007,6 +1024,7 @@ CSSParserImpl::CSSParserImpl()
     mHashlessColorQuirk(false),
     mUnitlessLengthQuirk(false),
     mUnsafeRulesEnabled(false),
+    mIsChromeOrCertifiedApp(false),
     mViewportUnitsEnabled(true),
     mHTMLMediaMode(false),
     mParsingCompoundProperty(false),
@@ -1147,6 +1165,9 @@ CSSParserImpl::ParseSheet(const nsAString& aInput,
   }
 
   mUnsafeRulesEnabled = aAllowUnsafeRules;
+  mIsChromeOrCertifiedApp =
+    dom::IsChromeURI(aSheetURI) ||
+    aSheetPrincipal->GetAppStatus() == nsIPrincipal::APP_STATUS_CERTIFIED;
 
   nsCSSToken* tk = &mToken;
   for (;;) {
@@ -1170,6 +1191,7 @@ CSSParserImpl::ParseSheet(const nsAString& aInput,
   ReleaseScanner();
 
   mUnsafeRulesEnabled = false;
+  mIsChromeOrCertifiedApp = false;
 
   // XXX check for low level errors
   return NS_OK;
@@ -7060,13 +7082,15 @@ CSSParserImpl::ParseGridTrackList(nsCSSProperty aPropID)
 
 bool
 CSSParserImpl::ParseGridTemplateAreasLine(const nsAutoString& aInput,
-                                          nsTArray<nsCSSGridNamedArea>& aNamedAreas,
-                                          uint32_t aRow,
-                                          uint32_t& aColumns)
+                                          nsCSSValueGridTemplateAreas& aAreas,
+                                          nsDataHashtable<nsStringHashKey, uint32_t>& aAreaIndices)
 {
+  aAreas.mTemplates.AppendElement(mToken.mIdent);
+
   nsCSSGridTemplateAreaScanner scanner(aInput);
   nsCSSGridTemplateAreaToken token;
   nsCSSGridNamedArea* currentArea = nullptr;
+  uint32_t row = aAreas.NRows();
   uint32_t column;
   for (column = 1; scanner.Next(token); column++) {
     if (token.isTrash) {
@@ -7074,7 +7098,7 @@ CSSParserImpl::ParseGridTemplateAreasLine(const nsAutoString& aInput,
     }
     if (currentArea) {
       if (token.mName == currentArea->mName) {
-        if (currentArea->mRowStart == aRow) {
+        if (currentArea->mRowStart == row) {
           // Next column in the first row of this named area.
           currentArea->mColumnEnd++;
         }
@@ -7083,7 +7107,7 @@ CSSParserImpl::ParseGridTemplateAreasLine(const nsAutoString& aInput,
       // We're exiting |currentArea|, so currentArea is ending at |column|.
       // Make sure that this is consistent with currentArea on previous rows:
       if (currentArea->mColumnEnd != column) {
-        NS_ASSERTION(currentArea->mRowStart != aRow,
+        NS_ASSERTION(currentArea->mRowStart != row,
                      "Inconsistent column end for the first row of a named area.");
         // Not a rectangle
         return false;
@@ -7094,38 +7118,48 @@ CSSParserImpl::ParseGridTemplateAreasLine(const nsAutoString& aInput,
       // Named cell that doesn't have a cell with the same name on its left.
 
       // Check if this is the continuation of an existing named area:
-      for (uint32_t i = 0, end = aNamedAreas.Length(); i < end; i++) {
-        if (aNamedAreas[i].mName == token.mName) {
-          currentArea = &aNamedAreas[i];
-          if (currentArea->mColumnStart != column || currentArea->mRowEnd != aRow) {
-            // Existing named area, but not forming a rectangle
-            return false;
-          }
-          // Next row of an existing named area
-          currentArea->mRowEnd++;
-          break;
+      uint32_t index;
+      if (aAreaIndices.Get(token.mName, &index)) {
+        MOZ_ASSERT(index < aAreas.mNamedAreas.Length(),
+                   "Invalid aAreaIndices hash table");
+        currentArea = &aAreas.mNamedAreas[index];
+        if (currentArea->mColumnStart != column ||
+            currentArea->mRowEnd != row) {
+          // Existing named area, but not forming a rectangle
+          return false;
         }
-      }
-      if (!currentArea) {
+        // Next row of an existing named area
+        currentArea->mRowEnd++;
+      } else {
         // New named area
-        currentArea = aNamedAreas.AppendElement();
+        aAreaIndices.Put(token.mName, aAreas.mNamedAreas.Length());
+        currentArea = aAreas.mNamedAreas.AppendElement();
         currentArea->mName = token.mName;
         // For column or row N (starting at 1),
         // the start line is N, the end line is N + 1
         currentArea->mColumnStart = column;
         currentArea->mColumnEnd = column + 1;
-        currentArea->mRowStart = aRow;
-        currentArea->mRowEnd = aRow + 1;
+        currentArea->mRowStart = row;
+        currentArea->mRowEnd = row + 1;
       }
     }
   }
   if (currentArea && currentArea->mColumnEnd != column) {
-    NS_ASSERTION(currentArea->mRowStart != aRow,
+    NS_ASSERTION(currentArea->mRowStart != row,
                  "Inconsistent column end for the first row of a named area.");
     // Not a rectangle
     return false;
   }
-  aColumns = column;
+
+  // On the first row, set the number of columns
+  // that grid-template-areas contributes to the explicit grid.
+  // On other rows, check that the number of columns is consistent
+  // between rows.
+  if (row == 1) {
+    aAreas.mNColumns = column;
+  } else if (aAreas.mNColumns != column) {
+    return false;
+  }
   return true;
 }
 
@@ -7138,30 +7172,24 @@ CSSParserImpl::ParseGridTemplateAreas()
     return true;
   }
 
-  nsCSSValueGridTemplateAreas& result = value.SetGridTemplateAreas();
-  uint32_t row = 1;
-  uint32_t firstRowColumns;
-  do {
+  nsCSSValueGridTemplateAreas& areas = value.SetGridTemplateAreas();
+  nsDataHashtable<nsStringHashKey, uint32_t> areaIndices;
+  for (;;) {
     if (!GetToken(true)) {
-      return false;
+      break;
     }
     if (eCSSToken_String != mToken.mType) {
-      UngetToken();  // In case it's opening a block or function.
+      UngetToken();
+      break;
+    }
+    if (!ParseGridTemplateAreasLine(mToken.mIdent, areas, areaIndices)) {
       return false;
     }
-    uint32_t columns;
-    if (!ParseGridTemplateAreasLine(mToken.mIdent, result.mNamedAreas,
-                                    row, columns)) {
-      return false;
-    }
-    if (row == 1) {
-      firstRowColumns = columns;
-    } else if (columns != firstRowColumns) {
-      return false;
-    }
-    result.mTemplates.AppendElement(mToken.mIdent);
-    row++;
-  } while (!CheckEndProperty());
+  }
+
+  if (areas.NRows() == 0) {
+    return false;
+  }
 
   AppendValue(eCSSProperty_grid_template_areas, value);
   return true;

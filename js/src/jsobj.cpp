@@ -66,9 +66,6 @@ using namespace js;
 using namespace js::gc;
 using namespace js::types;
 
-using js::frontend::IsIdentifier;
-using mozilla::ArrayLength;
-using mozilla::DebugOnly;
 using mozilla::Maybe;
 using mozilla::RoundUpPow2;
 
@@ -1256,8 +1253,20 @@ NewObject(ExclusiveContext *cx, types::TypeObject *type_, JSObject *parent, gc::
     if (!NewObjectMetadata(cx, &metadata))
         return nullptr;
 
+    // Normally, the number of fixed slots given an object is the maximum
+    // permitted for its size class. For array buffers we only use enough to
+    // cover the class reservd slots, so that the remaining space in the
+    // object's allocation is available for the buffer's data.
+    size_t nfixed;
+    if (clasp == &ArrayBufferObject::class_) {
+        JS_STATIC_ASSERT(ArrayBufferObject::RESERVED_SLOTS == 4);
+        nfixed = ArrayBufferObject::RESERVED_SLOTS;
+    } else {
+        nfixed = GetGCKindSlots(kind, clasp);
+    }
+
     RootedShape shape(cx, EmptyShape::getInitialShape(cx, clasp, type->proto(),
-                                                      parent, metadata, kind));
+                                                      parent, metadata, nfixed));
     if (!shape)
         return nullptr;
 
@@ -1563,7 +1572,7 @@ js::CreateThisForFunctionWithProto(JSContext *cx, HandleObject callee, JSObject 
         res = NewObjectWithClassProto(cx, &JSObject::class_, proto, callee->getParent(), allocKind, newKind);
     }
 
-    if (res && cx->typeInferenceEnabled()) {
+    if (res) {
         JSScript *script = callee->as<JSFunction>().getOrCreateScript(cx);
         if (!script)
             return nullptr;
@@ -1748,10 +1757,8 @@ JS_CopyPropertyFrom(JSContext *cx, HandleId id, HandleObject target,
 }
 
 JS_FRIEND_API(bool)
-JS_CopyPropertiesFrom(JSContext *cx, JSObject *targetArg, JSObject *objArg)
+JS_CopyPropertiesFrom(JSContext *cx, HandleObject target, HandleObject obj)
 {
-    RootedObject target(cx, targetArg);
-    RootedObject obj(cx, objArg);
     JSAutoCompartment ac(cx, obj);
 
     AutoIdVector props(cx);
@@ -2549,7 +2556,7 @@ DefineConstructorAndPrototype(JSContext *cx, HandleObject obj, JSProtoKey key, H
          * (FIXME: remove this dependency on the exact identity of the parent,
          * perhaps as part of bug 638316.)
          */
-        RootedFunction fun(cx, NewFunction(cx, NullPtr(), constructor, nargs,
+        RootedFunction fun(cx, NewFunction(cx, js::NullPtr(), constructor, nargs,
                                            JSFunction::NATIVE_CTOR, obj, atom, ctorKind));
         if (!fun)
             goto bad;
@@ -5806,7 +5813,7 @@ MaybeDumpValue(const char *name, const Value &v)
 }
 
 JS_FRIEND_API(void)
-js_DumpStackFrame(JSContext *cx, StackFrame *start)
+js_DumpInterpreterFrame(JSContext *cx, InterpreterFrame *start)
 {
     /* This should only called during live debugging. */
     ScriptFrameIter i(cx, ScriptFrameIter::GO_THROUGH_SAVED);
@@ -5830,7 +5837,7 @@ js_DumpStackFrame(JSContext *cx, StackFrame *start)
         if (i.isJit())
             fprintf(stderr, "JIT frame\n");
         else
-            fprintf(stderr, "StackFrame at %p\n", (void *) i.interpFrame());
+            fprintf(stderr, "InterpreterFrame at %p\n", (void *) i.interpFrame());
 
         if (i.isFunctionFrame()) {
             fprintf(stderr, "callee fun: ");
@@ -5900,17 +5907,7 @@ JSObject::addSizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::Objects
 
     if (hasDynamicElements()) {
         js::ObjectElements *elements = getElementsHeader();
-        if (MOZ_UNLIKELY(elements->isAsmJSArrayBuffer())) {
-#if defined (JS_CPU_X64)
-            // On x64, ArrayBufferObject::prepareForAsmJS switches the
-            // ArrayBufferObject to use mmap'd storage.
-            sizes->nonHeapElementsAsmJS += as<ArrayBufferObject>().byteLength();
-#else
-            sizes->mallocHeapElementsAsmJS += mallocSizeOf(elements);
-#endif
-        } else {
-            sizes->mallocHeapElementsNonAsmJS += mallocSizeOf(elements);
-        }
+        sizes->mallocHeapElementsNonAsmJS += mallocSizeOf(elements);
     }
 
     // Other things may be measured in the future if DMD indicates it is worthwhile.
@@ -5937,6 +5934,8 @@ JSObject::addSizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::Objects
         sizes->mallocHeapRegExpStatics += as<RegExpStaticsObject>().sizeOfData(mallocSizeOf);
     } else if (is<PropertyIteratorObject>()) {
         sizes->mallocHeapPropertyIteratorData += as<PropertyIteratorObject>().sizeOfMisc(mallocSizeOf);
+    } else if (is<ArrayBufferObject>() || is<SharedArrayBufferObject>()) {
+        ArrayBufferObject::addSizeOfExcludingThis(this, mallocSizeOf, sizes);
 #ifdef JS_ION
     } else if (is<AsmJSModuleObject>()) {
         as<AsmJSModuleObject>().addSizeOfMisc(mallocSizeOf, &sizes->nonHeapCodeAsmJS,

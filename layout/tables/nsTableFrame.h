@@ -527,7 +527,7 @@ protected:
 
   void InitChildReflowState(nsHTMLReflowState& aReflowState);
 
-  virtual int GetSkipSides(const nsHTMLReflowState* aReflowState = nullptr) const MOZ_OVERRIDE;
+  virtual int GetLogicalSkipSides(const nsHTMLReflowState* aReflowState = nullptr) const MOZ_OVERRIDE;
 
 public:
   bool IsRowInserted() const;
@@ -572,8 +572,8 @@ protected:
    *  necessary because the dimensions of table parts may change after they've
    *  been reflowed (e.g. in AdjustForCollapsingRowsCols).
    */
-
-  void FixupPositionedTableParts(nsPresContext* aPresContext,
+  void FixupPositionedTableParts(nsPresContext*           aPresContext,
+                                 nsHTMLReflowMetrics&     aDesiredSize,
                                  const nsHTMLReflowState& aReflowState);
 
   // Clears the list of positioned table parts.

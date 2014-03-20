@@ -516,7 +516,7 @@ TabParent::AcknowledgeScrollUpdate(const ViewID& aScrollId, const uint32_t& aScr
   }
 }
 
-void TabParent::HandleDoubleTap(const CSSIntPoint& aPoint,
+void TabParent::HandleDoubleTap(const CSSPoint& aPoint,
                                 int32_t aModifiers,
                                 const ScrollableLayerGuid &aGuid)
 {
@@ -525,7 +525,7 @@ void TabParent::HandleDoubleTap(const CSSIntPoint& aPoint,
   }
 }
 
-void TabParent::HandleSingleTap(const CSSIntPoint& aPoint,
+void TabParent::HandleSingleTap(const CSSPoint& aPoint,
                                 int32_t aModifiers,
                                 const ScrollableLayerGuid &aGuid)
 {
@@ -535,7 +535,7 @@ void TabParent::HandleSingleTap(const CSSIntPoint& aPoint,
   }
 }
 
-void TabParent::HandleLongTap(const CSSIntPoint& aPoint,
+void TabParent::HandleLongTap(const CSSPoint& aPoint,
                               int32_t aModifiers,
                               const ScrollableLayerGuid &aGuid)
 {
@@ -544,7 +544,7 @@ void TabParent::HandleLongTap(const CSSIntPoint& aPoint,
   }
 }
 
-void TabParent::HandleLongTapUp(const CSSIntPoint& aPoint,
+void TabParent::HandleLongTapUp(const CSSPoint& aPoint,
                                 int32_t aModifiers,
                                 const ScrollableLayerGuid &aGuid)
 {
@@ -721,7 +721,7 @@ bool TabParent::SendRealMouseEvent(WidgetMouseEvent& event)
   return PBrowserParent::SendRealMouseEvent(event);
 }
 
-CSSIntPoint TabParent::AdjustTapToChildWidget(const CSSIntPoint& aPoint)
+CSSPoint TabParent::AdjustTapToChildWidget(const CSSPoint& aPoint)
 {
   nsCOMPtr<nsIContent> content = do_QueryInterface(mFrameElement);
 
@@ -735,12 +735,12 @@ CSSIntPoint TabParent::AdjustTapToChildWidget(const CSSIntPoint& aPoint)
   }
   nsPresContext* presContext = doc->GetShell()->GetPresContext();
 
-  return CSSIntPoint(
-    aPoint.x + presContext->DevPixelsToIntCSSPixels(mChildProcessOffsetAtTouchStart.x),
-    aPoint.y + presContext->DevPixelsToIntCSSPixels(mChildProcessOffsetAtTouchStart.y));
+  return aPoint + CSSPoint(
+    presContext->DevPixelsToFloatCSSPixels(mChildProcessOffsetAtTouchStart.x),
+    presContext->DevPixelsToFloatCSSPixels(mChildProcessOffsetAtTouchStart.y));
 }
 
-bool TabParent::SendHandleSingleTap(const CSSIntPoint& aPoint, const ScrollableLayerGuid& aGuid)
+bool TabParent::SendHandleSingleTap(const CSSPoint& aPoint, const ScrollableLayerGuid& aGuid)
 {
   if (mIsDestroyed) {
     return false;
@@ -749,7 +749,7 @@ bool TabParent::SendHandleSingleTap(const CSSIntPoint& aPoint, const ScrollableL
   return PBrowserParent::SendHandleSingleTap(AdjustTapToChildWidget(aPoint), aGuid);
 }
 
-bool TabParent::SendHandleLongTap(const CSSIntPoint& aPoint, const ScrollableLayerGuid& aGuid)
+bool TabParent::SendHandleLongTap(const CSSPoint& aPoint, const ScrollableLayerGuid& aGuid)
 {
   if (mIsDestroyed) {
     return false;
@@ -758,7 +758,7 @@ bool TabParent::SendHandleLongTap(const CSSIntPoint& aPoint, const ScrollableLay
   return PBrowserParent::SendHandleLongTap(AdjustTapToChildWidget(aPoint), aGuid);
 }
 
-bool TabParent::SendHandleLongTapUp(const CSSIntPoint& aPoint, const ScrollableLayerGuid& aGuid)
+bool TabParent::SendHandleLongTapUp(const CSSPoint& aPoint, const ScrollableLayerGuid& aGuid)
 {
   if (mIsDestroyed) {
     return false;
@@ -767,7 +767,7 @@ bool TabParent::SendHandleLongTapUp(const CSSIntPoint& aPoint, const ScrollableL
   return PBrowserParent::SendHandleLongTapUp(AdjustTapToChildWidget(aPoint), aGuid);
 }
 
-bool TabParent::SendHandleDoubleTap(const CSSIntPoint& aPoint, const ScrollableLayerGuid& aGuid)
+bool TabParent::SendHandleDoubleTap(const CSSPoint& aPoint, const ScrollableLayerGuid& aGuid)
 {
   if (mIsDestroyed) {
     return false;
@@ -1190,6 +1190,28 @@ TabParent::GetChildProcessOffset()
 
   return LayoutDeviceIntPoint::ToUntyped(LayoutDeviceIntPoint::FromAppUnitsToNearest(
            pt, targetFrame->PresContext()->AppUnitsPerDevPixel()));
+}
+
+bool
+TabParent::RecvReplyKeyEvent(const WidgetKeyboardEvent& event)
+{
+  NS_ENSURE_TRUE(mFrameElement, true);
+
+  WidgetKeyboardEvent localEvent(event);
+  // Set mNoCrossProcessBoundaryForwarding to avoid this event from
+  // being infinitely redispatched and forwarded to the child again.
+  localEvent.mFlags.mNoCrossProcessBoundaryForwarding = true;
+
+  // Here we convert the WidgetEvent that we received to an nsIDOMEvent
+  // to be able to dispatch it to the <browser> element as the target element.
+  nsIDocument* doc = mFrameElement->OwnerDoc();
+  nsIPresShell* presShell = doc->GetShell();
+  NS_ENSURE_TRUE(presShell, true);
+  nsPresContext* presContext = presShell->GetPresContext();
+  NS_ENSURE_TRUE(presContext, true);
+
+  EventDispatcher::Dispatch(mFrameElement, presContext, &localEvent);
+  return true;
 }
 
 /**
@@ -1694,7 +1716,7 @@ TabParent::AllocPOfflineCacheUpdateParent(const URIParams& aManifestURI,
     new mozilla::docshell::OfflineCacheUpdateParent(OwnOrContainingAppId(),
                                                     IsBrowserElement());
   // Use this reference as the IPDL reference.
-  return update.forget().get();
+  return update.forget().take();
 }
 
 bool

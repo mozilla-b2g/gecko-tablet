@@ -14,7 +14,10 @@
 #include "mozilla/RefPtr.h"
 #include "nsIMemoryReporter.h"          // for nsIMemoryReporter
 #include "mozilla/Atomics.h"            // for Atomic
+#include "mozilla/layers/LayersMessages.h" // for ShmemSection
 #include "LayersTypes.h"
+#include <vector>
+#include "mozilla/layers/AtomicRefCountedWithFinalize.h"
 
 /*
  * FIXME [bjacob] *** PURE CRAZYNESS WARNING ***
@@ -74,11 +77,13 @@ bool ReleaseOwnedSurfaceDescriptor(const SurfaceDescriptor& aDescriptor);
  * These methods should be only called in the ipdl implementor's thread, unless
  * specified otherwise in the implementing class.
  */
-class ISurfaceAllocator : public AtomicRefCounted<ISurfaceAllocator>
+class ISurfaceAllocator : public AtomicRefCountedWithFinalize<ISurfaceAllocator>
 {
 public:
   MOZ_DECLARE_REFCOUNTED_TYPENAME(ISurfaceAllocator)
   ISurfaceAllocator() {}
+
+  void Finalize();
 
   /**
    * Returns the type of backend that is used off the main thread.
@@ -106,6 +111,20 @@ public:
   virtual bool AllocUnsafeShmem(size_t aSize,
                                 mozilla::ipc::SharedMemory::SharedMemoryType aType,
                                 mozilla::ipc::Shmem* aShmem) = 0;
+
+  /**
+   * Allocate memory in shared memory that can always be accessed by both
+   * processes at a time. Safety is left for the user of the memory to care
+   * about.
+   */
+  bool AllocShmemSection(size_t aSize,
+                         mozilla::layers::ShmemSection* aShmemSection);
+
+  /**
+   * Deallocates a shmem section.
+   */
+  void FreeShmemSection(mozilla::layers::ShmemSection& aShmemSection);
+
   /**
    * Deallocate memory allocated by either AllocShmem or AllocUnsafeShmem.
    */
@@ -124,6 +143,11 @@ public:
                                               gfxContentType aContent,
                                               uint32_t aCaps,
                                               SurfaceDescriptor* aBuffer);
+
+  /**
+   * Returns the maximum texture size supported by the compositor.
+   */
+  virtual int32_t GetMaxTextureSize() const { return INT32_MAX; }
 
   virtual void DestroySharedSurface(SurfaceDescriptor* aSurface);
 
@@ -153,9 +177,14 @@ protected:
                                               SurfaceDescriptor* aBuffer);
 
 
-  virtual ~ISurfaceAllocator() {}
+  virtual ~ISurfaceAllocator();
 
-  friend class detail::RefCounted<ISurfaceAllocator, detail::AtomicRefCount>;
+  void ShrinkShmemSectionHeap();
+
+  // This is used to implement an extremely simple & naive heap allocator.
+  std::vector<mozilla::ipc::Shmem> mUsedShmems;
+
+  friend class AtomicRefCountedWithFinalize<ISurfaceAllocator>;
 };
 
 class GfxMemoryImageReporter MOZ_FINAL : public nsIMemoryReporter

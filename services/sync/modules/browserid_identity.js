@@ -135,7 +135,7 @@ this.BrowserIDManager.prototype = {
     }
 
     // If we are already happy then there is nothing more to do.
-    if (Weave.Status.login == LOGIN_SUCCEEDED) {
+    if (this._syncKeyBundle) {
       return Promise.resolve();
     }
 
@@ -160,6 +160,19 @@ this.BrowserIDManager.prototype = {
     this.resetCredentials();
     this._signedInUser = null;
     return Promise.resolve();
+  },
+
+  offerSyncOptions: function () {
+    // If the user chose to "Customize sync options" when signing
+    // up with Firefox Accounts, ask them to choose what to sync.
+    const url = "chrome://browser/content/sync/customize.xul";
+    const features = "centerscreen,chrome,modal,dialog,resizable=no";
+    let win = Services.wm.getMostRecentWindow("navigator:browser");
+
+    let data = {accepted: false};
+    win.openDialog(url, "_blank", features, data);
+
+    return data;
   },
 
   initializeWithCurrentIdentity: function(isInitialSync=false) {
@@ -193,17 +206,12 @@ this.BrowserIDManager.prototype = {
         this._updateSignedInUser(accountData);
         this._log.info("Starting fetch for key bundle.");
         if (this.needsCustomization) {
-          // If the user chose to "Customize sync options" when signing
-          // up with Firefox Accounts, ask them to choose what to sync.
-          const url = "chrome://browser/content/sync/customize.xul";
-          const features = "centerscreen,chrome,modal,dialog,resizable=no";
-          let win = Services.wm.getMostRecentWindow("navigator:browser");
-
-          let data = {accepted: false};
-          win.openDialog(url, "_blank", features, data);
-
+          let data = this.offerSyncOptions();
           if (data.accepted) {
             Services.prefs.clearUserPref(PREF_SYNC_SHOW_CUSTOMIZATION);
+
+            // Mark any non-selected engines as declined.
+            Weave.Service.engineManager.declineDisabled();
           } else {
             // Log out if the user canceled the dialog.
             return this._fxaService.signOut();
@@ -513,7 +521,6 @@ this.BrowserIDManager.prototype = {
         // This will arrange for us to be in the right 'currentAuthState'
         // such that UI will show the right error.
         this._shouldHaveSyncKeyBundle = true;
-        this._syncKeyBundle = null;
         Weave.Status.login = this._authFailureReason;
         Services.obs.notifyObservers(null, "weave:service:login:error", null);
         throw err;
@@ -627,7 +634,28 @@ BrowserIDClusterManager.prototype = {
     let cb = Async.makeSpinningCallback();
     promiseClusterURL().then(function (clusterURL) {
       cb(null, clusterURL);
-    }).then(null, cb);
+    }).then(
+      null, err => {
+      // service.js's verifyLogin() method will attempt to fetch a cluster
+      // URL when it sees a 401.  If it gets null, it treats it as a "real"
+      // auth error and sets Status.login to LOGIN_FAILED_LOGIN_REJECTED, which
+      // in turn causes a notification bar to appear informing the user they
+      // need to re-authenticate.
+      // On the other hand, if fetching the cluster URL fails with an exception,
+      // verifyLogin() assumes it is a transient error, and thus doesn't show
+      // the notification bar under the assumption the issue will resolve
+      // itself.
+      // Thus:
+      // * On a real 401, we must return null.
+      // * On any other problem we must let an exception bubble up.
+      if (err instanceof AuthenticationError) {
+        // callback with no error and a null result - cb.wait() returns null.
+        cb(null, null);
+      } else {
+        // callback with an error - cb.wait() completes by raising an exception.
+        cb(err);
+      }
+    });
     return cb.wait();
   },
 

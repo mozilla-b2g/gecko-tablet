@@ -12,6 +12,8 @@
 #include "nsIConstraintValidation.h"
 
 namespace mozilla {
+class EventChainPostVisitor;
+class EventChainPreVisitor;
 namespace dom {
 
 class HTMLButtonElement MOZ_FINAL : public nsGenericHTMLFormElementWithState,
@@ -21,7 +23,7 @@ class HTMLButtonElement MOZ_FINAL : public nsGenericHTMLFormElementWithState,
 public:
   using nsIConstraintValidation::GetValidationMessage;
 
-  HTMLButtonElement(already_AddRefed<nsINodeInfo> aNodeInfo,
+  HTMLButtonElement(already_AddRefed<nsINodeInfo>& aNodeInfo,
                       FromParser aFromParser = NOT_FROM_PARSER);
   virtual ~HTMLButtonElement();
 
@@ -47,8 +49,9 @@ public:
   virtual bool IsDisabledForEvents(uint32_t aMessage) MOZ_OVERRIDE;
 
   // nsIDOMEventTarget
-  virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
-  virtual nsresult PostHandleEvent(nsEventChainPostVisitor& aVisitor) MOZ_OVERRIDE;
+  virtual nsresult PreHandleEvent(EventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
+  virtual nsresult PostHandleEvent(
+                     EventChainPostVisitor& aVisitor) MOZ_OVERRIDE;
 
   // nsINode
   virtual nsresult Clone(nsINodeInfo* aNodeInfo, nsINode** aResult) const MOZ_OVERRIDE;

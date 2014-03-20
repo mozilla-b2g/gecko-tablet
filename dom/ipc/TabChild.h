@@ -11,7 +11,6 @@
 #include "nsIWebNavigation.h"
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
-#include "nsEventDispatcher.h"
 #include "nsIWebBrowserChrome2.h"
 #include "nsIEmbeddingSiteWindow.h"
 #include "nsIWebBrowserChromeFocus.h"
@@ -31,6 +30,7 @@
 #include "nsITooltipListener.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/TabContext.h"
+#include "mozilla/EventDispatcher.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/layers/CompositorTypes.h"
 
@@ -118,7 +118,7 @@ public:
   }
 
   nsresult
-  PreHandleEvent(nsEventChainPreVisitor& aVisitor)
+  PreHandleEvent(EventChainPreVisitor& aVisitor)
   {
     aVisitor.mForceContentDispatch = true;
     return NS_OK;
@@ -218,13 +218,13 @@ public:
     virtual bool RecvUpdateFrame(const mozilla::layers::FrameMetrics& aFrameMetrics) MOZ_OVERRIDE;
     virtual bool RecvAcknowledgeScrollUpdate(const ViewID& aScrollId,
                                              const uint32_t& aScrollGeneration) MOZ_OVERRIDE;
-    virtual bool RecvHandleDoubleTap(const CSSIntPoint& aPoint,
+    virtual bool RecvHandleDoubleTap(const CSSPoint& aPoint,
                                      const mozilla::layers::ScrollableLayerGuid& aGuid) MOZ_OVERRIDE;
-    virtual bool RecvHandleSingleTap(const CSSIntPoint& aPoint,
+    virtual bool RecvHandleSingleTap(const CSSPoint& aPoint,
                                      const mozilla::layers::ScrollableLayerGuid& aGuid) MOZ_OVERRIDE;
-    virtual bool RecvHandleLongTap(const CSSIntPoint& aPoint,
+    virtual bool RecvHandleLongTap(const CSSPoint& aPoint,
                                    const mozilla::layers::ScrollableLayerGuid& aGuid) MOZ_OVERRIDE;
-    virtual bool RecvHandleLongTapUp(const CSSIntPoint& aPoint,
+    virtual bool RecvHandleLongTapUp(const CSSPoint& aPoint,
                                      const mozilla::layers::ScrollableLayerGuid& aGuid) MOZ_OVERRIDE;
     virtual bool RecvNotifyTransformBegin(const ViewID& aViewId) MOZ_OVERRIDE;
     virtual bool RecvNotifyTransformEnd(const ViewID& aViewId) MOZ_OVERRIDE;
@@ -417,7 +417,7 @@ private:
     bool InitRenderingState();
     void DestroyWindow();
     void SetProcessNameToAppName();
-    bool ProcessUpdateFrame(const mozilla::layers::FrameMetrics& aFrameMetrics);
+    FrameMetrics ProcessUpdateFrame(const FrameMetrics& aFrameMetrics);
 
     // Call RecvShow(nsIntSize(0, 0)) and block future calls to RecvShow().
     void DoFakeShow();

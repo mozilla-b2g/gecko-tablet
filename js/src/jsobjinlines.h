@@ -373,9 +373,6 @@ JSObject::setDenseOrTypedArrayElementWithType(js::ExclusiveContext *cx, uint32_t
 /* static */ inline bool
 JSObject::setSingletonType(js::ExclusiveContext *cx, js::HandleObject obj)
 {
-    if (!cx->typeInferenceEnabled())
-        return true;
-
     JS_ASSERT_IF(cx->isJSContext(),
                  !IsInsideNursery(cx->asJSContext()->runtime(), obj.get()));
 
@@ -497,8 +494,7 @@ inline bool JSObject::isVarObj()
 
 /* static */ inline JSObject *
 JSObject::create(js::ExclusiveContext *cx, js::gc::AllocKind kind, js::gc::InitialHeap heap,
-                 js::HandleShape shape, js::HandleTypeObject type,
-                 js::HeapSlot *extantSlots /* = nullptr */)
+                 js::HandleShape shape, js::HandleTypeObject type)
 {
     /*
      * Callers must use dynamicSlotsCount to size the initial slot array of the
@@ -508,16 +504,13 @@ JSObject::create(js::ExclusiveContext *cx, js::gc::AllocKind kind, js::gc::Initi
     JS_ASSERT(shape && type);
     JS_ASSERT(type->clasp() == shape->getObjectClass());
     JS_ASSERT(type->clasp() != &js::ArrayObject::class_);
-    JS_ASSERT(js::gc::GetGCKindSlots(kind, type->clasp()) == shape->numFixedSlots());
+    JS_ASSERT_IF(type->clasp() != &js::ArrayBufferObject::class_,
+                 js::gc::GetGCKindSlots(kind, type->clasp()) == shape->numFixedSlots());
     JS_ASSERT_IF(type->clasp()->flags & JSCLASS_BACKGROUND_FINALIZE, IsBackgroundFinalized(kind));
     JS_ASSERT_IF(type->clasp()->finalize, heap == js::gc::TenuredHeap);
-    JS_ASSERT_IF(extantSlots, dynamicSlotsCount(shape->numFixedSlots(), shape->slotSpan(),
-                                                type->clasp()));
 
     const js::Class *clasp = type->clasp();
-    size_t nDynamicSlots = 0;
-    if (!extantSlots)
-        nDynamicSlots = dynamicSlotsCount(shape->numFixedSlots(), shape->slotSpan(), clasp);
+    size_t nDynamicSlots = dynamicSlotsCount(shape->numFixedSlots(), shape->slotSpan(), clasp);
 
     JSObject *obj = js::NewGCObject<js::CanGC>(cx, kind, nDynamicSlots, heap);
     if (!obj)
@@ -525,20 +518,14 @@ JSObject::create(js::ExclusiveContext *cx, js::gc::AllocKind kind, js::gc::Initi
 
     obj->shape_.init(shape);
     obj->type_.init(type);
-    if (extantSlots) {
-#ifdef JSGC_GENERATIONAL
-        if (cx->isJSContext())
-            cx->asJSContext()->runtime()->gcNursery.notifyInitialSlots(obj, extantSlots);
-#endif
-        obj->slots = extantSlots;
-    }
+    // Note: slots are created and assigned internally by NewGCObject.
     obj->elements = js::emptyObjectElements;
 
     if (clasp->hasPrivate())
         obj->privateRef(shape->numFixedSlots()) = nullptr;
 
     size_t span = shape->slotSpan();
-    if (span && clasp != &js::ArrayBufferObject::class_)
+    if (span)
         obj->initializeSlotRange(0, span);
 
     return obj;
@@ -584,12 +571,10 @@ JSObject::finish(js::FreeOp *fop)
 {
     if (hasDynamicSlots())
         fop->free_(slots);
+
     if (hasDynamicElements()) {
         js::ObjectElements *elements = getElementsHeader();
-        if (MOZ_UNLIKELY(elements->isAsmJSArrayBuffer()))
-            js::ArrayBufferObject::releaseAsmJSArrayBuffer(fop, this);
-        else
-            fop->free_(elements);
+        fop->free_(elements);
     }
 }
 
@@ -946,6 +931,17 @@ inline T *
 NewBuiltinClassInstance(ExclusiveContext *cx, NewObjectKind newKind = GenericObject)
 {
     JSObject *obj = NewBuiltinClassInstance(cx, &T::class_, newKind);
+    if (!obj)
+        return nullptr;
+
+    return &obj->as<T>();
+}
+
+template<typename T>
+inline T *
+NewBuiltinClassInstance(ExclusiveContext *cx, gc::AllocKind allocKind, NewObjectKind newKind = GenericObject)
+{
+    JSObject *obj = NewBuiltinClassInstance(cx, &T::class_, allocKind, newKind);
     if (!obj)
         return nullptr;
 

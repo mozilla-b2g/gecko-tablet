@@ -119,6 +119,7 @@ extern "C" {
 
 #include "nsIDOMWheelEvent.h"
 
+#include "NativeKeyBindings.h"
 #include "nsWindow.h"
 
 using namespace mozilla;
@@ -2268,38 +2269,22 @@ nsWindow::OnExposeEvent(cairo_t *cr)
 void
 nsWindow::UpdateAlpha(gfxPattern* aPattern, nsIntRect aBoundsRect)
 {
-  if (gfxPlatform::GetPlatform()->SupportsAzureContent()) {
-      // We need to create our own buffer to force the stride to match the
-      // expected stride.
-      int32_t stride = GetAlignedStride<4>(BytesPerPixel(SurfaceFormat::A8) *
-                                           aBoundsRect.width);
-      int32_t bufferSize = stride * aBoundsRect.height;
-      nsAutoArrayPtr<uint8_t> imageBuffer(new (std::nothrow) uint8_t[bufferSize]);
-      RefPtr<DrawTarget> drawTarget = gfxPlatform::GetPlatform()->
-          CreateDrawTargetForData(imageBuffer, ToIntSize(aBoundsRect.Size()),
-                                  stride, SurfaceFormat::A8);
+    // We need to create our own buffer to force the stride to match the
+    // expected stride.
+    int32_t stride = GetAlignedStride<4>(BytesPerPixel(SurfaceFormat::A8) *
+                                         aBoundsRect.width);
+    int32_t bufferSize = stride * aBoundsRect.height;
+    nsAutoArrayPtr<uint8_t> imageBuffer(new (std::nothrow) uint8_t[bufferSize]);
+    RefPtr<DrawTarget> drawTarget = gfxPlatform::GetPlatform()->
+        CreateDrawTargetForData(imageBuffer, ToIntSize(aBoundsRect.Size()),
+                                stride, SurfaceFormat::A8);
 
-      if (drawTarget) {
-          drawTarget->FillRect(Rect(0, 0, aBoundsRect.width, aBoundsRect.height),
-                               *aPattern->GetPattern(drawTarget),
-                               DrawOptions(1.0, CompositionOp::OP_SOURCE));
-      }
-      UpdateTranslucentWindowAlphaInternal(aBoundsRect, imageBuffer, stride);
-  } else {
-      nsRefPtr<gfxImageSurface> img =
-          new gfxImageSurface(aBoundsRect.Size(), gfxImageFormat::A8);
-      if (img && !img->CairoStatus()) {
-          img->SetDeviceOffset(-aBoundsRect.TopLeft());
-
-          nsRefPtr<gfxContext> imgCtx = new gfxContext(img);
-          imgCtx->SetPattern(aPattern);
-          imgCtx->SetOperator(gfxContext::OPERATOR_SOURCE);
-          imgCtx->Paint();
-
-          UpdateTranslucentWindowAlphaInternal(aBoundsRect, img->Data(),
-                                               img->Stride());
-      }
-  }
+    if (drawTarget) {
+        drawTarget->FillRect(Rect(0, 0, aBoundsRect.width, aBoundsRect.height),
+                             *aPattern->GetPattern(drawTarget),
+                             DrawOptions(1.0, CompositionOp::OP_SOURCE));
+    }
+    UpdateTranslucentWindowAlphaInternal(aBoundsRect, imageBuffer, stride);
 }
 
 gboolean
@@ -5971,6 +5956,16 @@ nsWindow::GetInputContext()
       context.mNativeIMEContext = mIMModule;
   }
   return context;
+}
+
+NS_IMETHODIMP_(bool)
+nsWindow::ExecuteNativeKeyBinding(NativeKeyBindingsType aType,
+                                  const WidgetKeyboardEvent& aEvent,
+                                  DoCommandCallback aCallback,
+                                  void* aCallbackData)
+{
+    NativeKeyBindings* keyBindings = NativeKeyBindings::GetInstance(aType);
+    return keyBindings->Execute(aEvent, aCallback, aCallbackData);
 }
 
 NS_IMETHODIMP

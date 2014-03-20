@@ -56,13 +56,15 @@ LinkFail(JSContext *cx, const char *str)
 }
 
 static bool
-GetDataProperty(JSContext *cx, const Value &objVal, HandlePropertyName field, MutableHandleValue v)
+GetDataProperty(JSContext *cx, HandleValue objVal, HandlePropertyName field, MutableHandleValue v)
 {
     if (!objVal.isObject())
         return LinkFail(cx, "accessing property of non-object");
 
     Rooted<JSPropertyDescriptor> desc(cx);
-    if (!JS_GetPropertyDescriptorById(cx, &objVal.toObject(), NameToId(field), 0, &desc))
+    RootedObject obj(cx, &objVal.toObject());
+    RootedId id(cx, NameToId(field));
+    if (!JS_GetPropertyDescriptorById(cx, obj, id, 0, &desc))
         return false;
 
     if (!desc.object())
@@ -463,24 +465,8 @@ HandleDynamicLinkFailure(JSContext *cx, CallArgs args, AsmJSModule &module, Hand
         return false;
 
     // Call the function we just recompiled.
-
-    unsigned argc = args.length();
-
-    InvokeArgs args2(cx);
-    if (!args2.init(argc))
-        return false;
-
-    args2.setCallee(ObjectValue(*fun));
-    args2.setThis(args.thisv());
-    for (unsigned i = 0; i < argc; i++)
-        args2[i].set(args[i]);
-
-    if (!Invoke(cx, args2))
-        return false;
-
-    args.rval().set(args2.rval());
-
-    return true;
+    args.setCallee(ObjectValue(*fun));
+    return Invoke(cx, args);
 }
 
 #ifdef MOZ_VTUNE

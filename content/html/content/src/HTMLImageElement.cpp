@@ -36,7 +36,7 @@
 #include "nsRuleData.h"
 
 #include "nsIDOMHTMLMapElement.h"
-#include "nsEventDispatcher.h"
+#include "mozilla/EventDispatcher.h"
 
 #include "nsLayoutUtils.h"
 
@@ -45,7 +45,7 @@ NS_IMPL_NS_NEW_HTML_ELEMENT(Image)
 namespace mozilla {
 namespace dom {
 
-HTMLImageElement::HTMLImageElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+HTMLImageElement::HTMLImageElement(already_AddRefed<nsINodeInfo>& aNodeInfo)
   : nsGenericHTMLElement(aNodeInfo)
   , mForm(nullptr)
 {
@@ -341,7 +341,7 @@ HTMLImageElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
 
 
 nsresult
-HTMLImageElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
+HTMLImageElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
 {
   // If we are a map and get a mouse click, don't let it be handled by
   // the Generic Element as this could cause a click event to fire
@@ -547,12 +547,12 @@ HTMLImageElement::Image(const GlobalObject& aGlobal,
     return nullptr;
   }
 
-  nsCOMPtr<nsINodeInfo> nodeInfo =
+  already_AddRefed<nsINodeInfo> nodeInfo =
     doc->NodeInfoManager()->GetNodeInfo(nsGkAtoms::img, nullptr,
                                         kNameSpaceID_XHTML,
                                         nsIDOMNode::ELEMENT_NODE);
 
-  nsRefPtr<HTMLImageElement> img = new HTMLImageElement(nodeInfo.forget());
+  nsRefPtr<HTMLImageElement> img = new HTMLImageElement(nodeInfo);
 
   if (aWidth.WasPassed()) {
     img->SetWidth(aWidth.Value(), aError);

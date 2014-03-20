@@ -6,9 +6,9 @@
 #include "mozilla/dom/HTMLInputElement.h"
 
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/dom/Date.h"
-#include "nsAsyncDOMEvent.h"
 #include "nsAttrValueInlines.h"
 
 #include "nsIDOMHTMLInputElement.h"
@@ -57,15 +57,14 @@
 #include "nsLinebreakConverter.h" //to strip out carriage returns
 #include "nsReadableUtils.h"
 #include "nsUnicharUtils.h"
-#include "nsEventDispatcher.h"
 #include "nsLayoutUtils.h"
 
 #include "nsIDOMMutationEvent.h"
 #include "mozilla/ContentEvents.h"
+#include "mozilla/EventDispatcher.h"
 #include "mozilla/InternalMutationEvent.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
-#include "nsEventListenerManager.h"
 
 #include "nsRuleData.h"
 #include <algorithm>
@@ -399,7 +398,7 @@ public:
       // Note that we leave the trailing "/" on the path.
       domFile->SetPath(Substring(path, 0, uint32_t(length)));
     }
-    *aResult = static_cast<nsIDOMFile*>(domFile.forget().get());
+    *aResult = domFile.forget().downcast<nsIDOMFile>().take();
     LookupAndCacheNext();
     return NS_OK;
   }
@@ -1109,7 +1108,7 @@ static nsresult FireEventForAccessibility(nsIDOMHTMLInputElement* aTarget,
 // construction, destruction
 //
 
-HTMLInputElement::HTMLInputElement(already_AddRefed<nsINodeInfo> aNodeInfo,
+HTMLInputElement::HTMLInputElement(already_AddRefed<nsINodeInfo>& aNodeInfo,
                                    FromParser aFromParser)
   : nsGenericHTMLFormElementWithState(aNodeInfo)
   , mType(kInputDefaultType->value)
@@ -1245,9 +1244,8 @@ HTMLInputElement::Clone(nsINodeInfo* aNodeInfo, nsINode** aResult) const
 {
   *aResult = nullptr;
 
-  nsCOMPtr<nsINodeInfo> ni = aNodeInfo;
-  nsRefPtr<HTMLInputElement> it =
-    new HTMLInputElement(ni.forget(), NOT_FROM_PARSER);
+  already_AddRefed<nsINodeInfo> ni = nsCOMPtr<nsINodeInfo>(aNodeInfo).forget();
+  nsRefPtr<HTMLInputElement> it = new HTMLInputElement(ni, NOT_FROM_PARSER);
 
   nsresult rv = const_cast<HTMLInputElement*>(this)->CopyInnerTo(it);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -3203,8 +3201,8 @@ HTMLInputElement::DispatchSelectEvent(nsPresContext* aPresContext)
     WidgetEvent event(nsContentUtils::IsCallerChrome(), NS_FORM_SELECTED);
 
     mHandlingSelectEvent = true;
-    nsEventDispatcher::Dispatch(static_cast<nsIContent*>(this),
-                                aPresContext, &event, nullptr, &status);
+    EventDispatcher::Dispatch(static_cast<nsIContent*>(this),
+                              aPresContext, &event, nullptr, &status);
     mHandlingSelectEvent = false;
   }
 
@@ -3224,7 +3222,8 @@ HTMLInputElement::SelectAll(nsPresContext* aPresContext)
 }
 
 bool
-HTMLInputElement::NeedToInitializeEditorForEvent(nsEventChainPreVisitor& aVisitor) const
+HTMLInputElement::NeedToInitializeEditorForEvent(
+                    EventChainPreVisitor& aVisitor) const
 {
   // We only need to initialize the editor for single line input controls because they
   // are lazily initialized.  We don't need to initialize the control for
@@ -3255,7 +3254,7 @@ HTMLInputElement::IsDisabledForEvents(uint32_t aMessage)
 }
 
 nsresult
-HTMLInputElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
+HTMLInputElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
 {
   // Do not process any DOM events if the element is disabled
   aVisitor.mCanHandle = false;
@@ -3578,9 +3577,9 @@ HTMLInputElement::CancelRangeThumbDrag(bool aIsForUserEvent)
     if (frame) {
       frame->UpdateForValueChange();
     }
-    nsRefPtr<nsAsyncDOMEvent> event =
-      new nsAsyncDOMEvent(this, NS_LITERAL_STRING("input"), true, false);
-    event->RunDOMEventWhenSafe();
+    nsRefPtr<AsyncEventDispatcher> asyncDispatcher =
+      new AsyncEventDispatcher(this, NS_LITERAL_STRING("input"), true, false);
+    asyncDispatcher->RunDOMEventWhenSafe();
   }
 }
 
@@ -3732,7 +3731,7 @@ HTMLInputElement::ShouldPreventDOMActivateDispatch(EventTarget* aOriginalTarget)
 }
 
 nsresult
-HTMLInputElement::MaybeInitPickers(nsEventChainPostVisitor& aVisitor)
+HTMLInputElement::MaybeInitPickers(EventChainPostVisitor& aVisitor)
 {
   // Open a file picker when we receive a click on a <input type='file'>, or
   // open a color picker when we receive a click on a <input type='color'>.
@@ -3758,7 +3757,7 @@ HTMLInputElement::MaybeInitPickers(nsEventChainPostVisitor& aVisitor)
 }
 
 nsresult
-HTMLInputElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
+HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
 {
   if (!aVisitor.mPresContext) {
     // Hack alert! In order to open file picker even in case the element isn't
@@ -3984,9 +3983,9 @@ HTMLInputElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
                 event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_KEYBOARD;
                 nsEventStatus status = nsEventStatus_eIgnore;
 
-                nsEventDispatcher::Dispatch(static_cast<nsIContent*>(this),
-                                            aVisitor.mPresContext, &event,
-                                            nullptr, &status);
+                EventDispatcher::Dispatch(static_cast<nsIContent*>(this),
+                                          aVisitor.mPresContext, &event,
+                                          nullptr, &status);
                 aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
               } // case
             } // switch
@@ -4018,9 +4017,10 @@ HTMLInputElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
                                            NS_MOUSE_CLICK, nullptr,
                                            WidgetMouseEvent::eReal);
                     event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_KEYBOARD;
-                    rv = nsEventDispatcher::Dispatch(ToSupports(selectedRadioButton),
-                                                     aVisitor.mPresContext,
-                                                     &event, nullptr, &status);
+                    rv =
+                      EventDispatcher::Dispatch(ToSupports(selectedRadioButton),
+                                                aVisitor.mPresContext,
+                                                &event, nullptr, &status);
                     if (NS_SUCCEEDED(rv)) {
                       aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
                     }
@@ -4241,7 +4241,7 @@ HTMLInputElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
 }
 
 void
-HTMLInputElement::PostHandleEventForRangeThumb(nsEventChainPostVisitor& aVisitor)
+HTMLInputElement::PostHandleEventForRangeThumb(EventChainPostVisitor& aVisitor)
 {
   MOZ_ASSERT(mType == NS_FORM_INPUT_RANGE);
 
@@ -5079,6 +5079,10 @@ HTMLInputElement::SetSelectionRange(int32_t aSelectionStart,
       aRv = textControlFrame->SetSelectionRange(aSelectionStart, aSelectionEnd, dir);
       if (!aRv.Failed()) {
         aRv = textControlFrame->ScrollSelectionIntoView();
+        nsRefPtr<AsyncEventDispatcher> asyncDispatcher =
+          new AsyncEventDispatcher(this, NS_LITERAL_STRING("select"),
+                                   true, false);
+        asyncDispatcher->PostDOMEvent();
       }
     }
   }
@@ -5204,11 +5208,6 @@ HTMLInputElement::SetRangeText(const nsAString& aReplacement, uint32_t aStart,
 
   Optional<nsAString> direction;
   SetSelectionRange(aSelectionStart, aSelectionEnd, direction, aRv);
-  if (!aRv.Failed()) {
-    nsRefPtr<nsAsyncDOMEvent> event =
-      new nsAsyncDOMEvent(this, NS_LITERAL_STRING("select"), true, false);
-    event->PostDOMEvent();
-  }
 }
 
 int32_t
@@ -5468,13 +5467,14 @@ FireEventForAccessibility(nsIDOMHTMLInputElement* aTarget,
 {
   nsCOMPtr<nsIDOMEvent> event;
   nsCOMPtr<mozilla::dom::Element> element = do_QueryInterface(aTarget);
-  if (NS_SUCCEEDED(nsEventDispatcher::CreateEvent(element, aPresContext, nullptr,
-                                                  NS_LITERAL_STRING("Events"),
-                                                  getter_AddRefs(event)))) {
+  if (NS_SUCCEEDED(EventDispatcher::CreateEvent(element, aPresContext, nullptr,
+                                                NS_LITERAL_STRING("Events"),
+                                                getter_AddRefs(event)))) {
     event->InitEvent(aEventType, true, true);
     event->SetTrusted(true);
 
-    nsEventDispatcher::DispatchDOMEvent(aTarget, nullptr, event, aPresContext, nullptr);
+    EventDispatcher::DispatchDOMEvent(aTarget, nullptr, event, aPresContext,
+                                      nullptr);
   }
 
   return NS_OK;
