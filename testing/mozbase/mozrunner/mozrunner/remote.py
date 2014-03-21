@@ -111,6 +111,7 @@ class B2GRunner(RemoteRunner):
         tmp_env = self.env or {}
         self.env = { 'MOZ_CRASHREPORTER': '1',
                      'MOZ_CRASHREPORTER_NO_REPORT': '1',
+                     'MOZ_CRASHREPORTER_SHUTDOWN': '1',
                      'MOZ_HIDE_RESULTS_TABLE': '1',
                      'MOZ_PROCESS_LOG': processLog,
                      'NSPR_LOG_MODULES': 'signaling:5,mtransport:3',
@@ -152,10 +153,13 @@ class B2GRunner(RemoteRunner):
                                 " prior to running before running the automation framework")
 
         self.dm.shellCheckOutput(['stop', 'b2g'])
-
-        self.kp_kwargs.update({'stream': sys.stdout,
-                               'processOutputLine': self.on_output,
-                               'onTimeout': self.on_timeout,})
+        self.kp_kwargs.update({'processOutputLine': self.on_output,
+                               'stream': sys.stdout,
+                               'onTimeout': self.on_timeout,
+                               'onFinish': self.on_finish})
+ #       self.kp_kwargs.update({'stream': sys.stdout,
+#                               'processOutputLine': self.on_output,
+#                               'onTimeout': self.on_timeout,})
         self.process_handler = self.process_class(self.command, **self.kp_kwargs)
         self.process_handler.run(timeout=timeout, outputTimeout=outputTimeout)
 
@@ -219,6 +223,9 @@ class B2GRunner(RemoteRunner):
             msg = "%s with no output" % msg
 
         self.log.testFail(msg % (self.last_test, timeout))
+        self.check_for_crashes()
+
+    def on_finish(self):
         self.check_for_crashes()
 
     def _reboot_device(self):
