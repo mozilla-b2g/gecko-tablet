@@ -65,7 +65,9 @@ browser.jar:
         skin/classic/browser/Privacy-16.png
         skin/classic/browser/Privacy-32.png
         skin/classic/browser/Privacy-48.png
-        skin/classic/browser/privatebrowsing-indicator.png
+        skin/classic/browser/privatebrowsing-mask-tabstrip-XPVista7.png
+        skin/classic/browser/privatebrowsing-mask-titlebar-XPVista7.png
+        skin/classic/browser/privatebrowsing-mask-titlebar-XPVista7-tall.png
         skin/classic/browser/reload-stop-go.png
         skin/classic/browser/searchbar.css
         skin/classic/browser/searchbar-dropdown-arrow.png
@@ -91,13 +93,22 @@ browser.jar:
         skin/classic/browser/webRTC-sharingMicrophone-16.png
         skin/classic/browser/customizableui/background-noise-toolbar.png  (customizableui/background-noise-toolbar.png)
         skin/classic/browser/customizableui/customizeFavicon.ico  (../shared/customizableui/customizeFavicon.ico)
+        skin/classic/browser/customizableui/customize-illustration.png  (../shared/customizableui/customize-illustration.png)
+        skin/classic/browser/customizableui/customize-illustration-rtl.png  (../shared/customizableui/customize-illustration-rtl.png)
         skin/classic/browser/customizableui/customize-titleBar-toggle.png  (customizableui/customize-titleBar-toggle.png)
         skin/classic/browser/customizableui/customizeMode-gridTexture.png  (customizableui/customizeMode-gridTexture.png)
         skin/classic/browser/customizableui/customizeMode-separatorHorizontal.png  (customizableui/customizeMode-separatorHorizontal.png)
         skin/classic/browser/customizableui/customizeMode-separatorVertical.png  (customizableui/customizeMode-separatorVertical.png)
+        skin/classic/browser/customizableui/info-icon-customizeTip.png  (../shared/customizableui/info-icon-customizeTip.png)
         skin/classic/browser/customizableui/menuPanel-customizeFinish.png  (../shared/customizableui/menuPanel-customizeFinish.png)
+        skin/classic/browser/customizableui/panelarrow-customizeTip.png  (../shared/customizableui/panelarrow-customizeTip.png)
 *       skin/classic/browser/customizableui/panelUIOverlay.css       (customizableui/panelUIOverlay.css)
         skin/classic/browser/customizableui/subView-arrow-back-inverted.png  (../shared/customizableui/subView-arrow-back-inverted.png)
+        skin/classic/browser/customizableui/subView-arrow-back-inverted-rtl.png  (../shared/customizableui/subView-arrow-back-inverted-rtl.png)
+        skin/classic/browser/customizableui/whimsy.png  (../shared/customizableui/whimsy.png)
+        skin/classic/browser/customizableui/whimsy@2x.png  (../shared/customizableui/whimsy@2x.png)
+        skin/classic/browser/customizableui/whimsy-bw.png  (../shared/customizableui/whimsy-bw.png)
+        skin/classic/browser/customizableui/whimsy-bw@2x.png  (../shared/customizableui/whimsy-bw@2x.png)
 *       skin/classic/browser/downloads/allDownloadsViewOverlay.css   (downloads/allDownloadsViewOverlay.css)
         skin/classic/browser/downloads/buttons.png                   (downloads/buttons.png)
         skin/classic/browser/downloads/contentAreaDownloadsView.css  (downloads/contentAreaDownloadsView.css)
@@ -125,6 +136,7 @@ browser.jar:
         skin/classic/browser/places/bookmarksToolbar.png             (places/bookmarksToolbar.png)
         skin/classic/browser/places/bookmarksToolbar-menuPanel.png   (places/bookmarksToolbar-menuPanel.png)
         skin/classic/browser/places/bookmarks-notification-finish.png (places/bookmarks-notification-finish.png)
+        skin/classic/browser/places/bookmarks-menu-arrow.png         (places/bookmarks-menu-arrow.png)
         skin/classic/browser/places/calendar.png                     (places/calendar.png)
         skin/classic/browser/places/toolbarDropMarker.png            (places/toolbarDropMarker.png)
         skin/classic/browser/places/editBookmarkOverlay.css          (places/editBookmarkOverlay.css)
@@ -189,7 +201,8 @@ browser.jar:
 *       skin/classic/browser/devtools/dark-theme.css                (../shared/devtools/dark-theme.css)
 *       skin/classic/browser/devtools/light-theme.css               (../shared/devtools/light-theme.css)
         skin/classic/browser/devtools/filters.svg                   (../shared/devtools/filters.svg)
-        skin/classic/browser/devtools/controls.png                  (../shared/devtools/controls.png)
+        skin/classic/browser/devtools/controls.png                  (../shared/devtools/images/controls.png)
+        skin/classic/browser/devtools/controls@2x.png               (../shared/devtools/images/controls@2x.png)
 *       skin/classic/browser/devtools/widgets.css                   (devtools/widgets.css)
         skin/classic/browser/devtools/commandline-icon.png          (devtools/commandline-icon.png)
         skin/classic/browser/devtools/alerticon-warning.png         (devtools/alerticon-warning.png)
@@ -238,8 +251,7 @@ browser.jar:
         skin/classic/browser/devtools/background-noise-toolbar.png  (devtools/background-noise-toolbar.png)
         skin/classic/browser/devtools/noise.png                     (devtools/noise.png)
         skin/classic/browser/devtools/dropmarker.png                (devtools/dropmarker.png)
-        skin/classic/browser/devtools/layout-background-grid.png    (devtools/layout-background-grid.png)
-        skin/classic/browser/devtools/layoutview.css                (devtools/layoutview.css)
+        skin/classic/browser/devtools/layoutview.css                (../shared/devtools/layoutview.css)
         skin/classic/browser/devtools/debugger-collapse.png         (../shared/devtools/images/debugger-collapse.png)
         skin/classic/browser/devtools/debugger-expand.png           (../shared/devtools/images/debugger-expand.png)
         skin/classic/browser/devtools/debugger-pause.png            (../shared/devtools/images/debugger-pause.png)
@@ -386,7 +398,11 @@ browser.jar:
         skin/classic/aero/browser/Privacy-16.png                     (Privacy-16-aero.png)
         skin/classic/aero/browser/Privacy-32.png                     (Privacy-32-aero.png)
         skin/classic/aero/browser/Privacy-48.png                     (Privacy-48-aero.png)
-        skin/classic/aero/browser/privatebrowsing-indicator.png
+        skin/classic/aero/browser/privatebrowsing-mask-tabstrip.png
+        skin/classic/aero/browser/privatebrowsing-mask-tabstrip-XPVista7.png
+        skin/classic/aero/browser/privatebrowsing-mask-titlebar.png
+        skin/classic/aero/browser/privatebrowsing-mask-titlebar-XPVista7.png
+        skin/classic/aero/browser/privatebrowsing-mask-titlebar-XPVista7-tall.png
         skin/classic/aero/browser/reload-stop-go.png
         skin/classic/aero/browser/searchbar.css
         skin/classic/aero/browser/searchbar-dropdown-arrow.png       (searchbar-dropdown-arrow-aero.png)
@@ -411,14 +427,23 @@ browser.jar:
         skin/classic/aero/browser/webRTC-shareMicrophone-64.png
         skin/classic/aero/browser/webRTC-sharingMicrophone-16.png
         skin/classic/aero/browser/customizableui/background-noise-toolbar.png  (customizableui/background-noise-toolbar.png)
+        skin/classic/aero/browser/customizableui/customize-illustration.png  (../shared/customizableui/customize-illustration.png)
+        skin/classic/aero/browser/customizableui/customize-illustration-rtl.png  (../shared/customizableui/customize-illustration-rtl.png)
         skin/classic/aero/browser/customizableui/customize-titleBar-toggle.png  (customizableui/customize-titleBar-toggle.png)
         skin/classic/aero/browser/customizableui/customizeFavicon.ico  (../shared/customizableui/customizeFavicon.ico)
         skin/classic/aero/browser/customizableui/customizeMode-gridTexture.png  (customizableui/customizeMode-gridTexture.png)
         skin/classic/aero/browser/customizableui/customizeMode-separatorHorizontal.png  (customizableui/customizeMode-separatorHorizontal.png)
         skin/classic/aero/browser/customizableui/customizeMode-separatorVertical.png  (customizableui/customizeMode-separatorVertical.png)
+        skin/classic/aero/browser/customizableui/info-icon-customizeTip.png  (../shared/customizableui/info-icon-customizeTip.png)
         skin/classic/aero/browser/customizableui/menuPanel-customizeFinish.png  (../shared/customizableui/menuPanel-customizeFinish.png)
+        skin/classic/aero/browser/customizableui/panelarrow-customizeTip.png  (../shared/customizableui/panelarrow-customizeTip.png)
 *       skin/classic/aero/browser/customizableui/panelUIOverlay.css  (customizableui/panelUIOverlay-aero.css)
         skin/classic/aero/browser/customizableui/subView-arrow-back-inverted.png  (../shared/customizableui/subView-arrow-back-inverted.png)
+        skin/classic/aero/browser/customizableui/subView-arrow-back-inverted-rtl.png  (../shared/customizableui/subView-arrow-back-inverted-rtl.png)
+        skin/classic/aero/browser/customizableui/whimsy.png  (../shared/customizableui/whimsy.png)
+        skin/classic/aero/browser/customizableui/whimsy@2x.png  (../shared/customizableui/whimsy@2x.png)
+        skin/classic/aero/browser/customizableui/whimsy-bw.png  (../shared/customizableui/whimsy-bw.png)
+        skin/classic/aero/browser/customizableui/whimsy-bw@2x.png  (../shared/customizableui/whimsy-bw@2x.png)
 *       skin/classic/aero/browser/downloads/allDownloadsViewOverlay.css (downloads/allDownloadsViewOverlay-aero.css)
         skin/classic/aero/browser/downloads/buttons.png              (downloads/buttons-aero.png)
         skin/classic/aero/browser/downloads/contentAreaDownloadsView.css (downloads/contentAreaDownloadsView.css)
@@ -441,12 +466,13 @@ browser.jar:
         skin/classic/aero/browser/newtab/controls.png                (newtab/controls.png)
 *       skin/classic/aero/browser/places/places.css                  (places/places-aero.css)
 *       skin/classic/aero/browser/places/organizer.css               (places/organizer-aero.css)
-        skin/classic/aero/browser/places/bookmark.png                (places/bookmark.png)
+        skin/classic/aero/browser/places/bookmark.png                (places/bookmark-aero.png)
         skin/classic/aero/browser/places/query.png                   (places/query-aero.png)
         skin/classic/aero/browser/places/bookmarksMenu.png           (places/bookmarksMenu-aero.png)
         skin/classic/aero/browser/places/bookmarksToolbar.png        (places/bookmarksToolbar-aero.png)
         skin/classic/aero/browser/places/bookmarksToolbar-menuPanel.png (places/bookmarksToolbar-menuPanel-aero.png)
         skin/classic/aero/browser/places/bookmarks-notification-finish.png   (places/bookmarks-notification-finish.png)
+        skin/classic/aero/browser/places/bookmarks-menu-arrow.png    (places/bookmarks-menu-arrow.png)
         skin/classic/aero/browser/places/calendar.png                (places/calendar-aero.png)
         skin/classic/aero/browser/places/toolbarDropMarker.png       (places/toolbarDropMarker-aero.png)
         skin/classic/aero/browser/places/editBookmarkOverlay.css     (places/editBookmarkOverlay.css)
@@ -510,7 +536,8 @@ browser.jar:
 *       skin/classic/aero/browser/devtools/dark-theme.css            (../shared/devtools/dark-theme.css)
 *       skin/classic/aero/browser/devtools/light-theme.css           (../shared/devtools/light-theme.css)
         skin/classic/aero/browser/devtools/filters.svg               (../shared/devtools/filters.svg)
-        skin/classic/aero/browser/devtools/controls.png              (../shared/devtools/controls.png)
+        skin/classic/aero/browser/devtools/controls.png              (../shared/devtools/images/controls.png)
+        skin/classic/aero/browser/devtools/controls@2x.png           (../shared/devtools/images/controls@2x.png)
 *       skin/classic/aero/browser/devtools/widgets.css               (devtools/widgets.css)
         skin/classic/aero/browser/devtools/commandline-icon.png      (devtools/commandline-icon.png)
         skin/classic/aero/browser/devtools/command-paintflashing.png    (../shared/devtools/images/command-paintflashing.png)
@@ -554,13 +581,12 @@ browser.jar:
         skin/classic/aero/browser/devtools/itemToggle-light.png      (../shared/devtools/images/itemToggle-light.png)
         skin/classic/aero/browser/devtools/itemArrow-dark-rtl.png    (../shared/devtools/images/itemArrow-dark-rtl.png)
         skin/classic/aero/browser/devtools/itemArrow-dark-ltr.png    (../shared/devtools/images/itemArrow-dark-ltr.png)
-        skin/classic/aero/browser/devtools/itemArrow-rtl.png         (../shared/devtools/images/itemArrow-rtl.svg)
-        skin/classic/aero/browser/devtools/itemArrow-ltr.png         (../shared/devtools/images/itemArrow-ltr.svg)
+        skin/classic/aero/browser/devtools/itemArrow-rtl.svg         (../shared/devtools/images/itemArrow-rtl.svg)
+        skin/classic/aero/browser/devtools/itemArrow-ltr.svg         (../shared/devtools/images/itemArrow-ltr.svg)
         skin/classic/aero/browser/devtools/background-noise-toolbar.png (devtools/background-noise-toolbar.png)
         skin/classic/aero/browser/devtools/noise.png                 (devtools/noise.png)
         skin/classic/aero/browser/devtools/dropmarker.png            (devtools/dropmarker.png)
-        skin/classic/aero/browser/devtools/layout-background-grid.png (devtools/layout-background-grid.png)
-        skin/classic/aero/browser/devtools/layoutview.css            (devtools/layoutview.css)
+        skin/classic/aero/browser/devtools/layoutview.css            (../shared/devtools/layoutview.css)
         skin/classic/aero/browser/devtools/debugger-collapse.png     (../shared/devtools/images/debugger-collapse.png)
         skin/classic/aero/browser/devtools/debugger-expand.png       (../shared/devtools/images/debugger-expand.png)
         skin/classic/aero/browser/devtools/debugger-pause.png        (../shared/devtools/images/debugger-pause.png)

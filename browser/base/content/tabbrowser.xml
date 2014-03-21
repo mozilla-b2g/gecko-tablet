@@ -996,11 +996,11 @@
               oldBrowser.docShellIsActive = false;
             }
 
-            var updatePageReport = false;
+            var updateBlockedPopups = false;
             if (!oldBrowser ||
-                (oldBrowser.pageReport && !newBrowser.pageReport) ||
-                (!oldBrowser.pageReport && newBrowser.pageReport))
-              updatePageReport = true;
+                (oldBrowser.blockedPopups && !newBrowser.blockedPopups) ||
+                (!oldBrowser.blockedPopups && newBrowser.blockedPopups))
+              updateBlockedPopups = true;
 
             newBrowser.setAttribute("type", "content-primary");
             newBrowser.docShellIsActive =
@@ -1020,8 +1020,8 @@
 
             this._appendStatusPanel();
 
-            if (updatePageReport)
-              this.mCurrentBrowser.updatePageReport();
+            if (updateBlockedPopups)
+              this.mCurrentBrowser.updateBlockedPopups(false);
 
             // Update the URL bar.
             var loc = this.mCurrentBrowser.currentURI;
@@ -1260,6 +1260,7 @@
             var aFromExternal;
             var aRelatedToCurrent;
             var aDisableMCB;
+            var aSkipAnimation;
             if (arguments.length == 2 &&
                 typeof arguments[1] == "object" &&
                 !(arguments[1] instanceof Ci.nsIURI)) {
@@ -1272,6 +1273,7 @@
               aFromExternal         = params.fromExternal;
               aRelatedToCurrent     = params.relatedToCurrent;
               aDisableMCB           = params.disableMCB;
+              aSkipAnimation        = params.skipAnimation;
             }
 
             var bgLoad = (aLoadInBackground != null) ? aLoadInBackground :
@@ -1285,6 +1287,7 @@
                                   allowThirdPartyFixup: aAllowThirdPartyFixup,
                                   fromExternal: aFromExternal,
                                   relatedToCurrent: aRelatedToCurrent,
+                                  skipAnimation: aSkipAnimation,
                                   disableMCB: aDisableMCB});
             if (!bgLoad)
               this.selectedTab = tab;
@@ -2792,10 +2795,6 @@
         ]]></body>
       </method>
 
-      <property name="pageReport"
-                onget="return this.mCurrentBrowser.pageReport;"
-                readonly="true"/>
-
       <property name="currentURI"
                 onget="return this.mCurrentBrowser.currentURI;"
                 readonly="true"/>
@@ -2994,6 +2993,18 @@
                 tab.setAttribute("titlechanged", "true");
               break;
             }
+            case "DOMWindowClose": {
+              if (this.tabs.length == 1) {
+                window.close();
+                return;
+              }
+
+              let tab = this._getTabForBrowser(browser);
+              if (tab) {
+                this.removeTab(tab);
+              }
+              break;
+            }
             case "contextmenu": {
               gContextMenuContentData = { event: aMessage.objects.event,
                                           browser: browser };
@@ -3060,6 +3071,7 @@
             .useRemoteTabs;
           if (remote) {
             messageManager.addMessageListener("DOMTitleChanged", this);
+            messageManager.addMessageListener("DOMWindowClose", this);
             messageManager.addMessageListener("contextmenu", this);
           }
           messageManager.addMessageListener("DOMWebNotificationClicked", this);

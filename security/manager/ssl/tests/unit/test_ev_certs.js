@@ -119,11 +119,11 @@ function run_test() {
   run_next_test();
 }
 
-function add_tests_in_mode(useInsanity)
+function add_tests_in_mode(useMozillaPKIX)
 {
   add_test(function () {
-    Services.prefs.setBoolPref("security.use_insanity_verification",
-                               useInsanity);
+    Services.prefs.setBoolPref("security.use_mozillapkix_verification",
+                               useMozillaPKIX);
     run_next_test();
   });
 
@@ -162,8 +162,8 @@ function add_tests_in_mode(useInsanity)
     clearOCSPCache();
     let ocspResponder = failingOCSPResponder();
     check_cert_err("ev-valid",
-                   useInsanity ? SEC_ERROR_UNKNOWN_ISSUER
-                               : SEC_ERROR_UNTRUSTED_ISSUER);
+                   useMozillaPKIX ? SEC_ERROR_UNKNOWN_ISSUER
+                                  : SEC_ERROR_UNTRUSTED_ISSUER);
     ocspResponder.stop(run_next_test);
   });
 
@@ -186,23 +186,23 @@ function add_tests_in_mode(useInsanity)
 
   add_test(function () {
     check_no_ocsp_requests("ev-valid",
-      useInsanity ? SEC_ERROR_POLICY_VALIDATION_FAILED
-                  : (isDebugBuild ? SEC_ERROR_REVOKED_CERTIFICATE
-                                  : SEC_ERROR_EXTENSION_NOT_FOUND));
+      useMozillaPKIX ? SEC_ERROR_POLICY_VALIDATION_FAILED
+                     : (isDebugBuild ? SEC_ERROR_REVOKED_CERTIFICATE
+                                     : SEC_ERROR_EXTENSION_NOT_FOUND));
   });
 
   add_test(function () {
     check_no_ocsp_requests("non-ev-root",
-      useInsanity ? SEC_ERROR_POLICY_VALIDATION_FAILED
-                  : (isDebugBuild ? SEC_ERROR_UNTRUSTED_ISSUER
-                                  : SEC_ERROR_EXTENSION_NOT_FOUND));
+      useMozillaPKIX ? SEC_ERROR_POLICY_VALIDATION_FAILED
+                     : (isDebugBuild ? SEC_ERROR_UNTRUSTED_ISSUER
+                                     : SEC_ERROR_EXTENSION_NOT_FOUND));
   });
 
   add_test(function () {
     check_no_ocsp_requests("no-ocsp-url-cert",
-      useInsanity ? SEC_ERROR_POLICY_VALIDATION_FAILED
-                  : (isDebugBuild ? SEC_ERROR_REVOKED_CERTIFICATE
-                                  : SEC_ERROR_EXTENSION_NOT_FOUND));
+      useMozillaPKIX ? SEC_ERROR_POLICY_VALIDATION_FAILED
+                     : (isDebugBuild ? SEC_ERROR_REVOKED_CERTIFICATE
+                                     : SEC_ERROR_EXTENSION_NOT_FOUND));
   });
 
   // Test the EV continues to work with flags after successful EV verification
@@ -223,13 +223,11 @@ function add_tests_in_mode(useInsanity)
 
       let error = certdb.verifyCertNow(cert, certificateUsageSSLServer,
                                        flags, verifiedChain, hasEVPolicy);
-      // XXX(bug 915932): Without an OCSP cache, local-only validation of EV
-      //                  certs will always fail due to lack of an OCSP.
-      do_check_eq(hasEVPolicy.value, isDebugBuild && !useInsanity);
+      do_check_eq(hasEVPolicy.value, isDebugBuild);
       do_check_eq(error,
-                  useInsanity ? SEC_ERROR_POLICY_VALIDATION_FAILED
-                              : (isDebugBuild ? 0
-                                              : SEC_ERROR_EXTENSION_NOT_FOUND));
+                  isDebugBuild ? 0
+                               : (useMozillaPKIX ? SEC_ERROR_POLICY_VALIDATION_FAILED
+                                                 : SEC_ERROR_EXTENSION_NOT_FOUND));
       failingOcspResponder.stop(run_next_test);
     });
   });

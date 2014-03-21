@@ -122,13 +122,13 @@ function MockFxAccounts() {
 
 add_test(function test_non_https_remote_server_uri() {
   Services.prefs.setCharPref(
-    "identity.fxaccounts.remote.uri",
+    "identity.fxaccounts.remote.signup.uri",
     "http://example.com/browser/browser/base/content/test/general/accounts_testRemoteCommands.html");
   do_check_throws_message(function () {
-    fxAccounts.getAccountsURI();
+    fxAccounts.getAccountsSignUpURI();
   }, "Firefox Accounts server must use HTTPS");
 
-  Services.prefs.clearUserPref("identity.fxaccounts.remote.uri");
+  Services.prefs.clearUserPref("identity.fxaccounts.remote.signup.uri");
 
   run_next_test();
 });
@@ -418,7 +418,7 @@ add_task(function test_getAssertion() {
   _("delta: " + Date.parse(payload.exp - start) + "\n");
   let exp = Number(payload.exp);
 
-  do_check_eq(exp, now + TWO_MINUTES_MS);
+  do_check_eq(exp, now + ASSERTION_LIFETIME);
 
   // Reset for next call.
   fxa.internal._d_signCertificate = Promise.defer();
@@ -430,7 +430,7 @@ add_task(function test_getAssertion() {
   // There were no additional calls - same number of getcert calls as before
   do_check_eq(fxa.internal._getCertificateSigned_calls.length, 1);
 
-  // Wait an hour; assertion expires, but not the certificate
+  // Wait an hour; assertion use period expires, but not the certificate
   now += ONE_HOUR_MS;
   fxa.internal._now_is = now;
 
@@ -456,7 +456,7 @@ add_task(function test_getAssertion() {
   do_check_eq(keyPair.validUntil, start + KEY_LIFETIME);
   do_check_eq(cert.validUntil, start + CERT_LIFETIME);
   exp = Number(payload.exp);
-  do_check_eq(exp, now + TWO_MINUTES_MS);
+  do_check_eq(exp, now + ASSERTION_LIFETIME);
 
   // Now we wait even longer, and expect both assertion and cert to expire.  So
   // we will have to get a new keypair and cert.
@@ -479,7 +479,7 @@ add_task(function test_getAssertion() {
   do_check_eq(cert.validUntil, now + CERT_LIFETIME);
   exp = Number(payload.exp);
 
-  do_check_eq(exp, now + TWO_MINUTES_MS);
+  do_check_eq(exp, now + ASSERTION_LIFETIME);
   _("----- DONE ----\n");
 });
 

@@ -45,7 +45,6 @@ class nsIURI;
 class nsINodeInfo;
 class nsIControllers;
 class nsEventChainVisitor;
-class nsEventListenerManager;
 class nsIScrollableFrame;
 class nsAttrValueOrString;
 class ContentUnbinder;
@@ -103,6 +102,11 @@ enum {
 ASSERT_NODE_FLAGS_SPACE(ELEMENT_TYPE_SPECIFIC_BITS_OFFSET);
 
 namespace mozilla {
+class EventChainPostVisitor;
+class EventChainPreVisitor;
+class EventChainVisitor;
+class EventListenerManager;
+
 namespace dom {
 
 class Link;
@@ -119,7 +123,7 @@ class Element : public FragmentOrElement
 {
 public:
 #ifdef MOZILLA_INTERNAL_API
-  Element(already_AddRefed<nsINodeInfo> aNodeInfo) :
+  Element(already_AddRefed<nsINodeInfo>& aNodeInfo) :
     FragmentOrElement(aNodeInfo),
     mState(NS_EVENT_STATE_MOZ_READONLY)
   {
@@ -492,6 +496,8 @@ public:
   void ListAttributes(FILE* out) const;
 #endif
 
+  void Describe(nsAString& aOutDescription) const MOZ_OVERRIDE;
+
   /*
    * Attribute Mapping Helpers
    */
@@ -514,6 +520,8 @@ public:
   }
 
 private:
+  void DescribeAttribute(uint32_t index, nsAString& aOutDescription) const;
+
   static bool
   FindAttributeDependence(const nsIAtom* aAttribute,
                           const MappedAttributeEntry* const aMaps[],
@@ -1056,10 +1064,10 @@ protected:
   }
 
   /**
-   * Hook to allow subclasses to produce a different nsEventListenerManager if
+   * Hook to allow subclasses to produce a different EventListenerManager if
    * needed for attachment of attribute-defined handlers
    */
-  virtual nsEventListenerManager*
+  virtual EventListenerManager*
     GetEventListenerManagerForAttr(nsIAtom* aAttrName, bool* aDefer);
 
   /**
@@ -1084,7 +1092,8 @@ protected:
    * Add/remove this element to the documents id cache
    */
   void AddToIdTable(nsIAtom* aId);
-  void RemoveFromIdTable();
+  void RemoveFromIdTable(); // checks HasID() and uses DoGetID()
+  void RemoveFromIdTable(nsIAtom* aId);
 
   /**
    * Functions to carry out event default actions for links of all types
@@ -1099,18 +1108,18 @@ protected:
    * @param aURI the uri of the link, set only if the return value is true [OUT]
    * @return true if we can handle the link event, false otherwise
    */
-  bool CheckHandleEventForLinksPrecondition(nsEventChainVisitor& aVisitor,
-                                              nsIURI** aURI) const;
+  bool CheckHandleEventForLinksPrecondition(EventChainVisitor& aVisitor,
+                                            nsIURI** aURI) const;
 
   /**
    * Handle status bar updates before they can be cancelled.
    */
-  nsresult PreHandleEventForLinks(nsEventChainPreVisitor& aVisitor);
+  nsresult PreHandleEventForLinks(EventChainPreVisitor& aVisitor);
 
   /**
    * Handle default actions for link event if the event isn't consumed yet.
    */
-  nsresult PostHandleEventForLinks(nsEventChainPostVisitor& aVisitor);
+  nsresult PostHandleEventForLinks(EventChainPostVisitor& aVisitor);
 
   /**
    * Get the target of this link element. Consumers should established that
@@ -1205,9 +1214,10 @@ inline bool nsINode::HasAttributes() const
 nsresult                                                                    \
 _elementName::Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const        \
 {                                                                           \
-  *aResult = nullptr;                                                        \
-  nsCOMPtr<nsINodeInfo> ni = aNodeInfo;                                     \
-  _elementName *it = new _elementName(ni.forget());                         \
+  *aResult = nullptr;                                                       \
+  already_AddRefed<nsINodeInfo> ni =                                        \
+    nsCOMPtr<nsINodeInfo>(aNodeInfo).forget();                              \
+  _elementName *it = new _elementName(ni);                                  \
   if (!it) {                                                                \
     return NS_ERROR_OUT_OF_MEMORY;                                          \
   }                                                                         \
@@ -1225,9 +1235,10 @@ _elementName::Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const        \
 nsresult                                                                    \
 _elementName::Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const        \
 {                                                                           \
-  *aResult = nullptr;                                                        \
-  nsCOMPtr<nsINodeInfo> ni = aNodeInfo;                                     \
-  _elementName *it = new _elementName(ni.forget());                         \
+  *aResult = nullptr;                                                       \
+  already_AddRefed<nsINodeInfo> ni =                                        \
+    nsCOMPtr<nsINodeInfo>(aNodeInfo).forget();                              \
+  _elementName *it = new _elementName(ni);                                  \
   if (!it) {                                                                \
     return NS_ERROR_OUT_OF_MEMORY;                                          \
   }                                                                         \
@@ -1372,7 +1383,7 @@ NS_IMETHOD SetAttributeNode(nsIDOMAttr* newAttr,                              \
   }                                                                           \
   mozilla::ErrorResult rv;                                                    \
   mozilla::dom::Attr* attr = static_cast<mozilla::dom::Attr*>(newAttr);       \
-  *_retval = Element::SetAttributeNode(*attr, rv).get();                      \
+  *_retval = Element::SetAttributeNode(*attr, rv).take();                     \
   return rv.ErrorCode();                                                      \
 }                                                                             \
 NS_IMETHOD RemoveAttributeNode(nsIDOMAttr* oldAttr,                           \
@@ -1383,7 +1394,7 @@ NS_IMETHOD RemoveAttributeNode(nsIDOMAttr* oldAttr,                           \
   }                                                                           \
   mozilla::ErrorResult rv;                                                    \
   mozilla::dom::Attr* attr = static_cast<mozilla::dom::Attr*>(oldAttr);       \
-  *_retval = Element::RemoveAttributeNode(*attr, rv).get();                   \
+  *_retval = Element::RemoveAttributeNode(*attr, rv).take();                  \
   return rv.ErrorCode();                                                      \
 }                                                                             \
 NS_IMETHOD GetAttributeNodeNS(const nsAString& namespaceURI,                  \
@@ -1399,7 +1410,7 @@ NS_IMETHOD SetAttributeNodeNS(nsIDOMAttr* newAttr,                            \
 {                                                                             \
   mozilla::ErrorResult rv;                                                    \
   mozilla::dom::Attr* attr = static_cast<mozilla::dom::Attr*>(newAttr);       \
-  *_retval = Element::SetAttributeNodeNS(*attr, rv).get();                    \
+  *_retval = Element::SetAttributeNodeNS(*attr, rv).take();                   \
   return rv.ErrorCode();                                                      \
 }                                                                             \
 NS_IMETHOD GetElementsByTagName(const nsAString& name,                        \
@@ -1475,12 +1486,12 @@ NS_IMETHOD MozRemove() MOZ_FINAL                                              \
 }                                                                             \
 NS_IMETHOD GetClientRects(nsIDOMClientRectList** _retval) MOZ_FINAL           \
 {                                                                             \
-  *_retval = Element::GetClientRects().get();                                 \
+  *_retval = Element::GetClientRects().take();                                \
   return NS_OK;                                                               \
 }                                                                             \
 NS_IMETHOD GetBoundingClientRect(nsIDOMClientRect** _retval) MOZ_FINAL        \
 {                                                                             \
-  *_retval = Element::GetBoundingClientRect().get();                          \
+  *_retval = Element::GetBoundingClientRect().take();                         \
   return NS_OK;                                                               \
 }                                                                             \
 NS_IMETHOD GetScrollTop(int32_t* aScrollTop) MOZ_FINAL                        \

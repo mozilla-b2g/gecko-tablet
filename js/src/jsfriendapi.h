@@ -53,16 +53,17 @@ extern JS_FRIEND_API(void)
 JS_SetIsWorkerRuntime(JSRuntime *rt);
 
 extern JS_FRIEND_API(JSObject *)
-JS_FindCompilationScope(JSContext *cx, JSObject *obj);
+JS_FindCompilationScope(JSContext *cx, JS::HandleObject obj);
 
 extern JS_FRIEND_API(JSFunction *)
 JS_GetObjectFunction(JSObject *obj);
 
 extern JS_FRIEND_API(bool)
-JS_SplicePrototype(JSContext *cx, JSObject *obj, JSObject *proto);
+JS_SplicePrototype(JSContext *cx, JS::HandleObject obj, JS::HandleObject proto);
 
 extern JS_FRIEND_API(JSObject *)
-JS_NewObjectWithUniqueType(JSContext *cx, const JSClass *clasp, JSObject *proto, JSObject *parent);
+JS_NewObjectWithUniqueType(JSContext *cx, const JSClass *clasp, JS::HandleObject proto,
+                           JS::HandleObject parent);
 
 extern JS_FRIEND_API(uint32_t)
 JS_ObjectCountDynamicSlots(JS::HandleObject obj);
@@ -74,7 +75,7 @@ extern JS_FRIEND_API(size_t)
 JS_GetCustomIteratorCount(JSContext *cx);
 
 extern JS_FRIEND_API(bool)
-JS_NondeterministicGetWeakMapKeys(JSContext *cx, JSObject *obj, JSObject **ret);
+JS_NondeterministicGetWeakMapKeys(JSContext *cx, JS::HandleObject obj, JS::MutableHandleObject ret);
 
 /*
  * Determine whether the given object is backed by a DeadObjectProxy.
@@ -185,7 +186,7 @@ js_DumpChars(const jschar *s, size_t n);
  * restrictions on the compartment of |cx|.
  */
 extern JS_FRIEND_API(bool)
-JS_CopyPropertiesFrom(JSContext *cx, JSObject *target, JSObject *obj);
+JS_CopyPropertiesFrom(JSContext *cx, JS::HandleObject target, JS::HandleObject obj);
 
 /*
  * Single-property version of the above. This function asserts that an |own|
@@ -222,7 +223,7 @@ struct JSFunctionSpecWithHelp {
     {nullptr, nullptr, 0, 0, nullptr, nullptr}
 
 extern JS_FRIEND_API(bool)
-JS_DefineFunctionsWithHelp(JSContext *cx, JSObject *obj, const JSFunctionSpecWithHelp *fs);
+JS_DefineFunctionsWithHelp(JSContext *cx, JS::HandleObject obj, const JSFunctionSpecWithHelp *fs);
 
 namespace js {
 
@@ -268,24 +269,19 @@ namespace js {
             js::proxy_LookupGeneric,                                                    \
             js::proxy_LookupProperty,                                                   \
             js::proxy_LookupElement,                                                    \
-            js::proxy_LookupSpecial,                                                    \
             js::proxy_DefineGeneric,                                                    \
             js::proxy_DefineProperty,                                                   \
             js::proxy_DefineElement,                                                    \
-            js::proxy_DefineSpecial,                                                    \
             js::proxy_GetGeneric,                                                       \
             js::proxy_GetProperty,                                                      \
             js::proxy_GetElement,                                                       \
-            js::proxy_GetSpecial,                                                       \
             js::proxy_SetGeneric,                                                       \
             js::proxy_SetProperty,                                                      \
             js::proxy_SetElement,                                                       \
-            js::proxy_SetSpecial,                                                       \
             js::proxy_GetGenericAttributes,                                             \
             js::proxy_SetGenericAttributes,                                             \
             js::proxy_DeleteProperty,                                                   \
             js::proxy_DeleteElement,                                                    \
-            js::proxy_DeleteSpecial,                                                    \
             js::proxy_Watch, js::proxy_Unwatch,                                         \
             js::proxy_Slice,                                                            \
             nullptr,             /* enumerate       */                                  \
@@ -318,9 +314,6 @@ extern JS_FRIEND_API(bool)
 proxy_LookupElement(JSContext *cx, JS::HandleObject obj, uint32_t index, JS::MutableHandleObject objp,
                     JS::MutableHandle<Shape*> propp);
 extern JS_FRIEND_API(bool)
-proxy_LookupSpecial(JSContext *cx, JS::HandleObject obj, HandleSpecialId sid,
-                    JS::MutableHandleObject objp, JS::MutableHandle<Shape*> propp);
-extern JS_FRIEND_API(bool)
 proxy_DefineGeneric(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::HandleValue value,
                     JSPropertyOp getter, JSStrictPropertyOp setter, unsigned attrs);
 extern JS_FRIEND_API(bool)
@@ -331,10 +324,6 @@ extern JS_FRIEND_API(bool)
 proxy_DefineElement(JSContext *cx, JS::HandleObject obj, uint32_t index, JS::HandleValue value,
                     JSPropertyOp getter, JSStrictPropertyOp setter, unsigned attrs);
 extern JS_FRIEND_API(bool)
-proxy_DefineSpecial(JSContext *cx, JS::HandleObject obj, HandleSpecialId sid,
-                    JS::HandleValue value, JSPropertyOp getter, JSStrictPropertyOp setter,
-                    unsigned attrs);
-extern JS_FRIEND_API(bool)
 proxy_GetGeneric(JSContext *cx, JS::HandleObject obj, JS::HandleObject receiver, JS::HandleId id,
                  JS::MutableHandleValue vp);
 extern JS_FRIEND_API(bool)
@@ -343,9 +332,6 @@ proxy_GetProperty(JSContext *cx, JS::HandleObject obj, JS::HandleObject receiver
 extern JS_FRIEND_API(bool)
 proxy_GetElement(JSContext *cx, JS::HandleObject obj, JS::HandleObject receiver, uint32_t index,
                  JS::MutableHandleValue vp);
-extern JS_FRIEND_API(bool)
-proxy_GetSpecial(JSContext *cx, JS::HandleObject obj, JS::HandleObject receiver,
-                 HandleSpecialId sid, JS::MutableHandleValue vp);
 extern JS_FRIEND_API(bool)
 proxy_SetGeneric(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
                  JS::MutableHandleValue bp, bool strict);
@@ -356,9 +342,6 @@ extern JS_FRIEND_API(bool)
 proxy_SetElement(JSContext *cx, JS::HandleObject obj, uint32_t index, JS::MutableHandleValue vp,
                  bool strict);
 extern JS_FRIEND_API(bool)
-proxy_SetSpecial(JSContext *cx, JS::HandleObject obj, HandleSpecialId sid,
-                 JS::MutableHandleValue vp, bool strict);
-extern JS_FRIEND_API(bool)
 proxy_GetGenericAttributes(JSContext *cx, JS::HandleObject obj, JS::HandleId id, unsigned *attrsp);
 extern JS_FRIEND_API(bool)
 proxy_SetGenericAttributes(JSContext *cx, JS::HandleObject obj, JS::HandleId id, unsigned *attrsp);
@@ -367,8 +350,6 @@ proxy_DeleteProperty(JSContext *cx, JS::HandleObject obj, JS::Handle<PropertyNam
                      bool *succeeded);
 extern JS_FRIEND_API(bool)
 proxy_DeleteElement(JSContext *cx, JS::HandleObject obj, uint32_t index, bool *succeeded);
-extern JS_FRIEND_API(bool)
-proxy_DeleteSpecial(JSContext *cx, JS::HandleObject obj, HandleSpecialId sid, bool *succeeded);
 
 extern JS_FRIEND_API(void)
 proxy_Trace(JSTracer *trc, JSObject *obj);
@@ -660,6 +641,11 @@ GetObjectParentMaybeScope(JSObject *obj);
 
 JS_FRIEND_API(JSObject *)
 GetGlobalForObjectCrossCompartment(JSObject *obj);
+
+// Sidestep the activeContext checking implicitly performed in
+// JS_SetPendingException.
+JS_FRIEND_API(void)
+SetPendingExceptionCrossContext(JSContext *cx, JS::HandleValue v);
 
 JS_FRIEND_API(void)
 AssertSameCompartment(JSContext *cx, JSObject *obj);
@@ -1950,6 +1936,21 @@ typedef JSContext*
 
 JS_FRIEND_API(void)
 SetDefaultJSContextCallback(JSRuntime *rt, DefaultJSContextCallback cb);
+
+/*
+ * To help embedders enforce their invariants, we allow them to specify in
+ * advance which JSContext should be passed to JSAPI calls. If this is set
+ * to a non-null value, the assertSameCompartment machinery does double-
+ * duty (in debug builds) to verify that it matches the cx being used.
+ */
+#ifdef DEBUG
+JS_FRIEND_API(void)
+Debug_SetActiveJSContext(JSRuntime *rt, JSContext *cx);
+#else
+inline void
+Debug_SetActiveJSContext(JSRuntime *rt, JSContext *cx) {};
+#endif
+
 
 enum CTypesActivityType {
     CTYPES_CALL_BEGIN,

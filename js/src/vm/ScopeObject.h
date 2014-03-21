@@ -207,7 +207,7 @@ class ScopeObject : public JSObject
 
     /*
      * Get or set an aliased variable contained in this scope. Unaliased
-     * variables should instead access the StackFrame. Aliased variable access
+     * variables should instead access the stack frame. Aliased variable access
      * is primarily made through JOF_SCOPECOORD ops which is why these members
      * take a ScopeCoordinate instead of just the slot index.
      */
@@ -269,8 +269,22 @@ class CallObject : public ScopeObject
     const Value &aliasedVar(AliasedFormalIter fi) {
         return getSlot(fi.scopeSlot());
     }
+    inline void setAliasedVar(JSContext *cx, AliasedFormalIter fi, PropertyName *name,
+                              const Value &v);
 
-    inline void setAliasedVar(JSContext *cx, AliasedFormalIter fi, PropertyName *name, const Value &v);
+    /*
+     * When an aliased var (var accessed by nested closures) is also aliased by
+     * the arguments object, it must of course exist in one canonical location
+     * and that location is always the CallObject. For this to work, the
+     * ArgumentsObject stores special MagicValue in its array for forwarded-to-
+     * CallObject variables. This MagicValue's payload is the slot of the
+     * CallObject to access.
+     */
+    const Value &aliasedVarFromArguments(const Value &argsValue) {
+        return getSlot(argsValue.magicUint32());
+    }
+    inline void setAliasedVarFromArguments(JSContext *cx, const Value &argsValue, jsid id,
+                                           const Value &v);
 
     /* For jit access. */
     static size_t offsetOfCallee() {
@@ -616,12 +630,12 @@ class ScopeIter
     ScopeIter(const ScopeIter &si, JSContext *cx
               MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
 
-    /* Constructing from StackFrame places ScopeIter on the innermost scope. */
+    /* Constructing from AbstractFramePtr places ScopeIter on the innermost scope. */
     ScopeIter(AbstractFramePtr frame, jsbytecode *pc, JSContext *cx
               MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
 
     /*
-     * Without a StackFrame, the resulting ScopeIter is done() with
+     * Without a stack frame, the resulting ScopeIter is done() with
      * enclosingScope() as given.
      */
     ScopeIter(JSObject &enclosingScope, JSContext *cx

@@ -11,7 +11,6 @@
 #include "nsIPermissionManager.h"
 #include "DOMCameraControl.h"
 #include "nsDOMClassInfo.h"
-#include "DictionaryHelpers.h"
 #include "CameraCommon.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/CameraManagerBinding.h"
@@ -120,7 +119,7 @@ nsDOMCameraManager::GetCamera(const nsAString& aCamera,
     cameraId = 1;
   }
 
-  nsCOMPtr<CameraErrorCallback> errorCallback = nullptr;
+  nsRefPtr<CameraErrorCallback> errorCallback = nullptr;
   if (aOnError.WasPassed()) {
     errorCallback = &aOnError.Value();
   }

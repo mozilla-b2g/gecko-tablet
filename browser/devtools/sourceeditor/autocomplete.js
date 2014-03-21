@@ -60,10 +60,10 @@ function setupAutoCompletion(ctx, walker) {
   keyMap[Editor.accel("Space")] = cm => autoComplete(ctx);
   cm.addKeyMap(keyMap);
 
-  cm.on("keydown", (cm, e) => onEditorKeypress(ed, e));
+  cm.on("keydown", (cm, e) => onEditorKeypress(ctx, e));
   ed.on("change", () => autoComplete(ctx));
   ed.on("destroy", () => {
-    cm.off("keydown", (cm, e) => onEditorKeypress(ed, e));
+    cm.off("keydown", (cm, e) => onEditorKeypress(ctx, e));
     ed.off("change", () => autoComplete(ctx));
     popup.destroy();
     popup = null;
@@ -91,7 +91,7 @@ function autoComplete({ ed, cm }) {
   let cur = ed.getCursor();
   completer.complete(cm.getRange({line: 0, ch: 0}, cur), cur)
     .then(suggestions => {
-    if (!suggestions || !suggestions.length || !suggestions[0].preLabel) {
+    if (!suggestions || !suggestions.length || suggestions[0].preLabel == null) {
       private.suggestionInsertedOnce = false;
       popup.hidePopup();
       ed.emit("after-suggest");
@@ -155,7 +155,7 @@ function cycleSuggestions(ed, reverse) {
  * onkeydown handler for the editor instance to prevent autocompleting on some
  * keypresses.
  */
-function onEditorKeypress(ed, event) {
+function onEditorKeypress({ ed, Editor }, event) {
   let private = privates.get(ed);
   switch (event.keyCode) {
     case event.DOM_VK_ESCAPE:
@@ -165,8 +165,14 @@ function onEditorKeypress(ed, event) {
     case event.DOM_VK_RIGHT:
     case event.DOM_VK_HOME:
     case event.DOM_VK_END:
+      private.doNotAutocomplete = true;
+      private.popup.hidePopup();
+      break;
+
     case event.DOM_VK_BACK_SPACE:
     case event.DOM_VK_DELETE:
+      if (ed.config.mode == Editor.modes.css)
+        private.completer.invalidateCache(ed.getCursor().line)
       private.doNotAutocomplete = true;
       private.popup.hidePopup();
       break;

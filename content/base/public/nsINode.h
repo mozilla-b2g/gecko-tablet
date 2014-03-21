@@ -15,12 +15,12 @@
 #include "nsNodeInfoManager.h"      // for use in NodePrincipal()
 #include "nsPropertyTable.h"        // for typedefs
 #include "nsTObserverArray.h"       // for member
-#include "nsWindowMemoryReporter.h" // for NS_DECL_SIZEOF_EXCLUDING_THIS
 #include "mozilla/ErrorResult.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/EventTarget.h" // for base class
 #include "js/TypeDecls.h"     // for Handle, Value, JSObject, JSContext
 #include "mozilla/dom/DOMString.h"
+#include "mozilla/dom/BindingDeclarations.h"
 
 // Including 'windows.h' will #define GetClassInfo to something else.
 #ifdef XP_WIN
@@ -51,6 +51,7 @@ class nsXPCClassInfo;
 class nsDOMMutationObserver;
 
 namespace mozilla {
+class EventListenerManager;
 namespace dom {
 /**
  * @return true if aChar is what the DOM spec defines as 'space character'.
@@ -64,10 +65,17 @@ inline bool IsSpaceCharacter(char aChar) {
   return aChar == ' ' || aChar == '\t' || aChar == '\n' || aChar == '\r' ||
          aChar == '\f';
 }
+struct BoxQuadOptions;
+struct ConvertCoordinateOptions;
+class DOMPoint;
+class DOMQuad;
+class DOMRectReadOnly;
 class Element;
 class EventHandlerNonNull;
 class OnErrorEventHandlerNonNull;
 template<typename T> class Optional;
+class TextOrElementOrDocument;
+struct DOMPointInit;
 } // namespace dom
 } // namespace mozilla
 
@@ -244,12 +252,20 @@ private:
   // ever passed to Mutated().
   enum { eMaxMutations = 300 };
 
-  
+
   // sMutationCount is a global mutation counter which is decreased by one at
   // every mutation. It is capped at 0 to avoid wrapping.
   // Its value is always between 0 and 300, inclusive.
   static uint32_t sMutationCount;
 };
+
+// This should be used for any nsINode sub-class that has fields of its own
+// that it needs to measure;  any sub-class that doesn't use it will inherit
+// SizeOfExcludingThis from its super-class.  SizeOfIncludingThis() need not be
+// defined, it is inherited from nsINode.
+// This macro isn't actually specific to nodes, and bug 956400 will move it into MFBT.
+#define NS_DECL_SIZEOF_EXCLUDING_THIS \
+  virtual size_t SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 
 // Categories of node properties
 // 0 is global.
@@ -270,6 +286,15 @@ private:
 class nsINode : public mozilla::dom::EventTarget
 {
 public:
+  typedef mozilla::dom::BoxQuadOptions BoxQuadOptions;
+  typedef mozilla::dom::ConvertCoordinateOptions ConvertCoordinateOptions;
+  typedef mozilla::dom::DOMPoint DOMPoint;
+  typedef mozilla::dom::DOMPointInit DOMPointInit;
+  typedef mozilla::dom::DOMQuad DOMQuad;
+  typedef mozilla::dom::DOMRectReadOnly DOMRectReadOnly;
+  typedef mozilla::dom::TextOrElementOrDocument TextOrElementOrDocument;
+  typedef mozilla::ErrorResult ErrorResult;
+
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_INODE_IID)
 
   // Among the sub-classes that inherit (directly or indirectly) from nsINode,
@@ -312,7 +337,7 @@ public:
   friend class nsAttrAndChildArray;
 
 #ifdef MOZILLA_INTERNAL_API
-  nsINode(already_AddRefed<nsINodeInfo> aNodeInfo)
+  nsINode(already_AddRefed<nsINodeInfo>& aNodeInfo)
   : mNodeInfo(aNodeInfo),
     mParent(nullptr),
     mBoolFlags(0),
@@ -384,17 +409,17 @@ protected:
     return nullptr;
   }
 
-public:
-  nsIDocument* GetParentObject() const
-  {
-    // Make sure that we get the owner document of the content node, in case
-    // we're in document teardown.  If we are, it's important to *not* use
-    // globalObj as the node's parent since that would give the node the
-    // principal of globalObj (i.e. the principal of the document that's being
-    // loaded) and not the principal of the document that's being unloaded.
-    // See http://bugzilla.mozilla.org/show_bug.cgi?id=227417
-    return OwnerDoc();
+  // Subclasses that wish to override the parent behavior should return the
+  // result of GetParentObjectIntenral, which handles the XBL scope stuff.
+  //
+  mozilla::dom::ParentObject GetParentObjectInternal(nsINode* aNativeParent) const {
+    mozilla::dom::ParentObject p(aNativeParent);
+    p.mUseXBLScope = ChromeOnlyAccess();
+    return p;
   }
+
+public:
+  mozilla::dom::ParentObject GetParentObject() const; // Implemented in nsIDocument.h
 
   /**
    * Return whether the node is an Element node
@@ -798,10 +823,10 @@ public:
    */
   NS_DECL_NSIDOMEVENTTARGET
 
-  virtual nsEventListenerManager*
-  GetExistingListenerManager() const MOZ_OVERRIDE;
-  virtual nsEventListenerManager*
-  GetOrCreateListenerManager() MOZ_OVERRIDE;
+  virtual mozilla::EventListenerManager*
+    GetExistingListenerManager() const MOZ_OVERRIDE;
+  virtual mozilla::EventListenerManager*
+    GetOrCreateListenerManager() MOZ_OVERRIDE;
 
   using mozilla::dom::EventTarget::RemoveEventListener;
   using nsIDOMEventTarget::AddEventListener;
@@ -1601,6 +1626,23 @@ public:
   mozilla::dom::Element* GetFirstElementChild() const;
   mozilla::dom::Element* GetLastElementChild() const;
 
+  void GetBoxQuads(const BoxQuadOptions& aOptions,
+                   nsTArray<nsRefPtr<DOMQuad> >& aResult,
+                   mozilla::ErrorResult& aRv);
+
+  already_AddRefed<DOMQuad> ConvertQuadFromNode(DOMQuad& aQuad,
+                                                const TextOrElementOrDocument& aFrom,
+                                                const ConvertCoordinateOptions& aOptions,
+                                                ErrorResult& aRv);
+  already_AddRefed<DOMQuad> ConvertRectFromNode(DOMRectReadOnly& aRect,
+                                                const TextOrElementOrDocument& aFrom,
+                                                const ConvertCoordinateOptions& aOptions,
+                                                ErrorResult& aRv);
+  already_AddRefed<DOMPoint> ConvertPointFromNode(const DOMPointInit& aPoint,
+                                                  const TextOrElementOrDocument& aFrom,
+                                                  const ConvertCoordinateOptions& aOptions,
+                                                  ErrorResult& aRv);
+
 protected:
 
   // Override this function to create a custom slots class.
@@ -1875,7 +1917,7 @@ ToCanonicalSupports(nsINode* aPointer)
     if (rv.Failed()) { \
       return rv.ErrorCode(); \
     } \
-    *aResult = clone.forget().get()->AsDOMNode(); \
+    *aResult = clone.forget().take()->AsDOMNode(); \
     return NS_OK; \
   } \
   NS_IMETHOD Normalize() __VA_ARGS__ \

@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "jsprf.h"
 #include "jit/arm/Simulator-arm.h"
 #include "jit/BaselineIC.h"
 #include "jit/BaselineJIT.h"
@@ -531,9 +532,14 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
     // If SPS Profiler is enabled, mark the frame as having pushed an SPS entry.
     // This may be wrong for the last frame of ArgumentCheck bailout, but
     // that will be fixed later.
-    if (cx->runtime()->spsProfiler.enabled() && ionScript->hasSPSInstrumentation()) {
-        IonSpew(IonSpew_BaselineBailouts, "      Setting SPS flag on frame!");
-        flags |= BaselineFrame::HAS_PUSHED_SPS_FRAME;
+    if (ionScript->hasSPSInstrumentation()) {
+        if (callerPC == nullptr) {
+            IonSpew(IonSpew_BaselineBailouts, "      Setting SPS flag on top frame!");
+            flags |= BaselineFrame::HAS_PUSHED_SPS_FRAME;
+        } else if (js_JitOptions.profileInlineFrames) {
+            IonSpew(IonSpew_BaselineBailouts, "      Setting SPS flag on inline frame!");
+            flags |= BaselineFrame::HAS_PUSHED_SPS_FRAME;
+        }
     }
 
     // Initialize BaselineFrame's scopeChain and argsObj
@@ -943,29 +949,56 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
                 // If bailing into prologue, HAS_PUSHED_SPS_FRAME should not be set on frame.
                 blFrame->unsetPushedSPSFrame();
 
-                // Additionally, if SPS is enabled, there are two corner cases to handle:
-                //  1. If resuming into the prologue, and innermost frame is an inlined frame,
-                //     and bailout is because of argument check failure, then:
-                //          Top SPS profiler entry would be for caller frame.
-                //          Ion would not have set the PC index field on that frame
-                //              (since this bailout happens before MFunctionBoundary).
-                //          Make sure that's done now.
-                //  2. If resuming into the prologue, and the bailout is NOT because of an
-                //     argument check, then:
-                //          Top SPS profiler entry would be for callee frame.
-                //          Ion would already have pushed an SPS entry for this frame.
-                //          The pc for this entry would be set to nullptr.
-                //          Make sure it's set to script->pc.
                 if (cx->runtime()->spsProfiler.enabled()) {
-                    if (caller && bailoutKind == Bailout_ArgumentCheck) {
-                        IonSpew(IonSpew_BaselineBailouts, "      Setting PCidx on innermost "
-                                "inlined frame's parent's SPS entry (%s:%d) (pcIdx=%d)!",
-                                caller->filename(), caller->lineno(), caller->pcToOffset(callerPC));
-                        cx->runtime()->spsProfiler.updatePC(caller, callerPC);
-                    } else if (bailoutKind != Bailout_ArgumentCheck) {
-                        IonSpew(IonSpew_BaselineBailouts,
-                                "      Popping SPS entry for innermost inlined frame's SPS entry");
-                        cx->runtime()->spsProfiler.exit(script, fun);
+                    if (js_JitOptions.profileInlineFrames) {
+                        // If SPS is enabled, there are two corner cases to handle:
+                        //  1. If resuming into the prologue, and innermost frame is an inlined
+                        //     frame, and bailout is because of argument check failure, then:
+                        //          Top SPS profiler entry would be for caller frame.
+                        //          Ion would not have set the PC index field on that frame
+                        //              (since this bailout happens before MFunctionBoundary).
+                        //          Make sure that's done now.
+                        //  2. If resuming into the prologue, and the bailout is NOT because of an
+                        //     argument check, then:
+                        //          Top SPS profiler entry would be for callee frame.
+                        //          Ion would already have pushed an SPS entry for this frame.
+                        //          The pc for this entry would be set to nullptr.
+                        //          Make sure it's set to script->pc.
+                        if (caller && bailoutKind == Bailout_ArgumentCheck) {
+                            IonSpew(IonSpew_BaselineBailouts, "      Setting PCidx on innermost "
+                                    "inlined frame's parent's SPS entry (%s:%d) (pcIdx=%d)!",
+                                    caller->filename(), caller->lineno(),
+                                    caller->pcToOffset(callerPC));
+                            cx->runtime()->spsProfiler.updatePC(caller, callerPC);
+
+                        } else if (bailoutKind != Bailout_ArgumentCheck) {
+                            IonSpew(IonSpew_BaselineBailouts,
+                                    "      Popping SPS entry for innermost inlined frame");
+                            cx->runtime()->spsProfiler.exit(script, fun);
+                        }
+
+                    } else {
+                        // If not profiling inline frames, then this is logically simpler.
+                        //
+                        // 1. If resuming into inline code, then the top SPS entry will be
+                        // for the outermost caller, and will have an uninitialized PC.
+                        // This will be fixed up later in BailoutIonToBaseline.
+                        //
+                        // 2. If resuming into top-level code prologue, with ArgumentCheck,
+                        // no SPS entry will have been pushed.  Can be left alone.
+                        //
+                        // 3. If resuming into top-level code prologue, without ArgumentCheck,
+                        // an SPS entry will have been pushed, and needs to be popped.
+                        //
+                        // 4. If resuming into top-level code main body, an SPS entry will
+                        // have been pushed, and can be left alone.
+                        //
+                        // Only need to handle case 3 here.
+                        if (!caller && bailoutKind != Bailout_ArgumentCheck) {
+                            IonSpew(IonSpew_BaselineBailouts,
+                                    "      Popping SPS entry for outermost frame");
+                            cx->runtime()->spsProfiler.exit(script, fun);
+                        }
                     }
                 }
             } else {
@@ -975,14 +1008,34 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
             IonSpew(IonSpew_BaselineBailouts, "      Set resumeAddr=%p", opReturnAddr);
         }
 
-        if (cx->runtime()->spsProfiler.enabled() && blFrame->hasPushedSPSFrame()) {
-            // Set PC index to 0 for the innermost frame to match what the
-            // interpreter and Baseline do: they update the SPS pc for
-            // JSOP_CALL ops but set it to 0 when running other ops. Ion code
-            // can set the pc to NullPCIndex and this will confuse SPS when
-            // Baseline calls into the VM at non-CALL ops and re-enters JS.
-            IonSpew(IonSpew_BaselineBailouts, "      Setting PCidx for last frame to 0");
-            cx->runtime()->spsProfiler.updatePC(script, script->code());
+        if (cx->runtime()->spsProfiler.enabled()) {
+            if (blFrame->hasPushedSPSFrame()) {
+                // Set PC index to 0 for the innermost frame to match what the
+                // interpreter and Baseline do: they update the SPS pc for
+                // JSOP_CALL ops but set it to 0 when running other ops. Ion code
+                // can set the pc to NullPCIndex and this will confuse SPS when
+                // Baseline calls into the VM at non-CALL ops and re-enters JS.
+                IonSpew(IonSpew_BaselineBailouts, "      Setting PCidx for last frame to 0");
+                cx->runtime()->spsProfiler.updatePC(script, script->code());
+            }
+
+            // Register bailout with profiler.
+            const char *filename = script->filename();
+            if (filename == nullptr)
+                filename = "<unknown>";
+            unsigned len = strlen(filename) + 200;
+            char *buf = js_pod_malloc<char>(len);
+            if (buf == nullptr)
+                return false;
+            JS_snprintf(buf, len, "%s %s %s on line %d of %s:%d",
+                                  BailoutKindString(bailoutKind),
+                                  resumeAfter ? "after" : "at",
+                                  js_CodeName[op],
+                                  int(PCToLineNumber(script, pc)),
+                                  filename,
+                                  int(script->lineno()));
+            cx->runtime()->spsProfiler.markEvent(buf);
+            js_free(buf);
         }
 
         return true;
@@ -1254,7 +1307,7 @@ jit::BailoutIonToBaseline(JSContext *cx, JitActivation *activation, IonBailoutIt
         IonSpew(IonSpew_BaselineBailouts, "Resuming in catch or finally block");
 
     IonSpew(IonSpew_BaselineBailouts, "  Reading from snapshot offset %u size %u",
-            iter.snapshotOffset(), iter.ionScript()->snapshotsSize());
+            iter.snapshotOffset(), iter.ionScript()->snapshotsListSize());
 
     if (!excInfo)
         iter.ionScript()->incNumBailouts();
@@ -1290,6 +1343,9 @@ jit::BailoutIonToBaseline(JSContext *cx, JitActivation *activation, IonBailoutIt
     RootedFunction fun(cx, callee);
     RootedScript scr(cx, iter.script());
     AutoValueVector startFrameFormals(cx);
+
+    RootedScript topCaller(cx);
+    jsbytecode *topCallerPC = nullptr;
 
     while (true) {
 #if JS_TRACE_LOGGING
@@ -1329,9 +1385,23 @@ jit::BailoutIonToBaseline(JSContext *cx, JitActivation *activation, IonBailoutIt
         scr = fun->existingScript();
         snapIter.nextFrame();
 
+        // Save top caller info for adjusting SPS frames later.
+        if (!topCaller) {
+            JS_ASSERT(frameNo == 0);
+            topCaller = caller;
+            topCallerPC = callerPC;
+        }
+
         frameNo++;
     }
     IonSpew(IonSpew_BaselineBailouts, "  Done restoring frames");
+
+    // If there were multiple inline frames unpacked, and inline frame profiling
+    // is off, then the current top SPS frame is for the outermost caller, and
+    // has an uninitialized PC.  Initialize it now.
+    if (frameNo > 0 && !js_JitOptions.profileInlineFrames)
+        cx->runtime()->spsProfiler.updatePC(topCaller, topCallerPC);
+
     BailoutKind bailoutKind = snapIter.bailoutKind();
 
     if (!startFrameFormals.empty()) {
@@ -1340,12 +1410,9 @@ jit::BailoutIonToBaseline(JSContext *cx, JitActivation *activation, IonBailoutIt
         mozilla::PodCopy(argv, startFrameFormals.begin(), startFrameFormals.length());
     }
 
-    // Take the reconstructed baseline stack so it doesn't get freed when builder destructs.
-    BaselineBailoutInfo *info = builder.takeBuffer();
-    info->numFrames = frameNo + 1;
-
     // Do stack check.
     bool overRecursed = false;
+    BaselineBailoutInfo *info = builder.info();
     uint8_t *newsp = info->incomingStack - (info->copyStackTop - info->copyStackBottom);
 #ifdef JS_ARM_SIMULATOR
     if (Simulator::Current()->overRecursed(uintptr_t(newsp)))
@@ -1358,6 +1425,9 @@ jit::BailoutIonToBaseline(JSContext *cx, JitActivation *activation, IonBailoutIt
         return BAILOUT_RETURN_OVERRECURSED;
     }
 
+    // Take the reconstructed baseline stack so it doesn't get freed when builder destructs.
+    info = builder.takeBuffer();
+    info->numFrames = frameNo + 1;
     info->bailoutKind = bailoutKind;
     *bailoutInfo = info;
     return BAILOUT_RETURN_OK;

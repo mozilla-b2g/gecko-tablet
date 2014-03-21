@@ -8,6 +8,7 @@
 #include "mozilla/dom/AudioDestinationNodeBinding.h"
 #include "mozilla/Preferences.h"
 #include "AudioChannelAgent.h"
+#include "AudioChannelService.h"
 #include "AudioNodeEngine.h"
 #include "AudioNodeStream.h"
 #include "MediaStreamGraph.h"
@@ -22,6 +23,8 @@
 
 namespace mozilla {
 namespace dom {
+
+static uint8_t gWebAudioOutputKey;
 
 class OfflineDestinationNodeEngine : public AudioNodeEngine
 {
@@ -52,10 +55,10 @@ public:
     }
   }
 
-  virtual void ProduceAudioBlock(AudioNodeStream* aStream,
-                                 const AudioChunk& aInput,
-                                 AudioChunk* aOutput,
-                                 bool* aFinished) MOZ_OVERRIDE
+  virtual void ProcessBlock(AudioNodeStream* aStream,
+                            const AudioChunk& aInput,
+                            AudioChunk* aOutput,
+                            bool* aFinished) MOZ_OVERRIDE
   {
     // Do this just for the sake of political correctness; this output
     // will not go anywhere.
@@ -165,10 +168,10 @@ public:
   {
   }
 
-  virtual void ProduceAudioBlock(AudioNodeStream* aStream,
-                                 const AudioChunk& aInput,
-                                 AudioChunk* aOutput,
-                                 bool* aFinished) MOZ_OVERRIDE
+  virtual void ProcessBlock(AudioNodeStream* aStream,
+                            const AudioChunk& aInput,
+                            AudioChunk* aOutput,
+                            bool* aFinished) MOZ_OVERRIDE
   {
     *aOutput = aInput;
     aOutput->mVolume *= mVolume;
@@ -233,6 +236,13 @@ AudioDestinationNode::AudioDestinationNode(AudioContext* aContext,
 
   mStream = graph->CreateAudioNodeStream(engine, MediaStreamGraph::EXTERNAL_STREAM);
   mStream->AddMainThreadListener(this);
+  mStream->AddAudioOutput(&gWebAudioOutputKey);
+
+  AudioChannel channel = AudioChannelService::GetDefaultAudioChannel();
+  if (channel != AudioChannel::Normal) {
+    ErrorResult rv;
+    SetMozAudioChannelType(channel, rv);
+  }
 
   if (!aIsOffline && UseAudioChannelService()) {
     nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(GetOwner());
@@ -380,6 +390,23 @@ AudioDestinationNode::CanPlayChanged(int32_t aCanPlay)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+AudioDestinationNode::WindowVolumeChanged()
+{
+  MOZ_ASSERT(mAudioChannelAgent);
+
+  if (!mStream) {
+    return NS_OK;
+  }
+
+  float volume;
+  nsresult rv = mAudioChannelAgent->GetWindowVolume(&volume);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  mStream->SetAudioOutputVolume(&gWebAudioOutputKey, volume);
+  return NS_OK;
+}
+
 AudioChannel
 AudioDestinationNode::MozAudioChannelType() const
 {
@@ -413,6 +440,11 @@ AudioDestinationNode::CheckAudioChannelPermissions(AudioChannel aValue)
 
   // Only normal channel doesn't need permission.
   if (aValue == AudioChannel::Normal) {
+    return true;
+  }
+
+  // Maybe this audio channel is equal to the default one.
+  if (aValue == AudioChannelService::GetDefaultAudioChannel()) {
     return true;
   }
 
@@ -478,7 +510,7 @@ AudioDestinationNode::CreateAudioChannelAgent()
   }
 
   mAudioChannelAgent = new AudioChannelAgent();
-  mAudioChannelAgent->InitWithWeakCallback(type, this);
+  mAudioChannelAgent->InitWithWeakCallback(GetOwner(), type, this);
 
   nsCOMPtr<nsIDocShell> docshell = do_GetInterface(GetOwner());
   if (docshell) {

@@ -1122,7 +1122,7 @@ CssRuleView.prototype = {
     // Test for css transform
     if (property && property.name === "transform") {
       this.previewTooltip.setCssTransformContent(property.value, this.pageStyle,
-        this._viewedElement).then(def.resolve);
+        this._viewedElement).then(def.resolve, def.reject);
       hasTooltip = true;
     }
 
@@ -1142,11 +1142,32 @@ CssRuleView.prototype = {
       }
     }
 
-    if (hasTooltip) {
+    // Get the nodes containing the property name and property value,
+    // and test for font family
+    let propertyRoot = target.parentNode;
+    let propertyNameNode = propertyRoot.querySelector(".ruleview-propertyname");
+
+    if (!propertyNameNode) {
+      propertyRoot = propertyRoot.parentNode;
+      propertyNameNode = propertyRoot.querySelector(".ruleview-propertyname");
+    }
+
+    let propertyName;
+    if (propertyNameNode) {
+      propertyName = propertyNameNode.textContent;
+    }
+
+    if (propertyName === "font-family" &&
+        target.classList.contains("ruleview-propertyvalue")) {
+      this.previewTooltip.setFontFamilyContent(target.textContent).then(def.resolve);
+      hasTooltip = true;
+    }
+
+    if (!hasTooltip) {
+      def.reject();
+    } else if (this.colorPicker.tooltip.isShown()) {
       this.colorPicker.revert();
       this.colorPicker.hide();
-    } else {
-      def.reject();
     }
 
     return def.promise;

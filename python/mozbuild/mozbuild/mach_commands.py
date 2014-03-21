@@ -531,7 +531,7 @@ class Build(MachCommandBase):
     # It would be nice to filter the choices below based on
     # conditions, but that is for another day.
     @CommandArgument('-b', '--backend',
-        choices=['RecursiveMake', 'AndroidEclipse', 'VisualStudio'],
+        choices=['RecursiveMake', 'AndroidEclipse', 'CppEclipse', 'VisualStudio'],
         default='RecursiveMake',
         help='Which backend to build (default: RecursiveMake).')
     def build_backend(self, backend='RecursiveMake', diff=False):
@@ -898,11 +898,15 @@ class Makefiles(MachCommandBase):
             return True
 
         for path in self._makefile_ins():
-            statements = [s for s in pymake.parser.parsefile(path)
-                if is_statement_relevant(s)]
+            relpath = os.path.relpath(path, self.topsrcdir)
+            try:
+                statements = [s for s in pymake.parser.parsefile(path)
+                    if is_statement_relevant(s)]
 
-            if not statements:
-                print(os.path.relpath(path, self.topsrcdir))
+                if not statements:
+                    print(relpath)
+            except pymake.parser.SyntaxError:
+                print('Warning: Could not parse %s' % relpath, file=sys.stderr)
 
     def _makefile_ins(self):
         for root, dirs, files in os.walk(self.topsrcdir):

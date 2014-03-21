@@ -22,7 +22,14 @@
 #include "nsAutoPtr.h"                  // for nsRefPtr
 #include "nsPrintfCString.h"            // for nsPrintfCString
 #include "mozilla/layers/PTextureParent.h"
+#include "mozilla/unused.h"
 #include <limits>
+
+#if 0
+#define RECYCLE_LOG(...) printf_stderr(__VA_ARGS__)
+#else
+#define RECYCLE_LOG(...) do { } while (0)
+#endif
 
 struct nsIntPoint;
 
@@ -43,6 +50,9 @@ public:
   bool Init(const SurfaceDescriptor& aSharedData,
             const TextureFlags& aFlags);
 
+  void CompositorRecycle();
+  virtual bool RecvClientRecycle() MOZ_OVERRIDE;
+
   virtual bool RecvRemoveTexture() MOZ_OVERRIDE;
 
   virtual bool RecvRemoveTextureSync() MOZ_OVERRIDE;
@@ -52,6 +62,7 @@ public:
   void ActorDestroy(ActorDestroyReason why) MOZ_OVERRIDE;
 
   ISurfaceAllocator* mAllocator;
+  RefPtr<TextureHost> mWaitForClientRecycle;
   RefPtr<TextureHost> mTextureHost;
 };
 
@@ -346,14 +357,6 @@ DeprecatedTextureHost::SwapTextures(const SurfaceDescriptor& aImage,
     *aResult = *mBuffer;
   }
   *mBuffer = aImage;
-  // The following SetBuffer call was added in bug 912725 as a fix for the
-  // hacky fix introduced in gecko 23 for bug 862324.
-  // Note that it is a no-op in the generic case, but not for
-  // GrallocDeprecatedTextureHostOGL which overrides SetBuffer to make it
-  // register the TextureHost with the GrallocBufferActor.
-  // The reason why this SetBuffer calls is needed here is that just above we
-  // overwrote *mBuffer in place, so we need to tell the new mBuffer about this
-  // TextureHost.
   SetBuffer(mBuffer, mDeAllocator);
 }
 
@@ -728,7 +731,37 @@ TextureParent::TextureParent(ISurfaceAllocator* aAllocator)
 TextureParent::~TextureParent()
 {
   MOZ_COUNT_DTOR(TextureParent);
-  mTextureHost = nullptr;
+  if (mTextureHost) {
+    mTextureHost->ClearRecycleCallback();
+  }
+}
+
+static void RecycleCallback(TextureHost* textureHost, void* aClosure) {
+  TextureParent* tp = reinterpret_cast<TextureParent*>(aClosure);
+  tp->CompositorRecycle();
+}
+
+void
+TextureParent::CompositorRecycle()
+{
+  mTextureHost->ClearRecycleCallback();
+  mozilla::unused << SendCompositorRecycle();
+
+  // Don't forget to prepare for the next reycle
+  mWaitForClientRecycle = mTextureHost;
+}
+
+bool
+TextureParent::RecvClientRecycle()
+{
+  // This will allow the RecycleCallback to be called once the compositor
+  // releases any external references to TextureHost.
+  mTextureHost->SetRecycleCallback(RecycleCallback, this);
+  if (!mWaitForClientRecycle) {
+    RECYCLE_LOG("Not a recycable tile");
+  }
+  mWaitForClientRecycle = nullptr;
+  return true;
 }
 
 bool
@@ -738,7 +771,14 @@ TextureParent::Init(const SurfaceDescriptor& aSharedData,
   mTextureHost = TextureHost::Create(aSharedData,
                                      mAllocator,
                                      aFlags);
-  mTextureHost->mActor = this;
+  if (mTextureHost) {
+    mTextureHost->mActor = this;
+    if (aFlags & TEXTURE_RECYCLE) {
+      mWaitForClientRecycle = mTextureHost;
+      RECYCLE_LOG("Setup recycling for tile %p\n", this);
+    }
+  }
+
   return !!mTextureHost;
 }
 
@@ -773,6 +813,10 @@ TextureParent::ActorDestroy(ActorDestroyReason why)
     NS_RUNTIMEABORT("FailedConstructor isn't possible in PTexture");
   }
 
+  if (mTextureHost->GetFlags() & TEXTURE_RECYCLE) {
+    RECYCLE_LOG("clear recycling for tile %p\n", this);
+    mTextureHost->ClearRecycleCallback();
+  }
   if (mTextureHost->GetFlags() & TEXTURE_DEALLOCATE_CLIENT) {
     mTextureHost->ForgetSharedData();
   }

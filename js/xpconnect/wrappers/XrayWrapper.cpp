@@ -53,6 +53,16 @@ GetXrayType(JSObject *obj)
     return NotXray;
 }
 
+JSObject *
+XrayAwareCalleeGlobal(JSObject *fun)
+{
+  MOZ_ASSERT(js::IsFunctionObject(fun));
+  JSObject *scope = js::GetObjectParent(fun);
+  if (IsXrayWrapper(scope))
+    scope = js::UncheckedUnwrap(scope);
+  return js::GetGlobalForObjectCrossCompartment(scope);
+}
+
 const uint32_t JSSLOT_RESOLVING = 0;
 ResolvingId::ResolvingId(JSContext *cx, HandleObject wrapper, HandleId id)
   : mId(id),
@@ -477,8 +487,8 @@ XrayTraits::cloneExpandoChain(JSContext *cx, HandleObject dst, HandleObject src)
                                                      .toObjectOrNull());
         if (!JS_WrapObject(cx, &exclusive))
             return false;
-        JSObject *newHead = attachExpandoObject(cx, dst, GetExpandoObjectPrincipal(oldHead),
-                                                exclusive);
+        RootedObject newHead(cx, attachExpandoObject(cx, dst, GetExpandoObjectPrincipal(oldHead),
+                                                     exclusive));
         if (!JS_CopyPropertiesFrom(cx, newHead, oldHead))
             return false;
         oldHead = JS_GetReservedSlot(oldHead, JSSLOT_EXPANDO_NEXT).toObjectOrNull();
@@ -1540,7 +1550,7 @@ XrayWrapper<Base, Traits>::getPropertyDescriptor(JSContext *cx, HandleObject wra
         id == nsXPConnect::GetRuntimeInstance()->GetStringID(XPCJSRuntime::IDX_TO_STRING))
     {
 
-        JSFunction *toString = JS_NewFunction(cx, XrayToString, 0, 0, holder, "toString");
+        JSFunction *toString = JS_NewFunction(cx, XrayToString, 0, 0, wrapper, "toString");
         if (!toString)
             return false;
 

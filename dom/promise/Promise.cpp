@@ -9,6 +9,7 @@
 #include "jsfriendapi.h"
 #include "mozilla/dom/OwningNonNull.h"
 #include "mozilla/dom/PromiseBinding.h"
+#include "mozilla/CycleCollectedJSRuntime.h"
 #include "mozilla/Preferences.h"
 #include "PromiseCallback.h"
 #include "PromiseNativeHandler.h"
@@ -98,13 +99,11 @@ public:
     MOZ_ASSERT(mState != Promise::Pending);
     MOZ_COUNT_CTOR(PromiseResolverMixin);
 
-    JSContext* cx = nsContentUtils::GetDefaultJSContextForThread();
-
     /* It's safe to use unsafeGet() here: the unsafeness comes from the
      * possibility of updating the value of mJSObject without triggering the
      * barriers.  However if the value will always be marked, post barriers
      * unnecessary. */
-    JS_AddNamedValueRootRT(JS_GetRuntime(cx), mValue.unsafeGet(),
+    JS_AddNamedValueRootRT(CycleCollectedJSRuntime::Get()->Runtime(), mValue.unsafeGet(),
                            "PromiseResolverMixin.mValue");
   }
 
@@ -113,13 +112,11 @@ public:
     NS_ASSERT_OWNINGTHREAD(PromiseResolverMixin);
     MOZ_COUNT_DTOR(PromiseResolverMixin);
 
-    JSContext* cx = nsContentUtils::GetDefaultJSContextForThread();
-
     /* It's safe to use unsafeGet() here: the unsafeness comes from the
      * possibility of updating the value of mJSObject without triggering the
      * barriers.  However if the value will always be marked, post barriers
      * unnecessary. */
-    JS_RemoveValueRootRT(JS_GetRuntime(cx), mValue.unsafeGet());
+    JS_RemoveValueRootRT(CycleCollectedJSRuntime::Get()->Runtime(), mValue.unsafeGet());
   }
 
 protected:
@@ -188,11 +185,10 @@ public:
 NS_IMPL_CYCLE_COLLECTION_CLASS(Promise)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Promise)
-  tmp->MaybeReportRejected();
+  tmp->MaybeReportRejectedOnce();
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mGlobal)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mResolveCallbacks);
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mRejectCallbacks);
-  tmp->mResult = JS::UndefinedValue();
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
@@ -232,8 +228,7 @@ Promise::Promise(nsIGlobalObject* aGlobal)
 
 Promise::~Promise()
 {
-  MaybeReportRejected();
-  mResult = JS::UndefinedValue();
+  MaybeReportRejectedOnce();
   mozilla::DropJSObjects(this);
 }
 
@@ -631,7 +626,7 @@ public:
   {
     MOZ_ASSERT(mCountdown > 0);
 
-    JSContext* cx = nsContentUtils::GetDefaultJSContextForThread();
+    ThreadsafeAutoSafeJSContext cx;
     JSAutoCompartment ac(cx, mValues);
 
     {
@@ -825,6 +820,9 @@ Promise::AppendCallbacks(PromiseCallback* aResolveCallback,
   if (aRejectCallback) {
     mHadRejectCallback = true;
     mRejectCallbacks.AppendElement(aRejectCallback);
+
+    // Now that there is a callback, we don't need to report anymore.
+    RemoveFeature();
   }
 
   // If promise's state is resolved, queue a task to process our resolve
@@ -855,8 +853,7 @@ Promise::RunTask()
   mResolveCallbacks.Clear();
   mRejectCallbacks.Clear();
 
-  JSContext* cx = nsContentUtils::GetDefaultJSContextForThread();
-  JSAutoRequest ar(cx);
+  ThreadsafeAutoJSContext cx; // Just for rooting.
   JS::Rooted<JS::Value> value(cx, mResult);
 
   for (uint32_t i = 0; i < callbacks.Length(); ++i) {
@@ -871,13 +868,10 @@ Promise::MaybeReportRejected()
     return;
   }
 
-  // Technically we should push this JSContext, but in reality the JS engine
-  // just uses it for string allocation here, so we can get away without it.
   if (!mResult.isObject()) {
     return;
   }
-  JSContext* cx = nsContentUtils::GetDefaultJSContextForThread();
-  JSAutoRequest ar(cx);
+  ThreadsafeAutoJSContext cx;
   JS::Rooted<JSObject*> obj(cx, &mResult.toObject());
   JSAutoCompartment ac(cx, obj);
   JSErrorReport* report = JS_ErrorFromException(cx, obj);
@@ -1065,7 +1059,45 @@ Promise::RunResolveTask(JS::Handle<JS::Value> aValue,
 
   SetResult(aValue);
   SetState(aState);
+
+  // If the Promise was rejected, and there is no reject handler already setup,
+  // watch for thread shutdown.
+  if (aState == PromiseState::Rejected &&
+      !mHadRejectCallback &&
+      !NS_IsMainThread()) {
+    WorkerPrivate* worker = GetCurrentThreadWorkerPrivate();
+    MOZ_ASSERT(worker);
+    worker->AssertIsOnWorkerThread();
+
+    mFeature = new PromiseReportRejectFeature(this);
+    if (NS_WARN_IF(!worker->AddFeature(worker->GetJSContext(), mFeature))) {
+      // Worker is shutting down, report rejection immediately since it is
+      // unlikely that reject callbacks will be added after this point.
+      MaybeReportRejected();
+    }
+  }
+
   RunTask();
+}
+
+void
+Promise::RemoveFeature()
+{
+  if (mFeature) {
+    WorkerPrivate* worker = GetCurrentThreadWorkerPrivate();
+    MOZ_ASSERT(worker);
+    worker->RemoveFeature(worker->GetJSContext(), mFeature);
+    mFeature = nullptr;
+  }
+}
+
+bool
+PromiseReportRejectFeature::Notify(JSContext* aCx, workers::Status aStatus)
+{
+  MOZ_ASSERT(aStatus > workers::Running);
+  mPromise->MaybeReportRejectedOnce();
+  // After this point, `this` has been deleted by RemoveFeature!
+  return true;
 }
 
 bool
@@ -1086,6 +1118,16 @@ Promise::ArgumentToJSValue(const nsAString& aArgument,
     NS_ADDREF(sharedBuffer);
   }
 
+  return true;
+}
+
+bool
+Promise::ArgumentToJSValue(bool aArgument,
+                           JSContext* aCx,
+                           JSObject* aScope,
+                           JS::MutableHandle<JS::Value> aValue)
+{
+  aValue.setBoolean(aArgument);
   return true;
 }
 

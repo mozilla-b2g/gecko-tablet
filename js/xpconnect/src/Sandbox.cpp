@@ -510,6 +510,7 @@ EvalInWindow(JSContext *cx, const nsAString &source, HandleObject scope, Mutable
         lineNo = 0;
     }
 
+    RootedObject cxGlobal(cx, JS::CurrentGlobalOrNull(cx));
     {
         // CompileOptions must be created from the context
         // we will execute this script in.
@@ -548,8 +549,9 @@ EvalInWindow(JSContext *cx, const nsAString &source, HandleObject scope, Mutable
             rval.set(UndefinedValue());
 
             // Then clone the exception.
-            if (CloneNonReflectors(cx, &exn))
-                JS_SetPendingException(cx, exn);
+            JSAutoCompartment ac(wndCx, cxGlobal);
+            if (CloneNonReflectors(wndCx, &exn))
+                js::SetPendingExceptionCrossContext(cx, exn);
 
             return false;
         }
@@ -1111,7 +1113,7 @@ xpc::CreateSandboxObject(JSContext *cx, MutableHandleValue vp, nsISupports *prin
             new SandboxPrivate(principal, sandbox);
 
         // Pass on ownership of sbp to |sandbox|.
-        JS_SetPrivate(sandbox, sbp.forget().get());
+        JS_SetPrivate(sandbox, sbp.forget().take());
 
         bool allowComponents = nsContentUtils::IsSystemPrincipal(principal) ||
                                nsContentUtils::IsExpandedPrincipal(principal);
@@ -1231,18 +1233,14 @@ GetPrincipalOrSOP(JSContext *cx, HandleObject from, nsISupports **out)
     *out = nullptr;
 
     nsXPConnect* xpc = nsXPConnect::XPConnect();
-    nsCOMPtr<nsIXPConnectWrappedNative> wrapper;
-    xpc->GetWrappedNativeOfJSObject(cx, from,
-                                    getter_AddRefs(wrapper));
+    nsISupports* native = xpc->GetNativeOfWrapper(cx, from);
 
-    NS_ENSURE_TRUE(wrapper, false);
-
-    if (nsCOMPtr<nsIScriptObjectPrincipal> sop = do_QueryWrappedNative(wrapper)) {
+    if (nsCOMPtr<nsIScriptObjectPrincipal> sop = do_QueryInterface(native)) {
         sop.forget(out);
         return true;
     }
 
-    nsCOMPtr<nsIPrincipal> principal = do_QueryWrappedNative(wrapper);
+    nsCOMPtr<nsIPrincipal> principal = do_QueryInterface(native);
     principal.forget(out);
     NS_ENSURE_TRUE(*out, false);
 
@@ -1680,8 +1678,7 @@ xpc::EvalInSandbox(JSContext *cx, HandleObject sandboxArg, const nsAString& sour
         JSAutoCompartment ac(sandcx, sandbox);
 
         JS::CompileOptions options(sandcx);
-        options.setPrincipals(nsJSPrincipals::get(prin))
-               .setFileAndLine(filenameBuf.get(), lineNo);
+        options.setFileAndLine(filenameBuf.get(), lineNo);
         if (jsVersion != JSVERSION_DEFAULT)
                options.setVersion(jsVersion);
         JS::RootedObject rootedSandbox(sandcx, sandbox);

@@ -7,7 +7,6 @@ const CURRENT_SCHEMA_VERSION = 23;
 
 const NS_APP_USER_PROFILE_50_DIR = "ProfD";
 const NS_APP_PROFILE_DIR_STARTUP = "ProfDS";
-const NS_APP_BOOKMARKS_50_FILE = "BMarks";
 
 // Shortcuts to transitions type.
 const TRANSITION_LINK = Ci.nsINavHistoryService.TRANSITION_LINK;
@@ -28,7 +27,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
 XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
                                   "resource://gre/modules/NetUtil.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Promise",
-                                  "resource://gre/modules/commonjs/sdk/core/promise.js");
+                                  "resource://gre/modules/Promise.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Services",
                                   "resource://gre/modules/Services.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Task",
@@ -37,6 +36,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "BookmarkJSONUtils",
                                   "resource://gre/modules/BookmarkJSONUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PlacesBackups",
                                   "resource://gre/modules/PlacesBackups.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "PlacesTransactions",
+                                  "resource://gre/modules/PlacesTransactions.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "OS",
                                   "resource://gre/modules/osfile.jsm");
 

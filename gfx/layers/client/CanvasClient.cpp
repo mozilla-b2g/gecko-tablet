@@ -65,7 +65,9 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
                                                 : gfxContentType::COLOR_ALPHA;
     gfxImageFormat format
       = gfxPlatform::GetPlatform()->OptimalFormatForContent(contentType);
-    mBuffer = CreateBufferTextureClient(gfx::ImageFormatToSurfaceFormat(format));
+    mBuffer = CreateBufferTextureClient(gfx::ImageFormatToSurfaceFormat(format),
+                                        TEXTURE_FLAGS_DEFAULT,
+                                        gfxPlatform::GetPlatform()->GetPreferredCanvasBackend());
     MOZ_ASSERT(mBuffer->AsTextureClientSurface());
     mBuffer->AsTextureClientSurface()->AllocateForSurface(aSize);
 
@@ -79,10 +81,10 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
   bool updated = false;
   {
     // Restrict drawTarget to a scope so that terminates before Unlock.
-    RefPtr<DrawTarget> drawTarget =
-      mBuffer->AsTextureClientDrawTarget()->GetAsDrawTarget();
-    if (drawTarget) {
-      aLayer->UpdateTarget(drawTarget);
+    nsRefPtr<gfxASurface> surface =
+      mBuffer->AsTextureClientSurface()->GetAsSurface();
+    if (surface) {
+      aLayer->DeprecatedUpdateSurface(surface);
       updated = true;
     }
   }
@@ -99,13 +101,6 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
   }
 }
 
-TemporaryRef<BufferTextureClient>
-CanvasClient2D::CreateBufferTextureClient(gfx::SurfaceFormat aFormat, TextureFlags aFlags)
-{
-  return CompositableClient::CreateBufferTextureClient(aFormat,
-                                                       mTextureInfo.mTextureFlags | aFlags);
-}
-
 CanvasClientSurfaceStream::CanvasClientSurfaceStream(CompositableForwarder* aLayerForwarder,
                                                      TextureFlags aFlags)
   : CanvasClient(aLayerForwarder, aFlags)
@@ -116,7 +111,18 @@ void
 CanvasClientSurfaceStream::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 {
   GLScreenBuffer* screen = aLayer->mGLContext->Screen();
-  SurfaceStream* stream = screen->Stream();
+  SurfaceStream* stream = nullptr;
+
+  if (aLayer->mStream) {
+    stream = aLayer->mStream;
+
+    // Copy our current surface to the current producer surface in our stream, then
+    // call SwapProducer to make a new buffer ready.
+    stream->CopySurfaceToProducer(aLayer->mTextureSurface, aLayer->mFactory);
+    stream->SwapProducer(aLayer->mFactory, gfx::IntSize(aSize.width, aSize.height));
+  } else {
+    stream = screen->Stream();
+  }
 
   bool isCrossProcess = !(XRE_GetProcessType() == GeckoProcessType_Default);
   bool bufferCreated = false;
@@ -255,7 +261,15 @@ DeprecatedCanvasClientSurfaceStream::Update(gfx::IntSize aSize, ClientCanvasLaye
   mDeprecatedTextureClient->EnsureAllocated(aSize, gfxContentType::COLOR);
 
   GLScreenBuffer* screen = aLayer->mGLContext->Screen();
-  SurfaceStream* stream = screen->Stream();
+  SurfaceStream* stream = nullptr;
+
+  if (aLayer->mStream) {
+    stream = aLayer->mStream;
+    stream->CopySurfaceToProducer(aLayer->mTextureSurface, aLayer->mFactory);
+    stream->SwapProducer(aLayer->mFactory, gfx::IntSize(aSize.width, aSize.height));
+  } else {
+    stream = screen->Stream();
+  }
 
   bool isCrossProcess = !(XRE_GetProcessType() == GeckoProcessType_Default);
   if (isCrossProcess) {

@@ -33,6 +33,7 @@ from .data import (
     JARManifest,
     LibraryDefinition,
     LocalInclude,
+    PerSourceFlag,
     PreprocessedTestWebIDLFile,
     PreprocessedWebIDLFile,
     Program,
@@ -216,10 +217,12 @@ class TreeMetadataEmitter(LoggingMixin):
             'ANDROID_GENERATED_RESFILES',
             'ANDROID_RES_DIRS',
             'CPP_UNIT_TESTS',
+            'DISABLE_STL_WRAPPING',
             'EXPORT_LIBRARY',
             'EXTRA_ASSEMBLER_FLAGS',
             'EXTRA_COMPILE_FLAGS',
             'EXTRA_COMPONENTS',
+            'EXTRA_DSO_LDOPTS',
             'EXTRA_JS_MODULES',
             'EXTRA_PP_COMPONENTS',
             'EXTRA_PP_JS_MODULES',
@@ -240,6 +243,7 @@ class TreeMetadataEmitter(LoggingMixin):
             'OS_LIBS',
             'RCFILE',
             'RESFILE',
+            'RCINCLUDE',
             'DEFFILE',
             'SDK_LIBRARY',
             'WIN32_EXE_LDFLAGS',
@@ -306,6 +310,11 @@ class TreeMetadataEmitter(LoggingMixin):
             passthru.variables['NO_PROFILE_GUIDED_OPTIMIZE'] = no_pgo
         if no_pgo_sources:
             passthru.variables['NO_PROFILE_GUIDED_OPTIMIZE'] = no_pgo_sources
+
+        sources_with_flags = [f for f in sources if sources[f].flags]
+        for f in sources_with_flags:
+            ext = mozpath.splitext(f)[1]
+            yield PerSourceFlag(sandbox, f, sources[f].flags)
 
         exports = sandbox.get('EXPORTS')
         if exports:
@@ -468,9 +477,25 @@ class TreeMetadataEmitter(LoggingMixin):
             filtered = m.tests
 
             if filter_inactive:
-                filtered = m.active_tests(disabled=False, **self.mozinfo)
+                # We return tests that don't exist because we want manifests
+                # defining tests that don't exist to result in error.
+                filtered = m.active_tests(exists=False, disabled=False,
+                    **self.mozinfo)
+
+                missing = [t['name'] for t in filtered if not os.path.exists(t['path'])]
+                if missing:
+                    raise SandboxValidationError('Test manifest (%s) lists '
+                        'test that does not exist: %s' % (
+                        path, ', '.join(missing)))
 
             out_dir = mozpath.join(install_prefix, manifest_reldir)
+            if 'install-to-subdir' in defaults:
+                # This is terrible, but what are you going to do?
+                out_dir = mozpath.join(out_dir, defaults['install-to-subdir'])
+                obj.manifest_obj_relpath = mozpath.join(manifest_reldir,
+                                                        defaults['install-to-subdir'],
+                                                        mozpath.basename(path))
+
 
             # "head" and "tail" lists.
             # All manifests support support-files.
@@ -541,9 +566,12 @@ class TreeMetadataEmitter(LoggingMixin):
                 # If there are no tests, look for support-files under DEFAULT.
                 process_support_files(defaults)
 
-            # We also copy the manifest into the output directory.
-            out_path = mozpath.join(out_dir, mozpath.basename(manifest_path))
-            obj.installs[path] = (out_path, False)
+            # We also copy manifests into the output directory,
+            # including manifests from [include:foo] directives.
+            for mpath in m.manifests():
+                mpath = mozpath.normpath(mpath)
+                out_path = mozpath.join(out_dir, mozpath.basename(mpath))
+                obj.installs[mpath] = (out_path, False)
 
             # Some manifests reference files that are auto generated as
             # part of the build or shouldn't be installed for some

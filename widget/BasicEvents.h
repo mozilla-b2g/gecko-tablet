@@ -81,7 +81,7 @@ enum nsEventStructType
 #define NS_EVENT_NULL                   0
 
 // This is a dummy event message for all event listener implementation in
-// nsEventListenerManager.
+// EventListenerManager.
 #define NS_EVENT_ALL                    1
 
 #define NS_WINDOW_START                 100
@@ -499,20 +499,20 @@ public:
   // If mInSystemGroup is true, the event is being dispatched in system group.
   bool    mInSystemGroup: 1;
   // If mCancelable is true, the event can be consumed.  I.e., calling
-  // nsDOMEvent::PreventDefault() can prevent the default action.
+  // dom::Event::PreventDefault() can prevent the default action.
   bool    mCancelable : 1;
   // If mBubbles is true, the event can bubble.  Otherwise, cannot be handled
   // in bubbling phase.
   bool    mBubbles : 1;
-  // If mPropagationStopped is true, nsDOMEvent::StopPropagation() or
-  // nsDOMEvent::StopImmediatePropagation() has been called.
+  // If mPropagationStopped is true, dom::Event::StopPropagation() or
+  // dom::Event::StopImmediatePropagation() has been called.
   bool    mPropagationStopped : 1;
   // If mImmediatePropagationStopped is true,
-  // nsDOMEvent::StopImmediatePropagation() has been called.
+  // dom::Event::StopImmediatePropagation() has been called.
   // Note that mPropagationStopped must be true when this is true.
   bool    mImmediatePropagationStopped : 1;
   // If mDefaultPrevented is true, the event has been consumed.
-  // E.g., nsDOMEvent::PreventDefault() has been called or
+  // E.g., dom::Event::PreventDefault() has been called or
   // the default action has been performed.
   bool    mDefaultPrevented : 1;
   // If mDefaultPreventedByContent is true, the event has been
@@ -546,13 +546,18 @@ public:
   // If mNoContentDispatch is true, the event is never dispatched to the
   // event handlers which are added to the contents, onfoo attributes and
   // properties.  Note that this flag is ignored when
-  // nsEventChainPreVisitor::mForceContentDispatch is set true.  For exapmle,
+  // EventChainPreVisitor::mForceContentDispatch is set true.  For exapmle,
   // window and document object sets it true.  Therefore, web applications
   // can handle the event if they add event listeners to the window or the
   // document.
   bool    mNoContentDispatch : 1;
   // If mOnlyChromeDispatch is true, the event is dispatched to only chrome.
   bool    mOnlyChromeDispatch : 1;
+  // If mWantReplyFromContentProcess is true, the event will be redispatched
+  // in the parent process after the content process has handled it. Useful
+  // for when the parent process need the know first how the event was used
+  // by content before handling it itself.
+  bool mWantReplyFromContentProcess : 1;
 
   // If the event is being handled in target phase, returns true.
   inline bool InTargetPhase() const

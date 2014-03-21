@@ -7,7 +7,7 @@
 #define nsCycleCollectionParticipant_h__
 
 #include "nsCycleCollectionNoteChild.h"
-#include "jspubtd.h"
+#include "js/RootingAPI.h"
 
 #define NS_CYCLECOLLECTIONPARTICIPANT_IID                                      \
 {                                                                              \
@@ -58,6 +58,7 @@ struct TraceCallbacks
     virtual void Trace(JS::Heap<JS::Value>* p, const char* name, void* closure) const = 0;
     virtual void Trace(JS::Heap<jsid>* p, const char* name, void* closure) const = 0;
     virtual void Trace(JS::Heap<JSObject*>* p, const char* name, void* closure) const = 0;
+    virtual void Trace(JS::TenuredHeap<JSObject*>* p, const char* name, void* closure) const = 0;
     virtual void Trace(JS::Heap<JSString*>* p, const char* name, void* closure) const = 0;
     virtual void Trace(JS::Heap<JSScript*>* p, const char* name, void* closure) const = 0;
     virtual void Trace(JS::Heap<JSFunction*>* p, const char* name, void* closure) const = 0;
@@ -76,6 +77,7 @@ struct TraceCallbackFunc : public TraceCallbacks
     virtual void Trace(JS::Heap<JS::Value>* p, const char* name, void* closure) const MOZ_OVERRIDE;
     virtual void Trace(JS::Heap<jsid>* p, const char* name, void* closure) const MOZ_OVERRIDE;
     virtual void Trace(JS::Heap<JSObject*>* p, const char* name, void* closure) const MOZ_OVERRIDE;
+    virtual void Trace(JS::TenuredHeap<JSObject*>* p, const char* name, void* closure) const MOZ_OVERRIDE;
     virtual void Trace(JS::Heap<JSString*>* p, const char* name, void* closure) const MOZ_OVERRIDE;
     virtual void Trace(JS::Heap<JSScript*>* p, const char* name, void* closure) const MOZ_OVERRIDE;
     virtual void Trace(JS::Heap<JSFunction*>* p, const char* name, void* closure) const MOZ_OVERRIDE;
@@ -708,11 +710,18 @@ static NS_CYCLE_COLLECTION_INNERCLASS NS_CYCLE_COLLECTION_INNERNAME;
     tmp->_unroot_function();                                                   \
   }
 
-// NS_IMPL_CYCLE_COLLECTION_0 is not defined because most of the time it doesn't
-// make sense to add something to the CC that doesn't traverse to anything.
-
 #define NS_IMPL_CYCLE_COLLECTION_CLASS(_class) \
  _class::NS_CYCLE_COLLECTION_INNERCLASS _class::NS_CYCLE_COLLECTION_INNERNAME;
+
+// NB: This is not something you usually want to use.  It is here to allow
+// adding things to the CC graph to help debugging via CC logs, but it does not
+// traverse or unlink anything, so it is useless for anything else.
+#define NS_IMPL_CYCLE_COLLECTION_0(_class)                                     \
+ NS_IMPL_CYCLE_COLLECTION_CLASS(_class)                                        \
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(_class)                                 \
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_END                                           \
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(_class)                               \
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 #define NS_IMPL_CYCLE_COLLECTION_1(_class, _f)                                 \
  NS_IMPL_CYCLE_COLLECTION_CLASS(_class)                                        \

@@ -413,10 +413,26 @@ SampleAnimations(Layer* aLayer, TimeStamp aPoint)
     Animation& animation = animations[i];
     AnimData& animData = animationData[i];
 
+    activeAnimations = true;
+
+    TimeDuration elapsedDuration = aPoint - animation.startTime();
+    // Skip animations that are yet to start.
+    //
+    // Currently, this should only happen when the refresh driver is under test
+    // control and is made to produce a time in the past or is restored from
+    // test control causing it to jump backwards in time.
+    //
+    // Since activeAnimations is true, this could mean we keep compositing
+    // unnecessarily during the delay, but so long as this only happens while
+    // the refresh driver is under test control that should be ok.
+    if (elapsedDuration.ToSeconds() < 0) {
+      continue;
+    }
+
     double numIterations = animation.numIterations() != -1 ?
       animation.numIterations() : NS_IEEEPositiveInfinity();
     double positionInIteration =
-      ElementAnimations::GetPositionInIteration(aPoint - animation.startTime(),
+      ElementAnimations::GetPositionInIteration(elapsedDuration,
                                                 animation.duration(),
                                                 numIterations,
                                                 animation.direction());
@@ -436,8 +452,6 @@ SampleAnimations(Layer* aLayer, TimeStamp aPoint)
                                  (segment->endPortion() - segment->startPortion());
 
     double portion = animData.mFunctions[segmentIndex]->GetValue(positionInSegment);
-
-    activeAnimations = true;
 
     // interpolate the property
     Animatable interpolatedValue;
@@ -648,7 +662,7 @@ AsyncCompositionManager::TransformScrollableLayer(Layer* aLayer)
 
   CSSToLayerScale geckoZoom = metrics.LayersPixelsPerCSSPixel();
 
-  LayerIntPoint scrollOffsetLayerPixels = RoundedToInt(metrics.mScrollOffset * geckoZoom);
+  LayerIntPoint scrollOffsetLayerPixels = RoundedToInt(metrics.GetScrollOffset() * geckoZoom);
 
   if (mIsFirstPaint) {
     mContentRect = metrics.mScrollableRect;
@@ -680,7 +694,7 @@ AsyncCompositionManager::TransformScrollableLayer(Layer* aLayer)
   // however, we can assume there is no async zooming in progress and so the following statement
   // works fine.
   CSSToScreenScale userZoom(metrics.mDevPixelsPerCSSPixel * metrics.mCumulativeResolution * LayerToScreenScale(1));
-  ScreenPoint userScroll = metrics.mScrollOffset * userZoom;
+  ScreenPoint userScroll = metrics.GetScrollOffset() * userZoom;
   SyncViewportInfo(displayPort, geckoZoom, mLayersUpdated,
                    userScroll, userZoom, fixedLayerMargins,
                    offset);
@@ -699,7 +713,7 @@ AsyncCompositionManager::TransformScrollableLayer(Layer* aLayer)
 
   LayerPoint geckoScroll(0, 0);
   if (metrics.IsScrollable()) {
-    geckoScroll = metrics.mScrollOffset * geckoZoom;
+    geckoScroll = metrics.GetScrollOffset() * geckoZoom;
   }
 
   LayerPoint translation = (userScroll / zoomAdjust) - geckoScroll;

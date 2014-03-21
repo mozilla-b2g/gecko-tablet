@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/BasicEvents.h"
+#include "mozilla/EventDispatcher.h"
 #include "mozilla/Likely.h"
 
 #include "nsGkAtoms.h"
@@ -32,7 +33,6 @@
 #include "nsStyleUtil.h"
 #include "SVGContentUtils.h"
 
-#include "nsEventDispatcher.h"
 #include "nsSMILTimeContainer.h"
 #include "nsSMILAnimationController.h"
 #include "nsSMILTypes.h"
@@ -156,8 +156,8 @@ NS_INTERFACE_TABLE_TAIL_INHERITING(SVGSVGElementBase)
 //----------------------------------------------------------------------
 // Implementation
 
-SVGSVGElement::SVGSVGElement(already_AddRefed<nsINodeInfo> aNodeInfo,
-                                 FromParser aFromParser)
+SVGSVGElement::SVGSVGElement(already_AddRefed<nsINodeInfo>& aNodeInfo,
+                             FromParser aFromParser)
   : SVGSVGElementBase(aNodeInfo),
     mViewportWidth(0),
     mViewportHeight(0),
@@ -183,8 +183,8 @@ nsresult
 SVGSVGElement::Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const
 {
   *aResult = nullptr;
-  nsCOMPtr<nsINodeInfo> ni = aNodeInfo;
-  SVGSVGElement *it = new SVGSVGElement(ni.forget(), NOT_FROM_PARSER);
+  already_AddRefed<nsINodeInfo> ni = nsCOMPtr<nsINodeInfo>(aNodeInfo).forget();
+  SVGSVGElement *it = new SVGSVGElement(ni, NOT_FROM_PARSER);
 
   nsCOMPtr<nsINode> kungFuDeathGrip = it;
   nsresult rv1 = it->Init();
@@ -433,7 +433,7 @@ SVGSVGElement::CreateSVGTransform()
 already_AddRefed<SVGTransform>
 SVGSVGElement::CreateSVGTransformFromMatrix(SVGMatrix& matrix)
 {
-  nsRefPtr<SVGTransform> transform = new SVGTransform(matrix.Matrix());
+  nsRefPtr<SVGTransform> transform = new SVGTransform(matrix.GetMatrix());
   return transform.forget();
 }
 
@@ -589,7 +589,7 @@ SVGSVGElement::IsAttributeMapped(const nsIAtom* name) const
 // nsIContent methods:
 
 nsresult
-SVGSVGElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
+SVGSVGElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
 {
   if (aVisitor.mEvent->message == NS_SVG_LOAD) {
     if (mTimedDocumentRoot) {

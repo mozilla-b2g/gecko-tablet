@@ -68,8 +68,7 @@ StoreBuffer::WholeCellEdges::mark(JSTracer *trc)
         JSObject *object = static_cast<JSObject *>(tenured);
         if (object->is<ArgumentsObject>())
             ArgumentsObject::trace(trc, object);
-        else
-            MarkChildren(trc, object);
+        MarkChildren(trc, object);
         return;
     }
 #ifdef JS_ION
@@ -100,7 +99,7 @@ StoreBuffer::MonoTypeBuffer<T>::handleOverflow(StoreBuffer *owner)
           * compacting unless the buffer is totally full.
           */
         if (storage_->availableInCurrentChunk() < sizeof(T))
-            compact(owner);
+            maybeCompact(owner);
     }
 }
 
@@ -326,7 +325,7 @@ void
 StoreBuffer::setAboutToOverflow()
 {
     aboutToOverflow_ = true;
-    runtime_->triggerOperationCallback(JSRuntime::TriggerCallbackMainThread);
+    runtime_->requestInterrupt(JSRuntime::RequestInterruptMainThread);
 }
 
 bool
@@ -369,6 +368,8 @@ JS_PUBLIC_API(void)
 JS::HeapValuePostBarrier(JS::Value *valuep)
 {
     JS_ASSERT(JSVAL_IS_TRACEABLE(*valuep));
+    if (valuep->isString() && StringIsPermanentAtom(valuep->toString()))
+        return;
     JSRuntime *runtime = static_cast<js::gc::Cell *>(valuep->toGCThing())->runtimeFromMainThread();
     runtime->gcStoreBuffer.putRelocatableValue(valuep);
 }
@@ -378,6 +379,8 @@ JS::HeapValueRelocate(JS::Value *valuep)
 {
     /* Called with old contents of *valuep before overwriting. */
     JS_ASSERT(JSVAL_IS_TRACEABLE(*valuep));
+    if (valuep->isString() && StringIsPermanentAtom(valuep->toString()))
+        return;
     JSRuntime *runtime = static_cast<js::gc::Cell *>(valuep->toGCThing())->runtimeFromMainThread();
     runtime->gcStoreBuffer.removeRelocatableValue(valuep);
 }

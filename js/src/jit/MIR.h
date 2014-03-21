@@ -134,7 +134,7 @@ typedef InlineList<MUse>::iterator MUseIterator;
 // A node is an entry in the MIR graph. It has two kinds:
 //   MInstruction: an instruction which appears in the IR stream.
 //   MResumePoint: a list of instructions that correspond to the state of the
-//              interpreter stack.
+//                 interpreter/Baseline stack.
 //
 // Nodes can hold references to MDefinitions. Each MDefinition has a list of
 // nodes holding such a reference (its use chain).
@@ -1321,6 +1321,8 @@ class MTest
     }
     void infer();
     MDefinition *foldsTo(TempAllocator &alloc, bool useValueNumbers);
+    void filtersUndefinedOrNull(bool trueBranch, MDefinition **subject, bool *filtersUndefined,
+                                bool *filtersNull);
 
     void markOperandCantEmulateUndefined() {
         operandMightEmulateUndefined_ = false;
@@ -2278,6 +2280,8 @@ class MCompare
     bool tryFold(bool *result);
     bool evaluateConstantOperands(bool *result);
     MDefinition *foldsTo(TempAllocator &alloc, bool useValueNumbers);
+    void filtersUndefinedOrNull(bool trueBranch, MDefinition **subject, bool *filtersUndefined,
+                                bool *filtersNull);
 
     void infer(BaselineInspector *inspector, jsbytecode *pc);
     CompareType compareType() const {
@@ -4552,17 +4556,7 @@ class MPhi MOZ_FINAL : public MDefinition, public InlineForwardListNode<MPhi>
     }
     void computeRange(TempAllocator &alloc);
 
-    MDefinition *operandIfRedundant() {
-        // If this phi is redundant (e.g., phi(a,a) or b=phi(a,this)),
-        // returns the operand that it will always be equal to (a, in
-        // those two cases).
-        MDefinition *first = getOperand(0);
-        for (size_t i = 1, e = numOperands(); i < e; i++) {
-            if (getOperand(i) != first && getOperand(i) != this)
-                return nullptr;
-        }
-        return first;
-    }
+    MDefinition *operandIfRedundant();
 
     bool canProduceFloat32() const {
         return canProduceFloat32_;
@@ -4615,7 +4609,7 @@ class MBeta : public MUnaryInstruction
     void computeRange(TempAllocator &alloc);
 };
 
-// MIR representation of a Value on the OSR StackFrame.
+// MIR representation of a Value on the OSR BaselineFrame.
 // The Value is indexed off of OsrFrameReg.
 class MOsrValue : public MUnaryInstruction
 {
@@ -4648,7 +4642,7 @@ class MOsrValue : public MUnaryInstruction
     }
 };
 
-// MIR representation of a JSObject scope chain pointer on the OSR StackFrame.
+// MIR representation of a JSObject scope chain pointer on the OSR BaselineFrame.
 // The pointer is indexed off of OsrFrameReg.
 class MOsrScopeChain : public MUnaryInstruction
 {
@@ -4670,7 +4664,7 @@ class MOsrScopeChain : public MUnaryInstruction
     }
 };
 
-// MIR representation of a JSObject ArgumentsObject pointer on the OSR StackFrame.
+// MIR representation of a JSObject ArgumentsObject pointer on the OSR BaselineFrame.
 // The pointer is indexed off of OsrFrameReg.
 class MOsrArgumentsObject : public MUnaryInstruction
 {
@@ -4692,7 +4686,7 @@ class MOsrArgumentsObject : public MUnaryInstruction
     }
 };
 
-// MIR representation of the return value on the OSR StackFrame.
+// MIR representation of the return value on the OSR BaselineFrame.
 // The Value is indexed off of OsrFrameReg.
 class MOsrReturnValue : public MUnaryInstruction
 {
@@ -8806,6 +8800,37 @@ class MGuardThreadExclusive
     }
 };
 
+class MFilterTypeSet
+  : public MUnaryInstruction
+{
+    MFilterTypeSet(MDefinition *def, types::TemporaryTypeSet *types)
+      : MUnaryInstruction(def)
+    {
+        JS_ASSERT(!types->unknown());
+
+        MIRType type = MIRTypeFromValueType(types->getKnownTypeTag());
+        setResultType(type);
+        setResultTypeSet(types);
+    }
+
+  public:
+    INSTRUCTION_HEADER(FilterTypeSet)
+
+    static MFilterTypeSet *New(TempAllocator &alloc, MDefinition *def, types::TemporaryTypeSet *types) {
+        return new(alloc) MFilterTypeSet(def, types);
+    }
+
+    bool congruentTo(MDefinition *def) const {
+        return false;
+    }
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
+    virtual bool neverHoist() const {
+        return resultTypeSet()->empty();
+    }
+};
+
 // Given a value, guard that the value is in a particular TypeSet, then returns
 // that value.
 class MTypeBarrier
@@ -9197,7 +9222,7 @@ class MNewDenseArrayPar : public MBinaryInstruction
     }
 };
 
-// A resume point contains the information needed to reconstruct the interpreter
+// A resume point contains the information needed to reconstruct the Baseline
 // state from a position in the JIT. See the big comment near resumeAfter() in
 // IonBuilder.cpp.
 class MResumePoint MOZ_FINAL : public MNode, public InlineForwardListNode<MResumePoint>
@@ -9866,7 +9891,7 @@ bool PropertyReadOnPrototypeNeedsTypeBarrier(types::CompilerConstraintList *cons
                                              types::TemporaryTypeSet *observed);
 bool PropertyReadIsIdempotent(types::CompilerConstraintList *constraints,
                               MDefinition *obj, PropertyName *name);
-bool AddObjectsForPropertyRead(MDefinition *obj, PropertyName *name,
+void AddObjectsForPropertyRead(MDefinition *obj, PropertyName *name,
                                types::TemporaryTypeSet *observed);
 bool PropertyWriteNeedsTypeBarrier(TempAllocator &alloc, types::CompilerConstraintList *constraints,
                                    MBasicBlock *current, MDefinition **pobj,

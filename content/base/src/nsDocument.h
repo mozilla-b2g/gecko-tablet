@@ -61,6 +61,7 @@
 #include "nsISecurityEventSink.h"
 #include "nsIChannelEventSink.h"
 #include "imgIRequest.h"
+#include "mozilla/EventListenerManager.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/DOMImplementation.h"
 #include "nsIDOMTouchEvent.h"
@@ -76,7 +77,6 @@
 #define XML_DECLARATION_BITS_STANDALONE_YES       (1 << 3)
 
 
-class nsEventListenerManager;
 class nsDOMStyleSheetList;
 class nsDOMStyleSheetSetList;
 class nsIOutputStream;
@@ -98,6 +98,7 @@ class nsPointerLockPermissionRequest;
 class nsISecurityConsoleMessage;
 
 namespace mozilla {
+class EventChainPreVisitor;
 namespace dom {
 class UndoManager;
 class LifecycleCallbacks;
@@ -313,7 +314,7 @@ private:
   // The this value to use for invocation of the callback.
   nsRefPtr<mozilla::dom::Element> mThisObject;
   nsRefPtr<mozilla::dom::CallbackFunction> mCallback;
-  // The type of callback (eCreated, eEnteredView, etc.)
+  // The type of callback (eCreated, eAttached, etc.)
   nsIDocument::ElementCallbackType mType;
   // Arguments to be passed to the callback,
   // used by the attribute changed callback.
@@ -902,9 +903,12 @@ public:
   NS_DECL_NSIDOMDOCUMENTXBL
 
   // nsIDOMEventTarget
-  virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
-  virtual nsEventListenerManager* GetOrCreateListenerManager() MOZ_OVERRIDE;
-  virtual nsEventListenerManager* GetExistingListenerManager() const MOZ_OVERRIDE;
+  virtual nsresult PreHandleEvent(
+                     mozilla::EventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
+  virtual mozilla::EventListenerManager*
+    GetOrCreateListenerManager() MOZ_OVERRIDE;
+  virtual mozilla::EventListenerManager*
+    GetExistingListenerManager() const MOZ_OVERRIDE;
 
   // nsIScriptObjectPrincipal
   virtual nsIPrincipal* GetPrincipal() MOZ_OVERRIDE;
@@ -1417,10 +1421,12 @@ public:
                                     uint32_t aNamespaceID,
                                     mozilla::ErrorResult& rv);
 
+  static bool IsRegisterElementEnabled(JSContext* aCx, JSObject* aObject);
+
   // The "registry" from the web components spec.
   nsRefPtr<Registry> mRegistry;
 
-  nsRefPtr<nsEventListenerManager> mListenerManager;
+  nsRefPtr<mozilla::EventListenerManager> mListenerManager;
   nsCOMPtr<nsIDOMStyleSheetList> mDOMStyleSheets;
   nsRefPtr<nsDOMStyleSheetSetList> mStyleSheetSetList;
   nsRefPtr<nsScriptLoader> mScriptLoader;

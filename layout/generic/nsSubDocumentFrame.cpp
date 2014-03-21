@@ -411,6 +411,13 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     haveDisplayPort ||
     presContext->IsRootContentDocument() || (sf && sf->IsScrollingActive());
 
+  // Don't let in fixed pos propagate down to child documents. This makes
+  // it a little less effective but doesn't regress an important case of a
+  // child document being in a fixed pos element where we would do no occlusion
+  // at all if we let it propagate down.
+  nsDisplayListBuilder::AutoInFixedPosSetter
+    buildingInFixedPos(aBuilder, false);
+
   nsDisplayList childItems;
 
   {
@@ -1042,7 +1049,7 @@ EndSwapDocShellsForDocument(nsIDocument* aDocument, void*)
     nsCOMPtr<nsIContentViewer> cv;
     ds->GetContentViewer(getter_AddRefs(cv));
     while (cv) {
-      nsCOMPtr<nsPresContext> pc;
+      nsRefPtr<nsPresContext> pc;
       cv->GetPresContext(getter_AddRefs(pc));
       if (pc && pc->GetPresShell()) {
         pc->GetPresShell()->SetNeverPainting(ds->IsInvisible());

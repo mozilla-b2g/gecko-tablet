@@ -20,6 +20,59 @@
 namespace mozilla {
 namespace dom {
 
+CompareTextTracks::CompareTextTracks(HTMLMediaElement* aMediaElement)
+{
+  mMediaElement = aMediaElement;
+}
+
+int32_t
+CompareTextTracks::TrackChildPosition(TextTrack* aTextTrack) const {
+  HTMLTrackElement* trackElement = aTextTrack->GetTrackElement();
+  if (!trackElement) {
+    return -1;
+  }
+  return mMediaElement->IndexOf(trackElement);
+}
+
+bool
+CompareTextTracks::Equals(TextTrack* aOne, TextTrack* aTwo) const {
+  // Two tracks can never be equal. If they have corresponding TrackElements
+  // they would need to occupy the same tree position (impossible) and in the
+  // case of tracks coming from AddTextTrack source we put the newest at the
+  // last position, so they won't be equal as well.
+  return false;
+}
+
+bool
+CompareTextTracks::LessThan(TextTrack* aOne, TextTrack* aTwo) const
+{
+  TextTrackSource sourceOne = aOne->GetTextTrackSource();
+  TextTrackSource sourceTwo = aTwo->GetTextTrackSource();
+  if (sourceOne != sourceTwo) {
+    return sourceOne == Track ||
+           (sourceOne == AddTextTrack && sourceTwo == MediaResourceSpecific);
+  }
+  switch (sourceOne) {
+    case Track: {
+      int32_t positionOne = TrackChildPosition(aOne);
+      int32_t positionTwo = TrackChildPosition(aTwo);
+      // If either position one or positiontwo are -1 then something has gone
+      // wrong. In this case we should just put them at the back of the list.
+      return positionOne != -1 && positionTwo != -1 &&
+             positionOne < positionTwo;
+    }
+    case AddTextTrack:
+      // For AddTextTrack sources the tracks will already be in the correct relative
+      // order in the source array. Assume we're called in iteration order and can
+      // therefore always report aOne < aTwo to maintain the original temporal ordering.
+      return true;
+    case MediaResourceSpecific:
+      // No rules for Media Resource Specific tracks yet.
+      break;
+  }
+  return true;
+}
+
 NS_IMPL_CYCLE_COLLECTION_3(TextTrackManager, mTextTracks,
                            mPendingTextTracks, mNewCues)
 NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(TextTrackManager, AddRef)
@@ -29,6 +82,7 @@ StaticRefPtr<nsIWebVTTParserWrapper> TextTrackManager::sParserWrapper;
 
 TextTrackManager::TextTrackManager(HTMLMediaElement *aMediaElement)
   : mMediaElement(aMediaElement)
+  , performedTrackSelection(false)
 {
   MOZ_COUNT_CTOR(TextTrackManager);
   mNewCues = new TextTrackCueList(mMediaElement->OwnerDoc()->GetParentObject());
@@ -58,20 +112,37 @@ TextTrackManager::TextTracks() const
 
 already_AddRefed<TextTrack>
 TextTrackManager::AddTextTrack(TextTrackKind aKind, const nsAString& aLabel,
-                               const nsAString& aLanguage)
+                               const nsAString& aLanguage,
+                               TextTrackMode aMode,
+                               TextTrackReadyState aReadyState,
+                               TextTrackSource aTextTrackSource)
 {
+  if (!mMediaElement) {
+    return nullptr;
+  }
   nsRefPtr<TextTrack> ttrack =
-    mTextTracks->AddTextTrack(aKind, aLabel, aLanguage);
-  ttrack->SetReadyState(HTMLTrackElement::READY_STATE_LOADED);
+    mTextTracks->AddTextTrack(aKind, aLabel, aLanguage, aMode, aReadyState,
+                              aTextTrackSource, CompareTextTracks(mMediaElement));
   AddCues(ttrack);
+
+  if (aTextTrackSource == Track) {
+    HonorUserPreferencesForTrackSelection();
+  }
+
   return ttrack.forget();
 }
 
 void
 TextTrackManager::AddTextTrack(TextTrack* aTextTrack)
 {
-  mTextTracks->AddTextTrack(aTextTrack);
+  if (!mMediaElement) {
+    return;
+  }
+  mTextTracks->AddTextTrack(aTextTrack, CompareTextTracks(mMediaElement));
   AddCues(aTextTrack);
+  if (aTextTrack->GetTextTrackSource() == Track) {
+    HonorUserPreferencesForTrackSelection();
+  }
 }
 
 void
@@ -156,8 +227,103 @@ TextTrackManager::PopulatePendingList()
   for (uint32_t index = 0; index < len; ++index) {
     TextTrack* ttrack = mTextTracks->IndexedGetter(index, dummy);
     if (ttrack && ttrack->Mode() != TextTrackMode::Disabled &&
-        ttrack->ReadyState() == HTMLTrackElement::READY_STATE_LOADING) {
-      mPendingTextTracks->AddTextTrack(ttrack);
+        ttrack->ReadyState() == TextTrackReadyState::Loading) {
+      mPendingTextTracks->AddTextTrack(ttrack,
+                                       CompareTextTracks(mMediaElement));
+    }
+  }
+}
+
+void
+TextTrackManager::HonorUserPreferencesForTrackSelection()
+{
+  if (performedTrackSelection) {
+    return;
+  }
+
+  TextTrackKind ttKinds[] = { TextTrackKind::Captions,
+                              TextTrackKind::Subtitles };
+
+  // Steps 1 - 3: Perform automatic track selection for different TextTrack
+  // Kinds.
+  PerformTrackSelection(ttKinds, ArrayLength(ttKinds));
+  PerformTrackSelection(TextTrackKind::Descriptions);
+  PerformTrackSelection(TextTrackKind::Chapters);
+
+  // Step 4: Set all TextTracks with a kind of metadata that are disabled
+  // to hidden.
+  for (uint32_t i = 0; i < mTextTracks->Length(); i++) {
+    TextTrack* track = (*mTextTracks)[i];
+    if (track->Kind() == TextTrackKind::Metadata && TrackIsDefault(track) &&
+        track->Mode() == TextTrackMode::Disabled) {
+      track->SetMode(TextTrackMode::Hidden);
+    }
+  }
+
+  performedTrackSelection = true;
+}
+
+bool
+TextTrackManager::TrackIsDefault(TextTrack* aTextTrack)
+{
+  HTMLTrackElement* trackElement = aTextTrack->GetTrackElement();
+  if (!trackElement) {
+    return false;
+  }
+  return trackElement->Default();
+}
+
+void
+TextTrackManager::PerformTrackSelection(TextTrackKind aTextTrackKind)
+{
+  TextTrackKind ttKinds[] = { aTextTrackKind };
+  PerformTrackSelection(ttKinds, ArrayLength(ttKinds));
+}
+
+void
+TextTrackManager::PerformTrackSelection(TextTrackKind aTextTrackKinds[],
+                                        uint32_t size)
+{
+  nsTArray<TextTrack*> candidates;
+  GetTextTracksOfKinds(aTextTrackKinds, size, candidates);
+
+  // Step 3: If any TextTracks in candidates are showing then abort these steps.
+  for (uint32_t i = 0; i < candidates.Length(); i++) {
+    if (candidates[i]->Mode() == TextTrackMode::Showing) {
+      return;
+    }
+  }
+
+  // Step 4: Honor user preferences for track selection, otherwise, set the
+  // first TextTrack in candidates with a default attribute to showing.
+  // TODO: Bug 981691 - Honor user preferences for text track selection.
+  for (uint32_t i = 0; i < candidates.Length(); i++) {
+    if (TrackIsDefault(candidates[i]) &&
+        candidates[i]->Mode() == TextTrackMode::Disabled) {
+      candidates[i]->SetMode(TextTrackMode::Showing);
+      return;
+    }
+  }
+}
+
+void
+TextTrackManager::GetTextTracksOfKinds(TextTrackKind aTextTrackKinds[],
+                                       uint32_t size,
+                                       nsTArray<TextTrack*>& aTextTracks)
+{
+  for (uint32_t i = 0; i < size; i++) {
+    GetTextTracksOfKind(aTextTrackKinds[i], aTextTracks);
+  }
+}
+
+void
+TextTrackManager::GetTextTracksOfKind(TextTrackKind aTextTrackKind,
+                                      nsTArray<TextTrack*>& aTextTracks)
+{
+  for (uint32_t i = 0; i < mTextTracks->Length(); i++) {
+    TextTrack* textTrack = (*mTextTracks)[i];
+    if (textTrack->Kind() == aTextTrackKind) {
+      aTextTracks.AppendElement(textTrack);
     }
   }
 }

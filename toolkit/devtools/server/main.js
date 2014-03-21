@@ -9,6 +9,8 @@
  * Toolkit glue for the remote debugging protocol, loaded into the
  * debugging global.
  */
+let DevToolsUtils = require("devtools/toolkit/DevToolsUtils.js");
+let Services = require("Services");
 
 // Until all Debugger server code is converted to SDK modules,
 // imports Components.* alias from chrome module.
@@ -21,6 +23,9 @@ this.Cc = Cc;
 this.CC = CC;
 this.Cu = Cu;
 this.Cr = Cr;
+this.DevToolsUtils = DevToolsUtils;
+this.Services = Services;
+
 // Overload `Components` to prevent SDK loader exception on Components
 // object usage
 Object.defineProperty(this, "Components", {
@@ -31,11 +36,10 @@ const DBG_STRINGS_URI = "chrome://global/locale/devtools/debugger.properties";
 
 const nsFile = CC("@mozilla.org/file/local;1", "nsIFile", "initWithPath");
 Cu.import("resource://gre/modules/reflect.jsm");
-Cu.import("resource://gre/modules/devtools/DevToolsUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 let wantLogging = Services.prefs.getBoolPref("devtools.debugger.log");
 
+Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
 Cu.import("resource://gre/modules/jsdebugger.jsm");
 addDebuggerToGlobal(this);
 
@@ -61,8 +65,6 @@ this.promised = promised;
 this.all = all;
 
 Cu.import("resource://gre/modules/devtools/SourceMap.jsm");
-
-loadSubScript.call(this, "resource://gre/modules/devtools/DevToolsUtils.js");
 
 function dumpn(str) {
   if (wantLogging) {
@@ -340,6 +342,13 @@ var DebuggerServer = {
 
   /**
    * Install Firefox-specific actors.
+   *
+   * /!\ Be careful when adding a new actor, especially global actors.
+   * Any new global actor will be exposed and returned by the root actor.
+   *
+   * That's the reason why tab actors aren't loaded on demand via
+   * restrictPrivileges=true, to prevent exposing them on b2g parent process's
+   * root actor.
    */
   addBrowserActors: function(aWindowType = "navigator:browser", restrictPrivileges = false) {
     this.chromeWindowType = aWindowType;
@@ -352,6 +361,7 @@ var DebuggerServer = {
 
     this.addActors("resource://gre/modules/devtools/server/actors/webapps.js");
     this.registerModule("devtools/server/actors/device");
+    this.registerModule("devtools/server/actors/preference");
   },
 
   /**
@@ -361,11 +371,14 @@ var DebuggerServer = {
     // In case of apps being loaded in parent process, DebuggerServer is already
     // initialized and browser actors are already loaded,
     // but childtab.js hasn't been loaded yet.
-    if (!("BrowserTabActor" in this)) {
-      this.addActors("resource://gre/modules/devtools/server/actors/webbrowser.js");
+    if (!("WebConsoleActor" in this)) {
       this.addTabActors();
     }
-    if (!("ContentAppActor" in DebuggerServer)) {
+    // But webbrowser.js and childtab.js aren't loaded from shell.js.
+    if (!("BrowserTabActor" in this)) {
+      this.addActors("resource://gre/modules/devtools/server/actors/webbrowser.js");
+    }
+    if (!("ContentActor" in this)) {
       this.addActors("resource://gre/modules/devtools/server/actors/childtab.js");
     }
   },
@@ -380,6 +393,7 @@ var DebuggerServer = {
     this.registerModule("devtools/server/actors/webgl");
     this.registerModule("devtools/server/actors/stylesheets");
     this.registerModule("devtools/server/actors/styleeditor");
+    this.registerModule("devtools/server/actors/storage");
     this.registerModule("devtools/server/actors/gcli");
     this.registerModule("devtools/server/actors/tracer");
     this.registerModule("devtools/server/actors/memory");
@@ -514,10 +528,75 @@ var DebuggerServer = {
     return this._onConnection(transport, aPrefix, true);
   },
 
+  connectToChild: function(aConnection, aMessageManager, aOnDisconnect) {
+    let deferred = Promise.defer();
+
+    let mm = aMessageManager;
+    mm.loadFrameScript("resource://gre/modules/devtools/server/child.js", false);
+
+    let actor, childTransport;
+    let prefix = aConnection.allocID("child");
+
+    let onActorCreated = DevToolsUtils.makeInfallible(function (msg) {
+      mm.removeMessageListener("debug:actor", onActorCreated);
+
+      // Pipe Debugger message from/to parent/child via the message manager
+      childTransport = new ChildDebuggerTransport(mm, prefix);
+      childTransport.hooks = {
+        onPacket: aConnection.send.bind(aConnection),
+        onClosed: function () {}
+      };
+      childTransport.ready();
+
+      aConnection.setForwarding(prefix, childTransport);
+
+      dumpn("establishing forwarding for app with prefix " + prefix);
+
+      actor = msg.json.actor;
+
+      deferred.resolve(actor);
+    }).bind(this);
+    mm.addMessageListener("debug:actor", onActorCreated);
+
+    let onMessageManagerDisconnect = DevToolsUtils.makeInfallible(function (subject, topic, data) {
+      if (subject == mm) {
+        Services.obs.removeObserver(onMessageManagerDisconnect, topic);
+        if (childTransport) {
+          // If we have a child transport, the actor has already
+          // been created. We need to stop using this message manager.
+          childTransport.close();
+          aConnection.cancelForwarding(prefix);
+        } else {
+          // Otherwise, the app has been closed before the actor
+          // had a chance to be created, so we are not able to create
+          // the actor.
+          deferred.resolve(null);
+        }
+        if (actor) {
+          // The ContentActor within the child process doesn't necessary
+          // have to time to uninitialize itself when the app is closed/killed.
+          // So ensure telling the client that the related actor is detached.
+          aConnection.send({ from: actor.actor, type: "tabDetached" });
+          actor = null;
+        }
+
+        if (aOnDisconnect) {
+          aOnDisconnect(mm);
+        }
+      }
+    }).bind(this);
+    Services.obs.addObserver(onMessageManagerDisconnect,
+                             "message-manager-disconnect", false);
+
+    mm.sendAsyncMessage("debug:connect", { prefix: prefix });
+
+    return deferred.promise;
+  },
+
   // nsIServerSocketListener implementation
 
   onSocketAccepted:
-  makeInfallible(function DS_onSocketAccepted(aSocket, aTransport) {
+  DevToolsUtils.makeInfallible(function DS_onSocketAccepted(aSocket, aTransport) {
     if (Services.prefs.getBoolPref("devtools.debugger.prompt-connection") && !this._allowConnection()) {
       return;
     }
@@ -921,7 +1000,7 @@ DebuggerServerConnection.prototype = {
   },
 
   _unknownError: function DSC__unknownError(aPrefix, aError) {
-    let errorString = aPrefix + ": " + safeErrorString(aError);
+    let errorString = aPrefix + ": " + DevToolsUtils.safeErrorString(aError);
     Cu.reportError(errorString);
     dumpn(errorString);
     return {

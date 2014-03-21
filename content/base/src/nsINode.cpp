@@ -13,12 +13,17 @@
 #include "AccessCheck.h"
 #include "jsapi.h"
 #include "mozAutoDocUpdate.h"
+#include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/CORSMode.h"
+#include "mozilla/EventDispatcher.h"
+#include "mozilla/EventListenerManager.h"
 #include "mozilla/InternalMutationEvent.h"
 #include "mozilla/Likely.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/Telemetry.h"
-#include "nsAsyncDOMEvent.h"
+#include "mozilla/dom/Element.h"
+#include "mozilla/dom/Event.h"
+#include "mozilla/dom/ShadowRoot.h"
 #include "nsAttrValueOrString.h"
 #include "nsBindingManager.h"
 #include "nsCCUncollectableMarker.h"
@@ -35,13 +40,10 @@
 #include "nsDOMMutationObserver.h"
 #include "nsDOMString.h"
 #include "nsDOMTokenList.h"
-#include "nsEventDispatcher.h"
-#include "nsEventListenerManager.h"
 #include "nsEventStateManager.h"
 #include "nsFocusManager.h"
 #include "nsFrameManager.h"
 #include "nsFrameSelection.h"
-#include "mozilla/dom/Element.h"
 #include "nsGenericHTMLElement.h"
 #include "nsGkAtoms.h"
 #include "nsIAnonymousContentCreator.h"
@@ -96,13 +98,12 @@
 #include "nsCSSParser.h"
 #include "HTMLLegendElement.h"
 #include "nsWrapperCacheInlines.h"
-#include "mozilla/dom/ShadowRoot.h"
 #include "WrapperFactory.h"
 #include "DocumentType.h"
 #include <algorithm>
-#include "nsDOMEvent.h"
 #include "nsGlobalWindow.h"
 #include "nsDOMMutationObserver.h"
+#include "GeometryUtils.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -1066,7 +1067,7 @@ nsINode::AddEventListener(const nsAString& aType,
     aWantsUntrusted = true;
   }
 
-  nsEventListenerManager* listener_manager = GetOrCreateListenerManager();
+  EventListenerManager* listener_manager = GetOrCreateListenerManager();
   NS_ENSURE_STATE(listener_manager);
   listener_manager->AddEventListener(aType, aListener, aUseCapture,
                                      aWantsUntrusted);
@@ -1087,7 +1088,7 @@ nsINode::AddEventListener(const nsAString& aType,
     wantsUntrusted = aWantsUntrusted.Value();
   }
 
-  nsEventListenerManager* listener_manager = GetOrCreateListenerManager();
+  EventListenerManager* listener_manager = GetOrCreateListenerManager();
   if (!listener_manager) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
     return;
@@ -1123,7 +1124,7 @@ nsINode::RemoveEventListener(const nsAString& aType,
                              nsIDOMEventListener* aListener,
                              bool aUseCapture)
 {
-  nsEventListenerManager* elm = GetExistingListenerManager();
+  EventListenerManager* elm = GetExistingListenerManager();
   if (elm) {
     elm->RemoveEventListener(aType, aListener, aUseCapture);
   }
@@ -1133,11 +1134,46 @@ nsINode::RemoveEventListener(const nsAString& aType,
 NS_IMPL_REMOVE_SYSTEM_EVENT_LISTENER(nsINode)
 
 nsresult
-nsINode::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
+nsINode::PreHandleEvent(EventChainPreVisitor& aVisitor)
 {
   // This is only here so that we can use the NS_DECL_NSIDOMTARGET macro
   NS_ABORT();
   return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+void
+nsINode::GetBoxQuads(const BoxQuadOptions& aOptions,
+                     nsTArray<nsRefPtr<DOMQuad> >& aResult,
+                     mozilla::ErrorResult& aRv)
+{
+  mozilla::GetBoxQuads(this, aOptions, aResult, aRv);
+}
+
+already_AddRefed<DOMQuad>
+nsINode::ConvertQuadFromNode(DOMQuad& aQuad,
+                             const GeometryNode& aFrom,
+                             const ConvertCoordinateOptions& aOptions,
+                             ErrorResult& aRv)
+{
+  return mozilla::ConvertQuadFromNode(this, aQuad, aFrom, aOptions, aRv);
+}
+
+already_AddRefed<DOMQuad>
+nsINode::ConvertRectFromNode(DOMRectReadOnly& aRect,
+                             const GeometryNode& aFrom,
+                             const ConvertCoordinateOptions& aOptions,
+                             ErrorResult& aRv)
+{
+  return mozilla::ConvertRectFromNode(this, aRect, aFrom, aOptions, aRv);
+}
+
+already_AddRefed<DOMPoint>
+nsINode::ConvertPointFromNode(const DOMPointInit& aPoint,
+                              const GeometryNode& aFrom,
+                              const ConvertCoordinateOptions& aOptions,
+                              ErrorResult& aRv)
+{
+  return mozilla::ConvertPointFromNode(this, aPoint, aFrom, aOptions, aRv);
 }
 
 nsresult
@@ -1162,14 +1198,13 @@ nsINode::DispatchEvent(nsIDOMEvent *aEvent, bool* aRetVal)
 
   nsEventStatus status = nsEventStatus_eIgnore;
   nsresult rv =
-    nsEventDispatcher::DispatchDOMEvent(this, nullptr, aEvent, context,
-                                        &status);
+    EventDispatcher::DispatchDOMEvent(this, nullptr, aEvent, context, &status);
   *aRetVal = (status != nsEventStatus_eConsumeNoDefault);
   return rv;
 }
 
 nsresult
-nsINode::PostHandleEvent(nsEventChainPostVisitor& /*aVisitor*/)
+nsINode::PostHandleEvent(EventChainPostVisitor& /*aVisitor*/)
 {
   return NS_OK;
 }
@@ -1180,17 +1215,17 @@ nsINode::DispatchDOMEvent(WidgetEvent* aEvent,
                           nsPresContext* aPresContext,
                           nsEventStatus* aEventStatus)
 {
-  return nsEventDispatcher::DispatchDOMEvent(this, aEvent, aDOMEvent,
-                                             aPresContext, aEventStatus);
+  return EventDispatcher::DispatchDOMEvent(this, aEvent, aDOMEvent,
+                                           aPresContext, aEventStatus);
 }
 
-nsEventListenerManager*
+EventListenerManager*
 nsINode::GetOrCreateListenerManager()
 {
   return nsContentUtils::GetListenerManagerForNode(this);
 }
 
-nsEventListenerManager*
+EventListenerManager*
 nsINode::GetExistingListenerManager() const
 {
   return nsContentUtils::GetExistingListenerManagerForNode(this);
@@ -1442,7 +1477,7 @@ nsINode::doInsertChildAt(nsIContent* aKid, uint32_t aIndex,
       mutation.mRelatedNode = do_QueryInterface(this);
 
       mozAutoSubtreeModified subtree(OwnerDoc(), this);
-      (new nsAsyncDOMEvent(aKid, mutation))->RunDOMEventWhenSafe();
+      (new AsyncEventDispatcher(aKid, mutation))->RunDOMEventWhenSafe();
     }
   }
 
@@ -2192,7 +2227,7 @@ nsINode::GetBoundMutationObservers(nsTArray<nsRefPtr<nsDOMMutationObserver> >& a
       nsCOMPtr<nsDOMMutationObserver> mo = do_QueryInterface(objects->ObjectAt(i));
       if (mo) {
         MOZ_ASSERT(!aResult.Contains(mo));
-        aResult.AppendElement(mo.forget());
+        aResult.AppendElement(mo);
       }
     }
   }
@@ -2202,7 +2237,7 @@ size_t
 nsINode::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
 {
   size_t n = 0;
-  nsEventListenerManager* elm = GetExistingListenerManager();
+  EventListenerManager* elm = GetExistingListenerManager();
   if (elm) {
     n += elm->SizeOfIncludingThis(aMallocSizeOf);
   }
@@ -2220,13 +2255,13 @@ nsINode::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
 
 #define EVENT(name_, id_, type_, struct_)                                    \
   EventHandlerNonNull* nsINode::GetOn##name_() {                             \
-    nsEventListenerManager *elm = GetExistingListenerManager();              \
+    EventListenerManager *elm = GetExistingListenerManager();                \
     return elm ? elm->GetEventHandler(nsGkAtoms::on##name_, EmptyString())   \
                : nullptr;                                                    \
   }                                                                          \
   void nsINode::SetOn##name_(EventHandlerNonNull* handler)                   \
   {                                                                          \
-    nsEventListenerManager *elm = GetOrCreateListenerManager();              \
+    EventListenerManager *elm = GetOrCreateListenerManager();                \
     if (elm) {                                                               \
       elm->SetEventHandler(nsGkAtoms::on##name_, EmptyString(), handler);    \
     }                                                                        \
@@ -2545,7 +2580,7 @@ nsresult
 nsINode::QuerySelectorAll(const nsAString& aSelector, nsIDOMNodeList **aReturn)
 {
   ErrorResult rv;
-  *aReturn = nsINode::QuerySelectorAll(aSelector, rv).get();
+  *aReturn = nsINode::QuerySelectorAll(aSelector, rv).take();
   return rv.ErrorCode();
 }
 
@@ -2595,19 +2630,8 @@ nsINode::WrapObject(JSContext *aCx, JS::Handle<JSObject*> aScope)
   }
 
   JS::Rooted<JSObject*> obj(aCx, WrapNode(aCx, aScope));
-  if (obj && ChromeOnlyAccess() &&
-      !nsContentUtils::IsSystemPrincipal(NodePrincipal()) &&
-      xpc::AllowXBLScope(js::GetObjectCompartment(obj)))
-  {
-    // Create a new wrapper and cache it.
-    JSAutoCompartment ac(aCx, obj);
-    JSObject* wrapper = xpc::WrapperFactory::WrapSOWObject(aCx, obj);
-    if (!wrapper) {
-      ClearWrapper();
-      return nullptr;
-    }
-    dom::SetSystemOnlyWrapper(obj, this, *wrapper);
-  }
+  MOZ_ASSERT_IF(ChromeOnlyAccess(),
+                xpc::IsInXBLScope(obj) || !xpc::UseXBLScope(js::GetObjectCompartment(obj)));
   return obj;
 }
 
@@ -2633,7 +2657,7 @@ nsINode::GetAttributes()
 }
 
 bool
-EventTarget::DispatchEvent(nsDOMEvent& aEvent,
+EventTarget::DispatchEvent(Event& aEvent,
                            ErrorResult& aRv)
 {
   bool result = false;

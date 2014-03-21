@@ -299,7 +299,7 @@ public:
   { SetImageAnimationModeExternal(aMode); }
 #endif
 
-  /** 
+  /**
    * Get medium of presentation
    */
   nsIAtom* Medium() {
@@ -338,7 +338,7 @@ public:
    * If aLanguage is nullptr, the document's language is used.
    *
    * This object is read-only, you must copy the font to modify it.
-   * 
+   *
    * When aFontID is kPresContext_DefaultVariableFontID or
    * kPresContext_DefaultFixedFontID (which equals
    * kGenericFont_moz_fixed, which is used for the -moz-fixed generic),
@@ -393,7 +393,7 @@ public:
     return false;
   }
 
-  /** 
+  /**
    * Get the default colors
    */
   const nscolor DefaultColor() const { return mDefaultColor; }
@@ -468,7 +468,7 @@ public:
    * context.
    */
   bool IsPaginated() const { return mPaginated; }
-  
+
   /**
    * Sets whether the presentation context can scroll for a paginated
    * context.
@@ -543,7 +543,7 @@ public:
     const LangGroupFontPrefs *prefs = GetFontPrefsForLang(aLanguage);
     return std::max(mBaseMinFontSize, prefs->mMinimumFontSize);
   }
-  
+
   /**
    * Get the per-presentation base minimum font size.  This size is
    * independent of the language-specific global preference.
@@ -551,7 +551,7 @@ public:
   int32_t BaseMinFontSize() const {
     return mBaseMinFontSize;
   }
-  
+
   /**
    * Set the per-presentation base minimum font size.  This size is
    * independent of the language-specific global preference.
@@ -681,7 +681,7 @@ public:
   {
     mDrawColorBackground = aCanDraw;
   }
-  
+
   /**
    * Getter and setter for OMTA time counters
    */
@@ -720,7 +720,7 @@ public:
    *
    *  Visual directionality is a presentation method that displays text
    *  as if it were a uni-directional, according to the primary display
-   *  direction only. 
+   *  direction only.
    *
    *  Implicit directionality is a presentation method in which the
    *  direction is determined by the Bidi algorithm according to the
@@ -745,7 +745,7 @@ public:
 
   /**
    * Set the Bidi options for the presentation context
-   */  
+   */
   NS_HIDDEN_(void) SetBidi(uint32_t aBidiOptions,
                            bool aForceRestyle = false);
 
@@ -807,7 +807,7 @@ public:
      whether the prescontext is now being shown.
   */
   NS_HIDDEN_(bool) EnsureVisible();
-  
+
 #ifdef MOZ_REFLOW_PERF
   NS_HIDDEN_(void) CountReflows(const char * aName,
                                 nsIFrame * aFrame);
@@ -828,6 +828,7 @@ public:
 
   // Is this presentation in a chrome docshell?
   bool IsChrome() const { return mIsChrome; }
+  bool IsChromeOriginImage() const { return mIsChromeOriginImage; }
   void UpdateIsChrome();
 
   // Public API for native theme code to get style internals.
@@ -835,7 +836,7 @@ public:
 
   // Is it OK to let the page specify colors and backgrounds?
   bool UseDocumentColors() const {
-    return GetCachedBoolPref(kPresContext_UseDocumentColors) || IsChrome();
+    return GetCachedBoolPref(kPresContext_UseDocumentColors) || IsChrome() || IsChromeOriginImage();
   }
 
   // Explicitly enable and disable paint flashing.
@@ -849,7 +850,7 @@ public:
   bool GetPaintFlashing() const;
 
   bool             SupressingResizeReflow() const { return mSupressResizeReflow; }
-  
+
   virtual NS_HIDDEN_(gfxUserFontSet*) GetUserFontSetExternal();
   NS_HIDDEN_(gfxUserFontSet*) GetUserFontSetInternal();
 #ifdef MOZILLA_INTERNAL_API
@@ -948,7 +949,7 @@ public:
     bool mInterruptsEnabled;
     bool mHasPendingInterrupt;
   };
-    
+
   /**
    * Check for interrupts. This may return true if a pending event is
    * detected. Once it has returned true, it will keep returning true
@@ -1021,6 +1022,14 @@ public:
   }
 
   bool IsDeviceSizePageSize();
+
+  bool HasWarnedAboutPositionedTableParts() const {
+    return mHasWarnedAboutPositionedTableParts;
+  }
+
+  void SetHasWarnedAboutPositionedTableParts() {
+    mHasWarnedAboutPositionedTableParts = true;
+  }
 
 protected:
   friend class nsRunnableMethod<nsPresContext>;
@@ -1127,7 +1136,7 @@ public:
   bool MayHavePaintEventListener();
 
   /**
-   * Checks for MozAfterPaint listeners on the document and 
+   * Checks for MozAfterPaint listeners on the document and
    * any subdocuments, except for subdocuments that are non-top-level
    * content documents.
    */
@@ -1318,11 +1327,14 @@ protected:
   unsigned              mFireAfterPaintEvents : 1;
 
   unsigned              mIsChrome : 1;
+  unsigned              mIsChromeOriginImage : 1;
 
   // Should we paint flash in this context? Do not use this variable directly.
   // Use GetPaintFlashing() method instead.
   mutable unsigned mPaintFlashing : 1;
   mutable unsigned mPaintFlashingInitialized : 1;
+
+  unsigned mHasWarnedAboutPositionedTableParts : 1;
 
 #ifdef DEBUG
   bool                  mInitialized;
@@ -1487,7 +1499,7 @@ protected:
 #ifdef MOZ_REFLOW_PERF
 
 #define DO_GLOBAL_REFLOW_COUNT(_name) \
-  aPresContext->CountReflows((_name), (nsIFrame*)this); 
+  aPresContext->CountReflows((_name), (nsIFrame*)this);
 #else
 #define DO_GLOBAL_REFLOW_COUNT(_name)
 #endif // MOZ_REFLOW_PERF

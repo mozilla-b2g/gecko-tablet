@@ -17,6 +17,7 @@
 #include "nsISupportsImpl.h"            // for MOZ_COUNT_CTOR, etc
 #include "nsRegion.h"
 #include <vector>
+#include "mozilla/WidgetUtils.h"
 
 /**
  * Different elements of a web pages are rendered into separate "layers" before
@@ -120,6 +121,7 @@ struct Effect;
 struct EffectChain;
 class Image;
 class ISurfaceAllocator;
+class Layer;
 class NewTextureSource;
 class DataTextureSource;
 class CompositingRenderTarget;
@@ -130,6 +132,23 @@ enum SurfaceInitMode
 {
   INIT_MODE_NONE,
   INIT_MODE_CLEAR
+};
+
+/**
+ * A base class for a platform-dependent helper for use by TextureHost.
+ */
+class CompositorBackendSpecificData : public RefCounted<CompositorBackendSpecificData>
+{
+public:
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(CompositorBackendSpecificData)
+  CompositorBackendSpecificData()
+  {
+    MOZ_COUNT_CTOR(CompositorBackendSpecificData);
+  }
+  virtual ~CompositorBackendSpecificData()
+  {
+    MOZ_COUNT_DTOR(CompositorBackendSpecificData);
+  }
 };
 
 /**
@@ -184,6 +203,7 @@ public:
     : mCompositorID(0)
     , mDiagnosticTypes(DIAGNOSTIC_NONE)
     , mParent(aParent)
+    , mScreenRotation(ROTATION_0)
   {
     MOZ_COUNT_CTOR(Compositor);
   }
@@ -340,6 +360,8 @@ public:
    */
   virtual void EndFrame() = 0;
 
+  virtual void SetFBAcquireFence(Layer* aLayer) {}
+
   /**
    * Post-rendering stuff if the rendering is done outside of this Compositor
    * e.g., by Composer2D.
@@ -459,6 +481,34 @@ public:
     return fillRatio;
   }
 
+  virtual CompositorBackendSpecificData* GetCompositorBackendSpecificData() {
+    return nullptr;
+  }
+
+  ScreenRotation GetScreenRotation() const {
+    return mScreenRotation;
+  }
+
+  void SetScreenRotation(ScreenRotation aRotation) {
+    mScreenRotation = aRotation;
+  }
+
+  // On b2g the clip rect is in the coordinate space of the physical screen
+  // independently of its rotation, while the coordinate space of the layers,
+  // on the other hand, depends on the screen orientation.
+  // This only applies to b2g as with other platforms, orientation is handled
+  // at the OS level rather than in Gecko.
+  gfx::Rect ClipRectInLayersCoordinates(gfx::Rect aClip) const {
+    switch (mScreenRotation) {
+      case ROTATION_90:
+      case ROTATION_270:
+        return gfx::Rect(aClip.y, aClip.x, aClip.height, aClip.width);
+      case ROTATION_0:
+      case ROTATION_180:
+      default:
+        return aClip;
+    }
+  }
 protected:
   void DrawDiagnosticsInternal(DiagnosticFlags aFlags,
                                const gfx::Rect& aVisibleRect,
@@ -483,6 +533,8 @@ protected:
    */
   size_t mPixelsPerFrame;
   size_t mPixelsFilled;
+
+  ScreenRotation mScreenRotation;
 
 private:
   static LayersBackend sBackend;

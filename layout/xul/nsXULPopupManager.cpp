@@ -12,12 +12,10 @@
 #include "nsMenuBarListener.h"
 #include "nsContentUtils.h"
 #include "nsIDOMDocument.h"
-#include "nsDOMEvent.h"
 #include "nsIDOMEvent.h"
 #include "nsIDOMXULElement.h"
 #include "nsIXULDocument.h"
 #include "nsIXULTemplateBuilder.h"
-#include "nsEventDispatcher.h"
 #include "nsEventStateManager.h"
 #include "nsCSSFrameConstructor.h"
 #include "nsLayoutUtils.h"
@@ -37,6 +35,8 @@
 #include "nsFrameManager.h"
 #include "nsIObserverService.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/Event.h" // for nsIDOMEvent::InternalDOMEvent()
+#include "mozilla/EventDispatcher.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/Services.h"
@@ -328,11 +328,15 @@ nsXULPopupManager::AdjustPopupsOnWindowChange(nsPIDOMWindow* aWindow)
   // When the parent window is moved, adjust any child popups. Dismissable
   // menus and panels are expected to roll up when a window is moved, so there
   // is no need to check these popups, only the noautohide popups.
+
+  // The items are added to a list so that they can be adjusted bottom to top.
+  nsTArray<nsMenuPopupFrame *> list;
+
   nsMenuChainItem* item = mNoHidePanels;
   while (item) {
     // only move popups that are within the same window and where auto
     // positioning has not been disabled
-    nsMenuPopupFrame* frame= item->Frame();
+    nsMenuPopupFrame* frame = item->Frame();
     if (frame->GetAutoPosition()) {
       nsIContent* popup = frame->GetContent();
       if (popup) {
@@ -342,7 +346,7 @@ nsXULPopupManager::AdjustPopupsOnWindowChange(nsPIDOMWindow* aWindow)
           if (window) {
             window = window->GetPrivateRoot();
             if (window == aWindow) {
-              frame->SetPopupPosition(nullptr, true, false);
+              list.AppendElement(frame);
             }
           }
         }
@@ -350,6 +354,17 @@ nsXULPopupManager::AdjustPopupsOnWindowChange(nsPIDOMWindow* aWindow)
     }
 
     item = item->GetParent();
+  }
+
+  for (int32_t l = list.Length() - 1; l >= 0; l--) {
+    list[l]->SetPopupPosition(nullptr, true, false);
+  }
+}
+
+void nsXULPopupManager::AdjustPopupsOnWindowChange(nsIPresShell* aPresShell)
+{
+  if (aPresShell->GetDocument()) {
+    AdjustPopupsOnWindowChange(aPresShell->GetDocument()->GetWindow());
   }
 }
 
@@ -960,8 +975,8 @@ nsXULPopupManager::HidePopupCallback(nsIContent* aPopup,
   nsEventStatus status = nsEventStatus_eIgnore;
   WidgetMouseEvent event(true, NS_XUL_POPUP_HIDDEN, nullptr,
                          WidgetMouseEvent::eReal);
-  nsEventDispatcher::Dispatch(aPopup, aPopupFrame->PresContext(),
-                              &event, nullptr, &status);
+  EventDispatcher::Dispatch(aPopup, aPopupFrame->PresContext(),
+                            &event, nullptr, &status);
   ENSURE_TRUE(weakFrame.IsAlive());
 
   // if there are more popups to close, look for the next one
@@ -1210,7 +1225,7 @@ nsXULPopupManager::FirePopupShowingEvent(nsIContent* aPopup,
 
   event.refPoint = LayoutDeviceIntPoint::FromUntyped(mCachedMousePoint);
   event.modifiers = mCachedModifiers;
-  nsEventDispatcher::Dispatch(popup, presContext, &event, nullptr, &status);
+  EventDispatcher::Dispatch(popup, presContext, &event, nullptr, &status);
 
   mCachedMousePoint = nsIntPoint(0, 0);
   mOpeningPopup = nullptr;
@@ -1275,7 +1290,7 @@ nsXULPopupManager::FirePopupHidingEvent(nsIContent* aPopup,
   nsEventStatus status = nsEventStatus_eIgnore;
   WidgetMouseEvent event(true, NS_XUL_POPUP_HIDING, nullptr,
                          WidgetMouseEvent::eReal);
-  nsEventDispatcher::Dispatch(aPopup, aPresContext, &event, nullptr, &status);
+  EventDispatcher::Dispatch(aPopup, aPresContext, &event, nullptr, &status);
 
   // when a panel is closed, blur whatever has focus inside the popup
   if (aPopupType == ePopupTypePanel &&

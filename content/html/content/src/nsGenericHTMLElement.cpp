@@ -5,6 +5,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/EventDispatcher.h"
+#include "mozilla/EventListenerManager.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/Likely.h"
 
@@ -26,7 +28,6 @@
 #include "nsIDOMElementCSSInlineStyle.h"
 #include "nsIDOMWindow.h"
 #include "nsIDOMDocument.h"
-#include "nsEventListenerManager.h"
 #include "nsMappedAttributes.h"
 #include "nsHTMLStyleSheet.h"
 #include "nsIHTMLDocument.h"
@@ -75,7 +76,6 @@
 
 #include "nsIEditor.h"
 #include "nsIEditorIMESupport.h"
-#include "nsEventDispatcher.h"
 #include "nsLayoutUtils.h"
 #include "mozAutoDocUpdate.h"
 #include "nsHtml5Module.h"
@@ -83,7 +83,6 @@
 #include "mozilla/dom/Element.h"
 #include "HTMLFieldSetElement.h"
 #include "HTMLMenuElement.h"
-#include "nsAsyncDOMEvent.h"
 #include "nsDOMMutationObserver.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/FromParser.h"
@@ -106,64 +105,6 @@
 
 using namespace mozilla;
 using namespace mozilla::dom;
-
-class nsINodeInfo;
-class nsIDOMNodeList;
-class nsRuleWalker;
-
-// XXX todo: add in missing out-of-memory checks
-
-//----------------------------------------------------------------------
-
-#ifdef GATHER_ELEMENT_USEAGE_STATISTICS
-
-// static objects that have constructors are kinda bad, but we don't
-// care here, this is only debugging code!
-
-static nsHashtable sGEUS_ElementCounts;
-
-void GEUS_ElementCreated(nsINodeInfo *aNodeInfo)
-{
-  nsAutoString name;
-  aNodeInfo->GetName(name);
-
-  nsStringKey key(name);
-
-  int32_t count = (int32_t)sGEUS_ElementCounts.Get(&key);
-
-  count++;
-
-  sGEUS_ElementCounts.Put(&key, (void *)count);
-}
-
-bool GEUS_enum_func(nsHashKey *aKey, void *aData, void *aClosure)
-{
-  const char16_t *name_chars = ((nsStringKey *)aKey)->GetString();
-  NS_ConvertUTF16toUTF8 name(name_chars);
-
-  printf ("%s %d\n", name.get(), aData);
-
-  return true;
-}
-
-void GEUS_DumpElementCounts()
-{
-  printf ("Element count statistics:\n");
-
-  sGEUS_ElementCounts.Enumerate(GEUS_enum_func, nullptr);
-
-  printf ("End of element count statistics:\n");
-}
-
-nsresult
-nsGenericHTMLElement::Init(nsINodeInfo *aNodeInfo)
-{
-  GEUS_ElementCreated(aNodeInfo);
-
-  return nsGenericHTMLElementBase::Init(aNodeInfo);
-}
-
-#endif
 
 /**
  * nsAutoFocusEvent is used to dispatch a focus event when a
@@ -322,7 +263,7 @@ nsGenericHTMLElement::Dataset()
 NS_IMETHODIMP
 nsGenericHTMLElement::GetDataset(nsISupports** aDataset)
 {
-  *aDataset = Dataset().get();
+  *aDataset = Dataset().take();
   return NS_OK;
 }
 
@@ -696,7 +637,8 @@ nsGenericHTMLElement::FindAncestorForm(HTMLFormElement* aCurrentForm)
 }
 
 bool
-nsGenericHTMLElement::CheckHandleEventForAnchorsPreconditions(nsEventChainVisitor& aVisitor)
+nsGenericHTMLElement::CheckHandleEventForAnchorsPreconditions(
+                        EventChainVisitor& aVisitor)
 {
   NS_PRECONDITION(nsCOMPtr<Link>(do_QueryObject(this)),
                   "should be called only when |this| implements |Link|");
@@ -718,7 +660,7 @@ nsGenericHTMLElement::CheckHandleEventForAnchorsPreconditions(nsEventChainVisito
 }
 
 nsresult
-nsGenericHTMLElement::PreHandleEventForAnchors(nsEventChainPreVisitor& aVisitor)
+nsGenericHTMLElement::PreHandleEventForAnchors(EventChainPreVisitor& aVisitor)
 {
   nsresult rv = nsGenericHTMLElementBase::PreHandleEvent(aVisitor);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -731,7 +673,7 @@ nsGenericHTMLElement::PreHandleEventForAnchors(nsEventChainPreVisitor& aVisitor)
 }
 
 nsresult
-nsGenericHTMLElement::PostHandleEventForAnchors(nsEventChainPostVisitor& aVisitor)
+nsGenericHTMLElement::PostHandleEventForAnchors(EventChainPostVisitor& aVisitor)
 {
   if (!CheckHandleEventForAnchorsPreconditions(aVisitor)) {
     return NS_OK;
@@ -745,7 +687,7 @@ nsGenericHTMLElement::IsHTMLLink(nsIURI** aURI) const
 {
   NS_PRECONDITION(aURI, "Must provide aURI out param");
 
-  *aURI = GetHrefURIForAnchors().get();
+  *aURI = GetHrefURIForAnchors().take();
   // We promise out param is non-null if we return true, so base rv on it
   return *aURI != nullptr;
 }
@@ -811,7 +753,7 @@ nsGenericHTMLElement::AfterSetAttr(int32_t aNamespaceID, nsIAtom* aName,
                                                 aValue, aNotify);
 }
 
-nsEventListenerManager*
+EventListenerManager*
 nsGenericHTMLElement::GetEventListenerManagerForAttr(nsIAtom* aAttrName,
                                                      bool* aDefer)
 {
@@ -1010,7 +952,7 @@ nsGenericHTMLElement::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aAttribute,
       UnsetFlags(NODE_HAS_ACCESSKEY);
     }
     else if (IsEventAttributeName(aAttribute)) {
-      if (nsEventListenerManager* manager = GetExistingListenerManager()) {
+      if (EventListenerManager* manager = GetExistingListenerManager()) {
         manager->RemoveEventHandler(aAttribute, EmptyString());
       }
     }
@@ -1076,7 +1018,8 @@ nsGenericHTMLElement::ParseAttribute(int32_t aNamespaceID,
 
     if (aAttribute == nsGkAtoms::itemref ||
         aAttribute == nsGkAtoms::itemprop ||
-        aAttribute == nsGkAtoms::itemtype) {
+        aAttribute == nsGkAtoms::itemtype ||
+        aAttribute == nsGkAtoms::rel) {
       aResult.ParseAtomArray(aValue);
       return true;
     }
@@ -1960,7 +1903,7 @@ nsGenericHTMLElement::TouchEventsEnabled(JSContext* /* unused */, JSObject* /* u
 
 //----------------------------------------------------------------------
 
-nsGenericHTMLFormElement::nsGenericHTMLFormElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+nsGenericHTMLFormElement::nsGenericHTMLFormElement(already_AddRefed<nsINodeInfo>& aNodeInfo)
   : nsGenericHTMLElement(aNodeInfo)
   , mForm(nullptr)
   , mFieldSet(nullptr)
@@ -1984,12 +1927,14 @@ NS_IMPL_ISUPPORTS_INHERITED1(nsGenericHTMLFormElement,
                              nsGenericHTMLElement,
                              nsIFormControl)
 
-nsINode*
+mozilla::dom::ParentObject
 nsGenericHTMLFormElement::GetParentObject() const
 {
   // We use the parent chain to implement the scope for event handlers.
-  return mForm ? static_cast<nsINode*>(mForm)
-               : static_cast<nsINode*>(OwnerDoc());
+  if (mForm) {
+    return GetParentObjectInternal(mForm);
+  }
+  return nsGenericHTMLElement::GetParentObject();
 }
 
 bool
@@ -2284,7 +2229,7 @@ nsGenericHTMLFormElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
 }
 
 nsresult
-nsGenericHTMLFormElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
+nsGenericHTMLFormElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
 {
   if (aVisitor.mEvent->mFlags.mIsTrusted) {
     switch (aVisitor.mEvent->message) {
@@ -2694,7 +2639,7 @@ nsGenericHTMLElement::Click()
                          NS_MOUSE_CLICK, nullptr, WidgetMouseEvent::eReal);
   event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_UNKNOWN;
 
-  nsEventDispatcher::Dispatch(static_cast<nsIContent*>(this), context, &event);
+  EventDispatcher::Dispatch(static_cast<nsIContent*>(this), context, &event);
 
   ClearHandlingClick();
 }
@@ -2800,7 +2745,8 @@ nsGenericHTMLElement::PerformAccesskey(bool aKeyCausesActivation,
     nsAutoPopupStatePusher popupStatePusher(aIsTrustedEvent ?
                                             openAllowed : openAbused);
 
-    nsEventDispatcher::Dispatch(static_cast<nsIContent*>(this), presContext, &event);
+    EventDispatcher::Dispatch(static_cast<nsIContent*>(this),
+                              presContext, &event);
   }
 }
 
@@ -2979,7 +2925,7 @@ nsGenericHTMLElement::ChangeEditableState(int32_t aChange)
 //----------------------------------------------------------------------
 
 nsGenericHTMLFormElementWithState::nsGenericHTMLFormElementWithState(
-    already_AddRefed<nsINodeInfo> aNodeInfo
+    already_AddRefed<nsINodeInfo>& aNodeInfo
   )
   : nsGenericHTMLFormElement(aNodeInfo)
 {

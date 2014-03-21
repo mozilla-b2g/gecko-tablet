@@ -5,19 +5,22 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/Attributes.h"
+#include "mozilla/EventDispatcher.h"
+#include "mozilla/IMEStateManager.h"
 #include "mozilla/MiscEvents.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
+#include "mozilla/dom/Event.h"
 #include "mozilla/dom/TabParent.h"
 #include "mozilla/dom/UIEvent.h"
+
+#include "ContentEventHandler.h"
 
 #include "nsCOMPtr.h"
 #include "nsEventStateManager.h"
 #include "nsFocusManager.h"
-#include "nsIMEStateManager.h"
-#include "nsContentEventHandler.h"
 #include "nsIContent.h"
 #include "nsINodeInfo.h"
 #include "nsIDocument.h"
@@ -25,7 +28,6 @@
 #include "nsIWidget.h"
 #include "nsPresContext.h"
 #include "nsIPresShell.h"
-#include "nsDOMEvent.h"
 #include "nsGkAtoms.h"
 #include "nsIFormControl.h"
 #include "nsIComboboxControlFrame.h"
@@ -62,7 +64,6 @@
 #include "imgIContainer.h"
 #include "nsIProperties.h"
 #include "nsISupportsPrimitives.h"
-#include "nsEventDispatcher.h"
 
 #include "nsServiceManagerUtils.h"
 #include "nsITimer.h"
@@ -1216,9 +1217,10 @@ nsEventStateManager::PreHandleEvent(nsPresContext* aPresContext,
     break;
   case NS_QUERY_TEXT_CONTENT:
     {
-      if (RemoteQueryContentEvent(aEvent))
+      if (RemoteQueryContentEvent(aEvent)) {
         break;
-      nsContentEventHandler handler(mPresContext);
+      }
+      ContentEventHandler handler(mPresContext);
       handler.OnQueryTextContent(aEvent->AsQueryContentEvent());
     }
     break;
@@ -1227,7 +1229,7 @@ nsEventStateManager::PreHandleEvent(nsPresContext* aPresContext,
       if (RemoteQueryContentEvent(aEvent)) {
         break;
       }
-      nsContentEventHandler handler(mPresContext);
+      ContentEventHandler handler(mPresContext);
       handler.OnQueryCaretRect(aEvent->AsQueryContentEvent());
     }
     break;
@@ -1236,42 +1238,42 @@ nsEventStateManager::PreHandleEvent(nsPresContext* aPresContext,
       if (RemoteQueryContentEvent(aEvent)) {
         break;
       }
-      nsContentEventHandler handler(mPresContext);
+      ContentEventHandler handler(mPresContext);
       handler.OnQueryTextRect(aEvent->AsQueryContentEvent());
     }
     break;
   case NS_QUERY_EDITOR_RECT:
     {
       // XXX remote event
-      nsContentEventHandler handler(mPresContext);
+      ContentEventHandler handler(mPresContext);
       handler.OnQueryEditorRect(aEvent->AsQueryContentEvent());
     }
     break;
   case NS_QUERY_CONTENT_STATE:
     {
       // XXX remote event
-      nsContentEventHandler handler(mPresContext);
+      ContentEventHandler handler(mPresContext);
       handler.OnQueryContentState(aEvent->AsQueryContentEvent());
     }
     break;
   case NS_QUERY_SELECTION_AS_TRANSFERABLE:
     {
       // XXX remote event
-      nsContentEventHandler handler(mPresContext);
+      ContentEventHandler handler(mPresContext);
       handler.OnQuerySelectionAsTransferable(aEvent->AsQueryContentEvent());
     }
     break;
   case NS_QUERY_CHARACTER_AT_POINT:
     {
       // XXX remote event
-      nsContentEventHandler handler(mPresContext);
+      ContentEventHandler handler(mPresContext);
       handler.OnQueryCharacterAtPoint(aEvent->AsQueryContentEvent());
     }
     break;
   case NS_QUERY_DOM_WIDGET_HITTEST:
     {
       // XXX remote event
-      nsContentEventHandler handler(mPresContext);
+      ContentEventHandler handler(mPresContext);
       handler.OnQueryDOMWidgetHittest(aEvent->AsQueryContentEvent());
     }
     break;
@@ -1280,11 +1282,12 @@ nsEventStateManager::PreHandleEvent(nsPresContext* aPresContext,
       WidgetSelectionEvent* selectionEvent = aEvent->AsSelectionEvent();
       if (IsTargetCrossProcess(selectionEvent)) {
         // Will not be handled locally, remote the event
-        if (GetCrossProcessTarget()->SendSelectionEvent(*selectionEvent))
+        if (GetCrossProcessTarget()->SendSelectionEvent(*selectionEvent)) {
           selectionEvent->mSucceeded = true;
+        }
         break;
       }
-      nsContentEventHandler handler(mPresContext);
+      ContentEventHandler handler(mPresContext);
       handler.OnSelectionEvent(selectionEvent);
     }
     break;
@@ -1963,8 +1966,8 @@ nsEventStateManager::FireContextClick()
       AutoHandlingUserInputStatePusher userInpStatePusher(true, &event, doc);
 
       // dispatch to DOM
-      nsEventDispatcher::Dispatch(mGestureDownContent, mPresContext, &event,
-                                  nullptr, &status);
+      EventDispatcher::Dispatch(mGestureDownContent, mPresContext, &event,
+                                nullptr, &status);
 
       // We don't need to dispatch to frame handling because no frames
       // watch NS_CONTEXTMENU except for nsMenuFrame and that's only for
@@ -2171,14 +2174,14 @@ nsEventStateManager::GenerateDragGesture(nsPresContext* aPresContext,
       // elements in an editor, only fire the draggesture event so that the
       // editor code can handle it but content doesn't see a dragstart.
       nsEventStatus status = nsEventStatus_eIgnore;
-      nsEventDispatcher::Dispatch(targetContent, aPresContext, &startEvent, nullptr,
-                                  &status);
+      EventDispatcher::Dispatch(targetContent, aPresContext, &startEvent,
+                                nullptr, &status);
 
       WidgetDragEvent* event = &startEvent;
       if (status != nsEventStatus_eConsumeNoDefault) {
         status = nsEventStatus_eIgnore;
-        nsEventDispatcher::Dispatch(targetContent, aPresContext, &gestureEvent, nullptr,
-                                    &status);
+        EventDispatcher::Dispatch(targetContent, aPresContext, &gestureEvent,
+                                  nullptr, &status);
         event = &gestureEvent;
       }
 
@@ -2707,8 +2710,8 @@ nsEventStateManager::SendLineScrollEvent(nsIFrame* aTargetFrame,
   event.inputSource = aEvent->inputSource;
 
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsEventDispatcher::Dispatch(targetContent, aTargetFrame->PresContext(),
-                              &event, nullptr, &status);
+  EventDispatcher::Dispatch(targetContent, aTargetFrame->PresContext(),
+                            &event, nullptr, &status);
   aState.mDefaultPrevented =
     event.mFlags.mDefaultPrevented || status == nsEventStatus_eConsumeNoDefault;
   aState.mDefaultPreventedByContent = event.mFlags.mDefaultPreventedByContent;
@@ -2746,8 +2749,8 @@ nsEventStateManager::SendPixelScrollEvent(nsIFrame* aTargetFrame,
   event.inputSource = aEvent->inputSource;
 
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsEventDispatcher::Dispatch(targetContent, aTargetFrame->PresContext(),
-                              &event, nullptr, &status);
+  EventDispatcher::Dispatch(targetContent, aTargetFrame->PresContext(),
+                            &event, nullptr, &status);
   aState.mDefaultPrevented =
     event.mFlags.mDefaultPrevented || status == nsEventStatus_eConsumeNoDefault;
   aState.mDefaultPreventedByContent = event.mFlags.mDefaultPreventedByContent;
@@ -3765,7 +3768,7 @@ nsEventStateManager::IsTargetCrossProcess(WidgetGUIEvent* aEvent)
 void
 nsEventStateManager::NotifyDestroyPresContext(nsPresContext* aPresContext)
 {
-  nsIMEStateManager::OnDestroyPresContext(aPresContext);
+  IMEStateManager::OnDestroyPresContext(aPresContext);
   if (mHoverContent) {
     // Bug 70855: Presentation is going away, possibly for a reframe.
     // Reset the hover state so that if we're recreating the presentation,
@@ -4030,12 +4033,12 @@ nsEventStateManager::SetCursor(int32_t aCursor, imgIContainer* aContainer,
   return NS_OK;
 }
 
-class MOZ_STACK_CLASS nsESMEventCB : public nsDispatchingCallback
+class MOZ_STACK_CLASS nsESMEventCB : public EventDispatchingCallback
 {
 public:
   nsESMEventCB(nsIContent* aTarget) : mTarget(aTarget) {}
 
-  virtual void HandleEvent(nsEventChainPostVisitor& aVisitor)
+  virtual void HandleEvent(EventChainPostVisitor& aVisitor)
   {
     if (aVisitor.mPresContext) {
       nsIFrame* frame = aVisitor.mPresContext->GetPrimaryFrameFor(mTarget);
@@ -4125,8 +4128,8 @@ nsEventStateManager::DispatchMouseOrPointerEvent(WidgetMouseEvent* aMouseEvent,
   nsIFrame* targetFrame = nullptr;
   if (aTargetContent) {
     nsESMEventCB callback(aTargetContent);
-    nsEventDispatcher::Dispatch(aTargetContent, mPresContext, event, nullptr,
-                                &status, &callback);
+    EventDispatcher::Dispatch(aTargetContent, mPresContext, event, nullptr,
+                              &status, &callback);
 
     // Although the primary frame was checked in event callback, 
     // it may not be the same object after event dispatching and handling.
@@ -4646,9 +4649,10 @@ nsEventStateManager::FireDragEnterOrExit(nsPresContext* aPresContext,
 
   if (aTargetContent != aRelatedTarget) {
     //XXX This event should still go somewhere!!
-    if (aTargetContent)
-      nsEventDispatcher::Dispatch(aTargetContent, aPresContext, &event,
-                                  nullptr, &status);
+    if (aTargetContent) {
+      EventDispatcher::Dispatch(aTargetContent, aPresContext, &event,
+                                nullptr, &status);
+    }
 
     // adjust the drag hover if the dragenter event was cancelled or this is a drag exit
     if (status == nsEventStatus_eConsumeNoDefault || aMsg == NS_DRAGDROP_EXIT)
@@ -5176,7 +5180,7 @@ nsEventStateManager::ContentRemoved(nsIDocument* aDocument, nsIContent* aContent
     element->LeaveLink(element->GetPresContext());
   }
 
-  nsIMEStateManager::OnRemoveContent(mPresContext, aContent);
+  IMEStateManager::OnRemoveContent(mPresContext, aContent);
 
   // inform the focus manager that the content is being removed. If this
   // content is focused, the focus will be removed without firing events.
@@ -5427,7 +5431,7 @@ nsEventStateManager::DoQuerySelectedText(WidgetQueryContentEvent* aEvent)
   if (RemoteQueryContentEvent(aEvent)) {
     return;
   }
-  nsContentEventHandler handler(mPresContext);
+  ContentEventHandler handler(mPresContext);
   handler.OnQuerySelectedText(aEvent);
 }
 
@@ -5918,7 +5922,7 @@ nsEventStateManager::Prefs::OnChange(const char* aPrefName, void*)
 {
   nsDependentCString prefName(aPrefName);
   if (prefName.EqualsLiteral("dom.popup_allowed_events")) {
-    nsDOMEvent::PopupAllowedEventsChanged();
+    Event::PopupAllowedEventsChanged();
   }
 }
 

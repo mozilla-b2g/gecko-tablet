@@ -7,6 +7,7 @@
 #include "WorkerScope.h"
 
 #include "jsapi.h"
+#include "mozilla/EventListenerManager.h"
 #include "mozilla/dom/FunctionBinding.h"
 #include "mozilla/dom/DedicatedWorkerGlobalScopeBinding.h"
 #include "mozilla/dom/SharedWorkerGlobalScopeBinding.h"
@@ -142,7 +143,7 @@ WorkerGlobalScope::GetOnerror()
 {
   mWorkerPrivate->AssertIsOnWorkerThread();
 
-  nsEventListenerManager *elm = GetExistingListenerManager();
+  EventListenerManager* elm = GetExistingListenerManager();
   return elm ? elm->GetOnErrorEventHandler() : nullptr;
 }
 
@@ -151,7 +152,7 @@ WorkerGlobalScope::SetOnerror(OnErrorEventHandlerNonNull* aHandler)
 {
   mWorkerPrivate->AssertIsOnWorkerThread();
 
-  nsEventListenerManager *elm = GetOrCreateListenerManager();
+  EventListenerManager* elm = GetOrCreateListenerManager();
   if (elm) {
     elm->SetEventHandler(aHandler);
   }
@@ -298,8 +299,8 @@ DedicatedWorkerGlobalScope::WrapGlobalObject(JSContext* aCx)
   // We're wrapping the global, so the scope is undefined.
   JS::Rooted<JSObject*> scope(aCx);
 
-  return DedicatedWorkerGlobalScopeBinding_workers::Wrap(aCx, scope, this,
-                                                         this, options,
+  return DedicatedWorkerGlobalScopeBinding_workers::Wrap(aCx, this, this,
+                                                         options,
                                                          GetWorkerPrincipal());
 }
 
@@ -339,8 +340,7 @@ SharedWorkerGlobalScope::WrapGlobalObject(JSContext* aCx)
   // We're wrapping the global, so the scope is undefined.
   JS::Rooted<JSObject*> scope(aCx);
 
-  return SharedWorkerGlobalScopeBinding_workers::Wrap(aCx, scope, this, this,
-                                                      options,
+  return SharedWorkerGlobalScopeBinding_workers::Wrap(aCx, this, this, options,
                                                       GetWorkerPrincipal());
 }
 

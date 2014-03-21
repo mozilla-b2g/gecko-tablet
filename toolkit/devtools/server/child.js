@@ -4,10 +4,13 @@
 
 "use strict";
 
+let chromeGlobal = this;
+
 // Encapsulate in its own scope to allows loading this frame script
 // more than once.
 (function () {
-  const {DevToolsUtils} = Cu.import("resource://gre/modules/devtools/DevToolsUtils.jsm", {});
+  let { devtools } = Cu.import("resource://gre/modules/devtools/Loader.jsm", {});
+  const DevToolsUtils = devtools.require("devtools/toolkit/DevToolsUtils.js");
   const {DebuggerServer, ActorPool} = Cu.import("resource://gre/modules/devtools/dbg-server.jsm", {});
 
   if (!DebuggerServer.initialized) {
@@ -25,18 +28,14 @@
 
     let mm = msg.target;
 
-    let prefix = msg.data.prefix + docShell.appId;
+    let conn = DebuggerServer.connectToParent(msg.data.prefix, mm);
 
-    let conn = DebuggerServer.connectToParent(prefix, mm);
-
-    let actor = new DebuggerServer.ContentAppActor(conn, content);
+    let actor = new DebuggerServer.ContentActor(conn, chromeGlobal);
     let actorPool = new ActorPool(conn);
     actorPool.addActor(actor);
     conn.addActorPool(actorPool);
 
-    sendAsyncMessage("debug:actor", {actor: actor.grip(),
-                                     appId: docShell.appId,
-                                     prefix: prefix});
+    sendAsyncMessage("debug:actor", {actor: actor.grip()});
   });
 
   addMessageListener("debug:connect", onConnect);

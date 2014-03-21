@@ -16,6 +16,7 @@ import java.net.URL;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -30,6 +31,7 @@ import java.util.regex.Pattern;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.mozilla.gecko.GeckoProfileDirectories.NoMozillaDirectoryException;
 import org.mozilla.gecko.background.announcements.AnnouncementsBroadcastService;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.favicons.Favicons;
@@ -43,11 +45,13 @@ import org.mozilla.gecko.health.StubbedHealthRecorder;
 import org.mozilla.gecko.menu.GeckoMenu;
 import org.mozilla.gecko.menu.GeckoMenuInflater;
 import org.mozilla.gecko.menu.MenuPanel;
+import org.mozilla.gecko.mozglue.GeckoLoader;
 import org.mozilla.gecko.preferences.GeckoPreferences;
 import org.mozilla.gecko.prompts.PromptService;
 import org.mozilla.gecko.updater.UpdateService;
 import org.mozilla.gecko.updater.UpdateServiceHelper;
 import org.mozilla.gecko.util.ActivityResultHandler;
+import org.mozilla.gecko.util.FileUtils;
 import org.mozilla.gecko.util.GeckoEventListener;
 import org.mozilla.gecko.util.HardwareUtils;
 import org.mozilla.gecko.util.ThreadUtils;
@@ -132,6 +136,7 @@ public abstract class GeckoApp
     Tabs.OnTabsChangedListener
 {
     private static final String LOGTAG = "GeckoApp";
+    private static final int ONE_DAY_MS = 1000*60*60*24;
 
     private static enum StartupAction {
         NORMAL,     /* normal application start */
@@ -155,6 +160,7 @@ public abstract class GeckoApp
     public static final String PREFS_OOM_EXCEPTION         = "OOMException";
     public static final String PREFS_VERSION_CODE          = "versionCode";
     public static final String PREFS_WAS_STOPPED           = "wasStopped";
+    public static final String PREFS_CLEANUP_TEMP_FILES    = "cleanupTempFiles";
 
     public static final String SAVED_STATE_IN_BACKGROUND   = "inBackground";
     public static final String SAVED_STATE_PRIVATE_SESSION = "privateSession";
@@ -208,7 +214,7 @@ public abstract class GeckoApp
 
     abstract public int getLayout();
     abstract public boolean hasTabsSideBar();
-    abstract protected String getDefaultProfileName();
+    abstract protected String getDefaultProfileName() throws NoMozillaDirectoryException;
 
     private static final String RESTARTER_ACTION = "org.mozilla.gecko.restart";
     private static final String RESTARTER_CLASS = "org.mozilla.gecko.Restarter";
@@ -364,9 +370,9 @@ public abstract class GeckoApp
 
     @Override
     public void showMenu(View menu) {
-        // Hide the menu only if we are showing the MenuPopup.
-        if (!HardwareUtils.hasMenuButton())
-            closeMenu();
+        // Hide the menu before we reshow it to avoid platform specific bugs like
+        // bug 794581 and bug 968182.
+        closeMenu();
 
         mMenuPanel.removeAllViews();
         mMenuPanel.addView(menu);
@@ -567,6 +573,8 @@ public abstract class GeckoApp
             } else if (event.equals("Reader:FaviconRequest")) {
                 final String url = message.getString("url");
                 handleFaviconRequest(url);
+            } else if (event.equals("Gecko:DelayedStartup")) {
+                ThreadUtils.postToBackgroundThread(new UninstallListener.DelayedStartupTask(this));
             } else if (event.equals("Gecko:Ready")) {
                 mGeckoReadyStartupTimer.stop();
                 geckoConnected();
@@ -671,10 +679,7 @@ public abstract class GeckoApp
                 Intent intent = GeckoAppShell.getOpenURIIntent(sAppContext, message.optString("url"),
                     message.optString("mime"), message.optString("action"), message.optString("title"));
                 String[] handlers = GeckoAppShell.getHandlersForIntent(intent);
-                ArrayList<String> appList = new ArrayList<String>(handlers.length);
-                for (int i = 0; i < handlers.length; i++) {
-                    appList.add(handlers[i]);
-                }
+                List<String> appList = Arrays.asList(handlers);
                 JSONObject handlersJSON = new JSONObject();
                 handlersJSON.put("apps", new JSONArray(appList));
                 EventDispatcher.sendResponse(message, handlersJSON);
@@ -1199,7 +1204,15 @@ public abstract class GeckoApp
                         profilePath =  m.group(1);
                     }
                     if (profileName == null) {
-                        profileName = getDefaultProfileName();
+                        try {
+                            profileName = getDefaultProfileName();
+                        } catch (NoMozillaDirectoryException e) {
+                            Log.wtf(LOGTAG, "Unable to fetch default profile name!", e);
+                            // There's nothing at all we can do now. If the Mozilla directory
+                            // didn't exist, then we're screwed.
+                            // Crash here so we can fix the bug.
+                            throw new RuntimeException(e);
+                        }
                         if (profileName == null)
                             profileName = GeckoProfile.DEFAULT_PROFILE;
                     }
@@ -1363,11 +1376,6 @@ public abstract class GeckoApp
                         GeckoApp.this.onLocaleReady(uiLocale);
                     }
                 });
-
-                // Perform webapp uninstalls as appropiate.
-                if (AppConstants.MOZ_ANDROID_SYNTHAPKS) {
-                    UninstallListener.initUninstallPackageScan(getApplicationContext());
-                }
             }
         });
 
@@ -1563,6 +1571,7 @@ public abstract class GeckoApp
         registerEventListener("Reader:FaviconRequest");
         registerEventListener("onCameraCapture");
         registerEventListener("Gecko:Ready");
+        registerEventListener("Gecko:DelayedStartup");
         registerEventListener("Toast:Show");
         registerEventListener("DOMFullScreen:Start");
         registerEventListener("DOMFullScreen:Stop");
@@ -2041,6 +2050,15 @@ public abstract class GeckoApp
                 if (rec != null) {
                     rec.recordSessionEnd("P", editor);
                 }
+
+                // If we haven't done it before, cleanup any old files in our old temp dir
+                if (prefs.getBoolean(GeckoApp.PREFS_CLEANUP_TEMP_FILES, true)) {
+                    File tempDir = GeckoLoader.getGREDir(GeckoApp.this);
+                    FileUtils.delTree(tempDir, new FileUtils.NameAndAgeFilter(null, ONE_DAY_MS), false);
+
+                    editor.putBoolean(GeckoApp.PREFS_CLEANUP_TEMP_FILES, false);
+                }
+
                 editor.commit();
 
                 // In theory, the first browser session will not run long enough that we need to
@@ -2087,6 +2105,7 @@ public abstract class GeckoApp
         unregisterEventListener("Reader:FaviconRequest");
         unregisterEventListener("onCameraCapture");
         unregisterEventListener("Gecko:Ready");
+        unregisterEventListener("Gecko:DelayedStartup");
         unregisterEventListener("Toast:Show");
         unregisterEventListener("DOMFullScreen:Start");
         unregisterEventListener("DOMFullScreen:Stop");

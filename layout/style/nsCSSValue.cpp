@@ -60,7 +60,7 @@ nsCSSValue::nsCSSValue(const nsString& aValue, nsCSSUnit aUnit)
 {
   NS_ABORT_IF_FALSE(UnitHasStringValue(), "not a string value");
   if (UnitHasStringValue()) {
-    mValue.mString = BufferFromString(aValue).get();
+    mValue.mString = BufferFromString(aValue).take();
   }
   else {
     mUnit = eCSSUnit_Null;
@@ -178,6 +178,10 @@ nsCSSValue::nsCSSValue(const nsCSSValue& aCopy)
   else if (eCSSUnit_PairListDep == mUnit) {
     mValue.mPairListDependent = aCopy.mValue.mPairListDependent;
   }
+  else if (eCSSUnit_GridTemplateAreas == mUnit) {
+    mValue.mGridTemplateAreas = aCopy.mValue.mGridTemplateAreas;
+    mValue.mGridTemplateAreas->AddRef();
+  }
   else {
     NS_ABORT_IF_FALSE(false, "unknown unit");
   }
@@ -249,6 +253,9 @@ bool nsCSSValue::operator==(const nsCSSValue& aOther) const
     }
     else if (eCSSUnit_PairList == mUnit) {
       return *mValue.mPairList == *aOther.mValue.mPairList;
+    }
+    else if (eCSSUnit_GridTemplateAreas == mUnit) {
+      return *mValue.mGridTemplateAreas == *aOther.mValue.mGridTemplateAreas;
     }
     else {
       return mValue.mFloat == aOther.mValue.mFloat;
@@ -336,6 +343,8 @@ void nsCSSValue::DoReset()
     mValue.mSharedList->Release();
   } else if (eCSSUnit_PairList == mUnit) {
     mValue.mPairList->Release();
+  } else if (eCSSUnit_GridTemplateAreas == mUnit) {
+    mValue.mGridTemplateAreas->Release();
   }
   mUnit = eCSSUnit_Null;
 }
@@ -378,7 +387,7 @@ void nsCSSValue::SetStringValue(const nsString& aValue,
   mUnit = aUnit;
   NS_ABORT_IF_FALSE(UnitHasStringValue(), "not a string unit");
   if (UnitHasStringValue()) {
-    mValue.mString = BufferFromString(aValue).get();
+    mValue.mString = BufferFromString(aValue).take();
   } else
     mUnit = eCSSUnit_Null;
 }
@@ -587,6 +596,15 @@ void nsCSSValue::SetDependentPairListValue(nsCSSValuePairList* aList)
   }
 }
 
+nsCSSValueGridTemplateAreas& nsCSSValue::SetGridTemplateAreas()
+{
+  Reset();
+  mUnit = eCSSUnit_GridTemplateAreas;
+  mValue.mGridTemplateAreas = new nsCSSValueGridTemplateAreas;
+  mValue.mGridTemplateAreas->AddRef();
+  return *mValue.mGridTemplateAreas;
+}
+
 void nsCSSValue::SetAutoValue()
 {
   Reset();
@@ -656,10 +674,9 @@ void nsCSSValue::StartImageLoad(nsIDocument* aDocument) const
                                  mValue.mURL->mReferrer,
                                  mValue.mURL->mOriginPrincipal,
                                  aDocument);
-  if (image) {
-    nsCSSValue* writable = const_cast<nsCSSValue*>(this);
-    writable->SetImageValue(image);
-  }
+
+  nsCSSValue* writable = const_cast<nsCSSValue*>(this);
+  writable->SetImageValue(image);
 }
 
 nscolor nsCSSValue::GetColorValue() const
@@ -1007,6 +1024,22 @@ nsCSSValue::AppendToString(nsCSSProperty aProperty, nsAString& aResult,
                                          aResult);
       break;
 
+    case eCSSProperty_grid_auto_flow:
+      nsStyleUtil::AppendBitmaskCSSValue(aProperty, intValue,
+                                         NS_STYLE_GRID_AUTO_FLOW_NONE,
+                                         NS_STYLE_GRID_AUTO_FLOW_DENSE,
+                                         aResult);
+      break;
+
+    case eCSSProperty_grid_auto_position:
+    case eCSSProperty_grid_column_start:
+    case eCSSProperty_grid_column_end:
+    case eCSSProperty_grid_row_start:
+    case eCSSProperty_grid_row_end:
+      // "span" is the only enumerated-unit value for these properties
+      aResult.AppendLiteral("span");
+      break;
+
     case eCSSProperty_touch_action:
       nsStyleUtil::AppendBitmaskCSSValue(aProperty, intValue,
                                          NS_STYLE_TOUCH_ACTION_PAN_X,
@@ -1287,6 +1320,10 @@ nsCSSValue::AppendToString(nsCSSProperty aProperty, nsAString& aResult,
       nsStyleUtil::ComputeFunctionalAlternates(list, altValues);
       nsStyleUtil::SerializeFunctionalAlternates(altValues, out);
       aResult.Append(out);
+    } else if (eCSSProperty_grid_auto_position == aProperty) {
+      GetPairValue().mXValue.AppendToString(aProperty, aResult, aSerialization);
+      aResult.AppendLiteral(" / ");
+      GetPairValue().mYValue.AppendToString(aProperty, aResult, aSerialization);
     } else {
       GetPairValue().AppendToString(aProperty, aResult, aSerialization);
     }
@@ -1307,6 +1344,8 @@ nsCSSValue::AppendToString(nsCSSProperty aProperty, nsAString& aResult,
         GetPairListValue()->AppendToString(aProperty, aResult, aSerialization);
         break;
     }
+  } else if (eCSSUnit_GridTemplateAreas == unit) {
+    GetGridTemplateAreas().AppendToString(aProperty, aResult, aSerialization);
   }
 
   switch (unit) {
@@ -1368,6 +1407,7 @@ nsCSSValue::AppendToString(nsCSSProperty aProperty, nsAString& aResult,
     case eCSSUnit_SharedList:   break;
     case eCSSUnit_PairList:     break;
     case eCSSUnit_PairListDep:  break;
+    case eCSSUnit_GridTemplateAreas:     break;
 
     case eCSSUnit_Inch:         aResult.AppendLiteral("in");   break;
     case eCSSUnit_Millimeter:   aResult.AppendLiteral("mm");   break;
@@ -1398,6 +1438,8 @@ nsCSSValue::AppendToString(nsCSSProperty aProperty, nsAString& aResult,
 
     case eCSSUnit_Seconds:      aResult.Append(char16_t('s'));    break;
     case eCSSUnit_Milliseconds: aResult.AppendLiteral("ms");   break;
+
+    case eCSSUnit_FlexFraction: aResult.AppendLiteral("fr");   break;
   }
 }
 
@@ -1507,6 +1549,11 @@ nsCSSValue::SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const
     case eCSSUnit_PairListDep:
       break;
 
+    // GridTemplateAreas
+    case eCSSUnit_GridTemplateAreas:
+      n += mValue.mGridTemplateAreas->SizeOfIncludingThis(aMallocSizeOf);
+      break;
+
     // Int: nothing extra to measure.
     case eCSSUnit_Integer:
     case eCSSUnit_Enumerated:
@@ -1554,6 +1601,7 @@ nsCSSValue::SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const
     case eCSSUnit_Kilohertz:
     case eCSSUnit_Seconds:
     case eCSSUnit_Milliseconds:
+    case eCSSUnit_FlexFraction:
       break;
 
     default:
@@ -1594,11 +1642,11 @@ nsCSSValueList::CloneInto(nsCSSValueList* aList) const
     aList->mNext = mNext ? mNext->Clone() : nullptr;
 }
 
-void
-nsCSSValueList::AppendToString(nsCSSProperty aProperty, nsAString& aResult,
-                               nsCSSValue::Serialization aSerialization) const
+static void
+AppendValueListToString(const nsCSSValueList* val,
+                        nsCSSProperty aProperty, nsAString& aResult,
+                        nsCSSValue::Serialization aSerialization)
 {
-  const nsCSSValueList* val = this;
   for (;;) {
     val->mValue.AppendToString(aProperty, aResult, aSerialization);
     val = val->mNext;
@@ -1609,6 +1657,55 @@ nsCSSValueList::AppendToString(nsCSSProperty aProperty, nsAString& aResult,
                                  CSS_PROPERTY_VALUE_LIST_USES_COMMAS))
       aResult.Append(char16_t(','));
     aResult.Append(char16_t(' '));
+  }
+}
+
+static void
+AppendGridTemplateToString(const nsCSSValueList* val,
+                           nsCSSProperty aProperty, nsAString& aResult,
+                           nsCSSValue::Serialization aSerialization)
+{
+  // This is called for the "list" that's the top-level value of the property.
+  for (;;) {
+    bool addSpaceSpearator = true;
+    nsCSSUnit unit = val->mValue.GetUnit();
+
+    if (unit == eCSSUnit_Null) {
+      // Empty or omitted <line-names>. Serializes to nothing.
+      addSpaceSpearator = false;  // Avoid a double space.
+
+    } else if (unit == eCSSUnit_List || unit == eCSSUnit_ListDep) {
+      // Non-empty <line-names>
+      aResult.AppendLiteral("(");
+      AppendValueListToString(val->mValue.GetListValue(), aProperty,
+                              aResult, aSerialization);
+      aResult.AppendLiteral(")");
+
+    } else {
+      // <track-size>
+      val->mValue.AppendToString(aProperty, aResult, aSerialization);
+    }
+
+    val = val->mNext;
+    if (!val) {
+      break;
+    }
+
+    if (addSpaceSpearator) {
+      aResult.Append(char16_t(' '));
+    }
+  }
+}
+
+void
+nsCSSValueList::AppendToString(nsCSSProperty aProperty, nsAString& aResult,
+                               nsCSSValue::Serialization aSerialization) const
+{
+  if (aProperty == eCSSProperty_grid_template_columns ||
+      aProperty == eCSSProperty_grid_template_rows) {
+    AppendGridTemplateToString(this, aProperty, aResult, aSerialization);
+  } else {
+    AppendValueListToString(this, aProperty, aResult, aSerialization);
   }
 }
 
@@ -2283,3 +2380,28 @@ nsCSSCornerSizes::corners[4] = {
   &nsCSSCornerSizes::mBottomRight,
   &nsCSSCornerSizes::mBottomLeft,
 };
+
+void
+nsCSSValueGridTemplateAreas::AppendToString(nsCSSProperty aProperty,
+                                       nsAString& aResult,
+                                       nsCSSValue::Serialization aValueSerialization) const
+{
+  uint32_t length = mTemplates.Length();
+  if (length == 0) {
+    aResult.AppendLiteral("none");
+  } else {
+    nsStyleUtil::AppendEscapedCSSString(mTemplates[0], aResult);
+    for (uint32_t i = 1; i < length; i++) {
+      aResult.Append(char16_t(' '));
+      nsStyleUtil::AppendEscapedCSSString(mTemplates[i], aResult);
+    }
+  }
+}
+
+size_t
+nsCSSValueGridTemplateAreas::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const
+{
+  size_t n = mNamedAreas.SizeOfExcludingThis(aMallocSizeOf);
+  n += mTemplates.SizeOfIncludingThis(aMallocSizeOf);
+  return n;
+}

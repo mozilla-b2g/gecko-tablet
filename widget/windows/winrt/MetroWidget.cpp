@@ -798,18 +798,6 @@ MetroWidget::WindowProcedure(HWND aWnd, UINT aMsg, WPARAM aWParam, LPARAM aLPara
   }
 
   switch (aMsg) {
-    case WM_PAINT:
-    {
-      HRGN rgn = CreateRectRgn(0, 0, 0, 0);
-      GetUpdateRgn(mWnd, rgn, false);
-      nsIntRegion region = WinUtils::ConvertHRGNToRegion(rgn);
-      DeleteObject(rgn);
-      if (region.IsEmpty())
-        break;
-      Paint(region);
-      break;
-    }
-
     case WM_POWERBROADCAST:
     {
       switch (aWParam)
@@ -1147,22 +1135,6 @@ MetroWidget::ApzReceiveInputEvent(WidgetInputEvent* aEvent,
     return nsEventStatus_eIgnore;
   }
   return mController->ReceiveInputEvent(aEvent, aOutTargetGuid);
-}
-
-nsEventStatus
-MetroWidget::ApzReceiveInputEvent(WidgetInputEvent* aInEvent,
-                                  ScrollableLayerGuid* aOutTargetGuid,
-                                  WidgetInputEvent* aOutEvent)
-{
-  MOZ_ASSERT(aInEvent);
-  MOZ_ASSERT(aOutEvent);
-
-  if (!mController) {
-    return nsEventStatus_eIgnore;
-  }
-  return mController->ReceiveInputEvent(aInEvent,
-                                        aOutTargetGuid,
-                                        aOutEvent);
 }
 
 LayerManager*

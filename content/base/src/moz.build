@@ -50,9 +50,8 @@ if CONFIG['MOZ_WEBRTC']:
 # Are we targeting x86-32 or x86-64?  If so, we want to include SSE2 code for
 # nsTextFragment.cpp
 if CONFIG['INTEL_ARCHITECTURE']:
-    SOURCES += [
-        'nsTextFragmentSSE2.cpp',
-    ]
+    SOURCES += ['nsTextFragmentSSE2.cpp']
+    SOURCES['nsTextFragmentSSE2.cpp'].flags += CONFIG['SSE2_FLAGS']
 
 EXPORTS.mozilla.dom += [
     'Attr.h',
@@ -61,6 +60,8 @@ EXPORTS.mozilla.dom += [
     'DocumentType.h',
     'DOMImplementation.h',
     'DOMParser.h',
+    'DOMPoint.h',
+    'DOMQuad.h',
     'DOMRect.h',
     'DOMStringList.h',
     'EventSource.h',
@@ -80,6 +81,8 @@ UNIFIED_SOURCES += [
     'DocumentType.cpp',
     'DOMImplementation.cpp',
     'DOMParser.cpp',
+    'DOMPoint.cpp',
+    'DOMQuad.cpp',
     'DOMRect.cpp',
     'DOMStringList.cpp',
     'Element.cpp',

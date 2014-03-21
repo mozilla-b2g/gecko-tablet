@@ -134,6 +134,11 @@ this.AccessFu = {
       this.readyCallback();
       delete this.readyCallback;
     }
+
+    if (Utils.MozBuildApp !== 'mobile/android') {
+      this.announce(
+        Utils.stringBundle.GetStringFromName('screenReaderStarted'));
+    }
   },
 
   /**
@@ -148,6 +153,11 @@ this.AccessFu = {
     Logger.info('Disabled');
 
     Utils.win.document.removeChild(this.stylesheet.get());
+
+    if (Utils.MozBuildApp !== 'mobile/android') {
+      this.announce(
+        Utils.stringBundle.GetStringFromName('screenReaderStopped'));
+    }
 
     for each (let mm in Utils.AllMessageManagers) {
       mm.sendAsyncMessage('AccessFu:Stop');
@@ -299,7 +309,7 @@ this.AccessFu = {
       case 'Accessibility:Focus':
         this._focused = JSON.parse(aData);
         if (this._focused) {
-          this.showCurrent(true);
+          this.autoMove({ forcePresent: true, noOpIfOnScreen: true });
         }
         break;
       case 'Accessibility:MoveByGranularity':
@@ -343,10 +353,11 @@ this.AccessFu = {
           // We delay this for half a second so the awesomebar could close,
           // and we could use the current coordinates for the content item.
           // XXX TODO figure out how to avoid magic wait here.
-          Utils.win.setTimeout(
-            function () {
-              this.showCurrent(false);
-            }.bind(this), 500);
+	  this.autoMove({
+	    delay: 500,
+	    forcePresent: true,
+	    noOpIfOnScreen: true,
+	    moveMethod: 'moveFirst' });
         }
         break;
       }
@@ -362,14 +373,13 @@ this.AccessFu = {
     }
   },
 
-  showCurrent: function showCurrent(aMove) {
+  autoMove: function autoMove(aOptions) {
     let mm = Utils.getMessageManager(Utils.CurrentBrowser);
-    mm.sendAsyncMessage('AccessFu:ShowCurrent', { move: aMove });
+    mm.sendAsyncMessage('AccessFu:AutoMove', aOptions);
   },
 
   announce: function announce(aAnnouncement) {
-    this._output(Presentation.announce(aAnnouncement),
-                 Utils.CurrentBrowser);
+    this._output(Presentation.announce(aAnnouncement), Utils.CurrentBrowser);
   },
 
   // So we don't enable/disable twice
@@ -515,7 +525,8 @@ var Output = {
 
     init: function init() {
       let window = Utils.win;
-      this.webspeechEnabled = !!window.speechSynthesis;
+      this.webspeechEnabled = !!window.speechSynthesis &&
+        !!window.SpeechSynthesisUtterance;
 
       let settingsToGet = 2;
       let settingsCallback = (aName, aSetting) => {
@@ -688,12 +699,24 @@ var Output = {
     }
   },
 
+  get androidBridge() {
+    delete this.androidBridge;
+    if (Utils.MozBuildApp === 'mobile/android') {
+      this.androidBridge = Cc['@mozilla.org/android/bridge;1'].getService(
+      Ci.nsIAndroidBridge);
+    } else {
+      this.androidBridge = null;
+    }
+    return this.androidBridge;
+  },
+
   Android: function Android(aDetails, aBrowser) {
     const ANDROID_VIEW_TEXT_CHANGED = 0x10;
     const ANDROID_VIEW_TEXT_SELECTION_CHANGED = 0x2000;
 
-    if (!this._bridge)
-      this._bridge = Cc['@mozilla.org/android/bridge;1'].getService(Ci.nsIAndroidBridge);
+    if (!this.androidBridge) {
+      return;
+    }
 
     for each (let androidEvent in aDetails) {
       androidEvent.type = 'Accessibility:Event';
@@ -711,7 +734,7 @@ var Output = {
           androidEvent.brailleOutput = this.brailleState.init(androidEvent.brailleOutput);
           break;
       }
-      this._bridge.handleGeckoMessage(JSON.stringify(androidEvent));
+      this.androidBridge.handleGeckoMessage(JSON.stringify(androidEvent));
     }
   },
 

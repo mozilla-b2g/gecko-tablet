@@ -14,6 +14,7 @@
 
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/IOInterposer.h"
 #include "mozilla/Likely.h"
 #include "mozilla/Poison.h"
 #include "mozilla/Preferences.h"
@@ -1976,9 +1977,10 @@ SetCurrentProfileAsDefault(nsIToolkitProfileService* aProfileSvc,
     return rv;
 
   bool foundMatchingProfile = false;
-  nsCOMPtr<nsIToolkitProfile> profile;
-  rv = profiles->GetNext(getter_AddRefs(profile));
+  nsCOMPtr<nsISupports> supports;
+  rv = profiles->GetNext(getter_AddRefs(supports));
   while (NS_SUCCEEDED(rv)) {
+    nsCOMPtr<nsIToolkitProfile> profile = do_QueryInterface(supports);
     nsCOMPtr<nsIFile> profileRoot;
     profile->GetRootDir(getter_AddRefs(profileRoot));
     profileRoot->Equals(aCurrentProfileRoot, &foundMatchingProfile);
@@ -1988,7 +1990,7 @@ SetCurrentProfileAsDefault(nsIToolkitProfileService* aProfileSvc,
         rv = aProfileSvc->Flush();
       return rv;
     }
-    rv = profiles->GetNext(getter_AddRefs(profile));
+    rv = profiles->GetNext(getter_AddRefs(supports));
   }
   return rv;
 }
@@ -2583,6 +2585,7 @@ static PRFuncPtr FindFunction(const char* aName)
 
 static void MOZ_gdk_display_close(GdkDisplay *display)
 {
+#if CLEANUP_MEMORY
   // XXX wallpaper for bug 417163: don't close the Display if we're using the
   // Qt theme because we crash (in Qt code) when using jemalloc.
   bool theme_is_qt = false;
@@ -2597,12 +2600,10 @@ static void MOZ_gdk_display_close(GdkDisplay *display)
     g_free(theme_name);
   }
 
-#if CLEANUP_MEMORY
   // Get a (new) Pango context that holds a reference to the fontmap that
   // GTK has been using.  gdk_pango_context_get() must be called while GTK
   // has a default display.
   PangoContext *pangoContext = gdk_pango_context_get();
-#endif
 
   bool buggyCairoShutdown = cairo_version() < CAIRO_VERSION_ENCODE(1, 4, 0);
 
@@ -2615,7 +2616,6 @@ static void MOZ_gdk_display_close(GdkDisplay *display)
       gdk_display_close(display);
   }
 
-#if CLEANUP_MEMORY
   // Clean up PangoCairo's default fontmap.
   // This pango_fc_font_map_shutdown call (and the associated code to
   // get the font map) really shouldn't be needed anymore, except that
@@ -2647,12 +2647,16 @@ static void MOZ_gdk_display_close(GdkDisplay *display)
   cairo_debug_reset_static_data();
   // FIXME: Do we need to call this in non-GTK2 cases as well?
   FcFini();
-#endif // CLEANUP_MEMORY
 
   if (buggyCairoShutdown) {
     if (!theme_is_qt)
       gdk_display_close(display);
   }
+#else // not CLEANUP_MEMORY
+  // Don't do anything to avoid running into driver bugs under XCloseDisplay().
+  // See bug 973192.
+  (void) display;
+#endif
 }
 #endif // MOZ_WIDGET_GTK2
 
@@ -2849,10 +2853,10 @@ XREMain::XRE_mainInit(bool* aExitFlag)
   // error handling. indeed, this process is expected to be crashy, and we
   // don't want the user to see its crashes. That's the whole reason for
   // doing this in a separate process.
-  if (fire_glxtest_process()) {
-    *aExitFlag = true;
-    return 0;
-  }
+  //
+  // This call will cause a fork and the fork will terminate itself separately
+  // from the usual shutdown sequence
+  fire_glxtest_process();
 #endif
 
 #if defined(XP_WIN) && defined(MOZ_METRO)
@@ -2964,10 +2968,8 @@ XREMain::XRE_mainInit(bool* aExitFlag)
     rv = lf->GetParent(getter_AddRefs(greDir));
     if (NS_FAILED(rv))
       return 2;
-    
-    rv = CallQueryInterface(greDir, &mAppData->xreDirectory);
-    if (NS_FAILED(rv))
-      return 2;
+
+    greDir.forget(&mAppData->xreDirectory);
   }
 
   if (!mAppData->directory) {
@@ -4023,6 +4025,8 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
   GeckoProfilerInitRAII profilerGuard(&aLocal);
   PROFILER_LABEL("Startup", "XRE_Main");
 
+  mozilla::IOInterposerInit ioInterposerGuard;
+
   nsresult rv = NS_OK;
 
   gArgc = argc;
@@ -4225,6 +4229,8 @@ XRE_mainMetro(int argc, char* argv[], const nsXREAppData* aAppData)
   char aLocal;
   GeckoProfilerInitRAII profilerGuard(&aLocal);
   PROFILER_LABEL("Startup", "XRE_Main");
+
+  mozilla::IOInterposerInit ioInterposerGuard;
 
   nsresult rv = NS_OK;
 

@@ -20,6 +20,7 @@ class EncodedBufferCache;
 class MediaEncoder;
 class ProcessedMediaStream;
 class MediaInputPort;
+struct MediaRecorderOptions;
 
 namespace dom {
 
@@ -37,6 +38,7 @@ namespace dom {
 class MediaRecorder : public nsDOMEventTargetHelper
 {
   class Session;
+  friend class CreateAndDispatchBlobEventRunnable;
 
 public:
   MediaRecorder(DOMMediaStream&, nsPIDOMWindow* aOwnerWindow);
@@ -74,7 +76,9 @@ public:
 
   static already_AddRefed<MediaRecorder>
   Constructor(const GlobalObject& aGlobal,
-              DOMMediaStream& aStream, ErrorResult& aRv);
+              DOMMediaStream& aStream,
+              const MediaRecorderOptions& aInitDict,
+              ErrorResult& aRv);
 
   // EventHandler
   IMPL_EVENT_HANDLER(dataavailable)
@@ -85,7 +89,7 @@ public:
 protected:
   MediaRecorder& operator = (const MediaRecorder& x) MOZ_DELETE;
   // Create dataavailable event with Blob data and it runs in main thread
-  nsresult CreateAndDispatchBlobEvent(const already_AddRefed<nsIDOMBlob> &aBlob);
+  nsresult CreateAndDispatchBlobEvent(already_AddRefed<nsIDOMBlob>&& aBlob);
   // Creating a simple event to notify UA simple event.
   void DispatchSimpleEvent(const nsAString & aStr);
   // Creating a error event with message.

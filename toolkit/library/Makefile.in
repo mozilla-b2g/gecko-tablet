@@ -24,10 +24,6 @@ SHARED_LIBRARY_LIBS += \
   $(foreach component,$(COMPONENT_LIBS),$(DEPTH)/staticlib/$(LIB_PREFIX)$(component).$(LIB_SUFFIX)) \
   $(NULL)
 
-ifeq ($(OS_ARCH)_$(GNU_CC),WINNT_)
-RCINCLUDE = xulrunner.rc
-endif
-
 # dependent libraries
 ifdef MOZ_B2G_BT_BLUEZ #{
 ifeq (gonk,$(MOZ_WIDGET_TOOLKIT))
@@ -57,7 +53,7 @@ COMPONENT_LIBS += $(MOZ_APP_COMPONENT_LIBS)
 endif
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),cocoa)
-OS_LIBS += -framework OpenGL -lcups
+OS_LIBS += -lcups
 endif
 
 EXTRA_DSO_LDOPTS += \
@@ -175,10 +171,6 @@ EXTRA_DSO_LDOPTS += $(NSPR_LIBS) $(MOZALLOC_LIB)
 ifeq ($(MOZ_WIDGET_TOOLKIT),cocoa)
 CXXFLAGS += $(TK_CFLAGS)
 OS_LIBS += \
-  -framework SystemConfiguration \
-  -framework QTKit \
-  -framework IOKit \
-  -F$(MACOS_PRIVATE_FRAMEWORKS_DIR) -framework CoreUI \
   $(TK_LIBS) \
   $(NULL)
 endif

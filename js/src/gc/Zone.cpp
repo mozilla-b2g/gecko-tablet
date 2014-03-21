@@ -42,6 +42,9 @@ JS::Zone::Zone(JSRuntime *rt)
     gcGrayRoots(),
     data(nullptr),
     types(this)
+#ifdef JS_ION
+    , jitZone_(nullptr)
+#endif
 {
     /* Ensure that there are no vtables to mess us up here. */
     JS_ASSERT(reinterpret_cast<JS::shadow::Zone *>(this) ==
@@ -54,13 +57,10 @@ Zone::~Zone()
 {
     if (this == runtimeFromMainThread()->systemZone)
         runtimeFromMainThread()->systemZone = nullptr;
-}
 
-bool
-Zone::init(JSContext *cx)
-{
-    types.init(cx);
-    return true;
+#ifdef JS_ION
+    js_delete(jitZone_);
+#endif
 }
 
 void
@@ -169,6 +169,9 @@ void
 Zone::discardJitCode(FreeOp *fop)
 {
 #ifdef JS_ION
+    if (!jitZone())
+        return;
+
     if (isPreservingCode()) {
         PurgeJITCaches(this);
     } else {
@@ -189,7 +192,19 @@ Zone::discardJitCode(FreeOp *fop)
 
         for (CellIterUnderGC i(this, FINALIZE_SCRIPT); !i.done(); i.next()) {
             JSScript *script = i.get<JSScript>();
-            jit::FinishInvalidation(fop, script);
+            jit::FinishInvalidation<SequentialExecution>(fop, script);
+
+            // Preserve JIT code that have been recently used in
+            // parallel. Note that we mark their baseline scripts as active as
+            // well to preserve them.
+            if (script->hasParallelIonScript()) {
+                if (jit::ShouldPreserveParallelJITCode(runtimeFromMainThread(), script)) {
+                    script->parallelIonScript()->purgeCaches(this);
+                    script->baselineScript()->setActive();
+                } else {
+                    jit::FinishInvalidation<ParallelExecution>(fop, script);
+                }
+            }
 
             /*
              * Discard baseline script if it's not marked as active. Note that
@@ -205,8 +220,7 @@ Zone::discardJitCode(FreeOp *fop)
             script->resetUseCount();
         }
 
-        for (CompartmentsInZoneIter comp(this); !comp.done(); comp.next())
-            jit::FinishDiscardJitCode(fop, comp);
+        jitZone()->optimizedStubSpace()->free();
     }
 #endif
 }
@@ -218,6 +232,20 @@ Zone::gcNumber()
     // them cannot access the main runtime's gcNumber without racing.
     return usedByExclusiveThread ? 0 : runtimeFromMainThread()->gcNumber;
 }
+
+#ifdef JS_ION
+js::jit::JitZone *
+Zone::createJitZone(JSContext *cx)
+{
+    MOZ_ASSERT(!jitZone_);
+
+    if (!cx->runtime()->getJitRuntime(cx))
+        return nullptr;
+
+    jitZone_ = cx->new_<js::jit::JitZone>();
+    return jitZone_;
+}
+#endif
 
 JS::Zone *
 js::ZoneOfObject(const JSObject &obj)

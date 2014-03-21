@@ -31,6 +31,9 @@
 #include "nsXULAppAPI.h"                // for XRE_GetProcessType
 #include "nscore.h"                     // for NS_IMETHOD
 #include "VBOArena.h"                   // for gl::VBOArena
+#ifdef MOZ_WIDGET_GONK
+#include <ui/GraphicBuffer.h>
+#endif
 
 class gfx3DMatrix;
 class nsIWidget;
@@ -51,6 +54,99 @@ class GLManagerCompositor;
 class TextureSource;
 struct Effect;
 struct EffectChain;
+
+/**
+ * Interface for pools of temporary gl textures for the compositor.
+ * The textures are fully owned by the pool, so the latter is responsible
+ * calling fDeleteTextures accordingly.
+ * Users of GetTexture receive a texture that is only valid for the duration
+ * of the current frame.
+ * This is primarily intended for direct texturing APIs that need to attach
+ * shared objects (such as an EGLImage) to a gl texture.
+ */
+class CompositorTexturePoolOGL : public RefCounted<CompositorTexturePoolOGL>
+{
+public:
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(CompositorTexturePoolOGL)
+
+  virtual ~CompositorTexturePoolOGL() {}
+
+  virtual void Clear() = 0;
+
+  virtual GLuint GetTexture(GLenum aUnit) = 0;
+
+  virtual void EndFrame() = 0;
+};
+
+/**
+ * Agressively reuses textures. One gl texture per texture unit in total.
+ * So far this hasn't shown the best results on b2g.
+ */
+class PerUnitTexturePoolOGL : public CompositorTexturePoolOGL
+{
+public:
+  PerUnitTexturePoolOGL(gl::GLContext* aGL)
+  : mGL(aGL)
+  {}
+
+  virtual ~PerUnitTexturePoolOGL()
+  {
+    DestroyTextures();
+  }
+
+  virtual void Clear() MOZ_OVERRIDE
+  {
+    DestroyTextures();
+  }
+
+  virtual GLuint GetTexture(GLenum aUnit) MOZ_OVERRIDE;
+
+  virtual void EndFrame() MOZ_OVERRIDE {}
+
+protected:
+  void DestroyTextures();
+
+  nsTArray<GLuint> mTextures;
+  RefPtr<gl::GLContext> mGL;
+};
+
+/**
+ * Reuse gl textures from a pool of textures that haven't yet been
+ * used during the current frame.
+ * All the textures that are not used at the end of a frame are
+ * deleted.
+ * This strategy seems to work well with gralloc textures because destroying
+ * unused textures which are bound to gralloc buffers let drivers know that it
+ * can unlock the gralloc buffers.
+ */
+class PerFrameTexturePoolOGL : public CompositorTexturePoolOGL
+{
+public:
+  PerFrameTexturePoolOGL(gl::GLContext* aGL)
+  : mGL(aGL)
+  {}
+
+  virtual ~PerFrameTexturePoolOGL()
+  {
+    DestroyTextures();
+  }
+
+  virtual void Clear() MOZ_OVERRIDE
+  {
+    DestroyTextures();
+  }
+
+  virtual GLuint GetTexture(GLenum aUnit) MOZ_OVERRIDE;
+
+  virtual void EndFrame() MOZ_OVERRIDE;
+
+protected:
+  void DestroyTextures();
+
+  RefPtr<gl::GLContext> mGL;
+  nsTArray<GLuint> mCreatedTextures;
+  nsTArray<GLuint> mUnusedTextures;
+};
 
 class CompositorOGL : public Compositor
 {
@@ -110,6 +206,7 @@ public:
 
 
   virtual void EndFrame() MOZ_OVERRIDE;
+  virtual void SetFBAcquireFence(Layer* aLayer) MOZ_OVERRIDE;
   virtual void EndFrameForExternalComposition(const gfx::Matrix& aTransform) MOZ_OVERRIDE;
   virtual void AbortFrame() MOZ_OVERRIDE;
 
@@ -302,11 +399,9 @@ private:
    */
   GLint FlipY(GLint y) const { return mHeight - y; }
 
-  bool mDestroyed;
+  RefPtr<CompositorTexturePoolOGL> mTexturePool;
 
-  // Textures used for direct texturing of buffers like gralloc.
-  // The index of the texture in this array must correspond to the texture unit.
-  nsTArray<GLuint> mTextures;
+  bool mDestroyed;
 
   /**
    * Height of the OpenGL context's primary framebuffer in pixels. Used by

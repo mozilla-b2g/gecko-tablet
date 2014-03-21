@@ -225,6 +225,12 @@ MaybeCallable(MDefinition *op)
     return types->maybeCallable();
 }
 
+MTest *
+MTest::New(TempAllocator &alloc, MDefinition *ins, MBasicBlock *ifTrue, MBasicBlock *ifFalse)
+{
+    return new(alloc) MTest(ins, ifTrue, ifFalse);
+}
+
 void
 MTest::infer()
 {
@@ -243,6 +249,32 @@ MTest::foldsTo(TempAllocator &alloc, bool useValueNumbers)
         return MTest::New(alloc, op->toNot()->operand(), ifFalse(), ifTrue());
 
     return this;
+}
+
+void
+MTest::filtersUndefinedOrNull(bool trueBranch, MDefinition **subject, bool *filtersUndefined,
+                              bool *filtersNull)
+{
+    MDefinition *ins = getOperand(0);
+    if (ins->isCompare()) {
+        ins->toCompare()->filtersUndefinedOrNull(trueBranch, subject, filtersUndefined, filtersNull);
+        return;
+    }
+
+    if (!trueBranch && ins->isNot()) {
+        *subject = ins->getOperand(0);
+        *filtersUndefined = *filtersNull = true;
+        return;
+    }
+
+    if (trueBranch) {
+        *subject = ins;
+        *filtersUndefined = *filtersNull = true;
+        return;
+    }
+
+    *filtersUndefined = *filtersNull = false;
+    *subject = nullptr;
 }
 
 void
@@ -826,12 +858,6 @@ MRound::trySpecializeFloat32(TempAllocator &alloc)
     setPolicyType(MIRType_Float32);
 }
 
-MTest *
-MTest::New(TempAllocator &alloc, MDefinition *ins, MBasicBlock *ifTrue, MBasicBlock *ifFalse)
-{
-    return new(alloc) MTest(ins, ifTrue, ifFalse);
-}
-
 MCompare *
 MCompare::New(TempAllocator &alloc, MDefinition *left, MDefinition *right, JSOp op)
 {
@@ -927,20 +953,33 @@ MPhi::removeOperand(size_t index)
 }
 
 MDefinition *
-MPhi::foldsTo(TempAllocator &alloc, bool useValueNumbers)
+MPhi::operandIfRedundant()
 {
-    JS_ASSERT(!inputs_.empty());
+    JS_ASSERT(inputs_.length() != 0);
 
+    // If this phi is redundant (e.g., phi(a,a) or b=phi(a,this)),
+    // returns the operand that it will always be equal to (a, in
+    // those two cases).
     MDefinition *first = getOperand(0);
-
-    for (size_t i = 1; i < inputs_.length(); i++) {
+    for (size_t i = 1, e = numOperands(); i < e; i++) {
         // Phis need dominator information to fold based on value numbers. For
         // simplicity, we only compare SSA names right now (bug 714727).
-        if (!EqualValues(false, getOperand(i), first))
-            return this;
+        if (!EqualValues(false, getOperand(i), first) &&
+            !EqualValues(false, getOperand(i), this))
+        {
+            return nullptr;
+        }
     }
-
     return first;
+}
+
+MDefinition *
+MPhi::foldsTo(TempAllocator &alloc, bool useValueNumbers)
+{
+    if (MDefinition *def = operandIfRedundant())
+        return def;
+
+    return this;
 }
 
 bool
@@ -1766,9 +1805,10 @@ SafelyCoercesToDouble(MDefinition *op)
 static bool
 ObjectOrSimplePrimitive(MDefinition *op)
 {
-    // Return true if op is either undefined/null/bolean/int32 or an object.
+    // Return true if op is either undefined/null/boolean/int32 or an object.
     return !op->mightBeType(MIRType_String)
         && !op->mightBeType(MIRType_Double)
+        && !op->mightBeType(MIRType_Float32)
         && !op->mightBeType(MIRType_Magic);
 }
 
@@ -2567,6 +2607,37 @@ MCompare::trySpecializeFloat32(TempAllocator &alloc)
 }
 
 void
+MCompare::filtersUndefinedOrNull(bool trueBranch, MDefinition **subject, bool *filtersUndefined,
+                                 bool *filtersNull)
+{
+    *filtersNull = *filtersUndefined = false;
+    *subject = nullptr;
+
+    if (compareType() != Compare_Undefined && compareType() != Compare_Null)
+        return;
+
+    JS_ASSERT(jsop() == JSOP_STRICTNE || jsop() == JSOP_NE ||
+              jsop() == JSOP_STRICTEQ || jsop() == JSOP_EQ);
+
+    // JSOP_*NE only removes undefined/null from if/true branch
+    if (!trueBranch && (jsop() == JSOP_STRICTNE || jsop() == JSOP_NE))
+        return;
+
+    // JSOP_*EQ only removes undefined/null from else/false branch
+    if (trueBranch && (jsop() == JSOP_STRICTEQ || jsop() == JSOP_EQ))
+        return;
+
+    if (jsop() == JSOP_STRICTEQ || jsop() == JSOP_STRICTNE) {
+        *filtersUndefined = compareType() == Compare_Undefined;
+        *filtersNull = compareType() == Compare_Null;
+    } else {
+        *filtersUndefined = *filtersNull = true;
+    }
+
+    *subject = lhs();
+}
+
+void
 MNot::infer()
 {
     JS_ASSERT(operandMightEmulateUndefined());
@@ -2765,10 +2836,8 @@ InlinePropertyTable::buildTypeSetForFunction(JSFunction *func) const
     if (!types)
         return nullptr;
     for (size_t i = 0; i < numEntries(); i++) {
-        if (entries_[i]->func == func) {
-            if (!types->addType(types::Type::ObjectType(entries_[i]->typeObj), alloc))
-                return nullptr;
-        }
+        if (entries_[i]->func == func)
+            types->addType(types::Type::ObjectType(entries_[i]->typeObj), alloc);
     }
     return types;
 }
@@ -2933,8 +3002,9 @@ jit::ElementAccessIsDenseNative(MDefinition *obj, MDefinition *id)
     if (!types)
         return false;
 
+    // Typed arrays are native classes but do not have dense elements.
     const Class *clasp = types->getKnownClass();
-    return clasp && clasp->isNative();
+    return clasp && clasp->isNative() && !IsTypedArrayClass(clasp);
 }
 
 bool
@@ -3171,7 +3241,7 @@ jit::PropertyReadIsIdempotent(types::CompilerConstraintList *constraints,
     return true;
 }
 
-bool
+void
 jit::AddObjectsForPropertyRead(MDefinition *obj, PropertyName *name,
                                types::TemporaryTypeSet *observed)
 {
@@ -3181,16 +3251,20 @@ jit::AddObjectsForPropertyRead(MDefinition *obj, PropertyName *name,
     LifoAlloc *alloc = GetIonContext()->temp->lifoAlloc();
 
     types::TemporaryTypeSet *types = obj->resultTypeSet();
-    if (!types || types->unknownObject())
-        return observed->addType(types::Type::AnyObjectType(), alloc);
+    if (!types || types->unknownObject()) {
+        observed->addType(types::Type::AnyObjectType(), alloc);
+        return;
+    }
 
     for (size_t i = 0; i < types->getObjectCount(); i++) {
         types::TypeObjectKey *object = types->getObject(i);
         if (!object)
             continue;
 
-        if (object->unknownProperties())
-            return observed->addType(types::Type::AnyObjectType(), alloc);
+        if (object->unknownProperties()) {
+            observed->addType(types::Type::AnyObjectType(), alloc);
+            return;
+        }
 
         jsid id = name ? NameToId(name) : JSID_VOID;
         types::HeapTypeSetKey property = object->property(id);
@@ -3198,17 +3272,17 @@ jit::AddObjectsForPropertyRead(MDefinition *obj, PropertyName *name,
         if (!types)
             continue;
 
-        if (types->unknownObject())
-            return observed->addType(types::Type::AnyObjectType(), alloc);
+        if (types->unknownObject()) {
+            observed->addType(types::Type::AnyObjectType(), alloc);
+            return;
+        }
 
         for (size_t i = 0; i < types->getObjectCount(); i++) {
             types::TypeObjectKey *object = types->getObject(i);
-            if (object && !observed->addType(types::Type::ObjectType(object), alloc))
-                return false;
+            if (object)
+                observed->addType(types::Type::ObjectType(object), alloc);
         }
     }
-
-    return true;
 }
 
 static bool

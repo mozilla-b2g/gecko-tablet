@@ -38,8 +38,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "BookmarkHTMLUtils",
 XPCOMUtils.defineLazyModuleGetter(this, "BookmarkJSONUtils",
                                   "resource://gre/modules/BookmarkJSONUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "webappsUI",
-                                  "resource:///modules/webappsUI.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "WebappManager",
+                                  "resource:///modules/WebappManager.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "PageThumbs",
                                   "resource://gre/modules/PageThumbs.jsm");
@@ -468,11 +468,10 @@ BrowserGlue.prototype = {
 
     this._syncSearchEngines();
 
-    webappsUI.init();
+    WebappManager.init();
     PageThumbs.init();
     NewTabUtils.init();
     BrowserNewTabPreloader.init();
-    CustomizationTabPreloader.init();
     SignInToWebsiteUX.init();
     PdfJs.init();
 #ifdef NIGHTLY_BUILD
@@ -655,7 +654,7 @@ BrowserGlue.prototype = {
 
     BrowserNewTabPreloader.uninit();
     CustomizationTabPreloader.uninit();
-    webappsUI.uninit();
+    WebappManager.uninit();
     SignInToWebsiteUX.uninit();
     webrtcUI.uninit();
   },
@@ -1046,13 +1045,13 @@ BrowserGlue.prototype = {
     // forced migration (due to a major schema change).
     // If the database is corrupt or has been newly created we should
     // import bookmarks.
-    var dbStatus = PlacesUtils.history.databaseStatus;
-    var importBookmarks = !aInitialMigrationPerformed &&
+    let dbStatus = PlacesUtils.history.databaseStatus;
+    let importBookmarks = !aInitialMigrationPerformed &&
                           (dbStatus == PlacesUtils.history.DATABASE_STATUS_CREATE ||
                            dbStatus == PlacesUtils.history.DATABASE_STATUS_CORRUPT);
 
     // Check if user or an extension has required to import bookmarks.html
-    var importBookmarksHTML = false;
+    let importBookmarksHTML = false;
     try {
       importBookmarksHTML =
         Services.prefs.getBoolPref("browser.places.importBookmarksHTML");
@@ -1063,7 +1062,7 @@ BrowserGlue.prototype = {
     Task.spawn(function() {
       // Check if Safe Mode or the user has required to restore bookmarks from
       // default profile's bookmarks.html
-      var restoreDefaultBookmarks = false;
+      let restoreDefaultBookmarks = false;
       try {
         restoreDefaultBookmarks =
           Services.prefs.getBoolPref("browser.bookmarks.restore_default_bookmarks");
@@ -1091,10 +1090,7 @@ BrowserGlue.prototype = {
         else {
           // We have created a new database but we don't have any backup available
           importBookmarks = true;
-          var dirService = Cc["@mozilla.org/file/directory_service;1"].
-                           getService(Ci.nsIProperties);
-          var bookmarksHTMLFile = dirService.get("BMarks", Ci.nsILocalFile);
-          if (bookmarksHTMLFile.exists()) {
+          if (yield OS.File.exists(BookmarkHTMLUtils.defaultPath)) {
             // If bookmarks.html is available in current profile import it...
             importBookmarksHTML = true;
           }
@@ -1120,36 +1116,30 @@ BrowserGlue.prototype = {
         // An import operation is about to run.
         // Don't try to recreate smart bookmarks if autoExportHTML is true or
         // smart bookmarks are disabled.
-        var autoExportHTML = false;
+        let autoExportHTML = false;
         try {
           autoExportHTML = Services.prefs.getBoolPref("browser.bookmarks.autoExportHTML");
         } catch(ex) {}
-        var smartBookmarksVersion = 0;
+        let smartBookmarksVersion = 0;
         try {
           smartBookmarksVersion = Services.prefs.getIntPref("browser.places.smartBookmarksVersion");
         } catch(ex) {}
         if (!autoExportHTML && smartBookmarksVersion != -1)
           Services.prefs.setIntPref("browser.places.smartBookmarksVersion", 0);
 
-        // Get bookmarks.html file location
-        var dirService = Cc["@mozilla.org/file/directory_service;1"].
-                         getService(Ci.nsIProperties);
-
-        var bookmarksURI = null;
+        let bookmarksUrl = null;
         if (restoreDefaultBookmarks) {
           // User wants to restore bookmarks.html file from default profile folder
-          bookmarksURI = NetUtil.newURI("resource:///defaults/profile/bookmarks.html");
+          bookmarksUrl = "resource:///defaults/profile/bookmarks.html";
         }
-        else {
-          var bookmarksFile = dirService.get("BMarks", Ci.nsILocalFile);
-          if (bookmarksFile.exists())
-            bookmarksURI = NetUtil.newURI(bookmarksFile);
+        else if (yield OS.File.exists(BookmarkHTMLUtils.defaultPath)) {
+          bookmarksUrl = OS.Path.toFileURI(BookmarkHTMLUtils.defaultPath);
         }
 
-        if (bookmarksURI) {
+        if (bookmarksUrl) {
           // Import from bookmarks.html file.
           try {
-            BookmarkHTMLUtils.importFromURL(bookmarksURI.spec, true).then(null,
+            BookmarkHTMLUtils.importFromURL(bookmarksUrl, true).then(null,
               function onFailure() {
                 Cu.reportError("Bookmarks.html file could be corrupt.");
               }
@@ -1240,7 +1230,7 @@ BrowserGlue.prototype = {
         // can safely add a profile-before-change blocker.
         AsyncShutdown.profileBeforeChange.addBlocker(
           "Places: bookmarks.html",
-          () => BookmarkHTMLUtils.exportToFile(Services.dirsvc.get("BMarks", Ci.nsIFile))
+          () => BookmarkHTMLUtils.exportToFile(BookmarkHTMLUtils.defaultPath)
                                  .then(null, Cu.reportError)
         );
       }
@@ -1302,7 +1292,7 @@ BrowserGlue.prototype = {
   },
 
   _migrateUI: function BG__migrateUI() {
-    const UI_VERSION = 20;
+    const UI_VERSION = 22;
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul#";
     let currentUIVersion = 0;
     try {
@@ -1574,6 +1564,22 @@ BrowserGlue.prototype = {
       }
     }
 
+    if (currentUIVersion < 21) {
+      // Make sure the 'toolbarbutton-1' class will always be present from here
+      // on out.
+      let button = this._rdf.GetResource(BROWSER_DOCURL + "bookmarks-menu-button");
+      let classResource = this._rdf.GetResource("class");
+      if (this._getPersist(button, classResource)) {
+        this._setPersist(button, classResource);
+      }
+    }
+
+    if (currentUIVersion < 22) {
+      // Reset the Sync promobox count to promote the new FxAccount-based Sync.
+      Services.prefs.clearUserPref("browser.syncPromoViewsLeft");
+      Services.prefs.clearUserPref("browser.syncPromoViewsLeftMap");
+    }
+
     if (this._dirty)
       this._dataSource.QueryInterface(Ci.nsIRDFRemoteDataSource).Flush();
 
@@ -1633,7 +1639,7 @@ BrowserGlue.prototype = {
     // be set to the version it has been added in, we will compare its value
     // to users' smartBookmarksVersion and add new smart bookmarks without
     // recreating old deleted ones.
-    const SMART_BOOKMARKS_VERSION = 6;
+    const SMART_BOOKMARKS_VERSION = 7;
     const SMART_BOOKMARKS_ANNO = "Places/SmartBookmark";
     const SMART_BOOKMARKS_PREF = "browser.places.smartBookmarksVersion";
 
@@ -1665,7 +1671,7 @@ BrowserGlue.prototype = {
                                 Ci.nsINavHistoryQueryOptions.SORT_BY_VISITCOUNT_DESCENDING +
                                 "&maxResults=" + MAX_RESULTS),
             parent: PlacesUtils.toolbarFolderId,
-            position: toolbarIndex++,
+            get position() { return toolbarIndex++; },
             newInVersion: 1
           },
           RecentlyBookmarked: {
@@ -1680,7 +1686,7 @@ BrowserGlue.prototype = {
                                 "&maxResults=" + MAX_RESULTS +
                                 "&excludeQueries=1"),
             parent: PlacesUtils.bookmarksMenuFolderId,
-            position: menuIndex++,
+            get position() { return menuIndex++; },
             newInVersion: 1
           },
           RecentTags: {
@@ -1692,25 +1698,31 @@ BrowserGlue.prototype = {
                                 Ci.nsINavHistoryQueryOptions.SORT_BY_LASTMODIFIED_DESCENDING +
                                 "&maxResults=" + MAX_RESULTS),
             parent: PlacesUtils.bookmarksMenuFolderId,
-            position: menuIndex++,
+            get position() { return menuIndex++; },
             newInVersion: 1
           },
         };
 
         if (Services.metro && Services.metro.supported) {
           smartBookmarks.Windows8Touch = {
-            title: bundle.GetStringFromName("windows8TouchTitle"),
-            uri: NetUtil.newURI("place:folder=" +
-                                PlacesUtils.annotations.getItemsWithAnnotation('metro/bookmarksRoot', {})[0] +
-                                "&queryType=" +
-                                Ci.nsINavHistoryQueryOptions.QUERY_TYPE_BOOKMARKS +
-                                "&sort=" +
-                                Ci.nsINavHistoryQueryOptions.SORT_BY_DATEADDED_DESCENDING +
-                                "&maxResults=" + MAX_RESULTS +
-                                "&excludeQueries=1"),
+            title: PlacesUtils.getString("windows8TouchTitle"),
+            get uri() {
+              let metroBookmarksRoot = PlacesUtils.annotations.getItemsWithAnnotation('metro/bookmarksRoot', {});
+              if (metroBookmarksRoot.length > 0) {
+                return NetUtil.newURI("place:folder=" +
+                                      metroBookmarksRoot[0] +
+                                      "&queryType=" +
+                                      Ci.nsINavHistoryQueryOptions.QUERY_TYPE_BOOKMARKS +
+                                      "&sort=" +
+                                      Ci.nsINavHistoryQueryOptions.SORT_BY_DATEADDED_DESCENDING +
+                                      "&maxResults=" + MAX_RESULTS +
+                                      "&excludeQueries=1")
+              }
+              return null;
+            },
             parent: PlacesUtils.bookmarksMenuFolderId,
-            position: menuIndex++,
-            newInVersion: 6
+            get position() { return menuIndex++; },
+            newInVersion: 7
           };
         }
 
@@ -1722,9 +1734,13 @@ BrowserGlue.prototype = {
           let queryId = PlacesUtils.annotations.getItemAnnotation(itemId, SMART_BOOKMARKS_ANNO);
           if (queryId in smartBookmarks) {
             let smartBookmark = smartBookmarks[queryId];
+            if (!smartBookmark.uri) {
+              PlacesUtils.bookmarks.removeItem(itemId);
+              return;
+            }
             smartBookmark.itemId = itemId;
             smartBookmark.parent = PlacesUtils.bookmarks.getFolderIdForItem(itemId);
-            smartBookmark.position = PlacesUtils.bookmarks.getItemIndex(itemId);
+            smartBookmark.updatedPosition = PlacesUtils.bookmarks.getItemIndex(itemId);
           }
           else {
             // We don't remove old Smart Bookmarks because user could still
@@ -1742,7 +1758,7 @@ BrowserGlue.prototype = {
           // bookmark if it has been removed.
           if (smartBookmarksCurrentVersion > 0 &&
               smartBookmark.newInVersion <= smartBookmarksCurrentVersion &&
-              !smartBookmark.itemId)
+              !smartBookmark.itemId || !smartBookmark.uri)
             continue;
 
           // Remove old version of the smart bookmark if it exists, since it
@@ -1755,7 +1771,7 @@ BrowserGlue.prototype = {
           smartBookmark.itemId =
             PlacesUtils.bookmarks.insertBookmark(smartBookmark.parent,
                                                  smartBookmark.uri,
-                                                 smartBookmark.position,
+                                                 smartBookmark.updatedPosition || smartBookmark.position,
                                                  smartBookmark.title);
           PlacesUtils.annotations.setItemAnnotation(smartBookmark.itemId,
                                                     SMART_BOOKMARKS_ANNO,

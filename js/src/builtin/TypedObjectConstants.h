@@ -21,23 +21,24 @@
 #define JS_DESCR_SLOT_TYPE_REPR          0  // Associated Type Representation
 #define JS_DESCR_SLOT_ALIGNMENT          1  // Alignment in bytes
 #define JS_DESCR_SLOT_SIZE               2  // Size in bytes, if sized, else 0
+#define JS_DESCR_SLOT_PROTO              3  // Prototype for instances, if any
 
 // Slots on scalars, references, and x4s
-#define JS_DESCR_SLOT_TYPE               3  // Type code
+#define JS_DESCR_SLOT_TYPE               4  // Type code
 
 // Slots on all array descriptors
-#define JS_DESCR_SLOT_ARRAY_ELEM_TYPE    3
+#define JS_DESCR_SLOT_ARRAY_ELEM_TYPE    4
 
 // Slots on sized array descriptors
-#define JS_DESCR_SLOT_SIZED_ARRAY_LENGTH 4
+#define JS_DESCR_SLOT_SIZED_ARRAY_LENGTH 5
 
 // Slots on struct type objects
-#define JS_DESCR_SLOT_STRUCT_FIELD_NAMES 3
-#define JS_DESCR_SLOT_STRUCT_FIELD_TYPES 4
-#define JS_DESCR_SLOT_STRUCT_FIELD_OFFSETS 5
+#define JS_DESCR_SLOT_STRUCT_FIELD_NAMES 4
+#define JS_DESCR_SLOT_STRUCT_FIELD_TYPES 5
+#define JS_DESCR_SLOT_STRUCT_FIELD_OFFSETS 6
 
 // Maximum number of slots for any descriptor
-#define JS_DESCR_SLOTS                   6
+#define JS_DESCR_SLOTS                   7
 
 ///////////////////////////////////////////////////////////////////////////
 // Slots for type representation objects
@@ -109,15 +110,14 @@
 #define JS_TYPEDOBJ_SLOT_BYTELENGTH       1
 #define JS_TYPEDOBJ_SLOT_OWNER            2
 #define JS_TYPEDOBJ_SLOT_NEXT_VIEW        3
-#define JS_TYPEDOBJ_SLOT_NEXT_BUFFER      4
 
-#define JS_DATAVIEW_SLOTS              5 // Number of slots for data views
+#define JS_DATAVIEW_SLOTS              4 // Number of slots for data views
 
-#define JS_TYPEDOBJ_SLOT_LENGTH           5 // Length of array (see (*) below)
-#define JS_TYPEDOBJ_SLOT_TYPE_DESCR       6 // For typed objects, type descr
+#define JS_TYPEDOBJ_SLOT_LENGTH           4 // Length of array (see (*) below)
+#define JS_TYPEDOBJ_SLOT_TYPE_DESCR       5 // For typed objects, type descr
 
 #define JS_TYPEDOBJ_SLOT_DATA             7 // private slot, based on alloc kind
-#define JS_TYPEDOBJ_SLOTS                 7 // Number of slots for typed objs
+#define JS_TYPEDOBJ_SLOTS                 6 // Number of slots for typed objs
 
 // (*) The JS_TYPEDOBJ_SLOT_LENGTH slot stores the length for typed objects of
 // sized and unsized array type. The slot contains 0 for non-arrays.

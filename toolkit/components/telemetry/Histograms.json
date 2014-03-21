@@ -2836,6 +2836,15 @@
     "extended_statistics_ok": true,
     "description": "PLACES: Time to convert and write the backup"
   },
+  "PLACES_EXPORT_TOHTML_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "low": 50,
+    "high": 2000,
+    "n_buckets": 10,
+    "extended_statistics_ok": true,
+    "description": "PLACES: Time to convert and write bookmarks.html"
+  },
   "FENNEC_FAVICONS_COUNT": {
     "expires_in_version": "never",
     "kind": "exponential",
@@ -4245,13 +4254,13 @@
     "extended_statistics_ok": true,
     "description": "Time spent on a successful cert  verification in classic mode (ms)"
   },
-  "SSL_SUCCESFUL_CERT_VALIDATION_TIME_INSANITY" : {
+  "SSL_SUCCESFUL_CERT_VALIDATION_TIME_MOZILLAPKIX" : {
     "expires_in_version": "never",
     "kind": "exponential",
     "high": "60000",
     "n_buckets": 50,
     "extended_statistics_ok": true,
-    "description": "Time spent on a successful cert verification in insanity mode (ms)"
+    "description": "Time spent on a successful cert verification in mozilla::pkix mode (ms)"
   },
   "SSL_INITIAL_FAILED_CERT_VALIDATION_TIME_LIBPKIX" : {
     "expires_in_version": "never",
@@ -4269,13 +4278,13 @@
     "extended_statistics_ok": true,
     "description": "Time spent on an initially failed cert  verification in classic mode (ms)"
   },
-  "SSL_INITIAL_FAILED_CERT_VALIDATION_TIME_INSANITY" : {
+  "SSL_INITIAL_FAILED_CERT_VALIDATION_TIME_MOZILLAPKIX" : {
     "expires_in_version": "never",
     "kind": "exponential",
     "high": "60000",
     "n_buckets": 50,
     "extended_statistics_ok": true,
-    "description": "Time spent on an initially failed cert verification in insanity mode (ms)"
+    "description": "Time spent on an initially failed cert verification in mozilla::pkix mode (ms)"
   },
   "HEALTHREPORT_DB_OPEN_FIRSTRUN_MS": {
     "expires_in_version": "never",
@@ -4892,6 +4901,20 @@
     "n_buckets": "1000",
     "description": "The time (in milliseconds) that it took a 'detach' request to go round trip."
   },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_ADDONDETACH_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'detach' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_ADDONDETACH_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'detach' request to go round trip."
+  },
   "DEVTOOLS_DEBUGGER_RDP_LOCAL_TABDETACH_MS": {
     "expires_in_version": "never",
     "kind": "exponential",
@@ -4952,6 +4975,20 @@
     "expires_in_version": "never",
     "kind": "boolean",
     "description": "The number of failed ICE Connections (0) vs. number of successful ICE connections (1)."
+  },
+  "WEBRTC_AVSYNC_WHEN_AUDIO_LAGS_VIDEO_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 60000,
+    "n_buckets": 1000,
+    "description": "The delay (in milliseconds) when audio is behind video. Zero delay is counted. Measured every second of a call."
+  },
+  "WEBRTC_AVSYNC_WHEN_VIDEO_LAGS_AUDIO_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 60000,
+    "n_buckets": 1000,
+    "description": "The delay (in milliseconds) when video is behind audio. Zero delay is not counted. Measured every second of a call."
   },
   "WEBRTC_CALL_DURATION": {
     "expires_in_version": "never",

@@ -249,6 +249,7 @@ private:
   void ResumeComposition();
   void ResumeCompositionAndResize(int width, int height);
   void ForceComposition();
+  void CancelCurrentCompositeTask();
 
   inline static PlatformThreadId CompositorThreadID();
 
@@ -306,7 +307,7 @@ private:
   TimeStamp mTestTime;
   bool mIsTesting;
 #ifdef COMPOSITOR_PERFORMANCE_WARNING
-  TimeStamp mExpectedComposeTime;
+  TimeStamp mExpectedComposeStartTime;
 #endif
 
   bool mPaused;

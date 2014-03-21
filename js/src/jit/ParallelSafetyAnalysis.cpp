@@ -183,7 +183,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     CUSTOM_OP(NewArray)
     CUSTOM_OP(NewObject)
     CUSTOM_OP(NewCallObject)
-    UNSAFE_OP(NewDerivedTypedObject)
+    CUSTOM_OP(NewDerivedTypedObject)
     UNSAFE_OP(InitElem)
     UNSAFE_OP(InitElemGetterSetter)
     UNSAFE_OP(MutateProto)
@@ -201,6 +201,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     SAFE_OP(LoadSlot)
     WRITE_GUARDED_OP(StoreSlot, slots)
     SAFE_OP(FunctionEnvironment) // just a load of func env ptr
+    SAFE_OP(FilterTypeSet)
     SAFE_OP(TypeBarrier) // causes a bailout if the type is not found: a-ok with us
     SAFE_OP(MonitorTypes) // causes a bailout if the type is not found: a-ok with us
     UNSAFE_OP(PostWriteBarrier)
@@ -563,6 +564,20 @@ ParallelSafetyVisitor::visitNewArray(MNewArray *newInstruction)
     }
 
     return replaceWithNewPar(newInstruction, newInstruction->templateObject());
+}
+
+bool
+ParallelSafetyVisitor::visitNewDerivedTypedObject(MNewDerivedTypedObject *ins)
+{
+    // FIXME(Bug 984090) -- There should really be a parallel-safe
+    // version of NewDerivedTypedObject. However, until that is
+    // implemented, let's just ignore those with 0 uses, since they
+    // will be stripped out by DCE later.
+    if (ins->useCount() == 0)
+        return true;
+
+    SpewMIR(ins, "visitNewDerivedTypedObject");
+    return markUnsafe();
 }
 
 bool

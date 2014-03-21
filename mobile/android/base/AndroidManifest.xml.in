@@ -141,6 +141,25 @@
                 <action android:name="android.intent.action.SEARCH" />
             </intent-filter>
 
+            <!-- For XPI installs from websites and the download manager. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="file" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:mimeType="application/x-xpinstall" />
+            </intent-filter>
+
+            <!-- For XPI installs from file: URLs. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:host="" />
+                <data android:scheme="file" />
+                <data android:pathPattern=".*\\.xpi" />
+            </intent-filter>
+
 #ifdef MOZ_ANDROID_BEAM
             <intent-filter>
                 <action android:name="android.nfc.action.NDEF_DISCOVERED"/>
@@ -271,6 +290,11 @@
                   android:configChanges="orientation|screenSize"
                   android:excludeFromRecents="true"/>
 
+        <activity android:name="org.mozilla.gecko.home.HomePanelPicker"
+                  android:theme="@style/Gecko.TitleDialog"
+                  android:label="@string/home_add_panel_title"
+                  android:excludeFromRecents="true" />
+
         <provider android:name="org.mozilla.gecko.db.BrowserProvider"
                   android:authorities="@ANDROID_PACKAGE_NAME@.db.browser"
                   android:permission="@ANDROID_PACKAGE_NAME@.permissions.BROWSER_PROVIDER">
@@ -298,6 +322,9 @@
                   android:permission="@ANDROID_PACKAGE_NAME@.permissions.FORMHISTORY_PROVIDER"
                   android:protectionLevel="signature"/>
 
+        <provider android:name="org.mozilla.gecko.GeckoProfilesProvider"
+                  android:authorities="@ANDROID_PACKAGE_NAME@.profiles"/>
+
         <provider android:name="org.mozilla.gecko.db.TabsProvider"
                   android:label="@string/sync_configure_engines_title_tabs"
                   android:authorities="@ANDROID_PACKAGE_NAME@.db.tabs"
@@ -305,6 +332,10 @@
 
         <provider android:name="org.mozilla.gecko.db.HomeProvider"
                   android:authorities="@ANDROID_PACKAGE_NAME@.db.home"
+                  android:permission="@ANDROID_PACKAGE_NAME@.permissions.BROWSER_PROVIDER"/>
+
+        <provider android:name="org.mozilla.gecko.db.ReadingListProvider"
+                  android:authorities="@ANDROID_PACKAGE_NAME@.db.readinglist"
                   android:permission="@ANDROID_PACKAGE_NAME@.permissions.BROWSER_PROVIDER"/>
 
         <service

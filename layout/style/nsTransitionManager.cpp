@@ -18,7 +18,7 @@
 #include "nsRuleWalker.h"
 #include "nsCSSPropertySet.h"
 #include "nsStyleAnimation.h"
-#include "nsEventDispatcher.h"
+#include "mozilla/EventDispatcher.h"
 #include "mozilla/ContentEvents.h"
 #include "mozilla/dom/Element.h"
 #include "nsIFrame.h"
@@ -171,10 +171,10 @@ ElementTransitions::CanPerformOnCompositorThread(CanAnimateFlags aFlags) const
   bool existsProperty = false;
   for (uint32_t i = 0, i_end = mPropertyTransitions.Length(); i < i_end; ++i) {
     const ElementPropertyTransition& pt = mPropertyTransitions[i];
-    if (pt.IsRemovedSentinel()) {
+    if (!pt.IsRunningAt(now)) {
       continue;
     }
-    
+
     existsProperty = true;
 
     if (!css::CommonElementAnimationData::CanAnimatePropertyOnCompositor(mElement,
@@ -981,7 +981,7 @@ nsTransitionManager::FlushTransitions(FlushFlags aFlags)
 
   for (uint32_t i = 0, i_end = events.Length(); i < i_end; ++i) {
     TransitionEventInfo &info = events[i];
-    nsEventDispatcher::Dispatch(info.mElement, mPresContext, &info.mEvent);
+    EventDispatcher::Dispatch(info.mElement, mPresContext, &info.mEvent);
 
     if (!mPresContext) {
       break;

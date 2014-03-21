@@ -99,7 +99,7 @@ struct EnterJITStack
 /*
  * This method generates a trampoline for a c++ function with the following
  * signature:
- *   void enter(void *code, int argc, Value *argv, StackFrame *fp, CalleeToken
+ *   void enter(void *code, int argc, Value *argv, InterpreterFrame *fp, CalleeToken
  *              calleeToken, JSObject *scopeChain, Value *vp)
  *   ...using standard EABI calling convention
  */
@@ -147,18 +147,6 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
     // Load the number of actual arguments into r10.
     masm.loadPtr(slot_vp, r10);
     masm.unboxInt32(Address(r10, 0), r10);
-
-#if 0
-    // This is in case we want to go back to using frames that
-    // aren't 8 byte alinged
-    // there are r1 2-word arguments to the js code
-    // we want 2 word alignment, so this shouldn't matter.
-    // After the arguments have been pushed, we want to push an additional 3 words of
-    // data, so in all, we want to decrease sp by 4 if it is currently aligned to
-    // 8, and not touch it otherwise
-    aasm->as_sub(sp, sp, Imm8(4));
-    aasm->as_orr(sp, sp, Imm8(4));
-#endif
 
     // Subtract off the size of the arguments from the stack pointer, store elsewhere
     aasm->as_sub(r4, sp, O2RegImmShift(r1, LSL, 3)); //r4 = sp - argc*8
@@ -275,7 +263,7 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
 
         masm.setupUnalignedABICall(3, scratch);
         masm.passABIArg(r11); // BaselineFrame
-        masm.passABIArg(OsrFrameReg); // StackFrame
+        masm.passABIArg(OsrFrameReg); // InterpreterFrame
         masm.passABIArg(numStackValues);
         masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, jit::InitBaselineFrameForOsr));
 

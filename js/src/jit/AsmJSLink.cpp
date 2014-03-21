@@ -56,13 +56,15 @@ LinkFail(JSContext *cx, const char *str)
 }
 
 static bool
-GetDataProperty(JSContext *cx, const Value &objVal, HandlePropertyName field, MutableHandleValue v)
+GetDataProperty(JSContext *cx, HandleValue objVal, HandlePropertyName field, MutableHandleValue v)
 {
     if (!objVal.isObject())
         return LinkFail(cx, "accessing property of non-object");
 
     Rooted<JSPropertyDescriptor> desc(cx);
-    if (!JS_GetPropertyDescriptorById(cx, &objVal.toObject(), NameToId(field), 0, &desc))
+    RootedObject obj(cx, &objVal.toObject());
+    RootedId id(cx, NameToId(field));
+    if (!JS_GetPropertyDescriptorById(cx, obj, id, 0, &desc))
         return false;
 
     if (!desc.object())
@@ -318,41 +320,6 @@ DynamicallyLinkModule(JSContext *cx, CallArgs args, AsmJSModule &module)
     return true;
 }
 
-AsmJSActivation::AsmJSActivation(JSContext *cx, AsmJSModule &module)
-  : cx_(cx),
-    module_(module),
-    errorRejoinSP_(nullptr),
-    profiler_(nullptr),
-    resumePC_(nullptr)
-{
-    if (cx->runtime()->spsProfiler.enabled()) {
-        // Use a profiler string that matches jsMatch regex in
-        // browser/devtools/profiler/cleopatra/js/parserWorker.js.
-        // (For now use a single static string to avoid further slowing down
-        // calls into asm.js.)
-        profiler_ = &cx->runtime()->spsProfiler;
-        profiler_->enterNative("asm.js code :0", this);
-    }
-
-    prev_ = cx_->runtime()->mainThread.asmJSActivationStack_;
-
-    JSRuntime::AutoLockForOperationCallback lock(cx_->runtime());
-    cx_->runtime()->mainThread.asmJSActivationStack_ = this;
-
-    (void) errorRejoinSP_;  // squelch GCC warning
-}
-
-AsmJSActivation::~AsmJSActivation()
-{
-    if (profiler_)
-        profiler_->exitNative();
-
-    JS_ASSERT(cx_->runtime()->mainThread.asmJSActivationStack_ == this);
-
-    JSRuntime::AutoLockForOperationCallback lock(cx_->runtime());
-    cx_->runtime()->mainThread.asmJSActivationStack_ = prev_;
-}
-
 static const unsigned ASM_MODULE_SLOT = 0;
 static const unsigned ASM_EXPORT_INDEX_SLOT = 1;
 
@@ -417,15 +384,12 @@ CallAsmJS(JSContext *cx, unsigned argc, Value *vp)
     }
 
     {
-        // Each call into an asm.js module requires an AsmJSActivation record
-        // pushed on a stack maintained by the runtime. This record is used for
-        // to handle a variety of exceptional things that can happen in asm.js
-        // code.
-        AsmJSActivation activation(cx, module);
-
-        // Eagerly push an IonContext+JitActivation so that the optimized
-        // asm.js-to-Ion FFI call path (which we want to be very fast) can
-        // avoid doing so.
+        // Push an AsmJSActivation to describe the asm.js frames we're about to
+        // push when running this module. Additionally, push a JitActivation so
+        // that the optimized asm.js-to-Ion FFI call path (which we want to be
+        // very fast) can avoid doing so. The JitActivation is marked as
+        // inactive so stack iteration will skip over it.
+        AsmJSActivation activation(cx, module, exportIndex);
         JitActivation jitActivation(cx, /* firstFrameIsConstructing = */ false, /* active */ false);
 
         // Call the per-exported-function trampoline created by GenerateEntry.
@@ -493,8 +457,7 @@ HandleDynamicLinkFailure(JSContext *cx, CallArgs args, AsmJSModule &module, Hand
         formals.infallibleAppend(module.bufferArgumentName());
 
     CompileOptions options(cx);
-    options.setPrincipals(cx->compartment()->principals)
-           .setOriginPrincipals(module.scriptSource()->originPrincipals())
+    options.setOriginPrincipals(module.scriptSource()->originPrincipals())
            .setCompileAndGo(false)
            .setNoScriptRval(false);
 
@@ -502,24 +465,8 @@ HandleDynamicLinkFailure(JSContext *cx, CallArgs args, AsmJSModule &module, Hand
         return false;
 
     // Call the function we just recompiled.
-
-    unsigned argc = args.length();
-
-    InvokeArgs args2(cx);
-    if (!args2.init(argc))
-        return false;
-
-    args2.setCallee(ObjectValue(*fun));
-    args2.setThis(args.thisv());
-    for (unsigned i = 0; i < argc; i++)
-        args2[i].set(args[i]);
-
-    if (!Invoke(cx, args2))
-        return false;
-
-    args.rval().set(args2.rval());
-
-    return true;
+    args.setCallee(ObjectValue(*fun));
+    return Invoke(cx, args);
 }
 
 #ifdef MOZ_VTUNE

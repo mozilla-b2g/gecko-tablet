@@ -26,6 +26,7 @@
 #include "nsZipArchive.h"
 #include "nsIDOMFile.h"
 #include "nsIDOMFileList.h"
+#include "nsWindowMemoryReporter.h"
 
 using namespace mozilla;
 using namespace JS;
@@ -2880,7 +2881,8 @@ nsXPCComponents_Utils::NondeterministicGetWeakMapKeys(HandleValue aMap,
         return NS_OK;
     }
     RootedObject objRet(aCx);
-    if (!JS_NondeterministicGetWeakMapKeys(aCx, &aMap.toObject(), objRet.address()))
+    RootedObject mapObj(aCx, &aMap.toObject());
+    if (!JS_NondeterministicGetWeakMapKeys(aCx, mapObj, &objRet))
         return NS_ERROR_OUT_OF_MEMORY;
      aKeys.set(objRet ? ObjectValue(*objRet) : UndefinedValue());
     return NS_OK;
@@ -3245,26 +3247,41 @@ nsXPCComponents_Utils::Dispatch(HandleValue runnableArg, HandleValue scope,
     return NS_DispatchToMainThread(run);
 }
 
-#define GENERATE_JSOPTION_GETTER_SETTER(_attr, _getter, _setter)    \
-    NS_IMETHODIMP                                                   \
-    nsXPCComponents_Utils::Get## _attr(JSContext* cx, bool* aValue) \
-    {                                                               \
-        *aValue = ContextOptionsRef(cx)._getter();                  \
-        return NS_OK;                                               \
-    }                                                               \
-    NS_IMETHODIMP                                                   \
-    nsXPCComponents_Utils::Set## _attr(JSContext* cx, bool aValue)  \
-    {                                                               \
-        ContextOptionsRef(cx)._setter(aValue);                      \
-        return NS_OK;                                               \
+#define GENERATE_JSCONTEXTOPTION_GETTER_SETTER(_attr, _getter, _setter) \
+    NS_IMETHODIMP                                                       \
+    nsXPCComponents_Utils::Get## _attr(JSContext* cx, bool* aValue)     \
+    {                                                                   \
+        *aValue = ContextOptionsRef(cx)._getter();                      \
+        return NS_OK;                                                   \
+    }                                                                   \
+    NS_IMETHODIMP                                                       \
+    nsXPCComponents_Utils::Set## _attr(JSContext* cx, bool aValue)      \
+    {                                                                   \
+        ContextOptionsRef(cx)._setter(aValue);                          \
+        return NS_OK;                                                   \
     }
 
-GENERATE_JSOPTION_GETTER_SETTER(Strict, extraWarnings, setExtraWarnings)
-GENERATE_JSOPTION_GETTER_SETTER(Werror, werror, setWerror)
-GENERATE_JSOPTION_GETTER_SETTER(Strict_mode, strictMode, setStrictMode)
-GENERATE_JSOPTION_GETTER_SETTER(Ion, ion, setIon)
+#define GENERATE_JSRUNTIMEOPTION_GETTER_SETTER(_attr, _getter, _setter) \
+    NS_IMETHODIMP                                                       \
+    nsXPCComponents_Utils::Get## _attr(JSContext* cx, bool* aValue)     \
+    {                                                                   \
+        *aValue = RuntimeOptionsRef(cx)._getter();                      \
+        return NS_OK;                                                   \
+    }                                                                   \
+    NS_IMETHODIMP                                                       \
+    nsXPCComponents_Utils::Set## _attr(JSContext* cx, bool aValue)      \
+    {                                                                   \
+        RuntimeOptionsRef(cx)._setter(aValue);                          \
+        return NS_OK;                                                   \
+    }
 
-#undef GENERATE_JSOPTION_GETTER_SETTER
+GENERATE_JSCONTEXTOPTION_GETTER_SETTER(Strict, extraWarnings, setExtraWarnings)
+GENERATE_JSCONTEXTOPTION_GETTER_SETTER(Werror, werror, setWerror)
+GENERATE_JSCONTEXTOPTION_GETTER_SETTER(Strict_mode, strictMode, setStrictMode)
+GENERATE_JSRUNTIMEOPTION_GETTER_SETTER(Ion, ion, setIon)
+
+#undef GENERATE_JSCONTEXTOPTION_GETTER_SETTER
+#undef GENERATE_JSRUNTIMEOPTION_GETTER_SETTER
 
 NS_IMETHODIMP
 nsXPCComponents_Utils::SetGCZeal(int32_t aValue, JSContext* cx)

@@ -6,6 +6,7 @@
 #ifndef mozilla_dom_HTMLFormElement_h
 #define mozilla_dom_HTMLFormElement_h
 
+#include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/Attributes.h"
 #include "nsCOMPtr.h"
 #include "nsIForm.h"
@@ -20,13 +21,14 @@
 #include "nsInterfaceHashtable.h"
 #include "nsRefPtrHashtable.h"
 #include "nsDataHashtable.h"
-#include "nsAsyncDOMEvent.h"
 #include "jsfriendapi.h" // For js::ExpandoAndGeneration
 
 class nsIMutableArray;
 class nsIURI;
 
 namespace mozilla {
+class EventChainPostVisitor;
+class EventChainPreVisitor;
 namespace dom {
 class HTMLFormControlsCollection;
 class HTMLImageElement;
@@ -40,7 +42,7 @@ class HTMLFormElement MOZ_FINAL : public nsGenericHTMLElement,
   friend class HTMLFormControlsCollection;
 
 public:
-  HTMLFormElement(already_AddRefed<nsINodeInfo> aNodeInfo);
+  HTMLFormElement(already_AddRefed<nsINodeInfo>& aNodeInfo);
   virtual ~HTMLFormElement();
 
   nsresult Init();
@@ -89,9 +91,11 @@ public:
                                 nsIAtom* aAttribute,
                                 const nsAString& aValue,
                                 nsAttrValue& aResult) MOZ_OVERRIDE;
-  virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
-  virtual nsresult WillHandleEvent(nsEventChainPostVisitor& aVisitor) MOZ_OVERRIDE;
-  virtual nsresult PostHandleEvent(nsEventChainPostVisitor& aVisitor) MOZ_OVERRIDE;
+  virtual nsresult PreHandleEvent(EventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
+  virtual nsresult WillHandleEvent(
+                     EventChainPostVisitor& aVisitor) MOZ_OVERRIDE;
+  virtual nsresult PostHandleEvent(
+                     EventChainPostVisitor& aVisitor) MOZ_OVERRIDE;
 
   virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                               nsIContent* aBindingParent,
@@ -409,24 +413,24 @@ protected:
                              JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
   void PostPasswordEvent();
-  void EventHandled() { mFormPasswordEvent = nullptr; }
+  void EventHandled() { mFormPasswordEventDispatcher = nullptr; }
 
-  class FormPasswordEvent : public nsAsyncDOMEvent
+  class FormPasswordEventDispatcher MOZ_FINAL : public AsyncEventDispatcher
   {
   public:
-    FormPasswordEvent(HTMLFormElement* aEventNode,
-                      const nsAString& aEventType)
-      : nsAsyncDOMEvent(aEventNode, aEventType, true, true)
+    FormPasswordEventDispatcher(HTMLFormElement* aEventNode,
+                                const nsAString& aEventType)
+      : AsyncEventDispatcher(aEventNode, aEventType, true, true)
     {}
 
     NS_IMETHOD Run() MOZ_OVERRIDE
     {
       static_cast<HTMLFormElement*>(mEventNode.get())->EventHandled();
-      return nsAsyncDOMEvent::Run();
+      return AsyncEventDispatcher::Run();
     }
   };
 
-  nsRefPtr<FormPasswordEvent> mFormPasswordEvent;
+  nsRefPtr<FormPasswordEventDispatcher> mFormPasswordEventDispatcher;
 
   class RemoveElementRunnable;
   friend class RemoveElementRunnable;

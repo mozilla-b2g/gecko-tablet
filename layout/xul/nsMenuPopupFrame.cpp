@@ -17,7 +17,6 @@
 #include "nsMenuFrame.h"
 #include "nsMenuBarFrame.h"
 #include "nsPopupSetFrame.h"
-#include "nsEventDispatcher.h"
 #include "nsPIDOMWindow.h"
 #include "nsIDOMKeyEvent.h"
 #include "nsIDOMScreen.h"
@@ -47,6 +46,7 @@
 #include "nsIServiceManager.h"
 #include "nsThemeConstants.h"
 #include "nsDisplayList.h"
+#include "mozilla/EventDispatcher.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/MouseEvents.h"
@@ -345,7 +345,7 @@ public:
   {
     WidgetMouseEvent event(true, NS_XUL_POPUP_SHOWN, nullptr,
                            WidgetMouseEvent::eReal);
-    return nsEventDispatcher::Dispatch(mPopup, mPresContext, &event);                 
+    return EventDispatcher::Dispatch(mPopup, mPresContext, &event);                 
   }
 
 private:
@@ -872,12 +872,8 @@ nsMenuPopupFrame::GetRootViewForPopup(nsIFrame* aStartFrame)
     // window type of eWindowType_popup - in other words a popup window
     // widget. If we find one, this is the view we want. 
     nsIWidget* widget = view->GetWidget();
-    if (widget) {
-      nsWindowType wtype;
-      widget->GetWindowType(wtype);
-      if (wtype == eWindowType_popup) {
-        return view;
-      }
+    if (widget && widget->WindowType() == eWindowType_popup) {
+      return view;
     }
 
     nsView* temp = view->GetParent();

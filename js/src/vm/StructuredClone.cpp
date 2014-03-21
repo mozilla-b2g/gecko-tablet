@@ -230,7 +230,7 @@ struct JSStructuredCloneReader {
     // Any value passed to JS_ReadStructuredClone.
     void *closure;
 
-    friend bool JS_ReadTypedArray(JSStructuredCloneReader *r, JS::Value *vp);
+    friend bool JS_ReadTypedArray(JSStructuredCloneReader *r, JS::MutableHandleValue vp);
 };
 
 struct JSStructuredCloneWriter {
@@ -977,6 +977,8 @@ JSStructuredCloneWriter::writeTransferMap()
             return false;
         if (!out.writePtr(nullptr)) // Pointer to ArrayBuffer contents or to SharedArrayRawBuffer.
             return false;
+        if (!out.write(0)) // |byteLength| for an ArrayBuffer, 0 for SharedArrayBuffer
+            return false;
         if (!out.write(0)) // |userdata|, intended to be passed to callbacks.
             return false;
     }
@@ -1006,14 +1008,15 @@ JSStructuredCloneWriter::transferOwnership()
         MOZ_ASSERT(uint32_t(LittleEndian::readUint64(point)) == SCTAG_TM_UNFILLED);
 
         if (obj->is<ArrayBufferObject>()) {
-            void *content;
-            uint8_t *data;
-            if (!JS_StealArrayBufferContents(context(), obj, &content, &data))
+            size_t nbytes = obj->as<ArrayBufferObject>().byteLength();
+            void *contents = JS_StealArrayBufferContents(context(), obj);
+            if (!contents)
                 return false; // Destructor will clean up the already-transferred data
 
             uint64_t entryTag = PairToUInt64(SCTAG_TRANSFER_MAP_ENTRY, SCTAG_TM_ALLOC_DATA);
             LittleEndian::writeUint64(point++, entryTag);
-            LittleEndian::writeUint64(point++, reinterpret_cast<uint64_t>(content));
+            LittleEndian::writeUint64(point++, reinterpret_cast<uint64_t>(contents));
+            LittleEndian::writeUint64(point++, nbytes);
             LittleEndian::writeUint64(point++, 0);
         } else {
             SharedArrayRawBuffer *rawbuf = obj->as<SharedArrayBufferObject>().rawBufferObject();
@@ -1025,6 +1028,7 @@ JSStructuredCloneWriter::transferOwnership()
             uint64_t entryTag = PairToUInt64(SCTAG_TRANSFER_MAP_ENTRY, SCTAG_TM_SHARED_BUFFER);
             LittleEndian::writeUint64(point++, entryTag);
             LittleEndian::writeUint64(point++, reinterpret_cast<uint64_t>(rawbuf));
+            LittleEndian::writeUint64(point++, 0);
             LittleEndian::writeUint64(point++, 0);
         }
     }
@@ -1512,6 +1516,10 @@ JSStructuredCloneReader::readTransferMap()
         if (!in.readPtr(&content))
             return false;
 
+        uint64_t nbytes;
+        if (!in.read(&nbytes))
+            return false;
+
         uint64_t userdata;
         if (!in.read(&userdata))
             return false;
@@ -1519,7 +1527,7 @@ JSStructuredCloneReader::readTransferMap()
         RootedObject obj(context());
 
         if (data == SCTAG_TM_ALLOC_DATA)
-            obj = JS_NewArrayBufferWithContents(context(), content);
+            obj = JS_NewArrayBufferWithContents(context(), nbytes, content);
         else if (data == SCTAG_TM_SHARED_BUFFER)
             obj = SharedArrayBufferObject::New(context(), (SharedArrayRawBuffer *)content);
 
@@ -1800,18 +1808,18 @@ JS_ReadBytes(JSStructuredCloneReader *r, void *p, size_t len)
 }
 
 JS_PUBLIC_API(bool)
-JS_ReadTypedArray(JSStructuredCloneReader *r, JS::Value *vp)
+JS_ReadTypedArray(JSStructuredCloneReader *r, JS::MutableHandleValue vp)
 {
     uint32_t tag, nelems;
     if (!r->input().readPair(&tag, &nelems))
         return false;
     if (tag >= SCTAG_TYPED_ARRAY_V1_MIN && tag <= SCTAG_TYPED_ARRAY_V1_MAX) {
-        return r->readTypedArray(TagToV1ArrayType(tag), nelems, vp, true);
+        return r->readTypedArray(TagToV1ArrayType(tag), nelems, vp.address(), true);
     } else if (tag == SCTAG_TYPED_ARRAY_OBJECT) {
         uint64_t arrayType;
         if (!r->input().read(&arrayType))
             return false;
-        return r->readTypedArray(arrayType, nelems, vp);
+        return r->readTypedArray(arrayType, nelems, vp.address());
     } else {
         JS_ReportErrorNumber(r->context(), js_GetErrorMessage, nullptr,
                              JSMSG_SC_BAD_SERIALIZED_DATA, "expected type array");

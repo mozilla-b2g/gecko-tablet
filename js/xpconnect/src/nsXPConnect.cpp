@@ -233,13 +233,6 @@ xpc::SystemErrorReporter(JSContext *cx, const char *message, JSErrorReport *rep)
 
 }
 
-NS_EXPORT_(void)
-xpc::SystemErrorReporterExternal(JSContext *cx, const char *message,
-                                 JSErrorReport *rep)
-{
-    return SystemErrorReporter(cx, message, rep);
-}
-
 
 /***************************************************************************/
 
@@ -361,56 +354,12 @@ TraceXPCGlobal(JSTracer *trc, JSObject *obj)
         mozilla::dom::TraceProtoAndIfaceCache(trc, obj);
 }
 
-#ifdef DEBUG
-#include "mozilla/Preferences.h"
-#include "nsIXULRuntime.h"
-static void
-CheckTypeInference(JSContext *cx, const JSClass *clasp, nsIPrincipal *principal)
-{
-    // Check that the global class isn't whitelisted.
-    if (strcmp(clasp->name, "Sandbox") ||
-        strcmp(clasp->name, "nsXBLPrototypeScript compilation scope") ||
-        strcmp(clasp->name, "nsXULPrototypeScript compilation scope"))
-        return;
-
-    // Check that the pref is on.
-    if (!mozilla::Preferences::GetBool("javascript.options.typeinference"))
-        return;
-
-    // Check that we're not chrome.
-    bool isSystem;
-    nsIScriptSecurityManager* ssm;
-    ssm = XPCWrapper::GetSecurityManager();
-    if (NS_FAILED(ssm->IsSystemPrincipal(principal, &isSystem)) || !isSystem)
-        return;
-
-    // Check that safe mode isn't on.
-    bool safeMode;
-    nsCOMPtr<nsIXULRuntime> xr = do_GetService("@mozilla.org/xre/runtime;1");
-    if (!xr) {
-        NS_WARNING("Couldn't get XUL runtime!");
-        return;
-    }
-    if (NS_FAILED(xr->GetInSafeMode(&safeMode)) || safeMode)
-        return;
-
-    // Finally, do the damn assert.
-    MOZ_ASSERT(ContextOptionsRef(cx).typeInference());
-}
-#else
-#define CheckTypeInference(cx, clasp, principal) {}
-#endif
-
 namespace xpc {
 
 JSObject*
 CreateGlobalObject(JSContext *cx, const JSClass *clasp, nsIPrincipal *principal,
                    JS::CompartmentOptions& aOptions)
 {
-    // Make sure that Type Inference is enabled for everything non-chrome.
-    // Sandboxes and compilation scopes are exceptions. See bug 744034.
-    CheckTypeInference(cx, clasp, principal);
-
     MOZ_ASSERT(NS_IsMainThread(), "using a principal off the main thread?");
     MOZ_ASSERT(principal);
 
@@ -420,6 +369,7 @@ CreateGlobalObject(JSContext *cx, const JSClass *clasp, nsIPrincipal *principal,
     if (!global)
         return nullptr;
     JSAutoCompartment ac(cx, global);
+
     // The constructor automatically attaches the scope to the compartment private
     // of |global|.
     (void) new XPCWrappedNativeScope(cx, global);
@@ -1221,7 +1171,7 @@ nsXPConnect::CheckForDebugMode(JSRuntime *rt)
 #endif //#ifdef MOZ_JSDEBUGGER
 
 
-NS_EXPORT_(void)
+void
 xpc_ActivateDebugMode()
 {
     XPCJSRuntime* rt = nsXPConnect::GetRuntimeInstance();
@@ -1310,7 +1260,7 @@ nsXPConnect::HoldObject(JSContext *aJSContext, JSObject *aObjectArg,
 
 namespace xpc {
 
-NS_EXPORT_(bool)
+bool
 Base64Encode(JSContext *cx, HandleValue val, MutableHandleValue out)
 {
     MOZ_ASSERT(cx);
@@ -1336,7 +1286,7 @@ Base64Encode(JSContext *cx, HandleValue val, MutableHandleValue out)
     return true;
 }
 
-NS_EXPORT_(bool)
+bool
 Base64Decode(JSContext *cx, HandleValue val, MutableHandleValue out)
 {
     MOZ_ASSERT(cx);
@@ -1404,8 +1354,11 @@ WriteScriptOrFunction(nsIObjectOutputStream *stream, JSContext *cx,
     // Exactly one of script or functionObj must be given
     MOZ_ASSERT(!scriptArg != !functionObj);
 
-    RootedScript script(cx, scriptArg ? scriptArg :
-                                        JS_GetFunctionScript(cx, JS_GetObjectFunction(functionObj)));
+    RootedScript script(cx, scriptArg);
+    if (!script) {
+        RootedFunction fun(cx, JS_GetObjectFunction(functionObj));
+        script.set(JS_GetFunctionScript(cx, fun));
+    }
 
     nsIPrincipal *principal =
         nsJSPrincipals::get(JS_GetScriptPrincipals(script));
@@ -1473,18 +1426,22 @@ ReadScriptOrFunction(nsIObjectInputStream *stream, JSContext *cx,
     nsJSPrincipals* principal = nullptr;
     nsCOMPtr<nsIPrincipal> readPrincipal;
     if (flags & HAS_PRINCIPALS_FLAG) {
-        rv = stream->ReadObject(true, getter_AddRefs(readPrincipal));
+        nsCOMPtr<nsISupports> supports;
+        rv = stream->ReadObject(true, getter_AddRefs(supports));
         if (NS_FAILED(rv))
             return rv;
+        readPrincipal = do_QueryInterface(supports);
         principal = nsJSPrincipals::get(readPrincipal);
     }
 
     nsJSPrincipals* originPrincipal = nullptr;
     nsCOMPtr<nsIPrincipal> readOriginPrincipal;
     if (flags & HAS_ORIGIN_PRINCIPALS_FLAG) {
-        rv = stream->ReadObject(true, getter_AddRefs(readOriginPrincipal));
+        nsCOMPtr<nsISupports> supports;
+        rv = stream->ReadObject(true, getter_AddRefs(supports));
         if (NS_FAILED(rv))
             return rv;
+        readOriginPrincipal = do_QueryInterface(supports);
         originPrincipal = nsJSPrincipals::get(readOriginPrincipal);
     }
 

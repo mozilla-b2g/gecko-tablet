@@ -72,7 +72,7 @@ static MOZ_NEVER_INLINE bool
 #else
 static bool
 #endif
-ToBooleanOp(const FrameRegs &regs)
+ToBooleanOp(const InterpreterRegs &regs)
 {
     return ToBoolean(regs.stackHandleAt(-1));
 }
@@ -83,7 +83,7 @@ static MOZ_NEVER_INLINE bool
 #else
 static bool
 #endif
-LooseEqualityOp(JSContext *cx, FrameRegs &regs)
+LooseEqualityOp(JSContext *cx, InterpreterRegs &regs)
 {
     HandleValue rval = regs.stackHandleAt(-1);
     HandleValue lval = regs.stackHandleAt(-2);
@@ -227,7 +227,7 @@ NoSuchMethod(JSContext *cx, unsigned argc, Value *vp)
 #endif /* JS_HAS_NO_SUCH_METHOD */
 
 static inline bool
-GetPropertyOperation(JSContext *cx, StackFrame *fp, HandleScript script, jsbytecode *pc,
+GetPropertyOperation(JSContext *cx, InterpreterFrame *fp, HandleScript script, jsbytecode *pc,
                      MutableHandleValue lval, MutableHandleValue vp)
 {
     JSOp op = JSOp(*pc);
@@ -280,7 +280,7 @@ GetPropertyOperation(JSContext *cx, StackFrame *fp, HandleScript script, jsbytec
 }
 
 static inline bool
-NameOperation(JSContext *cx, StackFrame *fp, jsbytecode *pc, MutableHandleValue vp)
+NameOperation(JSContext *cx, InterpreterFrame *fp, jsbytecode *pc, MutableHandleValue vp)
 {
     JSObject *obj = fp->scopeChain();
     PropertyName *name = fp->script()->getName(pc);
@@ -371,13 +371,13 @@ js::ValueToCallable(JSContext *cx, HandleValue v, int numToSkip, MaybeConstruct 
 static MOZ_NEVER_INLINE bool
 Interpret(JSContext *cx, RunState &state);
 
-StackFrame *
+InterpreterFrame *
 InvokeState::pushInterpreterFrame(JSContext *cx)
 {
     return cx->runtime()->interpreterStack().pushInvokeFrame(cx, args_, initial_);
 }
 
-StackFrame *
+InterpreterFrame *
 ExecuteState::pushInterpreterFrame(JSContext *cx)
 {
     return cx->runtime()->interpreterStack().pushExecuteFrame(cx, script_, thisv_, scopeChain_,
@@ -482,9 +482,9 @@ js::Invoke(JSContext *cx, CallArgs args, MaybeConstruct construct)
     InvokeState state(cx, args, initial);
 
     // Check to see if useNewType flag should be set for this frame.
-    if (construct && cx->typeInferenceEnabled()) {
-        ScriptFrameIter iter(cx);
-        if (!iter.done()) {
+    if (construct) {
+        FrameIter iter(cx);
+        if (!iter.done() && iter.hasScript()) {
             JSScript *script = iter.script();
             jsbytecode *pc = iter.pc();
             if (UseNewType(cx, script, pc))
@@ -894,21 +894,21 @@ js::UnwindScope(JSContext *cx, ScopeIter &si, jsbytecode *pc)
 }
 
 static void
-ForcedReturn(JSContext *cx, ScopeIter &si, FrameRegs &regs)
+ForcedReturn(JSContext *cx, ScopeIter &si, InterpreterRegs &regs)
 {
     UnwindScope(cx, si, regs.fp()->script()->main());
     regs.setToEndOfScript();
 }
 
 static void
-ForcedReturn(JSContext *cx, FrameRegs &regs)
+ForcedReturn(JSContext *cx, InterpreterRegs &regs)
 {
     ScopeIter si(regs.fp(), regs.pc, cx);
     ForcedReturn(cx, si, regs);
 }
 
 void
-js::UnwindForUncatchableException(JSContext *cx, const FrameRegs &regs)
+js::UnwindForUncatchableException(JSContext *cx, const InterpreterRegs &regs)
 {
     /* c.f. the regular (catchable) TryNoteIter loop in HandleError. */
     for (TryNoteIter tni(cx, regs); !tni.done(); ++tni) {
@@ -920,7 +920,7 @@ js::UnwindForUncatchableException(JSContext *cx, const FrameRegs &regs)
     }
 }
 
-TryNoteIter::TryNoteIter(JSContext *cx, const FrameRegs &regs)
+TryNoteIter::TryNoteIter(JSContext *cx, const InterpreterRegs &regs)
   : regs(regs),
     script(cx, regs.fp()->script()),
     pcOffset(regs.pc - script->main())
@@ -988,7 +988,7 @@ enum HandleErrorContinuation
 };
 
 static HandleErrorContinuation
-HandleError(JSContext *cx, FrameRegs &regs)
+HandleError(JSContext *cx, InterpreterRegs &regs)
 {
     JS_ASSERT(regs.fp()->script()->containsPC(regs.pc));
 
@@ -1417,7 +1417,7 @@ Interpret(JSContext *cx, RunState &state)
      */
 #define CHECK_BRANCH()                                                        \
     JS_BEGIN_MACRO                                                            \
-        if (cx->runtime()->interrupt && !js_HandleExecutionInterrupt(cx))     \
+        if (!CheckForInterrupt(cx))                                           \
             goto error;                                                       \
     JS_END_MACRO
 
@@ -1456,7 +1456,7 @@ Interpret(JSContext *cx, RunState &state)
     gc::MaybeVerifyBarriers(cx, true);
     JS_ASSERT(!cx->compartment()->activeAnalysis);
 
-    StackFrame *entryFrame = state.pushInterpreterFrame(cx);
+    InterpreterFrame *entryFrame = state.pushInterpreterFrame(cx);
     if (!entryFrame)
         return false;
 
@@ -2597,7 +2597,7 @@ CASE(JSOP_FUNCALL)
         funScript = fun->getOrCreateScript(cx);
         if (!funScript)
             goto error;
-        if (cx->typeInferenceEnabled() && funScript->shouldCloneAtCallsite()) {
+        if (funScript->shouldCloneAtCallsite()) {
             fun = CloneFunctionAtCallsite(cx, fun, script, REGS.pc);
             if (!fun)
                 goto error;
@@ -2621,7 +2621,7 @@ CASE(JSOP_FUNCALL)
     }
 
     InitialFrameFlags initial = construct ? INITIAL_CONSTRUCT : INITIAL_NONE;
-    bool newType = cx->typeInferenceEnabled() && UseNewType(cx, script, REGS.pc);
+    bool newType = UseNewType(cx, script, REGS.pc);
 
     TypeMonitorCall(cx, args, construct);
 
@@ -3720,11 +3720,8 @@ js::GetAndClearException(JSContext *cx, MutableHandleValue res)
     if (!status)
         return false;
 
-    // Check the interrupt flag to allow interrupting deeply nested exception
-    // handling.
-    if (cx->runtime()->interrupt)
-        return js_HandleExecutionInterrupt(cx);
-    return true;
+    // Allow interrupting deeply nested exception handling.
+    return CheckForInterrupt(cx);
 }
 
 template <bool strict>

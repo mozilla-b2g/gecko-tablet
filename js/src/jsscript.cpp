@@ -35,7 +35,9 @@
 #include "gc/Marking.h"
 #include "jit/BaselineJIT.h"
 #include "jit/IonCode.h"
+#include "js/MemoryMetrics.h"
 #include "js/OldDebugAPI.h"
+#include "js/Utility.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/Compression.h"
 #include "vm/Debugger.h"
@@ -1822,7 +1824,7 @@ ScriptSource::initFromOptions(ExclusiveContext *cx, const ReadOnlyCompileOptions
     JS_ASSERT(!filename_);
     JS_ASSERT(!introducerFilename_);
 
-    originPrincipals_ = options.originPrincipals();
+    originPrincipals_ = options.originPrincipals(cx);
     if (originPrincipals_)
         JS_HoldPrincipals(originPrincipals_);
 
@@ -2667,7 +2669,7 @@ js::PCToLineNumber(unsigned startLine, jssrcnote *notes, jsbytecode *code, jsbyt
 unsigned
 js::PCToLineNumber(JSScript *script, jsbytecode *pc, unsigned *columnp)
 {
-    /* Cope with StackFrame.pc value prior to entering js_Interpret. */
+    /* Cope with InterpreterFrame.pc value prior to entering Interpret. */
     if (!pc)
         return 0;
 
@@ -2729,28 +2731,29 @@ js_GetScriptLineExtent(JSScript *script)
 }
 
 void
-js::CurrentScriptFileLineOrigin(JSContext *cx, JSScript **script,
-                                const char **file, unsigned *linenop,
-                                uint32_t *pcOffset, JSPrincipals **origin, LineOption opt)
+js::DescribeScriptedCallerForCompilation(JSContext *cx, JSScript **maybeScript,
+                                         const char **file, unsigned *linenop,
+                                         uint32_t *pcOffset, JSPrincipals **origin,
+                                         LineOption opt)
 {
     if (opt == CALLED_FROM_JSOP_EVAL) {
         jsbytecode *pc = nullptr;
-        *script = cx->currentScript(&pc);
+        *maybeScript = cx->currentScript(&pc);
         JS_ASSERT(JSOp(*pc) == JSOP_EVAL || JSOp(*pc) == JSOP_SPREADEVAL);
         JS_ASSERT(*(pc + (JSOp(*pc) == JSOP_EVAL ? JSOP_EVAL_LENGTH
                                                  : JSOP_SPREADEVAL_LENGTH)) == JSOP_LINENO);
-        *file = (*script)->filename();
+        *file = (*maybeScript)->filename();
         *linenop = GET_UINT16(pc + (JSOp(*pc) == JSOP_EVAL ? JSOP_EVAL_LENGTH
                                                            : JSOP_SPREADEVAL_LENGTH));
-        *pcOffset = pc - (*script)->code();
-        *origin = (*script)->originPrincipals();
+        *pcOffset = pc - (*maybeScript)->code();
+        *origin = (*maybeScript)->originPrincipals();
         return;
     }
 
-    NonBuiltinScriptFrameIter iter(cx);
+    NonBuiltinFrameIter iter(cx);
 
     if (iter.done()) {
-        *script = nullptr;
+        *maybeScript = nullptr;
         *file = nullptr;
         *linenop = 0;
         *pcOffset = 0;
@@ -2758,11 +2761,19 @@ js::CurrentScriptFileLineOrigin(JSContext *cx, JSScript **script,
         return;
     }
 
-    *script = iter.script();
-    *file = (*script)->filename();
-    *linenop = PCToLineNumber(*script, iter.pc());
-    *pcOffset = iter.pc() - (*script)->code();
-    *origin = (*script)->originPrincipals();
+    *file = iter.scriptFilename();
+    *linenop = iter.computeLine();
+    *origin = iter.originPrincipals();
+
+    // These values are only used for introducer fields which are debugging
+    // information and can be safely left null for asm.js frames.
+    if (iter.hasScript()) {
+        *maybeScript = iter.script();
+        *pcOffset = iter.pc() - (*maybeScript)->code();
+    } else {
+        *maybeScript = nullptr;
+        *pcOffset = 0;
+    }
 }
 
 template <class T>
@@ -2896,8 +2907,7 @@ js::CloneScript(JSContext *cx, HandleObject enclosingScope, HandleFunction fun, 
     /* Now that all fallible allocation is complete, create the GC thing. */
 
     CompileOptions options(cx);
-    options.setPrincipals(cx->compartment()->principals)
-           .setOriginPrincipals(src->originPrincipals())
+    options.setOriginPrincipals(src->originPrincipals())
            .setCompileAndGo(src->compileAndGo())
            .setSelfHostingMode(src->selfHosted())
            .setNoScriptRval(src->noScriptRval())
@@ -3472,10 +3482,8 @@ JSScript::argumentsOptimizationFailed(JSContext *cx, HandleScript script)
          * We cannot reliably create an arguments object for Ion activations of
          * this script.  To maintain the invariant that "script->needsArgsObj
          * implies fp->hasArgsObj", the Ion bail mechanism will create an
-         * arguments object right after restoring the StackFrame and before
-         * entering the interpreter (in jit::ThunkToInterpreter).  This delay is
-         * safe since the engine avoids any observation of a StackFrame when it's
-         * runningInJit (see ScriptFrameIter::interpFrame comment).
+         * arguments object right after restoring the BaselineFrame and before
+         * entering Baseline code (in jit::FinishBailoutToBaseline).
          */
         if (i.isIon())
             continue;
@@ -3582,12 +3590,9 @@ LazyScript::CreateRaw(ExclusiveContext *cx, HandleFunction fun,
     size_t bytes = (p.numFreeVariables * sizeof(HeapPtrAtom))
                  + (p.numInnerFunctions * sizeof(HeapPtrFunction));
 
-    void *table = nullptr;
-    if (bytes) {
-        table = cx->malloc_(bytes);
-        if (!table)
-            return nullptr;
-    }
+    ScopedJSFreePtr<void> table(bytes ? cx->malloc_(bytes) : nullptr);
+    if (bytes && !table)
+        return nullptr;
 
     LazyScript *res = js_NewGCLazyScript(cx);
     if (!res)
@@ -3595,7 +3600,7 @@ LazyScript::CreateRaw(ExclusiveContext *cx, HandleFunction fun,
 
     cx->compartment()->scheduleDelazificationForDebugMode();
 
-    return new (res) LazyScript(fun, table, packed, begin, end, lineno, column);
+    return new (res) LazyScript(fun, table.forget(), packed, begin, end, lineno, column);
 }
 
 /* static */ LazyScript *
@@ -3664,6 +3669,24 @@ LazyScript::initRuntimeFields(uint64_t packedFields)
     packed = packedFields;
     p_.hasBeenCloned = p.hasBeenCloned;
     p_.treatAsRunOnce = p.treatAsRunOnce;
+}
+
+bool
+LazyScript::hasUncompiledEnclosingScript() const
+{
+    // It can happen that we created lazy scripts while compiling an enclosing
+    // script, but we errored out while compiling that script. When we iterate
+    // over lazy script in a compartment, we might see lazy scripts that never
+    // escaped to script and should be ignored.
+    //
+    // If the enclosing scope is a function with a null script or has a script
+    // without code, it was not successfully compiled.
+
+    if (!enclosingScope() || !enclosingScope()->is<JSFunction>())
+        return false;
+
+    JSFunction &fun = enclosingScope()->as<JSFunction>();
+    return fun.isInterpreted() && (!fun.mutableScript() || !fun.nonLazyScript()->code());
 }
 
 uint32_t

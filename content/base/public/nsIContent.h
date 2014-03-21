@@ -21,6 +21,7 @@ class nsIFrame;
 class nsXBLBinding;
 
 namespace mozilla {
+class EventChainPreVisitor;
 namespace dom {
 class ShadowRoot;
 struct CustomElementData;
@@ -53,11 +54,10 @@ public:
   // If you're using the external API, the only thing you can know about
   // nsIContent is that it exists with an IID
 
-  nsIContent(already_AddRefed<nsINodeInfo> aNodeInfo)
+  nsIContent(already_AddRefed<nsINodeInfo>& aNodeInfo)
     : nsINode(aNodeInfo)
   {
-    NS_ASSERTION(mNodeInfo,
-                 "No nsINodeInfo passed to nsIContent, PREPARE TO CRASH!!!");
+    MOZ_ASSERT(mNodeInfo);
     SetNodeIsContent();
   }
 #endif // MOZILLA_INTERNAL_API
@@ -914,7 +914,8 @@ public:
   // Overloaded from nsINode
   virtual already_AddRefed<nsIURI> GetBaseURI() const MOZ_OVERRIDE;
 
-  virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
+  virtual nsresult PreHandleEvent(
+                     mozilla::EventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
 
   virtual bool IsPurple() = 0;
   virtual void RemovePurple() = 0;
@@ -949,6 +950,15 @@ public:
   virtual void DumpContent(FILE* out = stdout, int32_t aIndent = 0,
                            bool aDumpAll = true) const = 0;
 #endif
+
+  /**
+   * Append to aOutDescription a short (preferably one line) string
+   * describing the content.
+   * Currently implemented for elements only.
+   */
+  virtual void Describe(nsAString& aOutDescription) const {
+    aOutDescription = NS_LITERAL_STRING("(not an element)");
+  }
 
   enum ETabFocusType {
   //eTabFocus_textControlsMask = (1<<0),  // unused - textboxes always tabbable

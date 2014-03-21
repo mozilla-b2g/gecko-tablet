@@ -100,8 +100,8 @@ typedef void* nsNativeWidget;
 #endif
 
 #define NS_IWIDGET_IID \
-{ 0xb979c607, 0xf0aa, 0x4fee, \
-  { 0xb2, 0x7b, 0xd4, 0x46, 0xa2, 0xe, 0x8b, 0x27 } }
+{ 0x8e081187, 0xf123, 0x4572, \
+  { 0x82, 0xc6, 0x4c, 0xcd, 0xc2, 0x0e, 0xbd, 0xf9 } }
 
 /*
  * Window shadow styles
@@ -481,7 +481,7 @@ struct SizeConstraints {
   nsIntSize mMaxSize;
 };
 
-// IMEMessage is shared by nsIMEStateManager and TextComposition.
+// IMEMessage is shared by IMEStateManager and TextComposition.
 // XXX Negative values are used in Android...
 enum IMEMessage MOZ_ENUM_TYPE(int8_t)
 {
@@ -622,6 +622,9 @@ class nsIWidget : public nsISupports {
       : mLastChild(nullptr)
       , mPrevSibling(nullptr)
       , mOnDestroyCalled(false)
+      , mWindowType(eWindowType_child)
+      , mZIndex(0)
+
     {
       ClearNativeTouchSequence();
     }
@@ -1004,12 +1007,15 @@ class nsIWidget : public nsISupports {
     /**
      * Sets the widget's z-index.
      */
-    NS_IMETHOD SetZIndex(int32_t aZIndex) = 0;
+    virtual void SetZIndex(int32_t aZIndex) = 0;
 
     /**
      * Gets the widget's z-index. 
      */
-    NS_IMETHOD GetZIndex(int32_t* aZIndex) = 0;
+    int32_t GetZIndex()
+    {
+      return mZIndex;
+    }
 
     /**
      * Position this widget just behind the given widget. (Used to
@@ -1120,39 +1126,13 @@ class nsIWidget : public nsISupports {
     virtual nsIntPoint GetClientOffset() = 0;
 
     /**
-     * Get the foreground color for this widget
-     *
-     * @return this widget's foreground color
-     *
-     */
-    virtual nscolor GetForegroundColor(void) = 0;
-
-    /**
-     * Set the foreground color for this widget
-     *
-     * @param aColor the new foreground color
-     *
-     */
-
-    NS_IMETHOD SetForegroundColor(const nscolor &aColor) = 0;
-
-    /**
-     * Get the background color for this widget
-     *
-     * @return this widget's background color
-     *
-     */
-
-    virtual nscolor GetBackgroundColor(void) = 0;
-
-    /**
      * Set the background color for this widget
      *
      * @param aColor the new background color
      *
      */
 
-    NS_IMETHOD SetBackgroundColor(const nscolor &aColor) = 0;
+    virtual void SetBackgroundColor(const nscolor &aColor) { }
 
     /**
      * Get the cursor for this widget.
@@ -1183,11 +1163,9 @@ class nsIWidget : public nsISupports {
                          uint32_t aHotspotX, uint32_t aHotspotY) = 0;
 
     /** 
-     * Get the window type of this widget
-     *
-     * @param aWindowType the window type of the widget
+     * Get the window type of this widget.
      */
-    NS_IMETHOD GetWindowType(nsWindowType& aWindowType) = 0;
+    nsWindowType WindowType() { return mWindowType; }
 
     /**
      * Set the transparency mode of the top-level window containing this widget.
@@ -1832,6 +1810,22 @@ public:
      */
     NS_IMETHOD_(InputContext) GetInputContext() = 0;
 
+    /*
+     * Execute native key bindings for aType.
+     */
+    typedef void (*DoCommandCallback)(mozilla::Command, void*);
+    enum NativeKeyBindingsType
+    {
+      NativeKeyBindingsForSingleLineEditor,
+      NativeKeyBindingsForMultiLineEditor,
+      NativeKeyBindingsForRichTextEditor
+    };
+    NS_IMETHOD_(bool) ExecuteNativeKeyBinding(
+                        NativeKeyBindingsType aType,
+                        const mozilla::WidgetKeyboardEvent& aEvent,
+                        DoCommandCallback aCallback,
+                        void* aCallbackData) = 0;
+
     /**
      * Set layers acceleration to 'True' or 'False'
      */
@@ -2032,6 +2026,8 @@ protected:
     nsIWidget* mPrevSibling;
     // When Destroy() is called, the sub class should set this true.
     bool mOnDestroyCalled;
+    nsWindowType mWindowType;
+    int32_t mZIndex;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsIWidget, NS_IWIDGET_IID)

@@ -9,6 +9,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPtr.h"
+#include "mozilla/unused.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/ipc/ProtocolTypes.h"
@@ -629,12 +630,12 @@ protected:
   nsRefPtr<ChildImpl> mActor;
 
 public:
-  CreateCallbackRunnable(already_AddRefed<ChildImpl> aActor)
+  CreateCallbackRunnable(already_AddRefed<ChildImpl>&& aActor)
   : mActor(aActor)
   {
     // May be created on any thread!
 
-    MOZ_ASSERT(aActor.get());
+    MOZ_ASSERT(mActor);
   }
 
   CreateCallbackRunnable()
@@ -660,10 +661,10 @@ class ChildImpl::OpenChildProcessActorRunnable MOZ_FINAL :
   ProcessHandle mProcessHandle;
 
 public:
-  OpenChildProcessActorRunnable(already_AddRefed<ChildImpl> aActor,
+  OpenChildProcessActorRunnable(already_AddRefed<ChildImpl>&& aActor,
                                 Transport* aTransport,
                                 ProcessHandle aProcessHandle)
-  : CreateCallbackRunnable(aActor), mTransport(aTransport),
+  : CreateCallbackRunnable(Move(aActor)), mTransport(aTransport),
     mProcessHandle(aProcessHandle)
   {
     AssertIsOnMainThread();
@@ -677,7 +678,7 @@ private:
   {
     if (mTransport) {
       CRASH_IN_CHILD_PROCESS("Leaking transport!");
-      mTransport.forget();
+      unused << mTransport.forget();
     }
   }
 
@@ -691,14 +692,14 @@ class ChildImpl::OpenMainProcessActorRunnable MOZ_FINAL :
   MessageLoop* mParentMessageLoop;
 
 public:
-  OpenMainProcessActorRunnable(already_AddRefed<ChildImpl> aChildActor,
+  OpenMainProcessActorRunnable(already_AddRefed<ChildImpl>&& aChildActor,
                                already_AddRefed<ParentImpl> aParentActor,
                                MessageLoop* aParentMessageLoop)
-  : CreateCallbackRunnable(aChildActor), mParentActor(aParentActor),
+  : CreateCallbackRunnable(Move(aChildActor)), mParentActor(aParentActor),
     mParentMessageLoop(aParentMessageLoop)
   {
     AssertIsOnMainThread();
-    MOZ_ASSERT(aParentActor.get());
+    MOZ_ASSERT(mParentActor);
     MOZ_ASSERT(aParentMessageLoop);
   }
 
@@ -979,6 +980,7 @@ ParentImpl::ShutdownBackgroundThread()
   AssertIsOnMainThread();
   MOZ_ASSERT_IF(!sBackgroundThread, !sBackgroundThreadMessageLoop);
   MOZ_ASSERT_IF(!sShutdownHasStarted, !sLiveActorCount);
+  MOZ_ASSERT_IF(!sBackgroundThread, !sLiveActorCount);
   MOZ_ASSERT_IF(sBackgroundThread, sShutdownTimer);
 
   if (sPendingCallbacks) {
@@ -1000,6 +1002,12 @@ ParentImpl::ShutdownBackgroundThread()
     }
   }
 
+  nsCOMPtr<nsITimer> shutdownTimer;
+  if (sShutdownHasStarted) {
+    shutdownTimer = sShutdownTimer.get();
+    sShutdownTimer = nullptr;
+  }
+
   if (sBackgroundThread) {
     nsCOMPtr<nsIThread> thread = sBackgroundThread.get();
     nsAutoPtr<nsTArray<ParentImpl*>> liveActors(sLiveActorsForBackgroundThread);
@@ -1014,8 +1022,6 @@ ParentImpl::ShutdownBackgroundThread()
       // If this is final shutdown then we need to spin the event loop while we
       // wait for all the actors to be cleaned up. We also set a timeout to
       // force-kill any hanging actors.
-      nsCOMPtr<nsITimer> shutdownTimer = sShutdownTimer.get();
-      sShutdownTimer = nullptr;
 
       if (sLiveActorCount) {
         TimerCallbackClosure closure(thread, liveActors);
@@ -1520,7 +1526,7 @@ ChildImpl::GetOrCreateForCurrentThread(
     return true;
   }
 
-  nsCOMPtr<CreateActorRunnable> runnable = new CreateActorRunnable();
+  nsRefPtr<CreateActorRunnable> runnable = new CreateActorRunnable();
   if (NS_FAILED(NS_DispatchToMainThread(runnable, NS_DISPATCH_NORMAL))) {
     CRASH_IN_CHILD_PROCESS("Failed to dispatch to main thread!");
     return false;
@@ -1533,7 +1539,7 @@ ChildImpl::CreateCallbackRunnable::~CreateCallbackRunnable()
 {
   if (mActor) {
     CRASH_IN_CHILD_PROCESS("Leaking actor!");
-    mActor.forget();
+    unused << mActor.forget();
   }
 }
 
@@ -1676,7 +1682,7 @@ ChildImpl::OpenMainProcessActorRunnable::Run()
   }
 
   // Now that Open() has succeeded transfer the ownership of the actors to IPDL.
-  parentActor.forget();
+  unused << parentActor.forget();
 
   auto threadLocalInfo =
     static_cast<ThreadLocalInfo*>(PR_GetThreadPrivate(sThreadLocalIndex));
@@ -1719,7 +1725,9 @@ ChildImpl::ParentCreateCallback::Success(
 {
   AssertIsInMainProcess();
   AssertIsOnMainThread();
-  MOZ_ASSERT(aParentActor.get());
+
+  nsRefPtr<ParentImpl> parentActor = aParentActor;
+  MOZ_ASSERT(parentActor);
   MOZ_ASSERT(aParentMessageLoop);
   MOZ_ASSERT(mEventTarget);
 
@@ -1729,7 +1737,7 @@ ChildImpl::ParentCreateCallback::Success(
   mEventTarget.swap(target);
 
   nsCOMPtr<nsIRunnable> openRunnable =
-    new OpenMainProcessActorRunnable(childActor.forget(), aParentActor,
+    new OpenMainProcessActorRunnable(childActor.forget(), parentActor.forget(),
                                      aParentMessageLoop);
   if (NS_FAILED(target->Dispatch(openRunnable, NS_DISPATCH_NORMAL))) {
     NS_WARNING("Failed to dispatch open runnable!");

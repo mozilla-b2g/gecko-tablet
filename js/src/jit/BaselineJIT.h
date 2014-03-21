@@ -312,20 +312,20 @@ struct BaselineScript
 inline bool
 IsBaselineEnabled(JSContext *cx)
 {
-    return cx->compartment()->options().baseline(cx);
+    return cx->runtime()->options().baseline();
 }
 
 MethodStatus
 CanEnterBaselineMethod(JSContext *cx, RunState &state);
 
 MethodStatus
-CanEnterBaselineAtBranch(JSContext *cx, StackFrame *fp, bool newType);
+CanEnterBaselineAtBranch(JSContext *cx, InterpreterFrame *fp, bool newType);
 
 IonExecStatus
 EnterBaselineMethod(JSContext *cx, RunState &state);
 
 IonExecStatus
-EnterBaselineAtBranch(JSContext *cx, StackFrame *fp, jsbytecode *pc);
+EnterBaselineAtBranch(JSContext *cx, InterpreterFrame *fp, jsbytecode *pc);
 
 void
 FinishDiscardBaselineScript(FreeOp *fop, JSScript *script);

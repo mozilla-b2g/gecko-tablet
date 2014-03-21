@@ -80,7 +80,7 @@ JS_SetIsWorkerRuntime(JSRuntime *rt)
 }
 
 JS_FRIEND_API(JSObject *)
-JS_FindCompilationScope(JSContext *cx, JSObject *objArg)
+JS_FindCompilationScope(JSContext *cx, HandleObject objArg)
 {
     RootedObject obj(cx, objArg);
 
@@ -109,10 +109,8 @@ JS_GetObjectFunction(JSObject *obj)
 }
 
 JS_FRIEND_API(bool)
-JS_SplicePrototype(JSContext *cx, JSObject *objArg, JSObject *protoArg)
+JS_SplicePrototype(JSContext *cx, HandleObject obj, HandleObject proto)
 {
-    RootedObject obj(cx, objArg);
-    RootedObject proto(cx, protoArg);
     /*
      * Change the prototype of an object which hasn't been used anywhere
      * and does not share its type with another object. Unlike JS_SetPrototype,
@@ -133,10 +131,9 @@ JS_SplicePrototype(JSContext *cx, JSObject *objArg, JSObject *protoArg)
 }
 
 JS_FRIEND_API(JSObject *)
-JS_NewObjectWithUniqueType(JSContext *cx, const JSClass *clasp, JSObject *protoArg, JSObject *parentArg)
+JS_NewObjectWithUniqueType(JSContext *cx, const JSClass *clasp, HandleObject proto,
+                           HandleObject parent)
 {
-    RootedObject proto(cx, protoArg);
-    RootedObject parent(cx, parentArg);
     /*
      * Create our object with a null proto and then splice in the correct proto
      * after we setSingletonType, so that we don't pollute the default
@@ -288,9 +285,8 @@ DefineHelpProperty(JSContext *cx, HandleObject obj, const char *prop, const char
 }
 
 JS_FRIEND_API(bool)
-JS_DefineFunctionsWithHelp(JSContext *cx, JSObject *objArg, const JSFunctionSpecWithHelp *fs)
+JS_DefineFunctionsWithHelp(JSContext *cx, HandleObject obj, const JSFunctionSpecWithHelp *fs)
 {
-    RootedObject obj(cx, objArg);
     JS_ASSERT(!cx->runtime()->isAtomsCompartment(cx->compartment()));
 
     CHECK_REQUEST(cx);
@@ -391,6 +387,12 @@ JS_FRIEND_API(JSObject *)
 js::GetGlobalForObjectCrossCompartment(JSObject *obj)
 {
     return &obj->global();
+}
+
+JS_FRIEND_API(void)
+js::SetPendingExceptionCrossContext(JSContext *cx, JS::HandleValue v)
+{
+    cx->setPendingException(v);
 }
 
 JS_FRIEND_API(void)
@@ -1149,6 +1151,14 @@ js::SetDefaultJSContextCallback(JSRuntime *rt, DefaultJSContextCallback cb)
 {
     rt->defaultJSContextCallback = cb;
 }
+
+#ifdef DEBUG
+JS_FRIEND_API(void)
+js::Debug_SetActiveJSContext(JSRuntime *rt, JSContext *cx)
+{
+    rt->activeContext = cx;
+}
+#endif
 
 JS_FRIEND_API(void)
 js::SetCTypesActivityCallback(JSRuntime *rt, CTypesActivityCallback cb)

@@ -164,8 +164,6 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "BoxObject", xbl: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "BrowserFeedWriter", desktop: true},
-// IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "CallEvent", b2g: true, pref: "dom.telephony.enabled"},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "CallGroupErrorEvent", b2g: true, pref: "dom.telephony.enabled"},
@@ -308,9 +306,17 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "DOMParser",
 // IMPORTANT: Do not change this list without review from a DOM peer!
+    "DOMPoint",
+// IMPORTANT: Do not change this list without review from a DOM peer!
+    "DOMPointReadOnly",
+// IMPORTANT: Do not change this list without review from a DOM peer!
+    "DOMQuad",
+// IMPORTANT: Do not change this list without review from a DOM peer!
     "DOMRect",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "DOMRectList",
+// IMPORTANT: Do not change this list without review from a DOM peer!
+    "DOMRectReadOnly",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "DOMRequest",
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -1118,9 +1124,7 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "VTTCue",
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    "VTTRegion",
-// IMPORTANT: Do not change this list without review from a DOM peer!
-    "VTTRegionList",
+    {name: "VTTRegion", pref: "media.webvtt.regions.enabled"},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "WaveShaperNode",
 // IMPORTANT: Do not change this list without review from a DOM peer!

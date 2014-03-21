@@ -420,6 +420,16 @@ Arena::staticAsserts()
     static_assert(JS_ARRAY_LENGTH(FirstThingOffsets) == FINALIZE_LIMIT, "We have defined all offsets.");
 }
 
+void
+Arena::setAsFullyUnused(AllocKind thingKind)
+{
+    FreeSpan entireList;
+    entireList.first = thingsStart(thingKind);
+    uintptr_t arenaAddr = aheader.arenaAddress();
+    entireList.last = arenaAddr | ArenaMask;
+    aheader.setFirstFreeSpan(&entireList);
+}
+
 template<typename T>
 inline bool
 Arena::finalize(FreeOp *fop, AllocKind thingKind, size_t thingSize)
@@ -481,7 +491,8 @@ Arena::finalize(FreeOp *fop, AllocKind thingKind, size_t thingSize)
 
     if (allClear) {
         JS_ASSERT(newListTail == &newListHead);
-        JS_ASSERT(newFreeSpanStart == thingsStart(thingKind));
+        JS_ASSERT(!newFreeSpanStart ||
+                  newFreeSpanStart == thingsStart(thingKind));
         return true;
     }
 
@@ -533,15 +544,25 @@ FinalizeTypedArenas(FreeOp *fop,
      * others into dest in an appropriate position.
      */
 
+    /*
+     * During parallel sections, we sometimes finalize the parallel arenas,
+     * but in that case, we want to hold on to the memory in our arena
+     * lists, not offer it up for reuse.
+     */
+    bool releaseArenas = !InParallelSection();
+
     size_t thingSize = Arena::thingSize(thingKind);
 
     while (ArenaHeader *aheader = *src) {
         *src = aheader->next;
         bool allClear = aheader->getArena()->finalize<T>(fop, thingKind, thingSize);
-        if (allClear)
+        if (!allClear)
+            dest.insert(aheader);
+        else if (releaseArenas)
             aheader->chunk()->releaseArena(aheader);
         else
-            dest.insert(aheader);
+            aheader->chunk()->recycleArena(aheader, dest, thingKind);
+
         budget.step(Arena::thingsPerArena(thingSize));
         if (budget.isOverBudget())
             return false;
@@ -595,8 +616,8 @@ FinalizeArenas(FreeOp *fop,
 #ifdef JS_ION
       {
         // JitCode finalization may release references on an executable
-        // allocator that is accessed when triggering interrupts.
-        JSRuntime::AutoLockForOperationCallback lock(fop->runtime());
+        // allocator that is accessed when requesting interrupts.
+        JSRuntime::AutoLockForInterrupt lock(fop->runtime());
         return FinalizeTypedArenas<jit::JitCode>(fop, src, dest, thingKind, budget);
       }
 #endif
@@ -939,6 +960,13 @@ Chunk::addArenaToFreeList(JSRuntime *rt, ArenaHeader *aheader)
     ++info.numArenasFreeCommitted;
     ++info.numArenasFree;
     ++rt->gcNumArenasFreeCommitted;
+}
+
+void
+Chunk::recycleArena(ArenaHeader *aheader, ArenaList &dest, AllocKind thingKind)
+{
+    aheader->getArena()->setAsFullyUnused(thingKind);
+    dest.insert(aheader);
 }
 
 void
@@ -1405,10 +1433,12 @@ ArenaLists::allocateFromArenaInline(Zone *zone, AllocKind thingKind)
             JS_ASSERT(aheader->hasFreeThings());
 
             /*
-             * The empty arenas are returned to the chunk and should not present on
-             * the list.
+             * Normally, the empty arenas are returned to the chunk
+             * and should not present on the list. In parallel
+             * execution, however, we keep empty arenas in the arena
+             * list to avoid synchronizing on the chunk.
              */
-            JS_ASSERT(!aheader->isEmpty());
+            JS_ASSERT(!aheader->isEmpty() || InParallelSection());
             al->cursor = &aheader->next;
 
             /*
@@ -1480,9 +1510,50 @@ ArenaLists::allocateFromArena(JS::Zone *zone, AllocKind thingKind)
 }
 
 void
+ArenaLists::wipeDuringParallelExecution(JSRuntime *rt)
+{
+    JS_ASSERT(InParallelSection());
+
+    // First, check that we all objects we have allocated are eligible
+    // for background finalization. The idea is that we will free
+    // (below) ALL background finalizable objects, because we know (by
+    // the rules of parallel execution) they are not reachable except
+    // by other thread-local objects. However, if there were any
+    // object ineligible for background finalization, it might retain
+    // a reference to one of these background finalizable objects, and
+    // that'd be bad.
+    for (unsigned i = 0; i < FINALIZE_LAST; i++) {
+        AllocKind thingKind = AllocKind(i);
+        if (!IsBackgroundFinalized(thingKind) && arenaLists[thingKind].head)
+            return;
+    }
+
+    // Finalize all background finalizable objects immediately and
+    // return the (now empty) arenas back to arena list.
+    FreeOp fop(rt, false);
+    for (unsigned i = 0; i < FINALIZE_OBJECT_LAST; i++) {
+        AllocKind thingKind = AllocKind(i);
+
+        if (!IsBackgroundFinalized(thingKind))
+            continue;
+
+        if (arenaLists[i].head) {
+            purge(thingKind);
+            forceFinalizeNow(&fop, thingKind);
+        }
+    }
+}
+
+void
 ArenaLists::finalizeNow(FreeOp *fop, AllocKind thingKind)
 {
     JS_ASSERT(!IsBackgroundFinalized(thingKind));
+    forceFinalizeNow(fop, thingKind);
+}
+
+void
+ArenaLists::forceFinalizeNow(FreeOp *fop, AllocKind thingKind)
+{
     JS_ASSERT(backgroundFinalizeState[thingKind] == BFS_DONE);
 
     ArenaHeader *arenas = arenaLists[thingKind].head;
@@ -2098,20 +2169,20 @@ js::SetMarkStackLimit(JSRuntime *rt, size_t limit)
 }
 
 void
-js::MarkCompartmentActive(StackFrame *fp)
+js::MarkCompartmentActive(InterpreterFrame *fp)
 {
     fp->script()->compartment()->zone()->active = true;
 }
 
 static void
-TriggerOperationCallback(JSRuntime *rt, JS::gcreason::Reason reason)
+RequestInterrupt(JSRuntime *rt, JS::gcreason::Reason reason)
 {
     if (rt->gcIsNeeded)
         return;
 
     rt->gcIsNeeded = true;
     rt->gcTriggerReason = reason;
-    rt->triggerOperationCallback(JSRuntime::TriggerCallbackMainThread);
+    rt->requestInterrupt(JSRuntime::RequestInterruptMainThread);
 }
 
 bool
@@ -2123,8 +2194,8 @@ js::TriggerGC(JSRuntime *rt, JS::gcreason::Reason reason)
         return true;
     }
 
-    /* Don't trigger GCs when allocating under the operation callback lock. */
-    if (rt->currentThreadOwnsOperationCallbackLock())
+    /* Don't trigger GCs when allocating under the interrupt callback lock. */
+    if (rt->currentThreadOwnsInterruptLock())
         return false;
 
     JS_ASSERT(CurrentThreadCanAccessRuntime(rt));
@@ -2134,7 +2205,7 @@ js::TriggerGC(JSRuntime *rt, JS::gcreason::Reason reason)
         return false;
 
     JS::PrepareForFullGC(rt);
-    TriggerOperationCallback(rt, reason);
+    RequestInterrupt(rt, reason);
     return true;
 }
 
@@ -2156,8 +2227,8 @@ js::TriggerZoneGC(Zone *zone, JS::gcreason::Reason reason)
 
     JSRuntime *rt = zone->runtimeFromMainThread();
 
-    /* Don't trigger GCs when allocating under the operation callback lock. */
-    if (rt->currentThreadOwnsOperationCallbackLock())
+    /* Don't trigger GCs when allocating under the interrupt callback lock. */
+    if (rt->currentThreadOwnsInterruptLock())
         return false;
 
     /* GC is already running. */
@@ -2176,7 +2247,7 @@ js::TriggerZoneGC(Zone *zone, JS::gcreason::Reason reason)
     }
 
     PrepareZoneForGC(zone);
-    TriggerOperationCallback(rt, reason);
+    RequestInterrupt(rt, reason);
     return true;
 }
 
@@ -2857,7 +2928,7 @@ static bool
 ShouldPreserveJITCode(JSCompartment *comp, int64_t currentTime)
 {
     JSRuntime *rt = comp->runtimeFromMainThread();
-    if (rt->gcShouldCleanUpEverything || !comp->zone()->types.inferenceEnabled)
+    if (rt->gcShouldCleanUpEverything)
         return false;
 
     if (rt->alwaysPreserveCode)
@@ -3001,7 +3072,7 @@ BeginMarkPhase(JSRuntime *rt)
     }
 
     for (CompartmentsIter c(rt, WithAtoms); !c.done(); c.next()) {
-        JS_ASSERT(!c->gcLiveArrayBuffers);
+        JS_ASSERT(c->gcLiveArrayBuffers.empty());
         c->marked = false;
         if (ShouldPreserveJITCode(c, currentTime))
             c->zone()->setPreservingCode(true);
@@ -3287,9 +3358,10 @@ js::gc::MarkingValidator::nonIncrementalMark()
     }
 
     /*
-     * Save the lists of live weakmaps and array buffers for the compartments we
-     * are collecting.
+     * Temporarily clear the lists of live weakmaps and array buffers for the
+     * compartments we are collecting.
      */
+
     WeakMapVector weakmaps;
     ArrayBufferVector arrayBuffers;
     for (GCCompartmentsIter c(runtime); !c.done(); c.next()) {
@@ -3306,10 +3378,6 @@ js::gc::MarkingValidator::nonIncrementalMark()
      */
     initialized = true;
 
-    /*
-     * Reset the lists of live weakmaps and array buffers for the compartments we
-     * are collecting.
-     */
     for (GCCompartmentsIter c(runtime); !c.done(); c.next()) {
         WeakMapBase::resetCompartmentWeakMapList(c);
         ArrayBufferObject::resetArrayBufferList(c);
@@ -3366,7 +3434,6 @@ js::gc::MarkingValidator::nonIncrementalMark()
         Swap(*entry, *bitmap);
     }
 
-    /* Restore the weak map and array buffer lists. */
     for (GCCompartmentsIter c(runtime); !c.done(); c.next()) {
         WeakMapBase::resetCompartmentWeakMapList(c);
         ArrayBufferObject::resetArrayBufferList(c);
@@ -4253,7 +4320,7 @@ EndSweepPhase(JSRuntime *rt, JSGCInvocationKind gckind, bool lastGC)
 #ifdef DEBUG
     for (CompartmentsIter c(rt, SkipAtoms); !c.done(); c.next()) {
         JS_ASSERT(!c->gcIncomingGrayPointers);
-        JS_ASSERT(!c->gcLiveArrayBuffers);
+        JS_ASSERT(c->gcLiveArrayBuffers.empty());
 
         for (JSCompartment::WrapperEnum e(c); !e.empty(); e.popFront()) {
             if (e.front().key().kind != CrossCompartmentKey::StringWrapper)
@@ -4468,7 +4535,7 @@ ResetIncrementalGC(JSRuntime *rt, const char *reason)
 
 #ifdef DEBUG
     for (CompartmentsIter c(rt, SkipAtoms); !c.done(); c.next())
-        JS_ASSERT(!c->gcLiveArrayBuffers);
+        JS_ASSERT(c->gcLiveArrayBuffers.empty());
 
     for (ZonesIter zone(rt, WithAtoms); !zone.done(); zone.next()) {
         JS_ASSERT(!zone->needsBarrier());
@@ -5113,9 +5180,6 @@ js::NewCompartment(JSContext *cx, Zone *zone, JSPrincipals *principals,
 
         zoneHolder.reset(zone);
 
-        if (!zone->init(cx))
-            return nullptr;
-
         zone->setGCLastBytes(8192, GC_NORMAL);
 
         const JSPrincipals *trusted = rt->trustedPrincipals();
@@ -5299,6 +5363,9 @@ js::ReleaseAllJITCode(FreeOp *fop)
 # endif
 
     for (ZonesIter zone(fop->runtime(), SkipAtoms); !zone.done(); zone.next()) {
+        if (!zone->jitZone())
+            continue;
+
 # ifdef DEBUG
         /* Assert no baseline scripts are marked as active. */
         for (CellIter i(zone, FINALIZE_SCRIPT); !i.done(); i.next()) {
@@ -5314,7 +5381,8 @@ js::ReleaseAllJITCode(FreeOp *fop)
 
         for (CellIter i(zone, FINALIZE_SCRIPT); !i.done(); i.next()) {
             JSScript *script = i.get<JSScript>();
-            jit::FinishInvalidation(fop, script);
+            jit::FinishInvalidation<SequentialExecution>(fop, script);
+            jit::FinishInvalidation<ParallelExecution>(fop, script);
 
             /*
              * Discard baseline script if it's not marked as active. Note that
@@ -5322,6 +5390,8 @@ js::ReleaseAllJITCode(FreeOp *fop)
              */
             jit::FinishDiscardBaselineScript(fop, script);
         }
+
+        zone->jitZone()->optimizedStubSpace()->free();
     }
 #endif
 }
@@ -5477,11 +5547,19 @@ ArenaLists::adoptArenas(JSRuntime *rt, ArenaLists *fromArenaLists)
         ArenaList *fromList = &fromArenaLists->arenaLists[thingKind];
         ArenaList *toList = &arenaLists[thingKind];
         while (fromList->head != nullptr) {
+            // Remove entry from |fromList|
             ArenaHeader *fromHeader = fromList->head;
             fromList->head = fromHeader->next;
             fromHeader->next = nullptr;
 
-            toList->insert(fromHeader);
+            // During parallel execution, we sometimes keep empty arenas
+            // on the lists rather than sending them back to the chunk.
+            // Therefore, if fromHeader is empty, send it back to the
+            // chunk now. Otherwise, attach to |toList|.
+            if (fromHeader->isEmpty())
+                fromHeader->chunk()->releaseArena(fromHeader);
+            else
+                toList->insert(fromHeader);
         }
         fromList->cursor = &fromList->head;
     }

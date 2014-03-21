@@ -545,7 +545,7 @@ private:
   nsresult FinishedSomeDecoding(eShutdownIntent intent = eShutdownIntent_Done,
                                 DecodeRequest* request = nullptr);
 
-  void DrawWithPreDownscaleIfNeeded(imgFrame *aFrame,
+  bool DrawWithPreDownscaleIfNeeded(imgFrame *aFrame,
                                     gfxContext *aContext,
                                     GraphicsFilter aFilter,
                                     const gfxMatrix &aUserSpaceToImageSpace,
@@ -590,7 +590,7 @@ private:
 
   nsresult DoImageDataComplete();
 
-  bool ApplyDecodeFlags(uint32_t aNewFlags);
+  bool ApplyDecodeFlags(uint32_t aNewFlags, uint32_t aWhichFrame);
 
   already_AddRefed<layers::Image> GetCurrentImage();
   void UpdateImageContainer();
@@ -658,6 +658,9 @@ private: // data
 
   // Cached value for GetImageContainer.
   nsRefPtr<mozilla::layers::ImageContainer> mImageContainer;
+
+  // If not cached in mImageContainer, this might have our image container
+  WeakPtr<mozilla::layers::ImageContainer> mImageContainerCache;
 
 #ifdef DEBUG
   uint32_t                       mFramesNotified;

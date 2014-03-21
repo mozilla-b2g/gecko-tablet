@@ -39,7 +39,9 @@ let appName = Services.appinfo.name;
 this.dumpn = function dumpn(str) {
   logger.trace(str);
 }
-loader.loadSubScript("resource://gre/modules/devtools/DevToolsUtils.js");
+let { devtools } = Cu.import("resource://gre/modules/devtools/Loader.jsm", {});
+let DevToolsUtils = devtools.require("devtools/toolkit/DevToolsUtils.js");
+this.DevToolsUtils = DevToolsUtils;
 loader.loadSubScript("resource://gre/modules/devtools/server/transport.js");
 
 let bypassOffline = false;
@@ -2126,6 +2128,17 @@ MarionetteServerConnection.prototype = {
     this._emu_cb_id += 1;
   },
 
+  runEmulatorShell: function runEmulatorShell(args, callback) {
+    if (callback) {
+      if (!this._emu_cbs) {
+        this._emu_cbs = {};
+      }
+      this._emu_cbs[this._emu_cb_id] = callback;
+    }
+    this.sendToClient({emulator_shell: args, id: this._emu_cb_id}, -1);
+    this._emu_cb_id += 1;
+  },
+
   emulatorCmdResult: function emulatorCmdResult(message) {
     if (this.context != "chrome") {
       this.sendAsync("emulatorCmdResult", message, -1);
@@ -2323,6 +2336,7 @@ MarionetteServerConnection.prototype = {
         }
         break;
       case "Marionette:runEmulatorCmd":
+      case "Marionette:runEmulatorShell":
         this.sendToClient(message.json, -1);
         break;
       case "Marionette:switchToFrame":

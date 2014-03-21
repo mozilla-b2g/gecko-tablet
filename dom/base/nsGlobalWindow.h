@@ -32,7 +32,7 @@
 #include "nsIScriptObjectPrincipal.h"
 #include "nsITimer.h"
 #include "nsIDOMModalContentWindow.h"
-#include "nsEventListenerManager.h"
+#include "mozilla/EventListenerManager.h"
 #include "nsIPrincipal.h"
 #include "nsSize.h"
 #include "mozFlushType.h"
@@ -384,11 +384,11 @@ public:
   // nsIDOMEventTarget
   NS_DECL_NSIDOMEVENTTARGET
 
-  virtual nsEventListenerManager*
-  GetExistingListenerManager() const MOZ_OVERRIDE;
+  virtual mozilla::EventListenerManager*
+    GetExistingListenerManager() const MOZ_OVERRIDE;
 
-  virtual nsEventListenerManager*
-  GetOrCreateListenerManager() MOZ_OVERRIDE;
+  virtual mozilla::EventListenerManager*
+    GetOrCreateListenerManager() MOZ_OVERRIDE;
 
   using mozilla::dom::EventTarget::RemoveEventListener;
   virtual void AddEventListener(const nsAString& aType,
@@ -727,13 +727,13 @@ public:
 #define EVENT(name_, id_, type_, struct_)                                     \
   mozilla::dom::EventHandlerNonNull* GetOn##name_()                           \
   {                                                                           \
-    nsEventListenerManager *elm = GetExistingListenerManager();               \
+    mozilla::EventListenerManager* elm = GetExistingListenerManager();        \
     return elm ? elm->GetEventHandler(nsGkAtoms::on##name_, EmptyString())    \
                : nullptr;                                                     \
   }                                                                           \
   void SetOn##name_(mozilla::dom::EventHandlerNonNull* handler)               \
   {                                                                           \
-    nsEventListenerManager *elm = GetOrCreateListenerManager();               \
+    mozilla::EventListenerManager* elm = GetOrCreateListenerManager();        \
     if (elm) {                                                                \
       elm->SetEventHandler(nsGkAtoms::on##name_, EmptyString(), handler);     \
     }                                                                         \
@@ -741,12 +741,12 @@ public:
 #define ERROR_EVENT(name_, id_, type_, struct_)                               \
   mozilla::dom::OnErrorEventHandlerNonNull* GetOn##name_()                    \
   {                                                                           \
-    nsEventListenerManager *elm = GetExistingListenerManager();               \
+    mozilla::EventListenerManager* elm = GetExistingListenerManager();        \
     return elm ? elm->GetOnErrorEventHandler() : nullptr;                     \
   }                                                                           \
   void SetOn##name_(mozilla::dom::OnErrorEventHandlerNonNull* handler)        \
   {                                                                           \
-    nsEventListenerManager *elm = GetOrCreateListenerManager();               \
+    mozilla::EventListenerManager* elm = GetOrCreateListenerManager();        \
     if (elm) {                                                                \
       elm->SetEventHandler(handler);                                          \
     }                                                                         \
@@ -754,12 +754,12 @@ public:
 #define BEFOREUNLOAD_EVENT(name_, id_, type_, struct_)                        \
   mozilla::dom::OnBeforeUnloadEventHandlerNonNull* GetOn##name_()             \
   {                                                                           \
-    nsEventListenerManager *elm = GetExistingListenerManager();               \
+    mozilla::EventListenerManager* elm = GetExistingListenerManager();        \
     return elm ? elm->GetOnBeforeUnloadEventHandler() : nullptr;              \
   }                                                                           \
   void SetOn##name_(mozilla::dom::OnBeforeUnloadEventHandlerNonNull* handler) \
   {                                                                           \
-    nsEventListenerManager *elm = GetOrCreateListenerManager();               \
+    mozilla::EventListenerManager* elm = GetOrCreateListenerManager();        \
     if (elm) {                                                                \
       elm->SetEventHandler(handler);                                          \
     }                                                                         \
@@ -975,7 +975,7 @@ public:
   void NotifyDefaultButtonLoaded(mozilla::dom::Element& aDefaultButton,
                                  mozilla::ErrorResult& aError);
   nsIMessageBroadcaster* GetMessageManager(mozilla::ErrorResult& aError);
-  void BeginWindowMove(nsDOMEvent& aMouseDownEvent,
+  void BeginWindowMove(mozilla::dom::Event& aMouseDownEvent,
                        mozilla::dom::Element* aPanel,
                        mozilla::ErrorResult& aError);
 
@@ -1170,9 +1170,8 @@ protected:
   already_AddRefed<nsIBaseWindow> GetTreeOwnerWindow();
   already_AddRefed<nsIWebBrowserChrome> GetWebBrowserChrome();
   nsresult SecurityCheckURL(const char *aURL);
-  nsresult BuildURIfromBase(const char *aURL,
-                            nsIURI **aBuiltURI,
-                            bool *aFreeSecurityPass, JSContext **aCXused);
+  nsresult BuildURIfromBase(const char *aURL, nsIURI **aBuiltURI,
+                            JSContext **aCXused);
   bool PopupWhitelisted();
   PopupControlState RevisePopupAbuseLevel(PopupControlState);
   void     FireAbuseEvents(bool aBlocked, bool aWindow,
@@ -1465,7 +1464,7 @@ protected:
   nsCOMPtr<nsIXPConnectJSObjectHolder> mInnerWindowHolder;
 
   // These member variable are used only on inner windows.
-  nsRefPtr<nsEventListenerManager> mListenerManager;
+  nsRefPtr<mozilla::EventListenerManager> mListenerManager;
   // mTimeouts is generally sorted by mWhen, unless mTimeoutInsertionPoint is
   // non-null.  In that case, the dummy timeout pointed to by
   // mTimeoutInsertionPoint may have a later mWhen than some of the timeouts

@@ -37,6 +37,7 @@
 #include "nsIXULBuilderListener.h"
 #include "nsIRDFRemoteDataSource.h"
 #include "nsIRDFService.h"
+#include "nsIScriptContext.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIServiceManager.h"
 #include "nsISimpleEnumerator.h"
@@ -68,7 +69,7 @@
 #include "nsXULTemplateQueryProcessorStorage.h"
 #include "nsContentUtils.h"
 #include "ChildIterator.h"
-#include "nsCxPusher.h"
+#include "mozilla/dom/ScriptSettings.h"
 
 using namespace mozilla::dom;
 using namespace mozilla;
@@ -1379,14 +1380,13 @@ nsXULTemplateBuilder::InitHTMLTemplateRoot()
     if (! global)
         return NS_ERROR_UNEXPECTED;
 
-    nsIScriptContext *context = global->GetContext();
-    if (! context)
-        return NS_ERROR_UNEXPECTED;
+    nsCOMPtr<nsIGlobalObject> innerWin =
+        do_QueryInterface(doc->GetInnerWindow());
 
-    AutoPushJSContext jscontext(context->GetNativeContext());
-    NS_ASSERTION(context != nullptr, "no jscontext");
-    if (! jscontext)
-        return NS_ERROR_UNEXPECTED;
+    // We are going to run script via JS_SetProperty, so we need a script entry
+    // point, but as this is XUL related it does not appear in the HTML spec.
+    AutoEntryScript entryScript(innerWin, true);
+    JSContext* jscontext = entryScript.cx();
 
     JS::Rooted<JSObject*> scope(jscontext, global->GetGlobalJSObject());
     JS::Rooted<JS::Value> v(jscontext);
@@ -1403,8 +1403,7 @@ nsXULTemplateBuilder::InitHTMLTemplateRoot()
                                         &jsdatabase);
         NS_ENSURE_SUCCESS(rv, rv);
 
-        bool ok;
-        ok = JS_SetProperty(jscontext, jselement, "database", jsdatabase);
+        bool ok = JS_SetProperty(jscontext, jselement, "database", jsdatabase);
         NS_ASSERTION(ok, "unable to set database property");
         if (! ok)
             return NS_ERROR_FAILURE;
@@ -1419,8 +1418,7 @@ nsXULTemplateBuilder::InitHTMLTemplateRoot()
                                         &jsbuilder);
         NS_ENSURE_SUCCESS(rv, rv);
 
-        bool ok;
-        ok = JS_SetProperty(jscontext, jselement, "builder", jsbuilder);
+        bool ok = JS_SetProperty(jscontext, jselement, "builder", jsbuilder);
         if (! ok)
             return NS_ERROR_FAILURE;
     }
@@ -2118,7 +2116,7 @@ nsXULTemplateBuilder::DetermineRDFQueryRef(nsIContent* aQueryElement, nsIAtom** 
         content->GetAttr(kNameSpaceID_None, nsGkAtoms::tag, tag);
 
         if (!tag.IsEmpty())
-            *aTag = NS_NewAtom(tag).get();
+            *aTag = NS_NewAtom(tag).take();
     }
 }
 

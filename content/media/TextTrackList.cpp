@@ -61,20 +61,33 @@ TextTrackList::IndexedGetter(uint32_t aIndex, bool& aFound)
   return aFound ? mTextTracks[aIndex] : nullptr;
 }
 
+TextTrack*
+TextTrackList::operator[](uint32_t aIndex)
+{
+  return mTextTracks.SafeElementAt(aIndex, nullptr);
+}
+
 already_AddRefed<TextTrack>
 TextTrackList::AddTextTrack(TextTrackKind aKind,
                             const nsAString& aLabel,
-                            const nsAString& aLanguage)
+                            const nsAString& aLanguage,
+                            TextTrackMode aMode,
+                            TextTrackReadyState aReadyState,
+                            TextTrackSource aTextTrackSource,
+                            const CompareTextTracks& aCompareTT)
 {
-  nsRefPtr<TextTrack> track = new TextTrack(mGlobal, this, aKind, aLabel, aLanguage);
-  AddTextTrack(track);
+  nsRefPtr<TextTrack> track = new TextTrack(mGlobal, this, aKind, aLabel,
+                                            aLanguage, aMode, aReadyState,
+                                            aTextTrackSource);
+  AddTextTrack(track, aCompareTT);
   return track.forget();
 }
 
 void
-TextTrackList::AddTextTrack(TextTrack* aTextTrack)
+TextTrackList::AddTextTrack(TextTrack* aTextTrack,
+                            const CompareTextTracks& aCompareTT)
 {
-  if (mTextTracks.AppendElement(aTextTrack)) {
+  if (mTextTracks.InsertElementSorted(aTextTrack, aCompareTT)) {
     aTextTrack->SetTextTrackList(this);
     CreateAndDispatchTrackEventRunner(aTextTrack, NS_LITERAL_STRING("addtrack"));
   }

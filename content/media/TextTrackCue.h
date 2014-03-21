@@ -22,6 +22,7 @@ namespace dom {
 
 class HTMLTrackElement;
 class TextTrack;
+class TextTrackRegion;
 
 class TextTrackCue MOZ_FINAL : public nsDOMEventTargetHelper
 {
@@ -74,7 +75,6 @@ public:
     }
 
     mId = aId;
-    CueChanged();
   }
 
   double StartTime() const
@@ -90,7 +90,6 @@ public:
 
     mStartTime = aStartTime;
     mReset = true;
-    CueChanged();
   }
 
   double EndTime() const
@@ -106,7 +105,6 @@ public:
 
     mEndTime = aEndTime;
     mReset = true;
-    CueChanged();
   }
 
   bool PauseOnExit()
@@ -121,23 +119,10 @@ public:
     }
 
     mPauseOnExit = aPauseOnExit;
-    CueChanged();
   }
 
-  void GetRegionId(nsAString& aRegionId) const
-  {
-    aRegionId = mRegionId;
-  }
-
-  void SetRegionId(const nsAString& aRegionId)
-  {
-    if (mRegionId == aRegionId) {
-      return;
-    }
-
-    mRegionId = aRegionId;
-    CueChanged();
-  }
+  TextTrackRegion* GetRegion();
+  void SetRegion(TextTrackRegion* aRegion);
 
   DirectionSetting Vertical() const
   {
@@ -152,7 +137,6 @@ public:
 
     mReset = true;
     mVertical = aVertical;
-    CueChanged();
   }
 
   bool SnapToLines()
@@ -168,7 +152,6 @@ public:
 
     mReset = true;
     mSnapToLines = aSnapToLines;
-    CueChanged();
   }
 
   void GetLine(OwningLongOrAutoKeyword& aLine) const
@@ -186,13 +169,11 @@ public:
         (mLineIsAutoKeyword || (aLine.GetAsLong() != mLineLong))) {
       mLineIsAutoKeyword = false;
       mLineLong = aLine.GetAsLong();
-      CueChanged();
       mReset = true;
       return;
     }
     if (aLine.IsAutoKeyword() && !mLineIsAutoKeyword) {
       mLineIsAutoKeyword = true;
-      CueChanged();
       mReset = true;
     }
   }
@@ -214,7 +195,6 @@ public:
 
     mReset = true;
     mLineAlign = aLineAlign;
-    CueChanged();
   }
 
   int32_t Position() const
@@ -235,7 +215,6 @@ public:
 
     mReset = true;
     mPosition = aPosition;
-    CueChanged();
   }
 
   AlignSetting PositionAlign() const
@@ -255,7 +234,6 @@ public:
 
     mReset = true;
     mPositionAlign = aPositionAlign;
-    CueChanged();
   }
 
   int32_t Size() const
@@ -276,7 +254,6 @@ public:
 
     mReset = true;
     mSize = aSize;
-    CueChanged();
   }
 
   AlignSetting Align() const
@@ -292,7 +269,6 @@ public:
 
     mReset = true;
     mAlign = aAlign;
-    CueChanged();
   }
 
   void GetText(nsAString& aText) const
@@ -308,7 +284,6 @@ public:
 
     mReset = true;
     mText = aText;
-    CueChanged();
   }
 
   IMPL_EVENT_HANDLER(enter)
@@ -354,7 +329,6 @@ public:
   void SetTrackElement(HTMLTrackElement* aTrackElement);
 
 private:
-  void CueChanged();
   void SetDefaultCueSettings();
   nsresult StashDocument(nsISupports* aGlobal);
 
@@ -371,7 +345,7 @@ private:
   int32_t mSize;
   bool mPauseOnExit;
   bool mSnapToLines;
-  nsString mRegionId;
+  nsRefPtr<TextTrackRegion> mRegion;
   DirectionSetting mVertical;
   bool mLineIsAutoKeyword;
   long mLineLong;

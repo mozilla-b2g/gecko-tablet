@@ -934,7 +934,7 @@ case "$OS_TEST" in
     CPU_ARCH=x86
     ;;
 
-powerpc64 | ppc64)
+powerpc64 | ppc64 | powerpc64le | ppc64le)
     CPU_ARCH=ppc64
     ;;
 
@@ -1136,7 +1136,8 @@ if test "$GNU_CC"; then
     AC_MSG_CHECKING([for --build-id option to ld])
     _SAVE_LDFLAGS=$LDFLAGS
     LDFLAGS="$LDFLAGS -Wl,--build-id"
-    AC_TRY_LINK(,,AC_MSG_RESULT([yes]),
+    AC_TRY_LINK(,,AC_MSG_RESULT([yes])
+                  [NSPR_LDFLAGS="$NSPR_LDFLAGS -Wl,--build-id"],
                   AC_MSG_RESULT([no])
                   LDFLAGS=$_SAVE_LDFLAGS)
 
@@ -4026,19 +4027,7 @@ AC_SUBST(CXX_VERSION)
 AC_SUBST(MSMANIFEST_TOOL)
 AC_SUBST(MOZ_LINKER)
 
-AC_MSG_CHECKING([for posix_fallocate])
-AC_TRY_LINK([#define _XOPEN_SOURCE 600
-  #include <fcntl.h>],
-                 [posix_fallocate(0, 0, 0);],
-                 [ac_cv___posix_fallocate=true],
-                 [ac_cv___posix_fallocate=false])
-
-if test "$ac_cv___posix_fallocate" = true ; then
-  AC_DEFINE(HAVE_POSIX_FALLOCATE)
-  AC_MSG_RESULT(yes)
-else
-  AC_MSG_RESULT(no)
-fi
+AC_CHECK_FUNCS(posix_fadvise posix_fallocate)
 
 dnl Check for missing components
 if test "$COMPILE_ENVIRONMENT"; then

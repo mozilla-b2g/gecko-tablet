@@ -7,27 +7,49 @@
 #define GFX_FRAMEMETRICS_H
 
 #include <stdint.h>                     // for uint32_t, uint64_t
+#include <string>                       // for std::string
 #include "Units.h"                      // for CSSRect, CSSPixel, etc
 #include "mozilla/gfx/BasePoint.h"      // for BasePoint
 #include "mozilla/gfx/Rect.h"           // for RoundedIn
 #include "mozilla/gfx/ScaleFactor.h"    // for ScaleFactor
+#include "mozilla/gfx/Logging.h"        // for Log
 
 namespace IPC {
 template <typename T> struct ParamTraits;
 } // namespace IPC
 
 namespace mozilla {
-namespace layers {
 
-// The layer coordinates of the parent layer. Like the layer coordinates
-// of the current layer (LayerPixel) but doesn't include the current layer's
-// resolution.
+// The layer coordinates of the parent layer.
+// This can be arrived at in two ways:
+//   - Start with the CSS coordinates of the parent layer (note: NOT the
+//     CSS coordinates of the current layer, that will give you the wrong
+//     answer), multiply by the device scale and the resolutions of all
+//     layers from the root down to and including the parent.
+//   - Start with global screen coordinates and unapply all CSS and async
+//     transforms from the root down to and including the parent.
+// It's helpful to look at https://wiki.mozilla.org/Platform/GFX/APZ#Coordinate_systems
+// to get a picture of how the various coordinate systems relate to each other.
 struct ParentLayerPixel {};
 
-typedef gfx::ScaleFactor<LayoutDevicePixel, ParentLayerPixel> LayoutDeviceToParentLayerScale;
-typedef gfx::ScaleFactor<ParentLayerPixel, LayerPixel> ParentLayerToLayerScale;
+typedef gfx::PointTyped<ParentLayerPixel> ParentLayerPoint;
+typedef gfx::RectTyped<ParentLayerPixel> ParentLayerRect;
+typedef gfx::SizeTyped<ParentLayerPixel> ParentLayerSize;
 
+typedef gfx::IntMarginTyped<ParentLayerPixel> ParentLayerIntMargin;
+typedef gfx::IntPointTyped<ParentLayerPixel> ParentLayerIntPoint;
+typedef gfx::IntRectTyped<ParentLayerPixel> ParentLayerIntRect;
+typedef gfx::IntSizeTyped<ParentLayerPixel> ParentLayerIntSize;
+
+typedef gfx::ScaleFactor<CSSPixel, ParentLayerPixel> CSSToParentLayerScale;
+typedef gfx::ScaleFactor<LayoutDevicePixel, ParentLayerPixel> LayoutDeviceToParentLayerScale;
+typedef gfx::ScaleFactor<ScreenPixel, ParentLayerPixel> ScreenToParentLayerScale;
+
+typedef gfx::ScaleFactor<ParentLayerPixel, LayerPixel> ParentLayerToLayerScale;
 typedef gfx::ScaleFactor<ParentLayerPixel, ScreenPixel> ParentLayerToScreenScale;
+
+
+namespace layers {
 
 /**
  * The viewport and displayport metrics for the painted frame at the
@@ -49,19 +71,18 @@ public:
     , mDisplayPort(0, 0, 0, 0)
     , mCriticalDisplayPort(0, 0, 0, 0)
     , mViewport(0, 0, 0, 0)
-    , mScrollOffset(0, 0)
     , mScrollId(NULL_SCROLL_ID)
     , mScrollableRect(0, 0, 0, 0)
     , mResolution(1)
     , mCumulativeResolution(1)
-    , mZoom(1)
+    , mTransformScale(1)
     , mDevPixelsPerCSSPixel(1)
     , mPresShellId(-1)
     , mMayHaveTouchListeners(false)
     , mIsRoot(false)
     , mHasScrollgrab(false)
-    , mDisableScrollingX(false)
-    , mDisableScrollingY(false)
+    , mScrollOffset(0, 0)
+    , mZoom(1)
     , mUpdateScrollOffset(false)
     , mScrollGeneration(0)
   {}
@@ -70,11 +91,12 @@ public:
 
   bool operator==(const FrameMetrics& aOther) const
   {
+    // mContentDescription is not compared on purpose as it's only used
+    // for debugging.
     return mCompositionBounds.IsEqualEdges(aOther.mCompositionBounds) &&
            mDisplayPort.IsEqualEdges(aOther.mDisplayPort) &&
            mCriticalDisplayPort.IsEqualEdges(aOther.mCriticalDisplayPort) &&
            mViewport.IsEqualEdges(aOther.mViewport) &&
-           mScrollOffset == aOther.mScrollOffset &&
            mScrollId == aOther.mScrollId &&
            mScrollableRect.IsEqualEdges(aOther.mScrollableRect) &&
            mResolution == aOther.mResolution &&
@@ -83,9 +105,8 @@ public:
            mMayHaveTouchListeners == aOther.mMayHaveTouchListeners &&
            mPresShellId == aOther.mPresShellId &&
            mIsRoot == aOther.mIsRoot &&
+           mScrollOffset == aOther.mScrollOffset &&
            mHasScrollgrab == aOther.mHasScrollgrab &&
-           mDisableScrollingX == aOther.mDisableScrollingX &&
-           mDisableScrollingY == aOther.mDisableScrollingY &&
            mUpdateScrollOffset == aOther.mUpdateScrollOffset;
   }
   bool operator!=(const FrameMetrics& aOther) const
@@ -118,7 +139,7 @@ public:
 
   LayerPoint GetScrollOffsetInLayerPixels() const
   {
-    return mScrollOffset * LayersPixelsPerCSSPixel();
+    return GetScrollOffset() * LayersPixelsPerCSSPixel();
   }
 
   LayoutDeviceToParentLayerScale GetParentResolution() const
@@ -135,7 +156,7 @@ public:
   CSSRect GetExpandedScrollableRect() const
   {
     CSSRect scrollableRect = mScrollableRect;
-    CSSRect compBounds = CalculateCompositedRectInCssPixels();
+    CSSRect compBounds = CSSRect(CalculateCompositedRectInCssPixels());
     if (scrollableRect.width < compBounds.width) {
       scrollableRect.x = std::max(0.f,
                                   scrollableRect.x - (compBounds.width - scrollableRect.width));
@@ -151,18 +172,36 @@ public:
     return scrollableRect;
   }
 
-  /**
-   * Return the scale factor needed to fit the viewport
-   * into its composition bounds.
-   */
+  // Return the scale factor needed to fit the viewport
+  // into its composition bounds.
   CSSToScreenScale CalculateIntrinsicScale() const
   {
     return CSSToScreenScale(float(mCompositionBounds.width) / float(mViewport.width));
   }
 
-  CSSRect CalculateCompositedRectInCssPixels() const
+  // Return the scale factor for converting from CSS pixels (for this layer)
+  // to layer pixels of our parent layer. Much as mZoom is used to interface
+  // between inputs we get in screen pixels and quantities in CSS pixels,
+  // this is used to interface between mCompositionBounds and quantities
+  // in CSS pixels.
+  CSSToParentLayerScale GetZoomToParent() const
   {
-    return CSSRect(gfx::RoundedIn(mCompositionBounds / mZoom));
+    return mZoom * mTransformScale;
+  }
+
+  CSSIntRect CalculateCompositedRectInCssPixels() const
+  {
+    return gfx::RoundedIn(mCompositionBounds / GetZoomToParent());
+  }
+
+  void ScrollBy(const CSSPoint& aPoint)
+  {
+    mScrollOffset += aPoint;
+  }
+
+  void ZoomBy(float aFactor)
+  {
+    mZoom.scale *= aFactor;
   }
 
   // ---------------------------------------------------------------------------
@@ -184,7 +223,7 @@ public:
   // This value is valid for nested scrollable layers as well, and is still
   // relative to the layer tree origin. This value is provided by Gecko at
   // layout/paint time.
-  ScreenIntRect mCompositionBounds;
+  ParentLayerIntRect mCompositionBounds;
 
   // ---------------------------------------------------------------------------
   // The following metrics are all in CSS pixels. They are not in any uniform
@@ -205,9 +244,6 @@ public:
   // To pre-render a margin of 100 CSS pixels around the window,
   // { x = -100, y = - 100,
   //   width = window.innerWidth + 200, height = window.innerHeight + 200 }
-  //
-  // This is only valid on the root layer. Nested iframes do not have a
-  // displayport set on them. See bug 775452.
   CSSRect mDisplayPort;
 
   // If non-empty, the area of a frame's contents that is considered critical
@@ -228,23 +264,6 @@ public:
   // iframe. For layers that don't correspond to a document, this metric is
   // meaningless and invalid.
   CSSRect mViewport;
-
-  // The position of the top-left of the CSS viewport, relative to the document
-  // (or the document relative to the viewport, if that helps understand it).
-  //
-  // Thus it is relative to the document. It is in the same coordinate space as
-  // |mScrollableRect|, but a different coordinate space than |mViewport| and
-  // |mDisplayPort|.
-  //
-  // It is required that the rect:
-  // { x = mScrollOffset.x, y = mScrollOffset.y,
-  //   width = mCompositionBounds.x / mResolution.scale,
-  //   height = mCompositionBounds.y / mResolution.scale }
-  // Be within |mScrollableRect|.
-  //
-  // This is valid for any layer, but is always relative to this frame and
-  // not any parents, regardless of parent transforms.
-  CSSPoint mScrollOffset;
 
   // A unique ID assigned to each scrollable frame.
   ViewID mScrollId;
@@ -276,11 +295,16 @@ public:
   // This information is provided by Gecko at layout/paint time.
   LayoutDeviceToLayerScale mCumulativeResolution;
 
-  // The "user zoom". Content is painted by gecko at mResolution * mDevPixelsPerCSSPixel,
-  // but will be drawn to the screen at mZoom. In the steady state, the
-  // two will be the same, but during an async zoom action the two may
-  // diverge. This information is initialized in Gecko but updated in the APZC.
-  CSSToScreenScale mZoom;
+  // The conversion factor between local screen pixels (the coordinate
+  // system in which APZCs receive input events) and our parent layer's
+  // layer pixels (the coordinate system of mCompositionBounds).
+  // This consists of the scale of the local CSS transform and the
+  // nontransient async transform.
+  // TODO: APZ does not currently work well if there is a CSS transform
+  //       on the layer being scrolled that's not just a scale that's
+  //       the same in both directions. When we fix this, mTransformScale
+  //       will probably need to turn into a matrix.
+  ScreenToParentLayerScale mTransformScale;
 
   // The conversion factor between CSS pixels and device pixels for this frame.
   // This can vary based on a variety of things, such as reflowing-zoom. The
@@ -300,24 +324,24 @@ public:
   bool mHasScrollgrab;
 
 public:
-  bool GetDisableScrollingX() const
+  void SetScrollOffset(const CSSPoint& aScrollOffset)
   {
-    return mDisableScrollingX;
+    mScrollOffset = aScrollOffset;
   }
 
-  void SetDisableScrollingX(bool aDisableScrollingX)
+  const CSSPoint& GetScrollOffset() const
   {
-    mDisableScrollingX = aDisableScrollingX;
+    return mScrollOffset;
   }
 
-  bool GetDisableScrollingY() const
+  void SetZoom(const CSSToScreenScale& aZoom)
   {
-    return mDisableScrollingY;
+    mZoom = aZoom;
   }
 
-  void SetDisableScrollingY(bool aDisableScrollingY)
+  CSSToScreenScale GetZoom() const
   {
-    mDisableScrollingY = aDisableScrollingY;
+    return mZoom;
   }
 
   void SetScrollOffsetUpdated(uint32_t aScrollGeneration)
@@ -336,20 +360,52 @@ public:
     return mScrollGeneration;
   }
 
+  const std::string& GetContentDescription() const
+  {
+    return mContentDescription;
+  }
+
+  void SetContentDescription(const std::string& aContentDescription)
+  {
+    mContentDescription = aContentDescription;
+  }
+
 private:
   // New fields from now on should be made private and old fields should
   // be refactored to be private.
 
-  // Allow disabling scrolling in individual axis to support
-  // |overflow: hidden|.
-  bool mDisableScrollingX;
-  bool mDisableScrollingY;
+  // The position of the top-left of the CSS viewport, relative to the document
+  // (or the document relative to the viewport, if that helps understand it).
+  //
+  // Thus it is relative to the document. It is in the same coordinate space as
+  // |mScrollableRect|, but a different coordinate space than |mViewport| and
+  // |mDisplayPort|.
+  //
+  // It is required that the rect:
+  // { x = mScrollOffset.x, y = mScrollOffset.y,
+  //   width = mCompositionBounds.x / mResolution.scale,
+  //   height = mCompositionBounds.y / mResolution.scale }
+  // Be within |mScrollableRect|.
+  //
+  // This is valid for any layer, but is always relative to this frame and
+  // not any parents, regardless of parent transforms.
+  CSSPoint mScrollOffset;
+
+  // The "user zoom". Content is painted by gecko at mResolution * mDevPixelsPerCSSPixel,
+  // but will be drawn to the screen at mZoom. In the steady state, the
+  // two will be the same, but during an async zoom action the two may
+  // diverge. This information is initialized in Gecko but updated in the APZC.
+  CSSToScreenScale mZoom;
 
   // Whether mScrollOffset was updated by something other than the APZ code, and
   // if the APZC receiving this metrics should update its local copy.
   bool mUpdateScrollOffset;
   // The scroll generation counter used to acknowledge the scroll offset update.
   uint32_t mScrollGeneration;
+
+  // A description of the content element corresponding to this frame.
+  // This is empty unless the apz.printtree pref is turned on.
+  std::string mContentDescription;
 };
 
 /**
@@ -407,6 +463,11 @@ struct ScrollableLayerGuid {
     return !(*this == other);
   }
 };
+
+template <int LogLevel>
+gfx::Log<LogLevel>& operator<<(gfx::Log<LogLevel>& log, const ScrollableLayerGuid& aGuid) {
+  return log << '(' << aGuid.mLayersId << ',' << aGuid.mPresShellId << ',' << aGuid.mScrollId << ')';
+}
 
 struct ZoomConstraints {
   bool mAllowZoom;

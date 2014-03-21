@@ -360,10 +360,6 @@ $(CURDIR)/javascript-trace.h: $(srcdir)/devtools/javascript-trace.d
 $(addsuffix .$(OBJ_SUFFIX),Probes jsinterp jsobj): $(CURDIR)/javascript-trace.h
 endif
 
-ifdef HAVE_LINUX_PERF_EVENT_H
-pm_linux.$(OBJ_SUFFIX): CXXFLAGS += $(LINUX_HEADERS_INCLUDES)
-endif
-
 # Prepare self-hosted JS code for embedding
 export:: selfhosting
 selfhosting:: selfhosted.out.h
@@ -387,6 +383,7 @@ selfhosted_out_h_deps := \
   $(selfhosting_srcs) \
   $(srcdir)/js.msg \
   $(srcdir)/builtin/embedjs.py \
+  $(srcdir)/builtin/TypedObjectConstants.h \
   $(NULL)
 
 SELFHOSTED_DEFINES += $(DEFINES) $(ACDEFINES)

@@ -51,6 +51,7 @@
 #include <android/log.h>
 #endif
 #include "GeckoProfiler.h"
+#include "TextRenderer.h"               // for TextRenderer
 
 class gfxASurface;
 class gfxContext;
@@ -104,6 +105,7 @@ LayerManagerComposite::LayerManagerComposite(Compositor* aCompositor)
 , mIsCompositorReady(false)
 , mDebugOverlayWantsNextFrame(false)
 {
+  mTextRenderer = new TextRenderer(aCompositor);
   MOZ_ASSERT(aCompositor);
 }
 
@@ -179,6 +181,7 @@ LayerManagerComposite::BeginTransactionWithDrawTarget(DrawTarget* aTarget)
 
   mIsCompositorReady = true;
   mCompositor->SetTargetContext(aTarget);
+  mTarget = aTarget;
 }
 
 bool
@@ -243,6 +246,7 @@ LayerManagerComposite::EndTransaction(DrawThebesLayerCallback aCallback,
   }
 
   mCompositor->SetTargetContext(nullptr);
+  mTarget = nullptr;
 
 #ifdef MOZ_LAYERS_HAVE_LOG
   Log();
@@ -444,7 +448,7 @@ LayerManagerComposite::Render()
   /** Our more efficient but less powerful alter ego, if one is available. */
   nsRefPtr<Composer2D> composer2D = mCompositor->GetWidget()->GetComposer2D();
 
-  if (composer2D && composer2D->TryRender(mRoot, mWorldMatrix)) {
+  if (!mTarget && composer2D && composer2D->TryRender(mRoot, mWorldMatrix)) {
     if (mFPS) {
       double fps = mFPS->mCompositionFps.AddFrameAndGetFps(TimeStamp::Now());
       if (gfxPrefs::LayersDrawFPS()) {
@@ -505,6 +509,7 @@ LayerManagerComposite::Render()
   {
     PROFILER_LABEL("LayerManagerComposite", "EndFrame");
     mCompositor->EndFrame();
+    mCompositor->SetFBAcquireFence(mRoot);
   }
 
   mCompositor->GetWidget()->PostRender(this);
@@ -682,8 +687,8 @@ LayerManagerComposite::ComputeRenderIntegrity()
 
     // Clip the screen rect to the document bounds
     gfxRect documentBounds =
-      transform.TransformBounds(gfxRect(metrics.mScrollableRect.x - metrics.mScrollOffset.x,
-                                        metrics.mScrollableRect.y - metrics.mScrollOffset.y,
+      transform.TransformBounds(gfxRect(metrics.mScrollableRect.x - metrics.GetScrollOffset().x,
+                                        metrics.mScrollableRect.y - metrics.GetScrollOffset().y,
                                         metrics.mScrollableRect.width,
                                         metrics.mScrollableRect.height));
     documentBounds.RoundOut();

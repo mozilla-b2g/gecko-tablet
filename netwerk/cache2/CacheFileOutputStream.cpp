@@ -313,7 +313,7 @@ CacheFileOutputStream::ReleaseChunk()
   LOG(("CacheFileOutputStream::ReleaseChunk() [this=%p, idx=%d]",
        this, mChunk->Index()));
 
-  mFile->ReleaseOutsideLock(mChunk.forget().get());
+  mFile->ReleaseOutsideLock(mChunk.forget().take());
 }
 
 void
@@ -389,6 +389,19 @@ CacheFileOutputStream::NotifyListener()
   mCallbackTarget = nullptr;
 
   asyncCallback->OnOutputStreamReady(this);
+}
+
+// Memory reporting
+
+size_t
+CacheFileOutputStream::SizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const
+{
+  // Everything the stream keeps a reference to is already reported somewhere else.
+  // mFile reports itself.
+  // mChunk reported as part of CacheFile.
+  // mCloseListener is CacheEntry, already reported.
+  // mCallback is usually CacheFile or a class that is reported elsewhere.
+  return mallocSizeOf(this);
 }
 
 } // net

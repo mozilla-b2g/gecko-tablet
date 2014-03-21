@@ -608,6 +608,8 @@ ArrayMetaTypeDescr::create(JSContext *cx,
     if (!prototypeObj)
         return nullptr;
 
+    obj->initReservedSlot(JS_DESCR_SLOT_PROTO, ObjectValue(*prototypeObj));
+
     if (!LinkConstructorAndPrototype(cx, obj, prototypeObj))
         return nullptr;
 
@@ -731,6 +733,15 @@ UnsizedArrayTypeDescr::dimension(JSContext *cx, unsigned int argc, jsval *vp)
 
     args.rval().setObject(*obj);
     return true;
+}
+
+bool
+js::IsTypedObjectArray(JSObject &obj)
+{
+    if (!obj.is<TypedObject>())
+        return false;
+    TypeDescr& d = obj.as<TypedObject>().typeDescr();
+    return d.is<SizedArrayTypeDescr>() || d.is<UnsizedArrayTypeDescr>();
 }
 
 /*********************************
@@ -969,6 +980,8 @@ StructMetaTypeDescr::create(JSContext *cx,
         cx, CreatePrototypeObjectForComplexTypeInstance(cx, structTypePrototype));
     if (!prototypeObj)
         return nullptr;
+
+    descr->initReservedSlot(JS_DESCR_SLOT_PROTO, ObjectValue(*prototypeObj));
 
     if (!LinkConstructorAndPrototype(cx, descr, prototypeObj))
         return nullptr;
@@ -1397,14 +1410,12 @@ TypedObject::createUnattachedWithClass(JSContext *cx,
     obj->initReservedSlot(JS_TYPEDOBJ_SLOT_BYTELENGTH, Int32Value(0));
     obj->initReservedSlot(JS_TYPEDOBJ_SLOT_OWNER, NullValue());
     obj->initReservedSlot(JS_TYPEDOBJ_SLOT_NEXT_VIEW, PrivateValue(nullptr));
-    obj->initReservedSlot(JS_TYPEDOBJ_SLOT_NEXT_BUFFER, PrivateValue(UNSET_BUFFER_LINK));
     obj->initReservedSlot(JS_TYPEDOBJ_SLOT_LENGTH, Int32Value(length));
     obj->initReservedSlot(JS_TYPEDOBJ_SLOT_TYPE_DESCR, ObjectValue(*type));
 
     // Tag the type object for this instance with the type
     // representation, if that has not been done already.
-    if (cx->typeInferenceEnabled() && !type->is<SimpleTypeDescr>()) {
-        // FIXME Bug 929651           ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+    if (!type->is<SimpleTypeDescr>()) { // FIXME Bug 929651
         RootedTypeObject typeObj(cx, obj->getType(cx));
         if (typeObj) {
             if (!typeObj->addTypedObjectAddendum(cx, type))
@@ -1430,6 +1441,7 @@ TypedObject::attach(ArrayBufferObject &buffer, int32_t offset)
 void
 TypedObject::attach(TypedObject &typedObj, int32_t offset)
 {
+    JS_ASSERT(!typedObj.owner().isNeutered());
     JS_ASSERT(typedObj.typedMem() != NULL);
 
     attach(typedObj.owner(), typedObj.offset() + offset);
@@ -1461,6 +1473,7 @@ TypedObjLengthFromType(TypeDescr &descr)
 TypedObject::createDerived(JSContext *cx, HandleSizedTypeDescr type,
                            HandleTypedObject typedObj, size_t offset)
 {
+    JS_ASSERT(!typedObj->owner().isNeutered());
     JS_ASSERT(typedObj->typedMem() != NULL);
     JS_ASSERT(offset <= typedObj->size());
     JS_ASSERT(offset + type->size() <= typedObj->size());
@@ -1499,7 +1512,7 @@ TypedObject::createZeroed(JSContext *cx,
       {
         size_t totalSize = descr->as<SizedTypeDescr>().size();
         Rooted<ArrayBufferObject*> buffer(cx);
-        buffer = ArrayBufferObject::create(cx, totalSize, false);
+        buffer = ArrayBufferObject::create(cx, totalSize);
         if (!buffer)
             return nullptr;
         typeRepr->asSized()->initInstance(cx->runtime(), buffer->dataPointer(), 1);
@@ -1520,7 +1533,7 @@ TypedObject::createZeroed(JSContext *cx,
         }
 
         Rooted<ArrayBufferObject*> buffer(cx);
-        buffer = ArrayBufferObject::create(cx, totalSize, false);
+        buffer = ArrayBufferObject::create(cx, totalSize);
         if (!buffer)
             return nullptr;
 
@@ -1581,7 +1594,10 @@ TypedObject::obj_trace(JSTracer *trace, JSObject *object)
     if (repr->opaque()) {
         uint8_t *mem = typedObj.typedMem();
         if (!mem)
-            return; // unattached handle or partially constructed
+            return; // partially constructed
+
+        if (typedObj.owner().isNeutered())
+            return;
 
         switch (repr->kind()) {
           case TypeDescr::Scalar:
@@ -1694,15 +1710,6 @@ ReportPropertyError(JSContext *cx,
 }
 
 bool
-TypedObject::obj_lookupSpecial(JSContext *cx, HandleObject obj,
-                              HandleSpecialId sid, MutableHandleObject objp,
-                              MutableHandleShape propp)
-{
-    RootedId id(cx, SPECIALID_TO_JSID(sid));
-    return obj_lookupGeneric(cx, obj, id, objp, propp);
-}
-
-bool
 TypedObject::obj_defineGeneric(JSContext *cx, HandleObject obj, HandleId id, HandleValue v,
                               PropertyOp getter, StrictPropertyOp setter, unsigned attrs)
 {
@@ -1723,18 +1730,9 @@ TypedObject::obj_defineElement(JSContext *cx, HandleObject obj, uint32_t index, 
                                PropertyOp getter, StrictPropertyOp setter, unsigned attrs)
 {
     AutoRooterGetterSetter gsRoot(cx, attrs, &getter, &setter);
-
-    RootedObject delegate(cx, ArrayBufferDelegate(cx, obj));
-    if (!delegate)
+    Rooted<jsid> id(cx);
+    if (!IndexToId(cx, index, &id))
         return false;
-    return baseops::DefineElement(cx, delegate, index, v, getter, setter, attrs);
-}
-
-bool
-TypedObject::obj_defineSpecial(JSContext *cx, HandleObject obj, HandleSpecialId sid, HandleValue v,
-                              PropertyOp getter, StrictPropertyOp setter, unsigned attrs)
-{
-    Rooted<jsid> id(cx, SPECIALID_TO_JSID(sid));
     return obj_defineGeneric(cx, obj, id, v, getter, setter, attrs);
 }
 
@@ -1764,7 +1762,7 @@ TypedObject::obj_getGeneric(JSContext *cx, HandleObject obj, HandleObject receiv
       case TypeDescr::SizedArray:
       case TypeDescr::UnsizedArray:
         if (JSID_IS_ATOM(id, cx->names().length)) {
-            if (!typedObj->typedMem()) { // unattached
+            if (typedObj->owner().isNeutered() || !typedObj->typedMem()) { // unattached
                 JS_ReportErrorNumber(
                     cx, js_GetErrorMessage,
                     nullptr, JSMSG_TYPEDOBJECT_HANDLE_UNATTACHED);
@@ -1857,15 +1855,6 @@ TypedObject::obj_getArrayElement(JSContext *cx,
     Rooted<SizedTypeDescr*> elementType(cx, &typeDescr->as<T>().elementType());
     size_t offset = elementType->size() * index;
     return Reify(cx, elementType, typedObj, offset, vp);
-}
-
-bool
-TypedObject::obj_getSpecial(JSContext *cx, HandleObject obj,
-                            HandleObject receiver, HandleSpecialId sid,
-                            MutableHandleValue vp)
-{
-    RootedId id(cx, SPECIALID_TO_JSID(sid));
-    return obj_getGeneric(cx, obj, receiver, id, vp);
 }
 
 bool
@@ -1967,15 +1956,6 @@ TypedObject::obj_setArrayElement(JSContext *cx,
     elementType = &descr->as<T>().elementType();
     size_t offset = elementType->size() * index;
     return ConvertAndCopyTo(cx, elementType, typedObj, offset, vp);
-}
-
-bool
-TypedObject::obj_setSpecial(JSContext *cx, HandleObject obj,
-                             HandleSpecialId sid, MutableHandleValue vp,
-                             bool strict)
-{
-    RootedId id(cx, SPECIALID_TO_JSID(sid));
-    return obj_setGeneric(cx, obj, id, vp, strict);
 }
 
 bool
@@ -2101,19 +2081,6 @@ TypedObject::obj_deleteElement(JSContext *cx, HandleObject obj, uint32_t index,
 }
 
 bool
-TypedObject::obj_deleteSpecial(JSContext *cx, HandleObject obj,
-                               HandleSpecialId sid, bool *succeeded)
-{
-    RootedObject proto(cx, obj->getProto());
-    if (!proto) {
-        *succeeded = false;
-        return true;
-    }
-
-    return JSObject::deleteSpecial(cx, proto, sid, succeeded);
-}
-
-bool
 TypedObject::obj_enumerate(JSContext *cx, HandleObject obj, JSIterateOp enum_op,
                            MutableHandleValue statep, MutableHandleId idp)
 {
@@ -2199,6 +2166,12 @@ TypedObject::obj_enumerate(JSContext *cx, HandleObject obj, JSIterateOp enum_op,
 }
 
 /* static */ size_t
+TypedObject::ownerOffset()
+{
+    return JSObject::getFixedSlotOffset(JS_TYPEDOBJ_SLOT_OWNER);
+}
+
+/* static */ size_t
 TypedObject::dataOffset()
 {
     // the offset of 7 is based on the alloc kind
@@ -2206,12 +2179,12 @@ TypedObject::dataOffset()
 }
 
 void
-TypedObject::neuter(JSContext *cx)
+TypedObject::neuter(void *newData)
 {
     setSlot(JS_TYPEDOBJ_SLOT_LENGTH, Int32Value(0));
     setSlot(JS_TYPEDOBJ_SLOT_BYTELENGTH, Int32Value(0));
     setSlot(JS_TYPEDOBJ_SLOT_BYTEOFFSET, Int32Value(0));
-    setPrivate(nullptr);
+    setPrivate(newData);
 }
 
 /******************************************************************************
@@ -2242,24 +2215,19 @@ const Class TransparentTypedObject::class_ = {
         TypedObject::obj_lookupGeneric,
         TypedObject::obj_lookupProperty,
         TypedObject::obj_lookupElement,
-        TypedObject::obj_lookupSpecial,
         TypedObject::obj_defineGeneric,
         TypedObject::obj_defineProperty,
         TypedObject::obj_defineElement,
-        TypedObject::obj_defineSpecial,
         TypedObject::obj_getGeneric,
         TypedObject::obj_getProperty,
         TypedObject::obj_getElement,
-        TypedObject::obj_getSpecial,
         TypedObject::obj_setGeneric,
         TypedObject::obj_setProperty,
         TypedObject::obj_setElement,
-        TypedObject::obj_setSpecial,
         TypedObject::obj_getGenericAttributes,
         TypedObject::obj_setGenericAttributes,
         TypedObject::obj_deleteProperty,
         TypedObject::obj_deleteElement,
-        TypedObject::obj_deleteSpecial,
         nullptr, nullptr, // watch/unwatch
         nullptr,   /* slice */
         TypedObject::obj_enumerate,
@@ -2344,6 +2312,12 @@ TypedObject::constructSized(JSContext *cx, unsigned int argc, Value *vp)
     if (args[0].isObject() && args[0].toObject().is<ArrayBufferObject>()) {
         Rooted<ArrayBufferObject*> buffer(cx);
         buffer = &args[0].toObject().as<ArrayBufferObject>();
+
+        if (buffer->isNeutered()) {
+            JS_ReportErrorNumber(cx, js_GetErrorMessage,
+                                 nullptr, JSMSG_TYPEDOBJECT_BAD_ARGS);
+            return false;
+        }
 
         int32_t offset;
         if (args.length() >= 2 && !args[1].isUndefined()) {
@@ -2450,6 +2424,12 @@ TypedObject::constructUnsized(JSContext *cx, unsigned int argc, Value *vp)
     if (args[0].isObject() && args[0].toObject().is<ArrayBufferObject>()) {
         Rooted<ArrayBufferObject*> buffer(cx);
         buffer = &args[0].toObject().as<ArrayBufferObject>();
+
+        if (buffer->isNeutered()) {
+            JS_ReportErrorNumber(cx, js_GetErrorMessage,
+                                 nullptr, JSMSG_TYPEDOBJECT_BAD_ARGS);
+            return false;
+        }
 
         int32_t offset;
         if (args.length() >= 2 && !args[1].isUndefined()) {
@@ -2575,24 +2555,19 @@ const Class OpaqueTypedObject::class_ = {
         TypedObject::obj_lookupGeneric,
         TypedObject::obj_lookupProperty,
         TypedObject::obj_lookupElement,
-        TypedObject::obj_lookupSpecial,
         TypedObject::obj_defineGeneric,
         TypedObject::obj_defineProperty,
         TypedObject::obj_defineElement,
-        TypedObject::obj_defineSpecial,
         TypedObject::obj_getGeneric,
         TypedObject::obj_getProperty,
         TypedObject::obj_getElement,
-        TypedObject::obj_getSpecial,
         TypedObject::obj_setGeneric,
         TypedObject::obj_setProperty,
         TypedObject::obj_setElement,
-        TypedObject::obj_setSpecial,
         TypedObject::obj_getGenericAttributes,
         TypedObject::obj_setGenericAttributes,
         TypedObject::obj_deleteProperty,
         TypedObject::obj_deleteElement,
-        TypedObject::obj_deleteSpecial,
         nullptr, nullptr, // watch/unwatch
         nullptr, // slice
         TypedObject::obj_enumerate,
@@ -2683,6 +2658,7 @@ js::SetTypedObjectOffset(ThreadSafeContext *, unsigned argc, Value *vp)
     TypedObject &typedObj = args[0].toObject().as<TypedObject>();
     int32_t offset = args[1].toInt32();
 
+    JS_ASSERT(!typedObj.owner().isNeutered());
     JS_ASSERT(typedObj.typedMem() != nullptr); // must be attached already
 
     typedObj.setPrivate(typedObj.owner().dataPointer() + offset);
@@ -2741,7 +2717,7 @@ js::TypedObjectIsAttached(ThreadSafeContext *cx, unsigned argc, Value *vp)
     CallArgs args = CallArgsFromVp(argc, vp);
     JS_ASSERT(args[0].isObject() && args[0].toObject().is<TypedObject>());
     TypedObject &typedObj = args[0].toObject().as<TypedObject>();
-    args.rval().setBoolean(typedObj.typedMem() != nullptr);
+    args.rval().setBoolean(!typedObj.owner().isNeutered() && typedObj.typedMem() != nullptr);
     return true;
 }
 

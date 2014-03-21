@@ -71,7 +71,7 @@ GCONF_VERSION=1.2.1
 GIO_VERSION=2.20
 STARTUP_NOTIFICATION_VERSION=0.8
 DBUS_VERSION=0.60
-SQLITE_VERSION=3.8.3.1
+SQLITE_VERSION=3.8.4.1
 
 MSMANIFEST_TOOL=
 
@@ -164,9 +164,22 @@ if test -z "$PERL" -o "$PERL" = ":"; then
     AC_MSG_ERROR([perl not found in \$PATH])
 fi
 
+if test -n "$GAIADIR" -a ! -d "$GAIADIR" ; then
+    AC_MSG_ERROR([GAIADIR '$GAIADIR' isn't a valid directory])
+fi
+
 AC_SUBST(GAIADIR)
 if test -n "$GAIADIR" ; then
     AC_DEFINE(PACKAGE_GAIA)
+fi
+
+if test -n "$FXOS_SIMULATOR" -a -z "$GAIADIR" ; then
+    AC_MSG_ERROR([FXOS_SIMULATOR=1 requires GAIADIR to be defined])
+fi
+
+if test -n "$FXOS_SIMULATOR" ; then
+    AC_DEFINE(FXOS_SIMULATOR)
+    AC_SUBST(FXOS_SIMULATOR)
 fi
 
 MOZ_ARG_WITH_STRING(gonk,
@@ -943,7 +956,7 @@ MOZ_JPEG_CFLAGS=
 MOZ_JPEG_LIBS='$(call EXPAND_LIBNAME_PATH,mozjpeg,$(DEPTH)/media/libjpeg)'
 MOZ_BZ2_CFLAGS=
 MOZ_BZ2_LIBS='$(call EXPAND_LIBNAME_PATH,bz2,$(DEPTH)/modules/libbz2/src)'
-MOZ_PNG_CFLAGS=
+MOZ_PNG_CFLAGS="-I$_objdir/dist/include" # needed for freetype compilation
 MOZ_PNG_LIBS='$(call EXPAND_LIBNAME_PATH,mozpng,$(DEPTH)/media/libpng)'
 
 MOZ_JS_STATIC_LIBS='$(call EXPAND_LIBNAME_PATH,js_static,$(LIBXUL_DIST)/lib)'
@@ -1135,7 +1148,7 @@ case "$OS_TEST" in
     CPU_ARCH=x86
     ;;
 
-powerpc64 | ppc64)
+powerpc64 | ppc64 | powerpc64le | ppc64le)
     CPU_ARCH=ppc64
     ;;
 
@@ -1903,6 +1916,9 @@ case "$target" in
     fi
     TARGET_NSPR_MDCPUCFG='\"md/_darwin.cfg\"'
 
+    MMX_FLAGS="-mmmx"
+    SSE_FLAGS="-msse"
+    SSE2_FLAGS="-msse2"
 
     if test "x$lto_is_enabled" = "xyes"; then
         echo "Skipping -dead_strip because lto is enabled."
@@ -1995,6 +2011,10 @@ ia64*-hpux*)
     fi
     TARGET_NSPR_MDCPUCFG='\"md/_linux.cfg\"'
 
+    MMX_FLAGS="-mmmx"
+    SSE_FLAGS="-msse"
+    SSE2_FLAGS="-msse2"
+
     MOZ_GFX_OPTIMIZE_MOBILE=1
     MOZ_OPTIMIZE_FLAGS="-Os -freorder-blocks -fno-reorder-functions"
     ;;
@@ -2015,6 +2035,10 @@ ia64*-hpux*)
         MOZ_PGO_OPTIMIZE_FLAGS="-O3"
         MOZ_OPTIMIZE_FLAGS="-Os -freorder-blocks $MOZ_OPTIMIZE_SIZE_TWEAK"
     fi
+
+    MMX_FLAGS="-mmmx"
+    SSE_FLAGS="-msse"
+    SSE2_FLAGS="-msse2"
 
     TARGET_NSPR_MDCPUCFG='\"md/_linux.cfg\"'
 
@@ -2060,6 +2084,10 @@ ia64*-hpux*)
         MOZ_FIX_LINK_PATHS=
         DLL_PREFIX=
         IMPORT_LIB_SUFFIX=dll.a
+
+        MMX_FLAGS="-mmmx"
+        SSE_FLAGS="-msse"
+        SSE2_FLAGS="-msse2"
 
         # We use mix of both POSIX and Win32 printf format across the tree, so format
         # warnings are useless on mingw.
@@ -2262,6 +2290,9 @@ ia64*-hpux*)
     fi
     MKSHLIB='$(CXX) $(CXXFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -Wl,-soname,$(notdir $@) -o $@'
     MKCSHLIB='$(CC) $(CFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -Wl,-soname,$(notdir $@)) -o $@'
+    MMX_FLAGS="-mmmx"
+    SSE_FLAGS="-msse"
+    SSE2_FLAGS="-msse2"
     ;;
 
 *-openbsd*)
@@ -2277,6 +2308,9 @@ ia64*-hpux*)
     if test "$LIBRUNPATH"; then
         DSO_LDOPTS="-R$LIBRUNPATH $DSO_LDOPTS"
     fi
+    MMX_FLAGS="-mmmx"
+    SSE_FLAGS="-msse"
+    SSE2_FLAGS="-msse2"
     ;;
 
 *-solaris*)
@@ -2292,6 +2326,9 @@ ia64*-hpux*)
        CFLAGS="$CFLAGS -xlibmieee -xstrconst -xbuiltin=%all -D__FUNCTION__=__func__"
        CXXFLAGS="$CXXFLAGS -xlibmieee -xbuiltin=%all -features=tmplife,tmplrefstatic,extensions,no%except -norunpath -D__FUNCTION__=__func__ -template=no%extdef"
        LDFLAGS="-xildoff $LDFLAGS"
+       MMX_FLAGS="-xarch=mmx -xO4"
+       SSE_FLAGS="-xarch=sse"
+       SSE2_FLAGS="-xarch=ssei2 -xO4"
        if test -z "$CROSS_COMPILE" -a -f /usr/lib/ld/map.noexstk; then
            _SAVE_LDFLAGS=$LDFLAGS
            LDFLAGS="-M /usr/lib/ld/map.noexstk $LDFLAGS"
@@ -2355,6 +2392,9 @@ ia64*-hpux*)
        if test "$OS_RELEASE" = "5.3"; then
            AC_DEFINE(MUST_UNDEF_HAVE_BOOLEAN_AFTER_INCLUDES)
        fi
+       MMX_FLAGS="-mmmx"
+       SSE_FLAGS="-msse"
+       SSE2_FLAGS="-msse2"
     fi
     if test "$OS_RELEASE" = "5.5.1"; then
         AC_DEFINE(NEED_USLEEP_PROTOTYPE)
@@ -2375,6 +2415,10 @@ ia64*-hpux*)
     ;;
 
 esac
+
+AC_SUBST_LIST(MMX_FLAGS)
+AC_SUBST_LIST(SSE_FLAGS)
+AC_SUBST_LIST(SSE2_FLAGS)
 
 case "$target" in
 *-*linux*)
@@ -3904,6 +3948,7 @@ MOZ_GSTREAMER=
 MOZ_DIRECTSHOW=
 MOZ_WMF=
 MOZ_FMP4=
+MOZ_FFMPEG=
 MOZ_WEBRTC=1
 MOZ_PEERCONNECTION=
 MOZ_SRTP=
@@ -3966,7 +4011,7 @@ MOZ_PAY=
 MOZ_AUDIO_CHANNEL_MANAGER=
 NSS_NO_LIBPKIX=
 MOZ_CONTENT_SANDBOX=
-MOZ_CONTENT_SANDBOX_REPORTER=
+MOZ_CONTENT_SANDBOX_REPORTER=1
 JSGC_USE_EXACT_ROOTING=
 
 case "$target_os" in
@@ -4160,6 +4205,7 @@ AC_SUBST(MOZ_BUILD_APP)
 AC_SUBST(MOZ_PHOENIX)
 AC_SUBST(MOZ_XULRUNNER)
 AC_SUBST(MOZ_B2G)
+AC_SUBST(MOZ_B2G_VERSION)
 
 AC_DEFINE_UNQUOTED(MOZ_BUILD_APP,$MOZ_BUILD_APP)
 
@@ -5222,9 +5268,26 @@ if test -n "$MOZ_WMF"; then
 fi;
 
 dnl ========================================================
+dnl FFmpeg H264/AAC Decoding Support
+dnl ========================================================
+if test "$OS_TARGET" = "Linux"; then
+  MOZ_FFMPEG=1
+fi
+
+MOZ_ARG_DISABLE_BOOL(ffmpeg,
+[  --disable-ffmpeg         Disable FFmpeg for fragmented H264/AAC decoding],
+    MOZ_FFMPEG=,
+    MOZ_FFMPEG=1
+)
+
+if test -n "$MOZ_FFMPEG"; then
+    AC_DEFINE(MOZ_FFMPEG)
+fi;
+
+dnl ========================================================
 dnl = Built-in fragmented MP4 support.
 dnl ========================================================
-if test -n "$MOZ_WMF"; then
+if test -n "$MOZ_WMF" -o -n "$MOZ_FFMPEG"; then
     dnl Enable fragmented MP4 parser on Windows by default.
     dnl We will also need to enable it on other platforms as we implement
     dnl platform decoder support there too.
@@ -7400,6 +7463,14 @@ fi
 AC_SUBST(MOZ_AUDIO_CHANNEL_MANAGER)
 
 dnl ========================================================
+dnl = Enable Support for Firefox Accounts in B2G
+dnl ========================================================
+if test -n "$MOZ_SERVICES_FXACCOUNTS"; then
+    AC_DEFINE(MOZ_SERVICES_FXACCOUNTS)
+fi
+AC_SUBST(MOZ_SERVICES_FXACCOUNTS)
+
+dnl ========================================================
 dnl = Support for demangling undefined symbols
 dnl ========================================================
 if test -z "$SKIP_LIBRARY_CHECKS"; then
@@ -7740,6 +7811,7 @@ XPCOM_LIBS="$LIBXUL_LIBS"
 
 if test "$OS_ARCH" = "WINNT"; then
   GKMEDIAS_SHARED_LIBRARY=1
+  AC_DEFINE(GKMEDIAS_SHARED_LIBRARY)
 fi
 AC_SUBST(GKMEDIAS_SHARED_LIBRARY)
 
@@ -7877,7 +7949,13 @@ dnl ========================================================
 dnl Check for pixman and cairo
 dnl ========================================================
 
-MOZ_TREE_CAIRO=1
+if test "$MOZ_WIDGET_TOOLKIT" = "gtk3" ; then
+  # cairo-gtk3 can be build with system-cairo only
+  MOZ_TREE_CAIRO=
+else
+  MOZ_TREE_CAIRO=1
+fi
+
 MOZ_ARG_ENABLE_BOOL(system-cairo,
 [  --enable-system-cairo   Use system cairo (located with pkgconfig)],
 MOZ_TREE_CAIRO=,
@@ -7967,6 +8045,9 @@ if test "$MOZ_TREE_CAIRO"; then
           MOZ_CHECK_HEADER(d3d10.h, MOZ_ENABLE_D3D10_LAYER=1)
         fi
         ;;
+      gtk3)
+        AC_MSG_ERROR([cairo-gtk3 toolkit is incompatible with in-tree cairo. Please add --enable-system-cairo to your build config.])
+        ;;
     esac
     if test "$USE_FC_FREETYPE"; then
         FC_FONT_FEATURE="#define CAIRO_HAS_FC_FONT 1"
@@ -8032,12 +8113,9 @@ if test "$MOZ_ENABLE_SKIA"; then
   AC_DEFINE(USE_SKIA)
   if test "${MOZ_WIDGET_TOOLKIT}" = "android" -o x"$MOZ_WIDGET_TOOLKIT" = x"gonk"; then
     AC_DEFINE(SK_BUILD_FOR_ANDROID_NDK)
-  elif test "$OS_ARCH" = "WINNT"; then
-    AC_DEFINE(SKIA_DLL)
-    AC_DEFINE(GR_DLL)
   fi
 
-  if test "${CPU_ARCH}" != "ppc" -a "${CPU_ARCH}" != "ppc64"; then
+  if test "${CPU_ARCH}" != "ppc" -a "${CPU_ARCH}" != "ppc64" -a "${CPU_ARCH}" != "sparc" ; then
     MOZ_ENABLE_SKIA_GPU=1
     AC_DEFINE(USE_SKIA_GPU)
     AC_SUBST(MOZ_ENABLE_SKIA_GPU)
@@ -8633,6 +8711,7 @@ AC_SUBST(MOZ_TREMOR)
 AC_SUBST(MOZ_OPUS)
 AC_SUBST(MOZ_WEBM)
 AC_SUBST(MOZ_WMF)
+AC_SUBST(MOZ_FFMPEG)
 AC_SUBST(MOZ_FMP4)
 AC_SUBST(MOZ_DIRECTSHOW)
 AC_SUBST(MOZ_MEDIA_PLUGINS)
@@ -8667,19 +8746,7 @@ fi
 AC_SUBST(MOZ_EM_DEBUG)
 
 if test -n "$COMPILE_ENVIRONMENT"; then
-AC_MSG_CHECKING([for posix_fallocate])
-AC_TRY_LINK([#define _XOPEN_SOURCE 600
-  #include <fcntl.h>],
-                 [posix_fallocate(0, 0, 0);],
-                 [ac_cv___posix_fallocate=true],
-                 [ac_cv___posix_fallocate=false])
-
-if test "$ac_cv___posix_fallocate" = true ; then
-  AC_DEFINE(HAVE_POSIX_FALLOCATE)
-  AC_MSG_RESULT(yes)
-else
-  AC_MSG_RESULT(no)
-fi
+AC_CHECK_FUNCS(posix_fadvise posix_fallocate)
 
 dnl Check for missing components
 if test "$MOZ_X11"; then
@@ -8919,8 +8986,10 @@ if test "$MOZ_TREE_FREETYPE"; then
    export CPPFLAGS="$CPPFLAGS $MOZ_DEBUG_FLAGS"
    export CXXFLAGS="$CXXFLAGS $MOZ_DEBUG_FLAGS"
    export LDFLAGS="$LDFLAGS $MOZ_DEBUG_LDFLAGS"
+   export LIBPNG_CFLAGS="$MOZ_PNG_CFLAGS"
+   export LIBPNG_LIBS="$MOZ_PNG_LIBS"
    export CONFIG_FILES="unix-cc.mk:unix-cc.in unix-def.mk:unix-def.in freetype-config freetype2.pc:freetype2.in"
-   ac_configure_args="$ac_configure_args --host=$target --disable-shared --with-pic=yes --without-png"
+   ac_configure_args="$ac_configure_args --host=$target --disable-shared --with-pic=yes --with-png=yes --without-harfbuzz"
 
    if ! test -e modules; then
      mkdir modules

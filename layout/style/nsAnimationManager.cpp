@@ -6,6 +6,7 @@
 #include "nsAnimationManager.h"
 #include "nsTransitionManager.h"
 
+#include "mozilla/EventDispatcher.h"
 #include "mozilla/MemoryReporting.h"
 
 #include "nsPresContext.h"
@@ -15,7 +16,6 @@
 #include "nsCSSRules.h"
 #include "RestyleManager.h"
 #include "nsStyleAnimation.h"
-#include "nsEventDispatcher.h"
 #include "nsLayoutUtils.h"
 #include "nsIFrame.h"
 #include "nsIDocument.h"
@@ -327,7 +327,7 @@ ElementAnimations::EnsureStyleRuleFor(TimeStamp aRefreshTime,
 bool
 ElementAnimation::IsRunningAt(TimeStamp aTime) const
 {
-  if (IsPaused()) {
+  if (IsPaused() || mIterationDuration.ToMilliseconds() <= 0.0) {
     return false;
   }
 
@@ -398,8 +398,7 @@ ElementAnimations::CanPerformOnCompositorThread(CanAnimateFlags aFlags) const
   bool hasTransform = false;
   for (uint32_t animIdx = mAnimations.Length(); animIdx-- != 0; ) {
     const ElementAnimation& anim = mAnimations[animIdx];
-    if (anim.mIterationDuration.ToMilliseconds() <= 0.0) {
-      // No animation data
+    if (!anim.IsRunningAt(now)) {
       continue;
     }
 
@@ -1092,7 +1091,7 @@ nsAnimationManager::DoDispatchEvents()
   mPendingEvents.SwapElements(events);
   for (uint32_t i = 0, i_end = events.Length(); i < i_end; ++i) {
     AnimationEventInfo &info = events[i];
-    nsEventDispatcher::Dispatch(info.mElement, mPresContext, &info.mEvent);
+    EventDispatcher::Dispatch(info.mElement, mPresContext, &info.mEvent);
 
     if (!mPresContext) {
       break;

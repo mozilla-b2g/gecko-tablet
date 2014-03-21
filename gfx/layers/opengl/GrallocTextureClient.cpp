@@ -7,7 +7,6 @@
 
 #include "mozilla/gfx/2D.h"
 #include "mozilla/layers/GrallocTextureClient.h"
-#include "mozilla/layers/CompositableClient.h"
 #include "mozilla/layers/CompositableForwarder.h"
 #include "mozilla/layers/ISurfaceAllocator.h"
 #include "mozilla/layers/ShadowLayerUtilsGralloc.h"
@@ -93,30 +92,20 @@ GrallocTextureClientOGL::DropTextureData()
 
 GrallocTextureClientOGL::GrallocTextureClientOGL(GrallocBufferActor* aActor,
                                                  gfx::IntSize aSize,
+                                                 gfx::BackendType aMoz2dBackend,
                                                  TextureFlags aFlags)
-: BufferTextureClient(nullptr, gfx::SurfaceFormat::UNKNOWN, aFlags)
-, mAllocator(nullptr)
+: BufferTextureClient(nullptr, gfx::SurfaceFormat::UNKNOWN, aMoz2dBackend, aFlags)
 , mMappedBuffer(nullptr)
 {
   InitWith(aActor, aSize);
   MOZ_COUNT_CTOR(GrallocTextureClientOGL);
 }
 
-GrallocTextureClientOGL::GrallocTextureClientOGL(CompositableClient* aCompositable,
-                                                 gfx::SurfaceFormat aFormat,
-                                                 TextureFlags aFlags)
-: BufferTextureClient(aCompositable, aFormat, aFlags)
-, mAllocator(nullptr)
-, mMappedBuffer(nullptr)
-{
-  MOZ_COUNT_CTOR(GrallocTextureClientOGL);
-}
-
 GrallocTextureClientOGL::GrallocTextureClientOGL(ISurfaceAllocator* aAllocator,
                                                  gfx::SurfaceFormat aFormat,
+                                                 gfx::BackendType aMoz2dBackend,
                                                  TextureFlags aFlags)
-: BufferTextureClient(nullptr, aFormat, aFlags)
-, mAllocator(aAllocator)
+: BufferTextureClient(aAllocator, aFormat, aMoz2dBackend, aFlags)
 , mMappedBuffer(nullptr)
 {
   MOZ_COUNT_CTOR(GrallocTextureClientOGL);
@@ -180,18 +169,10 @@ GrallocTextureClientOGL::UpdateSurface(gfxASurface* aSurface)
     return false;
   }
 
-  if (gfxPlatform::GetPlatform()->SupportsAzureContent()) {
-    RefPtr<DrawTarget> dt = GetAsDrawTarget();
-    RefPtr<SourceSurface> source = gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(dt, aSurface);
+  RefPtr<DrawTarget> dt = GetAsDrawTarget();
+  RefPtr<SourceSurface> source = gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(dt, aSurface);
 
-    dt->CopySurface(source, IntRect(IntPoint(), GetSize()), IntPoint());
-  } else {
-    nsRefPtr<gfxASurface> surf = GetAsSurface();
-    nsRefPtr<gfxContext> tmpCtx = new gfxContext(surf.get());
-    tmpCtx->SetOperator(gfxContext::OPERATOR_SOURCE);
-    tmpCtx->DrawSurface(aSurface, gfxSize(GetSize().width,
-                                          GetSize().height));
-  }
+  dt->CopySurface(source, IntRect(IntPoint(), GetSize()), IntPoint());
 
   return true;
 }
@@ -455,15 +436,6 @@ GrallocTextureClientOGL::GetBufferSize() const
   // see Bug 908196
   MOZ_CRASH("This method should never be called.");
   return 0;
-}
-
-ISurfaceAllocator*
-GrallocTextureClientOGL::GetAllocator()
-{
-  MOZ_ASSERT(mCompositable || mAllocator);
-  return mCompositable ?
-         mCompositable->GetForwarder() :
-         mAllocator;
 }
 
 } // namesapace layers

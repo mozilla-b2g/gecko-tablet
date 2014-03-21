@@ -110,6 +110,7 @@ class IonBuilder : public MIRGenerator
                 MBasicBlock *ifFalse;
                 jsbytecode *falseEnd;
                 MBasicBlock *ifTrue;    // Set when the end of the true path is reached.
+                MTest *test;
             } branch;
             struct {
                 // Common entry point.
@@ -200,8 +201,8 @@ class IonBuilder : public MIRGenerator
             }
         }
 
-        static CFGState If(jsbytecode *join, MBasicBlock *ifFalse);
-        static CFGState IfElse(jsbytecode *trueEnd, jsbytecode *falseEnd, MBasicBlock *ifFalse);
+        static CFGState If(jsbytecode *join, MTest *test);
+        static CFGState IfElse(jsbytecode *trueEnd, jsbytecode *falseEnd, MTest *test);
         static CFGState AndOr(jsbytecode *join, MBasicBlock *joinStart);
         static CFGState TableSwitch(jsbytecode *exitpc, MTableSwitch *ins);
         static CFGState CondSwitch(IonBuilder *builder, jsbytecode *exitpc, jsbytecode *defaultTarget);
@@ -279,7 +280,8 @@ class IonBuilder : public MIRGenerator
     MBasicBlock *newBlockPopN(MBasicBlock *predecessor, jsbytecode *pc, uint32_t popped);
     MBasicBlock *newBlockAfter(MBasicBlock *at, MBasicBlock *predecessor, jsbytecode *pc);
     MBasicBlock *newOsrPreheader(MBasicBlock *header, jsbytecode *loopEntry);
-    MBasicBlock *newPendingLoopHeader(MBasicBlock *predecessor, jsbytecode *pc, bool osr);
+    MBasicBlock *newPendingLoopHeader(MBasicBlock *predecessor, jsbytecode *pc, bool osr, bool canOsr,
+                                      unsigned stackPhiCount);
     MBasicBlock *newBlock(jsbytecode *pc) {
         return newBlock(nullptr, pc);
     }
@@ -326,7 +328,7 @@ class IonBuilder : public MIRGenerator
 
     void insertRecompileCheck();
 
-    bool initParameters();
+    void initParameters();
     void rewriteParameter(uint32_t slotIdx, MDefinition *param, int32_t argIndex);
     void rewriteParameters();
     bool initScopeChain(MDefinition *callee = nullptr);
@@ -335,6 +337,9 @@ class IonBuilder : public MIRGenerator
 
     MConstant *constant(const Value &v);
     MConstant *constantInt(int32_t i);
+
+    // Filter the type information at tests
+    bool filterTypesAtTest(MTest *test);
 
     // Add a guard which ensure that the set of type which goes through this
     // generated code correspond to the observed types for the bytecode.
@@ -350,6 +355,9 @@ class IonBuilder : public MIRGenerator
     // type, infallibly unboxing ins as needed.  The new instruction will be
     // added to |current| in this case.
     MDefinition *ensureDefiniteType(MDefinition* def, JSValueType definiteType);
+
+    // Creates a MDefinition based on the given def improved with type as TypeSet.
+    MDefinition *ensureDefiniteTypeSet(MDefinition* def, types::TemporaryTypeSet *types);
 
     JSObject *getSingletonPrototype(JSFunction *target);
 
@@ -458,6 +466,7 @@ class IonBuilder : public MIRGenerator
                                      MDefinition *offset,
                                      ScalarTypeDescr::Type type,
                                      bool canBeNeutered,
+                                     bool racy,
                                      MDefinition *value);
     bool checkTypedObjectIndexInBounds(size_t elemSize,
                                        MDefinition *obj,
@@ -551,6 +560,7 @@ class IonBuilder : public MIRGenerator
     bool jsop_compare(JSOp op);
     bool getStaticName(JSObject *staticObject, PropertyName *name, bool *psucceeded);
     bool setStaticName(JSObject *staticObject, PropertyName *name);
+    bool jsop_getgname(PropertyName *name);
     bool jsop_getname(PropertyName *name);
     bool jsop_intrinsic(PropertyName *name);
     bool jsop_bindname(PropertyName *name);
@@ -564,6 +574,9 @@ class IonBuilder : public MIRGenerator
     bool jsop_setelem_typed(ScalarTypeDescr::Type arrayType,
                             SetElemSafety safety,
                             MDefinition *object, MDefinition *index, MDefinition *value);
+    bool jsop_setelem_typed_object(ScalarTypeDescr::Type arrayType,
+                                   SetElemSafety safety, bool racy,
+                                   MDefinition *object, MDefinition *index, MDefinition *value);
     bool jsop_length();
     bool jsop_length_fastPath();
     bool jsop_arguments();
@@ -666,6 +679,8 @@ class IonBuilder : public MIRGenerator
     bool inlineUnsafeSetDenseArrayElement(CallInfo &callInfo, uint32_t base);
     bool inlineUnsafeSetTypedArrayElement(CallInfo &callInfo, uint32_t base,
                                           ScalarTypeDescr::Type arrayType);
+    bool inlineUnsafeSetTypedObjectArrayElement(CallInfo &callInfo, uint32_t base,
+                                                ScalarTypeDescr::Type arrayType);
     InliningStatus inlineNewDenseArray(CallInfo &callInfo);
     InliningStatus inlineNewDenseArrayForSequentialExecution(CallInfo &callInfo);
     InliningStatus inlineNewDenseArrayForParallelExecution(CallInfo &callInfo);
@@ -679,6 +694,8 @@ class IonBuilder : public MIRGenerator
 
     // TypedObject intrinsics.
     InliningStatus inlineObjectIsTypeDescr(CallInfo &callInfo);
+    bool elementAccessIsTypedObjectArrayOfScalarType(MDefinition* obj, MDefinition* id,
+                                                     ScalarTypeDescr::Type *arrayType);
 
     // Utility intrinsics.
     InliningStatus inlineIsCallable(CallInfo &callInfo);

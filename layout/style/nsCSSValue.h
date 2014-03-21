@@ -206,6 +206,8 @@ enum nsCSSUnit {
   eCSSUnit_PairListDep  = 57,     // (nsCSSValuePairList*) same as PairList
                                   //   but does not own the list
 
+  eCSSUnit_GridTemplateAreas   = 60,   // (nsCSSValueGridTemplateAreas*) for grid-template-areas
+
   eCSSUnit_Integer      = 70,     // (int) simple value
   eCSSUnit_Enumerated   = 71,     // (int) value has enumerated meaning
 
@@ -258,7 +260,10 @@ enum nsCSSUnit {
 
   // Time units
   eCSSUnit_Seconds      = 3000,    // (float) Standard time
-  eCSSUnit_Milliseconds = 3001     // (float) 1/1000 second
+  eCSSUnit_Milliseconds = 3001,    // (float) 1/1000 second
+
+  // Flexible fraction (CSS Grid)
+  eCSSUnit_FlexFraction = 4000     // (float) Fraction of free space
 };
 
 struct nsCSSValueGradient;
@@ -274,6 +279,7 @@ struct nsCSSValuePairList;
 struct nsCSSValuePairList_heap;
 struct nsCSSValueTriplet;
 struct nsCSSValueTriplet_heap;
+struct nsCSSValueGridTemplateAreas;
 class nsCSSValueFloatColor;
 
 class nsCSSValue {
@@ -494,6 +500,9 @@ public:
   inline nsCSSValueTriplet& GetTripletValue();
   inline const nsCSSValueTriplet& GetTripletValue() const;
 
+  inline nsCSSValueGridTemplateAreas& GetGridTemplateAreas();
+  inline const nsCSSValueGridTemplateAreas& GetGridTemplateAreas() const;
+
   mozilla::css::URLValue* GetURLStructValue() const
   {
     // Not allowing this for Image values, because if the caller takes
@@ -572,6 +581,7 @@ public:
   nsCSSRect& SetRectValue();
   nsCSSValueList* SetListValue();
   nsCSSValuePairList* SetPairListValue();
+  nsCSSValueGridTemplateAreas& SetGridTemplateAreas();
 
   void StartImageLoad(nsIDocument* aDocument) const;  // Only pretend const
 
@@ -614,11 +624,12 @@ protected:
     nsCSSValueSharedList* mSharedList;
     nsCSSValuePairList_heap* mPairList;
     nsCSSValuePairList* mPairListDependent;
+    nsCSSValueGridTemplateAreas* mGridTemplateAreas;
     nsCSSValueFloatColor* mFloatColor;
   } mValue;
 };
 
-struct nsCSSValue::Array {
+struct nsCSSValue::Array MOZ_FINAL {
 
   // return |Array| with reference count of zero
   static Array* Create(size_t aItemCount) {
@@ -752,17 +763,23 @@ private:
 // nsCSSValueList_heap differs from nsCSSValueList only in being
 // refcounted.  It should not be necessary to use this class directly;
 // it's an implementation detail of nsCSSValue.
-struct nsCSSValueList_heap : public nsCSSValueList {
+struct nsCSSValueList_heap MOZ_FINAL : public nsCSSValueList {
   NS_INLINE_DECL_REFCOUNTING(nsCSSValueList_heap)
 
   size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
+
+private:
+  // Private destructor, to discourage deletion outside of Release():
+  ~nsCSSValueList_heap()
+  {
+  }
 };
 
 // This is a reference counted list value.  Note that the object is
 // a wrapper for the reference count and a pointer to the head of the
 // list, whereas the other list types (such as nsCSSValueList) do
 // not have such a wrapper.
-struct nsCSSValueSharedList {
+struct nsCSSValueSharedList MOZ_FINAL {
   nsCSSValueSharedList()
     : mHead(nullptr)
   {
@@ -776,8 +793,11 @@ struct nsCSSValueSharedList {
     MOZ_COUNT_CTOR(nsCSSValueSharedList);
   }
 
+private:
+  // Private destructor, to discourage deletion outside of Release():
   ~nsCSSValueSharedList();
 
+public:
   NS_INLINE_DECL_REFCOUNTING(nsCSSValueSharedList)
 
   void AppendToString(nsCSSProperty aProperty, nsAString& aResult,
@@ -874,10 +894,16 @@ struct nsCSSRect {
 // nsCSSRect_heap differs from nsCSSRect only in being
 // refcounted.  It should not be necessary to use this class directly;
 // it's an implementation detail of nsCSSValue.
-struct nsCSSRect_heap : public nsCSSRect {
+struct nsCSSRect_heap MOZ_FINAL : public nsCSSRect {
   NS_INLINE_DECL_REFCOUNTING(nsCSSRect_heap)
 
   size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
+
+private:
+  // Private destructor, to discourage deletion outside of Release():
+  ~nsCSSRect_heap()
+  {
+  }
 };
 
 // This has to be here so that the relationship between nsCSSRect
@@ -963,7 +989,7 @@ struct nsCSSValuePair {
 // nsCSSValuePair_heap differs from nsCSSValuePair only in being
 // refcounted.  It should not be necessary to use this class directly;
 // it's an implementation detail of nsCSSValue.
-struct nsCSSValuePair_heap : public nsCSSValuePair {
+struct nsCSSValuePair_heap MOZ_FINAL : public nsCSSValuePair {
   // forward constructor
   nsCSSValuePair_heap(const nsCSSValue& aXValue, const nsCSSValue& aYValue)
       : nsCSSValuePair(aXValue, aYValue)
@@ -972,6 +998,12 @@ struct nsCSSValuePair_heap : public nsCSSValuePair {
   NS_INLINE_DECL_REFCOUNTING(nsCSSValuePair_heap)
 
   size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
+
+private:
+  // Private destructor, to discourage deletion outside of Release():
+  ~nsCSSValuePair_heap()
+  {
+  }
 };
 
 struct nsCSSValueTriplet {
@@ -1048,7 +1080,7 @@ struct nsCSSValueTriplet {
 // nsCSSValueTriplet_heap differs from nsCSSValueTriplet only in being
 // refcounted.  It should not be necessary to use this class directly;
 // it's an implementation detail of nsCSSValue.
-struct nsCSSValueTriplet_heap : public nsCSSValueTriplet {
+struct nsCSSValueTriplet_heap MOZ_FINAL : public nsCSSValueTriplet {
   // forward constructor
   nsCSSValueTriplet_heap(const nsCSSValue& aXValue, const nsCSSValue& aYValue, const nsCSSValue& aZValue)
     : nsCSSValueTriplet(aXValue, aYValue, aZValue)
@@ -1057,6 +1089,12 @@ struct nsCSSValueTriplet_heap : public nsCSSValueTriplet {
   NS_INLINE_DECL_REFCOUNTING(nsCSSValueTriplet_heap)
 
   size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
+
+private:
+  // Private destructor, to discourage deletion outside of Release():
+  ~nsCSSValueTriplet_heap()
+  {
+  }
 };
 
 // This has to be here so that the relationship between nsCSSValuePair
@@ -1119,10 +1157,16 @@ private:
 // nsCSSValuePairList_heap differs from nsCSSValuePairList only in being
 // refcounted.  It should not be necessary to use this class directly;
 // it's an implementation detail of nsCSSValue.
-struct nsCSSValuePairList_heap : public nsCSSValuePairList {
+struct nsCSSValuePairList_heap MOZ_FINAL : public nsCSSValuePairList {
   NS_INLINE_DECL_REFCOUNTING(nsCSSValuePairList_heap)
 
   size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
+
+private:
+  // Private destructor, to discourage deletion outside of Release():
+  ~nsCSSValuePairList_heap()
+  {
+  }
 };
 
 // This has to be here so that the relationship between nsCSSValuePairList
@@ -1147,6 +1191,22 @@ nsCSSValue::GetPairListValue() const
     NS_ABORT_IF_FALSE (mUnit == eCSSUnit_PairListDep, "not a pairlist value");
     return mValue.mPairListDependent;
   }
+}
+
+inline nsCSSValueGridTemplateAreas&
+nsCSSValue::GetGridTemplateAreas()
+{
+  NS_ABORT_IF_FALSE (mUnit == eCSSUnit_GridTemplateAreas,
+                     "not a grid-template-areas value");
+  return *mValue.mGridTemplateAreas;
+}
+
+inline const nsCSSValueGridTemplateAreas&
+nsCSSValue::GetGridTemplateAreas() const
+{
+  NS_ABORT_IF_FALSE (mUnit == eCSSUnit_GridTemplateAreas,
+                     "not a grid-template-areas value");
+  return *mValue.mGridTemplateAreas;
 }
 
 struct nsCSSValueGradientStop {
@@ -1174,7 +1234,7 @@ public:
   size_t SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 };
 
-struct nsCSSValueGradient {
+struct nsCSSValueGradient MOZ_FINAL {
   nsCSSValueGradient(bool aIsRadial, bool aIsRepeating);
 
   // true if gradient is radial, false if it is linear
@@ -1266,14 +1326,23 @@ public:
   size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 
 private:
+  // Private destructor, to discourage deletion outside of Release():
+  ~nsCSSValueGradient()
+  {
+  }
+
   nsCSSValueGradient(const nsCSSValueGradient& aOther) MOZ_DELETE;
   nsCSSValueGradient& operator=(const nsCSSValueGradient& aOther) MOZ_DELETE;
 };
 
-struct nsCSSValueTokenStream {
+struct nsCSSValueTokenStream MOZ_FINAL {
   nsCSSValueTokenStream();
+
+private:
+  // Private destructor, to discourage deletion outside of Release():
   ~nsCSSValueTokenStream();
 
+public:
   bool operator==(const nsCSSValueTokenStream& aOther) const
   {
     bool eq;
@@ -1328,12 +1397,24 @@ struct nsCSSValueTokenStream {
   uint32_t mLineNumber;
   uint32_t mLineOffset;
 
+  // This table is used to hold a reference on to any ImageValue that results
+  // from re-parsing this token stream at computed value time.  When properties
+  // like background-image contain a normal url(), the Declaration's data block
+  // will hold a reference to the ImageValue.  When a token stream is used,
+  // the Declaration only holds on to this nsCSSValueTokenStream object, and
+  // the ImageValue would only exist for the duration of
+  // nsRuleNode::WalkRuleTree, in the AutoCSSValueArray.  So instead when
+  // we re-parse a token stream and get an ImageValue, we record it in this
+  // table so that the Declaration can be the object that keeps holding
+  // a reference to it.
+  nsTHashtable<nsRefPtrHashKey<mozilla::css::ImageValue> > mImageValues;
+
 private:
   nsCSSValueTokenStream(const nsCSSValueTokenStream& aOther) MOZ_DELETE;
   nsCSSValueTokenStream& operator=(const nsCSSValueTokenStream& aOther) MOZ_DELETE;
 };
 
-class nsCSSValueFloatColor {
+class nsCSSValueFloatColor MOZ_FINAL {
 public:
   nsCSSValueFloatColor(float aComponent1, float aComponent2, float aComponent3,
                        float aAlpha)
@@ -1345,11 +1426,14 @@ public:
     MOZ_COUNT_CTOR(nsCSSValueFloatColor);
   }
 
+private:
+  // Private destructor, to discourage deletion outside of Release():
   ~nsCSSValueFloatColor()
   {
     MOZ_COUNT_DTOR(nsCSSValueFloatColor);
   }
 
+public:
   bool operator==(nsCSSValueFloatColor& aOther) const;
 
   nscolor GetColorValue(nsCSSUnit aUnit) const;
@@ -1420,6 +1504,63 @@ struct nsCSSCornerSizes {
 protected:
   typedef nsCSSValue nsCSSCornerSizes::*corner_type;
   static const corner_type corners[4];
+};
+
+struct nsCSSGridNamedArea {
+  nsString mName;
+  uint32_t mColumnStart;
+  uint32_t mColumnEnd;
+  uint32_t mRowStart;
+  uint32_t mRowEnd;
+};
+
+struct nsCSSValueGridTemplateAreas {
+  // Parsed value
+  nsTArray<nsCSSGridNamedArea> mNamedAreas;
+
+  // Original <string> values. Length gives the number of rows,
+  // content makes serialization easier.
+  nsTArray<nsString> mTemplates;
+
+  // How many columns grid-template-areas contributes to the explicit grid.
+  // http://dev.w3.org/csswg/css-grid/#explicit-grid
+  uint32_t mNColumns;
+
+  // How many rows grid-template-areas contributes to the explicit grid.
+  // http://dev.w3.org/csswg/css-grid/#explicit-grid
+  uint32_t NRows() const {
+    return mTemplates.Length();
+  }
+
+  nsCSSValueGridTemplateAreas()
+    : mNColumns(0)
+    // Default constructors for mNamedAreas and mTemplates: empty arrays.
+  {
+  }
+
+  void Reset()
+  {
+    mNamedAreas.Clear();
+    mTemplates.Clear();
+    mNColumns = 0;
+  }
+
+  void AppendToString(nsCSSProperty aProperty, nsAString& aResult,
+                      nsCSSValue::Serialization aValueSerialization) const;
+
+  bool operator==(const nsCSSValueGridTemplateAreas& aOther) const
+  {
+    return mTemplates == aOther.mTemplates;
+  }
+
+  bool operator!=(const nsCSSValueGridTemplateAreas& aOther) const
+  {
+    return !(*this == aOther);
+  }
+
+  NS_INLINE_DECL_REFCOUNTING(nsCSSValueGridTemplateAreas)
+
+  size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 };
 
 #endif /* nsCSSValue_h___ */

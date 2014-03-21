@@ -25,7 +25,6 @@
 #include "nsIDOMHTMLTextAreaElement.h"
 #include "nsIDOMHTMLInputElement.h"
 #include "nsFocusManager.h"
-#include "nsEventListenerManager.h"
 #include "nsIDOMEventListener.h"
 #include "nsPIDOMWindow.h"
 #include "nsPIWindowRoot.h"
@@ -42,7 +41,6 @@
 #include "nsCRT.h"
 #include "nsXBLEventHandler.h"
 #include "nsXBLSerialize.h"
-#include "nsEventDispatcher.h"
 #include "nsJSUtils.h"
 #include "mozilla/BasicEvents.h"
 #include "mozilla/Preferences.h"
@@ -288,7 +286,7 @@ nsXBLPrototypeHandler::ExecuteHandler(EventTarget* aTarget,
   NS_ENSURE_SUCCESS(rv, rv);
 
   JS::Rooted<JSObject*> globalObject(cx, boundGlobal->GetGlobalJSObject());
-  JS::Rooted<JSObject*> scopeObject(cx, xpc::GetXBLScope(cx, globalObject));
+  JS::Rooted<JSObject*> scopeObject(cx, xpc::GetXBLScopeOrGlobal(cx, globalObject));
   NS_ENSURE_TRUE(scopeObject, NS_ERROR_OUT_OF_MEMORY);
 
   // Bind it to the bound element. Note that if we're using a separate XBL scope,
@@ -365,7 +363,7 @@ nsXBLPrototypeHandler::EnsureEventHandler(nsIScriptGlobalObject* aGlobal,
   NS_ENSURE_TRUE(!handlerText.IsEmpty(), NS_ERROR_FAILURE);
 
   JS::Rooted<JSObject*> globalObject(cx, aGlobal->GetGlobalJSObject());
-  JS::Rooted<JSObject*> scopeObject(cx, xpc::GetXBLScope(cx, globalObject));
+  JS::Rooted<JSObject*> scopeObject(cx, xpc::GetXBLScopeOrGlobal(cx, globalObject));
   NS_ENSURE_TRUE(scopeObject, NS_ERROR_OUT_OF_MEMORY);
 
   nsAutoCString bindingURI;

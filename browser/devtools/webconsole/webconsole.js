@@ -2140,13 +2140,8 @@ WebConsoleFrame.prototype = {
     }
     else {
       this._outputTimerInitialized = false;
-      if (this._flushCallback) {
-        try {
-          this._flushCallback();
-        }
-        catch (ex) {
-          console.error(ex);
-        }
+      if (this._flushCallback && this._flushCallback() === false) {
+        this._flushCallback = null;
       }
     }
 
@@ -2367,6 +2362,10 @@ WebConsoleFrame.prototype = {
    */
   removeOutputMessage: function WCF_removeOutputMessage(aNode)
   {
+    if (aNode._messageObject) {
+      aNode._messageObject.destroy();
+    }
+
     if (aNode._objectActors) {
       for (let actor of aNode._objectActors) {
         this._releaseObject(actor);
@@ -3204,10 +3203,10 @@ JSTerm.prototype = {
         if (oldFlushCallback) {
           oldFlushCallback();
           this.hud._flushCallback = oldFlushCallback;
+          return true;
         }
-        else {
-          this.hud._flushCallback = null;
-        }
+
+        return false;
       };
     }
 
@@ -4558,11 +4557,13 @@ var Utils = {
    */
   categoryForScriptError: function Utils_categoryForScriptError(aScriptError)
   {
-    switch (aScriptError.category) {
-      case "CSS Parser":
-      case "CSS Loader":
-        return CATEGORY_CSS;
+    let category = aScriptError.category;
 
+    if (/^(?:CSS|Layout)\b/.test(category)) {
+      return CATEGORY_CSS;
+    }
+
+    switch (category) {
       case "Mixed Content Blocker":
       case "Mixed Content Message":
       case "CSP":

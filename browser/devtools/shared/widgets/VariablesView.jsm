@@ -52,7 +52,7 @@ Object.defineProperty(this, "NetworkHelper", {
   enumerable: true
 });
 
-this.EXPORTED_SYMBOLS = ["VariablesView"];
+this.EXPORTED_SYMBOLS = ["VariablesView", "escapeHTML"];
 
 /**
  * Debugger localization strings.
@@ -1830,7 +1830,8 @@ Scope.prototype = {
    * The click listener for this scope's title.
    */
   _onClick: function(e) {
-    if (e.button != 0 ||
+    if (this.editing ||
+        e.button != 0 ||
         e.target == this._editNode ||
         e.target == this._deleteNode ||
         e.target == this._addPropertyNode) {
@@ -2081,6 +2082,7 @@ Scope.prototype = {
   new: null,
   preventDisableOnChange: false,
   preventDescriptorModifiers: false,
+  editing: false,
   editableNameTooltip: "",
   editableValueTooltip: "",
   editButtonTooltip: "",
@@ -3423,7 +3425,24 @@ VariablesView.stringifiers.byObjectClass = {
 
     return "Date " + new Date(preview.timestamp).toISOString();
   },
+
+  String: function({displayString}) {
+    if (displayString === undefined) {
+      return null;
+    }
+    return VariablesView.getString(displayString);
+  },
+
+  Number: function({preview}) {
+    if (preview === undefined) {
+      return null;
+    }
+    return VariablesView.getString(preview.value);
+  },
 }; // VariablesView.stringifiers.byObjectClass
+
+VariablesView.stringifiers.byObjectClass.Boolean =
+  VariablesView.stringifiers.byObjectClass.Number;
 
 VariablesView.stringifiers.byObjectKind = {
   ArrayLike: function(aGrip, {concise}) {
@@ -3872,6 +3891,7 @@ Editable.prototype = {
     this._variable.collapse();
     this._variable.hideArrow();
     this._variable.locked = true;
+    this._variable.editing = true;
   },
 
   /**
@@ -3889,6 +3909,7 @@ Editable.prototype = {
     this._variable.locked = false;
     this._variable.twisty = this._prevExpandable;
     this._variable.expanded = this._prevExpanded;
+    this._variable.editing = false;
     this._onCleanup && this._onCleanup();
   },
 

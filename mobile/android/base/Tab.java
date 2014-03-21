@@ -67,7 +67,7 @@ public class Tab {
     private Context mAppContext;
     private ErrorType mErrorType = ErrorType.NONE;
     private static final int MAX_HISTORY_LIST_SIZE = 50;
-    private int mLoadProgress;
+    private volatile int mLoadProgress;
 
     public static final int STATE_DELAYED = 0;
     public static final int STATE_LOADING = 1;
@@ -117,7 +117,7 @@ public class Tab {
         mZoomConstraints = new ZoomConstraints(false);
         mPluginViews = new ArrayList<View>();
         mPluginLayers = new HashMap<Object, Layer>();
-        mState = shouldShowProgress(url) ? STATE_SUCCESS : STATE_LOADING;
+        mState = shouldShowProgress(url) ? STATE_LOADING : STATE_SUCCESS;
         mLoadProgress = LOAD_PROGRESS_INIT;
 
         // At startup, the background is set to a color specified by LayerView
@@ -635,15 +635,13 @@ public class Tab {
         setHasTouchListeners(false);
         setBackgroundColor(DEFAULT_BACKGROUND_COLOR);
         setErrorType(ErrorType.NONE);
-        setLoadProgress(LOAD_PROGRESS_LOCATION_CHANGE);
+        setLoadProgressIfLoading(LOAD_PROGRESS_LOCATION_CHANGE);
 
         Tabs.getInstance().notifyListeners(this, Tabs.TabEvents.LOCATION_CHANGE, oldUrl);
     }
 
     private static boolean shouldShowProgress(final String url) {
-        return AboutPages.isAboutHome(url) ||
-               AboutPages.isAboutReader(url) ||
-               AboutPages.isAboutPrivateBrowsing(url);
+        return !AboutPages.isAboutPage(url);
     }
 
     void handleDocumentStart(boolean showProgress, String url) {
@@ -672,7 +670,7 @@ public class Tab {
     }
 
     void handleContentLoaded() {
-        setLoadProgress(LOAD_PROGRESS_LOADED);
+        setLoadProgressIfLoading(LOAD_PROGRESS_LOADED);
     }
 
     protected void saveThumbnailToDB() {
@@ -774,6 +772,22 @@ public class Tab {
      */
     void setLoadProgress(int progressPercentage) {
         mLoadProgress = progressPercentage;
+    }
+
+    /**
+     * Sets the tab load progress to the given percentage only if the tab is
+     * currently loading.
+     *
+     * about:neterror can trigger a STOP before other page load events (bug
+     * 976426), so any post-START events should make sure the page is loading
+     * before updating progress.
+     *
+     * @param progressPercentage Percentage to set progress to (0-100)
+     */
+    void setLoadProgressIfLoading(int progressPercentage) {
+        if (getState() == STATE_LOADING) {
+            setLoadProgress(progressPercentage);
+        }
     }
 
     /**

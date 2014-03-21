@@ -75,7 +75,7 @@
 
 #endif
 
-#if defined(XP_MACOSX) || defined(XP_WIN)
+#if defined(XP_MACOSX) || defined(XP_WIN) || defined(XP_LINUX)
 #define ENABLE_SPS_LEAF_DATA
 #endif
 
@@ -124,13 +124,8 @@ class OS {
   // Sleep for a number of microseconds.
   static void SleepMicro(const int microseconds);
 
-  // On supported platforms, setup a signal handler which would start
-  // the profiler.
-#if defined(ANDROID)
-  static void RegisterStartHandler();
-#else
-  static void RegisterStartHandler() {}
-#endif
+  // Called on startup to initialize platform specific things
+  static void Startup();
 
  private:
   static const int msPerSecond = 1000;

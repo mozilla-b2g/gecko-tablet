@@ -23,6 +23,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "LightweightThemeManager",
                                   "resource://gre/modules/LightweightThemeManager.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
                                   "resource://gre/modules/FileUtils.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "ZipUtils",
+                                  "resource://gre/modules/ZipUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
                                   "resource://gre/modules/NetUtil.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PermissionsUtils",
@@ -65,6 +67,8 @@ const PREF_EM_AUTO_DISABLED_SCOPES    = "extensions.autoDisableScopes";
 const PREF_EM_SHOW_MISMATCH_UI        = "extensions.showMismatchUI";
 const PREF_XPI_ENABLED                = "xpinstall.enabled";
 const PREF_XPI_WHITELIST_REQUIRED     = "xpinstall.whitelist.required";
+const PREF_XPI_DIRECT_WHITELISTED     = "xpinstall.whitelist.directRequest";
+const PREF_XPI_FILE_WHITELISTED       = "xpinstall.whitelist.fileRequest";
 const PREF_XPI_PERMISSIONS_BRANCH     = "xpinstall.";
 const PREF_XPI_UNPACK                 = "extensions.alwaysUnpack";
 const PREF_INSTALL_REQUIREBUILTINCERTS = "extensions.install.requireBuiltInCerts";
@@ -111,9 +115,6 @@ const RDFURI_INSTALL_MANIFEST_ROOT    = "urn:mozilla:install-manifest";
 const PREFIX_NS_EM                    = "http://www.mozilla.org/2004/em-rdf#";
 
 const TOOLKIT_ID                      = "toolkit@mozilla.org";
-
-// The maximum amount of file data to buffer at a time during file extraction
-const EXTRACTION_BUFFER               = 1024 * 512;
 
 // The value for this is in Makefile.in
 #expand const DB_SCHEMA                       = __MOZ_EXTENSIONS_DB_SCHEMA__;
@@ -1126,199 +1127,6 @@ function getTemporaryFile() {
   file.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, FileUtils.PERMS_FILE);
 
   return file;
-}
-
-/**
- * Asynchronously writes data from an nsIInputStream to an OS.File instance.
- * The source stream and OS.File are closed regardless of whether the operation
- * succeeds or fails.
- * Returns a promise that will be resolved when complete.
- *
- * @param  aPath
- *         The name of the file being extracted for logging purposes.
- * @param  aStream
- *         The source nsIInputStream.
- * @param  aFile
- *         The open OS.File instance to write to.
- */
-function saveStreamAsync(aPath, aStream, aFile) {
-  let deferred = Promise.defer();
-
-  // Read the input stream on a background thread
-  let sts = Cc["@mozilla.org/network/stream-transport-service;1"].
-            getService(Ci.nsIStreamTransportService);
-  let transport = sts.createInputTransport(aStream, -1, -1, true);
-  let input = transport.openInputStream(0, 0, 0)
-                       .QueryInterface(Ci.nsIAsyncInputStream);
-  let source = Cc["@mozilla.org/binaryinputstream;1"].
-               createInstance(Ci.nsIBinaryInputStream);
-  source.setInputStream(input);
-
-  let data = Uint8Array(EXTRACTION_BUFFER);
-
-  function readFailed(error) {
-    try {
-      aStream.close();
-    }
-    catch (e) {
-      logger.error("Failed to close JAR stream for " + aPath);
-    }
-
-    aFile.close().then(function() {
-      deferred.reject(error);
-    }, function(e) {
-      logger.error("Failed to close file for " + aPath);
-      deferred.reject(error);
-    });
-  }
-
-  function readData() {
-    try {
-      let count = Math.min(source.available(), data.byteLength);
-      source.readArrayBuffer(count, data.buffer);
-
-      aFile.write(data, { bytes: count }).then(function() {
-        input.asyncWait(readData, 0, 0, Services.tm.currentThread);
-      }, readFailed);
-    }
-    catch (e if e.result == Cr.NS_BASE_STREAM_CLOSED) {
-      deferred.resolve(aFile.close());
-    }
-    catch (e) {
-      readFailed(e);
-    }
-  }
-
-  input.asyncWait(readData, 0, 0, Services.tm.currentThread);
-
-  return deferred.promise;
-}
-
-/**
- * Asynchronously extracts files from a ZIP file into a directory.
- * Returns a promise that will be resolved when the extraction is complete.
- *
- * @param  aZipFile
- *         The source ZIP file that contains the add-on.
- * @param  aDir
- *         The nsIFile to extract to.
- */
-function extractFilesAsync(aZipFile, aDir) {
-  let zipReader = Cc["@mozilla.org/libjar/zip-reader;1"].
-                  createInstance(Ci.nsIZipReader);
-
-  try {
-    zipReader.open(aZipFile);
-  }
-  catch (e) {
-    return Promise.reject(e);
-  }
-
-  return Task.spawn(function() {
-    // Get all of the entries in the zip and sort them so we create directories
-    // before files
-    let entries = zipReader.findEntries(null);
-    let names = [];
-    while (entries.hasMore())
-      names.push(entries.getNext());
-    names.sort();
-
-    for (let name of names) {
-      let entryName = name;
-      let zipentry = zipReader.getEntry(name);
-      let path = OS.Path.join(aDir.path, ...name.split("/"));
-
-      if (zipentry.isDirectory) {
-        try {
-          yield OS.File.makeDir(path);
-        }
-        catch (e) {
-          logger.error("extractFilesAsync: failed to create directory " + path, e);
-          throw e;
-        }
-      }
-      else {
-        let options = { unixMode: zipentry.permissions | FileUtils.PERMS_FILE };
-        try {
-          let file = yield OS.File.open(path, { truncate: true }, options);
-          if (zipentry.realSize == 0)
-            yield file.close();
-          else
-            yield saveStreamAsync(path, zipReader.getInputStream(entryName), file);
-        }
-        catch (e) {
-          logger.error("extractFilesAsync: failed to extract file " + path, e);
-          throw e;
-        }
-      }
-    }
-
-    zipReader.close();
-  }).then(null, (e) => {
-    zipReader.close();
-    throw e;
-  });
-}
-
-/**
- * Extracts files from a ZIP file into a directory.
- *
- * @param  aZipFile
- *         The source ZIP file that contains the add-on.
- * @param  aDir
- *         The nsIFile to extract to.
- */
-function extractFiles(aZipFile, aDir) {
-  function getTargetFile(aDir, entry) {
-    let target = aDir.clone();
-    entry.split("/").forEach(function(aPart) {
-      target.append(aPart);
-    });
-    return target;
-  }
-
-  let zipReader = Cc["@mozilla.org/libjar/zip-reader;1"].
-                  createInstance(Ci.nsIZipReader);
-  zipReader.open(aZipFile);
-
-  try {
-    // create directories first
-    let entries = zipReader.findEntries("*/");
-    while (entries.hasMore()) {
-      var entryName = entries.getNext();
-      let target = getTargetFile(aDir, entryName);
-      if (!target.exists()) {
-        try {
-          target.create(Ci.nsIFile.DIRECTORY_TYPE,
-                        FileUtils.PERMS_DIRECTORY);
-        }
-        catch (e) {
-          logger.error("extractFiles: failed to create target directory for " +
-                "extraction file = " + target.path, e);
-        }
-      }
-    }
-
-    entries = zipReader.findEntries(null);
-    while (entries.hasMore()) {
-      let entryName = entries.getNext();
-      let target = getTargetFile(aDir, entryName);
-      if (target.exists())
-        continue;
-
-      zipReader.extract(entryName, target);
-      try {
-        target.permissions |= FileUtils.PERMS_FILE;
-      }
-      catch (e) {
-        logger.warn("Failed to set permissions " + aPermissions.toString(8) + " on " +
-             target.path, e);
-      }
-    }
-  }
-  finally {
-    zipReader.close();
-  }
 }
 
 /**
@@ -2425,7 +2233,7 @@ var XPIProvider = {
             }
 
             try {
-              extractFiles(stagedXPI, targetDir);
+              ZipUtils.extractFiles(stagedXPI, targetDir);
             }
             catch (e) {
               logger.error("Failed to extract staged XPI for add-on " + addon.id + " in " +
@@ -3640,6 +3448,28 @@ var XPIProvider = {
   },
 
   /**
+   * Called to test whether installing XPI add-ons by direct URL requests is
+   * whitelisted.
+   *
+   * @return true if installing by direct requests is whitelisted
+   */
+  isDirectRequestWhitelisted: function XPI_isDirectRequestWhitelisted() {
+    // Default to whitelisted if the preference does not exist.
+    return Prefs.getBoolPref(PREF_XPI_DIRECT_WHITELISTED, true);
+  },
+
+  /**
+   * Called to test whether installing XPI add-ons from file referrers is
+   * whitelisted.
+   *
+   * @return true if installing from file referrers is whitelisted
+   */
+  isFileRequestWhitelisted: function XPI_isFileRequestWhitelisted() {
+    // Default to whitelisted if the preference does not exist.
+    return Prefs.getBoolPref(PREF_XPI_FILE_WHITELISTED, true);
+  },
+
+  /**
    * Called to test whether installing XPI add-ons from a URI is allowed.
    *
    * @param  aUri
@@ -3650,11 +3480,13 @@ var XPIProvider = {
     if (!this.isInstallEnabled())
       return false;
 
+    // Direct requests without a referrer are either whitelisted or blocked.
     if (!aUri)
-      return true;
+      return this.isDirectRequestWhitelisted();
 
-    // file: and chrome: don't need whitelisted hosts
-    if (aUri.schemeIs("chrome") || aUri.schemeIs("file"))
+    // Local referrers can be whitelisted.
+    if (this.isFileRequestWhitelisted() &&
+        (aUri.schemeIs("chrome") || aUri.schemeIs("file")))
       return true;
 
     this.importPermissions();
@@ -3919,6 +3751,7 @@ var XPIProvider = {
     let self = this;
     XPIDatabase.getVisibleAddons(null, function UARD_getVisibleAddonsCallback(aAddons) {
       let pending = aAddons.length;
+      logger.debug("updateAddonRepositoryData found " + pending + " visible add-ons");
       if (pending == 0) {
         aCallback();
         return;
@@ -3929,18 +3762,19 @@ var XPIProvider = {
           aCallback();
       }
 
-      aAddons.forEach(function UARD_forEachCallback(aAddon) {
-        AddonRepository.getCachedAddonByID(aAddon.id,
+      for (let addon of aAddons) {
+        AddonRepository.getCachedAddonByID(addon.id,
                                            function UARD_getCachedAddonCallback(aRepoAddon) {
           if (aRepoAddon) {
-            aAddon._repositoryAddon = aRepoAddon;
-            aAddon.compatibilityOverrides = aRepoAddon.compatibilityOverrides;
-            self.updateAddonDisabledState(aAddon);
+            logger.debug("updateAddonRepositoryData got info for " + addon.id);
+            addon._repositoryAddon = aRepoAddon;
+            addon.compatibilityOverrides = aRepoAddon.compatibilityOverrides;
+            self.updateAddonDisabledState(addon);
           }
 
           notifyComplete();
         });
-      });
+      };
     });
   },
 
@@ -4989,9 +4823,10 @@ AddonInstall.prototype = {
    *         be closed before this method returns.
    * @param  aCallback
    *         A function to call when all of the add-on manifests have been
-   *         loaded.
+   *         loaded. Because this loadMultipackageManifests is an internal API
+   *         we don't exception-wrap this callback
    */
-  loadMultipackageManifests: function AI_loadMultipackageManifests(aZipReader,
+  _loadMultipackageManifests: function AI_loadMultipackageManifests(aZipReader,
                                                                    aCallback) {
     let files = [];
     let entries = aZipReader.findEntries("(*.[Xx][Pp][Ii]|*.[Jj][Aa][Rr])");
@@ -5036,7 +4871,7 @@ AddonInstall.prototype = {
 
     if (!addon) {
       // No valid add-on was found
-      makeSafe(aCallback)();
+      aCallback();
       return;
     }
 
@@ -5085,7 +4920,7 @@ AddonInstall.prototype = {
       }, this);
     }
     else {
-      makeSafe(aCallback)();
+      aCallback();
     }
   },
 
@@ -5165,7 +5000,7 @@ AddonInstall.prototype = {
     }
 
     if (this.addon.type == "multipackage") {
-      this.loadMultipackageManifests(zipreader, function loadManifest_loadMultipackageManifests() {
+      this._loadMultipackageManifests(zipreader, function loadManifest_loadMultipackageManifests() {
         addRepositoryData(self.addon);
       });
       return;
@@ -5445,7 +5280,7 @@ AddonInstall.prototype = {
    *         The error code to pass to the listeners
    */
   downloadFailed: function AI_downloadFailed(aReason, aError) {
-    logger.warn("Download failed", aError);
+    logger.warn("Download of " + this.sourceURI.spec + " failed", aError);
     this.state = AddonManager.STATE_DOWNLOAD_FAILED;
     this.error = aReason;
     XPIProvider.removeActiveInstall(this);
@@ -5521,18 +5356,20 @@ AddonInstall.prototype = {
 
     // Find and cancel any pending installs for the same add-on in the same
     // install location
-    XPIProvider.installs.forEach(function(aInstall) {
+    for (let aInstall of XPIProvider.installs) {
       if (aInstall.state == AddonManager.STATE_INSTALLED &&
           aInstall.installLocation == this.installLocation &&
-          aInstall.addon.id == this.addon.id)
+          aInstall.addon.id == this.addon.id) {
+        logger.debug("Cancelling previous pending install of " + aInstall.addon.id);
         aInstall.cancel();
-    }, this);
+      }
+    }
 
     let isUpgrade = this.existingAddon &&
                     this.existingAddon._installLocation == this.installLocation;
     let requiresRestart = XPIProvider.installRequiresRestart(this.addon);
 
-    logger.debug("Starting install of " + this.sourceURI.spec);
+    logger.debug("Starting install of " + this.addon.id + " from " + this.sourceURI.spec);
     AddonManagerPrivate.callAddonListeners("onInstalling",
                                            createWrapper(this.addon),
                                            requiresRestart);
@@ -5551,7 +5388,7 @@ AddonInstall.prototype = {
         stagedAddon.append(this.addon.id);
         yield removeAsync(stagedAddon);
         yield OS.File.makeDir(stagedAddon.path);
-        yield extractFilesAsync(this.file, stagedAddon);
+        yield ZipUtils.extractFilesAsync(this.file, stagedAddon);
         installedUnpacked = 1;
       }
       else {
@@ -5588,7 +5425,7 @@ AddonInstall.prototype = {
           stream.close();
         }
 
-        logger.debug("Staged install of " + this.sourceURI.spec + " ready; waiting for restart.");
+        logger.debug("Staged install of " + this.addon.id + " from " + this.sourceURI.spec + " ready; waiting for restart.");
         this.state = AddonManager.STATE_INSTALLED;
         if (isUpgrade) {
           delete this.existingAddon.pendingUpgrade;
@@ -6050,8 +5887,10 @@ UpdateChecker.prototype = {
         // If the existing install has not yet started downloading then send an
         // available update notification. If it is already downloading then
         // don't send any available update notification
-        if (currentInstall.state == AddonManager.STATE_AVAILABLE)
+        if (currentInstall.state == AddonManager.STATE_AVAILABLE) {
+          logger.debug("Found an existing AddonInstall for " + this.addon.id);
           sendUpdateAvailableMessages(this, currentInstall);
+        }
         else
           sendUpdateAvailableMessages(this, null);
         return;

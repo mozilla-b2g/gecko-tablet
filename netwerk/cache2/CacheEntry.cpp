@@ -15,6 +15,7 @@
 #include "nsICacheStorage.h"
 #include "nsISerializable.h"
 #include "nsIStreamTransportService.h"
+#include "nsISizeOf.h"
 
 #include "nsComponentManagerUtils.h"
 #include "nsServiceManagerUtils.h"
@@ -319,7 +320,6 @@ bool CacheEntry::Load(bool aTruncate, bool aPriority)
                        aTruncate,
                        !mUseDisk,
                        aPriority,
-                       false /* key is not a hash */,
                        directLoad ? nullptr : this);
     }
 
@@ -420,13 +420,12 @@ already_AddRefed<CacheEntryHandle> CacheEntry::ReopenTruncated(bool aMemoryOnly,
       true, // truncate existing (this one)
       getter_AddRefs(handle));
 
-    LOG(("  exchanged entry %p by entry %p, rv=0x%08x", this, newEntry.get(), rv));
-
     if (NS_SUCCEEDED(rv)) {
       newEntry = handle->Entry();
+      LOG(("  exchanged entry %p by entry %p, rv=0x%08x", this, newEntry.get(), rv));
       newEntry->AsyncOpen(aCallback, nsICacheStorage::OPEN_TRUNCATE);
-    }
-    else {
+    } else {
+      LOG(("  exchanged of entry %p failed, rv=0x%08x", this, rv));
       AsyncDoom(nullptr);
     }
   }
@@ -837,6 +836,17 @@ bool CacheEntry::IsReferenced() const
   return mHandlersCount > 0;
 }
 
+bool CacheEntry::IsFileDoomed()
+{
+  mozilla::MutexAutoLock lock(mLock);
+
+  if (NS_SUCCEEDED(mFileStatus)) {
+    return mFile->IsDoomed();
+  }
+
+  return false;
+}
+
 uint32_t CacheEntry::GetMetadataMemoryConsumption()
 {
   NS_ENSURE_SUCCESS(mFileStatus, 0);
@@ -1041,16 +1051,15 @@ NS_IMETHODIMP CacheEntry::GetSecurityInfo(nsISupports * *aSecurityInfo)
 
   NS_ENSURE_SUCCESS(mFileStatus, NS_ERROR_NOT_AVAILABLE);
 
-  char const* info;
+  nsXPIDLCString info;
   nsCOMPtr<nsISupports> secInfo;
   nsresult rv;
 
-  rv = mFile->GetElement("security-info", &info);
+  rv = mFile->GetElement("security-info", getter_Copies(info));
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (info) {
-    rv = NS_DeserializeObject(nsDependentCString(info),
-                              getter_AddRefs(secInfo));
+    rv = NS_DeserializeObject(info, getter_AddRefs(secInfo));
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
@@ -1137,15 +1146,7 @@ NS_IMETHODIMP CacheEntry::GetMetaDataElement(const char * aKey, char * *aRetval)
 {
   NS_ENSURE_SUCCESS(mFileStatus, NS_ERROR_NOT_AVAILABLE);
 
-  const char *value;
-  nsresult rv = mFile->GetElement(aKey, &value);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (!value)
-    return NS_ERROR_NOT_AVAILABLE;
-
-  *aRetval = NS_strdup(value);
-  return NS_OK;
+  return mFile->GetElement(aKey, aRetval);
 }
 
 NS_IMETHODIMP CacheEntry::SetMetaDataElement(const char * aKey, const char * aValue)
@@ -1542,6 +1543,41 @@ NS_IMETHODIMP CacheOutputCloseListener::Run()
 {
   mEntry->OnOutputClosed();
   return NS_OK;
+}
+
+// Memory reporting
+
+size_t CacheEntry::SizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const
+{
+  size_t n = 0;
+  nsCOMPtr<nsISizeOf> sizeOf;
+
+  n += mCallbacks.SizeOfExcludingThis(mallocSizeOf);
+  if (mFile) {
+    n += mFile->SizeOfIncludingThis(mallocSizeOf);
+  }
+
+  sizeOf = do_QueryInterface(mURI);
+  if (sizeOf) {
+    n += sizeOf->SizeOfIncludingThis(mallocSizeOf);
+  }
+
+  n += mEnhanceID.SizeOfExcludingThisIfUnshared(mallocSizeOf);
+  n += mStorageID.SizeOfExcludingThisIfUnshared(mallocSizeOf);
+
+  // mDoomCallback is an arbitrary class that is probably reported elsewhere.
+  // mOutputStream is reported in mFile.
+  // mWriter is one of many handles we create, but (intentionally) not keep
+  // any reference to, so those unfortunatelly cannot be reported.  Handles are
+  // small, though.
+  // mSecurityInfo doesn't impl nsISizeOf.
+
+  return n;
+}
+
+size_t CacheEntry::SizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const
+{
+  return mallocSizeOf(this) + SizeOfExcludingThis(mallocSizeOf);
 }
 
 } // net

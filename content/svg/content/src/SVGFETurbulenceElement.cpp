@@ -132,7 +132,7 @@ SVGFETurbulenceElement::GetPrimitiveDescription(nsSVGFilterInstance* aInstance,
   uint16_t stitch = mEnumAttributes[STITCHTILES].GetAnimValue();
 
   if (fX == 0 || fY == 0) {
-    return FilterPrimitiveDescription(FilterPrimitiveDescription::eNone);
+    return FilterPrimitiveDescription(PrimitiveType::Empty);
   }
 
   // We interpret the base frequency as relative to user space units. In other
@@ -140,13 +140,12 @@ SVGFETurbulenceElement::GetPrimitiveDescription(nsSVGFilterInstance* aInstance,
   // units wide and 1 / fY user space units high. We do not scale the frequency
   // depending on the filter primitive region.
   gfxRect firstPeriodInUserSpace(0, 0, 1 / fX, 1 / fY);
-  gfxMatrix m = aInstance->GetUserSpaceToFilterSpaceTransform();
-  gfxRect firstPeriodInFilterSpace = m.TransformBounds(firstPeriodInUserSpace);
+  gfxRect firstPeriodInFilterSpace = aInstance->UserSpaceToFilterSpace(firstPeriodInUserSpace);
   Size frequencyInFilterSpace(1 / firstPeriodInFilterSpace.width,
                               1 / firstPeriodInFilterSpace.height);
   gfxPoint offset = firstPeriodInFilterSpace.TopLeft();
 
-  FilterPrimitiveDescription descr(FilterPrimitiveDescription::eTurbulence);
+  FilterPrimitiveDescription descr(PrimitiveType::Turbulence);
   descr.Attributes().Set(eTurbulenceOffset, IntPoint(offset.x, offset.y));
   descr.Attributes().Set(eTurbulenceBaseFrequency, frequencyInFilterSpace);
   descr.Attributes().Set(eTurbulenceSeed, seed);

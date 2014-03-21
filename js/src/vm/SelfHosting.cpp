@@ -414,22 +414,22 @@ js::intrinsic_UnsafePutElements(JSContext *cx, unsigned argc, Value *vp)
         uint32_t elemi = base+2;
 
         JS_ASSERT(args[arri].isObject());
-        JS_ASSERT(args[arri].toObject().isNative() ||
-                  args[arri].toObject().is<TypedArrayObject>());
+        JS_ASSERT(args[arri].toObject().isNative() || IsTypedObjectArray(args[arri].toObject()));
         JS_ASSERT(args[idxi].isInt32());
 
         RootedObject arrobj(cx, &args[arri].toObject());
         uint32_t idx = args[idxi].toInt32();
 
-        if (arrobj->isNative()) {
-            JS_ASSERT(idx < arrobj->getDenseInitializedLength());
-            arrobj->setDenseElementWithType(cx, idx, args[elemi]);
-        } else {
-            JS_ASSERT(idx < arrobj->as<TypedArrayObject>().length());
+        if (arrobj->is<TypedArrayObject>() || arrobj->is<TypedObject>()) {
+            JS_ASSERT(!arrobj->is<TypedArrayObject>() || idx < arrobj->as<TypedArrayObject>().length());
+            JS_ASSERT(!arrobj->is<TypedObject>() || idx < arrobj->as<TypedObject>().length());
             RootedValue tmp(cx, args[elemi]);
             // XXX: Always non-strict.
             if (!JSObject::setElement(cx, arrobj, arrobj, idx, &tmp, false))
                 return false;
+        } else {
+            JS_ASSERT(idx < arrobj->getDenseInitializedLength());
+            arrobj->setDenseElementWithType(cx, idx, args[elemi]);
         }
     }
 
@@ -694,6 +694,9 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("NewDenseArray",           intrinsic_NewDenseArray,           1,0),
     JS_FN("ShouldForceSequential",   intrinsic_ShouldForceSequential,   0,0),
     JS_FN("ParallelTestsShouldPass", intrinsic_ParallelTestsShouldPass, 0,0),
+    JS_FNINFO("ClearThreadLocalArenas",
+              intrinsic_ClearThreadLocalArenas,
+              &intrinsic_ClearThreadLocalArenasInfo, 0,0),
     JS_FNINFO("SetForkJoinTargetRegion",
               intrinsic_SetForkJoinTargetRegion,
               &intrinsic_SetForkJoinTargetRegionInfo, 2, 0),

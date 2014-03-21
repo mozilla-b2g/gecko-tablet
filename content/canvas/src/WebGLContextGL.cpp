@@ -44,6 +44,7 @@
 
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/ImageData.h"
+#include "mozilla/Endian.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -477,9 +478,6 @@ WebGLContext::CopyTexSubImage2D_base(GLenum target,
 
         gl->fCopyTexSubImage2D(target, level, actual_xoffset, actual_yoffset, actual_x, actual_y, actual_width, actual_height);
     }
-
-    if (!sub)
-        ReattachTextureToAnyFramebufferToWorkAroundBugs(tex, level);
 }
 
 void
@@ -541,13 +539,12 @@ WebGLContext::CopyTexImage2D(GLenum target,
     }
 
     if (sizeMayChange)
-        UpdateWebGLErrorAndClearGLError();
+        GetAndFlushUnderlyingGLErrors();
 
     CopyTexSubImage2D_base(target, level, internalformat, 0, 0, x, y, width, height, false);
 
     if (sizeMayChange) {
-        GLenum error = LOCAL_GL_NO_ERROR;
-        UpdateWebGLErrorAndClearGLError(&error);
+        GLenum error = GetAndFlushUnderlyingGLErrors();
         if (error) {
             GenerateWarning("copyTexImage2D generated error %s", ErrorName(error));
             return;
@@ -723,6 +720,9 @@ WebGLContext::DeleteRenderbuffer(WebGLRenderbuffer *rbuf)
     if (mBoundFramebuffer)
         mBoundFramebuffer->DetachRenderbuffer(rbuf);
 
+    // Invalidate framebuffer status cache
+    rbuf->NotifyFBsStatusChanged();
+
     if (mBoundRenderbuffer == rbuf)
         BindRenderbuffer(LOCAL_GL_RENDERBUFFER,
                          static_cast<WebGLRenderbuffer*>(nullptr));
@@ -744,6 +744,9 @@ WebGLContext::DeleteTexture(WebGLTexture *tex)
 
     if (mBoundFramebuffer)
         mBoundFramebuffer->DetachTexture(tex);
+
+    // Invalidate framebuffer status cache
+    tex->NotifyFBsStatusChanged();
 
     GLuint activeTexture = mActiveTexture;
     for (int32_t i = 0; i < mGLMaxTextureUnits; i++) {
@@ -905,8 +908,7 @@ WebGLContext::DoFakeVertexAttrib0(GLuint vertexCount)
 
         gl->fBindBuffer(LOCAL_GL_ARRAY_BUFFER, mFakeVertexAttrib0BufferObject);
 
-        GLenum error = LOCAL_GL_NO_ERROR;
-        UpdateWebGLErrorAndClearGLError();
+        GetAndFlushUnderlyingGLErrors();
 
         if (mFakeVertexAttrib0BufferStatus == WebGLVertexAttrib0Status::EmulatedInitializedArray) {
             nsAutoArrayPtr<GLfloat> array(new GLfloat[4 * vertexCount]);
@@ -920,7 +922,7 @@ WebGLContext::DoFakeVertexAttrib0(GLuint vertexCount)
         } else {
             gl->fBufferData(LOCAL_GL_ARRAY_BUFFER, dataSize, nullptr, LOCAL_GL_DYNAMIC_DRAW);
         }
-        UpdateWebGLErrorAndClearGLError(&error);
+        GLenum error = GetAndFlushUnderlyingGLErrors();
 
         gl->fBindBuffer(LOCAL_GL_ARRAY_BUFFER, mBoundArrayBuffer ? mBoundArrayBuffer->GLName() : 0);
 
@@ -1346,6 +1348,11 @@ WebGLContext::GetFramebufferAttachmentParameter(JSContext* cx,
         return JS::NullValue();
     }
 
+    if (!mBoundFramebuffer) {
+        ErrorInvalidOperation("getFramebufferAttachmentParameter: cannot query framebuffer 0");
+        return JS::NullValue();
+    }
+
     if (attachment != LOCAL_GL_DEPTH_ATTACHMENT &&
         attachment != LOCAL_GL_STENCIL_ATTACHMENT &&
         attachment != LOCAL_GL_DEPTH_STENCIL_ATTACHMENT)
@@ -1366,11 +1373,6 @@ WebGLContext::GetFramebufferAttachmentParameter(JSContext* cx,
             ErrorInvalidEnumInfo("getFramebufferAttachmentParameter: attachment", attachment);
             return JS::NullValue();
         }
-    }
-
-    if (!mBoundFramebuffer) {
-        ErrorInvalidOperation("getFramebufferAttachmentParameter: cannot query framebuffer 0");
-        return JS::NullValue();
     }
 
     MakeContextCurrent();
@@ -1394,8 +1396,47 @@ WebGLContext::GetFramebufferAttachmentParameter(JSContext* cx,
                 return JS::NumberValue(uint32_t(LOCAL_GL_RENDERBUFFER));
 
             case LOCAL_GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME:
-            {
                 return WebGLObjectAsJSValue(cx, fba.Renderbuffer(), rv);
+
+            case LOCAL_GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE: {
+                if (!IsExtensionEnabled(EXT_color_buffer_half_float) &&
+                    !IsExtensionEnabled(WEBGL_color_buffer_float))
+                {
+                    break;
+                }
+
+                if (attachment == LOCAL_GL_DEPTH_STENCIL_ATTACHMENT) {
+                    ErrorInvalidOperation("getFramebufferAttachmentParameter: Cannot get component"
+                                          " type of a depth-stencil attachment.");
+                    return JS::NullValue();
+                }
+
+                if (!fba.IsComplete())
+                    return JS::NumberValue(uint32_t(LOCAL_GL_NONE));
+
+                uint32_t ret = LOCAL_GL_NONE;
+                switch (fba.Renderbuffer()->InternalFormat()) {
+                case LOCAL_GL_RGBA4:
+                case LOCAL_GL_RGB5_A1:
+                case LOCAL_GL_RGB565:
+                case LOCAL_GL_SRGB8_ALPHA8:
+                    ret = LOCAL_GL_UNSIGNED_NORMALIZED;
+                    break;
+                case LOCAL_GL_RGB16F:
+                case LOCAL_GL_RGBA16F:
+                case LOCAL_GL_RGB32F:
+                case LOCAL_GL_RGBA32F:
+                    ret = LOCAL_GL_FLOAT;
+                    break;
+                case LOCAL_GL_DEPTH_COMPONENT16:
+                case LOCAL_GL_STENCIL_INDEX8:
+                    ret = LOCAL_GL_UNSIGNED_INT;
+                    break;
+                default:
+                    MOZ_ASSERT(false, "Unhandled RB component type.");
+                    break;
+                }
+                return JS::NumberValue(uint32_t(ret));
             }
         }
 
@@ -1418,19 +1459,57 @@ WebGLContext::GetFramebufferAttachmentParameter(JSContext* cx,
                 return JS::NumberValue(uint32_t(LOCAL_GL_TEXTURE));
 
             case LOCAL_GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME:
-            {
                 return WebGLObjectAsJSValue(cx, fba.Texture(), rv);
-            }
 
             case LOCAL_GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL:
                 return JS::Int32Value(fba.TexImageLevel());
 
-            case LOCAL_GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_CUBE_MAP_FACE:
-            {
+            case LOCAL_GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_CUBE_MAP_FACE: {
                 GLenum face = fba.TexImageTarget();
                 if (face == LOCAL_GL_TEXTURE_2D)
                     face = 0;
                 return JS::Int32Value(face);
+            }
+
+            case LOCAL_GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE: {
+                if (!IsExtensionEnabled(EXT_color_buffer_half_float) &&
+                    !IsExtensionEnabled(WEBGL_color_buffer_float))
+                {
+                    break;
+                }
+
+                if (attachment == LOCAL_GL_DEPTH_STENCIL_ATTACHMENT) {
+                    ErrorInvalidOperation("getFramebufferAttachmentParameter: cannot component"
+                                          " type of depth-stencil attachments.");
+                    return JS::NullValue();
+                }
+
+                if (!fba.IsComplete())
+                    return JS::NumberValue(uint32_t(LOCAL_GL_NONE));
+
+                uint32_t ret = LOCAL_GL_NONE;
+                GLenum type = fba.Texture()->ImageInfoAt(fba.TexImageTarget(),
+                                                         fba.TexImageLevel()).Type();
+                switch (type) {
+                case LOCAL_GL_UNSIGNED_BYTE:
+                case LOCAL_GL_UNSIGNED_SHORT_4_4_4_4:
+                case LOCAL_GL_UNSIGNED_SHORT_5_5_5_1:
+                case LOCAL_GL_UNSIGNED_SHORT_5_6_5:
+                    ret = LOCAL_GL_UNSIGNED_NORMALIZED;
+                    break;
+                case LOCAL_GL_FLOAT:
+                case LOCAL_GL_HALF_FLOAT_OES:
+                    ret = LOCAL_GL_FLOAT;
+                    break;
+                case LOCAL_GL_UNSIGNED_SHORT:
+                case LOCAL_GL_UNSIGNED_INT:
+                    ret = LOCAL_GL_UNSIGNED_INT;
+                    break;
+                default:
+                    MOZ_ASSERT(false, "Unhandled RB component type.");
+                    break;
+                }
+                return JS::NumberValue(uint32_t(ret));
             }
         }
 
@@ -1502,19 +1581,53 @@ WebGLContext::CreateTexture()
     return globj.forget();
 }
 
+static GLenum
+GetAndClearError(GLenum* errorVar)
+{
+    MOZ_ASSERT(errorVar);
+    GLenum ret = *errorVar;
+    *errorVar = LOCAL_GL_NO_ERROR;
+    return ret;
+}
+
 GLenum
 WebGLContext::GetError()
 {
-    if (mContextStatus == ContextNotLost) {
-        MakeContextCurrent();
-        UpdateWebGLErrorAndClearGLError();
-    } else if (!mContextLostErrorSet) {
-        mWebGLError = LOCAL_GL_CONTEXT_LOST;
-        mContextLostErrorSet = true;
+    /* WebGL 1.0: Section 5.14.3: Setting and getting state:
+     *   If the context's webgl context lost flag is set, returns
+     *   CONTEXT_LOST_WEBGL the first time this method is called.
+     *   Afterward, returns NO_ERROR until the context has been
+     *   restored.
+     *
+     * WEBGL_lose_context:
+     *   [When this extension is enabled: ] loseContext and
+     *   restoreContext are allowed to generate INVALID_OPERATION errors
+     *   even when the context is lost.
+     */
+
+    if (IsContextLost()) {
+        if (mEmitContextLostErrorOnce) {
+            mEmitContextLostErrorOnce = false;
+            return LOCAL_GL_CONTEXT_LOST;
+        }
+        // Don't return yet, since WEBGL_lose_contexts contradicts the
+        // original spec, and allows error generation while lost.
     }
 
-    GLenum err = mWebGLError;
-    mWebGLError = LOCAL_GL_NO_ERROR;
+    GLenum err = GetAndClearError(&mWebGLError);
+    if (err != LOCAL_GL_NO_ERROR)
+        return err;
+
+    if (IsContextLost())
+        return LOCAL_GL_NO_ERROR;
+
+    // Either no WebGL-side error, or it's already been cleared.
+    // UnderlyingGL-side errors, now.
+
+    MakeContextCurrent();
+    GetAndFlushUnderlyingGLErrors();
+
+    err = GetAndClearError(&mUnderlyingGLError);
     return err;
 }
 
@@ -2218,9 +2331,8 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
                          GLenum type, const Nullable<ArrayBufferView> &pixels,
                          ErrorResult& rv)
 {
-    if (IsContextLost()) {
+    if (IsContextLost())
         return;
-    }
 
     if (mCanvasElement->IsWriteOnly() && !nsContentUtils::IsCallerChrome()) {
         GenerateWarning("readPixels: Not allowed");
@@ -2258,20 +2370,34 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
     int requiredDataType = 0;
 
     // Check the type param
+    bool isReadTypeValid = false;
+    bool isReadTypeFloat = false;
     switch (type) {
         case LOCAL_GL_UNSIGNED_BYTE:
-            bytesPerPixel = 1 * channels;
+            isReadTypeValid = true;
+            bytesPerPixel = 1*channels;
             requiredDataType = js::ArrayBufferView::TYPE_UINT8;
             break;
         case LOCAL_GL_UNSIGNED_SHORT_4_4_4_4:
         case LOCAL_GL_UNSIGNED_SHORT_5_5_5_1:
         case LOCAL_GL_UNSIGNED_SHORT_5_6_5:
+            isReadTypeValid = true;
             bytesPerPixel = 2;
             requiredDataType = js::ArrayBufferView::TYPE_UINT16;
             break;
-        default:
-            return ErrorInvalidEnum("readPixels: Bad type");
+        case LOCAL_GL_FLOAT:
+            if (IsExtensionEnabled(WEBGL_color_buffer_float) ||
+                IsExtensionEnabled(EXT_color_buffer_half_float))
+            {
+                isReadTypeValid = true;
+                isReadTypeFloat = true;
+                bytesPerPixel = 4*channels;
+                requiredDataType = js::ArrayBufferView::TYPE_FLOAT32;
+            }
+            break;
     }
+    if (!isReadTypeValid)
+        return ErrorInvalidEnum("readPixels: Bad type", type);
 
     int dataType = JS_GetArrayBufferViewType(pixels.Value().Obj());
 
@@ -2301,11 +2427,24 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
         return rv.Throw(NS_ERROR_OUT_OF_MEMORY);
     }
 
+    bool isSourceTypeFloat = false;
+    if (mBoundFramebuffer &&
+        mBoundFramebuffer->ColorAttachmentCount() &&
+        mBoundFramebuffer->ColorAttachment(0).IsDefined())
+    {
+        isSourceTypeFloat = mBoundFramebuffer->ColorAttachment(0).IsReadableFloat();
+    }
+
+    if (isReadTypeFloat != isSourceTypeFloat)
+        return ErrorInvalidOperation("readPixels: Invalid type floatness");
+
     // Check the format and type params to assure they are an acceptable pair (as per spec)
     switch (format) {
         case LOCAL_GL_RGBA: {
             switch (type) {
                 case LOCAL_GL_UNSIGNED_BYTE:
+                    break;
+                case LOCAL_GL_FLOAT:
                     break;
                 default:
                     return ErrorInvalidOperation("readPixels: Invalid format/type pair");
@@ -2423,7 +2562,7 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
                 uint8_t *row = static_cast<uint8_t*>(data);
                 for (GLint j = 0; j < height; ++j) {
                     uint8_t *rowp = row;
-#ifdef IS_LITTLE_ENDIAN
+#if MOZ_LITTLE_ENDIAN
                     // offset to get the alpha byte; we're always going to
                     // move by 4 bytes
                     rowp += 3;
@@ -2432,6 +2571,20 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
                     while (rowp != endrowp) {
                         *rowp = 0xff;
                         rowp += 4;
+                    }
+
+                    row += checked_alignedRowSize.value();
+                }
+            } else if (format == LOCAL_GL_RGBA && type == LOCAL_GL_FLOAT) {
+                float* row = static_cast<float*>(data);
+
+                for (GLint j = 0; j < height; ++j) {
+                    float* pAlpha = row + 3;
+                    float* pAlphaEnd = pAlpha + 4*width;
+
+                    while (pAlpha != pAlphaEnd) {
+                        *pAlpha = 1.0f;
+                        pAlpha += 4;
                     }
 
                     row += checked_alignedRowSize.value();
@@ -2489,6 +2642,22 @@ WebGLContext::RenderbufferStorage(GLenum target, GLenum internalformat, GLsizei 
         break;
     case LOCAL_GL_SRGB8_ALPHA8_EXT:
         break;
+    case LOCAL_GL_RGB16F:
+    case LOCAL_GL_RGBA16F: {
+        bool hasExtensions = IsExtensionEnabled(OES_texture_half_float) &&
+                             IsExtensionEnabled(EXT_color_buffer_half_float);
+        if (!hasExtensions)
+            return ErrorInvalidEnumInfo("renderbufferStorage: internalformat", target);
+        break;
+    }
+    case LOCAL_GL_RGB32F:
+    case LOCAL_GL_RGBA32F: {
+        bool hasExtensions = IsExtensionEnabled(OES_texture_float) &&
+                             IsExtensionEnabled(WEBGL_color_buffer_float);
+        if (!hasExtensions)
+            return ErrorInvalidEnumInfo("renderbufferStorage: internalformat", target);
+        break;
+    }
     default:
         return ErrorInvalidEnumInfo("renderbufferStorage: internalformat", internalformat);
     }
@@ -2499,10 +2668,11 @@ WebGLContext::RenderbufferStorage(GLenum target, GLenum internalformat, GLsizei 
                        height != mBoundRenderbuffer->Height() ||
                        internalformat != mBoundRenderbuffer->InternalFormat();
     if (sizeChanges) {
-        UpdateWebGLErrorAndClearGLError();
+        // Invalidate framebuffer status cache
+        mBoundRenderbuffer->NotifyFBsStatusChanged();
+        GetAndFlushUnderlyingGLErrors();
         mBoundRenderbuffer->RenderbufferStorage(internalformatForGL, width, height);
-        GLenum error = LOCAL_GL_NO_ERROR;
-        UpdateWebGLErrorAndClearGLError(&error);
+        GLenum error = GetAndFlushUnderlyingGLErrors();
         if (error) {
             GenerateWarning("renderbufferStorage generated error %s", ErrorName(error));
             return;
@@ -3375,8 +3545,6 @@ WebGLContext::CompressedTexImage2D(GLenum target, GLint level, GLenum internalfo
     MOZ_ASSERT(tex);
     tex->SetImageInfo(target, level, width, height, internalformat, LOCAL_GL_UNSIGNED_BYTE,
                       WebGLImageDataStatus::InitializedImageData);
-
-    ReattachTextureToAnyFramebufferToWorkAroundBugs(tex, level);
 }
 
 void
@@ -3637,12 +3805,11 @@ GLenum WebGLContext::CheckedTexImage2D(GLenum target,
     }
 
     if (sizeMayChange) {
-        UpdateWebGLErrorAndClearGLError();
+        GetAndFlushUnderlyingGLErrors();
 
         gl->fTexImage2D(target, level, internalFormat, width, height, border, format, realType, data);
 
-        GLenum error = LOCAL_GL_NO_ERROR;
-        UpdateWebGLErrorAndClearGLError(&error);
+        GLenum error = GetAndFlushUnderlyingGLErrors();
         return error;
     }
 
@@ -3784,8 +3951,6 @@ WebGLContext::TexImage2D_base(GLenum target, GLint level, GLenum internalformat,
     MOZ_ASSERT(imageInfoStatusIfSuccess != WebGLImageDataStatus::NoImageData);
 
     tex->SetImageInfo(target, level, width, height, internalformat, type, imageInfoStatusIfSuccess);
-
-    ReattachTextureToAnyFramebufferToWorkAroundBugs(tex, level);
 }
 
 void
@@ -3888,8 +4053,13 @@ WebGLContext::TexSubImage2D_base(GLenum target, GLint level,
 
     // convert type for half float if not on GLES2
     GLenum realType = type;
-    if (realType == LOCAL_GL_HALF_FLOAT_OES && !gl->IsGLES2())
-        realType = LOCAL_GL_HALF_FLOAT;
+    if (realType == LOCAL_GL_HALF_FLOAT_OES) {
+        if (gl->IsSupported(gl::GLFeature::texture_half_float)) {
+            realType = LOCAL_GL_HALF_FLOAT;
+        } else {
+            MOZ_ASSERT(gl->IsExtensionSupported(gl::GLContext::OES_texture_half_float));
+        }
+    }
 
     if (actualSrcFormat == dstFormat &&
         srcPremultiplied == mPixelStorePremultiplyAlpha &&
@@ -4218,58 +4388,6 @@ InternalFormatForFormatAndType(GLenum format, GLenum type, bool isGLES2)
 
     NS_ASSERTION(false, "Coding mistake -- bad format/type passed?");
     return 0;
-}
-
-void
-WebGLContext::ReattachTextureToAnyFramebufferToWorkAroundBugs(WebGLTexture *tex,
-                                                              GLint level)
-{
-    MOZ_ASSERT(tex);
-
-    if (!gl->WorkAroundDriverBugs())
-        return;
-
-    if (!mIsMesa)
-        return;
-
-    MakeContextCurrent();
-    WebGLFramebuffer* curFB = mBoundFramebuffer;
-
-    for(WebGLFramebuffer *framebuffer = mFramebuffers.getFirst();
-        framebuffer;
-        framebuffer = framebuffer->getNext())
-    {
-        size_t colorAttachmentCount = framebuffer->mColorAttachments.Length();
-        for (size_t i = 0; i < colorAttachmentCount; i++)
-        {
-            if (framebuffer->ColorAttachment(i).Texture() == tex) {
-                BindFramebuffer(LOCAL_GL_FRAMEBUFFER, framebuffer);
-                framebuffer->FramebufferTexture2D(
-                  LOCAL_GL_FRAMEBUFFER, LOCAL_GL_COLOR_ATTACHMENT0 + i,
-                  tex->Target(), tex, level);
-            }
-        }
-        if (framebuffer->DepthAttachment().Texture() == tex) {
-            BindFramebuffer(LOCAL_GL_FRAMEBUFFER, framebuffer);
-            framebuffer->FramebufferTexture2D(
-              LOCAL_GL_FRAMEBUFFER, LOCAL_GL_DEPTH_ATTACHMENT,
-              tex->Target(), tex, level);
-        }
-        if (framebuffer->StencilAttachment().Texture() == tex) {
-            BindFramebuffer(LOCAL_GL_FRAMEBUFFER, framebuffer);
-            framebuffer->FramebufferTexture2D(
-              LOCAL_GL_FRAMEBUFFER, LOCAL_GL_STENCIL_ATTACHMENT,
-              tex->Target(), tex, level);
-        }
-        if (framebuffer->DepthStencilAttachment().Texture() == tex) {
-            BindFramebuffer(LOCAL_GL_FRAMEBUFFER, framebuffer);
-            framebuffer->FramebufferTexture2D(
-              LOCAL_GL_FRAMEBUFFER, LOCAL_GL_DEPTH_STENCIL_ATTACHMENT,
-              tex->Target(), tex, level);
-        }
-    }
-
-    BindFramebuffer(LOCAL_GL_FRAMEBUFFER, curFB);
 }
 
 void

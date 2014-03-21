@@ -12,6 +12,7 @@
 #include "nsError.h"
 #include "nsSVGAnimatedTransformList.h"
 #include "nsSVGAttrTearoffTable.h"
+#include "mozilla/DebugOnly.h"
 
 namespace {
   const double kRadPerDegree = 2.0 * M_PI / 360.0;
@@ -169,7 +170,7 @@ SVGTransform::Type() const
 }
 
 SVGMatrix*
-SVGTransform::Matrix()
+SVGTransform::GetMatrix()
 {
   SVGMatrix* wrapper =
     SVGMatrixTearoffTable().GetTearoff(this);
@@ -193,7 +194,7 @@ SVGTransform::SetMatrix(SVGMatrix& aMatrix, ErrorResult& rv)
     rv.Throw(NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR);
     return;
   }
-  SetMatrix(aMatrix.Matrix());
+  SetMatrix(aMatrix.GetMatrix());
 }
 
 void

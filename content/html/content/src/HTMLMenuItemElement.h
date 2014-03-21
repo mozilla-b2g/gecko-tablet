@@ -11,6 +11,9 @@
 #include "nsGenericHTMLElement.h"
 
 namespace mozilla {
+
+class EventChainPreVisitor;
+
 namespace dom {
 
 class Visitor;
@@ -21,7 +24,7 @@ class HTMLMenuItemElement MOZ_FINAL : public nsGenericHTMLElement,
 public:
   using mozilla::dom::Element::GetText;
 
-  HTMLMenuItemElement(already_AddRefed<nsINodeInfo> aNodeInfo,
+  HTMLMenuItemElement(already_AddRefed<nsINodeInfo>& aNodeInfo,
                       mozilla::dom::FromParser aFromParser);
   virtual ~HTMLMenuItemElement();
 
@@ -33,8 +36,9 @@ public:
   // nsIDOMHTMLMenuItemElement
   NS_DECL_NSIDOMHTMLMENUITEMELEMENT
 
-  virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
-  virtual nsresult PostHandleEvent(nsEventChainPostVisitor& aVisitor) MOZ_OVERRIDE;
+  virtual nsresult PreHandleEvent(EventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
+  virtual nsresult PostHandleEvent(
+                     EventChainPostVisitor& aVisitor) MOZ_OVERRIDE;
 
   virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                               nsIContent* aBindingParent,

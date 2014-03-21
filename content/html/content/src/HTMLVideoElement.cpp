@@ -25,7 +25,6 @@
 
 #include "nsITimer.h"
 
-#include "nsEventDispatcher.h"
 #include "nsIDOMProgressEvent.h"
 #include "MediaError.h"
 #include "MediaDecoder.h"
@@ -66,7 +65,7 @@ NS_IMETHODIMP HTMLVideoElement::GetVideoHeight(uint32_t *aVideoHeight)
   return NS_OK;
 }
 
-HTMLVideoElement::HTMLVideoElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+HTMLVideoElement::HTMLVideoElement(already_AddRefed<nsINodeInfo>& aNodeInfo)
   : HTMLMediaElement(aNodeInfo)
 {
 }
@@ -254,7 +253,6 @@ HTMLVideoElement::GetVideoPlaybackQuality()
   uint64_t totalFrames = 0;
   uint64_t droppedFrames = 0;
   uint64_t corruptedFrames = 0;
-  double totalFrameDelay = 0.0;
 
   if (sVideoStatsEnabled) {
     nsPIDOMWindow* window = OwnerDoc()->GetInnerWindow();
@@ -270,13 +268,12 @@ HTMLVideoElement::GetVideoPlaybackQuality()
       totalFrames = stats.GetParsedFrames();
       droppedFrames = totalFrames - stats.GetPresentedFrames();
       corruptedFrames = totalFrames - stats.GetDecodedFrames();
-      totalFrameDelay = stats.GetTotalFrameDelay();
     }
   }
 
   nsRefPtr<VideoPlaybackQuality> playbackQuality =
     new VideoPlaybackQuality(this, creationTime, totalFrames, droppedFrames,
-                             corruptedFrames, totalFrameDelay);
+                             corruptedFrames);
   return playbackQuality.forget();
 }
 

@@ -807,8 +807,7 @@ mozJSComponentLoader::ObjectForLocation(nsIFile *aComponentFile,
             ContextOptionsRef(cx).setDontReportUncaught(true);
 
         CompileOptions options(cx);
-        options.setPrincipals(nsJSPrincipals::get(mSystemPrincipal))
-               .setNoScriptRval(mReuseLoaderGlobal ? false : true)
+        options.setNoScriptRval(mReuseLoaderGlobal ? false : true)
                .setVersion(JSVERSION_LATEST)
                .setFileAndLine(nativePath.get(), 1)
                .setSourcePolicy(mReuseLoaderGlobal ?
@@ -838,8 +837,12 @@ mozJSComponentLoader::ObjectForLocation(nsIFile *aComponentFile,
             // Make sure the file is closed, no matter how we return.
             FileAutoCloser fileCloser(fileHandle);
 
-            PRFileMap *map = PR_CreateFileMap(fileHandle, fileSize,
-                                              PR_PROT_READONLY);
+            // We don't provide the file size here.  If we did, PR_CreateFileMap
+            // would simply stat() the file to verify that the size we provided
+            // didn't require extending the file.  We know that the file doesn't
+            // need to be extended, so skip the extra work by not providing the
+            // size.
+            PRFileMap *map = PR_CreateFileMap(fileHandle, 0, PR_PROT_READONLY);
             if (!map) {
                 NS_ERROR("Failed to create file map");
                 return NS_ERROR_FAILURE;
@@ -870,7 +873,7 @@ mozJSComponentLoader::ObjectForLocation(nsIFile *aComponentFile,
 #else  /* HAVE_PR_MEMMAP */
 
             /**
-             * No memmap implementation, so fall back to 
+             * No memmap implementation, so fall back to
              * reading in the file
              */
 
@@ -1013,7 +1016,7 @@ mozJSComponentLoader::ObjectForLocation(nsIFile *aComponentFile,
             ok = JS_ExecuteScriptVersion(cx, obj, script, nullptr, JSVERSION_LATEST);
         } else {
             RootedValue rval(cx);
-            ok = JS_CallFunction(cx, obj, function, JS::EmptyValueArray, &rval);
+            ok = JS_CallFunction(cx, obj, function, JS::HandleValueArray::empty(), &rval);
         }
      }
 

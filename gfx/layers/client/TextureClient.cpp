@@ -24,6 +24,25 @@
 #include "nsISupportsImpl.h"            // for MOZ_COUNT_CTOR, etc
 #include "ImageContainer.h"             // for PlanarYCbCrImage, etc
 #include "mozilla/gfx/2D.h"
+#include "mozilla/layers/TextureClientOGL.h"
+
+#ifdef XP_WIN
+#include "mozilla/layers/TextureD3D9.h"
+#include "mozilla/layers/TextureD3D11.h"
+#include "gfxWindowsPlatform.h"
+#include "gfx2DGlue.h"
+#endif
+#ifdef MOZ_X11
+#include "mozilla/layers/TextureClientX11.h"
+#ifdef GL_PROVIDER_GLX
+#include "GLXLibrary.h"
+#endif
+#endif
+
+#ifdef MOZ_WIDGET_GONK
+#include <cutils/properties.h>
+#include "mozilla/layers/GrallocTextureClient.h"
+#endif
 
 #ifdef MOZ_ANDROID_OMTC
 #  include "gfxReusableImageSurfaceWrapper.h"
@@ -31,6 +50,12 @@
 #else
 #  include "gfxReusableSharedImageSurfaceWrapper.h"
 #  include "gfxSharedImageSurface.h"
+#endif
+
+#if 0
+#define RECYCLE_LOG(...) printf_stderr(__VA_ARGS__)
+#else
+#define RECYCLE_LOG(...) do { } while (0)
 #endif
 
 using namespace mozilla::gl;
@@ -71,6 +96,20 @@ public:
 
   bool Recv__delete__() MOZ_OVERRIDE;
 
+  bool RecvCompositorRecycle()
+  {
+    RECYCLE_LOG("Receive recycle %p (%p)\n", mTextureClient, mWaitForRecycle.get());
+    mWaitForRecycle = nullptr;
+    return true;
+  }
+
+  void WaitForCompositorRecycle()
+  {
+    mWaitForRecycle = mTextureClient;
+    RECYCLE_LOG("Wait for recycle %p\n", mWaitForRecycle.get());
+    SendClientRecycle();
+  }
+
   /**
    * Only used during the deallocation phase iff we need synchronization between
    * the client and host side for deallocation (that is, when the data is going
@@ -109,6 +148,7 @@ private:
   }
 
   RefPtr<CompositableForwarder> mForwarder;
+  RefPtr<TextureClient> mWaitForRecycle;
   TextureClientData* mTextureData;
   TextureClient* mTextureClient;
   bool mIPCOpen;
@@ -119,6 +159,7 @@ private:
 void
 TextureChild::DeleteTextureData()
 {
+  mWaitForRecycle = nullptr;
   if (mTextureData) {
     mTextureData->DeallocateSharedData(GetAllocator());
     delete mTextureData;
@@ -139,6 +180,7 @@ TextureChild::ActorDestroy(ActorDestroyReason why)
   if (mTextureClient) {
     mTextureClient->mActor = nullptr;
   }
+  mWaitForRecycle = nullptr;
 }
 
 // static
@@ -162,7 +204,13 @@ TextureClient::DestroyIPDLActor(PTextureChild* actor)
 TextureClient*
 TextureClient::AsTextureClient(PTextureChild* actor)
 {
-  return actor? static_cast<TextureChild*>(actor)->mTextureClient : nullptr;
+  return actor ? static_cast<TextureChild*>(actor)->mTextureClient : nullptr;
+}
+
+void
+TextureClient::WaitForCompositorRecycle()
+{
+  mActor->WaitForCompositorRecycle();
 }
 
 bool
@@ -192,6 +240,123 @@ TextureClient::GetIPDLActor()
 {
   return mActor;
 }
+
+#ifdef MOZ_WIDGET_GONK
+static bool
+DisableGralloc(SurfaceFormat aFormat)
+{
+  if (aFormat == gfx::SurfaceFormat::A8) {
+    return true;
+  }
+
+  return false;
+}
+#endif
+
+// static
+TemporaryRef<TextureClient>
+TextureClient::CreateTextureClientForDrawing(ISurfaceAllocator* aAllocator,
+                                             SurfaceFormat aFormat,
+                                             TextureFlags aTextureFlags,
+                                             gfx::BackendType aMoz2DBackend,
+                                             const gfx::IntSize& aSizeHint)
+{
+  if (aMoz2DBackend == gfx::BackendType::NONE) {
+    aMoz2DBackend = gfxPlatform::GetPlatform()->GetContentBackend();
+  }
+
+  RefPtr<TextureClient> result;
+
+#ifdef XP_WIN
+  LayersBackend parentBackend = aAllocator->GetCompositorBackendType();
+  if (parentBackend == LayersBackend::LAYERS_D3D11 &&
+      (aMoz2DBackend == gfx::BackendType::DIRECT2D ||
+        aMoz2DBackend == gfx::BackendType::DIRECT2D1_1) &&
+      gfxWindowsPlatform::GetPlatform()->GetD2DDevice() &&
+
+      !(aTextureFlags & TEXTURE_ALLOC_FALLBACK)) {
+    result = new TextureClientD3D11(aFormat, aTextureFlags);
+  }
+  if (parentBackend == LayersBackend::LAYERS_D3D9 &&
+      aMoz2DBackend == gfx::BackendType::CAIRO &&
+      aAllocator->IsSameProcess() &&
+      !(aTextureFlags & TEXTURE_ALLOC_FALLBACK)) {
+    if (!gfxWindowsPlatform::GetPlatform()->GetD3D9Device()) {
+      result = new DIBTextureClientD3D9(aFormat, aTextureFlags);
+    } else {
+      result = new CairoTextureClientD3D9(aFormat, aTextureFlags);
+    }
+  }
+#endif
+
+#ifdef MOZ_X11
+  LayersBackend parentBackend = aAllocator->GetCompositorBackendType();
+  gfxSurfaceType type =
+    gfxPlatform::GetPlatform()->ScreenReferenceSurface()->GetType();
+
+  if (parentBackend == LayersBackend::LAYERS_BASIC &&
+      aMoz2DBackend == gfx::BackendType::CAIRO &&
+      type == gfxSurfaceType::Xlib &&
+      !(aTextureFlags & TEXTURE_ALLOC_FALLBACK))
+  {
+    result = new TextureClientX11(aFormat, aTextureFlags);
+  }
+#ifdef GL_PROVIDER_GLX
+#if 0
+  // Bug 977963: Disabled for black layers
+  if (parentBackend == LayersBackend::LAYERS_OPENGL &&
+      type == gfxSurfaceType::Xlib &&
+      !(aTextureFlags & TEXTURE_ALLOC_FALLBACK) &&
+      aFormat != SurfaceFormat::A8 &&
+      gl::sGLXLibrary.UseTextureFromPixmap())
+  {
+    result = new TextureClientX11(aFormat, aTextureFlags);
+  }
+#endif
+#endif
+#endif
+
+#ifdef MOZ_WIDGET_GONK
+  if (!DisableGralloc(aFormat)) {
+    // Don't allow Gralloc texture clients to exceed the maximum texture size.
+    // BufferTextureClients have code to handle tiling the surface client-side.
+    int32_t maxTextureSize = aAllocator->GetMaxTextureSize();
+    if (aSizeHint.width <= maxTextureSize && aSizeHint.height <= maxTextureSize) {
+      result = new GrallocTextureClientOGL(aAllocator, aFormat, aMoz2DBackend,
+                                           aTextureFlags);
+    }
+  }
+#endif
+
+  // Can't do any better than a buffer texture client.
+  if (!result) {
+    result = CreateBufferTextureClient(aAllocator, aFormat, aTextureFlags, aMoz2DBackend);
+  }
+
+  MOZ_ASSERT(!result || result->AsTextureClientDrawTarget(),
+             "Not a TextureClientDrawTarget?");
+  return result;
+}
+
+// static
+TemporaryRef<BufferTextureClient>
+TextureClient::CreateBufferTextureClient(ISurfaceAllocator* aAllocator,
+                                         SurfaceFormat aFormat,
+                                         TextureFlags aTextureFlags,
+                                         gfx::BackendType aMoz2DBackend)
+{
+  if (gfxPlatform::GetPlatform()->PreferMemoryOverShmem()) {
+    RefPtr<BufferTextureClient> result = new MemoryTextureClient(aAllocator, aFormat,
+                                                                 aMoz2DBackend,
+                                                                 aTextureFlags);
+    return result.forget();
+  }
+  RefPtr<BufferTextureClient> result = new ShmemTextureClient(aAllocator, aFormat,
+                                                              aMoz2DBackend,
+                                                              aTextureFlags);
+  return result.forget();
+}
+
 
 class ShmemTextureClientData : public TextureClientData
 {
@@ -296,6 +461,30 @@ void TextureClient::ForceRemove()
   MarkInvalid();
 }
 
+bool TextureClient::CopyToTextureClient(TextureClient* aTarget,
+                                        const gfx::IntRect* aRect,
+                                        const gfx::IntPoint* aPoint)
+{
+  MOZ_ASSERT(IsLocked());
+  MOZ_ASSERT(aTarget->IsLocked());
+
+  if (!aTarget->AsTextureClientDrawTarget() || !AsTextureClientDrawTarget()) {
+    return false;
+  }
+
+  RefPtr<DrawTarget> destinationTarget = aTarget->AsTextureClientDrawTarget()->GetAsDrawTarget();
+  RefPtr<DrawTarget> sourceTarget = AsTextureClientDrawTarget()->GetAsDrawTarget();
+  RefPtr<gfx::SourceSurface> source = sourceTarget->Snapshot();
+  destinationTarget->CopySurface(source,
+                                 aRect ? *aRect : gfx::IntRect(gfx::IntPoint(0, 0), GetSize()),
+                                 aPoint ? *aPoint : gfx::IntPoint(0, 0));
+  destinationTarget = nullptr;
+  source = nullptr;
+  sourceTarget = nullptr;
+
+  return true;
+}
+
 void
 TextureClient::Finalize()
 {
@@ -339,12 +528,6 @@ ShmemTextureClient::ToSurfaceDescriptor(SurfaceDescriptor& aDescriptor)
   return true;
 }
 
-ISurfaceAllocator*
-ShmemTextureClient::GetAllocator() const
-{
-  return mCompositable->GetForwarder();
-}
-
 bool
 ShmemTextureClient::Allocate(uint32_t aSize)
 {
@@ -371,10 +554,11 @@ ShmemTextureClient::GetBufferSize() const
   return mShmem.Size<uint8_t>();
 }
 
-ShmemTextureClient::ShmemTextureClient(CompositableClient* aCompositable,
+ShmemTextureClient::ShmemTextureClient(ISurfaceAllocator* aAllocator,
                                        gfx::SurfaceFormat aFormat,
+                                       gfx::BackendType aMoz2DBackend,
                                        TextureFlags aFlags)
-  : BufferTextureClient(aCompositable, aFormat, aFlags)
+  : BufferTextureClient(aAllocator, aFormat, aMoz2DBackend, aFlags)
   , mAllocated(false)
 {
   MOZ_COUNT_CTOR(ShmemTextureClient);
@@ -386,7 +570,7 @@ ShmemTextureClient::~ShmemTextureClient()
   if (ShouldDeallocateInDestructor()) {
     // if the buffer has never been shared we must deallocate it or ir would
     // leak.
-    mCompositable->GetForwarder()->DeallocShmem(mShmem);
+    GetAllocator()->DeallocShmem(mShmem);
   }
 }
 
@@ -417,10 +601,11 @@ MemoryTextureClient::Allocate(uint32_t aSize)
   return true;
 }
 
-MemoryTextureClient::MemoryTextureClient(CompositableClient* aCompositable,
+MemoryTextureClient::MemoryTextureClient(ISurfaceAllocator* aAllocator,
                                          gfx::SurfaceFormat aFormat,
+                                         gfx::BackendType aMoz2DBackend,
                                          TextureFlags aFlags)
-  : BufferTextureClient(aCompositable, aFormat, aFlags)
+  : BufferTextureClient(aAllocator, aFormat, aMoz2DBackend, aFlags)
   , mBuffer(nullptr)
   , mBufSize(0)
 {
@@ -438,18 +623,27 @@ MemoryTextureClient::~MemoryTextureClient()
   }
 }
 
-BufferTextureClient::BufferTextureClient(CompositableClient* aCompositable,
+BufferTextureClient::BufferTextureClient(ISurfaceAllocator* aAllocator,
                                          gfx::SurfaceFormat aFormat,
+                                         gfx::BackendType aMoz2DBackend,
                                          TextureFlags aFlags)
   : TextureClient(aFlags)
-  , mCompositable(aCompositable)
+  , mAllocator(aAllocator)
   , mFormat(aFormat)
+  , mBackend(aMoz2DBackend)
+  , mOpenMode(0)
   , mUsingFallbackDrawTarget(false)
   , mLocked(false)
 {}
 
 BufferTextureClient::~BufferTextureClient()
 {}
+
+ISurfaceAllocator*
+BufferTextureClient::GetAllocator() const
+{
+  return mAllocator;
+}
 
 bool
 BufferTextureClient::UpdateSurface(gfxASurface* aSurface)
@@ -463,25 +657,13 @@ BufferTextureClient::UpdateSurface(gfxASurface* aSurface)
     return false;
   }
 
-  if (gfxPlatform::GetPlatform()->SupportsAzureContent()) {
-    RefPtr<DrawTarget> dt = GetAsDrawTarget();
-    RefPtr<SourceSurface> source = gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(dt, aSurface);
+  RefPtr<DrawTarget> dt = GetAsDrawTarget();
+  RefPtr<SourceSurface> source = gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(dt, aSurface);
 
-    dt->CopySurface(source, IntRect(IntPoint(), serializer.GetSize()), IntPoint());
-    // XXX - if the Moz2D backend is D2D, we would be much better off memcpying
-    // the content of the surface directly because with D2D, GetAsDrawTarget is
-    // very expensive.
-  } else {
-    RefPtr<gfxImageSurface> surf = serializer.GetAsThebesSurface();
-    if (!surf) {
-      return false;
-    }
-
-    nsRefPtr<gfxContext> tmpCtx = new gfxContext(surf.get());
-    tmpCtx->SetOperator(gfxContext::OPERATOR_SOURCE);
-    tmpCtx->DrawSurface(aSurface, gfxSize(serializer.GetSize().width,
-                                          serializer.GetSize().height));
-  }
+  dt->CopySurface(source, IntRect(IntPoint(), serializer.GetSize()), IntPoint());
+  // XXX - if the Moz2D backend is D2D, we would be much better off memcpying
+  // the content of the surface directly because with D2D, GetAsDrawTarget is
+  // very expensive.
 
   if (TextureRequiresLocking(mFlags) && !ImplementsLocking()) {
     // We don't have support for proper locking yet, so we'll
@@ -546,15 +728,15 @@ BufferTextureClient::GetAsDrawTarget()
   }
 
   MOZ_ASSERT(mUsingFallbackDrawTarget == false);
-  mDrawTarget = serializer.GetAsDrawTarget();
+  mDrawTarget = serializer.GetAsDrawTarget(mBackend);
   if (mDrawTarget) {
     return mDrawTarget;
   }
 
   // fallback path, probably because the Moz2D backend can't create a
   // DrawTarget around raw memory. This is going to be slow :(
-  mDrawTarget = gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(
-    serializer.GetSize(), serializer.GetFormat());
+  mDrawTarget = gfx::Factory::CreateDrawTarget(mBackend, serializer.GetSize(),
+                                               serializer.GetFormat());
   if (!mDrawTarget) {
     return nullptr;
   }

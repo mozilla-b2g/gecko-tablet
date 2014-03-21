@@ -40,6 +40,7 @@ struct gfxRGBA;
 namespace mozilla {
 namespace gl {
 class GLContext;
+class SkiaGLGlue;
 }
 namespace gfx {
 class DrawTarget;
@@ -256,20 +257,6 @@ public:
                               int32_t aStride, mozilla::gfx::SurfaceFormat aFormat);
 
     /**
-     * Returns true if we will render content using Azure using a gfxPlatform
-     * provided DrawTarget.
-     * Prefer using SupportsAzureContentForDrawTarget or 
-     * SupportsAzureContentForType.
-     * This function is potentially misleading and dangerous because we might
-     * support a certain Azure backend on the current platform, but when you
-     * ask for a DrawTarget you get one for a different backend which is not
-     * supported for content drawing.
-     */
-    bool SupportsAzureContent() {
-      return GetContentBackend() != mozilla::gfx::BackendType::NONE;
-    }
-
-    /**
      * Returns true if we should use Azure to render content with aTarget. For
      * example, it is possible that we are using Direct2D for rendering and thus
      * using Azure. But we want to render to a CairoDrawTarget, in which case
@@ -283,14 +270,17 @@ public:
     }
 
     virtual bool UseAcceleratedSkiaCanvas();
-
-    virtual void InitializeSkiaCaches();
+    virtual void InitializeSkiaCacheLimits();
 
     void GetAzureBackendInfo(mozilla::widget::InfoObject &aObj) {
       aObj.DefineProperty("AzureCanvasBackend", GetBackendName(mPreferredCanvasBackend));
       aObj.DefineProperty("AzureSkiaAccelerated", UseAcceleratedSkiaCanvas());
       aObj.DefineProperty("AzureFallbackCanvasBackend", GetBackendName(mFallbackCanvasBackend));
       aObj.DefineProperty("AzureContentBackend", GetBackendName(mContentBackend));
+    }
+
+    mozilla::gfx::BackendType GetContentBackend() {
+      return mContentBackend;
     }
 
     mozilla::gfx::BackendType GetPreferredCanvasBackend() {
@@ -598,6 +588,9 @@ public:
     bool PreferMemoryOverShmem() const;
     bool UseDeprecatedTextures() const { return mLayersUseDeprecated; }
 
+    mozilla::gl::SkiaGLGlue* GetSkiaGLGlue();
+    void PurgeSkiaCache();
+
 protected:
     gfxPlatform();
     virtual ~gfxPlatform();
@@ -647,10 +640,6 @@ protected:
      * Decode the backend enumberation from a string.
      */
     static mozilla::gfx::BackendType BackendTypeForName(const nsCString& aName);
-
-    mozilla::gfx::BackendType GetContentBackend() {
-      return mContentBackend;
-    }
 
     static mozilla::TemporaryRef<mozilla::gfx::ScaledFont>
       GetScaledFontForFontWithCairoSkia(mozilla::gfx::DrawTarget* aTarget, gfxFont* aFont);
@@ -711,6 +700,7 @@ private:
     mozilla::RefPtr<mozilla::gfx::DrawEventRecorder> mRecorder;
     bool mLayersPreferMemoryOverShmem;
     bool mLayersUseDeprecated;
+    mozilla::RefPtr<mozilla::gl::SkiaGLGlue> mSkiaGlue;
 };
 
 #endif /* GFX_PLATFORM_H */

@@ -330,8 +330,7 @@ CompositorParent::RecvFlushRendering()
   // If we're waiting to do a composite, then cancel it
   // and do it immediately instead.
   if (mCurrentCompositeTask) {
-    mCurrentCompositeTask->Cancel();
-    mCurrentCompositeTask = nullptr;
+    CancelCurrentCompositeTask();
     ForceComposeToTarget(nullptr);
   }
   return true;
@@ -376,9 +375,15 @@ CompositorParent::RecvSetTestSampleTime(const TimeStamp& aTime)
 
   mIsTesting = true;
   mTestTime = aTime;
-  if (mCompositionManager) {
-    mCompositionManager->TransformShadowTree(aTime);
+
+  // Update but only if we were already scheduled to animate
+  if (mCompositionManager && mCurrentCompositeTask) {
+    bool requestNextFrame = mCompositionManager->TransformShadowTree(aTime);
+    if (!requestNextFrame) {
+      CancelCurrentCompositeTask();
+    }
   }
+
   return true;
 }
 
@@ -392,6 +397,11 @@ CompositorParent::RecvLeaveTestMode()
 void
 CompositorParent::ActorDestroy(ActorDestroyReason why)
 {
+  CancelCurrentCompositeTask();
+  if (mForceCompositionTask) {
+    mForceCompositionTask->Cancel();
+    mForceCompositionTask = nullptr;
+  }
   mPaused = true;
   RemoveCompositor(mCompositorID);
 
@@ -462,6 +472,15 @@ CompositorParent::ForceComposition()
   // Cancel the orientation changed state to force composition
   mForceCompositionTask = nullptr;
   ScheduleRenderOnCompositorThread();
+}
+
+void
+CompositorParent::CancelCurrentCompositeTask()
+{
+  if (mCurrentCompositeTask) {
+    mCurrentCompositeTask->Cancel();
+    mCurrentCompositeTask = nullptr;
+  }
 }
 
 void
@@ -578,19 +597,19 @@ CompositorParent::ScheduleComposition()
   TimeDuration minFrameDelta = TimeDuration::FromMilliseconds(
     rate == 0 ? 0.0 : std::max(0.0, 1000.0 / rate));
 
-#ifdef COMPOSITOR_PERFORMANCE_WARNING
-  mExpectedComposeTime = TimeStamp::Now() + minFrameDelta;
-#endif
 
   mCurrentCompositeTask = NewRunnableMethod(this, &CompositorParent::Composite);
 
   if (!initialComposition && delta < minFrameDelta) {
     TimeDuration delay = minFrameDelta - delta;
 #ifdef COMPOSITOR_PERFORMANCE_WARNING
-    mExpectedComposeTime = TimeStamp::Now() + delay;
+    mExpectedComposeStartTime = TimeStamp::Now() + delay;
 #endif
     ScheduleTask(mCurrentCompositeTask, delay.ToMilliseconds());
   } else {
+#ifdef COMPOSITOR_PERFORMANCE_WARNING
+    mExpectedComposeStartTime = TimeStamp::Now();
+#endif
     ScheduleTask(mCurrentCompositeTask, 0);
   }
 }
@@ -608,7 +627,20 @@ CompositorParent::CompositeToTarget(DrawTarget* aTarget)
   PROFILER_LABEL("CompositorParent", "Composite");
   NS_ABORT_IF_FALSE(CompositorThreadID() == PlatformThread::CurrentId(),
                     "Composite can only be called on the compositor thread");
-  mCurrentCompositeTask = nullptr;
+
+#ifdef COMPOSITOR_PERFORMANCE_WARNING
+  TimeDuration scheduleDelta = TimeStamp::Now() - mExpectedComposeStartTime;
+  if (scheduleDelta > TimeDuration::FromMilliseconds(2) ||
+      scheduleDelta < TimeDuration::FromMilliseconds(-2)) {
+    printf_stderr("Compositor: Compose starting off schedule by %4.1f ms\n",
+                  scheduleDelta.ToMilliseconds());
+  }
+#endif
+
+  if (mCurrentCompositeTask) {
+    mCurrentCompositeTask->Cancel();
+    mCurrentCompositeTask = nullptr;
+  }
 
   mLastCompose = TimeStamp::Now();
 
@@ -658,9 +690,15 @@ CompositorParent::CompositeToTarget(DrawTarget* aTarget)
   }
 
 #ifdef COMPOSITOR_PERFORMANCE_WARNING
-  if (mExpectedComposeTime + TimeDuration::FromMilliseconds(15) < TimeStamp::Now()) {
-    printf_stderr("Compositor: Composite took %i ms.\n",
-                  15 + (int)(TimeStamp::Now() - mExpectedComposeTime).ToMilliseconds());
+  TimeDuration executionTime = TimeStamp::Now() - mLastCompose;
+  TimeDuration frameBudget = TimeDuration::FromMilliseconds(15);
+  int32_t frameRate = CalculateCompositionFrameRate();
+  if (frameRate > 0) {
+    frameBudget = TimeDuration::FromSeconds(1.0 / frameRate);
+  }
+  if (executionTime > frameBudget) {
+    printf_stderr("Compositor: Composite execution took %4.1f ms\n",
+                  executionTime.ToMilliseconds());
   }
 #endif
 
@@ -741,12 +779,22 @@ CompositorParent::ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
 
   if (root) {
     SetShadowProperties(root);
-    if (mIsTesting) {
-      mCompositionManager->TransformShadowTree(mTestTime);
-    }
   }
   if (aScheduleComposite) {
     ScheduleComposition();
+    // When testing we synchronously update the shadow tree with the animated
+    // values to avoid race conditions when calling GetAnimationTransform etc.
+    // (since the above SetShadowProperties will remove animation effects).
+    // However, we only do this update when a composite operation is already
+    // scheduled in order to better match the behavior under regular sampling
+    // conditions.
+    if (mIsTesting && root && mCurrentCompositeTask) {
+      bool requestNextFrame =
+        mCompositionManager->TransformShadowTree(mTestTime);
+      if (!requestNextFrame) {
+        CancelCurrentCompositeTask();
+      }
+    }
   }
   mLayerManager->NotifyShadowTreeTransaction();
 }

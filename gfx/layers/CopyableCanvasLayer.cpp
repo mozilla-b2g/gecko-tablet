@@ -32,6 +32,7 @@ namespace layers {
 
 CopyableCanvasLayer::CopyableCanvasLayer(LayerManager* aLayerManager, void *aImplData) :
   CanvasLayer(aLayerManager, aImplData)
+  , mStream(nullptr)
 {
   MOZ_COUNT_CTOR(CopyableCanvasLayer);
 }
@@ -48,6 +49,7 @@ CopyableCanvasLayer::Initialize(const Data& aData)
 
   if (aData.mGLContext) {
     mGLContext = aData.mGLContext;
+    mStream = aData.mStream;
     mIsGLAlphaPremult = aData.mIsGLAlphaPremult;
     mNeedsYFlip = true;
     MOZ_ASSERT(mGLContext->IsOffscreen(), "canvas gl context isn't offscreen");
@@ -70,7 +72,7 @@ CopyableCanvasLayer::Initialize(const Data& aData)
 bool
 CopyableCanvasLayer::IsDataValid(const Data& aData)
 {
-  return mGLContext == aData.mGLContext;
+  return mGLContext == aData.mGLContext && mStream == aData.mStream;
 }
 
 void
@@ -95,7 +97,7 @@ CopyableCanvasLayer::UpdateTarget(DrawTarget* aDestTarget,
     RefPtr<DataSourceSurface> readSurf;
     RefPtr<SourceSurface> resultSurf;
 
-    SharedSurface* sharedSurf = mGLContext->RequestFrame();
+    SharedSurface_GL* sharedSurf = mGLContext->RequestFrame();
     if (!sharedSurf) {
       NS_WARNING("Null frame received.");
       return;
@@ -190,7 +192,7 @@ CopyableCanvasLayer::DeprecatedUpdateSurface(gfxASurface* aDestSurface,
     RefPtr<DataSourceSurface> readDSurf;
     nsRefPtr<gfxASurface> resultSurf;
 
-    SharedSurface* sharedSurf = mGLContext->RequestFrame();
+    SharedSurface_GL* sharedSurf = mGLContext->RequestFrame();
     if (!sharedSurf) {
       NS_WARNING("Null frame received.");
       return;
@@ -284,19 +286,15 @@ CopyableCanvasLayer::PaintWithOpacity(gfx::DrawTarget* aTarget,
 
   DrawOptions options = DrawOptions(aOpacity, CompositionOp::OP_SOURCE);
 
-  // If content opaque, then save off current operator and set to source.
-  // This ensures that alpha is not applied even if the source surface
-  // has an alpha channel
-  if (GetContentFlags() & CONTENT_OPAQUE) {
-    options.mCompositionOp = CompositionOp::OP_SOURCE;
-  }
-
   if (aOperator != CompositionOp::OP_OVER) {
     options.mCompositionOp = aOperator;
   }
 
+  // XXX: This needs rewriting for acceptable performance using CoreGraphics.
+  // Therefore - this ::PaintWithOpacity is currently not used
   Rect rect = Rect(0, 0, mBounds.width, mBounds.height);
   aTarget->FillRect(rect, pat, options);
+
   if (aMaskSurface) {
     aTarget->MaskSurface(pat, aMaskSurface, Point(0, 0), options);
   }
@@ -348,7 +346,7 @@ CopyableCanvasLayer::DeprecatedPaintWithOpacity(gfxContext* aContext,
   // Restore surface operator
   if (GetContentFlags() & CONTENT_OPAQUE) {
     aContext->SetOperator(savedOp);
-  }  
+  }
 
   if (mNeedsYFlip) {
     aContext->SetMatrix(m);

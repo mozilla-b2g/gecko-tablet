@@ -82,6 +82,7 @@
 #include "mozilla/GuardObjects.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/TimeStamp.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -548,7 +549,7 @@ public:
     static void ActivityCallback(void *arg, bool active);
     static void CTypesActivityCallback(JSContext *cx,
                                        js::CTypesActivityType type);
-    static bool OperationCallback(JSContext *cx);
+    static bool InterruptCallback(JSContext *cx);
     static void OutOfMemoryCallback(JSContext *cx);
 
     size_t SizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf);
@@ -906,24 +907,19 @@ XPC_WN_JSOp_ThisObject(JSContext *cx, JS::HandleObject obj);
         nullptr, /* lookupGeneric */                                          \
         nullptr, /* lookupProperty */                                         \
         nullptr, /* lookupElement */                                          \
-        nullptr, /* lookupSpecial */                                          \
         nullptr, /* defineGeneric */                                          \
         nullptr, /* defineProperty */                                         \
         nullptr, /* defineElement */                                          \
-        nullptr, /* defineSpecial */                                          \
         nullptr, /* getGeneric    */                                          \
         nullptr, /* getProperty    */                                         \
         nullptr, /* getElement    */                                          \
-        nullptr, /* getSpecial    */                                          \
         nullptr, /* setGeneric    */                                          \
         nullptr, /* setProperty    */                                         \
         nullptr, /* setElement    */                                          \
-        nullptr, /* setSpecial    */                                          \
         nullptr, /* getGenericAttributes  */                                  \
         nullptr, /* setGenericAttributes  */                                  \
         nullptr, /* deleteProperty */                                         \
         nullptr, /* deleteElement */                                          \
-        nullptr, /* deleteSpecial */                                          \
         nullptr, nullptr, /* watch/unwatch */                                 \
         nullptr, /* slice */                                                  \
         XPC_WN_JSOp_Enumerate,                                                \
@@ -935,24 +931,19 @@ XPC_WN_JSOp_ThisObject(JSContext *cx, JS::HandleObject obj);
         nullptr, /* lookupGeneric */                                          \
         nullptr, /* lookupProperty */                                         \
         nullptr, /* lookupElement */                                          \
-        nullptr, /* lookupSpecial */                                          \
         nullptr, /* defineGeneric */                                          \
         nullptr, /* defineProperty */                                         \
         nullptr, /* defineElement */                                          \
-        nullptr, /* defineSpecial */                                          \
         nullptr, /* getGeneric    */                                          \
         nullptr, /* getProperty    */                                         \
         nullptr, /* getElement    */                                          \
-        nullptr, /* getSpecial    */                                          \
         nullptr, /* setGeneric    */                                          \
         nullptr, /* setProperty    */                                         \
         nullptr, /* setElement    */                                          \
-        nullptr, /* setSpecial    */                                          \
         nullptr, /* getGenericAttributes  */                                  \
         nullptr, /* setGenericAttributes  */                                  \
         nullptr, /* deleteProperty */                                         \
         nullptr, /* deleteElement */                                          \
-        nullptr, /* deleteSpecial */                                          \
         nullptr, nullptr, /* watch/unwatch */                                 \
         nullptr, /* slice */                                                  \
         XPC_WN_JSOp_Enumerate,                                                \
@@ -1654,7 +1645,7 @@ public:
     void
     SetCallback(nsIXPCScriptable* s) {mCallback = s;}
     void
-    SetCallback(already_AddRefed<nsIXPCScriptable> s) {mCallback = s;}
+    SetCallback(already_AddRefed<nsIXPCScriptable>&& s) {mCallback = s;}
 
     void
     SetScriptableShared(XPCNativeScriptableShared* shared) {mShared = shared;}
@@ -1698,7 +1689,7 @@ public:
         : mCallback(si.GetCallback()), mFlags(si.GetFlags()),
           mInterfacesBitmap(si.GetInterfacesBitmap()) {}
 
-    XPCNativeScriptableCreateInfo(already_AddRefed<nsIXPCScriptable> callback,
+    XPCNativeScriptableCreateInfo(already_AddRefed<nsIXPCScriptable>&& callback,
                                   XPCNativeScriptableFlags flags,
                                   uint32_t interfacesBitmap)
         : mCallback(callback), mFlags(flags),
@@ -1718,7 +1709,7 @@ public:
     GetInterfacesBitmap() const     {return mInterfacesBitmap;}
 
     void
-    SetCallback(already_AddRefed<nsIXPCScriptable> callback)
+    SetCallback(already_AddRefed<nsIXPCScriptable>&& callback)
         {mCallback = callback;}
 
     void
@@ -2169,11 +2160,11 @@ protected:
     XPCWrappedNative(); // not implemented
 
     // This ctor is used if this object will have a proto.
-    XPCWrappedNative(already_AddRefed<nsISupports> aIdentity,
+    XPCWrappedNative(already_AddRefed<nsISupports>&& aIdentity,
                      XPCWrappedNativeProto* aProto);
 
     // This ctor is used if this object will NOT have a proto.
-    XPCWrappedNative(already_AddRefed<nsISupports> aIdentity,
+    XPCWrappedNative(already_AddRefed<nsISupports>&& aIdentity,
                      XPCWrappedNativeScope* aScope,
                      XPCNativeSet* aSet);
 
@@ -2773,8 +2764,9 @@ void PopJSContextNoScriptContext();
 class XPCJSContextStack
 {
 public:
-    XPCJSContextStack()
-      : mSafeJSContext(nullptr)
+    XPCJSContextStack(XPCJSRuntime *aRuntime)
+      : mRuntime(aRuntime)
+      , mSafeJSContext(nullptr)
     { }
 
     virtual ~XPCJSContextStack();
@@ -2807,6 +2799,7 @@ private:
     bool Push(JSContext *cx);
 
     AutoInfallibleTArray<XPCJSContextInfo, 16> mStack;
+    XPCJSRuntime* mRuntime;
     JSContext*  mSafeJSContext;
 };
 
@@ -3620,9 +3613,9 @@ DefineStaticJSVals(JSContext *cx);
 } // namespace dom
 } // namespace mozilla
 
-NS_EXPORT_(bool)
+bool
 xpc_LocalizeRuntime(JSRuntime *rt);
-NS_EXPORT_(void)
+void
 xpc_DelocalizeRuntime(JSRuntime *rt);
 
 /***************************************************************************/

@@ -475,6 +475,7 @@ interface TestInterface {
   void passUnion12(optional (EventInit or long) arg = 5);
   void passUnion13(optional (object or long?) arg = null);
   void passUnion14(optional (object or long?) arg = 5);
+  void passUnionWithCallback((EventHandler or long) arg);
 #endif
   void passUnionWithNullable((object? or long) arg);
   void passNullableUnion((object or long)? arg);
@@ -521,6 +522,7 @@ interface TestInterface {
   void passNullableUnionWithDefaultValue12(optional (unrestricted float or DOMString)? arg = null);
 
   void passSequenceOfUnions(sequence<(CanvasPattern or CanvasGradient)> arg);
+  void passSequenceOfUnions2(sequence<(object or long)> arg);
   void passVariadicUnion((CanvasPattern or CanvasGradient)... arg);
 
   void passSequenceOfNullableUnions(sequence<(CanvasPattern or CanvasGradient)?> arg);
@@ -876,6 +878,7 @@ dictionary DictForConstructor {
 interface TestIndexedGetterInterface {
   getter long item(unsigned long idx);
   readonly attribute unsigned long length;
+  legacycaller void();
 };
 
 interface TestNamedGetterInterface {

@@ -44,6 +44,7 @@ class PlanarYCbCrData;
 class Image;
 class PTextureChild;
 class TextureChild;
+class BufferTextureClient;
 
 /**
  * TextureClient is the abstraction that allows us to share data between the
@@ -198,6 +199,19 @@ public:
   TextureClient(TextureFlags aFlags = TEXTURE_FLAGS_DEFAULT);
   virtual ~TextureClient();
 
+  static TemporaryRef<BufferTextureClient>
+  CreateBufferTextureClient(ISurfaceAllocator* aAllocator,
+                            gfx::SurfaceFormat aFormat,
+                            TextureFlags aTextureFlags,
+                            gfx::BackendType aMoz2dBackend);
+
+  static TemporaryRef<TextureClient>
+  CreateTextureClientForDrawing(ISurfaceAllocator* aAllocator,
+                                gfx::SurfaceFormat aFormat,
+                                TextureFlags aTextureFlags,
+                                gfx::BackendType aMoz2dBackend,
+                                const gfx::IntSize& aSizeHint);
+
   virtual TextureClientSurface* AsTextureClientSurface() { return nullptr; }
   virtual TextureClientDrawTarget* AsTextureClientDrawTarget() { return nullptr; }
   virtual TextureClientYCbCr* AsTextureClientYCbCr() { return nullptr; }
@@ -215,11 +229,27 @@ public:
   virtual bool IsLocked() const = 0;
 
   /**
+   * Copies a rectangle from this texture client to a position in aTarget.
+   * It is assumed that the necessary locks are in place; so this should at
+   * least have a read lock and aTarget should at least have a write lock.
+   */
+  virtual bool CopyToTextureClient(TextureClient* aTarget,
+                                   const gfx::IntRect* aRect,
+                                   const gfx::IntPoint* aPoint);
+
+  /**
    * Returns true if this texture has a lock/unlock mechanism.
    * Textures that do not implement locking should be immutable or should
    * use immediate uploads (see TextureFlags in CompositorTypes.h)
    */
   virtual bool ImplementsLocking() const { return false; }
+
+  /**
+   * Indicates whether the TextureClient implementation is backed by an
+   * in-memory buffer. The consequence of this is that locking the
+   * TextureClient does not contend with locking the texture on the host side.
+   */
+  virtual bool HasInternalBuffer() const = 0;
 
   /**
    * Allocate and deallocate a TextureChild actor.
@@ -250,6 +280,15 @@ public:
    * See TextureFlags in CompositorTypes.h.
    */
   TextureFlags GetFlags() const { return mFlags; }
+
+  /**
+   * valid only for TEXTURE_RECYCLE TextureClient.
+   * When called this texture client will grab a strong reference and release
+   * it once the compositor notifies that it is done with the texture.
+   * NOTE: In this stage the texture client can no longer be used by the
+   * client in a transaction.
+   */
+  void WaitForCompositorRecycle();
 
   /**
    * After being shared with the compositor side, an immutable texture is never
@@ -355,8 +394,8 @@ class BufferTextureClient : public TextureClient
                           , public TextureClientDrawTarget
 {
 public:
-  BufferTextureClient(CompositableClient* aCompositable, gfx::SurfaceFormat aFormat,
-                      TextureFlags aFlags);
+  BufferTextureClient(ISurfaceAllocator* aAllocator, gfx::SurfaceFormat aFormat,
+                      gfx::BackendType aBackend, TextureFlags aFlags);
 
   virtual ~BufferTextureClient();
 
@@ -411,11 +450,16 @@ public:
 
   virtual size_t GetBufferSize() const = 0;
 
+  virtual bool HasInternalBuffer() const MOZ_OVERRIDE { return true; }
+
+  ISurfaceAllocator* GetAllocator() const;
+
 protected:
   RefPtr<gfx::DrawTarget> mDrawTarget;
-  CompositableClient* mCompositable;
+  RefPtr<ISurfaceAllocator> mAllocator;
   gfx::SurfaceFormat mFormat;
   gfx::IntSize mSize;
+  gfx::BackendType mBackend;
   OpenMode mOpenMode;
   bool mUsingFallbackDrawTarget;
   bool mLocked;
@@ -428,8 +472,8 @@ protected:
 class ShmemTextureClient : public BufferTextureClient
 {
 public:
-  ShmemTextureClient(CompositableClient* aCompositable, gfx::SurfaceFormat aFormat,
-                     TextureFlags aFlags);
+  ShmemTextureClient(ISurfaceAllocator* aAllocator, gfx::SurfaceFormat aFormat,
+                     gfx::BackendType aBackend, TextureFlags aFlags);
 
   ~ShmemTextureClient();
 
@@ -445,13 +489,12 @@ public:
 
   virtual TextureClientData* DropTextureData() MOZ_OVERRIDE;
 
-  ISurfaceAllocator* GetAllocator() const;
+  virtual bool HasInternalBuffer() const MOZ_OVERRIDE { return true; }
 
   mozilla::ipc::Shmem& GetShmem() { return mShmem; }
 
 protected:
   mozilla::ipc::Shmem mShmem;
-  RefPtr<ISurfaceAllocator> mAllocator;
   bool mAllocated;
 };
 
@@ -463,8 +506,8 @@ protected:
 class MemoryTextureClient : public BufferTextureClient
 {
 public:
-  MemoryTextureClient(CompositableClient* aCompositable, gfx::SurfaceFormat aFormat,
-                      TextureFlags aFlags);
+  MemoryTextureClient(ISurfaceAllocator* aAllocator, gfx::SurfaceFormat aFormat,
+                      gfx::BackendType aBackend, TextureFlags aFlags);
 
   ~MemoryTextureClient();
 
@@ -477,6 +520,8 @@ public:
   virtual size_t GetBufferSize() const MOZ_OVERRIDE { return mBufSize; }
 
   virtual bool IsAllocated() const MOZ_OVERRIDE { return mBuffer != nullptr; }
+
+  virtual bool HasInternalBuffer() const MOZ_OVERRIDE { return true; }
 
   virtual TextureClientData* DropTextureData() MOZ_OVERRIDE;
 

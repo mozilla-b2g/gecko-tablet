@@ -11,7 +11,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import org.mozilla.gecko.R;
 import org.mozilla.gecko.background.common.log.Logger;
 import org.mozilla.gecko.background.fxa.FxAccountClient;
 import org.mozilla.gecko.background.fxa.FxAccountClient20;
@@ -22,7 +21,6 @@ import org.mozilla.gecko.browserid.RSACryptoImplementation;
 import org.mozilla.gecko.browserid.verifier.BrowserIDRemoteVerifierClient;
 import org.mozilla.gecko.browserid.verifier.BrowserIDVerifierDelegate;
 import org.mozilla.gecko.fxa.FxAccountConstants;
-import org.mozilla.gecko.fxa.activities.FxAccountStatusActivity;
 import org.mozilla.gecko.fxa.authenticator.AndroidFxAccount;
 import org.mozilla.gecko.fxa.authenticator.FxAccountAuthenticator;
 import org.mozilla.gecko.fxa.login.FxAccountLoginStateMachine;
@@ -30,7 +28,6 @@ import org.mozilla.gecko.fxa.login.FxAccountLoginStateMachine.LoginStateMachineD
 import org.mozilla.gecko.fxa.login.FxAccountLoginTransition.Transition;
 import org.mozilla.gecko.fxa.login.Married;
 import org.mozilla.gecko.fxa.login.State;
-import org.mozilla.gecko.fxa.login.State.Action;
 import org.mozilla.gecko.fxa.login.State.StateLabel;
 import org.mozilla.gecko.sync.BackoffHandler;
 import org.mozilla.gecko.sync.ExtendedJSONObject;
@@ -51,19 +48,14 @@ import org.mozilla.gecko.tokenserver.TokenServerException;
 import org.mozilla.gecko.tokenserver.TokenServerToken;
 
 import android.accounts.Account;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.content.AbstractThreadedSyncAdapter;
 import android.content.ContentProviderClient;
 import android.content.ContentResolver;
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.SyncResult;
 import android.os.Bundle;
 import android.os.SystemClock;
-import android.support.v4.app.NotificationCompat;
-import android.support.v4.app.NotificationCompat.Builder;
 
 public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
   private static final String LOG_TAG = FxAccountSyncAdapter.class.getSimpleName();
@@ -73,15 +65,18 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
   // Tracks the last seen storage hostname for backoff purposes.
   private static final String PREF_BACKOFF_STORAGE_HOST = "backoffStorageHost";
 
-  // Used to do cheap in-memory rate limiting.
-  private static final int MINIMUM_SYNC_DELAY_MILLIS = 5000;
+  // Used to do cheap in-memory rate limiting. Don't sync again if we
+  // successfully synced within this duration.
+  private static final int MINIMUM_SYNC_DELAY_MILLIS = 15 * 1000;        // 15 seconds.
   private volatile long lastSyncRealtimeMillis = 0L;
 
   protected final ExecutorService executor;
+  protected final FxAccountNotificationManager notificationManager;
 
   public FxAccountSyncAdapter(Context context, boolean autoInitialize) {
     super(context, autoInitialize);
     this.executor = Executors.newSingleThreadExecutor();
+    this.notificationManager = new FxAccountNotificationManager(NOTIFICATION_ID);
   }
 
   protected static class SyncDelegate {
@@ -89,8 +84,10 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
     protected final CountDownLatch latch;
     protected final SyncResult syncResult;
     protected final AndroidFxAccount fxAccount;
+    protected final FxAccountNotificationManager notificationManager;
 
-    public SyncDelegate(Context context, CountDownLatch latch, SyncResult syncResult, AndroidFxAccount fxAccount) {
+    public SyncDelegate(Context context, CountDownLatch latch, SyncResult syncResult, AndroidFxAccount fxAccount,
+        FxAccountNotificationManager notificationManager) {
       if (context == null) {
         throw new IllegalArgumentException("context must not be null");
       }
@@ -103,10 +100,14 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
       if (fxAccount == null) {
         throw new IllegalArgumentException("fxAccount must not be null");
       }
+      if (notificationManager == null) {
+        throw new IllegalArgumentException("notificationManager must not be null");
+      }
       this.context = context;
       this.latch = latch;
       this.syncResult = syncResult;
       this.fxAccount = fxAccount;
+      this.notificationManager = notificationManager;
     }
 
     /**
@@ -171,7 +172,6 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
      */
     public void handleCannotSync(State finalState) {
       Logger.warn(LOG_TAG, "Cannot sync from state: " + finalState.getStateLabel());
-      showNotification(context, finalState);
       setSyncResultSoftError();
       latch.countDown();
     }
@@ -189,6 +189,15 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
          */
       }
       setSyncResultSoftError();
+      latch.countDown();
+    }
+
+    /**
+     * Simply don't sync, without setting any error flags.
+     * This is the appropriate behavior when a routine backoff has not yet
+     * been met.
+     */
+    public void rejectSync() {
       latch.countDown();
     }
   }
@@ -299,6 +308,11 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
       private boolean didReceiveBackoff = false;
 
       @Override
+      public String getUserAgent() {
+        return FxAccountConstants.USER_AGENT;
+      }
+
+      @Override
       public void handleSuccess(final TokenServerToken token) {
         FxAccountConstants.pii(LOG_TAG, "Got token! uid is " + token.uid + " and endpoint is " + token.endpoint + ".");
 
@@ -348,9 +362,9 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
           // skew adjustment that the HawkAuthHeaderProvider uses to adjust its
           // timestamps. Eventually we might want this to adapt within the scope of a
           // global session.
-          final SkewHandler tokenServerSkewHandler = SkewHandler.getSkewHandlerForHostname(storageHostname);
-          final long tokenServerSkew = tokenServerSkewHandler.getSkewInSeconds();
-          final AuthHeaderProvider authHeaderProvider = new HawkAuthHeaderProvider(token.id, token.key.getBytes("UTF-8"), false, tokenServerSkew);
+          final SkewHandler storageServerSkewHandler = SkewHandler.getSkewHandlerForHostname(storageHostname);
+          final long storageServerSkew = storageServerSkewHandler.getSkewInSeconds();
+          final AuthHeaderProvider authHeaderProvider = new HawkAuthHeaderProvider(token.id, token.key.getBytes("UTF-8"), false, storageServerSkew);
 
           final Context context = getContext();
           final SyncConfiguration syncConfig = new SyncConfiguration(token.uid, authHeaderProvider, sharedPrefs, syncKeyBundle);
@@ -395,34 +409,6 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
     tokenServerclient.getTokenFromBrowserIDAssertion(assertion, true, clientState, delegate);
   }
 
-  protected static void showNotification(Context context, State state) {
-    final NotificationManager notificationManager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-
-    final Action action = state.getNeededAction();
-    if (action == Action.None) {
-      Logger.info(LOG_TAG, "State " + state.getStateLabel() + " needs no action; cancelling any existing notification.");
-      notificationManager.cancel(NOTIFICATION_ID);
-      return;
-    }
-
-    final String title = context.getResources().getString(R.string.fxaccount_sync_sign_in_error_notification_title);
-    final String text = context.getResources().getString(R.string.fxaccount_sync_sign_in_error_notification_text, state.email);
-    Logger.info(LOG_TAG, "State " + state.getStateLabel() + " needs action; offering notification with title: " + title);
-    FxAccountConstants.pii(LOG_TAG, "And text: " + text);
-
-    final Intent notificationIntent = new Intent(context, FxAccountStatusActivity.class);
-    final PendingIntent pendingIntent = PendingIntent.getActivity(context, 0, notificationIntent, 0);
-
-    final Builder builder = new NotificationCompat.Builder(context);
-    builder
-      .setContentTitle(title)
-      .setContentText(text)
-      .setSmallIcon(R.drawable.ic_status_logo)
-      .setAutoCancel(true)
-      .setContentIntent(pendingIntent);
-    notificationManager.notify(NOTIFICATION_ID, builder.build());
-  }
-
   /**
    * A trivial Sync implementation that does not cache client keys,
    * certificates, or tokens.
@@ -435,6 +421,7 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
     Logger.setThreadLogTag(FxAccountConstants.GLOBAL_LOG_TAG);
     Logger.resetLogging();
 
+    // This applies even to forced syncs, but only on success.
     if (this.lastSyncRealtimeMillis > 0L &&
         (this.lastSyncRealtimeMillis + MINIMUM_SYNC_DELAY_MILLIS) > SystemClock.elapsedRealtime()) {
       Logger.info(LOG_TAG, "Not syncing FxAccount " + Utils.obfuscateEmail(account.name) +
@@ -454,7 +441,7 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
     }
 
     final CountDownLatch latch = new CountDownLatch(1);
-    final SyncDelegate syncDelegate = new SyncDelegate(context, latch, syncResult, fxAccount);
+    final SyncDelegate syncDelegate = new SyncDelegate(context, latch, syncResult, fxAccount, notificationManager);
 
     try {
       final State state;
@@ -468,18 +455,34 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
       // This will be the same chunk of SharedPreferences that we pass through to GlobalSession/SyncConfiguration.
       final SharedPreferences sharedPrefs = fxAccount.getSyncPrefs();
 
-      // Check for a backoff right here.
-      final BackoffHandler schedulerBackoffHandler = new PrefsBackoffHandler(sharedPrefs, "scheduler");
-      if (!shouldPerformSync(schedulerBackoffHandler, "scheduler", extras)) {
-        Logger.info(LOG_TAG, "Not syncing (scheduler).");
-        syncDelegate.postponeSync(schedulerBackoffHandler.delayMilliseconds());
+      final BackoffHandler backgroundBackoffHandler = new PrefsBackoffHandler(sharedPrefs, "background");
+      final BackoffHandler rateLimitBackoffHandler = new PrefsBackoffHandler(sharedPrefs, "rate");
+
+      // If this sync was triggered by user action, this will be true.
+      final boolean isImmediate = (extras != null) &&
+                                  (extras.getBoolean(ContentResolver.SYNC_EXTRAS_UPLOAD, false) ||
+                                   extras.getBoolean(ContentResolver.SYNC_EXTRAS_FORCE, false));
+
+      // If it's not an immediate sync, it must be either periodic or tickled.
+      // Check our background rate limiter.
+      if (!isImmediate) {
+        if (!shouldPerformSync(backgroundBackoffHandler, "background", extras)) {
+          syncDelegate.rejectSync();
+          return;
+        }
+      }
+
+      // Regardless, let's make sure we're not syncing too often.
+      if (!shouldPerformSync(rateLimitBackoffHandler, "rate", extras)) {
+        syncDelegate.postponeSync(rateLimitBackoffHandler.delayMilliseconds());
         return;
       }
 
       final SchedulePolicy schedulePolicy = new FxAccountSchedulePolicy(context, fxAccount);
 
-      // Set a small scheduled 'backoff' to rate-limit the next sync.
-      schedulePolicy.configureBackoffMillisBeforeSyncing(schedulerBackoffHandler);
+      // Set a small scheduled 'backoff' to rate-limit the next sync,
+      // and extend the background delay even further into the future.
+      schedulePolicy.configureBackoffMillisBeforeSyncing(rateLimitBackoffHandler, backgroundBackoffHandler);
 
       final String audience = fxAccount.getAudience();
       final String authServerEndpoint = fxAccount.getAccountServerURI();
@@ -524,6 +527,7 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
           Logger.info(LOG_TAG, "handleFinal: in " + state.getStateLabel());
           fxAccount.setState(state);
           schedulePolicy.onHandleFinal(state.getNeededAction());
+          notificationManager.update(context, fxAccount);
           try {
             if (state.getStateLabel() != StateLabel.Married) {
               syncDelegate.handleCannotSync(state);
@@ -531,11 +535,7 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
             }
 
             final Married married = (Married) state;
-            SkewHandler skewHandler = SkewHandler.getSkewHandlerFromEndpointString(tokenServerEndpoint);
-            final long now = System.currentTimeMillis();
-            final long issuedAtMillis = now + skewHandler.getSkewInMillis();
-            final long assertionDurationMillis = this.getAssertionDurationInMilliseconds();
-            final String assertion = married.generateAssertion(audience, JSONWebTokenUtils.DEFAULT_ASSERTION_ISSUER, issuedAtMillis, assertionDurationMillis);
+            final String assertion = married.generateAssertion(audience, JSONWebTokenUtils.DEFAULT_ASSERTION_ISSUER);
 
             /*
              * At this point we're in the correct state to sync, and we're ready to fetch

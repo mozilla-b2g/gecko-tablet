@@ -8,6 +8,7 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/HTMLAreaElementBinding.h"
+#include "mozilla/EventDispatcher.h"
 #include "mozilla/MemoryReporting.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(Area)
@@ -15,7 +16,7 @@ NS_IMPL_NS_NEW_HTML_ELEMENT(Area)
 namespace mozilla {
 namespace dom {
 
-HTMLAreaElement::HTMLAreaElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+HTMLAreaElement::HTMLAreaElement(already_AddRefed<nsINodeInfo>& aNodeInfo)
   : nsGenericHTMLElement(aNodeInfo)
   , Link(MOZ_THIS_IN_INITIALIZER_LIST())
 {
@@ -39,11 +40,13 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(HTMLAreaElement)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(HTMLAreaElement,
                                                   nsGenericHTMLElement)
   tmp->Link::Traverse(cb);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRelList)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(HTMLAreaElement,
                                                 nsGenericHTMLElement)
   tmp->Link::Unlink();
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mRelList)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_ELEMENT_CLONE(HTMLAreaElement)
@@ -90,13 +93,13 @@ HTMLAreaElement::SetTarget(const nsAString& aValue)
 }
 
 nsresult
-HTMLAreaElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
+HTMLAreaElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
 {
   return PreHandleEventForAnchors(aVisitor);
 }
 
 nsresult
-HTMLAreaElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
+HTMLAreaElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
 {
   return PostHandleEventForAnchors(aVisitor);
 }
@@ -114,6 +117,15 @@ HTMLAreaElement::GetLinkTarget(nsAString& aTarget)
   if (aTarget.IsEmpty()) {
     GetBaseTarget(aTarget);
   }
+}
+
+nsDOMTokenList* 
+HTMLAreaElement::RelList()
+{
+  if (!mRelList) {
+    mRelList = new nsDOMTokenList(this, nsGkAtoms::rel);
+  }
+  return mRelList;
 }
 
 nsresult

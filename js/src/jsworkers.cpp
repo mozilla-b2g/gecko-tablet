@@ -93,7 +93,7 @@ js::StartOffThreadIonCompile(JSContext *cx, jit::IonBuilder *builder)
     if (!WorkerThreadState().ionWorklist().append(builder))
         return false;
 
-    WorkerThreadState().notifyAll(GlobalWorkerThreadState::PRODUCER);
+    WorkerThreadState().notifyOne(GlobalWorkerThreadState::PRODUCER);
     return true;
 }
 
@@ -312,7 +312,6 @@ js::StartOffThreadParseScript(JSContext *cx, const ReadOnlyCompileOptions &optio
     if (!global)
         return false;
 
-    global->zone()->types.inferenceEnabled = cx->typeInferenceEnabled();
     JS_SetCompartmentPrincipals(global->compartment(), cx->compartment()->principals);
 
     RootedObject obj(cx);
@@ -320,19 +319,19 @@ js::StartOffThreadParseScript(JSContext *cx, const ReadOnlyCompileOptions &optio
     // Initialize all classes needed for parsing while we are still on the main
     // thread. Do this for both the target and the new global so that prototype
     // pointers can be changed infallibly after parsing finishes.
-    if (!js_GetClassObject(cx, JSProto_Function, &obj) ||
-        !js_GetClassObject(cx, JSProto_Array, &obj) ||
-        !js_GetClassObject(cx, JSProto_RegExp, &obj) ||
-        !js_GetClassObject(cx, JSProto_Iterator, &obj))
+    if (!GetBuiltinConstructor(cx, JSProto_Function, &obj) ||
+        !GetBuiltinConstructor(cx, JSProto_Array, &obj) ||
+        !GetBuiltinConstructor(cx, JSProto_RegExp, &obj) ||
+        !GetBuiltinConstructor(cx, JSProto_Iterator, &obj))
     {
         return false;
     }
     {
         AutoCompartment ac(cx, global);
-        if (!js_GetClassObject(cx, JSProto_Function, &obj) ||
-            !js_GetClassObject(cx, JSProto_Array, &obj) ||
-            !js_GetClassObject(cx, JSProto_RegExp, &obj) ||
-            !js_GetClassObject(cx, JSProto_Iterator, &obj))
+        if (!GetBuiltinConstructor(cx, JSProto_Function, &obj) ||
+            !GetBuiltinConstructor(cx, JSProto_Array, &obj) ||
+            !GetBuiltinConstructor(cx, JSProto_RegExp, &obj) ||
+            !GetBuiltinConstructor(cx, JSProto_Iterator, &obj))
         {
             return false;
         }
@@ -367,7 +366,7 @@ js::StartOffThreadParseScript(JSContext *cx, const ReadOnlyCompileOptions &optio
         if (!WorkerThreadState().parseWorklist().append(task.get()))
             return false;
 
-        WorkerThreadState().notifyAll(GlobalWorkerThreadState::PRODUCER);
+        WorkerThreadState().notifyOne(GlobalWorkerThreadState::PRODUCER);
     }
 
     task.forget();
@@ -648,7 +647,7 @@ GlobalWorkerThreadState::finishParseTask(JSContext *maybecx, JSRuntime *rt, void
         if (key == JSProto_Null)
             continue;
 
-        JSObject *newProto = GetClassPrototypePure(&parseTask->scopeChain->global(), key);
+        JSObject *newProto = GetBuiltinPrototypePure(&parseTask->scopeChain->global(), key);
         JS_ASSERT(newProto);
 
         object->setProtoUnchecked(newProto);
@@ -798,10 +797,10 @@ WorkerThread::handleIonWorkload()
     ionBuilder = nullptr;
 
     // Ping the main thread so that the compiled code can be incorporated
-    // at the next operation callback. Don't interrupt Ion code for this, as
+    // at the next interrupt callback. Don't interrupt Ion code for this, as
     // this incorporation can be delayed indefinitely without affecting
     // performance as long as the main thread is actually executing Ion code.
-    rt->triggerOperationCallback(JSRuntime::TriggerCallbackAnyThreadDontStopIon);
+    rt->requestInterrupt(JSRuntime::RequestInterruptAnyThreadDontStopIon);
 
     // Notify the main thread in case it is waiting for the compilation to finish.
     WorkerThreadState().notifyAll(GlobalWorkerThreadState::CONSUMER);
@@ -902,7 +901,7 @@ js::StartOffThreadCompression(ExclusiveContext *cx, SourceCompressionTask *task)
     if (!WorkerThreadState().compressionWorklist().append(task))
         return false;
 
-    WorkerThreadState().notifyAll(GlobalWorkerThreadState::PRODUCER);
+    WorkerThreadState().notifyOne(GlobalWorkerThreadState::PRODUCER);
     return true;
 }
 

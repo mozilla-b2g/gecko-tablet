@@ -16,7 +16,8 @@
 #include "EncodedBufferCache.h"
 #include "nsIDOMFile.h"
 #include "mozilla/dom/BlobEvent.h"
-
+#include "nsIPrincipal.h"
+#include "nsMimeTypes.h"
 
 #include "mozilla/dom/AudioStreamTrack.h"
 #include "mozilla/dom/VideoStreamTrack.h"
@@ -159,7 +160,7 @@ class MediaRecorder::Session: public nsIObserver
   class DestroyRunnable : public nsRunnable
   {
   public:
-    DestroyRunnable(const already_AddRefed<Session> &aSession)
+    DestroyRunnable(already_AddRefed<Session>&& aSession)
       : mSession(aSession) {}
 
     NS_IMETHODIMP Run()
@@ -320,7 +321,19 @@ private:
 
     // Allocate encoder and bind with union stream.
     // At this stage, the API doesn't allow UA to choose the output mimeType format.
-    mEncoder = MediaEncoder::CreateEncoder(NS_LITERAL_STRING(""), aTrackTypes);
+
+    nsCOMPtr<nsIDocument> doc = mRecorder->GetOwner()->GetExtantDoc();
+    uint16_t appStatus = nsIPrincipal::APP_STATUS_NOT_INSTALLED;
+    if (doc) {
+      doc->NodePrincipal()->GetAppStatus(&appStatus);
+    }
+    // Only allow certificated application can assign AUDIO_3GPP
+    if (appStatus == nsIPrincipal::APP_STATUS_CERTIFIED &&
+         mRecorder->mMimeType.EqualsLiteral(AUDIO_3GPP)) {
+      mEncoder = MediaEncoder::CreateEncoder(NS_LITERAL_STRING(AUDIO_3GPP), aTrackTypes);
+    } else {
+      mEncoder = MediaEncoder::CreateEncoder(NS_LITERAL_STRING(""), aTrackTypes);
+    }
 
     if (!mEncoder) {
       DoSessionEndTask(NS_ERROR_ABORT);
@@ -539,6 +552,25 @@ MediaRecorder::Resume(ErrorResult& aResult)
   }
 }
 
+class CreateAndDispatchBlobEventRunnable : public nsRunnable {
+  nsCOMPtr<nsIDOMBlob> mBlob;
+  nsRefPtr<MediaRecorder> mRecorder;
+public:
+  CreateAndDispatchBlobEventRunnable(already_AddRefed<nsIDOMBlob>&& aBlob,
+                                     MediaRecorder* aRecorder)
+    : mBlob(aBlob), mRecorder(aRecorder)
+  { }
+
+  NS_IMETHOD
+  Run();
+};
+
+NS_IMETHODIMP
+CreateAndDispatchBlobEventRunnable::Run()
+{
+  return mRecorder->CreateAndDispatchBlobEvent(mBlob.forget());
+}
+
 void
 MediaRecorder::RequestData(ErrorResult& aResult)
 {
@@ -548,8 +580,7 @@ MediaRecorder::RequestData(ErrorResult& aResult)
   }
 
   NS_DispatchToMainThread(
-    NS_NewRunnableMethodWithArg<const already_AddRefed<nsIDOMBlob> >(this,
-      &MediaRecorder::CreateAndDispatchBlobEvent, mSession->GetEncodedData()),
+    new CreateAndDispatchBlobEventRunnable(mSession->GetEncodedData(), this),
     NS_DISPATCH_NORMAL);
 }
 
@@ -561,7 +592,9 @@ MediaRecorder::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 
 /* static */ already_AddRefed<MediaRecorder>
 MediaRecorder::Constructor(const GlobalObject& aGlobal,
-                           DOMMediaStream& aStream, ErrorResult& aRv)
+                           DOMMediaStream& aStream,
+                           const MediaRecorderOptions& aInitDict,
+                           ErrorResult& aRv)
 {
   nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(aGlobal.GetAsSupports());
   if (!sgo) {
@@ -576,11 +609,12 @@ MediaRecorder::Constructor(const GlobalObject& aGlobal,
   }
 
   nsRefPtr<MediaRecorder> object = new MediaRecorder(aStream, ownerWindow);
+  object->SetMimeType(aInitDict.mMimeType);
   return object.forget();
 }
 
 nsresult
-MediaRecorder::CreateAndDispatchBlobEvent(const already_AddRefed<nsIDOMBlob> &aBlob)
+MediaRecorder::CreateAndDispatchBlobEvent(already_AddRefed<nsIDOMBlob>&& aBlob)
 {
   NS_ABORT_IF_FALSE(NS_IsMainThread(), "Not running on main thread");
 

@@ -35,6 +35,7 @@
 #include "nsIObserverService.h"
 #include "nsIObserver.h"
 #include "mozilla/Services.h"
+#include "nsProxyRelease.h"
 #include "nsThread.h"
 #include "nsThreadUtils.h"
 #include "nsAutoPtr.h"
@@ -220,8 +221,7 @@ DataChannelConnection::~DataChannelConnection()
     ASSERT_WEBRTC(NS_IsMainThread());
     if (mTransportFlow) {
       ASSERT_WEBRTC(mSTS);
-      RUN_ON_THREAD(mSTS, WrapRunnableNM(ReleaseTransportFlow, mTransportFlow.forget()),
-                    NS_DISPATCH_NORMAL);
+      NS_ProxyRelease(mSTS, mTransportFlow);
     }
 
     if (mInternalIOThread) {
@@ -401,6 +401,10 @@ DataChannelConnection::Init(unsigned short aPort, uint16_t aNumStreams, bool aUs
     if (usrsctp_setsockopt(mMasterSocket, IPPROTO_SCTP, SCTP_REUSE_PORT,
                            (const void *)&on, (socklen_t)sizeof(on)) < 0) {
       LOG(("Couldn't set SCTP_REUSE_PORT on SCTP socket"));
+    }
+    if (usrsctp_setsockopt(mMasterSocket, IPPROTO_SCTP, SCTP_NODELAY,
+                           (const void *)&on, (socklen_t)sizeof(on)) < 0) {
+      LOG(("Couldn't set SCTP_NODELAY on SCTP socket"));
     }
   }
 
@@ -1987,7 +1991,7 @@ DataChannelConnection::Open(const nsACString& label, const nsACString& protocol,
 
 // Separate routine so we can also call it to finish up from pending opens
 already_AddRefed<DataChannel>
-DataChannelConnection::OpenFinish(already_AddRefed<DataChannel> aChannel)
+DataChannelConnection::OpenFinish(already_AddRefed<DataChannel>&& aChannel)
 {
   nsRefPtr<DataChannel> channel(aChannel); // takes the reference passed in
   // Normally 1 reference if called from ::Open(), or 2 if called from
@@ -2350,6 +2354,17 @@ DataChannelConnection::ReadBlob(already_AddRefed<DataChannelConnection> aThis,
                                &DataChannelConnection::SendBinaryMsg,
                                aStream, temp),
                 NS_DISPATCH_NORMAL);
+}
+
+void
+DataChannelConnection::GetStreamIds(std::vector<uint16_t>* aStreamList)
+{
+  ASSERT_WEBRTC(NS_IsMainThread());
+  for (uint32_t i = 0; i < mStreams.Length(); ++i) {
+    if (mStreams[i]) {
+      aStreamList->push_back(mStreams[i]->mStream);
+    }
+  }
 }
 
 int32_t

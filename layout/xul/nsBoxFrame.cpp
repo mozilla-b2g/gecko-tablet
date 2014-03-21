@@ -57,7 +57,6 @@
 #include "nsITheme.h"
 #include "nsTransform2D.h"
 #include "nsEventStateManager.h"
-#include "nsEventDispatcher.h"
 #include "nsIDOMEvent.h"
 #include "nsDisplayList.h"
 #include "mozilla/Preferences.h"
@@ -919,7 +918,7 @@ nsBoxFrame::DoLayout(nsBoxLayoutState& aState)
                                   nsSize(mRect.width, NS_UNCONSTRAINEDSIZE));
 
     // Set up a |desiredSize| to pass into ReflowAbsoluteFrames
-    nsHTMLReflowMetrics desiredSize(reflowState.GetWritingMode());
+    nsHTMLReflowMetrics desiredSize(reflowState);
     desiredSize.Width() = mRect.width;
     desiredSize.Height() = mRect.height;
 

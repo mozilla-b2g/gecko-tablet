@@ -86,7 +86,6 @@ const char js_import_str[]          = "import";
 const char js_in_str[]              = "in";
 const char js_instanceof_str[]      = "instanceof";
 const char js_interface_str[]       = "interface";
-const char js_let_str[]             = "let";
 const char js_new_str[]             = "new";
 const char js_package_str[]         = "package";
 const char js_private_str[]         = "private";
@@ -299,7 +298,7 @@ AtomIsInterned(JSContext *cx, JSAtom *atom)
  */
 MOZ_ALWAYS_INLINE
 static JSAtom *
-AtomizeAndTakeOwnership(ExclusiveContext *cx, jschar *tbchars, size_t length, InternBehavior ib)
+AtomizeAndtake(ExclusiveContext *cx, jschar *tbchars, size_t length, InternBehavior ib)
 {
     JS_ASSERT(tbchars[length] == 0);
 
@@ -462,7 +461,7 @@ js::Atomize(ExclusiveContext *cx, const char *bytes, size_t length, InternBehavi
     jschar *tbcharsZ = InflateString(cx, bytes, &length);
     if (!tbcharsZ)
         return nullptr;
-    return AtomizeAndTakeOwnership(cx, tbcharsZ, length, ib);
+    return AtomizeAndtake(cx, tbcharsZ, length, ib);
 }
 
 JSAtom *

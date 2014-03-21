@@ -44,13 +44,6 @@ public:
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_AMBIGUOUS(nsJSContext,
                                                          nsIScriptContext)
 
-  virtual nsresult EvaluateString(const nsAString& aScript,
-                                  JS::Handle<JSObject*> aScopeObject,
-                                  JS::CompileOptions &aOptions,
-                                  bool aCoerceToString,
-                                  JS::Value* aRetValue,
-                                  void **aOffThreadToken = nullptr) MOZ_OVERRIDE;
-
   virtual nsresult BindCompiledEventHandler(nsISupports *aTarget,
                                             JS::Handle<JSObject*> aScope,
                                             JS::Handle<JSObject*> aHandler,
@@ -110,10 +103,8 @@ public:
   static void CycleCollectNow(nsICycleCollectorListener *aListener = nullptr,
                               int32_t aExtraForgetSkippableCalls = 0);
 
-  // If aSliceTime is negative, the CC will run to completion.  If aSliceTime
-  // is 0, only a minimum quantum of work will be done.  Otherwise, aSliceTime
-  // will be used as the time budget for the slice, in ms.
-  static void RunCycleCollectorSlice(int64_t aSliceTime);
+  // Run a cycle collector slice, using a heuristic to decide how long to run it.
+  static void RunCycleCollectorSlice();
 
   static void BeginCycleCollectionCallback();
   static void EndCycleCollectionCallback(mozilla::CycleCollectorResults &aResults);
