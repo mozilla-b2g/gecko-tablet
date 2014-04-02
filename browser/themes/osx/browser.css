@@ -197,8 +197,7 @@ toolbarbutton.bookmark-item:not(.subviewbutton):not(#bookmarks-menu-button),
   margin: 0 !important;
 }
 
-toolbarbutton.bookmark-item:not(.subviewbutton):not(#bookmarks-menu-button):hover,
-toolbarbutton.bookmark-item:not(#bookmarks-menu-button)[open="true"] {
+toolbarbutton.bookmark-item:not(.subviewbutton):not(#bookmarks-menu-button):hover {
   background-color: rgba(0, 0, 0, .205);
 }
 
@@ -221,7 +220,7 @@ toolbarbutton.bookmark-item[open="true"]:not(.subviewbutton) {
 }
 
 toolbarbutton.bookmark-item:not(.subviewbutton):not(#bookmarks-menu-button):active:hover,
-toolbarbutton.bookmark-item:not(#bookmarks-menu-button)[open="true"] {
+toolbarbutton.bookmark-item:not(.subviewbutton):not(#bookmarks-menu-button)[open="true"] {
   box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.4), 0 1px rgba(255, 255, 255, 0.4);
   background-color: rgba(0, 0, 0, .5);
 }
@@ -2766,8 +2765,8 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
   content: '';
   display: block;
   -moz-appearance: toolbar;
-  height: calc(@tabHeight@ + 1px);
-  margin-bottom: calc(-1px - @tabHeight@);
+  height: @tabHeight@;
+  margin-bottom: -@tabHeight@;
   visibility: hidden;
 }
 
@@ -3902,19 +3901,17 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
 /* Lion Fullscreen window styling */
 @media (-moz-mac-lion-theme) {
   #navigator-toolbox[inFullscreen]:not(:-moz-lwtheme)::before {
-    height: calc(@tabHeight@ + 11px) !important;
+    /* Adjust by the full element height of #titlebar, since that element is
+     * not displayed in native full-screen.
+     * Also add the height of the tabs, since we're calculating the
+     * total height of this pseudo-element, not just the top-padding. */
+    height: calc(@tabHeight@ + @spaceAboveTabbar@) !important;
   }
   #main-window[inFullscreen][privatebrowsingmode=temporary],
   #main-window[inFullscreen]:-moz-lwtheme {
-    /* This additional padding matches the change in height in the pseudo-element
-     * above. */
-    padding-top: 11px;
-  }
-  #main-window[inFullscreen]:not([privatebrowsingmode=temporary]):-moz-lwtheme {
-    /* In combination with the previous rule, forces the top 22px of the
-     * background image to be hidden, so the image doesn't jump around with
-     * the loss of the titlebar. */
-    background-position: right -11px;
+    /* Adjust by the full element height of #titlebar, since that element is
+     * not displayed in native full-screen. */
+    padding-top: @spaceAboveTabbar@;
   }
 }
 

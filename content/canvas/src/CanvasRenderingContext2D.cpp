@@ -95,6 +95,7 @@
 #include "GLContext.h"
 #include "GLContextProvider.h"
 #include "SVGContentUtils.h"
+#include "nsIScreenManager.h"
 
 #undef free // apparently defined by some windows header, clashing with a free()
             // method in SkTypes.h
@@ -822,8 +823,48 @@ CanvasRenderingContext2D::RemoveDemotableContext(CanvasRenderingContext2D* conte
 
 bool
 CheckSizeForSkiaGL(IntSize size) {
+  MOZ_ASSERT(NS_IsMainThread());
+
   int minsize = Preferences::GetInt("gfx.canvas.min-size-for-skia-gl", 128);
-  return size.width >= minsize && size.height >= minsize;
+  if (size.width < minsize || size.height < minsize) {
+    return false;
+  }
+
+  // Maximum pref allows 3 different options:
+  //  0   means unlimited size
+  //  > 0 means use value as an absolute threshold
+  //  < 0 means use the number of screen pixels as a threshold
+  int maxsize = Preferences::GetInt("gfx.canvas.max-size-for-skia-gl", 0);
+
+  // unlimited max size
+  if (!maxsize) {
+    return true;
+  }
+
+  // absolute max size threshold
+  if (maxsize > 0) {
+    return size.width <= maxsize && size.height <= maxsize;
+  }
+
+  // Cache the number of pixels on the primary screen
+  static int32_t gScreenPixels = -1;
+  if (gScreenPixels < 0) {
+    nsCOMPtr<nsIScreenManager> screenManager =
+      do_GetService("@mozilla.org/gfx/screenmanager;1");
+    if (screenManager) {
+      nsCOMPtr<nsIScreen> primaryScreen;
+      screenManager->GetPrimaryScreen(getter_AddRefs(primaryScreen));
+      if (primaryScreen) {
+        int32_t x, y, width, height;
+        primaryScreen->GetRect(&x, &y, &width, &height);
+
+        gScreenPixels = width * height;
+      }
+    }
+  }
+
+  // screen size acts as max threshold
+  return gScreenPixels < 0 || (size.width * size.height) <= gScreenPixels;
 }
 
 void
@@ -4364,24 +4405,32 @@ CanvasPath::Constructor(const GlobalObject& aGlobal, const nsAString& aPathStrin
 void
 CanvasPath::ClosePath()
 {
+  EnsurePathBuilder();
+
   mPathBuilder->Close();
 }
 
 void
 CanvasPath::MoveTo(double x, double y)
 {
+  EnsurePathBuilder();
+
   mPathBuilder->MoveTo(Point(ToFloat(x), ToFloat(y)));
 }
 
 void
 CanvasPath::LineTo(double x, double y)
 {
+  EnsurePathBuilder();
+
   mPathBuilder->LineTo(Point(ToFloat(x), ToFloat(y)));
 }
 
 void
 CanvasPath::QuadraticCurveTo(double cpx, double cpy, double x, double y)
 {
+  EnsurePathBuilder();
+
   mPathBuilder->QuadraticBezierTo(gfx::Point(ToFloat(cpx), ToFloat(cpy)),
                                   gfx::Point(ToFloat(x), ToFloat(y)));
 }
@@ -4486,6 +4535,8 @@ CanvasPath::Arc(double x, double y, double radius,
 void
 CanvasPath::LineTo(const gfx::Point& aPoint)
 {
+  EnsurePathBuilder();
+
   mPathBuilder->LineTo(aPoint);
 }
 
@@ -4494,6 +4545,8 @@ CanvasPath::BezierTo(const gfx::Point& aCP1,
                      const gfx::Point& aCP2,
                      const gfx::Point& aCP3)
 {
+  EnsurePathBuilder();
+
   mPathBuilder->BezierTo(aCP1, aCP2, aCP3);
 }
 
@@ -4505,23 +4558,46 @@ CanvasPath::GetPath(const CanvasWindingRule& winding, const mozilla::RefPtr<mozi
     fillRule = FillRule::FILL_EVEN_ODD;
   }
 
-  RefPtr<Path> mTempPath = mPathBuilder->Finish();
-  if (!mTempPath)
-    return mTempPath;
-
-  // retarget our backend if we're used with a different backend
-  if (mTempPath->GetBackendType() != mTarget->GetType()) {
-    mPathBuilder = mTarget->CreatePathBuilder(fillRule);
-    mTempPath->StreamToSink(mPathBuilder);
-    mTempPath = mPathBuilder->Finish();
-  } else if (mTempPath->GetFillRule() != fillRule) {
-    mPathBuilder = mTempPath->CopyToBuilder(fillRule);
-    mTempPath = mPathBuilder->Finish();
+  if (mPath &&
+      (mPath->GetBackendType() == mTarget->GetType()) &&
+      (mPath->GetFillRule() == fillRule)) {
+    return mPath;
   }
 
-  mPathBuilder = mTempPath->CopyToBuilder();
+  if (!mPath) {
+    // if there is no path, there must be a pathbuilder
+    MOZ_ASSERT(mPathBuilder);
+    mPath = mPathBuilder->Finish();
+    if (!mPath)
+      return mPath;
 
-  return mTempPath;
+    mPathBuilder = nullptr;
+  }
+
+  // retarget our backend if we're used with a different backend
+  if (mPath->GetBackendType() != mTarget->GetType()) {
+    RefPtr<PathBuilder> tmpPathBuilder = mTarget->CreatePathBuilder(fillRule);
+    mPath->StreamToSink(tmpPathBuilder);
+    mPath = tmpPathBuilder->Finish();
+  } else if (mPath->GetFillRule() != fillRule) {
+    RefPtr<PathBuilder> tmpPathBuilder = mPath->CopyToBuilder(fillRule);
+    mPath = tmpPathBuilder->Finish();
+  }
+
+  return mPath;
+}
+
+void
+CanvasPath::EnsurePathBuilder() const
+{
+  if (mPathBuilder) {
+    return;
+  }
+
+  // if there is not pathbuilder, there must be a path
+  MOZ_ASSERT(mPath);
+  mPathBuilder = mPath->CopyToBuilder();
+  mPath = nullptr;
 }
 
 }

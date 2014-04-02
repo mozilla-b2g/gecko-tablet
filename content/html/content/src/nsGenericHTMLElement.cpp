@@ -7,6 +7,7 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/EventListenerManager.h"
+#include "mozilla/EventStateManager.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/Likely.h"
 
@@ -60,7 +61,6 @@
 #include "nsString.h"
 #include "nsUnicharUtils.h"
 #include "nsGkAtoms.h"
-#include "nsEventStateManager.h"
 #include "nsIDOMEvent.h"
 #include "nsDOMCSSDeclaration.h"
 #include "nsITextControlFrame.h"
@@ -766,7 +766,7 @@ nsGenericHTMLElement::GetEventListenerManagerForAttr(nsIAtom* aAttrName,
 #define FORWARDED_EVENT(name_, id_, type_, struct_) \
        || nsGkAtoms::on##name_ == aAttrName
 #define WINDOW_EVENT FORWARDED_EVENT
-#include "nsEventNameList.h" // IWYU pragma: keep
+#include "mozilla/EventNameList.h" // IWYU pragma: keep
 #undef WINDOW_EVENT
 #undef FORWARDED_EVENT
 #undef EVENT
@@ -872,7 +872,7 @@ nsGenericHTMLElement::SetOn##name_(EventHandlerNonNull* handler)              \
                                                                               \
   return nsINode::SetOn##name_(handler);                                      \
 }
-#include "nsEventNameList.h" // IWYU pragma: keep
+#include "mozilla/EventNameList.h" // IWYU pragma: keep
 #undef ERROR_EVENT
 #undef FORWARDED_EVENT
 #undef EVENT
@@ -2711,7 +2711,7 @@ nsGenericHTMLElement::RegUnRegAccessKey(bool aDoReg)
   nsPresContext *presContext = GetPresContext();
 
   if (presContext) {
-    nsEventStateManager *esm = presContext->EventStateManager();
+    EventStateManager* esm = presContext->EventStateManager();
 
     // Register or unregister as appropriate.
     if (aDoReg) {
@@ -3142,13 +3142,42 @@ nsDOMSettableTokenListPropertyDestructor(void *aObject, nsIAtom *aProperty,
 {
   nsDOMSettableTokenList* list =
     static_cast<nsDOMSettableTokenList*>(aPropertyValue);
-  list->DropReference();
   NS_RELEASE(list);
+}
+
+static nsIAtom** sPropertiesToTraverseAndUnlink[] =
+  {
+    &nsGkAtoms::microdataProperties,
+    &nsGkAtoms::itemtype,
+    &nsGkAtoms::itemref,
+    &nsGkAtoms::itemprop,
+    &nsGkAtoms::sandbox,
+    nullptr
+  };
+
+// static
+nsIAtom***
+nsGenericHTMLElement::PropertiesToTraverseAndUnlink()
+{
+  return sPropertiesToTraverseAndUnlink;
 }
 
 nsDOMSettableTokenList*
 nsGenericHTMLElement::GetTokenList(nsIAtom* aAtom)
 {
+#ifdef DEBUG
+    nsIAtom*** props =
+      nsGenericHTMLElement::PropertiesToTraverseAndUnlink();
+    bool found = false;
+    for (uint32_t i = 0; props[i]; ++i) {
+      if (*props[i] == aAtom) {
+        found = true;
+        break;
+      }
+    }
+    MOZ_ASSERT(found, "Trying to use an unknown tokenlist!");
+#endif
+
   nsDOMSettableTokenList* list = nullptr;
   if (HasProperties()) {
     list = static_cast<nsDOMSettableTokenList*>(GetProperty(aAtom));

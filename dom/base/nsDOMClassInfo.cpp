@@ -23,6 +23,7 @@
 #include "xpcprivate.h"
 #include "XPCWrapper.h"
 
+#include "mozilla/DOMEventTargetHelper.h"
 #include "mozilla/dom/RegisterBindings.h"
 
 #include "nscore.h"
@@ -37,7 +38,6 @@
 #include "nsIXPCSecurityManager.h"
 #include "xptcall.h"
 #include "nsTArray.h"
-#include "nsDOMEventTargetHelper.h"
 #include "nsDocument.h" // nsDOMStyleSheetList
 #include "nsDOMBlobBuilder.h"
 
@@ -3498,6 +3498,8 @@ NS_IMETHODIMP
 nsLocationSH::AddProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                           JSObject *obj, jsid aId, jsval *vp, bool *_retval)
 {
+  JS::Rooted<JSObject*> rootedObj(cx, obj);
+
   // Shadowing protection. This will go away when nsLocation moves to the new
   // bindings.
   JS::Rooted<jsid> id(cx, aId);
@@ -3505,6 +3507,9 @@ nsLocationSH::AddProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
     JS_ReportError(cx, "Permission denied to shadow native property");
     return NS_ERROR_FAILURE;
   }
+
+  nsLocation* location = static_cast<nsLocation*>(GetNative(wrapper, rootedObj));
+  location->PreserveWrapper(location);
 
   return NS_OK;
 }
@@ -3516,8 +3521,7 @@ nsEventTargetSH::PreCreate(nsISupports *nativeObj, JSContext *cx,
                            JSObject *aGlobalObj, JSObject **parentObj)
 {
   JS::Rooted<JSObject*> globalObj(cx, aGlobalObj);
-  nsDOMEventTargetHelper *target =
-    nsDOMEventTargetHelper::FromSupports(nativeObj);
+  DOMEventTargetHelper* target = DOMEventTargetHelper::FromSupports(nativeObj);
 
   nsCOMPtr<nsIScriptGlobalObject> native_parent;
   target->GetParentObject(getter_AddRefs(native_parent));
@@ -3539,8 +3543,7 @@ nsEventTargetSH::AddProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
 void
 nsEventTargetSH::PreserveWrapper(nsISupports *aNative)
 {
-  nsDOMEventTargetHelper *target =
-    nsDOMEventTargetHelper::FromSupports(aNative);
+  DOMEventTargetHelper* target = DOMEventTargetHelper::FromSupports(aNative);
   target->PreserveWrapper(aNative);
 }
 

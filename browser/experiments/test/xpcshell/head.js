@@ -12,18 +12,48 @@ Cu.import("resource://services-sync/healthreport.jsm", this);
 Cu.import("resource://testing-common/services/healthreport/utils.jsm", this);
 Cu.import("resource://gre/modules/services/healthreport/providers.jsm");
 
+function getExperimentPath(base) {
+  let p = do_get_cwd();
+  p.append(base);
+  return p.path;
+}
+
+function sha1File(path) {
+  let f = Cc["@mozilla.org/file/local;1"]
+            .createInstance(Ci.nsILocalFile);
+  f.initWithPath(path);
+  let hasher = Cc["@mozilla.org/security/hash;1"]
+                 .createInstance(Ci.nsICryptoHash);
+  hasher.init(hasher.SHA1);
+
+  let is = Cc["@mozilla.org/network/file-input-stream;1"]
+             .createInstance(Ci.nsIFileInputStream);
+  is.init(f, -1, 0, 0);
+  hasher.updateFromStream(is, Math.pow(2, 32) - 1);
+  is.close();
+  let bytes = hasher.finish(false);
+
+  return [("0" + bytes.charCodeAt(byte).toString(16)).slice(-2)
+          for (byte in bytes)]
+         .join("");
+}
+
 const EXPERIMENT1_ID       = "test-experiment-1@tests.mozilla.org";
-const EXPERIMENT1_XPI_SHA1 = "sha1:08c4d3ef1d0fc74faa455e85106ef0bc8cf8ca90";
 const EXPERIMENT1_XPI_NAME = "experiment-1.xpi";
 const EXPERIMENT1_NAME     = "Test experiment 1";
+const EXPERIMENT1_PATH     = getExperimentPath(EXPERIMENT1_XPI_NAME);
+const EXPERIMENT1_XPI_SHA1 = "sha1:" + sha1File(EXPERIMENT1_PATH);
 
-const EXPERIMENT1A_XPI_SHA1 = "sha1:2b8d14e3e06a54d5ce628fe3598cbb364cff9e6b";
+
 const EXPERIMENT1A_XPI_NAME = "experiment-1a.xpi";
 const EXPERIMENT1A_NAME     = "Test experiment 1.1";
+const EXPERIMENT1A_PATH     = getExperimentPath(EXPERIMENT1A_XPI_NAME);
+const EXPERIMENT1A_XPI_SHA1 = "sha1:" + sha1File(EXPERIMENT1A_PATH);
 
 const EXPERIMENT2_ID       = "test-experiment-2@tests.mozilla.org"
-const EXPERIMENT2_XPI_SHA1 = "sha1:81877991ec70360fb48db84c34a9b2da7aa41d6a";
 const EXPERIMENT2_XPI_NAME = "experiment-2.xpi";
+const EXPERIMENT2_PATH     = getExperimentPath(EXPERIMENT2_XPI_NAME);
+const EXPERIMENT2_XPI_SHA1 = "sha1:" + sha1File(EXPERIMENT2_PATH);
 
 const EXPERIMENT3_ID       = "test-experiment-3@tests.mozilla.org";
 const EXPERIMENT4_ID       = "test-experiment-4@tests.mozilla.org";
@@ -105,6 +135,18 @@ function dateToSeconds(date) {
   return date.getTime() / 1000;
 }
 
+let gGlobalScope = this;
+function loadAddonManager() {
+  let ns = {};
+  Cu.import("resource://gre/modules/Services.jsm", ns);
+  let head = "../../../../toolkit/mozapps/extensions/test/xpcshell/head_addons.js";
+  let file = do_get_file(head);
+  let uri = ns.Services.io.newFileURI(file);
+  ns.Services.scriptloader.loadSubScript(uri.spec, gGlobalScope);
+  createAppInfo("xpcshell@tests.mozilla.org", "XPCShell", "1", "1.9.2");
+  startupManager();
+}
+
 // Install addon and return a Promise<boolean> that is
 // resolve with true on success, false otherwise.
 function installAddon(url, hash) {
@@ -160,11 +202,19 @@ function uninstallAddon(id) {
   return deferred.promise;
 }
 
-function createAppInfo(options) {
+function getExperimentAddons() {
+  let deferred = Promise.defer();
+
+  AddonManager.getAddonsByTypes(["experiment"], deferred.resolve);
+
+  return deferred.promise;
+}
+
+function createAppInfo(optionsIn) {
   const XULAPPINFO_CONTRACTID = "@mozilla.org/xre/app-info;1";
   const XULAPPINFO_CID = Components.ID("{c763b610-9d49-455a-bbd2-ede71682a1ac}");
 
-  let options = options || {};
+  let options = optionsIn || {};
   let id = options.id || "xpcshell@tests.mozilla.org";
   let name = options.name || "XPCShell";
   let version = options.version || "1.0";

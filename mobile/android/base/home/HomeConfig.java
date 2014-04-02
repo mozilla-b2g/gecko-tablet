@@ -608,12 +608,14 @@ public final class HomeConfig {
         private final ItemType mItemType;
         private final ItemHandler mItemHandler;
         private final String mBackImageUrl;
+        private final String mFilter;
 
         private static final String JSON_KEY_TYPE = "type";
         private static final String JSON_KEY_DATASET = "dataset";
         private static final String JSON_KEY_ITEM_TYPE = "itemType";
         private static final String JSON_KEY_ITEM_HANDLER = "itemHandler";
         private static final String JSON_KEY_BACK_IMAGE_URL = "backImageUrl";
+        private static final String JSON_KEY_FILTER = "filter";
 
         public ViewConfig(JSONObject json) throws JSONException, IllegalArgumentException {
             mType = ViewType.fromId(json.getString(JSON_KEY_TYPE));
@@ -621,6 +623,7 @@ public final class HomeConfig {
             mItemType = ItemType.fromId(json.getString(JSON_KEY_ITEM_TYPE));
             mItemHandler = ItemHandler.fromId(json.getString(JSON_KEY_ITEM_HANDLER));
             mBackImageUrl = json.optString(JSON_KEY_BACK_IMAGE_URL, null);
+            mFilter = json.optString(JSON_KEY_FILTER, null);
 
             validate();
         }
@@ -632,6 +635,7 @@ public final class HomeConfig {
             mItemType = (ItemType) in.readParcelable(getClass().getClassLoader());
             mItemHandler = (ItemHandler) in.readParcelable(getClass().getClassLoader());
             mBackImageUrl = in.readString();
+            mFilter = in.readString();
 
             validate();
         }
@@ -642,17 +646,19 @@ public final class HomeConfig {
             mItemType = viewConfig.mItemType;
             mItemHandler = viewConfig.mItemHandler;
             mBackImageUrl = viewConfig.mBackImageUrl;
+            mFilter = viewConfig.mFilter;
 
             validate();
         }
 
         public ViewConfig(ViewType type, String datasetId, ItemType itemType,
-                          ItemHandler itemHandler, String backImageUrl) {
+                          ItemHandler itemHandler, String backImageUrl, String filter) {
             mType = type;
             mDatasetId = datasetId;
             mItemType = itemType;
             mItemHandler = itemHandler;
             mBackImageUrl = backImageUrl;
+            mFilter = filter;
 
             validate();
         }
@@ -695,6 +701,10 @@ public final class HomeConfig {
             return mBackImageUrl;
         }
 
+        public String getFilter() {
+            return mFilter;
+        }
+
         public JSONObject toJSON() throws JSONException {
             final JSONObject json = new JSONObject();
 
@@ -705,6 +715,10 @@ public final class HomeConfig {
 
             if (!TextUtils.isEmpty(mBackImageUrl)) {
                 json.put(JSON_KEY_BACK_IMAGE_URL, mBackImageUrl);
+            }
+
+            if (!TextUtils.isEmpty(mFilter)) {
+                json.put(JSON_KEY_FILTER, mFilter);
             }
 
             return json;
@@ -722,6 +736,7 @@ public final class HomeConfig {
             dest.writeParcelable(mItemType, 0);
             dest.writeParcelable(mItemHandler, 0);
             dest.writeString(mBackImageUrl);
+            dest.writeString(mFilter);
         }
 
         public static final Creator<ViewConfig> CREATOR = new Creator<ViewConfig>() {
@@ -847,17 +862,39 @@ public final class HomeConfig {
      * method.
      */
     public static class State implements Iterable<PanelConfig> {
-        private final HomeConfig mHomeConfig;
+        private HomeConfig mHomeConfig;
         private final List<PanelConfig> mPanelConfigs;
+        private final boolean mIsDefault;
 
-        private State(HomeConfig homeConfig, List<PanelConfig> panelConfigs) {
+        State(List<PanelConfig> panelConfigs, boolean isDefault) {
+            this(null, panelConfigs, isDefault);
+        }
+
+        private State(HomeConfig homeConfig, List<PanelConfig> panelConfigs, boolean isDefault) {
             mHomeConfig = homeConfig;
             mPanelConfigs = Collections.unmodifiableList(panelConfigs);
+            mIsDefault = isDefault;
+        }
+
+        private void setHomeConfig(HomeConfig homeConfig) {
+            if (mHomeConfig != null) {
+                throw new IllegalStateException("Can't set HomeConfig more than once");
+            }
+
+            mHomeConfig = homeConfig;
         }
 
         @Override
         public Iterator<PanelConfig> iterator() {
             return mPanelConfigs.iterator();
+        }
+
+        /**
+         * Returns whether this {@code State} instance represents the default
+         * {@code HomeConfig} configuration or not.
+         */
+        public boolean isDefault() {
+            return mIsDefault;
         }
 
         /**
@@ -894,12 +931,18 @@ public final class HomeConfig {
         private PanelConfig mDefaultPanel;
         private int mEnabledCount;
 
+        private boolean mHasChanged;
+        private final boolean mIsFromDefault;
+
         private Editor(HomeConfig homeConfig, State configState) {
             mHomeConfig = homeConfig;
             mOriginalThread = Thread.currentThread();
             mConfigMap = new HashMap<String, PanelConfig>();
             mConfigOrder = new LinkedList<String>();
             mEnabledCount = 0;
+
+            mHasChanged = false;
+            mIsFromDefault = configState.isDefault();
 
             initFromState(configState);
         }
@@ -1035,6 +1078,7 @@ public final class HomeConfig {
             setPanelIsDisabled(panelConfig, false);
 
             mDefaultPanel = panelConfig;
+            mHasChanged = true;
         }
 
         /**
@@ -1061,6 +1105,8 @@ public final class HomeConfig {
             } else if (mEnabledCount == 1) {
                 setDefault(panelId);
             }
+
+            mHasChanged = true;
         }
 
         /**
@@ -1100,6 +1146,7 @@ public final class HomeConfig {
                 installed = true;
             }
 
+            mHasChanged = true;
             return installed;
         }
 
@@ -1131,6 +1178,7 @@ public final class HomeConfig {
                 findNewDefault();
             }
 
+            mHasChanged = true;
             return true;
         }
 
@@ -1179,6 +1227,7 @@ public final class HomeConfig {
                 updated = true;
             }
 
+            mHasChanged = true;
             return updated;
         }
 
@@ -1194,7 +1243,8 @@ public final class HomeConfig {
             // We're about to save the current state in the background thread
             // so we should use a deep copy of the PanelConfig instances to
             // avoid saving corrupted state.
-            final State newConfigState = new State(mHomeConfig, makeOrderedCopy(true));
+            final State newConfigState =
+                    new State(mHomeConfig, makeOrderedCopy(true), isDefault());
 
             ThreadUtils.getBackgroundHandler().post(new Runnable() {
                 @Override
@@ -1215,13 +1265,24 @@ public final class HomeConfig {
         public State commit() {
             ThreadUtils.assertOnThread(mOriginalThread);
 
-            final State newConfigState = new State(mHomeConfig, makeOrderedCopy(false));
+            final State newConfigState =
+                    new State(mHomeConfig, makeOrderedCopy(false), isDefault());
 
             // This is a synchronous blocking operation, hence no
             // need to deep copy the current PanelConfig instances.
             mHomeConfig.save(newConfigState);
 
             return newConfigState;
+        }
+
+        /**
+         * Returns whether the {@code Editor} represents the default
+         * {@code HomeConfig} configuration without any unsaved changes.
+         */
+        public boolean isDefault() {
+            ThreadUtils.assertOnThread(mOriginalThread);
+
+            return (!mHasChanged && mIsFromDefault);
         }
 
         public boolean isEmpty() {
@@ -1260,15 +1321,15 @@ public final class HomeConfig {
         }
     }
 
-    public interface OnChangeListener {
-        public void onChange();
+    public interface OnReloadListener {
+        public void onReload();
     }
 
     public interface HomeConfigBackend {
-        public List<PanelConfig> load();
-        public void save(List<PanelConfig> entries);
+        public State load();
+        public void save(State configState);
         public String getLocale();
-        public void setOnChangeListener(OnChangeListener listener);
+        public void setOnReloadListener(OnReloadListener listener);
     }
 
     // UUIDs used to create PanelConfigs for default built-in panels
@@ -1284,8 +1345,10 @@ public final class HomeConfig {
     }
 
     public State load() {
-        final List<PanelConfig> panelConfigs = mBackend.load();
-        return new State(this, panelConfigs);
+        final State configState = mBackend.load();
+        configState.setHomeConfig(this);
+
+        return configState;
     }
 
     public String getLocale() {
@@ -1293,11 +1356,11 @@ public final class HomeConfig {
     }
 
     public void save(State configState) {
-        mBackend.save(configState.mPanelConfigs);
+        mBackend.save(configState);
     }
 
-    public void setOnChangeListener(OnChangeListener listener) {
-        mBackend.setOnChangeListener(listener);
+    public void setOnReloadListener(OnReloadListener listener) {
+        mBackend.setOnReloadListener(listener);
     }
 
     public static PanelConfig createBuiltinPanelConfig(Context context, PanelType panelType) {

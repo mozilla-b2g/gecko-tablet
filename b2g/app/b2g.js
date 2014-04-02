@@ -189,7 +189,7 @@ pref("privacy.item.syncAccount", true);
 // base url for the wifi geolocation network provider
 pref("geo.provider.use_mls", false);
 pref("geo.cell.scan", true);
-pref("geo.wifi.uri", "https://location.services.mozilla.com/v1/geolocate?key=%MOZ_MOZILLA_API_KEY%");
+pref("geo.wifi.uri", "https://location.services.mozilla.com/v1/geolocate?key=%MOZILLA_API_KEY%");
 
 // enable geo
 pref("geo.enabled", true);
@@ -265,7 +265,7 @@ pref("ui.highlight", "#b2f2ff");
 pref("editor.singleLine.pasteNewlines", 2);
 
 // threshold where a tap becomes a drag, in 1/240" reference pixels
-// The names of the preferences are to be in sync with nsEventStateManager.cpp
+// The names of the preferences are to be in sync with EventStateManager.cpp
 pref("ui.dragThresholdX", 25);
 pref("ui.dragThresholdY", 25);
 
@@ -852,6 +852,9 @@ pref("gfx.canvas.azure.accelerated", true);
 // Turn on dynamic cache size for Skia
 pref("gfx.canvas.skiagl.dynamic-cache", true);
 
+// Limit skia to canvases the size of the device screen or smaller
+pref("gfx.canvas.max-size-for-skia-gl", -1);
+
 // enable fence with readpixels for SurfaceStream
 pref("gfx.gralloc.fence-with-readpixels", true);
 
@@ -898,6 +901,8 @@ pref("apz.y_skate_size_multiplier", "1.5");
 pref("apz.x_stationary_size_multiplier", "1.5");
 pref("apz.y_stationary_size_multiplier", "1.8");
 pref("apz.enlarge_displayport_when_clipped", true);
+// Use "sticky" axis locking
+pref("apz.axis_lock_mode", 2);
 
 // This preference allows FirefoxOS apps (and content, I think) to force
 // the use of software (instead of hardware accelerated) 2D canvases by

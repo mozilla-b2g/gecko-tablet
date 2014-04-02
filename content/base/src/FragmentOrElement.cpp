@@ -40,7 +40,6 @@
 #include "nsStyleConsts.h"
 #include "nsString.h"
 #include "nsUnicharUtils.h"
-#include "nsEventStateManager.h"
 #include "nsIDOMEvent.h"
 #include "nsDOMCID.h"
 #include "nsIServiceManager.h"
@@ -520,10 +519,6 @@ FragmentOrElement::nsDOMSlots::~nsDOMSlots()
   if (mAttributeMap) {
     mAttributeMap->DropReference();
   }
-
-  if (mClassList) {
-    mClassList->DropReference();
-  }
 }
 
 void
@@ -589,10 +584,7 @@ FragmentOrElement::nsDOMSlots::Unlink(bool aIsXUL)
   mChildrenList = nullptr;
   mUndoManager = nullptr;
   mCustomElementData = nullptr;
-  if (mClassList) {
-    mClassList->DropReference();
-    mClassList = nullptr;
-  }
+  mClassList = nullptr;
 }
 
 size_t
@@ -1251,10 +1243,10 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(FragmentOrElement)
 
   if (tmp->HasProperties()) {
     if (tmp->IsHTML()) {
-      tmp->DeleteProperty(nsGkAtoms::microdataProperties);
-      tmp->DeleteProperty(nsGkAtoms::itemtype);
-      tmp->DeleteProperty(nsGkAtoms::itemref);
-      tmp->DeleteProperty(nsGkAtoms::itemprop);
+      nsIAtom*** props = nsGenericHTMLElement::PropertiesToTraverseAndUnlink();
+      for (uint32_t i = 0; props[i]; ++i) {
+        tmp->DeleteProperty(*props[i]);
+      }
     }
   }
 
@@ -1773,12 +1765,21 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(FragmentOrElement)
       classes.AppendLiteral("'");
     }
 
+    nsAutoCString orphan;
+    if (!tmp->IsInDoc() &&
+        // Ignore xbl:content, which is never in the document and hence always
+        // appears to be orphaned.
+        !tmp->NodeInfo()->Equals(nsGkAtoms::content, kNameSpaceID_XBL)) {
+      orphan.AppendLiteral(" (orphan)");
+    }
+
     const char* nsuri = nsid < ArrayLength(kNSURIs) ? kNSURIs[nsid] : "";
-    PR_snprintf(name, sizeof(name), "FragmentOrElement%s %s%s%s %s",
+    PR_snprintf(name, sizeof(name), "FragmentOrElement%s %s%s%s%s %s",
                 nsuri,
                 localName.get(),
                 NS_ConvertUTF16toUTF8(id).get(),
                 NS_ConvertUTF16toUTF8(classes).get(),
+                orphan.get(),
                 uri.get());
     cb.DescribeRefCountedNode(tmp->mRefCnt.get(), name);
   }
@@ -1798,15 +1799,12 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(FragmentOrElement)
 
   if (tmp->HasProperties()) {
     if (tmp->IsHTML()) {
-      nsISupports* property = static_cast<nsISupports*>
-                                         (tmp->GetProperty(nsGkAtoms::microdataProperties));
-      cb.NoteXPCOMChild(property);
-      property = static_cast<nsISupports*>(tmp->GetProperty(nsGkAtoms::itemref));
-      cb.NoteXPCOMChild(property);
-      property = static_cast<nsISupports*>(tmp->GetProperty(nsGkAtoms::itemprop));
-      cb.NoteXPCOMChild(property);
-      property = static_cast<nsISupports*>(tmp->GetProperty(nsGkAtoms::itemtype));
-      cb.NoteXPCOMChild(property);
+      nsIAtom*** props = nsGenericHTMLElement::PropertiesToTraverseAndUnlink();
+      for (uint32_t i = 0; props[i]; ++i) {
+        nsISupports* property =
+          static_cast<nsISupports*>(tmp->GetProperty(*props[i]));
+        cb.NoteXPCOMChild(property);
+      }
     }
   }
 

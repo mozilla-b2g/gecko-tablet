@@ -1147,8 +1147,8 @@ JSFunction::createScriptForLazilyInterpretedFunction(JSContext *cx, HandleFuncti
         JS_ASSERT(lazy->source()->hasSourceData());
 
         // Parse and compile the script from source.
-        SourceDataCache::AutoSuppressPurge asp(cx);
-        const jschar *chars = lazy->source()->chars(cx, asp);
+        SourceDataCache::AutoHoldEntry holder;
+        const jschar *chars = lazy->source()->chars(cx, holder);
         if (!chars)
             return false;
 
@@ -1588,9 +1588,6 @@ FunctionConstructor(JSContext *cx, unsigned argc, Value *vp, GeneratorKind gener
     JS::Anchor<JSString *> strAnchor(str);
     const jschar *chars = linear->chars();
     size_t length = linear->length();
-
-    /* Protect inlined chars from root analysis poisoning. */
-    SkipRoot skip(cx, &chars);
 
     /*
      * NB: (new Function) is not lexically closed by its caller, it's just an

@@ -250,7 +250,7 @@ public:
   using nsINode::SetOn##name_;                                                \
   already_AddRefed<mozilla::dom::EventHandlerNonNull> GetOn##name_();         \
   void SetOn##name_(mozilla::dom::EventHandlerNonNull* handler);
-#include "nsEventNameList.h" // IWYU pragma: keep
+#include "mozilla/EventNameList.h" // IWYU pragma: keep
 #undef ERROR_EVENT
 #undef FORWARDED_EVENT
 #undef EVENT
@@ -296,6 +296,7 @@ public:
     return rcFrame.height;
   }
 
+  static nsIAtom*** PropertiesToTraverseAndUnlink();
 protected:
   // These methods are used to implement element-specific behavior of Get/SetItemValue
   // when an element has @itemprop but no @itemscope.

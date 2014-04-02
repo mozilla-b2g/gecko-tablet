@@ -10,7 +10,7 @@
 #endif
       >
     <uses-sdk android:minSdkVersion="8"
-              android:targetSdkVersion="16"/>
+              android:targetSdkVersion="@ANDROID_TARGET_SDK@"/>
 
 #include ../services/manifests/AnnouncementsAndroidManifest_permissions.xml.in
 #include ../services/manifests/FxAccountAndroidManifest_permissions.xml.in
@@ -267,8 +267,8 @@
 
 #include ../services/manifests/AnnouncementsAndroidManifest_activities.xml.in
 #include ../services/manifests/FxAccountAndroidManifest_activities.xml.in
-#include ../services/manifests/SyncAndroidManifest_activities.xml.in
 #include ../services/manifests/HealthReportAndroidManifest_activities.xml.in
+#include ../services/manifests/SyncAndroidManifest_activities.xml.in
 
 #if MOZ_CRASHREPORTER
   <activity android:name="org.mozilla.gecko.CrashReporter"

@@ -302,10 +302,13 @@ class RValueAllocation
     };
 };
 
+class RecoverWriter;
+
 // Collects snapshots in a contiguous buffer, which is copied into IonScript
 // memory after code generation.
 class SnapshotWriter
 {
+    friend class RecoverWriter;
     CompactBufferWriter writer_;
     CompactBufferWriter allocWriter_;
 
@@ -315,30 +318,30 @@ class SnapshotWriter
     typedef HashMap<RVA, uint32_t, RVA::Hasher, SystemAllocPolicy> RValueAllocMap;
     RValueAllocMap allocMap_;
 
-    // These are only used to assert sanity.
-    uint32_t nallocs_;
+    // This is only used to assert sanity.
     uint32_t allocWritten_;
-    uint32_t nframes_;
-    uint32_t framesWritten_;
+
+    // Used to report size of the snapshot in the spew messages.
     SnapshotOffset lastStart_;
 
   public:
     bool init();
 
-    SnapshotOffset startSnapshot(uint32_t frameCount, BailoutKind kind, bool resumeAfter);
-    void startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, uint32_t exprStack);
+    SnapshotOffset startSnapshot(RecoverOffset recoverOffset, BailoutKind kind);
 #ifdef TRACK_SNAPSHOTS
-    void trackFrame(uint32_t pcOpcode, uint32_t mirOpcode, uint32_t mirId,
-                    uint32_t lirOpcode, uint32_t lirId);
+    void trackSnapshot(uint32_t pcOpcode, uint32_t mirOpcode, uint32_t mirId,
+                       uint32_t lirOpcode, uint32_t lirId);
 #endif
-    void endFrame();
-
     bool add(const RValueAllocation &slot);
 
+    uint32_t allocWritten() const {
+        return allocWritten_;
+    }
     void endSnapshot();
 
     bool oom() const {
-        return writer_.oom() || writer_.length() >= MAX_BUFFER_SIZE;
+        return writer_.oom() || writer_.length() >= MAX_BUFFER_SIZE ||
+            allocWriter_.oom() || allocWriter_.length() >= MAX_BUFFER_SIZE;
     }
 
     size_t listSize() const {
@@ -356,23 +359,49 @@ class SnapshotWriter
     }
 };
 
+class RecoverWriter
+{
+    CompactBufferWriter writer_;
+
+    uint32_t nframes_;
+    uint32_t framesWritten_;
+
+  public:
+    SnapshotOffset startRecover(uint32_t frameCount, bool resumeAfter);
+
+    void writeFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, uint32_t exprStack);
+
+    void endRecover();
+
+    size_t size() const {
+        return writer_.length();
+    }
+    const uint8_t *buffer() const {
+        return writer_.buffer();
+    }
+
+    bool oom() const {
+        return writer_.oom() || writer_.length() >= MAX_BUFFER_SIZE;
+    }
+};
+
+class RecoverReader;
+
 // A snapshot reader reads the entries out of the compressed snapshot buffer in
 // a script. These entries describe the equivalent interpreter frames at a given
 // position in JIT code. Each entry is an Ion's value allocations, used to
 // recover the corresponding Value from an Ion frame.
 class SnapshotReader
 {
+    friend class RecoverReader;
+
     CompactBufferReader reader_;
     CompactBufferReader allocReader_;
     const uint8_t* allocTable_;
 
-    uint32_t pcOffset_;           // Offset from script->code.
-    uint32_t allocCount_;         // Number of slots.
-    uint32_t frameCount_;
     BailoutKind bailoutKind_;
-    uint32_t framesRead_;         // Number of frame headers that have been read.
     uint32_t allocRead_;          // Number of slots that have been read.
-    bool resumeAfter_;
+    RecoverOffset recoverOffset_; // Offset of the recover instructions.
 
 #ifdef TRACK_SNAPSHOTS
   private:
@@ -383,6 +412,7 @@ class SnapshotReader
     uint32_t lirId_;
 
   public:
+    void readTrackSnapshot();
     void spewBailingFrom() const;
 #endif
 
@@ -394,33 +424,55 @@ class SnapshotReader
     SnapshotReader(const uint8_t *snapshots, uint32_t offset,
                    uint32_t RVATableSize, uint32_t listSize);
 
-    uint32_t pcOffset() const {
-        return pcOffset_;
-    }
-    uint32_t allocations() const {
-        return allocCount_;
-    }
+    RValueAllocation readAllocation();
+
     BailoutKind bailoutKind() const {
         return bailoutKind_;
     }
-    bool resumeAfter() const {
-        if (moreFrames())
-            return false;
-        return resumeAfter_;
+    RecoverOffset recoverOffset() const {
+        return recoverOffset_;
     }
+};
+
+class RecoverReader
+{
+    CompactBufferReader reader_;
+
+    uint32_t frameCount_;
+    uint32_t framesRead_;         // Number of frame headers that have been read.
+    uint32_t pcOffset_;           // Offset from script->code.
+    uint32_t allocCount_;         // Number of slots.
+    bool resumeAfter_;
+
+  private:
+    void readRecoverHeader();
+    void readFrame(SnapshotReader &snapshot);
+
+  public:
+    RecoverReader(SnapshotReader &snapshot, const uint8_t *recovers, uint32_t size);
+
     bool moreFrames() const {
         return framesRead_ < frameCount_;
     }
-    void nextFrame() {
-        readFrameHeader();
-    }
-    RValueAllocation readAllocation();
-
-    bool moreAllocations() const {
-        return allocRead_ < allocCount_;
+    void nextFrame(SnapshotReader &snapshot) {
+        readFrame(snapshot);
     }
     uint32_t frameCount() const {
         return frameCount_;
+    }
+
+    uint32_t pcOffset() const {
+        return pcOffset_;
+    }
+    bool resumeAfter() const {
+        return resumeAfter_;
+    }
+
+    uint32_t allocations() const {
+        return allocCount_;
+    }
+    bool moreAllocations(const SnapshotReader &snapshot) const {
+        return snapshot.allocRead_ < allocCount_;
     }
 };
 

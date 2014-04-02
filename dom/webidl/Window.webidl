@@ -65,7 +65,9 @@ typedef any Transferable;
 
   // the user agent
   [Throws] readonly attribute Navigator navigator; 
-  //(Not implemented)readonly attribute External external;
+#ifdef HAVE_SIDEBAR
+  [Replaceable, Throws] readonly attribute External external;
+#endif
   [Throws] readonly attribute ApplicationCache applicationCache;
 
   // user prompts
@@ -302,6 +304,9 @@ partial interface Window {
    */
   [Throws] readonly attribute unsigned long long mozPaintCount;
 
+  [Pure]
+           attribute EventHandler onwheel;
+
            attribute EventHandler ondevicemotion;
            attribute EventHandler ondeviceorientation;
            attribute EventHandler ondeviceproximity;
@@ -348,6 +353,13 @@ partial interface Window {
   readonly attribute Console console;
 };
 
+#ifdef HAVE_SIDEBAR
+// Mozilla extension
+partial interface Window {
+  [Replaceable, Throws]
+  readonly attribute (External or WindowProxy) sidebar;
+};
+#endif
 
 [ChromeOnly] interface ChromeWindow {
   [Func="nsGlobalWindow::IsChromeWindow"]

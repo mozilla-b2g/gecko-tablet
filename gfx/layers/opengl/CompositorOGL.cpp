@@ -282,7 +282,7 @@ CompositorOGL::Initialize()
       LOCAL_GL_NONE
     };
 
-    if (!mGLContext->IsGLES2()) {
+    if (!mGLContext->IsGLES()) {
       // No TEXTURE_RECTANGLE_ARB available on ES2
       textureTargets[1] = LOCAL_GL_TEXTURE_RECTANGLE_ARB;
     }
@@ -606,17 +606,13 @@ CalculatePOTSize(const IntSize& aSize, GLContext* gl)
 }
 
 void
-CompositorOGL::clearFBRect(const gfx::Rect* aRect)
+CompositorOGL::ClearRect(const gfx::Rect& aRect)
 {
-  if (!aRect) {
-    return;
-  }
-
   // Map aRect to OGL coordinates, origin:bottom-left
-  GLint y = mHeight - (aRect->y + aRect->height);
+  GLint y = mHeight - (aRect.y + aRect.height);
 
   ScopedGLState scopedScissorTestState(mGLContext, LOCAL_GL_SCISSOR_TEST, true);
-  ScopedScissorRect autoScissorRect(mGLContext, aRect->x, y, aRect->width, aRect->height);
+  ScopedScissorRect autoScissorRect(mGLContext, aRect.x, y, aRect.width, aRect.height);
   mGLContext->fClearColor(0.0, 0.0, 0.0, 0.0);
   mGLContext->fClear(LOCAL_GL_COLOR_BUFFER_BIT | LOCAL_GL_DEPTH_BUFFER_BIT);
 }
@@ -740,7 +736,7 @@ CompositorOGL::CreateFBOWithTexture(const IntRect& aRect, bool aCopyFromSource,
       GetFrameBufferInternalFormat(gl(), aSourceFrameBuffer, mWidget);
 
     bool isFormatCompatibleWithRGBA
-        = gl()->IsGLES2() ? (format == LOCAL_GL_RGBA)
+        = gl()->IsGLES() ? (format == LOCAL_GL_RGBA)
                           : true;
 
     if (isFormatCompatibleWithRGBA) {
@@ -1194,19 +1190,19 @@ CompositorOGL::EndFrame()
   // Unbind all textures
   mGLContext->fActiveTexture(LOCAL_GL_TEXTURE0);
   mGLContext->fBindTexture(LOCAL_GL_TEXTURE_2D, 0);
-  if (!mGLContext->IsGLES2()) {
+  if (!mGLContext->IsGLES()) {
     mGLContext->fBindTexture(LOCAL_GL_TEXTURE_RECTANGLE_ARB, 0);
   }
 
   mGLContext->fActiveTexture(LOCAL_GL_TEXTURE1);
   mGLContext->fBindTexture(LOCAL_GL_TEXTURE_2D, 0);
-  if (!mGLContext->IsGLES2()) {
+  if (!mGLContext->IsGLES()) {
     mGLContext->fBindTexture(LOCAL_GL_TEXTURE_RECTANGLE_ARB, 0);
   }
 
   mGLContext->fActiveTexture(LOCAL_GL_TEXTURE2);
   mGLContext->fBindTexture(LOCAL_GL_TEXTURE_2D, 0);
-  if (!mGLContext->IsGLES2()) {
+  if (!mGLContext->IsGLES()) {
     mGLContext->fBindTexture(LOCAL_GL_TEXTURE_RECTANGLE_ARB, 0);
   }
 }
@@ -1321,7 +1317,7 @@ CompositorOGL::CopyToTarget(DrawTarget *aTarget, const gfx::Matrix& aTransform)
 
   mGLContext->fBindFramebuffer(LOCAL_GL_FRAMEBUFFER, 0);
 
-  if (!mGLContext->IsGLES2()) {
+  if (!mGLContext->IsGLES()) {
     // GLES2 promises that binding to any custom FBO will attach
     // to GL_COLOR_ATTACHMENT0 attachment point.
     mGLContext->fReadBuffer(LOCAL_GL_BACK);

@@ -34,7 +34,6 @@
 #include "nsLayoutUtils.h"
 #include "nsContentUtils.h"
 #include "nsCSSFrameConstructor.h"
-#include "nsEventStateManager.h"
 #include "nsIPopupBoxObject.h"
 #include "nsPIWindowRoot.h"
 #include "nsIReflowCallback.h"
@@ -47,6 +46,7 @@
 #include "nsThemeConstants.h"
 #include "nsDisplayList.h"
 #include "mozilla/EventDispatcher.h"
+#include "mozilla/EventStateManager.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/MouseEvents.h"
@@ -841,7 +841,7 @@ nsMenuPopupFrame::HidePopup(bool aDeselectMenu, nsPopupState aNewState)
   nsEventStates state = mContent->AsElement()->State();
 
   if (state.HasState(NS_EVENT_STATE_HOVER)) {
-    nsEventStateManager *esm = PresContext()->EventStateManager();
+    EventStateManager* esm = PresContext()->EventStateManager();
     esm->SetContentState(nullptr, NS_EVENT_STATE_HOVER);
   }
 
@@ -1334,13 +1334,14 @@ nsMenuPopupFrame::SetPopupPosition(nsIFrame* aAnchorFrame, bool aIsMove, bool aS
                  "Popup is offscreen");
   }
 
+  // snap the popup's position in screen coordinates to device pixels,
+  // see bug 622507, bug 961431
+  screenPoint.x = presContext->RoundAppUnitsToNearestDevPixels(screenPoint.x);
+  screenPoint.y = presContext->RoundAppUnitsToNearestDevPixels(screenPoint.y);
+
   // determine the x and y position of the view by subtracting the desired
   // screen position from the screen position of the root frame.
   nsPoint viewPoint = screenPoint - rootScreenRect.TopLeft();
-
-  // snap the view's position to device pixels, see bug 622507
-  viewPoint.x = presContext->RoundAppUnitsToNearestDevPixels(viewPoint.x);
-  viewPoint.y = presContext->RoundAppUnitsToNearestDevPixels(viewPoint.y);
 
   nsView* view = GetView();
   NS_ASSERTION(view, "popup with no view");

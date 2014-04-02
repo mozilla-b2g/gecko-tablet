@@ -12,12 +12,12 @@
 #include "nsEventShell.h"
 #include "Role.h"
 
-#include "nsEventStateManager.h"
 #include "nsFocusManager.h"
+#include "mozilla/EventStateManager.h"
 #include "mozilla/dom/Element.h"
 
-namespace dom = mozilla::dom;
-using namespace mozilla::a11y;
+namespace mozilla {
+namespace a11y {
 
 FocusManager::FocusManager()
 {
@@ -240,9 +240,11 @@ FocusManager::ProcessDOMFocus(nsINode* aTarget)
 
   DocAccessible* document =
     GetAccService()->GetDocAccessible(aTarget->OwnerDoc());
+  if (!document)
+    return;
 
   Accessible* target = document->GetAccessibleEvenIfNotInMapOrContainer(aTarget);
-  if (target && document) {
+  if (target) {
     // Check if still focused. Otherwise we can end up with storing the active
     // item for control that isn't focused anymore.
     nsINode* focusedNode = FocusedDOMNode();
@@ -392,8 +394,9 @@ FocusManager::FocusedDOMNode() const
   // residing in chrome process because it means an element in content process
   // keeps the focus.
   if (focusedElm) {
-    if (nsEventStateManager::IsRemoteTarget(focusedElm))
+    if (EventStateManager::IsRemoteTarget(focusedElm)) {
       return nullptr;
+    }
     return focusedElm;
   }
 
@@ -408,3 +411,6 @@ FocusManager::FocusedDOMDocument() const
   nsINode* focusedNode = FocusedDOMNode();
   return focusedNode ? focusedNode->OwnerDoc() : nullptr;
 }
+
+} // namespace a11y
+} // namespace mozilla

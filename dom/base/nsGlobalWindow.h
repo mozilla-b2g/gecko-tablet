@@ -94,7 +94,6 @@ class nsScreen;
 class nsHistory;
 class nsGlobalWindowObserver;
 class nsGlobalWindow;
-class nsDOMEventTargetHelper;
 class nsDOMWindowUtils;
 class nsIIdleService;
 struct nsIntSize;
@@ -103,14 +102,17 @@ struct nsRect;
 class nsWindowSizes;
 
 namespace mozilla {
+class DOMEventTargetHelper;
 class Selection;
 namespace dom {
 class BarProp;
 class Console;
+class External;
 class Function;
 class Gamepad;
 class MediaQueryList;
 class Navigator;
+class OwningExternalOrWindowProxy;
 class SpeechSynthesis;
 class WakeLock;
 namespace indexedDB {
@@ -682,8 +684,8 @@ public:
 
   void UnmarkGrayTimers();
 
-  void AddEventTargetObject(nsDOMEventTargetHelper* aObject);
-  void RemoveEventTargetObject(nsDOMEventTargetHelper* aObject);
+  void AddEventTargetObject(mozilla::DOMEventTargetHelper* aObject);
+  void RemoveEventTargetObject(mozilla::DOMEventTargetHelper* aObject);
 
   void NotifyIdleObserver(IdleObserverHolder* aIdleObserverHolder,
                           bool aCallOnidle);
@@ -766,7 +768,7 @@ public:
   }
 #define WINDOW_ONLY_EVENT EVENT
 #define TOUCH_EVENT EVENT
-#include "nsEventNameList.h"
+#include "mozilla/EventNameList.h"
 #undef TOUCH_EVENT
 #undef WINDOW_ONLY_EVENT
 #undef BEFOREUNLOAD_EVENT
@@ -822,6 +824,10 @@ public:
   nsIDOMOfflineResourceList* GetApplicationCache(mozilla::ErrorResult& aError);
 
   mozilla::dom::Console* GetConsole(mozilla::ErrorResult& aRv);
+
+  void GetSidebar(mozilla::dom::OwningExternalOrWindowProxy& aResult,
+                  mozilla::ErrorResult& aRv);
+  already_AddRefed<mozilla::dom::External> GetExternal(mozilla::ErrorResult& aRv);
 
 protected:
   bool AlertOrConfirm(bool aAlert, const nsAString& aMessage,
@@ -1301,8 +1307,6 @@ protected:
 
   inline int32_t DOMMinTimeoutValue() const;
 
-  nsresult CreateOuterObject(nsGlobalWindow* aNewInner);
-  nsresult SetOuterObject(JSContext* aCx, JS::Handle<JSObject*> aOuterObject);
   nsresult CloneStorageEvent(const nsAString& aType,
                              nsCOMPtr<nsIDOMStorageEvent>& aEvent);
 
@@ -1457,6 +1461,11 @@ protected:
   nsGlobalWindowObserver*       mObserver; // Inner windows only.
   nsCOMPtr<nsIDOMCrypto>        mCrypto;
   nsRefPtr<mozilla::dom::Console> mConsole;
+  // We need to store an nsISupports pointer to this object because the
+  // mozilla::dom::External class doesn't exist on b2g and using the type
+  // forward declared here means that ~nsGlobalWindow wouldn't compile because
+  // it wouldn't see the ~External function's declaration.
+  nsCOMPtr<nsISupports>         mExternal;
 
   nsCOMPtr<nsIDOMStorage>      mLocalStorage;
   nsCOMPtr<nsIDOMStorage>      mSessionStorage;
@@ -1537,7 +1546,7 @@ protected:
   // currently enabled on this window.
   bool                          mAreDialogsEnabled;
 
-  nsTHashtable<nsPtrHashKey<nsDOMEventTargetHelper> > mEventTargetObjects;
+  nsTHashtable<nsPtrHashKey<mozilla::DOMEventTargetHelper> > mEventTargetObjects;
 
   nsTArray<uint32_t> mEnabledSensors;
 

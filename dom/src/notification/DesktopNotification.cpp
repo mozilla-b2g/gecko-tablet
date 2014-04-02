@@ -101,7 +101,7 @@ DesktopNotification::PostDesktopNotification()
       ops.mTextClickable = true;
       ops.mManifestURL = manifestUrl;
 
-      if (!ops.ToObject(cx, JS::NullPtr(), &val)) {
+      if (!ops.ToObject(cx, &val)) {
         return NS_ERROR_FAILURE;
       }
 
@@ -138,7 +138,7 @@ DesktopNotification::DesktopNotification(const nsAString & title,
                                          const nsAString & iconURL,
                                          nsPIDOMWindow *aWindow,
                                          nsIPrincipal* principal)
-  : nsDOMEventTargetHelper(aWindow)
+  : DOMEventTargetHelper(aWindow)
   , mTitle(title)
   , mDescription(description)
   , mIconURL(iconURL)

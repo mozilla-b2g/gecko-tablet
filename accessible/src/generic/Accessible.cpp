@@ -111,8 +111,8 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE_WITH_DESTROY(Accessible, LastRelease())
 Accessible::Accessible(nsIContent* aContent, DocAccessible* aDoc) :
   mContent(aContent), mDoc(aDoc),
   mParent(nullptr), mIndexInParent(-1), mChildrenFlags(eChildrenUninitialized),
-  mStateFlags(0), mType(0), mGenericTypes(0), mIndexOfEmbeddedChild(-1),
-  mRoleMapEntry(nullptr)
+  mStateFlags(0), mContextFlags(0), mType(0), mGenericTypes(0),
+  mIndexOfEmbeddedChild(-1), mRoleMapEntry(nullptr)
 {
 #ifdef NS_DEBUG_X
    {
@@ -2522,6 +2522,7 @@ Accessible::BindToParent(Accessible* aParent, uint32_t aIndexInParent)
     if (mParent != aParent) {
       NS_ERROR("Adopting child!");
       mParent->RemoveChild(this);
+      mParent->InvalidateChildrenGroupInfo();
     } else {
       NS_ERROR("Binding to the same parent!");
       return;
@@ -2530,16 +2531,26 @@ Accessible::BindToParent(Accessible* aParent, uint32_t aIndexInParent)
 
   mParent = aParent;
   mIndexInParent = aIndexInParent;
+
+  mParent->InvalidateChildrenGroupInfo();
+
+  // Note: this is currently only used for richlistitems and their children.
+  if (mParent->HasNameDependentParent() || mParent->IsXULListItem())
+    mContextFlags |= eHasNameDependentParent;
+  else
+    mContextFlags &= ~eHasNameDependentParent;
 }
 
 // Accessible protected
 void
 Accessible::UnbindFromParent()
 {
+  mParent->InvalidateChildrenGroupInfo();
   mParent = nullptr;
   mIndexInParent = -1;
   mIndexOfEmbeddedChild = -1;
   mGroupInfo = nullptr;
+  mContextFlags &= ~eHasNameDependentParent;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -3127,11 +3138,27 @@ Accessible::GetActionRule()
 AccGroupInfo*
 Accessible::GetGroupInfo()
 {
-  if (mGroupInfo)
+  if (mGroupInfo){
+    if (HasDirtyGroupInfo()) {
+      mGroupInfo->Update();
+      SetDirtyGroupInfo(false);
+    }
+
     return mGroupInfo;
+  }
 
   mGroupInfo = AccGroupInfo::CreateGroupInfo(this);
   return mGroupInfo;
+}
+
+void
+Accessible::InvalidateChildrenGroupInfo()
+{
+  uint32_t length = mChildren.Length();
+  for (uint32_t i = 0; i < length; i++) {
+    Accessible* child = mChildren[i];
+    child->SetDirtyGroupInfo(true);
+  }
 }
 
 void
@@ -3215,13 +3242,15 @@ Accessible::GetLevelInternal()
 void
 Accessible::StaticAsserts() const
 {
-  static_assert(eLastChildrenFlag <= (2 << kChildrenFlagsBits) - 1,
+  static_assert(eLastChildrenFlag <= (1 << kChildrenFlagsBits) - 1,
                 "Accessible::mChildrenFlags was oversized by eLastChildrenFlag!");
-  static_assert(eLastStateFlag <= (2 << kStateFlagsBits) - 1,
+  static_assert(eLastStateFlag <= (1 << kStateFlagsBits) - 1,
                 "Accessible::mStateFlags was oversized by eLastStateFlag!");
-  static_assert(eLastAccType <= (2 << kTypeBits) - 1,
+  static_assert(eLastAccType <= (1 << kTypeBits) - 1,
                 "Accessible::mType was oversized by eLastAccType!");
-  static_assert(eLastAccGenericType <= (2 << kGenericTypesBits) - 1,
+  static_assert(eLastContextFlag <= (1 << kContextFlagsBits) - 1,
+                "Accessible::mContextFlags was oversized by eLastContextFlag!");
+  static_assert(eLastAccGenericType <= (1 << kGenericTypesBits) - 1,
                 "Accessible::mGenericType was oversized by eLastAccGenericType!");
 }
 

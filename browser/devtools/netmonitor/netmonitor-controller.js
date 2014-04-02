@@ -117,6 +117,12 @@ const {Tooltip} = require("devtools/shared/widgets/Tooltip");
 XPCOMUtils.defineLazyModuleGetter(this, "Chart",
   "resource:///modules/devtools/Chart.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "Curl",
+  "resource:///modules/devtools/Curl.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "CurlUtils",
+  "resource:///modules/devtools/Curl.jsm");
+
 XPCOMUtils.defineLazyModuleGetter(this, "Task",
   "resource://gre/modules/Task.jsm");
 
@@ -126,22 +132,16 @@ XPCOMUtils.defineLazyModuleGetter(this, "PluralForm",
 XPCOMUtils.defineLazyModuleGetter(this, "DevToolsUtils",
   "resource://gre/modules/devtools/DevToolsUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "devtools",
-  "resource://gre/modules/devtools/Loader.jsm");
+XPCOMUtils.defineLazyServiceGetter(this, "clipboardHelper",
+  "@mozilla.org/widget/clipboardhelper;1", "nsIClipboardHelper");
 
 Object.defineProperty(this, "NetworkHelper", {
   get: function() {
-    return devtools.require("devtools/toolkit/webconsole/network-helper");
+    return require("devtools/toolkit/webconsole/network-helper");
   },
   configurable: true,
   enumerable: true
 });
-
-XPCOMUtils.defineLazyServiceGetter(this, "clipboardHelper",
-  "@mozilla.org/widget/clipboardhelper;1", "nsIClipboardHelper");
-
-XPCOMUtils.defineLazyModuleGetter(this, "Curl",
-  "resource:///modules/devtools/Curl.jsm");
 
 /**
  * Object defining the network monitor controller components.
@@ -191,7 +191,7 @@ let NetMonitorController = {
    * @return object
    *         A promise that is resolved when the monitor finishes connecting.
    */
-  connect: function() {
+  connect: Task.async(function*() {
     if (this._connection) {
       return this._connection;
     }
@@ -207,11 +207,9 @@ let NetMonitorController = {
       this._startMonitoringTab(client, form, deferred.resolve);
     }
 
-    return deferred.promise.then((result) => {
-      window.emit(EVENTS.CONNECTED);
-      return result;
-    });
-  },
+    yield deferred.promise;
+    window.emit(EVENTS.CONNECTED);
+  }),
 
   /**
    * Disconnects the debugger client and removes event handlers as necessary.
@@ -447,9 +445,10 @@ TargetEventsHandler.prototype = {
     switch (aType) {
       case "will-navigate": {
         // Reset UI.
-        NetMonitorView.RequestsMenu.reset();
-        NetMonitorView.Sidebar.toggle(false);
-
+        if (!Services.prefs.getBoolPref("devtools.webconsole.persistlog")) {
+          NetMonitorView.RequestsMenu.reset();
+          NetMonitorView.Sidebar.toggle(false);
+        }
         // Switch to the default network traffic inspector view.
         if (NetMonitorController.getCurrentActivity() == ACTIVITY_TYPE.NONE) {
           NetMonitorView.showNetworkInspectorView();

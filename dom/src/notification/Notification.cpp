@@ -419,7 +419,7 @@ Notification::Notification(const nsAString& aID, const nsAString& aTitle, const 
                            NotificationDirection aDir, const nsAString& aLang,
                            const nsAString& aTag, const nsAString& aIconUrl,
 			   nsPIDOMWindow* aWindow)
-  : nsDOMEventTargetHelper(aWindow),
+  : DOMEventTargetHelper(aWindow),
     mID(aID), mTitle(aTitle), mBody(aBody), mDir(aDir), mLang(aLang),
     mTag(aTag), mIconUrl(aIconUrl), mIsClosed(false)
 {
@@ -583,7 +583,7 @@ Notification::ShowInternal()
         ops.mLang = mLang;
         ops.mTag = mTag;
 
-        if (!ops.ToObject(cx, JS::NullPtr(), &val)) {
+        if (!ops.ToObject(cx, &val)) {
           NS_WARNING("Converting dict to object failed!");
           return;
         }

@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.gecko.tests;
 
 import java.util.HashSet;
@@ -7,7 +11,6 @@ import java.util.concurrent.Callable;
 import org.mozilla.gecko.db.BrowserContract;
 import org.mozilla.gecko.db.BrowserContract.ReadingListItems;
 import org.mozilla.gecko.db.ReadingListProvider;
-import org.mozilla.gecko.db.TransactionalProvider;
 
 import android.content.ContentProvider;
 import android.content.ContentUris;
@@ -56,11 +59,6 @@ public class testReadingListProvider extends ContentProviderTest {
     };
 
     @Override
-    protected int getTestType() {
-        return TEST_MOCHITEST;
-    }
-
-    @Override
     public void setUp() throws Exception {
         super.setUp(sProviderFactory, BrowserContract.READING_LIST_AUTHORITY, DB_NAME);
         for (TestCase test: TESTS_TO_RUN) {
@@ -68,12 +66,13 @@ public class testReadingListProvider extends ContentProviderTest {
         }
     }
 
-    public void testReadingListProvider() throws Exception {
+    public void testReadingListProviderTests() throws Exception {
         for (Runnable test : mTests) {
             setTestName(test.getClass().getSimpleName());
             ensureEmptyDatabase();
             test.run();
         }
+
         // Ensure browser initialization is complete before completing test,
         // so that the minidumps directory is consistently created.
         blockForGeckoReady();
