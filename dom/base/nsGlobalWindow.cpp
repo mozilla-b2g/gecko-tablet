@@ -60,6 +60,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/Debug.h"
 #include "mozilla/EventListenerManager.h"
+#include "mozilla/EventStates.h"
 #include "mozilla/MouseEvents.h"
 #include "AudioChannelService.h"
 
@@ -2487,18 +2488,18 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
       {
         JSAutoCompartment ac(cx, mJSObject);
 
-        JS_SetParent(cx, mJSObject, newInnerWindow->mJSObject);
-
         JS::Rooted<JSObject*> obj(cx, mJSObject);
+        JS::Rooted<JSObject*> newParent(cx, newInnerWindow->mJSObject);
+        JS_SetParent(cx, obj, newParent);
 
         // Inform the nsJSContext, which is the canonical holder of the outer.
         mContext->SetWindowProxy(obj);
 
         NS_ASSERTION(!JS_IsExceptionPending(cx),
                      "We might overwrite a pending exception!");
-        XPCWrappedNativeScope* scope = xpc::GetObjectScope(mJSObject);
+        XPCWrappedNativeScope* scope = xpc::GetObjectScope(obj);
         if (scope->mWaiverWrapperMap) {
-          scope->mWaiverWrapperMap->Reparent(cx, newInnerWindow->mJSObject);
+          scope->mWaiverWrapperMap->Reparent(cx, newParent);
         }
       }
     }
@@ -2914,21 +2915,6 @@ nsGlobalWindow::UpdateParentTarget()
   }
 
   mParentTarget = eventTarget;
-}
-
-bool
-nsGlobalWindow::GetIsTabModalPromptAllowed()
-{
-  MOZ_ASSERT(IsOuterWindow());
-
-  bool allowTabModal = true;
-  if (mDocShell) {
-    nsCOMPtr<nsIContentViewer> cv;
-    mDocShell->GetContentViewer(getter_AddRefs(cv));
-    cv->GetIsTabModalPromptAllowed(&allowTabModal);
-  }
-
-  return allowTabModal;
 }
 
 EventTarget*
@@ -6165,10 +6151,6 @@ nsGlobalWindow::AlertOrConfirm(bool aAlert,
   nsAutoString final;
   nsContentUtils::StripNullChars(aMessage, final);
 
-  // Check if we're being called at a point where we can't use tab-modal
-  // prompts, because something doesn't want reentrancy.
-  bool allowTabModal = GetIsTabModalPromptAllowed();
-
   nsresult rv;
   nsCOMPtr<nsIPromptFactory> promptFac =
     do_GetService("@mozilla.org/prompter;1", &rv);
@@ -6184,9 +6166,10 @@ nsGlobalWindow::AlertOrConfirm(bool aAlert,
     return false;
   }
 
-  nsCOMPtr<nsIWritablePropertyBag2> promptBag = do_QueryInterface(prompt);
-  if (promptBag)
-    promptBag->SetPropertyAsBool(NS_LITERAL_STRING("allowTabModal"), allowTabModal);
+  // Always allow tab modal prompts for alert and confirm.
+  if (nsCOMPtr<nsIWritablePropertyBag2> promptBag = do_QueryInterface(prompt)) {
+    promptBag->SetPropertyAsBool(NS_LITERAL_STRING("allowTabModal"), true);
+  }
 
   bool result = false;
   nsAutoSyncOperation sync(mDoc);
@@ -6280,10 +6263,6 @@ nsGlobalWindow::Prompt(const nsAString& aMessage, const nsAString& aInitial,
   nsContentUtils::StripNullChars(aMessage, fixedMessage);
   nsContentUtils::StripNullChars(aInitial, fixedInitial);
 
-  // Check if we're being called at a point where we can't use tab-modal
-  // prompts, because something doesn't want reentrancy.
-  bool allowTabModal = GetIsTabModalPromptAllowed();
-
   nsresult rv;
   nsCOMPtr<nsIPromptFactory> promptFac =
     do_GetService("@mozilla.org/prompter;1", &rv);
@@ -6299,9 +6278,10 @@ nsGlobalWindow::Prompt(const nsAString& aMessage, const nsAString& aInitial,
     return;
   }
 
-  nsCOMPtr<nsIWritablePropertyBag2> promptBag = do_QueryInterface(prompt);
-  if (promptBag)
-    promptBag->SetPropertyAsBool(NS_LITERAL_STRING("allowTabModal"), allowTabModal);
+  // Always allow tab modal prompts for prompt.
+  if (nsCOMPtr<nsIWritablePropertyBag2> promptBag = do_QueryInterface(prompt)) {
+    promptBag->SetPropertyAsBool(NS_LITERAL_STRING("allowTabModal"), true);
+  }
 
   // Pass in the default value, if any.
   char16_t *inoutValue = ToNewUnicode(fixedInitial);
@@ -13439,16 +13419,6 @@ nsGlobalModalWindow::SetReturnValue(nsIVariant *aRetVal)
   mReturnValue = new DialogValueHolder(nsContentUtils::GetSubjectPrincipal(),
                                        aRetVal);
   return NS_OK;
-}
-
-void
-nsGlobalWindow::SetHasAudioAvailableEventListeners()
-{
-  MOZ_ASSERT(IsInnerWindow());
-
-  if (mDoc) {
-    mDoc->NotifyAudioAvailableListener();
-  }
 }
 
 NS_IMETHODIMP

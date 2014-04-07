@@ -547,9 +547,6 @@ public:
   void DisableDialogs();
   bool AreDialogsEnabled();
 
-  // Inner windows only.
-  virtual void SetHasAudioAvailableEventListeners();
-
   nsIScriptContext *GetContextInternal()
   {
     if (mOuterWindow) {
@@ -1301,9 +1298,6 @@ protected:
   void ClearStatus();
 
   virtual void UpdateParentTarget();
-
-  // Outer windows only.
-  bool GetIsTabModalPromptAllowed();
 
   inline int32_t DOMMinTimeoutValue() const;
 

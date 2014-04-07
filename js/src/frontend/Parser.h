@@ -119,6 +119,10 @@ struct ParseContext : public GenericParseContext
     bool isLegacyGenerator() const { return generatorKind() == LegacyGenerator; }
     bool isStarGenerator() const { return generatorKind() == StarGenerator; }
 
+    bool isArrowFunction() const {
+        return sc->isFunctionBox() && sc->asFunctionBox()->function()->isArrow();
+    }
+
     uint32_t        blockScopeDepth; /* maximum depth of nested block scopes, in slots */
     Node            blockNode;      /* parse node for a block with let declarations
                                        (block with its own lexical scope)  */
@@ -205,7 +209,7 @@ struct ParseContext : public GenericParseContext
                                        |this|'s descendents */
 
     // Value for parserPC to restore at the end. Use 'parent' instead for
-    // information about the parse chain, this may be nullptr if 
+    // information about the parse chain, this may be nullptr if
     // parent != nullptr.
     ParseContext<ParseHandler> *oldpc;
 
@@ -643,15 +647,6 @@ class Parser : private AutoGCRooter, public StrictModeGetter
     TokenPos pos() const { return tokenStream.currentToken().pos; }
 
     bool asmJS(Node list);
-
-  public:
-    // This function may only be called from within Parser::asmJS before
-    // parsing any tokens. It returns the canonical offset to be used as the
-    // start of the asm.js module. We use the offset in the char buffer
-    // immediately after the "use asm" processing directive statement (which
-    // includes any semicolons or newlines that end the statement).
-    uint32_t offsetOfCurrentAsmJSModule() const { return tokenStream.currentToken().pos.end; }
-  private:
 
     friend class LegacyCompExprTransplanter;
     friend struct BindData<ParseHandler>;

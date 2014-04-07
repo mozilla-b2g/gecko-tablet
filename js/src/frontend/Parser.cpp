@@ -1257,8 +1257,11 @@ Parser<ParseHandler>::newFunction(GenericParseContext *pc, HandleAtom atom,
                               : (kind == Arrow)
                                 ? JSFunction::INTERPRETED_LAMBDA_ARROW
                                 : JSFunction::INTERPRETED;
+    gc::AllocKind allocKind = JSFunction::FinalizeKind;
+    if (kind == Arrow)
+        allocKind = JSFunction::ExtendedFinalizeKind;
     fun = NewFunctionWithProto(context, NullPtr(), nullptr, 0, flags, NullPtr(), atom, proto,
-                               JSFunction::FinalizeKind, MaybeSingletonObject);
+                               allocKind, MaybeSingletonObject);
     if (!fun)
         return nullptr;
     if (options().selfHostingMode)
@@ -1821,7 +1824,7 @@ Parser<FullParseHandler>::checkFunctionDefinition(HandlePropertyName funName,
         pn->pn_dflags |= PND_BOUND;
     } else {
         /* A function expression does not introduce any binding. */
-        pn->setOp(JSOP_LAMBDA);
+        pn->setOp(kind == Arrow ? JSOP_LAMBDA_ARROW : JSOP_LAMBDA);
     }
 
     // When a lazily-parsed function is called, we only fully parse (and emit)

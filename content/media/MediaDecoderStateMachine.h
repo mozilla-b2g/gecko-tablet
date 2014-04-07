@@ -79,7 +79,6 @@ hardware (via AudioStream).
 #include "mozilla/Attributes.h"
 #include "nsThreadUtils.h"
 #include "MediaDecoder.h"
-#include "AudioAvailableEventManager.h"
 #include "mozilla/ReentrantMonitor.h"
 #include "MediaDecoderReader.h"
 #include "MediaDecoderOwner.h"
@@ -113,8 +112,9 @@ class SharedThreadPool;
 
   See MediaDecoder.h for more details.
 */
-class MediaDecoderStateMachine : public nsRunnable
+class MediaDecoderStateMachine
 {
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MediaDecoderStateMachine)
 public:
   typedef MediaDecoder::DecodedStreamData DecodedStreamData;
   MediaDecoderStateMachine(MediaDecoder* aDecoder,
@@ -227,9 +227,6 @@ public:
   // the main thread.
   void StartBuffering();
 
-  // State machine thread run function. Defers to RunStateMachine().
-  NS_IMETHOD Run() MOZ_OVERRIDE;
-
   // This is called on the state machine thread and audio thread.
   // The decoder monitor must be obtained before calling this.
   bool HasAudio() const {
@@ -297,10 +294,6 @@ public:
     return mMediaSeekable;
   }
 
-  // Sets the current frame buffer length for the MozAudioAvailable event.
-  // Accessed on the main and state machine threads.
-  void SetFrameBufferLength(uint32_t aLength);
-
   // Returns the shared state machine thread.
   nsIEventTarget* GetStateMachineThread();
 
@@ -335,10 +328,6 @@ public:
   // be called on any thread with the decoder monitor held.
   void SetSyncPointForMediaStream();
   int64_t GetCurrentTimeViaMediaStreamSync();
-
-  // Called when a "MozAudioAvailable" event listener is added to the media
-  // element. Called on the main thread.
-  void NotifyAudioAvailableListener();
 
   // Copy queued audio/video data in the reader to any output MediaStreams that
   // need it.
@@ -512,8 +501,7 @@ private:
                        uint64_t aFrameOffset);
 
   // Pops an audio chunk from the front of the audio queue, and pushes its
-  // audio data to the audio hardware. MozAudioAvailable data is also queued
-  // here. Called on the audio thread.
+  // audio data to the audio hardware.
   uint32_t PlayFromAudioQueue(uint64_t aFrameOffset, uint32_t aChannels);
 
   // Stops the audio thread. The decoder monitor must be held with exactly
@@ -646,7 +634,7 @@ private:
 
   bool IsStateMachineScheduled() const {
     AssertCurrentThreadInMonitor();
-    return !mTimeout.IsNull() || mRunAgain;
+    return !mTimeout.IsNull();
   }
 
   // Returns true if we're not playing and the decode thread has filled its
@@ -682,14 +670,16 @@ private:
 
   RefPtr<SharedThreadPool> mStateMachineThreadPool;
 
-  // Timer to call the state machine Run() method. Used by
+  // Timer to run the state machine cycles. Used by
   // ScheduleStateMachine(). Access protected by decoder monitor.
   nsCOMPtr<nsITimer> mTimer;
 
-  // Timestamp at which the next state machine Run() method will be called.
-  // If this is non-null, a call to Run() is scheduled, either by a timer,
-  // or via an event. Access protected by decoder monitor.
+  // Timestamp at which the next state machine cycle will run.
+  // Access protected by decoder monitor.
   TimeStamp mTimeout;
+
+  // Used to check if there are state machine cycles are running in sequence.
+  DebugOnly<bool> mInRunningStateMachine;
 
   // The time that playback started from the system clock. This is used for
   // timing the presentation of video frames when there's no audio.
@@ -920,14 +910,6 @@ private:
   // Synchronised via decoder monitor.
   bool mQuickBuffering;
 
-  // True if the shared state machine thread is currently running this
-  // state machine.
-  bool mIsRunning;
-
-  // True if we should run the state machine again once the current
-  // state machine run has finished.
-  bool mRunAgain;
-
   // True if we should not decode/preroll unnecessary samples, unless we're
   // played. "Prerolling" in this context refers to when we decode and
   // buffer decoded samples in advance of when they're needed for playback.
@@ -940,13 +922,6 @@ private:
   // memory and CPU overhead.
   bool mMinimizePreroll;
 
-  // True if we've dispatched an event to run the state machine. It's
-  // imperative that we don't dispatch multiple events to run the state
-  // machine at the same time, as our code assume all events are synchronous.
-  // If we dispatch multiple events, the second event can run while the
-  // first is shutting down a thread, causing inconsistent state.
-  bool mDispatchedRunEvent;
-
   // True if the decode thread has gone filled its buffers and is now
   // waiting to be awakened before it continues decoding. Synchronized
   // by the decoder monitor.
@@ -954,11 +929,6 @@ private:
 
   // True is we are decoding a realtime stream, like a camera stream
   bool mRealTime;
-
-  // Manager for queuing and dispatching MozAudioAvailable events.  The
-  // event manager is accessed from the state machine and audio threads,
-  // and takes care of synchronizing access to its internal queue.
-  AudioAvailableEventManager mEventManager;
 
   // Stores presentation info required for playback. The decoder monitor
   // must be held when accessing this.

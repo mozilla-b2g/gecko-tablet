@@ -567,6 +567,7 @@ abstract public class BrowserApp extends GeckoApp
         registerEventListener("Menu:Update");
         registerEventListener("Accounts:Create");
         registerEventListener("Accounts:Exist");
+        registerEventListener("Prompt:ShowTop");
 
         Distribution.init(this);
         JavaAddonManager.getInstance().init(getApplicationContext());
@@ -2703,6 +2704,7 @@ abstract public class BrowserApp extends GeckoApp
                                                   final String appLocale,
                                                   final SessionInformation previousSession) {
         return new BrowserHealthRecorder(context,
+                                         GeckoSharedPrefs.forApp(context),
                                          profilePath,
                                          dispatcher,
                                          osLocale,
