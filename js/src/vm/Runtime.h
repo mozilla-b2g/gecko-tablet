@@ -1348,11 +1348,11 @@ struct JSRuntime : public JS::shadow::Runtime,
     void                *data;
 
   private:
-    /* Synchronize GC heap access between main thread and GCHelperThread. */
+    /* Synchronize GC heap access between main thread and GCHelperState. */
     PRLock *gcLock;
     mozilla::DebugOnly<PRThread *> gcLockOwner;
 
-    friend class js::GCHelperThread;
+    friend class js::GCHelperState;
   public:
 
     void lockGC() {
@@ -1368,13 +1368,23 @@ struct JSRuntime : public JS::shadow::Runtime,
 
     void unlockGC() {
 #ifdef JS_THREADSAFE
-        JS_ASSERT(gcLockOwner == PR_GetCurrentThread());
+        JS_ASSERT(currentThreadOwnsGCLock());
         gcLockOwner = nullptr;
         PR_Unlock(gcLock);
 #endif
     }
 
-    js::GCHelperThread  gcHelperThread;
+#ifdef DEBUG
+    bool currentThreadOwnsGCLock() {
+#ifdef JS_THREADSAFE
+        return gcLockOwner == PR_GetCurrentThread();
+#else
+        return true;
+#endif
+    }
+#endif
+
+    js::GCHelperState gcHelperState;
 
 #if defined(XP_MACOSX) && defined(JS_ION)
     js::AsmJSMachExceptionHandler asmJSMachExceptionHandler;
@@ -1845,7 +1855,7 @@ inline void
 FreeOp::free_(void *p)
 {
     if (shouldFreeLater()) {
-        runtime()->gcHelperThread.freeLater(p);
+        runtime()->gcHelperState.freeLater(p);
         return;
     }
     js_free(p);

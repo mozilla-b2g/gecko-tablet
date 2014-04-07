@@ -33,7 +33,6 @@ class ArrayBufferViewObject;
 class SharedArrayBufferObject;
 class BaseShape;
 class DebugScopeObject;
-class GCHelperThread;
 class GlobalObject;
 class LazyScript;
 class Nursery;
@@ -353,6 +352,12 @@ GetGCKindSlots(AllocKind thingKind, const Class *clasp)
     return nslots;
 }
 
+// Class to assist in triggering background chunk allocation. This cannot be done
+// while holding the GC or worker thread state lock due to lock ordering issues.
+// As a result, the triggering is delayed using this class until neither of the
+// above locks is held.
+class AutoMaybeStartBackgroundAllocation;
+
 /*
  * ArenaList::head points to the start of the list. Normally cursor points
  * to the first arena in the list with some free things and all arenas
@@ -634,7 +639,8 @@ class ArenaLists
     inline void queueForBackgroundSweep(FreeOp *fop, AllocKind thingKind);
 
     void *allocateFromArena(JS::Zone *zone, AllocKind thingKind);
-    inline void *allocateFromArenaInline(JS::Zone *zone, AllocKind thingKind);
+    inline void *allocateFromArenaInline(JS::Zone *zone, AllocKind thingKind,
+                                         AutoMaybeStartBackgroundAllocation &maybeStartBackgroundAllocation);
 
     inline void normalizeBackgroundFinalizeState(AllocKind thingKind);
 
@@ -780,20 +786,20 @@ void
 InitTracer(JSTracer *trc, JSRuntime *rt, JSTraceCallback callback);
 
 /*
- * Helper that implements sweeping and allocation for kinds that can be swept
- * and allocated off the main thread.
+ * Helper state for use when JS helper threads sweep and allocate GC thing kinds
+ * that can be swept and allocated off the main thread.
  *
  * In non-threadsafe builds, all actual sweeping and allocation is performed
- * on the main thread, but GCHelperThread encapsulates this from clients as
+ * on the main thread, but GCHelperState encapsulates this from clients as
  * much as possible.
  */
-class GCHelperThread {
+class GCHelperState
+{
     enum State {
         IDLE,
         SWEEPING,
         ALLOCATING,
-        CANCEL_ALLOCATION,
-        SHUTDOWN
+        CANCEL_ALLOCATION
     };
 
     /*
@@ -809,13 +815,25 @@ class GCHelperThread {
     static const size_t FREE_ARRAY_SIZE = size_t(1) << 16;
     static const size_t FREE_ARRAY_LENGTH = FREE_ARRAY_SIZE / sizeof(void *);
 
-    JSRuntime         *const rt;
-    PRThread          *thread;
-    PRCondVar         *wakeup;
-    PRCondVar         *done;
-    volatile State    state;
+    // Associated runtime.
+    JSRuntime *const rt;
 
-    void wait(PRCondVar *which);
+    // Condvar for notifying the main thread when work has finished. This is
+    // associated with the runtime's GC lock --- the worker thread state
+    // condvars can't be used here due to lock ordering issues.
+    PRCondVar *done;
+
+    // Activity for the helper to do, protected by the GC lock.
+    State state_;
+
+    // Thread which work is being performed on, or null.
+    PRThread *thread;
+
+    void startBackgroundThread(State newState);
+    void waitForBackgroundThread();
+
+    State state();
+    void setState(State state);
 
     bool              sweepFlag;
     bool              shrinkFlag;
@@ -838,19 +856,15 @@ class GCHelperThread {
         js_free(array);
     }
 
-    static void threadMain(void* arg);
-    void threadLoop();
-
     /* Must be called with the GC lock taken. */
     void doSweep();
 
   public:
-    GCHelperThread(JSRuntime *rt)
+    GCHelperState(JSRuntime *rt)
       : rt(rt),
-        thread(nullptr),
-        wakeup(nullptr),
         done(nullptr),
-        state(IDLE),
+        state_(IDLE),
+        thread(nullptr),
         sweepFlag(false),
         shrinkFlag(false),
         freeCursor(nullptr),
@@ -860,6 +874,8 @@ class GCHelperThread {
 
     bool init();
     void finish();
+
+    void work();
 
     /* Must be called with the GC lock taken. */
     void startBackgroundSweep(bool shouldShrink);
@@ -884,10 +900,6 @@ class GCHelperThread {
         backgroundAllocation = false;
     }
 
-    PRThread *getThread() const {
-        return thread;
-    }
-
     bool onBackgroundThread();
 
     /*
@@ -895,7 +907,7 @@ class GCHelperThread {
      * been done.
      */
     bool sweeping() const {
-        return state == SWEEPING;
+        return state_ == SWEEPING;
     }
 
     bool shouldShrink() const {
