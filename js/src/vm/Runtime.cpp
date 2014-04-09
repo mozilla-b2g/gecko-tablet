@@ -259,7 +259,7 @@ JSRuntime::JSRuntime(JSRuntime *parentRuntime, JSUseHelperThreads useHelperThrea
     data(nullptr),
     gcLock(nullptr),
     gcLockOwner(nullptr),
-    gcHelperState(thisFromCtor()),
+    gcHelperThread(thisFromCtor()),
     signalHandlersInstalled_(false),
     defaultFreeOp_(thisFromCtor(), false),
     debuggerMutations(0),
@@ -832,7 +832,7 @@ JSRuntime::onOutOfMemory(void *p, size_t nbytes, JSContext *cx)
      * all the allocations and released the empty GC chunks.
      */
     JS::ShrinkGCBuffers(this);
-    gcHelperState.waitBackgroundSweepOrAllocEnd();
+    gcHelperThread.waitBackgroundSweepOrAllocEnd();
     if (!p)
         p = js_malloc(nbytes);
     else if (p == reinterpret_cast<void *>(1))
@@ -927,7 +927,7 @@ JSRuntime::assertCanLock(RuntimeLock which)
       case InterruptLock:
         JS_ASSERT(!currentThreadOwnsInterruptLock());
       case GCLock:
-        JS_ASSERT(!currentThreadOwnsGCLock());
+        JS_ASSERT(gcLockOwner != PR_GetCurrentThread());
         break;
       default:
         MOZ_CRASH();

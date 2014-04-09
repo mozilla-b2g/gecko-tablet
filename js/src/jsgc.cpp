@@ -395,7 +395,7 @@ ArenaHeader::checkSynchronizedWithFreeList() const
      * list in the zone can mutate at any moment. We cannot do any
      * checks in this case.
      */
-    if (IsBackgroundFinalized(getAllocKind()) && zone->runtimeFromAnyThread()->gcHelperState.onBackgroundThread())
+    if (IsBackgroundFinalized(getAllocKind()) && zone->runtimeFromAnyThread()->gcHelperThread.onBackgroundThread())
         return;
 
     FreeSpan firstSpan = FreeSpan::decodeOffsets(arenaAddress(), firstFreeSpanOffsets);
@@ -647,7 +647,7 @@ ChunkPool::wantBackgroundAllocation(JSRuntime *rt) const
      * allocation if we have empty chunks or when the runtime needs just few
      * of them.
      */
-    return rt->gcHelperState.canBackgroundAllocate() &&
+    return rt->gcHelperThread.canBackgroundAllocate() &&
            emptyCount == 0 &&
            rt->gcChunkSet.count() >= 4;
 }
@@ -672,6 +672,9 @@ ChunkPool::get(JSRuntime *rt)
     }
     JS_ASSERT(chunk->unused());
     JS_ASSERT(!rt->gcChunkSet.has(chunk));
+
+    if (wantBackgroundAllocation(rt))
+        rt->gcHelperThread.startBackgroundAllocationIfIdle();
 
     return chunk;
 }
@@ -950,12 +953,12 @@ Chunk::releaseArena(ArenaHeader *aheader)
     Zone *zone = aheader->zone;
     JSRuntime *rt = zone->runtimeFromAnyThread();
     AutoLockGC maybeLock;
-    if (rt->gcHelperState.sweeping())
+    if (rt->gcHelperThread.sweeping())
         maybeLock.lock(rt);
 
     JS_ASSERT(rt->gcBytes >= ArenaSize);
     JS_ASSERT(zone->gcBytes >= ArenaSize);
-    if (rt->gcHelperState.sweeping())
+    if (rt->gcHelperThread.sweeping())
         zone->reduceGCTriggerBytes(zone->gcHeapGrowthFactor * ArenaSize);
     rt->gcBytes -= ArenaSize;
     zone->gcBytes -= ArenaSize;
@@ -978,35 +981,9 @@ Chunk::releaseArena(ArenaHeader *aheader)
     }
 }
 
-class js::gc::AutoMaybeStartBackgroundAllocation
-{
-  private:
-    JSRuntime *runtime;
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-
-  public:
-    AutoMaybeStartBackgroundAllocation(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM)
-      : runtime(nullptr)
-    {
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-
-    void tryToStartBackgroundAllocation(JSRuntime *rt) {
-        runtime = rt;
-    }
-
-    ~AutoMaybeStartBackgroundAllocation() {
-        if (runtime) {
-            AutoLockWorkerThreadState workerLock;
-            AutoLockGC lock(runtime);
-            runtime->gcHelperState.startBackgroundAllocationIfIdle();
-        }
-    }
-};
-
 /* The caller must hold the GC lock. */
 static Chunk *
-PickChunk(Zone *zone, AutoMaybeStartBackgroundAllocation &maybeStartBackgroundAllocation)
+PickChunk(Zone *zone)
 {
     JSRuntime *rt = zone->runtimeFromAnyThread();
     Chunk **listHeadp = GetAvailableChunkList(zone);
@@ -1017,9 +994,6 @@ PickChunk(Zone *zone, AutoMaybeStartBackgroundAllocation &maybeStartBackgroundAl
     chunk = rt->gcChunkPool.get(rt);
     if (!chunk)
         return nullptr;
-
-    if (rt->gcChunkPool.wantBackgroundAllocation(rt))
-        maybeStartBackgroundAllocation.tryToStartBackgroundAllocation(rt);
 
     rt->gcChunkAllocationSinceLastGC = true;
 
@@ -1124,7 +1098,7 @@ js_InitGC(JSRuntime *rt, uint32_t maxbytes)
     if (!rt->gcRootsHash.init(256))
         return false;
 
-    if (!rt->gcHelperState.init())
+    if (!rt->gcHelperThread.init())
         return false;
 
     /*
@@ -1174,7 +1148,7 @@ js_FinishGC(JSRuntime *rt)
      * Wait until the background finalization stops and the helper thread
      * shuts down before we forcefully release any remaining GC memory.
      */
-    rt->gcHelperState.finish();
+    rt->gcHelperThread.finish();
 
 #ifdef JS_GC_ZEAL
     /* Free memory associated with GC verification. */
@@ -1387,8 +1361,7 @@ PushArenaAllocatedDuringSweep(JSRuntime *runtime, ArenaHeader *arena)
 }
 
 inline void *
-ArenaLists::allocateFromArenaInline(Zone *zone, AllocKind thingKind,
-                                    AutoMaybeStartBackgroundAllocation &maybeStartBackgroundAllocation)
+ArenaLists::allocateFromArenaInline(Zone *zone, AllocKind thingKind)
 {
     /*
      * Parallel JS Note:
@@ -1403,7 +1376,6 @@ ArenaLists::allocateFromArenaInline(Zone *zone, AllocKind thingKind,
     Chunk *chunk = nullptr;
 
     ArenaList *al = &arenaLists[thingKind];
-
     AutoLockGC maybeLock;
 
 #ifdef JS_THREADSAFE
@@ -1417,7 +1389,7 @@ ArenaLists::allocateFromArenaInline(Zone *zone, AllocKind thingKind,
         maybeLock.lock(zone->runtimeFromAnyThread());
         if (*bfs == BFS_RUN) {
             JS_ASSERT(!*al->cursor);
-            chunk = PickChunk(zone, maybeStartBackgroundAllocation);
+            chunk = PickChunk(zone);
             if (!chunk) {
                 /*
                  * Let the caller to wait for the background allocation to
@@ -1467,7 +1439,7 @@ ArenaLists::allocateFromArenaInline(Zone *zone, AllocKind thingKind,
         /* Make sure we hold the GC lock before we call PickChunk. */
         if (!maybeLock.locked())
             maybeLock.lock(zone->runtimeFromAnyThread());
-        chunk = PickChunk(zone, maybeStartBackgroundAllocation);
+        chunk = PickChunk(zone);
         if (!chunk)
             return nullptr;
     }
@@ -1512,8 +1484,7 @@ ArenaLists::allocateFromArenaInline(Zone *zone, AllocKind thingKind,
 void *
 ArenaLists::allocateFromArena(JS::Zone *zone, AllocKind thingKind)
 {
-    AutoMaybeStartBackgroundAllocation maybeStartBackgroundAllocation;
-    return allocateFromArenaInline(zone, thingKind, maybeStartBackgroundAllocation);
+    return allocateFromArenaInline(zone, thingKind);
 }
 
 void
@@ -1588,7 +1559,7 @@ ArenaLists::queueForBackgroundSweep(FreeOp *fop, AllocKind thingKind)
     JS_ASSERT(IsBackgroundFinalized(thingKind));
 
 #ifdef JS_THREADSAFE
-    JS_ASSERT(!fop->runtime()->gcHelperState.sweeping());
+    JS_ASSERT(!fop->runtime()->gcHelperThread.sweeping());
 #endif
 
     ArenaList *al = &arenaLists[thingKind];
@@ -1766,8 +1737,6 @@ ArenaLists::refillFreeList(ThreadSafeContext *cx, AllocKind thingKind)
                 return thing;
         }
 
-        AutoMaybeStartBackgroundAllocation maybeStartBackgroundAllocation;
-
         if (cx->isJSContext()) {
             /*
              * allocateFromArena may fail while the background finalization still
@@ -1778,14 +1747,13 @@ ArenaLists::refillFreeList(ThreadSafeContext *cx, AllocKind thingKind)
              * this race we always try to allocate twice.
              */
             for (bool secondAttempt = false; ; secondAttempt = true) {
-                void *thing = cx->allocator()->arenas.allocateFromArenaInline(zone, thingKind,
-                                                                              maybeStartBackgroundAllocation);
+                void *thing = cx->allocator()->arenas.allocateFromArenaInline(zone, thingKind);
                 if (MOZ_LIKELY(!!thing))
                     return thing;
                 if (secondAttempt)
                     break;
 
-                cx->asJSContext()->runtime()->gcHelperState.waitBackgroundSweepEnd();
+                cx->asJSContext()->runtime()->gcHelperThread.waitBackgroundSweepEnd();
             }
         } else {
 #ifdef JS_THREADSAFE
@@ -1804,8 +1772,7 @@ ArenaLists::refillFreeList(ThreadSafeContext *cx, AllocKind thingKind)
                     WorkerThreadState().wait(GlobalWorkerThreadState::PRODUCER);
             }
 
-            void *thing = cx->allocator()->arenas.allocateFromArenaInline(zone, thingKind,
-                                                                          maybeStartBackgroundAllocation);
+            void *thing = cx->allocator()->arenas.allocateFromArenaInline(zone, thingKind);
             if (thing)
                 return thing;
 #else
@@ -2284,7 +2251,7 @@ js::MaybeGC(JSContext *cx)
     if (zone->gcBytes > 1024 * 1024 &&
         zone->gcBytes >= factor * zone->gcTriggerBytes &&
         rt->gcIncrementalState == NO_INCREMENTAL &&
-        !rt->gcHelperState.sweeping())
+        !rt->gcHelperThread.sweeping())
     {
         PrepareZoneForGC(zone);
         GCSlice(rt, GC_NORMAL, JS::gcreason::MAYBEGC);
@@ -2466,7 +2433,6 @@ SweepBackgroundThings(JSRuntime* rt, bool onBackgroundThread)
 static void
 AssertBackgroundSweepingFinished(JSRuntime *rt)
 {
-#ifdef DEBUG
     JS_ASSERT(!rt->gcSweepingZones);
     for (ZonesIter zone(rt, WithAtoms); !zone.done(); zone.next()) {
         for (unsigned i = 0; i < FINALIZE_LIMIT; ++i) {
@@ -2474,7 +2440,6 @@ AssertBackgroundSweepingFinished(JSRuntime *rt)
             JS_ASSERT(zone->allocator.arenas.doneBackgroundFinalize(AllocKind(i)));
         }
     }
-#endif
 }
 
 unsigned
@@ -2496,7 +2461,7 @@ js::GetCPUCount()
 #endif /* JS_THREADSAFE */
 
 bool
-GCHelperState::init()
+GCHelperThread::init()
 {
     if (!rt->useHelperThreads()) {
         backgroundAllocation = false;
@@ -2504,173 +2469,188 @@ GCHelperState::init()
     }
 
 #ifdef JS_THREADSAFE
+    if (!(wakeup = PR_NewCondVar(rt->gcLock)))
+        return false;
     if (!(done = PR_NewCondVar(rt->gcLock)))
         return false;
 
-    backgroundAllocation = (GetCPUCount() >= 2);
-
-    if (!WorkerThreadState().ensureInitialized())
+    thread = PR_CreateThread(PR_USER_THREAD, threadMain, this, PR_PRIORITY_NORMAL,
+                             PR_GLOBAL_THREAD, PR_JOINABLE_THREAD, 0);
+    if (!thread)
         return false;
-#endif /* JS_THREADSAFE */
 
+    backgroundAllocation = (GetCPUCount() >= 2);
+#endif /* JS_THREADSAFE */
     return true;
 }
 
 void
-GCHelperState::finish()
+GCHelperThread::finish()
 {
     if (!rt->useHelperThreads() || !rt->gcLock) {
-        JS_ASSERT(state_ == IDLE);
+        JS_ASSERT(state == IDLE);
         return;
     }
 
 #ifdef JS_THREADSAFE
-    // Wait for any lingering background sweeping to finish.
-    waitBackgroundSweepEnd();
-
+    PRThread *join = nullptr;
+    {
+        AutoLockGC lock(rt);
+        if (thread && state != SHUTDOWN) {
+            /*
+             * We cannot be in the ALLOCATING or CANCEL_ALLOCATION states as
+             * the allocations should have been stopped during the last GC.
+             */
+            JS_ASSERT(state == IDLE || state == SWEEPING);
+            if (state == IDLE)
+                PR_NotifyCondVar(wakeup);
+            state = SHUTDOWN;
+            join = thread;
+        }
+    }
+    if (join) {
+        /* PR_DestroyThread is not necessary. */
+        PR_JoinThread(join);
+    }
+    if (wakeup)
+        PR_DestroyCondVar(wakeup);
     if (done)
         PR_DestroyCondVar(done);
-#else
-    MOZ_CRASH();
 #endif /* JS_THREADSAFE */
 }
 
-GCHelperState::State
-GCHelperState::state()
-{
-    JS_ASSERT(rt->currentThreadOwnsGCLock());
-    return state_;
-}
-
-void
-GCHelperState::setState(State state)
-{
-    JS_ASSERT(rt->currentThreadOwnsGCLock());
-    state_ = state;
-}
-
-void
-GCHelperState::startBackgroundThread(State newState)
-{
 #ifdef JS_THREADSAFE
-    JS_ASSERT(!thread && state() == IDLE && newState != IDLE);
-    setState(newState);
-
-    if (!WorkerThreadState().gcHelperWorklist().append(this))
-        CrashAtUnhandlableOOM("Could not add to pending GC helpers list");
-    WorkerThreadState().notifyAll(GlobalWorkerThreadState::PRODUCER);
-#else
-    MOZ_CRASH();
+#ifdef MOZ_NUWA_PROCESS
+extern "C" {
+MFBT_API bool IsNuwaProcess();
+MFBT_API void NuwaMarkCurrentThread(void (*recreate)(void *), void *arg);
+}
 #endif
+
+/* static */
+void
+GCHelperThread::threadMain(void *arg)
+{
+    PR_SetCurrentThreadName("JS GC Helper");
+
+#ifdef MOZ_NUWA_PROCESS
+    if (IsNuwaProcess && IsNuwaProcess()) {
+        JS_ASSERT(NuwaMarkCurrentThread != nullptr);
+        NuwaMarkCurrentThread(nullptr, nullptr);
+    }
+#endif
+
+    static_cast<GCHelperThread *>(arg)->threadLoop();
 }
 
 void
-GCHelperState::waitForBackgroundThread()
+GCHelperThread::wait(PRCondVar *which)
 {
-#ifdef JS_THREADSAFE
-    JS_ASSERT(CurrentThreadCanAccessRuntime(rt));
-
     rt->gcLockOwner = nullptr;
-    PR_WaitCondVar(done, PR_INTERVAL_NO_TIMEOUT);
+    PR_WaitCondVar(which, PR_INTERVAL_NO_TIMEOUT);
 #ifdef DEBUG
     rt->gcLockOwner = PR_GetCurrentThread();
 #endif
-#else
-    MOZ_CRASH();
-#endif
 }
 
 void
-GCHelperState::work()
+GCHelperThread::threadLoop()
 {
-#ifdef JS_THREADSAFE
     AutoLockGC lock(rt);
 
-    JS_ASSERT(!thread);
-    thread = PR_GetCurrentThread();
-
-    switch (state()) {
-
-      case IDLE:
-        MOZ_ASSUME_UNREACHABLE("GC helper triggered on idle state");
-        break;
-
-      case SWEEPING: {
 #if JS_TRACE_LOGGING
-        AutoTraceLog logger(TraceLogging::getLogger(TraceLogging::GC_BACKGROUND),
-                            TraceLogging::GC_SWEEPING_START,
-                            TraceLogging::GC_SWEEPING_STOP);
+    TraceLogging *logger = TraceLogging::getLogger(TraceLogging::GC_BACKGROUND);
 #endif
-        doSweep();
-        JS_ASSERT(state() == SWEEPING);
-        break;
-      }
 
-      case ALLOCATING: {
+    /*
+     * Even on the first iteration the state can be SHUTDOWN or SWEEPING if
+     * the stop request or the GC and the corresponding startBackgroundSweep call
+     * happen before this thread has a chance to run.
+     */
+    for (;;) {
+        switch (state) {
+          case SHUTDOWN:
+            return;
+          case IDLE:
+            wait(wakeup);
+            break;
+          case SWEEPING:
 #if JS_TRACE_LOGGING
-        AutoTraceLog logger(TraceLogging::getLogger(TraceLogging::GC_BACKGROUND),
-                            TraceLogging::GC_ALLOCATING_START,
-                            TraceLogging::GC_ALLOCATING_STOP);
+            logger->log(TraceLogging::GC_SWEEPING_START);
 #endif
-        do {
-            Chunk *chunk;
-            {
-                AutoUnlockGC unlock(rt);
-                chunk = Chunk::allocate(rt);
-            }
+            doSweep();
+            if (state == SWEEPING)
+                state = IDLE;
+            PR_NotifyAllCondVar(done);
+#if JS_TRACE_LOGGING
+            logger->log(TraceLogging::GC_SWEEPING_STOP);
+#endif
+            break;
+          case ALLOCATING:
+#if JS_TRACE_LOGGING
+            logger->log(TraceLogging::GC_ALLOCATING_START);
+#endif
+            do {
+                Chunk *chunk;
+                {
+                    AutoUnlockGC unlock(rt);
+                    chunk = Chunk::allocate(rt);
+                }
 
-            /* OOM stops the background allocation. */
-            if (!chunk)
-                break;
-            JS_ASSERT(chunk->info.numArenasFreeCommitted == 0);
-            rt->gcChunkPool.put(chunk);
-        } while (state() == ALLOCATING && rt->gcChunkPool.wantBackgroundAllocation(rt));
-
-        JS_ASSERT(state() == ALLOCATING || state() == CANCEL_ALLOCATION);
-        break;
-      }
-
-      case CANCEL_ALLOCATION:
-        break;
+                /* OOM stops the background allocation. */
+                if (!chunk) {
+#if JS_TRACE_LOGGING
+                    logger->log(TraceLogging::GC_ALLOCATING_STOP);
+#endif
+                    break;
+                }
+                JS_ASSERT(chunk->info.numArenasFreeCommitted == 0);
+                rt->gcChunkPool.put(chunk);
+            } while (state == ALLOCATING && rt->gcChunkPool.wantBackgroundAllocation(rt));
+            if (state == ALLOCATING)
+                state = IDLE;
+#if JS_TRACE_LOGGING
+            logger->log(TraceLogging::GC_ALLOCATING_STOP);
+#endif
+            break;
+          case CANCEL_ALLOCATION:
+            state = IDLE;
+            PR_NotifyAllCondVar(done);
+            break;
+        }
     }
-
-    setState(IDLE);
-    thread = nullptr;
-
-    PR_NotifyAllCondVar(done);
-#else
-    MOZ_CRASH();
-#endif
 }
+#endif /* JS_THREADSAFE */
 
 void
-GCHelperState::startBackgroundSweep(bool shouldShrink)
+GCHelperThread::startBackgroundSweep(bool shouldShrink)
 {
     JS_ASSERT(rt->useHelperThreads());
 
 #ifdef JS_THREADSAFE
-    AutoLockWorkerThreadState workerLock;
     AutoLockGC lock(rt);
-    JS_ASSERT(state() == IDLE);
+    JS_ASSERT(state == IDLE);
     JS_ASSERT(!sweepFlag);
     sweepFlag = true;
     shrinkFlag = shouldShrink;
-    startBackgroundThread(SWEEPING);
+    state = SWEEPING;
+    PR_NotifyCondVar(wakeup);
 #endif /* JS_THREADSAFE */
 }
 
 /* Must be called with the GC lock taken. */
 void
-GCHelperState::startBackgroundShrink()
+GCHelperThread::startBackgroundShrink()
 {
     JS_ASSERT(rt->useHelperThreads());
 
 #ifdef JS_THREADSAFE
-    switch (state()) {
+    switch (state) {
       case IDLE:
         JS_ASSERT(!sweepFlag);
         shrinkFlag = true;
-        startBackgroundThread(SWEEPING);
+        state = SWEEPING;
+        PR_NotifyCondVar(wakeup);
         break;
       case SWEEPING:
         shrinkFlag = true;
@@ -2682,41 +2662,43 @@ GCHelperState::startBackgroundShrink()
          * shrink.
          */
         break;
+      case SHUTDOWN:
+        MOZ_ASSUME_UNREACHABLE("No shrink on shutdown");
     }
 #endif /* JS_THREADSAFE */
 }
 
 void
-GCHelperState::waitBackgroundSweepEnd()
+GCHelperThread::waitBackgroundSweepEnd()
 {
     if (!rt->useHelperThreads()) {
-        JS_ASSERT(state_ == IDLE);
+        JS_ASSERT(state == IDLE);
         return;
     }
 
 #ifdef JS_THREADSAFE
     AutoLockGC lock(rt);
-    while (state() == SWEEPING)
-        waitForBackgroundThread();
+    while (state == SWEEPING)
+        wait(done);
     if (rt->gcIncrementalState == NO_INCREMENTAL)
         AssertBackgroundSweepingFinished(rt);
 #endif /* JS_THREADSAFE */
 }
 
 void
-GCHelperState::waitBackgroundSweepOrAllocEnd()
+GCHelperThread::waitBackgroundSweepOrAllocEnd()
 {
     if (!rt->useHelperThreads()) {
-        JS_ASSERT(state_ == IDLE);
+        JS_ASSERT(state == IDLE);
         return;
     }
 
 #ifdef JS_THREADSAFE
     AutoLockGC lock(rt);
-    if (state() == ALLOCATING)
-        setState(CANCEL_ALLOCATION);
-    while (state() == SWEEPING || state() == CANCEL_ALLOCATION)
-        waitForBackgroundThread();
+    if (state == ALLOCATING)
+        state = CANCEL_ALLOCATION;
+    while (state == SWEEPING || state == CANCEL_ALLOCATION)
+        wait(done);
     if (rt->gcIncrementalState == NO_INCREMENTAL)
         AssertBackgroundSweepingFinished(rt);
 #endif /* JS_THREADSAFE */
@@ -2724,18 +2706,20 @@ GCHelperState::waitBackgroundSweepOrAllocEnd()
 
 /* Must be called with the GC lock taken. */
 inline void
-GCHelperState::startBackgroundAllocationIfIdle()
+GCHelperThread::startBackgroundAllocationIfIdle()
 {
     JS_ASSERT(rt->useHelperThreads());
 
 #ifdef JS_THREADSAFE
-    if (state_ == IDLE)
-        startBackgroundThread(ALLOCATING);
+    if (state == IDLE) {
+        state = ALLOCATING;
+        PR_NotifyCondVar(wakeup);
+    }
 #endif /* JS_THREADSAFE */
 }
 
 void
-GCHelperState::replenishAndFreeLater(void *ptr)
+GCHelperThread::replenishAndFreeLater(void *ptr)
 {
     JS_ASSERT(freeCursor == freeCursorEnd);
     do {
@@ -2756,7 +2740,7 @@ GCHelperState::replenishAndFreeLater(void *ptr)
 #ifdef JS_THREADSAFE
 /* Must be called with the GC lock taken. */
 void
-GCHelperState::doSweep()
+GCHelperThread::doSweep()
 {
     if (sweepFlag) {
         sweepFlag = false;
@@ -2796,10 +2780,10 @@ GCHelperState::doSweep()
 #endif /* JS_THREADSAFE */
 
 bool
-GCHelperState::onBackgroundThread()
+GCHelperThread::onBackgroundThread()
 {
 #ifdef JS_THREADSAFE
-    return PR_GetCurrentThread() == thread;
+    return PR_GetCurrentThread() == getThread();
 #else
     return false;
 #endif
@@ -4254,7 +4238,7 @@ EndSweepPhase(JSRuntime *rt, JSGCInvocationKind gckind, bool lastGC)
             /*
              * Destroy arenas after we finished the sweeping so finalizers can
              * safely use IsAboutToBeFinalized(). This is done on the
-             * GCHelperState if possible. We acquire the lock only because
+             * GCHelperThread if possible. We acquire the lock only because
              * Expire needs to unlock it for other callers.
              */
             AutoLockGC lock(rt);
@@ -4521,7 +4505,7 @@ ResetIncrementalGC(JSRuntime *rt, const char *reason)
 
         {
             gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_WAIT_BACKGROUND_THREAD);
-            rt->gcHelperState.waitBackgroundSweepOrAllocEnd();
+            rt->gcHelperThread.waitBackgroundSweepOrAllocEnd();
         }
         break;
 
@@ -4736,7 +4720,7 @@ IncrementalCollectSlice(JSRuntime *rt,
         EndSweepPhase(rt, gckind, lastGC);
 
         if (rt->gcSweepOnBackgroundThread)
-            rt->gcHelperState.startBackgroundSweep(gckind == GC_SHRINK);
+            rt->gcHelperThread.startBackgroundSweep(gckind == GC_SHRINK);
 
         rt->gcIncrementalState = NO_INCREMENTAL;
         break;
@@ -4830,7 +4814,7 @@ GCCycle(JSRuntime *rt, bool incremental, int64_t budget,
      */
     {
         gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_WAIT_BACKGROUND_THREAD);
-        rt->gcHelperState.waitBackgroundSweepOrAllocEnd();
+        rt->gcHelperThread.waitBackgroundSweepOrAllocEnd();
     }
 
     State prevState = rt->gcIncrementalState;
@@ -5074,14 +5058,13 @@ js::PrepareForDebugGC(JSRuntime *rt)
 JS_FRIEND_API(void)
 JS::ShrinkGCBuffers(JSRuntime *rt)
 {
-    AutoLockWorkerThreadState workerLock;
     AutoLockGC lock(rt);
     JS_ASSERT(!rt->isHeapBusy());
 
     if (!rt->useHelperThreads())
         ExpireChunksAndArenas(rt, true);
     else
-        rt->gcHelperState.startBackgroundShrink();
+        rt->gcHelperThread.startBackgroundShrink();
 }
 
 void
@@ -5141,7 +5124,7 @@ js::gc::GCIfNeeded(JSContext *cx)
 void
 js::gc::FinishBackgroundFinalize(JSRuntime *rt)
 {
-    rt->gcHelperState.waitBackgroundSweepEnd();
+    rt->gcHelperThread.waitBackgroundSweepEnd();
 }
 
 AutoFinishGC::AutoFinishGC(JSRuntime *rt)
