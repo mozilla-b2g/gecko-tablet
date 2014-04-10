@@ -264,9 +264,9 @@ NS_IMPL_ADDREF_INHERITED(nsXMLHttpRequestUpload, nsXHREventTarget)
 NS_IMPL_RELEASE_INHERITED(nsXMLHttpRequestUpload, nsXHREventTarget)
 
 /* virtual */ JSObject*
-nsXMLHttpRequestUpload::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
+nsXMLHttpRequestUpload::WrapObject(JSContext* aCx)
 {
-  return XMLHttpRequestUploadBinding::Wrap(aCx, aScope, this);
+  return XMLHttpRequestUploadBinding::Wrap(aCx, this);
 }
 
 /////////////////////////////////////////////
@@ -3664,17 +3664,7 @@ nsXMLHttpRequest::GetInterface(const nsIID & aIID, void **aResult)
 JS::Value
 nsXMLHttpRequest::GetInterface(JSContext* aCx, nsIJSID* aIID, ErrorResult& aRv)
 {
-  const nsID* iid = aIID->GetID();
-  nsCOMPtr<nsISupports> result;
-  JS::Rooted<JS::Value> v(aCx, JSVAL_NULL);
-  aRv = GetInterface(*iid, getter_AddRefs(result));
-  NS_ENSURE_FALSE(aRv.Failed(), JSVAL_NULL);
-
-  JS::Rooted<JSObject*> wrapper(aCx, GetWrapper());
-  JSAutoCompartment ac(aCx, wrapper);
-  JS::Rooted<JSObject*> global(aCx, JS_GetGlobalForObject(aCx, wrapper));
-  aRv = nsContentUtils::WrapNative(aCx, global, result, iid, &v);
-  return aRv.Failed() ? JSVAL_NULL : v;
+  return dom::GetInterface(aCx, this, aIID, aRv);
 }
 
 nsXMLHttpRequestUpload*
