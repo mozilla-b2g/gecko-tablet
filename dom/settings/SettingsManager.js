@@ -87,14 +87,12 @@ SettingsLock.prototype = {
               let setReq = store.put(obj);
 
               setReq.onsuccess = function() {
+                lock._isBusy = false;
                 cpmm.sendAsyncMessage("Settings:Changed", { key: key, value: userValue });
-                if (last) {
-                  if (!request.error) {
-                    lock._open = true;
-                    Services.DOMRequest.fireSuccess(request, 0);
-                    lock._open = false;
-                  }
-                  lock._isBusy = false;
+                if (last && !request.error) {
+                  lock._open = true;
+                  Services.DOMRequest.fireSuccess(request, 0);
+                  lock._open = false;
                   if (!lock._requests.isEmpty()) {
                     lock.process();
                   }
