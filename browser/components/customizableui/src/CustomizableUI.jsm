@@ -338,7 +338,7 @@ let CustomizableUIInternal = {
     if (!areaIsKnown) {
       gAreas.set(aName, props);
 
-      if (props.get("legacy")) {
+      if (props.get("legacy") && !gPlacements.has(aName)) {
         // Guarantee this area exists in gFuturePlacements, to avoid checking it in
         // various places elsewhere.
         gFuturePlacements.set(aName, new Set());
@@ -386,6 +386,13 @@ let CustomizableUIInternal = {
         gPlacements.set(aName, placements);
       }
       gFuturePlacements.delete(aName);
+      let existingAreaNodes = gBuildAreas.get(aName);
+      if (existingAreaNodes) {
+        for (let areaNode of existingAreaNodes) {
+          this.notifyListeners("onAreaNodeUnregistered", aName, areaNode.customizationTarget,
+                               CustomizableUI.REASON_AREA_UNREGISTERED);
+        }
+      }
       gBuildAreas.delete(aName);
     } finally {
       this.endBatchUpdate(true);
@@ -458,6 +465,7 @@ let CustomizableUIInternal = {
       if (gDirtyAreaCache.has(area)) {
         this.buildArea(area, placements, aToolbar);
       }
+      this.notifyListeners("onAreaNodeRegistered", area, aToolbar.customizationTarget);
       aToolbar.setAttribute("currentset", placements.join(","));
     } finally {
       this.endBatchUpdate();
@@ -699,6 +707,8 @@ let CustomizableUIInternal = {
 
     let placements = gPlacements.get(CustomizableUI.AREA_PANEL);
     this.buildArea(CustomizableUI.AREA_PANEL, placements, aPanelContents);
+    this.notifyListeners("onAreaNodeRegistered", CustomizableUI.AREA_PANEL, aPanelContents);
+
     for (let child of aPanelContents.children) {
       if (child.localName != "toolbarbutton") {
         if (child.localName == "toolbaritem") {
@@ -839,6 +849,8 @@ let CustomizableUIInternal = {
       let areaProperties = gAreas.get(areaId);
       for (let node of areaNodes) {
         if (node.ownerDocument == document) {
+          this.notifyListeners("onAreaNodeUnregistered", areaId, node.customizationTarget,
+                               CustomizableUI.REASON_WINDOW_CLOSED);
           if (areaProperties.has("overflowable")) {
             node.overflowable.uninit();
             node.overflowable = null;
@@ -1857,12 +1869,17 @@ let CustomizableUIInternal = {
 
     // Look through previously saved state to see if we're restoring a widget.
     let seenAreas = new Set();
+    let widgetMightNeedAutoAdding = true;
     for (let [area, placements] of gPlacements) {
       seenAreas.add(area);
+      let areaIsRegistered = gAreas.has(area);
       let index = gPlacements.get(area).indexOf(widget.id);
       if (index != -1) {
-        widget.currentArea = area;
-        widget.currentPosition = index;
+        widgetMightNeedAutoAdding = false;
+        if (areaIsRegistered) {
+          widget.currentArea = area;
+          widget.currentPosition = index;
+        }
         break;
       }
     }
@@ -1870,16 +1887,20 @@ let CustomizableUIInternal = {
     // Also look at saved state data directly in areas that haven't yet been
     // restored. Can't rely on this for restored areas, as they may have
     // changed.
-    if (!widget.currentArea && gSavedState) {
+    if (widgetMightNeedAutoAdding && gSavedState) {
       for (let area of Object.keys(gSavedState.placements)) {
         if (seenAreas.has(area)) {
           continue;
         }
 
+        let areaIsRegistered = gAreas.has(area);
         let index = gSavedState.placements[area].indexOf(widget.id);
         if (index != -1) {
-          widget.currentArea = area;
-          widget.currentPosition = index;
+          widgetMightNeedAutoAdding = false;
+          if (areaIsRegistered) {
+            widget.currentArea = area;
+            widget.currentPosition = index;
+          }
           break;
         }
       }
@@ -1891,7 +1912,7 @@ let CustomizableUIInternal = {
     if (widget.currentArea) {
       this.notifyListeners("onWidgetAdded", widget.id, widget.currentArea,
                            widget.currentPosition);
-    } else {
+    } else if (widgetMightNeedAutoAdding) {
       let autoAdd = true;
       try {
         autoAdd = Services.prefs.getBoolPref(kPrefCustomizationAutoAdd);
@@ -2494,6 +2515,17 @@ this.CustomizableUI = {
   get PANEL_COLUMN_COUNT() 3,
 
   /**
+   * Constant indicating the reason the event was fired was a window closing
+   */
+  get REASON_WINDOW_CLOSED() "window-closed",
+  /**
+   * Constant indicating the reason the event was fired was an area being
+   * unregistered separately from window closing mechanics.
+   */
+  get REASON_AREA_UNREGISTERED() "area-unregistered",
+
+
+  /**
    * An iteratable property of windows managed by CustomizableUI.
    * Note that this can *only* be used as an iterator. ie:
    *     for (let window of CustomizableUI.windows) { ... }
@@ -2594,6 +2626,15 @@ this.CustomizableUI = {
    *   - onWindowClosed(aWindow)
    *     Fired when a window that has been managed by CustomizableUI has been
    *     closed.
+   *   - onAreaNodeRegistered(aArea, aContainer)
+   *     Fired after an area node is first built when it is registered. This
+   *     is often when the window has opened, but in the case of add-ons,
+   *     could fire when the node has just been registered with CustomizableUI
+   *     after an add-on update or disable/enable sequence.
+   *   - onAreaNodeUnregistered(aArea, aContainer, aReason)
+   *     Fired when an area node is explicitly unregistered by an API caller,
+   *     or by a window closing. The aReason parameter indicates which of
+   *     these is the case.
    */
   addListener: function(aListener) {
     CustomizableUIInternal.addListener(aListener);
