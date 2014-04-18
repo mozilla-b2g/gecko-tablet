@@ -55,12 +55,29 @@ GetOCSPResponseForType(OCSPResponseType aORT, CERTCertificate *aCert,
     PrintPRError("CERT_FindCertIssuer failed");
     return nullptr;
   }
-  if (aORT == ORTGoodOtherCA) {
+  if (aORT == ORTGoodOtherCA || aORT == ORTDelegatedIncluded ||
+      aORT == ORTDelegatedIncludedLast || aORT == ORTDelegatedMissing ||
+      aORT == ORTDelegatedMissingMultiple) {
     context.signerCert = PK11_FindCertFromNickname(aAdditionalCertName,
                                                    nullptr);
     if (!context.signerCert) {
       PrintPRError("PK11_FindCertFromNickname failed");
       return nullptr;
+    }
+  }
+  if (aORT == ORTDelegatedIncluded) {
+    context.includedCertificates[0] =
+      CERT_DupCertificate(context.signerCert.get());
+  }
+  if (aORT == ORTDelegatedIncludedLast || aORT == ORTDelegatedMissingMultiple) {
+    context.includedCertificates[0] =
+      CERT_DupCertificate(context.issuerCert.get());
+    context.includedCertificates[1] = CERT_DupCertificate(context.cert.get());
+    context.includedCertificates[2] =
+      CERT_DupCertificate(context.issuerCert.get());
+    if (aORT != ORTDelegatedMissingMultiple) {
+      context.includedCertificates[3] =
+        CERT_DupCertificate(context.signerCert.get());
     }
   }
   switch (aORT) {
@@ -127,6 +144,9 @@ GetOCSPResponseForType(OCSPResponseType aORT, CERTCertificate *aCert,
     extension.next = nullptr;
     context.extensions = &extension;
   }
+  if (aORT == ORTEmptyExtensions) {
+    context.includeEmptyExtensions = true;
+  }
 
   if (!context.signerCert) {
     context.signerCert = CERT_DupCertificate(context.issuerCert.get());
@@ -139,8 +159,12 @@ GetOCSPResponseForType(OCSPResponseType aORT, CERTCertificate *aCert,
   }
 
   SECItemArray* arr = SECITEM_AllocArray(aArena, nullptr, 1);
-  arr->items[0].data = response ? response->data : nullptr;
-  arr->items[0].len = response ? response->len : 0;
+  if (!arr) {
+    PrintPRError("SECITEM_AllocArray failed");
+    return nullptr;
+  }
+  arr->items[0].data = response->data;
+  arr->items[0].len = response->len;
 
   return arr;
 }

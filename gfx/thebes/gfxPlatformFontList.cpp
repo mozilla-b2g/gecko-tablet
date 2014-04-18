@@ -9,6 +9,7 @@
 #include "prlog.h"
 
 #include "gfxPlatformFontList.h"
+#include "gfxUserFontSet.h"
 
 #include "nsUnicharUtils.h"
 #include "nsUnicodeRange.h"
@@ -303,6 +304,21 @@ gfxPlatformFontList::ResolveFontName(const nsAString& aFontName, nsAString& aRes
     return false;
 }
 
+static PLDHashOperator
+RebuildLocalFonts(nsPtrHashKey<gfxUserFontSet>* aKey,
+                  void* aClosure)
+{
+    aKey->GetKey()->RebuildLocalRules();
+    return PL_DHASH_NEXT;
+}
+
+void
+gfxPlatformFontList::UpdateFontList()
+{
+    InitFontList();
+    mUserFontSetList.EnumerateEntries(RebuildLocalFonts, nullptr);
+}
+
 struct FontListData {
     FontListData(nsIAtom *aLangGroup,
                  const nsACString& aGenericFamily,
@@ -432,7 +448,7 @@ gfxPlatformFontList::SystemFindFontForChar(const uint32_t aCh,
 #ifdef PR_LOGGING
     PRLogModuleInfo *log = gfxPlatform::GetLog(eGfxLog_textrun);
 
-    if (MOZ_UNLIKELY(log)) {
+    if (MOZ_UNLIKELY(PR_LOG_TEST(log, PR_LOG_WARNING))) {
         uint32_t unicodeRange = FindCharUnicodeRange(aCh);
         int32_t script = mozilla::unicode::GetScriptCode(aCh);
         PR_LOG(log, PR_LOG_WARNING,\
@@ -797,6 +813,11 @@ gfxPlatformFontList::LoadFontInfo()
     }
 #endif
 
+    if (done) {
+        mOtherFamilyNamesInitialized = true;
+        mFaceNamesInitialized = true;
+    }
+
     return done;
 }
 
@@ -820,8 +841,6 @@ gfxPlatformFontList::CleanupLoader()
     }
 #endif
 
-    mOtherFamilyNamesInitialized = true;
-    mFaceNamesInitialized = true;
     gfxFontInfoLoader::CleanupLoader();
 }
 
@@ -837,6 +856,15 @@ gfxPlatformFontList::GetPrefsAndStartLoader()
         std::max(1u, Preferences::GetUint(FONT_LOADER_INTERVAL_PREF));
 
     StartLoader(delay, interval);
+}
+
+void
+gfxPlatformFontList::ForceGlobalReflow()
+{
+    // modify a preference that will trigger reflow everywhere
+    static const char kPrefName[] = "font.internaluseonly.changed";
+    bool fontInternalChange = Preferences::GetBool(kPrefName, false);
+    Preferences::SetBool(kPrefName, !fontInternalChange);
 }
 
 // Support for memory reporting

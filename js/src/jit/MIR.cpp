@@ -2328,12 +2328,6 @@ MToDouble::foldsTo(TempAllocator &alloc, bool useValueNumbers)
         }
     }
 
-    // Fold unnecessary numeric conversions.
-    if (input()->isToInt32()) {
-        replaceOperand(0, input()->getOperand(0));
-        conversion_ = NonStringPrimitives;
-    }
-
     return this;
 }
 
@@ -3096,9 +3090,14 @@ PropertyReadNeedsTypeBarrier(types::CompilerConstraintList *constraints,
     // a barrier is needed. Note that this only covers reads from properties
     // which are accounted for by type information, i.e. native data properties
     // and elements.
-
-    if (object->unknownProperties() || observed->empty())
+    //
+    // We also need a barrier if the object is a proxy, because then all bets
+    // are off, just as if it has unknown properties.
+    if (object->unknownProperties() || observed->empty() ||
+        object->clasp()->isProxy())
+    {
         return true;
+    }
 
     jsid id = name ? NameToId(name) : JSID_VOID;
     types::HeapTypeSetKey property = object->property(id);

@@ -147,6 +147,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "gCustomizationTabPreloader",
 XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
   "resource://gre/modules/PrivateBrowsingUtils.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "Translation",
+  "resource:///modules/translation/Translation.jsm");
+
 XPCOMUtils.defineLazyModuleGetter(this, "SitePermissions",
   "resource:///modules/SitePermissions.jsm");
 
@@ -1033,6 +1036,7 @@ var gBrowserInit = {
     gFormSubmitObserver.init();
     gRemoteTabsUI.init();
     gPageStyleMenu.init();
+    LanguageDetectionListener.init();
 
     // Initialize the full zoom setting.
     // We do this before the session restore service gets initialized so we can
@@ -4580,6 +4584,10 @@ var TabsInTitlebar = {
       document.documentElement.removeAttribute("tabsintitlebar");
       updateTitlebarDisplay();
 
+#ifdef XP_MACOSX
+      let secondaryButtonsWidth = rect($("titlebar-secondary-buttonbox")).width;
+      this._sizePlaceholder("fullscreen-button", secondaryButtonsWidth);
+#endif
       // Reset the margins and padding that might have been modified:
       titlebarContent.style.marginTop = "";
       titlebarContent.style.marginBottom = "";
@@ -5337,6 +5345,15 @@ function setStyleDisabled(disabled) {
   if (disabled)
     gPageStyleMenu.disableStyle();
 }
+
+
+var LanguageDetectionListener = {
+  init: function() {
+    window.messageManager.addMessageListener("LanguageDetection:Result", msg => {
+      Translation.languageDetected(msg.target, msg.data);
+    });
+  }
+};
 
 
 var BrowserOffline = {
@@ -6981,10 +6998,6 @@ var TabContextMenu = {
     this.contextTab = aPopupMenu.triggerNode.localName == "tab" ?
                       aPopupMenu.triggerNode : gBrowser.selectedTab;
     let disabled = gBrowser.tabs.length == 1;
-
-    // Enable the "Close Tab" menuitem when the window doesn't close with the last tab.
-    document.getElementById("context_closeTab").disabled =
-      disabled && gBrowser.tabContainer._closeWindowWithLastTab;
 
     var menuItems = aPopupMenu.getElementsByAttribute("tbattr", "tabbrowser-multiple");
     for (let menuItem of menuItems)
