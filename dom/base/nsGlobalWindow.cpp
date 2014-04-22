@@ -2454,7 +2454,8 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
           newInnerWindow->mPerformance =
             new nsPerformance(newInnerWindow,
                               currentInner->mPerformance->GetDOMTiming(),
-                              currentInner->mPerformance->GetChannel());
+                              currentInner->mPerformance->GetChannel(),
+                              currentInner->mPerformance->GetParentPerformance());
         }
       }
 
@@ -3277,11 +3278,10 @@ nsGlobalWindow::DefineArgumentsProperty(nsIArray *aArguments)
   MOZ_ASSERT(!mIsModalContentWindow); // Handled separately.
   nsIScriptContext *ctx = GetOuterWindowInternal()->mContext;
   NS_ENSURE_TRUE(aArguments && ctx, NS_ERROR_NOT_INITIALIZED);
-  AutoPushJSContext cx(ctx->GetNativeContext());
-  NS_ENSURE_TRUE(cx, NS_ERROR_NOT_INITIALIZED);
+  AutoJSContext cx;
 
   JS::Rooted<JSObject*> obj(cx, GetWrapperPreserveColor());
-  return GetContextInternal()->SetProperty(obj, "arguments", aArguments);
+  return ctx->SetProperty(obj, "arguments", aArguments);
 }
 
 //*****************************************************************************
@@ -3567,7 +3567,22 @@ nsPIDOMWindow::CreatePerformanceObjectIfNeeded()
     timedChannel = nullptr;
   }
   if (timing) {
-    mPerformance = new nsPerformance(this, timing, timedChannel);
+    // If we are dealing with an iframe, we will need the parent's performance
+    // object (so we can add the iframe as a resource of that page).
+    nsPerformance* parentPerformance = nullptr;
+    nsCOMPtr<nsIDOMWindow> parentWindow;
+    GetScriptableParent(getter_AddRefs(parentWindow));
+    nsCOMPtr<nsPIDOMWindow> parentPWindow = do_GetInterface(parentWindow);
+    if (GetOuterWindow() != parentPWindow) {
+      if (parentPWindow && !parentPWindow->IsInnerWindow()) {
+        parentPWindow = parentPWindow->GetCurrentInnerWindow();
+      }
+      if (parentPWindow) {
+        parentPerformance = parentPWindow->GetPerformance();
+      }
+    }
+    mPerformance =
+      new nsPerformance(this, timing, timedChannel, parentPerformance);
   }
 }
 
@@ -7860,11 +7875,8 @@ PostMessageEvent::Run()
   NS_ABORT_IF_FALSE(!mSource || mSource->IsOuterWindow(),
                     "should have been passed an outer window!");
 
-  // Get the JSContext for the target window
-  nsIScriptContext* scriptContext = mTargetWindow->GetContext();
-  AutoPushJSContext cx(scriptContext ? scriptContext->GetNativeContext()
-                                     : nsContentUtils::GetSafeJSContext());
-  MOZ_ASSERT(cx);
+  AutoJSAPI jsapi;
+  JSContext* cx = jsapi.cx();
 
   // If we bailed before this point we're going to leak mMessage, but
   // that's probably better than crashing.
@@ -7877,6 +7889,7 @@ PostMessageEvent::Run()
 
   NS_ABORT_IF_FALSE(targetWindow->IsInnerWindow(),
                     "we ordered an inner window!");
+  JSAutoCompartment ac(cx, targetWindow->GetWrapperPreserveColor());
 
   // Ensure that any origin which might have been provided is the origin of this
   // window's document.  Note that we do this *now* instead of when postMessage
@@ -13385,15 +13398,11 @@ nsGlobalWindow::GetMessageManager(ErrorResult& aError)
   nsGlobalChromeWindow* myself = static_cast<nsGlobalChromeWindow*>(this);
   if (!myself->mMessageManager) {
     nsIScriptContext* scx = GetContextInternal();
-    if (NS_WARN_IF(!scx)) {
+    if (NS_WARN_IF(!scx || !(scx->GetNativeContext()))) {
       aError.Throw(NS_ERROR_UNEXPECTED);
       return nullptr;
     }
-    AutoPushJSContext cx(scx->GetNativeContext());
-    if (NS_WARN_IF(!cx)) {
-      aError.Throw(NS_ERROR_UNEXPECTED);
-      return nullptr;
-    }
+
     nsCOMPtr<nsIMessageBroadcaster> globalMM =
       do_GetService("@mozilla.org/globalmessagemanager;1");
     myself->mMessageManager =
