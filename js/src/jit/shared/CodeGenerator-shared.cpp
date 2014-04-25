@@ -67,7 +67,7 @@ CodeGeneratorShared::CodeGeneratorShared(MIRGenerator *gen, LIRGraph *graph, Mac
         // An MAsmJSCall does not align the stack pointer at calls sites but instead
         // relies on the a priori stack adjustment (in the prologue) on platforms
         // (like x64) which require the stack to be aligned.
-#ifdef JS_CODEGEN_ARM
+#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS)
         bool forceAlign = true;
 #else
         bool forceAlign = false;
@@ -150,7 +150,7 @@ CodeGeneratorShared::encodeAllocations(LSnapshot *snapshot, MResumePoint *resume
             mir = mir->toBox()->getOperand(0);
 
         MIRType type = mir->isUnused()
-                       ? MIRType_Undefined
+                       ? MIRType_MagicOptimizedOut
                        : mir->type();
 
         RValueAllocation alloc;
@@ -194,9 +194,14 @@ CodeGeneratorShared::encodeAllocations(LSnapshot *snapshot, MResumePoint *resume
             break;
           }
           case MIRType_MagicOptimizedArguments:
+          case MIRType_MagicOptimizedOut:
           {
             uint32_t index;
-            if (!graph.addConstantToPool(MagicValue(JS_OPTIMIZED_ARGUMENTS), &index))
+            JSWhyMagic why = (type == MIRType_MagicOptimizedArguments
+                              ? JS_OPTIMIZED_ARGUMENTS
+                              : JS_OPTIMIZED_OUT);
+            Value v = MagicValue(why);
+            if (!graph.addConstantToPool(v, &index))
                 return false;
             alloc = RValueAllocation::ConstantPool(index);
             break;
@@ -769,6 +774,17 @@ CodeGeneratorShared::visitOutOfLineTruncateSlow(OutOfLineTruncateSlow *ool)
 
     masm.jump(ool->rejoin());
     return true;
+}
+
+bool
+CodeGeneratorShared::omitOverRecursedCheck() const
+{
+    // If the current function makes no calls (which means it isn't recursive)
+    // and it uses only a small amount of stack space, it doesn't need a
+    // stack overflow check. Note that the actual number here is somewhat
+    // arbitrary, and codegen actually uses small bounded amounts of
+    // additional stack space in some cases too.
+    return frameSize() < 64 && !gen->performsCall();
 }
 
 void

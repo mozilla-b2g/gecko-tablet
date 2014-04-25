@@ -3853,7 +3853,7 @@ ExclusiveContext::getNewType(const Class *clasp, TaggedProto proto, JSFunction *
     if (fun) {
         if (fun->hasScript())
             fun = fun->nonLazyScript()->functionNonDelazifying();
-        else if (fun->isInterpretedLazy())
+        else if (fun->isInterpretedLazy() && !fun->isSelfHostedBuiltin())
             fun = fun->lazyScript()->functionNonDelazifying();
         else
             fun = nullptr;
@@ -4025,7 +4025,8 @@ ConstraintTypeSet::sweep(Zone *zone, bool *oom)
                     *oom = true;
                     flags |= TYPE_FLAG_ANYOBJECT;
                     clearObjects();
-                    return;
+                    objectCount = 0;
+                    break;
                 }
             }
         }

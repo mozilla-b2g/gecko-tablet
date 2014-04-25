@@ -3,6 +3,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
 let B2G_ID = "{3c2e2abc-06d4-11e1-ac3b-374f68613e61}";
@@ -554,7 +555,7 @@ ThreadActor.prototype = {
       this._prettyPrintWorker.addEventListener(
         "error", this._onPrettyPrintError, false);
 
-      if (wantLogging) {
+      if (dumpn.wantLogging) {
         this._prettyPrintWorker.addEventListener("message", this._onPrettyPrintMsg, false);
 
         const postMsg = this._prettyPrintWorker.postMessage;
@@ -4780,25 +4781,27 @@ update(AddonThreadActor.prototype, {
 
   onAttach: function(aRequest) {
     if (!this.attached) {
-      Services.obs.addObserver(this, "document-element-inserted", false);
+      Services.obs.addObserver(this, "chrome-document-global-created", false);
+      Services.obs.addObserver(this, "content-document-global-created", false);
     }
     return ThreadActor.prototype.onAttach.call(this, aRequest);
   },
 
   disconnect: function() {
     if (this.attached) {
-      Services.obs.removeObserver(this, "document-element-inserted");
+      Services.obs.removeObserver(this, "content-document-global-created");
+      Services.obs.removeObserver(this, "chrome-document-global-created");
     }
     return ThreadActor.prototype.disconnect.call(this);
   },
 
   /**
-   * Called when a new DOM document element is created. Check if the DOM was
-   * laoded from an add-on and if so make the window a debuggee.
+   * Called when a new DOM document global is created. Check if the DOM was
+   * loaded from an add-on and if so make the window a debuggee.
    */
   observe: function(aSubject, aTopic, aData) {
     let id = {};
-    if (mapURIToAddonID(aSubject.documentURIObject, id) && id.value === this.addonID) {
+    if (mapURIToAddonID(aSubject.location, id) && id.value === this.addonID) {
       this.dbg.addDebuggee(aSubject.defaultView);
     }
   },
