@@ -684,7 +684,7 @@ FrameIter::FrameIter(const FrameIter &other)
   : data_(other.data_)
 #ifdef JS_ION
   , ionInlineFrames_(other.data_.cx_,
-                     data_.jitFrames_.isScripted() ? &other.ionInlineFrames_ : nullptr)
+                     data_.jitFrames_.isIonJS() ? &other.ionInlineFrames_ : nullptr)
 #endif
 {
 }
@@ -697,10 +697,12 @@ FrameIter::FrameIter(const Data &data)
 {
     JS_ASSERT(data.cx_);
 
+#ifdef JS_ION
     if (data_.jitFrames_.isIonJS()) {
         while (ionInlineFrames_.frameNo() != data.ionInlineFrameNo_)
             ++ionInlineFrames_;
     }
+#endif
 }
 
 #ifdef JS_ION
@@ -789,16 +791,17 @@ FrameIter::operator++()
         }
         popInterpreterFrame();
         break;
-      case JIT:
 #ifdef JS_ION
+      case JIT:
         popJitFrame();
         break;
-#else
-        MOZ_ASSUME_UNREACHABLE("Unexpected state");
-#endif
       case ASMJS:
         popAsmJSFrame();
         break;
+#else
+    default:
+        MOZ_ASSUME_UNREACHABLE("Unexpected state");
+#endif
     }
     return *this;
 }

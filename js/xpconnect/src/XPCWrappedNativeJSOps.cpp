@@ -1,7 +1,6 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=78:
- *
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim: set ts=8 sts=4 et sw=4 tw=99: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -873,7 +872,7 @@ XPC_WN_Helper_Finalize(js::FreeOp *fop, JSObject *obj)
 }
 
 static bool
-XPC_WN_Helper_NewResolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
+XPC_WN_Helper_NewResolve(JSContext *cx, HandleObject obj, HandleId id,
                          MutableHandleObject objp)
 {
     nsresult rv = NS_OK;
@@ -893,7 +892,7 @@ XPC_WN_Helper_NewResolve(JSContext *cx, HandleObject obj, HandleId id, unsigned 
         if (allowPropMods)
             oldResolvingWrapper = ccx.SetResolvingWrapper(wrapper);
 
-        rv = si->GetCallback()->NewResolve(wrapper, cx, obj, id, flags,
+        rv = si->GetCallback()->NewResolve(wrapper, cx, obj, id,
                                            obj2FromScriptable.address(), &retval);
 
         if (allowPropMods)

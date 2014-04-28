@@ -2401,17 +2401,13 @@ JS_SetParent(JSContext *cx, HandleObject obj, HandleObject parent)
 JS_PUBLIC_API(JSObject *)
 JS_GetConstructor(JSContext *cx, HandleObject proto)
 {
-    RootedValue cval(cx);
-
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, proto);
-    {
-        JSAutoResolveFlags rf(cx, 0);
 
-        if (!JSObject::getProperty(cx, proto, proto, cx->names().constructor, &cval))
-            return nullptr;
-    }
+    RootedValue cval(cx);
+    if (!JSObject::getProperty(cx, proto, proto, cx->names().constructor, &cval))
+        return nullptr;
     if (!IsFunctionObject(cval)) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_NO_CONSTRUCTOR,
                              proto->getClass()->name);
@@ -2679,14 +2675,13 @@ JS_DeepFreezeObject(JSContext *cx, HandleObject obj)
 }
 
 static bool
-LookupPropertyById(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
+LookupPropertyById(JSContext *cx, HandleObject obj, HandleId id,
                    MutableHandleObject objp, MutableHandleShape propp)
 {
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj, id);
 
-    JSAutoResolveFlags rf(cx, flags);
     return JSObject::lookupGeneric(cx, obj, id, objp, propp);
 }
 
@@ -2705,7 +2700,7 @@ LookupResult(JSContext *cx, HandleObject obj, HandleObject obj2, HandleId id,
     if (!obj2->isNative()) {
         if (obj2->is<ProxyObject>()) {
             Rooted<PropertyDescriptor> desc(cx);
-            if (!Proxy::getPropertyDescriptor(cx, obj2, id, &desc, 0))
+            if (!Proxy::getPropertyDescriptor(cx, obj2, id, &desc))
                 return false;
             if (!desc.isShared()) {
                 vp.set(desc.value());
@@ -2734,7 +2729,7 @@ JS_LookupPropertyById(JSContext *cx, HandleObject obj, HandleId id, MutableHandl
     RootedObject obj2(cx);
     RootedShape prop(cx);
 
-    return LookupPropertyById(cx, obj, id, 0, &obj2, &prop) &&
+    return LookupPropertyById(cx, obj, id, &obj2, &prop) &&
            LookupResult(cx, obj, obj2, id, prop, vp);
 }
 
@@ -2774,41 +2769,11 @@ JS_LookupUCProperty(JSContext *cx, HandleObject objArg, const jschar *name, size
 }
 
 JS_PUBLIC_API(bool)
-JS_LookupPropertyWithFlagsById(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
-                               MutableHandleObject objp, MutableHandleValue vp)
-{
-    RootedShape prop(cx);
-
-    AssertHeapIsIdle(cx);
-    CHECK_REQUEST(cx);
-    assertSameCompartment(cx, obj, id);
-    if (!(obj->isNative()
-          ? LookupPropertyWithFlags(cx, obj, id, flags, objp, &prop)
-          : JSObject::lookupGeneric(cx, obj, id, objp, &prop)))
-        return false;
-
-    return LookupResult(cx, obj, objp, id, prop, vp);
-}
-
-JS_PUBLIC_API(bool)
-JS_LookupPropertyWithFlags(JSContext *cx, HandleObject obj, const char *name, unsigned flags,
-                           MutableHandleValue vp)
-{
-    RootedObject obj2(cx);
-    JSAtom *atom = Atomize(cx, name, strlen(name));
-    if (!atom)
-        return false;
-
-    RootedId id(cx, AtomToId(atom));
-    return JS_LookupPropertyWithFlagsById(cx, obj, id, flags, &obj2, vp);
-}
-
-JS_PUBLIC_API(bool)
 JS_HasPropertyById(JSContext *cx, HandleObject obj, HandleId id, bool *foundp)
 {
     RootedObject obj2(cx);
     RootedShape prop(cx);
-    bool ok = LookupPropertyById(cx, obj, id, 0, &obj2, &prop);
+    bool ok = LookupPropertyById(cx, obj, id, &obj2, &prop);
     *foundp = (prop != nullptr);
     return ok;
 }
@@ -2855,7 +2820,7 @@ JS_AlreadyHasOwnPropertyById(JSContext *cx, HandleObject obj, HandleId id, bool 
         RootedObject obj2(cx);
         RootedShape prop(cx);
 
-        if (!LookupPropertyById(cx, obj, id, 0, &obj2, &prop))
+        if (!LookupPropertyById(cx, obj, id, &obj2, &prop))
             return false;
         *foundp = (obj == obj2);
         return true;
@@ -3005,9 +2970,6 @@ DefinePropertyById(JSContext *cx, HandleObject obj, HandleId id, HandleValue val
                             ? JS_FUNC_TO_DATA_PTR(JSObject *, setter)
                             : nullptr);
 
-    JSAutoResolveFlags rf(cx, 0);
-    if (flags != 0 && obj->isNative())
-        return DefineNativeProperty(cx, obj, id, value, getter, setter, attrs, flags);
     return JSObject::defineGeneric(cx, obj, id, value, getter, setter, attrs);
 }
 
@@ -3295,17 +3257,17 @@ JS_DefineProperties(JSContext *cx, HandleObject obj, const JSPropertySpec *ps)
 }
 
 static bool
-GetPropertyDescriptorById(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
-                          bool own, MutableHandle<PropertyDescriptor> desc)
+GetPropertyDescriptorById(JSContext *cx, HandleObject obj, HandleId id,
+                          MutableHandle<PropertyDescriptor> desc)
 {
     RootedObject obj2(cx);
     RootedShape shape(cx);
 
-    if (!LookupPropertyById(cx, obj, id, flags, &obj2, &shape))
+    if (!LookupPropertyById(cx, obj, id, &obj2, &shape))
         return false;
 
     desc.clear();
-    if (!shape || (own && obj != obj2))
+    if (!shape)
         return true;
 
     desc.object().set(obj2);
@@ -3322,12 +3284,8 @@ GetPropertyDescriptorById(JSContext *cx, HandleObject obj, HandleId id, unsigned
                 desc.value().set(obj2->nativeGetSlot(shape->slot()));
         }
     } else {
-        if (obj2->is<ProxyObject>()) {
-            JSAutoResolveFlags rf(cx, flags);
-            return own
-                   ? Proxy::getOwnPropertyDescriptor(cx, obj2, id, desc, 0)
-                   : Proxy::getPropertyDescriptor(cx, obj2, id, desc, 0);
-        }
+        if (obj2->is<ProxyObject>())
+            return Proxy::getPropertyDescriptor(cx, obj2, id, desc);
         if (!JSObject::getGenericAttributes(cx, obj2, id, &desc.attributesRef()))
             return false;
         JS_ASSERT(desc.getter() == nullptr);
@@ -3338,42 +3296,42 @@ GetPropertyDescriptorById(JSContext *cx, HandleObject obj, HandleId id, unsigned
 }
 
 JS_PUBLIC_API(bool)
-JS_GetOwnPropertyDescriptorById(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
+JS_GetOwnPropertyDescriptorById(JSContext *cx, HandleObject obj, HandleId id,
                                 MutableHandle<JSPropertyDescriptor> desc)
 {
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
 
-    return GetPropertyDescriptorById(cx, obj, id, flags, true, desc);
+    return GetOwnPropertyDescriptor(cx, obj, id, desc);
 }
 
 JS_PUBLIC_API(bool)
-JS_GetOwnPropertyDescriptor(JSContext *cx, HandleObject obj, const char *name, unsigned flags,
+JS_GetOwnPropertyDescriptor(JSContext *cx, HandleObject obj, const char *name,
                             MutableHandle<JSPropertyDescriptor> desc)
 {
     JSAtom *atom = Atomize(cx, name, strlen(name));
     if (!atom)
         return false;
     RootedId id(cx, AtomToId(atom));
-    return JS_GetOwnPropertyDescriptorById(cx, obj, id, flags, desc);
+    return JS_GetOwnPropertyDescriptorById(cx, obj, id, desc);
 }
 
 JS_PUBLIC_API(bool)
-JS_GetPropertyDescriptorById(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
+JS_GetPropertyDescriptorById(JSContext *cx, HandleObject obj, HandleId id,
                              MutableHandle<JSPropertyDescriptor> desc)
 {
-    return GetPropertyDescriptorById(cx, obj, id, flags, false, desc);
+    return GetPropertyDescriptorById(cx, obj, id, desc);
 }
 
 JS_PUBLIC_API(bool)
-JS_GetPropertyDescriptor(JSContext *cx, HandleObject obj, const char *name, unsigned flags,
+JS_GetPropertyDescriptor(JSContext *cx, HandleObject obj, const char *name,
                          MutableHandle<JSPropertyDescriptor> desc)
 {
     JSAtom *atom = Atomize(cx, name, strlen(name));
     if (!atom)
         return false;
     RootedId id(cx, AtomToId(atom));
-    return atom && JS_GetPropertyDescriptorById(cx, obj, id, flags, desc);
+    return atom && JS_GetPropertyDescriptorById(cx, obj, id, desc);
 }
 
 JS_PUBLIC_API(bool)
@@ -3390,7 +3348,6 @@ JS_ForwardGetPropertyTo(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj, id);
     assertSameCompartment(cx, onBehalfOf);
-    JSAutoResolveFlags rf(cx, 0);
 
     return JSObject::getGeneric(cx, obj, onBehalfOf, id, vp);
 }
@@ -3408,7 +3365,6 @@ JS_ForwardGetElementTo(JSContext *cx, HandleObject obj, uint32_t index, HandleOb
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj);
-    JSAutoResolveFlags rf(cx, 0);
 
     return JSObject::getElement(cx, obj, onBehalfOf, index, vp);
 }
@@ -3441,7 +3397,6 @@ JS_SetPropertyById(JSContext *cx, HandleObject obj, HandleId id, HandleValue v)
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj, id);
-    JSAutoResolveFlags rf(cx, JSRESOLVE_ASSIGNING);
 
     return JSObject::setGeneric(cx, obj, obj, id, &value, false);
 }
@@ -3452,7 +3407,6 @@ SetElement(JSContext *cx, HandleObject obj, uint32_t index, MutableHandleValue v
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj, vp);
-    JSAutoResolveFlags rf(cx, JSRESOLVE_ASSIGNING);
 
     return JSObject::setElement(cx, obj, obj, index, vp, false);
 }
@@ -3526,7 +3480,6 @@ JS_DeletePropertyById2(JSContext *cx, HandleObject obj, HandleId id, bool *resul
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj, id);
-    JSAutoResolveFlags rf(cx, 0);
 
     return JSObject::deleteByValue(cx, obj, IdToValue(id), result);
 }
@@ -3537,7 +3490,6 @@ JS_DeleteElement2(JSContext *cx, HandleObject obj, uint32_t index, bool *result)
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj);
-    JSAutoResolveFlags rf(cx, 0);
 
     return JSObject::deleteElement(cx, obj, index, result);
 }
@@ -3547,7 +3499,6 @@ JS_DeleteProperty2(JSContext *cx, HandleObject obj, const char *name, bool *resu
 {
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj);
-    JSAutoResolveFlags rf(cx, 0);
 
     JSAtom *atom = Atomize(cx, name, strlen(name));
     if (!atom)
@@ -3561,7 +3512,6 @@ JS_DeleteUCProperty2(JSContext *cx, HandleObject obj, const jschar *name, size_t
 {
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj);
-    JSAutoResolveFlags rf(cx, 0);
 
     JSAtom *atom = AtomizeChars(cx, name, AUTO_NAMELEN(name, namelen));
     if (!atom)

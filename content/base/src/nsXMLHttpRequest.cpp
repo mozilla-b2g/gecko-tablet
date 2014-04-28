@@ -138,7 +138,7 @@ using namespace mozilla::dom;
     return NS_OK;                                                               \
   }
 
-NS_IMPL_ISUPPORTS1(nsXHRParseEndListener, nsIDOMEventListener)
+NS_IMPL_ISUPPORTS(nsXHRParseEndListener, nsIDOMEventListener)
 
 class nsResumeTimeoutsEvent : public nsRunnable
 {
@@ -180,7 +180,7 @@ public:
   virtual ~XMLHttpRequestAuthPrompt();
 };
 
-NS_IMPL_ISUPPORTS1(XMLHttpRequestAuthPrompt, nsIAuthPrompt)
+NS_IMPL_ISUPPORTS(XMLHttpRequestAuthPrompt, nsIAuthPrompt)
 
 XMLHttpRequestAuthPrompt::XMLHttpRequestAuthPrompt()
 {
@@ -3341,7 +3341,7 @@ private:
   nsRefPtr<nsXMLHttpRequest> mXHR;
 };
 
-NS_IMPL_CYCLE_COLLECTION_1(AsyncVerifyRedirectCallbackForwarder, mXHR)
+NS_IMPL_CYCLE_COLLECTION(AsyncVerifyRedirectCallbackForwarder, mXHR)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(AsyncVerifyRedirectCallbackForwarder)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
@@ -3781,7 +3781,7 @@ nsXMLHttpRequest::EnsureXPCOMifier()
   return newRef.forget();
 }
 
-NS_IMPL_ISUPPORTS1(nsXMLHttpRequest::nsHeaderVisitor, nsIHttpHeaderVisitor)
+NS_IMPL_ISUPPORTS(nsXMLHttpRequest::nsHeaderVisitor, nsIHttpHeaderVisitor)
 
 NS_IMETHODIMP nsXMLHttpRequest::
 nsHeaderVisitor::VisitHeader(const nsACString &header, const nsACString &value)
@@ -3809,7 +3809,7 @@ NS_INTERFACE_MAP_END
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsXMLHttpRequestXPCOMifier)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsXMLHttpRequestXPCOMifier)
 
-// Can't NS_IMPL_CYCLE_COLLECTION_1 because mXHR has ambiguous
+// Can't NS_IMPL_CYCLE_COLLECTION( because mXHR has ambiguous
 // inheritance from nsISupports.
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsXMLHttpRequestXPCOMifier)
 
@@ -3930,13 +3930,12 @@ ArrayBufferBuilder::getArrayBuffer(JSContext* aCx)
   }
 
   JSObject* obj = JS_NewArrayBufferWithContents(aCx, mLength, mDataPtr);
-  if (!obj) {
-    return nullptr;
-  }
-
   mDataPtr = nullptr;
   mLength = mCapacity = 0;
-
+  if (!obj) {
+    js_free(mDataPtr);
+    return nullptr;
+  }
   return obj;
 }
 

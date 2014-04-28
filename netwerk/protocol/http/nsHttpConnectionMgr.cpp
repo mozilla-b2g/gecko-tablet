@@ -41,7 +41,7 @@ namespace net {
 
 //-----------------------------------------------------------------------------
 
-NS_IMPL_ISUPPORTS1(nsHttpConnectionMgr, nsIObserver)
+NS_IMPL_ISUPPORTS(nsHttpConnectionMgr, nsIObserver)
 
 static void
 InsertTransactionSorted(nsTArray<nsHttpTransaction*> &pendingQ, nsHttpTransaction *trans)
@@ -1178,6 +1178,7 @@ nsHttpConnectionMgr::ReportFailedToProcess(nsIURI *uri)
 
     nsAutoCString host;
     int32_t port = -1;
+    nsAutoCString username;
     bool usingSSL = false;
     bool isHttp = false;
 
@@ -1190,13 +1191,15 @@ nsHttpConnectionMgr::ReportFailedToProcess(nsIURI *uri)
         rv = uri->GetAsciiHost(host);
     if (NS_SUCCEEDED(rv))
         rv = uri->GetPort(&port);
+    if (NS_SUCCEEDED(rv))
+        uri->GetUsername(username);
     if (NS_FAILED(rv) || !isHttp || host.IsEmpty())
         return;
 
     // report the event for all the permutations of anonymous and
     // private versions of this host
     nsRefPtr<nsHttpConnectionInfo> ci =
-        new nsHttpConnectionInfo(host, port, nullptr, usingSSL);
+        new nsHttpConnectionInfo(host, port, username, nullptr, usingSSL);
     ci->SetAnonymous(false);
     ci->SetPrivate(false);
     PipelineFeedbackInfo(ci, RedCorruptedContent, nullptr, 0);
@@ -2707,11 +2710,11 @@ nsHttpConnectionMgr::nsConnectionHandle::PushBack(const char *buf, uint32_t bufL
 //////////////////////// nsHalfOpenSocket
 
 
-NS_IMPL_ISUPPORTS4(nsHttpConnectionMgr::nsHalfOpenSocket,
-                   nsIOutputStreamCallback,
-                   nsITransportEventSink,
-                   nsIInterfaceRequestor,
-                   nsITimerCallback)
+NS_IMPL_ISUPPORTS(nsHttpConnectionMgr::nsHalfOpenSocket,
+                  nsIOutputStreamCallback,
+                  nsITransportEventSink,
+                  nsIInterfaceRequestor,
+                  nsITimerCallback)
 
 nsHttpConnectionMgr::
 nsHalfOpenSocket::nsHalfOpenSocket(nsConnectionEntry *ent,

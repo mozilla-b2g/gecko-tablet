@@ -1812,8 +1812,7 @@ JS_InitStandardClasses(JSContext *cx, JS::Handle<JSObject*> obj);
  * loops any classes not yet resolved lazily.
  */
 extern JS_PUBLIC_API(bool)
-JS_ResolveStandardClass(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
-                        bool *resolved);
+JS_ResolveStandardClass(JSContext *cx, JS::HandleObject obj, JS::HandleId id, bool *resolved);
 
 extern JS_PUBLIC_API(bool)
 JS_EnumerateStandardClasses(JSContext *cx, JS::HandleObject obj);
@@ -2330,11 +2329,6 @@ JS_StringToId(JSContext *cx, JS::HandleString s, JS::MutableHandleId idp);
 
 extern JS_PUBLIC_API(bool)
 JS_IdToValue(JSContext *cx, jsid id, JS::MutableHandle<JS::Value> vp);
-
-/*
- * JSNewResolveOp flag bits.
- */
-#define JSRESOLVE_ASSIGNING     0x01    /* resolve on the left of assignment */
 
 /*
  * Invoke the [[DefaultValue]] hook (see ES5 8.6.2) with the provided hint on
@@ -2873,14 +2867,6 @@ extern JS_PUBLIC_API(bool)
 JS_LookupPropertyById(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
                       JS::MutableHandleValue vp);
 
-extern JS_PUBLIC_API(bool)
-JS_LookupPropertyWithFlags(JSContext *cx, JS::HandleObject obj, const char *name,
-                           unsigned flags, JS::MutableHandleValue vp);
-
-extern JS_PUBLIC_API(bool)
-JS_LookupPropertyWithFlagsById(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
-                               unsigned flags, JS::MutableHandleObject objp, JS::MutableHandleValue vp);
-
 struct JSPropertyDescriptor {
     JSObject           *obj;
     unsigned           attrs;
@@ -3027,10 +3013,10 @@ class MutableHandleBase<JSPropertyDescriptor>
 
 extern JS_PUBLIC_API(bool)
 JS_GetOwnPropertyDescriptorById(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
-                                unsigned flags, JS::MutableHandle<JSPropertyDescriptor> desc);
+                                JS::MutableHandle<JSPropertyDescriptor> desc);
 
 extern JS_PUBLIC_API(bool)
-JS_GetOwnPropertyDescriptor(JSContext *cx, JS::HandleObject obj, const char *name, unsigned flags,
+JS_GetOwnPropertyDescriptor(JSContext *cx, JS::HandleObject obj, const char *name,
                             JS::MutableHandle<JSPropertyDescriptor> desc);
 
 /*
@@ -3039,11 +3025,11 @@ JS_GetOwnPropertyDescriptor(JSContext *cx, JS::HandleObject obj, const char *nam
  * then this property was not found on the prototype chain.
  */
 extern JS_PUBLIC_API(bool)
-JS_GetPropertyDescriptorById(JSContext *cx, JS::HandleObject obj, JS::HandleId id, unsigned flags,
+JS_GetPropertyDescriptorById(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
                              JS::MutableHandle<JSPropertyDescriptor> desc);
 
 extern JS_PUBLIC_API(bool)
-JS_GetPropertyDescriptor(JSContext *cx, JS::HandleObject obj, const char *name, unsigned flags,
+JS_GetPropertyDescriptor(JSContext *cx, JS::HandleObject obj, const char *name,
                          JS::MutableHandle<JSPropertyDescriptor> desc);
 
 extern JS_PUBLIC_API(bool)
@@ -3185,9 +3171,8 @@ JS_PUBLIC_API(void)
 JS_SetAllNonReservedSlotsToUndefined(JSContext *cx, JSObject *objArg);
 
 /*
- * Create a new array buffer with the given contents. The new array buffer
- * takes ownership: after calling this function, do not free |contents| or use
- * |contents| from another thread.
+ * Create a new array buffer with the given contents. On success, the ownership
+ * is transferred to the new array buffer.
  */
 extern JS_PUBLIC_API(JSObject *)
 JS_NewArrayBufferWithContents(JSContext *cx, size_t nbytes, void *contents);
@@ -3219,7 +3204,8 @@ extern JS_PUBLIC_API(void *)
 JS_ReallocateArrayBufferContents(JSContext *cx, uint32_t nbytes, void *oldContents, uint32_t oldNbytes);
 
 /*
- * Create a new mapped array buffer with the given memory mapped contents.
+ * Create a new mapped array buffer with the given memory mapped contents. On success,
+ * the ownership is transferred to the new mapped array buffer.
  */
 extern JS_PUBLIC_API(JSObject *)
 JS_NewMappedArrayBufferWithContents(JSContext *cx, size_t nbytes, void *contents);

@@ -163,7 +163,7 @@ GetDataProperty(JSContext *cx, HandleValue objVal, HandlePropertyName field, Mut
     Rooted<JSPropertyDescriptor> desc(cx);
     RootedObject obj(cx, &objVal.toObject());
     RootedId id(cx, NameToId(field));
-    if (!JS_GetPropertyDescriptorById(cx, obj, id, 0, &desc))
+    if (!JS_GetPropertyDescriptorById(cx, obj, id, &desc))
         return false;
 
     if (!desc.object())
@@ -732,7 +732,7 @@ CreateExportObject(JSContext *cx, Handle<AsmJSModuleObject*> moduleObj)
         JS_ASSERT(func.maybeFieldName() != nullptr);
         RootedId id(cx, NameToId(func.maybeFieldName()));
         RootedValue val(cx, ObjectValue(*fun));
-        if (!DefineNativeProperty(cx, obj, id, val, nullptr, nullptr, JSPROP_ENUMERATE, 0))
+        if (!DefineNativeProperty(cx, obj, id, val, nullptr, nullptr, JSPROP_ENUMERATE))
             return nullptr;
     }
 

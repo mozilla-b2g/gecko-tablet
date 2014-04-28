@@ -247,8 +247,8 @@ pref("media.navigator.video.max_fs", 1200); // 640x480 == 1200mb
 pref("media.navigator.video.max_fr", 30);
 pref("media.peerconnection.video.h264_enabled", false);
 #else
-pref("media.navigator.video.default_width",640);
-pref("media.navigator.video.default_height",480);
+pref("media.navigator.video.default_width",0);  // adaptive default
+pref("media.navigator.video.default_height",0); // adaptive default
 pref("media.peerconnection.enabled", true);
 pref("media.peerconnection.video.enabled", true);
 pref("media.navigator.video.max_fs", 0); // unrestricted
@@ -4360,7 +4360,7 @@ pref("ui.touch_activation.duration_ms", 10);
 
 // nsMemoryInfoDumper can watch a fifo in the temp directory and take various
 // actions when the fifo is written to.  Disable this in general.
-pref("memory_info_dumper.watch_fifo", false);
+pref("memory_info_dumper.watch_fifo.enabled", false);
 
 #ifdef MOZ_CAPTIVEDETECT
 pref("captivedetect.maxWaitingTime", 5000);

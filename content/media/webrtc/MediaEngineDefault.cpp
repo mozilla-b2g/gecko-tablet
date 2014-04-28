@@ -31,7 +31,7 @@ namespace mozilla {
 
 using namespace mozilla::gfx;
 
-NS_IMPL_ISUPPORTS1(MediaEngineDefaultVideoSource, nsITimerCallback)
+NS_IMPL_ISUPPORTS(MediaEngineDefaultVideoSource, nsITimerCallback)
 /**
  * Default video source.
  */
@@ -61,13 +61,16 @@ MediaEngineDefaultVideoSource::GetUUID(nsAString& aUUID)
 }
 
 nsresult
-MediaEngineDefaultVideoSource::Allocate(const MediaEnginePrefs &aPrefs)
+MediaEngineDefaultVideoSource::Allocate(const VideoTrackConstraintsN &aConstraints,
+                                        const MediaEnginePrefs &aPrefs)
 {
   if (mState != kReleased) {
     return NS_ERROR_FAILURE;
   }
 
   mOpts = aPrefs;
+  mOpts.mWidth = mOpts.mWidth ? mOpts.mWidth : MediaEngine::DEFAULT_43_VIDEO_WIDTH;
+  mOpts.mHeight = mOpts.mHeight ? mOpts.mHeight : MediaEngine::DEFAULT_43_VIDEO_HEIGHT;
   mState = kAllocated;
   return NS_OK;
 }
@@ -341,7 +344,7 @@ private:
 /**
  * Default audio source.
  */
-NS_IMPL_ISUPPORTS1(MediaEngineDefaultAudioSource, nsITimerCallback)
+NS_IMPL_ISUPPORTS(MediaEngineDefaultAudioSource, nsITimerCallback)
 
 MediaEngineDefaultAudioSource::MediaEngineDefaultAudioSource()
   : mTimer(nullptr)
@@ -367,7 +370,8 @@ MediaEngineDefaultAudioSource::GetUUID(nsAString& aUUID)
 }
 
 nsresult
-MediaEngineDefaultAudioSource::Allocate(const MediaEnginePrefs &aPrefs)
+MediaEngineDefaultAudioSource::Allocate(const AudioTrackConstraintsN &aConstraints,
+                                        const MediaEnginePrefs &aPrefs)
 {
   if (mState != kReleased) {
     return NS_ERROR_FAILURE;

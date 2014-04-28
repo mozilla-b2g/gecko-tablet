@@ -54,6 +54,7 @@ class Nursery
     static const int NumNurseryChunks = 16;
     static const int LastNurseryChunk = NumNurseryChunks - 1;
     static const size_t Alignment = gc::ChunkSize;
+    static const size_t ChunkShift = gc::ChunkShift;
     static const size_t NurserySize = gc::ChunkSize * NumNurseryChunks;
 
     explicit Nursery(JSRuntime *rt)
@@ -200,13 +201,19 @@ class Nursery
         return reinterpret_cast<NurseryChunkLayout *>(start())[index];
     }
 
+    MOZ_ALWAYS_INLINE void initChunk(int chunkno) {
+        NurseryChunkLayout &c = chunk(chunkno);
+        c.trailer.location = gc::ChunkLocationNursery;
+        c.trailer.runtime = runtime();
+    }
+
     MOZ_ALWAYS_INLINE void setCurrentChunk(int chunkno) {
         JS_ASSERT(chunkno < NumNurseryChunks);
         JS_ASSERT(chunkno < numActiveChunks_);
         currentChunk_ = chunkno;
         position_ = chunk(chunkno).start();
         currentEnd_ = chunk(chunkno).end();
-        chunk(chunkno).trailer.runtime = runtime();
+        initChunk(chunkno);
     }
 
     void updateDecommittedRegion() {

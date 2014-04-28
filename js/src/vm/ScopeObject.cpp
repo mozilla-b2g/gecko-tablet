@@ -1150,7 +1150,7 @@ class DebugScopeProxy : public BaseProxyHandler
         if (scope->is<CallObject>() && !scope->as<CallObject>().isForEval()) {
             CallObject &callobj = scope->as<CallObject>();
             RootedScript script(cx, callobj.callee().nonLazyScript());
-            if (!script->ensureHasTypes(cx))
+            if (!script->ensureHasTypes(cx) || !script->ensureHasAnalyzedArgsUsage(cx))
                 return false;
 
             Bindings &bindings = script->bindings;
@@ -1325,15 +1325,13 @@ class DebugScopeProxy : public BaseProxyHandler
     }
 
     bool getPropertyDescriptor(JSContext *cx, HandleObject proxy, HandleId id,
-                               MutableHandle<PropertyDescriptor> desc,
-                               unsigned flags) MOZ_OVERRIDE
+                               MutableHandle<PropertyDescriptor> desc) MOZ_OVERRIDE
     {
-        return getOwnPropertyDescriptor(cx, proxy, id, desc, flags);
+        return getOwnPropertyDescriptor(cx, proxy, id, desc);
     }
 
     bool getOwnPropertyDescriptor(JSContext *cx, HandleObject proxy, HandleId id,
-                                  MutableHandle<PropertyDescriptor> desc,
-                                  unsigned flags) MOZ_OVERRIDE
+                                  MutableHandle<PropertyDescriptor> desc) MOZ_OVERRIDE
     {
         Rooted<DebugScopeObject*> debugScope(cx, &proxy->as<DebugScopeObject>());
         Rooted<ScopeObject*> scope(cx, &debugScope->scope());
@@ -1361,7 +1359,7 @@ class DebugScopeProxy : public BaseProxyHandler
             return true;
         }
 
-        return JS_GetOwnPropertyDescriptorById(cx, scope, id, flags, desc);
+        return JS_GetOwnPropertyDescriptorById(cx, scope, id, desc);
     }
 
     bool get(JSContext *cx, HandleObject proxy, HandleObject receiver,  HandleId id,

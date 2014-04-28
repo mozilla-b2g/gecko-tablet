@@ -249,14 +249,14 @@ private:
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsTextInputSelectionImpl)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsTextInputSelectionImpl)
 NS_INTERFACE_TABLE_HEAD(nsTextInputSelectionImpl)
-  NS_INTERFACE_TABLE3(nsTextInputSelectionImpl,
-                      nsISelectionController,
-                      nsISelectionDisplay,
-                      nsISupportsWeakReference)
+  NS_INTERFACE_TABLE(nsTextInputSelectionImpl,
+                     nsISelectionController,
+                     nsISelectionDisplay,
+                     nsISupportsWeakReference)
   NS_INTERFACE_TABLE_TO_MAP_SEGUE_CYCLE_COLLECTION(nsTextInputSelectionImpl)
 NS_INTERFACE_MAP_END
 
-NS_IMPL_CYCLE_COLLECTION_2(nsTextInputSelectionImpl, mFrameSelection, mLimiter)
+NS_IMPL_CYCLE_COLLECTION(nsTextInputSelectionImpl, mFrameSelection, mLimiter)
 
 
 // BEGIN nsTextInputSelectionImpl
@@ -725,11 +725,11 @@ nsTextInputListener::~nsTextInputListener()
 {
 }
 
-NS_IMPL_ISUPPORTS4(nsTextInputListener,
-                   nsISelectionListener,
-                   nsIEditorObserver,
-                   nsISupportsWeakReference,
-                   nsIDOMEventListener)
+NS_IMPL_ISUPPORTS(nsTextInputListener,
+                  nsISelectionListener,
+                  nsIEditorObserver,
+                  nsISupportsWeakReference,
+                  nsIDOMEventListener)
 
 // BEGIN nsIDOMSelectionListener
 
@@ -1429,6 +1429,7 @@ nsTextEditorState::DestroyEditor()
     mEditor->PreDestroy(true);
     mEditorInitialized = false;
   }
+  ClearValueCache();
 }
 
 void
@@ -1939,11 +1940,6 @@ nsTextEditorState::InitializeKeyboardEventListeners()
 void
 nsTextEditorState::ValueWasChanged(bool aNotify)
 {
-  // placeholder management
-  if (!mPlaceholderDiv) {
-    return;
-  }
-
   UpdatePlaceholderVisibility(aNotify);
 }
 
@@ -1964,15 +1960,11 @@ nsTextEditorState::UpdatePlaceholderText(bool aNotify)
   nsContentUtils::RemoveNewlines(placeholderValue);
   NS_ASSERTION(mPlaceholderDiv->GetFirstChild(), "placeholder div has no child");
   mPlaceholderDiv->GetFirstChild()->SetText(placeholderValue, aNotify);
-  ValueWasChanged(aNotify);
 }
 
 void
 nsTextEditorState::UpdatePlaceholderVisibility(bool aNotify)
 {
-  NS_ASSERTION(mPlaceholderDiv, "This function should not be called if "
-                                "mPlaceholderDiv isn't set");
-
   nsAutoString value;
   GetValue(value, true);
 
@@ -1999,7 +1991,7 @@ nsTextEditorState::HideSelectionIfBlurred()
   }
 }
 
-NS_IMPL_ISUPPORTS1(nsAnonDivObserver, nsIMutationObserver)
+NS_IMPL_ISUPPORTS(nsAnonDivObserver, nsIMutationObserver)
 
 void
 nsAnonDivObserver::CharacterDataChanged(nsIDocument*             aDocument,

@@ -26,7 +26,7 @@ StatementParams::StatementParams(mozIStorageStatement *aStatement) :
   (void)mStatement->GetParameterCount(&mParamCount);
 }
 
-NS_IMPL_ISUPPORTS2(
+NS_IMPL_ISUPPORTS(
   StatementParams,
   mozIStorageStatementParams,
   nsIXPCScriptable
@@ -157,7 +157,6 @@ StatementParams::NewResolve(nsIXPConnectWrappedNative *aWrapper,
                             JSContext *aCtx,
                             JSObject *aScopeObj,
                             jsid aId,
-                            uint32_t aFlags,
                             JSObject **_objp,
                             bool *_retval)
 {

@@ -65,7 +65,10 @@ JSObject *CreateNewObject(const int offset, const int length)
     if (!ptr)
         return nullptr;
     JSObject *obj = JS_NewMappedArrayBufferWithContents(cx, length, ptr);
-
+    if (!obj) {
+        JS_ReleaseMappedArrayBufferContents(ptr, length);
+        return nullptr;
+    }
     return obj;
 }
 
@@ -109,7 +112,7 @@ bool TestNeuterObject()
 {
     JS::RootedObject obj(cx, CreateNewObject(8, 12));
     CHECK(obj);
-    JS_NeuterArrayBuffer(cx, obj);
+    JS_NeuterArrayBuffer(cx, obj, ChangeData);
     CHECK(isNeutered(obj));
 
     return true;
