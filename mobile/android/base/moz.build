@@ -70,6 +70,7 @@ gujar.sources += [
     'util/StringUtils.java',
     'util/ThreadUtils.java',
     'util/UiAsyncTask.java',
+    'util/WebActivityMapper.java',
 ]
 gujar.extra_jars = [
     'gecko-mozglue.jar'
@@ -108,6 +109,7 @@ gbjar.sources += [
     'ActionModeCompatView.java',
     'ActivityHandlerHelper.java',
     'AlertNotification.java',
+    'AndroidGamepadManager.java',
     'animation/AnimationUtils.java',
     'animation/AnimatorProxy.java',
     'animation/HeightChangeAnimation.java',
@@ -287,6 +289,7 @@ gbjar.sources += [
     'home/TopSitesThumbnailView.java',
     'home/TwoLinePageRow.java',
     'InputMethods.java',
+    'IntentHelper.java',
     'JavaAddonManager.java',
     'LightweightTheme.java',
     'LightweightThemeDrawable.java',

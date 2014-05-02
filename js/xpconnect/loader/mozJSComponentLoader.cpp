@@ -471,7 +471,7 @@ mozJSComponentLoader::LoadModule(FileLocation &aFile)
 
     RootedValue NSGetFactory_val(cx);
     if (!JS_GetProperty(cx, entryObj, "NSGetFactory", &NSGetFactory_val) ||
-        JSVAL_IS_VOID(NSGetFactory_val)) {
+        NSGetFactory_val.isUndefined()) {
         return nullptr;
     }
 
@@ -1371,6 +1371,9 @@ mozJSComponentLoader::Unload(const nsACString & aLocation)
     if (!mInitialized) {
         return NS_OK;
     }
+
+    MOZ_RELEASE_ASSERT(!mReuseLoaderGlobal, "Module unloading not supported when "
+                                            "compartment sharing is enabled");
 
     nsCOMPtr<nsIIOService> ioService = do_GetIOService(&rv);
     NS_ENSURE_SUCCESS(rv, rv);

@@ -2258,10 +2258,15 @@ jit::AnalyzeNewScriptProperties(JSContext *cx, JSFunction *fun,
     types::TypeScript::SetThis(cx, script, types::Type::ObjectType(type));
 
     MIRGraph graph(&temp);
+    InlineScriptTree *inlineScriptTree = InlineScriptTree::New(&temp, nullptr, nullptr, script);
+    if (!inlineScriptTree)
+        return false;
+
     CompileInfo info(script, fun,
                      /* osrPc = */ nullptr, /* constructing = */ false,
                      DefinitePropertiesAnalysis,
-                     script->needsArgsObj());
+                     script->needsArgsObj(),
+                     inlineScriptTree);
 
     AutoTempAllocatorRooter root(cx, &temp);
 
@@ -2366,7 +2371,8 @@ jit::AnalyzeNewScriptProperties(JSContext *cx, JSFunction *fun,
 }
 
 static bool
-ArgumentsUseCanBeLazy(JSContext *cx, JSScript *script, MInstruction *ins, size_t index)
+ArgumentsUseCanBeLazy(JSContext *cx, JSScript *script, MInstruction *ins, size_t index,
+                      bool *argumentsContentsObserved)
 {
     // We can read the frame's arguments directly for f.apply(x, arguments).
     if (ins->isCall()) {
@@ -2374,13 +2380,16 @@ ArgumentsUseCanBeLazy(JSContext *cx, JSScript *script, MInstruction *ins, size_t
             ins->toCall()->numActualArgs() == 2 &&
             index == MCall::IndexOfArgument(1))
         {
+            *argumentsContentsObserved = true;
             return true;
         }
     }
 
     // arguments[i] can read fp->canonicalActualArg(i) directly.
-    if (ins->isCallGetElement() && index == 0)
+    if (ins->isCallGetElement() && index == 0) {
+        *argumentsContentsObserved = true;
         return true;
+    }
 
     // arguments.length length can read fp->numActualArgs() directly.
     if (ins->isCallGetProperty() && index == 0 && ins->toCallGetProperty()->name() == cx->names().length)
@@ -2403,6 +2412,26 @@ jit::AnalyzeArgumentsUsage(JSContext *cx, JSScript *scriptArg)
     // and also simplifies handling of early returns.
     script->setNeedsArgsObj(true);
 
+    // Always construct arguments objects when in debug mode and for generator
+    // scripts (generators can be suspended when speculation fails).
+    //
+    // FIXME: Don't build arguments for ES6 generator expressions.
+    if (cx->compartment()->debugMode() || script->isGenerator())
+        return true;
+
+    // If the script has dynamic name accesses which could reach 'arguments',
+    // the parser will already have checked to ensure there are no explicit
+    // uses of 'arguments' in the function. If there are such uses, the script
+    // will be marked as definitely needing an arguments object.
+    //
+    // New accesses on 'arguments' can occur through 'eval' or the debugger
+    // statement. In the former case, we will dynamically detect the use and
+    // mark the arguments optimization as having failed.
+    if (script->bindingsAccessedDynamically()) {
+        script->setNeedsArgsObj(false);
+        return true;
+    }
+
     if (!jit::IsIonEnabled(cx) || !script->compileAndGo())
         return true;
 
@@ -2422,10 +2451,14 @@ jit::AnalyzeArgumentsUsage(JSContext *cx, JSScript *scriptArg)
         return false;
 
     MIRGraph graph(&temp);
+    InlineScriptTree *inlineScriptTree = InlineScriptTree::New(&temp, nullptr, nullptr, script);
+    if (!inlineScriptTree)
+        return false;
     CompileInfo info(script, script->functionNonDelazifying(),
                      /* osrPc = */ nullptr, /* constructing = */ false,
                      ArgumentsUsageAnalysis,
-                     /* needsArgsObj = */ true);
+                     /* needsArgsObj = */ true,
+                     inlineScriptTree);
 
     AutoTempAllocatorRooter root(cx, &temp);
 
@@ -2461,6 +2494,8 @@ jit::AnalyzeArgumentsUsage(JSContext *cx, JSScript *scriptArg)
 
     MDefinition *argumentsValue = graph.begin()->getSlot(info.argsObjSlot());
 
+    bool argumentsContentsObserved = false;
+
     for (MUseDefIterator uses(argumentsValue); uses; uses++) {
         MDefinition *use = uses.def();
 
@@ -2468,9 +2503,19 @@ jit::AnalyzeArgumentsUsage(JSContext *cx, JSScript *scriptArg)
         if (!use->isInstruction())
             return true;
 
-        if (!ArgumentsUseCanBeLazy(cx, script, use->toInstruction(), uses.index()))
+        if (!ArgumentsUseCanBeLazy(cx, script, use->toInstruction(), uses.index(),
+                                   &argumentsContentsObserved))
+        {
             return true;
+        }
     }
+
+    // If a script explicitly accesses the contents of 'arguments', and has
+    // formals which may be stored as part of a call object, don't use lazy
+    // arguments. The compiler can then assume that accesses through
+    // arguments[i] will be on unaliased variables.
+    if (script->funHasAnyAliasedFormal() && argumentsContentsObserved)
+        return true;
 
     script->setNeedsArgsObj(false);
     return true;

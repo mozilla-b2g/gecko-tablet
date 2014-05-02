@@ -259,7 +259,7 @@ nsXPCComponents_Interfaces::NewEnumerate(nsIXPConnectWrappedNative *wrapper,
         }
         case JSENUMERATE_NEXT:
         {
-            uint32_t idx = JSVAL_TO_INT(*statep);
+            uint32_t idx = statep->toInt32();
             nsIInterfaceInfo* interface = mInterfaces.SafeElementAt(idx);
             *statep = UINT_TO_JSVAL(idx + 1);
 
@@ -323,9 +323,7 @@ nsXPCComponents_Interfaces::NewResolve(nsIXPConnectWrappedNative *wrapper,
                     // Assign, not compare
                     (idobj = holder->GetJSObject())) {
                     *objp = obj;
-                    *_retval = JS_DefinePropertyById(cx, obj, id,
-                                                     OBJECT_TO_JSVAL(idobj),
-                                                     nullptr, nullptr,
+                    *_retval = JS_DefinePropertyById(cx, obj, id, idobj,
                                                      JSPROP_ENUMERATE |
                                                      JSPROP_READONLY |
                                                      JSPROP_PERMANENT);
@@ -507,7 +505,7 @@ nsXPCComponents_InterfacesByID::NewEnumerate(nsIXPConnectWrappedNative *wrapper,
         }
         case JSENUMERATE_NEXT:
         {
-            uint32_t idx = JSVAL_TO_INT(*statep);
+            uint32_t idx = statep->toInt32();
             nsIInterfaceInfo* interface = mInterfaces.SafeElementAt(idx);
             *statep = UINT_TO_JSVAL(idx + 1);
             if (interface) {
@@ -579,9 +577,7 @@ nsXPCComponents_InterfacesByID::NewResolve(nsIXPConnectWrappedNative *wrapper,
                 (idobj = holder->GetJSObject())) {
                 *objp = obj;
                 *_retval =
-                    JS_DefinePropertyById(cx, obj, id,
-                                          OBJECT_TO_JSVAL(idobj),
-                                          nullptr, nullptr,
+                    JS_DefinePropertyById(cx, obj, id, idobj,
                                           JSPROP_ENUMERATE |
                                           JSPROP_READONLY |
                                           JSPROP_PERMANENT);
@@ -764,7 +760,7 @@ nsXPCComponents_Classes::NewEnumerate(nsIXPConnectWrappedNative *wrapper,
         {
             nsCOMPtr<nsISupports> isup;
             bool hasMore;
-            e = (nsISimpleEnumerator*) JSVAL_TO_PRIVATE(*statep);
+            e = (nsISimpleEnumerator*) statep->toPrivate();
 
             if (NS_SUCCEEDED(e->HasMoreElements(&hasMore)) && hasMore &&
                 NS_SUCCEEDED(e->GetNext(getter_AddRefs(isup))) && isup) {
@@ -786,7 +782,7 @@ nsXPCComponents_Classes::NewEnumerate(nsIXPConnectWrappedNative *wrapper,
 
         case JSENUMERATE_DESTROY:
         default:
-            e = (nsISimpleEnumerator*) JSVAL_TO_PRIVATE(*statep);
+            e = (nsISimpleEnumerator*) statep->toPrivate();
             NS_IF_RELEASE(e);
             *statep = JSVAL_NULL;
             return NS_OK;
@@ -821,9 +817,7 @@ nsXPCComponents_Classes::NewResolve(nsIXPConnectWrappedNative *wrapper,
                     // Assign, not compare
                         (idobj = holder->GetJSObject())) {
                     *objp = obj;
-                    *_retval = JS_DefinePropertyById(cx, obj, id,
-                                                     OBJECT_TO_JSVAL(idobj),
-                                                     nullptr, nullptr,
+                    *_retval = JS_DefinePropertyById(cx, obj, id, idobj,
                                                      JSPROP_ENUMERATE |
                                                      JSPROP_READONLY |
                                                      JSPROP_PERMANENT);
@@ -1004,7 +998,7 @@ nsXPCComponents_ClassesByID::NewEnumerate(nsIXPConnectWrappedNative *wrapper,
         {
             nsCOMPtr<nsISupports> isup;
             bool hasMore;
-            e = (nsISimpleEnumerator*) JSVAL_TO_PRIVATE(*statep);
+            e = (nsISimpleEnumerator*) statep->toPrivate();
 
             if (NS_SUCCEEDED(e->HasMoreElements(&hasMore)) && hasMore &&
                 NS_SUCCEEDED(e->GetNext(getter_AddRefs(isup))) && isup) {
@@ -1027,7 +1021,7 @@ nsXPCComponents_ClassesByID::NewEnumerate(nsIXPConnectWrappedNative *wrapper,
 
         case JSENUMERATE_DESTROY:
         default:
-            e = (nsISimpleEnumerator*) JSVAL_TO_PRIVATE(*statep);
+            e = (nsISimpleEnumerator*) statep->toPrivate();
             NS_IF_RELEASE(e);
             *statep = JSVAL_NULL;
             return NS_OK;
@@ -1082,9 +1076,7 @@ nsXPCComponents_ClassesByID::NewResolve(nsIXPConnectWrappedNative *wrapper,
                     // Assign, not compare
                     (idobj = holder->GetJSObject())) {
                     *objp = obj;
-                    *_retval = JS_DefinePropertyById(cx, obj, id,
-                                                     ObjectValue(*idobj),
-                                                     nullptr, nullptr,
+                    *_retval = JS_DefinePropertyById(cx, obj, id, idobj,
                                                      JSPROP_ENUMERATE |
                                                      JSPROP_READONLY |
                                                      JSPROP_PERMANENT);
@@ -1264,7 +1256,7 @@ nsXPCComponents_Results::NewEnumerate(nsIXPConnectWrappedNative *wrapper,
         case JSENUMERATE_NEXT:
         {
             const char* name;
-            iter = (const void**) JSVAL_TO_PRIVATE(*statep);
+            iter = (const void**) statep->toPrivate();
             if (nsXPCException::IterateNSResults(nullptr, &name, nullptr, iter)) {
                 RootedString idstr(cx, JS_NewStringCopyZ(cx, name));
                 JS::RootedId id(cx);
@@ -1278,7 +1270,7 @@ nsXPCComponents_Results::NewEnumerate(nsIXPConnectWrappedNative *wrapper,
 
         case JSENUMERATE_DESTROY:
         default:
-            iter = (const void**) JSVAL_TO_PRIVATE(*statep);
+            iter = (const void**) statep->toPrivate();
             delete [] (char*) iter;
             *statep = JSVAL_NULL;
             return NS_OK;
@@ -1303,11 +1295,8 @@ nsXPCComponents_Results::NewResolve(nsIXPConnectWrappedNative *wrapper,
         nsresult rv;
         while (nsXPCException::IterateNSResults(&rv, &rv_name, nullptr, &iter)) {
             if (!strcmp(name.ptr(), rv_name)) {
-                jsval val = JS_NumberValue((double)rv);
-
                 *objp = obj;
-                if (!JS_DefinePropertyById(cx, obj, id, val,
-                                           nullptr, nullptr,
+                if (!JS_DefinePropertyById(cx, obj, id, (uint32_t)rv,
                                            JSPROP_ENUMERATE |
                                            JSPROP_READONLY |
                                            JSPROP_PERMANENT)) {
@@ -2469,7 +2458,7 @@ nsXPCComponents_Constructor::CallOrConstruct(nsIXPConnectWrappedNative *wrapper,
             return ThrowAndFail(NS_ERROR_XPC_BAD_CID, cx, _retval);
 
         nsCOMPtr<nsIXPConnectWrappedNative> wn;
-        if (NS_FAILED(xpc->GetWrappedNativeOfJSObject(cx, JSVAL_TO_OBJECT(val),
+        if (NS_FAILED(xpc->GetWrappedNativeOfJSObject(cx, val.toObjectOrNull(),
                                                       getter_AddRefs(wn))) || !wn ||
             !(cClassID = do_QueryWrappedNative(wn))) {
             return ThrowAndFail(NS_ERROR_XPC_UNEXPECTED, cx, _retval);
@@ -2962,9 +2951,8 @@ xpc::CreateObjectIn(JSContext *cx, HandleValue vobj, CreateObjectInOptions &opti
             return false;
 
         if (define) {
-            if (!JS_DefinePropertyById(cx, scope, options.defineAs, ObjectValue(*obj),
-                                       JS_PropertyStub, JS_StrictPropertyStub,
-                                       JSPROP_ENUMERATE))
+            if (!JS_DefinePropertyById(cx, scope, options.defineAs, obj, JSPROP_ENUMERATE,
+                                       JS_PropertyStub, JS_StrictPropertyStub))
                 return false;
         }
     }

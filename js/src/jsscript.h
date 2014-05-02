@@ -180,7 +180,7 @@ class Bindings
     friend class BindingIter;
     friend class AliasedFormalIter;
 
-    HeapPtr<Shape> callObjShape_;
+    HeapPtrShape callObjShape_;
     uintptr_t bindingArrayAndFlag_;
     uint16_t numArgs_;
     uint16_t numBlockScoped_;
@@ -1915,21 +1915,6 @@ SweepScriptData(JSRuntime *rt);
 
 extern void
 FreeScriptData(JSRuntime *rt);
-
-struct ScriptAndCounts
-{
-    /* This structure is stored and marked from the JSRuntime. */
-    JSScript *script;
-    ScriptCounts scriptCounts;
-
-    PCCounts &getPCCounts(jsbytecode *pc) const {
-        return scriptCounts.pcCountsVector[script->pcToOffset(pc)];
-    }
-
-    jit::IonScriptCounts *getIonCounts() const {
-        return scriptCounts.ionCounts;
-    }
-};
 
 struct GSNCache;
 
