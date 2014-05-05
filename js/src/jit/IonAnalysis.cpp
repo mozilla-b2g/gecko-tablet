@@ -54,7 +54,7 @@ jit::SplitCriticalEdges(MIRGraph &graph)
 }
 
 // Operands to a resume point which are dead at the point of the resume can be
-// replaced with undefined values. This analysis supports limited detection of
+// replaced with a magic value. This analysis supports limited detection of
 // dead operands, pruning those which are defined in the resume point's basic
 // block and have no uses outside the block or at points later than the resume
 // point.
@@ -92,6 +92,14 @@ jit::EliminateDeadResumePointOperands(MIRGenerator *mir, MIRGraph &graph)
             // than doing a more sophisticated analysis, just ignore these.
             if (ins->isUnbox() || ins->isParameter() || ins->isTypeBarrier() || ins->isComputeThis())
                 continue;
+
+            // TypedObject intermediate values captured by resume points may
+            // be legitimately dead in Ion code, but are still needed if we
+            // bail out. They can recover on bailout.
+            if (ins->isNewDerivedTypedObject()) {
+                MOZ_ASSERT(ins->canRecoverOnBailout());
+                continue;
+            }
 
             // If the instruction's behavior has been constant folded into a
             // separate instruction, we can't determine precisely where the
@@ -135,11 +143,23 @@ jit::EliminateDeadResumePointOperands(MIRGenerator *mir, MIRGraph &graph)
                     continue;
                 }
 
+                // Function.arguments can be used to access all arguments in
+                // non-strict scripts, so we can't optimize out any arguments.
+                CompileInfo &info = block->info();
+                if (!info.script()->strict()) {
+                    uint32_t slot = uses->index();
+                    uint32_t firstArgSlot = info.firstArgSlot();
+                    if (firstArgSlot <= slot && slot - firstArgSlot < info.nargs()) {
+                        uses++;
+                        continue;
+                    }
+                }
+
                 // Store an optimized out magic value in place of all dead
                 // resume point operands. Making any such substitution can in
                 // general alter the interpreter's behavior, even though the
                 // code is dead, as the interpreter will still execute opcodes
-                // whose effects cannot be observed. If the undefined value
+                // whose effects cannot be observed. If the magic value value
                 // were to flow to, say, a dead property access the
                 // interpreter could throw an exception; we avoid this problem
                 // by removing dead operands before removing dead code.
