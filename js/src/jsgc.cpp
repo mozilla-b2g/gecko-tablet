@@ -789,6 +789,7 @@ Chunk::init(JSRuntime *rt)
 
     /* Initialize the chunk info. */
     info.age = 0;
+    info.trailer.storeBuffer = nullptr;
     info.trailer.location = ChunkLocationTenuredHeap;
     info.trailer.runtime = rt;
 
@@ -2850,13 +2851,6 @@ BeginMarkPhase(JSRuntime *rt)
         c->marked = false;
         if (ShouldPreserveJITCode(c, currentTime))
             c->zone()->setPreservingCode(true);
-    }
-
-    if (!rt->gc.shouldCleanUpEverything) {
-#ifdef JS_ION
-        if (JSCompartment *comp = jit::TopmostJitActivationCompartment(rt))
-            comp->zone()->setPreservingCode(true);
-#endif
     }
 
     /*
