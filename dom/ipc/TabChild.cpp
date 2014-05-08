@@ -1599,11 +1599,7 @@ TabChild::CancelCachedFileDescriptorCallback(
 
     // No need to hold the callback any longer.
     info->mCallback = nullptr;
-<<<<<<< local
-    
-=======
 
->>>>>>> other
     // Set this flag so that we will close the file descriptor when it arrives.
     info->mCanceled = true;
 }
