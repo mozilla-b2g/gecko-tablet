@@ -1331,6 +1331,23 @@ TabChild::DestroyWindow()
       }
       mLayersId = 0;
     }
+
+    for (uint32_t index = 0, count = mCachedFileDescriptorInfos.Length();
+         index < count;
+         index++) {
+        nsAutoPtr<CachedFileDescriptorInfo>& info =
+            mCachedFileDescriptorInfos[index];
+
+        MOZ_ASSERT(!info->mCallback);
+
+        if (info->mFileDescriptor.IsValid()) {
+            MOZ_ASSERT(!info->mCanceled);
+
+            nsRefPtr<CloseFileRunnable> runnable =
+                new CloseFileRunnable(info->mFileDescriptor);
+            runnable->Dispatch();
+        }
+    }
 }
 
 bool
@@ -1582,7 +1599,11 @@ TabChild::CancelCachedFileDescriptorCallback(
 
     // No need to hold the callback any longer.
     info->mCallback = nullptr;
+<<<<<<< local
     
+=======
+
+>>>>>>> other
     // Set this flag so that we will close the file descriptor when it arrives.
     info->mCanceled = true;
 }
