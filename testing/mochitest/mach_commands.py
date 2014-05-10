@@ -190,7 +190,8 @@ class MochitestRunner(MozbuildObject):
         jsdebugger=False, debug_on_failure=False, start_at=None, end_at=None,
         e10s=False, dmd=False, dump_output_directory=None,
         dump_about_memory_after_test=False, dump_dmd_after_test=False,
-        install_extension=None, quiet=False, environment=[], app_override=None, **kwargs):
+        install_extension=None, quiet=False, environment=[], app_override=None,
+        useTestMediaDevices=False, **kwargs):
         """Runs a mochitest.
 
         test_paths are path to tests. They can be a relative path from the
@@ -315,6 +316,7 @@ class MochitestRunner(MozbuildObject):
         options.dumpOutputDirectory = dump_output_directory
         options.quiet = quiet
         options.environment = environment
+        options.useTestMediaDevices = useTestMediaDevices
 
         options.failureFile = failure_file_path
         if install_extension != None:
@@ -339,6 +341,8 @@ class MochitestRunner(MozbuildObject):
             manifest.tests.extend(tests)
 
             options.manifestFile = manifest
+            if len(test_paths) == 1 and len(tests) == 1:
+                options.testPath = test_paths[0]
 
         if rerun_failures:
             options.testManifest = failure_file_path
@@ -525,6 +529,12 @@ def MochitestCommand(func):
                              metavar='NAME=VALUE', dest='environment',
                              help="Sets the given variable in the application's environment")
     func = setenv(func)
+
+    test_media = CommandArgument('--use-test-media-devices', default=False,
+                                 action='store_true',
+                                 dest='useTestMediaDevices',
+        help='Use test media device drivers for media testing.')
+    func = test_media(func)
 
     app_override = CommandArgument('--app-override', default=None, action='store',
         help="Override the default binary used to run tests with the path you provide, e.g. " \

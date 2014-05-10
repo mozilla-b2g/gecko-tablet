@@ -19,7 +19,8 @@ TelephonyChild::TelephonyChild(TelephonyIPCProvider* aProvider)
 }
 
 TelephonyChild::~TelephonyChild()
-{  
+{
+
 }
 
 void

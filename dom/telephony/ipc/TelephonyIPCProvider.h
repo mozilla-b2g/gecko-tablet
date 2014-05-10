@@ -32,7 +32,7 @@ public:
 
 private:
   ~TelephonyIPCProvider();
-  
+
   nsTArray<nsCOMPtr<nsITelephonyListener> > mListeners;
   PTelephonyChild* mPTelephonyChild;
   uint32_t mDefaultServiceId;
