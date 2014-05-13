@@ -1422,9 +1422,6 @@ pref("network.cookie.cookieBehavior",       3); // 0-Accept, 1-dontAcceptForeign
 #ifdef ANDROID
 pref("network.cookie.cookieBehavior",       0); // Keep the old default of accepting all cookies
 #endif
-#ifdef MOZ_WIDGET_GONK
-pref("network.cookie.cookieBehavior",       0); // Keep the old default of accepting all cookies
-#endif
 pref("network.cookie.thirdparty.sessionOnly", false);
 pref("network.cookie.lifetimePolicy",       0); // accept normally, 1-askBeforeAccepting, 2-acceptForSession,3-acceptForNDays
 pref("network.cookie.alwaysAcceptSessionCookies", false);
@@ -1986,11 +1983,7 @@ pref("plugins.click_to_play", false);
 // Player ("Shockwave for Director"). To hide all plugins from enumeration, use
 // the empty string "" to match no plugin names. To allow all plugins to be
 // enumerated, use the string "*" to match all plugin names.
-#ifdef EARLY_BETA_OR_EARLIER
-pref("plugins.enumerable_names", "Java,Nexus Personal,QuickTime,Shockwave");
-#else
 pref("plugins.enumerable_names", "*");
-#endif
 
 // The default value for nsIPluginTag.enabledState (STATE_ENABLED = 2)
 pref("plugin.default.state", 2);
