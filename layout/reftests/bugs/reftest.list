@@ -845,7 +845,7 @@ skip-if(B2G&&browserIsRemote) == 401946-1.xul about:blank # bug 974780
 == 402567-1.html 402567-1-ref.html
 == 402567-2.html 402567-2-ref.html
 == 402567-3.html 402567-3-ref.html
-skip-if(B2G) == 402567-4.html 402567-4-ref.html
+skip-if(B2G) fuzzy-if(gtk2Widget,2,40) == 402567-4.html 402567-4-ref.html
 == 402629-1.html 402629-1-ref.html
 == 402629-2.html 402629-2-ref.html
 == 402629-3.html 402629-3-ref.html
@@ -1796,7 +1796,7 @@ fails == 942017.html 942017-ref.html # bug 942017
 == 950436-1.html 950436-1-ref.html
 == 957770-1.svg 957770-1-ref.svg
 == 960277-1.html 960277-1-ref.html
-pref(layout.css.overflow-clip-box.enabled,true) fuzzy(50,10) == 966992-1.html 966992-1-ref.html
+pref(layout.css.overflow-clip-box.enabled,true) fuzzy(50,31) == 966992-1.html 966992-1-ref.html
 skip-if(Android) == 966510-1.html 966510-1-ref.html # scrollable elements other than the root probably won't work well on android until bug 776030 is fixed
 skip-if(Android) == 966510-2.html 966510-2-ref.html # same as above
 == 978911-1.svg 978911-1-ref.svg

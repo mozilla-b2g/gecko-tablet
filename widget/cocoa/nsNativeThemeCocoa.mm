@@ -2398,13 +2398,20 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
       break;
 
     case NS_THEME_PROGRESSBAR:
-      if (!QueueAnimatedContentForRefresh(aFrame->GetContent(), 30)) {
-        NS_WARNING("Unable to animate progressbar!");
+    {
+      double value = GetProgressValue(aFrame);
+      double maxValue = GetProgressMaxValue(aFrame);
+      // Don't request repaints for scrollbars at 100% because those don't animate.
+      if (value < maxValue) {
+        if (!QueueAnimatedContentForRefresh(aFrame->GetContent(), 30)) {
+          NS_WARNING("Unable to animate progressbar!");
+        }
       }
       DrawProgress(cgContext, macRect, IsIndeterminateProgress(aFrame, eventState),
                    aFrame->StyleDisplay()->mOrient != NS_STYLE_ORIENT_VERTICAL,
-		   GetProgressValue(aFrame), GetProgressMaxValue(aFrame), aFrame);
+                   value, maxValue, aFrame);
       break;
+    }
 
     case NS_THEME_PROGRESSBAR_VERTICAL:
       DrawProgress(cgContext, macRect, IsIndeterminateProgress(aFrame, eventState),
@@ -3225,6 +3232,18 @@ nsNativeThemeCocoa::WidgetStateChanged(nsIFrame* aFrame, uint8_t aWidgetType,
         aAttribute == nsGkAtoms::open ||
         aAttribute == nsGkAtoms::hover)
       *aShouldRepaint = true;
+
+    if ((aWidgetType == NS_THEME_SCROLLBAR ||
+         aWidgetType == NS_THEME_SCROLLBAR_SMALL) &&
+        !nsLookAndFeel::UseOverlayScrollbars() &&
+        (aAttribute == nsGkAtoms::curpos ||
+         aAttribute == nsGkAtoms::minpos ||
+         aAttribute == nsGkAtoms::maxpos ||
+         aAttribute == nsGkAtoms::pageincrement)) {
+      // Non-overlay scrollbars paint the thumb as part of the scrollbar,
+      // so we need to invalidate the scrollbar when the thumb moves.
+      *aShouldRepaint = true;
+    }
   }
 
   return NS_OK;

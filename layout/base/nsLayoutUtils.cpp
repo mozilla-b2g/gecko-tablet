@@ -1561,12 +1561,10 @@ GetAnimatedGeometryRootForFrame(nsIFrame* aFrame,
     if (!parent)
       break;
     nsIAtom* parentType = parent->GetType();
-#ifdef ANDROID
     // Treat the slider thumb as being as an active scrolled root
-    // on mobile so that it can move without repainting.
+    // so that it can move without repainting.
     if (parentType == nsGkAtoms::sliderFrame)
       break;
-#endif
     // Sticky frames are active if their nearest scrollable frame
     // is also active, just keep a record of sticky frames that we
     // encounter for now.
@@ -2308,13 +2306,16 @@ nsLayoutUtils::TransformFrameRectToAncestor(nsIFrame* aFrame,
 
 static nsIntPoint GetWidgetOffset(nsIWidget* aWidget, nsIWidget*& aRootWidget) {
   nsIntPoint offset(0, 0);
-  nsIWidget* parent = aWidget->GetParent();
-  while (parent) {
+  while ((aWidget->WindowType() == eWindowType_child ||
+          aWidget->WindowType() == eWindowType_plugin)) {
+    nsIWidget* parent = aWidget->GetParent();
+    if (!parent) {
+      break;
+    }
     nsIntRect bounds;
     aWidget->GetBounds(bounds);
     offset += bounds.TopLeft();
     aWidget = parent;
-    parent = aWidget->GetParent();
   }
   aRootWidget = aWidget;
   return offset;
