@@ -2796,11 +2796,11 @@ nsXPCComponents_Utils::FinishCC()
     return NS_OK;
 }
 
-/* void ccSlice(long long budget); */
+/* void ccSlice(in long long budget); */
 NS_IMETHODIMP
 nsXPCComponents_Utils::CcSlice(int64_t budget)
 {
-    nsCycleCollector_collectSliceWork(budget);
+    nsJSContext::RunCycleCollectorWorkSlice(budget);
     return NS_OK;
 }
 
@@ -3631,7 +3631,7 @@ nsXPCComponents_Utils::GetObjectPrincipal(HandleValue val, JSContext *cx,
     obj = js::CheckedUnwrap(obj);
     MOZ_ASSERT(obj);
 
-    nsCOMPtr<nsIPrincipal> prin = nsContentUtils::GetObjectPrincipal(obj);
+    nsCOMPtr<nsIPrincipal> prin = nsContentUtils::ObjectPrincipal(obj);
     prin.forget(result);
     return NS_OK;
 }

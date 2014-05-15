@@ -1607,6 +1607,7 @@ ScrollFrameHelper::ScrollFrameHelper(nsContainerFrame* aOuter,
   , mCollapsedResizer(false)
   , mShouldBuildScrollableLayer(false)
   , mHasBeenScrolled(false)
+  , mIsResolutionSet(false)
 {
   mScrollingActive = IsAlwaysActive();
 
@@ -1878,7 +1879,7 @@ void ScrollFrameHelper::MarkInactive()
     return;
 
   mScrollingActive = false;
-  mOuter->InvalidateFrameSubtree();
+  mOuter->SchedulePaint();
 }
 
 void ScrollFrameHelper::MarkActive()
@@ -2388,7 +2389,7 @@ ClipListsExceptCaret(nsDisplayListCollection* aLists,
 }
 
 static bool
-DisplayportExceedsMaxTextureSize(nsPresContext* aPresContext, const nsRect& aDisplayPort)
+DisplayportExceedsMaxTextureSize(nsPresContext* aPresContext, const nsRect& aDisplayPort, bool aLowPrecision)
 {
 #ifdef MOZ_WIDGET_GONK
   // On B2G we actively run into max texture size limits because the displayport-sizing code
@@ -2402,6 +2403,10 @@ DisplayportExceedsMaxTextureSize(nsPresContext* aPresContext, const nsRect& aDis
   // will kill this child process to prevent OOMs (see the patch that landed as part of bug
   // 965945 for details).
   gfxSize resolution = aPresContext->PresShell()->GetCumulativeResolution();
+  if (aLowPrecision) {
+    resolution.width *= gfxPrefs::LowPrecisionResolution();
+    resolution.height *= gfxPrefs::LowPrecisionResolution();
+  }
   return (aPresContext->AppUnitsToDevPixels(aDisplayPort.width) * resolution.width > 4096) ||
          (aPresContext->AppUnitsToDevPixels(aDisplayPort.height) * resolution.height > 4096);
 #else
@@ -2523,8 +2528,17 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       usingDisplayport = nsLayoutUtils::GetDisplayPort(mOuter->GetContent(), &displayPort);
     }
 
-    if (usingDisplayport && DisplayportExceedsMaxTextureSize(mOuter->PresContext(), displayPort)) {
+    bool usingLowPrecision = gfxPrefs::UseLowPrecisionBuffer();
+    if (usingDisplayport && DisplayportExceedsMaxTextureSize(mOuter->PresContext(), displayPort, usingLowPrecision)) {
       usingDisplayport = false;
+    }
+    if (usingDisplayport && usingLowPrecision) {
+      // If we have low-res painting enabled we should check the critical displayport too
+      nsRect critDp;
+      bool usingCritDp = nsLayoutUtils::GetCriticalDisplayPort(mOuter->GetContent(), &critDp);
+      if (usingCritDp && !critDp.IsEmpty() && DisplayportExceedsMaxTextureSize(mOuter->PresContext(), critDp, false)) {
+        usingDisplayport = false;
+      }
     }
 
     // Override the dirty rectangle if the displayport has been set.
@@ -2782,6 +2796,7 @@ void
 ScrollFrameHelper::SetResolution(const gfxSize& aResolution)
 {
   mResolution = aResolution;
+  mIsResolutionSet = true;
 }
 
 static void
@@ -4525,6 +4540,7 @@ ScrollFrameHelper::RestoreState(nsPresState* aState)
   mDidHistoryRestore = true;
   mLastPos = mScrolledFrame ? GetLogicalScrollPosition() : nsPoint(0,0);
   mResolution = aState->GetResolution();
+  mIsResolutionSet = true;
 
   if (mIsRoot) {
     mOuter->PresContext()->PresShell()->SetResolution(mResolution.width, mResolution.height);

@@ -19,8 +19,10 @@ WEBIDL_FILES = [
     'ActivityRequestHandler.webidl',
     'AnalyserNode.webidl',
     'AnimationEvent.webidl',
+    'AnimationTimeline.webidl',
     'AppInfo.webidl',
     'AppNotificationServiceOptions.webidl',
+    'APZTestData.webidl',
     'ArchiveReader.webidl',
     'ArchiveRequest.webidl',
     'Attr.webidl',
@@ -213,6 +215,8 @@ WEBIDL_FILES = [
     'InputEvent.webidl',
     'InputMethod.webidl',
     'InspectorUtils.webidl',
+    'InstallEvent.webidl',
+    'InstallPhaseEvent.webidl',
     'InterAppConnection.webidl',
     'InterAppConnectionRequest.webidl',
     'InterAppMessagePort.webidl',
@@ -298,6 +302,9 @@ WEBIDL_FILES = [
     'ScriptProcessorNode.webidl',
     'ScrollAreaEvent.webidl',
     'Selection.webidl',
+    'ServiceWorker.webidl',
+    'ServiceWorkerContainer.webidl',
+    'ServiceWorkerGlobalScope.webidl',
     'SettingsManager.webidl',
     'ShadowRoot.webidl',
     'SharedWorker.webidl',
@@ -579,6 +586,10 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
         'MozWifiP2pManager.webidl',
         'MozWifiP2pStatusChangeEvent.webidl',
         'MozWifiStatusChangeEvent.webidl',
+    ]
+else:
+    WEBIDL_FILES += [
+        'InstallTrigger.webidl',
     ]
 
 if CONFIG['MOZ_WEBSPEECH']:

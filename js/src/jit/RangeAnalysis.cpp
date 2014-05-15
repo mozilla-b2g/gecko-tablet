@@ -453,7 +453,9 @@ Range::intersect(TempAllocator &alloc, const Range *lhs, const Range *rhs, bool 
          newHasInt32LowerBound && newHasInt32UpperBound &&
          newLower == newUpper))
     {
-        refineInt32BoundsByExponent(newExponent, &newLower, &newUpper);
+        refineInt32BoundsByExponent(newExponent,
+                                    &newLower, &newHasInt32LowerBound,
+                                    &newUpper, &newHasInt32UpperBound);
 
         // If we're intersecting two ranges that don't overlap, this could also
         // push the bounds past each other, since the actual intersection is
@@ -2113,7 +2115,9 @@ Range::wrapAroundToInt32()
 
         // Clearing the fractional field may provide an opportunity to refine
         // lower_ or upper_.
-        refineInt32BoundsByExponent(max_exponent_, &lower_, &upper_);
+        refineInt32BoundsByExponent(max_exponent_,
+                                    &lower_, &hasInt32LowerBound_,
+                                    &upper_, &hasInt32UpperBound_);
 
         assertInvariants();
     }
@@ -2525,6 +2529,12 @@ bool
 RangeAnalysis::truncate()
 {
     IonSpew(IonSpew_Range, "Do range-base truncation (backward loop)");
+
+    // Automatic truncation is disabled for AsmJS because the truncation logic
+    // is based on IonMonkey which assumes that we can bailout if the truncation
+    // logic fails. As AsmJS code has no bailout mechanism, it is safer to avoid
+    // any automatic truncations.
+    MOZ_ASSERT(!mir->compilingAsmJS());
 
     Vector<MInstruction *, 16, SystemAllocPolicy> worklist;
     Vector<MBinaryBitwiseInstruction *, 16, SystemAllocPolicy> bitops;

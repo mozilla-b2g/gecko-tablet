@@ -1977,6 +1977,21 @@ nsJSContext::RunCycleCollectorSlice()
   gCCStats.FinishCycleCollectionSlice();
 }
 
+//static
+void
+nsJSContext::RunCycleCollectorWorkSlice(int64_t aWorkBudget)
+{
+  if (!NS_IsMainThread()) {
+    return;
+  }
+
+  PROFILER_LABEL("CC", "RunCycleCollectorWorkSlice");
+
+  gCCStats.PrepareForCycleCollectionSlice();
+  nsCycleCollector_collectSliceWork(aWorkBudget);
+  gCCStats.FinishCycleCollectionSlice();
+}
+
 static void
 ICCTimerFired(nsITimer* aTimer, void* aClosure)
 {
@@ -2867,7 +2882,8 @@ AsmJSCacheOpenEntryForRead(JS::Handle<JSObject*> aGlobal,
                            const uint8_t** aMemory,
                            intptr_t *aHandle)
 {
-  nsIPrincipal* principal = nsContentUtils::GetObjectPrincipal(aGlobal);
+  nsIPrincipal* principal =
+    nsJSPrincipals::get(JS_GetCompartmentPrincipals(js::GetObjectCompartment(aGlobal)));
   return asmjscache::OpenEntryForRead(principal, aBegin, aLimit, aSize, aMemory,
                                       aHandle);
 }
@@ -2881,7 +2897,8 @@ AsmJSCacheOpenEntryForWrite(JS::Handle<JSObject*> aGlobal,
                             uint8_t** aMemory,
                             intptr_t* aHandle)
 {
-  nsIPrincipal* principal = nsContentUtils::GetObjectPrincipal(aGlobal);
+  nsIPrincipal* principal =
+    nsJSPrincipals::get(JS_GetCompartmentPrincipals(js::GetObjectCompartment(aGlobal)));
   return asmjscache::OpenEntryForWrite(principal, aInstalled, aBegin, aEnd,
                                        aSize, aMemory, aHandle);
 }

@@ -102,6 +102,9 @@ pref("dom.workers.maxPerDomain", 20);
 // Whether or not Shared Web Workers are enabled.
 pref("dom.workers.sharedWorkers.enabled", true);
 
+// Service workers
+pref("dom.serviceWorkers.enabled", false);
+
 // Whether nonzero values can be returned from performance.timing.*
 pref("dom.enable_performance", true);
 
@@ -315,6 +318,7 @@ pref("media.mediasource.enabled", false);
 
 #ifdef MOZ_WEBSPEECH
 pref("media.webspeech.recognition.enable", false);
+pref("media.webspeech.synth.enabled", false);
 #endif
 #ifdef MOZ_WEBM_ENCODER
 pref("media.encoder.webm.enabled", true);
@@ -759,6 +763,8 @@ pref("dom.sysmsg.enabled", false);
 pref("dom.webapps.useCurrentProfile", false);
 
 pref("dom.cycle_collector.incremental", true);
+
+pref("dom.window_experimental_bindings", false);
 
 // Parsing perf prefs. For now just mimic what the old code did.
 #ifndef XP_WIN
@@ -1549,6 +1555,7 @@ pref("security.notification_enable_delay", 500);
 pref("security.csp.enable", true);
 pref("security.csp.debug", false);
 pref("security.csp.experimentalEnabled", false);
+pref("security.csp.newbackend.enable", false);
 
 // Mixed content blocking
 pref("security.mixed_content.block_active_content", false);
@@ -1939,6 +1946,13 @@ pref("layout.display-list.dump", false);
 // but provides more time for other operations when the browser is
 // heavily loaded.
 pref("layout.frame_rate.precise", false);
+
+// Is support for the Web Animations API enabled?
+#ifdef RELEASE_BUILD
+pref("dom.animations-api.core.enabled", false);
+#else
+pref("dom.animations-api.core.enabled", true);
+#endif
 
 // pref to permit users to make verified SOAP calls by default
 pref("capability.policy.default.SOAPCall.invokeVerifySourceHeader", "allAccess");

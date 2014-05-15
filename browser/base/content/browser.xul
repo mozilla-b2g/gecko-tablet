@@ -244,7 +244,7 @@
            onpopuphidden="SocialShare.onHidden()"
            hidden="true">
       <vbox class="social-share-toolbar">
-        <vbox id="social-share-provider-buttons" flex="1"/>
+        <arrowscrollbox id="social-share-provider-buttons" orient="vertical" flex="1"/>
       </vbox>
     </panel>
 
@@ -797,10 +797,9 @@
                       oncommand="toggleSidebar('viewBookmarksSidebar');">
               <observes element="viewBookmarksSidebar" attribute="checked"/>
             </menuitem>
-            <menuseparator/>
             <!-- NB: temporary solution for bug 985024, this should go away soon. -->
             <menuitem id="BMB_bookmarksShowAllTop"
-                      class="subviewbutton"
+                      class="menuitem-iconic subviewbutton"
                       label="&showAllBookmarks2.label;"
                       command="Browser:ShowAllBookmarks"
                       key="manBookmarkKb"/>

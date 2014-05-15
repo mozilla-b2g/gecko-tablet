@@ -36,6 +36,7 @@
 #include "nsIController.h"
 #include "nsScriptNameSpaceManager.h"
 #include "nsWindowMemoryReporter.h"
+#include "WindowNamedPropertiesHandler.h"
 
 // Helper Classes
 #include "nsJSUtils.h"
@@ -1119,6 +1120,11 @@ nsGlobalWindow::nsGlobalWindow(nsGlobalWindow *aOuterWindow)
   // Initialize the PRCList (this).
   PR_INIT_CLIST(this);
 
+  if (Preferences::GetBool("dom.window_experimental_bindings") ||
+      !aOuterWindow) {
+    SetIsDOMBinding();
+  }
+
   if (aOuterWindow) {
     // |this| is an inner window, add this inner window to the outer
     // window list of inners.
@@ -1148,7 +1154,6 @@ nsGlobalWindow::nsGlobalWindow(nsGlobalWindow *aOuterWindow)
     Freeze();
 
     mObserver = nullptr;
-    SetIsDOMBinding();
   }
 
   // We could have failed the first time through trying
@@ -1707,7 +1712,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsGlobalWindow)
     if (tmp->mDoc && tmp->mDoc->GetDocumentURI()) {
       tmp->mDoc->GetDocumentURI()->GetSpec(uri);
     }
-    PR_snprintf(name, sizeof(name), "nsGlobalWindow #%ld %s %s",
+    PR_snprintf(name, sizeof(name), "nsGlobalWindow #%llu %s %s",
                 tmp->mWindowID, tmp->IsInnerWindow() ? "inner" : "outer",
                 uri.get());
     cb.DescribeRefCountedNode(tmp->mRefCnt.get(), name);
@@ -1950,8 +1955,7 @@ nsGlobalWindow::TraceGlobalJSObject(JSTracer* aTrc)
 JSObject*
 nsGlobalWindow::OuterObject(JSContext* aCx, JS::Handle<JSObject*> aObj)
 {
-  nsGlobalWindow* origWin;
-  UNWRAP_OBJECT(Window, aObj, origWin);
+  nsGlobalWindow* origWin = UnwrapDOMObject<nsGlobalWindow>(aObj);
   nsGlobalWindow* win = origWin->GetOuterWindowInternal();
 
   if (!win) {
@@ -1961,6 +1965,7 @@ nsGlobalWindow::OuterObject(JSContext* aCx, JS::Handle<JSObject*> aObj)
     // null to prevent leaking an inner window to code in a different
     // window.
     NS_WARNING("nsGlobalWindow::OuterObject shouldn't fail!");
+    Throw(aCx, NS_ERROR_UNEXPECTED);
     return nullptr;
   }
 
@@ -1973,6 +1978,7 @@ nsGlobalWindow::OuterObject(JSContext* aCx, JS::Handle<JSObject*> aObj)
   // need to wrap here.
   if (!JS_WrapObject(aCx, &winObj)) {
     NS_WARNING("nsGlobalWindow::OuterObject shouldn't fail!");
+    Throw(aCx, NS_ERROR_UNEXPECTED);
     return nullptr;
   }
 
@@ -2024,7 +2030,7 @@ nsGlobalWindow::SetInitialPrincipalToSubject()
   FORWARD_TO_OUTER_VOID(SetInitialPrincipalToSubject, ());
 
   // First, grab the subject principal.
-  nsCOMPtr<nsIPrincipal> newWindowPrincipal = nsContentUtils::GetSubjectPrincipal();
+  nsCOMPtr<nsIPrincipal> newWindowPrincipal = nsContentUtils::SubjectPrincipal();
 
   // Now, if we're about to use the system principal or an nsExpandedPrincipal,
   // make sure we're not using it for a content docshell.
@@ -2208,26 +2214,34 @@ CreateNativeGlobalForInner(JSContext* aCx,
     }
   }
 
-  nsIXPConnect* xpc = nsContentUtils::XPConnect();
-
   // Determine if we need the Components object.
   bool needComponents = nsContentUtils::IsSystemPrincipal(aPrincipal) ||
                         TreatAsRemoteXUL(aPrincipal);
   uint32_t flags = needComponents ? 0 : nsIXPConnect::OMIT_COMPONENTS_OBJECT;
   flags |= nsIXPConnect::DONT_FIRE_ONNEWGLOBALHOOK;
 
-  nsCOMPtr<nsIXPConnectJSObjectHolder> holder;
-  nsresult rv = xpc->InitClassesWithNewWrappedGlobal(
-    aCx, ToSupports(aNewInner),
-    aPrincipal, flags, options, getter_AddRefs(holder));
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (aNewInner->IsDOMBinding()) {
+    aGlobal.set(WindowBinding::Wrap(aCx, aNewInner, aNewInner, options,
+                                    nsJSPrincipals::get(aPrincipal), false));
+    if (!aGlobal || !xpc::InitGlobalObject(aCx, aGlobal, flags)) {
+      return NS_ERROR_FAILURE;
+    }
+  } else {
+    nsIXPConnect* xpc = nsContentUtils::XPConnect();
+    nsCOMPtr<nsIXPConnectJSObjectHolder> holder;
+    nsresult rv = xpc->InitClassesWithNewWrappedGlobal(
+      aCx, ToSupports(aNewInner),
+      aPrincipal, flags, options, getter_AddRefs(holder));
+    NS_ENSURE_SUCCESS(rv, rv);
+  
+    aGlobal.set(holder->GetJSObject());
+    MOZ_ASSERT(aGlobal);
+  }
 
-  aGlobal.set(holder->GetJSObject());
+  MOZ_ASSERT(aNewInner->GetWrapperPreserveColor() == aGlobal);
 
   // Set the location information for the new global, so that tools like
   // about:memory may use that information
-  MOZ_ASSERT(aGlobal);
-  MOZ_ASSERT(aNewInner->GetWrapperPreserveColor() == aGlobal);
   xpc::SetLocationForGlobal(aGlobal, aURI);
 
   return NS_OK;
@@ -2536,14 +2550,21 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
     // If we created a new inner window above, we need to do the last little bit
     // of initialization now that the dust has settled.
     if (createdInnerWindow) {
-      nsIXPConnect *xpc = nsContentUtils::XPConnect();
-      nsCOMPtr<nsIXPConnectWrappedNative> wrapper;
-      nsresult rv = xpc->GetWrappedNativeOfJSObject(cx, newInnerGlobal,
-                                                    getter_AddRefs(wrapper));
-      NS_ENSURE_SUCCESS(rv, rv);
-      NS_ABORT_IF_FALSE(wrapper, "bad wrapper");
-      rv = wrapper->FinishInitForWrappedGlobal();
-      NS_ENSURE_SUCCESS(rv, rv);
+      if (newInnerWindow->IsDOMBinding()) {
+        JS::Rooted<JSObject*> global(cx, newInnerGlobal);
+        JS::Rooted<JSObject*> proto(cx);
+        JS_GetPrototype(cx, global, &proto);
+        WindowNamedPropertiesHandler::Install(cx, proto);
+      } else {
+        nsIXPConnect *xpc = nsContentUtils::XPConnect();
+        nsCOMPtr<nsIXPConnectWrappedNative> wrapper;
+        nsresult rv = xpc->GetWrappedNativeOfJSObject(cx, newInnerGlobal,
+                                                      getter_AddRefs(wrapper));
+        NS_ENSURE_SUCCESS(rv, rv);
+        NS_ABORT_IF_FALSE(wrapper, "bad wrapper");
+        rv = wrapper->FinishInitForWrappedGlobal();
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
     }
 
     if (!aState) {
@@ -6063,7 +6084,7 @@ nsGlobalWindow::MakeScriptDialogTitle(nsAString &aOutTitle)
   // Try to get a host from the running principal -- this will do the
   // right thing for javascript: and data: documents.
 
-  nsCOMPtr<nsIPrincipal> principal = nsContentUtils::GetSubjectPrincipal();
+  nsCOMPtr<nsIPrincipal> principal = nsContentUtils::SubjectPrincipal();
   nsCOMPtr<nsIURI> uri;
   nsresult rv = principal->GetURI(getter_AddRefs(uri));
   // Note - The check for the current JSContext here isn't necessarily sensical.
@@ -7601,8 +7622,8 @@ JSObject* nsGlobalWindow::CallerGlobal()
   // .source attribute. So we fall back to the compartment global there.
   JS::Rooted<JSObject*> incumbentGlobal(cx, &IncumbentJSGlobal());
   JS::Rooted<JSObject*> compartmentGlobal(cx, JS::CurrentGlobalOrNull(cx));
-  nsIPrincipal* incumbentPrin = nsContentUtils::GetObjectPrincipal(incumbentGlobal);
-  nsIPrincipal* compartmentPrin = nsContentUtils::GetObjectPrincipal(compartmentGlobal);
+  nsIPrincipal* incumbentPrin = nsContentUtils::ObjectPrincipal(incumbentGlobal);
+  nsIPrincipal* compartmentPrin = nsContentUtils::ObjectPrincipal(compartmentGlobal);
   return incumbentPrin->EqualsConsideringDomain(compartmentPrin) ? incumbentGlobal
                                                                  : compartmentGlobal;
 }
@@ -8072,7 +8093,7 @@ nsGlobalWindow::PostMessageMoz(JSContext* aCx, JS::Handle<JS::Value> aMessage,
       nsContentUtils::GetSecurityManager();
     MOZ_ASSERT(ssm);
 
-    nsCOMPtr<nsIPrincipal> principal = nsContentUtils::GetSubjectPrincipal();
+    nsCOMPtr<nsIPrincipal> principal = nsContentUtils::SubjectPrincipal();
     MOZ_ASSERT(principal);
 
     uint32_t appId;
@@ -8757,7 +8778,7 @@ nsGlobalWindow::GetFrameElement(ErrorResult& aError)
   if (aError.Failed() || !element) {
     return nullptr;
   }
-  if (!nsContentUtils::GetSubjectPrincipal()->
+  if (!nsContentUtils::SubjectPrincipal()->
          SubsumesConsideringDomain(element->NodePrincipal())) {
     return nullptr;
   }
@@ -8941,7 +8962,7 @@ nsGlobalWindow::ShowModalDialog(const nsAString& aUrl, nsIVariant* aArgument,
   }
 
   nsRefPtr<DialogValueHolder> argHolder =
-    new DialogValueHolder(nsContentUtils::GetSubjectPrincipal(), aArgument);
+    new DialogValueHolder(nsContentUtils::SubjectPrincipal(), aArgument);
 
   // Before bringing up the window/dialog, unsuppress painting and flush
   // pending reflows.
@@ -11740,7 +11761,7 @@ nsGlobalWindow::SetTimeoutOrInterval(nsIScriptTimeoutHandler *aHandler,
   // chrome privileges on content windows, but we do allow setTimeouts running
   // with content privileges on chrome windows (where they can't do very much,
   // of course).
-  nsCOMPtr<nsIPrincipal> subjectPrincipal = nsContentUtils::GetSubjectPrincipal();
+  nsCOMPtr<nsIPrincipal> subjectPrincipal = nsContentUtils::SubjectPrincipal();
   nsCOMPtr<nsIPrincipal> ourPrincipal = GetPrincipal();
   if (ourPrincipal->Subsumes(subjectPrincipal)) {
     timeout->mPrincipal = subjectPrincipal;
@@ -13431,12 +13452,6 @@ nsGlobalWindow::GetMessageManager(ErrorResult& aError)
   MOZ_ASSERT(IsChromeWindow());
   nsGlobalChromeWindow* myself = static_cast<nsGlobalChromeWindow*>(this);
   if (!myself->mMessageManager) {
-    nsIScriptContext* scx = GetContextInternal();
-    if (NS_WARN_IF(!scx || !(scx->GetNativeContext()))) {
-      aError.Throw(NS_ERROR_UNEXPECTED);
-      return nullptr;
-    }
-
     nsCOMPtr<nsIMessageBroadcaster> globalMM =
       do_GetService("@mozilla.org/globalmessagemanager;1");
     myself->mMessageManager =
@@ -13475,7 +13490,7 @@ nsGlobalWindow::GetDialogArguments(JSContext* aCx, ErrorResult& aError)
   JS::Rooted<JSObject*> wrapper(aCx, GetWrapper());
   JSAutoCompartment ac(aCx, wrapper);
   JS::Rooted<JS::Value> args(aCx);
-  mDialogArguments->Get(aCx, wrapper, nsContentUtils::GetSubjectPrincipal(),
+  mDialogArguments->Get(aCx, wrapper, nsContentUtils::SubjectPrincipal(),
                         &args, aError);
   return args;
 }
@@ -13488,7 +13503,7 @@ nsGlobalModalWindow::GetDialogArguments(nsIVariant **aArguments)
 
   // This does an internal origin check, and returns undefined if the subject
   // does not subsumes the origin of the arguments.
-  return mDialogArguments->Get(nsContentUtils::GetSubjectPrincipal(), aArguments);
+  return mDialogArguments->Get(nsContentUtils::SubjectPrincipal(), aArguments);
 }
 
 JS::Value
@@ -13504,7 +13519,7 @@ nsGlobalWindow::GetReturnValue(JSContext* aCx, ErrorResult& aError)
   if (mReturnValue) {
     JS::Rooted<JSObject*> wrapper(aCx, GetWrapper());
     JSAutoCompartment ac(aCx, wrapper);
-    mReturnValue->Get(aCx, wrapper, nsContentUtils::GetSubjectPrincipal(),
+    mReturnValue->Get(aCx, wrapper, nsContentUtils::SubjectPrincipal(),
                       &returnValue, aError);
   }
   return returnValue;
@@ -13521,7 +13536,7 @@ nsGlobalModalWindow::GetReturnValue(nsIVariant **aRetVal)
     variant.forget(aRetVal);
     return NS_OK;
   }
-  return mReturnValue->Get(nsContentUtils::GetSubjectPrincipal(), aRetVal);
+  return mReturnValue->Get(nsContentUtils::SubjectPrincipal(), aRetVal);
 }
 
 void
@@ -13540,7 +13555,7 @@ nsGlobalWindow::SetReturnValue(JSContext* aCx,
     nsContentUtils::XPConnect()->JSToVariant(aCx, aReturnValue,
                                              getter_AddRefs(returnValue));
   if (!aError.Failed()) {
-    mReturnValue = new DialogValueHolder(nsContentUtils::GetSubjectPrincipal(),
+    mReturnValue = new DialogValueHolder(nsContentUtils::SubjectPrincipal(),
                                          returnValue);
   }
 }
@@ -13550,7 +13565,7 @@ nsGlobalModalWindow::SetReturnValue(nsIVariant *aRetVal)
 {
   FORWARD_TO_OUTER_MODAL_CONTENT_WINDOW(SetReturnValue, (aRetVal), NS_OK);
 
-  mReturnValue = new DialogValueHolder(nsContentUtils::GetSubjectPrincipal(),
+  mReturnValue = new DialogValueHolder(nsContentUtils::SubjectPrincipal(),
                                        aRetVal);
   return NS_OK;
 }

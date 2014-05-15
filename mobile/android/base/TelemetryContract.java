@@ -7,31 +7,40 @@ package org.mozilla.gecko;
 
 /**
  * Holds data definitions for our UI Telemetry implementation.
+ *
+ * See mobile/android/base/docs/index.rst for a full dictionary.
  */
 public interface TelemetryContract {
 
     /**
      * Holds event names. Intended for use with
      * Telemetry.sendUIEvent() as the "action" parameter.
+     *
+     * Please keep this list sorted.
      */
     public interface Event {
-        // Outcome of data policy notification: can be true or false.
-        public static final String POLICY_NOTIFICATION_SUCCESS = "policynotification.success.1:";
+        // Generic action, usually for tracking menu and toolbar actions.
+        public static final String ACTION = "action.1";
 
-        // Top site pinned.
-        public static final String TOP_SITES_PIN = "pin.1";
+        // Cancel a state, action, etc.
+        public static final String CANCEL = "cancel.1";
 
-        // Top site un-pinned.
-        public static final String TOP_SITES_UNPIN = "unpin.1";
+        // Launching (opening) an external application.
+        // Note: Only used in JavaScript for now, but here for completeness.
+        public static final String LAUNCH = "launch.1";
 
-        // Top site edited.
-        public static final String TOP_SITES_EDIT = "edit.1";
+        // Loading a URL.
+        public static final String LOAD_URL = "loadurl.1";
+
+        public static final String LOCALE_BROWSER_RESET = "locale.browser.reset.1";
+        public static final String LOCALE_BROWSER_SELECTED = "locale.browser.selected.1";
+        public static final String LOCALE_BROWSER_UNSELECTED = "locale.browser.unselected.1";
 
         // Set default panel.
         public static final String PANEL_SET_DEFAULT = "setdefault.1";
 
-        // Sharing content.
-        public static final String SHARE = "share.1";
+        // Outcome of data policy notification: can be true or false.
+        public static final String POLICY_NOTIFICATION_SUCCESS = "policynotification.success.1:";
 
         // Sanitizing private data.
         public static final String SANITIZE = "sanitize.1";
@@ -40,19 +49,21 @@ public interface TelemetryContract {
         // Note: Only used in JavaScript for now, but here for completeness.
         public static final String SAVE = "save.1";
 
+        // Sharing content.
+        public static final String SHARE = "share.1";
+
+        // Top site edited.
+        public static final String TOP_SITES_EDIT = "edit.1";
+
+        // Top site pinned.
+        public static final String TOP_SITES_PIN = "pin.1";
+
+        // Top site un-pinned.
+        public static final String TOP_SITES_UNPIN = "unpin.1";
+
         // Stop holding a resource (reader, bookmark, etc) for viewing later.
         // Note: Only used in JavaScript for now, but here for completeness.
         public static final String UNSAVE = "unsave.1";
-
-        // Loading a URL.
-        public static final String LOAD_URL = "loadurl.1";
-
-        // Generic action, usually for tracking menu and toolbar actions.
-        public static final String ACTION = "action.1";
-
-        // Launching (opening) an external application
-        // Note: Only used in JavaScript for now, but here for completeness.
-        public static final String LAUNCH = "launch.1";
     }
 
     /**
@@ -62,6 +73,12 @@ public interface TelemetryContract {
     public interface Method {
         // Action triggered from a list.
         public static final String LIST = "list";
+
+        // Action triggered from the action bar (including the toolbar).
+        public static final String ACTIONBAR = "actionbar";
+
+        // Action triggered by hitting the Android back button.
+        public static final String BACK = "back";
 
         // Action triggered from a button.
         public static final String BUTTON = "button";
@@ -97,6 +114,9 @@ public interface TelemetryContract {
      * Telemetry.startUISession() as the "sessionName" parameter.
      */
     public interface Session {
+        // Awesomescreen (including frecency search) is active.
+        public static final String AWESOMESCREEN = "awesomescreen.1";
+
         // Started when a user enters about:home.
         public static final String HOME = "home.1";
 
@@ -107,9 +127,6 @@ public interface TelemetryContract {
         // Started when a Reader viewer becomes active in the foreground.
         // Note: Only used in JavaScript for now, but here for completeness.
         public static final String READER = "reader.1";
-
-        // URL bar focused.
-        public static final String URLBAR_FOCUSED = "urlbar.1";
 
         // Awesomescreen frecency search is active.
         public static final String FRECENCY = "frecency.1";
@@ -122,5 +139,8 @@ public interface TelemetryContract {
      * Holds reasons for stopping a session. Intended for use in
      * Telemetry.stopUISession() as the "reason" parameter.
      */
-    public interface Reason {}
+    public interface Reason {
+        // Changes were committed.
+        public static final String COMMIT = "commit";
+    }
 }

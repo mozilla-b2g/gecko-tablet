@@ -1156,7 +1156,7 @@ static void
 ComputeImmediateDominators(MIRGraph &graph)
 {
     // The default start block is a root and therefore only self-dominates.
-    MBasicBlock *startBlock = *graph.begin();
+    MBasicBlock *startBlock = graph.entryBlock();
     startBlock->setImmediateDominator(startBlock);
 
     // Any OSR block is a root and therefore only self-dominates.
@@ -1240,7 +1240,7 @@ jit::BuildDominatorTree(MIRGraph &graph)
     // If compiling with OSR, many blocks will self-dominate.
     // Without OSR, there is only one root block which dominates all.
     if (!graph.osrBlock())
-        JS_ASSERT(graph.begin()->numDominated() == graph.numBlocks() - 1);
+        JS_ASSERT(graph.entryBlock()->numDominated() == graph.numBlocks() - 1);
 #endif
     // Now, iterate through the dominator tree and annotate every
     // block with its index in the pre-order traversal of the
@@ -1449,6 +1449,50 @@ AssertReversePostOrder(MIRGraph &graph)
 }
 #endif
 
+#ifdef DEBUG
+static void
+AssertDominatorTree(MIRGraph &graph)
+{
+    // Check dominators.
+    size_t i = graph.numBlocks();
+    size_t totalNumDominated = 0;
+    for (MBasicBlockIterator block(graph.begin()); block != graph.end(); block++) {
+        MBasicBlock *idom = block->immediateDominator();
+        JS_ASSERT(idom->dominates(*block));
+        JS_ASSERT(idom == *block || idom->id() < block->id());
+
+        if (idom == *block) {
+            totalNumDominated += block->numDominated() + 1;
+        } else {
+            bool foundInParent = false;
+            for (size_t j = 0; j < idom->numImmediatelyDominatedBlocks(); j++) {
+                if (idom->getImmediatelyDominatedBlock(j) == *block) {
+                    foundInParent = true;
+                    break;
+                }
+            }
+            JS_ASSERT(foundInParent);
+        }
+
+        size_t numDominated = 0;
+        for (size_t j = 0; j < block->numImmediatelyDominatedBlocks(); j++) {
+            MBasicBlock *dom = block->getImmediatelyDominatedBlock(j);
+            JS_ASSERT(block->dominates(dom));
+            JS_ASSERT(dom->id() > block->id());
+            JS_ASSERT(dom->immediateDominator() == *block);
+
+            numDominated += dom->numDominated() + 1;
+        }
+        JS_ASSERT(block->numDominated() == numDominated);
+        JS_ASSERT(block->numDominated() + 1 <= i);
+        JS_ASSERT(block->numSuccessors() != 0 || block->numDominated() == 0);
+        i--;
+    }
+    JS_ASSERT(i == 0);
+    JS_ASSERT(totalNumDominated == graph.numBlocks());
+}
+#endif
+
 void
 jit::AssertGraphCoherency(MIRGraph &graph)
 {
@@ -1511,6 +1555,8 @@ jit::AssertExtendedGraphCoherency(MIRGraph &graph)
         //
         // JS_ASSERT_IF(!successorWithPhis, block->successorWithPhis() == nullptr);
     }
+
+    AssertDominatorTree(graph);
 #endif
 }
 
@@ -2147,14 +2193,10 @@ AnalyzePoppedThis(JSContext *cx, types::TypeObject *type,
         JS_ASSERT(!baseobj->inDictionaryMode());
 
         Vector<MResumePoint *> callerResumePoints(cx);
-        MBasicBlock *block = ins->block();
-        for (MResumePoint *rp = block->callerResumePoint();
+        for (MResumePoint *rp = ins->block()->callerResumePoint();
              rp;
-             block = rp->block(), rp = block->callerResumePoint())
+             rp = rp->block()->callerResumePoint())
         {
-            JSScript *script = rp->block()->info().script();
-            if (!types::AddClearDefiniteFunctionUsesInScript(cx, type, script, block->info().script()))
-                return true;
             if (!callerResumePoints.append(rp))
                 return false;
         }
@@ -2313,7 +2355,7 @@ jit::AnalyzeNewScriptProperties(JSContext *cx, JSFunction *fun,
     if (!EliminatePhis(&builder, graph, AggressiveObservability))
         return false;
 
-    MDefinition *thisValue = graph.begin()->getSlot(info.thisSlot());
+    MDefinition *thisValue = graph.entryBlock()->getSlot(info.thisSlot());
 
     // Get a list of instructions using the |this| value in the order they
     // appear in the graph.
@@ -2373,7 +2415,24 @@ jit::AnalyzeNewScriptProperties(JSContext *cx, JSFunction *fun,
             return false;
         }
         if (!handled)
-            return true;
+            break;
+    }
+
+    if (baseobj->slotSpan() != 0) {
+        // We found some definite properties, but their correctness is still
+        // contingent on the correct frames being inlined. Add constraints to
+        // invalidate the definite properties if additional functions could be
+        // called at the inline frame sites.
+        Vector<MBasicBlock *> exitBlocks(cx);
+        for (MBasicBlockIterator block(graph.begin()); block != graph.end(); block++) {
+            if (MResumePoint *rp = block->callerResumePoint()) {
+                if (block->numPredecessors() == 1 && block->getPredecessor(0) == rp->block()) {
+                    JSScript *script = rp->block()->info().script();
+                    if (!types::AddClearDefiniteFunctionUsesInScript(cx, type, script, block->info().script()))
+                        return false;
+                }
+            }
+        }
     }
 
     return true;
@@ -2501,7 +2560,7 @@ jit::AnalyzeArgumentsUsage(JSContext *cx, JSScript *scriptArg)
     if (!EliminatePhis(&builder, graph, AggressiveObservability))
         return false;
 
-    MDefinition *argumentsValue = graph.begin()->getSlot(info.argsObjSlot());
+    MDefinition *argumentsValue = graph.entryBlock()->getSlot(info.argsObjSlot());
 
     bool argumentsContentsObserved = false;
 

@@ -2093,7 +2093,7 @@ MOZ_CXX11
 dnl Check for .hidden assembler directive and visibility attribute.
 dnl Borrowed from glibc configure.in
 dnl ===============================================================
-if test "$GNU_CC"; then
+if test "$GNU_CC" -a "$OS_TARGET" != WINNT; then
   AC_DEFINE(HAVE_VISIBILITY_HIDDEN_ATTRIBUTE)
   AC_DEFINE(HAVE_VISIBILITY_ATTRIBUTE)
   if test -n "$gonkdir"; then
@@ -3675,14 +3675,14 @@ else
     fi
     AC_SUBST(CL_INCLUDES_PREFIX)
     rm -f dummy-hello.c
+
+    dnl Make sure that the build system can handle non-ASCII characters
+    dnl in environment variables to prevent it from breaking silently on
+    dnl non-English systems.
+    NONASCII=$'\241\241'
+    AC_SUBST(NONASCII)
   fi
 fi
-
-dnl Make sure that the build system can handle non-ASCII characters
-dnl in environment variables to prevent it from breking silently on
-dnl non-English systems.
-NONASCII=$'\241\241'
-AC_SUBST(NONASCII)
 
 dnl ========================================================
 dnl = Disable -fstrict-aliasing with GCC 4.4 and earlier.

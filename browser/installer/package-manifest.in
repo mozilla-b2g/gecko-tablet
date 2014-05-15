@@ -407,6 +407,7 @@
 @BINPATH@/components/extensions.manifest
 @BINPATH@/components/addonManager.js
 @BINPATH@/components/amContentHandler.js
+@BINPATH@/components/amInstallTrigger.js
 @BINPATH@/components/amWebInstallListener.js
 @BINPATH@/components/nsBlocklistService.js
 #ifdef MOZ_UPDATER
@@ -628,6 +629,13 @@
 @BINPATH@/browser/chrome/icons/default/default16.png
 @BINPATH@/browser/chrome/icons/default/default32.png
 @BINPATH@/browser/chrome/icons/default/default48.png
+#endif
+
+; [Webide Files]
+#ifdef MOZ_DEVTOOLS_WEBIDE
+@BINPATH@/browser/chrome/webide@JAREXT@
+@BINPATH@/browser/chrome/webide.manifest
+@BINPATH@/browser/@PREF_DIR@/webide-prefs.js
 #endif
 
 ; shell icons

@@ -191,6 +191,7 @@
 #include "nsWrapperCacheInlines.h"
 #include "nsSandboxFlags.h"
 #include "nsIAppsService.h"
+#include "mozilla/dom/AnimationTimeline.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/DocumentFragment.h"
 #include "mozilla/dom/Event.h"
@@ -1961,6 +1962,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDocument)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCachedEncoder)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStateObjectCached)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mUndoManager)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAnimationTimeline)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mTemplateContentsOwner)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChildrenCollection)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRegistry)
@@ -2030,6 +2032,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mOriginalDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mCachedEncoder)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mUndoManager)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mAnimationTimeline)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mTemplateContentsOwner)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mChildrenCollection)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mRegistry)
@@ -2799,8 +2802,26 @@ nsDocument::InitCSP(nsIChannel* aChannel)
     }
   }
 
-  // create new CSP object
-  csp = do_CreateInstance("@mozilla.org/contentsecuritypolicy;1", &rv);
+  // Create new CSP object - if we're using the new CSP implementation and backend,
+  // use the new contract ID (same interface, but use C++ implementation).
+  if (CSPService::sNewBackendEnabled) {
+    if (oldHeaderIsPresent && !newHeaderIsPresent) {
+      // New CSP implementation doesn't support old header!  ABORT CSP INIT!
+      // (Not a problem if newHeaderIsPresent because the old header will be
+      // ignored).  This check will get removed when x- header support is
+      // removed (see bug 949533)
+#ifdef PR_LOGGING
+      PR_LOG(gCspPRLog, PR_LOG_DEBUG, ("%s %s %s",
+           "This document has an old, x-content-security-policy",
+           "header and the new CSP implementation doesn't support the non-standard",
+           "CSP.  Skipping CSP initialization."));
+#endif
+      return NS_OK;
+    }
+    csp = do_CreateInstance("@mozilla.org/cspcontext;1", &rv);
+  } else {
+    csp = do_CreateInstance("@mozilla.org/contentsecuritypolicy;1", &rv);
+  }
 
   if (NS_FAILED(rv)) {
 #ifdef PR_LOGGING
@@ -3129,6 +3150,16 @@ nsDocument::GetUndoManager()
 
   nsRefPtr<UndoManager> undoManager = mUndoManager;
   return undoManager.forget();
+}
+
+AnimationTimeline*
+nsDocument::Timeline()
+{
+  if (!mAnimationTimeline) {
+    mAnimationTimeline = new AnimationTimeline(this);
+  }
+
+  return mAnimationTimeline;
 }
 
 /* Return true if the document is in the focused top-level window, and is an
@@ -6345,7 +6376,7 @@ nsIDocument::LoadBindingDocument(const nsAString& aURI, ErrorResult& rv)
   // It's just designed to preserve the old semantics during a mass-conversion
   // patch.
   nsCOMPtr<nsIPrincipal> subjectPrincipal =
-    nsContentUtils::GetCurrentJSContext() ? nsContentUtils::GetSubjectPrincipal()
+    nsContentUtils::GetCurrentJSContext() ? nsContentUtils::SubjectPrincipal()
                                           : NodePrincipal();
   BindingManager()->LoadBindingDocument(this, uri, subjectPrincipal);
 }
@@ -12130,8 +12161,9 @@ nsIDocument::WrapObject(JSContext *aCx)
   }
 
   nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(GetInnerWindow());
-  if (!win) {
-    // No window, nothing else to do here
+  if (!win ||
+      static_cast<nsGlobalWindow*>(win.get())->IsDOMBinding()) {
+    // No window or window on new DOM binding, nothing else to do here.
     return obj;
   }
 

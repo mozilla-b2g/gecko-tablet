@@ -34,8 +34,9 @@ using namespace mozilla;
  * Abstract base class for something which watches an fd and takes action when
  * we can read from it without blocking.
  */
-class FdWatcher : public MessageLoopForIO::Watcher
-                , public nsIObserver
+class FdWatcher
+  : public MessageLoopForIO::Watcher
+  , public nsIObserver
 {
 protected:
   MessageLoopForIO::FileDescriptorWatcher mReadWatcher;
@@ -98,8 +99,9 @@ public:
   }
 };
 
-typedef void (* FifoCallback)(const nsCString& inputStr);
-struct FifoInfo {
+typedef void (*FifoCallback)(const nsCString& aInputStr);
+struct FifoInfo
+{
   nsCString mCommand;
   FifoCallback mCallback;
 };
@@ -133,14 +135,16 @@ private:
   FifoWatcher(nsCString aPath)
     : mDirPath(aPath)
     , mFifoInfoLock("FifoWatcher.mFifoInfoLock")
-  {}
+  {
+  }
 
   mozilla::Mutex mFifoInfoLock; // protects mFifoInfo
   FifoInfoArray mFifoInfo;
 };
 
-typedef void (* PipeCallback)(const uint8_t recvSig);
-struct SignalInfo {
+typedef void (*PipeCallback)(const uint8_t aRecvSig);
+struct SignalInfo
+{
   uint8_t mSignal;
   PipeCallback mCallback;
 };
