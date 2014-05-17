@@ -39,7 +39,9 @@
 #include "jit/PcScriptCache.h"
 #include "js/MemoryMetrics.h"
 #include "js/SliceBudget.h"
+#ifdef JS_YARR
 #include "yarr/BumpPointerAllocator.h"
+#endif
 
 #include "jscntxtinlines.h"
 #include "jsgcinlines.h"
@@ -104,6 +106,11 @@ PerThreadData::init()
     if (!dtoaState)
         return false;
 
+#ifndef JS_YARR
+    if (!regexpStack.init())
+        return false;
+#endif
+
     return true;
 }
 
@@ -146,7 +153,9 @@ JSRuntime::JSRuntime(JSRuntime *parentRuntime, JSUseHelperThreads useHelperThrea
     tempLifoAlloc(TEMP_LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
     freeLifoAlloc(TEMP_LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
     execAlloc_(nullptr),
+#ifdef JS_YARR
     bumpAlloc_(nullptr),
+#endif
     jitRuntime_(nullptr),
     selfHostingGlobal_(nullptr),
     nativeStackBase(0),
@@ -288,7 +297,7 @@ JSRuntime::init(uint32_t maxbytes)
         SetMarkStackLimit(this, atoi(size));
 
     ScopedJSDeletePtr<Zone> atomsZone(new_<Zone>(this));
-    if (!atomsZone)
+    if (!atomsZone || !atomsZone->init())
         return false;
 
     JS::CompartmentOptions options;
@@ -436,7 +445,9 @@ JSRuntime::~JSRuntime()
 #endif
 
     js_free(defaultLocale);
+#ifdef JS_YARR
     js_delete(bumpAlloc_);
+#endif
     js_delete(mathCache_);
 #ifdef JS_ION
     js_delete(jitRuntime_);
@@ -511,7 +522,9 @@ JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::Runtim
 
     rtSizes->temporary += tempLifoAlloc.sizeOfExcludingThis(mallocSizeOf);
 
+#ifdef JS_YARR
     rtSizes->regexpData += bumpAlloc_ ? bumpAlloc_->sizeOfNonHeapData() : 0;
+#endif
 
     rtSizes->interpreterStack += interpreterStack_.sizeOfExcludingThis(mallocSizeOf);
 
@@ -595,6 +608,8 @@ JSRuntime::createExecutableAllocator(JSContext *cx)
     return execAlloc_;
 }
 
+#ifdef JS_YARR
+
 WTF::BumpPointerAllocator *
 JSRuntime::createBumpPointerAllocator(JSContext *cx)
 {
@@ -606,6 +621,8 @@ JSRuntime::createBumpPointerAllocator(JSContext *cx)
         js_ReportOutOfMemory(cx);
     return bumpAlloc_;
 }
+
+#endif // JS_YARR
 
 MathCache *
 JSRuntime::createMathCache(JSContext *cx)

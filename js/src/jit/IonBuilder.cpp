@@ -116,7 +116,6 @@ IonBuilder::IonBuilder(JSContext *analysisContext, CompileCompartment *comp,
     backgroundCodegen_(nullptr),
     analysisContext(analysisContext),
     baselineFrame_(baselineFrame),
-    abortReason_(AbortReason_Disable),
     descrSetHash_(nullptr),
     constraints_(constraints),
     analysis_(*temp, info->script()),
@@ -145,6 +144,7 @@ IonBuilder::IonBuilder(JSContext *analysisContext, CompileCompartment *comp,
 {
     script_ = info->script();
     pc = info->startPC();
+    abortReason_ = AbortReason_Disable;
 
     JS_ASSERT(script()->hasBaselineScript() == (info->executionMode() != ArgumentsUsageAnalysis));
     JS_ASSERT(!!analysisContext == (info->executionMode() == DefinitePropertiesAnalysis));
@@ -444,14 +444,21 @@ IonBuilder::analyzeNewLoopTypes(MBasicBlock *entry, jsbytecode *start, jsbytecod
     for (size_t i = 0; i < loopHeaders_.length(); i++) {
         if (loopHeaders_[i].pc == start) {
             MBasicBlock *oldEntry = loopHeaders_[i].header;
-            for (MPhiIterator oldPhi = oldEntry->phisBegin();
-                 oldPhi != oldEntry->phisEnd();
-                 oldPhi++)
-            {
-                MPhi *newPhi = entry->getSlot(oldPhi->slot())->toPhi();
+            MResumePoint *oldEntryRp = oldEntry->entryResumePoint();
+            size_t stackDepth = oldEntryRp->numOperands();
+            for (size_t slot = 0; slot < stackDepth; slot++) {
+                MDefinition *oldDef = oldEntryRp->getOperand(slot);
+                if (!oldDef->isPhi()) {
+                    MOZ_ASSERT(oldDef->block()->id() < oldEntry->id());
+                    MOZ_ASSERT(oldDef == entry->getSlot(slot));
+                    continue;
+                }
+                MPhi *oldPhi = oldDef->toPhi();
+                MPhi *newPhi = entry->getSlot(slot)->toPhi();
                 if (!newPhi->addBackedgeType(oldPhi->type(), oldPhi->resultTypeSet()))
                     return false;
             }
+
             // Update the most recent header for this loop encountered, in case
             // new types flow to the phis and the loop is processed at least
             // three times.
@@ -1150,26 +1157,24 @@ IonBuilder::maybeAddOsrTypeBarriers()
     static const size_t OSR_PHI_POSITION = 1;
     JS_ASSERT(preheader->getPredecessor(OSR_PHI_POSITION) == osrBlock);
 
-    MPhiIterator headerPhi = header->phisBegin();
-    while (headerPhi != header->phisEnd() && headerPhi->slot() < info().startArgSlot())
-        headerPhi++;
-
-    for (uint32_t i = info().startArgSlot(); i < osrBlock->stackDepth(); i++, headerPhi++) {
+    MResumePoint *headerRp = header->entryResumePoint();
+    size_t stackDepth = headerRp->numOperands();
+    MOZ_ASSERT(stackDepth == osrBlock->stackDepth());
+    for (uint32_t slot = info().startArgSlot(); slot < stackDepth; slot++) {
         // Aliased slots are never accessed, since they need to go through
         // the callobject. The typebarriers are added there and can be
         // discarded here.
-        if (info().isSlotAliasedAtOsr(i))
+        if (info().isSlotAliasedAtOsr(slot))
             continue;
 
-        MInstruction *def = osrBlock->getSlot(i)->toInstruction();
-
-        JS_ASSERT(headerPhi->slot() == i);
-        MPhi *preheaderPhi = preheader->getSlot(i)->toPhi();
+        MInstruction *def = osrBlock->getSlot(slot)->toInstruction();
+        MPhi *preheaderPhi = preheader->getSlot(slot)->toPhi();
+        MPhi *headerPhi = headerRp->getOperand(slot)->toPhi();
 
         MIRType type = headerPhi->type();
         types::TemporaryTypeSet *typeSet = headerPhi->resultTypeSet();
 
-        if (!addOsrValueTypeBarrier(i, &def, type, typeSet))
+        if (!addOsrValueTypeBarrier(slot, &def, type, typeSet))
             return false;
 
         preheaderPhi->replaceOperand(OSR_PHI_POSITION, def);
@@ -4104,7 +4109,7 @@ IonBuilder::patchInlinedReturns(CallInfo &callInfo, MIRGraphReturns &returns, MB
         return patchInlinedReturn(callInfo, returns[0], bottom);
 
     // Accumulate multiple returns with a phi.
-    MPhi *phi = MPhi::New(alloc(), bottom->stackDepth());
+    MPhi *phi = MPhi::New(alloc());
     if (!phi->reserveLength(returns.length()))
         return nullptr;
 
@@ -4171,7 +4176,9 @@ IonBuilder::makeInliningDecision(JSFunction *target, CallInfo &callInfo)
         if (targetScript->getUseCount() < optimizationInfo().usesBeforeInlining() &&
             info().executionMode() != DefinitePropertiesAnalysis)
         {
-            return DontInline(targetScript, "Vetoed: callee is insufficiently hot.");
+            IonSpew(IonSpew_Inlining, "Cannot inline %s:%u: callee is insufficiently hot.",
+                    targetScript->filename(), targetScript->lineno());
+            return InliningDecision_UseCountTooLow;
         }
     }
 
@@ -4206,6 +4213,7 @@ IonBuilder::selectInliningTargets(ObjectVector &targets, CallInfo &callInfo, Boo
           case InliningDecision_Error:
             return false;
           case InliningDecision_DontInline:
+          case InliningDecision_UseCountTooLow:
             inlineable = false;
             break;
           case InliningDecision_Inline:
@@ -4326,6 +4334,8 @@ IonBuilder::inlineCallsite(ObjectVector &targets, ObjectVector &originals,
             return InliningStatus_Error;
           case InliningDecision_DontInline:
             return InliningStatus_NotInlined;
+          case InliningDecision_UseCountTooLow:
+            return InliningStatus_UseCountTooLow;
           case InliningDecision_Inline:
             break;
         }
@@ -4533,7 +4543,7 @@ IonBuilder::inlineCalls(CallInfo &callInfo, ObjectVector &targets,
     returnBlock->inheritSlots(dispatchBlock);
     callInfo.popFormals(returnBlock);
 
-    MPhi *retPhi = MPhi::New(alloc(), returnBlock->stackDepth());
+    MPhi *retPhi = MPhi::New(alloc());
     returnBlock->addPhi(retPhi);
     returnBlock->push(retPhi);
 
@@ -4950,6 +4960,7 @@ IonBuilder::jsop_funcall(uint32_t argc)
           case InliningDecision_Error:
             return false;
           case InliningDecision_DontInline:
+          case InliningDecision_UseCountTooLow:
             break;
           case InliningDecision_Inline:
             if (target->isInterpreted())
@@ -5090,6 +5101,7 @@ IonBuilder::jsop_funapplyarguments(uint32_t argc)
       case InliningDecision_Error:
         return false;
       case InliningDecision_DontInline:
+      case InliningDecision_UseCountTooLow:
         break;
       case InliningDecision_Inline:
         if (target->isInterpreted())
@@ -5159,6 +5171,13 @@ IonBuilder::jsop_call(uint32_t argc, bool constructing)
     JSFunction *target = nullptr;
     if (targets.length() == 1)
         target = &targets[0]->as<JSFunction>();
+
+    if (target && status == InliningStatus_UseCountTooLow) {
+        MRecompileCheck *check = MRecompileCheck::New(alloc(), target->nonLazyScript(),
+                                                      optimizationInfo().usesBeforeInlining(),
+                                                      MRecompileCheck::RecompileCheck_Inlining);
+        current->add(check);
+    }
 
     return makeCall(target, callInfo, hasClones);
 }
@@ -6132,7 +6151,10 @@ IonBuilder::insertRecompileCheck()
     OptimizationLevel nextLevel = js_IonOptimizations.nextLevel(curLevel);
     const OptimizationInfo *info = js_IonOptimizations.get(nextLevel);
     uint32_t useCount = info->usesBeforeCompile(topBuilder->script());
-    current->add(MRecompileCheck::New(alloc(), topBuilder->script(), useCount));
+
+    MRecompileCheck *check = MRecompileCheck::New(alloc(), topBuilder->script(), useCount,
+                                MRecompileCheck::RecompileCheck_OptimizationLevel);
+    current->add(check);
 }
 
 JSObject *
@@ -8864,6 +8886,7 @@ IonBuilder::getPropTryCommonGetter(bool *emitted, MDefinition *obj, PropertyName
           case InliningDecision_Error:
             return false;
           case InliningDecision_DontInline:
+          case InliningDecision_UseCountTooLow:
             break;
           case InliningDecision_Inline:
             inlineable = true;
@@ -9280,6 +9303,7 @@ IonBuilder::setPropTryCommonSetter(bool *emitted, MDefinition *obj,
           case InliningDecision_Error:
             return false;
           case InliningDecision_DontInline:
+          case InliningDecision_UseCountTooLow:
             break;
           case InliningDecision_Inline:
             if (!inlineScriptedCall(callInfo, commonSetter))

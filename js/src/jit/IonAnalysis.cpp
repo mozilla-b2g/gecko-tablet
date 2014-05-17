@@ -107,6 +107,12 @@ jit::EliminateDeadResumePointOperands(MIRGenerator *mir, MIRGraph &graph)
             if (ins->isImplicitlyUsed())
                 continue;
 
+            // If the instruction's is captured by one of the resume point, then
+            // it might be observed indirectly while the frame is live on the
+            // stack, so it has to be computed.
+            if (ins->isObserved())
+                continue;
+
             // Check if this instruction's result is only used within the
             // current block, and keep track of its last use in a definition
             // (not resume point). This requires the instructions in the block
@@ -139,14 +145,6 @@ jit::EliminateDeadResumePointOperands(MIRGenerator *mir, MIRGraph &graph)
                     mrp->instruction() == *ins ||
                     mrp->instruction()->id() <= maxDefinition)
                 {
-                    uses++;
-                    continue;
-                }
-
-                // The operand is an uneliminable slot. This currently
-                // includes argument slots in non-strict scripts (due to being
-                // observable via Function.arguments).
-                if (!block->info().canOptimizeOutSlot(uses->index())) {
                     uses++;
                     continue;
                 }
@@ -232,30 +230,7 @@ IsPhiObservable(MPhi *phi, Observability observe)
         break;
     }
 
-    uint32_t slot = phi->slot();
-    CompileInfo &info = phi->block()->info();
-    JSFunction *fun = info.funMaybeLazy();
-
-    // If the Phi is of the |this| value, it must always be observable.
-    if (fun && slot == info.thisSlot())
-        return true;
-
-    // If the function may need an arguments object, then make sure to
-    // preserve the scope chain, because it may be needed to construct the
-    // arguments object during bailout. If we've already created an arguments
-    // object (or got one via OSR), preserve that as well.
-    if (fun && info.hasArguments() &&
-        (slot == info.scopeChainSlot() || slot == info.argsObjSlot()))
-    {
-        return true;
-    }
-
-    // The Phi is an uneliminable slot. Currently this includes argument slots
-    // in non-strict scripts (due to being observable via Function.arguments).
-    if (fun && !info.canOptimizeOutSlot(slot))
-        return true;
-
-    return false;
+    return phi->isObserved();
 }
 
 // Handles cases like:
@@ -2586,5 +2561,98 @@ jit::AnalyzeArgumentsUsage(JSContext *cx, JSScript *scriptArg)
         return true;
 
     script->setNeedsArgsObj(false);
+    return true;
+}
+
+// Reorder the blocks in the loop starting at the given header to be contiguous.
+static void
+MakeLoopContiguous(MIRGraph &graph, MBasicBlock *header, MBasicBlock *backedge, size_t numMarked)
+{
+    MOZ_ASSERT(header->isMarked(), "Loop header is not part of loop");
+    MOZ_ASSERT(backedge->isMarked(), "Loop backedge is not part of loop");
+
+    // If there are any blocks between the loop header and the loop backedge
+    // that are not part of the loop, prepare to move them to the end. We keep
+    // them in order, which preserves RPO.
+    ReversePostorderIterator insertIter = graph.rpoBegin(backedge);
+    insertIter++;
+    MBasicBlock *insertPt = *insertIter;
+
+    // Visit all the blocks from the loop header to the loop backedge.
+    size_t headerId = header->id();
+    size_t inLoopId = headerId;
+    size_t afterLoopId = inLoopId + numMarked;
+    ReversePostorderIterator i = graph.rpoBegin(header);
+    for (;;) {
+        MBasicBlock *block = *i++;
+        MOZ_ASSERT(block->id() >= header->id() && block->id() <= backedge->id(),
+                   "Loop backedge should be last block in loop");
+
+        if (block->isMarked()) {
+            // This block is in the loop.
+            block->unmark();
+            block->setId(inLoopId++);
+            // If we've reached the loop backedge, we're done!
+            if (block == backedge)
+                break;
+        } else {
+            // This block is not in the loop. Move it to the end.
+            graph.moveBlockBefore(insertPt, block);
+            block->setId(afterLoopId++);
+        }
+    }
+    MOZ_ASSERT(header->id() == headerId, "Loop header id changed");
+    MOZ_ASSERT(inLoopId == headerId + numMarked, "Wrong number of blocks kept in loop");
+    MOZ_ASSERT(afterLoopId == (insertIter != graph.rpoEnd() ? insertPt->id() : graph.numBlocks()),
+               "Wrong number of blocks moved out of loop");
+}
+
+// Reorder the blocks in the graph so that loops are contiguous.
+bool
+jit::MakeLoopsContiguous(MIRGraph &graph)
+{
+    MBasicBlock *osrBlock = graph.osrBlock();
+    Vector<MBasicBlock *, 1, IonAllocPolicy> inlooplist(graph.alloc());
+
+    // Visit all loop headers (in any order).
+    for (MBasicBlockIterator i(graph.begin()); i != graph.end(); i++) {
+        MBasicBlock *header = *i;
+        if (!header->isLoopHeader())
+            continue;
+
+        // Mark all the blocks in the loop by marking all blocks in a path
+        // between the backedge and the loop header.
+        MBasicBlock *backedge = header->backedge();
+        size_t numMarked = 1;
+        backedge->mark();
+        if (!inlooplist.append(backedge))
+            return false;
+        do {
+            MBasicBlock *block = inlooplist.popCopy();
+            MOZ_ASSERT(block->id() >= header->id() && block->id() <= backedge->id(),
+                       "Non-OSR predecessor of loop block not between header and backedge");
+            if (block == header)
+                continue;
+            for (size_t p = 0; p < block->numPredecessors(); p++) {
+                MBasicBlock *pred = block->getPredecessor(p);
+                if (pred->isMarked())
+                    continue;
+                // Ignore paths entering the loop in the middle from an OSR
+                // entry. They won't pass through the loop header and they
+                // aren't part of the loop.
+                if (osrBlock && osrBlock->dominates(pred) && !osrBlock->dominates(header))
+                    continue;
+                ++numMarked;
+                pred->mark();
+                if (!inlooplist.append(pred))
+                    return false;
+            }
+        } while (!inlooplist.empty());
+
+        // Move all blocks between header and backedge that aren't marked to
+        // the end of the loop, making the loop itself contiguous.
+        MakeLoopContiguous(graph, header, backedge, numMarked);
+    }
+
     return true;
 }

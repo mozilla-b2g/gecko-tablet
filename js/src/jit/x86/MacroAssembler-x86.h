@@ -699,6 +699,9 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     void storePtr(Register src, const Address &address) {
         movl(src, Operand(address));
     }
+    void storePtr(Register src, const BaseIndex &address) {
+        movl(src, Operand(address));
+    }
     void storePtr(Register src, const Operand &dest) {
         movl(src, dest);
     }
@@ -950,11 +953,8 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     }
     Condition testStringTruthy(bool truthy, const ValueOperand &value) {
         Register string = value.payloadReg();
-        Operand lengthAndFlags(string, JSString::offsetOfLengthAndFlags());
-
-        size_t mask = (0xFFFFFFFF << JSString::LENGTH_SHIFT);
-        testl(lengthAndFlags, Imm32(mask));
-        return truthy ? Assembler::NonZero : Assembler::Zero;
+        cmpl(Operand(string, JSString::offsetOfLength()), Imm32(0));
+        return truthy ? Assembler::NotEqual : Assembler::Equal;
     }
     void branchTestStringTruthy(bool truthy, const ValueOperand &value, Label *label) {
         Condition cond = testStringTruthy(truthy, value);
@@ -981,6 +981,9 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
 
     void rshiftPtr(Imm32 imm, Register dest) {
         shrl(imm, dest);
+    }
+    void rshiftPtrArithmetic(Imm32 imm, Register dest) {
+        sarl(imm, dest);
     }
     void lshiftPtr(Imm32 imm, Register dest) {
         shll(imm, dest);
