@@ -5,7 +5,7 @@
 "use strict"
 
 /* static functions */
-let DEBUG = 0;
+let DEBUG = 1;
 let debug;
 if (DEBUG)
   debug = function (s) { dump("-*- SettingsService: " + s + "\n"); }
@@ -229,6 +229,7 @@ SettingsService.prototype = {
   },
 
   createLock: function createLock(aCallback) {
+    debug("SettingsService createLock!");
     var lock = new SettingsServiceLock(this);
     this._locks.enqueue(lock);
     this._settingsDB.ensureDB(
