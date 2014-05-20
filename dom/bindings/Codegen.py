@@ -55,8 +55,7 @@ def isTypeCopyConstructible(type):
 def wantsAddProperty(desc):
     return (desc.concrete and
             desc.wrapperCache and
-            not (desc.workers and
-                 desc.interface.getExtendedAttribute("Global")))
+            not desc.interface.getExtendedAttribute("Global"))
 
 
 # We'll want to insert the indent at the beginnings of lines, but we
@@ -70,7 +69,7 @@ def indent(s, indentLevel=2):
     Indent C++ code.
 
     Weird secret feature: this doesn't indent lines that start with # (such as
-    #include lines).
+    #include lines or #ifdef/#endif).
     """
     if s == "":
         return s
@@ -2477,11 +2476,6 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
             interfaceClass = "nullptr"
             interfaceCache = "nullptr"
 
-        if self.descriptor.concrete:
-            domClass = "&Class.mClass"
-        else:
-            domClass = "nullptr"
-
         isGlobal = self.descriptor.interface.getExtendedAttribute("Global") is not None
         if not isGlobal and self.properties.hasNonChromeOnly():
             properties = "&sNativeProperties"
@@ -2502,7 +2496,6 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
                                         ${protoClass}, ${protoCache},
                                         constructorProto, ${interfaceClass}, ${constructHookHolder}, ${constructArgs}, ${namedConstructors},
                                         ${interfaceCache},
-                                        ${domClass},
                                         ${properties},
                                         ${chromeProperties},
                                         ${name}, aDefineOnGlobal);
@@ -2514,7 +2507,6 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
             constructArgs=constructArgs,
             namedConstructors=namedConstructors,
             interfaceCache=interfaceCache,
-            domClass=domClass,
             properties=properties,
             chromeProperties=chromeProperties,
             name='"' + self.descriptor.interface.identifier.name + '"' if needInterfaceObject else "nullptr")
@@ -6683,7 +6675,13 @@ class CGGenericMethod(CGAbstractBindingMethod):
             const JSJitInfo *info = FUNCTION_VALUE_TO_JITINFO(args.calleev());
             MOZ_ASSERT(info->type() == JSJitInfo::Method);
             JSJitMethodOp method = info->method;
-            return method(cx, obj, self, JSJitMethodCallArgs(args));
+            bool ok = method(cx, obj, self, JSJitMethodCallArgs(args));
+            #ifdef DEBUG
+            if (ok) {
+              AssertReturnTypeMatchesJitinfo(info, args.rval());
+            }
+            #endif
+            return ok;
             """)))
 
 
@@ -6981,7 +6979,13 @@ class CGGenericGetter(CGAbstractBindingMethod):
             const JSJitInfo *info = FUNCTION_VALUE_TO_JITINFO(args.calleev());
             MOZ_ASSERT(info->type() == JSJitInfo::Getter);
             JSJitGetterOp getter = info->getter;
-            return getter(cx, obj, self, JSJitGetterCallArgs(args));
+            bool ok = getter(cx, obj, self, JSJitGetterCallArgs(args));
+            #ifdef DEBUG
+            if (ok) {
+              AssertReturnTypeMatchesJitinfo(info, args.rval());
+            }
+            #endif
+            return ok;
             """)))
 
 
@@ -7116,6 +7120,9 @@ class CGGenericSetter(CGAbstractBindingMethod):
               return false;
             }
             args.rval().set(JSVAL_VOID);
+            #ifdef DEBUG
+            AssertReturnTypeMatchesJitinfo(info, args.rval());
+            #endif
             return true;
             """,
             name=self.descriptor.interface.identifier.name)))
