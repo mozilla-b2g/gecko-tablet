@@ -179,9 +179,16 @@ class B2GRunner(RemoteRunner):
         self.dm.moveTree(posixpath.join(self.remote_profile, 'user.js'),
                          posixpath.join(self.remote_profile, 'prefs.js'))
 
-        self.kp_kwargs.update({'stream': sys.stdout,
-                               'processOutputLine': self.on_output,
-                               'onTimeout': self.on_timeout,})
+        self.kp_kwargs.update({'processOutputLine': self.on_output,
+                               'stream': sys.stdout,
+                               'onTimeout': self.on_timeout,
+                               'onFinish': self.on_finish})
+
+
+        #self.kp_kwargs.update({'stream': sys.stdout,
+        #                       'processOutputLine': self.on_output,
+        #                       'onTimeout': self.on_timeout,})
+
         self.process_handler = self.process_class(self.command, **self.kp_kwargs)
         self.process_handler.run(timeout=timeout, outputTimeout=outputTimeout)
 
