@@ -173,15 +173,6 @@ class B2GRunner(RemoteRunner):
                                 " prior to running before running the automation framework")
 
         self.dm.shellCheckOutput(['stop', 'b2g'])
-<<<<<<< local
-        self.kp_kwargs.update({'processOutputLine': self.on_output,
-                               'stream': sys.stdout,
-                               'onTimeout': self.on_timeout,
-                               'onFinish': self.on_finish})
- #       self.kp_kwargs.update({'stream': sys.stdout,
-#                               'processOutputLine': self.on_output,
-#                               'onTimeout': self.on_timeout,})
-=======
 
         # For some reason user.js in the profile doesn't get picked up.
         # Manually copy it over to prefs.js. See bug 1009730 for more details.
@@ -191,7 +182,6 @@ class B2GRunner(RemoteRunner):
         self.kp_kwargs.update({'stream': sys.stdout,
                                'processOutputLine': self.on_output,
                                'onTimeout': self.on_timeout,})
->>>>>>> other
         self.process_handler = self.process_class(self.command, **self.kp_kwargs)
         self.process_handler.run(timeout=timeout, outputTimeout=outputTimeout)
 
