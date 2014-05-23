@@ -2203,7 +2203,7 @@ nsHttpChannel::ProcessPartialContent()
         if (NS_FAILED(rv)) return rv;
 
         // make the cached response be the current response
-        mResponseHead = mCachedResponseHead;
+        mResponseHead = Move(mCachedResponseHead);
 
         UpdateInhibitPersistentCachingFlag();
 
@@ -2334,7 +2334,7 @@ nsHttpChannel::ProcessNotModified()
     if (NS_FAILED(rv)) return rv;
 
     // make the cached response be the current response
-    mResponseHead = mCachedResponseHead;
+    mResponseHead = Move(mCachedResponseHead);
 
     UpdateInhibitPersistentCachingFlag();
 
@@ -3536,7 +3536,7 @@ nsHttpChannel::ReadFromCache(bool alreadyMarkedValid)
          "Using cached copy of: %s\n", this, mSpec.get()));
 
     if (mCachedResponseHead)
-        mResponseHead = mCachedResponseHead;
+        mResponseHead = Move(mCachedResponseHead);
 
     UpdateInhibitPersistentCachingFlag();
 
@@ -4155,26 +4155,6 @@ nsHttpChannel::AsyncProcessRedirection(uint32_t redirectType)
     }
 
     return ContinueProcessRedirectionAfterFallback(NS_OK);
-}
-
-// Creates an URI to the given location using current URI for base and charset
-nsresult
-nsHttpChannel::CreateNewURI(const char *loc, nsIURI **newURI)
-{
-    nsCOMPtr<nsIIOService> ioService;
-    nsresult rv = gHttpHandler->GetIOService(getter_AddRefs(ioService));
-    if (NS_FAILED(rv)) return rv;
-
-    // the new uri should inherit the origin charset of the current uri
-    nsAutoCString originCharset;
-    rv = mURI->GetOriginCharset(originCharset);
-    if (NS_FAILED(rv))
-        originCharset.Truncate();
-
-    return ioService->NewURI(nsDependentCString(loc),
-                             originCharset.get(),
-                             mURI,
-                             newURI);
 }
 
 nsresult
@@ -5156,7 +5136,7 @@ nsHttpChannel::OnStopRequest(nsIRequest *request, nsISupports *ctxt, nsresult st
             }
             else if (contentLength != int64_t(-1) && contentLength != size) {
                 LOG(("  concurrent cache entry write has been interrupted"));
-                mCachedResponseHead = mResponseHead;
+                mCachedResponseHead = Move(mResponseHead);
                 rv = MaybeSetupByteRangeRequest(size, contentLength);
                 if (NS_SUCCEEDED(rv) && mIsPartialRequest) {
                     // Prevent read from cache again
@@ -6025,6 +6005,26 @@ nsHttpChannel::OnLookupComplete(nsICancelable *request,
 //-----------------------------------------------------------------------------
 // nsHttpChannel internal functions
 //-----------------------------------------------------------------------------
+
+// Creates an URI to the given location using current URI for base and charset
+nsresult
+nsHttpChannel::CreateNewURI(const char *loc, nsIURI **newURI)
+{
+    nsCOMPtr<nsIIOService> ioService;
+    nsresult rv = gHttpHandler->GetIOService(getter_AddRefs(ioService));
+    if (NS_FAILED(rv)) return rv;
+
+    // the new uri should inherit the origin charset of the current uri
+    nsAutoCString originCharset;
+    rv = mURI->GetOriginCharset(originCharset);
+    if (NS_FAILED(rv))
+        originCharset.Truncate();
+
+    return ioService->NewURI(nsDependentCString(loc),
+                             originCharset.get(),
+                             mURI,
+                             newURI);
+}
 
 void
 nsHttpChannel::MaybeInvalidateCacheEntryForSubsequentGet()

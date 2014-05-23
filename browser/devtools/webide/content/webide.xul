@@ -119,7 +119,7 @@
   <popupset>
 
     <!-- App panel -->
-    <panel id="project-panel" type="arrow" position="bottomcenter topleft" consumeoutsideclicks="true">
+    <panel id="project-panel" type="arrow" position="bottomcenter topleft" consumeoutsideclicks="true" animate="false">
       <vbox flex="1">
         <toolbarbutton class="panel-item project-panel-item-newapp" command="cmd_newApp"/>
         <toolbarbutton class="panel-item project-panel-item-openpackaged" command="cmd_importPackagedApp"/>
@@ -132,7 +132,7 @@
     </panel>
 
     <!-- Runtime panel -->
-    <panel id="runtime-panel" type="arrow" position="bottomcenter topright" consumeoutsideclicks="true">
+    <panel id="runtime-panel" type="arrow" position="bottomcenter topright" consumeoutsideclicks="true" animate="false">
       <vbox flex="1">
         <label class="panel-header">&runtimePanel_USBDevices;</label>
         <vbox id="runtime-panel-usbruntime"></vbox>
@@ -148,17 +148,13 @@
 
   </popupset>
 
-  <vbox flex="1" id="body">
+  <notificationbox flex="1" id="body">
     <iframe id="details" flex="1" hidden="true" src="details.xhtml"/>
-  </vbox>
+    <iframe id="projecteditor" flex="1" hidden="true"/>
+  </notificationbox>
 
   <splitter hidden="true" class="devtools-horizontal-splitter" orient="vertical"/>
 
   <!-- toolbox iframe will be inserted here -->
-
-  <html:div id="logs-container">
-    <html:pre id="logs"></html:pre>
-    <html:button id="toggle-logs">&logs;</html:button>
-  </html:div>
 
 </window>

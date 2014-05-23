@@ -719,11 +719,26 @@ WorkerThread::destroy()
         threadData.destroy();
 }
 
+#ifdef MOZ_NUWA_PROCESS
+extern "C" {
+MFBT_API bool IsNuwaProcess();
+MFBT_API void NuwaMarkCurrentThread(void (*recreate)(void *), void *arg);
+}
+#endif
+
 /* static */
 void
 WorkerThread::ThreadMain(void *arg)
 {
     PR_SetCurrentThreadName("Analysis Helper");
+
+#ifdef MOZ_NUWA_PROCESS
+    if (IsNuwaProcess()) {
+        JS_ASSERT(NuwaMarkCurrentThread != nullptr);
+        NuwaMarkCurrentThread(nullptr, nullptr);
+    }
+#endif
+
     static_cast<WorkerThread *>(arg)->threadLoop();
 }
 
@@ -788,7 +803,24 @@ WorkerThread::handleIonWorkload()
     JS_ASSERT(WorkerThreadState().canStartIonCompile());
     JS_ASSERT(idle());
 
-    ionBuilder = WorkerThreadState().ionWorklist().popCopy();
+    // Find the ionBuilder with the script having the highest usecount.
+    GlobalWorkerThreadState::IonBuilderVector &ionWorklist = WorkerThreadState().ionWorklist();
+    size_t highest = 0;
+    for (size_t i = 1; i < ionWorklist.length(); i++) {
+        if (ionWorklist[i]->script()->getUseCount() >
+            ionWorklist[highest]->script()->getUseCount())
+        {
+            highest = i;
+        }
+    }
+    ionBuilder = ionWorklist[highest];
+
+    // Pop the top IonBuilder and move it to the original place of the
+    // IonBuilder we took to start compiling. If both are the same, only pop.
+    if (highest != ionWorklist.length() - 1)
+        ionWorklist[highest] = ionWorklist.popCopy();
+    else
+        ionWorklist.popBack();
 
     TraceLogger *logger = TraceLoggerForCurrentThread();
     AutoTraceLog logScript(logger, TraceLogCreateTextId(logger, ionBuilder->script()));
@@ -911,8 +943,11 @@ js::StartOffThreadCompression(ExclusiveContext *cx, SourceCompressionTask *task)
 
     AutoLockWorkerThreadState lock;
 
-    if (!WorkerThreadState().compressionWorklist().append(task))
+    if (!WorkerThreadState().compressionWorklist().append(task)) {
+        if (JSContext *maybecx = cx->maybeJSContext())
+            js_ReportOutOfMemory(maybecx);
         return false;
+    }
 
     WorkerThreadState().notifyOne(GlobalWorkerThreadState::PRODUCER);
     return true;

@@ -947,6 +947,8 @@ var gBrowserInit = {
     }
 #endif
 
+    ToolbarIconColor.init();
+
     // Wait until chrome is painted before executing code not critical to making the window visible
     this._boundDelayedStartup = this._delayedStartup.bind(this, mustLoadSidebar);
     window.addEventListener("MozAfterPaint", this._boundDelayedStartup);
@@ -1026,10 +1028,6 @@ var gBrowserInit = {
       // Note: loadOneOrMoreURIs *must not* be called if window.arguments.length >= 3.
       // Such callers expect that window.arguments[0] is handled as a single URI.
       else {
-        if (uriToLoad == "about:newtab" &&
-            Services.prefs.getBoolPref("browser.newtabpage.enabled")) {
-          Services.telemetry.getHistogramById("NEWTAB_PAGE_SHOWN").add(true);
-        }
         loadOneOrMoreURIs(uriToLoad);
       }
     }
@@ -1282,6 +1280,8 @@ var gBrowserInit = {
     BookmarkingUI.uninit();
 
     TabsInTitlebar.uninit();
+
+    ToolbarIconColor.uninit();
 
     var enumerator = Services.wm.getEnumerator(null);
     enumerator.getNext();
@@ -4296,6 +4296,8 @@ function setToolbarVisibility(toolbar, isVisible, persist=true) {
   PlacesToolbarHelper.init();
   BookmarkingUI.onToolbarVisibilityChange();
   gBrowser.updateWindowResizers();
+  if (isVisible)
+    ToolbarIconColor.inferFromText();
 }
 
 var TabsInTitlebar = {
@@ -4446,11 +4448,6 @@ var TabsInTitlebar = {
       fullTabsHeight += verticalMargins(tabsStyles);
 #endif
 
-      // If the navbar overlaps the tabbar using negative margins, we need to take those into
-      // account so we don't overlap it
-      let navbarMarginTop = parseFloat(window.getComputedStyle($("nav-bar")).marginTop);
-      navbarMarginTop = Math.min(navbarMarginTop, 0);
-
       // And get the height of what's in the titlebar:
       let titlebarContentHeight = rect(titlebarContent).height;
 
@@ -4491,9 +4488,6 @@ var TabsInTitlebar = {
         // We need to increase the titlebar content's outer height (ie including margins)
         // to match the tab and menu height:
         let extraMargin = tabAndMenuHeight - titlebarContentHeight;
-        // We need to reduce the height by the amount of navbar overlap
-        // (this value is 0 or negative):
-        extraMargin += navbarMarginTop;
         // On non-OSX, we can just use bottom margin:
 #ifndef XP_MACOSX
         titlebarContent.style.marginBottom = extraMargin + "px";
@@ -4540,6 +4534,8 @@ var TabsInTitlebar = {
       titlebar.style.marginBottom = "";
       menubar.style.paddingBottom = "";
     }
+
+    ToolbarIconColor.inferFromText();
   },
 
   _sizePlaceholder: function (type, width) {
@@ -7190,5 +7186,73 @@ function BrowserOpenNewTabOrWindow(event) {
     OpenBrowserWindow();
   } else {
     BrowserOpenTab();
+  }
+}
+
+let ToolbarIconColor = {
+  init: function () {
+    this._initialized = true;
+
+    window.addEventListener("activate", this);
+    window.addEventListener("deactivate", this);
+    Services.obs.addObserver(this, "lightweight-theme-styling-update", false);
+
+    // If the window isn't active now, we assume that it has never been active
+    // before and will soon become active such that inferFromText will be
+    // called from the initial activate event.
+    if (Services.focus.activeWindow == window)
+      this.inferFromText();
+  },
+
+  uninit: function () {
+    this._initialized = false;
+
+    window.removeEventListener("activate", this);
+    window.removeEventListener("deactivate", this);
+    Services.obs.removeObserver(this, "lightweight-theme-styling-update");
+  },
+
+  handleEvent: function (event) {
+    switch (event.type) {
+      case "activate":
+      case "deactivate":
+        this.inferFromText();
+        break;
+    }
+  },
+
+  observe: function (aSubject, aTopic, aData) {
+    switch (aTopic) {
+      case "lightweight-theme-styling-update":
+        // inferFromText needs to run after LightweightThemeConsumer.jsm's
+        // lightweight-theme-styling-update observer.
+        setTimeout(() => { this.inferFromText(); }, 0);
+        break;
+    }
+  },
+
+  inferFromText: function () {
+    if (!this._initialized)
+      return;
+
+    function parseRGB(aColorString) {
+      let rgb = aColorString.match(/^rgba?\((\d+), (\d+), (\d+)/);
+      rgb.shift();
+      return rgb.map(x => parseInt(x));
+    }
+
+    let toolbarSelector = "#navigator-toolbox > toolbar:not([collapsed=true]):not(#addon-bar)";
+#ifdef XP_MACOSX
+    toolbarSelector += ":not([type=menubar])";
+#endif
+
+    for (let toolbar of document.querySelectorAll(toolbarSelector)) {
+      let [r, g, b] = parseRGB(getComputedStyle(toolbar).color);
+      let luminance = 0.2125 * r + 0.7154 * g + 0.0721 * b;
+      if (luminance <= 110)
+        toolbar.removeAttribute("brighttext");
+      else
+        toolbar.setAttribute("brighttext", "true");
+    }
   }
 }

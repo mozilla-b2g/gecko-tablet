@@ -124,6 +124,7 @@ WEBIDL_FILES = [
     'GeometryUtils.webidl',
     'GetUserMediaRequest.webidl',
     'History.webidl',
+    'HTMLAllCollection.webidl',
     'HTMLAnchorElement.webidl',
     'HTMLAppletElement.webidl',
     'HTMLAreaElement.webidl',
@@ -223,6 +224,7 @@ WEBIDL_FILES = [
     'KeyboardEvent.webidl',
     'KeyEvent.webidl',
     'LegacyQueryInterface.webidl',
+    'LinkImport.webidl',
     'LinkStyle.webidl',
     'LocalMediaStream.webidl',
     'Location.webidl',
@@ -315,6 +317,7 @@ WEBIDL_FILES = [
     'StorageType.webidl',
     'StyleSheet.webidl',
     'StyleSheetList.webidl',
+    'SubtleCrypto.webidl',
     'SVGAElement.webidl',
     'SVGAltGlyphElement.webidl',
     'SVGAngle.webidl',
@@ -543,11 +546,18 @@ if CONFIG['MOZ_DEBUG']:
     WEBIDL_FILES += ['TestInterfaceJS.webidl']
 
 if CONFIG['MOZ_B2G_BT']:
-    WEBIDL_FILES += [
-        'BluetoothAdapter.webidl',
-        'BluetoothDevice.webidl',
-        'BluetoothManager.webidl',
-    ]
+    if CONFIG['MOZ_B2G_BT_API_V2']:
+        WEBIDL_FILES += [
+            'BluetoothAdapter2.webidl',
+            'BluetoothDevice2.webidl',
+            'BluetoothManager2.webidl',
+        ]
+    else:
+        WEBIDL_FILES += [
+            'BluetoothAdapter.webidl',
+            'BluetoothDevice.webidl',
+            'BluetoothManager.webidl',
+        ]
 
 if CONFIG['MOZ_B2G_RIL']:
     WEBIDL_FILES += [
@@ -581,6 +591,7 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
         'MozNetworkStatsData.webidl',
         'MozNetworkStatsInterface.webidl',
         'MozSpeakerManager.webidl',
+        'MozWifiCapabilities.webidl',
         'MozWifiConnectionInfoEvent.webidl',
         'MozWifiManager.webidl',
         'MozWifiP2pManager.webidl',

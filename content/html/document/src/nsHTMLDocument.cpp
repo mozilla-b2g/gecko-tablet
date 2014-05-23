@@ -547,7 +547,8 @@ nsHTMLDocument::StartDocumentLoad(const char* aCommand,
               !strcmp(aCommand, "external-resource");
   bool viewSource = !strcmp(aCommand, "view-source");
   bool asData = !strcmp(aCommand, kLoadAsData);
-  if(!(view || viewSource || asData)) {
+  bool import = !strcmp(aCommand, "import");
+  if (!(view || viewSource || asData || import)) {
     MOZ_ASSERT(false, "Bad parser command");
     return NS_ERROR_INVALID_ARG;
   }
@@ -1370,7 +1371,7 @@ nsHTMLDocument::Open(JSContext* cx,
 {
   NS_ASSERTION(nsContentUtils::CanCallerAccess(static_cast<nsIDOMHTMLDocument*>(this)),
                "XOW should have caught this!");
-  if (!IsHTML() || mDisableDocWrite) {
+  if (!IsHTML() || mDisableDocWrite || !IsMasterDocument()) {
     // No calling document.open() on XHTML
     rv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return nullptr;
@@ -1772,7 +1773,7 @@ nsHTMLDocument::WriteCommon(JSContext *cx,
     (mWriteLevel > NS_MAX_DOCUMENT_WRITE_DEPTH || mTooDeepWriteRecursion);
   NS_ENSURE_STATE(!mTooDeepWriteRecursion);
 
-  if (!IsHTML() || mDisableDocWrite) {
+  if (!IsHTML() || mDisableDocWrite || !IsMasterDocument()) {
     // No calling document.write*() on XHTML!
 
     return NS_ERROR_DOM_INVALID_STATE_ERR;
@@ -2564,12 +2565,6 @@ nsHTMLDocument::All()
   return mAll;
 }
 
-JSObject*
-nsHTMLDocument::GetAll(JSContext* aCx, ErrorResult& aRv)
-{
-  return All()->GetObject(aCx, aRv);
-}
-
 static void
 NotifyEditableStateChange(nsINode *aNode, nsIDocument *aDocument)
 {
@@ -2991,10 +2986,10 @@ ConvertToMidasInternalCommandInner(const nsAString& inCommandID,
   // Hack to support old boolean commands that were backwards (see bug 301490).
   bool invertBool = false;
   if (convertedCommandID.LowerCaseEqualsLiteral("usecss")) {
-    convertedCommandID.Assign("styleWithCSS");
+    convertedCommandID.AssignLiteral("styleWithCSS");
     invertBool = true;
   } else if (convertedCommandID.LowerCaseEqualsLiteral("readonly")) {
-    convertedCommandID.Assign("contentReadOnly");
+    convertedCommandID.AssignLiteral("contentReadOnly");
     invertBool = true;
   }
 

@@ -1942,6 +1942,8 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDocument)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDOMStyleSheets)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStyleSheetSetList)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mScriptLoader)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mMasterDocument)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mImportManager)
 
   tmp->mRadioGroups.EnumerateRead(RadioGroupsTraverser, &cb);
 
@@ -2037,6 +2039,8 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mTemplateContentsOwner)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mChildrenCollection)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mRegistry)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mMasterDocument)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mImportManager)
 
   tmp->mParentDocument = nullptr;
 
@@ -2803,24 +2807,15 @@ nsDocument::InitCSP(nsIChannel* aChannel)
     }
   }
 
-  // Create new CSP object - if we're using the new CSP implementation and backend,
-  // use the new contract ID (same interface, but use C++ implementation).
-  if (CSPService::sNewBackendEnabled) {
-    if (oldHeaderIsPresent && !newHeaderIsPresent) {
-      // New CSP implementation doesn't support old header!  ABORT CSP INIT!
-      // (Not a problem if newHeaderIsPresent because the old header will be
-      // ignored).  This check will get removed when x- header support is
-      // removed (see bug 949533)
-#ifdef PR_LOGGING
-      PR_LOG(gCspPRLog, PR_LOG_DEBUG, ("%s %s %s",
-           "This document has an old, x-content-security-policy",
-           "header and the new CSP implementation doesn't support the non-standard",
-           "CSP.  Skipping CSP initialization."));
-#endif
-      return NS_OK;
-    }
+  // Create new CSP object:
+  //   * by default we are trying to use the new C++ implmentation
+  //   * however, we still support XCSP headers during the transition phase
+  //     and fall back to the JS implementation if we find an XCSP header.
+
+  if (newHeaderIsPresent && CSPService::sNewBackendEnabled) {
     csp = do_CreateInstance("@mozilla.org/cspcontext;1", &rv);
-  } else {
+  }
+  else {
     csp = do_CreateInstance("@mozilla.org/contentsecuritypolicy;1", &rv);
   }
 
@@ -2977,7 +2972,7 @@ nsIDocument::GetLastModified(nsAString& aLastModified) const
   } else {
     // If we for whatever reason failed to find the last modified time
     // (or even the current time), fall back to what NS4.x returned.
-    aLastModified.Assign(NS_LITERAL_STRING("01/01/1970 00:00:00"));
+    aLastModified.AssignLiteral("01/01/1970 00:00:00");
   }
 }
 
@@ -4617,6 +4612,10 @@ nsDocument::GetWindowInternal() const
     if (win) {
       // mScriptGlobalObject is always the inner window, let's get the outer.
       win = win->GetOuterWindow();
+    } else if (mMasterDocument) {
+      // For script execution in the imported document we need the window of
+      // the master document.
+      win = mMasterDocument->GetWindow();
     }
   }
 
@@ -7959,6 +7958,9 @@ nsDocument::IsScriptEnabled()
   NS_ENSURE_TRUE(sm, false);
 
   nsCOMPtr<nsIScriptGlobalObject> globalObject = do_QueryInterface(GetInnerWindow());
+  if (!globalObject && mMasterDocument) {
+    globalObject = do_QueryInterface(mMasterDocument->GetInnerWindow());
+  }
   NS_ENSURE_TRUE(globalObject && globalObject->GetGlobalJSObject(), false);
 
   return sm->ScriptAllowed(globalObject->GetGlobalJSObject());
@@ -9201,16 +9203,16 @@ nsIDocument::GetReadyState(nsAString& aReadyState) const
 {
   switch(mReadyState) {
   case READYSTATE_LOADING :
-    aReadyState.Assign(NS_LITERAL_STRING("loading"));
+    aReadyState.AssignLiteral("loading");
     break;
   case READYSTATE_INTERACTIVE :
-    aReadyState.Assign(NS_LITERAL_STRING("interactive"));
+    aReadyState.AssignLiteral("interactive");
     break;
   case READYSTATE_COMPLETE :
-    aReadyState.Assign(NS_LITERAL_STRING("complete"));
+    aReadyState.AssignLiteral("complete");
     break;
   default:
-    aReadyState.Assign(NS_LITERAL_STRING("uninitialized"));
+    aReadyState.AssignLiteral("uninitialized");
   }
 }
 

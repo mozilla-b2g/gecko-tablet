@@ -36,6 +36,7 @@ GrallocTextureClientOGL::GrallocTextureClientOGL(ISurfaceAllocator* aAllocator,
                                                  gfx::BackendType aMoz2dBackend,
                                                  TextureFlags aFlags)
 : BufferTextureClient(aAllocator, aFormat, aMoz2dBackend, aFlags)
+, mGrallocHandle(null_t())
 , mMappedBuffer(nullptr)
 , mMediaBuffer(nullptr)
 {
@@ -169,6 +170,10 @@ GrallocTextureClientOGL::GetAsDrawTarget()
 {
   MOZ_ASSERT(IsValid());
   MOZ_ASSERT(mMappedBuffer, "Calling TextureClient::GetAsDrawTarget without locking :(");
+
+  if (!IsValid() || !IsAllocated()) {
+    return nullptr;
+  }
 
   if (mDrawTarget) {
     return mDrawTarget;

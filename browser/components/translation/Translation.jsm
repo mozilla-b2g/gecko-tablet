@@ -8,9 +8,7 @@ this.EXPORTED_SYMBOLS = ["Translation"];
 
 const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
 
-Cu.import("resource://gre/modules/Promise.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
 this.Translation = {
   supportedSourceLanguages: ["en", "zh", "ja", "es", "de", "fr", "ru", "ar", "ko", "pt"],
@@ -56,6 +54,7 @@ this.Translation = {
  */
 function TranslationUI(aBrowser) {
   this.browser = aBrowser;
+  aBrowser.messageManager.addMessageListener("Translation:Finished", this);
 }
 
 TranslationUI.prototype = {
@@ -68,6 +67,11 @@ TranslationUI.prototype = {
     this.state = this.STATE_TRANSLATING;
     this.translatedFrom = aFrom;
     this.translatedTo = aTo;
+
+    this.browser.messageManager.sendAsyncMessage(
+      "Translation:TranslateDocument",
+      { from: aFrom, to: aTo }
+    );
   },
 
   showURLBarIcon: function(aTranslated) {
@@ -109,11 +113,13 @@ TranslationUI.prototype = {
   showOriginalContent: function() {
     this.showURLBarIcon();
     this.originalShown = true;
+    this.browser.messageManager.sendAsyncMessage("Translation:ShowOriginal");
   },
 
   showTranslatedContent: function() {
     this.showURLBarIcon(true);
     this.originalShown = false;
+    this.browser.messageManager.sendAsyncMessage("Translation:ShowTranslation");
   },
 
   get notificationBox() this.browser.ownerGlobal.gBrowser.getNotificationBox(),
@@ -153,5 +159,19 @@ TranslationUI.prototype = {
       return null;
 
     return this.showTranslationInfoBar();
+  },
+
+  receiveMessage: function(msg) {
+    switch (msg.name) {
+      case "Translation:Finished":
+        if (msg.data.success) {
+          this.state = this.STATE_TRANSLATED;
+          this.showURLBarIcon(true);
+          this.originalShown = false;
+        } else {
+          this.state = this.STATE_ERROR;
+        }
+        break;
+    }
   }
 };
