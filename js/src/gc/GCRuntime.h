@@ -144,18 +144,19 @@ class GCRuntime
 #ifdef JS_THREADSAFE
     void notifyRequestEnd() { conservativeGC.updateForRequestEnd(); }
 #endif
-    bool isBackgroundSweeping() { return helperThread.sweeping(); }
-    void waitBackgroundSweepEnd() { helperThread.waitBackgroundSweepEnd(); }
-    void waitBackgroundSweepOrAllocEnd() { helperThread.waitBackgroundSweepOrAllocEnd(); }
-    void startBackgroundShrink() { helperThread.startBackgroundShrink(); }
-    void freeLater(void *p) { helperThread.freeLater(p); }
+    bool isBackgroundSweeping() { return helperState.sweeping(); }
+    void waitBackgroundSweepEnd() { helperState.waitBackgroundSweepEnd(); }
+    void waitBackgroundSweepOrAllocEnd() { helperState.waitBackgroundSweepOrAllocEnd(); }
+    void startBackgroundShrink() { helperState.startBackgroundShrink(); }
+    void freeLater(void *p) { helperState.freeLater(p); }
+    void startBackgroundAllocationIfIdle();
 #ifdef DEBUG
-    bool onBackgroundThread() { return helperThread.onBackgroundThread(); }
+    bool onBackgroundThread() { return helperState.onBackgroundThread(); }
 #endif
 
 #ifdef JS_THREADSAFE
     void assertCanLock() {
-        JS_ASSERT(lockOwner != PR_GetCurrentThread());
+        JS_ASSERT(!currentThreadOwnsLock());
     }
 #endif
 
@@ -171,7 +172,7 @@ class GCRuntime
 
     void unlockGC() {
 #ifdef JS_THREADSAFE
-        JS_ASSERT(lockOwner == PR_GetCurrentThread());
+        JS_ASSERT(currentThreadOwnsLock());
         lockOwner = nullptr;
         PR_Unlock(lock);
 #endif
@@ -203,7 +204,7 @@ class GCRuntime
   private:
     // For ArenaLists::allocateFromArenaInline()
     friend class ArenaLists;
-    Chunk *pickChunk(Zone *zone);
+    Chunk *pickChunk(Zone *zone, AutoMaybeStartBackgroundAllocation &maybeStartBackgroundAllocation);
 
     inline bool wantBackgroundAllocation() const;
 
@@ -533,16 +534,26 @@ class GCRuntime
     size_t                noGCOrAllocationCheck;
 #endif
 
-    /* Synchronize GC heap access between main thread and GCHelperThread. */
+    /* Synchronize GC heap access between main thread and GCHelperState. */
     PRLock                *lock;
     mozilla::DebugOnly<PRThread *>   lockOwner;
 
-    js::GCHelperThread helperThread;
+#ifdef DEBUG
+    bool currentThreadOwnsLock() {
+#ifdef JS_THREADSAFE
+        return lockOwner == PR_GetCurrentThread();
+#else
+        return true;
+#endif
+    }
+#endif
+
+    js::GCHelperState helperState;
 
     ConservativeGCData conservativeGC;
 
     //friend class js::gc::Chunk; // todo: remove
-    friend class js::GCHelperThread;
+    friend class js::GCHelperState;
     friend class js::gc::MarkingValidator;
 };
 
