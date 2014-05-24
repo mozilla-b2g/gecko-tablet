@@ -9,6 +9,7 @@ import posixpath
 import Queue
 import re
 import shutil
+import signal
 import tempfile
 import time
 import traceback
@@ -152,6 +153,8 @@ class B2GRemoteAutomation(Automation):
                 self.log.info("TEST-UNEXPECTED-FAIL | %s | application timed "
                               "out after %d seconds with no output",
                               self.lastTestSeen, int(timeout))
+                self._devicemanager.killProcess('/system/b2g/b2g', sig=signal.SIGABRT)
+                self.checkForCrashes(None, symbolsPath)
                 return 1
 
     def getDeviceStatus(self, serial=None):
