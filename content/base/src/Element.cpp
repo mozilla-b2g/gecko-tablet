@@ -27,7 +27,7 @@
 #include "nsIScriptGlobalObject.h"
 #include "nsIURL.h"
 #include "nsNetUtil.h"
-#include "nsIFrame.h"
+#include "nsContainerFrame.h"
 #include "nsIAnonymousContentCreator.h"
 #include "nsIPresShell.h"
 #include "nsPresContext.h"
@@ -218,7 +218,7 @@ nsIContent::UpdateEditableState(bool aNotify)
     if (root) {
       nsIFrame* rootFrame = root->GetPrimaryFrame();
       if (rootFrame) {
-        nsIFrame* parentFrame = rootFrame->GetParent();
+        nsContainerFrame* parentFrame = rootFrame->GetParent();
         nsITextControlFrame* textCtrl = do_QueryFrame(parentFrame);
         isUnknownNativeAnon = !textCtrl;
       }
@@ -2262,7 +2262,7 @@ Element::DescribeAttribute(uint32_t index, nsAString& aOutDescription) const
       value.Insert(char16_t('\\'), uint32_t(i));
   }
   aOutDescription.Append(value);
-  aOutDescription.AppendLiteral("\"");
+  aOutDescription.Append('"');
 }
 
 #ifdef DEBUG

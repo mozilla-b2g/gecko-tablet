@@ -79,9 +79,6 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
                                              MBasicBlock *pred, const BytecodeSite &site,
                                              unsigned loopStateSlots);
     static MBasicBlock *NewSplitEdge(MIRGraph &graph, CompileInfo &info, MBasicBlock *pred);
-    static MBasicBlock *NewAbortPar(MIRGraph &graph, CompileInfo &info,
-                                    MBasicBlock *pred, const BytecodeSite &site,
-                                    MResumePoint *resumePoint);
     static MBasicBlock *NewAsmJS(MIRGraph &graph, CompileInfo &info,
                                  MBasicBlock *pred, Kind kind);
 
@@ -548,7 +545,7 @@ class MIRGraph
     bool hasTryBlock_;
 
   public:
-    MIRGraph(TempAllocator *alloc)
+    explicit MIRGraph(TempAllocator *alloc)
       : alloc_(alloc),
         returnAccumulator_(nullptr),
         blockIdGen_(0),
@@ -701,7 +698,7 @@ class MDefinitionIterator
     }
 
   public:
-    MDefinitionIterator(MBasicBlock *block)
+    explicit MDefinitionIterator(MBasicBlock *block)
       : block_(block),
         phiIter_(block->phisBegin()),
         iter_(block->begin())

@@ -1996,7 +1996,18 @@ sparc*-*)
 dnl ENABLE_ION=0
     AC_DEFINE(JS_CPU_SPARC)
     AC_DEFINE(JS_NUNBOX32)
+    else
+    AC_DEFINE(JS_CPU_SPARC64)
+    AC_DEFINE(JS_PUNBOX64)
     fi
+    ;;
+powerpc64-*)
+    AC_DEFINE(JS_CPU_PPC64)
+    AC_DEFINE(JS_PUNBOX64)
+    ;;
+powerpc-*)
+    AC_DEFINE(JS_CPU_PPC)
+    AC_DEFINE(JS_NUNBOX32)
     ;;
 mips*-*)
     AC_DEFINE(JS_CPU_MIPS)
@@ -2090,7 +2101,7 @@ if test "$GNU_CC" -a "$OS_TARGET" != WINNT; then
     ;;
   *)
     case $GCC_VERSION in
-    4.4*)
+    4.4*|4.6*)
       VISIBILITY_FLAGS='-I$(DIST)/system_wrappers -include $(topsrcdir)/config/gcc_hidden_dso_handle.h'
       ;;
     *)

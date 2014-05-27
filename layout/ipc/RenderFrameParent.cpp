@@ -931,13 +931,14 @@ RenderFrameParent::OwnerContentChanged(nsIContent* aContent)
   BuildViewMap();
 }
 
-void
+nsEventStatus
 RenderFrameParent::NotifyInputEvent(WidgetInputEvent& aEvent,
                                     ScrollableLayerGuid* aOutTargetGuid)
 {
   if (GetApzcTreeManager()) {
-    GetApzcTreeManager()->ReceiveInputEvent(aEvent, aOutTargetGuid);
+    return GetApzcTreeManager()->ReceiveInputEvent(aEvent, aOutTargetGuid);
   }
+  return nsEventStatus_eIgnore;
 }
 
 void
@@ -993,7 +994,7 @@ RenderFrameParent::AllocPLayerTransactionParent()
     return nullptr;
   }
   nsRefPtr<LayerManager> lm = GetFrom(mFrameLoader);
-  LayerTransactionParent* result = new LayerTransactionParent(lm->AsLayerManagerComposite(), this, 0);
+  LayerTransactionParent* result = new LayerTransactionParent(lm->AsLayerManagerComposite(), this, 0, 0);
   result->AddIPDLReference();
   return result;
 }

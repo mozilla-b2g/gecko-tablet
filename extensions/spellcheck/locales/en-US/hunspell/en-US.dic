@@ -1,4 +1,4 @@
-57472
+57499
 0/nm
 0th/pt
 1/n1
@@ -17122,6 +17122,7 @@ aggravation/M
 aggregate/MGNDSX
 aggregated/E
 aggregation/M
+aggregator/SM
 aggression/SM
 aggressive/YP
 aggressiveness/M
@@ -19032,7 +19033,7 @@ baddest
 baddie/M
 baddy/SM
 bade
-badge/MZDRS
+badge/MZDRSG
 badger/GMD
 badinage/M
 badlands/M
@@ -20250,6 +20251,9 @@ blotter/MS
 blotting
 blotto
 blouse/MGDS
+bloviate/SGD
+bloviation
+bloviator/SM
 blow/SZGMR
 blower/M
 blowfly/SM
@@ -22350,7 +22354,7 @@ cheapo
 cheapskate/SM
 cheat/ZGMDRS
 cheater/M
-check/AGMDS
+check/AGMDSU
 checkbook/SM
 checked/U
 checker/MDGS
@@ -22400,7 +22404,7 @@ chemiluminescence
 chemiluminescent
 chemise/MS
 chemist/MS
-chemistry/M
+chemistry/MS
 chemo/M
 chemosynthesis
 chemotherapeutic
@@ -23375,6 +23379,8 @@ colonizations
 colonize/CAGSD
 colonizer/MS
 colonnade/MDS
+colonoscope/SM
+colonoscopy/SM
 colony/SM
 colophon/SM
 color's
@@ -25623,6 +25629,7 @@ decent/ITRY
 deception/MS
 deceptive/YP
 deceptiveness/M
+decertify/DSGNX
 decibel/MS
 decidability/U
 decidable/U
@@ -28610,6 +28617,8 @@ escapology
 escargot/MS
 escarole/MS
 escarpment/SM
+eschatological
+eschatologist/SM
 eschatology
 eschew/SDG
 escort/SMDG
@@ -29522,6 +29531,7 @@ faun/MS
 fauna/SM
 fauvism/M
 fauvist/SM
+faux
 fave/S
 favor/ESMDG
 favorable/U
@@ -35317,8 +35327,11 @@ interloper/M
 interlude/MGDS
 intermarriage/MS
 intermarry/DSG
+intermediacy/S
 intermediary/SM
-intermediate/SMY
+intermediate/SMYPGD
+intermediation/SE
+intermediator/SM
 interment/EM
 interments
 intermezzi
@@ -37764,6 +37777,7 @@ mafiosi
 mafioso/M
 mag/SM
 magazine/SM
+mage/SM
 magenta/M
 maggot/MS
 maggoty/RT
@@ -41494,7 +41508,7 @@ opportunist/MS
 opportunistic
 opportunistically
 opportunity/SM
-oppose/DSG
+oppose/DSGRB
 opposed/U
 opposite/SMYNX
 opposition/M
@@ -42525,6 +42539,7 @@ park/MDSG
 parka/SM
 parking/M
 parkland
+parkour
 parkway/MS
 parky
 parlance/M
@@ -43370,6 +43385,8 @@ philtre/MS
 phish/ZGDR
 phisher/M
 phlebitis/M
+phlebotomist/SM
+phlebotomize/SGD
 phlebotomy
 phlegm/M
 phlegmatic
@@ -47062,6 +47079,9 @@ rheumatic/MS
 rheumatically
 rheumatism/M
 rheumatoid
+rheumatological
+rheumatologist/SM
+rheumatology/M
 rheumy/TR
 rhinestone/SM
 rhinitis/M
@@ -50226,6 +50246,7 @@ sometime/S
 someway/S
 somewhat/S
 somewhere
+sommelier/SM
 somnambulism/M
 somnambulist/SM
 somnolence/M
@@ -52369,6 +52390,9 @@ syndrome/SM
 synergism/M
 synergistic
 synergy/SM
+synesthesia
+synesthete/S
+synesthetic
 synfuel/MS
 synod/SM
 synonym/SM
@@ -52829,6 +52853,8 @@ telephony/M
 telephoto/SM
 telephotography/M
 teleplay/MS
+teleport/SGD
+teleportation
 teleprinter/SM
 teleprocessing/M
 teleprompter/SM
@@ -53851,6 +53877,7 @@ traceable/U
 traceless
 tracer/M
 tracery/SM
+traceur/SM
 trachea/M
 tracheae
 tracheal
@@ -54161,7 +54188,7 @@ trews
 trey/MS
 triad/SM
 triadic
-triage/MG
+triage/MGS
 trial/ASM
 trialed
 trialing

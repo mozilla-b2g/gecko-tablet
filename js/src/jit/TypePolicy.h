@@ -100,7 +100,7 @@ class PowPolicy : public BoxInputsPolicy
     MIRType specialization_;
 
   public:
-    PowPolicy(MIRType specialization)
+    explicit PowPolicy(MIRType specialization)
       : specialization_(specialization)
     { }
 
@@ -322,6 +322,12 @@ class StoreTypedArrayElementStaticPolicy : public StoreTypedArrayPolicy
 
 // Accepts integers and doubles. Everything else is boxed.
 class ClampPolicy : public BoxInputsPolicy
+{
+  public:
+    bool adjustInputs(TempAllocator &alloc, MInstruction *ins);
+};
+
+class FilterTypeSetPolicy : public BoxInputsPolicy
 {
   public:
     bool adjustInputs(TempAllocator &alloc, MInstruction *ins);

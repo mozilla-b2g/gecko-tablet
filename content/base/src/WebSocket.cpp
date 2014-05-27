@@ -330,7 +330,7 @@ WebSocket::ScheduleConnectionCloseEvents(nsISupports* aContext,
                                          nsresult aStatusCode,
                                          bool sync)
 {
-  NS_ABORT_IF_FALSE(NS_IsMainThread(), "Not running on main thread");
+  MOZ_ASSERT(NS_IsMainThread());
 
   // no-op if some other code has already initiated close event
   if (!mOnCloseScheduled) {
@@ -351,8 +351,7 @@ WebSocket::ScheduleConnectionCloseEvents(nsISupports* aContext,
     if (sync) {
       DispatchConnectionCloseEvents();
     } else {
-      NS_DispatchToMainThread(new CallDispatchConnectionCloseEvents(this),
-                              NS_DISPATCH_NORMAL);
+      NS_DispatchToCurrentThread(new CallDispatchConnectionCloseEvents(this));
     }
   }
 
@@ -993,7 +992,7 @@ WebSocket::ParseURL(const nsString& aURL)
   nsAutoCString filePath;
   rv = parsedURL->GetFilePath(filePath);
   if (filePath.IsEmpty()) {
-    filePath.AssignLiteral("/");
+    filePath.Assign('/');
   }
   NS_ENSURE_SUCCESS(rv, NS_ERROR_DOM_SYNTAX_ERR);
 
