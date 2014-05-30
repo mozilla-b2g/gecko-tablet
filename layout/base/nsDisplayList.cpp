@@ -62,6 +62,7 @@ using namespace mozilla;
 using namespace mozilla::css;
 using namespace mozilla::layers;
 using namespace mozilla::dom;
+using namespace mozilla::layout;
 typedef FrameMetrics::ViewID ViewID;
 
 static inline nsIFrame*
@@ -328,10 +329,9 @@ AddAnimationForProperty(nsIFrame* aFrame, nsCSSProperty aProperty,
     aLayer->AddAnimation();
 
   animation->startTime() = ea->mStartTime + ea->mDelay;
-  animation->duration() = ea->mIterationDuration;
-  animation->numIterations() =
-    ea->mIterationCount != NS_IEEEPositiveInfinity() ? ea->mIterationCount : -1;
-  animation->direction() = ea->mDirection;
+  animation->duration() = ea->mTiming.mIterationDuration;
+  animation->iterationCount() = ea->mTiming.mIterationCount;
+  animation->direction() = ea->mTiming.mDirection;
   animation->property() = aProperty;
   animation->data() = aData;
 
@@ -1365,6 +1365,8 @@ void nsDisplayList::PaintForFrame(nsDisplayListBuilder* aBuilder,
       flags = LayerManager::END_NO_REMOTE_COMPOSITE;
     }
   }
+
+  MaybeSetupTransactionIdAllocator(layerManager, view);
 
   layerManager->EndTransaction(FrameLayerBuilder::DrawThebesLayer,
                                aBuilder, flags);

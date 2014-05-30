@@ -645,11 +645,10 @@ class MacroAssembler : public MacroAssemblerSpecific
             branch32(cond, length, Imm32(key.constant()), label);
     }
 
-    void branchTestNeedsBarrier(Condition cond, Register scratch, Label *label) {
+    void branchTestNeedsBarrier(Condition cond, Label *label) {
         JS_ASSERT(cond == Zero || cond == NonZero);
         CompileZone *zone = GetIonContext()->compartment->zone();
-        movePtr(ImmPtr(zone->addressOfNeedsBarrier()), scratch);
-        Address needsBarrierAddr(scratch, 0);
+        AbsoluteAddress needsBarrierAddr(zone->addressOfNeedsBarrier());
         branchTest32(cond, needsBarrierAddr, Imm32(0x1), label);
     }
 
@@ -1016,9 +1015,14 @@ class MacroAssembler : public MacroAssemblerSpecific
             add32(Imm32(offset), temp);
         branch32(Assembler::GreaterThanOrEqual, temp, Imm32(p->maxSize()), full);
 
-        // 4 * sizeof(void*) * idx = idx << (2 + log(sizeof(void*)))
-        JS_STATIC_ASSERT(sizeof(ProfileEntry) == 4 * sizeof(void*));
-        lshiftPtr(Imm32(2 + (sizeof(void*) == 4 ? 2 : 3)), temp);
+        JS_STATIC_ASSERT(sizeof(ProfileEntry) == (2 * sizeof(void *)) + 8);
+        if (sizeof(void *) == 4) {
+            lshiftPtr(Imm32(4), temp);
+        } else {
+            lshiftPtr(Imm32(3), temp);
+            mulBy3(temp, temp);
+        }
+
         addPtr(ImmPtr(p->stack()), temp);
     }
 
@@ -1042,9 +1046,14 @@ class MacroAssembler : public MacroAssemblerSpecific
         // Test against max size.
         branch32(Assembler::LessThanOrEqual, AbsoluteAddress(p->addressOfMaxSize()), temp, full);
 
-        // 4 * sizeof(void*) * idx = idx << (2 + log(sizeof(void*)))
-        JS_STATIC_ASSERT(sizeof(ProfileEntry) == 4 * sizeof(void*));
-        lshiftPtr(Imm32(2 + (sizeof(void*) == 4 ? 2 : 3)), temp);
+        JS_STATIC_ASSERT(sizeof(ProfileEntry) == (2 * sizeof(void *)) + 8);
+        if (sizeof(void *) == 4) {
+            lshiftPtr(Imm32(4), temp);
+        } else {
+            lshiftPtr(Imm32(3), temp);
+            mulBy3(temp, temp);
+        }
+
         push(temp);
         loadPtr(AbsoluteAddress(p->addressOfStack()), temp);
         addPtr(Address(StackPointer, 0), temp);
@@ -1059,14 +1068,14 @@ class MacroAssembler : public MacroAssemblerSpecific
     void spsUpdatePCIdx(SPSProfiler *p, int32_t idx, Register temp) {
         Label stackFull;
         spsProfileEntryAddress(p, -1, temp, &stackFull);
-        store32(Imm32(idx), Address(temp, ProfileEntry::offsetOfPCIdx()));
+        store32(Imm32(idx), Address(temp, ProfileEntry::offsetOfLineOrPc()));
         bind(&stackFull);
     }
 
     void spsUpdatePCIdx(SPSProfiler *p, Register idx, Register temp) {
         Label stackFull;
         spsProfileEntryAddressSafe(p, -1, temp, &stackFull);
-        store32(idx, Address(temp, ProfileEntry::offsetOfPCIdx()));
+        store32(idx, Address(temp, ProfileEntry::offsetOfLineOrPc()));
         bind(&stackFull);
     }
 
@@ -1075,11 +1084,10 @@ class MacroAssembler : public MacroAssemblerSpecific
         Label stackFull;
         spsProfileEntryAddress(p, 0, temp, &stackFull);
 
-        storePtr(ImmPtr(str),  Address(temp, ProfileEntry::offsetOfString()));
-        storePtr(ImmGCPtr(s),  Address(temp, ProfileEntry::offsetOfScript()));
-        storePtr(ImmPtr((void*) ProfileEntry::SCRIPT_OPT_STACKPOINTER),
-                 Address(temp, ProfileEntry::offsetOfStackAddress()));
-        store32(Imm32(ProfileEntry::NullPCIndex), Address(temp, ProfileEntry::offsetOfPCIdx()));
+        storePtr(ImmPtr(str), Address(temp, ProfileEntry::offsetOfLabel()));
+        storePtr(ImmGCPtr(s), Address(temp, ProfileEntry::offsetOfSpOrScript()));
+        store32(Imm32(ProfileEntry::NullPCOffset), Address(temp, ProfileEntry::offsetOfLineOrPc()));
+        store32(Imm32(0), Address(temp, ProfileEntry::offsetOfFlags()));
 
         /* Always increment the stack size, whether or not we actually pushed. */
         bind(&stackFull);
@@ -1095,17 +1103,16 @@ class MacroAssembler : public MacroAssemblerSpecific
         spsProfileEntryAddressSafe(p, 0, temp, &stackFull);
 
         loadPtr(str, temp2);
-        storePtr(temp2, Address(temp, ProfileEntry::offsetOfString()));
+        storePtr(temp2, Address(temp, ProfileEntry::offsetOfLabel()));
 
         loadPtr(script, temp2);
-        storePtr(temp2, Address(temp, ProfileEntry::offsetOfScript()));
-
-        storePtr(ImmPtr(nullptr), Address(temp, ProfileEntry::offsetOfStackAddress()));
+        storePtr(temp2, Address(temp, ProfileEntry::offsetOfSpOrScript()));
 
         // Store 0 for PCIdx because that's what interpreter does.
         // (See probes::EnterScript, which calls spsProfiler.enter, which pushes an entry
         //  with 0 pcIdx).
-        store32(Imm32(0), Address(temp, ProfileEntry::offsetOfPCIdx()));
+        store32(Imm32(0), Address(temp, ProfileEntry::offsetOfLineOrPc()));
+        store32(Imm32(0), Address(temp, ProfileEntry::offsetOfFlags()));
 
         /* Always increment the stack size, whether or not we actually pushed. */
         bind(&stackFull);

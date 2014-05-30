@@ -966,8 +966,7 @@ XULDocument::AttributeWillChange(nsIDocument* aDocument,
 
     // XXXbz check aNameSpaceID, dammit!
     // See if we need to update our ref map.
-    if (aAttribute == nsGkAtoms::ref ||
-        (aAttribute == nsGkAtoms::id && !aElement->GetIDAttributeName())) {
+    if (aAttribute == nsGkAtoms::ref) {
         // Might not need this, but be safe for now.
         nsCOMPtr<nsIMutationObserver> kungFuDeathGrip(this);
         RemoveElementFromRefMap(aElement);
@@ -986,8 +985,7 @@ XULDocument::AttributeChanged(nsIDocument* aDocument,
 
     // XXXbz check aNameSpaceID, dammit!
     // See if we need to update our ref map.
-    if (aAttribute == nsGkAtoms::ref ||
-        (aAttribute == nsGkAtoms::id && !aElement->GetIDAttributeName())) {
+    if (aAttribute == nsGkAtoms::ref) {
         AddElementToRefMap(aElement);
     }
     
@@ -1927,9 +1925,6 @@ static void
 GetRefMapAttribute(Element* aElement, nsAutoString* aValue)
 {
     aElement->GetAttr(kNameSpaceID_None, nsGkAtoms::ref, *aValue);
-    if (aValue->IsEmpty() && !aElement->GetIDAttributeName()) {
-        aElement->GetAttr(kNameSpaceID_None, nsGkAtoms::id, *aValue);
-    }
 }
 
 nsresult
@@ -3549,10 +3544,7 @@ XULDocument::OnStreamComplete(nsIStreamLoader* aLoader,
             mOffThreadCompileStringBuf = nullptr;
             mOffThreadCompileStringLength = 0;
 
-            rv = mCurrentScriptProto->Compile(srcBuf,
-                                              uri, 1, this,
-                                              mMasterPrototype,
-                                              this);
+            rv = mCurrentScriptProto->Compile(srcBuf, uri, 1, this, this);
             if (NS_SUCCEEDED(rv) && !mCurrentScriptProto->GetScriptObject()) {
                 // We will be notified via OnOffThreadCompileComplete when the
                 // compile finishes. Keep the contents of the compiled script

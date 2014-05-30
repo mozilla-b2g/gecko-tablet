@@ -69,7 +69,6 @@
 @BINPATH@/@MOZ_CHILD_PROCESS_NAME@
 #endif
 #ifdef XP_WIN32
-#ifndef MOZ_DEBUG
 #if MOZ_MSVC_REDIST == 1600
 @BINPATH@/msvcp100.dll
 @BINPATH@/msvcr100.dll
@@ -79,7 +78,6 @@
 #elif MOZ_MSVC_REDIST == 1800
 @BINPATH@/msvcp120.dll
 @BINPATH@/msvcr120.dll
-#endif
 #endif
 #endif
 #ifdef MOZ_SHARED_MOZGLUE
@@ -388,7 +386,7 @@
 #endif
 @BINPATH@/components/SiteSpecificUserAgent.js
 @BINPATH@/components/SiteSpecificUserAgent.manifest
-@BINPATH@/components/storage-mozStorage.js
+@BINPATH@/components/storage-json.js
 @BINPATH@/components/crypto-SDR.js
 @BINPATH@/components/jsconsole-clhandler.manifest
 @BINPATH@/components/jsconsole-clhandler.js
@@ -627,7 +625,11 @@
 
 ; [Default Preferences]
 ; All the pref files must be part of base to prevent migration bugs
+#ifdef MOZ_MULET
+@BINPATH@/defaults/pref/b2g.js
+#else
 @BINPATH@/@PREF_DIR@/b2g.js
+#endif
 @BINPATH@/@PREF_DIR@/channel-prefs.js
 @BINPATH@/greprefs.js
 @BINPATH@/defaults/autoconfig/platform.js
@@ -804,7 +806,7 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 #endif
 
 @BINPATH@/components/DataStore.manifest
-@BINPATH@/components/DataStoreService.js
+@BINPATH@/components/DataStoreImpl.js
 @BINPATH@/components/dom_datastore.xpt
 
 #ifdef MOZ_WEBSPEECH

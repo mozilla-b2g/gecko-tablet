@@ -20,6 +20,7 @@
 #include "nsCSSAnonBoxes.h"
 #include "nsCSSColorUtils.h"
 #include "nsView.h"
+#include "nsViewManager.h"
 #include "nsPlaceholderFrame.h"
 #include "nsIScrollableFrame.h"
 #include "nsIDOMEvent.h"
@@ -78,6 +79,7 @@
 #include "UnitTransforms.h"
 #include "TiledLayerBuffer.h" // For TILEDLAYERBUFFER_TILE_SIZE
 #include "ClientLayerManager.h"
+#include "nsRefreshDriver.h"
 
 #include "mozilla/Preferences.h"
 
@@ -1623,12 +1625,10 @@ GetAnimatedGeometryRootForFrame(nsIFrame* aFrame,
     if (!parent)
       break;
     nsIAtom* parentType = parent->GetType();
-#ifdef ANDROID
     // Treat the slider thumb as being as an active scrolled root
-    // on mobile so that it can move without repainting.
+    // so that it can move without repainting.
     if (parentType == nsGkAtoms::sliderFrame)
       break;
-#endif
     // Sticky frames are active if their nearest scrollable frame
     // is also active, just keep a record of sticky frames that we
     // encounter for now.
@@ -6579,10 +6579,10 @@ nsLayoutUtils::WantSubAPZC()
 }
 
 /* static */ void
-nsLayoutUtils::LogTestDataForPaint(nsIPresShell* aPresShell,
-                                   ViewID aScrollId,
-                                   const std::string& aKey,
-                                   const std::string& aValue)
+nsLayoutUtils::DoLogTestDataForPaint(nsIPresShell* aPresShell,
+                                     ViewID aScrollId,
+                                     const std::string& aKey,
+                                     const std::string& aValue)
 {
   nsRefPtr<LayerManager> lm = aPresShell->GetPresContext()->GetRootPresContext()
       ->GetPresShell()->GetLayerManager();
@@ -6636,4 +6636,20 @@ AutoMaybeDisableFontInflation::~AutoMaybeDisableFontInflation()
   if (mPresContext) {
     mPresContext->mInflationDisabledForShrinkWrap = mOldValue;
   }
+}
+
+namespace mozilla {
+namespace layout {
+
+void
+MaybeSetupTransactionIdAllocator(layers::LayerManager* aManager, nsView* aView)
+{
+  if (aManager->GetBackendType() == layers::LayersBackend::LAYERS_CLIENT) {
+    layers::ClientLayerManager *manager = static_cast<layers::ClientLayerManager*>(aManager);
+    nsRefreshDriver *refresh = aView->GetViewManager()->GetPresShell()->GetPresContext()->RefreshDriver();
+    manager->SetTransactionIdAllocator(refresh);
+  }
+}
+
+}
 }

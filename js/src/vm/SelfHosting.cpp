@@ -61,25 +61,25 @@ js::intrinsic_ToObject(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-static bool
-intrinsic_ToInteger(JSContext *cx, unsigned argc, Value *vp)
+bool
+js::intrinsic_ToInteger(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     double result;
     if (!ToInteger(cx, args[0], &result))
         return false;
-    args.rval().setDouble(result);
+    args.rval().setNumber(result);
     return true;
 }
 
 bool
-intrinsic_ToString(JSContext *cx, unsigned argc, Value *vp)
+js::intrinsic_ToString(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     RootedString str(cx);
     str = ToString<CanGC>(cx, args[0]);
-        if (!str)
-            return false;
+    if (!str)
+        return false;
     args.rval().setString(str);
     return true;
 }

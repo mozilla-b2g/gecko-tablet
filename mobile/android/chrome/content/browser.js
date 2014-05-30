@@ -490,9 +490,11 @@ var BrowserApp = {
 
         let newtabStrings = Strings.browser.GetStringFromName("newtabpopup.opened");
         let label = PluralForm.get(1, newtabStrings).replace("#1", 1);
+        let buttonLabel = Strings.browser.GetStringFromName("newtabpopup.switch");
         NativeWindow.toast.show(label, "long", {
           button: {
-            icon: "drawable://select_opened_tab",
+            icon: "drawable://switch_button_icon",
+            label: buttonLabel,
             callback: () => { BrowserApp.selectTab(tab); },
           }
         });
@@ -507,9 +509,11 @@ var BrowserApp = {
 
         let newtabStrings = Strings.browser.GetStringFromName("newprivatetabpopup.opened");
         let label = PluralForm.get(1, newtabStrings).replace("#1", 1);
+        let buttonLabel = Strings.browser.GetStringFromName("newtabpopup.switch");
         NativeWindow.toast.show(label, "long", {
           button: {
-            icon: "drawable://select_opened_tab",
+            icon: "drawable://switch_button_icon",
+            label: buttonLabel,
             callback: () => { BrowserApp.selectTab(tab); },
           }
         });
@@ -982,7 +986,8 @@ var BrowserApp = {
       let message = Strings.browser.formatStringFromName("undoCloseToast.message", [title], 1);
       NativeWindow.toast.show(message, "short", {
         button: {
-          label: Strings.browser.GetStringFromName("undoCloseToast.action"),
+          icon: "drawable://undo_button_icon",
+          label: Strings.browser.GetStringFromName("undoCloseToast.action2"),
           callback: function() {
             let ss = Cc["@mozilla.org/browser/sessionstore;1"].getService(Ci.nsISessionStore);
             ss.undoCloseTab(window, 0);

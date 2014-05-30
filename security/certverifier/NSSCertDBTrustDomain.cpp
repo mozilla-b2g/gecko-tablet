@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "ExtendedValidation.h"
+#include "NSSErrorsService.h"
 #include "OCSPRequestor.h"
 #include "certdb.h"
 #include "mozilla/Telemetry.h"
@@ -44,11 +45,13 @@ NSSCertDBTrustDomain::NSSCertDBTrustDomain(SECTrustType certDBTrustType,
                                            OCSPFetching ocspFetching,
                                            OCSPCache& ocspCache,
                                            void* pinArg,
+                                           CertVerifier::ocsp_get_config ocspGETConfig,
                                            CERTChainVerifyCallback* checkChainCallback)
   : mCertDBTrustType(certDBTrustType)
   , mOCSPFetching(ocspFetching)
   , mOCSPCache(ocspCache)
   , mPinArg(pinArg)
+  , mOCSPGetConfig(ocspGETConfig)
   , mCheckChainCallback(checkChainCallback)
 {
 }
@@ -338,7 +341,8 @@ NSSCertDBTrustDomain::CheckRevocation(
     }
 
     response = DoOCSPRequest(arena.get(), url.get(), request,
-                             OCSPFetchingTypeToTimeoutTime(mOCSPFetching));
+                             OCSPFetchingTypeToTimeoutTime(mOCSPFetching),
+                             mOCSPGetConfig == CertVerifier::ocsp_get_enabled);
   }
 
   if (!response) {
@@ -458,7 +462,7 @@ NSSCertDBTrustDomain::IsChainValid(const CERTCertList* certChain) {
   if (chainOK) {
     return SECSuccess;
   }
-  PR_SetError(SEC_ERROR_APPLICATION_CALLBACK_ERROR, 0);
+  PR_SetError(PSM_ERROR_KEY_PINNING_FAILURE, 0);
   return SECFailure;
 }
 
