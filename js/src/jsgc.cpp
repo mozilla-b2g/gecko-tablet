@@ -188,6 +188,7 @@
 #include "jscntxt.h"
 #include "jscompartment.h"
 #include "jsobj.h"
+#include "jsprf.h"
 #include "jsscript.h"
 #include "jstypes.h"
 #include "jsutil.h"
@@ -984,7 +985,7 @@ class js::gc::AutoMaybeStartBackgroundAllocation
 
     ~AutoMaybeStartBackgroundAllocation() {
         if (runtime && !runtime->currentThreadOwnsInterruptLock()) {
-            AutoLockWorkerThreadState workerLock;
+            AutoLockHelperThreadState helperLock;
             AutoLockGC lock(runtime);
             runtime->gc.startBackgroundAllocationIfIdle();
         }
@@ -1114,13 +1115,14 @@ GCRuntime::GCRuntime(JSRuntime *rt) :
     mallocBytes(0),
     mallocGCTriggered(false),
     scriptAndCountsVector(nullptr),
+    helperState(rt),
     alwaysPreserveCode(false),
 #ifdef DEBUG
     noGCOrAllocationCheck(0),
 #endif
     lock(nullptr),
     lockOwner(nullptr),
-    helperState(rt)
+    inUnsafeRegion(0)
 {
 }
 
@@ -1921,16 +1923,16 @@ ArenaLists::refillFreeList(ThreadSafeContext *cx, AllocKind thingKind)
             /*
              * If we're off the main thread, we try to allocate once and
              * return whatever value we get. If we aren't in a ForkJoin
-             * session (i.e. we are in a worker thread async with the main
+             * session (i.e. we are in a helper thread async with the main
              * thread), we need to first ensure the main thread is not in a GC
              * session.
              */
-            mozilla::Maybe<AutoLockWorkerThreadState> lock;
+            mozilla::Maybe<AutoLockHelperThreadState> lock;
             JSRuntime *rt = zone->runtimeFromAnyThread();
             if (rt->exclusiveThreadsPresent()) {
                 lock.construct();
                 while (rt->isHeapBusy())
-                    WorkerThreadState().wait(GlobalWorkerThreadState::PRODUCER);
+                    HelperThreadState().wait(GlobalHelperThreadState::PRODUCER);
             }
 
             void *thing = cx->allocator()->arenas.allocateFromArenaInline(zone, thingKind,
@@ -2354,7 +2356,7 @@ GCHelperState::init()
 
     backgroundAllocation = (GetCPUCount() >= 2);
 
-    WorkerThreadState().ensureInitialized();
+    HelperThreadState().ensureInitialized();
 #else
     backgroundAllocation = false;
 #endif /* JS_THREADSAFE */
@@ -2402,9 +2404,9 @@ GCHelperState::startBackgroundThread(State newState)
     JS_ASSERT(!thread && state() == IDLE && newState != IDLE);
     setState(newState);
 
-    if (!WorkerThreadState().gcHelperWorklist().append(this))
+    if (!HelperThreadState().gcHelperWorklist().append(this))
         CrashAtUnhandlableOOM("Could not add to pending GC helpers list");
-    WorkerThreadState().notifyAll(GlobalWorkerThreadState::PRODUCER);
+    HelperThreadState().notifyAll(GlobalHelperThreadState::PRODUCER);
 #else
     MOZ_CRASH();
 #endif
@@ -2493,7 +2495,7 @@ void
 GCHelperState::startBackgroundSweep(bool shouldShrink)
 {
 #ifdef JS_THREADSAFE
-    AutoLockWorkerThreadState workerLock;
+    AutoLockHelperThreadState helperLock;
     AutoLockGC lock(rt);
     JS_ASSERT(state() == IDLE);
     JS_ASSERT(!sweepFlag);
@@ -4268,10 +4270,10 @@ AutoTraceSession::AutoTraceSession(JSRuntime *rt, js::HeapState heapState)
     JS_ASSERT(rt->currentThreadHasExclusiveAccess());
 
     if (rt->exclusiveThreadsPresent()) {
-        // Lock the worker thread state when changing the heap state in the
+        // Lock the helper thread state when changing the heap state in the
         // presence of exclusive threads, to avoid racing with refillFreeList.
 #ifdef JS_THREADSAFE
-        AutoLockWorkerThreadState lock;
+        AutoLockHelperThreadState lock;
         rt->gc.heapState = heapState;
 #else
         MOZ_CRASH();
@@ -4287,11 +4289,11 @@ AutoTraceSession::~AutoTraceSession()
 
     if (runtime->exclusiveThreadsPresent()) {
 #ifdef JS_THREADSAFE
-        AutoLockWorkerThreadState lock;
+        AutoLockHelperThreadState lock;
         runtime->gc.heapState = prevState;
 
-        // Notify any worker threads waiting for the trace session to end.
-        WorkerThreadState().notifyAll(GlobalWorkerThreadState::PRODUCER);
+        // Notify any helper threads waiting for the trace session to end.
+        HelperThreadState().notifyAll(GlobalHelperThreadState::PRODUCER);
 #else
         MOZ_CRASH();
 #endif
@@ -4313,6 +4315,9 @@ AutoGCSession::AutoGCSession(GCRuntime *gc)
     // It's ok if threads other than the main thread have suppressGC set, as
     // they are operating on zones which will not be collected from here.
     JS_ASSERT(!gc->rt->mainThread.suppressGC);
+
+    // Assert if this is a GC unsafe region.
+    JS::AutoAssertOnGC::VerifyIsSafeToGC(gc->rt);
 }
 
 AutoGCSession::~AutoGCSession()
@@ -4968,7 +4973,7 @@ js::PrepareForDebugGC(JSRuntime *rt)
 JS_FRIEND_API(void)
 JS::ShrinkGCBuffers(JSRuntime *rt)
 {
-    AutoLockWorkerThreadState workerLock;
+    AutoLockHelperThreadState helperLock;
     AutoLockGC lock(rt);
     JS_ASSERT(!rt->isHeapBusy());
 
@@ -5603,32 +5608,50 @@ JS::GetGCNumber()
         return 0;
     return rt->gc.number;
 }
+#endif
 
-JS::AutoAssertNoGC::AutoAssertNoGC()
+JS::AutoAssertOnGC::AutoAssertOnGC()
   : runtime(nullptr), gcNumber(0)
 {
     js::PerThreadData *data = js::TlsPerThreadData.get();
     if (data) {
         /*
          * GC's from off-thread will always assert, so off-thread is implicitly
-         * AutoAssertNoGC. We still need to allow AutoAssertNoGC to be used in
+         * AutoAssertOnGC. We still need to allow AutoAssertOnGC to be used in
          * code that works from both threads, however. We also use this to
          * annotate the off thread run loops.
          */
         runtime = data->runtimeIfOnOwnerThread();
-        if (runtime)
+        if (runtime) {
             gcNumber = runtime->gc.number;
+            ++runtime->gc.inUnsafeRegion;
+        }
     }
 }
 
-JS::AutoAssertNoGC::AutoAssertNoGC(JSRuntime *rt)
+JS::AutoAssertOnGC::AutoAssertOnGC(JSRuntime *rt)
   : runtime(rt), gcNumber(rt->gc.number)
 {
+    ++rt->gc.inUnsafeRegion;
 }
 
-JS::AutoAssertNoGC::~AutoAssertNoGC()
+JS::AutoAssertOnGC::~AutoAssertOnGC()
 {
-    if (runtime)
-        MOZ_ASSERT(gcNumber == runtime->gc.number, "GC ran inside an AutoAssertNoGC scope.");
+    if (runtime) {
+        --runtime->gc.inUnsafeRegion;
+        MOZ_ASSERT(runtime->gc.inUnsafeRegion >= 0);
+
+        /*
+         * The following backstop assertion should never fire: if we bumped the
+         * gcNumber, we should have asserted because inUnsafeRegion was true.
+         */
+        MOZ_ASSERT(gcNumber == runtime->gc.number, "GC ran inside an AutoAssertOnGC scope.");
+    }
 }
-#endif
+
+/* static */ void
+JS::AutoAssertOnGC::VerifyIsSafeToGC(JSRuntime *rt)
+{
+    if (rt->gc.inUnsafeRegion > 0)
+        MOZ_CRASH("[AutoAssertOnGC] possible GC in GC-unsafe region");
+}

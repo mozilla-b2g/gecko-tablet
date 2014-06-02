@@ -1617,6 +1617,10 @@ abstract public class BrowserApp extends GeckoApp
             throw new IllegalArgumentException("Cannot handle null URLs in enterEditingMode");
         }
 
+        if (mBrowserToolbar.isEditing() || mBrowserToolbar.isAnimating()) {
+            return;
+        }
+
         final Tab selectedTab = Tabs.getInstance().getSelectedTab();
         mTargetTabForEditingMode = (selectedTab != null ? selectedTab.getId() : null);
 
@@ -1699,7 +1703,9 @@ abstract public class BrowserApp extends GeckoApp
                 // Otherwise, construct a search query from the bookmark keyword.
                 final String searchUrl = keywordUrl.replace("%s", URLEncoder.encode(keywordSearch));
                 Tabs.getInstance().loadUrl(searchUrl, Tabs.LOADURL_USER_ENTERED);
-                Telemetry.sendUIEvent(TelemetryContract.Event.LOAD_URL, "", "keyword");
+                Telemetry.sendUIEvent(TelemetryContract.Event.LOAD_URL,
+                                      TelemetryContract.Method.NONE,
+                                      "keyword");
             }
         });
     }
