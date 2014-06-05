@@ -430,8 +430,8 @@
 @BINPATH@/components/RadioInterfaceLayer.js
 @BINPATH@/components/RadioInterfaceLayer.manifest
 @BINPATH@/components/RILContentHelper.js
-@BINPATH@/components/TelephonyProvider.js
-@BINPATH@/components/TelephonyProvider.manifest
+@BINPATH@/components/TelephonyService.js
+@BINPATH@/components/TelephonyService.manifest
 #endif // MOZ_WIDGET_GONK && MOZ_B2G_RIL
 
 #ifndef MOZ_WIDGET_GONK
@@ -802,6 +802,7 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 @BINPATH@/components/HelperAppDialog.js
 @BINPATH@/components/DownloadsUI.js
 @BINPATH@/components/InterAppCommUIGlue.js
+@BINPATH@/components/SystemMessageGlue.js
 
 #ifndef MOZ_WIDGET_GONK
 @BINPATH@/components/SimulatorScreen.js
