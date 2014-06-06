@@ -70,6 +70,7 @@
 #include "mozilla/Alignment.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/CheckedInt.h"
+#include "mozilla/DebugOnly.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/ImageData.h"
 #include "mozilla/dom/PBrowserParent.h"
@@ -2320,7 +2321,7 @@ CanvasRenderingContext2D::SetFont(const nsAString& font,
 
   nsPresContext *c = presShell->GetPresContext();
   CurrentState().fontGroup =
-      gfxPlatform::GetPlatform()->CreateFontGroup(fontStyle->mFont.name,
+      gfxPlatform::GetPlatform()->CreateFontGroup(fontStyle->mFont.fontlist,
                                                   &style,
                                                   c->GetUserFontSet());
   NS_ASSERTION(CurrentState().fontGroup, "Could not get font group");
@@ -2997,7 +2998,7 @@ gfxFontGroup *CanvasRenderingContext2D::GetCurrentFontStyle()
       gfxFontStyle style;
       style.size = kDefaultFontSize;
       CurrentState().fontGroup =
-        gfxPlatform::GetPlatform()->CreateFontGroup(NS_LITERAL_STRING("sans-serif"),
+        gfxPlatform::GetPlatform()->CreateFontGroup(FontFamilyList(eFamily_sans_serif),
                                                     &style,
                                                     nullptr);
       if (CurrentState().fontGroup) {
@@ -4006,7 +4007,9 @@ void
 CanvasRenderingContext2D::PutImageData(ImageData& imageData, double dx,
                                        double dy, ErrorResult& error)
 {
-  dom::Uint8ClampedArray arr(imageData.GetDataObject());
+  dom::Uint8ClampedArray arr;
+  DebugOnly<bool> inited = arr.Init(imageData.GetDataObject());
+  MOZ_ASSERT(inited);
 
   error = PutImageData_explicit(JS_DoubleToInt32(dx), JS_DoubleToInt32(dy),
                                 imageData.Width(), imageData.Height(),
@@ -4020,7 +4023,9 @@ CanvasRenderingContext2D::PutImageData(ImageData& imageData, double dx,
                                        double dirtyHeight,
                                        ErrorResult& error)
 {
-  dom::Uint8ClampedArray arr(imageData.GetDataObject());
+  dom::Uint8ClampedArray arr;
+  DebugOnly<bool> inited = arr.Init(imageData.GetDataObject());
+  MOZ_ASSERT(inited);
 
   error = PutImageData_explicit(JS_DoubleToInt32(dx), JS_DoubleToInt32(dy),
                                 imageData.Width(), imageData.Height(),

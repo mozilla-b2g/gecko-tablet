@@ -22,5 +22,4 @@
 # changes to stick? As of bug 928195, this shouldn't be necessary! Please
 # don't change CLOBBER for WebIDL changes any more.
 
-Bug 1014976 - Windows debug bustage from linking changes.
-
+Bug 978238 needs clobber because of changes to js.msg (see bug 1019955).

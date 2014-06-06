@@ -581,7 +581,6 @@ struct StackBaseShape
     static inline bool match(UnownedBaseShape *key, const StackBaseShape *lookup);
 
     // For RootedGeneric<StackBaseShape*>
-    static inline js::ThingRootKind rootKind() { return js::THING_ROOT_CUSTOM; }
     void trace(JSTracer *trc);
 };
 
@@ -1233,7 +1232,6 @@ struct StackShape
     }
 
     // For RootedGeneric<StackShape*>
-    static inline js::ThingRootKind rootKind() { return js::THING_ROOT_CUSTOM; }
     void trace(JSTracer *trc);
 };
 

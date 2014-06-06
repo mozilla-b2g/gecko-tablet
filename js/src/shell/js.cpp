@@ -339,10 +339,6 @@ struct JSShellContextData {
 static JSShellContextData *
 NewContextData()
 {
-    /* Prevent creation of new contexts after we have been canceled. */
-    if (gServiceInterrupt)
-        return nullptr;
-
     JSShellContextData *data = (JSShellContextData *)
                                js_calloc(sizeof(JSShellContextData), 1);
     if (!data)
@@ -387,6 +383,10 @@ ShellInterruptCallback(JSContext *cx)
 
     if (!result && gExitCode == 0)
         gExitCode = EXITCODE_TIMEOUT;
+
+    // Reset gServiceInterrupt. CancelExecution or InterruptIf will set it to
+    // true to distinguish watchdog or user triggered interrupts.
+    gServiceInterrupt = false;
 
     return result;
 }
@@ -456,7 +456,7 @@ RunFile(JSContext *cx, Handle<JSObject*> obj, const char *filename, FILE *file, 
     #endif
     if (script && !compileOnly) {
         if (!JS_ExecuteScript(cx, obj, script)) {
-            if (!gQuitting && !gServiceInterrupt)
+            if (!gQuitting && gExitCode != EXITCODE_TIMEOUT)
                 gExitCode = EXITCODE_RUNTIME_ERROR;
         }
         int64_t t2 = PRMJ_Now() - t1;
@@ -1438,7 +1438,7 @@ Run(JSContext *cx, unsigned argc, jsval *vp)
     if (!thisobj)
         return false;
 
-    JSString *str = JS::ToString(cx, args[0]);
+    RootedString str(cx, JS::ToString(cx, args[0]));
     if (!str)
         return false;
     args[0].setString(str);
@@ -3426,6 +3426,36 @@ InterruptIf(JSContext *cx, unsigned argc, Value *vp)
 }
 
 static bool
+InvokeInterruptCallbackWrapper(JSContext *cx, unsigned argc, jsval *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (args.length() != 1) {
+        JS_ReportError(cx, "Wrong number of arguments");
+        return false;
+    }
+
+    gServiceInterrupt = true;
+    JS_RequestInterruptCallback(cx->runtime());
+    bool interruptRv = CheckForInterrupt(cx);
+
+    // The interrupt handler could have set a pending exception. Since we call
+    // back into JS, don't have it see the pending exception. If we have an
+    // uncatchable exception that's not propagating a debug mode forced
+    // return, return.
+    if (!interruptRv && !cx->isExceptionPending() && !cx->isPropagatingForcedReturn())
+        return false;
+
+    JS::AutoSaveExceptionState savedExc(cx);
+    Value argv[1] = { BooleanValue(interruptRv) };
+    RootedValue rv(cx);
+    if (!Invoke(cx, UndefinedValue(), args[0], 1, argv, &rv))
+        return false;
+
+    args.rval().setUndefined();
+    return interruptRv;
+}
+
+static bool
 SetInterruptCallback(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -4728,6 +4758,13 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "  Requests interrupt callback if cond is true. If a callback function is set via\n"
 "  |timeout| or |setInterruptCallback|, it will be called. No-op otherwise."),
 
+    JS_FN_HELP("invokeInterruptCallback", InvokeInterruptCallbackWrapper, 0, 0,
+"invokeInterruptCallback(fun)",
+"  Forcefully set the interrupt flag and invoke the interrupt handler. If a\n"
+"  callback function is set via |timeout| or |setInterruptCallback|, it will\n"
+"  be called. Before returning, fun is called with the return value of the\n"
+"  interrupt handler."),
+
     JS_FN_HELP("setInterruptCallback", SetInterruptCallback, 1, 0,
 "setInterruptCallback(func)",
 "  Sets func as the interrupt callback function.\n"
@@ -5706,7 +5743,10 @@ NewContext(JSRuntime *rt)
 static void
 DestroyContext(JSContext *cx, bool withGC)
 {
-    JSShellContextData *data = GetContextData(cx);
+    // Don't use GetContextData as |data| could be a nullptr in the case of
+    // destroying a context precisely because we couldn't create its private
+    // data.
+    JSShellContextData *data = (JSShellContextData *) JS_GetContextPrivate(cx);
     JS_SetContextPrivate(cx, nullptr);
     free(data);
     WITH_SIGNALS_DISABLED(withGC ? JS_DestroyContext(cx) : JS_DestroyContextNoGC(cx));

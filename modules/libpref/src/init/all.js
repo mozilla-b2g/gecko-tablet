@@ -359,6 +359,9 @@ pref("media.video_stats.enabled", true);
 // Whether to enable the audio writing APIs on the audio element
 pref("media.audio_data.enabled", false);
 
+// Whether to use async panning and zooming
+pref("layers.async-pan-zoom.enabled", false);
+
 // Whether to lock touch scrolling to one axis at a time
 // 0 = FREE (No locking at all)
 // 1 = STANDARD (Once locked, remain locked until scrolling ends)
@@ -368,8 +371,16 @@ pref("apz.axis_lock_mode", 0);
 // Whether to print the APZC tree for debugging
 pref("apz.printtree", false);
 
+#ifdef XP_MACOSX
 // Layerize scrollable subframes to allow async panning
+pref("apz.subframe.enabled", true);
+pref("apz.fling_repaint_interval", 16);
+pref("apz.pan_repaint_interval", 16);
+pref("apz.apz.x_skate_size_multiplier", "2.5");
+pref("apz.apz.y_skate_size_multiplier", "3.5");
+#else
 pref("apz.subframe.enabled", false);
+#endif
 
 // APZ testing (bug 961289)
 pref("apz.test.logging_enabled", false);
@@ -758,6 +769,9 @@ pref("dom.forms.number", true);
 // platforms which don't have a color picker implemented yet.
 pref("dom.forms.color", true);
 
+// Support for new @autocomplete values
+pref("dom.forms.autocomplete.experimental", false);
+
 // Enables system messages and activities
 pref("dom.sysmsg.enabled", false);
 
@@ -787,6 +801,11 @@ pref("privacy.donottrackheader.value",      1);
 
 pref("dom.event.contextmenu.enabled",       true);
 pref("dom.event.clipboardevents.enabled",   true);
+#if defined(XP_WIN) && !defined(RELEASE_BUILD)
+pref("dom.event.highrestimestamp.enabled",  true);
+#else
+pref("dom.event.highrestimestamp.enabled",  false);
+#endif
 
 pref("dom.webcomponents.enabled",           false);
 
@@ -1820,9 +1839,6 @@ pref("layout.css.masking.enabled", true);
 // Is support for mix-blend-mode enabled?
 pref("layout.css.mix-blend-mode.enabled", true);
 
-// Is support for the the @supports rule enabled?
-pref("layout.css.supports-rule.enabled", true);
-
 // Is support for CSS Filters enabled?
 pref("layout.css.filters.enabled", false);
 
@@ -2089,11 +2105,7 @@ pref("svg.svg-iframe.enabled", false);
 
 // Is support for the new getBBox method from SVG 2 enabled?
 // See https://svgwg.org/svg2-draft/single-page.html#types-SVGBoundingBoxOptions
-#ifdef RELEASE_BUILD
 pref("svg.new-getBBox.enabled", false);
-#else
-pref("svg.new-getBBox.enabled", true);
-#endif
 
 // Default font types and sizes by locale
 pref("font.default.ar", "sans-serif");
@@ -4160,6 +4172,13 @@ pref("touchcaret.distance.threshold", 1500);
 // When time exceed this expiration time, we'll hide touch caret.
 // In milliseconds. (0 means disable this feature)
 pref("touchcaret.expiration.time", 3000);
+
+// Turn off selection caret by default
+pref("selectioncaret.enabled", false);
+
+// This will inflate size of selection caret frame when we checking if
+// user click on selection caret or not. In app units.
+pref("selectioncaret.inflatesize.threshold", 40);
 
 // Wakelock is disabled by default.
 pref("dom.wakelock.enabled", false);

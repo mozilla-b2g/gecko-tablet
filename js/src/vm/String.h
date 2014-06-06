@@ -703,11 +703,12 @@ class JSFlatString : public JSLinearString
     bool isIndexSlow(uint32_t *indexp) const;
 
     void init(const jschar *chars, size_t length);
+    void init(const JS::Latin1Char *chars, size_t length);
 
   public:
-    template <js::AllowGC allowGC>
+    template <js::AllowGC allowGC, typename CharT>
     static inline JSFlatString *new_(js::ThreadSafeContext *cx,
-                                     const jschar *chars, size_t length);
+                                     const CharT *chars, size_t length);
 
     MOZ_ALWAYS_INLINE
     const jschar *charsZ() const {
@@ -1077,10 +1078,12 @@ class StaticStrings
     template <typename CharT>
     JSAtom *lookup(const CharT *chars, size_t length) {
         switch (length) {
-          case 1:
-            if (chars[0] < UNIT_STATIC_LIMIT)
-                return getUnit(chars[0]);
+          case 1: {
+            jschar c = chars[0];
+            if (c < UNIT_STATIC_LIMIT)
+                return getUnit(c);
             return nullptr;
+          }
           case 2:
             if (fitsInSmallChar(chars[0]) && fitsInSmallChar(chars[1]))
                 return getLength2(chars[0], chars[1]);

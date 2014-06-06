@@ -644,7 +644,7 @@ namespace js {
 
 PropDesc::PropDesc(const Value &getter, const Value &setter,
                    Enumerability enumerable, Configurability configurable)
-  : pd_(UndefinedValue()),
+  : descObj_(nullptr),
     value_(UndefinedValue()),
     get_(getter), set_(setter),
     attrs(JSPROP_GETTER | JSPROP_SETTER | JSPROP_SHARED |
@@ -772,32 +772,17 @@ IsInternalFunctionObject(JSObject *funobj)
     return fun->isLambda() && !funobj->getParent();
 }
 
-class AutoPropDescArrayRooter : private AutoGCRooter
+class AutoPropDescVector : public AutoVectorRooter<PropDesc>
 {
   public:
-    explicit AutoPropDescArrayRooter(JSContext *cx)
-      : AutoGCRooter(cx, DESCRIPTORS), descriptors(cx)
-    { }
-
-    PropDesc *append() {
-        if (!descriptors.append(PropDesc()))
-            return nullptr;
-        return &descriptors.back();
+    explicit AutoPropDescVector(JSContext *cx
+                    MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+        : AutoVectorRooter<PropDesc>(cx, DESCVECTOR)
+    {
+        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     }
 
-    bool reserve(size_t n) {
-        return descriptors.reserve(n);
-    }
-
-    PropDesc& operator[](size_t i) {
-        JS_ASSERT(i < descriptors.length());
-        return descriptors[i];
-    }
-
-    friend void AutoGCRooter::trace(JSTracer *trc);
-
-  private:
-    PropDescArray descriptors;
+    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 /*

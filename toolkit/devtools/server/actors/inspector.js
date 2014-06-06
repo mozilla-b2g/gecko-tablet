@@ -258,7 +258,8 @@ var NodeActor = exports.NodeActor = protocol.ActorClass({
   get computedStyle() {
     if (Cu.isDeadWrapper(this.rawNode) ||
         this.rawNode.nodeType !== Ci.nsIDOMNode.ELEMENT_NODE ||
-        !this.rawNode.ownerDocument) {
+        !this.rawNode.ownerDocument ||
+        !this.rawNode.ownerDocument.defaultView) {
       return null;
     }
     return this.rawNode.ownerDocument.defaultView.getComputedStyle(this.rawNode);

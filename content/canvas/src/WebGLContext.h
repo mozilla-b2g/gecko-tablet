@@ -213,6 +213,14 @@ public:
     void ErrorOutOfMemory(const char *fmt = 0, ...);
 
     const char *ErrorName(GLenum error);
+
+    /**
+     * Return displayable name for GLenum.
+     * This version is like gl::GLenumToStr but with out the GL_ prefix to
+     * keep consistency with how errors are reported from WebGL.
+     */
+    static const char *EnumName(GLenum glenum);
+
     bool IsTextureFormatCompressed(GLenum format);
 
     void DummyFramebufferOperation(const char *info);
@@ -1246,6 +1254,8 @@ public:
     friend class WebGLShader;
     friend class WebGLUniformLocation;
     friend class WebGLVertexArray;
+    friend class WebGLVertexArrayFake;
+    friend class WebGLVertexArrayGL;
 };
 
 // used by DOM bindings in conjunction with GetParentObject

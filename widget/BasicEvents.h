@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "mozilla/dom/EventTarget.h"
+#include "mozilla/TimeStamp.h"
 #include "nsCOMPtr.h"
 #include "nsIAtom.h"
 #include "nsISupportsImpl.h"
@@ -136,6 +137,7 @@ enum nsEventStructType
 #define NS_MOUSE_MOZHITTEST             (NS_MOUSE_MESSAGE_START + 33)
 #define NS_MOUSEENTER                   (NS_MOUSE_MESSAGE_START + 34)
 #define NS_MOUSELEAVE                   (NS_MOUSE_MESSAGE_START + 35)
+#define NS_MOUSE_MOZLONGTAP             (NS_MOUSE_MESSAGE_START + 36)
 
 // Pointer spec events
 #define NS_POINTER_EVENT_START          4400
@@ -622,7 +624,7 @@ protected:
   WidgetEvent(bool aIsTrusted, uint32_t aMessage,
               nsEventStructType aStructType) :
     eventStructType(aStructType), message(aMessage), refPoint(0, 0),
-    lastRefPoint(0, 0), time(0), userType(0)
+    lastRefPoint(0, 0), time(0), timeStamp(TimeStamp::Now()), userType(0)
   {
     MOZ_COUNT_CTOR(WidgetEvent);
     mFlags.Clear();
@@ -639,7 +641,7 @@ protected:
 public:
   WidgetEvent(bool aIsTrusted, uint32_t aMessage) :
     eventStructType(NS_EVENT), message(aMessage), refPoint(0, 0),
-    lastRefPoint(0, 0), time(0), userType(0)
+    lastRefPoint(0, 0), time(0), timeStamp(TimeStamp::Now()), userType(0)
   {
     MOZ_COUNT_CTOR(WidgetEvent);
     mFlags.Clear();
@@ -681,6 +683,9 @@ public:
   // Elapsed time, in milliseconds, from a platform-specific zero time
   // to the time the message was created
   uint64_t time;
+  // Timestamp when the message was created. Set in parallel to 'time' until we
+  // determine if it is safe to drop 'time' (see bug 77992).
+  mozilla::TimeStamp timeStamp;
   // See BaseEventFlags definition for the detail.
   BaseEventFlags mFlags;
 
@@ -704,6 +709,7 @@ public:
     refPoint = aEvent.refPoint;
     // lastRefPoint doesn't need to be copied.
     time = aEvent.time;
+    timeStamp = aEvent.timeStamp;
     // mFlags should be copied manually if it's necessary.
     userType = aEvent.userType;
     // typeString should be copied manually if it's necessary.

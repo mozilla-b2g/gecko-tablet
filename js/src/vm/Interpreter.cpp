@@ -1054,6 +1054,14 @@ HandleError(JSContext *cx, InterpreterRegs &regs)
             }
         }
     } else {
+        // We may be propagating a forced return from the interrupt
+        // callback, which cannot easily force a return.
+        if (MOZ_UNLIKELY(cx->isPropagatingForcedReturn())) {
+            cx->clearPropagatingForcedReturn();
+            ForcedReturn(cx, si, regs);
+            return SuccessfulReturnContinuation;
+        }
+
         UnwindForUncatchableException(cx, regs);
     }
 
@@ -3174,10 +3182,10 @@ CASE(JSOP_SPREAD)
     HandleValue countVal = REGS.stackHandleAt(-2);
     RootedObject &arr = rootObject0;
     arr = &REGS.sp[-3].toObject();
-    HandleValue iterable = REGS.stackHandleAt(-1);
+    HandleValue iterator = REGS.stackHandleAt(-1);
     MutableHandleValue resultCountVal = REGS.stackHandleAt(-2);
 
-    if (!SpreadOperation(cx, arr, countVal, iterable, resultCountVal))
+    if (!SpreadOperation(cx, arr, countVal, iterator, resultCountVal))
         goto error;
 
     REGS.sp--;
@@ -3891,12 +3899,12 @@ js::InitGetterSetterOperation(JSContext *cx, jsbytecode *pc, HandleObject obj, H
 
 bool
 js::SpreadOperation(JSContext *cx, HandleObject arr, HandleValue countVal,
-                    HandleValue iterable, MutableHandleValue resultCountVal)
+                    HandleValue iterator, MutableHandleValue resultCountVal)
 {
     int32_t count = countVal.toInt32();
     ForOfIterator iter(cx);
-    RootedValue iterVal(cx, iterable);
-    if (!iter.init(iterVal))
+    RootedValue iterVal(cx, iterator);
+    if (!iter.initWithIterator(iterVal))
         return false;
     while (true) {
         bool done;

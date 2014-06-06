@@ -219,12 +219,12 @@ WebGLContext::DrawElements_check(GLsizei count, GLenum type,
         return false;
     }
 
-    if (!mBoundVertexArray->mBoundElementArrayBuffer) {
+    if (!mBoundVertexArray->mElementArrayBuffer) {
         ErrorInvalidOperation("%s: must have element array buffer binding", info);
         return false;
     }
 
-    WebGLBuffer& elemArrayBuffer = *mBoundVertexArray->mBoundElementArrayBuffer;
+    WebGLBuffer& elemArrayBuffer = *mBoundVertexArray->mElementArrayBuffer;
 
     if (!elemArrayBuffer.ByteLength()) {
         ErrorInvalidOperation("%s: bound element array buffer doesn't have any data", info);
@@ -258,6 +258,14 @@ WebGLContext::DrawElements_check(GLsizei count, GLenum type,
     if (uint32_t(primcount) > mMaxFetchedInstances) {
         ErrorInvalidOperation("%s: bound instance attribute buffers do not have sufficient size for given primcount", info);
         return false;
+    }
+
+    // Bug 1008310 - Check if buffer has been used with a different previous type
+    if (elemArrayBuffer.IsElementArrayUsedWithMultipleTypes()) {
+        GenerateWarning("%s: bound element array buffer previously used with a type other than "
+                        "%s, this will affect performance.",
+                        info,
+                        WebGLContext::EnumName(type));
     }
 
     MakeContextCurrent();
