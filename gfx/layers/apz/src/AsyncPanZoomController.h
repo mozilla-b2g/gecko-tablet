@@ -388,6 +388,17 @@ protected:
   nsEventStatus OnScaleEnd(const PinchGestureInput& aEvent);
 
   /**
+   * Helper methods for handling pan events.
+   */
+  nsEventStatus OnPanMayBegin(const PanGestureInput& aEvent);
+  nsEventStatus OnPanCancelled(const PanGestureInput& aEvent);
+  nsEventStatus OnPanBegin(const PanGestureInput& aEvent);
+  nsEventStatus OnPan(const PanGestureInput& aEvent, bool aFingersOnTouchpad);
+  nsEventStatus OnPanEnd(const PanGestureInput& aEvent);
+  nsEventStatus OnPanMomentumStart(const PanGestureInput& aEvent);
+  nsEventStatus OnPanMomentumEnd(const PanGestureInput& aEvent);
+
+  /**
    * Helper methods for long press gestures.
    */
   nsEventStatus OnLongPress(const TapGestureInput& aEvent);
@@ -470,6 +481,11 @@ protected:
    * Sets the panning state ignoring the touch action value.
    */
   void HandlePanning(double angle);
+
+  /**
+   * Update the panning state and axis locks.
+   */
+  void HandlePanningUpdate(float aDX, float aDY);
 
   /**
    * Sets up anything needed for panning. This takes us out of the "TOUCHING"
@@ -1015,6 +1031,9 @@ public:
 
   virtual bool Sample(FrameMetrics& aFrameMetrics,
                       const TimeDuration& aDelta) = 0;
+
+  // Called if the animation is cancelled before it ends.
+  virtual void Cancel() {}
 
   /**
    * Get the deferred tasks in |mDeferredTasks|. See |mDeferredTasks|

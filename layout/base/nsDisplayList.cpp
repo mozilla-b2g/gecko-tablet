@@ -739,7 +739,6 @@ static void RecordFrameMetrics(nsIFrame* aForFrame,
   metrics.mCompositionBounds = RoundedToInt(LayoutDeviceRect::FromAppUnits(compositionBounds, auPerDevPixel)
                                             * layoutToParentLayerScale);
 
-
   // For the root scroll frame of the root content document, the above calculation
   // will yield the size of the viewport frame as the composition bounds, which
   // doesn't actually correspond to what is visible when
@@ -748,8 +747,9 @@ static void RecordFrameMetrics(nsIFrame* aForFrame,
   // document has a widget then the widget's bounds will correspond to what is
   // visible. If we don't have a widget the root view's bounds correspond to what
   // would be visible because they don't get modified by setCSSViewport.
-  bool isRootContentDocRootScrollFrame = presContext->IsRootContentDocument()
-                                      && aScrollFrame == presShell->GetRootScrollFrame();
+  bool isRootScrollFrame = aScrollFrame == presShell->GetRootScrollFrame();
+  bool isRootContentDocRootScrollFrame = isRootScrollFrame
+                                      && presContext->IsRootContentDocument();
   if (isRootContentDocRootScrollFrame) {
     if (nsIFrame* rootFrame = presShell->GetRootFrame()) {
       if (nsView* view = rootFrame->GetView()) {
@@ -818,6 +818,18 @@ static void RecordFrameMetrics(nsIFrame* aForFrame,
   }
 
   aRoot->SetFrameMetrics(metrics);
+
+  // Also compute and set the background color on the container.
+  // This is needed for APZ overscrolling support.
+  if (aScrollFrame) {
+    // FindBackground() does not work for a root scroll frame, need to use the
+    // root frame instead.
+    nsIFrame* backgroundFrame = isRootScrollFrame ? presShell->GetRootFrame() : aScrollFrame;
+    nsStyleContext* backgroundStyle;
+    if (nsCSSRendering::FindBackground(backgroundFrame, &backgroundStyle)) {
+      aRoot->SetBackgroundColor(backgroundStyle->StyleBackground()->mBackgroundColor);
+    }
+  }
 }
 
 nsDisplayListBuilder::~nsDisplayListBuilder() {
@@ -1181,16 +1193,30 @@ nsDisplayList::ComputeVisibilityForSublist(nsDisplayListBuilder* aBuilder,
       // is that the fixed pos content is in a child document, in which it
       // would scroll with the rest of the content.
       bool occlude = true;
+      nsIPresShell* presShell = nullptr;
       if (aDisplayPortFrame && item->IsInFixedPos()) {
         if (item->Frame()->PresContext() == aDisplayPortFrame->PresContext()) {
           occlude = false;
+          presShell = aDisplayPortFrame->PresContext()->PresShell();
         }
       }
 
+      nsRegion opaque = TreatAsOpaque(item, aBuilder);
       if (occlude) {
-        nsRegion opaque = TreatAsOpaque(item, aBuilder);
         // Subtract opaque item from the visible region
         aBuilder->SubtractFromVisibleRegion(aVisibleRegion, opaque);
+      } else if (presShell &&
+                 presShell->IsScrollPositionClampingScrollPortSizeSet() &&
+                 !opaque.IsEmpty()) {
+        // We make an exception if the fixed position item would fully occlude
+        // the scroll position clamping scroll-port. In that case, it's very
+        // unlikely that it will become visible via async scrolling, so we let
+        // it occlude.
+        nsRect scrollClampingScrollPort(nsPoint(0, 0),
+          presShell->GetScrollPositionClampingScrollPortSize());
+        if (opaque.Contains(scrollClampingScrollPort)) {
+          aVisibleRegion->SetEmpty();
+        }
       }
 
       if (aBuilder->NeedToForceTransparentSurfaceForItem(item) ||

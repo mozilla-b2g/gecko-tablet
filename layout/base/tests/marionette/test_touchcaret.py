@@ -216,26 +216,6 @@ class TouchCaretTest(MarionetteTestCase):
         el.send_keys(content_to_add)
         assertFunc(non_target_content, self.get_content(el))
 
-    def _test_scroll_by_dragging_touch_caret_to_bottom_right_corner(self, el, assertFunc):
-        content_to_add = '!'
-        target_content = string.ascii_letters + content_to_add
-
-        # Insert a long string to test horizontal scrolling.
-        el.clear()
-        el.send_keys(string.ascii_letters)
-
-        # Tap to make touch caret appear.
-        el.tap()
-
-        # Move touch caret to 100px right to the bottom-right corner of the input
-        # box so that it could scroll faster.
-        src_x, src_y = self.touch_caret_location(el)
-        dest_x, dest_y = el.size['width'] + 100, el.size['height']
-        self.actions.flick(el, src_x, src_y, dest_x, dest_y).perform()
-
-        el.send_keys(content_to_add)
-        assertFunc(target_content, self.get_content(el))
-
     ########################################################################
     # <input> test cases with touch caret enabled
     ########################################################################
@@ -254,10 +234,6 @@ class TouchCaretTest(MarionetteTestCase):
     def test_input_touch_caret_timeout(self):
         self.openTestHtml(enabled=True)
         self._test_touch_caret_timeout_by_dragging_it_to_top_left_corner_after_timout(self._input, self.assertNotEqual)
-
-    def test_input_scroll_by_dragging_touch_caret_to_bottom_right_corner(self):
-        self.openTestHtml(enabled=True)
-        self._test_scroll_by_dragging_touch_caret_to_bottom_right_corner(self._input, self.assertEqual)
 
     ########################################################################
     # <input> test cases with touch caret disabled
@@ -289,10 +265,6 @@ class TouchCaretTest(MarionetteTestCase):
         self.openTestHtml(enabled=True)
         self._test_touch_caret_timeout_by_dragging_it_to_top_left_corner_after_timout(self._textarea, self.assertNotEqual)
 
-    def test_textarea_scroll_by_dragging_touch_caret_to_bottom_right_corner(self):
-        self.openTestHtml(enabled=True)
-        self._test_scroll_by_dragging_touch_caret_to_bottom_right_corner(self._textarea, self.assertEqual)
-
     ########################################################################
     # <textarea> test cases with touch caret disabled
     ########################################################################
@@ -322,10 +294,6 @@ class TouchCaretTest(MarionetteTestCase):
     def test_contenteditable_touch_caret_timeout(self):
         self.openTestHtml(enabled=True)
         self._test_touch_caret_timeout_by_dragging_it_to_top_left_corner_after_timout(self._contenteditable, self.assertNotEqual)
-
-    def test_contenteditable_scroll_by_dragging_touch_caret_to_bottom_right_corner(self):
-        self.openTestHtml(enabled=True)
-        self._test_scroll_by_dragging_touch_caret_to_bottom_right_corner(self._contenteditable, self.assertEqual)
 
     ########################################################################
     # <div> contenteditable test cases with touch caret disabled
