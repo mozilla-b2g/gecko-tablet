@@ -41,12 +41,11 @@
 #include "nsDOMFile.h"
 #include "nsGlobalWindow.h"
 
-#include "mozilla/Preferences.h"
-
 /* Using WebRTC backend on Desktops (Mac, Windows, Linux), otherwise default */
 #include "MediaEngineDefault.h"
 #if defined(MOZ_WEBRTC)
 #include "MediaEngineWebRTC.h"
+#include "browser_logging/WebRtcLog.h"
 #endif
 
 #ifdef MOZ_B2G
@@ -1576,6 +1575,10 @@ MediaManager::GetUserMedia(bool aPrivileged,
                                                                 callID, c, isHTTPS);
     obs->NotifyObservers(req, "getUserMedia:request", nullptr);
   }
+
+#ifdef MOZ_WEBRTC
+  EnableWebRtcLog();
+#endif
 
   return NS_OK;
 }

@@ -463,6 +463,17 @@ pref("services.push.pingInterval", 1800000); // 30 minutes
 pref("services.push.requestTimeout", 10000);
 // enable udp wakeup support
 pref("services.push.udp.wakeupEnabled", true);
+// This value should be the prefix to be added to the current PDP context[1]
+// domain or a full-qualified domain name.
+// If finished with a dot, it will be added as a prefix to the PDP context
+// domain. If not, will be used as the DNS query.
+// If the DNS query is unsuccessful, the push agent will send a null netid and
+// is a server decision what to do with the device. If the MCC-MNC identifies a
+// unique network the server will change to UDP mode. Otherwise, a websocket
+// connection will be maintained.
+// [1] Packet Data Protocol
+//     http://en.wikipedia.org/wiki/GPRS_core_network#PDP_context
+pref("services.push.udp.well-known_netidAddress", "_wakeup_.");
 
 // NetworkStats
 #ifdef MOZ_WIDGET_GONK
@@ -549,15 +560,7 @@ pref("app.update.incompatible.mode", 0);
 pref("app.update.staging.enabled", true);
 pref("app.update.service.enabled", true);
 
-// The URL hosting the update manifest.
-// Temporary hack to only put Flame builds on aus4. 18 is Jelly Bean (4.3).
-// This needs to be changed if Flame upgrades to 19 (Kit Kat) before other devices
-// move to aus4.
-#if ANDROID_VERSION == 18
 pref("app.update.url", "https://aus4.mozilla.org/update/3/%PRODUCT%/%VERSION%/%BUILD_ID%/%PRODUCT_DEVICE%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/update.xml");
-#else
-pref("app.update.url", "http://update.boot2gecko.org/%CHANNEL%/update.xml");
-#endif
 pref("app.update.channel", "@MOZ_UPDATE_CHANNEL@");
 
 // Interval at which update manifest is fetched.  In units of seconds.

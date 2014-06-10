@@ -368,29 +368,43 @@ function displayStats(globalReport) {
       document.getElementById('stats').replaceChild(newPcDiv, pcDiv);
     }
   });
+}
 
-  globalReport.errors.forEach(function (error) {
-    var pcDivHeading = 'PeerConnection:' + error.pcid;
+function onLoad() {
+  WebrtcGlobalInformation.getAllStats(displayStats);
+  if (WebrtcGlobalInformation.debugLevel) {
+    setDebugButton(true);
+  } else {
+    setDebugButton(false);
+  }
+}
 
-    var pcDiv = document.getElementById(pcDivHeading);
-    var newPcDiv = buildPcDiv(error, pcDivHeading);
-    newPcDiv.id = pcDivHeading;
+function startDebugMode() {
+  WebrtcGlobalInformation.debugLevel = 65535;
+  setDebugButton(true);
+}
 
-    if (pcDiv) {
-      document.getElementById('stats').replaceChild(newPcDiv, pcDiv);
-    } else {
-      document.getElementById('stats').appendChild(newPcDiv);
-    }
-  });
+function stopDebugMode() {
+  WebrtcGlobalInformation.debugLevel = 0;
+  setDebugButton(false);
+}
+
+function setDebugButton(on) {
+  var button = document.getElementById("debug-toggle-button");
+  button.innerHTML = on ? "Stop debug mode" : "Start debug mode";
+  button.onclick = on ? stopDebugMode : startDebugMode;
 }
 
   </script>
 
-  <body id="body" onload="WebrtcGlobalInformation.getAllStats(displayStats)">
+  <body id="body" onload="onLoad()">
     <div id="stats">
     </div>
     <button onclick="WebrtcGlobalInformation.getLogging('', displayLogs)">
-      Show/refresh logging
+      Connection log
+    </button>
+    <button id="debug-toggle-button" onclick="startDebugMode()">
+      Start debug mode
     </button>
     <div id="logs">
     </div>
