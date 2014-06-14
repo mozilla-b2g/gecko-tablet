@@ -123,6 +123,7 @@ user_pref("datareporting.policy.dataSubmissionPolicyBypassAcceptance", true);
 // Point Firefox Health Report at a local server. We don't care if it actually
 // works. It just can't hit the default production endpoint.
 user_pref("datareporting.healthreport.documentServerURI", "http://%(server)s/healthreport/");
+user_pref("datareporting.healthreport.about.reportUrl", "http://%(server)s/abouthealthreport/");
 
 // Make sure CSS error reporting is enabled for tests
 user_pref("layout.css.report_errors", true);
@@ -170,6 +171,9 @@ user_pref("browser.webapps.testing", true);
 // Disable android snippets
 user_pref("browser.snippets.enabled", false);
 user_pref("browser.snippets.syncPromo.enabled", false);
+
+// Disable useragent updates.
+user_pref("general.useragent.updates.enabled", false);
 
 // Do not turn HTTP cache v2 for our infra tests (some tests are failing)
 user_pref("browser.cache.use_new_backend_temp", false);

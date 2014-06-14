@@ -30,6 +30,7 @@
 #include "vm/Debugger.h"
 #include "vm/ForkJoin.h"
 #include "vm/Interpreter.h"
+#include "vm/TraceLogging.h"
 
 #include "jsscriptinlines.h"
 #include "jit/JitFrameIterator-inl.h"
@@ -82,20 +83,23 @@ JitFrameIterator::JitFrameIterator(ThreadSafeContext *cx)
     type_(JitFrame_Exit),
     returnAddressToFp_(nullptr),
     frameSize_(0),
+    mode_(cx->isForkJoinContext() ? ParallelExecution : SequentialExecution),
+    kind_(Kind_FrameIterator),
     cachedSafepointIndex_(nullptr),
-    activation_(nullptr),
-    mode_(cx->isForkJoinContext() ? ParallelExecution : SequentialExecution)
+    activation_(nullptr)
 {
 }
 
 JitFrameIterator::JitFrameIterator(const ActivationIterator &activations)
-    : current_(activations.jitTop()),
-      type_(JitFrame_Exit),
-      returnAddressToFp_(nullptr),
-      frameSize_(0),
-      cachedSafepointIndex_(nullptr),
-      activation_(activations->asJit()),
-      mode_(activation_->cx()->isForkJoinContext() ? ParallelExecution : SequentialExecution)
+  : current_(activations.jitTop()),
+    type_(JitFrame_Exit),
+    returnAddressToFp_(nullptr),
+    frameSize_(0),
+    mode_(activations->asJit()->cx()->isForkJoinContext() ? ParallelExecution
+                                                          : SequentialExecution),
+    kind_(Kind_FrameIterator),
+    cachedSafepointIndex_(nullptr),
+    activation_(activations->asJit())
 {
 }
 
@@ -104,8 +108,23 @@ JitFrameIterator::JitFrameIterator(IonJSFrameLayout *fp, ExecutionMode mode)
     type_(JitFrame_IonJS),
     returnAddressToFp_(fp->returnAddress()),
     frameSize_(fp->prevFrameLocalSize()),
-    mode_(mode)
+    mode_(mode),
+    kind_(Kind_FrameIterator)
 {
+}
+
+IonBailoutIterator *
+JitFrameIterator::asBailoutIterator()
+{
+    MOZ_ASSERT(isBailoutIterator());
+    return static_cast<IonBailoutIterator *>(this);
+}
+
+const IonBailoutIterator *
+JitFrameIterator::asBailoutIterator() const
+{
+    MOZ_ASSERT(isBailoutIterator());
+    return static_cast<const IonBailoutIterator *>(this);
 }
 
 bool
@@ -584,6 +603,7 @@ void
 HandleException(ResumeFromException *rfe)
 {
     JSContext *cx = GetJSContextFromJitCode();
+    TraceLogger *logger = TraceLoggerForMainThread(cx->runtime());
 
     rfe->kind = ResumeFromException::RESUME_ENTRY_FRAME;
 
@@ -634,10 +654,14 @@ HandleException(ResumeFromException *rfe)
                 // When profiling, each frame popped needs a notification that
                 // the function has exited, so invoke the probe that a function
                 // is exiting.
+
                 JSScript *script = frames.script();
                 probes::ExitScript(cx, script, script->functionNonDelazifying(), popSPSFrame);
-                if (!frames.more())
+                if (!frames.more()) {
+                    TraceLogStopEvent(logger, TraceLogger::IonMonkey);
+                    TraceLogStopEvent(logger);
                     break;
+                }
                 ++frames;
             }
 
@@ -664,6 +688,9 @@ HandleException(ResumeFromException *rfe)
 
             if (rfe->kind != ResumeFromException::RESUME_ENTRY_FRAME)
                 return;
+
+            TraceLogStopEvent(logger, TraceLogger::Baseline);
+            TraceLogStopEvent(logger);
 
             // Unwind profiler pseudo-stack
             JSScript *script = iter.script();
@@ -1689,7 +1716,14 @@ JitFrameIterator::ionScriptFromCalleeToken() const
     switch (GetCalleeTokenTag(calleeToken())) {
       case CalleeToken_Function:
       case CalleeToken_Script:
-        return mode_ == ParallelExecution ? script()->parallelIonScript() : script()->ionScript();
+        switch (mode_) {
+          case SequentialExecution:
+            return script()->ionScript();
+          case ParallelExecution:
+            return script()->parallelIonScript();
+          default:
+            MOZ_ASSUME_UNREACHABLE("No such execution mode");
+        }
       default:
         MOZ_ASSUME_UNREACHABLE("unknown callee token type");
     }
@@ -1745,7 +1779,11 @@ InlineFrameIterator::InlineFrameIterator(ThreadSafeContext *cx, const InlineFram
     script_(cx)
 {
     if (frame_) {
-        start_ = SnapshotIterator(*frame_);
+        if (frame_->isBailoutIterator())
+            start_ = SnapshotIterator(*frame_->asBailoutIterator());
+        else
+            start_ = SnapshotIterator(*frame_);
+
         // findNextFrame will iterate to the next frame and init. everything.
         // Therefore to settle on the same frame, we report one frame less readed.
         framesRead_ = iter->framesRead_ - 1;

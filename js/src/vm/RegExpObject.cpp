@@ -415,7 +415,8 @@ RegExpObject::toString(JSContext *cx) const
         if (!sb.reserve(len + 2))
             return nullptr;
         sb.infallibleAppend('/');
-        sb.infallibleAppend(src->chars(), len);
+        if (!sb.append(src))
+            return nullptr;
         sb.infallibleAppend('/');
     } else {
         if (!sb.append("/(?:)/"))
@@ -435,8 +436,8 @@ RegExpObject::toString(JSContext *cx) const
 
 /* RegExpShared */
 
-RegExpShared::RegExpShared(JSAtom *source, RegExpFlag flags)
-  : source(source), flags(flags), parenCount(0), canStringMatch(false), marked_(false)
+RegExpShared::RegExpShared(JSCompartment *comp, JSAtom *source, RegExpFlag flags)
+  : source(source), flags(flags), parenCount(0), canStringMatch(false), marked_(false), comp(comp)
 {
 #ifdef JS_YARR
     bytecode = nullptr;
@@ -537,15 +538,16 @@ RegExpShared::compile(JSContext *cx, bool matchOnly, const jschar *sampleChars, 
      * The sticky case we implement hackily by prepending a caret onto the front
      * and relying on |::execute| to pseudo-slice the string when it sees a sticky regexp.
      */
-    static const jschar prefix[] = {'^', '(', '?', ':'};
-    static const jschar postfix[] = {')'};
+    static const char prefix[] = {'^', '(', '?', ':'};
+    static const char postfix[] = {')'};
 
     using mozilla::ArrayLength;
     StringBuffer sb(cx);
     if (!sb.reserve(ArrayLength(prefix) + source->length() + ArrayLength(postfix)))
         return false;
     sb.infallibleAppend(prefix, ArrayLength(prefix));
-    sb.infallibleAppend(source->chars(), source->length());
+    if (!sb.append(source))
+        return false;
     sb.infallibleAppend(postfix, ArrayLength(postfix));
 
     RootedAtom fakeySource(cx, sb.finishAtom());
@@ -558,6 +560,9 @@ RegExpShared::compile(JSContext *cx, bool matchOnly, const jschar *sampleChars, 
 bool
 RegExpShared::compile(JSContext *cx, HandleAtom pattern, bool matchOnly, const jschar *sampleChars, size_t sampleLength)
 {
+    if (cx->compartment() != comp)
+        MOZ_CRASH();
+
     if (!ignoreCase() && !StringHasRegExpMetaChars(pattern->chars(), pattern->length())) {
         canStringMatch = true;
         parenCount = 0;
@@ -629,6 +634,9 @@ RegExpShared::compile(JSContext *cx, HandleAtom pattern, bool matchOnly, const j
 #ifdef JS_ION
     JS_ASSERT(!code.jitCode || !code.byteCode);
     jitCode = code.jitCode;
+
+    if (jitCode && jitCode->tenuredZone() != comp->zone())
+        MOZ_CRASH();
 #endif
 
     byteCode = code.byteCode;
@@ -970,6 +978,9 @@ RegExpCompartment::sweep(JSRuntime *rt)
     for (Set::Enum e(set_); !e.empty(); e.popFront()) {
         RegExpShared *shared = e.front();
 
+        if (this != &shared->compartment()->regExps)
+            MOZ_CRASH();
+
         // Sometimes RegExpShared instances are marked without the
         // compartment being subsequently cleared. This can happen if a GC is
         // restarted while in progress (i.e. performing a full GC in the
@@ -1002,6 +1013,9 @@ RegExpCompartment::sweep(JSRuntime *rt)
 bool
 RegExpCompartment::get(JSContext *cx, JSAtom *source, RegExpFlag flags, RegExpGuard *g)
 {
+    if (this != &cx->compartment()->regExps)
+        MOZ_CRASH();
+
     Key key(source, flags);
     Set::AddPtr p = set_.lookupForAdd(key);
     if (p) {
@@ -1009,11 +1023,14 @@ RegExpCompartment::get(JSContext *cx, JSAtom *source, RegExpFlag flags, RegExpGu
         // from the table (which only holds weak references).
         MaybeTraceRegExpShared(cx, *p);
 
+        if ((*p)->compartment() != cx->compartment())
+            MOZ_CRASH();
+
         g->init(**p);
         return true;
     }
 
-    ScopedJSDeletePtr<RegExpShared> shared(cx->new_<RegExpShared>(source, flags));
+    ScopedJSDeletePtr<RegExpShared> shared(cx->new_<RegExpShared>(cx->compartment(), source, flags));
     if (!shared)
         return false;
 

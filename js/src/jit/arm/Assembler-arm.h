@@ -138,8 +138,12 @@ static MOZ_CONSTEXPR_VAR FloatRegister d15 = {FloatRegisters::d15};
 static const uint32_t StackAlignment = 8;
 static const uint32_t CodeAlignment = 8;
 static const bool StackKeptAligned = true;
-static const uint32_t NativeFrameSize = sizeof(void*);
-static const uint32_t AlignmentAtAsmJSPrologue = sizeof(void*);
+
+// As an invariant across architectures, within asm.js code:
+//    $sp % StackAlignment = (AsmJSSizeOfRetAddr + masm.framePushed) % StackAlignment
+// To achieve this on ARM, the first instruction of the asm.js prologue pushes
+// lr without incrementing masm.framePushed.
+static const uint32_t AsmJSSizeOfRetAddr = sizeof(void*);
 
 static const Scale ScalePointer = TimesFour;
 
@@ -984,7 +988,8 @@ class BOffImm
       : data ((offset - 8) >> 2 & 0x00ffffff)
     {
         JS_ASSERT((offset & 0x3) == 0);
-        JS_ASSERT(isInRange(offset));
+        if (!isInRange(offset))
+            CrashAtUnhandlableOOM("BOffImm");
     }
     static bool isInRange(int offset)
     {

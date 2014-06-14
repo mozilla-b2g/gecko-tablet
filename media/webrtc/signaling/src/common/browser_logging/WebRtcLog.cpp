@@ -28,14 +28,24 @@ static PRLogModuleInfo* GetWebRtcTraceLog()
   return sLog;
 }
 
+static PRLogModuleInfo* GetWebRtcAECLog()
+{
+  static PRLogModuleInfo *sLog;
+  if (!sLog) {
+    sLog = PR_NewLogModule("AEC");
+  }
+  return sLog;
+}
+
 class WebRtcTraceCallback: public webrtc::TraceCallback
 {
 public:
   void Print(webrtc::TraceLevel level, const char* message, int length)
   {
+#ifdef PR_LOGGING
     PRLogModuleInfo *log = GetWebRtcTraceLog();
     PR_LOG(log, PR_LOG_DEBUG, ("%s", message));
-    return;
+#endif
   }
 };
 
@@ -47,6 +57,7 @@ void GetWebRtcLogPrefs(uint32_t *aTraceMask, nsACString* aLogFile, bool *aMultiL
   *aMultiLog = mozilla::Preferences::GetBool("media.webrtc.debug.multi_log");
   *aTraceMask = mozilla::Preferences::GetUint("media.webrtc.debug.trace_mask");
   mozilla::Preferences::GetCString("media.webrtc.debug.log_file", aLogFile);
+  webrtc::Trace::set_aec_debug_size(mozilla::Preferences::GetUint("media.webrtc.debug.aec_dump_max_size"));
 }
 #endif
 
@@ -67,6 +78,11 @@ void CheckOverrides(uint32_t *aTraceMask, nsACString *aLogFile, bool *aMultiLog)
   */
   if (log_info && (log_info->level != 0)) {
     *aTraceMask = log_info->level;
+  }
+
+  log_info = GetWebRtcAECLog();
+  if (log_info && (log_info->level != 0)) {
+    webrtc::Trace::set_aec_debug(true);
   }
 
   const char *file_name = PR_GetEnv("WEBRTC_TRACE_FILE");

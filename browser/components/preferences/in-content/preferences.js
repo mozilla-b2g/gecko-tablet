@@ -3,7 +3,7 @@
    - You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 "use strict";
- 
+
 const Cc = Components.classes;
 const Ci = Components.interfaces;
 const Cu = Components.utils;
@@ -33,7 +33,18 @@ function init_all() {
   let categories = document.getElementById("categories");
   categories.addEventListener("select", event => gotoPref(event.target.value));
 
-  gotoPref("paneGeneral");
+  document.documentElement.addEventListener("keydown", function(event) {
+    if (event.keyCode == KeyEvent.DOM_VK_TAB) {
+      categories.setAttribute("keyboard-navigation", "true");
+    }
+  });
+  categories.addEventListener("mousedown", function() {
+    this.removeAttribute("keyboard-navigation");
+  });
+
+  if (document.getElementById("category-general").selected) {
+    gotoPref("paneGeneral");
+  }
 }
 
 function selectCategory(name) {

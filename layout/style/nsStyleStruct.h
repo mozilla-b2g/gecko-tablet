@@ -27,6 +27,7 @@
 #include "nsCSSValue.h"
 #include "imgRequestProxy.h"
 #include "Orientation.h"
+#include "CounterStyleManager.h"
 
 class nsIFrame;
 class nsIURI;
@@ -1108,7 +1109,7 @@ protected:
 
 
 struct nsStyleList {
-  nsStyleList(void);
+  nsStyleList(nsPresContext* aPresContext);
   nsStyleList(const nsStyleList& aStyleList);
   ~nsStyleList(void);
 
@@ -1141,9 +1142,28 @@ struct nsStyleList {
       mListStyleImage->LockImage();
   }
 
-  uint8_t   mListStyleType;             // [inherited] See nsStyleConsts.h
+  void GetListStyleType(nsSubstring& aType) const { aType = mListStyleType; }
+  mozilla::CounterStyle* GetCounterStyle() const
+  {
+    return mCounterStyle.get();
+  }
+  void SetListStyleType(const nsSubstring& aType,
+                        mozilla::CounterStyle* aStyle)
+  {
+    mListStyleType = aType;
+    mCounterStyle = aStyle;
+  }
+  void SetListStyleType(const nsSubstring& aType,
+                        nsPresContext* aPresContext)
+  {
+    SetListStyleType(aType, aPresContext->
+                     CounterStyleManager()->BuildCounterStyle(aType));
+  }
+
   uint8_t   mListStylePosition;         // [inherited]
 private:
+  nsString  mListStyleType;             // [inherited]
+  nsRefPtr<mozilla::CounterStyle> mCounterStyle; // [inherited]
   nsRefPtr<imgRequestProxy> mListStyleImage; // [inherited]
   nsStyleList& operator=(const nsStyleList& aOther) MOZ_DELETE;
 public:
@@ -1870,7 +1890,7 @@ private:
   uint8_t mDirection;
   uint8_t mFillMode;
   uint8_t mPlayState;
-  float mIterationCount; // NS_IEEEPositiveInfinity() means infinite
+  float mIterationCount; // mozilla::PositiveInfinity<float>() means infinite
 };
 
 struct nsStyleDisplay {

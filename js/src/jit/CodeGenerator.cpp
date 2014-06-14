@@ -5138,7 +5138,7 @@ CodeGenerator::emitConcat(LInstruction *lir, Register lhs, Register rhs, Registe
         return false;
 
     ExecutionMode mode = gen->info().executionMode();
-    JitCode *stringConcatStub = gen->compartment->jitCompartment()->stringConcatStub(mode);
+    JitCode *stringConcatStub = gen->compartment->jitCompartment()->stringConcatStubNoBarrier(mode);
     masm.call(stringConcatStub);
     masm.branchTestPtr(Assembler::Zero, output, output, ool->entry());
 
@@ -5444,14 +5444,17 @@ JitRuntime::generateMallocStub(JSContext *cx)
 {
     const Register regReturn = CallTempReg0;
     const Register regNBytes = CallTempReg0;
-    const Register regRuntime = CallTempReg1;
-    const Register regTemp = CallTempReg1;
 
     MacroAssembler masm(cx);
 
     RegisterSet regs = RegisterSet::Volatile();
     regs.takeUnchecked(regNBytes);
     masm.PushRegsInMask(regs);
+
+    const Register regTemp = regs.takeGeneral();
+    const Register regRuntime = regTemp;
+    regs.add(regTemp);
+    JS_ASSERT(regTemp != regNBytes);
 
     masm.setupUnalignedABICall(2, regTemp);
     masm.movePtr(ImmPtr(cx->runtime()), regRuntime);
@@ -5478,13 +5481,16 @@ JitCode *
 JitRuntime::generateFreeStub(JSContext *cx)
 {
     const Register regSlots = CallTempReg0;
-    const Register regTemp = CallTempReg1;
 
     MacroAssembler masm(cx);
 
     RegisterSet regs = RegisterSet::Volatile();
     regs.takeUnchecked(regSlots);
     masm.PushRegsInMask(regs);
+
+    const Register regTemp = regs.takeGeneral();
+    regs.add(regTemp);
+    JS_ASSERT(regTemp != regSlots);
 
     masm.setupUnalignedABICall(1, regTemp);
     masm.passABIArg(regSlots);
@@ -6799,6 +6805,10 @@ CodeGenerator::link(JSContext *cx, types::CompilerConstraintList *constraints)
     // Implicit interrupts are used only for sequential code. In parallel mode
     // use the normal executable allocator so that we cannot segv during
     // execution off the main thread.
+    //
+    // Also, note that creating the code here during an incremental GC will
+    // trace the code and mark all GC things it refers to. This captures any
+    // read barriers which were skipped while compiling the script off thread.
     Linker linker(masm);
     AutoFlushICache afc("IonLink");
     JitCode *code = (executionMode == SequentialExecution)
@@ -8696,7 +8706,7 @@ CodeGenerator::visitAsmJSCall(LAsmJSCall *ins)
     if (mir->spIncrement())
         masm.freeStack(mir->spIncrement());
 
-    JS_ASSERT((AlignmentAtAsmJSPrologue + masm.framePushed()) % StackAlignment == 0);
+    JS_ASSERT((AsmJSSizeOfRetAddr + masm.framePushed()) % StackAlignment == 0);
 
 #ifdef DEBUG
     Label ok;

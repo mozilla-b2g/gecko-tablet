@@ -4171,6 +4171,8 @@ PresShell::FlushPendingNotifications(mozilla::ChangesToFlush aFlush)
       // reflow).
       mPresContext->FlushUserFontSet();
 
+      mPresContext->FlushCounterStyles();
+
       // Flush any requested SMIL samples.
       if (mDocument->HasAnimationController()) {
         mDocument->GetAnimationController()->FlushResampleRequests();
@@ -4517,6 +4519,15 @@ PresShell::ContentRemoved(nsIDocument *aDocument,
   VERIFY_STYLE_TREE;
 }
 
+void
+PresShell::NotifyCounterStylesAreDirty()
+{
+  nsAutoCauseReflowNotifier reflowNotifier(this);
+  mFrameConstructor->BeginUpdate();
+  mFrameConstructor->NotifyCounterStylesAreDirty();
+  mFrameConstructor->EndUpdate();
+}
+
 nsresult
 PresShell::ReconstructFrames(void)
 {
@@ -4563,6 +4574,7 @@ nsIPresShell::ReconstructStyleDataInternal()
 
   if (mPresContext) {
     mPresContext->RebuildUserFontSet();
+    mPresContext->RebuildCounterStyles();
   }
 
   Element* root = mDocument->GetRootElement();
@@ -8556,6 +8568,8 @@ PresShell::WillDoReflow()
 
   mPresContext->FlushUserFontSet();
 
+  mPresContext->FlushCounterStyles();
+
   mFrameConstructor->BeginUpdate();
 
   mLastReflowStart = GetPerformanceNow();
@@ -10475,6 +10489,12 @@ PresShell::AddSizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
 {
   mFrameArena.AddSizeOfExcludingThis(aMallocSizeOf, aArenaObjectsSize);
   *aPresShellSize += aMallocSizeOf(this);
+  *aPresShellSize += mVisibleImages.SizeOfExcludingThis(nullptr,
+                                                        aMallocSizeOf,
+                                                        nullptr);
+  *aPresShellSize += mFramesToDirty.SizeOfExcludingThis(nullptr,
+                                                        aMallocSizeOf,
+                                                        nullptr);
   *aPresShellSize += aArenaObjectsSize->mOther;
 
   *aStyleSetsSize += StyleSet()->SizeOfIncludingThis(aMallocSizeOf);

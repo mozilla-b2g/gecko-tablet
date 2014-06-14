@@ -17,10 +17,12 @@
 #include "nsSMILKeySpline.h"
 #include "nsStyleStruct.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/FloatingPoint.h"
 #include "nsCSSPseudoElements.h"
 
-class nsPresContext;
 class nsIFrame;
+class nsPresContext;
+class nsStyleChangeList;
 class ElementPropertyTransition;
 
 
@@ -229,7 +231,7 @@ struct AnimationProperty
 struct AnimationTiming
 {
   mozilla::TimeDuration mIterationDuration;
-  float mIterationCount; // NS_IEEEPositiveInfinity() means infinite
+  float mIterationCount; // mozilla::PositiveInfinity<float>() means infinite
   uint8_t mDirection;
   uint8_t mFillMode;
 
@@ -310,9 +312,18 @@ struct ElementAnimation
     return (IsPaused() ? mPauseStart : aTime) - mStartTime - mDelay;
   }
 
-  // Return the duration of the active interval.
-  mozilla::TimeDuration ActiveDuration() const {
-    return mTiming.mIterationDuration.MultDouble(mTiming.mIterationCount);
+  // Return the duration of the active interval for the given timing parameters.
+  static mozilla::TimeDuration ActiveDuration(const AnimationTiming& aTiming) {
+    if (aTiming.mIterationCount == mozilla::PositiveInfinity<float>()) {
+      // An animation that repeats forever has an infinite active duration
+      // unless its iteration duration is zero, in which case it has a zero
+      // active duration.
+      const TimeDuration zeroDuration;
+      return aTiming.mIterationDuration == zeroDuration
+             ? zeroDuration
+             : mozilla::TimeDuration::Forever();
+    }
+    return aTiming.mIterationDuration.MultDouble(aTiming.mIterationCount);
   }
 
   // Return the duration from the start the active interval to the point where

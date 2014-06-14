@@ -367,6 +367,18 @@ class Build(MachCommandBase):
                     allow_parallel=False, ensure_exit_code=False, num_jobs=jobs,
                     silent=not verbose, force_pymake=pymake)
 
+                make_extra = self.mozconfig['make_extra'] or []
+                make_extra = dict(m.split('=', 1) for m in make_extra)
+
+                moz_automation = os.getenv('MOZ_AUTOMATION') or make_extra.get('export MOZ_AUTOMATION', None)
+                if moz_automation and status == 0:
+                    # Default to 1 job until we have make-4.0 in for output
+                    # buffering.
+                    status = self._run_make(target='automation/build',
+                        line_handler=output.on_line, log=False, print_directory=False,
+                        allow_parallel=False, ensure_exit_code=False, num_jobs=1,
+                        silent=not verbose, force_pymake=pymake)
+
                 self.log(logging.WARNING, 'warning_summary',
                     {'count': len(monitor.warnings_database)},
                     '{count} compiler warnings present.')
@@ -418,8 +430,7 @@ class Build(MachCommandBase):
             # Fennec doesn't have useful output from just building. We should
             # arguably make the build action useful for Fennec. Another day...
             if self.substs['MOZ_BUILD_APP'] != 'mobile/android':
-                app_path = self.get_binary_path('app')
-                print('To take your build for a test drive, run: %s' % app_path)
+                print('To take your build for a test drive, run: |mach run|')
             app = self.substs['MOZ_BUILD_APP']
             if app in ('browser', 'mobile/android'):
                 print('For more information on what to do now, see '

@@ -928,6 +928,7 @@ struct RuleCascadeData {
       mStateSelectors(),
       mSelectorDocumentStates(0),
       mKeyframesRuleTable(16),
+      mCounterStyleRuleTable(16),
       mCacheKey(aMedium),
       mNext(nullptr),
       mQuirksMode(aQuirksMode)
@@ -988,8 +989,10 @@ struct RuleCascadeData {
   nsTArray<nsCSSKeyframesRule*> mKeyframesRules;
   nsTArray<nsCSSFontFeatureValuesRule*> mFontFeatureValuesRules;
   nsTArray<nsCSSPageRule*> mPageRules;
+  nsTArray<nsCSSCounterStyleRule*> mCounterStyleRules;
 
   nsDataHashtable<nsStringHashKey, nsCSSKeyframesRule*> mKeyframesRuleTable;
+  nsDataHashtable<nsStringHashKey, nsCSSCounterStyleRule*> mCounterStyleRuleTable;
 
   // Looks up or creates the appropriate list in |mAttributeSelectors|.
   // Returns null only on allocation failure.
@@ -1006,6 +1009,22 @@ SizeOfSelectorsEntry(PLDHashEntryHdr* aHdr, MallocSizeOf aMallocSizeOf, void *)
 {
   AtomSelectorEntry* entry = static_cast<AtomSelectorEntry*>(aHdr);
   return entry->mSelectors.SizeOfExcludingThis(aMallocSizeOf);
+}
+
+static size_t
+SizeOfKeyframesRuleEntryExcludingThis(nsStringHashKey::KeyType aKey,
+                                      nsCSSKeyframesRule* const& aData,
+                                      mozilla::MallocSizeOf aMallocSizeOf,
+                                      void* aUserArg)
+{
+  // We don't own the nsCSSKeyframesRule objects so we don't count them. We do
+  // care about the size of the keys' nsAString members' buffers though.
+  //
+  // Note that we depend on nsStringHashKey::GetKey() returning a reference,
+  // since otherwise aKey would be a copy of the string key and we would not be
+  // measuring the right object here.
+
+  return aKey.SizeOfExcludingThisIfUnshared(aMallocSizeOf);
 }
 
 size_t
@@ -1042,6 +1061,10 @@ RuleCascadeData::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
   n += mKeyframesRules.SizeOfExcludingThis(aMallocSizeOf);
   n += mFontFeatureValuesRules.SizeOfExcludingThis(aMallocSizeOf);
   n += mPageRules.SizeOfExcludingThis(aMallocSizeOf);
+  n += mCounterStyleRules.SizeOfExcludingThis(aMallocSizeOf);
+  n += mKeyframesRuleTable.SizeOfExcludingThis(SizeOfKeyframesRuleEntryExcludingThis,
+                                               aMallocSizeOf,
+                                               nullptr);
 
   return n;
 }
@@ -2865,6 +2888,19 @@ nsCSSRuleProcessor::KeyframesRuleForName(nsPresContext* aPresContext,
   return nullptr;
 }
 
+nsCSSCounterStyleRule*
+nsCSSRuleProcessor::CounterStyleRuleForName(nsPresContext* aPresContext,
+                                            const nsAString& aName)
+{
+  RuleCascadeData* cascade = GetRuleCascade(aPresContext);
+
+  if (cascade) {
+    return cascade->mCounterStyleRuleTable.Get(aName);
+  }
+
+  return nullptr;
+}
+
 // Append all the currently-active page rules to aArray.  Return
 // true for success and false for failure.
 bool
@@ -3205,6 +3241,7 @@ struct CascadeEnumData {
                   nsTArray<nsCSSKeyframesRule*>& aKeyframesRules,
                   nsTArray<nsCSSFontFeatureValuesRule*>& aFontFeatureValuesRules,
                   nsTArray<nsCSSPageRule*>& aPageRules,
+                  nsTArray<nsCSSCounterStyleRule*>& aCounterStyleRules,
                   nsMediaQueryResultCacheKey& aKey,
                   uint8_t aSheetType)
     : mPresContext(aPresContext),
@@ -3212,6 +3249,7 @@ struct CascadeEnumData {
       mKeyframesRules(aKeyframesRules),
       mFontFeatureValuesRules(aFontFeatureValuesRules),
       mPageRules(aPageRules),
+      mCounterStyleRules(aCounterStyleRules),
       mCacheKey(aKey),
       mSheetType(aSheetType)
   {
@@ -3236,6 +3274,7 @@ struct CascadeEnumData {
   nsTArray<nsCSSKeyframesRule*>& mKeyframesRules;
   nsTArray<nsCSSFontFeatureValuesRule*>& mFontFeatureValuesRules;
   nsTArray<nsCSSPageRule*>& mPageRules;
+  nsTArray<nsCSSCounterStyleRule*>& mCounterStyleRules;
   nsMediaQueryResultCacheKey& mCacheKey;
   PLArenaPool mArena;
   // Hooray, a manual PLDHashTable since nsClassHashtable doesn't
@@ -3255,6 +3294,7 @@ struct CascadeEnumData {
  *  (4) add any @font-feature-value rules, in order,
  *      into data->mFontFeatureValuesRules.
  *  (5) add any @page rules, in order, into data->mPageRules.
+ *  (6) add any @counter-style rules, in order, into data->mCounterStyleRules.
  */
 static bool
 CascadeRuleEnumFunc(css::Rule* aRule, void* aData)
@@ -3317,6 +3357,13 @@ CascadeRuleEnumFunc(css::Rule* aRule, void* aData)
   else if (css::Rule::PAGE_RULE == type) {
     nsCSSPageRule* pageRule = static_cast<nsCSSPageRule*>(aRule);
     if (!data->mPageRules.AppendElement(pageRule)) {
+      return false;
+    }
+  }
+  else if (css::Rule::COUNTER_STYLE_RULE == type) {
+    nsCSSCounterStyleRule* counterStyleRule =
+      static_cast<nsCSSCounterStyleRule*>(aRule);
+    if (!data->mCounterStyleRules.AppendElement(counterStyleRule)) {
       return false;
     }
   }
@@ -3424,6 +3471,7 @@ nsCSSRuleProcessor::RefreshRuleCascade(nsPresContext* aPresContext)
                            newCascade->mKeyframesRules,
                            newCascade->mFontFeatureValuesRules,
                            newCascade->mPageRules,
+                           newCascade->mCounterStyleRules,
                            newCascade->mCacheKey,
                            mSheetType);
       if (!data.mRulesByWeight.ops)
@@ -3460,6 +3508,13 @@ nsCSSRuleProcessor::RefreshRuleCascade(nsPresContext* aPresContext)
              iEnd = newCascade->mKeyframesRules.Length(); i < iEnd; ++i) {
         nsCSSKeyframesRule* rule = newCascade->mKeyframesRules[i];
         newCascade->mKeyframesRuleTable.Put(rule->GetName(), rule);
+      }
+
+      // Build mCounterStyleRuleTable
+      for (nsTArray<nsCSSCounterStyleRule*>::size_type i = 0,
+           iEnd = newCascade->mCounterStyleRules.Length(); i < iEnd; ++i) {
+        nsCSSCounterStyleRule* rule = newCascade->mCounterStyleRules[i];
+        newCascade->mCounterStyleRuleTable.Put(rule->GetName(), rule);
       }
 
       // Ensure that the current one is always mRuleCascades.

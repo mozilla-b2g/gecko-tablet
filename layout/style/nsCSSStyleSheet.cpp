@@ -24,7 +24,7 @@
 #include "nsString.h"
 #include "nsTArray.h"
 #include "nsIDOMCSSStyleSheet.h"
-#include "nsICSSRuleList.h"
+#include "mozilla/dom/CSSRuleList.h"
 #include "nsIDOMMediaList.h"
 #include "nsIDOMNode.h"
 #include "nsError.h"
@@ -51,7 +51,7 @@ using namespace mozilla::dom;
 // -------------------------------
 // Style Rule List for the DOM
 //
-class CSSRuleListImpl : public nsICSSRuleList
+class CSSRuleListImpl : public CSSRuleList
 {
 public:
   CSSRuleListImpl(nsCSSStyleSheet *aStyleSheet);
@@ -1769,7 +1769,7 @@ nsCSSStyleSheet::GetCssRules(nsIDOMCSSRuleList** aCssRules)
   return rv.ErrorCode();
 }
 
-nsICSSRuleList*
+CSSRuleList*
 nsCSSStyleSheet::GetCssRules(ErrorResult& aRv)
 {
   // No doing this on incomplete sheets!
@@ -2042,6 +2042,7 @@ nsCSSStyleSheet::InsertRuleIntoGroup(const nsAString & aRule,
     case css::Rule::FONT_FACE_RULE:
     case css::Rule::PAGE_RULE:
     case css::Rule::KEYFRAMES_RULE:
+    case css::Rule::COUNTER_STYLE_RULE:
     case css::Rule::DOCUMENT_RULE:
     case css::Rule::SUPPORTS_RULE:
       // these types are OK to insert into a group

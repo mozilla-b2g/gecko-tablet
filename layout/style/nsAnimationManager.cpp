@@ -68,8 +68,8 @@ ElementAnimations::EnsureStyleRuleFor(TimeStamp aRefreshTime,
     for (uint32_t animIdx = mAnimations.Length(); animIdx-- != 0; ) {
       ElementAnimation* anim = mAnimations[animIdx];
 
-      if (anim->mProperties.IsEmpty() ||
-          anim->mTiming.mIterationDuration.ToMilliseconds() <= 0.0) {
+      if (anim->mProperties.IsEmpty()) {
+        // Empty @keyframes rule.
         continue;
       }
 
@@ -113,12 +113,6 @@ ElementAnimations::EnsureStyleRuleFor(TimeStamp aRefreshTime,
     for (uint32_t animIdx = mAnimations.Length(); animIdx-- != 0; ) {
       ElementAnimation* anim = mAnimations[animIdx];
 
-      if (anim->mProperties.IsEmpty() ||
-          anim->mTiming.mIterationDuration.ToMilliseconds() <= 0.0) {
-        // The animation isn't active or filling at this time.
-        continue;
-      }
-
       // The ElapsedDurationAt() call here handles pausing.  But:
       // FIXME: avoid recalculating every time when paused.
       TimeDuration elapsedDuration = anim->ElapsedDurationAt(aRefreshTime);
@@ -133,8 +127,9 @@ ElementAnimations::EnsureStyleRuleFor(TimeStamp aRefreshTime,
 
       // If the time fraction is null, we don't have fill data for the current
       // time so we shouldn't animate.
-      if (computedTiming.mTimeFraction == ComputedTiming::kNullTimeFraction)
+      if (computedTiming.mTimeFraction == ComputedTiming::kNullTimeFraction) {
         continue;
+      }
 
       NS_ABORT_IF_FALSE(0.0 <= computedTiming.mTimeFraction &&
                         computedTiming.mTimeFraction <= 1.0,
@@ -218,17 +213,6 @@ ElementAnimations::GetEventsAt(TimeStamp aRefreshTime,
   for (uint32_t animIdx = mAnimations.Length(); animIdx-- != 0; ) {
     ElementAnimation* anim = mAnimations[animIdx];
 
-    // We should *not* skip animations with zero duration (bug 1004365) or
-    // those with no keyframes (bug 1004377).
-    // We will fix this separately but for now this is necessary since
-    // ElementAnimation::GetComputedTimingAt does not yet handle
-    // zero-duration iterations.
-    if (anim->mProperties.IsEmpty() ||
-        anim->mTiming.mIterationDuration.ToMilliseconds() <= 0.0) {
-      // The animation isn't active or filling at this time.
-      continue;
-    }
-
     TimeDuration elapsedDuration = anim->ElapsedDurationAt(aRefreshTime);
     ComputedTiming computedTiming =
       ElementAnimation::GetComputedTimingAt(elapsedDuration, anim->mTiming);
@@ -264,7 +248,8 @@ ElementAnimations::GetEventsAt(TimeStamp aRefreshTime,
         break;
 
       case ComputedTiming::AnimationPhase_After:
-        TimeDuration activeDuration = anim->ActiveDuration();
+        TimeDuration activeDuration =
+          ElementAnimation::ActiveDuration(anim->mTiming);
         // If we skipped the animation interval entirely, dispatch
         // 'animationstart' first
         if (anim->mLastNotification ==

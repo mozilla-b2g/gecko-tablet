@@ -45,6 +45,7 @@ using mozilla::MinNumberValue;
 using mozilla::NegativeInfinity;
 using mozilla::PodCopy;
 using mozilla::PositiveInfinity;
+using mozilla::Range;
 using mozilla::RangedPtr;
 
 using JS::AutoCheckCannotGC;
@@ -175,14 +176,15 @@ ComputeAccurateBinaryBaseInteger(const CharT *start, const CharT *end, int base)
     return value;
 }
 
+template <typename CharT>
 double
-js::ParseDecimalNumber(const JS::TwoByteChars chars)
+js::ParseDecimalNumber(const Range<const CharT> chars)
 {
     MOZ_ASSERT(chars.length() > 0);
     uint64_t dec = 0;
-    RangedPtr<jschar> s = chars.start(), end = chars.end();
+    RangedPtr<const CharT> s = chars.start(), end = chars.end();
     do {
-        jschar c = *s;
+        CharT c = *s;
         MOZ_ASSERT('0' <= c && c <= '9');
         uint8_t digit = c - '0';
         uint64_t next = dec * 10 + digit;
@@ -192,6 +194,12 @@ js::ParseDecimalNumber(const JS::TwoByteChars chars)
     } while (++s < end);
     return static_cast<double>(dec);
 }
+
+template double
+js::ParseDecimalNumber(const Range<const Latin1Char> chars);
+
+template double
+js::ParseDecimalNumber(const Range<const jschar> chars);
 
 template <typename CharT>
 bool
@@ -1105,26 +1113,22 @@ static JSConstDoubleSpec number_constants[] = {
     {0,0,0,{0,0,0}}
 };
 
-#if (defined __GNUC__ && defined __i386__) || \
-    (defined __SUNPRO_CC && defined __i386)
-
 /*
  * Set the exception mask to mask all exceptions and set the FPU precision
  * to 53 bit mantissa (64 bit doubles).
  */
-static inline void FIX_FPU() {
+void
+js::FIX_FPU()
+{
+#if (defined __GNUC__ && defined __i386__) || \
+    (defined __SUNPRO_CC && defined __i386)
     short control;
     asm("fstcw %0" : "=m" (control) : );
     control &= ~0x300; // Lower bits 8 and 9 (precision control).
     control |= 0x2f3;  // Raise bits 0-5 (exception masks) and 9 (64-bit precision).
     asm("fldcw %0" : : "m" (control) );
-}
-
-#else
-
-#define FIX_FPU() ((void)0)
-
 #endif
+}
 
 bool
 js::InitRuntimeNumberState(JSRuntime *rt)
@@ -1466,7 +1470,7 @@ js::NumberValueToStringBuffer(JSContext *cx, const Value &v, StringBuffer &sb)
      * even if jschars are UTF-8, all chars should map to one jschar.
      */
     JS_ASSERT(!cbuf.dbuf && cstrlen < cbuf.sbufSize);
-    return sb.appendInflated(cstr, cstrlen);
+    return sb.append(cstr, cstrlen);
 }
 
 template <typename CharT>

@@ -24,6 +24,7 @@ const HTML_NS = "http://www.w3.org/1999/xhtml";
 const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 const PREF_UA_STYLES = "devtools.inspector.showUserAgentStyles";
 const PREF_DEFAULT_COLOR_UNIT = "devtools.defaultColorUnit";
+const TRANSFORM_HIGHLIGHTER_TYPE = "CssTransformHighlighter";
 
 /**
  * These regular expressions are adapted from firebug's css.js, and are
@@ -1030,7 +1031,6 @@ TextProperty.prototype = {
   }
 };
 
-
 /**
  * View hierarchy mostly follows the model hierarchy.
  *
@@ -1079,6 +1079,7 @@ function CssRuleView(aInspector, aDoc, aStore, aPageStyle) {
   this._contextMenuUpdate = this._contextMenuUpdate.bind(this);
   this._onSelectAll = this._onSelectAll.bind(this);
   this._onCopy = this._onCopy.bind(this);
+  this._onCopyColor = this._onCopyColor.bind(this);
   this._onToggleOrigSources = this._onToggleOrigSources.bind(this);
 
   this.element.addEventListener("copy", this._onCopy);
@@ -1110,6 +1111,12 @@ function CssRuleView(aInspector, aDoc, aStore, aPageStyle) {
 
   this._buildContextMenu();
   this._showEmpty();
+
+  // Initialize the css transform highlighter if the target supports it
+  let hUtils = this.inspector.toolbox.highlighterUtils;
+  if (hUtils.hasCustomHighlighter(TRANSFORM_HIGHLIGHTER_TYPE)) {
+    this._initTransformHighlighter();
+  }
 }
 
 exports.CssRuleView = CssRuleView;
@@ -1138,6 +1145,11 @@ CssRuleView.prototype = {
       accesskey: "ruleView.contextmenu.copy.accessKey",
       command: this._onCopy
     });
+    this.menuitemCopyColor = createMenuItem(this._contextmenu, {
+      label: "ruleView.contextmenu.copyColor",
+      accesskey: "ruleView.contextmenu.copyColor.accessKey",
+      command: this._onCopyColor
+    });
     this.menuitemSources= createMenuItem(this._contextmenu, {
       label: "ruleView.contextmenu.showOrigSources",
       accesskey: "ruleView.contextmenu.showOrigSources.accessKey",
@@ -1154,19 +1166,73 @@ CssRuleView.prototype = {
   },
 
   /**
+   * Get the css transform highlighter front, initializing it if needed
+   * @param a promise that resolves to the highlighter
+   */
+  getTransformHighlighter: function() {
+    if (this.transformHighlighterPromise) {
+      return this.transformHighlighterPromise;
+    }
+
+    let utils = this.inspector.toolbox.highlighterUtils;
+    this.transformHighlighterPromise =
+    utils.getHighlighterByType(TRANSFORM_HIGHLIGHTER_TYPE).then(highlighter => {
+      this.transformHighlighter = highlighter;
+      return this.transformHighlighter;
+    });
+
+    return this.transformHighlighterPromise;
+  },
+
+  _initTransformHighlighter: function() {
+    this.isTransformHighlighterShown = false;
+
+    this._onMouseMove = this._onMouseMove.bind(this);
+    this._onMouseLeave = this._onMouseLeave.bind(this);
+
+    this.element.addEventListener("mousemove", this._onMouseMove, false);
+    this.element.addEventListener("mouseleave", this._onMouseLeave, false);
+  },
+
+  _onMouseMove: function(event) {
+    if (event.target === this._lastHovered) {
+      return;
+    }
+
+    if (this.isTransformHighlighterShown) {
+      this.isTransformHighlighterShown = false;
+      this.getTransformHighlighter().then(highlighter => highlighter.hide());
+    }
+
+    this._lastHovered = event.target;
+    let prop = event.target.textProperty;
+    let isHighlightable = prop && prop.name === "transform" &&
+                          prop.enabled && !prop.overridden &&
+                          !prop.rule.pseudoElement;
+
+    if (isHighlightable) {
+      this.isTransformHighlighterShown = true;
+      let node = this.inspector.selection.nodeFront;
+      this.getTransformHighlighter().then(highlighter => highlighter.show(node));
+    }
+  },
+
+  _onMouseLeave: function(event) {
+    this._lastHovered = null;
+    if (this.isTransformHighlighterShown) {
+      this.isTransformHighlighterShown = false;
+      this.getTransformHighlighter().then(highlighter => highlighter.hide());
+    }
+  },
+
+  /**
    * Which type of hover-tooltip should be shown for the given element?
-   * This depends on the element: does it contain an image URL, a CSS transform,
-   * a font-family, ...
+   * This depends on the element: does it contain a URL, a font-family, ...
    * @param {DOMNode} el The element to test
    * @return {String} The type of hover-tooltip
    */
   _getHoverTooltipTypeForTarget: function(el) {
     let prop = el.textProperty;
-
-    // Test for css transform
-    if (prop && prop.name === "transform") {
-      return "transform";
-    }
 
     // Test for image
     let isUrl = el.classList.contains("theme-link") &&
@@ -1212,10 +1278,6 @@ CssRuleView.prototype = {
       this.colorPicker.hide();
     }
 
-    if (tooltipType === "transform") {
-      return this.previewTooltip.setCssTransformContent(target.textProperty.value,
-        this.pageStyle, this._viewedElement);
-    }
     if (tooltipType === "image") {
       let prop = target.parentNode.textProperty;
       let dim = Services.prefs.getIntPref("devtools.inspector.imagePreviewTooltipSize");
@@ -1261,6 +1323,7 @@ CssRuleView.prototype = {
       copy = false;
     }
 
+    this.menuitemCopyColor.hidden = !this._isColorPopup();
     this.menuitemCopy.disabled = !copy;
 
     let label = "ruleView.contextmenu.showOrigSources";
@@ -1273,6 +1336,37 @@ CssRuleView.prototype = {
     let accessKey = label + ".accessKey";
     this.menuitemSources.setAttribute("accesskey",
                                       _strings.GetStringFromName(accessKey));
+  },
+
+  /**
+   * A helper that determines if the popup was opened with a click to a color
+   * value and saves the color to this._colorToCopy.
+   *
+   * @return {Boolean}
+   *         true if click on color opened the popup, false otherwise.
+   */
+  _isColorPopup: function () {
+    this._colorToCopy = "";
+
+    let trigger = this.doc.popupNode;
+    if (!trigger) {
+      return false;
+    }
+
+    let container = (trigger.nodeType == trigger.TEXT_NODE) ?
+                     trigger.parentElement : trigger;
+
+    let isColorNode = el => el.dataset && "color" in el.dataset;
+
+    while (!isColorNode(container)) {
+      container = container.parentNode;
+      if (!container) {
+        return false;
+      }
+    }
+
+    this._colorToCopy = container.dataset["color"];
+    return true;
   },
 
   /**
@@ -1325,6 +1419,13 @@ CssRuleView.prototype = {
     } catch(e) {
       console.error(e);
     }
+  },
+
+  /**
+   * Copy the most recently selected color value to clipboard.
+   */
+  _onCopyColor: function() {
+    clipboardHelper.copyString(this._colorToCopy, this.styleDocument);
   },
 
   /**
@@ -1400,6 +1501,10 @@ CssRuleView.prototype = {
       this.menuitemCopy.removeEventListener("command", this._onCopy);
       this.menuitemCopy = null;
 
+      // Destroy Copy Color menuitem.
+      this.menuitemCopyColor.removeEventListener("command", this._onCopyColor);
+      this.menuitemCopyColor = null;
+
       this.menuitemSources.removeEventListener("command", this._onToggleOrigSources);
       this.menuitemSources = null;
 
@@ -1415,6 +1520,16 @@ CssRuleView.prototype = {
     this.previewTooltip.stopTogglingOnHover(this.element);
     this.previewTooltip.destroy();
     this.colorPicker.destroy();
+
+    if (this.transformHighlighter) {
+      this.transformHighlighter.finalize();
+      this.transformHighlighter = null;
+
+      this.element.removeEventListener("mousemove", this._onMouseMove, false);
+      this.element.removeEventListener("mouseleave", this._onMouseLeave, false);
+
+      this._lastHovered = null;
+    }
 
     if (this.element.parentNode) {
       this.element.parentNode.removeChild(this.element);
@@ -1440,10 +1555,6 @@ CssRuleView.prototype = {
 
     this.clear();
 
-    if (this._elementStyle) {
-      delete this._elementStyle;
-    }
-
     this._viewedElement = aElement;
     if (!this._viewedElement) {
       this._showEmpty();
@@ -1454,11 +1565,11 @@ CssRuleView.prototype = {
       this.pageStyle, this.showUserAgentStyles);
 
     return this._elementStyle.init().then(() => {
-      return this._populate();
+      if (this._viewedElement === aElement) {
+        return this._populate();
+      }
     }).then(() => {
-      // A new node may already be selected, in which this._elementStyle will
-      // be null.
-      if (this._elementStyle) {
+      if (this._viewedElement === aElement) {
         this._elementStyle.onChanged = () => {
           this._changed();
         };

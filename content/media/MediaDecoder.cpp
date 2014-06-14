@@ -222,7 +222,8 @@ MediaDecoder::DecodedStreamGraphListener::DecodedStreamGraphListener(MediaStream
   : mData(aData),
     mMutex("MediaDecoder::DecodedStreamData::mMutex"),
     mStream(aStream),
-    mLastOutputTime(aStream->GetCurrentTime()),
+    mLastOutputTime(aStream->
+                    StreamTimeToMicroseconds(aStream->GetCurrentTime())),
     mStreamFinishedOnMainThread(false)
 {
 }
@@ -233,7 +234,8 @@ MediaDecoder::DecodedStreamGraphListener::NotifyOutput(MediaStreamGraph* aGraph,
 {
   MutexAutoLock lock(mMutex);
   if (mStream) {
-    mLastOutputTime = mStream->GraphTimeToStreamTime(aCurrentTime);
+    mLastOutputTime = mStream->
+      StreamTimeToMicroseconds(mStream->GraphTimeToStreamTime(aCurrentTime));
   }
 }
 
@@ -1526,7 +1528,7 @@ int64_t MediaDecoder::GetEndMediaTime() const {
 }
 
 // Drop reference to state machine.  Only called during shutdown dance.
-void MediaDecoder::BreakCycles() {
+void MediaDecoder::ReleaseStateMachine() {
   mDecoderStateMachine = nullptr;
 }
 

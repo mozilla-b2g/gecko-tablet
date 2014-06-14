@@ -48,6 +48,7 @@
 #include "nsRenderingContext.h"
 #include "TextOverflow.h"
 #include "nsIFrameInlines.h"
+#include "CounterStyleManager.h"
 
 #include "nsBidiPresUtils.h"
 
@@ -1185,6 +1186,7 @@ nsBlockFrame::Reflow(nsPresContext*           aPresContext,
     nsHTMLReflowMetrics metrics(aReflowState);
     // XXX Use the entire line when we fix bug 25888.
     nsLayoutUtils::LinePosition position;
+    WritingMode wm = aReflowState.GetWritingMode();
     bool havePosition = nsLayoutUtils::GetFirstLinePosition(this, &position);
     nscoord lineTop = havePosition ? position.mTop
                                    : reflowState->ComputedPhysicalBorderPadding().top;
@@ -1200,9 +1202,9 @@ nsBlockFrame::Reflow(nsPresContext*           aPresContext,
       // bullets that are placed next to a child block (bug 92896)
     
       // Tall bullets won't look particularly nice here...
-      nsRect bbox = bullet->GetRect();
-      bbox.y = position.mBaseline - metrics.TopAscent();
-      bullet->SetRect(bbox);
+      LogicalRect bbox = bullet->GetLogicalRect(wm, metrics.Width());
+      bbox.BStart(wm) = position.mBaseline - metrics.BlockStartAscent();
+      bullet->SetRect(wm, bbox, metrics.Width());
     }
     // Otherwise just leave the bullet where it is, up against our top padding.
   }
@@ -2455,13 +2457,14 @@ nsBlockFrame::ReflowDirtyLines(nsBlockReflowState& aState)
     if (!BulletIsEmpty()) {
       // There are no lines so we have to fake up some y motion so that
       // we end up with *some* height.
+      WritingMode wm = aState.mReflowState.GetWritingMode();
 
-      if (metrics.TopAscent() == nsHTMLReflowMetrics::ASK_FOR_BASELINE) {
+      if (metrics.BlockStartAscent() == nsHTMLReflowMetrics::ASK_FOR_BASELINE) {
         nscoord ascent;
         if (nsLayoutUtils::GetFirstLineBaseline(bullet, &ascent)) {
-          metrics.SetTopAscent(ascent);
+          metrics.SetBlockStartAscent(ascent);
         } else {
-          metrics.SetTopAscent(metrics.Height());
+          metrics.SetBlockStartAscent(metrics.BSize(wm));
         }
       }
 
@@ -2474,10 +2477,11 @@ nsBlockFrame::ReflowDirtyLines(nsBlockReflowState& aState)
         nsLayoutUtils::GetCenteredFontBaseline(fm, aState.mMinLineHeight);
       nscoord minDescent = aState.mMinLineHeight - minAscent;
 
-      aState.mY += std::max(minAscent, metrics.TopAscent()) +
-                   std::max(minDescent, metrics.Height() - metrics.TopAscent());
+      aState.mY += std::max(minAscent, metrics.BlockStartAscent()) +
+                   std::max(minDescent, metrics.BSize(wm) -
+                                         metrics.BlockStartAscent());
 
-      nscoord offset = minAscent - metrics.TopAscent();
+      nscoord offset = minAscent - metrics.BlockStartAscent();
       if (offset > 0) {
         bullet->SetRect(bullet->GetRect() + nsPoint(0, offset));
       }
@@ -6483,17 +6487,10 @@ nsBlockFrame::SetInitialChildList(ChildListID     aListID,
         !GetPrevInFlow()) {
       // Resolve style for the bullet frame
       const nsStyleList* styleList = StyleList();
-      nsCSSPseudoElements::Type pseudoType;
-      switch (styleList->mListStyleType) {
-        case NS_STYLE_LIST_STYLE_DISC:
-        case NS_STYLE_LIST_STYLE_CIRCLE:
-        case NS_STYLE_LIST_STYLE_SQUARE:
-          pseudoType = nsCSSPseudoElements::ePseudo_mozListBullet;
-          break;
-        default:
-          pseudoType = nsCSSPseudoElements::ePseudo_mozListNumber;
-          break;
-      }
+      CounterStyle* style = styleList->GetCounterStyle();
+      nsCSSPseudoElements::Type pseudoType = style->IsBullet() ?
+        nsCSSPseudoElements::ePseudo_mozListBullet :
+        nsCSSPseudoElements::ePseudo_mozListNumber;
 
       nsIPresShell *shell = presContext->PresShell();
 
@@ -6532,35 +6529,23 @@ nsBlockFrame::BulletIsEmpty() const
                  NS_STYLE_DISPLAY_LIST_ITEM && HasOutsideBullet(),
                "should only care when we have an outside bullet");
   const nsStyleList* list = StyleList();
-  return list->mListStyleType == NS_STYLE_LIST_STYLE_NONE &&
+  return list->GetCounterStyle()->IsNone() &&
          !list->GetListStyleImage();
 }
 
 void
-nsBlockFrame::GetBulletText(nsAString& aText) const
+nsBlockFrame::GetSpokenBulletText(nsAString& aText) const
 {
-  aText.Truncate();
-
   const nsStyleList* myList = StyleList();
-  if (myList->GetListStyleImage() ||
-      myList->mListStyleType == NS_STYLE_LIST_STYLE_DISC) {
+  if (myList->GetListStyleImage()) {
     aText.Assign(kDiscCharacter);
     aText.Append(' ');
-  }
-  else if (myList->mListStyleType == NS_STYLE_LIST_STYLE_CIRCLE) {
-    aText.Assign(kCircleCharacter);
-    aText.Append(' ');
-  }
-  else if (myList->mListStyleType == NS_STYLE_LIST_STYLE_SQUARE) {
-    aText.Assign(kSquareCharacter);
-    aText.Append(' ');
-  }
-  else if (myList->mListStyleType != NS_STYLE_LIST_STYLE_NONE) {
+  } else {
     nsBulletFrame* bullet = GetBullet();
     if (bullet) {
-      nsAutoString text;
-      bullet->GetListItemText(*myList, text);
-      aText = text;
+      bullet->GetSpokenText(aText);
+    } else {
+      aText.Truncate();
     }
   }
 }

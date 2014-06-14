@@ -117,6 +117,15 @@ class MUse : public TempObject, public InlineListNode<MUse>
         consumer_(consumer)
     { }
 
+    // Low-level unchecked edit method for replaceAllUsesWith. This doesn't
+    // update use lists! replaceAllUsesWith does that manually.
+    void setProducerUnchecked(MDefinition *producer) {
+        MOZ_ASSERT(consumer_);
+        MOZ_ASSERT(producer_);
+        MOZ_ASSERT(producer);
+        producer_ = producer;
+    }
+
   public:
     // Default constructor for use in vectors.
     MUse()
@@ -1018,8 +1027,8 @@ class MNop : public MNullaryInstruction
     }
 };
 
-// No-op instruction. This cannot be moved or eliminated, and is intended for
-// protecting the input against follow-up optimization.
+// Truncation barrier. This is intended for protecting its input against
+// follow-up truncation optimizations.
 class MLimitedTruncate : public MUnaryInstruction
 {
   public:
@@ -1034,6 +1043,7 @@ class MLimitedTruncate : public MUnaryInstruction
     {
         setResultType(input->type());
         setResultTypeSet(input->resultTypeSet());
+        setMovable();
     }
 
   public:
@@ -2279,21 +2289,33 @@ class MApplyArgs
 class MBail : public MNullaryInstruction
 {
   protected:
-    MBail()
+    MBail(BailoutKind kind)
     {
+        bailoutKind_ = kind;
         setGuard();
     }
+
+  private:
+    BailoutKind bailoutKind_;
 
   public:
     INSTRUCTION_HEADER(Bail)
 
     static MBail *
+    New(TempAllocator &alloc, BailoutKind kind) {
+        return new(alloc) MBail(kind);
+    }
+    static MBail *
     New(TempAllocator &alloc) {
-        return new(alloc) MBail();
+        return new(alloc) MBail(Bailout_Inevitable);
     }
 
     AliasSet getAliasSet() const {
         return AliasSet::None();
+    }
+
+    BailoutKind bailoutKind() const {
+        return bailoutKind_;
     }
 };
 
@@ -2693,7 +2715,30 @@ class MUnbox : public MUnaryInstruction, public BoxInputsPolicy
     INSTRUCTION_HEADER(Unbox)
     static MUnbox *New(TempAllocator &alloc, MDefinition *ins, MIRType type, Mode mode)
     {
-        return new(alloc) MUnbox(ins, type, mode, Bailout_Normal);
+        // Unless we were given a specific BailoutKind, pick a default based on
+        // the type we expect.
+        BailoutKind kind;
+        switch(type){
+          case MIRType_Boolean:
+            kind = Bailout_NonBooleanInput;
+            break;
+          case MIRType_Int32:
+            kind = Bailout_NonInt32Input;
+            break;
+          case MIRType_Double:
+            kind = Bailout_NonNumericInput; // Int32s are fine too
+            break;
+          case MIRType_String:
+            kind = Bailout_NonStringInput;
+            break;
+          case MIRType_Object:
+            kind = Bailout_NonObjectInput;
+            break;
+          default:
+            MOZ_ASSUME_UNREACHABLE("Given MIRType cannot be unboxed.");
+        }
+
+        return new(alloc) MUnbox(ins, type, mode, kind);
     }
 
     static MUnbox *New(TempAllocator &alloc, MDefinition *ins, MIRType type, Mode mode,
@@ -3617,6 +3662,11 @@ class MBitAnd : public MBinaryBitwiseInstruction
         return getOperand(0); // x & x => x;
     }
     void computeRange(TempAllocator &alloc);
+
+    bool writeRecoverData(CompactBufferWriter &writer) const;
+    bool canRecoverOnBailout() const {
+        return specialization_ != MIRType_None;
+    }
 };
 
 class MBitOr : public MBinaryBitwiseInstruction
@@ -4641,6 +4691,12 @@ class MConcat
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
+
+    bool writeRecoverData(CompactBufferWriter &writer) const;
+    bool canRecoverOnBailout() const {
+        return true;
+    }
+
 };
 
 class MConcatPar
@@ -9433,7 +9489,7 @@ class MGuardThreadExclusive
         return getOperand(1);
     }
     BailoutKind bailoutKind() const {
-        return Bailout_Normal;
+        return Bailout_GuardThreadExclusive;
     }
     bool congruentTo(const MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
@@ -10371,7 +10427,7 @@ class MAsmJSPassStackArg : public MUnaryInstruction
     }
 };
 
-class MAsmJSCall MOZ_FINAL : public MInstruction
+class MAsmJSCall MOZ_FINAL : public MVariadicInstruction
 {
   public:
     class Callee {
@@ -10396,33 +10452,14 @@ class MAsmJSCall MOZ_FINAL : public MInstruction
     };
 
   private:
-    struct Operand {
-        AnyRegister reg;
-        MUse use;
-    };
-
     CallSiteDesc desc_;
     Callee callee_;
-    FixedList<MUse> operands_;
     FixedList<AnyRegister> argRegs_;
     size_t spIncrement_;
-
-    void initOperand(size_t index, MDefinition *operand) {
-        // FixedList doesn't initialize its elements, so do an unchecked init.
-        operands_[index].initUnchecked(operand, this);
-    }
 
     MAsmJSCall(const CallSiteDesc &desc, Callee callee, size_t spIncrement)
      : desc_(desc), callee_(callee), spIncrement_(spIncrement)
     { }
-
-  protected:
-    MUse *getUseFor(size_t index) {
-        return &operands_[index];
-    }
-    const MUse *getUseFor(size_t index) const {
-        return &operands_[index];
-    }
 
   public:
     INSTRUCTION_HEADER(AsmJSCall);
@@ -10437,21 +10474,6 @@ class MAsmJSCall MOZ_FINAL : public MInstruction
     static MAsmJSCall *New(TempAllocator &alloc, const CallSiteDesc &desc, Callee callee,
                            const Args &args, MIRType resultType, size_t spIncrement);
 
-    size_t numOperands() const {
-        return operands_.length();
-    }
-    size_t indexOf(const MUse *u) const MOZ_FINAL MOZ_OVERRIDE {
-        MOZ_ASSERT(u >= &operands_[0]);
-        MOZ_ASSERT(u <= &operands_[numOperands() - 1]);
-        return u - &operands_[0];
-    }
-    void replaceOperand(size_t index, MDefinition *operand) MOZ_FINAL MOZ_OVERRIDE {
-        operands_[index].replaceProducer(operand);
-    }
-    MDefinition *getOperand(size_t index) const {
-        JS_ASSERT(index < numOperands());
-        return operands_[index].producer();
-    }
     size_t numArgs() const {
         return argRegs_.length();
     }
