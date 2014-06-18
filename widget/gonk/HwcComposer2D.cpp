@@ -683,7 +683,7 @@ HwcComposer2D::Commit()
     displays[HWC_DISPLAY_PRIMARY] = mList;
 
     for (uint32_t j=0; j < (mList->numHwLayers - 1); j++) {
-        if (mHwcLayerMap.IsEmpty() ||
+        if (!mHwcLayerMap[j] ||
             (mList->hwLayers[j].compositionType == HWC_FRAMEBUFFER)) {
             continue;
         }
@@ -793,7 +793,6 @@ HwcComposer2D::TryRender(Layer* aRoot,
                           gfxMatrix(),
                           aGLWorldTransform))
     {
-        mHwcLayerMap.Clear();
         LOGD("Render aborted. Nothing was drawn to the screen");
         return false;
     }
