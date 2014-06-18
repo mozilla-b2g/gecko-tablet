@@ -360,9 +360,6 @@ TelephonyIPCService::CallStateChanged(uint32_t aClientId,
                                        uint32_t aCallIndex,
                                        uint16_t aCallState,
                                        const nsAString& aNumber,
-                                       uint16_t aNumberPresentation,
-                                       const nsAString& aName,
-                                       uint16_t aNamePresentation,
                                        bool aIsOutgoing,
                                        bool aIsEmergency,
                                        bool aIsConference,
@@ -371,7 +368,6 @@ TelephonyIPCService::CallStateChanged(uint32_t aClientId,
 {
   for (uint32_t i = 0; i < mListeners.Length(); i++) {
     mListeners[i]->CallStateChanged(aClientId, aCallIndex, aCallState, aNumber,
-                                    aNumberPresentation, aName, aNamePresentation,
                                     aIsOutgoing, aIsEmergency, aIsConference,
                                     aIsSwitchable, aIsMergeable);
   }
@@ -398,9 +394,6 @@ TelephonyIPCService::EnumerateCallState(uint32_t aClientId,
                                          uint32_t aCallIndex,
                                          uint16_t aCallState,
                                          const nsAString& aNumber,
-                                         uint16_t aNumberPresentation,
-                                         const nsAString& aName,
-                                         uint16_t aNamePresentation,
                                          bool aIsOutgoing,
                                          bool aIsEmergency,
                                          bool aIsConference,
@@ -412,14 +405,10 @@ TelephonyIPCService::EnumerateCallState(uint32_t aClientId,
 
 NS_IMETHODIMP
 TelephonyIPCService::NotifyCdmaCallWaiting(uint32_t aClientId,
-                                            const nsAString& aNumber,
-                                            uint16_t aNumberPresentation,
-                                            const nsAString& aName,
-                                            uint16_t aNamePresentation)
+                                            const nsAString& aNumber)
 {
   for (uint32_t i = 0; i < mListeners.Length(); i++) {
-    mListeners[i]->NotifyCdmaCallWaiting(aClientId, aNumber, aNumberPresentation,
-                                         aName, aNamePresentation);
+    mListeners[i]->NotifyCdmaCallWaiting(aClientId, aNumber);
   }
   return NS_OK;
 }

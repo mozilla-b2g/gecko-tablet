@@ -231,12 +231,12 @@ MarkupView.prototype = {
   },
 
   update: function() {
-    let updateChildren = function(node) {
+    let updateChildren = (node) => {
       this.getContainer(node).update();
       for (let child of node.treeChildren()) {
         updateChildren(child);
       }
-    }.bind(this);
+    };
 
     // Start with the documentElement
     let documentElement;
@@ -293,7 +293,7 @@ MarkupView.prototype = {
    */
   _shouldNewSelectionBeHighlighted: function() {
     let reason = this._inspector.selection.reason;
-    let unwantedReasons = ["inspector-open", "navigateaway", "test"];
+    let unwantedReasons = ["inspector-open", "navigateaway", "nodeselected", "test"];
     let isHighlitNode = this._hoveredNode === this._inspector.selection.nodeFront;
     return !isHighlitNode && reason && unwantedReasons.indexOf(reason) === -1;
   },
@@ -361,11 +361,15 @@ MarkupView.prototype = {
 
     switch(aEvent.keyCode) {
       case Ci.nsIDOMKeyEvent.DOM_VK_H:
-        let node = this._selectedContainer.node;
-        if (node.hidden) {
-          this.walker.unhideNode(node).then(() => this.nodeChanged(node));
+        if (aEvent.metaKey || aEvent.shiftKey) {
+          handled = false;
         } else {
-          this.walker.hideNode(node).then(() => this.nodeChanged(node));
+          let node = this._selectedContainer.node;
+          if (node.hidden) {
+            this.walker.unhideNode(node).then(() => this.nodeChanged(node));
+          } else {
+            this.walker.hideNode(node).then(() => this.nodeChanged(node));
+          }
         }
         break;
       case Ci.nsIDOMKeyEvent.DOM_VK_DELETE:
@@ -1240,10 +1244,10 @@ MarkupView.prototype = {
     this._previewBar.classList.add("hide");
     win.clearTimeout(this._resizePreviewTimeout);
 
-    win.setTimeout(function() {
+    win.setTimeout(() => {
       this._updatePreview();
       this._previewBar.classList.remove("hide");
-    }.bind(this), 1000);
+    }, 1000);
   }
 };
 

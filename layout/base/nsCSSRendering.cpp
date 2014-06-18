@@ -1602,7 +1602,8 @@ nsCSSRendering::PaintBackground(nsPresContext* aPresContext,
 }
 
 void
-nsCSSRendering::PaintBackgroundColor(nsPresContext* aPresContext,
+nsCSSRendering::PaintBackgroundColor(gfxRGBA aColor,
+                                     nsPresContext* aPresContext,
                                      nsRenderingContext& aRenderingContext,
                                      nsIFrame* aForFrame,
                                      const nsRect& aDirtyRect,
@@ -1634,7 +1635,7 @@ nsCSSRendering::PaintBackgroundColor(nsPresContext* aPresContext,
     sc = aForFrame->StyleContext();
   }
 
-  PaintBackgroundColorWithSC(aPresContext, aRenderingContext, aForFrame,
+  PaintBackgroundColorWithSC(aColor, aPresContext, aRenderingContext, aForFrame,
                              aDirtyRect, aBorderArea, sc,
                              *aForFrame->StyleBorder(), aFlags);
 }
@@ -2873,7 +2874,8 @@ nsCSSRendering::PaintBackgroundWithSC(nsPresContext* aPresContext,
 }
 
 void
-nsCSSRendering::PaintBackgroundColorWithSC(nsPresContext* aPresContext,
+nsCSSRendering::PaintBackgroundColorWithSC(gfxRGBA aColor,
+                                           nsPresContext* aPresContext,
                                            nsRenderingContext& aRenderingContext,
                                            nsIFrame* aForFrame,
                                            const nsRect& aDirtyRect,
@@ -2903,11 +2905,11 @@ nsCSSRendering::PaintBackgroundColorWithSC(nsPresContext* aPresContext,
   // background colors.
   bool drawBackgroundImage;
   bool drawBackgroundColor;
-  nscolor bgColor = DetermineBackgroundColor(aPresContext,
-                                             aBackgroundSC,
-                                             aForFrame,
-                                             drawBackgroundImage,
-                                             drawBackgroundColor);
+  DetermineBackgroundColor(aPresContext,
+                           aBackgroundSC,
+                           aForFrame,
+                           drawBackgroundImage,
+                           drawBackgroundColor);
 
   NS_ASSERTION(drawBackgroundImage || drawBackgroundColor,
                "Should not be trying to paint a background if we don't have one");
@@ -2951,7 +2953,7 @@ nsCSSRendering::PaintBackgroundColorWithSC(nsPresContext* aPresContext,
                     aDirtyRect, haveRoundedCorners, bgRadii, appUnitsPerPixel,
                     &clipState);
 
-  ctx->SetColor(gfxRGBA(bgColor));
+  ctx->SetColor(aColor);
 
   gfxContextAutoSaveRestore autoSR;
   DrawBackgroundColor(clipState, ctx, haveRoundedCorners, appUnitsPerPixel);
@@ -5162,11 +5164,11 @@ nsContextBoxBlur::Init(const nsRect& aRect, nscoord aSpreadRadius,
   // and will sometimes get incorrect results (e.g. rotated blurs)
   gfxMatrix transform = aDestinationCtx->CurrentMatrix();
   // XXX: we could probably handle negative scales but for now it's easier just to fallback
-  if (transform.HasNonAxisAlignedTransform() || transform.xx <= 0.0 || transform.yy <= 0.0) {
+  if (transform.HasNonAxisAlignedTransform() || transform._11 <= 0.0 || transform._22 <= 0.0) {
     transform = gfxMatrix();
   } else {
-    scaleX = transform.xx;
-    scaleY = transform.yy;
+    scaleX = transform._11;
+    scaleY = transform._22;
   }
 
   // compute a large or smaller blur radius
@@ -5286,9 +5288,9 @@ nsContextBoxBlur::BlurRectangle(gfxContext* aDestinationCtx,
   // and will sometimes get incorrect results (e.g. rotated blurs)
   gfxMatrix transform = aDestinationCtx->CurrentMatrix();
   // XXX: we could probably handle negative scales but for now it's easier just to fallback
-  if (!transform.HasNonAxisAlignedTransform() && transform.xx > 0.0 && transform.yy > 0.0) {
-    scaleX = transform.xx;
-    scaleY = transform.yy;
+  if (!transform.HasNonAxisAlignedTransform() && transform._11 > 0.0 && transform._22 > 0.0) {
+    scaleX = transform._11;
+    scaleY = transform._22;
     aDestinationCtx->IdentityMatrix();
   } else {
     transform = gfxMatrix();

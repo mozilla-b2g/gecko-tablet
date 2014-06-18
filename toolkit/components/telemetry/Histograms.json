@@ -4658,6 +4658,17 @@
     "n_buckets": 20,
     "description": "The PDF document size (KB)"
   },
+  "PDF_VIEWER_FONT_TYPES": {
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 19,
+    "description": "The PDF document font types used"
+  },
+  "PDF_VIEWER_EMBED": {
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "description": "A PDF document was embedded: true using OBJECT/EMBED and false using IFRAME"
+  },
   "PDF_VIEWER_FORM": {
     "expires_in_version": "never",
     "kind": "boolean",
@@ -4666,7 +4677,7 @@
   "PDF_VIEWER_STREAM_TYPES": {
     "expires_in_version": "never",
     "kind": "enumerated",
-    "n_values": 9,
+    "n_values": 19,
     "description": "The PDF document compression stream types used"
   },
   "PDF_VIEWER_TIME_TO_VIEW_MS": {
@@ -5709,6 +5720,16 @@
     "kind": "boolean",
     "description": "How many times has the devtool's Shader Editor been opened?"
   },
+  "DEVTOOLS_WEBAUDIOEDITOR_OPENED_BOOLEAN": {
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "description": "How many times has the devtool's Web Audio Editor been opened?"
+  },
+  "DEVTOOLS_CANVASDEBUGGER_OPENED_BOOLEAN": {
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "description": "How many times has the devtool's Canvas Debugger been opened?"
+  },
   "DEVTOOLS_JSPROFILER_OPENED_BOOLEAN": {
     "expires_in_version": "never",
     "kind": "boolean",
@@ -5813,6 +5834,16 @@
     "expires_in_version": "never",
     "kind": "flag",
     "description": "How many users have opened the devtool's Shader Editor?"
+  },
+  "DEVTOOLS_WEBAUDIOEDITOR_OPENED_PER_USER_FLAG": {
+    "expires_in_version": "never",
+    "kind": "flag",
+    "description": "How many users have opened the devtool's Web Audio Editor?"
+  },
+  "DEVTOOLS_CANVASDEBUGGER_OPENED_PER_USER_FLAG": {
+    "expires_in_version": "never",
+    "kind": "flag",
+    "description": "How many users have opened the devtool's Canvas Debugger?"
   },
   "DEVTOOLS_JSPROFILER_OPENED_PER_USER_FLAG": {
     "expires_in_version": "never",
@@ -5944,6 +5975,20 @@
     "high": "10000000",
     "n_buckets": 100,
     "description": "How long has the Shader Editor been active (seconds)"
+  },
+  "DEVTOOLS_WEBAUDIOEDITOR_TIME_ACTIVE_SECONDS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "10000000",
+    "n_buckets": 100,
+    "description": "How long has the Web Audio Editor been active (seconds)"
+  },
+  "DEVTOOLS_CANVASDEBUGGER_TIME_ACTIVE_SECONDS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "10000000",
+    "n_buckets": 100,
+    "description": "How long has the Canvas Debugger been active (seconds)"
   },
   "DEVTOOLS_JSPROFILER_TIME_ACTIVE_SECONDS": {
     "expires_in_version": "never",

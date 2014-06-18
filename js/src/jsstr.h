@@ -48,27 +48,38 @@ SkipSpace(const CharT *s, const CharT *end)
 
 // Return less than, equal to, or greater than zero depending on whether
 // s1 is less than, equal to, or greater than s2.
+template <typename Char1, typename Char2>
 inline int32_t
-CompareChars(const jschar *s1, size_t l1, const jschar *s2, size_t l2)
+CompareChars(const Char1 *s1, size_t len1, const Char2 *s2, size_t len2)
 {
-    size_t n = Min(l1, l2);
+    size_t n = Min(len1, len2);
     for (size_t i = 0; i < n; i++) {
         if (int32_t cmp = s1[i] - s2[i])
             return cmp;
     }
 
-    return (int32_t)(l1 - l2);
+    return int32_t(len1 - len2);
 }
 
 }  /* namespace js */
 
 struct JSSubString {
+    JSLinearString  *base;
+    size_t          offset;
     size_t          length;
-    const jschar    *chars;
-};
 
-extern const jschar js_empty_ucstr[];
-extern const JSSubString js_EmptySubString;
+    JSSubString() { mozilla::PodZero(this); }
+
+    void initEmpty(JSLinearString *base) {
+        this->base = base;
+        offset = length = 0;
+    }
+    void init(JSLinearString *base, size_t offset, size_t length) {
+        this->base = base;
+        this->offset = offset;
+        this->length = length;
+    }
+};
 
 /*
  * Shorthands for ASCII (7-bit) decimal and hex conversion.
@@ -183,6 +194,9 @@ EqualStrings(JSContext *cx, JSLinearString *str1, JSLinearString *str2, bool *re
 extern bool
 EqualStrings(JSLinearString *str1, JSLinearString *str2);
 
+extern bool
+EqualChars(JSLinearString *str1, JSLinearString *str2);
+
 /*
  * Return less than, equal to, or greater than zero depending on whether
  * str1 is less than, equal to, or greater than str2.
@@ -201,8 +215,7 @@ StringEqualsAscii(JSLinearString *str, const char *asciiBytes);
 
 /* Return true if the string contains a pattern anywhere inside it. */
 extern bool
-StringHasPattern(const jschar *text, uint32_t textlen,
-                 const jschar *pat, uint32_t patlen);
+StringHasPattern(JSLinearString *text, const jschar *pat, uint32_t patlen);
 
 extern int
 StringFindPattern(const jschar *text, uint32_t textlen,

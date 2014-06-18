@@ -369,9 +369,6 @@ static const JSFunctionSpec string_functions[] = {
     JS_FS_END
 };
 
-const jschar      js_empty_ucstr[]  = {0};
-const JSSubString js_EmptySubString = {0, js_empty_ucstr};
-
 static const unsigned STRING_ELEMENT_ATTRS = JSPROP_ENUMERATE | JSPROP_READONLY | JSPROP_PERMANENT;
 
 static bool
@@ -1317,10 +1314,12 @@ StringMatch(JSLinearString *text, JSLinearString *pat, uint32_t start = 0)
 static const size_t sRopeMatchThresholdRatioLog2 = 5;
 
 bool
-js::StringHasPattern(const jschar *text, uint32_t textLen,
-                     const jschar *pat, uint32_t patLen)
+js::StringHasPattern(JSLinearString *text, const jschar *pat, uint32_t patLen)
 {
-    return StringMatch(text, textLen, pat, patLen) != -1;
+    AutoCheckCannotGC nogc;
+    return text->hasLatin1Chars()
+           ? StringMatch(text->latin1Chars(nogc), text->length(), pat, patLen) != -1
+           : StringMatch(text->twoByteChars(nogc), text->length(), pat, patLen) != -1;
 }
 
 int
@@ -2254,11 +2253,7 @@ DoMatchGlobal(JSContext *cx, CallArgs args, RegExpStatics *res, HandleLinearStri
     // techniques from the spec to implement step 8f's loop.
 
     // Step 8f.
-#ifdef JS_YARR
-    MatchPair match;
-#else
     ScopedMatchPairs matches(&cx->tempLifoAlloc());
-#endif
     size_t charsLen = input->length();
     const jschar *chars = input->chars();
     RegExpShared &re = g.regExp();
@@ -2268,11 +2263,7 @@ DoMatchGlobal(JSContext *cx, CallArgs args, RegExpStatics *res, HandleLinearStri
 
         // Steps 8f(i-ii), minus "lastIndex" updates (see above).
         size_t nextSearchIndex = searchIndex;
-#ifdef JS_YARR
-        RegExpRunStatus status = re.executeMatchOnly(cx, chars, charsLen, &nextSearchIndex, match);
-#else
         RegExpRunStatus status = re.execute(cx, chars, charsLen, &nextSearchIndex, matches);
-#endif
         if (status == RegExpRunStatus_Error)
             return false;
 
@@ -2281,10 +2272,7 @@ DoMatchGlobal(JSContext *cx, CallArgs args, RegExpStatics *res, HandleLinearStri
             break;
 
         lastSuccessfulStart = searchIndex;
-
-#ifndef JS_YARR
         MatchPair &match = matches[0];
-#endif
 
         // Steps 8f(iii)(1-3).
         searchIndex = match.isEmpty() ? nextSearchIndex + 1 : nextSearchIndex;
@@ -2423,25 +2411,15 @@ js::str_search(JSContext *cx, unsigned argc, Value *vp)
 
     /* Per ECMAv5 15.5.4.12 (5) The last index property is ignored and left unchanged. */
     size_t i = 0;
-#ifdef JS_YARR
-    MatchPair match;
-    RegExpRunStatus status = g.regExp().executeMatchOnly(cx, chars, length, &i, match);
-#else
     ScopedMatchPairs matches(&cx->tempLifoAlloc());
     RegExpRunStatus status = g.regExp().execute(cx, chars, length, &i, matches);
-#endif
     if (status == RegExpRunStatus_Error)
         return false;
 
     if (status == RegExpRunStatus_Success)
         res->updateLazily(cx, linearStr, &g.regExp(), 0);
 
-#ifdef JS_YARR
-    JS_ASSERT_IF(status == RegExpRunStatus_Success_NotFound, match.start == -1);
-    args.rval().setInt32(match.start);
-#else
     args.rval().setInt32(status == RegExpRunStatus_Success_NotFound ? -1 : matches[0].start);
-#endif
     return true;
 }
 
@@ -2507,7 +2485,6 @@ struct ReplaceData
     RootedLinearString repstr;         /* replacement string */
     uint32_t           dollarIndex;    /* index of first $ in repstr, or UINT32_MAX */
     int                leftIndex;      /* left context index in str->chars */
-    JSSubString        dollarStr;      /* for "$$" InterpretDollar result */
     bool               calledBack;     /* record whether callback has been called */
     FastInvokeGuard    fig;            /* used for lambda calls, also holds arguments */
     StringBuffer       sb;             /* buffer built during DoMatch */
@@ -2611,9 +2588,7 @@ InterpretDollar(RegExpStatics *res, const jschar *dp, const jschar *ep,
     *skip = 2;
     switch (dc) {
       case '$':
-        rdata.dollarStr.chars = dp;
-        rdata.dollarStr.length = 1;
-        *out = rdata.dollarStr;
+        out->init(rdata.repstr, dp - rdata.repstr->chars(), 1);
         return true;
       case '&':
         res->getLastMatch(out);
@@ -2777,7 +2752,7 @@ DoReplace(RegExpStatics *res, ReplaceData &rdata)
             JSSubString sub;
             size_t skip;
             if (InterpretDollar(res, dp, ep, rdata, &sub, &skip)) {
-                rdata.sb.infallibleAppend(sub.chars, sub.length);
+                rdata.sb.infallibleAppendSubstring(sub.base, sub.offset, sub.length);
                 cp += skip;
                 dp += skip;
             } else {
@@ -3100,11 +3075,7 @@ StrReplaceRegexpRemove(JSContext *cx, HandleString str, RegExpShared &re, Mutabl
 
     size_t charsLen = flatStr->length();
 
-#ifdef JS_YARR
-    MatchPair match;
-#else
     ScopedMatchPairs matches(&cx->tempLifoAlloc());
-#endif
     size_t startIndex = 0; /* Index used for iterating through the string. */
     size_t lastIndex = 0;  /* Index after last successful match. */
     size_t lazyIndex = 0;  /* Index before last successful match. */
@@ -3114,19 +3085,12 @@ StrReplaceRegexpRemove(JSContext *cx, HandleString str, RegExpShared &re, Mutabl
         if (!CheckForInterrupt(cx))
             return false;
 
-#ifdef JS_YARR
-        RegExpRunStatus status = re.executeMatchOnly(cx, flatStr->chars(), charsLen, &startIndex, match);
-#else
         RegExpRunStatus status = re.execute(cx, flatStr->chars(), charsLen, &startIndex, matches);
-#endif
         if (status == RegExpRunStatus_Error)
             return false;
         if (status == RegExpRunStatus_Success_NotFound)
             break;
-
-#ifndef JS_YARR
         MatchPair &match = matches[0];
-#endif
 
         /* Include the latest unmatched substring. */
         if (size_t(match.start) > lastIndex) {
@@ -3233,7 +3197,7 @@ StrReplaceRegExp(JSContext *cx, ReplaceData &rdata, MutableHandleValue rval)
 
     JSSubString sub;
     res->getRightContext(&sub);
-    if (!rdata.sb.append(sub.chars, sub.length))
+    if (!rdata.sb.appendSubstring(sub.base, sub.offset, sub.length))
         return false;
 
     JSString *retstr = rdata.sb.finishString();
@@ -3622,7 +3586,8 @@ SplitHelper(JSContext *cx, HandleLinearString str, uint32_t limit, const Matcher
                 if (!matches[i + 1].isUndefined()) {
                     JSSubString parsub;
                     res->getParen(i + 1, &parsub);
-                    sub = js_NewStringCopyN<CanGC>(cx, parsub.chars, parsub.length);
+                    sub = js_NewStringCopyN<CanGC>(cx, parsub.base->chars() + parsub.offset,
+                                                   parsub.length);
                     if (!sub || !splits.append(StringValue(sub)))
                         return nullptr;
                 } else {
@@ -3736,13 +3701,11 @@ class SplitStringMatcher
     bool operator()(JSContext *cx, JSLinearString *str, size_t index, SplitMatchResult *res) const
     {
         JS_ASSERT(index == 0 || index < str->length());
-        const jschar *chars = str->chars();
-        int match = StringMatch(chars + index, str->length() - index,
-                                sep->chars(), sep->length());
+        int match = StringMatch(str, sep, index);
         if (match == -1)
             res->setFailure();
         else
-            res->setResult(sep->length(), index + match + sep->length());
+            res->setResult(sep->length(), match + sep->length());
         return true;
     }
 };
@@ -4496,8 +4459,8 @@ js::StringToSource(JSContext *cx, JSString *str)
     return js_QuoteString(cx, str, '"');
 }
 
-static bool
-EqualChars(JSLinearString *str1, JSLinearString *str2)
+bool
+js::EqualChars(JSLinearString *str1, JSLinearString *str2)
 {
     MOZ_ASSERT(str1->length() == str2->length());
 
@@ -4555,8 +4518,28 @@ js::EqualStrings(JSLinearString *str1, JSLinearString *str2)
     return EqualChars(str1, str2);
 }
 
-static bool
-CompareStringsImpl(JSContext *cx, JSString *str1, JSString *str2, int32_t *result)
+static int32_t
+CompareStringsImpl(JSLinearString *str1, JSLinearString *str2)
+{
+    size_t len1 = str1->length();
+    size_t len2 = str2->length();
+
+    AutoCheckCannotGC nogc;
+    if (str1->hasLatin1Chars()) {
+        const Latin1Char *chars1 = str1->latin1Chars(nogc);
+        return str2->hasLatin1Chars()
+               ? CompareChars(chars1, len1, str2->latin1Chars(nogc), len2)
+               : CompareChars(chars1, len1, str2->twoByteChars(nogc), len2);
+    }
+
+    const jschar *chars1 = str1->twoByteChars(nogc);
+    return str2->hasLatin1Chars()
+           ? CompareChars(chars1, len1, str2->latin1Chars(nogc), len2)
+           : CompareChars(chars1, len1, str2->twoByteChars(nogc), len2);
+}
+
+bool
+js::CompareStrings(JSContext *cx, JSString *str1, JSString *str2, int32_t *result)
 {
     JS_ASSERT(str1);
     JS_ASSERT(str2);
@@ -4566,28 +4549,22 @@ CompareStringsImpl(JSContext *cx, JSString *str1, JSString *str2, int32_t *resul
         return true;
     }
 
-    const jschar *s1 = str1->getChars(cx);
-    if (!s1)
+    JSLinearString *linear1 = str1->ensureLinear(cx);
+    if (!linear1)
         return false;
 
-    const jschar *s2 = str2->getChars(cx);
-    if (!s2)
+    JSLinearString *linear2 = str2->ensureLinear(cx);
+    if (!linear2)
         return false;
 
-    *result = CompareChars(s1, str1->length(), s2, str2->length());
+    *result = CompareStringsImpl(linear1, linear2);
     return true;
-}
-
-bool
-js::CompareStrings(JSContext *cx, JSString *str1, JSString *str2, int32_t *result)
-{
-    return CompareStringsImpl(cx, str1, str2, result);
 }
 
 int32_t
 js::CompareAtoms(JSAtom *atom1, JSAtom *atom2)
 {
-    return CompareChars(atom1->chars(), atom1->length(), atom2->chars(), atom2->length());
+    return CompareStringsImpl(atom1, atom2);
 }
 
 bool
@@ -4600,12 +4577,13 @@ js::StringEqualsAscii(JSLinearString *str, const char *asciiBytes)
 #endif
     if (length != str->length())
         return false;
-    const jschar *chars = str->chars();
-    for (size_t i = 0; i != length; ++i) {
-        if (unsigned(asciiBytes[i]) != unsigned(chars[i]))
-            return false;
-    }
-    return true;
+
+    const Latin1Char *latin1 = reinterpret_cast<const Latin1Char *>(asciiBytes);
+
+    AutoCheckCannotGC nogc;
+    return str->hasLatin1Chars()
+           ? PodEqual(latin1, str->latin1Chars(nogc), length)
+           : EqualCharsLatin1TwoByte(latin1, str->twoByteChars(nogc), length);
 }
 
 size_t
