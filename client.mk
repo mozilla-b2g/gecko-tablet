@@ -129,6 +129,7 @@ MOZCONFIG_OUT_FILTERED := $(filter-out $(START_COMMENT)%,$(MOZCONFIG_OUT_LINES))
 ifdef AUTOCLOBBER
 export AUTOCLOBBER=1
 endif
+export MOZ_PGO
 
 ifdef MOZ_PARALLEL_BUILD
   MOZ_MAKE_FLAGS := $(filter-out -j%,$(MOZ_MAKE_FLAGS))
@@ -144,13 +145,6 @@ endif
 
 ifndef MOZ_OBJDIR
   MOZ_OBJDIR = obj-$(CONFIG_GUESS)
-else
-# On Windows Pymake builds check MOZ_OBJDIR doesn't start with "/"
-  ifneq (,$(findstring mingw,$(CONFIG_GUESS)))
-  ifeq (1_a,$(.PYMAKE)_$(firstword a$(subst /, ,$(MOZ_OBJDIR))))
-  $(error For Windows Pymake builds, MOZ_OBJDIR must be a Windows [and not MSYS] style path.)
-  endif
-  endif
 endif
 
 ifdef MOZ_BUILD_PROJECTS

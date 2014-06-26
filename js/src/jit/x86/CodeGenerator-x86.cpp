@@ -115,8 +115,8 @@ CodeGeneratorX86::visitBoxFloatingPoint(LBoxFloatingPoint *box)
 
     FloatRegister reg = ToFloatRegister(in);
     if (box->type() == MIRType_Float32) {
-        masm.convertFloat32ToDouble(reg, ScratchFloatReg);
-        reg = ScratchFloatReg;
+        masm.convertFloat32ToDouble(reg, ScratchFloat32Reg);
+        reg = ScratchFloat32Reg;
     }
     masm.boxDouble(reg, out);
     return true;
@@ -554,13 +554,13 @@ CodeGeneratorX86::postAsmJSCall(LAsmJSCall *lir)
         masm.reserveStack(sizeof(float));
         Operand op(esp, 0);
         masm.fstp32(op);
-        masm.loadFloat32(op, ReturnFloatReg);
+        masm.loadFloat32(op, ReturnFloat32Reg);
         masm.freeStack(sizeof(float));
     } else {
         masm.reserveStack(sizeof(double));
         Operand op(esp, 0);
         masm.fstp(op);
-        masm.loadDouble(op, ReturnFloatReg);
+        masm.loadDouble(op, ReturnDoubleReg);
         masm.freeStack(sizeof(double));
     }
 }
@@ -705,8 +705,8 @@ CodeGeneratorX86::visitOutOfLineTruncate(OutOfLineTruncate *ool)
         masm.storeDouble(input, Operand(esp, 0));
 
         static const uint32_t EXPONENT_MASK = 0x7ff00000;
-        static const uint32_t EXPONENT_SHIFT = FloatingPoint<double>::ExponentShift - 32;
-        static const uint32_t TOO_BIG_EXPONENT = (FloatingPoint<double>::ExponentBias + 63)
+        static const uint32_t EXPONENT_SHIFT = FloatingPoint<double>::kExponentShift - 32;
+        static const uint32_t TOO_BIG_EXPONENT = (FloatingPoint<double>::kExponentBias + 63)
                                                  << EXPONENT_SHIFT;
 
         // Check exponent to avoid fp exceptions.
@@ -734,8 +734,8 @@ CodeGeneratorX86::visitOutOfLineTruncate(OutOfLineTruncate *ool)
         // integer, by adding/subtracting 2^32 and then trying to convert to int32.
         // This has to be an exact conversion, as otherwise the truncation works
         // incorrectly on the modified value.
-        masm.xorpd(ScratchFloatReg, ScratchFloatReg);
-        masm.ucomisd(input, ScratchFloatReg);
+        masm.xorpd(ScratchDoubleReg, ScratchDoubleReg);
+        masm.ucomisd(input, ScratchDoubleReg);
         masm.j(Assembler::Parity, &fail);
 
         {
@@ -753,9 +753,9 @@ CodeGeneratorX86::visitOutOfLineTruncate(OutOfLineTruncate *ool)
 
         masm.addsd(input, temp);
         masm.cvttsd2si(temp, output);
-        masm.cvtsi2sd(output, ScratchFloatReg);
+        masm.cvtsi2sd(output, ScratchDoubleReg);
 
-        masm.ucomisd(temp, ScratchFloatReg);
+        masm.ucomisd(temp, ScratchDoubleReg);
         masm.j(Assembler::Parity, &fail);
         masm.j(Assembler::Equal, ool->rejoin());
     }
@@ -793,10 +793,10 @@ CodeGeneratorX86::visitOutOfLineTruncateFloat32(OutOfLineTruncateFloat32 *ool)
         masm.subl(Imm32(sizeof(uint64_t)), esp);
         masm.storeFloat32(input, Operand(esp, 0));
 
-        static const uint32_t EXPONENT_MASK = FloatingPoint<float>::ExponentBits;
-        static const uint32_t EXPONENT_SHIFT = FloatingPoint<float>::ExponentShift;
+        static const uint32_t EXPONENT_MASK = FloatingPoint<float>::kExponentBits;
+        static const uint32_t EXPONENT_SHIFT = FloatingPoint<float>::kExponentShift;
         // Integers are still 64 bits long, so we can still test for an exponent > 63.
-        static const uint32_t TOO_BIG_EXPONENT = (FloatingPoint<float>::ExponentBias + 63)
+        static const uint32_t TOO_BIG_EXPONENT = (FloatingPoint<float>::kExponentBias + 63)
                                                  << EXPONENT_SHIFT;
 
         // Check exponent to avoid fp exceptions.
@@ -824,8 +824,8 @@ CodeGeneratorX86::visitOutOfLineTruncateFloat32(OutOfLineTruncateFloat32 *ool)
         // integer, by adding/subtracting 2^32 and then trying to convert to int32.
         // This has to be an exact conversion, as otherwise the truncation works
         // incorrectly on the modified value.
-        masm.xorps(ScratchFloatReg, ScratchFloatReg);
-        masm.ucomiss(input, ScratchFloatReg);
+        masm.xorps(ScratchFloat32Reg, ScratchFloat32Reg);
+        masm.ucomiss(input, ScratchFloat32Reg);
         masm.j(Assembler::Parity, &fail);
 
         {
@@ -843,9 +843,9 @@ CodeGeneratorX86::visitOutOfLineTruncateFloat32(OutOfLineTruncateFloat32 *ool)
 
         masm.addss(input, temp);
         masm.cvttss2si(temp, output);
-        masm.cvtsi2ss(output, ScratchFloatReg);
+        masm.cvtsi2ss(output, ScratchFloat32Reg);
 
-        masm.ucomiss(temp, ScratchFloatReg);
+        masm.ucomiss(temp, ScratchFloat32Reg);
         masm.j(Assembler::Parity, &fail);
         masm.j(Assembler::Equal, ool->rejoin());
     }

@@ -73,7 +73,9 @@ this.ContentSearch = {
     // the meantime, then we need to update msg.target.  event.detail will be
     // the docshell's new parent <xul:browser> element.
     msg.handleEvent = function (event) {
+      this.target.removeEventListener("SwapDocShells", this, true);
       this.target = event.detail;
+      this.target.addEventListener("SwapDocShells", this, true);
     };
     msg.target.addEventListener("SwapDocShells", msg, true);
 
@@ -229,7 +231,13 @@ this.ContentSearch = {
     xhr.onloadend = () => {
       deferred.resolve(xhr.response);
     };
-    xhr.send();
+    try {
+      // This throws if the URI is erroneously encoded.
+      xhr.send();
+    }
+    catch (err) {
+      return Promise.resolve(null);
+    }
     return deferred.promise;
   },
 

@@ -45,7 +45,7 @@ LIRGenerator::visitParameter(MParameter *param)
         offset = 1 + param->index();
 
     LParameter *ins = new(alloc()) LParameter;
-    if (!defineBox(ins, param, LDefinition::PRESET))
+    if (!defineBox(ins, param, LDefinition::FIXED))
         return false;
 
     offset *= sizeof(Value);
@@ -118,13 +118,7 @@ bool
 LIRGenerator::visitCheckOverRecursed(MCheckOverRecursed *ins)
 {
     LCheckOverRecursed *lir = new(alloc()) LCheckOverRecursed();
-
-    if (!add(lir, ins))
-        return false;
-    if (!assignSafepoint(lir, ins))
-        return false;
-
-    return true;
+    return add(lir, ins) && assignSafepoint(lir, ins);
 }
 
 bool
@@ -235,13 +229,6 @@ LIRGenerator::visitNewStringObject(MNewStringObject *ins)
 
     LNewStringObject *lir = new(alloc()) LNewStringObject(useRegister(ins->input()), temp());
     return define(lir, ins) && assignSafepoint(lir, ins);
-}
-
-bool
-LIRGenerator::visitAbortPar(MAbortPar *ins)
-{
-    LAbortPar *lir = new(alloc()) LAbortPar();
-    return add(lir, ins);
 }
 
 bool
@@ -512,6 +499,13 @@ LIRGenerator::visitBail(MBail *bail)
 }
 
 bool
+LIRGenerator::visitUnreachable(MUnreachable *unreachable)
+{
+    LUnreachable *lir = new(alloc()) LUnreachable();
+    return add(lir, unreachable);
+}
+
+bool
 LIRGenerator::visitAssertFloat32(MAssertFloat32 *assertion)
 {
     MIRType type = assertion->input()->type();
@@ -663,7 +657,7 @@ LIRGenerator::visitTest(MTest *test)
 
     // String is converted to length of string in the type analysis phase (see
     // TestPolicy).
-    JS_ASSERT(opd->type() != MIRType_String);
+    MOZ_ASSERT(opd->type() != MIRType_String);
 
     if (opd->type() == MIRType_Value) {
         LDefinition temp0, temp1;
@@ -693,6 +687,10 @@ LIRGenerator::visitTest(MTest *test)
     // no payload.
     if (opd->type() == MIRType_Undefined || opd->type() == MIRType_Null)
         return add(new(alloc()) LGoto(ifFalse));
+
+    // All symbols are truthy.
+    if (opd->type() == MIRType_Symbol)
+        return add(new(alloc()) LGoto(ifTrue));
 
     // Constant Double operand.
     if (opd->type() == MIRType_Double && opd->isConstant()) {
@@ -1218,7 +1216,7 @@ LIRGenerator::visitRound(MRound *ins)
         return define(lir, ins);
     }
 
-    LRoundF *lir = new (alloc()) LRoundF(useRegister(ins->num()), tempDouble());
+    LRoundF *lir = new (alloc()) LRoundF(useRegister(ins->num()), tempFloat32());
     if (!assignSnapshot(lir, Bailout_Round))
         return false;
     return define(lir, ins);
@@ -1831,9 +1829,10 @@ LIRGenerator::visitToInt32(MToInt32 *convert)
       }
 
       case MIRType_String:
+      case MIRType_Symbol:
       case MIRType_Object:
       case MIRType_Undefined:
-        // Objects might be effectful. Undefined coerces to NaN, not int32.
+        // Objects might be effectful. Undefined and symbols coerce to NaN, not int32.
         MOZ_ASSUME_UNREACHABLE("ToInt32 invalid input type");
         return false;
 
@@ -1861,6 +1860,7 @@ LIRGenerator::visitTruncateToInt32(MTruncateToInt32 *truncate)
 
       case MIRType_Null:
       case MIRType_Undefined:
+      case MIRType_Symbol:
         return define(new(alloc()) LInteger(0), truncate);
 
       case MIRType_Int32:
@@ -2179,7 +2179,7 @@ LIRGenerator::visitGuardThreadExclusive(MGuardThreadExclusive *ins)
                                            useFixed(ins->object(), CallTempReg1),
                                            tempFixed(CallTempReg2));
     lir->setMir(ins);
-    return add(lir, ins);
+    return assignSnapshot(lir, Bailout_GuardThreadExclusive) && add(lir, ins);
 }
 
 bool
@@ -2463,6 +2463,8 @@ LIRGenerator::visitNot(MNot *ins)
       case MIRType_Undefined:
       case MIRType_Null:
         return define(new(alloc()) LInteger(1), ins);
+      case MIRType_Symbol:
+        return define(new(alloc()) LInteger(0), ins);
       case MIRType_Object: {
         // Objects that don't emulate undefined can be constant-folded.
         if (!ins->operandMightEmulateUndefined())
@@ -3083,10 +3085,11 @@ LIRGenerator::visitAssertRange(MAssertRange *ins)
         lir = new(alloc()) LAssertRangeD(useRegister(input), tempDouble());
         break;
 
-      case MIRType_Float32:
-        lir = new(alloc()) LAssertRangeF(useRegister(input), tempFloat32());
+      case MIRType_Float32: {
+        LDefinition armtemp = hasMultiAlias() ? tempFloat32() : LDefinition::BogusTemp();
+        lir = new(alloc()) LAssertRangeF(useRegister(input), tempFloat32(), armtemp);
         break;
-
+      }
       case MIRType_Value:
         lir = new(alloc()) LAssertRangeV(tempToUnbox(), tempDouble(), tempDouble());
         if (!useBox(lir, LAssertRangeV::Input, input))
@@ -3193,17 +3196,20 @@ LIRGenerator::visitSetElementCache(MSetElementCache *ins)
     // |useRegister| below.
     LInstruction *lir;
     if (ins->value()->type() == MIRType_Value) {
+        LDefinition tempF32 = hasUnaliasedDouble() ? tempFloat32() : LDefinition::BogusTemp();
         lir = new(alloc()) LSetElementCacheV(useByteOpRegister(ins->object()), tempToUnbox(),
-                                             temp(), tempDouble());
+                                             temp(), tempDouble(), tempF32);
 
         if (!useBox(lir, LSetElementCacheV::Index, ins->index()))
             return false;
         if (!useBox(lir, LSetElementCacheV::Value, ins->value()))
             return false;
     } else {
+        LDefinition tempF32 = hasUnaliasedDouble() ? tempFloat32() : LDefinition::BogusTemp();
         lir = new(alloc()) LSetElementCacheT(useByteOpRegister(ins->object()),
                                              useRegisterOrConstant(ins->value()),
-                                             tempToUnbox(), temp(), tempDouble());
+                                             tempToUnbox(), temp(), tempDouble(),
+                                             tempF32);
 
         if (!useBox(lir, LSetElementCacheT::Index, ins->index()))
             return false;
@@ -3477,8 +3483,10 @@ LIRGenerator::visitAsmJSReturn(MAsmJSReturn *ins)
 {
     MDefinition *rval = ins->getOperand(0);
     LAsmJSReturn *lir = new(alloc()) LAsmJSReturn;
-    if (IsFloatingPointType(rval->type()))
-        lir->setOperand(0, useFixed(rval, ReturnFloatReg));
+    if (rval->type() == MIRType_Float32)
+        lir->setOperand(0, useFixed(rval, ReturnFloat32Reg));
+    else if (rval->type() == MIRType_Double)
+        lir->setOperand(0, useFixed(rval, ReturnDoubleReg));
     else if (rval->type() == MIRType_Int32)
         lir->setOperand(0, useFixed(rval, ReturnReg));
     else

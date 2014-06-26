@@ -3367,6 +3367,7 @@ GetElementIC::attachArgumentsElement(JSContext *cx, HandleScript outerScript, Io
         JS_ASSERT(index().reg().type() == MIRType_Boolean ||
                   index().reg().type() == MIRType_Int32 ||
                   index().reg().type() == MIRType_String ||
+                  index().reg().type() == MIRType_Symbol ||
                   index().reg().type() == MIRType_Object);
         masm.branchTestMIRType(Assembler::NotEqual, elemIdx, index().reg().type(),
                                &failureRestoreIndex);
@@ -3572,12 +3573,12 @@ StoreDenseElement(MacroAssembler &masm, ConstantOrRegister value, Register eleme
     masm.bind(&convert);
     if (reg.hasValue()) {
         masm.branchTestInt32(Assembler::NotEqual, reg.valueReg(), &storeValue);
-        masm.int32ValueToDouble(reg.valueReg(), ScratchFloatReg);
-        masm.storeDouble(ScratchFloatReg, target);
+        masm.int32ValueToDouble(reg.valueReg(), ScratchDoubleReg);
+        masm.storeDouble(ScratchDoubleReg, target);
     } else {
         JS_ASSERT(reg.type() == MIRType_Int32);
-        masm.convertInt32ToDouble(reg.typedReg().gpr(), ScratchFloatReg);
-        masm.storeDouble(ScratchFloatReg, target);
+        masm.convertInt32ToDouble(reg.typedReg().gpr(), ScratchDoubleReg);
+        masm.storeDouble(ScratchDoubleReg, target);
     }
 
     masm.bind(&done);
@@ -3701,7 +3702,8 @@ static bool
 GenerateSetTypedArrayElement(JSContext *cx, MacroAssembler &masm, IonCache::StubAttacher &attacher,
                              HandleTypedArrayObject tarr, Register object,
                              ValueOperand indexVal, ConstantOrRegister value,
-                             Register tempUnbox, Register temp, FloatRegister tempFloat)
+                             Register tempUnbox, Register temp, FloatRegister tempDouble,
+                             FloatRegister tempFloat32)
 {
     Label failures, done, popObjectAndFail;
 
@@ -3730,18 +3732,22 @@ GenerateSetTypedArrayElement(JSContext *cx, MacroAssembler &masm, IonCache::Stub
     BaseIndex target(elements, index, ScaleFromElemWidth(width));
 
     if (arrayType == ScalarTypeDescr::TYPE_FLOAT32) {
+        FloatRegister ftemp;
         if (LIRGenerator::allowFloat32Optimizations()) {
-            if (!masm.convertConstantOrRegisterToFloat(cx, value, tempFloat, &failures))
+            JS_ASSERT(tempFloat32 != InvalidFloatReg);
+            if (!masm.convertConstantOrRegisterToFloat(cx, value, tempFloat32, &failures))
                 return false;
+            ftemp = tempFloat32;
         } else {
-            if (!masm.convertConstantOrRegisterToDouble(cx, value, tempFloat, &failures))
+            if (!masm.convertConstantOrRegisterToDouble(cx, value, tempDouble, &failures))
                 return false;
+            ftemp = tempDouble;
         }
-        masm.storeToTypedFloatArray(arrayType, tempFloat, target);
+        masm.storeToTypedFloatArray(arrayType, ftemp, target);
     } else if (arrayType == ScalarTypeDescr::TYPE_FLOAT64) {
-        if (!masm.convertConstantOrRegisterToDouble(cx, value, tempFloat, &failures))
+        if (!masm.convertConstantOrRegisterToDouble(cx, value, tempDouble, &failures))
             return false;
-        masm.storeToTypedFloatArray(arrayType, tempFloat, target);
+        masm.storeToTypedFloatArray(arrayType, tempDouble, target);
     } else {
         // On x86 we only have 6 registers available to use, so reuse the object
         // register to compute the intermediate value to store and restore it
@@ -3749,13 +3755,13 @@ GenerateSetTypedArrayElement(JSContext *cx, MacroAssembler &masm, IonCache::Stub
         masm.push(object);
 
         if (arrayType == ScalarTypeDescr::TYPE_UINT8_CLAMPED) {
-            if (!masm.clampConstantOrRegisterToUint8(cx, value, tempFloat, object,
+            if (!masm.clampConstantOrRegisterToUint8(cx, value, tempDouble, object,
                                                      &popObjectAndFail))
             {
                 return false;
             }
         } else {
-            if (!masm.truncateConstantOrRegisterToInt32(cx, value, tempFloat, object,
+            if (!masm.truncateConstantOrRegisterToInt32(cx, value, tempDouble, object,
                                                         &popObjectAndFail))
             {
                 return false;
@@ -3788,7 +3794,7 @@ SetElementIC::attachTypedArrayElement(JSContext *cx, HandleScript outerScript, I
     RepatchStubAppender attacher(*this);
     if (!GenerateSetTypedArrayElement(cx, masm, attacher, tarr,
                                       object(), index(), value(),
-                                      tempToUnboxIndex(), temp(), tempFloat()))
+                                      tempToUnboxIndex(), temp(), tempDouble(), tempFloat32()))
     {
         return false;
     }
@@ -3859,7 +3865,7 @@ SetElementParIC::attachTypedArrayElement(LockedJSContext &cx, IonScript *ion,
     DispatchStubPrepender attacher(*this);
     if (!GenerateSetTypedArrayElement(cx, masm, attacher, tarr,
                                       object(), index(), value(),
-                                      tempToUnboxIndex(), temp(), tempFloat()))
+                                      tempToUnboxIndex(), temp(), tempDouble(), tempFloat32()))
     {
         return false;
     }
@@ -4132,7 +4138,7 @@ BindNameIC::attachNonGlobal(JSContext *cx, HandleScript outerScript, IonScript *
 }
 
 static bool
-IsCacheableScopeChain(JSObject *scopeChain, JSObject *holder)
+IsCacheableNonGlobalScopeChain(JSObject *scopeChain, JSObject *holder)
 {
     while (true) {
         if (!IsCacheableNonGlobalScope(scopeChain)) {
@@ -4175,7 +4181,7 @@ BindNameIC::update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain)
         if (scopeChain->is<GlobalObject>()) {
             if (!cache.attachGlobal(cx, outerScript, ion, scopeChain))
                 return nullptr;
-        } else if (IsCacheableScopeChain(scopeChain, holder)) {
+        } else if (IsCacheableNonGlobalScopeChain(scopeChain, holder)) {
             if (!cache.attachNonGlobal(cx, outerScript, ion, scopeChain, holder))
                 return nullptr;
         } else {
@@ -4203,7 +4209,7 @@ NameIC::attachReadSlot(JSContext *cx, HandleScript outerScript, IonScript *ion,
     GenerateScopeChainGuards(masm, scopeChain, holderBase, scratchReg, &failures,
                              /* skipLastGuard = */true);
 
-    // GenerateScopeChain leaves the last scope chain in scrachReg, even though it
+    // GenerateScopeChain leaves the last scope chain in scratchReg, even though it
     // doesn't generate the extra guard.
     GenerateReadSlot(cx, ion, masm, attacher, holderBase, holder, shape, scratchReg,
                      outputReg(), failures.used() ? &failures : nullptr);
@@ -4212,7 +4218,25 @@ NameIC::attachReadSlot(JSContext *cx, HandleScript outerScript, IonScript *ion,
 }
 
 static bool
-IsCacheableNameReadSlot(JSContext *cx, HandleObject scopeChain, HandleObject obj,
+IsCacheableScopeChain(JSObject *scopeChain, JSObject *obj)
+{
+    JSObject *obj2 = scopeChain;
+    while (obj2) {
+        if (!IsCacheableNonGlobalScope(obj2) && !obj2->is<GlobalObject>())
+            return false;
+
+        // Stop once we hit the global or target obj.
+        if (obj2->is<GlobalObject>() || obj2 == obj)
+            break;
+
+        obj2 = obj2->enclosingScope();
+    }
+
+    return obj == obj2;
+}
+
+static bool
+IsCacheableNameReadSlot(HandleObject scopeChain, HandleObject obj,
                         HandleObject holder, HandleShape shape, jsbytecode *pc,
                         const TypedOrValueRegister &output)
 {
@@ -4235,31 +4259,31 @@ IsCacheableNameReadSlot(JSContext *cx, HandleObject scopeChain, HandleObject obj
         return false;
     }
 
-    RootedObject obj2(cx, scopeChain);
-    while (obj2) {
-        if (!IsCacheableNonGlobalScope(obj2) && !obj2->is<GlobalObject>())
-            return false;
-
-        // Stop once we hit the global or target obj.
-        if (obj2->is<GlobalObject>() || obj2 == obj)
-            break;
-
-        obj2 = obj2->enclosingScope();
-    }
-
-    return obj == obj2;
+    return IsCacheableScopeChain(scopeChain, obj);
 }
 
 bool
 NameIC::attachCallGetter(JSContext *cx, HandleScript outerScript, IonScript *ion,
-                         HandleObject obj, HandleObject holder, HandleShape shape,
-                         void *returnAddr)
+                         HandleObject scopeChain, HandleObject obj, HandleObject holder,
+                         HandleShape shape, void *returnAddr)
 {
     MacroAssembler masm(cx, ion, outerScript, profilerLeavePc_);
-
     RepatchStubAppender attacher(*this);
+
+    Label failures;
+    Register scratchReg = outputReg().valueReg().scratchReg();
+
+    // Don't guard the base of the proto chain the name was found on. It will be guarded
+    // by GenerateCallGetter().
+    masm.mov(scopeChainReg(), scratchReg);
+    GenerateScopeChainGuards(masm, scopeChain, obj, scratchReg, &failures,
+                             /* skipLastGuard = */true);
+
+    // GenerateScopeChain leaves the last scope chain in scratchReg, even though it
+    // doesn't generate the extra guard.
     if (!GenerateCallGetter(cx, ion, masm, attacher, obj, name(), holder, shape, liveRegs_,
-                            scopeChainReg(), outputReg(), returnAddr))
+                            scratchReg, outputReg(), returnAddr,
+                            failures.used() ? &failures : nullptr))
     {
          return false;
     }
@@ -4269,12 +4293,15 @@ NameIC::attachCallGetter(JSContext *cx, HandleScript outerScript, IonScript *ion
 }
 
 static bool
-IsCacheableNameCallGetter(JSObject *scopeChain, JSObject *obj, JSObject *holder, Shape *shape)
+IsCacheableNameCallGetter(HandleObject scopeChain, HandleObject obj, HandleObject holder,
+                          HandleShape shape)
 {
-    if (obj != scopeChain)
+    if (!shape)
+        return false;
+    if (!obj->is<GlobalObject>())
         return false;
 
-    if (!obj->is<GlobalObject>())
+    if (!IsCacheableScopeChain(scopeChain, obj))
         return false;
 
     return IsCacheableGetPropCallNative(obj, holder, shape) ||
@@ -4303,11 +4330,11 @@ NameIC::update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain,
         return false;
 
     if (cache.canAttachStub()) {
-        if (IsCacheableNameReadSlot(cx, scopeChain, obj, holder, shape, pc, cache.outputReg())) {
+        if (IsCacheableNameReadSlot(scopeChain, obj, holder, shape, pc, cache.outputReg())) {
             if (!cache.attachReadSlot(cx, outerScript, ion, scopeChain, obj, holder, shape))
                 return false;
         } else if (IsCacheableNameCallGetter(scopeChain, obj, holder, shape)) {
-            if (!cache.attachCallGetter(cx, outerScript, ion, obj, holder, shape, returnAddr))
+            if (!cache.attachCallGetter(cx, outerScript, ion, scopeChain, obj, holder, shape, returnAddr))
                 return false;
         }
     }

@@ -1137,7 +1137,7 @@ nsHTMLDocument::MatchLinks(nsIContent *aContent, int32_t aNamespaceID,
     }
 #endif
 
-    nsINodeInfo *ni = aContent->NodeInfo();
+    mozilla::dom::NodeInfo *ni = aContent->NodeInfo();
 
     nsIAtom *localName = ni->NameAtom();
     if (ni->NamespaceID() == kNameSpaceID_XHTML &&
@@ -1576,6 +1576,13 @@ nsHTMLDocument::Open(JSContext* cx,
 #ifdef DEBUG
     bool willReparent = mWillReparent;
     mWillReparent = true;
+
+    nsDocument* templateContentsOwner =
+      static_cast<nsDocument*>(mTemplateContentsOwner.get());
+
+    if (templateContentsOwner) {
+      templateContentsOwner->mWillReparent = true;
+    }
 #endif
 
     // Should this pass true for aForceReuseInnerWindow?
@@ -1585,6 +1592,10 @@ nsHTMLDocument::Open(JSContext* cx,
     }
 
 #ifdef DEBUG
+    if (templateContentsOwner) {
+      templateContentsOwner->mWillReparent = willReparent;
+    }
+
     mWillReparent = willReparent;
 #endif
 
@@ -1601,6 +1612,20 @@ nsHTMLDocument::Open(JSContext* cx,
       if (rv.Failed()) {
         return nullptr;
       }
+
+      // Also reparent the template contents owner document
+      // because its global is set to the same as this document.
+      if (mTemplateContentsOwner) {
+        JS::Rooted<JSObject*> contentsOwnerWrapper(cx,
+          mTemplateContentsOwner->GetWrapper());
+        if (contentsOwnerWrapper) {
+          rv = mozilla::dom::ReparentWrapper(cx, contentsOwnerWrapper);
+          if (rv.Failed()) {
+            return nullptr;
+          }
+        }
+      }
+
       nsIXPConnect *xpc = nsContentUtils::XPConnect();
       rv = xpc->RescueOrphansInScope(cx, oldScope->GetGlobalJSObject());
       if (rv.Failed()) {
@@ -2756,7 +2781,7 @@ nsHTMLDocument::EditingStateChanged()
     rv = NS_NewURI(getter_AddRefs(uri), NS_LITERAL_STRING("resource://gre/res/contenteditable.css"));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsRefPtr<nsCSSStyleSheet> sheet;
+    nsRefPtr<CSSStyleSheet> sheet;
     rv = LoadChromeSheetSync(uri, true, getter_AddRefs(sheet));
     NS_ENSURE_TRUE(sheet, rv);
 
@@ -3521,7 +3546,7 @@ nsHTMLDocument::QueryCommandValue(const nsAString& commandID,
 }
 
 nsresult
-nsHTMLDocument::Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const
+nsHTMLDocument::Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult) const
 {
   NS_ASSERTION(aNodeInfo->NodeInfoManager() == mNodeInfoManager,
                "Can't import this document into another document!");

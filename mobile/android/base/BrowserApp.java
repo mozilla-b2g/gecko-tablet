@@ -9,12 +9,13 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.net.URLEncoder;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Vector;
 
-import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+
 import org.mozilla.gecko.DynamicToolbar.PinReason;
 import org.mozilla.gecko.DynamicToolbar.VisibilityTransition;
 import org.mozilla.gecko.GeckoProfileDirectories.NoMozillaDirectoryException;
@@ -111,16 +112,16 @@ import android.widget.RelativeLayout;
 import android.widget.Toast;
 import android.widget.ViewFlipper;
 
-abstract public class BrowserApp extends GeckoApp
-                                 implements TabsPanel.TabsLayoutChangeListener,
-                                            PropertyAnimator.PropertyAnimationListener,
-                                            View.OnKeyListener,
-                                            LayerView.OnMetricsChangedListener,
-                                            BrowserSearch.OnSearchListener,
-                                            BrowserSearch.OnEditSuggestionListener,
-                                            HomePager.OnNewTabsListener,
-                                            OnUrlOpenListener,
-                                            ActionModeCompat.Presenter {
+public class BrowserApp extends GeckoApp
+                        implements TabsPanel.TabsLayoutChangeListener,
+                                   PropertyAnimator.PropertyAnimationListener,
+                                   View.OnKeyListener,
+                                   LayerView.OnMetricsChangedListener,
+                                   BrowserSearch.OnSearchListener,
+                                   BrowserSearch.OnEditSuggestionListener,
+                                   HomePager.OnNewTabsListener,
+                                   OnUrlOpenListener,
+                                   ActionModeCompat.Presenter {
     private static final String LOGTAG = "GeckoBrowserApp";
 
     private static final int TABS_ANIMATION_DURATION = 450;
@@ -757,12 +758,17 @@ abstract public class BrowserApp extends GeckoApp
             if (!TextUtils.isEmpty(text)) {
                 Tabs.getInstance().loadUrl(text);
                 Telemetry.sendUIEvent(TelemetryContract.Event.LOAD_URL, TelemetryContract.Method.CONTEXT_MENU);
+                Telemetry.sendUIEvent(TelemetryContract.Event.ACTION, TelemetryContract.Method.CONTEXT_MENU, "pasteandgo");
             }
             return true;
         }
 
         if (itemId == R.id.site_settings) {
+            // This can be selected from either the browser menu or the contextmenu, depending on the size and version (v11+) of the phone.
             GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Permissions:Get", null));
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.HONEYCOMB) {
+                Telemetry.sendUIEvent(TelemetryContract.Event.ACTION, TelemetryContract.Method.CONTEXT_MENU, "site_settings");
+            }
             return true;
         }
 
@@ -770,11 +776,13 @@ abstract public class BrowserApp extends GeckoApp
             String text = Clipboard.getText();
             if (!TextUtils.isEmpty(text)) {
                 enterEditingMode(text);
+                Telemetry.sendUIEvent(TelemetryContract.Event.ACTION, TelemetryContract.Method.CONTEXT_MENU, "paste");
             }
             return true;
         }
 
         if (itemId == R.id.subscribe) {
+            // This can be selected from either the browser menu or the contextmenu, depending on the size and version (v11+) of the phone.
             Tab tab = Tabs.getInstance().getSelectedTab();
             if (tab != null && tab.hasFeeds()) {
                 JSONObject args = new JSONObject();
@@ -784,11 +792,15 @@ abstract public class BrowserApp extends GeckoApp
                     Log.e(LOGTAG, "error building json arguments");
                 }
                 GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Feeds:Subscribe", args.toString()));
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.HONEYCOMB) {
+                    Telemetry.sendUIEvent(TelemetryContract.Event.ACTION, TelemetryContract.Method.CONTEXT_MENU, "subscribe");
+                }
             }
             return true;
         }
 
         if (itemId == R.id.add_search_engine) {
+            // This can be selected from either the browser menu or the contextmenu, depending on the size and version (v11+) of the phone.
             Tab tab = Tabs.getInstance().getSelectedTab();
             if (tab != null && tab.hasOpenSearch()) {
                 JSONObject args = new JSONObject();
@@ -799,6 +811,10 @@ abstract public class BrowserApp extends GeckoApp
                     return true;
                 }
                 GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("SearchEngines:Add", args.toString()));
+
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.HONEYCOMB) {
+                    Telemetry.sendUIEvent(TelemetryContract.Event.ACTION, TelemetryContract.Method.CONTEXT_MENU, "add_search_engine");
+                }
             }
             return true;
         }
@@ -809,6 +825,7 @@ abstract public class BrowserApp extends GeckoApp
                 String url = tab.getURL();
                 if (url != null) {
                     Clipboard.setText(url);
+                    Telemetry.sendUIEvent(TelemetryContract.Event.ACTION, TelemetryContract.Method.CONTEXT_MENU, "copyurl");
                 }
             }
             return true;
@@ -1113,7 +1130,7 @@ abstract public class BrowserApp extends GeckoApp
         final int sidebarWidth = getResources().getDimensionPixelSize(R.dimen.tabs_sidebar_width);
 
         ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) mTabsPanel.getLayoutParams();
-        lp.width = (isSideBar ? sidebarWidth : ViewGroup.LayoutParams.FILL_PARENT);
+        lp.width = (isSideBar ? sidebarWidth : ViewGroup.LayoutParams.MATCH_PARENT);
         mTabsPanel.requestLayout();
 
         final boolean sidebarIsShown = (isSideBar && mTabsPanel.isShown());
@@ -1130,6 +1147,10 @@ abstract public class BrowserApp extends GeckoApp
             // Do exactly the same thing as if you tapped 'Sync' in Settings.
             final Intent intent = new Intent(getContext(), FxAccountGetStartedActivity.class);
             intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            final NativeJSObject extras = message.optObject("extras", null);
+            if (extras != null) {
+                intent.putExtra("extras", extras.toString());
+            }
             getContext().startActivity(intent);
 
         } else if ("CharEncoding:Data".equals(event)) {
@@ -2742,7 +2763,7 @@ abstract public class BrowserApp extends GeckoApp
 
     // HomePager.OnNewTabsListener
     @Override
-    public void onNewTabs(String[] urls) {
+    public void onNewTabs(List<String> urls) {
         final EnumSet<OnUrlOpenListener.Flags> flags = EnumSet.of(OnUrlOpenListener.Flags.ALLOW_SWITCH_TO_TAB);
 
         for (String url : urls) {

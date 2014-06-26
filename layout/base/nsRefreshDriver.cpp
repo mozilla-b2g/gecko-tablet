@@ -873,8 +873,15 @@ nsRefreshDriver::EnsureTimerStarted(bool aAdjustingTimer)
     mActiveTimer->AddRefreshDriver(this);
   }
 
-  mMostRecentRefresh = mActiveTimer->MostRecentRefresh();
-  mMostRecentRefreshEpochTime = mActiveTimer->MostRecentRefreshEpochTime();
+  // Since the different timers are sampled at different rates, when switching
+  // timers, the most recent refresh of the new timer may be *before* the
+  // most recent refresh of the old timer. However, the refresh driver time
+  // should not go backwards so we clamp the most recent refresh time.
+  mMostRecentRefresh =
+    std::max(mActiveTimer->MostRecentRefresh(), mMostRecentRefresh);
+  mMostRecentRefreshEpochTime =
+    std::max(mActiveTimer->MostRecentRefreshEpochTime(),
+             mMostRecentRefreshEpochTime);
 }
 
 void
@@ -1389,7 +1396,9 @@ nsRefreshDriver::FinishedWaitingForTransaction()
   if (mSkippedPaints &&
       !IsInRefresh() &&
       (ObserverCount() || ImageRequestCount())) {
+    profiler_tracing("Paint", "RD", TRACING_INTERVAL_START);
     DoRefresh();
+    profiler_tracing("Paint", "RD", TRACING_INTERVAL_END);
   }
   mSkippedPaints = 0;
 }

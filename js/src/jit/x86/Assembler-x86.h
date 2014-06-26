@@ -43,8 +43,10 @@ static MOZ_CONSTEXPR_VAR Register JSReturnReg_Data = edx;
 static MOZ_CONSTEXPR_VAR Register StackPointer = esp;
 static MOZ_CONSTEXPR_VAR Register FramePointer = ebp;
 static MOZ_CONSTEXPR_VAR Register ReturnReg = eax;
-static MOZ_CONSTEXPR_VAR FloatRegister ReturnFloatReg = xmm0;
-static MOZ_CONSTEXPR_VAR FloatRegister ScratchFloatReg = xmm7;
+static MOZ_CONSTEXPR_VAR FloatRegister ReturnFloat32Reg = xmm0;
+static MOZ_CONSTEXPR_VAR FloatRegister ScratchFloat32Reg = xmm7;
+static MOZ_CONSTEXPR_VAR FloatRegister ReturnDoubleReg = xmm0;
+static MOZ_CONSTEXPR_VAR FloatRegister ScratchDoubleReg = xmm7;
 
 // Avoid ebp, which is the FramePointer, which is unavailable in some modes.
 static MOZ_CONSTEXPR_VAR Register ArgumentsRectifierReg = esi;
@@ -112,11 +114,11 @@ static const bool StackKeptAligned = false;
 static const uint32_t CodeAlignment = 8;
 
 // As an invariant across architectures, within asm.js code:
-//   $sp % StackAlignment = (AsmJSSizeOfRetAddr + masm.framePushed) % StackAlignment
+//   $sp % StackAlignment = (AsmJSFrameSize + masm.framePushed) % StackAlignment
 // On x86, this naturally falls out of the fact that the 'call' instruction
 // pushes the return address on the stack and masm.framePushed = 0 at the first
 // instruction of the prologue.
-static const uint32_t AsmJSSizeOfRetAddr = sizeof(void*);
+static const uint32_t AsmJSFrameSize = sizeof(void*);
 
 struct ImmTag : public Imm32
 {

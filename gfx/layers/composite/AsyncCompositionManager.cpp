@@ -13,6 +13,7 @@
 #include "Layers.h"                     // for Layer, ContainerLayer, etc
 #include "gfxPoint.h"                   // for gfxPoint, gfxSize
 #include "gfxPoint3D.h"                 // for gfxPoint3D
+#include "mozilla/StyleAnimationValue.h" // for StyleAnimationValue, etc
 #include "mozilla/WidgetUtils.h"        // for ComputeTransformForRotation
 #include "mozilla/gfx/BaseRect.h"       // for BaseRect
 #include "mozilla/gfx/Point.h"          // for RoundedToInt, PointTyped
@@ -30,7 +31,6 @@
 #include "nsPoint.h"                    // for nsPoint
 #include "nsRect.h"                     // for nsIntRect
 #include "nsRegion.h"                   // for nsIntRegion
-#include "nsStyleAnimation.h"           // for nsStyleAnimation::Value, etc
 #include "nsTArray.h"                   // for nsTArray, nsTArray_Impl, etc
 #include "nsTArrayForwardDeclare.h"     // for InfallibleTArray
 #if defined(MOZ_WIDGET_ANDROID)
@@ -354,14 +354,15 @@ AsyncCompositionManager::AlignFixedAndStickyLayers(Layer* aLayer,
 }
 
 static void
-SampleValue(float aPortion, Animation& aAnimation, nsStyleAnimation::Value& aStart,
-            nsStyleAnimation::Value& aEnd, Animatable* aValue)
+SampleValue(float aPortion, Animation& aAnimation, StyleAnimationValue& aStart,
+            StyleAnimationValue& aEnd, Animatable* aValue)
 {
-  nsStyleAnimation::Value interpolatedValue;
+  StyleAnimationValue interpolatedValue;
   NS_ASSERTION(aStart.GetUnit() == aEnd.GetUnit() ||
-               aStart.GetUnit() == nsStyleAnimation::eUnit_None ||
-               aEnd.GetUnit() == nsStyleAnimation::eUnit_None, "Must have same unit");
-  nsStyleAnimation::Interpolate(aAnimation.property(), aStart, aEnd,
+               aStart.GetUnit() == StyleAnimationValue::eUnit_None ||
+               aEnd.GetUnit() == StyleAnimationValue::eUnit_None,
+               "Must have same unit");
+  StyleAnimationValue::Interpolate(aAnimation.property(), aStart, aEnd,
                                 aPortion, interpolatedValue);
   if (aAnimation.property() == eCSSProperty_opacity) {
     *aValue = interpolatedValue.GetFloatValue();
@@ -435,6 +436,9 @@ SampleAnimations(Layer* aLayer, TimeStamp aPoint)
 
     AnimationTiming timing;
     timing.mIterationDuration = animation.duration();
+    // Currently animations run on the compositor have their delay factored
+    // into their start time, hence the delay is effectively zero.
+    timing.mDelay = TimeDuration(0);
     timing.mIterationCount = animation.iterationCount();
     timing.mDirection = animation.direction();
     // Animations typically only run on the compositor during their active

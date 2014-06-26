@@ -38,7 +38,7 @@ class CompositorParent;
 class GestureEventListener;
 class ContainerLayer;
 class PCompositorParent;
-class ViewTransform;
+struct ViewTransform;
 class AsyncPanZoomAnimation;
 class FlingAnimation;
 
@@ -316,7 +316,7 @@ public:
    * Returns whether this APZC is for an element marked with the 'scrollgrab'
    * attribute.
    */
-  bool HasScrollgrab() const { return mFrameMetrics.mHasScrollgrab; }
+  bool HasScrollgrab() const { return mFrameMetrics.GetHasScrollgrab(); }
 
   /**
    * Returns whether this APZC has room to be panned (in any direction).

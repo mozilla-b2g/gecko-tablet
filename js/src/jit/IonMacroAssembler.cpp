@@ -76,11 +76,12 @@ MacroAssembler::guardTypeSet(const Source &address, const TypeSet *types, Barrie
     JS_ASSERT(!types->unknown());
 
     Label matched;
-    types::Type tests[7] = {
+    types::Type tests[8] = {
         types::Type::Int32Type(),
         types::Type::UndefinedType(),
         types::Type::BooleanType(),
         types::Type::StringType(),
+        types::Type::SymbolType(),
         types::Type::NullType(),
         types::Type::MagicArgType(),
         types::Type::AnyObjectType()
@@ -97,7 +98,7 @@ MacroAssembler::guardTypeSet(const Source &address, const TypeSet *types, Barrie
 
     // Emit all typed tests.
     BranchType lastBranch;
-    for (size_t i = 0; i < 7; i++) {
+    for (size_t i = 0; i < mozilla::ArrayLength(tests); i++) {
         if (!types->hasType(tests[i]))
             continue;
 
@@ -283,8 +284,8 @@ StoreToTypedFloatArray(MacroAssembler &masm, int arrayType, const S &value, cons
             // See the comment in TypedArrayObjectTemplate::doubleToNative.
             masm.canonicalizeDouble(value);
 #endif
-            masm.convertDoubleToFloat32(value, ScratchFloatReg);
-            masm.storeFloat32(ScratchFloatReg, dest);
+            masm.convertDoubleToFloat32(value, ScratchFloat32Reg);
+            masm.storeFloat32(ScratchFloat32Reg, dest);
         }
         break;
       case ScalarTypeDescr::TYPE_FLOAT64:
@@ -399,8 +400,8 @@ MacroAssembler::loadFromTypedArray(int arrayType, const T &src, const ValueOpera
             }
             bind(&isDouble);
             {
-                convertUInt32ToDouble(temp, ScratchFloatReg);
-                boxDouble(ScratchFloatReg, dest);
+                convertUInt32ToDouble(temp, ScratchDoubleReg);
+                boxDouble(ScratchDoubleReg, dest);
             }
             bind(&done);
         } else {
@@ -410,16 +411,16 @@ MacroAssembler::loadFromTypedArray(int arrayType, const T &src, const ValueOpera
         }
         break;
       case ScalarTypeDescr::TYPE_FLOAT32:
-        loadFromTypedArray(arrayType, src, AnyRegister(ScratchFloatReg), dest.scratchReg(),
+        loadFromTypedArray(arrayType, src, AnyRegister(ScratchFloat32Reg), dest.scratchReg(),
                            nullptr);
         if (LIRGenerator::allowFloat32Optimizations())
-            convertFloat32ToDouble(ScratchFloatReg, ScratchFloatReg);
-        boxDouble(ScratchFloatReg, dest);
+            convertFloat32ToDouble(ScratchFloat32Reg, ScratchDoubleReg);
+        boxDouble(ScratchDoubleReg, dest);
         break;
       case ScalarTypeDescr::TYPE_FLOAT64:
-        loadFromTypedArray(arrayType, src, AnyRegister(ScratchFloatReg), dest.scratchReg(),
+        loadFromTypedArray(arrayType, src, AnyRegister(ScratchDoubleReg), dest.scratchReg(),
                            nullptr);
-        boxDouble(ScratchFloatReg, dest);
+        boxDouble(ScratchDoubleReg, dest);
         break;
       default:
         MOZ_ASSUME_UNREACHABLE("Invalid typed array type");
@@ -1510,8 +1511,8 @@ MacroAssembler::convertInt32ValueToDouble(const Address &address, Register scrat
 {
     branchTestInt32(Assembler::NotEqual, address, done);
     unboxInt32(address, scratch);
-    convertInt32ToDouble(scratch, ScratchFloatReg);
-    storeDouble(ScratchFloatReg, address);
+    convertInt32ToDouble(scratch, ScratchDoubleReg);
+    storeDouble(ScratchDoubleReg, address);
 }
 
 void
@@ -1678,6 +1679,7 @@ MacroAssembler::convertTypedOrValueToFloatingPoint(TypedOrValueRegister src, Flo
         break;
       case MIRType_Object:
       case MIRType_String:
+      case MIRType_Symbol:
         jump(fail);
         break;
       case MIRType_Undefined:
@@ -1754,7 +1756,7 @@ MacroAssembler::convertValueToInt(ValueOperand value, MDefinition *maybeInput,
         jump(fail);
     }
 
-    // The value is null or undefined in truncation contexts - just emit 0.
+    // The value is null, undefined, or a symbol in truncation contexts - just emit 0.
     if (isNull.used())
         bind(&isNull);
     mov(ImmWord(0), output);
@@ -1894,6 +1896,7 @@ MacroAssembler::convertTypedOrValueToInt(TypedOrValueRegister src, FloatRegister
         convertDoubleToInt(temp, output, temp, nullptr, fail, behavior);
         break;
       case MIRType_String:
+      case MIRType_Symbol:
       case MIRType_Object:
         jump(fail);
         break;
@@ -1976,6 +1979,9 @@ MacroAssembler::branchEqualTypeIfNeeded(MIRType type, MDefinition *maybeDef, Reg
             break;
           case MIRType_String:
             branchTestString(Equal, tag, label);
+            break;
+          case MIRType_Symbol:
+            branchTestSymbol(Equal, tag, label);
             break;
           case MIRType_Object:
             branchTestObject(Equal, tag, label);

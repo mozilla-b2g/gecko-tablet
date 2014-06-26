@@ -52,24 +52,36 @@ BackCert::Init(const SECItem& certDER)
     return MapSECStatus(SECFailure);
   }
 
+  if (nssCert->version.len == 1 &&
+      nssCert->version.data[0] == static_cast<uint8_t>(der::Version::v3)) {
+    version = der::Version::v3;
+  } else if (nssCert->version.len == 1 &&
+             nssCert->version.data[0] == static_cast<uint8_t>(der::Version::v2)) {
+    version = der::Version::v2;
+  } else if (nssCert->version.len == 0) {
+    version = der::Version::v1;
+  } else {
+    // Explicit encoding of v1 is not allowed. We do not support any other
+    // version except v3.
+    return Fail(RecoverableError, SEC_ERROR_BAD_DER);
+  }
+
   const CERTCertExtension* const* exts = nssCert->extensions;
   if (!exts) {
     return Success;
   }
-  // We only decode v3 extensions for v3 certificates for two reasons.
-  // 1. They make no sense in non-v3 certs
-  // 2. An invalid cert can embed a basic constraints extension and the
-  //    check basic constrains will asume that this is valid. Making it
-  //    posible to create chains with v1 and v2 intermediates with is
-  //    not desirable.
-  if (! (nssCert->version.len == 1 &&
-      nssCert->version.data[0] == mozilla::pkix::der::Version::v3)) {
+
+  // Extensions are only allowed in v3 certificates, not v1 or v2. Also, we
+  // use presence of the basic constraints extension with isCA==true to decide
+  // whether to treat a certificate as a CA certificate, and we don't want to
+  // allow v1 or v2 intermediate CA certificates; this check is part of that
+  // enforcement as well.
+  if (version != der::Version::v3) {
     return Fail(RecoverableError, SEC_ERROR_EXTENSION_VALUE_INVALID);
   }
 
   const SECItem* dummyEncodedSubjectKeyIdentifier = nullptr;
   const SECItem* dummyEncodedAuthorityKeyIdentifier = nullptr;
-  const SECItem* dummyEncodedAuthorityInfoAccess = nullptr;
   const SECItem* dummyEncodedSubjectAltName = nullptr;
 
   for (const CERTCertExtension* ext = *exts; ext; ext = *++exts) {
@@ -104,7 +116,7 @@ BackCert::Init(const SECItem& certDER)
       // We should remember the value of the encoded AIA extension here, but
       // since our TrustDomain implementations get the OCSP URI using
       // CERT_GetOCSPAuthorityInfoAccessLocation, we currently don't need to.
-      out = &dummyEncodedAuthorityInfoAccess;
+      out = &encodedAuthorityInfoAccess;
     }
 
     // If this is an extension we don't understand and it's marked critical,
@@ -129,7 +141,6 @@ BackCert::Init(const SECItem& certDER)
   return Success;
 }
 
-
 Result
 BackCert::VerifyOwnSignatureWithKey(TrustDomain& trustDomain,
                                     const SECItem& subjectPublicKeyInfo) const
@@ -142,7 +153,7 @@ static Result BuildForward(TrustDomain& trustDomain,
                            BackCert& subject,
                            PRTime time,
                            EndEntityOrCA endEntityOrCA,
-                           KeyUsages requiredKeyUsagesIfPresent,
+                           KeyUsage requiredKeyUsageIfPresent,
                            KeyPurposeId requiredEKUIfPresent,
                            const CertPolicyId& requiredPolicy,
                            /*optional*/ const SECItem* stapledOCSPResponse,
@@ -158,7 +169,7 @@ BuildForwardInner(TrustDomain& trustDomain,
                   const CertPolicyId& requiredPolicy,
                   const SECItem& potentialIssuerDER,
                   unsigned int subCACount,
-                  ScopedCERTCertList& results)
+                  /*out*/ ScopedCERTCertList& results)
 {
   BackCert potentialIssuer(&subject, BackCert::IncludeCN::No);
   Result rv = potentialIssuer.Init(potentialIssuerDER);
@@ -188,9 +199,12 @@ BuildForwardInner(TrustDomain& trustDomain,
     return rv;
   }
 
+  // RFC 5280, Section 4.2.1.3: "If the keyUsage extension is present, then the
+  // subject public key MUST NOT be used to verify signatures on certificates
+  // or CRLs unless the corresponding keyCertSign or cRLSign bit is set."
   rv = BuildForward(trustDomain, potentialIssuer, time, EndEntityOrCA::MustBeCA,
-                    KU_KEY_CERT_SIGN, requiredEKUIfPresent, requiredPolicy,
-                    nullptr, subCACount, results);
+                    KeyUsage::keyCertSign, requiredEKUIfPresent,
+                    requiredPolicy, nullptr, subCACount, results);
   if (rv != Success) {
     return rv;
   }
@@ -210,7 +224,7 @@ BuildForward(TrustDomain& trustDomain,
              BackCert& subject,
              PRTime time,
              EndEntityOrCA endEntityOrCA,
-             KeyUsages requiredKeyUsagesIfPresent,
+             KeyUsage requiredKeyUsageIfPresent,
              KeyPurposeId requiredEKUIfPresent,
              const CertPolicyId& requiredPolicy,
              /*optional*/ const SECItem* stapledOCSPResponse,
@@ -225,7 +239,7 @@ BuildForward(TrustDomain& trustDomain,
   // See the explanation of error prioritization in pkix.h.
   rv = CheckIssuerIndependentProperties(trustDomain, subject, time,
                                         endEntityOrCA,
-                                        requiredKeyUsagesIfPresent,
+                                        requiredKeyUsageIfPresent,
                                         requiredEKUIfPresent, requiredPolicy,
                                         subCACount, &trustLevel);
   PRErrorCode deferredEndEntityError = 0;
@@ -280,7 +294,7 @@ BuildForward(TrustDomain& trustDomain,
   // Find a trusted issuer.
   // TODO(bug 965136): Add SKI/AKI matching optimizations
   ScopedCERTCertList candidates;
-  if (trustDomain.FindPotentialIssuers(&subject.GetNSSCert()->derIssuer, time,
+  if (trustDomain.FindPotentialIssuers(&subject.GetIssuer(), time,
                                        candidates) != SECSuccess) {
     return MapSECStatus(SECFailure);
   }
@@ -302,10 +316,12 @@ BuildForward(TrustDomain& trustDomain,
         return Fail(FatalError, deferredEndEntityError);
       }
 
-      SECStatus srv = trustDomain.CheckRevocation(endEntityOrCA,
-                                                  subject.GetNSSCert(),
-                                                  n->cert, time,
-                                                  stapledOCSPResponse);
+      CertID certID(subject.GetIssuer(), n->cert->derPublicKey,
+                    subject.GetSerialNumber());
+      SECStatus srv = trustDomain.CheckRevocation(
+                                    endEntityOrCA, certID, time,
+                                    stapledOCSPResponse,
+                                    subject.encodedAuthorityInfoAccess);
       if (srv != SECSuccess) {
         return MapSECStatus(SECFailure);
       }
@@ -348,8 +364,8 @@ BuildCertChain(TrustDomain& trustDomain,
                const CERTCertificate* nssCert,
                PRTime time,
                EndEntityOrCA endEntityOrCA,
-               /*optional*/ KeyUsages requiredKeyUsagesIfPresent,
-               /*optional*/ KeyPurposeId requiredEKUIfPresent,
+               KeyUsage requiredKeyUsageIfPresent,
+               KeyPurposeId requiredEKUIfPresent,
                const CertPolicyId& requiredPolicy,
                /*optional*/ const SECItem* stapledOCSPResponse,
                /*out*/ ScopedCERTCertList& results)
@@ -375,7 +391,7 @@ BuildCertChain(TrustDomain& trustDomain,
   }
 
   rv = BuildForward(trustDomain, cert, time, endEntityOrCA,
-                    requiredKeyUsagesIfPresent, requiredEKUIfPresent,
+                    requiredKeyUsageIfPresent, requiredEKUIfPresent,
                     requiredPolicy, stapledOCSPResponse, 0, results);
   if (rv != Success) {
     results = nullptr;

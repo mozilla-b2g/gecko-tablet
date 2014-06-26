@@ -601,6 +601,11 @@ struct IonScript
 
     static const uint32_t MAX_PARALLEL_AGE = 5;
 
+    enum ShouldIncreaseAge {
+        IncreaseAge = true,
+        KeepAge = false
+    };
+
     void resetParallelAge() {
         MOZ_ASSERT(isParallelEntryScript());
         parallelAge_ = 0;
@@ -608,9 +613,9 @@ struct IonScript
     uint32_t parallelAge() const {
         return parallelAge_;
     }
-    uint32_t increaseParallelAge() {
+    uint32_t shouldPreserveParallelCode(ShouldIncreaseAge increaseAge = KeepAge) {
         MOZ_ASSERT(isParallelEntryScript());
-        return ++parallelAge_;
+        return (increaseAge ? ++parallelAge_ : parallelAge_) < MAX_PARALLEL_AGE;
     }
 
     static void writeBarrierPre(Zone *zone, IonScript *ionScript);
@@ -636,11 +641,6 @@ struct IonBlockCounts
 
     // Text information about the code generated for this block.
     char *code_;
-
-    // Number of bytes of code generated in this block. Spill code is counted
-    // separately from other, instruction implementing code.
-    uint32_t instructionBytes_;
-    uint32_t spillBytes_;
 
   public:
 
@@ -701,22 +701,6 @@ struct IonBlockCounts
 
     const char *code() const {
         return code_;
-    }
-
-    void setInstructionBytes(uint32_t bytes) {
-        instructionBytes_ = bytes;
-    }
-
-    uint32_t instructionBytes() const {
-        return instructionBytes_;
-    }
-
-    void setSpillBytes(uint32_t bytes) {
-        spillBytes_ = bytes;
-    }
-
-    uint32_t spillBytes() const {
-        return spillBytes_;
     }
 };
 

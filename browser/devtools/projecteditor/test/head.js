@@ -72,6 +72,22 @@ function addTab(url) {
   return def.promise;
 }
 
+/**
+ * Some tests may need to import one or more of the test helper scripts.
+ * A test helper script is simply a js file that contains common test code that
+ * is either not common-enough to be in head.js, or that is located in a separate
+ * directory.
+ * The script will be loaded synchronously and in the test's scope.
+ * @param {String} filePath The file path, relative to the current directory.
+ *                 Examples:
+ *                 - "helper_attributes_test_runner.js"
+ *                 - "../../../commandline/test/helpers.js"
+ */
+function loadHelperScript(filePath) {
+  let testDir = gTestPath.substr(0, gTestPath.lastIndexOf("/"));
+  Services.scriptloader.loadSubScript(testDir + "/" + filePath, this);
+}
+
 function addProjectEditorTabForTempDirectory() {
   TEMP_PATH = buildTempDirectoryStructure();
   let CUSTOM_OPTS = {
@@ -121,7 +137,7 @@ function buildTempDirectoryStructure() {
 
   let htmlFile = FileUtils.getFile("TmpD", ["ProjectEditor", "index.html"]);
   htmlFile.createUnique(Components.interfaces.nsIFile.NORMAL_FILE_TYPE, FileUtils.PERMS_FILE);
-  writeToFile(htmlFile, [
+  writeToFileSync(htmlFile, [
     '<!DOCTYPE html>',
     '<html lang="en">',
     ' <head>',
@@ -137,14 +153,14 @@ function buildTempDirectoryStructure() {
 
   let readmeFile = FileUtils.getFile("TmpD", ["ProjectEditor", "README.md"]);
   readmeFile.createUnique(Components.interfaces.nsIFile.NORMAL_FILE_TYPE, FileUtils.PERMS_FILE);
-  writeToFile(readmeFile, [
+  writeToFileSync(readmeFile, [
     '## Readme'
     ].join("\n")
   );
 
   let licenseFile = FileUtils.getFile("TmpD", ["ProjectEditor", "LICENSE"]);
   licenseFile.createUnique(Components.interfaces.nsIFile.NORMAL_FILE_TYPE, FileUtils.PERMS_FILE);
-  writeToFile(licenseFile, [
+  writeToFileSync(licenseFile, [
    '/* This Source Code Form is subject to the terms of the Mozilla Public',
    ' * License, v. 2.0. If a copy of the MPL was not distributed with this',
    ' * file, You can obtain one at http://mozilla.org/MPL/2.0/. */'
@@ -153,7 +169,7 @@ function buildTempDirectoryStructure() {
 
   let cssFile = FileUtils.getFile("TmpD", ["ProjectEditor", "css", "styles.css"]);
   cssFile.createUnique(Components.interfaces.nsIFile.NORMAL_FILE_TYPE, FileUtils.PERMS_FILE);
-  writeToFile(cssFile, [
+  writeToFileSync(cssFile, [
     'body {',
     ' background: red;',
     '}'
@@ -173,7 +189,10 @@ function buildTempDirectoryStructure() {
 
 // https://developer.mozilla.org/en-US/Add-ons/Code_snippets/File_I_O#Writing_to_a_file
 function writeToFile(file, data) {
-  console.log("Writing to file: " + file.path, file.exists());
+  if (typeof file === "string") {
+    file = new FileUtils.File(file);
+  }
+  info("Writing to file: " + file.path + " (exists? " + file.exists() + ")");
   let defer = promise.defer();
   var ostream = FileUtils.openSafeFileOutputStream(file);
 
@@ -188,7 +207,32 @@ function writeToFile(file, data) {
       // Handle error!
       info("ERROR WRITING TEMP FILE", status);
     }
+    defer.resolve();
   });
+  return defer.promise;
+}
+
+// This is used when setting up the test.
+// You should typically use the async version of this, writeToFile.
+// https://developer.mozilla.org/en-US/Add-ons/Code_snippets/File_I_O#More
+function writeToFileSync(file, data) {
+  // file is nsIFile, data is a string
+  var foStream = Components.classes["@mozilla.org/network/file-output-stream;1"].
+                 createInstance(Components.interfaces.nsIFileOutputStream);
+
+  // use 0x02 | 0x10 to open file for appending.
+  foStream.init(file, 0x02 | 0x08 | 0x20, 0666, 0);
+  // write, create, truncate
+  // In a c file operation, we have no need to set file mode with or operation,
+  // directly using "r" or "w" usually.
+
+  // if you are sure there will never ever be any non-ascii text in data you can
+  // also call foStream.write(data, data.length) directly
+  var converter = Components.classes["@mozilla.org/intl/converter-output-stream;1"].
+                  createInstance(Components.interfaces.nsIConverterOutputStream);
+  converter.init(foStream, "UTF-8", 0, 0);
+  converter.writeString(data);
+  converter.close(); // this closes foStream
 }
 
 function getTempFile(path) {
@@ -198,8 +242,10 @@ function getTempFile(path) {
 }
 
 // https://developer.mozilla.org/en-US/Add-ons/Code_snippets/File_I_O#Writing_to_a_file
-function* getFileData(path) {
-  let file = new FileUtils.File(path);
+function* getFileData(file) {
+  if (typeof file === "string") {
+    file = new FileUtils.File(file);
+  }
   let def = promise.defer();
 
   NetUtil.asyncFetch(file, function(inputStream, status) {

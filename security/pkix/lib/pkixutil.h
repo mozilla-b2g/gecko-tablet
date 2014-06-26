@@ -27,6 +27,7 @@
 
 #include "pkix/enumclass.h"
 #include "pkix/pkixtypes.h"
+#include "pkixder.h"
 #include "prerror.h"
 #include "seccomon.h"
 #include "secerr.h"
@@ -96,7 +97,8 @@ public:
 
   // nssCert and childCert must be valid for the lifetime of BackCert
   BackCert(BackCert* childCert, IncludeCN includeCN)
-    : encodedBasicConstraints(nullptr)
+    : encodedAuthorityInfoAccess(nullptr)
+    , encodedBasicConstraints(nullptr)
     , encodedCertificatePolicies(nullptr)
     , encodedExtendedKeyUsage(nullptr)
     , encodedKeyUsage(nullptr)
@@ -112,6 +114,7 @@ public:
 
   const SECItem& GetDER() const { return nssCert->derCert; }
   const SECItem& GetIssuer() const { return nssCert->derIssuer; }
+  const SECItem& GetSerialNumber() const { return nssCert->serialNumber; }
   const SECItem& GetSubject() const { return nssCert->derSubject; }
   const SECItem& GetSubjectPublicKeyInfo() const
   {
@@ -121,6 +124,9 @@ public:
   Result VerifyOwnSignatureWithKey(TrustDomain& trustDomain,
                                    const SECItem& subjectPublicKeyInfo) const;
 
+  der::Version version;
+
+  const SECItem* encodedAuthorityInfoAccess;
   const SECItem* encodedBasicConstraints;
   const SECItem* encodedCertificatePolicies;
   const SECItem* encodedExtendedKeyUsage;

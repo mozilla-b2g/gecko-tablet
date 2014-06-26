@@ -69,7 +69,6 @@ class nsIIOService;
 class nsIJSRuntimeService;
 class nsILineBreaker;
 class nsNameSpaceManager;
-class nsINodeInfo;
 class nsIObserver;
 class nsIParser;
 class nsIParserService;
@@ -114,6 +113,7 @@ namespace dom {
 class DocumentFragment;
 class Element;
 class EventTarget;
+class NodeInfo;
 class Selection;
 } // namespace dom
 
@@ -367,6 +367,19 @@ public:
    */
   static bool IsHTMLVoid(nsIAtom* aLocalName);
 
+  enum ParseHTMLIntegerResultFlags {
+    eParseHTMLInteger_NoFlags               = 0,
+    eParseHTMLInteger_IsPercent             = 1 << 0,
+    eParseHTMLInteger_NonStandard           = 1 << 1,
+    eParseHTMLInteger_DidNotConsumeAllInput = 1 << 2,
+    // Set if one or more error flags were set.
+    eParseHTMLInteger_Error                 = 1 << 3,
+    eParseHTMLInteger_ErrorNoValue          = 1 << 4,
+    eParseHTMLInteger_ErrorOverflow         = 1 << 5
+  };
+  static int32_t ParseHTMLInteger(const nsAString& aValue,
+                                  ParseHTMLIntegerResultFlags *aResult);
+
   /**
    * Parse a margin string of format 'top, right, bottom, left' into
    * an nsIntMargin.
@@ -538,7 +551,7 @@ public:
                                        const nsAString& aQualifiedName,
                                        nsNodeInfoManager* aNodeInfoManager,
                                        uint16_t aNodeType,
-                                       nsINodeInfo** aNodeInfo);
+                                       mozilla::dom::NodeInfo** aNodeInfo);
 
   static void SplitExpatName(const char16_t *aExpatName, nsIAtom **aPrefix,
                              nsIAtom **aTagName, int32_t *aNameSpaceID);
@@ -704,8 +717,8 @@ public:
    * Convenience method to create a new nodeinfo that differs only by name
    * from aNodeInfo.
    */
-  static nsresult NameChanged(nsINodeInfo* aNodeInfo, nsIAtom* aName,
-                              nsINodeInfo** aResult);
+  static nsresult NameChanged(mozilla::dom::NodeInfo* aNodeInfo, nsIAtom* aName,
+                              mozilla::dom::NodeInfo** aResult);
 
   /**
    * Returns the appropriate event argument names for the specified
@@ -2040,11 +2053,8 @@ public:
    *
    * @return whether aAttr was valid and can be cached.
    */
-  static AutocompleteAttrState
-  SerializeAutocompleteAttribute(const nsAttrValue* aAttr,
-                                 nsAString& aResult,
-                                 AutocompleteAttrState aCachedState =
-                                   eAutocompleteAttrState_Unknown);
+  static AutocompleteAttrState SerializeAutocompleteAttribute(const nsAttrValue* aAttr,
+                                                          nsAString& aResult);
 
   /**
    * This will parse aSource, to extract the value of the pseudo attribute

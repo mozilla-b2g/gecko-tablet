@@ -6,6 +6,7 @@
 
 #include "mozilla/dom/HTMLMediaElement.h"
 #include "mozilla/dom/HTMLMediaElementBinding.h"
+#include "mozilla/dom/HTMLSourceElement.h"
 #include "mozilla/dom/ElementInlines.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/MathAlgorithms.h"
@@ -36,7 +37,6 @@
 #include "nsContentUtils.h"
 #include "nsIRequest.h"
 
-#include "nsFrameManager.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIXPConnect.h"
 #include "jsapi.h"
@@ -73,8 +73,6 @@
 
 #include "AudioChannelService.h"
 
-#include "nsCSSParser.h"
-#include "nsIMediaList.h"
 #include "mozilla/dom/power/PowerManagerService.h"
 #include "mozilla/dom/WakeLock.h"
 
@@ -243,6 +241,8 @@ class HTMLMediaElement::MediaLoadListener MOZ_FINAL : public nsIStreamListener,
                                                       public nsIInterfaceRequestor,
                                                       public nsIObserver
 {
+  ~MediaLoadListener() {}
+
   NS_DECL_ISUPPORTS
   NS_DECL_NSIREQUESTOBSERVER
   NS_DECL_NSISTREAMLISTENER
@@ -903,17 +903,13 @@ void HTMLMediaElement::LoadFromSourceChildren()
     //       Key System that the user agent knows it cannot use with type,
     //       then end the synchronous section[...]" (Bug 1016707)
     nsAutoString media;
-    if (child->GetAttr(kNameSpaceID_None, nsGkAtoms::media, media) && !media.IsEmpty()) {
-      nsCSSParser cssParser;
-      nsRefPtr<nsMediaList> mediaList(new nsMediaList());
-      cssParser.ParseMediaList(media, nullptr, 0, mediaList, false);
-      nsIPresShell* presShell = OwnerDoc()->GetShell();
-      if (presShell && !mediaList->Matches(presShell->GetPresContext(), nullptr)) {
-        DispatchAsyncSourceError(child);
-        const char16_t* params[] = { media.get(), src.get() };
-        ReportLoadError("MediaLoadSourceMediaNotMatched", params, ArrayLength(params));
-        continue;
-      }
+    HTMLSourceElement *childSrc = HTMLSourceElement::FromContent(child);
+    MOZ_ASSERT(childSrc, "Expect child to be HTMLSourceElement");
+    if (childSrc && !childSrc->MatchesCurrentMedia()) {
+      DispatchAsyncSourceError(child);
+      const char16_t* params[] = { media.get(), src.get() };
+      ReportLoadError("MediaLoadSourceMediaNotMatched", params, ArrayLength(params));
+      continue;
     }
     LOG(PR_LOG_DEBUG, ("%p Trying load from <source>=%s type=%s media=%s", this,
       NS_ConvertUTF16toUTF8(src).get(), NS_ConvertUTF16toUTF8(type).get(),
@@ -1967,7 +1963,7 @@ HTMLMediaElement::LookupMediaElementURITable(nsIURI* aURI)
   return nullptr;
 }
 
-HTMLMediaElement::HTMLMediaElement(already_AddRefed<nsINodeInfo>& aNodeInfo)
+HTMLMediaElement::HTMLMediaElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
   : nsGenericHTMLElement(aNodeInfo),
     mSrcStreamListener(nullptr),
     mCurrentLoadID(0),
@@ -2031,7 +2027,7 @@ HTMLMediaElement::HTMLMediaElement(already_AddRefed<nsINodeInfo>& aNodeInfo)
 
   mPaused.SetOuter(this);
 
-  RegisterFreezableElement();
+  RegisterActivityObserver();
   NotifyOwnerDocumentActivityChanged();
 }
 
@@ -2043,7 +2039,7 @@ HTMLMediaElement::~HTMLMediaElement()
   if (mVideoFrameContainer) {
     mVideoFrameContainer->ForgetElement();
   }
-  UnregisterFreezableElement();
+  UnregisterActivityObserver();
   if (mDecoder) {
     ShutdownDecoder();
   }
@@ -2528,7 +2524,6 @@ nsresult HTMLMediaElement::InitializeDecoderAsClone(MediaDecoder* aOriginal)
   double duration = aOriginal->GetDuration();
   if (duration >= 0) {
     decoder->SetDuration(duration);
-    decoder->SetTransportSeekable(aOriginal->IsTransportSeekable());
     decoder->SetMediaSeekable(aOriginal->IsMediaSeekable());
   }
 

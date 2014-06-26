@@ -26,7 +26,6 @@
 #include "nsCOMPtr.h"
 #include "nsFocusManager.h"
 #include "nsIContent.h"
-#include "nsINodeInfo.h"
 #include "nsIDocument.h"
 #include "nsIFrame.h"
 #include "nsIWidget.h"
@@ -200,6 +199,7 @@ public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSITIMERCALLBACK
 private:
+  ~UITimerCallback() {}
   uint32_t mPreviousCount;
 };
 
