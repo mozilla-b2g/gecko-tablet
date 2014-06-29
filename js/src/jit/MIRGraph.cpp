@@ -119,6 +119,15 @@ MIRGraph::removeBlock(MBasicBlock *block)
 }
 
 void
+MIRGraph::removeBlockIncludingPhis(MBasicBlock *block)
+{
+    // removeBlock doesn't clear phis because of IonBuilder constraints. Here,
+    // we want to totally clear everything.
+    removeBlock(block);
+    block->discardAllPhis();
+}
+
+void
 MIRGraph::unmarkBlocks()
 {
     for (MBasicBlockIterator i(blocks_.begin()); i != blocks_.end(); i++)
@@ -931,6 +940,20 @@ MBasicBlock::addImmediatelyDominatedBlock(MBasicBlock *child)
 }
 
 void
+MBasicBlock::removeImmediatelyDominatedBlock(MBasicBlock *child)
+{
+    for (size_t i = 0; ; ++i) {
+        MOZ_ASSERT(i < immediatelyDominated_.length(),
+                   "Dominated block to remove not present");
+        if (immediatelyDominated_[i] == child) {
+            immediatelyDominated_[i] = immediatelyDominated_.back();
+            immediatelyDominated_.popBack();
+            return;
+        }
+    }
+}
+
+void
 MBasicBlock::assertUsesAreNotWithin(MUseIterator use, MUseIterator end)
 {
 #ifdef DEBUG
@@ -939,14 +962,6 @@ MBasicBlock::assertUsesAreNotWithin(MUseIterator use, MUseIterator end)
                      use->consumer()->toDefinition()->block()->id() < id());
     }
 #endif
-}
-
-bool
-MBasicBlock::dominates(const MBasicBlock *other) const
-{
-    uint32_t high = domIndex() + numDominated();
-    uint32_t low  = domIndex();
-    return other->domIndex() >= low && other->domIndex() < high;
 }
 
 AbortReason

@@ -230,10 +230,6 @@
 #include "mozilla/dom/SpeechSynthesis.h"
 #endif
 
-#ifdef MOZ_JSDEBUGGER
-#include "jsdIDebuggerService.h"
-#endif
-
 #ifdef MOZ_B2G
 #include "nsPISocketTransportService.h"
 #endif
@@ -7840,7 +7836,22 @@ PostMessageReadStructuredClone(JSContext* cx,
                                uint32_t data,
                                void* closure)
 {
-  if (tag == SCTAG_DOM_BLOB || tag == SCTAG_DOM_FILELIST) {
+  if (tag == SCTAG_DOM_BLOB) {
+    NS_ASSERTION(!data, "Data should be empty");
+
+    // What we get back from the reader is a DOMFileImpl.
+    // From that we create a new DOMFile.
+    nsISupports* supports;
+    if (JS_ReadBytes(reader, &supports, sizeof(supports))) {
+      nsCOMPtr<nsIDOMBlob> file = new DOMFile(static_cast<DOMFileImpl*>(supports));
+      JS::Rooted<JS::Value> val(cx);
+      if (NS_SUCCEEDED(nsContentUtils::WrapNative(cx, file, &val))) {
+        return val.toObjectOrNull();
+      }
+    }
+  }
+
+  if (tag == SCTAG_DOM_FILELIST) {
     NS_ASSERTION(!data, "Data should be empty");
 
     nsISupports* supports;
@@ -7879,8 +7890,11 @@ PostMessageWriteStructuredClone(JSContext* cx,
     nsISupports* supports = wrappedNative->Native();
 
     nsCOMPtr<nsIDOMBlob> blob = do_QueryInterface(supports);
-    if (blob && scInfo->subsumes)
+    if (blob && scInfo->subsumes) {
       scTag = SCTAG_DOM_BLOB;
+      DOMFile* file = static_cast<DOMFile*>(blob.get());
+      supports = file->Impl();
+    }
 
     nsCOMPtr<nsIDOMFileList> list = do_QueryInterface(supports);
     if (list && scInfo->subsumes)
@@ -10863,7 +10877,6 @@ nsGlobalWindow::ShowSlowScriptDialog()
 
   // Prioritize the SlowScriptDebug interface over JSD1.
   nsCOMPtr<nsISlowScriptDebugCallback> debugCallback;
-  bool oldDebugPossible = false;
 
   if (hasFrame) {
     const char *debugCID = "@mozilla.org/dom/slow-script-debug;1";
@@ -10871,33 +10884,9 @@ nsGlobalWindow::ShowSlowScriptDialog()
     if (NS_SUCCEEDED(rv)) {
       debugService->GetActivationHandler(getter_AddRefs(debugCallback));
     }
-
-    if (!debugCallback) {
-      oldDebugPossible = js::CanCallContextDebugHandler(cx);
-#ifdef MOZ_JSDEBUGGER
-      // Get the debugger service if necessary.
-      if (oldDebugPossible) {
-        bool jsds_IsOn = false;
-        const char jsdServiceCtrID[] = "@mozilla.org/js/jsd/debugger-service;1";
-        nsCOMPtr<jsdIExecutionHook> jsdHook;
-        nsCOMPtr<jsdIDebuggerService> jsds = do_GetService(jsdServiceCtrID, &rv);
-
-        // Check if there's a user for the debugger service that's 'on' for us
-        if (NS_SUCCEEDED(rv)) {
-          jsds->GetDebuggerHook(getter_AddRefs(jsdHook));
-          jsds->GetIsOn(&jsds_IsOn);
-        }
-
-        // If there is a debug handler registered for this runtime AND
-        // ((jsd is on AND has a hook) OR (jsd isn't on (something else debugs)))
-        // then something useful will be done with our request to debug.
-        oldDebugPossible = ((jsds_IsOn && (jsdHook != nullptr)) || !jsds_IsOn);
-      }
-#endif
-    }
   }
 
-  bool showDebugButton = debugCallback || oldDebugPossible;
+  bool showDebugButton = !!debugCallback;
 
   // Get localizable strings
   nsXPIDLString title, msg, stopButton, waitButton, debugButton, neverShowDlg;
@@ -11005,10 +10994,6 @@ nsGlobalWindow::ShowSlowScriptDialog()
     if (debugCallback) {
       rv = debugCallback->HandleSlowScriptDebug(this);
       return NS_SUCCEEDED(rv) ? ContinueSlowScript : KillSlowScript;
-    }
-
-    if (oldDebugPossible) {
-      return js_CallContextDebugHandler(cx) ? ContinueSlowScript : KillSlowScript;
     }
   }
   JS_ClearPendingException(cx);
@@ -11384,7 +11369,7 @@ nsGlobalWindow::Observe(nsISupports* aSubject, const char* aTopic,
 #endif // MOZ_B2G
 
   if (!nsCRT::strcmp(aTopic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID)) {
-    MOZ_ASSERT(!nsCRT::strcmp(NS_ConvertUTF16toUTF8(aData).get(), "intl.accept_languages"));
+    MOZ_ASSERT(!NS_strcmp(aData, MOZ_UTF16("intl.accept_languages")));
     MOZ_ASSERT(IsInnerWindow());
 
     // The user preferred languages have changed, we need to fire an event on

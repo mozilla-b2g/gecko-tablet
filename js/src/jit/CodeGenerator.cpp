@@ -3340,7 +3340,10 @@ CodeGenerator::generateBody()
         // blocks are created to split critical edges, and if we didn't end up
         // putting any instructions in them, we can skip them.
         if (current->isTrivial())
-            continue; 
+            continue;
+
+        IonSpew(IonSpew_Codegen, "# block%lu%s:", i,
+                current->mir()->isLoopHeader() ? " (loop header)" : "");
 
         masm.bind(current->label());
 
@@ -8570,7 +8573,7 @@ CodeGenerator::visitAsmJSCall(LAsmJSCall *ins)
         masm.call(mir->desc(), ToRegister(ins->getOperand(mir->dynamicCalleeOperandIndex())));
         break;
       case MAsmJSCall::Callee::Builtin:
-        masm.call(mir->desc(), AsmJSImmPtr(callee.builtin()));
+        masm.call(AsmJSImmPtr(callee.builtin()));
         break;
     }
 

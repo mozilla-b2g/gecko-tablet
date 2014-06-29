@@ -13,6 +13,7 @@
 #include "mozilla/layers/GeckoContentController.h"
 #include "mozilla/layers/CompositorParent.h"
 #include "mozilla/layers/APZCTreeManager.h"
+#include "mozilla/Preferences.h"
 #include "base/task.h"
 #include "Layers.h"
 #include "TestLayers.h"
@@ -58,6 +59,24 @@ public:
   MOCK_METHOD2(PostDelayedTask, void(Task* aTask, int aDelayMs));
 };
 
+class TestScopedBoolPref {
+public:
+  TestScopedBoolPref(const char* aPref, bool aVal)
+    : mPref(aPref)
+  {
+    mOldVal = Preferences::GetBool(aPref);
+    Preferences::SetBool(aPref, aVal);
+  }
+
+  ~TestScopedBoolPref() {
+    Preferences::SetBool(mPref, mOldVal);
+  }
+
+private:
+  const char* mPref;
+  bool mOldVal;
+};
+
 class MockContentControllerDelayed : public MockContentController {
 public:
   MockContentControllerDelayed()
@@ -89,6 +108,19 @@ public:
     mTaskQueue[0]->Run();
     delete mTaskQueue[0];
     mTaskQueue.RemoveElementAt(0);
+  }
+
+  // Run all the tasks in the queue, returning the number of tasks
+  // run. Note that if a task queues another task while running, that
+  // new task will not be run. Therefore, there may be still be tasks
+  // in the queue after this function is called. Only when the return
+  // value is 0 is the queue guaranteed to be empty.
+  int RunThroughDelayedTasks() {
+    int numTasks = mTaskQueue.Length();
+    for (int i = 0; i < numTasks; i++) {
+      RunDelayedTask();
+    }
+    return numTasks;
   }
 
 private:
@@ -807,7 +839,72 @@ TEST_F(AsyncPanZoomControllerTester, Fling) {
   apzc->Destroy();
 }
 
+// Start a fling, and then tap while the fling is ongoing. When
+// aSlow is false, the tap will happen while the fling is at a
+// high velocity, and we check that the tap doesn't trigger sending a tap
+// to content. If aSlow is true, the tap will happen while the fling
+// is at a slow velocity, and we check that the tap does trigger sending
+// a tap to content. See bug 1022956.
+void
+DoFlingStopTest(bool aSlow) {
+  TimeStamp testStartTime = TimeStamp::Now();
+  AsyncPanZoomController::SetFrameTime(testStartTime);
+
+  nsRefPtr<MockContentControllerDelayed> mcc = new NiceMock<MockContentControllerDelayed>();
+  nsRefPtr<TestAPZCTreeManager> tm = new TestAPZCTreeManager();
+  nsRefPtr<TestAsyncPanZoomController> apzc = new TestAsyncPanZoomController(0, mcc, tm, AsyncPanZoomController::USE_GESTURE_DETECTOR);
+
+  apzc->SetFrameMetrics(TestFrameMetrics());
+  apzc->NotifyLayersUpdated(TestFrameMetrics(), true);
+
+  int time = 0;
+  int touchStart = 50;
+  int touchEnd = 10;
+
+  // Start the fling down.
+  ApzcPan(apzc, tm, time, touchStart, touchEnd);
+  // The touchstart from the pan will leave some cancelled tasks in the queue, clear them out
+  EXPECT_EQ(2, mcc->RunThroughDelayedTasks());
+
+  // If we want to tap while the fling is fast, let the fling advance for 10ms only. If we want
+  // the fling to slow down more, advance to 2000ms. These numbers may need adjusting if our
+  // friction and threshold values change, but they should be deterministic at least.
+  int timeDelta = aSlow ? 2000 : 10;
+  int tapCallsExpected = aSlow ? 1 : 0;
+  int delayedTasksExpected = aSlow ? 3 : 2;
+
+  // Advance the fling animation by timeDelta milliseconds.
+  ScreenPoint pointOut;
+  ViewTransform viewTransformOut;
+  apzc->SampleContentTransformForFrame(testStartTime + TimeDuration::FromMilliseconds(timeDelta), &viewTransformOut, pointOut);
+
+  // Deliver a tap to abort the fling. Ensure that we get a HandleSingleTap
+  // call out of it if and only if the fling is slow.
+  EXPECT_CALL(*mcc, HandleSingleTap(_, 0, apzc->GetGuid())).Times(tapCallsExpected);
+  ApzcTap(apzc, 10, 10, time, 0, nullptr);
+  EXPECT_EQ(delayedTasksExpected, mcc->RunThroughDelayedTasks());
+
+  // Verify that we didn't advance any further after the fling was aborted, in either case.
+  ScreenPoint finalPointOut;
+  apzc->SampleContentTransformForFrame(testStartTime + TimeDuration::FromMilliseconds(timeDelta + 1000), &viewTransformOut, finalPointOut);
+  EXPECT_EQ(pointOut.x, finalPointOut.x);
+  EXPECT_EQ(pointOut.y, finalPointOut.y);
+
+  apzc->AssertStateIsReset();
+  apzc->Destroy();
+}
+
+TEST_F(AsyncPanZoomControllerTester, FlingStop) {
+  DoFlingStopTest(false);
+}
+
+TEST_F(AsyncPanZoomControllerTester, FlingStopTap) {
+  DoFlingStopTest(true);
+}
+
 TEST_F(AsyncPanZoomControllerTester, OverScrollPanning) {
+  TestScopedBoolPref overscrollEnabledPref("apz.overscroll.enabled", true);
+
   TimeStamp testStartTime = TimeStamp::Now();
   AsyncPanZoomController::SetFrameTime(testStartTime);
 
@@ -818,20 +915,78 @@ TEST_F(AsyncPanZoomControllerTester, OverScrollPanning) {
   apzc->SetFrameMetrics(TestFrameMetrics());
   apzc->NotifyLayersUpdated(TestFrameMetrics(), true);
 
-  EXPECT_CALL(*mcc, SendAsyncScrollDOMEvent(_,_,_)).Times(AtLeast(1));
-  EXPECT_CALL(*mcc, RequestContentRepaint(_)).Times(1);
+  // Pan sufficiently to hit overscroll behavior
+  int time = 0;
+  int touchStart = 500;
+  int touchEnd = 10;
+  ApzcPan(apzc, tm, time, touchStart, touchEnd);
+  EXPECT_TRUE(apzc->IsOverscrolled());
+
+  // Note that in the calls to SampleContentTransformForFrame below, the time
+  // increment used is sufficiently large for the animation to have completed. However,
+  // any single call to SampleContentTransformForFrame will not finish an animation
+  // *and* also proceed through the following animation, if there is one.
+  // Therefore the minimum number of calls to go from an overscroll-inducing pan
+  // to a reset state is 3; these are documented further below.
+
+  ScreenPoint pointOut;
+  ViewTransform viewTransformOut;
+
+  // This sample will run to the end of the non-overscrolling fling animation
+  // and will schedule the overscrolling fling animation.
+  apzc->SampleContentTransformForFrame(testStartTime + TimeDuration::FromMilliseconds(10000), &viewTransformOut, pointOut);
+  EXPECT_EQ(ScreenPoint(0, 90), pointOut);
+  EXPECT_TRUE(apzc->IsOverscrolled());
+
+  // This sample will run to the end of the overscrolling fling animation and
+  // will schedule the snapback animation.
+  apzc->SampleContentTransformForFrame(testStartTime + TimeDuration::FromMilliseconds(20000), &viewTransformOut, pointOut);
+  EXPECT_EQ(ScreenPoint(0, 90), pointOut);
+  EXPECT_TRUE(apzc->IsOverscrolled());
+
+  // This sample will run to the end of the snapback animation and reset the state.
+  apzc->SampleContentTransformForFrame(testStartTime + TimeDuration::FromMilliseconds(30000), &viewTransformOut, pointOut);
+  EXPECT_EQ(ScreenPoint(0, 90), pointOut);
+  EXPECT_FALSE(apzc->IsOverscrolled());
+
+  apzc->AssertStateIsReset();
+  apzc->Destroy();
+}
+
+TEST_F(AsyncPanZoomControllerTester, OverScrollAbort) {
+  TestScopedBoolPref overscrollEnabledPref("apz.overscroll.enabled", true);
+
+  TimeStamp testStartTime = TimeStamp::Now();
+  AsyncPanZoomController::SetFrameTime(testStartTime);
+
+  nsRefPtr<MockContentController> mcc = new NiceMock<MockContentController>();
+  nsRefPtr<TestAPZCTreeManager> tm = new TestAPZCTreeManager();
+  nsRefPtr<TestAsyncPanZoomController> apzc = new TestAsyncPanZoomController(0, mcc, tm);
+
+  apzc->SetFrameMetrics(TestFrameMetrics());
+  apzc->NotifyLayersUpdated(TestFrameMetrics(), true);
 
   // Pan sufficiently to hit overscroll behavior
   int time = 0;
   int touchStart = 500;
   int touchEnd = 10;
+  ApzcPan(apzc, tm, time, touchStart, touchEnd);
+  EXPECT_TRUE(apzc->IsOverscrolled());
+
   ScreenPoint pointOut;
   ViewTransform viewTransformOut;
 
-  // Pan down
-  ApzcPan(apzc, tm, time, touchStart, touchEnd);
-  apzc->SampleContentTransformForFrame(testStartTime+TimeDuration::FromMilliseconds(1000), &viewTransformOut, pointOut);
-  EXPECT_EQ(ScreenPoint(0, 90), pointOut);
+  // This sample call will run to the end of the non-overscrolling fling animation
+  // and will schedule the overscrolling fling animation (see comment in OverScrollPanning
+  // above for more explanation).
+  apzc->SampleContentTransformForFrame(testStartTime + TimeDuration::FromMilliseconds(10000), &viewTransformOut, pointOut);
+  EXPECT_TRUE(apzc->IsOverscrolled());
+
+  // At this point, we have an active overscrolling fling animation.
+  // Check that cancelling the animation clears the overscroll.
+  apzc->CancelAnimation();
+  EXPECT_FALSE(apzc->IsOverscrolled());
+  apzc->AssertStateIsReset();
 
   apzc->Destroy();
 }
