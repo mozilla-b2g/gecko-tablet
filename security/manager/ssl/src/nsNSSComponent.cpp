@@ -30,7 +30,7 @@
 #include "nsIDOMWindow.h"
 #include "nsIDOMWindowCollection.h"
 #include "nsIDocument.h"
-#include "nsIDOMSmartCardEvent.h"
+#include "mozilla/dom/SmartCardEvent.h"
 #include "nsSmartCardMonitor.h"
 #include "nsIDOMCryptoLegacy.h"
 #else
@@ -47,7 +47,6 @@
 #include "nsITokenPasswordDialogs.h"
 #include "nsServiceManagerUtils.h"
 #include "nsNSSShutDown.h"
-#include "GeneratedEvents.h"
 #include "SharedSSLState.h"
 #include "NSSErrorsService.h"
 
@@ -437,23 +436,17 @@ nsNSSComponent::DispatchEventToWindow(nsIDOMWindow* domWin,
     return NS_FAILED(rv) ? rv : NS_ERROR_FAILURE;
   }
 
-  nsCOMPtr<nsIDocument> d = do_QueryInterface(doc);
+  nsCOMPtr<EventTarget> d = do_QueryInterface(doc);
 
-  // create the event
-  nsCOMPtr<nsIDOMEvent> event;
-  NS_NewDOMSmartCardEvent(getter_AddRefs(event), d, nullptr, nullptr);
-  nsCOMPtr<nsIDOMSmartCardEvent> smartCardEvent = do_QueryInterface(event);
-  rv = smartCardEvent->InitSmartCardEvent(eventType, false, true, tokenName);
-  NS_ENSURE_SUCCESS(rv, rv);
-  smartCardEvent->SetTrusted(true);
+  SmartCardEventInit init;
+  init.mBubbles = false;
+  init.mCancelable = true;
+  init.mTokenName = tokenName;
 
-  // Send it
-  nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(doc, &rv);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
+  nsRefPtr<SmartCardEvent> event = SmartCardEvent::Constructor(d, eventType, init);
+  event->SetTrusted(true);
 
-  return target->DispatchEvent(smartCardEvent, &boolrv);
+  return d->DispatchEvent(event, &boolrv);
 }
 #endif // MOZ_DISABLE_CRYPTOLEGACY
 
@@ -868,15 +861,6 @@ static const CipherPref sCipherPrefs[] = {
    TLS_RSA_WITH_RC4_128_MD5, true }, // deprecated (RSA key exchange, RC4, HMAC-MD5)
 
  // All the rest are disabled by default
-
- { "security.ssl3.rsa_fips_des_ede3_sha",
-   SSL_RSA_FIPS_WITH_3DES_EDE_CBC_SHA, false },
- { "security.ssl3.dhe_dss_camellia_256_sha",
-   TLS_DHE_DSS_WITH_CAMELLIA_256_CBC_SHA, false },
- { "security.ssl3.dhe_dss_camellia_128_sha",
-   TLS_DHE_DSS_WITH_CAMELLIA_128_CBC_SHA, false },
- { "security.ssl3.rsa_seed_sha",
-   TLS_RSA_WITH_SEED_CBC_SHA, false },
 
  { nullptr, 0 } // end marker
 };

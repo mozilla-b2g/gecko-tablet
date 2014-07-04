@@ -3415,30 +3415,46 @@ extern JS_PUBLIC_API(bool)
 JS_BufferIsCompilableUnit(JSContext *cx, JS::Handle<JSObject*> obj, const char *utf8,
                           size_t length);
 
-extern JS_PUBLIC_API(JSScript *)
+/*
+ * |script| will always be set. On failure, it will be set to nullptr.
+ */
+extern JS_PUBLIC_API(bool)
 JS_CompileScript(JSContext *cx, JS::HandleObject obj,
                  const char *ascii, size_t length,
-                 const JS::CompileOptions &options);
+                 const JS::CompileOptions &options,
+                 JS::MutableHandleScript script);
 
-extern JS_PUBLIC_API(JSScript *)
+/*
+ * |script| will always be set. On failure, it will be set to nullptr.
+ */
+extern JS_PUBLIC_API(bool)
 JS_CompileUCScript(JSContext *cx, JS::HandleObject obj,
                    const jschar *chars, size_t length,
-                   const JS::CompileOptions &options);
+                   const JS::CompileOptions &options,
+                   JS::MutableHandleScript script);
 
 extern JS_PUBLIC_API(JSObject *)
 JS_GetGlobalFromScript(JSScript *script);
 
-extern JS_PUBLIC_API(JSFunction *)
+/*
+ * |fun| will always be set. On failure, it will be set to nullptr.
+ */
+extern JS_PUBLIC_API(bool)
 JS_CompileFunction(JSContext *cx, JS::HandleObject obj, const char *name,
                    unsigned nargs, const char *const *argnames,
                    const char *bytes, size_t length,
-                   const JS::CompileOptions &options);
+                   const JS::CompileOptions &options,
+                   JS::MutableHandleFunction fun);
 
-extern JS_PUBLIC_API(JSFunction *)
+/*
+ * |fun| will always be set. On failure, it will be set to nullptr.
+ */
+extern JS_PUBLIC_API(bool)
 JS_CompileUCFunction(JSContext *cx, JS::HandleObject obj, const char *name,
                      unsigned nargs, const char *const *argnames,
                      const jschar *chars, size_t length,
-                     const JS::CompileOptions &options);
+                     const JS::CompileOptions &options,
+                     JS::MutableHandleFunction fun);
 
 namespace JS {
 
@@ -3571,10 +3587,6 @@ class JS_FRIEND_API(ReadOnlyCompileOptions)
     uint32_t introductionOffset;
     bool hasIntroductionInfo;
 
-    // Wrap any compilation option values that need it as appropriate for
-    // use from |compartment|.
-    virtual bool wrap(JSContext *cx, JSCompartment *compartment) = 0;
-
   private:
     static JSObject * const nullObjectPtr;
     void operator=(const ReadOnlyCompileOptions &) MOZ_DELETE;
@@ -3669,8 +3681,6 @@ class JS_FRIEND_API(OwningCompileOptions) : public ReadOnlyCompileOptions
         return true;
     }
 
-    virtual bool wrap(JSContext *cx, JSCompartment *compartment) MOZ_OVERRIDE;
-
   private:
     void operator=(const CompileOptions &rhs) MOZ_DELETE;
 };
@@ -3754,29 +3764,32 @@ class MOZ_STACK_CLASS JS_FRIEND_API(CompileOptions) : public ReadOnlyCompileOpti
         return *this;
     }
 
-    virtual bool wrap(JSContext *cx, JSCompartment *compartment) MOZ_OVERRIDE;
-
   private:
     void operator=(const CompileOptions &rhs) MOZ_DELETE;
 };
 
-extern JS_PUBLIC_API(JSScript *)
+/*
+ * |script| will always be set. On failure, it will be set to nullptr.
+ */
+extern JS_PUBLIC_API(bool)
 Compile(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options,
-        const char *bytes, size_t length);
+        SourceBufferHolder &srcBuf, JS::MutableHandleScript script);
 
-extern JS_PUBLIC_API(JSScript *)
+extern JS_PUBLIC_API(bool)
 Compile(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options,
-        const jschar *chars, size_t length);
+        const char *bytes, size_t length, JS::MutableHandleScript script);
 
-extern JS_PUBLIC_API(JSScript *)
+extern JS_PUBLIC_API(bool)
 Compile(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options,
-        SourceBufferHolder &srcBuf);
+        const jschar *chars, size_t length, JS::MutableHandleScript script);
 
-extern JS_PUBLIC_API(JSScript *)
-Compile(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options, FILE *file);
+extern JS_PUBLIC_API(bool)
+Compile(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options, FILE *file,
+        JS::MutableHandleScript script);
 
-extern JS_PUBLIC_API(JSScript *)
-Compile(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options, const char *filename);
+extern JS_PUBLIC_API(bool)
+Compile(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options, const char *filename,
+        JS::MutableHandleScript script);
 
 extern JS_PUBLIC_API(bool)
 CanCompileOffThread(JSContext *cx, const ReadOnlyCompileOptions &options, size_t length);
@@ -3805,20 +3818,20 @@ CompileOffThread(JSContext *cx, const ReadOnlyCompileOptions &options,
 extern JS_PUBLIC_API(JSScript *)
 FinishOffThreadScript(JSContext *maybecx, JSRuntime *rt, void *token);
 
-extern JS_PUBLIC_API(JSFunction *)
+extern JS_PUBLIC_API(bool)
 CompileFunction(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options,
                 const char *name, unsigned nargs, const char *const *argnames,
-                const char *bytes, size_t length);
+                SourceBufferHolder &srcBuf, JS::MutableHandleFunction fun);
 
-extern JS_PUBLIC_API(JSFunction *)
+extern JS_PUBLIC_API(bool)
 CompileFunction(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options,
                 const char *name, unsigned nargs, const char *const *argnames,
-                const jschar *chars, size_t length);
+                const char *bytes, size_t length, JS::MutableHandleFunction fun);
 
-extern JS_PUBLIC_API(JSFunction *)
+extern JS_PUBLIC_API(bool)
 CompileFunction(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options,
                 const char *name, unsigned nargs, const char *const *argnames,
-                SourceBufferHolder &srcBuf);
+                const jschar *chars, size_t length, JS::MutableHandleFunction fun);
 
 } /* namespace JS */
 
@@ -3996,6 +4009,11 @@ Call(JSContext *cx, JS::HandleValue thisv, JS::HandleObject funObj, const JS::Ha
     return Call(cx, thisv, fun, args, rval);
 }
 
+extern JS_PUBLIC_API(bool)
+Construct(JSContext *cx, JS::HandleValue fun,
+          const JS::HandleValueArray& args,
+          MutableHandleValue rval);
+
 } /* namespace JS */
 
 /*
@@ -4148,8 +4166,20 @@ JS_FileEscapedString(FILE *fp, JSString *str, char quote);
 extern JS_PUBLIC_API(size_t)
 JS_GetStringLength(JSString *str);
 
+/* Returns true iff the string's characters are stored as Latin1. */
+extern JS_PUBLIC_API(bool)
+JS_StringHasLatin1Chars(JSString *str);
+
 extern JS_PUBLIC_API(const jschar *)
 JS_GetStringCharsAndLength(JSContext *cx, JSString *str, size_t *length);
+
+extern JS_PUBLIC_API(const JS::Latin1Char *)
+JS_GetLatin1StringCharsAndLength(JSContext *cx, const JS::AutoCheckCannotGC &nogc, JSString *str,
+                                 size_t *length);
+
+extern JS_PUBLIC_API(const jschar *)
+JS_GetTwoByteStringCharsAndLength(JSContext *cx, const JS::AutoCheckCannotGC &nogc, JSString *str,
+                                  size_t *length);
 
 extern JS_PUBLIC_API(const jschar *)
 JS_GetInternedStringChars(JSString *str);
@@ -4606,9 +4636,9 @@ JS_SetErrorReporter(JSContext *cx, JSErrorReporter er);
 namespace JS {
 
 extern JS_PUBLIC_API(bool)
-CreateTypeError(JSContext *cx, HandleString stack, HandleString fileName,
-                uint32_t lineNumber, uint32_t columnNumber, JSErrorReport *report,
-                HandleString message, MutableHandleValue rval);
+CreateError(JSContext *cx, JSExnType type, HandleString stack,
+            HandleString fileName, uint32_t lineNumber, uint32_t columnNumber,
+            JSErrorReport *report, HandleString message, MutableHandleValue rval);
 
 /************************************************************************/
 
@@ -5164,8 +5194,14 @@ typedef void
 extern JS_PUBLIC_API(void)
 SetOutOfMemoryCallback(JSRuntime *rt, OutOfMemoryCallback cb, void *data);
 
+
+/*
+ * Capture the current call stack as a chain of SavedFrame objects, and set
+ * |stackp| to the SavedFrame for the newest stack frame. If |maxFrameCount| is
+ * non-zero, capture at most the youngest |maxFrameCount| frames.
+ */
 extern JS_PUBLIC_API(bool)
-CaptureCurrentStack(JSContext *cx, MutableHandleObject stackp);
+CaptureCurrentStack(JSContext *cx, MutableHandleObject stackp, unsigned maxFrameCount = 0);
 
 } /* namespace JS */
 

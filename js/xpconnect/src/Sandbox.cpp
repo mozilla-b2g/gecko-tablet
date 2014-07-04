@@ -414,7 +414,7 @@ struct AutoSkipPropertyMirroring
 static bool
 sandbox_addProperty(JSContext *cx, HandleObject obj, HandleId id, MutableHandleValue vp)
 {
-    CompartmentPrivate *priv = GetCompartmentPrivate(obj);
+    CompartmentPrivate *priv = CompartmentPrivate::Get(obj);
     MOZ_ASSERT(priv->writeToGlobalPrototype);
 
     // Whenever JS_EnumerateStandardClasses is called (by sandbox_enumerate for
@@ -511,7 +511,7 @@ NS_IMPL_RELEASE(nsXPCComponents_utils_Sandbox)
 #define XPC_MAP_FLAGS               0
 #include "xpc_map_end.h" /* This #undef's the above. */
 
-xpc::SandboxProxyHandler xpc::sandboxProxyHandler;
+const xpc::SandboxProxyHandler xpc::sandboxProxyHandler;
 
 bool
 xpc::IsSandboxPrototypeProxy(JSObject *obj)
@@ -522,7 +522,7 @@ xpc::IsSandboxPrototypeProxy(JSObject *obj)
 
 bool
 xpc::SandboxCallableProxyHandler::call(JSContext *cx, JS::Handle<JSObject*> proxy,
-                                       const JS::CallArgs &args)
+                                       const JS::CallArgs &args) const
 {
     // We forward the call to our underlying callable.
 
@@ -575,7 +575,7 @@ xpc::SandboxCallableProxyHandler::call(JSContext *cx, JS::Handle<JSObject*> prox
     return JS::Call(cx, thisVal, func, args, args.rval());
 }
 
-xpc::SandboxCallableProxyHandler xpc::sandboxCallableProxyHandler;
+const xpc::SandboxCallableProxyHandler xpc::sandboxCallableProxyHandler;
 
 /*
  * Wrap a callable such that if we're called with oldThisObj as the
@@ -638,7 +638,7 @@ bool
 xpc::SandboxProxyHandler::getPropertyDescriptor(JSContext *cx,
                                                 JS::Handle<JSObject*> proxy,
                                                 JS::Handle<jsid> id,
-                                                JS::MutableHandle<JSPropertyDescriptor> desc)
+                                                JS::MutableHandle<JSPropertyDescriptor> desc) const
 {
     JS::RootedObject obj(cx, wrappedObject(proxy));
 
@@ -685,6 +685,7 @@ xpc::SandboxProxyHandler::getOwnPropertyDescriptor(JSContext *cx,
                                                    JS::Handle<JSObject*> proxy,
                                                    JS::Handle<jsid> id,
                                                    JS::MutableHandle<JSPropertyDescriptor> desc)
+                                                   const
 {
     if (!getPropertyDescriptor(cx, proxy, id, desc))
         return false;
@@ -702,13 +703,13 @@ xpc::SandboxProxyHandler::getOwnPropertyDescriptor(JSContext *cx,
 
 bool
 xpc::SandboxProxyHandler::has(JSContext *cx, JS::Handle<JSObject*> proxy,
-                              JS::Handle<jsid> id, bool *bp)
+                              JS::Handle<jsid> id, bool *bp) const
 {
     return BaseProxyHandler::has(cx, proxy, id, bp);
 }
 bool
 xpc::SandboxProxyHandler::hasOwn(JSContext *cx, JS::Handle<JSObject*> proxy,
-                                 JS::Handle<jsid> id, bool *bp)
+                                 JS::Handle<jsid> id, bool *bp) const
 {
     return BaseProxyHandler::hasOwn(cx, proxy, id, bp);
 }
@@ -717,7 +718,7 @@ bool
 xpc::SandboxProxyHandler::get(JSContext *cx, JS::Handle<JSObject*> proxy,
                               JS::Handle<JSObject*> receiver,
                               JS::Handle<jsid> id,
-                              JS::MutableHandle<Value> vp)
+                              JS::MutableHandle<Value> vp) const
 {
     return BaseProxyHandler::get(cx, proxy, receiver, id, vp);
 }
@@ -727,21 +728,21 @@ xpc::SandboxProxyHandler::set(JSContext *cx, JS::Handle<JSObject*> proxy,
                               JS::Handle<JSObject*> receiver,
                               JS::Handle<jsid> id,
                               bool strict,
-                              JS::MutableHandle<Value> vp)
+                              JS::MutableHandle<Value> vp) const
 {
     return BaseProxyHandler::set(cx, proxy, receiver, id, strict, vp);
 }
 
 bool
 xpc::SandboxProxyHandler::keys(JSContext *cx, JS::Handle<JSObject*> proxy,
-                               AutoIdVector &props)
+                               AutoIdVector &props) const
 {
     return BaseProxyHandler::keys(cx, proxy, props);
 }
 
 bool
 xpc::SandboxProxyHandler::iterate(JSContext *cx, JS::Handle<JSObject*> proxy,
-                                  unsigned flags, JS::MutableHandle<Value> vp)
+                                  unsigned flags, JS::MutableHandle<Value> vp) const
 {
     return BaseProxyHandler::iterate(cx, proxy, flags, vp);
 }
@@ -890,7 +891,7 @@ xpc::CreateSandboxObject(JSContext *cx, MutableHandleValue vp, nsISupports *prin
     if (!sandbox)
         return NS_ERROR_FAILURE;
 
-    xpc::GetCompartmentPrivate(sandbox)->writeToGlobalPrototype =
+    CompartmentPrivate::Get(sandbox)->writeToGlobalPrototype =
       options.writeToGlobalPrototype;
 
     // Set up the wantXrays flag, which indicates whether xrays are desired even
@@ -902,7 +903,7 @@ xpc::CreateSandboxObject(JSContext *cx, MutableHandleValue vp, nsISupports *prin
     // Arguably we should just flip the default for chrome and still honor the
     // flag, but such a change would break code in subtle ways for minimal
     // benefit. So we just switch it off here.
-    xpc::GetCompartmentPrivate(sandbox)->wantXrays =
+    CompartmentPrivate::Get(sandbox)->wantXrays =
       AccessCheck::isChrome(sandbox) ? false : options.wantXrays;
 
     {
@@ -946,12 +947,12 @@ xpc::CreateSandboxObject(JSContext *cx, MutableHandleValue vp, nsISupports *prin
         JS_SetPrivate(sandbox, sbp.forget().take());
 
         // Don't try to mirror the properties that are set below.
-        AutoSkipPropertyMirroring askip(GetCompartmentPrivate(sandbox));
+        AutoSkipPropertyMirroring askip(CompartmentPrivate::Get(sandbox));
 
         bool allowComponents = nsContentUtils::IsSystemPrincipal(principal) ||
                                nsContentUtils::IsExpandedPrincipal(principal);
         if (options.wantComponents && allowComponents &&
-            !GetObjectScope(sandbox)->AttachComponentsObject(cx))
+            !ObjectScope(sandbox)->AttachComponentsObject(cx))
             return NS_ERROR_XPC_UNEXPECTED;
 
         if (!XPCNativeWrapper::AttachNewConstructorObject(cx, sandbox))

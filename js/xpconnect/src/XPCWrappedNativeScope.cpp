@@ -25,23 +25,10 @@ using namespace JS;
 XPCWrappedNativeScope* XPCWrappedNativeScope::gScopes = nullptr;
 XPCWrappedNativeScope* XPCWrappedNativeScope::gDyingScopes = nullptr;
 
-// static
-XPCWrappedNativeScope*
-XPCWrappedNativeScope::GetNewOrUsed(JSContext *cx, JS::HandleObject aGlobal)
-{
-    XPCWrappedNativeScope* scope = GetObjectScope(aGlobal);
-    if (!scope) {
-        scope = new XPCWrappedNativeScope(cx, aGlobal);
-    }
-    return scope;
-}
-
 static bool
 RemoteXULForbidsXBLScope(nsIPrincipal *aPrincipal, HandleObject aGlobal)
 {
-  // Check for random JSD scopes that don't have a principal.
-  if (!aPrincipal)
-      return false;
+  MOZ_ASSERT(aPrincipal);
 
   // The SafeJSContext is lazily created, and tends to be created at really
   // weird times, at least for xpcshell (often very early in startup or late
@@ -94,8 +81,13 @@ XPCWrappedNativeScope::XPCWrappedNativeScope(JSContext *cx,
 
     MOZ_COUNT_CTOR(XPCWrappedNativeScope);
 
+    // Create the compartment private.
+    JSCompartment *c = js::GetObjectCompartment(aGlobal);
+    MOZ_ASSERT(!JS_GetCompartmentPrivate(c));
+    CompartmentPrivate *priv = new CompartmentPrivate(c);
+    JS_SetCompartmentPrivate(c, priv);
+
     // Attach ourselves to the compartment private.
-    CompartmentPrivate *priv = EnsureCompartmentPrivate(aGlobal);
     priv->scope = this;
 
     // Determine whether we would allow an XBL scope in this situation.
@@ -128,8 +120,8 @@ XPCWrappedNativeScope::IsDyingScope(XPCWrappedNativeScope *scope)
     return false;
 }
 
-JSObject*
-XPCWrappedNativeScope::GetComponentsJSObject()
+bool
+XPCWrappedNativeScope::GetComponentsJSObject(JS::MutableHandleObject obj)
 {
     AutoJSContext cx;
     if (!mComponents) {
@@ -145,17 +137,17 @@ XPCWrappedNativeScope::GetComponentsJSObject()
                                                    nullptr, nullptr, false,
                                                    nullptr);
     if (NS_WARN_IF(!ok))
-        return nullptr;
+        return false;
 
     if (NS_WARN_IF(!val.isObject()))
-        return nullptr;
+        return false;
 
     // The call to wrap() here is necessary even though the object is same-
     // compartment, because it applies our security wrapper.
-    JS::RootedObject obj(cx, &val.toObject());
-    if (NS_WARN_IF(!JS_WrapObject(cx, &obj)))
-        return nullptr;
-    return obj;
+    obj.set(&val.toObject());
+    if (NS_WARN_IF(!JS_WrapObject(cx, obj)))
+        return false;
+    return true;
 }
 
 void
@@ -174,8 +166,8 @@ XPCWrappedNativeScope::ForcePrivilegedComponents()
 bool
 XPCWrappedNativeScope::AttachComponentsObject(JSContext* aCx)
 {
-    RootedObject components(aCx, GetComponentsJSObject());
-    if (!components)
+    RootedObject components(aCx);
+    if (!GetComponentsJSObject(&components))
         return false;
 
     RootedObject global(aCx, GetGlobalJSObject());
@@ -193,7 +185,8 @@ CompartmentPerAddon()
     static bool pref = false;
 
     if (!initialized) {
-        pref = Preferences::GetBool("dom.compartment_per_addon", false);
+        pref = Preferences::GetBool("dom.compartment_per_addon", false) ||
+               Preferences::GetBool("browser.tabs.remote.autostart", false);
         initialized = true;
     }
 
@@ -246,7 +239,7 @@ XPCWrappedNativeScope::EnsureContentXBLScope(JSContext *cx)
     mContentXBLScope = &v.toObject();
 
     // Tag it.
-    EnsureCompartmentPrivate(js::UncheckedUnwrap(mContentXBLScope))->scope->mIsContentXBLScope = true;
+    CompartmentPrivate::Get(js::UncheckedUnwrap(mContentXBLScope))->scope->mIsContentXBLScope = true;
 
     // Good to go!
     return mContentXBLScope;
@@ -269,7 +262,7 @@ GetXBLScope(JSContext *cx, JSObject *contentScopeArg)
 
     JS::RootedObject contentScope(cx, contentScopeArg);
     JSAutoCompartment ac(cx, contentScope);
-    JSObject *scope = EnsureCompartmentPrivate(contentScope)->scope->EnsureContentXBLScope(cx);
+    JSObject *scope = CompartmentPrivate::Get(contentScope)->scope->EnsureContentXBLScope(cx);
     NS_ENSURE_TRUE(scope, nullptr); // See bug 858642.
     scope = js::UncheckedUnwrap(scope);
     JS::ExposeObjectToActiveJS(scope);
@@ -286,7 +279,7 @@ GetScopeForXBLExecution(JSContext *cx, HandleObject contentScope, JSAddonId *add
         return global;
 
     JSAutoCompartment ac(cx, contentScope);
-    XPCWrappedNativeScope *nativeScope = EnsureCompartmentPrivate(contentScope)->scope;
+    XPCWrappedNativeScope *nativeScope = CompartmentPrivate::Get(contentScope)->scope;
 
     RootedObject scope(cx);
     if (nativeScope->UseContentXBLScope())
@@ -305,14 +298,14 @@ GetScopeForXBLExecution(JSContext *cx, HandleObject contentScope, JSAddonId *add
 bool
 AllowContentXBLScope(JSCompartment *c)
 {
-  XPCWrappedNativeScope *scope = EnsureCompartmentPrivate(c)->scope;
+  XPCWrappedNativeScope *scope = CompartmentPrivate::Get(c)->scope;
   return scope && scope->AllowContentXBLScope();
 }
 
 bool
 UseContentXBLScope(JSCompartment *c)
 {
-  XPCWrappedNativeScope *scope = EnsureCompartmentPrivate(c)->scope;
+  XPCWrappedNativeScope *scope = CompartmentPrivate::Get(c)->scope;
   return scope && scope->UseContentXBLScope();
 }
 
@@ -346,7 +339,7 @@ XPCWrappedNativeScope::EnsureAddonScope(JSContext *cx, JSAddonId *addonId)
     NS_ENSURE_SUCCESS(rv, nullptr);
     mAddonScopes.AppendElement(&v.toObject());
 
-    EnsureCompartmentPrivate(js::UncheckedUnwrap(&v.toObject()))->scope->mIsAddonScope = true;
+    CompartmentPrivate::Get(js::UncheckedUnwrap(&v.toObject()))->scope->mIsAddonScope = true;
     return &v.toObject();
 }
 
@@ -360,7 +353,7 @@ xpc::GetAddonScope(JSContext *cx, JS::HandleObject contentScope, JSAddonId *addo
     }
 
     JSAutoCompartment ac(cx, contentScope);
-    XPCWrappedNativeScope *nativeScope = EnsureCompartmentPrivate(contentScope)->scope;
+    XPCWrappedNativeScope *nativeScope = CompartmentPrivate::Get(contentScope)->scope;
     JSObject *scope = nativeScope->EnsureAddonScope(cx, addonId);
     NS_ENSURE_TRUE(scope, nullptr);
 
@@ -675,31 +668,10 @@ XPCWrappedNativeScope::SystemIsBeingShutDown()
 
 /***************************************************************************/
 
-static PLDHashOperator
-WNProtoRemover(PLDHashTable *table, PLDHashEntryHdr *hdr,
-               uint32_t number, void *arg)
-{
-    XPCWrappedNativeProtoMap* detachedMap = (XPCWrappedNativeProtoMap*)arg;
-
-    XPCWrappedNativeProto* proto = (XPCWrappedNativeProto*)
-        ((ClassInfo2WrappedNativeProtoMap::Entry*)hdr)->value;
-
-    detachedMap->Add(proto);
-
-    return PL_DHASH_REMOVE;
-}
-
-void
-XPCWrappedNativeScope::RemoveWrappedNativeProtos()
-{
-    mWrappedNativeProtoMap->Enumerate(WNProtoRemover,
-                                      GetRuntime()->GetDetachedWrappedNativeProtoMap());
-}
-
 JSObject *
-XPCWrappedNativeScope::GetExpandoChain(JSObject *target)
+XPCWrappedNativeScope::GetExpandoChain(HandleObject target)
 {
-    MOZ_ASSERT(GetObjectScope(target) == this);
+    MOZ_ASSERT(ObjectScope(target) == this);
     if (!mXrayExpandos.initialized())
         return nullptr;
     return mXrayExpandos.lookup(target);
@@ -709,9 +681,9 @@ bool
 XPCWrappedNativeScope::SetExpandoChain(JSContext *cx, HandleObject target,
                                        HandleObject chain)
 {
-    MOZ_ASSERT(GetObjectScope(target) == this);
+    MOZ_ASSERT(ObjectScope(target) == this);
     MOZ_ASSERT(js::IsObjectInContextCompartment(target, cx));
-    MOZ_ASSERT_IF(chain, GetObjectScope(chain) == this);
+    MOZ_ASSERT_IF(chain, ObjectScope(chain) == this);
     if (!mXrayExpandos.initialized() && !mXrayExpandos.init(cx))
         return false;
     return mXrayExpandos.put(cx, target, chain);

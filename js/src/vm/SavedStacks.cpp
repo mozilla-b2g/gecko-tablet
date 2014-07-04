@@ -12,6 +12,7 @@
 #include "jsfriendapi.h"
 #include "jsnum.h"
 
+#include "gc/Marking.h"
 #include "vm/GlobalObject.h"
 #include "vm/StringBuffer.h"
 
@@ -395,13 +396,13 @@ SavedStacks::init()
 }
 
 bool
-SavedStacks::saveCurrentStack(JSContext *cx, MutableHandleSavedFrame frame)
+SavedStacks::saveCurrentStack(JSContext *cx, MutableHandleSavedFrame frame, unsigned maxFrameCount)
 {
     JS_ASSERT(initialized());
     JS_ASSERT(&cx->compartment()->savedStacks() == this);
 
     ScriptFrameIter iter(cx);
-    return insertFrames(cx, iter, frame);
+    return insertFrames(cx, iter, frame, maxFrameCount);
 }
 
 void
@@ -442,6 +443,19 @@ SavedStacks::sweep(JSRuntime *rt)
     }
 }
 
+void
+SavedStacks::trace(JSTracer *trc)
+{
+    if (!pcLocationMap.initialized())
+        return;
+
+    // Mark each of the source strings in our pc to location cache.
+    for (PCLocationMap::Enum e(pcLocationMap); !e.empty(); e.popFront()) {
+        LocationValue &loc = e.front().value();
+        MarkString(trc, &loc.source, "SavedStacks::PCLocationMap's memoized script source name");
+    }
+}
+
 uint32_t
 SavedStacks::count()
 {
@@ -462,7 +476,8 @@ SavedStacks::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf)
 }
 
 bool
-SavedStacks::insertFrames(JSContext *cx, ScriptFrameIter &iter, MutableHandleSavedFrame frame)
+SavedStacks::insertFrames(JSContext *cx, ScriptFrameIter &iter, MutableHandleSavedFrame frame,
+                          unsigned maxFrameCount)
 {
     if (iter.done()) {
         frame.set(nullptr);
@@ -483,17 +498,29 @@ SavedStacks::insertFrames(JSContext *cx, ScriptFrameIter &iter, MutableHandleSav
     // script and callee should keep compartment alive.
     JSCompartment *compartment = iter.compartment();
     RootedSavedFrame parentFrame(cx);
-    if (!insertFrames(cx, ++iter, &parentFrame))
-        return false;
 
-    LocationValue location;
+    // If maxFrameCount is zero, then there's no limit on the number of frames.
+    if (maxFrameCount == 0) {
+        if (!insertFrames(cx, ++iter, &parentFrame, 0))
+            return false;
+    } else if (maxFrameCount == 1) {
+        // Since we were only asked to save one frame, the SavedFrame we're
+        // building here should have no parent, even if there are older frames
+        // on the stack.
+        parentFrame = nullptr;
+    } else {
+        if (!insertFrames(cx, ++iter, &parentFrame, maxFrameCount - 1))
+            return false;
+    }
+
+    AutoLocationValueRooter location(cx);
     if (!getLocation(cx, script, pc, &location))
         return false;
 
     SavedFrame::AutoLookupRooter lookup(cx,
-                                        location.source,
-                                        location.line,
-                                        location.column,
+                                        location.get().source,
+                                        location.get().line,
+                                        location.get().column,
                                         callee ? callee->displayAtom() : nullptr,
                                         parentFrame,
                                         compartment->principals);
@@ -589,7 +616,7 @@ SavedStacks::sweepPCLocationMap()
 
 bool
 SavedStacks::getLocation(JSContext *cx, JSScript *script, jsbytecode *pc,
-                         LocationValue *locationp)
+                         MutableHandleLocationValue locationp)
 {
     PCKey key(script, pc);
     PCLocationMap::AddPtr p = pcLocationMap.lookupForAdd(key);
@@ -608,7 +635,7 @@ SavedStacks::getLocation(JSContext *cx, JSScript *script, jsbytecode *pc,
             return false;
     }
 
-    *locationp = p->value();
+    locationp.set(p->value());
     return true;
 }
 

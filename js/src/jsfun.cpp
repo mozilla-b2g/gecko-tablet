@@ -54,6 +54,7 @@ using namespace js::frontend;
 
 using mozilla::ArrayLength;
 using mozilla::PodCopy;
+using mozilla::RangedPtr;
 
 static bool
 fun_getProperty(JSContext *cx, HandleObject obj_, HandleId id, MutableHandleValue vp)
@@ -668,7 +669,7 @@ CreateFunctionPrototype(JSContext *cx, JSProtoKey key)
     CompileOptions options(cx);
     options.setNoScriptRval(true)
            .setVersion(JSVERSION_DEFAULT);
-    RootedScriptSource sourceObject(cx, ScriptSourceObject::create(cx, ss, options));
+    RootedScriptSource sourceObject(cx, ScriptSourceObject::create(cx, ss));
     if (!sourceObject)
         return nullptr;
 
@@ -1540,7 +1541,7 @@ FunctionConstructor(JSContext *cx, unsigned argc, Value *vp, GeneratorKind gener
     bool isStarGenerator = generatorKind == StarGenerator;
     JS_ASSERT(generatorKind != LegacyGenerator);
 
-    JSScript *maybeScript = nullptr;
+    RootedScript maybeScript(cx);
     const char *filename;
     unsigned lineno;
     JSPrincipals *originPrincipals;

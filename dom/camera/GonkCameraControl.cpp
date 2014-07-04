@@ -230,15 +230,16 @@ nsGonkCameraControl::SetConfigurationInternal(const Configuration& aConfig)
         break;
     }
 
-    nsresult rv = Set(CAMERA_PARAM_RECORDINGHINT,
-                      aConfig.mMode == kVideoMode);
+    DOM_CAMERA_LOGT("%s:%d\n", __func__, __LINE__);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+    rv = Set(CAMERA_PARAM_RECORDINGHINT, aConfig.mMode == kVideoMode);
     if (NS_FAILED(rv)) {
       DOM_CAMERA_LOGE("Failed to set recording hint (0x%x)\n", rv);
     }
   }
-
-  DOM_CAMERA_LOGT("%s:%d\n", __func__, __LINE__);
-  NS_ENSURE_SUCCESS(rv, rv);
 
   mCurrentConfiguration.mMode = aConfig.mMode;
   mCurrentConfiguration.mRecorderProfile = aConfig.mRecorderProfile;
@@ -470,6 +471,19 @@ nsGonkCameraControl::Set(uint32_t aKey, int64_t aValue)
 
 nsresult
 nsGonkCameraControl::Get(uint32_t aKey, int64_t& aRet)
+{
+  return mParams.Get(aKey, aRet);
+}
+
+// Boolean parameter accessors.
+nsresult
+nsGonkCameraControl::Set(uint32_t aKey, bool aValue)
+{
+  return SetAndPush(aKey, aValue);
+}
+
+nsresult
+nsGonkCameraControl::Get(uint32_t aKey, bool& aRet)
 {
   return mParams.Get(aKey, aRet);
 }

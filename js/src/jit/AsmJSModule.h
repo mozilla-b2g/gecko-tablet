@@ -320,20 +320,20 @@ class AsmJSModule
 
       private:
         Kind kind_;
-        uint32_t beginOffset_;
-        uint32_t endOffset_;
+        uint32_t begin_;
+        uint32_t end_;
         uint32_t functionNameIndex_;
 
         friend class AsmJSModule;
-        CodeRange(Kind kind, uint32_t beginOffset, uint32_t endOffset)
-          : kind_(kind), beginOffset_(beginOffset), endOffset_(endOffset)
+        CodeRange(Kind k, uint32_t begin, uint32_t end, uint32_t functionNameIndex)
+          : kind_(k), begin_(begin), end_(end), functionNameIndex_(functionNameIndex)
         {}
 
       public:
         CodeRange() {}
         Kind kind() const { return kind_; }
-        uint32_t beginOffset() const { return beginOffset_; }
-        uint32_t endOffset() const { return endOffset_; }
+        uint32_t begin() const { return begin_; }
+        uint32_t end() const { return end_; }
         PropertyName *functionName(const AsmJSModule &module) const {
             JS_ASSERT(kind_ == Function);
             return module.functionNames_[functionNameIndex_].name();
@@ -694,20 +694,19 @@ class AsmJSModule
         if (len > pod.minHeapLength_)
             pod.minHeapLength_ = len;
     }
-    bool addFunctionCodeRange(PropertyName *name, uint32_t beginOffset, uint32_t endOffset) {
+    bool addFunctionCodeRange(PropertyName *name, uint32_t begin, uint32_t end) {
         JS_ASSERT(isFinishedWithModulePrologue() && !isFinishedWithFunctionBodies());
         JS_ASSERT(name->isTenured());
-        JS_ASSERT(beginOffset <= endOffset);
-        JS_ASSERT_IF(!codeRanges_.empty(), codeRanges_.back().endOffset() <= beginOffset);
+        JS_ASSERT(begin <= end);
+        JS_ASSERT_IF(!codeRanges_.empty(), codeRanges_.back().end() <= begin);
         if (functionNames_.length() >= UINT32_MAX)
             return false;
-        CodeRange codeRange(CodeRange::Function, beginOffset, endOffset);
-        codeRange.functionNameIndex_ = functionNames_.length();
+        CodeRange codeRange(CodeRange::Function, begin, end, functionNames_.length());
         return functionNames_.append(name) && codeRanges_.append(codeRange);
     }
-    bool addEntryCodeRange(unsigned exportIndex, uint32_t endOffset) {
-        uint32_t beginOffset = exports_[exportIndex].pod.codeOffset_;
-        CodeRange codeRange(CodeRange::Entry, beginOffset, endOffset);
+    bool addEntryCodeRange(unsigned exportIndex, uint32_t end) {
+        uint32_t begin = exports_[exportIndex].pod.codeOffset_;
+        CodeRange codeRange(CodeRange::Entry, begin, end, UINT32_MAX);
         return codeRanges_.append(codeRange);
     }
     bool addExit(unsigned ffiIndex, unsigned *exitIndex) {

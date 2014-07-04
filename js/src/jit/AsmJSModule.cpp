@@ -213,17 +213,17 @@ namespace js {
 bool
 operator==(size_t pcOffset, const AsmJSModule::CodeRange &rhs)
 {
-    return pcOffset >= rhs.beginOffset() && pcOffset < rhs.endOffset();
+    return pcOffset >= rhs.begin() && pcOffset < rhs.end();
 }
 bool
 operator<=(const AsmJSModule::CodeRange &lhs, const AsmJSModule::CodeRange &rhs)
 {
-    return lhs.beginOffset() <= rhs.beginOffset();
+    return lhs.begin() <= rhs.begin();
 }
 bool
 operator<(size_t pcOffset, const AsmJSModule::CodeRange &rhs)
 {
-    return pcOffset < rhs.beginOffset();
+    return pcOffset < rhs.begin();
 }
 
 } // namespace js
@@ -335,8 +335,8 @@ AsmJSModule::finish(ExclusiveContext *cx, TokenStream &tokenStream, MacroAssembl
     }
     for (size_t i = 0; i < codeRanges_.length(); i++) {
         CodeRange &c = codeRanges_[i];
-        c.beginOffset_ = masm.actualOffset(c.beginOffset_);
-        c.endOffset_ = masm.actualOffset(c.endOffset_);
+        c.begin_ = masm.actualOffset(c.begin_);
+        c.end_ = masm.actualOffset(c.end_);
     }
 #endif
     JS_ASSERT(pod.functionBytes_ % AsmJSPageSize == 0);

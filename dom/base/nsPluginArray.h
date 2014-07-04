@@ -109,7 +109,7 @@ public:
   nsTArray<nsRefPtr<nsMimeType> >& MimeTypes();
 
 protected:
-  ~nsPluginElement() {}
+  ~nsPluginElement();
 
   void EnsurePluginMimeTypes();
 

@@ -479,6 +479,11 @@ pref("dom.mozNetworkStats.enabled", true);
 pref("dom.webapps.firstRunWithSIM", true);
 #endif
 
+// ResourceStats
+#ifdef MOZ_WIDGET_GONK
+pref("dom.resource_stats.enabled", true);
+#endif
+
 #ifdef MOZ_B2G_RIL
 // SingleVariant
 pref("dom.mozApps.single_variant_sourcedir", "/persist/svoperapps");
@@ -991,7 +996,8 @@ pref("services.sync.fxaccounts.enabled", true);
 pref("identity.fxaccounts.enabled", true);
 #endif
 
-pref("services.mobileid.server.uri", "http://msisdn.dev.mozaws.net");
+// Mobile Identity API.
+pref("services.mobileid.server.uri", "https://msisdn-dev.stage.mozaws.net");
 
 // Enable mapped array buffer
 pref("dom.mapped_arraybuffer.enabled", true);

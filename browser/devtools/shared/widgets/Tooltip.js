@@ -195,11 +195,13 @@ function Tooltip(doc, options) {
   // Listen to keypress events to close the tooltip if configured to do so
   let win = this.doc.querySelector("window");
   this._onKeyPress = event => {
+    if (this.panel.hidden) {
+      return;
+    }
+
     this.emit("keypress", event.keyCode);
     if (this.options.get("closeOnKeys").indexOf(event.keyCode) !== -1) {
-      if (!this.panel.hidden) {
-        event.stopPropagation();
-      }
+      event.stopPropagation();
       this.hide();
     }
   };
@@ -255,7 +257,9 @@ Tooltip.prototype = {
   },
 
   isShown: function() {
-    return this.panel.state !== "closed" && this.panel.state !== "hiding";
+    return this.panel &&
+           this.panel.state !== "closed" &&
+           this.panel.state !== "hiding";
   },
 
   setSize: function(width, height) {

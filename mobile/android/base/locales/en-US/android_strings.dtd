@@ -44,8 +44,8 @@
 
 <!ENTITY history_today_section "Today">
 <!ENTITY history_yesterday_section "Yesterday">
-<!ENTITY history_week_section "7 days ago">
-<!ENTITY history_older_section "Older than 7 days">
+<!ENTITY history_week_section2 "Last Week">
+<!ENTITY history_older_section2 "Last Month">
 
 <!ENTITY go "Go">
 <!ENTITY search "Search">
@@ -374,7 +374,7 @@ size. -->
 <!ENTITY home_move_up_to_filter "Up to &formatS;">
 
 <!ENTITY private_browsing_title "Private Browsing">
-<!ENTITY private_tabs_panel_description "Your private tabs will show up here. While we don\'t keep any of your browsing history or cookies, bookmarks and files that you download will still be saved on your device.">
+<!ENTITY private_tabs_panel_empty_desc "Your private tabs will show up here. While we don\'t keep any of your browsing history or cookies, bookmarks and files that you download will still be saved on your device.">
 <!ENTITY private_tabs_panel_learn_more "Want to learn more?">
 
 <!ENTITY pin_site_dialog_hint "Enter a search keyword">

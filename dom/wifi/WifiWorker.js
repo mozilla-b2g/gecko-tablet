@@ -2505,6 +2505,7 @@ WifiWorker.prototype = {
         function tensPlace(percent) ((percent / 10) | 0)
 
         if (last && last.linkSpeed === info.linkSpeed &&
+            last.ipAddress === info.ipAddress &&
             tensPlace(last.relSignalStrength) === tensPlace(info.relSignalStrength)) {
           return;
         }
@@ -3308,13 +3309,13 @@ WifiWorker.prototype = {
       return;
     }
 
-    let certDB2 = Cc["@mozilla.org/security/x509certdb;1"]
-                  .getService(Ci.nsIX509CertDB2);
-    if (!certDB2) {
+    let certDB = Cc["@mozilla.org/security/x509certdb;1"]
+                 .getService(Ci.nsIX509CertDB);
+    if (!certDB) {
       self._sendMessage(message, false, "Failed to query NSS DB service", msg);
     }
 
-    let certList = certDB2.getCerts();
+    let certList = certDB.getCerts();
     if (!certList) {
       self._sendMessage(message, false, "Failed to get certificate List", msg);
     }
@@ -3331,7 +3332,7 @@ WifiWorker.prototype = {
     };
 
     while (certListEnum.hasMoreElements()) {
-      let certInfo = certListEnum.getNext().QueryInterface(Ci.nsIX509Cert3);
+      let certInfo = certListEnum.getNext().QueryInterface(Ci.nsIX509Cert);
       let certNicknameInfo = /WIFI\_([A-Z]*)\_(.*)/.exec(certInfo.nickname);
       if (!certNicknameInfo) {
         continue;

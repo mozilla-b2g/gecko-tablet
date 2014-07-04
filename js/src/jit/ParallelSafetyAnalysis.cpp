@@ -306,6 +306,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     SAFE_OP(FunctionDispatch)
     SAFE_OP(TypeObjectDispatch)
     SAFE_OP(IsCallable)
+    SAFE_OP(IsObject)
     SAFE_OP(HaveSameClass)
     SAFE_OP(HasClass)
     UNSAFE_OP(EffectiveAddress)
@@ -758,6 +759,7 @@ ParallelSafetyVisitor::visitThrow(MThrow *thr)
     MBail *bail = MBail::New(alloc(), Bailout_ParallelUnsafe);
     TransplantResumePoint(thr, bail);
     block->discardLastIns();
+    block->add(bail);
     block->end(MUnreachable::New(alloc()));
     return true;
 }

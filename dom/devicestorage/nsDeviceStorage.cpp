@@ -11,6 +11,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/DeviceStorageBinding.h"
+#include "mozilla/dom/DeviceStorageChangeEvent.h"
 #include "mozilla/dom/DeviceStorageFileSystem.h"
 #include "mozilla/dom/devicestorage/PDeviceStorageRequestChild.h"
 #include "mozilla/dom/Directory.h"
@@ -47,10 +48,8 @@
 #include "TabChild.h"
 #include "DeviceStorageFileDescriptor.h"
 #include "DeviceStorageRequestChild.h"
-#include "nsIDOMDeviceStorageChangeEvent.h"
 #include "nsCRT.h"
 #include "nsIObserverService.h"
-#include "GeneratedEvents.h"
 #include "nsIMIMEService.h"
 #include "nsCExternalHandlerService.h"
 #include "nsIPermissionManager.h"
@@ -1670,21 +1669,27 @@ InterfaceToJsval(nsPIDOMWindow* aWindow,
                  nsISupports* aObject,
                  const nsIID* aIID)
 {
-  AutoJSContext cx;
   nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(aWindow);
   if (!sgo) {
-    return JSVAL_NULL;
+    return JS::NullValue();
   }
 
-  JS::Rooted<JSObject*> scopeObj(cx, sgo->GetGlobalJSObject());
-  NS_ENSURE_TRUE(scopeObj, JSVAL_NULL);
-  JSAutoCompartment ac(cx, scopeObj);
+  JSObject *unrootedScopeObj = sgo->GetGlobalJSObject();
+  NS_ENSURE_TRUE(unrootedScopeObj, JS::NullValue());
+  JSRuntime *runtime = JS_GetObjectRuntime(unrootedScopeObj);
+  JS::Rooted<JS::Value> someJsVal(runtime);
+  nsresult rv;
 
+  { // Protect someJsVal from moving GC in ~JSAutoCompartment
+    AutoJSContext cx;
 
-  JS::Rooted<JS::Value> someJsVal(cx);
-  nsresult rv = nsContentUtils::WrapNative(cx, aObject, aIID, &someJsVal);
+    JS::Rooted<JSObject*> scopeObj(cx, unrootedScopeObj);
+    JSAutoCompartment ac(cx, scopeObj);
+
+    rv = nsContentUtils::WrapNative(cx, aObject, aIID, &someJsVal);
+  }
   if (NS_FAILED(rv)) {
-    return JSVAL_NULL;
+    return JS::NullValue();
   }
 
   return someJsVal;
@@ -1721,23 +1726,24 @@ nsIFileToJsval(nsPIDOMWindow* aWindow, DeviceStorageFile* aFile)
   return InterfaceToJsval(aWindow, blob, &NS_GET_IID(nsIDOMBlob));
 }
 
-JS::Value StringToJsval(nsPIDOMWindow* aWindow, nsAString& aString)
+bool
+StringToJsval(nsPIDOMWindow* aWindow, nsAString& aString,
+              JS::MutableHandle<JS::Value> result)
 {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(aWindow);
 
   AutoJSAPI jsapi;
   if (NS_WARN_IF(!jsapi.Init(aWindow))) {
-    return JSVAL_NULL;
+    return false;
   }
   JSContext* cx = jsapi.cx();
 
-  JS::Rooted<JS::Value> result(cx);
-  if (!xpc::StringToJsval(cx, aString, &result)) {
-    return JSVAL_NULL;
+  if (!xpc::StringToJsval(cx, aString, result)) {
+    return false;
   }
 
-  return result;
+  return true;
 }
 
 class DeviceStorageCursorRequest MOZ_FINAL
@@ -2136,8 +2142,8 @@ public:
     }
 
     AutoJSContext cx;
-    JS::Rooted<JS::Value> result(cx,
-                                 StringToJsval(mRequest->GetOwner(), state));
+    JS::Rooted<JS::Value> result(cx);
+    StringToJsval(mRequest->GetOwner(), state, &result);
     mRequest->FireSuccess(result);
     mRequest = nullptr;
     return NS_OK;
@@ -2170,8 +2176,8 @@ public:
     }
 
     AutoJSContext cx;
-    JS::Rooted<JS::Value> result(cx,
-                                 StringToJsval(mRequest->GetOwner(), state));
+    JS::Rooted<JS::Value> result(cx);
+    StringToJsval(mRequest->GetOwner(), state, &result);
     mRequest->FireSuccess(result);
     mRequest = nullptr;
     return NS_OK;
@@ -2204,8 +2210,8 @@ public:
     }
 
     AutoJSContext cx;
-    JS::Rooted<JS::Value> result(cx,
-                                 StringToJsval(mRequest->GetOwner(), state));
+    JS::Rooted<JS::Value> result(cx);
+    StringToJsval(mRequest->GetOwner(), state, &result);
     mRequest->FireSuccess(result);
     mRequest = nullptr;
     return NS_OK;
@@ -2238,8 +2244,8 @@ public:
     }
 
     AutoJSContext cx;
-    JS::Rooted<JS::Value> result(cx,
-                                 StringToJsval(mRequest->GetOwner(), state));
+    JS::Rooted<JS::Value> result(cx);
+    StringToJsval(mRequest->GetOwner(), state, &result);
     mRequest->FireSuccess(result);
     mRequest = nullptr;
     return NS_OK;
@@ -2272,8 +2278,8 @@ public:
     }
 
     AutoJSContext cx;
-    JS::Rooted<JS::Value> result(cx,
-                                 StringToJsval(mRequest->GetOwner(), state));
+    JS::Rooted<JS::Value> result(cx);
+    StringToJsval(mRequest->GetOwner(), state, &result);
     mRequest->FireSuccess(result);
     mRequest = nullptr;
     return NS_OK;
@@ -2324,7 +2330,7 @@ public:
     if (mFile) {
       result = nsIFileToJsval(window, mFile);
     } else if (mPath.Length()) {
-      result = StringToJsval(window, mPath);
+      StringToJsval(window, mPath, &result);
     }
     else {
       result = JS_NumberValue(double(mValue));
@@ -4196,21 +4202,19 @@ nsDOMDeviceStorage::DispatchMountChangeEvent(nsAString& aVolumeStatus)
   }
   mLastStatus = aVolumeStatus;
 
-  nsCOMPtr<nsIDOMEvent> event;
-  NS_NewDOMDeviceStorageChangeEvent(getter_AddRefs(event), this,
-                                    nullptr, nullptr);
+  DeviceStorageChangeEventInit init;
+  init.mBubbles = true;
+  init.mCancelable = false;
+  init.mPath = mStorageName;
+  init.mReason = aVolumeStatus;
 
-  nsCOMPtr<nsIDOMDeviceStorageChangeEvent> ce = do_QueryInterface(event);
-  nsresult rv = ce->InitDeviceStorageChangeEvent(NS_LITERAL_STRING("change"),
-                                                 true, false,
-                                                 mStorageName,
-                                                 aVolumeStatus);
-  if (NS_FAILED(rv)) {
-    return;
-  }
+  nsRefPtr<DeviceStorageChangeEvent> event =
+    DeviceStorageChangeEvent::Constructor(this, NS_LITERAL_STRING("change"),
+                                          init);
+  event->SetTrusted(true);
 
   bool ignore;
-  DispatchEvent(ce, &ignore);
+  DispatchEvent(event, &ignore);
 }
 #endif
 
@@ -4286,24 +4290,19 @@ nsDOMDeviceStorage::Notify(const char* aReason, DeviceStorageFile* aFile)
     return NS_OK;
   }
 
-  nsCOMPtr<nsIDOMEvent> event;
-  NS_NewDOMDeviceStorageChangeEvent(getter_AddRefs(event), this,
-                                    nullptr, nullptr);
+  DeviceStorageChangeEventInit init;
+  init.mBubbles = true;
+  init.mCancelable = false;
+  aFile->GetFullPath(init.mPath);
+  init.mReason.AssignWithConversion(aReason);
 
-  nsCOMPtr<nsIDOMDeviceStorageChangeEvent> ce = do_QueryInterface(event);
-
-  nsString reason;
-  reason.AssignWithConversion(aReason);
-
-  nsString fullPath;
-  aFile->GetFullPath(fullPath);
-  nsresult rv = ce->InitDeviceStorageChangeEvent(NS_LITERAL_STRING("change"),
-                                                 true, false, fullPath,
-                                                 reason);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsRefPtr<DeviceStorageChangeEvent> event =
+    DeviceStorageChangeEvent::Constructor(this, NS_LITERAL_STRING("change"),
+                                          init);
+  event->SetTrusted(true);
 
   bool ignore;
-  DispatchEvent(ce, &ignore);
+  DispatchEvent(event, &ignore);
   return NS_OK;
 }
 

@@ -7769,8 +7769,9 @@ CodeGenerator::emitLoadElementT(LLoadElementT *lir, const T &source)
 {
     if (LIRGenerator::allowTypedElementHoleCheck()) {
         if (lir->mir()->needsHoleCheck()) {
-            Assembler::Condition cond = masm.testMagic(Assembler::Equal, source);
-            if (!bailoutIf(cond, lir->snapshot()))
+            Label bail;
+            masm.branchTestMagic(Assembler::Equal, source, &bail);
+            if (!bailoutFrom(&bail, lir->snapshot()))
                 return false;
         }
     } else {
@@ -8481,6 +8482,15 @@ CodeGenerator::visitIsCallable(LIsCallable *ins)
     masm.cmpPtrSet(Assembler::NonZero, Address(output, offsetof(js::Class, call)), ImmPtr(nullptr), output);
     masm.bind(&done);
 
+    return true;
+}
+
+bool
+CodeGenerator::visitIsObject(LIsObject *ins)
+{
+    Register output = ToRegister(ins->output());
+    ValueOperand value = ToValue(ins, LIsObject::Input);
+    masm.testObjectSet(Assembler::Equal, value, output);
     return true;
 }
 

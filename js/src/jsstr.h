@@ -131,6 +131,11 @@ template <js::AllowGC allowGC, typename CharT>
 extern JSFlatString *
 NewString(js::ThreadSafeContext *cx, CharT *chars, size_t length);
 
+/* Like NewString, but doesn't try to deflate to Latin1. */
+template <js::AllowGC allowGC, typename CharT>
+extern JSFlatString *
+NewStringDontDeflate(js::ThreadSafeContext *cx, CharT *chars, size_t length);
+
 extern JSLinearString *
 NewDependentString(JSContext *cx, JSString *base, size_t start, size_t length);
 
@@ -314,8 +319,9 @@ CopyAndInflateChars(jschar *dst, const JS::Latin1Char *src, size_t srclen)
  * must to be initialized with the buffer size and will contain on return the
  * number of copied bytes.
  */
+template <typename CharT>
 extern bool
-DeflateStringToBuffer(JSContext *maybecx, const jschar *chars,
+DeflateStringToBuffer(JSContext *maybecx, const CharT *chars,
                       size_t charsLength, char *bytes, size_t *length);
 
 /*

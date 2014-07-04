@@ -116,6 +116,7 @@ UNIFIED_SOURCES += [
     'frontend/TokenStream.cpp',
     'gc/Barrier.cpp',
     'gc/ForkJoinNursery.cpp',
+    'gc/GCTrace.cpp',
     'gc/Iteration.cpp',
     'gc/Marking.cpp',
     'gc/Memory.cpp',
@@ -374,7 +375,6 @@ if CONFIG['ENABLE_ION']:
         ]
     elif CONFIG['JS_CODEGEN_ARM']:
         SOURCES += [
-            'assembler/assembler/ARMAssembler.cpp',
             'assembler/assembler/MacroAssemblerARM.cpp',
         ]
 

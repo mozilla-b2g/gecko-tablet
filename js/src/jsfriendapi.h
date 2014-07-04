@@ -575,9 +575,12 @@ struct Function {
     void *_1;
 };
 
-struct Atom {
+struct String
+{
     static const uint32_t INLINE_CHARS_BIT = JS_BIT(2);
     static const uint32_t LATIN1_CHARS_BIT = JS_BIT(6);
+    static const uint32_t ROPE_FLAGS       = 0;
+    static const uint32_t TYPE_FLAGS_MASK  = JS_BIT(6) - 1;
     uint32_t flags;
     uint32_t length;
     union {
@@ -761,29 +764,111 @@ GetObjectSlot(JSObject *obj, size_t slot)
     return reinterpret_cast<const shadow::Object *>(obj)->slotRef(slot);
 }
 
-inline const jschar *
-GetAtomChars(JSAtom *atom)
-{
-    using shadow::Atom;
-    Atom *atom_ = reinterpret_cast<Atom *>(atom);
-    JS_ASSERT(!(atom_->flags & Atom::LATIN1_CHARS_BIT));
-    if (atom_->flags & Atom::INLINE_CHARS_BIT) {
-        char *p = reinterpret_cast<char *>(atom);
-        return reinterpret_cast<const jschar *>(p + offsetof(Atom, inlineStorageTwoByte));
-    }
-    return atom_->nonInlineCharsTwoByte;
-}
-
-inline size_t
+MOZ_ALWAYS_INLINE size_t
 GetAtomLength(JSAtom *atom)
 {
-    return reinterpret_cast<shadow::Atom*>(atom)->length;
+    return reinterpret_cast<shadow::String*>(atom)->length;
 }
 
-inline JSLinearString *
+static const uint32_t MaxStringLength = (1 << 28) - 1;
+
+MOZ_ALWAYS_INLINE size_t
+GetStringLength(JSString *s)
+{
+    return reinterpret_cast<shadow::String*>(s)->length;
+}
+
+MOZ_ALWAYS_INLINE bool
+LinearStringHasLatin1Chars(JSLinearString *s)
+{
+    return reinterpret_cast<shadow::String *>(s)->flags & shadow::String::LATIN1_CHARS_BIT;
+}
+
+MOZ_ALWAYS_INLINE bool
+AtomHasLatin1Chars(JSAtom *atom)
+{
+    return reinterpret_cast<shadow::String *>(atom)->flags & shadow::String::LATIN1_CHARS_BIT;
+}
+
+MOZ_ALWAYS_INLINE bool
+StringHasLatin1Chars(JSString *s)
+{
+    return reinterpret_cast<shadow::String *>(s)->flags & shadow::String::LATIN1_CHARS_BIT;
+}
+
+MOZ_ALWAYS_INLINE const JS::Latin1Char *
+GetLatin1LinearStringChars(const JS::AutoCheckCannotGC &nogc, JSLinearString *linear)
+{
+    MOZ_ASSERT(LinearStringHasLatin1Chars(linear));
+
+    using shadow::String;
+    String *s = reinterpret_cast<String *>(linear);
+    if (s->flags & String::INLINE_CHARS_BIT)
+        return s->inlineStorageLatin1;
+    return s->nonInlineCharsLatin1;
+}
+
+MOZ_ALWAYS_INLINE const jschar *
+GetTwoByteLinearStringChars(const JS::AutoCheckCannotGC &nogc, JSLinearString *linear)
+{
+    MOZ_ASSERT(!LinearStringHasLatin1Chars(linear));
+
+    using shadow::String;
+    String *s = reinterpret_cast<String *>(linear);
+    if (s->flags & String::INLINE_CHARS_BIT)
+        return s->inlineStorageTwoByte;
+    return s->nonInlineCharsTwoByte;
+}
+
+MOZ_ALWAYS_INLINE JSLinearString *
 AtomToLinearString(JSAtom *atom)
 {
     return reinterpret_cast<JSLinearString *>(atom);
+}
+
+MOZ_ALWAYS_INLINE const JS::Latin1Char *
+GetLatin1AtomChars(const JS::AutoCheckCannotGC &nogc, JSAtom *atom)
+{
+    return GetLatin1LinearStringChars(nogc, AtomToLinearString(atom));
+}
+
+MOZ_ALWAYS_INLINE const jschar *
+GetTwoByteAtomChars(const JS::AutoCheckCannotGC &nogc, JSAtom *atom)
+{
+    return GetTwoByteLinearStringChars(nogc, AtomToLinearString(atom));
+}
+
+JS_FRIEND_API(JSLinearString *)
+StringToLinearStringSlow(JSContext *cx, JSString *str);
+
+MOZ_ALWAYS_INLINE JSLinearString *
+StringToLinearString(JSContext *cx, JSString *str)
+{
+    using shadow::String;
+    String *s = reinterpret_cast<String *>(str);
+    if (MOZ_UNLIKELY((s->flags & String::TYPE_FLAGS_MASK) == String::ROPE_FLAGS))
+        return StringToLinearStringSlow(cx, str);
+    return reinterpret_cast<JSLinearString *>(str);
+}
+
+inline bool
+CopyStringChars(JSContext *cx, jschar *dest, JSString *s, size_t len)
+{
+    JSLinearString *linear = StringToLinearString(cx, s);
+    if (!linear)
+        return false;
+
+    JS::AutoCheckCannotGC nogc;
+    if (LinearStringHasLatin1Chars(linear)) {
+        const JS::Latin1Char *src = GetLatin1LinearStringChars(nogc, linear);
+        for (size_t i = 0; i < len; i++)
+            dest[i] = src[i];
+    } else {
+        const jschar *src = GetTwoByteLinearStringChars(nogc, linear);
+        mozilla::PodCopy(dest, src, len);
+    }
+
+    return true;
 }
 
 JS_FRIEND_API(bool)

@@ -24,8 +24,11 @@ Cu.import("resource://gre/modules/systemlibs.js");
 Cu.import("resource://gre/modules/Promise.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
 
-var RIL = {};
-Cu.import("resource://gre/modules/ril_consts.js", RIL);
+XPCOMUtils.defineLazyGetter(this, "RIL", function () {
+  let obj = {};
+  Cu.import("resource://gre/modules/ril_consts.js", obj);
+  return obj;
+});
 
 // Ril quirk to attach data registration on demand.
 let RILQUIRKS_DATA_REGISTRATION_ON_DEMAND =
@@ -1573,6 +1576,15 @@ RadioInterfaceLayer.prototype = {
     return this.radioInterfaces[clientId];
   },
 
+  getClientIdForEmergencyCall: function() {
+    for (let cid = 0; cid < this.numRadioInterfaces; ++cid) {
+      if (gRadioEnabledController._isRadioAbleToEnableAtClient(cid)) {
+        return cid;
+      }
+    }
+    return -1;
+  },
+
   setMicrophoneMuted: function(muted) {
     for (let clientId = 0; clientId < this.numRadioInterfaces; clientId++) {
       let radioInterface = this.radioInterfaces[clientId];
@@ -1629,9 +1641,7 @@ WorkerMessenger.prototype = {
           libcutils.property_get("ro.moz.ril.send_stk_profile_dl", "false") == "true",
         dataRegistrationOnDemand: RILQUIRKS_DATA_REGISTRATION_ON_DEMAND,
         subscriptionControl: RILQUIRKS_SUBSCRIPTION_CONTROL
-      },
-      rilEmergencyNumbers: libcutils.property_get("ril.ecclist") ||
-                           libcutils.property_get("ro.ril.ecclist")
+      }
     };
 
     this.send(null, "setInitialOptions", options);
@@ -2293,17 +2303,27 @@ RadioInterface.prototype = {
     if (!message || !message.mvnoType || !message.mvnoData) {
       message.errorMsg = RIL.GECKO_ERROR_INVALID_PARAMETER;
     }
-    // Currently we only support imsi matching.
-    if (message.mvnoType != "imsi") {
-      message.errorMsg = RIL.GECKO_ERROR_MODE_NOT_SUPPORTED;
-    }
-    // Fire error if mvnoType is imsi but imsi is not available.
-    if (!this.rilContext.imsi) {
-      message.errorMsg = RIL.GECKO_ERROR_GENERIC_FAILURE;
-    }
 
     if (!message.errorMsg) {
-      message.result = this.isImsiMatches(message.mvnoData);
+      switch (message.mvnoType) {
+        case "imsi":
+          if (!this.rilContext.imsi) {
+            message.errorMsg = RIL.GECKO_ERROR_GENERIC_FAILURE;
+            break;
+          }
+          message.result = this.isImsiMatches(message.mvnoData);
+          break;
+        case "spn":
+          let spn = this.rilContext.iccInfo && this.rilContext.iccInfo.spn;
+          if (!spn) {
+            message.errorMsg = RIL.GECKO_ERROR_GENERIC_FAILURE;
+            break;
+          }
+          message.result = spn == message.mvnoData;
+          break;
+        default:
+          message.errorMsg = RIL.GECKO_ERROR_MODE_NOT_SUPPORTED;
+      }
     }
 
     target.sendAsyncMessage("RIL:MatchMvno", {

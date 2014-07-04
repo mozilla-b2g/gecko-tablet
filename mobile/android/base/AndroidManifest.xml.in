@@ -17,6 +17,10 @@
 #include ../services/manifests/HealthReportAndroidManifest_permissions.xml.in
 #include ../services/manifests/SyncAndroidManifest_permissions.xml.in
 
+#ifdef MOZ_ANDROID_SEARCH_ACTIVITY
+#include ../search/manifests/SearchAndroidManifest_permissions.xml.in
+#endif
+
 #ifndef RELEASE_BUILD
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
@@ -88,7 +92,7 @@
 
         <meta-data android:name="com.sec.android.support.multiwindow" android:value="true"/>
 
-#ifdef GOOGLE_PLAY_SERVICES
+#ifdef MOZ_NATIVE_DEVICES
         <!-- This resources comes from Google Play Services. Required for casting support. -->
         <meta-data android:name="com.google.android.gms.version" android:value="@integer/google_play_services_version" />
 #endif
@@ -286,7 +290,9 @@
             </intent-filter>
         </receiver>
 
-        <receiver android:name="org.mozilla.gecko.ReferrerReceiver" android:exported="true">
+        <!-- Catch install referrer so we can do post-install work. -->
+        <receiver android:name="org.mozilla.gecko.distribution.ReferrerReceiver"
+                  android:exported="true">
             <intent-filter>
                 <action android:name="com.android.vending.INSTALL_REFERRER" />
             </intent-filter>
@@ -306,6 +312,9 @@
 #include ../services/manifests/FxAccountAndroidManifest_activities.xml.in
 #include ../services/manifests/HealthReportAndroidManifest_activities.xml.in
 #include ../services/manifests/SyncAndroidManifest_activities.xml.in
+#ifdef MOZ_ANDROID_SEARCH_ACTIVITY
+#include ../search/manifests/SearchAndroidManifest_activities.xml.in
+#endif
 
 #if MOZ_CRASHREPORTER
   <activity android:name="org.mozilla.gecko.CrashReporter"
@@ -397,6 +406,9 @@
 #include ../services/manifests/FxAccountAndroidManifest_services.xml.in
 #include ../services/manifests/HealthReportAndroidManifest_services.xml.in
 #include ../services/manifests/SyncAndroidManifest_services.xml.in
+#ifdef MOZ_ANDROID_SEARCH_ACTIVITY
+#include ../search/manifests/SearchAndroidManifest_services.xml.in
+#endif
 
     </application>
 

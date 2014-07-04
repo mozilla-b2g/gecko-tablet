@@ -274,7 +274,7 @@ FunctionStatementList(ParseNode *fn)
 static inline bool
 IsNormalObjectField(ExclusiveContext *cx, ParseNode *pn)
 {
-    JS_ASSERT(pn->isKind(PNK_COLON));
+    JS_ASSERT(pn->isKind(PNK_COLON) || pn->isKind(PNK_SHORTHAND));
     return pn->getOp() == JSOP_INITPROP &&
            BinaryLeft(pn)->isKind(PNK_NAME) &&
            BinaryLeft(pn)->name() != cx->names().proto;
@@ -290,7 +290,7 @@ ObjectNormalFieldName(ExclusiveContext *cx, ParseNode *pn)
 static inline ParseNode *
 ObjectFieldInitializer(ParseNode *pn)
 {
-    JS_ASSERT(pn->isKind(PNK_COLON));
+    JS_ASSERT(pn->isKind(PNK_COLON) || pn->isKind(PNK_SHORTHAND));
     return BinaryRight(pn);
 }
 
@@ -5667,8 +5667,8 @@ CheckFunctionsParallel(ModuleCompiler &m)
 
     IonSpew(IonSpew_Logs, "Can't log asm.js script. (Compiled on background thread.)");
 
-    // Saturate all helper threads plus the main thread.
-    size_t numParallelJobs = HelperThreadState().threadCount + 1;
+    // Saturate all helper threads.
+    size_t numParallelJobs = HelperThreadState().maxAsmJSCompilationThreads();
 
     // Allocate scoped AsmJSParallelTask objects. Each contains a unique
     // LifoAlloc that provides all necessary memory for compilation.

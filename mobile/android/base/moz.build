@@ -19,7 +19,6 @@ resjar.generated_sources += [
 
 if CONFIG['MOZ_NATIVE_DEVICES']:
     resjar.generated_sources += ['com/google/android/gms/R.java']
-    DEFINES["GOOGLE_PLAY_SERVICES"] = 1
     resjar.generated_sources += ['android/support/v7/appcompat/R.java']
     resjar.generated_sources += ['android/support/v7/mediarouter/R.java']
 
@@ -157,6 +156,8 @@ gbjar.sources += [
     'db/TabsProvider.java',
     'db/TopSitesCursorWrapper.java',
     'distribution/Distribution.java',
+    'distribution/ReferrerDescriptor.java',
+    'distribution/ReferrerReceiver.java',
     'DoorHangerPopup.java',
     'DynamicToolbar.java',
     'EditBookmarkDialog.java',
@@ -355,7 +356,6 @@ gbjar.sources += [
     'prompts/PromptService.java',
     'prompts/TabInput.java',
     'ReaderModeUtils.java',
-    'ReferrerReceiver.java',
     'Restarter.java',
     'ScrollAnimator.java',
     'ServiceNotificationClient.java',
@@ -477,6 +477,8 @@ if CONFIG['MOZ_NATIVE_DEVICES']:
     gbjar.extra_jars += [CONFIG['ANDROID_APPCOMPAT_LIB']]
     gbjar.extra_jars += [CONFIG['ANDROID_MEDIAROUTER_LIB']]
     gbjar.extra_jars += [CONFIG['GOOGLE_PLAY_SERVICES_LIB']]
+    gbjar.sources += ['ChromeCast.java']
+    gbjar.sources += ['MediaPlayerManager.java']
 
 gbjar.javac_flags += ['-Xlint:all,-deprecation,-fallthrough']
 
@@ -527,7 +529,8 @@ ANDROID_GENERATED_RESFILES += [
     'res/values/strings.xml',
 ]
 
-for var in ('MOZ_ANDROID_ANR_REPORTER', 'MOZ_LINKER_EXTRACT', 'MOZILLA_OFFICIAL', 'MOZ_DEBUG'):
+for var in ('MOZ_ANDROID_ANR_REPORTER', 'MOZ_LINKER_EXTRACT', 'MOZILLA_OFFICIAL', 'MOZ_DEBUG',
+            'MOZ_ANDROID_SEARCH_ACTIVITY', 'MOZ_NATIVE_DEVICES'):
     if CONFIG[var]:
         DEFINES[var] = 1
 
@@ -551,6 +554,26 @@ if '-march=armv7' in CONFIG['OS_CFLAGS']:
     DEFINES['MOZ_MIN_CPU_VERSION'] = 7
 else:
     DEFINES['MOZ_MIN_CPU_VERSION'] = 5
+
+if CONFIG['MOZ_ANDROID_SEARCH_ACTIVITY']:
+    # The Search Activity is mostly independent of Fennec proper, but
+    # it does depend on Geckoview.  Therefore, we build it as a jar
+    # that depends on the Geckoview jars.
+    search_source_dir = SRCDIR + '/../search'
+    include('../search/search_activity_sources.mozbuild')
+
+    ANDROID_RES_DIRS += [search_source_dir + '/res']
+    resjar.generated_sources += ['org/mozilla/search/R.java']
+
+    search_activity = add_java_jar('search-activity')
+    search_activity.sources += [search_source_dir + '/' + f for f in search_activity_sources]
+    search_activity.javac_flags += ['-Xlint:all']
+    search_activity.extra_jars = [
+        'gecko-R.jar',
+        'gecko-browser.jar',
+        'gecko-mozglue.jar',
+        'gecko-util.jar',
+    ]
 
 generated_recursive_make_targets = ['.aapt.deps', '.locales.deps'] # Captures dependencies on Android manifest and all resources.
 
@@ -590,6 +613,9 @@ cpe = main.add_classpathentry('src', SRCDIR,
         'org/mozilla/gecko/resources/**'])
 if not CONFIG['MOZ_CRASHREPORTER']:
     cpe.exclude_patterns += ['org/mozilla/gecko/CrashReporter.java']
+if not CONFIG['MOZ_NATIVE_DEVICES']:
+    cpe.exclude_patterns += ['org/mozilla/gecko/ChromeCast.java']
+    cpe.exclude_patterns += ['org/mozilla/gecko/MediaPlayerManager.java']
 main.add_classpathentry('generated', OBJDIR + '/generated',
     dstdir='generated')
 main.add_classpathentry('thirdparty', TOPSRCDIR + '/mobile/android/thirdparty',
