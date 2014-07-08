@@ -879,12 +879,8 @@ nsDOMWindowUtils::SendWheelEvent(float aX,
   wheelEvent.deltaMode = aDeltaMode;
   wheelEvent.isMomentum =
     (aOptions & WHEEL_EVENT_CAUSED_BY_MOMENTUM) != 0;
-  wheelEvent.isPixelOnlyDevice =
-    (aOptions & WHEEL_EVENT_CAUSED_BY_PIXEL_ONLY_DEVICE) != 0;
-  NS_ENSURE_TRUE(
-    !wheelEvent.isPixelOnlyDevice ||
-      aDeltaMode == nsIDOMWheelEvent::DOM_DELTA_PIXEL,
-    NS_ERROR_INVALID_ARG);
+  wheelEvent.mIsNoLineOrPageDelta =
+    (aOptions & WHEEL_EVENT_CAUSED_BY_NO_LINE_OR_PAGE_DELTA_DEVICE) != 0;
   wheelEvent.customizedByUserPrefs =
     (aOptions & WHEEL_EVENT_CUSTOMIZED_BY_USER_PREFS) != 0;
   wheelEvent.lineOrPageDeltaX = aLineOrPageDeltaX;
@@ -3069,11 +3065,9 @@ nsDOMWindowUtils::GetPCCountScriptSummary(int32_t script, JSContext* cx, nsAStri
   if (!text)
     return NS_ERROR_FAILURE;
 
-  nsDependentJSString str;
-  if (!str.init(cx, text))
+  if (!AssignJSString(cx, result, text))
     return NS_ERROR_FAILURE;
 
-  result = str;
   return NS_OK;
 }
 
@@ -3086,11 +3080,9 @@ nsDOMWindowUtils::GetPCCountScriptContents(int32_t script, JSContext* cx, nsAStr
   if (!text)
     return NS_ERROR_FAILURE;
 
-  nsDependentJSString str;
-  if (!str.init(cx, text))
+  if (!AssignJSString(cx, result, text))
     return NS_ERROR_FAILURE;
 
-  result = str;
   return NS_OK;
 }
 

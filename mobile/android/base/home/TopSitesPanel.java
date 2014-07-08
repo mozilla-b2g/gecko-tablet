@@ -279,8 +279,7 @@ public class TopSitesPanel extends HomeFragment {
         MenuInflater inflater = new MenuInflater(view.getContext());
         inflater.inflate(R.menu.home_contextmenu, menu);
 
-        // Hide ununsed menu items.
-        menu.findItem(R.id.home_open_in_reader).setVisible(false);
+        // Hide unused menu items.
         menu.findItem(R.id.home_edit_bookmark).setVisible(false);
 
         TopSitesGridContextMenuInfo info = (TopSitesGridContextMenuInfo) menuInfo;
@@ -356,7 +355,8 @@ public class TopSitesPanel extends HomeFragment {
 
         if (itemId == R.id.top_sites_edit) {
             // Decode "user-entered" URLs before showing them.
-            mEditPinnedSiteListener.onEditPinnedSite(info.position, decodeUserEnteredUrl(info.url));
+            mEditPinnedSiteListener.onEditPinnedSite(info.position,
+                                                     StringUtils.decodeUserEnteredUrl(info.url));
 
             Telemetry.sendUIEvent(TelemetryContract.Event.EDIT);
             return true;
@@ -376,10 +376,6 @@ public class TopSitesPanel extends HomeFragment {
         // Gecko thread priority, we ensure that the UI appears quickly. The
         // priority is reset to normal once thumbnails are loaded.
         ThreadUtils.reduceGeckoPriority(PRIORITY_RESET_TIMEOUT);
-    }
-
-    static String encodeUserEnteredUrl(String url) {
-        return Uri.fromParts("user-entered", url, null).toString();
     }
 
     /**
@@ -558,11 +554,14 @@ public class TopSitesPanel extends HomeFragment {
                 return;
             }
 
+            // Make sure we query suggested images without the user-entered wrapper.
+            final String decodedUrl = StringUtils.decodeUserEnteredUrl(url);
+
             // Suggested images have precedence over thumbnails, no need to wait
             // for them to be loaded. See: CursorLoaderCallbacks.onLoadFinished()
-            final String imageUrl = BrowserDB.getSuggestedImageUrlForUrl(url);
+            final String imageUrl = BrowserDB.getSuggestedImageUrlForUrl(decodedUrl);
             if (!TextUtils.isEmpty(imageUrl)) {
-                final int bgColor = BrowserDB.getSuggestedBackgroundColorForUrl(url);
+                final int bgColor = BrowserDB.getSuggestedBackgroundColorForUrl(decodedUrl);
                 view.displayThumbnail(imageUrl, bgColor);
                 return;
             }

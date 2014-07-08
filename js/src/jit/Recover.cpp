@@ -501,7 +501,6 @@ RNot::recover(JSContext *cx, SnapshotIterator &iter) const
     RootedValue v(cx, iter.read());
     RootedValue result(cx);
 
-    MOZ_ASSERT(!v.isObject());
     result.setBoolean(!ToBoolean(v));
 
     iter.storeInstructionResult(result);
@@ -556,6 +555,28 @@ MStringLength::writeRecoverData(CompactBufferWriter &writer) const
 {
     MOZ_ASSERT(canRecoverOnBailout());
     writer.writeUnsigned(uint32_t(RInstruction::Recover_StringLength));
+    return true;
+}
+
+bool
+MArgumentsLength::writeRecoverData(CompactBufferWriter &writer) const
+{
+    MOZ_ASSERT(canRecoverOnBailout());
+    writer.writeUnsigned(uint32_t(RInstruction::Recover_ArgumentsLength));
+    return true;
+}
+
+RArgumentsLength::RArgumentsLength(CompactBufferReader &reader)
+{ }
+
+bool
+RArgumentsLength::recover(JSContext *cx, SnapshotIterator &iter) const
+{
+    RootedValue result(cx);
+
+    result.setInt32(iter.readOuterNumActualArgs());
+
+    iter.storeInstructionResult(result);
     return true;
 }
 
@@ -732,6 +753,63 @@ RMinMax::recover(JSContext *cx, SnapshotIterator &iter) const
     RootedValue result(cx);
 
     if (!js_minmax_impl(cx, isMax_, a, b, &result))
+        return false;
+
+    iter.storeInstructionResult(result);
+    return true;
+}
+
+bool
+MAbs::writeRecoverData(CompactBufferWriter &writer) const
+{
+    MOZ_ASSERT(canRecoverOnBailout());
+    writer.writeUnsigned(uint32_t(RInstruction::Recover_Abs));
+    return true;
+}
+
+RAbs::RAbs(CompactBufferReader &reader)
+{ }
+
+bool
+RAbs::recover(JSContext *cx, SnapshotIterator &iter) const
+{
+    RootedValue v(cx, iter.read());
+    RootedValue result(cx);
+
+    if (!js_math_abs_handle(cx, v, &result))
+        return false;
+
+    iter.storeInstructionResult(result);
+    return true;
+}
+
+bool
+MSqrt::writeRecoverData(CompactBufferWriter &writer) const
+{
+    MOZ_ASSERT(canRecoverOnBailout());
+    writer.writeUnsigned(uint32_t(RInstruction::Recover_Sqrt));
+    writer.writeByte(type() == MIRType_Float32);
+    return true;
+}
+
+RSqrt::RSqrt(CompactBufferReader &reader)
+{
+    isFloatOperation_ = reader.readByte();
+}
+
+bool
+RSqrt::recover(JSContext *cx, SnapshotIterator &iter) const
+{
+    RootedValue num(cx, iter.read());
+    RootedValue result(cx);
+
+    MOZ_ASSERT(num.isNumber());
+    if (!math_sqrt_handle(cx, num, &result))
+        return false;
+
+    // MIRType_Float32 is a specialization embedding the fact that the result is
+    // rounded to a Float32.
+    if (isFloatOperation_ && !RoundFloat32(cx, result, &result))
         return false;
 
     iter.storeInstructionResult(result);

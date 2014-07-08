@@ -346,6 +346,9 @@ pref("media.tabstreaming.time_per_frame", 40);
 pref("media.webvtt.enabled", true);
 pref("media.webvtt.regions.enabled", false);
 
+// AudioTrack and VideoTrack support
+pref("media.track.enabled", false);
+
 // Whether to enable MediaSource support
 pref("media.mediasource.enabled", false);
 
@@ -1956,7 +1959,7 @@ pref("layout.css.overflow-clip-box.enabled", false);
 pref("layout.css.grid.enabled", false);
 
 // Is support for CSS box-decoration-break enabled?
-pref("layout.css.box-decoration-break.enabled", false);
+pref("layout.css.box-decoration-break.enabled", true);
 
 // Is layout of CSS outline-style:auto enabled?
 pref("layout.css.outline-style-auto.enabled", false);

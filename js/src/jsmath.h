@@ -99,6 +99,9 @@ extern bool
 js_math_random(JSContext *cx, unsigned argc, js::Value *vp);
 
 extern bool
+js_math_abs_handle(JSContext *cx, js::HandleValue v, js::MutableHandleValue r);
+
+extern bool
 js_math_abs(JSContext *cx, unsigned argc, js::Value *vp);
 
 extern bool
@@ -122,6 +125,9 @@ js_minmax_impl(JSContext *cx, bool max, js::HandleValue a, js::HandleValue b,
                js::MutableHandleValue res);
 
 namespace js {
+
+extern bool
+math_sqrt_handle(JSContext *cx, js::HandleValue number, js::MutableHandleValue result);
 
 extern bool
 math_imul(JSContext *cx, unsigned argc, js::Value *vp);

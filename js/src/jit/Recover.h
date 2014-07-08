@@ -33,6 +33,7 @@ namespace jit {
     _(Not)                                      \
     _(Concat)                                   \
     _(StringLength)                             \
+    _(ArgumentsLength)                          \
     _(Floor)                                    \
     _(Round)                                    \
     _(CharCodeAt)                               \
@@ -40,6 +41,8 @@ namespace jit {
     _(Pow)                                      \
     _(PowHalf)                                  \
     _(MinMax)                                   \
+    _(Abs)                                      \
+    _(Sqrt)                                     \
     _(NewObject)                                \
     _(NewDerivedTypedObject)
 
@@ -291,7 +294,7 @@ class RConcat MOZ_FINAL : public RInstruction
 
 class RStringLength MOZ_FINAL : public RInstruction
 {
-public:
+  public:
     RINSTRUCTION_HEADER_(StringLength)
 
     virtual uint32_t numOperands() const {
@@ -300,6 +303,19 @@ public:
 
     bool recover(JSContext *cx, SnapshotIterator &iter) const;
 };
+
+class RArgumentsLength MOZ_FINAL : public RInstruction
+{
+  public:
+    RINSTRUCTION_HEADER_(ArgumentsLength)
+
+    virtual uint32_t numOperands() const {
+        return 0;
+    }
+
+    bool recover(JSContext *cx, SnapshotIterator &iter) const;
+};
+
 
 class RFloor MOZ_FINAL : public RInstruction
 {
@@ -383,6 +399,33 @@ class RMinMax MOZ_FINAL : public RInstruction
 
     virtual uint32_t numOperands() const {
         return 2;
+    }
+
+    bool recover(JSContext *cx, SnapshotIterator &iter) const;
+};
+
+class RAbs MOZ_FINAL : public RInstruction
+{
+  public:
+    RINSTRUCTION_HEADER_(Abs)
+
+    virtual uint32_t numOperands() const {
+        return 1;
+    }
+
+    bool recover(JSContext *cx, SnapshotIterator &iter) const;
+};
+
+class RSqrt MOZ_FINAL : public RInstruction
+{
+  private:
+    bool isFloatOperation_;
+
+  public:
+    RINSTRUCTION_HEADER_(Sqrt)
+
+    virtual uint32_t numOperands() const {
+        return 1;
     }
 
     bool recover(JSContext *cx, SnapshotIterator &iter) const;

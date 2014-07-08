@@ -3986,6 +3986,11 @@ class MAbs
     void computeRange(TempAllocator &alloc);
     bool isFloat32Commutative() const { return true; }
     void trySpecializeFloat32(TempAllocator &alloc);
+
+    bool writeRecoverData(CompactBufferWriter &writer) const;
+    bool canRecoverOnBailout() const {
+        return true;
+    }
 };
 
 // Inline implementation of Math.sqrt().
@@ -4027,6 +4032,11 @@ class MSqrt
 
     bool isFloat32Commutative() const { return true; }
     void trySpecializeFloat32(TempAllocator &alloc);
+
+    bool writeRecoverData(CompactBufferWriter &writer) const;
+    bool canRecoverOnBailout() const {
+        return true;
+    }
 };
 
 // Inline implementation of atan2 (arctangent of y/x).
@@ -6250,11 +6260,7 @@ class MNot
     }
     bool writeRecoverData(CompactBufferWriter &writer) const;
     bool canRecoverOnBailout() const {
-        // Non objects are recoverable and objects that cannot emulate
-        // undefined get folded into 'true' by GVN.
-        // So the only way to reach this function with an operand that
-        // is an object is when that object might emulate undefined.
-        return !operandMightEmulateUndefined_;
+        return true;
     }
 };
 
@@ -9357,6 +9363,12 @@ class MArgumentsLength : public MNullaryInstruction
    }
 
     void computeRange(TempAllocator &alloc);
+
+    bool writeRecoverData(CompactBufferWriter &writer) const;
+
+    bool canRecoverOnBailout() const {
+        return true;
+    }
 };
 
 // This MIR instruction is used to get an argument from the actual arguments.

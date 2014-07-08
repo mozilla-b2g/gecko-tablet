@@ -321,6 +321,40 @@ function rstring_length(i) {
     return i;
 }
 
+var uceFault_arguments_length_1 = eval(uneval(uceFault).replace('uceFault', 'uceFault_arguments_length_1'));
+function rarguments_length_1(i) {
+    var x = arguments.length;
+    if (uceFault_arguments_length_1(i) || uceFault_arguments_length_1(i))
+        assertEq(x, 1);
+    return i;
+}
+
+var uceFault_arguments_length_3 = eval(uneval(uceFault).replace('uceFault', 'uceFault_arguments_length_3'));
+function rarguments_length_3(i) {
+    var x = arguments.length;
+    if (uceFault_arguments_length_3(i) || uceFault_arguments_length_3(i))
+        assertEq(x, 3);
+    return i;
+}
+
+function ret_argumentsLength() { return arguments.length; }
+
+var uceFault_inline_arguments_length_1 = eval(uneval(uceFault).replace('uceFault', 'uceFault_inline_arguments_length_1'));
+function rinline_arguments_length_1(i) {
+    var x = ret_argumentsLength.apply(this, arguments);
+    if (uceFault_inline_arguments_length_1(i) || uceFault_inline_arguments_length_1(i))
+        assertEq(x, 1);
+    return i;
+}
+
+var uceFault_inline_arguments_length_3 = eval(uneval(uceFault).replace('uceFault', 'uceFault_inline_arguments_length_3'));
+function rinline_arguments_length_3(i) {
+    var x = ret_argumentsLength.apply(this, arguments);
+    if (uceFault_inline_arguments_length_3(i) || uceFault_inline_arguments_length_3(i))
+        assertEq(x, 3);
+    return i;
+}
+
 var uceFault_floor_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_floor_number'));
 function rfloor_number(i) {
     var x = Math.floor(i + 0.1111);
@@ -457,6 +491,51 @@ function rmax_object(i) {
     return i;
 }
 
+var uceFault_abs = eval(uneval(uceFault).replace('uceFault', 'uceFault_abs'));
+function rabs_number(i) {
+    var x = Math.abs(i-42);
+    if (uceFault_abs(i) || uceFault_abs(i))
+        assertEq(x, 57);
+    return i;
+}
+
+var uceFault_abs_object = eval(uneval(uceFault).replace('uceFault', 'uceFault_abs_object'));
+function rabs_object(i) {
+    var t = -i;
+    var o = { valueOf: function() { return t; } };
+    var x = Math.abs(o); /* computed with t == i, not 1000 */
+    t = 1000;
+    if(uceFault_abs_object(i) || uceFault_abs_object(i))
+        assertEq(x, 99);
+    return i;
+}
+
+var uceFault_sqrt_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_sqrt_number'));
+function rsqrt_number(i) {
+    var x = Math.sqrt(i);
+    if (uceFault_sqrt_number(i) || uceFault_sqrt_number(i))
+        assertEq(x, Math.sqrt(99));
+    return i;
+}
+
+var uceFault_sqrt_float = eval(uneval(uceFault).replace('uceFault', 'uceFault_sqrt_float'));
+function rsqrt_float(i) {
+    var x = Math.fround(Math.sqrt(Math.fround(i)));
+    if (uceFault_sqrt_float(i) || uceFault_sqrt_float(i))
+        assertEq(x, Math.fround(Math.sqrt(Math.fround(99)))); /* != 9.9498743710662 (when computed with double sqrt) */
+    return i;
+}
+
+var uceFault_sqrt_object = eval(uneval(uceFault).replace('uceFault', 'uceFault_sqrt_object'));
+function rsqrt_object(i) {
+    var t = i;
+    var o = { valueOf: function () { return t; } };
+    var x = Math.sqrt(o); /* computed with t == i, not 1.5 */
+    t = 1.5;
+    if (uceFault_sqrt_object(i) || uceFault_sqrt_object(i))
+        assertEq(x, Math.sqrt(99));
+    return i;
+}
 
 for (i = 0; i < 100; i++) {
     rbitnot_number(i);
@@ -492,6 +571,10 @@ for (i = 0; i < 100; i++) {
     rconcat_string(i);
     rconcat_number(i);
     rstring_length(i);
+    rarguments_length_1(i);
+    rarguments_length_3(i, 0, 1);
+    rinline_arguments_length_1(i);
+    rinline_arguments_length_3(i, 0, 1);
     rfloor_number(i);
     rfloor_object(i);
     rround_number(i);
@@ -507,6 +590,11 @@ for (i = 0; i < 100; i++) {
     rmin_object(i);
     rmax_number(i);
     rmax_object(i);
+    rabs_number(i);
+    rabs_object(i);
+    rsqrt_number(i);
+    rsqrt_float(i);
+    rsqrt_object(i);
 }
 
 // Test that we can refer multiple time to the same recover instruction, as well

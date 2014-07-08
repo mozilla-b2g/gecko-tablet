@@ -98,7 +98,7 @@ abstract class HomeFragment extends Fragment {
 
         menu.setHeaderTitle(info.getDisplayTitle());
 
-        // Hide ununsed menu items.
+        // Hide unused menu items.
         menu.findItem(R.id.top_sites_edit).setVisible(false);
         menu.findItem(R.id.top_sites_pin).setVisible(false);
         menu.findItem(R.id.top_sites_unpin).setVisible(false);
@@ -117,9 +117,6 @@ abstract class HomeFragment extends Fragment {
         if (!StringUtils.isShareableUrl(info.url) || GeckoProfile.get(getActivity()).inGuestMode()) {
             menu.findItem(R.id.home_share).setVisible(false);
         }
-
-        final boolean canOpenInReader = (info.display == Combined.DISPLAY_READER);
-        menu.findItem(R.id.home_open_in_reader).setVisible(canOpenInReader);
     }
 
     @Override
@@ -196,7 +193,7 @@ abstract class HomeFragment extends Fragment {
 
             // Some pinned site items have "user-entered" urls. URLs entered in the PinSiteDialog are wrapped in
             // a special URI until we can get a valid URL. If the url is a user-entered url, decode the URL before loading it.
-            final Tab newTab = Tabs.getInstance().loadUrl(decodeUserEnteredUrl(url), flags);
+            final Tab newTab = Tabs.getInstance().loadUrl(StringUtils.decodeUserEnteredUrl(url), flags);
             final int newTabId = newTab.getId(); // We don't want to hold a reference to the Tab.
 
             final String message = isPrivate ?
@@ -223,12 +220,6 @@ abstract class HomeFragment extends Fragment {
         if (itemId == R.id.home_edit_bookmark) {
             // UI Dialog associates to the activity context, not the applications'.
             new EditBookmarkDialog(context).show(info.url);
-            return true;
-        }
-
-        if (itemId == R.id.home_open_in_reader) {
-            final String url = ReaderModeUtils.getAboutReaderForUrl(info.url);
-            Tabs.getInstance().loadUrl(url, Tabs.LOADURL_NONE);
             return true;
         }
 
@@ -275,22 +266,6 @@ abstract class HomeFragment extends Fragment {
         return mCanLoadHint;
     }
 
-    /**
-     * Given a url with a user-entered scheme, extract the
-     * scheme-specific component. For e.g, given "user-entered://www.google.com",
-     * this method returns "//www.google.com". If the passed url
-     * does not have a user-entered scheme, the same url will be returned.
-     *
-     * @param  url to be decoded
-     * @return url component entered by user
-     */
-    public static String decodeUserEnteredUrl(String url) {
-        Uri uri = Uri.parse(url);
-        if ("user-entered".equals(uri.getScheme())) {
-            return uri.getSchemeSpecificPart();
-        }
-        return url;
-    }
 
     protected abstract void load();
 

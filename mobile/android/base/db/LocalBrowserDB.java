@@ -11,6 +11,7 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -32,6 +33,7 @@ import org.mozilla.gecko.db.BrowserContract.ReadingListItems;
 import org.mozilla.gecko.db.BrowserContract.SyncColumns;
 import org.mozilla.gecko.db.BrowserContract.Thumbnails;
 import org.mozilla.gecko.db.BrowserContract.URLColumns;
+import org.mozilla.gecko.db.BrowserDB.FilterFlags;
 import org.mozilla.gecko.distribution.Distribution;
 import org.mozilla.gecko.favicons.decoders.FaviconDecoder;
 import org.mozilla.gecko.favicons.decoders.LoadFaviconResult;
@@ -507,17 +509,29 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
     }
 
     @Override
-    public Cursor filter(ContentResolver cr, CharSequence constraint, int limit) {
+    public Cursor filter(ContentResolver cr, CharSequence constraint, int limit,
+                         EnumSet<FilterFlags> flags) {
+        String selection = "";
+        String[] selectionArgs = null;
+
+        if (flags.contains(FilterFlags.EXCLUDE_PINNED_SITES)) {
+            selection = Combined.URL + " NOT IN (SELECT " +
+                                                 Bookmarks.URL + " FROM bookmarks WHERE " +
+                                                 DBUtils.qualifyColumn("bookmarks", Bookmarks.PARENT) + " = ? AND " +
+                                                 DBUtils.qualifyColumn("bookmarks", Bookmarks.IS_DELETED) + " == 0)";
+            selectionArgs = new String[] { String.valueOf(Bookmarks.FIXED_PINNED_LIST_ID) };
+        }
+
         return filterAllSites(cr,
                               new String[] { Combined._ID,
                                              Combined.URL,
                                              Combined.TITLE,
-                                             Combined.DISPLAY,
                                              Combined.BOOKMARK_ID,
                                              Combined.HISTORY_ID },
                               constraint,
                               limit,
-                              null);
+                              null,
+                              selection, selectionArgs);
     }
 
     @Override
@@ -535,7 +549,6 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
                               new String[] { Combined._ID,
                                              Combined.URL,
                                              Combined.TITLE,
-                                             Combined.DISPLAY,
                                              Combined.BOOKMARK_ID,
                                              Combined.HISTORY_ID },
                               "",
@@ -624,7 +637,6 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
                                            Combined.HISTORY_ID,
                                            Combined.URL,
                                            Combined.TITLE,
-                                           Combined.DISPLAY,
                                            Combined.DATE_LAST_VISITED,
                                            Combined.VISITS },
                             History.DATE_LAST_VISITED + " > 0",
@@ -768,16 +780,13 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
 
     @Override
     public boolean isBookmark(ContentResolver cr, String uri) {
-        // This method is about normal bookmarks, not the Reading List.
         Cursor c = null;
         try {
             c = cr.query(bookmarksUriWithLimit(1),
                          new String[] { Bookmarks._ID },
                          Bookmarks.URL + " = ? AND " +
-                                 Bookmarks.PARENT + " != ? AND " +
                                  Bookmarks.PARENT + " != ?",
                          new String[] { uri,
-                                 String.valueOf(Bookmarks.FIXED_READING_LIST_ID),
                                  String.valueOf(Bookmarks.FIXED_PINNED_LIST_ID) },
                          Bookmarks.URL);
             return c.getCount() > 0;
@@ -974,9 +983,8 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         // Do this now so that the items still exist!
         bumpParents(cr, Bookmarks.URL, uri);
 
-        // Toggling bookmark on an URL should not affect the items in the reading list or pinned sites.
-        final String[] urlArgs = new String[] { uri, String.valueOf(Bookmarks.FIXED_READING_LIST_ID), String.valueOf(Bookmarks.FIXED_PINNED_LIST_ID) };
-        final String urlEquals = Bookmarks.URL + " = ? AND " + Bookmarks.PARENT + " != ? AND " + Bookmarks.PARENT + " != ? ";
+        final String[] urlArgs = new String[] { uri, String.valueOf(Bookmarks.FIXED_PINNED_LIST_ID) };
+        final String urlEquals = Bookmarks.URL + " = ? AND " + Bookmarks.PARENT + " != ? ";
 
         cr.delete(contentUri, urlEquals, urlArgs);
     }
@@ -1331,32 +1339,26 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         if (url != null) {
             // Bookmarks are defined by their URL and Folder.
             builder.withSelection(Bookmarks.URL + " = ? AND "
-                                  + Bookmarks.PARENT + " = ? AND "
-                                  + Bookmarks.PARENT + " != ?",
+                                  + Bookmarks.PARENT + " = ?",
                                   new String[] { url,
-                                                 Long.toString(parent),
-                                                 String.valueOf(Bookmarks.FIXED_READING_LIST_ID)
+                                                 Long.toString(parent)
                                   });
         } else if (title != null) {
             // Or their title and parent folder. (Folders!)
             builder.withSelection(Bookmarks.TITLE + " = ? AND "
-                                  + Bookmarks.PARENT + " = ? AND "
-                                  + Bookmarks.PARENT + " != ?",
+                                  + Bookmarks.PARENT + " = ?",
                                   new String[] { title,
-                                                 Long.toString(parent),
-                                                 String.valueOf(Bookmarks.FIXED_READING_LIST_ID)
+                                                 Long.toString(parent)
                                   });
         } else if (type == Bookmarks.TYPE_SEPARATOR) {
-            // Or their their position (seperators)
+            // Or their their position (separators)
             builder.withSelection(Bookmarks.POSITION + " = ? AND "
-                                  + Bookmarks.PARENT + " = ? AND "
-                                  + Bookmarks.PARENT + " != ?",
+                                  + Bookmarks.PARENT + " = ?",
                                   new String[] { Long.toString(position),
-                                                 Long.toString(parent),
-                                                 String.valueOf(Bookmarks.FIXED_READING_LIST_ID)
+                                                 Long.toString(parent)
                                   });
         } else {
-            Log.e(LOGTAG, "Bookmark entry without url or title and not a seperator, not added.");
+            Log.e(LOGTAG, "Bookmark entry without url or title and not a separator, not added.");
         }
         builder.withValues(values);
 

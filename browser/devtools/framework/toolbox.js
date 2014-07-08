@@ -264,6 +264,7 @@ Toolbox.prototype = {
       // Load the toolbox-level actor fronts and utilities now
       this._target.makeRemote().then(() => {
         iframe.setAttribute("src", this._URL);
+        iframe.setAttribute("aria-label", toolboxStrings("toolbox.label"))
         let domHelper = new DOMHelpers(iframe.contentWindow);
         domHelper.onceDOMReady(domReady);
       });
@@ -294,6 +295,12 @@ Toolbox.prototype = {
     let responsiveModeActive = this._isResponsiveModeActive();
     if (e.keyCode === e.DOM_VK_ESCAPE && !responsiveModeActive) {
       this.toggleSplitConsole();
+      // If the debugger is paused, don't let the ESC key stop any pending
+      // navigation.
+      let jsdebugger = this.getPanel("jsdebugger");
+      if (jsdebugger && jsdebugger.panelWin.gThreadClient.state == "paused") {
+        e.preventDefault();
+      }
     }
   },
 
@@ -808,6 +815,9 @@ Toolbox.prototype = {
     };
 
     iframe.setAttribute("src", definition.url);
+    if (definition.panelLabel) {
+      iframe.setAttribute("aria-label", definition.panelLabel);
+    }
 
     // Depending on the host, iframe.contentWindow is not always
     // defined at this moment. If it is not defined, we use an

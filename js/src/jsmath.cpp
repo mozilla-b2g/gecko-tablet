@@ -89,6 +89,19 @@ const Class js::MathClass = {
 };
 
 bool
+js_math_abs_handle(JSContext *cx, js::HandleValue v, js::MutableHandleValue r)
+{
+    double x;
+    if (!ToNumber(cx, v, &x))
+        return false;
+
+    double z = Abs(x);
+    r.setNumber(z);
+
+    return true;
+}
+
+bool
 js_math_abs(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -98,13 +111,7 @@ js_math_abs(JSContext *cx, unsigned argc, Value *vp)
         return true;
     }
 
-    double x;
-    if (!ToNumber(cx, args[0], &x))
-        return false;
-
-    double z = Abs(x);
-    args.rval().setNumber(z);
-    return true;
+    return js_math_abs_handle(cx, args[0], args.rval());
 }
 
 #if defined(SOLARIS) && defined(__GNUC__)
@@ -910,6 +917,22 @@ js::math_sin(JSContext *cx, unsigned argc, Value *vp)
 }
 
 bool
+js::math_sqrt_handle(JSContext *cx, HandleValue number, MutableHandleValue result)
+{
+    double x;
+    if (!ToNumber(cx, number, &x))
+        return false;
+
+    MathCache *mathCache = cx->runtime()->getMathCache(cx);
+    if (!mathCache)
+        return false;
+
+    double z = mathCache->lookup(sqrt, x, MathCache::Sqrt);
+    result.setDouble(z);
+    return true;
+}
+
+bool
 js_math_sqrt(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -919,17 +942,7 @@ js_math_sqrt(JSContext *cx, unsigned argc, Value *vp)
         return true;
     }
 
-    double x;
-    if (!ToNumber(cx, args[0], &x))
-        return false;
-
-    MathCache *mathCache = cx->runtime()->getMathCache(cx);
-    if (!mathCache)
-        return false;
-
-    double z = mathCache->lookup(sqrt, x, MathCache::Sqrt);
-    args.rval().setDouble(z);
-    return true;
+    return math_sqrt_handle(cx, args[0], args.rval());
 }
 
 double
