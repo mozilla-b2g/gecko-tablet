@@ -1409,8 +1409,6 @@ public:
     mManager->Mutated(this);
   }
 
-  virtual int32_t GetMaxLayerSize() { return Manager()->GetMaxTextureSize(); }
-
 protected:
   Layer(LayerManager* aManager, void* aImplData);
 
@@ -2180,7 +2178,6 @@ protected:
   uint64_t mId;
 };
 
-void SetAntialiasingFlags(Layer* aLayer, gfxContext* aTarget);
 void SetAntialiasingFlags(Layer* aLayer, gfx::DrawTarget* aTarget);
 
 #ifdef MOZ_DUMP_PAINTING
