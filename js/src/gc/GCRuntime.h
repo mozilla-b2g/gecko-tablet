@@ -131,7 +131,7 @@ class GCRuntime
 {
   public:
     explicit GCRuntime(JSRuntime *rt);
-    bool init(uint32_t maxbytes);
+    bool init(uint32_t maxbytes, uint32_t maxNurseryBytes);
     void finish();
 
     inline int zeal();
@@ -699,6 +699,12 @@ class GCRuntime
     mozilla::DebugOnly<PRThread *>   lockOwner;
 
     GCHelperState helperState;
+
+    /*
+     * During incremental sweeping, this field temporarily holds the arenas of
+     * the current AllocKind being swept in order of increasing free space.
+     */
+    SortedArenaList incrementalSweepList;
 
     ConservativeGCData conservativeGC;
 

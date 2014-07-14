@@ -7798,6 +7798,25 @@ AC_SUBST(PROFILE_GEN_LDFLAGS)
 AC_SUBST(PROFILE_USE_CFLAGS)
 AC_SUBST(PROFILE_USE_LDFLAGS)
 
+dnl =============================================
+dnl Support for -fno-integrated-as (recent clang)
+dnl =============================================
+dnl Under clang 3.4+, use -fno-integrated-as to
+dnl build libvpx's vp8_asm_enc_offsets.c
+
+_SAVE_CFLAGS="$CFLAGS"
+CFLAGS="$CFLAGS -fno-integrated-as"
+
+AC_MSG_CHECKING([whether C compiler supports -fno-integrated-as])
+AC_TRY_COMPILE([], [return 0;],
+               [ NO_INTEGRATED_AS_CFLAGS="-fno-integrated-as"
+                 result="yes" ], result="no")
+AC_MSG_RESULT([$result])
+
+CFLAGS="$_SAVE_CFLAGS"
+
+AC_SUBST(NO_INTEGRATED_AS_CFLAGS)
+
 fi # ! SKIP_COMPILER_CHECKS
 
 AC_DEFINE(CPP_THROW_NEW, [throw()])
@@ -8783,7 +8802,6 @@ AC_SUBST(CC_VERSION)
 AC_SUBST(CXX_VERSION)
 AC_SUBST(MSMANIFEST_TOOL)
 AC_SUBST(NS_ENABLE_TSF)
-AC_SUBST(MOZ_APP_COMPONENT_LIBS)
 AC_SUBST(MOZ_APP_EXTRA_LIBS)
 
 AC_SUBST(MOZ_WAVE)
@@ -9050,8 +9068,6 @@ if test -z "$MOZ_NATIVE_JEMALLOC" -a "$MOZ_MEMORY" && test -n "$MOZ_JEMALLOC3" -
   if test "$CROSS_COMPILE"; then
     ac_configure_args="$ac_configure_args je_cv_static_page_shift=12"
   fi
-  _save_cache_file="$cache_file"
-  cache_file=$_objdir/memory/jemalloc/src/config.cache
 
   if ! test -e memory/jemalloc; then
     mkdir -p memory/jemalloc
@@ -9064,7 +9080,6 @@ if test -z "$MOZ_NATIVE_JEMALLOC" -a "$MOZ_MEMORY" && test -n "$MOZ_JEMALLOC3" -
   srcdir=`cd $srcdir; pwd`
   AC_OUTPUT_SUBDIRS(memory/jemalloc/src)
   srcdir="$_save_srcdir"
-  cache_file="$_save_cache_file"
   ac_configure_args="$_SUBDIR_CONFIG_ARGS"
 fi
 
@@ -9088,7 +9103,7 @@ if test "$MOZ_TREE_FREETYPE"; then
      mkdir modules
    fi
 
-   AC_OUTPUT_SUBDIRS(modules/freetype2)
+   AC_OUTPUT_SUBDIRS(modules/freetype2,$cache_file)
 fi
 
 if test -z "$direct_nspr_config"; then
@@ -9180,14 +9195,9 @@ if test -z "$MOZ_NATIVE_NSPR"; then
     export LDFLAGS="$LDFLAGS $NSPR_LDFLAGS"
     export CFLAGS="$CFLAGS $MOZ_FRAMEPTR_FLAGS"
 
-    # Use a separate cache file for NSPR since it uses autoconf 2.68.
-    _save_cache_file="$cache_file"
-    cache_file=$_objdir/nsprpub/config.cache
-
     AC_OUTPUT_SUBDIRS(nsprpub)
 
     # .. and restore them
-    cache_file="$_save_cache_file"
     CFLAGS="$_SAVE_CFLAGS"
     CPPFLAGS="$_SAVE_CPPFLAGS"
     LDFLAGS="$_SAVE_LDFLAGS"
@@ -9277,7 +9287,7 @@ if ! test -e js; then
     mkdir js
 fi
 
-AC_OUTPUT_SUBDIRS(js/src)
+AC_OUTPUT_SUBDIRS(js/src,$cache_file)
 ac_configure_args="$_SUBDIR_CONFIG_ARGS"
 
 fi # COMPILE_ENVIRONMENT && !LIBXUL_SDK_DIR
