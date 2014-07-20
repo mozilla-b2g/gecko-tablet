@@ -20,11 +20,11 @@ class DeviceRunner(BaseRunner):
     remote devices (or emulators), such as B2G.
     """
     def __init__(self, device_class, device_args=None, **kwargs):
-        process_args = {'stream': sys.stdout,
-                        'processOutputLine': self.on_output,
-                        'onTimeout': self.on_timeout }
-        process_args.update(kwargs.get('process_args') or {})
-
+        process_args = kwargs.get('process_args', {})
+        process_args.update({ 'stream': sys.stdout,
+                              'processOutputLine': self.on_output,
+                              'onFinish': self.on_finish,
+                              'onTimeout': self.on_timeout })
         kwargs['process_args'] = process_args
         BaseRunner.__init__(self, **kwargs)
 
@@ -117,6 +117,9 @@ class DeviceRunner(BaseRunner):
             msg = "%s with no output" % msg
 
         print(msg % (self.last_test, timeout))
+        self.check_for_crashes()
+
+    def on_finish(self):
         self.check_for_crashes()
 
     def check_for_crashes(self):

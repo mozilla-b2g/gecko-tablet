@@ -1478,6 +1478,23 @@ TabChild::~TabChild()
     if (webBrowser) {
       webBrowser->SetContainerWindow(nullptr);
     }
+
+    for (uint32_t index = 0, count = mCachedFileDescriptorInfos.Length();
+         index < count;
+         index++) {
+        nsAutoPtr<CachedFileDescriptorInfo>& info =
+            mCachedFileDescriptorInfos[index];
+
+        MOZ_ASSERT(!info->mCallback);
+
+        if (info->mFileDescriptor.IsValid()) {
+            MOZ_ASSERT(!info->mCanceled);
+
+            nsRefPtr<CloseFileRunnable> runnable =
+                new CloseFileRunnable(info->mFileDescriptor);
+            runnable->Dispatch();
+        }
+    }
 }
 
 void
