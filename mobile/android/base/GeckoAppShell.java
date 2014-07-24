@@ -8,18 +8,17 @@ package org.mozilla.gecko;
 import java.io.BufferedReader;
 import java.io.Closeable;
 import java.io.File;
-import java.io.FileReader;
 import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.net.URLConnection;
-import java.net.MalformedURLException;
 import java.net.Proxy;
 import java.net.URL;
+import java.net.URLConnection;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -44,7 +43,6 @@ import org.mozilla.gecko.mozglue.RobocopTarget;
 import org.mozilla.gecko.mozglue.generatorannotations.OptionalGeneratedParameter;
 import org.mozilla.gecko.mozglue.generatorannotations.WrapElementForJNI;
 import org.mozilla.gecko.prompts.PromptService;
-import org.mozilla.gecko.util.GeckoEventListener;
 import org.mozilla.gecko.util.HardwareUtils;
 import org.mozilla.gecko.util.NativeJSContainer;
 import org.mozilla.gecko.util.ProxySelector;
@@ -136,9 +134,6 @@ public class GeckoAppShell
 
     // See also HardwareUtils.LOW_MEMORY_THRESHOLD_MB.
     private static final int HIGH_MEMORY_DEVICE_THRESHOLD_MB = 768;
-
-    public static final String SHORTCUT_TYPE_WEBAPP = "webapp";
-    public static final String SHORTCUT_TYPE_BOOKMARK = "bookmark";
 
     static private int sDensityDpi = 0;
     static private int sScreenDepth = 0;
@@ -256,7 +251,7 @@ public class GeckoAppShell
 
         @Override
         public void onFaviconLoaded(String pageUrl, String faviconURL, Bitmap favicon) {
-            GeckoAppShell.createShortcut(title, url, url, favicon, "");
+            GeckoAppShell.createShortcut(title, url, favicon);
         }
     }
 
@@ -718,9 +713,6 @@ public class GeckoAppShell
 
     @WrapElementForJNI
     public static void startMonitoringGamepad() {
-        if (Build.VERSION.SDK_INT < 9) {
-            return;
-        }
         ThreadUtils.postToUiThread(new Runnable() {
                 @Override
                 public void run() {
@@ -731,10 +723,6 @@ public class GeckoAppShell
 
     @WrapElementForJNI
     public static void stopMonitoringGamepad() {
-        if (Build.VERSION.SDK_INT < 9) {
-            return;
-        }
-
         ThreadUtils.postToUiThread(new Runnable() {
                 @Override
                 public void run() {
@@ -790,59 +778,25 @@ public class GeckoAppShell
         restartScheduled = true;
     }
 
-    public static Intent getWebappIntent(String aURI, String aOrigin, String aTitle, Bitmap aIcon) {
-        Intent intent;
-
-        Allocator slots = Allocator.getInstance(getContext());
-        int index = slots.getIndexForOrigin(aOrigin);
-
-        if (index == -1) {
-            return null;
-        }
-
-        String packageName = slots.getAppForIndex(index);
-        intent = getContext().getPackageManager().getLaunchIntentForPackage(packageName);
-        if (aURI != null) {
-            intent.setData(Uri.parse(aURI));
-        }
-
-        return intent;
-    }
-
-    // "Installs" an application by creating a shortcut
-    // This is the entry point from AndroidBridge.h
+    // Creates a homescreen shortcut for a web page.
+    // This is the entry point from nsIShellService.
     @WrapElementForJNI
-    static void createShortcut(String aTitle, String aURI, String aIconData, String aType) {
-        if ("webapp".equals(aType)) {
-            Log.w(LOGTAG, "createShortcut with no unique URI should not be used for aType = webapp!");
-        }
-
-        createShortcut(aTitle, aURI, aURI, aIconData, aType);
-    }
-
-    // For non-webapps.
-    public static void createShortcut(String aTitle, String aURI, Bitmap aBitmap, String aType) {
-        createShortcut(aTitle, aURI, aURI, aBitmap, aType);
-    }
-
-    // Internal, for webapps.
-    static void createShortcut(final String aTitle, final String aURI, final String aUniqueURI, final String aIconData, final String aType) {
+    static void createShortcut(final String aTitle, final String aURI, final String aIconData) {
         ThreadUtils.postToBackgroundThread(new Runnable() {
             @Override
             public void run() {
                 // TODO: use the cache. Bug 961600.
                 Bitmap icon = FaviconDecoder.getMostSuitableBitmapFromDataURI(aIconData, getPreferredIconSize());
-                GeckoAppShell.doCreateShortcut(aTitle, aURI, aURI, icon, aType);
+                GeckoAppShell.doCreateShortcut(aTitle, aURI, icon);
             }
         });
     }
 
-    public static void createShortcut(final String aTitle, final String aURI, final String aUniqueURI,
-                                      final Bitmap aIcon, final String aType) {
+    public static void createShortcut(final String aTitle, final String aURI, final Bitmap aBitmap) {
         ThreadUtils.postToBackgroundThread(new Runnable() {
             @Override
             public void run() {
-                GeckoAppShell.doCreateShortcut(aTitle, aURI, aUniqueURI, aIcon, aType);
+                GeckoAppShell.doCreateShortcut(aTitle, aURI, aBitmap);
             }
         });
     }
@@ -850,23 +804,17 @@ public class GeckoAppShell
     /**
      * Call this method only on the background thread.
      */
-    private static void doCreateShortcut(final String aTitle, final String aURI, final String aUniqueURI,
-                                         final Bitmap aIcon, final String aType) {
+    private static void doCreateShortcut(final String aTitle, final String aURI, final Bitmap aIcon) {
         // The intent to be launched by the shortcut.
-        Intent shortcutIntent;
-        if (aType.equalsIgnoreCase(SHORTCUT_TYPE_WEBAPP)) {
-            shortcutIntent = getWebappIntent(aURI, aUniqueURI, aTitle, aIcon);
-        } else {
-            shortcutIntent = new Intent();
-            shortcutIntent.setAction(GeckoApp.ACTION_HOMESCREEN_SHORTCUT);
-            shortcutIntent.setData(Uri.parse(aURI));
-            shortcutIntent.setClassName(AppConstants.ANDROID_PACKAGE_NAME,
-                                        AppConstants.BROWSER_INTENT_CLASS_NAME);
-        }
+        Intent shortcutIntent = new Intent();
+        shortcutIntent.setAction(GeckoApp.ACTION_HOMESCREEN_SHORTCUT);
+        shortcutIntent.setData(Uri.parse(aURI));
+        shortcutIntent.setClassName(AppConstants.ANDROID_PACKAGE_NAME,
+                                    AppConstants.BROWSER_INTENT_CLASS_NAME);
 
         Intent intent = new Intent();
         intent.putExtra(Intent.EXTRA_SHORTCUT_INTENT, shortcutIntent);
-        intent.putExtra(Intent.EXTRA_SHORTCUT_ICON, getLauncherIcon(aIcon, aType));
+        intent.putExtra(Intent.EXTRA_SHORTCUT_ICON, getLauncherIcon(aIcon));
 
         if (aTitle != null) {
             intent.putExtra(Intent.EXTRA_SHORTCUT_NAME, aTitle);
@@ -879,41 +827,6 @@ public class GeckoAppShell
 
         intent.setAction("com.android.launcher.action.INSTALL_SHORTCUT");
         getContext().sendBroadcast(intent);
-    }
-
-    public static void removeShortcut(final String aTitle, final String aURI, final String aType) {
-        removeShortcut(aTitle, aURI, null, aType);
-    }
-
-    public static void removeShortcut(final String aTitle, final String aURI, final String aUniqueURI, final String aType) {
-        ThreadUtils.postToBackgroundThread(new Runnable() {
-            @Override
-            public void run() {
-                // the intent to be launched by the shortcut
-                Intent shortcutIntent;
-                if (aType.equalsIgnoreCase(SHORTCUT_TYPE_WEBAPP)) {
-                    shortcutIntent = getWebappIntent(aURI, aUniqueURI, "", null);
-                    if (shortcutIntent == null)
-                        return;
-                } else {
-                    shortcutIntent = new Intent();
-                    shortcutIntent.setAction(GeckoApp.ACTION_HOMESCREEN_SHORTCUT);
-                    shortcutIntent.setClassName(AppConstants.ANDROID_PACKAGE_NAME,
-                                                AppConstants.BROWSER_INTENT_CLASS_NAME);
-                    shortcutIntent.setData(Uri.parse(aURI));
-                }
-        
-                Intent intent = new Intent();
-                intent.putExtra(Intent.EXTRA_SHORTCUT_INTENT, shortcutIntent);
-                if (aTitle != null)
-                    intent.putExtra(Intent.EXTRA_SHORTCUT_NAME, aTitle);
-                else
-                    intent.putExtra(Intent.EXTRA_SHORTCUT_NAME, aURI);
-
-                intent.setAction("com.android.launcher.action.UNINSTALL_SHORTCUT");
-                getContext().sendBroadcast(intent);
-            }
-        });
     }
 
     @JNITarget
@@ -934,7 +847,7 @@ public class GeckoAppShell
         }
     }
 
-    static private Bitmap getLauncherIcon(Bitmap aSource, String aType) {
+    static private Bitmap getLauncherIcon(Bitmap aSource) {
         final int kOffset = 6;
         final int kRadius = 5;
         int size = getPreferredIconSize();
@@ -950,8 +863,8 @@ public class GeckoAppShell
             // If we aren't drawing a favicon, just use an orange color.
             paint.setColor(Color.HSVToColor(DEFAULT_LAUNCHER_ICON_HSV));
             canvas.drawRoundRect(new RectF(kOffset, kOffset, size - kOffset, size - kOffset), kRadius, kRadius, paint);
-        } else if (aType.equalsIgnoreCase(SHORTCUT_TYPE_WEBAPP) || aSource.getWidth() >= insetSize || aSource.getHeight() >= insetSize) {
-            // otherwise, if this is a webapp or if the icons is lare enough, just draw it
+        } else if (aSource.getWidth() >= insetSize || aSource.getHeight() >= insetSize) {
+            // Otherwise, if the icon is large enough, just draw it.
             Rect iconBounds = new Rect(0, 0, size, size);
             canvas.drawBitmap(aSource, null, iconBounds, null);
             return bitmap;
@@ -2177,17 +2090,12 @@ public class GeckoAppShell
         int[] result = new int[4];
         result[0] = 0;
 
-        if (Build.VERSION.SDK_INT >= 9) {
-            if (android.hardware.Camera.getNumberOfCameras() == 0)
-                return result;
+        if (android.hardware.Camera.getNumberOfCameras() == 0) {
+            return result;
         }
 
         try {
-            // no front/back camera before API level 9
-            if (Build.VERSION.SDK_INT >= 9)
-                sCamera = android.hardware.Camera.open(aCamera);
-            else
-                sCamera = android.hardware.Camera.open();
+            sCamera = android.hardware.Camera.open(aCamera);
 
             android.hardware.Camera.Parameters params = sCamera.getParameters();
             params.setPreviewFormat(ImageFormat.NV21);
@@ -2419,113 +2327,15 @@ public class GeckoAppShell
         GeckoNetworkManager.getInstance().disableNotifications();
     }
 
-    // values taken from android's Base64
-    public static final int BASE64_DEFAULT = 0;
-    public static final int BASE64_URL_SAFE = 8;
-
-    /**
-     * taken from http://www.source-code.biz/base64coder/java/Base64Coder.java.txt and modified (MIT License)
-     */
-    // Mapping table from 6-bit nibbles to Base64 characters.
-    private static final byte[] map1 = new byte[64];
-    private static final byte[] map1_urlsafe;
-    static {
-      int i=0;
-      for (byte c='A'; c<='Z'; c++) map1[i++] = c;
-      for (byte c='a'; c<='z'; c++) map1[i++] = c;
-      for (byte c='0'; c<='9'; c++) map1[i++] = c;
-      map1[i++] = '+'; map1[i++] = '/';
-      map1_urlsafe = map1.clone();
-      map1_urlsafe[62] = '-'; map1_urlsafe[63] = '_'; 
-    }
-
-    // Mapping table from Base64 characters to 6-bit nibbles.
-    private static final byte[] map2 = new byte[128];
-    static {
-        for (int i=0; i<map2.length; i++) map2[i] = -1;
-        for (int i=0; i<64; i++) map2[map1[i]] = (byte)i;
-        map2['-'] = (byte)62; map2['_'] = (byte)63;
-    }
-
-    final static byte EQUALS_ASCII = (byte) '=';
-
-    /**
-     * Encodes a byte array into Base64 format.
-     * No blanks or line breaks are inserted in the output.
-     * @param in    An array containing the data bytes to be encoded.
-     * @return      A character array containing the Base64 encoded data.
-     */
-    public static byte[] encodeBase64(byte[] in, int flags) {
-        if (Build.VERSION.SDK_INT >=Build.VERSION_CODES.FROYO)
-            return Base64.encode(in, flags | Base64.NO_WRAP);
-        int oDataLen = (in.length*4+2)/3;       // output length without padding
-        int oLen = ((in.length+2)/3)*4;         // output length including padding
-        byte[] out = new byte[oLen];
-        int ip = 0;
-        int iEnd = in.length;
-        int op = 0;
-        byte[] toMap = ((flags & BASE64_URL_SAFE) == 0 ? map1 : map1_urlsafe);
-        while (ip < iEnd) {
-            int i0 = in[ip++] & 0xff;
-            int i1 = ip < iEnd ? in[ip++] & 0xff : 0;
-            int i2 = ip < iEnd ? in[ip++] & 0xff : 0;
-            int o0 = i0 >>> 2;
-            int o1 = ((i0 &   3) << 4) | (i1 >>> 4);
-            int o2 = ((i1 & 0xf) << 2) | (i2 >>> 6);
-            int o3 = i2 & 0x3F;
-            out[op++] = toMap[o0];
-            out[op++] = toMap[o1];
-            out[op] = op < oDataLen ? toMap[o2] : EQUALS_ASCII; op++;
-            out[op] = op < oDataLen ? toMap[o3] : EQUALS_ASCII; op++;
-        }
-        return out; 
-    }
-
     /**
      * Decodes a byte array from Base64 format.
      * No blanks or line breaks are allowed within the Base64 encoded input data.
-     * @param in    A character array containing the Base64 encoded data.
-     * @param iOff  Offset of the first character in <code>in</code> to be processed.
-     * @param iLen  Number of characters to process in <code>in</code>, starting at <code>iOff</code>.
+     * @param s     A string containing the Base64 encoded data.
      * @return      An array containing the decoded data bytes.
      * @throws      IllegalArgumentException If the input is not valid Base64 encoded data.
      */
-    public static byte[] decodeBase64(byte[] in, int flags) {
-        if (Build.VERSION.SDK_INT >=Build.VERSION_CODES.FROYO)
-            return Base64.decode(in, flags);
-        int iOff = 0;
-        int iLen = in.length;
-        if (iLen%4 != 0) throw new IllegalArgumentException ("Length of Base64 encoded input string is not a multiple of 4.");
-        while (iLen > 0 && in[iOff+iLen-1] == '=') iLen--;
-        int oLen = (iLen*3) / 4;
-        byte[] out = new byte[oLen];
-        int ip = iOff;
-        int iEnd = iOff + iLen;
-        int op = 0;
-        while (ip < iEnd) {
-            int i0 = in[ip++];
-            int i1 = in[ip++];
-            int i2 = ip < iEnd ? in[ip++] : 'A';
-            int i3 = ip < iEnd ? in[ip++] : 'A';
-            if (i0 > 127 || i1 > 127 || i2 > 127 || i3 > 127)
-                throw new IllegalArgumentException ("Illegal character in Base64 encoded data.");
-            int b0 = map2[i0];
-            int b1 = map2[i1];
-            int b2 = map2[i2];
-            int b3 = map2[i3];
-            if (b0 < 0 || b1 < 0 || b2 < 0 || b3 < 0)
-                throw new IllegalArgumentException ("Illegal character in Base64 encoded data.");
-            int o0 = ( b0       <<2) | (b1>>>4);
-            int o1 = ((b1 & 0xf)<<4) | (b2>>>2);
-            int o2 = ((b2 &   3)<<6) |  b3;
-            out[op++] = (byte)o0;
-            if (op<oLen) out[op++] = (byte)o1;
-            if (op<oLen) out[op++] = (byte)o2; }
-        return out; 
-    }
-
     public static byte[] decodeBase64(String s, int flags) {
-        return decodeBase64(s.getBytes(), flags);
+        return Base64.decode(s.getBytes(), flags);
     }
 
     @WrapElementForJNI(stubName = "GetScreenOrientationWrapper")

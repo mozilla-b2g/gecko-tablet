@@ -226,6 +226,16 @@ gfx3DMatrix::ScalePost(float aX, float aY, float aZ)
 }
 
 void
+gfx3DMatrix::ChangeBasis(const gfxPoint3D& aOrigin)
+{
+  // Translate to the origin before applying this matrix.
+  Translate(-aOrigin);
+
+  // Translate back into position after applying this matrix.
+  TranslatePost(aOrigin);
+}
+
+void
 gfx3DMatrix::SkewXY(double aSkew)
 {
     (*this)[1] += (*this)[0] * aSkew;
@@ -818,7 +828,6 @@ gfxRect gfx3DMatrix::ProjectRectBounds(const gfxRect& aRect) const
       // If the line between two points crosses the w=0 plane, then interpolate a point
       // as close to the w=0 plane as possible and use that instead.
       gfxPointH3D intercept = ComputePerspectivePlaneIntercept(points[i], points[next]);
-      MOZ_ASSERT(intercept.HasPositiveWCoord());
 
       gfxPoint point2d = intercept.As2DPoint();
       min_x = min(point2d.x, min_x);

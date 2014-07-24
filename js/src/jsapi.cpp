@@ -24,6 +24,7 @@
 #include "jscntxt.h"
 #include "jsdate.h"
 #include "jsexn.h"
+#include "jsfriendapi.h"
 #include "jsfun.h"
 #include "jsgc.h"
 #include "jsiter.h"
@@ -114,6 +115,19 @@ using js::frontend::Parser;
 /* Make sure that jschar is two bytes unsigned integer */
 JS_STATIC_ASSERT((jschar)-1 > 0);
 JS_STATIC_ASSERT(sizeof(jschar) == 2);
+
+bool
+JS::CallArgs::requireAtLeast(JSContext *cx, const char *fnname, unsigned required) {
+    if (length() < required) {
+        char numArgsStr[40];
+        JS_snprintf(numArgsStr, sizeof numArgsStr, "%u", required - 1);
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_MORE_ARGS_NEEDED,
+                             fnname, numArgsStr, required == 2 ? "" : "s");
+        return false;
+    }
+
+    return true;
+}
 
 JS_PUBLIC_API(int64_t)
 JS_Now()
@@ -1483,7 +1497,7 @@ JS_PUBLIC_API(char *)
 JS_strdup(JSContext *cx, const char *s)
 {
     AssertHeapIsIdle(cx);
-    return js_strdup(cx, s);
+    return DuplicateString(cx, s).release();
 }
 
 JS_PUBLIC_API(char *)
@@ -6309,6 +6323,15 @@ JS_SetGlobalJitCompilerOption(JSRuntime *rt, JSJitCompilerOption opt, uint32_t v
             IonSpew(js::jit::IonSpew_Scripts, "Disable offthread compilation");
         }
         break;
+      case JSJITCOMPILER_SIGNALS_ENABLE:
+        if (value == 1) {
+            rt->setCanUseSignalHandlers(true);
+            IonSpew(js::jit::IonSpew_Scripts, "Enable signals");
+        } else if (value == 0) {
+            rt->setCanUseSignalHandlers(false);
+            IonSpew(js::jit::IonSpew_Scripts, "Disable signals");
+        }
+        break;
       default:
         break;
     }
@@ -6330,6 +6353,8 @@ JS_GetGlobalJitCompilerOption(JSRuntime *rt, JSJitCompilerOption opt)
         return JS::RuntimeOptionsRef(rt).baseline();
       case JSJITCOMPILER_OFFTHREAD_COMPILATION_ENABLE:
         return rt->canUseOffthreadIonCompilation();
+      case JSJITCOMPILER_SIGNALS_ENABLE:
+        return rt->canUseSignalHandlers();
       default:
         break;
     }

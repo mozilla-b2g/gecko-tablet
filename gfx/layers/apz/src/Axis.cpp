@@ -34,6 +34,9 @@ Axis::Axis(AsyncPanZoomController* aAsyncPanZoomController)
 }
 
 void Axis::UpdateWithTouchAtDevicePoint(int32_t aPos, uint32_t aTimestampMs) {
+  // mVelocityQueue is controller-thread only
+  AsyncPanZoomController::AssertOnControllerThread();
+
   if (aTimestampMs == mPosTimeMs) {
     // Duplicate event?
     return;
@@ -194,6 +197,9 @@ float Axis::PanDistance(float aPos) {
 }
 
 void Axis::EndTouch(uint32_t aTimestampMs) {
+  // mVelocityQueue is controller-thread only
+  AsyncPanZoomController::AssertOnControllerThread();
+
   mVelocity = 0;
   int count = 0;
   while (!mVelocityQueue.IsEmpty()) {
@@ -210,6 +216,9 @@ void Axis::EndTouch(uint32_t aTimestampMs) {
 }
 
 void Axis::CancelTouch() {
+  // mVelocityQueue is controller-thread only
+  AsyncPanZoomController::AssertOnControllerThread();
+
   mVelocity = 0.0f;
   while (!mVelocityQueue.IsEmpty()) {
     mVelocityQueue.RemoveElementAt(0);
@@ -272,8 +281,8 @@ float Axis::ScaleWillOverscrollAmount(float aScale, float aFocus) {
   float originAfterScale = (GetOrigin() + aFocus) - (aFocus / aScale);
 
   bool both = ScaleWillOverscrollBothSides(aScale);
-  bool minus = originAfterScale < GetPageStart();
-  bool plus = (originAfterScale + (GetCompositionLength() / aScale)) > GetPageEnd();
+  bool minus = GetPageStart() - originAfterScale > COORDINATE_EPSILON;
+  bool plus = (originAfterScale + (GetCompositionLength() / aScale)) - GetPageEnd() > COORDINATE_EPSILON;
 
   if ((minus && plus) || both) {
     // If we ever reach here it's a bug in the client code.
@@ -330,7 +339,7 @@ bool Axis::ScaleWillOverscrollBothSides(float aScale) {
   CSSToParentLayerScale scale(metrics.GetZoomToParent().scale * aScale);
   CSSRect cssCompositionBounds = metrics.mCompositionBounds / scale;
 
-  return GetRectLength(metrics.GetExpandedScrollableRect()) < GetRectLength(cssCompositionBounds);
+  return GetRectLength(cssCompositionBounds) - GetRectLength(metrics.GetExpandedScrollableRect()) > COORDINATE_EPSILON;
 }
 
 const FrameMetrics& Axis::GetFrameMetrics() const {

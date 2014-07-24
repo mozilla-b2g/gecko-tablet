@@ -408,7 +408,8 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
           nsRect(nsPoint(0,0), nsLayoutUtils::CalculateCompositionSizeForFrame(rootScrollFrame)) :
           dirty.Intersect(nsRect(nsPoint(0,0), subdocRootFrame->GetSize()));
       nsRect displayPort;
-      if (nsLayoutUtils::GetOrMaybeCreateDisplayPort(
+      if (!aBuilder->IsForEventDelivery() &&
+          nsLayoutUtils::GetOrMaybeCreateDisplayPort(
             *aBuilder, rootScrollFrame, displayportBase, &displayPort)) {
         haveDisplayPort = true;
         dirty = displayPort;
@@ -443,13 +444,6 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   bool needsOwnLayer = constructResolutionItem || constructZoomItem ||
     haveDisplayPort ||
     presContext->IsRootContentDocument() || (sf && sf->IsScrollingActive());
-
-  // Don't let in fixed pos propagate down to child documents. This makes
-  // it a little less effective but doesn't regress an important case of a
-  // child document being in a fixed pos element where we would do no occlusion
-  // at all if we let it propagate down.
-  nsDisplayListBuilder::AutoInFixedPosSetter
-    buildingInFixedPos(aBuilder, false);
 
   nsDisplayList childItems;
 
@@ -506,6 +500,14 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     }
   }
 
+  if (subdocRootFrame) {
+    aBuilder->LeavePresShell(subdocRootFrame, dirty);
+
+    if (ignoreViewportScrolling) {
+      aBuilder->SetIgnoreScrollFrame(savedIgnoreScrollFrame);
+    }
+  }
+
   // Generate a resolution and/or zoom item if needed. If one or both of those is
   // created, we don't need to create a separate nsDisplaySubDocument.
 
@@ -543,14 +545,6 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       aBuilder, subdocRootFrame ? subdocRootFrame : this,
       &childItems, flags);
     childItems.AppendToTop(layerItem);
-  }
-
-  if (subdocRootFrame) {
-    aBuilder->LeavePresShell(subdocRootFrame, dirty);
-
-    if (ignoreViewportScrolling) {
-      aBuilder->SetIgnoreScrollFrame(savedIgnoreScrollFrame);
-    }
   }
 
   if (aBuilder->IsForImageVisibility()) {

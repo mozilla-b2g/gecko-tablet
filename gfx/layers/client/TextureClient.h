@@ -50,6 +50,7 @@ class PTextureChild;
 class TextureChild;
 class BufferTextureClient;
 class TextureClient;
+class KeepAlive;
 
 /**
  * TextureClient is the abstraction that allows us to share data between the
@@ -117,16 +118,6 @@ public:
   TextureClient(TextureFlags aFlags = TextureFlags::DEFAULT);
   virtual ~TextureClient();
 
-  // Creates a TextureClient that can be accessed through a raw pointer.
-  // XXX - this doesn't allocate the texture data.
-  // Prefer CreateForRawBufferAccess which returns a BufferTextureClient
-  // only if allocation suceeded.
-  static TemporaryRef<BufferTextureClient>
-  CreateBufferTextureClient(ISurfaceAllocator* aAllocator,
-                            gfx::SurfaceFormat aFormat,
-                            TextureFlags aTextureFlags,
-                            gfx::BackendType aMoz2dBackend);
-
   // Creates and allocates a TextureClient usable with Moz2D.
   static TemporaryRef<TextureClient>
   CreateForDrawing(ISurfaceAllocator* aAllocator,
@@ -153,6 +144,15 @@ public:
                            gfx::BackendType aMoz2dBackend,
                            TextureFlags aTextureFlags,
                            TextureAllocationFlags flags = ALLOC_DEFAULT);
+
+  // Creates and allocates a BufferTextureClient (can beaccessed through raw
+  // pointers) with a certain buffer size. It's unfortunate that we need this.
+  // providing format and sizes could let us do more optimization.
+  static TemporaryRef<BufferTextureClient>
+  CreateWithBufferSize(ISurfaceAllocator* aAllocator,
+                       gfx::SurfaceFormat aFormat,
+                       size_t aSize,
+                       TextureFlags aTextureFlags);
 
   virtual TextureClientYCbCr* AsTextureClientYCbCr() { return nullptr; }
 
@@ -201,21 +201,6 @@ public:
   virtual gfx::SurfaceFormat GetFormat() const
   {
     return gfx::SurfaceFormat::UNKNOWN;
-  }
-
-  /**
-   * Allocates for a given surface size, taking into account the pixel format
-   * which is part of the state of the TextureClient.
-   *
-   * Does not clear the surface by default, clearing the surface can be done
-   * by passing the CLEAR_BUFFER flag.
-   *
-   * TextureClients that can expose a DrawTarget should override this method.
-   */
-  virtual bool AllocateForSurface(gfx::IntSize aSize,
-                                  TextureAllocationFlags flags = ALLOC_DEFAULT)
-  {
-    return false;
   }
 
   /**
@@ -298,6 +283,14 @@ public:
   bool IsValid() const { return mValid; }
 
   /**
+   * kee the passed object alive until the IPDL actor is destroyed. This can
+   * help avoid race conditions in some cases.
+   * It's a temporary hack to ensure that DXGI textures don't get destroyed
+   * between serialization and deserialization.
+   */
+  void KeepUntilFullDeallocation(KeepAlive* aKeep);
+
+  /**
    * Create and init the TextureChild/Parent IPDL actor pair.
    *
    * Should be called only once per TextureClient.
@@ -368,6 +361,22 @@ protected:
    * anymore. This usually means it will soon be destroyed.
    */
   void MarkInvalid() { mValid = false; }
+
+  /**
+   * Allocates for a given surface size, taking into account the pixel format
+   * which is part of the state of the TextureClient.
+   *
+   * Does not clear the surface by default, clearing the surface can be done
+   * by passing the CLEAR_BUFFER flag.
+   *
+   * TextureClients that can expose a DrawTarget should override this method.
+   */
+  virtual bool AllocateForSurface(gfx::IntSize aSize,
+                                  TextureAllocationFlags flags = ALLOC_DEFAULT)
+  {
+    return false;
+  }
+
 
   /**
    * Should only be called *once* per texture, in TextureClient::InitIPDLActor.
@@ -611,6 +620,21 @@ struct TextureClientAutoUnlock
   {
     mTexture->Unlock();
   }
+};
+
+class KeepAlive
+{
+public:
+  virtual ~KeepAlive() {}
+};
+
+template<typename T>
+class TKeepAlive : public KeepAlive
+{
+public:
+  TKeepAlive(T* aData) : mData(aData) {}
+protected:
+  RefPtr<T> mData;
 };
 
 }

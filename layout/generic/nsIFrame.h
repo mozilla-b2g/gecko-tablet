@@ -1896,6 +1896,12 @@ public:
   nsPoint GetOffsetToCrossDoc(const nsIFrame* aOther) const;
 
   /**
+   * Like GetOffsetToCrossDoc, but the caller can specify which appunits
+   * to return the result in.
+   */
+  nsPoint GetOffsetToCrossDoc(const nsIFrame* aOther, const int32_t aAPD) const;
+
+  /**
    * Get the screen rect of the frame in pixels.
    * @return the pixel rect of the frame in screen coordinates.
    */
@@ -2268,6 +2274,15 @@ public:
    * been applied, i.e. in this frame's coordinate system
    */
   nsRect GetVisualOverflowRectRelativeToSelf() const;
+
+  /**
+   * Same as GetVisualOverflowRect, except relative to the parent
+   * frame.
+   *
+   * @return the rect relative to the parent frame, in the parent frame's
+   * coordinate system
+   */
+  nsRect GetVisualOverflowRectRelativeToParent() const;
 
   /**
    * Returns this frame's visual overflow rect as it would be before taking
@@ -3071,7 +3086,6 @@ private:
    * Returns true if any overflow changed.
    */
   bool SetOverflowAreas(const nsOverflowAreas& aOverflowAreas);
-  nsPoint GetOffsetToCrossDoc(const nsIFrame* aOther, const int32_t aAPD) const;
 
   // Helper-functions for SortFrameList():
   template<bool IsLessThanOrEqual(nsIFrame*, nsIFrame*)>

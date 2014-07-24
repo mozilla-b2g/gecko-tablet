@@ -244,8 +244,7 @@ APZCTreeManager::UpdatePanZoomControllerTree(CompositorParent* aCompositor,
                                       * metrics.mDevPixelsPerCSSPixel
                                       * metrics.GetParentResolution());
         }
-        gfx3DMatrix transform;
-        gfx::To3DMatrix(aLayer->GetTransform(), transform);
+        gfx3DMatrix transform = gfx::To3DMatrix(aLayer->GetTransform());
 
         apzc->SetLayerHitTestData(visible, aTransform, transform);
         APZCTM_LOG("Setting rect(%f %f %f %f) as visible region for APZC %p\n", visible.x, visible.y,
@@ -312,9 +311,7 @@ APZCTreeManager::UpdatePanZoomControllerTree(CompositorParent* aCompositor,
     aTransform = gfx3DMatrix();
   } else {
     // Multiply child layer transforms on the left so they get applied first
-    gfx3DMatrix matrix;
-    gfx::To3DMatrix(aLayer->GetTransform(), matrix);
-    aTransform = matrix * aTransform;
+    aTransform = gfx::To3DMatrix(aLayer->GetTransform()) * aTransform;
   }
 
   uint64_t childLayersId = (aLayer->AsRefLayer() ? aLayer->AsRefLayer()->GetReferentId() : aLayersId);
@@ -908,6 +905,23 @@ APZCTreeManager::CancelAnimationsForOverscrollHandoffChain()
     }
   }
   return mOverscrollHandoffChain.length() > 0;
+}
+
+void
+APZCTreeManager::SnapBackOverscrolledApzc(AsyncPanZoomController* aApzc)
+{
+  // This is called when a fling is winding down, so there is no overscroll
+  // handoff chain already built, so build it now.
+  BuildOverscrollHandoffChain(aApzc);
+  MonitorAutoLock lock(mTreeLock);
+  // Exactly one APZC along the hand-off chain can be overscrolled.
+  // Find it, and start a snap-back animation for it.
+  for (uint32_t i = 0; i < mOverscrollHandoffChain.length(); ++i) {
+    if (mOverscrollHandoffChain[i]->SnapBackIfOverscrolled()) {
+      break;
+    }
+  }
+  mOverscrollHandoffChain.clear();
 }
 
 bool

@@ -9,6 +9,7 @@
 
 #include "mozilla/dom/FileSystemTaskBase.h"
 #include "nsAutoPtr.h"
+#include "mozilla/ErrorResult.h"
 
 class nsIDOMBlob;
 class nsIInputStream;
@@ -27,7 +28,8 @@ public:
                  const nsAString& aPath,
                  nsIDOMBlob* aBlobData,
                  InfallibleTArray<uint8_t>& aArrayData,
-                 bool replace);
+                 bool replace,
+                 ErrorResult& aRv);
   CreateFileTask(FileSystemBase* aFileSystem,
                  const FileSystemCreateFileParams& aParam,
                  FileSystemRequestParent* aParent);
@@ -69,7 +71,7 @@ private:
   InfallibleTArray<uint8_t> mArrayData;
   bool mReplace;
 
-  // This cannot be a DOMFile bacause this object is created on a different
+  // This cannot be a DOMFile because this object is created on a different
   // thread and DOMFile is not thread-safe. Let's use the DOMFileImpl instead.
   nsRefPtr<DOMFileImpl> mTargetFileImpl;
 };

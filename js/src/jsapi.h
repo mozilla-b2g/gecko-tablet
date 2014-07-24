@@ -759,7 +759,7 @@ typedef bool
  */
 typedef JSObject *
 (* JSWrapObjectCallback)(JSContext *cx, JS::HandleObject existing, JS::HandleObject obj,
-                         JS::HandleObject parent, unsigned flags);
+                         JS::HandleObject parent);
 
 /*
  * Callback used by the wrap hook to ask the embedding to prepare an object
@@ -768,7 +768,7 @@ typedef JSObject *
  */
 typedef JSObject *
 (* JSPreWrapCallback)(JSContext *cx, JS::HandleObject scope, JS::HandleObject obj,
-                      unsigned flags);
+                      JS::HandleObject objectPassedToWrap);
 
 struct JSWrapObjectCallbacks
 {
@@ -4926,7 +4926,8 @@ JS_SetOffthreadIonCompilationEnabled(JSRuntime *rt, bool enabled);
     Register(ION_USECOUNT_TRIGGER, "ion.usecount.trigger")              \
     Register(ION_ENABLE, "ion.enable")                                  \
     Register(BASELINE_ENABLE, "baseline.enable")                        \
-    Register(OFFTHREAD_COMPILATION_ENABLE, "offthread-compilation.enable")
+    Register(OFFTHREAD_COMPILATION_ENABLE, "offthread-compilation.enable") \
+    Register(SIGNALS_ENABLE, "signals.enable")
 
 typedef enum JSJitCompilerOption {
 #define JIT_COMPILER_DECLARE(key, str) \

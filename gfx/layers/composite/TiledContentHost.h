@@ -229,6 +229,9 @@ public:
                       Compositor* aCompositor,
                       AttachFlags aFlags = NO_FLAGS) MOZ_OVERRIDE;
 
+  virtual void Detach(Layer* aLayer = nullptr,
+                      AttachFlags aFlags = NO_FLAGS) MOZ_OVERRIDE;
+
 #ifdef MOZ_DUMP_PAINTING
   virtual void Dump(std::stringstream& aStream,
                     const char* aPrefix="",
@@ -252,6 +255,7 @@ public:
 private:
 
   void RenderLayerBuffer(TiledLayerBufferComposite& aLayerBuffer,
+                         const gfxRGBA* aBackgroundColor,
                          EffectChain& aEffectChain,
                          float aOpacity,
                          const gfx::Filter& aFilter,
@@ -261,6 +265,7 @@ private:
 
   // Renders a single given tile.
   void RenderTile(const TileHost& aTile,
+                  const gfxRGBA* aBackgroundColor,
                   EffectChain& aEffectChain,
                   float aOpacity,
                   const gfx::Matrix4x4& aTransform,

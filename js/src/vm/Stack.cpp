@@ -12,6 +12,7 @@
 
 #include "gc/Marking.h"
 #ifdef JS_ION
+#include "jit/AsmJSFrameIterator.h"
 #include "jit/AsmJSModule.h"
 #include "jit/BaselineFrame.h"
 #include "jit/JitCompartment.h"
@@ -90,7 +91,6 @@ InterpreterFrame::initExecuteFrame(JSContext *cx, JSScript *script, AbstractFram
 
 #ifdef DEBUG
     Debug_SetValueRangeToCrashOnTouch(&rval_, 1);
-    hookData_ = (void *)0xbad;
 #endif
 }
 
@@ -1681,15 +1681,14 @@ jit::JitActivation::markRematerializedFrames(JSTracer *trc)
         RematerializedFrame::MarkInVector(trc, e.front().value());
 }
 
-#endif // JS_ION
-
 AsmJSActivation::AsmJSActivation(JSContext *cx, AsmJSModule &module)
   : Activation(cx, AsmJS),
     module_(module),
     errorRejoinSP_(nullptr),
     profiler_(nullptr),
     resumePC_(nullptr),
-    exitFP_(nullptr)
+    fp_(nullptr),
+    exitReason_(AsmJSExit::None)
 {
     if (cx->runtime()->spsProfiler.enabled()) {
         // Use a profiler string that matches jsMatch regex in
@@ -1699,6 +1698,9 @@ AsmJSActivation::AsmJSActivation(JSContext *cx, AsmJSModule &module)
         profiler_ = &cx->runtime()->spsProfiler;
         profiler_->enterNative("asm.js code :0", this);
     }
+
+    prevAsmJSForModule_ = module.activation();
+    module.activation() = this;
 
     prevAsmJS_ = cx->mainThread().asmJSActivationStack_;
 
@@ -1713,12 +1715,19 @@ AsmJSActivation::~AsmJSActivation()
     if (profiler_)
         profiler_->exitNative();
 
+    JS_ASSERT(fp_ == nullptr);
+
+    JS_ASSERT(module_.activation() == this);
+    module_.activation() = prevAsmJSForModule_;
+
     JSContext *cx = cx_->asJSContext();
     JS_ASSERT(cx->mainThread().asmJSActivationStack_ == this);
 
     JSRuntime::AutoLockForInterrupt lock(cx->runtime());
     cx->mainThread().asmJSActivationStack_ = prevAsmJS_;
 }
+
+#endif // JS_ION
 
 InterpreterFrameIterator &
 InterpreterFrameIterator::operator++()
@@ -1769,3 +1778,100 @@ ActivationIterator::settle()
     while (!done() && activation_->isJit() && !activation_->asJit()->isActive())
         activation_ = activation_->prev();
 }
+
+JS::ProfilingFrameIterator::ProfilingFrameIterator(JSRuntime *rt, const RegisterState &state)
+  : activation_(rt->mainThread.asmJSActivationStack())
+{
+#ifdef JS_ION
+    if (!activation_)
+        return;
+
+    static_assert(sizeof(AsmJSProfilingFrameIterator) <= StorageSpace, "Need to increase storage");
+    new (storage_.addr()) AsmJSProfilingFrameIterator(*activation_, state);
+    settle();
+#else
+    JS_ASSERT(!activation_);
+#endif
+}
+
+JS::ProfilingFrameIterator::~ProfilingFrameIterator()
+{
+#ifdef JS_ION
+    if (!done())
+        iter().~AsmJSProfilingFrameIterator();
+#else
+    JS_ASSERT(done());
+#endif
+}
+
+void
+JS::ProfilingFrameIterator::operator++()
+{
+#ifdef JS_ION
+    JS_ASSERT(!done());
+    ++iter();
+    settle();
+#else
+    MOZ_CRASH("Shouldn't have any frames");
+#endif
+}
+
+void
+JS::ProfilingFrameIterator::settle()
+{
+#ifdef JS_ION
+    while (iter().done()) {
+        iter().~AsmJSProfilingFrameIterator();
+        activation_ = activation_->prevAsmJS();
+        if (!activation_)
+            return;
+        new (storage_.addr()) AsmJSProfilingFrameIterator(*activation_);
+    }
+#else
+    MOZ_CRASH("Shouldn't have any frames");
+#endif
+}
+
+JS::ProfilingFrameIterator::Kind
+JS::ProfilingFrameIterator::kind() const
+{
+#ifdef JS_ION
+    return iter().kind();
+#else
+    MOZ_CRASH("Shouldn't have any frames");
+#endif
+}
+
+JSAtom *
+JS::ProfilingFrameIterator::functionDisplayAtom() const
+{
+#ifdef JS_ION
+    JS_ASSERT(kind() == Function);
+    return iter().functionDisplayAtom();
+#else
+    MOZ_CRASH("Shouldn't have any frames");
+#endif
+}
+
+const char *
+JS::ProfilingFrameIterator::functionFilename() const
+{
+#ifdef JS_ION
+    JS_ASSERT(kind() == Function);
+    return iter().functionFilename();
+#else
+    MOZ_CRASH("Shouldn't have any frames");
+#endif
+}
+
+const char *
+JS::ProfilingFrameIterator::nonFunctionDescription() const
+{
+#ifdef JS_ION
+    JS_ASSERT(kind() != Function);
+    return iter().nonFunctionDescription();
+#else
+    MOZ_CRASH("Shouldn't have any frames");
+#endif
+}
+

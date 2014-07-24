@@ -81,14 +81,10 @@ public final class GeckoLoader {
         }
     }
 
-    private static void setupDownloadEnvironment(Context context) {
+    private static void setupDownloadEnvironment(final Context context) {
         try {
-            File downloadDir = null;
-            File updatesDir  = null;
-            if (Build.VERSION.SDK_INT >= 8) {
-                downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-                updatesDir  = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
-            }
+            File downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            File updatesDir  = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
             if (downloadDir == null) {
                 downloadDir = new File(Environment.getExternalStorageDirectory().getPath(), "download");
             }
@@ -97,8 +93,7 @@ public final class GeckoLoader {
             }
             putenv("DOWNLOADS_DIRECTORY=" + downloadDir.getPath());
             putenv("UPDATES_DIRECTORY="   + updatesDir.getPath());
-        }
-        catch (Exception e) {
+        } catch (Exception e) {
             Log.w(LOGTAG, "No download directory found.", e);
         }
     }
@@ -218,9 +213,12 @@ public final class GeckoLoader {
 
         // Disable on-demand decompression of the linker on devices where it
         // is known to cause crashes.
-        if ("HTC".equals(android.os.Build.MANUFACTURER) &&
-            "HTC Vision".equals(android.os.Build.MODEL)) {
-            putenv("MOZ_LINKER_ONDEMAND=0");
+        String forced_ondemand = System.getenv("MOZ_LINKER_ONDEMAND");
+        if (forced_ondemand == null) {
+            if ("HTC".equals(android.os.Build.MANUFACTURER) &&
+                "HTC Vision".equals(android.os.Build.MODEL)) {
+                putenv("MOZ_LINKER_ONDEMAND=0");
+            }
         }
 
 #ifdef MOZ_LINKER_EXTRACT

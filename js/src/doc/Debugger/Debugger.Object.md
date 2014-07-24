@@ -153,6 +153,24 @@ from its prototype:
     environment enclosing the function when it was created. If the referent
     is a function proxy or not debuggee code, this is `undefined`.
 
+`isBoundFunction`
+:   `true` if the referent is a bound function; `false` otherwise.
+
+`boundTargetFunction`
+:   If the referent is a bound function, this is its target function—the
+    function that was bound to a particular `this` object. If the referent
+    is not a bound function, this is `undefined`.
+
+`boundThis`
+:   If the referent is a bound function, this is the `this` value it was
+    bound to. If the referent is not a bound function, this is `undefined`.
+
+`boundArguments`
+:   If the referent is a bound function, this is an array (in the Debugger
+    object's compartment) that contains the debuggee values of the `arguments`
+    object it was bound to. If the referent is not a bound function, this is
+    `undefined`.
+
 `proxyHandler`
 :   If the referent is a proxy whose handler object was allocated by
     debuggee code, this is its handler object—the object whose methods are
@@ -181,6 +199,11 @@ from its prototype:
     wrapper's global, not the wrapped object's global. The result refers to
     the global directly, not via a wrapper.
 
+<code id="allocationsite">allocationSite</code>
+:   If [object allocation site tracking][tracking-allocs] was enabled when this
+    `Debugger.Object`'s referent was allocated, return the
+    [JavaScript execution stack][saved-frame] captured at the time of the
+    allocation. Otherwise, return `null`.
 
 
 ## Function Properties of the Debugger.Object prototype

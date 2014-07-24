@@ -98,7 +98,7 @@ BreakpointStore.prototype = {
   get size() { return this._size; },
 
   /**
-   * Add a breakpoint to the breakpoint store.
+   * Add a breakpoint to the breakpoint store if it doesn't already exist.
    *
    * @param Object aBreakpoint
    *        The breakpoint to be added (not copied). It is an object with the
@@ -109,10 +109,11 @@ BreakpointStore.prototype = {
    *            the whole line)
    *          - condition (optional)
    *          - actor (optional)
+   * @returns Object aBreakpoint
+   *          The new or existing breakpoint.
    */
   addBreakpoint: function (aBreakpoint) {
     let { url, line, column } = aBreakpoint;
-    let updating = false;
 
     if (column != null) {
       if (!this._breakpoints[url]) {
@@ -121,16 +122,22 @@ BreakpointStore.prototype = {
       if (!this._breakpoints[url][line]) {
         this._breakpoints[url][line] = [];
       }
-      this._breakpoints[url][line][column] = aBreakpoint;
+      if (!this._breakpoints[url][line][column]) {
+        this._breakpoints[url][line][column] = aBreakpoint;
+        this._size++;
+      }
+      return this._breakpoints[url][line][column];
     } else {
       // Add a breakpoint that breaks on the whole line.
       if (!this._wholeLineBreakpoints[url]) {
         this._wholeLineBreakpoints[url] = [];
       }
-      this._wholeLineBreakpoints[url][line] = aBreakpoint;
+      if (!this._wholeLineBreakpoints[url][line]) {
+        this._wholeLineBreakpoints[url][line] = aBreakpoint;
+        this._size++;
+      }
+      return this._wholeLineBreakpoints[url][line];
     }
-
-    this._size++;
   },
 
   /**
@@ -1257,7 +1264,29 @@ ThreadActor.prototype = {
         let l = Object.create(null);
         l.type = handler.type;
         let listener = handler.listenerObject;
-        l.script = this.globalDebugObject.makeDebuggeeValue(listener).script;
+        let listenerDO = this.globalDebugObject.makeDebuggeeValue(listener);
+        // If the listener is an object with a 'handleEvent' method, use that.
+        if (listenerDO.class == "Object" || listenerDO.class == "XULElement") {
+          // For some events we don't have permission to access the
+          // 'handleEvent' property when running in content scope.
+          if (!listenerDO.unwrap()) {
+            continue;
+          }
+          let heDesc;
+          while (!heDesc && listenerDO) {
+            heDesc = listenerDO.getOwnPropertyDescriptor("handleEvent");
+            listenerDO = listenerDO.proto;
+          }
+          if (heDesc && heDesc.value) {
+            listenerDO = heDesc.value;
+          }
+        }
+        // When the listener is a bound function, we are actually interested in
+        // the target function.
+        while (listenerDO.isBoundFunction) {
+          listenerDO = listenerDO.boundTargetFunction;
+        }
+        l.script = listenerDO.script;
         // Chrome listeners won't be converted to debuggee values, since their
         // compartment is not added as a debuggee.
         if (!l.script)
@@ -1417,9 +1446,7 @@ ThreadActor.prototype = {
 
     let locationPromise = this.sources.getGeneratedLocation(aRequest.location);
     return locationPromise.then(({url, line, column}) => {
-      if (line == null ||
-          line < 0 ||
-          this.dbg.findScripts({ url: url }).length == 0) {
+      if (line == null || line < 0) {
         return {
           error: "noScript",
           message: "Requested setting a breakpoint on "
@@ -1515,12 +1542,11 @@ ThreadActor.prototype = {
     // Find all scripts matching the given location
     let scripts = this.dbg.findScripts(aLocation);
     if (scripts.length == 0) {
+      // Since we did not find any scripts to set the breakpoint on now, return
+      // early. When a new script that matches this breakpoint location is
+      // introduced, the breakpoint actor will already be in the breakpoint store
+      // and will be set at that time.
       return {
-        error: "noScript",
-        message: "Requested setting a breakpoint on "
-          + aLocation.url + ":" + aLocation.line
-          + (aLocation.column != null ? ":" + aLocation.column : "")
-          + " but there is no Debugger.Script at that location",
         actor: actor.actorID
       };
     }
@@ -1827,9 +1853,37 @@ ThreadActor.prototype = {
         listenerForm.capturing = handler.capturing;
         listenerForm.allowsUntrusted = handler.allowsUntrusted;
         listenerForm.inSystemEventGroup = handler.inSystemEventGroup;
-        listenerForm.isEventHandler = !!node["on" + listenerForm.type];
+        let handlerName = "on" + listenerForm.type;
+        listenerForm.isEventHandler = false;
+        if (typeof node.hasAttribute !== "undefined") {
+          listenerForm.isEventHandler = !!node.hasAttribute(handlerName);
+        }
+        if (!!node[handlerName]) {
+          listenerForm.isEventHandler = !!node[handlerName];
+        }
         // Get the Debugger.Object for the listener object.
         let listenerDO = this.globalDebugObject.makeDebuggeeValue(listener);
+        // If the listener is an object with a 'handleEvent' method, use that.
+        if (listenerDO.class == "Object" || listenerDO.class == "XULElement") {
+          // For some events we don't have permission to access the
+          // 'handleEvent' property when running in content scope.
+          if (!listenerDO.unwrap()) {
+            continue;
+          }
+          let heDesc;
+          while (!heDesc && listenerDO) {
+            heDesc = listenerDO.getOwnPropertyDescriptor("handleEvent");
+            listenerDO = listenerDO.proto;
+          }
+          if (heDesc && heDesc.value) {
+            listenerDO = heDesc.value;
+          }
+        }
+        // When the listener is a bound function, we are actually interested in
+        // the target function.
+        while (listenerDO.isBoundFunction) {
+          listenerDO = listenerDO.boundTargetFunction;
+        }
         listenerForm.function = this.createValueGrip(listenerDO);
         listeners.push(listenerForm);
       }
@@ -3511,14 +3565,27 @@ exports.ObjectActor = ObjectActor;
 DebuggerServer.ObjectActorPreviewers = {
   String: [function({obj, threadActor}, aGrip) {
     let result = genericObjectPreviewer("String", String, obj, threadActor);
-    if (result) {
-      let length = DevToolsUtils.getProperty(obj, "length");
-      if (typeof length != "number") {
-        return false;
-      }
+    let length = DevToolsUtils.getProperty(obj, "length");
 
-      aGrip.displayString = result.value;
+    if (!result || typeof length != "number") {
+      return false;
+    }
+
+    aGrip.preview = {
+      kind: "ArrayLike",
+      length: length
+    };
+
+    if (threadActor._gripDepth > 1) {
       return true;
+    }
+
+    let items = aGrip.preview.items = [];
+
+    const max = Math.min(result.value.length, OBJECT_PREVIEW_MAX_ITEMS);
+    for (let i = 0; i < max; i++) {
+      let value = threadActor.createValueGrip(result.value[i]);
+      items.push(value);
     }
 
     return true;

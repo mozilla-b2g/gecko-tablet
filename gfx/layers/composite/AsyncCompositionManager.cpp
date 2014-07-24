@@ -141,8 +141,13 @@ static void
 TranslateShadowLayer2D(Layer* aLayer,
                        const gfxPoint& aTranslation)
 {
+  // This layer might also be a scrollable layer and have an async transform.
+  // To make sure we don't clobber that, we start with the shadow transform.
+  // Any adjustments to the shadow transform made in this function in previous
+  // frames have been cleared in ClearAsyncTransforms(), so such adjustments
+  // will not compound over successive frames.
   Matrix layerTransform;
-  if (!GetBaseTransform2D(aLayer, &layerTransform)) {
+  if (!aLayer->GetLocalTransform().Is2D(&layerTransform)) {
     return;
   }
 
@@ -400,9 +405,7 @@ SampleValue(float aPortion, Animation& aAnimation, StyleAnimationValue& aStart,
   transform.Translate(scaledOrigin);
 
   InfallibleTArray<TransformFunction> functions;
-  Matrix4x4 realTransform;
-  ToMatrix4x4(transform, realTransform);
-  functions.AppendElement(TransformMatrix(realTransform));
+  functions.AppendElement(TransformMatrix(ToMatrix4x4(transform)));
   *aValue = functions;
 }
 
@@ -506,10 +509,23 @@ SampleAnimations(Layer* aLayer, TimeStamp aPoint)
 }
 
 Matrix4x4
-CombineWithCSSTransform(const gfx3DMatrix& treeTransform, Layer* aLayer)
+AdjustAndCombineWithCSSTransform(const gfx3DMatrix& asyncTransform, Layer* aLayer)
 {
-  Matrix4x4 result;
-  ToMatrix4x4(treeTransform, result);
+  Matrix4x4 result = ToMatrix4x4(asyncTransform);
+
+  // Container layers start at the origin, but they are clipped to where they
+  // actually have content on the screen. The tree transform is meant to apply
+  // to the clipped area. If the tree transform includes a scale component,
+  // then applying it to container as-is will produce incorrect results. To
+  // avoid this, translate the layer so that the clip rect starts at the origin,
+  // apply the tree transform, and translate back.
+  if (const nsIntRect* shadowClipRect = aLayer->AsLayerComposite()->GetShadowClipRect()) {
+    if (shadowClipRect->TopLeft() != nsIntPoint()) {  // avoid a gratuitous change of basis
+      result.ChangeBasis(shadowClipRect->x, shadowClipRect->y, 0);
+    }
+  }
+
+  // Combine the async transform with the layer's CSS transform.
   result = result * aLayer->GetTransform();
   return result;
 }
@@ -535,11 +551,11 @@ AsyncCompositionManager::ApplyAsyncContentTransformToTree(TimeStamp aCurrentFram
     LayerComposite* layerComposite = aLayer->AsLayerComposite();
     Matrix4x4 oldTransform = aLayer->GetTransform();
 
-    ViewTransform treeTransformWithoutOverscroll, overscrollTransform;
+    ViewTransform asyncTransformWithoutOverscroll, overscrollTransform;
     ScreenPoint scrollOffset;
     *aWantNextFrame |=
       controller->SampleContentTransformForFrame(aCurrentFrame,
-                                                 &treeTransformWithoutOverscroll,
+                                                 &asyncTransformWithoutOverscroll,
                                                  scrollOffset,
                                                  &overscrollTransform);
 
@@ -549,7 +565,7 @@ AsyncCompositionManager::ApplyAsyncContentTransformToTree(TimeStamp aCurrentFram
                         metrics.mDisplayPort : metrics.mCriticalDisplayPort);
     LayerMargin fixedLayerMargins(0, 0, 0, 0);
     ScreenPoint offset(0, 0);
-    SyncFrameMetrics(scrollOffset, treeTransformWithoutOverscroll.mScale.scale,
+    SyncFrameMetrics(scrollOffset, asyncTransformWithoutOverscroll.mScale.scale,
                      metrics.mScrollableRect, mLayersUpdated, displayPort,
                      paintScale, mIsFirstPaint, fixedLayerMargins, offset);
 
@@ -559,8 +575,8 @@ AsyncCompositionManager::ApplyAsyncContentTransformToTree(TimeStamp aCurrentFram
     // Apply the render offset
     mLayerManager->GetCompositor()->SetScreenRenderOffset(offset);
 
-    Matrix4x4 transform = CombineWithCSSTransform(
-        treeTransformWithoutOverscroll * overscrollTransform, aLayer);
+    Matrix4x4 transform = AdjustAndCombineWithCSSTransform(
+        asyncTransformWithoutOverscroll * overscrollTransform, aLayer);
 
     // GetTransform already takes the pre- and post-scale into account.  Since we
     // will apply the pre- and post-scale again when computing the effective
@@ -584,8 +600,8 @@ AsyncCompositionManager::ApplyAsyncContentTransformToTree(TimeStamp aCurrentFram
     // the overscroll transform when computing the 'aCurrentTransformForRoot'
     // parameter. This ensures that the overscroll transform is not unapplied,
     // and therefore that the visual effect applies to fixed and sticky layers.
-    Matrix4x4 transformWithoutOverscroll = CombineWithCSSTransform(
-        treeTransformWithoutOverscroll, aLayer);
+    Matrix4x4 transformWithoutOverscroll = AdjustAndCombineWithCSSTransform(
+        asyncTransformWithoutOverscroll, aLayer);
     AlignFixedAndStickyLayers(aLayer, aLayer, oldTransform,
                               transformWithoutOverscroll, fixedLayerMargins);
 
@@ -654,9 +670,9 @@ ApplyAsyncTransformToScrollbarForContent(TimeStamp aCurrentFrame, ContainerLayer
     // block accomplishes that and throws away the temp variables.
     // TODO: it might be cleaner to do a pass through the layer tree to advance all the APZC
     // transforms before updating the layer shadow transforms. That will allow removal of this code.
-    ViewTransform treeTransform;
+    ViewTransform asyncTransform;
     ScreenPoint scrollOffset;
-    apzc->SampleContentTransformForFrame(aCurrentFrame, &treeTransform, scrollOffset);
+    apzc->SampleContentTransformForFrame(aCurrentFrame, &asyncTransform, scrollOffset);
   }
 
   gfx3DMatrix asyncTransform = gfx3DMatrix(apzc->GetCurrentAsyncTransform());
@@ -696,9 +712,7 @@ ApplyAsyncTransformToScrollbarForContent(TimeStamp aCurrentFrame, ContainerLayer
     // the content. This is needed because otherwise that transient async transform is
     // part of the effective transform of this scrollbar, and the scrollbar will jitter
     // as the content scrolls.
-    Matrix4x4 targetUntransform;
-    ToMatrix4x4(transientTransform.Inverse(), targetUntransform);
-    transform = transform * targetUntransform;
+    transform = transform * ToMatrix4x4(transientTransform.Inverse());
   }
 
   // GetTransform already takes the pre- and post-scale into account.  Since we
@@ -766,8 +780,7 @@ AsyncCompositionManager::TransformScrollableLayer(Layer* aLayer)
   const FrameMetrics& metrics = container->GetFrameMetrics();
   // We must apply the resolution scale before a pan/zoom transform, so we call
   // GetTransform here.
-  gfx3DMatrix currentTransform;
-  To3DMatrix(aLayer->GetTransform(), currentTransform);
+  gfx3DMatrix currentTransform = To3DMatrix(aLayer->GetTransform());
   Matrix4x4 oldTransform = aLayer->GetTransform();
 
   gfx3DMatrix treeTransform;
@@ -844,9 +857,7 @@ AsyncCompositionManager::TransformScrollableLayer(Layer* aLayer)
   computedTransform.ScalePost(1.0f/container->GetPostXScale(),
                               1.0f/container->GetPostYScale(),
                               1);
-  Matrix4x4 matrix;
-  ToMatrix4x4(computedTransform, matrix);
-  layerComposite->SetShadowTransform(matrix);
+  layerComposite->SetShadowTransform(ToMatrix4x4(computedTransform));
   NS_ASSERTION(!layerComposite->GetShadowTransformSetByAnimation(),
                "overwriting animated transform!");
 
@@ -894,6 +905,18 @@ AsyncCompositionManager::TransformScrollableLayer(Layer* aLayer)
                             aLayer->GetLocalTransform(), fixedLayerMargins);
 }
 
+void
+ClearAsyncTransforms(Layer* aLayer)
+{
+  if (!aLayer->AsLayerComposite()->GetShadowTransformSetByAnimation()) {
+    aLayer->AsLayerComposite()->SetShadowTransform(aLayer->GetBaseTransform());
+  }
+  for (Layer* child = aLayer->GetFirstChild();
+      child; child = child->GetNextSibling()) {
+    ClearAsyncTransforms(child);
+  }
+}
+
 bool
 AsyncCompositionManager::TransformShadowTree(TimeStamp aCurrentFrame)
 {
@@ -908,6 +931,12 @@ AsyncCompositionManager::TransformShadowTree(TimeStamp aCurrentFrame)
   // NB: we must sample animations *before* sampling pan/zoom
   // transforms.
   bool wantNextFrame = SampleAnimations(root, aCurrentFrame);
+
+  // Clear any async transforms (not due to animations) set in previous frames.
+  // This is necessary because some things called by
+  // ApplyAsyncContentTransformToTree (in particular, TranslateShadowLayer2D),
+  // add to the shadow transform rather than overwriting it.
+  ClearAsyncTransforms(root);
 
   // FIXME/bug 775437: unify this interface with the ~native-fennec
   // derived code

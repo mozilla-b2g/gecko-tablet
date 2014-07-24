@@ -131,6 +131,9 @@ browser.jar:
   skin/classic/browser/webRTC-shareScreen-64@2x.png   (../shared/webrtc/webRTC-shareScreen-64@2x.png)
   skin/classic/browser/webRTC-sharingScreen-16.png    (../shared/webrtc/webRTC-sharingScreen-16.png)
   skin/classic/browser/webRTC-sharingScreen-16@2x.png (../shared/webrtc/webRTC-sharingScreen-16@2x.png)
+  skin/classic/browser/webRTC-camera-black-16.png
+  skin/classic/browser/webRTC-microphone-black-16.png
+  skin/classic/browser/webRTC-screen-black-16.png
   skin/classic/browser/customizableui/background-noise-toolbar.png  (customizableui/background-noise-toolbar.png)
   skin/classic/browser/customizableui/customize-titleBar-toggle.png  (customizableui/customize-titleBar-toggle.png)
   skin/classic/browser/customizableui/customize-titleBar-toggle@2x.png  (customizableui/customize-titleBar-toggle@2x.png)
@@ -182,6 +185,7 @@ browser.jar:
 * skin/classic/browser/newtab/newTab.css                    (newtab/newTab.css)
   skin/classic/browser/newtab/controls.png                  (../shared/newtab/controls.png)
   skin/classic/browser/newtab/controls@2x.png               (../shared/newtab/controls@2x.png)
+  skin/classic/browser/newtab/texture.png                   (../shared/newtab/texture.png)
   skin/classic/browser/setDesktopBackground.css
   skin/classic/browser/monitor.png
   skin/classic/browser/monitor_16-10.png
@@ -239,8 +243,6 @@ browser.jar:
   skin/classic/browser/preferences/in-content/check@2x.png    (../shared/incontentprefs/check@2x.png)
   skin/classic/browser/preferences/in-content/icons.png       (../shared/incontentprefs/icons.png)
   skin/classic/browser/preferences/in-content/icons@2x.png    (../shared/incontentprefs/icons@2x.png)
-  skin/classic/browser/preferences/in-content/header.png      (../shared/incontentprefs/header.png)
-  skin/classic/browser/preferences/in-content/header@2x.png   (../shared/incontentprefs/header@2x.png)
   skin/classic/browser/preferences/in-content/help-glyph.png  (../shared/incontentprefs/help-glyph.png)
   skin/classic/browser/preferences/in-content/help-glyph@2x.png (../shared/incontentprefs/help-glyph@2x.png)
   skin/classic/browser/preferences/in-content/sorter.png      (../shared/incontentprefs/sorter.png)
