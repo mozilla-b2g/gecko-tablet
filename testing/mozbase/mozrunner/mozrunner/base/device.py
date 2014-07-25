@@ -20,7 +20,7 @@ class DeviceRunner(BaseRunner):
     remote devices (or emulators), such as B2G.
     """
     def __init__(self, device_class, device_args=None, **kwargs):
-        process_args = kwargs.get('process_args', {})
+        process_args = kwargs.get('process_args') or {}
         process_args.update({ 'stream': sys.stdout,
                               'processOutputLine': self.on_output,
                               'onFinish': self.on_finish,
