@@ -174,16 +174,18 @@ MaybeFoldConditionBlock(MIRGraph &graph, MBasicBlock *initialBlock)
     // e.g. 'if (a ? b : 0)', then the block associated with that constant
     // can be eliminated.
 
-    // Look for a diamond pattern:
-    //
-    //       initialBlock
-    //         /     \
-    // trueBranch  falseBranch
-    //         \     /
-    //        testBlock
-    //
-    // Where testBlock contains only a test on a phi combining two values
-    // pushed onto the stack by trueBranch and falseBranch.
+    /*
+     * Look for a diamond pattern:
+     *
+     *        initialBlock
+     *          /     \
+     *  trueBranch  falseBranch
+     *          \     /
+     *         testBlock
+     *
+     * Where testBlock contains only a test on a phi combining two values
+     * pushed onto the stack by trueBranch and falseBranch.
+     */
 
     MInstruction *ins = initialBlock->lastIns();
     if (!ins->isTest())
@@ -201,6 +203,13 @@ MaybeFoldConditionBlock(MIRGraph &graph, MBasicBlock *initialBlock)
         return;
     if (testBlock->numPredecessors() != 2)
         return;
+
+    if (initialBlock->isLoopBackedge() || trueBranch->isLoopBackedge() || falseBranch->isLoopBackedge())
+        return;
+
+    // Make sure the test block does not have any outgoing loop backedges.
+    if (!SplitCriticalEdgesForBlock(graph, testBlock))
+        CrashAtUnhandlableOOM("MaybeFoldConditionBlock");
 
     MPhi *phi;
     MTest *finalTest;
@@ -271,14 +280,6 @@ MaybeFoldConditionBlock(MIRGraph &graph, MBasicBlock *initialBlock)
     finalTest->ifTrue()->removePredecessor(testBlock);
     finalTest->ifFalse()->removePredecessor(testBlock);
     graph.removeBlock(testBlock);
-
-    // Split any new critical edges which were introduced.
-    if (!SplitCriticalEdgesForBlock(graph, initialBlock) ||
-        (trueTarget == trueBranch && !SplitCriticalEdgesForBlock(graph, trueBranch)) ||
-        (falseTarget == falseBranch && !SplitCriticalEdgesForBlock(graph, falseBranch)))
-    {
-        CrashAtUnhandlableOOM("MaybeFoldConditionBlock");
-    }
 }
 
 static void
@@ -320,6 +321,13 @@ MaybeFoldAndOrBlock(MIRGraph &graph, MBasicBlock *initialBlock)
         return;
     if (branchBlock->numPredecessors() != 1 || testBlock->numPredecessors() != 2)
         return;
+
+    if (initialBlock->isLoopBackedge() || branchBlock->isLoopBackedge())
+        return;
+
+    // Make sure the test block does not have any outgoing loop backedges.
+    if (!SplitCriticalEdgesForBlock(graph, testBlock))
+        CrashAtUnhandlableOOM("MaybeFoldAndOrBlock");
 
     MPhi *phi;
     MTest *finalTest;
@@ -364,13 +372,6 @@ MaybeFoldAndOrBlock(MIRGraph &graph, MBasicBlock *initialBlock)
     finalTest->ifTrue()->removePredecessor(testBlock);
     finalTest->ifFalse()->removePredecessor(testBlock);
     graph.removeBlock(testBlock);
-
-    // Split any new critical edges which were introduced.
-    if (!SplitCriticalEdgesForBlock(graph, initialBlock) ||
-        !SplitCriticalEdgesForBlock(graph, branchBlock))
-    {
-        CrashAtUnhandlableOOM("MaybeFoldConditionBlock");
-    }
 }
 
 void
@@ -422,13 +423,12 @@ jit::EliminateDeadResumePointOperands(MIRGenerator *mir, MIRGraph &graph)
             if (ins->isUnbox() || ins->isParameter() || ins->isTypeBarrier() || ins->isComputeThis())
                 continue;
 
-            // TypedObject intermediate values captured by resume points may
-            // be legitimately dead in Ion code, but are still needed if we
-            // bail out. They can recover on bailout.
-            if (ins->isNewDerivedTypedObject()) {
-                MOZ_ASSERT(ins->canRecoverOnBailout());
+            // Early intermediate values captured by resume points, such as
+            // TypedObject, ArrayState and its allocation, may be legitimately
+            // dead in Ion code, but are still needed if we bail out. They can
+            // recover on bailout.
+            if (ins->canRecoverOnBailout())
                 continue;
-            }
 
             // If the instruction's behavior has been constant folded into a
             // separate instruction, we can't determine precisely where the

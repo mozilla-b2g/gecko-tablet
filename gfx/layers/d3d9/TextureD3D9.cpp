@@ -566,6 +566,18 @@ CairoTextureClientD3D9::~CairoTextureClientD3D9()
   MOZ_COUNT_DTOR(CairoTextureClientD3D9);
 }
 
+TemporaryRef<TextureClient>
+CairoTextureClientD3D9::CreateSimilar(TextureFlags aFlags, TextureAllocationFlags aAllocFlags) const
+{
+  RefPtr<TextureClient> tex = new CairoTextureClientD3D9(mFormat, mFlags | aFlags);
+
+  if (!tex->AllocateForSurface(mSize, aAllocFlags)) {
+    return nullptr;
+  }
+
+  return tex;
+}
+
 bool
 CairoTextureClientD3D9::Lock(OpenMode aMode)
 {
@@ -712,6 +724,9 @@ SharedTextureClientD3D9::SharedTextureClientD3D9(gfx::SurfaceFormat aFormat, Tex
 
 SharedTextureClientD3D9::~SharedTextureClientD3D9()
 {
+  if (mTexture && mActor) {
+    KeepUntilFullDeallocation(new TKeepAlive<IDirect3DTexture9>(mTexture));
+  }
   MOZ_COUNT_DTOR(SharedTextureClientD3D9);
 }
 
@@ -751,6 +766,7 @@ TextureHostD3D9::TextureHostD3D9(TextureFlags aFlags,
   , mIsLocked(false)
 {
   mTexture = reinterpret_cast<IDirect3DTexture9*>(aDescriptor.texture());
+  MOZ_ASSERT(mTexture);
   mTexture->Release(); // see AddRef in CairoTextureClientD3D9::ToSurfaceDescriptor
   MOZ_ASSERT(mTexture);
   D3DSURFACE_DESC desc;
@@ -836,6 +852,7 @@ DataTextureSourceD3D9::UpdateFromTexture(IDirect3DTexture9* aTexture,
 void
 TextureHostD3D9::Updated(const nsIntRegion* aRegion)
 {
+  MOZ_ASSERT(mTexture);
   if (!mTexture) {
     return;
   }
@@ -867,6 +884,7 @@ NewTextureSource*
 TextureHostD3D9::GetTextureSources()
 {
   MOZ_ASSERT(mIsLocked);
+  MOZ_ASSERT(mTextureSource);
   return mTextureSource;
 }
 
@@ -874,8 +892,11 @@ bool
 TextureHostD3D9::Lock()
 {
   MOZ_ASSERT(!mIsLocked);
-  mIsLocked = true;
-  return true;
+  // XXX - Currently if a TextureHostD3D9 is created but Update is never called,
+  // it will not have a TextureSource although it could since it has a valid
+  // D3D9 texture.
+  mIsLocked = !!mTextureSource;
+  return mIsLocked;
 }
 
 void
@@ -900,44 +921,63 @@ DXGITextureHostD3D9::DXGITextureHostD3D9(TextureFlags aFlags,
   , mIsLocked(false)
 {
   MOZ_ASSERT(mHandle);
+  OpenSharedHandle();
+}
+
+IDirect3DDevice9*
+DXGITextureHostD3D9::GetDevice()
+{
+  return mCompositor ? mCompositor->device() : nullptr;
+}
+
+void
+DXGITextureHostD3D9::OpenSharedHandle()
+{
+  MOZ_ASSERT(!mTextureSource);
+
+  if (!GetDevice()) {
+    return;
+  }
+
+  nsRefPtr<IDirect3DTexture9> texture;
+  HRESULT hr = GetDevice()->CreateTexture(mSize.width, mSize.height, 1,
+                                          D3DUSAGE_RENDERTARGET,
+                                          SurfaceFormatToD3D9Format(mFormat),
+                                          D3DPOOL_DEFAULT,
+                                          getter_AddRefs(texture),
+                                          (HANDLE*)&mHandle);
+  if (FAILED(hr)) {
+    NS_WARNING("Failed to open shared texture");
+    return;
+  }
+
+  mTextureSource = new DataTextureSourceD3D9(mFormat, mSize, mCompositor, texture);
+
+  return;
 }
 
 NewTextureSource*
 DXGITextureHostD3D9::GetTextureSources()
 {
+  MOZ_ASSERT(mIsLocked);
+  MOZ_ASSERT(mTextureSource);
   return mTextureSource;
 }
 
 bool
 DXGITextureHostD3D9::Lock()
 {
-  DeviceManagerD3D9* deviceManager = gfxWindowsPlatform::GetPlatform()->GetD3D9DeviceManager();
-  if (!deviceManager) {
-    NS_WARNING("trying to lock a TextureHost without a D3D device");
+  MOZ_ASSERT(!mIsLocked);
+
+  if (!GetDevice()) {
     return false;
   }
 
   if (!mTextureSource) {
-    nsRefPtr<IDirect3DTexture9> tex;
-    HRESULT hr = deviceManager->device()->CreateTexture(mSize.width,
-                                                        mSize.height,
-                                                        1,
-                                                        D3DUSAGE_RENDERTARGET,
-                                                        SurfaceFormatToD3D9Format(mFormat),
-                                                        D3DPOOL_DEFAULT,
-                                                        getter_AddRefs(tex),
-                                                        (HANDLE*)&mHandle);
-    if (FAILED(hr)) {
-      NS_WARNING("Failed to open shared texture");
-      return false;
-    }
-
-    mTextureSource = new DataTextureSourceD3D9(mFormat, mSize, mCompositor, tex);
+    OpenSharedHandle();
   }
-
-  MOZ_ASSERT(!mIsLocked);
-  mIsLocked = true;
-  return true;
+  mIsLocked = !!mTextureSource;
+  return mIsLocked;
 }
 
 void

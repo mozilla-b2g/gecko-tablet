@@ -38,7 +38,6 @@ LOCAL_INCLUDES += [
     '../xul',
     '/caps',
     '/content/base/src',
-    '/content/canvas/src',
     '/content/html/content/src',
     '/content/html/document/src',
     '/content/svg/content/src',
@@ -49,6 +48,7 @@ LOCAL_INCLUDES += [
     '/dom/audiochannel',
     '/dom/base',
     '/dom/camera',
+    '/dom/canvas',
     '/dom/file',
     '/dom/filesystem',
     '/dom/media',
@@ -75,7 +75,7 @@ LOCAL_INCLUDES += [
     '/js/xpconnect/src',
     '/netwerk/base/src',
     '/netwerk/cookie',
-    '/view/src',
+    '/view',
 ]
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('qt', 'gtk2', 'gtk3'):
@@ -130,5 +130,8 @@ if CONFIG['MOZ_FFMPEG']:
     LOCAL_INCLUDES += [
         '/content/media/fmp4/ffmpeg/include',
     ]
+
+if CONFIG['MOZ_GSTREAMER']:
+    CXXFLAGS += CONFIG['GSTREAMER_CFLAGS']
 
 FINAL_LIBRARY = 'xul'

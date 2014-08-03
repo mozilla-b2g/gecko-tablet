@@ -12,6 +12,10 @@ MOZ_BRANDING_DIRECTORY=mobile/android/branding/unofficial
 MOZ_OFFICIAL_BRANDING_DIRECTORY=mobile/android/branding/official
 # MOZ_APP_DISPLAYNAME is set by branding/configure.sh
 
+# We support Android SDK version 9 and up by default.
+# See the --enable-android-min-sdk and --enable-android-max-sdk arguments in configure.in.
+MOZ_ANDROID_MIN_SDK_VERSION=9
+
 MOZ_SAFE_BROWSING=1
 
 MOZ_DISABLE_CRYPTOLEGACY=1
@@ -75,8 +79,12 @@ MOZ_NATIVE_DEVICES=
 # Mark as WebGL conformant
 MOZ_WEBGL_CONFORMANT=1
 
-# Don't enable the Search Activity.
-# MOZ_ANDROID_SEARCH_ACTIVITY=1
+# Enable the Search Activity in nightly.
+if test "$NIGHTLY_BUILD"; then
+  MOZ_ANDROID_SEARCH_ACTIVITY=1
+else
+  MOZ_ANDROID_SEARCH_ACTIVITY=
+fi
 
 # Don't enable the Mozilla Location Service stumbler.
 # MOZ_ANDROID_MLS_STUMBLER=1

@@ -12,9 +12,9 @@
 #include "jscompartment.h"
 #include "jsprf.h"
 
+#include "asmjs/AsmJSModule.h"
 #include "gc/Marking.h"
 #include "jit/AliasAnalysis.h"
-#include "jit/AsmJSModule.h"
 #include "jit/BacktrackingAllocator.h"
 #include "jit/BaselineDebugModeOSR.h"
 #include "jit/BaselineFrame.h"
@@ -231,12 +231,10 @@ JitRuntime::initialize(JSContext *cx)
         if (!bailoutHandler_)
             return false;
 
-#ifdef JS_THREADSAFE
         IonSpew(IonSpew_Codegen, "# Emitting parallel bailout handler");
         parallelBailoutHandler_ = generateBailoutHandler(cx, ParallelExecution);
         if (!parallelBailoutHandler_)
             return false;
-#endif
 
         IonSpew(IonSpew_Codegen, "# Emitting invalidator");
         invalidator_ = generateInvalidator(cx);
@@ -249,12 +247,10 @@ JitRuntime::initialize(JSContext *cx)
     if (!argumentsRectifier_)
         return false;
 
-#ifdef JS_THREADSAFE
     IonSpew(IonSpew_Codegen, "# Emitting parallel arguments rectifier");
     parallelArgumentsRectifier_ = generateArgumentsRectifier(cx, ParallelExecution, nullptr);
     if (!parallelArgumentsRectifier_)
         return false;
-#endif
 
     IonSpew(IonSpew_Codegen, "# Emitting EnterJIT sequence");
     enterJIT_ = generateEnterJIT(cx, EnterJitOptimized);
@@ -365,13 +361,11 @@ JitRuntime::handleAccessViolation(JSRuntime *rt, void *faultingAddress)
     if (!rt->signalHandlersInstalled() || !ionAlloc_ || !ionAlloc_->codeContains((char *) faultingAddress))
         return false;
 
-#ifdef JS_THREADSAFE
     // All places where the interrupt lock is taken must either ensure that Ion
     // code memory won't be accessed within, or call ensureIonCodeAccessible to
     // render the memory safe for accessing. Otherwise taking the lock below
     // will deadlock the process.
     JS_ASSERT(!rt->currentThreadOwnsInterruptLock());
-#endif
 
     // Taking this lock is necessary to prevent the interrupting thread from marking
     // the memory as inaccessible while we are patching backedges. This will cause us
@@ -509,13 +503,11 @@ JitCompartment::ensureIonStubsExist(JSContext *cx)
             return false;
     }
 
-#ifdef JS_THREADSAFE
     if (!parallelStringConcatStub_) {
         parallelStringConcatStub_ = generateStringConcatStub(cx, ParallelExecution);
         if (!parallelStringConcatStub_)
             return false;
     }
-#endif
 
     return true;
 }
@@ -577,7 +569,6 @@ jit::FinishOffThreadBuilder(IonBuilder *builder)
 static inline void
 FinishAllOffThreadCompilations(JSCompartment *comp)
 {
-#ifdef JS_THREADSAFE
     AutoLockHelperThreadState lock;
     GlobalHelperThreadState::IonBuilderVector &finished = HelperThreadState().ionFinishedList();
 
@@ -588,7 +579,6 @@ FinishAllOffThreadCompilations(JSCompartment *comp)
             HelperThreadState().remove(finished, &i);
         }
     }
-#endif
 }
 
 /* static */ void
@@ -978,7 +968,7 @@ IonScript::trace(JSTracer *trc)
 IonScript::writeBarrierPre(Zone *zone, IonScript *ionScript)
 {
 #ifdef JSGC_INCREMENTAL
-    if (zone->needsBarrier())
+    if (zone->needsIncrementalBarrier())
         ionScript->trace(zone->barrierTracer());
 #endif
 }
@@ -1300,6 +1290,16 @@ OptimizeMIR(MIRGenerator *mir)
     if (mir->shouldCancel("Start"))
         return false;
 
+    if (!mir->compilingAsmJS()) {
+        AutoTraceLog log(logger, TraceLogger::FoldTests);
+        FoldTests(graph);
+        IonSpewPass("Fold Tests");
+        AssertBasicGraphCoherency(graph);
+
+        if (mir->shouldCancel("Fold Tests"))
+            return false;
+    }
+
     {
         AutoTraceLog log(logger, TraceLogger::SplitCriticalEdges);
         if (!SplitCriticalEdges(graph))
@@ -1308,16 +1308,6 @@ OptimizeMIR(MIRGenerator *mir)
         AssertGraphCoherency(graph);
 
         if (mir->shouldCancel("Split Critical Edges"))
-            return false;
-    }
-
-    if (!mir->compilingAsmJS()) {
-        AutoTraceLog log(logger, TraceLogger::FoldTests);
-        FoldTests(graph);
-        IonSpewPass("Fold Tests");
-        AssertBasicGraphCoherency(graph);
-
-        if (mir->shouldCancel("Fold Tests"))
             return false;
     }
 
@@ -1729,7 +1719,6 @@ CompileBackEnd(MIRGenerator *mir)
 void
 AttachFinishedCompilations(JSContext *cx)
 {
-#ifdef JS_THREADSAFE
     JitCompartment *ion = cx->compartment()->jitCompartment();
     if (!ion)
         return;
@@ -1788,7 +1777,6 @@ AttachFinishedCompilations(JSContext *cx)
 
         FinishOffThreadBuilder(builder);
     }
-#endif
 }
 
 static const size_t BUILDER_LIFO_ALLOC_PRIMARY_CHUNK_SIZE = 1 << 12;
@@ -1796,17 +1784,14 @@ static const size_t BUILDER_LIFO_ALLOC_PRIMARY_CHUNK_SIZE = 1 << 12;
 static inline bool
 OffThreadCompilationAvailable(JSContext *cx)
 {
-#ifdef JS_THREADSAFE
     // Even if off thread compilation is enabled, compilation must still occur
     // on the main thread in some cases.
     //
     // Require cpuCount > 1 so that Ion compilation jobs and main-thread
     // execution are not competing for the same resources.
     return cx->runtime()->canUseOffthreadIonCompilation()
-        && HelperThreadState().cpuCount > 1;
-#else
-    return false;
-#endif
+        && HelperThreadState().cpuCount > 1
+        && CanUseExtraThreads();
 }
 
 static void
@@ -2005,7 +1990,10 @@ CheckScript(JSContext *cx, JSScript *script, bool osr)
         return false;
     }
 
-    if (!script->compileAndGo()) {
+    if (!script->compileAndGo() && !script->functionNonDelazifying()) {
+        // Support non-CNG functions but not other scripts. For global scripts,
+        // IonBuilder currently uses the global object as scope chain, this is
+        // not valid for non-CNG code.
         IonSpew(IonSpew_Abort, "not compile-and-go");
         return false;
     }
@@ -2631,7 +2619,7 @@ InvalidateActivation(FreeOp *fop, uint8_t *jitTop, bool invalidateAll)
         JitCode *ionCode = ionScript->method();
 
         JS::Zone *zone = script->zone();
-        if (zone->needsBarrier()) {
+        if (zone->needsIncrementalBarrier()) {
             // We're about to remove edges from the JSScript to gcthings
             // embedded in the JitCode. Perform one final trace of the
             // JitCode for the incremental GC, as it must know about

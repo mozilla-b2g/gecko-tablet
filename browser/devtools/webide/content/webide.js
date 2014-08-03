@@ -106,6 +106,7 @@ let UI = {
     // if a modification happened, it happened when the window was
     // not focused.
     if (AppManager.selectedProject &&
+        AppManager.selectedProject.type != "mainProcess" &&
         AppManager.selectedProject.type != "runtimeApp") {
       AppManager.validateProject(AppManager.selectedProject);
     }
@@ -272,6 +273,11 @@ let UI = {
                             nbox.PRIORITY_WARNING_LOW, buttons);
   },
 
+  dismissErrorNotification: function() {
+    let nbox = document.querySelector("#notificationbox");
+    nbox.removeAllNotifications(true);
+  },
+
   /********** RUNTIME **********/
 
   updateRuntimeList: function() {
@@ -289,7 +295,6 @@ let UI = {
 
     let noHelperNode = document.querySelector("#runtime-panel-noadbhelper");
     let noUSBNode = document.querySelector("#runtime-panel-nousbdevice");
-    let noSimulatorNode = document.querySelector("#runtime-panel-nosimulator");
 
     if (Devices.helperAddonInstalled) {
       noHelperNode.setAttribute("hidden", "true");
@@ -301,12 +306,6 @@ let UI = {
       noUSBNode.removeAttribute("hidden");
     } else {
       noUSBNode.setAttribute("hidden", "true");
-    }
-
-    if (AppManager.runtimeList.simulator.length > 0) {
-      noSimulatorNode.setAttribute("hidden", "true");
-    } else {
-      noSimulatorNode.removeAttribute("hidden");
     }
 
     for (let [type, parent] of [
@@ -326,6 +325,7 @@ let UI = {
         let r = runtime;
         panelItemNode.addEventListener("click", () => {
           this.hidePanels();
+          this.dismissErrorNotification();
           this.connectToRuntime(r);
         }, true);
       }
@@ -489,6 +489,11 @@ let UI = {
     this.resetFocus();
     let deck = document.querySelector("#deck");
     let panel = deck.querySelector("#deck-panel-" + id);
+    let lazysrc = panel.getAttribute("lazysrc");
+    if (lazysrc) {
+      panel.removeAttribute("lazysrc");
+      panel.setAttribute("src", lazysrc);
+    }
     deck.selectedPanel = panel;
     this.updateProjectEditorMenusVisibility();
   },
@@ -553,6 +558,9 @@ let UI = {
         } else {
           playCmd.removeAttribute("disabled");
         }
+      } else if (AppManager.selectedProject.type == "mainProcess") {
+        playCmd.setAttribute("disabled", "true");
+        stopCmd.setAttribute("disabled", "true");
       } else {
         if (AppManager.selectedProject.errorsCount == 0) {
           playCmd.removeAttribute("disabled");
@@ -628,7 +636,7 @@ let UI = {
     splitter.removeAttribute("hidden");
 
     let iframe = document.createElement("iframe");
-    document.querySelector("window").insertBefore(iframe, splitter.nextSibling);
+    document.querySelector("notificationbox").insertBefore(iframe, splitter.nextSibling);
     let host = devtools.Toolbox.HostType.CUSTOM;
     let options = { customIframe: iframe };
     this.toolboxIframe = iframe;
@@ -736,6 +744,14 @@ let Cmds = {
         return;
       }
 
+      // Clean location string and add "http://" if missing
+      location = location.trim();
+      try { // Will fail if no scheme
+        Services.io.extractScheme(location);
+      } catch(e) {
+        location = "http://" + location;
+      }
+
       // Add project
       let project = yield AppProjects.addHosted(location)
 
@@ -811,6 +827,22 @@ let Cmds = {
       runtimeAppsNode.firstChild.remove();
     }
 
+    if (AppManager.isMainProcessDebuggable()) {
+      let panelItemNode = document.createElement("toolbarbutton");
+      panelItemNode.className = "panel-item";
+      panelItemNode.setAttribute("label", Strings.GetStringFromName("mainProcess_label"));
+      panelItemNode.setAttribute("image", AppManager.DEFAULT_PROJECT_ICON);
+      runtimeAppsNode.appendChild(panelItemNode);
+      panelItemNode.addEventListener("click", () => {
+        UI.hidePanels();
+        AppManager.selectedProject = {
+          type: "mainProcess",
+          name: Strings.GetStringFromName("mainProcess_label"),
+          icon: AppManager.DEFAULT_PROJECT_ICON
+        };
+      }, true);
+    }
+
     let sortedApps = AppManager.webAppsStore.object.all;
     sortedApps = sortedApps.sort((a, b) => {
       return a.name > b.name;
@@ -872,6 +904,10 @@ let Cmds = {
 
   showRuntimeDetails: function() {
     UI.selectDeckPanel("runtimedetails");
+  },
+
+  showMonitor: function() {
+    UI.selectDeckPanel("monitor");
   },
 
   play: function() {

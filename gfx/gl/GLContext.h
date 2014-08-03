@@ -29,7 +29,6 @@
 
 #include "GLDefs.h"
 #include "GLLibraryLoader.h"
-#include "gfx3DMatrix.h"
 #include "nsISupportsImpl.h"
 #include "plstr.h"
 #include "nsDataHashtable.h"
@@ -147,6 +146,7 @@ MOZ_BEGIN_ENUM_CLASS(GLRenderer)
     AndroidEmulator,
     GalliumLlvmpipe,
     IntelHD3000,
+    MicrosoftBasicRenderDriver,
     Other
 MOZ_END_ENUM_CLASS(GLRenderer)
 
@@ -411,6 +411,7 @@ public:
         EXT_frag_depth,
         OES_compressed_ETC1_RGB8_texture,
         EXT_draw_range_elements,
+        EXT_shader_texture_lod,
         Extensions_Max,
         Extensions_End
     };

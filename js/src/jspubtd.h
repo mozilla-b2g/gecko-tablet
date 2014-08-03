@@ -144,11 +144,7 @@ class JS_PUBLIC_API(JSTracer);
 
 class JSFlatString;
 
-#ifdef JS_THREADSAFE
 typedef struct PRCallOnceType   JSCallOnceType;
-#else
-typedef bool                    JSCallOnceType;
-#endif
 typedef bool                    (*JSInitCallback)(void);
 
 /*
@@ -177,7 +173,7 @@ namespace shadow {
 struct Runtime
 {
     /* Restrict zone access during Minor GC. */
-    bool needsBarrier_;
+    bool needsIncrementalBarrier_;
 
 #ifdef JSGC_GENERATIONAL
   private:
@@ -190,14 +186,14 @@ struct Runtime
         js::gc::StoreBuffer *storeBuffer
 #endif
     )
-      : needsBarrier_(false)
+      : needsIncrementalBarrier_(false)
 #ifdef JSGC_GENERATIONAL
       , gcStoreBufferPtr_(storeBuffer)
 #endif
     {}
 
-    bool needsBarrier() const {
-        return needsBarrier_;
+    bool needsIncrementalBarrier() const {
+        return needsIncrementalBarrier_;
     }
 
 #ifdef JSGC_GENERATIONAL

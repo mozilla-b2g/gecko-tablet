@@ -82,7 +82,15 @@ loop.Client = (function($) {
      * @param {Function} cb Callback(err)
      */
     _ensureRegistered: function(cb) {
-      this.mozLoop.ensureRegistered(cb);
+      this.mozLoop.ensureRegistered(function(error) {
+        if (error) {
+          console.log("Error registering with Loop server, code: " + error);
+          cb(error);
+          return;
+        } else {
+          cb(null);
+        }
+      });
     },
 
     /**
@@ -109,17 +117,50 @@ loop.Client = (function($) {
         try {
           var urlData = JSON.parse(responseText);
 
-          // XXX Support an alternate call_url property for
-          // backwards compatibility whilst we switch over servers.
-          // Bug 1033988 will want to remove these two lines.
-          if (urlData.call_url)
-            urlData.callUrl = urlData.call_url;
-
           cb(null, this._validate(urlData, expectedCallUrlProperties));
 
           this.mozLoop.noteCallUrlExpiry(urlData.expiresAt);
         } catch (err) {
           console.log("Error requesting call info", err);
+          cb(err);
+        }
+      });
+    },
+
+    /**
+     * Block call URL based on the token identifier
+     *
+     * @param {string} token Conversation identifier used to block the URL
+     * @param {function} cb Callback function used for handling an error
+     *                      response. XXX The incoming call panel does not
+     *                      exist after the block button is clicked therefore
+     *                      it does not make sense to display an error.
+     **/
+    deleteCallUrl: function(token, cb) {
+      this._ensureRegistered(function(err) {
+        if (err) {
+          cb(err);
+          return;
+        }
+
+        this._deleteCallUrlInternal(token, cb);
+      }.bind(this));
+    },
+
+    _deleteCallUrlInternal: function(token, cb) {
+      this.mozLoop.hawkRequest("/call-url/" + token, "DELETE", null,
+                               (error, responseText) => {
+        if (error) {
+          this._failureHandler(cb, error);
+          return;
+        }
+
+        try {
+          cb(null);
+
+          this.mozLoop.noteCallUrlExpiry((new Date()).getTime() / 1000);
+        } catch (err) {
+          console.log("Error deleting call info", err);
           cb(err);
         }
       });
@@ -142,7 +183,6 @@ loop.Client = (function($) {
     requestCallUrl: function(nickname, cb) {
       this._ensureRegistered(function(err) {
         if (err) {
-          console.log("Error registering with Loop server, code: " + err);
           cb(err);
           return;
         }

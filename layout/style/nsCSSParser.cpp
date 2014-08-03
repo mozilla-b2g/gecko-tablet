@@ -3355,7 +3355,8 @@ CSSParserImpl::ParseMozDocumentRule(RuleAppendFunc aAppendFunc, void* aData)
       }
 
       NS_ASSERTION(!mHavePushBack, "mustn't have pushback at this point");
-      if (!mScanner->NextURL(mToken) || mToken.mType != eCSSToken_URL) {
+      mScanner->NextURL(mToken);
+      if (mToken.mType != eCSSToken_URL) {
         REPORT_UNEXPECTED_TOKEN(PEMozDocRuleNotURI);
         SkipUntil(')');
         delete urls;
@@ -12244,7 +12245,8 @@ AppendGeneric(nsCSSKeyword aKeyword, FontFamilyList *aFamilyList)
 bool
 CSSParserImpl::ParseFamily(nsCSSValue& aValue)
 {
-  nsRefPtr<FontFamilyList> familyList = new FontFamilyList();
+  nsRefPtr<css::FontFamilyListRefCnt> familyList =
+    new css::FontFamilyListRefCnt();
   nsAutoString family;
   bool single, quoted;
 

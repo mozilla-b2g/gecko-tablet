@@ -278,7 +278,7 @@ MTest::foldsTo(TempAllocator &alloc)
     MDefinition *op = getOperand(0);
 
     if (op->isNot())
-        return MTest::New(alloc, op->toNot()->operand(), ifFalse(), ifTrue());
+        return MTest::New(alloc, op->toNot()->input(), ifFalse(), ifTrue());
 
     return this;
 }
@@ -1501,6 +1501,10 @@ MBinaryArithInstruction::foldsTo(TempAllocator &alloc)
 void
 MBinaryArithInstruction::trySpecializeFloat32(TempAllocator &alloc)
 {
+    // Do not use Float32 if we can use int32.
+    if (specialization_ == MIRType_Int32)
+        return;
+
     MDefinition *left = lhs();
     MDefinition *right = rhs();
 
@@ -1527,6 +1531,10 @@ MAbs::fallible() const
 void
 MAbs::trySpecializeFloat32(TempAllocator &alloc)
 {
+    // Do not use Float32 if we can use int32.
+    if (input()->type() == MIRType_Int32)
+        return;
+
     if (!input()->canProduceFloat32() || !CheckUsesAreFloat32Consumers(this)) {
         if (input()->type() == MIRType_Float32)
             ConvertDefinitionToDouble<0>(alloc, input(), this);
@@ -2770,8 +2778,8 @@ MDefinition *
 MNot::foldsTo(TempAllocator &alloc)
 {
     // Fold if the input is constant
-    if (operand()->isConstant()) {
-        bool result = operand()->toConstant()->valueToBoolean();
+    if (input()->isConstant()) {
+        bool result = input()->toConstant()->valueToBoolean();
         if (type() == MIRType_Int32)
             return MConstant::New(alloc, Int32Value(!result));
 
@@ -2780,11 +2788,11 @@ MNot::foldsTo(TempAllocator &alloc)
     }
 
     // NOT of an undefined or null value is always true
-    if (operand()->type() == MIRType_Undefined || operand()->type() == MIRType_Null)
+    if (input()->type() == MIRType_Undefined || input()->type() == MIRType_Null)
         return MConstant::New(alloc, BooleanValue(true));
 
     // NOT of an object that can't emulate undefined is always false.
-    if (operand()->type() == MIRType_Object && !operandMightEmulateUndefined())
+    if (input()->type() == MIRType_Object && !operandMightEmulateUndefined())
         return MConstant::New(alloc, BooleanValue(false));
 
     return this;

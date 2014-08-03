@@ -208,7 +208,8 @@ nsSimplePageSequenceFrame::Reflow(nsPresContext*          aPresContext,
 
     // Reflow the page
     nsHTMLReflowState kidReflowState(aPresContext, aReflowState, kidFrame,
-                                     pageSize);
+                                     LogicalSize(kidFrame->GetWritingMode(),
+                                                 pageSize));
     nsReflowStatus  status;
 
     kidReflowState.SetComputedWidth(kidReflowState.AvailableWidth());
@@ -765,11 +766,11 @@ nsSimplePageSequenceFrame::DoPageEnd()
   return rv;
 }
 
-static gfx3DMatrix
+static gfx::Matrix4x4
 ComputePageSequenceTransform(nsIFrame* aFrame, float aAppUnitsPerPixel)
 {
   float scale = aFrame->PresContext()->GetPrintPreviewScale();
-  return gfx3DMatrix::ScalingMatrix(scale, scale, 1);
+  return gfx::Matrix4x4().Scale(scale, scale, 1);
 }
 
 void

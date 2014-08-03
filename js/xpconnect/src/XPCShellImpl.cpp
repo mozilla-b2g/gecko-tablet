@@ -90,14 +90,6 @@ private:
     nsCOMPtr<nsIFile> mAppFile;
 };
 
-#ifdef JS_THREADSAFE
-#define DoBeginRequest(cx) JS_BeginRequest((cx))
-#define DoEndRequest(cx)   JS_EndRequest((cx))
-#else
-#define DoBeginRequest(cx) ((void)0)
-#define DoEndRequest(cx)   ((void)0)
-#endif
-
 static const char kXPConnectServiceContractID[] = "@mozilla.org/js/xpc/XPConnect;1";
 
 #define EXITCODE_RUNTIME_ERROR 3
@@ -478,7 +470,6 @@ static bool
 Options(JSContext *cx, unsigned argc, jsval *vp)
 {
     JS::CallArgs args = CallArgsFromVp(argc, vp);
-    ContextOptions oldContextOptions = ContextOptionsRef(cx);
     RuntimeOptions oldRuntimeOptions = RuntimeOptionsRef(cx);
 
     for (unsigned i = 0; i < args.length(); ++i) {
@@ -491,7 +482,7 @@ Options(JSContext *cx, unsigned argc, jsval *vp)
             return false;
 
         if (strcmp(opt.ptr(), "strict") == 0)
-            ContextOptionsRef(cx).toggleExtraWarnings();
+            RuntimeOptionsRef(cx).toggleExtraWarnings();
         else if (strcmp(opt.ptr(), "werror") == 0)
             RuntimeOptionsRef(cx).toggleWerror();
         else if (strcmp(opt.ptr(), "strict_mode") == 0)
@@ -504,7 +495,7 @@ Options(JSContext *cx, unsigned argc, jsval *vp)
     }
 
     char *names = nullptr;
-    if (oldContextOptions.extraWarnings()) {
+    if (oldRuntimeOptions.extraWarnings()) {
         names = JS_sprintf_append(names, "%s", "strict");
         if (!names) {
             JS_ReportOutOfMemory(cx);
@@ -920,7 +911,7 @@ ProcessFile(JSContext *cx, JS::Handle<JSObject*> obj, const char *filename, FILE
             }
         }
         ungetc(ch, file);
-        DoBeginRequest(cx);
+        JS_BeginRequest(cx);
 
         JS::CompileOptions options(cx);
         options.setUTF8(true)
@@ -928,7 +919,7 @@ ProcessFile(JSContext *cx, JS::Handle<JSObject*> obj, const char *filename, FILE
                .setCompileAndGo(true);
         if (JS::Compile(cx, obj, options, file, &script) && !compileOnly)
             (void)JS_ExecuteScript(cx, obj, script, &result);
-        DoEndRequest(cx);
+        JS_EndRequest(cx);
 
         return;
     }
@@ -956,7 +947,7 @@ ProcessFile(JSContext *cx, JS::Handle<JSObject*> obj, const char *filename, FILE
             lineno++;
         } while (!JS_BufferIsCompilableUnit(cx, obj, buffer, strlen(buffer)));
 
-        DoBeginRequest(cx);
+        JS_BeginRequest(cx);
         /* Clear any pending exception from previous failed compiles.  */
         JS_ClearPendingException(cx);
         JS::CompileOptions options(cx);
@@ -980,7 +971,7 @@ ProcessFile(JSContext *cx, JS::Handle<JSObject*> obj, const char *filename, FILE
                 }
             }
         }
-        DoEndRequest(cx);
+        JS_EndRequest(cx);
     } while (!hitEOF && !gQuitting);
 
     fprintf(gOutFile, "\n");
@@ -1034,7 +1025,7 @@ ProcessArgsForCompartment(JSContext *cx, char **argv, int argc)
         case 'S':
             RuntimeOptionsRef(cx).toggleWerror();
         case 's':
-            ContextOptionsRef(cx).toggleExtraWarnings();
+            RuntimeOptionsRef(cx).toggleExtraWarnings();
             break;
         case 'I':
             RuntimeOptionsRef(cx).toggleIon()

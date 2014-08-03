@@ -1566,6 +1566,16 @@ SampleChars(FrequencyCollator *collator, const CharT *chars, size_t length)
     }
 }
 
+static bool
+IsNativeRegExpEnabled(JSContext *cx)
+{
+#ifdef JS_CODEGEN_NONE
+    return false;
+#else
+    return cx->runtime()->options().nativeRegExp();
+#endif
+}
+
 RegExpCode
 irregexp::CompilePattern(JSContext *cx, RegExpShared *shared, RegExpCompileData *data,
                          HandleLinearString sample, bool is_global, bool ignore_case,
@@ -1641,13 +1651,12 @@ irregexp::CompilePattern(JSContext *cx, RegExpShared *shared, RegExpCompileData 
         return RegExpCode();
     }
 
-#ifdef JS_ION
     Maybe<jit::IonContext> ctx;
     Maybe<NativeRegExpMacroAssembler> native_assembler;
     Maybe<InterpretedRegExpMacroAssembler> interpreted_assembler;
 
     RegExpMacroAssembler *assembler;
-    if (cx->runtime()->options().nativeRegExp()) {
+    if (IsNativeRegExpEnabled(cx)) {
         NativeRegExpMacroAssembler::Mode mode =
             is_ascii ? NativeRegExpMacroAssembler::ASCII
                      : NativeRegExpMacroAssembler::JSCHAR;
@@ -1659,10 +1668,6 @@ irregexp::CompilePattern(JSContext *cx, RegExpShared *shared, RegExpCompileData 
         interpreted_assembler.construct(&alloc, shared, (data->capture_count + 1) * 2);
         assembler = interpreted_assembler.addr();
     }
-#else // JS_ION
-    InterpretedRegExpMacroAssembler macro_assembler(&alloc, shared, (data->capture_count + 1) * 2);
-    RegExpMacroAssembler *assembler = &macro_assembler;
-#endif // JS_ION
 
     // Inserted here, instead of in Assembler, because it depends on information
     // in the AST that isn't replicated in the Node structure.
@@ -1687,7 +1692,6 @@ RegExpRunStatus
 irregexp::ExecuteCode(JSContext *cx, jit::JitCode *codeBlock, const CharT *chars, size_t start,
                       size_t length, MatchPairs *matches)
 {
-#ifdef JS_ION
     typedef void (*RegExpCodeSignature)(InputOutputData *);
 
     InputOutputData data(chars, chars + length, start, matches);
@@ -1700,9 +1704,6 @@ irregexp::ExecuteCode(JSContext *cx, jit::JitCode *codeBlock, const CharT *chars
     }
 
     return (RegExpRunStatus) data.result;
-#else
-    MOZ_CRASH();
-#endif
 }
 
 template RegExpRunStatus

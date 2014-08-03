@@ -33,16 +33,97 @@ loop.webapp = (function($, _, OT, webL10n) {
   });
 
   /**
+   * Firefox promotion interstitial. Will display only to non-Firefox users.
+   */
+  var PromoteFirefoxView = React.createClass({
+    propTypes: {
+      helper: React.PropTypes.object.isRequired
+    },
+
+    render: function() {
+      if (this.props.helper.isFirefox(navigator.userAgent)) {
+        return <div />;
+      }
+      return (
+        <div className="promote-firefox">
+          <h3>{__("promote_firefox_hello_heading")}</h3>
+          <p>
+            <a className="btn btn-large btn-success"
+               href="https://www.mozilla.org/firefox/">
+              {__("get_firefox_button")}
+            </a>
+          </p>
+        </div>
+      );
+    }
+  });
+
+  /**
    * Expired call URL view.
    */
   var CallUrlExpiredView = React.createClass({
+    propTypes: {
+      helper: React.PropTypes.object.isRequired
+    },
+
     render: function() {
       /* jshint ignore:start */
       return (
-        // XXX proper UX/design should be implemented here (see bug 1000131)
-        <div>{__("call_url_unavailable_notification")}</div>
+        <div className="expired-url-info">
+          <div className="info-panel">
+            <div className="firefox-logo" />
+            <h1>{__("call_url_unavailable_notification_heading")}</h1>
+            <h4>{__("call_url_unavailable_notification_message")}</h4>
+          </div>
+          <PromoteFirefoxView helper={this.props.helper} />
+        </div>
       );
       /* jshint ignore:end */
+    }
+  });
+
+  var ConversationHeader = React.createClass({
+    render: function() {
+      var cx = React.addons.classSet;
+      var conversationUrl = location.href;
+
+      var urlCreationDateClasses = cx({
+        "light-color-font": true,
+        "call-url-date": true, /* Used as a handler in the tests */
+        /*hidden until date is available*/
+        "hide": !this.props.urlCreationDateString.length
+      });
+
+      var callUrlCreationDateString = __("call_url_creation_date_label", {
+        "call_url_creation_date": this.props.urlCreationDateString
+      });
+
+      return (
+        /* jshint ignore:start */
+        <header className="container-box">
+          <h1 className="light-weight-font">
+            <strong>{__("brandShortname")}</strong> {__("clientShortname")}
+          </h1>
+          <div className="loop-logo" title="Firefox WebRTC! logo"></div>
+          <h3 className="call-url">
+            {conversationUrl}
+          </h3>
+          <h4 className={urlCreationDateClasses} >
+            {callUrlCreationDateString}
+          </h4>
+        </header>
+        /* jshint ignore:end */
+      );
+    }
+  });
+
+  var ConversationFooter = React.createClass({
+    render: function() {
+      return (
+        <div className="footer container-box">
+          <div title="Mozilla Logo" className="footer-logo"></div>
+        </div>
+      );
     }
   });
 
@@ -50,19 +131,7 @@ loop.webapp = (function($, _, OT, webL10n) {
    * Conversation launcher view. A ConversationModel is associated and attached
    * as a `model` property.
    */
-  var ConversationFormView = sharedViews.BaseView.extend({
-    template: _.template([
-      '<form>',
-      '  <p>',
-      '    <button class="btn btn-success" data-l10n-id="start_call"></button>',
-      '  </p>',
-      '</form>'
-    ].join("")),
-
-    events: {
-      "submit": "initiate"
-    },
-
+  var ConversationFormView = React.createClass({
     /**
      * Constructor.
      *
@@ -70,55 +139,115 @@ loop.webapp = (function($, _, OT, webL10n) {
      * - {loop.shared.model.ConversationModel}    model    Conversation model.
      * - {loop.shared.views.NotificationListView} notifier Notifier component.
      *
-     * @param  {Object} options Options object.
      */
-    initialize: function(options) {
-      options = options || {};
 
-      if (!options.model) {
-        throw new Error("missing required model");
-      }
-      this.model = options.model;
+    getInitialState: function() {
+      return {
+        urlCreationDateString: '',
+        disableCallButton: false
+      };
+    },
 
-      if (!options.notifier) {
-        throw new Error("missing required notifier");
-      }
-      this.notifier = options.notifier;
+    propTypes: {
+      model: React.PropTypes.instanceOf(sharedModels.ConversationModel)
+                                       .isRequired,
+      // XXX Check more tightly here when we start injecting window.loop.*
+      notifier: React.PropTypes.object.isRequired,
+      client: React.PropTypes.object.isRequired
+    },
 
-      this.listenTo(this.model, "session:error", this._onSessionError);
+    componentDidMount: function() {
+      this.props.model.listenTo(this.props.model, "session:error",
+                                this._onSessionError);
+      this.props.client.requestCallUrlInfo(this.props.model.get("loopToken"),
+                                           this._setConversationTimestamp);
+      // XXX DOM element does not exist before React view gets instantiated
+      // We should turn the notifier into a react component
+      this.props.notifier.$el = $("#messages");
     },
 
     _onSessionError: function(error) {
       console.error(error);
-      this.notifier.errorL10n("unable_retrieve_call_info");
-    },
-
-    /**
-     * Disables this form to prevent multiple submissions.
-     *
-     * @see  https://bugzilla.mozilla.org/show_bug.cgi?id=991126
-     */
-    disableForm: function() {
-      this.$("button").attr("disabled", "disabled");
+      this.props.notifier.errorL10n("unable_retrieve_call_info");
     },
 
     /**
      * Initiates the call.
-     *
-     * @param {SubmitEvent} event
      */
-    initiate: function(event) {
-      event.preventDefault();
-      this.model.initiate({
+    _initiate: function() {
+      this.props.model.initiate({
         client: new loop.StandaloneClient({
           baseServerUrl: baseServerUrl
         }),
         outgoing: true,
         // For now, we assume both audio and video as there is no
         // other option to select.
-        callType: "audio-video"
+        callType: "audio-video",
+        loopServer: loop.config.serverUrl
       });
-      this.disableForm();
+
+      this.setState({disableCallButton: true});
+    },
+
+    _setConversationTimestamp: function(err, callUrlInfo) {
+      if (err) {
+        this.props.notifier.errorL10n("unable_retrieve_call_info");
+      } else {
+        var date = (new Date(callUrlInfo.urlCreationDate * 1000));
+        var options = {year: "numeric", month: "long", day: "numeric"};
+        var timestamp = date.toLocaleDateString(navigator.language, options);
+
+        this.setState({urlCreationDateString: timestamp});
+      }
+    },
+
+    render: function() {
+      var tos_link_name = __("terms_of_use_link_text");
+      var privacy_notice_name = __("privacy_notice_link_text");
+
+      var tosHTML = __("legal_text_and_links", {
+        "terms_of_use_url": "<a target=_blank href='" +
+          "https://accounts.firefox.com/legal/terms'>" + tos_link_name + "</a>",
+        "privacy_notice_url": "<a target=_blank href='" +
+          "https://www.mozilla.org/privacy/'>" + privacy_notice_name + "</a>"
+      });
+
+      var callButtonClasses = "btn btn-success btn-large " +
+                              loop.shared.utils.getTargetPlatform();
+
+      return (
+        /* jshint ignore:start */
+        <div className="container">
+          <div className="container-box">
+
+            <ConversationHeader
+              urlCreationDateString={this.state.urlCreationDateString} />
+
+            <p className="large-font light-weight-font">
+              {__("initiate_call_button_label")}
+            </p>
+
+            <div id="messages"></div>
+
+            <div className="button-group">
+              <div className="flex-padding-1"></div>
+              <button ref="submitButton" onClick={this._initiate}
+                className={callButtonClasses}
+                disabled={this.state.disableCallButton}>
+                {__("initiate_call_button")}
+                <i className="icon icon-video"></i>
+              </button>
+              <div className="flex-padding-1"></div>
+            </div>
+
+            <p className="terms-service"
+               dangerouslySetInnerHTML={{__html: tosHTML}}></p>
+          </div>
+
+          <ConversationFooter />
+        </div>
+        /* jshint ignore:end */
+      );
     }
   });
 
@@ -135,7 +264,12 @@ loop.webapp = (function($, _, OT, webL10n) {
       "call/:token":         "initiate"
     },
 
-    initialize: function() {
+    initialize: function(options) {
+      this.helper = options.helper;
+      if (!this.helper) {
+        throw new Error("WebappRouter requires an helper object");
+      }
+
       // Load default view
       this.loadView(new HomeView());
 
@@ -193,7 +327,7 @@ loop.webapp = (function($, _, OT, webL10n) {
     },
 
     expired: function() {
-      this.loadReactComponent(CallUrlExpiredView());
+      this.loadReactComponent(CallUrlExpiredView({helper: this.helper}));
     },
 
     /**
@@ -209,9 +343,12 @@ loop.webapp = (function($, _, OT, webL10n) {
         this._conversation.endSession();
       }
       this._conversation.set("loopToken", loopToken);
-      this.loadView(new ConversationFormView({
+      this.loadReactComponent(ConversationFormView({
         model: this._conversation,
-        notifier: this._notifier
+        notifier: this._notifier,
+        client: new loop.StandaloneClient({
+          baseServerUrl: loop.config.serverUrl
+        })
       }));
     },
 
@@ -238,8 +375,14 @@ loop.webapp = (function($, _, OT, webL10n) {
     this._iOSRegex = /^(iPad|iPhone|iPod)/;
   }
 
-  WebappHelper.prototype.isIOS = function isIOS(platform) {
-    return this._iOSRegex.test(platform);
+  WebappHelper.prototype = {
+    isFirefox: function(platform) {
+      return platform.indexOf("Firefox") !== -1;
+    },
+
+    isIOS: function(platform) {
+      return this._iOSRegex.test(platform);
+    }
   };
 
   /**
@@ -248,6 +391,7 @@ loop.webapp = (function($, _, OT, webL10n) {
   function init() {
     var helper = new WebappHelper();
     router = new WebappRouter({
+      helper: helper,
       notifier: new sharedViews.NotificationListView({el: "#messages"}),
       conversation: new sharedModels.ConversationModel({}, {
         sdk: OT,
@@ -260,6 +404,9 @@ loop.webapp = (function($, _, OT, webL10n) {
     } else if (!OT.checkSystemRequirements()) {
       router.navigate("unsupportedBrowser", {trigger: true});
     }
+    // Set the 'lang' and 'dir' attributes to <html> when the page is translated
+    document.documentElement.lang = document.webL10n.getLanguage();
+    document.documentElement.dir = document.webL10n.getDirection();
   }
 
   return {
@@ -267,8 +414,9 @@ loop.webapp = (function($, _, OT, webL10n) {
     CallUrlExpiredView: CallUrlExpiredView,
     ConversationFormView: ConversationFormView,
     HomeView: HomeView,
-    WebappHelper: WebappHelper,
     init: init,
+    PromoteFirefoxView: PromoteFirefoxView,
+    WebappHelper: WebappHelper,
     WebappRouter: WebappRouter
   };
 })(jQuery, _, window.OT, document.webL10n);

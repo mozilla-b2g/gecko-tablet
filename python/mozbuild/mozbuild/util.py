@@ -292,10 +292,12 @@ class StrictOrderingOnAppendList(list):
         if not isinstance(other, list):
             raise ValueError('Only lists can be appended to lists.')
 
-        StrictOrderingOnAppendList.ensure_sorted(other)
-
-        # list.__add__ will return a new list. We "cast" it to our type.
-        return StrictOrderingOnAppendList(list.__add__(self, other))
+        new_list = StrictOrderingOnAppendList()
+        # Can't extend with self because it may already be the result of
+        # several extensions and not be ordered.
+        list.extend(new_list, self)
+        new_list.extend(other)
+        return new_list
 
     def __iadd__(self, other):
         if not isinstance(other, list):
@@ -434,10 +436,7 @@ class HierarchicalStringList(object):
         # to try to actually set the attribute. We want to ignore this case,
         # since we don't actually create an attribute called 'foo', but just add
         # it to our list of children (using _get_exportvariable()).
-        exports = self._get_exportvariable(name)
-        if not isinstance(value, HierarchicalStringList):
-            exports._check_list(value)
-            exports._strings = value
+        self._set_exportvariable(name, value)
 
     def __getattr__(self, name):
         if name.startswith('__'):
@@ -452,8 +451,20 @@ class HierarchicalStringList(object):
         self._strings += other
         return self
 
+    def __getitem__(self, name):
+        return self._get_exportvariable(name)
+
+    def __setitem__(self, name, value):
+        self._set_exportvariable(name, value)
+
     def _get_exportvariable(self, name):
         return self._children.setdefault(name, HierarchicalStringList())
+
+    def _set_exportvariable(self, name, value):
+        exports = self._get_exportvariable(name)
+        if not isinstance(value, HierarchicalStringList):
+            exports._check_list(value)
+            exports._strings = value
 
     def _check_list(self, value):
         if not isinstance(value, list):

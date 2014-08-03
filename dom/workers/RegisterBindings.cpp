@@ -17,6 +17,7 @@
 #include "mozilla/dom/EventHandlerBinding.h"
 #include "mozilla/dom/EventTargetBinding.h"
 #include "mozilla/dom/FileReaderSyncBinding.h"
+#include "mozilla/dom/HeadersBinding.h"
 #include "mozilla/dom/ImageData.h"
 #include "mozilla/dom/ImageDataBinding.h"
 #include "mozilla/dom/MessageEventBinding.h"
@@ -63,6 +64,8 @@ WorkerPrivate::RegisterBindings(JSContext* aCx, JS::Handle<JSObject*> aGlobal)
       !DOMExceptionBinding::GetConstructorObject(aCx, aGlobal) ||
       !EventBinding::GetConstructorObject(aCx, aGlobal) ||
       !FileReaderSyncBinding_workers::GetConstructorObject(aCx, aGlobal) ||
+      (HeadersBinding::ConstructorEnabled(aCx, aGlobal) &&
+       !HeadersBinding::GetConstructorObject(aCx, aGlobal)) ||
       !ImageDataBinding::GetConstructorObject(aCx, aGlobal) ||
       !MessageEventBinding::GetConstructorObject(aCx, aGlobal) ||
       !MessagePortBinding::GetConstructorObject(aCx, aGlobal) ||

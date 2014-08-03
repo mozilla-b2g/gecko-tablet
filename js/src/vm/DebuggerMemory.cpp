@@ -13,7 +13,7 @@
 
 #include "vm/Debugger-inl.h"
 
-namespace js {
+using namespace js;
 
 /* static */ DebuggerMemory *
 DebuggerMemory::create(JSContext *cx, Debugger *dbg)
@@ -42,7 +42,7 @@ DebuggerMemory::construct(JSContext *cx, unsigned argc, Value *vp)
 /* static */ const Class DebuggerMemory::class_ = {
     "Memory",
     JSCLASS_HAS_PRIVATE | JSCLASS_IMPLEMENTS_BARRIERS |
-    JSCLASS_HAS_RESERVED_SLOTS(DebuggerMemory::JSSLOT_COUNT),
+    JSCLASS_HAS_RESERVED_SLOTS(JSSLOT_COUNT),
 
     JS_PropertyStub,       // addProperty
     JS_DeletePropertyStub, // delProperty
@@ -72,7 +72,7 @@ DebuggerMemory::checkThis(JSContext *cx, CallArgs &args, const char *fnName)
     JSObject &thisObject = thisValue.toObject();
     if (!thisObject.is<DebuggerMemory>()) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_INCOMPATIBLE_PROTO,
-                             DebuggerMemory::class_.name, fnName, thisObject.getClass()->name);
+                             class_.name, fnName, thisObject.getClass()->name);
         return nullptr;
     }
 
@@ -82,7 +82,7 @@ DebuggerMemory::checkThis(JSContext *cx, CallArgs &args, const char *fnName)
     // doesn't have a Debugger instance.
     if (thisObject.getReservedSlot(JSSLOT_DEBUGGER).isUndefined()) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_INCOMPATIBLE_PROTO,
-                             DebuggerMemory::class_.name, fnName, "prototype object");
+                             class_.name, fnName, "prototype object");
         return nullptr;
     }
 
@@ -163,13 +163,10 @@ DebuggerMemory::getTrackingAllocationSites(JSContext *cx, unsigned argc, Value *
 }
 
 /* static */ const JSPropertySpec DebuggerMemory::properties[] = {
-    JS_PSGS("trackingAllocationSites", DebuggerMemory::getTrackingAllocationSites,
-            DebuggerMemory::setTrackingAllocationSites, 0),
+    JS_PSGS("trackingAllocationSites", getTrackingAllocationSites, setTrackingAllocationSites, 0),
     JS_PS_END
 };
 
 /* static */ const JSFunctionSpec DebuggerMemory::methods[] = {
     JS_FS_END
 };
-
-} /* namespace js */

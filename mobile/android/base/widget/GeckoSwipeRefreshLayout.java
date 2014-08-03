@@ -16,6 +16,8 @@
 
 package org.mozilla.gecko.widget;
 
+import org.mozilla.gecko.AppConstants.Versions;
+
 import android.content.Context;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
@@ -67,13 +69,13 @@ public class GeckoSwipeRefreshLayout extends ViewGroup {
     private OnRefreshListener mListener;
     private MotionEvent mDownEvent;
     private int mFrom;
-    private boolean mRefreshing = false;
+    private boolean mRefreshing;
     private int mTouchSlop;
     private float mDistanceToTriggerSync = -1;
     private float mPrevY;
     private int mMediumAnimationDuration;
-    private float mFromPercentage = 0;
-    private float mCurrPercentage = 0;
+    private float mFromPercentage;
+    private float mCurrPercentage;
     private int mProgressBarHeight;
     private int mCurrentTargetOffsetTop;
     // Target is returning to its start offset because it was cancelled or a
@@ -350,7 +352,7 @@ public class GeckoSwipeRefreshLayout extends ViewGroup {
      *         scroll up. Override this if the child view is a custom view.
      */
     public boolean canChildScrollUp() {
-        if (android.os.Build.VERSION.SDK_INT < 14) {
+        if (Versions.preICS) {
             if (mTarget instanceof AbsListView) {
                 final AbsListView absListView = (AbsListView) mTarget;
                 return absListView.getChildCount() > 0

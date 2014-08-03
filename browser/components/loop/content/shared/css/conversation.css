@@ -8,7 +8,7 @@
   position: relative;
 }
 
-.conversation .controls {
+.conversation-toolbar {
   position: absolute;
   z-index: 999; /* required to have it superimposed to the video element */
   left: 0;
@@ -20,13 +20,13 @@
   padding: 0;
 }
 
-.conversation .controls li {
+.conversation-toolbar li {
   float: left;
   font-size: 0px; /* prevents vertical bottom padding added to buttons in google
                      chrome */
 }
 
-.conversation .controls .btn {
+.conversation-toolbar .btn {
   width: 40px;
   height: 30px;
   background: transparent;
@@ -38,66 +38,66 @@
   cursor: pointer;
 }
 
-.conversation .controls .btn:hover {
+.conversation-toolbar .btn:hover {
   background-color: rgba(255, 255, 255, .35);
 }
 
 /* Hangup button */
-.conversation .controls .btn-hangup {
+.conversation-toolbar .btn-hangup {
   background-color: #D74345;
   background-image: url(../img/hangup-inverse-14x14.png);
 }
-.conversation .controls .btn-hangup:hover {
+.conversation-toolbar .btn-hangup:hover {
   background-color: #C53436;
 }
 @media (min-resolution: 2dppx) {
-  .conversation .controls .btn-hangup {
+  .conversation-toolbar .btn-hangup {
     background-image: url(../img/hangup-inverse-14x14@2x.png);
   }
 }
 
 /* Common media control buttons behavior */
-.conversation .controls .media-control {
+.conversation-toolbar .media-control {
   background-color: transparent;
   opacity: 1;
 }
-.conversation .controls .media-control:hover {
+.conversation-toolbar .media-control:hover {
   background-color: rgba(255, 255, 255, .35);
   opacity: 1;
 }
-.conversation .controls .media-control.muted {
+.conversation-toolbar .media-control.muted {
   background-color: #0096DD;
   opacity: 1;
 }
 
 /* Audio mute button */
-.conversation .controls .local-media.btn-mute-audio {
+.conversation-toolbar .local-media.btn-mute-audio {
   background-image: url(../img/audio-inverse-14x14.png);
 }
-.conversation .controls .local-media.btn-mute-audio.muted {
+.conversation-toolbar .local-media.btn-mute-audio.muted {
   background-image: url(../img/mute-inverse-14x14.png);
 }
 @media (min-resolution: 2dppx) {
-  .conversation .controls .local-media.btn-mute-audio {
+  .conversation-toolbar .local-media.btn-mute-audio {
     background-image: url(../img/audio-inverse-14x14@2x.png);
   }
-  .conversation .controls .local-media.btn-mute-audio.muted {
+  .conversation-toolbar .local-media.btn-mute-audio.muted {
     background-image: url(../img/mute-inverse-14x14@2x.png);
   }
 }
 
 /* Video mute button */
-.conversation .controls .local-media.btn-mute-video {
+.conversation-toolbar .local-media.btn-mute-video {
   background-image: url(../img/video-inverse-14x14.png);
 }
-.conversation .controls .local-media.btn-mute-video.muted {
+.conversation-toolbar .local-media.btn-mute-video.muted {
   background-image: url(../img/facemute-14x14.png);
 }
 @media (min-resolution: 2dppx) {
-  .conversation .controls .local-media.btn-mute-video {
+  .conversation-toolbar .local-media.btn-mute-video {
     background-image: url(../img/video-inverse-14x14@2x.png);
   }
-  .conversation .controls .local-media.btn-mute-video.muted {
+  .conversation-toolbar .local-media.btn-mute-video.muted {
     background-image: url(../img/facemute-14x14@2x.png);
   }
 }
@@ -177,8 +177,64 @@
   min-height: 264px;
 }
 
+.incoming-call-action-group {
+  padding: 2.5em 1em;
+}
+
+.incoming-call-action-group .button-chevron-menu-group {
+  margin-right: .5em;
+}
+
+.incoming-call-action-group > .btn {
+  margin-left: .5em;
+}
+
 .incoming-call h2 {
   font-size: 1.5em;
   font-weight: normal;
 }
 
+/* Expired call url page */
+
+.expired-url-info {
+  width: 400px;
+  margin: 0 auto;
+}
+
+.promote-firefox {
+  text-align: center;
+  font-size: 18px;
+  line-height: 24px;
+  margin: 2em 0;
+}
+
+.promote-firefox h3 {
+  font-weight: 300;
+}
+
+/* Block incoming call */
+
+.native-dropdown-menu {
+  /* Should match a native select menu */
+  padding: 0;
+  position: absolute; /* element can be wider than the parent */
+  background: #fff;
+  margin: 0;
+  box-shadow: 0 4px 5px rgba(30, 30, 30, .3);
+  border-style: solid;
+  border-width: 1px 1px 1px 2px;
+  border-color: #aaa #111 #111 #aaa;
+}
+
+.decline-block-menu li {
+  padding: 0 10px 0 5px;
+  list-style: none;
+  font-size: .9em;
+  color: #000;
+  cursor: pointer;
+}
+
+  .decline-block-menu li:hover {
+    color: #FFF;
+    background: #111;
+  }

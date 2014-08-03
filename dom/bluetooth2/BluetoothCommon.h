@@ -130,7 +130,6 @@ extern bool gBluetoothDebugFlag;
 #define KEY_REMOTE_AGENT      "/B2G/bluetooth/remote_device_agent"
 #define KEY_MANAGER           "/B2G/bluetooth/manager"
 #define KEY_ADAPTER           "/B2G/bluetooth/adapter"
-#define KEY_DISCOVERY_HANDLE  "/B2G/bluetooth/discovery_handle"
 
 /**
  * When the connection status of a Bluetooth profile is changed, we'll notify
@@ -148,6 +147,15 @@ extern bool gBluetoothDebugFlag;
 #define A2DP_STATUS_CHANGED_ID               "a2dpstatuschanged"
 #define HFP_STATUS_CHANGED_ID                "hfpstatuschanged"
 #define SCO_STATUS_CHANGED_ID                "scostatuschanged"
+
+/**
+ * Types of pairing requests for constructing BluetoothPairingEvent and
+ * BluetoothPairingHandle.
+ */
+#define PAIRING_REQ_TYPE_DISPLAYPASSKEY       "displaypasskeyreq"
+#define PAIRING_REQ_TYPE_ENTERPINCODE         "enterpincodereq"
+#define PAIRING_REQ_TYPE_CONFIRMATION         "pairingconfirmationreq"
+#define PAIRING_REQ_TYPE_CONSENT              "pairingconsentreq"
 
 /**
  * When the pair status of a Bluetooth device is changed, we'll dispatch an

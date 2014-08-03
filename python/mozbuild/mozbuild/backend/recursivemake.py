@@ -8,9 +8,13 @@ import itertools
 import json
 import logging
 import os
+import re
 import types
 
-from collections import namedtuple
+from collections import (
+    defaultdict,
+    namedtuple,
+)
 
 import mozwebidlcodegen
 from reftest import ReftestManifest
@@ -84,10 +88,10 @@ class BackendMakeFile(object):
     actually change. We use FileAvoidWrite to accomplish this.
     """
 
-    def __init__(self, srcdir, objdir, environment):
+    def __init__(self, srcdir, objdir, environment, topobjdir):
         self.srcdir = srcdir
         self.objdir = objdir
-        self.relobjdir = objdir[len(environment.topobjdir) + 1:]
+        self.relobjdir = mozpath.relpath(objdir, topobjdir)
         self.environment = environment
         self.name = mozpath.join(objdir, 'backend.mk')
 
@@ -141,18 +145,17 @@ class RecursiveMakeTraversal(object):
         - static
         - (normal) dirs
         - tests
-        - tools
 
     The "traditional" recursive make backend recurses through those by first
     building the current directory, followed by parallel directories (in
     parallel), then static directories, dirs, tests and tools (all
     sequentially).
     """
-    SubDirectoryCategories = ['parallel', 'static', 'dirs', 'tests', 'tools']
+    SubDirectoryCategories = ['parallel', 'static', 'dirs', 'tests']
     SubDirectoriesTuple = namedtuple('SubDirectories', SubDirectoryCategories)
     class SubDirectories(SubDirectoriesTuple):
         def __new__(self):
-            return RecursiveMakeTraversal.SubDirectoriesTuple.__new__(self, [], [], [], [], [])
+            return RecursiveMakeTraversal.SubDirectoriesTuple.__new__(self, [], [], [], [])
 
     def __init__(self):
         self._traversal = {}
@@ -179,7 +182,7 @@ class RecursiveMakeTraversal(object):
         Default filter for use with compute_dependencies and traverse.
         """
         return current, subdirs.parallel, \
-               subdirs.static + subdirs.dirs + subdirs.tests + subdirs.tools
+               subdirs.static + subdirs.dirs + subdirs.tests
 
     def call_filter(self, current, filter):
         """
@@ -319,11 +322,14 @@ class RecursiveMakeBackend(CommonBackend):
             ]}
 
         self._traversal = RecursiveMakeTraversal()
+        self._compile_graph = defaultdict(set)
+        self._triggers = defaultdict(set)
+
         self._may_skip = {
             'export': set(),
-            'compile': set(),
-            'binaries': set(),
             'libs': set(),
+        }
+        self._no_skip = {
             'tools': set(),
         }
 
@@ -335,7 +341,8 @@ class RecursiveMakeBackend(CommonBackend):
 
         if obj.objdir not in self._backend_files:
             self._backend_files[obj.objdir] = \
-                BackendMakeFile(obj.srcdir, obj.objdir, obj.config)
+                BackendMakeFile(obj.srcdir, obj.objdir, obj.config,
+                    self.environment.topobjdir)
         backend_file = self._backend_files[obj.objdir]
 
         CommonBackend.consume_object(self, obj)
@@ -380,7 +387,8 @@ class RecursiveMakeBackend(CommonBackend):
                     if do_unify:
                         # On Windows, path names have a maximum length of 255 characters,
                         # so avoid creating extremely long path names.
-                        unified_prefix = backend_file.relobjdir
+                        unified_prefix = mozpath.relpath(backend_file.objdir,
+                            backend_file.environment.topobjdir)
                         if len(unified_prefix) > 20:
                             unified_prefix = unified_prefix[-20:].split('/', 1)[-1]
                         unified_prefix = unified_prefix.replace('/', '_')
@@ -497,58 +505,50 @@ class RecursiveMakeBackend(CommonBackend):
             self.log(logging.DEBUG, 'fill_root_mk', {
                 'number': len(skip), 'tier': tier
                 }, 'Ignoring {number} directories during {tier}')
+        for tier, no_skip in self._no_skip.items():
+            self.log(logging.DEBUG, 'fill_root_mk', {
+                'number': len(no_skip), 'tier': tier
+                }, 'Using {number} directories during {tier}')
 
         # Traverse directories in parallel, and skip static dirs
         def parallel_filter(current, subdirs):
             all_subdirs = subdirs.parallel + subdirs.dirs + \
-                          subdirs.tests + subdirs.tools
+                          subdirs.tests
             if current in self._may_skip[tier] \
                     or current.startswith('subtiers/'):
                 current = None
-            # subtiers/*_start and subtiers/*_finish, under subtiers/*, are
-            # kept sequential. Others are all forced parallel.
-            if current and current.startswith('subtiers/') and all_subdirs and \
-                    all_subdirs[0].startswith('subtiers/'):
-                return current, [], all_subdirs
             return current, all_subdirs, []
 
         # build everything in parallel, including static dirs
-        def compile_filter(current, subdirs):
-            current, parallel, sequential = parallel_filter(current, subdirs)
-            return current, subdirs.static + parallel, sequential
-
-        # Skip tools dirs during libs traversal. Because of bug 925236 and
-        # possible other unknown race conditions, don't parallelize the libs
-        # tier.
+        # Because of bug 925236 and possible other unknown race conditions,
+        # don't parallelize the libs tier.
         def libs_filter(current, subdirs):
-            if current in self._may_skip[tier] \
+            if current in self._may_skip['libs'] \
                     or current.startswith('subtiers/'):
                 current = None
             return current, [], subdirs.parallel + \
                 subdirs.dirs + subdirs.tests
 
         # Because of bug 925236 and possible other unknown race conditions,
-        # don't parallelize the tools tier.
+        # don't parallelize the tools tier. There aren't many directories for
+        # this tier anyways.
         def tools_filter(current, subdirs):
-            if current in self._may_skip[tier] \
+            if current not in self._no_skip['tools'] \
                     or current.startswith('subtiers/'):
                 current = None
-            return current, subdirs.parallel, \
-                subdirs.dirs + subdirs.tests + subdirs.tools
+            return current, [], subdirs.parallel + \
+                subdirs.dirs + subdirs.tests
 
-        # compile, binaries and tools tiers use the same traversal as export
-        filters = {
-            'export': parallel_filter,
-            'compile': compile_filter,
-            'binaries': parallel_filter,
-            'libs': libs_filter,
-            'tools': tools_filter,
-        }
+        filters = [
+            ('export', parallel_filter),
+            ('libs', libs_filter),
+            ('tools', tools_filter),
+        ]
 
         root_deps_mk = Makefile()
 
         # Fill the dependencies for traversal of each tier.
-        for tier, filter in filters.items():
+        for tier, filter in filters:
             main, all_deps = \
                 self._traversal.compute_dependencies(filter)
             for dir, deps in all_deps.items():
@@ -559,12 +559,28 @@ class RecursiveMakeBackend(CommonBackend):
             if main:
                 rule.add_dependencies('%s/%s' % (d, tier) for d in main)
 
+        all_compile_deps = reduce(lambda x,y: x|y,
+            self._compile_graph.values()) if self._compile_graph else set()
+        compile_roots = set(self._compile_graph.keys()) - all_compile_deps
+
+        rule = root_deps_mk.create_rule(['recurse_compile'])
+        rule.add_dependencies(compile_roots)
+        for target, deps in sorted(self._compile_graph.items()):
+            if deps:
+                rule = root_deps_mk.create_rule([target])
+                rule.add_dependencies(deps)
+
         root_mk = Makefile()
 
         # Fill root.mk with the convenience variables.
-        for tier, filter in filters.items():
+        for tier, filter in filters:
             all_dirs = self._traversal.traverse('', filter)
             root_mk.add_statement('%s_dirs := %s' % (tier, ' '.join(all_dirs)))
+
+        # Need a list of compile targets because we can't use pattern rules:
+        # https://savannah.gnu.org/bugs/index.php?42833
+        root_mk.add_statement('compile_targets := %s' % ' '.join(sorted(
+            set(self._compile_graph.keys()) | all_compile_deps)))
 
         root_mk.add_statement('$(call include_deps,root-deps.mk)')
 
@@ -687,8 +703,6 @@ class RecursiveMakeBackend(CommonBackend):
                     self.summary.makefile_in_count += 1
 
                     for tier, skiplist in self._may_skip.items():
-                        if tier in ('compile', 'binaries'):
-                            continue
                         if bf.relobjdir in skiplist:
                             skiplist.remove(bf.relobjdir)
                 else:
@@ -702,6 +716,27 @@ class RecursiveMakeBackend(CommonBackend):
                 obj.topobjdir = bf.environment.topobjdir
                 obj.config = bf.environment
                 self._create_makefile(obj, stub=stub)
+                with open(obj.output_path) as fh:
+                    content = fh.read()
+                    for trigger, targets in self._triggers.items():
+                        if trigger.encode('ascii') in content:
+                            for target in targets:
+                                t = '%s/target' % mozpath.relpath(objdir,
+                                    self.environment.topobjdir)
+                                self._compile_graph[t].add(target)
+                    # Skip every directory but those with a Makefile
+                    # containing a tools target, or XPI_PKGNAME or
+                    # INSTALL_EXTENSION_ID.
+                    for t in (b'XPI_PKGNAME', b'INSTALL_EXTENSION_ID',
+                            b'tools'):
+                        if t not in content:
+                            continue
+                        if t == b'tools' and not re.search('(?:^|\s)tools.*::', content, re.M):
+                            continue
+                        if objdir == bf.environment.topobjdir:
+                            continue
+                        self._no_skip['tools'].add(mozpath.relpath(objdir,
+                            bf.environment.topobjdir))
 
         # Write out a master list of all IPDL source files.
         ipdl_dir = mozpath.join(self.environment.topobjdir, 'ipc', 'ipdl')
@@ -732,13 +767,6 @@ class RecursiveMakeBackend(CommonBackend):
 
         with self._write_file(mozpath.join(ipdl_dir, 'ipdlsrcs.mk')) as ipdls:
             mk.dump(ipdls, removal_guard=False)
-
-        # These contain autogenerated sources that the build config doesn't
-        # yet know about.
-        # TODO Emit GENERATED_SOURCES so these special cases are dealt with
-        # the proper way.
-        self._may_skip['compile'] -= {'ipc/ipdl'}
-        self._may_skip['compile'] -= {'dom/bindings', 'dom/bindings/test'}
 
         self._fill_root_mk()
 
@@ -809,19 +837,13 @@ class RecursiveMakeBackend(CommonBackend):
 
             self._traversal.add('', dirs=['subtiers/%s' % tier])
 
+            for d in dirs + obj.tier_static_dirs[tier]:
+                if d.trigger:
+                    self._triggers[d.trigger].add('%s/target' % d)
+
         if obj.dirs:
             fh.write('DIRS := %s\n' % ' '.join(obj.dirs))
             self._traversal.add(backend_file.relobjdir, dirs=relativize(obj.dirs))
-
-        if obj.parallel_dirs:
-            fh.write('PARALLEL_DIRS := %s\n' % ' '.join(obj.parallel_dirs))
-            self._traversal.add(backend_file.relobjdir,
-                                parallel=relativize(obj.parallel_dirs))
-
-        if obj.tool_dirs:
-            fh.write('TOOL_DIRS := %s\n' % ' '.join(obj.tool_dirs))
-            self._traversal.add(backend_file.relobjdir,
-                                tools=relativize(obj.tool_dirs))
 
         if obj.test_dirs:
             fh.write('TEST_DIRS := %s\n' % ' '.join(obj.test_dirs))
@@ -829,60 +851,54 @@ class RecursiveMakeBackend(CommonBackend):
                 self._traversal.add(backend_file.relobjdir,
                                     tests=relativize(obj.test_dirs))
 
-        if obj.test_tool_dirs and \
-            self.environment.substs.get('ENABLE_TESTS', False):
-
-            fh.write('TOOL_DIRS += %s\n' % ' '.join(obj.test_tool_dirs))
-            self._traversal.add(backend_file.relobjdir,
-                                tools=relativize(obj.test_tool_dirs))
-
         # The directory needs to be registered whether subdirectories have been
         # registered or not.
         self._traversal.add(backend_file.relobjdir)
 
-        if obj.is_tool_dir:
-            fh.write('IS_TOOL_DIR := 1\n')
-
         affected_tiers = set(obj.affected_tiers)
-        # Until all SOURCES are really in moz.build, consider all directories
-        # building binaries to require a pass at compile, too.
-        if 'binaries' in affected_tiers:
-            affected_tiers.add('compile')
-        if 'compile' in affected_tiers or 'binaries' in affected_tiers:
-            affected_tiers.add('libs')
-        if obj.is_tool_dir and 'libs' in affected_tiers:
-            affected_tiers.remove('libs')
-            affected_tiers.add('tools')
 
         for tier in set(self._may_skip.keys()) - affected_tiers:
             self._may_skip[tier].add(backend_file.relobjdir)
 
+    def _process_hierarchy_elements(self, obj, element, namespace, action):
+        """Walks the ``HierarchicalStringList`` ``element`` and performs
+        ``action`` on each HierarchicalStringList in the hierarchy.
+
+        ``action`` is a callback to be invoked with the following arguments:
+        - ``element``     - The HierarchicalStringList along the current namespace
+        - ``namespace``   - The namespace of the element
+        """
+        if namespace:
+            namespace += '/'
+
+        action(element, namespace)
+
+        children = element.get_children()
+        for subdir in sorted(children):
+            self._process_hierarchy_elements(obj, children[subdir],
+                                             namespace + subdir,
+                                             action)
+
     def _process_hierarchy(self, obj, element, namespace, action):
         """Walks the ``HierarchicalStringList`` ``element`` and performs
-        ``action`` on each string in the heirarcy.
+        ``action`` on each string in the hierarchy.
 
         ``action`` is a callback to be invoked with the following arguments:
         - ``source`` - The path to the source file named by the current string
         - ``dest``   - The relative path, including the namespace, of the
                        destination file.
         """
-        strings = element.get_strings()
-        if namespace:
-            namespace += '/'
+        def process_element(element, namespace):
+            strings = element.get_strings()
+            for s in strings:
+                source = mozpath.normpath(mozpath.join(obj.srcdir, s))
+                dest = '%s%s' % (namespace, mozpath.basename(s))
+                flags = None
+                if '__getitem__' in dir(element):
+                    flags = element[s]
+                action(source, dest, flags)
 
-        for s in strings:
-            source = mozpath.normpath(mozpath.join(obj.srcdir, s))
-            dest = '%s%s' % (namespace, mozpath.basename(s))
-            flags = None
-            if '__getitem__' in dir(element):
-                flags = element[s]
-            action(source, dest, flags)
-
-        children = element.get_children()
-        for subdir in sorted(children):
-            self._process_hierarchy(obj, children[subdir],
-                namespace=namespace + subdir,
-                action=action)
+        self._process_hierarchy_elements(obj, element, namespace, process_element)
 
     def _process_exports(self, obj, exports, backend_file):
         # This may not be needed, but is present for backwards compatibility
@@ -937,8 +953,34 @@ class RecursiveMakeBackend(CommonBackend):
             backend_file.write('NO_DIST_INSTALL := 1\n')
 
     def _process_javascript_modules(self, obj, backend_file):
-        if obj.flavor != 'testing':
-            raise Exception('We only support testing JavaScriptModules instances.')
+        if obj.flavor not in ('extra', 'extra_pp', 'testing'):
+            raise Exception('Unsupported JavaScriptModules instance: %s' % obj.flavor)
+
+        if obj.flavor == 'extra':
+            def onelement(element, namespace):
+                if not element.get_strings():
+                    return
+
+                prefix = 'extra_js_%s' % namespace.replace('/', '_')
+                backend_file.write('%s_FILES := %s\n'
+                                   % (prefix, ' '.join(element.get_strings())))
+                backend_file.write('%s_DEST = $(FINAL_TARGET)/%s\n' % (prefix, namespace))
+                backend_file.write('INSTALL_TARGETS += %s\n\n' % prefix)
+            self._process_hierarchy_elements(obj, obj.modules, 'modules', onelement)
+            return
+
+        if obj.flavor == 'extra_pp':
+            def onelement(element, namespace):
+                if not element.get_strings():
+                    return
+
+                prefix = 'extra_pp_js_%s' % namespace.replace('/', '_')
+                backend_file.write('%s := %s\n'
+                                   % (prefix, ' '.join(element.get_strings())))
+                backend_file.write('%s_PATH = $(FINAL_TARGET)/%s\n' % (prefix, namespace))
+                backend_file.write('PP_TARGETS += %s\n\n' % prefix)
+            self._process_hierarchy_elements(obj, obj.modules, 'modules', onelement)
+            return
 
         if not self.environment.substs.get('ENABLE_TESTS', False):
             return
@@ -1020,6 +1062,11 @@ class RecursiveMakeBackend(CommonBackend):
     def _process_simple_program(self, obj, backend_file):
         if obj.is_unit_test:
             backend_file.write('CPP_UNIT_TESTS += %s\n' % obj.program)
+            # config.mk adds a dependency on NSPR_LIBS for CPP_UNIT_TESTS
+            # Add it here until moz.build land handles this.
+            if 'NSPR_LIBS' in self._triggers:
+                self._compile_graph[self._build_target_for_obj(obj)] |= \
+                    self._triggers['NSPR_LIBS']
         else:
             backend_file.write('SIMPLE_PROGRAMS += %s\n' % obj.program)
 
@@ -1144,52 +1191,75 @@ class RecursiveMakeBackend(CommonBackend):
     def _process_host_library(self, libdef, backend_file):
         backend_file.write('HOST_LIBRARY_NAME = %s\n' % libdef.basename)
 
+    def _build_target_for_obj(self, obj):
+        return '%s/%s' % (mozpath.relpath(obj.objdir,
+            self.environment.topobjdir), obj.KIND)
+
     def _process_linked_libraries(self, obj, backend_file):
-        def recurse_lib(lib):
+        def recursive_get_shared_libs(lib):
             for l in lib.linked_libraries:
                 if isinstance(l, StaticLibrary):
-                    for q in recurse_lib(l):
+                    for q in recursive_get_shared_libs(l):
                         yield q
                 else:
                     yield l
 
         def pretty_relpath(lib):
-            # If this is an external objdir (i.e., comm-central), use the other
-            # directory instead of $(DEPTH).
-            if lib.objdir.startswith(topobjdir + '/'):
-                return '$(DEPTH)/%s' % mozpath.relpath(lib.objdir, topobjdir)
-            else:
-                return mozpath.relpath(lib.objdir, obj.objdir)
+            return '$(DEPTH)/%s' % mozpath.relpath(lib.objdir, topobjdir)
 
         topobjdir = mozpath.normsep(obj.topobjdir)
+        # This will create the node even if there aren't any linked libraries.
+        build_target = self._build_target_for_obj(obj)
+        self._compile_graph[build_target]
+
+        # Until MOZ_GLUE_LDFLAGS/MOZ_GLUE_PROGRAM_LDFLAGS are properly
+        # handled in moz.build world, assume any program or shared library
+        # we build depends on it.
+        if obj.KIND == 'target' and not isinstance(obj, StaticLibrary) and \
+                build_target != 'mozglue/build/target' and \
+                not obj.config.substs.get('JS_STANDALONE'):
+            self._compile_graph[build_target].add('mozglue/build/target')
+            if obj.config.substs.get('MOZ_MEMORY'):
+                self._compile_graph[build_target].add('memory/build/target')
+
+        # Until STLPORT_LIBS are properly handled in moz.build world, assume
+        # any program or shared library we build depends on it.
+        if obj.KIND == 'target' and not isinstance(obj, StaticLibrary) and \
+                build_target != 'build/stlport/target' and \
+                'stlport' in obj.config.substs.get('STLPORT_LIBS'):
+            self._compile_graph[build_target].add('build/stlport/target')
+
         for lib in obj.linked_libraries:
+            self._compile_graph[build_target].add(
+                self._build_target_for_obj(lib))
             relpath = pretty_relpath(lib)
             if isinstance(obj, Library):
                 if isinstance(lib, StaticLibrary):
-                    backend_file.write_once('SHARED_LIBRARY_LIBS += %s/%s\n'
-                                       % (relpath, lib.lib_name))
-                    for l in recurse_lib(lib):
-                        backend_file.write_once('EXTRA_DSO_LDOPTS += %s/%s\n'
+                    backend_file.write_once('STATIC_LIBS += %s/%s\n'
+                                        % (relpath, lib.import_name))
+                    if isinstance(obj, SharedLibrary):
+                        for l in recursive_get_shared_libs(lib):
+                            backend_file.write_once('SHARED_LIBS += %s/%s\n'
                                         % (pretty_relpath(l), l.import_name))
                 elif isinstance(obj, SharedLibrary):
                     assert lib.variant != lib.COMPONENT
-                    backend_file.write_once('EXTRA_DSO_LDOPTS += %s/%s\n'
-                                       % (relpath, lib.import_name))
+                    backend_file.write_once('SHARED_LIBS += %s/%s\n'
+                                        % (relpath, lib.import_name))
             elif isinstance(obj, (Program, SimpleProgram)):
                 if isinstance(lib, StaticLibrary):
-                    backend_file.write_once('LIBS += %s/%s\n'
-                                       % (relpath, lib.lib_name))
-                    for l in recurse_lib(lib):
-                        backend_file.write_once('EXTRA_LIBS += %s/%s\n'
+                    backend_file.write_once('STATIC_LIBS += %s/%s\n'
+                                        % (relpath, lib.import_name))
+                    for l in recursive_get_shared_libs(lib):
+                        backend_file.write_once('SHARED_LIBS += %s/%s\n'
                                         % (pretty_relpath(l), l.import_name))
                 else:
                     assert lib.variant != lib.COMPONENT
-                    backend_file.write_once('EXTRA_LIBS += %s/%s\n'
-                                       % (relpath, lib.import_name))
+                    backend_file.write_once('SHARED_LIBS += %s/%s\n'
+                                        % (relpath, lib.import_name))
             elif isinstance(obj, (HostLibrary, HostProgram, HostSimpleProgram)):
                 assert isinstance(lib, HostLibrary)
                 backend_file.write_once('HOST_LIBS += %s/%s\n'
-                                   % (relpath, lib.lib_name))
+                                   % (relpath, lib.import_name))
 
     def _write_manifests(self, dest, manifests):
         man_dir = mozpath.join(self.environment.topobjdir, '_build_manifests',
@@ -1339,7 +1409,8 @@ class RecursiveMakeBackend(CommonBackend):
             bindings_dir,
             unified_prefix='UnifiedBindings',
             unified_files_makefile_variable='unified_binding_cpp_files',
-            poison_windows_h=True)
+            poison_windows_h=True,
+            files_per_unified_file=32)
 
         webidls_mk = mozpath.join(bindings_dir, 'webidlsrcs.mk')
         with self._write_file(webidls_mk) as fh:

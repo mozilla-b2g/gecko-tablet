@@ -62,8 +62,10 @@ public interface TelemetryContract {
         SANITIZE("sanitize.1"),
 
         // Saving a resource (reader, bookmark, etc) for viewing later.
-        // Note: Only used in JavaScript for now, but here for completeness.
         SAVE("save.1"),
+
+        // Perform a search -- currently used when starting a search in the search activity.
+        SEARCH("search.1"),
 
         // Sharing content.
         SHARE("share.1"),
@@ -76,7 +78,6 @@ public interface TelemetryContract {
         UNPIN("unpin.1"),
 
         // Stop holding a resource (reader, bookmark, etc) for viewing later.
-        // Note: Only used in JavaScript for now, but here for completeness.
         UNSAVE("unsave.1"),
 
         // VALUES BELOW THIS LINE ARE EXCLUSIVE TO TESTING.
@@ -113,6 +114,9 @@ public interface TelemetryContract {
 
         // Action triggered from a button.
         BUTTON("button"),
+
+        // Action taken from a content page -- for example, a search results web page.
+        CONTENT("content"),
 
         // Action occurred via a context menu.
         CONTEXT_MENU("contextmenu"),
@@ -192,6 +196,9 @@ public interface TelemetryContract {
         // Started when a Reader viewer becomes active in the foreground.
         // Note: Only used in JavaScript for now, but here for completeness.
         READER("reader.1"),
+
+        // Started when the search activity launches.
+        SEARCH_ACTIVITY("searchactivity.1"),
 
         // VALUES BELOW THIS LINE ARE EXCLUSIVE TO TESTING.
         _TEST_STARTED_TWICE("_test_session_started_twice.1"),

@@ -8,6 +8,7 @@ EXPORTS += [
     'HTMLPropertiesCollection.h',
     'nsGenericHTMLElement.h',
     'nsHTMLDNSPrefetch.h',
+    'nsTextEditorState.h',
 ]
 
 EXPORTS.mozilla.dom += [
@@ -171,11 +172,11 @@ include('/ipc/chromium/chromium-config.mozbuild')
 FINAL_LIBRARY = 'xul'
 LOCAL_INCLUDES += [
     '/content/base/src',
-    '/content/canvas/src',
     '/content/html/document/src',
     '/content/media/',
     '/content/xul/content/src',
     '/dom/base',
+    '/dom/canvas',
     '/dom/xbl',
     '/editor/libeditor/base',
     '/editor/libeditor/text',

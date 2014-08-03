@@ -17,7 +17,7 @@ endif
 endif
 
 ifeq (WINNT,$(OS_TARGET))
-mozglue.def: mozglue.def.in
+mozglue.def: mozglue.def.in $(GLOBAL_DEPS)
 	$(call py_action,preprocessor,$(if $(MOZ_REPLACE_MALLOC),-DMOZ_REPLACE_MALLOC) $(ACDEFINES) $< -o $@)
 
 GARBAGE += mozglue.def
@@ -126,7 +126,7 @@ ifeq (WINNT,$(OS_TARGET))
 #
 ###############################################################################
 
-libs:: mozcrt.lib
+target:: mozcrt.lib
 	$(INSTALL) $(IFLAGS2) mozcrt.lib $(DIST)/lib
 
 # And finally combine that with the jemalloc import library to get an import

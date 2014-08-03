@@ -428,7 +428,6 @@ struct JSCompartment
                            js::AutoDebugModeInvalidation &invalidate);
 
     void clearBreakpointsIn(js::FreeOp *fop, js::Debugger *dbg, JS::HandleObject handler);
-    void clearTraps(js::FreeOp *fop);
 
   private:
     void sweepBreakpoints(js::FreeOp *fop);
@@ -452,7 +451,6 @@ struct JSCompartment
     /* Used by memory reporters and invalid otherwise. */
     void               *compartmentStats;
 
-#ifdef JS_ION
   private:
     js::jit::JitCompartment *jitCompartment_;
 
@@ -461,7 +459,6 @@ struct JSCompartment
     js::jit::JitCompartment *jitCompartment() {
         return jitCompartment_;
     }
-#endif
 };
 
 inline bool
@@ -506,11 +503,7 @@ class js::AutoDebugModeInvalidation
       : comp_(nullptr), zone_(zone), needInvalidation_(NoNeed)
     { }
 
-#ifdef JS_ION
     ~AutoDebugModeInvalidation();
-#else
-    ~AutoDebugModeInvalidation() { }
-#endif
 
     bool isFor(JSCompartment *comp) {
         if (comp_)

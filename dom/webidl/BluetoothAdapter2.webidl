@@ -58,16 +58,6 @@ interface BluetoothAdapter : EventTarget {
   readonly attribute boolean                discoverable;
   readonly attribute boolean                discovering;
 
-  // array of type BluetoothDevice[]
-  [GetterThrows]
-  readonly attribute any            devices;
-
-  // array of type DOMString[]
-  [GetterThrows]
-  readonly attribute any            uuids;
-
-           attribute EventHandler   ondevicefound;
-
   // Fired when pairing process is completed
            attribute EventHandler   onpairedstatuschanged;
 
@@ -94,26 +84,20 @@ interface BluetoothAdapter : EventTarget {
    * request, and the last one would indicate adapter.state becomes
    * enabled/disabled.
    */
-  // Promise<void>
   [NewObject, Throws]
-  Promise enable();
-  // Promise<void>
+  Promise<void> enable();
   [NewObject, Throws]
-  Promise disable();
+  Promise<void> disable();
 
-  // Promise<void>
   [NewObject, Throws]
-  Promise setName(DOMString aName);
-  // Promise<void>
+  Promise<void> setName(DOMString aName);
   [NewObject, Throws]
-  Promise setDiscoverable(boolean aDiscoverable);
+  Promise<void> setDiscoverable(boolean aDiscoverable);
 
-  // Promise<BluetoothDiscoveryHandle>
   [NewObject, Throws]
-  Promise startDiscovery();
-  // Promise<void>
+  Promise<BluetoothDiscoveryHandle> startDiscovery();
   [NewObject, Throws]
-  Promise stopDiscovery();
+  Promise<void> stopDiscovery();
 
   [NewObject, Throws]
   DOMRequest pair(DOMString deviceAddress);
@@ -123,12 +107,6 @@ interface BluetoothAdapter : EventTarget {
   DOMRequest getPairedDevices();
   [NewObject, Throws]
   DOMRequest getConnectedDevices(unsigned short serviceUuid);
-  [NewObject, Throws]
-  DOMRequest setPinCode(DOMString deviceAddress, DOMString pinCode);
-  [NewObject, Throws]
-  DOMRequest setPasskey(DOMString deviceAddress, unsigned long passkey);
-  [NewObject, Throws]
-  DOMRequest setPairingConfirmation(DOMString deviceAddress, boolean confirmation);
 
   /**
    * Connect/Disconnect to a specific service of a target remote device.

@@ -2302,6 +2302,7 @@ ContentParent::RecvAudioChannelChangeDefVolChannel(const int32_t& aChannel,
 bool
 ContentParent::RecvDataStoreGetStores(
                                     const nsString& aName,
+                                    const nsString& aOwner,
                                     const IPC::Principal& aPrincipal,
                                     InfallibleTArray<DataStoreSetting>* aValue)
 {
@@ -2310,7 +2311,7 @@ ContentParent::RecvDataStoreGetStores(
     return false;
   }
 
-  nsresult rv = service->GetDataStoresFromIPC(aName, aPrincipal, aValue);
+  nsresult rv = service->GetDataStoresFromIPC(aName, aOwner, aPrincipal, aValue);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return false;
   }
@@ -3745,7 +3746,7 @@ ContentParent::RecvOpenAnonymousTemporaryFile(FileDescriptor *aFD)
     if (NS_WARN_IF(NS_FAILED(rv))) {
         return false;
     }
-    *aFD = FileDescriptor::PlatformHandleType(PR_FileDesc2NativeHandle(prfd));
+    *aFD = FileDescriptor(FileDescriptor::PlatformHandleType(PR_FileDesc2NativeHandle(prfd)));
     // The FileDescriptor object owns a duplicate of the file handle; we
     // must close the original (and clean up the NSPR descriptor).
     PR_Close(prfd);

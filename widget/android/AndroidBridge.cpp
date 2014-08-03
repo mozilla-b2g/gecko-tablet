@@ -1001,7 +1001,7 @@ AndroidBridge::InitCamera(const nsCString& contentType, uint32_t camera, uint32_
 
     AutoLocalJNIFrame jniFrame(env, 1);
     jintArray arr = mozilla::widget::android::GeckoAppShell::InitCameraWrapper
-      (NS_ConvertUTF8toUTF16(contentType), (int32_t) camera, (int32_t) width, (int32_t) height);
+      (NS_ConvertUTF8toUTF16(contentType), (int32_t) camera, (int32_t) *width, (int32_t) *height);
 
     if (!arr)
         return false;
@@ -2133,5 +2133,16 @@ nsresult AndroidBridge::InputStreamRead(jobject obj, char *aBuf, uint32_t aCount
         return NS_OK;
     }
     *aRead = read;
+    return NS_OK;
+}
+
+nsresult AndroidBridge::GetExternalPublicDirectory(const nsAString& aType, nsAString& aPath) {
+    AutoLocalJNIFrame frame(1);
+    const jstring path = GeckoAppShell::GetExternalPublicDirectory(aType);
+    if (!path) {
+        return NS_ERROR_NOT_AVAILABLE;
+    }
+    nsJNIString pathStr(path, frame.GetEnv());
+    aPath.Assign(pathStr);
     return NS_OK;
 }

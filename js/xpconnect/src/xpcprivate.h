@@ -1062,7 +1062,7 @@ public:
     static void
     TraceWrappedNativesInAllScopes(JSTracer* trc, XPCJSRuntime* rt);
 
-    void TraceSelf(JSTracer *trc) {
+    void TraceInside(JSTracer *trc) {
         MOZ_ASSERT(mGlobalJSObject);
         mGlobalJSObject.trace(trc, "XPCWrappedNativeScope::mGlobalJSObject");
         if (mContentXBLScope)
@@ -1861,7 +1861,7 @@ public:
                 mScriptableInfo->Mark();
         }
 
-        GetScope()->TraceSelf(trc);
+        GetScope()->TraceInside(trc);
     }
 
     void TraceJS(JSTracer *trc) {
@@ -1986,9 +1986,6 @@ private:
 };
 
 void *xpc_GetJSPrivate(JSObject *obj);
-
-void
-TraceXPCGlobal(JSTracer *trc, JSObject *obj);
 
 /***************************************************************************/
 // XPCWrappedNative the wrapper around one instance of a native xpcom object
@@ -2177,10 +2174,10 @@ public:
         if (HasProto())
             GetProto()->TraceSelf(trc);
         else
-            GetScope()->TraceSelf(trc);
+            GetScope()->TraceInside(trc);
         if (mFlatJSObject && JS_IsGlobalObject(mFlatJSObject))
         {
-            TraceXPCGlobal(trc, mFlatJSObject);
+            xpc::TraceXPCGlobal(trc, mFlatJSObject);
         }
     }
 
@@ -2970,12 +2967,6 @@ extern char*
 xpc_PrintJSStack(JSContext* cx, bool showArgs, bool showLocals,
                  bool showThisProps);
 
-extern bool
-xpc_DumpEvalInJSStackFrame(JSContext* cx, uint32_t frameno, const char* text);
-
-extern bool
-xpc_InstallJSDebuggerKeywordHandler(JSRuntime* rt);
-
 /***************************************************************************/
 
 // Definition of nsScriptError, defined here because we lack a place to put
@@ -3359,31 +3350,22 @@ Atob(JSContext *cx, unsigned argc, jsval *vp);
 bool
 Btoa(JSContext *cx, unsigned argc, jsval *vp);
 
-class FunctionForwarderOptions;
-
 // Helper function that creates a JSFunction that wraps a native function that
-// forwards the call to the original 'callable'. For improved security, any
-// object-valued arguments are cloned at call time, unless either:
-//
-// * The object is a function and FunctionForwarderOptions::allowCallbacks is set
-// * The object is a reflector, in which case it is wrapped.
+// forwards the call to the original 'callable'.
 bool
 NewFunctionForwarder(JSContext *cx, JS::HandleId id, JS::HandleObject callable,
-                     FunctionForwarderOptions &options, JS::MutableHandleValue vp);
-
-// Old-style function forwarding without structured-cloning for arguments. This
-// is deprecated.
-bool
-NewNonCloningFunctionForwarder(JSContext *cx, JS::HandleId id,
-                               JS::HandleObject callable, JS::MutableHandleValue vp);
+                     JS::MutableHandleValue vp);
 
 // Old fashioned xpc error reporter. Try to use JS_ReportError instead.
 nsresult
 ThrowAndFail(nsresult errNum, JSContext *cx, bool *retval);
 
 struct GlobalProperties {
-    GlobalProperties(bool aPromise) {
+    GlobalProperties() {
       mozilla::PodZero(this);
+
+      // Promise is supposed to be part of ES, and therefore should appear on
+      // every global.
       Promise = true;
     }
     bool Parse(JSContext *cx, JS::HandleObject obj);
@@ -3444,7 +3426,6 @@ public:
         , sameZoneAs(cx)
         , invisibleToDebugger(false)
         , discardSource(false)
-        , globalProperties(true)
         , metadata(cx)
     { }
 
@@ -3486,16 +3467,13 @@ public:
                   JSObject* options = nullptr)
         : OptionsBase(cx, options)
         , defineAs(cx, JSID_VOID)
-        , allowCallbacks(false)
     { }
 
     virtual bool Parse() {
-        return ParseId("defineAs", &defineAs) &&
-               ParseBoolean("allowCallbacks", &allowCallbacks);
+        return ParseId("defineAs", &defineAs);
     };
 
     JS::RootedId defineAs;
-    bool allowCallbacks;
 };
 
 class MOZ_STACK_CLASS StackScopedCloneOptions : public OptionsBase {
@@ -3518,43 +3496,6 @@ public:
     // When a function is encountered, clone it (exportFunction-style) rather than
     // aborting the clone.
     bool cloneFunctions;
-};
-
-class MOZ_STACK_CLASS FunctionForwarderOptions : public OptionsBase {
-public:
-    FunctionForwarderOptions(JSContext *cx = xpc_GetSafeJSContext(),
-                             JSObject* options = nullptr)
-        : OptionsBase(cx, options)
-        , allowCallbacks(false)
-    { }
-
-    JSObject *ToJSObject(JSContext *cx) {
-        JS::RootedObject global(cx, JS::CurrentGlobalOrNull(cx));
-        JS::RootedObject obj(cx, JS_NewObjectWithGivenProto(cx, nullptr, JS::NullPtr(), global));
-        if (!obj)
-            return nullptr;
-
-        JS::RootedValue val(cx);
-        unsigned attrs = JSPROP_READONLY | JSPROP_PERMANENT;
-        val = JS::BooleanValue(allowCallbacks);
-        if (!JS_DefineProperty(cx, obj, "allowCallbacks", val, attrs))
-            return nullptr;
-
-        return obj;
-    }
-
-    virtual bool Parse() {
-        return ParseBoolean("allowCallbacks", &allowCallbacks);
-    };
-
-    // Allow callback arguments. This is similar to setting cloneFunctions in
-    // StackScopedCloneOptions, except that cloneFunctions will clone any Function
-    // encountered in the object graph, whereas this option only allows the base
-    // object to be supported.
-    //
-    // So invoking: |forwardedFunction(callback)| will work, but
-    // |forwardedFunction({ cb: callback })| will not.
-    bool allowCallbacks;
 };
 
 JSObject *

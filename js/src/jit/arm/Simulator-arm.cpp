@@ -33,8 +33,8 @@
 #include "mozilla/Likely.h"
 #include "mozilla/MathAlgorithms.h"
 
+#include "asmjs/AsmJSValidate.h"
 #include "jit/arm/Assembler-arm.h"
-#include "jit/AsmJS.h"
 #include "vm/Runtime.h"
 
 extern "C" {
@@ -385,31 +385,23 @@ class SimulatorRuntime
     {}
     ~SimulatorRuntime();
     bool init() {
-#ifdef JS_THREADSAFE
         lock_ = PR_NewLock();
         if (!lock_)
             return false;
-#endif
         if (!icache_.init())
             return false;
         return true;
     }
     ICacheMap &icache() {
-#ifdef JS_THREADSAFE
         MOZ_ASSERT(lockOwner_ == PR_GetCurrentThread());
-#endif
         return icache_;
     }
     Redirection *redirection() const {
-#ifdef JS_THREADSAFE
         MOZ_ASSERT(lockOwner_ == PR_GetCurrentThread());
-#endif
         return redirection_;
     }
     void setRedirection(js::jit::Redirection *redirection) {
-#ifdef JS_THREADSAFE
         MOZ_ASSERT(lockOwner_ == PR_GetCurrentThread());
-#endif
         redirection_ = redirection;
     }
 };
@@ -423,21 +415,17 @@ class AutoLockSimulatorRuntime
     AutoLockSimulatorRuntime(SimulatorRuntime *srt)
       : srt_(srt)
     {
-#ifdef JS_THREADSAFE
         PR_Lock(srt_->lock_);
         MOZ_ASSERT(!srt_->lockOwner_);
 #ifdef DEBUG
         srt_->lockOwner_ = PR_GetCurrentThread();
 #endif
-#endif
     }
 
     ~AutoLockSimulatorRuntime() {
-#ifdef JS_THREADSAFE
         MOZ_ASSERT(srt_->lockOwner_ == PR_GetCurrentThread());
         srt_->lockOwner_ = nullptr;
         PR_Unlock(srt_->lock_);
-#endif
     }
 };
 
@@ -1264,10 +1252,8 @@ SimulatorRuntime::~SimulatorRuntime()
         js_delete(r);
         r = next;
     }
-#ifdef JS_THREADSAFE
     if (lock_)
         PR_DestroyLock(lock_);
-#endif
 }
 
 // Sets the register in the architecture state. It will also deal with updating
@@ -1444,6 +1430,8 @@ ReturnType Simulator::getFromVFPRegister(int reg_index)
 // requires these to be instantiated.
 template double Simulator::getFromVFPRegister<double, 2>(int reg_index);
 template float Simulator::getFromVFPRegister<float, 1>(int reg_index);
+template void Simulator::setVFPRegister<double, 2>(int reg_index, const double& value);
+template void Simulator::setVFPRegister<float, 1>(int reg_index, const float& value);
 
 void
 Simulator::getFpArgs(double *x, double *y, int32_t *z)

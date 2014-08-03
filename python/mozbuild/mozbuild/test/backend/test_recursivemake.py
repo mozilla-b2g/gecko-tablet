@@ -212,8 +212,7 @@ class TestRecursiveMakeBackend(BackendTester):
 
         lines = [l.strip() for l in open(p, 'rt').readlines()[2:]]
         self.assertEqual(lines, [
-            'DIRS := dir1',
-            'PARALLEL_DIRS := dir2',
+            'DIRS := dir1 dir2',
             'TEST_DIRS := dir3',
         ])
 
@@ -276,14 +275,6 @@ class TestRecursiveMakeBackend(BackendTester):
             'EXTRA_PP_COMPONENTS': [
                 'EXTRA_PP_COMPONENTS += bar.pp.js',
                 'EXTRA_PP_COMPONENTS += foo.pp.js',
-            ],
-            'EXTRA_JS_MODULES': [
-                'EXTRA_JS_MODULES += bar.jsm',
-                'EXTRA_JS_MODULES += foo.jsm',
-            ],
-            'EXTRA_PP_JS_MODULES': [
-                'EXTRA_PP_JS_MODULES += bar.pp.jsm',
-                'EXTRA_PP_JS_MODULES += foo.pp.jsm',
             ],
             'FAIL_ON_WARNINGS': [
                 'FAIL_ON_WARNINGS := 1',

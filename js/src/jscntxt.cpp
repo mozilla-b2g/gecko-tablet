@@ -39,9 +39,7 @@
 #include "jswatchpoint.h"
 
 #include "gc/Marking.h"
-#ifdef JS_ION
 #include "jit/Ion.h"
-#endif
 #include "js/CharacterEncoding.h"
 #include "js/OldDebugAPI.h"
 #include "vm/Debugger.h"
@@ -191,9 +189,7 @@ js::NewContext(JSRuntime *rt, size_t stackChunkSize)
      * of the struct.
      */
     if (!rt->haveCreatedContext) {
-#ifdef JS_THREADSAFE
         JS_BeginRequest(cx);
-#endif
         bool ok = rt->initializeAtoms(cx);
         if (ok)
             ok = rt->initSelfHosting(cx);
@@ -201,9 +197,8 @@ js::NewContext(JSRuntime *rt, size_t stackChunkSize)
         if (ok && !rt->parentRuntime)
             ok = rt->transformToPermanentAtoms();
 
-#ifdef JS_THREADSAFE
         JS_EndRequest(cx);
-#endif
+
         if (!ok) {
             DestroyContext(cx, DCM_NEW_FAILED);
             return nullptr;
@@ -227,10 +222,8 @@ js::DestroyContext(JSContext *cx, DestroyContextMode mode)
     JSRuntime *rt = cx->runtime();
     JS_AbortIfWrongThread(rt);
 
-#ifdef JS_THREADSAFE
     if (cx->outstandingRequests != 0)
         MOZ_CRASH();
-#endif
 
     cx->checkNoGCRooters();
 
@@ -467,13 +460,13 @@ checkReportFlags(JSContext *cx, unsigned *flags)
         JSScript *script = cx->currentScript();
         if (script && script->strict())
             *flags &= ~JSREPORT_WARNING;
-        else if (cx->options().extraWarnings())
+        else if (cx->compartment()->options().extraWarnings(cx))
             *flags |= JSREPORT_WARNING;
         else
             return true;
     } else if (JSREPORT_IS_STRICT(*flags)) {
         /* Warning/error only when JSOPTION_STRICT is set. */
-        if (!cx->options().extraWarnings())
+        if (!cx->compartment()->options().extraWarnings(cx))
             return true;
     }
 
@@ -979,7 +972,7 @@ js_GetErrorMessage(void *userRef, const unsigned errorNumber)
 bool
 js::InvokeInterruptCallback(JSContext *cx)
 {
-    JS_ASSERT_REQUEST_DEPTH(cx);
+    JS_ASSERT(cx->runtime()->requestDepth >= 1);
 
     JSRuntime *rt = cx->runtime();
     JS_ASSERT(rt->interrupt);
@@ -995,15 +988,11 @@ js::InvokeInterruptCallback(JSContext *cx)
 
     js::gc::GCIfNeeded(cx);
 
-#ifdef JS_ION
-#ifdef JS_THREADSAFE
     rt->interruptPar = false;
-#endif
 
     // A worker thread may have requested an interrupt after finishing an Ion
     // compilation.
     jit::AttachFinishedCompilations(cx);
-#endif
 
     // Important: Additional callbacks can occur inside the callback handler
     // if it re-enters the JS engine. The embedding must ensure that the
@@ -1114,9 +1103,7 @@ JSContext::JSContext(JSRuntime *rt)
     errorReporter(nullptr),
     data(nullptr),
     data2(nullptr),
-#ifdef JS_THREADSAFE
     outstandingRequests(0),
-#endif
     iterValue(MagicValue(JS_NO_ITER_VALUE)),
     jitIsBroken(false),
 #ifdef MOZ_TRACE_JSCALLS
@@ -1345,7 +1332,7 @@ JSContext::findVersion() const
     return runtime()->defaultVersion();
 }
 
-#if defined JS_THREADSAFE && defined DEBUG
+#ifdef DEBUG
 
 JS::AutoCheckRequestDepth::AutoCheckRequestDepth(JSContext *cx)
     : cx(cx)

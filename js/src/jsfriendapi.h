@@ -418,13 +418,6 @@ SetSourceHook(JSRuntime *rt, mozilla::UniquePtr<SourceHook> hook);
 extern JS_FRIEND_API(mozilla::UniquePtr<SourceHook>)
 ForgetSourceHook(JSRuntime *rt);
 
-#ifdef NIGHTLY_BUILD
-typedef void (*AssertOnScriptEntryHook)(JSContext *cx, JS::HandleScript script);
-
-extern JS_FRIEND_API(void)
-SetAssertOnScriptEntryHook(JSRuntime *rt, AssertOnScriptEntryHook hook);
-#endif
-
 extern JS_FRIEND_API(JS::Zone *)
 GetCompartmentZone(JSCompartment *comp);
 
@@ -1055,10 +1048,8 @@ GetPCCountScriptSummary(JSContext *cx, size_t script);
 JS_FRIEND_API(JSString *)
 GetPCCountScriptContents(JSContext *cx, size_t script);
 
-#ifdef JS_THREADSAFE
 JS_FRIEND_API(bool)
 ContextHasOutstandingRequests(const JSContext *cx);
-#endif
 
 typedef void
 (* ActivityCallback)(void *arg, bool active);

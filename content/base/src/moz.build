@@ -198,17 +198,8 @@ SOURCES += [
 EXTRA_COMPONENTS += [
     'contentAreaDropListener.js',
     'contentAreaDropListener.manifest',
-    'contentSecurityPolicy.manifest',
     'messageWakeupService.js',
     'messageWakeupService.manifest',
-]
-
-EXTRA_PP_COMPONENTS += [
-    'contentSecurityPolicy.js',
-]
-
-EXTRA_JS_MODULES += [
-    'CSPUtils.jsm',
 ]
 
 FAIL_ON_WARNINGS = True
@@ -223,8 +214,6 @@ LOCAL_INCLUDES += [
     '/content/html/content/src',
     '/content/html/document/src',
     '/content/svg/content/src',
-    '/content/xml/content/src',
-    '/content/xml/document/src',
     '/content/xul/content/src',
     '/content/xul/document/src',
     '/docshell/base',
@@ -232,6 +221,7 @@ LOCAL_INCLUDES += [
     '/dom/ipc',
     '/dom/workers',
     '/dom/xbl',
+    '/dom/xml',
     '/dom/xslt/xpath',
     '/image/src',
     '/js/ipc',

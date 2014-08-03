@@ -22,6 +22,7 @@
 #include "nsContentList.h"
 #include "nsStyleSet.h"
 #include "nsIDOMMutationEvent.h"
+#include "nsThreadUtils.h"
 
 #ifdef ACCESSIBILITY
 #include "mozilla/a11y/AccTypes.h"
@@ -63,7 +64,7 @@ nsNumberControlFrame::DestroyFrom(nsIFrame* aDestructRoot)
 }
 
 nscoord
-nsNumberControlFrame::GetMinWidth(nsRenderingContext* aRenderingContext)
+nsNumberControlFrame::GetMinISize(nsRenderingContext* aRenderingContext)
 {
   nscoord result;
   DISPLAY_MIN_WIDTH(this, result);
@@ -72,7 +73,7 @@ nsNumberControlFrame::GetMinWidth(nsRenderingContext* aRenderingContext)
   if (kid) { // display:none?
     result = nsLayoutUtils::IntrinsicForContainer(aRenderingContext,
                                                   kid,
-                                                  nsLayoutUtils::MIN_WIDTH);
+                                                  nsLayoutUtils::MIN_ISIZE);
   } else {
     result = 0;
   }
@@ -81,7 +82,7 @@ nsNumberControlFrame::GetMinWidth(nsRenderingContext* aRenderingContext)
 }
 
 nscoord
-nsNumberControlFrame::GetPrefWidth(nsRenderingContext* aRenderingContext)
+nsNumberControlFrame::GetPrefISize(nsRenderingContext* aRenderingContext)
 {
   nscoord result;
   DISPLAY_PREF_WIDTH(this, result);
@@ -90,7 +91,7 @@ nsNumberControlFrame::GetPrefWidth(nsRenderingContext* aRenderingContext)
   if (kid) { // display:none?
     result = nsLayoutUtils::IntrinsicForContainer(aRenderingContext,
                                                   kid,
-                                                  nsLayoutUtils::PREF_WIDTH);
+                                                  nsLayoutUtils::PREF_ISIZE);
   } else {
     result = 0;
   }
@@ -137,10 +138,12 @@ nsNumberControlFrame::Reflow(nsPresContext* aPresContext,
 
     nsHTMLReflowMetrics wrappersDesiredSize(aReflowState);
 
+    WritingMode wm = outerWrapperFrame->GetWritingMode();
+    LogicalSize availSize = aReflowState.ComputedSize(wm);
+    availSize.BSize(wm) = NS_UNCONSTRAINEDSIZE;
+
     nsHTMLReflowState wrapperReflowState(aPresContext, aReflowState,
-                                         outerWrapperFrame,
-                                         nsSize(contentBoxWidth,
-                                                NS_UNCONSTRAINEDSIZE));
+                                         outerWrapperFrame, availSize);
 
     // offsets of wrapper frame
     nscoord xoffset = aReflowState.ComputedPhysicalBorderPadding().left +
@@ -257,6 +260,28 @@ nsNumberControlFrame::GetTextFieldFrame()
   return do_QueryFrame(GetAnonTextControl()->GetPrimaryFrame());
 }
 
+class FocusTextField : public nsRunnable
+{
+public:
+  FocusTextField(nsIContent* aNumber, nsIContent* aTextField)
+    : mNumber(aNumber),
+      mTextField(aTextField)
+  {}
+
+  NS_IMETHODIMP Run() MOZ_OVERRIDE
+  {
+    if (mNumber->AsElement()->State().HasState(NS_EVENT_STATE_FOCUS)) {
+      HTMLInputElement::FromContent(mTextField)->Focus();
+    }
+
+    return NS_OK;
+  }
+
+private:
+  nsCOMPtr<nsIContent> mNumber;
+  nsCOMPtr<nsIContent> mTextField;
+};
+
 nsresult
 nsNumberControlFrame::MakeAnonymousElement(Element** aResult,
                                            nsTArray<ContentInfo>& aElements,
@@ -362,10 +387,8 @@ nsNumberControlFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
 
   if (mContent->AsElement()->State().HasState(NS_EVENT_STATE_FOCUS)) {
     // We don't want to focus the frame but the text field.
-    nsIFocusManager* fm = nsFocusManager::GetFocusManager();
-    nsCOMPtr<nsIDOMElement> element = do_QueryInterface(mTextField);
-    NS_ASSERTION(element, "Really, this should be a nsIDOMElement!");
-    fm->SetFocus(element, 0);
+    nsRefPtr<FocusTextField> focusJob = new FocusTextField(mContent, mTextField);
+    nsContentUtils::AddScriptRunner(focusJob);
   }
 
   if (StyleDisplay()->mAppearance == NS_THEME_TEXTFIELD) {

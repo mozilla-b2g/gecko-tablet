@@ -963,7 +963,7 @@ CacheStorageService::RemoveEntry(CacheEntry* aEntry, bool aOnlyUnreferenced)
       return false;
     }
 
-    if (!aEntry->IsUsingDisk() && IsForcedValidEntry(entryKey)) {
+    if (!aEntry->IsUsingDisk() && IsForcedValidEntryInternal(entryKey)) {
       LOG(("  forced valid, not removing"));
       return false;
     }
@@ -1034,13 +1034,20 @@ CacheStorageService::RecordMemoryOnlyEntry(CacheEntry* aEntry,
   }
 }
 
-// Checks if a cache entry is forced valid (will be loaded directly from cache
-// without further validation) - see nsICacheEntry.idl for further details
+// Acquires the mutex lock for CacheStorageService and calls through to
+// IsForcedValidInternal (bug 1044233)
 bool CacheStorageService::IsForcedValidEntry(nsACString &aCacheEntryKey)
 {
-  TimeStamp validUntil;
-
   mozilla::MutexAutoLock lock(mLock);
+
+  return IsForcedValidEntryInternal(aCacheEntryKey);
+}
+
+// Checks if a cache entry is forced valid (will be loaded directly from cache
+// without further validation) - see nsICacheEntry.idl for further details
+bool CacheStorageService::IsForcedValidEntryInternal(nsACString &aCacheEntryKey)
+{
+  TimeStamp validUntil;
 
   if (!mForcedValidEntries.Get(aCacheEntryKey, &validUntil)) {
     return false;

@@ -33,11 +33,11 @@
 #endif
 #include "jswrapper.h"
 
+#include "asmjs/AsmJSModule.h"
+#include "asmjs/AsmJSValidate.h"
 #include "gc/Barrier.h"
 #include "gc/Marking.h"
 #include "gc/Memory.h"
-#include "jit/AsmJS.h"
-#include "jit/AsmJSModule.h"
 #include "js/MemoryMetrics.h"
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
@@ -409,7 +409,7 @@ ArrayBufferObject::changeContents(JSContext *cx, void *newData)
     }
 }
 
-#if defined(JS_CPU_X64)
+#if defined(JS_CODEGEN_X64)
 // Refer to comment above AsmJSMappedSize in AsmJS.h.
 JS_STATIC_ASSERT(AsmJSAllocationGranularity == AsmJSPageSize);
 #endif
@@ -437,7 +437,7 @@ ArrayBufferObject::releaseAsmJSArrayNoSignals(FreeOp *fop)
     fop->free_(dataPointer());
 }
 
-#if defined(JS_ION) && defined(JS_CPU_X64)
+#ifdef JS_CODEGEN_X64
 /* static */ bool
 ArrayBufferObject::prepareForAsmJS(JSContext *cx, Handle<ArrayBufferObject*> buffer,
                                    bool usesSignalHandlers)
@@ -524,7 +524,7 @@ ArrayBufferObject::releaseAsmJSArray(FreeOp *fop)
 #   endif
 # endif
 }
-#else  /* defined(JS_ION) && defined(JS_CPU_X64) */
+#else // JS_CODEGEN_X64
 bool
 ArrayBufferObject::prepareForAsmJS(JSContext *cx, Handle<ArrayBufferObject*> buffer,
                                    bool usesSignalHandlers)
@@ -547,7 +547,6 @@ bool
 ArrayBufferObject::canNeuterAsmJSArrayBuffer(JSContext *cx, ArrayBufferObject &buffer)
 {
     JS_ASSERT(!buffer.isSharedArrayBuffer());
-#ifdef JS_ION
     AsmJSActivation *act = cx->mainThread().asmJSActivationStack();
     for (; act; act = act->prevAsmJS()) {
         if (act->module().maybeHeapBufferObject() == &buffer)
@@ -557,9 +556,6 @@ ArrayBufferObject::canNeuterAsmJSArrayBuffer(JSContext *cx, ArrayBufferObject &b
         return true;
 
     return false;
-#else
-    return true;
-#endif
 }
 
 void *

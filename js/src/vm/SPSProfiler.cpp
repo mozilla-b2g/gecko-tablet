@@ -35,11 +35,10 @@ SPSProfiler::SPSProfiler(JSRuntime *rt)
 bool
 SPSProfiler::init()
 {
-#ifdef JS_THREADSAFE
     lock_ = PR_NewLock();
     if (lock_ == nullptr)
         return false;
-#endif
+
     return true;
 }
 
@@ -49,10 +48,8 @@ SPSProfiler::~SPSProfiler()
         for (ProfileStringMap::Enum e(strings); !e.empty(); e.popFront())
             js_free(const_cast<char *>(e.front().value()));
     }
-#ifdef JS_THREADSAFE
     if (lock_)
         PR_DestroyLock(lock_);
-#endif
 }
 
 void
@@ -89,14 +86,12 @@ SPSProfiler::enable(bool enabled)
 
     enabled_ = enabled;
 
-#ifdef JS_ION
     /* Toggle SPS-related jumps on baseline jitcode.
      * The call to |ReleaseAllJITCode| above will release most baseline jitcode, but not
      * jitcode for scripts with active frames on the stack.  These scripts need to have
      * their profiler state toggled so they behave properly.
      */
     jit::ToggleBaselineSPS(rt, enabled);
-#endif
 }
 
 /* Lookup the string for the function/script, creating one if necessary */
@@ -204,7 +199,7 @@ SPSProfiler::exit(JSScript *script, JSFunction *maybeFun)
 }
 
 void
-SPSProfiler::enterNative(const char *string, void *sp)
+SPSProfiler::enterAsmJS(const char *string, void *sp)
 {
     /* these operations cannot be re-ordered, so volatile-ize operations */
     volatile ProfileEntry *stack = stack_;
@@ -215,7 +210,7 @@ SPSProfiler::enterNative(const char *string, void *sp)
     if (current < max_) {
         stack[current].setLabel(string);
         stack[current].setCppFrame(sp, 0);
-        JS_ASSERT(stack[current].flags() == js::ProfileEntry::IS_CPP_ENTRY);
+        stack[current].setFlag(ProfileEntry::ASMJS);
     }
     *size = current + 1;
 }
@@ -326,7 +321,7 @@ SPSEntryMarker::SPSEntryMarker(JSRuntime *rt,
         return;
     }
     size_before = *profiler->size_;
-    profiler->push("js::RunScript", nullptr, script, script->code(), /* copy = */ false);
+    profiler->push("js::RunScript", this, nullptr, nullptr, /* copy = */ false);
 }
 
 SPSEntryMarker::~SPSEntryMarker()

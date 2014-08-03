@@ -111,6 +111,7 @@ public class StringHelper {
     // Display
     public static final String TEXT_SIZE_LABEL = "Text size";
     public static final String TITLE_BAR_LABEL = "Title bar";
+    public static final String SCROLL_TITLE_BAR_LABEL="Full-screen browsing";
     public static final String TEXT_REFLOW_LABEL = "Text reflow";
     public static final String CHARACTER_ENCODING_LABEL = "Character encoding";
     public static final String PLUGINS_LABEL = "Plugins";
@@ -130,7 +131,6 @@ public class StringHelper {
     public static final String ABOUT_LABEL = "About (Fennec|Nightly|Aurora|Firefox Beta|Firefox)";
     public static final String FAQS_LABEL = "FAQs";
     public static final String FEEDBACK_LABEL = "Give feedback";
-    public static final String PRODUCT_ANNOUNCEMENTS_LABEL = "Show product announcements";
     public static final String LOCATION_SERVICES_LABEL = "Mozilla location services";
     public static final String HELTH_REPORT_LABEL = "(Fennec|Nightly|Aurora|Firefox Beta|Firefox) Health Report";
     public static final String MY_HEALTH_REPORT_LABEL = "View my Health Report";

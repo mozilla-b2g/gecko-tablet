@@ -28,7 +28,7 @@ namespace mozilla {
 class MOZ_STACK_CLASS AutoCxPusher
 {
 public:
-  AutoCxPusher(JSContext *aCx, bool aAllowNull = false);
+  explicit AutoCxPusher(JSContext *aCx, bool aAllowNull = false);
   // XPCShell uses an nsCxPusher, which contains an AutoCxPusher.
   ~AutoCxPusher();
 
@@ -97,11 +97,11 @@ namespace mozilla {
  */
 class MOZ_STACK_CLASS AutoJSContext {
 public:
-  AutoJSContext(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM);
+  explicit AutoJSContext(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM);
   operator JSContext*() const;
 
 protected:
-  AutoJSContext(bool aSafe MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
+  explicit AutoJSContext(bool aSafe MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
 
   // We need this Init() method because we can't use delegating constructor for
   // the moment. It is a C++11 feature and we do not require C++11 to be
@@ -119,7 +119,7 @@ protected:
  */
 class MOZ_STACK_CLASS ThreadsafeAutoJSContext {
 public:
-  ThreadsafeAutoJSContext(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM);
+  explicit ThreadsafeAutoJSContext(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM);
   operator JSContext*() const;
 
 private:
@@ -135,7 +135,7 @@ private:
  */
 class MOZ_STACK_CLASS AutoSafeJSContext : public AutoJSContext {
 public:
-  AutoSafeJSContext(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM);
+  explicit AutoSafeJSContext(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM);
 private:
   JSAutoCompartment mAc;
 };
@@ -145,7 +145,7 @@ private:
  */
 class MOZ_STACK_CLASS ThreadsafeAutoSafeJSContext {
 public:
-  ThreadsafeAutoSafeJSContext(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM);
+  explicit ThreadsafeAutoSafeJSContext(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM);
   operator JSContext*() const;
 
 private:
@@ -153,29 +153,6 @@ private:
   Maybe<JSAutoRequest> mRequest; // Used on workers.
   Maybe<AutoSafeJSContext> mAutoSafeJSContext; // Used on main thread.
   MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-};
-
-/**
- * Use AutoPushJSContext when you want to use a specific JSContext that may or
- * may not be already on the stack. This differs from nsCxPusher in that it only
- * pushes in the case that the given cx is not the active cx on the JSContext
- * stack, which avoids an expensive JS_SaveFrameChain in the common case.
- *
- * Most consumers of this should probably just use AutoJSContext. But the goal
- * here is to preserve the existing behavior while ensure proper cx-stack
- * semantics in edge cases where the context being used doesn't match the active
- * context.
- *
- * NB: This will not push a null cx even if aCx is null. Make sure you know what
- * you're doing.
- */
-class MOZ_STACK_CLASS AutoPushJSContext {
-  Maybe<AutoCxPusher> mPusher;
-  JSContext* mCx;
-
-public:
-  AutoPushJSContext(JSContext* aCx);
-  operator JSContext*() { return mCx; }
 };
 
 } // namespace mozilla

@@ -200,7 +200,7 @@ describe("loop.panel", function() {
 
     beforeEach(function() {
       callUrlData = {
-        call_url: "http://call.invalid/",
+        callUrl: "http://call.invalid/",
         expiresAt: 1000
       };
 
@@ -229,7 +229,7 @@ describe("loop.panel", function() {
 
     beforeEach(function() {
       callUrlData = {
-        call_url: "http://call.invalid/",
+        callUrl: "http://call.invalid/fakeToken",
         expiresAt: 1000
       };
 
@@ -272,7 +272,7 @@ describe("loop.panel", function() {
 
       it("should update state with the call url received", function() {
         expect(view.state.pending).eql(false);
-        expect(view.state.callUrl).eql(callUrlData.call_url);
+        expect(view.state.callUrl).eql(callUrlData.callUrl);
       });
 
       it("should clear the pending state when a response is received",
@@ -283,7 +283,7 @@ describe("loop.panel", function() {
       it("should update CallUrlResult with the call url", function() {
         var urlField = view.getDOMNode().querySelector("input[type='url']");
 
-        expect(urlField.value).eql(callUrlData.call_url);
+        expect(urlField.value).eql(callUrlData.callUrl);
       });
 
       it("should reset all pending notifications", function() {
@@ -302,6 +302,12 @@ describe("loop.panel", function() {
         sinon.assert.calledOnce(notifier.errorL10n);
         sinon.assert.calledWithExactly(notifier.errorL10n,
                                        "unable_retrieve_url");
+      });
+
+      it("should set 'loopToken' with the callUrl token", function() {
+        sinon.assert.calledOnce(navigator.mozLoop.setLoopCharPref);
+        sinon.assert.calledWithExactly(navigator.mozLoop.setLoopCharPref,
+                                       "loopToken", "fakeToken");
       });
     });
   });
