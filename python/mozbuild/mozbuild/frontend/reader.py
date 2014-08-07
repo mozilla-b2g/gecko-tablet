@@ -104,10 +104,6 @@ def is_read_allowed(path, config):
     return False
 
 
-class PathWithTrigger(unicode):
-    __slots__ = ('trigger',)
-
-
 class SandboxCalledError(SandboxError):
     """Represents an error resulting from calling the error() function."""
 
@@ -281,8 +277,7 @@ class MozbuildSandbox(Sandbox):
         data.is_library = True
         return data
 
-    def _add_tier_directory(self, tier, reldir, static=False, external=False,
-            trigger=None):
+    def _add_tier_directory(self, tier, reldir, external=False):
         """Register a tier directory with the build."""
         if isinstance(reldir, text_type):
             reldir = [reldir]
@@ -290,22 +285,15 @@ class MozbuildSandbox(Sandbox):
         if not tier in self['TIERS']:
             self['TIERS'][tier] = {
                 'regular': [],
-                'static': [],
                 'external': [],
             }
 
-        key = 'static' if static else 'external' if external else 'regular'
-        if external and static:
-            raise Exception('Only one of external or static can be set at the '
-                'same time')
-
+        key = 'external' if external else 'regular'
         for path in reldir:
             if path in self['TIERS'][tier][key]:
                 raise Exception('Directory has already been registered with '
                     'tier: %s' % path)
 
-            path = PathWithTrigger(path)
-            path.trigger = trigger
             self['TIERS'][tier][key].append(path)
 
     def _export(self, varname):
@@ -877,7 +865,7 @@ class BuildReader(object):
                     'TIERS defined but it should not be', sandbox)
 
             for tier, values in sandbox['TIERS'].items():
-                # We don't descend into static directories because static by
+                # We don't descend into external directories because external by
                 # definition is external to the build system.
                 for d in values['regular']:
                     if d in recurse_info:

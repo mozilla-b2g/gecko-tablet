@@ -18,8 +18,11 @@ IS_COMPONENT = True
 
 USE_LIBS += [
     'mozalloc',
+    'nspr',
     'xpcomglue_s',
     'xul',
 ]
 
 CXXFLAGS += CONFIG['MOZ_GNOMEVFS_CFLAGS']
+
+OS_LIBS += CONFIG['MOZ_GNOMEVFS_LIBS']

@@ -10,6 +10,7 @@ if CONFIG['GKMEDIAS_SHARED_LIBRARY']:
     FORCE_SHARED_LIB = True
     USE_LIBS += [
         'mozalloc',
+        'nspr',
     ]
 
 if CONFIG['MOZ_WEBRTC']:
@@ -17,3 +18,9 @@ if CONFIG['MOZ_WEBRTC']:
 
 if CONFIG['OS_TARGET'] == 'WINNT':
     DEFFILE = 'symbols.def'
+    OS_LIBS += [
+        'usp10',
+        'ole32',
+        'msimg32',
+        'winmm',
+    ]

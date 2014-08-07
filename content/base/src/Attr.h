@@ -42,7 +42,8 @@ public:
 
   // nsIDOMNode interface
   NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  virtual void GetTextContentInternal(nsAString& aTextContent) MOZ_OVERRIDE;
+  virtual void GetTextContentInternal(nsAString& aTextContent,
+                                      ErrorResult& aError) MOZ_OVERRIDE;
   virtual void SetTextContentInternal(const nsAString& aTextContent,
                                       ErrorResult& aError) MOZ_OVERRIDE;
   virtual void GetNodeValueInternal(nsAString& aNodeValue) MOZ_OVERRIDE;
@@ -78,6 +79,14 @@ public:
                                                                    nsIAttribute)
 
   virtual nsIDOMNode* AsDOMNode() { return this; }
+
+  // This method should not do anything interesting, except possibly in the case of
+  // external binary components.
+  static Attr* FromDOMAttr(nsIDOMAttr* aDOMAttr)
+  {
+    nsCOMPtr<nsIAttribute> iattr = do_QueryInterface(aDOMAttr);
+    return static_cast<mozilla::dom::Attr*>(iattr.get());
+  }
 
   // WebIDL
   virtual JSObject* WrapObject(JSContext* aCx) MOZ_OVERRIDE;

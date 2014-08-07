@@ -1558,8 +1558,10 @@ static PLDHashOperator NotifyVisitRemoval(PlaceHashKey* aEntry,
   const nsTArray<VisitData>& visits = aEntry->visits;
   nsCOMPtr<nsIURI> uri;
   (void)NS_NewURI(getter_AddRefs(uri), visits[0].spec);
-  bool removingPage = visits.Length() == aEntry->visitCount &&
-                      !aEntry->bookmarked;
+  // XXX visitCount should really just be unsigned (bug 1049812)
+  bool removingPage =
+    visits.Length() == static_cast<size_t>(aEntry->visitCount) &&
+    !aEntry->bookmarked;
   // FindRemovableVisits only sets the transition type on the VisitData objects
   // it collects if the visits were filtered by transition type.
   // RemoveVisitsFilter currently only supports filtering by transition type, so
@@ -1636,7 +1638,9 @@ static PLDHashOperator ListToBeRemovedPlaceIds(PlaceHashKey* aEntry,
 {
   const nsTArray<VisitData>& visits = aEntry->visits;
   // Only orphan ids should be listed.
-  if (visits.Length() == aEntry->visitCount && !aEntry->bookmarked) {
+  // XXX visitCount should really just be unsigned (bug 1049812)
+  if (visits.Length() == static_cast<size_t>(aEntry->visitCount) &&
+      !aEntry->bookmarked) {
     nsCString* list = static_cast<nsCString*>(aIdsList);
     if (!list->IsEmpty())
       list->Append(',');
@@ -2223,12 +2227,6 @@ History::FetchPageInfo(VisitData& _place, bool* _exists)
   return NS_OK;
 }
 
-/* static */ size_t
-History::SizeOfEntryExcludingThis(KeyClass* aEntry, mozilla::MallocSizeOf aMallocSizeOf, void *)
-{
-  return aEntry->array.SizeOfExcludingThis(aMallocSizeOf);
-}
-
 MOZ_DEFINE_MALLOC_SIZE_OF(HistoryMallocSizeOf)
 
 NS_IMETHODIMP
@@ -2246,7 +2244,7 @@ size_t
 History::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOfThis)
 {
   return aMallocSizeOfThis(this) +
-         mObservers.SizeOfExcludingThis(SizeOfEntryExcludingThis, aMallocSizeOfThis);
+         mObservers.SizeOfExcludingThis(aMallocSizeOfThis);
 }
 
 /* static */

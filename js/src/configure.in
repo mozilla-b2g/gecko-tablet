@@ -2153,7 +2153,7 @@ dnl Quota support
 MOZ_CHECK_HEADERS(sys/quota.h)
 MOZ_CHECK_HEADERS(linux/quota.h)
 
-AC_ARG_ENABLE(dtrace,
+MOZ_ARG_ENABLE_BOOL(dtrace,
               [  --enable-dtrace         build with dtrace support if available (default=no)],
               [enable_dtrace="yes"],)
 if test "x$enable_dtrace" = "xyes"; then
@@ -3632,7 +3632,7 @@ if test -z "$SKIP_LIBRARY_CHECKS" -a -z "$NO_EDITLINE"; then
 fi
 AC_SUBST(JS_BUNDLED_EDITLINE)
 AC_SUBST(JS_DISABLE_SHELL)
-AC_SUBST(EDITLINE_LIBS)
+AC_SUBST_LIST(EDITLINE_LIBS)
 
 dnl ========================================================
 dnl =
@@ -3770,7 +3770,7 @@ HOST_CXXFLAGS=`echo \
     $_DEPEND_CFLAGS`
 
 AC_SUBST(NSPR_CFLAGS)
-AC_SUBST(NSPR_LIBS)
+AC_SUBST_LIST(NSPR_LIBS)
 AC_SUBST(MOZ_NATIVE_NSPR)
 
 if test -n "$MOZ_NUWA_PROCESS"; then

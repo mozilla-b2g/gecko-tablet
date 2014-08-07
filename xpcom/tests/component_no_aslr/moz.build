@@ -22,6 +22,11 @@ DEFINES['LIBRARY_FILENAME'] = '%s%s%s' % (
 
 USE_LIBS += [
     'mozalloc',
+    'nspr',
     'xpcomglue_s',
     'xul',
 ]
+
+# Need to link with CoreFoundation on Mac
+if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa':
+    OS_LIBS += CONFIG['TK_LIBS']

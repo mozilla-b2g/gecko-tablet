@@ -3891,9 +3891,15 @@ void HTMLMediaElement::UpdateAudioChannelPlayingState()
      (!mPaused &&
       (HasAttr(kNameSpaceID_None, nsGkAtoms::loop) ||
        (mReadyState >= nsIDOMHTMLMediaElement::HAVE_CURRENT_DATA &&
-        !IsPlaybackEnded())));
+        !IsPlaybackEnded()) ||
+       mPlayingBeforeSeek));
   if (playingThroughTheAudioChannel != mPlayingThroughTheAudioChannel) {
     mPlayingThroughTheAudioChannel = playingThroughTheAudioChannel;
+
+    // If we are not playing, we don't need to create a new audioChannelAgent.
+    if (!mAudioChannelAgent && !mPlayingThroughTheAudioChannel) {
+       return;
+    }
 
     if (!mAudioChannelAgent) {
       nsresult rv;

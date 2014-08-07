@@ -1896,12 +1896,12 @@ nsPresContext::MediaFeatureValuesChanged(StyleRebuildType aShouldRebuild,
 
   mPendingViewportChange = false;
 
-  if (!nsContentUtils::IsSafeToRunScript()) {
-    NS_ABORT_IF_FALSE(mDocument->IsBeingUsedAsImage(),
-                      "How did we get here?  Are we failing to notify "
-                      "listeners that we should notify?");
+  if (mDocument->IsBeingUsedAsImage()) {
+    MOZ_ASSERT(PR_CLIST_IS_EMPTY(&mDOMMediaQueryLists));
     return;
   }
+
+  MOZ_ASSERT(nsContentUtils::IsSafeToRunScript());
 
   // Media query list listeners should be notified from a queued task
   // (in HTML5 terms), although we also want to notify them on certain
@@ -2721,7 +2721,7 @@ nsPresContext::GetPrimaryFrameFor(nsIContent* aContent)
 {
   NS_PRECONDITION(aContent, "Don't do that");
   if (GetPresShell() &&
-      GetPresShell()->GetDocument() == aContent->GetCurrentDoc()) {
+      GetPresShell()->GetDocument() == aContent->GetComposedDoc()) {
     return aContent->GetPrimaryFrame();
   }
   return nullptr;

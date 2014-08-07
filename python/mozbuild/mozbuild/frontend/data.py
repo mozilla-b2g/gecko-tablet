@@ -104,7 +104,6 @@ class DirectoryTraversal(SandboxDerived):
         'dirs',
         'test_dirs',
         'tier_dirs',
-        'tier_static_dirs',
     )
 
     def __init__(self, sandbox):
@@ -113,7 +112,6 @@ class DirectoryTraversal(SandboxDerived):
         self.dirs = []
         self.test_dirs = []
         self.tier_dirs = OrderedDict()
-        self.tier_static_dirs = OrderedDict()
 
 
 class BaseConfigSubstitution(SandboxDerived):
@@ -328,11 +326,15 @@ class LinkageWrongKindError(Exception):
 
 class Linkable(SandboxDerived):
     """Generic sandbox container object for programs and libraries"""
-    __slots__ = ('linked_libraries')
+    __slots__ = (
+        'linked_libraries',
+        'linked_system_libs',
+    )
 
     def __init__(self, sandbox):
         SandboxDerived.__init__(self, sandbox)
         self.linked_libraries = []
+        self.linked_system_libs = []
 
     def link_library(self, obj):
         assert isinstance(obj, BaseLibrary)
@@ -343,6 +345,20 @@ class Linkable(SandboxDerived):
             raise LinkageWrongKindError('%s != %s' % (obj.KIND, self.KIND))
         self.linked_libraries.append(obj)
         obj.refs.append(self)
+
+    def link_system_library(self, lib):
+        # The '$' check is here as a special temporary rule, allowing the
+        # inherited use of make variables, most notably in TK_LIBS.
+        if not lib.startswith('$') and not lib.startswith('-'):
+            if self.config.substs.get('GNU_CC'):
+                lib = '-l%s' % lib
+            else:
+                lib = '%s%s%s' % (
+                    self.config.import_prefix,
+                    lib,
+                    self.config.import_suffix,
+                )
+        self.linked_system_libs.append(lib)
 
 
 class BaseProgram(Linkable):
@@ -479,6 +495,20 @@ class SharedLibrary(Library):
             )
         else:
             self.soname = self.lib_name
+
+
+class ExternalLibrary(object):
+    """Empty mixin for libraries built by an external build system."""
+
+
+class ExternalStaticLibrary(StaticLibrary, ExternalLibrary):
+    """Sandbox container for static libraries built by an external build
+    system."""
+
+
+class ExternalSharedLibrary(SharedLibrary, ExternalLibrary):
+    """Sandbox container for shared libraries built by an external build
+    system."""
 
 
 class HostLibrary(BaseLibrary):

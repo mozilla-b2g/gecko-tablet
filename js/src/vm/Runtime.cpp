@@ -172,6 +172,9 @@ JSRuntime::JSRuntime(JSRuntime *parentRuntime)
     negativeInfinityValue(DoubleValue(NegativeInfinity<double>())),
     positiveInfinityValue(DoubleValue(PositiveInfinity<double>())),
     emptyString(nullptr),
+#ifdef NIGHTLY_BUILD
+    assertOnScriptEntryHook_(nullptr),
+#endif
     debugMode(false),
     spsProfiler(thisFromCtor()),
     profilingScripts(false),
@@ -180,7 +183,7 @@ JSRuntime::JSRuntime(JSRuntime *parentRuntime)
     data(nullptr),
     signalHandlersInstalled_(false),
     canUseSignalHandlers_(false),
-    defaultFreeOp_(thisFromCtor(), false),
+    defaultFreeOp_(thisFromCtor()),
     debuggerMutations(0),
     securityCallbacks(const_cast<JSSecurityCallbacks *>(&NullSecurityCallbacks)),
     DOMcallbacks(nullptr),
