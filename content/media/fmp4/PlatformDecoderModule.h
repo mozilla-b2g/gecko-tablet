@@ -66,6 +66,7 @@ public:
   // This is called on the decode task queue.
   static PlatformDecoderModule* Create();
 
+#ifdef MOZ_EME
   // Creates a PlatformDecoderModule that uses a CDMProxy to decrypt or
   // decrypt-and-decode EME encrypted content. If the CDM only decrypts and
   // does not decode, we create a PDM and use that to create MediaDataDecoders
@@ -75,6 +76,7 @@ public:
                                                  bool aHasAudio,
                                                  bool aHasVideo,
                                                  MediaTaskQueue* aTaskQueue);
+#endif
 
   // Called to shutdown the decoder module and cleanup state. The PDM
   // is deleted immediately after Shutdown() is called. Shutdown() is
@@ -123,6 +125,7 @@ protected:
   // Caches pref media.fragmented-mp4.use-blank-decoder
   static bool sUseBlankDecoder;
   static bool sFFmpegDecoderEnabled;
+  static bool sGonkDecoderEnabled;
 };
 
 // A callback used by MediaDataDecoder to return output/errors to the
@@ -144,6 +147,10 @@ public:
   virtual void InputExhausted() = 0;
 
   virtual void DrainComplete() = 0;
+
+  virtual void NotifyResourcesStatusChanged() {};
+
+  virtual void ReleaseMediaResources() {};
 };
 
 // MediaDataDecoder is the interface exposed by decoders created by the
@@ -209,6 +216,15 @@ public:
   // returned.
   virtual nsresult Shutdown() = 0;
 
+  // For Codec Resource Management
+  virtual bool IsWaitingMediaResources() {
+    return false;
+  };
+  virtual bool IsDormantNeeded() {
+    return false;
+  };
+  virtual void ReleaseMediaResources() {};
+  virtual void ReleaseDecoder() {};
 };
 
 } // namespace mozilla

@@ -124,8 +124,7 @@ nsChromeRegistryChrome::Init()
   mSelectedLocale = NS_LITERAL_CSTRING("en-US");
   mSelectedSkin = NS_LITERAL_CSTRING("classic/1.0");
 
-  PL_DHashTableInit(&mPackagesHash, &kTableOps,
-                    nullptr, sizeof(PackageEntry), 16);
+  PL_DHashTableInit(&mPackagesHash, &kTableOps, nullptr, sizeof(PackageEntry));
 
   bool safeMode = false;
   nsCOMPtr<nsIXULRuntime> xulrun (do_GetService(XULAPPINFO_SERVICE_CONTRACTID));
@@ -497,7 +496,7 @@ nsChromeRegistryChrome::SendRegisteredChrome(
     if (!parents.Length())
       return;
 
-    for (PRUint32 i = 0; i < parents.Length(); i++) {
+    for (uint32_t i = 0; i < parents.Length(); i++) {
       DebugOnly<bool> success =
         parents[i]->SendRegisterChrome(packages, resources, overrides,
                                        mSelectedLocale, true);

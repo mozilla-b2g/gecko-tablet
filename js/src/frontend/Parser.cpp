@@ -788,16 +788,6 @@ Parser<ParseHandler>::reportBadReturn(Node pn, ParseReportKind kind,
     return report(kind, pc->sc->strict, pn, errnum, name.ptr());
 }
 
-template <typename ParseHandler>
-bool
-Parser<ParseHandler>::checkFinalReturn(Node pn)
-{
-    JS_ASSERT(pc->sc->isFunctionBox());
-    return HasFinalReturn(pn) == ENDS_IN_RETURN ||
-           reportBadReturn(pn, ParseExtraWarning,
-                           JSMSG_NO_RETURN_VALUE, JSMSG_ANON_NO_RETURN_VALUE);
-}
-
 /*
  * Check that assigning to lhs is permitted.  Assigning to 'eval' or
  * 'arguments' is banned in strict mode and in destructuring assignment.
@@ -1111,10 +1101,6 @@ Parser<ParseHandler>::functionBody(FunctionSyntaxKind kind, FunctionBodyType typ
         JS_ASSERT(type == StatementListBody);
         break;
     }
-
-    /* Check for falling off the end of a function that returns a value. */
-    if (options().extraWarningsOption && pc->funHasReturnExpr && !checkFinalReturn(pn))
-        return null();
 
     /* Define the 'arguments' binding if necessary. */
     if (!checkFunctionArguments())
@@ -4878,13 +4864,6 @@ Parser<ParseHandler>::returnStatement()
     if (!pn)
         return null();
 
-    if (options().extraWarningsOption && pc->funHasReturnExpr && pc->funHasReturnVoid &&
-        !reportBadReturn(pn, ParseExtraWarning,
-                         JSMSG_NO_RETURN_VALUE, JSMSG_ANON_NO_RETURN_VALUE))
-    {
-        return null();
-    }
-
     if (pc->isLegacyGenerator() && exprNode) {
         /* Disallow "return v;" in legacy generators. */
         reportBadReturn(pn, ParseError, JSMSG_BAD_GENERATOR_RETURN,
@@ -7258,6 +7237,20 @@ Parser<ParseHandler>::objectLiteral()
                 return null();
             propname = newNumber(tokenStream.currentToken());
             break;
+
+          case TOK_LB: {
+              // Computed property name.
+              uint32_t begin = pos().begin;
+              Node assignNode = assignExpr();
+              if (!assignNode)
+                  return null();
+              MUST_MATCH_TOKEN(TOK_RB, JSMSG_COMP_PROP_UNTERM_EXPR);
+              propname = handler.newComputedName(assignNode, begin, pos().end);
+              if (!propname)
+                  return null();
+              handler.setListFlag(literal, PNX_NONCONST);
+              break;
+          }
 
           case TOK_NAME: {
             atom = tokenStream.currentName();

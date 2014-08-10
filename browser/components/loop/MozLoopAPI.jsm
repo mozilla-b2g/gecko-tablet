@@ -11,8 +11,15 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource:///modules/loop/MozLoopService.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "hookWindowCloseForPanelClose",
-  "resource://gre/modules/MozSocialAPI.jsm");
-
+                                        "resource://gre/modules/MozSocialAPI.jsm");
+XPCOMUtils.defineLazyGetter(this, "appInfo", function() {
+  return Cc["@mozilla.org/xre/app-info;1"]
+           .getService(Ci.nsIXULAppInfo)
+           .QueryInterface(Ci.nsIXULRuntime);
+});
+XPCOMUtils.defineLazyServiceGetter(this, "clipboardHelper",
+                                         "@mozilla.org/widget/clipboardhelper;1",
+                                         "nsIClipboardHelper");
 this.EXPORTED_SYMBOLS = ["injectLoopAPI"];
 
 /**
@@ -26,6 +33,7 @@ this.EXPORTED_SYMBOLS = ["injectLoopAPI"];
 function injectLoopAPI(targetWindow) {
   let ringer;
   let ringerStopper;
+  let appVersionInfo;
 
   let api = {
     /**
@@ -223,6 +231,43 @@ function injectLoopAPI(targetWindow) {
         }, (error) => {
           callback(Cu.cloneInto(error, targetWindow));
         });
+      }
+    },
+
+    /**
+     * Copies passed string onto the system clipboard.
+     *
+     * @param {String} str The string to copy
+     */
+    copyString: {
+      enumerable: true,
+      writable: true,
+      value: function(str) {
+        clipboardHelper.copyString(str);
+      }
+    },
+
+    /**
+     * Returns the app version information for use during feedback.
+     *
+     * @return {Object} An object containing:
+     *   - channel: The update channel the application is on
+     *   - version: The application version
+     *   - OS: The operating system the application is running on
+     */
+    appVersionInfo: {
+      enumerable: true,
+      get: function() {
+        if (!appVersionInfo) {
+          let defaults = Services.prefs.getDefaultBranch(null);
+
+          appVersionInfo = Cu.cloneInto({
+            channel: defaults.getCharPref("app.update.channel"),
+            version: appInfo.version,
+            OS: appInfo.OS
+          }, targetWindow);
+        }
+        return appVersionInfo;
       }
     },
   };
