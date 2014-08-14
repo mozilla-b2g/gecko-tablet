@@ -27,6 +27,26 @@ class TestReadOnlyDict(unittest.TestCase):
         with self.assertRaises(Exception):
             test['baz'] = True
 
+    def test_update(self):
+        original = {'foo': 1, 'bar': 2}
+
+        test = ReadOnlyDict(original)
+
+        with self.assertRaises(Exception):
+            test.update(foo=2)
+
+        self.assertEqual(original, test)
+
+    def test_del(self):
+        original = {'foo': 1, 'bar': 2}
+
+        test = ReadOnlyDict(original)
+
+        with self.assertRaises(Exception):
+            del test['foo']
+
+        self.assertEqual(original, test)
+
 
 class TestReadOnlyDefaultDict(unittest.TestCase):
     def test_simple(self):
@@ -57,8 +77,12 @@ class TestList(unittest.TestCase):
         test = List([1, 2, 3])
 
         test += [4, 5, 6]
-
+        self.assertIsInstance(test, List)
         self.assertEqual(test, [1, 2, 3, 4, 5, 6])
+
+        test = test + [7, 8]
+        self.assertIsInstance(test, List)
+        self.assertEqual(test, [1, 2, 3, 4, 5, 6, 7, 8])
 
     def test_add_string(self):
         test = List([1, 2, 3])
@@ -66,6 +90,23 @@ class TestList(unittest.TestCase):
         with self.assertRaises(ValueError):
             test += 'string'
 
+    def test_none(self):
+        """As a special exception, we allow None to be treated as an empty
+        list."""
+        test = List([1, 2, 3])
+
+        test += None
+        self.assertEqual(test, [1, 2, 3])
+
+        test = test + None
+        self.assertIsInstance(test, List)
+        self.assertEqual(test, [1, 2, 3])
+
+        with self.assertRaises(ValueError):
+            test += False
+
+        with self.assertRaises(ValueError):
+            test = test + False
 
 if __name__ == '__main__':
     main()

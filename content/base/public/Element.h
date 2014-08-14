@@ -115,7 +115,6 @@ enum {
 ASSERT_NODE_FLAGS_SPACE(ELEMENT_TYPE_SPECIFIC_BITS_OFFSET);
 
 namespace mozilla {
-class ElementAnimation;
 class EventChainPostVisitor;
 class EventChainPreVisitor;
 class EventChainVisitor;
@@ -124,6 +123,7 @@ class EventStateManager;
 
 namespace dom {
 
+class AnimationPlayer;
 class Link;
 class UndoManager;
 class DOMRect;
@@ -132,8 +132,8 @@ class DestinationInsertionPointList;
 
 // IID for the dom::Element interface
 #define NS_ELEMENT_IID \
-{ 0xd123f791, 0x124a, 0x43f3, \
-  { 0x84, 0xe3, 0x55, 0x81, 0x0b, 0x6c, 0xf3, 0x08 } }
+{ 0xb0135f9d, 0xa476, 0x4711, \
+  { 0x8b, 0xb9, 0xca, 0xe5, 0x2a, 0x05, 0xf9, 0xbe } }
 
 class Element : public FragmentOrElement
 {
@@ -803,7 +803,7 @@ public:
   {
   }
 
-  void GetAnimationPlayers(nsTArray<nsRefPtr<ElementAnimation> >& aPlayers);
+  void GetAnimationPlayers(nsTArray<nsRefPtr<AnimationPlayer> >& aPlayers);
 
   NS_IMETHOD GetInnerHTML(nsAString& aInnerHTML);
   virtual void SetInnerHTML(const nsAString& aInnerHTML, ErrorResult& aError);
@@ -1488,11 +1488,8 @@ NS_IMETHOD SetAttributeNode(nsIDOMAttr* newAttr,                              \
   if (!newAttr) {                                                             \
     return NS_ERROR_INVALID_POINTER;                                          \
   }                                                                           \
-  mozilla::dom::Attr* attr = mozilla::dom::Attr::FromDOMAttr(newAttr);        \
-  if (!attr) {                                                                \
-    return NS_ERROR_INVALID_POINTER;                                          \
-  }                                                                           \
   mozilla::ErrorResult rv;                                                    \
+  mozilla::dom::Attr* attr = static_cast<mozilla::dom::Attr*>(newAttr);       \
   *_retval = Element::SetAttributeNode(*attr, rv).take();                     \
   return rv.ErrorCode();                                                      \
 }                                                                             \
@@ -1502,11 +1499,8 @@ NS_IMETHOD RemoveAttributeNode(nsIDOMAttr* oldAttr,                           \
   if (!oldAttr) {                                                             \
     return NS_ERROR_INVALID_POINTER;                                          \
   }                                                                           \
-  mozilla::dom::Attr* attr = mozilla::dom::Attr::FromDOMAttr(oldAttr);        \
-  if (!attr) {                                                                \
-    return NS_ERROR_INVALID_POINTER;                                          \
-  }                                                                           \
   mozilla::ErrorResult rv;                                                    \
+  mozilla::dom::Attr* attr = static_cast<mozilla::dom::Attr*>(oldAttr);       \
   *_retval = Element::RemoveAttributeNode(*attr, rv).take();                  \
   return rv.ErrorCode();                                                      \
 }                                                                             \
@@ -1521,11 +1515,8 @@ NS_IMETHOD GetAttributeNodeNS(const nsAString& namespaceURI,                  \
 NS_IMETHOD SetAttributeNodeNS(nsIDOMAttr* newAttr,                            \
                               nsIDOMAttr** _retval) MOZ_FINAL                 \
 {                                                                             \
-  mozilla::dom::Attr* attr = mozilla::dom::Attr::FromDOMAttr(newAttr);        \
-  if (!attr) {                                                                \
-    return NS_ERROR_INVALID_POINTER;                                          \
-  }                                                                           \
   mozilla::ErrorResult rv;                                                    \
+  mozilla::dom::Attr* attr = static_cast<mozilla::dom::Attr*>(newAttr);       \
   *_retval = Element::SetAttributeNodeNS(*attr, rv).take();                   \
   return rv.ErrorCode();                                                      \
 }                                                                             \

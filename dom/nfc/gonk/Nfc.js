@@ -267,7 +267,7 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
 
     isPeerReadyCalled: function isPeerReadyCalled(appId) {
       let targetInfo = this.peerTargetsMap[appId];
-      return targetInfo.IsPeerReadyCalled;
+      return !!targetInfo.IsPeerReadyCalled;
     },
 
     notifyPeerEvent: function notifyPeerEvent(appId, event) {
@@ -356,7 +356,7 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
         case "NFC:NotifyUserAcceptedP2P":
           // Notify the 'NFC_PEER_EVENT_READY' since user has acknowledged
           if (!this.isPeerReadyTarget(msg.json.appId)) {
-            debug("Application ID : " + appId + " is not a registered PeerReadytarget");
+            debug("Application ID : " + msg.json.appId + " is not a registered PeerReadytarget");
             return null;
           }
 
@@ -514,7 +514,7 @@ Nfc.prototype = {
 
         delete this.sessionTokenMap[this._currentSessionId];
         this._currentSessionId = null;
-        this.currentPeerAppId = null;
+        gMessageManager.currentPeerAppId = null;
         break;
      case "ConfigResponse":
         let target = this.targetsByRequestId[message.requestId];

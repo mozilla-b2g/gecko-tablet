@@ -34,6 +34,8 @@ MIRGenerator::MIRGenerator(CompileCompartment *compartment, const JitCompileOpti
     usesSimdCached_(false),
     minAsmJSHeapLength_(AsmJSAllocationGranularity),
     modifiesFrameArguments_(false),
+    instrumentedProfiling_(false),
+    instrumentedProfilingIsCached_(false),
     options(options)
 { }
 
@@ -101,6 +103,17 @@ MIRGraph::insertBlockAfter(MBasicBlock *at, MBasicBlock *block)
     block->setId(blockIdGen_++);
     blocks_.insertAfter(at, block);
     numBlocks_++;
+}
+
+void
+MIRGraph::renumberBlocksAfter(MBasicBlock *at)
+{
+    MBasicBlockIterator iter = begin(at);
+    iter++;
+
+    uint32_t id = at->id();
+    for (; iter != end(); iter++)
+        iter->setId(++id);
 }
 
 void
@@ -895,6 +908,15 @@ MBasicBlock::insertAfter(MInstruction *at, MInstruction *ins)
     graph().allocDefinitionId(ins);
     instructions_.insertAfter(at, ins);
     ins->setTrackedSite(at->trackedSite());
+}
+
+void
+MBasicBlock::insertAtEnd(MInstruction *ins)
+{
+    if (hasLastIns())
+        insertBefore(lastIns(), ins);
+    else
+        add(ins);
 }
 
 void

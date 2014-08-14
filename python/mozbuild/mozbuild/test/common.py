@@ -10,6 +10,8 @@ from mach.logging import LoggingManager
 
 from mozbuild.util import ReadOnlyDict
 
+import mozpack.path as mozpath
+
 
 # By including this module, tests get structured logging.
 log_manager = LoggingManager()
@@ -19,22 +21,22 @@ log_manager.add_terminal_logging()
 # have to mock it.
 class MockConfig(object):
     def __init__(self, topsrcdir='/path/to/topsrcdir', extra_substs={}):
-        self.topsrcdir = topsrcdir
-        self.topobjdir = '/path/to/topobjdir'
+        self.topsrcdir = mozpath.abspath(topsrcdir)
+        self.topobjdir = mozpath.abspath('/path/to/topobjdir')
 
         self.substs = ReadOnlyDict({
             'MOZ_FOO': 'foo',
             'MOZ_BAR': 'bar',
             'MOZ_TRUE': '1',
             'MOZ_FALSE': '',
-        })
-
-        self.substs.update(extra_substs)
+        }, **extra_substs)
 
         self.substs_unicode = ReadOnlyDict({k.decode('utf-8'): v.decode('utf-8',
             'replace') for k, v in self.substs.items()})
 
         self.defines = self.substs
+
+        self.external_source_dir = None
 
     def child_path(self, p):
         return os.path.join(self.topsrcdir, p)

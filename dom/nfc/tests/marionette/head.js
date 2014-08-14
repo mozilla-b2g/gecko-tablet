@@ -3,8 +3,6 @@
 
 const Cu = SpecialPowers.Cu;
 
-let pendingEmulatorCmdCount = 0;
-
 let Promise = Cu.import("resource://gre/modules/Promise.jsm").Promise;
 let nfc = window.navigator.mozNfc;
 
@@ -35,12 +33,60 @@ let emulator = (function() {
 
   return {
     run: run,
+    pendingCmdCount: pendingCmdCount,
     P2P_RE_INDEX_0 : 0,
     P2P_RE_INDEX_1 : 1,
     T1T_RE_INDEX   : 2,
     T2T_RE_INDEX   : 3,
     T3T_RE_INDEX   : 4,
     T4T_RE_INDEX   : 5
+  };
+}());
+
+let sysMsgHelper = (function() {
+  function techDiscovered(msg) {
+    log("system message nfc-manager-tech-discovered");
+    let discovered = mDiscovered.shift();
+    if (discovered) {
+      discovered(msg);
+    }
+  }
+
+  function techLost(msg) {
+    log("system message nfc-manager-tech-lost");
+    let lost = mLost.shift();
+    if (lost) {
+      lost(msg);
+    }
+  }
+
+  function sendFile(msg) {
+    log("system message nfc-manager-send-file");
+    let send = mSendFile.shift();
+    if (send) {
+      send(msg);
+    }
+  }
+
+  let mDiscovered = [], mLost = [], mSendFile = [];
+  window.navigator.mozSetMessageHandler("nfc-manager-tech-discovered",
+                                        techDiscovered);
+  window.navigator.mozSetMessageHandler("nfc-manager-tech-lost", techLost);
+  window.navigator.mozSetMessageHandler("nfc-manager-send-file", sendFile);
+
+  return {
+    waitForTechDiscovered: function(discovered) {
+      mDiscovered.push(discovered);
+    },
+
+    waitForTechLost: function(lost) {
+      mLost.push(lost);
+    },
+
+    waitForSendFile: function(sendFile) {
+      mSendFile.push(sendFile);
+    },
+
   };
 }());
 
@@ -184,7 +230,7 @@ function cleanUp() {
             finish()
           },
           function() {
-            return pendingEmulatorCmdCount === 0;
+            return emulator.pendingCmdCount === 0;
           });
 }
 

@@ -78,7 +78,7 @@ public:
     uint32_t sum = 0;
     uint32_t bytesRead = 0;
     do {
-      uint32_t offset = aOffset + sum;
+      uint64_t offset = aOffset + sum;
       char* buffer = reinterpret_cast<char*>(aBuffer) + sum;
       uint32_t toRead = aCount - sum;
       nsresult rv = mResource->ReadAt(offset, buffer, toRead, &bytesRead);
@@ -381,6 +381,10 @@ MP4Reader::ReadMetadata(MediaInfo* aInfo,
     NS_ENSURE_TRUE(mAudio.mDecoder != nullptr, NS_ERROR_FAILURE);
     nsresult rv = mAudio.mDecoder->Init();
     NS_ENSURE_SUCCESS(rv, rv);
+
+    // Decode one audio frame to detect potentially incorrect channels count or
+    // sampling rate from demuxer.
+    Decode(kAudio);
   }
 
   if (HasVideo()) {
@@ -585,7 +589,15 @@ MP4Reader::Output(TrackType aTrack, MediaData* aSample)
   switch (aTrack) {
     case kAudio: {
       MOZ_ASSERT(aSample->mType == MediaData::AUDIO_SAMPLES);
-      AudioQueue().Push(static_cast<AudioData*>(aSample));
+      AudioData* audioData = static_cast<AudioData*>(aSample);
+      AudioQueue().Push(audioData);
+      if (audioData->mChannels != mInfo.mAudio.mChannels ||
+          audioData->mRate != mInfo.mAudio.mRate) {
+        LOG("MP4Reader::Output change of sampling rate:%d->%d",
+            mInfo.mAudio.mRate, audioData->mRate);
+        mInfo.mAudio.mRate = audioData->mRate;
+        mInfo.mAudio.mChannels = audioData->mChannels;
+      }
       break;
     }
     case kVideo: {
@@ -745,13 +757,27 @@ void
 MP4Reader::NotifyDataArrived(const char* aBuffer, uint32_t aLength,
                              int64_t aOffset)
 {
-  nsTArray<MediaByteRange> ranges;
-  if (NS_FAILED(mDecoder->GetResource()->GetCachedRanges(ranges))) {
-    return;
+  if (NS_IsMainThread()) {
+    MediaTaskQueue* queue =
+      mAudio.mTaskQueue ? mAudio.mTaskQueue : mVideo.mTaskQueue;
+    queue->Dispatch(NS_NewRunnableMethod(this, &MP4Reader::UpdateIndex));
+  } else {
+    UpdateIndex();
   }
+}
 
+void
+MP4Reader::UpdateIndex()
+{
+  nsTArray<MediaByteRange> ranges;
   nsTArray<Interval<Microseconds>> timeRanges;
-  mDemuxer->ConvertByteRangesToTime(ranges, &timeRanges);
+
+  MediaResource* resource = mDecoder->GetResource();
+  resource->Pin();
+  if (NS_SUCCEEDED(resource->GetCachedRanges(ranges))) {
+    mDemuxer->ConvertByteRangesToTime(ranges, &timeRanges);
+  }
+  resource->Unpin();
 
   MonitorAutoLock mon(mTimeRangesMonitor);
   mTimeRanges = timeRanges;

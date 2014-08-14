@@ -1589,8 +1589,7 @@ RilObject.prototype = {
       return;
     }
 
-    if (this.voiceRegistrationState.emergencyCallsOnly ||
-        options.isDialEmergency) {
+    if (this.voiceRegistrationState.emergencyCallsOnly) {
       onerror(RIL_CALL_FAILCAUSE_TO_GECKO_CALL_ERROR[CALL_FAIL_UNOBTAINABLE_NUMBER]);
       return;
     }
@@ -1615,6 +1614,7 @@ RilObject.prototype = {
     }
 
     options.request = REQUEST_DIAL;
+    options.isEmergency = false;
     this.sendDialRequest(options);
   },
 
@@ -1637,6 +1637,8 @@ RilObject.prototype = {
 
     options.request = RILQUIRKS_REQUEST_USE_DIAL_EMERGENCY_CALL ?
                       REQUEST_DIAL_EMERGENCY_CALL : REQUEST_DIAL;
+    options.isEmergency = true;
+
     if (this.radioState == GECKO_RADIOSTATE_OFF) {
       if (DEBUG) {
         this.context.debug("Automatically enable radio for an emergency call.");
@@ -4109,10 +4111,6 @@ RilObject.prototype = {
       newCall.isOutgoing = true;
     }
 
-    if (newCall.isEmergency === undefined) {
-      newCall.isEmergency = false;
-    }
-
     // Set flag for conference.
     newCall.isConference = newCall.isMpty ? true : false;
 
@@ -5564,7 +5562,7 @@ RilObject.prototype[REQUEST_DIAL] = function REQUEST_DIAL(length, options) {
   }
 };
 RilObject.prototype[REQUEST_DIAL_EMERGENCY_CALL] = function REQUEST_DIAL_EMERGENCY_CALL(length, options) {
-  RilObject.prototype[REQUEST_DIAL](length, options);
+  RilObject.prototype[REQUEST_DIAL].call(this, length, options);
 };
 RilObject.prototype[REQUEST_GET_IMSI] = function REQUEST_GET_IMSI(length, options) {
   if (options.rilRequestError) {

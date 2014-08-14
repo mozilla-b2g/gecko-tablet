@@ -15,28 +15,7 @@ import sys
 import tempfile
 from urlparse import urlparse
 import zipfile
-
-try:
-  import mozinfo
-except ImportError:
-  # Stub out fake mozinfo since this is not importable on Android 4.0 Opt.
-  # This should be fixed; see
-  # https://bugzilla.mozilla.org/show_bug.cgi?id=650881
-  mozinfo = type('mozinfo', (), dict(info={}))()
-  mozinfo.isWin = mozinfo.isLinux = mozinfo.isUnix = mozinfo.isMac = False
-
-  # TODO! FILE: localautomation :/
-  # mapping from would-be mozinfo attr <-> sys.platform
-  mapping = {'isMac': ['mac', 'darwin'],
-             'isLinux': ['linux', 'linux2'],
-             'isWin': ['win32', 'win64'],
-             }
-  mapping = dict(sum([[(value, key) for value in values] for key, values in mapping.items()], []))
-  attr = mapping.get(sys.platform)
-  if attr:
-    setattr(mozinfo, attr, True)
-  if mozinfo.isLinux:
-    mozinfo.isUnix = True
+import mozinfo
 
 __all__ = [
   "ZipFileReader",
@@ -627,6 +606,8 @@ class ShutdownLeaks(object):
           self._logWindow(line)
         elif line[2:10] == "DOCSHELL":
           self._logDocShell(line)
+        elif line.startswith("TEST-START | Shutdown"):
+          self.seenShutdown = True
     elif message['action'] == 'test_start':
       fileName = message['test'].replace("chrome://mochitests/content/browser/", "")
       self.currentTest = {"fileName": fileName, "windows": set(), "docShells": set()}
@@ -635,10 +616,11 @@ class ShutdownLeaks(object):
       if self.currentTest and (self.currentTest["windows"] or self.currentTest["docShells"]):
         self.tests.append(self.currentTest)
       self.currentTest = None
-    elif message['action'] == 'suite_end':
-      self.seenShutdown = True
 
   def process(self):
+    if not self.seenShutdown:
+      self.logger("TEST-UNEXPECTED-FAIL | ShutdownLeaks | process() called before end of test suite")
+
     for test in self._parseLeakingTests():
       for url, count in self._zipLeakedWindows(test["leakedWindows"]):
         self.logger("TEST-UNEXPECTED-FAIL | %s | leaked %d window(s) until shutdown [url = %s]" % (test["fileName"], count, url))

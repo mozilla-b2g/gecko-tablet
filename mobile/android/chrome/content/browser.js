@@ -86,6 +86,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "WebappManager",
 XPCOMUtils.defineLazyModuleGetter(this, "CharsetMenu",
                                   "resource://gre/modules/CharsetMenu.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "NetErrorHelper",
+                                  "resource://gre/modules/NetErrorHelper.jsm");
+
 // Lazily-loaded browser scripts:
 [
   ["SelectHelper", "chrome://browser/content/SelectHelper.js"],
@@ -448,6 +451,13 @@ var BrowserApp = {
 
     if (this._startupStatus)
       this.onAppUpdated();
+
+    if (this.isGuest) {
+      // Disable extension installs
+      Services.prefs.setIntPref("extensions.enabledScopes", 1);
+      Services.prefs.setIntPref("extensions.autoDisableScopes", 1);
+      Services.prefs.setBoolPref("xpinstall.enabled", false);
+    }
 
     // notify java that gecko has loaded
     sendMessageToJava({ type: "Gecko:Ready" });
@@ -2094,8 +2104,8 @@ var NativeWindow = {
     SelectorContext: function(aSelector) {
       return {
         matches: function(aElt) {
-          if (aElt.mozMatchesSelector)
-            return aElt.mozMatchesSelector(aSelector);
+          if (aElt.matches)
+            return aElt.matches(aSelector);
           return false;
         }
       };
@@ -3797,6 +3807,10 @@ Tab.prototype = {
         // pages and other similar page. This lets us fix bugs like 401575 which
         // require error page UI to do privileged things, without letting error
         // pages have any privilege themselves.
+        if (docURI.startsWith("about:neterror")) {
+          NetErrorHelper.attachToBrowser(this.browser);
+        }
+
         if (docURI.startsWith("about:certerror") || docURI.startsWith("about:blocked")) {
           this.browser.addEventListener("click", ErrorPageEventHandler, true);
           let listener = function() {
@@ -4194,6 +4208,20 @@ Tab.prototype = {
     try {
       fixedURI = URIFixup.createExposableURI(aLocationURI);
     } catch (ex) { }
+
+    // In guest sessions, we refuse to let you open any file urls.
+    if (BrowserApp.isGuest) {
+      let bannedSchemes = ["file", "chrome", "resource", "jar"];
+
+      if (bannedSchemes.indexOf(fixedURI.scheme) > -1) {
+        aRequest.cancel(Cr.NS_BINDING_ABORTED);
+
+        aRequest = this.browser.docShell.displayLoadError(Cr.NS_ERROR_UNKNOWN_PROTOCOL, fixedURI, null);
+        if (aRequest) {
+          fixedURI = aRequest.URI;
+        }
+      }
+    }
 
     let contentType = contentWin.document.contentType;
 
@@ -5120,7 +5148,7 @@ var BrowserEventHandler = {
       if (checkElem) {
         if ((elem.scrollTopMax > 0 || elem.scrollLeftMax > 0) &&
             (this._hasScrollableOverflow(elem) ||
-             elem.mozMatchesSelector("textarea")) ||
+             elem.matches("textarea")) ||
             (elem instanceof HTMLInputElement && elem.mozIsTextField(false)) ||
             (elem instanceof HTMLSelectElement && (elem.size > 1 || elem.multiple))) {
           scrollable = true;
@@ -5255,14 +5283,14 @@ const ElementTouchHelper = {
     let threshold = Number.POSITIVE_INFINITY;
     for (let i = 0; i < nodes.length; i++) {
       let current = nodes[i];
-      if (!current.mozMatchesSelector || !this.isElementClickable(current, unclickableCache, true))
+      if (!current.matches || !this.isElementClickable(current, unclickableCache, true))
         continue;
 
       let rect = current.getBoundingClientRect();
       let distance = this._computeDistanceFromRect(aX, aY, rect);
 
       // increase a little bit the weight for already visited items
-      if (current && current.mozMatchesSelector("*:visited"))
+      if (current && current.matches("*:visited"))
         distance *= (this.weight.visited / 100);
 
       if (distance < threshold) {
@@ -5286,7 +5314,7 @@ const ElementTouchHelper = {
         continue;
       if (this._hasMouseListener(elem))
         return true;
-      if (elem.mozMatchesSelector && elem.mozMatchesSelector(selector))
+      if (elem.matches && elem.matches(selector))
         return true;
       if (elem instanceof HTMLLabelElement && elem.control != null)
         return true;
@@ -6202,7 +6230,7 @@ var ViewportHandler = {
         let document = target.ownerDocument;
         let browser = BrowserApp.getBrowserForDocument(document);
         let tab = BrowserApp.getTabForBrowser(browser);
-        if (tab)
+        if (tab && tab.contentDocumentIsDisplayed)
           this.updateMetadata(tab, false);
         break;
     }
