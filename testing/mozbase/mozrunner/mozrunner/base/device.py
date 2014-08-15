@@ -35,10 +35,10 @@ class DeviceRunner(BaseRunner):
         self._env['MOZ_PROCESS_LOG'] = process_log.name
         self._env.update(kwargs.pop('env', {}) or {})
 
-        process_args = { 'stream': sys.stdout,
-                         'processOutputLine': self.on_output,
-                         'onFinish': self.on_finish,
-                         'onTimeout': self.on_timeout }
+        process_args = {'stream': sys.stdout,
+                        'processOutputLine': self.on_output,
+                        'onFinish': self.on_finish,
+                        'onTimeout': self.on_timeout }
         process_args.update(kwargs.get('process_args') or {})
 
         kwargs['process_args'] = process_args
@@ -77,7 +77,13 @@ class DeviceRunner(BaseRunner):
             raise Exception("Network did not come up when starting device")
         self.app_ctx.stop_application()
 
+        # In this case we need to pass in env as part of the command.
+        # Make this empty so BaseRunner doesn't pass anything into the
+        # process class.
+        self._env = self.env
+        self.env = None
         BaseRunner.start(self, *args, **kwargs)
+        self.env = self._env
 
         timeout = 10 # seconds
         starttime = datetime.datetime.now()

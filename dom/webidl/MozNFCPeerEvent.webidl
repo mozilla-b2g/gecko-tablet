@@ -4,13 +4,17 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-[Constructor(DOMString type, optional SmartCardEventInit eventInitDict)]
-interface SmartCardEvent : Event
+[Constructor(DOMString type, optional MozNFCPeerEventInit eventInitDict),
+ Func="Navigator::HasNFCSupport"]
+interface MozNFCPeerEvent : Event
 {
-  readonly attribute DOMString? tokenName;
+  /**
+   * The detected NFCPeer.
+   */
+  readonly attribute MozNFCPeer? peer;
 };
 
-dictionary SmartCardEventInit : EventInit
+dictionary MozNFCPeerEventInit : EventInit
 {
-  DOMString tokenName = "";
+  MozNFCPeer? peer = null;
 };

@@ -261,6 +261,10 @@ const kEventConstructors = {
                                                          return new MozMmsEvent(aName, aProps);
                                                        },
                                              },
+  MozNFCPeerEvent:                           { create: function (aName, aProps) {
+                                                         return new MozNFCPeerEvent(aName, aProps);
+                                                       },
+                                             },
   MozOtaStatusEvent:                         { create: function (aName, aProps) {
                                                           return new MozOtaStatusEvent(aName, aProps);
                                                        },
@@ -369,10 +373,6 @@ const kEventConstructors = {
                                                                                   aProps.allowedDirections, aProps.direction, aProps.delta || 0.0,
                                                                                   aProps.clickCount);
                                                          return e;
-                                                       },
-                                             },
-  SmartCardEvent:                            { create: function (aName, aProps) {
-                                                         return new SmartCardEvent(aName, aProps);
                                                        },
                                              },
   SpeechRecognitionEvent:                    { create: function (aName, aProps) {
