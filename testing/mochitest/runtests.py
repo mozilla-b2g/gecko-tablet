@@ -481,6 +481,11 @@ class MochitestUtilsMixin(object):
         repeat -- How many times to repeat the test, ie: repeat=1 will run the test twice.
     """
 
+    if not hasattr(options, 'logFile'):
+        options.logFile = ""
+    if not hasattr(options, 'fileLevel'):
+        options.fileLevel = 'INFO'
+
     # allow relative paths for logFile
     if options.logFile:
       options.logFile = self.getLogFilePath(options.logFile)
@@ -1975,29 +1980,18 @@ class Mochitest(MochitestUtilsMixin):
       """record last test on harness"""
       if message['action'] == 'test_start':
         self.harness.lastTestSeen = message['test']
-      elif message['action'] == 'log' and 'TEST-START' in message['message'] and '|' in message['message']:
-        self.harness.lastTestSeen = message['message'].split("|")[1].strip()
       return message
 
     def dumpScreenOnTimeout(self, message):
       if (not self.dump_screen_on_fail
           and self.dump_screen_on_timeout
-          and 'expected' in message and message['status'] == 'FAIL'
-          and 'message' in message
-          and "Test timed out" in message['message']):
-        self.harness.dumpScreen(self.utilityPath)
-      elif (not self.dump_screen_on_fail
-            and self.dump_screen_on_timeout
-            and message['action'] == 'log'
-            and 'TEST-UNEXPECTED-FAIL' in message['message']
-            and 'Test timed out' in message['message']):
+          and message['action'] == 'test_status' and 'expected' in message
+          and "Test timed out" in message['subtest']):
         self.harness.dumpScreen(self.utilityPath)
       return message
 
     def dumpScreenOnFail(self, message):
       if self.dump_screen_on_fail and 'expected' in message and message['status'] == 'FAIL':
-        self.harness.dumpScreen(self.utilityPath)
-      elif self.dump_screen_on_fail and message['action'] == 'log' and 'TEST-UNEXPECTED-FAIL' in message['message']:
         self.harness.dumpScreen(self.utilityPath)
       return message
 

@@ -109,9 +109,10 @@ MP4Reader::MP4Reader(AbstractMediaDecoder* aDecoder)
   , mVideo("MP4 video decoder data", Preferences::GetUint("media.mp4-video-decode-ahead", 2))
   , mLastReportedNumDecodedFrames(0)
   , mLayersBackendType(layers::LayersBackend::LAYERS_NONE)
-  , mTimeRangesMonitor("MP4Reader::TimeRanges")
   , mDemuxerInitialized(false)
   , mIsEncrypted(false)
+  , mIndexReady(false)
+  , mIndexMonitor("MP4 index")
 {
   MOZ_ASSERT(NS_IsMainThread(), "Must be on main thread.");
   MOZ_COUNT_CTOR(MP4Reader);
@@ -288,6 +289,14 @@ MP4Reader::ExtractCryptoInitData(nsTArray<uint8_t>& aInitData)
   }
 }
 
+bool
+MP4Reader::IsSupportedAudioMimeType(const char* aMimeType)
+{
+  return (!strcmp(aMimeType, "audio/mpeg") ||
+          !strcmp(aMimeType, "audio/mp4a-latm")) &&
+         mPlatform->SupportsAudioMimeType(aMimeType);
+}
+
 nsresult
 MP4Reader::ReadMetadata(MediaInfo* aInfo,
                         MetadataTags** aTags)
@@ -296,11 +305,9 @@ MP4Reader::ReadMetadata(MediaInfo* aInfo,
     bool ok = mDemuxer->Init();
     NS_ENSURE_TRUE(ok, NS_ERROR_FAILURE);
 
-    mInfo.mAudio.mHasAudio = mAudio.mActive = mDemuxer->HasValidAudio();
-    const AudioDecoderConfig& audio = mDemuxer->AudioConfig();
-    // If we have audio, we *only* allow AAC to be decoded.
-    if (mInfo.mAudio.mHasAudio && strcmp(audio.mime_type, "audio/mp4a-latm")) {
-      return NS_ERROR_FAILURE;
+    {
+      MonitorAutoLock mon(mIndexMonitor);
+      mIndexReady = true;
     }
 
     mInfo.mVideo.mHasVideo = mVideo.mActive = mDemuxer->HasValidVideo();
@@ -370,14 +377,18 @@ MP4Reader::ReadMetadata(MediaInfo* aInfo,
     NS_ENSURE_TRUE(mPlatform, NS_ERROR_FAILURE);
   }
 
-  if (HasAudio()) {
+  if (mDemuxer->HasValidAudio()) {
     const AudioDecoderConfig& audio = mDemuxer->AudioConfig();
+    mInfo.mAudio.mHasAudio = mAudio.mActive = true;
+    if (mInfo.mAudio.mHasAudio && !IsSupportedAudioMimeType(audio.mime_type)) {
+      return NS_ERROR_FAILURE;
+    }
     mInfo.mAudio.mRate = audio.samples_per_second;
     mInfo.mAudio.mChannels = audio.channel_count;
     mAudio.mCallback = new DecoderCallback(this, kAudio);
-    mAudio.mDecoder = mPlatform->CreateAACDecoder(audio,
-                                                  mAudio.mTaskQueue,
-                                                  mAudio.mCallback);
+    mAudio.mDecoder = mPlatform->CreateAudioDecoder(audio,
+                                                    mAudio.mTaskQueue,
+                                                    mAudio.mCallback);
     NS_ENSURE_TRUE(mAudio.mDecoder != nullptr, NS_ERROR_FAILURE);
     nsresult rv = mAudio.mDecoder->Init();
     NS_ENSURE_SUCCESS(rv, rv);
@@ -411,6 +422,8 @@ MP4Reader::ReadMetadata(MediaInfo* aInfo,
 
   *aInfo = mInfo;
   *aTags = nullptr;
+
+  UpdateIndex();
 
   return NS_OK;
 }
@@ -769,28 +782,52 @@ MP4Reader::NotifyDataArrived(const char* aBuffer, uint32_t aLength,
 void
 MP4Reader::UpdateIndex()
 {
-  nsTArray<MediaByteRange> ranges;
-  nsTArray<Interval<Microseconds>> timeRanges;
+  MonitorAutoLock mon(mIndexMonitor);
+  if (!mIndexReady) {
+    return;
+  }
 
   MediaResource* resource = mDecoder->GetResource();
   resource->Pin();
+  nsTArray<MediaByteRange> ranges;
   if (NS_SUCCEEDED(resource->GetCachedRanges(ranges))) {
-    mDemuxer->ConvertByteRangesToTime(ranges, &timeRanges);
+    mDemuxer->UpdateIndex(ranges);
   }
   resource->Unpin();
-
-  MonitorAutoLock mon(mTimeRangesMonitor);
-  mTimeRanges = timeRanges;
 }
 
+int64_t
+MP4Reader::GetEvictionOffset(double aTime)
+{
+  MonitorAutoLock mon(mIndexMonitor);
+  if (!mIndexReady) {
+    return 0;
+  }
+
+  return mDemuxer->GetEvictionOffset(aTime * 1000000.0);
+}
 
 nsresult
 MP4Reader::GetBuffered(dom::TimeRanges* aBuffered, int64_t aStartTime)
 {
-  MonitorAutoLock mon(mTimeRangesMonitor);
-  for (size_t i = 0; i < mTimeRanges.Length(); i++) {
-    aBuffered->Add((mTimeRanges[i].start - aStartTime) / 1000000.0,
-                   (mTimeRanges[i].end - aStartTime) / 1000000.0);
+  MonitorAutoLock mon(mIndexMonitor);
+  if (!mIndexReady) {
+    return NS_OK;
+  }
+
+  MediaResource* resource = mDecoder->GetResource();
+  nsTArray<MediaByteRange> ranges;
+  resource->Pin();
+  nsresult rv = resource->GetCachedRanges(ranges);
+  resource->Unpin();
+
+  if (NS_SUCCEEDED(rv)) {
+    nsTArray<Interval<Microseconds>> timeRanges;
+    mDemuxer->ConvertByteRangesToTime(ranges, &timeRanges);
+    for (size_t i = 0; i < timeRanges.Length(); i++) {
+      aBuffered->Add((timeRanges[i].start - aStartTime) / 1000000.0,
+                     (timeRanges[i].end - aStartTime) / 1000000.0);
+    }
   }
 
   return NS_OK;

@@ -352,9 +352,7 @@ nsXMLHttpRequest::Init()
   // Instead of grabbing some random global from the context stack,
   // let's use the default one (junk scope) for now.
   // We should move away from this Init...
-  nsCOMPtr<nsIGlobalObject> global = xpc::GetJunkScopeGlobal();
-  NS_ENSURE_TRUE(global, NS_ERROR_FAILURE);
-  Construct(subjectPrincipal, global);
+  Construct(subjectPrincipal, xpc::GetNativeForGlobal(xpc::PrivilegedJunkScope()));
   return NS_OK;
 }
 
@@ -3973,9 +3971,13 @@ ArrayBufferBuilder::setCapacity(uint32_t aNewCap)
 {
   MOZ_ASSERT(!mMapPtr);
 
-  uint8_t *newdata = (uint8_t *) JS_ReallocateArrayBufferContents(nullptr, aNewCap, mDataPtr, mCapacity);
+  uint8_t *newdata = (uint8_t *) realloc(mDataPtr, aNewCap);
   if (!newdata) {
     return false;
+  }
+
+  if (aNewCap > mCapacity) {
+    memset(newdata + mCapacity, 0, aNewCap - mCapacity);
   }
 
   mDataPtr = newdata;

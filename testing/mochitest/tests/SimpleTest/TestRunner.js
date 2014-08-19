@@ -139,9 +139,14 @@ function StructuredLogger(name) {
     };
 
     this.testStatus = function(test, subtest, status, expected="PASS", message=null) {
+        // Bugfix for assertions not passing an assertion name
+        if (subtest === null || subtest === undefined) {
+            subtest = "undefined assertion name";
+        }
+
         var data = {test: test, subtest: subtest, status: status};
 
-        if (message !== null) {
+        if (message) {
             data.message = String(message);
         }
         if (expected != status && status != 'SKIP') {
@@ -260,6 +265,11 @@ function StructuredLogger(name) {
             LogController.log(str);
         } else {
             dump('\n' + str + '\n');
+        }
+
+        // Checking for error messages
+        if (message.expected || message.level === "ERROR") {
+            TestRunner.failureHandler();
         }
     };
 
@@ -425,8 +435,11 @@ TestRunner.error = function(msg) {
         TestRunner.structuredLogger.error(msg);
     } else {
         dump(msg + "\n");
+        TestRunner.failureHandler();
     }
+};
 
+TestRunner.failureHandler = function() {
     if (TestRunner.runUntilFailure) {
       TestRunner._haltTests = true;
     }
@@ -469,7 +482,7 @@ TestRunner._makeIframe = function (url, retry) {
             return;
         }
 
-        TestRunner.structuredLogger.error("Unable to restore focus, expect failures and timeouts.");
+        TestRunner.structuredLogger.info("Error: Unable to restore focus, expect failures and timeouts.");
     }
     window.scrollTo(0, $('indicator').offsetTop);
     iframe.src = url;
@@ -690,8 +703,8 @@ TestRunner.testFinished = function(tests) {
         if (TestRunner.currentTestURL != TestRunner.getLoadedTestURL()) {
             TestRunner.structuredLogger.testStatus(TestRunner.currentTestURL,
                                                    TestRunner.getLoadedTestURL(),
-                                                   "ERROR",
-                                                   "OK",
+                                                   "FAIL",
+                                                   "PASS",
                                                    "finished in a non-clean fashion, probably" +
                                                    " because it didn't call SimpleTest.finish()",
                                                    {loaded_test_url: TestRunner.getLoadedTestURL()});

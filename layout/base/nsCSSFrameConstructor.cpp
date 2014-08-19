@@ -4470,7 +4470,7 @@ nsCSSFrameConstructor::FinishBuildingScrollFrame(nsContainerFrame* aScrollFrame,
  *                  If this is not null, we'll just use it
  * @param aScrolledContentStyle the style that was resolved for the scrolled frame. (returned)
  */
-nsresult
+void
 nsCSSFrameConstructor::BuildScrollFrame(nsFrameConstructorState& aState,
                                         nsIContent*              aContent,
                                         nsStyleContext*          aContentStyle,
@@ -4478,16 +4478,15 @@ nsCSSFrameConstructor::BuildScrollFrame(nsFrameConstructorState& aState,
                                         nsContainerFrame*        aParentFrame,
                                         nsContainerFrame*&       aNewFrame)
 {
-    nsRefPtr<nsStyleContext> scrolledContentStyle =
-      BeginBuildingScrollFrame(aState, aContent, aContentStyle, aParentFrame,
-                               nsCSSAnonBoxes::scrolledContent,
-                               false, aNewFrame);
+  nsRefPtr<nsStyleContext> scrolledContentStyle =
+    BeginBuildingScrollFrame(aState, aContent, aContentStyle, aParentFrame,
+                             nsCSSAnonBoxes::scrolledContent,
+                             false, aNewFrame);
 
-    aScrolledFrame->SetStyleContextWithoutNotification(scrolledContentStyle);
-    InitAndRestoreFrame(aState, aContent, aNewFrame, aScrolledFrame);
+  aScrolledFrame->SetStyleContextWithoutNotification(scrolledContentStyle);
+  InitAndRestoreFrame(aState, aContent, aNewFrame, aScrolledFrame);
 
-    FinishBuildingScrollFrame(aNewFrame, aScrolledFrame);
-    return NS_OK;
+  FinishBuildingScrollFrame(aNewFrame, aScrolledFrame);
 }
 
 const nsCSSFrameConstructor::FrameConstructionData*
@@ -4573,13 +4572,16 @@ nsCSSFrameConstructor::FindDisplayData(const nsStyleDisplay* aDisplay,
       FCDATA_DECL(FCDATA_IS_LINE_PARTICIPANT,
                   NS_NewRubyFrame) },
     { NS_STYLE_DISPLAY_RUBY_BASE,
-      FCDATA_DECL(FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeRubyBaseContainer),
+      FCDATA_DECL(FCDATA_IS_LINE_PARTICIPANT |
+                  FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeRubyBaseContainer),
                   NS_NewRubyBaseFrame) },
     { NS_STYLE_DISPLAY_RUBY_BASE_CONTAINER,
-      FCDATA_DECL(FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeRuby),
+      FCDATA_DECL(FCDATA_IS_LINE_PARTICIPANT |
+                  FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeRuby),
                   NS_NewRubyBaseContainerFrame) },
     { NS_STYLE_DISPLAY_RUBY_TEXT,
-      FCDATA_DECL(FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeRubyTextContainer),
+      FCDATA_DECL(FCDATA_IS_LINE_PARTICIPANT |
+                  FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeRubyTextContainer),
                   NS_NewRubyTextFrame) },
     { NS_STYLE_DISPLAY_RUBY_TEXT_CONTAINER,
       FCDATA_DECL(FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeRuby),
@@ -9096,13 +9098,15 @@ nsCSSFrameConstructor::sPseudoParentData[eParentTypeCount] = {
   },
   { // Ruby Base
     FCDATA_DECL(FCDATA_USE_CHILD_ITEMS | 
+                FCDATA_IS_LINE_PARTICIPANT |
                 FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeRubyBaseContainer) |
                 FCDATA_SKIP_FRAMESET,
                 NS_NewRubyBaseFrame),
     &nsCSSAnonBoxes::rubyBase
   },
   { // Ruby Base Container
-    FCDATA_DECL(FCDATA_USE_CHILD_ITEMS | 
+    FCDATA_DECL(FCDATA_USE_CHILD_ITEMS |
+                FCDATA_IS_LINE_PARTICIPANT |
                 FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeRuby) |
                 FCDATA_SKIP_FRAMESET,
                 NS_NewRubyBaseContainerFrame),
@@ -9110,6 +9114,7 @@ nsCSSFrameConstructor::sPseudoParentData[eParentTypeCount] = {
   },
   { // Ruby Text
     FCDATA_DECL(FCDATA_USE_CHILD_ITEMS |
+                FCDATA_IS_LINE_PARTICIPANT |
                 FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeRubyTextContainer) |
                 FCDATA_SKIP_FRAMESET,
                 NS_NewRubyTextFrame),
