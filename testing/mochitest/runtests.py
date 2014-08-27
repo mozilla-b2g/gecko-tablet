@@ -1162,13 +1162,16 @@ class Mochitest(MochitestUtilsMixin):
     return manifest
 
   def getGMPPluginPath(self, options):
+    if options.gmp_path:
+      return options.gmp_path
+
     # For local builds, gmp-fake will be under dist/bin.
-    gmp_path = os.path.join(options.xrePath, 'gmp-fake')
+    gmp_path = os.path.join(options.xrePath, 'gmp-fake', '1.0')
     if os.path.isdir(gmp_path):
       return gmp_path
 
     # For packaged builds, gmp-fake will get copied under $profile/plugins.
-    gmp_path = os.path.join(self.profile.profile, 'plugins', 'gmp-fake')
+    gmp_path = os.path.join(self.profile.profile, 'plugins', 'gmp-fake', '1.0')
     if os.path.isdir(gmp_path):
       return gmp_path
     # This is fatal for desktop environments.
@@ -1909,9 +1912,12 @@ class Mochitest(MochitestUtilsMixin):
         stackFixerCommand = [self.perl, os.path.join(self.utilityPath, "fix-linux-stack.pl")]
         stackFixerProcess = subprocess.Popen(stackFixerCommand, stdin=subprocess.PIPE,
                                              stdout=subprocess.PIPE)
-        def fixFunc(line):
-          stackFixerProcess.stdin.write(line + '\n')
-          return stackFixerProcess.stdout.readline().rstrip()
+        def fixFunc(lines):
+          out = []
+          for line in lines.split('\n'):
+            stackFixerProcess.stdin.write(line + '\n')
+            out.append(stackFixerProcess.stdout.readline().rstrip())
+          return '\n'.join(out)
 
         stackFixerFunction = fixFunc
 

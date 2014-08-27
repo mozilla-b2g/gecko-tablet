@@ -469,7 +469,7 @@ public:
     if (!_argc) {
       top = true;
     }
-    mozilla::dom::Element::ScrollIntoView(top);
+    mozilla::dom::Element::ScrollIntoView(top, mozilla::dom::ScrollOptions());
     return NS_OK;
   }
   NS_IMETHOD GetOffsetParent(nsIDOMElement** aOffsetParent) MOZ_FINAL {
@@ -829,7 +829,12 @@ public:
    * Get the presentation context for this content node.
    * @return the presentation context
    */
-  nsPresContext* GetPresContext();
+  enum PresContextFor
+  {
+    eForComposedDoc,
+    eForUncomposedDoc
+  };
+  nsPresContext* GetPresContext(PresContextFor aFor);
 
   // Form Helper Routines
   /**

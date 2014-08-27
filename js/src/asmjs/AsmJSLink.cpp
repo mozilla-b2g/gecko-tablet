@@ -77,8 +77,11 @@ GetDataProperty(JSContext *cx, HandleValue objVal, HandlePropertyName field, Mut
     if (!objVal.isObject())
         return LinkFail(cx, "accessing property of non-object");
 
-    Rooted<JSPropertyDescriptor> desc(cx);
     RootedObject obj(cx, &objVal.toObject());
+    if (IsScriptedProxy(obj))
+        return LinkFail(cx, "accessing property of a Proxy");
+
+    Rooted<JSPropertyDescriptor> desc(cx);
     RootedId id(cx, NameToId(field));
     if (!JS_GetPropertyDescriptorById(cx, obj, id, &desc))
         return false;
@@ -122,6 +125,24 @@ ValidateGlobalVariable(JSContext *cx, const AsmJSModule &module, AsmJSModule::Gl
         RootedValue v(cx);
         if (!GetDataProperty(cx, importVal, field, &v))
             return false;
+
+        if (!v.isPrimitive()) {
+            // Ideally, we'd reject all non-primitives, but Emscripten has a bug
+            // that generates code that passes functions for some imports. To
+            // avoid breaking all the code that contains this bug, we make an
+            // exception for functions that don't have user-defined valueOf or
+            // toString, for their coercions are not observable and coercion via
+            // ToNumber/ToInt32 definitely produces NaN/0. We should remove this
+            // special case later once most apps have been built with newer
+            // Emscripten.
+            jsid toString = NameToId(cx->names().toString);
+            if (!v.toObject().is<JSFunction>() ||
+                !HasObjectValueOf(&v.toObject(), cx) ||
+                !ClassMethodIsNative(cx, &v.toObject(), &JSFunction::class_, toString, fun_toString))
+            {
+                return LinkFail(cx, "Imported values must be primitives");
+            }
+        }
 
         switch (global.varInitCoercion()) {
           case AsmJS_ToInt32:
@@ -181,6 +202,7 @@ ValidateMathBuiltinFunction(JSContext *cx, AsmJSModule::Global &global, HandleVa
     RootedValue v(cx);
     if (!GetDataProperty(cx, globalVal, cx->names().Math, &v))
         return false;
+
     RootedPropertyName field(cx, global.mathName());
     if (!GetDataProperty(cx, v, field, &v))
         return false;
@@ -226,6 +248,7 @@ ValidateConstant(JSContext *cx, AsmJSModule::Global &global, HandleValue globalV
 
     if (!GetDataProperty(cx, v, field, &v))
         return false;
+
     if (!v.isNumber())
         return LinkFail(cx, "math / global constant value needs to be a number");
 
@@ -245,6 +268,18 @@ static bool
 LinkModuleToHeap(JSContext *cx, AsmJSModule &module, Handle<ArrayBufferObject*> heap)
 {
     uint32_t heapLength = heap->byteLength();
+
+    if (IsDeprecatedAsmJSHeapLength(heapLength)) {
+        LinkFail(cx, "ArrayBuffer byteLengths smaller than 64KB are deprecated and "
+                     "will cause a link-time failure in the future");
+
+        // The goal of deprecation is to give apps some time before linking
+        // fails. However, if warnings-as-errors is turned on (which happens as
+        // part of asm.js testing) an exception may be raised.
+        if (cx->isExceptionPending())
+            return false;
+    }
+
     if (!IsValidAsmJSHeapLength(heapLength)) {
         ScopedJSFreePtr<char> msg(
             JS_smprintf("ArrayBuffer byteLength 0x%x is not a valid heap length. The next "
@@ -259,7 +294,7 @@ LinkModuleToHeap(JSContext *cx, AsmJSModule &module, Handle<ArrayBufferObject*> 
     JS_ASSERT((module.minHeapLength() - 1) <= INT32_MAX);
     if (heapLength < module.minHeapLength()) {
         ScopedJSFreePtr<char> msg(
-            JS_smprintf("ArrayBuffer byteLength of 0x%x is less than 0x%x (which is the"
+            JS_smprintf("ArrayBuffer byteLength of 0x%x is less than 0x%x (which is the "
                         "largest constant heap access offset rounded up to the next valid "
                         "heap size).",
                         heapLength,
@@ -341,6 +376,8 @@ DynamicallyLinkModule(JSContext *cx, CallArgs args, AsmJSModule &module)
 
     for (unsigned i = 0; i < module.numExits(); i++)
         module.exitIndexToGlobalDatum(i).fun = &ffis[module.exit(i).ffiIndex()]->as<JSFunction>();
+
+    module.initGlobalNaN();
 
     return true;
 }

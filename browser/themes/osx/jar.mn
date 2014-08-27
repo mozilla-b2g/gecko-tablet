@@ -5,7 +5,6 @@
 browser.jar:
 % skin browser classic/1.0 %skin/classic/browser/
   skin/classic/browser/sanitizeDialog.css                   (sanitizeDialog.css)
-* skin/classic/browser/aboutPrivateBrowsing.css             (aboutPrivateBrowsing.css)
 * skin/classic/browser/aboutSessionRestore.css              (aboutSessionRestore.css)
   skin/classic/browser/aboutSessionRestore-window-icon.png
   skin/classic/browser/aboutWelcomeBack.css                 (../shared/aboutWelcomeBack.css)
@@ -53,6 +52,8 @@ browser.jar:
   skin/classic/browser/notification-16@2x.png
   skin/classic/browser/notification-64.png
   skin/classic/browser/notification-64@2x.png
+  skin/classic/browser/mask.png                             (../shared/mask.png)
+  skin/classic/browser/mask@2x.png                          (../shared/mask@2x.png)
   skin/classic/browser/menuPanel.png
   skin/classic/browser/menuPanel@2x.png
   skin/classic/browser/menuPanel-customize.png
@@ -63,10 +64,12 @@ browser.jar:
   skin/classic/browser/menuPanel-help@2x.png
   skin/classic/browser/menuPanel-small.png
   skin/classic/browser/menuPanel-small@2x.png
-  skin/classic/browser/mixed-content-blocked-16.png
-  skin/classic/browser/mixed-content-blocked-16@2x.png
-  skin/classic/browser/mixed-content-blocked-64.png
-  skin/classic/browser/mixed-content-blocked-64@2x.png
+  skin/classic/browser/bad-content-blocked-16.png
+  skin/classic/browser/bad-content-blocked-16@2x.png
+  skin/classic/browser/bad-content-blocked-64.png
+  skin/classic/browser/bad-content-blocked-64@2x.png
+  skin/classic/browser/bad-content-unblocked-16.png
+  skin/classic/browser/bad-content-unblocked-16@2x.png
   skin/classic/browser/panel-expander-closed.png
   skin/classic/browser/panel-expander-closed@2x.png
   skin/classic/browser/panel-expander-open.png
@@ -84,7 +87,6 @@ browser.jar:
   skin/classic/browser/pointerLock-64.png
   skin/classic/browser/pointerLock-64@2x.png
   skin/classic/browser/Privacy-16.png
-  skin/classic/browser/Privacy-48.png
   skin/classic/browser/privatebrowsing-mask.png
   skin/classic/browser/privatebrowsing-mask@2x.png
   skin/classic/browser/privatebrowsing-mask-short.png
@@ -192,8 +194,6 @@ browser.jar:
   skin/classic/browser/feeds/audioFeedIcon.png              (feeds/feedIcon.png)
   skin/classic/browser/feeds/audioFeedIcon16.png            (feeds/feedIcon16.png)
 * skin/classic/browser/newtab/newTab.css                    (newtab/newTab.css)
-  skin/classic/browser/newtab/controls.png                  (../shared/newtab/controls.png)
-  skin/classic/browser/newtab/controls@2x.png               (../shared/newtab/controls@2x.png)
   skin/classic/browser/newtab/controls.svg                  (../shared/newtab/controls.svg)
   skin/classic/browser/setDesktopBackground.css
   skin/classic/browser/monitor.png
@@ -340,6 +340,8 @@ browser.jar:
   skin/classic/browser/devtools/command-tilt@2x.png           (../shared/devtools/images/command-tilt@2x.png)
   skin/classic/browser/devtools/command-pick.png              (../shared/devtools/images/command-pick.png)
   skin/classic/browser/devtools/command-pick@2x.png           (../shared/devtools/images/command-pick@2x.png)
+  skin/classic/browser/devtools/command-frames.png            (../shared/devtools/images/command-frames.png)
+  skin/classic/browser/devtools/command-frames@2x.png         (../shared/devtools/images/command-frames@2x.png)
   skin/classic/browser/devtools/command-console.png           (../shared/devtools/images/command-console.png)
   skin/classic/browser/devtools/command-console@2x.png        (../shared/devtools/images/command-console@2x.png)
   skin/classic/browser/devtools/command-eyedropper.png        (../shared/devtools/images/command-eyedropper.png)

@@ -49,10 +49,10 @@ loop.conversation = (function(OT, mozL10n) {
     },
 
     _handleAccept: function(callType) {
-      return () => {
+      return function() {
         this.props.model.set("selectedCallType", callType);
         this.props.model.trigger("accept");
-      };
+      }.bind(this);
     },
 
     _handleDecline: function() {
@@ -77,13 +77,10 @@ loop.conversation = (function(OT, mozL10n) {
 
     render: function() {
       /* jshint ignore:start */
-      var btnClassAccept = "btn btn-success btn-accept call-audio-video";
-      var btnClassBlock = "btn btn-error btn-block";
+      var btnClassAccept = "btn btn-accept";
       var btnClassDecline = "btn btn-error btn-decline";
-      var conversationPanelClass = "incoming-call " +
-                                  loop.shared.utils.getTargetPlatform();
-      var cx = React.addons.classSet;
-      var dropdownMenuClassesDecline = cx({
+      var conversationPanelClass = "incoming-call";
+      var dropdownMenuClassesDecline = React.addons.classSet({
         "native-dropdown-menu": true,
         "conversation-window-dropdown": true,
         "visually-hidden": !this.state.showDeclineMenu
@@ -91,10 +88,13 @@ loop.conversation = (function(OT, mozL10n) {
       return (
         <div className={conversationPanelClass}>
           <h2>{__("incoming_call")}</h2>
-          <div className="button-group incoming-call-action-group">
-            <div className="button-chevron-menu-group">
-              <div className="button-group-chevron">
-                <div className="button-group">
+          <div className="btn-group incoming-call-action-group">
+
+            <div className="fx-embedded-incoming-call-button-spacer"></div>
+
+            <div className="btn-chevron-menu-group">
+              <div className="btn-group-chevron">
+                <div className="btn-group">
 
                   <button className={btnClassDecline}
                           onClick={this._handleDecline}>
@@ -114,11 +114,17 @@ loop.conversation = (function(OT, mozL10n) {
               </div>
             </div>
 
-            <div className="button-chevron-menu-group">
-              <div className="button-group">
+            <div className="fx-embedded-incoming-call-button-spacer"></div>
+
+            <div className="btn-chevron-menu-group">
+              <div className="btn-group">
                 <button className={btnClassAccept}
                         onClick={this._handleAccept("audio-video")}>
-                  {__("incoming_call_answer_button")}
+                  <span className="fx-embedded-answer-btn-text">
+                    {__("incoming_call_answer_button")}
+                  </span>
+                  <span className="fx-embedded-btn-icon-video">
+                  </span>
                 </button>
                 <div className="call-audio-only"
                      onClick={this._handleAccept("audio")}
@@ -126,6 +132,9 @@ loop.conversation = (function(OT, mozL10n) {
                 </div>
               </div>
             </div>
+
+            <div className="fx-embedded-incoming-call-button-spacer"></div>
+
           </div>
         </div>
       );
@@ -175,17 +184,17 @@ loop.conversation = (function(OT, mozL10n) {
     incoming: function(loopVersion) {
       navigator.mozLoop.startAlerting();
       this._conversation.set({loopVersion: loopVersion});
-      this._conversation.once("accept", () => {
+      this._conversation.once("accept", function() {
         this.navigate("call/accept", {trigger: true});
-      });
-      this._conversation.once("decline", () => {
+      }.bind(this));
+      this._conversation.once("decline", function() {
         this.navigate("call/decline", {trigger: true});
-      });
-      this._conversation.once("declineAndBlock", () => {
+      }.bind(this));
+      this._conversation.once("declineAndBlock", function() {
         this.navigate("call/declineAndBlock", {trigger: true});
-      });
+      }.bind(this));
       this._conversation.once("call:incoming", this.startCall, this);
-      this._client.requestCallsInfo(loopVersion, (err, sessionData) => {
+      this._client.requestCallsInfo(loopVersion, function(err, sessionData) {
         if (err) {
           console.error("Failed to get the sessionData", err);
           // XXX Not the ideal response, but bug 1047410 will be replacing
@@ -202,7 +211,7 @@ loop.conversation = (function(OT, mozL10n) {
         this._conversation.setIncomingSessionData(sessionData[0]);
 
         this._setupWebSocketAndCallView();
-      });
+      }.bind(this));
     },
 
     /**
@@ -263,7 +272,7 @@ loop.conversation = (function(OT, mozL10n) {
      */
     declineAndBlock: function() {
       navigator.mozLoop.stopAlerting();
-      var token = navigator.mozLoop.getLoopCharPref("loopToken");
+      var token = this._conversation.get("callToken");
       this._client.deleteCallUrl(token, function(error) {
         // XXX The conversation window will be closed when this cb is triggered
         // figure out if there is a better way to report the error to the user
@@ -338,6 +347,8 @@ loop.conversation = (function(OT, mozL10n) {
     mozL10n.initialize(navigator.mozLoop);
 
     document.title = mozL10n.get("incoming_call_title");
+
+    document.body.classList.add(loop.shared.utils.getTargetPlatform());
 
     var client = new loop.Client();
     router = new ConversationRouter({

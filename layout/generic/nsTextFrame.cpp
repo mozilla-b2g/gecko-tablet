@@ -1910,7 +1910,9 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
     fontStyle = f->StyleFont();
     nsIFrame* parent = mLineContainer->GetParent();
     if (NS_MATHML_MATHVARIANT_NONE != fontStyle->mMathVariant) {
-      anyMathMLStyling = true;
+      if (NS_MATHML_MATHVARIANT_NORMAL != fontStyle->mMathVariant) {
+        anyMathMLStyling = true;
+      }
     } else if (mLineContainer->GetStateBits() & NS_FRAME_IS_IN_SINGLE_CHAR_MI) {
       textFlags |= nsTextFrameUtils::TEXT_IS_SINGLE_CHAR_MI;
       anyMathMLStyling = true;
@@ -4579,6 +4581,15 @@ nsTextFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     return;
   
   DO_GLOBAL_REFLOW_COUNT_DSP("nsTextFrame");
+
+  if (NS_GET_A(StyleColor()->mColor) == 0 &&
+      !IsSVGText() && !IsSelected() && !StyleText()->HasTextShadow()) {
+    TextDecorations textDecs;
+    GetTextDecorations(PresContext(), eResolvedColors, textDecs);
+    if (!textDecs.HasDecorationLines()) {
+      return;
+    }
+  }
 
   aLists.Content()->AppendNewToTop(
     new (aBuilder) nsDisplayText(aBuilder, this));
@@ -7335,14 +7346,19 @@ nsTextFrame::AddInlinePrefISize(nsRenderingContext *aRenderingContext,
   }
 }
 
-/* virtual */ nsSize
+/* virtual */
+LogicalSize
 nsTextFrame::ComputeSize(nsRenderingContext *aRenderingContext,
-                         nsSize aCBSize, nscoord aAvailableWidth,
-                         nsSize aMargin, nsSize aBorder, nsSize aPadding,
+                         WritingMode aWM,
+                         const LogicalSize& aCBSize,
+                         nscoord aAvailableISize,
+                         const LogicalSize& aMargin,
+                         const LogicalSize& aBorder,
+                         const LogicalSize& aPadding,
                          uint32_t aFlags)
 {
   // Inlines and text don't compute size before reflow.
-  return nsSize(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE);
+  return LogicalSize(aWM, NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE);
 }
 
 static nsRect

@@ -1687,7 +1687,41 @@ static nsresult LaunchChild(nsINativeAppSupport* aNative,
 static const char kProfileProperties[] =
   "chrome://mozapps/locale/profile/profileSelection.properties";
 
-static nsresult
+namespace {
+
+/**
+ * This class, instead of a raw nsresult, should be the return type of any
+ * function called by SelectProfile that initializes XPCOM.
+ */
+class ReturnAbortOnError
+{
+public:
+  MOZ_IMPLICIT ReturnAbortOnError(nsresult aRv)
+  {
+    mRv = ConvertRv(aRv);
+  }
+
+  operator nsresult()
+  {
+    return mRv;
+  }
+
+private:
+  inline nsresult
+  ConvertRv(nsresult aRv)
+  {
+    if (NS_SUCCEEDED(aRv) || aRv == NS_ERROR_LAUNCHED_CHILD_PROCESS) {
+      return aRv;
+    }
+    return NS_ERROR_ABORT;
+  }
+
+  nsresult mRv;
+};
+
+} // anonymous namespace
+
+static ReturnAbortOnError
 ProfileLockedDialog(nsIFile* aProfileDir, nsIFile* aProfileLocalDir,
                     nsIProfileUnlocker* aUnlocker,
                     nsINativeAppSupport* aNative, nsIProfileLock* *aResult)
@@ -1753,18 +1787,21 @@ ProfileLockedDialog(nsIFile* aProfileDir, nsIFile* aProfileLocalDir,
 
       bool checkState = false;
       rv = ps->ConfirmEx(nullptr, killTitle, killMessage, flags,
-                         killTitle, nullptr, nullptr, nullptr, 
+                         nullptr, killTitle, nullptr, nullptr,
                          &checkState, &button);
       NS_ENSURE_SUCCESS_LOG(rv, rv);
 #endif
 
       if (button == 1) {
         rv = aUnlocker->Unlock(nsIProfileUnlocker::FORCE_QUIT);
-        if (NS_FAILED(rv)) 
+        if (NS_FAILED(rv)) {
           return rv;
+        }
 
-        return NS_LockProfilePath(aProfileDir, aProfileLocalDir, 
-                                  nullptr, aResult);
+        SaveFileToEnv("XRE_PROFILE_PATH", aProfileDir);
+        SaveFileToEnv("XRE_PROFILE_LOCAL_PATH", aProfileLocalDir);
+
+        return LaunchChild(aNative);
       }
     } else {
 #ifdef MOZ_WIDGET_ANDROID
@@ -1854,7 +1891,7 @@ ProfileLockedDialog(nsIToolkitProfile* aProfile, nsIProfileUnlocker* aUnlocker,
 static const char kProfileManagerURL[] =
   "chrome://mozapps/content/profile/profileSelection.xul";
 
-static nsresult
+static ReturnAbortOnError
 ShowProfileManager(nsIToolkitProfileService* aProfileSvc,
                    nsINativeAppSupport* aNative)
 {

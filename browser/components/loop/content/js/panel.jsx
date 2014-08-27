@@ -77,12 +77,12 @@ loop.panel = (function(_, mozL10n) {
                               __("display_name_available_status");
 
       return (
-        <div className="footer component-spacer">
+        <div className="footer">
           <div className="do-not-disturb">
-            <p className="dnd-status" onClick={this.showDropdownMenu}>
+            <div className="dnd-status" onClick={this.showDropdownMenu}>
               <span>{availabilityText}</span>
               <i className={availabilityStatus}></i>
-            </p>
+            </div>
             <ul className={availabilityDropdown}
                 onMouseLeave={this.hideDropdownMenu}>
               <li onClick={this.changeAvailability("available")}
@@ -123,7 +123,6 @@ loop.panel = (function(_, mozL10n) {
             </a>
           ),
         });
-        navigator.mozLoop.setLoopCharPref('seenToS', 'seen');
         return <p className="terms-service"
                   dangerouslySetInnerHTML={{__html: tosHTML}}></p>;
       } else {
@@ -139,10 +138,8 @@ loop.panel = (function(_, mozL10n) {
 
     render: function() {
       return (
-        <div className="component-spacer share generate-url">
-          <div className="description">
-            <p className="description-content">{this.props.summary}</p>
-          </div>
+        <div className="share generate-url">
+          <div className="description">{this.props.summary}</div>
           <div className="action">
             {this.props.children}
           </div>
@@ -170,16 +167,18 @@ loop.panel = (function(_, mozL10n) {
     * Returns a random 5 character string used to identify
     * the conversation.
     * XXX this will go away once the backend changes
-    * @note:
-    * - When we get back a callUrl we use setLoopCharPref to store the token
-    *   (the last fragment of the URL) so that it can be used to ignore&block
-    *   the call. The preference is used by the conversation router.
     */
     conversationIdentifier: function() {
       return Math.random().toString(36).substring(5);
     },
 
     componentDidMount: function() {
+      // If we've already got a callURL, don't bother requesting a new one.
+      // As of this writing, only used for visual testing in the UI showcase.
+      if (this.state.callUrl.length) {
+        return;
+      }
+
       this.setState({pending: true});
       this.props.client.requestCallUrl(this.conversationIdentifier(),
                                        this._onCallUrlReceived);
@@ -199,7 +198,6 @@ loop.panel = (function(_, mozL10n) {
           var token = callUrlData.callToken ||
                       callUrl.pathname.split('/').pop();
 
-          navigator.mozLoop.setLoopCharPref('loopToken', token);
           this.setState({pending: false, copied: false, callUrl: callUrl.href});
         } catch(e) {
           console.log(e);
@@ -212,7 +210,7 @@ loop.panel = (function(_, mozL10n) {
     _generateMailTo: function() {
       return encodeURI([
         "mailto:?subject=" + __("share_email_subject2") + "&",
-        "body=" + __("share_email_body", {callUrl: this.state.callUrl})
+        "body=" + __("share_email_body2", {callUrl: this.state.callUrl})
       ].join(""));
     },
 
@@ -245,7 +243,7 @@ loop.panel = (function(_, mozL10n) {
           <div className="invite">
             <input type="url" value={this.state.callUrl} readOnly="true"
                    className={inputCSSClass} />
-            <p className="button-group url-actions">
+            <p className="btn-group url-actions">
               <button className="btn btn-email" disabled={!this.state.callUrl}
                 onClick={this.handleEmailButtonClick}
                 data-mailto={this._generateMailTo()}>
@@ -366,6 +364,8 @@ loop.panel = (function(_, mozL10n) {
       notifier: new sharedViews.NotificationListView({el: "#messages"})
     });
     Backbone.history.start();
+
+    document.body.classList.add(loop.shared.utils.getTargetPlatform());
 
     // Notify the window that we've finished initalization and initial layout
     var evtObject = document.createEvent('Event');

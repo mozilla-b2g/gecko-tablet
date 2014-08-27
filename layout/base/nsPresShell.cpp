@@ -35,6 +35,7 @@
 #include "mozilla/MouseEvents.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
+#include "mozilla/UniquePtr.h"
 #include <algorithm>
 
 #ifdef XP_WIN
@@ -749,7 +750,7 @@ PresShell::PresShell()
   mIsThemeSupportDisabled = false;
   mIsActive = true;
   // FIXME/bug 735029: find a better solution to this problem
-#ifdef MOZ_ANDROID_OMTC
+#ifdef MOZ_WIDGET_ANDROID
   // The java pan/zoom code uses this to mean approximately "request a
   // reset of pan/zoom state" which doesn't necessarily correspond
   // with the first paint of content.
@@ -3523,7 +3524,11 @@ static void ScrollToShowRect(nsIFrame*                aFrame,
   // If we don't need to scroll, then don't try since it might cancel
   // a current smooth scroll operation.
   if (needToScroll) {
-    aFrameAsScrollable->ScrollTo(scrollPt, nsIScrollableFrame::INSTANT, &allowedRange);
+    nsIScrollableFrame::ScrollMode scrollMode = nsIScrollableFrame::INSTANT;
+    if (gfxPrefs::ScrollBehaviorEnabled() && aFlags & nsIPresShell::SCROLL_SMOOTH) {
+      scrollMode = nsIScrollableFrame::SMOOTH_MSD;
+    }
+    aFrameAsScrollable->ScrollTo(scrollPt, scrollMode, &allowedRange);
   }
 }
 
@@ -6157,9 +6162,10 @@ PresShell::Paint(nsView*        aViewToPaint,
       bool computeInvalidRect = computeInvalidFunc ||
                                 (layerManager->GetBackendType() == LayersBackend::LAYERS_BASIC);
 
-      nsAutoPtr<LayerProperties> props(computeInvalidRect ?
-                                         LayerProperties::CloneFrom(layerManager->GetRoot()) :
-                                         nullptr);
+      UniquePtr<LayerProperties> props;
+      if (computeInvalidRect) {
+        props = Move(LayerProperties::CloneFrom(layerManager->GetRoot()));
+      }
 
       MaybeSetupTransactionIdAllocator(layerManager, aViewToPaint);
 
@@ -6832,24 +6838,29 @@ PresShell::HandleEvent(nsIFrame* aFrame,
                                        retargetEventDoc->GetShell() :
                                        nullptr;
 
-    nsRefPtr<SelectionCarets> selectionCaret = presShell ?
-                                               presShell->GetSelectionCarets() :
-                                               nullptr;
-    if (selectionCaret) {
-      *aEventStatus = selectionCaret->HandleEvent(aEvent);
+    // Bug 1057256: Touch caret should handle the event before selection carets.
+    // Otherwise, a long tap on touch caret will be incorrectly handled by
+    // selection carets which makes moving touch caret failed.
+    nsRefPtr<TouchCaret> touchCaret = presShell ?
+                                      presShell->GetTouchCaret() :
+                                      nullptr;
+    if (touchCaret) {
+      *aEventStatus = touchCaret->HandleEvent(aEvent);
       if (*aEventStatus == nsEventStatus_eConsumeNoDefault) {
-        // If the event is consumed by the touch caret, Cancel APZC panning by
+        // If the event is consumed by the touch caret, cancel APZC panning by
         // setting mMultipleActionsPrevented.
         aEvent->mFlags.mMultipleActionsPrevented = true;
         return NS_OK;
       }
     }
 
-    nsRefPtr<TouchCaret> touchCaret = presShell ? presShell->GetTouchCaret() : nullptr;
-    if (touchCaret) {
-      *aEventStatus = touchCaret->HandleEvent(aEvent);
+    nsRefPtr<SelectionCarets> selectionCaret = presShell ?
+                                               presShell->GetSelectionCarets() :
+                                               nullptr;
+    if (selectionCaret) {
+      *aEventStatus = selectionCaret->HandleEvent(aEvent);
       if (*aEventStatus == nsEventStatus_eConsumeNoDefault) {
-        // If the event is consumed by the touch caret, cancel APZC panning by
+        // If the event is consumed by the selection carets, cancel APZC panning by
         // setting mMultipleActionsPrevented.
         aEvent->mFlags.mMultipleActionsPrevented = true;
         return NS_OK;
@@ -9943,7 +9954,7 @@ void ReflowCountMgr::PaintCount(const char*     aName,
     if (counter != nullptr && counter->mName.EqualsASCII(aName)) {
       aRenderingContext->PushState();
       aRenderingContext->Translate(aOffset);
-      nsFont font(eFamily_serif, NS_FONT_STYLE_NORMAL, NS_FONT_VARIANT_NORMAL,
+      nsFont font(eFamily_serif, NS_FONT_STYLE_NORMAL,
                   NS_FONT_WEIGHT_NORMAL, NS_FONT_STRETCH_NORMAL, 0,
                   nsPresContext::CSSPixelsToAppUnits(11));
 

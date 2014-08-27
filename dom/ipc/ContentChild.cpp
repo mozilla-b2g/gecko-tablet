@@ -592,6 +592,7 @@ ContentChild::Init(MessageLoop* aIOLoop,
 void
 ContentChild::InitProcessAttributes()
 {
+#ifdef MOZ_WIDGET_GONK
 #ifdef MOZ_NUWA_PROCESS
     if (IsNuwaProcess()) {
         SetProcessName(NS_LITERAL_STRING("(Nuwa)"), false);
@@ -603,7 +604,9 @@ ContentChild::InitProcessAttributes()
     } else {
         SetProcessName(NS_LITERAL_STRING("Browser"), false);
     }
-
+#else
+    SetProcessName(NS_LITERAL_STRING("Web Content"), true);
+#endif
 }
 
 void
@@ -944,6 +947,7 @@ bool
 ContentChild::RecvSpeakerManagerNotify()
 {
 #ifdef MOZ_WIDGET_GONK
+    // Only notify the process which has the SpeakerManager instance.
     nsRefPtr<SpeakerManagerService> service =
         SpeakerManagerService::GetSpeakerManagerService();
     if (service) {

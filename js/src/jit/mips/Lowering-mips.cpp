@@ -356,7 +356,7 @@ LIRGeneratorMIPS::newLTableSwitch(const LAllocation &in, const LDefinition &inpu
 LTableSwitchV *
 LIRGeneratorMIPS::newLTableSwitchV(MTableSwitch *tableswitch)
 {
-    return new(alloc()) LTableSwitchV(temp(), tempFloat32(), temp(), tableswitch);
+    return new(alloc()) LTableSwitchV(temp(), tempDouble(), temp(), tableswitch);
 }
 
 bool
@@ -522,11 +522,11 @@ LIRGeneratorMIPS::lowerTruncateFToInt32(MTruncateToInt32 *ins)
 bool
 LIRGeneratorMIPS::visitStoreTypedArrayElementStatic(MStoreTypedArrayElementStatic *ins)
 {
-    MOZ_ASSUME_UNREACHABLE("NYI");
+    MOZ_CRASH("NYI");
 }
 
 bool
 LIRGeneratorMIPS::visitForkJoinGetSlice(MForkJoinGetSlice *ins)
 {
-    MOZ_ASSUME_UNREACHABLE("NYI");
+    MOZ_CRASH("NYI");
 }

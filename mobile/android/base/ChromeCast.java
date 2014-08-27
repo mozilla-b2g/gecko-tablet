@@ -24,7 +24,6 @@ import com.google.android.gms.cast.RemoteMediaPlayer;
 import com.google.android.gms.cast.RemoteMediaPlayer.MediaChannelResult;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
-import com.google.android.gms.common.api.GoogleApiClient.ConnectionCallbacks;
 import com.google.android.gms.common.api.ResultCallback;
 import com.google.android.gms.common.api.Status;
 import com.google.android.gms.common.GooglePlayServicesUtil;
@@ -45,6 +44,9 @@ class ChromeCast implements GeckoMediaPlayer {
     private GoogleApiClient apiClient;
     private RemoteMediaPlayer remoteMediaPlayer;
     private boolean canMirror;
+    private String mSessionId;
+    private MirrorChannel mMirrorChannel;
+    private boolean mApplicationStarted = false;
 
     // Callback to start playback of a url on a remote device
     private class VideoPlayCallback implements ResultCallback<ApplicationConnectionResult>,
@@ -70,18 +72,13 @@ class ChromeCast implements GeckoMediaPlayer {
             // TODO: Do we want to shutdown when there are errors?
             if (mediaStatus.getPlayerState() == MediaStatus.PLAYER_STATE_IDLE &&
                 mediaStatus.getIdleReason() == MediaStatus.IDLE_REASON_FINISHED) {
-                stop(null);
 
                 GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Casting:Stop", null));
             }
         }
 
         @Override
-        public void onMetadataUpdated() {
-            MediaInfo mediaInfo = remoteMediaPlayer.getMediaInfo();
-            MediaMetadata metadata = mediaInfo.getMetadata();
-            debug("metadata updated " + metadata);
-        }
+        public void onMetadataUpdated() { }
 
         @Override
         public void onResult(ApplicationConnectionResult result) {
@@ -91,6 +88,7 @@ class ChromeCast implements GeckoMediaPlayer {
                 remoteMediaPlayer = new RemoteMediaPlayer();
                 remoteMediaPlayer.setOnStatusUpdatedListener(this);
                 remoteMediaPlayer.setOnMetadataUpdatedListener(this);
+                mSessionId = result.getSessionId();
 
                 try {
                     Cast.CastApi.setMessageReceivedCallbacks(apiClient, remoteMediaPlayer.getNamespace(), remoteMediaPlayer);
@@ -100,7 +98,7 @@ class ChromeCast implements GeckoMediaPlayer {
 
                 startPlayback();
             } else {
-                callback.sendError(null);
+                callback.sendError(status.toString());
             }
         }
 
@@ -123,7 +121,7 @@ class ChromeCast implements GeckoMediaPlayer {
                         }
 
                         debug("Media load failed " + result.getStatus());
-                        callback.sendError(null);
+                        callback.sendError(result.getStatus().toString());
                     }
                 });
 
@@ -134,7 +132,7 @@ class ChromeCast implements GeckoMediaPlayer {
                 debug("Problem opening media during loading", e);
             }
 
-            callback.sendError(null);
+            callback.sendError("");
         }
     }
 
@@ -155,6 +153,10 @@ class ChromeCast implements GeckoMediaPlayer {
         final JSONObject obj = new JSONObject();
         try {
             final CastDevice device = CastDevice.getFromBundle(route.getExtras());
+            if (device == null) {
+                return null;
+            }
+
             obj.put("uuid", route.getId());
             obj.put("version", device.getDeviceVersion());
             obj.put("friendlyName", device.getFriendlyName());
@@ -189,6 +191,8 @@ class ChromeCast implements GeckoMediaPlayer {
                 @Override
                 public void onConnected(Bundle connectionHint) {
                     if (!apiClient.isConnected()) {
+                        debug("Connection failed");
+                        callback.sendError("Not connected");
                         return;
                     }
 
@@ -220,14 +224,39 @@ class ChromeCast implements GeckoMediaPlayer {
         callback.sendSuccess(null);
     }
 
+    public boolean verifySession(final EventCallback callback) {
+        String msg = null;
+        if (apiClient == null || !apiClient.isConnected()) {
+            msg = "Not connected";
+        }
+
+        if (mSessionId == null) {
+            msg = "No session";
+        }
+
+        if (msg != null) {
+            debug(msg);
+            if (callback != null) {
+                callback.sendError(msg);
+            }
+            return false;
+        }
+
+        return true;
+    }
+
     public void play(final EventCallback callback) {
+        if (!verifySession(callback)) {
+            return;
+        }
+
         remoteMediaPlayer.play(apiClient).setResultCallback(new ResultCallback<MediaChannelResult>() {
             @Override
             public void onResult(MediaChannelResult result) {
                 Status status = result.getStatus();
                 if (!status.isSuccess()) {
-                    debug("Unable to toggle pause: " + status.getStatusCode());
-                    callback.sendError(null);
+                    debug("Unable to play: " + status.getStatusCode());
+                    callback.sendError(status.toString());
                 } else {
                     callback.sendSuccess(null);
                 }
@@ -236,13 +265,17 @@ class ChromeCast implements GeckoMediaPlayer {
     }
 
     public void pause(final EventCallback callback) {
+        if (!verifySession(callback)) {
+            return;
+        }
+
         remoteMediaPlayer.pause(apiClient).setResultCallback(new ResultCallback<MediaChannelResult>() {
             @Override
             public void onResult(MediaChannelResult result) {
                 Status status = result.getStatus();
                 if (!status.isSuccess()) {
-                    debug("Unable to toggle pause: " + status.getStatusCode());
-                    callback.sendError(null);
+                    debug("Unable to pause: " + status.getStatusCode());
+                    callback.sendError(status.toString());
                 } else {
                     callback.sendSuccess(null);
                 }
@@ -251,6 +284,10 @@ class ChromeCast implements GeckoMediaPlayer {
     }
 
     public void end(final EventCallback callback) {
+        if (!verifySession(callback)) {
+            return;
+        }
+
         Cast.CastApi.stopApplication(apiClient).setResultCallback(new ResultCallback<Status>() {
             @Override
             public void onResult(Status result) {
@@ -258,6 +295,7 @@ class ChromeCast implements GeckoMediaPlayer {
                     try {
                         Cast.CastApi.removeMessageReceivedCallbacks(apiClient, remoteMediaPlayer.getNamespace());
                         remoteMediaPlayer = null;
+                        mSessionId = null;
                         apiClient.disconnect();
                         apiClient = null;
 
@@ -272,18 +310,13 @@ class ChromeCast implements GeckoMediaPlayer {
                 }
 
                 if (callback != null) {
-                    callback.sendError(null);
+                    callback.sendError(result.getStatus().toString());
                 }
             }
         });
     }
 
-    private String mSessionId;
-    MirrorChannel mMirrorChannel;
-    boolean mApplicationStarted = false;
-
     class MirrorChannel implements MessageReceivedCallback {
-
         /**
          * @return custom namespace
          */
@@ -348,7 +381,7 @@ class ChromeCast implements GeckoMediaPlayer {
 
                 GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Casting:Mirror", route.getId()));
             } else {
-                callback.sendError(null);
+                callback.sendError(status.toString());
             }
         }
     }

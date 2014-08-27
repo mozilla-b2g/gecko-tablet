@@ -255,7 +255,7 @@ describe("loop.panel", function() {
 
             if (key === "share_email_subject2")
               text = "email-subject";
-            else if (key === "share_email_body")
+            else if (key === "share_email_body2")
               text = "{{callUrl}}";
 
             return JSON.stringify({textContent: text});
@@ -352,36 +352,10 @@ describe("loop.panel", function() {
         sinon.assert.calledWithExactly(notifier.errorL10n,
                                        "unable_retrieve_url");
       });
-
-      it("should set 'loopToken' with the callUrl token", function() {
-        sinon.assert.calledOnce(navigator.mozLoop.setLoopCharPref);
-        sinon.assert.calledWithExactly(navigator.mozLoop.setLoopCharPref,
-                                       "loopToken", "fakeToken");
-      });
     });
   });
 
   describe('loop.panel.ToSView', function() {
-
-    it("should set the value of the loop.seenToS preference to 'seen'",
-      function() {
-        TestUtils.renderIntoDocument(loop.panel.ToSView());
-
-        sinon.assert.calledOnce(navigator.mozLoop.setLoopCharPref);
-        sinon.assert.calledWithExactly(navigator.mozLoop.setLoopCharPref,
-          'seenToS', 'seen');
-      });
-
-    it("should not set the value of loop.seenToS when it's already set",
-      function() {
-        navigator.mozLoop.getLoopCharPref = function() {
-          return "seen";
-        };
-
-        TestUtils.renderIntoDocument(loop.panel.ToSView());
-
-        sinon.assert.notCalled(navigator.mozLoop.setLoopCharPref);
-      });
 
     it("should render when the value of loop.seenToS is not set", function() {
       var view = TestUtils.renderIntoDocument(loop.panel.ToSView());
