@@ -234,10 +234,13 @@ pref("media.volume_scale", "1.0");
 // Timeout for wakelock release
 pref("media.wakelock_timeout", 2000);
 
+// Whether we should play videos opened in a "video document", i.e. videos
+// opened as top-level documents, as opposed to inside a media element.
+pref("media.play-stand-alone", true);
+
 #ifdef MOZ_WMF
 pref("media.windows-media-foundation.enabled", true);
 pref("media.windows-media-foundation.use-dxva", true);
-pref("media.windows-media-foundation.play-stand-alone", true);
 #endif
 #ifdef MOZ_DIRECTSHOW
 pref("media.directshow.enabled", true);
@@ -245,9 +248,8 @@ pref("media.directshow.enabled", true);
 #ifdef MOZ_FMP4
 pref("media.fragmented-mp4.enabled", true);
 pref("media.fragmented-mp4.ffmpeg.enabled", false);
-// "media.fragmented-mp4.exposed" controls whether the MP4 parser can be
-// created by <video> elements.
-#if defined(XP_WIN) && defined(MOZ_WMF)
+#if defined(XP_WIN) && defined(MOZ_WMF) || defined(XP_MACOSX)
+// Denotes that the fragmented MP4 parser can be created by <video> elements.
 pref("media.fragmented-mp4.exposed", true);
 #else
 pref("media.fragmented-mp4.exposed", false);
@@ -370,6 +372,8 @@ pref("media.navigator.enabled", true);
 
 pref("media.getusermedia.screensharing.enabled", true);
 pref("media.getusermedia.screensharing.allowed_domains", "");
+// OS/X 10.6 and XP have screen/window sharing off by default due to various issues - Caveat emptor
+pref("media.getusermedia.screensharing.allow_on_old_platforms", false);
 
 // TextTrack support
 pref("media.webvtt.enabled", true);
@@ -2098,7 +2102,7 @@ pref("layout.display-list.dump", false);
 // heavily loaded.
 pref("layout.frame_rate.precise", false);
 
-// pref to control whether layout warnings that are hit quite often are enabled 
+// pref to control whether layout warnings that are hit quite often are enabled
 pref("layout.spammy_warnings.enabled", true);
 
 // Is support for the Web Animations API enabled?
@@ -3711,7 +3715,7 @@ pref("gl.msaa-level", 2);
 pref("webgl.force-enabled", false);
 pref("webgl.disabled", false);
 pref("webgl.shader_validator", true);
-pref("webgl.prefer-native-gl", false);
+pref("webgl.disable-angle", false);
 pref("webgl.min_capability_mode", false);
 pref("webgl.disable-extensions", false);
 pref("webgl.msaa-force", false);

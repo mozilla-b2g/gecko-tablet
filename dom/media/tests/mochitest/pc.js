@@ -1539,6 +1539,10 @@ PeerConnectionWrapper.prototype = {
    *        The location the stream is coming from ('local' or 'remote')
    */
   attachMedia : function PCW_attachMedia(stream, type, side) {
+    function isSenderOfTrack(sender) {
+      return sender.track == this;
+    }
+
     info("Got media stream: " + type + " (" + side + ")");
     this.streams.push(stream);
 
@@ -1547,9 +1551,13 @@ PeerConnectionWrapper.prototype = {
       // way and audio + audiovideo the other.
       if (type == "video") {
         this._pc.addStream(stream);
+        ok(this._pc.getSenders().find(isSenderOfTrack,
+                                      stream.getVideoTracks()[0]),
+           "addStream adds sender");
       } else {
         stream.getTracks().forEach(function(track) {
-          this._pc.addTrack(track, stream);
+          var sender = this._pc.addTrack(track, stream);
+          is(sender.track, track, "addTrack returns sender");
         }.bind(this));
       }
     }
@@ -2278,6 +2286,34 @@ PeerConnectionWrapper.prototype = {
       is(numLocalCandidates, 0, "Have no localcandidate stats");
       is(numRemoteCandidates, 0, "Have no remotecandidate stats");
     }
+  },
+
+  /**
+   * Property-matching function for finding a certain stat in passed-in stats
+   *
+   * @param {object} stats
+   *        The stats to check from this PeerConnectionWrapper
+   * @param {object} props
+   *        The properties to look for
+   * @returns {boolean} Whether an entry containing all match-props was found.
+   */
+  hasStat : function PCW_hasStat(stats, props) {
+    for (var key in stats) {
+      if (stats.hasOwnProperty(key)) {
+        var res = stats[key];
+        var match = true;
+        for (var prop in props) {
+          if (res[prop] !== props[prop]) {
+            match = false;
+            break;
+          }
+        }
+        if (match) {
+          return true;
+        }
+      }
+    }
+    return false;
   },
 
   /**
