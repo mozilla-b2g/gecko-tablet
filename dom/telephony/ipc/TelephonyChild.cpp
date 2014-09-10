@@ -20,6 +20,7 @@ TelephonyChild::TelephonyChild(TelephonyIPCService* aService)
 
 TelephonyChild::~TelephonyChild()
 {
+
 }
 
 void
