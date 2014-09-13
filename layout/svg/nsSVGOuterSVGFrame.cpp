@@ -610,13 +610,13 @@ nsDisplayOuterSVG::Paint(nsDisplayListBuilder* aBuilder,
   gfxPoint devPixelOffset =
     nsLayoutUtils::PointToGfxPoint(viewportRect.TopLeft(), appUnitsPerDevPixel);
 
-  aContext->PushState();
+  aContext->ThebesContext()->Save();
   // We include the offset of our frame and a scale from device pixels to user
   // units (i.e. CSS px) in the matrix that we pass to our children):
   gfxMatrix tm = nsSVGIntegrationUtils::GetCSSPxToDevPxMatrix(mFrame) *
                    gfxMatrix::Translation(devPixelOffset);
   nsSVGUtils::PaintFrameWithEffects(mFrame, aContext, tm, &contentAreaDirtyRect);
-  aContext->PopState();
+  aContext->ThebesContext()->Restore();
 
   NS_ASSERTION(!aContext->ThebesContext()->HasError(), "Cairo in error state");
 
@@ -854,15 +854,9 @@ nsSVGOuterSVGFrame::GetBBoxContribution(const gfx::Matrix &aToBBoxUserspace,
 // nsSVGContainerFrame methods:
 
 gfxMatrix
-nsSVGOuterSVGFrame::GetCanvasTM(uint32_t aFor, nsIFrame* aTransformRoot)
+nsSVGOuterSVGFrame::GetCanvasTM()
 {
-  if (!(GetStateBits() & NS_FRAME_IS_NONDISPLAY) && !aTransformRoot) {
-    if (aFor == FOR_PAINTING && NS_SVGDisplayListPaintingEnabled()) {
-      return nsSVGIntegrationUtils::GetCSSPxToDevPxMatrix(this);
-    }
-  }
   if (!mCanvasTM) {
-    NS_ASSERTION(!aTransformRoot, "transform root will be ignored here");
     SVGSVGElement *content = static_cast<SVGSVGElement*>(mContent);
 
     float devPxPerCSSPx =
@@ -870,7 +864,7 @@ nsSVGOuterSVGFrame::GetCanvasTM(uint32_t aFor, nsIFrame* aTransformRoot)
                                 PresContext()->AppUnitsPerDevPixel());
 
     gfxMatrix tm = content->PrependLocalTransformsTo(
-                     gfxMatrix().Scale(devPxPerCSSPx, devPxPerCSSPx));
+                     gfxMatrix::Scaling(devPxPerCSSPx, devPxPerCSSPx));
     mCanvasTM = new gfxMatrix(tm);
   }
   return *mCanvasTM;

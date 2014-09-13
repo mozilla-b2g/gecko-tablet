@@ -814,6 +814,14 @@ AsyncPanZoomController::AssertOnControllerThread() {
   MOZ_ASSERT(sControllerThread == PR_GetCurrentThread());
 }
 
+void
+AsyncPanZoomController::AssertOnCompositorThread()
+{
+  if (GetThreadAssertionsEnabled()) {
+    Compositor::AssertOnCompositorThread();
+  }
+}
+
 /*static*/ void
 AsyncPanZoomController::InitializeGlobalState()
 {
@@ -870,9 +878,7 @@ AsyncPanZoomController::~AsyncPanZoomController() {
 PCompositorParent*
 AsyncPanZoomController::GetSharedFrameMetricsCompositor()
 {
-  if (GetThreadAssertionsEnabled()) {
-    Compositor::AssertOnCompositorThread();
-  }
+  AssertOnCompositorThread();
 
   if (mSharingFrameMetricsAcrossProcesses) {
     const CompositorParent::LayerTreeState* state = CompositorParent::GetIndirectShadowTree(mLayersId);
@@ -899,6 +905,8 @@ AsyncPanZoomController::GetGestureEventListener() const {
 void
 AsyncPanZoomController::Destroy()
 {
+  AssertOnCompositorThread();
+
   CancelAnimation();
 
   mTouchBlockQueue.Clear();
@@ -1280,7 +1288,7 @@ nsEventStatus AsyncPanZoomController::OnTouchEnd(const MultiTouchInput& aEvent) 
     // Make a local copy of the tree manager pointer and check that it's not
     // null before calling DispatchFling(). This is necessary because Destroy(),
     // which nulls out mTreeManager, could be called concurrently.
-    if (APZCTreeManager* treeManagerLocal = mTreeManager) {
+    if (APZCTreeManager* treeManagerLocal = GetApzcTreeManager()) {
       treeManagerLocal->DispatchFling(this,
                                       flingVelocity,
                                       CurrentTouchBlock()->GetOverscrollHandoffChain(),
@@ -1452,8 +1460,7 @@ nsEventStatus AsyncPanZoomController::OnScaleEnd(const PinchGestureInput& aEvent
 bool
 AsyncPanZoomController::ConvertToGecko(const ScreenPoint& aPoint, CSSPoint* aOut)
 {
-  APZCTreeManager* treeManagerLocal = mTreeManager;
-  if (treeManagerLocal) {
+  if (APZCTreeManager* treeManagerLocal = GetApzcTreeManager()) {
     Matrix4x4 transformToGecko = treeManagerLocal->GetApzcToGeckoTransform(this);
     Point result = transformToGecko * Point(aPoint.x, aPoint.y);
     // NOTE: This isn't *quite* LayoutDevicePoint, we just don't have a name
@@ -1709,7 +1716,7 @@ static void TransformVector(const Matrix4x4& aTransform,
 
 void AsyncPanZoomController::ToGlobalScreenCoordinates(ScreenPoint* aVector,
                                                        const ScreenPoint& aAnchor) const {
-  if (APZCTreeManager* treeManagerLocal = mTreeManager) {
+  if (APZCTreeManager* treeManagerLocal = GetApzcTreeManager()) {
     Matrix4x4 transform = treeManagerLocal->GetScreenToApzcTransform(this);
     transform.Invert();
     TransformVector(transform, aVector, aAnchor);
@@ -1718,7 +1725,7 @@ void AsyncPanZoomController::ToGlobalScreenCoordinates(ScreenPoint* aVector,
 
 void AsyncPanZoomController::ToLocalScreenCoordinates(ScreenPoint* aVector,
                                                       const ScreenPoint& aAnchor) const {
-  if (APZCTreeManager* treeManagerLocal = mTreeManager) {
+  if (APZCTreeManager* treeManagerLocal = GetApzcTreeManager()) {
     Matrix4x4 transform = treeManagerLocal->GetScreenToApzcTransform(this);
     TransformVector(transform, aVector, aAnchor);
   }
@@ -1964,15 +1971,15 @@ bool AsyncPanZoomController::OverscrollBy(const CSSPoint& aOverscroll) {
 }
 
 nsRefPtr<const OverscrollHandoffChain> AsyncPanZoomController::BuildOverscrollHandoffChain() {
-  if (APZCTreeManager* treeManagerLocal = mTreeManager) {
+  if (APZCTreeManager* treeManagerLocal = GetApzcTreeManager()) {
     return treeManagerLocal->BuildOverscrollHandoffChain(this);
-  } else {
-    // This APZC IsDestroyed(). To avoid callers having to special-case this
-    // scenario, just build a 1-element chain containing ourselves.
-    OverscrollHandoffChain* result = new OverscrollHandoffChain;
-    result->Add(this);
-    return result;
   }
+
+  // This APZC IsDestroyed(). To avoid callers having to special-case this
+  // scenario, just build a 1-element chain containing ourselves.
+  OverscrollHandoffChain* result = new OverscrollHandoffChain;
+  result->Add(this);
+  return result;
 }
 
 void AsyncPanZoomController::AcceptFling(const ScreenPoint& aVelocity,
@@ -2001,13 +2008,13 @@ bool AsyncPanZoomController::AttemptFling(ScreenPoint aVelocity,
                 false /* do not allow overscroll */);
     return true;
   }
-  
+
   return false;
 }
 
 void AsyncPanZoomController::HandleFlingOverscroll(const ScreenPoint& aVelocity,
                                                    const nsRefPtr<const OverscrollHandoffChain>& aOverscrollHandoffChain) {
-  APZCTreeManager* treeManagerLocal = mTreeManager;
+  APZCTreeManager* treeManagerLocal = GetApzcTreeManager();
   if (!(treeManagerLocal && treeManagerLocal->DispatchFling(this,
                                                             aVelocity,
                                                             aOverscrollHandoffChain,
@@ -2056,7 +2063,7 @@ bool AsyncPanZoomController::CallDispatchScroll(const ScreenPoint& aStartPoint,
   // Make a local copy of the tree manager pointer and check if it's not
   // null before calling DispatchScroll(). This is necessary because
   // Destroy(), which nulls out mTreeManager, could be called concurrently.
-  APZCTreeManager* treeManagerLocal = mTreeManager;
+  APZCTreeManager* treeManagerLocal = GetApzcTreeManager();
   return treeManagerLocal
       && treeManagerLocal->DispatchScroll(this, aStartPoint, aEndPoint,
                                           aOverscrollHandoffChain,
@@ -2358,6 +2365,8 @@ AsyncPanZoomController::FireAsyncScrollOnTimeout()
 bool AsyncPanZoomController::UpdateAnimation(const TimeStamp& aSampleTime,
                                              Vector<Task*>* aOutDeferredTasks)
 {
+  AssertOnCompositorThread();
+
   // This function may get called multiple with the same sample time, because
   // there may be multiple layers with this APZC, and each layer invokes this
   // function during composition. However we only want to do one animation step
@@ -2430,6 +2439,8 @@ void AsyncPanZoomController::GetOverscrollTransform(Matrix4x4* aTransform) const
 
 bool AsyncPanZoomController::AdvanceAnimations(const TimeStamp& aSampleTime)
 {
+  AssertOnCompositorThread();
+
   // The eventual return value of this function. The compositor needs to know
   // whether or not to advance by a frame as soon as it can. For example, if a
   // fling is happening, it has to keep compositing so that the animation is
@@ -2575,6 +2586,8 @@ Matrix4x4 AsyncPanZoomController::GetTransformToLastDispatchedPaint() const {
 }
 
 void AsyncPanZoomController::NotifyLayersUpdated(const FrameMetrics& aLayerMetrics, bool aIsFirstPaint) {
+  AssertOnCompositorThread();
+
   ReentrantMonitorAutoEnter lock(mMonitor);
   bool isDefault = mFrameMetrics.IsDefault();
 
@@ -2723,6 +2736,11 @@ void AsyncPanZoomController::NotifyLayersUpdated(const FrameMetrics& aLayerMetri
 const FrameMetrics& AsyncPanZoomController::GetFrameMetrics() const {
   mMonitor.AssertCurrentThreadIn();
   return mFrameMetrics;
+}
+
+APZCTreeManager* AsyncPanZoomController::GetApzcTreeManager() const {
+  mMonitor.AssertNotCurrentThreadIn();
+  return mTreeManager;
 }
 
 void AsyncPanZoomController::ZoomToRect(CSSRect aRect) {

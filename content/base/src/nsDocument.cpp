@@ -102,7 +102,6 @@
 
 #include "nsBidiUtils.h"
 
-#include "nsIDOMUserDataHandler.h"
 #include "nsIDOMXPathNSResolver.h"
 #include "nsIParserService.h"
 #include "nsContentCreatorFunctions.h"
@@ -2517,6 +2516,55 @@ nsDocument::FillStyleSet(nsStyleSet* aStyleSet)
                          nsStyleSet::eDocSheet);
 }
 
+static void
+WarnIfSandboxIneffective(nsIDocShell* aDocShell,
+                         uint32_t aSandboxFlags,
+                         nsIChannel* aChannel)
+{
+  // If the document is sandboxed (via the HTML5 iframe sandbox
+  // attribute) and both the allow-scripts and allow-same-origin
+  // keywords are supplied, the sandboxed document can call into its
+  // parent document and remove its sandboxing entirely - we print a
+  // warning to the web console in this case.
+  if (aSandboxFlags & SANDBOXED_NAVIGATION &&
+      !(aSandboxFlags & SANDBOXED_SCRIPTS) &&
+      !(aSandboxFlags & SANDBOXED_ORIGIN)) {
+    nsCOMPtr<nsIDocShellTreeItem> parentAsItem;
+    aDocShell->GetSameTypeParent(getter_AddRefs(parentAsItem));
+    nsCOMPtr<nsIDocShell> parentDocShell = do_QueryInterface(parentAsItem);
+    if (!parentDocShell) {
+      return;
+    }
+
+    // Don't warn if our parent is not the top-level document.
+    nsCOMPtr<nsIDocShellTreeItem> grandParentAsItem;
+    parentDocShell->GetSameTypeParent(getter_AddRefs(grandParentAsItem));
+    if (grandParentAsItem) {
+      return;
+    }
+
+    nsCOMPtr<nsIChannel> parentChannel;
+    parentDocShell->GetCurrentDocumentChannel(getter_AddRefs(parentChannel));
+    if (!parentChannel) {
+      return;
+    }
+    nsresult rv = nsContentUtils::CheckSameOrigin(aChannel, parentChannel);
+    if (NS_FAILED(rv)) {
+      return;
+    }
+
+    nsCOMPtr<nsIDocument> parentDocument = do_GetInterface(parentDocShell);
+    nsCOMPtr<nsIURI> iframeUri;
+    parentChannel->GetURI(getter_AddRefs(iframeUri));
+    nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
+                                    NS_LITERAL_CSTRING("Iframe Sandbox"),
+                                    parentDocument,
+                                    nsContentUtils::eSECURITY_PROPERTIES,
+                                    "BothAllowScriptsAndSameOriginPresent",
+                                    nullptr, 0, iframeUri);
+  }
+}
+
 nsresult
 nsDocument::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
                               nsILoadGroup* aLoadGroup,
@@ -2606,6 +2654,7 @@ nsDocument::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
   if (docShell) {
     nsresult rv = docShell->GetSandboxFlags(&mSandboxFlags);
     NS_ENSURE_SUCCESS(rv, rv);
+    WarnIfSandboxIneffective(docShell, mSandboxFlags, GetChannel());
   }
 
   // If this is not a data document, set CSP.
@@ -6331,15 +6380,6 @@ nsIDocument::ImportNode(nsINode& aNode, bool aDeep, ErrorResult& rv) const
       if (rv.Failed()) {
         return nullptr;
       }
-
-      nsIDocument *ownerDoc = imported->OwnerDoc();
-      rv = nsNodeUtils::CallUserDataHandlers(nodesWithProperties, ownerDoc,
-                                             nsIDOMUserDataHandler::NODE_IMPORTED,
-                                             true);
-      if (rv.Failed()) {
-        return nullptr;
-      }
-
       return newNode.forget();
     }
     default:
@@ -7288,30 +7328,6 @@ BlastSubtreeToPieces(nsINode *aNode)
   }
 }
 
-
-class nsUserDataCaller : public nsRunnable
-{
-public:
-  nsUserDataCaller(nsCOMArray<nsINode>& aNodesWithProperties,
-                   nsIDocument* aOwnerDoc)
-    : mNodesWithProperties(aNodesWithProperties),
-      mOwnerDoc(aOwnerDoc)
-  {
-  }
-
-  NS_IMETHOD Run()
-  {
-    nsNodeUtils::CallUserDataHandlers(mNodesWithProperties, mOwnerDoc,
-                                      nsIDOMUserDataHandler::NODE_ADOPTED,
-                                      false);
-    return NS_OK;
-  }
-
-private:
-  nsCOMArray<nsINode> mNodesWithProperties;
-  nsCOMPtr<nsIDocument> mOwnerDoc;
-};
-
 NS_IMETHODIMP
 nsDocument::AdoptNode(nsIDOMNode *aAdoptedNode, nsIDOMNode **aResult)
 {
@@ -7494,11 +7510,6 @@ nsIDocument::AdoptNode(nsINode& aAdoptedNode, ErrorResult& rv)
 
       return nullptr;
     }
-  }
-
-  if (nodesWithProperties.Count()) {
-    nsContentUtils::AddScriptRunner(new nsUserDataCaller(nodesWithProperties,
-                                                         this));
   }
 
   NS_ASSERTION(adoptedNode->OwnerDoc() == this,
@@ -10437,8 +10448,7 @@ FullscreenRoots::Add(nsIDocument* aRoot)
     if (!sInstance) {
       sInstance = new FullscreenRoots();
     }
-    nsWeakPtr weakRoot = do_GetWeakReference(aRoot);
-    sInstance->mRoots.AppendElement(weakRoot);
+    sInstance->mRoots.AppendElement(do_GetWeakReference(aRoot));
   }
 }
 
@@ -11011,8 +11021,7 @@ nsDocument::FullScreenStackPush(Element* aElement)
     EventStateManager::SetFullScreenState(top, false);
   }
   EventStateManager::SetFullScreenState(aElement, true);
-  nsWeakPtr weakElement = do_GetWeakReference(aElement);
-  mFullScreenStack.AppendElement(weakElement);
+  mFullScreenStack.AppendElement(do_GetWeakReference(aElement));
   NS_ASSERTION(GetFullScreenElement() == aElement, "Should match");
   return true;
 }

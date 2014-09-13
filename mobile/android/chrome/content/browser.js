@@ -95,6 +95,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "CharsetMenu",
 XPCOMUtils.defineLazyModuleGetter(this, "NetErrorHelper",
                                   "resource://gre/modules/NetErrorHelper.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "PermissionsUtils",
+                                  "resource://gre/modules/PermissionsUtils.jsm");
+
 // Lazily-loaded browser scripts:
 [
   ["SelectHelper", "chrome://browser/content/SelectHelper.js"],
@@ -163,6 +166,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "NetErrorHelper",
 
 XPCOMUtils.defineLazyServiceGetter(this, "Haptic",
   "@mozilla.org/widget/hapticfeedback;1", "nsIHapticFeedback");
+
+XPCOMUtils.defineLazyServiceGetter(this, "ParentalControls",
+  "@mozilla.org/parental-controls-service;1", "nsIParentalControlsService");
 
 XPCOMUtils.defineLazyServiceGetter(this, "DOMUtils",
   "@mozilla.org/inspector/dom-utils;1", "inIDOMUtils");
@@ -287,7 +293,6 @@ var BrowserApp = {
   _tabs: [],
   _selectedTab: null,
   _prefObservers: [],
-  isGuest: false,
 
   get isTablet() {
     let sysInfo = Cc["@mozilla.org/system-info;1"].getService(Ci.nsIPropertyBag2);
@@ -434,8 +439,6 @@ var BrowserApp = {
         gScreenHeight = window.arguments[2];
       if (window.arguments[3])
         pinned = window.arguments[3];
-      if (window.arguments[4])
-        this.isGuest = window.arguments[4];
     }
 
     if (pinned) {
@@ -459,7 +462,7 @@ var BrowserApp = {
     if (this._startupStatus)
       this.onAppUpdated();
 
-    if (this.isGuest) {
+    if (!ParentalControls.isAllowed(ParentalControls.INSTALL_EXTENSIONS)) {
       // Disable extension installs
       Services.prefs.setIntPref("extensions.enabledScopes", 1);
       Services.prefs.setIntPref("extensions.autoDisableScopes", 1);
@@ -581,7 +584,7 @@ var BrowserApp = {
     NativeWindow.contextmenus.add({
       label: Strings.browser.GetStringFromName("contextmenu.shareLink"),
       order: NativeWindow.contextmenus.DEFAULT_HTML5_ORDER - 1, // Show above HTML5 menu items
-      selector: NativeWindow.contextmenus._disableInGuest(NativeWindow.contextmenus.linkShareableContext),
+      selector: NativeWindow.contextmenus._disableRestricted("SHARE", NativeWindow.contextmenus.linkShareableContext),
       showAsActions: function(aElement) {
         return {
           title: aElement.textContent.trim() || aElement.title.trim(),
@@ -597,7 +600,7 @@ var BrowserApp = {
     NativeWindow.contextmenus.add({
       label: Strings.browser.GetStringFromName("contextmenu.shareEmailAddress"),
       order: NativeWindow.contextmenus.DEFAULT_HTML5_ORDER - 1,
-      selector: NativeWindow.contextmenus._disableInGuest(NativeWindow.contextmenus.emailLinkContext),
+      selector: NativeWindow.contextmenus._disableRestricted("SHARE", NativeWindow.contextmenus.emailLinkContext),
       showAsActions: function(aElement) {
         let url = NativeWindow.contextmenus._getLinkURL(aElement);
         let emailAddr = NativeWindow.contextmenus._stripScheme(url);
@@ -616,7 +619,7 @@ var BrowserApp = {
     NativeWindow.contextmenus.add({
       label: Strings.browser.GetStringFromName("contextmenu.sharePhoneNumber"),
       order: NativeWindow.contextmenus.DEFAULT_HTML5_ORDER - 1,
-      selector: NativeWindow.contextmenus._disableInGuest(NativeWindow.contextmenus.phoneNumberLinkContext),
+      selector: NativeWindow.contextmenus._disableRestricted("SHARE", NativeWindow.contextmenus.phoneNumberLinkContext),
       showAsActions: function(aElement) {
         let url = NativeWindow.contextmenus._getLinkURL(aElement);
         let phoneNumber = NativeWindow.contextmenus._stripScheme(url);
@@ -633,7 +636,7 @@ var BrowserApp = {
     });
 
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.addToContacts"),
-      NativeWindow.contextmenus._disableInGuest(NativeWindow.contextmenus.emailLinkContext),
+      NativeWindow.contextmenus._disableRestricted("ADD_CONTACT", NativeWindow.contextmenus.emailLinkContext),
       function(aTarget) {
         UITelemetry.addEvent("action.1", "contextmenu", null, "web_contact_email");
 
@@ -645,7 +648,7 @@ var BrowserApp = {
       });
 
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.addToContacts"),
-      NativeWindow.contextmenus._disableInGuest(NativeWindow.contextmenus.phoneNumberLinkContext),
+      NativeWindow.contextmenus._disableRestricted("ADD_CONTACT", NativeWindow.contextmenus.phoneNumberLinkContext),
       function(aTarget) {
         UITelemetry.addEvent("action.1", "contextmenu", null, "web_contact_phone");
 
@@ -657,7 +660,7 @@ var BrowserApp = {
       });
 
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.bookmarkLink"),
-      NativeWindow.contextmenus._disableInGuest(NativeWindow.contextmenus.linkBookmarkableContext),
+      NativeWindow.contextmenus._disableRestricted("BOOKMARK", NativeWindow.contextmenus.linkBookmarkableContext),
       function(aTarget) {
         UITelemetry.addEvent("action.1", "contextmenu", null, "web_bookmark");
 
@@ -694,7 +697,7 @@ var BrowserApp = {
     NativeWindow.contextmenus.add({
       label: Strings.browser.GetStringFromName("contextmenu.shareMedia"),
       order: NativeWindow.contextmenus.DEFAULT_HTML5_ORDER - 1,
-      selector: NativeWindow.contextmenus._disableInGuest(NativeWindow.contextmenus.SelectorContext("video")),
+      selector: NativeWindow.contextmenus._disableRestricted("SHARE", NativeWindow.contextmenus.SelectorContext("video")),
       showAsActions: function(aElement) {
         let url = (aElement.currentSrc || aElement.src);
         let title = aElement.textContent || aElement.title;
@@ -742,7 +745,7 @@ var BrowserApp = {
 
     NativeWindow.contextmenus.add({
       label: Strings.browser.GetStringFromName("contextmenu.shareImage"),
-      selector: NativeWindow.contextmenus._disableInGuest(NativeWindow.contextmenus.imageSaveableContext),
+      selector: NativeWindow.contextmenus._disableRestricted("SHARE", NativeWindow.contextmenus.imageSaveableContext),
       order: NativeWindow.contextmenus.DEFAULT_HTML5_ORDER - 1, // Show above HTML5 menu items
       showAsActions: function(aTarget) {
         let doc = aTarget.ownerDocument;
@@ -774,7 +777,7 @@ var BrowserApp = {
       });
 
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.setImageAs"),
-      NativeWindow.contextmenus._disableInGuest(NativeWindow.contextmenus.imageSaveableContext),
+      NativeWindow.contextmenus._disableRestricted("SET_IMAGE", NativeWindow.contextmenus.imageSaveableContext),
       function(aTarget) {
         UITelemetry.addEvent("action.1", "contextmenu", null, "web_background_image");
 
@@ -2680,11 +2683,13 @@ var NativeWindow = {
       return null;
     },
 
-    _disableInGuest: function _disableInGuest(selector) {
+    _disableRestricted: function _disableRestricted(restriction, selector) {
       return {
-        matches: function _disableInGuestMatches(aElement, aX, aY) {
-          if (BrowserApp.isGuest)
+        matches: function _disableRestrictedMatches(aElement, aX, aY) {
+          if (!ParentalControls.isAllowed(ParentalControls[restriction])) {
             return false;
+          }
+
           return selector.matches(aElement, aX, aY);
         }
       };
@@ -2846,6 +2851,9 @@ var LightWeightThemeWebInstaller = {
   },
 
   _isAllowed: function (node) {
+    // Make sure the whitelist has been imported to permissions
+    PermissionsUtils.importFromPrefs("xpinstall.", "install");
+
     let pm = Services.perms;
 
     let uri = node.ownerDocument.documentURIObject;
@@ -3928,50 +3936,52 @@ Tab.prototype = {
           // Check that type matches opensearch.
           let isOpenSearch = (type == "application/opensearchdescription+xml");
           if (isOpenSearch && target.title && /^(?:https?|ftp):/i.test(target.href)) {
-            let visibleEngines = Services.search.getVisibleEngines();
-            // NOTE: Engines are currently identified by name, but this can be changed
-            // when Engines are identified by URL (see bug 335102).
-            if (visibleEngines.some(function(e) {
-              return e.name == target.title;
-            })) {
-              // This engine is already present, do nothing.
-              return;
-            }
-
-            if (this.browser.engines) {
-              // This engine has already been handled, do nothing.
-              if (this.browser.engines.some(function(e) {
-                return e.url == target.href;
+            Services.search.init(() => {
+              let visibleEngines = Services.search.getVisibleEngines();
+              // NOTE: Engines are currently identified by name, but this can be changed
+              // when Engines are identified by URL (see bug 335102).
+              if (visibleEngines.some(function(e) {
+                return e.name == target.title;
               })) {
-                  return;
+                // This engine is already present, do nothing.
+                return;
               }
-            } else {
-              this.browser.engines = [];
-            }
 
-            // Get favicon.
-            let iconURL = target.ownerDocument.documentURIObject.prePath + "/favicon.ico";
+              if (this.browser.engines) {
+                // This engine has already been handled, do nothing.
+                if (this.browser.engines.some(function(e) {
+                  return e.url == target.href;
+                })) {
+                    return;
+                }
+              } else {
+                this.browser.engines = [];
+              }
 
-            let newEngine = {
-              title: target.title,
-              url: target.href,
-              iconURL: iconURL
-            };
+              // Get favicon.
+              let iconURL = target.ownerDocument.documentURIObject.prePath + "/favicon.ico";
 
-            this.browser.engines.push(newEngine);
+              let newEngine = {
+                title: target.title,
+                url: target.href,
+                iconURL: iconURL
+              };
 
-            // Don't send a message to display engines if we've already handled an engine.
-            if (this.browser.engines.length > 1)
-              return;
+              this.browser.engines.push(newEngine);
 
-            // Broadcast message that this tab contains search engines that should be visible.
-            let newEngineMessage = {
-              type: "Link:OpenSearch",
-              tabID: this.id,
-              visible: true
-            };
+              // Don't send a message to display engines if we've already handled an engine.
+              if (this.browser.engines.length > 1)
+                return;
 
-            Messaging.sendRequest(newEngineMessage);
+              // Broadcast message that this tab contains search engines that should be visible.
+              let newEngineMessage = {
+                type: "Link:OpenSearch",
+                tabID: this.id,
+                visible: true
+              };
+
+              Messaging.sendRequest(newEngineMessage);
+            });
           }
         }
         break;
@@ -4202,8 +4212,8 @@ Tab.prototype = {
       fixedURI = URIFixup.createExposableURI(aLocationURI);
     } catch (ex) { }
 
-    // In guest sessions, we refuse to let you open any file urls.
-    if (BrowserApp.isGuest) {
+    // In restricted profiles, we refuse to let you open any file urls.
+    if (!ParentalControls.isAllowed(ParentalControls.VISIT_FILE_URLS)) {
       let bannedSchemes = ["file", "chrome", "resource", "jar", "wyciwyg"];
 
       if (bannedSchemes.indexOf(fixedURI.scheme) > -1) {

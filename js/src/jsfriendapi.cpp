@@ -47,9 +47,7 @@ PerThreadDataFriendFields::PerThreadDataFriendFields()
     for (int i=0; i<StackKindCount; i++)
         nativeStackLimit[i] = UINTPTR_MAX;
 #endif
-#if defined(JSGC_USE_EXACT_ROOTING)
     PodArrayZero(thingGCRooters);
-#endif
 }
 
 JS_FRIEND_API(void)
@@ -1220,3 +1218,9 @@ JS_StoreStringPostBarrierCallback(JSContext* cx,
         rt->gc.storeBuffer.putCallback(callback, key, data);
 }
 #endif /* JSGC_GENERATIONAL */
+
+JS_FRIEND_API(bool)
+js::ForwardToNative(JSContext *cx, JSNative native, const CallArgs &args)
+{
+    return native(cx, args.length(), args.base());
+}

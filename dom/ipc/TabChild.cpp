@@ -1892,6 +1892,9 @@ TabChild::RecvAcknowledgeScrollUpdate(const ViewID& aScrollId,
 bool
 TabChild::RecvHandleDoubleTap(const CSSPoint& aPoint, const ScrollableLayerGuid& aGuid)
 {
+    TABC_LOG("Handling double tap at %s with %p %p\n",
+      Stringify(aPoint).c_str(), mGlobal.get(), mTabChildGlobal.get());
+
     if (!mGlobal || !mTabChildGlobal) {
         return true;
     }
@@ -1912,6 +1915,9 @@ TabChild::RecvHandleDoubleTap(const CSSPoint& aPoint, const ScrollableLayerGuid&
 bool
 TabChild::RecvHandleSingleTap(const CSSPoint& aPoint, const ScrollableLayerGuid& aGuid)
 {
+  TABC_LOG("Handling single tap at %s with %p %p %d\n",
+    Stringify(aPoint).c_str(), mGlobal.get(), mTabChildGlobal.get(), mTouchEndCancelled);
+
   if (!mGlobal || !mTabChildGlobal) {
     return true;
   }
@@ -1941,6 +1947,8 @@ TabChild::FireSingleTapEvent(LayoutDevicePoint aPoint)
   if (mDestroyed) {
     return;
   }
+  TABC_LOG("Dispatching single-tap component events to %s\n",
+    Stringify(aPoint).c_str());
   int time = 0;
   DispatchSynthesizedMouseEvent(NS_MOUSE_MOVE, time, aPoint, mWidget);
   DispatchSynthesizedMouseEvent(NS_MOUSE_BUTTON_DOWN, time, aPoint, mWidget);
@@ -1950,6 +1958,9 @@ TabChild::FireSingleTapEvent(LayoutDevicePoint aPoint)
 bool
 TabChild::RecvHandleLongTap(const CSSPoint& aPoint, const ScrollableLayerGuid& aGuid)
 {
+  TABC_LOG("Handling long tap at %s with %p %p\n",
+    Stringify(aPoint).c_str(), mGlobal.get(), mTabChildGlobal.get());
+
   if (!mGlobal || !mTabChildGlobal) {
     return true;
   }
@@ -1962,6 +1973,8 @@ TabChild::RecvHandleLongTap(const CSSPoint& aPoint, const ScrollableLayerGuid& a
                          2, 1, 0, true,
                          nsIDOMMouseEvent::MOZ_SOURCE_TOUCH);
 
+  TABC_LOG("Contextmenu event handled: %d\n", eventHandled);
+
   // If no one handle context menu, fire MOZLONGTAP event
   if (!eventHandled) {
     LayoutDevicePoint currentPoint =
@@ -1970,6 +1983,7 @@ TabChild::RecvHandleLongTap(const CSSPoint& aPoint, const ScrollableLayerGuid& a
     nsEventStatus status =
       DispatchSynthesizedMouseEvent(NS_MOUSE_MOZLONGTAP, time, currentPoint, mWidget);
     eventHandled = (status == nsEventStatus_eConsumeNoDefault);
+    TABC_LOG("MOZLONGTAP event handled: %d\n", eventHandled);
   }
 
   SendContentReceivedTouch(aGuid, eventHandled);
@@ -2243,6 +2257,8 @@ bool
 TabChild::RecvRealTouchEvent(const WidgetTouchEvent& aEvent,
                              const ScrollableLayerGuid& aGuid)
 {
+  TABC_LOG("Receiving touch event of type %d\n", aEvent.message);
+
   WidgetTouchEvent localEvent(aEvent);
   localEvent.widget = mWidget;
   for (size_t i = 0; i < localEvent.touches.Length(); i++) {

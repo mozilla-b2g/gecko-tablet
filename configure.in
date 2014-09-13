@@ -1264,6 +1264,22 @@ if test -n "$MOZ_ASAN"; then
     MOZ_PATH_PROG(LLVM_SYMBOLIZER, llvm-symbolizer)
 fi
 AC_SUBST(MOZ_ASAN)
+
+dnl ========================================================
+dnl = Use Memory Sanitizer
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(memory-sanitizer,
+[  --enable-memory-sanitizer       Enable Memory Sanitizer (default=no)],
+    MOZ_MSAN=1,
+    MOZ_MSAN= )
+if test -n "$MOZ_MSAN"; then
+    MOZ_LLVM_HACKS=1
+    AC_DEFINE(MOZ_MSAN)
+    MOZ_PATH_PROG(LLVM_SYMBOLIZER, llvm-symbolizer)
+fi
+AC_SUBST(MOZ_MSAN)
+
+# The LLVM symbolizer is used by all sanitizers
 AC_SUBST(LLVM_SYMBOLIZER)
 
 dnl ========================================================
@@ -3839,7 +3855,6 @@ NSS_NO_LIBPKIX=
 MOZ_CONTENT_SANDBOX=
 MOZ_GMP_SANDBOX=
 MOZ_SANDBOX=1
-JSGC_USE_EXACT_ROOTING=1
 JSGC_GENERATIONAL=
 
 case "$target_os" in
@@ -4155,7 +4170,6 @@ cairo-gtk3)
     USE_FC_FREETYPE=1
 
     TK_CFLAGS='$(MOZ_GTK3_CFLAGS)'
-    TK_LIBS='$(MOZ_GTK3_LIBS)'
     MOZ_WIDGET_GTK=3
     AC_DEFINE_UNQUOTED(MOZ_WIDGET_GTK,$MOZ_WIDGET_GTK)
     MOZ_PDF_PRINTING=1
@@ -4268,6 +4282,10 @@ if test "$COMPILE_ENVIRONMENT"; then
   if test "$MOZ_ENABLE_GTK3"; then
     PKG_CHECK_MODULES(MOZ_GTK3, gtk+-3.0 >= $GTK3_VERSION gtk+-unix-print-3.0 glib-2.0 gobject-2.0 $GDK_PACKAGES)
     MOZ_GTK3_CFLAGS="-I${_topsrcdir}/widget/gtk/compat-gtk3 $MOZ_GTK3_CFLAGS"
+    dnl Contrary to MOZ_GTK2_LIBS, MOZ_GTK3_LIBS needs to be literally added to TK_LIBS instead
+    dnl of a make reference because of how TK_LIBS is mangled in toolkit/library/moz.build
+    dnl for GTK+3 builds.
+    TK_LIBS=$MOZ_GTK3_LIBS
   fi
   if test "$MOZ_ENABLE_GTK"; then
     if test "$MOZ_X11"; then
@@ -6765,6 +6783,33 @@ AC_SUBST(MOZ_PGO)
 AC_SUBST(MOZ_PGO_OPTIMIZE_FLAGS)
 
 dnl ========================================================
+dnl = Enable NS_StackWalk.
+dnl ========================================================
+
+# On Windows, NS_StackWalk will only work correctly if we have frame pointers
+# available. That will only be true for non-optimized builds, debug builds or
+# builds with --enable-profiling in the .mozconfig (which is turned on in
+# Nightly by default.)
+case "$OS_TARGET" in
+WINNT)
+    if test -z "$MOZ_OPTIMIZE" -o -n "$MOZ_PROFILING" -o -n "$MOZ_DEBUG"; then
+        MOZ_STACKWALKING=1
+    else
+        MOZ_STACKWALKING=
+    fi
+    ;;
+*)
+    MOZ_STACKWALKING=1
+    ;;
+esac
+
+if test -n "$MOZ_STACKWALKING"; then
+    AC_DEFINE(MOZ_STACKWALKING)
+fi
+
+AC_SUBST(MOZ_STACKWALKING)
+
+dnl ========================================================
 dnl = Enable any treating of compile warnings as errors
 dnl ========================================================
 MOZ_ARG_ENABLE_BOOL(warnings-as-errors,
@@ -7170,17 +7215,6 @@ MOZ_ARG_DISABLE_BOOL(gcincremental,
     JSGC_INCREMENTAL= )
 if test -n "$JSGC_INCREMENTAL"; then
     AC_DEFINE(JSGC_INCREMENTAL)
-fi
-
-dnl ========================================================
-dnl = Use exact stack rooting for GC
-dnl ========================================================
-MOZ_ARG_DISABLE_BOOL(exact-rooting,
-[  --disable-exact-rooting  Enable use of conservative stack scanning for GC],
-    JSGC_USE_EXACT_ROOTING= ,
-    JSGC_USE_EXACT_ROOTING=1 )
-if test -n "$JSGC_USE_EXACT_ROOTING"; then
-    AC_DEFINE(JSGC_USE_EXACT_ROOTING)
 fi
 
 dnl ========================================================
@@ -9101,6 +9135,11 @@ if test -n "$_WRAP_MALLOC"; then
     _SUBDIR_CONFIG_ARGS="`echo $_SUBDIR_CONFIG_ARGS | sed -e 's/--enable-wrap-malloc *//'`"
 fi
 
+if test -n "$MOZ_USING_CCACHE"; then
+    # Avoid double prepending ccache by omitting --with-ccache in building NSPR.
+    _SUBDIR_CONFIG_ARGS="`echo $_SUBDIR_CONFIG_ARGS | sed -e 's/--with-ccache\S* *//'`"
+fi
+
 MOZ_SUBCONFIGURE_NSPR()
 
 dnl ========================================================
@@ -9142,9 +9181,6 @@ if test -z "$JS_SHARED_LIBRARY" ; then
     if test -n "$MOZ_DISABLE_EXPORT_JS"; then
         ac_configure_args="$ac_configure_args --disable-export-js"
     fi
-fi
-if test -z "$JSGC_USE_EXACT_ROOTING" ; then
-    ac_configure_args="$ac_configure_args --disable-exact-rooting"
 fi
 if test -z "$JSGC_GENERATIONAL" ; then
     ac_configure_args="$ac_configure_args --disable-gcgenerational"

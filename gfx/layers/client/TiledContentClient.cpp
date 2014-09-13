@@ -751,6 +751,12 @@ TileClient::GetBackBuffer(const nsIntRegion& aDirtyRegion,
 
   if (!mBackBuffer ||
       mBackLock->GetReadCount() > 1) {
+
+    if (mBackLock) {
+      // Before we Replacing the lock by another one we need to unlock it!
+      mBackLock->ReadUnlock();
+    }
+
     if (mBackBuffer) {
       // Our current back-buffer is still locked by the compositor. This can occur
       // when the client is producing faster than the compositor can consume. In
@@ -761,14 +767,18 @@ TileClient::GetBackBuffer(const nsIntRegion& aDirtyRegion,
       }
     }
     mBackBuffer.Set(this, pool->GetTextureClient());
-    if (aMode == SurfaceMode::SURFACE_COMPONENT_ALPHA) {
-      mBackBufferOnWhite = pool->GetTextureClient();
+    if (!mBackBuffer) {
+      return nullptr;
     }
 
-    if (mBackLock) {
-      // Before we Replacing the lock by another one we need to unlock it!
-      mBackLock->ReadUnlock();
+    if (aMode == SurfaceMode::SURFACE_COMPONENT_ALPHA) {
+      mBackBufferOnWhite = pool->GetTextureClient();
+      if (!mBackBufferOnWhite) {
+        mBackBuffer.Set(this, nullptr);
+        return nullptr;
+      }
     }
+
     // Create a lock for our newly created back-buffer.
     if (mManager->AsShadowForwarder()->IsSameProcess()) {
       // If our compositor is in the same process, we can save some cycles by not
@@ -929,8 +939,9 @@ ClientTiledLayerBuffer::PaintThebes(const nsIntRegion& aNewValidRegion,
       mSinglePaintBufferOffset = nsIntPoint(bounds.x, bounds.y);
     }
     ctxt->NewPath();
-    ctxt->Scale(mResolution, mResolution);
-    ctxt->Translate(gfxPoint(-bounds.x, -bounds.y));
+    ctxt->SetMatrix(
+      ctxt->CurrentMatrix().Scale(mResolution, mResolution).
+                            Translate(-bounds.x, -bounds.y));
 #ifdef GFX_TILEDLAYER_PREF_WARNINGS
     if (PR_IntervalNow() - start > 3) {
       printf_stderr("Slow alloc %i\n", PR_IntervalNow() - start);
@@ -1121,19 +1132,29 @@ ClientTiledLayerBuffer::ValidateTile(TileClient aTile,
   extraPainted.And(extraPainted, mNewValidRegion);
   mPaintedRegion.Or(mPaintedRegion, extraPainted);
 
+  if (!backBuffer) {
+    NS_WARNING("Failed to allocate a tile TextureClient");
+    aTile.DiscardBackBuffer();
+    aTile.DiscardFrontBuffer();
+    return TileClient();
+  }
+
   // the back buffer may have been already locked in ValidateBackBufferFromFront
   if (!backBuffer->IsLocked()) {
     if (!backBuffer->Lock(OpenMode::OPEN_READ_WRITE)) {
-      NS_WARNING("Failed to lock tile TextureClient for updating.");
+      NS_WARNING("Failed to lock a tile TextureClient");
+      aTile.DiscardBackBuffer();
       aTile.DiscardFrontBuffer();
-      return aTile;
+      return TileClient();
     }
   }
+
   if (backBufferOnWhite && !backBufferOnWhite->IsLocked()) {
     if (!backBufferOnWhite->Lock(OpenMode::OPEN_READ_WRITE)) {
       NS_WARNING("Failed to lock tile TextureClient for updating.");
+      aTile.DiscardBackBuffer();
       aTile.DiscardFrontBuffer();
-      return aTile;
+      return TileClient();
     }
   }
 
@@ -1300,8 +1321,10 @@ ClientTiledLayerBuffer::ValidateTile(TileClient aTile,
 
     ctxt->NewPath();
     ctxt->Clip(gfxRect(bounds.x, bounds.y, bounds.width, bounds.height));
-    ctxt->Translate(gfxPoint(-unscaledTileOrigin.x, -unscaledTileOrigin.y));
-    ctxt->Scale(mResolution, mResolution);
+    ctxt->SetMatrix(
+      ctxt->CurrentMatrix().Translate(-unscaledTileOrigin.x,
+                                      -unscaledTileOrigin.y).
+                            Scale(mResolution, mResolution));
     mCallback(mThebesLayer, ctxt,
               tileRegion.GetBounds(),
               DrawRegionClip::CLIP_NONE,

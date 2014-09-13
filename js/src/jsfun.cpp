@@ -1862,8 +1862,6 @@ FunctionConstructor(JSContext *cx, unsigned argc, Value *vp, GeneratorKind gener
     if (!str)
         return false;
 
-    JS::Anchor<JSString *> strAnchor(str);
-
     /*
      * NB: (new Function) is not lexically closed by its caller, it's just an
      * anonymous function in the top-level scope that its constructor inhabits.
@@ -2185,7 +2183,7 @@ CheckIsValidConstructible(Value calleev)
     if (callee->is<JSFunction>())
         JS_ASSERT(callee->as<JSFunction>().isNativeConstructor());
     else
-        JS_ASSERT(callee->getClass()->construct != nullptr);
+        JS_ASSERT(callee->constructHook() != nullptr);
 }
 
 } // namespace detail

@@ -1,8 +1,11 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const MozLoopServiceInternal = Cu.import("resource:///modules/loop/MozLoopService.jsm", {}).
-                               MozLoopServiceInternal;
+const HAWK_TOKEN_LENGTH = 64;
+const {
+  LOOP_SESSION_TYPE,
+  MozLoopServiceInternal,
+} = Cu.import("resource:///modules/loop/MozLoopService.jsm", {});
 
 var gMozLoopAPI;
 
@@ -96,9 +99,12 @@ function promiseOAuthParamsSetup(baseURL, params) {
 
 function resetFxA() {
   let global = Cu.import("resource:///modules/loop/MozLoopService.jsm", {});
+  global.gHawkClient = null;
   global.gFxAOAuthClientPromise = null;
   global.gFxAOAuthClient = null;
   global.gFxAOAuthTokenData = null;
+  const fxASessionPref = MozLoopServiceInternal.getSessionTokenPrefName(LOOP_SESSION_TYPE.FXA);
+  Services.prefs.clearUserPref(fxASessionPref);
 }
 
 function promiseDeletedOAuthParams(baseURL) {
@@ -112,3 +118,46 @@ function promiseDeletedOAuthParams(baseURL) {
 
   return deferred.promise;
 }
+
+/**
+ * Get the last registration on the test server.
+ */
+function promiseOAuthGetRegistration(baseURL) {
+  let deferred = Promise.defer();
+  let xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"].
+              createInstance(Ci.nsIXMLHttpRequest);
+  xhr.open("GET", baseURL + "/get_registration", true);
+  xhr.responseType = "json";
+  xhr.addEventListener("load", () => deferred.resolve(xhr));
+  xhr.addEventListener("error", deferred.reject);
+  xhr.send();
+
+  return deferred.promise;
+}
+
+/**
+ * This is used to fake push registration and notifications for
+ * MozLoopService tests. There is only one object created per test instance, as
+ * once registration has taken place, the object cannot currently be changed.
+ */
+let mockPushHandler = {
+  // This sets the registration result to be returned when initialize
+  // is called. By default, it is equivalent to success.
+  registrationResult: null,
+  pushUrl: undefined,
+
+  /**
+   * MozLoopPushHandler API
+   */
+  initialize: function(registerCallback, notificationCallback) {
+    registerCallback(this.registrationResult, this.pushUrl);
+    this._notificationCallback = notificationCallback;
+  },
+
+  /**
+   * Test-only API to simplify notifying a push notification result.
+   */
+  notify: function(version) {
+    this._notificationCallback(version);
+  }
+};

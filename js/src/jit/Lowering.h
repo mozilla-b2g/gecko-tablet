@@ -273,12 +273,12 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitSimdBinaryComp(MSimdBinaryComp *ins);
     bool visitSimdBinaryArith(MSimdBinaryArith *ins);
     bool visitSimdBinaryBitwise(MSimdBinaryBitwise *ins);
-    bool visitSimdValueX4(MSimdValueX4 *ins);
     bool visitSimdConstant(MSimdConstant *ins);
     bool visitPhi(MPhi *ins);
     bool visitBeta(MBeta *ins);
     bool visitObjectState(MObjectState *ins);
     bool visitArrayState(MArrayState *ins);
+    bool visitUnknownValue(MUnknownValue *ins);
 };
 
 } // namespace jit

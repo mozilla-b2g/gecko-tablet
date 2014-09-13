@@ -407,10 +407,10 @@ CreateSamplingRestrictedDrawable(gfxDrawable* aDrawable,
     nsRefPtr<gfxContext> tmpCtx = new gfxContext(target);
     tmpCtx->SetOperator(OptimalFillOperator());
     aDrawable->Draw(tmpCtx, needed - needed.TopLeft(), true,
-                    GraphicsFilter::FILTER_FAST, 1.0, gfxMatrix().Translate(needed.TopLeft()));
+                    GraphicsFilter::FILTER_FAST, 1.0, gfxMatrix::Translation(needed.TopLeft()));
     RefPtr<SourceSurface> surface = target->Snapshot();
 
-    nsRefPtr<gfxDrawable> drawable = new gfxSurfaceDrawable(surface, size, gfxMatrix().Translate(-needed.TopLeft()));
+    nsRefPtr<gfxDrawable> drawable = new gfxSurfaceDrawable(surface, size, gfxMatrix::Translation(-needed.TopLeft()));
     return drawable.forget();
 }
 #endif // !MOZ_GFX_OPTIMIZE_MOBILE
@@ -450,7 +450,7 @@ struct MOZ_STACK_CLASS AutoCairoPixmanBugWorkaround
         // Clip the rounded-out-to-device-pixels bounds of the
         // transformed fill area. This is the area for the group we
         // want to push.
-        mContext->IdentityMatrix();
+        mContext->SetMatrix(gfxMatrix());
         gfxRect bounds = currentMatrix.TransformBounds(aFill);
         bounds.RoundOut();
         mContext->Clip(bounds);

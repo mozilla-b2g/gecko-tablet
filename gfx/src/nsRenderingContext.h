@@ -51,27 +51,10 @@ public:
 
     // Graphics state
 
-    void PushState(void);
-    void PopState(void);
     void IntersectClip(const nsRect& aRect);
     void SetClip(const nsIntRegion& aRegion);
     void SetLineStyle(nsLineStyle aLineStyle);
     void SetColor(nscolor aColor);
-    void Translate(const nsPoint& aPt);
-    void Scale(float aSx, float aSy);
-
-    class AutoPushTranslation {
-        nsRenderingContext* mCtx;
-    public:
-        AutoPushTranslation(nsRenderingContext* aCtx, const nsPoint& aPt)
-            : mCtx(aCtx) {
-            mCtx->PushState();
-            mCtx->Translate(aPt);
-        }
-        ~AutoPushTranslation() {
-            mCtx->PopState();
-        }
-    };
 
     // Shapes
 
@@ -87,8 +70,6 @@ public:
 
     void FillEllipse(const nsRect& aRect);
     void FillEllipse(nscoord aX, nscoord aY, nscoord aWidth, nscoord aHeight);
-
-    void InvertRect(const nsRect& aRect);
 
     // Text
 

@@ -107,6 +107,9 @@ pref("offline-apps.quota.warn",        51200);
 // cache compression turned off for now - see bug #715198
 pref("browser.cache.compression_level", 0);
 
+// Whether or not MozAbortablePromise is enabled.
+pref("dom.abortablepromise.enabled", false);
+
 // Whether or not testing features are enabled.
 pref("dom.quotaManager.testing", false);
 
@@ -373,13 +376,12 @@ pref("media.getusermedia.playout_delay", 50);
 pref("media.peerconnection.capture_delay", 50);
 pref("media.getusermedia.playout_delay", 50);
 #endif
-#else
-#ifdef ANDROID
-pref("media.navigator.enabled", true);
-#endif
 #endif
 
+#if !defined(ANDROID)
 pref("media.getusermedia.screensharing.enabled", true);
+#endif
+
 #ifdef RELEASE_BUILD
 pref("media.getusermedia.screensharing.allowed_domains", "");
 #else

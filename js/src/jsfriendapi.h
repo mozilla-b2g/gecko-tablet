@@ -156,10 +156,6 @@ JS_CloneObject(JSContext *cx, JS::HandleObject obj, JS::HandleObject proto,
 extern JS_FRIEND_API(JSString *)
 JS_BasicObjectToString(JSContext *cx, JS::HandleObject obj);
 
-extern JS_FRIEND_API(bool)
-js_GetterOnlyPropertyStub(JSContext *cx, JS::HandleObject obj, JS::HandleId id, bool strict,
-                          JS::MutableHandleValue vp);
-
 JS_FRIEND_API(void)
 js_ReportOverRecursed(JSContext *maybecx);
 
@@ -266,7 +262,7 @@ namespace js {
         js::proxy_ObjectMoved                                           \
     }
 
-#define PROXY_CLASS_WITH_EXT(name, extraSlots, flags, callOp, constructOp, ext)         \
+#define PROXY_CLASS_WITH_EXT(name, extraSlots, flags, ext)                              \
     {                                                                                   \
         name,                                                                           \
         js::Class::NON_NATIVE |                                                         \
@@ -282,9 +278,9 @@ namespace js {
         JS_ResolveStub,                                                                 \
         js::proxy_Convert,                                                              \
         js::proxy_Finalize,      /* finalize    */                                      \
-        callOp,                  /* call        */                                      \
+        nullptr,                  /* call        */                                     \
         js::proxy_HasInstance,   /* hasInstance */                                      \
-        constructOp,             /* construct   */                                      \
+        nullptr,             /* construct   */                                          \
         js::proxy_Trace,         /* trace       */                                      \
         JS_NULL_CLASS_SPEC,                                                             \
         ext,                                                                            \
@@ -311,8 +307,8 @@ namespace js {
         }                                                                               \
     }
 
-#define PROXY_CLASS_DEF(name, extraSlots, flags, callOp, constructOp)   \
-  PROXY_CLASS_WITH_EXT(name, extraSlots, flags, callOp, constructOp,    \
+#define PROXY_CLASS_DEF(name, extraSlots, flags)                        \
+  PROXY_CLASS_WITH_EXT(name, extraSlots, flags,                         \
                        PROXY_MAKE_EXT(                                  \
                          nullptr, /* outerObject */                     \
                          nullptr, /* innerObject */                     \
@@ -2475,6 +2471,9 @@ UnsafeDefineElement(JSContext *cx, JS::HandleObject obj, uint32_t index, JS::Han
 JS_FRIEND_API(bool)
 SliceSlowly(JSContext* cx, JS::HandleObject obj, JS::HandleObject receiver,
             uint32_t begin, uint32_t end, JS::HandleObject result);
+
+JS_FRIEND_API(bool)
+ForwardToNative(JSContext *cx, JSNative native, const JS::CallArgs &args);
 
 /* ES5 8.12.8. */
 extern JS_FRIEND_API(bool)

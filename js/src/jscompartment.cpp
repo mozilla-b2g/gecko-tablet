@@ -435,8 +435,8 @@ JSCompartment::wrap(JSContext *cx, MutableHandleObject obj, HandleObject existin
     if (existing) {
         // Is it possible to reuse |existing|?
         if (!existing->getTaggedProto().isLazy() ||
-            // Note: don't use is<ObjectProxyObject>() here -- it also matches subclasses!
-            existing->getClass() != &ProxyObject::uncallableClass_ ||
+            // Note: Class asserted above, so all that's left to check is callability
+            existing->isCallable() ||
             existing->getParent() != global ||
             obj->isCallable())
         {
@@ -611,7 +611,7 @@ JSCompartment::sweep(FreeOp *fop, bool releaseTypes)
         jitCompartment_->sweep(fop, this);
 
     /*
-     * JIT code increments activeUseCount for any RegExpShared used by jit
+     * JIT code increments activeWarmUpCounter for any RegExpShared used by jit
      * code for the lifetime of the JIT script. Thus, we must perform
      * sweeping after clearing jit code.
      */

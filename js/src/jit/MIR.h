@@ -745,6 +745,12 @@ class MDefinition : public MNode
     bool isEffectful() const {
         return getAliasSet().isStore();
     }
+#ifdef DEBUG
+    virtual bool needsResumePoint() const {
+        // Return whether this instruction should have its own resume point.
+        return isEffectful();
+    }
+#endif
     virtual bool mightAlias(const MDefinition *store) const {
         // Return whether this load may depend on the specified store, given
         // that the alias sets intersect. This may be refined to exclude
@@ -6436,6 +6442,15 @@ class MRegExpReplace
     static MRegExpReplace *New(TempAllocator &alloc, MDefinition *string, MDefinition *pattern, MDefinition *replacement) {
         return new(alloc) MRegExpReplace(string, pattern, replacement);
     }
+
+    bool writeRecoverData(CompactBufferWriter &writer) const;
+    bool canRecoverOnBailout() const {
+        // RegExpReplace will zero the lastIndex field when global flag is set.
+        // So we can only remove this if it's non-global.
+        if (pattern()->isRegExp())
+            return !pattern()->toRegExp()->source()->global();
+        return false;
+    }
 };
 
 class MStringReplace
@@ -6820,15 +6835,15 @@ class MMaybeCopyElementsForWrite
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
-        // This instruction can read and write to the elements' contents,
-        // in the same manner as MConvertElementsToDoubles. As with that
-        // instruction, this is safe to consolidate and freely reorder this
-        // instruction, though this must precede any loads of the object's
-        // elements pointer or writes to the object's elements. The latter
-        // property is ensured by chaining this with the object definition
-        // itself, in the same manner as MBoundsCheck.
-        return AliasSet::None();
+        return AliasSet::Store(AliasSet::ObjectFields);
     }
+#ifdef DEBUG
+    bool needsResumePoint() const {
+        // This instruction is idempotent and does not change observable
+        // behavior, so does not need its own resume point.
+        return false;
+    }
+#endif
 
     TypePolicy *typePolicy() {
         return this;
@@ -10623,7 +10638,6 @@ class MFilterTypeSet
       : MUnaryInstruction(def)
     {
         MOZ_ASSERT(!types->unknown());
-        MOZ_ASSERT(def->type() == types->getKnownMIRType());
         setResultType(types->getKnownMIRType());
         setResultTypeSet(types);
     }
@@ -11295,8 +11309,8 @@ class MHasClass
     }
 };
 
-// Increase the usecount of the provided script upon execution and test if
-// the usecount surpasses the threshold. Upon hit it will recompile the
+// Increase the warm-up counter of the provided script upon execution and test if
+// the warm-up counter surpasses the threshold. Upon hit it will recompile the
 // outermost script (i.e. not the inlined script).
 class MRecompileCheck : public MNullaryInstruction
 {
@@ -11313,8 +11327,8 @@ class MRecompileCheck : public MNullaryInstruction
   public:
     INSTRUCTION_HEADER(RecompileCheck);
 
-    static MRecompileCheck *New(TempAllocator &alloc, JSScript *script_, uint32_t useCount) {
-        return new(alloc) MRecompileCheck(script_, useCount);
+    static MRecompileCheck *New(TempAllocator &alloc, JSScript *script_, uint32_t recompileThreshold) {
+        return new(alloc) MRecompileCheck(script_, recompileThreshold);
     }
 
     JSScript *script() const {
@@ -11660,6 +11674,21 @@ class MAsmJSCall MOZ_FINAL : public MVariadicInstruction
 
     bool possiblyCalls() const {
         return true;
+    }
+};
+
+class MUnknownValue : public MNullaryInstruction
+{
+  protected:
+    MUnknownValue() {
+        setResultType(MIRType_Value);
+    }
+
+  public:
+    INSTRUCTION_HEADER(UnknownValue)
+
+    static MUnknownValue *New(TempAllocator &alloc) {
+        return new(alloc) MUnknownValue();
     }
 };
 

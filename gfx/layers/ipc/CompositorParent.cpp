@@ -149,6 +149,12 @@ CompositorThreadHolder::CreateCompositorThread()
    * Compositor hangs seen in the wild, but is short enough to not miss getting
    * native hang stacks. */
   options.permanent_hang_timeout = 2048; // milliseconds
+#if defined(_WIN32)
+  /* With d3d9 the compositor thread creates native ui, see DeviceManagerD3D9. As
+   * such the thread is a gui thread, and must process a windows message queue or
+   * risk deadlocks. Chromium message loop TYPE_UI does exactly what we need. */
+  options.message_loop_type = MessageLoop::TYPE_UI;
+#endif
 
   if (!compositorThread->StartWithOptions(options)) {
     delete compositorThread;
@@ -801,7 +807,7 @@ CompositorParent::ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
   // Instruct the LayerManager to update its render bounds now. Since all the orientation
   // change, dimension change would be done at the stage, update the size here is free of
   // race condition.
-  mLayerManager->UpdateRenderBounds(aTargetConfig.clientBounds());
+  mLayerManager->UpdateRenderBounds(aTargetConfig.naturalBounds());
   mLayerManager->SetRegionToClear(aTargetConfig.clearRegion());
 
   mCompositionManager->Updated(aIsFirstPaint, aTargetConfig);

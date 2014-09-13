@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- * vim: set ts=8 sts=4 et sw=4 tw=99:
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -61,6 +62,7 @@
 #include "perf/jsperf.h"
 #include "shell/jsheaptools.h"
 #include "shell/jsoptparse.h"
+#include "shell/OSObject.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/Debugger.h"
 #include "vm/HelperThreads.h"
@@ -1452,8 +1454,6 @@ Run(JSContext *cx, unsigned argc, jsval *vp)
     const char16_t *ucbuf = chars.twoByteRange().start().get();
     size_t buflen = str->length();
 
-    JS::Anchor<JSString *> a_str(str);
-
     RootedScript script(cx);
     int64_t startClock = PRMJ_Now();
     {
@@ -2174,7 +2174,7 @@ DisassFile(JSContext *cx, unsigned argc, jsval *vp)
     Sprinter sprinter(cx);
     if (!sprinter.init())
         return false;
-    bool ok = DisassembleScript(cx, script, NullPtr(), p.lines, p.recursive, &sprinter);
+    bool ok = DisassembleScript(cx, script, JS::NullPtr(), p.lines, p.recursive, &sprinter);
     if (ok)
         fprintf(stdout, "%s\n", sprinter.string());
     if (!ok)
@@ -4034,9 +4034,8 @@ WrapWithProto(JSContext *cx, unsigned argc, jsval *vp)
 
     WrapperOptions options(cx);
     options.setProto(proto.toObjectOrNull());
-    options.selectDefaultClass(obj.toObject().isCallable());
     JSObject *wrapped = Wrapper::New(cx, &obj.toObject(), &obj.toObject().global(),
-                                     &Wrapper::singletonWithPrototype, &options);
+                                     &Wrapper::singletonWithPrototype, options);
     if (!wrapped)
         return false;
 
@@ -4798,7 +4797,6 @@ static bool
 PrintHelpString(JSContext *cx, jsval v)
 {
     JSString *str = v.toString();
-    JS::Anchor<JSString *> a_str(str);
 
     JSLinearString *linear = str->ensureLinear(cx);
     if (!linear)
@@ -4949,118 +4947,6 @@ static const JSClass global_class = {
     JS_ConvertStub,   nullptr,
     nullptr, nullptr, nullptr,
     JS_GlobalObjectTraceHook
-};
-
-static bool
-env_setProperty(JSContext *cx, HandleObject obj, HandleId id, bool strict, MutableHandleValue vp)
-{
-/* XXX porting may be easy, but these don't seem to supply setenv by default */
-#if !defined SOLARIS
-    int rv;
-
-    RootedValue idvalue(cx, IdToValue(id));
-    RootedString idstring(cx, ToString(cx, idvalue));
-    JSAutoByteString idstr;
-    if (!idstr.encodeLatin1(cx, idstring))
-        return false;
-
-    RootedString value(cx, ToString(cx, vp));
-    if (!value)
-        return false;
-    JSAutoByteString valstr;
-    if (!valstr.encodeLatin1(cx, value))
-        return false;
-
-#if defined XP_WIN || defined HPUX || defined OSF1
-    {
-        char *waste = JS_smprintf("%s=%s", idstr.ptr(), valstr.ptr());
-        if (!waste) {
-            JS_ReportOutOfMemory(cx);
-            return false;
-        }
-        rv = putenv(waste);
-#ifdef XP_WIN
-        /*
-         * HPUX9 at least still has the bad old non-copying putenv.
-         *
-         * Per mail from <s.shanmuganathan@digital.com>, OSF1 also has a putenv
-         * that will crash if you pass it an auto char array (so it must place
-         * its argument directly in the char *environ[] array).
-         */
-        JS_smprintf_free(waste);
-#endif
-    }
-#else
-    rv = setenv(idstr.ptr(), valstr.ptr(), 1);
-#endif
-    if (rv < 0) {
-        JS_ReportError(cx, "can't set env variable %s to %s", idstr.ptr(), valstr.ptr());
-        return false;
-    }
-    vp.set(StringValue(value));
-#endif /* !defined SOLARIS */
-    return true;
-}
-
-static bool
-env_enumerate(JSContext *cx, HandleObject obj)
-{
-    static bool reflected;
-    char **evp, *name, *value;
-    RootedString valstr(cx);
-    bool ok;
-
-    if (reflected)
-        return true;
-
-    for (evp = (char **)JS_GetPrivate(obj); (name = *evp) != nullptr; evp++) {
-        value = strchr(name, '=');
-        if (!value)
-            continue;
-        *value++ = '\0';
-        valstr = JS_NewStringCopyZ(cx, value);
-        ok = valstr && JS_DefineProperty(cx, obj, name, valstr, JSPROP_ENUMERATE);
-        value[-1] = '=';
-        if (!ok)
-            return false;
-    }
-
-    reflected = true;
-    return true;
-}
-
-static bool
-env_resolve(JSContext *cx, HandleObject obj, HandleId id, MutableHandleObject objp)
-{
-    if (JSID_IS_SYMBOL(id))
-        return true;
-
-    RootedString idstring(cx, IdToString(cx, id));
-    if (!idstring)
-        return false;
-    JSAutoByteString idstr;
-    if (!idstr.encodeLatin1(cx, idstring))
-        return false;
-
-    const char *name = idstr.ptr();
-    const char *value = getenv(name);
-    if (value) {
-        RootedString valstr(cx, JS_NewStringCopyZ(cx, value));
-        if (!valstr)
-            return false;
-        if (!JS_DefineProperty(cx, obj, name, valstr, JSPROP_ENUMERATE))
-            return false;
-        objp.set(obj);
-    }
-    return true;
-}
-
-static const JSClass env_class = {
-    "environment", JSCLASS_HAS_PRIVATE | JSCLASS_NEW_RESOLVE,
-    JS_PropertyStub,  JS_DeletePropertyStub,
-    JS_PropertyStub,  env_setProperty,
-    env_enumerate, (JSResolveOp) env_resolve,
-    JS_ConvertStub
 };
 
 /*
@@ -5807,16 +5693,16 @@ SetRuntimeOptions(JSRuntime *rt, const OptionParser &op)
             return OptionFailure("ion-limit-script-size", str);
     }
 
-    int32_t useCount = op.getIntOption("ion-uses-before-compile");
-    if (useCount >= 0)
-        jit::js_JitOptions.setUsesBeforeCompile(useCount);
+    int32_t warmUpThreshold = op.getIntOption("ion-warmup-threshold");
+    if (warmUpThreshold >= 0)
+        jit::js_JitOptions.setCompilerWarmUpThreshold(warmUpThreshold);
 
-    useCount = op.getIntOption("baseline-uses-before-compile");
-    if (useCount >= 0)
-        jit::js_JitOptions.baselineUsesBeforeCompile = useCount;
+    warmUpThreshold = op.getIntOption("baseline-warmup-threshold");
+    if (warmUpThreshold >= 0)
+        jit::js_JitOptions.baselineWarmUpThreshold = warmUpThreshold;
 
     if (op.getBoolOption("baseline-eager"))
-        jit::js_JitOptions.baselineUsesBeforeCompile = 0;
+        jit::js_JitOptions.baselineWarmUpThreshold = 0;
 
     if (const char *str = op.getStringOption("ion-regalloc")) {
         if (strcmp(str, "lsra") == 0) {
@@ -5922,10 +5808,8 @@ Shell(JSContext *cx, OptionParser *op, char **envp)
 
     JSAutoCompartment ac(cx, glob);
 
-    JSObject *envobj = JS_DefineObject(cx, glob, "environment", &env_class);
-    if (!envobj)
+    if (!js::DefineOS(cx, glob))
         return 1;
-    JS_SetPrivate(envobj, envp);
 
     int result = ProcessArgs(cx, glob, op);
 
@@ -6054,7 +5938,7 @@ main(int argc, char **argv, char **envp)
                                "On-Stack Replacement (default: on, off to disable)")
         || !op.addStringOption('\0', "ion-limit-script-size", "on/off",
                                "Don't compile very large scripts (default: on, off to disable)")
-        || !op.addIntOption('\0', "ion-uses-before-compile", "COUNT",
+        || !op.addIntOption('\0', "ion-warmup-threshold", "COUNT",
                             "Wait for COUNT calls or iterations before compiling "
                             "(default: 1000)", -1)
         || !op.addStringOption('\0', "ion-regalloc", "[mode]",
@@ -6071,7 +5955,7 @@ main(int argc, char **argv, char **envp)
         || !op.addBoolOption('\0', "baseline", "Enable baseline compiler (default)")
         || !op.addBoolOption('\0', "no-baseline", "Disable baseline compiler")
         || !op.addBoolOption('\0', "baseline-eager", "Always baseline-compile methods")
-        || !op.addIntOption('\0', "baseline-uses-before-compile", "COUNT",
+        || !op.addIntOption('\0', "baseline-warmup-threshold", "COUNT",
                             "Wait for COUNT calls or iterations before baseline-compiling "
                             "(default: 10)", -1)
         || !op.addBoolOption('\0', "no-fpu", "Pretend CPU does not support floating-point operations "

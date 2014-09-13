@@ -573,6 +573,13 @@ protected:
   const FrameMetrics& GetFrameMetrics() const;
 
   /**
+   * Gets the pointer to the apzc tree manager. All the access to tree manager
+   * should be made via this method and not via private variable since this method
+   * ensures that no lock is set.
+   */
+  APZCTreeManager* GetApzcTreeManager() const;
+
+  /**
    * Timeout function for mozbrowserasyncscroll event. Because we throttle
    * mozbrowserasyncscroll events in some conditions, this function ensures
    * that the last mozbrowserasyncscroll event will be fired after a period of
@@ -1098,10 +1105,16 @@ public:
   static bool GetThreadAssertionsEnabled();
   /**
    * This can be used to assert that the current thread is the
-   * controller/UI thread (on which input events are received.
+   * controller/UI thread (on which input events are received).
    * This does nothing if thread assertions are disabled.
    */
   static void AssertOnControllerThread();
+  /**
+   * This can be used to assert that the current thread is the
+   * compositor thread (which applies the async transform).
+   * This does nothing if thread assertions are disabled.
+   */
+  static void AssertOnCompositorThread();
   /**
    * Set an extra offset for testing async scrolling.
    */
