@@ -14,7 +14,6 @@
 
 #include "ContentChild.h"
 #include "CrashReporterChild.h"
-#include "FileDescriptorSetChild.h"
 #include "TabChild.h"
 
 #include "mozilla/Attributes.h"
@@ -30,6 +29,7 @@
 #include "mozilla/dom/nsIContentChild.h"
 #include "mozilla/hal_sandbox/PHalChild.h"
 #include "mozilla/ipc/BackgroundChild.h"
+#include "mozilla/ipc/FileDescriptorSetChild.h"
 #include "mozilla/ipc/FileDescriptorUtils.h"
 #include "mozilla/ipc/GeckoChildProcessHost.h"
 #include "mozilla/ipc/TestShellChild.h"
@@ -126,7 +126,6 @@
 #include "ipc/Nuwa.h"
 #endif
 
-#include "mozilla/dom/indexedDB/PIndexedDBChild.h"
 #include "mozilla/dom/mobilemessage/SmsChild.h"
 #include "mozilla/dom/devicestorage/DeviceStorageRequestChild.h"
 #include "mozilla/dom/PFileSystemRequestChild.h"
@@ -167,7 +166,6 @@ using namespace mozilla::dom::bluetooth;
 using namespace mozilla::dom::devicestorage;
 using namespace mozilla::dom::ipc;
 using namespace mozilla::dom::mobilemessage;
-using namespace mozilla::dom::indexedDB;
 using namespace mozilla::dom::telephony;
 using namespace mozilla::hal_sandbox;
 using namespace mozilla::ipc;
@@ -1206,20 +1204,6 @@ ContentChild::DeallocPHalChild(PHalChild* aHal)
     return true;
 }
 
-PIndexedDBChild*
-ContentChild::AllocPIndexedDBChild()
-{
-    NS_NOTREACHED("Should never get here!");
-    return nullptr;
-}
-
-bool
-ContentChild::DeallocPIndexedDBChild(PIndexedDBChild* aActor)
-{
-    delete aActor;
-    return true;
-}
-
 asmjscache::PAsmJSCacheEntryChild*
 ContentChild::AllocPAsmJSCacheEntryChild(
                                     const asmjscache::OpenMode& aOpenMode,
@@ -1730,12 +1714,16 @@ ContentChild::RecvAddPermission(const IPC::Permission& permission)
                                                 getter_AddRefs(principal));
     NS_ENSURE_SUCCESS(rv, true);
 
+    // child processes don't care about modification time.
+    int64_t modificationTime = 0;
+
     permissionManager->AddInternal(principal,
                                    nsCString(permission.type),
                                    permission.capability,
                                    0,
                                    permission.expireType,
                                    permission.expireTime,
+                                   modificationTime,
                                    nsPermissionManager::eNotify,
                                    nsPermissionManager::eNoDBOperation);
 #endif
