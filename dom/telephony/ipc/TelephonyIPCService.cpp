@@ -103,11 +103,6 @@ NS_IMETHODIMP
 TelephonyIPCService::RegisterListener(nsITelephonyListener *aListener)
 {
   MOZ_ASSERT(!mListeners.Contains(aListener));
-  
-  if (!mPTelephonyChild) {
-    NS_WARNING("TelephonyProvider used after shutdown has begun!");
-    return NS_ERROR_FAILURE;
-  }
 
   if (!mPTelephonyChild) {
     NS_WARNING("TelephonyService used after shutdown has begun!");
