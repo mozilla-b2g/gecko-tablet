@@ -122,8 +122,8 @@ B2GAppMigrator.prototype = {
         Services.obs.removeObserver(this, kMigrationMessageName);
         break;
       case "xpcom-shutdown":
-        Services.obs.removeObserver(this, kMigrationMessageName);
         Services.obs.removeObserver(this, "xpcom-shutdown");
+        Services.obs.removeObserver(this, kMigrationMessageName);
         break;
       default:
         debug("Unhandled topic: " + topic);
