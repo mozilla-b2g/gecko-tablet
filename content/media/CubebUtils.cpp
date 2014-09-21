@@ -6,7 +6,6 @@
 
 #include <stdint.h>
 #include <algorithm>
-#include "mozilla/Atomics.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticMutex.h"
 #include "CubebUtils.h"
@@ -20,16 +19,24 @@ namespace mozilla {
 
 namespace {
 
-// Prefered samplerate, in Hz (characteristic of the
-// hardware/mixer/platform/API used).
-Atomic<uint32_t> sPreferredSampleRate;
-
 // This mutex protects the variables below.
 StaticMutex sMutex;
 cubeb* sCubebContext;
 double sVolumeScale;
 uint32_t sCubebLatency;
 bool sCubebLatencyPrefSet;
+
+// Prefered samplerate, in Hz (characteristic of the hardware, mixer, platform,
+// and API used).
+//
+// sMutex protects *initialization* of this, which must be performed from each
+// thread before fetching, after which it is safe to fetch without holding the
+// mutex because it is only written once per process execution (by the first
+// initialization to complete).  Since the init must have been called on a
+// given thread before fetching the value, it's guaranteed (via the mutex) that
+// sufficient memory barriers have occurred to ensure the correct value is
+// visible on the querying thread/CPU.
+uint32_t sPreferredSampleRate;
 
 } // anonymous namespace
 
@@ -85,16 +92,10 @@ cubeb* GetCubebContext()
 
 void InitPreferredSampleRate()
 {
-  // The mutex is used here to prohibit concurrent initialization calls, but
-  // sPreferredSampleRate itself is safe to access without the mutex because
-  // it is using atomic storage.
   StaticMutexAutoLock lock(sMutex);
-  uint32_t preferredSampleRate = 0;
   if (sPreferredSampleRate == 0 &&
       cubeb_get_preferred_sample_rate(GetCubebContextUnlocked(),
-                                      &preferredSampleRate) == CUBEB_OK) {
-    sPreferredSampleRate = preferredSampleRate;
-  } else {
+                                      &sPreferredSampleRate) != CUBEB_OK) {
     // Query failed, use a sensible default.
     sPreferredSampleRate = 44100;
   }

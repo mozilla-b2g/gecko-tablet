@@ -15,25 +15,20 @@ Cu.import("resource://gre/modules/Task.jsm");
 
 // TODO bug 943125: remove this polyfill and use Debugger.Frame.prototype.depth
 // once it is implemented.
-if (!Object.getOwnPropertyDescriptor(Debugger.Frame.prototype, "depth")) {
-  Debugger.Frame.prototype._depth = null;
-  Object.defineProperty(Debugger.Frame.prototype, "depth", {
-    get: function () {
-      if (this._depth === null) {
-        if (!this.older) {
-          this._depth = 0;
-        } else {
-          // Hide depth from self-hosted frames.
-          const increment = this.script && this.script.url == "self-hosted"
-            ? 0
-            : 1;
-          this._depth = increment + this.older.depth;
-        }
-      }
-
-      return this._depth;
+function getFrameDepth(frame) {
+  if (typeof(frame.depth) != "number") {
+    if (!frame.older) {
+      frame.depth = 0;
+    } else {
+      // Hide depth from self-hosted frames.
+      const increment = frame.script && frame.script.url == "self-hosted"
+        ? 0
+        : 1;
+      frame.depth = increment + getFrameDepth(frame.older);
     }
-  });
+  }
+
+  return frame.depth;
 }
 
 const { setTimeout } = require("sdk/timers");
@@ -111,7 +106,6 @@ TracerActor.prototype = {
   get dbg() {
     if (!this._dbg) {
       this._dbg = this._parent.makeDebugger();
-      this._dbg.onEnterFrame = this.onEnterFrame;
     }
     return this._dbg;
   },
@@ -193,6 +187,7 @@ TracerActor.prototype = {
     }
 
     if (this.idle) {
+      this.dbg.onEnterFrame = this.onEnterFrame;
       this.dbg.enabled = true;
       this._sequence = 0;
       this._startTime = Date.now();
@@ -249,6 +244,7 @@ TracerActor.prototype = {
     }
 
     if (this.idle) {
+      this._dbg.onEnterFrame = undefined;
       this.dbg.enabled = false;
     }
 
@@ -269,11 +265,11 @@ TracerActor.prototype = {
    *        The stack frame that was entered.
    */
   onEnterFrame: function(aFrame) {
-    Task.spawn(function*() {
-      if (aFrame.script && aFrame.script.url == "self-hosted") {
-        return;
-      }
+    if (aFrame.script && aFrame.script.url == "self-hosted") {
+      return;
+    }
 
+    Task.spawn(function*() {
       // This function might request original (i.e. source-mapped) location,
       // which is asynchronous. We need to ensure that packets are sent out
       // in the correct order.
@@ -362,7 +358,7 @@ TracerActor.prototype = {
       }
 
       if (this._requestsForTraceType.depth) {
-        packet.depth = aFrame.depth;
+        packet.depth = getFrameDepth(aFrame);
       }
 
       const onExitFrame = this.onExitFrame;
@@ -406,7 +402,7 @@ TracerActor.prototype = {
     }
 
     if (this._requestsForTraceType.depth) {
-      packet.depth = aFrame.depth;
+      packet.depth = getFrameDepth(aFrame);
     }
 
     if (aCompletion) {
@@ -437,14 +433,7 @@ TracerActor.prototype.requestTypes = {
   "stopTrace": TracerActor.prototype.onStopTrace
 };
 
-exports.register = function(handle) {
-  handle.addTabActor(TracerActor, "traceActor");
-};
-
-exports.unregister = function(handle) {
-  handle.removeTabActor(TracerActor, "traceActor");
-};
-
+exports.TracerActor = TracerActor;
 
 /**
  * MapStack is a collection of key/value pairs with stack ordering,

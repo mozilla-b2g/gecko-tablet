@@ -14,6 +14,7 @@
 
 #include "ContentChild.h"
 #include "CrashReporterChild.h"
+#include "FileDescriptorSetChild.h"
 #include "TabChild.h"
 
 #include "mozilla/Attributes.h"
@@ -29,7 +30,6 @@
 #include "mozilla/dom/nsIContentChild.h"
 #include "mozilla/hal_sandbox/PHalChild.h"
 #include "mozilla/ipc/BackgroundChild.h"
-#include "mozilla/ipc/FileDescriptorSetChild.h"
 #include "mozilla/ipc/FileDescriptorUtils.h"
 #include "mozilla/ipc/GeckoChildProcessHost.h"
 #include "mozilla/ipc/TestShellChild.h"
@@ -126,7 +126,7 @@
 #include "ipc/Nuwa.h"
 #endif
 
-#include "mozilla/dom/mobileconnection/MobileConnectionChild.h"
+#include "mozilla/dom/indexedDB/PIndexedDBChild.h"
 #include "mozilla/dom/mobilemessage/SmsChild.h"
 #include "mozilla/dom/devicestorage/DeviceStorageRequestChild.h"
 #include "mozilla/dom/PFileSystemRequestChild.h"
@@ -155,14 +155,19 @@
 #include "mozilla/net/NeckoMessageUtils.h"
 #include "mozilla/RemoteSpellCheckEngineChild.h"
 
+#ifdef MOZ_B2G_RIL
+#include "mozilla/dom/mobileconnection/MobileConnectionChild.h"
+using namespace mozilla::dom::mobileconnection;
+#endif
+
 using namespace base;
 using namespace mozilla;
 using namespace mozilla::docshell;
 using namespace mozilla::dom::bluetooth;
 using namespace mozilla::dom::devicestorage;
 using namespace mozilla::dom::ipc;
-using namespace mozilla::dom::mobileconnection;
 using namespace mozilla::dom::mobilemessage;
+using namespace mozilla::dom::indexedDB;
 using namespace mozilla::dom::telephony;
 using namespace mozilla::hal_sandbox;
 using namespace mozilla::ipc;
@@ -493,17 +498,15 @@ ContentChild* ContentChild::sSingleton;
 // Performs initialization that is not fork-safe, i.e. that must be done after
 // forking from the Nuwa process.
 static void
-InitOnContentProcessCreated(bool aAfterNuwaFork)
+InitOnContentProcessCreated()
 {
 #ifdef MOZ_NUWA_PROCESS
     // Wait until we are forked from Nuwa
-    if (!aAfterNuwaFork &&
-        Preferences::GetBool("dom.ipc.processPrelaunch.enabled", false)) {
+    if (IsNuwaProcess()) {
         return;
     }
-#else
-    unused << aAfterNuwaFork;
 #endif
+
     // This will register cross-process observer.
     mozilla::dom::time::InitializeDateCacheCleaner();
 }
@@ -697,7 +700,7 @@ ContentChild::InitXPCOM()
         new SystemMessageHandledObserver();
     sysMsgObserver->Init();
 
-    InitOnContentProcessCreated(/* aAfterNuwaFork = */false);
+    InitOnContentProcessCreated();
 }
 
 PMemoryReportRequestChild*
@@ -1198,6 +1201,20 @@ bool
 ContentChild::DeallocPHalChild(PHalChild* aHal)
 {
     delete aHal;
+    return true;
+}
+
+PIndexedDBChild*
+ContentChild::AllocPIndexedDBChild()
+{
+    NS_NOTREACHED("Should never get here!");
+    return nullptr;
+}
+
+bool
+ContentChild::DeallocPIndexedDBChild(PIndexedDBChild* aActor)
+{
+    delete aActor;
     return true;
 }
 
@@ -2039,7 +2056,7 @@ public:
         }
 
         // Perform other after-fork initializations.
-        InitOnContentProcessCreated(/* aAfterNuwaFork = */true);
+        InitOnContentProcessCreated();
 
         return NS_OK;
     }

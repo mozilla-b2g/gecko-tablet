@@ -10,7 +10,6 @@
 #include "DecoderTraits.h"
 #include "MediaDataDecodedListener.h"
 #include "MediaDecoderOwner.h"
-#include "MediaSource.h"
 #include "MediaSourceDecoder.h"
 #include "MediaSourceUtils.h"
 #include "SourceBufferDecoder.h"
@@ -474,7 +473,10 @@ MediaSourceReader::ReadMetadata(MediaInfo* aInfo, MetadataTags** aTags)
             this, mEssentialTrackBuffers.Length(), mTrackBuffers.Length(),
             mAudioTrack.get(), mVideoTrack.get());
 
-  mEssentialTrackBuffers.Clear();
+  {
+    ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
+    mEssentialTrackBuffers.Clear();
+  }
   if (!mAudioTrack && !mVideoTrack) {
     MSE_DEBUG("MediaSourceReader(%p)::ReadMetadata missing track: mAudioTrack=%p mVideoTrack=%p",
               this, mAudioTrack.get(), mVideoTrack.get());

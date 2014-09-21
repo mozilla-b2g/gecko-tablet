@@ -252,7 +252,7 @@ RegExpObject::trace(JSTracer *trc, JSObject *obj)
     //      isHeapBusy() will be false.
     if (trc->runtime()->isHeapBusy() &&
         IS_GC_MARKING_TRACER(trc) &&
-        !obj->tenuredZone()->isPreservingCode())
+        !obj->asTenured()->zone()->isPreservingCode())
     {
         obj->setPrivate(nullptr);
     } else {
@@ -772,10 +772,13 @@ RegExpCompartment::sweep(JSRuntime *rt)
         bool keep = shared->marked() && !IsStringAboutToBeFinalized(shared->source.unsafeGet());
         for (size_t i = 0; i < ArrayLength(shared->compilationArray); i++) {
             RegExpShared::RegExpCompilation &compilation = shared->compilationArray[i];
-            if (keep && compilation.jitCode)
-                keep = !IsJitCodeAboutToBeFinalized(compilation.jitCode.unsafeGet());
+            if (compilation.jitCode &&
+                IsJitCodeAboutToBeFinalized(compilation.jitCode.unsafeGet()))
+            {
+                keep = false;
+            }
         }
-        if (keep) {
+        if (keep || rt->isHeapCompacting()) {
             shared->clearMarked();
         } else {
             js_delete(shared);

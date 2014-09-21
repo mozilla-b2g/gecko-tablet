@@ -461,6 +461,14 @@ function rmin_number(i) {
     return i;
 }
 
+var uceFault_min_float = eval(uneval(uceFault).replace('uceFault', 'uceFault_min_float'));
+function rmin_float(i) {
+    var x = Math.fround(Math.min(Math.fround(20), Math.fround(13.37)));
+    if (uceFault_min_number(i) || uceFault_min_number(i))
+        assertEq(x, Math.fround(13.37));
+    return i;
+}
+
 var uceFault_min_object = eval(uneval(uceFault).replace('uceFault', 'uceFault_min_object'));
 function rmin_object(i) {
     var t = i;
@@ -477,6 +485,14 @@ function rmax_number(i) {
     var x = Math.max(i, i-1, i-2.1);
     if (uceFault_max_number(i) || uceFault_max_number(i))
         assertEq(x, i);
+    return i;
+}
+
+var uceFault_max_float = eval(uneval(uceFault).replace('uceFault', 'uceFault_max_float'));
+function rmax_float(i) {
+    var x = Math.fround(Math.max(Math.fround(2), Math.fround(13.37)));
+    if (uceFault_max_number(i) || uceFault_max_number(i))
+        assertEq(x, Math.fround(13.37));
     return i;
 }
 
@@ -911,6 +927,20 @@ function rregexp_m_literal_replace(i) {
     return i;
 }
 
+var uceFault_typeof = eval(uneval(uceFault).replace('uceFault', 'uceFault_typeof'))
+function rtypeof(i) {
+    var inputs = [ {}, [], 1, true, Symbol(), undefined, function(){}, null ];
+    var types = [ "object", "object", "number", "boolean", "symbol", "undefined", "function", "object"];
+    var x = typeof (inputs[i % inputs.length]);
+    var y = types[i % types.length];
+
+    if (uceFault_typeof(i) || uceFault_typeof(i)) {
+        assertEq(x, y);
+    }
+
+    return i;
+}
+
 for (i = 0; i < 100; i++) {
     rbitnot_number(i);
     rbitnot_object(i);
@@ -961,8 +991,10 @@ for (i = 0; i < 100; i++) {
     rpowhalf_number(i);
     rpowhalf_object(i);
     rmin_number(i);
+    rmin_float(i);
     rmin_object(i);
     rmax_number(i);
+    rmax_float(i);
     rmax_object(i);
     rabs_number(i);
     rabs_object(i);
@@ -999,6 +1031,7 @@ for (i = 0; i < 100; i++) {
     rregexp_i_literal_replace(i);
     rregexp_m_replace(i);
     rregexp_m_literal_replace(i);
+    rtypeof(i);
 }
 
 // Test that we can refer multiple time to the same recover instruction, as well

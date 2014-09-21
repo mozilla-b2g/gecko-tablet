@@ -71,8 +71,12 @@ WeakMapBase::unmarkCompartment(JSCompartment *c)
 void
 WeakMapBase::markAll(JSCompartment *c, JSTracer *tracer)
 {
-    for (WeakMapBase *m = c->gcWeakMapList; m; m = m->next)
-        m->markIteratively(tracer);
+    JS_ASSERT(tracer->eagerlyTraceWeakMaps() != DoNotTraceWeakMaps);
+    for (WeakMapBase *m = c->gcWeakMapList; m; m = m->next) {
+        m->trace(tracer);
+        if (m->memberOf)
+            gc::MarkObject(tracer, &m->memberOf, "memberOf");
+    }
 }
 
 bool
@@ -176,7 +180,7 @@ ObjectValueMap::findZoneEdges()
     Zone *mapZone = compartment->zone();
     for (Range r = all(); !r.empty(); r.popFront()) {
         JSObject *key = r.front().key();
-        if (key->isMarked(BLACK) && !key->isMarked(GRAY))
+        if (key->asTenured()->isMarked(BLACK) && !key->asTenured()->isMarked(GRAY))
             continue;
         JSWeakmapKeyDelegateOp op = key->getClass()->ext.weakmapKeyDelegateOp;
         if (!op)

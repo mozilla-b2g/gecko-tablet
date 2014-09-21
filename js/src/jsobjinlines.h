@@ -84,7 +84,7 @@ JSObject::finalize(js::FreeOp *fop)
 
 #ifdef DEBUG
     JS_ASSERT(isTenured());
-    if (!IsBackgroundFinalized(tenuredGetAllocKind())) {
+    if (!IsBackgroundFinalized(asTenured()->getAllocKind())) {
         /* Assert we're on the main thread. */
         JS_ASSERT(CurrentThreadCanAccessRuntime(fop->runtime()));
     }
@@ -492,7 +492,8 @@ JSObject::setProto(JSContext *cx, JS::HandleObject obj, JS::HandleObject proto, 
     }
 
     JS::Rooted<js::TaggedProto> taggedProto(cx, js::TaggedProto(proto));
-    return SetClassAndProto(cx, obj, obj->getClass(), taggedProto, succeeded);
+    *succeeded = SetClassAndProto(cx, obj, obj->getClass(), taggedProto, false);
+    return *succeeded;
 }
 
 inline bool
@@ -662,6 +663,12 @@ JSObject::finish(js::FreeOp *fop)
             fop->free_(elements);
         }
     }
+
+    // It's possible that unreachable shapes may be marked whose listp points
+    // into this object. In case this happens, null out the shape's pointer here
+    // so that a moving GC will not try to access the dead object.
+    if (shape_->listp == &shape_)
+        shape_->listp = nullptr;
 }
 
 /* static */ inline bool
@@ -1059,7 +1066,7 @@ CopyInitializerObject(JSContext *cx, HandleObject baseobj, NewObjectKind newKind
 
     gc::AllocKind allocKind = gc::GetGCObjectFixedSlotsKind(baseobj->numFixedSlots());
     allocKind = gc::GetBackgroundAllocKind(allocKind);
-    JS_ASSERT_IF(baseobj->isTenured(), allocKind == baseobj->tenuredGetAllocKind());
+    JS_ASSERT_IF(baseobj->isTenured(), allocKind == baseobj->asTenured()->getAllocKind());
     RootedObject obj(cx);
     obj = NewBuiltinClassInstance(cx, &JSObject::class_, allocKind, newKind);
     if (!obj)

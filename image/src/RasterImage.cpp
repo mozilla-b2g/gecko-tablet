@@ -252,7 +252,8 @@ public:
       image->UnlockImage();
     }
 
-    if (DiscardingEnabled() && dstFrame) {
+    if (dstFrame) {
+      dstFrame->SetOptimizable();
       dstFrame->SetDiscardable();
     }
 
@@ -1422,21 +1423,17 @@ RasterImage::DecodingComplete()
     CONTAINER_ENSURE_SUCCESS(rv);
   }
 
-  // If there's only 1 frame, optimize it. Optimizing animated images
+  // If there's only 1 frame, mark it as optimizable. Optimizing animated images
   // is not supported.
   //
   // We don't optimize the frame for multipart images because we reuse
   // the frame.
   if ((GetNumFrames() == 1) && !mMultipart) {
-    // CanForciblyDiscard is used instead of CanForciblyDiscardAndRedecode
-    // because we know decoding is complete at this point and this is not
-    // an animation
     nsRefPtr<imgFrame> firstFrame = mFrameBlender.RawGetFrame(0);
+    firstFrame->SetOptimizable();
     if (DiscardingEnabled() && CanForciblyDiscard()) {
       firstFrame->SetDiscardable();
     }
-    rv = firstFrame->Optimize();
-    NS_ENSURE_SUCCESS(rv, rv);
   }
 
   // Double-buffer our frame in the multipart case, since we'll start decoding
@@ -2607,6 +2604,11 @@ RasterImage::RequestScale(imgFrame* aFrame, nsIntSize aSize)
     return;
   }
 
+  // We don't scale frames which aren't fully decoded.
+  if (!aFrame->ImageComplete()) {
+    return;
+  }
+
   // We also can't scale if we can't lock the image data for this frame.
   RawAccessFrameRef frameRef = aFrame->RawAccessRef();
   if (!frameRef) {
@@ -2631,7 +2633,7 @@ RasterImage::RequestScale(imgFrame* aFrame, nsIntSize aSize)
 
 void
 RasterImage::DrawWithPreDownscaleIfNeeded(DrawableFrameRef&& aFrameRef,
-                                          gfxContext *aContext,
+                                          gfxContext* aContext,
                                           const nsIntSize& aSize,
                                           const ImageRegion& aRegion,
                                           GraphicsFilter aFilter,
@@ -2673,10 +2675,19 @@ RasterImage::DrawWithPreDownscaleIfNeeded(DrawableFrameRef&& aFrameRef,
     region.Scale(1.0 / scale.width, 1.0 / scale.height);
   }
 
-  nsIntMargin padding(finalFrameRect.y,
-                      mSize.width - finalFrameRect.XMost(),
-                      mSize.height - finalFrameRect.YMost(),
-                      finalFrameRect.x);
+  // We can only use padding if we're using the original |aFrameRef|, unscaled.
+  // (If so, we moved it into |frameRef|, so |aFrameRef| is empty.) Because of
+  // this restriction, we don't scale frames that require padding.
+  // XXX(seth): We actually do scale such frames right now though, if a single
+  // frame of a non-animated image requires padding. We'll fix that in bug
+  // 1060200, because dependencies between bugs make it hard to fix here.
+  nsIntMargin padding(0, 0, 0, 0);
+  if (!aFrameRef) {
+    padding = nsIntMargin(finalFrameRect.y,
+                          mSize.width - finalFrameRect.XMost(),
+                          mSize.height - finalFrameRect.YMost(),
+                          finalFrameRect.x);
+  }
 
   frameRef->Draw(aContext, region, padding, aFilter, aFlags);
 }
@@ -3664,7 +3675,7 @@ RasterImage::OptimalImageSizeForDest(const gfxSize& aDest, uint32_t aWhichFrame,
              aDest.height >= 0 || ceil(aDest.height) <= INT32_MAX,
              "Unexpected destination size");
 
-  if (mSize.IsEmpty()) {
+  if (mSize.IsEmpty() || aDest.IsEmpty()) {
     return nsIntSize(0, 0);
   }
 

@@ -185,7 +185,7 @@ public class BrowserApp extends GeckoApp
     }
 
     // The types of guest mdoe dialogs we show
-    private static enum GuestModeDialog {
+    public static enum GuestModeDialog {
         ENTERING,
         LEAVING
     }
@@ -536,11 +536,15 @@ public class BrowserApp extends GeckoApp
         mBrowserToolbar = (BrowserToolbar) findViewById(R.id.browser_toolbar);
         mProgressView = (ToolbarProgressView) findViewById(R.id.progress);
         mBrowserToolbar.setProgressBar(mProgressView);
-        if (Intent.ACTION_VIEW.equals(intent.getAction())) {
+
+        final String action = intent.getAction();
+        if (Intent.ACTION_VIEW.equals(action)) {
             // Show the target URL immediately in the toolbar.
             mBrowserToolbar.setTitle(intent.getDataString());
 
             Telemetry.sendUIEvent(TelemetryContract.Event.LOAD_URL, TelemetryContract.Method.INTENT);
+        } else if (GuestSession.NOTIFICATION_INTENT.equals(action)) {
+            GuestSession.handleIntent(this, intent);
         }
 
         if (NewTabletUI.isEnabled(this)) {
@@ -660,6 +664,13 @@ public class BrowserApp extends GeckoApp
                 Log.e(LOGTAG, "Error initializing media manager", ex);
             }
         }
+
+        if (getProfile().inGuestMode()) {
+            GuestSession.showNotification(this);
+        } else {
+            // If we're restarting, we won't destroy the activity. Make sure we remove any guest notifications that might have been shown.
+            GuestSession.hideNotification(this);
+        }
     }
 
     private void registerOnboardingReceiver(Context context) {
@@ -719,10 +730,6 @@ public class BrowserApp extends GeckoApp
         super.onResume();
         EventDispatcher.getInstance().unregisterGeckoThreadListener((GeckoEventListener)this,
             "Prompt:ShowTop");
-        if (AppConstants.MOZ_STUMBLER_BUILD_TIME_ENABLED) {
-            // Starts or pings the stumbler lib, see also usage in handleMessage(): Gecko:DelayedStartup.
-            GeckoPreferences.broadcastStumblerPref(this);
-        }
     }
 
     @Override
@@ -1032,6 +1039,8 @@ public class BrowserApp extends GeckoApp
             mBrowserHealthReporter.uninit();
             mBrowserHealthReporter = null;
         }
+
+        GuestSession.onDestroy(this);
 
         EventDispatcher.getInstance().unregisterGeckoThreadListener((GeckoEventListener)this,
             "Menu:Update",
@@ -1496,7 +1505,14 @@ public class BrowserApp extends GeckoApp
                 if (AppConstants.MOZ_STUMBLER_BUILD_TIME_ENABLED) {
                     // Start (this acts as ping if started already) the stumbler lib; if the stumbler has queued data it will upload it.
                     // Stumbler operates on its own thread, and startup impact is further minimized by delaying work (such as upload) a few seconds.
-                    GeckoPreferences.broadcastStumblerPref(this);
+                    // Avoid any potential startup CPU/thread contention by delaying the pref broadcast.
+                    final long oneSecondInMillis = 1000;
+                    ThreadUtils.getBackgroundHandler().postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                             GeckoPreferences.broadcastStumblerPref(BrowserApp.this);
+                        }
+                    }, oneSecondInMillis);
                 }
                 super.handleMessage(event, message);
             } else if (event.equals("Gecko:Ready")) {
@@ -1813,11 +1829,11 @@ public class BrowserApp extends GeckoApp
 
         final Tab tab = Tabs.getInstance().getSelectedTab();
         if (tab != null) {
-            final String userSearch = tab.getUserSearch();
+            final String userRequested = tab.getUserRequested();
 
             // Check to see if there's a user-entered search term,
             // which we save whenever the user performs a search.
-            url = (TextUtils.isEmpty(userSearch) ? tab.getURL() : userSearch);
+            url = (TextUtils.isEmpty(userRequested) ? tab.getURL() : userRequested);
         }
 
         enterEditingMode(url);
@@ -2831,7 +2847,7 @@ public class BrowserApp extends GeckoApp
         return super.onOptionsItemSelected(item);
     }
 
-    private void showGuestModeDialog(final GuestModeDialog type) {
+    public void showGuestModeDialog(final GuestModeDialog type) {
         final Prompt ps = new Prompt(this, new Prompt.PromptCallback() {
             @Override
             public void onPromptFinished(String result) {
@@ -2916,12 +2932,12 @@ public class BrowserApp extends GeckoApp
             GeckoAppShell.sendEventToGecko(GeckoEvent.createURILoadEvent(uri));
         }
 
-        if (!mInitialized) {
-            return;
+        // Only solicit feedback when the app has been launched from the icon shortcut.
+        if (GuestSession.NOTIFICATION_INTENT.equals(action)) {
+            GuestSession.handleIntent(this, intent);
         }
 
-        // Only solicit feedback when the app has been launched from the icon shortcut.
-        if (!Intent.ACTION_MAIN.equals(action)) {
+        if (!mInitialized || !Intent.ACTION_MAIN.equals(action)) {
             return;
         }
 

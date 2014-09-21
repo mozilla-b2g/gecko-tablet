@@ -60,6 +60,7 @@ import org.mozilla.gecko.util.ThreadUtils;
 
 import android.app.Activity;
 import android.app.ActivityManager;
+import android.app.DownloadManager;
 import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
@@ -131,6 +132,7 @@ public class GeckoAppShell
     // We have static members only.
     private GeckoAppShell() { }
 
+    private static Thread.UncaughtExceptionHandler systemUncaughtHandler;
     private static boolean restartScheduled;
     private static GeckoEditableListener editableListener;
 
@@ -210,6 +212,8 @@ public class GeckoAppShell
     public static native void dispatchMemoryPressure();
 
     public static void registerGlobalExceptionHandler() {
+        systemUncaughtHandler = Thread.getDefaultUncaughtExceptionHandler();
+
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
             @Override
             public void uncaughtException(Thread thread, Throwable e) {
@@ -484,8 +488,19 @@ public class GeckoAppShell
                 // shutdown
                 editor.commit();
             }
-        } finally {
+        } catch (final Throwable exc) {
+            // Report the Java crash below, even if we encounter an exception here.
+        }
+
+        try {
             reportJavaCrash(getStackTraceString(e));
+        } finally {
+            // reportJavaCrash should have caused us to hard crash. If we're still here,
+            // it probably means Gecko is not loaded, and we should do something else.
+            // Bring up the app crashed dialog so we don't crash silently.
+            if (systemUncaughtHandler != null) {
+                systemUncaughtHandler.uncaughtException(thread, e);
+            }
         }
     }
 
@@ -1782,7 +1797,7 @@ public class GeckoAppShell
     }
 
     @WrapElementForJNI
-    public static void scanMedia(String aFile, String aMimeType) {
+    public static void scanMedia(final String aFile, String aMimeType) {
         // If the platform didn't give us a mimetype, try to guess one from the filename
         if (TextUtils.isEmpty(aMimeType)) {
             int extPosition = aFile.lastIndexOf(".");
@@ -1791,8 +1806,20 @@ public class GeckoAppShell
             }
         }
 
-        Context context = getContext();
-        GeckoMediaScannerClient.startScan(context, aFile, aMimeType);
+        final File f = new File(aFile);
+        if (AppConstants.Versions.feature12Plus) {
+            final DownloadManager dm = (DownloadManager) getContext().getSystemService(Context.DOWNLOAD_SERVICE);
+            dm.addCompletedDownload(f.getName(),
+                                    f.getName(),
+                                    !TextUtils.isEmpty(aMimeType),
+                                    aMimeType,
+                                    f.getAbsolutePath(),
+                                    f.length(),
+                                    false);
+        } else {
+            Context context = getContext();
+            GeckoMediaScannerClient.startScan(context, aFile, aMimeType);
+        }
     }
 
     @WrapElementForJNI(stubName = "GetIconForExtensionWrapper")

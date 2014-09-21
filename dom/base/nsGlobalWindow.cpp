@@ -187,6 +187,7 @@
 #include "mozilla/dom/MessagePort.h"
 #include "mozilla/dom/MessagePortBinding.h"
 #include "mozilla/dom/indexedDB/IDBFactory.h"
+#include "mozilla/dom/quota/QuotaManager.h"
 
 #include "mozilla/dom/StructuredCloneTags.h"
 
@@ -668,10 +669,12 @@ public:
                        unsigned flags,
                        JS::MutableHandle<JS::Value> vp) const MOZ_OVERRIDE;
 
+  static void ObjectMoved(JSObject *obj, const JSObject *old);
+
   static const nsOuterWindowProxy singleton;
 
 protected:
-  nsGlobalWindow* GetWindow(JSObject *proxy) const
+  static nsGlobalWindow* GetWindow(JSObject *proxy)
   {
     return nsGlobalWindow::FromSupports(
       static_cast<nsISupports*>(js::GetProxyExtra(proxy, 0).toPrivate()));
@@ -703,7 +706,8 @@ const js::Class OuterWindowProxyClass =
             nullptr, /* outerObject */
             js::proxy_innerObject,
             nullptr, /* iteratorObject */
-            false   /* isWrappedNative */
+            false,   /* isWrappedNative */
+            nsOuterWindowProxy::ObjectMoved
         ));
 
 bool
@@ -1021,6 +1025,15 @@ nsOuterWindowProxy::unwatch(JSContext *cx, JS::Handle<JSObject*> proxy,
                             JS::Handle<jsid> id) const
 {
   return js::UnwatchGuts(cx, proxy, id);
+}
+
+void
+nsOuterWindowProxy::ObjectMoved(JSObject *obj, const JSObject *old)
+{
+  nsGlobalWindow* global = GetWindow(obj);
+  if (global) {
+    global->UpdateWrapper(obj, old);
+  }
 }
 
 const nsOuterWindowProxy
@@ -1560,6 +1573,12 @@ nsGlobalWindow::FreeInnerObjects()
 
   // Kill all of the workers for this window.
   mozilla::dom::workers::CancelWorkersForWindow(this);
+
+  // Close all offline storages for this window.
+  quota::QuotaManager* quotaManager = quota::QuotaManager::Get();
+  if (quotaManager) {
+    quotaManager->AbortCloseStoragesForWindow(this);
+  }
 
   ClearAllTimeouts();
 
@@ -10574,11 +10593,9 @@ GetIndexedDBEnabledForAboutURI(nsIURI *aURI)
   return flags & nsIAboutModule::ENABLE_INDEXED_DB;
 }
 
-mozilla::dom::indexedDB::IDBFactory*
+indexedDB::IDBFactory*
 nsGlobalWindow::GetIndexedDB(ErrorResult& aError)
 {
-  using mozilla::dom::indexedDB::IDBFactory;
-
   if (!mIndexedDB) {
     // If the document has the sandboxed origin flag set
     // don't allow access to indexedDB.
@@ -10625,7 +10642,8 @@ nsGlobalWindow::GetIndexedDB(ErrorResult& aError)
     }
 
     // This may be null if being created from a file.
-    aError = IDBFactory::CreateForWindow(this, getter_AddRefs(mIndexedDB));
+    aError = indexedDB::IDBFactory::Create(this, nullptr,
+                                           getter_AddRefs(mIndexedDB));
   }
 
   return mIndexedDB;

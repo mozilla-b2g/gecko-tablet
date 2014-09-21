@@ -6,6 +6,7 @@
 
 const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 
+Cu.import("resource://services-common/utils.js");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource:///modules/loop/MozLoopService.jsm");
@@ -23,6 +24,9 @@ XPCOMUtils.defineLazyGetter(this, "appInfo", function() {
 XPCOMUtils.defineLazyServiceGetter(this, "clipboardHelper",
                                          "@mozilla.org/widget/clipboardhelper;1",
                                          "nsIClipboardHelper");
+XPCOMUtils.defineLazyServiceGetter(this, "extProtocolSvc",
+                                         "@mozilla.org/uriloader/external-protocol-service;1",
+                                         "nsIExternalProtocolService");
 this.EXPORTED_SYMBOLS = ["injectLoopAPI"];
 
 /**
@@ -94,6 +98,15 @@ const injectObjectAPI = function(api, targetWindow) {
 };
 
 /**
+ * Get the two-digit hexadecimal code for a byte
+ *
+ * @param {byte} charCode
+ */
+const toHexString = function(charCode) {
+  return ("0" + charCode.toString(16)).slice(-2);
+};
+
+/**
  * Inject the loop API into the given window.  The caller must be sure the
  * window is a loop content window (eg, a panel, chatwindow, or similar).
  *
@@ -108,6 +121,25 @@ function injectLoopAPI(targetWindow) {
   let contactsAPI;
 
   let api = {
+    /**
+     * Gets an object with data that represents the currently
+     * authenticated user's identity.
+     *
+     * @return null if user not logged in; profile object otherwise
+     */
+    userProfile: {
+      enumerable: true,
+      get: function() {
+        if (!MozLoopService.userProfile)
+          return null;
+        let userProfile = Cu.cloneInto({
+          email: MozLoopService.userProfile.email,
+          uid: MozLoopService.userProfile.uid
+        }, targetWindow);
+        return userProfile;
+      }
+    },
+
     /**
      * Sets and gets the "do not disturb" mode activation flag.
      */
@@ -147,6 +179,21 @@ function injectLoopAPI(targetWindow) {
       writable: true,
       value: function(loopCallId) {
         return Cu.cloneInto(MozLoopService.getCallData(loopCallId), targetWindow);
+      }
+    },
+
+    /**
+     * Releases the callData for a specific loopCallId
+     *
+     * The result of this call will be a free call session slot.
+     *
+     * @param {int} loopCallId
+     */
+    releaseCallData: {
+      enumerable: true,
+      writable: true,
+      value: function(loopCallId) {
+        MozLoopService.releaseCallData(loopCallId);
       }
     },
 
@@ -357,6 +404,9 @@ function injectLoopAPI(targetWindow) {
      *    }
      *  - {String} The body of the response.
      *
+     * @param {LOOP_SESSION_TYPE} sessionType The type of session to use for
+     *                                        the request.  This is one of the
+     *                                        LOOP_SESSION_TYPE members
      * @param {String} path The path to make the request to.
      * @param {String} method The request method, e.g. 'POST', 'GET'.
      * @param {Object} payloadObj An object which is converted to JSON and
@@ -366,10 +416,9 @@ function injectLoopAPI(targetWindow) {
     hawkRequest: {
       enumerable: true,
       writable: true,
-      value: function(path, method, payloadObj, callback) {
-        // XXX: Bug 1065153 - Should take a sessionType parameter instead of hard-coding GUEST
+      value: function(sessionType, path, method, payloadObj, callback) {
         // XXX Should really return a DOM promise here.
-        MozLoopService.hawkRequest(LOOP_SESSION_TYPE.GUEST, path, method, payloadObj).then((response) => {
+        MozLoopService.hawkRequest(sessionType, path, method, payloadObj).then((response) => {
           callback(null, response.body);
         }, hawkError => {
           // The hawkError.error property, while usually a string representing
@@ -388,10 +437,9 @@ function injectLoopAPI(targetWindow) {
 
     LOOP_SESSION_TYPE: {
       enumerable: true,
-      writable: false,
-      value: function() {
-        return LOOP_SESSION_TYPE;
-      },
+      get: function() {
+        return Cu.cloneInto(LOOP_SESSION_TYPE, targetWindow);
+      }
     },
 
     logInToFxA: {
@@ -399,6 +447,14 @@ function injectLoopAPI(targetWindow) {
       writable: true,
       value: function() {
         return MozLoopService.logInToFxA();
+      }
+    },
+
+    logOutFromFxA: {
+      enumerable: true,
+      writable: true,
+      value: function() {
+        return MozLoopService.logOutFromFxA();
       }
     },
 
@@ -429,33 +485,129 @@ function injectLoopAPI(targetWindow) {
         if (!appVersionInfo) {
           let defaults = Services.prefs.getDefaultBranch(null);
 
-          appVersionInfo = Cu.cloneInto({
-            channel: defaults.getCharPref("app.update.channel"),
-            version: appInfo.version,
-            OS: appInfo.OS
-          }, targetWindow);
+          // If the lazy getter explodes, we're probably loaded in xpcshell,
+          // which doesn't have what we need, so log an error.
+          try {
+            appVersionInfo = Cu.cloneInto({
+              channel: defaults.getCharPref("app.update.channel"),
+              version: appInfo.version,
+              OS: appInfo.OS
+            }, targetWindow);
+          } catch (ex) {
+            // only log outside of xpcshell to avoid extra message noise
+            if (typeof window !== 'undefined' && "console" in window) {
+              console.log("Failed to construct appVersionInfo; if this isn't " +
+                          "an xpcshell unit test, something is wrong", ex);
+            }
+          }
         }
         return appVersionInfo;
       }
     },
+
+    /**
+     * Composes an email via the external protocol service.
+     *
+     * @param {String} subject Subject of the email to send
+     * @param {String} body    Body message of the email to send
+     */
+    composeEmail: {
+      enumerable: true,
+      writable: true,
+      value: function(subject, body) {
+        let mailtoURL = "mailto:?subject=" + encodeURIComponent(subject) + "&" +
+                        "body=" + encodeURIComponent(body);
+        extProtocolSvc.loadURI(CommonUtils.makeURI(mailtoURL));
+      }
+    },
+
+    /**
+     * Adds a value to a telemetry histogram.
+     *
+     * @param  {string}  histogramId Name of the telemetry histogram to update.
+     * @param  {integer} value       Value to add to the histogram.
+     */
+    telemetryAdd: {
+      enumerable: true,
+      writable: true,
+      value: function(histogramId, value) {
+        Services.telemetry.getHistogramById(histogramId).add(value);
+      }
+    },
+
+    /**
+     * Compose a URL pointing to the location of an avatar by email address.
+     * At the moment we use the Gravatar service to match email addresses with
+     * avatars. This might change in the future as avatars might come from another
+     * source.
+     *
+     * @param {String} emailAddress Users' email address
+     * @param {Number} size         Size of the avatar image to return in pixels.
+     *                              Optional. Default value: 40.
+     * @return the URL pointing to an avatar matching the provided email address.
+     */
+    getUserAvatar: {
+      enumerable: true,
+      writable: true,
+      value: function(emailAddress, size = 40) {
+        if (!emailAddress) {
+          return "";
+        }
+
+        // Do the MD5 dance.
+        let hasher = Cc["@mozilla.org/security/hash;1"]
+                       .createInstance(Ci.nsICryptoHash);
+        hasher.init(Ci.nsICryptoHash.MD5);
+        let stringStream = Cc["@mozilla.org/io/string-input-stream;1"]
+                             .createInstance(Ci.nsIStringInputStream);
+        stringStream.data = emailAddress.trim().toLowerCase();
+        hasher.updateFromStream(stringStream, -1);
+        let hash = hasher.finish(false);
+        // Convert the binary hash data to a hex string.
+        let md5Email = [toHexString(hash.charCodeAt(i)) for (i in hash)].join("");
+
+        // Compose the Gravatar URL.
+        return "http://www.gravatar.com/avatar/" + md5Email + ".jpg?default=blank&s=" + size;
+      }
+    },
+  };
+
+  function onStatusChanged(aSubject, aTopic, aData) {
+    let event = new targetWindow.CustomEvent("LoopStatusChanged");
+    targetWindow.dispatchEvent(event)
+  };
+
+  function onDOMWindowDestroyed(aSubject, aTopic, aData) {
+    if (targetWindow && aSubject != targetWindow)
+      return;
+    Services.obs.removeObserver(onDOMWindowDestroyed, "dom-window-destroyed");
+    Services.obs.removeObserver(onStatusChanged, "loop-status-changed");
   };
 
   let contentObj = Cu.createObjectIn(targetWindow);
   Object.defineProperties(contentObj, api);
   Object.seal(contentObj);
   Cu.makeObjectPropsNormal(contentObj);
+  Services.obs.addObserver(onStatusChanged, "loop-status-changed", false);
+  Services.obs.addObserver(onDOMWindowDestroyed, "dom-window-destroyed", false);
 
-  targetWindow.navigator.wrappedJSObject.__defineGetter__("mozLoop", function() {
-    // We do this in a getter, so that we create these objects
-    // only on demand (this is a potential concern, since
-    // otherwise we might add one per iframe, and keep them
-    // alive for as long as the window is alive).
-    delete targetWindow.navigator.wrappedJSObject.mozLoop;
-    return targetWindow.navigator.wrappedJSObject.mozLoop = contentObj;
-  });
+  if ("navigator" in targetWindow) {
+    targetWindow.navigator.wrappedJSObject.__defineGetter__("mozLoop", function () {
+      // We do this in a getter, so that we create these objects
+      // only on demand (this is a potential concern, since
+      // otherwise we might add one per iframe, and keep them
+      // alive for as long as the window is alive).
+      delete targetWindow.navigator.wrappedJSObject.mozLoop;
+      return targetWindow.navigator.wrappedJSObject.mozLoop = contentObj;
+    });
 
-  // Handle window.close correctly on the panel and chatbox.
-  hookWindowCloseForPanelClose(targetWindow);
+    // Handle window.close correctly on the panel and chatbox.
+    hookWindowCloseForPanelClose(targetWindow);
+  } else {
+    // This isn't a window; but it should be a JS scope; used for testing
+    return targetWindow.mozLoop = contentObj;
+  }
+
 }
 
 function getChromeWindow(contentWin) {

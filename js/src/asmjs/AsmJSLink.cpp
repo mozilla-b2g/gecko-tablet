@@ -360,11 +360,17 @@ ValidateSimdOperation(JSContext *cx, AsmJSModule::Global &global, HandleValue gl
           case AsmJSSimdOperation_xor: native = simd_int32x4_xor; break;
           case AsmJSSimdOperation_select: native = simd_int32x4_select; break;
           case AsmJSSimdOperation_splat: native = simd_int32x4_splat; break;
+          case AsmJSSimdOperation_withX: native = simd_int32x4_withX; break;
+          case AsmJSSimdOperation_withY: native = simd_int32x4_withY; break;
+          case AsmJSSimdOperation_withZ: native = simd_int32x4_withZ; break;
+          case AsmJSSimdOperation_withW: native = simd_int32x4_withW; break;
           case AsmJSSimdOperation_lessThanOrEqual:
           case AsmJSSimdOperation_greaterThanOrEqual:
           case AsmJSSimdOperation_notEqual:
           case AsmJSSimdOperation_mul:
           case AsmJSSimdOperation_div:
+          case AsmJSSimdOperation_max:
+          case AsmJSSimdOperation_min:
             MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("shouldn't have been validated in the first "
                                                     "place");
         }
@@ -375,6 +381,8 @@ ValidateSimdOperation(JSContext *cx, AsmJSModule::Global &global, HandleValue gl
           case AsmJSSimdOperation_sub: native = simd_float32x4_sub; break;
           case AsmJSSimdOperation_mul: native = simd_float32x4_mul; break;
           case AsmJSSimdOperation_div: native = simd_float32x4_div; break;
+          case AsmJSSimdOperation_max: native = simd_float32x4_max; break;
+          case AsmJSSimdOperation_min: native = simd_float32x4_min; break;
           case AsmJSSimdOperation_lessThan: native = simd_float32x4_lessThan ; break;
           case AsmJSSimdOperation_lessThanOrEqual: native = simd_float32x4_lessThanOrEqual; break;
           case AsmJSSimdOperation_equal: native = simd_float32x4_equal; break;
@@ -386,6 +394,10 @@ ValidateSimdOperation(JSContext *cx, AsmJSModule::Global &global, HandleValue gl
           case AsmJSSimdOperation_xor: native = simd_float32x4_xor; break;
           case AsmJSSimdOperation_select: native = simd_float32x4_select; break;
           case AsmJSSimdOperation_splat: native = simd_float32x4_splat; break;
+          case AsmJSSimdOperation_withX: native = simd_float32x4_withX; break;
+          case AsmJSSimdOperation_withY: native = simd_float32x4_withY; break;
+          case AsmJSSimdOperation_withZ: native = simd_float32x4_withZ; break;
+          case AsmJSSimdOperation_withW: native = simd_float32x4_withW; break;
         }
         break;
     }

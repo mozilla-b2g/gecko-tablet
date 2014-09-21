@@ -43,8 +43,8 @@ using base::TimeTicks;
 
 // A lazily created thread local storage for quick access to a thread's message
 // loop, if one exists.  This should be safe and free of static constructors.
-static base::LazyInstance<base::ThreadLocalPointer<MessageLoop> > lazy_tls_ptr(
-    base::LINKER_INITIALIZED);
+static base::LazyInstance<base::ThreadLocalPointer<MessageLoop> > lazy_tls_ptr =
+    LAZY_INSTANCE_INITIALIZER;
 
 //------------------------------------------------------------------------------
 
@@ -319,7 +319,7 @@ void MessageLoop::PostTask_Helper(
   // directly, as it could starve handling of foreign threads.  Put every task
   // into this queue.
 
-  scoped_refptr<base::MessagePump> pump;
+  nsRefPtr<base::MessagePump> pump;
   {
     AutoLock locked(incoming_queue_lock_);
     incoming_queue_.push(pending_task);

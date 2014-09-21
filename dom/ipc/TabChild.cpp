@@ -10,13 +10,13 @@
 
 #include "Layers.h"
 #include "ContentChild.h"
+#include "IndexedDBChild.h"
 #include "TabParent.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/EventListenerManager.h"
 #include "mozilla/IntentionalCrash.h"
 #include "mozilla/docshell/OfflineCacheUpdateChild.h"
-#include "mozilla/dom/indexedDB/PIndexedDBPermissionRequestChild.h"
 #include "mozilla/ipc/DocumentRendererChild.h"
 #include "mozilla/ipc/FileDescriptorUtils.h"
 #include "mozilla/layers/ActiveElementManager.h"
@@ -97,6 +97,7 @@ using namespace mozilla::ipc;
 using namespace mozilla::layers;
 using namespace mozilla::layout;
 using namespace mozilla::docshell;
+using namespace mozilla::dom::indexedDB;
 using namespace mozilla::widget;
 using namespace mozilla::jsipc;
 
@@ -1897,8 +1898,9 @@ TabChild::RecvHandleDoubleTap(const CSSPoint& aPoint, const ScrollableLayerGuid&
 bool
 TabChild::RecvHandleSingleTap(const CSSPoint& aPoint, const ScrollableLayerGuid& aGuid)
 {
-  TABC_LOG("Handling single tap at %s with %p %p %d\n",
-    Stringify(aPoint).c_str(), mGlobal.get(), mTabChildGlobal.get(), mTouchEndCancelled);
+  TABC_LOG("Handling single tap at %s on %s with %p %p %d\n",
+    Stringify(aPoint).c_str(), Stringify(aGuid).c_str(), mGlobal.get(),
+    mTabChildGlobal.get(), mTouchEndCancelled);
 
   if (!mGlobal || !mTabChildGlobal) {
     return true;
@@ -2502,24 +2504,6 @@ TabChild::DeallocPFilePickerChild(PFilePickerChild* actor)
   return true;
 }
 
-auto
-TabChild::AllocPIndexedDBPermissionRequestChild(const Principal& aPrincipal)
-  -> PIndexedDBPermissionRequestChild*
-{
-  MOZ_CRASH("PIndexedDBPermissionRequestChild actors should always be created "
-            "manually!");
-}
-
-bool
-TabChild::DeallocPIndexedDBPermissionRequestChild(
-                                       PIndexedDBPermissionRequestChild* aActor)
-{
-  MOZ_ASSERT(aActor);
-
-  delete aActor;
-  return true;
-}
-
 bool
 TabChild::RecvActivateFrameEvent(const nsString& aType, const bool& capture)
 {
@@ -2624,6 +2608,12 @@ TabChild::RecvDestroy()
 
   observerService->RemoveObserver(this, BROWSER_ZOOM_TO_RECT);
   observerService->RemoveObserver(this, BEFORE_FIRST_PAINT);
+
+  const InfallibleTArray<PIndexedDBChild*>& idbActors =
+    ManagedPIndexedDBChild();
+  for (uint32_t i = 0; i < idbActors.Length(); ++i) {
+    static_cast<IndexedDBChild*>(idbActors[i])->Disconnect();
+  }
 
   // XXX what other code in ~TabChild() should we be running here?
   DestroyWindow();
@@ -2899,6 +2889,22 @@ void
 TabChild::SendRequestFocus(bool aCanFocus)
 {
   PBrowserChild::SendRequestFocus(aCanFocus);
+}
+
+PIndexedDBChild*
+TabChild::AllocPIndexedDBChild(
+                            const nsCString& aGroup,
+                            const nsCString& aASCIIOrigin, bool* /* aAllowed */)
+{
+  NS_NOTREACHED("Should never get here!");
+  return nullptr;
+}
+
+bool
+TabChild::DeallocPIndexedDBChild(PIndexedDBChild* aActor)
+{
+  delete aActor;
+  return true;
 }
 
 bool

@@ -20,9 +20,6 @@ describe("loop.conversation", function() {
 
     navigator.mozLoop = {
       doNotDisturb: true,
-      get serverUrl() {
-        return "http://example.com";
-      },
       getStrings: function() {
         return JSON.stringify({textContent: "fakeText"});
       },
@@ -33,6 +30,7 @@ describe("loop.conversation", function() {
       getLoopCharPref: sandbox.stub(),
       getLoopBoolPref: sandbox.stub(),
       getCallData: sandbox.stub(),
+      releaseCallData: function() {},
       startAlerting: function() {},
       stopAlerting: function() {},
       ensureRegistered: function() {},
@@ -464,6 +462,10 @@ describe("loop.conversation", function() {
           router._websocket = {
             decline: sandbox.spy()
           };
+          conversation.setIncomingSessionData({
+            callId:         8699,
+            websocketToken: 123
+          });
         });
 
         it("should close the window", function() {
@@ -478,6 +480,14 @@ describe("loop.conversation", function() {
           router.decline();
 
           sinon.assert.calledOnce(navigator.mozLoop.stopAlerting);
+        });
+
+        it("should release callData", function() {
+          sandbox.stub(navigator.mozLoop, "releaseCallData");
+          router.decline();
+
+          sinon.assert.calledOnce(navigator.mozLoop.releaseCallData);
+          sinon.assert.calledWithExactly(navigator.mozLoop.releaseCallData, 8699);
         });
       });
 
@@ -549,8 +559,9 @@ describe("loop.conversation", function() {
           sandbox.stub(conversation, "get");
           router.declineAndBlock();
 
-          sinon.assert.calledOnce(conversation.get);
+          sinon.assert.calledTwice(conversation.get);
           sinon.assert.calledWithExactly(conversation.get, "callToken");
+          sinon.assert.calledWithExactly(conversation.get, "callId");
         });
 
         it("should trigger error handling in case of error", function() {
