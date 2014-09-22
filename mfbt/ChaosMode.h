@@ -23,7 +23,7 @@ public:
   static bool isActive()
   {
     // Flip this to true to activate chaos mode
-    return true;
+    return false;
   }
 
   /**
