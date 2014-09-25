@@ -580,9 +580,6 @@
               if (this.mBlank)
                 return false;
 
-              if (gMultiProcessBrowser)
-                return true;
-
               // Don't show progress indicators in tabs for about: URIs
               // pointing to local resources.
               try {
@@ -1513,9 +1510,6 @@
                 aURL.toLowerCase() != "about:blank") {
               return false;
             }
-
-            if (aURL.startsWith("chrome:"))
-              return false;
 
             return true;
           ]]>

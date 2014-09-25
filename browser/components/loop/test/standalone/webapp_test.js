@@ -12,12 +12,17 @@ describe("loop.webapp", function() {
 
   var sharedModels = loop.shared.models,
       sharedViews = loop.shared.views,
+      sharedUtils = loop.shared.utils,
       sandbox,
-      notifications;
+      notifications,
+      feedbackApiClient;
 
   beforeEach(function() {
     sandbox = sinon.sandbox.create();
     notifications = new sharedModels.NotificationCollection();
+    feedbackApiClient = new loop.FeedbackAPIClient("http://invalid", {
+      product: "Loop"
+    });
   });
 
   afterEach(function() {
@@ -29,8 +34,9 @@ describe("loop.webapp", function() {
 
     beforeEach(function() {
       sandbox.stub(React, "renderComponent");
-      sandbox.stub(loop.webapp.WebappHelper.prototype,
+      sandbox.stub(sharedUtils.Helper.prototype,
                    "locationHash").returns("#call/fake-Token");
+      loop.config.feedbackApiUrl = "http://fake.invalid";
       conversationSetStub =
         sandbox.stub(sharedModels.ConversationModel.prototype, "set");
     });
@@ -73,11 +79,12 @@ describe("loop.webapp", function() {
       });
       conversation.set("loopToken", "fakeToken");
       ocView = mountTestComponent({
-        helper: new loop.webapp.WebappHelper(),
+        helper: new sharedUtils.Helper(),
         client: client,
         conversation: conversation,
         notifications: notifications,
-        sdk: {}
+        sdk: {},
+        feedbackApiClient: feedbackApiClient
       });
     });
 
@@ -305,7 +312,7 @@ describe("loop.webapp", function() {
           conversation.trigger("session:ended");
 
           TestUtils.findRenderedComponentWithType(ocView,
-            loop.webapp.StartConversationView);
+            loop.webapp.EndedConversationView);
         });
       });
 
@@ -314,7 +321,7 @@ describe("loop.webapp", function() {
           conversation.trigger("session:peer-hungup");
 
           TestUtils.findRenderedComponentWithType(ocView,
-            loop.webapp.StartConversationView);
+            loop.webapp.EndedConversationView);
         });
 
         it("should notify the user", function() {
@@ -333,7 +340,7 @@ describe("loop.webapp", function() {
             conversation.trigger("session:network-disconnected");
 
             TestUtils.findRenderedComponentWithType(ocView,
-              loop.webapp.StartConversationView);
+              loop.webapp.EndedConversationView);
           });
 
         it("should notify the user", function() {
@@ -467,20 +474,22 @@ describe("loop.webapp", function() {
   });
 
   describe("WebappRootView", function() {
-    var webappHelper, sdk, conversationModel, client, props;
+    var helper, sdk, conversationModel, client, props;
 
     function mountTestComponent() {
       return TestUtils.renderIntoDocument(
         loop.webapp.WebappRootView({
         client: client,
-        helper: webappHelper,
+        helper: helper,
+        notifications: notifications,
         sdk: sdk,
-        conversation: conversationModel
+        conversation: conversationModel,
+        feedbackApiClient: feedbackApiClient
       }));
     }
 
     beforeEach(function() {
-      webappHelper = new loop.webapp.WebappHelper();
+      helper = new sharedUtils.Helper();
       sdk = {
         checkSystemRequirements: function() { return true; }
       };
@@ -497,7 +506,7 @@ describe("loop.webapp", function() {
 
     it("should mount the unsupportedDevice view if the device is running iOS",
       function() {
-        sandbox.stub(webappHelper, "isIOS").returns(true);
+        sandbox.stub(helper, "isIOS").returns(true);
 
         var webappRootView = mountTestComponent();
 
@@ -772,6 +781,32 @@ describe("loop.webapp", function() {
     });
   });
 
+  describe("EndedConversationView", function() {
+    var view, conversation;
+
+    beforeEach(function() {
+      conversation = new sharedModels.ConversationModel({}, {
+        sdk: {}
+      });
+      view = React.addons.TestUtils.renderIntoDocument(
+        loop.webapp.EndedConversationView({
+          conversation: conversation,
+          sdk: {},
+          feedbackApiClient: feedbackApiClient,
+          onAfterFeedbackReceived: function(){}
+        })
+      );
+    });
+
+    it("should render a ConversationView", function() {
+      TestUtils.findRenderedComponentWithType(view, sharedViews.ConversationView);
+    });
+
+    it("should render a FeedbackView", function() {
+      TestUtils.findRenderedComponentWithType(view, sharedViews.FeedbackView);
+    });
+  });
+
   describe("PromoteFirefoxView", function() {
     describe("#render", function() {
       it("should not render when using Firefox", function() {
@@ -788,40 +823,6 @@ describe("loop.webapp", function() {
         }));
 
         expect(comp.getDOMNode().querySelectorAll("h3").length).eql(1);
-      });
-    });
-  });
-
-  describe("WebappHelper", function() {
-    var helper;
-
-    beforeEach(function() {
-      helper = new loop.webapp.WebappHelper();
-    });
-
-    describe("#isIOS", function() {
-      it("should detect iOS", function() {
-        expect(helper.isIOS("iPad")).eql(true);
-        expect(helper.isIOS("iPod")).eql(true);
-        expect(helper.isIOS("iPhone")).eql(true);
-        expect(helper.isIOS("iPhone Simulator")).eql(true);
-      });
-
-      it("shouldn't detect iOS with other platforms", function() {
-        expect(helper.isIOS("MacIntel")).eql(false);
-      });
-    });
-
-    describe("#isFirefox", function() {
-      it("should detect Firefox", function() {
-        expect(helper.isFirefox("Firefox")).eql(true);
-        expect(helper.isFirefox("Gecko/Firefox")).eql(true);
-        expect(helper.isFirefox("Firefox/Gecko")).eql(true);
-        expect(helper.isFirefox("Gecko/Firefox/Chuck Norris")).eql(true);
-      });
-
-      it("shouldn't detect Firefox with other platforms", function() {
-        expect(helper.isFirefox("Opera")).eql(false);
       });
     });
   });
