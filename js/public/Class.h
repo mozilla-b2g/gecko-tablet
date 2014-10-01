@@ -505,9 +505,13 @@ struct Class
         return flags & JSCLASS_EMULATES_UNDEFINED;
     }
 
+    bool isJSFunction() const {
+        return this == js::FunctionClassPtr;
+    }
+
     bool nonProxyCallable() const {
         MOZ_ASSERT(!isProxy());
-        return this == js::FunctionClassPtr || call;
+        return isJSFunction() || call;
     }
 
     bool isProxy() const {
@@ -576,9 +580,10 @@ IsObjectWithClass(const JS::Value &v, ESClassValue classValue, JSContext *cx);
 inline bool
 Unbox(JSContext *cx, JS::HandleObject obj, JS::MutableHandleValue vp);
 
+/* Check whether the object's class supplies objectMovedOp for non-global objects. */
 #ifdef DEBUG
 JS_FRIEND_API(bool)
-HasObjectMovedOp(JSObject *obj);
+HasObjectMovedOpIfRequired(JSObject *obj);
 #endif
 
 }  /* namespace js */

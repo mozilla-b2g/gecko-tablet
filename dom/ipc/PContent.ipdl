@@ -9,10 +9,12 @@ include protocol PBackground;
 include protocol PBlob;
 include protocol PBluetooth;
 include protocol PBrowser;
+include protocol PCellBroadcast;
 include protocol PCompositor;
 include protocol PContentBridge;
 include protocol PCycleCollectWithLogs;
 include protocol PCrashReporter;
+include protocol PDocAccessible;
 include protocol PExternalHelperApp;
 include protocol PDeviceStorageRequest;
 include protocol PFileDescriptorSet;
@@ -20,7 +22,6 @@ include protocol PFMRadio;
 include protocol PFileSystemRequest;
 include protocol PHal;
 include protocol PImageBridge;
-include protocol PIndexedDB;
 include protocol PMemoryReportRequest;
 include protocol PMobileConnection;
 include protocol PNecko;
@@ -31,6 +32,7 @@ include protocol PSpeechSynthesis;
 include protocol PStorage;
 include protocol PTelephony;
 include protocol PTestShell;
+include protocol PVoicemail;
 include protocol PJavaScript;
 include protocol PRemoteSpellcheckEngine;
 include DOMTypes;
@@ -39,6 +41,13 @@ include InputStreamParams;
 include PTabContext;
 include URIParams;
 include ProtocolTypes;
+
+// Workaround to prevent error if PContentChild.cpp & PContentBridgeParent.cpp
+// are put into different UnifiedProtocolsXX.cpp files.
+// XXX Remove this once bug 1069073 is fixed
+include "mozilla/dom/PContentBridgeParent.h";
+
+include "mozilla/dom/indexedDB/SerializationHelpers.h";
 
 using GeoPosition from "nsGeoPositionIPCSerialiser.h";
 
@@ -55,6 +64,7 @@ using mozilla::dom::asmjscache::WriteParams from "mozilla/dom/asmjscache/AsmJSCa
 using mozilla::dom::AudioChannel from "mozilla/dom/AudioChannelBinding.h";
 using mozilla::dom::AudioChannelState from "AudioChannelCommon.h";
 using mozilla::dom::NativeThreadId from "mozilla/dom/TabMessageUtils.h";
+using mozilla::dom::quota::PersistenceType from "mozilla/dom/quota/PersistenceType.h";
 using mozilla::hal::ProcessPriority from "mozilla/HalTypes.h";
 using gfxIntSize from "nsSize.h";
 
@@ -320,15 +330,16 @@ intr protocol PContent
     manages PBlob;
     manages PBluetooth;
     manages PBrowser;
+    manages PCellBroadcast;
     manages PCrashReporter;
     manages PCycleCollectWithLogs;
+    manages PDocAccessible;
     manages PDeviceStorageRequest;
     manages PFileSystemRequest;
     manages PExternalHelperApp;
     manages PFileDescriptorSet;
     manages PFMRadio;
     manages PHal;
-    manages PIndexedDB;
     manages PMemoryReportRequest;
     manages PMobileConnection;
     manages PNecko;
@@ -338,6 +349,7 @@ intr protocol PContent
     manages PStorage;
     manages PTelephony;
     manages PTestShell;
+    manages PVoicemail;
     manages PJavaScript;
     manages PRemoteSpellcheckEngine;
 
@@ -479,6 +491,14 @@ child:
 
 parent:
     /**
+     * Tell the parent process a new accessible document has been created.
+     * aParentDoc is the accessible document it was created in if any, and
+     * aParentAcc is the id of the accessible in that document the new document
+     * is a child of.
+     */
+    PDocAccessible(nullable PDocAccessible aParentDoc, uint64_t aParentAcc);
+
+    /**
      * Tell the content process some attributes of itself.  This is
      * among the first information queried by content processes after
      * startup.  (The message is sync to allow the content process to
@@ -520,8 +540,6 @@ parent:
 
     PHal();
 
-    PIndexedDB();
-
     PMobileConnection(uint32_t clientId);
 
     PNecko();
@@ -531,6 +549,8 @@ parent:
                  float systemDefaultScale,
                  bool success);
 
+    PCellBroadcast();
+
     PSms();
 
     PSpeechSynthesis();
@@ -538,6 +558,8 @@ parent:
     PStorage();
 
     PTelephony();
+
+    PVoicemail();
 
     PBluetooth();
 
@@ -579,11 +601,11 @@ parent:
 
     CloseAlert(nsString name, Principal principal);
 
-    PExternalHelperApp(OptionalURIParams uri, 
+    PExternalHelperApp(OptionalURIParams uri,
                        nsCString aMimeContentType,
-                       nsCString aContentDisposition, 
-                       uint32_t aContentDispositionHint, 
-                       nsString aContentDispositionFilename, 
+                       nsCString aContentDisposition,
+                       uint32_t aContentDispositionHint,
+                       nsString aContentDispositionFilename,
                        bool aForceSave,
                        int64_t aContentLength,
                        OptionalURIParams aReferrer,
@@ -596,7 +618,7 @@ parent:
     ConsoleMessage(nsString message);
     ScriptError(nsString message, nsString sourceName, nsString sourceLine,
                 uint32_t lineNumber, uint32_t colNumber, uint32_t flags,
-                nsCString category); 
+                nsCString category);
 
     // nsIPermissionManager messages
     sync ReadPermissions() returns (Permission[] permissions);
@@ -701,6 +723,14 @@ parent:
     BackUpXResources(FileDescriptor aXSocketFd);
 
     sync OpenAnonymousTemporaryFile() returns (FileDescriptor aFD);
+
+    // Use only for testing!
+    sync GetFileReferences(PersistenceType persistenceType,
+                           nsCString origin,
+                           nsString databaseName,
+                           int64_t fileId)
+      returns (int32_t refCnt, int32_t dBRefCnt, int32_t sliceRefCnt,
+               bool result);
 
 both:
      AsyncMessage(nsString aMessage, ClonedMessageData aData,

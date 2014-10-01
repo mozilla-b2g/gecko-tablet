@@ -118,6 +118,7 @@ WEBIDL_FILES = [
     'DummyBinding.webidl',
     'DynamicsCompressorNode.webidl',
     'Element.webidl',
+    'EngineeringMode.webidl',
     'Event.webidl',
     'EventHandler.webidl',
     'EventListener.webidl',
@@ -237,6 +238,7 @@ WEBIDL_FILES = [
     'InterAppConnection.webidl',
     'InterAppConnectionRequest.webidl',
     'InterAppMessagePort.webidl',
+    'KeyAlgorithm.webidl',
     'KeyboardEvent.webidl',
     'KeyEvent.webidl',
     'LegacyQueryInterface.webidl',
@@ -263,6 +265,8 @@ WEBIDL_FILES = [
     'MouseEvent.webidl',
     'MouseScrollEvent.webidl',
     'MozActivity.webidl',
+    'MozCellBroadcast.webidl',
+    'MozCellBroadcastMessage.webidl',
     'MozMmsMessage.webidl',
     'MozMobileCellInfo.webidl',
     'MozMobileConnection.webidl',
@@ -274,6 +278,8 @@ WEBIDL_FILES = [
     'MozSelfSupport.webidl',
     'MozTetheringManager.webidl',
     'MozTimeManager.webidl',
+    'MozVoicemail.webidl',
+    'MozVoicemailStatus.webidl',
     'MozWakeLock.webidl',
     'MutationEvent.webidl',
     'MutationObserver.webidl',
@@ -601,11 +607,8 @@ if CONFIG['MOZ_B2G_BT']:
 if CONFIG['MOZ_B2G_RIL']:
     WEBIDL_FILES += [
         'IccCardLockError.webidl',
-        'MozCellBroadcast.webidl',
         'MozIcc.webidl',
         'MozIccManager.webidl',
-        'MozVoicemail.webidl',
-        'MozVoicemailStatus.webidl'
     ]
 
 if CONFIG['MOZ_NFC']:
@@ -660,6 +663,7 @@ GENERATED_EVENTS_WEBIDL_FILES = [
     'MediaStreamEvent.webidl',
     'MediaStreamTrackEvent.webidl',
     'MozApplicationEvent.webidl',
+    'MozCellBroadcastEvent.webidl',
     'MozClirModeEvent.webidl',
     'MozContactChangeEvent.webidl',
     'MozEmergencyCbModeEvent.webidl',
@@ -671,6 +675,7 @@ GENERATED_EVENTS_WEBIDL_FILES = [
     'MozSettingsTransactionEvent.webidl',
     'MozSmsEvent.webidl',
     'MozStkCommandEvent.webidl',
+    'MozVoicemailEvent.webidl',
     'PageTransitionEvent.webidl',
     'PopStateEvent.webidl',
     'PopupBlockedEvent.webidl',
@@ -719,12 +724,6 @@ if CONFIG['MOZ_B2G_BT']:
     GENERATED_EVENTS_WEBIDL_FILES += [
         'BluetoothDeviceEvent.webidl',
         'BluetoothStatusChangedEvent.webidl',
-    ]
-
-if CONFIG['MOZ_B2G_RIL']:
-    GENERATED_EVENTS_WEBIDL_FILES += [
-        'MozCellBroadcastEvent.webidl',
-        'MozVoicemailEvent.webidl',
     ]
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':

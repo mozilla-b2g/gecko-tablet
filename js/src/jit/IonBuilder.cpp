@@ -3846,9 +3846,6 @@ IonBuilder::jsop_try()
 {
     JS_ASSERT(JSOp(*pc) == JSOP_TRY);
 
-    if (!js_JitOptions.compileTryCatch)
-        return abort("Try-catch support disabled");
-
     // Try-finally is not yet supported.
     if (analysis().hasTryFinally())
         return abort("Has try-finally");
@@ -5171,9 +5168,11 @@ IonBuilder::createThisScriptedSingleton(JSFunction *target, MDefinition *callee)
 
     // Generate an inline path to create a new |this| object with
     // the given singleton prototype.
+    MConstant *templateConst = MConstant::NewConstraintlessObject(alloc(), templateObject);
     MCreateThisWithTemplate *createThis =
-        MCreateThisWithTemplate::New(alloc(), constraints(), templateObject,
+        MCreateThisWithTemplate::New(alloc(), constraints(), templateConst,
                                      templateObject->type()->initialHeap(constraints()));
+    current->add(templateConst);
     current->add(createThis);
 
     return createThis;

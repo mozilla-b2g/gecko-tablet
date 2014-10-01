@@ -1222,12 +1222,12 @@ MPhi::foldsTernary()
     if (testArg != test->input())
         return nullptr;
 
-    // If testArg is a number type we can:
+    // If testArg is an int32 type we can:
     // - fold testArg ? testArg : 0 to testArg
     // - fold testArg ? 0 : testArg to 0
-    if (IsNumberType(testArg->type()) && c->vp()->toNumber() == 0) {
+    if (testArg->type() == MIRType_Int32 && c->vp()->toNumber() == 0) {
         // When folding to the constant we need to hoist it.
-        if (trueDef == c)
+        if (trueDef == c && !c->block()->dominates(block()))
             c->block()->moveBefore(pred->lastIns(), c);
         return trueDef;
     }
@@ -1239,7 +1239,7 @@ MPhi::foldsTernary()
         c->vp()->toString() == GetIonContext()->runtime->emptyString())
     {
         // When folding to the constant we need to hoist it.
-        if (trueDef == c)
+        if (trueDef == c && !c->block()->dominates(block()))
             c->block()->moveBefore(pred->lastIns(), c);
         return trueDef;
     }
@@ -3167,11 +3167,24 @@ MNewObject::shouldUseVM() const
     return obj->hasSingletonType() || obj->hasDynamicSlots();
 }
 
+bool
+MCreateThisWithTemplate::canRecoverOnBailout() const
+{
+    MOZ_ASSERT(!templateObject()->denseElementsAreCopyOnWrite());
+    MOZ_ASSERT(!templateObject()->is<ArrayObject>());
+    return true;
+}
+
 MObjectState::MObjectState(MDefinition *obj)
 {
     // This instruction is only used as a summary for bailout paths.
+    setResultType(MIRType_Object);
     setRecoveredOnBailout();
-    JSObject *templateObject = obj->toNewObject()->templateObject();
+    JSObject *templateObject = nullptr;
+    if (obj->isNewObject())
+        templateObject = obj->toNewObject()->templateObject();
+    else
+        templateObject = obj->toCreateThisWithTemplate()->templateObject();
     numSlots_ = templateObject->slotSpan();
     numFixedSlots_ = templateObject->numFixedSlots();
 }

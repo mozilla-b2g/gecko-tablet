@@ -1267,10 +1267,7 @@ JSObject::sealOrFreeze(JSContext *cx, HandleObject obj, ImmutabilityType it)
     assertSameCompartment(cx, obj);
     JS_ASSERT(it == SEAL || it == FREEZE);
 
-    bool extensible;
-    if (!JSObject::isExtensible(cx, obj, &extensible))
-        return false;
-    if (extensible && !JSObject::preventExtensions(cx, obj))
+    if (!JSObject::preventExtensions(cx, obj))
         return false;
 
     AutoIdVector props(cx);
@@ -1528,8 +1525,10 @@ js::NewObjectWithGivenProto(ExclusiveContext *cxArg, const js::Class *clasp,
         allocKind = GetBackgroundAllocKind(allocKind);
 
     NewObjectCache::EntryIndex entry = -1;
+    uint64_t gcNumber = 0;
     if (JSContext *cx = cxArg->maybeJSContext()) {
-        NewObjectCache &cache = cx->runtime()->newObjectCache;
+        JSRuntime *rt = cx->runtime();
+        NewObjectCache &cache = rt->newObjectCache;
         if (protoArg.isObject() &&
             newKind == GenericObject &&
             !cx->compartment()->hasObjectMetadataCallback() &&
@@ -1550,6 +1549,7 @@ js::NewObjectWithGivenProto(ExclusiveContext *cxArg, const js::Class *clasp,
                 }
             }
         }
+        gcNumber = rt->gc.gcNumber();
     }
 
     Rooted<TaggedProto> proto(cxArg, protoArg);
@@ -1570,7 +1570,9 @@ js::NewObjectWithGivenProto(ExclusiveContext *cxArg, const js::Class *clasp,
     if (!obj)
         return nullptr;
 
-    if (entry != -1 && !obj->hasDynamicSlots()) {
+    if (entry != -1 && !obj->hasDynamicSlots() &&
+        cxArg->asJSContext()->runtime()->gc.gcNumber() == gcNumber)
+    {
         cxArg->asJSContext()->runtime()->newObjectCache.fillProto(entry, clasp,
                                                                   proto, allocKind, obj);
     }
@@ -5076,8 +5078,9 @@ GetPropertyHelperInline(JSContext *cx,
 
             if (op == JSOP_GETXPROP) {
                 /* Undefined property during a name lookup, report an error. */
-                RootedAtom atom(cx, JSID_TO_ATOM(id));
-                js_ReportIsNotDefined(cx, atom);
+                JSAutoByteString printable;
+                if (js_ValueToPrintable(cx, IdToValue(id), &printable))
+                    js_ReportIsNotDefined(cx, printable.ptr());
                 return false;
             }
 
@@ -6450,7 +6453,7 @@ js_DumpInterpreterFrame(JSContext *cx, InterpreterFrame *start)
             fprintf(stderr, "  current op: %s\n", js_CodeName[*pc]);
             MaybeDumpObject("staticScope", i.script()->getStaticScope(pc));
         }
-        MaybeDumpValue("this", i.thisv());
+        MaybeDumpValue("this", i.thisv(cx));
         if (!i.isJit()) {
             fprintf(stderr, "  rval: ");
             dumpValue(i.interpFrame()->returnValue());

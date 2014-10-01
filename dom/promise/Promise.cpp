@@ -1023,13 +1023,11 @@ Promise::MaybeReportRejected()
   }
 
   nsRefPtr<xpc::ErrorReport> xpcReport = new xpc::ErrorReport();
-  if (MOZ_LIKELY(NS_IsMainThread())) {
-    nsIGlobalObject* global = xpc::NativeGlobal(js::GetGlobalForObjectCrossCompartment(obj));
-    xpcReport->Init(report.report(), report.message(), global);
-  } else {
-    xpcReport->InitOnWorkerThread(report.report(), report.message(),
-                                  GetCurrentThreadWorkerPrivate()->IsChromeWorker());
-  }
+  bool isMainThread = MOZ_LIKELY(NS_IsMainThread());
+  bool isChrome = isMainThread ? nsContentUtils::IsSystemPrincipal(nsContentUtils::ObjectPrincipal(obj))
+                               : GetCurrentThreadWorkerPrivate()->IsChromeWorker();
+  nsPIDOMWindow* win = isMainThread ? xpc::WindowGlobalOrNull(obj) : nullptr;
+  xpcReport->Init(report.report(), report.message(), isChrome, win ? win->WindowID() : 0);
 
   // Now post an event to do the real reporting async
   // Since Promises preserve their wrapper, it is essential to nsRefPtr<> the
@@ -1092,7 +1090,7 @@ Promise::ResolveInternal(JSContext* aCx,
       return;
     }
 
-    if (then.isObject() && JS_ObjectIsCallable(aCx, &then.toObject())) {
+    if (then.isObject() && JS::IsCallable(&then.toObject())) {
       // This is the then() function of the thenable aValueObj.
       JS::Rooted<JSObject*> thenObj(aCx, &then.toObject());
       nsRefPtr<PromiseInit> thenCallback =

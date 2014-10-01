@@ -5629,26 +5629,38 @@ RilObject.prototype[REQUEST_SETUP_DATA_CALL] = function REQUEST_SETUP_DATA_CALL(
   this[REQUEST_DATA_CALL_LIST](length, options);
 };
 RilObject.prototype[REQUEST_SIM_IO] = function REQUEST_SIM_IO(length, options) {
-  let ICCIOHelper = this.context.ICCIOHelper;
-  if (!length) {
-    ICCIOHelper.processICCIOError(options);
+  if (options.rilRequestError) {
+    if (options.onerror) {
+      options.onerror(RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError] ||
+                      GECKO_ERROR_GENERIC_FAILURE);
+    }
     return;
   }
 
-  // Don't need to read rilRequestError since we can know error status from
-  // sw1 and sw2.
   let Buf = this.context.Buf;
   options.sw1 = Buf.readInt32();
   options.sw2 = Buf.readInt32();
-  // See 3GPP TS 11.11, clause 9.4.1 for opetation success results.
+
+  // See 3GPP TS 11.11, clause 9.4.1 for operation success results.
   if (options.sw1 !== ICC_STATUS_NORMAL_ENDING &&
       options.sw1 !== ICC_STATUS_NORMAL_ENDING_WITH_EXTRA &&
       options.sw1 !== ICC_STATUS_WITH_SIM_DATA &&
       options.sw1 !== ICC_STATUS_WITH_RESPONSE_DATA) {
-    ICCIOHelper.processICCIOError(options);
+    if (DEBUG) {
+      this.context.debug("ICC I/O Error EF id = 0x" + options.fileId.toString(16) +
+                         ", command = 0x" + options.command.toString(16) +
+                         ", sw1 = 0x" + options.sw1.toString(16) +
+                         ", sw2 = 0x" + options.sw2.toString(16));
+    }
+    if (options.onerror) {
+      // We can get fail cause from sw1/sw2 (See TS 11.11 clause 9.4.1 and
+      // ISO 7816-4 clause 6). But currently no one needs this information,
+      // so simply reports "GenericFailure" for now.
+      options.onerror(GECKO_ERROR_GENERIC_FAILURE);
+    }
     return;
   }
-  ICCIOHelper.processICCIO(options);
+  this.context.ICCIOHelper.processICCIO(options);
 };
 RilObject.prototype[REQUEST_SEND_USSD] = function REQUEST_SEND_USSD(length, options) {
   if (DEBUG) {
@@ -10524,6 +10536,32 @@ StkCommandParamsFactoryObject.prototype = {
     return method.call(this, cmdDetails, ctlvs);
   },
 
+  loadIconIfNecessary: function(cmdDetails, ctlvs, ret) {
+    let ctlv =
+      this.context.StkProactiveCmdHelper
+                  .searchForTag(COMPREHENSIONTLV_TAG_ICON_ID, ctlvs);
+    if (!ctlv || !this.context.ICCUtilsHelper.isICCServiceAvailable("IMG")) {
+      return ret;
+    }
+
+    let iconId = ctlv.value;
+    ret.iconSelfExplanatory = iconId.qualifier == 0 ? true : false;
+
+    let onerror = (function() {
+      this.context.RIL.sendChromeMessage(cmdDetails);
+    }).bind(this);
+
+    let onsuccess = (function(result) {
+      ret.icons = result[0];
+      this.context.RIL.sendChromeMessage(cmdDetails);
+    }).bind(this);
+
+    ret.pending = true;
+    this.context.IconLoader.loadIcons([iconId.identifier], onsuccess, onerror);
+
+    return ret;
+  },
+
   /**
    * Construct a param for Refresh.
    *
@@ -10733,27 +10771,7 @@ StkCommandParamsFactoryObject.prototype = {
       textMsg.userClear = true;
     }
 
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_ICON_ID, ctlvs);
-    if (!ctlv || !this.context.ICCUtilsHelper.isICCServiceAvailable("IMG")) {
-      return textMsg;
-    }
-
-    let iconId = ctlv.value;
-    textMsg.iconSelfExplanatory = iconId.qualifier == 0 ? true : false;
-
-    let onerror = (function() {
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    let onsuccess = (function(result) {
-      textMsg.icons = result[0];
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    textMsg.pending = true;
-    this.context.IconLoader.loadIcons([iconId.identifier], onsuccess, onerror);
-
-    return textMsg;
+    return this.loadIconIfNecessary(cmdDetails, ctlvs, textMsg);
   },
 
   processSetUpIdleModeText: function(cmdDetails, ctlvs) {
@@ -10770,27 +10788,7 @@ StkCommandParamsFactoryObject.prototype = {
     }
     textMsg.text = ctlv.value.textString;
 
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_ICON_ID, ctlvs);
-    if (!ctlv || !this.context.ICCUtilsHelper.isICCServiceAvailable("IMG")) {
-      return textMsg;
-    }
-
-    let iconId = ctlv.value;
-    textMsg.iconSelfExplanatory = iconId.qualifier == 0 ? true : false;
-
-    let onerror = (function() {
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    let onsuccess = (function(result) {
-      textMsg.icons = result[0];
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    textMsg.pending = true;
-    this.context.IconLoader.loadIcons([iconId.identifier], onsuccess, onerror);
-
-    return textMsg;
+    return this.loadIconIfNecessary(cmdDetails, ctlvs, textMsg);
   },
 
   processGetInkey: function(cmdDetails, ctlvs) {
@@ -10837,27 +10835,7 @@ StkCommandParamsFactoryObject.prototype = {
       input.isHelpAvailable = true;
     }
 
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_ICON_ID, ctlvs);
-    if (!ctlv || !this.context.ICCUtilsHelper.isICCServiceAvailable("IMG")) {
-      return input;
-    }
-
-    let iconId = ctlv.value;
-    input.iconSelfExplanatory = iconId.qualifier == 0 ? true : false;
-
-    let onerror = (function() {
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    let onsuccess = (function(result) {
-      input.icons = result[0];
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    input.pending = true;
-    this.context.IconLoader.loadIcons([iconId.identifier], onsuccess, onerror);
-
-    return input;
+    return this.loadIconIfNecessary(cmdDetails, ctlvs, input);
   },
 
   processGetInput: function(cmdDetails, ctlvs) {
@@ -10909,27 +10887,7 @@ StkCommandParamsFactoryObject.prototype = {
       input.isHelpAvailable = true;
     }
 
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_ICON_ID, ctlvs);
-    if (!ctlv || !this.context.ICCUtilsHelper.isICCServiceAvailable("IMG")) {
-      return input;
-    }
-
-    let iconId = ctlv.value;
-    input.iconSelfExplanatory = iconId.qualifier == 0 ? true : false;
-
-    let onerror = (function() {
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    let onsuccess = (function(result) {
-      input.icons = result[0];
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    input.pending = true;
-    this.context.IconLoader.loadIcons([iconId.identifier], onsuccess, onerror);
-
-    return input;
+    return this.loadIconIfNecessary(cmdDetails, ctlvs, input);
   },
 
   processEventNotify: function(cmdDetails, ctlvs) {
@@ -10942,28 +10900,7 @@ StkCommandParamsFactoryObject.prototype = {
       textMsg.text = ctlv.value.identifier;
     }
 
-    ctlv = StkProactiveCmdHelper.searchForTag(
-      COMPREHENSIONTLV_TAG_ICON_ID, ctlvs);
-    if (!ctlv || !this.context.ICCUtilsHelper.isICCServiceAvailable("IMG")) {
-      return textMsg;
-    }
-
-    let iconId = ctlv.value;
-    textMsg.iconSelfExplanatory = iconId.qualifier == 0 ? true : false;
-
-    let onerror = (function() {
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    let onsuccess = (function(result) {
-      textMsg.icons = result[0];
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    textMsg.pending = true;
-    this.context.IconLoader.loadIcons([iconId.identifier], onsuccess, onerror);
-
-    return textMsg;
+    return this.loadIconIfNecessary(cmdDetails, ctlvs, textMsg);
   },
 
   processSetupCall: function(cmdDetails, ctlvs) {
@@ -10996,27 +10933,7 @@ StkCommandParamsFactoryObject.prototype = {
       call.duration = ctlv.value;
     }
 
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_ICON_ID, ctlvs);
-    if (!ctlv || !this.context.ICCUtilsHelper.isICCServiceAvailable("IMG")) {
-      return call;
-    }
-
-    let iconId = ctlv.value;
-    call.iconSelfExplanatory = iconId.qualifier == 0 ? true : false;
-
-    let onerror = (function() {
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    let onsuccess = (function(result) {
-      call.icons = result[0];
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    call.pending = true;
-    this.context.IconLoader.loadIcons([iconId.identifier], onsuccess, onerror);
-
-    return call;
+    return this.loadIconIfNecessary(cmdDetails, ctlvs, call);
   },
 
   processLaunchBrowser: function(cmdDetails, ctlvs) {
@@ -11039,27 +10956,7 @@ StkCommandParamsFactoryObject.prototype = {
 
     browser.mode = cmdDetails.commandQualifier & 0x03;
 
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_ICON_ID, ctlvs);
-    if (!ctlv || !this.context.ICCUtilsHelper.isICCServiceAvailable("IMG")) {
-      return browser;
-    }
-
-    let iconId = ctlv.value;
-    browser.iconSelfExplanatory = iconId.qualifier == 0 ? true : false;
-
-    let onerror = (function() {
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    let onsuccess = (function(result) {
-      browser.icons = result[0];
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    browser.pending = true;
-    this.context.IconLoader.loadIcons([iconId.identifier], onsuccess, onerror);
-
-    return browser;
+    return this.loadIconIfNecessary(cmdDetails, ctlvs, browser);
   },
 
   processPlayTone: function(cmdDetails, ctlvs) {
@@ -11086,28 +10983,7 @@ StkCommandParamsFactoryObject.prototype = {
     // vibrate is only defined in TS 102.223
     playTone.isVibrate = (cmdDetails.commandQualifier & 0x01) !== 0x00;
 
-    ctlv = StkProactiveCmdHelper.searchForTag(
-      COMPREHENSIONTLV_TAG_ICON_ID, ctlvs);
-    if (!ctlv || !this.context.ICCUtilsHelper.isICCServiceAvailable("IMG")) {
-      return playTone;
-    }
-
-    let iconId = ctlv.value;
-    playTone.iconSelfExplanatory = iconId.qualifier == 0 ? true : false;
-
-    let onerror = (function() {
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    let onsuccess = (function(result) {
-      playTone.icons = result[0];
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    playTone.pending = true;
-    this.context.IconLoader.loadIcons([iconId.identifier], onsuccess, onerror);
-
-    return playTone;
+    return this.loadIconIfNecessary(cmdDetails, ctlvs, playTone);
   },
 
   /**
@@ -11164,27 +11040,7 @@ StkCommandParamsFactoryObject.prototype = {
       bipMsg.text = ctlv.value.identifier;
     }
 
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_ICON_ID, ctlvs);
-    if (!ctlv || !this.context.ICCUtilsHelper.isICCServiceAvailable("IMG")) {
-      return bipMsg;
-    }
-
-    let iconId = ctlv.value;
-    bipMsg.iconSelfExplanatory = iconId.qualifier == 0 ? true : false;
-
-    let onerror = (function() {
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    let onsuccess = (function(result) {
-      bipMsg.icons = result[0];
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    bipMsg.pending = true;
-    this.context.IconLoader.loadIcons([iconId.identifier], onsuccess, onerror);
-
-    return bipMsg;
+    return this.loadIconIfNecessary(cmdDetails, ctlvs, bipMsg);
   }
 };
 StkCommandParamsFactoryObject.prototype[STK_CMD_REFRESH] = function STK_CMD_REFRESH(cmdDetails, ctlvs) {
@@ -12645,28 +12501,6 @@ ICCIOHelperObject.prototype = {
   processICCIOUpdateRecord: function(options) {
     if (options.callback) {
       options.callback(options);
-    }
-  },
-
-  /**
-   * Process ICC IO error.
-   */
-  processICCIOError: function(options) {
-    let requestError = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-    if (DEBUG) {
-      // See GSM11.11, TS 51.011 clause 9.4, and ISO 7816-4 for the error
-      // description.
-      let errorMsg = "ICC I/O Error code " + requestError +
-                     " EF id = " + options.fileId.toString(16) +
-                     " command = " + options.command.toString(16);
-      if (options.sw1 && options.sw2) {
-        errorMsg += "(" + options.sw1.toString(16) +
-                    "/" + options.sw2.toString(16) + ")";
-      }
-      this.context.debug(errorMsg);
-    }
-    if (options.onerror) {
-      options.onerror(requestError);
     }
   },
 };
@@ -14976,6 +14810,12 @@ ICCContactHelperObject.prototype = {
         ICCRecordHelper.readADNLike(ICC_EF_FDN, onsuccess, onerror);
         break;
       case "sdn":
+        let ICCUtilsHelper = this.context.ICCUtilsHelper;
+        if (!ICCUtilsHelper.isICCServiceAvailable("SDN")) {
+          onerror(CONTACT_ERR_CONTACT_TYPE_NOT_SUPPORTED);
+          break;
+        }
+
         ICCRecordHelper.readADNLike(ICC_EF_SDN, onsuccess, onerror);
         break;
       default:

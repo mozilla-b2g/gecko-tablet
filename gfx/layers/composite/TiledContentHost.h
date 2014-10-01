@@ -137,7 +137,7 @@ public:
 
   bool HasDoubleBufferedTiles() { return mHasDoubleBufferedTiles; }
 
-  bool IsValid() const { return !mUninitialized; }
+  bool IsValid() const { return mIsValid; }
 
 #if defined(MOZ_WIDGET_GONK) && ANDROID_VERSION >= 17
   virtual void SetReleaseFence(const android::sp<android::Fence>& aReleaseFence);
@@ -162,11 +162,11 @@ protected:
 private:
   CSSToParentLayerScale mFrameResolution;
   bool mHasDoubleBufferedTiles;
-  bool mUninitialized;
+  bool mIsValid;
 };
 
 /**
- * ContentHost for tiled Thebes layers. Since tiled layers are special snow
+ * ContentHost for tiled PaintedLayers. Since tiled layers are special snow
  * flakes, we have a unique update process. All the textures that back the
  * tiles are added in the usual way, but Updated is called on the host side
  * in response to a message that describes the transaction for every tile.
@@ -215,8 +215,8 @@ public:
     return mLowPrecisionTiledBuffer.GetValidRegion();
   }
 
-  void UseTiledLayerBuffer(ISurfaceAllocator* aAllocator,
-                           const SurfaceDescriptorTiles& aTiledDescriptor);
+  virtual bool UseTiledLayerBuffer(ISurfaceAllocator* aAllocator,
+                                   const SurfaceDescriptorTiles& aTiledDescriptor) MOZ_OVERRIDE;
 
   void Composite(EffectChain& aEffectChain,
                  float aOpacity,

@@ -1128,8 +1128,8 @@ class Mochitest(MochitestUtilsMixin):
     """ create the profile and add optional chrome bits and files if requested """
     if options.browserChrome and options.timeout:
       options.extraPrefs.append("testing.browserTestHarness.timeout=%d" % options.timeout)
-    options.extraPrefs.append("browser.tabs.remote=%s" % ('true' if options.e10s else 'false'))
     options.extraPrefs.append("browser.tabs.remote.autostart=%s" % ('true' if options.e10s else 'false'))
+    options.extraPrefs.append("browser.tabs.remote.sandbox=%s" % options.contentSandbox)
 
     # get extensions to install
     extensions = self.getExtensionsToInstall(options)
@@ -1590,6 +1590,8 @@ class Mochitest(MochitestUtilsMixin):
     paths = []
 
     for test in tests:
+      if test.get('expected') == 'fail':
+        raise Exception('fail-if encountered for test: %s. There is no support for fail-if in Mochitests.' % test['name'])
       pathAbs = os.path.abspath(test['path'])
       assert pathAbs.startswith(self.testRootAbs)
       tp = pathAbs[len(self.testRootAbs):].replace('\\', '/').strip('/')
@@ -1840,7 +1842,7 @@ class Mochitest(MochitestUtilsMixin):
         self.stopVMwareRecording();
       self.stopServers()
 
-    processLeakLog(self.leak_report_file, options.leakThreshold)
+    processLeakLog(self.leak_report_file, options.leakThresholds)
 
     if self.nsprLogs:
       with zipfile.ZipFile("%s/nsprlog.zip" % browserEnv["MOZ_UPLOAD_DIR"], "w", zipfile.ZIP_DEFLATED) as logzip:

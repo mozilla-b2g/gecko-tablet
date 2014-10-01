@@ -457,6 +457,7 @@ frontend::CompileScript(ExclusiveContext *cx, LifoAlloc *alloc, HandleObject sco
     if (sct && !extraSct && !sct->complete())
         return nullptr;
 
+    MOZ_ASSERT_IF(cx->isJSContext(), !cx->asJSContext()->isExceptionPending());
     return script;
 }
 
@@ -466,7 +467,7 @@ frontend::CompileLazyFunction(JSContext *cx, Handle<LazyScript*> lazy, const cha
     JS_ASSERT(cx->compartment() == lazy->functionNonDelazifying()->compartment());
 
     CompileOptions options(cx, lazy->version());
-    options.setOriginPrincipals(lazy->originPrincipals())
+    options.setMutedErrors(lazy->mutedErrors())
            .setFileAndLine(lazy->source()->filename(), lazy->lineno())
            .setColumn(lazy->column())
            .setCompileAndGo(true)
@@ -614,6 +615,12 @@ CompileFunctionBody(JSContext *cx, MutableHandleFunction fun, const ReadOnlyComp
     if (!NameFunctions(cx, fn))
         return false;
 
+    if (!SetDisplayURL(cx, parser.tokenStream, ss))
+        return false;
+
+    if (!SetSourceMap(cx, parser.tokenStream, ss))
+        return false;
+
     if (fn->pn_funbox->function()->isInterpreted()) {
         JS_ASSERT(fun == fn->pn_funbox->function());
 
@@ -646,12 +653,6 @@ CompileFunctionBody(JSContext *cx, MutableHandleFunction fun, const ReadOnlyComp
         fun.set(fn->pn_funbox->function());
         JS_ASSERT(IsAsmJSModuleNative(fun->native()));
     }
-
-    if (!SetDisplayURL(cx, parser.tokenStream, ss))
-        return false;
-
-    if (!SetSourceMap(cx, parser.tokenStream, ss))
-        return false;
 
     if (!sct.complete())
         return false;

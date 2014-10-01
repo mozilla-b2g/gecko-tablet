@@ -1406,31 +1406,13 @@ class MOZ_STACK_CLASS ModuleCompiler
             return false;
         }
 
-        if (!standardLibrarySimdOpNames_.init() ||
-            !addStandardLibrarySimdOpName("add", AsmJSSimdOperation_add) ||
-            !addStandardLibrarySimdOpName("sub", AsmJSSimdOperation_sub) ||
-            !addStandardLibrarySimdOpName("mul", AsmJSSimdOperation_mul) ||
-            !addStandardLibrarySimdOpName("div", AsmJSSimdOperation_div) ||
-            !addStandardLibrarySimdOpName("lessThanOrEqual", AsmJSSimdOperation_lessThanOrEqual) ||
-            !addStandardLibrarySimdOpName("lessThan", AsmJSSimdOperation_lessThan) ||
-            !addStandardLibrarySimdOpName("equal", AsmJSSimdOperation_equal) ||
-            !addStandardLibrarySimdOpName("notEqual", AsmJSSimdOperation_notEqual) ||
-            !addStandardLibrarySimdOpName("greaterThan", AsmJSSimdOperation_greaterThan) ||
-            !addStandardLibrarySimdOpName("greaterThanOrEqual", AsmJSSimdOperation_greaterThanOrEqual) ||
-            !addStandardLibrarySimdOpName("and", AsmJSSimdOperation_and) ||
-            !addStandardLibrarySimdOpName("or", AsmJSSimdOperation_or) ||
-            !addStandardLibrarySimdOpName("xor", AsmJSSimdOperation_xor) ||
-            !addStandardLibrarySimdOpName("select", AsmJSSimdOperation_select) ||
-            !addStandardLibrarySimdOpName("splat", AsmJSSimdOperation_splat) ||
-            !addStandardLibrarySimdOpName("max", AsmJSSimdOperation_max) ||
-            !addStandardLibrarySimdOpName("min", AsmJSSimdOperation_min) ||
-            !addStandardLibrarySimdOpName("withX", AsmJSSimdOperation_withX) ||
-            !addStandardLibrarySimdOpName("withY", AsmJSSimdOperation_withY) ||
-            !addStandardLibrarySimdOpName("withZ", AsmJSSimdOperation_withZ) ||
-            !addStandardLibrarySimdOpName("withW", AsmJSSimdOperation_withW))
+#define ADDSTDLIBSIMDOPNAME(op) || !addStandardLibrarySimdOpName(#op, AsmJSSimdOperation_##op)
+        if (!standardLibrarySimdOpNames_.init()
+            FORALL_SIMD_OP(ADDSTDLIBSIMDOPNAME))
         {
             return false;
         }
+#undef ADDSTDLIBSIMDOPNAME
 
         uint32_t srcStart = parser_.pc->maybeFunction->pn_body->pn_pos.begin;
         uint32_t srcBodyStart = tokenStream().currentToken().pos.end;
@@ -2509,6 +2491,18 @@ class FunctionCompiler
         return ins;
     }
 
+    template<class T>
+    MDefinition *convertSimd(MDefinition *vec, MIRType from, MIRType to)
+    {
+        if (inDeadCode())
+            return nullptr;
+
+        MOZ_ASSERT(IsSimdType(from) && IsSimdType(to) && from != to);
+        T *ins = T::NewAsmJS(alloc(), vec, from, to);
+        curBlock_->add(ins);
+        return ins;
+    }
+
     MDefinition *splatSimd(MDefinition *v, MIRType type)
     {
         if (inDeadCode())
@@ -3573,29 +3567,14 @@ static bool
 IsSimdValidOperationType(AsmJSSimdType type, AsmJSSimdOperation op)
 {
     switch (op) {
-      case AsmJSSimdOperation_add:
-      case AsmJSSimdOperation_sub:
-      case AsmJSSimdOperation_lessThan:
-      case AsmJSSimdOperation_equal:
-      case AsmJSSimdOperation_greaterThan:
-      case AsmJSSimdOperation_and:
-      case AsmJSSimdOperation_or:
-      case AsmJSSimdOperation_xor:
-      case AsmJSSimdOperation_select:
-      case AsmJSSimdOperation_splat:
-      case AsmJSSimdOperation_withX:
-      case AsmJSSimdOperation_withY:
-      case AsmJSSimdOperation_withZ:
-      case AsmJSSimdOperation_withW:
+#define CASE(op) case AsmJSSimdOperation_##op:
+      FOREACH_COMMONX4_SIMD_OP(CASE)
         return true;
-      case AsmJSSimdOperation_mul:
-      case AsmJSSimdOperation_div:
-      case AsmJSSimdOperation_max:
-      case AsmJSSimdOperation_min:
-      case AsmJSSimdOperation_lessThanOrEqual:
-      case AsmJSSimdOperation_notEqual:
-      case AsmJSSimdOperation_greaterThanOrEqual:
+      FOREACH_INT32X4_SIMD_OP(CASE)
+        return type == AsmJSSimdType_int32x4;
+      FOREACH_FLOAT32X4_SIMD_OP(CASE)
         return type == AsmJSSimdType_float32x4;
+#undef CASE
     }
     return false;
 }
@@ -4913,6 +4892,19 @@ CheckSimdWith(FunctionCompiler &f, ParseNode *call, Type retType, SimdLane lane,
     return true;
 }
 
+template<class T>
+static bool
+CheckSimdCast(FunctionCompiler &f, ParseNode *call, Type fromType, Type toType, MDefinition **def,
+              Type *type)
+{
+    DefinitionVector defs;
+    if (!CheckSimdCallArgs(f, call, 1, CheckArgIsSubtypeOf(fromType), &defs))
+        return false;
+    *def = f.convertSimd<T>(defs[0], fromType.toMIRType(), toType.toMIRType());
+    *type = toType;
+    return true;
+}
+
 static bool
 CheckSimdOperationCall(FunctionCompiler &f, ParseNode *call, const ModuleCompiler::Global *global,
                        MDefinition **def, Type *type)
@@ -4963,6 +4955,15 @@ CheckSimdOperationCall(FunctionCompiler &f, ParseNode *call, const ModuleCompile
         return CheckSimdWith(f, call, retType, SimdLane::LaneZ, def, type);
       case AsmJSSimdOperation_withW:
         return CheckSimdWith(f, call, retType, SimdLane::LaneW, def, type);
+
+      case AsmJSSimdOperation_fromInt32x4:
+        return CheckSimdCast<MSimdConvert>(f, call, Type::Int32x4, retType, def, type);
+      case AsmJSSimdOperation_fromInt32x4Bits:
+        return CheckSimdCast<MSimdReinterpretCast>(f, call, Type::Int32x4, retType, def, type);
+      case AsmJSSimdOperation_fromFloat32x4:
+        return CheckSimdCast<MSimdConvert>(f, call, Type::Float32x4, retType, def, type);
+      case AsmJSSimdOperation_fromFloat32x4Bits:
+        return CheckSimdCast<MSimdReinterpretCast>(f, call, Type::Float32x4, retType, def, type);
 
       case AsmJSSimdOperation_splat: {
         DefinitionVector defs;

@@ -321,6 +321,10 @@ Proxy::set(JSContext *cx, HandleObject proxy, HandleObject receiver, HandleId id
     if (desc.object() && desc.setter() && desc.setter() != JS_StrictPropertyStub)
         return CallSetter(cx, receiver, id, desc.setter(), desc.attributes(), strict, vp);
 
+    if (desc.isReadonly()) {
+        return strict ? Throw(cx, id, JSMSG_READ_ONLY) : true;
+    }
+
     // Ok. Either there was no pre-existing property, or it was a value prop
     // that we're going to shadow. Make a property descriptor and define it.
     //
@@ -860,7 +864,6 @@ ProxyObject::renew(JSContext *cx, const BaseProxyHandler *handler, Value priv)
     JS_ASSERT_IF(IsCrossCompartmentWrapper(this), IsDeadProxyObject(this));
     JS_ASSERT(getParent() == cx->global());
     JS_ASSERT(getClass() == &ProxyObject::class_);
-    JS_ASSERT(!isCallable());
     JS_ASSERT(!getClass()->ext.innerObject);
     JS_ASSERT(getTaggedProto().isLazy());
 

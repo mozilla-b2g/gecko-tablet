@@ -1772,20 +1772,24 @@ LIRGenerator::visitToDouble(MToDouble *convert)
 
       case MIRType_Int32:
       {
-        LInt32ToDouble *lir = new(alloc()) LInt32ToDouble(useRegister(opd));
+        LInt32ToDouble *lir = new(alloc()) LInt32ToDouble(useRegisterAtStart(opd));
         return define(lir, convert);
       }
 
       case MIRType_Float32:
       {
-        // Bug 1039993: this used to be useRegisterAtStart, and theoreticall, it
+        LFloat32ToDouble *lir;
+#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS)
+        // Bug 1039993: this used to be useRegisterAtStart, and theoretically, it
         // should still be, however, there is a bug in LSRA's implementation of
         // *AtStart, which is quite fundamental. This should be reverted when that
         // is fixed, or lsra is deprecated.
-#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS)
-        LFloat32ToDouble *lir = new(alloc()) LFloat32ToDouble(useRegister(opd));
+        if (gen->optimizationInfo().registerAllocator() == RegisterAllocator_LSRA)
+            lir = new (alloc()) LFloat32ToDouble(useRegister(opd));
+        else
+            lir = new (alloc()) LFloat32ToDouble(useRegisterAtStart(opd));
 #else
-        LFloat32ToDouble *lir = new(alloc()) LFloat32ToDouble(useRegisterAtStart(opd));
+        lir = new (alloc()) LFloat32ToDouble(useRegisterAtStart(opd));
 #endif
         return define(lir, convert);
       }
@@ -1830,13 +1834,22 @@ LIRGenerator::visitToFloat32(MToFloat32 *convert)
 
       case MIRType_Int32:
       {
-        LInt32ToFloat32 *lir = new(alloc()) LInt32ToFloat32(useRegister(opd));
+        LInt32ToFloat32 *lir = new(alloc()) LInt32ToFloat32(useRegisterAtStart(opd));
         return define(lir, convert);
       }
 
       case MIRType_Double:
       {
-        LDoubleToFloat32 *lir = new(alloc()) LDoubleToFloat32(useRegister(opd));
+        LDoubleToFloat32 *lir;
+#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS)
+        // Bug 1039993: workaround LSRA issues.
+        if (gen->optimizationInfo().registerAllocator() == RegisterAllocator_LSRA)
+            lir = new(alloc()) LDoubleToFloat32(useRegister(opd));
+        else
+            lir = new(alloc()) LDoubleToFloat32(useRegisterAtStart(opd));
+#else
+        lir = new(alloc()) LDoubleToFloat32(useRegisterAtStart(opd));
+#endif
         return define(lir, convert);
       }
 
@@ -2479,7 +2492,7 @@ bool
 LIRGenerator::visitTypedObjectElements(MTypedObjectElements *ins)
 {
     JS_ASSERT(ins->type() == MIRType_Elements);
-    return define(new(alloc()) LTypedObjectElements(useRegisterAtStart(ins->object())), ins);
+    return define(new(alloc()) LTypedObjectElements(useRegister(ins->object())), ins);
 }
 
 bool
@@ -3704,6 +3717,33 @@ LIRGenerator::visitSimdConstant(MSimdConstant *ins)
         return define(new(alloc()) LFloat32x4(), ins);
 
     MOZ_CRASH("Unknown SIMD kind when generating constant");
+}
+
+bool
+LIRGenerator::visitSimdConvert(MSimdConvert *ins)
+{
+    MOZ_ASSERT(IsSimdType(ins->type()));
+    MDefinition *input = ins->input();
+    LUse use = useRegisterAtStart(input);
+
+    if (ins->type() == MIRType_Int32x4) {
+        MOZ_ASSERT(input->type() == MIRType_Float32x4);
+        return define(new(alloc()) LFloat32x4ToInt32x4(use), ins);
+    }
+
+    if (ins->type() == MIRType_Float32x4) {
+        MOZ_ASSERT(input->type() == MIRType_Int32x4);
+        return define(new(alloc()) LInt32x4ToFloat32x4(use), ins);
+    }
+
+    MOZ_CRASH("Unknown SIMD kind when generating constant");
+}
+
+bool
+LIRGenerator::visitSimdReinterpretCast(MSimdReinterpretCast *ins)
+{
+    MOZ_ASSERT(IsSimdType(ins->type()) && IsSimdType(ins->input()->type()));
+    return redefine(ins, ins->input());
 }
 
 bool

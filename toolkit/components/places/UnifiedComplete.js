@@ -11,7 +11,6 @@
 
 const { classes: Cc, interfaces: Ci, results: Cr, utils: Cu } = Components;
 
-const TOPIC_SHUTDOWN = "places-shutdown";
 const TOPIC_PREFCHANGED = "nsPref:changed";
 
 const DEFAULT_BEHAVIOR = 0;
@@ -629,7 +628,9 @@ Search.prototype = {
   },
 
   /**
-   * Used to cancel this search, will stop providing results.
+   * Cancels this search.
+   * After invoking this method, we won't run any more searches or heuristics,
+   * and no new matches may be added to the current result.
    */
   cancel: function () {
     if (this._sleepTimer)
@@ -706,6 +707,11 @@ Search.prototype = {
       hasFirstResult = true;
     }
 
+    if (this._enableActions && !hasFirstResult) {
+      // If it's not a bookmarked keyword, then it may be a search engine
+      // with an alias - which works like a keyword.
+      hasFirstResult = yield this._matchSearchEngineAlias();
+    }
     let shouldAutofill = this._shouldAutofill;
     if (this.pending && !hasFirstResult && shouldAutofill) {
       // Or it may look like a URL we know about from search engines.
@@ -714,15 +720,35 @@ Search.prototype = {
 
     if (this.pending && !hasFirstResult && shouldAutofill) {
       // It may also look like a URL we know from the database.
+      // Here we can only try to predict whether the URL autofill query is
+      // likely to return a result.  If the prediction ends up being wrong,
+      // later we will need to make up for the lack of a special first result.
       hasFirstResult = yield this._matchKnownUrl(conn, queries);
     }
+
+    if (this.pending && this._enableActions && !hasFirstResult) {
+      // If we don't have a result that matches what we know about, then
+      // we use a fallback for things we don't know about.
+      yield this._matchHeuristicFallback();
+    }
+
+    // IMPORTANT: No other first result heuristics should run after
+    // _matchHeuristicFallback().
 
     yield this._sleep(Prefs.delay);
     if (!this.pending)
       return;
 
     for (let [query, params] of queries) {
-      yield conn.executeCached(query, params, this._onResultRow.bind(this));
+      let hasResult = yield conn.executeCached(query, params, this._onResultRow.bind(this));
+
+      if (this.pending && params.query_type == QUERYTYPE_AUTOFILL_URL &&
+          !hasResult) {
+        // If we predicted that our URL autofill query might have gotten a
+        // result, but it didn't, then we need to recover.
+        yield this._matchHeuristicFallback();
+      }
+
       if (!this.pending)
         return;
     }
@@ -828,6 +854,112 @@ Search.prototype = {
     return true;
   },
 
+  _matchSearchEngineAlias: function* () {
+    if (this._searchTokens.length < 2)
+      return false;
+
+    let match = yield PlacesSearchAutocompleteProvider.findMatchByAlias(
+                                                         this._searchTokens[0]);
+    if (!match)
+      return false;
+
+    let query = this._searchTokens.slice(1).join(" ");
+
+    yield this._addSearchEngineMatch(match, query);
+    return true;
+  },
+
+  _matchCurrentSearchEngine: function* () {
+    let match = yield PlacesSearchAutocompleteProvider.getDefaultMatch();
+    if (!match)
+      return;
+
+    let query = this._originalSearchString;
+
+    yield this._addSearchEngineMatch(match, query);
+  },
+
+  _addSearchEngineMatch: function* (match, query) {
+    let value = makeActionURL("searchengine", {
+      engineName: match.engineName,
+      input: this._originalSearchString,
+      searchQuery: query,
+    });
+
+    this._addMatch({
+      value: value,
+      comment: match.engineName,
+      icon: match.iconUrl,
+      style: "action searchengine",
+      finalCompleteValue: this._trimmedOriginalSearchString,
+      frecency: FRECENCY_SEARCHENGINES_DEFAULT,
+    });
+  },
+
+  // These are separated out so we can run them in two distinct cases:
+  // (1) We didn't match on anything that we know about
+  // (2) Our predictive query for URL autofill thought we may get a result,
+  //     but we didn't.
+  _matchHeuristicFallback: function* () {
+    // We may not have auto-filled, but this may still look like a URL.
+    let hasFirstResult = yield this._matchUnknownUrl();
+    // However, even if the input is a valid URL, we may not want to use
+    // it as such. This can happen if the host would require whitelisting,
+    // but isn't in the whitelist.
+
+    if (this.pending && !hasFirstResult) {
+      // When all else fails, we search using the current search engine.
+      yield this._matchCurrentSearchEngine();
+    }
+  },
+
+  // TODO (bug 1054814): Use visited URLs to inform which scheme to use, if the
+  // scheme isn't specificed.
+  _matchUnknownUrl: function* () {
+    let flags = Ci.nsIURIFixup.FIXUP_FLAG_FIX_SCHEME_TYPOS |
+                Ci.nsIURIFixup.FIXUP_FLAG_REQUIRE_WHITELISTED_HOST;
+    let fixupInfo = null;
+    try {
+      fixupInfo = Services.uriFixup.getFixupURIInfo(this._originalSearchString,
+                                                    flags);
+    } catch (e) {
+      return false;
+    }
+
+    let uri = fixupInfo.preferredURI;
+    // Check the host, as "http:///" is a valid nsIURI, but not useful to us.
+    // But, some schemes are expected to have no host. So we check just against
+    // schemes we know should have a host. This allows new schemes to be
+    // implemented without us accidentally blocking access to them.
+    let hostExpected = new Set(["http", "https", "ftp", "chrome", "resource"]);
+    if (!uri || (hostExpected.has(uri.scheme) && !uri.host))
+      return false;
+
+    let value = makeActionURL("visiturl", {
+      url: uri.spec,
+      input: this._originalSearchString,
+    });
+
+    let match = {
+      value: value,
+      comment: uri.spec,
+      style: "action visiturl",
+      finalCompleteValue: this._originalSearchString,
+      frecency: 0,
+    };
+
+    try {
+      let favicon = yield PlacesUtils.promiseFaviconLinkUrl(uri);
+      if (favicon)
+        match.icon = favicon.spec;
+    } catch (e) {
+      // It's possible we don't have a favicon for this - and that's ok.
+    };
+
+    this._addMatch(match);
+    return true;
+  },
+
   _onResultRow: function (row) {
     TelemetryStopwatch.finish(TELEMETRY_1ST_RESULT);
     let queryType = row.getResultByIndex(QUERYINDEX_QUERYTYPE);
@@ -849,6 +981,10 @@ Search.prototype = {
         break;
     }
     this._addMatch(match);
+    // If the search has been canceled by the user or by _addMatch reaching the
+    // maximum number of results, we can stop the underlying Sqlite query.
+    if (!this.pending)
+      throw StopIteration;
   },
 
   _maybeRestyleSearchMatch: function (match) {
@@ -910,22 +1046,19 @@ Search.prototype = {
                                match.comment,
                                match.icon || PlacesUtils.favicons.defaultFavicon.spec,
                                match.style,
-                               match.finalCompleteValue);
+                               match.finalCompleteValue || "");
       notifyResults = true;
     }
 
     if (this._result.matchCount == 6)
       TelemetryStopwatch.finish(TELEMETRY_6_FIRST_RESULTS);
 
-    if (this._result.matchCount == Prefs.maxRichResults || !this.pending) {
+    if (this._result.matchCount == Prefs.maxRichResults) {
       // We have enough results, so stop running our search.
+      // We don't need to notify results in this case, cause the main promise
+      // chain will do that for us when finishSearch is invoked.
       this.cancel();
-      // This tells Sqlite.jsm to stop providing us results and cancel the
-      // underlying query.
-      throw StopIteration;
-    }
-
-    if (notifyResults) {
+    } else if (notifyResults) {
       // Notify about results if we've gotten them.
       this.notifyResults(true);
     }
@@ -1329,19 +1462,9 @@ Search.prototype = {
 //// component @mozilla.org/autocomplete/search;1?name=unifiedcomplete
 
 function UnifiedComplete() {
-  Services.obs.addObserver(this, TOPIC_SHUTDOWN, true);
 }
 
 UnifiedComplete.prototype = {
-  //////////////////////////////////////////////////////////////////////////////
-  //// nsIObserver
-
-  observe: function (subject, topic, data) {
-    if (topic === TOPIC_SHUTDOWN) {
-      this.ensureShutdown();
-    }
-  },
-
   //////////////////////////////////////////////////////////////////////////////
   //// Database handling
 
@@ -1366,6 +1489,18 @@ UnifiedComplete.prototype = {
           readOnly: true
         });
 
+        try {
+           Sqlite.shutdown.addBlocker("Places UnifiedComplete.js clone closing",
+                                      Task.async(function* () {
+                                        SwitchToTabStorage.shutdown();
+                                        yield conn.close();
+                                      }));
+        } catch (ex) {
+          // It's too late to block shutdown, just close the connection.
+          yield conn.close();
+          throw ex;
+        }
+
         // Autocomplete often fallbacks to a table scan due to lack of text
         // indices.  A larger cache helps reducing IO and improving performance.
         // The value used here is larger than the default Storage value defined
@@ -1379,20 +1514,6 @@ UnifiedComplete.prototype = {
                                        Cu.reportError(ex); });
     }
     return this._promiseDatabase;
-  },
-
-  /**
-   * Used to stop running queries and close the database handle.
-   */
-  ensureShutdown: function () {
-    if (this._promiseDatabase) {
-      Task.spawn(function* () {
-        let conn = yield this.getDatabaseHandle();
-        SwitchToTabStorage.shutdown();
-        yield conn.close()
-      }.bind(this)).then(null, Cu.reportError);
-      this._promiseDatabase = null;
-    }
   },
 
   //////////////////////////////////////////////////////////////////////////////

@@ -446,7 +446,7 @@ SendCommand(JSContext *cx, unsigned argc, Value *vp)
         return false;
     }
 
-    JSString* str = ToString(cx, args[0]);
+    RootedString str(cx, ToString(cx, args[0]));
     if (!str) {
         JS_ReportError(cx, "Could not convert argument 1 to string!");
         return false;
@@ -687,7 +687,7 @@ SetInterruptCallback(JSContext *cx, unsigned argc, jsval *vp)
     }
 
     // Otherwise, we should have a callable object.
-    if (!args[0].isObject() || !JS_ObjectIsCallable(cx, &args[0].toObject())) {
+    if (!args[0].isObject() || !JS::IsCallable(&args[0].toObject())) {
         JS_ReportError(cx, "Argument must be callable");
         return false;
     }
@@ -1351,6 +1351,23 @@ XRE_XPCShellMain(int argc, char **argv, char **envp)
         argc -= 2;
         argv += 2;
     } else {
+#ifdef XP_MACOSX
+        // On OSX, the GreD needs to point to Contents/Resources in the .app
+        // bundle. Libraries will be loaded at a relative path to GreD, i.e.
+        // ../MacOS.
+        XRE_GetFileFromPath(argv[0], getter_AddRefs(greDir));
+        nsCOMPtr<nsIFile> parentDir;
+        greDir->GetParent(getter_AddRefs(parentDir));
+        parentDir->GetParent(getter_AddRefs(greDir));
+        greDir->AppendNative(NS_LITERAL_CSTRING("Resources"));
+        bool dirExists = false;
+        greDir->Exists(&dirExists);
+        if (!dirExists) {
+            printf("Setting GreD failed.\n");
+            return 1;
+        }
+        dirprovider.SetGREDir(greDir);
+#else
         nsAutoString workingDir;
         if (!GetCurrentWorkingDirectory(workingDir)) {
             printf("GetCurrentWorkingDirectory failed.\n");
@@ -1361,6 +1378,7 @@ XRE_XPCShellMain(int argc, char **argv, char **envp)
             printf("NS_NewLocalFile failed.\n");
             return 1;
         }
+#endif
     }
 
     if (argc > 1 && !strcmp(argv[1], "-a")) {

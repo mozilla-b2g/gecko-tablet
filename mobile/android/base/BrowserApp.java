@@ -78,8 +78,8 @@ import org.mozilla.gecko.widget.GeckoActionProvider;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.content.BroadcastReceiver;
 import android.app.KeyguardManager;
+import android.content.BroadcastReceiver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -121,11 +121,14 @@ import android.view.ViewGroup;
 import android.view.ViewStub;
 import android.view.ViewTreeObserver;
 import android.view.Window;
+import android.view.WindowManager;
 import android.view.animation.Interpolator;
 import android.widget.ListView;
 import android.widget.RelativeLayout;
 import android.widget.Toast;
 import android.widget.ViewFlipper;
+
+import com.readystatesoftware.systembartint.SystemBarTintManager;
 
 public class BrowserApp extends GeckoApp
                         implements TabsPanel.TabsLayoutChangeListener,
@@ -518,14 +521,8 @@ public class BrowserApp extends GeckoApp
         final String args = intent.getStringExtra("args");
 
         if (GuestSession.shouldUse(this, args)) {
-            GuestSession.configureWindow(getWindow());
             mProfile = GeckoProfile.createGuestProfile(this);
         } else {
-            // We also allow non-guest sessions if the keyguard isn't a secure one.
-            final KeyguardManager manager = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
-            if (Versions.feature16Plus && !manager.isKeyguardSecure()) {
-                GuestSession.configureWindow(getWindow());
-            }
             GeckoProfile.maybeCleanupGuestProfile(this);
         }
 
@@ -536,6 +533,8 @@ public class BrowserApp extends GeckoApp
         super.onCreate(savedInstanceState);
 
         final Context appContext = getApplicationContext();
+
+        setupSystemUITinting();
 
         mBrowserChrome = (ViewGroup) findViewById(R.id.browser_chrome);
         mActionBarFlipper = (ViewFlipper) findViewById(R.id.browser_actionbar);
@@ -681,6 +680,18 @@ public class BrowserApp extends GeckoApp
         }
     }
 
+    private void setupSystemUITinting() {
+        if (!Versions.feature19Plus) {
+            return;
+        }
+
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
+
+        SystemBarTintManager tintManager = new SystemBarTintManager(this);
+        tintManager.setTintColor(getResources().getColor(R.color.background_tabs));
+        tintManager.setStatusBarTintEnabled(true);
+    }
+
     private void registerOnboardingReceiver(Context context) {
         final LocalBroadcastManager lbm = LocalBroadcastManager.getInstance(this);
 
@@ -740,12 +751,26 @@ public class BrowserApp extends GeckoApp
         final String args = getIntent().getStringExtra("args");
         // If an external intent tries to start Fennec in guest mode, and it's not already
         // in guest mode, this will change modes before opening the url.
+        // NOTE: OnResume is called twice sometimes when showing on the lock screen.
         final boolean enableGuestSession = GuestSession.shouldUse(this, args);
         final boolean inGuestSession = GeckoProfile.get(this).inGuestMode();
         if (enableGuestSession != inGuestSession) {
             doRestart(getIntent());
             GeckoAppShell.systemExit();
             return;
+        }
+
+        final KeyguardManager manager = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+        // The test machines return null for the KeyguardService, despite running Android 4.2.
+        if (Versions.feature11Plus && manager != null) {
+            // If the keyguard is showing AND we're either in guest mode or the keyguard is insecure,
+            // allow showing this window. We do this in onResume so that we can avoid setting these flags if the keyguard
+            // is not showing since it affects Android's layout of the window.
+            if (manager.isKeyguardLocked() && (GeckoProfile.get(this).inGuestMode() || !manager.isKeyguardSecure())) {
+                GuestSession.configureWindow(getWindow());
+            } else {
+                GuestSession.unconfigureWindow(getWindow());
+            }
         }
 
         EventDispatcher.getInstance().unregisterGeckoThreadListener((GeckoEventListener)this,

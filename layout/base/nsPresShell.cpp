@@ -6942,6 +6942,10 @@ PresShell::HandleEvent(nsIFrame* aFrame,
 
   if (!nsContentUtils::IsSafeToRunScript() &&
       aEvent->IsAllowedToDispatchDOMEvent()) {
+    if (aEvent->mClass == eCompositionEventClass ||
+        aEvent->mClass == eTextEventClass) {
+      IMEStateManager::OnCompositionEventDiscarded(aEvent);
+    }
 #ifdef DEBUG
     if (aEvent->IsIMERelatedEvent()) {
       nsPrintfCString warning("%d event is discarded", aEvent->message);
@@ -10056,6 +10060,7 @@ void ReflowCountMgr::PaintCount(const char*     aName,
         // We have one frame, therefore we must have a root...
         aPresContext->GetPresShell()->GetRootFrame()->
           StyleFont()->mLanguage,
+        gfxFont::eHorizontal,
         aPresContext->GetUserFontSet(),
         aPresContext->GetTextPerfMetrics(),
         *getter_AddRefs(fm));
