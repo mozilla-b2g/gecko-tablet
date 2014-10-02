@@ -15,15 +15,17 @@
   var PanelView = loop.panel.PanelView;
   // 1.2. Conversation Window
   var IncomingCallView = loop.conversation.IncomingCallView;
+  var DesktopPendingConversationView = loop.conversationViews.PendingConversationView;
 
   // 2. Standalone webapp
   var HomeView = loop.webapp.HomeView;
-  var UnsupportedBrowserView = loop.webapp.UnsupportedBrowserView;
-  var UnsupportedDeviceView = loop.webapp.UnsupportedDeviceView;
-  var CallUrlExpiredView    = loop.webapp.CallUrlExpiredView;
+  var UnsupportedBrowserView  = loop.webapp.UnsupportedBrowserView;
+  var UnsupportedDeviceView   = loop.webapp.UnsupportedDeviceView;
+  var CallUrlExpiredView      = loop.webapp.CallUrlExpiredView;
   var PendingConversationView = loop.webapp.PendingConversationView;
-  var StartConversationView = loop.webapp.StartConversationView;
-  var EndedConversationView = loop.webapp.EndedConversationView;
+  var StartConversationView   = loop.webapp.StartConversationView;
+  var FailedConversationView  = loop.webapp.FailedConversationView;
+  var EndedConversationView   = loop.webapp.EndedConversationView;
 
   // 3. Shared components
   var ConversationToolbar = loop.shared.views.ConversationToolbar;
@@ -62,6 +64,12 @@
     sdk: mockSDK
   });
   mockConversationModel.startSession = noop;
+
+  var mockWebSocket = new loop.CallConnectionWebSocket({
+    url: "fake",
+    callId: "fakeId",
+    websocketToken: "fakeToken"
+  });
 
   var notifications = new loop.shared.models.NotificationCollection();
   var errNotifications = new loop.shared.models.NotificationCollection();
@@ -168,8 +176,7 @@
             Example({summary: "Default", dashed: "true", style: {width: "260px", height: "254px"}}, 
               React.DOM.div({className: "fx-embedded"}, 
                 IncomingCallView({model: mockConversationModel, 
-                                   showDeclineMenu: true, 
-                                   video: true})
+                                   showMenu: true})
               )
             )
           ), 
@@ -223,12 +230,21 @@
           Section({name: "PendingConversationView"}, 
             Example({summary: "Pending conversation view (connecting)", dashed: "true"}, 
               React.DOM.div({className: "standalone"}, 
-                PendingConversationView(null)
+                PendingConversationView({websocket: mockWebSocket})
               )
             ), 
             Example({summary: "Pending conversation view (ringing)", dashed: "true"}, 
               React.DOM.div({className: "standalone"}, 
-                PendingConversationView({callState: "ringing"})
+                PendingConversationView({websocket: mockWebSocket, callState: "ringing"})
+              )
+            )
+          ), 
+
+          Section({name: "PendingConversationView (Desktop)"}, 
+            Example({summary: "Connecting", dashed: "true", 
+                     style: {width: "260px", height: "265px"}}, 
+              React.DOM.div({className: "fx-embedded"}, 
+                DesktopPendingConversationView({callState: "gather", calleeId: "Mr Smith"})
               )
             )
           ), 
@@ -236,10 +252,19 @@
           Section({name: "StartConversationView"}, 
             Example({summary: "Start conversation view", dashed: "true"}, 
               React.DOM.div({className: "standalone"}, 
-                StartConversationView({model: mockConversationModel, 
+                StartConversationView({conversation: mockConversationModel, 
                                        client: mockClient, 
-                                       notifications: notifications, 
-                                       showCallOptionsMenu: true})
+                                       notifications: notifications})
+              )
+            )
+          ), 
+
+          Section({name: "FailedConversationView"}, 
+            Example({summary: "Failed conversation view", dashed: "true"}, 
+              React.DOM.div({className: "standalone"}, 
+                FailedConversationView({conversation: mockConversationModel, 
+                                        client: mockClient, 
+                                        notifications: notifications})
               )
             )
           ), 
@@ -446,6 +471,9 @@
     React.renderComponent(App(null), body);
 
     _renderComponentsInIframes();
+
+    // Put the title back, in case views changed it.
+    document.title = "Loop UI Components Showcase";
   });
 
 })();

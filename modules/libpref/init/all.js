@@ -135,7 +135,7 @@ pref("dom.serviceWorkers.enabled", false);
 pref("dom.enable_performance", true);
 
 // Whether resource timing will be gathered and returned by performance.GetEntries*
-pref("dom.enable_resource_timing", false);
+pref("dom.enable_resource_timing", true);
 
 // Whether the Gamepad API is enabled
 pref("dom.gamepad.enabled", true);
@@ -341,7 +341,6 @@ pref("media.peerconnection.video.max_bitrate", 2000);
 #endif
 pref("media.navigator.permission.disabled", false);
 pref("media.peerconnection.default_iceservers", "[{\"url\": \"stun:stun.services.mozilla.com\"}]");
-pref("media.peerconnection.trickle_ice", true);
 pref("media.peerconnection.use_document_iceservers", true);
 // Do not enable identity before ensuring that the UX cannot be spoofed
 // see Bug 884573 for details
@@ -578,8 +577,8 @@ pref("gfx.font_rendering.opentype_svg.enabled", true);
 #ifdef XP_WIN
 // comma separated list of backends to use in order of preference
 // e.g., pref("gfx.canvas.azure.backends", "direct2d,skia,cairo");
-pref("gfx.canvas.azure.backends", "direct2d,skia,cairo");
-pref("gfx.content.azure.backends", "direct2d,cairo");
+pref("gfx.canvas.azure.backends", "direct2d1.1,direct2d,skia,cairo");
+pref("gfx.content.azure.backends", "direct2d1.1,direct2d,cairo");
 #else
 #ifdef XP_MACOSX
 pref("gfx.content.azure.backends", "cg");
@@ -3900,6 +3899,7 @@ pref("gfx.xrender.enabled",true);
 #ifdef XP_WIN
 // Whether to disable the automatic detection and use of direct2d.
 pref("gfx.direct2d.disabled", false);
+pref("gfx.direct2d.use1_1", true);
 
 // Whether to attempt to enable Direct2D regardless of automatic detection or
 // blacklisting

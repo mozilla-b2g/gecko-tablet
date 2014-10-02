@@ -1997,6 +1997,8 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDocument)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOnDemandBuiltInUASheets)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPreloadingImages)
 
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSubImportLinks)
+
   for (uint32_t i = 0; i < tmp->mFrameRequestCallbacks.Length(); ++i) {
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mFrameRequestCallbacks[i]");
     cb.NoteXPCOMChild(tmp->mFrameRequestCallbacks[i].mCallback.GetISupports());
@@ -2061,6 +2063,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mRegistry)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mMasterDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mImportManager)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mSubImportLinks)
 
   tmp->mParentDocument = nullptr;
 
@@ -9178,14 +9181,6 @@ nsDocument::CloneDocHelper(nsDocument* clone) const
   nsresult rv = clone->Init();
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Set URI/principal
-  clone->nsDocument::SetDocumentURI(nsIDocument::GetDocumentURI());
-  clone->SetChromeXHRDocURI(mChromeXHRDocURI);
-  // Must set the principal first, since SetBaseURI checks it.
-  clone->SetPrincipal(NodePrincipal());
-  clone->mDocumentBaseURI = mDocumentBaseURI;
-  clone->SetChromeXHRDocBaseURI(mChromeXHRDocBaseURI);
-
   if (mCreatingStaticClone) {
     nsCOMPtr<nsILoadGroup> loadGroup;
 
@@ -9209,6 +9204,18 @@ nsDocument::CloneDocHelper(nsDocument* clone) const
 
     clone->SetContainer(mDocumentContainer);
   }
+
+  // Now ensure that our clone has the same URI, base URI, and principal as us.
+  // We do this after the mCreatingStaticClone block above, because that block
+  // can set the base URI to an incorrect value in cases when base URI
+  // information came from the channel.  So we override explicitly, and do it
+  // for all these properties, in case ResetToURI messes with any of the rest of
+  // them.
+  clone->nsDocument::SetDocumentURI(nsIDocument::GetDocumentURI());
+  clone->SetChromeXHRDocURI(mChromeXHRDocURI);
+  clone->SetPrincipal(NodePrincipal());
+  clone->mDocumentBaseURI = mDocumentBaseURI;
+  clone->SetChromeXHRDocBaseURI(mChromeXHRDocBaseURI);
 
   // Set scripting object
   bool hasHadScriptObject = true;
