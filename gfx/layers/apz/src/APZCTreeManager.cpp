@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "APZCTreeManager.h"
+#include "AsyncPanZoomController.h"
 #include "Compositor.h"                 // for Compositor
 #include "CompositorParent.h"           // for CompositorParent, etc
 #include "InputData.h"                  // for InputData, etc
@@ -11,7 +12,6 @@
 #include "mozilla/dom/Touch.h"          // for Touch
 #include "mozilla/gfx/Point.h"          // for Point
 #include "mozilla/layers/AsyncCompositionManager.h" // for ViewTransform
-#include "mozilla/layers/AsyncPanZoomController.h"
 #include "mozilla/layers/LayerMetricsWrapper.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/mozalloc.h"           // for operator new
@@ -59,6 +59,16 @@ struct APZCTreeManager::TreeBuildingState {
   nsTArray< nsRefPtr<AsyncPanZoomController> > mApzcsToDestroy;
   std::map<ScrollableLayerGuid, AsyncPanZoomController*> mApzcMap;
 };
+
+/*static*/ const LayerMargin
+APZCTreeManager::CalculatePendingDisplayPort(
+  const FrameMetrics& aFrameMetrics,
+  const ScreenPoint& aVelocity,
+  double aEstimatedPaintDuration)
+{
+  return AsyncPanZoomController::CalculatePendingDisplayPort(
+    aFrameMetrics, aVelocity, aEstimatedPaintDuration);
+}
 
 APZCTreeManager::APZCTreeManager()
     : mTreeLock("APZCTreeLock"),
@@ -625,7 +635,7 @@ APZCTreeManager::ProcessTouchInput(MultiTouchInput& aInput,
     // ignore that second touch point completely. The touch-start for it is
     // dropped completely; subsequent touch events until the touch-end for it
     // will have this touch point filtered out.
-    if (mApzcForInputBlock && mApzcForInputBlock->IsOverscrolled()) {
+    if (mApzcForInputBlock && BuildOverscrollHandoffChain(mApzcForInputBlock)->HasOverscrolledApzc()) {
       if (mRetainedTouchIdentifier == -1) {
         mRetainedTouchIdentifier = mApzcForInputBlock->GetLastTouchIdentifier();
       }

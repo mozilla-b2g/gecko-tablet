@@ -8,7 +8,7 @@
 /*****************************************************************************/
 
 #include <stdint.h>
-const PRTime gPreloadListExpirationTime = INT64_C(1422698928654000);
+const PRTime gPreloadListExpirationTime = INT64_C(1424513391772000);
 
 class nsSTSPreload
 {
@@ -47,6 +47,7 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "archlinux.de", true },
   { "arivo.com.br", true },
   { "auf-feindgebiet.de", true },
+  { "baer.im", true },
   { "bank.simple.com", false },
   { "barcodeberlin.com", true },
   { "baruch.me", true },
@@ -135,7 +136,6 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "drive.google.com", true },
   { "ebanking.indovinabank.com.vn", false },
   { "ecosystem.atlassian.net", true },
-  { "ed.gs", true },
   { "edyou.eu", true },
   { "eff.org", true },
   { "emailprivacytester.com", true },
@@ -170,7 +170,6 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "getdigitized.net", true },
   { "giacomopelagatti.it", true },
   { "glass.google.com", true },
-  { "globalcs.co.uk", true },
   { "globuli-info.de", true },
   { "gmail.com", false },
   { "gmantra.org", true },
@@ -183,6 +182,7 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "greensolid.biz", true },
   { "grepular.com", true },
   { "groups.google.com", true },
+  { "guphi.net", true },
   { "guthabenkarten-billiger.de", true },
   { "hackerone.com", true },
   { "harvestapp.com", true },
@@ -270,7 +270,6 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "market.android.com", true },
   { "markusueberallassetmanagement.de", true },
   { "mathiasbynens.be", true },
-  { "matteomarescotti.name", true },
   { "mattmccutchen.net", true },
   { "mbp.banking.co.at", false },
   { "mediacru.sh", true },
@@ -296,10 +295,12 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "my.xero.com", false },
   { "mylookout.com", false },
   { "mynigma.org", true },
+  { "nachsenden.info", true },
   { "neg9.org", false },
   { "neilwynne.com", false },
   { "netzbit.de", true },
   { "ng-security.com", true },
+  { "npw.net", true },
   { "onedrive.com", true },
   { "onedrive.live.com", false },
   { "oplop.appspot.com", true },
@@ -350,8 +351,6 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "riccy.org", true },
   { "riesenmagnete.de", true },
   { "rippleunion.com", true },
-  { "rme.li", false },
-  { "robteix.com", true },
   { "roddis.net", false },
   { "romab.com", true },
   { "rosenkeller.org", true },
@@ -374,7 +373,7 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "servethecity-karlsruhe.de", true },
   { "sherbers.de", true },
   { "shodan.io", true },
-  { "silentcircle.com", true },
+  { "silentcircle.com", false },
   { "simbolo.co.uk", false },
   { "simple.com", false },
   { "simpletax.ca", false },
@@ -469,7 +468,6 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "wiki.python.org", true },
   { "wildbee.org", true },
   { "winhistory-forum.net", true },
-  { "wiz.biz", true },
   { "writeapp.me", false },
   { "wunderlist.com", true },
   { "www.aclu.org", false },

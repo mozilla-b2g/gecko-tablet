@@ -235,7 +235,7 @@ EnumerateWindowNamedProperties(JSContext* aCx, JS::Handle<JSObject*> aWrapper,
                                JS::AutoIdVector& aProps)
 {
   JSAutoCompartment ac(aCx, aObj);
-  return js::GetProxyHandler(aObj)->getOwnPropertyNames(aCx, aObj, aProps);
+  return js::GetProxyHandler(aObj)->ownPropertyKeys(aCx, aObj, aProps);
 }
 
 const NativePropertyHooks sWindowNamedPropertiesNativePropertyHooks[] = { {
@@ -249,7 +249,6 @@ const NativePropertyHooks sWindowNamedPropertiesNativePropertyHooks[] = { {
 
 static const DOMIfaceAndProtoJSClass WindowNamedPropertiesClass = {
   PROXY_CLASS_DEF("WindowProperties",
-                  DOM_INTERFACE_PROTO_SLOTS_BASE, /* extra slots */
                   JSCLASS_IS_DOMIFACEANDPROTOJSCLASS),
   eNamedPropertiesObject,
   sWindowNamedPropertiesNativePropertyHooks,

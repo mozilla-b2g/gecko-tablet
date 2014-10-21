@@ -53,28 +53,24 @@ TrackBuffer::~TrackBuffer()
 
 class ReleaseDecoderTask : public nsRunnable {
 public:
-  explicit ReleaseDecoderTask(nsRefPtr<SourceBufferDecoder> aDecoder)
+  explicit ReleaseDecoderTask(SourceBufferDecoder* aDecoder)
+    : mDecoder(aDecoder)
   {
-    mDecoders.AppendElement(aDecoder);
-  }
-
-  explicit ReleaseDecoderTask(nsTArray<nsRefPtr<SourceBufferDecoder>>& aDecoders)
-  {
-    mDecoders.SwapElements(aDecoders);
   }
 
   NS_IMETHOD Run() MOZ_OVERRIDE MOZ_FINAL {
-    mDecoders.Clear();
+    mDecoder = nullptr;
     return NS_OK;
   }
 
 private:
-  nsTArray<nsRefPtr<SourceBufferDecoder>> mDecoders;
+  nsRefPtr<SourceBufferDecoder> mDecoder;
 };
 
 void
 TrackBuffer::Shutdown()
 {
+  // Finish any decoder initialization, which may add to mInitializedDecoders.
   // Shutdown waits for any pending events, which may require the monitor,
   // so we must not hold the monitor during this call.
   mParentDecoder->GetReentrantMonitor().AssertNotCurrentThreadIn();
@@ -82,13 +78,10 @@ TrackBuffer::Shutdown()
   mTaskQueue = nullptr;
 
   ReentrantMonitorAutoEnter mon(mParentDecoder->GetReentrantMonitor());
-  DiscardDecoder();
   for (uint32_t i = 0; i < mDecoders.Length(); ++i) {
     mDecoders[i]->GetReader()->Shutdown();
   }
   mInitializedDecoders.Clear();
-  NS_DispatchToMainThread(new ReleaseDecoderTask(mDecoders));
-  MOZ_ASSERT(mDecoders.IsEmpty());
   mParentDecoder = nullptr;
 }
 
@@ -233,44 +226,55 @@ TrackBuffer::NewDecoder()
   mLastStartTimestamp = 0;
   mLastEndTimestamp = 0;
 
+  decoder->SetTaskQueue(mTaskQueue);
   return QueueInitializeDecoder(decoder);
 }
 
 bool
-TrackBuffer::QueueInitializeDecoder(nsRefPtr<SourceBufferDecoder> aDecoder)
+TrackBuffer::QueueInitializeDecoder(SourceBufferDecoder* aDecoder)
 {
   RefPtr<nsIRunnable> task =
-    NS_NewRunnableMethodWithArg<nsRefPtr<SourceBufferDecoder>>(this,
-                                                               &TrackBuffer::InitializeDecoder,
-                                                               aDecoder);
-  aDecoder->SetTaskQueue(mTaskQueue);
+    NS_NewRunnableMethodWithArg<SourceBufferDecoder*>(this,
+                                                      &TrackBuffer::InitializeDecoder,
+                                                      aDecoder);
   if (NS_FAILED(mTaskQueue->Dispatch(task))) {
     MSE_DEBUG("MediaSourceReader(%p): Failed to enqueue decoder initialization task", this);
+    RemoveDecoder(aDecoder);
     return false;
   }
   return true;
 }
 
 void
-TrackBuffer::InitializeDecoder(nsRefPtr<SourceBufferDecoder> aDecoder)
+TrackBuffer::InitializeDecoder(SourceBufferDecoder* aDecoder)
 {
+  MOZ_ASSERT(mTaskQueue->IsCurrentThreadIn());
+
   // ReadMetadata may block the thread waiting on data, so it must not be
   // called with the monitor held.
   mParentDecoder->GetReentrantMonitor().AssertNotCurrentThreadIn();
 
   MediaDecoderReader* reader = aDecoder->GetReader();
   MSE_DEBUG("TrackBuffer(%p): Initializing subdecoder %p reader %p",
-            this, aDecoder.get(), reader);
+            this, aDecoder, reader);
 
   MediaInfo mi;
   nsAutoPtr<MetadataTags> tags; // TODO: Handle metadata.
   nsresult rv = reader->ReadMetadata(&mi, getter_Transfers(tags));
   reader->SetIdle();
+
+  if (NS_SUCCEEDED(rv) && reader->IsWaitingOnCDMResource()) {
+    ReentrantMonitorAutoEnter mon(mParentDecoder->GetReentrantMonitor());
+    mWaitingDecoders.AppendElement(aDecoder);
+    return;
+  }
+
+  aDecoder->SetTaskQueue(nullptr);
+
   if (NS_FAILED(rv) || (!mi.HasVideo() && !mi.HasAudio())) {
     // XXX: Need to signal error back to owning SourceBuffer.
     MSE_DEBUG("TrackBuffer(%p): Reader %p failed to initialize rv=%x audio=%d video=%d",
               this, reader, rv, mi.HasAudio(), mi.HasVideo());
-    aDecoder->SetTaskQueue(nullptr);
     RemoveDecoder(aDecoder);
     return;
   }
@@ -314,10 +318,9 @@ TrackBuffer::ValidateTrackFormats(const MediaInfo& aInfo)
 }
 
 bool
-TrackBuffer::RegisterDecoder(nsRefPtr<SourceBufferDecoder> aDecoder)
+TrackBuffer::RegisterDecoder(SourceBufferDecoder* aDecoder)
 {
   ReentrantMonitorAutoEnter mon(mParentDecoder->GetReentrantMonitor());
-  aDecoder->SetTaskQueue(nullptr);
   const MediaInfo& info = aDecoder->GetReader()->GetMediaInfo();
   // Initialize the track info since this is the first decoder.
   if (mInitializedDecoders.IsEmpty()) {
@@ -385,13 +388,16 @@ TrackBuffer::ContainsTime(int64_t aTime)
 void
 TrackBuffer::BreakCycles()
 {
+  MOZ_ASSERT(NS_IsMainThread());
+
   for (uint32_t i = 0; i < mDecoders.Length(); ++i) {
     mDecoders[i]->GetReader()->BreakCycles();
   }
-  mInitializedDecoders.Clear();
-  NS_DispatchToMainThread(new ReleaseDecoderTask(mDecoders));
-  MOZ_ASSERT(mDecoders.IsEmpty());
-  mParentDecoder = nullptr;
+  mDecoders.Clear();
+
+  // These are cleared in Shutdown()
+  MOZ_ASSERT(mInitializedDecoders.IsEmpty());
+  MOZ_ASSERT(!mParentDecoder);
 }
 
 void
@@ -408,6 +414,31 @@ TrackBuffer::Decoders()
   // XXX assert OnDecodeThread
   return mInitializedDecoders;
 }
+
+#ifdef MOZ_EME
+nsresult
+TrackBuffer::SetCDMProxy(CDMProxy* aProxy)
+{
+  ReentrantMonitorAutoEnter mon(mParentDecoder->GetReentrantMonitor());
+
+  for (uint32_t i = 0; i < mDecoders.Length(); ++i) {
+    nsresult rv = mDecoders[i]->SetCDMProxy(aProxy);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  for (uint32_t i = 0; i < mWaitingDecoders.Length(); ++i) {
+    CDMCaps::AutoLock caps(aProxy->Capabilites());
+    caps.CallOnMainThreadWhenCapsAvailable(
+      NS_NewRunnableMethodWithArg<SourceBufferDecoder*>(this,
+                                                        &TrackBuffer::QueueInitializeDecoder,
+                                                        mWaitingDecoders[i]));
+  }
+
+  mWaitingDecoders.Clear();
+
+  return NS_OK;
+}
+#endif
 
 #if defined(DEBUG)
 void
@@ -428,12 +459,19 @@ TrackBuffer::Dump(const char* aPath)
 #endif
 
 void
-TrackBuffer::RemoveDecoder(nsRefPtr<SourceBufferDecoder> aDecoder)
+TrackBuffer::RemoveDecoder(SourceBufferDecoder* aDecoder)
 {
-  ReentrantMonitorAutoEnter mon(mParentDecoder->GetReentrantMonitor());
-  MOZ_ASSERT(!mInitializedDecoders.Contains(aDecoder));
-  mDecoders.RemoveElement(aDecoder);
-  NS_DispatchToMainThread(new ReleaseDecoderTask(aDecoder));
+  RefPtr<nsIRunnable> task = new ReleaseDecoderTask(aDecoder);
+  {
+    ReentrantMonitorAutoEnter mon(mParentDecoder->GetReentrantMonitor());
+    MOZ_ASSERT(!mInitializedDecoders.Contains(aDecoder));
+    mDecoders.RemoveElement(aDecoder);
+    if (mCurrentDecoder == aDecoder) {
+      DiscardDecoder();
+    }
+  }
+  // At this point, task should be holding the only reference to aDecoder.
+  NS_DispatchToMainThread(task);
 }
 
 } // namespace mozilla

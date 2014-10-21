@@ -18,9 +18,6 @@
 
 /* a presentation of a document, part 2 */
 
-#ifdef MOZ_LOGGING
-#define FORCE_PR_LOG /* Allow logging in the release build */
-#endif
 #include "prlog.h"
 
 #include "mozilla/ArrayUtils.h"
@@ -3074,7 +3071,7 @@ PresShell::CreateReferenceRenderingContext()
   nsRefPtr<nsRenderingContext> rc;
   if (mPresContext->IsScreen()) {
     rc = new nsRenderingContext();
-    rc->Init(devCtx, gfxPlatform::GetPlatform()->ScreenReferenceDrawTarget());
+    rc->Init(gfxPlatform::GetPlatform()->ScreenReferenceDrawTarget());
   } else {
     rc = devCtx->CreateRenderingContext();
   }
@@ -3084,7 +3081,8 @@ PresShell::CreateReferenceRenderingContext()
 }
 
 nsresult
-PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll)
+PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll,
+                      uint32_t aAdditionalScrollFlags)
 {
   if (!mDocument) {
     return NS_ERROR_FAILURE;
@@ -3191,7 +3189,7 @@ PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll)
       rv = ScrollContentIntoView(content,
                                  ScrollAxis(SCROLL_TOP, SCROLL_ALWAYS),
                                  ScrollAxis(),
-                                 ANCHOR_SCROLL_FLAGS);
+                                 ANCHOR_SCROLL_FLAGS | aAdditionalScrollFlags);
       NS_ENSURE_SUCCESS(rv, rv);
 
       nsIScrollableFrame* rootScroll = GetRootScrollFrameAsScrollable();
@@ -3532,7 +3530,11 @@ static void ScrollToShowRect(nsIFrame*                aFrame,
   // a current smooth scroll operation.
   if (needToScroll) {
     nsIScrollableFrame::ScrollMode scrollMode = nsIScrollableFrame::INSTANT;
-    if (gfxPrefs::ScrollBehaviorEnabled() && aFlags & nsIPresShell::SCROLL_SMOOTH) {
+    bool autoBehaviorIsSmooth = (aFrameAsScrollable->GetScrollbarStyles().mScrollBehavior
+                                  == NS_STYLE_SCROLL_BEHAVIOR_SMOOTH);
+    bool smoothScroll = (aFlags & nsIPresShell::SCROLL_SMOOTH) ||
+                          ((aFlags & nsIPresShell::SCROLL_SMOOTH_AUTO) && autoBehaviorIsSmooth);
+    if (gfxPrefs::ScrollBehaviorEnabled() && smoothScroll) {
       scrollMode = nsIScrollableFrame::SMOOTH_MSD;
     }
     aFrameAsScrollable->ScrollTo(scrollPt, scrollMode, &allowedRange);
@@ -3946,7 +3948,7 @@ PresShell::UnsuppressAndInvalidate()
     rootFrame->InvalidateFrame();
 
     if (mTouchCaret) {
-      mTouchCaret->UpdatePositionIfNeeded();
+      mTouchCaret->SyncVisibilityWithCaret();
     }
   }
 
@@ -4484,6 +4486,21 @@ PresShell::ContentInserted(nsIDocument* aDocument,
   VERIFY_STYLE_TREE;
 }
 
+PLDHashOperator
+ReleasePointerCaptureFromRemovedContent(const uint32_t& aKey,
+                                        nsIPresShell::PointerCaptureInfo* aData,
+                                        void* aChildLink)
+{
+  if (aChildLink && aData && aData->mOverrideContent) {
+    if (nsIContent* content = static_cast<nsIContent*>(aChildLink)) {
+      if (nsContentUtils::ContentIsDescendantOf(aData->mOverrideContent, content)) {
+        nsIPresShell::ReleasePointerCapturingContent(aKey, aData->mOverrideContent);
+      }
+    }
+  }
+  return PLDHashOperator::PL_DHASH_NEXT;
+}
+
 void
 PresShell::ContentRemoved(nsIDocument *aDocument,
                           nsIContent* aContainer,
@@ -4520,6 +4537,10 @@ PresShell::ContentRemoved(nsIDocument *aDocument,
     mPresContext->RestyleManager()->
       RestyleForRemove(aContainer->AsElement(), aChild, oldNextSibling);
   }
+
+  // We should check that aChild does not contain pointer capturing elements.
+  // If it does we should release the pointer capture for the elements.
+  gPointerCaptureList->EnumerateRead(ReleasePointerCaptureFromRemovedContent, aChild);
 
   bool didReconstruct;
   mFrameConstructor->ContentRemoved(aContainer, aChild, oldNextSibling,
@@ -4810,7 +4831,7 @@ PresShell::RenderDocument(const nsRect& aRect, uint32_t aFlags,
   AutoSaveRestoreRenderingState _(this);
 
   nsRefPtr<nsRenderingContext> rc = new nsRenderingContext();
-  rc->Init(devCtx, aThebesContext);
+  rc->Init(aThebesContext);
 
   bool wouldFlushRetainedLayers = false;
   uint32_t flags = nsLayoutUtils::PAINT_IGNORE_SUPPRESSION;
@@ -5064,8 +5085,6 @@ PresShell::PaintRangePaintInfo(nsTArray<nsAutoPtr<RangePaintInfo> >* aItems,
   if (!pc || aArea.width == 0 || aArea.height == 0)
     return nullptr;
 
-  nsDeviceContext* deviceContext = pc->DeviceContext();
-
   // use the rectangle to create the surface
   nsIntRect pixelArea = aArea.ToOutsidePixels(pc->AppUnitsPerDevPixel());
 
@@ -5078,7 +5097,7 @@ PresShell::PaintRangePaintInfo(nsTArray<nsAutoPtr<RangePaintInfo> >* aItems,
   // if the image is larger in one or both directions than half the size of
   // the available screen area, scale the image down to that size.
   nsRect maxSize;
-  deviceContext->GetClientRect(maxSize);
+  pc->DeviceContext()->GetClientRect(maxSize);
   nscoord maxWidth = pc->AppUnitsToDevPixels(maxSize.width >> 1);
   nscoord maxHeight = pc->AppUnitsToDevPixels(maxSize.height >> 1);
   bool resize = (pixelArea.width > maxWidth || pixelArea.height > maxHeight);
@@ -5117,16 +5136,21 @@ PresShell::PaintRangePaintInfo(nsTArray<nsAutoPtr<RangePaintInfo> >* aItems,
   }
 
   nsRefPtr<gfxContext> ctx = new gfxContext(dt);
-  nsRefPtr<nsRenderingContext> rc = new nsRenderingContext();
-  rc->Init(deviceContext, ctx);
 
   if (aRegion) {
     // Convert aRegion from CSS pixels to dev pixels
     nsIntRegion region =
       aRegion->ToAppUnits(nsPresContext::AppUnitsPerCSSPixel())
         .ToOutsidePixels(pc->AppUnitsPerDevPixel());
-    rc->SetClip(region);
+    nsIntRegionRectIterator iter(region);
+    const nsIntRect* rect;
+    while ((rect = iter.Next())) {
+      ctx->Clip(gfxRect(rect->x, rect->y, rect->width, rect->height));
+    }
   }
+
+  nsRefPtr<nsRenderingContext> rc = new nsRenderingContext();
+  rc->Init(ctx);
 
   gfxMatrix initialTM = ctx->CurrentMatrix();
 
@@ -6339,9 +6363,10 @@ nsIPresShell::GetPointerCapturingContent(uint32_t aPointerId)
   return nullptr;
 }
 
-/* static */ void
+/* static */ bool
 nsIPresShell::CheckPointerCaptureState(uint32_t aPointerId)
 {
+  bool didDispatchEvent = false;
   PointerCaptureInfo* pointerCaptureInfo = nullptr;
   if (gPointerCaptureList->Get(aPointerId, &pointerCaptureInfo) && pointerCaptureInfo) {
     // If pendingContent exist or anybody calls element.releasePointerCapture
@@ -6357,6 +6382,7 @@ nsIPresShell::CheckPointerCaptureState(uint32_t aPointerId)
           gPointerCaptureList->Remove(aPointerId);
         }
         DispatchGotOrLostPointerCaptureEvent(false, aPointerId, content);
+        didDispatchEvent = true;
       } else if (pointerCaptureInfo->mPendingContent && pointerCaptureInfo->mReleaseContent) {
         // If anybody calls element.releasePointerCapture
         // We should clear overrideContent and pendingContent
@@ -6372,8 +6398,10 @@ nsIPresShell::CheckPointerCaptureState(uint32_t aPointerId)
       pointerCaptureInfo->mPendingContent = nullptr;
       pointerCaptureInfo->mReleaseContent = false;
       DispatchGotOrLostPointerCaptureEvent(true, aPointerId, pointerCaptureInfo->mOverrideContent);
+      didDispatchEvent = true;
     }
   }
+  return didDispatchEvent;
 }
 
 /* static */ bool
@@ -6942,9 +6970,9 @@ PresShell::HandleEvent(nsIFrame* aFrame,
 
   if (!nsContentUtils::IsSafeToRunScript() &&
       aEvent->IsAllowedToDispatchDOMEvent()) {
-    if (aEvent->mClass == eCompositionEventClass ||
-        aEvent->mClass == eTextEventClass) {
-      IMEStateManager::OnCompositionEventDiscarded(aEvent);
+    if (aEvent->mClass == eCompositionEventClass) {
+      IMEStateManager::OnCompositionEventDiscarded(
+        aEvent->AsCompositionEvent());
     }
 #ifdef DEBUG
     if (aEvent->IsIMERelatedEvent()) {
@@ -7252,7 +7280,9 @@ PresShell::HandleEvent(nsIFrame* aFrame,
       if (WidgetPointerEvent* pointerEvent = aEvent->AsPointerEvent()) {
         // Before any pointer events, we should check state of pointer capture,
         // Thus got/lostpointercapture events emulate asynchronous behavior.
-        CheckPointerCaptureState(pointerEvent->pointerId);
+        // Handlers of got/lostpointercapture events can change capturing state,
+        // That's why we should re-check pointer capture state until stable state.
+        while(CheckPointerCaptureState(pointerEvent->pointerId));
       }
     }
 
@@ -7266,7 +7296,9 @@ PresShell::HandleEvent(nsIFrame* aFrame,
           if (nsIFrame* capturingFrame = pointerCapturingContent->GetPrimaryFrame()) {
             // If pointer capture is set, we should suppress pointerover/pointerenter events
             // for all elements except element which have pointer capture. (Code in EventStateManager)
-            pointerEvent->retargetedByPointerCapture = (frame != capturingFrame);
+            pointerEvent->retargetedByPointerCapture =
+              frame && frame->GetContent() &&
+              !nsContentUtils::ContentIsDescendantOf(frame->GetContent(), pointerCapturingContent);
             frame = capturingFrame;
           }
 
@@ -7859,10 +7891,10 @@ PresShell::HandleEventInternal(WidgetEvent* aEvent, nsEventStatus* aStatus)
             }
           }
           if (eventTarget) {
-            if (aEvent->mClass == eCompositionEventClass ||
-                aEvent->mClass == eTextEventClass) {
+            if (aEvent->mClass == eCompositionEventClass) {
               IMEStateManager::DispatchCompositionEvent(eventTarget,
-                mPresContext, aEvent, aStatus, eventCBPtr);
+                mPresContext, aEvent->AsCompositionEvent(), aStatus,
+                eventCBPtr);
             } else {
               EventDispatcher::Dispatch(eventTarget, mPresContext,
                                         aEvent, nullptr, aStatus, eventCBPtr);
@@ -7907,7 +7939,13 @@ nsIPresShell::DispatchGotOrLostPointerCaptureEvent(bool aIsGotCapture,
                                     init);
   if (event) {
     bool dummy;
-    aCaptureTarget->DispatchEvent(event->InternalDOMEvent(), &dummy);
+    // If the capturing element was removed from the DOM tree,
+    // lostpointercapture event should be fired at the document.
+    if (!aIsGotCapture && !aCaptureTarget->IsInDoc()) {
+      aCaptureTarget->OwnerDoc()->DispatchEvent(event->InternalDOMEvent(), &dummy);
+    } else {
+      aCaptureTarget->DispatchEvent(event->InternalDOMEvent(), &dummy);
+    }
   }
 }
 
@@ -10045,10 +10083,12 @@ void ReflowCountMgr::PaintCount(const char*     aName,
     IndiReflowCounter * counter =
       (IndiReflowCounter *)PL_HashTableLookup(mIndiFrameCounts, key);
     if (counter != nullptr && counter->mName.EqualsASCII(aName)) {
+      DrawTarget* drawTarget = aRenderingContext->GetDrawTarget();
+      int32_t appUnitsPerDevPixel = aPresContext->AppUnitsPerDevPixel();
+
       aRenderingContext->ThebesContext()->Save();
       gfxPoint devPixelOffset =
-        nsLayoutUtils::PointToGfxPoint(aOffset,
-                                       aPresContext->AppUnitsPerDevPixel());
+        nsLayoutUtils::PointToGfxPoint(aOffset, appUnitsPerDevPixel);
       aRenderingContext->ThebesContext()->SetMatrix(
         aRenderingContext->ThebesContext()->CurrentMatrix().Translate(devPixelOffset));
       nsFont font(eFamily_serif, NS_FONT_STYLE_NORMAL,
@@ -10093,11 +10133,13 @@ void ReflowCountMgr::PaintCount(const char*     aName,
       }
 
       nsRect rect(0,0, width+15, height+15);
-      aRenderingContext->SetColor(NS_RGB(0,0,0));
-      aRenderingContext->FillRect(rect);
-      aRenderingContext->SetColor(color2);
+      Rect devPxRect = NSRectToRect(rect, appUnitsPerDevPixel, *drawTarget);
+      ColorPattern black(ToDeviceColor(Color(0.f, 0.f, 0.f, 1.f)));
+      drawTarget->FillRect(devPxRect, black);
+
+      aRenderingContext->ThebesContext()->SetColor(color2);
       aRenderingContext->DrawString(buf, strlen(buf), x+15,y+15);
-      aRenderingContext->SetColor(color);
+      aRenderingContext->ThebesContext()->SetColor(color);
       aRenderingContext->DrawString(buf, strlen(buf), x,y);
 
       aRenderingContext->ThebesContext()->Restore();
@@ -10638,6 +10680,9 @@ nsIPresShell::SetScrollPositionClampingScrollPortSize(nscoord aWidth, nscoord aH
     mScrollPositionClampingScrollPortSize.width = aWidth;
     mScrollPositionClampingScrollPortSize.height = aHeight;
 
+    if (nsIScrollableFrame* rootScrollFrame = GetRootScrollFrameAsScrollable()) {
+      rootScrollFrame->MarkScrollbarsDirtyForReflow();
+    }
     MarkFixedFramesForReflow(eResize);
   }
 }

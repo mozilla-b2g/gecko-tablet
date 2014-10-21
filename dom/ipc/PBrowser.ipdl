@@ -44,7 +44,6 @@ using class mozilla::WidgetMouseEvent from "ipc/nsGUIEventIPC.h";
 using class mozilla::WidgetWheelEvent from "ipc/nsGUIEventIPC.h";
 using struct nsRect from "nsRect.h";
 using class mozilla::WidgetSelectionEvent from "ipc/nsGUIEventIPC.h";
-using class mozilla::WidgetTextEvent from "ipc/nsGUIEventIPC.h";
 using class mozilla::WidgetTouchEvent from "ipc/nsGUIEventIPC.h";
 using struct mozilla::dom::RemoteDOMEvent from "mozilla/dom/TabMessageUtils.h";
 using mozilla::dom::ScreenOrientation from "mozilla/dom/ScreenOrientation.h";
@@ -70,7 +69,7 @@ union MaybeNativeKeyBinding
   void_t;
 };
 
-intr protocol PBrowser
+prio(normal upto high) intr protocol PBrowser
 {
     manager PContent or PContentBridge;
 
@@ -109,8 +108,8 @@ parent:
                      CpowEntry[] aCpows, Principal aPrincipal)
       returns (nsString[] retval);
 
-    rpc RpcMessage(nsString aMessage, ClonedMessageData aData,
-                   CpowEntry[] aCpows, Principal aPrincipal)
+    prio(high) sync RpcMessage(nsString aMessage, ClonedMessageData aData,
+                               CpowEntry[] aCpows, Principal aPrincipal)
       returns (nsString[] retval);
 
     /**
@@ -479,8 +478,6 @@ child:
 
     CompositionEvent(WidgetCompositionEvent event);
 
-    TextEvent(WidgetTextEvent event);
-
     SelectionEvent(WidgetSelectionEvent event);
 
     /**
@@ -541,6 +538,11 @@ child:
      * window.
      */
     UIResolutionChanged();
+
+    /**
+     * Tell the child of an app's offline status
+     */
+    AppOfflineStatus(uint32_t id, bool offline);
 
 /*
  * FIXME: write protocol!

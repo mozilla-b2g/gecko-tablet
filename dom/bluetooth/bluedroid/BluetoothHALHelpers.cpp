@@ -224,6 +224,9 @@ Convert(const bt_property_t& aIn, BluetoothProperty& aOut)
   /* value conversion */
 
   switch (aOut.mType) {
+    case PROPERTY_UNKNOWN:
+      /* Bug 1065999: working around unknown properties */
+      break;
     case PROPERTY_BDNAME:
       /* fall through */
     case PROPERTY_REMOTE_FRIENDLY_NAME:
@@ -273,7 +276,7 @@ Convert(const bt_property_t& aIn, BluetoothProperty& aOut)
       }
       break;
     case PROPERTY_REMOTE_RSSI:
-      aOut.mInt32 = *static_cast<int32_t*>(aIn.val);
+      aOut.mInt32 = *static_cast<int8_t*>(aIn.val);
       break;
 #if ANDROID_VERSION >= 18
     case PROPERTY_REMOTE_VERSION_INFO:

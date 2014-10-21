@@ -40,6 +40,7 @@
 #include "prclist.h"
 #include "mozilla/dom/StorageEvent.h"
 #include "mozilla/dom/StorageEventBinding.h"
+#include "mozilla/dom/UnionTypes.h"
 #include "nsFrameMessageManager.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/TimeStamp.h"
@@ -107,6 +108,9 @@ class MediaQueryList;
 class MozSelfSupport;
 class Navigator;
 class OwningExternalOrWindowProxy;
+class Promise;
+struct RequestInit;
+class RequestOrScalarValueString;
 class Selection;
 class SpeechSynthesis;
 class WakeLock;
@@ -487,7 +491,7 @@ public:
                            mozilla::ErrorResult& aRv);
 
   // Object Management
-  explicit nsGlobalWindow(nsGlobalWindow *aOuterWindow);
+  static already_AddRefed<nsGlobalWindow> Create(nsGlobalWindow *aOuterWindow);
 
   static nsGlobalWindow *FromSupports(nsISupports *supports)
   {
@@ -820,7 +824,10 @@ public:
     return top.forget();
   }
 protected:
+  explicit nsGlobalWindow(nsGlobalWindow *aOuterWindow);
   nsIDOMWindow* GetOpenerWindow(mozilla::ErrorResult& aError);
+  // Initializes the mWasOffline member variable
+  void InitWasOffline();
 public:
   void GetOpener(JSContext* aCx, JS::MutableHandle<JS::Value> aRetval,
                  mozilla::ErrorResult& aError);
@@ -850,6 +857,9 @@ public:
   void Alert(mozilla::ErrorResult& aError);
   void Alert(const nsAString& aMessage, mozilla::ErrorResult& aError);
   bool Confirm(const nsAString& aMessage, mozilla::ErrorResult& aError);
+  already_AddRefed<mozilla::dom::Promise> Fetch(const mozilla::dom::RequestOrScalarValueString& aInput,
+                                                const mozilla::dom::RequestInit& aInit,
+                                                mozilla::ErrorResult& aRv);
   void Prompt(const nsAString& aMessage, const nsAString& aInitial,
               nsAString& aReturn, mozilla::ErrorResult& aError);
   void Print(mozilla::ErrorResult& aError);
@@ -900,12 +910,12 @@ public:
                 mozilla::ErrorResult& aError);
   void ResizeBy(int32_t aWidthDif, int32_t aHeightDif,
                 mozilla::ErrorResult& aError);
-  void Scroll(double aXScroll, double aYScroll,
-              const mozilla::dom::ScrollOptions& aOptions);
-  void ScrollTo(double aXScroll, double aYScroll,
-                const mozilla::dom::ScrollOptions& aOptions);
-  void ScrollBy(double aXScrollDif, double aYScrollDif,
-                const mozilla::dom::ScrollOptions& aOptions);
+  void Scroll(double aXScroll, double aYScroll);
+  void Scroll(const mozilla::dom::ScrollToOptions& aOptions);
+  void ScrollTo(double aXScroll, double aYScroll);
+  void ScrollTo(const mozilla::dom::ScrollToOptions& aOptions);
+  void ScrollBy(double aXScrollDif, double aYScrollDif);
+  void ScrollBy(const mozilla::dom::ScrollToOptions& aOptions);
   void ScrollByLines(int32_t numLines,
                      const mozilla::dom::ScrollOptions& aOptions);
   void ScrollByPages(int32_t numPages,
@@ -1240,7 +1250,7 @@ public:
                            const nsAString &aPopupURL,
                            const nsAString &aPopupWindowName,
                            const nsAString &aPopupWindowFeatures);
-  void FireOfflineStatusEvent();
+  void FireOfflineStatusEventIfChanged();
 
   // Inner windows only.
   nsresult ScheduleNextIdleObserverCallback();
@@ -1443,8 +1453,10 @@ protected:
   // Indicates whether scripts are allowed to close this window.
   bool                          mBlockScriptedClosingFlag : 1;
 
+  // Window offline status. Checked to see if we need to fire offline event
+  bool                          mWasOffline : 1;
+
   // Track what sorts of events we need to fire when thawed
-  bool                          mFireOfflineStatusChangeEventOnThaw : 1;
   bool                          mNotifyIdleObserversIdleOnThaw : 1;
   bool                          mNotifyIdleObserversActiveOnThaw : 1;
 
@@ -1651,13 +1663,7 @@ public:
   // nsIDOMChromeWindow interface
   NS_DECL_NSIDOMCHROMEWINDOW
 
-  explicit nsGlobalChromeWindow(nsGlobalWindow *aOuterWindow)
-    : nsGlobalWindow(aOuterWindow),
-      mGroupMessageManagers(1)
-  {
-    mIsChrome = true;
-    mCleanMessageManager = true;
-  }
+  static already_AddRefed<nsGlobalChromeWindow> Create(nsGlobalWindow *aOuterWindow);
 
   static PLDHashOperator
   DisconnectGroupMessageManager(const nsAString& aKey,
@@ -1671,6 +1677,14 @@ public:
   }
 
 protected:
+  explicit nsGlobalChromeWindow(nsGlobalWindow *aOuterWindow)
+    : nsGlobalWindow(aOuterWindow),
+      mGroupMessageManagers(1)
+  {
+    mIsChrome = true;
+    mCleanMessageManager = true;
+  }
+
   ~nsGlobalChromeWindow()
   {
     NS_ABORT_IF_FALSE(mCleanMessageManager,
@@ -1718,16 +1732,18 @@ class nsGlobalModalWindow : public nsGlobalWindow,
                             public nsIDOMModalContentWindow
 {
 public:
+  NS_DECL_ISUPPORTS_INHERITED
+  NS_DECL_NSIDOMMODALCONTENTWINDOW
+
+  static already_AddRefed<nsGlobalModalWindow> Create(nsGlobalWindow *aOuterWindow);
+
+protected:
   explicit nsGlobalModalWindow(nsGlobalWindow *aOuterWindow)
     : nsGlobalWindow(aOuterWindow)
   {
     mIsModalContentWindow = true;
   }
 
-  NS_DECL_ISUPPORTS_INHERITED
-  NS_DECL_NSIDOMMODALCONTENTWINDOW
-
-protected:
   ~nsGlobalModalWindow() {}
 };
 
@@ -1738,11 +1754,11 @@ NS_NewScriptGlobalObject(bool aIsChrome, bool aIsModalContentWindow)
   nsRefPtr<nsGlobalWindow> global;
 
   if (aIsChrome) {
-    global = new nsGlobalChromeWindow(nullptr);
+    global = nsGlobalChromeWindow::Create(nullptr);
   } else if (aIsModalContentWindow) {
-    global = new nsGlobalModalWindow(nullptr);
+    global = nsGlobalModalWindow::Create(nullptr);
   } else {
-    global = new nsGlobalWindow(nullptr);
+    global = nsGlobalWindow::Create(nullptr);
   }
 
   return global.forget();

@@ -88,8 +88,6 @@ gfxContext::gfxContext(DrawTarget *aTarget, const Point& aDeviceOffset)
   : mPathIsRect(false)
   , mTransformChanged(false)
   , mRefCairo(nullptr)
-  , mSurface(nullptr)
-  , mFlags(0)
   , mDT(aTarget)
   , mOriginalDT(aTarget)
 {
@@ -128,24 +126,6 @@ gfxContext::~gfxContext()
   }
   mDT->Flush();
   MOZ_COUNT_DTOR(gfxContext);
-}
-
-gfxASurface *
-gfxContext::OriginalSurface()
-{
-    if (mSurface) {
-        return mSurface;
-    }
-
-    if (mOriginalDT && mOriginalDT->GetBackendType() == BackendType::CAIRO) {
-        cairo_surface_t *s =
-            (cairo_surface_t*)mOriginalDT->GetNativeSurface(NativeSurfaceType::CAIRO_SURFACE);
-        if (s) {
-            mSurface = gfxASurface::Wrap(s);
-            return mSurface;
-        }
-    }
-    return nullptr;
 }
 
 already_AddRefed<gfxASurface>
@@ -406,16 +386,6 @@ gfxContext::Rectangle(const gfxRect& rect, bool snapToPixels)
 }
 
 void
-gfxContext::Ellipse(const gfxPoint& center, const gfxSize& dimensions)
-{
-  gfxSize halfDim = dimensions / 2.0;
-  gfxRect r(center - gfxPoint(halfDim.width, halfDim.height), dimensions);
-  gfxCornerSizes c(halfDim, halfDim, halfDim, halfDim);
-
-  RoundedRectangle (r, c);
-}
-
-void
 gfxContext::Polygon(const gfxPoint *points, uint32_t numPoints)
 {
   if (numPoints == 0) {
@@ -518,7 +488,7 @@ gfxContext::UserToDevice(const gfxRect& rect) const
 bool
 gfxContext::UserToDevicePixelSnapped(gfxRect& rect, bool ignoreScale) const
 {
-  if (GetFlags() & FLAG_DISABLE_SNAPPING)
+  if (mDT->GetUserData(&sDisablePixelSnapping))
       return false;
 
   // if we're not at 1.0 scale, don't snap, unless we're
@@ -559,7 +529,7 @@ gfxContext::UserToDevicePixelSnapped(gfxRect& rect, bool ignoreScale) const
 bool
 gfxContext::UserToDevicePixelSnapped(gfxPoint& pt, bool ignoreScale) const
 {
-  if (GetFlags() & FLAG_DISABLE_SNAPPING)
+  if (mDT->GetUserData(&sDisablePixelSnapping))
       return false;
 
   // if we're not at 1.0 scale, don't snap, unless we're
@@ -752,12 +722,18 @@ gfxContext::CurrentFillRule() const
 
 // clipping
 void
+gfxContext::Clip(const Rect& rect)
+{
+  AzureState::PushedClip clip = { nullptr, rect, mTransform };
+  CurrentState().pushedClips.AppendElement(clip);
+  mDT->PushClipRect(rect);
+  NewPath();
+}
+
+void
 gfxContext::Clip(const gfxRect& rect)
 {
-  AzureState::PushedClip clip = { nullptr, ToRect(rect), mTransform };
-  CurrentState().pushedClips.AppendElement(clip);
-  mDT->PushClipRect(ToRect(rect));
-  NewPath();
+  Clip(ToRect(rect));
 }
 
 void
@@ -856,20 +832,7 @@ gfxContext::SetColor(const gfxRGBA& c)
   CurrentState().pattern = nullptr;
   CurrentState().sourceSurfCairo = nullptr;
   CurrentState().sourceSurface = nullptr;
-
-  if (gfxPlatform::GetCMSMode() == eCMSMode_All) {
-
-      gfxRGBA cms;
-      qcms_transform *transform = gfxPlatform::GetCMSRGBTransform();
-      if (transform)
-        gfxPlatform::TransformPixel(c, cms, transform);
-
-      // Use the original alpha to avoid unnecessary float->byte->float
-      // conversion errors
-      CurrentState().color = ToColor(cms);
-  }
-  else
-      CurrentState().color = ToColor(c);
+  CurrentState().color = ToDeviceColor(c);
 }
 
 void
@@ -1154,61 +1117,6 @@ gfxContext::PopGroupToSource()
   mat.PreTranslate(deviceOffset.x, deviceOffset.y); // device offset translation
 
   CurrentState().surfTransform = mat;
-}
-
-bool
-gfxContext::PointInFill(const gfxPoint& pt)
-{
-  EnsurePath();
-  return mPath->ContainsPoint(ToPoint(pt), Matrix());
-}
-
-bool
-gfxContext::PointInStroke(const gfxPoint& pt)
-{
-  EnsurePath();
-  return mPath->StrokeContainsPoint(CurrentState().strokeOptions,
-                                    ToPoint(pt),
-                                    Matrix());
-}
-
-gfxRect
-gfxContext::GetUserPathExtent()
-{
-  if (mPathIsRect) {
-    return ThebesRect(mTransform.TransformBounds(mRect));
-  }
-  EnsurePath();
-  return ThebesRect(mPath->GetBounds());
-}
-
-gfxRect
-gfxContext::GetUserFillExtent()
-{
-  if (mPathIsRect) {
-    return ThebesRect(mTransform.TransformBounds(mRect));
-  }
-  EnsurePath();
-  return ThebesRect(mPath->GetBounds());
-}
-
-gfxRect
-gfxContext::GetUserStrokeExtent()
-{
-  if (mPathIsRect) {
-    Rect rect = mRect;
-    rect.Inflate(CurrentState().strokeOptions.mLineWidth / 2);
-    return ThebesRect(mTransform.TransformBounds(rect));
-  }
-  EnsurePath();
-  return ThebesRect(mPath->GetStrokedBounds(CurrentState().strokeOptions, mTransform));
-}
-
-bool
-gfxContext::HasError()
-{
-  // As far as this is concerned, an Azure context is never in error.
-  return false;
 }
 
 void

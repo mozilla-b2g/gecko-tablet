@@ -60,6 +60,9 @@
 #include "mozilla/Hal.h"
 #include "mozilla/HalTypes.h"
 #include "mozilla/StaticPtr.h"
+#ifdef MOZ_ENABLE_PROFILER_SPS
+#include "ProfilerMarkers.h"
+#endif
 
 namespace mozilla {
 namespace layers {
@@ -642,6 +645,26 @@ CompositorParent::CompositeCallback()
   CompositeToTarget(nullptr);
 }
 
+// Go down the composite layer tree, setting properties to match their
+// content-side counterparts.
+static void
+SetShadowProperties(Layer* aLayer)
+{
+  // FIXME: Bug 717688 -- Do these updates in LayerTransactionParent::RecvUpdate.
+  LayerComposite* layerComposite = aLayer->AsLayerComposite();
+  // Set the layerComposite's base transform to the layer's base transform.
+  layerComposite->SetShadowTransform(aLayer->GetBaseTransform());
+  layerComposite->SetShadowTransformSetByAnimation(false);
+  layerComposite->SetShadowVisibleRegion(aLayer->GetVisibleRegion());
+  layerComposite->SetShadowClipRect(aLayer->GetClipRect());
+  layerComposite->SetShadowOpacity(aLayer->GetOpacity());
+
+  for (Layer* child = aLayer->GetFirstChild();
+      child; child = child->GetNextSibling()) {
+    SetShadowProperties(child);
+  }
+}
+
 void
 CompositorParent::CompositeToTarget(DrawTarget* aTarget, const nsIntRect* aRect)
 {
@@ -669,6 +692,7 @@ CompositorParent::CompositeToTarget(DrawTarget* aTarget, const nsIntRect* aRect)
   }
 
   AutoResolveRefLayers resolve(mCompositionManager);
+  SetShadowProperties(mLayerManager->GetRoot());
 
   if (aTarget) {
     mLayerManager->BeginTransactionWithDrawTarget(aTarget, *aRect);
@@ -756,26 +780,6 @@ CompositorParent::CanComposite()
          !mPaused;
 }
 
-// Go down the composite layer tree, setting properties to match their
-// content-side counterparts.
-static void
-SetShadowProperties(Layer* aLayer)
-{
-  // FIXME: Bug 717688 -- Do these updates in LayerTransactionParent::RecvUpdate.
-  LayerComposite* layerComposite = aLayer->AsLayerComposite();
-  // Set the layerComposite's base transform to the layer's base transform.
-  layerComposite->SetShadowTransform(aLayer->GetBaseTransform());
-  layerComposite->SetShadowTransformSetByAnimation(false);
-  layerComposite->SetShadowVisibleRegion(aLayer->GetVisibleRegion());
-  layerComposite->SetShadowClipRect(aLayer->GetClipRect());
-  layerComposite->SetShadowOpacity(aLayer->GetOpacity());
-
-  for (Layer* child = aLayer->GetFirstChild();
-      child; child = child->GetNextSibling()) {
-    SetShadowProperties(child);
-  }
-}
-
 void
 CompositorParent::ScheduleRotationOnCompositorThread(const TargetConfig& aTargetConfig,
                                                      bool aIsFirstPaint)
@@ -823,9 +827,6 @@ CompositorParent::ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
   MOZ_ASSERT(aTransactionId > mPendingTransaction);
   mPendingTransaction = aTransactionId;
 
-  if (root) {
-    SetShadowProperties(root);
-  }
   if (aScheduleComposite) {
     ScheduleComposition();
     if (mPaused) {
@@ -839,6 +840,7 @@ CompositorParent::ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
     // conditions.
     if (mIsTesting && root && mCurrentCompositeTask) {
       AutoResolveRefLayers resolve(mCompositionManager);
+      SetShadowProperties(mLayerManager->GetRoot());
       bool requestNextFrame =
         mCompositionManager->TransformShadowTree(mTestTime);
       if (!requestNextFrame) {
@@ -871,6 +873,7 @@ CompositorParent::SetTestSampleTime(LayerTransactionParent* aLayerTree,
   // Update but only if we were already scheduled to animate
   if (mCompositionManager && mCurrentCompositeTask) {
     AutoResolveRefLayers resolve(mCompositionManager);
+    SetShadowProperties(mLayerManager->GetRoot());
     bool requestNextFrame = mCompositionManager->TransformShadowTree(aTime);
     if (!requestNextFrame) {
       CancelCurrentCompositeTask();
@@ -1036,6 +1039,19 @@ CompositorParent::NotifyChildCreated(const uint64_t& aChild)
   sIndirectLayerTrees[aChild].mLayerManager = mLayerManager;
 }
 
+bool
+CompositorParent::RecvAdoptChild(const uint64_t& child)
+{
+  NotifyChildCreated(child);
+  if (sIndirectLayerTrees[child].mLayerTree) {
+    sIndirectLayerTrees[child].mLayerTree->mLayerManager = mLayerManager;
+  }
+  if (sIndirectLayerTrees[child].mRoot) {
+    sIndirectLayerTrees[child].mRoot->AsLayerComposite()->SetLayerManager(mLayerManager);
+  }
+  return true;
+}
+
 /*static*/ uint64_t
 CompositorParent::AllocateLayerTreeId()
 {
@@ -1117,6 +1133,25 @@ CompositorParent::ComputeRenderIntegrity()
   return 1.0f;
 }
 
+static void
+InsertVsyncProfilerMarker(TimeStamp aVsyncTimestamp)
+{
+#ifdef MOZ_ENABLE_PROFILER_SPS
+  MOZ_ASSERT(CompositorParent::IsInCompositorThread());
+  MOZ_ASSERT(profiler_is_active());
+  VsyncPayload* payload = new VsyncPayload(aVsyncTimestamp);
+  PROFILER_MARKER_PAYLOAD("VsyncTimestamp", payload);
+#endif
+}
+
+/*static */ void
+CompositorParent::PostInsertVsyncProfilerMarker(TimeStamp aVsyncTimestamp)
+{
+  if (profiler_is_active()) {
+    CompositorLoop()->PostTask(FROM_HERE,
+      NewRunnableFunction(InsertVsyncProfilerMarker, aVsyncTimestamp));
+  }
+}
 
 /**
  * This class handles layer updates pushed directly from child
@@ -1157,6 +1192,7 @@ public:
   virtual bool RecvPause() MOZ_OVERRIDE { return true; }
   virtual bool RecvResume() MOZ_OVERRIDE { return true; }
   virtual bool RecvNotifyChildCreated(const uint64_t& child) MOZ_OVERRIDE;
+  virtual bool RecvAdoptChild(const uint64_t& child) MOZ_OVERRIDE { return false; }
   virtual bool RecvMakeSnapshot(const SurfaceDescriptor& aInSnapshot,
                                 const nsIntRect& aRect)
   { return true; }
@@ -1400,9 +1436,6 @@ CrossProcessCompositorParent::ShadowLayersUpdated(
   state->mParent->ScheduleRotationOnCompositorThread(aTargetConfig, aIsFirstPaint);
 
   Layer* shadowRoot = aLayerTree->GetRoot();
-  if (shadowRoot) {
-    SetShadowProperties(shadowRoot);
-  }
   UpdateIndirectTree(id, shadowRoot, aTargetConfig);
 
   state->mParent->NotifyShadowTreeTransaction(id, aIsFirstPaint, aScheduleComposite,

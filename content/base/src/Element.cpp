@@ -135,6 +135,8 @@
 #include "nsISupportsImpl.h"
 #include "mozilla/dom/DocumentFragment.h"
 #include "mozilla/IntegerPrintfMacros.h"
+#include "mozilla/dom/WindowBinding.h"
+#include "mozilla/dom/ElementBinding.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -430,7 +432,7 @@ Element::WrapObject(JSContext *aCx)
     doc = OwnerDoc();
   }
   else {
-    doc = GetCurrentDoc();
+    doc = GetComposedDoc();
   }
 
   if (!doc) {
@@ -587,13 +589,23 @@ Element::GetScrollFrame(nsIFrame **aStyledFrame, bool aFlushLayout)
 void
 Element::ScrollIntoView()
 {
-  ScrollIntoView(true, ScrollOptions());
+  ScrollIntoView(ScrollIntoViewOptions());
 }
 
 void
-Element::ScrollIntoView(bool aTop, const ScrollOptions &aOptions)
+Element::ScrollIntoView(bool aTop)
 {
-  nsIDocument *document = GetCurrentDoc();
+  ScrollIntoViewOptions options;
+  if (!aTop) {
+    options.mBlock = ScrollLogicalPosition::End;
+  }
+  ScrollIntoView(options);
+}
+
+void
+Element::ScrollIntoView(const ScrollIntoViewOptions &aOptions)
+{
+  nsIDocument *document = GetComposedDoc();
   if (!document) {
     return;
   }
@@ -604,12 +616,15 @@ Element::ScrollIntoView(bool aTop, const ScrollOptions &aOptions)
     return;
   }
 
-  int16_t vpercent = aTop ? nsIPresShell::SCROLL_TOP :
-    nsIPresShell::SCROLL_BOTTOM;
+  int16_t vpercent = (aOptions.mBlock == ScrollLogicalPosition::Start)
+                       ? nsIPresShell::SCROLL_TOP
+                       : nsIPresShell::SCROLL_BOTTOM;
 
   uint32_t flags = nsIPresShell::SCROLL_OVERFLOW_HIDDEN;
   if (aOptions.mBehavior == ScrollBehavior::Smooth) {
     flags |= nsIPresShell::SCROLL_SMOOTH;
+  } else if (aOptions.mBehavior == ScrollBehavior::Auto) {
+    flags |= nsIPresShell::SCROLL_SMOOTH_AUTO;
   }
 
   presShell->ScrollContentIntoView(this,
@@ -619,6 +634,137 @@ Element::ScrollIntoView(bool aTop, const ScrollOptions &aOptions)
                                    nsIPresShell::ScrollAxis(),
                                    flags);
 }
+
+void
+Element::Scroll(const CSSIntPoint& aScroll, const ScrollOptions& aOptions)
+{
+  nsIScrollableFrame* sf = GetScrollFrame();
+  if (sf) {
+    nsIScrollableFrame::ScrollMode scrollMode = nsIScrollableFrame::INSTANT;
+    if (aOptions.mBehavior == ScrollBehavior::Smooth) {
+      scrollMode = nsIScrollableFrame::SMOOTH_MSD;
+    } else if (aOptions.mBehavior == ScrollBehavior::Auto) {
+      ScrollbarStyles styles = sf->GetScrollbarStyles();
+      if (styles.mScrollBehavior == NS_STYLE_SCROLL_BEHAVIOR_SMOOTH) {
+        scrollMode = nsIScrollableFrame::SMOOTH_MSD;
+      }
+    }
+
+    sf->ScrollToCSSPixels(aScroll, scrollMode);
+  }
+}
+
+void
+Element::Scroll(double aXScroll, double aYScroll)
+{
+  // Convert -Inf, Inf, and NaN to 0; otherwise, convert by C-style cast.
+  CSSIntPoint scrollPos(mozilla::ToZeroIfNonfinite(aXScroll),
+                        mozilla::ToZeroIfNonfinite(aYScroll));
+
+  Scroll(scrollPos, ScrollOptions());
+}
+
+void
+Element::Scroll(const ScrollToOptions& aOptions)
+{
+  nsIScrollableFrame *sf = GetScrollFrame();
+  if (sf) {
+    CSSIntPoint scrollPos = sf->GetScrollPositionCSSPixels();
+    if (aOptions.mLeft.WasPassed()) {
+      scrollPos.x = mozilla::ToZeroIfNonfinite(aOptions.mLeft.Value());
+    }
+    if (aOptions.mTop.WasPassed()) {
+      scrollPos.y = mozilla::ToZeroIfNonfinite(aOptions.mTop.Value());
+    }
+    Scroll(scrollPos, aOptions);
+  }
+}
+
+void
+Element::ScrollTo(double aXScroll, double aYScroll)
+{
+  Scroll(aXScroll, aYScroll);
+}
+
+void
+Element::ScrollTo(const ScrollToOptions& aOptions)
+{
+  Scroll(aOptions);
+}
+
+void
+Element::ScrollBy(double aXScrollDif, double aYScrollDif)
+{
+  nsIScrollableFrame *sf = GetScrollFrame();
+  if (sf) {
+    CSSIntPoint scrollPos = sf->GetScrollPositionCSSPixels();
+    scrollPos += CSSIntPoint(mozilla::ToZeroIfNonfinite(aXScrollDif),
+                             mozilla::ToZeroIfNonfinite(aYScrollDif));
+    Scroll(scrollPos, ScrollOptions());
+  }
+}
+
+void
+Element::ScrollBy(const ScrollToOptions& aOptions)
+{
+  nsIScrollableFrame *sf = GetScrollFrame();
+  if (sf) {
+    CSSIntPoint scrollPos = sf->GetScrollPositionCSSPixels();
+    if (aOptions.mLeft.WasPassed()) {
+      scrollPos.x += mozilla::ToZeroIfNonfinite(aOptions.mLeft.Value());
+    }
+    if (aOptions.mTop.WasPassed()) {
+      scrollPos.y += mozilla::ToZeroIfNonfinite(aOptions.mTop.Value());
+    }
+    Scroll(scrollPos, aOptions);
+  }
+}
+
+int32_t
+Element::ScrollTop()
+{
+  nsIScrollableFrame* sf = GetScrollFrame();
+  return sf ? sf->GetScrollPositionCSSPixels().y : 0;
+}
+
+void
+Element::SetScrollTop(int32_t aScrollTop)
+{
+  nsIScrollableFrame* sf = GetScrollFrame();
+  if (sf) {
+    nsIScrollableFrame::ScrollMode scrollMode = nsIScrollableFrame::INSTANT;
+    if (sf->GetScrollbarStyles().mScrollBehavior == NS_STYLE_SCROLL_BEHAVIOR_SMOOTH) {
+      scrollMode = nsIScrollableFrame::SMOOTH_MSD;
+    }
+    sf->ScrollToCSSPixels(CSSIntPoint(sf->GetScrollPositionCSSPixels().x,
+                                      aScrollTop),
+                          scrollMode);
+  }
+}
+
+int32_t
+Element::ScrollLeft()
+{
+  nsIScrollableFrame* sf = GetScrollFrame();
+  return sf ? sf->GetScrollPositionCSSPixels().x : 0;
+}
+
+void
+Element::SetScrollLeft(int32_t aScrollLeft)
+{
+  nsIScrollableFrame* sf = GetScrollFrame();
+  if (sf) {
+    nsIScrollableFrame::ScrollMode scrollMode = nsIScrollableFrame::INSTANT;
+    if (sf->GetScrollbarStyles().mScrollBehavior == NS_STYLE_SCROLL_BEHAVIOR_SMOOTH) {
+      scrollMode = nsIScrollableFrame::SMOOTH_MSD;
+    }
+
+    sf->ScrollToCSSPixels(CSSIntPoint(aScrollLeft,
+                                      sf->GetScrollPositionCSSPixels().y),
+                          scrollMode);
+  }
+}
+
 
 bool
 Element::ScrollByNoFlush(int32_t aDx, int32_t aDy)
@@ -767,7 +913,7 @@ Element::AddToIdTable(nsIAtom* aId)
     ShadowRoot* containingShadow = GetContainingShadow();
     containingShadow->AddToIdTable(this, aId);
   } else {
-    nsIDocument* doc = GetCurrentDoc();
+    nsIDocument* doc = GetUncomposedDoc();
     if (doc && (!IsInAnonymousSubtree() || doc->IsXUL())) {
       doc->AddToIdTable(this, aId);
     }
@@ -790,7 +936,7 @@ Element::RemoveFromIdTable()
       containingShadow->RemoveFromIdTable(this, id);
     }
   } else {
-    nsIDocument* doc = GetCurrentDoc();
+    nsIDocument* doc = GetUncomposedDoc();
     if (doc && (!IsInAnonymousSubtree() || doc->IsXUL())) {
       doc->RemoveFromIdTable(this, id);
     }
@@ -876,8 +1022,6 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE(DestinationInsertionPointList)
 DestinationInsertionPointList::DestinationInsertionPointList(Element* aElement)
   : mParent(aElement)
 {
-  SetIsDOMBinding();
-
   nsTArray<nsIContent*>* destPoints = aElement->GetExistingDestInsertionPoints();
   if (destPoints) {
     for (uint32_t i = 0; i < destPoints->Length(); i++) {
@@ -1197,9 +1341,9 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
   NS_PRECONDITION(aParent || aDocument, "Must have document if no parent!");
   NS_PRECONDITION((NODE_FROM(aParent, aDocument)->OwnerDoc() == OwnerDoc()),
                   "Must have the same owner document");
-  NS_PRECONDITION(!aParent || aDocument == aParent->GetCurrentDoc(),
+  NS_PRECONDITION(!aParent || aDocument == aParent->GetUncomposedDoc(),
                   "aDocument must be current doc of aParent");
-  NS_PRECONDITION(!GetCurrentDoc(), "Already have a document.  Unbind first!");
+  NS_PRECONDITION(!GetUncomposedDoc(), "Already have a document.  Unbind first!");
   // Note that as we recurse into the kids, they'll have a non-null parent.  So
   // only assert if our parent is _changing_ while we have a parent.
   NS_PRECONDITION(!GetParent() || aParent == GetParent(),
@@ -1406,7 +1550,7 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
   // XXXbz script execution during binding can trigger some of these
   // postcondition asserts....  But we do want that, since things will
   // generally be quite broken when that happens.
-  NS_POSTCONDITION(aDocument == GetCurrentDoc(), "Bound to wrong document");
+  NS_POSTCONDITION(aDocument == GetUncomposedDoc(), "Bound to wrong document");
   NS_POSTCONDITION(aParent == GetParent(), "Bound to wrong parent");
   NS_POSTCONDITION(aBindingParent == GetBindingParent(),
                    "Bound to wrong binding parent");
@@ -1414,48 +1558,45 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
   return NS_OK;
 }
 
-class RemoveFromBindingManagerRunnable : public nsRunnable {
-public:
-  RemoveFromBindingManagerRunnable(nsBindingManager* aManager,
-                                   Element* aElement,
-                                   nsIDocument* aDoc):
-    mManager(aManager), mElement(aElement), mDoc(aDoc)
-  {}
+RemoveFromBindingManagerRunnable::RemoveFromBindingManagerRunnable(nsBindingManager* aManager,
+                                                                   nsIContent* aContent,
+                                                                   nsIDocument* aDoc):
+  mManager(aManager), mContent(aContent), mDoc(aDoc)
+{}
 
-  NS_IMETHOD Run()
-  {
-    // It may be the case that the element was removed from the
-    // DOM, causing this runnable to be created, then inserted back
-    // into the document before the this runnable had a chance to
-    // tear down the binding. Only tear down the binding if the element
-    // is still no longer in the DOM. nsXBLService::LoadBinding tears
-    // down the old binding if the element is inserted back into the
-    // DOM and loads a different binding.
-    if (!mElement->IsInDoc()) {
-      mManager->RemovedFromDocumentInternal(mElement, mDoc);
-    }
+RemoveFromBindingManagerRunnable::~RemoveFromBindingManagerRunnable() {}
 
-    return NS_OK;
+NS_IMETHODIMP
+RemoveFromBindingManagerRunnable::Run()
+{
+  // It may be the case that the element was removed from the
+  // DOM, causing this runnable to be created, then inserted back
+  // into the document before the this runnable had a chance to
+  // tear down the binding. Only tear down the binding if the element
+  // is still no longer in the DOM. nsXBLService::LoadBinding tears
+  // down the old binding if the element is inserted back into the
+  // DOM and loads a different binding.
+  if (!mContent->IsInComposedDoc()) {
+    mManager->RemovedFromDocumentInternal(mContent, mDoc);
   }
 
-private:
-  nsRefPtr<nsBindingManager> mManager;
-  nsRefPtr<Element> mElement;
-  nsCOMPtr<nsIDocument> mDoc;
-};
+  return NS_OK;
+}
+
 
 void
 Element::UnbindFromTree(bool aDeep, bool aNullParent)
 {
-  NS_PRECONDITION(aDeep || (!GetCurrentDoc() && !GetBindingParent()),
+  NS_PRECONDITION(aDeep || (!GetUncomposedDoc() && !GetBindingParent()),
                   "Shallow unbind won't clear document and binding parent on "
                   "kids!");
 
   RemoveFromIdTable();
 
   // Make sure to unbind this node before doing the kids
-  nsIDocument *document =
-    HasFlag(NODE_FORCE_XBL_BINDINGS) ? OwnerDoc() : GetCurrentDoc();
+  nsIDocument* document =
+    HasFlag(NODE_FORCE_XBL_BINDINGS) || IsInShadowTree() ?
+      OwnerDoc() : GetUncomposedDoc();
 
   if (aNullParent) {
     if (IsFullScreenAncestor()) {
@@ -1492,7 +1633,9 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
   if (document) {
     // Notify XBL- & nsIAnonymousContentCreator-generated
     // anonymous content that the document is changing.
-    if (HasFlag(NODE_MAY_BE_IN_BINDING_MNGR)) {
+    // Unlike XBL, bindings for web components shadow DOM
+    // do not get uninstalled.
+    if (HasFlag(NODE_MAY_BE_IN_BINDING_MNGR) && !GetShadowRoot()) {
       nsContentUtils::AddScriptRunner(
         new RemoveFromBindingManagerRunnable(document->BindingManager(), this,
                                              document));
@@ -1602,7 +1745,7 @@ Element::SetSMILOverrideStyleRule(css::StyleRule* aStyleRule,
   slots->mSMILOverrideStyleRule = aStyleRule;
 
   if (aNotify) {
-    nsIDocument* doc = GetCurrentDoc();
+    nsIDocument* doc = GetComposedDoc();
     // Only need to request a restyle if we're in a document.  (We might not
     // be in a document, if we're clearing animation effects on a target node
     // that's been detached since the previous animation sample.)
@@ -2020,7 +2163,7 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
 {
   nsresult rv;
 
-  nsIDocument* document = GetCurrentDoc();
+  nsIDocument* document = GetComposedDoc();
   mozAutoDocUpdate updateBatch(document, UPDATE_CONTENT_MODEL, aNotify);
 
   nsMutationGuard::DidMutate();
@@ -2233,7 +2376,7 @@ Element::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aName,
   nsresult rv = BeforeSetAttr(aNameSpaceID, aName, nullptr, aNotify);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsIDocument *document = GetCurrentDoc();
+  nsIDocument *document = GetComposedDoc();
   mozAutoDocUpdate updateBatch(document, UPDATE_CONTENT_MODEL, aNotify);
 
   if (aNotify) {
@@ -2622,7 +2765,7 @@ Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor)
             WidgetMouseEvent::eLeftButton) {
         // don't make the link grab the focus if there is no link handler
         nsILinkHandler *handler = aVisitor.mPresContext->GetLinkHandler();
-        nsIDocument *document = GetCurrentDoc();
+        nsIDocument *document = GetComposedDoc();
         if (handler && document) {
           nsIFocusManager* fm = nsFocusManager::GetFocusManager();
           if (fm) {
@@ -2939,6 +3082,11 @@ Element::MozRequestPointerLock()
 void
 Element::GetAnimationPlayers(nsTArray<nsRefPtr<AnimationPlayer> >& aPlayers)
 {
+  nsIDocument* doc = GetComposedDoc();
+  if (doc) {
+    doc->FlushPendingNotifications(Flush_Style);
+  }
+
   nsIAtom* properties[] = { nsGkAtoms::transitionsProperty,
                             nsGkAtoms::animationsProperty };
   for (size_t propIdx = 0; propIdx < MOZ_ARRAY_LENGTH(properties);
@@ -2953,7 +3101,7 @@ Element::GetAnimationPlayers(nsTArray<nsRefPtr<AnimationPlayer> >& aPlayers)
          playerIdx < collection->mPlayers.Length();
          playerIdx++) {
       AnimationPlayer* player = collection->mPlayers[playerIdx];
-      if (player->IsCurrent()) {
+      if (player->HasCurrentSource() || player->HasInEffectSource()) {
         aPlayers.AppendElement(player);
       }
     }

@@ -10,21 +10,22 @@
 #include "nsClassHashtable.h"
 #include "nsNetUtil.h"
 #include "nsIPrincipal.h"
-#include "nsDOMFile.h"
-#include "nsIDOMMediaStream.h"
+#include "DOMMediaStream.h"
 #include "mozilla/dom/MediaSource.h"
 #include "nsIMemoryReporter.h"
+#include "mozilla/dom/File.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/LoadInfo.h"
 
-using mozilla::dom::DOMFileImpl;
+using mozilla::dom::FileImpl;
+using mozilla::ErrorResult;
 using mozilla::LoadInfo;
 
 // -----------------------------------------------------------------------
 // Hash table
 struct DataInfo
 {
-  // mObject is expected to be an nsIDOMBlob, nsIDOMMediaStream, or MediaSource
+  // mObject is expected to be an nsIDOMBlob, DOMMediaStream, or MediaSource
   nsCOMPtr<nsISupports> mObject;
   nsCOMPtr<nsIPrincipal> mPrincipal;
   nsCString mStack;
@@ -496,7 +497,7 @@ nsHostObjectProtocolHandler::NewChannel(nsIURI* uri, nsIChannel* *result)
     return NS_ERROR_DOM_BAD_URI;
   }
 
-  nsCOMPtr<PIDOMFileImpl> blobImpl = do_QueryInterface(info->mObject);
+  nsCOMPtr<PIFileImpl> blobImpl = do_QueryInterface(info->mObject);
   if (!blobImpl) {
     return NS_ERROR_DOM_BAD_URI;
   }
@@ -510,7 +511,7 @@ nsHostObjectProtocolHandler::NewChannel(nsIURI* uri, nsIChannel* *result)
   }
 #endif
 
-  DOMFileImpl* blob = static_cast<DOMFileImpl*>(blobImpl.get());
+  FileImpl* blob = static_cast<FileImpl*>(blobImpl.get());
   nsCOMPtr<nsIInputStream> stream;
   nsresult rv = blob->GetInternalStream(getter_AddRefs(stream));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -518,30 +519,28 @@ nsHostObjectProtocolHandler::NewChannel(nsIURI* uri, nsIChannel* *result)
   nsCOMPtr<nsIChannel> channel;
   rv = NS_NewInputStreamChannel(getter_AddRefs(channel),
                                 uri,
-                                stream);
+                                stream,
+                                info->mPrincipal,
+                                nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL,
+                                nsIContentPolicy::TYPE_OTHER);
+
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsString type;
-  rv = blob->GetType(type);
-  NS_ENSURE_SUCCESS(rv, rv);
+  blob->GetType(type);
 
   if (blob->IsFile()) {
     nsString filename;
-    rv = blob->GetName(filename);
-    NS_ENSURE_SUCCESS(rv, rv);
+    blob->GetName(filename);
     channel->SetContentDispositionFilename(filename);
   }
 
-  uint64_t size;
-  rv = blob->GetSize(&size);
-  NS_ENSURE_SUCCESS(rv, rv);
+  ErrorResult error;
+  uint64_t size = blob->GetSize(error);
+  if (NS_WARN_IF(error.Failed())) {
+    return error.ErrorCode();
+  }
 
-  nsCOMPtr<nsILoadInfo> loadInfo =
-    new mozilla::LoadInfo(info->mPrincipal,
-                          nullptr,
-                          nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL,
-                          nsIContentPolicy::TYPE_OTHER);
-  channel->SetLoadInfo(loadInfo);
   channel->SetOriginalURI(uri);
   channel->SetContentType(NS_ConvertUTF16toUTF8(type));
   channel->SetContentLength(size);
@@ -589,36 +588,41 @@ nsFontTableProtocolHandler::GetScheme(nsACString &result)
 }
 
 nsresult
-NS_GetStreamForBlobURI(nsIURI* aURI, nsIInputStream** aStream)
+NS_GetBlobForBlobURI(nsIURI* aURI, FileImpl** aBlob)
 {
   NS_ASSERTION(IsBlobURI(aURI), "Only call this with blob URIs");
 
-  *aStream = nullptr;
+  *aBlob = nullptr;
 
-  nsCOMPtr<PIDOMFileImpl> blobImpl = do_QueryInterface(GetDataObject(aURI));
+  nsCOMPtr<PIFileImpl> blobImpl = do_QueryInterface(GetDataObject(aURI));
   if (!blobImpl) {
     return NS_ERROR_DOM_BAD_URI;
   }
 
-  DOMFileImpl* blob = static_cast<DOMFileImpl*>(blobImpl.get());
-  return blob->GetInternalStream(aStream);
+  nsRefPtr<FileImpl> blob = static_cast<FileImpl*>(blobImpl.get());
+  blob.forget(aBlob);
+  return NS_OK;
 }
 
 nsresult
-NS_GetStreamForMediaStreamURI(nsIURI* aURI, nsIDOMMediaStream** aStream)
+NS_GetStreamForBlobURI(nsIURI* aURI, nsIInputStream** aStream)
+{
+  nsRefPtr<FileImpl> blobImpl;
+  nsresult rv = NS_GetBlobForBlobURI(aURI, getter_AddRefs(blobImpl));
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  return blobImpl->GetInternalStream(aStream);
+}
+
+nsresult
+NS_GetStreamForMediaStreamURI(nsIURI* aURI, mozilla::DOMMediaStream** aStream)
 {
   NS_ASSERTION(IsMediaStreamURI(aURI), "Only call this with mediastream URIs");
 
   *aStream = nullptr;
-
-  nsCOMPtr<nsIDOMMediaStream> stream = do_QueryInterface(GetDataObject(aURI));
-  if (!stream) {
-    return NS_ERROR_DOM_BAD_URI;
-  }
-
-  *aStream = stream;
-  NS_ADDREF(*aStream);
-  return NS_OK;
+  return CallQueryInterface(GetDataObject(aURI), aStream);
 }
 
 NS_IMETHODIMP

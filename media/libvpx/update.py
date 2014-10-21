@@ -364,6 +364,7 @@ def prepare_upstream(prefix, commit=None):
             configure += ['--enable-pic']
         if 'linux' in target:
             configure += ['--enable-pic']
+            configure += ['--disable-avx2']
         # x86inc.asm is not compatible with pic 32bit builds
         if target == 'x86-linux-gcc':
             configure += ['--disable-use-x86inc']
@@ -529,6 +530,8 @@ def update_and_remove_files(prefix, libvpx_files, files):
 def apply_patches():
     # Patch to permit vpx users to specify their own <stdint.h> types.
     os.system("patch -p0 < stdint.patch")
+    # Patch to allow older versions of Apple's clang to build libvpx.
+    os.system("patch -p3 < apple-clang.patch")
 
 def update_readme(commit):
     with open('README_MOZILLA') as f:

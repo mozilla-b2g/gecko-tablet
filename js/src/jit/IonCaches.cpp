@@ -466,7 +466,8 @@ GeneratePrototypeGuards(JSContext *cx, IonScript *ion, MacroAssembler &masm, JSO
                         JSObject *holder, Register objectReg, Register scratchReg,
                         Label *failures)
 {
-    /* The guards here protect against the effects of TradeGuts(). If the prototype chain
+    /*
+     * The guards here protect against the effects of JSObject::swap(). If the prototype chain
      * is directly altered, then TI will toss the jitcode, so we don't have to worry about
      * it, and any other change to the holder, or adding a shadowing property will result
      * in reshaping the holder, and thus the failure of the shape guard.
@@ -654,15 +655,15 @@ IsCacheableGetPropCallPropertyOp(JSObject *obj, JSObject *holder, Shape *shape)
 }
 
 static inline void
-EmitLoadSlot(MacroAssembler &masm, JSObject *holder, Shape *shape, Register holderReg,
+EmitLoadSlot(MacroAssembler &masm, NativeObject *holder, Shape *shape, Register holderReg,
              TypedOrValueRegister output, Register scratchReg)
 {
     MOZ_ASSERT(holder);
     if (holder->isFixedSlot(shape->slot())) {
-        Address addr(holderReg, JSObject::getFixedSlotOffset(shape->slot()));
+        Address addr(holderReg, NativeObject::getFixedSlotOffset(shape->slot()));
         masm.loadTypedOrValue(addr, output);
     } else {
-        masm.loadPtr(Address(holderReg, JSObject::offsetOfSlots()), scratchReg);
+        masm.loadPtr(Address(holderReg, NativeObject::offsetOfSlots()), scratchReg);
 
         Address addr(scratchReg, holder->dynamicSlotIndex(shape->slot()) * sizeof(Value));
         masm.loadTypedOrValue(addr, output);
@@ -681,11 +682,10 @@ GenerateDOMProxyChecks(JSContext *cx, MacroAssembler &masm, JSObject *obj,
     //      2. The object does not have expando properties, or has an expando
     //          which is known to not have the desired property.
     Address handlerAddr(object, ProxyObject::offsetOfHandler());
-    Address expandoSlotAddr(object, JSObject::getFixedSlotOffset(GetDOMProxyExpandoSlot()));
 
     // Check that object is a DOMProxy.
-    masm.branchPrivatePtr(Assembler::NotEqual, handlerAddr,
-                          ImmPtr(obj->as<ProxyObject>().handler()), stubFailure);
+    masm.branchPtr(Assembler::NotEqual, handlerAddr,
+                   ImmPtr(obj->as<ProxyObject>().handler()), stubFailure);
 
     if (skipExpandoCheck)
         return;
@@ -700,8 +700,12 @@ GenerateDOMProxyChecks(JSContext *cx, MacroAssembler &masm, JSObject *obj,
     Label failDOMProxyCheck;
     Label domProxyOk;
 
-    Value expandoVal = obj->getFixedSlot(GetDOMProxyExpandoSlot());
-    masm.loadValue(expandoSlotAddr, tempVal);
+    Value expandoVal = GetProxyExtra(obj, GetDOMProxyExpandoSlot());
+
+    masm.loadPtr(Address(object, ProxyObject::offsetOfValues()), tempVal.scratchReg());
+    masm.loadValue(Address(tempVal.scratchReg(),
+                           ProxyObject::offsetOfExtraSlotInValues(GetDOMProxyExpandoSlot())),
+                   tempVal);
 
     if (!expandoVal.isObject() && !expandoVal.isUndefined()) {
         masm.branchTestValue(Assembler::NotEqual, tempVal, expandoVal, &failDOMProxyCheck);
@@ -726,7 +730,7 @@ GenerateDOMProxyChecks(JSContext *cx, MacroAssembler &masm, JSObject *obj,
     masm.branchTestUndefined(Assembler::Equal, tempVal, &domProxyOk);
 
     if (expandoVal.isObject()) {
-        MOZ_ASSERT(!expandoVal.toObject().nativeContains(cx, name));
+        MOZ_ASSERT(!expandoVal.toObject().as<NativeObject>().contains(cx, name));
 
         // Reference object has an expando object that doesn't define the name. Check that
         // the incoming object has an expando object with the same shape.
@@ -750,7 +754,7 @@ GenerateDOMProxyChecks(JSContext *cx, MacroAssembler &masm, JSObject *obj,
 
 static void
 GenerateReadSlot(JSContext *cx, IonScript *ion, MacroAssembler &masm,
-                 IonCache::StubAttacher &attacher, JSObject *obj, JSObject *holder,
+                 IonCache::StubAttacher &attacher, JSObject *obj, NativeObject *holder,
                  Shape *shape, Register object, TypedOrValueRegister output,
                  Label *failures = nullptr)
 {
@@ -1075,7 +1079,7 @@ GenerateArrayLength(JSContext *cx, MacroAssembler &masm, IonCache::StubAttacher 
         outReg = output.typedReg().gpr();
     }
 
-    masm.loadPtr(Address(object, JSObject::offsetOfElements()), outReg);
+    masm.loadPtr(Address(object, NativeObject::offsetOfElements()), outReg);
     masm.load32(Address(outReg, ObjectElements::offsetOfLength()), outReg);
 
     // The length is an unsigned int, but the value encodes a signed int.
@@ -1152,7 +1156,7 @@ template <class GetPropCache>
 static GetPropertyIC::NativeGetPropCacheability
 CanAttachNativeGetProp(typename GetPropCache::Context cx, const GetPropCache &cache,
                        HandleObject obj, HandlePropertyName name,
-                       MutableHandleObject holder, MutableHandleShape shape,
+                       MutableHandleNativeObject holder, MutableHandleShape shape,
                        bool skipArrayLen = false)
 {
     if (!obj || !obj->isNative())
@@ -1241,7 +1245,7 @@ GetPropertyIC::tryAttachNative(JSContext *cx, HandleScript outerScript, IonScrip
     MOZ_ASSERT(outerScript->ionScript() == ion);
 
     RootedShape shape(cx);
-    RootedObject holder(cx);
+    RootedNativeObject holder(cx);
 
     NativeGetPropCacheability type =
         CanAttachNativeGetProp(cx, *this, obj, name, &holder, &shape);
@@ -1448,7 +1452,7 @@ GetPropertyIC::tryAttachDOMProxyUnshadowed(JSContext *cx, HandleScript outerScri
     MOZ_ASSERT(output().hasValue());
 
     RootedObject checkObj(cx, obj->getTaggedProto().toObjectOrNull());
-    RootedObject holder(cx);
+    RootedNativeObject holder(cx);
     RootedShape shape(cx);
 
     NativeGetPropCacheability canCache =
@@ -1844,7 +1848,7 @@ GetPropertyParIC::reset()
 
 bool
 GetPropertyParIC::attachReadSlot(LockedJSContext &cx, IonScript *ion, HandleObject obj,
-                                 HandleObject holder, HandleShape shape)
+                                 HandleNativeObject holder, HandleShape shape)
 {
     // Ready to generate the read slot stub.
     DispatchStubPrepender attacher(*this);
@@ -1910,7 +1914,7 @@ GetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex,
 
             {
                 RootedShape shape(ncx);
-                RootedObject holder(ncx);
+                RootedNativeObject holder(ncx);
                 RootedPropertyName name(ncx, cache.name());
 
                 GetPropertyIC::NativeGetPropCacheability canCache =
@@ -1963,7 +1967,7 @@ IonCache::destroy()
 
 static void
 GenerateSetSlot(JSContext *cx, MacroAssembler &masm, IonCache::StubAttacher &attacher,
-                JSObject *obj, Shape *shape, Register object, ConstantOrRegister value,
+                NativeObject *obj, Shape *shape, Register object, ConstantOrRegister value,
                 bool needsTypeBarrier, bool checkTypeset)
 {
     MOZ_ASSERT(obj->isNative());
@@ -2003,7 +2007,7 @@ GenerateSetSlot(JSContext *cx, MacroAssembler &masm, IonCache::StubAttacher &att
     }
 
     if (obj->isFixedSlot(shape->slot())) {
-        Address addr(object, JSObject::getFixedSlotOffset(shape->slot()));
+        Address addr(object, NativeObject::getFixedSlotOffset(shape->slot()));
 
         if (cx->zone()->needsIncrementalBarrier())
             masm.callPreBarrier(addr, MIRType_Value);
@@ -2011,7 +2015,7 @@ GenerateSetSlot(JSContext *cx, MacroAssembler &masm, IonCache::StubAttacher &att
         masm.storeConstantOrRegister(value, addr);
     } else {
         Register slotsReg = object;
-        masm.loadPtr(Address(object, JSObject::offsetOfSlots()), slotsReg);
+        masm.loadPtr(Address(object, NativeObject::offsetOfSlots()), slotsReg);
 
         Address addr(slotsReg, obj->dynamicSlotIndex(shape->slot()) * sizeof(Value));
 
@@ -2034,7 +2038,7 @@ GenerateSetSlot(JSContext *cx, MacroAssembler &masm, IonCache::StubAttacher &att
 
 bool
 SetPropertyIC::attachSetSlot(JSContext *cx, HandleScript outerScript, IonScript *ion,
-                             HandleObject obj, HandleShape shape, bool checkTypeset)
+                             HandleNativeObject obj, HandleShape shape, bool checkTypeset)
 {
     MacroAssembler masm(cx, ion, outerScript, profilerLeavePc_);
     RepatchStubAppender attacher(*this);
@@ -2523,7 +2527,7 @@ SetPropertyIC::attachCallSetter(JSContext *cx, HandleScript outerScript, IonScri
 
 static void
 GenerateAddSlot(JSContext *cx, MacroAssembler &masm, IonCache::StubAttacher &attacher,
-                JSObject *obj, Shape *oldShape, types::TypeObject *oldType,
+                NativeObject *obj, Shape *oldShape, types::TypeObject *oldType,
                 Register object, ConstantOrRegister value,
                 bool checkTypeset)
 {
@@ -2609,12 +2613,12 @@ GenerateAddSlot(JSContext *cx, MacroAssembler &masm, IonCache::StubAttacher &att
     // Set the value on the object. Since this is an add, obj->lastProperty()
     // must be the shape of the property we are adding.
     if (obj->isFixedSlot(newShape->slot())) {
-        Address addr(object, JSObject::getFixedSlotOffset(newShape->slot()));
+        Address addr(object, NativeObject::getFixedSlotOffset(newShape->slot()));
         masm.storeConstantOrRegister(value, addr);
     } else {
         Register slotsReg = object;
 
-        masm.loadPtr(Address(object, JSObject::offsetOfSlots()), slotsReg);
+        masm.loadPtr(Address(object, NativeObject::offsetOfSlots()), slotsReg);
 
         Address addr(slotsReg, obj->dynamicSlotIndex(newShape->slot()) * sizeof(Value));
         masm.storeConstantOrRegister(value, addr);
@@ -2633,7 +2637,7 @@ GenerateAddSlot(JSContext *cx, MacroAssembler &masm, IonCache::StubAttacher &att
 
 bool
 SetPropertyIC::attachAddSlot(JSContext *cx, HandleScript outerScript, IonScript *ion,
-                             HandleObject obj, HandleShape oldShape, HandleTypeObject oldType,
+                             HandleNativeObject obj, HandleShape oldShape, HandleTypeObject oldType,
                              bool checkTypeset)
 {
     MOZ_ASSERT_IF(!needsTypeBarrier(), !checkTypeset);
@@ -2683,14 +2687,12 @@ CanInlineSetPropTypeCheck(JSObject *obj, jsid id, ConstantOrRegister val, bool *
 }
 
 static bool
-IsPropertySetInlineable(HandleObject obj, HandleId id, MutableHandleShape pshape,
+IsPropertySetInlineable(NativeObject *obj, HandleId id, MutableHandleShape pshape,
                         ConstantOrRegister val, bool needsTypeBarrier, bool *checkTypeset)
 {
-    MOZ_ASSERT(obj->isNative());
-
     // Do a pure non-proto chain climbing lookup. See note in
     // CanAttachNativeGetProp.
-    pshape.set(obj->nativeLookupPure(id));
+    pshape.set(obj->lookupPure(id));
 
     if (!pshape)
         return false;
@@ -2711,16 +2713,14 @@ IsPropertySetInlineable(HandleObject obj, HandleId id, MutableHandleShape pshape
 }
 
 static bool
-IsPropertyAddInlineable(HandleObject obj, HandleId id, ConstantOrRegister val, uint32_t oldSlots,
+IsPropertyAddInlineable(NativeObject *obj, HandleId id, ConstantOrRegister val, uint32_t oldSlots,
                         HandleShape oldShape, bool needsTypeBarrier, bool *checkTypeset)
 {
-    MOZ_ASSERT(obj->isNative());
-
     // If the shape of the object did not change, then this was not an add.
     if (obj->lastProperty() == oldShape)
         return false;
 
-    Shape *shape = obj->nativeLookupPure(id);
+    Shape *shape = obj->lookupPure(id);
     if (!shape || shape->inDictionary() || !shape->hasSlot() || !shape->hasDefaultSetter())
         return false;
 
@@ -2749,7 +2749,7 @@ IsPropertyAddInlineable(HandleObject obj, HandleId id, ConstantOrRegister val, u
             return false;
 
         // If prototype defines this property in a non-plain way, don't optimize
-        Shape *protoShape = proto->nativeLookupPure(id);
+        Shape *protoShape = proto->as<NativeObject>().lookupPure(id);
         if (protoShape && !protoShape->hasDefaultSetter())
             return false;
 
@@ -2781,14 +2781,14 @@ IsPropertyAddInlineable(HandleObject obj, HandleId id, ConstantOrRegister val, u
 
 static SetPropertyIC::NativeSetPropCacheability
 CanAttachNativeSetProp(HandleObject obj, HandleId id, ConstantOrRegister val,
-                       bool needsTypeBarrier, MutableHandleObject holder,
+                       bool needsTypeBarrier, MutableHandleNativeObject holder,
                        MutableHandleShape shape, bool *checkTypeset)
 {
     if (!obj->isNative())
         return SetPropertyIC::CanAttachNone;
 
     // See if the property exists on the object.
-    if (IsPropertySetInlineable(obj, id, shape, val, needsTypeBarrier, checkTypeset))
+    if (IsPropertySetInlineable(&obj->as<NativeObject>(), id, shape, val, needsTypeBarrier, checkTypeset))
         return SetPropertyIC::CanAttachSetSlot;
 
     // If we couldn't find the property on the object itself, do a full, but
@@ -2859,13 +2859,14 @@ SetPropertyIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
         }
 
         RootedShape shape(cx);
-        RootedObject holder(cx);
+        RootedNativeObject holder(cx);
         bool checkTypeset;
         canCache = CanAttachNativeSetProp(obj, id, cache.value(), cache.needsTypeBarrier(),
                                           &holder, &shape, &checkTypeset);
 
         if (!addedSetterStub && canCache == CanAttachSetSlot) {
-            if (!cache.attachSetSlot(cx, script, ion, obj, shape, checkTypeset))
+            RootedNativeObject nobj(cx, &obj->as<NativeObject>());
+            if (!cache.attachSetSlot(cx, script, ion, nobj, shape, checkTypeset))
                 return false;
             addedSetterStub = true;
         }
@@ -2877,7 +2878,7 @@ SetPropertyIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
         }
     }
 
-    uint32_t oldSlots = obj->numDynamicSlots();
+    uint32_t oldSlots = obj->is<NativeObject>() ? obj->as<NativeObject>().numDynamicSlots() : 0;
     RootedShape oldShape(cx, obj->lastProperty());
 
     // Set/Add the property on the object, the inlined cache are setup for the next execution.
@@ -2887,10 +2888,12 @@ SetPropertyIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
     // The property did not exist before, now we can try to inline the property add.
     bool checkTypeset;
     if (!addedSetterStub && canCache == MaybeCanAttachAddSlot &&
-        IsPropertyAddInlineable(obj, id, cache.value(), oldSlots, oldShape, cache.needsTypeBarrier(),
+        IsPropertyAddInlineable(&obj->as<NativeObject>(), id,
+                                cache.value(), oldSlots, oldShape, cache.needsTypeBarrier(),
                                 &checkTypeset))
     {
-        if (!cache.attachAddSlot(cx, script, ion, obj, oldShape, oldType, checkTypeset))
+        RootedNativeObject nobj(cx, &obj->as<NativeObject>());
+        if (!cache.attachAddSlot(cx, script, ion, nobj, oldShape, oldType, checkTypeset))
             return false;
     }
 
@@ -2916,10 +2919,14 @@ SetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject ob
     RootedValue v(cx, value);
     RootedId id(cx, AtomToId(cache.name()));
 
+    if (!obj->isNative())
+        return false;
+    RootedNativeObject nobj(cx, &obj->as<NativeObject>());
+
     // Avoid unnecessary locking if cannot attach stubs.
     if (!cache.canAttachStub()) {
         return baseops::SetPropertyHelper<ParallelExecution>(
-            cx, obj, obj, id, baseops::Qualified, &v, cache.strict());
+            cx, nobj, nobj, id, baseops::Qualified, &v, cache.strict());
     }
 
     SetPropertyIC::NativeSetPropCacheability canCache = SetPropertyIC::CanAttachNone;
@@ -2931,27 +2938,27 @@ SetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject ob
 
         if (cache.canAttachStub()) {
             bool alreadyStubbed;
-            if (!cache.hasOrAddStubbedShape(ncx, obj->lastProperty(), &alreadyStubbed))
+            if (!cache.hasOrAddStubbedShape(ncx, nobj->lastProperty(), &alreadyStubbed))
                 return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
             if (alreadyStubbed) {
                 return baseops::SetPropertyHelper<ParallelExecution>(
-                    cx, obj, obj, id, baseops::Qualified, &v, cache.strict());
+                    cx, nobj, nobj, id, baseops::Qualified, &v, cache.strict());
             }
 
             // If the object has a lazy type, we need to de-lazify it, but
             // this is not safe in parallel.
-            if (obj->hasLazyType())
+            if (nobj->hasLazyType())
                 return false;
 
             {
                 RootedShape shape(cx);
-                RootedObject holder(cx);
+                RootedNativeObject holder(cx);
                 bool checkTypeset;
-                canCache = CanAttachNativeSetProp(obj, id, cache.value(), cache.needsTypeBarrier(),
+                canCache = CanAttachNativeSetProp(nobj, id, cache.value(), cache.needsTypeBarrier(),
                                                   &holder, &shape, &checkTypeset);
 
                 if (canCache == SetPropertyIC::CanAttachSetSlot) {
-                    if (!cache.attachSetSlot(ncx, ion, obj, shape, checkTypeset))
+                    if (!cache.attachSetSlot(ncx, ion, nobj, shape, checkTypeset))
                         return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
                     attachedStub = true;
                 }
@@ -2959,11 +2966,11 @@ SetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject ob
         }
     }
 
-    uint32_t oldSlots = obj->numDynamicSlots();
-    RootedShape oldShape(cx, obj->lastProperty());
-    RootedTypeObject oldType(cx, obj->type());
+    uint32_t oldSlots = nobj->numDynamicSlots();
+    RootedShape oldShape(cx, nobj->lastProperty());
+    RootedTypeObject oldType(cx, nobj->type());
 
-    if (!baseops::SetPropertyHelper<ParallelExecution>(cx, obj, obj, id, baseops::Qualified, &v,
+    if (!baseops::SetPropertyHelper<ParallelExecution>(cx, nobj, nobj, id, baseops::Qualified, &v,
                                                        cache.strict()))
     {
         return false;
@@ -2971,11 +2978,12 @@ SetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject ob
 
     bool checkTypeset;
     if (!attachedStub && canCache == SetPropertyIC::MaybeCanAttachAddSlot &&
-        IsPropertyAddInlineable(obj, id, cache.value(), oldSlots, oldShape, cache.needsTypeBarrier(),
+        IsPropertyAddInlineable(nobj, id,
+                                cache.value(), oldSlots, oldShape, cache.needsTypeBarrier(),
                                 &checkTypeset))
     {
         LockedJSContext ncx(cx);
-        if (cache.canAttachStub() && !cache.attachAddSlot(ncx, ion, obj, oldShape, oldType, checkTypeset))
+        if (cache.canAttachStub() && !cache.attachAddSlot(ncx, ion, nobj, oldShape, oldType, checkTypeset))
             return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
     }
 
@@ -2983,7 +2991,7 @@ SetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject ob
 }
 
 bool
-SetPropertyParIC::attachSetSlot(LockedJSContext &cx, IonScript *ion, HandleObject obj,
+SetPropertyParIC::attachSetSlot(LockedJSContext &cx, IonScript *ion, HandleNativeObject obj,
                                 HandleShape shape, bool checkTypeset)
 {
     MacroAssembler masm(cx, ion);
@@ -2994,7 +3002,7 @@ SetPropertyParIC::attachSetSlot(LockedJSContext &cx, IonScript *ion, HandleObjec
 }
 
 bool
-SetPropertyParIC::attachAddSlot(LockedJSContext &cx, IonScript *ion, HandleObject obj,
+SetPropertyParIC::attachAddSlot(LockedJSContext &cx, IonScript *ion, HandleNativeObject obj,
                                 HandleShape oldShape, HandleTypeObject oldType, bool checkTypeset)
 {
     MOZ_ASSERT_IF(!needsTypeBarrier(), !checkTypeset);
@@ -3038,7 +3046,7 @@ GetElementIC::attachGetProp(JSContext *cx, HandleScript outerScript, IonScript *
 {
     MOZ_ASSERT(index().reg().hasValue());
 
-    RootedObject holder(cx);
+    RootedNativeObject holder(cx);
     RootedShape shape(cx);
 
     GetPropertyIC::NativeGetPropCacheability canCache =
@@ -3165,7 +3173,7 @@ GenerateDenseElement(JSContext *cx, MacroAssembler &masm, IonCache::StubAttacher
 
     // Load elements vector.
     masm.push(object);
-    masm.loadPtr(Address(object, JSObject::offsetOfElements()), object);
+    masm.loadPtr(Address(object, NativeObject::offsetOfElements()), object);
 
     Label hole;
 
@@ -3673,7 +3681,7 @@ GenerateSetDenseElement(JSContext *cx, MacroAssembler &masm, IonCache::StubAttac
     {
         // Load obj->elements.
         Register elements = temp;
-        masm.loadPtr(Address(object, JSObject::offsetOfElements()), elements);
+        masm.loadPtr(Address(object, NativeObject::offsetOfElements()), elements);
 
         // Compute the location of the element.
         BaseIndex target(elements, index, TimesEight);
@@ -3964,7 +3972,7 @@ SetElementParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject obj
 
 bool
 GetElementParIC::attachReadSlot(LockedJSContext &cx, IonScript *ion, HandleObject obj,
-                                const Value &idval, HandlePropertyName name, HandleObject holder,
+                                const Value &idval, HandlePropertyName name, HandleNativeObject holder,
                                 HandleShape shape)
 {
     MacroAssembler masm(cx, ion);
@@ -4040,7 +4048,7 @@ GetElementParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject obj
                 GetElementIC::canAttachGetProp(obj, idval, id))
             {
                 RootedShape shape(ncx);
-                RootedObject holder(ncx);
+                RootedNativeObject holder(ncx);
                 RootedPropertyName name(ncx, JSID_TO_ATOM(id)->asPropertyName());
 
                 GetPropertyIC::NativeGetPropCacheability canCache =
@@ -4245,7 +4253,7 @@ BindNameIC::update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain)
 bool
 NameIC::attachReadSlot(JSContext *cx, HandleScript outerScript, IonScript *ion,
                        HandleObject scopeChain, HandleObject holderBase,
-                       HandleObject holder, HandleShape shape)
+                       HandleNativeObject holder, HandleShape shape)
 {
     MacroAssembler masm(cx, ion, outerScript, profilerLeavePc_);
     Label failures;
@@ -4381,8 +4389,11 @@ NameIC::update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain,
 
     if (cache.canAttachStub()) {
         if (IsCacheableNameReadSlot(scopeChain, obj, holder, shape, pc, cache.outputReg())) {
-            if (!cache.attachReadSlot(cx, outerScript, ion, scopeChain, obj, holder, shape))
+            if (!cache.attachReadSlot(cx, outerScript, ion, scopeChain, obj,
+                                      holder.as<NativeObject>(), shape))
+            {
                 return false;
+            }
         } else if (IsCacheableNameCallGetter(scopeChain, obj, holder, shape)) {
             if (!cache.attachCallGetter(cx, outerScript, ion, scopeChain, obj, holder, shape, returnAddr))
                 return false;

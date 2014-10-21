@@ -7,6 +7,7 @@
 #define MOZILLA_GFX_GRALLOCTEXTUREHOST_H
 #ifdef MOZ_WIDGET_GONK
 
+#include "mozilla/layers/CompositorOGL.h"
 #include "mozilla/layers/TextureHostOGL.h"
 #include "mozilla/layers/ShadowLayerUtilsGralloc.h"
 #include <ui/GraphicBuffer.h>
@@ -16,7 +17,7 @@ namespace layers {
 
 class GrallocTextureHostOGL;
 
-class GrallocTextureSourceOGL : public NewTextureSource
+class GrallocTextureSourceOGL : public TextureSource
                               , public TextureSourceOGL
 {
 public:
@@ -75,7 +76,7 @@ public:
 
 protected:
   RefPtr<TextureSharedDataGonkOGL> mTextureBackendSpecificData;
-  CompositorOGL* mCompositor;
+  RefPtr<CompositorOGL> mCompositor;
   GrallocTextureHostOGL* mTextureHost;
   android::sp<android::GraphicBuffer> mGraphicBuffer;
   EGLImage mEGLImage;
@@ -116,7 +117,7 @@ public:
 
   virtual LayerRenderState GetRenderState() MOZ_OVERRIDE;
 
-  virtual NewTextureSource* GetTextureSources() MOZ_OVERRIDE
+  virtual TextureSource* GetTextureSources() MOZ_OVERRIDE
   {
     return mTextureSource;
   }

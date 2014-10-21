@@ -204,7 +204,7 @@ JS_GetTraceThingInfo(char *buf, size_t bufsize, JSTracer *trc, void *thing,
                     PutEscapedString(buf, bufsize, fun->displayAtom(), 0);
                 }
             } else if (obj->getClass()->flags & JSCLASS_HAS_PRIVATE) {
-                JS_snprintf(buf, bufsize, " %p", obj->getPrivate());
+                JS_snprintf(buf, bufsize, " %p", obj->as<NativeObject>().getPrivate());
             } else {
                 JS_snprintf(buf, bufsize, " <no private>");
             }
@@ -587,7 +587,7 @@ GCMarker::checkZone(void *p)
 {
     MOZ_ASSERT(started);
     DebugOnly<Cell *> cell = static_cast<Cell *>(p);
-    MOZ_ASSERT_IF(cell->isTenured(), cell->asTenured()->zone()->isCollecting());
+    MOZ_ASSERT_IF(cell->isTenured(), cell->asTenured().zone()->isCollecting());
 }
 #endif
 

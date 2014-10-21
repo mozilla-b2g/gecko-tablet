@@ -19,10 +19,27 @@ class nsFontFaceLoader;
 
 //#define DEBUG_USERFONT_CACHE
 
+class gfxFontFaceBufferSource
+{
+  NS_INLINE_DECL_REFCOUNTING(gfxFontFaceBufferSource)
+public:
+  virtual void TakeBuffer(uint8_t*& aBuffer, uint32_t& aLength) = 0;
+
+protected:
+  virtual ~gfxFontFaceBufferSource() {}
+};
+
 // parsed CSS @font-face rule information
 // lifetime: from when @font-face rule processed until font is loaded
 struct gfxFontFaceSrc {
-    bool                   mIsLocal;       // url or local
+
+    enum SourceType {
+        eSourceType_Local,
+        eSourceType_URL,
+        eSourceType_Buffer
+    };
+
+    SourceType             mSourceType;
 
     // if url, whether to use the origin principal or not
     bool                   mUseOriginPrincipal;
@@ -36,20 +53,33 @@ struct gfxFontFaceSrc {
     nsCOMPtr<nsIURI>       mURI;           // uri if url
     nsCOMPtr<nsIURI>       mReferrer;      // referrer url if url
     nsCOMPtr<nsIPrincipal> mOriginPrincipal; // principal if url
+
+    nsRefPtr<gfxFontFaceBufferSource> mBuffer;
 };
 
 inline bool
 operator==(const gfxFontFaceSrc& a, const gfxFontFaceSrc& b)
 {
-    bool equals;
-    return (a.mIsLocal && b.mIsLocal &&
-            a.mLocalName == b.mLocalName) ||
-           (!a.mIsLocal && !b.mIsLocal &&
-            a.mUseOriginPrincipal == b.mUseOriginPrincipal &&
-            a.mFormatFlags == b.mFormatFlags &&
-            NS_SUCCEEDED(a.mURI->Equals(b.mURI, &equals)) && equals &&
-            NS_SUCCEEDED(a.mReferrer->Equals(b.mReferrer, &equals)) && equals &&
-            a.mOriginPrincipal->Equals(b.mOriginPrincipal));
+    if (a.mSourceType != b.mSourceType) {
+        return false;
+    }
+    switch (a.mSourceType) {
+        case gfxFontFaceSrc::eSourceType_Local:
+            return a.mLocalName == b.mLocalName;
+        case gfxFontFaceSrc::eSourceType_URL: {
+            bool equals;
+            return a.mUseOriginPrincipal == b.mUseOriginPrincipal &&
+                   a.mFormatFlags == b.mFormatFlags &&
+                   NS_SUCCEEDED(a.mURI->Equals(b.mURI, &equals)) && equals &&
+                   NS_SUCCEEDED(a.mReferrer->Equals(b.mReferrer, &equals)) &&
+                     equals &&
+                   a.mOriginPrincipal->Equals(b.mOriginPrincipal);
+        }
+        case gfxFontFaceSrc::eSourceType_Buffer:
+            return a.mBuffer == b.mBuffer;
+    }
+    NS_WARNING("unexpected mSourceType");
+    return false;
 }
 
 // Subclassed to store platform-specific code cleaned out when font entry is
@@ -62,7 +92,8 @@ class gfxUserFontData {
 public:
     gfxUserFontData()
         : mSrcIndex(0), mFormat(0), mMetaOrigLen(0),
-          mCRC32(0), mLength(0), mPrivate(false)
+          mCRC32(0), mLength(0), mCompression(kUnknownCompression),
+          mPrivate(false), mIsBuffer(false)
     { }
     virtual ~gfxUserFontData() { }
 
@@ -76,7 +107,15 @@ public:
     uint32_t          mMetaOrigLen; // length needed to decompress metadata
     uint32_t          mCRC32;     // Checksum
     uint32_t          mLength;    // Font length
+    uint8_t           mCompression; // compression type
     bool              mPrivate;   // whether font belongs to a private window
+    bool              mIsBuffer;  // whether the font source was a buffer
+
+    enum {
+        kUnknownCompression = 0,
+        kZlibCompression = 1,
+        kBrotliCompression = 2
+    };
 };
 
 // initially contains a set of userfont font entry objects, replaced with
@@ -142,9 +181,16 @@ public:
         FLAG_FORMAT_EOT            = 1 << 4,
         FLAG_FORMAT_SVG            = 1 << 5,
         FLAG_FORMAT_WOFF           = 1 << 6,
+        FLAG_FORMAT_WOFF2          = 1 << 7,
+
+        // the common formats that we support everywhere
+        FLAG_FORMATS_COMMON        = FLAG_FORMAT_OPENTYPE |
+                                     FLAG_FORMAT_TRUETYPE |
+                                     FLAG_FORMAT_WOFF     |
+                                     FLAG_FORMAT_WOFF2,
 
         // mask of all unused bits, update when adding new formats
-        FLAG_FORMAT_NOT_USED       = ~((1 << 7)-1)
+        FLAG_FORMAT_NOT_USED       = ~((1 << 8)-1)
     };
 
 
@@ -154,18 +200,18 @@ public:
     // italic style = constants in gfxFontConstants.h, e.g. NS_FONT_STYLE_NORMAL
     // language override = result of calling gfxFontStyle::ParseFontLanguageOverride
     // TODO: support for unicode ranges not yet implemented
-    already_AddRefed<gfxUserFontEntry> CreateFontFace(
+    virtual already_AddRefed<gfxUserFontEntry> CreateUserFontEntry(
                               const nsTArray<gfxFontFaceSrc>& aFontFaceSrcList,
                               uint32_t aWeight,
                               int32_t aStretch,
                               uint32_t aItalicStyle,
                               const nsTArray<gfxFontFeature>& aFeatureSettings,
                               uint32_t aLanguageOverride,
-                              gfxSparseBitSet* aUnicodeRanges);
+                              gfxSparseBitSet* aUnicodeRanges) = 0;
 
     // creates a font face for the specified family, or returns an existing
     // matching entry on the family if there is one
-    already_AddRefed<gfxUserFontEntry> FindOrCreateFontFace(
+    already_AddRefed<gfxUserFontEntry> FindOrCreateUserFontEntry(
                                const nsAString& aFamilyName,
                                const nsTArray<gfxFontFaceSrc>& aFontFaceSrcList,
                                uint32_t aWeight,
@@ -176,8 +222,8 @@ public:
                                gfxSparseBitSet* aUnicodeRanges);
 
     // add in a font face for which we have the gfxUserFontEntry already
-    void AddFontFace(const nsAString& aFamilyName,
-                     gfxUserFontEntry* aUserFontEntry);
+    void AddUserFontEntry(const nsAString& aFamilyName,
+                          gfxUserFontEntry* aUserFontEntry);
 
     // Whether there is a face with this family name
     bool HasFamily(const nsAString& aFamilyName) const
@@ -421,6 +467,10 @@ public:
         mLocalRulesUsed = true;
     }
 
+#ifdef PR_LOGGING
+    static PRLogModuleInfo* GetUserFontsLog();
+#endif
+
 protected:
     // Protected destructor, to discourage deletion outside of Release():
     virtual ~gfxUserFontSet();
@@ -443,7 +493,7 @@ protected:
     // helper method for performing the actual userfont set rebuild
     virtual void DoRebuildUserFontSet() = 0;
 
-    // helper method for FindOrCreateFontFace
+    // helper method for FindOrCreateUserFontEntry
     gfxUserFontEntry* FindExistingUserFontEntry(
                                    gfxUserFontFamily* aFamily,
                                    const nsTArray<gfxFontFaceSrc>& aFontFaceSrcList,
@@ -466,8 +516,6 @@ protected:
 
     // true when local names have been looked up, false otherwise
     bool mLocalRulesUsed;
-
-    static PRLogModuleInfo* GetUserFontsLog();
 };
 
 // acts a placeholder until the real font is downloaded
@@ -524,17 +572,26 @@ public:
     // a valid font resource is found or all sources fail
     void Load();
 
+    // methods to expose some information to FontFaceSet::UserFontSet
+    // since we can't make that class a friend
+    void SetLoader(nsFontFaceLoader* aLoader) { mLoader = aLoader; }
+    nsFontFaceLoader* GetLoader() { return mLoader; }
+    nsIPrincipal* GetPrincipal() { return mPrincipal; }
+    uint32_t GetSrcIndex() { return mSrcIndex; }
+    void GetFamilyNameAndURIForLogging(nsACString& aFamilyName,
+                                       nsACString& aURI);
+
 protected:
     const uint8_t* SanitizeOpenTypeData(const uint8_t* aData,
                                         uint32_t aLength,
                                         uint32_t& aSaneLength,
-                                        bool aIsCompressed);
+                                        gfxUserFontType aFontType);
 
     // attempt to load the next resource in the src list.
     void LoadNextSrc();
 
     // change the load state
-    void SetLoadState(UserFontLoadState aLoadState);
+    virtual void SetLoadState(UserFontLoadState aLoadState);
 
     // when download has been completed, pass back data here
     // aDownloadStatus == NS_OK ==> download succeeded, error otherwise
@@ -556,7 +613,8 @@ protected:
                            bool               aPrivate,
                            const nsAString&   aOriginalName,
                            FallibleTArray<uint8_t>* aMetadata,
-                           uint32_t           aMetaOrigLen);
+                           uint32_t           aMetaOrigLen,
+                           uint8_t            aCompression);
 
     // general load state
     UserFontLoadState        mUserFontLoadState;

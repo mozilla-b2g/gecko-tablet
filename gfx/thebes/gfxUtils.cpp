@@ -593,17 +593,6 @@ gfxUtils::DrawPixelSnapped(gfxContext*         aContext,
                                      imageRect.Width(), imageRect.Height(),
                                      region.Width(), region.Height());
 
-    if (aRegion.IsRestricted() &&
-        aContext->CurrentMatrix().HasNonIntegerTranslation() &&
-        drawable->DrawWithSamplingRect(aContext, aRegion.Rect(), aRegion.Restriction(),
-                                       doTile, aFilter, aOpacity)) {
-      return;
-    }
-
-    // On Mobile, we don't ever want to do this; it has the potential for
-    // allocating very large temporary surfaces, especially since we'll
-    // do full-page snapshots often (see bug 749426).
-#ifndef MOZ_GFX_OPTIMIZE_MOBILE
     // OK now, the hard part left is to account for the subimage sampling
     // restriction. If all the transforms involved are just integer
     // translations, then we assume no resampling will occur so there's
@@ -611,19 +600,29 @@ gfxUtils::DrawPixelSnapped(gfxContext*         aContext,
     // XXX if only we had source-clipping in cairo!
     if (aContext->CurrentMatrix().HasNonIntegerTranslation()) {
         if (doTile || !aRegion.RestrictionContains(imageRect)) {
+            if (drawable->DrawWithSamplingRect(aContext, aRegion.Rect(), aRegion.Restriction(),
+                                               doTile, aFilter, aOpacity)) {
+              return;
+            }
+
+            // On Mobile, we don't ever want to do this; it has the potential for
+            // allocating very large temporary surfaces, especially since we'll
+            // do full-page snapshots often (see bug 749426).
+#ifndef MOZ_GFX_OPTIMIZE_MOBILE
             nsRefPtr<gfxDrawable> restrictedDrawable =
               CreateSamplingRestrictedDrawable(aDrawable, aContext,
                                                aRegion, aFormat);
             if (restrictedDrawable) {
                 drawable.swap(restrictedDrawable);
             }
-        }
-        // We no longer need to tile: Either we never needed to, or we already
-        // filled a surface with the tiled pattern; this surface can now be
-        // drawn without tiling.
-        doTile = false;
-    }
+
+            // We no longer need to tile: Either we never needed to, or we already
+            // filled a surface with the tiled pattern; this surface can now be
+            // drawn without tiling.
+            doTile = false;
 #endif
+        }
+    }
 
     drawable->Draw(aContext, aRegion.Rect(), doTile, aFilter, aOpacity);
 }
@@ -1350,3 +1349,36 @@ bool gfxUtils::sDumpPainting = getenv("MOZ_DUMP_PAINT") != 0;
 bool gfxUtils::sDumpPaintingToFile = getenv("MOZ_DUMP_PAINT_TO_FILE") != 0;
 FILE *gfxUtils::sDumpPaintFile = nullptr;
 #endif
+
+namespace mozilla {
+namespace gfx {
+
+Color ToDeviceColor(Color aColor)
+{
+  // aColor is pass-by-value since to get return value optimization goodness we
+  // need to return the same object from all return points in this function. We
+  // could declare a local Color variable and use that, but we might as well
+  // just use aColor.
+  if (gfxPlatform::GetCMSMode() == eCMSMode_All) {
+    qcms_transform *transform = gfxPlatform::GetCMSRGBTransform();
+    if (transform) {
+      gfxPlatform::TransformPixel(aColor, aColor, transform);
+      // Use the original alpha to avoid unnecessary float->byte->float
+      // conversion errors
+    }
+  }
+  return aColor;
+}
+
+Color ToDeviceColor(nscolor aColor)
+{
+  return ToDeviceColor(Color::FromABGR(aColor));
+}
+
+Color ToDeviceColor(const gfxRGBA& aColor)
+{
+  return ToDeviceColor(ToColor(aColor));
+}
+
+} // namespace gfx
+} // namespace mozilla

@@ -166,18 +166,17 @@ public:
   /**
    * Query the transforms that should be applied to the layer corresponding
    * to this APZC due to asynchronous panning and zooming.
-   * This function returns two transforms via out parameters:
-   *   |aOutTransform| is the transform due to regular panning and zooming
-   *   |aOverscrollTransform| is the transform due to overscrolling
-   * The two are separated because some clients want to ignore the overscroll
-   * transform for some purposes (and for convenience to these clients, the
-   * overscroll transform parameter may be nullptr). Clients who do not want
-   * to ignore the overscroll transform should multiply the two transforms
-   * together.
+   * This function returns the async transform via the |aOutTransform|
+   * out parameter.
    */
   void SampleContentTransformForFrame(ViewTransform* aOutTransform,
-                                      ScreenPoint& aScrollOffset,
-                                      Matrix4x4* aOutOverscrollTransform);
+                                      ScreenPoint& aScrollOffset);
+
+  /**
+   * Return a visual effect that reflects this apzc's
+   * overscrolled state, if any.
+   */
+  Matrix4x4 GetOverscrollTransform() const;
 
   /**
    * A shadow layer update has arrived. |aLayerMetrics| is the new FrameMetrics
@@ -328,6 +327,12 @@ public:
    * Returns whether this APZC has room to be panned (in any direction).
    */
   bool IsPannable() const;
+
+  /**
+   * Returns true if the APZC has a velocity greater than the stop-on-tap
+   * fling velocity threshold (which is pref-controlled).
+   */
+  bool IsMovingFast() const;
 
   /**
    * Returns the identifier of the touch in the last touch event processed by
@@ -492,7 +497,7 @@ protected:
   /**
    * Gets a vector of the velocities of each axis.
    */
-  const ScreenPoint GetVelocityVector();
+  const ScreenPoint GetVelocityVector() const;
 
   /**
    * Gets the first touch point from a MultiTouchInput.  This gets only
@@ -594,12 +599,6 @@ private:
    * document before sending over IPC.
    */
   bool ConvertToGecko(const ScreenPoint& aPoint, CSSPoint* aOut);
-
-  /**
-   * Return in |aTransform| a visual effect that reflects this apzc's
-   * overscrolled state, if any.
-   */
-  void GetOverscrollTransform(Matrix4x4* aTransform) const;
 
   enum AxisLockMode {
     FREE,     /* No locking at all */

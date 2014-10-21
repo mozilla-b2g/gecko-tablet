@@ -23,6 +23,7 @@
 #include "vm/SavedStacks.h"
 
 #include "vm/Debugger-inl.h"
+#include "vm/NativeObject-inl.h"
 
 using namespace js;
 
@@ -38,8 +39,8 @@ DebuggerMemory::create(JSContext *cx, Debugger *dbg)
 {
 
     Value memoryProto = dbg->object->getReservedSlot(Debugger::JSSLOT_DEBUG_MEMORY_PROTO);
-    RootedObject memory(cx, NewObjectWithGivenProto(cx, &class_,
-                                                    &memoryProto.toObject(), nullptr));
+    RootedNativeObject memory(cx, NewNativeObjectWithGivenProto(cx, &class_,
+                                                                &memoryProto.toObject(), nullptr));
     if (!memory)
         return nullptr;
 
@@ -99,7 +100,7 @@ DebuggerMemory::checkThis(JSContext *cx, CallArgs &args, const char *fnName)
     // Debugger.Memory instances, however doesn't actually represent an instance
     // of Debugger.Memory. It is the only object that is<DebuggerMemory>() but
     // doesn't have a Debugger instance.
-    if (thisObject.getReservedSlot(JSSLOT_DEBUGGER).isUndefined()) {
+    if (thisObject.as<DebuggerMemory>().getReservedSlot(JSSLOT_DEBUGGER).isUndefined()) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_INCOMPATIBLE_PROTO,
                              class_.name, fnName, "prototype object");
         return nullptr;
@@ -192,15 +193,27 @@ DebuggerMemory::drainAllocationsLog(JSContext *cx, unsigned argc, Value *vp)
 
     size_t length = dbg->allocationsLogLength;
 
-    RootedObject result(cx, NewDenseFullyAllocatedArray(cx, length));
+    RootedArrayObject result(cx, NewDenseFullyAllocatedArray(cx, length));
     if (!result)
         return false;
     result->ensureDenseInitializedLength(cx, 0, length);
 
     for (size_t i = 0; i < length; i++) {
-        Debugger::AllocationSite *allocSite = dbg->allocationsLog.popFirst();
-        result->setDenseElement(i, ObjectOrNullValue(allocSite->frame));
-        js_delete(allocSite);
+        RootedObject obj(cx, NewBuiltinClassInstance(cx, &JSObject::class_));
+        if (!obj)
+            return false;
+
+        mozilla::UniquePtr<Debugger::AllocationSite, JS::DeletePolicy<Debugger::AllocationSite> >
+            allocSite(dbg->allocationsLog.popFirst());
+        RootedValue frame(cx, ObjectOrNullValue(allocSite->frame));
+        if (!JSObject::defineProperty(cx, obj, cx->names().frame, frame))
+            return false;
+
+        RootedValue timestampValue(cx, NumberValue(allocSite->when));
+        if (!JSObject::defineProperty(cx, obj, cx->names().timestamp, timestampValue))
+            return false;
+
+        result->setDenseElement(i, ObjectValue(*obj));
     }
 
     dbg->allocationsLogLength = 0;

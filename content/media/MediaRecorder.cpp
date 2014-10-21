@@ -15,11 +15,11 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/AudioStreamTrack.h"
 #include "mozilla/dom/BlobEvent.h"
+#include "mozilla/dom/File.h"
 #include "mozilla/dom/RecordErrorEvent.h"
 #include "mozilla/dom/VideoStreamTrack.h"
 #include "nsError.h"
 #include "nsIDocument.h"
-#include "nsIDOMFile.h"
 #include "nsIPrincipal.h"
 #include "nsMimeTypes.h"
 #include "nsProxyRelease.h"
@@ -386,10 +386,24 @@ public:
     return NS_OK;
   }
 
+  nsresult RequestData()
+  {
+    LOG(PR_LOG_DEBUG, ("Session.RequestData"));
+    MOZ_ASSERT(NS_IsMainThread());
+
+    if (NS_FAILED(NS_DispatchToMainThread(new PushBlobRunnable(this)))) {
+      MOZ_ASSERT(false, "RequestData NS_DispatchToMainThread failed");
+      return NS_ERROR_FAILURE;
+    }
+
+    return NS_OK;
+  }
+
   already_AddRefed<nsIDOMBlob> GetEncodedData()
   {
     MOZ_ASSERT(NS_IsMainThread());
-    return mEncodedBufferCache->ExtractBlob(mMimeType);
+    return mEncodedBufferCache->ExtractBlob(mRecorder->GetParentObject(),
+                                            mMimeType);
   }
 
   bool IsEncoderError()
@@ -815,25 +829,6 @@ MediaRecorder::Resume(ErrorResult& aResult)
   mState = RecordingState::Recording;
 }
 
-class CreateAndDispatchBlobEventRunnable : public nsRunnable {
-  nsCOMPtr<nsIDOMBlob> mBlob;
-  nsRefPtr<MediaRecorder> mRecorder;
-public:
-  CreateAndDispatchBlobEventRunnable(already_AddRefed<nsIDOMBlob>&& aBlob,
-                                     MediaRecorder* aRecorder)
-    : mBlob(aBlob), mRecorder(aRecorder)
-  { }
-
-  NS_IMETHOD
-  Run();
-};
-
-NS_IMETHODIMP
-CreateAndDispatchBlobEventRunnable::Run()
-{
-  return mRecorder->CreateAndDispatchBlobEvent(mBlob.forget());
-}
-
 void
 MediaRecorder::RequestData(ErrorResult& aResult)
 {
@@ -842,10 +837,9 @@ MediaRecorder::RequestData(ErrorResult& aResult)
     return;
   }
   MOZ_ASSERT(mSessions.Length() > 0);
-  if (NS_FAILED(NS_DispatchToMainThread(
-                  new CreateAndDispatchBlobEventRunnable(
-                    mSessions.LastElement()->GetEncodedData(), this)))) {
-    MOZ_ASSERT(false, "NS_DispatchToMainThread CreateAndDispatchBlobEventRunnable failed");
+  nsresult rv = mSessions.LastElement()->RequestData();
+  if (NS_FAILED(rv)) {
+    NotifyError(rv);
   }
 }
 
@@ -920,7 +914,10 @@ MediaRecorder::CreateAndDispatchBlobEvent(already_AddRefed<nsIDOMBlob>&& aBlob)
   BlobEventInit init;
   init.mBubbles = false;
   init.mCancelable = false;
-  init.mData = aBlob;
+
+  nsCOMPtr<nsIDOMBlob> blob = aBlob;
+  init.mData = static_cast<File*>(blob.get());
+
   nsRefPtr<BlobEvent> event =
     BlobEvent::Constructor(this,
                            NS_LITERAL_STRING("dataavailable"),

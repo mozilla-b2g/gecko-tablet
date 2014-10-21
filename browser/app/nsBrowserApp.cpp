@@ -274,10 +274,7 @@ static int do_main(int argc, char* argv[], nsIFile *xreDirectory)
     nsCOMPtr<nsIFile> greDir;
     exeFile->GetParent(getter_AddRefs(greDir));
 #ifdef XP_MACOSX
-    nsCOMPtr<nsIFile> parent;
-    greDir->GetParent(getter_AddRefs(parent));
-    greDir = parent.forget();
-    greDir->AppendNative(NS_LITERAL_CSTRING(kOSXResourcesFolder));
+    greDir->SetNativeLeafName(NS_LITERAL_CSTRING(kOSXResourcesFolder));
 #endif
     nsCOMPtr<nsIFile> appSubdir;
     greDir->Clone(getter_AddRefs(appSubdir));
@@ -568,7 +565,11 @@ InitXPCOMGlue(const char *argv0, nsIFile **xreDirectory)
     return rv;
   }
 
+#ifndef MOZ_METRO
+  // This will set this thread as the main thread, which in metro land is
+  // wrong. We initialize this later from the right thread in nsAppRunner.
   NS_LogInit();
+#endif
 
   // chop XPCOM_DLL off exePath
   *lastSlash = '\0';

@@ -31,6 +31,10 @@
 #include "nsContentUtils.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIObserverService.h"
+#include "nsProxyRelease.h"
+#include "nsPIDOMWindow.h"
+#include "nsPerformance.h"
+#include "nsINetworkInterceptController.h"
 
 #include <algorithm>
 
@@ -66,6 +70,7 @@ HttpBaseChannel::HttpBaseChannel()
   , mResponseTimeoutEnabled(true)
   , mAllRedirectsSameOrigin(true)
   , mAllRedirectsPassTimingAllowCheck(true)
+  , mForceNoIntercept(false)
   , mSuspendCount(0)
   , mProxyResolveFlags(0)
   , mContentDispositionHint(UINT32_MAX)
@@ -83,6 +88,15 @@ HttpBaseChannel::HttpBaseChannel()
 HttpBaseChannel::~HttpBaseChannel()
 {
   LOG(("Destroying HttpBaseChannel @%x\n", this));
+
+  if (mLoadInfo) {
+    nsCOMPtr<nsIThread> mainThread;
+    NS_GetMainThread(getter_AddRefs(mainThread));
+    
+    nsILoadInfo *forgetableLoadInfo;
+    mLoadInfo.forget(&forgetableLoadInfo);
+    NS_ProxyRelease(mainThread, forgetableLoadInfo, false);
+  }
 
   // Make sure we don't leak
   CleanRedirectCacheChainIfNecessary();
@@ -1652,6 +1666,12 @@ HttpBaseChannel::GetLastModifiedTime(PRTime* lastModifiedTime)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+HttpBaseChannel::ForceNoIntercept()
+{
+  mForceNoIntercept = true;
+  return NS_OK;
+}
 
 //-----------------------------------------------------------------------------
 // HttpBaseChannel::nsISupportsPriority
@@ -1753,6 +1773,19 @@ HttpBaseChannel::GetPrincipal(bool requireAppId)
   }
 
   return mPrincipal;
+}
+
+bool
+HttpBaseChannel::ShouldIntercept()
+{
+  nsCOMPtr<nsINetworkInterceptController> controller;
+  GetCallback(controller);
+  bool shouldIntercept = false;
+  if (controller && !mForceNoIntercept) {
+    nsresult rv = controller->ShouldPrepareForIntercept(mURI, &shouldIntercept);
+    NS_ENSURE_SUCCESS(rv, false);
+  }
+  return shouldIntercept;
 }
 
 // nsIRedirectHistory
@@ -2360,6 +2393,45 @@ IMPL_TIMING_ATTR(RedirectEnd)
 
 #undef IMPL_TIMING_ATTR
 
+nsPerformance*
+HttpBaseChannel::GetPerformance()
+{
+    // If performance timing is disabled, there is no need for the nsPerformance
+    // object anymore.
+    if (!mTimingEnabled) {
+        return nullptr;
+    }
+    nsCOMPtr<nsILoadContext> loadContext;
+    NS_QueryNotificationCallbacks(this, loadContext);
+    if (!loadContext) {
+        return nullptr;
+    }
+    nsCOMPtr<nsIDOMWindow> domWindow;
+    loadContext->GetAssociatedWindow(getter_AddRefs(domWindow));
+    if (!domWindow) {
+        return nullptr;
+    }
+    nsCOMPtr<nsPIDOMWindow> pDomWindow = do_QueryInterface(domWindow);
+    if (!pDomWindow) {
+        return nullptr;
+    }
+    if (!pDomWindow->IsInnerWindow()) {
+        pDomWindow = pDomWindow->GetCurrentInnerWindow();
+        if (!pDomWindow) {
+            return nullptr;
+        }
+    }
+
+    nsPerformance* docPerformance = pDomWindow->GetPerformance();
+    if (!docPerformance) {
+      return nullptr;
+    }
+    // iframes should be added to the parent's entries list.
+    if (mLoadFlags & LOAD_DOCUMENT_URI) {
+      return docPerformance->GetParentPerformance();
+    }
+    return docPerformance;
+}
 
 //------------------------------------------------------------------------------
 

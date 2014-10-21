@@ -21,7 +21,6 @@
 #include "imgRequestProxy.h"
 #include "jsapi.h"
 #include "jsfriendapi.h"
-#include "js/OldDebugAPI.h"
 #include "js/Value.h"
 #include "Layers.h"
 #include "MediaDecoder.h"
@@ -60,7 +59,6 @@
 #include "nsAttrValueInlines.h"
 #include "nsBindingManager.h"
 #include "nsCCUncollectableMarker.h"
-#include "nsChannelPolicy.h"
 #include "nsCharSeparatedTokenizer.h"
 #include "nsCOMPtr.h"
 #include "nsContentCreatorFunctions.h"
@@ -89,7 +87,7 @@
 #include "nsIAsyncVerifyRedirectCallback.h"
 #include "nsICategoryManager.h"
 #include "nsIChannelEventSink.h"
-#include "nsIChannelPolicy.h"
+#include "nsICharsetDetectionObserver.h"
 #include "nsIChromeRegistry.h"
 #include "nsIConsoleService.h"
 #include "nsIContent.h"
@@ -2025,6 +2023,10 @@ nsContentUtils::GetCrossDocParentNode(nsINode* aChild)
   NS_PRECONDITION(aChild, "The child is null!");
 
   nsINode* parent = aChild->GetParentNode();
+  if (parent && parent->IsContent() && aChild->IsContent()) {
+    parent = aChild->AsContent()->GetFlattenedTreeParent();
+  }
+
   if (parent || !aChild->IsNodeOfType(nsINode::eDOCUMENT))
     return parent;
 
@@ -2082,12 +2084,6 @@ nsContentUtils::ContentIsCrossDocDescendantOf(nsINode* aPossibleDescendant,
   do {
     if (aPossibleDescendant == aPossibleAncestor)
       return true;
-
-    // Step over shadow root to the host node.
-    ShadowRoot* shadowRoot = ShadowRoot::FromNode(aPossibleDescendant);
-    if (shadowRoot) {
-      aPossibleDescendant = shadowRoot->GetHost();
-    }
 
     aPossibleDescendant = GetCrossDocParentNode(aPossibleDescendant);
   } while (aPossibleDescendant);
@@ -2455,7 +2451,8 @@ nsContentUtils::GenerateStateKey(nsIContent* aContent,
     return NS_OK;
   }
 
-  nsCOMPtr<nsIHTMLDocument> htmlDocument(do_QueryInterface(aContent->GetCurrentDoc()));
+  nsCOMPtr<nsIHTMLDocument> htmlDocument =
+    do_QueryInterface(aContent->GetUncomposedDoc());
 
   KeyAppendInt(partID, aKey);  // first append a partID
   bool generatedUniqueKey = false;
@@ -2465,7 +2462,7 @@ nsContentUtils::GenerateStateKey(nsIContent* aContent,
     // If this becomes unnecessary and the following line is removed,
     // please also remove the corresponding flush operation from
     // nsHtml5TreeBuilderCppSupplement.h. (Look for "See bug 497861." there.)
-    aContent->GetCurrentDoc()->FlushPendingNotifications(Flush_Content);
+    aContent->GetUncomposedDoc()->FlushPendingNotifications(Flush_Content);
 
     nsContentList *htmlForms = htmlDocument->GetForms();
     nsContentList *htmlFormControls = htmlDocument->GetFormControls();
@@ -2849,7 +2846,7 @@ nsContentUtils::SplitExpatName(const char16_t *aExpatName, nsIAtom **aPrefix,
 nsPresContext*
 nsContentUtils::GetContextForContent(const nsIContent* aContent)
 {
-  nsIDocument* doc = aContent->GetCurrentDoc();
+  nsIDocument* doc = aContent->GetComposedDoc();
   if (doc) {
     nsIPresShell *presShell = doc->GetShell();
     if (presShell) {
@@ -3008,20 +3005,6 @@ nsContentUtils::LoadImage(nsIURI* aURI, nsIDocument* aLoadingDocument,
   NS_ASSERTION(loadGroup || IsFontTableURI(documentURI),
                "Could not get loadgroup; onload may fire too early");
 
-  // check for a Content Security Policy to pass down to the channel that
-  // will get created to load the image
-  nsCOMPtr<nsIChannelPolicy> channelPolicy;
-  nsCOMPtr<nsIContentSecurityPolicy> csp;
-  if (aLoadingPrincipal) {
-    nsresult rv = aLoadingPrincipal->GetCsp(getter_AddRefs(csp));
-    NS_ENSURE_SUCCESS(rv, rv);
-    if (csp) {
-      channelPolicy = do_CreateInstance("@mozilla.org/nschannelpolicy;1");
-      channelPolicy->SetContentSecurityPolicy(csp);
-      channelPolicy->SetLoadType(nsIContentPolicy::TYPE_IMAGE);
-    }
-  }
-    
   // Make the URI immutable so people won't change it under us
   NS_TryToSetImmutable(aURI);
 
@@ -3036,7 +3019,6 @@ nsContentUtils::LoadImage(nsIURI* aURI, nsIDocument* aLoadingDocument,
                               aLoadingDocument,     /* uniquification key */
                               aLoadFlags,           /* load flags */
                               nullptr,               /* cache key */
-                              channelPolicy,        /* CSP info */
                               initiatorType,        /* the load initiator */
                               aRequest);
 }
@@ -3238,7 +3220,8 @@ static const char gPropertiesFiles[nsContentUtils::PropertiesFile_COUNT][56] = {
   "chrome://branding/locale/brand.properties",
   "chrome://global/locale/commonDialogs.properties",
   "chrome://global/locale/mathml/mathml.properties",
-  "chrome://global/locale/security/security.properties"
+  "chrome://global/locale/security/security.properties",
+  "chrome://necko/locale/necko.properties"
 };
 
 /* static */ nsresult
@@ -4406,7 +4389,7 @@ nsContentUtils::SetNodeTextContent(nsIContent* aContent,
 
   // Might as well stick a batch around this since we're performing several
   // mutations.
-  mozAutoDocUpdate updateBatch(aContent->GetCurrentDoc(),
+  mozAutoDocUpdate updateBatch(aContent->GetComposedDoc(),
     UPDATE_CONTENT_MODEL, true);
   nsAutoMutationBatch mb;
 
@@ -5983,7 +5966,8 @@ nsContentUtils::CreateArrayBuffer(JSContext *aCx, const nsACString& aData,
 
   if (dataLen > 0) {
     NS_ASSERTION(JS_IsArrayBufferObject(*aResult), "What happened?");
-    memcpy(JS_GetArrayBufferData(*aResult), aData.BeginReading(), dataLen);
+    JS::AutoCheckCannotGC nogc;
+    memcpy(JS_GetArrayBufferData(*aResult, nogc), aData.BeginReading(), dataLen);
   }
 
   return NS_OK;
@@ -5993,20 +5977,26 @@ nsContentUtils::CreateArrayBuffer(JSContext *aCx, const nsACString& aData,
 // TODO: bug 704447: large file support
 nsresult
 nsContentUtils::CreateBlobBuffer(JSContext* aCx,
+                                 nsISupports* aParent,
                                  const nsACString& aData,
                                  JS::MutableHandle<JS::Value> aBlob)
 {
   uint32_t blobLen = aData.Length();
   void* blobData = moz_malloc(blobLen);
-  nsCOMPtr<nsIDOMBlob> blob;
+  nsRefPtr<File> blob;
   if (blobData) {
     memcpy(blobData, aData.BeginReading(), blobLen);
-    blob = mozilla::dom::DOMFile::CreateMemoryFile(blobData, blobLen,
-                                                   EmptyString());
+    blob = mozilla::dom::File::CreateMemoryFile(aParent, blobData, blobLen,
+                                                EmptyString());
   } else {
     return NS_ERROR_OUT_OF_MEMORY;
   }
-  return nsContentUtils::WrapNative(aCx, blob, aBlob);
+
+  if (!WrapNewBindingObject(aCx, blob, aBlob)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  return NS_OK;
 }
 
 void
@@ -6106,7 +6096,9 @@ nsContentUtils::IsFocusedContent(const nsIContent* aContent)
 bool
 nsContentUtils::IsSubDocumentTabbable(nsIContent* aContent)
 {
-  nsIDocument* doc = aContent->GetCurrentDoc();
+  //XXXsmaug Shadow DOM spec issue!
+  //         We may need to change this to GetComposedDoc().
+  nsIDocument* doc = aContent->GetUncomposedDoc();
   if (!doc) {
     return false;
   }
@@ -6824,14 +6816,14 @@ nsContentUtils::HasDistributedChildren(nsIContent* aContent)
   if (shadow) {
     // Children of a shadow root are distributed to
     // the shadow insertion point of the younger shadow root.
-    return shadow->GetYoungerShadow();
+    return shadow->GetYoungerShadowRoot();
   }
 
   HTMLShadowElement* shadowEl = HTMLShadowElement::FromContent(aContent);
   if (shadowEl && shadowEl->IsInsertionPoint()) {
     // Children of a shadow insertion points are distributed
     // to the insertion points in the older shadow root.
-    return shadow->GetOlderShadow();
+    return shadowEl->GetOlderShadowRoot();
   }
 
   HTMLContentElement* contentEl = HTMLContentElement::FromContent(aContent);
@@ -7005,4 +6997,24 @@ nsContentUtils::GetInnerWindowID(nsIRequest* aRequest)
   nsPIDOMWindow* inner = pwindow->IsInnerWindow() ? pwindow.get() : pwindow->GetCurrentInnerWindow();
 
   return inner ? inner->WindowID() : 0;
+}
+
+void
+nsContentUtils::GetHostOrIPv6WithBrackets(nsIURI* aURI, nsAString& aHost)
+{
+  aHost.Truncate();
+  nsAutoCString hostname;
+  nsresult rv = aURI->GetHost(hostname);
+  if (NS_FAILED(rv)) { // Some URIs do not have a host
+    return;
+  }
+
+  if (hostname.FindChar(':') != -1) { // Escape IPv6 address
+    MOZ_ASSERT(!hostname.Length() ||
+      (hostname[0] !='[' && hostname[hostname.Length() - 1] != ']'));
+    hostname.Insert('[', 0);
+    hostname.Append(']');
+  }
+
+  CopyUTF8toUTF16(hostname, aHost);
 }

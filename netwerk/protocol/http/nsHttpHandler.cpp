@@ -190,6 +190,8 @@ nsHttpHandler::nsHttpHandler()
     , mCoalesceSpdy(true)
     , mSpdyPersistentSettings(false)
     , mAllowPush(true)
+    , mEnableAltSvc(true)
+    , mEnableAltSvcOE(true)
     , mSpdySendingChunkSize(ASpdySession::kSendingChunkSize)
     , mSpdySendBufferSize(ASpdySession::kTCPSendBufferSize)
     , mSpdyPushAllowance(32768)
@@ -614,6 +616,7 @@ nsHttpHandler::BuildUserAgent()
                            mAppVersion.Length() +
                            mCompatFirefox.Length() +
                            mCompatDevice.Length() +
+                           mDeviceModelId.Length() +
                            13);
 
     // Application portion
@@ -637,6 +640,10 @@ nsHttpHandler::BuildUserAgent()
     else if (!mOscpu.IsEmpty()) {
       mUserAgent += mOscpu;
       mUserAgent.AppendLiteral("; ");
+    }
+    if (!mDeviceModelId.IsEmpty()) {
+        mUserAgent += mDeviceModelId;
+        mUserAgent.AppendLiteral("; ");
     }
     mUserAgent += mMisc;
     mUserAgent += ')';
@@ -699,6 +706,31 @@ nsHttpHandler::InitUserAgentComponents()
         mCompatDevice.AssignLiteral("Tablet");
     else
         mCompatDevice.AssignLiteral("Mobile");
+#endif
+
+#if defined(MOZ_WIDGET_GONK)
+    // Device model identifier should be a simple token, which can be composed
+    // of letters, numbers, hyphen ("-") and dot (".").
+    // Any other characters means the identifier is invalid and ignored.
+    nsCString deviceId;
+    rv = Preferences::GetCString("general.useragent.device_id", &deviceId);
+    if (NS_SUCCEEDED(rv)) {
+        bool valid = true;
+        deviceId.Trim(" ", true, true);
+        for (int i = 0; i < deviceId.Length(); i++) {
+            char c = deviceId.CharAt(i);
+            if (!(isalnum(c) || c == '-' || c == '.')) {
+                valid = false;
+                break;
+            }
+        }
+        if (valid) {
+            mDeviceModelId = deviceId;
+        } else {
+            LOG(("nsHttpHandler: Ignore invalid device ID: [%s]\n",
+                  deviceId.get()));
+        }
+    }
 #endif
 
 #ifndef MOZ_UA_OS_AGNOSTIC
@@ -1228,6 +1260,21 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
                                 &cVar);
         if (NS_SUCCEEDED(rv))
             mAllowPush = cVar;
+    }
+
+    if (PREF_CHANGED(HTTP_PREF("altsvc.enabled"))) {
+        rv = prefs->GetBoolPref(HTTP_PREF("atsvc.enabled"),
+                                &cVar);
+        if (NS_SUCCEEDED(rv))
+            mEnableAltSvc = cVar;
+    }
+
+
+    if (PREF_CHANGED(HTTP_PREF("altsvc.oe"))) {
+        rv = prefs->GetBoolPref(HTTP_PREF("atsvc.oe"),
+                                &cVar);
+        if (NS_SUCCEEDED(rv))
+            mEnableAltSvcOE = cVar;
     }
 
     if (PREF_CHANGED(HTTP_PREF("spdy.push-allowance"))) {
@@ -1834,11 +1881,18 @@ nsHttpHandler::Observe(nsISupports *subject,
         }
     } else if (!strcmp(topic, "last-pb-context-exited")) {
         mPrivateAuthCache.ClearAll();
+        if (mConnMgr) {
+            mConnMgr->ClearAltServiceMappings();
+        }
     } else if (!strcmp(topic, "browser:purge-session-history")) {
-        if (mConnMgr && gSocketTransportService) {
-            nsCOMPtr<nsIRunnable> event = NS_NewRunnableMethod(mConnMgr,
-                &nsHttpConnectionMgr::ClearConnectionHistory);
-            gSocketTransportService->Dispatch(event, NS_DISPATCH_NORMAL);
+        if (mConnMgr) {
+            if (gSocketTransportService) {
+                nsCOMPtr<nsIRunnable> event =
+                    NS_NewRunnableMethod(mConnMgr,
+                                         &nsHttpConnectionMgr::ClearConnectionHistory);
+                gSocketTransportService->Dispatch(event, NS_DISPATCH_NORMAL);
+            }
+            mConnMgr->ClearAltServiceMappings();
         }
     } else if (!strcmp(topic, NS_NETWORK_LINK_TOPIC)) {
         nsAutoCString converted = NS_ConvertUTF16toUTF8(data);
@@ -1917,7 +1971,7 @@ nsHttpHandler::SpeculativeConnect(nsIURI *aURI,
     aURI->GetUsername(username);
 
     nsHttpConnectionInfo *ci =
-        new nsHttpConnectionInfo(host, port, username, nullptr, usingSSL);
+        new nsHttpConnectionInfo(host, port, EmptyCString(), username, nullptr, usingSSL);
 
     return SpeculativeConnect(ci, aCallbacks);
 }

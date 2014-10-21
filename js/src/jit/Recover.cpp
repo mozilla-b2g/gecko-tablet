@@ -21,9 +21,10 @@
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
 #include "jit/VMFunctions.h"
-
 #include "vm/Interpreter.h"
+
 #include "vm/Interpreter-inl.h"
+#include "vm/NativeObject-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -873,12 +874,7 @@ RStringSplit::recover(JSContext *cx, SnapshotIterator &iter) const
     RootedString str(cx, iter.read().toString());
     RootedString sep(cx, iter.read().toString());
     RootedTypeObject typeObj(cx, iter.read().toObject().type());
-
     RootedValue result(cx);
-
-    // Use AutoEnterAnalysis to avoid invoking the object metadata callback,
-    // which could try to walk the stack while bailing out.
-    types::AutoEnterAnalysis enter(cx);
 
     JSObject *res = str_split_string(cx, typeObj, str, sep);
     if (!res)
@@ -905,7 +901,7 @@ bool RRegExpExec::recover(JSContext *cx, SnapshotIterator &iter) const{
 
     RootedValue result(cx);
 
-    if(!regexp_exec_raw(cx, regexp, input, &result))
+    if (!regexp_exec_raw(cx, regexp, input, nullptr, &result))
         return false;
 
     iter.storeInstructionResult(result);
@@ -987,6 +983,31 @@ RTypeOf::recover(JSContext *cx, SnapshotIterator &iter) const
 }
 
 bool
+MToFloat32::writeRecoverData(CompactBufferWriter &writer) const
+{
+    MOZ_ASSERT(canRecoverOnBailout());
+    writer.writeUnsigned(uint32_t(RInstruction::Recover_ToFloat32));
+    return true;
+}
+
+RToFloat32::RToFloat32(CompactBufferReader &reader)
+{ }
+
+bool
+RToFloat32::recover(JSContext *cx, SnapshotIterator &iter) const
+{
+    RootedValue v(cx, iter.read());
+    RootedValue result(cx);
+
+    MOZ_ASSERT(!v.isObject());
+    if (!RoundFloat32(cx, v, &result))
+        return false;
+
+    iter.storeInstructionResult(result);
+    return true;
+}
+
+bool
 MNewObject::writeRecoverData(CompactBufferWriter &writer) const
 {
     MOZ_ASSERT(canRecoverOnBailout());
@@ -1003,13 +1024,9 @@ RNewObject::RNewObject(CompactBufferReader &reader)
 bool
 RNewObject::recover(JSContext *cx, SnapshotIterator &iter) const
 {
-    RootedObject templateObject(cx, &iter.read().toObject());
+    RootedNativeObject templateObject(cx, &iter.read().toObject().as<NativeObject>());
     RootedValue result(cx);
     JSObject *resultObject = nullptr;
-
-    // Use AutoEnterAnalysis to avoid invoking the object metadata callback
-    // while bailing out, which could try to walk the stack.
-    types::AutoEnterAnalysis enter(cx);
 
     // See CodeGenerator::visitNewObjectVMCall
     if (templateObjectIsClassPrototype_)
@@ -1048,10 +1065,6 @@ RNewArray::recover(JSContext *cx, SnapshotIterator &iter) const
     RootedValue result(cx);
     RootedTypeObject type(cx);
 
-    // Use AutoEnterAnalysis to avoid invoking the object metadata callback
-    // while bailing out, which could try to walk the stack.
-    types::AutoEnterAnalysis enter(cx);
-
     // See CodeGenerator::visitNewArrayCallVM
     if (!templateObject->hasSingletonType())
         type = templateObject->type();
@@ -1083,10 +1096,6 @@ RNewDerivedTypedObject::recover(JSContext *cx, SnapshotIterator &iter) const
     Rooted<TypedObject *> owner(cx, &iter.read().toObject().as<TypedObject>());
     int32_t offset = iter.read().toInt32();
 
-    // Use AutoEnterAnalysis to avoid invoking the object metadata callback
-    // while bailing out, which could try to walk the stack.
-    types::AutoEnterAnalysis enter(cx);
-
     JSObject *obj = OutlineTypedObject::createDerived(cx, descr, owner, offset);
     if (!obj)
         return false;
@@ -1113,16 +1122,12 @@ RCreateThisWithTemplate::RCreateThisWithTemplate(CompactBufferReader &reader)
 bool
 RCreateThisWithTemplate::recover(JSContext *cx, SnapshotIterator &iter) const
 {
-    RootedObject templateObject(cx, &iter.read().toObject());
-
-    // Use AutoEnterAnalysis to avoid invoking the object metadata callback
-    // while bailing out, which could try to walk the stack.
-    types::AutoEnterAnalysis enter(cx);
+    RootedNativeObject templateObject(cx, &iter.read().toObject().as<NativeObject>());
 
     // See CodeGenerator::visitCreateThisWithTemplate
-    gc::AllocKind allocKind = templateObject->asTenured()->getAllocKind();
+    gc::AllocKind allocKind = templateObject->asTenured().getAllocKind();
     gc::InitialHeap initialHeap = tenuredHeap_ ? gc::TenuredHeap : gc::DefaultHeap;
-    JSObject *resultObject = JSObject::copy(cx, allocKind, initialHeap, templateObject);
+    JSObject *resultObject = NativeObject::copy(cx, allocKind, initialHeap, templateObject);
     if (!resultObject)
         return false;
 
@@ -1149,13 +1154,13 @@ RObjectState::RObjectState(CompactBufferReader &reader)
 bool
 RObjectState::recover(JSContext *cx, SnapshotIterator &iter) const
 {
-    RootedObject object(cx, &iter.read().toObject());
+    RootedNativeObject object(cx, &iter.read().toObject().as<NativeObject>());
     MOZ_ASSERT(object->slotSpan() == numSlots());
 
     RootedValue val(cx);
     for (size_t i = 0; i < numSlots(); i++) {
         val = iter.read();
-        object->nativeSetSlot(i, val);
+        object->setSlot(i, val);
     }
 
     val.setObject(*object);
@@ -1181,7 +1186,7 @@ bool
 RArrayState::recover(JSContext *cx, SnapshotIterator &iter) const
 {
     RootedValue result(cx);
-    JSObject *object = &iter.read().toObject();
+    ArrayObject *object = &iter.read().toObject().as<ArrayObject>();
     uint32_t initLength = iter.read().toInt32();
 
     object->setDenseInitializedLength(initLength);

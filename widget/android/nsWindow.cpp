@@ -31,7 +31,6 @@ using mozilla::unused;
 #include "nsIWidgetListener.h"
 #include "nsViewManager.h"
 
-#include "nsRenderingContext.h"
 #include "nsIDOMSimpleGestureEvent.h"
 
 #include "nsGkAtoms.h"
@@ -73,7 +72,6 @@ NS_IMPL_ISUPPORTS_INHERITED0(nsWindow, nsBaseWidget)
 static gfxIntSize gAndroidBounds = gfxIntSize(0, 0);
 static gfxIntSize gAndroidScreenBounds;
 
-#include "mozilla/layers/AsyncPanZoomController.h"
 #include "mozilla/layers/CompositorChild.h"
 #include "mozilla/layers/CompositorParent.h"
 #include "mozilla/layers/LayerTransactionParent.h"
@@ -683,9 +681,9 @@ nsWindow::DispatchEvent(WidgetGUIEvent* aEvent)
             mIMEComposingStart = -1;
             mIMEComposingText.Truncate();
             break;
-        case NS_TEXT_TEXT:
+        case NS_COMPOSITION_CHANGE:
             MOZ_ASSERT(mIMEComposing);
-            mIMEComposingText = aEvent->AsTextEvent()->theText;
+            mIMEComposingText = aEvent->AsCompositionEvent()->mData;
             break;
         }
         return status;
@@ -1707,14 +1705,15 @@ nsWindow::RemoveIMEComposition()
     AutoIMEMask selMask(mIMEMaskSelectionUpdate);
     AutoIMEMask textMask(mIMEMaskTextUpdate);
 
-    WidgetTextEvent textEvent(true, NS_TEXT_TEXT, this);
-    InitEvent(textEvent, nullptr);
-    textEvent.theText = mIMEComposingText;
-    DispatchEvent(&textEvent);
+    WidgetCompositionEvent compositionChangeEvent(true, NS_COMPOSITION_CHANGE,
+                                                  this);
+    InitEvent(compositionChangeEvent, nullptr);
+    compositionChangeEvent.mData = mIMEComposingText;
+    DispatchEvent(&compositionChangeEvent);
 
-    WidgetCompositionEvent event(true, NS_COMPOSITION_END, this);
-    InitEvent(event, nullptr);
-    DispatchEvent(&event);
+    WidgetCompositionEvent compEndEvent(true, NS_COMPOSITION_END, this);
+    InitEvent(compEndEvent, nullptr);
+    DispatchEvent(&compEndEvent);
 }
 
 void
@@ -1845,22 +1844,16 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
             }
 
             {
-                WidgetCompositionEvent event(true, NS_COMPOSITION_UPDATE, this);
+                WidgetCompositionEvent event(true, NS_COMPOSITION_CHANGE, this);
                 InitEvent(event, nullptr);
-                event.data = ae->Characters();
-                DispatchEvent(&event);
-            }
-            {
-                WidgetTextEvent event(true, NS_TEXT_TEXT, this);
-                InitEvent(event, nullptr);
-                event.theText = ae->Characters();
+                event.mData = ae->Characters();
 
                 if (ae->Action() == AndroidGeckoEvent::IME_COMPOSE_TEXT) {
                     // Because we're leaving the composition open, we need to
                     // include proper text ranges to make the editor happy.
                     TextRange range;
                     range.mStartOffset = 0;
-                    range.mEndOffset = event.theText.Length();
+                    range.mEndOffset = event.mData.Length();
                     range.mRangeType = NS_TEXTRANGE_RAWINPUT;
                     event.mRanges = new TextRangeArray();
                     event.mRanges->AppendElement(range);
@@ -1874,7 +1867,7 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
             {
                 WidgetCompositionEvent event(true, NS_COMPOSITION_END, this);
                 InitEvent(event, nullptr);
-                event.data = ae->Characters();
+                event.mData = ae->Characters();
                 DispatchEvent(&event);
             }
 
@@ -1918,13 +1911,6 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
             selEvent.mExpandToClusterBoundary = false;
 
             DispatchEvent(&selEvent);
-
-            // Notify SelectionHandler of final caret position
-            // Required after IME hide via 'Back' button
-            AndroidGeckoEvent* broadcastEvent = AndroidGeckoEvent::MakeBroadcastEvent(
-                NS_LITERAL_CSTRING("TextSelection:UpdateCaretPos"),
-                NS_LITERAL_CSTRING(""));
-            nsAppShell::gAppShell->PostEvent(broadcastEvent);
         }
         break;
     case AndroidGeckoEvent::IME_ADD_COMPOSITION_RANGE:
@@ -1961,7 +1947,7 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
             AutoIMEMask selMask(mIMEMaskSelectionUpdate);
             AutoIMEMask textMask(mIMEMaskTextUpdate);
 
-            WidgetTextEvent event(true, NS_TEXT_TEXT, this);
+            WidgetCompositionEvent event(true, NS_COMPOSITION_CHANGE, this);
             InitEvent(event, nullptr);
 
             event.mRanges = new TextRangeArray();
@@ -1992,7 +1978,7 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
                     InitEvent(queryEvent, nullptr);
                     DispatchEvent(&queryEvent);
                     MOZ_ASSERT(queryEvent.mSucceeded && !queryEvent.mWasAsync);
-                    event.theText = queryEvent.mReply.mString;
+                    event.mData = queryEvent.mReply.mString;
 
                     mIMEComposingStart = queryEvent.mReply.mOffset;
                 }
@@ -2007,34 +1993,17 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
             } else {
                 // If the new composition matches the existing composition,
                 // reuse the old composition.
-                event.theText = mIMEComposingText;
-            }
-
-            {
-                WidgetCompositionEvent compositionUpdate(true,
-                                                         NS_COMPOSITION_UPDATE,
-                                                         this);
-                InitEvent(compositionUpdate, nullptr);
-                compositionUpdate.data = event.theText;
-                DispatchEvent(&compositionUpdate);
+                event.mData = mIMEComposingText;
             }
 
 #ifdef DEBUG_ANDROID_IME
-            const NS_ConvertUTF16toUTF8 theText8(event.theText);
-            const char* text = theText8.get();
+            const NS_ConvertUTF16toUTF8 data(event.mData);
+            const char* text = data.get();
             ALOGIME("IME: IME_SET_TEXT: text=\"%s\", length=%u, range=%u",
-                    text, event.theText.Length(), event.mRanges->Length());
+                    text, event.mData.Length(), event.mRanges->Length());
 #endif // DEBUG_ANDROID_IME
 
             DispatchEvent(&event);
-
-            // Notify SelectionHandler of final caret position
-            // Required in cases of keyboards providing autoCorrections
-            AndroidGeckoEvent* broadcastEvent =
-                AndroidGeckoEvent::MakeBroadcastEvent(
-                    NS_LITERAL_CSTRING("TextSelection:UpdateCaretPos"),
-                    NS_LITERAL_CSTRING(""));
-            nsAppShell::gAppShell->PostEvent(broadcastEvent);
         }
         break;
 
@@ -2101,19 +2070,15 @@ nsWindow::NotifyIME(const IMENotification& aIMENotification)
             if (mIMEComposing) {
                 nsRefPtr<nsWindow> kungFuDeathGrip(this);
 
-                WidgetCompositionEvent updateEvent(true, NS_COMPOSITION_UPDATE,
-                                                   this);
-                InitEvent(updateEvent, nullptr);
-                DispatchEvent(&updateEvent);
+                WidgetCompositionEvent compositionChangeEvent(
+                                         true, NS_COMPOSITION_CHANGE, this);
+                InitEvent(compositionChangeEvent, nullptr);
+                DispatchEvent(&compositionChangeEvent);
 
-                WidgetTextEvent textEvent(true, NS_TEXT_TEXT, this);
-                InitEvent(textEvent, nullptr);
-                DispatchEvent(&textEvent);
-
-                WidgetCompositionEvent compEvent(true, NS_COMPOSITION_END,
-                                                 this);
-                InitEvent(compEvent, nullptr);
-                DispatchEvent(&compEvent);
+                WidgetCompositionEvent compositionEndEvent(
+                                         true, NS_COMPOSITION_END, this);
+                InitEvent(compositionEndEvent, nullptr);
+                DispatchEvent(&compositionEndEvent);
             }
 
             mozilla::widget::android::GeckoAppShell::NotifyIME(REQUEST_TO_CANCEL_COMPOSITION);

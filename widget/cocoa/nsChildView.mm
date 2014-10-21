@@ -5,9 +5,6 @@
 
 #include "mozilla/ArrayUtils.h"
 
-#ifdef MOZ_LOGGING
-#define FORCE_PR_LOG
-#endif
 #include "prlog.h"
 
 #include <unistd.h>
@@ -402,38 +399,16 @@ class APZCTMController : public mozilla::layers::GeckoContentController
   typedef mozilla::layers::FrameMetrics FrameMetrics;
   typedef mozilla::layers::ScrollableLayerGuid ScrollableLayerGuid;
 
-  class RequestContentRepaintEvent : public nsRunnable
-  {
-  public:
-    explicit RequestContentRepaintEvent(const FrameMetrics& aFrameMetrics)
-      : mFrameMetrics(aFrameMetrics)
-    {
-    }
-
-    NS_IMETHOD Run()
-    {
-      MOZ_ASSERT(NS_IsMainThread());
-
-      nsCOMPtr<nsIContent> targetContent = nsLayoutUtils::FindContentFor(mFrameMetrics.GetScrollId());
-      if (targetContent) {
-        APZCCallbackHelper::UpdateSubFrame(targetContent, mFrameMetrics);
-      }
-
-      return NS_OK;
-    }
-  protected:
-    FrameMetrics mFrameMetrics;
-  };
-
 public:
   // GeckoContentController interface
   virtual void RequestContentRepaint(const FrameMetrics& aFrameMetrics)
   {
-    nsCOMPtr<nsIRunnable> r1 = new RequestContentRepaintEvent(aFrameMetrics);
-    if (!NS_IsMainThread()) {
-      NS_DispatchToMainThread(r1);
-    } else {
-      r1->Run();
+    MOZ_ASSERT(NS_IsMainThread());
+
+    nsCOMPtr<nsIContent> targetContent = nsLayoutUtils::FindContentFor(aFrameMetrics.GetScrollId());
+    if (targetContent) {
+      FrameMetrics metrics = aFrameMetrics;
+      APZCCallbackHelper::UpdateSubFrame(targetContent, metrics);
     }
   }
 
@@ -2537,8 +2512,8 @@ nsChildView::MaybeDrawRoundedCorners(GLManager* aManager, const nsIntRect& aRect
   aManager->gl()->fBlendFuncSeparate(LOCAL_GL_ZERO, LOCAL_GL_SRC_ALPHA,
                                      LOCAL_GL_ZERO, LOCAL_GL_SRC_ALPHA);
 
-  Matrix4x4 flipX = Matrix4x4().Scale(-1, 1, 1);
-  Matrix4x4 flipY = Matrix4x4().Scale(1, -1, 1);
+  Matrix4x4 flipX = Matrix4x4::Scaling(-1, 1, 1);
+  Matrix4x4 flipY = Matrix4x4::Scaling(1, -1, 1);
 
   if (mIsCoveringTitlebar && !mIsFullscreen) {
     // Mask the top corners.
@@ -2676,6 +2651,17 @@ nsChildView::ClearVibrantAreas()
   if (VibrancyManager::SystemSupportsVibrancy()) {
     EnsureVibrancyManager().ClearVibrantAreas();
   }
+}
+
+NSColor*
+nsChildView::VibrancyFillColorForWidgetType(uint8_t aWidgetType)
+{
+  if (VibrancyManager::SystemSupportsVibrancy()) {
+    return EnsureVibrancyManager().VibrancyFillColorForType(
+      aWidgetType == NS_THEME_MAC_VIBRANCY_LIGHT
+        ? VibrancyType::LIGHT : VibrancyType::DARK);
+  }
+  return [NSColor whiteColor];
 }
 
 mozilla::VibrancyManager&
@@ -2939,7 +2925,7 @@ RectTextureImage::Draw(GLManager* aManager,
 
   program->Activate();
   program->SetProjectionMatrix(aManager->GetProjMatrix());
-  program->SetLayerTransform(aTransform * gfx::Matrix4x4().Translate(aLocation.x, aLocation.y, 0));
+  program->SetLayerTransform(Matrix4x4(aTransform).PostTranslate(aLocation.x, aLocation.y, 0));
   program->SetTextureTransform(gfx::Matrix4x4());
   program->SetRenderOffset(nsIntPoint(0, 0));
   program->SetTexCoordMultiplier(mUsedSize.width, mUsedSize.height);
@@ -3659,6 +3645,14 @@ NSEvent* gLastDragMouseDownEvent = nil;
   return [[self window] isKindOfClass:[BaseWindow class]] &&
          [(BaseWindow*)[self window] mainChildView] == self &&
          [(BaseWindow*)[self window] drawsContentsIntoWindowFrame];
+}
+
+- (NSColor*)vibrancyFillColorForWidgetType:(uint8_t)aWidgetType
+{
+  if (!mGeckoChild) {
+    return [NSColor whiteColor];
+  }
+  return mGeckoChild->VibrancyFillColorForWidgetType(aWidgetType);
 }
 
 - (nsIntRegion)nativeDirtyRegionWithBoundingRect:(NSRect)aRect

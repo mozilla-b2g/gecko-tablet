@@ -712,18 +712,19 @@ Search.prototype = {
       // with an alias - which works like a keyword.
       hasFirstResult = yield this._matchSearchEngineAlias();
     }
-    let shouldAutofill = this._shouldAutofill;
-    if (this.pending && !hasFirstResult && shouldAutofill) {
-      // Or it may look like a URL we know about from search engines.
-      hasFirstResult = yield this._matchSearchEngineUrl();
-    }
 
+    let shouldAutofill = this._shouldAutofill;
     if (this.pending && !hasFirstResult && shouldAutofill) {
       // It may also look like a URL we know from the database.
       // Here we can only try to predict whether the URL autofill query is
       // likely to return a result.  If the prediction ends up being wrong,
       // later we will need to make up for the lack of a special first result.
       hasFirstResult = yield this._matchKnownUrl(conn, queries);
+    }
+
+    if (this.pending && !hasFirstResult && shouldAutofill) {
+      // Or it may look like a URL we know about from search engines.
+      hasFirstResult = yield this._matchSearchEngineUrl();
     }
 
     if (this.pending && this._enableActions && !hasFirstResult) {
@@ -742,8 +743,8 @@ Search.prototype = {
     for (let [query, params] of queries) {
       let hasResult = yield conn.executeCached(query, params, this._onResultRow.bind(this));
 
-      if (this.pending && params.query_type == QUERYTYPE_AUTOFILL_URL &&
-          !hasResult) {
+      if (this.pending && this._enableActions && !hasResult &&
+          params.query_type == QUERYTYPE_AUTOFILL_URL) {
         // If we predicted that our URL autofill query might have gotten a
         // result, but it didn't, then we need to recover.
         yield this._matchHeuristicFallback();
@@ -858,11 +859,12 @@ Search.prototype = {
     if (this._searchTokens.length < 2)
       return false;
 
-    let match = yield PlacesSearchAutocompleteProvider.findMatchByAlias(
-                                                         this._searchTokens[0]);
+    let alias = this._searchTokens[0];
+    let match = yield PlacesSearchAutocompleteProvider.findMatchByAlias(alias);
     if (!match)
       return false;
 
+    match.engineAlias = alias;
     let query = this._searchTokens.slice(1).join(" ");
 
     yield this._addSearchEngineMatch(match, query);
@@ -880,11 +882,15 @@ Search.prototype = {
   },
 
   _addSearchEngineMatch: function* (match, query) {
-    let value = makeActionURL("searchengine", {
+    let actionURLParams = {
       engineName: match.engineName,
       input: this._originalSearchString,
       searchQuery: query,
-    });
+    };
+    if (match.engineAlias) {
+      actionURLParams.alias = match.engineAlias;
+    }
+    let value = makeActionURL("searchengine", actionURLParams);
 
     this._addMatch({
       value: value,

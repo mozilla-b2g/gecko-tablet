@@ -4,10 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifdef MOZ_LOGGING
-#define FORCE_PR_LOG
-#endif
-
 #include "base/basictypes.h"
 
 /* This must occur *after* base/basictypes.h to avoid typedefs conflicts. */
@@ -57,7 +53,6 @@
 #include "nsNetUtil.h"
 #include "nsIIOService.h"
 #include "nsNetCID.h"
-#include "nsChannelProperties.h"
 
 #include "nsMimeTypes.h"
 // used for header disposition information.
@@ -549,7 +544,6 @@ static nsExtraMimeTypeEntry extraMimeEntries [] =
   { AUDIO_OGG, "opus", "Opus Audio" },
 #ifdef MOZ_WIDGET_GONK
   { AUDIO_AMR, "amr", "Adaptive Multi-Rate Audio" },
-  { AUDIO_3GPP, "3gpp,3gp", "3GPP Audio" },
 #endif
   { VIDEO_WEBM, "webm", "Web Media Video" },
   { AUDIO_WEBM, "webm", "Web Media Audio" },
@@ -560,6 +554,12 @@ static nsExtraMimeTypeEntry extraMimeEntries [] =
   { AUDIO_WAV, "wav", "Waveform Audio" },
   { VIDEO_3GPP, "3gpp,3gp", "3GPP Video" },
   { VIDEO_3GPP2,"3g2", "3GPP2 Video" },
+#ifdef MOZ_WIDGET_GONK
+  // The AUDIO_3GPP has to come after the VIDEO_3GPP entry because the Gallery
+  // app on Firefox OS depends on the "3gp" extension mapping to the
+  // "video/3gpp" MIME type.
+  { AUDIO_3GPP, "3gpp,3gp", "3GPP Audio" },
+#endif
   { AUDIO_MIDI, "mid", "Standard MIDI Audio" }
 };
 

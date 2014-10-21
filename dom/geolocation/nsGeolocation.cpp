@@ -243,7 +243,6 @@ PositionError::PositionError(Geolocation* aParent, int16_t aCode)
   : mCode(aCode)
   , mParent(aParent)
 {
-  SetIsDOMBinding();
 }
 
 PositionError::~PositionError(){}
@@ -919,7 +918,9 @@ nsGeolocationService::UpdateAccuracy(bool aForceHigh)
 
   if (XRE_GetProcessType() == GeckoProcessType_Content) {
     ContentChild* cpc = ContentChild::GetSingleton();
-    cpc->SendSetGeolocationHigherAccuracy(highRequired);
+    if (cpc->IsAlive()) {
+      cpc->SendSetGeolocationHigherAccuracy(highRequired);
+    }
     return;
   }
 
@@ -1019,7 +1020,6 @@ NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(Geolocation,
 Geolocation::Geolocation()
 : mLastWatchId(0)
 {
-  SetIsDOMBinding();
 }
 
 Geolocation::~Geolocation()

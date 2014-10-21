@@ -56,15 +56,14 @@ public:
     }
 
     Rect snapped(mBounds.x, mBounds.y, mBounds.width, mBounds.height);
-    if (UserToDevicePixelSnapped(snapped, aDT->GetTransform())) {
-      Matrix mat = aDT->GetTransform();
-      mat.Invert();
-      snapped = mat.TransformBounds(snapped);
-    }
+    MaybeSnapToDevicePixels(snapped, *aDT, true);
 
+    // Clip drawing in case we're using (unbounded) operator source.
+    aDT->PushClipRect(snapped);
     FillRectWithMask(aDT, aDeviceOffset, snapped, ToColor(mColor),
                      DrawOptions(GetEffectiveOpacity(), GetEffectiveOperator(this)),
                      aMaskLayer);
+    aDT->PopClip();
   }
 
 protected:

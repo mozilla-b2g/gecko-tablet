@@ -11,8 +11,7 @@ describe("loop.conversation", function() {
 
   var sharedModels = loop.shared.models,
       sharedView = loop.shared.views,
-      sandbox,
-      notifications;
+      sandbox;
 
   // XXX refactor to Just Work with "sandbox.stubComponent" or else
   // just pass in the sandbox and put somewhere generally usable
@@ -30,7 +29,6 @@ describe("loop.conversation", function() {
   beforeEach(function() {
     sandbox = sinon.sandbox.create();
     sandbox.useFakeTimers();
-    notifications = new loop.shared.models.NotificationCollection();
 
     navigator.mozLoop = {
       doNotDisturb: true,
@@ -41,7 +39,7 @@ describe("loop.conversation", function() {
         return "en-US";
       },
       setLoopCharPref: sinon.stub(),
-      getLoopCharPref: sinon.stub().returns(null),
+      getLoopCharPref: sinon.stub().returns("http://fakeurl"),
       getLoopBoolPref: sinon.stub(),
       getCallData: sinon.stub(),
       releaseCallData: sinon.stub(),
@@ -59,6 +57,9 @@ describe("loop.conversation", function() {
 
     // XXX These stubs should be hoisted in a common file
     // Bug 1040968
+    sandbox.stub(document.mozL10n, "get", function(x) {
+      return x;
+    });
     document.mozL10n.initialize(navigator.mozLoop);
   });
 
@@ -89,7 +90,7 @@ describe("loop.conversation", function() {
       delete window.OT;
     });
 
-    it("should initalize L10n", function() {
+    it("should initialize L10n", function() {
       loop.conversation.init();
 
       sinon.assert.calledOnce(document.mozL10n.initialize);
@@ -97,15 +98,52 @@ describe("loop.conversation", function() {
         navigator.mozLoop);
     });
 
-    it("should create the ConversationControllerView", function() {
+    it("should create the AppControllerView", function() {
       loop.conversation.init();
 
       sinon.assert.calledOnce(React.renderComponent);
       sinon.assert.calledWith(React.renderComponent,
         sinon.match(function(value) {
           return TestUtils.isDescriptorOfType(value,
-            loop.conversation.ConversationControllerView);
+            loop.conversation.AppControllerView);
       }));
+    });
+
+    describe("when locationHash begins with #room", function () {
+      // XXX must stay in sync with "test.alwaysUseRooms" pref check
+      // in conversation.jsx:init until we remove that code, which should
+      // happen in the second patch in bug 1074686, at which time this comment
+      // can go away as well.
+      var fakeRoomID = "32";
+
+      beforeEach(function() {
+        loop.shared.utils.Helper.prototype.locationHash
+          .returns("#room/" + fakeRoomID);
+
+        sandbox.stub(loop.store, "LocalRoomStore");
+      });
+
+      it("should create a localRoomStore", function() {
+        loop.conversation.init();
+
+        sinon.assert.calledOnce(loop.store.LocalRoomStore);
+        sinon.assert.calledWithNew(loop.store.LocalRoomStore);
+        sinon.assert.calledWithExactly(loop.store.LocalRoomStore,
+          sinon.match({
+            dispatcher: sinon.match.instanceOf(loop.Dispatcher),
+            mozLoop: sinon.match.same(navigator.mozLoop)
+          }));
+      });
+
+      it("should dispatch SetupEmptyRoom with localRoomId from locationHash",
+        function() {
+
+          loop.conversation.init();
+
+          sinon.assert.calledOnce(loop.Dispatcher.prototype.dispatch);
+          sinon.assert.calledWithExactly(loop.Dispatcher.prototype.dispatch,
+            new loop.shared.actions.SetupEmptyRoom({localRoomId: fakeRoomID}));
+        });
     });
 
     it("should trigger a gatherCallData action", function() {
@@ -114,21 +152,35 @@ describe("loop.conversation", function() {
       sinon.assert.calledOnce(loop.Dispatcher.prototype.dispatch);
       sinon.assert.calledWithExactly(loop.Dispatcher.prototype.dispatch,
         new loop.shared.actions.GatherCallData({
-          calleeId: null,
-          callId: "42"
+          callId: "42",
+          outgoing: false
         }));
     });
+
+    it("should trigger an outgoing gatherCallData action for outgoing calls",
+      function() {
+        loop.shared.utils.Helper.prototype.locationHash.returns("#outgoing/24");
+
+        loop.conversation.init();
+
+        sinon.assert.calledOnce(loop.Dispatcher.prototype.dispatch);
+        sinon.assert.calledWithExactly(loop.Dispatcher.prototype.dispatch,
+          new loop.shared.actions.GatherCallData({
+            callId: "24",
+            outgoing: true
+          }));
+      });
   });
 
   describe("ConversationControllerView", function() {
     var store, conversation, client, ccView, oldTitle, dispatcher;
 
-    function mountTestComponent() {
+    function mountTestComponent(localRoomStore) {
       return TestUtils.renderIntoDocument(
-        loop.conversation.ConversationControllerView({
+        loop.conversation.AppControllerView({
           client: client,
           conversation: conversation,
-          notifications: notifications,
+          localRoomStore: localRoomStore,
           sdk: {},
           store: store
         }));
@@ -141,9 +193,19 @@ describe("loop.conversation", function() {
         sdk: {}
       });
       dispatcher = new loop.Dispatcher();
-      store = new loop.store.ConversationStore({}, {
+      store = new loop.store.ConversationStore({
+        contact: {
+          name: [ "Mr Smith" ],
+          email: [{
+            type: "home",
+            value: "fakeEmail",
+            pref: true
+          }]
+        }
+      }, {
         client: client,
-        dispatcher: dispatcher
+        dispatcher: dispatcher,
+        sdkDriver: {}
       });
     });
 
@@ -169,6 +231,22 @@ describe("loop.conversation", function() {
       TestUtils.findRenderedComponentWithType(ccView,
         loop.conversation.IncomingConversationView);
     });
+
+    it("should display the EmptyRoomView for rooms", function() {
+      navigator.mozLoop.rooms = {
+        addCallback: function() {},
+        removeCallback: function() {}
+      };
+      var localRoomStore = new loop.store.LocalRoomStore({
+        mozLoop: navigator.mozLoop,
+        dispatcher: dispatcher
+      });
+
+      ccView = mountTestComponent(localRoomStore);
+
+      TestUtils.findRenderedComponentWithType(ccView,
+        loop.roomViews.EmptyRoomView);
+    });
   });
 
   describe("IncomingConversationView", function() {
@@ -179,7 +257,6 @@ describe("loop.conversation", function() {
         loop.conversation.IncomingConversationView({
           client: client,
           conversation: conversation,
-          notifications: notifications,
           sdk: {}
         }));
     }
@@ -201,9 +278,13 @@ describe("loop.conversation", function() {
 
     describe("start", function() {
       it("should set the title to incoming_call_title2", function() {
-        sandbox.stub(document.mozL10n, "get", function(x) {
-          return x;
-        });
+        navigator.mozLoop.getCallData = function() {
+          return {
+            progressURL:    "fake",
+            websocketToken: "fake",
+            callId: 42
+          };
+        };
 
         icView = mountTestComponent();
 
@@ -314,17 +395,13 @@ describe("loop.conversation", function() {
               });
             });
 
-          it("should display an error if the websocket failed to connect", function(done) {
-            sandbox.stub(notifications, "errorL10n");
-
+          // XXX implement me as part of bug 1047410
+          // see https://hg.mozilla.org/integration/fx-team/rev/5d2c69ebb321#l18.259
+          it.skip("should should switch view state to failed", function(done) {
             icView = mountTestComponent();
             rejectWebSocketConnect();
 
-            promise.then(function() {
-            }, function () {
-              sinon.assert.calledOnce(notifications.errorL10n);
-              sinon.assert.calledWithExactly(notifications.errorL10n,
-                "cannot_start_call_session_not_ready");
+            promise.then(function() {}, function() {
               done();
             });
           });
@@ -333,6 +410,8 @@ describe("loop.conversation", function() {
         describe("WebSocket Events", function() {
           describe("Call cancelled or timed out before acceptance", function() {
             beforeEach(function() {
+              // Mounting the test component automatically calls the required
+              // setup functions
               icView = mountTestComponent();
               promise = new Promise(function(resolve, reject) {
                 resolve();
@@ -383,6 +462,46 @@ describe("loop.conversation", function() {
               });
             });
 
+            describe("progress - terminated - closed", function() {
+              it("should stop alerting", function(done) {
+                promise.then(function() {
+                  icView._websocket.trigger("progress", {
+                    state: "terminated",
+                    reason: "closed"
+                  });
+
+                  sinon.assert.calledOnce(navigator.mozLoop.stopAlerting);
+                  done();
+                });
+              });
+
+              it("should close the websocket", function(done) {
+                promise.then(function() {
+                  icView._websocket.trigger("progress", {
+                    state: "terminated",
+                    reason: "closed"
+                  });
+
+                  sinon.assert.calledOnce(icView._websocket.close);
+                  done();
+                });
+              });
+
+              it("should close the window", function(done) {
+                promise.then(function() {
+                  icView._websocket.trigger("progress", {
+                    state: "terminated",
+                    reason: "closed"
+                  });
+
+                  sandbox.clock.tick(1);
+
+                  sinon.assert.calledOnce(window.close);
+                  done();
+                });
+              });
+            });
+
             describe("progress - terminated - timeout (previousState = alerting)", function() {
               it("should stop alerting", function(done) {
                 promise.then(function() {
@@ -422,6 +541,22 @@ describe("loop.conversation", function() {
                 });
               });
             });
+
+            describe("progress - terminated - timeout (previousState not init" +
+                     " nor alerting)",
+              function() {
+                it("should set the state to end", function(done) {
+                  promise.then(function() {
+                    icView._websocket.trigger("progress", {
+                      state: "terminated",
+                      reason: "timeout"
+                    }, "connecting");
+
+                    expect(icView.state.callStatus).eql("end");
+                    done();
+                  });
+                });
+              });
           });
         });
       });
@@ -586,6 +721,14 @@ describe("loop.conversation", function() {
             TestUtils.findRenderedComponentWithType(icView,
               sharedView.ConversationView);
           });
+
+        it("should set the title to the call identifier", function() {
+          sandbox.stub(conversation, "getCallIdentifier").returns("fakeId");
+
+          conversation.accepted();
+
+          expect(document.title).eql("fakeId");
+        });
       });
 
       describe("session:ended", function() {
@@ -608,13 +751,20 @@ describe("loop.conversation", function() {
           });
       });
 
-      describe("session:peer-hungup", function() {
+      describe("session:network-disconnected", function() {
         it("should navigate to call/feedback when network disconnects",
           function() {
             conversation.trigger("session:network-disconnected");
 
               TestUtils.findRenderedComponentWithType(icView,
                 sharedView.FeedbackView);
+          });
+
+        it("should update the conversation window toolbar title",
+          function() {
+            conversation.trigger("session:network-disconnected");
+
+            expect(document.title).eql("generic_failure_title");
           });
       });
 
@@ -666,7 +816,9 @@ describe("loop.conversation", function() {
     var view, model;
 
     beforeEach(function() {
-      var Model = Backbone.Model.extend({});
+      var Model = Backbone.Model.extend({
+        getCallIdentifier: function() {return "fakeId";}
+      });
       model = new Model();
       sandbox.spy(model, "trigger");
       sandbox.stub(model, "set");

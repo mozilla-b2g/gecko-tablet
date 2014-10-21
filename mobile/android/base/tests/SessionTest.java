@@ -45,8 +45,8 @@ public abstract class SessionTest extends BaseTest {
     }
 
     protected class PageInfo {
-        private String url;
-        private String title;
+        private final String url;
+        private final String title;
 
         public PageInfo(String key) {
             if (key.startsWith("about:")) {
@@ -197,7 +197,7 @@ public abstract class SessionTest extends BaseTest {
                             verifyUrl(page.url);
                         } else {
                             waitForText(page.title);
-                            verifyPageTitle(page.title);
+                            verifyPageTitle(page.title, page.url);
                         }
                     }
 

@@ -95,7 +95,7 @@ class SyntaxParseHandler
     Node newNullLiteral(const TokenPos &pos) { return NodeGeneric; }
 
     template <class Boxer>
-    Node newRegExp(JSObject *reobj, const TokenPos &pos, Boxer &boxer) { return NodeGeneric; }
+    Node newRegExp(RegExpObject *reobj, const TokenPos &pos, Boxer &boxer) { return NodeGeneric; }
 
     Node newConditional(Node cond, Node thenExpr, Node elseExpr) { return NodeGeneric; }
 
@@ -135,11 +135,14 @@ class SyntaxParseHandler
     bool addPrototypeMutation(Node literal, uint32_t begin, Node expr) { return true; }
     bool addPropertyDefinition(Node literal, Node name, Node expr, bool isShorthand = false) { return true; }
     bool addMethodDefinition(Node literal, Node name, Node fn, JSOp op) { return true; }
+    Node newYieldExpression(uint32_t begin, Node value, Node gen) { return NodeGeneric; }
+    Node newYieldStarExpression(uint32_t begin, Node value, Node gen) { return NodeGeneric; }
 
     // Statements
 
     Node newStatementList(unsigned blockid, const TokenPos &pos) { return NodeGeneric; }
     void addStatementToList(Node list, Node stmt, ParseContext<SyntaxParseHandler> *pc) {}
+    bool prependInitialYield(Node stmtList, Node gen) { return true; }
     Node newEmptyStatement(const TokenPos &pos) { return NodeGeneric; }
 
     Node newExprStatement(Node expr, uint32_t end) {

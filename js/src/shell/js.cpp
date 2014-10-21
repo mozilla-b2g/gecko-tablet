@@ -64,7 +64,6 @@
 #include "jit/arm/Simulator-arm.h"
 #include "jit/Ion.h"
 #include "js/Debug.h"
-#include "js/OldDebugAPI.h"
 #include "js/StructuredClone.h"
 #include "perf/jsperf.h"
 #include "shell/jsheaptools.h"
@@ -1066,11 +1065,11 @@ static bool
 CacheEntry_setBytecode(JSContext *cx, HandleObject cache, uint8_t *buffer, uint32_t length)
 {
     MOZ_ASSERT(CacheEntry_isCacheEntry(cache));
-    ArrayBufferObject::BufferContents contents =
-        ArrayBufferObject::BufferContents::create<ArrayBufferObject::PLAIN_BUFFER>(buffer);
-    Rooted<ArrayBufferObject*> arrayBuffer(cx, ArrayBufferObject::create(cx, length, contents));
 
-    if (!arrayBuffer || !ArrayBufferObject::ensureNonInline(cx, arrayBuffer))
+    ArrayBufferObject::BufferContents contents =
+        ArrayBufferObject::BufferContents::create<ArrayBufferObject::PLAIN>(buffer);
+    Rooted<ArrayBufferObject*> arrayBuffer(cx, ArrayBufferObject::create(cx, length, contents));
+    if (!arrayBuffer)
         return false;
 
     SetReservedSlot(cache, CacheEntry_BYTECODE, OBJECT_TO_JSVAL(arrayBuffer));
@@ -2802,7 +2801,7 @@ ShapeOf(JSContext *cx, unsigned argc, JS::Value *vp)
  * non-native referent may be simplified to data properties.
  */
 static bool
-CopyProperty(JSContext *cx, HandleObject obj, HandleObject referent, HandleId id,
+CopyProperty(JSContext *cx, HandleNativeObject obj, HandleObject referent, HandleId id,
              MutableHandleObject objp)
 {
     RootedShape shape(cx);
@@ -2811,13 +2810,13 @@ CopyProperty(JSContext *cx, HandleObject obj, HandleObject referent, HandleId id
 
     objp.set(nullptr);
     if (referent->isNative()) {
-        if (!LookupNativeProperty(cx, referent, id, &obj2, &shape))
+        if (!LookupNativeProperty(cx, referent.as<NativeObject>(), id, &obj2, &shape))
             return false;
         if (obj2 != referent)
             return true;
 
         if (shape->hasSlot()) {
-            desc.value().set(referent->nativeGetSlot(shape->slot()));
+            desc.value().set(referent->as<NativeObject>().getSlot(shape->slot()));
         } else {
             desc.value().setUndefined();
         }
@@ -2861,7 +2860,7 @@ resolver_resolve(JSContext *cx, HandleObject obj, HandleId id, MutableHandleObje
 {
     jsval v = JS_GetReservedSlot(obj, 0);
     Rooted<JSObject*> vobj(cx, &v.toObject());
-    return CopyProperty(cx, obj, vobj, id, objp);
+    return CopyProperty(cx, obj.as<NativeObject>(), vobj, id, objp);
 }
 
 static bool
@@ -2875,7 +2874,7 @@ resolver_enumerate(JSContext *cx, HandleObject obj)
     RootedObject ignore(cx);
     for (size_t i = 0; ok && i < ida.length(); i++) {
         Rooted<jsid> id(cx, ida[i]);
-        ok = CopyProperty(cx, obj, referent, id, &ignore);
+        ok = CopyProperty(cx, obj.as<NativeObject>(), referent, id, &ignore);
     }
     return ok;
 }
@@ -5941,7 +5940,7 @@ main(int argc, char **argv, char **envp)
         || !op.addBoolOption('\0', "no-asmjs", "Disable asm.js compilation")
         || !op.addBoolOption('\0', "no-native-regexp", "Disable native regexp compilation")
         || !op.addStringOption('\0', "ion-scalar-replacement", "on/off",
-                               "Scalar Replacement (default: off, on to enable)")
+                               "Scalar Replacement (default: on, off to disable)")
         || !op.addStringOption('\0', "ion-gvn", "[mode]",
                                "Specify Ion global value numbering:\n"
                                "  off: disable GVN\n"
@@ -5997,6 +5996,7 @@ main(int argc, char **argv, char **envp)
 #ifdef JSGC_GENERATIONAL
         || !op.addBoolOption('\0', "no-ggc", "Disable Generational GC")
 #endif
+        || !op.addBoolOption('\0', "no-incremental-gc", "Disable Incremental GC")
         || !op.addIntOption('\0', "available-memory", "SIZE",
                             "Select GC settings based on available memory (MB)", 0)
 #if defined(JS_CODEGEN_ARM)
@@ -6132,6 +6132,17 @@ main(int argc, char **argv, char **envp)
 
     JS_SetGCParameter(rt, JSGC_MODE, JSGC_MODE_INCREMENTAL);
     JS_SetGCParameterForThread(cx, JSGC_MAX_CODE_CACHE_BYTES, 16 * 1024 * 1024);
+
+    // Set some parameters to allow incremental GC in low memory conditions,
+    // as is done for the browser, except in more-deterministic builds or when
+    // disabled by command line options.
+#ifndef JS_MORE_DETERMINISTIC
+    if (!op.getBoolOption("no-incremental-gc")) {
+        JS_SetGCParameter(rt, JSGC_DYNAMIC_HEAP_GROWTH, 1);
+        JS_SetGCParameter(rt, JSGC_DYNAMIC_MARK_SLICE, 1);
+        JS_SetGCParameter(rt, JSGC_SLICE_TIME_BUDGET, 10);
+    }
+#endif
 
     js::SetPreserveWrapperCallback(rt, DummyPreserveWrapperCallback);
 

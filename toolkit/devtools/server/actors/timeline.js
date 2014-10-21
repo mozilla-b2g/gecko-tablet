@@ -23,9 +23,11 @@
 
 const {Ci, Cu} = require("chrome");
 const protocol = require("devtools/server/protocol");
-const {method, Arg, RetVal} = protocol;
+const {method, Arg, RetVal, Option} = protocol;
 const events = require("sdk/event/core");
 const {setTimeout, clearTimeout} = require("sdk/timers");
+const {MemoryActor} = require("devtools/server/actors/memory");
+const {FramerateActor} = require("devtools/server/actors/framerate");
 
 // How often do we pull markers from the docShells, and therefore, how often do
 // we send events to the front (knowing that when there are no markers in the
@@ -49,7 +51,28 @@ let TimelineActor = exports.TimelineActor = protocol.ActorClass({
      */
     "markers" : {
       type: "markers",
-      markers: Arg(0, "array:json")
+      markers: Arg(0, "array:json"),
+      endTime: Arg(1, "number")
+    },
+
+    /**
+     * "memory" events emitted in tandem with "markers", if this was enabled
+     * when the recording started.
+     */
+    "memory" : {
+      type: "memory",
+      delta: Arg(0, "number"),
+      measurement: Arg(1, "json")
+    },
+
+    /**
+     * "ticks" events (from the refresh driver) emitted in tandem with "markers",
+     * if this was enabled when the recording started.
+     */
+    "ticks" : {
+      type: "ticks",
+      delta: Arg(0, "number"),
+      timestamps: Arg(1, "array:number")
     }
   },
 
@@ -58,6 +81,7 @@ let TimelineActor = exports.TimelineActor = protocol.ActorClass({
     this.tabActor = tabActor;
 
     this._isRecording = false;
+    this._startTime = 0;
 
     // Make sure to get markers from new windows as they become available
     this._onWindowReady = this._onWindowReady.bind(this);
@@ -114,13 +138,24 @@ let TimelineActor = exports.TimelineActor = protocol.ActorClass({
     if (!this._isRecording) {
       return;
     }
+    if (!this.docShells.length) {
+      return;
+    }
 
+    let endTime = this.docShells[0].now();
     let markers = [];
+
     for (let docShell of this.docShells) {
       markers = [...markers, ...docShell.popProfileTimelineMarkers()];
     }
     if (markers.length > 0) {
-      events.emit(this, "markers", markers);
+      events.emit(this, "markers", markers, endTime);
+    }
+    if (this._memoryActor) {
+      events.emit(this, "memory", endTime, this._memoryActor.measure());
+    }
+    if (this._framerateActor) {
+      events.emit(this, "ticks", endTime, this._framerateActor.getPendingTicks());
     }
 
     this._dataPullTimeout = setTimeout(() => {
@@ -143,18 +178,37 @@ let TimelineActor = exports.TimelineActor = protocol.ActorClass({
   /**
    * Start recording profile markers.
    */
-  start: method(function() {
+  start: method(function({ withMemory, withTicks }) {
     if (this._isRecording) {
       return;
     }
     this._isRecording = true;
+    this._startTime = this.docShells[0].now();
 
     for (let docShell of this.docShells) {
       docShell.recordProfileTimelineMarkers = true;
     }
 
+    if (withMemory) {
+      this._memoryActor = new MemoryActor(this.conn, this.tabActor);
+      events.emit(this, "memory", Date.now(), this._memoryActor.measure());
+    }
+    if (withTicks) {
+      this._framerateActor = new FramerateActor(this.conn, this.tabActor);
+      this._framerateActor.startRecording();
+    }
+
     this._pullTimelineData();
-  }, {}),
+    return this._startTime;
+  }, {
+    request: {
+      withMemory: Option(0, "boolean"),
+      withTicks: Option(0, "boolean")
+    },
+    response: {
+      value: RetVal("number")
+    }
+  }),
 
   /**
    * Stop recording profile markers.
@@ -164,6 +218,14 @@ let TimelineActor = exports.TimelineActor = protocol.ActorClass({
       return;
     }
     this._isRecording = false;
+
+    if (this._memoryActor) {
+      this._memoryActor = null;
+    }
+    if (this._framerateActor) {
+      this._framerateActor.stopRecording();
+      this._framerateActor = null;
+    }
 
     for (let docShell of this.docShells) {
       docShell.recordProfileTimelineMarkers = false;
@@ -178,8 +240,6 @@ let TimelineActor = exports.TimelineActor = protocol.ActorClass({
    */
   _onWindowReady: function({window}) {
     if (this._isRecording) {
-      // XXX As long as bug 1070089 isn't fixed, each docShell has its own start
-      // recording time, so markers aren't going to be properly ordered.
       let docShell = window.QueryInterface(Ci.nsIInterfaceRequestor)
                            .getInterface(Ci.nsIWebNavigation)
                            .QueryInterface(Ci.nsIDocShell);

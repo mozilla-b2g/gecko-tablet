@@ -394,6 +394,24 @@ const CustomizableWidgets = [
       clearSubview(doc.getElementById("PanelUI-sidebarItems"));
     }
   }, {
+    id: "social-share-button",
+    tooltiptext: "social-share-button.label",
+    label: "social-share-button.tooltiptext",
+    // custom build our button so we can attach to the share command
+    type: "custom",
+    onBuild: function(aDocument) {
+      let node = aDocument.createElementNS(kNSXUL, "toolbarbutton");
+      node.setAttribute("id", this.id);
+      node.classList.add("toolbarbutton-1");
+      node.classList.add("chromeclass-toolbar-additional");
+      node.setAttribute("label", CustomizableUI.getLocalizedProperty(this, "label"));
+      node.setAttribute("tooltiptext", CustomizableUI.getLocalizedProperty(this, "tooltiptext"));
+      node.setAttribute("removable", "true");
+      node.setAttribute("observes", "Social:PageShareOrMark");
+      node.setAttribute("command", "Social:SharePage");
+      return node;
+    }
+  }, {
     id: "add-ons-button",
     shortcutId: "key_openAddons",
     tooltiptext: "add-ons-button.tooltiptext3",
@@ -905,9 +923,8 @@ const CustomizableWidgets = [
   }, {
     id: "loop-call-button",
     type: "custom",
-    // XXX Bug 1013989 will provide a label for the button
-    label: "loop-call-button.label",
-    tooltiptext: "loop-call-button.tooltiptext",
+    label: "loop-call-button3.label",
+    tooltiptext: "loop-call-button3.tooltiptext",
     defaultArea: CustomizableUI.AREA_NAVBAR,
     introducedInVersion: 1,
     onBuild: function(aDocument) {
@@ -915,7 +932,7 @@ const CustomizableWidgets = [
       node.setAttribute("id", this.id);
       node.classList.add("toolbarbutton-1");
       node.classList.add("chromeclass-toolbar-additional");
-      node.setAttribute("type", "badged");
+      node.classList.add("badged-button");
       node.setAttribute("label", CustomizableUI.getLocalizedProperty(this, "label"));
       node.setAttribute("tooltiptext", CustomizableUI.getLocalizedProperty(this, "tooltiptext"));
       node.setAttribute("removable", "true");
@@ -1031,8 +1048,11 @@ if (Services.prefs.getBoolPref("privacy.panicButton.enabled")) {
       let win = aContainer.ownerDocument.defaultView;
       for (let item of variableHeightItems) {
         if (aSetHeights) {
-          let height = win.getComputedStyle(item, null).getPropertyValue("height");
+          let cs = win.getComputedStyle(item, null);
+          let height = cs.getPropertyValue("height");
+          let width = cs.getPropertyValue("width");
           item.style.height = height;
+          item.style.width = width;
           // In the main menu panel, need to set the height of the container of this
           // description because otherwise the text will overflow:
           if (item.id == "PanelUI-panic-mainDesc" &&
@@ -1043,6 +1063,7 @@ if (Services.prefs.getBoolPref("privacy.panicButton.enabled")) {
           }
         } else {
           item.style.removeProperty("height");
+          item.style.removeProperty("width");
           if (item.id == "PanelUI-panic-mainDesc") {
             item.parentNode.style.removeProperty("min-height");
           }

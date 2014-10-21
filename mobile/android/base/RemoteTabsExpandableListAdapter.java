@@ -101,34 +101,44 @@ public class RemoteTabsExpandableListAdapter extends BaseExpandableListAdapter {
 
         final RemoteClient client = clients.get(groupPosition);
 
+        // UI elements whose state depends on isExpanded, roughly from left to
+        // right: device type icon; client name text color; expanded state
+        // indicator.
+        final int deviceTypeResId;
+        final int textColorResId;
+        final int deviceExpandedResId;
+
+        if (isExpanded && !client.tabs.isEmpty()) {
+            deviceTypeResId = "desktop".equals(client.deviceType) ? R.drawable.sync_desktop : R.drawable.sync_mobile;
+            textColorResId = R.color.home_text_color;
+            deviceExpandedResId = R.drawable.home_group_expanded;
+        } else {
+            deviceTypeResId = "desktop".equals(client.deviceType) ? R.drawable.sync_desktop_inactive : R.drawable.sync_mobile_inactive;
+            textColorResId = R.color.home_text_color_disabled;
+            deviceExpandedResId = R.drawable.home_group_collapsed;
+        }
+
+        // Now update the UI.
         final TextView nameView = (TextView) view.findViewById(R.id.client);
         nameView.setText(client.name);
+        nameView.setTextColor(context.getResources().getColor(textColorResId));
 
         final TextView lastModifiedView = (TextView) view.findViewById(R.id.last_synced);
         final long now = System.currentTimeMillis();
         lastModifiedView.setText(TabsAccessor.getLastSyncedString(context, now, client.lastModified));
 
         // These views exists only in some of our group views: they are present
-        // for the home panel groups and not for the tabs tray groups.
+        // for the home panel groups and not for the tabs panel groups.
         // Therefore, we must handle null.
         final ImageView deviceTypeView = (ImageView) view.findViewById(R.id.device_type);
         if (deviceTypeView != null) {
-            if ("desktop".equals(client.deviceType)) {
-                deviceTypeView.setBackgroundResource(R.drawable.sync_desktop);
-            } else {
-                deviceTypeView.setBackgroundResource(R.drawable.sync_mobile);
-            }
+            deviceTypeView.setImageResource(deviceTypeResId);
         }
 
         final ImageView deviceExpandedView = (ImageView) view.findViewById(R.id.device_expanded);
         if (deviceExpandedView != null) {
             // If there are no tabs to display, don't show an indicator at all.
-            if (client.tabs.isEmpty()) {
-                deviceExpandedView.setBackgroundResource(0);
-            } else {
-                final int resourceId = isExpanded ? R.drawable.home_group_expanded : R.drawable.home_group_collapsed;
-                deviceExpandedView.setBackgroundResource(resourceId);
-            }
+            deviceExpandedView.setImageResource(client.tabs.isEmpty() ? 0 : deviceExpandedResId);
         }
 
         return view;
@@ -164,7 +174,7 @@ public class RemoteTabsExpandableListAdapter extends BaseExpandableListAdapter {
         final RemoteTab tab = client.tabs.get(childPosition);
 
         // The view is a TwoLinePageRow only for some of our child views: it's
-        // present for the home panel children and not for the tabs tray
+        // present for the home panel children and not for the tabs panel
         // children. Therefore, we must handle one case manually.
         if (view instanceof TwoLinePageRow) {
             ((TwoLinePageRow) view).update(tab.title, tab.url);

@@ -57,6 +57,14 @@ class nsGlobalWindow;
 class nsICSSDeclaration;
 class nsISMILAttr;
 
+namespace mozilla {
+namespace dom {
+  struct ScrollIntoViewOptions;
+  struct ScrollToOptions;
+} // namespace dom
+} // namespace mozilla
+
+
 already_AddRefed<nsContentList>
 NS_GetContentList(nsINode* aRootNode,
                   int32_t  aMatchNameSpaceId,
@@ -133,8 +141,8 @@ class DestinationInsertionPointList;
 
 // IID for the dom::Element interface
 #define NS_ELEMENT_IID \
-{ 0xb0135f9d, 0xa476, 0x4711, \
-  { 0x8b, 0xb9, 0xca, 0xe5, 0x2a, 0x05, 0xf9, 0xbe } }
+{ 0xaa79cb98, 0xc785, 0x44c5, \
+  { 0x80, 0x80, 0x2e, 0x5f, 0x0c, 0xa5, 0xbd, 0x63 } }
 
 class Element : public FragmentOrElement
 {
@@ -646,6 +654,10 @@ public:
   }
   bool HasAttributeNS(const nsAString& aNamespaceURI,
                       const nsAString& aLocalName) const;
+  bool HasAttributes() const
+  {
+    return HasAttrs();
+  }
   Element* Closest(const nsAString& aSelector,
                    ErrorResult& aResult);
   bool Matches(const nsAString& aSelector,
@@ -668,6 +680,10 @@ public:
     bool activeState = false;
     if (!nsIPresShell::GetPointerInfo(aPointerId, activeState)) {
       aError.Throw(NS_ERROR_DOM_INVALID_POINTER_ERR);
+      return;
+    }
+    if (!IsInDoc()) {
+      aError.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
       return;
     }
     if (!activeState) {
@@ -729,38 +745,23 @@ public:
   already_AddRefed<DestinationInsertionPointList> GetDestinationInsertionPoints();
 
   void ScrollIntoView();
-  void ScrollIntoView(bool aTop, const ScrollOptions &aOptions);
-  int32_t ScrollTop()
-  {
-    nsIScrollableFrame* sf = GetScrollFrame();
-    return sf ? sf->GetScrollPositionCSSPixels().y : 0;
-  }
-  void SetScrollTop(int32_t aScrollTop)
-  {
-    nsIScrollableFrame* sf = GetScrollFrame();
-    if (sf) {
-      sf->ScrollToCSSPixels(CSSIntPoint(sf->GetScrollPositionCSSPixels().x,
-                                        aScrollTop));
-    }
-  }
-  int32_t ScrollLeft()
-  {
-    nsIScrollableFrame* sf = GetScrollFrame();
-    return sf ? sf->GetScrollPositionCSSPixels().x : 0;
-  }
-  void SetScrollLeft(int32_t aScrollLeft)
-  {
-    nsIScrollableFrame* sf = GetScrollFrame();
-    if (sf) {
-      sf->ScrollToCSSPixels(CSSIntPoint(aScrollLeft,
-                                        sf->GetScrollPositionCSSPixels().y));
-    }
-  }
+  void ScrollIntoView(bool aTop);
+  void ScrollIntoView(const ScrollIntoViewOptions &aOptions);
+  void Scroll(double aXScroll, double aYScroll);
+  void Scroll(const ScrollToOptions& aOptions);
+  void ScrollTo(double aXScroll, double aYScroll);
+  void ScrollTo(const ScrollToOptions& aOptions);
+  void ScrollBy(double aXScrollDif, double aYScrollDif);
+  void ScrollBy(const ScrollToOptions& aOptions);
   /* Scrolls without flushing the layout.
    * aDx is the x offset, aDy the y offset in CSS pixels.
    * Returns true if we actually scrolled.
    */
   bool ScrollByNoFlush(int32_t aDx, int32_t aDy);
+  int32_t ScrollTop();
+  void SetScrollTop(int32_t aScrollTop);
+  int32_t ScrollLeft();
+  void SetScrollLeft(int32_t aScrollLeft);
   int32_t ScrollWidth();
   int32_t ScrollHeight();
   int32_t ClientTop()
@@ -1108,6 +1109,17 @@ protected:
                             bool aCallAfterSetAttr);
 
   /**
+   * Scroll to a new position using behavior evaluated from CSS and
+   * a CSSOM-View DOM method ScrollOptions dictionary.  The scrolling may
+   * be performed asynchronously or synchronously depending on the resolved
+   * scroll-behavior.
+   *
+   * @param aScroll       Destination of scroll, in CSS pixels
+   * @param aOptions      Dictionary of options to be evaluated
+   */
+  void Scroll(const CSSIntPoint& aScroll, const ScrollOptions& aOptions);
+
+  /**
    * Convert an attribute string value to attribute type based on the type of
    * attribute.  Called by SetAttr().  Note that at the moment we only do this
    * for attributes in the null namespace (kNameSpaceID_None).
@@ -1271,6 +1283,21 @@ private:
   EventStates mState;
 };
 
+class RemoveFromBindingManagerRunnable : public nsRunnable
+{
+public:
+  RemoveFromBindingManagerRunnable(nsBindingManager* aManager,
+                                   nsIContent* aContent,
+                                   nsIDocument* aDoc);
+
+  NS_IMETHOD Run();
+private:
+  virtual ~RemoveFromBindingManagerRunnable();
+  nsRefPtr<nsBindingManager> mManager;
+  nsRefPtr<nsIContent> mContent;
+  nsCOMPtr<nsIDocument> mDoc;
+};
+
 class DestinationInsertionPointList : public nsINodeList
 {
 public:
@@ -1347,11 +1374,6 @@ inline const mozilla::dom::Element* nsINode::AsElement() const
 {
   MOZ_ASSERT(IsElement());
   return static_cast<const mozilla::dom::Element*>(this);
-}
-
-inline bool nsINode::HasAttributes() const
-{
-  return IsElement() && AsElement()->HasAttrs();
 }
 
 /**
@@ -1535,6 +1557,11 @@ NS_IMETHOD HasAttributeNS(const nsAString& namespaceURI,                      \
                           bool* _retval) MOZ_FINAL                            \
 {                                                                             \
   *_retval = Element::HasAttributeNS(namespaceURI, localName);                \
+  return NS_OK;                                                               \
+}                                                                             \
+NS_IMETHOD HasAttributes(bool* _retval) MOZ_FINAL                             \
+{                                                                             \
+  *_retval = Element::HasAttributes();                                        \
   return NS_OK;                                                               \
 }                                                                             \
 NS_IMETHOD GetAttributeNode(const nsAString& name,                            \

@@ -107,7 +107,7 @@ protected:
 class AnonymousCounterStyle MOZ_FINAL : public CounterStyle
 {
 public:
-  AnonymousCounterStyle(const nsCSSValue::Array* aValue);
+  explicit AnonymousCounterStyle(const nsCSSValue::Array* aValue);
 
   virtual void GetPrefix(nsAString& aResult) MOZ_OVERRIDE;
   virtual void GetSuffix(nsAString& aResult) MOZ_OVERRIDE;
@@ -175,6 +175,8 @@ public:
   // if any counter style is changed, false elsewise. This method should
   // be called when any counter style may be affected.
   bool NotifyRuleChanged();
+
+  nsPresContext* PresContext() const { return mPresContext; }
 
   NS_INLINE_DECL_REFCOUNTING(CounterStyleManager)
 

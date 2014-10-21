@@ -14,7 +14,8 @@ browser.jar:
   skin/classic/browser/aboutCertError_sectionCollapsed.png
   skin/classic/browser/aboutCertError_sectionCollapsed-rtl.png
   skin/classic/browser/aboutCertError_sectionExpanded.png
-  skin/classic/browser/aboutSocialError.css
+  skin/classic/browser/aboutSocialError.css                 (../shared/aboutSocialError.css)
+* skin/classic/browser/aboutProviderDirectory.css           (../shared/aboutProviderDirectory.css)
 #ifdef MOZ_SERVICES_SYNC
   skin/classic/browser/aboutSyncTabs.css
 #endif
@@ -22,6 +23,7 @@ browser.jar:
   skin/classic/browser/actionicon-tab.png
   skin/classic/browser/actionicon-tab@2x.png
 * skin/classic/browser/browser.css                          (browser.css)
+* skin/classic/browser/devedition.css
 * skin/classic/browser/browser-lightweightTheme.css
   skin/classic/browser/click-to-play-warning-stripes.png
 * skin/classic/browser/content-contextmenu.svg
@@ -101,6 +103,8 @@ browser.jar:
   skin/classic/browser/Secure-Glyph.png
   skin/classic/browser/Secure-Glyph@2x.png
   skin/classic/browser/slowStartup-16.png
+  skin/classic/browser/theme-switcher-icon.png
+  skin/classic/browser/theme-switcher-icon@2x.png
   skin/classic/browser/Toolbar.png
   skin/classic/browser/Toolbar@2x.png
   skin/classic/browser/Toolbar-inverted.png
@@ -378,6 +382,7 @@ browser.jar:
   skin/classic/browser/devtools/eyedropper.css              (../shared/devtools/eyedropper.css)
 * skin/classic/browser/devtools/netmonitor.css              (devtools/netmonitor.css)
 * skin/classic/browser/devtools/profiler.css                (devtools/profiler.css)
+* skin/classic/browser/devtools/performance.css             (devtools/performance.css)
 * skin/classic/browser/devtools/timeline.css                (devtools/timeline.css)
 * skin/classic/browser/devtools/scratchpad.css              (devtools/scratchpad.css)
 * skin/classic/browser/devtools/shadereditor.css            (devtools/shadereditor.css)
@@ -470,7 +475,6 @@ browser.jar:
   skin/classic/browser/devtools/arrow-e@2x.png              (../shared/devtools/images/arrow-e@2x.png)
   skin/classic/browser/devtools/responsiveui-home.png       (../shared/devtools/responsiveui-home.png)
   skin/classic/browser/devtools/projecteditor/projecteditor.css         (../shared/devtools/projecteditor/projecteditor.css)
-  skin/classic/browser/devtools/projecteditor/file-icons-sheet@2x.png       (../shared/devtools/projecteditor/file-icons-sheet@2x.png)
   skin/classic/browser/devtools/app-manager/connection-footer.css     (../shared/devtools/app-manager/connection-footer.css)
   skin/classic/browser/devtools/app-manager/index.css                 (../shared/devtools/app-manager/index.css)
   skin/classic/browser/devtools/app-manager/device.css                (../shared/devtools/app-manager/device.css)

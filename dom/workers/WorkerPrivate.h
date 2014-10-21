@@ -22,7 +22,7 @@
 #include "nsString.h"
 #include "nsTArray.h"
 #include "nsThreadUtils.h"
-#include "StructuredCloneTags.h"
+#include "mozilla/dom/StructuredCloneTags.h"
 
 #include "Queue.h"
 #include "WorkerFeature.h"
@@ -1225,8 +1225,7 @@ GetCurrentThreadJSContext();
 
 enum WorkerStructuredDataType
 {
-  DOMWORKER_SCTAG_FILE = SCTAG_DOM_MAX,
-  DOMWORKER_SCTAG_BLOB,
+  DOMWORKER_SCTAG_BLOB = SCTAG_DOM_MAX,
 
   DOMWORKER_SCTAG_END
 };

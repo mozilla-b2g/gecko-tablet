@@ -216,7 +216,7 @@ let FormAssistant = {
     'range'
   ]),
 
-  isKeyboardOpened: false,
+  isHandlingFocus: false,
   selectionStart: -1,
   selectionEnd: -1,
   textBeforeCursor: "",
@@ -224,7 +224,8 @@ let FormAssistant = {
   scrollIntoViewTimeout: null,
   _focusedElement: null,
   _focusCounter: 0, // up one for every time we focus a new element
-  _observer: null,
+  _focusDeleteObserver: null,
+  _focusContentObserver: null,
   _documentEncoder: null,
   _editor: null,
   _editing: false,
@@ -250,9 +251,13 @@ let FormAssistant = {
 
     if (this.focusedElement) {
       this.focusedElement.removeEventListener('compositionend', this);
-      if (this._observer) {
-        this._observer.disconnect();
-        this._observer = null;
+      if (this._focusDeleteObserver) {
+        this._focusDeleteObserver.disconnect();
+        this._focusDeleteObserver = null;
+      }
+      if (this._focusContentObserver) {
+        this._focusContentObserver.disconnect();
+        this._focusContentObserver = null;
       }
       if (this._selectionPrivate) {
         this._selectionPrivate.removeSelectionListener(this);
@@ -292,23 +297,36 @@ let FormAssistant = {
 
       // If our focusedElement is removed from DOM we want to handle it properly
       let MutationObserver = element.ownerDocument.defaultView.MutationObserver;
-      this._observer = new MutationObserver(function(mutations) {
+      this._focusDeleteObserver = new MutationObserver(function(mutations) {
         var del = [].some.call(mutations, function(m) {
           return [].some.call(m.removedNodes, function(n) {
             return n.contains(element);
           });
         });
         if (del && element === self.focusedElement) {
-          self.hideKeyboard();
+          self.unhandleFocus();
           self.selectionStart = -1;
           self.selectionEnd = -1;
         }
       });
 
-      this._observer.observe(element.ownerDocument.body, {
+      this._focusDeleteObserver.observe(element.ownerDocument.body, {
         childList: true,
         subtree: true
       });
+
+      // If contenteditable, also add a mutation observer on its content and
+      // call selectionChanged when a change occurs
+      if (isContentEditable(element)) {
+        this._focusContentObserver = new MutationObserver(function() {
+          this.updateSelection();
+        }.bind(this));
+
+        this._focusContentObserver.observe(element, {
+          childList: true,
+          subtree: true
+        });
+      }
     }
 
     this.focusedElement = element;
@@ -333,7 +351,7 @@ let FormAssistant = {
     if (this._editing) {
       return;
     }
-    this.sendKeyboardState(this.focusedElement);
+    this.sendInputState(this.focusedElement);
   },
 
   handleEvent: function fa_handleEvent(evt) {
@@ -361,13 +379,13 @@ let FormAssistant = {
         }
 
         if (isContentEditable(target)) {
-          this.showKeyboard(this.getTopLevelEditable(target));
+          this.handleFocus(this.getTopLevelEditable(target));
           this.updateSelection();
           break;
         }
 
         if (this.isFocusableElement(target)) {
-          this.showKeyboard(target);
+          this.handleFocus(target);
           this.updateSelection();
         }
         break;
@@ -388,14 +406,14 @@ let FormAssistant = {
 
       case "blur":
         if (this.focusedElement) {
-          this.hideKeyboard();
+          this.unhandleFocus();
           this.selectionStart = -1;
           this.selectionEnd = -1;
         }
         break;
 
       case "resize":
-        if (!this.isKeyboardOpened)
+        if (!this.isHandlingFocus)
           return;
 
         if (this.scrollIntoViewTimeout) {
@@ -585,11 +603,8 @@ let FormAssistant = {
       case "Forms:ReplaceSurroundingText": {
         CompositionManager.endComposition('');
 
-        let selectionRange = getSelectionRange(target);
         if (!replaceSurroundingText(target,
                                     json.text,
-                                    selectionRange[0],
-                                    selectionRange[1],
                                     json.offset,
                                     json.length)) {
           if (json.requestId) {
@@ -657,7 +672,7 @@ let FormAssistant = {
 
   },
 
-  showKeyboard: function fa_showKeyboard(target) {
+  handleFocus: function fa_handleFocus(target) {
     if (this.focusedElement === target)
       return;
 
@@ -667,18 +682,17 @@ let FormAssistant = {
     this.setFocusedElement(target);
 
     let count = this._focusCounter;
-    this.waitForNextTick(function fa_showKeyboardSync() {
+    this.waitForNextTick(function fa_handleFocusSync() {
       if (count !== this._focusCounter) {
         return;
       }
 
-      let kbOpened = this.sendKeyboardState(target);
-      if (this.isTextInputElement(target))
-        this.isKeyboardOpened = kbOpened;
+      let isHandlingFocus = this.sendInputState(target);
+      this.isHandlingFocus = isHandlingFocus;
     }.bind(this));
   },
 
-  hideKeyboard: function fa_hideKeyboard() {
+  unhandleFocus: function fa_unhandleFocus() {
     this.setFocusedElement(null);
 
     let count = this._focusCounter;
@@ -686,13 +700,13 @@ let FormAssistant = {
     // Wait for the next tick before unset the focused element and etc.
     // If the user move from one input from another,
     // the remote process should get one Forms:Input message instead of two.
-    this.waitForNextTick(function fa_hideKeyboardSync() {
+    this.waitForNextTick(function fa_unhandleFocusSync() {
       if (count !== this._focusCounter ||
-          !this.isKeyboardOpened) {
+          !this.isHandlingFocus) {
         return;
       }
 
-      this.isKeyboardOpened = false;
+      this.isHandlingFocus = false;
       sendAsyncMessage("Forms:Input", { "type": "blur" });
     }.bind(this));
   },
@@ -710,12 +724,6 @@ let FormAssistant = {
             !this.ignoredInputTypes.has(element.type));
   },
 
-  isTextInputElement: function fa_isTextInputElement(element) {
-    return element instanceof HTMLInputElement ||
-           element instanceof HTMLTextAreaElement ||
-           isContentEditable(element);
-  },
-
   getTopLevelEditable: function fa_getTopLevelEditable(element) {
     function retrieveTopLevelEditable(element) {
       while (element && !isContentEditable(element))
@@ -727,7 +735,7 @@ let FormAssistant = {
     return retrieveTopLevelEditable(element) || element;
   },
 
-  sendKeyboardState: function(element) {
+  sendInputState: function(element) {
     // FIXME/bug 729623: work around apparent bug in the IME manager
     // in gecko.
     let readonly = element.getAttribute("readonly");
@@ -1139,31 +1147,50 @@ function getPlaintextEditor(element) {
   return editor;
 }
 
-function replaceSurroundingText(element, text, selectionStart, selectionEnd,
-                                offset, length) {
+function replaceSurroundingText(element, text, offset, length) {
   let editor = FormAssistant.editor;
   if (!editor) {
     return false;
   }
 
   // Check the parameters.
-  let start = selectionStart + offset;
-  if (start < 0) {
-    start = 0;
-  }
   if (length < 0) {
     length = 0;
   }
-  let end = start + length;
 
-  if (selectionStart != start || selectionEnd != end) {
-    // Change selection range before replacing.
-    if (!setSelectionRange(element, start, end)) {
-      return false;
+  // Change selection range before replacing. For content editable element,
+  // searching the node for setting selection range is not needed when the
+  // selection is collapsed within a text node.
+  let fastPathHit = false;
+  if (!isPlainTextField(element)) {
+    let sel = element.ownerDocument.defaultView.getSelection();
+    let node = sel.anchorNode;
+    if (sel.isCollapsed && node && node.nodeType == 3 /* TEXT_NODE */) {
+      let start = sel.anchorOffset + offset;
+      let end = start + length;
+      // Fallback to setSelectionRange() if the replacement span multiple nodes.
+      if (start >= 0 && end <= node.textContent.length) {
+        fastPathHit = true;
+        sel.collapse(node, start);
+        sel.extend(node, end);
+      }
+    }
+  }
+  if (!fastPathHit) {
+    let range = getSelectionRange(element);
+    let start = range[0] + offset;
+    if (start < 0) {
+      start = 0;
+    }
+    let end = start + length;
+    if (start != range[0] || end != range[1]) {
+      if (!setSelectionRange(element, start, end)) {
+        return false;
+      }
     }
   }
 
-  if (start != end) {
+  if (length) {
     // Delete the selected text.
     editor.deleteSelection(Ci.nsIEditor.ePrevious, Ci.nsIEditor.eStrip);
   }
@@ -1180,7 +1207,6 @@ function replaceSurroundingText(element, text, selectionStart, selectionEnd,
 
 let CompositionManager =  {
   _isStarted: false,
-  _text: '',
   _clauseAttrMap: {
     'raw-input':
       Ci.nsICompositionStringSynthesizer.ATTR_RAWINPUT,
@@ -1233,14 +1259,9 @@ let CompositionManager =  {
     if (!this._isStarted) {
       this._isStarted = true;
       domWindowUtils.sendCompositionEvent('compositionstart', '', '');
-      this._text = '';
     }
 
     // Update the composing text.
-    if (this._text !== text) {
-      this._text = text;
-      domWindowUtils.sendCompositionEvent('compositionupdate', text, '');
-    }
     let compositionString = domWindowUtils.createCompositionStringSynthesizer();
     compositionString.setString(text);
     for (var i = 0; i < clauseLens.length; i++) {
@@ -1257,9 +1278,6 @@ let CompositionManager =  {
       return;
     }
     // Update the composing text.
-    if (this._text !== text) {
-      domWindowUtils.sendCompositionEvent('compositionupdate', text, '');
-    }
     let compositionString = domWindowUtils.createCompositionStringSynthesizer();
     compositionString.setString(text);
     // Set the cursor position to |text.length| so that the text will be
@@ -1267,7 +1285,6 @@ let CompositionManager =  {
     compositionString.setCaret(text.length, 0);
     compositionString.dispatchEvent();
     domWindowUtils.sendCompositionEvent('compositionend', text, '');
-    this._text = '';
     this._isStarted = false;
   },
 
@@ -1277,7 +1294,6 @@ let CompositionManager =  {
       return;
     }
 
-    this._text = '';
     this._isStarted = false;
   }
 };

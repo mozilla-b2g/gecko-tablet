@@ -3,11 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifdef MOZ_LOGGING
-#define FORCE_PR_LOG /* Allow logging in the release build */
-#include "prlog.h"
-#endif
-
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/BinarySearch.h"
 
@@ -711,7 +706,7 @@ namespace {
 struct Format14CmapWrapper
 {
     const Format14Cmap& mCmap14;
-    Format14CmapWrapper(const Format14Cmap& cmap14) : mCmap14(cmap14) {}
+    explicit Format14CmapWrapper(const Format14Cmap& cmap14) : mCmap14(cmap14) {}
     uint32_t operator[](size_t index) const {
         return mCmap14.varSelectorRecords[index].varSelector;
     }
@@ -720,7 +715,7 @@ struct Format14CmapWrapper
 struct NonDefUVSTableWrapper
 {
     const NonDefUVSTable& mTable;
-    NonDefUVSTableWrapper(const NonDefUVSTable& table) : mTable(table) {}
+    explicit NonDefUVSTableWrapper(const NonDefUVSTable& table) : mTable(table) {}
     uint32_t operator[](size_t index) const {
         return mTable.uvsMappings[index].unicodeValue;
     }
@@ -954,6 +949,10 @@ gfxFontUtils::DetermineFontDataType(const uint8_t *aFontData, uint32_t aFontData
             reinterpret_cast<const AutoSwap_PRUint32*>(aFontData);
         if (uint32_t(*version) == TRUETYPE_TAG('w','O','F','F')) {
             return GFX_USERFONT_WOFF;
+        }
+        if (Preferences::GetBool(GFX_PREF_WOFF2_ENABLED) &&
+            uint32_t(*version) == TRUETYPE_TAG('w','O','F','2')) {
+            return GFX_USERFONT_WOFF2;
         }
     }
     
@@ -1338,7 +1337,7 @@ struct MacCharsetMappingComparator
 {
     typedef gfxFontUtils::MacFontNameCharsetMapping MacFontNameCharsetMapping;
     const MacFontNameCharsetMapping& mSearchValue;
-    MacCharsetMappingComparator(const MacFontNameCharsetMapping& aSearchValue)
+    explicit MacCharsetMappingComparator(const MacFontNameCharsetMapping& aSearchValue)
       : mSearchValue(aSearchValue) {}
     int operator()(const MacFontNameCharsetMapping& aEntry) const {
         if (mSearchValue < aEntry) {

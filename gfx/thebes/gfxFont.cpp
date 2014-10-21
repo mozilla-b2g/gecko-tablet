@@ -7,9 +7,6 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MathAlgorithms.h"
 
-#ifdef MOZ_LOGGING
-#define FORCE_PR_LOG /* Allow logging in the release build */
-#endif
 #include "prlog.h"
 
 #include "nsExpirationTracker.h"
@@ -1907,7 +1904,7 @@ gfxFont::Draw(gfxTextRun *aTextRun, uint32_t aStart, uint32_t aEnd,
             Translate(p).       // translate origin for rotation
             Rotate(M_PI / 2.0). // turn 90deg clockwise
             Translate(-p).      // undo the translation
-            Translate(gfxPoint(0, metrics.emAscent - metrics.emDescent) / 2));
+            Translate(gfxPoint(0, (metrics.emAscent - metrics.emDescent) / 2)));
                                 // and offset the (alphabetic) baseline of the
                                 // horizontally-shaped text from the (centered)
                                 // default baseline used for vertical
@@ -2106,7 +2103,8 @@ gfxFont::Measure(gfxTextRun *aTextRun,
                  uint32_t aStart, uint32_t aEnd,
                  BoundingBoxType aBoundingBoxType,
                  gfxContext *aRefContext,
-                 Spacing *aSpacing)
+                 Spacing *aSpacing,
+                 uint16_t aOrientation)
 {
     // If aBoundingBoxType is TIGHT_HINTED_OUTLINE_EXTENTS
     // and the underlying cairo font may be antialiased,
@@ -2122,14 +2120,15 @@ gfxFont::Measure(gfxTextRun *aTextRun,
         if (mNonAAFont) {
             return mNonAAFont->Measure(aTextRun, aStart, aEnd,
                                        TIGHT_HINTED_OUTLINE_EXTENTS,
-                                       aRefContext, aSpacing);
+                                       aRefContext, aSpacing, aOrientation);
         }
     }
 
     const int32_t appUnitsPerDevUnit = aTextRun->GetAppUnitsPerDevUnit();
     // Current position in appunits
     gfxFont::Orientation orientation =
-        aTextRun->IsVertical() ? gfxFont::eVertical : gfxFont::eHorizontal;
+        aOrientation == gfxTextRunFactory::TEXT_ORIENT_VERTICAL_UPRIGHT
+        ? gfxFont::eVertical : gfxFont::eHorizontal;
     const gfxFont::Metrics& fontMetrics = GetMetrics(orientation);
 
     RunMetrics metrics;
@@ -3431,11 +3430,10 @@ gfxFont::CreateVerticalMetrics()
     // We synthesize our own positions, as font metrics don't provide these
     // for vertical layout.
     metrics->underlineSize = std::max(1.0, metrics->underlineSize);
-    metrics->underlineOffset = 0; // XXX to be adjusted
+    metrics->underlineOffset = - metrics->maxDescent - metrics->underlineSize;
 
     metrics->strikeoutSize = std::max(1.0, metrics->strikeoutSize);
-    metrics->strikeoutOffset =
-        metrics->maxDescent - 0.5 * metrics->strikeoutSize;
+    metrics->strikeoutOffset = - 0.5 * metrics->strikeoutSize;
 
     // Somewhat arbitrary values for now, subject to future refinement...
     metrics->spaceWidth = metrics->aveCharWidth;

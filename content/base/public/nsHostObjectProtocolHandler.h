@@ -18,11 +18,12 @@
 #define RTSPURI_SCHEME "rtsp"
 
 class nsIDOMBlob;
-class nsIDOMMediaStream;
 class nsIPrincipal;
 
 namespace mozilla {
+class DOMMediaStream;
 namespace dom {
+class FileImpl;
 class MediaSource;
 }
 }
@@ -119,10 +120,13 @@ inline bool IsFontTableURI(nsIURI* aUri)
 }
 
 extern nsresult
+NS_GetBlobForBlobURI(nsIURI* aURI, mozilla::dom::FileImpl** aBlob);
+
+extern nsresult
 NS_GetStreamForBlobURI(nsIURI* aURI, nsIInputStream** aStream);
 
 extern nsresult
-NS_GetStreamForMediaStreamURI(nsIURI* aURI, nsIDOMMediaStream** aStream);
+NS_GetStreamForMediaStreamURI(nsIURI* aURI, mozilla::DOMMediaStream** aStream);
 
 extern nsresult
 NS_GetSourceForMediaSourceURI(nsIURI* aURI, mozilla::dom::MediaSource** aSource);

@@ -45,7 +45,7 @@ class TestShellParent;
 } // namespace ipc
 
 namespace jsipc {
-class JavaScriptParent;
+class JavaScriptShared;
 class PJavaScriptParent;
 }
 
@@ -139,6 +139,8 @@ public:
 
     static bool IgnoreIPCPrincipal();
 
+    static void NotifyUpdatedDictionaries();
+
     virtual bool RecvCreateChildProcess(const IPCTabContext& aContext,
                                         const hal::ProcessPriority& aPriority,
                                         uint64_t* aId,
@@ -175,7 +177,7 @@ public:
     TestShellParent* CreateTestShell();
     bool DestroyTestShell(TestShellParent* aTestShell);
     TestShellParent* GetTestShellSingleton();
-    jsipc::JavaScriptParent *GetCPOWManager();
+    jsipc::JavaScriptShared* GetCPOWManager() MOZ_OVERRIDE;
 
     void ReportChildAlreadyBlocked();
     bool RequestRunToCompletion();
@@ -410,7 +412,9 @@ private:
     virtual bool RecvGetProcessAttributes(uint64_t* aId,
                                           bool* aIsForApp,
                                           bool* aIsForBrowser) MOZ_OVERRIDE;
-    virtual bool RecvGetXPCOMProcessAttributes(bool* aIsOffline) MOZ_OVERRIDE;
+    virtual bool RecvGetXPCOMProcessAttributes(bool* aIsOffline,
+                                               InfallibleTArray<nsString>* dictionaries)
+        MOZ_OVERRIDE;
 
     virtual bool DeallocPJavaScriptParent(mozilla::jsipc::PJavaScriptParent*) MOZ_OVERRIDE;
 
@@ -559,11 +563,11 @@ private:
                                  const InfallibleTArray<CpowEntry>& aCpows,
                                  const IPC::Principal& aPrincipal,
                                  InfallibleTArray<nsString>* aRetvals) MOZ_OVERRIDE;
-    virtual bool AnswerRpcMessage(const nsString& aMsg,
-                                  const ClonedMessageData& aData,
-                                  const InfallibleTArray<CpowEntry>& aCpows,
-                                  const IPC::Principal& aPrincipal,
-                                  InfallibleTArray<nsString>* aRetvals) MOZ_OVERRIDE;
+    virtual bool RecvRpcMessage(const nsString& aMsg,
+                                const ClonedMessageData& aData,
+                                const InfallibleTArray<CpowEntry>& aCpows,
+                                const IPC::Principal& aPrincipal,
+                                InfallibleTArray<nsString>* aRetvals) MOZ_OVERRIDE;
     virtual bool RecvAsyncMessage(const nsString& aMsg,
                                   const ClonedMessageData& aData,
                                   const InfallibleTArray<CpowEntry>& aCpows,
@@ -631,8 +635,13 @@ private:
 
     virtual bool RecvSetFakeVolumeState(const nsString& fsName, const int32_t& fsState) MOZ_OVERRIDE;
 
-    virtual bool RecvKeywordToURI(const nsCString& aKeyword, OptionalInputStreamParams* aPostData,
+    virtual bool RecvKeywordToURI(const nsCString& aKeyword,
+                                  nsString* aProviderName,
+                                  OptionalInputStreamParams* aPostData,
                                   OptionalURIParams* aURI) MOZ_OVERRIDE;
+
+    virtual bool RecvNotifyKeywordSearchLoading(const nsString &aProvider,
+                                                const nsString &aKeyword) MOZ_OVERRIDE; 
 
     virtual void ProcessingError(Result what) MOZ_OVERRIDE;
 

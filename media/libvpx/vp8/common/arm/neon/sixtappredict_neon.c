@@ -9,7 +9,10 @@
  */
 
 #include <arm_neon.h>
-#include "vpx_ports/mem.h"
+
+#ifdef _MSC_VER
+#define __builtin_prefetch(x)
+#endif
 
 static const int8_t vp8_sub_pel_filters[8][8] = {
     {0,  0,  128,   0,   0, 0, 0, 0},  /* note that 1/8 pel positionyys are */

@@ -12,10 +12,16 @@ loop.conversation = (function(mozL10n) {
   "use strict";
 
   var sharedViews = loop.shared.views;
+  var sharedMixins = loop.shared.mixins;
   var sharedModels = loop.shared.models;
+  var sharedActions = loop.shared.actions;
+
   var OutgoingConversationView = loop.conversationViews.OutgoingConversationView;
+  var CallIdentifierView = loop.conversationViews.CallIdentifierView;
+  var EmptyRoomView = loop.roomViews.EmptyRoomView;
 
   var IncomingCallView = React.createClass({displayName: 'IncomingCallView',
+    mixins: [sharedMixins.DropdownMenuMixin],
 
     propTypes: {
       model: React.PropTypes.object.isRequired,
@@ -24,23 +30,9 @@ loop.conversation = (function(mozL10n) {
 
     getDefaultProps: function() {
       return {
-        showDeclineMenu: false,
+        showMenu: false,
         video: true
       };
-    },
-
-    getInitialState: function() {
-      return {showDeclineMenu: this.props.showDeclineMenu};
-    },
-
-    componentDidMount: function() {
-      window.addEventListener("click", this.clickHandler);
-      window.addEventListener("blur", this._hideDeclineMenu);
-    },
-
-    componentWillUnmount: function() {
-      window.removeEventListener("click", this.clickHandler);
-      window.removeEventListener("blur", this._hideDeclineMenu);
     },
 
     clickHandler: function(e) {
@@ -104,11 +96,16 @@ loop.conversation = (function(mozL10n) {
       var dropdownMenuClassesDecline = React.addons.classSet({
         "native-dropdown-menu": true,
         "conversation-window-dropdown": true,
-        "visually-hidden": !this.state.showDeclineMenu
+        "visually-hidden": !this.state.showMenu
       });
+
       return (
         React.DOM.div({className: "call-window"}, 
-          React.DOM.h2(null, mozL10n.get("incoming_call_title2")), 
+          CallIdentifierView({video: this.props.video, 
+            peerIdentifier: this.props.model.getCallIdentifier(), 
+            urlCreationDate: this.props.model.get("urlCreationDate"), 
+            showIcons: true}), 
+
           React.DOM.div({className: "btn-group call-action-group"}, 
 
             React.DOM.div({className: "fx-embedded-call-button-spacer"}), 
@@ -117,13 +114,11 @@ loop.conversation = (function(mozL10n) {
               React.DOM.div({className: "btn-group-chevron"}, 
                 React.DOM.div({className: "btn-group"}, 
 
-                  React.DOM.button({className: "btn btn-error btn-decline", 
+                  React.DOM.button({className: "btn btn-decline", 
                           onClick: this._handleDecline}, 
                     mozL10n.get("incoming_call_cancel_button")
                   ), 
-                  React.DOM.div({className: "btn-chevron", 
-                       onClick: this._toggleDeclineMenu}
-                  )
+                  React.DOM.div({className: "btn-chevron", onClick: this.toggleDropdownMenu})
                 ), 
 
                 React.DOM.ul({className: dropdownMenuClassesDecline}, 
@@ -194,15 +189,14 @@ loop.conversation = (function(mozL10n) {
       client: React.PropTypes.instanceOf(loop.Client).isRequired,
       conversation: React.PropTypes.instanceOf(sharedModels.ConversationModel)
                          .isRequired,
-      notifications: React.PropTypes.instanceOf(sharedModels.NotificationCollection)
-                          .isRequired,
       sdk: React.PropTypes.object.isRequired
     },
 
     getInitialState: function() {
       return {
+        callFailed: false, // XXX this should be removed when bug 1047410 lands.
         callStatus: "start"
-      }
+      };
     },
 
     componentDidMount: function() {
@@ -244,8 +238,7 @@ loop.conversation = (function(mozL10n) {
           );
         }
         case "connected": {
-          // XXX This should be the caller id (bug 1020449)
-          document.title = mozL10n.get("incoming_call_title2");
+          document.title = this.props.conversation.getCallIdentifier();
 
           var callType = this.props.conversation.get("selectedCallType");
 
@@ -259,7 +252,12 @@ loop.conversation = (function(mozL10n) {
           );
         }
         case "end": {
-          document.title = mozL10n.get("conversation_has_ended");
+          // XXX To be handled with the "failed" view state when bug 1047410 lands
+          if (this.state.callFailed) {
+            document.title = mozL10n.get("generic_failure_title");
+          } else {
+            document.title = mozL10n.get("conversation_has_ended");
+          }
 
           var feebackAPIBaseUrl = navigator.mozLoop.getLoopCharPref(
             "feedback.baseUrl");
@@ -292,9 +290,10 @@ loop.conversation = (function(mozL10n) {
      * @param {{code: number, message: string}} error
      */
     _notifyError: function(error) {
+      // XXX Not the ideal response, but bug 1047410 will be replacing
+      // this by better "call failed" UI.
       console.error(error);
-      this.props.notifications.errorL10n("connection_error_see_console_notification");
-      this.setState({callStatus: "end"});
+      this.setState({callFailed: true, callStatus: "end"});
     },
 
     /**
@@ -304,16 +303,16 @@ loop.conversation = (function(mozL10n) {
      * - {String} connectionId: OT session id
      */
     _onPeerHungup: function() {
-      this.props.notifications.warnL10n("peer_ended_conversation2");
-      this.setState({callStatus: "end"});
+      this.setState({callFailed: false, callStatus: "end"});
     },
 
     /**
      * Network disconnected. Notifies the user and ends the call.
      */
     _onNetworkDisconnected: function() {
-      this.props.notifications.warnL10n("network_disconnected");
-      this.setState({callStatus: "end"});
+      // XXX Not the ideal response, but bug 1047410 will be replacing
+      // this by better "call failed" UI.
+      this.setState({callFailed: true, callStatus: "end"});
     },
 
     /**
@@ -324,10 +323,9 @@ loop.conversation = (function(mozL10n) {
 
       var callData = navigator.mozLoop.getCallData(this.props.conversation.get("callId"));
       if (!callData) {
-        console.error("Failed to get the call data");
         // XXX Not the ideal response, but bug 1047410 will be replacing
         // this by better "call failed" UI.
-        this.props.notifications.errorL10n("cannot_start_call_session_not_ready");
+        console.error("Failed to get the call data");
         return;
       }
       this.props.conversation.setIncomingSessionData(callData);
@@ -396,14 +394,18 @@ loop.conversation = (function(mozL10n) {
       if (progressData.state !== "terminated")
         return;
 
-      if (progressData.reason === "cancel") {
+      if (progressData.reason === "cancel" ||
+          progressData.reason === "closed") {
         this._abortIncomingCall();
         return;
       }
 
-      if (progressData.reason === "timeout" &&
-          (previousState === "init" || previousState === "alerting")) {
-        this._abortIncomingCall();
+      if (progressData.reason === "timeout") {
+        if (previousState === "init" || previousState === "alerting") {
+          this._abortIncomingCall();
+        } else {
+          this.setState({callFailed: true, callStatus: "end"});
+        }
       }
     },
 
@@ -476,7 +478,7 @@ loop.conversation = (function(mozL10n) {
     _handleSessionError: function() {
       // XXX Not the ideal response, but bug 1047410 will be replacing
       // this by better "call failed" UI.
-      this.props.notifications.errorL10n("cannot_start_call_session_not_ready");
+      console.error("Failed initiating the call session.");
     },
   });
 
@@ -484,18 +486,20 @@ loop.conversation = (function(mozL10n) {
    * Master controller view for handling if incoming or outgoing calls are
    * in progress, and hence, which view to display.
    */
-  var ConversationControllerView = React.createClass({displayName: 'ConversationControllerView',
+  var AppControllerView = React.createClass({displayName: 'AppControllerView',
     propTypes: {
       // XXX Old types required for incoming call view.
       client: React.PropTypes.instanceOf(loop.Client).isRequired,
       conversation: React.PropTypes.instanceOf(sharedModels.ConversationModel)
                          .isRequired,
-      notifications: React.PropTypes.instanceOf(sharedModels.NotificationCollection)
-                          .isRequired,
       sdk: React.PropTypes.object.isRequired,
 
       // XXX New types for OutgoingConversationView
-      store: React.PropTypes.instanceOf(loop.store.ConversationStore).isRequired
+      store: React.PropTypes.instanceOf(loop.store.ConversationStore).isRequired,
+      dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired,
+
+      // if not passed, this is not a room view
+      localRoomStore: React.PropTypes.instanceOf(loop.store.LocalRoomStore)
     },
 
     getInitialState: function() {
@@ -509,6 +513,15 @@ loop.conversation = (function(mozL10n) {
     },
 
     render: function() {
+      if (this.props.localRoomStore) {
+        return (
+          EmptyRoomView({
+            mozLoop: navigator.mozLoop, 
+            localRoomStore: this.props.localRoomStore}
+          )
+        );
+      }
+
       // Don't display anything, until we know what type of call we are.
       if (this.state.outgoing === undefined) {
         return null;
@@ -516,21 +529,21 @@ loop.conversation = (function(mozL10n) {
 
       if (this.state.outgoing) {
         return (OutgoingConversationView({
-          store: this.props.store}
+          store: this.props.store, 
+          dispatcher: this.props.dispatcher}
         ));
       }
 
       return (IncomingConversationView({
         client: this.props.client, 
         conversation: this.props.conversation, 
-        notifications: this.props.notifications, 
         sdk: this.props.sdk}
       ));
     }
   });
 
   /**
-   * Panel initialisation.
+   * Conversation initialisation.
    */
   function init() {
     // Do the initial L10n setup, we do this before anything
@@ -551,14 +564,16 @@ loop.conversation = (function(mozL10n) {
 
     var dispatcher = new loop.Dispatcher();
     var client = new loop.Client();
-    var conversationStore = new loop.store.ConversationStore({}, {
-      client: client,
-      dispatcher: dispatcher
+    var sdkDriver = new loop.OTSdkDriver({
+      dispatcher: dispatcher,
+      sdk: OT
     });
 
-    // XXX For now key this on the pref, but this should really be
-    // set by the information from the mozLoop API when we can get it (bug 1072323).
-    var outgoingEmail = navigator.mozLoop.getLoopCharPref("outgoingemail");
+    var conversationStore = new loop.store.ConversationStore({}, {
+      client: client,
+      dispatcher: dispatcher,
+      sdkDriver: sdkDriver
+    });
 
     // XXX Old class creation for the incoming conversation view, whilst
     // we transition across (bug 1072323).
@@ -566,40 +581,69 @@ loop.conversation = (function(mozL10n) {
       {},                // Model attributes
       {sdk: window.OT}   // Model dependencies
     );
-    var notifications = new sharedModels.NotificationCollection();
 
     // Obtain the callId and pass it through
     var helper = new loop.shared.utils.Helper();
     var locationHash = helper.locationHash();
     var callId;
-    if (locationHash) {
-      callId = locationHash.match(/\#incoming\/(.*)/)[1]
-      conversation.set("callId", callId);
+    var outgoing;
+    var localRoomStore;
+
+    // XXX removeMe, along with noisy comment at the beginning of
+    // conversation_test.js "when locationHash begins with #room".
+    if (navigator.mozLoop.getLoopBoolPref("test.alwaysUseRooms")) {
+      locationHash = "#room/32";
     }
+
+    var hash = locationHash.match(/#incoming\/(.*)/);
+    if (hash) {
+      callId = hash[1];
+      outgoing = false;
+    } else if (hash = locationHash.match(/#room\/(.*)/)) {
+      localRoomStore = new loop.store.LocalRoomStore({
+        dispatcher: dispatcher,
+        mozLoop: navigator.mozLoop
+      });
+    } else {
+      hash = locationHash.match(/#outgoing\/(.*)/);
+      if (hash) {
+        callId = hash[1];
+        outgoing = true;
+      }
+    }
+
+    conversation.set({callId: callId});
 
     window.addEventListener("unload", function(event) {
       // Handle direct close of dialog box via [x] control.
-      navigator.mozLoop.releaseCallData(conversation.get("callId"));
+      navigator.mozLoop.releaseCallData(callId);
     });
 
     document.body.classList.add(loop.shared.utils.getTargetPlatform());
 
-    React.renderComponent(ConversationControllerView({
+    React.renderComponent(AppControllerView({
+      localRoomStore: localRoomStore, 
       store: conversationStore, 
       client: client, 
       conversation: conversation, 
-      notifications: notifications, 
+      dispatcher: dispatcher, 
       sdk: window.OT}
     ), document.querySelector('#main'));
 
+   if (localRoomStore) {
+      dispatcher.dispatch(
+        new sharedActions.SetupEmptyRoom({localRoomId: hash[1]}));
+      return;
+    }
+
     dispatcher.dispatch(new loop.shared.actions.GatherCallData({
       callId: callId,
-      calleeId: outgoingEmail
+      outgoing: outgoing
     }));
   }
 
   return {
-    ConversationControllerView: ConversationControllerView,
+    AppControllerView: AppControllerView,
     IncomingConversationView: IncomingConversationView,
     IncomingCallView: IncomingCallView,
     init: init

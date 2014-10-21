@@ -34,7 +34,7 @@ class URIParams;
 }// namespace ipc
 
 namespace jsipc {
-class JavaScriptChild;
+class JavaScriptShared;
 }
 
 namespace layers {
@@ -87,10 +87,10 @@ public:
     const AppInfo& GetAppInfo() {
         return mAppInfo;
     }
-
     void SetProcessName(const nsAString& aName, bool aDontOverride = false);
     void GetProcessName(nsAString& aName);
     void GetProcessName(nsACString& aName);
+    bool IsAlive();
     static void AppendProcessId(nsACString& aName);
 
     ContentBridgeParent* GetLastBridge() {
@@ -194,7 +194,7 @@ public:
     virtual PTestShellChild* AllocPTestShellChild() MOZ_OVERRIDE;
     virtual bool DeallocPTestShellChild(PTestShellChild*) MOZ_OVERRIDE;
     virtual bool RecvPTestShellConstructor(PTestShellChild*) MOZ_OVERRIDE;
-    jsipc::JavaScriptChild *GetCPOWManager();
+    jsipc::JavaScriptShared* GetCPOWManager() MOZ_OVERRIDE;
 
     PMobileConnectionChild*
     SendPMobileConnectionConstructor(PMobileConnectionChild* aActor,
@@ -293,6 +293,8 @@ public:
 
     virtual bool RecvGeolocationUpdate(const GeoPosition& somewhere) MOZ_OVERRIDE;
 
+    virtual bool RecvUpdateDictionaryList(const InfallibleTArray<nsString>& aDictionaries) MOZ_OVERRIDE;
+
     virtual bool RecvAddPermission(const IPC::Permission& permission) MOZ_OVERRIDE;
 
     virtual bool RecvScreenSizeChanged(const gfxIntSize &size) MOZ_OVERRIDE;
@@ -381,6 +383,8 @@ public:
                                          const bool& aIsForApp,
                                          const bool& aIsForBrowser) MOZ_OVERRIDE;
 
+    void GetAvailableDictionaries(InfallibleTArray<nsString>& aDictionaries);
+
 private:
     virtual void ActorDestroy(ActorDestroyReason why) MOZ_OVERRIDE;
 
@@ -396,6 +400,8 @@ private:
     nsRefPtr<ConsoleListener> mConsoleListener;
 
     nsTHashtable<nsPtrHashKey<nsIObserver>> mIdleObservers;
+
+    InfallibleTArray<nsString> mAvailableDictionaries;
 
     /**
      * An ID unique to the process containing our corresponding
@@ -415,6 +421,7 @@ private:
     bool mIsForApp;
     bool mIsForBrowser;
     bool mCanOverrideProcessName;
+    bool mIsAlive;
     nsString mProcessName;
 
     static ContentChild* sSingleton;

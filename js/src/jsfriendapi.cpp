@@ -29,6 +29,7 @@
 #include "jsobjinlines.h"
 #include "jsscriptinlines.h"
 
+#include "vm/NativeObject-inl.h"
 #include "vm/ScopeObject-inl.h"
 
 using namespace js;
@@ -434,7 +435,7 @@ js::NotifyAnimationActivity(JSObject *obj)
 JS_FRIEND_API(uint32_t)
 js::GetObjectSlotSpan(JSObject *obj)
 {
-    return obj->slotSpan();
+    return obj->as<NativeObject>().slotSpan();
 }
 
 JS_FRIEND_API(bool)
@@ -554,9 +555,14 @@ js::GetOriginalEval(JSContext *cx, HandleObject scope, MutableHandleObject eval)
 }
 
 JS_FRIEND_API(void)
-js::SetReservedSlotWithBarrier(JSObject *obj, size_t slot, const js::Value &value)
+js::SetReservedOrProxyPrivateSlotWithBarrier(JSObject *obj, size_t slot, const js::Value &value)
 {
-    obj->setSlot(slot, value);
+    if (IsProxy(obj)) {
+        MOZ_ASSERT(slot == 0);
+        obj->as<ProxyObject>().setSameCompartmentPrivate(value);
+    } else {
+        obj->as<NativeObject>().setSlot(slot, value);
+    }
 }
 
 JS_FRIEND_API(bool)
@@ -652,7 +658,7 @@ js::VisitGrayWrapperTargets(Zone *zone, GCThingCallback callback, void *closure)
     for (CompartmentsInZoneIter comp(zone); !comp.done(); comp.next()) {
         for (JSCompartment::WrapperEnum e(comp); !e.empty(); e.popFront()) {
             gc::Cell *thing = e.front().key().wrapped;
-            if (thing->isTenured() && thing->asTenured()->isMarked(gc::GRAY))
+            if (thing->isTenured() && thing->asTenured().isMarked(gc::GRAY))
                 callback(closure, thing);
         }
     }
@@ -748,7 +754,7 @@ FormatValue(JSContext *cx, const Value &vArg, JSAutoByteString &bytes)
 }
 
 static char *
-FormatFrame(JSContext *cx, const NonBuiltinScriptFrameIter &iter, char *buf, int num,
+FormatFrame(JSContext *cx, const ScriptFrameIter &iter, char *buf, int num,
             bool showArgs, bool showLocals, bool showThisProps)
 {
     MOZ_ASSERT(!cx->isExceptionPending());
@@ -875,7 +881,7 @@ FormatFrame(JSContext *cx, const NonBuiltinScriptFrameIter &iter, char *buf, int
         RootedObject obj(cx, &thisVal.toObject());
 
         AutoIdVector keys(cx);
-        if (!GetPropertyNames(cx, obj, JSITER_OWNONLY, &keys)) {
+        if (!GetPropertyKeys(cx, obj, JSITER_OWNONLY, &keys)) {
             cx->clearPendingException();
             return buf;
         }
@@ -920,7 +926,7 @@ JS::FormatStackDump(JSContext *cx, char *buf, bool showArgs, bool showLocals, bo
 {
     int num = 0;
 
-    for (NonBuiltinScriptFrameIter i(cx); !i.done(); ++i) {
+    for (AllFramesIter i(cx); !i.done(); ++i) {
         buf = FormatFrame(cx, i, buf, num, showArgs, showLocals, showThisProps);
         num++;
     }
@@ -1189,7 +1195,7 @@ JS::IncrementalReferenceBarrier(void *ptr, JSGCTraceKind kind)
 #ifdef DEBUG
     Zone *zone = kind == JSTRACE_OBJECT
                  ? static_cast<JSObject *>(cell)->zone()
-                 : cell->asTenured()->zone();
+                 : cell->asTenured().zone();
     MOZ_ASSERT(!zone->runtimeFromMainThread()->isHeapMajorCollecting());
 #endif
 
@@ -1384,8 +1390,8 @@ JS_FRIEND_API(void)
 js::UnsafeDefineElement(JSContext *cx, JS::HandleObject obj, uint32_t index, JS::HandleValue value)
 {
     MOZ_ASSERT(obj->isNative());
-    MOZ_ASSERT(index < obj->getDenseInitializedLength());
-    obj->setDenseElementWithType(cx, index, value);
+    MOZ_ASSERT(index < obj->as<NativeObject>().getDenseInitializedLength());
+    obj->as<NativeObject>().setDenseElementWithType(cx, index, value);
 }
 
 JS_FRIEND_API(bool)
@@ -1434,8 +1440,8 @@ js::IsInRequest(JSContext *cx)
 }
 
 bool
-js::HasObjectMovedOpIfRequired(JSObject *obj) {
-    return obj->is<GlobalObject>() || !!GetObjectClass(obj)->ext.objectMovedOp;
+js::HasObjectMovedOp(JSObject *obj) {
+    return !!GetObjectClass(obj)->ext.objectMovedOp;
 }
 #endif
 

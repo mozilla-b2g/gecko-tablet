@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-
 #include "vm/SavedStacks.h"
 
 #include "mozilla/Attributes.h"
@@ -17,6 +16,7 @@
 #include "jshashutil.h"
 #include "jsmath.h"
 #include "jsnum.h"
+#include "prmjtime.h"
 
 #include "gc/Marking.h"
 #include "js/Vector.h"
@@ -25,7 +25,8 @@
 #include "vm/StringBuffer.h"
 
 #include "jscntxtinlines.h"
-#include "jsobjinlines.h"
+
+#include "vm/NativeObject-inl.h"
 
 using mozilla::AddToHash;
 using mozilla::HashString;
@@ -280,7 +281,7 @@ SavedFrame::checkThis(JSContext *cx, CallArgs &args, const char *fnName)
     // Check for SavedFrame.prototype, which has the same class as SavedFrame
     // instances, however doesn't actually represent a captured stack frame. It
     // is the only object that is<SavedFrame>() but doesn't have a source.
-    if (thisObject.getReservedSlot(JSSLOT_SOURCE).isNull()) {
+    if (thisObject.as<SavedFrame>().getReservedSlot(JSSLOT_SOURCE).isNull()) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_INCOMPATIBLE_PROTO,
                              SavedFrame::class_.name, fnName, "prototype object");
         return nullptr;
@@ -430,10 +431,10 @@ SavedStacks::sweep(JSRuntime *rt)
 {
     if (frames.initialized()) {
         for (SavedFrame::Set::Enum e(frames); !e.empty(); e.popFront()) {
-            JSObject *obj = static_cast<JSObject *>(e.front());
+            JSObject *obj = e.front().unbarrieredGet();
             JSObject *temp = obj;
 
-            if (IsObjectAboutToBeFinalized(&obj)) {
+            if (IsObjectAboutToBeFinalizedFromAnyThread(&obj)) {
                 e.removeFront();
             } else {
                 SavedFrame *frame = &obj->as<SavedFrame>();
@@ -458,7 +459,9 @@ SavedStacks::sweep(JSRuntime *rt)
 
     sweepPCLocationMap();
 
-    if (savedFrameProto && IsObjectAboutToBeFinalized(savedFrameProto.unsafeGet())) {
+    if (savedFrameProto.unbarrieredGet() &&
+        IsObjectAboutToBeFinalizedFromAnyThread(savedFrameProto.unsafeGet()))
+    {
         savedFrameProto.set(nullptr);
     }
 }
@@ -592,9 +595,10 @@ SavedStacks::getOrCreateSavedFramePrototype(JSContext *cx)
     if (!global)
         return nullptr;
 
-    RootedObject proto(cx, NewObjectWithGivenProto(cx, &SavedFrame::class_,
-                                                   global->getOrCreateObjectPrototype(cx),
-                                                   global));
+    RootedNativeObject proto(cx,
+        NewNativeObjectWithGivenProto(cx, &SavedFrame::class_,
+                                      global->getOrCreateObjectPrototype(cx),
+                                      global));
     if (!proto
         || !JS_DefineProperties(cx, proto, SavedFrame::properties)
         || !JS_DefineFunctions(cx, proto, SavedFrame::methods)
@@ -603,10 +607,11 @@ SavedStacks::getOrCreateSavedFramePrototype(JSContext *cx)
         return nullptr;
     }
 
-    savedFrameProto.set(proto);
     // The only object with the SavedFrame::class_ that doesn't have a source
     // should be the prototype.
-    savedFrameProto->setReservedSlot(SavedFrame::JSSLOT_SOURCE, NullValue());
+    proto->setReservedSlot(SavedFrame::JSSLOT_SOURCE, NullValue());
+
+    savedFrameProto.set(proto);
     return savedFrameProto;
 }
 
@@ -647,7 +652,7 @@ SavedStacks::sweepPCLocationMap()
     for (PCLocationMap::Enum e(pcLocationMap); !e.empty(); e.popFront()) {
         PCKey key = e.front().key();
         JSScript *script = key.script.get();
-        if (IsScriptAboutToBeFinalized(&script)) {
+        if (IsScriptAboutToBeFinalizedFromAnyThread(&script)) {
             e.removeFront();
         } else if (script != key.script.get()) {
             key.script = script;
@@ -671,10 +676,12 @@ SavedStacks::getLocation(JSContext *cx, const FrameIter &iter, MutableHandleLoca
     // that doesn't employ memoization, and update |locationp|'s slots directly.
 
     if (!iter.hasScript()) {
-        const char *filename = iter.scriptFilename();
-        if (!filename)
-            filename = "";
-        locationp->source = Atomize(cx, filename, strlen(filename));
+        if (const char16_t *displayURL = iter.scriptDisplayURL()) {
+            locationp->source = AtomizeChars(cx, displayURL, js_strlen(displayURL));
+        } else {
+            const char *filename = iter.scriptFilename() ? iter.scriptFilename() : "";
+            locationp->source = Atomize(cx, filename, strlen(filename));
+        }
         if (!locationp->source)
             return false;
 
@@ -689,8 +696,13 @@ SavedStacks::getLocation(JSContext *cx, const FrameIter &iter, MutableHandleLoca
     PCLocationMap::AddPtr p = pcLocationMap.lookupForAdd(key);
 
     if (!p) {
-        const char *filename = script->filename() ? script->filename() : "";
-        RootedAtom source(cx, Atomize(cx, filename, strlen(filename)));
+        RootedAtom source(cx);
+        if (const char16_t *displayURL = iter.scriptDisplayURL()) {
+            source = AtomizeChars(cx, displayURL, js_strlen(displayURL));
+        } else {
+            const char *filename = script->filename() ? script->filename() : "";
+            source = Atomize(cx, filename, strlen(filename));
+        }
         if (!source)
             return false;
 
@@ -736,8 +748,6 @@ SavedStacks::FrameState::FrameState(const FrameIter &iter)
       name(iter.isNonEvalFunctionFrame() ? iter.functionDisplayAtom() : nullptr),
       location()
 {
-    if (principals)
-        JS_HoldPrincipals(principals);
 }
 
 SavedStacks::FrameState::FrameState(const FrameState &fs)
@@ -745,13 +755,10 @@ SavedStacks::FrameState::FrameState(const FrameState &fs)
       name(fs.name),
       location(fs.location)
 {
-    if (principals)
-        JS_HoldPrincipals(principals);
 }
 
-SavedStacks::FrameState::~FrameState() {
-    if (principals)
-        JS_DropPrincipals(TlsPerThreadData.get()->runtimeFromMainThread(), principals);
+SavedStacks::FrameState::~FrameState()
+{
 }
 
 void
@@ -804,7 +811,7 @@ SavedStacksMetadataCallback(JSContext *cx, JSObject **pmetadata)
         return false;
     *pmetadata = frame;
 
-    return Debugger::onLogAllocationSite(cx, frame);
+    return Debugger::onLogAllocationSite(cx, frame, PRMJ_Now());
 }
 
 #ifdef JS_CRASH_DIAGNOSTICS

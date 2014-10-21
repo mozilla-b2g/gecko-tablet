@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import android.os.Build;
 import org.json.JSONObject;
 import org.mozilla.gecko.AppConstants;
 import org.mozilla.gecko.AppConstants.Versions;
@@ -36,6 +37,7 @@ import org.mozilla.gecko.TelemetryContract.Method;
 import org.mozilla.gecko.background.common.GlobalConstants;
 import org.mozilla.gecko.background.healthreport.HealthReportConstants;
 import org.mozilla.gecko.db.BrowserContract.SuggestedSites;
+import org.mozilla.gecko.updater.UpdateServiceHelper;
 import org.mozilla.gecko.util.GeckoEventListener;
 import org.mozilla.gecko.util.HardwareUtils;
 import org.mozilla.gecko.util.ThreadUtils;
@@ -325,7 +327,7 @@ OnSharedPreferenceChangeListener
                 // all) in the action bar.
                 updateActionBarTitle(R.string.settings_title);
 
-                if (android.os.Build.VERSION.SDK_INT < 13) {
+                if (Build.VERSION.SDK_INT < 13) {
                     // Affected by Bug 1015209 -- no detach/attach.
                     // If we try rejigging fragments, we'll crash, so don't
                     // enable locale switching at all.
@@ -438,6 +440,7 @@ OnSharedPreferenceChangeListener
         intent.putExtra(PreferenceActivity.EXTRA_SHOW_FRAGMENT_ARGUMENTS, fragmentArgs);
     }
 
+    @Override
     public boolean isValidFragment(String fragmentName) {
         return GeckoPreferenceFragment.class.getName().equals(fragmentName);
     }
@@ -697,6 +700,12 @@ OnSharedPreferenceChangeListener
                     i--;
                     continue;
                 } else if (PREFS_DEVTOOLS_REMOTE_ENABLED.equals(key)) {
+                    if (!RestrictedProfiles.isAllowed(RestrictedProfiles.Restriction.DISALLOW_REMOTE_DEBUGGING)) {
+                        preferences.removePreference(pref);
+                        i--;
+                        continue;
+                    }
+
                     final Context thisContext = this;
                     pref.setOnPreferenceClickListener(new OnPreferenceClickListener() {
                         @Override
@@ -741,7 +750,11 @@ OnSharedPreferenceChangeListener
                     continue;
                 } else if (handlers.containsKey(key)) {
                     PrefHandler handler = handlers.get(key);
-                    handler.setupPref(this, pref);
+                    if (!handler.setupPref(this, pref)) {
+                        preferences.removePreference(pref);
+                        i--;
+                        continue;
+                    }
                 }
 
                 // Some Preference UI elements are not actually preferences,
@@ -1023,13 +1036,16 @@ OnSharedPreferenceChangeListener
     }
 
     public interface PrefHandler {
-        public void setupPref(Context context, Preference pref);
+        // Allows the pref to do any initialization it needs. Return false to have the pref removed
+        // from the prefs screen entirely.
+        public boolean setupPref(Context context, Preference pref);
         public void onChange(Context context, Preference pref, Object newValue);
     }
 
     @SuppressWarnings("serial")
-    private Map<String, PrefHandler> handlers = new HashMap<String, PrefHandler>() {{
+    private final Map<String, PrefHandler> handlers = new HashMap<String, PrefHandler>() {{
         put(ClearOnShutdownPref.PREF, new ClearOnShutdownPref());
+        put(AndroidImportPreference.PREF_KEY, new AndroidImportPreference.Handler());
     }};
 
     @Override
@@ -1056,17 +1072,17 @@ OnSharedPreferenceChangeListener
         if (PREFS_MENU_CHAR_ENCODING.equals(prefName)) {
             setCharEncodingState(((String) newValue).equals("true"));
         } else if (PREFS_UPDATER_AUTODOWNLOAD.equals(prefName)) {
-            org.mozilla.gecko.updater.UpdateServiceHelper.registerForUpdates(this, (String) newValue);
+            UpdateServiceHelper.registerForUpdates(this, (String) newValue);
         } else if (PREFS_HEALTHREPORT_UPLOAD_ENABLED.equals(prefName)) {
             // The healthreport pref only lives in Android, so we do not persist
             // to Gecko, but we do broadcast intent to the health report
             // background uploader service, which will start or stop the
             // repeated background upload attempts.
-            broadcastHealthReportUploadPref(this, ((Boolean) newValue).booleanValue());
+            broadcastHealthReportUploadPref(this, (Boolean) newValue);
         } else if (PREFS_GEO_REPORTING.equals(prefName)) {
-            broadcastStumblerPref(this, ((Boolean) newValue).booleanValue());
+            broadcastStumblerPref(this, (Boolean) newValue);
             // Translate boolean value to int for geo reporting pref.
-            newValue = ((Boolean) newValue) ? 1 : 0;
+            newValue = (Boolean) newValue ? 1 : 0;
         } else if (handlers.containsKey(prefName)) {
             PrefHandler handler = handlers.get(prefName);
             handler.onChange(this, preference, newValue);
@@ -1286,6 +1302,7 @@ OnSharedPreferenceChangeListener
                     prefSetter = new TwoStatePrefSetter();
                 }
                 ThreadUtils.postToUiThread(new Runnable() {
+                    @Override
                     public void run() {
                         prefSetter.setBooleanPref(pref, value);
                     }

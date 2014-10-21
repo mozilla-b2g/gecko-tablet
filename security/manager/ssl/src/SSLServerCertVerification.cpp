@@ -305,6 +305,7 @@ MapCertErrorToProbeValue(PRErrorCode errorCode)
     case SSL_ERROR_BAD_CERT_DOMAIN:                    return  9;
     case SEC_ERROR_EXPIRED_CERTIFICATE:                return 10;
     case mozilla::pkix::MOZILLA_PKIX_ERROR_CA_CERT_USED_AS_END_ENTITY: return 11;
+    case mozilla::pkix::MOZILLA_PKIX_ERROR_V1_CERT_USED_AS_CA: return 12;
   }
   NS_WARNING("Unknown certificate error code. Does MapCertErrorToProbeValue "
              "handle everything in DetermineCertOverrideErrors?");
@@ -334,6 +335,7 @@ DetermineCertOverrideErrors(CERTCertificate* cert, const char* hostName,
     case SEC_ERROR_EXPIRED_ISSUER_CERTIFICATE:
     case SEC_ERROR_UNKNOWN_ISSUER:
     case mozilla::pkix::MOZILLA_PKIX_ERROR_CA_CERT_USED_AS_END_ENTITY:
+    case mozilla::pkix::MOZILLA_PKIX_ERROR_V1_CERT_USED_AS_CA:
     {
       collectedErrors = nsICertOverrideService::ERROR_UNTRUSTED;
       errorCodeTrust = defaultErrorCodeToReport;
@@ -400,11 +402,20 @@ CertErrorRunnable::CheckCertOverrides()
                                                mDefaultErrorCodeToReport);
   }
 
+  nsCOMPtr<nsISSLSocketControl> sslSocketControl = do_QueryInterface(
+    NS_ISUPPORTS_CAST(nsITransportSecurityInfo*, mInfoObject));
+  if (sslSocketControl &&
+      sslSocketControl->GetBypassAuthentication()) {
+    PR_LOG(gPIPNSSLog, PR_LOG_DEBUG,
+           ("[%p][%p] Bypass Auth in CheckCertOverrides\n",
+            mFdForLogging, this));
+    return new SSLServerCertVerificationResult(mInfoObject, 0);
+  }
+
   int32_t port;
   mInfoObject->GetPort(&port);
 
-  nsCString hostWithPortString;
-  hostWithPortString.AppendASCII(mInfoObject->GetHostNameRaw());
+  nsAutoCString hostWithPortString(mInfoObject->GetHostName());
   hostWithPortString.Append(':');
   hostWithPortString.AppendInt(port);
 
@@ -440,7 +451,7 @@ CertErrorRunnable::CheckCertOverrides()
     {
       bool haveOverride;
       bool isTemporaryOverride; // we don't care
-      nsCString hostString(mInfoObject->GetHostName());
+      const nsACString& hostString(mInfoObject->GetHostName());
       nsrv = overrideService->HasMatchingOverride(hostString, port,
                                                   mCert,
                                                   &overrideBits,
@@ -490,8 +501,6 @@ CertErrorRunnable::CheckCertOverrides()
   // First, deliver the technical details of the broken SSL status.
 
   // Try to get a nsIBadCertListener2 implementation from the socket consumer.
-  nsCOMPtr<nsISSLSocketControl> sslSocketControl = do_QueryInterface(
-    NS_ISUPPORTS_CAST(nsITransportSecurityInfo*, mInfoObject));
   if (sslSocketControl) {
     nsCOMPtr<nsIInterfaceRequestor> cb;
     sslSocketControl->GetNotificationCallbacks(getter_AddRefs(cb));
@@ -767,25 +776,10 @@ AccumulateSubjectCommonNameTelemetry(const char* commonName,
 // commonName may be NULL.
 static bool
 TryMatchingWildcardSubjectAltName(const char* commonName,
-                                  nsDependentCString altName)
+                                  const nsACString& altName)
 {
-  if (!commonName) {
-    return false;
-  }
-  // altNameSubstr is now ".<something>"
-  nsDependentCString altNameSubstr(altName.get() + 1, altName.Length() - 1);
-  nsDependentCString commonNameStr(commonName, strlen(commonName));
-  int32_t altNameIndex = commonNameStr.Find(altNameSubstr);
-  // This only matches if the end of commonNameStr is the altName without
-  // the '*'.
-  // Consider this.example.com and *.example.com:
-  // "this.example.com".Find(".example.com") is 4
-  // 4 + ".example.com".Length() == 4 + 12 == 16 == "this.example.com".Length()
-  // Now this.example.com and *.example:
-  // "this.example.com".Find(".example") is 4
-  // 4 + ".example".Length() == 4 + 8 == 12 != "this.example.com".Length()
-  return altNameIndex >= 0 &&
-         altNameIndex + altNameSubstr.Length() == commonNameStr.Length();
+  return commonName &&
+         StringEndsWith(nsDependentCString(commonName), Substring(altName, 1));
 }
 
 // Gathers telemetry on Baseline Requirements 9.2.1 (Subject Alternative
@@ -859,13 +853,13 @@ GatherBaselineRequirementsTelemetry(const ScopedCERTCertList& certList)
   bool malformedDNSNameOrIPAddressPresent = false;
   bool nonFQDNPresent = false;
   do {
-    nsDependentCString altName;
+    nsAutoCString altName;
     if (currentName->type == certDNSName) {
       altName.Assign(reinterpret_cast<char*>(currentName->name.other.data),
                      currentName->name.other.len);
-      nsDependentCString altNameWithoutWildcard(altName);
-      if (altNameWithoutWildcard.Find("*.") == 0) {
-        altNameWithoutWildcard.Assign(altName.get() + 2, altName.Length() - 2);
+      nsDependentCString altNameWithoutWildcard(altName, 0);
+      if (StringBeginsWith(altNameWithoutWildcard, NS_LITERAL_CSTRING("*."))) {
+        altNameWithoutWildcard.Rebind(altName, 2);
         commonNameInSubjectAltNames |=
           TryMatchingWildcardSubjectAltName(commonName.get(), altName);
       }
@@ -898,7 +892,7 @@ GatherBaselineRequirementsTelemetry(const ScopedCERTCertList& certList)
                 commonName.get()));
           malformedDNSNameOrIPAddressPresent = true;
         } else {
-          altName.Assign(buf, strlen(buf));
+          altName.Assign(buf);
         }
       } else if (currentName->name.other.len == 16) {
         addr.inet.family = PR_AF_INET6;
@@ -910,7 +904,7 @@ GatherBaselineRequirementsTelemetry(const ScopedCERTCertList& certList)
                 commonName.get()));
           malformedDNSNameOrIPAddressPresent = true;
         } else {
-          altName.Assign(buf, strlen(buf));
+          altName.Assign(buf);
         }
       } else {
         PR_LOG(gPIPNSSLog, PR_LOG_DEBUG,

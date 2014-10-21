@@ -323,16 +323,13 @@ jit::CanEnterBaselineMethod(JSContext *cx, RunState &state)
 
         if (!state.maybeCreateThisForConstructor(cx))
             return Method_Skipped;
-    } else if (state.isExecute()) {
+    } else {
+        MOZ_ASSERT(state.isExecute());
         ExecuteType type = state.asExecute()->type();
         if (type == EXECUTE_DEBUG || type == EXECUTE_DEBUG_GLOBAL) {
             JitSpew(JitSpew_BaselineAbort, "debugger frame");
             return Method_CantCompile;
         }
-    } else {
-        MOZ_ASSERT(state.isGenerator());
-        JitSpew(JitSpew_BaselineAbort, "generator frame");
-        return Method_CantCompile;
     }
 
     RootedScript script(cx, state.script());
@@ -901,15 +898,6 @@ jit::FinishDiscardBaselineScript(FreeOp *fop, JSScript *script)
     BaselineScript *baseline = script->baselineScript();
     script->setBaselineScript(nullptr, nullptr);
     BaselineScript::Destroy(fop, baseline);
-}
-
-void
-jit::JitCompartment::toggleBaselineStubBarriers(bool enabled)
-{
-    for (ICStubCodeMap::Enum e(*stubCodes_); !e.empty(); e.popFront()) {
-        JitCode *code = *e.front().value().unsafeGet();
-        code->togglePreBarriers(enabled);
-    }
 }
 
 void

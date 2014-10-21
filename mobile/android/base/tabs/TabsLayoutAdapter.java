@@ -20,13 +20,15 @@ import java.util.ArrayList;
 public class TabsLayoutAdapter extends BaseAdapter {
     public static final String LOGTAG = "Gecko" + TabsLayoutAdapter.class.getSimpleName();
 
-    private Context mContext;
+    private final Context mContext;
+    private final int mTabLayoutId;
     private ArrayList<Tab> mTabs;
-    private LayoutInflater mInflater;
+    private final LayoutInflater mInflater;
 
-    public TabsLayoutAdapter (Context context) {
+    public TabsLayoutAdapter (Context context, int tabLayoutId) {
         mContext = context;
         mInflater = LayoutInflater.from(mContext);
+        mTabLayoutId = tabLayoutId;
     }
 
     final void setTabs (ArrayList<Tab> tabs) {
@@ -70,23 +72,23 @@ public class TabsLayoutAdapter extends BaseAdapter {
     }
 
     @Override
-    final public View getView(int position, View convertView, ViewGroup parent) {
-        final View view;
+    final public TabsLayoutItemView getView(int position, View convertView, ViewGroup parent) {
+        final TabsLayoutItemView view;
         if (convertView == null) {
             view = newView(position, parent);
         } else {
-            view = convertView;
+            view = (TabsLayoutItemView) convertView;
         }
         final Tab tab = mTabs.get(position);
         bindView(view, tab);
         return view;
     }
 
-    View newView(int position, ViewGroup parent) {
-        return mInflater.inflate(R.layout.tabs_layout_item_view, parent, false);
+    TabsLayoutItemView newView(int position, ViewGroup parent) {
+        return (TabsLayoutItemView) mInflater.inflate(mTabLayoutId, parent, false);
     }
 
-    void bindView(View view, Tab tab) {
-        ((TabsLayoutItemView) view).assignValues(tab);
+    void bindView(TabsLayoutItemView view, Tab tab) {
+        view.assignValues(tab);
     }
 }

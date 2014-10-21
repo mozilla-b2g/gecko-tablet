@@ -27,13 +27,13 @@ import android.widget.FrameLayout;
  */
 class PrivateTabsPanel extends FrameLayout implements CloseAllPanelView {
     private TabsPanel tabsPanel;
-    private TabsLayout tabsLayout;
+    private final TabsLayout tabsLayout;
 
     public PrivateTabsPanel(Context context, AttributeSet attrs) {
         super(context, attrs);
 
         LayoutInflater.from(context).inflate(R.layout.private_tabs_panel, this);
-        tabsLayout = (TabsLayout) findViewById(R.id.private_tabs_tray);
+        tabsLayout = (TabsLayout) findViewById(R.id.private_tabs_layout);
 
         final View emptyView = findViewById(R.id.private_tabs_empty);
         tabsLayout.setEmptyView(emptyView);

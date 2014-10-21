@@ -55,7 +55,6 @@ nsLocation::nsLocation(nsPIDOMWindow* aWindow, nsIDocShell *aDocShell)
 {
   MOZ_ASSERT(aDocShell);
   MOZ_ASSERT(mInnerWindow->IsInnerWindow());
-  SetIsDOMBinding();
 
   mDocShell = do_GetWeakReference(aDocShell);
 }
@@ -408,18 +407,9 @@ nsLocation::GetHostname(nsAString& aHostname)
   aHostname.Truncate();
 
   nsCOMPtr<nsIURI> uri;
-  nsresult result;
-
-  result = GetURI(getter_AddRefs(uri), true);
-
+  GetURI(getter_AddRefs(uri), true);
   if (uri) {
-    nsAutoCString host;
-
-    result = uri->GetHost(host);
-
-    if (NS_SUCCEEDED(result)) {
-      AppendUTF8toUTF16(host, aHostname);
-    }
+    nsContentUtils::GetHostOrIPv6WithBrackets(uri, aHostname);
   }
 
   return NS_OK;
@@ -924,7 +914,7 @@ nsLocation::Reload(bool aForceget)
     nsIPresShell *shell;
     nsPresContext *pcx;
     if (doc && (shell = doc->GetShell()) && (pcx = shell->GetPresContext())) {
-      pcx->RebuildAllStyleData(NS_STYLE_HINT_REFLOW);
+      pcx->RebuildAllStyleData(NS_STYLE_HINT_REFLOW, eRestyle_Subtree);
     }
 
     return NS_OK;

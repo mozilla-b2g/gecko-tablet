@@ -20,6 +20,7 @@ EXPORTS.mozilla.dom += [
     'ContentChild.h',
     'ContentParent.h',
     'ContentProcess.h',
+    'CPOWManagerGetter.h',
     'CrashReporterChild.h',
     'CrashReporterParent.h',
     'FilePickerParent.h',
@@ -62,9 +63,9 @@ UNIFIED_SOURCES += [
 ]
 
 # Blob.cpp cannot be compiled in unified mode because it triggers a fatal gcc warning.
-# ContentChild.cpp cannot be compiled in unified mode because it forces NSPR logging.
 # CrashReporterChild.cpp cannot be compiled in unified mode because of name clashes
 # in OS X headers.
+# ContentChild.cpp cannot be compiled in unified mode on  linux due to Time conflict
 SOURCES += [
     'Blob.cpp',
     'ContentChild.cpp',
@@ -109,7 +110,9 @@ LOCAL_INCLUDES += [
     '/dom/geolocation',
     '/dom/mobilemessage/ipc',
     '/dom/storage',
+    '/editor/libeditor',
     '/extensions/cookie',
+    '/extensions/spellcheck/src',
     '/hal/sandbox',
     '/js/ipc',
     '/layout/base',
@@ -125,6 +128,9 @@ DEFINES['BIN_SUFFIX'] = '"%s"' % CONFIG['BIN_SUFFIX']
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('android', 'gtk2', 'gonk', 'qt'):
     DEFINES['MOZ_ENABLE_FREETYPE'] = True
+
+if CONFIG['MOZ_TOOLKIT_SEARCH']:
+    DEFINES['MOZ_TOOLKIT_SEARCH'] = True
 
 for var in ('MOZ_PERMISSIONS', 'MOZ_CHILD_PERMISSIONS'):
     if CONFIG[var]:

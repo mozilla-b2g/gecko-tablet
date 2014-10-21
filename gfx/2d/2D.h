@@ -535,6 +535,8 @@ public:
    * drawing. Future use of the builder results in a crash!
    */
   virtual TemporaryRef<Path> Finish() = 0;
+
+  virtual BackendType GetBackendType() const = 0;
 };
 
 struct Glyph
@@ -1005,7 +1007,7 @@ public:
   void AddUserData(UserDataKey *key, void *userData, void (*destroy)(void*)) {
     mUserData.Add(key, userData, destroy);
   }
-  void *GetUserData(UserDataKey *key) {
+  void *GetUserData(UserDataKey *key) const {
     return mUserData.Get(key);
   }
   void *RemoveUserData(UserDataKey *key) {

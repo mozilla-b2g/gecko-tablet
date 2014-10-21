@@ -5,22 +5,18 @@
 
 package org.mozilla.gecko;
 
-import java.util.Set;
-
-import org.json.JSONException;
-import org.json.JSONObject;
-
-import java.lang.StringBuilder;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.HashSet;
-
-import org.mozilla.gecko.mozglue.RobocopTarget;
+import java.util.Set;
+import org.json.JSONException;
+import org.json.JSONObject;
 import org.mozilla.gecko.AppConstants.Versions;
+import org.mozilla.gecko.mozglue.RobocopTarget;
 import org.mozilla.gecko.mozglue.generatorannotations.WrapElementForJNI;
-
+import android.annotation.TargetApi;
 import android.content.Context;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.UserManager;
 import android.util.Log;
@@ -59,14 +55,16 @@ public class RestrictedProfiles {
      */
     public static enum Restriction {
         DISALLOW_DOWNLOADS(1, "no_download_files"),
-        DISALLOW_INSTALL_EXTENSIONS(2, "no_install_extensions"),
+        DISALLOW_INSTALL_EXTENSION(2, "no_install_extensions"),
         DISALLOW_INSTALL_APPS(3, "no_install_apps"), // UserManager.DISALLOW_INSTALL_APPS
         DISALLOW_BROWSE_FILES(4, "no_browse_files"),
         DISALLOW_SHARE(5, "no_share"),
         DISALLOW_BOOKMARK(6, "no_bookmark"),
         DISALLOW_ADD_CONTACTS(7, "no_add_contacts"),
         DISALLOW_SET_IMAGE(8, "no_set_image"),
-        DISALLOW_MODIFY_ACCOUNTS(9, "no_modify_accounts"); // UserManager.DISALLOW_MODIFY_ACCOUNTS
+        DISALLOW_MODIFY_ACCOUNTS(9, "no_modify_accounts"), // UserManager.DISALLOW_MODIFY_ACCOUNTS
+        DISALLOW_REMOTE_DEBUGGING(10, "no_remote_debugging"),
+        DISALLOW_IMPORT_SETTINGS(11, "no_import_settings");
 
         public final int id;
         public final String name;
@@ -87,14 +85,34 @@ public class RestrictedProfiles {
         throw new IllegalArgumentException("Unknown action " + action);
     }
 
+    @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
     @RobocopTarget
     private static Bundle getRestrictions() {
         final UserManager mgr = (UserManager) GeckoAppShell.getContext().getSystemService(Context.USER_SERVICE);
         return mgr.getUserRestrictions();
     }
 
+    /**
+     * This method does the system version check for you.
+     *
+     * Returns false if the system doesn't support restrictions,
+     * or the provided value is not present in the set of user
+     * restrictions.
+     *
+     * Returns true otherwise.
+     */
+    private static boolean getRestriction(final String name) {
+        // Early versions don't support restrictions at all,
+        // so no action can be restricted.
+        if (Versions.preJBMR2) {
+            return false;
+        }
+
+        return getRestrictions().getBoolean(name, false);
+    }
+
     private static boolean canLoadUrl(final String url) {
-        // Null urls are always allowed
+        // Null URLs are always permitted.
         if (url == null) {
             return true;
         }
@@ -102,10 +120,10 @@ public class RestrictedProfiles {
         try {
             // If we're not in guest mode, and the system restriction isn't in place, everything is allowed.
             if (!getInGuest() &&
-                !getRestrictions().getBoolean(Restriction.DISALLOW_BROWSE_FILES.name, false)) {
+                !getRestriction(Restriction.DISALLOW_BROWSE_FILES.name)) {
                 return true;
             }
-        } catch(IllegalArgumentException ex) {
+        } catch (IllegalArgumentException ex) {
             Log.i(LOGTAG, "Invalid action", ex);
         }
 
@@ -121,13 +139,13 @@ public class RestrictedProfiles {
             }
         }
 
-        // TODO: The UserManager should support blacklisting urls by the device owner.
+        // TODO: The UserManager should support blacklisting URLs by the device owner.
         return true;
     }
 
     @WrapElementForJNI
     public static boolean isUserRestricted() {
-        // Guest mode is supported in all Android versions
+        // Guest mode is supported in all Android versions.
         if (getInGuest()) {
             return true;
         }
@@ -148,31 +166,24 @@ public class RestrictedProfiles {
         final Restriction restriction;
         try {
             restriction = geckoActionToRestriction(action);
-        } catch(IllegalArgumentException ex) {
-            return true;
-        }
-
-        if (Restriction.DISALLOW_BROWSE_FILES == restriction) {
-            return canLoadUrl(url);
-        }
-
-        // ALl actions are blocked in Guest mode
-        if (getInGuest()) {
+        } catch (IllegalArgumentException ex) {
+            // Unknown actions represent a coding error, so we
+            // refuse the action and log.
+            Log.e(LOGTAG, "Unknown action " + action + "; check calling code.");
             return false;
         }
 
-        if (Versions.preJBMR2) {
-            return true;
+        if (getInGuest()) {
+            if (Restriction.DISALLOW_BROWSE_FILES == restriction) {
+                return canLoadUrl(url);
+            }
+
+            // Guest users can't do anything.
+            return false;
         }
 
-        try {
-            // NOTE: Restrictions hold the opposite intention, so we need to flip it
-            return !getRestrictions().getBoolean(restriction.name, false);
-        } catch(IllegalArgumentException ex) {
-            Log.i(LOGTAG, "Invalid action", ex);
-        }
-
-        return true;
+        // NOTE: Restrictions hold the opposite intention, so we need to flip it.
+        return !getRestriction(restriction.name);
     }
 
     @WrapElementForJNI

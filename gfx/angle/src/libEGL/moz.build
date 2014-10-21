@@ -9,6 +9,7 @@ UNIFIED_SOURCES += [
     '../common/RefCountObject.cpp',
     '../common/tls.cpp',
     '../common/utilities.cpp',
+    '../common/win32/NativeWindow.cpp',
     'Config.cpp',
     'Display.cpp',
     'libEGL.cpp',

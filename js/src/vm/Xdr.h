@@ -28,7 +28,7 @@ namespace js {
  *
  *  https://developer.mozilla.org/en-US/docs/SpiderMonkey/Internals/Bytecode
  */
-static const uint32_t XDR_BYTECODE_VERSION = uint32_t(0xb973c0de - 185);
+static const uint32_t XDR_BYTECODE_VERSION = uint32_t(0xb973c0de - 186);
 
 class XDRBuffer {
   public:
@@ -225,7 +225,7 @@ class XDRState {
     bool codeChars(const JS::Latin1Char *chars, size_t nchars);
     bool codeChars(char16_t *chars, size_t nchars);
 
-    bool codeFunction(JS::MutableHandleObject objp);
+    bool codeFunction(JS::MutableHandleFunction objp);
     bool codeScript(MutableHandleScript scriptp);
     bool codeConstValue(MutableHandleValue vp);
 };

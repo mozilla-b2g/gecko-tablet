@@ -98,6 +98,7 @@ void Mark##base##RootRange(JSTracer *trc, size_t len, type **thing, const char *
 bool Is##base##Marked(type **thingp);                                                             \
 bool Is##base##Marked(BarrieredBase<type*> *thingp);                                              \
 bool Is##base##AboutToBeFinalized(type **thingp);                                                 \
+bool Is##base##AboutToBeFinalizedFromAnyThread(type **thingp);                                    \
 bool Is##base##AboutToBeFinalized(BarrieredBase<type*> *thingp);                                  \
 type *Update##base##IfRelocated(JSRuntime *rt, BarrieredBase<type*> *thingp);                     \
 type *Update##base##IfRelocated(JSRuntime *rt, type **thingp);
@@ -105,6 +106,8 @@ type *Update##base##IfRelocated(JSRuntime *rt, type **thingp);
 DeclMarker(BaseShape, BaseShape)
 DeclMarker(BaseShape, UnownedBaseShape)
 DeclMarker(JitCode, jit::JitCode)
+DeclMarker(Object, NativeObject)
+DeclMarker(Object, ArrayObject)
 DeclMarker(Object, ArgumentsObject)
 DeclMarker(Object, ArrayBufferObject)
 DeclMarker(Object, ArrayBufferObjectMaybeShared)
@@ -217,6 +220,9 @@ IsValueMarked(Value *v);
 bool
 IsValueAboutToBeFinalized(Value *v);
 
+bool
+IsValueAboutToBeFinalizedFromAnyThread(Value *v);
+
 /*** Slot Marking ***/
 
 bool
@@ -229,7 +235,7 @@ void
 MarkArraySlots(JSTracer *trc, size_t len, HeapSlot *vec, const char *name);
 
 void
-MarkObjectSlots(JSTracer *trc, JSObject *obj, uint32_t start, uint32_t nslots);
+MarkObjectSlots(JSTracer *trc, NativeObject *obj, uint32_t start, uint32_t nslots);
 
 void
 MarkCrossCompartmentObjectUnbarriered(JSTracer *trc, JSObject *src, JSObject **dst_obj,
@@ -244,14 +250,14 @@ MarkCrossCompartmentScriptUnbarriered(JSTracer *trc, JSObject *src, JSScript **d
  * being GC'd. (Although it won't be marked if it's in the wrong compartment.)
  */
 void
-MarkCrossCompartmentSlot(JSTracer *trc, JSObject *src, HeapSlot *dst_slot, const char *name);
+MarkCrossCompartmentSlot(JSTracer *trc, JSObject *src, HeapValue *dst_slot, const char *name);
 
 
 /*** Special Cases ***/
 
 /*
  * MarkChildren<JSObject> is exposed solely for preWriteBarrier on
- * JSObject::TradeGuts. It should not be considered external interface.
+ * JSObject::swap. It should not be considered external interface.
  */
 void
 MarkChildren(JSTracer *trc, JSObject *obj);
@@ -305,6 +311,13 @@ Mark(JSTracer *trc, JSObject **objp, const char *name)
     MarkObjectUnbarriered(trc, objp, name);
 }
 
+/* For use by Debugger::WeakMap's missingScopes HashKeyRef instantiation. */
+inline void
+Mark(JSTracer *trc, NativeObject **obj, const char *name)
+{
+    MarkObjectUnbarriered(trc, obj, name);
+}
+
 /* For use by Debugger::WeakMap's proxiedScopes HashKeyRef instantiation. */
 inline void
 Mark(JSTracer *trc, ScopeObject **obj, const char *name)
@@ -317,6 +330,9 @@ IsCellMarked(Cell **thingp);
 
 bool
 IsCellAboutToBeFinalized(Cell **thing);
+
+bool
+IsCellAboutToBeFinalizedFromAnyThread(Cell **thing);
 
 inline bool
 IsMarked(BarrieredBase<Value> *v)

@@ -25,7 +25,7 @@ loop.webapp = (function($, _, OT, mozL10n) {
   var HomeView = React.createClass({
     render: function() {
       return (
-        <p>{mozL10n.get("welcome")}</p>
+        <p>{mozL10n.get("welcome", {clientShortname: mozL10n.get("clientShortname2")})}</p>
       );
     }
   });
@@ -37,13 +37,13 @@ loop.webapp = (function($, _, OT, mozL10n) {
     render: function() {
       var useLatestFF = mozL10n.get("use_latest_firefox", {
         "firefoxBrandNameLink": React.renderComponentToStaticMarkup(
-          <a target="_blank" href="https://www.mozilla.org/firefox/">Firefox</a>
+          <a target="_blank" href={mozL10n.get("brand_website")}>{mozL10n.get("brandShortname")}</a>
         )
       });
       return (
         <div>
           <h2>{mozL10n.get("incompatible_browser")}</h2>
-          <p>{mozL10n.get("powered_by_webrtc")}</p>
+          <p>{mozL10n.get("powered_by_webrtc", {clientShortname: mozL10n.get("clientShortname2")})}</p>
           <p dangerouslySetInnerHTML={{__html: useLatestFF}}></p>
         </div>
       );
@@ -58,8 +58,8 @@ loop.webapp = (function($, _, OT, mozL10n) {
       return (
         <div>
           <h2>{mozL10n.get("incompatible_device")}</h2>
-          <p>{mozL10n.get("sorry_device_unsupported")}</p>
-          <p>{mozL10n.get("use_firefox_windows_mac_linux")}</p>
+          <p>{mozL10n.get("sorry_device_unsupported", {clientShortname: mozL10n.get("clientShortname2")})}</p>
+          <p>{mozL10n.get("use_firefox_windows_mac_linux", {brandShortname: mozL10n.get("brandShortname")})}</p>
         </div>
       );
     }
@@ -79,11 +79,11 @@ loop.webapp = (function($, _, OT, mozL10n) {
       }
       return (
         <div className="promote-firefox">
-          <h3>{mozL10n.get("promote_firefox_hello_heading")}</h3>
+          <h3>{mozL10n.get("promote_firefox_hello_heading", {brandShortname: mozL10n.get("brandShortname")})}</h3>
           <p>
             <a className="btn btn-large btn-accept"
-               href="https://www.mozilla.org/firefox/">
-              {mozL10n.get("get_firefox_button")}
+               href={mozL10n.get("brand_website")}>
+              {mozL10n.get("get_firefox_button", {brandShortname: mozL10n.get("brandShortname")})}
             </a>
           </p>
         </div>
@@ -117,8 +117,7 @@ loop.webapp = (function($, _, OT, mozL10n) {
     render: function() {
       return (
         <h1 className="standalone-header-title">
-          <strong>{mozL10n.get("brandShortname")}</strong>
-          {mozL10n.get("clientShortname")}
+          <strong>{mozL10n.get("clientShortname2")}</strong>
         </h1>
       );
     }
@@ -232,7 +231,9 @@ loop.webapp = (function($, _, OT, mozL10n) {
       return (
         <header className="standalone-header header-box container-box">
           <ConversationBranding />
-          <div className="loop-logo" title="Firefox WebRTC! logo"></div>
+          <div className="loop-logo"
+               title={mozL10n.get("client_alttext",
+                                  {clientShortname: mozL10n.get("clientShortname2")})}></div>
           <h3 className="call-url">
             {conversationUrl}
           </h3>
@@ -248,7 +249,9 @@ loop.webapp = (function($, _, OT, mozL10n) {
     render: function() {
       return (
         <div className="standalone-footer container-box">
-          <div title="Mozilla Logo" className="footer-logo"></div>
+          <div title={mozL10n.get("vendor_alttext",
+                                  {vendorShortname: mozL10n.get("vendorShortname")})}
+               className="footer-logo"></div>
         </div>
       );
     }
@@ -280,7 +283,11 @@ loop.webapp = (function($, _, OT, mozL10n) {
     },
 
     render: function() {
-      var callState = mozL10n.get("call_progress_" + this.state.callState + "_description");
+      var callStateStringEntityName = "call_progress_" + this.state.callState + "_description";
+      var callState = mozL10n.get(callStateStringEntityName);
+      document.title = mozL10n.get("standalone_title_with_status",
+                                   {clientShortname: mozL10n.get("clientShortname2"),
+                                    currentStatus: mozL10n.get(callStateStringEntityName)});
       return (
         <div className="container">
           <div className="container-box">
@@ -442,10 +449,9 @@ loop.webapp = (function($, _, OT, mozL10n) {
       if (err) {
         this.props.notifications.errorL10n("unable_retrieve_call_info");
       } else {
-        var date = (new Date(callUrlInfo.urlCreationDate * 1000));
-        var options = {year: "numeric", month: "long", day: "numeric"};
-        var timestamp = date.toLocaleDateString(navigator.language, options);
-        this.setState({urlCreationDateString: timestamp});
+        this.setState({
+          urlCreationDateString: sharedUtils.formatDate(callUrlInfo.urlCreationDate)
+        });
       }
     },
 
@@ -454,10 +460,12 @@ loop.webapp = (function($, _, OT, mozL10n) {
       var privacyNoticeName = mozL10n.get("privacy_notice_link_text");
 
       var tosHTML = mozL10n.get("legal_text_and_links", {
-        "terms_of_use_url": "<a target=_blank href='/legal/terms/'>" +
+        "clientShortname": mozL10n.get("clientShortname2"),
+        "terms_of_use_url": "<a target=_blank href='" +
+          mozL10n.get("legal_website") + "'>" +
           tosLinkName + "</a>",
         "privacy_notice_url": "<a target=_blank href='" +
-          "https://www.mozilla.org/privacy/'>" + privacyNoticeName + "</a>"
+          mozL10n.get("privacy_website") + "'>" + privacyNoticeName + "</a>"
       });
 
       var tosClasses = React.addons.classSet({
@@ -515,6 +523,9 @@ loop.webapp = (function($, _, OT, mozL10n) {
     },
 
     render: function() {
+      document.title = mozL10n.get("standalone_title_with_status",
+                                   {clientShortname: mozL10n.get("clientShortname2"),
+                                    currentStatus: mozL10n.get("status_conversation_ended")});
       return (
         <div className="ended-conversation">
           <sharedViews.FeedbackView
@@ -535,6 +546,7 @@ loop.webapp = (function($, _, OT, mozL10n) {
 
   var StartConversationView = React.createClass({
     render: function() {
+      document.title = mozL10n.get("clientShortname2");
       return this.transferPropsTo(
         <InitiateConversationView
           title={mozL10n.get("initiate_call_button_label2")}
@@ -545,6 +557,9 @@ loop.webapp = (function($, _, OT, mozL10n) {
 
   var FailedConversationView = React.createClass({
     render: function() {
+      document.title = mozL10n.get("standalone_title_with_status",
+                                   {clientShortname: mozL10n.get("clientShortname2"),
+                                    currentStatus: mozL10n.get("status_error")});
       return this.transferPropsTo(
         <InitiateConversationView
           title={mozL10n.get("call_failed_title")}
@@ -632,6 +647,9 @@ loop.webapp = (function($, _, OT, mozL10n) {
           return <PendingConversationView websocket={this._websocket} />;
         }
         case "connected": {
+          document.title = mozL10n.get("standalone_title_with_status",
+                                       {clientShortname: mozL10n.get("clientShortname2"),
+                                        currentStatus: mozL10n.get("status_in_conversation")});
           return (
             <sharedViews.ConversationView
               initiate={true}
@@ -815,7 +833,9 @@ loop.webapp = (function($, _, OT, mozL10n) {
      * Handles ending a call by resetting the view to the start state.
      */
     _endCall: function() {
-      this.setState({callStatus: "end"});
+      if (this.state.callStatus !== "failure") {
+        this.setState({callStatus: "end"});
+      }
     },
   });
 
@@ -909,6 +929,7 @@ loop.webapp = (function($, _, OT, mozL10n) {
     // Set the 'lang' and 'dir' attributes to <html> when the page is translated
     document.documentElement.lang = mozL10n.language.code;
     document.documentElement.dir = mozL10n.language.direction;
+    document.title = mozL10n.get("clientShortname2");
   }
 
   return {

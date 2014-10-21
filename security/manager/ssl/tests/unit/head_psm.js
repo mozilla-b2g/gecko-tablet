@@ -64,6 +64,7 @@ const SSL_ERROR_BAD_CERT_ALERT                          = SSL_ERROR_BASE +  17;
 const MOZILLA_PKIX_ERROR_KEY_PINNING_FAILURE            = MOZILLA_PKIX_ERROR_BASE +   0;
 const MOZILLA_PKIX_ERROR_CA_CERT_USED_AS_END_ENTITY     = MOZILLA_PKIX_ERROR_BASE +   1;
 const MOZILLA_PKIX_ERROR_INADEQUATE_KEY_SIZE            = MOZILLA_PKIX_ERROR_BASE +   2; // -16382
+const MOZILLA_PKIX_ERROR_V1_CERT_USED_AS_CA             = MOZILLA_PKIX_ERROR_BASE +   3;
 
 // Supported Certificate Usages
 const certificateUsageSSLClient              = 0x0001;
@@ -136,7 +137,7 @@ function _getLibraryFunctionWithNoArguments(functionName, libraryName) {
   } catch(e) {
     // In case opening the library without a full path fails,
     // try again with a full path.
-    let file = Services.dirsvc.get("GreD", Ci.nsILocalFile);
+    let file = Services.dirsvc.get("GreBinD", Ci.nsILocalFile);
     file.append(path);
     nsslib = ctypes.open(file.path);
   }
@@ -360,11 +361,9 @@ function _setupTLSServerTest(serverBinName)
                            .getService(Ci.nsIProperties);
   let envSvc = Cc["@mozilla.org/process/environment;1"]
                  .getService(Ci.nsIEnvironment);
-  let greDir = directoryService.get("GreD", Ci.nsIFile);
-  let macOSDir = greDir.parent;
-  macOSDir.append("MacOS");
-  envSvc.set("DYLD_LIBRARY_PATH", macOSDir.path);
-  envSvc.set("LD_LIBRARY_PATH", greDir.path);
+  let greBinDir = directoryService.get("GreBinD", Ci.nsIFile);
+  envSvc.set("DYLD_LIBRARY_PATH", greBinDir.path);
+  envSvc.set("LD_LIBRARY_PATH", greBinDir.path);
   envSvc.set("MOZ_TLS_SERVER_DEBUG_LEVEL", "3");
   envSvc.set("MOZ_TLS_SERVER_CALLBACK_PORT", CALLBACK_PORT);
 

@@ -61,6 +61,7 @@ this.EventManager.prototype = {
         this.addEventListener('wheel', this, true);
         this.addEventListener('scroll', this, true);
         this.addEventListener('resize', this, true);
+        this._preDialogPosition = new WeakMap();
       }
       this.present(Presentation.tabStateChanged(null, 'newtab'));
 
@@ -78,6 +79,7 @@ this.EventManager.prototype = {
     Logger.debug('EventManager.stop');
     AccessibilityEventObserver.removeListener(this);
     try {
+      this._preDialogPosition.clear();
       this.webProgress.removeProgressListener(this);
       this.removeEventListener('wheel', this, true);
       this.removeEventListener('scroll', this, true);
@@ -266,13 +268,14 @@ this.EventManager.prototype = {
       case Events.DOCUMENT_LOAD_COMPLETE:
       {
         let position = this.contentControl.vc.position;
-        if (position && Utils.isInSubtree(position, aEvent.accessible)) {
+        if (aEvent.accessible === aEvent.accessibleDocument ||
+            (position && Utils.isInSubtree(position, aEvent.accessible))) {
           // Do not automove into the document if the virtual cursor is already
           // positioned inside it.
           break;
         }
-        this.contentControl.autoMove(
-          aEvent.accessible, { delay: 500 });
+        this._preDialogPosition.set(aEvent.accessible.DOMNode, position);
+        this.contentControl.autoMove(aEvent.accessible, { delay: 500 });
         break;
       }
       case Events.VALUE_CHANGE:
@@ -365,7 +368,8 @@ this.EventManager.prototype = {
       if (vc.position &&
         (Utils.getState(vc.position).contains(States.DEFUNCT) ||
           Utils.isInSubtree(vc.position, acc))) {
-        let position = aEvent.targetPrevSibling || aEvent.targetParent;
+        let position = this._preDialogPosition.get(aEvent.accessible.DOMNode) ||
+          aEvent.targetPrevSibling || aEvent.targetParent;
         if (!position) {
           try {
             position = acc.previousSibling;

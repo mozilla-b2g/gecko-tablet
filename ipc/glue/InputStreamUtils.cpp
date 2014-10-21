@@ -7,13 +7,12 @@
 #include "nsIIPCSerializableInputStream.h"
 
 #include "mozilla/Assertions.h"
+#include "mozilla/dom/File.h"
 #include "mozilla/dom/ipc/BlobChild.h"
 #include "mozilla/dom/ipc/BlobParent.h"
 #include "nsComponentManagerUtils.h"
 #include "nsDebug.h"
-#include "nsDOMFile.h"
 #include "nsID.h"
-#include "nsIDOMFile.h"
 #include "nsIXULRuntime.h"
 #include "nsMIMEInputStream.h"
 #include "nsMultiplexInputStream.h"
@@ -107,17 +106,13 @@ DeserializeInputStream(const InputStreamParams& aParams,
     // When the input stream already exists in this process, all we need to do
     // is retrieve the original instead of sending any data over the wire.
     case InputStreamParams::TRemoteInputStreamParams: {
-      const RemoteInputStreamParams& params =
-          aParams.get_RemoteInputStreamParams();
-
-      nsRefPtr<DOMFileImpl> blobImpl;
-      if (params.remoteBlobParent()) {
-        blobImpl =
-          static_cast<BlobParent*>(params.remoteBlobParent())->GetBlobImpl();
-      } else {
-        blobImpl =
-          static_cast<BlobChild*>(params.remoteBlobChild())->GetBlobImpl();
+      if (NS_WARN_IF(XRE_GetProcessType() != GeckoProcessType_Default)) {
+        return nullptr;
       }
+
+      const nsID& id = aParams.get_RemoteInputStreamParams().id();
+
+      nsRefPtr<FileImpl> blobImpl = BlobParent::GetBlobImplForID(id);
 
       MOZ_ASSERT(blobImpl, "Invalid blob contents");
 

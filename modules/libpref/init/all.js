@@ -153,11 +153,7 @@ pref("dom.keyboardevent.code.enabled", true);
 #endif
 
 // Whether the WebCrypto API is enabled
-#ifdef RELEASE_BUILD
-pref("dom.webcrypto.enabled", false);
-#else
 pref("dom.webcrypto.enabled", true);
-#endif
 
 // Whether the UndoManager API is enabled
 pref("dom.undo_manager.enabled", false);
@@ -341,6 +337,7 @@ pref("media.peerconnection.video.max_bitrate", 2000);
 #endif
 pref("media.navigator.permission.disabled", false);
 pref("media.peerconnection.default_iceservers", "[{\"url\": \"stun:stun.services.mozilla.com\"}]");
+pref("media.peerconnection.ice.loopback", false); // Set only for testing in offline environments.
 pref("media.peerconnection.use_document_iceservers", true);
 // Do not enable identity before ensuring that the UX cannot be spoofed
 // see Bug 884573 for details
@@ -538,6 +535,11 @@ pref("gfx.color_management.enablev4", false);
 
 pref("gfx.downloadable_fonts.enabled", true);
 pref("gfx.downloadable_fonts.fallback_delay", 3000);
+#ifdef RELEASE_BUILD
+pref("gfx.downloadable_fonts.woff2.enabled", false);
+#else
+pref("gfx.downloadable_fonts.woff2.enabled", true);
+#endif
 
 #ifdef ANDROID
 pref("gfx.bundled_fonts.enabled", true);
@@ -1246,6 +1248,16 @@ pref("network.http.spdy.send-buffer-size", 131072);
 pref("network.http.spdy.allow-push", true);
 pref("network.http.spdy.push-allowance", 131072);
 
+// alt-svc allows separation of transport routing from
+// the origin host without using a proxy.
+#ifdef RELEASE_BUILD
+pref("network.http.altsvc.enabled", false);
+pref("network.http.altsvc.oe", false);
+#else
+pref("network.http.altsvc.enabled", true);
+pref("network.http.altsvc.oe", true);
+#endif
+
 pref("network.http.diagnostics", false);
 
 pref("network.http.pacing.requests.enabled", true);
@@ -1480,6 +1492,9 @@ pref("network.dnsCacheEntries", 400);
 
 // In the absence of OS TTLs, the DNS cache TTL value
 pref("network.dnsCacheExpiration", 60);
+
+// Get TTL; not supported on all platforms; nop on the unsupported ones.
+pref("network.dns.get-ttl", true);
 
 // The grace period allows the DNS cache to use expired entries, while kicking off
 // a revalidation in the background.
@@ -2006,8 +2021,11 @@ pref("layout.css.masking.enabled", true);
 // Is support for mix-blend-mode enabled?
 pref("layout.css.mix-blend-mode.enabled", true);
 
+// Is support for isolation enabled?
+pref("layout.css.isolation.enabled", false);
+
 // Is support for CSS Filters enabled?
-pref("layout.css.filters.enabled", false);
+pref("layout.css.filters.enabled", true);
 
 // Is support for basic shapes in clip-path enabled?
 pref("layout.css.clip-path-shapes.enabled", false);
@@ -2102,6 +2120,9 @@ pref("layout.css.outline-style-auto.enabled", false);
 // Is CSSOM-View scroll-behavior and its MSD smooth scrolling enabled?
 pref("layout.css.scroll-behavior.enabled", false);
 
+// Is the CSSOM-View scroll-behavior CSS property enabled?
+pref("layout.css.scroll-behavior.property-enabled", false);
+
 // Tuning of the smooth scroll motion used by CSSOM-View scroll-behavior.
 // Spring-constant controls the strength of the simulated MSD
 // (Mass-Spring-Damper)
@@ -2117,6 +2138,12 @@ pref("layout.css.scroll-behavior.spring-constant", "250.0");
 // When equal to 1.0, the system is critically-damped; it will reach the target
 // at the greatest speed without overshooting.
 pref("layout.css.scroll-behavior.damping-ratio", "1.0");
+
+// Is support for document.fonts enabled?
+//
+// Don't enable the pref for the CSS Font Loading API until bug 1072101 is
+// fixed, as we don't want to expose more indexed properties on the Web.
+pref("layout.css.font-loading-api.enabled", false);
 
 // pref for which side vertical scrollbars should be on
 // 0 = end-side in UI direction
@@ -2273,6 +2300,9 @@ pref("dom.ipc.plugins.reportCrashURL", true);
 pref("dom.ipc.plugins.unloadTimeoutSecs", 30);
 
 pref("dom.ipc.processCount", 1);
+
+// Enable caching of Moz2D Path objects for SVG geometry elements
+pref("svg.path-caching.enabled", true);
 
 // Enable the use of display-lists for SVG hit-testing and painting.
 pref("svg.display-lists.hit-testing.enabled", true);
@@ -3414,8 +3444,6 @@ pref("font.size.fixed.el", 12);
 
 pref("font.size.fixed.he", 12);
 
-pref("font.minimum-size.th", 13);
-
 pref("font.default.x-cyrillic", "sans-serif");
 pref("font.size.fixed.x-cyrillic", 12);
 
@@ -3850,8 +3878,6 @@ pref("layers.async-video-oop.enabled",true);
 
 #ifdef XP_WIN
 pref("layers.offmainthreadcomposition.enabled", true);
-// XXX - see bug 1009616
-pref("layers.async-video-oop.enabled", false);
 #endif
 
 #ifdef MOZ_WIDGET_QT
@@ -3861,6 +3887,10 @@ pref("layers.offmainthreadcomposition.enabled", true);
 #ifdef XP_MACOSX
 pref("layers.offmainthreadcomposition.enabled", true);
 pref("layers.enable-tiles", true);
+pref("layers.tiled-drawtarget.enabled", true);
+#endif
+
+#ifdef MOZ_WIDGET_GONK
 pref("layers.tiled-drawtarget.enabled", true);
 #endif
 
@@ -3911,6 +3941,10 @@ pref("layers.prefer-d3d9", false);
 
 // Force all possible layers to be always active layers
 pref("layers.force-active", false);
+
+// Never use gralloc surfaces, even when they're available on this
+// platform and are the optimal surface type.
+pref("layers.gralloc.disable", false);
 
 // Enable/Disable the geolocation API for content
 pref("geo.enabled", true);
@@ -4284,6 +4318,7 @@ pref("touchcaret.expiration.time", 3000);
 
 // Turn off selection caret by default
 pref("selectioncaret.enabled", false);
+pref("selectioncaret.noneditable", false);
 
 // This will inflate size of selection caret frame when we checking if
 // user click on selection caret or not. In app units.
@@ -4322,9 +4357,7 @@ pref("camera.control.low_memory_thresholdMB", 404);
 // UDPSocket API
 pref("dom.udpsocket.enabled", false);
 
-// Experiment: Get TTL from DNS records.
-//     Unset initially (0); Randomly chosen on first run; will remain unchanged
-//     unless adjusted by the user or experiment ends. Variants defined in
-//     nsHostResolver.cpp.
-pref("dns.ttl-experiment.variant", 0);
-pref("dns.ttl-experiment.enabled", true);
+// Use raw ICU instead of CoreServices API in Unicode collation
+#ifdef XP_MACOSX
+pref("intl.collation.mac.use_icu", true);
+#endif

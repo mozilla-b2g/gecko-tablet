@@ -5,6 +5,8 @@
 
 #include "nsTextBoxFrame.h"
 
+#include "gfxUtils.h"
+#include "mozilla/gfx/2D.h"
 #include "nsReadableUtils.h"
 #include "nsCOMPtr.h"
 #include "nsGkAtoms.h"
@@ -39,6 +41,7 @@
 #include "nsBidiPresUtils.h"
 
 using namespace mozilla;
+using namespace mozilla::gfx;
 
 class nsAccessKeyInfo
 {
@@ -385,6 +388,8 @@ nsTextBoxFrame::DrawText(nsRenderingContext& aRenderingContext,
                          const nscolor*      aOverrideColor)
 {
     nsPresContext* presContext = PresContext();
+    int32_t appUnitsPerDevPixel = presContext->AppUnitsPerDevPixel();
+    DrawTarget* drawTarget = aRenderingContext.GetDrawTarget();
 
     // paint the title
     nscolor overColor;
@@ -398,6 +403,8 @@ nsTextBoxFrame::DrawText(nsRenderingContext& aRenderingContext,
     uint8_t decorations = NS_STYLE_TEXT_DECORATION_LINE_NONE;
     // A mask of all possible decorations.
     uint8_t decorMask = NS_STYLE_TEXT_DECORATION_LINE_LINES_MASK;
+
+    bool vertical = GetWritingMode().IsVertical();
 
     nsIFrame* f = this;
     do {  // find decoration colors
@@ -477,14 +484,16 @@ nsTextBoxFrame::DrawText(nsRenderingContext& aRenderingContext,
         nsCSSRendering::PaintDecorationLine(this, ctx, dirtyRect, underColor,
                           pt, xInFrame, gfxSize(width, sizePixel),
                           ascentPixel, offsetPixel,
-                          NS_STYLE_TEXT_DECORATION_LINE_UNDERLINE, underStyle);
+                          NS_STYLE_TEXT_DECORATION_LINE_UNDERLINE, underStyle,
+                          vertical);
       }
       if ((decorations & NS_FONT_DECORATION_OVERLINE) &&
           overStyle != NS_STYLE_TEXT_DECORATION_STYLE_NONE) {
         nsCSSRendering::PaintDecorationLine(this, ctx, dirtyRect, overColor,
                           pt, xInFrame, gfxSize(width, sizePixel),
                           ascentPixel, ascentPixel,
-                          NS_STYLE_TEXT_DECORATION_LINE_OVERLINE, overStyle);
+                          NS_STYLE_TEXT_DECORATION_LINE_OVERLINE, overStyle,
+                          vertical);
       }
     }
 
@@ -496,7 +505,9 @@ nsTextBoxFrame::DrawText(nsRenderingContext& aRenderingContext,
 
     CalculateUnderline(*refContext);
 
-    aRenderingContext.SetColor(aOverrideColor ? *aOverrideColor : StyleColor()->mColor);
+    nscolor c = aOverrideColor ? *aOverrideColor : StyleColor()->mColor;
+    ColorPattern color(ToDeviceColor(c));
+    aRenderingContext.ThebesContext()->SetColor(c);
 
     nsresult rv = NS_ERROR_FAILURE;
 
@@ -546,10 +557,12 @@ nsTextBoxFrame::DrawText(nsRenderingContext& aRenderingContext,
     }
 
     if (mAccessKeyInfo && mAccessKeyInfo->mAccesskeyIndex != kNotFound) {
-        aRenderingContext.FillRect(aTextRect.x + mAccessKeyInfo->mBeforeWidth,
-                                   aTextRect.y + mAccessKeyInfo->mAccessOffset,
-                                   mAccessKeyInfo->mAccessWidth,
-                                   mAccessKeyInfo->mAccessUnderlineSize);
+      nsRect r(aTextRect.x + mAccessKeyInfo->mBeforeWidth,
+               aTextRect.y + mAccessKeyInfo->mAccessOffset,
+               mAccessKeyInfo->mAccessWidth,
+               mAccessKeyInfo->mAccessUnderlineSize);
+      Rect devPxRect = NSRectToRect(r, appUnitsPerDevPixel, *drawTarget);
+      drawTarget->FillRect(devPxRect, color);
     }
 
     // Strikeout is drawn on top of the text, per
@@ -562,7 +575,7 @@ nsTextBoxFrame::DrawText(nsRenderingContext& aRenderingContext,
       nsCSSRendering::PaintDecorationLine(this, ctx, dirtyRect, strikeColor,
                         pt, xInFrame, gfxSize(width, sizePixel), ascentPixel,
                         offsetPixel, NS_STYLE_TEXT_DECORATION_LINE_LINE_THROUGH,
-                        strikeStyle);
+                        strikeStyle, vertical);
     }
 }
 

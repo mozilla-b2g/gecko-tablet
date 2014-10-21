@@ -353,6 +353,9 @@ TLSFilterTransaction::WriteSegments(nsAHttpSegmentWriter *aWriter,
   if (NS_SUCCEEDED(rv) && NS_FAILED(mFilterReadCode) && !(*outCountWritten)) {
     // nsPipe turns failures into silent OK.. undo that!
     rv = mFilterReadCode;
+    if (mFilterReadCode == NS_BASE_STREAM_WOULD_BLOCK) {
+      Connection()->ResumeRecv();
+    }
   }
   LOG(("TLSFilterTransaction %p called trans->WriteSegments rv=%x %d\n",
        this, rv, *outCountWritten));
@@ -1540,6 +1543,12 @@ SocketTransportShim::Close(nsresult aReason)
 
 NS_IMETHODIMP
 SocketTransportShim::SetEventSink(nsITransportEventSink *aSink, nsIEventTarget *aEventTarget)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+SocketTransportShim::Bind(NetAddr *aLocalAddr)
 {
   return NS_ERROR_NOT_IMPLEMENTED;
 }

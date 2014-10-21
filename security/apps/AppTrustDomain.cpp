@@ -4,10 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifdef MOZ_LOGGING
-#define FORCE_PR_LOG 1
-#endif
-
 #include "AppTrustDomain.h"
 #include "certdb.h"
 #include "pkix/pkixnss.h"
@@ -34,11 +30,14 @@ using namespace mozilla::pkix;
 extern PRLogModuleInfo* gPIPNSSLog;
 #endif
 
+static const unsigned int DEFAULT_MINIMUM_NON_ECC_BITS = 2048;
+
 namespace mozilla { namespace psm {
 
 AppTrustDomain::AppTrustDomain(ScopedCERTCertList& certChain, void* pinArg)
   : mCertChain(certChain)
   , mPinArg(pinArg)
+  , mMinimumNonECCBits(DEFAULT_MINIMUM_NON_ECC_BITS)
 {
 }
 
@@ -75,6 +74,8 @@ AppTrustDomain::SetTrustedRoot(AppTrustedRoot trustedRoot)
     case nsIX509CertDB::AppMarketplaceStageRoot:
       trustedDER.data = const_cast<uint8_t*>(marketplaceStageRoot);
       trustedDER.len = mozilla::ArrayLength(marketplaceStageRoot);
+      // The staging root was generated with a 1024-bit key.
+      mMinimumNonECCBits = 1024u;
       break;
 
     case nsIX509CertDB::AppXPCShellRoot:
@@ -217,7 +218,7 @@ AppTrustDomain::VerifySignedData(const SignedDataWithSignature& signedData,
                                  Input subjectPublicKeyInfo)
 {
   return ::mozilla::pkix::VerifySignedData(signedData, subjectPublicKeyInfo,
-                                           mPinArg);
+                                           mMinimumNonECCBits, mPinArg);
 }
 
 Result
@@ -251,7 +252,8 @@ AppTrustDomain::IsChainValid(const DERArray& certChain, Time time)
 Result
 AppTrustDomain::CheckPublicKey(Input subjectPublicKeyInfo)
 {
-  return ::mozilla::pkix::CheckPublicKey(subjectPublicKeyInfo);
+  return ::mozilla::pkix::CheckPublicKey(subjectPublicKeyInfo,
+                                         mMinimumNonECCBits);
 }
 
 } } // namespace mozilla::psm

@@ -77,7 +77,7 @@ Link::LinkState() const
 
   // If we have not yet registered for notifications and need to,
   // due to our href changing, register now!
-  if (!mRegistered && mNeedsRegistration && element->IsInDoc()) {
+  if (!mRegistered && mNeedsRegistration && element->IsInComposedDoc()) {
     // Only try and register once.
     self->mNeedsRegistration = false;
 
@@ -94,7 +94,7 @@ Link::LinkState() const
         self->mRegistered = true;
 
         // And make sure we are in the document's link map.
-        element->GetCurrentDoc()->AddStyleRelevantLink(self);
+        element->GetComposedDoc()->AddStyleRelevantLink(self);
       }
     }
   }
@@ -361,13 +361,7 @@ Link::GetHostname(nsAString &_hostname, ErrorResult& aError)
     return;
   }
 
-  nsAutoCString host;
-  nsresult rv = uri->GetHost(host);
-  // Note that failure to get the host from the URI is not necessarily a bad
-  // thing.  Some URIs do not have a host.
-  if (NS_SUCCEEDED(rv)) {
-    CopyUTF8toUTF16(host, _hostname);
-  }
+  nsContentUtils::GetHostOrIPv6WithBrackets(uri, _hostname);
 }
 
 void
@@ -469,7 +463,7 @@ Link::ResetLinkState(bool aNotify, bool aHasHref)
   // currently registered; in either case, we should remove ourself
   // from the doc and the history.
   if (!mNeedsRegistration && mLinkState != eLinkState_NotLink) {
-    nsIDocument *doc = mElement->GetCurrentDoc();
+    nsIDocument *doc = mElement->GetComposedDoc();
     if (doc && (mRegistered || mLinkState == eLinkState_Visited)) {
       // Tell the document to forget about this link if we've registered
       // with it before.

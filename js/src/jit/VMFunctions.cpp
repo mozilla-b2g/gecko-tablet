@@ -22,7 +22,9 @@
 
 #include "jit/BaselineFrame-inl.h"
 #include "jit/IonFrames-inl.h"
+#include "vm/Debugger-inl.h"
 #include "vm/Interpreter-inl.h"
+#include "vm/NativeObject-inl.h"
 #include "vm/StringObject-inl.h"
 
 using namespace js;
@@ -221,7 +223,7 @@ MutatePrototype(JSContext *cx, HandleObject obj, HandleValue value)
 }
 
 bool
-InitProp(JSContext *cx, HandleObject obj, HandlePropertyName name, HandleValue value)
+InitProp(JSContext *cx, HandleNativeObject obj, HandlePropertyName name, HandleValue value)
 {
     RootedId id(cx, NameToId(name));
     return DefineNativeProperty(cx, obj, id, value, nullptr, nullptr, JSPROP_ENUMERATE);
@@ -294,7 +296,7 @@ template bool StringsEqual<true>(JSContext *cx, HandleString lhs, HandleString r
 template bool StringsEqual<false>(JSContext *cx, HandleString lhs, HandleString rhs, bool *res);
 
 JSObject*
-NewInitObject(JSContext *cx, HandleObject templateObject)
+NewInitObject(JSContext *cx, HandleNativeObject templateObject)
 {
     NewObjectKind newKind = templateObject->hasSingletonType() ? SingletonObject : GenericObject;
     if (!templateObject->hasLazyType() && templateObject->type()->shouldPreTenure())
@@ -366,21 +368,19 @@ ArrayPopDense(JSContext *cx, HandleObject obj, MutableHandleValue rval)
 }
 
 bool
-ArrayPushDense(JSContext *cx, HandleObject obj, HandleValue v, uint32_t *length)
+ArrayPushDense(JSContext *cx, HandleArrayObject obj, HandleValue v, uint32_t *length)
 {
-    MOZ_ASSERT(obj->is<ArrayObject>());
-
-    if (MOZ_LIKELY(obj->as<ArrayObject>().lengthIsWritable())) {
-        uint32_t idx = obj->as<ArrayObject>().length();
-        JSObject::EnsureDenseResult result = obj->ensureDenseElements(cx, idx, 1);
-        if (result == JSObject::ED_FAILED)
+    if (MOZ_LIKELY(obj->lengthIsWritable())) {
+        uint32_t idx = obj->length();
+        NativeObject::EnsureDenseResult result = obj->ensureDenseElements(cx, idx, 1);
+        if (result == NativeObject::ED_FAILED)
             return false;
 
-        if (result == JSObject::ED_OK) {
+        if (result == NativeObject::ED_OK) {
             obj->setDenseElement(idx, v);
             MOZ_ASSERT(idx < INT32_MAX);
             *length = idx + 1;
-            obj->as<ArrayObject>().setLengthInt32(*length);
+            obj->setLengthInt32(*length);
             return true;
         }
     }
@@ -511,15 +511,15 @@ SetProperty(JSContext *cx, HandleObject obj, HandlePropertyName name, HandleValu
     if (op == JSOP_SETALIASEDVAR) {
         // Aliased var assigns ignore readonly attributes on the property, as
         // required for initializing 'const' closure variables.
-        Shape *shape = obj->nativeLookup(cx, name);
+        Shape *shape = obj->as<NativeObject>().lookup(cx, name);
         MOZ_ASSERT(shape && shape->hasSlot());
-        obj->nativeSetSlotWithType(cx, shape, value);
+        obj->as<NativeObject>().setSlotWithType(cx, shape, value);
         return true;
     }
 
     if (MOZ_LIKELY(!obj->getOps()->setProperty)) {
         return baseops::SetPropertyHelper<SequentialExecution>(
-            cx, obj, obj, id,
+            cx, obj.as<NativeObject>(), obj.as<NativeObject>(), id,
             (op == JSOP_SETNAME || op == JSOP_SETGNAME)
             ? baseops::Unqualified
             : baseops::Qualified,
@@ -764,8 +764,7 @@ DebugPrologue(JSContext *cx, BaselineFrame *frame, jsbytecode *pc, bool *mustRet
 {
     *mustReturn = false;
 
-    JSTrapStatus status = ScriptDebugPrologue(cx, frame, pc);
-    switch (status) {
+    switch (Debugger::onEnterFrame(cx, frame)) {
       case JSTRAP_CONTINUE:
         return true;
 
@@ -781,7 +780,7 @@ DebugPrologue(JSContext *cx, BaselineFrame *frame, jsbytecode *pc, bool *mustRet
         return false;
 
       default:
-        MOZ_CRASH("Invalid trap status");
+        MOZ_CRASH("bad Debugger::onEnterFrame status");
     }
 }
 
@@ -809,10 +808,10 @@ DebugEpilogue(JSContext *cx, BaselineFrame *frame, jsbytecode *pc, bool ok)
     jsbytecode *unwindPc = frame->script()->main();
     frame->setUnwoundScopeOverridePc(unwindPc);
 
-    // If ScriptDebugEpilogue returns |true| we have to return the frame's
+    // If Debugger::onLeaveFrame returns |true| we have to return the frame's
     // return value. If it returns |false|, the debugger threw an exception.
     // In both cases we have to pop debug scopes.
-    ok = ScriptDebugEpilogue(cx, frame, pc, ok);
+    ok = Debugger::onLeaveFrame(cx, frame, ok);
 
     if (frame->isNonEvalFunctionFrame()) {
         MOZ_ASSERT_IF(ok, frame->hasReturnValue());
@@ -1050,7 +1049,7 @@ StringReplace(JSContext *cx, HandleString string, HandleString pattern, HandleSt
 }
 
 bool
-Recompile(JSContext *cx)
+RecompileImpl(JSContext *cx, bool force)
 {
     MOZ_ASSERT(cx->currentlyRunningInJit());
     JitActivationIterator activations(cx->runtime());
@@ -1066,7 +1065,7 @@ Recompile(JSContext *cx)
     if (!IsIonEnabled(cx))
         return true;
 
-    MethodStatus status = Recompile(cx, script, nullptr, nullptr, isConstructing);
+    MethodStatus status = Recompile(cx, script, nullptr, nullptr, isConstructing, force);
     if (status == Method_Error)
         return false;
 
@@ -1074,17 +1073,27 @@ Recompile(JSContext *cx)
 }
 
 bool
-SetDenseElement(JSContext *cx, HandleObject obj, int32_t index, HandleValue value,
+ForcedRecompile(JSContext *cx)
+{
+    return RecompileImpl(cx, /* force = */ true);
+}
+
+bool
+Recompile(JSContext *cx)
+{
+    return RecompileImpl(cx, /* force = */ false);
+}
+
+bool
+SetDenseElement(JSContext *cx, HandleNativeObject obj, int32_t index, HandleValue value,
                 bool strict)
 {
     // This function is called from Ion code for StoreElementHole's OOL path.
     // In this case we know the object is native, has no indexed properties
     // and we can use setDenseElement instead of setDenseElementWithType.
-
-    MOZ_ASSERT(obj->isNative());
     MOZ_ASSERT(!obj->isIndexed());
 
-    JSObject::EnsureDenseResult result = JSObject::ED_SPARSE;
+    NativeObject::EnsureDenseResult result = NativeObject::ED_SPARSE;
     do {
         if (index < 0)
             break;
@@ -1093,7 +1102,7 @@ SetDenseElement(JSContext *cx, HandleObject obj, int32_t index, HandleValue valu
             break;
         uint32_t idx = uint32_t(index);
         result = obj->ensureDenseElements(cx, idx, 1);
-        if (result != JSObject::ED_OK)
+        if (result != NativeObject::ED_OK)
             break;
         if (isArray) {
             ArrayObject &arr = obj->as<ArrayObject>();
@@ -1104,9 +1113,9 @@ SetDenseElement(JSContext *cx, HandleObject obj, int32_t index, HandleValue valu
         return true;
     } while (false);
 
-    if (result == JSObject::ED_FAILED)
+    if (result == NativeObject::ED_FAILED)
         return false;
-    MOZ_ASSERT(result == JSObject::ED_SPARSE);
+    MOZ_ASSERT(result == NativeObject::ED_SPARSE);
 
     RootedValue indexVal(cx, Int32Value(index));
     return SetObjectElement(cx, obj, indexVal, value, strict);
@@ -1132,9 +1141,9 @@ AssertValidObjectPtr(JSContext *cx, JSObject *obj)
 
     if (obj->isTenured()) {
         MOZ_ASSERT(obj->isAligned());
-        gc::AllocKind kind = obj->asTenured()->getAllocKind();
+        gc::AllocKind kind = obj->asTenured().getAllocKind();
         MOZ_ASSERT(kind >= js::gc::FINALIZE_OBJECT0 && kind <= js::gc::FINALIZE_OBJECT_LAST);
-        MOZ_ASSERT(obj->asTenured()->zone() == cx->zone());
+        MOZ_ASSERT(obj->asTenured().zone() == cx->zone());
     }
 }
 
@@ -1217,6 +1226,13 @@ void
 MarkValueFromIon(JSRuntime *rt, Value *vp)
 {
     gc::MarkValueUnbarriered(&rt->gc.marker, vp, "write barrier");
+}
+
+void
+MarkStringFromIon(JSRuntime *rt, JSString **stringp)
+{
+    if (*stringp)
+        gc::MarkStringUnbarriered(&rt->gc.marker, stringp, "write barrier");
 }
 
 void

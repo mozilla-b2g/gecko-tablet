@@ -58,7 +58,6 @@ const char js_break_str[]           = "break";
 const char js_case_str[]            = "case";
 const char js_catch_str[]           = "catch";
 const char js_class_str[]           = "class";
-const char js_close_str[]           = "close";
 const char js_const_str[]           = "const";
 const char js_continue_str[]        = "continue";
 const char js_debugger_str[]        = "debugger";
@@ -254,7 +253,7 @@ JSRuntime::sweepAtoms()
     for (AtomSet::Enum e(*atoms_); !e.empty(); e.popFront()) {
         AtomStateEntry entry = e.front();
         JSAtom *atom = entry.asPtr();
-        bool isDying = IsStringAboutToBeFinalized(&atom);
+        bool isDying = IsStringAboutToBeFinalizedFromAnyThread(&atom);
 
         /* Pinned or interned key cannot be finalized. */
         MOZ_ASSERT_IF(hasContexts() && entry.isTagged(), !isDying);

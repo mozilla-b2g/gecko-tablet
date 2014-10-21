@@ -947,7 +947,7 @@ JSStructuredCloneWriter::traverseObject(HandleObject obj)
      * will come off the stack in forward order.
      */
     AutoIdVector properties(context());
-    if (!GetPropertyNames(context(), obj, JSITER_OWNONLY, &properties))
+    if (!GetPropertyKeys(context(), obj, JSITER_OWNONLY, &properties))
         return false;
 
     for (size_t i = properties.length(); i > 0; --i) {
@@ -1169,13 +1169,20 @@ JSStructuredCloneWriter::transferOwnership()
             // lend itself well to generic manipulation via proxies.
             Rooted<ArrayBufferObject *> arrayBuffer(context(), &CheckedUnwrap(obj)->as<ArrayBufferObject>());
             size_t nbytes = arrayBuffer->byteLength();
+
+            // Structured cloning currently only has optimizations for mapped
+            // and malloc'd buffers, not asm.js-ified buffers.
+            bool hasStealableContents = arrayBuffer->hasStealableContents() &&
+                                        (arrayBuffer->isMapped() || arrayBuffer->hasMallocedContents());
+
             ArrayBufferObject::BufferContents bufContents =
-                ArrayBufferObject::stealContents(context(), arrayBuffer);
+                ArrayBufferObject::stealContents(context(), arrayBuffer, hasStealableContents);
             if (!bufContents)
                 return false; // Destructor will clean up the already-transferred data.
+
             content = bufContents.data();
             tag = SCTAG_TRANSFER_MAP_ARRAY_BUFFER;
-            if (bufContents.kind() & ArrayBufferObject::MAPPED_BUFFER)
+            if (bufContents.kind() == ArrayBufferObject::MAPPED)
                 ownership = JS::SCTAG_TMO_MAPPED_DATA;
             else
                 ownership = JS::SCTAG_TMO_ALLOC_DATA;

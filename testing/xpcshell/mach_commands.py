@@ -142,9 +142,10 @@ class XPCShellRunner(MozbuildObject):
         modules_dir = os.path.join(self.topobjdir, '_tests', 'modules')
         # We want output from the test to be written immediately if we are only
         # running a single test.
-        verbose_output = (test_path is not None or
-                          (manifest and len(manifest.test_paths())==1) or
-                          verbose)
+        single_test = (test_path is not None or
+                       (manifest and len(manifest.test_paths())==1))
+        verbose_output = verbose or single_test
+        sequential = sequential or single_test
 
         args = {
             'manifest': manifest,
@@ -257,7 +258,7 @@ class AndroidXPCShellRunner(MozbuildObject):
         options.localBin = os.path.join(self.topobjdir, 'dist/bin')
         options.testingModulesDir = os.path.join(self.topobjdir, '_tests/modules')
         options.mozInfo = os.path.join(self.topobjdir, 'mozinfo.json')
-        options.manifest = os.path.join(self.topobjdir, '_tests/xpcshell/xpcshell_android.ini')
+        options.manifest = os.path.join(self.topobjdir, '_tests/xpcshell/xpcshell.ini')
         options.symbolsPath = os.path.join(self.distdir, 'crashreporter-symbols')
         if local_apk:
             options.localAPK = local_apk
@@ -379,7 +380,7 @@ class B2GXPCShellRunner(MozbuildObject):
         options.localLib = self.bin_dir
         options.localBin = self.bin_dir
         options.logdir = self.xpcshell_dir
-        options.manifest = os.path.join(self.xpcshell_dir, 'xpcshell_b2g.ini')
+        options.manifest = os.path.join(self.xpcshell_dir, 'xpcshell.ini')
         options.mozInfo = os.path.join(self.topobjdir, 'mozinfo.json')
         options.objdir = self.topobjdir
         options.symbolsPath = os.path.join(self.distdir, 'crashreporter-symbols'),

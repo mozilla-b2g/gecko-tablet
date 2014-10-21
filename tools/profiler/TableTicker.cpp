@@ -36,6 +36,7 @@
 #include "nsIObserverService.h"
 #include "mozilla/Services.h"
 #include "PlatformMacros.h"
+#include "nsTArray.h"
 
 #if defined(SPS_OS_android) && !defined(MOZ_WIDGET_GONK)
   #include "AndroidBridge.h"
@@ -105,6 +106,43 @@ void TableTicker::HandleSaveRequest()
   nsCOMPtr<nsIRunnable> runnable = new SaveProfileTask();
   NS_DispatchToMainThread(runnable);
 }
+
+
+void TableTicker::StreamTaskTracer(JSStreamWriter& b)
+{
+  b.BeginObject();
+#ifdef MOZ_TASK_TRACER
+    b.Name("data");
+    b.BeginArray();
+      nsAutoPtr<nsTArray<nsCString>> data(
+        mozilla::tasktracer::GetLoggedData(sStartTime));
+      for (uint32_t i = 0; i < data->Length(); ++i) {
+        b.Value((data->ElementAt(i)).get());
+      }
+      mozilla::tasktracer::StartLogging();
+    b.EndArray();
+
+    b.Name("threads");
+    b.BeginArray();
+      mozilla::MutexAutoLock lock(*sRegisteredThreadsMutex);
+      for (size_t i = 0; i < sRegisteredThreads->size(); i++) {
+        // Thread meta data
+        ThreadInfo* info = sRegisteredThreads->at(i);
+        b.BeginObject();
+        if (XRE_GetProcessType() == GeckoProcessType_Plugin) {
+          // TODO Add the proper plugin name
+          b.NameValue("name", "Plugin");
+        } else {
+          b.NameValue("name", info->Name());
+        }
+        b.NameValue("tid", static_cast<int>(info->ThreadId()));
+        b.EndObject();
+      }
+    b.EndArray();
+#endif
+  b.EndObject();
+}
+
 
 void TableTicker::StreamMetaJSCustomObject(JSStreamWriter& b)
 {
@@ -270,6 +308,12 @@ void TableTicker::StreamJSObject(JSStreamWriter& b)
     b.Name("meta");
     StreamMetaJSCustomObject(b);
 
+    // Data of TaskTracer doesn't belong in the circular buffer.
+    if (TaskTracer()) {
+      b.Name("tasktracer");
+      StreamTaskTracer(b);
+    }
+
     // Lists the samples for each ThreadProfile
     b.Name("threads");
     b.BeginArray();
@@ -283,6 +327,9 @@ void TableTicker::StreamJSObject(JSStreamWriter& b)
           // Thread not being profiled, skip it
           if (!sRegisteredThreads->at(i)->Profile())
             continue;
+
+          // Note that we intentionally include ThreadProfile which
+          // have been marked for pending delete.
 
           MutexAutoLock lock(*sRegisteredThreads->at(i)->Profile()->GetMutex());
 
@@ -543,7 +590,8 @@ void mergeStacksIntoProfile(ThreadProfile& aProfile, TickSample* aSample, Native
 
 #ifdef USE_NS_STACKWALK
 static
-void StackWalkCallback(void* aPC, void* aSP, void* aClosure)
+void StackWalkCallback(uint32_t aFrameNumber, void* aPC, void* aSP,
+                       void* aClosure)
 {
   NativeStack* nativeStack = static_cast<NativeStack*>(aClosure);
   MOZ_ASSERT(nativeStack->count < nativeStack->size);
@@ -567,8 +615,11 @@ void TableTicker::doNativeBacktrace(ThreadProfile &aProfile, TickSample* aSample
     0
   };
 
-  // Start with the current function.
-  StackWalkCallback(aSample->pc, aSample->sp, &nativeStack);
+  // Start with the current function. We use 0 as the frame number here because
+  // the FramePointerStackWalk() and NS_StackWalk() calls below will use 1..N.
+  // This is a bit weird but it doesn't matter because StackWalkCallback()
+  // doesn't use the frame number argument.
+  StackWalkCallback(/* frameNumber */ 0, aSample->pc, aSample->sp, &nativeStack);
 
   uint32_t maxFrames = uint32_t(nativeStack.size - nativeStack.count);
 #ifdef XP_MACOSX

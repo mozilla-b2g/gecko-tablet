@@ -46,13 +46,13 @@ namespace mozilla {
  * reason why it needs to be faked (incomplete texture vs. uninitialized image data),
  * whereas the WebGL context can only know whether _any_ faking is currently needed at all.
  */
-MOZ_BEGIN_ENUM_CLASS(WebGLContextFakeBlackStatus, int)
+MOZ_BEGIN_ENUM_CLASS(WebGLContextFakeBlackStatus, uint8_t)
   Unknown,
   NotNeeded,
   Needed
 MOZ_END_ENUM_CLASS(WebGLContextFakeBlackStatus)
 
-MOZ_BEGIN_ENUM_CLASS(WebGLTextureFakeBlackStatus, int)
+MOZ_BEGIN_ENUM_CLASS(WebGLTextureFakeBlackStatus, uint8_t)
   Unknown,
   NotNeeded,
   IncompleteTexture,
@@ -65,7 +65,7 @@ MOZ_END_ENUM_CLASS(WebGLTextureFakeBlackStatus)
  * OpenGL ES 2.0 allows drawing without vertex attrib 0 array enabled, but
  * desktop OpenGL does not allow that.
  */
-MOZ_BEGIN_ENUM_CLASS(WebGLVertexAttrib0Status, int)
+MOZ_BEGIN_ENUM_CLASS(WebGLVertexAttrib0Status, uint8_t)
     Default, // default status - no emulation needed
     EmulatedUninitializedArray, // need an artificial attrib 0 array, but contents may be left uninitialized
     EmulatedInitializedArray // need an artificial attrib 0 array, and contents must be initialized
@@ -81,7 +81,7 @@ MOZ_END_ENUM_CLASS(WebGLVertexAttrib0Status)
  *   initialized. It is the state that renderbuffers are in after a renderbufferStorage call,
  *   and it is the state that texture images are in after a texImage2D call with null data.
  */
-MOZ_BEGIN_ENUM_CLASS(WebGLImageDataStatus, int)
+MOZ_BEGIN_ENUM_CLASS(WebGLImageDataStatus, uint8_t)
     NoImageData,
     UninitializedImageData,
     InitializedImageData
@@ -95,12 +95,11 @@ MOZ_END_ENUM_CLASS(WebGLImageDataStatus)
  *  - additional source formats, depending on browser details, used when uploading
  *    textures from DOM elements. See gfxImageSurface::Format().
  */
-MOZ_BEGIN_ENUM_CLASS(WebGLTexelFormat, int)
+MOZ_BEGIN_ENUM_CLASS(WebGLTexelFormat, uint8_t)
     // returned by SurfaceFromElementResultToImageSurface to indicate absence of image data
     None,
-    // dummy error code returned by GetWebGLTexelFormat in error cases,
-    // after assertion failure (so this never happens in debug builds)
-    BadFormat,
+    // common value for formats for which format conversions are not supported
+    FormatNotSupportingAnyConversion,
     // dummy pseudo-format meaning "use the other format".
     // For example, if SrcFormat=Auto and DstFormat=RGB8, then the source
     // is implicitly treated as being RGB8 itself.
@@ -108,8 +107,6 @@ MOZ_BEGIN_ENUM_CLASS(WebGLTexelFormat, int)
     // 1-channel formats
     R8,
     A8,
-    D16, // WEBGL_depth_texture
-    D32, // WEBGL_depth_texture
     R16F, // OES_texture_half_float
     A16F, // OES_texture_half_float
     R32F, // OES_texture_float
@@ -118,7 +115,6 @@ MOZ_BEGIN_ENUM_CLASS(WebGLTexelFormat, int)
     RA8,
     RA16F, // OES_texture_half_float
     RA32F, // OES_texture_float
-    D24S8, // WEBGL_depth_texture
     // 3-channel formats
     RGB8,
     BGRX8, // used for DOM elements. Source format only.
@@ -134,7 +130,7 @@ MOZ_BEGIN_ENUM_CLASS(WebGLTexelFormat, int)
     RGBA32F // OES_texture_float
 MOZ_END_ENUM_CLASS(WebGLTexelFormat)
 
-MOZ_BEGIN_ENUM_CLASS(WebGLTexImageFunc, int)
+MOZ_BEGIN_ENUM_CLASS(WebGLTexImageFunc, uint8_t)
     TexImage,
     TexSubImage,
     CopyTexImage,
@@ -142,6 +138,11 @@ MOZ_BEGIN_ENUM_CLASS(WebGLTexImageFunc, int)
     CompTexImage,
     CompTexSubImage,
 MOZ_END_ENUM_CLASS(WebGLTexImageFunc)
+
+MOZ_BEGIN_ENUM_CLASS(WebGLTexDimensions, uint8_t)
+    Tex2D,
+    Tex3D
+MOZ_END_ENUM_CLASS(WebGLTexDimensions)
 
 // Please keep extensions in alphabetic order.
 MOZ_BEGIN_ENUM_CLASS(WebGLExtensionID, uint8_t)

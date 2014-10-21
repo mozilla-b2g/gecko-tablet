@@ -714,21 +714,6 @@ GetCellParent(nsINode *aDomNode)
     return nullptr;
 }
 
-CaretAssociationHint
-nsFrameSelection::GetHintForPosition(nsIContent* aContent, int32_t aOffset)
-{
-  CaretAssociateHint hint = CARET_ASSOCIATE_BEFORE;
-  if (!aContent || aOffset < 1) {
-    return hint;
-  }
-  const nsTextFragment* text = aContent->GetText();
-  if (text && text->CharAt(aOffset - 1) == '\n') {
-    // Attach the caret to the next line if needed
-    hint = CARET_ASSOCIATE_AFTER;
-  }
-  return hint;
-}
-
 void
 nsFrameSelection::Init(nsIPresShell *aShell, nsIContent *aLimiter)
 {
@@ -3110,7 +3095,6 @@ Selection::Selection()
   , mType(nsISelectionController::SELECTION_NORMAL)
   , mApplyUserSelectStyle(false)
 {
-  SetIsDOMBinding();
 }
 
 Selection::Selection(nsFrameSelection* aList)
@@ -3120,7 +3104,6 @@ Selection::Selection(nsFrameSelection* aList)
   , mType(nsISelectionController::SELECTION_NORMAL)
   , mApplyUserSelectStyle(false)
 {
-  SetIsDOMBinding();
 }
 
 Selection::~Selection()

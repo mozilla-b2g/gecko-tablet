@@ -36,18 +36,18 @@ class TabsListLayout extends TwoWayView
                                 Tabs.OnTabsChangedListener {
     private static final String LOGTAG = "Gecko" + TabsListLayout.class.getSimpleName();
 
-    private Context mContext;
+    private final Context mContext;
     private TabsPanel mTabsPanel;
 
     final private boolean mIsPrivate;
 
-    private TabsLayoutAdapter mTabsAdapter;
+    private final TabsLayoutAdapter mTabsAdapter;
 
-    private List<View> mPendingClosedTabs;
+    private final List<View> mPendingClosedTabs;
     private int mCloseAnimationCount;
     private int mCloseAllAnimationCount;
 
-    private TabSwipeGestureListener mSwipeListener;
+    private final TabSwipeGestureListener mSwipeListener;
 
     // Time to animate non-flinged tabs of screen, in milliseconds
     private static final int ANIMATION_DURATION = 250;
@@ -65,8 +65,8 @@ class TabsListLayout extends TwoWayView
 
         setItemsCanFocus(true);
 
-        TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.TabsTray);
-        mIsPrivate = (a.getInt(R.styleable.TabsTray_tabs, 0x0) == 1);
+        TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.TabsLayout);
+        mIsPrivate = (a.getInt(R.styleable.TabsLayout_tabs, 0x0) == 1);
         a.recycle();
 
         mTabsAdapter = new TabsListLayoutAdapter(mContext);
@@ -80,16 +80,16 @@ class TabsListLayout extends TwoWayView
             @Override
             public void onMovedToScrapHeap(View view) {
                 TabsLayoutItemView item = (TabsLayoutItemView) view;
-                item.thumbnail.setImageDrawable(null);
-                item.close.setVisibility(View.VISIBLE);
+                item.setThumbnail(null);
+                item.setCloseVisible(true);
             }
         });
     }
 
     private class TabsListLayoutAdapter extends TabsLayoutAdapter {
-        private Button.OnClickListener mCloseOnClickListener;
+        private final Button.OnClickListener mCloseOnClickListener;
         public TabsListLayoutAdapter (Context context) {
-            super(context);
+            super(context, R.layout.tabs_layout_item_view);
 
             mCloseOnClickListener = new Button.OnClickListener() {
                 @Override
@@ -104,8 +104,8 @@ class TabsListLayout extends TwoWayView
         }
 
         @Override
-        public View newView(int position, ViewGroup parent) {
-            TabsLayoutItemView item = (TabsLayoutItemView) super.newView(position, parent);
+        public TabsLayoutItemView newView(int position, ViewGroup parent) {
+            TabsLayoutItemView item = super.newView(position, parent);
 
             item.setCloseOnClickListener(mCloseOnClickListener);
 
@@ -113,7 +113,7 @@ class TabsListLayout extends TwoWayView
         }
 
         @Override
-        public void bindView(View view, Tab tab) {
+        public void bindView(TabsLayoutItemView view, Tab tab) {
             super.bindView(view, tab);
 
             // If we're recycling this view, there's a chance it was transformed during
@@ -360,7 +360,7 @@ class TabsListLayout extends TwoWayView
         else
             animator.attach(view, Property.WIDTH, 1);
 
-        final int tabId = ((TabsLayoutItemView) view).id;
+        final int tabId = ((TabsLayoutItemView) view).getTabId();
 
         // Caching this assumes that all rows are the same height
         if (mOriginalSize == 0) {
@@ -397,7 +397,7 @@ class TabsListLayout extends TwoWayView
             @Override
             public void onPropertyAnimationEnd() {
                 TabsLayoutItemView tab = (TabsLayoutItemView) view;
-                tab.close.setVisibility(View.VISIBLE);
+                tab.setCloseVisible(true);
             }
         });
 
@@ -409,10 +409,10 @@ class TabsListLayout extends TwoWayView
         // http://androidxref.com/4.0.4/xref/packages/apps/Browser/src/com/android/browser/NavTabScroller.java#61
         private static final float MIN_VELOCITY = 750;
 
-        private int mSwipeThreshold;
-        private int mMinFlingVelocity;
+        private final int mSwipeThreshold;
+        private final int mMinFlingVelocity;
 
-        private int mMaxFlingVelocity;
+        private final int mMaxFlingVelocity;
         private VelocityTracker mVelocityTracker;
 
         private int mListWidth = 1;
@@ -495,7 +495,7 @@ class TabsListLayout extends TwoWayView
 
                     if (!mSwiping) {
                         TabsLayoutItemView item = (TabsLayoutItemView) mSwipeView;
-                        Tabs.getInstance().selectTab(item.id);
+                        Tabs.getInstance().selectTab(item.getTabId());
                         autoHidePanel();
 
                         mVelocityTracker.recycle();
@@ -582,7 +582,7 @@ class TabsListLayout extends TwoWayView
                         mSwiping = true;
                         TabsListLayout.this.requestDisallowInterceptTouchEvent(true);
 
-                        ((TabsLayoutItemView) mSwipeView).close.setVisibility(View.INVISIBLE);
+                        ((TabsLayoutItemView) mSwipeView).setCloseVisible(false);
 
                         // Stops listview from highlighting the touched item
                         // in the list when swiping.

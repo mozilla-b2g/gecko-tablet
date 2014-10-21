@@ -21,6 +21,9 @@
 #include "mozilla/WeakPtr.h"
 #include "mozilla/TimeStamp.h"
 #include "GeckoProfiler.h"
+#ifdef MOZ_ENABLE_PROFILER_SPS
+#include "ProfilerMarkers.h"
+#endif
 
 // Helper Classes
 #include "nsCOMPtr.h"
@@ -915,6 +918,7 @@ protected:
 #endif
     bool                       mAffectPrivateSessionLifetime;
     bool                       mInvisible;
+    bool                       mHasLoadedNonBlankURI;
     uint64_t                   mHistoryID;
     uint32_t                   mDefaultLoadFlags;
 
@@ -947,26 +951,31 @@ private:
     nsWeakPtr mOpener;
     nsWeakPtr mOpenedRemote;
 
-    // Storing profile timeline markers and if/when recording started
-    mozilla::TimeStamp mProfileTimelineStartTime;
+    // True if recording profiles.
+    bool mProfileTimelineRecording;
+
+#ifdef MOZ_ENABLE_PROFILER_SPS
     struct InternalProfileTimelineMarker
     {
       InternalProfileTimelineMarker(const char* aName,
                                     ProfilerMarkerTracing* aPayload,
-                                    float aTime)
+                                    DOMHighResTimeStamp aTime)
         : mName(aName)
         , mPayload(aPayload)
         , mTime(aTime)
       {}
+
+      ~InternalProfileTimelineMarker()
+      {
+        delete mPayload;
+      }
+
       const char* mName;
       ProfilerMarkerTracing* mPayload;
-      float mTime;
+      DOMHighResTimeStamp mTime;
     };
-    nsTArray<nsAutoPtr<InternalProfileTimelineMarker>> mProfileTimelineMarkers;
-
-    // Get the elapsed time (in millis) since the profile timeline recording
-    // started
-    float GetProfileTimelineDelta();
+    nsTArray<InternalProfileTimelineMarker*> mProfileTimelineMarkers;
+#endif
 
     // Get rid of all the timeline markers accumulated so far
     void ClearProfileTimelineMarkers();
@@ -977,6 +986,9 @@ private:
                                 nsISupports* aRequestor,
                                 nsIDocShellTreeItem* aOriginalRequestor,
                                 nsIDocShellTreeItem** _retval);
+
+    // Notify consumers of a search being loaded through the observer service:
+    void MaybeNotifyKeywordSearchLoading(const nsString &aProvider, const nsString &aKeyword);
 
 #ifdef DEBUG
     // We're counting the number of |nsDocShells| to help find leaks

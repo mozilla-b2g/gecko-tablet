@@ -21,63 +21,6 @@ namespace js {
 class ScopeIter;
 
 /*
- * Announce to the debugger that the thread has entered a new JavaScript frame,
- * |frame|. Call whatever hooks have been registered to observe new frames, and
- * return a JSTrapStatus code indication how execution should proceed:
- *
- * - JSTRAP_CONTINUE: Continue execution normally.
- *
- * - JSTRAP_THROW: Throw an exception. ScriptDebugPrologue has set |cx|'s
- *   pending exception to the value to be thrown.
- *
- * - JSTRAP_ERROR: Terminate execution (as is done when a script is terminated
- *   for running too long). ScriptDebugPrologue has cleared |cx|'s pending
- *   exception.
- *
- * - JSTRAP_RETURN: Return from the new frame immediately. ScriptDebugPrologue
- *   has set |frame|'s return value appropriately.
- */
-extern JSTrapStatus
-ScriptDebugPrologue(JSContext *cx, AbstractFramePtr frame, jsbytecode *pc);
-
-/*
- * Announce to the debugger that the thread has exited a JavaScript frame, |frame|.
- * If |ok| is true, the frame is returning normally; if |ok| is false, the frame
- * is throwing an exception or terminating.
- *
- * Call whatever hooks have been registered to observe frame exits. Change cx's
- * current exception and |frame|'s return value to reflect the changes in behavior
- * the hooks request, if any. Return the new error/success value.
- *
- * This function may be called twice for the same outgoing frame; only the
- * first call has any effect. (Permitting double calls simplifies some
- * cases where an onPop handler's resumption value changes a return to a
- * throw, or vice versa: we can redirect to a complete copy of the
- * alternative path, containing its own call to ScriptDebugEpilogue.)
- */
-extern bool
-ScriptDebugEpilogue(JSContext *cx, AbstractFramePtr frame, jsbytecode *pc, bool ok);
-
-/*
- * Announce to the debugger that an exception has been thrown and propagated
- * to |frame|. Call whatever hooks have been registered to observe this and
- * return a JSTrapStatus code indication how execution should proceed:
- *
- * - JSTRAP_CONTINUE: Continue throwing the current exception.
- *
- * - JSTRAP_THROW: Throw another value. DebugExceptionUnwind has set |cx|'s
- *   pending exception to the new value.
- *
- * - JSTRAP_ERROR: Terminate execution. DebugExceptionUnwind has cleared |cx|'s
- *   pending exception.
- *
- * - JSTRAP_RETURN: Return from |frame|. DebugExceptionUnwind has cleared
- *   |cx|'s pending exception and set |frame|'s return value.
- */
-extern JSTrapStatus
-DebugExceptionUnwind(JSContext *cx, AbstractFramePtr frame, jsbytecode *pc);
-
-/*
  * For a given |call|, convert null/undefined |this| into the global object for
  * the callee and replace other primitives with boxed versions. This assumes
  * that call.callee() is not strict mode code. This is the special/slow case of
@@ -168,7 +111,6 @@ Execute(JSContext *cx, HandleScript script, JSObject &scopeChain, Value *rval);
 
 class ExecuteState;
 class InvokeState;
-class GeneratorState;
 
 // RunState is passed to RunScript and RunScript then eiter passes it to the
 // interpreter or to the JITs. RunState contains all information we need to
@@ -176,7 +118,7 @@ class GeneratorState;
 class RunState
 {
   protected:
-    enum Kind { Execute, Invoke, Generator };
+    enum Kind { Execute, Invoke };
     Kind kind_;
 
     RootedScript script_;
@@ -189,7 +131,6 @@ class RunState
   public:
     bool isExecute() const { return kind_ == Execute; }
     bool isInvoke() const { return kind_ == Invoke; }
-    bool isGenerator() const { return kind_ == Generator; }
 
     ExecuteState *asExecute() const {
         MOZ_ASSERT(isExecute());
@@ -198,10 +139,6 @@ class RunState
     InvokeState *asInvoke() const {
         MOZ_ASSERT(isInvoke());
         return (InvokeState *)this;
-    }
-    GeneratorState *asGenerator() const {
-        MOZ_ASSERT(isGenerator());
-        return (GeneratorState *)this;
     }
 
     JS::HandleScript script() const { return script_; }
@@ -215,7 +152,6 @@ class RunState
     RunState(const RunState &other) MOZ_DELETE;
     RunState(const ExecuteState &other) MOZ_DELETE;
     RunState(const InvokeState &other) MOZ_DELETE;
-    RunState(const GeneratorState &other) MOZ_DELETE;
     void operator=(const RunState &other) MOZ_DELETE;
 };
 
@@ -279,24 +215,6 @@ class InvokeState : public RunState
     virtual void setReturnValue(Value v) {
         args_.rval().set(v);
     }
-};
-
-// Generator script.
-class GeneratorState : public RunState
-{
-    JSContext *cx_;
-    JSGenerator *gen_;
-    JSGeneratorState futureState_;
-    bool entered_;
-
-  public:
-    GeneratorState(JSContext *cx, JSGenerator *gen, JSGeneratorState futureState);
-    ~GeneratorState();
-
-    virtual InterpreterFrame *pushInterpreterFrame(JSContext *cx);
-    virtual void setReturnValue(Value) { }
-
-    JSGenerator *gen() const { return gen_; }
 };
 
 extern bool

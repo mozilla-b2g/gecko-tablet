@@ -16,6 +16,8 @@
 
 #include "jsobjinlines.h"
 
+#include "vm/NativeObject-inl.h"
+
 using namespace js;
 using namespace js::types;
 
@@ -46,7 +48,7 @@ js::CreateRegExpMatchResult(JSContext *cx, HandleString input, const MatchPairs 
     size_t numPairs = matches.length();
     MOZ_ASSERT(numPairs > 0);
 
-    RootedObject arr(cx, NewDenseFullyAllocatedArrayWithTemplate(cx, numPairs, templateObject));
+    RootedArrayObject arr(cx, NewDenseFullyAllocatedArrayWithTemplate(cx, numPairs, templateObject));
     if (!arr)
         return false;
 
@@ -57,35 +59,32 @@ js::CreateRegExpMatchResult(JSContext *cx, HandleString input, const MatchPairs 
         if (pair.isUndefined()) {
             MOZ_ASSERT(i != 0); /* Since we had a match, first pair must be present. */
             arr->setDenseInitializedLength(i + 1);
-            arr->initDenseElementWithType(cx, i, UndefinedValue());
+            arr->initDenseElement(i, UndefinedValue());
         } else {
             JSLinearString *str = NewDependentString(cx, input, pair.start, pair.length());
             if (!str)
                 return false;
             arr->setDenseInitializedLength(i + 1);
-
-            // We don't have to update type information here, since the match
-            // result template is already known to have string elements.
             arr->initDenseElement(i, StringValue(str));
         }
     }
 
     /* Set the |index| property. (TemplateObject positions it in slot 0) */
-    arr->nativeSetSlot(0, Int32Value(matches[0].start));
+    arr->setSlot(0, Int32Value(matches[0].start));
 
     /* Set the |input| property. (TemplateObject positions it in slot 1) */
-    arr->nativeSetSlot(1, StringValue(input));
+    arr->setSlot(1, StringValue(input));
 
 #ifdef DEBUG
     RootedValue test(cx);
     RootedId id(cx, NameToId(cx->names().index));
     if (!baseops::GetProperty(cx, arr, id, &test))
         return false;
-    MOZ_ASSERT(test == arr->nativeGetSlot(0));
+    MOZ_ASSERT(test == arr->getSlot(0));
     id = NameToId(cx->names().input);
     if (!baseops::GetProperty(cx, arr, id, &test))
         return false;
-    MOZ_ASSERT(test == arr->nativeGetSlot(1));
+    MOZ_ASSERT(test == arr->getSlot(1));
 #endif
 
     rval.setObject(*arr);
@@ -508,7 +507,7 @@ js_InitRegExpClass(JSContext *cx, HandleObject obj)
 
     Rooted<GlobalObject*> global(cx, &obj->as<GlobalObject>());
 
-    RootedObject proto(cx, global->createBlankPrototype(cx, &RegExpObject::class_));
+    RootedNativeObject proto(cx, global->createBlankPrototype(cx, &RegExpObject::class_));
     if (!proto)
         return nullptr;
     proto->setPrivate(nullptr);
@@ -676,8 +675,13 @@ js::regexp_exec(JSContext *cx, unsigned argc, Value *vp)
 
 /* Separate interface for use by IonMonkey. */
 bool
-js::regexp_exec_raw(JSContext *cx, HandleObject regexp, HandleString input, MutableHandleValue output)
+js::regexp_exec_raw(JSContext *cx, HandleObject regexp, HandleString input,
+                    MatchPairs *maybeMatches, MutableHandleValue output)
 {
+    // The MatchPairs will always be passed in, but RegExp execution was
+    // successful only if the pairs have actually been filled in.
+    if (maybeMatches && maybeMatches->pairsRaw()[0] >= 0)
+        return CreateRegExpMatchResult(cx, input, *maybeMatches, output);
     return regexp_exec_impl(cx, regexp, input, UpdateRegExpStatics, output);
 }
 

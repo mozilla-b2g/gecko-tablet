@@ -172,7 +172,8 @@ ReportInvalidTrapResult(JSContext *cx, JSObject *proxy, JSAtom *atom)
                          js::NullPtr(), bytes.ptr());
 }
 
-// This function is shared between getOwnPropertyNames, enumerate, and keys
+// This function is shared between ownPropertyKeys, enumerate, and
+// getOwnEnumerablePropertyKeys.
 static bool
 ArrayToIdVector(JSContext *cx, HandleObject proxy, HandleObject target, HandleValue v,
                 AutoIdVector &props, unsigned flags, JSAtom *trapName_)
@@ -227,7 +228,7 @@ ArrayToIdVector(JSContext *cx, HandleObject proxy, HandleObject target, HandleVa
 
     // step l
     AutoIdVector ownProps(cx);
-    if (!GetPropertyNames(cx, target, flags, &ownProps))
+    if (!GetPropertyKeys(cx, target, flags, &ownProps))
         return false;
 
     // step m
@@ -558,11 +559,10 @@ ScriptedDirectProxyHandler::defineProperty(JSContext *cx, HandleObject proxy, Ha
     return true;
 }
 
-// This is secretly [[OwnPropertyKeys]]. SM uses the old wiki name, internally.
 // ES6 (5 April 2014) 9.5.12 Proxy.[[OwnPropertyKeys]]()
 bool
-ScriptedDirectProxyHandler::getOwnPropertyNames(JSContext *cx, HandleObject proxy,
-                                                AutoIdVector &props) const
+ScriptedDirectProxyHandler::ownPropertyKeys(JSContext *cx, HandleObject proxy,
+                                            AutoIdVector &props) const
 {
     // step 1
     RootedObject handler(cx, GetDirectProxyHandlerObject(proxy));
@@ -583,7 +583,7 @@ ScriptedDirectProxyHandler::getOwnPropertyNames(JSContext *cx, HandleObject prox
 
     // step 6
     if (trap.isUndefined())
-        return DirectProxyHandler::getOwnPropertyNames(cx, proxy, props);
+        return DirectProxyHandler::ownPropertyKeys(cx, proxy, props);
 
     // step 7-8
     Value argv[] = {
@@ -1088,6 +1088,35 @@ ScriptedDirectProxyHandler::isCallable(JSObject *obj) const
 {
     MOZ_ASSERT(obj->as<ProxyObject>().handler() == &ScriptedDirectProxyHandler::singleton);
     return obj->as<ProxyObject>().extra(IS_CALLABLE_EXTRA).toBoolean();
+}
+
+// ES6 implements both getPrototypeOf and setPrototypeOf traps. We don't have them yet (see bug
+// 888969). For now, use these, to account for proxy revocation.
+bool
+ScriptedDirectProxyHandler::getPrototypeOf(JSContext *cx, HandleObject proxy,
+                                           MutableHandleObject protop) const
+{
+    RootedObject target(cx, proxy->as<ProxyObject>().target());
+    // Though handler is used elsewhere, spec mandates that both get set to null.
+    if (!target) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
+        return false;
+    }
+
+    return DirectProxyHandler::getPrototypeOf(cx, proxy, protop);
+}
+
+bool
+ScriptedDirectProxyHandler::setPrototypeOf(JSContext *cx, HandleObject proxy,
+                                           HandleObject proto, bool *bp) const
+{
+    RootedObject target(cx, proxy->as<ProxyObject>().target());
+    if (!target) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
+        return false;
+    }
+
+    return DirectProxyHandler::setPrototypeOf(cx, proxy, proto, bp);
 }
 
 const char ScriptedDirectProxyHandler::family = 0;

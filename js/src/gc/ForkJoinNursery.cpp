@@ -21,7 +21,7 @@
 
 #include "jsgcinlines.h"
 #include "gc/Nursery-inl.h"
-#include "vm/ObjectImpl-inl.h"
+#include "vm/NativeObject-inl.h"
 
 // The ForkJoinNursery provides an object nursery for movable object
 // types for one ForkJoin worker thread.  There is a one-to-one
@@ -538,9 +538,9 @@ ForkJoinNursery::allocateObject(size_t baseSize, size_t numDynamic, bool& tooLar
         tooLarge = false;
         return nullptr;
     }
-    obj->setInitialSlots(numDynamic
-                         ? reinterpret_cast<HeapSlot *>(size_t(obj) + baseSize)
-                         : nullptr);
+    obj->setInitialSlotsMaybeNonNative(numDynamic
+                                       ? reinterpret_cast<HeapSlot *>(size_t(obj) + baseSize)
+                                       : nullptr);
     return obj;
 }
 
@@ -668,12 +668,13 @@ ForkJoinNursery::traceObject(ForkJoinNurseryCollectionTracer *trc, JSObject *obj
 
     if (!obj->isNative())
         return;
+    NativeObject *nobj = &obj->as<NativeObject>();
 
-    if (!obj->hasEmptyElements())
-        markSlots(obj->getDenseElements(), obj->getDenseInitializedLength());
+    if (!nobj->hasEmptyElements())
+        markSlots(nobj->getDenseElements(), nobj->getDenseInitializedLength());
 
     HeapSlot *fixedStart, *fixedEnd, *dynStart, *dynEnd;
-    obj->getSlotRange(0, obj->slotSpan(), &fixedStart, &fixedEnd, &dynStart, &dynEnd);
+    nobj->getSlotRange(0, nobj->slotSpan(), &fixedStart, &fixedEnd, &dynStart, &dynEnd);
     markSlots(fixedStart, fixedEnd);
     markSlots(dynStart, dynEnd);
 }
@@ -714,20 +715,25 @@ AllocKind
 ForkJoinNursery::getObjectAllocKind(JSObject *obj)
 {
     if (obj->is<ArrayObject>()) {
-        MOZ_ASSERT(obj->numFixedSlots() == 0);
+        ArrayObject *aobj = &obj->as<ArrayObject>();
+        MOZ_ASSERT(aobj->numFixedSlots() == 0);
 
         // Use minimal size object if we are just going to copy the pointer.
-        if (!isInsideFromspace((void *)obj->getElementsHeader()))
+        if (!isInsideFromspace((void *)aobj->getElementsHeader()))
             return FINALIZE_OBJECT0_BACKGROUND;
 
-        size_t nelements = obj->getDenseCapacity();
+        size_t nelements = aobj->getDenseCapacity();
         return GetBackgroundAllocKind(GetGCArrayKind(nelements));
     }
 
     if (obj->is<JSFunction>())
         return obj->as<JSFunction>().getAllocKind();
 
-    AllocKind kind = GetGCObjectFixedSlotsKind(obj->numFixedSlots());
+    // Don't handle other objects with special allocation requirements.
+    MOZ_ASSERT(!obj->is<TypedArrayObject>());
+    MOZ_ASSERT(obj->isNative());
+
+    AllocKind kind = GetGCObjectFixedSlotsKind(obj->as<NativeObject>().numFixedSlots());
     MOZ_ASSERT(!IsBackgroundFinalized(kind));
     MOZ_ASSERT(CanBeFinalizedInBackground(kind, obj->getClass()));
     return GetBackgroundAllocKind(kind);
@@ -808,11 +814,14 @@ ForkJoinNursery::copyObjectToTospace(JSObject *dst, JSObject *src, AllocKind dst
     // We deal with this by copying elements manually, possibly re-inlining
     // them if there is adequate room inline in dst.
     if (src->is<ArrayObject>())
-        srcSize = movedSize = sizeof(ObjectImpl);
+        srcSize = movedSize = sizeof(NativeObject);
 
     js_memcpy(dst, src, srcSize);
-    movedSize += copySlotsToTospace(dst, src, dstKind);
-    movedSize += copyElementsToTospace(dst, src, dstKind);
+    if (src->isNative()) {
+        NativeObject *ndst = &dst->as<NativeObject>(), *nsrc = &src->as<NativeObject>();
+        movedSize += copySlotsToTospace(ndst, nsrc, dstKind);
+        movedSize += copyElementsToTospace(ndst, nsrc, dstKind);
+    }
 
     // The shape's list head may point into the old object.
     if (&src->shape_ == dst->shape_->listp) {
@@ -824,30 +833,30 @@ ForkJoinNursery::copyObjectToTospace(JSObject *dst, JSObject *src, AllocKind dst
 }
 
 size_t
-ForkJoinNursery::copySlotsToTospace(JSObject *dst, JSObject *src, AllocKind dstKind)
+ForkJoinNursery::copySlotsToTospace(NativeObject *dst, NativeObject *src, AllocKind dstKind)
 {
     // Fixed slots have already been copied over.
     if (!src->hasDynamicSlots())
         return 0;
 
-    if (!isInsideFromspace(src->slots)) {
-        hugeSlots[hugeSlotsFrom].remove(src->slots);
+    if (!isInsideFromspace(src->slots_)) {
+        hugeSlots[hugeSlotsFrom].remove(src->slots_);
         if (!isEvacuating_)
-            hugeSlots[hugeSlotsNew].put(src->slots);
+            hugeSlots[hugeSlotsNew].put(src->slots_);
         return 0;
     }
 
     size_t count = src->numDynamicSlots();
-    dst->slots = allocateInTospace<HeapSlot>(count);
-    if (!dst->slots)
+    dst->slots_ = allocateInTospace<HeapSlot>(count);
+    if (!dst->slots_)
         CrashAtUnhandlableOOM("Failed to allocate slots while moving object.");
-    js_memcpy(dst->slots, src->slots, count * sizeof(HeapSlot));
-    setSlotsForwardingPointer(src->slots, dst->slots, count);
+    js_memcpy(dst->slots_, src->slots_, count * sizeof(HeapSlot));
+    setSlotsForwardingPointer(src->slots_, dst->slots_, count);
     return count * sizeof(HeapSlot);
 }
 
 size_t
-ForkJoinNursery::copyElementsToTospace(JSObject *dst, JSObject *src, AllocKind dstKind)
+ForkJoinNursery::copyElementsToTospace(NativeObject *dst, NativeObject *src, AllocKind dstKind)
 {
     if (src->hasEmptyElements() || src->denseElementsAreCopyOnWrite())
         return 0;
@@ -858,7 +867,7 @@ ForkJoinNursery::copyElementsToTospace(JSObject *dst, JSObject *src, AllocKind d
     // TODO Bug 874151: Prefer to put element data inline if we have space.
     // (Note, not a correctness issue.)
     if (!isInsideFromspace(srcHeader)) {
-        MOZ_ASSERT(src->elements == dst->elements);
+        MOZ_ASSERT(src->elements_ == dst->elements_);
         hugeSlots[hugeSlotsFrom].remove(reinterpret_cast<HeapSlot*>(srcHeader));
         if (!isEvacuating_)
             hugeSlots[hugeSlotsNew].put(reinterpret_cast<HeapSlot*>(srcHeader));
@@ -869,8 +878,8 @@ ForkJoinNursery::copyElementsToTospace(JSObject *dst, JSObject *src, AllocKind d
 
     // Unlike other objects, Arrays can have fixed elements.
     if (src->is<ArrayObject>() && nslots <= GetGCKindSlots(dstKind)) {
-        dst->setFixedElements();
-        dstHeader = dst->getElementsHeader();
+        dst->as<ArrayObject>().setFixedElements();
+        dstHeader = dst->as<ArrayObject>().getElementsHeader();
         js_memcpy(dstHeader, srcHeader, nslots * sizeof(HeapSlot));
         setElementsForwardingPointer(srcHeader, dstHeader, nslots);
         return nslots * sizeof(HeapSlot);
@@ -882,7 +891,7 @@ ForkJoinNursery::copyElementsToTospace(JSObject *dst, JSObject *src, AllocKind d
         CrashAtUnhandlableOOM("Failed to allocate elements while moving object.");
     js_memcpy(dstHeader, srcHeader, nslots * sizeof(HeapSlot));
     setElementsForwardingPointer(srcHeader, dstHeader, nslots);
-    dst->elements = dstHeader->elements();
+    dst->elements_ = dstHeader->elements();
     return nslots * sizeof(HeapSlot);
 }
 

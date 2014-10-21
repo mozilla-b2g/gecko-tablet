@@ -188,6 +188,12 @@ XPCOMUtils.defineLazyModuleGetter(this, "FormValidationHandler",
 XPCOMUtils.defineLazyModuleGetter(this, "UITour",
   "resource:///modules/UITour.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "CastingApps",
+  "resource:///modules/CastingApps.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "SimpleServiceDiscovery",
+  "resource://gre/modules/SimpleServiceDiscovery.jsm");
+
 let gInitialPages = [
   "about:blank",
   "about:newtab",
@@ -199,6 +205,7 @@ let gInitialPages = [
 
 #include browser-addons.js
 #include browser-customization.js
+#include browser-devedition.js
 #include browser-feeds.js
 #include browser-fullScreen.js
 #include browser-fullZoom.js
@@ -694,7 +701,7 @@ function gKeywordURIFixup({ target: browser, data: fixupInfo }) {
   // whether the original input would be vaguely interpretable as a URL,
   // so figure that out first.
   let alternativeURI = deserializeURI(fixupInfo.fixedURI);
-  if (!fixupInfo.fixupUsedKeyword || !alternativeURI || !alternativeURI.host) {
+  if (!fixupInfo.keywordProviderName  || !alternativeURI || !alternativeURI.host) {
     return;
   }
 
@@ -781,13 +788,21 @@ function gKeywordURIFixup({ target: browser, data: fixupInfo }) {
     notification.persistence = 1;
   };
 
-  gDNSService.asyncResolve(hostName, 0, onLookupComplete, Services.tm.mainThread);
+  try {
+    gDNSService.asyncResolve(hostName, 0, onLookupComplete, Services.tm.mainThread);
+  } catch (ex) {
+    // Do nothing if the URL is invalid (we don't want to show a notification in that case).
+    if (ex.result != Cr.NS_ERROR_UNKNOWN_HOST) {
+      // ... otherwise, report:
+      Cu.reportError(ex);
+    }
+  }
 }
 
 // Called when a docshell has attempted to load a page in an incorrect process.
 // This function is responsible for loading the page in the correct process.
 function RedirectLoad({ target: browser, data }) {
-  let tab = gBrowser._getTabForBrowser(browser);
+  let tab = gBrowser.getTabForBrowser(browser);
   // Flush the tab state before getting it
   TabState.flush(browser);
   let tabState = JSON.parse(SessionStore.getTabState(tab));
@@ -834,6 +849,7 @@ var gBrowserInit = {
     gPageStyleMenu.init();
     LanguageDetectionListener.init();
     BrowserOnClick.init();
+    DevEdition.init();
 
     let mm = window.getGroupMessageManager("browsers");
     mm.loadFrameScript("chrome://browser/content/content.js", true);
@@ -1390,6 +1406,8 @@ var gBrowserInit = {
     ToolbarIconColor.uninit();
 
     BrowserOnClick.uninit();
+
+    DevEdition.uninit();
 
     var enumerator = Services.wm.getEnumerator(null);
     enumerator.getNext();
@@ -2233,7 +2251,7 @@ function URLBarSetURI(aURI) {
     // Replace initial page URIs with an empty string
     // only if there's no opener (bug 370555).
     // Bug 863515 - Make content.opener checks work in electrolysis.
-    if (gInitialPages.contains(uri.spec))
+    if (gInitialPages.indexOf(uri.spec) != -1)
       value = !gMultiProcessBrowser && content.opener ? uri.spec : "";
     else
       value = losslessDecodeURI(uri);
@@ -2400,13 +2418,13 @@ let BrowserOnClick = {
   receiveMessage: function (msg) {
     switch (msg.name) {
       case "Browser:CertExceptionError":
-        this.onAboutCertError(msg.target, msg.json.elementId,
-                              msg.json.isTopFrame, msg.json.location,
-                              msg.objects.failedChannel);
+        this.onAboutCertError(msg.target, msg.data.elementId,
+                              msg.data.isTopFrame, msg.data.location,
+                              msg.data.sslStatusAsString);
       break;
       case "Browser:SiteBlockedError":
-        this.onAboutBlocked(msg.json.elementId, msg.json.isMalware,
-                            msg.json.isTopFrame, msg.json.location);
+        this.onAboutBlocked(msg.data.elementId, msg.data.isMalware,
+                            msg.data.isTopFrame, msg.data.location);
       break;
       case "Browser:NetworkError":
         // Reset network state, the error page will refresh on its own.
@@ -2415,7 +2433,7 @@ let BrowserOnClick = {
     }
   },
 
-  onAboutCertError: function (browser, elementId, isTopFrame, location, failedChannel) {
+  onAboutCertError: function (browser, elementId, isTopFrame, location, sslStatusAsString) {
     let secHistogram = Services.telemetry.getHistogramById("SECURITY_UI");
 
     switch (elementId) {
@@ -2423,8 +2441,11 @@ let BrowserOnClick = {
         if (isTopFrame) {
           secHistogram.add(Ci.nsISecurityUITelemetry.WARNING_BAD_CERT_TOP_CLICK_ADD_EXCEPTION);
         }
-        let sslStatus = failedChannel.securityInfo.QueryInterface(Ci.nsISSLStatusProvider)
-                                                  .SSLStatus;
+
+        let serhelper = Cc["@mozilla.org/network/serialization-helper;1"]
+                           .getService(Ci.nsISerializationHelper);
+        let sslStatus = serhelper.deserializeObject(sslStatusAsString);
+        sslStatus.QueryInterface(Components.interfaces.nsISSLStatus);
         let params = { exceptionAdded : false,
                        sslStatus : sslStatus };
 
@@ -2555,8 +2576,8 @@ let BrowserOnClick = {
         TabCrashReporter.submitCrashReport(browser);
       }
 #endif
-
-      TabCrashReporter.reloadCrashedTab(browser);
+      let tab = gBrowser.getTabForBrowser(browser);
+      SessionStore.reviveCrashedTab(tab);
     }
   },
 
@@ -2948,7 +2969,7 @@ const DOMLinkHandler = {
     if (gBrowser.isFailedIcon(aURL))
       return false;
 
-    let tab = gBrowser._getTabForBrowser(aBrowser);
+    let tab = gBrowser.getTabForBrowser(aBrowser);
     if (!tab)
       return false;
 
@@ -2957,7 +2978,7 @@ const DOMLinkHandler = {
   },
 
   addSearch: function(aBrowser, aEngine, aURL) {
-    let tab = gBrowser._getTabForBrowser(aBrowser);
+    let tab = gBrowser.getTabForBrowser(aBrowser);
     if (!tab)
       return false;
 
@@ -3767,7 +3788,7 @@ var XULBrowserWindow = {
         URLBarSetURI(aLocationURI);
 
         BookmarkingUI.onLocationChange();
-        SocialUI.updateState();
+        SocialUI.updateState(location);
       }
 
       // Utility functions for disabling find
@@ -6496,7 +6517,7 @@ var gIdentityHandler = {
 
     // Chrome URIs however get special treatment. Some chrome URIs are
     // whitelisted to provide a positive security signal to the user.
-    let whitelist = /^about:(accounts|addons|app-manager|config|crashes|customizing|healthreport|home|newaddon|permissions|preferences|privatebrowsing|sessionrestore|support|welcomeback)/i;
+    let whitelist = /^about:(accounts|addons|app-manager|config|crashes|customizing|healthreport|home|license|newaddon|permissions|preferences|privatebrowsing|rights|sessionrestore|support|welcomeback)/i;
     let isChromeUI = uri.schemeIs("about") && whitelist.test(uri.spec);
     if (isChromeUI) {
       this.setMode(this.IDENTITY_MODE_CHROMEUI);

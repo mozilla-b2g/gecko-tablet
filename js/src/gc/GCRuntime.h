@@ -30,24 +30,20 @@ namespace gc {
 
 typedef Vector<JS::Zone *, 4, SystemAllocPolicy> ZoneVector;
 
+struct FinalizePhase;
 class MarkingValidator;
 struct AutoPrepareForTracing;
 class AutoTraceSession;
 
 class ChunkPool
 {
-    Chunk   *emptyChunkListHead;
-    size_t  emptyCount;
+    Chunk *head_;
+    size_t count_;
 
   public:
-    ChunkPool()
-      : emptyChunkListHead(nullptr),
-        emptyCount(0)
-    {}
+    ChunkPool() : head_(nullptr), count_(0) {}
 
-    size_t getEmptyCount() const {
-        return emptyCount;
-    }
+    size_t count() const { return count_; }
 
     /* Must be called with the GC lock taken. */
     inline Chunk *get(JSRuntime *rt);
@@ -57,7 +53,7 @@ class ChunkPool
 
     class Enum {
       public:
-        explicit Enum(ChunkPool &pool) : pool(pool), chunkp(&pool.emptyChunkListHead) {}
+        explicit Enum(ChunkPool &pool) : pool(pool), chunkp(&pool.head_) {}
         bool empty() { return !*chunkp; }
         Chunk *front();
         inline void popFront();
@@ -66,42 +62,6 @@ class ChunkPool
         ChunkPool &pool;
         Chunk **chunkp;
     };
-};
-
-struct ConservativeGCData
-{
-    /*
-     * The GC scans conservatively between ThreadData::nativeStackBase and
-     * nativeStackTop unless the latter is nullptr.
-     */
-    uintptr_t           *nativeStackTop;
-
-    union {
-        jmp_buf         jmpbuf;
-        uintptr_t       words[JS_HOWMANY(sizeof(jmp_buf), sizeof(uintptr_t))];
-    } registerSnapshot;
-
-    ConservativeGCData() {
-        mozilla::PodZero(this);
-    }
-
-    ~ConservativeGCData() {
-        /*
-         * The conservative GC scanner should be disabled when the thread leaves
-         * the last request.
-         */
-        MOZ_ASSERT(!hasStackToScan());
-    }
-
-    MOZ_NEVER_INLINE void recordStackTop();
-
-    void updateForRequestEnd() {
-        nativeStackTop = nullptr;
-    }
-
-    bool hasStackToScan() const {
-        return !!nativeStackTop;
-    }
 };
 
 /*
@@ -124,6 +84,15 @@ class GCSchedulingTunables
      * be scheduled for a GC, depending on the exact circumstances.
      */
     size_t gcZoneAllocThresholdBase_;
+
+    /* Fraction of threshold.gcBytes() which triggers an incremental GC. */
+    double zoneAllocThresholdFactor_;
+
+    /*
+     * Number of bytes to allocate between incremental slices in GCs triggered
+     * by the zone allocation threshold.
+     */
+    size_t zoneAllocDelayBytes_;
 
     /*
      * Totally disables |highFrequencyGC|, the HeapGrowthFactor, and other
@@ -167,6 +136,8 @@ class GCSchedulingTunables
     GCSchedulingTunables()
       : gcMaxBytes_(0),
         gcZoneAllocThresholdBase_(30 * 1024 * 1024),
+        zoneAllocThresholdFactor_(0.9),
+        zoneAllocDelayBytes_(1024 * 1024),
         dynamicHeapGrowthEnabled_(false),
         highFrequencyThresholdUsec_(1000 * 1000),
         highFrequencyLowLimitBytes_(100 * 1024 * 1024),
@@ -181,6 +152,8 @@ class GCSchedulingTunables
 
     size_t gcMaxBytes() const { return gcMaxBytes_; }
     size_t gcZoneAllocThresholdBase() const { return gcZoneAllocThresholdBase_; }
+    double zoneAllocThresholdFactor() const { return zoneAllocThresholdFactor_; }
+    size_t zoneAllocDelayBytes() const { return zoneAllocDelayBytes_; }
     bool isDynamicHeapGrowthEnabled() const { return dynamicHeapGrowthEnabled_; }
     uint64_t highFrequencyThresholdUsec() const { return highFrequencyThresholdUsec_; }
     uint64_t highFrequencyLowLimitBytes() const { return highFrequencyLowLimitBytes_; }
@@ -326,8 +299,6 @@ class GCRuntime
   public:
     // Internal public interface
     js::gc::State state() { return incrementalState; }
-    void recordNativeStackTop();
-    void notifyRequestEnd() { conservativeGC.updateForRequestEnd(); }
     bool isBackgroundSweeping() { return helperState.isBackgroundSweeping(); }
     void waitBackgroundSweepEnd() { helperState.waitBackgroundSweepEnd(); }
     void waitBackgroundSweepOrAllocEnd() { helperState.waitBackgroundSweepOrAllocEnd(); }
@@ -473,11 +444,20 @@ class GCRuntime
     bool isVerifyPreBarriersEnabled() const { return false; }
 #endif
 
+    template <AllowGC allowGC>
+    static void *refillFreeListFromAnyThread(ThreadSafeContext *cx, AllocKind thingKind);
+    static void *refillFreeListInGC(Zone *zone, AllocKind thingKind);
+
   private:
-    // For ArenaLists::allocateFromArenaInline()
+    // For ArenaLists::allocateFromArena()
     friend class ArenaLists;
-    Chunk *pickChunk(Zone *zone, AutoMaybeStartBackgroundAllocation &maybeStartBackgroundAllocation);
+    Chunk *pickChunk(Zone *zone, AutoMaybeStartBackgroundAllocation &maybeStartBGAlloc);
     inline void arenaAllocatedDuringGC(JS::Zone *zone, ArenaHeader *arena);
+
+    template <AllowGC allowGC>
+    static void *refillFreeListFromMainThread(JSContext *cx, AllocKind thingKind);
+    static void *refillFreeListOffMainThread(ExclusiveContext *cx, AllocKind thingKind);
+    static void *refillFreeListPJS(ForkJoinContext *cx, AllocKind thingKind);
 
     /*
      * Return the list of chunks that can be released outside the GC lock.
@@ -528,10 +508,11 @@ class GCRuntime
     void decommitArenasFromAvailableList(Chunk **availableListHeadp);
     void decommitArenas();
     void expireChunksAndArenas(bool shouldShrink);
-    void sweepBackgroundThings(bool onBackgroundThread);
+    void sweepBackgroundThings();
     void assertBackgroundSweepingFinished();
     bool shouldCompact();
 #ifdef JSGC_COMPACTING
+    void sweepZoneAfterCompacting(Zone *zone);
     void compactPhase();
     ArenaHeader *relocateArenas();
     void updatePointersToRelocatedCells();
@@ -594,7 +575,7 @@ class GCRuntime
      */
     js::gc::Chunk         *systemAvailableChunkListHead;
     js::gc::Chunk         *userAvailableChunkListHead;
-    js::gc::ChunkPool     chunkPool;
+    js::gc::ChunkPool     emptyChunks;
 
     js::RootedValueMap    rootsHash;
 
@@ -691,10 +672,16 @@ class GCRuntime
      */
     JS::Zone              *zoneGroups;
     JS::Zone              *currentZoneGroup;
-    int                   finalizePhase;
+    unsigned              finalizePhase;
     JS::Zone              *sweepZone;
-    int                   sweepKindIndex;
+    unsigned              sweepKindIndex;
     bool                  abortSweepAfterCurrentGroup;
+
+    /*
+     * Concurrent sweep infrastructure.
+     */
+    void startTask(GCParallelTask &task, gcstats::Phase phase);
+    void joinTask(GCParallelTask &task, gcstats::Phase phase);
 
     /*
      * List head of arenas allocated during the sweep phase.
@@ -777,8 +764,8 @@ class GCRuntime
      * Otherwise, no additional GCs take place.
      *
      * You can control these values in several ways:
-     *   - Pass the -Z flag to the shell (see the usage info for details)
-     *   - Call   zeal() or schedulegc() from inside shell-executed JS code
+     *   - Set the JS_GC_ZEAL environment variable
+     *   - Call zeal() or schedulegc() from inside shell-executed JS code
      *     (see the help for details)
      *
      * If gzZeal_ == 1 then we perform GCs in select places (during MaybeGC and
@@ -789,6 +776,8 @@ class GCRuntime
      *
      * zeal_ values from 8 to 10 periodically run different types of
      * incremental GC.
+     *
+     * zeal_ value 14 performs periodic shrinking collections.
      */
 #ifdef JS_GC_ZEAL
     int                   zealMode;
@@ -856,8 +845,6 @@ class GCRuntime
      * the current AllocKind being swept in order of increasing free space.
      */
     SortedArenaList incrementalSweepList;
-
-    ConservativeGCData conservativeGC;
 
     friend class js::GCHelperState;
     friend class js::gc::MarkingValidator;

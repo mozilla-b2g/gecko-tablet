@@ -31,7 +31,7 @@ public class DoorHangerPopup extends ArrowPopup
 
     // Stores a set of all active DoorHanger notifications. A DoorHanger is
     // uniquely identified by its tabId and value.
-    private HashSet<DoorHanger> mDoorHangers;
+    private final HashSet<DoorHanger> mDoorHangers;
 
     // Whether or not the doorhanger popup is disabled.
     private boolean mDisabled;
@@ -184,7 +184,7 @@ public class DoorHangerPopup extends ArrowPopup
         mDoorHangers.add(newDoorHanger);
         mContent.addView(newDoorHanger);
 
-        // Only update the popup if we're adding a notifcation to the selected tab
+        // Only update the popup if we're adding a notification to the selected tab
         if (tabId == Tabs.getInstance().getSelectedTab().getId())
             updatePopup();
     }

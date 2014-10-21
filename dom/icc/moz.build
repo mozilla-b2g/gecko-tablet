@@ -8,11 +8,16 @@ DIRS += ['interfaces']
 
 EXPORTS.mozilla.dom += [
     'Icc.h',
+    'IccCardLockError.h',
+    'IccInfo.h',
     'IccManager.h',
 ]
 
 UNIFIED_SOURCES += [
+    'Assertions.cpp',
     'Icc.cpp',
+    'IccCardLockError.cpp',
+    "IccInfo.cpp",
     'IccListener.cpp',
     'IccManager.cpp',
 ]

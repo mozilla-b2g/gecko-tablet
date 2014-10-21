@@ -41,7 +41,7 @@ ThreadSafeContext::isThreadLocal(T thing) const
     MOZ_ASSERT(!IsInsideNursery(thing));
 
     // The thing is not in the nursery, but is it in the private tenured area?
-    if (allocator_->arenas.containsArena(runtime_, thing->asTenured()->arenaHeader()))
+    if (allocator_->arenas.containsArena(runtime_, thing->asTenured().arenaHeader()))
     {
         // GC should be suppressed in preparation for mutating thread local
         // objects, as we don't want to trip any barriers.
@@ -92,7 +92,7 @@ GetGCThingTraceKind(const void *thing)
     if (IsInsideNursery(cell))
         return JSTRACE_OBJECT;
 #endif
-    return MapAllocToTraceKind(cell->asTenured()->getAllocKind());
+    return MapAllocToTraceKind(cell->asTenured().getAllocKind());
 }
 
 inline void
@@ -546,7 +546,7 @@ CheckIncrementalZoneState(ThreadSafeContext *cx, T *t)
 
     Zone *zone = cx->asJSContext()->zone();
     MOZ_ASSERT_IF(t && zone->wasGCStarted() && (zone->isGCMarking() || zone->isGCSweeping()),
-                  t->asTenured()->arenaHeader()->allocatedDuringIncremental);
+                  t->asTenured().arenaHeader()->allocatedDuringIncremental);
 #endif
 }
 
@@ -601,12 +601,13 @@ AllocateObject(ThreadSafeContext *cx, AllocKind kind, size_t nDynamicSlots, Init
         js::Debug_SetSlotRangeToCrashOnTouch(slots, nDynamicSlots);
     }
 
-    JSObject *obj = static_cast<JSObject *>(cx->allocator()->arenas.allocateFromFreeList(kind, thingSize));
+    JSObject *obj = reinterpret_cast<JSObject *>(
+            cx->allocator()->arenas.allocateFromFreeList(kind, thingSize));
     if (!obj)
-        obj = static_cast<JSObject *>(js::gc::ArenaLists::refillFreeList<allowGC>(cx, kind));
+        obj = reinterpret_cast<JSObject *>(GCRuntime::refillFreeListFromAnyThread<allowGC>(cx, kind));
 
     if (obj)
-        obj->setInitialSlots(slots);
+        obj->setInitialSlotsMaybeNonNative(slots);
     else
         js_free(slots);
 
@@ -631,7 +632,7 @@ AllocateNonObject(ThreadSafeContext *cx)
 
     T *t = static_cast<T *>(cx->allocator()->arenas.allocateFromFreeList(kind, thingSize));
     if (!t)
-        t = static_cast<T *>(js::gc::ArenaLists::refillFreeList<allowGC>(cx, kind));
+        t = static_cast<T *>(GCRuntime::refillFreeListFromAnyThread<allowGC>(cx, kind));
 
     CheckIncrementalZoneState(cx, t);
     js::gc::TraceTenuredAlloc(t, kind);
@@ -738,6 +739,18 @@ NewGCExternalString(js::ThreadSafeContext *cx)
     return js::gc::AllocateNonObject<JSExternalString, js::CanGC>(cx);
 }
 
+inline Shape *
+NewGCShape(ThreadSafeContext *cx)
+{
+    return gc::AllocateNonObject<Shape, CanGC>(cx);
+}
+
+inline Shape *
+NewGCAccessorShape(ThreadSafeContext *cx)
+{
+    return gc::AllocateNonObject<AccessorShape, CanGC>(cx);
+}
+
 } /* namespace js */
 
 inline JSScript *
@@ -750,12 +763,6 @@ inline js::LazyScript *
 js_NewGCLazyScript(js::ThreadSafeContext *cx)
 {
     return js::gc::AllocateNonObject<js::LazyScript, js::CanGC>(cx);
-}
-
-inline js::Shape *
-js_NewGCShape(js::ThreadSafeContext *cx)
-{
-    return js::gc::AllocateNonObject<js::Shape, js::CanGC>(cx);
 }
 
 template <js::AllowGC allowGC>

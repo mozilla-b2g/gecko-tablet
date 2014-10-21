@@ -84,7 +84,7 @@ public:
                         const gfx::IntSize& aSize)
   {
     RefPtr<CompositingRenderTargetOGL> result
-      = new CompositingRenderTargetOGL(aCompositor, gfx::IntPoint(0, 0), 0, 0);
+      = new CompositingRenderTargetOGL(aCompositor, gfx::IntPoint(), 0, 0);
     result->mInitParams = InitParams(aSize, 0, INIT_MODE_NONE);
     result->mInitParams.mStatus = InitParams::INITIALIZED;
     return result.forget();
@@ -111,6 +111,8 @@ public:
    * Call when we want to draw into our FBO
    */
   void BindRenderTarget();
+
+  bool IsWindow() { return GetFBO() == 0; }
 
   GLuint GetFBO() const
   {
@@ -155,7 +157,12 @@ private:
   void InitializeImpl();
 
   InitParams mInitParams;
-  CompositorOGL* mCompositor;
+  /**
+   * There is temporary a cycle between the compositor and the render target,
+   * each having a strong ref to the other. The compositor's reference to
+   * the target is always cleared at the end of a frame.
+   */
+  RefPtr<CompositorOGL> mCompositor;
   GLContext* mGL;
   GLuint mTextureHandle;
   GLuint mFBO;

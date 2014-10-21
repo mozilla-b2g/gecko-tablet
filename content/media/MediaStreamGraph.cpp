@@ -32,6 +32,8 @@
 #include "AudioOutputObserver.h"
 #endif
 
+#include "webaudio/blink/HRTFDatabaseLoader.h"
+
 using namespace mozilla::layers;
 using namespace mozilla::dom;
 using namespace mozilla::gfx;
@@ -2860,9 +2862,12 @@ MediaStreamGraphImpl::CollectReports(nsIHandleReportCallback* aHandleReport,
     mNeedsMemoryReport = true;
 
     {
-      // Wake up the MSG thread.
+      // Wake up the MSG thread if it's real time (Offline graphs can't be
+      // sleeping).
       MonitorAutoLock monitorLock(mMonitor);
-      CurrentDriver()->WakeUp();
+      if (!CurrentDriver()->AsOfflineClockDriver()) {
+        CurrentDriver()->WakeUp();
+      }
     }
 
     if (mLifecycleState >= LIFECYCLE_WAITING_FOR_THREAD_SHUTDOWN) {
@@ -2909,6 +2914,15 @@ MediaStreamGraphImpl::CollectReports(nsIHandleReportCallback* aHandleReport,
     REPORT(streamPath, usage.mStream,
            "Memory used by AudioNode stream objects (Web Audio).");
 
+  }
+
+  size_t hrtfLoaders = WebCore::HRTFDatabaseLoader::sizeOfLoaders(MallocSizeOf);
+  if (hrtfLoaders) {
+
+    REPORT(NS_LITERAL_CSTRING(
+              "explicit/webaudio/audio-node/PannerNode/hrtf-databases"),
+           hrtfLoaders,
+           "Memory used by PannerNode databases (Web Audio).");
   }
 
 #undef REPORT

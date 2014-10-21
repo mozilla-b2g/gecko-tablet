@@ -69,6 +69,7 @@
 #include "nsInProcessTabChildGlobal.h"
 
 #include "Layers.h"
+#include "ClientLayerManager.h"
 
 #include "AppProcessChecker.h"
 #include "ContentParent.h"
@@ -192,7 +193,7 @@ nsFrameLoader::Create(Element* aOwner, bool aNetworkCreated)
   NS_ENSURE_TRUE(aOwner, nullptr);
   nsIDocument* doc = aOwner->OwnerDoc();
   NS_ENSURE_TRUE(!doc->IsResourceDoc() &&
-                 ((!doc->IsLoadedAsData() && aOwner->GetCurrentDoc()) ||
+                 ((!doc->IsLoadedAsData() && aOwner->GetUncomposedDoc()) ||
                    doc->IsStaticDocument()),
                  nullptr);
 
@@ -847,10 +848,11 @@ nsFrameLoader::MarginsChanged(uint32_t aMarginWidth,
   mDocShell->SetMarginHeight(aMarginHeight);
 
   // Trigger a restyle if there's a prescontext
+  // FIXME: This could do something much less expensive.
   nsRefPtr<nsPresContext> presContext;
   mDocShell->GetPresContext(getter_AddRefs(presContext));
   if (presContext)
-    presContext->RebuildAllStyleData(nsChangeHint(0));
+    presContext->RebuildAllStyleData(nsChangeHint(0), eRestyle_Subtree);
 }
 
 bool
@@ -873,12 +875,12 @@ nsFrameLoader::ShowRemoteFrame(const nsIntSize& size,
   // want here.  For now, hack.
   if (!mRemoteBrowserShown) {
     if (!mOwnerContent ||
-        !mOwnerContent->GetCurrentDoc()) {
+        !mOwnerContent->GetUncomposedDoc()) {
       return false;
     }
 
     nsRefPtr<layers::LayerManager> layerManager =
-      nsContentUtils::LayerManagerForDocument(mOwnerContent->GetCurrentDoc());
+      nsContentUtils::LayerManagerForDocument(mOwnerContent->GetUncomposedDoc());
     if (!layerManager) {
       // This is just not going to work.
       return false;
@@ -940,6 +942,93 @@ nsFrameLoader::Hide()
 }
 
 nsresult
+nsFrameLoader::SwapWithOtherRemoteLoader(nsFrameLoader* aOther,
+                                         nsRefPtr<nsFrameLoader>& aFirstToSwap,
+                                         nsRefPtr<nsFrameLoader>& aSecondToSwap)
+{
+  Element* ourContent = mOwnerContent;
+  Element* otherContent = aOther->mOwnerContent;
+
+  if (!ourContent || !otherContent) {
+    // Can't handle this
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
+  // Make sure there are no same-origin issues
+  bool equal;
+  nsresult rv =
+    ourContent->NodePrincipal()->Equals(otherContent->NodePrincipal(), &equal);
+  if (NS_FAILED(rv) || !equal) {
+    // Security problems loom.  Just bail on it all
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsIDocument* ourDoc = ourContent->GetCurrentDoc();
+  nsIDocument* otherDoc = otherContent->GetCurrentDoc();
+  if (!ourDoc || !otherDoc) {
+    // Again, how odd, given that we had docshells
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
+  nsIPresShell* ourShell = ourDoc->GetShell();
+  nsIPresShell* otherShell = otherDoc->GetShell();
+  if (!ourShell || !otherShell) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
+  if (mInSwap || aOther->mInSwap) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+  mInSwap = aOther->mInSwap = true;
+
+  nsIFrame* ourFrame = ourContent->GetPrimaryFrame();
+  nsIFrame* otherFrame = otherContent->GetPrimaryFrame();
+  if (!ourFrame || !otherFrame) {
+    mInSwap = aOther->mInSwap = false;
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
+  nsSubDocumentFrame* ourFrameFrame = do_QueryFrame(ourFrame);
+  if (!ourFrameFrame) {
+    mInSwap = aOther->mInSwap = false;
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
+  rv = ourFrameFrame->BeginSwapDocShells(otherFrame);
+  if (NS_FAILED(rv)) {
+    mInSwap = aOther->mInSwap = false;
+    return rv;
+  }
+
+  SetOwnerContent(otherContent);
+  aOther->SetOwnerContent(ourContent);
+
+  mRemoteBrowser->SetOwnerElement(otherContent);
+  aOther->mRemoteBrowser->SetOwnerElement(ourContent);
+
+  nsRefPtr<nsFrameMessageManager> ourMessageManager = mMessageManager;
+  nsRefPtr<nsFrameMessageManager> otherMessageManager = aOther->mMessageManager;
+  // Swap and setup things in parent message managers.
+  if (mMessageManager) {
+    mMessageManager->SetCallback(aOther);
+  }
+  if (aOther->mMessageManager) {
+    aOther->mMessageManager->SetCallback(this);
+  }
+  mMessageManager.swap(aOther->mMessageManager);
+
+  aFirstToSwap.swap(aSecondToSwap);
+
+  ourFrameFrame->EndSwapDocShells(otherFrame);
+
+  ourDoc->FlushPendingNotifications(Flush_Layout);
+  otherDoc->FlushPendingNotifications(Flush_Layout);
+
+  mInSwap = aOther->mInSwap = false;
+  return NS_OK;
+}
+
+nsresult
 nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
                                    nsRefPtr<nsFrameLoader>& aFirstToSwap,
                                    nsRefPtr<nsFrameLoader>& aSecondToSwap)
@@ -948,6 +1037,15 @@ nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
                   (aFirstToSwap == aOther && aSecondToSwap == this),
                   "Swapping some sort of random loaders?");
   NS_ENSURE_STATE(!mInShow && !aOther->mInShow);
+
+  if (mRemoteFrame && aOther->mRemoteFrame) {
+    return SwapWithOtherRemoteLoader(aOther, aFirstToSwap, aSecondToSwap);
+  }
+
+  if (mRemoteFrame || aOther->mRemoteFrame) {
+    NS_WARNING("Swapping remote and non-remote frames is not currently supported");
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
 
   Element* ourContent = mOwnerContent;
   Element* otherContent = aOther->mOwnerContent;
@@ -1073,8 +1171,8 @@ nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
     otherChildDocument->GetParentDocument();
 
   // Make sure to swap docshells between the two frames.
-  nsIDocument* ourDoc = ourContent->GetCurrentDoc();
-  nsIDocument* otherDoc = otherContent->GetCurrentDoc();
+  nsIDocument* ourDoc = ourContent->GetUncomposedDoc();
+  nsIDocument* otherDoc = otherContent->GetUncomposedDoc();
   if (!ourDoc || !otherDoc) {
     // Again, how odd, given that we had docshells
     return NS_ERROR_NOT_IMPLEMENTED;

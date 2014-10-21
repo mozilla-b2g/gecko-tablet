@@ -9,7 +9,7 @@
 #ifndef LIBGLESV2_ANGLETYPES_H_
 #define LIBGLESV2_ANGLETYPES_H_
 
-#include "libGLESv2/constants.h"
+#include "libGLESv2/Constants.h"
 #include "common/RefCountObject.h"
 
 namespace gl
@@ -18,17 +18,6 @@ class Buffer;
 class ProgramBinary;
 struct VertexAttribute;
 struct VertexAttribCurrentValueData;
-
-enum TextureType
-{
-    TEXTURE_2D,
-    TEXTURE_CUBE,
-    TEXTURE_3D,
-    TEXTURE_2D_ARRAY,
-
-    TEXTURE_TYPE_COUNT,
-    TEXTURE_UNKNOWN
-};
 
 enum SamplerType
 {
@@ -259,13 +248,6 @@ enum VertexConversionType
     VERTEX_CONVERT_CPU  = 1,
     VERTEX_CONVERT_GPU  = 2,
     VERTEX_CONVERT_BOTH = 3
-};
-
-enum D3DWorkaroundType
-{
-    ANGLE_D3D_WORKAROUND_NONE,
-    ANGLE_D3D_WORKAROUND_SKIP_OPTIMIZATION,
-    ANGLE_D3D_WORKAROUND_MAX_OPTIMIZATION
 };
 
 }

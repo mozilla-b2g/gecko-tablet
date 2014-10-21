@@ -11,7 +11,6 @@
 #include "jsdate.h"
 #include "jsfriendapi.h"
 #include "jshashutil.h"
-#include "jsobj.h"
 #include "jsweakmap.h"
 #include "jswrapper.h"
 #include "selfhosted.out.h"
@@ -24,6 +23,7 @@
 #include "gc/Marking.h"
 #include "vm/Compression.h"
 #include "vm/ForkJoin.h"
+#include "vm/GeneratorObject.h"
 #include "vm/Interpreter.h"
 #include "vm/String.h"
 #include "vm/TypedArrayCommon.h"
@@ -32,6 +32,7 @@
 #include "jsscriptinlines.h"
 
 #include "vm/BooleanObject-inl.h"
+#include "vm/NativeObject-inl.h"
 #include "vm/NumberObject-inl.h"
 #include "vm/StringObject-inl.h"
 
@@ -412,7 +413,7 @@ js::intrinsic_NewDenseArray(JSContext *cx, unsigned argc, Value *vp)
     uint32_t length = args[0].toInt32();
 
     // Make a new buffer and initialize it up to length.
-    RootedObject buffer(cx, NewDenseFullyAllocatedArray(cx, length));
+    RootedArrayObject buffer(cx, NewDenseFullyAllocatedArray(cx, length));
     if (!buffer)
         return false;
 
@@ -421,18 +422,18 @@ js::intrinsic_NewDenseArray(JSContext *cx, unsigned argc, Value *vp)
         return false;
     buffer->setType(newtype);
 
-    JSObject::EnsureDenseResult edr = buffer->ensureDenseElements(cx, length, 0);
+    NativeObject::EnsureDenseResult edr = buffer->ensureDenseElements(cx, length, 0);
     switch (edr) {
-      case JSObject::ED_OK:
+      case NativeObject::ED_OK:
         args.rval().setObject(*buffer);
         return true;
 
-      case JSObject::ED_SPARSE: // shouldn't happen!
+      case NativeObject::ED_SPARSE: // shouldn't happen!
         MOZ_ASSERT(!"%EnsureDenseArrayElements() would yield sparse array");
         JS_ReportError(cx, "%EnsureDenseArrayElements() would yield sparse array");
         break;
 
-      case JSObject::ED_FAILED:
+      case NativeObject::ED_FAILED:
         break;
     }
     return false;
@@ -480,8 +481,8 @@ js::intrinsic_UnsafePutElements(JSContext *cx, unsigned argc, Value *vp)
             if (!JSObject::setElement(cx, arrobj, arrobj, idx, &tmp, false))
                 return false;
         } else {
-            MOZ_ASSERT(idx < arrobj->getDenseInitializedLength());
-            arrobj->setDenseElementWithType(cx, idx, args[elemi]);
+            MOZ_ASSERT(idx < arrobj->as<ArrayObject>().getDenseInitializedLength());
+            arrobj->as<ArrayObject>().setDenseElementWithType(cx, idx, args[elemi]);
         }
     }
 
@@ -537,7 +538,7 @@ js::intrinsic_UnsafeSetReservedSlot(JSContext *cx, unsigned argc, Value *vp)
     MOZ_ASSERT(args[0].isObject());
     MOZ_ASSERT(args[1].isInt32());
 
-    args[0].toObject().setReservedSlot(args[1].toPrivateUint32(), args[2]);
+    args[0].toObject().as<NativeObject>().setReservedSlot(args[1].toPrivateUint32(), args[2]);
     args.rval().setUndefined();
     return true;
 }
@@ -550,7 +551,7 @@ js::intrinsic_UnsafeGetReservedSlot(JSContext *cx, unsigned argc, Value *vp)
     MOZ_ASSERT(args[0].isObject());
     MOZ_ASSERT(args[1].isInt32());
 
-    args.rval().set(args[0].toObject().getReservedSlot(args[1].toPrivateUint32()));
+    args.rval().set(args[0].toObject().as<NativeObject>().getReservedSlot(args[1].toPrivateUint32()));
     return true;
 }
 
@@ -576,7 +577,8 @@ js::intrinsic_IsPackedArray(JSContext *cx, unsigned argc, Value *vp)
     JSObject *obj = &args[0].toObject();
     bool isPacked = obj->is<ArrayObject>() && !obj->hasLazyType() &&
                     !obj->type()->hasAllFlags(types::OBJECT_FLAG_NON_PACKED) &&
-                    obj->getDenseInitializedLength() == obj->as<ArrayObject>().length();
+                    obj->as<ArrayObject>().getDenseInitializedLength() ==
+                        obj->as<ArrayObject>().length();
 
     args.rval().setBoolean(isPacked);
     return true;
@@ -652,6 +654,159 @@ intrinsic_IsStringIterator(JSContext *cx, unsigned argc, Value *vp)
 
     args.rval().setBoolean(args[0].toObject().is<StringIteratorObject>());
     return true;
+}
+
+static bool
+intrinsic_IsStarGeneratorObject(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(args.length() == 1);
+    MOZ_ASSERT(args[0].isObject());
+
+    args.rval().setBoolean(args[0].toObject().is<StarGeneratorObject>());
+    return true;
+}
+
+static bool
+intrinsic_StarGeneratorObjectIsClosed(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(args.length() == 1);
+    MOZ_ASSERT(args[0].isObject());
+
+    StarGeneratorObject *genObj = &args[0].toObject().as<StarGeneratorObject>();
+    args.rval().setBoolean(genObj->isClosed());
+    return true;
+}
+
+static bool
+intrinsic_IsLegacyGeneratorObject(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(args.length() == 1);
+    MOZ_ASSERT(args[0].isObject());
+
+    args.rval().setBoolean(args[0].toObject().is<LegacyGeneratorObject>());
+    return true;
+}
+
+static bool
+intrinsic_LegacyGeneratorObjectIsClosed(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(args.length() == 1);
+    MOZ_ASSERT(args[0].isObject());
+
+    LegacyGeneratorObject *genObj = &args[0].toObject().as<LegacyGeneratorObject>();
+    args.rval().setBoolean(genObj->isClosed());
+    return true;
+}
+
+static bool
+intrinsic_CloseNewbornLegacyGeneratorObject(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(args.length() == 1);
+    MOZ_ASSERT(args[0].isObject());
+
+    LegacyGeneratorObject *genObj = &args[0].toObject().as<LegacyGeneratorObject>();
+    args.rval().setBoolean(LegacyGeneratorObject::maybeCloseNewborn(genObj));
+    return true;
+}
+
+static bool
+intrinsic_CloseClosingLegacyGeneratorObject(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(args.length() == 1);
+    MOZ_ASSERT(args[0].isObject());
+
+    LegacyGeneratorObject *genObj = &args[0].toObject().as<LegacyGeneratorObject>();
+    MOZ_ASSERT(genObj->isClosing());
+    genObj->setClosed();
+    return true;
+}
+
+static bool
+intrinsic_ThrowStopIteration(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(args.length() == 0);
+
+    return ThrowStopIteration(cx);
+}
+
+static bool
+intrinsic_GeneratorIsRunning(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(args.length() == 1);
+    MOZ_ASSERT(args[0].isObject());
+
+    GeneratorObject *genObj = &args[0].toObject().as<GeneratorObject>();
+    args.rval().setBoolean(genObj->isRunning() || genObj->isClosing());
+    return true;
+}
+
+static bool
+intrinsic_GeneratorSetClosed(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(args.length() == 1);
+    MOZ_ASSERT(args[0].isObject());
+
+    GeneratorObject *genObj = &args[0].toObject().as<GeneratorObject>();
+    genObj->setClosed();
+    return true;
+}
+
+bool
+CallSelfHostedNonGenericMethod(JSContext *cx, CallArgs args)
+{
+    // This function is called when a self-hosted method is invoked on a
+    // wrapper object, like a CrossCompartmentWrapper. The last argument is
+    // the name of the self-hosted function. The other arguments are the
+    // arguments to pass to this function.
+
+    MOZ_ASSERT(args.length() > 0);
+    RootedPropertyName name(cx, args[args.length() - 1].toString()->asAtom().asPropertyName());
+
+    RootedValue selfHostedFun(cx);
+    if (!GlobalObject::getIntrinsicValue(cx, cx->global(), name, &selfHostedFun))
+        return false;
+
+    MOZ_ASSERT(selfHostedFun.toObject().is<JSFunction>());
+
+    InvokeArgs args2(cx);
+    if (!args2.init(args.length() - 1))
+        return false;
+
+    args2.setCallee(selfHostedFun);
+    args2.setThis(args.thisv());
+
+    for (size_t i = 0; i < args.length() - 1; i++)
+        args2[i].set(args[i]);
+
+    if (!Invoke(cx, args2))
+        return false;
+
+    args.rval().set(args2.rval());
+    return true;
+}
+
+template<typename T>
+MOZ_ALWAYS_INLINE bool
+IsObjectOfType(HandleValue v)
+{
+    return v.isObject() && v.toObject().is<T>();
+}
+
+template<typename T, NativeImpl Impl>
+static bool
+NativeMethod(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    return CallNonGenericMethod<IsObjectOfType<T>, Impl>(cx, args);
 }
 
 static bool
@@ -829,7 +984,7 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("std_Date_valueOf",                    date_valueOf,                 0,0),
 
     JS_FN("std_Function_bind",                   fun_bind,                     1,0),
-    JS_FN("std_Function_apply",                  js_fun_apply,                 1,0),
+    JS_FN("std_Function_apply",                  js_fun_apply,                 2,0),
 
     JS_FN("std_Math_floor",                      math_floor,                   1,0),
     JS_FN("std_Math_max",                        math_max,                     2,0),
@@ -847,7 +1002,7 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("std_Object_getPrototypeOf",           obj_getPrototypeOf,           1,0),
     JS_FN("std_Object_getOwnPropertyNames",      obj_getOwnPropertyNames,      1,0),
     JS_FN("std_Object_getOwnPropertyDescriptor", obj_getOwnPropertyDescriptor, 2,0),
-    JS_FN("std_Object_hasOwnProperty",           obj_hasOwnProperty,           2,0),
+    JS_FN("std_Object_hasOwnProperty",           obj_hasOwnProperty,           1,0),
 
     JS_FN("std_Set_has",                         SetObject::has,               1,0),
     JS_FN("std_Set_iterator",                    SetObject::values,            0,0),
@@ -859,7 +1014,7 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("std_String_match",                    str_match,                    1,0),
     JS_FN("std_String_replace",                  str_replace,                  2,0),
     JS_FN("std_String_split",                    str_split,                    2,0),
-    JS_FN("std_String_startsWith",               str_startsWith,               2,0),
+    JS_FN("std_String_startsWith",               str_startsWith,               1,0),
     JS_FN("std_String_substring",                str_substring,                2,0),
     JS_FN("std_String_toLowerCase",              str_toLowerCase,              0,0),
     JS_FN("std_String_toUpperCase",              str_toUpperCase,              0,0),
@@ -881,7 +1036,7 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ThrowError",              intrinsic_ThrowError,              4,0),
     JS_FN("AssertionFailed",         intrinsic_AssertionFailed,         1,0),
     JS_FN("SetScriptHints",          intrinsic_SetScriptHints,          2,0),
-    JS_FN("MakeConstructible",       intrinsic_MakeConstructible,       1,0),
+    JS_FN("MakeConstructible",       intrinsic_MakeConstructible,       2,0),
     JS_FN("_IsConstructing",         intrinsic_IsConstructing,          0,0),
     JS_FN("DecompileArg",            intrinsic_DecompileArg,            2,0),
     JS_FN("RuntimeDefaultLocale",    intrinsic_RuntimeDefaultLocale,    0,0),
@@ -900,6 +1055,23 @@ static const JSFunctionSpec intrinsic_functions[] = {
 
     JS_FN("NewStringIterator",       intrinsic_NewStringIterator,       0,0),
     JS_FN("IsStringIterator",        intrinsic_IsStringIterator,        1,0),
+
+    JS_FN("IsStarGeneratorObject",   intrinsic_IsStarGeneratorObject,   1,0),
+    JS_FN("StarGeneratorObjectIsClosed", intrinsic_StarGeneratorObjectIsClosed, 1,0),
+
+    JS_FN("IsLegacyGeneratorObject", intrinsic_IsLegacyGeneratorObject, 1,0),
+    JS_FN("LegacyGeneratorObjectIsClosed", intrinsic_LegacyGeneratorObjectIsClosed, 1,0),
+    JS_FN("CloseNewbornLegacyGeneratorObject", intrinsic_CloseNewbornLegacyGeneratorObject, 1,0),
+    JS_FN("CloseClosingLegacyGeneratorObject", intrinsic_CloseClosingLegacyGeneratorObject, 1,0),
+    JS_FN("ThrowStopIteration",      intrinsic_ThrowStopIteration,      0,0),
+
+    JS_FN("GeneratorIsRunning",      intrinsic_GeneratorIsRunning,      1,0),
+    JS_FN("GeneratorSetClosed",      intrinsic_GeneratorSetClosed,      1,0),
+
+    JS_FN("CallLegacyGeneratorMethodIfWrapped",
+          (NativeMethod<LegacyGeneratorObject, CallSelfHostedNonGenericMethod>), 2, 0),
+    JS_FN("CallStarGeneratorMethodIfWrapped",
+          (NativeMethod<StarGeneratorObject, CallSelfHostedNonGenericMethod>), 2, 0),
 
     JS_FN("IsWeakSet",               intrinsic_IsWeakSet,               1,0),
 
@@ -1072,10 +1244,13 @@ JSRuntime::initSelfHosting(JSContext *cx)
 
     JS::CompartmentOptions compartmentOptions;
     compartmentOptions.setDiscardSource(true);
-    if (!(selfHostingGlobal_ = JS_NewGlobalObject(cx, &self_hosting_global_class,
-                                                  nullptr, JS::DontFireOnNewGlobalHook,
-                                                  compartmentOptions)))
+    if (!(selfHostingGlobal_ = MaybeNativeObject(JS_NewGlobalObject(cx, &self_hosting_global_class,
+                                                                    nullptr, JS::DontFireOnNewGlobalHook,
+                                                                    compartmentOptions))))
+    {
         return false;
+    }
+
     JSAutoCompartment ac(cx, selfHostingGlobal_);
     Rooted<GlobalObject*> shg(cx, &selfHostingGlobal_->as<GlobalObject>());
     selfHostingGlobal_->compartment()->isSelfHosting = true;
@@ -1140,11 +1315,18 @@ JSRuntime::isSelfHostingCompartment(JSCompartment *comp)
     return selfHostingGlobal_->compartment() == comp;
 }
 
+bool
+JSRuntime::isSelfHostingZone(JS::Zone *zone)
+{
+    return selfHostingGlobal_->zoneFromAnyThread() == zone;
+}
+
 static bool
 CloneValue(JSContext *cx, HandleValue selfHostedValue, MutableHandleValue vp);
 
 static bool
-GetUnclonedValue(JSContext *cx, HandleObject selfHostedObject, HandleId id, MutableHandleValue vp)
+GetUnclonedValue(JSContext *cx, HandleNativeObject selfHostedObject,
+                 HandleId id, MutableHandleValue vp)
 {
     vp.setUndefined();
 
@@ -1169,7 +1351,7 @@ GetUnclonedValue(JSContext *cx, HandleObject selfHostedObject, HandleId id, Muta
                                         JSDVG_IGNORE_STACK, value, NullPtr(), nullptr, nullptr);
     }
 
-    RootedShape shape(cx, selfHostedObject->nativeLookupPure(id));
+    RootedShape shape(cx, selfHostedObject->lookupPure(id));
     if (!shape) {
         RootedValue value(cx, IdToValue(id));
         return js_ReportValueErrorFlags(cx, JSREPORT_ERROR, JSMSG_NO_SUCH_SELF_HOSTED_PROP,
@@ -1182,7 +1364,7 @@ GetUnclonedValue(JSContext *cx, HandleObject selfHostedObject, HandleId id, Muta
 }
 
 static bool
-CloneProperties(JSContext *cx, HandleObject selfHostedObject, HandleObject clone)
+CloneProperties(JSContext *cx, HandleNativeObject selfHostedObject, HandleObject clone)
 {
     AutoIdVector ids(cx);
 
@@ -1241,7 +1423,7 @@ CloneString(JSContext *cx, JSFlatString *selfHostedString)
 }
 
 static JSObject *
-CloneObject(JSContext *cx, HandleObject selfHostedObject)
+CloneObject(JSContext *cx, HandleNativeObject selfHostedObject)
 {
     AutoCycleDetector detect(cx, selfHostedObject);
     if (!detect.init())
@@ -1289,7 +1471,7 @@ CloneObject(JSContext *cx, HandleObject selfHostedObject)
     } else {
         MOZ_ASSERT(selfHostedObject->isNative());
         clone = NewObjectWithGivenProto(cx, selfHostedObject->getClass(), TaggedProto(nullptr), cx->global(),
-                                        selfHostedObject->asTenured()->getAllocKind(),
+                                        selfHostedObject->asTenured().getAllocKind(),
                                         SingletonObject);
     }
     if (!clone)
@@ -1303,7 +1485,7 @@ static bool
 CloneValue(JSContext *cx, HandleValue selfHostedValue, MutableHandleValue vp)
 {
     if (selfHostedValue.isObject()) {
-        RootedObject selfHostedObject(cx, &selfHostedValue.toObject());
+        RootedNativeObject selfHostedObject(cx, &selfHostedValue.toObject().as<NativeObject>());
         JSObject *clone = CloneObject(cx, selfHostedObject);
         if (!clone)
             return false;
@@ -1331,7 +1513,7 @@ JSRuntime::cloneSelfHostedFunctionScript(JSContext *cx, HandlePropertyName name,
 {
     RootedId id(cx, NameToId(name));
     RootedValue funVal(cx);
-    if (!GetUnclonedValue(cx, HandleObject::fromMarkedLocation(&selfHostingGlobal_), id, &funVal))
+    if (!GetUnclonedValue(cx, HandleNativeObject::fromMarkedLocation(&selfHostingGlobal_), id, &funVal))
         return false;
 
     RootedFunction sourceFun(cx, &funVal.toObject().as<JSFunction>());
@@ -1361,7 +1543,7 @@ JSRuntime::cloneSelfHostedValue(JSContext *cx, HandlePropertyName name, MutableH
 {
     RootedId id(cx, NameToId(name));
     RootedValue selfHostedValue(cx);
-    if (!GetUnclonedValue(cx, HandleObject::fromMarkedLocation(&selfHostingGlobal_), id, &selfHostedValue))
+    if (!GetUnclonedValue(cx, HandleNativeObject::fromMarkedLocation(&selfHostingGlobal_), id, &selfHostedValue))
         return false;
 
     /*

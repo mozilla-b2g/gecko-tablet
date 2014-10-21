@@ -29,6 +29,7 @@
 
 #include "jit/CompileInfo-inl.h"
 #include "jit/ExecutionMode-inl.h"
+#include "vm/NativeObject-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -625,6 +626,14 @@ IonBuilder::init()
         return false;
     }
 
+    if (inlineCallInfo_) {
+        // If we're inlining, the actual this/argument types are not necessarily
+        // a subset of the script's observed types. |argTypes| is never accessed
+        // for inlined scripts, so we just null it.
+        thisTypes = inlineCallInfo_->thisArg()->resultTypeSet();
+        argTypes = nullptr;
+    }
+
     if (!analysis().init(alloc(), gsn))
         return false;
 
@@ -806,10 +815,10 @@ bool
 IonBuilder::buildInline(IonBuilder *callerBuilder, MResumePoint *callerResumePoint,
                         CallInfo &callInfo)
 {
+    inlineCallInfo_ = &callInfo;
+
     if (!init())
         return false;
-
-    inlineCallInfo_ = &callInfo;
 
     JitSpew(JitSpew_IonScripts, "Inlining script %s:%d (%p)",
             script()->filename(), script()->lineno(), (void *)script());
@@ -3144,7 +3153,7 @@ IonBuilder::replaceTypeSet(MDefinition *subject, types::TemporaryTypeSet *type, 
     if (type->unknown())
         return true;
 
-    MFilterTypeSet *replace = nullptr;
+    MInstruction *replace = nullptr;
     MDefinition *ins;
 
     for (uint32_t i = 0; i < current->stackDepth(); i++) {
@@ -3161,27 +3170,32 @@ IonBuilder::replaceTypeSet(MDefinition *subject, types::TemporaryTypeSet *type, 
 
             ins->toFilterTypeSet()->setResultType(intersect->getKnownMIRType());
             ins->toFilterTypeSet()->setResultTypeSet(intersect);
+
+            if (ins->type() == MIRType_Undefined)
+                current->setSlot(i, constant(UndefinedValue()));
+            if (ins->type() == MIRType_Null)
+                current->setSlot(i, constant(NullValue()));
             continue;
         }
 
         if (ins == subject) {
             if (!replace) {
                 replace = MFilterTypeSet::New(alloc(), subject, type);
-
                 if (!replace)
                     return false;
-                if (replace == subject)
-                    break;
 
                 current->add(replace);
 
-                if (replace != subject) {
-                    // Make sure we don't hoist it above the MTest, we can use the
-                    // 'dependency' of an MInstruction. This is normally used by
-                    // Alias Analysis, but won't get overwritten, since this
-                    // instruction doesn't have an AliasSet.
-                    replace->setDependency(test);
-                }
+                // Make sure we don't hoist it above the MTest, we can use the
+                // 'dependency' of an MInstruction. This is normally used by
+                // Alias Analysis, but won't get overwritten, since this
+                // instruction doesn't have an AliasSet.
+                replace->setDependency(test);
+
+                if (replace->type() == MIRType_Undefined)
+                    replace = constant(UndefinedValue());
+                if (replace->type() == MIRType_Null)
+                    replace = constant(NullValue());
             }
             current->setSlot(i, replace);
         }
@@ -3312,7 +3326,7 @@ IonBuilder::improveTypesAtTest(MDefinition *ins, bool trueBranch, MTest *test)
     if (!ins)
         return true;
 
-    switch(ins->op()) {
+    switch (ins->op()) {
       case MDefinition::Op_Not:
         return improveTypesAtTest(ins->toNot()->getOperand(0), !trueBranch, test);
       case MDefinition::Op_IsObject: {
@@ -4245,7 +4259,12 @@ IonBuilder::inlineScriptedCall(CallInfo &callInfo, JSFunction *target)
                 return oom();
             MTypeBarrier *barrier = MTypeBarrier::New(alloc(), callInfo.thisArg(), clonedTypes);
             current->add(barrier);
-            callInfo.setThis(barrier);
+            if (barrier->type() == MIRType_Undefined)
+                callInfo.setThis(constant(UndefinedValue()));
+            else if (barrier->type() == MIRType_Null)
+                callInfo.setThis(constant(NullValue()));
+            else
+                callInfo.setThis(barrier);
         }
     }
 
@@ -4435,7 +4454,9 @@ IonBuilder::makeInliningDecision(JSFunction *target, CallInfo &callInfo)
             !targetScript->baselineScript()->ionCompiledOrInlined() &&
             info().executionMode() != DefinitePropertiesAnalysis)
         {
-            return DontInline(targetScript, "Vetoed: callee is insufficiently hot.");
+            JitSpew(JitSpew_Inlining, "Cannot inline %s:%u: callee is insufficiently hot.",
+                    targetScript->filename(), targetScript->lineno());
+            return InliningDecision_WarmUpCountTooLow;
         }
     }
 
@@ -4470,6 +4491,7 @@ IonBuilder::selectInliningTargets(ObjectVector &targets, CallInfo &callInfo, Boo
           case InliningDecision_Error:
             return false;
           case InliningDecision_DontInline:
+          case InliningDecision_WarmUpCountTooLow:
             inlineable = false;
             break;
           case InliningDecision_Inline:
@@ -4645,6 +4667,8 @@ IonBuilder::inlineCallsite(ObjectVector &targets, ObjectVector &originals,
             return InliningStatus_Error;
           case InliningDecision_DontInline:
             return InliningStatus_NotInlined;
+          case InliningDecision_WarmUpCountTooLow:
+            return InliningStatus_WarmUpCountTooLow;
           case InliningDecision_Inline:
             break;
         }
@@ -5259,6 +5283,7 @@ IonBuilder::jsop_funcall(uint32_t argc)
           case InliningDecision_Error:
             return false;
           case InliningDecision_DontInline:
+          case InliningDecision_WarmUpCountTooLow:
             break;
           case InliningDecision_Inline:
             if (target->isInterpreted())
@@ -5399,6 +5424,7 @@ IonBuilder::jsop_funapplyarguments(uint32_t argc)
       case InliningDecision_Error:
         return false;
       case InliningDecision_DontInline:
+      case InliningDecision_WarmUpCountTooLow:
         break;
       case InliningDecision_Inline:
         if (target->isInterpreted())
@@ -5468,6 +5494,14 @@ IonBuilder::jsop_call(uint32_t argc, bool constructing)
     JSFunction *target = nullptr;
     if (targets.length() == 1)
         target = &targets[0]->as<JSFunction>();
+
+    if (target && status == InliningStatus_WarmUpCountTooLow) {
+        MRecompileCheck *check =
+            MRecompileCheck::New(alloc(), target->nonLazyScript(),
+                                 optimizationInfo().inliningRecompileThreshold(),
+                                 MRecompileCheck::RecompileCheck_Inlining);
+        current->add(check);
+    }
 
     return makeCall(target, callInfo, hasClones);
 }
@@ -5715,7 +5749,7 @@ IonBuilder::jsop_eval(uint32_t argc)
         // same. This is not guaranteed if a primitive string/number/etc.
         // is passed through to the eval invoke as the primitive may be
         // boxed into different objects if accessed via 'this'.
-        MIRType type = thisTypes->getKnownMIRType();
+        MIRType type = thisTypes ? thisTypes->getKnownMIRType() : MIRType_Value;
         if (type != MIRType_Object && type != MIRType_Null && type != MIRType_Undefined)
             return abort("Direct eval from script with maybe-primitive 'this'");
 
@@ -5799,7 +5833,7 @@ IonBuilder::jsop_compare(JSOp op)
 bool
 IonBuilder::jsop_newarray(uint32_t count)
 {
-    JSObject *templateObject = inspector->getTemplateObject(pc);
+    NativeObject *templateObject = inspector->getTemplateObject(pc);
     if (!templateObject) {
         if (info().executionMode() == ArgumentsUsageAnalysis) {
             MUnknownValue *unknown = MUnknownValue::New(alloc());
@@ -5845,7 +5879,7 @@ IonBuilder::jsop_newarray(uint32_t count)
 bool
 IonBuilder::jsop_newarray_copyonwrite()
 {
-    JSObject *templateObject = types::GetCopyOnWriteObject(script(), pc);
+    ArrayObject *templateObject = types::GetCopyOnWriteObject(script(), pc);
 
     // The baseline compiler should have ensured the template object has a type
     // with the copy on write flag set already. During the arguments usage
@@ -5948,7 +5982,7 @@ IonBuilder::jsop_initelem_array()
     MElements *elements = MElements::New(alloc(), obj);
     current->add(elements);
 
-    JSObject *templateObject = obj->toNewArray()->templateObject();
+    NativeObject *templateObject = obj->toNewArray()->templateObject();
 
     if (templateObject->shouldConvertDoubleElements()) {
         MInstruction *valueDouble = MToDouble::New(alloc(), value);
@@ -5989,7 +6023,7 @@ IonBuilder::jsop_initprop(PropertyName *name)
     MDefinition *value = current->pop();
     MDefinition *obj = current->peek(-1);
 
-    JSObject *templateObject = nullptr;
+    NativeObject *templateObject = nullptr;
     Shape *shape = nullptr;
 
     bool useSlowPath = false;
@@ -6485,7 +6519,9 @@ IonBuilder::insertRecompileCheck()
     OptimizationLevel nextLevel = js_IonOptimizations.nextLevel(curLevel);
     const OptimizationInfo *info = js_IonOptimizations.get(nextLevel);
     uint32_t warmUpThreshold = info->compilerWarmUpThreshold(topBuilder->script());
-    current->add(MRecompileCheck::New(alloc(), topBuilder->script(), warmUpThreshold));
+    MRecompileCheck *check = MRecompileCheck::New(alloc(), topBuilder->script(), warmUpThreshold,
+                                MRecompileCheck::RecompileCheck_OptimizationLevel);
+    current->add(check);
 }
 
 JSObject *
@@ -6777,7 +6813,7 @@ NumFixedSlots(JSObject *object)
     // shape and can race with the main thread if we are building off thread.
     // The allocation kind and object class (which goes through the type) can
     // be read freely, however.
-    gc::AllocKind kind = object->asTenured()->getAllocKind();
+    gc::AllocKind kind = object->asTenured().getAllocKind();
     return gc::GetGCKindSlots(kind, object->getClass());
 }
 
@@ -7213,19 +7249,16 @@ IonBuilder::checkTypedObjectIndexInBounds(int32_t elemSize,
         // If we are not loading the length from the object itself,
         // then we still need to check if the object was neutered.
         *canBeNeutered = true;
-    } else {
-        MInstruction *lengthValue = MLoadFixedSlot::New(alloc(), obj, JS_BUFVIEW_SLOT_LENGTH);
-        current->add(lengthValue);
-
-        MInstruction *length32 = MTruncateToInt32::New(alloc(), lengthValue);
-        current->add(length32);
-
-        length = length32;
+    } else if (objPrediction.kind() == type::UnsizedArray) {
+        length = MTypedObjectUnsizedLength::New(alloc(), obj);
+        current->add(length->toInstruction());
 
         // If we are loading the length from the object itself,
         // then we do not need an extra neuter check, because the length
         // will have been set to 0 when the object was neutered.
         *canBeNeutered = false;
+    } else {
+        return false;
     }
 
     index = addBoundsCheck(idInt32, length);
@@ -7259,7 +7292,7 @@ IonBuilder::getElemTryScalarElemOfTypedObject(bool *emitted,
     if (!checkTypedObjectIndexInBounds(elemSize, obj, index, objPrediction,
                                        &indexAsByteOffset, &canBeNeutered))
     {
-        return false;
+        return true;
     }
 
     return pushScalarLoadFromTypedObject(emitted, obj, indexAsByteOffset, elemType, canBeNeutered);
@@ -7324,7 +7357,7 @@ IonBuilder::getElemTryComplexElemOfTypedObject(bool *emitted,
     if (!checkTypedObjectIndexInBounds(elemSize, obj, index, objPrediction,
                                        &indexAsByteOffset, &canBeNeutered))
     {
-        return false;
+        return true;
     }
 
     return pushDerivedTypedObject(emitted, obj, indexAsByteOffset,
@@ -8114,7 +8147,7 @@ IonBuilder::setElemTryScalarElemOfTypedObject(bool *emitted,
     if (!checkTypedObjectIndexInBounds(elemSize, obj, index, objPrediction,
                                        &indexAsByteOffset, &canBeNeutered))
     {
-        return false;
+        return true;
     }
 
     // Store the element
@@ -8566,8 +8599,7 @@ IonBuilder::jsop_arguments()
 bool
 IonBuilder::jsop_rest()
 {
-    JSObject *templateObject = inspector->getTemplateObject(pc);
-    MOZ_ASSERT(templateObject->is<ArrayObject>());
+    ArrayObject *templateObject = &inspector->getTemplateObject(pc)->as<ArrayObject>();
 
     if (inliningDepth_ == 0) {
         // We don't know anything about the callee.
@@ -9015,10 +9047,6 @@ IonBuilder::jsop_getprop(PropertyName *name)
     MDefinition *obj = current->pop();
     types::TemporaryTypeSet *types = bytecodeTypes(pc);
 
-    // Try to optimize to a specific constant.
-    if (!getPropTryInferredConstant(&emitted, obj, name, types) || emitted)
-        return emitted;
-
     // Try to optimize arguments.length.
     if (!getPropTryArgumentsLength(&emitted, obj) || emitted)
         return emitted;
@@ -9029,6 +9057,12 @@ IonBuilder::jsop_getprop(PropertyName *name)
 
     BarrierKind barrier = PropertyReadNeedsTypeBarrier(analysisContext, constraints(),
                                                        obj, name, types);
+
+    // Try to optimize to a specific constant.
+    if (barrier == BarrierKind::NoBarrier) {
+        if (!getPropTryInferredConstant(&emitted, obj, name, types) || emitted)
+            return emitted;
+    }
 
     // Always use a call if we are performing analysis and
     // not actually emitting code, to simplify later analysis. Also skip deeper
@@ -9313,13 +9347,13 @@ IonBuilder::getPropTryDefiniteSlot(bool *emitted, MDefinition *obj, PropertyName
     }
 
     MInstruction *load;
-    if (slot < JSObject::MAX_FIXED_SLOTS) {
+    if (slot < NativeObject::MAX_FIXED_SLOTS) {
         load = MLoadFixedSlot::New(alloc(), obj, slot);
     } else {
         MInstruction *slots = MSlots::New(alloc(), obj);
         current->add(slots);
 
-        load = MLoadSlot::New(alloc(), slots, slot - JSObject::MAX_FIXED_SLOTS);
+        load = MLoadSlot::New(alloc(), slots, slot - NativeObject::MAX_FIXED_SLOTS);
     }
 
     if (barrier == BarrierKind::NoBarrier)
@@ -9403,6 +9437,7 @@ IonBuilder::getPropTryCommonGetter(bool *emitted, MDefinition *obj, PropertyName
         switch (status) {
           case InliningStatus_Error:
             return false;
+          case InliningStatus_WarmUpCountTooLow:
           case InliningStatus_NotInlined:
             break;
           case InliningStatus_Inlined:
@@ -9419,6 +9454,7 @@ IonBuilder::getPropTryCommonGetter(bool *emitted, MDefinition *obj, PropertyName
           case InliningDecision_Error:
             return false;
           case InliningDecision_DontInline:
+          case InliningDecision_WarmUpCountTooLow:
             break;
           case InliningDecision_Inline:
             inlineable = true;
@@ -9843,6 +9879,7 @@ IonBuilder::setPropTryCommonSetter(bool *emitted, MDefinition *obj,
           case InliningDecision_Error:
             return false;
           case InliningDecision_DontInline:
+          case InliningDecision_WarmUpCountTooLow:
             break;
           case InliningDecision_Inline:
             if (!inlineScriptedCall(callInfo, commonSetter))
@@ -9967,7 +10004,7 @@ IonBuilder::setPropTryDefiniteSlot(bool *emitted, MDefinition *obj,
     }
 
     MInstruction *store;
-    if (slot < JSObject::MAX_FIXED_SLOTS) {
+    if (slot < NativeObject::MAX_FIXED_SLOTS) {
         store = MStoreFixedSlot::New(alloc(), obj, slot, value);
         if (writeBarrier)
             store->toStoreFixedSlot()->setNeedsBarrier();
@@ -9975,7 +10012,7 @@ IonBuilder::setPropTryDefiniteSlot(bool *emitted, MDefinition *obj,
         MInstruction *slots = MSlots::New(alloc(), obj);
         current->add(slots);
 
-        store = MStoreSlot::New(alloc(), slots, slot - JSObject::MAX_FIXED_SLOTS, value);
+        store = MStoreSlot::New(alloc(), slots, slot - NativeObject::MAX_FIXED_SLOTS, value);
         if (writeBarrier)
             store->toStoreSlot()->setNeedsBarrier();
     }
@@ -10386,8 +10423,8 @@ IonBuilder::jsop_this()
         return true;
     }
 
-    if (thisTypes->getKnownMIRType() == MIRType_Object ||
-        (thisTypes->empty() && baselineFrame_ && baselineFrame_->thisType.isSomeObject()))
+    if (thisTypes && (thisTypes->getKnownMIRType() == MIRType_Object ||
+        (thisTypes->empty() && baselineFrame_ && baselineFrame_->thisType.isSomeObject())))
     {
         // This is safe, because if the entry type of |this| is an object, it
         // will necessarily be an object throughout the entire function. OSR

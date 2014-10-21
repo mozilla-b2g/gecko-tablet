@@ -17,13 +17,13 @@
 #include "DecoderTraits.h"
 #include "nsIAudioChannelAgent.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/dom/AudioChannelBinding.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/TextTrackManager.h"
 #include "MediaDecoder.h"
 #ifdef MOZ_EME
 #include "mozilla/dom/MediaKeys.h"
 #endif
+#include "nsGkAtoms.h"
 
 // Something on Linux #defines None, which is an entry in the
 // MediaWaitingFor enum, so undef it here before including the binfing,
@@ -520,6 +520,7 @@ public:
   already_AddRefed<DOMMediaStream> GetMozSrcObject() const;
 
   void SetMozSrcObject(DOMMediaStream& aValue);
+  void SetMozSrcObject(DOMMediaStream* aValue);
 
   bool MozPreservesPitch() const
   {
@@ -544,6 +545,11 @@ public:
 
 
   bool IsEventAttributeName(nsIAtom* aName) MOZ_OVERRIDE;
+
+  // Returns the principal of the "top level" document; the origin displayed
+  // in the URL bar of the browser window.
+  already_AddRefed<nsIPrincipal> GetTopLevelPrincipal();
+
 #endif // MOZ_EME
 
   bool MozAutoplayEnabled() const
@@ -1229,6 +1235,9 @@ protected:
 
   // True if the media has an audio track
   bool mHasAudio;
+
+  // True if the media has a video track
+  bool mHasVideo;
 
   // True if the media's channel's download has been suspended.
   bool mDownloadSuspendedByCache;

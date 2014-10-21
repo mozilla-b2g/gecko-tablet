@@ -31,35 +31,32 @@ using namespace mozilla::pkix::test;
 
 // Creates a self-signed certificate with the given extension.
 static ByteString
-CreateCert(const char* subjectCN,
-           const ByteString* extensions, // empty-string-terminated array
-           /*out*/ ScopedTestKeyPair& subjectKey)
+CreateCertWithExtensions(const char* subjectCN,
+                         const ByteString* extensions)
 {
   static long serialNumberValue = 0;
   ++serialNumberValue;
   ByteString serialNumber(CreateEncodedSerialNumber(serialNumberValue));
-  EXPECT_NE(ENCODING_FAILED, serialNumber);
+  EXPECT_FALSE(ENCODING_FAILED(serialNumber));
   ByteString issuerDER(CNToDERName(subjectCN));
-  EXPECT_NE(ENCODING_FAILED, issuerDER);
+  EXPECT_FALSE(ENCODING_FAILED(issuerDER));
   ByteString subjectDER(CNToDERName(subjectCN));
-  EXPECT_NE(ENCODING_FAILED, subjectDER);
+  EXPECT_FALSE(ENCODING_FAILED(subjectDER));
+  ScopedTestKeyPair subjectKey(CloneReusedKeyPair());
   return CreateEncodedCertificate(v3, sha256WithRSAEncryption,
                                   serialNumber, issuerDER,
                                   oneDayBeforeNow, oneDayAfterNow,
-                                  subjectDER, extensions,
-                                  nullptr,
-                                  SignatureAlgorithm::rsa_pkcs1_with_sha256,
-                                  subjectKey);
+                                  subjectDER, *subjectKey, extensions,
+                                  *subjectKey,
+                                  sha256WithRSAEncryption);
 }
 
 // Creates a self-signed certificate with the given extension.
 static ByteString
-CreateCert(const char* subjectStr,
-           const ByteString& extension,
-           /*out*/ ScopedTestKeyPair& subjectKey)
+CreateCertWithOneExtension(const char* subjectStr, const ByteString& extension)
 {
   const ByteString extensions[] = { extension, ByteString() };
-  return CreateCert(subjectStr, extensions, subjectKey);
+  return CreateCertWithExtensions(subjectStr, extensions);
 }
 
 class TrustEverythingTrustDomain : public TrustDomain
@@ -136,9 +133,8 @@ TEST_F(pkixcert_extension, UnknownCriticalExtension)
     unknownCriticalExtension(unknownCriticalExtensionBytes,
                              sizeof(unknownCriticalExtensionBytes));
   const char* certCN = "Cert With Unknown Critical Extension";
-  ScopedTestKeyPair key;
-  ByteString cert(CreateCert(certCN, unknownCriticalExtension, key));
-  ASSERT_NE(ENCODING_FAILED, cert);
+  ByteString cert(CreateCertWithOneExtension(certCN, unknownCriticalExtension));
+  ASSERT_FALSE(ENCODING_FAILED(cert));
   Input certInput;
   ASSERT_EQ(Success, certInput.Init(cert.data(), cert.length()));
   ASSERT_EQ(Result::ERROR_UNKNOWN_CRITICAL_EXTENSION,
@@ -166,9 +162,9 @@ TEST_F(pkixcert_extension, UnknownNonCriticalExtension)
     unknownNonCriticalExtension(unknownNonCriticalExtensionBytes,
                                 sizeof(unknownNonCriticalExtensionBytes));
   const char* certCN = "Cert With Unknown NonCritical Extension";
-  ScopedTestKeyPair key;
-  ByteString cert(CreateCert(certCN, unknownNonCriticalExtension, key));
-  ASSERT_NE(ENCODING_FAILED, cert);
+  ByteString cert(CreateCertWithOneExtension(certCN,
+                                             unknownNonCriticalExtension));
+  ASSERT_FALSE(ENCODING_FAILED(cert));
   Input certInput;
   ASSERT_EQ(Success, certInput.Init(cert.data(), cert.length()));
   ASSERT_EQ(Success,
@@ -197,9 +193,9 @@ TEST_F(pkixcert_extension, WrongOIDCriticalExtension)
     wrongOIDCriticalExtension(wrongOIDCriticalExtensionBytes,
                               sizeof(wrongOIDCriticalExtensionBytes));
   const char* certCN = "Cert With Critical Wrong OID Extension";
-  ScopedTestKeyPair key;
-  ByteString cert(CreateCert(certCN, wrongOIDCriticalExtension, key));
-  ASSERT_NE(ENCODING_FAILED, cert);
+  ByteString cert(CreateCertWithOneExtension(certCN,
+                                             wrongOIDCriticalExtension));
+  ASSERT_FALSE(ENCODING_FAILED(cert));
   Input certInput;
   ASSERT_EQ(Success, certInput.Init(cert.data(), cert.length()));
   ASSERT_EQ(Result::ERROR_UNKNOWN_CRITICAL_EXTENSION,
@@ -230,9 +226,8 @@ TEST_F(pkixcert_extension, CriticalAIAExtension)
     criticalAIAExtension(criticalAIAExtensionBytes,
                          sizeof(criticalAIAExtensionBytes));
   const char* certCN = "Cert With Critical AIA Extension";
-  ScopedTestKeyPair key;
-  ByteString cert(CreateCert(certCN, criticalAIAExtension, key));
-  ASSERT_NE(ENCODING_FAILED, cert);
+  ByteString cert(CreateCertWithOneExtension(certCN, criticalAIAExtension));
+  ASSERT_FALSE(ENCODING_FAILED(cert));
   Input certInput;
   ASSERT_EQ(Success, certInput.Init(cert.data(), cert.length()));
   ASSERT_EQ(Success,
@@ -260,9 +255,9 @@ TEST_F(pkixcert_extension, UnknownCriticalCEExtension)
     unknownCriticalCEExtension(unknownCriticalCEExtensionBytes,
                                sizeof(unknownCriticalCEExtensionBytes));
   const char* certCN = "Cert With Unknown Critical id-ce Extension";
-  ScopedTestKeyPair key;
-  ByteString cert(CreateCert(certCN, unknownCriticalCEExtension, key));
-  ASSERT_NE(ENCODING_FAILED, cert);
+  ByteString cert(CreateCertWithOneExtension(certCN,
+                                             unknownCriticalCEExtension));
+  ASSERT_FALSE(ENCODING_FAILED(cert));
   Input certInput;
   ASSERT_EQ(Success, certInput.Init(cert.data(), cert.length()));
   ASSERT_EQ(Result::ERROR_UNKNOWN_CRITICAL_EXTENSION,
@@ -290,9 +285,8 @@ TEST_F(pkixcert_extension, KnownCriticalCEExtension)
     criticalCEExtension(criticalCEExtensionBytes,
                         sizeof(criticalCEExtensionBytes));
   const char* certCN = "Cert With Known Critical id-ce Extension";
-  ScopedTestKeyPair key;
-  ByteString cert(CreateCert(certCN, criticalCEExtension, key));
-  ASSERT_NE(ENCODING_FAILED, cert);
+  ByteString cert(CreateCertWithOneExtension(certCN, criticalCEExtension));
+  ASSERT_FALSE(ENCODING_FAILED(cert));
   Input certInput;
   ASSERT_EQ(Success, certInput.Init(cert.data(), cert.length()));
   ASSERT_EQ(Success,
@@ -319,9 +313,8 @@ TEST_F(pkixcert_extension, DuplicateSubjectAltName)
   static const ByteString DER(DER_BYTES, sizeof(DER_BYTES));
   static const ByteString extensions[] = { DER, DER, ByteString() };
   static const char* certCN = "Cert With Duplicate subjectAltName";
-  ScopedTestKeyPair key;
-  ByteString cert(CreateCert(certCN, extensions, key));
-  ASSERT_NE(ENCODING_FAILED, cert);
+  ByteString cert(CreateCertWithExtensions(certCN, extensions));
+  ASSERT_FALSE(ENCODING_FAILED(cert));
   Input certInput;
   ASSERT_EQ(Success, certInput.Init(cert.data(), cert.length()));
   ASSERT_EQ(Result::ERROR_EXTENSION_VALUE_INVALID,

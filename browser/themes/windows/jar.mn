@@ -17,13 +17,15 @@ browser.jar:
         skin/classic/browser/aboutCertError_sectionExpanded.png
         skin/classic/browser/aboutNetError.css                       (../shared/aboutNetError.css)
         skin/classic/browser/aboutNetError_info.svg                  (../shared/aboutNetError_info.svg)
-        skin/classic/browser/aboutSocialError.css
+        skin/classic/browser/aboutSocialError.css                    (../shared/aboutSocialError.css)
+*       skin/classic/browser/aboutProviderDirectory.css              (../shared/aboutProviderDirectory.css)
 #ifdef MOZ_SERVICES_SYNC
         skin/classic/browser/aboutSyncTabs.css
 #endif
         skin/classic/browser/aboutTabCrashed.css
         skin/classic/browser/actionicon-tab.png
 *       skin/classic/browser/browser.css
+*       skin/classic/browser/devedition.css
 *       skin/classic/browser/browser-lightweightTheme.css
         skin/classic/browser/click-to-play-warning-stripes.png
 *       skin/classic/browser/content-contextmenu.svg
@@ -78,6 +80,7 @@ browser.jar:
         skin/classic/browser/Secure24.png
         skin/classic/browser/setDesktopBackground.css
         skin/classic/browser/slowStartup-16.png
+        skin/classic/browser/theme-switcher-icon.png
         skin/classic/browser/Toolbar.png                             (Toolbar-XP.png)
         skin/classic/browser/Toolbar-inverted.png
         skin/classic/browser/Toolbar-lunaSilver.png
@@ -286,6 +289,7 @@ browser.jar:
 *       skin/classic/browser/devtools/debugger.css                  (devtools/debugger.css)
 *       skin/classic/browser/devtools/netmonitor.css                (devtools/netmonitor.css)
 *       skin/classic/browser/devtools/profiler.css                  (devtools/profiler.css)
+*       skin/classic/browser/devtools/performance.css               (devtools/performance.css)
 *       skin/classic/browser/devtools/timeline.css                  (devtools/timeline.css)
 *       skin/classic/browser/devtools/scratchpad.css                (devtools/scratchpad.css)
 *       skin/classic/browser/devtools/shadereditor.css              (devtools/shadereditor.css)
@@ -377,7 +381,6 @@ browser.jar:
         skin/classic/browser/devtools/arrow-e@2x.png                (../shared/devtools/images/arrow-e@2x.png)
         skin/classic/browser/devtools/responsiveui-home.png         (../shared/devtools/responsiveui-home.png)
         skin/classic/browser/devtools/projecteditor/projecteditor.css           (../shared/devtools/projecteditor/projecteditor.css)
-        skin/classic/browser/devtools/projecteditor/file-icons-sheet@2x.png       (../shared/devtools/projecteditor/file-icons-sheet@2x.png)
         skin/classic/browser/devtools/app-manager/connection-footer.css     (../shared/devtools/app-manager/connection-footer.css)
         skin/classic/browser/devtools/app-manager/index.css                 (../shared/devtools/app-manager/index.css)
         skin/classic/browser/devtools/app-manager/device.css                (../shared/devtools/app-manager/device.css)
@@ -438,7 +441,8 @@ browser.jar:
         skin/classic/aero/browser/aboutCertError_sectionExpanded.png
         skin/classic/aero/browser/aboutNetError.css                   (../shared/aboutNetError.css)
         skin/classic/aero/browser/aboutNetError_info.svg              (../shared/aboutNetError_info.svg)
-        skin/classic/aero/browser/aboutSocialError.css
+        skin/classic/aero/browser/aboutSocialError.css                (../shared/aboutSocialError.css)
+*       skin/classic/aero/browser/aboutProviderDirectory.css          (../shared/aboutProviderDirectory.css)
 #ifdef MOZ_SERVICES_SYNC
         skin/classic/aero/browser/aboutSyncTabs.css
 #endif
@@ -446,6 +450,7 @@ browser.jar:
         skin/classic/aero/browser/aboutWelcomeBack.css               (../shared/aboutWelcomeBack.css)
         skin/classic/aero/browser/actionicon-tab.png
 *       skin/classic/aero/browser/browser.css                        (browser-aero.css)
+*       skin/classic/aero/browser/devedition.css                     (devedition-aero.css)
 *       skin/classic/aero/browser/browser-lightweightTheme.css
         skin/classic/aero/browser/click-to-play-warning-stripes.png
 *       skin/classic/aero/browser/content-contextmenu.svg
@@ -503,6 +508,8 @@ browser.jar:
         skin/classic/aero/browser/Secure24.png                       (Secure24-aero.png)
         skin/classic/aero/browser/setDesktopBackground.css
         skin/classic/aero/browser/slowStartup-16.png
+        skin/classic/aero/browser/theme-switcher-icon.png
+        skin/classic/aero/browser/theme-switcher-icon-aero.png
         skin/classic/aero/browser/Toolbar.png
         skin/classic/aero/browser/Toolbar-inverted.png
         skin/classic/aero/browser/Toolbar-aero.png
@@ -803,7 +810,6 @@ browser.jar:
         skin/classic/aero/browser/devtools/arrow-e@2x.png               (../shared/devtools/images/arrow-e@2x.png)
         skin/classic/browser/devtools/responsiveui-home.png          (../shared/devtools/responsiveui-home.png)
         skin/classic/aero/browser/devtools/projecteditor/projecteditor.css       (../shared/devtools/projecteditor/projecteditor.css)
-        skin/classic/aero/browser/devtools/projecteditor/file-icons-sheet@2x.png       (../shared/devtools/projecteditor/file-icons-sheet@2x.png)
         skin/classic/aero/browser/devtools/app-manager/connection-footer.css     (../shared/devtools/app-manager/connection-footer.css)
         skin/classic/aero/browser/devtools/app-manager/index.css                 (../shared/devtools/app-manager/index.css)
         skin/classic/aero/browser/devtools/app-manager/device.css                (../shared/devtools/app-manager/device.css)
@@ -860,6 +866,9 @@ browser.jar:
 
 % override chrome://browser/skin/menuPanel-small.png       chrome://browser/skin/menuPanel-small-aero.png          os=WINNT osversion=6
 % override chrome://browser/skin/menuPanel-small.png       chrome://browser/skin/menuPanel-small-aero.png          os=WINNT osversion=6.1
+
+% override chrome://browser/skin/theme-switcher-icon.png   chrome://browser/skin/theme-switcher-icon-aero.png      os=WINNT osversion=6
+% override chrome://browser/skin/theme-switcher-icon.png   chrome://browser/skin/theme-switcher-icon-aero.png      os=WINNT osversion=6.1
 
 % override chrome://browser/skin/sync-horizontalbar.png          chrome://browser/skin/sync-horizontalbar-XPVista7.png          os=WINNT osversion<6.2
 % override chrome://browser/skin/syncProgress-horizontalbar.png  chrome://browser/skin/syncProgress-horizontalbar-XPVista7.png  os=WINNT osversion<6.2

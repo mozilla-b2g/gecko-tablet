@@ -51,7 +51,6 @@ public:
   explicit nsChildContentList(nsINode* aNode)
     : mNode(aNode)
   {
-    SetIsDOMBinding();
   }
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
@@ -413,7 +412,7 @@ public:
     /**
      * Web components custom element data.
      */
-    nsAutoPtr<CustomElementData> mCustomElementData;
+    nsRefPtr<CustomElementData> mCustomElementData;
   };
 
 protected:

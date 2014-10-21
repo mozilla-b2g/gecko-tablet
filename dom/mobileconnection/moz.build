@@ -19,10 +19,12 @@ EXPORTS.mozilla.dom.mobileconnection += [
     'ipc/MobileConnectionChild.h',
     'ipc/MobileConnectionIPCSerializer.h',
     'ipc/MobileConnectionParent.h',
+    'MobileCallForwardingOptions.h',
 ]
 
 XPIDL_SOURCES += [
     'interfaces/nsICellInfo.idl',
+    'interfaces/nsIMobileCallForwardingOptions.idl',
     'interfaces/nsIMobileCellInfo.idl',
     'interfaces/nsIMobileConnectionInfo.idl',
     'interfaces/nsIMobileConnectionService.idl',
@@ -31,10 +33,12 @@ XPIDL_SOURCES += [
 ]
 
 UNIFIED_SOURCES += [
+    'Assertions.cpp',
     'DOMMMIError.cpp',
     'ipc/MobileConnectionChild.cpp',
     'ipc/MobileConnectionIPCService.cpp',
     'ipc/MobileConnectionParent.cpp',
+    'MobileCallForwardingOptions.cpp',
     'MobileCellInfo.cpp',
     'MobileConnection.cpp',
     'MobileConnectionArray.cpp',

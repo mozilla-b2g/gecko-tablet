@@ -54,7 +54,7 @@ interface nsITabParent;
  
 typedef unsigned long nsLoadFlags;
 
-[scriptable, builtinclass, uuid(2b8e4a50-7744-454d-a05b-debead8070fe)]
+[scriptable, builtinclass, uuid(da8f78f1-8f20-4d6d-be56-fe53e177b630)]
 interface nsIDocShell : nsIDocShellTreeItem
 {
   /**
@@ -673,6 +673,14 @@ interface nsIDocShell : nsIDocShellTreeItem
   [infallible] attribute boolean recordProfileTimelineMarkers;
 
   /**
+   * Return a DOMHighResTimeStamp representing the number of
+   * milliseconds from an arbitrary point in time.  The reference
+   * point is shared by all DocShells and is also used by timestamps
+   * on markers.
+   */
+  DOMHighResTimeStamp now();
+
+  /**
    * Returns and flushes the profile timeline markers gathered by the docShell
    */
   [implicit_jscontext]
@@ -1017,4 +1025,11 @@ interface nsIDocShell : nsIDocShellTreeItem
 
   // URLSearchParams for the window.location is owned by the docShell.
   [noscript,notxpcom] URLSearchParams getURLSearchParams();
+
+  /**
+   * This attribute determines whether a document which is not about:blank has
+   * already be loaded by this docShell.
+   */
+  [infallible] readonly attribute boolean hasLoadedNonBlankURI;
+
 };

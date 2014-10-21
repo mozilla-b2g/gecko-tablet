@@ -558,16 +558,21 @@ nsresult nsNPAPIPluginInstance::SetWindow(NPWindow* window)
 
     NPPAutoPusher nppPusher(&mNPP);
 
-    DebugOnly<NPError> error;
+    NPError error;
     NS_TRY_SAFE_CALL_RETURN(error, (*pluginFunctions->setwindow)(&mNPP, (NPWindow*)window), this,
                             NS_PLUGIN_CALL_UNSAFE_TO_REENTER_GECKO);
+    // 'error' is only used if this is a logging-enabled build.
+    // That is somewhat complex to check, so we just use "unused"
+    // to suppress any compiler warnings in build configurations
+    // where the logging is a no-op.
+    mozilla::unused << error;
 
     mInPluginInitCall = oldVal;
 
     NPP_PLUGIN_LOG(PLUGIN_LOG_NORMAL,
     ("NPP SetWindow called: this=%p, [x=%d,y=%d,w=%d,h=%d], clip[t=%d,b=%d,l=%d,r=%d], return=%d\n",
     this, window->x, window->y, window->width, window->height,
-    window->clipRect.top, window->clipRect.bottom, window->clipRect.left, window->clipRect.right, (NPError)error));
+    window->clipRect.top, window->clipRect.bottom, window->clipRect.left, window->clipRect.right, error));
   }
   return NS_OK;
 }
@@ -947,7 +952,7 @@ void nsNPAPIPluginInstance::ReleaseContentTexture(nsNPAPIPluginInstance::Texture
   mContentTexture->Release(aTextureInfo);
 }
 
-nsSurfaceTexture* nsNPAPIPluginInstance::CreateSurfaceTexture()
+AndroidSurfaceTexture* nsNPAPIPluginInstance::CreateSurfaceTexture()
 {
   if (!EnsureGLContext())
     return nullptr;
@@ -956,7 +961,8 @@ nsSurfaceTexture* nsNPAPIPluginInstance::CreateSurfaceTexture()
   if (!texture)
     return nullptr;
 
-  nsSurfaceTexture* surface = nsSurfaceTexture::Create(texture);
+  AndroidSurfaceTexture* surface = AndroidSurfaceTexture::Create(TexturePoolOGL::GetGLContext(),
+                                                                 texture);
   if (!surface)
     return nullptr;
 
@@ -980,7 +986,7 @@ void* nsNPAPIPluginInstance::AcquireContentWindow()
       return nullptr;
   }
 
-  return mContentSurface->GetNativeWindow();
+  return mContentSurface->NativeWindow()->Handle();
 }
 
 EGLImage
@@ -992,7 +998,7 @@ nsNPAPIPluginInstance::AsEGLImage()
   return mContentTexture->CreateEGLImage();
 }
 
-nsSurfaceTexture*
+AndroidSurfaceTexture*
 nsNPAPIPluginInstance::AsSurfaceTexture()
 {
   if (!mContentSurface)
@@ -1003,13 +1009,13 @@ nsNPAPIPluginInstance::AsSurfaceTexture()
 
 void* nsNPAPIPluginInstance::AcquireVideoWindow()
 {
-  nsSurfaceTexture* surface = CreateSurfaceTexture();
+  AndroidSurfaceTexture* surface = CreateSurfaceTexture();
   if (!surface)
     return nullptr;
 
   VideoInfo* info = new VideoInfo(surface);
 
-  void* window = info->mSurfaceTexture->GetNativeWindow();
+  void* window = info->mSurfaceTexture->NativeWindow()->Handle();
   mVideos.insert(std::pair<void*, VideoInfo*>(window, info));
 
   return window;
@@ -1640,32 +1646,6 @@ nsNPAPIPluginInstance::URLRedirectResponse(void* notifyData, NPBool allow)
       currentListener->URLRedirectResponse(allow);
     }
   }
-}
-
-NPError
-nsNPAPIPluginInstance::InitAsyncSurface(NPSize *size, NPImageFormat format,
-                                        void *initData, NPAsyncSurface *surface)
-{
-  if (mOwner)
-    return mOwner->InitAsyncSurface(size, format, initData, surface);
-
-  return NPERR_GENERIC_ERROR;
-}
-
-NPError
-nsNPAPIPluginInstance::FinalizeAsyncSurface(NPAsyncSurface *surface)
-{
-  if (mOwner)
-    return mOwner->FinalizeAsyncSurface(surface);
-
-  return NPERR_GENERIC_ERROR;
-}
-
-void
-nsNPAPIPluginInstance::SetCurrentAsyncSurface(NPAsyncSurface *surface, NPRect *changed)
-{
-  if (mOwner)
-    mOwner->SetCurrentAsyncSurface(surface, changed);
 }
 
 class CarbonEventModelFailureEvent : public nsRunnable {

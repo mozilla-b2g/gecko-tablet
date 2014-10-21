@@ -28,6 +28,7 @@
 #include "nsIFrame.h"
 #include "nsIPresShell.h"
 #include "nsISVGChildFrame.h"
+#include "nsLayoutUtils.h"
 #include "nsPresContext.h"
 #include "nsRenderingContext.h"
 #include "nsStyleCoord.h"
@@ -57,9 +58,16 @@ using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::gfx;
 
+static bool sSVGPathCachingEnabled;
 static bool sSVGDisplayListHitTestingEnabled;
 static bool sSVGDisplayListPaintingEnabled;
 static bool sSVGNewGetBBoxEnabled;
+
+bool
+NS_SVGPathCachingEnabled()
+{
+  return sSVGPathCachingEnabled;
+}
 
 bool
 NS_SVGDisplayListHitTestingEnabled()
@@ -83,12 +91,10 @@ NS_SVGNewGetBBoxEnabled()
 // we only take the address of this:
 static mozilla::gfx::UserDataKey sSVGAutoRenderStateKey;
 
-SVGAutoRenderState::SVGAutoRenderState(DrawTarget* aDrawTarget,
-                                       RenderMode aMode
+SVGAutoRenderState::SVGAutoRenderState(DrawTarget* aDrawTarget
                                        MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
   : mDrawTarget(aDrawTarget)
   , mOriginalRenderState(nullptr)
-  , mMode(aMode)
   , mPaintingToWindow(false)
 {
   MOZ_GUARD_OBJECT_NOTIFIER_INIT;
@@ -114,16 +120,6 @@ SVGAutoRenderState::SetPaintingToWindow(bool aPaintingToWindow)
   mPaintingToWindow = aPaintingToWindow;
 }
 
-/* static */ SVGAutoRenderState::RenderMode
-SVGAutoRenderState::GetRenderMode(DrawTarget* aDrawTarget)
-{
-  void *state = aDrawTarget->GetUserData(&sSVGAutoRenderStateKey);
-  if (state) {
-    return static_cast<SVGAutoRenderState*>(state)->mMode;
-  }
-  return NORMAL;
-}
-
 /* static */ bool
 SVGAutoRenderState::IsPaintingToWindow(DrawTarget* aDrawTarget)
 {
@@ -137,6 +133,9 @@ SVGAutoRenderState::IsPaintingToWindow(DrawTarget* aDrawTarget)
 void
 nsSVGUtils::Init()
 {
+  Preferences::AddBoolVarCache(&sSVGPathCachingEnabled,
+                               "svg.path-caching.enabled");
+
   Preferences::AddBoolVarCache(&sSVGDisplayListHitTestingEnabled,
                                "svg.display-lists.hit-testing.enabled");
 
@@ -558,6 +557,7 @@ nsSVGUtils::PaintFrameWithEffects(nsIFrame *aFrame,
   if (opacity != 1.0f && CanOptimizeOpacity(aFrame))
     opacity = 1.0f;
 
+  DrawTarget* drawTarget = aContext->GetDrawTarget();
   gfxContext *gfx = aContext->ThebesContext();
   bool complexEffects = false;
 
@@ -589,7 +589,9 @@ nsSVGUtils::PaintFrameWithEffects(nsIFrame *aFrame,
         // GetCanvasTM().
         overflowRect = overflowRect + aFrame->GetPosition();
       }
-      aContext->IntersectClip(overflowRect);
+      gfx->Clip(NSRectToRect(overflowRect,
+                             aFrame->PresContext()->AppUnitsPerDevPixel(),
+                             *drawTarget));
     }
     gfx->PushGroup(gfxContentType::COLOR_ALPHA);
   }
@@ -668,7 +670,8 @@ nsSVGUtils::PaintFrameWithEffects(nsIFrame *aFrame,
 
   if (maskSurface) {
     gfx->Mask(maskSurface, maskTransform);
-  } else if (opacity != 1.0f) {
+  } else if (opacity != 1.0f ||
+             aFrame->StyleDisplay()->mMixBlendMode != NS_STYLE_BLEND_NORMAL) {
     gfx->Paint(opacity);
   }
 
@@ -1280,12 +1283,10 @@ nsSVGUtils::MakeFillPatternFor(nsIFrame* aFrame,
   // On failure, use the fallback colour in case we have an
   // objectBoundingBox where the width or height of the object is zero.
   // See http://www.w3.org/TR/SVG11/coords.html#ObjectBoundingBox
-  nscolor color = GetFallbackOrPaintColor(aFrame->StyleContext(),
-                                          &nsStyleSVG::mFill);
-  aOutPattern->InitColorPattern(Color(NS_GET_R(color)/255.0,
-                                      NS_GET_G(color)/255.0,
-                                      NS_GET_B(color)/255.0,
-                                      NS_GET_A(color)/255.0 * opacity));
+  Color color(Color::FromABGR(GetFallbackOrPaintColor(aFrame->StyleContext(),
+                                                      &nsStyleSVG::mFill)));
+  color.a *= opacity;
+  aOutPattern->InitColorPattern(ToDeviceColor(color));
 }
 
 /* static */ void
@@ -1343,12 +1344,10 @@ nsSVGUtils::MakeStrokePatternFor(nsIFrame* aFrame,
   // On failure, use the fallback colour in case we have an
   // objectBoundingBox where the width or height of the object is zero.
   // See http://www.w3.org/TR/SVG11/coords.html#ObjectBoundingBox
-  nscolor color = GetFallbackOrPaintColor(aFrame->StyleContext(),
-                                          &nsStyleSVG::mStroke);
-  aOutPattern->InitColorPattern(Color(NS_GET_R(color)/255.0,
-                                      NS_GET_G(color)/255.0,
-                                      NS_GET_B(color)/255.0,
-                                      NS_GET_A(color)/255.0 * opacity));
+  Color color(Color::FromABGR(GetFallbackOrPaintColor(aFrame->StyleContext(),
+                                                      &nsStyleSVG::mStroke)));
+  color.a *= opacity;
+  aOutPattern->InitColorPattern(ToDeviceColor(color));
 }
 
 /* static */ float
@@ -1591,7 +1590,7 @@ nsSVGUtils::PaintSVGGlyph(Element* aElement, gfxContext* aContext,
   aContext->GetDrawTarget()->AddUserData(&gfxTextContextPaint::sUserDataKey,
                                          aContextPaint, nullptr);
   nsRefPtr<nsRenderingContext> context(new nsRenderingContext());
-  context->Init(frame->PresContext()->DeviceContext(), aContext);
+  context->Init(aContext);
   svgFrame->NotifySVGChanged(nsISVGChildFrame::TRANSFORM_CHANGED);
   gfxMatrix m;
   if (frame->GetContent()->IsSVG()) {

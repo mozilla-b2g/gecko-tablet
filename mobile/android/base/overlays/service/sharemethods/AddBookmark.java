@@ -24,7 +24,8 @@ public class AddBookmark extends ShareMethod {
         return Result.SUCCESS;
     }
 
-    public String getSuccessMesssage() {
+    @Override
+    public String getSuccessMessage() {
         return context.getResources().getString(R.string.bookmark_added);
     }
 

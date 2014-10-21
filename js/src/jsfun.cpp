@@ -508,7 +508,7 @@ js::fun_resolve(JSContext *cx, HandleObject obj, HandleId id, MutableHandleObjec
 template<XDRMode mode>
 bool
 js::XDRInterpretedFunction(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enclosingScript,
-                           MutableHandleObject objp)
+                           MutableHandleFunction objp)
 {
     enum FirstWordFlag {
         HasAtom             = 0x1,
@@ -528,7 +528,7 @@ js::XDRInterpretedFunction(XDRState<mode> *xdr, HandleObject enclosingScope, Han
     Rooted<LazyScript *> lazy(cx);
 
     if (mode == XDR_ENCODE) {
-        fun = &objp->as<JSFunction>();
+        fun = objp;
         if (!fun->isInterpreted()) {
             JSAutoByteString funNameBytes;
             if (const char *name = GetFunctionNameBytes(cx, fun, &funNameBytes)) {
@@ -629,10 +629,10 @@ js::XDRInterpretedFunction(XDRState<mode> *xdr, HandleObject enclosingScope, Han
 }
 
 template bool
-js::XDRInterpretedFunction(XDRState<XDR_ENCODE> *, HandleObject, HandleScript, MutableHandleObject);
+js::XDRInterpretedFunction(XDRState<XDR_ENCODE> *, HandleObject, HandleScript, MutableHandleFunction);
 
 template bool
-js::XDRInterpretedFunction(XDRState<XDR_DECODE> *, HandleObject, HandleScript, MutableHandleObject);
+js::XDRInterpretedFunction(XDRState<XDR_DECODE> *, HandleObject, HandleScript, MutableHandleFunction);
 
 JSObject *
 js::CloneFunctionAndScript(JSContext *cx, HandleObject enclosingScope, HandleFunction srcFun)
@@ -1329,7 +1329,7 @@ JSFunction::initBoundFunction(JSContext *cx, HandleValue thisArg,
     if (!self->setFlag(cx, BaseShape::BOUND_FUNCTION))
         return false;
 
-    if (!JSObject::setSlotSpan(cx, self, BOUND_FUNCTION_RESERVED_SLOTS + argslen))
+    if (!NativeObject::setSlotSpan(cx, self, BOUND_FUNCTION_RESERVED_SLOTS + argslen))
         return false;
 
     self->setSlot(JSSLOT_BOUND_FUNCTION_THIS, thisArg);
@@ -2063,6 +2063,33 @@ js::CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent, 
     return cloneRoot;
 }
 
+/*
+ * Return an atom for use as the name of a builtin method with the given
+ * property id.
+ *
+ * Function names are always strings. If id is the well-known @@iterator
+ * symbol, this returns "[Symbol.iterator]".
+ *
+ * Implements step 4 of SetFunctionName in ES6 draft rev 27 (24 Aug 2014).
+ */
+JSAtom *
+js::IdToFunctionName(JSContext *cx, HandleId id)
+{
+    if (JSID_IS_ATOM(id))
+        return JSID_TO_ATOM(id);
+
+    if (JSID_IS_SYMBOL(id)) {
+        RootedAtom desc(cx, JSID_TO_SYMBOL(id)->description());
+        StringBuffer sb(cx);
+        if (!sb.append('[') || !sb.append(desc) || !sb.append(']'))
+            return nullptr;
+        return sb.finishAtom();
+    }
+
+    RootedValue idv(cx, IdToValue(id));
+    return ToAtom<CanGC>(cx, idv);
+}
+
 JSFunction *
 js::DefineFunction(JSContext *cx, HandleObject obj, HandleId id, Native native,
                    unsigned nargs, unsigned flags, AllocKind allocKind /* = FinalizeKind */,
@@ -2070,9 +2097,6 @@ js::DefineFunction(JSContext *cx, HandleObject obj, HandleId id, Native native,
 {
     PropertyOp gop;
     StrictPropertyOp sop;
-
-    RootedFunction fun(cx);
-
     if (flags & JSFUN_STUB_GSOPS) {
         /*
          * JSFUN_STUB_GSOPS is a request flag only, not stored in fun->flags or
@@ -2093,8 +2117,13 @@ js::DefineFunction(JSContext *cx, HandleObject obj, HandleId id, Native native,
         funFlags = JSFunction::INTERPRETED_LAZY;
     else
         funFlags = JSAPIToJSFunctionFlags(flags);
-    RootedAtom atom(cx, JSID_IS_ATOM(id) ? JSID_TO_ATOM(id) : nullptr);
-    fun = NewFunction(cx, NullPtr(), native, nargs, funFlags, obj, atom, allocKind, newKind);
+
+    RootedAtom atom(cx, IdToFunctionName(cx, id));
+    if (!atom)
+        return nullptr;
+
+    RootedFunction fun(cx, NewFunction(cx, NullPtr(), native, nargs, funFlags, obj, atom,
+                                       allocKind, newKind));
     if (!fun)
         return nullptr;
 
@@ -2147,29 +2176,6 @@ js::ReportIncompatible(JSContext *cx, CallReceiver call)
             JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_INCOMPATIBLE_METHOD,
                                  funName, "method", InformalValueTypeName(call.thisv()));
         }
-    }
-}
-
-bool
-JSObject::hasIdempotentProtoChain() const
-{
-    // Return false if obj (or an object on its proto chain) is non-native or
-    // has a resolve or lookup hook.
-    JSObject *obj = const_cast<JSObject *>(this);
-    while (true) {
-        if (!obj->isNative())
-            return false;
-
-        JSResolveOp resolve = obj->getClass()->resolve;
-        if (resolve != JS_ResolveStub && resolve != (JSResolveOp) js::fun_resolve)
-            return false;
-
-        if (obj->getOps()->lookupProperty || obj->getOps()->lookupGeneric || obj->getOps()->lookupElement)
-            return false;
-
-        obj = obj->getProto();
-        if (!obj)
-            return true;
     }
 }
 

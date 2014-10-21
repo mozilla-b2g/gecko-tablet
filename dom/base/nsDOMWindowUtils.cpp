@@ -48,11 +48,11 @@
 #include "nsComputedDOMStyle.h"
 #include "nsIPresShell.h"
 #include "nsCSSProps.h"
-#include "nsDOMFile.h"
 #include "nsTArrayHelpers.h"
 #include "nsIDocShell.h"
 #include "nsIContentViewer.h"
 #include "mozilla/StyleAnimationValue.h"
+#include "mozilla/dom/File.h"
 #include "mozilla/dom/DOMRect.h"
 #include <algorithm>
 
@@ -74,7 +74,6 @@
 #include "mozilla/dom/PermissionMessageUtils.h"
 #include "mozilla/dom/quota/PersistenceType.h"
 #include "mozilla/dom/quota/QuotaManager.h"
-#include "nsDOMBlobBuilder.h"
 #include "nsPrintfCString.h"
 #include "nsViewportInfo.h"
 #include "nsIFormControl.h"
@@ -2117,7 +2116,14 @@ nsDOMWindowUtils::SendCompositionEvent(const nsAString& aType,
   } else if (aType.EqualsLiteral("compositionend")) {
     msg = NS_COMPOSITION_END;
   } else if (aType.EqualsLiteral("compositionupdate")) {
-    msg = NS_COMPOSITION_UPDATE;
+    // Now we don't support manually dispatching composition update with this
+    // API.  A compositionupdate is dispatched when a DOM text event modifies
+    // composition string automatically.  For backward compatibility, this
+    // shouldn't return error in this case.
+    NS_WARNING("Don't call nsIDOMWindowUtils.sendCompositionEvent() for "
+               "compositionupdate since it's ignored and the event is "
+               "fired automatically when it's necessary");
+    return NS_OK;
   } else {
     return NS_ERROR_FAILURE;
   }
@@ -2125,7 +2131,7 @@ nsDOMWindowUtils::SendCompositionEvent(const nsAString& aType,
   WidgetCompositionEvent compositionEvent(true, msg, widget);
   InitEvent(compositionEvent);
   if (msg != NS_COMPOSITION_START) {
-    compositionEvent.data = aData;
+    compositionEvent.mData = aData;
   }
 
   compositionEvent.mFlags.mIsSynthesizedForTests = true;
@@ -2846,7 +2852,15 @@ nsDOMWindowUtils::WrapDOMFile(nsIFile *aFile,
     return NS_ERROR_FAILURE;
   }
 
-  nsRefPtr<DOMFile> file = DOMFile::CreateFromFile(aFile);
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+  NS_ENSURE_STATE(window);
+
+  nsPIDOMWindow* innerWindow = window->GetCurrentInnerWindow();
+  if (!innerWindow) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsRefPtr<File> file = File::CreateFromFile(innerWindow, aFile);
   file.forget(aDOMFile);
   return NS_OK;
 }

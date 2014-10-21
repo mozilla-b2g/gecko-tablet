@@ -109,25 +109,34 @@ function Tester(aTests, aDumper, aCallback) {
     this.SimpleTestOriginal[m] = this.SimpleTest[m];
   });
 
+  this._toleratedUncaughtRejections = null;
   this._uncaughtErrorObserver = function({message, date, fileName, stack, lineNumber}) {
-    let text = "Once bug 991040 has landed, THIS ERROR WILL CAUSE A TEST FAILURE.\n" + message;
-    let error = text;
+    let error = message;
     if (fileName || lineNumber) {
       error = {
         fileName: fileName,
         lineNumber: lineNumber,
-        message: text,
+        message: message,
         toString: function() {
-          return text;
+          return message;
         }
       };
     }
+
+    // We may have a whitelist of rejections we wish to tolerate.
+    let tolerate = this._toleratedUncaughtRejections &&
+      this._toleratedUncaughtRejections.indexOf(message) != -1;
+    let name = "A promise chain failed to handle a rejection: ";
+    if (tolerate) {
+      name = "WARNING: (PLEASE FIX THIS AS PART OF BUG 1077403) " + name;
+    }
+
     this.currentTest.addResult(
       new testResult(
-	/*success*/ true,
-        /*name*/"A promise chain failed to handle a rejection",
+	      /*success*/tolerate,
+        /*name*/name,
         /*error*/error,
-        /*known*/true,
+        /*known*/tolerate,
         /*stack*/stack));
     }.bind(this);
 }
@@ -259,6 +268,7 @@ Tester.prototype = {
       Services.obs.removeObserver(this, "chrome-document-global-created");
       Services.obs.removeObserver(this, "content-document-global-created");
       this.Promise.Debugging.clearUncaughtErrorObservers();
+      this._treatUncaughtRejectionsAsFailures = false;
       this.dumper.structuredLogger.info("TEST-START | Shutdown");
 
       if (this.tests.length) {
@@ -332,6 +342,8 @@ Tester.prototype = {
 
   nextTest: Task.async(function*() {
     if (this.currentTest) {
+      this.Promise.Debugging.flushUncaughtErrors();
+
       // Run cleanup functions for the current test before moving on to the
       // next one.
       let testScope = this.currentTest.scope;
@@ -344,6 +356,10 @@ Tester.prototype = {
           this.currentTest.addResult(new testResult(false, "Cleanup function threw an exception", ex, false));
         }
       };
+
+      if (testScope.__expected == 'fail' && testScope.__num_failed <= 0) {
+        this.currentTest.addResult(new testResult(false, "We expected at least one assertion to fail because this test file was marked as fail-if in the manifest", "", false));
+      }
 
       this.Promise.Debugging.flushUncaughtErrors();
 
@@ -563,7 +579,7 @@ Tester.prototype = {
     this.SimpleTest.reset();
 
     // Load the tests into a testscope
-    let currentScope = this.currentTest.scope = new testScope(this, this.currentTest);
+    let currentScope = this.currentTest.scope = new testScope(this, this.currentTest, this.currentTest.expected);
     let currentTest = this.currentTest;
 
     // Import utils in the test scope.
@@ -792,11 +808,20 @@ function testMessage(aName) {
 
 // Need to be careful adding properties to this object, since its properties
 // cannot conflict with global variables used in tests.
-function testScope(aTester, aTest) {
+function testScope(aTester, aTest, expected) {
   this.__tester = aTester;
+  this.__expected = expected;
+  this.__num_failed = 0;
 
   var self = this;
   this.ok = function test_ok(condition, name, diag, stack) {
+    if (this.__expected == 'fail') {
+        if (!condition) {
+          this.__num_failed++;
+          condition = true;
+        }
+    }
+
     aTest.addResult(new testResult(condition, name, diag, false,
                                    stack ? stack : Components.stack.caller));
   };
@@ -897,6 +922,13 @@ function testScope(aTester, aTest) {
     self.SimpleTest.ignoreAllUncaughtExceptions(aIgnoring);
   };
 
+  this.thisTestLeaksUncaughtRejectionsAndShouldBeFixed = function(...rejections) {
+    if (!aTester._toleratedUncaughtRejections) {
+      aTester._toleratedUncaughtRejections = [];
+    }
+    aTester._toleratedUncaughtRejections.push(...rejections);
+  };
+
   this.expectAssertions = function test_expectAssertions(aMin, aMax) {
     let min = aMin;
     let max = aMax;
@@ -909,6 +941,10 @@ function testScope(aTester, aTest) {
     }
     self.__expectedMinAsserts = min;
     self.__expectedMaxAsserts = max;
+  };
+
+  this.setExpected = function test_setExpected() {
+    self.__expected = 'fail';
   };
 
   this.finish = function test_finish() {
@@ -940,6 +976,7 @@ testScope.prototype = {
   __timeoutFactor: 1,
   __expectedMinAsserts: 0,
   __expectedMaxAsserts: 0,
+  __expected: 'pass',
 
   EventUtils: {},
   SimpleTest: {},

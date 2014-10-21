@@ -662,6 +662,7 @@ static const uint32_t AsmJSFrameBytesAfterReturnAddress = sizeof(void*);
 // A hoisting of constants that would otherwise require #including AsmJSModule.h
 // everywhere. Values are asserted in AsmJSModule.h.
 static const unsigned AsmJSActivationGlobalDataOffset = 0;
+static const unsigned AsmJSHeapGlobalDataOffset = sizeof(void*);
 static const unsigned AsmJSNaN64GlobalDataOffset = 2 * sizeof(void*);
 static const unsigned AsmJSNaN32GlobalDataOffset = 2 * sizeof(void*) + sizeof(double);
 
@@ -766,6 +767,7 @@ enum AsmJSImmKind
     AsmJSImm_RuntimeInterrupt,
     AsmJSImm_StackLimit,
     AsmJSImm_ReportOverRecursed,
+    AsmJSImm_OnDetached,
     AsmJSImm_HandleExecutionInterrupt,
     AsmJSImm_InvokeFromAsmJS_Ignore,
     AsmJSImm_InvokeFromAsmJS_ToInt32,
@@ -865,6 +867,8 @@ class AssemblerShared
     void append(AsmJSAbsoluteLink link) { enoughMemory_ &= asmJSAbsoluteLinks_.append(link); }
     size_t numAsmJSAbsoluteLinks() const { return asmJSAbsoluteLinks_.length(); }
     AsmJSAbsoluteLink asmJSAbsoluteLink(size_t i) const { return asmJSAbsoluteLinks_[i]; }
+
+    static bool canUseInSingleByteInstruction(Register reg) { return true; }
 };
 
 } // namespace jit

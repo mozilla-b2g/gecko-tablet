@@ -1414,10 +1414,6 @@ class AssemblerX86Shared : public AssemblerShared
         masm.divl_r(divisor.code());
     }
 
-    void unpcklps(FloatRegister src, FloatRegister dest) {
-        MOZ_ASSERT(HasSSE2());
-        masm.unpcklps_rr(src.code(), dest.code());
-    }
     void pinsrd(unsigned lane, Register src, FloatRegister dest) {
         MOZ_ASSERT(HasSSE41());
         masm.pinsrd_irr(lane, src.code(), dest.code());
@@ -1595,6 +1591,54 @@ class AssemblerX86Shared : public AssemblerShared
             break;
           case Operand::MEM_ADDRESS32:
             masm.cmpps_mr(src.address(), dest.code(), order);
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void rcpps(const Operand &src, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src.kind()) {
+          case Operand::FPREG:
+            masm.rcpps_rr(src.fpu(), dest.code());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.rcpps_mr(src.disp(), src.base(), dest.code());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.rcpps_mr(src.address(), dest.code());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void sqrtps(const Operand &src, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src.kind()) {
+          case Operand::FPREG:
+            masm.sqrtps_rr(src.fpu(), dest.code());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.sqrtps_mr(src.disp(), src.base(), dest.code());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.sqrtps_mr(src.address(), dest.code());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void rsqrtps(const Operand &src, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src.kind()) {
+          case Operand::FPREG:
+            masm.rsqrtps_rr(src.fpu(), dest.code());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.rsqrtps_mr(src.disp(), src.base(), dest.code());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.rsqrtps_mr(src.address(), dest.code());
             break;
           default:
             MOZ_CRASH("unexpected operand kind");
@@ -1812,9 +1856,37 @@ class AssemblerX86Shared : public AssemblerShared
         MOZ_ASSERT(HasSSE2());
         masm.movhlps_rr(src.code(), dest.code());
     }
+    void movlhps(FloatRegister src, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        masm.movlhps_rr(src.code(), dest.code());
+    }
+    void unpcklps(FloatRegister src, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        masm.unpcklps_rr(src.code(), dest.code());
+    }
+    void unpckhps(FloatRegister src, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        masm.unpckhps_rr(src.code(), dest.code());
+    }
     void shufps(uint32_t mask, FloatRegister src, FloatRegister dest) {
         MOZ_ASSERT(HasSSE2());
         masm.shufps_irr(mask, src.code(), dest.code());
+    }
+    void shufps(uint32_t mask, const Operand &src, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src.kind()) {
+          case Operand::FPREG:
+            masm.shufps_irr(mask, src.fpu(), dest.code());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.shufps_imr(mask, src.disp(), src.base(), dest.code());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.shufps_imr(mask, src.address(), dest.code());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
     }
     void addsd(FloatRegister src, FloatRegister dest) {
         MOZ_ASSERT(HasSSE2());

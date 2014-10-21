@@ -3735,7 +3735,7 @@ ChooseScaleAndSetTransform(FrameLayerBuilder* aLayerBuilder,
   nsIntPoint offset;
 
   Matrix4x4 transform =
-    Matrix4x4().Scale(aIncomingScale.mXScale, aIncomingScale.mYScale, 1.0);
+    Matrix4x4::Scaling(aIncomingScale.mXScale, aIncomingScale.mYScale, 1.0);
   if (aTransform) {
     // aTransform is applied first, then the scale is applied to the result
     transform = (*aTransform)*transform;
@@ -3764,7 +3764,9 @@ ChooseScaleAndSetTransform(FrameLayerBuilder* aLayerBuilder,
         NS_lround(NSAppUnitsToDoublePixels(appUnitOffset.x, appUnitsPerDevPixel)*aIncomingScale.mXScale),
         NS_lround(NSAppUnitsToDoublePixels(appUnitOffset.y, appUnitsPerDevPixel)*aIncomingScale.mYScale));
   }
-  transform = transform * Matrix4x4().Translate(offset.x + aIncomingScale.mOffset.x, offset.y + aIncomingScale.mOffset.y, 0);
+  transform.PostTranslate(offset.x + aIncomingScale.mOffset.x,
+                          offset.y + aIncomingScale.mOffset.y,
+                          0);
 
   if (transform.IsSingular()) {
     return false;
@@ -4137,7 +4139,7 @@ static gfxSize
 PredictScaleForContent(nsIFrame* aFrame, nsIFrame* aAncestorWithScale,
                        const gfxSize& aScale)
 {
-  Matrix4x4 transform = Matrix4x4().Scale(aScale.width, aScale.height, 1.0);
+  Matrix4x4 transform = Matrix4x4::Scaling(aScale.width, aScale.height, 1.0);
   if (aFrame != aAncestorWithScale) {
     // aTransform is applied first, then the scale is applied to the result
     transform = nsLayoutUtils::GetTransformToAncestor(aFrame, aAncestorWithScale)*transform;
@@ -4210,7 +4212,7 @@ static void DebugPaintItem(nsRenderingContext* aDest,
   nsRefPtr<gfxContext> context = new gfxContext(tempDT);
   context->SetMatrix(gfxMatrix::Translation(-gfxPoint(bounds.x, bounds.y)));
   nsRefPtr<nsRenderingContext> ctx = new nsRenderingContext();
-  ctx->Init(aDest->DeviceContext(), context);
+  ctx->Init(context);
 
   aItem->Paint(aBuilder, ctx);
   RefPtr<SourceSurface> surface = tempDT->Snapshot();
@@ -4477,7 +4479,7 @@ FrameLayerBuilder::DrawPaintedLayer(PaintedLayer* aLayer,
   }
 
   nsRefPtr<nsRenderingContext> rc = new nsRenderingContext();
-  rc->Init(presContext->DeviceContext(), aContext);
+  rc->Init(aContext);
 
   if (shouldDrawRectsSeparately) {
     nsIntRegionRectIterator it(aRegionToDraw);
@@ -4710,7 +4712,7 @@ ContainerState::SetupMaskLayer(Layer *aLayer,
 
   maskTransform.Invert();
   Matrix4x4 matrix = Matrix4x4::From2D(maskTransform);
-  matrix.Translate(mParameters.mOffset.x, mParameters.mOffset.y, 0);
+  matrix.PreTranslate(mParameters.mOffset.x, mParameters.mOffset.y, 0);
   maskLayer->SetBaseTransform(matrix);
 
   // save the details of the clip in user data

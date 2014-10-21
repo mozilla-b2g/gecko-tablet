@@ -259,34 +259,35 @@ TypeBarrierPolicy::adjustInputs(TempAllocator &alloc, MInstruction *def)
         return true;
     }
 
-    // Input is a value. Unbox the input to the requested type.
-    if (inputType == MIRType_Value) {
-        MOZ_ASSERT(outputType != MIRType_Value);
+    // Box input if needed.
+    if (inputType != MIRType_Value) {
+        MOZ_ASSERT(ins->alwaysBails());
+        ins->replaceOperand(0, boxAt(alloc, ins, ins->getOperand(0)));
+    }
 
-        // We can't unbox a value to null/undefined/lazyargs. So keep output
-        // also a value.
-        if (IsNullOrUndefined(outputType) || outputType == MIRType_MagicOptimizedArguments) {
-            MOZ_ASSERT(!ins->hasDefUses());
-            ins->setResultType(MIRType_Value);
-            return true;
-        }
-
-        MUnbox *unbox = MUnbox::New(alloc, ins->getOperand(0), outputType, MUnbox::TypeBarrier);
-        ins->block()->insertBefore(ins, unbox);
-
-        // The TypeBarrier is equivalent to removing branches with unexpected
-        // types.  The unexpected types would have changed Range Analysis
-        // predictions.  As such, we need to prevent destructive optimizations.
-        ins->block()->flagOperandsOfPrunedBranches(unbox);
-
-        ins->replaceOperand(0, unbox);
+    // We can't unbox a value to null/undefined/lazyargs. So keep output
+    // also a value.
+    // Note: Using setResultType shouldn't be done in TypePolicies,
+    //       Here it is fine, since the type barrier has no uses.
+    if (IsNullOrUndefined(outputType) || outputType == MIRType_MagicOptimizedArguments) {
+        MOZ_ASSERT(!ins->hasDefUses());
+        ins->setResultType(MIRType_Value);
         return true;
     }
 
-    // In the remaining cases we will alway bail. OutputType doesn't matter.
-    // Take inputType so we can use redefine during lowering.
-    MOZ_ASSERT(ins->alwaysBails());
-    ins->setResultType(inputType);
+    // Unbox / propagate the right type.
+    MUnbox::Mode mode = MUnbox::TypeBarrier;
+    MInstruction *replace = MUnbox::New(alloc, ins->getOperand(0), ins->type(), mode);
+
+    ins->block()->insertBefore(ins, replace);
+    ins->replaceOperand(0, replace);
+    if (!replace->typePolicy()->adjustInputs(alloc, replace))
+        return false;
+
+    // The TypeBarrier is equivalent to removing branches with unexpected
+    // types.  The unexpected types would have changed Range Analysis
+    // predictions.  As such, we need to prevent destructive optimizations.
+    ins->block()->flagOperandsOfPrunedBranches(replace);
 
     return true;
 }
@@ -502,6 +503,18 @@ template bool NoFloatPolicy<0>::staticAdjustInputs(TempAllocator &alloc, MInstru
 template bool NoFloatPolicy<1>::staticAdjustInputs(TempAllocator &alloc, MInstruction *def);
 template bool NoFloatPolicy<2>::staticAdjustInputs(TempAllocator &alloc, MInstruction *def);
 template bool NoFloatPolicy<3>::staticAdjustInputs(TempAllocator &alloc, MInstruction *def);
+
+template <unsigned FirstOp>
+bool
+NoFloatPolicyAfter<FirstOp>::adjustInputs(TempAllocator &alloc, MInstruction *def)
+{
+    for (size_t op = FirstOp, e = def->numOperands(); op < e; op++)
+        EnsureOperandNotFloat32(alloc, def, op);
+    return true;
+}
+
+template bool NoFloatPolicyAfter<1>::adjustInputs(TempAllocator &alloc, MInstruction *def);
+template bool NoFloatPolicyAfter<2>::adjustInputs(TempAllocator &alloc, MInstruction *def);
 
 template <unsigned Op>
 bool
@@ -851,29 +864,52 @@ bool
 FilterTypeSetPolicy::adjustInputs(TempAllocator &alloc, MInstruction *ins)
 {
     MOZ_ASSERT(ins->numOperands() == 1);
+    MIRType inputType = ins->getOperand(0)->type();
+    MIRType outputType = ins->type();
 
-    // Do nothing if already same type.
-    if (ins->type() == ins->getOperand(0)->type())
+    // Input and output type are already in accordance.
+    if (inputType == outputType)
         return true;
 
-    // Box input if ouput type is MIRType_Value
-    if (ins->type() == MIRType_Value) {
+    // Output is a value, box the input.
+    if (outputType == MIRType_Value) {
+        MOZ_ASSERT(inputType != MIRType_Value);
         ins->replaceOperand(0, boxAt(alloc, ins, ins->getOperand(0)));
         return true;
     }
 
-    // For simplicity just mark output type as MIRType_Value if input type
-    // is MIRType_Value. It should be possible to unbox, but we need to
-    // add extra code for Undefined/Null.
-    if (ins->getOperand(0)->type() == MIRType_Value) {
+    // The outputType should be a subset of the inputType else we are in code
+    // that has never executed yet. Bail to see the new type (if that hasn't
+    // happened yet).
+    if (inputType != MIRType_Value) {
+        MBail *bail = MBail::New(alloc);
+        ins->block()->insertBefore(ins, bail);
+        bail->setDependency(ins->dependency());
+        ins->setDependency(bail);
+        ins->replaceOperand(0, boxAt(alloc, ins, ins->getOperand(0)));
+    }
+
+    // We can't unbox a value to null/undefined/lazyargs. So keep output
+    // also a value.
+    // Note: Using setResultType shouldn't be done in TypePolicies,
+    //       Here it is fine, since the type barrier has no uses.
+    if (IsNullOrUndefined(outputType) || outputType == MIRType_MagicOptimizedArguments) {
+        MOZ_ASSERT(!ins->hasDefUses());
         ins->setResultType(MIRType_Value);
         return true;
     }
 
-    // In all other cases we will definitely bail, since types don't
-    // correspond. Just box and mark output as MIRType_Value.
-    ins->replaceOperand(0, boxAt(alloc, ins, ins->getOperand(0)));
-    ins->setResultType(MIRType_Value);
+    // Unbox / propagate the right type.
+    MUnbox::Mode mode = MUnbox::Infallible;
+    MInstruction *replace = MUnbox::New(alloc, ins->getOperand(0), ins->type(), mode);
+
+    ins->block()->insertBefore(ins, replace);
+    ins->replaceOperand(0, replace);
+    if (!replace->typePolicy()->adjustInputs(alloc, replace))
+        return false;
+
+    // Carry over the dependency the MFilterTypeSet had.
+    replace->setDependency(ins->dependency());
 
     return true;
 }
@@ -932,6 +968,8 @@ FilterTypeSetPolicy::adjustInputs(TempAllocator &alloc, MInstruction *ins)
     _(MixPolicy<StringPolicy<0>, IntPolicy<1> >)                        \
     _(MixPolicy<StringPolicy<0>, StringPolicy<1> >)                     \
     _(NoFloatPolicy<0>)                                                 \
+    _(NoFloatPolicyAfter<1>)                                            \
+    _(NoFloatPolicyAfter<2>)                                            \
     _(ObjectPolicy<0>)                                                  \
     _(ObjectPolicy<1>)                                                  \
     _(ObjectPolicy<3>)                                                  \

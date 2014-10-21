@@ -1154,9 +1154,9 @@ void MediaDecoderStateMachine::StartPlayback()
   SetPlayStartTime(TimeStamp::Now());
 
   NS_ASSERTION(IsPlaying(), "Should report playing by end of StartPlayback()");
-  if (NS_FAILED(StartAudioThread())) {
-    DECODER_WARN("Failed to create audio thread");
-  }
+  nsresult rv = StartAudioThread();
+  NS_ENSURE_SUCCESS_VOID(rv);
+
   mDecoder->GetReentrantMonitor().NotifyAll();
   mDecoder->UpdateStreamBlockingForStateMachinePlaying();
   DispatchDecodeTasksIfNeeded();
@@ -1421,11 +1421,21 @@ void MediaDecoderStateMachine::StartWaitForResources()
 void MediaDecoderStateMachine::NotifyWaitingForResourcesStatusChanged()
 {
   AssertCurrentThreadInMonitor();
-  if (mState != DECODER_STATE_WAIT_FOR_RESOURCES ||
-      mReader->IsWaitingMediaResources()) {
+  DECODER_LOG("NotifyWaitingForResourcesStatusChanged");
+  RefPtr<nsIRunnable> task(
+    NS_NewRunnableMethod(this,
+      &MediaDecoderStateMachine::DoNotifyWaitingForResourcesStatusChanged));
+  mDecodeTaskQueue->Dispatch(task);
+}
+
+void MediaDecoderStateMachine::DoNotifyWaitingForResourcesStatusChanged()
+{
+  NS_ASSERTION(OnDecodeThread(), "Should be on decode thread.");
+  ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
+  if (mState != DECODER_STATE_WAIT_FOR_RESOURCES) {
     return;
   }
-  DECODER_LOG("NotifyWaitingForResourcesStatusChanged");
+  DECODER_LOG("DoNotifyWaitingForResourcesStatusChanged");
   // The reader is no longer waiting for resources (say a hardware decoder),
   // we can now proceed to decode metadata.
   SetState(DECODER_STATE_DECODING_NONE);
@@ -1791,15 +1801,12 @@ MediaDecoderStateMachine::StartAudioThread()
   mStopAudioThread = false;
   if (HasAudio() && !mAudioSink) {
     mAudioCompleted = false;
-    mAudioSink = new AudioSink(this,
-                               mAudioStartTime, mInfo.mAudio, mDecoder->GetAudioChannel());
+    mAudioSink = new AudioSink(this, mAudioStartTime,
+                               mInfo.mAudio, mDecoder->GetAudioChannel());
+    // OnAudioSinkError() will be called before Init() returns if an error
+    // occurs during initialization.
     nsresult rv = mAudioSink->Init();
-    if (NS_FAILED(rv)) {
-      DECODER_WARN("Changed state to SHUTDOWN because audio sink initialization failed");
-      SetState(DECODER_STATE_SHUTDOWN);
-      mScheduler->ScheduleAndShutdown();
-      return rv;
-    }
+    NS_ENSURE_SUCCESS(rv, rv);
 
     mAudioSink->SetVolume(mVolume);
     mAudioSink->SetPlaybackRate(mPlaybackRate);
@@ -1912,6 +1919,8 @@ nsresult MediaDecoderStateMachine::DecodeMetadata()
   NS_ASSERTION(OnDecodeThread(), "Should be on decode thread.");
   MOZ_ASSERT(mState == DECODER_STATE_DECODING_METADATA);
   DECODER_LOG("Decoding Media Headers");
+
+  mReader->PreReadMetadata();
 
   if (mReader->IsWaitingMediaResources()) {
     StartWaitForResources();
@@ -2469,8 +2478,8 @@ nsresult MediaDecoderStateMachine::RunStateMachine()
       // will take care of calling MediaDecoder::PlaybackEnded.
       if (mDecoder->GetState() == MediaDecoder::PLAY_STATE_PLAYING &&
           !mDecoder->GetDecodedStream()) {
-        int64_t videoTime = HasVideo() ? mVideoFrameEndTime : 0;
-        int64_t clockTime = std::max(mEndTime, videoTime);
+        int64_t clockTime = std::max(mAudioEndTime, mVideoFrameEndTime);
+        clockTime = std::max(int64_t(0), std::max(clockTime, mEndTime));
         UpdatePlaybackPosition(clockTime);
 
         {
@@ -2698,7 +2707,8 @@ void MediaDecoderStateMachine::AdvanceFrame()
     // Filter out invalid frames by checking the frame time. FrameTime could be
     // zero if it's a initial frame.
     int64_t frameTime = currentFrame->mTime - mStartTime;
-    if (frameTime > 0  || (frameTime == 0 && mPlayDuration == 0)) {
+    if (frameTime > 0  || (frameTime == 0 && mPlayDuration == 0) ||
+        mScheduler->IsRealTime()) {
       ReentrantMonitorAutoExit exitMon(mDecoder->GetReentrantMonitor());
       // If we have video, we want to increment the clock in steps of the frame
       // duration.
@@ -3122,6 +3132,31 @@ void MediaDecoderStateMachine::OnAudioSinkComplete()
   UpdateReadyState();
   // Kick the decode thread; it may be sleeping waiting for this to finish.
   mDecoder->GetReentrantMonitor().NotifyAll();
+}
+
+void MediaDecoderStateMachine::OnAudioSinkError()
+{
+  AssertCurrentThreadInMonitor();
+  // AudioSink not used with captured streams, so ignore errors in this case.
+  if (mAudioCaptured) {
+    return;
+  }
+
+  mAudioCompleted = true;
+
+  // Make the best effort to continue playback when there is video.
+  if (HasVideo()) {
+    return;
+  }
+
+  // Otherwise notify media decoder/element about this error for it makes
+  // no sense to play an audio-only file without sound output.
+  RefPtr<nsIRunnable> task(
+    NS_NewRunnableMethod(this, &MediaDecoderStateMachine::OnDecodeError));
+  nsresult rv = mDecodeTaskQueue->Dispatch(task);
+  if (NS_FAILED(rv)) {
+    DECODER_WARN("Failed to dispatch OnDecodeError");
+  }
 }
 
 } // namespace mozilla

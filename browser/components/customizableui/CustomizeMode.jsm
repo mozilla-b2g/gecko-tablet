@@ -17,6 +17,8 @@ const kPlaceholderClass = "panel-customization-placeholder";
 const kSkipSourceNodePref = "browser.uiCustomization.skipSourceNodeCheck";
 const kToolbarVisibilityBtn = "customization-toolbar-visibility-button";
 const kDrawInTitlebarPref = "browser.tabs.drawInTitlebar";
+const kDeveditionThemePref = "browser.devedition.theme.enabled";
+const kDeveditionButtonPref = "browser.devedition.theme.showCustomizeButton";
 const kMaxTransitionDurationMs = 2000;
 
 const kPanelItemContextMenu = "customizationPanelItemContextMenu";
@@ -62,11 +64,18 @@ function CustomizeMode(aWindow) {
   this.paletteEmptyNotice = this.document.getElementById("customization-empty");
   this.paletteSpacer = this.document.getElementById("customization-spacer");
   this.tipPanel = this.document.getElementById("customization-tipPanel");
+  let lwthemeButton = this.document.getElementById("customization-lwtheme-button");
+  if (Services.prefs.getCharPref("general.skins.selectedSkin") != "classic/1.0") {
+    lwthemeButton.setAttribute("hidden", "true");
+  }
 #ifdef CAN_DRAW_IN_TITLEBAR
   this._updateTitlebarButton();
   Services.prefs.addObserver(kDrawInTitlebarPref, this, false);
-  this.window.addEventListener("unload", this);
 #endif
+  this._updateDevEditionThemeButton();
+  Services.prefs.addObserver(kDeveditionButtonPref, this, false);
+  Services.prefs.addObserver(kDeveditionThemePref, this, false);
+  this.window.addEventListener("unload", this);
 };
 
 CustomizeMode.prototype = {
@@ -101,6 +110,8 @@ CustomizeMode.prototype = {
 #ifdef CAN_DRAW_IN_TITLEBAR
     Services.prefs.removeObserver(kDrawInTitlebarPref, this);
 #endif
+    Services.prefs.removeObserver(kDeveditionButtonPref, this);
+    Services.prefs.removeObserver(kDeveditionThemePref, this);
   },
 
   toggle: function() {
@@ -1279,7 +1290,14 @@ CustomizeMode.prototype = {
         let tbb = doc.createElement("toolbarbutton");
         tbb.theme = aTheme;
         tbb.setAttribute("label", aTheme.name);
-        tbb.setAttribute("image", aTheme.iconURL);
+        if (aDefaultTheme == aTheme) {
+          // The actual icon is set up so it looks nice in about:addons, but
+          // we'd like the version that's correct for the OS we're on, so we set
+          // an attribute that our styling will then use to display the icon.
+          tbb.setAttribute("defaulttheme", "true");
+        } else {
+          tbb.setAttribute("image", aTheme.iconURL);
+        }
         if (aTheme.description)
           tbb.setAttribute("tooltiptext", aTheme.description);
         tbb.setAttribute("tabindex", "0");
@@ -1371,6 +1389,7 @@ CustomizeMode.prototype = {
         element.previousSibling.remove();
       }
     }
+    aEvent.target.removeAttribute("height");
   },
 
   _onUIChange: function() {
@@ -1435,11 +1454,9 @@ CustomizeMode.prototype = {
           this.exit();
         }
         break;
-#ifdef CAN_DRAW_IN_TITLEBAR
       case "unload":
         this.uninit();
         break;
-#endif
     }
   },
 
@@ -1451,6 +1468,7 @@ CustomizeMode.prototype = {
 #ifdef CAN_DRAW_IN_TITLEBAR
         this._updateTitlebarButton();
 #endif
+        this._updateDevEditionThemeButton();
         break;
       case "lightweight-theme-window-updated":
         if (aSubject == this.window) {
@@ -1485,6 +1503,29 @@ CustomizeMode.prototype = {
     Services.prefs.setBoolPref(kDrawInTitlebarPref, !aShouldShowTitlebar);
   },
 #endif
+
+  _updateDevEditionThemeButton: function() {
+    let button = this.document.getElementById("customization-devedition-theme-button");
+
+    let themeEnabled = Services.prefs.getBoolPref(kDeveditionThemePref);
+    if (themeEnabled) {
+      button.setAttribute("checked", "true");
+    } else {
+      button.removeAttribute("checked");
+    }
+
+    let buttonVisible = Services.prefs.getBoolPref(kDeveditionButtonPref);
+    if (buttonVisible) {
+      button.removeAttribute("hidden");
+    } else {
+      button.setAttribute("hidden", "true");
+    }
+  },
+  toggleDevEditionTheme: function() {
+    let button = this.document.getElementById("customization-devedition-theme-button");
+    let preferenceValue = button.hasAttribute("checked");
+    Services.prefs.setBoolPref(kDeveditionThemePref, preferenceValue);
+  },
 
   _onDragStart: function(aEvent) {
     __dumpDragData(aEvent);
@@ -1864,8 +1905,14 @@ CustomizeMode.prototype = {
       aEvent.dataTransfer.mozGetDataAt(kDragDataTypePrefix + documentId, 0);
 
     let draggedWrapper = document.getElementById("wrapper-" + draggedItemId);
-    draggedWrapper.hidden = false;
-    draggedWrapper.removeAttribute("mousedown");
+
+    // DraggedWrapper might no longer available if a widget node is
+    // destroyed after starting (but before stopping) a drag.
+    if (draggedWrapper) {
+      draggedWrapper.hidden = false;
+      draggedWrapper.removeAttribute("mousedown");
+    }
+
     if (this._dragOverItem) {
       this._cancelDragActive(this._dragOverItem);
       this._dragOverItem = null;

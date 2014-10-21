@@ -31,7 +31,7 @@ ValueReadBarrier(const Value &value)
 
 #ifdef DEBUG
 bool
-HeapSlot::preconditionForSet(JSObject *owner, Kind kind, uint32_t slot)
+HeapSlot::preconditionForSet(NativeObject *owner, Kind kind, uint32_t slot)
 {
     return kind == Slot
          ? &owner->getSlotRef(slot) == this
@@ -39,7 +39,7 @@ HeapSlot::preconditionForSet(JSObject *owner, Kind kind, uint32_t slot)
 }
 
 bool
-HeapSlot::preconditionForSet(Zone *zone, JSObject *owner, Kind kind, uint32_t slot)
+HeapSlot::preconditionForSet(Zone *zone, NativeObject *owner, Kind kind, uint32_t slot)
 {
     bool ok = kind == Slot
             ? &owner->getSlotRef(slot) == this
@@ -48,7 +48,7 @@ HeapSlot::preconditionForSet(Zone *zone, JSObject *owner, Kind kind, uint32_t sl
 }
 
 bool
-HeapSlot::preconditionForWriteBarrierPost(JSObject *obj, Kind kind, uint32_t slot, Value target) const
+HeapSlot::preconditionForWriteBarrierPost(NativeObject *obj, Kind kind, uint32_t slot, Value target) const
 {
     return kind == Slot
          ? obj->getSlotAddressUnchecked(slot)->get() == target

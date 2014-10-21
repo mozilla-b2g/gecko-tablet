@@ -4,10 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifdef MOZ_LOGGING
-#define FORCE_PR_LOG
-#endif
-
 #include "nsSocketTransport2.h"
 
 #include "mozilla/Attributes.h"
@@ -1239,7 +1235,9 @@ nsSocketTransport::InitiateSocket()
                         netAddrCString.get()));
         }
 #endif
-        return NS_ERROR_CONNECTION_REFUSED;
+        mCondition = NS_ERROR_CONNECTION_REFUSED;
+        OnSocketDetached(nullptr);
+        return mCondition;
     }
 
     //
@@ -1355,6 +1353,18 @@ nsSocketTransport::InitiateSocket()
     // Initiate the connect() to the host...
     //
     PRNetAddr prAddr;
+    {
+        if (mBindAddr) {
+            MutexAutoLock lock(mLock);
+            NetAddrToPRNetAddr(mBindAddr.get(), &prAddr);
+            status = PR_Bind(fd, &prAddr);
+            if (status != PR_SUCCESS) {
+                return NS_ERROR_FAILURE;
+            }
+            mBindAddr = nullptr;
+        }
+    }
+
     NetAddrToPRNetAddr(&mNetAddr, &prAddr);
 
     MOZ_EVENT_TRACER_EXEC(this, "net::tcp::connect");
@@ -2219,6 +2229,22 @@ nsSocketTransport::GetSelfAddr(NetAddr *addr)
     PRNetAddrToNetAddr(&prAddr, addr);
 
     return rv;
+}
+
+NS_IMETHODIMP
+nsSocketTransport::Bind(NetAddr *aLocalAddr)
+{
+    NS_ENSURE_ARG(aLocalAddr);
+
+    MutexAutoLock lock(mLock);
+    if (mAttached) {
+        return NS_ERROR_FAILURE;
+    }
+
+    mBindAddr = new NetAddr();
+    memcpy(mBindAddr.get(), aLocalAddr, sizeof(NetAddr));
+
+    return NS_OK;
 }
 
 /* nsINetAddr getScriptablePeerAddr (); */

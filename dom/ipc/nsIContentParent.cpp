@@ -8,6 +8,7 @@
 
 #include "mozilla/AppProcessChecker.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/dom/File.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/PTabContext.h"
 #include "mozilla/dom/PermissionMessageUtils.h"
@@ -17,7 +18,6 @@
 #include "mozilla/unused.h"
 
 #include "JavaScriptParent.h"
-#include "nsDOMFile.h"
 #include "nsFrameMessageManager.h"
 #include "nsIJSRuntimeService.h"
 #include "nsPrintfCString.h"
@@ -151,12 +151,12 @@ nsIContentParent::DeallocPBlobParent(PBlobParent* aActor)
 }
 
 BlobParent*
-nsIContentParent::GetOrCreateActorForBlob(nsIDOMBlob* aBlob)
+nsIContentParent::GetOrCreateActorForBlob(File* aBlob)
 {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(aBlob);
 
-  nsRefPtr<DOMFileImpl> blobImpl = static_cast<DOMFile*>(aBlob)->Impl();
+  nsRefPtr<FileImpl> blobImpl = aBlob->Impl();
   MOZ_ASSERT(blobImpl);
 
   BlobParent* actor = BlobParent::GetOrCreate(this, blobImpl);
@@ -185,8 +185,7 @@ nsIContentParent::RecvSyncMessage(const nsString& aMsg,
   nsRefPtr<nsFrameMessageManager> ppm = mMessageManager;
   if (ppm) {
     StructuredCloneData cloneData = ipc::UnpackClonedMessageDataForParent(aData);
-    CpowIdHolder cpows(GetCPOWManager(), aCpows);
-
+    CpowIdHolder cpows(this, aCpows);
     ppm->ReceiveMessage(static_cast<nsIContentFrameMessageManager*>(ppm.get()),
                         aMsg, true, &cloneData, &cpows, aPrincipal, aRetvals);
   }
@@ -194,11 +193,11 @@ nsIContentParent::RecvSyncMessage(const nsString& aMsg,
 }
 
 bool
-nsIContentParent::AnswerRpcMessage(const nsString& aMsg,
-                                   const ClonedMessageData& aData,
-                                   const InfallibleTArray<CpowEntry>& aCpows,
-                                   const IPC::Principal& aPrincipal,
-                                   InfallibleTArray<nsString>* aRetvals)
+nsIContentParent::RecvRpcMessage(const nsString& aMsg,
+                                 const ClonedMessageData& aData,
+                                 const InfallibleTArray<CpowEntry>& aCpows,
+                                 const IPC::Principal& aPrincipal,
+                                 InfallibleTArray<nsString>* aRetvals)
 {
   // FIXME Permission check in Content process
   nsIPrincipal* principal = aPrincipal;
@@ -213,7 +212,7 @@ nsIContentParent::AnswerRpcMessage(const nsString& aMsg,
   nsRefPtr<nsFrameMessageManager> ppm = mMessageManager;
   if (ppm) {
     StructuredCloneData cloneData = ipc::UnpackClonedMessageDataForParent(aData);
-    CpowIdHolder cpows(GetCPOWManager(), aCpows);
+    CpowIdHolder cpows(this, aCpows);
     ppm->ReceiveMessage(static_cast<nsIContentFrameMessageManager*>(ppm.get()),
                         aMsg, true, &cloneData, &cpows, aPrincipal, aRetvals);
   }
@@ -239,7 +238,7 @@ nsIContentParent::RecvAsyncMessage(const nsString& aMsg,
   nsRefPtr<nsFrameMessageManager> ppm = mMessageManager;
   if (ppm) {
     StructuredCloneData cloneData = ipc::UnpackClonedMessageDataForParent(aData);
-    CpowIdHolder cpows(GetCPOWManager(), aCpows);
+    CpowIdHolder cpows(this, aCpows);
     ppm->ReceiveMessage(static_cast<nsIContentFrameMessageManager*>(ppm.get()),
                         aMsg, false, &cloneData, &cpows, aPrincipal, nullptr);
   }

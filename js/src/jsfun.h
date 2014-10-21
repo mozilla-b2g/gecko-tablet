@@ -25,7 +25,7 @@ typedef JSThreadSafeNative ThreadSafeNative;
 
 struct JSAtomState;
 
-class JSFunction : public JSObject
+class JSFunction : public js::NativeObject
 {
   public:
     static const js::Class class_;
@@ -461,7 +461,7 @@ class JSFunction : public JSObject
   public:
     inline bool isExtended() const {
         JS_STATIC_ASSERT(FinalizeKind != ExtendedFinalizeKind);
-        MOZ_ASSERT_IF(isTenured(), !!(flags() & EXTENDED) == (asTenured()->getAllocKind() == ExtendedFinalizeKind));
+        MOZ_ASSERT_IF(isTenured(), !!(flags() & EXTENDED) == (asTenured().getAllocKind() == ExtendedFinalizeKind));
         return !!(flags() & EXTENDED);
     }
 
@@ -484,7 +484,7 @@ class JSFunction : public JSObject
         js::gc::AllocKind kind = FinalizeKind;
         if (isExtended())
             kind = ExtendedFinalizeKind;
-        MOZ_ASSERT_IF(isTenured(), kind == asTenured()->getAllocKind());
+        MOZ_ASSERT_IF(isTenured(), kind == asTenured().getAllocKind());
         return kind;
     }
 };
@@ -520,6 +520,9 @@ NewFunctionWithProto(ExclusiveContext *cx, HandleObject funobj, JSNative native,
                      JSFunction::Flags flags, HandleObject parent, HandleAtom atom,
                      JSObject *proto, gc::AllocKind allocKind = JSFunction::FinalizeKind,
                      NewObjectKind newKind = GenericObject);
+
+extern JSAtom *
+IdToFunctionName(JSContext *cx, HandleId id);
 
 extern JSFunction *
 DefineFunction(JSContext *cx, HandleObject obj, HandleId id, JSNative native,
@@ -571,7 +574,6 @@ extern JSFunction *
 CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent,
                     gc::AllocKind kind = JSFunction::FinalizeKind,
                     NewObjectKind newKindArg = GenericObject);
-
 
 extern bool
 FindBody(JSContext *cx, HandleFunction fun, HandleLinearString src, size_t *bodyStart,
@@ -631,7 +633,7 @@ JSString *FunctionToString(JSContext *cx, HandleFunction fun, bool bodyOnly, boo
 template<XDRMode mode>
 bool
 XDRInterpretedFunction(XDRState<mode> *xdr, HandleObject enclosingScope,
-                       HandleScript enclosingScript, MutableHandleObject objp);
+                       HandleScript enclosingScript, MutableHandleFunction objp);
 
 extern JSObject *
 CloneFunctionAndScript(JSContext *cx, HandleObject enclosingScope, HandleFunction fun);
@@ -664,7 +666,7 @@ js_fun_apply(JSContext *cx, unsigned argc, js::Value *vp);
 extern bool
 js_fun_call(JSContext *cx, unsigned argc, js::Value *vp);
 
-extern JSObject*
+extern JSObject *
 js_fun_bind(JSContext *cx, js::HandleObject target, js::HandleValue thisArg,
             js::Value *boundArgs, unsigned argslen);
 

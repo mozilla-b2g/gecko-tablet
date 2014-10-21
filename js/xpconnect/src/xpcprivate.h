@@ -2968,8 +2968,7 @@ xpc_JSObjectIsID(JSContext *cx, JSObject* obj);
 // in XPCDebug.cpp
 
 extern bool
-xpc_DumpJSStack(JSContext* cx, bool showArgs, bool showLocals,
-                bool showThisProps);
+xpc_DumpJSStack(bool showArgs, bool showLocals, bool showThisProps);
 
 // Return a newly-allocated string containing a representation of the
 // current JS stack.  It is the *caller's* responsibility to free this
@@ -3389,6 +3388,8 @@ struct GlobalProperties {
     bool URLSearchParams : 1;
     bool atob : 1;
     bool btoa : 1;
+    bool Blob : 1;
+    bool File : 1;
 };
 
 // Infallible.
@@ -3621,6 +3622,13 @@ GetRTIdByIndex(JSContext *cx, unsigned index);
 
 namespace xpc {
 
+enum WrapperDenialType {
+    WrapperDenialForXray = 0,
+    WrapperDenialForCOW,
+    WrapperDenialTypeCount
+};
+bool ReportWrapperDenial(JSContext *cx, JS::HandleId id, WrapperDenialType type, const char *reason);
+
 class CompartmentPrivate
 {
 public:
@@ -3635,11 +3643,12 @@ public:
         , skipWriteToGlobalPrototype(false)
         , universalXPConnectEnabled(false)
         , forcePermissiveCOWs(false)
-        , warnedAboutXrays(false)
+        , skipCOWCallableChecks(false)
         , scriptability(c)
         , scope(nullptr)
     {
         MOZ_COUNT_CTOR(xpc::CompartmentPrivate);
+        mozilla::PodArrayZero(wrapperDenialWarnings);
     }
 
     ~CompartmentPrivate();
@@ -3687,9 +3696,13 @@ public:
     // Using it in production is inherently unsafe.
     bool forcePermissiveCOWs;
 
+    // Disables the XPConnect security checks that deny access to callables and
+    // accessor descriptors on COWs. Do not use this unless you are bholley.
+    bool skipCOWCallableChecks;
+
     // Whether we've emitted a warning about a property that was filtered out
-    // by XrayWrappers. See XrayWrapper.cpp.
-    bool warnedAboutXrays;
+    // by a security wrapper. See XrayWrapper.cpp.
+    bool wrapperDenialWarnings[WrapperDenialTypeCount];
 
     // The scriptability of this compartment.
     Scriptability scriptability;

@@ -14,17 +14,18 @@
 #include "jscntxt.h"
 #include "jsnum.h"
 #include "jsobj.h"
-#include "jsonparser.h"
 #include "jsstr.h"
 #include "jstypes.h"
 #include "jsutil.h"
 
 #include "vm/Interpreter.h"
+#include "vm/JSONParser.h"
 #include "vm/StringBuffer.h"
 
 #include "jsatominlines.h"
 #include "jsboolinlines.h"
-#include "jsobjinlines.h"
+
+#include "vm/NativeObject-inl.h"
 
 using namespace js;
 using namespace js::gc;
@@ -330,7 +331,7 @@ JO(JSContext *cx, HandleObject obj, StringifyContext *scx)
     } else {
         MOZ_ASSERT_IF(scx->replacer, scx->propertyList.length() == 0);
         ids.emplace(cx);
-        if (!GetPropertyNames(cx, obj, JSITER_OWNONLY, ids.ptr()))
+        if (!GetPropertyKeys(cx, obj, JSITER_OWNONLY, ids.ptr()))
             return false;
         props = ids.ptr();
     }
@@ -565,7 +566,7 @@ js_Stringify(JSContext *cx, MutableHandleValue vp, JSObject *replacer_, Value sp
             uint32_t len;
             JS_ALWAYS_TRUE(GetLengthProperty(cx, replacer, &len));
             if (replacer->is<ArrayObject>() && !replacer->isIndexed())
-                len = Min(len, replacer->getDenseInitializedLength());
+                len = Min(len, replacer->as<ArrayObject>().getDenseInitializedLength());
 
             // Cap the initial size to a moderately small value.  This avoids
             // ridiculous over-allocation if an array with bogusly-huge length
@@ -662,7 +663,7 @@ js_Stringify(JSContext *cx, MutableHandleValue vp, JSObject *replacer_, Value sp
     }
 
     /* Step 9. */
-    RootedObject wrapper(cx, NewBuiltinClassInstance(cx, &JSObject::class_));
+    RootedNativeObject wrapper(cx, NewNativeBuiltinClassInstance(cx, &JSObject::class_));
     if (!wrapper)
         return false;
 
@@ -732,7 +733,7 @@ Walk(JSContext *cx, HandleObject holder, HandleId name, HandleValue reviver, Mut
         } else {
             /* Step 2b(i). */
             AutoIdVector keys(cx);
-            if (!GetPropertyNames(cx, obj, JSITER_OWNONLY, &keys))
+            if (!GetPropertyKeys(cx, obj, JSITER_OWNONLY, &keys))
                 return false;
 
             /* Step 2b(ii). */

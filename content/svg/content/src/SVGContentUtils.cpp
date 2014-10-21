@@ -25,6 +25,7 @@
 #include "nsContentUtils.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/Types.h"
+#include "mozilla/FloatingPoint.h"
 #include "nsStyleContext.h"
 #include "nsSVGPathDataParser.h"
 #include "SVGPathData.h"
@@ -158,7 +159,8 @@ void
 SVGContentUtils::GetStrokeOptions(AutoStrokeOptions* aStrokeOptions,
                                   nsSVGElement* aElement,
                                   nsStyleContext* aStyleContext,
-                                  gfxTextContextPaint *aContextPaint)
+                                  gfxTextContextPaint *aContextPaint,
+                                  StrokeOptionFlags aFlags)
 {
   nsRefPtr<nsStyleContext> styleContext;
   if (aStyleContext) {
@@ -175,17 +177,19 @@ SVGContentUtils::GetStrokeOptions(AutoStrokeOptions* aStrokeOptions,
 
   const nsStyleSVG* styleSVG = styleContext->StyleSVG();
 
-  DashState dashState =
-    GetStrokeDashData(aStrokeOptions, aElement, styleSVG, aContextPaint);
+  if (aFlags != eIgnoreStrokeDashing) {
+    DashState dashState =
+      GetStrokeDashData(aStrokeOptions, aElement, styleSVG, aContextPaint);
 
-  if (dashState == eNoStroke) {
-    // Hopefully this will shortcircuit any stroke operations:
-    aStrokeOptions->mLineWidth = 0;
-    return;
-  }
-  if (dashState == eContinuousStroke && aStrokeOptions->mDashPattern) {
-    // Prevent our caller from wasting time looking at a pattern without gaps:
-    aStrokeOptions->DiscardDashPattern();
+    if (dashState == eNoStroke) {
+      // Hopefully this will shortcircuit any stroke operations:
+      aStrokeOptions->mLineWidth = 0;
+      return;
+    }
+    if (dashState == eContinuousStroke && aStrokeOptions->mDashPattern) {
+      // Prevent our caller from wasting time looking at a pattern without gaps:
+      aStrokeOptions->DiscardDashPattern();
+    }
   }
 
   aStrokeOptions->mLineWidth =
@@ -422,7 +426,7 @@ GetCTMInternal(nsSVGElement *aElement, bool aScreenCTM, bool aHaveRecursed)
 
   // XXX this does not take into account CSS transform, or that the non-SVG
   // content that we've hit may itself be inside an SVG foreignObject higher up
-  nsIDocument* currentDoc = aElement->GetCurrentDoc();
+  nsIDocument* currentDoc = aElement->GetComposedDoc();
   float x = 0.0f, y = 0.0f;
   if (currentDoc && element->NodeInfo()->Equals(nsGkAtoms::svg, kNameSpaceID_SVG)) {
     nsIPresShell *presShell = currentDoc->GetShell();
@@ -664,7 +668,7 @@ SVGContentUtils::ParseNumber(RangedPtr<const char16_t>& aIter,
     return false;
   }
   floatType floatValue = floatType(value);
-  if (!NS_finite(floatValue)) {
+  if (!IsFinite(floatValue)) {
     return false;
   }
   aValue = floatValue;

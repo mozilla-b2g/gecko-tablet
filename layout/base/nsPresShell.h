@@ -123,7 +123,8 @@ public:
 
   virtual void ClearFrameRefs(nsIFrame* aFrame) MOZ_OVERRIDE;
   virtual already_AddRefed<nsRenderingContext> CreateReferenceRenderingContext();
-  virtual nsresult GoToAnchor(const nsAString& aAnchorName, bool aScroll) MOZ_OVERRIDE;
+  virtual nsresult GoToAnchor(const nsAString& aAnchorName, bool aScroll,
+                              uint32_t aAdditionalScrollFlags = 0) MOZ_OVERRIDE;
   virtual nsresult ScrollToAnchor() MOZ_OVERRIDE;
 
   virtual nsresult ScrollContentIntoView(nsIContent* aContent,
@@ -777,12 +778,6 @@ protected:
   // or all frames are constructed, we won't paint anything but
   // our <body> background and scrollbars.
   nsCOMPtr<nsITimer>        mPaintSuppressionTimer;
-
-  // At least on Win32 and Mac after interupting a reflow we need to post
-  // the resume reflow event off a timer to avoid event starvation because
-  // posted messages are processed before other messages when the modal
-  // moving/sizing loop is running, see bug 491700 for details.
-  nsCOMPtr<nsITimer>        mReflowContinueTimer;
 
   nsCOMPtr<nsITimer>        mDelayedPaintTimer;
 

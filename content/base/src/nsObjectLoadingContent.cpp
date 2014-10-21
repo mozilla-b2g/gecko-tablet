@@ -65,8 +65,6 @@
 #include "nsObjectLoadingContent.h"
 #include "mozAutoDocUpdate.h"
 #include "nsIContentSecurityPolicy.h"
-#include "nsIChannelPolicy.h"
-#include "nsChannelPolicy.h"
 #include "GeckoProfiler.h"
 #include "nsPluginFrame.h"
 #include "nsDOMClassInfo.h"
@@ -209,9 +207,9 @@ CheckPluginStopEvent::Run()
   // In an active document, but still no frame. Flush layout to see if we can
   // regain a frame now.
   LOG(("OBJLC [%p]: CheckPluginStopEvent - No frame, flushing layout", this));
-  nsIDocument* currentDoc = content->GetCurrentDoc();
-  if (currentDoc) {
-    currentDoc->FlushPendingNotifications(Flush_Layout);
+  nsIDocument* composedDoc = content->GetComposedDoc();
+  if (composedDoc) {
+    composedDoc->FlushPendingNotifications(Flush_Layout);
     if (objLC->mPendingCheckPluginStopEvent != this) {
       LOG(("OBJLC [%p]: CheckPluginStopEvent - superseded in layout flush",
            this));
@@ -239,7 +237,7 @@ class nsSimplePluginEvent : public nsRunnable {
 public:
   nsSimplePluginEvent(nsIContent* aTarget, const nsAString &aEvent)
     : mTarget(aTarget)
-    , mDocument(aTarget->GetCurrentDoc())
+    , mDocument(aTarget->GetComposedDoc())
     , mEvent(aEvent)
   {
     MOZ_ASSERT(aTarget && mDocument);
@@ -661,7 +659,7 @@ nsObjectLoadingContent::IsSupportedDocument(const nsCString& aMimeType)
   }
 
   nsCOMPtr<nsIWebNavigation> webNav;
-  nsIDocument* currentDoc = thisContent->GetCurrentDoc();
+  nsIDocument* currentDoc = thisContent->GetComposedDoc();
   if (currentDoc) {
     webNav = do_GetInterface(currentDoc->GetWindow());
   }
@@ -730,7 +728,7 @@ nsObjectLoadingContent::UnbindFromTree(bool aDeep, bool aNullParent)
     ///             would keep the docshell around, but trash the frameloader
     UnloadObject();
   }
-  nsIDocument* doc = thisContent->GetCurrentDoc();
+  nsIDocument* doc = thisContent->GetComposedDoc();
   if (doc && doc->IsActive()) {
     nsCOMPtr<nsIRunnable> ev = new nsSimplePluginEvent(doc,
                                                        NS_LITERAL_STRING("PluginRemoved"));
@@ -786,7 +784,7 @@ nsObjectLoadingContent::InstantiatePluginInstance(bool aIsLoading)
   nsCOMPtr<nsIContent> thisContent =
     do_QueryInterface(static_cast<nsIImageLoadingContent *>(this));
 
-  nsCOMPtr<nsIDocument> doc = thisContent->GetCurrentDoc();
+  nsCOMPtr<nsIDocument> doc = thisContent->GetComposedDoc();
   if (!doc || !InActiveDocument(thisContent)) {
     NS_ERROR("Shouldn't be calling "
              "InstantiatePluginInstance without an active document");
@@ -1178,8 +1176,8 @@ nsObjectLoadingContent::OnStopRequest(nsIRequest *aRequest,
   if (aStatusCode == NS_ERROR_TRACKING_URI) {
     nsCOMPtr<nsIContent> thisNode =
       do_QueryInterface(static_cast<nsIObjectLoadingContent*>(this));
-    if (thisNode) {
-      thisNode->GetCurrentDoc()->AddBlockedTrackingNode(thisNode);
+    if (thisNode && thisNode->IsInComposedDoc()) {
+      thisNode->GetComposedDoc()->AddBlockedTrackingNode(thisNode);
     }
   }
 
@@ -2492,15 +2490,6 @@ nsObjectLoadingContent::OpenChannel()
 
   nsCOMPtr<nsILoadGroup> group = doc->GetDocumentLoadGroup();
   nsCOMPtr<nsIChannel> chan;
-  nsCOMPtr<nsIChannelPolicy> channelPolicy;
-  nsCOMPtr<nsIContentSecurityPolicy> csp;
-  rv = doc->NodePrincipal()->GetCsp(getter_AddRefs(csp));
-  NS_ENSURE_SUCCESS(rv, rv);
-  if (csp) {
-    channelPolicy = do_CreateInstance("@mozilla.org/nschannelpolicy;1");
-    channelPolicy->SetContentSecurityPolicy(csp);
-    channelPolicy->SetLoadType(nsIContentPolicy::TYPE_OBJECT);
-  }
   nsRefPtr<ObjectInterfaceRequestorShim> shim =
     new ObjectInterfaceRequestorShim(this);
 
@@ -2522,7 +2511,6 @@ nsObjectLoadingContent::OpenChannel()
                      thisContent,
                      securityFlags,
                      nsIContentPolicy::TYPE_OBJECT,
-                     channelPolicy,
                      group, // aLoadGroup
                      shim,  // aCallbacks
                      nsIChannel::LOAD_CALL_CONTENT_SNIFFERS |
@@ -2660,7 +2648,7 @@ nsObjectLoadingContent::NotifyStateChanged(ObjectType aOldType,
     return;
   }
 
-  nsIDocument* doc = thisContent->GetCurrentDoc();
+  nsIDocument* doc = thisContent->GetComposedDoc();
   if (!doc) {
     return; // Nothing to do
   }
@@ -3349,7 +3337,7 @@ nsObjectLoadingContent::GetContentDocument()
     return nullptr;
   }
 
-  // XXXbz should this use GetCurrentDoc()?  sXBL/XBL2 issue!
+  // XXXbz should this use GetComposedDoc()?  sXBL/XBL2 issue!
   nsIDocument *sub_doc = thisContent->OwnerDoc()->GetSubDocumentFor(thisContent);
   if (!sub_doc) {
     return nullptr;
@@ -3451,9 +3439,6 @@ void
 nsObjectLoadingContent::SetupProtoChain(JSContext* aCx,
                                         JS::Handle<JSObject*> aObject)
 {
-  MOZ_ASSERT(nsCOMPtr<nsIContent>(do_QueryInterface(
-    static_cast<nsIObjectLoadingContent*>(this)))->IsDOMBinding());
-
   if (mType != eType_Plugin) {
     return;
   }

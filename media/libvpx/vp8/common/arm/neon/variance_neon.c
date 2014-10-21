@@ -9,7 +9,10 @@
  */
 
 #include <arm_neon.h>
-#include "vpx_ports/mem.h"
+
+#ifdef _MSC_VER
+#define __builtin_prefetch(x)
+#endif
 
 unsigned int vp8_variance16x16_neon(
         const unsigned char *src_ptr,

@@ -929,8 +929,12 @@ function rregexp_m_literal_replace(i) {
 
 var uceFault_typeof = eval(uneval(uceFault).replace('uceFault', 'uceFault_typeof'))
 function rtypeof(i) {
-    var inputs = [ {}, [], 1, true, Symbol(), undefined, function(){}, null ];
-    var types = [ "object", "object", "number", "boolean", "symbol", "undefined", "function", "object"];
+    var inputs = [ {}, [], 1, true, undefined, function(){}, null ];
+    var types = [ "object", "object", "number", "boolean", "undefined", "function", "object"];
+    if (typeof Symbol === "function") {
+      inputs.push(Symbol());
+      types.push("symbol");
+    }
     var x = typeof (inputs[i % inputs.length]);
     var y = types[i % types.length];
 
@@ -938,6 +942,25 @@ function rtypeof(i) {
         assertEq(x, y);
     }
 
+    return i;
+}
+
+var uceFault_tofloat32_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_tofloat32_number'));
+function rtofloat32_number(i) {
+    var x = Math.fround(i + 0.1111111111);
+    if (uceFault_tofloat32_number(i) || uceFault_tofloat32_number(i))
+        assertEq(x, Math.fround(99.1111111111));
+    return i;
+}
+
+var uceFault_tofloat32_object = eval(uneval(uceFault).replace('uceFault', 'uceFault_tofloat32_object'));
+function rtofloat32_object(i) {
+    var t = i + 0.1111111111;
+    var o = { valueOf: function () { return t; } };
+    var x = Math.fround(o);
+    t = 1000.1111111111;
+    if (uceFault_tofloat32_object(i) || uceFault_tofloat32_object(i))
+        assertEq(x, Math.fround(99.1111111111));
     return i;
 }
 
@@ -1032,6 +1055,8 @@ for (i = 0; i < 100; i++) {
     rregexp_m_replace(i);
     rregexp_m_literal_replace(i);
     rtypeof(i);
+    rtofloat32_number(i);
+    rtofloat32_object(i);
 }
 
 // Test that we can refer multiple time to the same recover instruction, as well

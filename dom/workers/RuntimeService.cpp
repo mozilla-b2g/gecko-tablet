@@ -23,7 +23,6 @@
 #include <algorithm>
 #include "BackgroundChild.h"
 #include "GeckoProfiler.h"
-#include "js/OldDebugAPI.h"
 #include "jsfriendapi.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/CycleCollectedJSRuntime.h"
@@ -175,9 +174,6 @@ uint32_t gMaxWorkersPerDomain = MAX_WORKERS_PER_DOMAIN;
 // Does not hold an owning reference.
 RuntimeService* gRuntimeService = nullptr;
 
-// Only non-null during the call to Init.
-RuntimeService* gRuntimeServiceDuringInit = nullptr;
-
 #ifdef ENABLE_TESTS
 bool gTestPBackground = false;
 #endif // ENABLE_TESTS
@@ -191,23 +187,6 @@ enum {
 
   ID_COUNT
 };
-
-// These are jsids for the main runtime. Only touched on the main thread.
-jsid gStringIDs[ID_COUNT] = { JSID_VOID };
-
-const char* gStringChars[] = {
-  "Worker",
-  "ChromeWorker",
-  "Event",
-  "MessageEvent",
-  "ErrorEvent"
-
-  // XXX Don't care about ProgressEvent since it should never leak to the main
-  // thread.
-};
-
-static_assert(MOZ_ARRAY_LENGTH(gStringChars) == ID_COUNT,
-              "gStringChars should have the right length.");
 
 class LiteralRebindingCString : public nsDependentCString
 {
@@ -327,7 +306,7 @@ LoadRuntimeOptions(const char* aPrefName, void* /* aClosure */)
   AssertIsOnMainThread();
 
   RuntimeService* rts = RuntimeService::GetService();
-  if (!rts && !gRuntimeServiceDuringInit) {
+  if (!rts) {
     // May be shutting down, just bail.
     return;
   }
@@ -388,7 +367,7 @@ LoadGCZealOptions(const char* /* aPrefName */, void* /* aClosure */)
   AssertIsOnMainThread();
 
   RuntimeService* rts = RuntimeService::GetService();
-  if (!rts && !gRuntimeServiceDuringInit) {
+  if (!rts) {
     // May be shutting down, just bail.
     return;
   }
@@ -451,7 +430,7 @@ LoadJSGCMemoryOptions(const char* aPrefName, void* /* aClosure */)
 
   RuntimeService* rts = RuntimeService::GetService();
 
-  if (!rts && !gRuntimeServiceDuringInit) {
+  if (!rts) {
     // May be shutting down, just bail.
     return;
   }
@@ -846,6 +825,16 @@ CreateJSContextForWorker(WorkerPrivate* aWorkerPrivate, JSRuntime* aRuntime)
   return workerCx;
 }
 
+static bool
+PreserveWrapper(JSContext *cx, JSObject *obj)
+{
+    MOZ_ASSERT(cx);
+    MOZ_ASSERT(obj);
+    MOZ_ASSERT(mozilla::dom::IsDOMObject(obj));
+
+    return mozilla::dom::TryPreserveWrapper(obj);
+}
+
 class WorkerJSRuntime : public mozilla::CycleCollectedJSRuntime
 {
 public:
@@ -857,6 +846,7 @@ public:
                               WORKER_DEFAULT_NURSERY_SIZE),
     mWorkerPrivate(aWorkerPrivate)
   {
+    js::SetPreserveWrapperCallback(Runtime(), PreserveWrapper);
     JS_InitDestroyPrincipalsCallback(Runtime(), DestroyWorkerPrincipals);
   }
 
@@ -1215,55 +1205,6 @@ NS_IMPL_ISUPPORTS(RuntimeService::WorkerThread::TestPBackgroundCreateCallback,
 
 BEGIN_WORKERS_NAMESPACE
 
-// Entry point for main thread non-window globals.
-bool
-ResolveWorkerClasses(JSContext* aCx, JS::Handle<JSObject*> aObj, JS::Handle<jsid> aId,
-                     JS::MutableHandle<JSObject*> aObjp)
-{
-  AssertIsOnMainThread();
-  MOZ_ASSERT(nsContentUtils::IsCallerChrome());
-
-  // Make sure our strings are interned.
-  if (JSID_IS_VOID(gStringIDs[0])) {
-    for (uint32_t i = 0; i < ID_COUNT; i++) {
-      JSString* str = JS_InternString(aCx, gStringChars[i]);
-      if (!str) {
-        while (i) {
-          gStringIDs[--i] = JSID_VOID;
-        }
-        return false;
-      }
-      gStringIDs[i] = INTERNED_STRING_TO_JSID(aCx, str);
-    }
-  }
-
-  // Invoking this function with JSID_VOID means "always resolve".
-  bool shouldResolve = JSID_IS_VOID(aId);
-  if (!shouldResolve) {
-    for (uint32_t i = 0; i < ID_COUNT; i++) {
-      if (gStringIDs[i] == aId) {
-        shouldResolve = true;
-        break;
-      }
-    }
-  }
-
-  if (!shouldResolve) {
-    aObjp.set(nullptr);
-    return true;
-  }
-
-  if (!WorkerBinding::GetConstructorObject(aCx, aObj) ||
-      !ChromeWorkerBinding::GetConstructorObject(aCx, aObj) ||
-      !ErrorEventBinding::GetConstructorObject(aCx, aObj) ||
-      !MessageEventBinding::GetConstructorObject(aCx, aObj)) {
-    return false;
-  }
-
-  aObjp.set(aObj);
-  return true;
-}
-
 void
 CancelWorkersForWindow(nsPIDOMWindow* aWindow)
 {
@@ -1398,19 +1339,18 @@ RuntimeService::GetOrCreateService()
   AssertIsOnMainThread();
 
   if (!gRuntimeService) {
-    nsRefPtr<RuntimeService> service = new RuntimeService();
-    if (NS_FAILED(service->Init())) {
+    // The observer service now owns us until shutdown.
+    gRuntimeService = new RuntimeService();
+    if (NS_FAILED(gRuntimeService->Init())) {
       NS_WARNING("Failed to initialize!");
-      service->Cleanup();
+      gRuntimeService->Cleanup();
+      gRuntimeService = nullptr;
       return nullptr;
     }
 
 #ifdef ENABLE_TESTS
     gTestPBackground = mozilla::Preferences::GetBool("pbackground.testing", false);
 #endif // ENABLE_TESTS
-
-    // The observer service now owns us until shutdown.
-    gRuntimeService = service;
   }
 
   return gRuntimeService;
@@ -1825,9 +1765,6 @@ RuntimeService::Init()
     NS_WARNING("Failed to register for offline notification event!");
   }
 
-  NS_ASSERTION(!gRuntimeServiceDuringInit, "This should be null!");
-  gRuntimeServiceDuringInit = this;
-
   if (NS_FAILED(Preferences::RegisterCallback(
                                  LoadJSGCMemoryOptions,
                                  PREF_JS_OPTIONS_PREFIX PREF_MEM_OPTIONS_PREFIX,
@@ -1884,9 +1821,6 @@ RuntimeService::Init()
                                                  nullptr))) {
     NS_WARNING("Failed to register pref callbacks!");
   }
-
-  NS_ASSERTION(gRuntimeServiceDuringInit == this, "Should be 'this'!");
-  gRuntimeServiceDuringInit = nullptr;
 
   // We assume atomic 32bit reads/writes. If this assumption doesn't hold on
   // some wacky platform then the worst that could happen is that the close
@@ -2598,6 +2532,12 @@ RuntimeService::Observe(nsISupports* aSubject, const char* aTopic,
   }
   if (!strcmp(aTopic, NS_IOSERVICE_OFFLINE_STATUS_TOPIC)) {
     SendOfflineStatusChangeEventToAllWorkers(NS_IsOffline());
+    return NS_OK;
+  }
+  if (!strcmp(aTopic, NS_IOSERVICE_APP_OFFLINE_STATUS_TOPIC)) {
+    BROADCAST_ALL_WORKERS(OfflineStatusChangeEvent,
+                          NS_IsOffline() ||
+                          NS_IsAppOffline(workers[index]->GetPrincipal()));
     return NS_OK;
   }
 

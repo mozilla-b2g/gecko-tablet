@@ -98,8 +98,8 @@
 #include "mozilla/dom/HTMLVideoElement.h"
 #include "mozilla/dom/SVGMatrix.h"
 #include "mozilla/dom/TextMetrics.h"
-#include "mozilla/dom/UnionTypes.h"
 #include "mozilla/dom/SVGMatrix.h"
+#include "mozilla/FloatingPoint.h"
 #include "nsGlobalWindow.h"
 #include "GLContext.h"
 #include "GLContextProvider.h"
@@ -113,9 +113,8 @@
 
 #undef free // apparently defined by some windows header, clashing with a free()
             // method in SkTypes.h
-#ifdef USE_SKIA
 #include "SkiaGLGlue.h"
-#include "SurfaceStream.h"
+#ifdef USE_SKIA
 #include "SurfaceTypes.h"
 #endif
 
@@ -236,7 +235,7 @@ public:
     const ContextState &state = aCtx->CurrentState();
 
     if (state.StyleIsColor(aStyle)) {
-      mPattern.InitColorPattern(Color::FromABGR(state.colorStyles[aStyle]));
+      mPattern.InitColorPattern(ToDeviceColor(state.colorStyles[aStyle]));
     } else if (state.gradientStyles[aStyle] &&
                state.gradientStyles[aStyle]->GetType() == CanvasGradient::Type::LINEAR) {
       CanvasLinearGradient *gradient =
@@ -710,7 +709,7 @@ public:
     CanvasRenderingContext2DUserData* self =
       static_cast<CanvasRenderingContext2DUserData*>(aData);
     CanvasRenderingContext2D* context = self->mContext;
-    if (!context || !context->mStream || !context->mTarget)
+    if (!context || !context->mTarget)
       return;
 
     // Since SkiaGL default to store drawing command until flush
@@ -825,13 +824,11 @@ CanvasRenderingContext2D::CanvasRenderingContext2D()
   , mZero(false), mOpaque(false)
   , mResetLayer(true)
   , mIPC(false)
-  , mStream(nullptr)
   , mIsEntireFrameInvalid(false)
   , mPredictManyRedrawCalls(false), mPathTransformWillUpdate(false)
   , mInvalidateCount(0)
 {
   sNumLivingContexts++;
-  SetIsDOMBinding();
 
   // The default is to use OpenGL mode
   if (!gfxPlatform::GetPlatform()->UseAcceleratedSkiaCanvas()) {
@@ -912,7 +909,6 @@ CanvasRenderingContext2D::Reset()
   }
 
   mTarget = nullptr;
-  mStream = nullptr;
 
   // reset hit regions
   mHitRegionsOptions.ClearAndRetainStorage();
@@ -1025,8 +1021,12 @@ CanvasRenderingContext2D::Redraw(const mgfx::Rect &r)
 void
 CanvasRenderingContext2D::DidRefresh()
 {
-  if (mStream && mStream->GLContext()) {
-    mStream->GLContext()->FlushIfHeavyGLCallsSinceLastFlush();
+  if (IsTargetValid() && SkiaGLTex()) {
+    SkiaGLGlue* glue = gfxPlatform::GetPlatform()->GetSkiaGLGlue();
+    MOZ_ASSERT(glue);
+
+    auto gl = glue->GetGLContext();
+    gl->FlushIfHeavyGLCallsSinceLastFlush();
   }
 }
 
@@ -1052,7 +1052,6 @@ bool CanvasRenderingContext2D::SwitchRenderingMode(RenderingMode aRenderingMode)
   RefPtr<SourceSurface> snapshot = mTarget->Snapshot();
   RefPtr<DrawTarget> oldTarget = mTarget;
   mTarget = nullptr;
-  mStream = nullptr;
   mResetLayer = true;
 
   // Recreate target using the new rendering mode
@@ -1219,12 +1218,10 @@ CanvasRenderingContext2D::EnsureTarget(RenderingMode aRenderingMode)
 
         SkiaGLGlue* glue = gfxPlatform::GetPlatform()->GetSkiaGLGlue();
 
-#if USE_SKIA
+#if USE_SKIA_GPU
         if (glue && glue->GetGrContext() && glue->GetGLContext()) {
           mTarget = Factory::CreateDrawTargetSkiaWithGrContext(glue->GetGrContext(), size, format);
           if (mTarget) {
-            mStream = gl::SurfaceStream::CreateForType(gl::SurfaceStreamType::TripleBuffer,
-                                                       glue->GetGLContext());
             AddDemotableContext(this);
           } else {
             printf_stderr("Failed to create a SkiaGL DrawTarget, falling back to software\n");
@@ -3091,11 +3088,18 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcess
   virtual void SetText(const char16_t* text, int32_t length, nsBidiDirection direction)
   {
     mFontgrp->UpdateUserFonts(); // ensure user font generation is current
+    // adjust flags for current direction run
+    uint32_t flags = mTextRunFlags;
+    if (direction & 1) {
+      flags |= gfxTextRunFactory::TEXT_IS_RTL;
+    } else {
+      flags &= ~gfxTextRunFactory::TEXT_IS_RTL;
+    }
     mTextRun = mFontgrp->MakeTextRun(text,
                                      length,
                                      mThebes,
                                      mAppUnitsPerDevPixel,
-                                     direction==NSBIDI_RTL ? gfxTextRunFactory::TEXT_IS_RTL : 0);
+                                     flags);
   }
 
   virtual nscoord GetWidth()
@@ -3121,10 +3125,14 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcess
   virtual void DrawText(nscoord xOffset, nscoord width)
   {
     gfxPoint point = mPt;
-    point.x += xOffset;
+    bool rtl = mTextRun->IsRightToLeft();
+    bool verticalRun = mTextRun->IsVertical();
+
+    gfxFloat& inlineCoord = verticalRun ? point.y : point.x;
+    inlineCoord += xOffset;
 
     // offset is given in terms of left side of string
-    if (mTextRun->IsRightToLeft()) {
+    if (rtl) {
       // Bug 581092 - don't use rounded pixel width to advance to
       // right-hand end of run, because this will cause different
       // glyph positioning for LTR vs RTL drawing of the same
@@ -3138,7 +3146,7 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcess
                                   gfxFont::LOOSE_INK_EXTENTS,
                               mThebes,
                               nullptr);
-      point.x += textRunMetrics.mAdvanceWidth;
+      inlineCoord += textRunMetrics.mAdvanceWidth;
       // old code was:
       //   point.x += width * mAppUnitsPerDevPixel;
       // TODO: restore this if/when we move to fractional coords
@@ -3157,6 +3165,15 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcess
     mCtx->EnsureTarget();
     for (uint32_t c = 0; c < numRuns; c++) {
       gfxFont *font = runs[c].mFont;
+
+      bool verticalFont =
+        runs[c].mOrientation == gfxTextRunFactory::TEXT_ORIENT_VERTICAL_UPRIGHT;
+
+      const float& baselineOriginInline =
+        verticalFont ? baselineOrigin.y : baselineOrigin.x;
+      const float& baselineOriginBlock =
+        verticalFont ? baselineOrigin.x : baselineOrigin.y;
+
       uint32_t endRun = 0;
       if (c + 1 < numRuns) {
         endRun = runs[c + 1].mCharacterOffset;
@@ -3174,23 +3191,53 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcess
         return;
       }
 
+      AutoRestoreTransform sidewaysRestore;
+      if (runs[c].mOrientation ==
+          gfxTextRunFactory::TEXT_ORIENT_VERTICAL_SIDEWAYS_RIGHT) {
+        sidewaysRestore.Init(mCtx->mTarget);
+        // TODO: The baseline adjustment here is kinda ad-hoc; eventually
+        // perhaps we should check for horizontal and vertical baseline data
+        // in the font, and adjust accordingly.
+        // (The same will be true for HTML text layout.)
+        const gfxFont::Metrics& metrics = mTextRun->GetFontGroup()->
+          GetFirstValidFont()->GetMetrics(gfxFont::eHorizontal);
+        mCtx->mTarget->SetTransform(mCtx->mTarget->GetTransform().Copy().
+          PreTranslate(baselineOrigin).      // translate origin for rotation
+          PreRotate(gfx::Float(M_PI / 2.0)). // turn 90deg clockwise
+          PreTranslate(-baselineOrigin).     // undo the translation
+          PreTranslate(Point(0, (metrics.emAscent - metrics.emDescent) / 2)));
+                              // and offset the (alphabetic) baseline of the
+                              // horizontally-shaped text from the (centered)
+                              // default baseline used for vertical
+      }
+
       RefPtr<GlyphRenderingOptions> renderingOptions = font->GetGlyphRenderingOptions();
 
       GlyphBuffer buffer;
 
       std::vector<Glyph> glyphBuf;
 
+      // TODO:
+      // This more-or-less duplicates the code found in gfxTextRun::Draw
+      // and the gfxFont methods that uses (Draw, DrawGlyphs, DrawOneGlyph);
+      // it would be nice to refactor and share that code.
       for (uint32_t i = runs[c].mCharacterOffset; i < endRun; i++) {
         Glyph newGlyph;
+
+        float& inlinePos =
+          verticalFont ? newGlyph.mPosition.y : newGlyph.mPosition.x;
+        float& blockPos =
+          verticalFont ? newGlyph.mPosition.x : newGlyph.mPosition.y;
+
         if (glyphs[i].IsSimpleGlyph()) {
           newGlyph.mIndex = glyphs[i].GetSimpleGlyph();
-          if (mTextRun->IsRightToLeft()) {
-            newGlyph.mPosition.x = baselineOrigin.x - advanceSum -
+          if (rtl) {
+            inlinePos = baselineOriginInline - advanceSum -
               glyphs[i].GetSimpleAdvance() * devUnitsPerAppUnit;
           } else {
-            newGlyph.mPosition.x = baselineOrigin.x + advanceSum;
+            inlinePos = baselineOriginInline + advanceSum;
           }
-          newGlyph.mPosition.y = baselineOrigin.y;
+          blockPos = baselineOriginBlock;
           advanceSum += glyphs[i].GetSimpleAdvance() * devUnitsPerAppUnit;
           glyphBuf.push_back(newGlyph);
           continue;
@@ -3200,34 +3247,34 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcess
           continue;
         }
 
-        gfxTextRun::DetailedGlyph *detailedGlyphs =
-          mTextRun->GetDetailedGlyphs(i);
+        const gfxTextRun::DetailedGlyph *d = mTextRun->GetDetailedGlyphs(i);
 
         if (glyphs[i].IsMissing()) {
           newGlyph.mIndex = 0;
-          if (mTextRun->IsRightToLeft()) {
-            newGlyph.mPosition.x = baselineOrigin.x - advanceSum -
-              detailedGlyphs[0].mAdvance * devUnitsPerAppUnit;
+          if (rtl) {
+            inlinePos = baselineOriginInline - advanceSum -
+              d->mAdvance * devUnitsPerAppUnit;
           } else {
-            newGlyph.mPosition.x = baselineOrigin.x + advanceSum;
+            inlinePos = baselineOriginInline + advanceSum;
           }
-          newGlyph.mPosition.y = baselineOrigin.y;
-          advanceSum += detailedGlyphs[0].mAdvance * devUnitsPerAppUnit;
+          blockPos = baselineOriginBlock;
+          advanceSum += d->mAdvance * devUnitsPerAppUnit;
           glyphBuf.push_back(newGlyph);
           continue;
         }
 
-        for (uint32_t c = 0; c < glyphs[i].GetGlyphCount(); c++) {
-          newGlyph.mIndex = detailedGlyphs[c].mGlyphID;
-          if (mTextRun->IsRightToLeft()) {
-            newGlyph.mPosition.x = baselineOrigin.x + detailedGlyphs[c].mXOffset * devUnitsPerAppUnit -
-              advanceSum - detailedGlyphs[c].mAdvance * devUnitsPerAppUnit;
+        for (uint32_t c = 0; c < glyphs[i].GetGlyphCount(); c++, d++) {
+          newGlyph.mIndex = d->mGlyphID;
+          if (rtl) {
+            inlinePos = baselineOriginInline - advanceSum -
+              d->mAdvance * devUnitsPerAppUnit;
           } else {
-            newGlyph.mPosition.x = baselineOrigin.x + detailedGlyphs[c].mXOffset * devUnitsPerAppUnit + advanceSum;
+            inlinePos = baselineOriginInline + advanceSum;
           }
-          newGlyph.mPosition.y = baselineOrigin.y + detailedGlyphs[c].mYOffset * devUnitsPerAppUnit;
+          inlinePos += d->mXOffset * devUnitsPerAppUnit;
+          blockPos = baselineOriginBlock + d->mYOffset * devUnitsPerAppUnit;
           glyphBuf.push_back(newGlyph);
-          advanceSum += detailedGlyphs[c].mAdvance * devUnitsPerAppUnit;
+          advanceSum += d->mAdvance * devUnitsPerAppUnit;
         }
       }
 
@@ -3302,6 +3349,9 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcess
   // union of bounding boxes of all runs, needed for shadows
   gfxRect mBoundingBox;
 
+  // flags to use when creating textrun, based on CSS style
+  uint32_t mTextRunFlags;
+
   // true iff the bounding box should be measured
   bool mDoMeasureBoundingBox;
 };
@@ -3341,9 +3391,10 @@ CanvasRenderingContext2D::DrawOrMeasureText(const nsAString& aRawText,
   // for now, default to ltr if not in doc
   bool isRTL = false;
 
+  nsRefPtr<nsStyleContext> canvasStyle;
   if (mCanvasElement && mCanvasElement->IsInDoc()) {
     // try to find the closest context
-    nsRefPtr<nsStyleContext> canvasStyle =
+    canvasStyle =
       nsComputedDOMStyle::GetStyleContextForElement(mCanvasElement,
                                                     nullptr,
                                                     presShell);
@@ -3377,6 +3428,14 @@ CanvasRenderingContext2D::DrawOrMeasureText(const nsAString& aRawText,
   bool doCalculateBounds = NeedToCalculateBounds();
 
   CanvasBidiProcessor processor;
+
+  // If we don't have a style context, we can't set up vertical-text flags
+  // (for now, at least; perhaps we need new Canvas API to control this).
+  processor.mTextRunFlags = canvasStyle ?
+    nsLayoutUtils::GetTextRunFlagsForStyle(canvasStyle,
+                                           canvasStyle->StyleFont(),
+                                           canvasStyle->StyleText(),
+                                           0) : 0;
 
   GetAppUnitsValues(&processor.mAppUnitsPerDevPixel, nullptr);
   processor.mPt = gfxPoint(aX, aY);
@@ -3444,7 +3503,10 @@ CanvasRenderingContext2D::DrawOrMeasureText(const nsAString& aRawText,
   // offset pt.y based on text baseline
   processor.mFontgrp->UpdateUserFonts(); // ensure user font generation is current
   const gfxFont::Metrics& fontMetrics =
-    processor.mFontgrp->GetFirstValidFont()->GetMetrics(gfxFont::eHorizontal); // XXX vertical?
+    processor.mFontgrp->GetFirstValidFont()->GetMetrics(
+      ((processor.mTextRunFlags & gfxTextRunFactory::TEXT_ORIENT_MASK) ==
+        gfxTextRunFactory::TEXT_ORIENT_HORIZONTAL)
+      ? gfxFont::eHorizontal : gfxFont::eVertical);
 
   gfxFloat anchorY;
 
@@ -4354,8 +4416,8 @@ CanvasRenderingContext2D::GetImageData(JSContext* aCx, double aSx,
     return nullptr;
   }
 
-  if (!NS_finite(aSx) || !NS_finite(aSy) ||
-      !NS_finite(aSw) || !NS_finite(aSh)) {
+  if (!IsFinite(aSx) || !IsFinite(aSy) ||
+      !IsFinite(aSw) || !IsFinite(aSh)) {
     error.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
     return nullptr;
   }
@@ -4450,16 +4512,22 @@ CanvasRenderingContext2D::GetImageDataArray(JSContext* aCx,
     return NS_OK;
   }
 
-  uint8_t* data = JS_GetUint8ClampedArrayData(darray);
-
   IntRect dstWriteRect = srcReadRect;
   dstWriteRect.MoveBy(-aX, -aY);
 
-  uint8_t* src = data;
-  uint32_t srcStride = aWidth * 4;
+  uint8_t* src;
+  uint32_t srcStride;
+
   if (readback) {
     srcStride = readback->Stride();
     src = readback->GetData() + srcReadRect.y * srcStride + srcReadRect.x * 4;
+  }
+
+  JS::AutoCheckCannotGC nogc;
+  uint8_t* data = JS_GetUint8ClampedArrayData(darray, nogc);
+  if (!readback) {
+    src = data;
+    srcStride = aWidth * 4;
   }
 
   // NOTE! dst is the same as src, and this relies on reading
@@ -4756,6 +4824,14 @@ CanvasRenderingContext2D::CreateImageData(JSContext* cx,
 
 static uint8_t g2DContextLayerUserData;
 
+
+uint32_t
+CanvasRenderingContext2D::SkiaGLTex() const
+{
+    MOZ_ASSERT(IsTargetValid());
+    return (uint32_t)(uintptr_t)mTarget->GetNativeSurface(NativeSurfaceType::OPENGL_TEXTURE);
+}
+
 already_AddRefed<CanvasLayer>
 CanvasRenderingContext2D::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
                                          CanvasLayer *aOldLayer,
@@ -4786,15 +4862,14 @@ CanvasRenderingContext2D::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
         aOldLayer->GetUserData(&g2DContextLayerUserData));
 
     CanvasLayer::Data data;
-    if (mStream) {
-#ifdef USE_SKIA
-      SkiaGLGlue* glue = gfxPlatform::GetPlatform()->GetSkiaGLGlue();
 
-      if (glue) {
-        data.mGLContext = glue->GetGLContext();
-        data.mStream = mStream.get();
-      }
-#endif
+    GLuint skiaGLTex = SkiaGLTex();
+    if (skiaGLTex) {
+      SkiaGLGlue* glue = gfxPlatform::GetPlatform()->GetSkiaGLGlue();
+      MOZ_ASSERT(glue);
+
+      data.mGLContext = glue->GetGLContext();
+      data.mFrontbufferGLTex = skiaGLTex;
     } else {
       data.mDrawTarget = mTarget;
     }
@@ -4831,24 +4906,22 @@ CanvasRenderingContext2D::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
   canvasLayer->SetUserData(&g2DContextLayerUserData, userData);
 
   CanvasLayer::Data data;
-  if (mStream) {
-    SkiaGLGlue* glue = gfxPlatform::GetPlatform()->GetSkiaGLGlue();
+  data.mSize = nsIntSize(mWidth, mHeight);
+  data.mHasAlpha = !mOpaque;
 
-    if (glue) {
-      canvasLayer->SetPreTransactionCallback(
-              CanvasRenderingContext2DUserData::PreTransactionCallback, userData);
-#if USE_SKIA
-      data.mGLContext = glue->GetGLContext();
-#endif
-      data.mStream = mStream.get();
-      data.mTexID = (uint32_t)((uintptr_t)mTarget->GetNativeSurface(NativeSurfaceType::OPENGL_TEXTURE));
-    }
+  GLuint skiaGLTex = SkiaGLTex();
+  if (skiaGLTex) {
+    canvasLayer->SetPreTransactionCallback(
+            CanvasRenderingContext2DUserData::PreTransactionCallback, userData);
+
+    SkiaGLGlue* glue = gfxPlatform::GetPlatform()->GetSkiaGLGlue();
+    MOZ_ASSERT(glue);
+
+    data.mGLContext = glue->GetGLContext();
+    data.mFrontbufferGLTex = skiaGLTex;
   } else {
     data.mDrawTarget = mTarget;
   }
-
-  data.mSize = nsIntSize(mWidth, mHeight);
-  data.mHasAlpha = !mOpaque;
 
   canvasLayer->Initialize(data);
   uint32_t flags = mOpaque ? Layer::CONTENT_OPAQUE : 0;
@@ -4885,16 +4958,12 @@ NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(CanvasPath, mParent)
 CanvasPath::CanvasPath(nsISupports* aParent)
   : mParent(aParent)
 {
-  SetIsDOMBinding();
-
   mPathBuilder = gfxPlatform::GetPlatform()->ScreenReferenceDrawTarget()->CreatePathBuilder();
 }
 
 CanvasPath::CanvasPath(nsISupports* aParent, TemporaryRef<PathBuilder> aPathBuilder)
   : mParent(aParent), mPathBuilder(aPathBuilder)
 {
-  SetIsDOMBinding();
-
   if (!mPathBuilder) {
     mPathBuilder = gfxPlatform::GetPlatform()->ScreenReferenceDrawTarget()->CreatePathBuilder();
   }

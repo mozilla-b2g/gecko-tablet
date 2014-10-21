@@ -44,6 +44,7 @@
 #include "nsNetUtil.h"
 #include "nsParserCIID.h"
 #include "nsPIBoxObject.h"
+#include "mozilla/dom/BoxObject.h"
 #include "nsXPIDLString.h"
 #include "nsPIDOMWindow.h"
 #include "nsPIWindowRoot.h"
@@ -1707,7 +1708,7 @@ XULDocument::AddElementToDocumentPost(Element* aElement)
 NS_IMETHODIMP
 XULDocument::AddSubtreeToDocument(nsIContent* aContent)
 {
-    NS_ASSERTION(aContent->GetCurrentDoc() == this, "Element not in doc!");
+    NS_ASSERTION(aContent->GetUncomposedDoc() == this, "Element not in doc!");
     // From here on we only care about elements.
     if (!aContent->IsElement()) {
         return NS_OK;
@@ -2701,7 +2702,6 @@ XULDocument::LoadOverlayInternal(nsIURI* aURI, bool aIsDynamic,
                            NodePrincipal(),
                            nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL,
                            nsIContentPolicy::TYPE_OTHER,
-                           nullptr,    // aChannelPolicy
                            group);
 
         if (NS_SUCCEEDED(rv)) {
@@ -3738,7 +3738,7 @@ XULDocument::CreateTemplateBuilder(nsIContent* aElement)
 
     // return successful if the element is not is a document, as an inline
     // script could have removed it
-    nsIDocument *document = aElement->GetCurrentDoc();
+    nsIDocument* document = aElement->GetUncomposedDoc();
     NS_ENSURE_TRUE(document, NS_OK);
 
     int32_t nameSpaceID;
@@ -3878,7 +3878,7 @@ XULDocument::OverlayForwardReference::Resolve()
     }
 
     // Check if 'target' is still in our document --- it might not be!
-    if (!notify && target->GetCurrentDoc() == mDocument) {
+    if (!notify && target->GetUncomposedDoc() == mDocument) {
         // Add child and any descendants to the element map
         // XXX this is bogus, the content in 'target' might already be
         // in the document

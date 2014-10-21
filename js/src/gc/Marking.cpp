@@ -13,6 +13,7 @@
 #include "jit/IonCode.h"
 #include "js/SliceBudget.h"
 #include "vm/ArgumentsObject.h"
+#include "vm/ArrayObject.h"
 #include "vm/ScopeObject.h"
 #include "vm/Shape.h"
 #include "vm/Symbol.h"
@@ -68,7 +69,7 @@ JS_PUBLIC_DATA(void * const) JS::NullPtr::constNullValue = nullptr;
  */
 
 static inline void
-PushMarkStack(GCMarker *gcmarker, ObjectImpl *thing);
+PushMarkStack(GCMarker *gcmarker, JSObject *thing);
 
 static inline void
 PushMarkStack(GCMarker *gcmarker, JSFunction *thing);
@@ -110,9 +111,6 @@ template<typename T>
 static inline bool
 IsThingPoisoned(T *thing)
 {
-    static_assert(sizeof(T) >= sizeof(FreeSpan) + sizeof(uint32_t),
-                  "Ensure it is well defined to look past any free span that "
-                  "may be embedded in the thing's header when freed.");
     const uint8_t poisonBytes[] = {
         JS_FRESH_NURSERY_PATTERN,
         JS_SWEPT_NURSERY_PATTERN,
@@ -230,7 +228,7 @@ CheckMarkedThing(JSTracer *trc, T **thingp)
      * ArenaHeader may not be synced with the real one in ArenaLists.
      */
     MOZ_ASSERT_IF(IsThingPoisoned(thing) && rt->isHeapBusy(),
-                  !InFreeList(thing->asTenured()->arenaHeader(), thing));
+                  !InFreeList(thing->asTenured().arenaHeader(), thing));
 #endif
 }
 
@@ -250,6 +248,13 @@ SetMaybeAliveFlag(T *thing)
 template<>
 void
 SetMaybeAliveFlag(JSObject *thing)
+{
+    thing->compartment()->maybeAlive = true;
+}
+
+template<>
+void
+SetMaybeAliveFlag(NativeObject *thing)
 {
     thing->compartment()->maybeAlive = true;
 }
@@ -450,19 +455,28 @@ IsMarked(T **thingp)
         }
     }
 #endif  // JSGC_GENERATIONAL
-    Zone *zone = (*thingp)->asTenured()->zone();
+    Zone *zone = (*thingp)->asTenured().zone();
     if (!zone->isCollecting() || zone->isGCFinished())
         return true;
 #ifdef JSGC_COMPACTING
     if (zone->isGCCompacting() && IsForwarded(*thingp))
         *thingp = Forwarded(*thingp);
 #endif
-    return (*thingp)->asTenured()->isMarked();
+    return (*thingp)->asTenured().isMarked();
 }
 
 template <typename T>
 static bool
 IsAboutToBeFinalized(T **thingp)
+{
+    MOZ_ASSERT_IF(!ThingIsPermanentAtom(*thingp),
+                  CurrentThreadCanAccessRuntime((*thingp)->runtimeFromMainThread()));
+    return IsAboutToBeFinalizedFromAnyThread(thingp);
+}
+
+template <typename T>
+static bool
+IsAboutToBeFinalizedFromAnyThread(T **thingp)
 {
     MOZ_ASSERT(thingp);
     MOZ_ASSERT(*thingp);
@@ -495,7 +509,7 @@ IsAboutToBeFinalized(T **thingp)
     }
 #endif  // JSGC_GENERATIONAL
 
-    Zone *zone = thing->asTenured()->zone();
+    Zone *zone = thing->asTenured().zoneFromAnyThread();
     if (zone->isGCSweeping()) {
         /*
          * We should return false for things that have been allocated during
@@ -505,9 +519,9 @@ IsAboutToBeFinalized(T **thingp)
          * we just assert that it's not necessary.
          */
         MOZ_ASSERT_IF(!rt->isHeapMinorCollecting(),
-                      !thing->asTenured()->arenaHeader()->allocatedDuringIncremental);
+                      !thing->asTenured().arenaHeader()->allocatedDuringIncremental);
 
-        return !thing->asTenured()->isMarked();
+        return !thing->asTenured().isMarked();
     }
 #ifdef JSGC_COMPACTING
     else if (zone->isGCCompacting() && IsForwarded(thing)) {
@@ -608,6 +622,12 @@ Is##base##AboutToBeFinalized(type **thingp)                                     
 }                                                                                                 \
                                                                                                   \
 bool                                                                                              \
+Is##base##AboutToBeFinalizedFromAnyThread(type **thingp)                                          \
+{                                                                                                 \
+    return IsAboutToBeFinalizedFromAnyThread<type>(thingp);                                       \
+}                                                                                                 \
+                                                                                                  \
+bool                                                                                              \
 Is##base##AboutToBeFinalized(BarrieredBase<type*> *thingp)                                        \
 {                                                                                                 \
     return IsAboutToBeFinalized<type>(thingp->unsafeGet());                                       \
@@ -629,6 +649,8 @@ Update##base##IfRelocated(JSRuntime *rt, type **thingp)                         
 DeclMarkerImpl(BaseShape, BaseShape)
 DeclMarkerImpl(BaseShape, UnownedBaseShape)
 DeclMarkerImpl(JitCode, jit::JitCode)
+DeclMarkerImpl(Object, NativeObject)
+DeclMarkerImpl(Object, ArrayObject)
 DeclMarkerImpl(Object, ArgumentsObject)
 DeclMarkerImpl(Object, ArrayBufferObject)
 DeclMarkerImpl(Object, ArrayBufferObjectMaybeShared)
@@ -638,7 +660,6 @@ DeclMarkerImpl(Object, GlobalObject)
 DeclMarkerImpl(Object, JSObject)
 DeclMarkerImpl(Object, JSFunction)
 DeclMarkerImpl(Object, NestedScopeObject)
-DeclMarkerImpl(Object, ObjectImpl)
 DeclMarkerImpl(Object, SavedFrame)
 DeclMarkerImpl(Object, ScopeObject)
 DeclMarkerImpl(Object, SharedArrayBufferObject)
@@ -666,7 +687,7 @@ gc::MarkKind(JSTracer *trc, void **thingp, JSGCTraceKind kind)
     MOZ_ASSERT(*thingp);
     DebugOnly<Cell *> cell = static_cast<Cell *>(*thingp);
     MOZ_ASSERT_IF(cell->isTenured(),
-                  kind == MapAllocToTraceKind(cell->asTenured()->getAllocKind()));
+                  kind == MapAllocToTraceKind(cell->asTenured().getAllocKind()));
     switch (kind) {
       case JSTRACE_OBJECT:
         MarkInternal(trc, reinterpret_cast<JSObject **>(thingp));
@@ -901,6 +922,28 @@ gc::IsValueAboutToBeFinalized(Value *v)
     return rv;
 }
 
+bool
+gc::IsValueAboutToBeFinalizedFromAnyThread(Value *v)
+{
+    MOZ_ASSERT(v->isMarkable());
+    bool rv;
+    if (v->isString()) {
+        JSString *str = (JSString *)v->toGCThing();
+        rv = IsAboutToBeFinalizedFromAnyThread<JSString>(&str);
+        v->setString(str);
+    } else if (v->isObject()) {
+        JSObject *obj = (JSObject *)v->toGCThing();
+        rv = IsAboutToBeFinalizedFromAnyThread<JSObject>(&obj);
+        v->setObject(*obj);
+    } else {
+        MOZ_ASSERT(v->isSymbol());
+        JS::Symbol *sym = v->toSymbol();
+        rv = IsAboutToBeFinalizedFromAnyThread<JS::Symbol>(&sym);
+        v->setSymbol(sym);
+    }
+    return rv;
+}
+
 /*** Slot Marking ***/
 
 bool
@@ -926,12 +969,12 @@ gc::MarkArraySlots(JSTracer *trc, size_t len, HeapSlot *vec, const char *name)
 }
 
 void
-gc::MarkObjectSlots(JSTracer *trc, JSObject *obj, uint32_t start, uint32_t nslots)
+gc::MarkObjectSlots(JSTracer *trc, NativeObject *obj, uint32_t start, uint32_t nslots)
 {
     MOZ_ASSERT(obj->isNative());
     for (uint32_t i = start; i < (start + nslots); ++i) {
         trc->setTracingDetails(js_GetObjectSlotName, obj, i);
-        MarkValueInternal(trc, obj->nativeGetSlotRef(i).unsafeGet());
+        MarkValueInternal(trc, obj->getSlotRef(i).unsafeGet());
     }
 }
 
@@ -948,9 +991,9 @@ ShouldMarkCrossCompartment(JSTracer *trc, JSObject *src, Cell *cell)
         MOZ_ASSERT(color == BLACK);
         return false;
     }
-    TenuredCell *tenured = cell->asTenured();
+    TenuredCell &tenured = cell->asTenured();
 
-    JS::Zone *zone = tenured->zone();
+    JS::Zone *zone = tenured.zone();
     if (color == BLACK) {
         /*
          * Having black->gray edges violates our promise to the cycle
@@ -959,7 +1002,7 @@ ShouldMarkCrossCompartment(JSTracer *trc, JSObject *src, Cell *cell)
          * source and destination of the cross-compartment edge should be gray,
          * but the source was marked black by the conservative scanner.
          */
-        if (tenured->isMarked(GRAY)) {
+        if (tenured.isMarked(GRAY)) {
             MOZ_ASSERT(!zone->isCollecting());
             trc->runtime()->gc.setFoundBlackGrayEdges();
         }
@@ -971,7 +1014,7 @@ ShouldMarkCrossCompartment(JSTracer *trc, JSObject *src, Cell *cell)
              * but it will be later, so record the cell so it can be marked gray
              * at the appropriate time.
              */
-            if (!tenured->isMarked())
+            if (!tenured.isMarked())
                 DelayCrossCompartmentGrayMarking(src);
             return false;
         }
@@ -995,10 +1038,10 @@ gc::MarkCrossCompartmentScriptUnbarriered(JSTracer *trc, JSObject *src, JSScript
 }
 
 void
-gc::MarkCrossCompartmentSlot(JSTracer *trc, JSObject *src, HeapSlot *dst, const char *name)
+gc::MarkCrossCompartmentSlot(JSTracer *trc, JSObject *src, HeapValue *dst, const char *name)
 {
     if (dst->isMarkable() && ShouldMarkCrossCompartment(trc, src, (Cell *)dst->toGCThing()))
-        MarkSlot(trc, dst, name);
+        MarkValue(trc, dst, name);
 }
 
 /*** Special Marking ***/
@@ -1022,6 +1065,12 @@ gc::IsCellAboutToBeFinalized(Cell **thingp)
     return IsAboutToBeFinalized<Cell>(thingp);
 }
 
+bool
+gc::IsCellAboutToBeFinalizedFromAnyThread(Cell **thingp)
+{
+    return IsAboutToBeFinalizedFromAnyThread<Cell>(thingp);
+}
+
 /*** Push Mark Stack ***/
 
 #define JS_COMPARTMENT_ASSERT(rt, thing)                                \
@@ -1036,12 +1085,12 @@ gc::IsCellAboutToBeFinalized(Cell **thingp)
     JS_COMPARTMENT_ASSERT_STR(rt, sym)
 
 static void
-PushMarkStack(GCMarker *gcmarker, ObjectImpl *thing)
+PushMarkStack(GCMarker *gcmarker, JSObject *thing)
 {
     JS_COMPARTMENT_ASSERT(gcmarker->runtime(), thing);
     MOZ_ASSERT(!IsInsideNursery(thing));
 
-    if (thing->asTenured()->markIfUnmarked(gcmarker->getMarkColor()))
+    if (thing->asTenured().markIfUnmarked(gcmarker->getMarkColor()))
         gcmarker->pushObject(thing);
 }
 
@@ -1059,7 +1108,7 @@ MaybePushMarkStackBetweenSlices(GCMarker *gcmarker, JSObject *thing)
     JS_COMPARTMENT_ASSERT(rt, thing);
     MOZ_ASSERT_IF(rt->isHeapBusy(), !IsInsideNursery(thing));
 
-    if (!IsInsideNursery(thing) && thing->asTenured()->markIfUnmarked(gcmarker->getMarkColor()))
+    if (!IsInsideNursery(thing) && thing->asTenured().markIfUnmarked(gcmarker->getMarkColor()))
         gcmarker->pushObject(thing);
 }
 
@@ -1069,7 +1118,7 @@ PushMarkStack(GCMarker *gcmarker, JSFunction *thing)
     JS_COMPARTMENT_ASSERT(gcmarker->runtime(), thing);
     MOZ_ASSERT(!IsInsideNursery(thing));
 
-    if (thing->asTenured()->markIfUnmarked(gcmarker->getMarkColor()))
+    if (thing->asTenured().markIfUnmarked(gcmarker->getMarkColor()))
         gcmarker->pushObject(thing);
 }
 
@@ -1162,6 +1211,12 @@ ScanShape(GCMarker *gcmarker, Shape *shape)
     else if (JSID_IS_SYMBOL(id))
         PushMarkStack(gcmarker, JSID_TO_SYMBOL(id));
 
+    if (shape->hasGetterObject())
+        MaybePushMarkStackBetweenSlices(gcmarker, shape->getterObject());
+
+    if (shape->hasSetterObject())
+        MaybePushMarkStackBetweenSlices(gcmarker, shape->setterObject());
+
     shape = shape->previous();
     if (shape && shape->markIfUnmarked(gcmarker->getMarkColor()))
         goto restart;
@@ -1173,12 +1228,6 @@ ScanBaseShape(GCMarker *gcmarker, BaseShape *base)
     base->assertConsistency();
 
     base->compartment()->mark();
-
-    if (base->hasGetterObject())
-        MaybePushMarkStackBetweenSlices(gcmarker, base->getterObject());
-
-    if (base->hasSetterObject())
-        MaybePushMarkStackBetweenSlices(gcmarker, base->setterObject());
 
     if (JSObject *parent = base->getObjectParent()) {
         MaybePushMarkStackBetweenSlices(gcmarker, parent);
@@ -1375,9 +1424,8 @@ gc::MarkChildren(JSTracer *trc, BaseShape *base)
  * This function is used by the cycle collector to trace through the
  * children of a BaseShape (and its baseUnowned(), if any). The cycle
  * collector does not directly care about BaseShapes, so only the
- * getter, setter, and parent are marked. Furthermore, the parent is
- * marked only if it isn't the same as prevParent, which will be
- * updated to the current shape's parent.
+ * parent is marked. Furthermore, the parent is marked only if it isn't the
+ * same as prevParent, which will be updated to the current shape's parent.
  */
 static inline void
 MarkCycleCollectorChildren(JSTracer *trc, BaseShape *base, JSObject **prevParent)
@@ -1386,22 +1434,9 @@ MarkCycleCollectorChildren(JSTracer *trc, BaseShape *base, JSObject **prevParent
 
     /*
      * The cycle collector does not need to trace unowned base shapes,
-     * as they have the same getter, setter and parent as the original
-     * base shape.
+     * as they have the same parent as the original base shape.
      */
     base->assertConsistency();
-
-    if (base->hasGetterObject()) {
-        JSObject *tmp = base->getterObject();
-        MarkObjectUnbarriered(trc, &tmp, "getter");
-        MOZ_ASSERT(tmp == base->getterObject());
-    }
-
-    if (base->hasSetterObject()) {
-        JSObject *tmp = base->setterObject();
-        MarkObjectUnbarriered(trc, &tmp, "setter");
-        MOZ_ASSERT(tmp == base->setterObject());
-    }
 
     JSObject *parent = base->getObjectParent();
     if (parent && parent != *prevParent) {
@@ -1426,6 +1461,19 @@ gc::MarkCycleCollectorChildren(JSTracer *trc, Shape *shape)
     do {
         MarkCycleCollectorChildren(trc, shape->base(), &prevParent);
         MarkId(trc, &shape->propidRef(), "propid");
+
+        if (shape->hasGetterObject()) {
+            JSObject *tmp = shape->getterObject();
+            MarkObjectUnbarriered(trc, &tmp, "getter");
+            MOZ_ASSERT(tmp == shape->getterObject());
+        }
+
+        if (shape->hasSetterObject()) {
+            JSObject *tmp = shape->setterObject();
+            MarkObjectUnbarriered(trc, &tmp, "setter");
+            MOZ_ASSERT(tmp == shape->setterObject());
+        }
+
         shape = shape->previous();
     } while (shape);
 }
@@ -1541,7 +1589,7 @@ struct SlotArrayLayout
         HeapSlot *start;
         uintptr_t index;
     };
-    JSObject *obj;
+    NativeObject *obj;
 
     static void staticAsserts() {
         /* This should have the same layout as three mark stack items. */
@@ -1566,7 +1614,7 @@ GCMarker::saveValueRanges()
             *p &= ~StackTagMask;
             p -= 2;
             SlotArrayLayout *arr = reinterpret_cast<SlotArrayLayout *>(p);
-            JSObject *obj = arr->obj;
+            NativeObject *obj = arr->obj;
             MOZ_ASSERT(obj->isNative());
 
             HeapSlot *vp = obj->getDenseElements();
@@ -1583,9 +1631,9 @@ GCMarker::saveValueRanges()
                     MOZ_ASSERT(arr->end == vp + Min(nfixed, obj->slotSpan()));
                     arr->index = arr->start - vp;
                 } else {
-                    MOZ_ASSERT(arr->start >= obj->slots &&
-                               arr->end == obj->slots + obj->slotSpan() - nfixed);
-                    arr->index = (arr->start - obj->slots) + nfixed;
+                    MOZ_ASSERT(arr->start >= obj->slots_ &&
+                               arr->end == obj->slots_ + obj->slotSpan() - nfixed);
+                    arr->index = (arr->start - obj->slots_) + nfixed;
                 }
                 arr->kind = HeapSlot::Slot;
             }
@@ -1597,7 +1645,7 @@ GCMarker::saveValueRanges()
 }
 
 bool
-GCMarker::restoreValueArray(JSObject *obj, void **vpp, void **endp)
+GCMarker::restoreValueArray(NativeObject *obj, void **vpp, void **endp)
 {
     uintptr_t start = stack.pop();
     HeapSlot::Kind kind = (HeapSlot::Kind) stack.pop();
@@ -1625,8 +1673,8 @@ GCMarker::restoreValueArray(JSObject *obj, void **vpp, void **endp)
                 *vpp = vp + start;
                 *endp = vp + Min(nfixed, nslots);
             } else {
-                *vpp = obj->slots + start - nfixed;
-                *endp = obj->slots + nslots - nfixed;
+                *vpp = obj->slots_ + start - nfixed;
+                *endp = obj->slots_ + nslots - nfixed;
             }
         } else {
             /* The object shrunk, in which case no scanning is needed. */
@@ -1645,7 +1693,7 @@ GCMarker::processMarkStackOther(uintptr_t tag, uintptr_t addr)
         ScanTypeObject(this, reinterpret_cast<types::TypeObject *>(addr));
     } else if (tag == SavedValueArrayTag) {
         MOZ_ASSERT(!(addr & CellMask));
-        JSObject *obj = reinterpret_cast<JSObject *>(addr);
+        NativeObject *obj = reinterpret_cast<NativeObject *>(addr);
         HeapValue *vp, *end;
         if (restoreValueArray(obj, (void **)&vp, (void **)&end))
             pushValueArray(obj, vp, end);
@@ -1709,7 +1757,7 @@ GCMarker::processMarkStackTop(SliceBudget &budget)
             JSObject *obj2 = &v.toObject();
             JS_COMPARTMENT_ASSERT(runtime(), obj2);
             MOZ_ASSERT(obj->compartment() == obj2->compartment());
-            if (obj2->asTenured()->markIfUnmarked(getMarkColor())) {
+            if (obj2->asTenured().markIfUnmarked(getMarkColor())) {
                 pushValueArray(obj, vp, end);
                 obj = obj2;
                 goto scan_obj;
@@ -1759,38 +1807,39 @@ GCMarker::processMarkStackTop(SliceBudget &budget)
         if (!shape->isNative())
             return;
 
-        unsigned nslots = obj->slotSpan();
+        NativeObject *nobj = &obj->as<NativeObject>();
+        unsigned nslots = nobj->slotSpan();
 
         do {
-            if (obj->hasEmptyElements())
+            if (nobj->hasEmptyElements())
                 break;
 
-            if (obj->denseElementsAreCopyOnWrite()) {
-                JSObject *owner = obj->getElementsHeader()->ownerObject();
-                if (owner != obj) {
+            if (nobj->denseElementsAreCopyOnWrite()) {
+                JSObject *owner = nobj->getElementsHeader()->ownerObject();
+                if (owner != nobj) {
                     PushMarkStack(this, owner);
                     break;
                 }
             }
 
-            vp = obj->getDenseElementsAllowCopyOnWrite();
-            end = vp + obj->getDenseInitializedLength();
+            vp = nobj->getDenseElementsAllowCopyOnWrite();
+            end = vp + nobj->getDenseInitializedLength();
             if (!nslots)
                 goto scan_value_array;
-            pushValueArray(obj, vp, end);
+            pushValueArray(nobj, vp, end);
         } while (false);
 
-        vp = obj->fixedSlots();
-        if (obj->slots) {
-            unsigned nfixed = obj->numFixedSlots();
+        vp = nobj->fixedSlots();
+        if (nobj->slots_) {
+            unsigned nfixed = nobj->numFixedSlots();
             if (nslots > nfixed) {
-                pushValueArray(obj, vp, vp + nfixed);
-                vp = obj->slots;
+                pushValueArray(nobj, vp, vp + nfixed);
+                vp = nobj->slots_;
                 end = vp + (nslots - nfixed);
                 goto scan_value_array;
             }
         }
-        MOZ_ASSERT(nslots <= obj->numFixedSlots());
+        MOZ_ASSERT(nslots <= nobj->numFixedSlots());
         end = vp + nslots;
         goto scan_value_array;
     }

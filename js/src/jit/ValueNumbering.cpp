@@ -56,7 +56,13 @@ ValueNumberer::VisibleValues::ValueHasher::match(Key k, Lookup l)
         return false;
 
     bool congruent = k->congruentTo(l); // Ask the values themselves what they think.
-    MOZ_ASSERT(congruent == l->congruentTo(k), "congruentTo relation is not symmetric");
+#ifdef DEBUG
+    if (congruent != l->congruentTo(k)) {
+       JitSpew(JitSpew_GVN, "      congruentTo relation is not symmetric between %s%u and %s%u!!",
+               k->opName(), k->id(),
+               l->opName(), l->id());
+    }
+#endif
     return congruent;
 }
 
@@ -153,6 +159,7 @@ ReplaceAllUsesWith(MDefinition *from, MDefinition *to)
 {
     MOZ_ASSERT(from != to, "GVN shouldn't try to replace a value with itself");
     MOZ_ASSERT(from->type() == to->type(), "Def replacement has different type");
+    MOZ_ASSERT(!to->isDiscarded(), "GVN replaces an instruction by a removed instruction");
 
     // We don't need the extra setting of UseRemoved flags that the regular
     // replaceAllUsesWith does because we do it ourselves.
@@ -297,10 +304,6 @@ ValueNumberer::releaseResumePointOperands(MResumePoint *resume)
         if (!resume->hasOperand(i))
             continue;
         MDefinition *op = resume->getOperand(i);
-        // TODO: We shouldn't leave discarded operands sitting around
-        // (bug 1055690).
-        if (op->isDiscarded())
-            continue;
         resume->releaseOperand(i);
 
         // We set the UseRemoved flag when removing resume point operands,
@@ -364,8 +367,7 @@ ValueNumberer::discardDef(MDefinition *def)
         MPhi *phi = def->toPhi();
         if (!releaseAndRemovePhiOperands(phi))
              return false;
-        MPhiIterator at(block->phisBegin(phi));
-        block->discardPhiAt(at);
+        block->discardPhi(phi);
     } else {
         MInstruction *ins = def->toInstruction();
         if (MResumePoint *resume = ins->resumePoint()) {
@@ -639,7 +641,7 @@ ValueNumberer::leader(MDefinition *def)
         VisibleValues::AddPtr p = values_.findLeaderForAdd(def);
         if (p) {
             MDefinition *rep = *p;
-            if (rep->block()->dominates(def->block())) {
+            if (!rep->isDiscarded() && rep->block()->dominates(def->block())) {
                 // We found a dominating congruent value.
                 return rep;
             }
@@ -697,7 +699,7 @@ ValueNumberer::visitDefinition(MDefinition *def)
 {
     // If this instruction has a dependency() into an unreachable block, we'll
     // need to update AliasAnalysis.
-    MDefinition *dep = def->dependency();
+    MInstruction *dep = def->dependency();
     if (dep != nullptr && (dep->isDiscarded() || dep->block()->isDead())) {
         JitSpew(JitSpew_GVN, "      AliasAnalysis invalidated");
         if (updateAliasAnalysis_ && !dependenciesBroken_) {
@@ -829,6 +831,8 @@ ValueNumberer::visitControlInstruction(MBasicBlock *block, const MBasicBlock *do
         return false;
     block->discardIgnoreOperands(control);
     block->end(newControl);
+    if (block->entryResumePoint() && newNumSuccs != oldNumSuccs)
+        block->flagOperandsOfPrunedBranches(newControl);
     return processDeadDefs();
 }
 

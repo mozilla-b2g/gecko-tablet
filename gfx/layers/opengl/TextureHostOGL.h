@@ -20,6 +20,7 @@
 #include "mozilla/gfx/Matrix.h"         // for Matrix4x4
 #include "mozilla/gfx/Point.h"          // for IntSize, IntPoint
 #include "mozilla/gfx/Types.h"          // for SurfaceFormat, etc
+#include "mozilla/layers/CompositorOGL.h"  // for CompositorOGL
 #include "mozilla/layers/CompositorTypes.h"  // for TextureFlags
 #include "mozilla/layers/LayersSurfaces.h"  // for SurfaceDescriptor
 #include "mozilla/layers/TextureHost.h"  // for TextureHost, etc
@@ -38,7 +39,6 @@
 
 class gfxReusableSurfaceWrapper;
 class nsIntRegion;
-class nsSurfaceTexture;
 struct nsIntPoint;
 struct nsIntRect;
 struct nsIntSize;
@@ -49,7 +49,7 @@ class DataSourceSurface;
 }
 
 namespace gl {
-class SurfaceStream;
+class AndroidSurfaceTexture;
 }
 
 namespace layers {
@@ -368,7 +368,7 @@ protected:
  *
  * The shared texture handle is owned by the TextureHost.
  */
-class GLTextureSource : public NewTextureSource
+class GLTextureSource : public TextureSource
                       , public TextureSourceOGL
 {
 public:
@@ -400,7 +400,7 @@ public:
 
 protected:
   const gfx::IntSize mSize;
-  CompositorOGL* mCompositor;
+  RefPtr<CompositorOGL> mCompositor;
   const GLuint mTex;
   const gfx::SurfaceFormat mFormat;
   const GLenum mTextureTarget;
@@ -411,12 +411,12 @@ protected:
 
 #ifdef MOZ_WIDGET_ANDROID
 
-class SurfaceTextureSource : public NewTextureSource
+class SurfaceTextureSource : public TextureSource
                            , public TextureSourceOGL
 {
 public:
   SurfaceTextureSource(CompositorOGL* aCompositor,
-                       nsSurfaceTexture* aSurfTex,
+                       mozilla::gl::AndroidSurfaceTexture* aSurfTex,
                        gfx::SurfaceFormat aFormat,
                        GLenum aTarget,
                        GLenum aWrapMode,
@@ -446,8 +446,8 @@ public:
   gl::GLContext* gl() const;
 
 protected:
-  CompositorOGL* mCompositor;
-  nsSurfaceTexture* const mSurfTex;
+  RefPtr<CompositorOGL> mCompositor;
+  mozilla::gl::AndroidSurfaceTexture* const mSurfTex;
   const gfx::SurfaceFormat mFormat;
   const GLenum mTextureTarget;
   const GLenum mWrapMode;
@@ -458,7 +458,7 @@ class SurfaceTextureHost : public TextureHost
 {
 public:
   SurfaceTextureHost(TextureFlags aFlags,
-                     nsSurfaceTexture* aSurfTex,
+                     mozilla::gl::AndroidSurfaceTexture* aSurfTex,
                      gfx::IntSize aSize);
 
   virtual ~SurfaceTextureHost();
@@ -474,7 +474,7 @@ public:
 
   virtual gfx::SurfaceFormat GetFormat() const MOZ_OVERRIDE;
 
-  virtual NewTextureSource* GetTextureSources() MOZ_OVERRIDE
+  virtual TextureSource* GetTextureSources() MOZ_OVERRIDE
   {
     return mTextureSource;
   }
@@ -491,9 +491,9 @@ public:
   virtual const char* Name() { return "SurfaceTextureHost"; }
 
 protected:
-  nsSurfaceTexture* const mSurfTex;
+  mozilla::gl::AndroidSurfaceTexture* const mSurfTex;
   const gfx::IntSize mSize;
-  CompositorOGL* mCompositor;
+  RefPtr<CompositorOGL> mCompositor;
   RefPtr<SurfaceTextureSource> mTextureSource;
 };
 
@@ -502,7 +502,7 @@ protected:
 ////////////////////////////////////////////////////////////////////////
 // EGLImage
 
-class EGLImageTextureSource : public NewTextureSource
+class EGLImageTextureSource : public TextureSource
                             , public TextureSourceOGL
 {
 public:
@@ -537,7 +537,7 @@ public:
   gl::GLContext* gl() const;
 
 protected:
-  CompositorOGL* mCompositor;
+  RefPtr<CompositorOGL> mCompositor;
   const EGLImage mImage;
   const gfx::SurfaceFormat mFormat;
   const GLenum mTextureTarget;
@@ -565,7 +565,7 @@ public:
 
   virtual gfx::SurfaceFormat GetFormat() const MOZ_OVERRIDE;
 
-  virtual NewTextureSource* GetTextureSources() MOZ_OVERRIDE
+  virtual TextureSource* GetTextureSources() MOZ_OVERRIDE
   {
     return mTextureSource;
   }
@@ -584,7 +584,7 @@ public:
 protected:
   const EGLImage mImage;
   const gfx::IntSize mSize;
-  CompositorOGL* mCompositor;
+  RefPtr<CompositorOGL> mCompositor;
   RefPtr<EGLImageTextureSource> mTextureSource;
 };
 

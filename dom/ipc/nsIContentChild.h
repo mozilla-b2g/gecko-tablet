@@ -9,12 +9,12 @@
 
 #include "nsISupports.h"
 #include "nsTArrayForwardDeclare.h"
+#include "mozilla/dom/CPOWManagerGetter.h"
 
 #define NS_ICONTENTCHILD_IID                                    \
   { 0x4eed2e73, 0x94ba, 0x48a8,                                 \
     { 0xa2, 0xd1, 0xa5, 0xed, 0x86, 0xd7, 0xbb, 0xe4 } }
 
-class nsIDOMBlob;
 class nsString;
 
 namespace IPC {
@@ -25,7 +25,6 @@ namespace mozilla {
 
 namespace jsipc {
 class PJavaScriptChild;
-class JavaScriptChild;
 class CpowEntry;
 } // jsipc
 
@@ -34,16 +33,18 @@ namespace dom {
 class BlobChild;
 class BlobConstructorParams;
 class ClonedMessageData;
+class File;
 class IPCTabContext;
 class PBlobChild;
 class PBrowserChild;
 
 class nsIContentChild : public nsISupports
+                      , public CPOWManagerGetter
 {
 public:
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_ICONTENTCHILD_IID)
 
-  BlobChild* GetOrCreateActorForBlob(nsIDOMBlob* aBlob);
+  BlobChild* GetOrCreateActorForBlob(File* aBlob);
 
   virtual PBlobChild* SendPBlobConstructor(
     PBlobChild* aActor,
@@ -56,7 +57,6 @@ public:
                           const uint64_t& aID,
                           const bool& aIsForApp,
                           const bool& aIsForBrowser) = 0;
-  virtual jsipc::JavaScriptChild* GetCPOWManager() = 0;
 protected:
   virtual jsipc::PJavaScriptChild* AllocPJavaScriptChild();
   virtual bool DeallocPJavaScriptChild(jsipc::PJavaScriptChild*);

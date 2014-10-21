@@ -11,7 +11,6 @@
 #include "nsString.h"
 #include "nsPrintfCString.h"
 #include "jsfriendapi.h"
-#include "js/OldDebugAPI.h"
 
 namespace mozilla {
 namespace jsipc {
@@ -47,6 +46,12 @@ struct OutVariant
 {
     JSVariant variant;
     explicit OutVariant(const JSVariant &variant) : variant(variant) {}
+};
+
+struct Identifier
+{
+    JSIDVariant variant;
+    explicit Identifier(const JSIDVariant &variant) : variant(variant) {}
 };
 
 class Logging
@@ -165,6 +170,10 @@ class Logging
                   formatObject(incoming, false, ObjectId::deserialize(ovar.get_RemoteObject().serializedId()), out);
               break;
           }
+          case JSVariant::TSymbolVariant: {
+              out = "<Symbol>";
+              break;
+          }
           case JSVariant::Tdouble: {
               out = nsPrintfCString("%.0f", value.get_double());
               break;
@@ -182,6 +191,29 @@ class Logging
               break;
           }
         }
+    }
+
+    void format(const Identifier &id, nsCString &out) {
+        switch (id.variant.type()) {
+          case JSIDVariant::TSymbolVariant: {
+              out = "<Symbol>";
+              break;
+          }
+          case JSIDVariant::TnsString: {
+              nsAutoCString tmp;
+              format(id.variant.get_nsString(), tmp);
+              out = nsPrintfCString("\"%s\"", tmp.get());
+              break;
+          }
+          case JSIDVariant::Tint32_t: {
+              out = nsPrintfCString("%d", id.variant.get_int32_t());
+              break;
+          }
+          default: {
+              out = "Unknown";
+              break;
+          }
+      }
     }
 
   private:

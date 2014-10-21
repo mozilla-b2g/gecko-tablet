@@ -100,7 +100,6 @@ select[size="1"] xul|scrollbarbutton {
 }
 
 /* Override inverse OS themes */
-select,
 textarea,
 button,
 xul|button,
@@ -149,6 +148,7 @@ input[type="radio"] {
 select {
   border-width: 1px;
   padding: 1px;
+  border-radius: @form_border_radius@;
 }
 
 select:not([size]):not([multiple]),
@@ -178,8 +178,6 @@ button {
 
 input[type="radio"],
 input[type="checkbox"] {
-  max-width: 14px;
-  max-height: 14px;
   border: 1px solid @form_border@ !important;
   padding: 2px 1px 2px 1px;
 }
@@ -194,7 +192,7 @@ select > button {
   background-size: auto auto;
   background-color: transparent;
   background-image: url("chrome://browser/skin/images/dropmarker.svg") !important;
-  background-position: -moz-calc(50% + 1px) center !important;
+  background-position: calc(50% + 1px) center !important;
   background-repeat: no-repeat !important;
 
   font-size: inherit;

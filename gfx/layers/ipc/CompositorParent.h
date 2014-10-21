@@ -109,6 +109,7 @@ public:
   virtual bool RecvPause() MOZ_OVERRIDE;
   virtual bool RecvResume() MOZ_OVERRIDE;
   virtual bool RecvNotifyChildCreated(const uint64_t& child) MOZ_OVERRIDE;
+  virtual bool RecvAdoptChild(const uint64_t& child) MOZ_OVERRIDE;
   virtual bool RecvMakeSnapshot(const SurfaceDescriptor& aInSnapshot,
                                 const nsIntRect& aRect) MOZ_OVERRIDE;
   virtual bool RecvFlushRendering() MOZ_OVERRIDE;
@@ -260,6 +261,11 @@ public:
    * the compositor thread.
    */
   static LayerTreeState* GetIndirectShadowTree(uint64_t aId);
+
+  /**
+   * Used by the profiler to denote when a vsync occured
+   */
+  static void PostInsertVsyncProfilerMarker(mozilla::TimeStamp aVsyncTimestamp);
 
   float ComputeRenderIntegrity();
 

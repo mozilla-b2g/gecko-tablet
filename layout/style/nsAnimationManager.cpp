@@ -9,7 +9,6 @@
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/StyleAnimationValue.h"
-#include "mozilla/dom/AnimationPlayer.h"
 
 #include "nsPresContext.h"
 #include "nsRuleProcessorData.h"
@@ -26,6 +25,127 @@ using namespace mozilla;
 using namespace mozilla::css;
 using mozilla::dom::Animation;
 using mozilla::dom::AnimationPlayer;
+using mozilla::CSSAnimationPlayer;
+
+void
+CSSAnimationPlayer::Play(UpdateFlags aUpdateFlags)
+{
+  mPauseShouldStick = false;
+  AnimationPlayer::Play(aUpdateFlags);
+}
+
+void
+CSSAnimationPlayer::Pause(UpdateFlags aUpdateFlags)
+{
+  mPauseShouldStick = true;
+  AnimationPlayer::Pause(aUpdateFlags);
+}
+
+void
+CSSAnimationPlayer::PlayFromStyle()
+{
+  mIsStylePaused = false;
+  if (!mPauseShouldStick) {
+    AnimationPlayer::Play(eNoUpdate);
+  }
+}
+
+void
+CSSAnimationPlayer::PauseFromStyle()
+{
+  // Check if the pause state is being overridden
+  if (mIsStylePaused) {
+    return;
+  }
+
+  mIsStylePaused = true;
+  AnimationPlayer::Pause(eNoUpdate);
+}
+
+void
+CSSAnimationPlayer::QueueEvents(EventArray& aEventsToDispatch)
+{
+  if (!mSource) {
+    return;
+  }
+
+  ComputedTiming computedTiming = mSource->GetComputedTiming();
+
+  dom::Element* target;
+  nsCSSPseudoElements::Type targetPseudoType;
+  mSource->GetTarget(target, targetPseudoType);
+
+  switch (computedTiming.mPhase) {
+    case ComputedTiming::AnimationPhase_Null:
+    case ComputedTiming::AnimationPhase_Before:
+      // Do nothing
+      break;
+
+    case ComputedTiming::AnimationPhase_Active:
+      // Dispatch 'animationstart' or 'animationiteration' when needed.
+      if (computedTiming.mCurrentIteration != mLastNotification) {
+        // Notify 'animationstart' even if a negative delay puts us
+        // past the first iteration.
+        // Note that when somebody changes the animation-duration
+        // dynamically, this will fire an extra iteration event
+        // immediately in many cases.  It's not clear to me if that's the
+        // right thing to do.
+        uint32_t message = mLastNotification == LAST_NOTIFICATION_NONE
+                           ? NS_ANIMATION_START
+                           : NS_ANIMATION_ITERATION;
+        mLastNotification = computedTiming.mCurrentIteration;
+        TimeDuration iterationStart =
+          mSource->Timing().mIterationDuration *
+          computedTiming.mCurrentIteration;
+        TimeDuration elapsedTime =
+          std::max(iterationStart, mSource->InitialAdvance());
+        AnimationEventInfo ei(target, Name(), message,
+                              StickyTimeDuration(elapsedTime),
+                              PseudoTypeAsString(targetPseudoType));
+        aEventsToDispatch.AppendElement(ei);
+      }
+      break;
+
+    case ComputedTiming::AnimationPhase_After:
+      // If we skipped the animation interval entirely, dispatch
+      // 'animationstart' first
+      if (mLastNotification == LAST_NOTIFICATION_NONE) {
+        // Notifying for start of 0th iteration.
+        // (This is overwritten below but we set it here to maintain
+        // internal consistency.)
+        mLastNotification = 0;
+        StickyTimeDuration elapsedTime =
+          std::min(StickyTimeDuration(mSource->InitialAdvance()),
+                   computedTiming.mActiveDuration);
+        AnimationEventInfo ei(target, Name(), NS_ANIMATION_START,
+                              elapsedTime,
+                              PseudoTypeAsString(targetPseudoType));
+        aEventsToDispatch.AppendElement(ei);
+      }
+      // Dispatch 'animationend' when needed.
+      if (mLastNotification != LAST_NOTIFICATION_END) {
+        mLastNotification = LAST_NOTIFICATION_END;
+        AnimationEventInfo ei(target, Name(), NS_ANIMATION_END,
+                              computedTiming.mActiveDuration,
+                              PseudoTypeAsString(targetPseudoType));
+        aEventsToDispatch.AppendElement(ei);
+      }
+      break;
+  }
+}
+
+/* static */ nsString
+CSSAnimationPlayer::PseudoTypeAsString(nsCSSPseudoElements::Type aPseudoType)
+{
+  switch (aPseudoType) {
+    case nsCSSPseudoElements::ePseudo_before:
+      return NS_LITERAL_STRING("::before");
+    case nsCSSPseudoElements::ePseudo_after:
+      return NS_LITERAL_STRING("::after");
+    default:
+      return EmptyString();
+  }
+}
 
 void
 nsAnimationManager::UpdateStyleAndEvents(AnimationPlayerCollection*
@@ -34,83 +154,19 @@ nsAnimationManager::UpdateStyleAndEvents(AnimationPlayerCollection*
                                          EnsureStyleRuleFlags aFlags)
 {
   aCollection->EnsureStyleRuleFor(aRefreshTime, aFlags);
-  GetEventsForCurrentTime(aCollection, mPendingEvents);
+  QueueEvents(aCollection, mPendingEvents);
   CheckNeedsRefresh();
 }
 
 void
-nsAnimationManager::GetEventsForCurrentTime(AnimationPlayerCollection*
-                                              aCollection,
-                                            EventArray& aEventsToDispatch)
+nsAnimationManager::QueueEvents(AnimationPlayerCollection* aCollection,
+                                EventArray& aEventsToDispatch)
 {
   for (size_t playerIdx = aCollection->mPlayers.Length(); playerIdx-- != 0; ) {
-    AnimationPlayer* player = aCollection->mPlayers[playerIdx];
-    Animation* anim = player->GetSource();
-    if (!anim) {
-      continue;
-    }
-
-    ComputedTiming computedTiming = anim->GetComputedTiming();
-
-    switch (computedTiming.mPhase) {
-      case ComputedTiming::AnimationPhase_Null:
-      case ComputedTiming::AnimationPhase_Before:
-        // Do nothing
-        break;
-
-      case ComputedTiming::AnimationPhase_Active:
-        // Dispatch 'animationstart' or 'animationiteration' when needed.
-        if (computedTiming.mCurrentIteration != anim->LastNotification()) {
-          // Notify 'animationstart' even if a negative delay puts us
-          // past the first iteration.
-          // Note that when somebody changes the animation-duration
-          // dynamically, this will fire an extra iteration event
-          // immediately in many cases.  It's not clear to me if that's the
-          // right thing to do.
-          uint32_t message =
-            anim->LastNotification() == Animation::LAST_NOTIFICATION_NONE
-                                        ? NS_ANIMATION_START
-                                        : NS_ANIMATION_ITERATION;
-          anim->SetLastNotification(computedTiming.mCurrentIteration);
-          TimeDuration iterationStart =
-            anim->Timing().mIterationDuration *
-            computedTiming.mCurrentIteration;
-          TimeDuration elapsedTime =
-            std::max(iterationStart, anim->InitialAdvance());
-          AnimationEventInfo ei(aCollection->mElement, player->Name(), message,
-                                StickyTimeDuration(elapsedTime),
-                                aCollection->PseudoElement());
-          aEventsToDispatch.AppendElement(ei);
-        }
-        break;
-
-      case ComputedTiming::AnimationPhase_After:
-        // If we skipped the animation interval entirely, dispatch
-        // 'animationstart' first
-        if (anim->LastNotification() == Animation::LAST_NOTIFICATION_NONE) {
-          // Notifying for start of 0th iteration.
-          // (This is overwritten below but we set it here to maintain
-          // internal consistency.)
-          anim->SetLastNotification(0);
-          StickyTimeDuration elapsedTime =
-            std::min(StickyTimeDuration(anim->InitialAdvance()),
-                     computedTiming.mActiveDuration);
-          AnimationEventInfo ei(aCollection->mElement,
-                                player->Name(), NS_ANIMATION_START,
-                                elapsedTime, aCollection->PseudoElement());
-          aEventsToDispatch.AppendElement(ei);
-        }
-        // Dispatch 'animationend' when needed.
-        if (anim->LastNotification() != Animation::LAST_NOTIFICATION_END) {
-          anim->SetLastNotification(Animation::LAST_NOTIFICATION_END);
-          AnimationEventInfo ei(aCollection->mElement,
-                                player->Name(), NS_ANIMATION_END,
-                                computedTiming.mActiveDuration,
-                                aCollection->PseudoElement());
-          aEventsToDispatch.AppendElement(ei);
-        }
-        break;
-    }
+    CSSAnimationPlayer* player =
+      aCollection->mPlayers[playerIdx]->AsCSSAnimationPlayer();
+    MOZ_ASSERT(player, "Expected a collection of CSS Animation players");
+    player->QueueEvents(aEventsToDispatch);
   }
 }
 
@@ -142,8 +198,7 @@ nsAnimationManager::GetAnimationPlayers(dom::Element *aElement,
   if (!collection && aCreateIfNeeded) {
     // FIXME: Consider arena-allocating?
     collection =
-      new AnimationPlayerCollection(aElement, propName, this,
-        mPresContext->RefreshDriver()->MostRecentRefresh());
+      new AnimationPlayerCollection(aElement, propName, this);
     nsresult rv =
       aElement->SetProperty(propName, collection,
                             &AnimationPlayerCollection::PropertyDtor, false);
@@ -226,7 +281,8 @@ nsIStyleRule*
 nsAnimationManager::CheckAnimationRule(nsStyleContext* aStyleContext,
                                        mozilla::dom::Element* aElement)
 {
-  if (!mPresContext->IsProcessingAnimationStyleChange()) {
+  // FIXME (bug 960465): This test should go away.
+  if (!mPresContext->RestyleManager()->IsProcessingAnimationStyleChange()) {
     if (!mPresContext->IsDynamic()) {
       // For print or print preview, ignore animations.
       return nullptr;
@@ -249,7 +305,7 @@ nsAnimationManager::CheckAnimationRule(nsStyleContext* aStyleContext,
     // build the animations list
     dom::AnimationTimeline* timeline = aElement->OwnerDoc()->Timeline();
     AnimationPlayerPtrArray newPlayers;
-    BuildAnimations(aStyleContext, timeline, newPlayers);
+    BuildAnimations(aStyleContext, aElement, timeline, newPlayers);
 
     if (newPlayers.IsEmpty()) {
       if (collection) {
@@ -275,8 +331,6 @@ nsAnimationManager::CheckAnimationRule(nsStyleContext* aStyleContext,
       // in the first place).
       if (!collection->mPlayers.IsEmpty()) {
 
-        Nullable<TimeDuration> now = timeline->GetCurrentTimeDuration();
-
         for (size_t newIdx = newPlayers.Length(); newIdx-- != 0;) {
           AnimationPlayer* newPlayer = newPlayers[newIdx];
 
@@ -286,10 +340,13 @@ nsAnimationManager::CheckAnimationRule(nsStyleContext* aStyleContext,
           // the new list of animations with a given name than in the old
           // list, it will be the animations towards the of the beginning of
           // the list that do not match and are treated as new animations.
-          nsRefPtr<AnimationPlayer> oldPlayer;
+          nsRefPtr<CSSAnimationPlayer> oldPlayer;
           size_t oldIdx = collection->mPlayers.Length();
           while (oldIdx-- != 0) {
-            AnimationPlayer* a = collection->mPlayers[oldIdx];
+            CSSAnimationPlayer* a =
+              collection->mPlayers[oldIdx]->AsCSSAnimationPlayer();
+            MOZ_ASSERT(a, "All players in the CSS Animation collection should"
+                          " be CSSAnimationPlayer objects");
             if (a->Name() == newPlayer->Name()) {
               oldPlayer = a;
               break;
@@ -309,22 +366,21 @@ nsAnimationManager::CheckAnimationRule(nsStyleContext* aStyleContext,
           }
 
           // Reset compositor state so animation will be re-synchronized.
-          oldPlayer->mIsRunningOnCompositor = false;
+          oldPlayer->ClearIsRunningOnCompositor();
 
           // Handle changes in play state.
-          if (!oldPlayer->IsPaused() && newPlayer->IsPaused()) {
-            // Start pause at current time.
-            oldPlayer->mHoldTime = oldPlayer->GetCurrentTimeDuration();
-          } else if (oldPlayer->IsPaused() && !newPlayer->IsPaused()) {
-            if (now.IsNull()) {
-              oldPlayer->mStartTime.SetNull();
-            } else {
-              oldPlayer->mStartTime.SetValue(now.Value() -
-                                               oldPlayer->mHoldTime.Value());
-            }
-            oldPlayer->mHoldTime.SetNull();
+          // CSSAnimationPlayer takes care of override behavior so that,
+          // for example, if the author has called pause(), that will
+          // override the animation-play-state.
+          // (We should check newPlayer->IsStylePaused() but that requires
+          //  downcasting to CSSAnimationPlayer and we happen to know that
+          //  newPlayer will only ever be paused by calling PauseFromStyle
+          //  making IsPaused synonymous in this case.)
+          if (!oldPlayer->IsStylePaused() && newPlayer->IsPaused()) {
+            oldPlayer->PauseFromStyle();
+          } else if (oldPlayer->IsStylePaused() && !newPlayer->IsPaused()) {
+            oldPlayer->PlayFromStyle();
           }
-          oldPlayer->mPlayState = newPlayer->mPlayState;
 
           // Replace new animation with the (updated) old one and remove the
           // old one from the array so we don't try to match it any more.
@@ -413,6 +469,7 @@ ResolvedStyleCache::Get(nsPresContext *aPresContext,
 
 void
 nsAnimationManager::BuildAnimations(nsStyleContext* aStyleContext,
+                                    dom::Element* aTarget,
                                     dom::AnimationTimeline* aTimeline,
                                     AnimationPlayerPtrArray& aPlayers)
 {
@@ -421,7 +478,7 @@ nsAnimationManager::BuildAnimations(nsStyleContext* aStyleContext,
   ResolvedStyleCache resolvedStyles;
 
   const nsStyleDisplay *disp = aStyleContext->StyleDisplay();
-  Nullable<TimeDuration> now = aTimeline->GetCurrentTimeDuration();
+  Nullable<TimeDuration> now = aTimeline->GetCurrentTime();
 
   for (size_t animIdx = 0, animEnd = disp->mAnimationNameCount;
        animIdx != animEnd; ++animIdx) {
@@ -441,8 +498,8 @@ nsAnimationManager::BuildAnimations(nsStyleContext* aStyleContext,
       continue;
     }
 
-    nsRefPtr<AnimationPlayer> dest =
-      *aPlayers.AppendElement(new AnimationPlayer(aTimeline));
+    nsRefPtr<CSSAnimationPlayer> dest = new CSSAnimationPlayer(aTimeline);
+    aPlayers.AppendElement(dest);
 
     AnimationTiming timing;
     timing.mIterationDuration =
@@ -453,13 +510,13 @@ nsAnimationManager::BuildAnimations(nsStyleContext* aStyleContext,
     timing.mFillMode = src.GetFillMode();
 
     nsRefPtr<Animation> destAnim =
-      new Animation(mPresContext->Document(), timing, src.GetName());
+      new Animation(mPresContext->Document(), aTarget,
+                    aStyleContext->GetPseudoType(), timing, src.GetName());
     dest->SetSource(destAnim);
 
     dest->mStartTime = now;
-    dest->mPlayState = src.GetPlayState();
-    if (dest->IsPaused()) {
-      dest->mHoldTime.SetValue(TimeDuration(0));
+    if (src.GetPlayState() == NS_STYLE_ANIMATION_PLAY_STATE_PAUSED) {
+      dest->PauseFromStyle();
     }
 
     // While current drafts of css3-animations say that later keyframes
@@ -665,12 +722,12 @@ nsAnimationManager::GetAnimationRule(mozilla::dom::Element* aElement,
     return nullptr;
   }
 
-  if (mPresContext->IsProcessingRestyles() &&
-      !mPresContext->IsProcessingAnimationStyleChange()) {
+  RestyleManager* restyleManager = mPresContext->RestyleManager();
+  if (restyleManager->SkipAnimationRules()) {
     // During the non-animation part of processing restyles, we don't
     // add the animation rule.
 
-    if (collection->mStyleRule) {
+    if (collection->mStyleRule && restyleManager->PostAnimationRestyles()) {
       collection->PostRestyleForAnimation(mPresContext);
     }
 

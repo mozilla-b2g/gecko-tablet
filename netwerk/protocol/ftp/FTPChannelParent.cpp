@@ -18,6 +18,7 @@
 #include "SerializedLoadContext.h"
 #include "nsIContentPolicy.h"
 #include "mozilla/ipc/BackgroundUtils.h"
+#include "nsIOService.h"
 
 using namespace mozilla::ipc;
 
@@ -39,11 +40,16 @@ FTPChannelParent::FTPChannelParent(nsILoadContext* aLoadContext, PBOverrideStatu
   nsIProtocolHandler* handler;
   CallGetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "ftp", &handler);
   NS_ASSERTION(handler, "no ftp handler");
+  
+  mObserver = new OfflineObserver(this);
 }
 
 FTPChannelParent::~FTPChannelParent()
 {
   gFtpHandler->Release();
+  if (mObserver) {
+    mObserver->RemoveObserver();
+  }
 }
 
 void
@@ -115,6 +121,17 @@ FTPChannelParent::DoAsyncOpen(const URIParams& aURI,
        this, uriSpec.get()));
 #endif
 
+  bool app_offline = false;
+  uint32_t appId = GetAppId();
+  if (appId != NECKO_UNKNOWN_APP_ID &&
+      appId != NECKO_NO_APP_ID) {
+    gIOService->IsAppOffline(appId, &app_offline);
+    LOG(("FTP app id %u is offline %d\n", appId, app_offline));
+  }
+
+  if (app_offline)
+    return SendFailedAsyncOpen(NS_ERROR_OFFLINE);
+
   nsresult rv;
   nsCOMPtr<nsIIOService> ios(do_GetIOService(&rv));
   if (NS_FAILED(rv))
@@ -132,7 +149,6 @@ FTPChannelParent::DoAsyncOpen(const URIParams& aURI,
                      requestingPrincipal,
                      aSecurityFlags,
                      aContentPolicyType,
-                     nullptr, // aChannelPolicy
                      nullptr, // aLoadGroup
                      nullptr, // aCallbacks
                      nsIRequest::LOAD_NORMAL,
@@ -196,6 +212,7 @@ FTPChannelParent::RecvCancel(const nsresult& status)
 {
   if (mChannel)
     mChannel->Cancel(status);
+
   return true;
 }
 
@@ -640,6 +657,25 @@ FTPChannelParent::NotifyDiversionFailed(nsresult aErrorCode,
   if (!mIPCClosed) {
     unused << SendDeleteSelf();
   }
+}
+
+void
+FTPChannelParent::OfflineDisconnect()
+{
+  if (mChannel) {
+    mChannel->Cancel(NS_ERROR_OFFLINE);
+  }
+  mStatus = NS_ERROR_OFFLINE;
+}
+
+uint32_t
+FTPChannelParent::GetAppId()
+{
+  uint32_t appId = NECKO_UNKNOWN_APP_ID;
+  if (mLoadContext) {
+    mLoadContext->GetAppId(&appId);
+  }
+  return appId;
 }
 
 //-----------------------------------------------------------------------------

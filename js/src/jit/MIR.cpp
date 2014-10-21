@@ -189,7 +189,7 @@ MDefinition::valueHash() const
     HashNumber out = op();
     for (size_t i = 0, e = numOperands(); i < e; i++)
         out = addU32ToHash(out, getOperand(i)->id());
-    if (MDefinition *dep = dependency())
+    if (MInstruction *dep = dependency())
         out = addU32ToHash(out, dep->id());
     return out;
 }
@@ -222,6 +222,18 @@ MDefinition::foldsTo(TempAllocator &alloc)
 {
     // In the default case, there are no constants to fold.
     return this;
+}
+
+bool
+MDefinition::mightBeMagicType() const
+{
+    if (IsMagicType(type()))
+        return true;
+
+    if (MIRType_Value != type())
+        return false;
+
+    return !resultTypeSet() || resultTypeSet()->hasType(types::Type::MagicArgType());
 }
 
 MDefinition *
@@ -526,9 +538,25 @@ MDefinition::justReplaceAllUsesWith(MDefinition *dom)
     MOZ_ASSERT(dom != nullptr);
     MOZ_ASSERT(dom != this);
 
-    for (MUseIterator i(usesBegin()); i != usesEnd(); i++)
+    for (MUseIterator i(usesBegin()), e(usesEnd()); i != e; ++i)
         i->setProducerUnchecked(dom);
     dom->uses_.takeElements(uses_);
+}
+
+void
+MDefinition::optimizeOutAllUses(TempAllocator &alloc)
+{
+    for (MUseIterator i(usesBegin()), e(usesEnd()); i != e;) {
+        MUse *use = *i++;
+        MConstant *constant = use->consumer()->block()->optimizedOutConstant(alloc);
+
+        // Update the resume point operand to use the optimized-out constant.
+        use->setProducerUnchecked(constant);
+        constant->addUseUnchecked(use);
+    }
+
+    // Remove dangling pointers.
+    this->uses_.clear();
 }
 
 bool
@@ -789,6 +817,14 @@ MSimdSplatX4::foldsTo(TempAllocator &alloc)
     }
 
     return MSimdConstant::New(alloc, cst, type());
+}
+
+MDefinition *
+MSimdSwizzle::foldsTo(TempAllocator &alloc)
+{
+    if (lanesMatch(0, 1, 2, 3))
+        return input();
+    return this;
 }
 
 MCloneLiteral *
@@ -1180,20 +1216,24 @@ MPhi::removeOperand(size_t index)
     // If we have phi(..., a, b, c, d, ..., z) and we plan
     // on removing a, then first shift downward so that we have
     // phi(..., b, c, d, ..., z, z):
-    size_t length = inputs_.length();
-    for (size_t i = index; i < length - 1; i++)
-        inputs_[i].replaceProducer(inputs_[i + 1].producer());
+    MUse *p = inputs_.begin() + index;
+    MUse *e = inputs_.end();
+    p->producer()->removeUse(p);
+    for (; p < e - 1; ++p) {
+        MDefinition *producer = (p + 1)->producer();
+        p->setProducerUnchecked(producer);
+        producer->replaceUse(p + 1, p);
+    }
 
     // truncate the inputs_ list:
-    inputs_[length - 1].releaseProducer();
-    inputs_.shrinkBy(1);
+    inputs_.popBack();
 }
 
 void
 MPhi::removeAllOperands()
 {
-    for (size_t i = 0; i < inputs_.length(); i++)
-        inputs_[i].releaseProducer();
+    for (MUse *p = inputs_.begin(), *e = inputs_.end(); p < e; ++p)
+        p->producer()->removeUse(p);
     inputs_.clear();
 }
 
@@ -1222,8 +1262,30 @@ MPhi::foldsTernary()
     if (!pred || !pred->lastIns()->isTest())
         return nullptr;
 
-    // We found a ternary construct.
     MTest *test = pred->lastIns()->toTest();
+
+    // True branch may only dominate one edge of MPhi.
+    if (test->ifTrue()->dominates(block()->getPredecessor(0)) &&
+        test->ifTrue()->dominates(block()->getPredecessor(1)))
+    {
+        return nullptr;
+    }
+
+    // False branch may only dominate one edge of MPhi.
+    if (test->ifFalse()->dominates(block()->getPredecessor(0)) &&
+        test->ifFalse()->dominates(block()->getPredecessor(1)))
+    {
+        return nullptr;
+    }
+
+    // True and false branch must dominate different edges of MPhi.
+    if (test->ifTrue()->dominates(block()->getPredecessor(0)) ==
+        test->ifFalse()->dominates(block()->getPredecessor(0)))
+    {
+        return nullptr;
+    }
+
+    // We found a ternary construct.
     bool firstIsTrueBranch = test->ifTrue()->dominates(block()->getPredecessor(0));
     MDefinition *trueDef = firstIsTrueBranch ? getOperand(0) : getOperand(1);
     MDefinition *falseDef = firstIsTrueBranch ? getOperand(1) : getOperand(0);
@@ -1321,19 +1383,6 @@ MPhi::congruentTo(const MDefinition *ins) const
         return false;
 
     return congruentIfOperandsEqual(ins);
-}
-
-bool
-MPhi::reserveLength(size_t length)
-{
-    // Initializes a new MPhi to have an Operand vector of at least the given
-    // capacity. This permits use of addInput() instead of addInputSlow(), the
-    // latter of which may call pod_realloc().
-    MOZ_ASSERT(numOperands() == 0);
-#if DEBUG
-    capacity_ = length;
-#endif
-    return inputs_.reserve(length);
 }
 
 static inline types::TemporaryTypeSet *
@@ -1464,65 +1513,20 @@ MPhi::typeIncludes(MDefinition *def)
     return this->mightBeType(def->type());
 }
 
-void
-MPhi::addInput(MDefinition *ins)
-{
-    // This can only been done if the length was reserved through reserveLength,
-    // else the slower addInputSlow need to get called.
-    MOZ_ASSERT(inputs_.length() < capacity_);
-
-    inputs_.append(MUse());
-    inputs_.back().init(ins, this);
-}
-
 bool
-MPhi::addInputSlow(MDefinition *ins, bool *ptypeChange)
+MPhi::checkForTypeChange(MDefinition *ins, bool *ptypeChange)
 {
-    // The list of inputs to an MPhi is given as a vector of MUse nodes,
-    // each of which is in the list of the producer MDefinition.
-    // Because appending to a vector may reallocate the vector, it is possible
-    // that this operation may cause the producers' linked lists to reference
-    // invalid memory. Therefore, in the event of moving reallocation, each
-    // MUse must be removed and reinserted from/into its producer's use chain.
-    uint32_t index = inputs_.length();
-    bool performingRealloc = !inputs_.canAppendWithoutRealloc(1);
+    MIRType resultType = this->type();
+    types::TemporaryTypeSet *resultTypeSet = this->resultTypeSet();
 
-    // Remove all MUses from all use lists, in case pod_realloc() moves.
-    if (performingRealloc) {
-        for (uint32_t i = 0; i < index; i++) {
-            MUse *use = &inputs_[i];
-            use->producer()->removeUse(use);
-        }
-    }
-
-    // Insert the new input.
-    if (!inputs_.append(MUse()))
+    if (!MergeTypes(&resultType, &resultTypeSet, ins->type(), ins->resultTypeSet()))
         return false;
 
-    inputs_.back().init(ins, this);
-
-    if (ptypeChange) {
-        MIRType resultType = this->type();
-        types::TemporaryTypeSet *resultTypeSet = this->resultTypeSet();
-
-        if (!MergeTypes(&resultType, &resultTypeSet, ins->type(), ins->resultTypeSet()))
-            return false;
-
-        if (resultType != this->type() || resultTypeSet != this->resultTypeSet()) {
-            *ptypeChange = true;
-            setResultType(resultType);
-            setResultTypeSet(resultTypeSet);
-        }
+    if (resultType != this->type() || resultTypeSet != this->resultTypeSet()) {
+        *ptypeChange = true;
+        setResultType(resultType);
+        setResultTypeSet(resultTypeSet);
     }
-
-    // Add all previously-removed MUses back.
-    if (performingRealloc) {
-        for (uint32_t i = 0; i < index; i++) {
-            MUse *use = &inputs_[i];
-            use->producer()->addUse(use);
-        }
-    }
-
     return true;
 }
 
@@ -2839,9 +2843,48 @@ MClampToUint8::foldsTo(TempAllocator &alloc)
 }
 
 bool
+MCompare::tryFoldEqualOperands(bool *result)
+{
+    if (lhs() != rhs())
+        return false;
+
+    // Intuitively somebody would think that if lhs == rhs,
+    // then we can just return true. (Or false for !==)
+    // However NaN !== NaN is true! So we spend some time trying
+    // to eliminate this case.
+
+    if (jsop() != JSOP_STRICTEQ && jsop() != JSOP_STRICTNE)
+        return false;
+
+    if (compareType_ == Compare_Unknown)
+        return false;
+
+    MOZ_ASSERT(compareType_ == Compare_Undefined || compareType_ == Compare_Null ||
+               compareType_ == Compare_Boolean || compareType_ == Compare_Int32 ||
+               compareType_ == Compare_Int32MaybeCoerceBoth ||
+               compareType_ == Compare_Int32MaybeCoerceLHS ||
+               compareType_ == Compare_Int32MaybeCoerceRHS || compareType_ == Compare_UInt32 ||
+               compareType_ == Compare_Double || compareType_ == Compare_DoubleMaybeCoerceLHS ||
+               compareType_ == Compare_DoubleMaybeCoerceRHS || compareType_ == Compare_Float32 ||
+               compareType_ == Compare_String || compareType_ == Compare_StrictString ||
+               compareType_ == Compare_Object || compareType_ == Compare_Value);
+
+    if (isDoubleComparison() || isFloat32Comparison()) {
+        if (!operandsAreNeverNaN())
+            return false;
+    }
+
+    *result = (jsop() == JSOP_STRICTEQ);
+    return true;
+}
+
+bool
 MCompare::tryFold(bool *result)
 {
     JSOp op = jsop();
+
+    if (tryFoldEqualOperands(result))
+        return true;
 
     if (compareType_ == Compare_Null || compareType_ == Compare_Undefined) {
         MOZ_ASSERT(op == JSOP_EQ || op == JSOP_STRICTEQ ||
@@ -3180,7 +3223,7 @@ MBeta::printOpcode(FILE *fp) const
 bool
 MNewObject::shouldUseVM() const
 {
-    JSObject *obj = templateObject();
+    NativeObject *obj = templateObject();
     return obj->hasSingletonType() || obj->hasDynamicSlots();
 }
 
@@ -3197,7 +3240,7 @@ MObjectState::MObjectState(MDefinition *obj)
     // This instruction is only used as a summary for bailout paths.
     setResultType(MIRType_Object);
     setRecoveredOnBailout();
-    JSObject *templateObject = nullptr;
+    NativeObject *templateObject = nullptr;
     if (obj->isNewObject())
         templateObject = obj->toNewObject()->templateObject();
     else
@@ -3241,10 +3284,10 @@ MObjectState::Copy(TempAllocator &alloc, MObjectState *state)
 bool
 MNewArray::shouldUseVM() const
 {
-    MOZ_ASSERT(count() < JSObject::NELEMENTS_LIMIT);
+    MOZ_ASSERT(count() < NativeObject::NELEMENTS_LIMIT);
 
     size_t arraySlots =
-        gc::GetGCKindSlots(templateObject()->asTenured()->getAllocKind()) - ObjectElements::VALUES_PER_HEADER;
+        gc::GetGCKindSlots(templateObject()->asTenured().getAllocKind()) - ObjectElements::VALUES_PER_HEADER;
 
     // Allocate space using the VMCall when mir hints it needs to get allocated
     // immediately, but only when data doesn't fit the available array slots.

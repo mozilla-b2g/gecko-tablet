@@ -196,17 +196,26 @@ PeerConnectionImpl* PeerConnectionImpl::CreatePeerConnection()
 PeerConnectionMedia::PeerConnectionMedia(PeerConnectionImpl *parent)
     : mParent(parent),
       mParentHandle(parent->GetHandle()),
+      mAllowIceLoopback(false),
       mIceCtx(nullptr),
       mDNSResolver(new mozilla::NrIceResolver()),
       mMainThread(mParent->GetMainThread()),
-      mSTSThread(mParent->GetSTSThread()) {}
+      mSTSThread(mParent->GetSTSThread()) {
+#ifdef MOZILLA_INTERNAL_API
+  mAllowIceLoopback = Preferences::GetBool(
+    "media.peerconnection.ice.loopback", false);
+#endif
+}
 
 nsresult PeerConnectionMedia::Init(const std::vector<NrIceStunServer>& stun_servers,
                                    const std::vector<NrIceTurnServer>& turn_servers)
 {
   // TODO(ekr@rtfm.com): need some way to set not offerer later
   // Looks like a bug in the NrIceCtx API.
-  mIceCtx = NrIceCtx::Create("PC:" + mParent->GetName(), true);
+  mIceCtx = NrIceCtx::Create("PC:" + mParent->GetName(),
+                             true, // Offerer
+                             true, // Trickle
+                             mAllowIceLoopback);
   if(!mIceCtx) {
     CSFLogError(logTag, "%s: Failed to create Ice Context", __FUNCTION__);
     return NS_ERROR_FAILURE;
@@ -240,10 +249,10 @@ nsresult PeerConnectionMedia::Init(const std::vector<NrIceStunServer>& stun_serv
   }
   mIceCtx->SignalGatheringStateChange.connect(
       this,
-      &PeerConnectionMedia::IceGatheringStateChange);
+      &PeerConnectionMedia::IceGatheringStateChange_s);
   mIceCtx->SignalConnectionStateChange.connect(
       this,
-      &PeerConnectionMedia::IceConnectionStateChange);
+      &PeerConnectionMedia::IceConnectionStateChange_s);
 
   // Create three streams to start with.
   // One each for audio, video and DataChannel
@@ -283,7 +292,7 @@ nsresult PeerConnectionMedia::Init(const std::vector<NrIceStunServer>& stun_serv
     mIceStreams[i]->SignalReady.connect(this, &PeerConnectionMedia::IceStreamReady);
     mIceStreams[i]->SignalCandidate.connect(
         this,
-        &PeerConnectionMedia::OnCandidateFound);
+        &PeerConnectionMedia::OnCandidateFound_s);
   }
 
   // TODO(ekr@rtfm.com): When we have a generic error reporting mechanism,
@@ -295,7 +304,7 @@ nsresult PeerConnectionMedia::Init(const std::vector<NrIceStunServer>& stun_serv
 }
 
 nsresult
-PeerConnectionMedia::AddStream(nsIDOMMediaStream* aMediaStream,
+PeerConnectionMedia::AddStream(DOMMediaStream* aMediaStream,
                                uint32_t hints,
                                uint32_t *stream_id)
 {
@@ -305,8 +314,6 @@ PeerConnectionMedia::AddStream(nsIDOMMediaStream* aMediaStream,
     CSFLogError(logTag, "%s - aMediaStream is NULL", __FUNCTION__);
     return NS_ERROR_FAILURE;
   }
-
-  DOMMediaStream* stream = static_cast<DOMMediaStream*>(aMediaStream);
 
   CSFLogDebug(logTag, "%s: MediaStream: %p", __FUNCTION__, aMediaStream);
 
@@ -336,14 +343,14 @@ PeerConnectionMedia::AddStream(nsIDOMMediaStream* aMediaStream,
       CSFLogError(logTag, "Only one stream of any given type allowed");
       return NS_ERROR_FAILURE;
     }
-    if (stream == lss->GetMediaStream()) {
+    if (aMediaStream == lss->GetMediaStream()) {
       localSourceStream = lss;
       *stream_id = u;
       break;
     }
   }
   if (!localSourceStream) {
-    localSourceStream = new LocalSourceStreamInfo(stream, this);
+    localSourceStream = new LocalSourceStreamInfo(aMediaStream, this);
     mLocalSourceStreams.AppendElement(localSourceStream);
     *stream_id = mLocalSourceStreams.Length() - 1;
   }
@@ -359,21 +366,19 @@ PeerConnectionMedia::AddStream(nsIDOMMediaStream* aMediaStream,
 }
 
 nsresult
-PeerConnectionMedia::RemoveStream(nsIDOMMediaStream* aMediaStream,
+PeerConnectionMedia::RemoveStream(DOMMediaStream* aMediaStream,
                                   uint32_t hints,
                                   uint32_t *stream_id)
 {
   MOZ_ASSERT(aMediaStream);
   ASSERT_ON_THREAD(mMainThread);
 
-  DOMMediaStream* stream = static_cast<DOMMediaStream*>(aMediaStream);
-
   CSFLogDebug(logTag, "%s: MediaStream: %p",
     __FUNCTION__, aMediaStream);
 
   for (uint32_t u = 0; u < mLocalSourceStreams.Length(); u++) {
     nsRefPtr<LocalSourceStreamInfo> localSourceStream = mLocalSourceStreams[u];
-    if (localSourceStream->GetMediaStream() == stream) {
+    if (localSourceStream->GetMediaStream() == aMediaStream) {
       *stream_id = u;
 
       if (hints & DOMMediaStream::HINT_CONTENTS_AUDIO) {
@@ -591,16 +596,73 @@ PeerConnectionMedia::AddRemoteStreamHint(int aIndex, bool aIsVideo)
 
 
 void
-PeerConnectionMedia::IceGatheringStateChange(NrIceCtx* ctx,
-                                             NrIceCtx::GatheringState state)
+PeerConnectionMedia::IceGatheringStateChange_s(NrIceCtx* ctx,
+                                               NrIceCtx::GatheringState state)
 {
+  ASSERT_ON_THREAD(mSTSThread);
+  // ShutdownMediaTransport_s has not run yet because it unhooks this function
+  // from its signal, which means that SelfDestruct_m has not been dispatched
+  // yet either, so this PCMedia will still be around when this dispatch reaches
+  // main.
+  GetMainThread()->Dispatch(
+    WrapRunnable(this,
+                 &PeerConnectionMedia::IceGatheringStateChange_m,
+                 ctx,
+                 state),
+    NS_DISPATCH_NORMAL);
+}
+
+void
+PeerConnectionMedia::IceConnectionStateChange_s(NrIceCtx* ctx,
+                                                NrIceCtx::ConnectionState state)
+{
+  ASSERT_ON_THREAD(mSTSThread);
+  // ShutdownMediaTransport_s has not run yet because it unhooks this function
+  // from its signal, which means that SelfDestruct_m has not been dispatched
+  // yet either, so this PCMedia will still be around when this dispatch reaches
+  // main.
+  GetMainThread()->Dispatch(
+    WrapRunnable(this,
+                 &PeerConnectionMedia::IceConnectionStateChange_m,
+                 ctx,
+                 state),
+    NS_DISPATCH_NORMAL);
+}
+
+void
+PeerConnectionMedia::OnCandidateFound_s(NrIceMediaStream *aStream,
+                                        const std::string &candidate)
+{
+  ASSERT_ON_THREAD(mSTSThread);
+  MOZ_ASSERT(aStream);
+
+  CSFLogDebug(logTag, "%s: %s", __FUNCTION__, aStream->name().c_str());
+
+  // ShutdownMediaTransport_s has not run yet because it unhooks this function
+  // from its signal, which means that SelfDestruct_m has not been dispatched
+  // yet either, so this PCMedia will still be around when this dispatch reaches
+  // main.
+  GetMainThread()->Dispatch(
+    WrapRunnable(this,
+                 &PeerConnectionMedia::OnCandidateFound_m,
+                 candidate,
+                 aStream->GetLevel()),
+    NS_DISPATCH_NORMAL);
+}
+
+void
+PeerConnectionMedia::IceGatheringStateChange_m(NrIceCtx* ctx,
+                                               NrIceCtx::GatheringState state)
+{
+  ASSERT_ON_THREAD(mMainThread);
   SignalIceGatheringStateChange(ctx, state);
 }
 
 void
-PeerConnectionMedia::IceConnectionStateChange(NrIceCtx* ctx,
-                                              NrIceCtx::ConnectionState state)
+PeerConnectionMedia::IceConnectionStateChange_m(NrIceCtx* ctx,
+                                                NrIceCtx::ConnectionState state)
 {
+  ASSERT_ON_THREAD(mMainThread);
   SignalIceConnectionStateChange(ctx, state);
 }
 
@@ -613,14 +675,11 @@ PeerConnectionMedia::IceStreamReady(NrIceMediaStream *aStream)
 }
 
 void
-PeerConnectionMedia::OnCandidateFound(NrIceMediaStream *aStream,
-                                      const std::string &candidate)
+PeerConnectionMedia::OnCandidateFound_m(const std::string &candidate,
+                                        uint16_t level)
 {
-  MOZ_ASSERT(aStream);
-
-  CSFLogDebug(logTag, "%s: %s", __FUNCTION__, aStream->name().c_str());
-
-  SignalCandidate(candidate, aStream->GetLevel());
+  ASSERT_ON_THREAD(mMainThread);
+  SignalCandidate(candidate, level);
 }
 
 

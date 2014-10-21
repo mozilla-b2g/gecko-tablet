@@ -13,7 +13,10 @@ import org.xmlpull.v1.XmlPullParserException;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * Extend this class to add a new search engine to
@@ -24,6 +27,8 @@ public class SearchEngine {
 
     private static final String URLTYPE_SUGGEST_JSON = "application/x-suggestions+json";
     private static final String URLTYPE_SEARCH_HTML  = "text/html";
+
+    private static final String URL_REL_MOBILE = "mobile";
 
     // Parameters copied from nsSearchService.js
     private static final String MOZ_PARAM_LOCALE = "\\{moz:locale\\}";
@@ -47,12 +52,12 @@ public class SearchEngine {
                     "document.getElementsByTagName('head')[0].appendChild(tag);" +
                     "tag.innerText='%s'})();";
 
-    private String identifier;
+    private final String identifier;
     private String shortName;
     private String iconURL;
 
-    // TODO: Make something more robust (like EngineURL in nsSearchService.js)
-    private Uri resultsUri;
+    // Ordered list of preferred results URIs.
+    private final List<Uri> resultsUris = new ArrayList<Uri>();
     private Uri suggestUri;
 
     /**
@@ -101,6 +106,7 @@ public class SearchEngine {
 
         final String type = parser.getAttributeValue(null, "type");
         final String template = parser.getAttributeValue(null, "template");
+        final String rel = parser.getAttributeValue(null, "rel");
 
         Uri uri = Uri.parse(template);
 
@@ -124,7 +130,12 @@ public class SearchEngine {
         }
 
         if (type.equals(URLTYPE_SEARCH_HTML)) {
-            resultsUri = uri;
+            // Prefer mobile URIs.
+            if (rel != null && rel.equals(URL_REL_MOBILE)) {
+                resultsUris.add(0, uri);
+            } else {
+                resultsUris.add(uri);
+            }
         } else if (type.equals(URLTYPE_SUGGEST_JSON)) {
             suggestUri = uri;
         }
@@ -199,7 +210,24 @@ public class SearchEngine {
      * the url will be sent to Fennec.
      */
     public boolean isSearchResultsPage(String url) {
-        return resultsUri.getAuthority().equalsIgnoreCase(Uri.parse(url).getAuthority());
+        return getResultsUri().getAuthority().equalsIgnoreCase(Uri.parse(url).getAuthority());
+    }
+
+    /**
+     * Finds the search query encoded in a given results URL.
+     *
+     * @param url Current results URL.
+     * @return The search query, or an empty string if a query couldn't be found.
+     */
+    public String queryForResultsUrl(String url) {
+        final Uri resultsUri = getResultsUri();
+        final Set<String> names = resultsUri.getQueryParameterNames();
+        for (String name : names) {
+            if (resultsUri.getQueryParameter(name).matches(OS_PARAM_USER_DEFINED)) {
+                return Uri.parse(url).getQueryParameter(name);
+            }
+        }
+        return "";
     }
 
     /**
@@ -208,6 +236,7 @@ public class SearchEngine {
      * @param query The user's query. This method will escape and encode the query.
      */
     public String resultsUriForQuery(String query) {
+        final Uri resultsUri = getResultsUri();
         if (resultsUri == null) {
             Log.e(LOG_TAG, "No results URL for search engine: " + identifier);
             return "";
@@ -228,6 +257,16 @@ public class SearchEngine {
         }
         final String template = Uri.decode(suggestUri.toString());
         return paramSubstitution(template, Uri.encode(query));
+    }
+
+    /**
+     * @return Preferred results URI.
+     */
+    private Uri getResultsUri() {
+        if (resultsUris.isEmpty()) {
+            return null;
+        }
+        return resultsUris.get(0);
     }
 
     /**

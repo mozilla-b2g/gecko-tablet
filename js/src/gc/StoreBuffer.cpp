@@ -24,17 +24,10 @@ using mozilla::ReentrancyGuard;
 void
 StoreBuffer::SlotsEdge::mark(JSTracer *trc)
 {
-    JSObject *obj = object();
+    NativeObject *obj = object();
 
     if (IsInsideNursery(obj))
         return;
-
-    if (!obj->isNative()) {
-        const Class *clasp = obj->getClass();
-        if (clasp)
-            clasp->trace(trc, obj);
-        return;
-    }
 
     if (kind() == ElementKind) {
         int32_t initLen = obj->getDenseInitializedLength();
@@ -97,7 +90,7 @@ StoreBuffer::MonoTypeBuffer<T>::handleOverflow(StoreBuffer *owner)
          * trigger a minor collection.
          */
         compact(owner);
-        if (isAboutToOverflow())
+        if (isLowOnSpace())
             owner->setAboutToOverflow();
     } else {
          /*

@@ -30,8 +30,6 @@ StackBaseShape::StackBaseShape(ThreadSafeContext *cx, const Class *clasp,
     clasp(clasp),
     parent(parent),
     metadata(metadata),
-    rawGetter(nullptr),
-    rawSetter(nullptr),
     compartment(cx->compartment_)
 {}
 
@@ -153,6 +151,24 @@ Shape::search(ExclusiveContext *cx, Shape *start, jsid id, Shape ***pspp, bool a
     return nullptr;
 }
 
+inline Shape *
+Shape::new_(ExclusiveContext *cx, StackShape &unrootedOther, uint32_t nfixed)
+{
+    RootedGeneric<StackShape*> other(cx, &unrootedOther);
+    Shape *shape = other->isAccessorShape() ? NewGCAccessorShape(cx) : NewGCShape(cx);
+    if (!shape) {
+        js_ReportOutOfMemory(cx);
+        return nullptr;
+    }
+
+    if (other->isAccessorShape())
+        new (shape) AccessorShape(*other, nfixed);
+    else
+        new (shape) Shape(*other, nfixed);
+
+    return shape;
+}
+
 template<class ObjectSubclass>
 /* static */ inline bool
 EmptyShape::ensureInitialCustomShape(ExclusiveContext *cx, Handle<ObjectSubclass*> obj)
@@ -162,14 +178,14 @@ EmptyShape::ensureInitialCustomShape(ExclusiveContext *cx, Handle<ObjectSubclass
 
     // If the provided object has a non-empty shape, it was given the cached
     // initial shape when created: nothing to do.
-    if (!obj->nativeEmpty())
+    if (!obj->empty())
         return true;
 
     // If no initial shape was assigned, do so.
     RootedShape shape(cx, ObjectSubclass::assignInitialShape(cx, obj));
     if (!shape)
         return false;
-    MOZ_ASSERT(!obj->nativeEmpty());
+    MOZ_ASSERT(!obj->empty());
 
     // If the object is a standard prototype -- |RegExp.prototype|,
     // |String.prototype|, |RangeError.prototype|, &c. -- GlobalObject.cpp's

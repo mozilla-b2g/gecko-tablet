@@ -12,10 +12,10 @@
 #include "mozilla/MemoryReporting.h"
 
 #include "jscntxt.h"
-#include "jsgc.h"
 #include "jsinfer.h"
 
 #include "gc/FindSCCs.h"
+#include "gc/GCRuntime.h"
 
 namespace js {
 
@@ -35,9 +35,9 @@ class Allocator
 
   private:
     // Since allocators can be accessed from worker threads, the parent zone_
-    // should not be accessed in general. ArenaLists is allowed to actually do
+    // should not be accessed in general. GCRuntime is allowed to actually do
     // the allocation, however.
-    friend class gc::ArenaLists;
+    friend class js::gc::GCRuntime;
 
     JS::Zone *zone_;
 };
@@ -282,6 +282,10 @@ struct Zone : public JS::shadow::Zone,
 
     // Thresholds used to trigger GC.
     js::gc::ZoneHeapThreshold threshold;
+
+    // Amount of data to allocate before triggering a new incremental slice for
+    // the current GC.
+    size_t gcDelayBytes;
 
     // Per-zone data for use by an embedder.
     void *data;

@@ -18,6 +18,7 @@
 #include "mozilla/dom/Nullable.h"
 #include "nsStyleStruct.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/Assertions.h"
 #include "mozilla/FloatingPoint.h"
 #include "nsCSSPseudoElements.h"
 #include "nsCycleCollectionParticipant.h"
@@ -150,8 +151,7 @@ enum EnsureStyleRuleFlags {
 struct AnimationPlayerCollection : public PRCList
 {
   AnimationPlayerCollection(dom::Element *aElement, nsIAtom *aElementProperty,
-                            mozilla::css::CommonAnimationManager *aManager,
-                            TimeStamp aNow)
+                            mozilla::css::CommonAnimationManager *aManager)
     : mElement(aElement)
     , mElementProperty(aElementProperty)
     , mManager(aManager)
@@ -252,15 +252,17 @@ struct AnimationPlayerCollection : public PRCList
            mElementProperty == nsGkAtoms::animationsOfAfterProperty;
   }
 
-  nsString PseudoElement()
+  nsString PseudoElement() const
   {
     if (IsForElement()) {
       return EmptyString();
-    } else if (IsForBeforePseudo()) {
-      return NS_LITERAL_STRING("::before");
-    } else {
-      return NS_LITERAL_STRING("::after");
     }
+    if (IsForBeforePseudo()) {
+      return NS_LITERAL_STRING("::before");
+    }
+    MOZ_ASSERT(IsForAfterPseudo(),
+               "::before & ::after should be the only pseudo-elements here");
+    return NS_LITERAL_STRING("::after");
   }
 
   mozilla::dom::Element* GetElementToRestyle() const;
@@ -304,9 +306,11 @@ struct AnimationPlayerCollection : public PRCList
   // Update mAnimationGeneration to nsCSSFrameConstructor's count
   void UpdateAnimationGeneration(nsPresContext* aPresContext);
 
-  // Returns true if there is an animation in the before or active phase
-  // at the current time.
-  bool HasCurrentAnimations();
+  // Returns true if there is an animation that has yet to finish.
+  bool HasCurrentAnimations() const;
+  // Returns true if there is an animation of the specified property that
+  // has yet to finish.
+  bool HasCurrentAnimationsForProperty(nsCSSProperty aProperty) const;
 
   // The refresh time associated with mStyleRule.
   TimeStamp mStyleRuleRefreshTime;

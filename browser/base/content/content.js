@@ -8,6 +8,8 @@ let {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource:///modules/ContentWebRTC.jsm");
+Cu.import("resource://gre/modules/InlineSpellChecker.jsm");
+Cu.import("resource://gre/modules/InlineSpellCheckerContent.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "E10SUtils",
   "resource:///modules/E10SUtils.jsm");
@@ -100,7 +102,15 @@ if (Services.appinfo.processType == Services.appinfo.PROCESS_TYPE_CONTENT) {
     }
 
     if (!defaultPrevented) {
-      sendSyncMessage("contextmenu", {}, { event: event });
+      let editFlags = SpellCheckHelper.isEditable(event.target, content);
+      let spellInfo;
+      if (editFlags &
+          (SpellCheckHelper.EDITABLE | SpellCheckHelper.CONTENTEDITABLE)) {
+        spellInfo =
+          InlineSpellCheckerContent.initContextMenu(event, editFlags, this);
+      }
+
+      sendSyncMessage("contextmenu", { editFlags, spellInfo }, { event });
     }
   }, false);
 } else {
@@ -424,12 +434,23 @@ let ClickEventHandler = {
     let docshell = ownerDoc.defaultView.QueryInterface(Ci.nsIInterfaceRequestor)
                                        .getInterface(Ci.nsIWebNavigation)
                                        .QueryInterface(Ci.nsIDocShell);
+    let serhelper = Cc["@mozilla.org/network/serialization-helper;1"]
+                     .getService(Ci.nsISerializationHelper);
+    let serializedSSLStatus = "";
+
+    try {
+      let serializable =  docShell.failedChannel.securityInfo
+                                  .QueryInterface(Ci.nsISSLStatusProvider)
+                                  .SSLStatus
+                                  .QueryInterface(Ci.nsISerializable);
+      serializedSSLStatus = serhelper.serializeToString(serializable);
+    } catch (e) { }
+
     sendAsyncMessage("Browser:CertExceptionError", {
       location: ownerDoc.location.href,
       elementId: targetElement.getAttribute("id"),
       isTopFrame: (ownerDoc.defaultView.parent === ownerDoc.defaultView),
-    }, {
-      failedChannel: docshell.failedChannel
+      sslStatusAsString: serializedSSLStatus
     });
   },
 

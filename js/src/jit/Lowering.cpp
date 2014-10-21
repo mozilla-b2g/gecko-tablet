@@ -2095,8 +2095,8 @@ LIRGenerator::visitRegExpExec(MRegExpExec *ins)
     MOZ_ASSERT(ins->regexp()->type() == MIRType_Object);
     MOZ_ASSERT(ins->string()->type() == MIRType_String);
 
-    LRegExpExec *lir = new(alloc()) LRegExpExec(useRegisterAtStart(ins->regexp()),
-                                                useRegisterAtStart(ins->string()));
+    LRegExpExec *lir = new(alloc()) LRegExpExec(useFixedAtStart(ins->regexp(), CallTempReg0),
+                                                useFixedAtStart(ins->string(), CallTempReg1));
     return defineReturn(lir, ins) && assignSafepoint(lir, ins);
 }
 
@@ -2106,8 +2106,8 @@ LIRGenerator::visitRegExpTest(MRegExpTest *ins)
     MOZ_ASSERT(ins->regexp()->type() == MIRType_Object);
     MOZ_ASSERT(ins->string()->type() == MIRType_String);
 
-    LRegExpTest *lir = new(alloc()) LRegExpTest(useRegisterAtStart(ins->regexp()),
-                                                useRegisterAtStart(ins->string()));
+    LRegExpTest *lir = new(alloc()) LRegExpTest(useFixedAtStart(ins->regexp(), CallTempReg2),
+                                                useFixedAtStart(ins->string(), CallTempReg3));
     return defineReturn(lir, ins) && assignSafepoint(lir, ins);
 }
 
@@ -2489,6 +2489,13 @@ LIRGenerator::visitTypedObjectProto(MTypedObjectProto *ins)
 }
 
 bool
+LIRGenerator::visitTypedObjectUnsizedLength(MTypedObjectUnsizedLength *ins)
+{
+    MOZ_ASSERT(ins->type() == MIRType_Int32);
+    return define(new(alloc()) LTypedObjectUnsizedLength(useRegisterAtStart(ins->object())), ins);
+}
+
+bool
 LIRGenerator::visitTypedObjectElements(MTypedObjectElements *ins)
 {
     MOZ_ASSERT(ins->type() == MIRType_Elements);
@@ -2501,7 +2508,7 @@ LIRGenerator::visitSetTypedObjectOffset(MSetTypedObjectOffset *ins)
     return add(new(alloc()) LSetTypedObjectOffset(
                    useRegister(ins->object()),
                    useRegister(ins->offset()),
-                   temp()),
+                   temp(), temp()),
                ins);
 }
 
@@ -3802,18 +3809,87 @@ LIRGenerator::visitSimdSignMask(MSimdSignMask *ins)
 }
 
 bool
+LIRGenerator::visitSimdSwizzle(MSimdSwizzle *ins)
+{
+    MOZ_ASSERT(IsSimdType(ins->input()->type()));
+    MOZ_ASSERT(IsSimdType(ins->type()));
+
+    if (ins->input()->type() == MIRType_Int32x4) {
+        LUse use = useRegisterAtStart(ins->input());
+        LSimdSwizzleI *lir = new (alloc()) LSimdSwizzleI(use);
+        return define(lir, ins);
+    }
+
+    if (ins->input()->type() == MIRType_Float32x4) {
+        LUse use = useRegisterAtStart(ins->input());
+        LSimdSwizzleF *lir = new (alloc()) LSimdSwizzleF(use);
+        return define(lir, ins);
+    }
+
+    MOZ_CRASH("Unknown SIMD kind when getting lane");
+    return false;
+}
+
+bool
+LIRGenerator::visitSimdShuffle(MSimdShuffle *ins)
+{
+    MOZ_ASSERT(IsSimdType(ins->lhs()->type()));
+    MOZ_ASSERT(IsSimdType(ins->rhs()->type()));
+    MOZ_ASSERT(IsSimdType(ins->type()));
+    MOZ_ASSERT(ins->type() == MIRType_Int32x4 || ins->type() == MIRType_Float32x4);
+
+    bool zFromLHS = ins->laneZ() < 4;
+    bool wFromLHS = ins->laneW() < 4;
+    uint32_t lanesFromLHS = (ins->laneX() < 4) + (ins->laneY() < 4) + zFromLHS + wFromLHS;
+
+    LUse lhs = useRegisterAtStart(ins->lhs());
+    LUse rhs = useRegister(ins->rhs());
+
+    // See codegen for requirements details.
+    LDefinition temp = (lanesFromLHS == 3) ? tempCopy(ins->rhs(), 1) : LDefinition::BogusTemp();
+
+    LSimdShuffle *lir = new (alloc()) LSimdShuffle(lhs, rhs, temp);
+    return defineReuseInput(lir, ins, 0);
+}
+
+bool
+LIRGenerator::visitSimdUnaryArith(MSimdUnaryArith *ins)
+{
+    MOZ_ASSERT(IsSimdType(ins->type()));
+
+    // Cannot be at start, as the ouput is used as a temporary to store values.
+    LUse in = use(ins->input());
+
+    if (ins->type() == MIRType_Int32x4) {
+        LSimdUnaryArithIx4 *lir = new(alloc()) LSimdUnaryArithIx4(in);
+        return define(lir, ins);
+    }
+
+    if (ins->type() == MIRType_Float32x4) {
+        LSimdUnaryArithFx4 *lir = new(alloc()) LSimdUnaryArithFx4(in);
+        return define(lir, ins);
+    }
+
+    MOZ_CRASH("Unknown SIMD kind for unary operation");
+    return false;
+}
+
+bool
 LIRGenerator::visitSimdBinaryComp(MSimdBinaryComp *ins)
 {
     MOZ_ASSERT(ins->type() == MIRType_Int32x4);
 
+    if (ShouldReorderCommutative(ins->lhs(), ins->rhs(), ins))
+        ins->reverse();
+
     if (ins->compareType() == MSimdBinaryComp::CompareInt32x4) {
         LSimdBinaryCompIx4 *add = new(alloc()) LSimdBinaryCompIx4();
-        return lowerForFPU(add, ins, ins->lhs(), ins->rhs());
+        return lowerForCompIx4(add, ins, ins->lhs(), ins->rhs());
     }
 
     if (ins->compareType() == MSimdBinaryComp::CompareFloat32x4) {
         LSimdBinaryCompFx4 *add = new(alloc()) LSimdBinaryCompFx4();
-        return lowerForFPU(add, ins, ins->lhs(), ins->rhs());
+        return lowerForCompFx4(add, ins, ins->lhs(), ins->rhs());
     }
 
     MOZ_CRASH("Unknown compare type when comparing values");
@@ -3825,14 +3901,19 @@ LIRGenerator::visitSimdBinaryArith(MSimdBinaryArith *ins)
 {
     MOZ_ASSERT(IsSimdType(ins->type()));
 
+    MDefinition *lhs = ins->lhs();
+    MDefinition *rhs = ins->rhs();
+    if (ins->isCommutative())
+        ReorderCommutative(&lhs, &rhs, ins);
+
     if (ins->type() == MIRType_Int32x4) {
         LSimdBinaryArithIx4 *add = new(alloc()) LSimdBinaryArithIx4();
-        return lowerForFPU(add, ins, ins->lhs(), ins->rhs());
+        return lowerForFPU(add, ins, lhs, rhs);
     }
 
     if (ins->type() == MIRType_Float32x4) {
         LSimdBinaryArithFx4 *add = new(alloc()) LSimdBinaryArithFx4();
-        return lowerForFPU(add, ins, ins->lhs(), ins->rhs());
+        return lowerForFPU(add, ins, lhs, rhs);
     }
 
     MOZ_CRASH("Unknown SIMD kind when adding values");
@@ -3843,9 +3924,13 @@ LIRGenerator::visitSimdBinaryBitwise(MSimdBinaryBitwise *ins)
 {
     MOZ_ASSERT(IsSimdType(ins->type()));
 
+    MDefinition *lhs = ins->lhs();
+    MDefinition *rhs = ins->rhs();
+    ReorderCommutative(&lhs, &rhs, ins);
+
     if (ins->type() == MIRType_Int32x4 || ins->type() == MIRType_Float32x4) {
         LSimdBinaryBitwiseX4 *lir = new(alloc()) LSimdBinaryBitwiseX4;
-        return lowerForFPU(lir, ins, ins->lhs(), ins->rhs());
+        return lowerForFPU(lir, ins, lhs, rhs);
     }
 
     MOZ_CRASH("Unknown SIMD kind when doing bitwise operations");
@@ -4047,11 +4132,8 @@ LIRGenerator::generate()
         if (gen->shouldCancel("Lowering (preparation loop)"))
             return false;
 
-        current = LBlock::New(alloc(), *block);
-        if (!current)
+        if (!lirGraph_.initBlock(*block))
             return false;
-        lirGraph_.setBlock(block->id(), current);
-        block->assignLir(current);
     }
 
     for (ReversePostorderIterator block(graph.rpoBegin()); block != graph.rpoEnd(); block++) {

@@ -274,7 +274,7 @@ nsXPTIInterfaceInfoManagerGetSingleton(nsISupports* aOuter,
 nsComponentManagerImpl* nsComponentManagerImpl::gComponentManager = nullptr;
 bool gXPCOMShuttingDown = false;
 bool gXPCOMThreadsShutDown = false;
-char16_t* gGREPath = nullptr;
+char16_t* gGREBinPath = nullptr;
 
 static NS_DEFINE_CID(kComponentManagerCID, NS_COMPONENTMANAGER_CID);
 static NS_DEFINE_CID(kINIParserFactoryCID, NS_INIPARSERFACTORY_CID);
@@ -584,26 +584,15 @@ NS_InitXPCOM2(nsIServiceManager** aResult,
   }
 
   nsCOMPtr<nsIFile> xpcomLib;
-  nsDirectoryService::gService->Get(NS_GRE_DIR,
+  nsDirectoryService::gService->Get(NS_GRE_BIN_DIR,
                                     NS_GET_IID(nsIFile),
                                     getter_AddRefs(xpcomLib));
   MOZ_ASSERT(xpcomLib);
 
-  // set gGREPath
+  // set gGREBinPath
   nsAutoString path;
   xpcomLib->GetPath(path);
-  gGREPath = ToNewUnicode(path);
-
-#ifdef XP_MACOSX
-  nsCOMPtr<nsIFile> parent;
-  xpcomLib->GetParent(getter_AddRefs(parent));
-  parent->AppendNative(NS_LITERAL_CSTRING("MacOS"));
-  bool pathExists = false;
-  parent->Exists(&pathExists);
-  if (pathExists) {
-      xpcomLib = parent.forget();
-  }
-#endif
+  gGREBinPath = ToNewUnicode(path);
 
   xpcomLib->AppendNative(nsDependentCString(XPCOM_DLL));
   nsDirectoryService::gService->Set(NS_XPCOM_LIBRARY_FILE, xpcomLib);
@@ -915,8 +904,8 @@ ShutdownXPCOM(nsIServiceManager* aServMgr)
   // Release the directory service
   NS_IF_RELEASE(nsDirectoryService::gService);
 
-  NS_Free(gGREPath);
-  gGREPath = nullptr;
+  NS_Free(gGREBinPath);
+  gGREBinPath = nullptr;
 
   if (moduleLoaders) {
     bool more;
@@ -958,6 +947,18 @@ ShutdownXPCOM(nsIServiceManager* aServMgr)
   NS_ShutdownLocalFile();
 #ifdef XP_UNIX
   NS_ShutdownNativeCharsetUtils();
+#endif
+
+#if defined(XP_WIN)
+  // This exit(0) call is intended to be temporary, to get shutdown leak
+  // checking working on Linux.
+  // On Windows XP debug, there are intermittent failures in
+  // dom/media/tests/mochitest/test_peerConnection_basicH264Video.html
+  // if we don't exit early in a child process. See bug 1073310.
+  if (XRE_GetProcessType() == GeckoProcessType_Content) {
+      NS_WARNING("Exiting child process early!");
+      exit(0);
+  }
 #endif
 
   // Shutdown xpcom. This will release all loaders and cause others holding
@@ -1036,6 +1037,17 @@ ShutdownXPCOM(nsIServiceManager* aServMgr)
   profiler_shutdown();
 
   NS_LogTerm();
+
+#if defined(MOZ_WIDGET_GONK)
+  // This exit(0) call is intended to be temporary, to get shutdown leak
+  // checking working on Linux.
+  // On debug B2G, the child process crashes very late.  Instead, just
+  // give up so at least we exit cleanly. See bug 1071866.
+  if (XRE_GetProcessType() == GeckoProcessType_Content) {
+      NS_WARNING("Exiting child process early!");
+      exit(0);
+  }
+#endif
 
   return NS_OK;
 }

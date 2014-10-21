@@ -7,13 +7,15 @@
 
 var expect = chai.expect;
 var TestUtils = React.addons.TestUtils;
+var sharedActions = loop.shared.actions;
+var sharedUtils = loop.shared.utils;
 
 describe("loop.panel", function() {
   "use strict";
 
   var sandbox, notifications, fakeXHR, requests = [];
 
-  beforeEach(function() {
+  beforeEach(function(done) {
     sandbox = sinon.sandbox.create();
     fakeXHR = sandbox.useFakeXMLHttpRequest();
     requests = [];
@@ -25,17 +27,23 @@ describe("loop.panel", function() {
 
     navigator.mozLoop = {
       doNotDisturb: true,
+      fxAEnabled: true,
       getStrings: function() {
         return JSON.stringify({textContent: "fakeText"});
       },
       get locale() {
         return "en-US";
       },
+      getLoopBoolPref: sandbox.stub(),
       setLoopCharPref: sandbox.stub(),
       getLoopCharPref: sandbox.stub().returns("unseen"),
+      getPluralForm: function() {
+        return "fakeText";
+      },
       copyString: sandbox.stub(),
       noteCallUrlExpiry: sinon.spy(),
       composeEmail: sinon.spy(),
+      telemetryAdd: sinon.spy(),
       contacts: {
         getAll: function(callback) {
           callback(null, []);
@@ -45,6 +53,8 @@ describe("loop.panel", function() {
     };
 
     document.mozL10n.initialize(navigator.mozLoop);
+    // XXX prevent a race whenever mozL10n hasn't been initialized yet
+    setTimeout(done, 0);
   });
 
   afterEach(function() {
@@ -124,7 +134,7 @@ describe("loop.panel", function() {
   });
 
   describe("loop.panel.PanelView", function() {
-    var fakeClient, callUrlData, view, callTab, contactsTab;
+    var fakeClient, dispatcher, roomListStore, callUrlData;
 
     beforeEach(function() {
       callUrlData = {
@@ -138,30 +148,94 @@ describe("loop.panel", function() {
         }
       };
 
-      view = TestUtils.renderIntoDocument(loop.panel.PanelView({
-        notifications: notifications,
-        client: fakeClient
-      }));
-
-      [callTab, contactsTab] =
-        TestUtils.scryRenderedDOMComponentsWithClass(view, "tab");
+      dispatcher = new loop.Dispatcher();
+      roomListStore = new loop.store.RoomListStore({
+        dispatcher: dispatcher,
+        mozLoop: navigator.mozLoop
+      });
     });
 
-    describe('TabView', function() {
-      it("should select contacts tab when clicking tab button", function() {
-        TestUtils.Simulate.click(
-          view.getDOMNode().querySelector('li[data-tab-name="contacts"]'));
+    function createTestPanelView() {
+      return TestUtils.renderIntoDocument(loop.panel.PanelView({
+        notifications: notifications,
+        client: fakeClient,
+        showTabButtons: true,
+        dispatcher: dispatcher,
+        roomListStore: roomListStore
+      }));
+    }
 
-        expect(contactsTab.getDOMNode().classList.contains("selected"))
-          .to.be.true;
+    describe('TabView', function() {
+      var view, callTab, roomsTab, contactsTab;
+
+      describe("loop.rooms.enabled on", function() {
+        beforeEach(function() {
+          navigator.mozLoop.getLoopBoolPref = function(pref) {
+            if (pref === "rooms.enabled") {
+              return true;
+            }
+          };
+
+          view = createTestPanelView();
+
+          [callTab, roomsTab, contactsTab] =
+            TestUtils.scryRenderedDOMComponentsWithClass(view, "tab");
+        });
+
+        it("should select contacts tab when clicking tab button", function() {
+          TestUtils.Simulate.click(
+            view.getDOMNode().querySelector("li[data-tab-name=\"contacts\"]"));
+
+          expect(contactsTab.getDOMNode().classList.contains("selected"))
+            .to.be.true;
+        });
+
+        it("should select rooms tab when clicking tab button", function() {
+          TestUtils.Simulate.click(
+            view.getDOMNode().querySelector("li[data-tab-name=\"rooms\"]"));
+
+          expect(roomsTab.getDOMNode().classList.contains("selected"))
+            .to.be.true;
+        });
+
+        it("should select call tab when clicking tab button", function() {
+          TestUtils.Simulate.click(
+            view.getDOMNode().querySelector("li[data-tab-name=\"call\"]"));
+
+          expect(callTab.getDOMNode().classList.contains("selected"))
+            .to.be.true;
+        });
       });
 
-      it("should select call tab when clicking tab button", function() {
-        TestUtils.Simulate.click(
-          view.getDOMNode().querySelector('li[data-tab-name="call"]'));
+      describe("loop.rooms.enabled off", function() {
+        beforeEach(function() {
+          navigator.mozLoop.getLoopBoolPref = function(pref) {
+            if (pref === "rooms.enabled") {
+              return false;
+            }
+          };
 
-        expect(callTab.getDOMNode().classList.contains("selected"))
-          .to.be.true;
+          view = createTestPanelView();
+
+          [callTab, contactsTab] =
+            TestUtils.scryRenderedDOMComponentsWithClass(view, "tab");
+        });
+
+        it("should select contacts tab when clicking tab button", function() {
+          TestUtils.Simulate.click(
+            view.getDOMNode().querySelector("li[data-tab-name=\"contacts\"]"));
+
+          expect(contactsTab.getDOMNode().classList.contains("selected"))
+            .to.be.true;
+        });
+
+        it("should select call tab when clicking tab button", function() {
+          TestUtils.Simulate.click(
+            view.getDOMNode().querySelector("li[data-tab-name=\"call\"]"));
+
+          expect(callTab.getDOMNode().classList.contains("selected"))
+            .to.be.true;
+        });
       });
     });
 
@@ -171,20 +245,42 @@ describe("loop.panel", function() {
           navigator.mozLoop.loggedInToFxA = false;
           navigator.mozLoop.logInToFxA = sandbox.stub();
 
+          var view = createTestPanelView();
+
           TestUtils.Simulate.click(
             view.getDOMNode().querySelector(".signin-link a"));
 
           sinon.assert.calledOnce(navigator.mozLoop.logInToFxA);
         });
+
+      it("should be hidden if FxA is not enabled",
+        function() {
+          navigator.mozLoop.fxAEnabled = false;
+          var view = TestUtils.renderIntoDocument(loop.panel.AuthLink());
+          expect(view.getDOMNode()).to.be.null;
       });
 
-    describe("SettingsDropdown", function() {
-      var view;
+      afterEach(function() {
+        navigator.mozLoop.fxAEnabled = true;
+      });
+    });
 
+    describe("SettingsDropdown", function() {
       beforeEach(function() {
         navigator.mozLoop.logInToFxA = sandbox.stub();
         navigator.mozLoop.logOutFromFxA = sandbox.stub();
         navigator.mozLoop.openFxASettings = sandbox.stub();
+      });
+
+      afterEach(function() {
+        navigator.mozLoop.fxAEnabled = true;
+      });
+
+      it("should be hidden if FxA is not enabled",
+        function() {
+          navigator.mozLoop.fxAEnabled = false;
+          var view = TestUtils.renderIntoDocument(loop.panel.SettingsDropdown());
+          expect(view.getDOMNode()).to.be.null;
       });
 
       it("should show a signin entry when user is not authenticated",
@@ -263,6 +359,8 @@ describe("loop.panel", function() {
 
     describe("#render", function() {
       it("should render a ToSView", function() {
+        var view = createTestPanelView();
+
         TestUtils.findRenderedComponentWithType(view, loop.panel.ToSView);
       });
     });
@@ -297,9 +395,9 @@ describe("loop.panel", function() {
           getStrings: function(key) {
             var text;
 
-            if (key === "share_email_subject3")
+            if (key === "share_email_subject4")
               text = "email-subject";
-            else if (key === "share_email_body3")
+            else if (key === "share_email_body4")
               text = "{{callUrl}}";
 
             return JSON.stringify({textContent: text});
@@ -346,12 +444,13 @@ describe("loop.panel", function() {
         expect(urlField.value).eql(callUrlData.callUrl);
       });
 
-      it("should reset all pending notifications", function() {
-        sinon.assert.calledOnce(view.props.notifications.reset);
+      it("should have 0 pending notifications", function() {
+        expect(view.props.notifications.length).eql(0);
       });
 
       it("should display a share button for email", function() {
         fakeClient.requestCallUrl = sandbox.stub();
+        var composeCallUrlEmail = sandbox.stub(sharedUtils, "composeCallUrlEmail");
         var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
           notifications: notifications,
           client: fakeClient
@@ -360,7 +459,9 @@ describe("loop.panel", function() {
 
         TestUtils.findRenderedDOMComponentWithClass(view, "button-email");
         TestUtils.Simulate.click(view.getDOMNode().querySelector(".button-email"));
-        sinon.assert.calledOnce(navigator.mozLoop.composeEmail);
+
+        sinon.assert.calledOnce(composeCallUrlEmail);
+        sinon.assert.calledWithExactly(composeCallUrlEmail, "http://example.com");
       });
 
       it("should feature a copy button capable of copying the call url when clicked", function() {
@@ -403,6 +504,29 @@ describe("loop.panel", function() {
             6000);
         });
 
+      it("should call mozLoop.telemetryAdd when the url is copied via button",
+        function() {
+          var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
+            notifications: notifications,
+            client: fakeClient
+          }));
+          view.setState({
+            pending: false,
+            copied: false,
+            callUrl: "http://example.com",
+            callUrlExpiry: 6000
+          });
+
+          // Multiple clicks should result in the URL being counted only once.
+          TestUtils.Simulate.click(view.getDOMNode().querySelector(".button-copy"));
+          TestUtils.Simulate.click(view.getDOMNode().querySelector(".button-copy"));
+
+          sinon.assert.calledOnce(navigator.mozLoop.telemetryAdd);
+          sinon.assert.calledWith(navigator.mozLoop.telemetryAdd,
+                                  "LOOP_CLIENT_CALL_URL_SHARED",
+                                  true);
+        });
+
       it("should note the call url expiry when the url is emailed",
         function() {
           var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
@@ -421,6 +545,29 @@ describe("loop.panel", function() {
           sinon.assert.calledOnce(navigator.mozLoop.noteCallUrlExpiry);
           sinon.assert.calledWithExactly(navigator.mozLoop.noteCallUrlExpiry,
             6000);
+        });
+
+      it("should call mozLoop.telemetryAdd when the url is emailed",
+        function() {
+          var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
+            notifications: notifications,
+            client: fakeClient
+          }));
+          view.setState({
+            pending: false,
+            copied: false,
+            callUrl: "http://example.com",
+            callUrlExpiry: 6000
+          });
+
+          // Multiple clicks should result in the URL being counted only once.
+          TestUtils.Simulate.click(view.getDOMNode().querySelector(".button-email"));
+          TestUtils.Simulate.click(view.getDOMNode().querySelector(".button-email"));
+
+          sinon.assert.calledOnce(navigator.mozLoop.telemetryAdd);
+          sinon.assert.calledWith(navigator.mozLoop.telemetryAdd,
+                                  "LOOP_CLIENT_CALL_URL_SHARED",
+                                  true);
         });
 
       it("should note the call url expiry when the url is copied manually",
@@ -444,6 +591,30 @@ describe("loop.panel", function() {
             6000);
         });
 
+      it("should call mozLoop.telemetryAdd when the url is copied manually",
+        function() {
+          var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
+            notifications: notifications,
+            client: fakeClient
+          }));
+          view.setState({
+            pending: false,
+            copied: false,
+            callUrl: "http://example.com",
+            callUrlExpiry: 6000
+          });
+
+          // Multiple copies should result in the URL being counted only once.
+          var urlField = view.getDOMNode().querySelector("input[type='url']");
+          TestUtils.Simulate.copy(urlField);
+          TestUtils.Simulate.copy(urlField);
+
+          sinon.assert.calledOnce(navigator.mozLoop.telemetryAdd);
+          sinon.assert.calledWith(navigator.mozLoop.telemetryAdd,
+                                  "LOOP_CLIENT_CALL_URL_SHARED",
+                                  true);
+        });
+
       it("should notify the user when the operation failed", function() {
         fakeClient.requestCallUrl = function(_, cb) {
           cb("fake error");
@@ -458,6 +629,34 @@ describe("loop.panel", function() {
         sinon.assert.calledWithExactly(notifications.errorL10n,
                                        "unable_retrieve_url");
       });
+    });
+  });
+
+  describe("loop.panel.RoomList", function() {
+    var roomListStore, dispatcher;
+
+    beforeEach(function() {
+      dispatcher = new loop.Dispatcher();
+      roomListStore = new loop.store.RoomListStore({
+        dispatcher: dispatcher,
+        mozLoop: navigator.mozLoop
+      });
+    });
+
+    function createTestComponent() {
+      return TestUtils.renderIntoDocument(loop.panel.RoomList({
+        store: roomListStore,
+        dispatcher: dispatcher
+      }));
+    }
+
+    it("should dispatch a GetAllRooms action on mount", function() {
+      var dispatch = sandbox.stub(dispatcher, "dispatch");
+
+      createTestComponent();
+
+      sinon.assert.calledOnce(dispatch);
+      sinon.assert.calledWithExactly(dispatch, new sharedActions.GetAllRooms());
     });
   });
 

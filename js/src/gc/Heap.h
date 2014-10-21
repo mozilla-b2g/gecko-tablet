@@ -87,6 +87,7 @@ enum AllocKind {
     FINALIZE_SCRIPT,
     FINALIZE_LAZY_SCRIPT,
     FINALIZE_SHAPE,
+    FINALIZE_ACCESSOR_SHAPE,
     FINALIZE_BASE_SHAPE,
     FINALIZE_TYPE_OBJECT,
     FINALIZE_FAT_INLINE_STRING,
@@ -119,6 +120,7 @@ MapAllocToTraceKind(AllocKind kind)
         JSTRACE_SCRIPT,     /* FINALIZE_SCRIPT */
         JSTRACE_LAZY_SCRIPT,/* FINALIZE_LAZY_SCRIPT */
         JSTRACE_SHAPE,      /* FINALIZE_SHAPE */
+        JSTRACE_SHAPE,      /* FINALIZE_ACCESSOR_SHAPE */
         JSTRACE_BASE_SHAPE, /* FINALIZE_BASE_SHAPE */
         JSTRACE_TYPE_OBJECT,/* FINALIZE_TYPE_OBJECT */
         JSTRACE_STRING,     /* FINALIZE_FAT_INLINE_STRING */
@@ -144,8 +146,8 @@ struct Cell
 {
   public:
     MOZ_ALWAYS_INLINE bool isTenured() const { return !IsInsideNursery(this); }
-    MOZ_ALWAYS_INLINE const TenuredCell *asTenured() const;
-    MOZ_ALWAYS_INLINE TenuredCell *asTenured();
+    MOZ_ALWAYS_INLINE const TenuredCell &asTenured() const;
+    MOZ_ALWAYS_INLINE TenuredCell &asTenured();
 
     inline JSRuntime *runtimeFromMainThread() const;
     inline JS::shadow::Runtime *shadowRuntimeFromMainThread() const;
@@ -183,7 +185,7 @@ class TenuredCell : public Cell
     MOZ_ALWAYS_INLINE void unmark(uint32_t color) const;
     MOZ_ALWAYS_INLINE void copyMarkBitsFrom(const TenuredCell *src);
 
-    // Note: this is in TenuredCell because ObjectImpl subclasses are sometimes
+    // Note: this is in TenuredCell because JSObject subclasses are sometimes
     // used tagged.
     static MOZ_ALWAYS_INLINE bool isNullLike(const Cell *thing) { return !thing; }
 
@@ -471,7 +473,7 @@ class FreeList
     }
 #endif
 
-    MOZ_ALWAYS_INLINE void *allocate(size_t thingSize) {
+    MOZ_ALWAYS_INLINE TenuredCell *allocate(size_t thingSize) {
         MOZ_ASSERT(thingSize % CellSize == 0);
         head.checkSpan(thingSize);
         uintptr_t thing = head.first;
@@ -490,7 +492,7 @@ class FreeList
         }
         head.checkSpan(thingSize);
         JS_EXTRA_POISON(reinterpret_cast<void *>(thing), JS_ALLOCATED_TENURED_PATTERN, thingSize);
-        return reinterpret_cast<void *>(thing);
+        return reinterpret_cast<TenuredCell *>(thing);
     }
 };
 
@@ -1146,18 +1148,18 @@ AssertValidColor(const TenuredCell *thing, uint32_t color)
 #endif
 }
 
-MOZ_ALWAYS_INLINE const TenuredCell *
+MOZ_ALWAYS_INLINE const TenuredCell &
 Cell::asTenured() const
 {
     MOZ_ASSERT(isTenured());
-    return static_cast<const TenuredCell *>(this);
+    return *static_cast<const TenuredCell *>(this);
 }
 
-MOZ_ALWAYS_INLINE TenuredCell *
+MOZ_ALWAYS_INLINE TenuredCell &
 Cell::asTenured()
 {
     MOZ_ASSERT(isTenured());
-    return static_cast<TenuredCell *>(this);
+    return *static_cast<TenuredCell *>(this);
 }
 
 inline JSRuntime *
@@ -1383,7 +1385,7 @@ Cell::isAligned() const
 {
     if (!isTenured())
         return true;
-    return asTenured()->isAligned();
+    return asTenured().isAligned();
 }
 
 bool

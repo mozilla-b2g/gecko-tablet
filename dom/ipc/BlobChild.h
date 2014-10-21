@@ -25,7 +25,7 @@ class PBackgroundChild;
 namespace dom {
 
 class ContentChild;
-class DOMFileImpl;
+class FileImpl;
 class nsIContentChild;
 class PBlobStreamChild;
 
@@ -37,7 +37,10 @@ class BlobChild MOZ_FINAL
   class RemoteBlobImpl;
   friend class RemoteBlobImpl;
 
-  DOMFileImpl* mBlobImpl;
+  class RemoteBlobSliceImpl;
+  friend class RemoteBlobSliceImpl;
+
+  FileImpl* mBlobImpl;
   RemoteBlobImpl* mRemoteBlobImpl;
 
   // One of these will be null and the other non-null.
@@ -58,10 +61,10 @@ public:
 
   // These create functions are called on the sending side.
   static BlobChild*
-  GetOrCreate(nsIContentChild* aManager, DOMFileImpl* aBlobImpl);
+  GetOrCreate(nsIContentChild* aManager, FileImpl* aBlobImpl);
 
   static BlobChild*
-  GetOrCreate(PBackgroundChild* aManager, DOMFileImpl* aBlobImpl);
+  GetOrCreate(PBackgroundChild* aManager, FileImpl* aBlobImpl);
 
   // These create functions are called on the receiving side.
   static BlobChild*
@@ -98,16 +101,12 @@ public:
   const nsID&
   ParentID() const;
 
-  // Get the DOMFileImpl associated with this actor. This may always be called
+  // Get the FileImpl associated with this actor. This may always be called
   // on the sending side. It may also be called on the receiving side unless
   // this is a "mystery" blob that has not yet received a SetMysteryBlobInfo()
   // call.
-  already_AddRefed<DOMFileImpl>
+  already_AddRefed<FileImpl>
   GetBlobImpl();
-
-  // XXX This method will be removed soon.
-  already_AddRefed<nsIDOMBlob>
-  GetBlob();
 
   // Use this for files.
   bool
@@ -130,9 +129,9 @@ public:
 
 private:
   // These constructors are called on the sending side.
-  BlobChild(nsIContentChild* aManager, DOMFileImpl* aBlobImpl);
+  BlobChild(nsIContentChild* aManager, FileImpl* aBlobImpl);
 
-  BlobChild(PBackgroundChild* aManager, DOMFileImpl* aBlobImpl);
+  BlobChild(PBackgroundChild* aManager, FileImpl* aBlobImpl);
 
   BlobChild(nsIContentChild* aManager, BlobChild* aOther);
 
@@ -145,11 +144,20 @@ private:
   BlobChild(PBackgroundChild* aManager,
             const ChildBlobConstructorParams& aParams);
 
+  // These constructors are called for slices.
+  BlobChild(nsIContentChild* aManager,
+            const nsID& aParentID,
+            RemoteBlobSliceImpl* aRemoteBlobSliceImpl);
+
+  BlobChild(PBackgroundChild* aManager,
+            const nsID& aParentID,
+            RemoteBlobSliceImpl* aRemoteBlobSliceImpl);
+
   // Only called by Destroy().
   ~BlobChild();
 
   void
-  CommonInit(DOMFileImpl* aBlobImpl);
+  CommonInit(FileImpl* aBlobImpl);
 
   void
   CommonInit(BlobChild* aOther);
@@ -157,9 +165,12 @@ private:
   void
   CommonInit(const ChildBlobConstructorParams& aParams);
 
+  void
+  CommonInit(const nsID& aParentID, RemoteBlobImpl* aRemoteBlobImpl);
+
   template <class ChildManagerType>
   static BlobChild*
-  GetOrCreateFromImpl(ChildManagerType* aManager, DOMFileImpl* aBlobImpl);
+  GetOrCreateFromImpl(ChildManagerType* aManager, FileImpl* aBlobImpl);
 
   template <class ChildManagerType>
   static BlobChild*
@@ -169,8 +180,8 @@ private:
   template <class ChildManagerType>
   static BlobChild*
   SendSliceConstructor(ChildManagerType* aManager,
-                       const ChildBlobConstructorParams& aParams,
-                       const ParentBlobConstructorParams& aOtherSideParams);
+                       RemoteBlobSliceImpl* aRemoteBlobSliceImpl,
+                       const ParentBlobConstructorParams& aParams);
 
   static BlobChild*
   MaybeGetActorFromRemoteBlob(nsIRemoteBlob* aRemoteBlob,
@@ -197,7 +208,8 @@ private:
   ActorDestroy(ActorDestroyReason aWhy) MOZ_OVERRIDE;
 
   virtual PBlobStreamChild*
-  AllocPBlobStreamChild() MOZ_OVERRIDE;
+  AllocPBlobStreamChild(const uint64_t& aStart,
+                        const uint64_t& aLength) MOZ_OVERRIDE;
 
   virtual bool
   DeallocPBlobStreamChild(PBlobStreamChild* aActor) MOZ_OVERRIDE;

@@ -2461,23 +2461,34 @@ ImplicitConvert(JSContext* cx,
       }
       break;
     } else if (val.isObject() && JS_IsArrayBufferObject(valObj)) {
-      // Convert ArrayBuffer to pointer without any copy.
-      // Just as with C arrays, we make no effort to
-      // keep the ArrayBuffer alive.
-      void* p = JS_GetStableArrayBufferData(cx, valObj);
-      if (!p)
-          return false;
-      *static_cast<void**>(buffer) = p;
+      // Convert ArrayBuffer to pointer without any copy. Just as with C
+      // arrays, we make no effort to keep the ArrayBuffer alive. This
+      // functionality will be removed for all but arguments in bug 1080262.
+      void* ptr;
+      {
+          JS::AutoCheckCannotGC nogc;
+          ptr = JS_GetArrayBufferData(valObj, nogc);
+      }
+      if (!ptr) {
+        return TypeError(cx, "arraybuffer pointer", val);
+      }
+      *static_cast<void**>(buffer) = ptr;
       break;
     } if (val.isObject() && JS_IsTypedArrayObject(valObj)) {
+      // Same as ArrayBuffer, above, though note that this will take the offset
+      // of the view into account.
       if(!CanConvertTypedArrayItemTo(baseType, valObj, cx)) {
         return TypeError(cx, "typed array with the appropriate type", val);
       }
-
-      // Convert TypedArray to pointer without any copy.
-      // Just as with C arrays, we make no effort to
-      // keep the TypedArray alive.
-      *static_cast<void**>(buffer) = JS_GetArrayBufferViewData(valObj);
+      void* ptr;
+      {
+          JS::AutoCheckCannotGC nogc;
+          ptr = JS_GetArrayBufferViewData(valObj, nogc);
+      }
+      if (!ptr) {
+        return TypeError(cx, "typed array pointer", val);
+      }
+      *static_cast<void**>(buffer) = ptr;
       break;
     }
     return TypeError(cx, "pointer", val);
@@ -2583,7 +2594,8 @@ ImplicitConvert(JSContext* cx,
         JS_ReportError(cx, "ArrayType length does not match source ArrayBuffer length");
         return false;
       }
-      memcpy(buffer, JS_GetArrayBufferData(valObj), sourceLength);
+      JS::AutoCheckCannotGC nogc;
+      memcpy(buffer, JS_GetArrayBufferData(valObj, nogc), sourceLength);
       break;
     } else if (val.isObject() && JS_IsTypedArrayObject(valObj)) {
       // Check that array is consistent with type, then
@@ -2599,7 +2611,8 @@ ImplicitConvert(JSContext* cx,
         JS_ReportError(cx, "typed array length does not match source TypedArray length");
         return false;
       }
-      memcpy(buffer, JS_GetArrayBufferViewData(valObj), sourceLength);
+      JS::AutoCheckCannotGC nogc;
+      memcpy(buffer, JS_GetArrayBufferViewData(valObj, nogc), sourceLength);
       break;
     } else {
       // Don't implicitly convert to string. Users can implicitly convert
@@ -2612,8 +2625,8 @@ ImplicitConvert(JSContext* cx,
     if (val.isObject() && !sourceData) {
       // Enumerate the properties of the object; if they match the struct
       // specification, convert the fields.
-      RootedObject iter(cx, JS_NewPropertyIterator(cx, valObj));
-      if (!iter)
+      AutoIdArray props(cx, JS_Enumerate(cx, valObj));
+      if (!props)
         return false;
 
       // Convert into an intermediate, in case of failure.
@@ -2624,13 +2637,15 @@ ImplicitConvert(JSContext* cx,
         return false;
       }
 
+      const FieldInfoHash* fields = StructType::GetFieldInfo(targetType);
+      if (props.length() != fields->count()) {
+        JS_ReportError(cx, "missing fields");
+        return false;
+      }
+
       RootedId id(cx);
-      size_t i = 0;
-      while (1) {
-        if (!JS_NextProperty(cx, iter, &id))
-          return false;
-        if (JSID_IS_VOID(id))
-          break;
+      for (size_t i = 0; i < props.length(); ++i) {
+        id = props[i];
 
         if (!JSID_IS_STRING(id)) {
           JS_ReportError(cx, "property name is not a string");
@@ -2650,14 +2665,6 @@ ImplicitConvert(JSContext* cx,
         char* fieldData = intermediate.get() + field->mOffset;
         if (!ImplicitConvert(cx, prop, field->mType, fieldData, false, nullptr))
           return false;
-
-        ++i;
-      }
-
-      const FieldInfoHash* fields = StructType::GetFieldInfo(targetType);
-      if (i != fields->count()) {
-        JS_ReportError(cx, "missing fields");
-        return false;
       }
 
       memcpy(buffer, intermediate.get(), structSize);
@@ -3393,14 +3400,14 @@ void
 CType::Trace(JSTracer* trc, JSObject* obj)
 {
   // Make sure our TypeCode slot is legit. If it's not, bail.
-  jsval slot = obj->getSlot(SLOT_TYPECODE);
+  jsval slot = obj->as<NativeObject>().getSlot(SLOT_TYPECODE);
   if (slot.isUndefined())
     return;
 
   // The contents of our slots depends on what kind of type we are.
   switch (TypeCode(slot.toInt32())) {
   case TYPE_struct: {
-    slot = obj->getReservedSlot(SLOT_FIELDINFO);
+    slot = obj->as<NativeObject>().getReservedSlot(SLOT_FIELDINFO);
     if (slot.isUndefined())
       return;
 
@@ -3417,7 +3424,7 @@ CType::Trace(JSTracer* trc, JSObject* obj)
   }
   case TYPE_function: {
     // Check if we have a FunctionInfo.
-    slot = obj->getReservedSlot(SLOT_FNINFO);
+    slot = obj->as<NativeObject>().getReservedSlot(SLOT_FNINFO);
     if (slot.isUndefined())
       return;
 
@@ -4692,30 +4699,20 @@ ExtractStructField(JSContext* cx, jsval val, MutableHandleObject typeObj)
     return nullptr;
   }
 
-  RootedObject obj(cx, val.toObjectOrNull());
-  RootedObject iter(cx, JS_NewPropertyIterator(cx, obj));
-  if (!iter)
+  RootedObject obj(cx, &val.toObject());
+  AutoIdArray props(cx, JS_Enumerate(cx, obj));
+  if (!props)
     return nullptr;
-
-  RootedId nameid(cx);
-  if (!JS_NextProperty(cx, iter, &nameid))
-    return nullptr;
-  if (JSID_IS_VOID(nameid)) {
-    JS_ReportError(cx, "struct field descriptors require a valid name and type");
-    return nullptr;
-  }
-
-  if (!JSID_IS_STRING(nameid)) {
-    JS_ReportError(cx, "struct field descriptors require a valid name and type");
-    return nullptr;
-  }
 
   // make sure we have one, and only one, property
-  RootedId id(cx);
-  if (!JS_NextProperty(cx, iter, &id))
-    return nullptr;
-  if (!JSID_IS_VOID(id)) {
+  if (props.length() != 1) {
     JS_ReportError(cx, "struct field descriptors must contain one property");
+    return nullptr;
+  }
+
+  RootedId nameid(cx, props[0]);
+  if (!JSID_IS_STRING(nameid)) {
+    JS_ReportError(cx, "struct field descriptors require a valid name and type");
     return nullptr;
   }
 

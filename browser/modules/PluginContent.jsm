@@ -14,6 +14,7 @@ this.EXPORTED_SYMBOLS = [ "PluginContent" ];
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/Timer.jsm");
+Cu.import("resource://gre/modules/BrowserUtils.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "gNavigatorBundle", function() {
   const url = "chrome://browser/locale/browser.properties";
@@ -93,6 +94,9 @@ PluginContent.prototype = {
       return;
     }
 
+    if (Services.telemetry.canSend) {
+      this._finishRecordingFlashPluginTelemetry();
+    }
     this.clearPluginDataCache();
   },
 
@@ -119,7 +123,7 @@ PluginContent.prototype = {
 
     if (this.isKnownPlugin(pluginElement)) {
       pluginTag = pluginHost.getPluginTagForType(pluginElement.actualType);
-      pluginName = this.makeNicePluginName(pluginTag.name);
+      pluginName = BrowserUtils.makeNicePluginName(pluginTag.name);
 
       permissionString = pluginHost.getPermissionStringForType(pluginElement.actualType);
       fallbackType = pluginElement.defaultFallbackType;
@@ -140,26 +144,6 @@ PluginContent.prototype = {
              fallbackType: fallbackType,
              blocklistState: blocklistState,
            };
-  },
-
-  // Map the plugin's name to a filtered version more suitable for user UI.
-  makeNicePluginName : function (aName) {
-    if (aName == "Shockwave Flash")
-      return "Adobe Flash";
-    // Regex checks if aName begins with "Java" + non-letter char
-    if (/^Java\W/.exec(aName))
-      return "Java";
-
-    // Clean up the plugin name by stripping off parenthetical clauses,
-    // trailing version numbers or "plugin".
-    // EG, "Foo Bar (Linux) Plugin 1.23_02" --> "Foo Bar"
-    // Do this by first stripping the numbers, etc. off the end, and then
-    // removing "Plugin" (and then trimming to get rid of any whitespace).
-    // (Otherwise, something like "Java(TM) Plug-in 1.7.0_07" gets mangled)
-    let newName = aName.replace(/\(.*?\)/g, "").
-                        replace(/[\s\d\.\-\_\(\)]+$/, "").
-                        replace(/\bplug-?in\b/i, "").trim();
-    return newName;
   },
 
   /**
@@ -397,6 +381,11 @@ PluginContent.prototype = {
         break;
     }
 
+    if (Services.telemetry.canSend && this._getPluginInfo(plugin).mimetype ===
+                                      "application/x-shockwave-flash") {
+      this._recordFlashPluginTelemetry(eventType, plugin);
+    }
+
     // Show the in-content UI if it's not too big. The crashed plugin handler already did this.
     if (eventType != "PluginCrashed") {
       let overlay = this.getPluginUI(plugin, "main");
@@ -423,6 +412,42 @@ PluginContent.prototype = {
 
     if (shouldShowNotification) {
       this._showClickToPlayNotification(plugin, false);
+    }
+  },
+
+  _recordFlashPluginTelemetry: function (eventType, plugin) {
+    if (!this.flashPluginStats) {
+      this.flashPluginStats = {
+        instancesCount: 0,
+        plugins: new WeakSet()
+      };
+    }
+
+    if (!this.flashPluginStats.plugins.has(plugin)) {
+      // Reporting plugin instance and its dimensions only once.
+      this.flashPluginStats.plugins.add(plugin);
+
+      this.flashPluginStats.instancesCount++;
+
+      let pluginRect = plugin.getBoundingClientRect();
+      Services.telemetry.getHistogramById('FLASH_PLUGIN_WIDTH')
+                       .add(pluginRect.width);
+      Services.telemetry.getHistogramById('FLASH_PLUGIN_HEIGHT')
+                       .add(pluginRect.height);
+      Services.telemetry.getHistogramById('FLASH_PLUGIN_AREA')
+                       .add(pluginRect.width * pluginRect.height);
+
+      let state = this._getPluginInfo(plugin).fallbackType;
+      Services.telemetry.getHistogramById('FLASH_PLUGIN_STATES')
+                       .add(state);
+    }
+  },
+
+  _finishRecordingFlashPluginTelemetry: function () {
+    if (this.flashPluginStats) {
+      Services.telemetry.getHistogramById('FLASH_PLUGIN_INSTANCES_ON_PAGE')
+                        .add(this.flashPluginStats.instancesCount);
+    delete this.flashPluginStats;
     }
   },
 
@@ -843,7 +868,7 @@ PluginContent.prototype = {
 
     // For non-GMP plugins, remap the plugin name to a more user-presentable form.
     if (!gmpPlugin) {
-      pluginName = this.makeNicePluginName(pluginName);
+      pluginName = BrowserUtils.makeNicePluginName(pluginName);
     }
 
     let messageString = gNavigatorBundle.formatStringFromName("crashedpluginsMessage.title", [pluginName], 1);

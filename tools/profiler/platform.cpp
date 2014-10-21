@@ -86,6 +86,10 @@ void Sampler::Startup() {
 
 void Sampler::Shutdown() {
   while (sRegisteredThreads->size() > 0) {
+    // Any stack that's still referenced at this point are
+    // still active and we don't have a way to clean them up
+    // safetly and still handle the pop call on that object.
+    sRegisteredThreads->back()->ForgetStack();
     delete sRegisteredThreads->back();
     sRegisteredThreads->pop_back();
   }
@@ -109,6 +113,7 @@ ThreadInfo::ThreadInfo(const char* aName, int aThreadId,
   , mPlatformData(Sampler::AllocPlatformData(aThreadId))
   , mProfile(nullptr)
   , mStackTop(aStackTop)
+  , mPendingDelete(false)
 {
   mThread = NS_GetCurrentThread();
 }
@@ -120,6 +125,20 @@ ThreadInfo::~ThreadInfo() {
     delete mProfile;
 
   Sampler::FreePlatformData(mPlatformData);
+
+  delete mPseudoStack;
+  mPseudoStack = nullptr;
+}
+
+void
+ThreadInfo::SetPendingDelete()
+{
+  mPendingDelete = true;
+  // We don't own the pseudostack so disconnect it.
+  mPseudoStack = nullptr;
+  if (mProfile) {
+    mProfile->SetPendingDelete();
+  }
 }
 
 ProfilerMarker::ProfilerMarker(const char* aMarkerName,
@@ -670,6 +689,10 @@ const char** mozilla_sampler_get_features()
     "mainthreadio",
     // Add RSS collection
     "memory",
+#ifdef MOZ_TASK_TRACER
+    // Start profiling with feature TaskTracer.
+    "tasktracer",
+#endif
 #if defined(XP_WIN)
     // Add power collection
     "power",
@@ -721,6 +744,9 @@ void mozilla_sampler_start(int aProfileEntries, double aInterval,
 
       for (uint32_t i = 0; i < threads.size(); i++) {
         ThreadInfo* info = threads[i];
+        if (info->IsPendingDelete()) {
+          continue;
+        }
         ThreadProfile* thread_profile = info->Profile();
         if (!thread_profile) {
           continue;
@@ -903,14 +929,13 @@ void mozilla_sampler_unregister_thread()
     return;
   }
 
-  Sampler::UnregisterCurrentThread();
-
   PseudoStack *stack = tlsPseudoStack.get();
   if (!stack) {
     return;
   }
-  delete stack;
   tlsPseudoStack.set(nullptr);
+
+  Sampler::UnregisterCurrentThread();
 }
 
 void mozilla_sampler_sleep_start() {

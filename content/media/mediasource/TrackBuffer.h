@@ -73,6 +73,10 @@ public:
   // TODO: Refactor to a cleaner interface between TrackBuffer and MediaSourceReader.
   const nsTArray<nsRefPtr<SourceBufferDecoder>>& Decoders();
 
+#ifdef MOZ_EME
+  nsresult SetCDMProxy(CDMProxy* aProxy);
+#endif
+
 #if defined(DEBUG)
   void Dump(const char* aPath);
 #endif
@@ -90,17 +94,17 @@ private:
   bool AppendDataToCurrentResource(const uint8_t* aData, uint32_t aLength);
 
   // Queue execution of InitializeDecoder on mTaskQueue.
-  bool QueueInitializeDecoder(nsRefPtr<SourceBufferDecoder> aDecoder);
+  bool QueueInitializeDecoder(SourceBufferDecoder* aDecoder);
 
   // Runs decoder initialization including calling ReadMetadata.  Runs as an
   // event on the decode thread pool.
-  void InitializeDecoder(nsRefPtr<SourceBufferDecoder> aDecoder);
+  void InitializeDecoder(SourceBufferDecoder* aDecoder);
 
   // Adds a successfully initialized decoder to mDecoders and (if it's the
   // first decoder initialized), initializes mHasAudio/mHasVideo.  Called
   // from the decode thread pool.  Return true if the decoder was
   // successfully registered.
-  bool RegisterDecoder(nsRefPtr<SourceBufferDecoder> aDecoder);
+  bool RegisterDecoder(SourceBufferDecoder* aDecoder);
 
   // Returns true if aInfo is considered a supported or the same format as
   // the TrackBuffer was initialized as.
@@ -110,7 +114,7 @@ private:
   // to clean up the decoder.  If aDecoder was added to
   // mInitializedDecoders, it must have been removed before calling this
   // function.
-  void RemoveDecoder(nsRefPtr<SourceBufferDecoder> aDecoder);
+  void RemoveDecoder(SourceBufferDecoder* aDecoder);
 
   nsAutoPtr<ContainerParser> mParser;
 
@@ -126,6 +130,10 @@ private:
   // Contains only the initialized decoders managed by this TrackBuffer.
   // Access protected by mParentDecoder's monitor.
   nsTArray<nsRefPtr<SourceBufferDecoder>> mInitializedDecoders;
+
+  // Decoders which are waiting on a Content Decryption Module to be able to
+  // finish ReadMetadata.
+  nsTArray<nsRefPtr<SourceBufferDecoder>> mWaitingDecoders;
 
   // The decoder that the owning SourceBuffer is currently appending data to.
   nsRefPtr<SourceBufferDecoder> mCurrentDecoder;

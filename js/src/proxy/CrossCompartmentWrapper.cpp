@@ -77,12 +77,12 @@ CrossCompartmentWrapper::defineProperty(JSContext *cx, HandleObject wrapper, Han
 }
 
 bool
-CrossCompartmentWrapper::getOwnPropertyNames(JSContext *cx, HandleObject wrapper,
-                                             AutoIdVector &props) const
+CrossCompartmentWrapper::ownPropertyKeys(JSContext *cx, HandleObject wrapper,
+                                         AutoIdVector &props) const
 {
     PIERCE(cx, wrapper,
            NOTHING,
-           Wrapper::getOwnPropertyNames(cx, wrapper, props),
+           Wrapper::ownPropertyKeys(cx, wrapper, props),
            NOTHING);
 }
 
@@ -151,11 +151,12 @@ CrossCompartmentWrapper::set(JSContext *cx, HandleObject wrapper, HandleObject r
 }
 
 bool
-CrossCompartmentWrapper::keys(JSContext *cx, HandleObject wrapper, AutoIdVector &props) const
+CrossCompartmentWrapper::getOwnEnumerablePropertyKeys(JSContext *cx, HandleObject wrapper,
+                                                      AutoIdVector &props) const
 {
     PIERCE(cx, wrapper,
            NOTHING,
-           Wrapper::keys(cx, wrapper, props),
+           Wrapper::getOwnEnumerablePropertyKeys(cx, wrapper, props),
            NOTHING);
 }
 
