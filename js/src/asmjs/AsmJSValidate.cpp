@@ -386,10 +386,11 @@ class Type
         Fixnum = AsmJSNumLit::Fixnum,
         Signed = AsmJSNumLit::NegativeInt,
         Unsigned = AsmJSNumLit::BigUnsigned,
-        Double = AsmJSNumLit::Double,
+        DoubleLit = AsmJSNumLit::Double,
         Float = AsmJSNumLit::Float,
         Int32x4 = AsmJSNumLit::Int32x4,
         Float32x4 = AsmJSNumLit::Float32x4,
+        Double,
         MaybeDouble,
         MaybeFloat,
         Floatish,
@@ -428,19 +429,20 @@ class Type
 
     inline bool operator<=(Type rhs) const {
         switch (rhs.which_) {
-          case Type::Signed:      return isSigned();
-          case Type::Unsigned:    return isUnsigned();
-          case Type::Double:      return isDouble();
-          case Type::Float:       return isFloat();
-          case Type::Int32x4:     return isInt32x4();
-          case Type::Float32x4:   return isFloat32x4();
-          case Type::MaybeDouble: return isMaybeDouble();
-          case Type::MaybeFloat:  return isMaybeFloat();
-          case Type::Floatish:    return isFloatish();
-          case Type::Int:         return isInt();
-          case Type::Intish:      return isIntish();
-          case Type::Fixnum:      return isFixnum();
-          case Type::Void:        return isVoid();
+          case Signed:      return isSigned();
+          case Unsigned:    return isUnsigned();
+          case DoubleLit:   return isDoubleLit();
+          case Double:      return isDouble();
+          case Float:       return isFloat();
+          case Int32x4:     return isInt32x4();
+          case Float32x4:   return isFloat32x4();
+          case MaybeDouble: return isMaybeDouble();
+          case MaybeFloat:  return isMaybeFloat();
+          case Floatish:    return isFloatish();
+          case Int:         return isInt();
+          case Intish:      return isIntish();
+          case Fixnum:      return isFixnum();
+          case Void:        return isVoid();
         }
         MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("unexpected this type");
     }
@@ -465,8 +467,12 @@ class Type
         return isInt() || which_ == Intish;
     }
 
+    bool isDoubleLit() const {
+        return which_ == DoubleLit;
+    }
+
     bool isDouble() const {
-        return which_ == Double;
+        return isDoubleLit() || which_ == Double;
     }
 
     bool isMaybeDouble() const {
@@ -512,6 +518,7 @@ class Type
     MIRType toMIRType() const {
         switch (which_) {
           case Double:
+          case DoubleLit:
           case MaybeDouble:
             return MIRType_Double;
           case Float:
@@ -543,6 +550,7 @@ class Type
             return Float;
           // Scalar types
           case Double:
+          case DoubleLit:
           case MaybeDouble:
           case Float:
           case MaybeFloat:
@@ -567,30 +575,7 @@ class Type
             return Floatish;
           // Scalar types
           case Double:
-          case MaybeDouble:
-          case Float:
-          case MaybeFloat:
-          case Floatish:
-          case Fixnum:
-          case Int:
-          case Signed:
-          case Unsigned:
-          case Intish:
-          case Void:
-            break;
-        }
-        MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("Invalid SIMD Type");
-    }
-
-    AsmJSSimdType simdToSimdType() const {
-        MOZ_ASSERT(isSimd());
-        switch (which_) {
-          case Int32x4:
-            return AsmJSSimdType_int32x4;
-          case Float32x4:
-            return AsmJSSimdType_float32x4;
-          // Scalar types
-          case Double:
+          case DoubleLit:
           case MaybeDouble:
           case Float:
           case MaybeFloat:
@@ -609,6 +594,7 @@ class Type
     const char *toChars() const {
         switch (which_) {
           case Double:      return "double";
+          case DoubleLit:   return "doublelit";
           case MaybeDouble: return "double?";
           case Float:       return "float";
           case Floatish:    return "floatish";
@@ -687,35 +673,6 @@ class RetType
     }
     bool operator==(RetType rhs) const { return which_ == rhs.which_; }
     bool operator!=(RetType rhs) const { return which_ != rhs.which_; }
-};
-
-// Represents the subset of Type that can be used as a return type of a builtin
-// Math function.
-class MathRetType
-{
-  public:
-    enum Which {
-        Double   = Type::Double,
-        Float    = Type::Float,
-        Floatish = Type::Floatish,
-        Signed   = Type::Signed,
-        Unsigned = Type::Unsigned
-    };
-
-  private:
-    Which which_;
-
-  public:
-    MathRetType() : which_(Which(-1)) {}
-    MOZ_IMPLICIT MathRetType(Which w) : which_(w) {}
-
-    Type toType() const {
-        return Type(Type::Which(which_));
-    }
-
-    Which which() const {
-        return which_;
-    }
 };
 
 namespace {
@@ -4422,7 +4379,7 @@ CheckAssign(FunctionCompiler &f, ParseNode *assign, MDefinition **def, Type *typ
 }
 
 static bool
-CheckMathIMul(FunctionCompiler &f, ParseNode *call, MDefinition **def, MathRetType *type)
+CheckMathIMul(FunctionCompiler &f, ParseNode *call, MDefinition **def, Type *type)
 {
     if (CallArgListLength(call) != 2)
         return f.fail(call, "Math.imul must be passed 2 arguments");
@@ -4446,12 +4403,12 @@ CheckMathIMul(FunctionCompiler &f, ParseNode *call, MDefinition **def, MathRetTy
         return f.failf(rhs, "%s is not a subtype of intish", rhsType.toChars());
 
     *def = f.mul(lhsDef, rhsDef, MIRType_Int32, MMul::Integer);
-    *type = MathRetType::Signed;
+    *type = Type::Signed;
     return true;
 }
 
 static bool
-CheckMathClz32(FunctionCompiler &f, ParseNode *call, MDefinition **def, MathRetType *type)
+CheckMathClz32(FunctionCompiler &f, ParseNode *call, MDefinition **def, Type *type)
 {
     if (CallArgListLength(call) != 1)
         return f.fail(call, "Math.clz32 must be passed 1 argument");
@@ -4467,12 +4424,12 @@ CheckMathClz32(FunctionCompiler &f, ParseNode *call, MDefinition **def, MathRetT
         return f.failf(arg, "%s is not a subtype of intish", argType.toChars());
 
     *def = f.unary<MClz>(argDef);
-    *type = MathRetType::Signed;
+    *type = Type::Fixnum;
     return true;
 }
 
 static bool
-CheckMathAbs(FunctionCompiler &f, ParseNode *call, MDefinition **def, MathRetType *type)
+CheckMathAbs(FunctionCompiler &f, ParseNode *call, MDefinition **def, Type *type)
 {
     if (CallArgListLength(call) != 1)
         return f.fail(call, "Math.abs must be passed 1 argument");
@@ -4486,19 +4443,19 @@ CheckMathAbs(FunctionCompiler &f, ParseNode *call, MDefinition **def, MathRetTyp
 
     if (argType.isSigned()) {
         *def = f.unary<MAbs>(argDef, MIRType_Int32);
-        *type = MathRetType::Unsigned;
+        *type = Type::Unsigned;
         return true;
     }
 
     if (argType.isMaybeDouble()) {
         *def = f.unary<MAbs>(argDef, MIRType_Double);
-        *type = MathRetType::Double;
+        *type = Type::Double;
         return true;
     }
 
     if (argType.isMaybeFloat()) {
         *def = f.unary<MAbs>(argDef, MIRType_Float32);
-        *type = MathRetType::Floatish;
+        *type = Type::Floatish;
         return true;
     }
 
@@ -4506,7 +4463,7 @@ CheckMathAbs(FunctionCompiler &f, ParseNode *call, MDefinition **def, MathRetTyp
 }
 
 static bool
-CheckMathSqrt(FunctionCompiler &f, ParseNode *call, MDefinition **def, MathRetType *type)
+CheckMathSqrt(FunctionCompiler &f, ParseNode *call, MDefinition **def, Type *type)
 {
     if (CallArgListLength(call) != 1)
         return f.fail(call, "Math.sqrt must be passed 1 argument");
@@ -4520,13 +4477,13 @@ CheckMathSqrt(FunctionCompiler &f, ParseNode *call, MDefinition **def, MathRetTy
 
     if (argType.isMaybeDouble()) {
         *def = f.unary<MSqrt>(argDef, MIRType_Double);
-        *type = MathRetType::Double;
+        *type = Type::Double;
         return true;
     }
 
     if (argType.isMaybeFloat()) {
         *def = f.unary<MSqrt>(argDef, MIRType_Float32);
-        *type = MathRetType::Floatish;
+        *type = Type::Floatish;
         return true;
     }
 
@@ -4534,8 +4491,7 @@ CheckMathSqrt(FunctionCompiler &f, ParseNode *call, MDefinition **def, MathRetTy
 }
 
 static bool
-CheckMathMinMax(FunctionCompiler &f, ParseNode *callNode, MDefinition **def, bool isMax,
-                MathRetType *type)
+CheckMathMinMax(FunctionCompiler &f, ParseNode *callNode, MDefinition **def, bool isMax, Type *type)
 {
     if (CallArgListLength(callNode) < 2)
         return f.fail(callNode, "Math.min/max must be passed at least 2 arguments");
@@ -4547,20 +4503,19 @@ CheckMathMinMax(FunctionCompiler &f, ParseNode *callNode, MDefinition **def, boo
         return false;
 
     if (firstType.isMaybeDouble()) {
-        *type = MathRetType::Double;
+        *type = Type::Double;
         firstType = Type::MaybeDouble;
     } else if (firstType.isMaybeFloat()) {
-        *type = MathRetType::Float;
+        *type = Type::Float;
         firstType = Type::MaybeFloat;
-    } else if (firstType.isInt()) {
-        *type = MathRetType::Signed;
-        firstType = Type::Int;
+    } else if (firstType.isSigned()) {
+        *type = Type::Signed;
+        firstType = Type::Signed;
     } else {
         return f.failf(firstArg, "%s is not a subtype of double?, float? or int",
                        firstType.toChars());
     }
 
-    MIRType opType = firstType.toMIRType();
     MDefinition *lastDef = firstDef;
     ParseNode *nextArg = NextNode(firstArg);
     for (unsigned i = 1; i < CallArgListLength(callNode); i++, nextArg = NextNode(nextArg)) {
@@ -4572,7 +4527,7 @@ CheckMathMinMax(FunctionCompiler &f, ParseNode *callNode, MDefinition **def, boo
         if (!(nextType <= firstType))
             return f.failf(nextArg, "%s is not a subtype of %s", nextType.toChars(), firstType.toChars());
 
-        lastDef = f.minMax(lastDef, nextDef, opType, isMax);
+        lastDef = f.minMax(lastDef, nextDef, firstType.toMIRType(), isMax);
     }
 
     *def = lastDef;
@@ -4848,7 +4803,7 @@ CheckCoercionArg(FunctionCompiler &f, ParseNode *arg, AsmJSCoercion expected, MD
 }
 
 static bool
-CheckMathFRound(FunctionCompiler &f, ParseNode *callNode, MDefinition **def, MathRetType *type)
+CheckMathFRound(FunctionCompiler &f, ParseNode *callNode, MDefinition **def, Type *type)
 {
     if (CallArgListLength(callNode) != 1)
         return f.fail(callNode, "Math.fround must be passed 1 argument");
@@ -4861,13 +4816,13 @@ CheckMathFRound(FunctionCompiler &f, ParseNode *callNode, MDefinition **def, Mat
 
     MOZ_ASSERT(argType == Type::Float);
     *def = argDef;
-    *type = MathRetType::Float;
+    *type = Type::Float;
     return true;
 }
 
 static bool
 CheckMathBuiltinCall(FunctionCompiler &f, ParseNode *callNode, AsmJSMathBuiltinFunction func,
-                     MDefinition **def, MathRetType *type)
+                     MDefinition **def, Type *type)
 {
     unsigned arity = 0;
     AsmJSImmKind doubleCallee, floatCallee;
@@ -4940,13 +4895,14 @@ CheckMathBuiltinCall(FunctionCompiler &f, ParseNode *callNode, AsmJSMathBuiltinF
     if (!f.builtinCall(callee, call, varType.toMIRType(), def))
         return false;
 
-    *type = MathRetType(opIsDouble ? MathRetType::Double : MathRetType::Floatish);
+    *type = opIsDouble ? Type::Double : Type::Floatish;
     return true;
 }
 
 typedef Vector<MDefinition*, 4, SystemAllocPolicy> DefinitionVector;
 
 namespace {
+// Include CheckSimdCallArgs in unnamed namespace to avoid MSVC name lookup bug.
 
 template<class CheckArgOp>
 static bool
@@ -4968,7 +4924,7 @@ CheckSimdCallArgs(FunctionCompiler &f, ParseNode *call, unsigned expectedArity,
         Type argType;
         if (!CheckExpr(f, arg, &argDefs[i], &argType))
             return false;
-        if (!checkArg(f, arg, i, argType))
+        if (!checkArg(f, arg, i, argType, &argDefs[i]))
             return false;
     }
 
@@ -4982,11 +4938,42 @@ class CheckArgIsSubtypeOf
   public:
     explicit CheckArgIsSubtypeOf(Type t) : formalType_(t) {}
 
-    bool operator()(FunctionCompiler &f, ParseNode *arg, unsigned argIndex, Type actualType) const
+    bool operator()(FunctionCompiler &f, ParseNode *arg, unsigned argIndex, Type actualType,
+                    MDefinition **def) const
     {
         if (!(actualType <= formalType_)) {
             return f.failf(arg, "%s is not a subtype of %s", actualType.toChars(),
                            formalType_.toChars());
+        }
+        return true;
+    }
+};
+
+class CheckSimdScalarArgs
+{
+    Type simdType_;
+    Type formalType_;
+
+  public:
+    CheckSimdScalarArgs(Type simdType)
+      : simdType_(simdType), formalType_(simdType.simdToCoercedScalarType())
+    {}
+
+    bool operator()(FunctionCompiler &f, ParseNode *arg, unsigned argIndex, Type actualType,
+                    MDefinition **def) const
+    {
+        if (!(actualType <= formalType_)) {
+            // As a special case, accept doublelit arguments to float32x4 ops by
+            // re-emitting them as float32 constants.
+            if (!simdType_.isFloat32x4() || !actualType.isDoubleLit()) {
+                return f.failf(arg, "%s is not a subtype of %s%s",
+                               actualType.toChars(), formalType_.toChars(),
+                               simdType_.isFloat32x4() ? " or doublelit" : "");
+            }
+
+            AsmJSNumLit doubleLit = ExtractNumericLiteral(f.m(), arg);
+            MOZ_ASSERT(doubleLit.which() == AsmJSNumLit::Double);
+            *def = f.constant(doubleLit.scalarValue(), Type::Float);
         }
         return true;
     }
@@ -4999,7 +4986,8 @@ class CheckSimdSelectArgs
   public:
     explicit CheckSimdSelectArgs(Type t) : formalType_(t) {}
 
-    bool operator()(FunctionCompiler &f, ParseNode *arg, unsigned argIndex, Type actualType) const
+    bool operator()(FunctionCompiler &f, ParseNode *arg, unsigned argIndex, Type actualType,
+                    MDefinition **def) const
     {
         if (argIndex == 0) {
             // First argument of select is an int32x4 mask.
@@ -5023,7 +5011,8 @@ class CheckSimdVectorScalarArgs
   public:
     explicit CheckSimdVectorScalarArgs(Type t) : formalType_(t) {}
 
-    bool operator()(FunctionCompiler &f, ParseNode *arg, unsigned argIndex, Type actualType) const
+    bool operator()(FunctionCompiler &f, ParseNode *arg, unsigned argIndex, Type actualType,
+                    MDefinition **def) const
     {
         MOZ_ASSERT(argIndex < 2);
         if (argIndex == 0) {
@@ -5276,8 +5265,7 @@ CheckSimdOperationCall(FunctionCompiler &f, ParseNode *call, const ModuleCompile
 
       case AsmJSSimdOperation_splat: {
         DefinitionVector defs;
-        Type formalType = retType.simdToCoercedScalarType();
-        if (!CheckSimdCallArgs(f, call, 1, CheckArgIsSubtypeOf(formalType), &defs))
+        if (!CheckSimdCallArgs(f, call, 1, CheckSimdScalarArgs(retType), &defs))
             return false;
         *def = f.splatSimd(defs[0], retType.toMIRType());
         *type = retType;
@@ -5311,16 +5299,13 @@ CheckSimdCtorCall(FunctionCompiler &f, ParseNode *call, const ModuleCompiler::Gl
     AsmJSSimdType simdType = global->simdCtorType();
     Type retType = simdType;
     unsigned length = SimdTypeToLength(simdType);
-    Type formalType = retType.simdToCoercedScalarType();
     DefinitionVector defs;
-    if (!CheckSimdCallArgs(f, call, length, CheckArgIsSubtypeOf(formalType), &defs))
+    if (!CheckSimdCallArgs(f, call, length, CheckSimdScalarArgs(retType), &defs))
         return false;
 
     // This code will need to be generalized when we handle float64x2
     MOZ_ASSERT(length == 4);
-
-    MIRType opType = retType.toMIRType();
-    *def = f.constructSimd<MSimdValueX4>(defs[0], defs[1], defs[2], defs[3], opType);
+    *def = f.constructSimd<MSimdValueX4>(defs[0], defs[1], defs[2], defs[3], retType.toMIRType());
     *type = retType;
     return true;
 }
@@ -5332,14 +5317,8 @@ CheckUncoercedCall(FunctionCompiler &f, ParseNode *expr, MDefinition **def, Type
 
     const ModuleCompiler::Global *global;
     if (IsCallToGlobal(f.m(), expr, &global)) {
-        if (global->isMathFunction()) {
-            MathRetType mathRetType;
-            if (!CheckMathBuiltinCall(f, expr, global->mathBuiltinFunction(), def, &mathRetType))
-                return false;
-            *type = mathRetType.toType();
-            return true;
-        }
-
+        if (global->isMathFunction())
+            return CheckMathBuiltinCall(f, expr, global->mathBuiltinFunction(), def, type);
         if (global->isSimdCtor())
             return CheckSimdCtorCall(f, expr, global, def, type);
         if (global->isSimdOperation())
@@ -5419,11 +5398,11 @@ static bool
 CheckCoercedMathBuiltinCall(FunctionCompiler &f, ParseNode *callNode, AsmJSMathBuiltinFunction func,
                             RetType retType, MDefinition **def, Type *type)
 {
-    MDefinition *result;
-    MathRetType resultType;
-    if (!CheckMathBuiltinCall(f, callNode, func, &result, &resultType))
+    MDefinition *resultDef;
+    Type resultType;
+    if (!CheckMathBuiltinCall(f, callNode, func, &resultDef, &resultType))
         return false;
-    return CoerceResult(f, callNode, retType, result, resultType.toType(), def, type);
+    return CoerceResult(f, callNode, retType, resultDef, resultType, def, type);
 }
 
 static bool
@@ -8481,7 +8460,7 @@ static bool
 FinishModule(ModuleCompiler &m,
              ScopedJSDeletePtr<AsmJSModule> *module)
 {
-    LifoAlloc lifo(LIFO_ALLOC_PRIMARY_CHUNK_SIZE);
+    LifoAlloc lifo(TempAllocator::PreferredLifoChunkSize);
     TempAllocator alloc(&lifo);
     IonContext ionContext(m.cx(), &alloc);
 

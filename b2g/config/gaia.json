@@ -4,6 +4,6 @@
         "remote": "http://github.com/qdot/gaia", 
         "branch": "bug_1060642"
     }, 
-    "revision": "2bf3274b9e149c6a0ffc13be4c7d3a2f7236e311", 
+    "revision": "9420e20475daffd4ff3f8e4b1537a4800346bcb6", 
     "repo_path": "/integration/gaia-central"
 }

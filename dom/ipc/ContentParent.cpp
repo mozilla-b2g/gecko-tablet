@@ -30,6 +30,10 @@
 #include "CrashReporterParent.h"
 #include "IHistory.h"
 #include "mozIApplication.h"
+#ifdef ACCESSIBILITY
+#include "mozilla/a11y/DocAccessibleParent.h"
+#include "nsAccessibilityService.h"
+#endif
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/dom/DataStoreService.h"
 #include "mozilla/dom/DOMStorageIPC.h"
@@ -2498,8 +2502,13 @@ ContentParent::RecvAddNewProcess(const uint32_t& aPid,
     // Update offline settings.
     bool isOffline;
     InfallibleTArray<nsString> unusedDictionaries;
-    RecvGetXPCOMProcessAttributes(&isOffline, &unusedDictionaries);
+    ClipboardCapabilities clipboardCaps;
+    RecvGetXPCOMProcessAttributes(&isOffline, &unusedDictionaries,
+                                  &clipboardCaps);
     content->SendSetOffline(isOffline);
+    MOZ_ASSERT(!clipboardCaps.supportsSelectionClipboard() &&
+               !clipboardCaps.supportsFindClipboard(),
+               "Unexpected values");
 
     PreallocatedProcessManager::PublishSpareProcess(content);
     return true;
@@ -2706,6 +2715,42 @@ ContentParent::Observe(nsISupports* aSubject,
     return NS_OK;
 }
 
+  a11y::PDocAccessibleParent*
+ContentParent::AllocPDocAccessibleParent(PDocAccessibleParent* aParent, const uint64_t&)
+{
+#ifdef ACCESSIBILITY
+  return new a11y::DocAccessibleParent();
+#else
+  return nullptr;
+#endif
+}
+
+bool
+ContentParent::DeallocPDocAccessibleParent(PDocAccessibleParent* aParent)
+{
+#ifdef ACCESSIBILITY
+  delete static_cast<a11y::DocAccessibleParent*>(aParent);
+#endif
+  return true;
+}
+
+bool
+ContentParent::RecvPDocAccessibleConstructor(PDocAccessibleParent* aDoc, PDocAccessibleParent* aParentDoc, const uint64_t& aParentID)
+{
+#ifdef ACCESSIBILITY
+  auto doc = static_cast<a11y::DocAccessibleParent*>(aDoc);
+  if (aParentDoc) {
+    MOZ_ASSERT(aParentID);
+    auto parentDoc = static_cast<a11y::DocAccessibleParent*>(aParentDoc);
+    return parentDoc->AddChildDoc(doc, aParentID);
+  } else {
+    MOZ_ASSERT(!aParentID);
+    GetAccService()->RemoteDocAdded(doc);
+  }
+#endif
+  return true;
+}
+
 PCompositorParent*
 ContentParent::AllocPCompositorParent(mozilla::ipc::Transport* aTransport,
                                       base::ProcessId aOtherProcess)
@@ -2747,7 +2792,8 @@ ContentParent::RecvGetProcessAttributes(uint64_t* aId,
 
 bool
 ContentParent::RecvGetXPCOMProcessAttributes(bool* aIsOffline,
-                                             InfallibleTArray<nsString>* dictionaries)
+                                             InfallibleTArray<nsString>* dictionaries,
+                                             ClipboardCapabilities* clipboardCaps)
 {
     nsCOMPtr<nsIIOService> io(do_GetIOService());
     MOZ_ASSERT(io, "No IO service?");
@@ -2758,6 +2804,15 @@ ContentParent::RecvGetXPCOMProcessAttributes(bool* aIsOffline,
     MOZ_ASSERT(spellChecker, "No spell checker?");
 
     spellChecker->GetDictionaryList(dictionaries);
+
+    nsCOMPtr<nsIClipboard> clipboard(do_GetService("@mozilla.org/widget/clipboard;1"));
+    MOZ_ASSERT(clipboard, "No clipboard?");
+
+    rv = clipboard->SupportsSelectionClipboard(&clipboardCaps->supportsSelectionClipboard());
+    MOZ_ASSERT(NS_SUCCEEDED(rv));
+
+    rv = clipboard->SupportsFindClipboard(&clipboardCaps->supportsFindClipboard());
+    MOZ_ASSERT(NS_SUCCEEDED(rv));
 
     return true;
 }

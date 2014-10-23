@@ -22,6 +22,7 @@
 #else
 # error "Unknown architecture!"
 #endif
+#include "jit/AtomicOp.h"
 #include "jit/IonInstrumentation.h"
 #include "jit/JitCompartment.h"
 #include "jit/VMFunctions.h"
@@ -183,7 +184,6 @@ class MacroAssembler : public MacroAssemblerSpecific
     mozilla::Maybe<AutoRooter> autoRooter_;
     mozilla::Maybe<IonContext> ionContext_;
     mozilla::Maybe<AutoIonContextAlloc> alloc_;
-    bool embedsNurseryPointers_;
 
     // SPS instrumentation, only used for Ion caches.
     mozilla::Maybe<IonInstrumentation> spsInstrumentation_;
@@ -206,8 +206,7 @@ class MacroAssembler : public MacroAssemblerSpecific
     // provided, but otherwise it can be safely omitted to prevent all
     // instrumentation from being emitted.
     MacroAssembler()
-      : embedsNurseryPointers_(false),
-        sps_(nullptr)
+      : sps_(nullptr)
     {
         IonContext *icx = GetIonContext();
         JSContext *cx = icx->cx;
@@ -230,8 +229,7 @@ class MacroAssembler : public MacroAssemblerSpecific
     // (for example, Trampoline-$(ARCH).cpp and IonCaches.cpp).
     explicit MacroAssembler(JSContext *cx, IonScript *ion = nullptr,
                             JSScript *script = nullptr, jsbytecode *pc = nullptr)
-      : embedsNurseryPointers_(false),
-        sps_(nullptr)
+      : sps_(nullptr)
     {
         constructRoot(cx);
         ionContext_.emplace(cx, (js::jit::TempAllocator *)nullptr);
@@ -257,8 +255,7 @@ class MacroAssembler : public MacroAssemblerSpecific
     // asm.js compilation handles its own IonContext-pushing
     struct AsmJSToken {};
     explicit MacroAssembler(AsmJSToken)
-      : embedsNurseryPointers_(false),
-        sps_(nullptr)
+      : sps_(nullptr)
     {
 #ifdef JS_CODEGEN_ARM
         initWithAllocator();
@@ -286,10 +283,6 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     size_t instructionsSize() const {
         return size();
-    }
-
-    bool embedsNurseryPointers() const {
-        return embedsNurseryPointers_;
     }
 
     // Emits a test of a value against all types in a TypeSet. A scratch
@@ -704,10 +697,6 @@ class MacroAssembler : public MacroAssemblerSpecific
         bind(&done);
     }
 
-    void branchNurseryPtr(Condition cond, const Address &ptr1, ImmMaybeNurseryPtr ptr2,
-                          Label *label);
-    void moveNurseryPtr(ImmMaybeNurseryPtr ptr, Register reg);
-
     void canonicalizeDouble(FloatRegister reg) {
         Label notNaN;
         branchDouble(DoubleOrdered, reg, reg, &notNaN);
@@ -749,6 +738,14 @@ class MacroAssembler : public MacroAssemblerSpecific
             MOZ_CRASH("Invalid typed array type");
         }
     }
+
+    template<typename T>
+    void compareExchangeToTypedIntArray(Scalar::Type arrayType, const T &mem, Register oldval, Register newval,
+                                        Register temp, AnyRegister output);
+
+    template<typename S, typename T>
+    void atomicBinopToTypedIntArray(AtomicOp op, Scalar::Type arrayType, const S &value,
+                                    const T &mem, Register temp1, Register temp2, AnyRegister output);
 
     void storeToTypedFloatArray(Scalar::Type arrayType, FloatRegister value, const BaseIndex &dest);
     void storeToTypedFloatArray(Scalar::Type arrayType, FloatRegister value, const Address &dest);
@@ -950,6 +947,15 @@ class MacroAssembler : public MacroAssemblerSpecific
     uint32_t callIon(Register callee) {
         leaveSPSFrame();
         MacroAssemblerSpecific::callIon(callee);
+        uint32_t ret = currentOffset();
+        reenterSPSFrame();
+        return ret;
+    }
+
+    // see above comment for what is returned
+    uint32_t callWithExitFrame(Label *target) {
+        leaveSPSFrame();
+        MacroAssemblerSpecific::callWithExitFrame(target);
         uint32_t ret = currentOffset();
         reenterSPSFrame();
         return ret;

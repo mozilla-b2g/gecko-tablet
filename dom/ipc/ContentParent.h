@@ -413,7 +413,8 @@ private:
                                           bool* aIsForApp,
                                           bool* aIsForBrowser) MOZ_OVERRIDE;
     virtual bool RecvGetXPCOMProcessAttributes(bool* aIsOffline,
-                                               InfallibleTArray<nsString>* dictionaries)
+                                               InfallibleTArray<nsString>* dictionaries,
+                                               ClipboardCapabilities* clipboardCaps)
         MOZ_OVERRIDE;
 
     virtual bool DeallocPJavaScriptParent(mozilla::jsipc::PJavaScriptParent*) MOZ_OVERRIDE;
@@ -678,6 +679,11 @@ private:
                           int32_t* aDBRefCnt,
                           int32_t* aSliceRefCnt,
                           bool* aResult) MOZ_OVERRIDE;
+
+    virtual PDocAccessibleParent* AllocPDocAccessibleParent(PDocAccessibleParent*, const uint64_t&) MOZ_OVERRIDE;
+    virtual bool DeallocPDocAccessibleParent(PDocAccessibleParent*) MOZ_OVERRIDE;
+    virtual bool RecvPDocAccessibleConstructor(PDocAccessibleParent* aDoc,
+                                               PDocAccessibleParent* aParentDoc, const uint64_t& aParentID) MOZ_OVERRIDE;
 
     // If you add strong pointers to cycle collected objects here, be sure to
     // release these objects in ShutDownProcess.  See the comment there for more
