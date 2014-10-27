@@ -3213,11 +3213,11 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
     const size_t kStackQuota =  2 * kDefaultStackQuota;
     const size_t kTrustedScriptBuffer = 246 * 1024;
 #elif defined(XP_WIN)
-    // 1MB is the default stack size on Windows, so use 900k. And since 32-bit
-    // Windows stack frames are 3.4k each, let's use a buffer of 48k and double
-    // that for 64-bit.
+    // 1MB is the default stack size on Windows, so use 900k.
+    // Windows PGO stack frames have unfortunately gotten pretty large lately. :-(
     const size_t kStackQuota = 900 * 1024;
-    const size_t kTrustedScriptBuffer = 12 * sizeof(size_t) * 1024;
+    const size_t kTrustedScriptBuffer = (sizeof(size_t) == 8) ? 120 * 1024
+                                                              : 80 * 1024;
     // The following two configurations are linux-only. Given the numbers above,
     // we use 50k and 100k trusted buffers on 32-bit and 64-bit respectively.
 #elif defined(DEBUG)

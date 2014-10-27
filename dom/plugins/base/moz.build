@@ -96,12 +96,11 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] != 'android':
 MSVC_ENABLE_PGO = True
 
 LOCAL_INCLUDES += [
-    '/content/base/src',
     '/dom/base',
     '/layout/generic',
     '/layout/xul',
+    '/widget',
     '/widget/android',
-    '/widget/xpwidgets',
     '/xpcom/base',
 ]
 

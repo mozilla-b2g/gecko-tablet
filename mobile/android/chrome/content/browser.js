@@ -3220,9 +3220,6 @@ Tab.prototype = {
 
     this.browser.stop();
 
-    let frameLoader = this.browser.QueryInterface(Ci.nsIFrameLoaderOwner).frameLoader;
-    frameLoader.renderMode = Ci.nsIFrameLoader.RENDER_MODE_ASYNC_SCROLL;
-
     // only set tab uri if uri is valid
     let uri = null;
     let title = aParams.title || aURL;
@@ -3963,8 +3960,7 @@ Tab.prototype = {
             type: "Link:Favicon",
             tabID: this.id,
             href: resolveGeckoURI(target.href),
-            size: maxSize,
-            mime: target.getAttribute("type") || ""
+            size: maxSize
           };
           Messaging.sendRequest(json);
         } else if (list.indexOf("[alternate]") != -1 && aEvent.type == "DOMLinkAdded") {

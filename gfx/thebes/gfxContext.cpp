@@ -325,22 +325,6 @@ gfxContext::QuadraticCurveTo(const gfxPoint& pt1, const gfxPoint& pt2)
 }
 
 void
-gfxContext::Arc(const gfxPoint& center, gfxFloat radius,
-                gfxFloat angle1, gfxFloat angle2)
-{
-  EnsurePathBuilder();
-  mPathBuilder->Arc(ToPoint(center), Float(radius), Float(angle1), Float(angle2));
-}
-
-void
-gfxContext::NegativeArc(const gfxPoint& center, gfxFloat radius,
-                        gfxFloat angle1, gfxFloat angle2)
-{
-  EnsurePathBuilder();
-  mPathBuilder->Arc(ToPoint(center), Float(radius), Float(angle2), Float(angle1));
-}
-
-void
 gfxContext::Line(const gfxPoint& start, const gfxPoint& end)
 {
   EnsurePathBuilder();
@@ -547,28 +531,6 @@ gfxContext::UserToDevicePixelSnapped(gfxPoint& pt, bool ignoreScale) const
   pt = UserToDevice(pt);
   pt.Round();
   return true;
-}
-
-void
-gfxContext::PixelSnappedRectangleAndSetPattern(const gfxRect& rect,
-                                               gfxPattern *pattern)
-{
-  gfxRect r(rect);
-
-  // Bob attempts to pixel-snap the rectangle, and returns true if
-  // the snapping succeeds.  If it does, we need to set up an
-  // identity matrix, because the rectangle given back is in device
-  // coordinates.
-  //
-  // We then have to call a translate to dr.pos afterwards, to make
-  // sure the image lines up in the right place with our pixel
-  // snapped rectangle.
-  //
-  // If snapping wasn't successful, we just translate to where the
-  // pattern would normally start (in app coordinates) and do the
-  // same thing.
-  Rectangle(r, true);
-  SetPattern(pattern);
 }
 
 void
@@ -898,6 +860,17 @@ gfxContext::GetPattern()
   return pat.forget();
 }
 
+void
+gfxContext::SetFontSmoothingBackgroundColor(const Color& aColor)
+{
+  CurrentState().fontSmoothingBackgroundColor = aColor;
+}
+
+Color
+gfxContext::GetFontSmoothingBackgroundColor()
+{
+  return CurrentState().fontSmoothingBackgroundColor;
+}
 
 // masking
 void

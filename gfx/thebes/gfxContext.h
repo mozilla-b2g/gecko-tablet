@@ -135,7 +135,7 @@ public:
     mozilla::TemporaryRef<Path> GetPath();
 
     /**
-     * Appends the given path to the current path.
+     * Sets the given path as the current path.
      */
     void SetPath(Path* path);
 
@@ -171,27 +171,6 @@ public:
      * Draws a quadratic Bézier curve with control points pt1, pt2 and pt3.
      */
     void QuadraticCurveTo(const gfxPoint& pt1, const gfxPoint& pt2);
-
-    /**
-     * Draws a clockwise arc (i.e. a circle segment).
-     * @param center The center of the circle
-     * @param radius The radius of the circle
-     * @param angle1 Starting angle for the segment
-     * @param angle2 Ending angle
-     */
-    void Arc(const gfxPoint& center, gfxFloat radius,
-             gfxFloat angle1, gfxFloat angle2);
-
-    /**
-     * Draws a counter-clockwise arc (i.e. a circle segment).
-     * @param center The center of the circle
-     * @param radius The radius of the circle
-     * @param angle1 Starting angle for the segment
-     * @param angle2 Ending angle
-     */
-
-    void NegativeArc(const gfxPoint& center, gfxFloat radius,
-                     gfxFloat angle1, gfxFloat angle2);
 
     // path helpers
     /**
@@ -309,15 +288,6 @@ public:
     bool UserToDevicePixelSnapped(gfxPoint& pt, bool ignoreScale = false) const;
 
     /**
-     * Attempts to pixel snap the rectangle, add it to the current
-     * path, and to set pattern as the current painting source.  This
-     * should be used for drawing filled pixel-snapped rectangles (like
-     * images), because the CTM at the time of the SetPattern call needs
-     * to have a snapped translation, or you get smeared images.
-     */
-    void PixelSnappedRectangleAndSetPattern(const gfxRect& rect, gfxPattern *pattern);
-
-    /**
      ** Painting sources
      **/
 
@@ -354,6 +324,13 @@ public:
      * Uses a pattern for drawing.
      */
     void SetPattern(gfxPattern *pattern);
+
+    /**
+     * Set the color that text drawn on top of transparent pixels should be
+     * anti-aliased into.
+     */
+    void SetFontSmoothingBackgroundColor(const mozilla::gfx::Color& aColor);
+    mozilla::gfx::Color GetFontSmoothingBackgroundColor();
 
     /**
      * Get the source pattern (solid color, normal pattern, surface, etc)
@@ -654,6 +631,7 @@ private:
     mozilla::gfx::AntialiasMode aaMode;
     bool patternTransformChanged;
     Matrix patternTransform;
+    Color fontSmoothingBackgroundColor;
     // This is used solely for using minimal intermediate surface size.
     mozilla::gfx::Point deviceOffset;
   };

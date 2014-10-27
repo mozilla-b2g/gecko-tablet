@@ -15,6 +15,7 @@
 # limitations under the License.
 
 EXPORTS += [
+    'GeckoTouchDispatcher.h',
     'GonkPermission.h',
     'OrientationObserver.h',
 ]
@@ -67,12 +68,11 @@ include('/ipc/chromium/chromium-config.mozbuild')
 FINAL_LIBRARY = 'xul'
 
 LOCAL_INCLUDES += [
-    '/content/media/omx/mediaresourcemanager',
+    '/dom/media/omx/mediaresourcemanager',
     '/dom/system/android',
     '/gfx/skia/trunk/include/config',
     '/gfx/skia/trunk/include/core',
-    '/widget/shared',
-    '/widget/xpwidgets',
+    '/widget',
 ]
 
 DEFINES['HAVE_OFF64_T'] = True

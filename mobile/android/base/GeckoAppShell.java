@@ -34,8 +34,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.mozilla.gecko.AppConstants.Versions;
-import org.mozilla.gecko.favicons.Favicons;
 import org.mozilla.gecko.favicons.OnFaviconLoadedListener;
+import org.mozilla.gecko.favicons.decoders.FaviconDecoder;
 import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.gfx.LayerView;
 import org.mozilla.gecko.gfx.PanZoomController;
@@ -137,10 +137,13 @@ public class GeckoAppShell
         }
 
         @Override
-        protected Bundle getCrashExtras(final Thread thread, final Throwable exc,
-                                        final Context appContext) {
-            final Bundle extras = super.getCrashExtras(
-                thread, exc, sContextGetter != null ? getContext() : null);
+        protected Context getAppContext() {
+            return sContextGetter != null ? getContext() : null;
+        }
+
+        @Override
+        protected Bundle getCrashExtras(final Thread thread, final Throwable exc) {
+            final Bundle extras = super.getCrashExtras(thread, exc);
 
             extras.putString("ProductName", AppConstants.MOZ_APP_BASENAME);
             extras.putString("ProductID", AppConstants.MOZ_APP_ID);
@@ -189,6 +192,11 @@ public class GeckoAppShell
             return false;
         }
     };
+
+    public static CrashHandler ensureCrashHandling() {
+        // Crash handling is automatically enabled when GeckoAppShell is loaded.
+        return CRASH_HANDLER;
+    }
 
     private static final Queue<GeckoEvent> PENDING_EVENTS = new ConcurrentLinkedQueue<GeckoEvent>();
     private static final Map<String, String> ALERT_COOKIES = new ConcurrentHashMap<String, String>();
@@ -802,24 +810,21 @@ public class GeckoAppShell
     // This is the entry point from nsIShellService.
     @WrapElementForJNI
     static void createShortcut(final String aTitle, final String aURI, final String aIconData) {
-        // We have the favicon data (base64) decoded on the background thread, callback here, then
-        // call the other createShortcut method with the decoded favicon.
-        // This is slightly contrived, but makes the images available to the favicon cache.
-        Favicons.getSizedFavicon(getContext(), aURI, aIconData, Integer.MAX_VALUE, 0,
-            new OnFaviconLoadedListener() {
-                @Override
-                public void onFaviconLoaded(String url, String faviconURL, Bitmap favicon) {
-                    createShortcut(aTitle, url, favicon);
-                }
+        ThreadUtils.postToBackgroundThread(new Runnable() {
+            @Override
+            public void run() {
+                // TODO: use the cache. Bug 961600.
+                Bitmap icon = FaviconDecoder.getMostSuitableBitmapFromDataURI(aIconData, getPreferredIconSize());
+                GeckoAppShell.doCreateShortcut(aTitle, aURI, icon);
             }
-        );
+        });
     }
 
     public static void createShortcut(final String aTitle, final String aURI, final Bitmap aBitmap) {
         ThreadUtils.postToBackgroundThread(new Runnable() {
             @Override
             public void run() {
-                doCreateShortcut(aTitle, aURI, aBitmap);
+                GeckoAppShell.doCreateShortcut(aTitle, aURI, aBitmap);
             }
         });
     }
@@ -2374,12 +2379,22 @@ public class GeckoAppShell
 
     @WrapElementForJNI
     public static void enableNetworkNotifications() {
-        GeckoNetworkManager.getInstance().enableNotifications();
+        ThreadUtils.postToUiThread(new Runnable() {
+            @Override
+            public void run() {
+                GeckoNetworkManager.getInstance().enableNotifications();
+            }
+        });
     }
 
     @WrapElementForJNI
     public static void disableNetworkNotifications() {
-        GeckoNetworkManager.getInstance().disableNotifications();
+        ThreadUtils.postToUiThread(new Runnable() {
+            @Override
+            public void run() {
+                GeckoNetworkManager.getInstance().disableNotifications();
+            }
+        });
     }
 
     /**

@@ -404,7 +404,11 @@ pref("media.webvtt.regions.enabled", false);
 pref("media.track.enabled", false);
 
 // Whether to enable MediaSource support
+#ifdef RELEASE_BUILD
 pref("media.mediasource.enabled", false);
+#else
+pref("media.mediasource.enabled", true);
+#endif
 
 #ifdef MOZ_WEBSPEECH
 pref("media.webspeech.recognition.enable", false);
@@ -1271,6 +1275,8 @@ pref("network.http.tcp_keepalive.short_lived_idle_time", 10);
 
 pref("network.http.tcp_keepalive.long_lived_connections", true);
 pref("network.http.tcp_keepalive.long_lived_idle_time", 600);
+
+pref("network.http.enforce-framing.http1", false);
 
 // default values for FTP
 // in a DSCP environment this should be 40 (0x28, or AF11), per RFC-4594,
