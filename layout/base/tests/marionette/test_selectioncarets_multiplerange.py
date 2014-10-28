@@ -98,11 +98,11 @@ class SelectionCaretsMultipleRangeTest(MarionetteTestCase):
 
         # Drag end caret to target location
         (caret1_x, caret1_y), (caret2_x, caret2_y) = sel.selection_carets_location()
-        self.actions.flick(self._body, caret2_x, caret2_y, end_caret_x, end_caret_y).perform()
+        self.actions.flick(self._body, caret2_x, caret2_y, end_caret_x, end_caret_y, 1).perform()
         self.assertEqual(self._to_unix_line_ending(sel.selected_content.strip()),
             'this 3\nuser can select this')
 
         (caret1_x, caret1_y), (caret2_x, caret2_y) = sel.selection_carets_location()
-        self.actions.flick(self._body, caret2_x, caret2_y, end_caret2_x, end_caret2_y).perform()
+        self.actions.flick(self._body, caret2_x, caret2_y, end_caret2_x, end_caret2_y, 1).perform()
         self.assertEqual(self._to_unix_line_ending(sel.selected_content.strip()),
             'this 3\nuser can select this 4\nuser can select this 5\nuser')
