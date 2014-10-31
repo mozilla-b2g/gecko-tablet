@@ -3747,7 +3747,7 @@ CodeGenerator::visitCheckOverRecursedPar(LCheckOverRecursedPar *lir)
     Register tempReg = ToRegister(lir->getTempReg());
 
     masm.loadPtr(Address(cxReg, offsetof(ForkJoinContext, perThreadData)), tempReg);
-    masm.loadPtr(Address(tempReg, offsetof(PerThreadData, jitStackLimit)), tempReg);
+    masm.loadPtr(Address(tempReg, PerThreadData::offsetOfJitStackLimit()), tempReg);
 
     // Conditional forward (unlikely) branch to failure.
     CheckOverRecursedFailure *ool = new(alloc()) CheckOverRecursedFailure(lir);
@@ -4099,7 +4099,7 @@ CodeGenerator::generateBody()
 
             if (iter->mirRaw()) {
                 // Only add instructions that have a tracked inline script tree.
-                if (iter->mirRaw()->trackedSite().hasTree()) {
+                if (iter->mirRaw()->trackedTree()) {
                     if (!addNativeToBytecodeEntry(iter->mirRaw()->trackedSite()))
                         return false;
                 }
@@ -4480,7 +4480,7 @@ CodeGenerator::visitNewDeclEnvObject(LNewDeclEnvObject *lir)
     return true;
 }
 
-typedef JSObject *(*NewCallObjectFn)(JSContext *, HandleShape, HandleTypeObject);
+typedef JSObject *(*NewCallObjectFn)(JSContext *, HandleShape, HandleTypeObject, uint32_t);
 static const VMFunction NewCallObjectInfo =
     FunctionInfo<NewCallObjectFn>(NewCallObject);
 
@@ -4492,9 +4492,12 @@ CodeGenerator::visitNewCallObject(LNewCallObject *lir)
 
     NativeObject *templateObj = lir->mir()->templateObject();
 
+    JSScript *script = lir->mir()->block()->info().script();
+    uint32_t lexicalBegin = script->bindings.aliasedBodyLevelLexicalBegin();
     OutOfLineCode *ool = oolCallVM(NewCallObjectInfo, lir,
                                    (ArgList(), ImmGCPtr(templateObj->lastProperty()),
-                                               ImmGCPtr(templateObj->type())),
+                                               ImmGCPtr(templateObj->type()),
+                                               Imm32(lexicalBegin)),
                                    StoreRegisterTo(objReg));
     if (!ool)
         return false;
@@ -4508,7 +4511,7 @@ CodeGenerator::visitNewCallObject(LNewCallObject *lir)
     return true;
 }
 
-typedef JSObject *(*NewSingletonCallObjectFn)(JSContext *, HandleShape);
+typedef JSObject *(*NewSingletonCallObjectFn)(JSContext *, HandleShape, uint32_t);
 static const VMFunction NewSingletonCallObjectInfo =
     FunctionInfo<NewSingletonCallObjectFn>(NewSingletonCallObject);
 
@@ -4519,9 +4522,12 @@ CodeGenerator::visitNewSingletonCallObject(LNewSingletonCallObject *lir)
 
     JSObject *templateObj = lir->mir()->templateObject();
 
+    JSScript *script = lir->mir()->block()->info().script();
+    uint32_t lexicalBegin = script->bindings.aliasedBodyLevelLexicalBegin();
     OutOfLineCode *ool;
     ool = oolCallVM(NewSingletonCallObjectInfo, lir,
-                    (ArgList(), ImmGCPtr(templateObj->lastProperty())),
+                    (ArgList(), ImmGCPtr(templateObj->lastProperty()),
+                                Imm32(lexicalBegin)),
                     StoreRegisterTo(objReg));
     if (!ool)
         return false;
@@ -5008,28 +5014,6 @@ CodeGenerator::visitTypedArrayElements(LTypedArrayElements *lir)
 }
 
 bool
-CodeGenerator::visitNeuterCheck(LNeuterCheck *lir)
-{
-    Register obj = ToRegister(lir->object());
-    Register temp = ToRegister(lir->temp());
-
-    Label inlineObject;
-    masm.loadObjClass(obj, temp);
-    masm.branchPtr(Assembler::Equal, temp, ImmPtr(&InlineOpaqueTypedObject::class_), &inlineObject);
-
-    masm.loadPtr(Address(obj, OutlineTypedObject::offsetOfOwner()), temp);
-    masm.unboxInt32(Address(temp, ArrayBufferObject::offsetOfFlagsSlot()), temp);
-
-    Imm32 flag(ArrayBufferObject::neuteredFlag());
-    if (!bailoutTest32(Assembler::NonZero, temp, flag, lir->snapshot()))
-        return false;
-
-    masm.bind(&inlineObject);
-
-    return true;
-}
-
-bool
 CodeGenerator::visitTypedObjectProto(LTypedObjectProto *lir)
 {
     Register obj = ToRegister(lir->object());
@@ -5065,12 +5049,13 @@ CodeGenerator::visitTypedObjectElements(LTypedObjectElements *lir)
     Label inlineObject, done;
     masm.loadObjClass(obj, out);
     masm.branchPtr(Assembler::Equal, out, ImmPtr(&InlineOpaqueTypedObject::class_), &inlineObject);
+    masm.branchPtr(Assembler::Equal, out, ImmPtr(&InlineTransparentTypedObject::class_), &inlineObject);
 
     masm.loadPtr(Address(obj, OutlineTypedObject::offsetOfData()), out);
     masm.jump(&done);
 
     masm.bind(&inlineObject);
-    masm.computeEffectiveAddress(Address(obj, InlineOpaqueTypedObject::offsetOfDataStart()), out);
+    masm.computeEffectiveAddress(Address(obj, InlineTypedObject::offsetOfDataStart()), out);
     masm.bind(&done);
 
     return true;
@@ -5090,12 +5075,13 @@ CodeGenerator::visitSetTypedObjectOffset(LSetTypedObjectOffset *lir)
     Label inlineObject, done;
     masm.loadObjClass(temp0, temp1);
     masm.branchPtr(Assembler::Equal, temp1, ImmPtr(&InlineOpaqueTypedObject::class_), &inlineObject);
+    masm.branchPtr(Assembler::Equal, temp1, ImmPtr(&InlineTransparentTypedObject::class_), &inlineObject);
 
     masm.loadPrivate(Address(temp0, ArrayBufferObject::offsetOfDataSlot()), temp0);
     masm.jump(&done);
 
     masm.bind(&inlineObject);
-    masm.addPtr(ImmWord(InlineOpaqueTypedObject::offsetOfDataStart()), temp0);
+    masm.addPtr(ImmWord(InlineTypedObject::offsetOfDataStart()), temp0);
 
     masm.bind(&done);
 
@@ -7349,7 +7335,8 @@ CodeGenerator::generate()
     // top-level script.
     InlineScriptTree *tree = gen->info().inlineScriptTree();
     jsbytecode *startPC = tree->script()->code();
-    if (!addNativeToBytecodeEntry(BytecodeSite(tree, startPC)))
+    BytecodeSite *startSite = new(gen->alloc()) BytecodeSite(tree, startPC);
+    if (!addNativeToBytecodeEntry(startSite))
         return false;
 
     if (!snapshots_.init())
@@ -7408,21 +7395,21 @@ CodeGenerator::generate()
         return false;
 
     // Reset native => bytecode map table with top-level script and startPc.
-    if (!addNativeToBytecodeEntry(BytecodeSite(tree, startPC)))
+    if (!addNativeToBytecodeEntry(startSite))
         return false;
 
     if (!generateBody())
         return false;
 
     // Reset native => bytecode map table with top-level script and startPc.
-    if (!addNativeToBytecodeEntry(BytecodeSite(tree, startPC)))
+    if (!addNativeToBytecodeEntry(startSite))
         return false;
 
     if (!generateEpilogue())
         return false;
 
     // Reset native => bytecode map table with top-level script and startPc.
-    if (!addNativeToBytecodeEntry(BytecodeSite(tree, startPC)))
+    if (!addNativeToBytecodeEntry(startSite))
         return false;
 
     if (!generateInvalidateEpilogue())
@@ -7438,7 +7425,7 @@ CodeGenerator::generate()
         return false;
 
     // Add terminal entry.
-    if (!addNativeToBytecodeEntry(BytecodeSite(tree, startPC)))
+    if (!addNativeToBytecodeEntry(startSite))
         return false;
 
     // Dump Native to bytecode entries to spew.
@@ -9802,7 +9789,7 @@ CodeGenerator::visitInterruptCheck(LInterruptCheck *lir)
     if (!ool)
         return false;
 
-    AbsoluteAddress interruptAddr(GetIonContext()->runtime->addressOfInterrupt());
+    AbsoluteAddress interruptAddr(GetIonContext()->runtime->addressOfInterruptUint32());
     masm.branch32(Assembler::NotEqual, interruptAddr, Imm32(0), ool->entry());
     masm.bind(ool->rejoin());
     return true;
@@ -9812,8 +9799,8 @@ bool
 CodeGenerator::visitAsmJSInterruptCheck(LAsmJSInterruptCheck *lir)
 {
     Register scratch = ToRegister(lir->scratch());
-    masm.movePtr(AsmJSImmPtr(AsmJSImm_RuntimeInterrupt), scratch);
-    masm.load8ZeroExtend(Address(scratch, 0), scratch);
+    masm.movePtr(AsmJSImmPtr(AsmJSImm_RuntimeInterruptUint32), scratch);
+    masm.load32(Address(scratch, 0), scratch);
     Label rejoin;
     masm.branch32(Assembler::Equal, scratch, Imm32(0), &rejoin);
     {

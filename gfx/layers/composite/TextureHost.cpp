@@ -144,6 +144,13 @@ TextureHost::GetIPDLActor()
   return mActor;
 }
 
+bool
+TextureHost::BindTextureSource(CompositableTextureSourceRef& texture)
+{
+  texture = GetTextureSources();
+  return !!texture;
+}
+
 FenceHandle
 TextureHost::GetAndResetReleaseFenceHandle()
 {
@@ -277,18 +284,6 @@ TextureHost::CompositorRecycle()
   static_cast<TextureParent*>(mActor)->CompositorRecycle();
 }
 
-void
-TextureHost::SetCompositableBackendSpecificData(CompositableBackendSpecificData* aBackendData)
-{
-  mCompositableBackendData = aBackendData;
-}
-
-void
-TextureHost::UnsetCompositableBackendSpecificData(CompositableBackendSpecificData* aBackendData)
-{
-  mCompositableBackendData = nullptr;
-}
-
 TextureHost::TextureHost(TextureFlags aFlags)
     : mActor(nullptr)
     , mFlags(aFlags)
@@ -322,9 +317,11 @@ TextureHost::PrintInfo(std::stringstream& aStream, const char* aPrefix)
 }
 
 TextureSource::TextureSource()
+: mCompositableCount(0)
 {
     MOZ_COUNT_CTOR(TextureSource);
 }
+
 TextureSource::~TextureSource()
 {
     MOZ_COUNT_DTOR(TextureSource);
@@ -817,17 +814,12 @@ SharedSurfaceToTexSource(gl::SharedSurface* abstractSurf, Compositor* compositor
 #ifdef XP_WIN
     case gl::SharedSurfaceType::EGLSurfaceANGLE: {
       auto surf = gl::SharedSurface_ANGLEShareHandle::Cast(abstractSurf);
-      HANDLE shareHandle = surf->GetShareHandle();
 
       MOZ_ASSERT(compositor->GetBackendType() == LayersBackend::LAYERS_D3D11);
       CompositorD3D11* compositorD3D11 = static_cast<CompositorD3D11*>(compositor);
-      ID3D11Device* d3d = compositorD3D11->GetDevice();
+      RefPtr<ID3D11Texture2D> tex = surf->GetConsumerTexture();
 
-      nsRefPtr<ID3D11Texture2D> tex;
-      HRESULT hr = d3d->OpenSharedResource(shareHandle,
-                                           __uuidof(ID3D11Texture2D),
-                                           getter_AddRefs(tex));
-      if (FAILED(hr)) {
+      if (!tex) {
         NS_WARNING("Failed to open shared resource.");
         break;
       }
@@ -844,8 +836,9 @@ SharedSurfaceToTexSource(gl::SharedSurface* abstractSurf, Compositor* compositor
 
       GLenum target = surf->ConsTextureTarget();
       GLuint tex = surf->ConsTexture(gl);
-      texSource = new GLTextureSource(compositorOGL, tex, format, target,
-                                      surf->mSize);
+      texSource = new GLTextureSource(compositorOGL, tex, target,
+                                      surf->mSize, format,
+                                      true/*externally owned*/);
       break;
     }
     case gl::SharedSurfaceType::EGLImageShare: {
@@ -860,8 +853,9 @@ SharedSurfaceToTexSource(gl::SharedSurface* abstractSurf, Compositor* compositor
       GLuint tex = 0;
       surf->AcquireConsumerTexture(gl, &tex, &target);
 
-      texSource = new GLTextureSource(compositorOGL, tex, format, target,
-                                      surf->mSize);
+      texSource = new GLTextureSource(compositorOGL, tex, target,
+                                      surf->mSize, format,
+                                      true/*externally owned*/);
       break;
     }
 #ifdef XP_MACOSX

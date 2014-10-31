@@ -327,10 +327,13 @@ sandbox_finalize(js::FreeOp *fop, JSObject *obj)
 static void
 sandbox_moved(JSObject *obj, const JSObject *old)
 {
+    // Note that this hook can be called before the private pointer is set. In
+    // this case the SandboxPrivate will not exist yet, so there is nothing to
+    // do.
     nsIScriptObjectPrincipal *sop =
         static_cast<nsIScriptObjectPrincipal *>(xpc_GetJSPrivate(obj));
-    MOZ_ASSERT(sop);
-    static_cast<SandboxPrivate *>(sop)->ObjectMoved(obj, old);
+    if (sop)
+        static_cast<SandboxPrivate *>(sop)->ObjectMoved(obj, old);
 }
 
 static bool
@@ -443,8 +446,10 @@ sandbox_addProperty(JSContext *cx, HandleObject obj, HandleId id, MutableHandleV
     if (!JS_GetPropertyDescriptorById(cx, obj, id, &pd))
         return false;
     unsigned attrs = pd.attributes() & ~(JSPROP_GETTER | JSPROP_SETTER);
-    if (!JS_DefinePropertyById(cx, obj, id, vp, attrs,
-                               writeToProto_getProperty, writeToProto_setProperty))
+    if (!JS_DefinePropertyById(cx, obj, id, vp,
+                               attrs | JSPROP_PROPOP_ACCESSORS,
+                               JS_PROPERTYOP_GETTER(writeToProto_getProperty),
+                               JS_PROPERTYOP_SETTER(writeToProto_setProperty)))
         return false;
 
     return true;

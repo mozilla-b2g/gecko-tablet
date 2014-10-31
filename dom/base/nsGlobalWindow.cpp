@@ -202,6 +202,7 @@
 #include "prrng.h"
 #include "nsSandboxFlags.h"
 #include "TimeChangeObserver.h"
+#include "TouchCaret.h"
 #include "mozilla/dom/AudioContext.h"
 #include "mozilla/dom/BlobBinding.h"
 #include "mozilla/dom/BrowserElementDictionariesBinding.h"
@@ -2590,8 +2591,9 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
     if (!aState) {
       JS::Rooted<JSObject*> rootedWrapper(cx, GetWrapperPreserveColor());
       if (!JS_DefineProperty(cx, newInnerGlobal, "window", rootedWrapper,
-                             JSPROP_ENUMERATE | JSPROP_READONLY | JSPROP_PERMANENT,
-                             JS_PropertyStub, JS_StrictPropertyStub)) {
+                             JSPROP_ENUMERATE | JSPROP_READONLY |
+                             JSPROP_PERMANENT,
+                             JS_STUBGETTER, JS_STUBSETTER)) {
         NS_ERROR("can't create the 'window' property");
         return NS_ERROR_FAILURE;
       }
@@ -4527,7 +4529,7 @@ nsGlobalWindow::SetOpener(JSContext* aCx, JS::Handle<JS::Value> aOpener,
 
     if (!JS_WrapObject(aCx, &thisObj) ||
         !JS_DefineProperty(aCx, thisObj, "opener", aOpener, JSPROP_ENUMERATE,
-                           JS_PropertyStub, JS_StrictPropertyStub)) {
+                           JS_STUBGETTER, JS_STUBSETTER)) {
       aError.Throw(NS_ERROR_FAILURE);
     }
 
@@ -9356,6 +9358,24 @@ nsGlobalWindow::UpdateCommands(const nsAString& anAction, nsISelection* aSel, in
     SelectionChangeEventInit init;
     init.mBubbles = true;
     if (aSel) {
+      bool isTouchCaretVisible = false;
+      bool isCollapsed = aSel->Collapsed();
+
+      nsIPresShell *shell = mDoc->GetShell();
+      if (shell) {
+        nsRefPtr<TouchCaret> touchCaret = shell->GetTouchCaret();
+        if (touchCaret) {
+          isTouchCaretVisible = touchCaret->GetVisibility();
+        }
+      }
+
+      // Dispatch selection change events when touch caret is visible even if selection
+      // is collapsed because it could be the shortcut mode, otherwise ignore this
+      // UpdateCommands
+      if (isCollapsed && !isTouchCaretVisible) {
+        return NS_OK;
+      }
+
       Selection* selection = static_cast<Selection*>(aSel);
       int32_t rangeCount = selection->GetRangeCount();
       nsLayoutUtils::RectAccumulator accumulator;
@@ -14003,9 +14023,8 @@ nsGlobalWindow::SetConsole(JSContext* aCx, JS::Handle<JS::Value> aValue)
   }
 
   if (!JS_WrapObject(aCx, &thisObj) ||
-      !JS_DefineProperty(aCx, thisObj, "console", aValue,
-                         JSPROP_ENUMERATE, JS_PropertyStub,
-                         JS_StrictPropertyStub)) {
+      !JS_DefineProperty(aCx, thisObj, "console", aValue, JSPROP_ENUMERATE,
+                         JS_STUBGETTER, JS_STUBSETTER)) {
     return NS_ERROR_FAILURE;
   }
 

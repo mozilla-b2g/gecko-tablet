@@ -2457,7 +2457,12 @@ Clone(JSContext *cx, unsigned argc, jsval *vp)
         parent = JS_GetParent(&args.callee());
     }
 
-    JSObject *clone = JS_CloneFunctionObject(cx, funobj, parent);
+    // Should it worry us that we might be getting with wrappers
+    // around with wrappers here?
+    JS::AutoObjectVector scopeChain(cx);
+    if (!parent->is<GlobalObject>() && !scopeChain.append(parent))
+        return false;
+    JSObject *clone = JS::CloneFunctionObject(cx, funobj, scopeChain);
     if (!clone)
         return false;
     args.rval().setObject(*clone);
@@ -5071,9 +5076,9 @@ static const JSJitInfo doFoo_methodinfo = {
 
 static const JSPropertySpec dom_props[] = {
     {"x",
-     JSPROP_SHARED | JSPROP_ENUMERATE | JSPROP_NATIVE_ACCESSORS,
-     { { (JSPropertyOp)dom_genericGetter, &dom_x_getterinfo } },
-     { { (JSStrictPropertyOp)dom_genericSetter, &dom_x_setterinfo } }
+     JSPROP_SHARED | JSPROP_ENUMERATE,
+     { { dom_genericGetter, &dom_x_getterinfo } },
+     { { dom_genericSetter, &dom_x_setterinfo } }
     },
     JS_PS_END
 };

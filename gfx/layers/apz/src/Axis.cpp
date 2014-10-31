@@ -8,6 +8,7 @@
 #include <math.h>                       // for fabsf, pow, powf
 #include <algorithm>                    // for max
 #include "AsyncPanZoomController.h"     // for AsyncPanZoomController
+#include "mozilla/dom/AnimationPlayer.h" // for ComputedTimingFunction
 #include "mozilla/layers/APZCTreeManager.h" // for APZCTreeManager
 #include "FrameMetrics.h"               // for FrameMetrics
 #include "mozilla/Attributes.h"         // for MOZ_FINAL
@@ -15,14 +16,20 @@
 #include "mozilla/gfx/Rect.h"           // for RoundedIn
 #include "mozilla/mozalloc.h"           // for operator new
 #include "mozilla/FloatingPoint.h"      // for FuzzyEqualsAdditive
+#include "mozilla/StaticPtr.h"          // for StaticAutoPtr
 #include "nsMathUtils.h"                // for NS_lround
 #include "nsPrintfCString.h"            // for nsPrintfCString
 #include "nsThreadUtils.h"              // for NS_DispatchToMainThread, etc
 #include "nscore.h"                     // for NS_IMETHOD
 #include "gfxPrefs.h"                   // for the preferences
 
+#define AXIS_LOG(...)
+// #define AXIS_LOG(...) printf_stderr("AXIS: " __VA_ARGS__)
+
 namespace mozilla {
 namespace layers {
+
+extern StaticAutoPtr<ComputedTimingFunction> gVelocityCurveFunction;
 
 Axis::Axis(AsyncPanZoomController* aAsyncPanZoomController)
   : mPos(0),
@@ -30,8 +37,15 @@ Axis::Axis(AsyncPanZoomController* aAsyncPanZoomController)
     mVelocity(0.0f),
     mAxisLocked(false),
     mAsyncPanZoomController(aAsyncPanZoomController),
-    mOverscroll(0)
+    mOverscroll(0),
+    mInUnderscroll(false)
 {
+}
+
+float Axis::ToLocalVelocity(float aVelocityInchesPerMs) {
+  ScreenPoint aVelocityPoint = MakePoint(aVelocityInchesPerMs * APZCTreeManager::GetDPI());
+  mAsyncPanZoomController->ToLocalScreenCoordinates(&aVelocityPoint, mAsyncPanZoomController->PanStart());
+  return aVelocityPoint.Length();
 }
 
 void Axis::UpdateWithTouchAtDevicePoint(ScreenCoord aPos, uint32_t aTimestampMs) {
@@ -49,9 +63,28 @@ void Axis::UpdateWithTouchAtDevicePoint(ScreenCoord aPos, uint32_t aTimestampMs)
 
   float newVelocity = mAxisLocked ? 0.0f : (float)(mPos - aPos) / (float)(aTimestampMs - mPosTimeMs);
   if (gfxPrefs::APZMaxVelocity() > 0.0f) {
-    ScreenPoint maxVelocity = MakePoint(gfxPrefs::APZMaxVelocity() * APZCTreeManager::GetDPI());
-    mAsyncPanZoomController->ToLocalScreenCoordinates(&maxVelocity, mAsyncPanZoomController->PanStart());
-    newVelocity = std::min(newVelocity, maxVelocity.Length());
+    bool velocityIsNegative = (newVelocity < 0);
+    newVelocity = fabs(newVelocity);
+
+    float maxVelocity = ToLocalVelocity(gfxPrefs::APZMaxVelocity());
+    newVelocity = std::min(newVelocity, maxVelocity);
+
+    if (gfxPrefs::APZCurveThreshold() > 0.0f && gfxPrefs::APZCurveThreshold() < gfxPrefs::APZMaxVelocity()) {
+      float curveThreshold = ToLocalVelocity(gfxPrefs::APZCurveThreshold());
+      if (newVelocity > curveThreshold) {
+        // here, 0 < curveThreshold < newVelocity <= maxVelocity, so we apply the curve
+        float scale = maxVelocity - curveThreshold;
+        float funcInput = (newVelocity - curveThreshold) / scale;
+        float funcOutput = gVelocityCurveFunction->GetValue(funcInput);
+        float curvedVelocity = (funcOutput * scale) + curveThreshold;
+        AXIS_LOG("Curving up velocity from %f to %f\n", newVelocity, curvedVelocity);
+        newVelocity = curvedVelocity;
+      }
+    }
+
+    if (velocityIsNegative) {
+      newVelocity = -newVelocity;
+    }
   }
 
   mVelocity = newVelocity;
@@ -149,8 +182,12 @@ ScreenCoord Axis::GetOverscroll() const {
   return mOverscroll;
 }
 
-bool Axis::SampleSnapBack(const TimeDuration& aDelta) {
-  // Apply spring physics to the snap-back as time goes on.
+bool Axis::IsInUnderscroll() const {
+  return mInUnderscroll;
+}
+
+bool Axis::SampleOverscrollAnimation(const TimeDuration& aDelta) {
+  // Apply spring physics to the overscroll as time goes on.
   // Note: this method of sampling isn't perfectly smooth, as it assumes
   // a constant velocity over 'aDelta', instead of an accelerating velocity.
   // (The way we applying friction to flings has the same issue.)
@@ -164,40 +201,45 @@ bool Axis::SampleSnapBack(const TimeDuration& aDelta) {
   //   b is a constant that provides damping (friction)
   //   v is the velocity of the point at the end of the spring
   // See http://gafferongames.com/game-physics/spring-physics/
-  const float kSpringStiffness = gfxPrefs::APZOverscrollSnapBackSpringStiffness();
-  const float kSpringFriction = gfxPrefs::APZOverscrollSnapBackSpringFriction();
-  const float kMass = gfxPrefs::APZOverscrollSnapBackMass();
-  float force = -1 * kSpringStiffness * mOverscroll - kSpringFriction * mVelocity;
-  float acceleration = force / kMass;
-  mVelocity += acceleration * aDelta.ToMilliseconds();
-  float displacement = mVelocity * aDelta.ToMilliseconds();
-  if (mOverscroll > 0) {
-    if (displacement > 0) {
-      NS_WARNING("Overscroll snap-back animation is moving in the wrong direction!");
-      return false;
-    }
-    mOverscroll = std::max(mOverscroll + displacement, 0.0f);
-    // Overscroll relieved, do not continue animation.
-    if (mOverscroll == 0.f) {
-      mVelocity = 0;
-      return false;
-    }
-    return true;
-  } else if (mOverscroll < 0) {
-    if (displacement < 0) {
-      NS_WARNING("Overscroll snap-back animation is moving in the wrong direction!");
-      return false;
-    }
-    mOverscroll = std::min(mOverscroll + displacement, 0.0f);
-    // Overscroll relieved, do not continue animation.
-    if (mOverscroll == 0.f) {
-      mVelocity = 0;
-      return false;
-    }
-    return true;
+  const float kSpringStiffness = gfxPrefs::APZOverscrollSpringStiffness();
+  const float kSpringFriction = gfxPrefs::APZOverscrollSpringFriction();
+
+  // Apply spring force.
+  float springForce = -1 * kSpringStiffness * mOverscroll;
+  // Assume unit mass, so force = acceleration.
+  mVelocity += springForce * aDelta.ToMilliseconds();
+
+  // Apply dampening.
+  mVelocity *= pow(double(1 - kSpringFriction), aDelta.ToMilliseconds());
+
+  // Adjust the amount of overscroll based on the velocity.
+  // Note that we allow for oscillations. mInUnderscroll tracks whether
+  // we are currently in a state where we have overshot and the spring is
+  // displaced in the other direction.
+  float oldOverscroll = mOverscroll;
+  mOverscroll += (mVelocity * aDelta.ToMilliseconds());
+  bool signChange = (oldOverscroll * mOverscroll) < 0;
+  if (signChange) {
+    // If the sign of mOverscroll changed, we have either entered underscroll
+    // or exited it.
+    mInUnderscroll = !mInUnderscroll;
   }
-  // No overscroll on this axis, do not continue animation.
-  return false;
+
+  // If both the velocity and the displacement fall below a threshold, stop
+  // the animation so we don't continue doing tiny oscillations that aren't
+  // noticeable.
+  if (fabs(mOverscroll) < gfxPrefs::APZOverscrollStopDistanceThreshold() &&
+      fabs(mVelocity) < gfxPrefs::APZOverscrollStopVelocityThreshold()) {
+    // "Jump" to the at-rest state. The jump shouldn't be noticeable as the
+    // velocity and overscroll are already low.
+    mOverscroll = 0;
+    mVelocity = 0;
+    mInUnderscroll = false;
+    return false;
+  }
+
+  // Otherwise, continue the animation.
+  return true;
 }
 
 bool Axis::IsOverscrolled() const {

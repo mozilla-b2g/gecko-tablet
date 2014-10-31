@@ -294,7 +294,7 @@
   <string name="site_settings_no_settings">&site_settings_no_settings;</string>
 
   <string name="reading_list_added">&reading_list_added;</string>
-  <string name="reading_list_time_minutes">&reading_list_time_minutes;</string>
+  <string name="reading_list_time_minutes">&reading_list_time_minutes2;</string>
   <string name="reading_list_time_over_an_hour">&reading_list_time_over_an_hour;</string>
 
   <string name="page_action_dropmarker_description">&page_action_dropmarker_description;</string>
@@ -343,6 +343,7 @@
   <string name="button_yes">&button_yes;</string>
   <string name="button_no">&button_no;</string>
 
+  <string name="home_title">&home_title;</string>
   <string name="home_top_sites_title">&home_top_sites_title;</string>
   <string name="home_top_sites_add">&home_top_sites_add;</string>
   <string name="home_history_title">&home_history_title;</string>
@@ -354,7 +355,7 @@
   <string name="home_last_tabs_empty">&home_last_tabs_empty;</string>
   <string name="home_open_all">&home_open_all;</string>
   <string name="home_most_recent_empty">&home_most_recent_empty;</string>
-  <string name="home_most_recent_emptyhint">&home_most_recent_emptyhint;</string>
+  <string name="home_most_recent_emptyhint">&home_most_recent_emptyhint2;</string>
   <string name="home_reading_list_empty">&home_reading_list_empty;</string>
   <string name="home_reading_list_hint">&home_reading_list_hint2;</string>
   <string name="home_reading_list_hint_accessible">&home_reading_list_hint_accessible;</string>

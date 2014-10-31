@@ -145,12 +145,6 @@ public:
     void MoveTo(const gfxPoint& pt);
 
     /**
-     * Creates a new subpath starting at the current point.
-     * Equivalent to MoveTo(CurrentPoint()).
-     */
-    void NewSubPath();
-
-    /**
      * Returns the current point in the current path.
      */
     gfxPoint CurrentPoint();
@@ -511,6 +505,7 @@ public:
      */
     void Clip(const Rect& rect);
     void Clip(const gfxRect& rect); // will clip to a rect
+    void Clip(Path* aPath);
 
     /**
      * This will ensure that the surface actually has its clip set.

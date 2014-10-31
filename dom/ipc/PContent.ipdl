@@ -25,6 +25,8 @@ include protocol PImageBridge;
 include protocol PMemoryReportRequest;
 include protocol PMobileConnection;
 include protocol PNecko;
+include protocol PPluginModule;
+include protocol PPrinting;
 include protocol PScreenManager;
 include protocol PSharedBufferManager;
 include protocol PSms;
@@ -40,6 +42,7 @@ include JavaScriptTypes;
 include InputStreamParams;
 include PTabContext;
 include URIParams;
+include PluginTypes;
 include ProtocolTypes;
 
 // Workaround to prevent error if PContentChild.cpp & PContentBridgeParent.cpp
@@ -67,6 +70,8 @@ using mozilla::dom::NativeThreadId from "mozilla/dom/TabMessageUtils.h";
 using mozilla::dom::quota::PersistenceType from "mozilla/dom/quota/PersistenceType.h";
 using mozilla::hal::ProcessPriority from "mozilla/HalTypes.h";
 using gfxIntSize from "nsSize.h";
+using mozilla::dom::TabId from "mozilla/dom/ipc/IdType.h";
+using mozilla::dom::ContentParentId from "mozilla/dom/ipc/IdType.h";
 
 union ChromeRegistryItem
 {
@@ -325,8 +330,10 @@ union MaybeFileDesc {
     void_t;
 };
 
-prio(normal upto high) intr protocol PContent
+prio(normal upto urgent) intr protocol PContent
 {
+    parent spawns PPluginModule;
+
     parent opens PCompositor;
     parent opens PSharedBufferManager;
     parent opens PImageBridge;
@@ -349,6 +356,7 @@ prio(normal upto high) intr protocol PContent
     manages PMemoryReportRequest;
     manages PMobileConnection;
     manages PNecko;
+    manages PPrinting;
     manages PScreenManager;
     manages PSms;
     manages PSpeechSynthesis;
@@ -385,8 +393,8 @@ both:
     // access to (in the form of a TabChild).
     //
     // Keep the last 3 attributes in sync with GetProcessAttributes!
-    async PBrowser(IPCTabContext context, uint32_t chromeFlags,
-                   uint64_t id, bool isForApp, bool isForBrowser);
+    async PBrowser(TabId tabId, IPCTabContext context, uint32_t chromeFlags,
+                   ContentParentId cpId, bool isForApp, bool isForBrowser);
 
     async PBlob(BlobConstructorParams params);
 
@@ -520,15 +528,39 @@ parent:
      * Keep the return values in sync with PBrowser()!
      */
     sync GetProcessAttributes()
-        returns (uint64_t id, bool isForApp, bool isForBrowser);
+        returns (ContentParentId cpId, bool isForApp, bool isForBrowser);
     sync GetXPCOMProcessAttributes()
         returns (bool isOffline, nsString[] dictionaries,
                  ClipboardCapabilities clipboardCaps);
 
     sync CreateChildProcess(IPCTabContext context,
-                            ProcessPriority priority)
-        returns (uint64_t id, bool isForApp, bool isForBrowser);
-    intr BridgeToChildProcess(uint64_t id);
+                            ProcessPriority priority,
+                            TabId openerTabId)
+        returns (ContentParentId cpId, bool isForApp, bool isForBrowser, TabId tabId);
+    intr BridgeToChildProcess(ContentParentId cpId);
+
+    /**
+     * This call connects the content process to a plugin process. While this
+     * call runs, a new PluginModuleParent will be created in the ContentChild
+     * via bridging. The corresponding PluginModuleChild will live in the plugin
+     * process. We use intr semantics here to ensure that the PluginModuleParent
+     * allocation message is dispatched before LoadPlugin returns.
+     */
+    intr LoadPlugin(uint32_t pluginId);
+
+    /**
+     * This call returns the set of plugins loaded in the chrome
+     * process. However, in many cases this set will not have changed since the
+     * last FindPlugins message. Consequently, the chrome process increments an
+     * epoch number every time the set of plugins changes. The content process
+     * sends up the last epoch it observed. If the epochs are the same, the
+     * chrome process returns no plugins. Otherwise it returns a complete list.
+     *
+     * |pluginEpoch| is the epoch last observed by the content
+     * process. |newPluginEpoch| is the current epoch in the chrome process. If
+     * |pluginEpoch == newPluginEpoch|, then |plugins| will be left empty.
+     */
+    sync FindPlugins(uint32_t pluginEpoch) returns (PluginTag[] plugins, uint32_t newPluginEpoch);
 
     async PJavaScript();
 
@@ -552,6 +584,8 @@ parent:
     PMobileConnection(uint32_t clientId);
 
     PNecko();
+
+    PPrinting();
 
     prio(high) sync PScreenManager()
         returns (uint32_t numberOfScreens,
@@ -742,6 +776,14 @@ parent:
                            int64_t fileId)
       returns (int32_t refCnt, int32_t dBRefCnt, int32_t sliceRefCnt,
                bool result);
+
+    /**
+     * Tell the chrome process there is an creation of PBrowser.
+     * return a system-wise unique Id.
+     */
+    sync AllocateTabId(TabId openerTabId, IPCTabContext context, ContentParentId cpId)
+        returns (TabId tabId);
+    async DeallocateTabId(TabId tabId);
 
 both:
      AsyncMessage(nsString aMessage, ClonedMessageData aData,

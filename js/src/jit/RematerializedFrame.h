@@ -144,16 +144,8 @@ class RematerializedFrame
         return slots_ + numActualArgs_;
     }
 
-    Value &unaliasedVar(unsigned i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING) {
-        MOZ_ASSERT_IF(checkAliasing, !script()->varIsAliased(i));
+    Value &unaliasedLocal(unsigned i) {
         MOZ_ASSERT(i < script()->nfixed());
-        return locals()[i];
-    }
-    Value &unaliasedLocal(unsigned i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING) {
-        MOZ_ASSERT(i < script()->nfixed());
-#ifdef DEBUG
-        CheckLocalUnaliased(checkAliasing, script(), i);
-#endif
         return locals()[i];
     }
     Value &unaliasedFormal(unsigned i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING) {

@@ -282,13 +282,6 @@ gfxContext::MoveTo(const gfxPoint& pt)
 }
 
 void
-gfxContext::NewSubPath()
-{
-    // XXX - This has no users, we should kill it, it should be equivelant to a
-    // MoveTo to the path's current point.
-}
-
-void
 gfxContext::LineTo(const gfxPoint& pt)
 {
   EnsurePathBuilder();
@@ -681,6 +674,14 @@ void
 gfxContext::Clip(const gfxRect& rect)
 {
   Clip(ToRect(rect));
+}
+
+void
+gfxContext::Clip(Path* aPath)
+{
+  mDT->PushClip(aPath);
+  AzureState::PushedClip clip = { aPath, Rect(), mTransform };
+  CurrentState().pushedClips.AppendElement(clip);
 }
 
 void
@@ -1153,10 +1154,10 @@ gfxContext::RoundedRectangle(const gfxRect& rect,
     // appropriate multiplier from the list before using.
 
   EnsurePathBuilder();
-  Size radii[] = { ToSize(corners[NS_CORNER_TOP_LEFT]),
-                   ToSize(corners[NS_CORNER_TOP_RIGHT]),
-                   ToSize(corners[NS_CORNER_BOTTOM_RIGHT]),
-                   ToSize(corners[NS_CORNER_BOTTOM_LEFT]) };
+  RectCornerRadii radii(ToSize(corners[NS_CORNER_TOP_LEFT]),
+                        ToSize(corners[NS_CORNER_TOP_RIGHT]),
+                        ToSize(corners[NS_CORNER_BOTTOM_RIGHT]),
+                        ToSize(corners[NS_CORNER_BOTTOM_LEFT]));
   AppendRoundedRectToPath(mPathBuilder, ToRect(rect), radii, draw_clockwise);
 }
 

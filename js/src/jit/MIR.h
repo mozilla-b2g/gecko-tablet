@@ -355,7 +355,7 @@ class MDefinition : public MNode
 
     // Track bailouts by storing the current pc in MIR instruction. Also used
     // for profiling and keeping track of what the last known pc was.
-    BytecodeSite trackedSite_;
+    const BytecodeSite *trackedSite_;
 
   private:
     enum Flag {
@@ -391,7 +391,7 @@ class MDefinition : public MNode
         resultType_(MIRType_None),
         resultTypeSet_(nullptr),
         dependency_(nullptr),
-        trackedSite_()
+        trackedSite_(nullptr)
     { }
 
     // Copying a definition leaves the list of uses and the block empty.
@@ -426,17 +426,18 @@ class MDefinition : public MNode
     // be worthwhile.
     virtual bool possiblyCalls() const { return false; }
 
-    void setTrackedSite(const BytecodeSite &site) {
+    void setTrackedSite(const BytecodeSite *site) {
+        MOZ_ASSERT(site);
         trackedSite_ = site;
     }
-    const BytecodeSite &trackedSite() const {
+    const BytecodeSite *trackedSite() const {
         return trackedSite_;
     }
     jsbytecode *trackedPc() const {
-        return trackedSite_.pc();
+        return trackedSite_ ? trackedSite_->pc() : nullptr;
     }
     InlineScriptTree *trackedTree() const {
-        return trackedSite_.tree();
+        return trackedSite_ ? trackedSite_->tree() : nullptr;
     }
 
     JSScript *profilerLeaveScript() const {
@@ -866,6 +867,7 @@ class MInstruction
 
     // Used to transfer the resume point to the rewritten instruction.
     void stealResumePoint(MInstruction *ins);
+    void moveResumePointAsEntry();
     MResumePoint *resumePoint() const {
         return resumePoint_;
     }
@@ -2412,6 +2414,33 @@ class MTest
         return true;
     }
 #endif
+};
+
+// Equivalent to MTest(true, successor, fake), except without the foldsTo
+// method. This allows IonBuilder to insert fake CFG edges to magically protect
+// control flow for try-catch blocks.
+class MGotoWithFake
+  : public MAryControlInstruction<0, 2>
+{
+    MGotoWithFake(MBasicBlock *successor, MBasicBlock *fake)
+    {
+        setSuccessor(0, successor);
+        setSuccessor(1, fake);
+    }
+
+  public:
+    INSTRUCTION_HEADER(GotoWithFake)
+    static MGotoWithFake *New(TempAllocator &alloc, MBasicBlock *successor, MBasicBlock *fake) {
+        return new(alloc) MGotoWithFake(successor, fake);
+    }
+
+    MBasicBlock *target() const {
+        return getSuccessor(0);
+    }
+
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
 };
 
 // Returns from this function to the previous caller.
@@ -7351,42 +7380,6 @@ class MTypedArrayElements
     ALLOW_CLONE(MTypedArrayElements)
 };
 
-// Checks whether a typed object is neutered.
-class MNeuterCheck
-  : public MUnaryInstruction,
-    public SingleObjectPolicy::Data
-{
-  private:
-    explicit MNeuterCheck(MDefinition *object)
-      : MUnaryInstruction(object)
-    {
-        MOZ_ASSERT(object->type() == MIRType_Object);
-        setResultType(MIRType_Object);
-        setResultTypeSet(object->resultTypeSet());
-        setGuard();
-        setMovable();
-    }
-
-  public:
-    INSTRUCTION_HEADER(NeuterCheck)
-
-    static MNeuterCheck *New(TempAllocator &alloc, MDefinition *object) {
-        return new(alloc) MNeuterCheck(object);
-    }
-
-    MDefinition *object() const {
-        return getOperand(0);
-    }
-
-    bool congruentTo(const MDefinition *ins) const {
-        return congruentIfOperandsEqual(ins);
-    }
-
-    AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::ObjectFields);
-    }
-};
-
 // Load a binary data object's "elements", which is just its opaque
 // binary data space. Eventually this should probably be
 // unified with `MTypedArrayElements`.
@@ -11293,6 +11286,10 @@ class MResumePoint MOZ_FINAL :
         MOZ_ASSERT(instruction_);
         instruction_ = ins;
     }
+    void resetInstruction() {
+        MOZ_ASSERT(instruction_);
+        instruction_ = nullptr;
+    }
     Mode mode() const {
         return mode_;
     }
@@ -11663,22 +11660,22 @@ class MAsmJSNeg : public MUnaryInstruction
 class MAsmJSHeapAccess
 {
     Scalar::Type viewType_;
-    bool skipBoundsCheck_;
+    bool needsBoundsCheck_;
 
   public:
-    explicit MAsmJSHeapAccess(Scalar::Type vt)
-      : viewType_(vt), skipBoundsCheck_(false)
+    MAsmJSHeapAccess(Scalar::Type vt, bool needsBoundsCheck)
+      : viewType_(vt), needsBoundsCheck_(needsBoundsCheck)
     {}
 
     Scalar::Type viewType() const { return viewType_; }
-    bool skipBoundsCheck() const { return skipBoundsCheck_; }
-    void setSkipBoundsCheck(bool v) { skipBoundsCheck_ = v; }
+    bool needsBoundsCheck() const { return needsBoundsCheck_; }
+    void removeBoundsCheck() { needsBoundsCheck_ = false; }
 };
 
 class MAsmJSLoadHeap : public MUnaryInstruction, public MAsmJSHeapAccess
 {
-    MAsmJSLoadHeap(Scalar::Type vt, MDefinition *ptr)
-      : MUnaryInstruction(ptr), MAsmJSHeapAccess(vt)
+    MAsmJSLoadHeap(Scalar::Type vt, MDefinition *ptr, bool needsBoundsCheck)
+      : MUnaryInstruction(ptr), MAsmJSHeapAccess(vt, needsBoundsCheck)
     {
         setMovable();
         if (vt == Scalar::Float32)
@@ -11692,8 +11689,10 @@ class MAsmJSLoadHeap : public MUnaryInstruction, public MAsmJSHeapAccess
   public:
     INSTRUCTION_HEADER(AsmJSLoadHeap);
 
-    static MAsmJSLoadHeap *New(TempAllocator &alloc, Scalar::Type vt, MDefinition *ptr) {
-        return new(alloc) MAsmJSLoadHeap(vt, ptr);
+    static MAsmJSLoadHeap *New(TempAllocator &alloc, Scalar::Type vt,
+                               MDefinition *ptr, bool needsBoundsCheck)
+    {
+        return new(alloc) MAsmJSLoadHeap(vt, ptr, needsBoundsCheck);
     }
 
     MDefinition *ptr() const { return getOperand(0); }
@@ -11707,17 +11706,17 @@ class MAsmJSLoadHeap : public MUnaryInstruction, public MAsmJSHeapAccess
 
 class MAsmJSStoreHeap : public MBinaryInstruction, public MAsmJSHeapAccess
 {
-    MAsmJSStoreHeap(Scalar::Type vt, MDefinition *ptr, MDefinition *v)
-      : MBinaryInstruction(ptr, v) , MAsmJSHeapAccess(vt)
+    MAsmJSStoreHeap(Scalar::Type vt, MDefinition *ptr, MDefinition *v, bool needsBoundsCheck)
+      : MBinaryInstruction(ptr, v) , MAsmJSHeapAccess(vt, needsBoundsCheck)
     {}
 
   public:
     INSTRUCTION_HEADER(AsmJSStoreHeap);
 
     static MAsmJSStoreHeap *New(TempAllocator &alloc, Scalar::Type vt,
-                                MDefinition *ptr, MDefinition *v)
+                                MDefinition *ptr, MDefinition *v, bool needsBoundsCheck)
     {
-        return new(alloc) MAsmJSStoreHeap(vt, ptr, v);
+        return new(alloc) MAsmJSStoreHeap(vt, ptr, v, needsBoundsCheck);
     }
 
     MDefinition *ptr() const { return getOperand(0); }

@@ -283,6 +283,16 @@ MInstruction::stealResumePoint(MInstruction *ins)
     resumePoint_->replaceInstruction(this);
 }
 
+void
+MInstruction::moveResumePointAsEntry()
+{
+    MOZ_ASSERT(isNop());
+    block()->clearEntryResumePoint();
+    block()->setEntryResumePoint(resumePoint_);
+    resumePoint_->resetInstruction();
+    resumePoint_ = nullptr;
+}
+
 static bool
 MaybeEmulatesUndefined(MDefinition *op)
 {
@@ -1301,6 +1311,23 @@ MPhi::foldsTernary()
     if (testArg != test->input())
         return nullptr;
 
+    // This check should be a tautology, except that the constant might be the
+    // result of the removal of a branch.  In such case the domination scope of
+    // the block which is holding the constant might be incomplete. This
+    // condition is used to prevent doing this optimization based on incomplete
+    // information.
+    //
+    // As GVN removed a branch, it will update the dominations rules before
+    // trying to fold this MPhi again. Thus, this condition does not inhibit
+    // this optimization.
+    MBasicBlock *truePred = block()->getPredecessor(firstIsTrueBranch ? 0 : 1);
+    MBasicBlock *falsePred = block()->getPredecessor(firstIsTrueBranch ? 1 : 0);
+    if (!trueDef->block()->dominates(truePred) ||
+        !falseDef->block()->dominates(falsePred))
+    {
+        return nullptr;
+    }
+
     // If testArg is an int32 type we can:
     // - fold testArg ? testArg : 0 to testArg
     // - fold testArg ? 0 : testArg to 0
@@ -1853,7 +1880,7 @@ MMinMax::foldsTo(TempAllocator &alloc)
         }
 
         // max(int32, cte <= INT32_MIN) = int32
-        if (val.isDouble() && val.toDouble() < INT32_MIN && isMax()) {
+        if (val.isDouble() && val.toDouble() <= INT32_MIN && isMax()) {
             MLimitedTruncate *limit =
                 MLimitedTruncate::New(alloc, operand->getOperand(0), MDefinition::NoTruncate);
             block()->insertBefore(this, limit);
@@ -3042,9 +3069,16 @@ MCompare::evaluateConstantOperands(TempAllocator &alloc, bool *result)
                 }
                 break;
               case JSOP_LE:
-                if (cte >= INT32_MAX || cte <= INT32_MIN) {
-                    *result = !((constant == lhs()) ^ (cte <= INT32_MIN));
-                    replaced = true;
+                if (constant == lhs()) {
+                    if (cte > INT32_MAX || cte <= INT32_MIN) {
+                        *result = (cte <= INT32_MIN);
+                        replaced = true;
+                    }
+                } else {
+                    if (cte >= INT32_MAX || cte < INT32_MIN) {
+                        *result = (cte >= INT32_MIN);
+                        replaced = true;
+                    }
                 }
                 break;
               case JSOP_GT:
@@ -3054,9 +3088,16 @@ MCompare::evaluateConstantOperands(TempAllocator &alloc, bool *result)
                 }
                 break;
               case JSOP_GE:
-                if (cte >= INT32_MAX || cte <= INT32_MIN) {
-                    *result = !((constant == rhs()) ^ (cte <= INT32_MIN));
-                    replaced = true;
+                if (constant == lhs()) {
+                    if (cte >= INT32_MAX || cte < INT32_MIN) {
+                        *result = (cte >= INT32_MAX);
+                        replaced = true;
+                    }
+                } else {
+                    if (cte > INT32_MAX || cte <= INT32_MIN) {
+                        *result = (cte <= INT32_MIN);
+                        replaced = true;
+                    }
                 }
                 break;
               case JSOP_STRICTEQ: // Fall through.

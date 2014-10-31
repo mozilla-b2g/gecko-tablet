@@ -46,7 +46,6 @@
 #include "mozilla/dom/quota/FileStreams.h"
 #include "mozilla/dom/quota/OriginOrPatternString.h"
 #include "mozilla/dom/quota/QuotaManager.h"
-#include "mozilla/dom/quota/StoragePrivilege.h"
 #include "mozilla/dom/quota/UsageInfo.h"
 #include "mozilla/ipc/BackgroundParent.h"
 #include "mozilla/ipc/BackgroundUtils.h"
@@ -2207,6 +2206,14 @@ SetDefaultPragmas(mozIStorageConnection* aConnection)
     return rv;
   }
 
+  if (IndexedDatabaseManager::FullSynchronous()) {
+    rv = aConnection->ExecuteSimpleSQL(
+                             NS_LITERAL_CSTRING("PRAGMA synchronous = FULL;"));
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+  }
+
   return NS_OK;
 }
 
@@ -3885,7 +3892,6 @@ protected:
   nsCString mOrigin;
   nsCString mDatabaseId;
   State mState;
-  StoragePrivilege mStoragePrivilege;
   bool mEnforcingQuota;
   const bool mDeleting;
   bool mBlockedQuotaManager;
@@ -8590,14 +8596,14 @@ Cursor::RecvContinue(const CursorRequestParams& aParams)
 FileManager::FileManager(PersistenceType aPersistenceType,
                          const nsACString& aGroup,
                          const nsACString& aOrigin,
-                         StoragePrivilege aPrivilege,
-                         const nsAString& aDatabaseName)
+                         const nsAString& aDatabaseName,
+                         bool aEnforcingQuota)
   : mPersistenceType(aPersistenceType)
   , mGroup(aGroup)
   , mOrigin(aOrigin)
-  , mPrivilege(aPrivilege)
   , mDatabaseName(aDatabaseName)
   , mLastFileId(0)
+  , mEnforcingQuota(aEnforcingQuota)
   , mInvalidated(false)
 { }
 
@@ -10436,7 +10442,6 @@ FactoryOp::FactoryOp(Factory* aFactory,
   , mContentParent(Move(aContentParent))
   , mCommonParams(aCommonParams)
   , mState(State_Initial)
-  , mStoragePrivilege(mozilla::dom::quota::Content)
   , mEnforcingQuota(true)
   , mDeleting(aDeleting)
   , mBlockedQuotaManager(false)
@@ -10735,9 +10740,7 @@ FactoryOp::CheckPermission(ContentParent* aContentParent,
     }
 
     if (State_Initial == mState) {
-      QuotaManager::GetInfoForChrome(&mGroup, &mOrigin, &mStoragePrivilege,
-                                     nullptr);
-      MOZ_ASSERT(mStoragePrivilege == mozilla::dom::quota::Chrome);
+      QuotaManager::GetInfoForChrome(&mGroup, &mOrigin, nullptr, nullptr);
       mEnforcingQuota = false;
     }
 
@@ -10789,12 +10792,10 @@ FactoryOp::CheckPermission(ContentParent* aContentParent,
   if (permission != PermissionRequestBase::kPermissionDenied &&
       State_Initial == mState) {
     rv = QuotaManager::GetInfoFromPrincipal(principal, &mGroup, &mOrigin,
-                                            &mStoragePrivilege, nullptr);
+                                            nullptr, nullptr);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
-
-    MOZ_ASSERT(mStoragePrivilege != mozilla::dom::quota::Chrome);
   }
 
   if (permission == PermissionRequestBase::kPermissionAllowed &&
@@ -11326,8 +11327,8 @@ OpenDatabaseOp::DoDatabaseWork()
     fileManager = new FileManager(persistenceType,
                                   mGroup,
                                   mOrigin,
-                                  mStoragePrivilege,
-                                  databaseName);
+                                  databaseName,
+                                  mEnforcingQuota);
 
     rv = fileManager->Init(fmDirectory, connection);
     if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -12704,7 +12705,7 @@ VersionChangeOp::RunOnIOThread()
   if (exists) {
     int64_t fileSize;
 
-    if (mDeleteDatabaseOp->mStoragePrivilege != Chrome) {
+    if (mDeleteDatabaseOp->mEnforcingQuota) {
       rv = dbFile->GetFileSize(&fileSize);
       if (NS_WARN_IF(NS_FAILED(rv))) {
         return rv;
@@ -12716,7 +12717,7 @@ VersionChangeOp::RunOnIOThread()
       return rv;
     }
 
-    if (mDeleteDatabaseOp->mStoragePrivilege != Chrome) {
+    if (mDeleteDatabaseOp->mEnforcingQuota) {
       quotaManager->DecreaseUsageForOrigin(persistenceType,
                                            mDeleteDatabaseOp->mGroup,
                                            mDeleteDatabaseOp->mOrigin,
@@ -12781,7 +12782,7 @@ VersionChangeOp::RunOnIOThread()
 
     uint64_t usage = 0;
 
-    if (mDeleteDatabaseOp->mStoragePrivilege != Chrome) {
+    if (mDeleteDatabaseOp->mEnforcingQuota) {
       rv = FileManager::GetUsage(fmDirectory, &usage);
       if (NS_WARN_IF(NS_FAILED(rv))) {
         return rv;
@@ -12793,7 +12794,7 @@ VersionChangeOp::RunOnIOThread()
       return rv;
     }
 
-    if (mDeleteDatabaseOp->mStoragePrivilege != Chrome) {
+    if (mDeleteDatabaseOp->mEnforcingQuota) {
       quotaManager->DecreaseUsageForOrigin(persistenceType,
                                            mDeleteDatabaseOp->mGroup,
                                            mDeleteDatabaseOp->mOrigin,
@@ -14425,12 +14426,14 @@ ObjectStoreAddOrPutRequestOp::CopyFileData(nsIInputStream* aInputStream,
     }
   } while (true);
 
-  nsresult rv2 = aOutputStream->Flush();
-  if (NS_WARN_IF(NS_FAILED(rv2))) {
-    return NS_SUCCEEDED(rv) ? rv2 : rv;
+  if (NS_SUCCEEDED(rv)) {
+    rv = aOutputStream->Flush();
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
   }
 
-  rv2 = aOutputStream->Close();
+  nsresult rv2 = aOutputStream->Close();
   if (NS_WARN_IF(NS_FAILED(rv2))) {
     return NS_SUCCEEDED(rv) ? rv2 : rv;
   }
@@ -14804,9 +14807,31 @@ ObjectStoreAddOrPutRequestOp::DoDatabaseWork(TransactionBase* aTransaction)
           }
           if (NS_WARN_IF(NS_FAILED(rv))) {
             // Try to remove the file if the copy failed.
-            if (NS_FAILED(diskFile->Remove(false))) {
-              NS_WARNING("Failed to remove file after copying failed!");
+            nsresult rv2;
+            int64_t fileSize;
+
+            if (mFileManager->EnforcingQuota()) {
+              rv2 = diskFile->GetFileSize(&fileSize);
+              if (NS_WARN_IF(NS_FAILED(rv2))) {
+                return rv;
+              }
             }
+
+            rv2 = diskFile->Remove(false);
+            if (NS_WARN_IF(NS_FAILED(rv2))) {
+              return rv;
+            }
+
+            if (mFileManager->EnforcingQuota()) {
+              QuotaManager* quotaManager = QuotaManager::Get();
+              MOZ_ASSERT(quotaManager);
+
+              quotaManager->DecreaseUsageForOrigin(mFileManager->Type(),
+                                                   mFileManager->Group(),
+                                                   mFileManager->Origin(),
+                                                   fileSize);
+            }
+
             return rv;
           }
 

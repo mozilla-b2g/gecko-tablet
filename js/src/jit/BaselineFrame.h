@@ -168,12 +168,6 @@ class BaselineFrame
         return (Value *)this - (slot + 1);
     }
 
-    Value &unaliasedVar(uint32_t i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING) const {
-        MOZ_ASSERT(i < script()->nfixedvars());
-        MOZ_ASSERT_IF(checkAliasing, !script()->varIsAliased(i));
-        return *valueSlot(i);
-    }
-
     Value &unaliasedFormal(unsigned i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING) const {
         MOZ_ASSERT(i < numFormalArgs());
         MOZ_ASSERT_IF(checkAliasing, !script()->argsObjAliasesFormals() &&
@@ -188,11 +182,8 @@ class BaselineFrame
         return argv()[i];
     }
 
-    Value &unaliasedLocal(uint32_t i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING) const {
+    Value &unaliasedLocal(uint32_t i) const {
         MOZ_ASSERT(i < script()->nfixed());
-#ifdef DEBUG
-        CheckLocalUnaliased(checkAliasing, script(), i);
-#endif
         return *valueSlot(i);
     }
 

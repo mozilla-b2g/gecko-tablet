@@ -57,6 +57,7 @@ navigator.mozLoop = {
     }
   },
   releaseCallData: function() {},
+  copyString: function() {},
   contacts: {
     getAll: function(callback) {
       callback(null, []);
@@ -64,9 +65,10 @@ navigator.mozLoop = {
     on: function() {}
   },
   rooms: {
-    getAll: function(callback) {
+    getAll: function(version, callback) {
       callback(null, fakeRooms);
-    }
+    },
+    on: function() {}
   },
   fxAEnabled: true
 };

@@ -51,9 +51,10 @@ describe("loop.panel", function() {
         on: sandbox.stub()
       },
       rooms: {
-        getAll: function(callback) {
+        getAll: function(version, callback) {
           callback(null, []);
-        }
+        },
+        on: sandbox.stub()
       }
     };
 
@@ -625,7 +626,7 @@ describe("loop.panel", function() {
           cb("fake error");
         };
         sandbox.stub(notifications, "errorL10n");
-        var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
+        TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
           notifications: notifications,
           client: fakeClient
         }));
@@ -637,21 +638,95 @@ describe("loop.panel", function() {
     });
   });
 
-  describe("loop.panel.RoomList", function() {
-    var roomListStore, dispatcher;
+  describe("loop.panel.RoomEntry", function() {
+    var buttonNode, roomData, roomEntry, roomStore, dispatcher;
 
     beforeEach(function() {
+      dispatcher = new loop.Dispatcher();
+      roomData = {
+        roomToken: "QzBbvGmIZWU",
+        roomUrl: "http://sample/QzBbvGmIZWU",
+        roomName: "Second Room Name",
+        maxSize: 2,
+        participants: [
+          { displayName: "Alexis", account: "alexis@example.com",
+            roomConnectionId: "2a1787a6-4a73-43b5-ae3e-906ec1e763cb" },
+          { displayName: "Adam",
+            roomConnectionId: "781f012b-f1ea-4ce1-9105-7cfc36fb4ec7" }
+        ],
+        ctime: 1405517418
+      };
+      roomStore = new loop.store.Room(roomData);
+      roomEntry = mountRoomEntry();
+      buttonNode = roomEntry.getDOMNode().querySelector("button.copy-link");
+    });
+
+    function mountRoomEntry() {
+      return TestUtils.renderIntoDocument(loop.panel.RoomEntry({
+        openRoom: sandbox.stub(),
+        room: roomStore
+      }));
+    }
+
+    it("should not display copy-link button by default", function() {
+      expect(buttonNode).to.not.equal(null);
+    });
+
+    it("should copy the URL when the click event fires", function() {
+      TestUtils.Simulate.click(buttonNode);
+
+      sinon.assert.calledOnce(navigator.mozLoop.copyString);
+      sinon.assert.calledWithExactly(navigator.mozLoop.copyString,
+        roomData.roomUrl);
+    });
+
+    it("should set state.urlCopied when the click event fires", function() {
+      TestUtils.Simulate.click(buttonNode);
+
+      expect(roomEntry.state.urlCopied).to.equal(true);
+    });
+
+    it("should switch to displaying a check icon when the URL has been copied",
+      function() {
+        TestUtils.Simulate.click(buttonNode);
+
+        expect(buttonNode.classList.contains("checked")).eql(true);
+      });
+
+    it("should not display a check icon after mouse leaves the entry",
+      function() {
+        var roomNode = roomEntry.getDOMNode();
+        TestUtils.Simulate.click(buttonNode);
+
+        TestUtils.SimulateNative.mouseOut(roomNode);
+
+        expect(buttonNode.classList.contains("checked")).eql(false);
+      });
+  });
+
+  describe("loop.panel.RoomList", function() {
+    var roomListStore, dispatcher, fakeEmail;
+
+    beforeEach(function() {
+      fakeEmail = "fakeEmail@example.com";
       dispatcher = new loop.Dispatcher();
       roomListStore = new loop.store.RoomListStore({
         dispatcher: dispatcher,
         mozLoop: navigator.mozLoop
+      });
+      roomListStore.setStoreState({
+        pendingCreation: false,
+        pendingInitialRetrieval: false,
+        rooms: [],
+        error: undefined
       });
     });
 
     function createTestComponent() {
       return TestUtils.renderIntoDocument(loop.panel.RoomList({
         store: roomListStore,
-        dispatcher: dispatcher
+        dispatcher: dispatcher,
+        userDisplayName: fakeEmail
       }));
     }
 
@@ -662,6 +737,43 @@ describe("loop.panel", function() {
 
       sinon.assert.calledOnce(dispatch);
       sinon.assert.calledWithExactly(dispatch, new sharedActions.GetAllRooms());
+    });
+
+    it("should dispatch a CreateRoom action when clicking on the Start a " +
+       "conversation button",
+      function() {
+        navigator.mozLoop.userProfile = {email: fakeEmail};
+        var dispatch = sandbox.stub(dispatcher, "dispatch");
+        var view = createTestComponent();
+
+        TestUtils.Simulate.click(view.getDOMNode().querySelector("button"));
+
+        sinon.assert.calledWith(dispatch, new sharedActions.CreateRoom({
+          nameTemplate: "fakeText",
+          roomOwner: fakeEmail
+        }));
+      });
+
+    it("should disable the create button when a creation operation is ongoing",
+      function() {
+        var dispatch = sandbox.stub(dispatcher, "dispatch");
+        roomListStore.setStoreState({pendingCreation: true});
+
+        var view = createTestComponent();
+
+        var buttonNode = view.getDOMNode().querySelector("button[disabled]");
+        expect(buttonNode).to.not.equal(null);
+    });
+
+    it("should disable the create button when a list retrieval operation is pending",
+      function() {
+        var dispatch = sandbox.stub(dispatcher, "dispatch");
+        roomListStore.setStoreState({pendingInitialRetrieval: true});
+
+        var view = createTestComponent();
+
+        var buttonNode = view.getDOMNode().querySelector("button[disabled]");
+        expect(buttonNode).to.not.equal(null);
     });
   });
 
