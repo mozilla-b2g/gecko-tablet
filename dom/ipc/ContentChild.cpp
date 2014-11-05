@@ -1908,6 +1908,17 @@ ContentChild::RecvGeolocationUpdate(const GeoPosition& somewhere)
 }
 
 bool
+ContentChild::RecvGeolocationError(const uint16_t& errorCode)
+{
+    nsCOMPtr<nsIGeolocationUpdate> gs = do_GetService("@mozilla.org/geolocation/service;1");
+    if (!gs) {
+        return true;
+    }
+    gs->NotifyError(errorCode);
+    return true;
+}
+
+bool
 ContentChild::RecvUpdateDictionaryList(const InfallibleTArray<nsString>& aDictionaries)
 {
     mAvailableDictionaries = aDictionaries;
@@ -2350,6 +2361,18 @@ ContentChild::RecvOnAppThemeChanged()
         os->NotifyObservers(nullptr, "app-theme-changed", nullptr);
     }
     return true;
+}
+
+PBrowserOrId
+ContentChild::GetBrowserOrId(TabChild* aTabChild)
+{
+    if (!aTabChild ||
+        this == aTabChild->Manager()) {
+        return PBrowserOrId(aTabChild);
+    }
+    else {
+        return PBrowserOrId(aTabChild->GetTabId());
+    }
 }
 
 } // namespace dom

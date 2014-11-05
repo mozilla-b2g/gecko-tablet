@@ -2272,9 +2272,6 @@ JS_GetExternalStringFinalizer(JSString *str);
  * The stack quotas for each kind of code should be monotonically descending,
  * and may be specified with this function. If 0 is passed for a given kind
  * of code, it defaults to the value of the next-highest-priority kind.
- *
- * This function may only be called immediately after the runtime is initialized
- * and before any code is executed and/or interrupts requested.
  */
 extern JS_PUBLIC_API(void)
 JS_SetNativeStackQuota(JSRuntime *cx, size_t systemCodeStackSize,
@@ -5369,11 +5366,10 @@ class MOZ_STACK_CLASS JS_PUBLIC_API(ForOfIterator) {
 
 
 /*
- * If a large allocation fails, the JS engine may call the large-allocation-
- * failure callback, if set, to allow the embedding to flush caches, possibly
- * perform shrinking GCs, etc. to make some room so that the allocation will
- * succeed if retried. After the callback returns, the JS engine will try to
- * allocate again and may be succesful.
+ * If a large allocation fails when calling pod_{calloc,realloc}CanGC, the JS
+ * engine may call the large-allocation- failure callback, if set, to allow the
+ * embedding to flush caches, possibly perform shrinking GCs, etc. to make some
+ * room. The allocation will then be retried (and may still fail.)
  */
 
 typedef void
