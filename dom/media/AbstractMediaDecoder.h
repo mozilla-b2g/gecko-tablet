@@ -88,8 +88,9 @@ public:
   // Return true if the transport layer supports seeking.
   virtual bool IsMediaSeekable() = 0;
 
-  virtual void MetadataLoaded(MediaInfo* aInfo, MetadataTags* aTags) = 0;
-  virtual void QueueMetadata(int64_t aTime, MediaInfo* aInfo, MetadataTags* aTags) = 0;
+  virtual void MetadataLoaded(nsAutoPtr<MediaInfo> aInfo, nsAutoPtr<MetadataTags> aTags) = 0;
+  virtual void QueueMetadata(int64_t aTime, nsAutoPtr<MediaInfo> aInfo, nsAutoPtr<MetadataTags> aTags) = 0;
+  virtual void FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo) = 0;
 
   virtual void RemoveMediaTracks() = 0;
 
@@ -127,6 +128,10 @@ public:
   // Called from HTMLMediaElement when owner document activity changes
   virtual void SetElementVisibility(bool aIsVisible) {}
 
+  // Called by some MediaDecoderReader to determine if we can rely
+  // on the resource length to limit reads.
+  virtual bool HasInitializationData() { return false; }
+
   // Stack based class to assist in notifying the frame statistics of
   // parsed and decoded frames. Use inside video demux & decode functions
   // to ensure all parsed and decoded frames are reported on all return paths.
@@ -149,15 +154,29 @@ public:
 #endif
 };
 
-class MetadataEventRunner : public nsRunnable
+class MetadataContainer
 {
-  private:
-    nsRefPtr<AbstractMediaDecoder> mDecoder;
-  public:
-    MetadataEventRunner(AbstractMediaDecoder* aDecoder, MediaInfo* aInfo, MetadataTags* aTags)
-          : mDecoder(aDecoder),
-            mInfo(aInfo),
-            mTags(aTags)
+protected:
+  MetadataContainer(AbstractMediaDecoder* aDecoder,
+                    nsAutoPtr<MediaInfo> aInfo,
+                    nsAutoPtr<MetadataTags> aTags)
+    : mDecoder(aDecoder),
+      mInfo(aInfo),
+      mTags(aTags)
+  {}
+
+  nsRefPtr<AbstractMediaDecoder> mDecoder;
+  nsAutoPtr<MediaInfo>  mInfo;
+  nsAutoPtr<MetadataTags> mTags;
+};
+
+class MetadataEventRunner : public nsRunnable, private MetadataContainer
+{
+public:
+  MetadataEventRunner(AbstractMediaDecoder* aDecoder,
+                      nsAutoPtr<MediaInfo> aInfo,
+                      nsAutoPtr<MetadataTags> aTags)
+    : MetadataContainer(aDecoder, aInfo, aTags)
   {}
 
   NS_IMETHOD Run() MOZ_OVERRIDE
@@ -165,12 +184,40 @@ class MetadataEventRunner : public nsRunnable
     mDecoder->MetadataLoaded(mInfo, mTags);
     return NS_OK;
   }
+};
 
-  // The ownership is transferred to MediaDecoder.
-  MediaInfo* mInfo;
+class FirstFrameLoadedEventRunner : public nsRunnable, private MetadataContainer
+{
+public:
+  FirstFrameLoadedEventRunner(AbstractMediaDecoder* aDecoder,
+                              nsAutoPtr<MediaInfo> aInfo)
+    : MetadataContainer(aDecoder, aInfo, nsAutoPtr<MetadataTags>(nullptr))
+  {}
 
-  // The ownership is transferred to its owning element.
-  MetadataTags* mTags;
+  NS_IMETHOD Run() MOZ_OVERRIDE
+  {
+    mDecoder->FirstFrameLoaded(mInfo);
+    return NS_OK;
+  }
+};
+
+class MetadataUpdatedEventRunner : public nsRunnable, private MetadataContainer
+{
+public:
+  MetadataUpdatedEventRunner(AbstractMediaDecoder* aDecoder,
+                             nsAutoPtr<MediaInfo> aInfo,
+                             nsAutoPtr<MetadataTags> aTags)
+    : MetadataContainer(aDecoder, aInfo, aTags)
+  {}
+
+  NS_IMETHOD Run() MOZ_OVERRIDE
+  {
+    nsAutoPtr<MediaInfo> info(new MediaInfo());
+    *info = *mInfo;
+    mDecoder->MetadataLoaded(info, mTags);
+    mDecoder->FirstFrameLoaded(mInfo);
+    return NS_OK;
+  }
 };
 
 class RemoveMediaTracksEventRunner : public nsRunnable

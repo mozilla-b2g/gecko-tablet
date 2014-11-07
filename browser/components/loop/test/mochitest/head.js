@@ -19,7 +19,7 @@ var gMozLoopAPI;
 function promiseGetMozLoopAPI() {
   return new Promise((resolve, reject) => {
     let loopPanel = document.getElementById("loop-notification-panel");
-    let btn = document.getElementById("loop-call-button");
+    let btn = document.getElementById("loop-button");
 
     // Wait for the popup to be shown if it's not already, then we can get the iframe and
     // wait for the iframe's load to be completed.
@@ -120,7 +120,7 @@ function* resetFxA() {
   global.gHawkClient = null;
   global.gFxAOAuthClientPromise = null;
   global.gFxAOAuthClient = null;
-  global.gRegisteredDeferred = null;
+  MozLoopServiceInternal.deferredRegistrations.delete(LOOP_SESSION_TYPE.FXA);
   MozLoopServiceInternal.fxAOAuthProfile = null;
   MozLoopServiceInternal.fxAOAuthTokenData = null;
   const fxASessionPref = MozLoopServiceInternal.getSessionTokenPrefName(LOOP_SESSION_TYPE.FXA);

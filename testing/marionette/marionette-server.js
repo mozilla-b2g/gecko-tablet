@@ -5,6 +5,7 @@
 "use strict";
 
 const FRAME_SCRIPT = "chrome://marionette/content/marionette-listener.js";
+const BROWSER_STARTUP_FINISHED = "browser-delayed-startup-finished";
 
 // import logger
 Cu.import("resource://gre/modules/Log.jsm");
@@ -22,6 +23,7 @@ let utils = {};
 loader.loadSubScript("chrome://marionette/content/EventUtils.js", utils);
 loader.loadSubScript("chrome://marionette/content/ChromeUtils.js", utils);
 loader.loadSubScript("chrome://marionette/content/atoms.js", utils);
+loader.loadSubScript("chrome://marionette/content/marionette-sendkeys.js", utils);
 
 // SpecialPowers requires insecure automation-only features that we put behind a pref.
 Services.prefs.setBoolPref('security.turn_off_all_security_so_that_viruses_can_take_over_this_computer',
@@ -77,6 +79,13 @@ let systemMessageListenerReady = false;
 Services.obs.addObserver(function() {
   systemMessageListenerReady = true;
 }, "system-message-listener-ready", false);
+
+// This is used on desktop to prevent newSession from returning before a page
+// load initiated by the Firefox command line has completed.
+let delayedBrowserStarted = false;
+Services.obs.addObserver(function () {
+  delayedBrowserStarted = true;
+}, BROWSER_STARTUP_FINISHED, false);
 
 /*
  * Custom exceptions
@@ -573,21 +582,33 @@ MarionetteServerConnection.prototype = {
       }
     }
 
-    if (!Services.prefs.getBoolPref("marionette.contentListener")) {
-      waitForWindow.call(this);
+    function runSessionStart() {
+      if (!Services.prefs.getBoolPref("marionette.contentListener")) {
+        waitForWindow.call(this);
+      }
+      else if ((appName != "Firefox") && (this.curBrowser === null)) {
+        // If there is a content listener, then we just wake it up
+        this.addBrowser(this.getCurrentWindow());
+        this.curBrowser.startSession(false, this.getCurrentWindow(),
+                                     this.whenBrowserStarted);
+        this.messageManager.broadcastAsyncMessage("Marionette:restart", {});
+      }
+      else {
+        this.sendError("Session already running", 500, null,
+                       this.command_id);
+      }
+      this.switchToGlobalMessageManager();
     }
-    else if ((appName != "Firefox") && (this.curBrowser == null)) {
-      // If there is a content listener, then we just wake it up
-      this.addBrowser(this.getCurrentWindow());
-      this.curBrowser.startSession(false, this.getCurrentWindow(),
-                                   this.whenBrowserStarted);
-      this.messageManager.broadcastAsyncMessage("Marionette:restart", {});
+
+    if (!delayedBrowserStarted && (appName != "B2G")) {
+      let self = this;
+      Services.obs.addObserver(function onStart () {
+        Services.obs.removeObserver(onStart, BROWSER_STARTUP_FINISHED);
+        runSessionStart.call(self);
+      }, BROWSER_STARTUP_FINISHED, false);
+    } else {
+      runSessionStart.call(this);
     }
-    else {
-      this.sendError("Session already running", 500, null,
-                     this.command_id);
-    }
-    this.switchToGlobalMessageManager();
   },
 
   /**
@@ -2044,16 +2065,12 @@ MarionetteServerConnection.prototype = {
   sendKeysToElement: function MDA_sendKeysToElement(aRequest) {
     let command_id = this.command_id = this.getCommandId();
     if (this.context == "chrome") {
-      try {
-        let el = this.curBrowser.elementManager.getKnownElement(
-            aRequest.parameters.id, this.getCurrentWindow());
-        el.focus();
-        utils.sendString(aRequest.parameters.value.join(""), utils.window);
-        this.sendOk(command_id);
-      }
-      catch (e) {
-        this.sendError(e.message, e.code, e.stack, command_id);
-      }
+      let currentWindow = this.getCurrentWindow();
+      let el = this.curBrowser.elementManager.getKnownElement(
+        aRequest.parameters.id, currentWindow);
+      utils.sendKeysToElement(currentWindow, el, aRequest.parameters.value,
+                              this.sendOk.bind(this), this.sendError.bind(this),
+                              command_id, this.context);
     }
     else {
       this.sendAsync("sendKeysToElement",

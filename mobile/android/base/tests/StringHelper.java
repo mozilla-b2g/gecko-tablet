@@ -50,6 +50,7 @@ public class StringHelper {
     public static final String CONTEXT_MENU_COPY_ADDRESS = "Copy Address";
     public static final String CONTEXT_MENU_EDIT_SITE_SETTINGS = "Edit Site Settings";
     public static final String CONTEXT_MENU_ADD_TO_HOME_SCREEN = "Add to Home Screen";
+    public static final String CONTEXT_MENU_PIN_SITE = "Pin Site";
 
     // Context Menu menu items
     public static final String[] CONTEXT_MENU_ITEMS_IN_PRIVATE_TAB = new String[] {
@@ -143,6 +144,10 @@ public class StringHelper {
     public static final String ROBOCOP_INPUT_TITLE = "Robocop Input";
     public static final String ROBOCOP_SELECTION_HANDLER_TITLE = "Automated Text Selection tests for Mobile";
 
+    // Distribution tile labels
+    public static final String DISTRIBUTION1_LABEL = "Distribution 1";
+    public static final String DISTRIBUTION2_LABEL = "Distribution 2";
+
     // Settings menu strings
     // Section labels - ordered as found in the settings menu
     public static final String CUSTOMIZE_SECTION_LABEL = "Customize";
@@ -182,7 +187,7 @@ public class StringHelper {
     public static final String ABOUT_LABEL = "About " + BRAND_NAME;
     public static final String FAQS_LABEL = "FAQs";
     public static final String FEEDBACK_LABEL = "Give feedback";
-    public static final String LOCATION_SERVICES_LABEL = "Mozilla location services";
+    public static final String LOCATION_SERVICES_LABEL = "Mozilla Location Service";
     public static final String HEALTH_REPORT_LABEL = BRAND_NAME + " Health Report";
     public static final String MY_HEALTH_REPORT_LABEL = "View my Health Report";
 

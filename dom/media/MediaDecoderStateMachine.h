@@ -138,6 +138,7 @@ public:
     DECODER_STATE_DECODING_NONE,
     DECODER_STATE_DECODING_METADATA,
     DECODER_STATE_WAIT_FOR_RESOURCES,
+    DECODER_STATE_DECODING_FIRSTFRAME,
     DECODER_STATE_DORMANT,
     DECODER_STATE_DECODING,
     DECODER_STATE_SEEKING,
@@ -198,7 +199,21 @@ public:
   void Play();
 
   // Seeks to the decoder to aTarget asynchronously.
+  // Must be called from the main thread.
   void Seek(const SeekTarget& aTarget);
+
+  // Dispatches a task to the main thread to seek to mQueuedSeekTarget.
+  // This is threadsafe and can be called on any thread.
+  void EnqueueStartQueuedSeekTask();
+
+  // Seeks to the decoder to mQueuedSeekTarget asynchronously.
+  // Must be called from the main thread.
+  void StartQueuedSeek();
+
+  // Seeks to the decoder to aTarget asynchronously.
+  // Must be called from the main thread.
+  // The decoder monitor must be held with exactly one lock count.
+  void StartSeek(const SeekTarget& aTarget);
 
   // Returns the current playback position in seconds.
   // Called from the main thread to get the current frame time. The decoder
@@ -321,7 +336,9 @@ public:
   // shutting down. The decoder monitor must be held while calling this.
   bool IsShutdown();
 
-  void QueueMetadata(int64_t aPublishTime, MediaInfo* aInfo, MetadataTags* aTags);
+  void QueueMetadata(int64_t aPublishTime,
+                     nsAutoPtr<MediaInfo> aInfo,
+                     nsAutoPtr<MetadataTags> aTags);
 
   // Returns true if we're currently playing. The decoder monitor must
   // be held.
@@ -342,6 +359,7 @@ public:
   void OnAudioDecoded(AudioData* aSample);
   void OnVideoDecoded(VideoData* aSample);
   void OnNotDecoded(MediaData::Type aType, RequestSampleCallback::NotDecodedReason aReason);
+  void OnSeekCompleted(nsresult aResult);
 
 private:
   void AcquireMonitorAndInvokeDecodeError();
@@ -396,7 +414,7 @@ protected:
   MediaQueue<AudioData>& AudioQueue() { return mAudioQueue; }
   MediaQueue<VideoData>& VideoQueue() { return mVideoQueue; }
 
-  nsresult FinishDecodeMetadata();
+  nsresult FinishDecodeFirstFrame();
 
   RefPtr<MediaDataDecodedListener<MediaDecoderStateMachine>> mMediaDecodedListener;
 
@@ -525,6 +543,16 @@ protected:
   // The decoder monitor must be held.
   nsresult EnqueueDecodeMetadataTask();
 
+  // Dispatches a LoadedMetadataEvent.
+  // This is threadsafe and can be called on any thread.
+  // The decoder monitor must be held.
+  void EnqueueLoadedMetadataEvent();
+
+  // Dispatches a task to the decode task queue to begin decoding content.
+  // This is threadsafe and can be called on any thread.
+  // The decoder monitor must be held.
+  nsresult EnqueueDecodeFirstFrameTask();
+
   // Dispatches a task to the decode task queue to seek the decoder.
   // The decoder monitor must be held.
   nsresult EnqueueDecodeSeekTask();
@@ -582,9 +610,16 @@ protected:
   // Wraps the call to DecodeMetadata(), signals a DecodeError() on failure.
   void CallDecodeMetadata();
 
-  // Checks whether we're finished decoding metadata, and switches to DECODING
-  // state if so.
-  void MaybeFinishDecodeMetadata();
+  // Initiate first content decoding. Called on the decode thread.
+  // The decoder monitor must be held with exactly one lock count.
+  nsresult DecodeFirstFrame();
+
+  // Wraps the call to DecodeFirstFrame(), signals a DecodeError() on failure.
+  void CallDecodeFirstFrame();
+
+  // Checks whether we're finished decoding first audio and/or video packets,
+  // and switches to DECODING state if so.
+  void MaybeFinishDecodeFirstFrame();
 
   // Seeks to mSeekTarget. Called on the decode thread. The decoder monitor
   // must be held with exactly one lock count.
@@ -725,6 +760,11 @@ protected:
   // The decoder monitor lock must be obtained before reading or writing
   // this value. Accessed on main and decode thread.
   SeekTarget mSeekTarget;
+
+  // Position to seek to in microseconds when DecodeFirstFrame completes.
+  // The decoder monitor lock must be obtained before reading or writing
+  // this value. Accessed on main and decode thread.
+  SeekTarget mQueuedSeekTarget;
 
   // The position that we're currently seeking to. This differs from
   // mSeekTarget, as mSeekTarget is the target we'll seek to next, whereas
@@ -914,6 +954,11 @@ protected:
   // True if we need to decode forwards to the seek target inside
   // mCurrentSeekTarget.
   bool mDecodeToSeekTarget;
+
+  // True if we've issued Seek() to the reader, but haven't yet received
+  // OnSeekCompleted. We should avoid trying to decode more audio/video
+  // until this completes.
+  bool mWaitingForDecoderSeek;
 
   // We record the playback position before we seek in order to
   // determine where the seek terminated relative to the playback position

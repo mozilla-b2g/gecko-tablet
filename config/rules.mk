@@ -542,12 +542,7 @@ endif
 # of something else. Makefiles which use this var *must* provide a sensible
 # default rule before including rules.mk
 default all::
-	$(MAKE) export
-ifdef COMPILE_ENVIRONMENT
-	$(MAKE) compile
-endif
-	$(MAKE) libs
-	$(MAKE) tools
+	$(foreach tier,$(TIERS),$(call SUBMAKE,$(tier)))
 
 ifeq ($(findstring s,$(filter-out --%, $(MAKEFLAGS))),)
 ECHO := echo
@@ -846,7 +841,6 @@ ifdef MOZ_PROFILE_GENERATE
 	touch -t `date +%Y%m%d%H%M.%S -d 'now+5seconds'` pgo.relink
 endif
 endif	# WINNT && !GCC
-	@$(RM) foodummyfilefoo $(DELETE_AFTER_LINK)
 	chmod +x $@
 ifdef ENABLE_STRIP
 	$(STRIP) $(STRIP_FLAGS) $@
@@ -1189,10 +1183,11 @@ endif
 endif
 
 ifdef EXTRA_COMPONENTS
-libs:: $(EXTRA_COMPONENTS)
+misc:: $(EXTRA_COMPONENTS)
 ifndef NO_DIST_INSTALL
 EXTRA_COMPONENTS_FILES := $(EXTRA_COMPONENTS)
 EXTRA_COMPONENTS_DEST := $(FINAL_TARGET)/components
+EXTRA_COMPONENTS_TARGET := misc
 INSTALL_TARGETS += EXTRA_COMPONENTS
 endif
 
@@ -1201,34 +1196,15 @@ endif
 ifdef EXTRA_PP_COMPONENTS
 ifndef NO_DIST_INSTALL
 EXTRA_PP_COMPONENTS_PATH := $(FINAL_TARGET)/components
+EXTRA_PP_COMPONENTS_TARGET := misc
 PP_TARGETS += EXTRA_PP_COMPONENTS
 endif
 endif
 
 EXTRA_MANIFESTS = $(filter %.manifest,$(EXTRA_COMPONENTS) $(EXTRA_PP_COMPONENTS))
 ifneq (,$(EXTRA_MANIFESTS))
-libs:: $(call mkdir_deps,$(FINAL_TARGET))
+misc:: $(call mkdir_deps,$(FINAL_TARGET))
 	$(call py_action,buildlist,$(FINAL_TARGET)/chrome.manifest $(patsubst %,'manifest components/%',$(notdir $(EXTRA_MANIFESTS))))
-endif
-
-################################################################################
-# Copy each element of EXTRA_JS_MODULES to
-# $(FINAL_TARGET)/modules.
-FINAL_JS_MODULES_PATH := $(FINAL_TARGET)/modules
-
-ifdef EXTRA_JS_MODULES
-ifndef NO_DIST_INSTALL
-EXTRA_JS_MODULES_FILES := $(EXTRA_JS_MODULES)
-EXTRA_JS_MODULES_DEST := $(FINAL_JS_MODULES_PATH)
-INSTALL_TARGETS += EXTRA_JS_MODULES
-endif
-endif
-
-ifdef EXTRA_PP_JS_MODULES
-ifndef NO_DIST_INSTALL
-EXTRA_PP_JS_MODULES_PATH := $(FINAL_JS_MODULES_PATH)
-PP_TARGETS += EXTRA_PP_JS_MODULES
-endif
 endif
 
 ################################################################################

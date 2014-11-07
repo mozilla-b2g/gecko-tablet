@@ -6755,7 +6755,9 @@ ShouldInflateFontsForContainer(const nsIFrame *aFrame)
          !(aFrame->GetStateBits() & NS_FRAME_IN_CONSTRAINED_HEIGHT) &&
          // We also want to disable font inflation for containers that have
          // preformatted text.
-         styleText->WhiteSpaceCanWrap(aFrame);
+         // MathML cells need special treatment. See bug 1002526 comment 56.
+         (styleText->WhiteSpaceCanWrap(aFrame) ||
+          aFrame->IsFrameOfType(nsIFrame::eMathML));
 }
 
 nscoord
@@ -6971,9 +6973,22 @@ nsLayoutUtils::CalculateCompositionSizeForFrame(nsIFrame* aFrame)
         size = nsSize(widgetBounds.width * auPerDevPixel,
                       widgetBounds.height * auPerDevPixel);
 #ifdef MOZ_WIDGET_ANDROID
-        nsSize frameSize = aFrame->GetSize();
-        if (frameSize.height < size.height) {
-          size.height = frameSize.height;
+        nsRect frameRect = aFrame->GetRect();
+        gfxSize cumulativeResolution = presShell->GetCumulativeResolution();
+        LayoutDeviceToParentLayerScale layoutToParentLayerScale =
+          // The ScreenToParentLayerScale should be mTransformScale which is
+          // not calculated yet, but we don't yet handle CSS transforms, so we
+          // assume it's 1 here.
+          LayoutDeviceToLayerScale(cumulativeResolution.width, cumulativeResolution.height) *
+          LayerToScreenScale(1.0) * ScreenToParentLayerScale(1.0);
+        ParentLayerRect frameRectPixels =
+          LayoutDeviceRect::FromAppUnits(frameRect, auPerDevPixel)
+          * layoutToParentLayerScale;
+        if (frameRectPixels.height < ParentLayerRect(ViewAs<ParentLayerPixel>(widgetBounds)).height) {
+          // Our return value is in appunits of the parent, so we need to
+          // include the resolution.
+          size.height =
+            NSToCoordRound(frameRect.height * cumulativeResolution.height);
         }
 #endif
       } else {
@@ -7211,7 +7226,9 @@ AutoMaybeDisableFontInflation::AutoMaybeDisableFontInflation(nsIFrame *aFrame)
   // root's NCA's (nearest common ancestor of its inflatable
   // descendants) width, we could probably disable inflation in
   // fewer cases than we currently do.
-  if (aFrame->IsContainerForFontSizeInflation()) {
+  // MathML cells need special treatment. See bug 1002526 comment 56.
+  if (aFrame->IsContainerForFontSizeInflation() &&
+      !aFrame->IsFrameOfType(nsIFrame::eMathML)) {
     mPresContext = aFrame->PresContext();
     mOldValue = mPresContext->mInflationDisabledForShrinkWrap;
     mPresContext->mInflationDisabledForShrinkWrap = true;

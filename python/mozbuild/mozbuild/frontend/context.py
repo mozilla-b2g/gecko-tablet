@@ -377,6 +377,8 @@ def ContextDerivedTypedList(type, base_class=List):
 # - 'export'
 # - 'libs': everything that is not built from C/C++/ObjC source and that has
 #      traditionally been in the libs tier.
+# - 'misc': like libs, but with parallel build. Eventually, everything that
+#      currently is in libs should move here.
 # A value of None means the variable has no direct effect on any tier.
 
 VARIABLES = {
@@ -509,21 +511,21 @@ VARIABLES = {
 
        This variable contains a list of files to copy into
        ``$(FINAL_TARGET)/components/``.
-        """, 'libs'),
+        """, 'misc'),
 
     'EXTRA_JS_MODULES': (HierarchicalStringList, list,
         """Additional JavaScript files to distribute.
 
         This variable contains a list of files to copy into
         ``$(FINAL_TARGET)/modules.
-        """, 'libs'),
+        """, 'misc'),
 
     'EXTRA_PP_JS_MODULES': (HierarchicalStringList, list,
         """Additional JavaScript files to distribute.
 
         This variable contains a list of files to copy into
         ``$(FINAL_TARGET)/modules``, after preprocessing.
-        """, 'libs'),
+        """, 'misc'),
 
     'TESTING_JS_MODULES': (HierarchicalStringList, list,
         """JavaScript modules to install in the test-only destination.
@@ -535,14 +537,14 @@ VARIABLES = {
         variable to control the final destination. e.g.
 
         ``TESTING_JS_MODULES.foo += ['module.jsm']``.
-        """, 'libs'),
+        """, None),
 
     'EXTRA_PP_COMPONENTS': (StrictOrderingOnAppendList, list,
         """Javascript XPCOM files.
 
        This variable contains a list of files to preprocess.  Generated
        files will be installed in the ``/components`` directory of the distribution.
-        """, 'libs'),
+        """, 'misc'),
 
     'FINAL_LIBRARY': (unicode, unicode,
         """Library in which the objects of the current directory will be linked.
