@@ -26,6 +26,8 @@ pref("browser.sessionstore.max_tabs_undo", 0);
 pref("browser.sessionstore.max_windows_undo", 0);
 pref("browser.sessionstore.restore_on_demand", false);
 pref("browser.sessionstore.resume_from_crash", false);
+// No e10s on mulet
+pref("browser.tabs.remote.autostart.1", false);
 #endif
 
 // Bug 945235: Prevent all bars to be considered visible:
@@ -112,15 +114,7 @@ pref("layout.reflow.synthMouseMove", false);
 pref("layers.enable-tiles", true);
 pref("layers.low-precision-buffer", true);
 pref("layers.low-precision-opacity", "0.5");
-/*
-   Cross Process Mutex is not supported on Mac OS X so progressive
-   paint cannot be enabled for B2G on Mac OS X desktop
-*/
-#ifdef MOZ_WIDGET_COCOA
-pref("layers.progressive-paint", false);
-#else
 pref("layers.progressive-paint", true);
-#endif
 
 /* download manager (don't show the window or alert) */
 pref("browser.download.useDownloadDir", true);

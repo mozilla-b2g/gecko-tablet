@@ -343,9 +343,9 @@ GMPChild::PreLoadLibraries(const std::string& aPluginPath)
     {
        "d3d9.dll", // Create an `IDirect3D9` to get adapter information
        "dxva2.dll", // Get monitor information
-       "msauddecmft.dll", // H.264 decoder
+       "msauddecmft.dll", // AAC decoder (on Windows 8)
        "msmpeg2adec.dll", // AAC decoder (on Windows 7)
-       "msmpeg2vdec.dll", // AAC decoder (on Windows 8)
+       "msmpeg2vdec.dll", // H.264 decoder
     };
   static const int whitelistLen = sizeof(whitelist) / sizeof(whitelist[0]);
 

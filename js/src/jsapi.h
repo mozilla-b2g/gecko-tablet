@@ -2272,6 +2272,9 @@ JS_GetExternalStringFinalizer(JSString *str);
  * The stack quotas for each kind of code should be monotonically descending,
  * and may be specified with this function. If 0 is passed for a given kind
  * of code, it defaults to the value of the next-highest-priority kind.
+ *
+ * This function may only be called immediately after the runtime is initialized
+ * and before any code is executed and/or interrupts requested.
  */
 extern JS_PUBLIC_API(void)
 JS_SetNativeStackQuota(JSRuntime *cx, size_t systemCodeStackSize,
@@ -2373,7 +2376,7 @@ extern JS_PUBLIC_API(bool)
 JS_EnumerateStub(JSContext *cx, JS::HandleObject obj);
 
 extern JS_PUBLIC_API(bool)
-JS_ResolveStub(JSContext *cx, JS::HandleObject obj, JS::HandleId id);
+JS_ResolveStub(JSContext *cx, JS::HandleObject obj, JS::HandleId id, bool *resolvedp);
 
 extern JS_PUBLIC_API(bool)
 JS_ConvertStub(JSContext *cx, JS::HandleObject obj, JSType type,

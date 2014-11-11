@@ -9,8 +9,6 @@
 
 #include "nsCOMPtr.h"
 
-#include "nsCycleCollectionNoteChild.h"
-
 /*****************************************************************************/
 
 // template <class T> class nsRefPtrGetterAddRefs;
@@ -294,6 +292,12 @@ public:
   }
 };
 
+class nsCycleCollectionTraversalCallback;
+template <typename T>
+void
+CycleCollectionNoteChild(nsCycleCollectionTraversalCallback& aCallback,
+                         T* aChild, const char* aName, uint32_t aFlags);
+
 template <typename T>
 inline void
 ImplCycleCollectionUnlink(nsRefPtr<T>& aField)
@@ -497,29 +501,6 @@ operator!=(NSCAP_Zero* aLhs, const nsRefPtr<T>& aRhs)
   return reinterpret_cast<const void*>(aLhs) != static_cast<const void*>(aRhs.get());
 }
 
-
-#ifdef HAVE_CPP_TROUBLE_COMPARING_TO_ZERO
-
-// We need to explicitly define comparison operators for `int'
-// because the compiler is lame.
-
-template <class T>
-inline bool
-operator==(const nsRefPtr<T>& aLhs, int aRhs)
-// specifically to allow |smartPtr == 0|
-{
-  return static_cast<const void*>(aLhs.get()) == reinterpret_cast<const void*>(aRhs);
-}
-
-template <class T>
-inline bool
-operator==(int aLhs, const nsRefPtr<T>& aRhs)
-// specifically to allow |0 == smartPtr|
-{
-  return reinterpret_cast<const void*>(aLhs) == static_cast<const void*>(aRhs.get());
-}
-
-#endif // !defined(HAVE_CPP_TROUBLE_COMPARING_TO_ZERO)
 
 template <class SourceType, class DestinationType>
 inline nsresult

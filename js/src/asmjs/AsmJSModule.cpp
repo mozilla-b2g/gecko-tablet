@@ -500,7 +500,7 @@ AsmJSHandleExecutionInterrupt()
 {
     AsmJSActivation *act = PerThreadData::innermostAsmJSActivation();
     act->module().setInterrupted(true);
-    bool ret = HandleExecutionInterrupt(act->cx());
+    bool ret = CheckForInterrupt(act->cx());
     act->module().setInterrupted(false);
     return ret;
 }
@@ -560,14 +560,15 @@ TryEnablingIon(JSContext *cx, AsmJSModule &module, HandleFunction fun, uint32_t 
             return true;
     }
 
-    // Enable
+    // The exit may have become optimized while executing the FFI.
+    if (module.exitIsOptimized(exitIndex))
+        return true;
+
     IonScript *ionScript = script->ionScript();
     if (!ionScript->addDependentAsmJSModule(cx, DependentAsmJSModuleExit(&module, exitIndex)))
         return false;
 
-    AsmJSModule::ExitDatum &exitDatum = module.exitIndexToGlobalDatum(exitIndex);
-    exitDatum.exit = module.ionExitTrampoline(module.exit(exitIndex));
-    exitDatum.ionScript = ionScript;
+    module.optimizeExit(exitIndex, ionScript);
     return true;
 }
 
@@ -672,8 +673,8 @@ AddressOf(AsmJSImmKind kind, ExclusiveContext *cx)
     switch (kind) {
       case AsmJSImm_Runtime:
         return cx->runtimeAddressForJit();
-      case AsmJSImm_RuntimeInterrupt:
-        return cx->runtimeAddressOfInterrupt();
+      case AsmJSImm_RuntimeInterruptUint32:
+        return cx->runtimeAddressOfInterruptUint32();
       case AsmJSImm_StackLimit:
         return cx->stackLimitAddressForJitCode(StackForUntrustedScript);
       case AsmJSImm_ReportOverRecursed:

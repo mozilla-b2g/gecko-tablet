@@ -3177,6 +3177,15 @@
     "extended_statistics_ok": true,
     "description": "Number of thumbnails stored in the browser DB"
   },
+  "FENNEC_READING_LIST_COUNT": {
+    "expires_in_version": "40",
+    "kind": "exponential",
+    "high": "1000",
+    "n_buckets": 10,
+    "cpp_guard": "ANDROID",
+    "extended_statistics_ok": true,
+    "description": "Number of reading list items stored in the browser DB"
+  },
   "PLACES_SORTED_BOOKMARKS_PERC": {
     "expires_in_version": "never",
     "kind": "linear",
@@ -5190,6 +5199,20 @@
     "high": "10000",
     "n_buckets": "1000",
     "description": "The time (in milliseconds) that it took a 'listAddons' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_LISTPROCESSES_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'listProcesses' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_LISTPROCESSES_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'listProcesses' request to go round trip."
   },
   "DEVTOOLS_DEBUGGER_RDP_LOCAL_DELETE_MS": {
     "expires_in_version": "never",
