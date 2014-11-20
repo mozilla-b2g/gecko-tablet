@@ -409,7 +409,7 @@ class CGDOMJSClass(CGThing):
                       nullptr, /* deleteGeneric */
                       nullptr, /* watch */
                       nullptr, /* unwatch */
-                      nullptr, /* slice */
+                      nullptr, /* getElements */
                       nullptr, /* enumerate */
                       JS_ObjectToOuterObject /* thisObject */
                     }
@@ -3012,26 +3012,26 @@ class CGConstructorEnabled(CGAbstractMethod):
         if not iface.isExposedInWindow():
             exposedInWindowCheck = dedent(
                 """
-                if (NS_IsMainThread()) {
-                  return false;
-                }
+                MOZ_ASSERT(!NS_IsMainThread(), "Why did we even get called?");
                 """)
             body.append(CGGeneric(exposedInWindowCheck))
 
-        if iface.isExposedInAnyWorker() and iface.isExposedOnlyInSomeWorkers():
+        if iface.isExposedInSomeButNotAllWorkers():
             workerGlobals = sorted(iface.getWorkerExposureSet())
             workerCondition = CGList((CGGeneric('strcmp(name, "%s")' % workerGlobal)
                                       for workerGlobal in workerGlobals), " && ")
             exposedInWorkerCheck = fill(
                 """
-                if (!NS_IsMainThread()) {
-                  const char* name = js::GetObjectClass(aObj)->name;
-                  if (${workerCondition}) {
-                    return false;
-                  }
+                const char* name = js::GetObjectClass(aObj)->name;
+                if (${workerCondition}) {
+                  return false;
                 }
                 """, workerCondition=workerCondition.define())
-            body.append(CGGeneric(exposedInWorkerCheck))
+            exposedInWorkerCheck = CGGeneric(exposedInWorkerCheck)
+            if iface.isExposedInWindow():
+                exposedInWorkerCheck = CGIfWrapper(exposedInWorkerCheck,
+                                                   "!NS_IsMainThread()")
+            body.append(exposedInWorkerCheck)
 
         pref = iface.getExtendedAttribute("Pref")
         if pref:
@@ -3474,7 +3474,6 @@ class CGClearCachedValueMethod(CGAbstractMethod):
                 JSAutoCompartment ac(aCx, obj);
                 if (!get_${name}(aCx, obj, aObject, args)) {
                   js::SetReservedSlot(obj, ${slotIndex}, oldValue);
-                  nsJSUtils::ReportPendingException(aCx);
                   return false;
                 }
                 return true;
@@ -9697,10 +9696,11 @@ class CGProxySpecialOperation(CGPerSignatureCall):
     resultVar: See the docstring for CGCallGenerator.
 
     foundVar: For getters and deleters, the generated code can also set a bool
-    variable, declared by the caller, to indicate whether the given indexed or
-    named property already existed or not. If the caller wants this, it should
-    pass the name of the bool variable as the foundVar keyword argument to the
-    constructor. The caller is responsible for declaring the variable.
+    variable, declared by the caller, if the given indexed or named property
+    already existed. If the caller wants this, it should pass the name of the
+    bool variable as the foundVar keyword argument to the constructor. The
+    caller is responsible for declaring the variable and initializing it to
+    false.
     """
     def __init__(self, descriptor, operation, checkFound=True,
                  argumentMutableValue=None, resultVar=None, foundVar=None):
@@ -9740,7 +9740,7 @@ class CGProxySpecialOperation(CGPerSignatureCall):
             self.cgRoot.prepend(instantiateJSToNativeConversion(info, templateValues))
         elif operation.isGetter() or operation.isDeleter():
             if foundVar is None:
-                self.cgRoot.prepend(CGGeneric("bool found;\n"))
+                self.cgRoot.prepend(CGGeneric("bool found = false;\n"))
 
     def getArguments(self):
         args = [(a, a.identifier.name) for a in self.arguments]
@@ -10217,7 +10217,7 @@ class CGDOMJSProxyHandler_defineProperty(ClassMethod):
             if self.descriptor.supportsNamedProperties():
                 set += fill(
                     """
-                    bool found;
+                    bool found = false;
                     $*{presenceChecker}
 
                     if (found) {
@@ -10258,7 +10258,7 @@ class CGDOMJSProxyHandler_delete(ClassMethod):
                     decls += "bool result;\n"
                     if foundVar is None:
                         foundVar = "found"
-                        decls += "bool found;\n"
+                        decls += "bool found = false;\n"
                     setBp = fill(
                         """
                         if (${foundVar}) {
@@ -10277,7 +10277,7 @@ class CGDOMJSProxyHandler_delete(ClassMethod):
                 foundDecl = ""
                 if foundVar is None:
                     foundVar = "found"
-                    foundDecl = "bool found;\n"
+                    foundDecl = "bool found = false;\n"
                 body = fill(
                     """
                     $*{foundDecl}
@@ -10331,7 +10331,7 @@ class CGDOMJSProxyHandler_delete(ClassMethod):
             # unconditionally here.
             delete += fill(
                 """
-                bool found;
+                bool found = false;
                 $*{namedBody}
                 if (found) {
                   return true;
@@ -10442,7 +10442,7 @@ class CGDOMJSProxyHandler_hasOwn(ClassMethod):
                 """
                 int32_t index = GetArrayIndexFromId(cx, id);
                 if (IsArrayIndex(index)) {
-                  bool found;
+                  bool found = false;
                   $*{presenceChecker}
 
                   *bp = found;
@@ -10472,7 +10472,7 @@ class CGDOMJSProxyHandler_hasOwn(ClassMethod):
             # property names, so no need to check for those here.
             named = fill(
                 """
-                bool found;
+                bool found = false;
                 $*{presenceChecker}
 
                 *bp = found;
@@ -10716,7 +10716,7 @@ class CGDOMJSProxyHandler_finalize(ClassMethod):
                 finalizeHook(self.descriptor, FINALIZE_HOOK_NAME, self.args[0].name).define())
 
 
-class CGDOMJSProxyHandler_slice(ClassMethod):
+class CGDOMJSProxyHandler_getElements(ClassMethod):
     def __init__(self, descriptor):
         assert descriptor.supportsIndexedProperties()
 
@@ -10724,8 +10724,8 @@ class CGDOMJSProxyHandler_slice(ClassMethod):
                 Argument('JS::Handle<JSObject*>', 'proxy'),
                 Argument('uint32_t', 'begin'),
                 Argument('uint32_t', 'end'),
-                Argument('JS::Handle<JSObject*>', 'array')]
-        ClassMethod.__init__(self, "slice", "bool", args, virtual=True, override=True, const=True)
+                Argument('js::ElementAdder*', 'adder')]
+        ClassMethod.__init__(self, "getElements", "bool", args, virtual=True, override=True, const=True)
         self.descriptor = descriptor
 
     def getBody(self):
@@ -10738,7 +10738,7 @@ class CGDOMJSProxyHandler_slice(ClassMethod):
             'jsvalRef': 'temp',
             'jsvalHandle': '&temp',
             'obj': 'proxy',
-            'successCode': ("js::UnsafeDefineElement(cx, array, index - begin, temp);\n"
+            'successCode': ("adder->append(cx, temp);\n"
                             "continue;\n")
         }
         get = CGProxyIndexedGetter(self.descriptor, templateValues, False, False).define()
@@ -10763,7 +10763,7 @@ class CGDOMJSProxyHandler_slice(ClassMethod):
               if (!js::GetObjectProto(cx, proxy, &proto)) {
                 return false;
               }
-              return js::SliceSlowly(cx, proto, proxy, ourEnd, end, array);
+              return js::GetElementsWithAdder(cx, proto, proxy, ourEnd, end, adder);
             }
 
             return true;
@@ -10836,7 +10836,7 @@ class CGDOMJSProxyHandler(CGClass):
 
 
         if descriptor.supportsIndexedProperties():
-            methods.append(CGDOMJSProxyHandler_slice(descriptor))
+            methods.append(CGDOMJSProxyHandler_getElements(descriptor))
         if (descriptor.operations['IndexedSetter'] is not None or
             (descriptor.operations['NamedSetter'] is not None and
              descriptor.interface.getExtendedAttribute('OverrideBuiltins'))):
@@ -11957,6 +11957,7 @@ class CGRegisterProtos(CGAbstractMethod):
         for desc in self.config.getDescriptors(hasInterfaceObject=True,
                                                isExternal=False,
                                                workers=False,
+                                               isExposedInWindow=True,
                                                register=True):
             lines.append("REGISTER_PROTO(%s, %s);\n" % (desc.name, getCheck(desc)))
             lines.extend("REGISTER_CONSTRUCTOR(%s, %s, %s);\n" % (n.identifier.name, desc.name, getCheck(desc))
@@ -12224,10 +12225,6 @@ class CGBindingRoot(CGThing):
         hasWorkerStuff = len(config.getDescriptors(webIDLFile=webIDLFile,
                                                    workers=True)) != 0
         bindingHeaders["WorkerPrivate.h"] = hasWorkerStuff
-
-        def descriptorHasThreadChecks(desc):
-            return ((not desc.workers and not desc.interface.isExposedInWindow()) or
-                    (desc.interface.isExposedInAnyWorker() and desc.interface.isExposedOnlyInSomeWorkers()))
 
         hasThreadChecks = hasWorkerStuff or any(d.hasThreadChecks() for d in descriptors)
         bindingHeaders["nsThreadUtils.h"] = hasThreadChecks
@@ -14399,6 +14396,7 @@ class GlobalGenRoots():
         defineIncludes = [CGHeaders.getDeclarationFilename(desc.interface)
                           for desc in config.getDescriptors(hasInterfaceObject=True,
                                                             workers=False,
+                                                            isExposedInWindow=True,
                                                             register=True)]
         defineIncludes.append('nsScriptNameSpaceManager.h')
         defineIncludes.extend([CGHeaders.getDeclarationFilename(desc.interface)
@@ -14767,6 +14765,25 @@ class CGEventMethod(CGNativeMember):
                             target += ".SetValue()"
                             source += ".Value()"
                         members += sequenceCopy % (target, source)
+                    elif m.type.isSpiderMonkeyInterface():
+                        srcname = "%s.%s" % (self.args[1].name, name)
+                        if m.type.nullable():
+                            members += fill(
+                                """
+                                if (${srcname}.IsNull()) {
+                                  e->${varname} = nullptr;
+                                } else {
+                                  e->${varname} = ${srcname}.Value().Obj();
+                                }
+                                """,
+                            varname=name,
+                            srcname=srcname);
+                        else:
+                            members += fill(
+                                """
+                                e->${varname}.set(${srcname}.Obj());
+                                """,
+                            varname=name, srcname=srcname);
                     else:
                         members += "e->%s = %s.%s;\n" % (name, self.args[1].name, name)
                     if m.type.isAny() or m.type.isObject() or m.type.isSpiderMonkeyInterface():

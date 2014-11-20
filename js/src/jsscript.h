@@ -127,6 +127,24 @@ struct BlockScopeArray {
     uint32_t        length;     // Count of indexed try notes.
 };
 
+class YieldOffsetArray {
+    uint32_t        *vector_;   // Array of bytecode offsets.
+    uint32_t        length_;    // Count of bytecode offsets.
+
+  public:
+    void init(uint32_t *vector, uint32_t length) {
+        vector_ = vector;
+        length_ = length;
+    }
+    uint32_t &operator[](uint32_t index) {
+        MOZ_ASSERT(index < length_);
+        return vector_[index];
+    }
+    uint32_t length() const {
+        return length_;
+    }
+};
+
 class Binding
 {
     // One JSScript stores one Binding per formal/variable so we use a
@@ -351,12 +369,17 @@ class DebugScript
      */
     uint32_t        stepMode;
 
-    /* Number of breakpoint sites at opcodes in the script. */
+    /*
+     * Number of breakpoint sites at opcodes in the script. This is the number
+     * of populated entries in DebugScript::breakpoints, below.
+     */
     uint32_t        numSites;
 
     /*
-     * Array with all breakpoints installed at opcodes in the script, indexed
-     * by the offset of the opcode into the script.
+     * Breakpoints set in our script. For speed and simplicity, this array is
+     * parallel to script->code(): the BreakpointSite for the opcode at
+     * script->code()[offset] is debugScript->breakpoints[offset]. Naturally,
+     * this array's true length is script->length().
      */
     BreakpointSite  *breakpoints[1];
 };
@@ -1010,7 +1033,7 @@ class JSScript : public js::gc::TenuredCell
     // However, callers of fullyInitFromEmitter() do not need to do this.
     static bool partiallyInit(js::ExclusiveContext *cx, JS::Handle<JSScript*> script,
                               uint32_t nconsts, uint32_t nobjects, uint32_t nregexps,
-                              uint32_t ntrynotes, uint32_t nblockscopes,
+                              uint32_t ntrynotes, uint32_t nblockscopes, uint32_t nyieldoffsets,
                               uint32_t nTypeSets);
     static bool fullyInitFromEmitter(js::ExclusiveContext *cx, JS::Handle<JSScript*> script,
                                      js::frontend::BytecodeEmitter *bce);
@@ -1521,14 +1544,16 @@ class JSScript : public js::gc::TenuredCell
     bool hasRegexps()       { return hasArray(REGEXPS);     }
     bool hasTrynotes()      { return hasArray(TRYNOTES);    }
     bool hasBlockScopes()   { return hasArray(BLOCK_SCOPES); }
+    bool hasYieldOffsets()  { return isGenerator(); }
 
     #define OFF(fooOff, hasFoo, t)   (fooOff() + (hasFoo() ? sizeof(t) : 0))
 
-    size_t constsOffset()     { return 0; }
-    size_t objectsOffset()    { return OFF(constsOffset,     hasConsts,     js::ConstArray);      }
-    size_t regexpsOffset()    { return OFF(objectsOffset,    hasObjects,    js::ObjectArray);     }
-    size_t trynotesOffset()   { return OFF(regexpsOffset,    hasRegexps,    js::ObjectArray);     }
-    size_t blockScopesOffset(){ return OFF(trynotesOffset,   hasTrynotes,   js::TryNoteArray);    }
+    size_t constsOffset()       { return 0; }
+    size_t objectsOffset()      { return OFF(constsOffset,      hasConsts,      js::ConstArray);      }
+    size_t regexpsOffset()      { return OFF(objectsOffset,     hasObjects,     js::ObjectArray);     }
+    size_t trynotesOffset()     { return OFF(regexpsOffset,     hasRegexps,     js::ObjectArray);     }
+    size_t blockScopesOffset()  { return OFF(trynotesOffset,    hasTrynotes,    js::TryNoteArray);    }
+    size_t yieldOffsetsOffset() { return OFF(blockScopesOffset, hasBlockScopes, js::BlockScopeArray); }
 
     size_t dataSize() const { return dataSize_; }
 
@@ -1555,6 +1580,11 @@ class JSScript : public js::gc::TenuredCell
     js::BlockScopeArray *blockScopes() {
         MOZ_ASSERT(hasBlockScopes());
         return reinterpret_cast<js::BlockScopeArray *>(data + blockScopesOffset());
+    }
+
+    js::YieldOffsetArray &yieldOffsets() {
+        MOZ_ASSERT(hasYieldOffsets());
+        return *reinterpret_cast<js::YieldOffsetArray *>(data + yieldOffsetsOffset());
     }
 
     bool hasLoops();
@@ -1647,6 +1677,10 @@ class JSScript : public js::gc::TenuredCell
   public:
     bool hasBreakpointsAt(jsbytecode *pc);
     bool hasAnyBreakpointsOrStepMode() { return hasDebugScript_; }
+
+    // See comment above 'debugMode' in jscompartment.h for explanation of
+    // invariants of debuggee compartments, scripts, and frames.
+    inline bool isDebuggee() const;
 
     js::BreakpointSite *getBreakpointSite(jsbytecode *pc)
     {

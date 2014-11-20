@@ -76,10 +76,6 @@ public:
         nsCString vendor;
     };
 
-#if defined(XP_MACOSX) && defined(MOZ_CONTENT_SANDBOX)
-    void OnChannelConnected(int32_t aPid);
-#endif
-
     bool Init(MessageLoop* aIOLoop,
               base::ProcessHandle aParentHandle,
               IPC::Channel* aChannel);
@@ -362,6 +358,13 @@ public:
 
     virtual bool RecvOnAppThemeChanged() MOZ_OVERRIDE;
 
+    virtual bool RecvStartProfiler(const uint32_t& aEntries,
+                                   const double& aInterval,
+                                   const nsTArray<nsCString>& aFeatures,
+                                   const nsTArray<nsCString>& aThreadNameFilters) MOZ_OVERRIDE;
+    virtual bool RecvStopProfiler() MOZ_OVERRIDE;
+    virtual bool AnswerGetProfile(nsCString* aProfile) MOZ_OVERRIDE;
+
 #ifdef ANDROID
     gfxIntSize GetScreenSize() { return mScreenSize; }
 #endif
@@ -407,6 +410,14 @@ public:
 
     PBrowserOrId
     GetBrowserOrId(TabChild* aTabChild);
+
+    virtual POfflineCacheUpdateChild* AllocPOfflineCacheUpdateChild(
+            const URIParams& manifestURI,
+            const URIParams& documentURI,
+            const bool& stickDocument,
+            const TabId& aTabId) MOZ_OVERRIDE;
+    virtual bool
+    DeallocPOfflineCacheUpdateChild(POfflineCacheUpdateChild* offlineCacheUpdate) MOZ_OVERRIDE;
 
 private:
     virtual void ActorDestroy(ActorDestroyReason why) MOZ_OVERRIDE;

@@ -35,6 +35,7 @@
 #include "nsAccessibilityService.h"
 #endif
 #include "mozilla/ClearOnShutdown.h"
+#include "mozilla/docshell/OfflineCacheUpdateParent.h"
 #include "mozilla/dom/DataStoreService.h"
 #include "mozilla/dom/DOMStorageIPC.h"
 #include "mozilla/dom/Element.h"
@@ -84,6 +85,7 @@
 #include "nsChromeRegistryChrome.h"
 #include "nsConsoleMessage.h"
 #include "nsConsoleService.h"
+#include "nsContentUtils.h"
 #include "nsDebugImpl.h"
 #include "nsFrameMessageManager.h"
 #include "nsGeolocationSettings.h"
@@ -197,6 +199,11 @@ using namespace mozilla::system;
 
 #ifdef MOZ_TOOLKIT_SEARCH
 #include "nsIBrowserSearchService.h"
+#endif
+
+#ifdef MOZ_ENABLE_PROFILER_SPS
+#include "nsIProfiler.h"
+#include "nsIProfileSaveEvent.h"
 #endif
 
 static NS_DEFINE_CID(kCClipboardCID, NS_CLIPBOARD_CID);
@@ -588,6 +595,11 @@ static const char* sObserverTopics[] = {
     "a11y-init-or-shutdown",
 #endif
     "app-theme-changed",
+#ifdef MOZ_ENABLE_PROFILER_SPS
+    "profiler-started",
+    "profiler-stopped",
+    "profiler-subprocess",
+#endif
 };
 
 /* static */ already_AddRefed<ContentParent>
@@ -1022,6 +1034,7 @@ ContentParent::CreateBrowserOrApp(const TabContext& aContext,
             }
             nsRefPtr<TabParent> tp(new TabParent(constructorSender, tabId,
                                                  aContext, chromeFlags));
+            tp->SetInitedByParent();
             tp->SetOwnerElement(aFrameElement);
 
             PBrowserParent* browser = constructorSender->SendPBrowserConstructor(
@@ -1133,6 +1146,7 @@ ContentParent::CreateBrowserOrApp(const TabContext& aContext,
     uint32_t chromeFlags = 0;
 
     nsRefPtr<TabParent> tp = new TabParent(parent, tabId, aContext, chromeFlags);
+    tp->SetInitedByParent();
     tp->SetOwnerElement(aFrameElement);
     PBrowserParent* browser = parent->SendPBrowserConstructor(
         // DeallocPBrowserParent() releases this ref.
@@ -1485,6 +1499,14 @@ ContentParent::ShutDownProcess(bool aCloseWithError)
             mCalledCloseWithError = true;
             channel->CloseWithError();
         }
+    }
+
+    const InfallibleTArray<POfflineCacheUpdateParent*>& ocuParents =
+        ManagedPOfflineCacheUpdateParent();
+    for (uint32_t i = 0; i < ocuParents.Length(); ++i) {
+        nsRefPtr<mozilla::docshell::OfflineCacheUpdateParent> ocuParent =
+            static_cast<mozilla::docshell::OfflineCacheUpdateParent*>(ocuParents[i]);
+        ocuParent->StopSendingMessagesToChild();
     }
 
     // NB: must MarkAsDead() here so that this isn't accidentally
@@ -1923,6 +1945,13 @@ ContentParent::ContentParent(mozIApplication* aApp,
     // From this point on, NS_WARNING, NS_ASSERTION, etc. should print out the
     // PID along with the warning.
     nsDebugImpl::SetMultiprocessMode("Parent");
+
+#if defined(XP_WIN) && !defined(MOZ_B2G)
+    // Request Windows message deferral behavior on our side of the PContent
+    // channel. Generally only applies to the situation where we get caught in
+    // a deadlock with the plugin process when sending CPOWs.
+    GetIPCChannel()->SetChannelFlags(MessageChannel::REQUIRE_DEFERRED_MESSAGE_PROTECTION);
+#endif
 
     NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
     ChildPrivileges privs = aIsNuwaProcess
@@ -2776,6 +2805,31 @@ ContentParent::Observe(nsISupports* aSubject,
     else if (!strcmp(aTopic, "app-theme-changed")) {
         unused << SendOnAppThemeChanged();
     }
+#ifdef MOZ_ENABLE_PROFILER_SPS
+    else if (!strcmp(aTopic, "profiler-started")) {
+        nsCOMPtr<nsIProfilerStartParams> params(do_QueryInterface(aSubject));
+        uint32_t entries;
+        double interval;
+        params->GetEntries(&entries);
+        params->GetInterval(&interval);
+        const nsTArray<nsCString>& features = params->GetFeatures();
+        const nsTArray<nsCString>& threadFilterNames = params->GetThreadFilterNames();
+        unused << SendStartProfiler(entries, interval, features, threadFilterNames);
+    }
+    else if (!strcmp(aTopic, "profiler-stopped")) {
+        unused << SendStopProfiler();
+    }
+    else if (!strcmp(aTopic, "profiler-subprocess")) {
+        nsCOMPtr<nsIProfileSaveEvent> pse = do_QueryInterface(aSubject);
+        if (pse) {
+            nsCString result;
+            unused << CallGetProfile(&result);
+            if (!result.IsEmpty()) {
+                pse->AddSubProfile(result.get());
+            }
+        }
+    }
+#endif
     return NS_OK;
 }
 
@@ -4317,6 +4371,62 @@ ContentParent::GetManagedTabContext()
         GetTabContextByContentProcess(this->ChildID()));
 }
 
+mozilla::docshell::POfflineCacheUpdateParent*
+ContentParent::AllocPOfflineCacheUpdateParent(const URIParams& aManifestURI,
+                                              const URIParams& aDocumentURI,
+                                              const bool& aStickDocument,
+                                              const TabId& aTabId)
+{
+    TabContext tabContext;
+    if (!ContentProcessManager::GetSingleton()->
+        GetTabContextByProcessAndTabId(this->ChildID(), aTabId, &tabContext)) {
+        return nullptr;
+    }
+    nsRefPtr<mozilla::docshell::OfflineCacheUpdateParent> update =
+        new mozilla::docshell::OfflineCacheUpdateParent(
+            tabContext.OwnOrContainingAppId(),
+            tabContext.IsBrowserElement());
+    // Use this reference as the IPDL reference.
+    return update.forget().take();
+}
+
+bool
+ContentParent::RecvPOfflineCacheUpdateConstructor(POfflineCacheUpdateParent* aActor,
+                                                  const URIParams& aManifestURI,
+                                                  const URIParams& aDocumentURI,
+                                                  const bool& aStickDocument,
+                                                  const TabId& aTabId)
+{
+    MOZ_ASSERT(aActor);
+
+    nsRefPtr<mozilla::docshell::OfflineCacheUpdateParent> update =
+        static_cast<mozilla::docshell::OfflineCacheUpdateParent*>(aActor);
+
+    nsresult rv = update->Schedule(aManifestURI, aDocumentURI, aStickDocument);
+    if (NS_FAILED(rv) && IsAlive()) {
+        // Inform the child of failure.
+        unused << update->SendFinish(false, false);
+    }
+
+    return true;
+}
+
+bool
+ContentParent::DeallocPOfflineCacheUpdateParent(POfflineCacheUpdateParent* aActor)
+{
+    // Reclaim the IPDL reference.
+    nsRefPtr<mozilla::docshell::OfflineCacheUpdateParent> update =
+        dont_AddRef(static_cast<mozilla::docshell::OfflineCacheUpdateParent*>(aActor));
+    return true;
+}
+
+bool
+ContentParent::RecvSetOfflinePermission(const Principal& aPrincipal)
+{
+    nsIPrincipal* principal = aPrincipal;
+    nsContentUtils::MaybeAllowOfflineAppByDefault(principal, nullptr);
+    return true;
+}
 
 } // namespace dom
 } // namespace mozilla

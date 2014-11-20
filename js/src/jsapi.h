@@ -4006,7 +4006,7 @@ extern JS_PUBLIC_API(JSString *)
 JS_DecompileFunctionBody(JSContext *cx, JS::Handle<JSFunction*> fun, unsigned indent);
 
 /*
- * NB: JS_ExecuteScript and the JS_Evaluate*Script* quadruplets use the obj
+ * NB: JS_ExecuteScript and the JS::Evaluate APIs use the obj
  * parameter as the initial scope chain header, the 'this' keyword value, and
  * the variables object (ECMA parlance for where 'var' and 'function' bind
  * names) of the execution context for script.
@@ -4026,23 +4026,34 @@ JS_DecompileFunctionBody(JSContext *cx, JS::Handle<JSFunction*> fun, unsigned in
  * non-ECMA explicit vs. implicit variable creation.
  *
  * Caveat embedders: unless you already depend on this buggy variables object
- * binding behavior, you should call ContextOptionsRef(cx).setVarObjFix(true)
+ * binding behavior, you should call RuntimeOptionsRef(rt).setVarObjFix(true)
  * for each context in the application, if you pass parented objects as the obj
  * parameter, or may ever pass such objects in the future.
  *
- * Why a runtime option?  The alternative is to add six or so new API entry
- * points with signatures matching the following six, and that doesn't seem
- * worth the code bloat cost.  Such new entry points would probably have less
- * obvious names, too, so would not tend to be used.  The JS_SetOption call,
- * OTOH, can be more easily hacked into existing code that does not depend on
- * the bug; such code can continue to use the familiar JS_EvaluateScript,
- * etc., entry points.
+ * Why a runtime option?  The alternative is to add APIs duplicating those below
+ * for the other value of varobjfix, and that doesn't seem worth the code bloat
+ * cost.  Such new entry points would probably have less obvious names, too, so
+ * would not tend to be used.  The RuntimeOptionsRef adjustment, OTOH, can be
+ * more easily hacked into existing code that does not depend on the bug; such
+ * code can continue to use the familiar JS::Evaluate, etc., entry points.
  */
 extern JS_PUBLIC_API(bool)
 JS_ExecuteScript(JSContext *cx, JS::HandleObject obj, JS::HandleScript script, JS::MutableHandleValue rval);
 
 extern JS_PUBLIC_API(bool)
 JS_ExecuteScript(JSContext *cx, JS::HandleObject obj, JS::HandleScript script);
+
+/*
+ * As above, but providing an explicit scope chain.  scopeChain must not include
+ * the global object on it; that's implicit.  It needs to contain the other
+ * objects that should end up on the scripts's scope chain.
+ */
+extern JS_PUBLIC_API(bool)
+JS_ExecuteScript(JSContext *cx, JS::AutoObjectVector &scopeChain,
+                 JS::HandleScript script, JS::MutableHandleValue rval);
+
+extern JS_PUBLIC_API(bool)
+JS_ExecuteScript(JSContext *cx, JS::AutoObjectVector &scopeChain, JS::HandleScript script);
 
 namespace JS {
 
@@ -4055,35 +4066,14 @@ CloneAndExecuteScript(JSContext *cx, JS::Handle<JSObject*> obj, JS::Handle<JSScr
 
 } /* namespace JS */
 
-extern JS_PUBLIC_API(bool)
-JS_ExecuteScriptVersion(JSContext *cx, JS::HandleObject obj, JS::HandleScript script,
-                        JS::MutableHandleValue rval, JSVersion version);
-
-extern JS_PUBLIC_API(bool)
-JS_ExecuteScriptVersion(JSContext *cx, JS::HandleObject obj, JS::HandleScript script,
-                        JSVersion version);
-
-extern JS_PUBLIC_API(bool)
-JS_EvaluateScript(JSContext *cx, JS::HandleObject obj,
-                  const char *bytes, unsigned length,
-                  const char *filename, unsigned lineno,
-                  JS::MutableHandleValue rval);
-
-extern JS_PUBLIC_API(bool)
-JS_EvaluateScript(JSContext *cx, JS::HandleObject obj,
-                  const char *bytes, unsigned length,
-                  const char *filename, unsigned lineno);
-
-extern JS_PUBLIC_API(bool)
-JS_EvaluateUCScript(JSContext *cx, JS::Handle<JSObject*> obj,
-                    const char16_t *chars, unsigned length,
-                    const char *filename, unsigned lineno,
-                    JS::MutableHandle<JS::Value> rval);
-
 namespace JS {
 
 extern JS_PUBLIC_API(bool)
 Evaluate(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options,
+         SourceBufferHolder &srcBuf, JS::MutableHandleValue rval);
+
+extern JS_PUBLIC_API(bool)
+Evaluate(JSContext *cx, AutoObjectVector &scopeChain, const ReadOnlyCompileOptions &options,
          SourceBufferHolder &srcBuf, JS::MutableHandleValue rval);
 
 extern JS_PUBLIC_API(bool)
@@ -4097,22 +4087,6 @@ Evaluate(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &opti
 extern JS_PUBLIC_API(bool)
 Evaluate(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options,
          const char *filename, JS::MutableHandleValue rval);
-
-extern JS_PUBLIC_API(bool)
-Evaluate(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options,
-         SourceBufferHolder &srcBuf);
-
-extern JS_PUBLIC_API(bool)
-Evaluate(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options,
-         const char16_t *chars, size_t length);
-
-extern JS_PUBLIC_API(bool)
-Evaluate(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options,
-         const char *bytes, size_t length);
-
-extern JS_PUBLIC_API(bool)
-Evaluate(JSContext *cx, JS::HandleObject obj, const ReadOnlyCompileOptions &options,
-         const char *filename);
 
 } /* namespace JS */
 
@@ -4967,7 +4941,7 @@ namespace JS {
  *
  * Typical usage:
  *
- *     bool ok = JS_EvaluateScript(cx, ...);
+ *     bool ok = JS::Evaluate(cx, ...);
  *     AutoSaveExceptionState savedExc(cx);
  *     ... cleanup that might re-enter JS ...
  *     return ok;
@@ -4977,6 +4951,7 @@ class JS_PUBLIC_API(AutoSaveExceptionState)
   private:
     JSContext *context;
     bool wasPropagatingForcedReturn;
+    bool wasOverRecursed;
     bool wasThrowing;
     RootedValue exceptionValue;
 
@@ -4999,6 +4974,7 @@ class JS_PUBLIC_API(AutoSaveExceptionState)
      */
     void drop() {
         wasPropagatingForcedReturn = false;
+        wasOverRecursed = false;
         wasThrowing = false;
         exceptionValue.setUndefined();
     }
@@ -5237,6 +5213,21 @@ typedef bool
 typedef void
 (* CloseAsmJSCacheEntryForReadOp)(size_t size, const uint8_t *memory, intptr_t handle);
 
+/* The list of reasons why an asm.js module may not be stored in the cache. */
+enum AsmJSCacheResult
+{
+    AsmJSCache_MIN,
+    AsmJSCache_Success = AsmJSCache_MIN,
+    AsmJSCache_ModuleTooSmall,
+    AsmJSCache_SynchronousScript,
+    AsmJSCache_QuotaExceeded,
+    AsmJSCache_Disabled_Internal,
+    AsmJSCache_Disabled_ShellFlags,
+    AsmJSCache_Disabled_JitInspector,
+    AsmJSCache_InternalError,
+    AsmJSCache_LIMIT
+};
+
 /*
  * This callback represents a request by the JS engine to open for writing a
  * cache entry of the given size for the given global and char range containing
@@ -5252,7 +5243,7 @@ typedef void
  * the principal of 'global' where it will not be evicted until the associated
  * installed JS file is removed.
  */
-typedef bool
+typedef AsmJSCacheResult
 (* OpenAsmJSCacheEntryForWriteOp)(HandleObject global, bool installed,
                                   const char16_t *begin, const char16_t *end,
                                   size_t size, uint8_t **memory, intptr_t *handle);

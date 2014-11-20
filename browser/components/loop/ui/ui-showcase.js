@@ -22,7 +22,6 @@
   var DesktopPendingConversationView = loop.conversationViews.PendingConversationView;
   var CallFailedView = loop.conversationViews.CallFailedView;
   var DesktopRoomConversationView = loop.roomViews.DesktopRoomConversationView;
-  var DesktopRoomInvitationView = loop.roomViews.DesktopRoomInvitationView;
 
   // 2. Standalone webapp
   var HomeView = loop.webapp.HomeView;
@@ -33,11 +32,15 @@
   var StartConversationView   = loop.webapp.StartConversationView;
   var FailedConversationView  = loop.webapp.FailedConversationView;
   var EndedConversationView   = loop.webapp.EndedConversationView;
+  var StandaloneRoomView      = loop.standaloneRoomViews.StandaloneRoomView;
 
   // 3. Shared components
   var ConversationToolbar = loop.shared.views.ConversationToolbar;
   var ConversationView = loop.shared.views.ConversationView;
   var FeedbackView = loop.shared.views.FeedbackView;
+
+  // Room constants
+  var ROOM_STATES = loop.store.ROOM_STATES;
 
   // Local helpers
   function returnTrue() {
@@ -59,12 +62,11 @@
   );
 
   var dispatcher = new loop.Dispatcher();
-  var activeRoomStore = new loop.store.ActiveRoomStore({
-    dispatcher: dispatcher,
-    mozLoop: navigator.mozLoop
+  var activeRoomStore = new loop.store.ActiveRoomStore(dispatcher, {
+    mozLoop: navigator.mozLoop,
+    sdkDriver: {}
   });
-  var roomStore = new loop.store.RoomStore({
-    dispatcher: dispatcher,
+  var roomStore = new loop.store.RoomStore(dispatcher, {
     mozLoop: navigator.mozLoop
   });
 
@@ -533,20 +535,86 @@
             )
           ), 
 
-          Section({name: "DesktopRoomInvitationView"}, 
-            Example({summary: "Desktop room invitation", dashed: "true", 
+          Section({name: "DesktopRoomConversationView"}, 
+            Example({summary: "Desktop room conversation (invitation)", dashed: "true", 
                      style: {width: "260px", height: "265px"}}, 
               React.DOM.div({className: "fx-embedded"}, 
-                DesktopRoomInvitationView({roomStore: roomStore})
+                DesktopRoomConversationView({
+                  roomStore: roomStore, 
+                  dispatcher: dispatcher, 
+                  roomState: ROOM_STATES.INIT})
+              )
+            ), 
+
+            Example({summary: "Desktop room conversation", dashed: "true", 
+                     style: {width: "260px", height: "265px"}}, 
+              React.DOM.div({className: "fx-embedded"}, 
+                DesktopRoomConversationView({
+                  roomStore: roomStore, 
+                  dispatcher: dispatcher, 
+                  roomState: ROOM_STATES.HAS_PARTICIPANTS})
               )
             )
           ), 
 
-          Section({name: "DesktopRoomConversationView"}, 
-            Example({summary: "Desktop room conversation", dashed: "true", 
-                     style: {width: "260px", height: "265px"}}, 
-              React.DOM.div({className: "fx-embedded"}, 
-                DesktopRoomConversationView({roomStore: roomStore})
+          Section({name: "StandaloneRoomView"}, 
+            Example({summary: "Standalone room conversation (ready)"}, 
+              React.DOM.div({className: "standalone"}, 
+                StandaloneRoomView({
+                  dispatcher: dispatcher, 
+                  activeRoomStore: activeRoomStore, 
+                  roomState: ROOM_STATES.READY, 
+                  helper: {isFirefox: returnTrue}})
+              )
+            ), 
+
+            Example({summary: "Standalone room conversation (joined)"}, 
+              React.DOM.div({className: "standalone"}, 
+                StandaloneRoomView({
+                  dispatcher: dispatcher, 
+                  activeRoomStore: activeRoomStore, 
+                  roomState: ROOM_STATES.JOINED, 
+                  helper: {isFirefox: returnTrue}})
+              )
+            ), 
+
+            Example({summary: "Standalone room conversation (has-participants)"}, 
+              React.DOM.div({className: "standalone"}, 
+                StandaloneRoomView({
+                  dispatcher: dispatcher, 
+                  activeRoomStore: activeRoomStore, 
+                  roomState: ROOM_STATES.HAS_PARTICIPANTS, 
+                  helper: {isFirefox: returnTrue}})
+              )
+            ), 
+
+            Example({summary: "Standalone room conversation (full - FFx user)"}, 
+              React.DOM.div({className: "standalone"}, 
+                StandaloneRoomView({
+                  dispatcher: dispatcher, 
+                  activeRoomStore: activeRoomStore, 
+                  roomState: ROOM_STATES.FULL, 
+                  helper: {isFirefox: returnTrue}})
+              )
+            ), 
+
+            Example({summary: "Standalone room conversation (full - non FFx user)"}, 
+              React.DOM.div({className: "standalone"}, 
+                StandaloneRoomView({
+                  dispatcher: dispatcher, 
+                  activeRoomStore: activeRoomStore, 
+                  roomState: ROOM_STATES.FULL, 
+                  helper: {isFirefox: returnFalse}})
+              )
+            ), 
+
+            Example({summary: "Standalone room conversation (failed)"}, 
+              React.DOM.div({className: "standalone"}, 
+                StandaloneRoomView({
+                  dispatcher: dispatcher, 
+                  activeRoomStore: activeRoomStore, 
+                  roomState: ROOM_STATES.FAILED, 
+                  helper: {isFirefox: returnFalse}})
               )
             )
           ), 

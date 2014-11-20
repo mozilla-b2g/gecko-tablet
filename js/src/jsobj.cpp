@@ -4133,8 +4133,8 @@ js_DumpInterpreterFrame(JSContext *cx, InterpreterFrame *start)
         fprintf(stderr, "  flags:");
         if (i.isConstructing())
             fprintf(stderr, " constructing");
-        if (!i.isJit() && i.interpFrame()->isDebuggerFrame())
-            fprintf(stderr, " debugger");
+        if (!i.isJit() && i.interpFrame()->isDebuggerEvalFrame())
+            fprintf(stderr, " debugger eval");
         if (i.isEvalFrame())
             fprintf(stderr, " eval");
         fputc('\n', stderr);
@@ -4153,7 +4153,7 @@ js_DumpBacktrace(JSContext *cx)
     Sprinter sprinter(cx);
     sprinter.init();
     size_t depth = 0;
-    for (ScriptFrameIter i(cx); !i.done(); ++i, ++depth) {
+    for (AllFramesIter i(cx); !i.done(); ++i, ++depth) {
         const char *filename = JS_GetScriptFilename(i.script());
         unsigned line = PCToLineNumber(i.script(), i.pc());
         JSScript *script = i.script();

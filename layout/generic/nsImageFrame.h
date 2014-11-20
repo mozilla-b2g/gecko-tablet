@@ -184,7 +184,7 @@ protected:
               const mozilla::LogicalSize& aMargin,
               const mozilla::LogicalSize& aBorder,
               const mozilla::LogicalSize& aPadding,
-              uint32_t aFlags) MOZ_OVERRIDE;
+              ComputeSizeFlags aFlags) MOZ_OVERRIDE;
 
   bool IsServerImageMap();
 
@@ -221,10 +221,10 @@ protected:
 protected:
   friend class nsImageListener;
   friend class nsImageLoadingContent;
-  nsresult OnStartContainer(imgIRequest *aRequest, imgIContainer *aImage);
-  nsresult OnDataAvailable(imgIRequest *aRequest, const nsIntRect *rect);
-  nsresult OnStopRequest(imgIRequest *aRequest,
-                         nsresult aStatus);
+
+  nsresult OnSizeAvailable(imgIRequest* aRequest, imgIContainer* aImage);
+  nsresult OnFrameUpdate(imgIRequest* aRequest, const nsIntRect* aRect);
+  nsresult OnLoadComplete(imgIRequest* aRequest, nsresult aStatus);
   nsresult FrameChanged(imgIRequest *aRequest,
                         imgIContainer *aContainer);
   /**
@@ -399,20 +399,14 @@ public:
     return imageFrame->GetInnerArea() + ToReferenceFrame();
   }
 
-  virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap) MOZ_OVERRIDE
+  virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder,
+                           bool* aSnap) MOZ_OVERRIDE
   {
     return GetBounds(aSnap);
   }
 
-  virtual nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder, bool* aSnap)
-  {
-    *aSnap = true;
-    bool animated;
-    if (mImage && mImage->GetAnimated(&animated) == NS_OK && !animated && mImage->FrameIsOpaque(imgIContainer::FRAME_CURRENT)) {
-      return nsRegion(GetBounds(aSnap));
-    }
-    return nsRegion();
-  }
+  virtual nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
+                                   bool* aSnap) MOZ_OVERRIDE;
 
   virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
                                              LayerManager* aManager,

@@ -121,6 +121,15 @@ function PlayFragmented(test, elem, token)
     var curFragment = 0;
 
     function addNextFragment() {
+      /* We can get another updateevent as a result of calling ms.endOfStream() if
+         the highest end time of our source buffers is different from that of the
+         media source duration. Due to bug 1065207 this can happen because of
+         inaccuracies in the frame duration calculations. Check if we are already
+         "ended" and ignore the update event */
+      if (ms.readyState == "ended") {
+        return;
+      }
+
       if (curFragment >= test.fragments.length) {
         Log(token, "addNextFragment() end of stream");
         ms.endOfStream();
@@ -192,23 +201,37 @@ function SetupEME(test, token, params)
 
   v.addEventListener("encrypted", function(ev) {
     Log(token, "got encrypted event");
-    MediaKeys.create(KEYSYSTEM_TYPE).then(function(mediaKeys) {
-      Log(token, "created MediaKeys object ok");
-      mediaKeys.sessions = [];
-      return v.setMediaKeys(mediaKeys);
-    }, bail("failed to create MediaKeys object")).then(function() {
-      Log(token, "set MediaKeys on <video> element ok");
-
-      var session = v.mediaKeys.createSession(test.sessionType);
-      if (params && params.onsessioncreated) {
-        params.onsessioncreated(session);
+    var options = [
+      {
+        initDataType: ev.initDataType,
+        videoType: test.type,
       }
-      session.addEventListener("message", UpdateSessionFunc(test, token));
-      session.generateRequest(ev.initDataType, ev.initData).then(function() {
-      }, bail(token + " Failed to initialise MediaKeySession"));
+    ];
+    navigator.requestMediaKeySystemAccess(KEYSYSTEM_TYPE, options)
+      .then(function(keySystemAccess) {
+        return keySystemAccess.createMediaKeys();
+      }, bail(token + " Failed to request key system access."))
+      
+      .then(function(mediaKeys) {
+        Log(token, "created MediaKeys object ok");
+        mediaKeys.sessions = [];
+        return v.setMediaKeys(mediaKeys);
+      }, bail("failed to create MediaKeys object"))
+      
+      .then(function() {
+        Log(token, "set MediaKeys on <video> element ok");
 
-    }, onSetKeysFail);
+        var session = v.mediaKeys.createSession(test.sessionType);
+        if (params && params.onsessioncreated) {
+          params.onsessioncreated(session);
+        }
+        session.addEventListener("message", UpdateSessionFunc(test, token));
+        return session.generateRequest(ev.initDataType, ev.initData);
+      }, onSetKeysFail)
+      
+      .then(function() {
+        Log(token, "generated request");
+      }, bail(token + " Failed to request key system access2."));
   });
-
   return v;
 }

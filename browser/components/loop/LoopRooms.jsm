@@ -6,6 +6,7 @@
 const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+Cu.import("resource://gre/modules/Services.jsm");
 const {MozLoopService, LOOP_SESSION_TYPE} = Cu.import("resource:///modules/loop/MozLoopService.jsm", {});
 XPCOMUtils.defineLazyModuleGetter(this, "Promise",
                                   "resource://gre/modules/Promise.jsm");
@@ -14,6 +15,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "Task",
 XPCOMUtils.defineLazyGetter(this, "eventEmitter", function() {
   const {EventEmitter} = Cu.import("resource://gre/modules/devtools/event-emitter.js", {});
   return new EventEmitter();
+});
+XPCOMUtils.defineLazyGetter(this, "gLoopBundle", function() {
+  return Services.strings.createBundle('chrome://browser/locale/loop/loop.properties');
 });
 
 this.EXPORTED_SYMBOLS = ["LoopRooms", "roomsPushNotification"];
@@ -56,7 +60,11 @@ const extend = function(target, source) {
  */
 const containsParticipant = function(room, participant) {
   for (let user of room.participants) {
-    if (user.roomConnectionId == participant.roomConnectionId) {
+    // XXX until a bug 1100318 is implemented and deployed,
+    // we need to check the "id" field here as well - roomConnectionId is the
+    // official value for the interface.
+    if (user.roomConnectionId == participant.roomConnectionId &&
+        user.id == participant.id) {
       return true;
     }
   }
@@ -107,11 +115,32 @@ const checkForParticipantsUpdate = function(room, updatedRoom) {
  * violated. You'll notice this as well in the documentation for each method.
  */
 let LoopRoomsInternal = {
+  /**
+   * @var {Map} rooms Collection of rooms currently in cache.
+   */
   rooms: new Map(),
 
+  /**
+   * @var {String} sessionType The type of user session. May be 'FXA' or 'GUEST'.
+   */
   get sessionType() {
     return MozLoopService.userProfile ? LOOP_SESSION_TYPE.FXA :
                                         LOOP_SESSION_TYPE.GUEST;
+  },
+
+  /**
+   * @var {Number} participantsCount The total amount of participants currently
+   *                                 inside all rooms.
+   */
+  get participantsCount() {
+    let count = 0;
+    for (let room of this.rooms.values()) {
+      if (!("participants" in room)) {
+        continue;
+      }
+      count += room.participants.length;
+    }
+    return count;
   },
 
   /**
@@ -131,8 +160,6 @@ let LoopRoomsInternal = {
     }
 
     Task.spawn(function* () {
-      yield MozLoopService.promiseRegisteredWithServers();
-
       if (!gDirty) {
         callback(null, [...this.rooms.values()]);
         return;
@@ -152,6 +179,10 @@ let LoopRoomsInternal = {
         if (orig) {
           checkForParticipantsUpdate(orig, room);
         }
+        // Remove the `currSize` for posterity.
+        if ("currSize" in room) {
+          delete room.currSize;
+        }
         this.rooms.set(room.roomToken, room);
         // When a version is specified, all the data is already provided by this
         // request.
@@ -163,6 +194,12 @@ let LoopRoomsInternal = {
           // fails the room data will not be added to the map.
           yield LoopRooms.promise("get", room.roomToken);
         }
+      }
+
+      // If there's no rooms in the list, remove the guest created room flag, so that
+      // we don't keep registering for guest when we don't need to.
+      if (this.sessionType == LOOP_SESSION_TYPE.GUEST && !this.rooms.size) {
+        this.setGuestCreatedRoom(false);
       }
 
       // Set the 'dirty' flag back to FALSE, since the list is as fresh as can be now.
@@ -201,11 +238,6 @@ let LoopRoomsInternal = {
         room.roomToken = roomToken;
         checkForParticipantsUpdate(room, data);
         extend(room, data);
-
-        // Remove the `currSize` for posterity.
-        if ("currSize" in room) {
-          delete room.currSize;
-        }
         this.rooms.set(roomToken, room);
 
         let eventName = !needsUpdate ? "update" : "add";
@@ -239,9 +271,37 @@ let LoopRoomsInternal = {
         delete room.expiresIn;
         this.rooms.set(room.roomToken, room);
 
+        if (this.sessionType == LOOP_SESSION_TYPE.GUEST) {
+          this.setGuestCreatedRoom(true);
+        }
+
         eventEmitter.emit("add", room);
         callback(null, room);
       }, error => callback(error)).catch(error => callback(error));
+  },
+
+  /**
+   * Sets whether or not the user has created a room in guest mode.
+   *
+   * @param {Boolean} created If the user has created the room.
+   */
+  setGuestCreatedRoom: function(created) {
+    if (created) {
+      Services.prefs.setBoolPref("loop.createdRoom", created);
+    } else {
+      Services.prefs.clearUserPref("loop.createdRoom");
+    }
+  },
+
+  /**
+   * Returns true if the user has a created room in guest mode.
+   */
+  getGuestCreatedRoom: function() {
+    try {
+      return Services.prefs.getBoolPref("loop.createdRoom");
+    } catch (x) {
+      return false;
+    }
   },
 
   open: function(roomToken) {
@@ -301,9 +361,16 @@ let LoopRoomsInternal = {
    *                            `Error` object or `null`.
    */
   join: function(roomToken, callback) {
+    let displayName;
+    if (MozLoopService.userProfile && MozLoopService.userProfile.email) {
+      displayName = MozLoopService.userProfile.email;
+    } else {
+      displayName = gLoopBundle.GetStringFromName("display_name_guest");
+    }
+
     this._postToRoom(roomToken, {
       action: "join",
-      displayName: MozLoopService.userProfile.email,
+      displayName: displayName,
       clientMaxSize: CLIENT_MAX_SIZE
     }, callback);
   },
@@ -351,6 +418,34 @@ let LoopRoomsInternal = {
   },
 
   /**
+   * Renames a room.
+   *
+   * @param {String} roomToken   The room token
+   * @param {String} newRoomName The new name for the room
+   * @param {Function} callback   Function that will be invoked once the operation
+   *                              finished. The first argument passed will be an
+   *                              `Error` object or `null`.
+   */
+  rename: function(roomToken, newRoomName, callback) {
+    let room = this.rooms.get(roomToken);
+    let url = "/rooms/" + encodeURIComponent(roomToken);
+
+    let origRoom = this.rooms.get(roomToken);
+    let patchData = {
+      roomName: newRoomName,
+      // XXX We have to supply the max size and room owner due to bug 1099063.
+      maxSize: origRoom.maxSize,
+      roomOwner: origRoom.roomOwner
+    };
+    MozLoopService.hawkRequest(this.sessionType, url, "PATCH", patchData)
+      .then(response => {
+        let data = JSON.parse(response.body);
+        extend(room, data);
+        callback(null, room);
+      }, error => callback(error)).catch(error => callback(error));
+  },
+
+  /**
    * Callback used to indicate changes to rooms data on the LoopServer.
    *
    * @param {String} version   Version number assigned to this change set.
@@ -380,6 +475,10 @@ Object.freeze(LoopRoomsInternal);
  * See the internal code for the API documentation.
  */
 this.LoopRooms = {
+  get participantsCount() {
+    return LoopRoomsInternal.participantsCount;
+  },
+
   getAll: function(version, callback) {
     return LoopRoomsInternal.getAll(version, callback);
   },
@@ -411,6 +510,14 @@ this.LoopRooms = {
 
   leave: function(roomToken, sessionToken, callback) {
     return LoopRoomsInternal.leave(roomToken, sessionToken, callback);
+  },
+
+  rename: function(roomToken, newRoomName, callback) {
+    return LoopRoomsInternal.rename(roomToken, newRoomName, callback);
+  },
+
+  getGuestCreatedRoom: function() {
+    return LoopRoomsInternal.getGuestCreatedRoom();
   },
 
   promise: function(method, ...params) {

@@ -90,6 +90,7 @@ protected:
                    const OptionalURIParams&   originalUri,
                    const OptionalURIParams&   docUri,
                    const OptionalURIParams&   referrerUri,
+                   const uint32_t&            referrerPolicy,
                    const OptionalURIParams&   internalRedirectUri,
                    const OptionalURIParams&   topWindowUri,
                    const uint32_t&            loadFlags,
@@ -110,6 +111,7 @@ protected:
                    const bool&                allowSpdy,
                    const OptionalFileDescriptorSet& aFds,
                    const ipc::PrincipalInfo&  aRequestingPrincipalInfo,
+                   const ipc::PrincipalInfo&  aTriggeringPrincipalInfo,
                    const uint32_t&            aSecurityFlags,
                    const uint32_t&            aContentPolicyType);
 

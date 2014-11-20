@@ -169,6 +169,16 @@ LIRGenerator::visitNewArrayCopyOnWrite(MNewArrayCopyOnWrite *ins)
 }
 
 bool
+LIRGenerator::visitNewArrayDynamicLength(MNewArrayDynamicLength *ins)
+{
+    MDefinition *length = ins->length();
+    MOZ_ASSERT(length->type() == MIRType_Int32);
+
+    LNewArrayDynamicLength *lir = new(alloc()) LNewArrayDynamicLength(useRegister(length), temp());
+    return define(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
 LIRGenerator::visitNewObject(MNewObject *ins)
 {
     LNewObject *lir = new(alloc()) LNewObject(temp());
@@ -2172,6 +2182,21 @@ LIRGenerator::visitStringReplace(MStringReplace *ins)
 }
 
 bool
+LIRGenerator::visitSubstr(MSubstr *ins)
+{
+    // The last temporary need to be a register that can handle 8bit moves, but
+    // there is no way to signal that to register allocator, except to give a
+    // fixed temporary that is able to do this.
+    LSubstr *lir = new (alloc()) LSubstr(useRegister(ins->string()),
+                                         useRegister(ins->begin()),
+                                         useRegister(ins->length()),
+                                         temp(),
+                                         temp(),
+                                         tempFixed(CallTempReg1));
+    return define(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
 LIRGenerator::visitLambda(MLambda *ins)
 {
     if (ins->info().singletonType || ins->info().useNewTypeForClone) {
@@ -2456,7 +2481,8 @@ LIRGenerator::visitPostWriteBarrier(MPostWriteBarrier *ins)
 {
 #ifdef JSGC_GENERATIONAL
     switch (ins->value()->type()) {
-      case MIRType_Object: {
+      case MIRType_Object:
+      case MIRType_ObjectOrNull: {
         LDefinition tmp = needTempForPostBarrier() ? temp() : LDefinition::BogusTemp();
         LPostWriteBarrierO *lir =
             new(alloc()) LPostWriteBarrierO(useRegisterOrConstant(ins->object()),
@@ -2665,7 +2691,7 @@ LIRGenerator::visitInArray(MInArray *ins)
 bool
 LIRGenerator::visitLoadElement(MLoadElement *ins)
 {
-    MOZ_ASSERT(ins->elements()->type() == MIRType_Elements);
+    MOZ_ASSERT(IsValidElementsType(ins->elements(), ins->offsetAdjustment()));
     MOZ_ASSERT(ins->index()->type() == MIRType_Int32);
 
     switch (ins->type()) {
@@ -2711,7 +2737,7 @@ LIRGenerator::visitLoadElementHole(MLoadElementHole *ins)
 bool
 LIRGenerator::visitLoadUnboxedObjectOrNull(MLoadUnboxedObjectOrNull *ins)
 {
-    MOZ_ASSERT(ins->elements()->type() == MIRType_Elements);
+    MOZ_ASSERT(IsValidElementsType(ins->elements(), ins->offsetAdjustment()));
     MOZ_ASSERT(ins->index()->type() == MIRType_Int32);
     MOZ_ASSERT(ins->type() == MIRType_Value);
 
@@ -2723,7 +2749,7 @@ LIRGenerator::visitLoadUnboxedObjectOrNull(MLoadUnboxedObjectOrNull *ins)
 bool
 LIRGenerator::visitLoadUnboxedString(MLoadUnboxedString *ins)
 {
-    MOZ_ASSERT(ins->elements()->type() == MIRType_Elements);
+    MOZ_ASSERT(IsValidElementsType(ins->elements(), ins->offsetAdjustment()));
     MOZ_ASSERT(ins->index()->type() == MIRType_Int32);
     MOZ_ASSERT(ins->type() == MIRType_String);
 
@@ -2735,7 +2761,7 @@ LIRGenerator::visitLoadUnboxedString(MLoadUnboxedString *ins)
 bool
 LIRGenerator::visitStoreElement(MStoreElement *ins)
 {
-    MOZ_ASSERT(ins->elements()->type() == MIRType_Elements);
+    MOZ_ASSERT(IsValidElementsType(ins->elements(), ins->offsetAdjustment()));
     MOZ_ASSERT(ins->index()->type() == MIRType_Int32);
 
     const LUse elements = useRegister(ins->elements());
@@ -2795,7 +2821,7 @@ LIRGenerator::visitStoreElementHole(MStoreElementHole *ins)
 bool
 LIRGenerator::visitStoreUnboxedObjectOrNull(MStoreUnboxedObjectOrNull *ins)
 {
-    MOZ_ASSERT(ins->elements()->type() == MIRType_Elements);
+    MOZ_ASSERT(IsValidElementsType(ins->elements(), ins->offsetAdjustment()));
     MOZ_ASSERT(ins->index()->type() == MIRType_Int32);
     MOZ_ASSERT(ins->value()->type() == MIRType_Object ||
                ins->value()->type() == MIRType_Null ||
@@ -2812,7 +2838,7 @@ LIRGenerator::visitStoreUnboxedObjectOrNull(MStoreUnboxedObjectOrNull *ins)
 bool
 LIRGenerator::visitStoreUnboxedString(MStoreUnboxedString *ins)
 {
-    MOZ_ASSERT(ins->elements()->type() == MIRType_Elements);
+    MOZ_ASSERT(IsValidElementsType(ins->elements(), ins->offsetAdjustment()));
     MOZ_ASSERT(ins->index()->type() == MIRType_Int32);
     MOZ_ASSERT(ins->value()->type() == MIRType_String);
 
@@ -2919,7 +2945,7 @@ LIRGenerator::visitStringSplit(MStringSplit *ins)
 bool
 LIRGenerator::visitLoadTypedArrayElement(MLoadTypedArrayElement *ins)
 {
-    MOZ_ASSERT(ins->elements()->type() == MIRType_Elements);
+    MOZ_ASSERT(IsValidElementsType(ins->elements(), ins->offsetAdjustment()));
     MOZ_ASSERT(ins->index()->type() == MIRType_Int32);
 
     const LUse elements = useRegister(ins->elements());
@@ -2963,7 +2989,7 @@ LIRGenerator::visitClampToUint8(MClampToUint8 *ins)
         return defineReuseInput(new(alloc()) LClampIToUint8(useRegisterAtStart(in)), ins, 0);
 
       case MIRType_Double:
-        return define(new(alloc()) LClampDToUint8(useRegisterAtStart(in), tempCopy(in, 0)), ins);
+        return define(new(alloc()) LClampDToUint8(useRegisterAtStart(in)), ins);
 
       case MIRType_Value:
       {
@@ -3012,7 +3038,7 @@ LIRGenerator::visitLoadTypedArrayElementStatic(MLoadTypedArrayElementStatic *ins
 bool
 LIRGenerator::visitStoreTypedArrayElement(MStoreTypedArrayElement *ins)
 {
-    MOZ_ASSERT(ins->elements()->type() == MIRType_Elements);
+    MOZ_ASSERT(IsValidElementsType(ins->elements(), ins->offsetAdjustment()));
     MOZ_ASSERT(ins->index()->type() == MIRType_Int32);
 
     if (ins->isFloatArray()) {
@@ -4096,6 +4122,13 @@ LIRGenerator::visitThrowUninitializedLexical(MThrowUninitializedLexical *ins)
 {
     LThrowUninitializedLexical *lir = new(alloc()) LThrowUninitializedLexical();
     return add(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
+LIRGenerator::visitDebugger(MDebugger *ins)
+{
+    LDebugger *lir = new(alloc()) LDebugger(tempFixed(CallTempReg0), tempFixed(CallTempReg1));
+    return assignSnapshot(lir, Bailout_Debugger) && add(lir, ins);
 }
 
 static void

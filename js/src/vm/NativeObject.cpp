@@ -26,9 +26,6 @@ using JS::GenericNaN;
 using mozilla::DebugOnly;
 using mozilla::RoundUpPow2;
 
-JS_STATIC_ASSERT(int32_t((NativeObject::NELEMENTS_LIMIT - 1) * sizeof(Value)) ==
-                 int64_t((NativeObject::NELEMENTS_LIMIT - 1) * sizeof(Value)));
-
 PropDesc::PropDesc()
 {
     setUndefined();
@@ -122,9 +119,9 @@ ObjectElements::ConvertElementsToDoubles(JSContext *cx, uintptr_t elementsPtr)
 /* static */ bool
 ObjectElements::MakeElementsCopyOnWrite(ExclusiveContext *cx, NativeObject *obj)
 {
-    // Make sure there is enough room for the owner object pointer at the end
-    // of the elements.
-    JS_STATIC_ASSERT(sizeof(HeapSlot) >= sizeof(HeapPtrObject));
+    static_assert(sizeof(HeapSlot) >= sizeof(HeapPtrObject),
+                  "there must be enough room for the owner object pointer at "
+                  "the end of the elements");
     if (!obj->ensureElements(cx, obj->getDenseInitializedLength() + 1))
         return false;
 
@@ -461,6 +458,7 @@ NativeObject::growSlots(ThreadSafeContext *cx, HandleNativeObject obj, uint32_t 
      * the limited number of bits to store shape slots, object growth is
      * throttled well before the slot capacity can overflow.
      */
+    NativeObject::slotsSizeMustNotOverflow();
     MOZ_ASSERT(newCount < NELEMENTS_LIMIT);
 
     if (!oldCount) {
@@ -1362,7 +1360,8 @@ PurgeScopeChainHelper(ExclusiveContext *cx, HandleObject objArg, HandleId id)
     if (JSID_IS_INT(id))
         return true;
 
-    PurgeProtoChain(cx, obj->getProto(), id);
+    if (!PurgeProtoChain(cx, obj->getProto(), id))
+        return false;
 
     /*
      * We must purge the scope chain only for Call objects as they are the only
@@ -1387,9 +1386,9 @@ PurgeScopeChainHelper(ExclusiveContext *cx, HandleObject objArg, HandleId id)
  * (i.e., obj has ever been on a prototype or parent chain).
  */
 static inline bool
-PurgeScopeChain(ExclusiveContext *cx, JS::HandleObject obj, JS::HandleId id)
+PurgeScopeChain(ExclusiveContext *cx, HandleObject obj, HandleId id)
 {
-    if (obj->isDelegate())
+    if (obj->isDelegate() && obj->isNative())
         return PurgeScopeChainHelper(cx, obj, id);
     return true;
 }
@@ -2310,7 +2309,7 @@ baseops::DeleteGeneric(JSContext *cx, HandleNativeObject obj, HandleId id, bool 
 
         if (!CallJSDeletePropertyOp(cx, obj->getClass()->delProperty, obj, id, succeeded))
             return false;
-        if (!succeeded)
+        if (!*succeeded)
             return true;
 
         NativeObject *nobj = &obj->as<NativeObject>();
@@ -2329,7 +2328,7 @@ baseops::DeleteGeneric(JSContext *cx, HandleNativeObject obj, HandleId id, bool 
     RootedId propid(cx, shape->propid());
     if (!CallJSDeletePropertyOp(cx, obj->getClass()->delProperty, obj, propid, succeeded))
         return false;
-    if (!succeeded)
+    if (!*succeeded)
         return true;
 
     return obj->removeProperty(cx, id) && SuppressDeletedProperty(cx, obj, id);
