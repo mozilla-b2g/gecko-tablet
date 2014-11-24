@@ -475,6 +475,9 @@ class AssemblerX86Shared : public AssemblerShared
           case Operand::MEM_SCALE:
             masm.movaps_mr(src.disp(), src.base(), src.index(), src.scale(), dest.code());
             break;
+          case Operand::FPREG:
+            masm.movaps_rr(src.fpu(), dest.code());
+            break;
           default:
             MOZ_CRASH("unexpected operand kind");
         }
@@ -1071,6 +1074,9 @@ class AssemblerX86Shared : public AssemblerShared
 
     void addl(Imm32 imm, Register dest) {
         masm.addl_ir(imm.value, dest.code());
+    }
+    void addl_wide(Imm32 imm, Register dest) {
+        masm.addl_ir_wide(imm.value, dest.code());
     }
     void addl(Imm32 imm, const Operand &op) {
         switch (op.kind()) {
@@ -1685,6 +1691,21 @@ class AssemblerX86Shared : public AssemblerShared
             MOZ_CRASH("unexpected operand kind");
         }
     }
+    void cmpeqps(const Operand &src, FloatRegister dest) {
+        cmpps(src, dest, X86Assembler::ConditionCmp_EQ);
+    }
+    void cmpltps(const Operand &src, FloatRegister dest) {
+        cmpps(src, dest, X86Assembler::ConditionCmp_LT);
+    }
+    void cmpleps(const Operand &src, FloatRegister dest) {
+        cmpps(src, dest, X86Assembler::ConditionCmp_LE);
+    }
+    void cmpunordps(const Operand &src, FloatRegister dest) {
+        cmpps(src, dest, X86Assembler::ConditionCmp_UNORD);
+    }
+    void cmpneqps(const Operand &src, FloatRegister dest) {
+        cmpps(src, dest, X86Assembler::ConditionCmp_NEQ);
+    }
     void rcpps(const Operand &src, FloatRegister dest) {
         MOZ_ASSERT(HasSSE2());
         switch (src.kind()) {
@@ -1886,6 +1907,7 @@ class AssemblerX86Shared : public AssemblerShared
         }
     }
     void andnps(const Operand &src, FloatRegister dest) {
+        // Negates bits of dest and then applies AND
         MOZ_ASSERT(HasSSE2());
         switch (src.kind()) {
           case Operand::FPREG:

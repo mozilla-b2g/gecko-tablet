@@ -25,6 +25,7 @@
 #include "nsIDOMDocument.h"
 #include "nsIContentIterator.h"
 #include "nsFocusManager.h"
+#include "nsFrameManager.h"
 #include "nsILinkHandler.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIURL.h"
@@ -137,6 +138,7 @@
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/dom/WindowBinding.h"
 #include "mozilla/dom/ElementBinding.h"
+#include "mozilla/dom/VRDevice.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -976,6 +978,7 @@ Element::CreateShadowRoot(ErrorResult& aError)
     nsIPresShell* shell = doc->GetShell();
     if (shell) {
       shell->DestroyFramesFor(this, &destroyedFramesFor);
+      MOZ_ASSERT(!shell->FrameManager()->GetDisplayContentsStyleFor(this));
     }
   }
   MOZ_ASSERT(!GetPrimaryFrame());
@@ -3071,7 +3074,7 @@ GetFullScreenError(nsIDocument* aDoc)
 }
 
 void
-Element::MozRequestFullScreen()
+Element::MozRequestFullScreen(const RequestFullscreenOptions& aOptions)
 {
   // Only grant full-screen requests if this is called from inside a trusted
   // event handler (i.e. inside an event handler for a user initiated event).
@@ -3095,7 +3098,12 @@ Element::MozRequestFullScreen()
     return;
   }
 
-  OwnerDoc()->AsyncRequestFullScreen(this);
+  FullScreenOptions opts;
+  if (aOptions.mVrDisplay) {
+    opts.mVRHMDDevice = aOptions.mVrDisplay->GetHMD();
+  }
+
+  OwnerDoc()->AsyncRequestFullScreen(this, opts);
 
   return;
 }

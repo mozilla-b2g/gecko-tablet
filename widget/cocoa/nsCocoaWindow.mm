@@ -1280,7 +1280,7 @@ void nsCocoaWindow::EnteredFullScreen(bool aFullScreen)
   DispatchSizeModeEvent();
 }
 
-NS_METHOD nsCocoaWindow::MakeFullScreen(bool aFullScreen)
+NS_METHOD nsCocoaWindow::MakeFullScreen(bool aFullScreen, nsIScreen* aTargetScreen)
 {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
 
@@ -2583,7 +2583,7 @@ static NSMutableSet *gSwizzledFrameViewClasses = nil;
 // is not a public class, we declare the method on NSView instead. We only have
 // this declaration in order to avoid compiler warnings.
 @interface NSView(PrivateAddKnownSubviewMethod)
- - (void)_addKnownSubview:(id)arg1 positioned:(long long)arg2 relativeTo:(id)arg3;
+ - (void)_addKnownSubview:(NSView*)aView positioned:(NSWindowOrderingMode)place relativeTo:(NSView*)otherView;
 @end
 
 @interface BaseWindow(Private)

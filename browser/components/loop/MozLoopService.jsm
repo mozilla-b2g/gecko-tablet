@@ -18,8 +18,6 @@ const LOOP_SESSION_TYPE = {
 // See LOG_LEVELS in Console.jsm. Common examples: "All", "Info", "Warn", & "Error".
 const PREF_LOG_LEVEL = "loop.debug.loglevel";
 
-const EMAIL_OR_PHONE_RE = /^(:?\S+@\S+|\+\d+)$/;
-
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Promise.jsm");
@@ -106,7 +104,7 @@ function getJSONPref(aName) {
 }
 
 let gHawkClient = null;
-let gLocalizedStrings = null;
+let gLocalizedStrings = new Map();
 let gFxAEnabled = true;
 let gFxAOAuthClientPromise = null;
 let gFxAOAuthClient = null;
@@ -295,12 +293,12 @@ let MozLoopServiceInternal = {
       messageString = "generic_failure_title";
     }
 
-    error.friendlyMessage = this.localizedStrings[messageString].textContent;
+    error.friendlyMessage = this.localizedStrings.get(messageString);
     error.friendlyDetails = detailsString ?
-                              this.localizedStrings[detailsString].textContent :
+                              this.localizedStrings.get(detailsString) :
                               null;
     error.friendlyDetailsButtonLabel = detailsButtonLabelString ?
-                                         this.localizedStrings[detailsButtonLabelString].textContent :
+                                         this.localizedStrings.get(detailsButtonLabelString) :
                                          null;
 
     error.friendlyDetailsButtonCallback = actionCallback || detailsButtonCallback || null;
@@ -682,33 +680,22 @@ let MozLoopServiceInternal = {
    * A getter to obtain and store the strings for loop. This is structured
    * for use by l10n.js.
    *
-   * @returns {Object} a map of element ids with attributes to set.
+   * @returns {Map} a map of element ids with localized string values
    */
   get localizedStrings() {
-    if (gLocalizedStrings)
+    if (gLocalizedStrings.size)
       return gLocalizedStrings;
 
-    var stringBundle =
-      Services.strings.createBundle('chrome://browser/locale/loop/loop.properties');
+    let stringBundle =
+      Services.strings.createBundle("chrome://browser/locale/loop/loop.properties");
 
-    var map = {};
-    var enumerator = stringBundle.getSimpleEnumeration();
+    let enumerator = stringBundle.getSimpleEnumeration();
     while (enumerator.hasMoreElements()) {
-      var string = enumerator.getNext().QueryInterface(Ci.nsIPropertyElement);
-
-      // 'textContent' is the default attribute to set if none are specified.
-      var key = string.key, property = 'textContent';
-      var i = key.lastIndexOf('.');
-      if (i >= 0) {
-        property = key.substring(i + 1);
-        key = key.substring(0, i);
-      }
-      if (!(key in map))
-        map[key] = {};
-      map[key][property] = string.value;
+      let string = enumerator.getNext().QueryInterface(Ci.nsIPropertyElement);
+      gLocalizedStrings.set(string.key, string.value);
     }
 
-    return gLocalizedStrings = map;
+    return gLocalizedStrings;
   },
 
   /**
@@ -787,7 +774,14 @@ let MozLoopServiceInternal = {
   openChatWindow: function(conversationWindowData) {
     // So I guess the origin is the loop server!?
     let origin = this.loopServerUri;
-    let windowId = gLastWindowId++;
+    // Try getting a window ID that can (re-)identify this conversation, or resort
+    // to a globally unique one as a last resort.
+    // XXX We can clean this up once rooms and direct contact calling are the only
+    //     two modes left.
+    let windowId = ("contact" in conversationWindowData) ?
+                   conversationWindowData.contact._guid || gLastWindowId++ :
+                   conversationWindowData.roomToken || conversationWindowData.callId ||
+                   gLastWindowId++;
     // Store the id as a string, as that's what we use elsewhere.
     windowId = windowId.toString();
 
@@ -1152,21 +1146,20 @@ this.MozLoopService = {
   },
 
   /**
-   * Returns the strings for the specified element. Designed for use
-   * with l10n.js.
+   * Returns the strings for the specified element. Designed for use with l10n.js.
    *
    * @param {key} The element id to get strings for.
-   * @return {String} A JSON string containing the localized
-   *                  attribute/value pairs for the element.
+   * @return {String} A JSON string containing the localized attribute/value pairs
+   *                  for the element.
    */
   getStrings: function(key) {
-      var stringData = MozLoopServiceInternal.localizedStrings;
-      if (!(key in stringData)) {
-        log.error("No string found for key: ", key);
-        return "";
-      }
+    var stringData = MozLoopServiceInternal.localizedStrings;
+    if (!stringData.has(key)) {
+      log.error("No string found for key: ", key);
+      return "";
+    }
 
-      return JSON.stringify(stringData[key]);
+    return JSON.stringify({ textContent: stringData.get(key) });
   },
 
   /**
@@ -1435,9 +1428,12 @@ this.MozLoopService = {
    */
   openGettingStartedTour: Task.async(function(aSrc = null) {
     try {
-      let url = new URL(Services.prefs.getCharPref("loop.gettingStarted.url"));
+      let urlStr = Services.prefs.getCharPref("loop.gettingStarted.url");
+      let url = new URL(Services.urlFormatter.formatURL(urlStr));
       if (aSrc) {
-        url.searchParams.set("source", aSrc);
+        url.searchParams.set("utm_source", "firefox-browser");
+        url.searchParams.set("utm_medium", "firefox-browser");
+        url.searchParams.set("utm_campaign", aSrc);
       }
       let win = Services.wm.getMostRecentWindow("navigator:browser");
       win.switchToTabHavingURI(url, true, {replaceQueryString: true});

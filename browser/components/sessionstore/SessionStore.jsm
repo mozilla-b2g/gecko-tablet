@@ -74,6 +74,16 @@ const FMM_MESSAGES = [
   "SessionStore:reloadPendingTab",
 ];
 
+// The list of messages we accept from <xul:browser>s that have no tab
+// assigned. Those are for example the ones that preload about:newtab pages.
+const FMM_NOTAB_MESSAGES = new Set([
+  // For a description see above.
+  "SessionStore:setupSyncHandler",
+
+  // For a description see above.
+  "SessionStore:update",
+]);
+
 // Messages that will be received via the Parent Process Message Manager.
 const PPMM_MESSAGES = [
   // A tab is being revived from the crashed state. The sender of this
@@ -605,9 +615,12 @@ let SessionStoreInternal = {
     var browser = aMessage.target;
     var win = browser.ownerDocument.defaultView;
     let tab = win.gBrowser.getTabForBrowser(browser);
-    if (!tab) {
-      // Ignore messages from <browser> elements that are not tabs.
-      return;
+
+    // Ensure we receive only specific messages from <xul:browser>s that
+    // have no tab assigned, e.g. the ones that preload aobut:newtab pages.
+    if (!tab && !FMM_NOTAB_MESSAGES.has(aMessage.name)) {
+      throw new Error(`received unexpected message '${aMessage.name}' ` +
+                      `from a browser that has no tab`);
     }
 
     switch (aMessage.name) {
@@ -635,8 +648,21 @@ let SessionStoreInternal = {
           let uri = activePageData ? activePageData.url || null : null;
           browser.userTypedValue = uri;
 
-          // Update tab label and icon again after the tab history was updated.
-          this.updateTabLabelAndIcon(tab, tabData);
+          // If the page has a title, set it.
+          if (activePageData) {
+            if (activePageData.title) {
+              tab.label = activePageData.title;
+              tab.crop = "end";
+            } else if (activePageData.url != "about:blank") {
+              tab.label = activePageData.url;
+              tab.crop = "center";
+            }
+          }
+
+          // Restore the tab icon.
+          if ("image" in tabData) {
+            win.gBrowser.setIcon(tab, tabData.image);
+          }
 
           let event = win.document.createEvent("Events");
           event.initEvent("SSTabRestoring", true, false);
@@ -691,7 +717,7 @@ let SessionStoreInternal = {
         }
         break;
       default:
-        debug(`received unknown message '${aMessage.name}'`);
+        throw new Error(`received unknown message '${aMessage.name}'`);
         break;
     }
   },
@@ -1847,26 +1873,6 @@ let SessionStoreInternal = {
     }
   },
 
-  updateTabLabelAndIcon(tab, tabData) {
-    let activePageData = tabData.entries[tabData.index - 1] || null;
-
-    // If the page has a title, set it.
-    if (activePageData) {
-      if (activePageData.title) {
-        tab.label = activePageData.title;
-        tab.crop = "end";
-      } else if (activePageData.url != "about:blank") {
-        tab.label = activePageData.url;
-        tab.crop = "center";
-      }
-    }
-
-    // Restore the tab icon.
-    if ("image" in tabData) {
-      tab.ownerDocument.defaultView.gBrowser.setIcon(tab, tabData.image);
-    }
-  },
-
   /**
    * Restores the session state stored in LastSession. This will attempt
    * to merge data into the current session. If a window was opened at startup
@@ -2539,17 +2545,9 @@ let SessionStoreInternal = {
       this._windows[aWindow.__SSi].selected = aSelectTab;
     }
 
-    // If we restore the selected tab, make sure it goes first.
-    let selectedIndex = aTabs.indexOf(tabbrowser.selectedTab);
-    if (selectedIndex > -1) {
-      this.restoreTab(tabbrowser.selectedTab, aTabData[selectedIndex]);
-    }
-
     // Restore all tabs.
     for (let t = 0; t < aTabs.length; t++) {
-      if (t != selectedIndex) {
-        this.restoreTab(aTabs[t], aTabData[t]);
-      }
+      this.restoreTab(aTabs[t], aTabData[t]);
     }
   },
 
@@ -2654,10 +2652,6 @@ let SessionStoreInternal = {
 
     browser.messageManager.sendAsyncMessage("SessionStore:restoreHistory",
                                             {tabData: tabData, epoch: epoch});
-
-    // Update tab label and icon to show something
-    // while we wait for the messages to be processed.
-    this.updateTabLabelAndIcon(tab, tabData);
 
     // Restore tab attributes.
     if ("attributes" in tabData) {

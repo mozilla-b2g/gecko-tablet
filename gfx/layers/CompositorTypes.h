@@ -150,6 +150,7 @@ MOZ_BEGIN_ENUM_CLASS(EffectTypes, uint8_t)
   COMPONENT_ALPHA,
   SOLID_COLOR,
   RENDER_TARGET,
+  VR_DISTORTION,
   MAX  //sentinel for the count of all effect types
 MOZ_END_ENUM_CLASS(EffectTypes)
 
@@ -159,17 +160,15 @@ MOZ_END_ENUM_CLASS(EffectTypes)
 MOZ_BEGIN_ENUM_CLASS(CompositableType, uint8_t)
   BUFFER_UNKNOWN,
   // the deprecated compositable types
-  BUFFER_IMAGE_SINGLE,    // image/canvas with a single texture, single buffered
-  BUFFER_IMAGE_BUFFERED,  // canvas, double buffered
-  BUFFER_BRIDGE,          // image bridge protocol
   BUFFER_CONTENT_INC,     // painted layer interface, only sends incremental
                           // updates to a texture on the compositor side.
   // somewhere in the middle
   BUFFER_TILED,           // tiled painted layer
   BUFFER_SIMPLE_TILED,
   // the new compositable types
-  IMAGE,     // image with single buffering
-  IMAGE_OVERLAY, // image without buffer
+  IMAGE,           // image with single buffering
+  IMAGE_OVERLAY,   // image without buffer
+  IMAGE_BRIDGE,    // ImageBridge protocol
   CONTENT_SINGLE,  // painted layer interface, single buffering
   CONTENT_DOUBLE,  // painted layer interface, double buffering
   BUFFER_COUNT

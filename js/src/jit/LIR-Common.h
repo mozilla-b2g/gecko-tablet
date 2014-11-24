@@ -7,6 +7,7 @@
 #ifndef jit_LIR_Common_h
 #define jit_LIR_Common_h
 
+#include "jit/AtomicOp.h"
 #include "jit/shared/Assembler-shared.h"
 
 // This file declares LIR instructions that are common to every platform.
@@ -365,19 +366,21 @@ class LSimdBinaryCompFx4 : public LSimdBinaryComp
 };
 
 // Binary SIMD arithmetic operation between two SIMD operands
-class LSimdBinaryArith : public LInstructionHelper<1, 2, 0>
+template<size_t Temps>
+class LSimdBinaryArith : public LInstructionHelper<1, 2, Temps>
 {
   public:
     LSimdBinaryArith() {}
 
     const LAllocation *lhs() {
-        return getOperand(0);
+        return this->getOperand(0);
     }
     const LAllocation *rhs() {
-        return getOperand(1);
+        return this->getOperand(1);
     }
+
     MSimdBinaryArith::Operation operation() const {
-        return mir_->toSimdBinaryArith()->operation();
+        return this->mir_->toSimdBinaryArith()->operation();
     }
     const char *extraName() const {
         return MSimdBinaryArith::OperationName(operation());
@@ -385,19 +388,23 @@ class LSimdBinaryArith : public LInstructionHelper<1, 2, 0>
 };
 
 // Binary SIMD arithmetic operation between two Int32x4 operands
-class LSimdBinaryArithIx4 : public LSimdBinaryArith
+class LSimdBinaryArithIx4 : public LSimdBinaryArith<0>
 {
   public:
     LIR_HEADER(SimdBinaryArithIx4);
-    LSimdBinaryArithIx4() : LSimdBinaryArith() {}
+    LSimdBinaryArithIx4() : LSimdBinaryArith<0>() {}
 };
 
 // Binary SIMD arithmetic operation between two Float32x4 operands
-class LSimdBinaryArithFx4 : public LSimdBinaryArith
+class LSimdBinaryArithFx4 : public LSimdBinaryArith<1>
 {
   public:
     LIR_HEADER(SimdBinaryArithFx4);
-    LSimdBinaryArithFx4() : LSimdBinaryArith() {}
+    LSimdBinaryArithFx4() : LSimdBinaryArith<1>() {}
+
+    const LDefinition *temp() {
+        return getTemp(0);
+    }
 };
 
 // Unary SIMD arithmetic operation on a SIMD operand
@@ -4568,8 +4575,9 @@ class LLoadUnboxedPointerT : public LInstructionHelper<1, 2, 0>
         setOperand(1, index);
     }
 
-    const MLoadUnboxedString *mir() const {
-        return mir_->toLoadUnboxedString();
+    MDefinition *mir() {
+        MOZ_ASSERT(mir_->isLoadUnboxedObjectOrNull() || mir_->isLoadUnboxedString());
+        return mir_;
     }
     const LAllocation *elements() {
         return getOperand(0);
@@ -6589,6 +6597,60 @@ class LAsmJSStoreHeap : public LInstructionHelper<0, 2, 0>
     }
 };
 
+class LAsmJSCompareExchangeHeap : public LInstructionHelper<1, 3, 0>
+{
+  public:
+    LIR_HEADER(AsmJSCompareExchangeHeap);
+
+    LAsmJSCompareExchangeHeap(const LAllocation &ptr, const LAllocation &oldValue,
+                              const LAllocation &newValue)
+    {
+        setOperand(0, ptr);
+        setOperand(1, oldValue);
+        setOperand(2, newValue);
+    }
+
+    const LAllocation *ptr() {
+        return getOperand(0);
+    }
+    const LAllocation *oldValue() {
+        return getOperand(1);
+    }
+    const LAllocation *newValue() {
+        return getOperand(2);
+    }
+
+    MAsmJSCompareExchangeHeap *mir() const {
+        return mir_->toAsmJSCompareExchangeHeap();
+    }
+};
+
+class LAsmJSAtomicBinopHeap : public LInstructionHelper<1, 2, 1>
+{
+  public:
+    LIR_HEADER(AsmJSAtomicBinopHeap);
+    LAsmJSAtomicBinopHeap(const LAllocation &ptr, const LAllocation &value,
+                          const LDefinition &temp)
+    {
+        setOperand(0, ptr);
+        setOperand(1, value);
+        setTemp(0, temp);
+    }
+    const LAllocation *ptr() {
+        return getOperand(0);
+    }
+    const LAllocation *value() {
+        return getOperand(1);
+    }
+    const LDefinition *temp() {
+        return getTemp(0);
+    }
+
+    MAsmJSAtomicBinopHeap *mir() const {
+        return mir_->toAsmJSAtomicBinopHeap();
+    }
+};
+
 class LAsmJSLoadGlobalVar : public LInstructionHelper<1, 0, 0>
 {
   public:
@@ -6873,19 +6935,19 @@ class LThrowUninitializedLexical : public LCallInstructionHelper<0, 0, 0>
 class LMemoryBarrier : public LInstructionHelper<0, 0, 0>
 {
   private:
-    const int type_;
+    const MemoryBarrierBits type_;
 
   public:
     LIR_HEADER(MemoryBarrier)
 
     // The parameter 'type' is a bitwise 'or' of the barrier types needed,
     // see AtomicOp.h.
-    explicit LMemoryBarrier(int type) : type_(type)
+    explicit LMemoryBarrier(MemoryBarrierBits type) : type_(type)
     {
-        MOZ_ASSERT((type_ & ~MembarAllbits) == 0);
+        MOZ_ASSERT((type_ & ~MembarAllbits) == MembarNobits);
     }
 
-    int type() const {
+    MemoryBarrierBits type() const {
         return type_;
     }
 

@@ -42,6 +42,7 @@ using namespace js;
 using JS::dbg::Builder;
 using js::frontend::IsIdentifier;
 using mozilla::ArrayLength;
+using mozilla::DebugOnly;
 using mozilla::Maybe;
 
 
@@ -468,12 +469,12 @@ Debugger::getScriptFrameWithIter(JSContext *cx, AbstractFramePtr frame,
 }
 
 /* static */ bool
-Debugger::hasLiveOnExceptionUnwind(GlobalObject *global)
+Debugger::hasLiveHook(GlobalObject *global, Hook which)
 {
     if (GlobalObject::DebuggerVector *debuggers = global->getDebuggers()) {
         for (Debugger **p = debuggers->begin(); p != debuggers->end(); p++) {
             Debugger *dbg = *p;
-            if (dbg->enabled && dbg->getHook(OnExceptionUnwind))
+            if (dbg->enabled && dbg->getHook(which))
                 return true;
         }
     }
@@ -1282,6 +1283,7 @@ Debugger::dispatchHook(JSContext *cx, MutableHandleValue vp, Hook which, HandleO
                 break;
               default:
                 MOZ_ASSERT_UNREACHABLE("Unexpected debugger hook");
+                st = JSTRAP_CONTINUE;
             }
             if (st != JSTRAP_CONTINUE)
                 return st;
@@ -1676,7 +1678,7 @@ Debugger::slowPathPromiseHook(JSContext *cx, Hook hook, HandleObject promise)
 {
     MOZ_ASSERT(hook == OnNewPromise || hook == OnPromiseSettled);
     RootedValue rval(cx);
-    JSTrapStatus status = dispatchHook(cx, &rval, hook, promise);
+    DebugOnly<JSTrapStatus> status = dispatchHook(cx, &rval, hook, promise);
     MOZ_ASSERT(status == JSTRAP_CONTINUE);
     MOZ_ASSERT(!cx->isExceptionPending());
 }
@@ -5004,6 +5006,26 @@ DebuggerSource_getIntroductionType(JSContext *cx, unsigned argc, Value *vp)
 }
 
 static bool
+DebuggerSource_setSourceMapUrl(JSContext *cx, unsigned argc, Value *vp)
+{
+    THIS_DEBUGSOURCE_REFERENT(cx, argc, vp, "sourceMapURL", args, obj, sourceObject);
+    ScriptSource *ss = sourceObject->source();
+    MOZ_ASSERT(ss);
+
+    JSString *str = ToString<CanGC>(cx, args[0]);
+    if (!str)
+        return false;
+
+    AutoStableStringChars stableChars(cx);
+    if (!stableChars.initTwoByte(cx, str))
+        return false;
+
+    ss->setSourceMapURL(cx, stableChars.twoByteChars());
+    args.rval().setUndefined();
+    return true;
+}
+
+static bool
 DebuggerSource_getSourceMapUrl(JSContext *cx, unsigned argc, Value *vp)
 {
     THIS_DEBUGSOURCE_REFERENT(cx, argc, vp, "(get sourceMapURL)", args, obj, sourceObject);
@@ -5032,7 +5054,7 @@ static const JSPropertySpec DebuggerSource_properties[] = {
     JS_PSG("introductionOffset", DebuggerSource_getIntroductionOffset, 0),
     JS_PSG("introductionType", DebuggerSource_getIntroductionType, 0),
     JS_PSG("elementAttributeName", DebuggerSource_getElementProperty, 0),
-    JS_PSG("sourceMapURL", DebuggerSource_getSourceMapUrl, 0),
+    JS_PSGS("sourceMapURL", DebuggerSource_getSourceMapUrl, DebuggerSource_setSourceMapUrl, 0),
     JS_PS_END
 };
 
@@ -6015,15 +6037,14 @@ DebuggerObject_getParameterNames(JSContext *cx, unsigned argc, Value *vp)
         MOZ_ASSERT(fun->nargs() == script->bindings.numArgs());
 
         if (fun->nargs() > 0) {
-            BindingVector bindings(cx);
-            if (!FillBindingVector(script, &bindings))
-                return false;
-            for (size_t i = 0; i < fun->nargs(); i++) {
+            BindingIter bi(script);
+            for (size_t i = 0; i < fun->nargs(); i++, bi++) {
+                MOZ_ASSERT(bi.argIndex() == i);
                 Value v;
-                if (bindings[i].name()->length() == 0)
+                if (bi->name()->length() == 0)
                     v = UndefinedValue();
                 else
-                    v = StringValue(bindings[i].name());
+                    v = StringValue(bi->name());
                 result->setDenseElement(i, v);
             }
         }

@@ -199,14 +199,20 @@ LIRGeneratorARM::lowerForFPU(LInstructionHelper<1, 1, 0> *ins, MDefinition *mir,
 
 }
 
+template<size_t Temps>
 bool
-LIRGeneratorARM::lowerForFPU(LInstructionHelper<1, 2, 0> *ins, MDefinition *mir, MDefinition *lhs, MDefinition *rhs)
+LIRGeneratorARM::lowerForFPU(LInstructionHelper<1, 2, Temps> *ins, MDefinition *mir, MDefinition *lhs, MDefinition *rhs)
 {
     ins->setOperand(0, useRegisterAtStart(lhs));
     ins->setOperand(1, useRegisterAtStart(rhs));
     return define(ins, mir,
                   LDefinition(LDefinition::TypeFrom(mir->type()), LDefinition::REGISTER));
 }
+
+template bool LIRGeneratorARM::lowerForFPU(LInstructionHelper<1, 2, 0> *ins, MDefinition *mir,
+                                           MDefinition *lhs, MDefinition *rhs);
+template bool LIRGeneratorARM::lowerForFPU(LInstructionHelper<1, 2, 1> *ins, MDefinition *mir,
+                                           MDefinition *lhs, MDefinition *rhs);
 
 bool
 LIRGeneratorARM::lowerForBitAndAndBranch(LBitAndAndBranch *baab, MInstruction *mir,
@@ -633,6 +639,38 @@ LIRGeneratorARM::visitCompareExchangeTypedArrayElement(MCompareExchangeTypedArra
 
     LCompareExchangeTypedArrayElement *lir =
         new(alloc()) LCompareExchangeTypedArrayElement(elements, index, oldval, newval, tempDef);
+
+    return define(lir, ins);
+}
+
+bool
+LIRGeneratorARM::visitAsmJSCompareExchangeHeap(MAsmJSCompareExchangeHeap *ins)
+{
+    MOZ_ASSERT(ins->viewType() < AsmJSHeapAccess::Float32);
+
+    MDefinition *ptr = ins->ptr();
+    MOZ_ASSERT(ptr->type() == MIRType_Int32);
+
+    LAsmJSCompareExchangeHeap *lir =
+        new(alloc()) LAsmJSCompareExchangeHeap(useRegister(ptr),
+                                               useRegister(ins->oldValue()),
+                                               useRegister(ins->newValue()));
+
+    return define(lir, ins);
+}
+
+bool
+LIRGeneratorARM::visitAsmJSAtomicBinopHeap(MAsmJSAtomicBinopHeap *ins)
+{
+    MOZ_ASSERT(ins->viewType() < AsmJSHeapAccess::Float32);
+
+    MDefinition *ptr = ins->ptr();
+    MOZ_ASSERT(ptr->type() == MIRType_Int32);
+
+    LAsmJSAtomicBinopHeap *lir =
+        new(alloc()) LAsmJSAtomicBinopHeap(useRegister(ptr),
+                                           useRegister(ins->value()),
+                                           LDefinition::BogusTemp());
 
     return define(lir, ins);
 }

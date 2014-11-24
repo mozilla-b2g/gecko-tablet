@@ -882,13 +882,6 @@ class ArenaLists
     friend class GCRuntime;
 };
 
-/*
- * Initial allocation size for data structures holding chunks is set to hold
- * chunks with total capacity of 16MB to avoid buffer resizes during browser
- * startup.
- */
-const size_t INITIAL_CHUNK_CAPACITY = 16 * 1024 * 1024 / ChunkSize;
-
 /* The number of GC cycles an empty chunk can survive before been released. */
 const size_t MAX_EMPTY_CHUNK_AGE = 4;
 
@@ -1030,8 +1023,7 @@ class GCHelperState
         js_free(array);
     }
 
-    /* Must be called with the GC lock taken. */
-    void doSweep(const AutoLockGC &lock);
+    void doSweep(AutoLockGC &lock);
 
   public:
     explicit GCHelperState(JSRuntime *rt)

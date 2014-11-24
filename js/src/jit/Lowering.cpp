@@ -2739,7 +2739,17 @@ LIRGenerator::visitLoadUnboxedObjectOrNull(MLoadUnboxedObjectOrNull *ins)
 {
     MOZ_ASSERT(IsValidElementsType(ins->elements(), ins->offsetAdjustment()));
     MOZ_ASSERT(ins->index()->type() == MIRType_Int32);
+
+    if (ins->type() == MIRType_Object) {
+        LLoadUnboxedPointerT *lir = new(alloc()) LLoadUnboxedPointerT(useRegister(ins->elements()),
+                                                                      useRegisterOrConstant(ins->index()));
+        if (ins->bailOnNull() && !assignSnapshot(lir, Bailout_TypeBarrierO))
+            return false;
+        return define(lir, ins);
+    }
+
     MOZ_ASSERT(ins->type() == MIRType_Value);
+    MOZ_ASSERT(!ins->bailOnNull());
 
     LLoadUnboxedPointerV *lir = new(alloc()) LLoadUnboxedPointerV(useRegister(ins->elements()),
                                                                   useRegisterOrConstant(ins->index()));
@@ -4062,20 +4072,23 @@ LIRGenerator::visitSimdBinaryArith(MSimdBinaryArith *ins)
 
     MDefinition *lhs = ins->lhs();
     MDefinition *rhs = ins->rhs();
+
     if (ins->isCommutative())
         ReorderCommutative(&lhs, &rhs, ins);
 
-    if (ins->type() == MIRType_Int32x4) {
-        LSimdBinaryArithIx4 *add = new(alloc()) LSimdBinaryArithIx4();
-        return lowerForFPU(add, ins, lhs, rhs);
-    }
+    if (ins->type() == MIRType_Int32x4)
+        return lowerForFPU(new(alloc()) LSimdBinaryArithIx4(), ins, lhs, rhs);
 
-    if (ins->type() == MIRType_Float32x4) {
-        LSimdBinaryArithFx4 *add = new(alloc()) LSimdBinaryArithFx4();
-        return lowerForFPU(add, ins, lhs, rhs);
-    }
+    MOZ_ASSERT(ins->type() == MIRType_Float32x4, "unknown simd type on binary arith operation");
 
-    MOZ_CRASH("Unknown SIMD kind when adding values");
+    LSimdBinaryArithFx4 *lir = new(alloc()) LSimdBinaryArithFx4();
+
+    bool needsTemp = ins->operation() == MSimdBinaryArith::Max ||
+                     ins->operation() == MSimdBinaryArith::MinNum ||
+                     ins->operation() == MSimdBinaryArith::MaxNum;
+    lir->setTemp(0, needsTemp ? temp(LDefinition::FLOAT32X4) : LDefinition::BogusTemp());
+
+    return lowerForFPU(lir, ins, lhs, rhs);
 }
 
 bool

@@ -9109,13 +9109,34 @@ CodeGenerator::visitLoadUnboxedPointerT(LLoadUnboxedPointerT *lir)
     const LAllocation *index = lir->index();
     Register out = ToRegister(lir->output());
 
-    if (index->isConstant()) {
-        int32_t offset = ToInt32(index) * sizeof(uintptr_t) + lir->mir()->offsetAdjustment();
-        masm.loadPtr(Address(elements, offset), out);
+    bool bailOnNull;
+    int32_t offsetAdjustment;
+    if (lir->mir()->isLoadUnboxedObjectOrNull()) {
+        MOZ_ASSERT(lir->mir()->toLoadUnboxedObjectOrNull()->bailOnNull());
+        bailOnNull = true;
+        offsetAdjustment = lir->mir()->toLoadUnboxedObjectOrNull()->offsetAdjustment();
+    } else if (lir->mir()->isLoadUnboxedString()) {
+        bailOnNull = false;
+        offsetAdjustment = lir->mir()->toLoadUnboxedString()->offsetAdjustment();
     } else {
-        masm.loadPtr(BaseIndex(elements, ToRegister(index), ScalePointer,
-                               lir->mir()->offsetAdjustment()), out);
+        MOZ_CRASH();
     }
+
+    if (index->isConstant()) {
+        Address source(elements, ToInt32(index) * sizeof(uintptr_t) + offsetAdjustment);
+        masm.loadPtr(source, out);
+    } else {
+        BaseIndex source(elements, ToRegister(index), ScalePointer, offsetAdjustment);
+        masm.loadPtr(source, out);
+    }
+
+    if (bailOnNull) {
+        Label bail;
+        masm.branchTestPtr(Assembler::Zero, out, out, &bail);
+        if (!bailoutFrom(&bail, lir->snapshot()))
+            return false;
+    }
+
     return true;
 }
 
@@ -10229,12 +10250,10 @@ CodeGenerator::visitDebugger(LDebugger *ins)
     Register cx = ToRegister(ins->getTemp(0));
     Register temp = ToRegister(ins->getTemp(1));
 
-    // The check for cx->compartment()->isDebuggee() could be inlined, but the
-    // performance of |debugger;| does not matter.
     masm.loadJSContext(cx);
     masm.setupUnalignedABICall(1, temp);
     masm.passABIArg(cx);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, IsCompartmentDebuggee));
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, GlobalHasLiveOnDebuggerStatement));
 
     Label bail;
     masm.branchIfTrueBool(ReturnReg, &bail);
