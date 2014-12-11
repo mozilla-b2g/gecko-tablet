@@ -415,6 +415,15 @@ panel[noactions] > richlistbox > richlistitem[type~="action"] > .ac-url-box > .a
   -moz-binding: url("chrome://browser/content/urlbarBindings.xml#browser-autocomplete-result-popup");
 }
 
+#PopupSearchAutoComplete {
+  -moz-binding: url("chrome://browser/content/urlbarBindings.xml#browser-search-autocomplete-result-popup");
+  margin-left: -23px;
+}
+
+searchbar[oneoffui] {
+  -moz-binding: url("chrome://browser/content/search/search.xml#searchbar-flare") !important;
+}
+
 #PopupAutoCompleteRichResult {
   -moz-binding: url("chrome://browser/content/urlbarBindings.xml#urlbar-rich-result-popup");
 }
@@ -970,7 +979,7 @@ chatbox:-moz-full-screen-ancestor > .chat-titlebar {
 
 /* Combobox dropdown renderer */
 #ContentSelectDropdown {
-  max-height: 400px;
+  -moz-binding: url("chrome://global/content/bindings/popup.xml#popup-scrollbars");
 }
 
 .contentSelectDropdown-optgroup {
@@ -1108,14 +1117,14 @@ toolbarpaletteitem[dragover] {
 
 #customization-palette:not([hidden]) {
   display: block;
-  flex: 1 1 main-size;
+  flex: 1 1 auto;
   overflow: auto;
   min-height: 3em;
 }
 
 #customization-footer-spacer,
 #customization-spacer {
-  flex: 1 1 main-size;
+  flex: 1 1 auto;
 }
 
 #customization-footer {
@@ -1210,6 +1219,20 @@ toolbarpaletteitem[place="palette"][hidden] {
 #UITourHighlight[active="color"] {
   animation-name: uitour-color;
   animation-duration: 2s;
+}
+
+#abouthome-search-panel > .panel-arrowcontainer > .panel-arrowcontent {
+  padding: 0;
+  font-size: 110%;
+}
+
+#abouthome-search-panel-manage {
+  padding: 4px 24px;
+}
+
+#abouthome-search-panel-manage > label {
+  padding: 0;
+  margin: 0;
 }
 
 /* Combined context-menu items */

@@ -628,7 +628,7 @@ public:
       }
 
       JS::Rooted<JS::Value> wrappedBlob(aCx);
-      if (!WrapNewBindingObject(aCx, aFile.mFile, &wrappedBlob)) {
+      if (!GetOrCreateDOMReflector(aCx, aFile.mFile, &wrappedBlob)) {
         return false;
       }
 
@@ -647,7 +647,7 @@ public:
     }
 
     JS::Rooted<JS::Value> wrappedFile(aCx);
-    if (!WrapNewBindingObject(aCx, aFile.mFile, &wrappedFile)) {
+    if (!GetOrCreateDOMReflector(aCx, aFile.mFile, &wrappedFile)) {
       return false;
     }
 
@@ -843,14 +843,10 @@ ClearStructuredCloneBuffer(JSAutoStructuredCloneBuffer& aBuffer)
 const JSClass IDBObjectStore::sDummyPropJSClass = {
   "IDBObjectStore Dummy",
   0 /* flags */,
-  JS_PropertyStub /* addProperty */,
-  JS_DeletePropertyStub /* delProperty */,
+  nullptr /* addProperty */,
+  nullptr /* delProperty */,
   JS_PropertyStub /* getProperty */,
-  JS_StrictPropertyStub /* setProperty */,
-  JS_EnumerateStub /* enumerate */,
-  JS_ResolveStub /* resolve */,
-  JS_ConvertStub /* convert */,
-  JSCLASS_NO_OPTIONAL_MEMBERS
+  JS_StrictPropertyStub /* setProperty */
 };
 
 IDBObjectStore::IDBObjectStore(IDBTransaction* aTransaction,

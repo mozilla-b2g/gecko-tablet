@@ -2502,7 +2502,7 @@ nsRuleNode::SetDefaultOnRoot(const nsStyleStructID aSID, nsStyleContext* aContex
     }
     case eStyleStruct_TableBorder:
     {
-      nsStyleTableBorder* table = new (mPresContext) nsStyleTableBorder(mPresContext);
+      nsStyleTableBorder* table = new (mPresContext) nsStyleTableBorder();
       aContext->SetStyle(eStyleStruct_TableBorder, table);
       return table;
     }
@@ -7678,18 +7678,10 @@ nsRuleNode::ComputePositionData(void* aStartStruct,
 
   // flex-basis: auto, length, percent, enum, calc, inherit, initial
   // (Note: The flags here should match those used for 'width' property above.)
-  const nsCSSValue* flexBasisValue = aRuleData->ValueForFlexBasis();
-  if (!SetCoord(*flexBasisValue,
-                pos->mFlexBasis, parentPos->mFlexBasis,
-                SETCOORD_LPAEH | SETCOORD_STORE_CALC,
-                aContext, mPresContext, canStoreInRuleTree)) {
-    if (eCSSUnit_Initial == flexBasisValue->GetUnit() ||
-        eCSSUnit_Unset == flexBasisValue->GetUnit()) {
-      // flex-basis initial value is "main-size"
-      pos->mFlexBasis.SetIntValue(NS_STYLE_FLEX_BASIS_MAIN_SIZE,
-                                  eStyleUnit_Enumerated);
-    }
-  }
+  SetCoord(*aRuleData->ValueForFlexBasis(), pos->mFlexBasis, parentPos->mFlexBasis,
+           SETCOORD_LPAEH | SETCOORD_INITIAL_AUTO | SETCOORD_STORE_CALC |
+             SETCOORD_UNSET_INITIAL,
+           aContext, mPresContext, canStoreInRuleTree);
 
   // flex-direction: enum, inherit, initial
   SetDiscrete(*aRuleData->ValueForFlexDirection(),
@@ -7880,7 +7872,7 @@ nsRuleNode::ComputeTableBorderData(void* aStartStruct,
                                    const RuleDetail aRuleDetail,
                                    const bool aCanStoreInRuleTree)
 {
-  COMPUTE_START_INHERITED(TableBorder, (mPresContext), table, parentTable)
+  COMPUTE_START_INHERITED(TableBorder, (), table, parentTable)
 
   // border-collapse: enum, inherit, initial
   SetDiscrete(*aRuleData->ValueForBorderCollapse(), table->mBorderCollapse,
@@ -7924,9 +7916,7 @@ nsRuleNode::ComputeTableBorderData(void* aStartStruct,
               table->mEmptyCells, canStoreInRuleTree,
               SETDSC_ENUMERATED | SETDSC_UNSET_INHERIT,
               parentTable->mEmptyCells,
-              (mPresContext->CompatibilityMode() == eCompatibility_NavQuirks)
-              ? NS_STYLE_TABLE_EMPTY_CELLS_SHOW_BACKGROUND
-              : NS_STYLE_TABLE_EMPTY_CELLS_SHOW,
+              NS_STYLE_TABLE_EMPTY_CELLS_SHOW,
               0, 0, 0, 0);
 
   COMPUTE_END_INHERITED(TableBorder, table)

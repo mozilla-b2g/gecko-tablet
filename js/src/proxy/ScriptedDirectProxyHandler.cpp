@@ -143,16 +143,6 @@ IsSealed(JSContext* cx, HandleObject obj, HandleId id, bool *bp)
     return true;
 }
 
-static bool
-HasOwn(JSContext *cx, HandleObject obj, HandleId id, bool *bp)
-{
-    Rooted<PropertyDescriptor> desc(cx);
-    if (!JS_GetPropertyDescriptorById(cx, obj, id, &desc))
-        return false;
-    *bp = (desc.object() == obj);
-    return true;
-}
-
 // Get the [[ProxyHandler]] of a scripted direct proxy.
 static JSObject *
 GetDirectProxyHandlerObject(JSObject *proxy)
@@ -209,7 +199,7 @@ ArrayToIdVector(JSContext *cx, HandleObject proxy, HandleObject target, HandleVa
 
         // step iv
         bool isFixed;
-        if (!HasOwn(cx, target, id, &isFixed))
+        if (!HasOwnProperty(cx, target, id, &isFixed))
             return false;
 
         // step v
@@ -256,7 +246,7 @@ ArrayToIdVector(JSContext *cx, HandleObject proxy, HandleObject target, HandleVa
 
         // step ii
         bool isFixed;
-        if (!HasOwn(cx, target, id, &isFixed))
+        if (!HasOwnProperty(cx, target, id, &isFixed))
             return false;
 
         // step iii
@@ -1201,7 +1191,7 @@ js::proxy_revocable(JSContext *cx, unsigned argc, Value *vp)
 
     revoker->as<JSFunction>().initExtendedSlot(ScriptedDirectProxyHandler::REVOKE_SLOT, proxyVal);
 
-    RootedObject result(cx, NewBuiltinClassInstance(cx, &JSObject::class_));
+    RootedPlainObject result(cx, NewBuiltinClassInstance<PlainObject>(cx));
     if (!result)
         return false;
 

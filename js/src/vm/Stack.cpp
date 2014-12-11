@@ -963,7 +963,7 @@ FrameIter::isConstructing() const
 }
 
 bool
-FrameIter::ensureHasRematerializedFrame(ThreadSafeContext *cx)
+FrameIter::ensureHasRematerializedFrame(JSContext *cx)
 {
     MOZ_ASSERT(isIon());
     return !!activation()->asJit()->getRematerializedFrame(cx, data_.jitFrames_);
@@ -1445,7 +1445,7 @@ jit::JitActivation::clearRematerializedFrames()
 }
 
 jit::RematerializedFrame *
-jit::JitActivation::getRematerializedFrame(ThreadSafeContext *cx, const JitFrameIterator &iter, size_t inlineDepth)
+jit::JitActivation::getRematerializedFrame(JSContext *cx, const JitFrameIterator &iter, size_t inlineDepth)
 {
     // Only allow rematerializing from the same thread.
     MOZ_ASSERT(cx->perThreadData == cx_->perThreadData);
@@ -1511,7 +1511,7 @@ jit::JitActivation::registerIonFrameRecovery(RInstructionResults&& results)
 }
 
 jit::RInstructionResults *
-jit::JitActivation::maybeIonFrameRecovery(IonJSFrameLayout *fp)
+jit::JitActivation::maybeIonFrameRecovery(JitFrameLayout *fp)
 {
     for (RInstructionResults *it = ionRecovery_.begin(); it != ionRecovery_.end(); ) {
         if (it->frame() == fp)
@@ -1522,7 +1522,7 @@ jit::JitActivation::maybeIonFrameRecovery(IonJSFrameLayout *fp)
 }
 
 void
-jit::JitActivation::removeIonFrameRecovery(IonJSFrameLayout *fp)
+jit::JitActivation::removeIonFrameRecovery(JitFrameLayout *fp)
 {
     RInstructionResults *elem = maybeIonFrameRecovery(fp);
     if (!elem)

@@ -317,6 +317,7 @@ public:
                                          const FileDescriptor& aFileDescriptor)
                                          MOZ_OVERRIDE;
     virtual bool RecvShow(const nsIntSize& aSize,
+                          const ShowInfo& aInfo,
                           const ScrollingBehavior& aScrolling,
                           const TextureFactoryIdentifier& aTextureFactoryIdentifier,
                           const uint64_t& aLayersId,
@@ -351,7 +352,9 @@ public:
     virtual bool RecvRealMouseEvent(const mozilla::WidgetMouseEvent& event) MOZ_OVERRIDE;
     virtual bool RecvRealKeyEvent(const mozilla::WidgetKeyboardEvent& event,
                                   const MaybeNativeKeyBinding& aBindings) MOZ_OVERRIDE;
-    virtual bool RecvMouseWheelEvent(const mozilla::WidgetWheelEvent& event) MOZ_OVERRIDE;
+    virtual bool RecvMouseWheelEvent(const mozilla::WidgetWheelEvent& event,
+                                     const ScrollableLayerGuid& aGuid,
+                                     const uint64_t& aInputBlockId) MOZ_OVERRIDE;
     virtual bool RecvRealTouchEvent(const WidgetTouchEvent& aEvent,
                                     const ScrollableLayerGuid& aGuid,
                                     const uint64_t& aInputBlockId) MOZ_OVERRIDE;
@@ -503,6 +506,8 @@ protected:
 
     virtual bool RecvRequestNotifyAfterRemotePaint();
 
+    virtual bool RecvParentActivated(const bool& aActivated) MOZ_OVERRIDE;
+
 #ifdef MOZ_WIDGET_GONK
     void MaybeRequestPreinitCamera();
 #endif
@@ -550,6 +555,8 @@ private:
                     const uint64_t& aLayersId,
                     PRenderFrameChild* aRenderFrame);
 
+    void ApplyShowInfo(const ShowInfo& aInfo);
+
     // These methods are used for tracking synthetic mouse events
     // dispatched for compatibility.  On each touch event, we
     // UpdateTapState().  If we've detected that the current gesture
@@ -572,6 +579,22 @@ private:
 
     void SendPendingTouchPreventedResponse(bool aPreventDefault,
                                            const ScrollableLayerGuid& aGuid);
+
+    // Adds the scrollable layer target to the target list, and returns whether
+    // or not the caller should wait for a refresh to send a target
+    // notification.
+    bool PrepareForSetTargetAPZCNotification(const ScrollableLayerGuid& aGuid,
+                                             const uint64_t& aInputBlockId,
+                                             nsIFrame* aRootFrame,
+                                             const nsIntPoint& aRefPoint,
+                                             nsTArray<ScrollableLayerGuid>* aTargets);
+
+    // Sends a SetTarget notification for APZC, given one or more previous
+    // calls to PrepareForAPZCSetTargetNotification().
+    void SendSetTargetAPZCNotification(nsIPresShell* aShell,
+                                       const uint64_t& aInputBlockId,
+                                       const nsTArray<ScrollableLayerGuid>& aTargets,
+                                       bool aWaitForRefresh);
 
     void SendSetTargetAPZCNotification(const WidgetTouchEvent& aEvent,
                                        const mozilla::layers::ScrollableLayerGuid& aGuid,

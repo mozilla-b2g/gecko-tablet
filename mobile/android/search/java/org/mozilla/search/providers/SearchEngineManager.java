@@ -12,9 +12,9 @@ import android.util.Log;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.mozilla.gecko.AppConstants;
-import org.mozilla.gecko.BrowserLocaleManager;
 import org.mozilla.gecko.GeckoProfile;
 import org.mozilla.gecko.GeckoSharedPrefs;
+import org.mozilla.gecko.Locales;
 import org.mozilla.gecko.R;
 import org.mozilla.gecko.util.FileUtils;
 import org.mozilla.gecko.util.GeckoJarReader;
@@ -188,7 +188,7 @@ public class SearchEngineManager implements SharedPreferences.OnSharedPreference
             final JSONObject all = new JSONObject(FileUtils.getFileContents(prefFile));
 
             // First, check to see if there's a locale-specific override.
-            final String languageTag = BrowserLocaleManager.getLanguageTag(Locale.getDefault());
+            final String languageTag = Locales.getLanguageTag(Locale.getDefault());
             final String overridesKey = "LocalizablePreferences." + languageTag;
             if (all.has(overridesKey)) {
                 final JSONObject overridePrefs = all.getJSONObject(overridesKey);
@@ -289,6 +289,10 @@ public class SearchEngineManager implements SharedPreferences.OnSharedPreference
         }
 
         final File[] files = (new File(pluginsDir, "common")).listFiles();
+        if (files == null) {
+            Log.e(LOG_TAG, "Could not find search plugin files in distribution directory");
+            return null;
+        }
         return createEngineFromFileList(files, name);
     }
 
@@ -353,6 +357,10 @@ public class SearchEngineManager implements SharedPreferences.OnSharedPreference
         }
 
         final File[] files = pluginsDir.listFiles();
+        if (files == null) {
+            Log.e(LOG_TAG, "Could not find search plugin files in profile directory");
+            return null;
+        }
         return createEngineFromFileList(files, name);
     }
 
@@ -360,7 +368,7 @@ public class SearchEngineManager implements SharedPreferences.OnSharedPreference
      * This method iterates through an array of search plugin files, creating
      * SearchEngine instances until it finds one with the right name.
      *
-     * @param files Array of search plugin files.
+     * @param files Array of search plugin files. Should not be null.
      * @param name Search engine name.
      * @return SearchEngine instance for name.
      */
@@ -413,7 +421,7 @@ public class SearchEngineManager implements SharedPreferences.OnSharedPreference
         final Locale locale = Locale.getDefault();
 
         // First, try a file path for the full locale.
-        final String languageTag = BrowserLocaleManager.getLanguageTag(locale);
+        final String languageTag = Locales.getLanguageTag(locale);
         String url = getSearchPluginsJarURL(languageTag, fileName);
 
         InputStream in = GeckoJarReader.getStream(url);
@@ -422,7 +430,7 @@ public class SearchEngineManager implements SharedPreferences.OnSharedPreference
         }
 
         // If that doesn't work, try a file path for just the language.
-        final String language = BrowserLocaleManager.getLanguage(locale);
+        final String language = Locales.getLanguage(locale);
         if (!languageTag.equals(language)) {
             url = getSearchPluginsJarURL(language, fileName);
             in = GeckoJarReader.getStream(url);

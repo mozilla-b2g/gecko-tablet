@@ -15,6 +15,7 @@
   --theme-toolbar-background: #f0f1f2;
   --theme-selection-background: #4c9ed9;
   --theme-selection-color: #f5f7fa;
+  --theme-selection-background-semitransparent: rgba(76, 158, 217, .23);
   --theme-splitter-color: #aaaaaa;
   --theme-comment: hsl(90,2%,46%);
 
@@ -50,7 +51,7 @@
 }
 
 .theme-bg-darker {
-  background: #EFEFEF;
+  background: var(--theme-selection-background-semitransparent);
 }
 
 .theme-selected,
@@ -390,15 +391,6 @@ div.CodeMirror span.eval-text {
 
 .theme-tooltip-panel .devtools-tooltip-simple-text:last-child {
   border-bottom: 0;
-}
-
-.devtools-horizontal-splitter {
-  border-bottom: 1px solid var(--theme-splitter-color);
-}
-
-.devtools-side-splitter {
-  -moz-border-end: 1px solid var(--theme-splitter-color);
-  border-color: var(--theme-splitter-color); /* Needed for responsive container at low width. */
 }
 
 .CodeMirror-hints,

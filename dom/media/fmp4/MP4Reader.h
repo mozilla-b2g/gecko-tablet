@@ -26,7 +26,7 @@ typedef std::deque<mp4_demuxer::MP4Sample*> MP4SampleQueue;
 
 class MP4Stream;
 
-class MP4Reader : public MediaDecoderReader
+class MP4Reader MOZ_FINAL : public MediaDecoderReader
 {
   typedef mp4_demuxer::TrackType TrackType;
 
@@ -57,9 +57,6 @@ public:
 
   virtual bool IsMediaSeekable() MOZ_OVERRIDE;
 
-  virtual void NotifyDataArrived(const char* aBuffer, uint32_t aLength,
-                                 int64_t aOffset) MOZ_OVERRIDE;
-
   virtual int64_t GetEvictionOffset(double aTime) MOZ_OVERRIDE;
 
   virtual nsresult GetBuffered(dom::TimeRanges* aBuffered) MOZ_OVERRIDE;
@@ -74,7 +71,7 @@ public:
 
   virtual nsresult ResetDecode() MOZ_OVERRIDE;
 
-  virtual void Shutdown() MOZ_OVERRIDE;
+  virtual nsRefPtr<ShutdownPromise> Shutdown() MOZ_OVERRIDE;
 
 private:
 
@@ -159,10 +156,10 @@ private:
       , mInputExhausted(false)
       , mError(false)
       , mIsFlushing(false)
-      , mDrainComplete(false)
       , mOutputRequested(false)
       , mUpdateScheduled(false)
-      , mEOS(false)
+      , mDemuxEOS(false)
+      , mDrainComplete(false)
       , mDiscontinuity(false)
     {
     }
@@ -189,10 +186,10 @@ private:
     bool mInputExhausted;
     bool mError;
     bool mIsFlushing;
-    bool mDrainComplete;
     bool mOutputRequested;
     bool mUpdateScheduled;
-    bool mEOS;
+    bool mDemuxEOS;
+    bool mDrainComplete;
     bool mDiscontinuity;
   };
   DecoderData mAudio;

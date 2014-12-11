@@ -329,6 +329,15 @@ MediaEngineGonkVideoSource::StartImpl(webrtc::CaptureCapability aCapability) {
   mCameraControl->Start(&config);
   mCameraControl->Set(CAMERA_PARAM_PICTURE_SIZE, config.mPreviewSize);
 
+  nsTArray<nsString> focusModes;
+  mCameraControl->Get(CAMERA_PARAM_SUPPORTED_FOCUSMODES, focusModes);
+  for (nsTArray<nsString>::index_type i = 0; i < focusModes.Length(); ++i) {
+    if (focusModes[i].EqualsASCII("continuous-video")) {
+      mCameraControl->Set(CAMERA_PARAM_FOCUSMODE, focusModes[i]);
+      break;
+    }
+  }
+
   hal::RegisterScreenConfigurationObserver(this);
 }
 
@@ -341,7 +350,8 @@ MediaEngineGonkVideoSource::StopImpl() {
 }
 
 void
-MediaEngineGonkVideoSource::OnHardwareStateChange(HardwareState aState)
+MediaEngineGonkVideoSource::OnHardwareStateChange(HardwareState aState,
+                                                  nsresult aReason)
 {
   ReentrantMonitorAutoEnter sync(mCallbackMonitor);
   if (aState == CameraControlListener::kHardwareClosed) {

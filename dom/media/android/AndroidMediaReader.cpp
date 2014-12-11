@@ -99,13 +99,16 @@ nsresult AndroidMediaReader::ReadMetadata(MediaInfo* aInfo,
   return NS_OK;
 }
 
-void AndroidMediaReader::Shutdown()
+nsRefPtr<ShutdownPromise>
+AndroidMediaReader::Shutdown()
 {
   ResetDecode();
   if (mPlugin) {
     GetAndroidMediaPluginHost()->DestroyDecoder(mPlugin);
     mPlugin = nullptr;
   }
+
+  return MediaDecoderReader::Shutdown();
 }
 
 // Resets all state related to decoding, emptying all buffers etc.

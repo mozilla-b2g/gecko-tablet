@@ -108,6 +108,10 @@ InspectorPanel.prototype = {
     return this._target.client.traits.getUniqueSelector;
   },
 
+  get canGetUsedFontFaces() {
+    return this._target.client.traits.getUsedFontFaces;
+  },
+
   get canPasteInnerOrAdjacentHTML() {
     return this._target.client.traits.pasteHTML;
   },
@@ -321,7 +325,7 @@ InspectorPanel.prototype = {
                         "chrome://browser/content/devtools/computedview.xhtml",
                         "computedview" == defaultTab);
 
-    if (Services.prefs.getBoolPref("devtools.fontinspector.enabled") && !this.target.isRemote) {
+    if (Services.prefs.getBoolPref("devtools.fontinspector.enabled") && this.canGetUsedFontFaces) {
       this.sidebar.addTab("fontinspector",
                           "chrome://browser/content/devtools/fontinspector/font-inspector.xhtml",
                           "fontinspector" == defaultTab);
@@ -414,9 +418,18 @@ InspectorPanel.prototype = {
     if (reason !== "navigateaway" &&
         this.canGetUniqueSelector &&
         this.selection.isElementNode()) {
-      selection.getUniqueSelector().then((selector) => {
+      selection.getUniqueSelector().then(selector => {
         this.selectionCssSelector = selector;
-      }).then(null, console.error);
+      }).then(null, e => {
+        // Only log this as an error if the panel hasn't been destroyed in the
+        // meantime.
+        if (!this._panelDestroyer) {
+          console.error(e);
+        } else {
+          console.warn("Could not set the unique selector for the newly "+
+            "selected node, the inspector was destroyed.");
+        }
+      });
     }
 
     let selfUpdate = this.updating("inspector-panel");

@@ -1214,8 +1214,8 @@ class Assembler : public AssemblerShared
     {
     }
 
-    // We need to wait until an AutoIonContextAlloc is created by the
-    // IonMacroAssembler, before allocating any space.
+    // We need to wait until an AutoJitContextAlloc is created by the
+    // MacroAssembler, before allocating any space.
     void initWithAllocator() {
         m_buffer.initWithAllocator();
     }
@@ -1275,7 +1275,7 @@ class Assembler : public AssemblerShared
     void copyDataRelocationTable(uint8_t *dest);
     void copyPreBarrierTable(uint8_t *dest);
 
-    bool addCodeLabel(CodeLabel label);
+    void addCodeLabel(CodeLabel label);
     size_t numCodeLabels() const {
         return codeLabels_.length();
     }

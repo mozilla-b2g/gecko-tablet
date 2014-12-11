@@ -60,14 +60,20 @@ GARBAGE += \
 
 GARBAGE_DIRS += classes db jars res sync services generated
 
-JAVA_BOOTCLASSPATH = \
+# The bootclasspath is functionally identical to the classpath, but allows the
+# classes given to redefine classes in core packages, such as java.lang.
+# android.jar is here as it provides Android's definition of the Java Standard
+# Library. The compatability lib here tweaks a few of the core classes to paint
+# over changes in behaviour between versions.
+JAVA_BOOTCLASSPATH := \
     $(ANDROID_SDK)/android.jar \
     $(ANDROID_COMPAT_LIB) \
     $(NULL)
 
 JAVA_BOOTCLASSPATH := $(subst $(NULL) ,:,$(strip $(JAVA_BOOTCLASSPATH)))
 
-# If native devices are enabled, add Google Play Services and some of the v7 compat libraries
+# If native devices are enabled, add Google Play Services and some of the v7
+# compat libraries.
 ifdef MOZ_NATIVE_DEVICES
     JAVA_CLASSPATH += \
         $(GOOGLE_PLAY_SERVICES_LIB) \
@@ -78,7 +84,26 @@ endif
 
 JAVA_CLASSPATH := $(subst $(NULL) ,:,$(strip $(JAVA_CLASSPATH)))
 
+# Library jars that we're bundling: these are subject to Proguard before inclusion
+# into classes.dex.
+java_bundled_libs := \
+    $(ANDROID_COMPAT_LIB) \
+    $(NULL)
+
+ifdef MOZ_NATIVE_DEVICES
+    java_bundled_libs += \
+        $(GOOGLE_PLAY_SERVICES_LIB) \
+        $(ANDROID_MEDIAROUTER_LIB) \
+        $(ANDROID_APPCOMPAT_LIB) \
+        $(NULL)
+endif
+
+java_bundled_libs := $(subst $(NULL) ,:,$(strip $(java_bundled_libs)))
+
+# All the jars we're compiling from source. (not to be confused with
+# java_bundled_libs, which holds the jars which we're including as binaries).
 ALL_JARS = \
+  constants.jar \
   gecko-R.jar \
   gecko-browser.jar \
   gecko-mozglue.jar \
@@ -101,24 +126,20 @@ ALL_JARS += ../stumbler/stumbler.jar
 generated/org/mozilla/mozstumbler/R.java: .aapt.deps ;
 endif
 
+# The list of jars in Java classpath notation (colon-separated).
+all_jars_classpath := $(subst $(NULL) ,:,$(strip $(ALL_JARS)))
+
 include $(topsrcdir)/config/config.mk
 
-# Note that we're going to set up a dependency directly between embed_android.dex and the java files
-# Instead of on the .class files, since more than one .class file might be produced per .java file
-# Sync dependencies are provided in a single jar. Sync classes themselves are delivered as source,
-# because Android resource classes must be compiled together in order to avoid overlapping resource
-# indices.
-
-library_jars = \
-    $(JAVA_CLASSPATH) \
-    $(JAVA_BOOTCLASSPATH) \
+library_jars := \
+    $(ANDROID_SDK)/android.jar \
     $(NULL)
 
 library_jars := $(subst $(NULL) ,:,$(strip $(library_jars)))
 
 classes.dex: .proguard.deps
 	$(REPORT_BUILD)
-	$(DX) --dex --output=classes.dex jars-proguarded $(subst :, ,$(ANDROID_COMPAT_LIB):$(JAVA_CLASSPATH))
+	$(DX) --dex --output=classes.dex jars-proguarded
 
 ifdef MOZ_DISABLE_PROGUARD
   PROGUARD_PASSES=0
@@ -134,6 +155,8 @@ else
   endif
 endif
 
+proguard_config_dir=$(topsrcdir)/mobile/android/config/proguard
+
 # This stanza ensures that the set of GeckoView classes does not depend on too
 # much of Fennec, where "too much" is defined as the set of potentially
 # non-GeckoView classes that GeckoView already depended on at a certain point in
@@ -147,19 +170,41 @@ classycle_jar := $(topsrcdir)/mobile/android/build/classycle/classycle-1.4.1.jar
 		$(ALL_JARS)
 	@$(TOUCH) $@
 
-# We touch the target file before invoking Proguard so that Proguard's
-# outputs are fresher than the target, preventing a subsequent
-# invocation from thinking Proguard's outputs are stale.  This is safe
-# because Make removes the target file if any recipe command fails.
-.proguard.deps: .geckoview.deps $(ALL_JARS)
+# First, we delete debugging information from libraries. Having line-number
+# information for libraries for which we lack the source isn't useful, so this
+# saves us a bit of space. Importantly, Proguard has a bug causing it to
+# sometimes corrupt this information if present (which it does for some of the
+# included libraries). This corruption prevents dex from completing, so we need
+# to get rid of it.  This prevents us from seeing line numbers in stack traces
+# for stack frames inside libraries.
+#
+# This step can occur much earlier than the main Proguard pass: it needs only
+# gecko-R.jar to have been compiled (as that's where the library R.java files
+# end up), but it does block the main Proguard pass.
+.bundled.proguard.deps: gecko-R.jar $(proguard_config_dir)/strip-libs.cfg
 	$(REPORT_BUILD)
 	@$(TOUCH) $@
 	java \
 		-Xmx512m -Xms128m \
 		-jar $(ANDROID_SDK_ROOT)/tools/proguard/lib/proguard.jar \
-		@$(topsrcdir)/mobile/android/config/proguard.cfg \
+		@$(proguard_config_dir)/strip-libs.cfg \
+		-injars $(subst ::,:,$(java_bundled_libs))\
+		-outjars bundled-jars-nodebug \
+		-libraryjars $(library_jars):gecko-R.jar
+
+# We touch the target file before invoking Proguard so that Proguard's
+# outputs are fresher than the target, preventing a subsequent
+# invocation from thinking Proguard's outputs are stale.  This is safe
+# because Make removes the target file if any recipe command fails.
+.proguard.deps: .geckoview.deps .bundled.proguard.deps $(ALL_JARS) $(proguard_config_dir)/proguard.cfg
+	$(REPORT_BUILD)
+	@$(TOUCH) $@
+	java \
+		-Xmx512m -Xms128m \
+		-jar $(ANDROID_SDK_ROOT)/tools/proguard/lib/proguard.jar \
+		@$(proguard_config_dir)/proguard.cfg \
 		-optimizationpasses $(PROGUARD_PASSES) \
-		-injars $(subst ::,:,$(subst $(NULL) ,:,$(strip $(ALL_JARS)))) \
+		-injars $(subst ::,:,$(all_jars_classpath)):bundled-jars-nodebug \
 		-outjars jars-proguarded \
 		-libraryjars $(library_jars)
 
@@ -191,14 +236,6 @@ GeneratedJNIWrappers.cpp: $(ANNOTATION_PROCESSOR_JAR_FILES)
 GeneratedJNIWrappers.cpp: $(ALL_JARS)
 	$(JAVA) -classpath gecko-mozglue.jar:$(JAVA_BOOTCLASSPATH):$(JAVA_CLASSPATH):$(ANNOTATION_PROCESSOR_JAR_FILES) org.mozilla.gecko.annotationProcessors.AnnotationProcessor $(ALL_JARS)
 
-# Like generated/org/mozilla/fennec_$USERID.
-android_package_dir = $(addprefix generated/,$(subst .,/,$(ANDROID_PACKAGE_NAME)))
-
-# These _PP_JAVAFILES are specified in moz.build and defined in
-# backend.mk, which is included by config.mk.  Therefore this needs to
-# be defined after config.mk is included.
-PP_JAVAFILES := $(filter-out generated/org/mozilla/gecko/R.java,$(gecko-mozglue_PP_JAVAFILES) $(gecko-browser_PP_JAVAFILES))
-
 manifest := \
   AndroidManifest.xml.in \
   WebappManifestFragment.xml.frag.in \
@@ -210,27 +247,19 @@ PP_TARGETS += manifest
 # generates these files into generated/org/mozilla/gecko for
 # consumption by the build system and IDEs.
 
-preprocessed := $(addsuffix .in,$(subst generated/org/mozilla/gecko/,,$(filter generated/org/mozilla/gecko/%,$(PP_JAVAFILES))))
+# The list in moz.build looks like
+# 'preprocessed/org/mozilla/gecko/AppConstants.java'.  The list in
+# constants_PP_JAVAFILES looks like
+# 'generated/preprocessed/org/mozilla/gecko/AppConstants.java'.  We
+# need to write AppConstants.java.in to
+# generated/preprocessed/org/mozilla/gecko.
+preprocessed := $(addsuffix .in,$(subst generated/preprocessed/org/mozilla/gecko/,,$(filter generated/preprocessed/org/mozilla/gecko/%,$(constants_PP_JAVAFILES))))
 
-preprocessed_PATH := generated/org/mozilla/gecko
+preprocessed_PATH := generated/preprocessed/org/mozilla/gecko
 preprocessed_KEEP_PATH := 1
 preprocessed_FLAGS := --marker='//\\\#'
 
 PP_TARGETS += preprocessed
-
-# Certain source files have Java package name @ANDROID_PACKAGE_NAME@.
-# We hate these files but they are necessary for backwards
-# compatibility.  These special rules generate these files into
-# generated/org/mozilla/{firefox,firefox_beta,fennec,fennec_$USER} for
-# consumption by the build system and IDEs.
-
-preprocessed_package := $(addsuffix .in,$(subst $(android_package_dir)/,,$(filter $(android_package_dir)/%,$(PP_JAVAFILES))))
-
-preprocessed_package_PATH := $(android_package_dir)
-preprocessed_package_KEEP_PATH := 1
-preprocessed_package_FLAGS := --marker='//\\\#'
-
-PP_TARGETS += preprocessed_package
 
 include $(topsrcdir)/config/rules.mk
 
@@ -437,10 +466,11 @@ $(abspath $(DIST)/fennec/$(OMNIJAR_NAME)): FORCE
 	$(RM) $(DIST)/fennec/$(notdir $(OMNIJAR_NAME))
 
 # Targets built very early during a Gradle build.
-gradle-targets: $(abspath $(DIST)/fennec/$(OMNIJAR_NAME))
 gradle-targets: .aapt.deps
 
-.PHONY: gradle-targets
+gradle-omnijar: $(abspath $(DIST)/fennec/$(OMNIJAR_NAME))
+
+.PHONY: gradle-targets gradle-omnijar
 
 libs:: geckoview_resources.zip classes.dex jni-stubs.inc GeneratedJNIWrappers.cpp fennec_ids.txt
 	$(INSTALL) geckoview_resources.zip $(FINAL_TARGET)

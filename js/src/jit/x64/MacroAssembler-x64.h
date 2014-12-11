@@ -7,7 +7,7 @@
 #ifndef jit_x64_MacroAssembler_x64_h
 #define jit_x64_MacroAssembler_x64_h
 
-#include "jit/IonFrames.h"
+#include "jit/JitFrames.h"
 #include "jit/MoveResolver.h"
 #include "jit/shared/MacroAssembler-x86-shared.h"
 
@@ -1433,10 +1433,8 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         storeValue(JSVAL_TYPE_INT32, ScratchReg, Dest);
     }
 
-#ifdef JSGC_GENERATIONAL
     void branchPtrInNurseryRange(Condition cond, Register ptr, Register temp, Label *label);
     void branchValueIsNurseryObject(Condition cond, ValueOperand value, Register temp, Label *label);
-#endif
 };
 
 typedef MacroAssemblerX64 MacroAssemblerSpecific;

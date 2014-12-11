@@ -258,7 +258,10 @@ loop.contacts = (function(_, mozL10n) {
   });
 
   const ContactsList = React.createClass({
-    mixins: [React.addons.LinkedStateMixin],
+    mixins: [
+      React.addons.LinkedStateMixin,
+      loop.shared.mixins.WindowCloseMixin
+    ],
 
     /**
      * Contacts collection object
@@ -403,25 +406,25 @@ loop.contacts = (function(_, mozL10n) {
           this.props.startForm("contacts_edit", contact);
           break;
         case "remove":
-          navigator.mozLoop.confirm(
-            mozL10n.get("confirm_delete_contact_alert"),
-            mozL10n.get("confirm_delete_contact_remove_button"),
-            mozL10n.get("confirm_delete_contact_cancel_button"),
-            (err, result) => {
+          navigator.mozLoop.confirm({
+            message: mozL10n.get("confirm_delete_contact_alert"),
+            okButton: mozL10n.get("confirm_delete_contact_remove_button"),
+            cancelButton: mozL10n.get("confirm_delete_contact_cancel_button")
+          }, (err, result) => {
+            if (err) {
+              throw err;
+            }
+
+            if (!result) {
+              return;
+            }
+
+            navigator.mozLoop.contacts.remove(contact._guid, err => {
               if (err) {
                 throw err;
               }
-
-              if (!result) {
-                return;
-              }
-
-              navigator.mozLoop.contacts.remove(contact._guid, err => {
-                if (err) {
-                  throw err;
-                }
-              });
             });
+          });
           break;
         case "block":
         case "unblock":
@@ -435,11 +438,13 @@ loop.contacts = (function(_, mozL10n) {
         case "video-call":
           if (!contact.blocked) {
             navigator.mozLoop.calls.startDirectCall(contact, CALL_TYPES.AUDIO_VIDEO);
+            this.closeWindow();
           }
           break;
         case "audio-call":
           if (!contact.blocked) {
             navigator.mozLoop.calls.startDirectCall(contact, CALL_TYPES.AUDIO_ONLY);
+            this.closeWindow();
           }
           break;
         default:
@@ -635,7 +640,7 @@ loop.contacts = (function(_, mozL10n) {
           <input ref="email" type="email" required={phoneOrEmailRequired}
                  className={cx({pristine: this.state.pristine})}
                  valueLink={this.linkState("email")} />
-          <label>{mozL10n.get("new_contact_phone_placeholder")}</label>
+          <label>{mozL10n.get("new_contact_fxos_phone_placeholder")}</label>
           <input ref="tel" type="tel" required={phoneOrEmailRequired}
                  className={cx({pristine: this.state.pristine})}
                  valueLink={this.linkState("tel")} />

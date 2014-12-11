@@ -347,10 +347,8 @@ class NewObjectCache
 
     static void copyCachedToObject(JSObject *dst, JSObject *src, gc::AllocKind kind) {
         js_memcpy(dst, src, gc::Arena::thingSize(kind));
-#ifdef JSGC_GENERATIONAL
         Shape::writeBarrierPost(dst->shape_, &dst->shape_);
         types::TypeObject::writeBarrierPost(dst->type_, &dst->type_);
-#endif
     }
 };
 
@@ -364,19 +362,24 @@ class NewObjectCache
 class FreeOp : public JSFreeOp
 {
     Vector<void *, 0, SystemAllocPolicy> freeLaterList;
+    ThreadType threadType;
 
   public:
     static FreeOp *get(JSFreeOp *fop) {
         return static_cast<FreeOp *>(fop);
     }
 
-    explicit FreeOp(JSRuntime *rt)
-      : JSFreeOp(rt)
+    explicit FreeOp(JSRuntime *rt, ThreadType thread = MainThread)
+      : JSFreeOp(rt), threadType(thread)
     {}
 
     ~FreeOp() {
         for (size_t i = 0; i < freeLaterList.length(); i++)
             free_(freeLaterList[i]);
+    }
+
+    bool onBackgroundThread() {
+        return threadType == BackgroundThread;
     }
 
     inline void free_(void *p);
@@ -702,7 +705,16 @@ struct JSRuntime : public JS::shadow::Runtime,
   private:
     mozilla::Atomic<uint32_t, mozilla::Relaxed> interrupt_;
     mozilla::Atomic<uint32_t, mozilla::Relaxed> interruptPar_;
+
+    /* Call this to accumulate telemetry data. */
+    JSAccumulateTelemetryDataCallback telemetryCallback;
   public:
+    // Accumulates data for Firefox telemetry. |id| is the ID of a JS_TELEMETRY_*
+    // histogram. |key| provides an additional key to identify the histogram.
+    // |sample| is the data to add to the histogram.
+    void addTelemetry(int id, uint32_t sample, const char *key = nullptr);
+
+    void setTelemetryCallback(JSRuntime *rt, JSAccumulateTelemetryDataCallback callback);
 
     enum InterruptMode {
         RequestInterruptUrgent,
@@ -1084,9 +1096,6 @@ struct JSRuntime : public JS::shadow::Runtime,
 
     /* Structured data callbacks are runtime-wide. */
     const JSStructuredCloneCallbacks *structuredCloneCallbacks;
-
-    /* Call this to accumulate telemetry data. */
-    JSAccumulateTelemetryDataCallback telemetryCallback;
 
     /* Optional error reporter. */
     JSErrorReporter     errorReporter;

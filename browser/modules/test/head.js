@@ -2,7 +2,8 @@
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
 Cu.import("resource://gre/modules/Promise.jsm");
-Cu.import("resource:///modules/UITour.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "UITour",
+  "resource:///modules/UITour.jsm");
 Cu.import("resource://gre/modules/Task.jsm");
 
 const SINGLE_TRY_TIMEOUT = 100;
@@ -134,6 +135,12 @@ function showInfoPromise(...args) {
   return promisePanelElementShown(window, popup);
 }
 
+function showMenuPromise(name) {
+  return new Promise(resolve => {
+    gContentAPI.showMenu(name, () => resolve());
+  });
+}
+
 function waitForCallbackResultPromise() {
   return waitForConditionPromise(() => {
     return gContentWindow.callbackResult;
@@ -219,6 +226,7 @@ function UITourTest() {
 
   registerCleanupFunction(function() {
     delete window.UITour;
+    delete window.UITourMetricsProvider;
     delete window.gContentWindow;
     delete window.gContentAPI;
     if (gTestTab)

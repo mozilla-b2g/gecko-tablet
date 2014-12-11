@@ -3,6 +3,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 include $(MOZILLA_DIR)/toolkit/mozapps/installer/package-name.mk
+include $(MOZILLA_DIR)/toolkit/mozapps/installer/make-eme.mk
 
 # This is how we create the binary packages we release to the public.
 
@@ -540,8 +541,9 @@ MAKE_PACKAGE    = cd ./$(PKG_DMG_SOURCE) && $(MOZ_SIGN_PREPARED_PACKAGE_CMD) $(M
                   && cd $(PACKAGE_BASE_DIR) \
                   && $(INNER_MAKE_PACKAGE)
 else
-MAKE_PACKAGE    = $(MOZ_SIGN_PREPARED_PACKAGE_CMD) \
-		  $(MOZ_PKG_DIR) && $(INNER_MAKE_PACKAGE)
+MAKE_PACKAGE    = $(MOZ_SIGN_PREPARED_PACKAGE_CMD) $(MOZ_PKG_DIR) \
+                  && $(or $(MAKE_SIGN_EME_VOUCHER),true) \
+                  && $(INNER_MAKE_PACKAGE)
 endif #Darwin
 
 else

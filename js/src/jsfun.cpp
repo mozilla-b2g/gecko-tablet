@@ -410,9 +410,9 @@ ResolveInterpretedFunctionPrototype(JSContext *cx, HandleObject obj)
         objProto = obj->global().getOrCreateObjectPrototype(cx);
     if (!objProto)
         return nullptr;
-    const Class *clasp = &JSObject::class_;
 
-    RootedObject proto(cx, NewObjectWithGivenProto(cx, clasp, objProto, nullptr, SingletonObject));
+    RootedPlainObject proto(cx, NewObjectWithGivenProto<PlainObject>(cx, objProto,
+                                                                     nullptr, SingletonObject));
     if (!proto)
         return nullptr;
 
@@ -894,13 +894,13 @@ const Class JSFunction::class_ = {
     js_Function_str,
     JSCLASS_IMPLEMENTS_BARRIERS |
     JSCLASS_HAS_CACHED_PROTO(JSProto_Function),
-    JS_PropertyStub,         /* addProperty */
-    JS_DeletePropertyStub,   /* delProperty */
+    nullptr,                 /* addProperty */
+    nullptr,                 /* delProperty */
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
     fun_enumerate,
     js::fun_resolve,
-    JS_ConvertStub,
+    nullptr,                 /* convert     */
     nullptr,                 /* finalize    */
     nullptr,                 /* call        */
     fun_hasInstance,
@@ -1916,7 +1916,7 @@ FunctionConstructor(JSContext *cx, unsigned argc, Value *vp, GeneratorKind gener
         ok = frontend::CompileStarGeneratorBody(cx, &fun, options, formals, srcBuf);
     else
         ok = frontend::CompileFunctionBody(cx, &fun, options, formals, srcBuf,
-                                           /* enclosingScope = */ NullPtr());
+                                           /* enclosingScope = */ js::NullPtr());
     args.rval().setObject(*fun);
     return ok;
 }

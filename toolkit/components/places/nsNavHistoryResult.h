@@ -105,10 +105,10 @@ private:
 #define NS_NAVHISTORYRESULT_IID \
   { 0x455d1d40, 0x1b9b, 0x40e6, { 0xa6, 0x41, 0x8b, 0xb7, 0xe8, 0x82, 0x23, 0x87 } }
 
-class nsNavHistoryResult : public nsSupportsWeakReference,
-                           public nsINavHistoryResult,
-                           public nsINavBookmarkObserver,
-                           public nsINavHistoryObserver
+class nsNavHistoryResult MOZ_FINAL : public nsSupportsWeakReference,
+                                     public nsINavHistoryResult,
+                                     public nsINavBookmarkObserver,
+                                     public nsINavHistoryObserver
 {
 public:
   static nsresult NewHistoryResult(nsINavHistoryQuery** aQueries,
@@ -203,7 +203,7 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsNavHistoryResult, NS_NAVHISTORYRESULT_IID)
 // implementation and all subclasses. More complex are GetIcon, GetParent
 // (which depends on the definition of container result node), and GetUri
 // (which is overridded for lazy construction for some containers).
-#define NS_IMPLEMENT_SIMPLE_RESULTNODE_NO_GETITEMMID \
+#define NS_IMPLEMENT_SIMPLE_RESULTNODE \
   NS_IMETHOD GetTitle(nsACString& aTitle) \
     { aTitle = mTitle; return NS_OK; } \
   NS_IMETHOD GetAccessCount(uint32_t* aAccessCount) \
@@ -217,10 +217,7 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsNavHistoryResult, NS_NAVHISTORYRESULT_IID)
   NS_IMETHOD GetDateAdded(PRTime* aDateAdded) \
     { *aDateAdded = mDateAdded; return NS_OK; } \
   NS_IMETHOD GetLastModified(PRTime* aLastModified) \
-    { *aLastModified = mLastModified; return NS_OK; }
-
-#define NS_IMPLEMENT_SIMPLE_RESULTNODE \
-  NS_IMPLEMENT_SIMPLE_RESULTNODE_NO_GETITEMMID \
+    { *aLastModified = mLastModified; return NS_OK; } \
   NS_IMETHOD GetItemId(int64_t* aId) \
     { *aId = mItemId; return NS_OK; }
 
@@ -233,8 +230,8 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsNavHistoryResult, NS_NAVHISTORYRESULT_IID)
 // (GetUri is redefined only by QueryResultNode and FolderResultNode because
 // the queries might not necessarily be parsed. The rest just return the node's
 // buffer.)
-#define NS_FORWARD_COMMON_RESULTNODE_TO_BASE_NO_GETITEMMID \
-  NS_IMPLEMENT_SIMPLE_RESULTNODE_NO_GETITEMMID \
+#define NS_FORWARD_COMMON_RESULTNODE_TO_BASE \
+  NS_IMPLEMENT_SIMPLE_RESULTNODE \
   NS_IMETHOD GetIcon(nsACString& aIcon) \
     { return nsNavHistoryResultNode::GetIcon(aIcon); } \
   NS_IMETHOD GetParent(nsINavHistoryContainerResultNode** aParent) \
@@ -247,11 +244,6 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsNavHistoryResult, NS_NAVHISTORYRESULT_IID)
     { return nsNavHistoryResultNode::GetPageGuid(aPageGuid); } \
   NS_IMETHOD GetBookmarkGuid(nsACString& aBookmarkGuid) \
     { return nsNavHistoryResultNode::GetBookmarkGuid(aBookmarkGuid); }
-
-#define NS_FORWARD_COMMON_RESULTNODE_TO_BASE \
-  NS_FORWARD_COMMON_RESULTNODE_TO_BASE_NO_GETITEMMID \
-  NS_IMETHOD GetItemId(int64_t* aId) \
-    { *aId = mItemId; return NS_OK; }
 
 class nsNavHistoryResultNode : public nsINavHistoryResultNode
 {
@@ -619,9 +611,9 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsNavHistoryContainerResultNode,
 //    bookmarks. This keeps itself in sync by listening to history and
 //    bookmark notifications.
 
-class nsNavHistoryQueryResultNode : public nsNavHistoryContainerResultNode,
-                                    public nsINavHistoryQueryResultNode,
-                                    public nsINavBookmarkObserver
+class nsNavHistoryQueryResultNode MOZ_FINAL : public nsNavHistoryContainerResultNode,
+                                              public nsINavHistoryQueryResultNode,
+                                              public nsINavBookmarkObserver
 {
 public:
   nsNavHistoryQueryResultNode(const nsACString& aTitle,
@@ -700,10 +692,10 @@ protected:
 //    Overridden container type for bookmark folders. It will keep the contents
 //    of the folder in sync with the bookmark service.
 
-class nsNavHistoryFolderResultNode : public nsNavHistoryContainerResultNode,
-                                     public nsINavHistoryQueryResultNode,
-                                     public nsINavBookmarkObserver,
-                                     public mozilla::places::AsyncStatementCallback
+class nsNavHistoryFolderResultNode MOZ_FINAL : public nsNavHistoryContainerResultNode,
+                                               public nsINavHistoryQueryResultNode,
+                                               public nsINavBookmarkObserver,
+                                               public mozilla::places::AsyncStatementCallback
 {
 public:
   nsNavHistoryFolderResultNode(const nsACString& aTitle,
@@ -711,9 +703,9 @@ public:
                                int64_t aFolderId);
 
   NS_DECL_ISUPPORTS_INHERITED
-  NS_FORWARD_COMMON_RESULTNODE_TO_BASE_NO_GETITEMMID
+  NS_FORWARD_COMMON_RESULTNODE_TO_BASE
   NS_IMETHOD GetType(uint32_t* type) {
-    if (mQueryItemId != -1) {
+    if (mTargetFolderItemId != mItemId) {
       *type = nsNavHistoryResultNode::RESULT_TYPE_FOLDER_SHORTCUT;
     } else {
       *type = nsNavHistoryResultNode::RESULT_TYPE_FOLDER;
@@ -723,7 +715,6 @@ public:
   NS_IMETHOD GetUri(nsACString& aURI);
   NS_FORWARD_CONTAINERNODE_EXCEPT_HASCHILDREN
   NS_IMETHOD GetHasChildren(bool* aHasChildren);
-  NS_IMETHOD GetItemId(int64_t *aItemId);
   NS_DECL_NSINAVHISTORYQUERYRESULTNODE
 
   virtual nsresult OpenContainer();
@@ -741,9 +732,12 @@ public:
   // after the container is closed until a notification comes in
   bool mContentsValid;
 
-  // If the node is generated from a place:folder=X query, this is the query's
-  // itemId.
-  int64_t mQueryItemId;
+  // If the node is generated from a place:folder=X query, this is the target
+  // folder id and GUID.  For regular folder nodes, they are set to the same
+  // values as mItemId and mBookmarkGuid. For more complex queries, they are set
+  // to -1/an empty string.
+  int64_t mTargetFolderItemId;
+  nsCString mTargetFolderGuid;
 
   nsresult FillChildren();
   void ClearChildren(bool aUnregister);

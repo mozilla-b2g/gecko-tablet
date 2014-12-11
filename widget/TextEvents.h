@@ -342,6 +342,20 @@ public:
   {
     return mRanges ? mRanges->Length() : 0;
   }
+
+  bool CausesDOMTextEvent() const
+  {
+    return message == NS_COMPOSITION_CHANGE ||
+           message == NS_COMPOSITION_COMMIT ||
+           message == NS_COMPOSITION_COMMIT_AS_IS;
+  }
+
+  bool CausesDOMCompositionEndEvent() const
+  {
+    return message == NS_COMPOSITION_END ||
+           message == NS_COMPOSITION_COMMIT ||
+           message == NS_COMPOSITION_COMMIT_AS_IS;
+  }
 };
 
 /******************************************************************************
@@ -431,6 +445,13 @@ public:
     NS_ASSERTION(message == NS_QUERY_SELECTED_TEXT,
                  "not querying selection");
     return mReply.mOffset + (mReply.mReversed ? 0 : mReply.mString.Length());
+  }
+
+  mozilla::WritingMode GetWritingMode(void) const
+  {
+    NS_ASSERTION(message == NS_QUERY_SELECTED_TEXT,
+                 "not querying selection");
+    return mReply.mWritingMode;
   }
 
   bool mSucceeded;

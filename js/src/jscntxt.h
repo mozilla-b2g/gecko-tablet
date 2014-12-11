@@ -33,7 +33,7 @@ js_ReportOverRecursed(js::ThreadSafeContext *cx);
 namespace js {
 
 namespace jit {
-class IonContext;
+class JitContext;
 class CompileCompartment;
 class DebugModeOSRVolatileJitFrameIterator;
 }
@@ -313,7 +313,7 @@ class ExclusiveContext : public ThreadSafeContext
     friend class AutoLockForExclusiveAccess;
     friend struct StackBaseShape;
     friend void JSScript::initCompartment(ExclusiveContext *cx);
-    friend class jit::IonContext;
+    friend class jit::JitContext;
 
     // The thread on which this context is running, if this is not a JSContext.
     HelperThread *helperThread_;
@@ -534,25 +534,10 @@ struct JSContext : public js::ExclusiveContext,
     inline JSScript *currentScript(jsbytecode **pc = nullptr,
                                    MaybeAllowCrossCompartment = DONT_ALLOW_CROSS_COMPARTMENT) const;
 
-#ifdef MOZ_TRACE_JSCALLS
-    /* Function entry/exit debugging callback. */
-    JSFunctionCallback    functionCallback;
-
-    void doFunctionCallback(const JSFunction *fun,
-                            const JSScript *scr,
-                            int entering) const
-    {
-        if (functionCallback)
-            functionCallback(fun, scr, this, entering);
-    }
-#endif
-
     // The generational GC nursery may only be used on the main thread.
-#ifdef JSGC_GENERATIONAL
     inline js::Nursery &nursery() {
         return runtime_->gc.nursery;
     }
-#endif
 
     void minorGC(JS::gcreason::Reason reason) {
         runtime_->gc.minorGC(this, reason);

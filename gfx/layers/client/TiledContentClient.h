@@ -9,6 +9,7 @@
 #include <stddef.h>                     // for size_t
 #include <stdint.h>                     // for uint16_t
 #include <algorithm>                    // for swap
+#include <limits>
 #include "Layers.h"                     // for LayerManager, etc
 #include "TiledLayerBuffer.h"           // for TiledLayerBuffer
 #include "Units.h"                      // for CSSPoint
@@ -399,6 +400,8 @@ public:
     , mLastPaintContentType(gfxContentType::COLOR)
     , mLastPaintSurfaceMode(SurfaceMode::SURFACE_OPAQUE)
     , mSharedFrameMetricsHelper(nullptr)
+    , mTilingOrigin(std::numeric_limits<int32_t>::max(),
+                    std::numeric_limits<int32_t>::max())
   {}
 
   void PaintThebes(const nsIntRegion& aNewValidRegion,
@@ -476,6 +479,16 @@ private:
   // When using Moz2D's CreateTiledDrawTarget we maintain a list of gfx::Tiles
   std::vector<gfx::Tile> mMoz2DTiles;
   /**
+   * While we're adding tiles, this is used to keep track of the position of
+   * the top-left of the top-left-most tile.  When we come to wrap the tiles in
+   * TiledDrawTarget we subtract the value of this member from each tile's
+   * offset so that all the tiles have a positive offset, then add a
+   * translation to the TiledDrawTarget to compensate.  This is important so
+   * that the mRect of the TiledDrawTarget is always at a positive x/y
+   * position, otherwise its GetSize() methods will be broken.
+   */
+  gfx::IntPoint mTilingOrigin;
+  /**
    * Calculates the region to update in a single progressive update transaction.
    * This employs some heuristics to update the most 'sensible' region to
    * update at this point in time, and how large an update should be performed
@@ -523,7 +536,7 @@ protected:
 public:
   virtual TextureInfo GetTextureInfo() const MOZ_OVERRIDE
   {
-    return TextureInfo(CompositableType::BUFFER_TILED);
+    return TextureInfo(CompositableType::CONTENT_TILED);
   }
 
   virtual void ClearCachedResources() MOZ_OVERRIDE;

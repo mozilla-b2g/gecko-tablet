@@ -1383,7 +1383,7 @@ public abstract class GeckoApp
             throw new RuntimeException("onLocaleReady must always be called from the UI thread.");
         }
 
-        final Locale loc = BrowserLocaleManager.parseLocaleCode(locale);
+        final Locale loc = Locales.parseLocaleCode(locale);
         if (loc.equals(mLastLocale)) {
             Log.d(LOGTAG, "New locale same as old; onLocaleReady has nothing to do.");
         }
@@ -1514,14 +1514,17 @@ public abstract class GeckoApp
         // External URLs should always be loaded regardless of whether Gecko is
         // already running.
         if (isExternalURL) {
+            // Restore tabs before opening an external URL so that the new tab
+            // is animated properly.
+            Tabs.getInstance().notifyListeners(null, Tabs.TabEvents.RESTORED);
             loadStartupTab(passedUri);
-        } else if (!mIsRestoringActivity) {
-            loadStartupTab(null);
-        }
+        } else {
+            if (!mIsRestoringActivity) {
+                loadStartupTab(null);
+            }
 
-        // We now have tab stubs from the last session. Any future tabs should
-        // be animated.
-        Tabs.getInstance().notifyListeners(null, Tabs.TabEvents.RESTORED);
+            Tabs.getInstance().notifyListeners(null, Tabs.TabEvents.RESTORED);
+        }
 
         // If we're not restoring, move the session file so it can be read for
         // the last tabs section.
@@ -2116,7 +2119,7 @@ public abstract class GeckoApp
         final LocaleManager localeManager = BrowserLocaleManager.getInstance();
         final Locale changed = localeManager.onSystemConfigurationChanged(this, getResources(), newConfig, mLastLocale);
         if (changed != null) {
-            onLocaleChanged(BrowserLocaleManager.getLanguageTag(changed));
+            onLocaleChanged(Locales.getLanguageTag(changed));
         }
 
         // onConfigurationChanged is not called for 180 degree orientation changes,

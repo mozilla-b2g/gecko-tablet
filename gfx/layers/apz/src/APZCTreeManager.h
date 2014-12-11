@@ -143,10 +143,11 @@ public:
    * The following values may be returned by this function:
    * nsEventStatus_eConsumeNoDefault is returned to indicate the
    *   caller should discard the event with extreme prejudice.
-   *   Currently this is only returned if the APZ determines that
-   *   something is in overscroll and the event should be ignored entirely.
-   *   There may be other scenarios where this return code might be used in
-   *   the future.
+   *   Currently this is only returned if the APZ determines that something is
+   *   in overscroll and the event should be ignored entirely, or if the input
+   *   event is part of a extended gesture like flywheel scrolling, and gets
+   *   consumed within the APZ code. There may be other scenarios where this
+   *   return code might be used in the future.
    * nsEventStatus_eIgnore is returned to indicate that the APZ code didn't
    *   use this event. This might be because it was directed at a point on
    *   the screen where there was no APZ, or because the thing the user was
@@ -210,8 +211,7 @@ public:
    * that have come in. If |aPreventDefault| is true, any touch events in the
    * queue will be discarded.
    */
-  void ContentReceivedTouch(uint64_t aInputBlockId,
-                            bool aPreventDefault);
+  void ContentReceivedInputBlock(uint64_t aInputBlockId, bool aPreventDefault);
 
   /**
    * When the event regions code is enabled, this function should be invoked to
@@ -412,6 +412,9 @@ private:
   already_AddRefed<AsyncPanZoomController> GetTouchInputBlockAPZC(const MultiTouchInput& aEvent,
                                                                   HitTestResult* aOutHitResult);
   nsEventStatus ProcessTouchInput(MultiTouchInput& aInput,
+                                  ScrollableLayerGuid* aOutTargetGuid,
+                                  uint64_t* aOutInputBlockId);
+  nsEventStatus ProcessWheelEvent(WidgetWheelEvent& aEvent,
                                   ScrollableLayerGuid* aOutTargetGuid,
                                   uint64_t* aOutInputBlockId);
   nsEventStatus ProcessEvent(WidgetInputEvent& inputEvent,

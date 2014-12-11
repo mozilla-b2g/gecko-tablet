@@ -100,7 +100,7 @@ MediaSourceReader::RequestAudioData()
   MSE_DEBUGV("MediaSourceReader(%p)::RequestAudioData", this);
   if (!mAudioReader) {
     MSE_DEBUG("MediaSourceReader(%p)::RequestAudioData called with no audio reader", this);
-    GetCallback()->OnNotDecoded(MediaData::AUDIO_DATA, RequestSampleCallback::DECODE_ERROR);
+    GetCallback()->OnNotDecoded(MediaData::AUDIO_DATA, DECODE_ERROR);
     return;
   }
   mAudioIsSeeking = false;
@@ -139,7 +139,7 @@ MediaSourceReader::RequestVideoData(bool aSkipToNextKeyframe, int64_t aTimeThres
              this, aSkipToNextKeyframe, aTimeThreshold);
   if (!mVideoReader) {
     MSE_DEBUG("MediaSourceReader(%p)::RequestVideoData called with no video reader", this);
-    GetCallback()->OnNotDecoded(MediaData::VIDEO_DATA, RequestSampleCallback::DECODE_ERROR);
+    GetCallback()->OnNotDecoded(MediaData::VIDEO_DATA, DECODE_ERROR);
     return;
   }
   if (aSkipToNextKeyframe) {
@@ -177,16 +177,16 @@ MediaSourceReader::OnVideoDecoded(VideoData* aSample)
 }
 
 void
-MediaSourceReader::OnNotDecoded(MediaData::Type aType, RequestSampleCallback::NotDecodedReason aReason)
+MediaSourceReader::OnNotDecoded(MediaData::Type aType, NotDecodedReason aReason)
 {
   MSE_DEBUG("MediaSourceReader(%p)::OnNotDecoded aType=%u aReason=%u IsEnded: %d", this, aType, aReason, IsEnded());
-  if (aReason == RequestSampleCallback::DECODE_ERROR) {
+  if (aReason == DECODE_ERROR || aReason == CANCELED) {
     GetCallback()->OnNotDecoded(aType, aReason);
     return;
   }
   // End of stream. Force switching past this stream to another reader by
   // switching to the end of the buffered range.
-  MOZ_ASSERT(aReason == RequestSampleCallback::END_OF_STREAM);
+  MOZ_ASSERT(aReason == END_OF_STREAM);
   nsRefPtr<MediaDecoderReader> reader = aType == MediaData::AUDIO_DATA ?
                                           mAudioReader : mVideoReader;
 
@@ -227,26 +227,44 @@ MediaSourceReader::OnNotDecoded(MediaData::Type aType, RequestSampleCallback::No
 
   // If the entire MediaSource is done, generate an EndOfStream.
   if (IsEnded()) {
-    GetCallback()->OnNotDecoded(aType, RequestSampleCallback::END_OF_STREAM);
+    GetCallback()->OnNotDecoded(aType, END_OF_STREAM);
     return;
   }
 
   // We don't have the data the caller wants. Tell that we're waiting for JS to
   // give us more data.
-  GetCallback()->OnNotDecoded(aType, RequestSampleCallback::WAITING_FOR_DATA);
+  GetCallback()->OnNotDecoded(aType, WAITING_FOR_DATA);
+}
+
+nsRefPtr<ShutdownPromise>
+MediaSourceReader::Shutdown()
+{
+  MOZ_ASSERT(mMediaSourceShutdownPromise.IsEmpty());
+  nsRefPtr<ShutdownPromise> p = mMediaSourceShutdownPromise.Ensure(__func__);
+
+  ContinueShutdown(true);
+  return p;
 }
 
 void
-MediaSourceReader::Shutdown()
+MediaSourceReader::ContinueShutdown(bool aSuccess)
 {
-  MediaDecoderReader::Shutdown();
-  for (uint32_t i = 0; i < mTrackBuffers.Length(); ++i) {
-    mTrackBuffers[i]->Shutdown();
+  MOZ_ASSERT(aSuccess);
+  if (mTrackBuffers.Length()) {
+    mTrackBuffers[0]->Shutdown()->Then(GetTaskQueue(), __func__, this,
+                                       &MediaSourceReader::ContinueShutdown,
+                                       &MediaSourceReader::ContinueShutdown);
+    mShutdownTrackBuffers.AppendElement(mTrackBuffers[0]);
+    mTrackBuffers.RemoveElementAt(0);
+    return;
   }
+
   mAudioTrack = nullptr;
   mAudioReader = nullptr;
   mVideoTrack = nullptr;
   mVideoReader = nullptr;
+
+  MediaDecoderReader::Shutdown()->ChainTo(mMediaSourceShutdownPromise.Steal(), __func__);
 }
 
 void
@@ -259,11 +277,12 @@ MediaSourceReader::BreakCycles()
   MOZ_ASSERT(!mAudioReader);
   MOZ_ASSERT(!mVideoTrack);
   MOZ_ASSERT(!mVideoReader);
+  MOZ_ASSERT(!mTrackBuffers.Length());
 
-  for (uint32_t i = 0; i < mTrackBuffers.Length(); ++i) {
-    mTrackBuffers[i]->BreakCycles();
+  for (uint32_t i = 0; i < mShutdownTrackBuffers.Length(); ++i) {
+    mShutdownTrackBuffers[i]->BreakCycles();
   }
-  mTrackBuffers.Clear();
+  mShutdownTrackBuffers.Clear();
 }
 
 already_AddRefed<MediaDecoderReader>
@@ -366,13 +385,22 @@ MediaSourceReader::CreateSubDecoder(const nsACString& aType)
     reader->SetStartTime(0);
   }
 
+  // This part is icky. It would be nicer to just give each subreader its own
+  // task queue. Unfortunately though, Request{Audio,Video}Data implementations
+  // currently assert that they're on "the decode thread", and so having
+  // separate task queues makes MediaSource stuff unnecessarily cumbersome. We
+  // should remove the need for these assertions (which probably involves making
+  // all Request*Data implementations fully async), and then get rid of the
+  // borrowing.
+  reader->SetBorrowedTaskQueue(GetTaskQueue());
+
   // Set a callback on the subreader that forwards calls to this reader.
   // This reader will then forward them onto the state machine via this
   // reader's callback.
   RefPtr<MediaDataDecodedListener<MediaSourceReader>> callback =
-    new MediaDataDecodedListener<MediaSourceReader>(this, GetTaskQueue());
+    new MediaDataDecodedListener<MediaSourceReader>(this, reader->GetTaskQueue());
   reader->SetCallback(callback);
-  reader->SetTaskQueue(GetTaskQueue());
+
 #ifdef MOZ_FMP4
   reader->SetSharedDecoderManager(mSharedDecoderManager);
 #endif

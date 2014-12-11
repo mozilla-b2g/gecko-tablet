@@ -517,7 +517,6 @@ public:
 
     static const char* GetFeatureName(GLFeature feature);
 
-
 private:
     std::bitset<size_t(GLFeature::EnumMax)> mAvailableFeatures;
 
@@ -2730,7 +2729,7 @@ public:
         AFTER_GL_CALL;
     }
 
-    void fDeleteTransformFeedbacks(GLsizei n, GLuint* ids)
+    void fDeleteTransformFeedbacks(GLsizei n, const GLuint* ids)
     {
         BEFORE_GL_CALL;
         ASSERT_SYMBOL_PRESENT(fDeleteTransformFeedbacks);

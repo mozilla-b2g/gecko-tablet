@@ -241,6 +241,9 @@ struct JSCompartment
      */
     bool                         globalWriteBarriered;
 
+    // Non-zero if any typed objects in this compartment might be neutered.
+    int32_t                      neuteredTypedObjects;
+
   public:
     void addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
                                 size_t *tiAllocationSiteTables,
@@ -427,8 +430,8 @@ struct JSCompartment
     // InterpreterFrame::isDebuggee, and Baseline::isDebuggee are enumerated
     // below.
     //
-    // 1. When a compartment's isDebuggee() == true, relazification and lazy
-    //    parsing are disabled.
+    // 1. When a compartment's isDebuggee() == true, relazification, lazy
+    //    parsing, and asm.js are disabled.
     //
     // 2. When a compartment's debugObservesAllExecution() == true, all of the
     //    compartment's scripts are considered debuggee scripts.

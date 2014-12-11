@@ -139,7 +139,7 @@ MP4Reader::~MP4Reader()
   MOZ_COUNT_DTOR(MP4Reader);
 }
 
-void
+nsRefPtr<ShutdownPromise>
 MP4Reader::Shutdown()
 {
   MOZ_ASSERT(GetTaskQueue()->IsCurrentThreadIn());
@@ -150,7 +150,8 @@ MP4Reader::Shutdown()
     mAudio.mDecoder = nullptr;
   }
   if (mAudio.mTaskQueue) {
-    mAudio.mTaskQueue->Shutdown();
+    mAudio.mTaskQueue->BeginShutdown();
+    mAudio.mTaskQueue->AwaitShutdownAndIdle();
     mAudio.mTaskQueue = nullptr;
   }
   if (mVideo.mDecoder) {
@@ -159,7 +160,8 @@ MP4Reader::Shutdown()
     mVideo.mDecoder = nullptr;
   }
   if (mVideo.mTaskQueue) {
-    mVideo.mTaskQueue->Shutdown();
+    mVideo.mTaskQueue->BeginShutdown();
+    mVideo.mTaskQueue->AwaitShutdownAndIdle();
     mVideo.mTaskQueue = nullptr;
   }
   // Dispose of the queued sample before shutting down the demuxer
@@ -169,6 +171,8 @@ MP4Reader::Shutdown()
     mPlatform->Shutdown();
     mPlatform = nullptr;
   }
+
+  return MediaDecoderReader::Shutdown();
 }
 
 void
@@ -315,7 +319,8 @@ bool
 MP4Reader::IsSupportedVideoMimeType(const char* aMimeType)
 {
   return (!strcmp(aMimeType, "video/mp4") ||
-          !strcmp(aMimeType, "video/avc")) &&
+          !strcmp(aMimeType, "video/avc") ||
+          !strcmp(aMimeType, "video/x-vnd.on2.vp6")) &&
          mPlatform->SupportsVideoMimeType(aMimeType);
 }
 
@@ -335,11 +340,6 @@ MP4Reader::ReadMetadata(MediaInfo* aInfo,
     // To decode, we need valid video and a place to put it.
     mInfo.mVideo.mHasVideo = mVideo.mActive = mDemuxer->HasValidVideo() &&
                                               mDecoder->GetImageContainer();
-    const VideoDecoderConfig& video = mDemuxer->VideoConfig();
-    // If we have video, we *only* allow H.264 to be decoded.
-    if (mInfo.mVideo.mHasVideo && strcmp(video.mime_type, "video/avc")) {
-      return NS_ERROR_FAILURE;
-    }
 
     mInfo.mAudio.mHasAudio = mAudio.mActive = mDemuxer->HasValidAudio();
 
@@ -456,6 +456,7 @@ MP4Reader::ReadMetadata(MediaInfo* aInfo,
   *aInfo = mInfo;
   *aTags = nullptr;
 
+  MonitorAutoLock mon(mIndexMonitor);
   UpdateIndex();
 
   return NS_OK;
@@ -564,7 +565,7 @@ MP4Reader::NeedInput(DecoderData& aDecoder)
   // which overrides our "few more samples" threshold.
   return
     !aDecoder.mError &&
-    !aDecoder.mEOS &&
+    !aDecoder.mDemuxEOS &&
     aDecoder.mOutputRequested &&
     aDecoder.mOutput.IsEmpty() &&
     (aDecoder.mInputExhausted ||
@@ -594,7 +595,7 @@ MP4Reader::Update(TrackType aTrack)
       output = decoder.mOutput[0];
       decoder.mOutput.RemoveElementAt(0);
     }
-    eos = decoder.mEOS;
+    eos = decoder.mDrainComplete;
   }
   VLOG("Update(%s) ni=%d no=%d iex=%d or=%d fl=%d",
        TrackTypeToStr(aTrack),
@@ -611,9 +612,10 @@ MP4Reader::Update(TrackType aTrack)
     } else {
       {
         MonitorAutoLock lock(decoder.mMonitor);
-        MOZ_ASSERT(!decoder.mEOS);
-        eos = decoder.mEOS = true;
+        MOZ_ASSERT(!decoder.mDemuxEOS);
+        decoder.mDemuxEOS = true;
       }
+      // DrainComplete takes care of reporting EOS upwards
       decoder.mDecoder->Drain();
     }
   }
@@ -660,8 +662,7 @@ MP4Reader::ReturnOutput(MediaData* aData, TrackType aTrack)
 void
 MP4Reader::ReturnEOS(TrackType aTrack)
 {
-  GetCallback()->OnNotDecoded(aTrack == kAudio ? MediaData::AUDIO_DATA : MediaData::VIDEO_DATA,
-                              RequestSampleCallback::END_OF_STREAM);
+  GetCallback()->OnNotDecoded(aTrack == kAudio ? MediaData::AUDIO_DATA : MediaData::VIDEO_DATA, END_OF_STREAM);
 }
 
 MP4Sample*
@@ -727,7 +728,7 @@ MP4Reader::DrainComplete(TrackType aTrack)
   DecoderData& data = GetDecoderData(aTrack);
   MonitorAutoLock mon(data.mMonitor);
   data.mDrainComplete = true;
-  mon.NotifyAll();
+  ScheduleUpdate(aTrack);
 }
 
 void
@@ -747,8 +748,7 @@ MP4Reader::Error(TrackType aTrack)
     MonitorAutoLock mon(data.mMonitor);
     data.mError = true;
   }
-  GetCallback()->OnNotDecoded(aTrack == kVideo ? MediaData::VIDEO_DATA : MediaData::AUDIO_DATA,
-                              RequestSampleCallback::DECODE_ERROR);
+  GetCallback()->OnNotDecoded(aTrack == kVideo ? MediaData::VIDEO_DATA : MediaData::AUDIO_DATA, DECODE_ERROR);
 }
 
 void
@@ -766,8 +766,8 @@ MP4Reader::Flush(TrackType aTrack)
   {
     MonitorAutoLock mon(data.mMonitor);
     data.mIsFlushing = true;
+    data.mDemuxEOS = false;
     data.mDrainComplete = false;
-    data.mEOS = false;
   }
   data.mDecoder->Flush();
   {
@@ -778,8 +778,7 @@ MP4Reader::Flush(TrackType aTrack)
     data.mNumSamplesOutput = 0;
     data.mInputExhausted = false;
     if (data.mOutputRequested) {
-      GetCallback()->OnNotDecoded(aTrack == kVideo ? MediaData::VIDEO_DATA : MediaData::AUDIO_DATA,
-                                  RequestSampleCallback::CANCELED);
+      GetCallback()->OnNotDecoded(aTrack == kVideo ? MediaData::VIDEO_DATA : MediaData::AUDIO_DATA, CANCELED);
     }
     data.mOutputRequested = false;
     data.mDiscontinuity = true;
@@ -804,11 +803,10 @@ MP4Reader::SkipVideoDemuxToNextKeyFrame(int64_t aTimeThreshold, uint32_t& parsed
     nsAutoPtr<MP4Sample> compressed(PopSample(kVideo));
     if (!compressed) {
       // EOS, or error. Let the state machine know.
-      GetCallback()->OnNotDecoded(MediaData::VIDEO_DATA,
-                                  RequestSampleCallback::END_OF_STREAM);
+      GetCallback()->OnNotDecoded(MediaData::VIDEO_DATA, END_OF_STREAM);
       {
         MonitorAutoLock mon(mVideo.mMonitor);
-        mVideo.mEOS = true;
+        mVideo.mDemuxEOS = true;
       }
       return false;
     }
@@ -852,16 +850,8 @@ MP4Reader::Seek(int64_t aTime,
 }
 
 void
-MP4Reader::NotifyDataArrived(const char* aBuffer, uint32_t aLength,
-                             int64_t aOffset)
-{
-  UpdateIndex();
-}
-
-void
 MP4Reader::UpdateIndex()
 {
-  MonitorAutoLock mon(mIndexMonitor);
   if (!mIndexReady) {
     return;
   }
@@ -891,6 +881,7 @@ MP4Reader::GetBuffered(dom::TimeRanges* aBuffered)
   if (!mIndexReady) {
     return NS_OK;
   }
+  UpdateIndex();
   MOZ_ASSERT(mStartTime != -1, "Need to finish metadata decode first");
 
   AutoPinned<MediaResource> resource(mDecoder->GetResource());

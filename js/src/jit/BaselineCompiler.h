@@ -108,22 +108,28 @@ namespace jit {
     _(JSOP_ARRAYPUSH)          \
     _(JSOP_GETELEM)            \
     _(JSOP_SETELEM)            \
+    _(JSOP_STRICTSETELEM)      \
     _(JSOP_CALLELEM)           \
     _(JSOP_DELELEM)            \
+    _(JSOP_STRICTDELELEM)      \
     _(JSOP_IN)                 \
     _(JSOP_GETGNAME)           \
     _(JSOP_BINDGNAME)          \
     _(JSOP_SETGNAME)           \
+    _(JSOP_STRICTSETGNAME)     \
     _(JSOP_SETNAME)            \
+    _(JSOP_STRICTSETNAME)      \
     _(JSOP_GETPROP)            \
     _(JSOP_SETPROP)            \
+    _(JSOP_STRICTSETPROP)      \
     _(JSOP_CALLPROP)           \
     _(JSOP_DELPROP)            \
+    _(JSOP_STRICTDELPROP)      \
     _(JSOP_LENGTH)             \
     _(JSOP_GETXPROP)           \
     _(JSOP_GETALIASEDVAR)      \
     _(JSOP_SETALIASEDVAR)      \
-    _(JSOP_NAME)               \
+    _(JSOP_GETNAME)            \
     _(JSOP_BINDNAME)           \
     _(JSOP_DELNAME)            \
     _(JSOP_GETINTRINSIC)       \
@@ -145,9 +151,11 @@ namespace jit {
     _(JSOP_FUNAPPLY)           \
     _(JSOP_NEW)                \
     _(JSOP_EVAL)               \
+    _(JSOP_STRICTEVAL)         \
     _(JSOP_SPREADCALL)         \
     _(JSOP_SPREADNEW)          \
     _(JSOP_SPREADEVAL)         \
+    _(JSOP_STRICTSPREADEVAL)   \
     _(JSOP_IMPLICITTHIS)       \
     _(JSOP_INSTANCEOF)         \
     _(JSOP_TYPEOF)             \
@@ -188,9 +196,7 @@ class BaselineCompiler : public BaselineCompilerSpecific
 {
     FixedList<Label>            labels_;
     NonAssertingLabel           return_;
-#ifdef JSGC_GENERATIONAL
     NonAssertingLabel           postBarrierSlot_;
-#endif
 
     // Native code offset right before the scope chain is initialized.
     CodeOffsetLabel prologueOffset_;
@@ -233,9 +239,7 @@ class BaselineCompiler : public BaselineCompilerSpecific
     void emitInitializeLocals(size_t n, const Value &v);
     bool emitPrologue();
     bool emitEpilogue();
-#ifdef JSGC_GENERATIONAL
     bool emitOutOfLinePostBarrierSlot();
-#endif
     bool emitIC(ICStub *stub, ICEntry::Kind kind);
     bool emitOpIC(ICStub *stub) {
         return emitIC(stub, ICEntry::Kind_Op);

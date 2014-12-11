@@ -10,13 +10,9 @@
 #include "jsgc.h"
 
 #include "gc/Heap.h"
-#ifdef JSGC_GENERATIONAL
-# include "gc/Nursery.h"
-#endif
+#include "gc/Nursery.h"
 #include "gc/Statistics.h"
-#ifdef JSGC_GENERATIONAL
-# include "gc/StoreBuffer.h"
-#endif
+#include "gc/StoreBuffer.h"
 #include "gc/Tracer.h"
 
 /* Perform validation of incremental marking in debug builds but not on B2G. */
@@ -374,9 +370,7 @@ class GCRuntime
         allocTask.cancel(GCParallelTask::CancelAndWait);
     }
 
-#ifdef JSGC_GENERATIONAL
     void requestMinorGC(JS::gcreason::Reason reason);
-#endif
 
 #ifdef DEBUG
 
@@ -444,6 +438,7 @@ class GCRuntime
 #ifdef JSGC_COMPACTING
     void disableCompactingGC();
     void enableCompactingGC();
+    bool isCompactingGCEnabled();
 #endif
 
     void setGrayRootsTracer(JSTraceDataOp traceOp, void *data);
@@ -599,18 +594,20 @@ class GCRuntime
     void decommitAllWithoutUnlocking(const AutoLockGC &lock);
     void decommitArenas(AutoLockGC &lock);
     void expireChunksAndArenas(bool shouldShrink, AutoLockGC &lock);
-    void sweepBackgroundThings();
+    void queueZonesForBackgroundSweep(js::gc::ZoneList& zones);
+    void sweepBackgroundThings(js::gc::ZoneList &zones, ThreadType threadType);
     void assertBackgroundSweepingFinished();
     bool shouldCompact();
+    bool compactPhase(bool lastGC);
 #ifdef JSGC_COMPACTING
     void sweepTypesAfterCompacting(Zone *zone);
     void sweepZoneAfterCompacting(Zone *zone);
-    void compactPhase(bool lastGC);
     ArenaHeader *relocateArenas();
     void updateAllCellPointersParallel(ArenasToUpdate &source);
     void updateAllCellPointersSerial(MovingTracer *trc, ArenasToUpdate &source);
     void updatePointersToRelocatedCells();
     void releaseRelocatedArenas(ArenaHeader *relocatedList);
+    void releaseRelocatedArenasWithoutUnlocking(ArenaHeader *relocatedList, const AutoLockGC& lock);
 #ifdef DEBUG
     void protectRelocatedArenas(ArenaHeader *relocatedList);
     void unprotectRelocatedArenas(ArenaHeader *relocatedList);
@@ -640,10 +637,8 @@ class GCRuntime
     /* List of compartments and zones (protected by the GC lock). */
     js::gc::ZoneVector zones;
 
-#ifdef JSGC_GENERATIONAL
     js::Nursery nursery;
     js::gc::StoreBuffer storeBuffer;
-#endif
 
     js::gcstats::Statistics stats;
 
@@ -705,10 +700,8 @@ class GCRuntime
     volatile uintptr_t majorGCRequested;
     JS::gcreason::Reason majorGCTriggerReason;
 
-#ifdef JSGC_GENERATIONAL
     bool minorGCRequested;
     JS::gcreason::Reason minorGCTriggerReason;
-#endif
 
     /* Incremented at the start of every major GC. */
     uint64_t majorGCNumber;
@@ -757,9 +750,8 @@ class GCRuntime
     /* Whether any black->gray edges were found during marking. */
     bool foundBlackGrayEdges;
 
-    /* List head of zones to be swept in the background. */
-    JS::Zone *sweepingZones;
-
+    /* Singly linekd list of zones to be swept in the background. */
+    js::gc::ZoneList backgroundSweepZones;
     /*
      * Free LIFO blocks are transferred to this allocator before being freed on
      * the background GC thread.

@@ -14,9 +14,9 @@
 #include "builtin/TypedObject.h"
 #include "jit/BaselineIC.h"
 #include "jit/Ion.h"
-#include "jit/IonLinker.h"
 #include "jit/JitcodeMap.h"
 #include "jit/JitSpewer.h"
+#include "jit/Linker.h"
 #include "jit/Lowering.h"
 #ifdef JS_ION_PERF
 # include "jit/PerfSpewer.h"
@@ -25,7 +25,7 @@
 #include "jit/VMFunctions.h"
 #include "vm/Shape.h"
 
-#include "jit/IonFrames-inl.h"
+#include "jit/JitFrames-inl.h"
 #include "vm/Interpreter-inl.h"
 #include "vm/Shape-inl.h"
 
@@ -1222,7 +1222,7 @@ GetPropertyIC::allowArrayLength(Context cx, HandleObject obj) const
     uint32_t locationIndex, numLocations;
     getLocationInfo(&locationIndex, &numLocations);
 
-    IonScript *ion = GetTopIonJSScript(cx)->ionScript();
+    IonScript *ion = GetTopJitJSScript(cx)->ionScript();
     CacheLocation *locs = ion->getCacheLocs(locationIndex);
     for (size_t i = 0; i < numLocations; i++) {
         CacheLocation &curLoc = locs[i];
@@ -1722,7 +1722,7 @@ GetPropertyIC::update(JSContext *cx, size_t cacheIndex,
                       HandleObject obj, MutableHandleValue vp)
 {
     void *returnAddr;
-    RootedScript outerScript(cx, GetTopIonJSScript(cx, &returnAddr));
+    RootedScript outerScript(cx, GetTopJitJSScript(cx, &returnAddr));
     IonScript *ion = outerScript->ionScript();
 
     GetPropertyIC &cache = ion->getCache(cacheIndex).toGetProperty();
@@ -1885,7 +1885,7 @@ bool
 GetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex,
                          HandleObject obj, MutableHandleValue vp)
 {
-    IonScript *ion = GetTopIonJSScript(cx)->parallelIonScript();
+    IonScript *ion = GetTopJitJSScript(cx)->parallelIonScript();
     GetPropertyParIC &cache = ion->getCache(cacheIndex).toGetPropertyPar();
 
     // Grab the property early, as the pure path is fast anyways and doesn't
@@ -2731,13 +2731,12 @@ IsPropertyAddInlineable(NativeObject *obj, HandleId id, ConstantOrRegister val, 
     // the shape must be the one we just added.
     MOZ_ASSERT(shape == obj->lastProperty());
 
-    // If object has a non-default resolve hook, don't inline
-    if (obj->getClass()->resolve != JS_ResolveStub)
+    // If object has a resolve hook, don't inline
+    if (obj->getClass()->resolve)
         return false;
 
-    // Likewise for a non-default addProperty hook, since we'll need
-    // to invoke it.
-    if (obj->getClass()->addProperty != JS_PropertyStub)
+    // Likewise for an addProperty hook, since we'll need to invoke it.
+    if (obj->getClass()->addProperty)
         return false;
 
     if (!obj->nonProxyIsExtensible() || !shape->writable())
@@ -2759,7 +2758,7 @@ IsPropertyAddInlineable(NativeObject *obj, HandleId id, ConstantOrRegister val, 
         // Otherwise, if there's no such property, watch out for a resolve
         // hook that would need to be invoked and thus prevent inlining of
         // property addition.
-        if (proto->getClass()->resolve != JS_ResolveStub)
+        if (proto->getClass()->resolve)
              return false;
     }
 
@@ -2820,7 +2819,7 @@ SetPropertyIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
                       HandleValue value)
 {
     void *returnAddr;
-    RootedScript script(cx, GetTopIonJSScript(cx, &returnAddr));
+    RootedScript script(cx, GetTopJitJSScript(cx, &returnAddr));
     IonScript *ion = script->ionScript();
     SetPropertyIC &cache = ion->getCache(cacheIndex).toSetProperty();
     RootedPropertyName name(cx, cache.name());
@@ -2916,7 +2915,7 @@ SetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject ob
 {
     MOZ_ASSERT(cx->isThreadLocal(obj));
 
-    IonScript *ion = GetTopIonJSScript(cx)->parallelIonScript();
+    IonScript *ion = GetTopJitJSScript(cx)->parallelIonScript();
     SetPropertyParIC &cache = ion->getCache(cacheIndex).toSetPropertyPar();
 
     RootedValue v(cx, value);
@@ -3480,7 +3479,7 @@ GetElementIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
                      HandleValue idval, MutableHandleValue res)
 {
     void *returnAddr;
-    RootedScript outerScript(cx, GetTopIonJSScript(cx, &returnAddr));
+    RootedScript outerScript(cx, GetTopJitJSScript(cx, &returnAddr));
     IonScript *ion = outerScript->ionScript();
     GetElementIC &cache = ion->getCache(cacheIndex).toGetElement();
     RootedScript script(cx);
@@ -3870,7 +3869,7 @@ bool
 SetElementIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
                      HandleValue idval, HandleValue value)
 {
-    RootedScript outerScript(cx, GetTopIonJSScript(cx));
+    RootedScript outerScript(cx, GetTopJitJSScript(cx));
     IonScript *ion = outerScript->ionScript();
     SetElementIC &cache = ion->getCache(cacheIndex).toSetElement();
 
@@ -3940,7 +3939,7 @@ bool
 SetElementParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject obj,
                         HandleValue idval, HandleValue value)
 {
-    IonScript *ion = GetTopIonJSScript(cx)->parallelIonScript();
+    IonScript *ion = GetTopJitJSScript(cx)->parallelIonScript();
     SetElementParIC &cache = ion->getCache(cacheIndex).toSetElementPar();
 
     // Avoid unnecessary locking if cannot attach stubs.
@@ -4019,7 +4018,7 @@ bool
 GetElementParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject obj,
                         HandleValue idval, MutableHandleValue vp)
 {
-    IonScript *ion = GetTopIonJSScript(cx)->parallelIonScript();
+    IonScript *ion = GetTopJitJSScript(cx)->parallelIonScript();
     GetElementParIC &cache = ion->getCache(cacheIndex).toGetElementPar();
 
     // Try to get the element early, as the pure path doesn't need a lock. If
@@ -4223,7 +4222,7 @@ IsCacheableNonGlobalScopeChain(JSObject *scopeChain, JSObject *holder)
 JSObject *
 BindNameIC::update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain)
 {
-    RootedScript outerScript(cx, GetTopIonJSScript(cx));
+    RootedScript outerScript(cx, GetTopJitJSScript(cx));
     IonScript *ion = outerScript->ionScript();
     BindNameIC &cache = ion->getCache(cacheIndex).toBindName();
     HandlePropertyName name = cache.name();
@@ -4374,7 +4373,7 @@ NameIC::update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain,
                MutableHandleValue vp)
 {
     void *returnAddr;
-    RootedScript outerScript(cx, GetTopIonJSScript(cx, &returnAddr));
+    RootedScript outerScript(cx, GetTopJitJSScript(cx, &returnAddr));
     IonScript *ion = outerScript->ionScript();
 
     NameIC &cache = ion->getCache(cacheIndex).toName();
@@ -4444,7 +4443,7 @@ CallsiteCloneIC::update(JSContext *cx, size_t cacheIndex, HandleObject callee)
     if (!fun->hasScript() || !fun->nonLazyScript()->shouldCloneAtCallsite())
         return fun;
 
-    RootedScript outerScript(cx, GetTopIonJSScript(cx));
+    RootedScript outerScript(cx, GetTopJitJSScript(cx));
     IonScript *ion = outerScript->ionScript();
     CallsiteCloneIC &cache = ion->getCache(cacheIndex).toCallsiteClone();
 

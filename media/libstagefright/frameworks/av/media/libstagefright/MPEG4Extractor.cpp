@@ -320,6 +320,9 @@ static const char *FourCC2MIME(uint32_t fourcc) {
         case FOURCC('s', 'a', 'w', 'b'):
             return MEDIA_MIMETYPE_AUDIO_AMR_WB;
 
+        case FOURCC('.', 'm', 'p', '3'):
+            return MEDIA_MIMETYPE_AUDIO_MPEG;
+
         case FOURCC('m', 'p', '4', 'v'):
             return MEDIA_MIMETYPE_VIDEO_MPEG4;
 
@@ -331,6 +334,9 @@ static const char *FourCC2MIME(uint32_t fourcc) {
         case FOURCC('a', 'v', 'c', '1'):
         case FOURCC('a', 'v', 'c', '3'):
             return MEDIA_MIMETYPE_VIDEO_AVC;
+
+        case FOURCC('V', 'P', '6', 'F'):
+            return MEDIA_MIMETYPE_VIDEO_VP6;
 
         default:
             CHECK(!"should not be here.");
@@ -838,6 +844,8 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
                 track->includes_expensive_metadata = false;
                 track->skipTrack = false;
                 track->timescale = 0;
+                track->segment_duration = 0;
+                track->media_time = 0;
                 track->meta->setCString(kKeyMIMEType, "application/octet-stream");
             }
 
@@ -910,12 +918,10 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
                 ALOGW("ignoring edit list because timescale is 0");
             } else {
                 off64_t entriesoffset = data_offset + 8;
-                uint64_t segment_duration;
-                int64_t media_time;
 
                 if (version == 1) {
-                    if (!mDataSource->getUInt64(entriesoffset, &segment_duration) ||
-                            !mDataSource->getUInt64(entriesoffset + 8, (uint64_t*)&media_time)) {
+                    if (!mDataSource->getUInt64(entriesoffset, &mLastTrack->segment_duration) ||
+                            !mDataSource->getUInt64(entriesoffset + 8, (uint64_t*)&mLastTrack->media_time)) {
                         return ERROR_IO;
                     }
                 } else if (version == 0) {
@@ -925,28 +931,14 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
                             !mDataSource->getUInt32(entriesoffset + 4, (uint32_t*)&mt)) {
                         return ERROR_IO;
                     }
-                    segment_duration = sd;
-                    media_time = mt;
+                    mLastTrack->segment_duration = sd;
+                    mLastTrack->media_time = mt;
                 } else {
                     return ERROR_IO;
                 }
 
-                uint64_t halfscale = mHeaderTimescale / 2;
-                segment_duration = (segment_duration * 1000000 + halfscale)/ mHeaderTimescale;
-                media_time = (media_time * 1000000 + halfscale) / mHeaderTimescale;
+                storeEditList();
 
-                int64_t duration;
-                int32_t samplerate;
-                if (mLastTrack->meta->findInt64(kKeyDuration, &duration) &&
-                        mLastTrack->meta->findInt32(kKeySampleRate, &samplerate)) {
-
-                    int64_t delay = (media_time  * samplerate + 500000) / 1000000;
-                    mLastTrack->meta->setInt32(kKeyEncoderDelay, delay);
-
-                    int64_t paddingus = duration - (segment_duration + media_time);
-                    int64_t paddingsamples = (paddingus * samplerate + 500000) / 1000000;
-                    mLastTrack->meta->setInt32(kKeyEncoderPadding, paddingsamples);
-                }
             }
             *offset += chunk_size;
             break;
@@ -1115,6 +1107,10 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
 
             mLastTrack->timescale = ntohl(timescale);
 
+            // Now that we've parsed the media timescale, we can interpret
+            // the edit list data.
+            storeEditList();
+
             int64_t duration = 0;
             if (version == 1) {
                 if (mDataSource->readAt(
@@ -1226,6 +1222,7 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
         }
 
         case FOURCC('m', 'p', '4', 'a'):
+        case FOURCC('.', 'm', 'p', '3'):
         case FOURCC('e', 'n', 'c', 'a'):
         case FOURCC('s', 'a', 'm', 'r'):
         case FOURCC('s', 'a', 'w', 'b'):
@@ -1280,6 +1277,7 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
         case FOURCC('h', '2', '6', '3'):
         case FOURCC('a', 'v', 'c', '1'):
         case FOURCC('a', 'v', 'c', '3'):
+        case FOURCC('V', 'P', '6', 'F'):
         {
             mHasVideo = true;
 
@@ -1810,6 +1808,35 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
     }
 
     return OK;
+}
+
+void MPEG4Extractor::storeEditList()
+{
+  if (mHeaderTimescale == 0 ||
+      mLastTrack->timescale == 0) {
+    return;
+  }
+
+  uint64_t segment_duration = (mLastTrack->segment_duration * 1000000)/ mHeaderTimescale;
+  // media_time is measured in media time scale units.
+  int64_t media_time = (mLastTrack->media_time * 1000000) / mLastTrack->timescale;
+
+  if (segment_duration == 0) {
+    mLastTrack->meta->setInt64(kKeyMediaTime, media_time);
+  }
+
+  int64_t duration;
+  int32_t samplerate;
+  if (mLastTrack->meta->findInt64(kKeyDuration, &duration) &&
+      mLastTrack->meta->findInt32(kKeySampleRate, &samplerate)) {
+
+    int64_t delay = (media_time  * samplerate + 500000) / 1000000;
+    mLastTrack->meta->setInt32(kKeyEncoderDelay, delay);
+
+    int64_t paddingus = duration - (segment_duration + media_time);
+    int64_t paddingsamples = (paddingus * samplerate + 500000) / 1000000;
+    mLastTrack->meta->setInt32(kKeyEncoderPadding, paddingsamples);
+  }
 }
 
 status_t MPEG4Extractor::parseSegmentIndex(off64_t offset, size_t size) {
@@ -2484,7 +2511,7 @@ static bool ValidInputSize(int32_t size) {
   // Reject compressed samples larger than an uncompressed UHD
   // frame. This is a reasonable cut-off for a lossy codec,
   // combined with the current Firefox limit to 5k video.
-  return (size > 0 && size < 4 * (1920 * 1080) * 3 / 2);
+  return (size > 0 && size <= 4 * (1920 * 1080) * 3 / 2);
 }
 
 status_t MPEG4Source::start(MetaData *params) {

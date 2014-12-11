@@ -11,7 +11,7 @@
 
 #include "jit/AtomicOp.h"
 #include "jit/IonCaches.h"
-#include "jit/IonFrames.h"
+#include "jit/JitFrames.h"
 #include "jit/mips/Assembler-mips.h"
 #include "jit/MoveResolver.h"
 
@@ -303,12 +303,12 @@ class MacroAssemblerMIPS : public Assembler
 
   public:
     // calls an Ion function, assumes that the stack is untouched (8 byte alinged)
-    void ma_callIon(const Register reg);
+    void ma_callJit(const Register reg);
     // callso an Ion function, assuming that sp has already been decremented
-    void ma_callIonNoPush(const Register reg);
+    void ma_callJitNoPush(const Register reg);
     // calls an ion function, assuming that the stack is currently not 8 byte aligned
-    void ma_callIonHalfPush(const Register reg);
-    void ma_callIonHalfPush(Label *label);
+    void ma_callJitHalfPush(const Register reg);
+    void ma_callJitHalfPush(Label *label);
 
     void ma_call(ImmPtr dest);
 
@@ -419,7 +419,7 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS
         BufferOffset bo = m_buffer.nextOffset();
         addPendingJump(bo, ImmPtr(c->raw()), Relocation::JITCODE);
         ma_liPatchable(ScratchRegister, Imm32((uint32_t)c->raw()));
-        ma_callIonHalfPush(ScratchRegister);
+        ma_callJitHalfPush(ScratchRegister);
     }
     void call(const CallSiteDesc &desc, const Register reg) {
         call(reg);
@@ -431,7 +431,7 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS
     }
 
     void callAndPushReturnAddress(Label *label) {
-        ma_callIonHalfPush(label);
+        ma_callJitHalfPush(label);
     }
 
     void branch(JitCode *c) {
@@ -1131,16 +1131,16 @@ public:
 
     // Builds an exit frame on the stack, with a return address to an internal
     // non-function. Returns offset to be passed to markSafepointAt().
-    bool buildFakeExitFrame(Register scratch, uint32_t *offset);
+    void buildFakeExitFrame(Register scratch, uint32_t *offset);
 
     void callWithExitFrame(Label *target);
     void callWithExitFrame(JitCode *target);
     void callWithExitFrame(JitCode *target, Register dynStack);
 
-    // Makes an Ion call using the only two methods that it is sane for
-    // indep code to make a call
-    void callIon(Register callee);
-    void callIonFromAsmJS(Register callee);
+    // Makes a call using the only two methods that it is sane for indep code
+    // to make a call.
+    void callJit(Register callee);
+    void callJitFromAsmJS(Register callee);
 
     void reserveStack(uint32_t amount);
     void freeStack(uint32_t amount);
@@ -1453,11 +1453,9 @@ public:
         as_movs(dest, src);
     }
 
-#ifdef JSGC_GENERATIONAL
     void branchPtrInNurseryRange(Condition cond, Register ptr, Register temp, Label *label);
     void branchValueIsNurseryObject(Condition cond, ValueOperand value, Register temp,
                                     Label *label);
-#endif
 
     void loadAsmJSActivation(Register dest) {
         loadPtr(Address(GlobalReg, AsmJSActivationGlobalDataOffset - AsmJSGlobalRegBias), dest);

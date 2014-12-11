@@ -8376,13 +8376,11 @@ nsDocument::GetRequiredRadioCount(const nsAString& aName) const
 }
 
 void
-nsDocument::RadioRequiredChanged(const nsAString& aName, nsIFormControl* aRadio)
+nsDocument::RadioRequiredWillChange(const nsAString& aName, bool aRequiredAdded)
 {
   nsRadioGroupStruct* radioGroup = GetOrCreateRadioGroup(aName);
 
-  nsCOMPtr<nsIContent> element = do_QueryInterface(aRadio);
-  NS_ASSERTION(element, "radio controls have to be content elements");
-  if (element->HasAttr(kNameSpaceID_None, nsGkAtoms::required)) {
+  if (aRequiredAdded) {
     radioGroup->mRequiredRadioCount++;
   } else {
     NS_ASSERTION(radioGroup->mRequiredRadioCount != 0,
@@ -9593,7 +9591,22 @@ nsDocument::MaybePreLoadImage(nsIURI* uri, const nsAString &aCrossOriginAttr,
   // the "real" load occurs. Unpinned in DispatchContentLoadedEvents and
   // unlink
   if (NS_SUCCEEDED(rv)) {
-    mPreloadingImages.AppendObject(request);
+    mPreloadingImages.Put(uri, request.forget());
+  }
+}
+
+void
+nsDocument::ForgetImagePreload(nsIURI* aURI)
+{
+  // Checking count is faster than hashing the URI in the common
+  // case of empty table.
+  if (mPreloadingImages.Count() != 0) {
+    nsCOMPtr<imgIRequest> req;
+    mPreloadingImages.Remove(aURI, getter_AddRefs(req));
+    if (req) {
+      // Make sure to cancel the request so imagelib knows it's gone.
+      req->CancelAndForgetObserver(NS_BINDING_ABORTED);
+    }
   }
 }
 

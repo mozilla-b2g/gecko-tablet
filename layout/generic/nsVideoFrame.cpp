@@ -159,12 +159,12 @@ nsVideoFrame::BuildLayer(nsDisplayListBuilder* aBuilder,
                          nsDisplayItem* aItem,
                          const ContainerLayerParameters& aContainerParameters)
 {
-  nsSize contentBoxSize = GetContentRectRelativeToSelf().Size();
+  nsRect area = GetContentRectRelativeToSelf() + aItem->ToReferenceFrame();
   HTMLVideoElement* element = static_cast<HTMLVideoElement*>(GetContent());
 
   nsIntSize videoSizeInPx;
   if (NS_FAILED(element->GetVideoSize(&videoSizeInPx)) ||
-      contentBoxSize.IsEmpty()) {
+      area.IsEmpty()) {
     return nullptr;
   }
 
@@ -189,11 +189,7 @@ nsVideoFrame::BuildLayer(nsDisplayListBuilder* aBuilder,
   intrinsicSize.width.SetCoordValue(aspectRatio.width);
   intrinsicSize.height.SetCoordValue(aspectRatio.height);
 
-  nsRect contentBoxRect(
-    GetContentRectRelativeToSelf().TopLeft() + aItem->ToReferenceFrame(),
-    contentBoxSize);
-
-  nsRect dest = nsLayoutUtils::ComputeObjectDestRect(contentBoxRect,
+  nsRect dest = nsLayoutUtils::ComputeObjectDestRect(area,
                                                      intrinsicSize,
                                                      aspectRatio,
                                                      StylePosition());
@@ -507,14 +503,16 @@ nsVideoFrame::ComputeSize(nsRenderingContext *aRenderingContext,
 
 nscoord nsVideoFrame::GetMinISize(nsRenderingContext *aRenderingContext)
 {
-  nscoord result = GetVideoIntrinsicSize(aRenderingContext).width;
+  nsSize size = GetVideoIntrinsicSize(aRenderingContext);
+  nscoord result = GetWritingMode().IsVertical() ? size.height : size.width;
   DISPLAY_MIN_WIDTH(this, result);
   return result;
 }
 
 nscoord nsVideoFrame::GetPrefISize(nsRenderingContext *aRenderingContext)
 {
-  nscoord result = GetVideoIntrinsicSize(aRenderingContext).width;
+  nsSize size = GetVideoIntrinsicSize(aRenderingContext);
+  nscoord result = GetWritingMode().IsVertical() ? size.height : size.width;
   DISPLAY_PREF_WIDTH(this, result);
   return result;
 }

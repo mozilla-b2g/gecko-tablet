@@ -177,7 +177,10 @@ pref("browser.sessionhistory.max_total_viewers", -1);
 pref("ui.use_native_colors", true);
 pref("ui.click_hold_context_menus", false);
 pref("browser.display.use_document_fonts",  1);  // 0 = never, 1 = quick, 2 = always
-pref("browser.display.use_document_colors", true);
+// 0 = default: always, except in high contrast mode
+// 1 = always
+// 2 = never
+pref("browser.display.document_color_use", 0);
 pref("browser.display.use_system_colors",   false);
 pref("browser.display.foreground_color",    "#000000");
 pref("browser.display.background_color",    "#FFFFFF");
@@ -276,9 +279,7 @@ pref("media.fragmented-mp4.use-blank-decoder", false);
 pref("media.raw.enabled", true);
 #endif
 pref("media.ogg.enabled", true);
-#ifdef MOZ_OPUS
 pref("media.opus.enabled", true);
-#endif
 #ifdef MOZ_WAVE
 pref("media.wave.enabled", true);
 #endif
@@ -334,8 +335,8 @@ pref("media.navigator.video.default_width",0);  // adaptive default
 pref("media.navigator.video.default_height",0); // adaptive default
 pref("media.peerconnection.enabled", true);
 pref("media.peerconnection.video.enabled", true);
-pref("media.navigator.video.max_fs", 0); // unrestricted
-pref("media.navigator.video.max_fr", 0); // unrestricted
+pref("media.navigator.video.max_fs", 12288); // Enough for 2048x1536
+pref("media.navigator.video.max_fr", 60);
 pref("media.navigator.video.h264.level", 31); // 0x42E01f - level 3.1
 pref("media.navigator.video.h264.max_br", 0);
 pref("media.navigator.video.h264.max_mbps", 0);
@@ -358,6 +359,7 @@ pref("media.peerconnection.use_document_iceservers", true);
 // Do not enable identity before fixing origin spoofing: see Bug 968335
 pref("media.peerconnection.identity.enabled", false);
 pref("media.peerconnection.identity.timeout", 10000);
+pref("media.peerconnection.ice.loopback", false); // Set only for testing in offline environments.
 // These values (aec, agc, and noice) are from media/webrtc/trunk/webrtc/common_types.h
 // kXxxUnchanged = 0, kXxxDefault = 1, and higher values are specific to each
 // setting (for Xxx = Ec, Agc, or Ns).  Defaults are all set to kXxxDefault here.
@@ -427,7 +429,7 @@ pref("media.mediasource.enabled", true);
 pref("media.mediasource.mp4.enabled", false);
 pref("media.mediasource.webm.enabled", false);
 #else
-#ifdef XP_WIN
+#if defined(XP_WIN) || defined(XP_MACOSX)
 pref("media.mediasource.mp4.enabled", true);
 pref("media.mediasource.webm.enabled", false);
 #else
@@ -844,6 +846,7 @@ pref("application.use_ns_plugin_finder", false);
 pref("browser.fixup.alternate.enabled", true);
 pref("browser.fixup.alternate.prefix", "www.");
 pref("browser.fixup.alternate.suffix", ".com");
+pref("browser.fixup.dns_first_for_single_words", false);
 pref("browser.fixup.hide_user_pass", true);
 
 // Location Bar AutoComplete
@@ -1038,11 +1041,7 @@ pref("javascript.options.mem.gc_dynamic_heap_growth", true);
 pref("javascript.options.mem.gc_dynamic_mark_slice", true);
 pref("javascript.options.mem.gc_allocation_threshold_mb", 30);
 pref("javascript.options.mem.gc_decommit_threshold_mb", 32);
-#ifdef JSGC_GENERATIONAL
 pref("javascript.options.mem.gc_min_empty_chunk_count", 1);
-#else
-pref("javascript.options.mem.gc_min_empty_chunk_count", 0);
-#endif
 pref("javascript.options.mem.gc_max_empty_chunk_count", 30);
 
 pref("javascript.options.showInConsole", false);
@@ -1276,7 +1275,7 @@ pref("network.http.bypass-cachelock-threshold", 250);
 pref("network.http.spdy.enabled", true);
 pref("network.http.spdy.enabled.v3-1", true);
 pref("network.http.spdy.enabled.http2draft", true);
-pref("network.http.spdy.enabled.http2", false);
+pref("network.http.spdy.enabled.http2", true);
 pref("network.http.spdy.enforce-tls-profile", true);
 pref("network.http.spdy.chunk-size", 16000);
 pref("network.http.spdy.timeout", 180);
@@ -2160,7 +2159,11 @@ pref("layout.css.grid.enabled", false);
 pref("layout.css.ruby.enabled", false);
 
 // Is support for CSS display:contents enabled?
+#ifdef RELEASE_BUILD
 pref("layout.css.display-contents.enabled", false);
+#else
+pref("layout.css.display-contents.enabled", true);
+#endif
 
 // Is support for CSS box-decoration-break enabled?
 pref("layout.css.box-decoration-break.enabled", true);
@@ -2362,13 +2365,8 @@ pref("svg.display-lists.painting.enabled", true);
 // Is support for the SVG 2 paint-order property enabled?
 pref("svg.paint-order.enabled", true);
 
-// Is support for the new marker features from SVG 2 enabled?  Currently
-// this just includes <marker orient="auto-start-reverse">.
-#ifdef RELEASE_BUILD
-pref("svg.marker-improvements.enabled", false);
-#else
+// Is support for the <marker orient="auto-start-reverse"> feature enabled?
 pref("svg.marker-improvements.enabled", true);
-#endif
 
 #ifdef RELEASE_BUILD
 pref("svg.svg-iframe.enabled", false);
@@ -3568,14 +3566,17 @@ pref("font.name.monospace.x-western", "Fira Mono");
 pref("font.name.serif.zh-CN", "Charis SIL Compact");
 pref("font.name.sans-serif.zh-CN", "Fira Sans");
 pref("font.name.monospace.zh-CN", "Fira Mono");
+pref("font.name-list.sans-serif.zh-CN", "Fira Sans,Droid Sans Fallback");
 
 pref("font.name.serif.zh-HK", "Charis SIL Compact");
 pref("font.name.sans-serif.zh-HK", "Fira Sans");
 pref("font.name.monospace.zh-HK", "Fira Mono");
+pref("font.name-list.sans-serif.zh-HK", "Fira Sans,Droid Sans Fallback");
 
 pref("font.name.serif.zh-TW", "Charis SIL Compact");
 pref("font.name.sans-serif.zh-TW", "Fira Sans");
 pref("font.name.monospace.zh-TW", "Fira Mono");
+pref("font.name-list.sans-serif.zh-TW", "Fira Sans,Droid Sans Fallback");
 
 #elif defined(ANDROID)
 // We use the bundled fonts for Firefox for Android
@@ -3771,42 +3772,32 @@ pref("image.mem.decodeondraw", true);
 // Allows image locking of decoded image data in content processes.
 pref("image.mem.allow_locking_in_content_processes", true);
 
-// Minimum timeout for image discarding (in milliseconds). The actual time in
-// which an image must inactive for it to be discarded will vary between this
-// value and twice this value.
-//
-// This used to be 120 seconds, but having it that high causes our working
-// set to grow very large. Switching it back to 10 seconds will hopefully
-// be better.
-pref("image.mem.min_discard_timeout_ms", 10000);
-
 // Chunk size for calls to the image decoders
 pref("image.mem.decode_bytes_at_a_time", 16384);
 
 // The longest time we can spend in an iteration of an async decode
 pref("image.mem.max_ms_before_yield", 5);
 
-// The maximum amount of decoded image data we'll willingly keep around (we
-// might keep around more than this, but we'll try to get down to this value).
-pref("image.mem.max_decoded_image_kb", 51200);
-
-// Hard limit for the amount of decoded image data, 0 means we don't have the
-// hard limit for it.
-pref("image.mem.hard_limit_decoded_image_kb", 0);
-
 // Minimum timeout for expiring unused images from the surface cache, in
 // milliseconds. This controls how long we store cached temporary surfaces.
 pref("image.mem.surfacecache.min_expiration_ms", 60000); // 60ms
 
 // Maximum size for the surface cache, in kilobytes.
-pref("image.mem.surfacecache.max_size_kb", 102400); // 100MB
+pref("image.mem.surfacecache.max_size_kb", 1048576); // 1GB
 
 // The surface cache's size, within the constraints of the maximum size set
-// above, is determined using a formula based on system capabilities like memory
-// size. The size factor is used to tune this formula. Larger size factors
-// result in smaller caches. The default should be a good balance for most
-// systems.
-pref("image.mem.surfacecache.size_factor", 64);
+// above, is determined as a fraction of main memory size. The size factor is
+// interpreted as a reciprocal, so a size factor of 4 means to use no more than
+// 1/4 of main memory.  The default should be a good balance for most systems.
+pref("image.mem.surfacecache.size_factor", 4);
+
+// How much of the data in the surface cache is discarded when we get a memory
+// pressure notification, as a fraction. The discard factor is interpreted as a
+// reciprocal, so a discard factor of 1 means to discard everything in the
+// surface cache on memory pressure, a discard factor of 2 means to discard half
+// of the data, and so forth. The default should be a good balance for desktop
+// and laptop systems, where we never discard visible images.
+pref("image.mem.surfacecache.discard_factor", 1);
 
 // Whether we decode images on multiple background threads rather than the
 // foreground thread.
@@ -3847,7 +3838,7 @@ pref("webgl.max-warnings-per-context", 32);
 pref("webgl.enable-draft-extensions", false);
 pref("webgl.enable-privileged-extensions", false);
 #ifdef XP_WIN
-pref("webgl.angle.try-d3d11", false);
+pref("webgl.angle.try-d3d11", true);
 pref("webgl.angle.force-d3d11", false);
 #endif
 
@@ -3988,6 +3979,8 @@ pref("gfx.direct2d.force-enabled", false);
 
 pref("layers.prefer-opengl", false);
 pref("layers.prefer-d3d9", false);
+pref("layers.d3d11.force-warp", false);
+pref("layers.d3d11.disable-warp", false);
 #endif
 
 // Force all possible layers to be always active layers
@@ -4373,6 +4366,7 @@ pref("touchcaret.expiration.time", 3000);
 
 // Turn off selection caret by default
 pref("selectioncaret.enabled", false);
+pref("selectioncaret.noneditable", false);
 
 // This will inflate size of selection caret frame when we checking if
 // user click on selection caret or not. In app units.

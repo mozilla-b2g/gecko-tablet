@@ -47,6 +47,7 @@
 #include "nsIWindowCreator2.h"
 #include "nsIXULBrowserWindow.h"
 #include "nsIXULWindow.h"
+#include "nsIRemoteBrowser.h"
 #include "nsViewManager.h"
 #include "nsIWidget.h"
 #include "nsIWindowWatcher.h"
@@ -229,6 +230,7 @@ TabParent::TabParent(nsIContentParent* aManager,
   , mFrameElement(nullptr)
   , mIMESelectionAnchor(0)
   , mIMESelectionFocus(0)
+  , mWritingMode()
   , mIMEComposing(false)
   , mIMECompositionEnding(false)
   , mIMECompositionStart(0)
@@ -600,7 +602,19 @@ TabParent::Show(const nsIntSize& size)
           unused << SendPRenderFrameConstructor(renderFrame);
         }
     }
-    unused << SendShow(size, scrolling, textureFactoryIdentifier, layersId, renderFrame);
+
+    ShowInfo info(EmptyString(), false, false);
+    if (mFrameElement) {
+      nsAutoString name;
+      mFrameElement->GetAttr(kNameSpaceID_None, nsGkAtoms::name, name);
+      bool allowFullscreen =
+        mFrameElement->HasAttr(kNameSpaceID_None, nsGkAtoms::allowfullscreen) ||
+        mFrameElement->HasAttr(kNameSpaceID_None, nsGkAtoms::mozallowfullscreen);
+      bool isPrivate = mFrameElement->HasAttr(kNameSpaceID_None, nsGkAtoms::mozprivatebrowsing);
+      info = ShowInfo(name, allowFullscreen, isPrivate);
+    }
+
+    unused << SendShow(size, info, scrolling, textureFactoryIdentifier, layersId, renderFrame);
 }
 
 void
@@ -974,12 +988,16 @@ bool TabParent::SendMouseWheelEvent(WidgetWheelEvent& event)
   if (mIsDestroyed) {
     return false;
   }
-  nsEventStatus status = MaybeForwardEventToRenderFrame(event, nullptr, nullptr);
+
+  ScrollableLayerGuid guid;
+  uint64_t blockId;
+  nsEventStatus status = MaybeForwardEventToRenderFrame(event, &guid, &blockId);
   if (status == nsEventStatus_eConsumeNoDefault ||
-      !MapEventCoordinatesForChildProcess(&event)) {
+      !MapEventCoordinatesForChildProcess(&event))
+  {
     return false;
   }
-  return PBrowserParent::SendMouseWheelEvent(event);
+  return PBrowserParent::SendMouseWheelEvent(event, guid, blockId);
 }
 
 static void
@@ -1383,6 +1401,7 @@ bool
 TabParent::RecvNotifyIMESelection(const uint32_t& aSeqno,
                                   const uint32_t& aAnchor,
                                   const uint32_t& aFocus,
+                                  const mozilla::WritingMode& aWritingMode,
                                   const bool& aCausedByComposition)
 {
   nsCOMPtr<nsIWidget> widget = GetWidget();
@@ -1392,6 +1411,7 @@ TabParent::RecvNotifyIMESelection(const uint32_t& aSeqno,
   if (aSeqno == mIMESeqno) {
     mIMESelectionAnchor = aAnchor;
     mIMESelectionFocus = aFocus;
+    mWritingMode = aWritingMode;
     const nsIMEUpdatePreference updatePreference =
       widget->GetIMEUpdatePreference();
     if (updatePreference.WantSelectionChange() &&
@@ -1449,6 +1469,37 @@ TabParent::RecvRequestFocus(const bool& aCanRaise)
 
   nsCOMPtr<nsIDOMElement> node = do_QueryInterface(mFrameElement);
   fm->SetFocus(node, flags);
+  return true;
+}
+
+bool
+TabParent::RecvEnableDisableCommands(const nsString& aAction,
+                                     const nsTArray<nsCString>& aEnabledCommands,
+                                     const nsTArray<nsCString>& aDisabledCommands)
+{
+  nsCOMPtr<nsIRemoteBrowser> remoteBrowser = do_QueryInterface(mFrameElement);
+  if (remoteBrowser) {
+    nsAutoArrayPtr<const char*> enabledCommands, disabledCommands;
+
+    if (aEnabledCommands.Length()) {
+      enabledCommands = new const char* [aEnabledCommands.Length()];
+      for (uint32_t c = 0; c < aEnabledCommands.Length(); c++) {
+        enabledCommands[c] = aEnabledCommands[c].get();
+      }
+    }
+
+    if (aDisabledCommands.Length()) {
+      disabledCommands = new const char* [aDisabledCommands.Length()];
+      for (uint32_t c = 0; c < aDisabledCommands.Length(); c++) {
+        disabledCommands[c] = aDisabledCommands[c].get();
+      }
+    }
+
+    remoteBrowser->EnableDisableCommands(aAction,
+                                         aEnabledCommands.Length(), enabledCommands,
+                                         aDisabledCommands.Length(), disabledCommands);
+  }
+
   return true;
 }
 
@@ -1573,6 +1624,7 @@ TabParent::HandleQueryContentEvent(WidgetQueryContentEvent& aEvent)
       }
       aEvent.mReply.mReversed = mIMESelectionFocus < mIMESelectionAnchor;
       aEvent.mReply.mHasSelection = true;
+      aEvent.mReply.mWritingMode = mWritingMode;
       aEvent.mSucceeded = true;
     }
     break;
@@ -1638,11 +1690,11 @@ TabParent::SendCompositionEvent(WidgetCompositionEvent& event)
     return false;
   }
 
-  if (event.message == NS_COMPOSITION_CHANGE) {
+  if (event.CausesDOMTextEvent()) {
     return SendCompositionChangeEvent(event);
   }
 
-  mIMEComposing = event.message != NS_COMPOSITION_END;
+  mIMEComposing = !event.CausesDOMCompositionEndEvent();
   mIMECompositionStart = std::min(mIMESelectionAnchor, mIMESelectionFocus);
   if (mIMECompositionEnding)
     return true;
@@ -1673,6 +1725,7 @@ TabParent::SendCompositionChangeEvent(WidgetCompositionEvent& event)
   }
   mIMESelectionAnchor = mIMESelectionFocus =
       mIMECompositionStart + event.mData.Length();
+  mIMEComposing = !event.CausesDOMCompositionEndEvent();
 
   event.mSeqno = ++mIMESeqno;
   return PBrowserParent::SendCompositionEvent(event);
@@ -2091,12 +2144,12 @@ TabParent::RecvUpdateZoomConstraints(const uint32_t& aPresShellId,
 }
 
 bool
-TabParent::RecvContentReceivedTouch(const ScrollableLayerGuid& aGuid,
-                                    const uint64_t& aInputBlockId,
-                                    const bool& aPreventDefault)
+TabParent::RecvContentReceivedInputBlock(const ScrollableLayerGuid& aGuid,
+                                         const uint64_t& aInputBlockId,
+                                         const bool& aPreventDefault)
 {
   if (RenderFrameParent* rfp = GetRenderFrame()) {
-    rfp->ContentReceivedTouch(aGuid, aInputBlockId, aPreventDefault);
+    rfp->ContentReceivedInputBlock(aGuid, aInputBlockId, aPreventDefault);
   }
   return true;
 }

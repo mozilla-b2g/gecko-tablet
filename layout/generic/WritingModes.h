@@ -346,6 +346,8 @@ private:
   friend class LogicalMargin;
   friend class LogicalRect;
 
+  friend struct IPC::ParamTraits<WritingMode>;
+
   /**
    * Return a WritingMode representing an unknown value.
    */
@@ -766,9 +768,18 @@ public:
    */
   LogicalSize ConvertTo(WritingMode aToMode, WritingMode aFromMode) const
   {
+#ifdef DEBUG
+    // In DEBUG builds make sure to return a LogicalSize with the
+    // expected writing mode
     CHECK_WRITING_MODE(aFromMode);
     return aToMode == aFromMode ?
       *this : LogicalSize(aToMode, GetPhysicalSize(aFromMode));
+#else
+    // optimization for non-DEBUG builds where LogicalSize doesn't store
+    // the writing mode
+    return (aToMode == aFromMode || !aToMode.IsOrthogonalTo(aFromMode))
+             ? *this : LogicalSize(aToMode, BSize(), ISize());
+#endif
   }
 
   /**

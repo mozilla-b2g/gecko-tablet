@@ -8,7 +8,7 @@
 
 #include "jsinfer.h"
 
-#include "jit/IonFrames.h"
+#include "jit/JitFrames.h"
 #include "vm/GlobalObject.h"
 #include "vm/Stack.h"
 
@@ -46,7 +46,7 @@ ArgumentsObject::MaybeForwardToCallObject(AbstractFramePtr frame, ArgumentsObjec
 }
 
 /* static */ void
-ArgumentsObject::MaybeForwardToCallObject(jit::IonJSFrameLayout *frame, HandleObject callObj,
+ArgumentsObject::MaybeForwardToCallObject(jit::JitFrameLayout *frame, HandleObject callObj,
                                           ArgumentsObject *obj, ArgumentsData *data)
 {
     JSFunction *callee = jit::CalleeTokenToFunction(frame->calleeToken());
@@ -80,12 +80,12 @@ struct CopyFrameArgs
     }
 };
 
-struct CopyIonJSFrameArgs
+struct CopyJitFrameArgs
 {
-    jit::IonJSFrameLayout *frame_;
+    jit::JitFrameLayout *frame_;
     HandleObject callObj_;
 
-    CopyIonJSFrameArgs(jit::IonJSFrameLayout *frame, HandleObject callObj)
+    CopyJitFrameArgs(jit::JitFrameLayout *frame, HandleObject callObj)
       : frame_(frame), callObj_(callObj)
     { }
 
@@ -193,14 +193,15 @@ ArgumentsObject::create(JSContext *cx, HandleScript script, HandleFunction calle
     if (!data)
         return nullptr;
 
-    RootedNativeObject obj(cx);
-    obj = MaybeNativeObject(JSObject::create(cx, FINALIZE_KIND,
-                                             GetInitialHeap(GenericObject, clasp),
-                                             shape, type));
-    if (!obj) {
+    Rooted<ArgumentsObject *> obj(cx);
+    JSObject *base = JSObject::create(cx, FINALIZE_KIND,
+                                      GetInitialHeap(GenericObject, clasp),
+                                      shape, type);
+    if (!base) {
         js_free(data);
         return nullptr;
     }
+    obj = &base->as<ArgumentsObject>();
 
     data->numArgs = numArgs;
     data->callee.init(ObjectValue(*callee.get()));
@@ -222,12 +223,11 @@ ArgumentsObject::create(JSContext *cx, HandleScript script, HandleFunction calle
 
     obj->initFixedSlot(INITIAL_LENGTH_SLOT, Int32Value(numActuals << PACKED_BITS_COUNT));
 
-    copy.maybeForwardToCallObject(&obj->as<ArgumentsObject>(), data);
+    copy.maybeForwardToCallObject(obj, data);
 
-    ArgumentsObject &argsobj = obj->as<ArgumentsObject>();
-    MOZ_ASSERT(argsobj.initialLength() == numActuals);
-    MOZ_ASSERT(!argsobj.hasOverriddenLength());
-    return &argsobj;
+    MOZ_ASSERT(obj->initialLength() == numActuals);
+    MOZ_ASSERT(!obj->hasOverriddenLength());
+    return obj;
 }
 
 ArgumentsObject *
@@ -264,14 +264,14 @@ ArgumentsObject::createUnexpected(JSContext *cx, AbstractFramePtr frame)
 }
 
 ArgumentsObject *
-ArgumentsObject::createForIon(JSContext *cx, jit::IonJSFrameLayout *frame, HandleObject scopeChain)
+ArgumentsObject::createForIon(JSContext *cx, jit::JitFrameLayout *frame, HandleObject scopeChain)
 {
     jit::CalleeToken token = frame->calleeToken();
     MOZ_ASSERT(jit::CalleeTokenIsFunction(token));
     RootedScript script(cx, jit::ScriptFromCalleeToken(token));
     RootedFunction callee(cx, jit::CalleeTokenToFunction(token));
     RootedObject callObj(cx, scopeChain->is<CallObject>() ? scopeChain.get() : nullptr);
-    CopyIonJSFrameArgs copy(frame, callObj);
+    CopyJitFrameArgs copy(frame, callObj);
     return create(cx, script, callee, frame->numActualArgs(), copy);
 }
 
@@ -570,13 +570,13 @@ const Class NormalArgumentsObject::class_ = {
     JSCLASS_IMPLEMENTS_BARRIERS |
     JSCLASS_HAS_RESERVED_SLOTS(NormalArgumentsObject::RESERVED_SLOTS) |
     JSCLASS_HAS_CACHED_PROTO(JSProto_Object) | JSCLASS_BACKGROUND_FINALIZE,
-    JS_PropertyStub,         /* addProperty */
+    nullptr,                 /* addProperty */
     args_delProperty,
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
     args_enumerate,
     args_resolve,
-    JS_ConvertStub,
+    nullptr,                 /* convert     */
     ArgumentsObject::finalize,
     nullptr,                 /* call        */
     nullptr,                 /* hasInstance */
@@ -594,13 +594,13 @@ const Class StrictArgumentsObject::class_ = {
     JSCLASS_IMPLEMENTS_BARRIERS |
     JSCLASS_HAS_RESERVED_SLOTS(StrictArgumentsObject::RESERVED_SLOTS) |
     JSCLASS_HAS_CACHED_PROTO(JSProto_Object) | JSCLASS_BACKGROUND_FINALIZE,
-    JS_PropertyStub,         /* addProperty */
+    nullptr,                 /* addProperty */
     args_delProperty,
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
     strictargs_enumerate,
     strictargs_resolve,
-    JS_ConvertStub,
+    nullptr,                 /* convert     */
     ArgumentsObject::finalize,
     nullptr,                 /* call        */
     nullptr,                 /* hasInstance */

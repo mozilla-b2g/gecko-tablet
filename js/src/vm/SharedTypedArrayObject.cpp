@@ -59,7 +59,7 @@ using JS::GenericNaN;
 TypedArrayLayout SharedTypedArrayObject::layout_(true, // shared
                                                  false, // neuterable
                                                  &SharedTypedArrayObject::classes[0],
-                                                 &SharedTypedArrayObject::classes[Scalar::TypeMax]);
+                                                 &SharedTypedArrayObject::classes[Scalar::MaxTypedArrayViewType]);
 
 inline void
 InitSharedArrayBufferViewDataPointer(SharedTypedArrayObject *obj, SharedArrayBufferObject *buffer, size_t byteOffset)
@@ -704,13 +704,13 @@ IMPL_SHARED_TYPED_ARRAY_COMBINED_UNWRAPPERS(Float64, double, double)
     JSCLASS_HAS_RESERVED_SLOTS(SharedTypedArrayObject::RESERVED_SLOTS) |       \
     JSCLASS_HAS_PRIVATE |                                                      \
     JSCLASS_HAS_CACHED_PROTO(JSProto_Shared##_typedArray),                     \
-    JS_PropertyStub,         /* addProperty */                                 \
-    JS_DeletePropertyStub,   /* delProperty */                                 \
+    nullptr,                 /* addProperty */                                 \
+    nullptr,                 /* delProperty */                                 \
     JS_PropertyStub,         /* getProperty */                                 \
     JS_StrictPropertyStub,   /* setProperty */                                 \
-    JS_EnumerateStub,                                                          \
-    JS_ResolveStub,                                                            \
-    JS_ConvertStub,                                                            \
+    nullptr,                 /* enumerate   */                                 \
+    nullptr,                 /* resolve     */                                 \
+    nullptr,                 /* convert     */                                 \
     nullptr,                 /* finalize    */                                 \
     nullptr,                 /* call        */                                 \
     nullptr,                 /* hasInstance */                                 \
@@ -725,13 +725,13 @@ IMPL_SHARED_TYPED_ARRAY_COMBINED_UNWRAPPERS(Float64, double, double)
     JSCLASS_HAS_RESERVED_SLOTS(SharedTypedArrayObject::RESERVED_SLOTS) |       \
     JSCLASS_HAS_PRIVATE | JSCLASS_IMPLEMENTS_BARRIERS |                        \
     JSCLASS_HAS_CACHED_PROTO(JSProto_Shared##_typedArray),                     \
-    JS_PropertyStub,         /* addProperty */                                 \
-    JS_DeletePropertyStub,   /* delProperty */                                 \
+    nullptr,                 /* addProperty */                                 \
+    nullptr,                 /* delProperty */                                 \
     JS_PropertyStub,         /* getProperty */                                 \
     JS_StrictPropertyStub,   /* setProperty */                                 \
-    JS_EnumerateStub,                                                          \
-    JS_ResolveStub,                                                            \
-    JS_ConvertStub,                                                            \
+    nullptr,                 /* enumerate   */                                 \
+    nullptr,                 /* resolve     */                                 \
+    nullptr,                 /* convert     */                                 \
     nullptr,                 /* finalize    */                                 \
     nullptr,                 /* call        */                                 \
     nullptr,                 /* hasInstance */                                 \
@@ -773,7 +773,7 @@ IMPL_SHARED_TYPED_ARRAY_STATICS(Float32Array)
 IMPL_SHARED_TYPED_ARRAY_STATICS(Float64Array)
 IMPL_SHARED_TYPED_ARRAY_STATICS(Uint8ClampedArray)
 
-const Class SharedTypedArrayObject::classes[Scalar::TypeMax] = {
+const Class SharedTypedArrayObject::classes[Scalar::MaxTypedArrayViewType] = {
     IMPL_SHARED_TYPED_ARRAY_FAST_CLASS(Int8Array),
     IMPL_SHARED_TYPED_ARRAY_FAST_CLASS(Uint8Array),
     IMPL_SHARED_TYPED_ARRAY_FAST_CLASS(Int16Array),
@@ -785,7 +785,7 @@ const Class SharedTypedArrayObject::classes[Scalar::TypeMax] = {
     IMPL_SHARED_TYPED_ARRAY_FAST_CLASS(Uint8ClampedArray)
 };
 
-const Class SharedTypedArrayObject::protoClasses[Scalar::TypeMax] = {
+const Class SharedTypedArrayObject::protoClasses[Scalar::MaxTypedArrayViewType] = {
     IMPL_SHARED_TYPED_ARRAY_PROTO_CLASS(Int8Array),
     IMPL_SHARED_TYPED_ARRAY_PROTO_CLASS(Uint8Array),
     IMPL_SHARED_TYPED_ARRAY_PROTO_CLASS(Int16Array),

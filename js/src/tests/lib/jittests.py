@@ -177,10 +177,10 @@ class Test:
                         test.tz_pacific = True
                     elif name == 'ion-eager':
                         test.jitflags.append('--ion-eager')
-                    elif name == 'no-ion':
-                        test.jitflags.append('--no-ion')
                     elif name == 'dump-bytecode':
                         test.jitflags.append('--dump-bytecode')
+                    elif name.startswith('--'): # // |jit-test| --ion-gvn=off; --no-sse4
+                        test.jitflags.append(name)
                     else:
                         print('%s: warning: unrecognized |jit-test| attribute %s' % (path, part))
 
@@ -599,15 +599,21 @@ def print_test_summary(num_tests, failures, complete, doing, options):
                 traceback.print_exc()
                 sys.stderr.write('---\n')
 
+        def show_test(res):
+            if options.show_failed:
+                print('    ' + subprocess.list2cmdline(res.cmd))
+            else:
+                print('    ' + ' '.join(res.test.jitflags + [res.test.path]))
+
         print('FAILURES:')
         for res in failures:
             if not res.timed_out:
-                print('    ' + ' '.join(res.test.jitflags + [res.test.path]))
+                show_test(res)
 
         print('TIMEOUTS:')
         for res in failures:
             if res.timed_out:
-                print('    ' + ' '.join(res.test.jitflags + [res.test.path]))
+                show_test(res)
     else:
         print('PASSED ALL' + ('' if complete else ' (partial run -- interrupted by user %s)' % doing))
 

@@ -59,6 +59,7 @@ class MediaStreamAudioSourceNode;
 class OscillatorNode;
 class PannerNode;
 class ScriptProcessorNode;
+class StereoPannerNode;
 class WaveShaperNode;
 class PeriodicWave;
 class Promise;
@@ -143,6 +144,9 @@ public:
                         uint32_t aNumberOfOutputChannels,
                         ErrorResult& aRv);
 
+  already_AddRefed<StereoPannerNode>
+  CreateStereoPanner();
+
   already_AddRefed<AnalyserNode>
   CreateAnalyser();
 
@@ -191,7 +195,7 @@ public:
                   const Optional<OwningNonNull<DecodeErrorCallback> >& aFailureCallback);
 
   // OfflineAudioContext methods
-  void StartRendering(ErrorResult& aRv);
+  already_AddRefed<Promise> StartRendering(ErrorResult& aRv);
   IMPL_EVENT_HANDLER(complete)
 
   bool IsOffline() const { return mIsOffline; }

@@ -870,18 +870,21 @@ nsSSLIOLayerHelpers::rememberTolerantAtVersion(const nsACString& hostName,
   mTLSIntoleranceInfo.Put(key, entry);
 }
 
-void nsSSLIOLayerHelpers::forgetIntolerance(const nsACString& hostName,
-                                            int16_t port)
+uint16_t
+nsSSLIOLayerHelpers::forgetIntolerance(const nsACString& hostName,
+                                       int16_t port)
 {
   nsCString key;
   getSiteKey(hostName, port, key);
 
   MutexAutoLock lock(mutex);
 
+  uint16_t tolerant = 0;
   IntoleranceEntry entry;
   if (mTLSIntoleranceInfo.Get(key, &entry)) {
     entry.AssertInvariant();
 
+    tolerant = entry.tolerant;
     entry.intolerant = 0;
     entry.intoleranceReason = 0;
     if (entry.strongCipherStatus != StrongCiphersWorked) {
@@ -891,6 +894,8 @@ void nsSSLIOLayerHelpers::forgetIntolerance(const nsACString& hostName,
     entry.AssertInvariant();
     mTLSIntoleranceInfo.Put(key, entry);
   }
+
+  return tolerant;
 }
 
 // returns true if we should retry the handshake
@@ -903,7 +908,47 @@ nsSSLIOLayerHelpers::rememberIntolerantAtVersion(const nsACString& hostName,
 {
   if (intolerant <= minVersion || intolerant <= mVersionFallbackLimit) {
     // We can't fall back any further. Assume that intolerance isn't the issue.
-    forgetIntolerance(hostName, port);
+    uint32_t tolerant = forgetIntolerance(hostName, port);
+    // If we know the server is tolerant at the version, we don't have to
+    // gather the telemetry.
+    if (intolerant <= tolerant) {
+      return false;
+    }
+
+    uint32_t fallbackLimitBucket = 0;
+    // added if the version has reached the min version.
+    if (intolerant <= minVersion) {
+      switch (minVersion) {
+        case SSL_LIBRARY_VERSION_TLS_1_0:
+          fallbackLimitBucket += 1;
+          break;
+        case SSL_LIBRARY_VERSION_TLS_1_1:
+          fallbackLimitBucket += 2;
+          break;
+        case SSL_LIBRARY_VERSION_TLS_1_2:
+          fallbackLimitBucket += 3;
+          break;
+      }
+    }
+    // added if the version has reached the fallback limit.
+    if (intolerant <= mVersionFallbackLimit) {
+      switch (mVersionFallbackLimit) {
+        case SSL_LIBRARY_VERSION_TLS_1_0:
+          fallbackLimitBucket += 4;
+          break;
+        case SSL_LIBRARY_VERSION_TLS_1_1:
+          fallbackLimitBucket += 8;
+          break;
+        case SSL_LIBRARY_VERSION_TLS_1_2:
+          fallbackLimitBucket += 12;
+          break;
+      }
+    }
+    if (fallbackLimitBucket) {
+      Telemetry::Accumulate(Telemetry::SSL_FALLBACK_LIMIT_REACHED,
+                            fallbackLimitBucket);
+    }
+
     return false;
   }
 
@@ -939,7 +984,8 @@ nsSSLIOLayerHelpers::rememberIntolerantAtVersion(const nsACString& hostName,
 // returns true if we should retry the handshake
 bool
 nsSSLIOLayerHelpers::rememberStrongCiphersFailed(const nsACString& hostName,
-                                                 int16_t port)
+                                                 int16_t port,
+                                                 PRErrorCode intoleranceReason)
 {
   nsCString key;
   getSiteKey(hostName, port, key);
@@ -956,7 +1002,7 @@ nsSSLIOLayerHelpers::rememberStrongCiphersFailed(const nsACString& hostName,
   } else {
     entry.tolerant = 0;
     entry.intolerant = 0;
-    entry.intoleranceReason = SSL_ERROR_NO_CYPHER_OVERLAP;
+    entry.intoleranceReason = intoleranceReason;
   }
 
   entry.strongCipherStatus = StrongCiphersFailed;
@@ -1171,7 +1217,6 @@ uint32_t tlsIntoleranceTelemetryBucket(PRErrorCode err)
     case SSL_ERROR_NO_CYPHER_OVERLAP: return 7;
     case SSL_ERROR_BAD_SERVER: return 8;
     case SSL_ERROR_BAD_BLOCK_PADDING: return 9;
-    case SSL_ERROR_UNSUPPORTED_VERSION: return 10;
     case SSL_ERROR_PROTOCOL_VERSION_ALERT: return 11;
     case SSL_ERROR_RX_MALFORMED_FINISHED: return 12;
     case SSL_ERROR_BAD_HANDSHAKE_HASH_VALUE: return 13;
@@ -1209,15 +1254,17 @@ retryDueToTLSIntolerance(PRErrorCode err, nsNSSSocketInfo* socketInfo)
       .forgetIntolerance(socketInfo->GetHostName(), socketInfo->GetPort());
 
     return false;
-  } else if (err == SSL_ERROR_NO_CYPHER_OVERLAP &&
-             nsNSSComponent::AreAnyWeakCiphersEnabled()) {
+  }
+  if ((err == SSL_ERROR_NO_CYPHER_OVERLAP || err == PR_END_OF_FILE_ERROR) &&
+      nsNSSComponent::AreAnyWeakCiphersEnabled()) {
     if (socketInfo->SharedState().IOLayerHelpers()
                   .rememberStrongCiphersFailed(socketInfo->GetHostName(),
-                                               socketInfo->GetPort())) {
-      Telemetry::Accumulate(Telemetry::SSL_WEAK_CIPHERS_FALLBACK, true);
+                                               socketInfo->GetPort(), err)) {
+      Telemetry::Accumulate(Telemetry::SSL_WEAK_CIPHERS_FALLBACK,
+                            tlsIntoleranceTelemetryBucket(err));
       return true;
     }
-    Telemetry::Accumulate(Telemetry::SSL_WEAK_CIPHERS_FALLBACK, false);
+    Telemetry::Accumulate(Telemetry::SSL_WEAK_CIPHERS_FALLBACK, 0);
   }
 
   // When not using a proxy we'll see a connection reset error.
@@ -1797,13 +1844,14 @@ void
 nsSSLIOLayerHelpers::loadVersionFallbackLimit()
 {
   // see nsNSSComponent::setEnabledTLSVersions for pref handling rules
-  int32_t limit = 1;   // 1 = TLS 1.0
-  Preferences::GetInt("security.tls.version.fallback-limit", &limit);
-  limit += SSL_LIBRARY_VERSION_3_0;
-  mVersionFallbackLimit = (uint16_t)limit;
-  if (limit != (int32_t)mVersionFallbackLimit) { // overflow check
-    mVersionFallbackLimit = SSL_LIBRARY_VERSION_TLS_1_0;
-  }
+  uint32_t limit = Preferences::GetUint("security.tls.version.fallback-limit",
+                                        1); // 1 = TLS 1.0
+  SSLVersionRange defaults = { SSL_LIBRARY_VERSION_TLS_1_0,
+                               SSL_LIBRARY_VERSION_TLS_1_0 };
+  SSLVersionRange filledInRange;
+  nsNSSComponent::FillTLSVersionRange(filledInRange, limit, limit, defaults);
+
+  mVersionFallbackLimit = filledInRange.max;
 }
 
 void

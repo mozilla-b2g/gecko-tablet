@@ -394,7 +394,6 @@ let ProfileView = {
 
     let graph = new LineGraphWidget($(".framerate", panel), L10N.getStr("graphs.fps"));
     graph.fixedHeight = FRAMERATE_GRAPH_HEIGHT;
-    graph.minDistanceBetweenPoints = 1;
     graph.dataOffsetX = beginAt;
 
     yield graph.setDataWhenReady(framerateData);
@@ -808,8 +807,9 @@ function findLastIndex(array, predicate) {
  */
 function viewSourceInDebugger(url, line) {
   let showSource = ({ DebuggerView }) => {
-    if (DebuggerView.Sources.containsValue(url)) {
-      DebuggerView.setEditorLocation(url, line, { noDebug: true }).then(() => {
+    let item = DebuggerView.Sources.getItemForAttachment(a => a.source.url === url);
+    if (item) {
+      DebuggerView.setEditorLocation(item.attachment.source.actor, line, { noDebug: true }).then(() => {
         window.emit(EVENTS.SOURCE_SHOWN_IN_JS_DEBUGGER);
       }, () => {
         window.emit(EVENTS.SOURCE_NOT_FOUND_IN_JS_DEBUGGER);

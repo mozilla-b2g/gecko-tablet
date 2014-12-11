@@ -47,6 +47,15 @@ let WebProgressListener = {
     webProgress.addProgressListener(this._filter, Ci.nsIWebProgress.NOTIFY_ALL);
   },
 
+  uninit() {
+    let webProgress = docShell.QueryInterface(Ci.nsIInterfaceRequestor)
+                              .getInterface(Ci.nsIWebProgress);
+    webProgress.removeProgressListener(this._filter);
+
+    this._filter.removeProgressListener(this);
+    this._filter = null;
+  },
+
   _requestSpec: function (aRequest, aPropertyName) {
     if (!aRequest || !(aRequest instanceof Ci.nsIChannel))
       return null;
@@ -99,6 +108,19 @@ let WebProgressListener = {
   },
 
   onProgressChange: function onProgressChange(aWebProgress, aRequest, aCurSelf, aMaxSelf, aCurTotal, aMaxTotal) {
+    let json = this._setupJSON(aWebProgress, aRequest);
+    let objects = this._setupObjects(aWebProgress);
+
+    json.curSelf = aCurSelf;
+    json.maxSelf = aMaxSelf;
+    json.curTotal = aCurTotal;
+    json.maxTotal = aMaxTotal;
+
+    sendAsyncMessage("Content:ProgressChange", json, objects);
+  },
+
+  onProgressChange64: function onProgressChange(aWebProgress, aRequest, aCurSelf, aMaxSelf, aCurTotal, aMaxTotal) {
+    this.onProgressChange(aWebProgress, aRequest, aCurSelf, aMaxSelf, aCurTotal, aMaxTotal);
   },
 
   onLocationChange: function onLocationChange(aWebProgress, aRequest, aLocationURI, aFlags) {
@@ -142,8 +164,13 @@ let WebProgressListener = {
     sendAsyncMessage("Content:SecurityChange", json, objects);
   },
 
+  onRefreshAttempted: function onRefreshAttempted(aWebProgress, aURI, aDelay, aSameURI) {
+    return true;
+  },
+
   QueryInterface: function QueryInterface(aIID) {
     if (aIID.equals(Ci.nsIWebProgressListener) ||
+        aIID.equals(Ci.nsIWebProgressListener2) ||
         aIID.equals(Ci.nsISupportsWeakReference) ||
         aIID.equals(Ci.nsISupports)) {
         return this;
@@ -154,6 +181,9 @@ let WebProgressListener = {
 };
 
 WebProgressListener.init();
+addEventListener("unload", () => {
+  WebProgressListener.uninit();
+});
 
 let WebNavigation =  {
   init: function() {

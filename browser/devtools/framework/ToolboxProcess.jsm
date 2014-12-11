@@ -159,11 +159,14 @@ BrowserToolboxProcess.prototype = {
     try {
       debuggingProfileDir.create(Ci.nsIFile.DIRECTORY_TYPE, 0o755);
     } catch (ex) {
-      if (ex.result !== Cr.NS_ERROR_FILE_ALREADY_EXISTS) {
+      // Don't re-copy over the prefs again if this profile already exists
+      if (ex.result === Cr.NS_ERROR_FILE_ALREADY_EXISTS) {
+        this._dbgProfilePath = debuggingProfileDir.path;
+      } else {
         dumpn("Error trying to create a profile directory, failing.");
         dumpn("Error: " + (ex.message || ex));
-        return;
       }
+      return;
     }
 
     this._dbgProfilePath = debuggingProfileDir.path;
@@ -199,6 +202,17 @@ BrowserToolboxProcess.prototype = {
 
     dumpn("Running chrome debugging process.");
     let args = ["-no-remote", "-foreground", "-profile", this._dbgProfilePath, "-chrome", xulURI];
+
+    // During local development, incremental builds can trigger the main process
+    // to clear its startup cache with the "flag file" .purgecaches, but this
+    // file is removed during app startup time, so we aren't able to know if it
+    // was present in order to also clear the child profile's startup cache as
+    // well.
+    //
+    // As an approximation of "isLocalBuild", check for an unofficial build.
+    if (!Services.appinfo.isOfficial) {
+      args.push("-purgecaches");
+    }
 
     process.runwAsync(args, args.length, { observe: () => this.close() });
 

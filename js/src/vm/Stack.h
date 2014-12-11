@@ -1330,7 +1330,7 @@ class JitActivation : public Activation
     // provided, as values need to be read out of snapshots.
     //
     // The inlineDepth must be within bounds of the frame pointed to by iter.
-    RematerializedFrame *getRematerializedFrame(ThreadSafeContext *cx, const JitFrameIterator &iter,
+    RematerializedFrame *getRematerializedFrame(JSContext *cx, const JitFrameIterator &iter,
                                                 size_t inlineDepth = 0);
 
     // Look up a rematerialized frame by the fp. If inlineDepth is out of
@@ -1351,11 +1351,11 @@ class JitActivation : public Activation
     bool registerIonFrameRecovery(RInstructionResults&& results);
 
     // Return the pointer to the Ion frame recovery, if it is already registered.
-    RInstructionResults *maybeIonFrameRecovery(IonJSFrameLayout *fp);
+    RInstructionResults *maybeIonFrameRecovery(JitFrameLayout *fp);
 
     // If an Ion frame recovery exists for the |fp| frame exists, then remove it
     // from the activation.
-    void removeIonFrameRecovery(IonJSFrameLayout *fp);
+    void removeIonFrameRecovery(JitFrameLayout *fp);
 
     void markIonRecovery(JSTracer *trc);
 
@@ -1636,7 +1636,7 @@ class FrameIter
 
     // Ensures that we have rematerialized the top frame and its associated
     // inline frames. Can only be called when isIon().
-    bool ensureHasRematerializedFrame(ThreadSafeContext *cx);
+    bool ensureHasRematerializedFrame(JSContext *cx);
 
     // True when isInterp() or isBaseline(). True when isIon() if it
     // has a rematerialized frame. False otherwise false otherwise.

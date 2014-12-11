@@ -40,8 +40,6 @@
 #include "nsWindowMemoryReporter.h"
 #include "WindowNamedPropertiesHandler.h"
 #include "nsFrameSelection.h"
-#include "nsISelectionListener.h"
-#include "nsCaret.h"
 
 // Helper Classes
 #include "nsJSUtils.h"
@@ -72,6 +70,7 @@
 #include "AudioChannelService.h"
 #include "MessageEvent.h"
 #include "nsAboutProtocolUtils.h"
+#include "nsCharTraits.h" // NS_IS_HIGH/LOW_SURROGATE
 
 // Interfaces Needed
 #include "nsIFrame.h"
@@ -194,8 +193,6 @@
 
 #include "nsRefreshDriver.h"
 
-#include "mozilla/dom/SelectionChangeEvent.h"
-
 #include "mozilla/AddonPathService.h"
 #include "mozilla/Services.h"
 #include "mozilla/Telemetry.h"
@@ -275,7 +272,6 @@ static PopupControlState    gPopupControlState         = openAbused;
 static int32_t              gRunningTimeoutDepth       = 0;
 static bool                 gMouseDown                 = false;
 static bool                 gDragServiceDisabled       = false;
-static bool                 gSelectionCaretPrefEnabled = false;
 static FILE                *gDumpFile                  = nullptr;
 static uint64_t             gNextWindowID              = 0;
 static uint32_t             gSerialCounter             = 0;
@@ -570,7 +566,9 @@ nsPIDOMWindow::nsPIDOMWindow(nsPIDOMWindow *aOuterWindow)
   mRunningTimeout(nullptr), mMutationBits(0), mIsDocumentLoaded(false),
   mIsHandlingResizeEvent(false), mIsInnerWindow(aOuterWindow != nullptr),
   mMayHavePaintEventListener(false), mMayHaveTouchEventListener(false),
-  mMayHaveTouchCaret(false), mMayHaveMouseEnterLeaveEventListener(false),
+  mMayHaveTouchCaret(false),
+  mMayHaveScrollWheelEventListener(false),
+  mMayHaveMouseEnterLeaveEventListener(false),
   mMayHavePointerEnterLeaveEventListener(false),
   mIsModalContentWindow(false),
   mIsActive(false), mIsBackground(false),
@@ -1191,9 +1189,6 @@ nsGlobalWindow::nsGlobalWindow(nsGlobalWindow *aOuterWindow)
     Preferences::AddBoolVarCache(&sIdleObserversAPIFuzzTimeDisabled, 
                                  "dom.idle-observers-api.fuzz_time.disabled",
                                  false);
-    Preferences::AddBoolVarCache(&gSelectionCaretPrefEnabled,
-                                 "selectioncaret.enabled",
-                                 false);
   }
 
   if (gDumpFile == nullptr) {
@@ -1233,6 +1228,12 @@ nsGlobalWindow::nsGlobalWindow(nsGlobalWindow *aOuterWindow)
   // We seem to see crashes in release builds because of null |sWindowsById|.
   if (sWindowsById) {
     sWindowsById->Put(mWindowID, this);
+  }
+
+  // Ensure that the current active state is initialized for child process windows.
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
+  if (fm) {
+    mIsActive = fm->IsParentActivated();
   }
 }
 
@@ -2611,11 +2612,14 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
     xpc::Scriptability::Get(GetWrapperPreserveColor()).SetDocShellAllowsScript(allow);
 
     if (!aState) {
-      JS::Rooted<JSObject*> rootedWrapper(cx, GetWrapperPreserveColor());
-      if (!JS_DefineProperty(cx, newInnerGlobal, "window", rootedWrapper,
-                             JSPROP_ENUMERATE | JSPROP_READONLY |
-                             JSPROP_PERMANENT,
-                             JS_STUBGETTER, JS_STUBSETTER)) {
+      // Get the "window" property once so it will be cached on our inner.  We
+      // have to do this here, not in binding code, because this has to happen
+      // after we've created the outer window proxy and stashed it in the outer
+      // nsGlobalWindow, so GetWrapperPreserveColor() on that outer
+      // nsGlobalWindow doesn't return null and nsGlobalWindow::OuterObject
+      // works correctly.
+      JS::Rooted<JS::Value> unused(cx);
+      if (!JS_GetProperty(cx, newInnerGlobal, "window", &unused)) {
         NS_ERROR("can't create the 'window' property");
         return NS_ERROR_FAILURE;
       }
@@ -3508,11 +3512,9 @@ nsGlobalWindow::GetDocument(nsIDOMDocument** aDocument)
   return NS_OK;
 }
 
-nsIDOMWindow*
-nsGlobalWindow::GetWindow(ErrorResult& aError)
+nsGlobalWindow*
+nsGlobalWindow::Window()
 {
-  FORWARD_TO_OUTER_OR_THROW(GetWindow, (aError), aError, nullptr);
-
   return this;
 }
 
@@ -3520,10 +3522,12 @@ NS_IMETHODIMP
 nsGlobalWindow::GetWindow(nsIDOMWindow** aWindow)
 {
   ErrorResult rv;
-  nsCOMPtr<nsIDOMWindow> window = GetWindow(rv);
+  FORWARD_TO_OUTER_OR_THROW(GetWindow, (aWindow), rv, rv.ErrorCode());
+
+  nsCOMPtr<nsIDOMWindow> window = Window();
   window.forget(aWindow);
 
-  return rv.ErrorCode();
+  return NS_OK;
 }
 
 nsIDOMWindow*
@@ -7912,7 +7916,7 @@ PostMessageReadStructuredClone(JSContext* cx,
       JS::Rooted<JS::Value> val(cx);
       {
         nsRefPtr<File> blob = new File(scInfo->window, blobImpl);
-        if (!WrapNewBindingObject(cx, blob, &val)) {
+        if (!GetOrCreateDOMReflector(cx, blob, &val)) {
           return nullptr;
         }
       }
@@ -9271,6 +9275,36 @@ nsGlobalWindow::ShowModalDialog(const nsAString& aURI, nsIVariant *aArgs_,
   return rv.ErrorCode();
 }
 
+class ChildCommandDispatcher : public nsRunnable
+{
+public:
+  ChildCommandDispatcher(nsGlobalWindow* aWindow,
+                         nsITabChild* aTabChild,
+                         const nsAString& aAction)
+  : mWindow(aWindow), mTabChild(aTabChild), mAction(aAction) {}
+
+  NS_IMETHOD Run()
+  {
+    nsCOMPtr<nsPIWindowRoot> root = mWindow->GetTopWindowRoot();
+    if (!root) {
+      return NS_OK;
+    }
+
+    nsTArray<nsCString> enabledCommands, disabledCommands;
+    root->GetEnabledDisabledCommands(enabledCommands, disabledCommands);
+    if (enabledCommands.Length() || disabledCommands.Length()) {
+      mTabChild->EnableDisableCommands(mAction, enabledCommands, disabledCommands);
+    }
+
+    return NS_OK;
+  }
+
+private:
+  nsRefPtr<nsGlobalWindow>             mWindow;
+  nsCOMPtr<nsITabChild>                mTabChild;
+  nsString                             mAction;
+};
+
 class CommandDispatcher : public nsRunnable
 {
 public:
@@ -9287,64 +9321,15 @@ public:
   nsString                             mAction;
 };
 
-static bool
-CheckReason(int16_t aReason, SelectionChangeReason aReasonType)
-{
-  switch (aReasonType) {
-    case SelectionChangeReason::Drag:
-      return aReason & nsISelectionListener::DRAG_REASON;
-    case SelectionChangeReason::Mousedown:
-      return aReason & nsISelectionListener::MOUSEDOWN_REASON;
-    case SelectionChangeReason::Mouseup:
-      return aReason & nsISelectionListener::MOUSEUP_REASON;
-    case SelectionChangeReason::Keypress:
-      return aReason & nsISelectionListener::KEYPRESS_REASON;
-    case SelectionChangeReason::Selectall:
-      return aReason & nsISelectionListener::SELECTALL_REASON;
-    case SelectionChangeReason::Collapsetostart:
-      return aReason & nsISelectionListener::COLLAPSETOSTART_REASON;
-    case SelectionChangeReason::Collapsetoend:
-      return aReason & nsISelectionListener::COLLAPSETOEND_REASON;
-    default:
-      return false;
-  }
-}
-
-static nsRect
-GetSelectionBoundingRect(Selection* aSel, nsIPresShell* aShell)
-{
-  nsRect res;
-  // Bounding client rect may be empty after calling GetBoundingClientRect
-  // when range is collapsed. So we get caret's rect when range is
-  // collapsed.
-  if (aSel->IsCollapsed()) {
-    aShell->FlushPendingNotifications(Flush_Layout);
-    nsIFrame* frame = nsCaret::GetGeometry(aSel, &res);
-    if (frame) {
-      nsIFrame* relativeTo =
-        nsLayoutUtils::GetContainingBlockForClientRect(frame);
-      res = nsLayoutUtils::TransformFrameRectToAncestor(frame, res, relativeTo);
-    }
-  } else {
-    int32_t rangeCount = aSel->GetRangeCount();
-    nsLayoutUtils::RectAccumulator accumulator;
-    for (int32_t idx = 0; idx < rangeCount; ++idx) {
-      nsRange* range = aSel->GetRangeAt(idx);
-      nsRange::CollectClientRects(&accumulator, range,
-                                  range->GetStartParent(), range->StartOffset(),
-                                  range->GetEndParent(), range->EndOffset(),
-                                  true, false);
-    }
-    res = accumulator.mResultRect.IsEmpty() ? accumulator.mFirstRect :
-      accumulator.mResultRect;
-  }
-
-  return res;
-}
-
 NS_IMETHODIMP
 nsGlobalWindow::UpdateCommands(const nsAString& anAction, nsISelection* aSel, int16_t aReason)
 {
+  // If this is a child process, redirect to the parent process.
+  if (nsCOMPtr<nsITabChild> child = do_GetInterface(GetDocShell())) {
+    nsContentUtils::AddScriptRunner(new ChildCommandDispatcher(this, child, anAction));
+    return NS_OK;
+  }
+
   nsPIDOMWindow *rootWindow = nsGlobalWindow::GetPrivateRoot();
   if (!rootWindow)
     return NS_OK;
@@ -9361,55 +9346,6 @@ nsGlobalWindow::UpdateCommands(const nsAString& anAction, nsISelection* aSel, in
     if (xulCommandDispatcher) {
       nsContentUtils::AddScriptRunner(new CommandDispatcher(xulCommandDispatcher,
                                                             anAction));
-    }
-  }
-
-  if (gSelectionCaretPrefEnabled && mDoc && anAction.EqualsLiteral("selectionchange")) {
-    SelectionChangeEventInit init;
-    init.mBubbles = true;
-    if (aSel) {
-      bool isTouchCaretVisible = false;
-      bool isCollapsed = aSel->Collapsed();
-
-      nsIPresShell *shell = mDoc->GetShell();
-      if (shell) {
-        nsRefPtr<TouchCaret> touchCaret = shell->GetTouchCaret();
-        if (touchCaret) {
-          isTouchCaretVisible = touchCaret->GetVisibility();
-        }
-      }
-
-      // Dispatch selection change events when touch caret is visible even if selection
-      // is collapsed because it could be the shortcut mode, otherwise ignore this
-      // UpdateCommands
-      if (isCollapsed && !isTouchCaretVisible) {
-        return NS_OK;
-      }
-
-      Selection* selection = static_cast<Selection*>(aSel);
-      nsRect rect = GetSelectionBoundingRect(selection, mDoc->GetShell());
-      nsRefPtr<DOMRect> domRect = new DOMRect(ToSupports(this));
-      domRect->SetLayoutRect(rect);
-      init.mBoundingClientRect = domRect;
-
-      selection->Stringify(init.mSelectedText);
-      for (uint32_t reasonType = 0;
-           reasonType < static_cast<uint32_t>(SelectionChangeReason::EndGuard_);
-           ++reasonType) {
-        SelectionChangeReason strongReasonType =
-          static_cast<SelectionChangeReason>(reasonType);
-        if (CheckReason(aReason, strongReasonType)) {
-          init.mReasons.AppendElement(strongReasonType);
-        }
-      }
-
-      nsRefPtr<SelectionChangeEvent> event =
-        SelectionChangeEvent::Constructor(mDoc, NS_LITERAL_STRING("mozselectionchange"), init);
-
-      event->SetTrusted(true);
-      event->GetInternalNSEvent()->mFlags.mOnlyChromeDispatch = true;
-      bool ret;
-      mDoc->DispatchEvent(event, &ret);
     }
   }
 
@@ -9821,17 +9757,21 @@ nsGlobalWindow::ActivateOrDeactivate(bool aActivate)
 {
   MOZ_ASSERT(IsOuterWindow());
 
+  if (!mDoc) {
+    return;
+  }
+
   // Set / unset mIsActive on the top level window, which is used for the
   // :-moz-window-inactive pseudoclass, and its sheet (if any).
   nsCOMPtr<nsIWidget> mainWidget = GetMainWidget();
-  if (!mainWidget)
-    return;
-
-  // Get the top level widget (if the main widget is a sheet, this will
-  // be the sheet's top (non-sheet) parent).
-  nsCOMPtr<nsIWidget> topLevelWidget = mainWidget->GetSheetWindowParent();
-  if (!topLevelWidget) {
-    topLevelWidget = mainWidget;
+  nsCOMPtr<nsIWidget> topLevelWidget;
+  if (mainWidget) {
+    // Get the top level widget (if the main widget is a sheet, this will
+    // be the sheet's top (non-sheet) parent).
+    topLevelWidget = mainWidget->GetSheetWindowParent();
+    if (!topLevelWidget) {
+      topLevelWidget = mainWidget;
+    }
   }
 
   nsCOMPtr<nsPIDOMWindow> piMainWindow(
@@ -11071,6 +11011,10 @@ nsGlobalWindow::ShowSlowScriptDialog()
   nsresult rv;
   AutoJSContext cx;
 
+  if (Preferences::GetBool("dom.always_stop_slow_scripts")) {
+    return KillSlowScript;
+  }
+
   // If it isn't safe to run script, then it isn't safe to bring up the prompt
   // (since that spins the event loop). In that (rare) case, we just kill the
   // script and report a warning.
@@ -11171,7 +11115,32 @@ nsGlobalWindow::ShowSlowScriptDialog()
   // Append file and line number information, if available
   if (filename.get()) {
     nsXPIDLString scriptLocation;
+    // We want to drop the middle part of too-long locations.  We'll
+    // define "too-long" as longer than 60 UTF-16 code units.  Just
+    // have to be a bit careful about unpaired surrogates.
     NS_ConvertUTF8toUTF16 filenameUTF16(filename.get());
+    if (filenameUTF16.Length() > 60) {
+      // XXXbz Do we need to insert any bidi overrides here?
+      size_t cutStart = 30;
+      size_t cutLength = filenameUTF16.Length() - 60;
+      MOZ_ASSERT(cutLength > 0);
+      if (NS_IS_LOW_SURROGATE(filenameUTF16[cutStart])) {
+        // Don't truncate before the low surrogate, in case it's preceded by a
+        // high surrogate and forms a single Unicode character.  Instead, just
+        // include the low surrogate.
+        ++cutStart;
+        --cutLength;
+      }
+      if (NS_IS_LOW_SURROGATE(filenameUTF16[cutStart + cutLength])) {
+        // Likewise, don't drop a trailing low surrogate here.  We want to
+        // increase cutLength, since it might be 0 already so we can't very well
+        // decrease it.
+        ++cutLength;
+      }
+
+      // Insert U+2026 HORIZONTAL ELLIPSIS
+      filenameUTF16.Replace(cutStart, cutLength, NS_LITERAL_STRING("\x2026"));
+    }
     const char16_t *formatParams[] = { filenameUTF16.get() };
     rv = nsContentUtils::FormatLocalizedString(nsContentUtils::eDOM_PROPERTIES,
                                                "KillScriptLocation",
@@ -14030,7 +13999,7 @@ nsGlobalWindow::GetConsole(JSContext* aCx,
     return rv.ErrorCode();
   }
 
-  if (!WrapNewBindingObject(aCx, console, aConsole)) {
+  if (!GetOrCreateDOMReflector(aCx, console, aConsole)) {
     return NS_ERROR_FAILURE;
   }
 

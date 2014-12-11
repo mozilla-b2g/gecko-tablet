@@ -69,7 +69,7 @@ MResumePoint::writeRecoverData(CompactBufferWriter &writer) const
 #ifdef DEBUG
     // Ensure that all snapshot which are encoded can safely be used for
     // bailouts.
-    if (GetIonContext()->cx) {
+    if (GetJitContext()->cx) {
         uint32_t stackDepth;
         bool reachablePC;
         jsbytecode *bailPC = pc();
@@ -77,7 +77,7 @@ MResumePoint::writeRecoverData(CompactBufferWriter &writer) const
         if (mode() == MResumePoint::ResumeAfter)
             bailPC = GetNextPc(pc());
 
-        if (!ReconstructStackDepth(GetIonContext()->cx, script,
+        if (!ReconstructStackDepth(GetJitContext()->cx, script,
                                    bailPC, &stackDepth, &reachablePC))
         {
             return false;
@@ -884,6 +884,34 @@ MMathFunction::writeRecoverData(CompactBufferWriter &writer) const
       case Round:
         writer.writeUnsigned(uint32_t(RInstruction::Recover_Round));
         return true;
+      case Sin:
+        writer.writeUnsigned(uint32_t(RInstruction::Recover_MathFunction));
+        writer.writeByte(function_);
+        return true;
+      default:
+        MOZ_CRASH("Unknown math function.");
+    }
+}
+
+RMathFunction::RMathFunction(CompactBufferReader &reader)
+{
+    function_ = reader.readByte();
+}
+
+bool
+RMathFunction::recover(JSContext *cx, SnapshotIterator &iter) const
+{
+    switch (function_) {
+      case MMathFunction::Sin: {
+        RootedValue arg(cx, iter.read());
+        RootedValue result(cx);
+
+        if (!js::math_sin_handle(cx, arg, &result))
+            return false;
+
+        iter.storeInstructionResult(result);
+        return true;
+      }
       default:
         MOZ_CRASH("Unknown math function.");
     }
@@ -1077,7 +1105,7 @@ RNewObject::RNewObject(CompactBufferReader &reader)
 bool
 RNewObject::recover(JSContext *cx, SnapshotIterator &iter) const
 {
-    RootedNativeObject templateObject(cx, &iter.read().toObject().as<NativeObject>());
+    RootedPlainObject templateObject(cx, &iter.read().toObject().as<PlainObject>());
     RootedValue result(cx);
     JSObject *resultObject = nullptr;
 
@@ -1175,7 +1203,7 @@ RCreateThisWithTemplate::RCreateThisWithTemplate(CompactBufferReader &reader)
 bool
 RCreateThisWithTemplate::recover(JSContext *cx, SnapshotIterator &iter) const
 {
-    RootedNativeObject templateObject(cx, &iter.read().toObject().as<NativeObject>());
+    RootedPlainObject templateObject(cx, &iter.read().toObject().as<PlainObject>());
 
     // See CodeGenerator::visitCreateThisWithTemplate
     gc::AllocKind allocKind = templateObject->asTenured().getAllocKind();
@@ -1207,7 +1235,7 @@ RObjectState::RObjectState(CompactBufferReader &reader)
 bool
 RObjectState::recover(JSContext *cx, SnapshotIterator &iter) const
 {
-    RootedNativeObject object(cx, &iter.read().toObject().as<NativeObject>());
+    RootedPlainObject object(cx, &iter.read().toObject().as<PlainObject>());
     MOZ_ASSERT(object->slotSpan() == numSlots());
 
     RootedValue val(cx);

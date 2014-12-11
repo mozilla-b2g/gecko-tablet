@@ -365,7 +365,7 @@ js::IsInNonStrictPropertySet(JSContext *cx)
 {
     jsbytecode *pc;
     JSScript *script = cx->currentScript(&pc, JSContext::ALLOW_CROSS_COMPARTMENT);
-    return script && !script->strict() && (js_CodeSpec[*pc].format & JOF_SET);
+    return script && !IsStrictSetPC(pc) && (js_CodeSpec[*pc].format & JOF_SET);
 }
 
 JS_FRIEND_API(bool)
@@ -659,7 +659,7 @@ js::VisitGrayWrapperTargets(Zone *zone, GCThingCallback callback, void *closure)
         for (JSCompartment::WrapperEnum e(comp); !e.empty(); e.popFront()) {
             gc::Cell *thing = e.front().key().wrapped;
             if (thing->isTenured() && thing->asTenured().isMarked(gc::GRAY))
-                callback(closure, thing);
+                callback(closure, JS::GCCellPtr(thing, thing->asTenured().getTraceKind()));
         }
     }
 }
@@ -681,7 +681,7 @@ js::StringToLinearStringSlow(JSContext *cx, JSString *str)
 JS_FRIEND_API(void)
 JS_SetAccumulateTelemetryCallback(JSRuntime *rt, JSAccumulateTelemetryDataCallback callback)
 {
-    rt->telemetryCallback = callback;
+    rt->setTelemetryCallback(rt, callback);
 }
 
 JS_FRIEND_API(JSObject *)
@@ -1020,10 +1020,8 @@ DumpHeapVisitRoot(JSTracer *trc, void **thingp, JSGCTraceKind kind)
 void
 js::DumpHeapComplete(JSRuntime *rt, FILE *fp, js::DumpHeapNurseryBehaviour nurseryBehaviour)
 {
-#ifdef JSGC_GENERATIONAL
     if (nurseryBehaviour == js::CollectNurseryBeforeDump)
         rt->gc.evictNursery(JS::gcreason::API);
-#endif
 
     DumpHeapTracer dtrc(fp, rt, DumpHeapVisitRoot, TraceWeakMapKeysValues);
     TraceRuntime(&dtrc);
@@ -1125,13 +1123,31 @@ JS::DisableIncrementalGC(JSRuntime *rt)
     rt->gc.disallowIncrementalGC();
 }
 
+JS_FRIEND_API(void)
+JS::DisableCompactingGC(JSRuntime *rt)
+{
+#ifdef JSGC_COMPACTING
+    rt->gc.disableCompactingGC();
+#endif
+}
+
+JS_FRIEND_API(bool)
+JS::IsCompactingGCEnabled(JSRuntime *rt)
+{
+#ifdef JSGC_COMPACTING
+    return rt->gc.isCompactingGCEnabled();
+#else
+    return false;
+#endif
+}
+
 JS::AutoDisableGenerationalGC::AutoDisableGenerationalGC(JSRuntime *rt)
   : gc(&rt->gc)
-#if defined(JSGC_GENERATIONAL) && defined(JS_GC_ZEAL)
+#ifdef JS_GC_ZEAL
   , restartVerifier(false)
 #endif
 {
-#if defined(JSGC_GENERATIONAL) && defined(JS_GC_ZEAL)
+#ifdef JS_GC_ZEAL
     restartVerifier = gc->endVerifyPostBarriers();
 #endif
     gc->disableGenerationalGC();
@@ -1140,7 +1156,7 @@ JS::AutoDisableGenerationalGC::AutoDisableGenerationalGC(JSRuntime *rt)
 JS::AutoDisableGenerationalGC::~AutoDisableGenerationalGC()
 {
     gc->enableGenerationalGC();
-#if defined(JSGC_GENERATIONAL) && defined(JS_GC_ZEAL)
+#ifdef JS_GC_ZEAL
     if (restartVerifier) {
         MOZ_ASSERT(gc->isGenerationalGCEnabled());
         gc->startVerifyPostBarriers();
@@ -1178,43 +1194,39 @@ JS::IncrementalObjectBarrier(JSObject *obj)
 }
 
 JS_FRIEND_API(void)
-JS::IncrementalReferenceBarrier(void *ptr, JSGCTraceKind kind)
+JS::IncrementalReferenceBarrier(GCCellPtr thing)
 {
-    if (!ptr)
+    if (!thing)
         return;
 
-    if (kind == JSTRACE_STRING && StringIsPermanentAtom(static_cast<JSString *>(ptr)))
+    if (thing.isString() && StringIsPermanentAtom(thing.toString()))
         return;
-
-    gc::Cell *cell = static_cast<gc::Cell *>(ptr);
 
 #ifdef DEBUG
-    Zone *zone = kind == JSTRACE_OBJECT
-                 ? static_cast<JSObject *>(cell)->zone()
-                 : cell->asTenured().zone();
+    Zone *zone = thing.isObject()
+                 ? thing.toObject()->zone()
+                 : thing.asCell()->asTenured().zone();
     MOZ_ASSERT(!zone->runtimeFromMainThread()->isHeapMajorCollecting());
 #endif
 
-    if (kind == JSTRACE_OBJECT)
-        JSObject::writeBarrierPre(static_cast<JSObject*>(cell));
-    else if (kind == JSTRACE_STRING)
-        JSString::writeBarrierPre(static_cast<JSString*>(cell));
-    else if (kind == JSTRACE_SYMBOL)
-        JS::Symbol::writeBarrierPre(static_cast<JS::Symbol*>(cell));
-    else if (kind == JSTRACE_SCRIPT)
-        JSScript::writeBarrierPre(static_cast<JSScript*>(cell));
-    else if (kind == JSTRACE_LAZY_SCRIPT)
-        LazyScript::writeBarrierPre(static_cast<LazyScript*>(cell));
-    else if (kind == JSTRACE_JITCODE)
-        jit::JitCode::writeBarrierPre(static_cast<jit::JitCode*>(cell));
-    else if (kind == JSTRACE_SHAPE)
-        Shape::writeBarrierPre(static_cast<Shape*>(cell));
-    else if (kind == JSTRACE_BASE_SHAPE)
-        BaseShape::writeBarrierPre(static_cast<BaseShape*>(cell));
-    else if (kind == JSTRACE_TYPE_OBJECT)
-        types::TypeObject::writeBarrierPre(static_cast<types::TypeObject *>(cell));
-    else
-        MOZ_CRASH("invalid trace kind");
+    switch(thing.kind()) {
+      case JSTRACE_OBJECT: return JSObject::writeBarrierPre(thing.toObject());
+      case JSTRACE_STRING: return JSString::writeBarrierPre(thing.toString());
+      case JSTRACE_SCRIPT: return JSScript::writeBarrierPre(thing.toScript());
+      case JSTRACE_SYMBOL: return JS::Symbol::writeBarrierPre(thing.toSymbol());
+      case JSTRACE_LAZY_SCRIPT:
+        return LazyScript::writeBarrierPre(static_cast<LazyScript*>(thing.asCell()));
+      case JSTRACE_JITCODE:
+        return jit::JitCode::writeBarrierPre(static_cast<jit::JitCode*>(thing.asCell()));
+      case JSTRACE_SHAPE:
+        return Shape::writeBarrierPre(static_cast<Shape*>(thing.asCell()));
+      case JSTRACE_BASE_SHAPE:
+        return BaseShape::writeBarrierPre(static_cast<BaseShape*>(thing.asCell()));
+      case JSTRACE_TYPE_OBJECT:
+        return types::TypeObject::writeBarrierPre(static_cast<types::TypeObject *>(thing.asCell()));
+      default:
+        MOZ_CRASH("Invalid trace kind in IncrementalReferenceBarrier.");
+    }
 }
 
 JS_FRIEND_API(void)
@@ -1433,7 +1445,6 @@ js::HasObjectMovedOp(JSObject *obj) {
 }
 #endif
 
-#ifdef JSGC_GENERATIONAL
 JS_FRIEND_API(void)
 JS_StoreObjectPostBarrierCallback(JSContext* cx,
                                   void (*callback)(JSTracer *trc, JSObject *key, void *data),
@@ -1453,7 +1464,6 @@ JS_StoreStringPostBarrierCallback(JSContext* cx,
     if (IsInsideNursery(key))
         rt->gc.storeBuffer.putCallback(callback, key, data);
 }
-#endif /* JSGC_GENERATIONAL */
 
 JS_FRIEND_API(bool)
 js::ForwardToNative(JSContext *cx, JSNative native, const CallArgs &args)

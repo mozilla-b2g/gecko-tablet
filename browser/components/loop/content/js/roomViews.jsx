@@ -16,8 +16,6 @@ loop.roomViews = (function(mozL10n) {
   var ROOM_STATES = loop.store.ROOM_STATES;
   var sharedViews = loop.shared.views;
 
-  function noop() {}
-
   /**
    * ActiveRoomStore mixin.
    * @type {Object}
@@ -140,7 +138,9 @@ loop.roomViews = (function(mozL10n) {
     ],
 
     propTypes: {
-      dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired
+      dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired,
+      feedbackStore:
+        React.PropTypes.instanceOf(loop.store.FeedbackStore).isRequired,
     },
 
     _renderInvitationOverlay: function() {
@@ -162,15 +162,20 @@ loop.roomViews = (function(mozL10n) {
        */
       window.addEventListener('orientationchange', this.updateVideoContainer);
       window.addEventListener('resize', this.updateVideoContainer);
+    },
 
+    componentWillUpdate: function(nextProps, nextState) {
       // The SDK needs to know about the configuration and the elements to use
       // for display. So the best way seems to pass the information here - ideally
       // the sdk wouldn't need to know this, but we can't change that.
-      this.props.dispatcher.dispatch(new sharedActions.SetupStreamElements({
-        publisherConfig: this._getPublisherConfig(),
-        getLocalElementFunc: this._getElement.bind(this, ".local"),
-        getRemoteElementFunc: this._getElement.bind(this, ".remote")
-      }));
+      if (this.state.roomState !== ROOM_STATES.MEDIA_WAIT &&
+          nextState.roomState === ROOM_STATES.MEDIA_WAIT) {
+        this.props.dispatcher.dispatch(new sharedActions.SetupStreamElements({
+          publisherConfig: this._getPublisherConfig(),
+          getLocalElementFunc: this._getElement.bind(this, ".local"),
+          getRemoteElementFunc: this._getElement.bind(this, ".remote")
+        }));
+      }
     },
 
     _getPublisherConfig: function() {
@@ -216,6 +221,13 @@ loop.roomViews = (function(mozL10n) {
     },
 
     /**
+     * User clicked on the "Leave" button.
+     */
+    leaveRoom: function() {
+      this.props.dispatcher.dispatch(new sharedActions.LeaveRoom());
+    },
+
+    /**
      * Closes the window if the cancel button is pressed in the generic failure view.
      */
     closeWindow: function() {
@@ -244,7 +256,7 @@ loop.roomViews = (function(mozL10n) {
       var localStreamClasses = React.addons.classSet({
         local: true,
         "local-stream": true,
-        "local-stream-audio": !this.state.videoMuted,
+        "local-stream-audio": this.state.videoMuted,
         "room-preview": this.state.roomState !== ROOM_STATES.HAS_PARTICIPANTS
       });
 
@@ -255,6 +267,12 @@ loop.roomViews = (function(mozL10n) {
           //       FULL case should never happen on desktop.
           return <loop.conversation.GenericFailureView
             cancelCall={this.closeWindow}
+          />;
+        }
+        case ROOM_STATES.ENDED: {
+          return <sharedViews.FeedbackView
+            feedbackStore={this.props.feedbackStore}
+            onAfterFeedbackReceived={this.closeWindow}
           />;
         }
         default: {
@@ -273,7 +291,7 @@ loop.roomViews = (function(mozL10n) {
                     video={{enabled: !this.state.videoMuted, visible: true}}
                     audio={{enabled: !this.state.audioMuted, visible: true}}
                     publishStream={this.publishStream}
-                    hangup={noop} />
+                    hangup={this.leaveRoom} />
                 </div>
               </div>
             </div>

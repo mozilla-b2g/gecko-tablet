@@ -269,6 +269,9 @@ let AboutHomeListener = {
       case "AboutHomeSearchEvent":
         this.onSearch(aEvent);
         break;
+      case "AboutHomeSearchPanel":
+        this.onOpenSearchPanel(aEvent);
+        break;
       case "click":
         this.onClick(aEvent);
         break;
@@ -320,14 +323,13 @@ let AboutHomeListener = {
     addEventListener("click", this, true);
     addEventListener("pagehide", this, true);
 
-    // XXX bug 738646 - when Marketplace is launched, remove this statement and
-    // the hidden attribute set on the apps button in aboutHome.xhtml
-    if (Services.prefs.getPrefType("browser.aboutHome.apps") == Services.prefs.PREF_BOOL &&
-        Services.prefs.getBoolPref("browser.aboutHome.apps"))
-      doc.getElementById("apps").removeAttribute("hidden");
+    if (!Services.prefs.getBoolPref("browser.search.showOneOffButtons")) {
+      doc.documentElement.setAttribute("searchUIConfiguration", "oldsearchui");
+    }
 
     sendAsyncMessage("AboutHome:RequestUpdate");
     doc.addEventListener("AboutHomeSearchEvent", this, true, true);
+    doc.addEventListener("AboutHomeSearchPanel", this, true, true);
   },
 
   onClick: function(aEvent) {
@@ -378,6 +380,10 @@ let AboutHomeListener = {
       case "settings":
         sendAsyncMessage("AboutHome:Settings");
         break;
+
+      case "searchIcon":
+        sendAsyncMessage("AboutHome:OpenSearchPanel", null, { anchor: originalTarget });
+        break;
     }
   },
 
@@ -395,6 +401,10 @@ let AboutHomeListener = {
 
   onSearch: function(aEvent) {
     sendAsyncMessage("AboutHome:Search", { searchData: aEvent.detail });
+  },
+
+  onOpenSearchPanel: function(aEvent) {
+    sendAsyncMessage("AboutHome:OpenSearchPanel");
   },
 
   onFocusInput: function () {

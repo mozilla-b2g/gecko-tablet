@@ -51,7 +51,7 @@ const cloneErrorObject = function(error, targetWindow) {
     if (typeof value != "string" && typeof value != "number") {
       value = String(value);
     }
-    
+
     Object.defineProperty(Cu.waiveXrays(obj), prop, {
       configurable: false,
       enumerable: true,
@@ -115,6 +115,8 @@ const injectObjectAPI = function(api, targetWindow) {
     injectedAPI[func] = function(...params) {
       let lastParam = params.pop();
       let callbackIsFunction = (typeof lastParam == "function");
+      // Clone params coming from content to the current scope.
+      params = [cloneValueInto(p, api) for (p of params)];
 
       // If the last parameter is a function, assume its a callback
       // and wrap it differently.
@@ -124,12 +126,17 @@ const injectObjectAPI = function(api, targetWindow) {
           // closing a window, we want to circumvent a JS error.
           if (callbackIsFunction && typeof lastParam != "function") {
             MozLoopService.log.debug(func + ": callback function was lost.");
+            // Assume the presence of a first result argument to be an error.
+            if (results[0]) {
+              MozLoopService.log.error(func + " error:", results[0]);
+            }
             return;
           }
           lastParam(...[cloneValueInto(r, targetWindow) for (r of results)]);
         });
       } else {
         try {
+          lastParam = cloneValueInto(lastParam, api);
           return cloneValueInto(api[func](...params, lastParam), targetWindow);
         } catch (ex) {
           return cloneValueInto(ex, targetWindow);
@@ -358,21 +365,31 @@ function injectLoopAPI(targetWindow) {
     /**
      * Displays a confirmation dialog using the specified strings.
      *
-     * Callback parameters:
-     * - err null on success, non-null on unexpected failure to show the prompt.
-     * - {Boolean} True if the user chose the OK button.
+     * @param {Object}   options  Confirm dialog options
+     * @param {Function} callback Function that will be invoked once the operation
+     *                            finished. The first argument passed will be an
+     *                            `Error` object or `null`. The second argument
+     *                            will be the result of the operation, TRUE if
+     *                            the user chose the OK button.
      */
     confirm: {
       enumerable: true,
       writable: true,
-      value: function(bodyMessage, okButtonMessage, cancelButtonMessage, callback) {
-        try {
-          let buttonFlags =
+      value: function(options, callback) {
+        let buttonFlags;
+        if (options.okButton && options.cancelButton) {
+          buttonFlags =
             (Ci.nsIPrompt.BUTTON_POS_0 * Ci.nsIPrompt.BUTTON_TITLE_IS_STRING) +
             (Ci.nsIPrompt.BUTTON_POS_1 * Ci.nsIPrompt.BUTTON_TITLE_IS_STRING);
+        } else if (!options.okButton && !options.cancelButton) {
+          buttonFlags = Services.prompt.STD_YES_NO_BUTTONS;
+        } else {
+          callback(cloneValueInto(new Error("confirm: missing button options"), targetWindow));
+        }
 
+        try {
           let chosenButton = Services.prompt.confirmEx(null, "",
-            bodyMessage, buttonFlags, okButtonMessage, cancelButtonMessage,
+            options.message, buttonFlags, options.okButton, options.cancelButton,
             null, null, {});
 
           callback(null, chosenButton == 0);
@@ -517,7 +534,7 @@ function injectLoopAPI(targetWindow) {
           // When the function was garbage collected due to async events, like
           // closing a window, we want to circumvent a JS error.
           if (callbackIsFunction && typeof callback != "function") {
-            MozLoopService.log.debug("hawkRequest: callback function was lost.");
+            MozLoopService.log.error("hawkRequest: callback function was lost.", hawkError);
             return;
           }
           // The hawkError.error property, while usually a string representing
@@ -699,6 +716,24 @@ function injectLoopAPI(targetWindow) {
         };
 
         request.send();
+      }
+    },
+
+    /**
+     * Associates a session-id and a call-id with a window for debugging.
+     *
+     * @param  {string}  windowId  The window id.
+     * @param  {string}  sessionId OT session id.
+     * @param  {string}  callId    The callId on the server.
+     */
+    addConversationContext: {
+      enumerable: true,
+      writable: true,
+      value: function(windowId, sessionId, callid) {
+        MozLoopService.addConversationContext(windowId, {
+          sessionId: sessionId,
+          callId: callid
+        });
       }
     }
   };

@@ -130,8 +130,8 @@ UpdateProcess.prototype = {
  */
 function CssHtmlTree(aStyleInspector, aPageStyle)
 {
-  this.styleWindow = aStyleInspector.window;
-  this.styleDocument = aStyleInspector.window.document;
+  this.styleWindow = aStyleInspector.doc.defaultView;
+  this.styleDocument = aStyleInspector.doc;
   this.styleInspector = aStyleInspector;
   this.inspector = this.styleInspector.inspector;
   this.pageStyle = aPageStyle;
@@ -284,12 +284,12 @@ CssHtmlTree.prototype = {
   },
 
   /**
-   * Update the highlighted element. The CssHtmlTree panel will show the style
-   * information for the given element.
+   * Update the view with a new selected element.
+   * The CssHtmlTree panel will show the style information for the given element.
    * @param {NodeFront} aElement The highlighted node to get styles for.
    * @returns a promise that will be resolved when highlighting is complete.
    */
-  highlight: function(aElement) {
+  selectElement: function(aElement) {
     if (!aElement) {
       this.viewedElement = null;
       this.noResults.hidden = false;
@@ -588,7 +588,14 @@ CssHtmlTree.prototype = {
     CssHtmlTree.propertyNames.push.apply(CssHtmlTree.propertyNames,
       mozProps.sort());
 
-    this._createPropertyViews();
+    this._createPropertyViews().then(null, e => {
+      if (!this.styleInspector) {
+        console.warn("The creation of property views was cancelled because the " +
+          "computed-view was destroyed before it was done creating views");
+      } else {
+        console.error(e);
+      }
+    });
   },
 
   /**
@@ -1012,7 +1019,7 @@ PropertyView.prototype = {
   {
     if (this.visible) {
       let isDark = this.tree._darkStripe = !this.tree._darkStripe;
-      return isDark ? "property-view theme-bg-darker" : "property-view";
+      return isDark ? "property-view row-striped" : "property-view";
     }
     return "property-view-hidden";
   },
@@ -1026,7 +1033,7 @@ PropertyView.prototype = {
   {
     if (this.visible) {
       let isDark = this.tree._darkStripe;
-      return isDark ? "property-content theme-bg-darker" : "property-content";
+      return isDark ? "property-content row-striped" : "property-content";
     }
     return "property-content-hidden";
   },

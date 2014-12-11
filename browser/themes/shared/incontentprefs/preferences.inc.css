@@ -33,6 +33,10 @@ treecol {
   -moz-image-region: rect(0, 24px, 24px, 0);
 }
 
+#category-search > .category-icon {
+  -moz-image-region: rect(0, 192px, 24px, 168px);
+}
+
 #category-content > .category-icon {
   -moz-image-region: rect(0, 48px, 24px, 24px);
 }
@@ -66,6 +70,10 @@ treecol {
     -moz-image-region: rect(0, 48px, 48px, 0);
   }
 
+  #category-search > .category-icon {
+    -moz-image-region: rect(0, 384px, 48px, 336px);
+  }
+
   #category-content > .category-icon {
     -moz-image-region: rect(0, 96px, 48px, 48px);
   }
@@ -88,6 +96,12 @@ treecol {
 
   #category-advanced > .category-icon {
     -moz-image-region: rect(0, 336px, 48px, 288px);
+  }
+}
+
+@media (max-width: 800px) {
+  .category-name {
+    display: none;
   }
 }
 

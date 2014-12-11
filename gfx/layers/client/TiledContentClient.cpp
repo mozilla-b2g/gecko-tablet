@@ -987,6 +987,22 @@ void PadDrawTargetOutFromRegion(RefPtr<DrawTarget> drawTarget, nsIntRegion &regi
       return x;
     }
 
+    static void ensure_memcpy(uint8_t *dst, uint8_t *src, size_t n, uint8_t *bitmap, int stride, int height)
+    {
+        if (src + n > bitmap + stride*height) {
+            MOZ_CRASH("long src memcpy");
+        }
+        if (src < bitmap) {
+            MOZ_CRASH("short src memcpy");
+        }
+        if (dst + n > bitmap + stride*height) {
+            MOZ_CRASH("long dst mempcy");
+        }
+        if (dst < bitmap) {
+            MOZ_CRASH("short dst mempcy");
+        }
+    }
+
     static void visitor(void *closure, VisitSide side, int x1, int y1, int x2, int y2) {
       LockedBits *lb = static_cast<LockedBits*>(closure);
       uint8_t *bitmap = lb->data;
@@ -999,12 +1015,14 @@ void PadDrawTargetOutFromRegion(RefPtr<DrawTarget> drawTarget, nsIntRegion &regi
         if (y1 > 0) {
           x1 = clamp(x1, 0, width - 1);
           x2 = clamp(x2, 0, width - 1);
+          ensure_memcpy(&bitmap[x1*bpp + (y1-1) * stride], &bitmap[x1*bpp + y1 * stride], (x2 - x1) * bpp, bitmap, stride, height);
           memcpy(&bitmap[x1*bpp + (y1-1) * stride], &bitmap[x1*bpp + y1 * stride], (x2 - x1) * bpp);
         }
       } else if (side == VisitSide::BOTTOM) {
         if (y1 < height) {
           x1 = clamp(x1, 0, width - 1);
           x2 = clamp(x2, 0, width - 1);
+          ensure_memcpy(&bitmap[x1*bpp + y1 * stride], &bitmap[x1*bpp + (y1-1) * stride], (x2 - x1) * bpp, bitmap, stride, height);
           memcpy(&bitmap[x1*bpp + y1 * stride], &bitmap[x1*bpp + (y1-1) * stride], (x2 - x1) * bpp);
         }
       } else if (side == VisitSide::LEFT) {
@@ -1038,6 +1056,9 @@ ClientTiledLayerBuffer::PostValidate(const nsIntRegion& aPaintRegion)
 {
   if (gfxPrefs::TiledDrawTargetEnabled() && mMoz2DTiles.size() > 0) {
     gfx::TileSet tileset;
+    for (size_t i = 0; i < mMoz2DTiles.size(); ++i) {
+      mMoz2DTiles[i].mTileOrigin -= mTilingOrigin;
+    }
     tileset.mTiles = &mMoz2DTiles[0];
     tileset.mTileCount = mMoz2DTiles.size();
     RefPtr<DrawTarget> drawTarget = gfx::Factory::CreateTiledDrawTarget(tileset);
@@ -1045,10 +1066,13 @@ ClientTiledLayerBuffer::PostValidate(const nsIntRegion& aPaintRegion)
 
     RefPtr<gfxContext> ctx = new gfxContext(drawTarget);
     ctx->SetMatrix(
-      ctx->CurrentMatrix().Scale(mResolution, mResolution));
+      ctx->CurrentMatrix().Scale(mResolution, mResolution).Translate(ThebesPoint(-mTilingOrigin)));
 
     mCallback(mPaintedLayer, ctx, aPaintRegion, DrawRegionClip::DRAW, nsIntRegion(), mCallbackData);
     mMoz2DTiles.clear();
+    // Reset:
+    mTilingOrigin = IntPoint(std::numeric_limits<int32_t>::max(),
+                             std::numeric_limits<int32_t>::max());
   }
 }
 
@@ -1170,6 +1194,8 @@ ClientTiledLayerBuffer::ValidateTile(TileClient aTile,
     }
 
     mMoz2DTiles.push_back(moz2DTile);
+    mTilingOrigin.x = std::min(mTilingOrigin.x, moz2DTile.mTileOrigin.x);
+    mTilingOrigin.y = std::min(mTilingOrigin.y, moz2DTile.mTileOrigin.y);
 
     nsIntRegionRectIterator it(aDirtyRegion);
     for (const nsIntRect* dirtyRect = it.Next(); dirtyRect != nullptr; dirtyRect = it.Next()) {

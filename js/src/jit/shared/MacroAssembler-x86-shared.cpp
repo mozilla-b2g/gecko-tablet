@@ -6,8 +6,8 @@
 
 #include "jit/shared/MacroAssembler-x86-shared.h"
 
-#include "jit/IonFrames.h"
-#include "jit/IonMacroAssembler.h"
+#include "jit/JitFrames.h"
+#include "jit/MacroAssembler.h"
 
 using namespace js;
 using namespace js::jit;
@@ -146,7 +146,7 @@ MacroAssembler::clampDoubleToUint8(FloatRegister input, Register output)
 
 // Builds an exit frame on the stack, with a return address to an internal
 // non-function. Returns offset to be passed to markSafepointAt().
-bool
+void
 MacroAssemblerX86Shared::buildFakeExitFrame(Register scratch, uint32_t *offset)
 {
     mozilla::DebugOnly<uint32_t> initialDepth = framePushed();
@@ -161,8 +161,8 @@ MacroAssemblerX86Shared::buildFakeExitFrame(Register scratch, uint32_t *offset)
     bind(cl.src());
     *offset = currentOffset();
 
-    MOZ_ASSERT(framePushed() == initialDepth + IonExitFrameLayout::Size());
-    return addCodeLabel(cl);
+    MOZ_ASSERT(framePushed() == initialDepth + ExitFrameLayout::Size());
+    addCodeLabel(cl);
 }
 
 void

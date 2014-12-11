@@ -1965,9 +1965,13 @@ void
 ScrollFrameHelper::AsyncScrollCallback(ScrollFrameHelper* aInstance,
                                        mozilla::TimeStamp aTime)
 {
-  NS_ASSERTION(aInstance != nullptr, "aInstance must not be null");
-  NS_ASSERTION(aInstance->mAsyncScroll,
+  MOZ_ASSERT(aInstance != nullptr, "aInstance must not be null");
+  MOZ_ASSERT(aInstance->mAsyncScroll,
     "Did not expect AsyncScrollCallback without an active async scroll.");
+
+  if (!aInstance || !aInstance->mAsyncScroll) {
+    return;  // XXX wallpaper bug 1107353 for now.
+  }
 
   nsRect range = aInstance->mAsyncScroll->mRange;
   if (aInstance->mAsyncScroll->mIsSmoothScroll) {
@@ -2091,6 +2095,16 @@ ScrollFrameHelper::ScrollToWithOrigin(nsPoint aScrollPosition,
           // animation for this scroll.
           mLastSmoothScrollOrigin = aOrigin;
           mScrollGeneration = ++sScrollGenerationCounter;
+
+          if (!nsLayoutUtils::GetDisplayPort(mOuter->GetContent())) {
+            // If this frame doesn't have a displayport then there won't be an
+            // APZC instance for it and so there won't be anything to process
+            // this smooth scroll request. We should set a displayport on this
+            // frame to force an APZC which can handle the request.
+            nsLayoutUtils::CalculateAndSetDisplayPortMargins(
+              mOuter->GetScrollTargetFrame(),
+              nsLayoutUtils::RepaintMode::DoNotRepaint);
+          }
 
           // Schedule a paint to ensure that the frame metrics get updated on
           // the compositor thread.

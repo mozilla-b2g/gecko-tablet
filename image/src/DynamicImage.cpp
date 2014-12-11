@@ -43,41 +43,17 @@ DynamicImage::FrameRect(uint32_t aWhichFrame)
   return nsIntRect(0, 0, size.width, size.height);
 }
 
-uint32_t
-DynamicImage::SizeOfData()
-{
-  // We don't know the answer to this (and the same goes for the other
-  // memory-related methods) since gfxDrawable doesn't expose a way to check.
-  return 0;
-}
-
 size_t
-DynamicImage::HeapSizeOfSourceWithComputedFallback(mozilla::MallocSizeOf aMallocSizeOf) const
+DynamicImage::SizeOfSourceWithComputedFallback(MallocSizeOf aMallocSizeOf) const
 {
   return 0;
 }
 
 size_t
-DynamicImage::HeapSizeOfDecodedWithComputedFallback(mozilla::MallocSizeOf aMallocSizeOf) const
+DynamicImage::SizeOfDecoded(gfxMemoryLocation aLocation,
+                            MallocSizeOf aMallocSizeOf) const
 {
-  return 0;
-}
-
-size_t
-DynamicImage::NonHeapSizeOfDecoded() const
-{
-  return 0;
-}
-
-size_t
-DynamicImage::OutOfProcessSizeOfDecoded() const
-{
-  return 0;
-}
-
-size_t
-DynamicImage::HeapSizeOfVectorImageDocument(nsACString* aDocURL) const
-{
+  // We don't know the answer since gfxDrawable doesn't expose this information.
   return 0;
 }
 
@@ -121,6 +97,10 @@ DynamicImage::OnNewSourceData()
 {
   return NS_OK;
 }
+
+void
+DynamicImage::OnSurfaceDiscarded()
+{ }
 
 void
 DynamicImage::SetInnerWindowID(uint64_t aInnerWindowId)
@@ -228,7 +208,7 @@ DynamicImage::GetFrame(uint32_t aWhichFrame,
 }
 
 NS_IMETHODIMP_(bool)
-DynamicImage::FrameIsOpaque(uint32_t aWhichFrame)
+DynamicImage::IsOpaque()
 {
   // XXX(seth): For performance reasons it'd be better to return true here, but
   // I'm not sure how we can guarantee it for an arbitrary gfxDrawable.
@@ -236,7 +216,8 @@ DynamicImage::FrameIsOpaque(uint32_t aWhichFrame)
 }
 
 NS_IMETHODIMP
-DynamicImage::GetImageContainer(LayerManager* aManager, ImageContainer** _retval)
+DynamicImage::GetImageContainer(LayerManager* aManager,
+                                ImageContainer** _retval)
 {
   *_retval = nullptr;
   return NS_OK;
@@ -351,7 +332,9 @@ DynamicImage::SetAnimationStartTime(const mozilla::TimeStamp& aTime)
 { }
 
 nsIntSize
-DynamicImage::OptimalImageSizeForDest(const gfxSize& aDest, uint32_t aWhichFrame, GraphicsFilter aFilter, uint32_t aFlags)
+DynamicImage::OptimalImageSizeForDest(const gfxSize& aDest,
+                                      uint32_t aWhichFrame,
+                                      GraphicsFilter aFilter, uint32_t aFlags)
 {
   gfxIntSize size(mDrawable->Size());
   return nsIntSize(size.width, size.height);

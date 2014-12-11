@@ -9,8 +9,7 @@
 
 #include <limits.h>
 
-#include "jspubtd.h"
-
+#include "js/TracingAPI.h"
 #include "js/Utility.h"
 
 /* These values are private to the JS engine. */
@@ -90,6 +89,8 @@ AssertGCThingHasType(js::gc::Cell *cell, JSGCTraceKind kind);
 inline void
 AssertGCThingHasType(js::gc::Cell *cell, JSGCTraceKind kind) {}
 #endif
+
+MOZ_ALWAYS_INLINE bool IsInsideNursery(const js::gc::Cell *cell);
 
 } /* namespace gc */
 } /* namespace js */
@@ -204,6 +205,101 @@ struct Zone
 };
 
 } /* namespace shadow */
+
+// A GC pointer, tagged with the trace kind.
+//
+// In general, a GC pointer should be stored with an exact type. This class
+// is for use when that is not possible because a single pointer must point
+// to several kinds of GC thing.
+class JS_FRIEND_API(GCCellPtr)
+{
+    typedef void (GCCellPtr::* ConvertibleToBool)();
+    void nonNull() {}
+
+  public:
+    // Construction from a void* and trace kind.
+    GCCellPtr(void *gcthing, JSGCTraceKind traceKind) : ptr(checkedCast(gcthing, traceKind)) {}
+
+    // Construction from an explicit type.
+    explicit GCCellPtr(JSObject *obj) : ptr(checkedCast(obj, JSTRACE_OBJECT)) { }
+    explicit GCCellPtr(JSFunction *fun) : ptr(checkedCast(fun, JSTRACE_OBJECT)) { }
+    explicit GCCellPtr(JSString *str) : ptr(checkedCast(str, JSTRACE_STRING)) { }
+    explicit GCCellPtr(JSFlatString *str) : ptr(checkedCast(str, JSTRACE_STRING)) { }
+    explicit GCCellPtr(JSScript *script) : ptr(checkedCast(script, JSTRACE_SCRIPT)) { }
+    explicit GCCellPtr(const Value &v);
+
+    // Not all compilers have nullptr_t yet, so use this instead of GCCellPtr(nullptr).
+    static GCCellPtr NullPtr() { return GCCellPtr(nullptr, JSTRACE_NULL); }
+
+    JSGCTraceKind kind() const {
+        JSGCTraceKind traceKind = JSGCTraceKind(ptr & JSTRACE_OUTOFLINE);
+        if (traceKind != JSTRACE_OUTOFLINE)
+            return traceKind;
+        return outOfLineKind();
+    }
+
+    // Allow GCCellPtr to be used in a boolean context.
+    operator ConvertibleToBool() const {
+        MOZ_ASSERT(bool(asCell()) == (kind() != JSTRACE_NULL));
+        return asCell() ? &GCCellPtr::nonNull : 0;
+    }
+
+    // Simplify checks to the kind.
+    bool isObject() const { return kind() == JSTRACE_OBJECT; }
+    bool isScript() const { return kind() == JSTRACE_SCRIPT; }
+    bool isString() const { return kind() == JSTRACE_STRING; }
+    bool isSymbol() const { return kind() == JSTRACE_SYMBOL; }
+
+    // Conversions to more specific types must match the kind. Access to
+    // further refined types is not allowed directly from a GCCellPtr.
+    JSObject *toObject() const {
+        MOZ_ASSERT(kind() == JSTRACE_OBJECT);
+        return reinterpret_cast<JSObject *>(asCell());
+    }
+    JSString *toString() const {
+        MOZ_ASSERT(kind() == JSTRACE_STRING);
+        return reinterpret_cast<JSString *>(asCell());
+    }
+    JSScript *toScript() const {
+        MOZ_ASSERT(kind() == JSTRACE_SCRIPT);
+        return reinterpret_cast<JSScript *>(asCell());
+    }
+    Symbol *toSymbol() const {
+        MOZ_ASSERT(kind() == JSTRACE_SYMBOL);
+        return reinterpret_cast<Symbol *>(asCell());
+    }
+    js::gc::Cell *asCell() const {
+        return reinterpret_cast<js::gc::Cell *>(ptr & ~JSTRACE_OUTOFLINE);
+    }
+
+    // The CC stores nodes as void* internally.
+    void *unsafeGetUntypedPtr() const {
+        MOZ_ASSERT(asCell());
+        MOZ_ASSERT(!js::gc::IsInsideNursery(asCell()));
+        return reinterpret_cast<void *>(asCell());
+    }
+    // The CC's trace logger needs an identity that is XPIDL serializable.
+    uint64_t unsafeAsInteger() const {
+        return reinterpret_cast<uint64_t>(unsafeGetUntypedPtr());
+    }
+
+  private:
+    uintptr_t checkedCast(void *p, JSGCTraceKind traceKind) {
+        js::gc::Cell *cell = static_cast<js::gc::Cell *>(p);
+        MOZ_ASSERT((uintptr_t(p) & JSTRACE_OUTOFLINE) == 0);
+        AssertGCThingHasType(cell, traceKind);
+        // Note: the JSTRACE_OUTOFLINE bits are set on all out-of-line kinds
+        // so that we can mask instead of branching.
+        MOZ_ASSERT_IF(traceKind >= JSTRACE_OUTOFLINE,
+                      (traceKind & JSTRACE_OUTOFLINE) == JSTRACE_OUTOFLINE);
+        return uintptr_t(p) | (traceKind & JSTRACE_OUTOFLINE);
+    }
+
+    JSGCTraceKind outOfLineKind() const;
+
+    uintptr_t ptr;
+};
+
 } /* namespace JS */
 
 namespace js {
@@ -253,7 +349,6 @@ GetGCThingArena(void *thing)
 MOZ_ALWAYS_INLINE bool
 IsInsideNursery(const js::gc::Cell *cell)
 {
-#ifdef JSGC_GENERATIONAL
     if (!cell)
         return false;
     uintptr_t addr = uintptr_t(cell);
@@ -262,13 +357,9 @@ IsInsideNursery(const js::gc::Cell *cell)
     uint32_t location = *reinterpret_cast<uint32_t *>(addr);
     MOZ_ASSERT(location != 0);
     return location & ChunkLocationAnyNursery;
-#else
-    return false;
-#endif
 }
 
 } /* namespace gc */
-
 } /* namespace js */
 
 namespace JS {
@@ -277,9 +368,7 @@ static MOZ_ALWAYS_INLINE Zone *
 GetTenuredGCThingZone(void *thing)
 {
     MOZ_ASSERT(thing);
-#ifdef JSGC_GENERATIONAL
     MOZ_ASSERT(!js::gc::IsInsideNursery((js::gc::Cell *)thing));
-#endif
     return js::gc::GetGCThingArena(thing)->zone;
 }
 
@@ -290,7 +379,6 @@ static MOZ_ALWAYS_INLINE bool
 GCThingIsMarkedGray(void *thing)
 {
     MOZ_ASSERT(thing);
-#ifdef JSGC_GENERATIONAL
     /*
      * GC things residing in the nursery cannot be gray: they have no mark bits.
      * All live objects in the nursery are moved to tenured at the beginning of
@@ -298,25 +386,28 @@ GCThingIsMarkedGray(void *thing)
      */
     if (js::gc::IsInsideNursery((js::gc::Cell *)thing))
         return false;
-#endif
     uintptr_t *word, mask;
     js::gc::GetGCThingMarkWordAndMask(thing, js::gc::GRAY, &word, &mask);
     return *word & mask;
 }
 
+} /* namespace JS */
+
+namespace js {
+namespace gc {
+
 static MOZ_ALWAYS_INLINE bool
-IsIncrementalBarrierNeededOnTenuredGCThing(shadow::Runtime *rt, void *thing, JSGCTraceKind kind)
+IsIncrementalBarrierNeededOnTenuredGCThing(JS::shadow::Runtime *rt, const JS::GCCellPtr thing)
 {
     MOZ_ASSERT(thing);
-#ifdef JSGC_GENERATIONAL
-    MOZ_ASSERT(!js::gc::IsInsideNursery((js::gc::Cell *)thing));
-#endif
+    MOZ_ASSERT(!js::gc::IsInsideNursery(thing.asCell()));
     if (!rt->needsIncrementalBarrier())
         return false;
-    JS::Zone *zone = GetTenuredGCThingZone(thing);
-    return reinterpret_cast<shadow::Zone *>(zone)->needsIncrementalBarrier();
+    JS::Zone *zone = JS::GetTenuredGCThingZone(thing.asCell());
+    return JS::shadow::Zone::asShadowZone(zone)->needsIncrementalBarrier();
 }
 
-} /* namespace JS */
+} /* namespace gc */
+} /* namespace js */
 
 #endif /* js_HeapAPI_h */

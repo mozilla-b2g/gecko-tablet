@@ -13,7 +13,7 @@
 #include "jsiter.h"
 
 #include "builtin/Object.h"
-#include "jit/IonFrames.h"
+#include "jit/JitFrames.h"
 #include "vm/ForkJoin.h"
 #include "vm/HelperThreads.h"
 #include "vm/Interpreter.h"
@@ -322,7 +322,10 @@ CallJSDeletePropertyOp(JSContext *cx, JSDeletePropertyOp op, HandleObject receiv
     JS_CHECK_RECURSION(cx, return false);
 
     assertSameCompartment(cx, receiver, id);
-    return op(cx, receiver, id, succeeded);
+    if (op)
+        return op(cx, receiver, id, succeeded);
+    *succeeded = true;
+    return true;
 }
 
 inline bool

@@ -138,7 +138,8 @@ nsPresContext::IsDOMPaintEventPending()
   if (mFireAfterPaintEvents) {
     return true;
   }
-  if (GetDisplayRootPresContext()->GetRootPresContext()->mRefreshDriver->ViewManagerFlushIsPending()) {
+  nsRootPresContext* drpc = GetDisplayRootPresContext();
+  if (drpc && drpc->mRefreshDriver->ViewManagerFlushIsPending()) {
     // Since we're promising that there will be a MozAfterPaint event
     // fired, we record an empty invalidation in case display list
     // invalidation doesn't invalidate anything further.
@@ -613,6 +614,14 @@ nsPresContext::GetDocumentColorPreferences()
   int32_t useAccessibilityTheme = 0;
   bool usePrefColors = true;
   bool isChromeDocShell = false;
+  static int32_t sDocumentColorsSetting;
+  static bool sDocumentColorsSettingPrefCached = false;
+  if (!sDocumentColorsSettingPrefCached) {
+    sDocumentColorsSettingPrefCached = true;
+    Preferences::AddIntVarCache(&sDocumentColorsSetting,
+                                "browser.display.document_color_use",
+                                0);
+  }
 
   nsIDocument* doc = mDocument->GetDisplayDocument();
   if (doc && doc->GetDocShell()) {
@@ -668,9 +677,21 @@ nsPresContext::GetDocumentColorPreferences()
   mBackgroundColor = NS_ComposeColors(NS_RGB(0xFF, 0xFF, 0xFF),
                                       mBackgroundColor);
 
-  mUseDocumentColors = !useAccessibilityTheme &&
-    Preferences::GetBool("browser.display.use_document_colors",
-                         mUseDocumentColors);
+
+  // Now deal with the pref:
+  // 0 = default: always, except in high contrast mode
+  // 1 = always
+  // 2 = never
+  if (sDocumentColorsSetting == 1) {
+    mUseDocumentColors = true;
+  } else if (sDocumentColorsSetting == 2) {
+    mUseDocumentColors = isChromeDocShell || mIsChromeOriginImage;
+  } else {
+    MOZ_ASSERT(!useAccessibilityTheme ||
+               !(isChromeDocShell || mIsChromeOriginImage),
+               "The accessibility theme should only be on for non-chrome");
+    mUseDocumentColors = !useAccessibilityTheme;
+  }
 }
 
 void
@@ -1751,6 +1772,12 @@ nsPresContext::UIResolutionChangedSubdocumentCallback(nsIDocument* aDocument,
   return true;
 }
 
+static void
+NotifyUIResolutionChanged(TabParent* aTabParent, void* aArg)
+{
+  aTabParent->UIResolutionChanged();
+}
+
 void
 nsPresContext::UIResolutionChangedInternal()
 {
@@ -1761,50 +1788,13 @@ nsPresContext::UIResolutionChangedInternal()
     AppUnitsPerDevPixelChanged();
   }
 
-  nsCOMPtr<nsIDOMChromeWindow> chromeWindow(do_QueryInterface(mDocument->GetWindow()));
-  nsCOMPtr<nsIMessageBroadcaster> windowMM;
-  if (chromeWindow) {
-    chromeWindow->GetMessageManager(getter_AddRefs(windowMM));
-  }
-  if (windowMM) {
-    NotifyUIResolutionChanged(windowMM);
-  }
+  // Recursively notify all remote leaf descendants that the
+  // resolution of the user interface has changed.
+  nsContentUtils::CallOnAllRemoteChildren(mDocument->GetWindow(),
+                                          NotifyUIResolutionChanged, nullptr);
 
   mDocument->EnumerateSubDocuments(UIResolutionChangedSubdocumentCallback,
                                    nullptr);
-}
-
-void
-nsPresContext::NotifyUIResolutionChanged(nsIMessageBroadcaster* aManager)
-{
-  uint32_t tabChildCount = 0;
-  aManager->GetChildCount(&tabChildCount);
-  for (uint32_t j = 0; j < tabChildCount; ++j) {
-    nsCOMPtr<nsIMessageListenerManager> childMM;
-    aManager->GetChildAt(j, getter_AddRefs(childMM));
-    if (!childMM) {
-      continue;
-    }
-
-    nsCOMPtr<nsIMessageBroadcaster> nonLeafMM = do_QueryInterface(childMM);
-    if (nonLeafMM) {
-      NotifyUIResolutionChanged(nonLeafMM);
-      continue;
-    }
-
-    nsCOMPtr<nsIMessageSender> tabMM = do_QueryInterface(childMM);
-
-    mozilla::dom::ipc::MessageManagerCallback* cb =
-     static_cast<nsFrameMessageManager*>(tabMM.get())->GetCallback();
-    if (cb) {
-      nsFrameLoader* fl = static_cast<nsFrameLoader*>(cb);
-      PBrowserParent* remoteBrowser = fl->GetRemoteBrowser();
-      TabParent* remote = static_cast<TabParent*>(remoteBrowser);
-      if (remote) {
-        remote->UIResolutionChanged();
-      }
-    }
-  }
 }
 
 void

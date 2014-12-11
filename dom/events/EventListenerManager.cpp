@@ -31,6 +31,7 @@
 #include "nsDOMCID.h"
 #include "nsError.h"
 #include "nsGkAtoms.h"
+#include "nsHtml5Atoms.h"
 #include "nsIContent.h"
 #include "nsIContentSecurityPolicy.h"
 #include "nsIDocument.h"
@@ -97,6 +98,7 @@ EventListenerManager::EventListenerManager(EventTarget* aTarget)
   , mMayHaveCapturingListeners(false)
   , mMayHaveSystemGroupListeners(false)
   , mMayHaveTouchEventListener(false)
+  , mMayHaveScrollWheelEventListener(false)
   , mMayHaveMouseEnterLeaveEventListener(false)
   , mMayHavePointerEnterLeaveEventListener(false)
   , mClearingListeners(false)
@@ -337,6 +339,16 @@ EventListenerManager::AddEventListenerInternal(
     // so we ignore listeners created with system event flag
     if (window && !aFlags.mInSystemGroup) {
       window->SetHasTouchEventListeners();
+    }
+  } else if (aTypeAtom == nsGkAtoms::onwheel ||
+             aTypeAtom == nsGkAtoms::onDOMMouseScroll ||
+             aTypeAtom == nsHtml5Atoms::onmousewheel) {
+    mMayHaveScrollWheelEventListener = true;
+    nsPIDOMWindow* window = GetInnerWindowForTarget();
+    // we don't want touchevent listeners added by scrollbars to flip this flag
+    // so we ignore listeners created with system event flag
+    if (window && !aFlags.mInSystemGroup) {
+      window->SetHasScrollWheelEventListeners();
     }
   } else if (aType >= NS_POINTER_EVENT_START && aType <= NS_POINTER_LOST_CAPTURE) {
     nsPIDOMWindow* window = GetInnerWindowForTarget();
@@ -900,7 +912,7 @@ EventListenerManager::CompileEventHandlerInternal(Listener* aListener,
   NS_ENSURE_TRUE(jsStr, NS_ERROR_OUT_OF_MEMORY);
 
   // Get the reflector for |aElement|, so that we can pass to setElement.
-  if (NS_WARN_IF(!WrapNewBindingObject(cx, target, aElement, &v))) {
+  if (NS_WARN_IF(!GetOrCreateDOMReflector(cx, target, aElement, &v))) {
     return NS_ERROR_FAILURE;
   }
   JS::CompileOptions options(cx);

@@ -7,6 +7,7 @@ package org.mozilla.gecko;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.lang.Override;
 import java.lang.reflect.Method;
 import java.net.URLEncoder;
 import java.util.EnumSet;
@@ -24,6 +25,7 @@ import org.mozilla.gecko.DynamicToolbar.VisibilityTransition;
 import org.mozilla.gecko.GeckoProfileDirectories.NoMozillaDirectoryException;
 import org.mozilla.gecko.Tabs.TabEvents;
 import org.mozilla.gecko.animation.PropertyAnimator;
+import org.mozilla.gecko.animation.TransitionsTracker;
 import org.mozilla.gecko.animation.ViewHelper;
 import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.db.BrowserContract.SearchHistory;
@@ -529,7 +531,7 @@ public class BrowserApp extends GeckoApp
                     public void run() {
                         final TabHistoryFragment fragment = TabHistoryFragment.newInstance(historyPageList, toIndex);
                         final FragmentManager fragmentManager = getSupportFragmentManager();
-                        GeckoAppShell.vibrateOnHapticFeedbackEnabled(getResources().getInteger(R.integer.long_press_vibrate_msec));
+                        GeckoAppShell.vibrateOnHapticFeedbackEnabled(getResources().getIntArray(R.array.long_press_vibrate_msec));
                         fragment.show(R.id.tab_history_panel, fragmentManager.beginTransaction(), TAB_HISTORY_FRAGMENT_TAG);
                     }
                 });
@@ -1971,6 +1973,8 @@ public class BrowserApp extends GeckoApp
         final PropertyAnimator animator = new PropertyAnimator(250);
         animator.setUseHardwareLayer(false);
 
+        TransitionsTracker.track(animator);
+
         mBrowserToolbar.startEditing(url, animator);
 
         final String panelId = selectedTab.getMostRecentHomePanel();
@@ -2193,7 +2197,7 @@ public class BrowserApp extends GeckoApp
                         if (locale == null) {
                             return;
                         }
-                        onLocaleChanged(BrowserLocaleManager.getLanguageTag(locale));
+                        onLocaleChanged(Locales.getLanguageTag(locale));
                     }
                 });
                 break;
@@ -2926,7 +2930,7 @@ public class BrowserApp extends GeckoApp
         if (itemId == R.id.help) {
             final String VERSION = AppConstants.MOZ_APP_VERSION;
             final String OS = AppConstants.OS_TARGET;
-            final String LOCALE = BrowserLocaleManager.getLanguageTag(Locale.getDefault());
+            final String LOCALE = Locales.getLanguageTag(Locale.getDefault());
 
             final String URL = getResources().getString(R.string.help_link, VERSION, OS, LOCALE);
             Tabs.getInstance().loadUrlInTab(URL);

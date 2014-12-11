@@ -14,9 +14,11 @@ class TestNavigate(MarionetteTestCase):
         self.assertNotEqual("about:blank", self.marionette.execute_script("return window.location.href;"))
         self.assertEqual("Marionette Test", self.marionette.title)
 
+    @skip_if_b2g # we currently allow this in b2g
     def test_navigate_chrome_error(self):
         with self.marionette.using_context("chrome"):
-            self.assertRaises(MarionetteException, self.marionette.navigate, "about:blank")
+            self.assertRaisesRegexp(MarionetteException, "Cannot navigate in chrome context",
+                                    self.marionette.navigate, "about:blank")
 
     def test_getUrl(self):
         test_html = self.marionette.absolute_url("test.html")

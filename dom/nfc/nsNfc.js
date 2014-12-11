@@ -265,6 +265,7 @@ function MozNFCImpl() {
 MozNFCImpl.prototype = {
   _nfcContentHelper: null,
   _window: null,
+  _rfState: null,
   nfcPeer: null,
   nfcTag: null,
   eventService: null,
@@ -287,6 +288,7 @@ MozNFCImpl.prototype = {
 
     if (this._nfcContentHelper) {
       this._nfcContentHelper.init(aWindow);
+      this._rfState = this._nfcContentHelper.queryRFState();
     }
   },
 
@@ -330,23 +332,6 @@ MozNFCImpl.prototype = {
     return callback.promise;
   },
 
-  _createNFCPeer: function _createNFCPeer(sessionToken) {
-    let peer = new MozNFCPeerImpl(this._window, sessionToken);
-    return this._window.MozNFCPeer._create(this._window, peer);
-  },
-
-  getNFCPeer: function getNFCPeer(sessionToken) {
-    if (!sessionToken || !this._nfcContentHelper.checkSessionToken(sessionToken, true)) {
-      return null;
-    }
-
-    if (!this.nfcPeer || this.nfcPeer.session != sessionToken) {
-      this.nfcPeer = this._createNFCPeer(sessionToken);
-    }
-
-    return this.nfcPeer;
-  },
-
   defineEventHandlerGetterSetter: function defineEventHandlerGetterSetter(name) {
     Object.defineProperty(this, name, {
       get: function get() {
@@ -387,7 +372,7 @@ MozNFCImpl.prototype = {
       return;
     }
 
-    if (!this.checkPermissions(["nfc-read", "nfc-write"])) {
+    if (!this.checkPermissions(["nfc"])) {
       return;
     }
 
@@ -424,7 +409,7 @@ MozNFCImpl.prototype = {
       return;
     }
 
-    if (!this.checkPermissions(["nfc-read", "nfc-write"])) {
+    if (!this.checkPermissions(["nfc"])) {
       return;
     }
 
@@ -459,14 +444,16 @@ MozNFCImpl.prototype = {
       return;
     }
 
-    if (!this.checkPermissions(["nfc-write"])) {
+    let perm = isPeerReady ? ["nfc-share"] : ["nfc"];
+    if (!this.checkPermissions(perm)) {
       return;
     }
 
     this.eventService.addSystemEventListener(this._window, "visibilitychange",
       this, /* useCapture */false);
 
-    this.nfcPeer = this._createNFCPeer(sessionToken);
+    let peerImpl = new MozNFCPeerImpl(this._window, sessionToken);
+    this.nfcPeer = this._window.MozNFCPeer._create(this._window, peerImpl)
     let eventData = { "peer": this.nfcPeer };
     let type = (isPeerReady) ? "peerready" : "peerfound";
 
@@ -481,7 +468,7 @@ MozNFCImpl.prototype = {
       return;
     }
 
-    if (!this.checkPermissions(["nfc-write"])) {
+    if (!this.checkPermissions(["nfc", "nfc-share"])) {
       return;
     }
 
@@ -520,6 +507,10 @@ MozNFCImpl.prototype = {
     }
   },
 
+  notifyRFStateChange: function notifyRFStateChange(rfState) {
+    this._rfState = rfState;
+  },
+
   checkPermissions: function checkPermissions(perms) {
     let principal = this._window.document.nodePrincipal;
     for (let perm of perms) {
@@ -547,5 +538,45 @@ MozNFCImpl.prototype = {
                                          Ci.nsIDOMEventListener]),
 };
 
+function NFCSendFileWrapper() {
+}
+NFCSendFileWrapper.prototype = {
+  // nsISystemMessagesWrapper implementation.
+  wrapMessage: function wrapMessage(aMessage, aWindow) {
+    let peerImpl = new MozNFCPeerImpl(aWindow, aMessage.sessionToken);
+    let peer = aWindow.MozNFCPeer._create(aWindow, peerImpl);
+
+    delete aMessage.sessionToken;
+    aMessage = Cu.cloneInto(aMessage, aWindow);
+    aMessage.peer = peer;
+    return aMessage;
+  },
+
+  classDescription: "NFCSendFileWrapper",
+  classID: Components.ID("{c5063a5c-8cb9-41d2-baf5-56062a2e30e9}"),
+  contractID: "@mozilla.org/dom/system-messages/wrapper/nfc-manager-send-file;1",
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsISystemMessagesWrapper])
+};
+
+function NFCTechDiscoveredWrapper() {
+}
+NFCTechDiscoveredWrapper.prototype = {
+  // nsISystemMessagesWrapper implementation.
+  wrapMessage: function wrapMessage(aMessage, aWindow) {
+    aMessage = Cu.cloneInto(aMessage, aWindow);
+    if (aMessage.isP2P) {
+      let peerImpl = new MozNFCPeerImpl(aWindow, aMessage.sessionToken);
+      let peer = aWindow.MozNFCPeer._create(aWindow, peerImpl);
+      aMessage.peer = peer;
+    }
+    return aMessage;
+  },
+
+  classDescription: "NFCTechDiscoveredWrapper",
+  classID: Components.ID("{2e7f9285-3c72-4e1f-b985-141a00a23a75}"),
+  contractID: "@mozilla.org/dom/system-messages/wrapper/nfc-manager-tech-discovered;1",
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsISystemMessagesWrapper])
+};
+
 this.NSGetFactory = XPCOMUtils.generateNSGetFactory([MozNFCTagImpl,
-  MozNFCPeerImpl, MozNFCImpl]);
+  MozNFCPeerImpl, MozNFCImpl, NFCSendFileWrapper, NFCTechDiscoveredWrapper]);

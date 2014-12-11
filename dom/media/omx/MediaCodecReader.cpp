@@ -344,10 +344,11 @@ MediaCodecReader::ReleaseMediaResources()
   ReleaseCriticalResources();
 }
 
-void
+nsRefPtr<ShutdownPromise>
 MediaCodecReader::Shutdown()
 {
   ReleaseResources();
+  return MediaDecoderReader::Shutdown();
 }
 
 void
@@ -487,7 +488,7 @@ MediaCodecReader::DecodeAudioDataTask()
     }
   }
   if (AudioQueue().AtEndOfStream()) {
-    GetCallback()->OnNotDecoded(MediaData::AUDIO_DATA, RequestSampleCallback::END_OF_STREAM);
+    GetCallback()->OnNotDecoded(MediaData::AUDIO_DATA, END_OF_STREAM);
   }
   return result;
 }
@@ -507,7 +508,7 @@ MediaCodecReader::DecodeVideoFrameTask(int64_t aTimeThreshold)
     }
   }
   if (VideoQueue().AtEndOfStream()) {
-    GetCallback()->OnNotDecoded(MediaData::VIDEO_DATA, RequestSampleCallback::END_OF_STREAM);
+    GetCallback()->OnNotDecoded(MediaData::VIDEO_DATA, END_OF_STREAM);
   }
   return result;
 }
@@ -1248,11 +1249,13 @@ void
 MediaCodecReader::ShutdownTaskQueues()
 {
   if(mAudioTrack.mTaskQueue) {
-    mAudioTrack.mTaskQueue->Shutdown();
+    mAudioTrack.mTaskQueue->BeginShutdown();
+    mAudioTrack.mTaskQueue->AwaitShutdownAndIdle();
     mAudioTrack.mTaskQueue = nullptr;
   }
   if(mVideoTrack.mTaskQueue) {
-    mVideoTrack.mTaskQueue->Shutdown();
+    mVideoTrack.mTaskQueue->BeginShutdown();
+    mVideoTrack.mTaskQueue->AwaitShutdownAndIdle();
     mVideoTrack.mTaskQueue = nullptr;
   }
 }

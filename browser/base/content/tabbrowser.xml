@@ -1099,6 +1099,7 @@
             }
 
             if (!this._previewMode) {
+              this.mCurrentTab.lastAccessed = Infinity;
               this.mCurrentTab.removeAttribute("unread");
               oldTab.lastAccessed = Date.now();
 
@@ -1638,6 +1639,7 @@
             t.linkedBrowser = b;
             this._tabForBrowser.set(b, t);
             t._tPos = position;
+            t.lastAccessed = Date.now();
             this.tabContainer._setPositionalAttributes();
 
             // Prevent the superfluous initial load of a blank document
@@ -1657,6 +1659,9 @@
             // allows the TabLabelModified event to be properly dispatched.
             if (!aURI || isBlankPageURL(aURI)) {
               t.label = this.mStringBundle.getString("tabs.emptyTabTitle");
+            } else if (aURI.toLowerCase().startsWith("javascript:")) {
+              // This can go away when bug 672618 or bug 55696 are fixed.
+              t.label = aURI;
             }
 
             this.tabContainer.updateVisibility();
@@ -3133,6 +3138,7 @@
           this.mCurrentTab.linkedPanel = uniqueId;
           this.mCurrentTab._tPos = 0;
           this.mCurrentTab._fullyOpen = true;
+          this.mCurrentTab.lastAccessed = Infinity;
           this.mCurrentTab.linkedBrowser = this.mCurrentBrowser;
           this._tabForBrowser.set(this.mCurrentBrowser, this.mCurrentTab);
 
@@ -3307,7 +3313,11 @@
 
             let timeoutPromise = new Promise((aResolve, aReject) => {
               timeoutId = setTimeout(() => {
-                this._showBusySpinnerRemoteBrowser(toBrowser);
+                if (toBrowser.isRemoteBrowser) {
+                  // The browser's remoteness could have changed since we
+                  // setTimeout so only show the spinner if it's still remote.
+                  this._showBusySpinnerRemoteBrowser(toBrowser);
+                }
                 attemptTabSwitch(aResolve, aReject);
               }, kTabSwitchTimeout);
             });
@@ -4944,13 +4954,12 @@
 
       <property name="lastAccessed">
         <getter>
-          return this.selected ? Date.now() : this._lastAccessed;
+          return this._lastAccessed == Infinity ? Date.now() : this._lastAccessed;
         </getter>
         <setter>
           this._lastAccessed = val;
         </setter>
       </property>
-      <field name="_lastAccessed">0</field>
 
       <field name="mOverCloseButton">false</field>
       <field name="mCorrespondingMenuitem">null</field>

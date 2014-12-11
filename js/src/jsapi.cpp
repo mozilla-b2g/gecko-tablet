@@ -2143,28 +2143,18 @@ JS_StrictPropertyStub(JSContext *cx, HandleObject obj, HandleId id, bool strict,
     return true;
 }
 
-JS_PUBLIC_API(bool)
-JS_DeletePropertyStub(JSContext *cx, HandleObject obj, HandleId id, bool *succeeded)
-{
-    *succeeded = true;
-    return true;
-}
-
-JS_PUBLIC_API(bool)
-JS_EnumerateStub(JSContext *cx, HandleObject obj)
-{
-    return true;
-}
-
+#if defined(__GNUC__) && __GNUC__ == 4 && __GNUC_MINOR__ == 4
+/* See comment in jsapi.h. */
 JS_PUBLIC_API(bool)
 JS_ResolveStub(JSContext *cx, HandleObject obj, HandleId id, bool *resolvedp)
 {
     MOZ_ASSERT(*resolvedp == false);
     return true;
 }
+#endif  /* GCC 4.4 */
 
 JS_PUBLIC_API(bool)
-JS_ConvertStub(JSContext *cx, HandleObject obj, JSType type, MutableHandleValue vp)
+JS::OrdinaryToPrimitive(JSContext *cx, HandleObject obj, JSType type, MutableHandleValue vp)
 {
     MOZ_ASSERT(type != JSTYPE_OBJECT && type != JSTYPE_FUNCTION);
     MOZ_ASSERT(obj);
@@ -2472,7 +2462,7 @@ JS_NewObject(JSContext *cx, const JSClass *jsclasp, HandleObject proto, HandleOb
 
     const Class *clasp = Valueify(jsclasp);
     if (!clasp)
-        clasp = &JSObject::class_;    /* default class is Object */
+        clasp = &PlainObject::class_;    /* default class is Object */
 
     MOZ_ASSERT(clasp != &JSFunction::class_);
     MOZ_ASSERT(!(clasp->flags & JSCLASS_IS_GLOBAL));
@@ -2492,7 +2482,7 @@ JS_NewObjectWithGivenProto(JSContext *cx, const JSClass *jsclasp, HandleObject p
 
     const Class *clasp = Valueify(jsclasp);
     if (!clasp)
-        clasp = &JSObject::class_;    /* default class is Object */
+        clasp = &PlainObject::class_;    /* default class is Object */
 
     MOZ_ASSERT(clasp != &JSFunction::class_);
     MOZ_ASSERT(!(clasp->flags & JSCLASS_IS_GLOBAL));
@@ -2818,7 +2808,6 @@ DefinePropertyById(JSContext *cx, HandleObject obj, HandleId id, HandleValue val
                   setter == JS_StrictPropertyStub || (attrs & JSPROP_PROPOP_ACCESSORS));
     MOZ_ASSERT_IF(setter == JS_StrictPropertyStub,
                   getter == JS_PropertyStub || (attrs & JSPROP_PROPOP_ACCESSORS));
-
 
     // If !(attrs & JSPROP_PROPOP_ACCESSORS), then either getter/setter are both
     // possibly-null JSNatives (or possibly-null JSFunction* if JSPROP_GETTER or
@@ -3198,7 +3187,7 @@ JS_DefineObject(JSContext *cx, HandleObject obj, const char *name, const JSClass
 
     const Class *clasp = Valueify(jsclasp);
     if (!clasp)
-        clasp = &JSObject::class_;    /* default class is Object */
+        clasp = &PlainObject::class_;    /* default class is Object */
 
     RootedObject nobj(cx, NewObjectWithClassProto(cx, clasp, proto, obj));
     if (!nobj)
@@ -5045,20 +5034,6 @@ JS_RestoreFrameChain(JSContext *cx)
     CHECK_REQUEST(cx);
     cx->restoreFrameChain();
 }
-
-#ifdef MOZ_TRACE_JSCALLS
-JS_PUBLIC_API(void)
-JS_SetFunctionCallback(JSContext *cx, JSFunctionCallback fcb)
-{
-    cx->functionCallback = fcb;
-}
-
-JS_PUBLIC_API(JSFunctionCallback)
-JS_GetFunctionCallback(JSContext *cx)
-{
-    return cx->functionCallback;
-}
-#endif
 
 /************************************************************************/
 JS_PUBLIC_API(JSString *)

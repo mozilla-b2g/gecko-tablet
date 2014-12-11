@@ -1087,9 +1087,14 @@ RuleCascadeData::AttributeListFor(nsIAtom* aAttribute)
 
 nsCSSRuleProcessor::nsCSSRuleProcessor(const sheet_array_type& aSheets,
                                        uint8_t aSheetType,
-                                       Element* aScopeElement)
+                                       Element* aScopeElement,
+                                       nsCSSRuleProcessor*
+                                         aPreviousCSSRuleProcessor)
   : mSheets(aSheets)
   , mRuleCascades(nullptr)
+  , mPreviousCacheKey(aPreviousCSSRuleProcessor
+                       ? aPreviousCSSRuleProcessor->CloneMQCacheKey()
+                       : UniquePtr<nsMediaQueryResultCacheKey>())
   , mLastPresContext(nullptr)
   , mScopeElement(aScopeElement)
   , mSheetType(aSheetType)
@@ -2142,11 +2147,17 @@ static bool SelectorMatches(Element* aElement,
               HasState(NS_DOCUMENT_STATE_RTL_LOCALE);
 
           nsDependentString dirString(pseudoClass->u.mString);
-          NS_ASSERTION(dirString.EqualsLiteral("ltr") ||
-                       dirString.EqualsLiteral("rtl"),
-                       "invalid value for -moz-locale-dir");
 
-          if (dirString.EqualsLiteral("rtl") != docIsRTL) {
+          if (dirString.EqualsLiteral("rtl")) {
+            if (!docIsRTL) {
+              return false;
+            }
+          } else if (dirString.EqualsLiteral("ltr")) {
+            if (docIsRTL) {
+              return false;
+            }
+          } else {
+            // Selectors specifying other directions never match.
             return false;
           }
         }
@@ -2211,22 +2222,25 @@ static bool SelectorMatches(Element* aElement,
             }
           }
 
-          // if we only had to consider HTML, directionality would be exclusively
-          // LTR or RTL, and this could be just
-          //
-          //  if (dirString.EqualsLiteral("rtl") !=
-          //    aElement->StyleState().HasState(NS_EVENT_STATE_RTL)
+          // If we only had to consider HTML, directionality would be
+          // exclusively LTR or RTL.
           //
           // However, in markup languages where there is no direction attribute
           // we have to consider the possibility that neither -moz-dir(rtl) nor
           // -moz-dir(ltr) matches.
           EventStates state = aElement->StyleState();
-          bool elementIsRTL = state.HasState(NS_EVENT_STATE_RTL);
-          bool elementIsLTR = state.HasState(NS_EVENT_STATE_LTR);
           nsDependentString dirString(pseudoClass->u.mString);
 
-          if ((dirString.EqualsLiteral("rtl") && !elementIsRTL) ||
-              (dirString.EqualsLiteral("ltr") && !elementIsLTR)) {
+          if (dirString.EqualsLiteral("rtl")) {
+            if (!state.HasState(NS_EVENT_STATE_RTL)) {
+              return false;
+            }
+          } else if (dirString.EqualsLiteral("ltr")) {
+            if (!state.HasState(NS_EVENT_STATE_LTR)) {
+              return false;
+            }
+          } else {
+            // Selectors specifying other directions never match.
             return false;
           }
         }
@@ -2903,17 +2917,50 @@ nsCSSRuleProcessor::HasAttributeDependentStyle(AttributeRuleProcessorData* aData
 /* virtual */ bool
 nsCSSRuleProcessor::MediumFeaturesChanged(nsPresContext* aPresContext)
 {
-  RuleCascadeData *old = mRuleCascades;
   // We don't want to do anything if there aren't any sets of rules
-  // cached yet (or somebody cleared them and is thus responsible for
-  // rebuilding things), since we should not build the rule cascade too
-  // early (e.g., before we know whether the quirk style sheet should be
+  // cached yet, since we should not build the rule cascade too early
+  // (e.g., before we know whether the quirk style sheet should be
   // enabled).  And if there's nothing cached, it doesn't matter if
-  // anything changed.  See bug 448281.
+  // anything changed.  But in the cases where it does matter, we've
+  // cached a previous cache key to test against, instead of our current
+  // rule cascades.  See bug 448281 and bug 1089417.
+  MOZ_ASSERT(!(mRuleCascades && mPreviousCacheKey));
+  RuleCascadeData *old = mRuleCascades;
   if (old) {
     RefreshRuleCascade(aPresContext);
+    return (old != mRuleCascades);
   }
-  return (old != mRuleCascades);
+
+  if (mPreviousCacheKey) {
+    // RefreshRuleCascade will get rid of mPreviousCacheKey anyway to
+    // maintain the invariant that we can't have both an mRuleCascades
+    // and an mPreviousCacheKey.  But we need to hold it a little
+    // longer.
+    UniquePtr<nsMediaQueryResultCacheKey> previousCacheKey(
+      Move(mPreviousCacheKey));
+    RefreshRuleCascade(aPresContext);
+
+    // This test is a bit pessimistic since the cache key's operator==
+    // just does list comparison rather than set comparison, but it
+    // should catch all the cases we care about (i.e., where the cascade
+    // order hasn't changed).  Other cases will do a restyle anyway, so
+    // we shouldn't need to worry about posting a second.
+    return !mRuleCascades || // all sheets gone, but we had sheets before
+           mRuleCascades->mCacheKey != *previousCacheKey;
+  }
+
+  return false;
+}
+
+UniquePtr<nsMediaQueryResultCacheKey>
+nsCSSRuleProcessor::CloneMQCacheKey()
+{
+  RuleCascadeData* c = mRuleCascades;
+  if (!c || !c->mCacheKey.HasFeatureConditions()) {
+    return UniquePtr<nsMediaQueryResultCacheKey>();
+  }
+
+  return MakeUnique<nsMediaQueryResultCacheKey>(c->mCacheKey);
 }
 
 /* virtual */ size_t
@@ -3014,6 +3061,10 @@ nsCSSRuleProcessor::AppendFontFeatureValuesRules(
 nsresult
 nsCSSRuleProcessor::ClearRuleCascades()
 {
+  if (!mPreviousCacheKey) {
+    mPreviousCacheKey = CloneMQCacheKey();
+  }
+
   // We rely on our caller (perhaps indirectly) to do something that
   // will rebuild style data and the user font set (either
   // nsIPresShell::ReconstructStyleData or
@@ -3538,6 +3589,11 @@ nsCSSRuleProcessor::RefreshRuleCascade(nsPresContext* aPresContext)
       return;
     }
   }
+
+  // We're going to make a new rule cascade; this means that we should
+  // now stop using the previous cache key that we're holding on to from
+  // the last time we had rule cascades.
+  mPreviousCacheKey = nullptr;
 
   if (mSheets.Length() != 0) {
     nsAutoPtr<RuleCascadeData> newCascade(

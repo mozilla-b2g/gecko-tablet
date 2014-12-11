@@ -204,7 +204,7 @@ template <> struct ExecutionModeTraits<ParallelExecution>
 
 namespace jit {
     struct IonScript;
-    class IonAllocPolicy;
+    class JitAllocPolicy;
     class TempAllocator;
 }
 
@@ -798,10 +798,10 @@ class TemporaryTypeSet : public TypeSet
     /* Get the prototype shared by all objects in this set, or nullptr. */
     JSObject *getCommonPrototype();
 
-    /* Get the typed array type of all objects in this set, or Scalar::TypeMax. */
+    /* Get the typed array type of all objects in this set, or Scalar::MaxTypedArrayViewType. */
     Scalar::Type getTypedArrayType();
 
-    /* Get the shared typed array type of all objects in this set, or Scalar::TypeMax. */
+    /* Get the shared typed array type of all objects in this set, or Scalar::MaxTypedArrayViewType. */
     Scalar::Type getSharedTypedArrayType();
 
     /* Whether clasp->isCallable() is true for one or more objects in this set. */
@@ -939,13 +939,14 @@ class TypeNewScript
     // analyses are performed and this array is cleared. The pointers in this
     // array are weak.
     static const uint32_t PRELIMINARY_OBJECT_COUNT = 20;
-    NativeObject **preliminaryObjects;
+    PlainObject **preliminaryObjects;
 
     // After the new script properties analyses have been performed, a template
     // object to use for newly constructed objects. The shape of this object
     // reflects all definite properties the object will have, and the
-    // allocation kind to use.
-    HeapPtrNativeObject templateObject_;
+    // allocation kind to use. Note that this is actually a PlainObject, but is
+    // JSObject here to avoid cyclic include dependencies.
+    HeapPtrPlainObject templateObject_;
 
     // Order in which definite properties become initialized. We need this in
     // case the definite properties are invalidated (such as by adding a setter
@@ -990,7 +991,7 @@ class TypeNewScript
         return true;
     }
 
-    NativeObject *templateObject() const {
+    PlainObject *templateObject() const {
         return templateObject_;
     }
 
@@ -1009,8 +1010,8 @@ class TypeNewScript
     void fixupAfterMovingGC();
 #endif
 
-    void registerNewObject(NativeObject *res);
-    void unregisterNewObject(NativeObject *res);
+    void registerNewObject(PlainObject *res);
+    void unregisterNewObject(PlainObject *res);
     bool maybeAnalyze(JSContext *cx, TypeObject *type, bool *regenerate, bool force = false);
 
     void rollbackPartiallyInitializedObjects(JSContext *cx, TypeObject *type);
@@ -1332,7 +1333,6 @@ struct TypeObjectWithNewScriptEntry
           : clasp(clasp), hashProto(proto), matchProto(proto), newFunction(newFunction)
         {}
 
-#ifdef JSGC_GENERATIONAL
         /*
          * For use by generational post barriers only.  Look up an entry whose
          * proto has been moved, but was hashed with the original value.
@@ -1340,7 +1340,6 @@ struct TypeObjectWithNewScriptEntry
         Lookup(const Class *clasp, TaggedProto hashProto, TaggedProto matchProto, JSFunction *newFunction)
             : clasp(clasp), hashProto(hashProto), matchProto(matchProto), newFunction(newFunction)
         {}
-#endif
 
     };
 
@@ -1688,7 +1687,7 @@ struct TypeCompartment
 
   public:
     void fixArrayType(ExclusiveContext *cx, ArrayObject *obj);
-    void fixObjectType(ExclusiveContext *cx, NativeObject *obj);
+    void fixObjectType(ExclusiveContext *cx, PlainObject *obj);
     void fixRestArgumentsType(ExclusiveContext *cx, ArrayObject *obj);
 
     JSObject *newTypedObject(JSContext *cx, IdValuePair *properties, size_t nproperties);

@@ -14,7 +14,7 @@
 
 #include "jit/Bailouts.h"
 #include "jit/InlineList.h"
-#include "jit/IonAllocPolicy.h"
+#include "jit/JitAllocPolicy.h"
 #include "jit/LOpcodes.h"
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
@@ -719,15 +719,15 @@ class LNode
     LIR_OPCODE_LIST(LIROP)
 #   undef LIROP
 
-    virtual bool accept(LElementVisitor *visitor) = 0;
+    virtual void accept(LElementVisitor *visitor) = 0;
 
 #define LIR_HEADER(opcode)                                                  \
     Opcode op() const {                                                     \
         return LInstruction::LOp_##opcode;                                  \
     }                                                                       \
-    bool accept(LElementVisitor *visitor) {                                 \
+    void accept(LElementVisitor *visitor) {                                 \
         visitor->setElement(this);                                          \
-        return visitor->visit##opcode(this);                                \
+        visitor->visit##opcode(this);                                       \
     }
 };
 
@@ -823,7 +823,7 @@ class LElementVisitor
     {}
 
   public:
-#define VISIT_INS(op) virtual bool visit##op(L##op *) { MOZ_CRASH("NYI: " #op); }
+#define VISIT_INS(op) virtual void visit##op(L##op *) { MOZ_CRASH("NYI: " #op); }
     LIR_OPCODE_LIST(VISIT_INS)
 #undef VISIT_INS
 };
@@ -1065,7 +1065,7 @@ class LCallInstructionHelper : public LInstructionHelper<Defs, Operands, Temps>
 class LRecoverInfo : public TempObject
 {
   public:
-    typedef Vector<MNode *, 2, IonAllocPolicy> Instructions;
+    typedef Vector<MNode *, 2, JitAllocPolicy> Instructions;
 
   private:
     // List of instructions needed to recover the stack frames.
@@ -1250,8 +1250,8 @@ class LSafepoint : public TempObject
     typedef SafepointNunboxEntry NunboxEntry;
 
   public:
-    typedef Vector<uint32_t, 0, IonAllocPolicy> SlotList;
-    typedef Vector<NunboxEntry, 0, IonAllocPolicy> NunboxList;
+    typedef Vector<uint32_t, 0, JitAllocPolicy> SlotList;
+    typedef Vector<NunboxEntry, 0, JitAllocPolicy> NunboxList;
 
   private:
     // The information in a safepoint describes the registers and gc related
@@ -1656,11 +1656,11 @@ class LIRGraph
     };
 
     FixedList<LBlock> blocks_;
-    Vector<Value, 0, IonAllocPolicy> constantPool_;
-    typedef HashMap<Value, uint32_t, ValueHasher, IonAllocPolicy> ConstantPoolMap;
+    Vector<Value, 0, JitAllocPolicy> constantPool_;
+    typedef HashMap<Value, uint32_t, ValueHasher, JitAllocPolicy> ConstantPoolMap;
     ConstantPoolMap constantPoolMap_;
-    Vector<LInstruction *, 0, IonAllocPolicy> safepoints_;
-    Vector<LInstruction *, 0, IonAllocPolicy> nonCallSafepoints_;
+    Vector<LInstruction *, 0, JitAllocPolicy> safepoints_;
+    Vector<LInstruction *, 0, JitAllocPolicy> nonCallSafepoints_;
     uint32_t numVirtualRegisters_;
     uint32_t numInstructions_;
 

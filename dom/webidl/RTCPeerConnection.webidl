@@ -8,7 +8,7 @@
  */
 
 callback RTCSessionDescriptionCallback = void (mozRTCSessionDescription sdp);
-callback RTCPeerConnectionErrorCallback = void (DOMString errorInformation);
+callback RTCPeerConnectionErrorCallback = void (DOMError error);
 callback VoidFunction = void ();
 callback RTCStatsCallback = void (RTCStatsReport report);
 
@@ -108,7 +108,7 @@ interface mozRTCPeerConnection : EventTarget  {
   readonly attribute RTCIdentityAssertion? peerIdentity;
 
   [ChromeOnly]
-  readonly attribute DOMString id;
+  attribute DOMString id;
 
   RTCConfiguration      getConfiguration ();
   sequence<MediaStream> getLocalStreams ();

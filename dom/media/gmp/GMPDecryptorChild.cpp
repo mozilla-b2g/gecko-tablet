@@ -27,10 +27,12 @@ namespace mozilla {
 namespace gmp {
 
 GMPDecryptorChild::GMPDecryptorChild(GMPChild* aPlugin,
-                                     const nsTArray<uint8_t>& aPluginVoucher)
+                                     const nsTArray<uint8_t>& aPluginVoucher,
+                                     const nsTArray<uint8_t>& aSandboxVoucher)
   : mSession(nullptr)
   , mPlugin(aPlugin)
   , mPluginVoucher(aPluginVoucher)
+  , mSandboxVoucher(aSandboxVoucher)
 {
   MOZ_ASSERT(mPlugin);
 }
@@ -181,9 +183,8 @@ GMPDecryptorChild::GetSandboxVoucher(const uint8_t** aVoucher,
   if (!aVoucher || !aVoucherLength) {
     return;
   }
-  const char* voucher = "placeholder_sandbox_voucher.";
-  *aVoucher = (uint8_t*)voucher;
-  *aVoucherLength = strlen(voucher);
+  *aVoucher = mSandboxVoucher.Elements();
+  *aVoucherLength = mSandboxVoucher.Length();
 }
 
 void
@@ -343,3 +344,7 @@ GMPDecryptorChild::RecvDecryptingComplete()
 
 } // namespace gmp
 } // namespace mozilla
+
+// avoid redefined macro in unified build
+#undef ON_GMP_THREAD
+#undef CALL_ON_GMP_THREAD

@@ -238,9 +238,22 @@ UpdateDepth(ExclusiveContext *cx, BytecodeEmitter *bce, ptrdiff_t target)
         bce->maxStackDepth = bce->stackDepth;
 }
 
+#ifdef DEBUG
+static bool
+CheckStrictOrSloppy(BytecodeEmitter *bce, JSOp op)
+{
+    if (IsCheckStrictOp(op) && !bce->sc->strict)
+        return false;
+    if (IsCheckSloppyOp(op) && bce->sc->strict)
+        return false;
+    return true;
+}
+#endif
+
 ptrdiff_t
 frontend::Emit1(ExclusiveContext *cx, BytecodeEmitter *bce, JSOp op)
 {
+    MOZ_ASSERT(CheckStrictOrSloppy(bce, op));
     ptrdiff_t offset = EmitCheck(cx, bce, 1);
     if (offset < 0)
         return -1;
@@ -254,6 +267,7 @@ frontend::Emit1(ExclusiveContext *cx, BytecodeEmitter *bce, JSOp op)
 ptrdiff_t
 frontend::Emit2(ExclusiveContext *cx, BytecodeEmitter *bce, JSOp op, jsbytecode op1)
 {
+    MOZ_ASSERT(CheckStrictOrSloppy(bce, op));
     ptrdiff_t offset = EmitCheck(cx, bce, 2);
     if (offset < 0)
         return -1;
@@ -269,6 +283,8 @@ ptrdiff_t
 frontend::Emit3(ExclusiveContext *cx, BytecodeEmitter *bce, JSOp op, jsbytecode op1,
                 jsbytecode op2)
 {
+    MOZ_ASSERT(CheckStrictOrSloppy(bce, op));
+
     /* These should filter through EmitVarOp. */
     MOZ_ASSERT(!IsArgOp(op));
     MOZ_ASSERT(!IsLocalOp(op));
@@ -288,6 +304,7 @@ frontend::Emit3(ExclusiveContext *cx, BytecodeEmitter *bce, JSOp op, jsbytecode 
 ptrdiff_t
 frontend::EmitN(ExclusiveContext *cx, BytecodeEmitter *bce, JSOp op, size_t extra)
 {
+    MOZ_ASSERT(CheckStrictOrSloppy(bce, op));
     ptrdiff_t length = 1 + (ptrdiff_t)extra;
     ptrdiff_t offset = EmitCheck(cx, bce, length);
     if (offset < 0)
@@ -1019,6 +1036,7 @@ LeaveNestedScope(ExclusiveContext *cx, BytecodeEmitter *bce, StmtInfoBCE *stmt)
 static bool
 EmitIndex32(ExclusiveContext *cx, JSOp op, uint32_t index, BytecodeEmitter *bce)
 {
+    MOZ_ASSERT(CheckStrictOrSloppy(bce, op));
     const size_t len = 1 + UINT32_INDEX_LEN;
     MOZ_ASSERT(len == size_t(js_CodeSpec[op].length));
     ptrdiff_t offset = EmitCheck(cx, bce, len);
@@ -1036,6 +1054,7 @@ EmitIndex32(ExclusiveContext *cx, JSOp op, uint32_t index, BytecodeEmitter *bce)
 static bool
 EmitIndexOp(ExclusiveContext *cx, JSOp op, uint32_t index, BytecodeEmitter *bce)
 {
+    MOZ_ASSERT(CheckStrictOrSloppy(bce, op));
     const size_t len = js_CodeSpec[op].length;
     MOZ_ASSERT(len >= 1 + UINT32_INDEX_LEN);
     ptrdiff_t offset = EmitCheck(cx, bce, len);
@@ -1056,8 +1075,8 @@ EmitAtomOp(ExclusiveContext *cx, JSAtom *atom, JSOp op, BytecodeEmitter *bce)
     MOZ_ASSERT(JOF_OPTYPE(op) == JOF_ATOM);
 
     // .generator lookups should be emitted as JSOP_GETALIASEDVAR instead of
-    // JSOP_NAME etc, to bypass |with| objects on the scope chain.
-    MOZ_ASSERT_IF(op == JSOP_NAME || op == JSOP_GETGNAME, atom != cx->names().dotGenerator);
+    // JSOP_GETNAME etc, to bypass |with| objects on the scope chain.
+    MOZ_ASSERT_IF(op == JSOP_GETNAME || op == JSOP_GETGNAME, atom != cx->names().dotGenerator);
 
     if (op == JSOP_GETPROP && atom == cx->names().length) {
         /* Specialize length accesses for the interpreter. */
@@ -1495,6 +1514,29 @@ BytecodeEmitter::isAliasedName(ParseNode *pn)
     return false;
 }
 
+static JSOp
+StrictifySetNameOp(JSOp op, BytecodeEmitter *bce)
+{
+    switch (op) {
+      case JSOP_SETNAME:
+        if (bce->sc->strict)
+            op = JSOP_STRICTSETNAME;
+        break;
+      case JSOP_SETGNAME:
+        if (bce->sc->strict)
+            op = JSOP_STRICTSETGNAME;
+        break;
+        default:;
+    }
+    return op;
+}
+
+static void
+StrictifySetNameNode(ParseNode *pn, BytecodeEmitter *bce)
+{
+    pn->setOp(StrictifySetNameOp(pn->getOp(), bce));
+}
+
 /*
  * Try to convert a *NAME op with a free name to a more specialized GNAME,
  * INTRINSIC or ALIASEDVAR op, which optimize accesses on that name.
@@ -1512,7 +1554,7 @@ TryConvertFreeName(BytecodeEmitter *bce, ParseNode *pn)
     if (bce->emitterMode == BytecodeEmitter::SelfHosting) {
         JSOp op;
         switch (pn->getOp()) {
-          case JSOP_NAME:     op = JSOP_GETINTRINSIC; break;
+          case JSOP_GETNAME:  op = JSOP_GETINTRINSIC; break;
           case JSOP_SETNAME:  op = JSOP_SETINTRINSIC; break;
           /* Other *NAME ops aren't (yet) supported in self-hosted code. */
           default: MOZ_CRASH("intrinsic");
@@ -1566,7 +1608,7 @@ TryConvertFreeName(BytecodeEmitter *bce, ParseNode *pn)
                 if (LookupAliasedName(bce, script, pn->pn_atom->asPropertyName(), &slot, pn)) {
                     JSOp op;
                     switch (pn->getOp()) {
-                      case JSOP_NAME:    op = JSOP_GETALIASEDVAR; break;
+                      case JSOP_GETNAME: op = JSOP_GETALIASEDVAR; break;
                       case JSOP_SETNAME: op = JSOP_SETALIASEDVAR; break;
                       default: return false;
                     }
@@ -1619,8 +1661,8 @@ TryConvertFreeName(BytecodeEmitter *bce, ParseNode *pn)
 
     JSOp op;
     switch (pn->getOp()) {
-      case JSOP_NAME:     op = JSOP_GETGNAME; break;
-      case JSOP_SETNAME:  op = JSOP_SETGNAME; break;
+      case JSOP_GETNAME:  op = JSOP_GETGNAME; break;
+      case JSOP_SETNAME:  op = StrictifySetNameOp(JSOP_SETGNAME, bce); break;
       case JSOP_SETCONST:
         // Not supported.
         return false;
@@ -1638,12 +1680,12 @@ TryConvertFreeName(BytecodeEmitter *bce, ParseNode *pn)
  * The caller can test pn->pn_cookie.isFree() to tell whether optimization
  * occurred, in which case BindNameToSlotHelper also updated pn->pn_op.  If
  * pn->pn_cookie.isFree() is still true on return, pn->pn_op still may have
- * been optimized, e.g., from JSOP_NAME to JSOP_CALLEE.  Whether or not
+ * been optimized, e.g., from JSOP_GETNAME to JSOP_CALLEE.  Whether or not
  * pn->pn_op was modified, if this function finds an argument or local variable
  * name, PND_CONST will be set in pn_dflags for read-only properties after a
  * successful return.
  *
- * NB: if you add more opcodes specialized from JSOP_NAME, etc., don't forget
+ * NB: if you add more opcodes specialized from JSOP_GETNAME, etc., don't forget
  * to update the special cases in EmitFor (for-in) and EmitAssignment (= and
  * op=, e.g. +=).
  */
@@ -1681,7 +1723,7 @@ BindNameToSlotHelper(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
 
     // Throw an error on attempts to mutate const-declared bindings.
     switch (op) {
-      case JSOP_NAME:
+      case JSOP_GETNAME:
       case JSOP_SETCONST:
         break;
       default:
@@ -1756,8 +1798,11 @@ BindNameToSlotHelper(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
     switch (dn->kind()) {
       case Definition::ARG:
         switch (op) {
-          case JSOP_NAME:     op = JSOP_GETARG; break;
-          case JSOP_SETNAME:  op = JSOP_SETARG; break;
+          case JSOP_GETNAME:
+            op = JSOP_GETARG; break;
+          case JSOP_SETNAME:
+          case JSOP_STRICTSETNAME:
+            op = JSOP_SETARG; break;
           default: MOZ_CRASH("arg");
         }
         MOZ_ASSERT(!pn->isConst());
@@ -1768,9 +1813,13 @@ BindNameToSlotHelper(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
       case Definition::CONST:
       case Definition::LET:
         switch (op) {
-          case JSOP_NAME:     op = JSOP_GETLOCAL; break;
-          case JSOP_SETNAME:  op = JSOP_SETLOCAL; break;
-          case JSOP_SETCONST: op = JSOP_SETLOCAL; break;
+          case JSOP_GETNAME:
+            op = JSOP_GETLOCAL; break;
+          case JSOP_SETNAME:
+          case JSOP_STRICTSETNAME:
+            op = JSOP_SETLOCAL; break;
+          case JSOP_SETCONST:
+            op = JSOP_SETLOCAL; break;
           default: MOZ_CRASH("local");
         }
         break;
@@ -1791,7 +1840,7 @@ BindNameToSlotHelper(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
         MOZ_ASSERT(pn->pn_atom == fun->atom());
 
         /*
-         * Leave pn->isOp(JSOP_NAME) if bce->fun is heavyweight to
+         * Leave pn->isOp(JSOP_GETNAME) if bce->fun is heavyweight to
          * address two cases: a new binding introduced by eval, and
          * assignment to the name in strict mode.
          *
@@ -1875,6 +1924,8 @@ BindNameToSlot(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
 {
     if (!BindNameToSlotHelper(cx, bce, pn))
         return false;
+
+    StrictifySetNameNode(pn, bce);
 
     if (bce->emitterMode == BytecodeEmitter::SelfHosting && !pn->isBound()) {
         bce->reportError(pn, JSMSG_SELFHOSTED_UNBOUND_NAME);
@@ -2214,9 +2265,9 @@ IteratorResultShape(ExclusiveContext *cx, BytecodeEmitter *bce, unsigned *shape)
 {
     MOZ_ASSERT(bce->script->compileAndGo());
 
-    RootedNativeObject obj(cx);
+    RootedPlainObject obj(cx);
     gc::AllocKind kind = GuessObjectGCKind(2);
-    obj = NewNativeBuiltinClassInstance(cx, &JSObject::class_, kind);
+    obj = NewBuiltinClassInstance<PlainObject>(cx, kind);
     if (!obj)
         return false;
 
@@ -2256,10 +2307,10 @@ EmitFinishIteratorResult(ExclusiveContext *cx, BytecodeEmitter *bce, bool done)
 {
     jsatomid value_id;
     if (!bce->makeAtomIndex(cx->names().value, &value_id))
-        return UINT_MAX;
+        return false;
     jsatomid done_id;
     if (!bce->makeAtomIndex(cx->names().done, &done_id))
-        return UINT_MAX;
+        return false;
 
     if (!EmitIndex32(cx, JSOP_INITPROP, value_id, bce))
         return false;
@@ -2294,7 +2345,7 @@ EmitNameOp(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn, bool callC
 
     /* Need to provide |this| value for call */
     if (callContext) {
-        if (op == JSOP_NAME && bce->needsImplicitThis()) {
+        if (op == JSOP_GETNAME && bce->needsImplicitThis()) {
             if (!EmitAtomOp(cx, pn, JSOP_IMPLICITTHIS, bce))
                 return false;
         } else {
@@ -2405,7 +2456,8 @@ EmitPropIncDec(ExclusiveContext *cx, ParseNode *pn, BytecodeEmitter *bce)
             return false;
     }
 
-    if (!EmitAtomOp(cx, pn->pn_kid, JSOP_SETPROP, bce))     // N? N+1
+    JSOp setOp = bce->sc->strict ? JSOP_STRICTSETPROP : JSOP_SETPROP;
+    if (!EmitAtomOp(cx, pn->pn_kid, setOp, bce))     // N? N+1
         return false;
     if (post && Emit1(cx, bce, JSOP_POP) < 0)       // RESULT
         return false;
@@ -2424,7 +2476,7 @@ EmitNameIncDec(ExclusiveContext *cx, ParseNode *pn, BytecodeEmitter *bce)
 
     if (!EmitAtomOp(cx, pn->pn_kid, global ? JSOP_BINDGNAME : JSOP_BINDNAME, bce))  // OBJ
         return false;
-    if (!EmitAtomOp(cx, pn->pn_kid, global ? JSOP_GETGNAME : JSOP_NAME, bce))       // OBJ V
+    if (!EmitAtomOp(cx, pn->pn_kid, global ? JSOP_GETGNAME : JSOP_GETNAME, bce))    // OBJ V
         return false;
     if (Emit1(cx, bce, JSOP_POS) < 0)               // OBJ N
         return false;
@@ -2442,7 +2494,8 @@ EmitNameIncDec(ExclusiveContext *cx, ParseNode *pn, BytecodeEmitter *bce)
             return false;
     }
 
-    if (!EmitAtomOp(cx, pn->pn_kid, global ? JSOP_SETGNAME : JSOP_SETNAME, bce)) // N? N+1
+    JSOp setOp = StrictifySetNameOp(global ? JSOP_SETGNAME : JSOP_SETNAME, bce);
+    if (!EmitAtomOp(cx, pn->pn_kid, setOp, bce)) // N? N+1
         return false;
     if (post && Emit1(cx, bce, JSOP_POP) < 0)       // RESULT
         return false;
@@ -2465,7 +2518,8 @@ EmitElemOperands(ExclusiveContext *cx, ParseNode *pn, JSOp op, BytecodeEmitter *
         return false;
     if (!EmitTree(cx, bce, pn->pn_right))
         return false;
-    if (op == JSOP_SETELEM && Emit2(cx, bce, JSOP_PICK, (jsbytecode)2) < 0)
+    bool isSetElem = op == JSOP_SETELEM || op == JSOP_STRICTSETELEM;
+    if (isSetElem && Emit2(cx, bce, JSOP_PICK, (jsbytecode)2) < 0)
         return false;
     return true;
 }
@@ -2525,7 +2579,8 @@ EmitElemIncDec(ExclusiveContext *cx, ParseNode *pn, BytecodeEmitter *bce)
             return false;
     }
 
-    if (!EmitElemOpBase(cx, bce, JSOP_SETELEM))     // N? N+1
+    JSOp setOp = bce->sc->strict ? JSOP_STRICTSETELEM : JSOP_SETELEM;
+    if (!EmitElemOpBase(cx, bce, setOp))     // N? N+1
         return false;
     if (post && Emit1(cx, bce, JSOP_POP) < 0)       // RESULT
         return false;
@@ -3307,7 +3362,9 @@ EmitDestructuringLHS(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn, 
 
             switch (pn->getOp()) {
               case JSOP_SETNAME:
+              case JSOP_STRICTSETNAME:
               case JSOP_SETGNAME:
+              case JSOP_STRICTSETGNAME:
               case JSOP_SETCONST: {
                 // This is like ordinary assignment, but with one difference.
                 //
@@ -3324,7 +3381,8 @@ EmitDestructuringLHS(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn, 
                     return false;
 
                 if (!pn->isOp(JSOP_SETCONST)) {
-                    JSOp bindOp = pn->isOp(JSOP_SETNAME) ? JSOP_BINDNAME : JSOP_BINDGNAME;
+                    bool global = pn->isOp(JSOP_SETGNAME) || pn->isOp(JSOP_STRICTSETGNAME);
+                    JSOp bindOp = global ? JSOP_BINDGNAME : JSOP_BINDNAME;
                     if (!EmitIndex32(cx, bindOp, atomIndex, bce))
                         return false;
                     if (Emit1(cx, bce, JSOP_SWAP) < 0)
@@ -3349,6 +3407,7 @@ EmitDestructuringLHS(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn, 
             break;
 
           case PNK_DOT:
+          {
             // See the (PNK_NAME, JSOP_SETNAME) case above.
             //
             // In `a.x = b`, `a` is evaluated first, then `b`, then a
@@ -3361,17 +3420,22 @@ EmitDestructuringLHS(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn, 
                 return false;
             if (Emit1(cx, bce, JSOP_SWAP) < 0)
                 return false;
-            if (!EmitAtomOp(cx, pn, JSOP_SETPROP, bce))
+            JSOp setOp = bce->sc->strict ? JSOP_STRICTSETPROP : JSOP_SETPROP;
+            if (!EmitAtomOp(cx, pn, setOp, bce))
                 return false;
             break;
+          }
 
           case PNK_ELEM:
+          {
             // See the comment at `case PNK_DOT:` above. This case,
             // `[a[x]] = [b]`, is handled much the same way. The JSOP_SWAP
             // is emitted by EmitElemOperands.
-            if (!EmitElemOp(cx, pn, JSOP_SETELEM, bce))
+            JSOp setOp = bce->sc->strict ? JSOP_STRICTSETELEM : JSOP_SETELEM;
+            if (!EmitElemOp(cx, pn, setOp, bce))
                 return false;
             break;
+          }
 
           case PNK_CALL:
             MOZ_ASSERT(pn->pn_xflags & PNX_SETCALL);
@@ -3847,12 +3911,17 @@ EmitVariables(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn, VarEmit
 
         if (pn3) {
             MOZ_ASSERT(emitOption != DefineVars);
-            if (op == JSOP_SETNAME || op == JSOP_SETGNAME || op == JSOP_SETINTRINSIC) {
+            if (op == JSOP_SETNAME ||
+                op == JSOP_STRICTSETNAME ||
+                op == JSOP_SETGNAME ||
+                op == JSOP_STRICTSETGNAME ||
+                op == JSOP_SETINTRINSIC)
+            {
                 MOZ_ASSERT(emitOption != PushInitialValues);
                 JSOp bindOp;
-                if (op == JSOP_SETNAME)
+                if (op == JSOP_SETNAME || op == JSOP_STRICTSETNAME)
                     bindOp = JSOP_BINDNAME;
-                else if (op == JSOP_SETGNAME)
+                else if (op == JSOP_SETGNAME || op == JSOP_STRICTSETGNAME)
                     bindOp = JSOP_BINDGNAME;
                 else
                     bindOp = JSOP_BINDINTRINSIC;
@@ -3926,9 +3995,9 @@ EmitAssignment(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *lhs, JSOp 
                 return false;
             if (!lhs->isConst()) {
                 JSOp bindOp;
-                if (lhs->isOp(JSOP_SETNAME))
+                if (lhs->isOp(JSOP_SETNAME) || lhs->isOp(JSOP_STRICTSETNAME))
                     bindOp = JSOP_BINDNAME;
-                else if (lhs->isOp(JSOP_SETGNAME))
+                else if (lhs->isOp(JSOP_SETGNAME) || lhs->isOp(JSOP_STRICTSETGNAME))
                     bindOp = JSOP_BINDGNAME;
                 else
                     bindOp = JSOP_BINDINTRINSIC;
@@ -3975,7 +4044,7 @@ EmitAssignment(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *lhs, JSOp 
                 if (lhs->isOp(JSOP_CALLEE)) {
                     if (Emit1(cx, bce, JSOP_CALLEE) < 0)
                         return false;
-                } else if (lhs->isOp(JSOP_NAME) || lhs->isOp(JSOP_GETGNAME)) {
+                } else if (lhs->isOp(JSOP_GETNAME) || lhs->isOp(JSOP_GETGNAME)) {
                     if (!EmitIndex32(cx, lhs->getOp(), atomIndex, bce))
                         return false;
                 } else {
@@ -3983,12 +4052,12 @@ EmitAssignment(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *lhs, JSOp 
                     if (!EmitVarOp(cx, lhs, lhs->getOp(), bce))
                         return false;
                 }
-            } else if (lhs->isOp(JSOP_SETNAME)) {
+            } else if (lhs->isOp(JSOP_SETNAME) || lhs->isOp(JSOP_STRICTSETNAME)) {
                 if (Emit1(cx, bce, JSOP_DUP) < 0)
                     return false;
                 if (!EmitIndex32(cx, JSOP_GETXPROP, atomIndex, bce))
                     return false;
-            } else if (lhs->isOp(JSOP_SETGNAME)) {
+            } else if (lhs->isOp(JSOP_SETGNAME) || lhs->isOp(JSOP_STRICTSETGNAME)) {
                 MOZ_ASSERT(lhs->pn_cookie.isFree());
                 if (!EmitAtomOp(cx, lhs, JSOP_GETGNAME, bce))
                     return false;
@@ -4079,17 +4148,23 @@ EmitAssignment(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *lhs, JSOp 
         }
         break;
       case PNK_DOT:
-        if (!EmitIndexOp(cx, JSOP_SETPROP, atomIndex, bce))
+      {
+        JSOp setOp = bce->sc->strict ? JSOP_STRICTSETPROP : JSOP_SETPROP;
+        if (!EmitIndexOp(cx, setOp, atomIndex, bce))
             return false;
         break;
+      }
       case PNK_CALL:
         /* Do nothing. The JSOP_SETCALL we emitted will always throw. */
         MOZ_ASSERT(lhs->pn_xflags & PNX_SETCALL);
         break;
       case PNK_ELEM:
-        if (Emit1(cx, bce, JSOP_SETELEM) < 0)
+      {
+        JSOp setOp = bce->sc->strict ? JSOP_STRICTSETELEM : JSOP_SETELEM;
+        if (Emit1(cx, bce, setOp) < 0)
             return false;
         break;
+      }
       case PNK_ARRAY:
       case PNK_OBJECT:
         if (!EmitDestructuringOps(cx, bce, lhs))
@@ -4172,8 +4247,8 @@ ParseNode::getConstantValue(ExclusiveContext *cx, AllowConstantObjects allowObje
             allowObjects = DontAllowObjects;
 
         gc::AllocKind kind = GuessObjectGCKind(pn_count);
-        RootedNativeObject obj(cx, NewNativeBuiltinClassInstance(cx, &JSObject::class_,
-                                                                 kind, MaybeSingletonObject));
+        RootedPlainObject obj(cx,
+            NewBuiltinClassInstance<PlainObject>(cx, kind, MaybeSingletonObject));
         if (!obj)
             return false;
 
@@ -5888,27 +5963,25 @@ EmitDelete(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
     ParseNode *pn2 = pn->pn_kid;
     switch (pn2->getKind()) {
       case PNK_NAME:
-      {
         if (!BindNameToSlot(cx, bce, pn2))
             return false;
-        JSOp op = pn2->getOp();
-        if (op == JSOP_FALSE) {
-            if (Emit1(cx, bce, op) < 0)
-                return false;
-        } else {
-            if (!EmitAtomOp(cx, pn2, op, bce))
-                return false;
-        }
+        if (!EmitAtomOp(cx, pn2, pn2->getOp(), bce))
+            return false;
+        break;
+      case PNK_DOT:
+      {
+        JSOp delOp = bce->sc->strict ? JSOP_STRICTDELPROP : JSOP_DELPROP;
+        if (!EmitPropOp(cx, pn2, delOp, bce))
+            return false;
         break;
       }
-      case PNK_DOT:
-        if (!EmitPropOp(cx, pn2, JSOP_DELPROP, bce))
-            return false;
-        break;
       case PNK_ELEM:
-        if (!EmitElemOp(cx, pn2, JSOP_DELELEM, bce))
+      {
+        JSOp delOp = bce->sc->strict ? JSOP_STRICTDELELEM : JSOP_DELELEM;
+        if (!EmitElemOp(cx, pn2, delOp, bce))
             return false;
         break;
+      }
       default:
       {
         /*
@@ -6144,7 +6217,11 @@ EmitCallOrNew(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
             return false;
     }
     CheckTypeSet(cx, bce, pn->getOp());
-    if (pn->isOp(JSOP_EVAL) || pn->isOp(JSOP_SPREADEVAL)) {
+    if (pn->isOp(JSOP_EVAL) ||
+        pn->isOp(JSOP_STRICTEVAL) ||
+        pn->isOp(JSOP_SPREADEVAL) ||
+        pn->isOp(JSOP_STRICTSPREADEVAL))
+    {
         uint32_t lineNum = bce->parser->tokenStream.srcCoords.lineNum(pn->pn_pos.begin);
         EMIT_UINT16_IMM_OP(JSOP_LINENO, lineNum);
     }
@@ -6262,7 +6339,9 @@ EmitIncOrDec(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
           case JSOP_SETARG:
           case JSOP_SETALIASEDVAR:
           case JSOP_SETNAME:
+          case JSOP_STRICTSETNAME:
           case JSOP_SETGNAME:
+          case JSOP_STRICTSETGNAME:
             maySet = true;
             break;
           default:
@@ -6415,10 +6494,10 @@ EmitObject(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
      * Try to construct the shape of the object as we go, so we can emit a
      * JSOP_NEWOBJECT with the final shape instead.
      */
-    RootedNativeObject obj(cx);
+    RootedPlainObject obj(cx);
     if (bce->script->compileAndGo()) {
         gc::AllocKind kind = GuessObjectGCKind(pn->pn_count);
-        obj = NewNativeBuiltinClassInstance(cx, &JSObject::class_, kind, TenuredObject);
+        obj = NewBuiltinClassInstance<PlainObject>(cx, kind, TenuredObject);
         if (!obj)
             return false;
     }

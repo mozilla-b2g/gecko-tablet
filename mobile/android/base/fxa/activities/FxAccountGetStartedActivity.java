@@ -9,10 +9,11 @@ import java.util.Locale;
 import org.mozilla.gecko.R;
 import org.mozilla.gecko.background.common.log.Logger;
 import org.mozilla.gecko.background.fxa.FxAccountAgeLockoutHelper;
+import org.mozilla.gecko.background.fxa.FxAccountUtils;
 import org.mozilla.gecko.fxa.FirefoxAccounts;
 import org.mozilla.gecko.fxa.FxAccountConstants;
 import org.mozilla.gecko.sync.setup.activities.ActivityUtils;
-import org.mozilla.gecko.LocaleAware;
+import org.mozilla.gecko.Locales;
 
 import android.accounts.AccountAuthenticatorActivity;
 import android.content.Intent;
@@ -38,7 +39,7 @@ public class FxAccountGetStartedActivity extends AccountAuthenticatorActivity {
     Logger.setThreadLogTag(FxAccountConstants.GLOBAL_LOG_TAG);
     Logger.debug(LOG_TAG, "onCreate(" + icicle + ")");
 
-    LocaleAware.initializeLocale(getApplicationContext());
+    Locales.initializeLocale(getApplicationContext());
 
     super.onCreate(icicle);
 
@@ -133,7 +134,7 @@ public class FxAccountGetStartedActivity extends AccountAuthenticatorActivity {
     TextView oldFirefox = (TextView) findViewById(R.id.old_firefox);
     String text = getResources().getString(R.string.fxaccount_getting_started_old_firefox);
     final String url = FirefoxAccounts.getOldSyncUpgradeURL(getResources(), Locale.getDefault());
-    FxAccountConstants.pii(LOG_TAG, "Old Firefox url is: " + url); // Don't want to leak locale in particular.
+    FxAccountUtils.pii(LOG_TAG, "Old Firefox url is: " + url); // Don't want to leak locale in particular.
     ActivityUtils.linkTextView(oldFirefox, text, url);
   }
 }

@@ -101,7 +101,7 @@ function handleError(aError) {
   finish();
 }
 
-function once(aTarget, aEventName, aUseCapture = false) {
+function once(aTarget, aEventName, aUseCapture = false, spread = false) {
   info("Waiting for event: '" + aEventName + "' on " + aTarget + ".");
 
   let deferred = Promise.defer();
@@ -114,13 +114,21 @@ function once(aTarget, aEventName, aUseCapture = false) {
     if ((add in aTarget) && (remove in aTarget)) {
       aTarget[add](aEventName, function onEvent(...aArgs) {
         aTarget[remove](aEventName, onEvent, aUseCapture);
-        deferred.resolve(...aArgs);
+        deferred.resolve(spread ? aArgs : aArgs[0]);
       }, aUseCapture);
       break;
     }
   }
 
   return deferred.promise;
+}
+
+/**
+ * Like `once`, except returns an array so we can
+ * access all arguments fired by the event.
+ */
+function onceSpread(aTarget, aEventName, aUseCapture) {
+  return once(aTarget, aEventName, aUseCapture, true);
 }
 
 function test () {
@@ -131,7 +139,7 @@ function initBackend(aUrl) {
   info("Initializing a performance front.");
 
   if (!DebuggerServer.initialized) {
-    DebuggerServer.init(() => true);
+    DebuggerServer.init();
     DebuggerServer.addBrowserActors();
   }
 
@@ -203,8 +211,14 @@ function busyWait(time) {
   while (Date.now() - start < time) { stack = Components.stack; }
 }
 
-function idleWait(time) {
-  return DevToolsUtils.waitForTime(time);
+function command (button) {
+  let ev = button.ownerDocument.createEvent("XULCommandEvent");
+  ev.initCommandEvent("command", true, true, button.ownerDocument.defaultView, 0, false, false, false, false, null);
+  button.dispatchEvent(ev);
+}
+
+function click (win, button) {
+  EventUtils.sendMouseEvent({ type: "click" }, button, win);
 }
 
 function* startRecording(panel) {
@@ -219,7 +233,7 @@ function* startRecording(panel) {
   ok(!button.hasAttribute("locked"),
     "The record button should not be locked yet.");
 
-  EventUtils.sendMouseEvent({ type: "click" }, button, win);
+  click(win, button);
 
   yield clicked;
 
@@ -247,7 +261,7 @@ function* stopRecording(panel) {
   ok(!button.hasAttribute("locked"),
     "The record button should not be locked yet.");
 
-  EventUtils.sendMouseEvent({ type: "click" }, button, win);
+  click(win, button);
 
   yield clicked;
 
@@ -281,4 +295,25 @@ function waitUntil(predicate, interval = 10) {
     waitUntil(predicate).then(() => deferred.resolve(true));
   }, interval);
   return deferred.promise;
+}
+
+// EventUtils just doesn't work!
+
+function dragStart(graph, x, y = 1) {
+  x /= window.devicePixelRatio;
+  y /= window.devicePixelRatio;
+  graph._onMouseMove({ clientX: x, clientY: y });
+  graph._onMouseDown({ clientX: x, clientY: y });
+}
+
+function dragStop(graph, x, y = 1) {
+  x /= window.devicePixelRatio;
+  y /= window.devicePixelRatio;
+  graph._onMouseMove({ clientX: x, clientY: y });
+  graph._onMouseUp({ clientX: x, clientY: y });
+}
+
+function dropSelection(graph) {
+  graph.dropSelection();
+  graph.emit("mouseup");
 }

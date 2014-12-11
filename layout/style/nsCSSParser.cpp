@@ -1481,6 +1481,7 @@ CSSParserImpl::ParseProperty(const nsCSSProperty aPropID,
   NS_PRECONDITION(aSheetPrincipal, "Must have principal here!");
   NS_PRECONDITION(aBaseURI, "need base URI");
   NS_PRECONDITION(aDeclaration, "Need declaration to parse into!");
+  MOZ_ASSERT(aPropID != eCSSPropertyExtra_variable);
 
   mData.AssertInitialState();
   mTempData.AssertInitialState();
@@ -5707,15 +5708,12 @@ CSSParserImpl::ParsePseudoClassWithIdentArg(nsCSSSelector& aSelector,
     return eSelectorParsingStatus_Error; // our caller calls SkipUntil(')')
   }
 
-  // -moz-locale-dir and -moz-dir can only have values of 'ltr' or 'rtl'.
+  // -moz-locale-dir and -moz-dir take an identifier argument.  While
+  // only 'ltr' and 'rtl' (case-insensitively) will match anything, any
+  // other identifier is still valid.
   if (aType == nsCSSPseudoClasses::ePseudoClass_mozLocaleDir ||
       aType == nsCSSPseudoClasses::ePseudoClass_dir) {
     nsContentUtils::ASCIIToLower(mToken.mIdent); // case insensitive
-    if (!mToken.mIdent.EqualsLiteral("ltr") &&
-        !mToken.mIdent.EqualsLiteral("rtl")) {
-      REPORT_UNEXPECTED_TOKEN(PEBadDirValue);
-      return eSelectorParsingStatus_Error; // our caller calls SkipUntil(')')
-    }
   }
 
   // Add the pseudo with the language parameter
@@ -6526,6 +6524,7 @@ CSSParserImpl::ParseDeclaration(css::Declaration* aDeclaration,
     // Map property name to its ID.
     propID = LookupEnabledProperty(propertyName);
     if (eCSSProperty_UNKNOWN == propID ||
+        eCSSPropertyExtra_variable == propID ||
         (aContext == eCSSContext_Page &&
          !nsCSSProps::PropHasFlags(propID,
                                    CSS_PROPERTY_APPLIES_TO_PAGE_RULE))) { // unknown property
@@ -7501,12 +7500,11 @@ CSSParserImpl::ParseFlex()
     return true;
   }
 
-  // Next, check for 'none' == '0 0 main-size'
+  // Next, check for 'none' == '0 0 auto'
   if (ParseVariant(tmpVal, VARIANT_NONE, nullptr)) {
     AppendValue(eCSSProperty_flex_grow, nsCSSValue(0.0f, eCSSUnit_Number));
     AppendValue(eCSSProperty_flex_shrink, nsCSSValue(0.0f, eCSSUnit_Number));
-    AppendValue(eCSSProperty_flex_basis,
-                nsCSSValue(NS_STYLE_FLEX_BASIS_MAIN_SIZE, eCSSUnit_Enumerated));
+    AppendValue(eCSSProperty_flex_basis, nsCSSValue(eCSSUnit_Auto));
     return true;
   }
 
@@ -7546,7 +7544,7 @@ CSSParserImpl::ParseFlex()
   // "a unitless zero that is not already preceded by two flex factors must be
   //  interpreted as a flex factor.
   if (!ParseNonNegativeVariant(tmpVal, flexBasisVariantMask | VARIANT_NUMBER,
-                               nsCSSProps::kFlexBasisKTable)) {
+                               nsCSSProps::kWidthKTable)) {
     // First component was not a valid flex-basis or flex-grow value. Fail.
     return false;
   }
@@ -7564,15 +7562,6 @@ CSSParserImpl::ParseFlex()
       // Failed to parse anything after our flex-basis -- that's fine. We can
       // skip the remaining parsing.
       doneParsing = true;
-      if (flexBasis.GetUnit() == eCSSUnit_Auto) {
-        // We've just parsed "flex:auto", without a number after "auto".  In
-        // this case, "auto" is *not* actually the flex-basis -- it's a special
-        // keyword for the "flex" shorthand, which expands to "1 1 main-size".
-        // Fortunately, the variables flexGrow & flexShrink are already set to
-        // 1, so we don't need to adjust them; we just need to set flexBasis.
-        flexBasis.SetIntValue(NS_STYLE_FLEX_BASIS_MAIN_SIZE,
-                              eCSSUnit_Enumerated);
-      }
     }
   }
 
@@ -7603,7 +7592,7 @@ CSSParserImpl::ParseFlex()
     // unitless 0 encountered here *must* have been preceded by 2 flex factors.
     if (!wasFirstComponentFlexBasis &&
         ParseNonNegativeVariant(tmpVal, flexBasisVariantMask,
-                                nsCSSProps::kFlexBasisKTable)) {
+                                nsCSSProps::kWidthKTable)) {
       flexBasis = tmpVal;
     }
   }
@@ -9529,6 +9518,7 @@ CSSParserImpl::ParseProperty(nsCSSProperty aPropID)
                     "hashless color quirk should not be set");
   NS_ABORT_IF_FALSE(!mUnitlessLengthQuirk,
                     "unitless length quirk should not be set");
+  MOZ_ASSERT(aPropID != eCSSPropertyExtra_variable);
 
   if (mNavQuirkMode) {
     mHashlessColorQuirk =

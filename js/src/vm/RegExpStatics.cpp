@@ -22,14 +22,14 @@ using namespace js;
 static void
 resc_finalize(FreeOp *fop, JSObject *obj)
 {
-    RegExpStatics *res = static_cast<RegExpStatics *>(obj->as<NativeObject>().getPrivate());
+    RegExpStatics *res = static_cast<RegExpStatics *>(obj->as<RegExpStaticsObject>().getPrivate());
     fop->delete_(res);
 }
 
 static void
 resc_trace(JSTracer *trc, JSObject *obj)
 {
-    void *pdata = obj->as<NativeObject>().getPrivate();
+    void *pdata = obj->as<RegExpStaticsObject>().getPrivate();
     MOZ_ASSERT(pdata);
     RegExpStatics *res = static_cast<RegExpStatics *>(pdata);
     res->mark(trc);
@@ -38,13 +38,13 @@ resc_trace(JSTracer *trc, JSObject *obj)
 const Class RegExpStaticsObject::class_ = {
     "RegExpStatics",
     JSCLASS_HAS_PRIVATE | JSCLASS_IMPLEMENTS_BARRIERS,
-    JS_PropertyStub,         /* addProperty */
-    JS_DeletePropertyStub,   /* delProperty */
+    nullptr,                 /* addProperty */
+    nullptr,                 /* delProperty */
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
-    JS_EnumerateStub,
-    JS_ResolveStub,
-    JS_ConvertStub,
+    nullptr,                 /* enumerate */
+    nullptr,                 /* resolve */
+    nullptr,                 /* convert */
     resc_finalize,
     nullptr,                 /* call        */
     nullptr,                 /* hasInstance */
@@ -55,14 +55,14 @@ const Class RegExpStaticsObject::class_ = {
 RegExpStaticsObject *
 RegExpStatics::create(ExclusiveContext *cx, GlobalObject *parent)
 {
-    NativeObject *obj = NewNativeObjectWithGivenProto(cx, &RegExpStaticsObject::class_, nullptr, parent);
+    RegExpStaticsObject *obj = NewObjectWithGivenProto<RegExpStaticsObject>(cx, nullptr, parent);
     if (!obj)
         return nullptr;
     RegExpStatics *res = cx->new_<RegExpStatics>();
     if (!res)
         return nullptr;
     obj->setPrivate(static_cast<void *>(res));
-    return &obj->as<RegExpStaticsObject>();
+    return obj;
 }
 
 void

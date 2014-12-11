@@ -1459,7 +1459,7 @@ BrowserGlue.prototype = {
   },
 
   _migrateUI: function BG__migrateUI() {
-    const UI_VERSION = 26;
+    const UI_VERSION = 27;
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul";
     let currentUIVersion = 0;
     try {
@@ -1766,6 +1766,15 @@ BrowserGlue.prototype = {
       if (defaultBehavior != -1 &&
           !!(defaultBehavior & Ci.mozIPlacesAutoComplete["BEHAVIOR_TYPED"])) {
         Services.prefs.setBoolPref("browser.urlbar.suggest.history.onlyTyped", true);
+      }
+    }
+
+    if (currentUIVersion < 27) {
+      // Fix up document color use:
+      const kOldColorPref = "browser.display.use_document_colors";
+      if (Services.prefs.prefHasUserValue(kOldColorPref) &&
+          !Services.prefs.getBoolPref(kOldColorPref)) {
+        Services.prefs.setIntPref("browser.display.document_color_use", 2);
       }
     }
 
@@ -2469,7 +2478,7 @@ let DefaultBrowserCheck = {
 let E10SUINotification = {
   // Increase this number each time we want to roll out an
   // e10s testing period to Nightly users.
-  CURRENT_NOTICE_COUNT: 2,
+  CURRENT_NOTICE_COUNT: 3,
   CURRENT_PROMPT_PREF: "browser.displayedE10SPrompt.1",
   PREVIOUS_PROMPT_PREF: "browser.displayedE10SPrompt",
 

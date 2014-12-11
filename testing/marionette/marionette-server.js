@@ -37,8 +37,16 @@ specialpowers.specialPowersObserver.init();
 Cu.import("resource://gre/modules/FileUtils.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
 
+function isMulet() {
+  let isMulet = false;
+  try {
+   isMulet = Services.prefs.getBoolPref("b2g.is_mulet");
+  } catch (ex) { }
+  return isMulet;
+}
+
 Services.prefs.setBoolPref("marionette.contentListener", false);
-let appName = Services.appinfo.name;
+let appName = isMulet() ? "B2G" : Services.appinfo.name;
 
 let { devtools } = Cu.import("resource://gre/modules/devtools/Loader.jsm", {});
 let DevToolsUtils = devtools.require("devtools/toolkit/DevToolsUtils.js");
@@ -1189,7 +1197,7 @@ MarionetteServerConnection.prototype = {
     // TODO: Error codes need to be refined as a part of bug 1100545 and
     // bug 945729.
     if (appName == "Firefox") {
-      sendError("Cannot navigate in chrome context", 13, null, command_id);
+      this.sendError("Cannot navigate in chrome context", 13, null, command_id);
       return;
     }
 
@@ -1488,7 +1496,7 @@ MarionetteServerConnection.prototype = {
         if (this.curBrowser.elementManager.seenItems[aRequest.parameters.element]) {
           let wantedFrame = this.curBrowser.elementManager.getKnownElement(aRequest.parameters.element, curWindow); //HTMLIFrameElement
           // Deal with an embedded xul:browser case
-          if (wantedFrame.tagName == "xul:browser") {
+          if (wantedFrame.tagName == "xul:browser" || wantedFrame.tagName == "browser") {
             curWindow = wantedFrame.contentWindow;
             this.curFrame = curWindow;
             if (aRequest.parameters.focus) {
@@ -2943,10 +2951,9 @@ BrowserObj.prototype = {
   setBrowser: function BO_setBrowser(win) {
     switch (appName) {
       case "Firefox":
-        if (this.window.location.href.indexOf("chrome://b2g") == -1) {
+        if (!isMulet()) {
           this.browser = win.gBrowser;
-        }
-        else {
+        } else {
           // this is Mulet
           appName = "B2G";
         }

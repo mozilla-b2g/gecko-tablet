@@ -1020,13 +1020,13 @@ static const uint32_t CacheEntry_BYTECODE = 1;
 
 static const JSClass CacheEntry_class = {
     "CacheEntryObject", JSCLASS_HAS_RESERVED_SLOTS(2),
-    JS_PropertyStub,       /* addProperty */
-    JS_DeletePropertyStub, /* delProperty */
+    nullptr,               /* addProperty */
+    nullptr,               /* delProperty */
     JS_PropertyStub,       /* getProperty */
     JS_StrictPropertyStub, /* setProperty */
-    JS_EnumerateStub,
-    JS_ResolveStub,
-    JS_ConvertStub,
+    nullptr,               /* enumerate */
+    nullptr,               /* resolve */
+    nullptr,               /* convert */
     nullptr,               /* finalize */
     nullptr,               /* call */
     nullptr,               /* hasInstance */
@@ -2569,10 +2569,10 @@ sandbox_resolve(JSContext *cx, HandleObject obj, HandleId id, bool *resolvedp)
 static const JSClass sandbox_class = {
     "sandbox",
     JSCLASS_GLOBAL_FLAGS,
-    JS_PropertyStub,   JS_DeletePropertyStub,
+    nullptr,           nullptr,
     JS_PropertyStub,   JS_StrictPropertyStub,
     sandbox_enumerate, sandbox_resolve,
-    JS_ConvertStub, nullptr,
+    nullptr, nullptr,
     nullptr, nullptr, nullptr,
     JS_GlobalObjectTraceHook
 };
@@ -3962,13 +3962,10 @@ ObjectEmulatingUndefined(JSContext *cx, unsigned argc, jsval *vp)
     static const JSClass cls = {
         "ObjectEmulatingUndefined",
         JSCLASS_EMULATES_UNDEFINED,
+        nullptr,
+        nullptr,
         JS_PropertyStub,
-        JS_DeletePropertyStub,
-        JS_PropertyStub,
-        JS_StrictPropertyStub,
-        JS_EnumerateStub,
-        JS_ResolveStub,
-        JS_ConvertStub
+        JS_StrictPropertyStub
     };
 
     RootedObject obj(cx, JS_NewObject(cx, &cls, JS::NullPtr(), JS::NullPtr()));
@@ -4785,10 +4782,10 @@ global_resolve(JSContext *cx, HandleObject obj, HandleId id, bool *resolvedp)
 
 static const JSClass global_class = {
     "global", JSCLASS_GLOBAL_FLAGS,
-    JS_PropertyStub,  JS_DeletePropertyStub,
+    nullptr,          nullptr,
     JS_PropertyStub,  JS_StrictPropertyStub,
     global_enumerate, global_resolve,
-    JS_ConvertStub,   nullptr,
+    nullptr, nullptr,
     nullptr, nullptr, nullptr,
     JS_GlobalObjectTraceHook
 };
@@ -4902,13 +4899,13 @@ static const JSFunctionSpec dom_methods[] = {
 
 static const JSClass dom_class = {
     "FakeDOMObject", JSCLASS_IS_DOMJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(2),
-    JS_PropertyStub,       /* addProperty */
-    JS_DeletePropertyStub, /* delProperty */
+    nullptr,               /* addProperty */
+    nullptr,               /* delProperty */
     JS_PropertyStub,       /* getProperty */
     JS_StrictPropertyStub, /* setProperty */
-    JS_EnumerateStub,
-    JS_ResolveStub,
-    JS_ConvertStub,
+    nullptr,               /* enumerate */
+    nullptr,               /* resolve */
+    nullptr,               /* convert */
     nullptr,               /* finalize */
     nullptr,               /* call */
     nullptr,               /* hasInstance */
@@ -5328,8 +5325,12 @@ NewGlobalObject(JSContext *cx, JS::CompartmentOptions &options,
         if (!js::DefineTestingFunctions(cx, glob, fuzzingSafe))
             return nullptr;
 
-        if (!fuzzingSafe && !JS_DefineFunctionsWithHelp(cx, glob, fuzzing_unsafe_functions))
-            return nullptr;
+        if (!fuzzingSafe) {
+            if (!JS_DefineFunctionsWithHelp(cx, glob, fuzzing_unsafe_functions))
+                return nullptr;
+            if (!js::DefineOS(cx, glob))
+                return nullptr;
+        }
 
         /* Initialize FakeDOMObject. */
         static const js::DOMCallbacks DOMcallbacks = {
@@ -5500,6 +5501,15 @@ SetRuntimeOptions(JSRuntime *rt, const OptionParser &op)
             return OptionFailure("ion-range-analysis", str);
     }
 
+    if (const char *str = op.getStringOption("ion-sink")) {
+        if (strcmp(str, "on") == 0)
+            jit::js_JitOptions.disableSink = false;
+        else if (strcmp(str, "off") == 0)
+            jit::js_JitOptions.disableSink = true;
+        else
+            return OptionFailure("ion-sink", str);
+    }
+
     if (const char *str = op.getStringOption("ion-loop-unrolling")) {
         if (strcmp(str, "on") == 0)
             jit::js_JitOptions.disableLoopUnrolling = false;
@@ -5657,9 +5667,6 @@ Shell(JSContext *cx, OptionParser *op, char **envp)
 
     JSAutoCompartment ac(cx, glob);
 
-    if (!js::DefineOS(cx, glob))
-        return 1;
-
     int result = ProcessArgs(cx, glob, op);
 
     if (enableDisassemblyDumps)
@@ -5797,6 +5804,8 @@ main(int argc, char **argv, char **envp)
                                "Find edge cases where Ion can avoid bailouts (default: on, off to disable)")
         || !op.addStringOption('\0', "ion-range-analysis", "on/off",
                                "Range analysis (default: on, off to disable)")
+        || !op.addStringOption('\0', "ion-sink", "on/off",
+                               "Sink code motion (default: off, on to enable)")
         || !op.addStringOption('\0', "ion-loop-unrolling", "on/off",
                                "Loop unrolling (default: off, on to enable)")
         || !op.addBoolOption('\0', "ion-check-range-analysis",
@@ -5832,6 +5841,8 @@ main(int argc, char **argv, char **envp)
                              "to test JIT codegen (no-op on platforms other than x86 and x64).")
         || !op.addBoolOption('\0', "no-sse4", "Pretend CPU does not support SSE4 instructions"
                              "to test JIT codegen (no-op on platforms other than x86 and x64).")
+        || !op.addBoolOption('\0', "no-avx", "Pretend CPU does not support AVX instructions"
+                             "to test JIT codegen (no-op on platforms other than x86 and x64).")
         || !op.addBoolOption('\0', "fuzzing-safe", "Don't expose functions that aren't safe for "
                              "fuzzers to call")
         || !op.addBoolOption('\0', "no-threads", "Disable helper threads and PJS threads")
@@ -5839,9 +5850,7 @@ main(int argc, char **argv, char **envp)
         || !op.addBoolOption('\0', "dump-entrained-variables", "Print variables which are "
                              "unnecessarily entrained by inner functions")
 #endif
-#ifdef JSGC_GENERATIONAL
         || !op.addBoolOption('\0', "no-ggc", "Disable Generational GC")
-#endif
         || !op.addBoolOption('\0', "no-incremental-gc", "Disable Incremental GC")
         || !op.addIntOption('\0', "available-memory", "SIZE",
                             "Select GC settings based on available memory (MB)", 0)
@@ -5864,9 +5873,7 @@ main(int argc, char **argv, char **envp)
         || !op.addIntOption('\0', "mips-sim-stop-at", "NUMBER", "Stop the MIPS simulator after the given "
                             "NUMBER of instructions.", -1)
 #endif
-#ifdef JSGC_GENERATIONAL
         || !op.addIntOption('\0', "nursery-size", "SIZE-MB", "Set the maximum nursery size in MB", 16)
-#endif
 #ifdef JS_GC_ZEAL
         || !op.addStringOption('z', "gc-zeal", "LEVEL[,N]",
                                "Specifies zealous garbage collection, overriding the environement "
@@ -5917,6 +5924,10 @@ main(int argc, char **argv, char **envp)
         js::jit::CPUInfo::SetSSE4Disabled();
         PropagateFlagToNestedShells("--no-sse4");
     }
+    if (op.getBoolOption("no-avx")) {
+        js::jit::CPUInfo::SetAVXDisabled();
+        PropagateFlagToNestedShells("--no-avx");
+    }
 #endif
 
     if (op.getBoolOption("no-threads"))
@@ -5933,9 +5944,7 @@ main(int argc, char **argv, char **envp)
         return 1;
 
     size_t nurseryBytes = JS::DefaultNurseryBytes;
-#ifdef JSGC_GENERATIONAL
     nurseryBytes = op.getIntOption("nursery-size") * 1024L * 1024L;
-#endif
 
     /* Use the same parameters as the browser in xpcjsruntime.cpp. */
     rt = JS_NewRuntime(JS::DefaultHeapMaxBytes, nurseryBytes);
@@ -5950,11 +5959,9 @@ main(int argc, char **argv, char **envp)
     gInterruptFunc.emplace(rt, NullValue());
 
     JS_SetGCParameter(rt, JSGC_MAX_BYTES, 0xffffffff);
-#ifdef JSGC_GENERATIONAL
     Maybe<JS::AutoDisableGenerationalGC> noggc;
     if (op.getBoolOption("no-ggc"))
         noggc.emplace(rt);
-#endif
 
     size_t availMem = op.getIntOption("available-memory");
     if (availMem > 0)
@@ -6018,9 +6025,7 @@ main(int argc, char **argv, char **envp)
     for (size_t i = 0; i < workerThreads.length(); i++)
         PR_JoinThread(workerThreads[i]);
 
-#ifdef JSGC_GENERATIONAL
     noggc.reset();
-#endif
 
     JS_DestroyRuntime(rt);
     JS_ShutDown();

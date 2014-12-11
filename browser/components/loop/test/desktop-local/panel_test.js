@@ -13,7 +13,7 @@ var sharedUtils = loop.shared.utils;
 describe("loop.panel", function() {
   "use strict";
 
-  var sandbox, notifications, fakeXHR, requests = [];
+  var sandbox, notifications, fakeXHR, fakeWindow, requests = [];
 
   beforeEach(function(done) {
     sandbox = sinon.sandbox.create();
@@ -22,7 +22,14 @@ describe("loop.panel", function() {
     // https://github.com/cjohansen/Sinon.JS/issues/393
     fakeXHR.xhr.onCreate = function (xhr) {
       requests.push(xhr);
+    }
+
+    fakeWindow = {
+      close: sandbox.stub(),
+      document: { addEventListener: function(){} }
     };
+    loop.shared.mixins.setRootObject(fakeWindow);
+
     notifications = new loop.shared.models.NotificationCollection();
 
     navigator.mozLoop = {
@@ -54,7 +61,8 @@ describe("loop.panel", function() {
           callback(null, []);
         },
         on: sandbox.stub()
-      }
+      },
+      confirm: sandbox.stub()
     };
 
     document.mozL10n.initialize(navigator.mozLoop);
@@ -64,6 +72,7 @@ describe("loop.panel", function() {
 
   afterEach(function() {
     delete navigator.mozLoop;
+    loop.shared.mixins.setRootObject(window);
     sandbox.restore();
   });
 
@@ -353,6 +362,31 @@ describe("loop.panel", function() {
           view.getDOMNode().querySelector(".icon-signout"));
 
         sinon.assert.calledOnce(navigator.mozLoop.logOutFromFxA);
+      });
+    });
+
+    describe("Help", function() {
+      var supportUrl = "https://example.com";
+
+      beforeEach(function() {
+        navigator.mozLoop.getLoopPref = function(pref) {
+          if (pref === "support_url")
+            return supportUrl;
+          return "unseen";
+        };
+
+        sandbox.stub(window, "open");
+        sandbox.stub(window, "close");
+      });
+
+      it("should open a tab to the support page", function() {
+        var view = TestUtils.renderIntoDocument(loop.panel.SettingsDropdown());
+
+        TestUtils.Simulate
+          .click(view.getDOMNode().querySelector(".icon-help"));
+
+        sinon.assert.calledOnce(window.open);
+        sinon.assert.calledWithExactly(window.open, supportUrl);
       });
     });
 
@@ -689,6 +723,42 @@ describe("loop.panel", function() {
       return TestUtils.renderIntoDocument(loop.panel.RoomEntry(props));
     }
 
+    describe("Edit room name", function() {
+      var roomEntry, domNode;
+
+      beforeEach(function() {
+        roomEntry = mountRoomEntry({
+          dispatcher: dispatcher,
+          deleteRoom: sandbox.stub(),
+          room: new loop.store.Room(roomData)
+        });
+        domNode = roomEntry.getDOMNode();
+
+        TestUtils.Simulate.click(domNode.querySelector(".edit-in-place"));
+      });
+
+      it("should render an edit form on room name click", function() {
+        expect(domNode.querySelector("form")).not.eql(null);
+        expect(domNode.querySelector("input").value).eql(roomData.roomName);
+      });
+
+      it("should dispatch a RenameRoom action when submitting the form",
+        function() {
+          var dispatch = sandbox.stub(dispatcher, "dispatch");
+
+          TestUtils.Simulate.change(domNode.querySelector("input"), {
+            target: {value: "New name"}
+          });
+          TestUtils.Simulate.submit(domNode.querySelector("form"));
+
+          sinon.assert.calledOnce(dispatch);
+          sinon.assert.calledWithExactly(dispatch, new sharedActions.RenameRoom({
+            roomToken: roomData.roomToken,
+            newRoomName: "New name"
+          }));
+        });
+    });
+
     describe("Copy button", function() {
       var roomEntry, copyButton;
 
@@ -754,33 +824,74 @@ describe("loop.panel", function() {
         expect(deleteButton).to.not.equal(null);
       });
 
-      it("should call the delete function when clicked", function() {
+      it("should dispatch a delete action when confirmation is granted", function() {
         sandbox.stub(dispatcher, "dispatch");
 
+        navigator.mozLoop.confirm.callsArgWith(1, null, true);
         TestUtils.Simulate.click(deleteButton);
 
+        sinon.assert.calledOnce(navigator.mozLoop.confirm);
         sinon.assert.calledOnce(dispatcher.dispatch);
         sinon.assert.calledWithExactly(dispatcher.dispatch,
           new sharedActions.DeleteRoom({roomToken: roomData.roomToken}));
       });
+
+      it("should not dispatch an action when the confirmation is cancelled", function() {
+        sandbox.stub(dispatcher, "dispatch");
+
+        navigator.mozLoop.confirm.callsArgWith(1, null, false);
+        TestUtils.Simulate.click(deleteButton);
+
+        sinon.assert.calledOnce(navigator.mozLoop.confirm);
+        sinon.assert.notCalled(dispatcher.dispatch);
+      });
     });
 
     describe("Room URL click", function() {
-      var roomEntry;
 
-      it("should dispatch an OpenRoom action", function() {
+      var roomEntry, urlLink;
+
+      beforeEach(function() {
         sandbox.stub(dispatcher, "dispatch");
+
         roomEntry = mountRoomEntry({
           dispatcher: dispatcher,
           room: new loop.store.Room(roomData)
         });
-        var urlLink = roomEntry.getDOMNode().querySelector("p > a");
+        urlLink = roomEntry.getDOMNode().querySelector("p > a");
+      });
 
+      it("should dispatch an OpenRoom action", function() {
         TestUtils.Simulate.click(urlLink);
 
         sinon.assert.calledOnce(dispatcher.dispatch);
         sinon.assert.calledWithExactly(dispatcher.dispatch,
           new sharedActions.OpenRoom({roomToken: roomData.roomToken}));
+      });
+
+      it("should call window.close", function() {
+        TestUtils.Simulate.click(urlLink);
+
+        sinon.assert.calledOnce(fakeWindow.close);
+      });
+    });
+
+    describe("Room name updated", function() {
+      it("should update room name", function() {
+        var roomEntry = mountRoomEntry({
+          dispatcher: dispatcher,
+          room: new loop.store.Room(roomData)
+        });
+        var updatedRoom = new loop.store.Room(_.extend({}, roomData, {
+          roomName: "New room name",
+          ctime: new Date().getTime()
+        }));
+
+        roomEntry.setProps({room: updatedRoom});
+
+        expect(
+          roomEntry.getDOMNode().querySelector(".edit-in-place").textContent)
+        .eql("New room name");
       });
     });
   });

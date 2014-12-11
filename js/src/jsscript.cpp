@@ -921,7 +921,7 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
                 classk = CK_WithObject;
             else if (obj->is<JSFunction>())
                 classk = CK_JSFunction;
-            else if (obj->is<JSObject>() || obj->is<ArrayObject>())
+            else if (obj->is<PlainObject>() || obj->is<ArrayObject>())
                 classk = CK_JSObject;
             else
                 MOZ_CRASH("Cannot encode this class of object.");
@@ -1348,13 +1348,13 @@ const Class ScriptSourceObject::class_ = {
     "ScriptSource",
     JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS) |
     JSCLASS_IMPLEMENTS_BARRIERS | JSCLASS_IS_ANONYMOUS,
-    JS_PropertyStub,        /* addProperty */
-    JS_DeletePropertyStub,  /* delProperty */
+    nullptr,                /* addProperty */
+    nullptr,                /* delProperty */
     JS_PropertyStub,        /* getProperty */
     JS_StrictPropertyStub,  /* setProperty */
-    JS_EnumerateStub,
-    JS_ResolveStub,
-    JS_ConvertStub,
+    nullptr,                /* enumerate */
+    nullptr,                /* resolve */
+    nullptr,                /* convert */
     finalize,
     nullptr,                /* call        */
     nullptr,                /* hasInstance */
@@ -2183,7 +2183,6 @@ SaveSharedScriptData(ExclusiveContext *cx, Handle<JSScript *> script, SharedScri
         }
     }
 
-#ifdef JSGC_INCREMENTAL
     /*
      * During the IGC we need to ensure that bytecode is marked whenever it is
      * accessed even if the bytecode was already in the table: at this point
@@ -2195,7 +2194,6 @@ SaveSharedScriptData(ExclusiveContext *cx, Handle<JSScript *> script, SharedScri
         if (JS::IsIncrementalGCInProgress(rt) && rt->gc.isFullGc())
             ssd->marked = true;
     }
-#endif
 
     script->setCode(ssd->data);
     script->atoms = ssd->atoms();
@@ -2712,7 +2710,7 @@ JSScript::finalize(FreeOp *fop)
     if (types_)
         types_->destroy();
 
-    jit::DestroyIonScripts(fop, this);
+    jit::DestroyJitScripts(fop, this);
 
     destroyScriptCounts(fop);
     destroyDebugScript(fop);
@@ -2911,9 +2909,15 @@ js::DescribeScriptedCallerForCompilation(JSContext *cx, MutableHandleScript mayb
     if (opt == CALLED_FROM_JSOP_EVAL) {
         jsbytecode *pc = nullptr;
         maybeScript.set(cx->currentScript(&pc));
-        MOZ_ASSERT(JSOp(*pc) == JSOP_EVAL || JSOp(*pc) == JSOP_SPREADEVAL);
-        MOZ_ASSERT(*(pc + (JSOp(*pc) == JSOP_EVAL ? JSOP_EVAL_LENGTH
-                                                  : JSOP_SPREADEVAL_LENGTH)) == JSOP_LINENO);
+        static_assert(JSOP_SPREADEVAL_LENGTH == JSOP_STRICTSPREADEVAL_LENGTH,
+                    "next op after a spread must be at consistent offset");
+        static_assert(JSOP_EVAL_LENGTH == JSOP_STRICTEVAL_LENGTH,
+                    "next op after a direct eval must be at consistent offset");
+        MOZ_ASSERT(JSOp(*pc) == JSOP_EVAL || JSOp(*pc) == JSOP_STRICTEVAL ||
+                   JSOp(*pc) == JSOP_SPREADEVAL || JSOp(*pc) == JSOP_STRICTSPREADEVAL);
+        mozilla::DebugOnly<bool> isSpread = JSOp(*pc) == JSOP_SPREADEVAL ||
+                                            JSOp(*pc) == JSOP_STRICTSPREADEVAL;
+        MOZ_ASSERT(*(pc + (isSpread ? JSOP_SPREADEVAL_LENGTH : JSOP_EVAL_LENGTH)) == JSOP_LINENO);
         *file = maybeScript->filename();
         *linenop = GET_UINT16(pc + (JSOp(*pc) == JSOP_EVAL ? JSOP_EVAL_LENGTH
                                                            : JSOP_SPREADEVAL_LENGTH));
@@ -3432,7 +3436,7 @@ JSScript::markChildren(JSTracer *trc)
 
     bindings.trace(trc);
 
-    jit::TraceIonScripts(trc, this);
+    jit::TraceJitScripts(trc, this);
 }
 
 void

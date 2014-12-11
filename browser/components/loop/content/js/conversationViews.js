@@ -193,7 +193,11 @@ loop.conversationViews = (function(mozL10n) {
    * Call failed view. Displayed when a call fails.
    */
   var CallFailedView = React.createClass({displayName: 'CallFailedView',
-    mixins: [Backbone.Events, sharedMixins.AudioMixin],
+    mixins: [
+      Backbone.Events,
+      sharedMixins.AudioMixin,
+      sharedMixins.WindowCloseMixin
+    ],
 
     propTypes: {
       dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired,
@@ -224,10 +228,10 @@ loop.conversationViews = (function(mozL10n) {
     },
 
     _onEmailLinkReceived: function() {
-      var emailLink = this.props.store.get("emailLink");
+      var emailLink = this.props.store.getStoreState("emailLink");
       var contactEmail = _getPreferredEmail(this.props.contact).value;
       sharedUtils.composeCallUrlEmail(emailLink, contactEmail);
-      window.close();
+      this.closeWindow();
     },
 
     _onEmailLinkError: function() {
@@ -356,7 +360,7 @@ loop.conversationViews = (function(mozL10n) {
           nameDisplayMode: "off",
           videoDisabledDisplayMode: "off"
         }
-      }
+      };
     },
 
     /**
@@ -428,19 +432,31 @@ loop.conversationViews = (function(mozL10n) {
    * the different views that need displaying.
    */
   var OutgoingConversationView = React.createClass({displayName: 'OutgoingConversationView',
+    mixins: [
+      sharedMixins.AudioMixin,
+      Backbone.Events
+    ],
+
     propTypes: {
       dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired,
       store: React.PropTypes.instanceOf(
-        loop.store.ConversationStore).isRequired
+        loop.store.ConversationStore).isRequired,
+      feedbackStore: React.PropTypes.instanceOf(loop.store.FeedbackStore)
     },
 
     getInitialState: function() {
-      return this.props.store.attributes;
+      return this.props.store.getStoreState();
     },
 
     componentWillMount: function() {
-      this.props.store.on("change", function() {
-        this.setState(this.props.store.attributes);
+      this.listenTo(this.props.store, "change", function() {
+        this.setState(this.props.store.getStoreState());
+      }, this);
+    },
+
+    componentWillUnmount: function() {
+      this.stopListening(this.props.store, "change", function() {
+        this.setState(this.props.store.getStoreState());
       }, this);
     },
 
@@ -462,22 +478,9 @@ loop.conversationViews = (function(mozL10n) {
     _renderFeedbackView: function() {
       document.title = mozL10n.get("conversation_has_ended");
 
-      // XXX Bug 1076754 Feedback view should be redone in the Flux style.
-      var feebackAPIBaseUrl = navigator.mozLoop.getLoopPref(
-        "feedback.baseUrl");
-
-      var appVersionInfo = navigator.mozLoop.appVersionInfo;
-
-      var feedbackClient = new loop.FeedbackAPIClient(feebackAPIBaseUrl, {
-        product: navigator.mozLoop.getLoopPref("feedback.product"),
-        platform: appVersionInfo.OS,
-        channel: appVersionInfo.channel,
-        version: appVersionInfo.version
-      });
-
       return (
         sharedViews.FeedbackView({
-          feedbackApiClient: feedbackClient, 
+          feedbackStore: this.props.feedbackStore, 
           onAfterFeedbackReceived: this._closeWindow.bind(this)}
         )
       );
@@ -505,6 +508,7 @@ loop.conversationViews = (function(mozL10n) {
           );
         }
         case CALL_STATES.FINISHED: {
+          this.play("terminated");
           return this._renderFeedbackView();
         }
         case CALL_STATES.INIT: {

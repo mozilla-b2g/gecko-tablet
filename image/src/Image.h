@@ -7,6 +7,7 @@
 #define MOZILLA_IMAGELIB_IMAGE_H_
 
 #include "mozilla/MemoryReporting.h"
+#include "gfx2DGlue.h"                // for gfxMemoryLocation
 #include "imgIContainer.h"
 #include "ProgressTracker.h"
 #include "ImageURL.h"
@@ -31,7 +32,7 @@ public:
     eDecoderType_icon    = 5,
     eDecoderType_unknown = 6
   };
-  static eDecoderType GetDecoderType(const char *aMimeType);
+  static eDecoderType GetDecoderType(const char* aMimeType);
 
   /**
    * Flags for Image initialization.
@@ -72,25 +73,18 @@ public:
   virtual nsIntRect FrameRect(uint32_t aWhichFrame) = 0;
 
   /**
-   * The size, in bytes, occupied by the significant data portions of the image.
-   * This includes both compressed source data and decoded frames.
+   * The size, in bytes, occupied by the compressed source data of the image.
+   * If MallocSizeOf does not work on this platform, uses a fallback approach to
+   * ensure that something reasonable is always returned.
    */
-  virtual uint32_t SizeOfData() = 0;
+  virtual size_t SizeOfSourceWithComputedFallback(
+                                          MallocSizeOf aMallocSizeOf) const = 0;
 
   /**
-   * The components that make up SizeOfData().
+   * The size, in bytes, occupied by the image's decoded data.
    */
-  virtual size_t HeapSizeOfSourceWithComputedFallback(MallocSizeOf aMallocSizeOf) const = 0;
-  virtual size_t HeapSizeOfDecodedWithComputedFallback(MallocSizeOf aMallocSizeOf) const = 0;
-  virtual size_t NonHeapSizeOfDecoded() const = 0;
-  virtual size_t OutOfProcessSizeOfDecoded() const = 0;
-
-  /**
-   * Gets the size of the memory taken up for the parsed vector image's
-   * document (e.g. SVGDocument), and returns the document's URL via the
-   * aDocURL outparam.
-   */
-  virtual size_t HeapSizeOfVectorImageDocument(nsACString* aDocURL = nullptr) const = 0;
+  virtual size_t SizeOfDecoded(gfxMemoryLocation aLocation,
+                               MallocSizeOf aMallocSizeOf) const = 0;
 
   virtual void IncrementAnimationConsumers() = 0;
   virtual void DecrementAnimationConsumers() = 0;
@@ -134,6 +128,12 @@ public:
    */
   virtual nsresult OnNewSourceData() = 0;
 
+  /**
+   * Called when the SurfaceCache discards a persistent surface belonging to
+   * this image.
+   */
+  virtual void OnSurfaceDiscarded() = 0;
+
   virtual void SetInnerWindowID(uint64_t aInnerWindowId) = 0;
   virtual uint64_t InnerWindowID() const = 0;
 
@@ -146,25 +146,34 @@ public:
 class ImageResource : public Image
 {
 public:
-  already_AddRefed<ProgressTracker> GetProgressTracker() MOZ_OVERRIDE {
+  already_AddRefed<ProgressTracker> GetProgressTracker() MOZ_OVERRIDE
+  {
     nsRefPtr<ProgressTracker> progressTracker = mProgressTracker;
     MOZ_ASSERT(progressTracker);
     return progressTracker.forget();
   }
-  void SetProgressTracker(ProgressTracker* aProgressTracker) MOZ_OVERRIDE MOZ_FINAL {
+
+  void SetProgressTracker(
+                       ProgressTracker* aProgressTracker) MOZ_OVERRIDE MOZ_FINAL
+  {
     MOZ_ASSERT(aProgressTracker);
     MOZ_ASSERT(!mProgressTracker);
     mProgressTracker = aProgressTracker;
   }
-  virtual uint32_t SizeOfData() MOZ_OVERRIDE;
 
   virtual void IncrementAnimationConsumers() MOZ_OVERRIDE;
   virtual void DecrementAnimationConsumers() MOZ_OVERRIDE;
 #ifdef DEBUG
-  virtual uint32_t GetAnimationConsumers() MOZ_OVERRIDE { return mAnimationConsumers; }
+  virtual uint32_t GetAnimationConsumers() MOZ_OVERRIDE
+  {
+    return mAnimationConsumers;
+  }
 #endif
 
-  virtual void SetInnerWindowID(uint64_t aInnerWindowId) MOZ_OVERRIDE {
+  virtual void OnSurfaceDiscarded() MOZ_OVERRIDE { }
+
+  virtual void SetInnerWindowID(uint64_t aInnerWindowId) MOZ_OVERRIDE
+  {
     mInnerWindowId = aInnerWindowId;
   }
   virtual uint64_t InnerWindowID() const MOZ_OVERRIDE { return mInnerWindowId; }
@@ -183,7 +192,7 @@ protected:
 
   // Shared functionality for implementors of imgIContainer. Every
   // implementation of attribute animationMode should forward here.
-  nsresult GetAnimationModeInternal(uint16_t *aAnimationMode);
+  nsresult GetAnimationModeInternal(uint16_t* aAnimationMode);
   nsresult SetAnimationModeInternal(uint16_t aAnimationMode);
 
   /**

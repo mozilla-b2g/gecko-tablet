@@ -753,14 +753,6 @@ typedef bool
 typedef void
 (* JSErrorReporter)(JSContext *cx, const char *message, JSErrorReport *report);
 
-#ifdef MOZ_TRACE_JSCALLS
-typedef void
-(* JSFunctionCallback)(const JSFunction *fun,
-                       const JSScript *scr,
-                       const JSContext *cx,
-                       int entering);
-#endif
-
 /*
  * Possible exception types. These types are part of a JSErrorFormatString
  * structure. They define which error to throw in case of a runtime error.
@@ -982,6 +974,13 @@ class MOZ_STACK_CLASS SourceBufferHolder MOZ_FINAL
 
 #define JSFUN_CONSTRUCTOR      0x400    /* native that can be called as a ctor */
 
+#define JSPROP_REDEFINE_NONCONFIGURABLE 0x800 /* If set, will allow redefining a
+                                                 non-configurable property, but
+                                                 only on a non-DOM global.  This
+                                                 is a temporary hack that will
+                                                 need to go away in bug
+                                                 1105518 */
+
 #define JSPROP_IGNORE_ENUMERATE 0x1000  /* ignore the value in JSPROP_ENUMERATE.
                                            This flag only valid when defining over
                                            an existing property. */
@@ -1158,6 +1157,17 @@ ToString(JSContext *cx, HandleValue v)
         return v.toString();
     return js::ToStringSlow(cx, v);
 }
+
+/*
+ * Implements ES6 draft rev 28 (2014 Oct 14) 7.1.1, second algorithm.
+ *
+ * Most users should not call this -- use JS::ToNumber, ToBoolean, or ToString
+ * instead. This should only be called from custom convert hooks. It implements
+ * the default conversion behavior shared by most objects in JS, so it's useful
+ * as a fallback.
+ */
+extern JS_PUBLIC_API(bool)
+OrdinaryToPrimitive(JSContext *cx, HandleObject obj, JSType type, MutableHandleValue vp);
 
 } /* namespace JS */
 
@@ -2368,19 +2378,16 @@ extern JS_PUBLIC_API(bool)
 JS_StrictPropertyStub(JSContext *cx, JS::HandleObject obj, JS::HandleId id, bool strict,
                       JS::MutableHandleValue vp);
 
-extern JS_PUBLIC_API(bool)
-JS_DeletePropertyStub(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
-                      bool *succeeded);
-
-extern JS_PUBLIC_API(bool)
-JS_EnumerateStub(JSContext *cx, JS::HandleObject obj);
-
+#if defined(__GNUC__) && __GNUC__ == 4 && __GNUC_MINOR__ == 4
+/*
+ * This is here because GCC 4.4 for Android ICS can't compile the JS engine
+ * without it. The function is unused, but if you delete it, we'll trigger a
+ * compiler bug. When we no longer support ICS, this can be deleted.
+ * See bug 1103152.
+ */
 extern JS_PUBLIC_API(bool)
 JS_ResolveStub(JSContext *cx, JS::HandleObject obj, JS::HandleId id, bool *resolvedp);
-
-extern JS_PUBLIC_API(bool)
-JS_ConvertStub(JSContext *cx, JS::HandleObject obj, JSType type,
-               JS::MutableHandleValue vp);
+#endif  /* GCC 4.4 */
 
 template<typename T>
 struct JSConstScalarSpec {
@@ -3030,6 +3037,13 @@ class PropertyDescriptorOperations
     bool isShared() const { return desc()->attrs & JSPROP_SHARED; }
     bool isIndex() const { return desc()->attrs & JSPROP_INDEX; }
     bool hasAttributes(unsigned attrs) const { return desc()->attrs & attrs; }
+
+    // Descriptors with JSPropertyOps are considered data descriptors. It's
+    // complicated.
+    bool isAccessorDescriptor() const { return hasGetterOrSetterObject(); }
+    bool isDataDescriptor() const { return !isAccessorDescriptor(); }
+
+    bool isWritable() const { MOZ_ASSERT(isDataDescriptor()); return !isReadonly(); }
 
     JS::HandleObject object() const {
         return JS::HandleObject::fromMarkedLocation(&desc()->obj);
@@ -3902,6 +3916,10 @@ class MOZ_STACK_CLASS JS_FRIEND_API(CompileOptions) : public ReadOnlyCompileOpti
         hasIntroductionInfo = true;
         return *this;
     }
+    CompileOptions &maybeMakeStrictMode(bool strict) {
+        strictOption = strictOption || strict;
+        return *this;
+    }
 
   private:
     void operator=(const CompileOptions &rhs) MOZ_DELETE;
@@ -4186,23 +4204,6 @@ JS_SaveFrameChain(JSContext *cx);
 
 extern JS_PUBLIC_API(void)
 JS_RestoreFrameChain(JSContext *cx);
-
-#ifdef MOZ_TRACE_JSCALLS
-/*
- * The callback is expected to be quick and noninvasive. It should not
- * request interrupts, turn on debugging, or produce uncaught JS
- * exceptions. The state of the stack and registers in the context
- * cannot be relied upon, since this callback may be invoked directly
- * from either JIT. The 'entering' field means we are entering a
- * function if it is positive, leaving a function if it is zero or
- * negative.
- */
-extern JS_PUBLIC_API(void)
-JS_SetFunctionCallback(JSContext *cx, JSFunctionCallback fcb);
-
-extern JS_PUBLIC_API(JSFunctionCallback)
-JS_GetFunctionCallback(JSContext *cx);
-#endif /* MOZ_TRACE_JSCALLS */
 
 /************************************************************************/
 

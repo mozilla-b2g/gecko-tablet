@@ -110,11 +110,12 @@ enum {
     JS_TELEMETRY_GC_NON_INCREMENTAL,
     JS_TELEMETRY_GC_SCC_SWEEP_TOTAL_MS,
     JS_TELEMETRY_GC_SCC_SWEEP_MAX_PAUSE_MS,
-    JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT
+    JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT,
+    JS_TELEMETRY_ADDON_EXCEPTIONS
 };
 
 typedef void
-(* JSAccumulateTelemetryDataCallback)(int id, uint32_t sample);
+(*JSAccumulateTelemetryDataCallback)(int id, uint32_t sample, const char *key);
 
 extern JS_FRIEND_API(void)
 JS_SetAccumulateTelemetryCallback(JSRuntime *rt, JSAccumulateTelemetryDataCallback callback);
@@ -277,12 +278,12 @@ namespace js {
             JSCLASS_IS_PROXY |                                                          \
             JSCLASS_IMPLEMENTS_BARRIERS |                                               \
             flags,                                                                      \
-        JS_PropertyStub,         /* addProperty */                                      \
-        JS_DeletePropertyStub,   /* delProperty */                                      \
+        nullptr,                 /* addProperty */                                      \
+        nullptr,                 /* delProperty */                                      \
         JS_PropertyStub,         /* getProperty */                                      \
         JS_StrictPropertyStub,   /* setProperty */                                      \
-        JS_EnumerateStub,                                                               \
-        JS_ResolveStub,                                                                 \
+        nullptr,                 /* enumerate */                                        \
+        nullptr,                 /* resolve */                                          \
         js::proxy_Convert,                                                              \
         js::proxy_Finalize,      /* finalize    */                                      \
         nullptr,                  /* call        */                                     \
@@ -492,9 +493,7 @@ struct WeakMapTracer;
  * m will be nullptr if the weak map is not contained in a JS Object.
  */
 typedef void
-(* WeakMapTraceCallback)(WeakMapTracer *trc, JSObject *m,
-                         void *k, JSGCTraceKind kkind,
-                         void *v, JSGCTraceKind vkind);
+(* WeakMapTraceCallback)(WeakMapTracer *trc, JSObject *m, JS::GCCellPtr key, JS::GCCellPtr value);
 
 struct WeakMapTracer {
     JSRuntime            *runtime;
@@ -514,7 +513,7 @@ extern JS_FRIEND_API(bool)
 ZoneGlobalsAreAllGray(JS::Zone *zone);
 
 typedef void
-(*GCThingCallback)(void *closure, void *gcthing);
+(*GCThingCallback)(void *closure, JS::GCCellPtr thing);
 
 extern JS_FRIEND_API(void)
 VisitGrayWrapperTargets(JS::Zone *zone, GCThingCallback callback, void *closure);
@@ -1415,7 +1414,11 @@ js_GetSCOffset(JSStructuredCloneWriter* writer);
 namespace js {
 namespace Scalar {
 
-/* Scalar types which can appear in typed arrays and typed objects. */
+/* Scalar types which can appear in typed arrays and typed objects.  The enum
+ * values need to be kept in sync with the JS_SCALARTYPEREPR_ constants, as
+ * well as the TypedArrayObject::classes and TypedArrayObject::protoClasses
+ * definitions.
+ */
 enum Type {
     Int8 = 0,
     Uint8,
@@ -1432,7 +1435,13 @@ enum Type {
      */
     Uint8Clamped,
 
-    TypeMax
+    /*
+     * SIMD types don't have their own TypedArray equivalent, for now.
+     */
+    MaxTypedArrayViewType,
+
+    Float32x4,
+    Int32x4
 };
 
 static inline size_t
@@ -1452,6 +1461,9 @@ byteSize(Type atype)
         return 4;
       case Float64:
         return 8;
+      case Int32x4:
+      case Float32x4:
+        return 16;
       default:
         MOZ_CRASH("invalid scalar type");
     }
@@ -1814,7 +1826,7 @@ extern JS_FRIEND_API(JSObject *)
 JS_GetObjectAsArrayBuffer(JSObject *obj, uint32_t *length, uint8_t **data);
 
 /*
- * Get the type of elements in a typed array, or TypeMax if a DataView.
+ * Get the type of elements in a typed array, or MaxTypedArrayViewType if a DataView.
  *
  * |obj| must have passed a JS_IsArrayBufferView/JS_Is*Array test, or somehow
  * be known that it would pass such a test: it is an ArrayBufferView or a
@@ -2672,7 +2684,6 @@ js_DefineOwnProperty(JSContext *cx, JSObject *objArg, jsid idArg,
 extern JS_FRIEND_API(bool)
 js_ReportIsNotFunction(JSContext *cx, JS::HandleValue v);
 
-#ifdef JSGC_GENERATIONAL
 extern JS_FRIEND_API(void)
 JS_StoreObjectPostBarrierCallback(JSContext* cx,
                                   void (*callback)(JSTracer *trc, JSObject *key, void *data),
@@ -2682,16 +2693,5 @@ extern JS_FRIEND_API(void)
 JS_StoreStringPostBarrierCallback(JSContext* cx,
                                   void (*callback)(JSTracer *trc, JSString *key, void *data),
                                   JSString *key, void *data);
-#else
-inline void
-JS_StoreObjectPostBarrierCallback(JSContext* cx,
-                                  void (*callback)(JSTracer *trc, JSObject *key, void *data),
-                                  JSObject *key, void *data) {}
-
-inline void
-JS_StoreStringPostBarrierCallback(JSContext* cx,
-                                  void (*callback)(JSTracer *trc, JSString *key, void *data),
-                                  JSString *key, void *data) {}
-#endif /* JSGC_GENERATIONAL */
 
 #endif /* jsfriendapi_h */

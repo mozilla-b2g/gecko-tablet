@@ -286,8 +286,10 @@ Snapshot(JSContext *cx, HandleObject pobj_, unsigned flags, AutoIdVector *props)
             !pobj->getOps()->enumerate &&
             !(clasp->flags & JSCLASS_NEW_ENUMERATE))
         {
-            if (!clasp->enumerate(cx, pobj.as<NativeObject>()))
-                return false;
+            if (JSEnumerateOp enumerate = clasp->enumerate) {
+                if (!enumerate(cx, pobj.as<NativeObject>()))
+                    return false;
+            }
             if (!EnumerateNativeProperties(cx, pobj.as<NativeObject>(), flags, ht, props))
                 return false;
         } else {
@@ -484,21 +486,17 @@ NewPropertyIteratorObject(JSContext *cx, unsigned flags)
         if (!shape)
             return nullptr;
 
-        NativeObject *obj =
-            MaybeNativeObject(JSObject::create(cx, ITERATOR_FINALIZE_KIND,
-                                               GetInitialHeap(GenericObject, clasp), shape, type));
+        JSObject *obj = JSObject::create(cx, ITERATOR_FINALIZE_KIND,
+                                         GetInitialHeap(GenericObject, clasp), shape, type);
         if (!obj)
             return nullptr;
+        PropertyIteratorObject *res = &obj->as<PropertyIteratorObject>();
 
-        MOZ_ASSERT(obj->numFixedSlots() == JSObject::ITER_CLASS_NFIXED_SLOTS);
-        return &obj->as<PropertyIteratorObject>();
+        MOZ_ASSERT(res->numFixedSlots() == JSObject::ITER_CLASS_NFIXED_SLOTS);
+        return res;
     }
 
-    JSObject *obj = NewBuiltinClassInstance(cx, &PropertyIteratorObject::class_);
-    if (!obj)
-        return nullptr;
-
-    return &obj->as<PropertyIteratorObject>();
+    return NewBuiltinClassInstance<PropertyIteratorObject>(cx);
 }
 
 NativeIterator *
@@ -723,7 +721,7 @@ js::GetIterator(JSContext *cx, HandleObject obj, unsigned flags, MutableHandleOb
                     IsAnyTypedArray(pobj) ||
                     pobj->hasUncacheableProto() ||
                     pobj->getOps()->enumerate ||
-                    pobj->getClass()->enumerate != JS_EnumerateStub ||
+                    pobj->getClass()->enumerate ||
                     pobj->as<NativeObject>().containsPure(cx->names().iteratorIntrinsic))
                 {
                     shapes.clear();
@@ -809,7 +807,7 @@ js::CreateItrResultObject(JSContext *cx, HandleValue value, bool done)
     if (!proto)
         return nullptr;
 
-    RootedObject obj(cx, NewObjectWithGivenProto(cx, &JSObject::class_, proto, cx->global()));
+    RootedPlainObject obj(cx, NewObjectWithGivenProto<PlainObject>(cx, proto, cx->global()));
     if (!obj)
         return nullptr;
 
@@ -921,13 +919,13 @@ const Class PropertyIteratorObject::class_ = {
     JSCLASS_HAS_CACHED_PROTO(JSProto_Iterator) |
     JSCLASS_HAS_PRIVATE |
     JSCLASS_BACKGROUND_FINALIZE,
-    JS_PropertyStub,         /* addProperty */
-    JS_DeletePropertyStub,   /* delProperty */
+    nullptr,                 /* addProperty */
+    nullptr,                 /* delProperty */
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
-    JS_EnumerateStub,
-    JS_ResolveStub,
-    JS_ConvertStub,
+    nullptr,                 /* enumerate */
+    nullptr,                 /* resolve */
+    nullptr,                 /* convert */
     finalize,
     nullptr,                 /* call        */
     nullptr,                 /* hasInstance */
@@ -946,14 +944,10 @@ const Class ArrayIteratorObject::class_ = {
     "Array Iterator",
     JSCLASS_IMPLEMENTS_BARRIERS |
     JSCLASS_HAS_RESERVED_SLOTS(ArrayIteratorSlotCount),
-    JS_PropertyStub,         /* addProperty */
-    JS_DeletePropertyStub,   /* delProperty */
+    nullptr,                 /* addProperty */
+    nullptr,                 /* delProperty */
     JS_PropertyStub,         /* getProperty */
-    JS_StrictPropertyStub,   /* setProperty */
-    JS_EnumerateStub,
-    JS_ResolveStub,
-    JS_ConvertStub,
-    nullptr                  /* finalize    */
+    JS_StrictPropertyStub    /* setProperty */
 };
 
 static const JSFunctionSpec array_iterator_methods[] = {
@@ -965,14 +959,10 @@ static const JSFunctionSpec array_iterator_methods[] = {
 static const Class StringIteratorPrototypeClass = {
     "String Iterator",
     JSCLASS_IMPLEMENTS_BARRIERS,
-    JS_PropertyStub,         /* addProperty */
-    JS_DeletePropertyStub,   /* delProperty */
+    nullptr,                 /* addProperty */
+    nullptr,                 /* delProperty */
     JS_PropertyStub,         /* getProperty */
-    JS_StrictPropertyStub,   /* setProperty */
-    JS_EnumerateStub,
-    JS_ResolveStub,
-    JS_ConvertStub,
-    nullptr                  /* finalize    */
+    JS_StrictPropertyStub    /* setProperty */
 };
 
 enum {
@@ -985,14 +975,10 @@ const Class StringIteratorObject::class_ = {
     "String Iterator",
     JSCLASS_IMPLEMENTS_BARRIERS |
     JSCLASS_HAS_RESERVED_SLOTS(StringIteratorSlotCount),
-    JS_PropertyStub,         /* addProperty */
-    JS_DeletePropertyStub,   /* delProperty */
+    nullptr,                 /* addProperty */
+    nullptr,                 /* delProperty */
     JS_PropertyStub,         /* getProperty */
-    JS_StrictPropertyStub,   /* setProperty */
-    JS_EnumerateStub,
-    JS_ResolveStub,
-    JS_ConvertStub,
-    nullptr                  /* finalize    */
+    JS_StrictPropertyStub    /* setProperty */
 };
 
 static const JSFunctionSpec string_iterator_methods[] = {
@@ -1319,13 +1305,13 @@ stopiter_hasInstance(JSContext *cx, HandleObject obj, MutableHandleValue v, bool
 const Class StopIterationObject::class_ = {
     "StopIteration",
     JSCLASS_HAS_CACHED_PROTO(JSProto_StopIteration),
-    JS_PropertyStub,         /* addProperty */
-    JS_DeletePropertyStub,   /* delProperty */
+    nullptr,                 /* addProperty */
+    nullptr,                 /* delProperty */
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
-    JS_EnumerateStub,
-    JS_ResolveStub,
-    JS_ConvertStub,
+    nullptr,                 /* enumerate */
+    nullptr,                 /* resolve */
+    nullptr,                 /* convert */
     nullptr,                 /* finalize    */
     nullptr,                 /* call        */
     stopiter_hasInstance,

@@ -1414,6 +1414,19 @@ Navigator::GetFeature(const nsAString& aName, ErrorResult& aRv)
   } // hardware.memory
 #endif
 
+  p->MaybeResolve(JS::UndefinedHandleValue);
+  return p.forget();
+}
+
+already_AddRefed<Promise>
+Navigator::HasFeature(const nsAString& aName, ErrorResult& aRv)
+{
+  nsCOMPtr<nsIGlobalObject> go = do_QueryInterface(mWindow);
+  nsRefPtr<Promise> p = Promise::Create(go, aRv);
+  if (aRv.Failed()) {
+    return nullptr;
+  }
+
   // Hardcoded manifest features. Some are still b2g specific.
   const char manifestFeatures[][64] = {
     "manifest.origin"
@@ -1430,19 +1443,6 @@ Navigator::GetFeature(const nsAString& aName, ErrorResult& aRv)
       p->MaybeResolve(true);
       return p.forget();
     }
-  }
-
-  p->MaybeResolve(JS::UndefinedHandleValue);
-  return p.forget();
-}
-
-already_AddRefed<Promise>
-Navigator::HasFeature(const nsAString& aName, ErrorResult& aRv)
-{
-  nsCOMPtr<nsIGlobalObject> go = do_QueryInterface(mWindow);
-  nsRefPtr<Promise> p = Promise::Create(go, aRv);
-  if (aRv.Failed()) {
-    return nullptr;
   }
 
   NS_NAMED_LITERAL_STRING(apiWindowPrefix, "api.window.");
@@ -2056,7 +2056,7 @@ Navigator::DoResolve(JSContext* aCx, JS::Handle<JSObject*> aObject,
       nsISupports* existingObject = mCachedResolveResults.GetWeak(name);
       if (existingObject) {
         // We know all of our WebIDL objects here are wrappercached, so just go
-        // ahead and WrapObject() them.  We can't use WrapNewBindingObject,
+        // ahead and WrapObject() them.  We can't use GetOrCreateDOMReflector,
         // because we don't have the concrete type.
         JS::Rooted<JS::Value> wrapped(aCx);
         if (!dom::WrapObject(aCx, existingObject, &wrapped)) {

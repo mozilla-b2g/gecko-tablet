@@ -1088,11 +1088,6 @@ nsDocumentViewer::PermitUnloadInternal(bool aCallerClosesWindow,
                                  BEFOREUNLOAD_DISABLED_PREFNAME);
   }
 
-  // If the user has turned off onbeforeunload warnings, no need to check.
-  if (sIsBeforeUnloadDisabled) {
-    return NS_OK;
-  }
-
   // First, get the script global object from the document...
   nsPIDOMWindow *window = mDocument->GetWindow();
 
@@ -1147,8 +1142,10 @@ nsDocumentViewer::PermitUnloadInternal(bool aCallerClosesWindow,
   nsCOMPtr<nsIDocShell> docShell(mContainer);
   nsAutoString text;
   beforeUnload->GetReturnValue(text);
-  if (*aShouldPrompt && (event->GetInternalNSEvent()->mFlags.mDefaultPrevented ||
-                         !text.IsEmpty())) {
+
+  if (!sIsBeforeUnloadDisabled && *aShouldPrompt &&
+      (event->GetInternalNSEvent()->mFlags.mDefaultPrevented ||
+       !text.IsEmpty())) {
     // Ask the user if it's ok to unload the current page
 
     nsCOMPtr<nsIPrompt> prompt = do_GetInterface(docShell);
@@ -3558,8 +3555,6 @@ NS_IMETHODIMP nsDocViewerSelectionListener::NotifySelectionChanged(nsIDOMDocumen
     mGotSelectionState = true;
     mSelectionWasCollapsed = selectionCollapsed;
   }
-
-  domWindow->UpdateCommands(NS_LITERAL_STRING("selectionchange"), selection, aReason);
 
   return NS_OK;
 }

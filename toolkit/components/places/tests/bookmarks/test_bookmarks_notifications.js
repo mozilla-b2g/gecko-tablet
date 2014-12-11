@@ -75,9 +75,11 @@ add_task(function* insert_bookmark_keyword_notification() {
   let bm = yield PlacesUtils.bookmarks.insert({ type: PlacesUtils.bookmarks.TYPE_BOOKMARK,
                                                 parentGuid: PlacesUtils.bookmarks.unfiledGuid,
                                                 url: new URL("http://example.com/"),
-                                                keyword: "kw" });
+                                                keyword: "Kw" });
   let itemId = yield PlacesUtils.promiseItemId(bm.guid);
   let parentId = yield PlacesUtils.promiseItemId(bm.parentGuid);
+  // Keywords are case-insensitive.
+  Assert.equal(bm.keyword, "kw");
   observer.check([ { name: "onItemAdded",
                      arguments: [ itemId, parentId, bm.index, bm.type,
                                   bm.url, null, bm.dateAdded,
@@ -109,10 +111,6 @@ add_task(function* insert_bookmark_tag_notification() {
   observer.check([ { name: "onItemAdded",
                      arguments: [ tagId, tagParentId, tag.index, tag.type,
                                   tag.url, null, tag.dateAdded,
-                                  tag.guid, tag.parentGuid ] },
-                   { name: "onItemChanged",
-                     arguments: [ tagId, "tags", false, "",
-                                  tag.lastModified, tag.type, tagParentId,
                                   tag.guid, tag.parentGuid ] },
                    { name: "onItemChanged",
                      arguments: [ itemId, "tags", false, "",
@@ -177,14 +175,82 @@ add_task(function* update_bookmark_keyword() {
                                                 parentGuid: PlacesUtils.bookmarks.unfiledGuid,
                                                 url: new URL("http://keyword.example.com/") });
   let observer = expectNotifications();
-  bm = yield PlacesUtils.bookmarks.update({ guid: bm.guid,
-                                            keyword: "kw" });
+  bm = yield PlacesUtils.bookmarks.update({ guid: bm.guid, keyword: "kW" });
+  // Keywords are case-insensitive.
+  Assert.equal(bm.keyword, "kw");
   let itemId = yield PlacesUtils.promiseItemId(bm.guid);
   let parentId = yield PlacesUtils.promiseItemId(bm.parentGuid);
 
   observer.check([ { name: "onItemChanged",
                      arguments: [ itemId, "keyword", false, bm.keyword,
                                   bm.lastModified, bm.type, parentId, bm.guid,
+                                  bm.parentGuid ] }
+                 ]);
+
+  observer = expectNotifications();
+  bm = yield PlacesUtils.bookmarks.update({ guid: bm.guid, keyword: "" });
+  observer.check([ { name: "onItemChanged",
+                     arguments: [ itemId, "keyword", false, "",
+                                  bm.lastModified, bm.type, parentId, bm.guid,
+                                  bm.parentGuid ] }
+                 ]);
+});
+
+add_task(function* update_move_same_folder() {
+  // Ensure there are at least two items in place (others test do so for us,
+  // but we don't have to depend on that).
+  let sep = yield PlacesUtils.bookmarks.insert({ type: PlacesUtils.bookmarks.TYPE_SEPARATOR,
+                                                 parentGuid: PlacesUtils.bookmarks.unfiledGuid });
+  let bm = yield PlacesUtils.bookmarks.insert({ type: PlacesUtils.bookmarks.TYPE_BOOKMARK,
+                                                parentGuid: PlacesUtils.bookmarks.unfiledGuid,
+                                                url: new URL("http://move.example.com/") });
+  let bmItemId = yield PlacesUtils.promiseItemId(bm.guid);
+  let bmParentId = yield PlacesUtils.promiseItemId(bm.parentGuid);
+  let bmOldIndex = bm.index;
+
+  let observer = expectNotifications();
+  bm = yield PlacesUtils.bookmarks.update({ guid: bm.guid,
+                                            parentGuid: PlacesUtils.bookmarks.unfiledGuid,
+                                            index: 0 });
+  Assert.equal(bm.index, 0);
+  observer.check([ { name: "onItemMoved",
+                     arguments: [ bmItemId, bmParentId, bmOldIndex, bmParentId, bm.index,
+                                  bm.type, bm.guid, bm.parentGuid, bm.parentGuid ] }
+                 ]);
+
+  // Test that we get the right index for DEFAULT_INDEX input.
+  bmOldIndex = 0;
+  observer = expectNotifications();
+  bm = yield PlacesUtils.bookmarks.update({ guid: bm.guid,
+                                            parentGuid: PlacesUtils.bookmarks.unfiledGuid,
+                                            index: PlacesUtils.bookmarks.DEFAULT_INDEX });
+  Assert.ok(bm.index > 0);
+  observer.check([ { name: "onItemMoved",
+                     arguments: [ bmItemId, bmParentId, bmOldIndex, bmParentId, bm.index,
+                                  bm.type, bm.guid, bm.parentGuid, bm.parentGuid ] }
+                 ]);
+});
+
+add_task(function* update_move_different_folder() {
+  let bm = yield PlacesUtils.bookmarks.insert({ type: PlacesUtils.bookmarks.TYPE_BOOKMARK,
+                                                parentGuid: PlacesUtils.bookmarks.unfiledGuid,
+                                                url: new URL("http://move.example.com/") });
+  let folder = yield PlacesUtils.bookmarks.insert({ type: PlacesUtils.bookmarks.TYPE_FOLDER,
+                                                    parentGuid: PlacesUtils.bookmarks.unfiledGuid });
+  let bmItemId = yield PlacesUtils.promiseItemId(bm.guid);
+  let bmOldParentId = PlacesUtils.unfiledBookmarksFolderId;
+  let bmOldIndex = bm.index;
+
+  let observer = expectNotifications();
+  bm = yield PlacesUtils.bookmarks.update({ guid: bm.guid,
+                                            parentGuid: folder.guid,
+                                            index: PlacesUtils.bookmarks.DEFAULT_INDEX });
+  Assert.equal(bm.index, 0);
+  let bmNewParentId = yield PlacesUtils.promiseItemId(folder.guid);
+  observer.check([ { name: "onItemMoved",
+                     arguments: [ bmItemId, bmOldParentId, bmOldIndex, bmNewParentId,
+                                  bm.index, bm.type, bm.guid,
+                                  PlacesUtils.bookmarks.unfiledGuid,
                                   bm.parentGuid ] }
                  ]);
 });

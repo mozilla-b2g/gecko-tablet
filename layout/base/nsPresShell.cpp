@@ -4728,6 +4728,9 @@ nsIPresShell::ReconstructStyleDataExternal()
 void
 PresShell::RecordStyleSheetChange(nsIStyleSheet* aStyleSheet)
 {
+  // too bad we can't check that the update is UPDATE_STYLE
+  NS_ASSERTION(mUpdateCount != 0, "must be in an update");
+
   if (mStylesHaveChanged)
     return;
 
@@ -7197,12 +7200,11 @@ PresShell::HandleKeyboardEvent(nsINode* aTarget,
   DispatchBeforeKeyboardEventInternal(chain, aEvent, chainIndex,
                                       defaultPrevented);
 
-  // Dispatch after events to partial items.
+  // Before event is default-prevented. Dispatch after events with
+  // embeddedCancelled = false to partial items.
   if (defaultPrevented) {
     *aStatus = nsEventStatus_eConsumeNoDefault;
-    DispatchAfterKeyboardEventInternal(chain, aEvent,
-                                       aEvent.mFlags.mDefaultPrevented, chainIndex);
-
+    DispatchAfterKeyboardEventInternal(chain, aEvent, false, chainIndex);
     // No need to forward the event to child process.
     aEvent.mFlags.mNoCrossProcessBoundaryForwarding = true;
     return;
@@ -7216,6 +7218,15 @@ PresShell::HandleKeyboardEvent(nsINode* aTarget,
   // Dispatch actual key event to event target.
   EventDispatcher::Dispatch(aTarget, mPresContext,
                             &aEvent, nullptr, aStatus, aEventCB);
+
+  if (aEvent.mFlags.mDefaultPrevented) {
+    // When embedder prevents the default action of actual key event, attribute
+    // 'embeddedCancelled' of after event is false, i.e. |!targetIsIframe|.
+    // On the contrary, if the defult action is prevented by embedded iframe,
+    // 'embeddedCancelled' is true which equals to |!targetIsIframe|.
+    DispatchAfterKeyboardEventInternal(chain, aEvent, !targetIsIframe, chainIndex);
+    return;
+  }
 
   // Event listeners may kill nsPresContext and nsPresShell.
   if (targetIsIframe || !CanDispatchEvent()) {
@@ -9259,7 +9270,7 @@ PresShell::DoReflow(nsIFrame* target, bool aInterruptible)
     bool hasUnconstrainedBSize = size.BSize(wm) == NS_UNCONSTRAINEDSIZE;
 
     if (hasUnconstrainedBSize || mLastRootReflowHadUnconstrainedBSize) {
-      reflowState.mFlags.mVResize = true;
+      reflowState.SetVResize(true);
     }
 
     mLastRootReflowHadUnconstrainedBSize = hasUnconstrainedBSize;

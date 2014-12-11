@@ -12,7 +12,6 @@
 #include "mozilla/dom/HTMLMediaElement.h"
 #include "nsError.h"
 #include "SharedThreadPool.h"
-#include "WebMReader.h"
 #include "VorbisUtils.h"
 #include "nestegg/nestegg.h"
 
@@ -106,7 +105,7 @@ IntelWebMVideoDecoder::Create(WebMReader* aReader)
 {
   nsAutoPtr<IntelWebMVideoDecoder> decoder(new IntelWebMVideoDecoder(aReader));
 
-  decoder->mTaskQueue = aReader->GetTaskQueue();
+  decoder->mTaskQueue = aReader->GetVideoTaskQueue();
   NS_ENSURE_TRUE(decoder->mTaskQueue, nullptr);
 
   return decoder.forget();

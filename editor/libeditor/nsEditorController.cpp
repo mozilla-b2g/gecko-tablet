@@ -3,10 +3,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsEditorController.h"
+
 #include "mozilla/mozalloc.h"
 #include "nsDebug.h"
 #include "nsEditorCommands.h"
-#include "nsEditorController.h"
 #include "nsError.h"
 #include "nsIControllerCommandTable.h"
 
@@ -53,6 +54,8 @@ nsresult nsEditorController::RegisterEditingCommands(nsIControllerCommandTable *
   NS_REGISTER_ONE_COMMAND(nsCutOrDeleteCommand, "cmd_cutOrDelete");
   NS_REGISTER_ONE_COMMAND(nsCopyCommand, "cmd_copy");
   NS_REGISTER_ONE_COMMAND(nsCopyOrDeleteCommand, "cmd_copyOrDelete");
+  NS_REGISTER_ONE_COMMAND(nsCopyAndCollapseToEndCommand,
+                          "cmd_copyAndCollapseToEnd");
   NS_REGISTER_ONE_COMMAND(nsSelectAllCommand, "cmd_selectAll");
 
   NS_REGISTER_ONE_COMMAND(nsPasteCommand, "cmd_paste");

@@ -2168,6 +2168,27 @@
     "n_buckets": 20,
     "description": "The number of unusable addresses reported for each record"
   },
+  "REFRESH_DRIVER_TICK" : {
+    "expires_in_version": "never",
+    "description": "Total time spent ticking the refresh driver in milliseconds",
+    "kind": "exponential",
+    "high": "1000",
+    "n_buckets": 50
+  },
+  "PAINT_BUILD_DISPLAYLIST_TIME" : {
+    "expires_in_version": "never",
+    "description": "Time spent in building displaylists in milliseconds",
+    "kind": "exponential",
+    "high": "1000",
+    "n_buckets": 50
+  },
+  "PAINT_RASTERIZE_TIME" : {
+    "expires_in_version": "never",
+    "description": "Time spent rasterizing each frame in milliseconds",
+    "kind": "exponential",
+    "high": "1000",
+    "n_buckets": 50
+  },
   "PREDICTOR_PREDICT_ATTEMPTS": {
     "expires_in_version": "never",
     "kind": "exponential",
@@ -4509,6 +4530,12 @@
     "n_values": 100,
     "description": "Security UI Telemetry"
   },
+  "JS_TELEMETRY_ADDON_EXCEPTIONS" : {
+    "expires_in_version" : "never",
+    "kind": "count",
+    "keyed" : true,
+    "description" : "Exceptions thrown by add-ons"
+  },
   "SEARCH_COUNTS": {
     "expires_in_version": "never",
     "kind": "count",
@@ -6453,9 +6480,16 @@
     "n_values": 64,
     "description": "TLS/SSL version intolerance was falsely detected, server rejected handshake"
   },
+  "SSL_FALLBACK_LIMIT_REACHED": {
+    "expires_in_version": "default",
+    "kind": "enumerated",
+    "n_values": 16,
+    "description": "TLS/SSL version fallback reached the minimum version (1=TLS 1.0, 2=TLS 1.1, 3=TLS 1.2) or the fallback limit (4=TLS 1.0, 8=TLS 1.1, 12=TLS 1.2), stopped the fallback"
+  },
   "SSL_WEAK_CIPHERS_FALLBACK": {
     "expires_in_version": "never",
-    "kind": "boolean",
+    "kind": "enumerated",
+    "n_values": 64,
     "description": "Fallback attempted when server did not support any strong cipher suites"
   },
   "SSL_CIPHER_SUITE_FULL": {
@@ -6562,6 +6596,12 @@
     "n_buckets": 10,
     "description": "How many permanent certificate overrides a user has stored."
   },
+  "SSL_SERVER_AUTH_EKU": {
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 10,
+    "description": "Presence of of the Server Authenticaton EKU in accepted SSL server certificates (0=No EKU, 1=EKU present and has id_kp_serverAuth, 2=EKU present and has id_kp_serverAuth as well as some other EKU, 3=EKU present but does not contain id_kp_serverAuth)"
+  },
   "TELEMETRY_TEST_EXPIRED": {
     "expires_in_version": "4.0a1",
     "kind": "flag",
@@ -6600,6 +6640,12 @@
     "high": "5000",
     "n_buckets": 10,
     "extended_statistics_ok": true
+  },
+  "CERT_VALIDATION_SUCCESS_BY_CA": {
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 256,
+    "description": "Successful SSL server cert validations by CA (see RootHashes.inc for names of CAs)"
   },
   "CERT_PINNING_FAILURES_BY_CA": {
     "alert_emails": ["pinning@mozilla.org"],

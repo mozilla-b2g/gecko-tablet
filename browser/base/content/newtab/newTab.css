@@ -345,6 +345,19 @@ input[type=button] {
   background-size: 26px 26px;
 }
 
+#newtab-search-logo.magnifier {
+  width: 38px; /* 26 image width + 6 left "padding" + 6 right "padding" */
+  -moz-margin-end: 5px;
+  background-size: 26px;
+  background-image: url("chrome://browser/skin/magnifier.png");
+}
+
+@media not all and (max-resolution: 1dppx) {
+  #newtab-search-icon.magnifier {
+    background-image: url("chrome://browser/skin/magnifier@2x.png");
+  }
+}
+
 #newtab-search-logo[type="logo"] {
   background-size: 65px 26px;
   width: 77px; /* 65 image width + 6 left "padding" + 6 right "padding" */
@@ -366,7 +379,7 @@ input[type=button] {
 }
 
 #newtab-search-text {
-  height: 38px;
+  height: 38px; /* same height as #newtab-search-logo */
   -moz-box-flex: 1;
 
   padding: 0 8px;
@@ -390,7 +403,7 @@ input[type=button] {
 }
 
 #newtab-search-submit {
-  height: 38px;
+  height: 38px; /* same height as #newtab-search-logo */
   font-size: 13px !important;
 
   -moz-margin-start: -1px;
@@ -441,27 +454,20 @@ input[type=button] {
   transition-duration: 0ms;
 }
 
-#newtab-customize-panel .panel-arrowcontent,
-#newtab-search-panel .panel-arrowcontent {
-  -moz-padding-start: 0;
-  -moz-padding-end: 0;
-  padding-top: 0;
-  padding-bottom: 0;
-  background: rgb(248, 250, 251);
+#newtab-customize-panel > .panel-arrowcontainer > .panel-arrowcontent,
+#newtab-search-panel > .panel-arrowcontainer > .panel-arrowcontent {
+  padding: 0;
 }
 
 .newtab-customize-panel-item,
-.newtab-search-panel-engine {
-  -moz-box-align: center;
-  padding-top: 4px;
-  padding-bottom: 4px;
-  -moz-padding-start: 24px;
-  -moz-padding-end: 24px;
+.newtab-search-panel-engine,
+#newtab-search-manage {
+  padding: 4px 24px;
 }
 
 .newtab-customize-panel-item:not(:last-child),
-.newtab-search-panel-engine:not(:last-child) {
-  border-bottom: 1px solid #ccc;
+.newtab-search-panel-engine {
+  border-bottom: 1px solid threedshadow;
 }
 
 .newtab-search-panel-engine > image {
@@ -472,10 +478,10 @@ input[type=button] {
 }
 
 .newtab-customize-panel-item > label,
-.newtab-search-panel-engine > label {
-  -moz-padding-start: 0;
-  -moz-margin-start: 0;
-  color: rgb(130, 132, 133);
+.newtab-search-panel-engine > label,
+#newtab-search-manage > label {
+  padding: 0;
+  margin: 0;
 }
 
 .newtab-customize-panel-item[selected],

@@ -162,6 +162,8 @@ public:
   // Set/Unset dormant state.
   void SetDormant(bool aDormant);
   void Shutdown();
+  void ShutdownReader();
+  void FinishShutdown(bool aSuccess);
 
   // Called from the main thread to get the duration. The decoder monitor
   // must be obtained before calling this. It is in units of microseconds.
@@ -333,6 +335,11 @@ public:
   // call this while we're not playing (while the MediaStream is blocked). Can
   // be called on any thread with the decoder monitor held.
   void SetSyncPointForMediaStream();
+
+  // Called when the decoded stream is destroyed. |mPlayStartTime| and
+  // |mPlayDuration| are updated to provide a good base for calculating video
+  // stream time using the system clock.
+  void ResyncMediaStreamClock();
   int64_t GetCurrentTimeViaMediaStreamSync() const;
 
   // Copy queued audio/video data in the reader to any output MediaStreams that
@@ -354,7 +361,7 @@ public:
   // be held.
   bool IsPlaying() const;
 
-  // Dispatch DoNotifyWaitingForResourcesStatusChanged task to mDecodeTaskQueue.
+  // Dispatch DoNotifyWaitingForResourcesStatusChanged task to the task queue.
   // Called when the reader may have acquired the hardware resources required
   // to begin decoding. The decoder monitor must be held while calling this.
   void NotifyWaitingForResourcesStatusChanged();
@@ -368,7 +375,7 @@ public:
 
   void OnAudioDecoded(AudioData* aSample);
   void OnVideoDecoded(VideoData* aSample);
-  void OnNotDecoded(MediaData::Type aType, RequestSampleCallback::NotDecodedReason aReason);
+  void OnNotDecoded(MediaData::Type aType, MediaDecoderReader::NotDecodedReason aReason);
   void OnSeekCompleted(nsresult aResult);
 
 private:
@@ -731,7 +738,7 @@ protected:
   // The task queue in which we run decode tasks. This is referred to as
   // the "decode thread", though in practise tasks can run on a different
   // thread every time they're called.
-  RefPtr<MediaTaskQueue> mDecodeTaskQueue;
+  MediaTaskQueue* DecodeTaskQueue() const { return mReader->GetTaskQueue(); }
 
   // The time that playback started from the system clock. This is used for
   // timing the presentation of video frames when there's no audio.
@@ -747,7 +754,8 @@ protected:
   // The amount of time we've spent playing already the media. The current
   // playback position is therefore |Now() - mPlayStartTime +
   // mPlayDuration|, which must be adjusted by mStartTime if used with media
-  // timestamps.  Accessed only via the state machine thread.
+  // timestamps. Accessed on state machine and main threads. Access controlled
+  // by decoder monitor.
   int64_t mPlayDuration;
 
   // Time that buffering started. Used for buffering timeout and only

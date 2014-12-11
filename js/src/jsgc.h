@@ -39,6 +39,12 @@ enum HeapState {
     MinorCollecting   // doing a GC of the minor heap (nursery)
 };
 
+enum ThreadType
+{
+    MainThread,
+    BackgroundThread
+};
+
 namespace jit {
     class JitCode;
 }
@@ -52,14 +58,8 @@ enum State {
     MARK_ROOTS,
     MARK,
     SWEEP,
-#ifdef JSGC_COMPACTING
     COMPACT
-#endif
 };
-
-/* Return a printable string for the given kind, for diagnostic purposes. */
-const char *
-TraceKindAsAscii(JSGCTraceKind kind);
 
 /* Map from C++ type to alloc kind. JSObject does not have a 1:1 mapping, so must use Arena::thingSize. */
 template <typename T> struct MapTypeToFinalizeKind {};
@@ -75,7 +75,6 @@ template <> struct MapTypeToFinalizeKind<JSExternalString>  { static const Alloc
 template <> struct MapTypeToFinalizeKind<JS::Symbol>        { static const AllocKind kind = FINALIZE_SYMBOL; };
 template <> struct MapTypeToFinalizeKind<jit::JitCode>      { static const AllocKind kind = FINALIZE_JITCODE; };
 
-#if defined(JSGC_GENERATIONAL) || defined(DEBUG)
 static inline bool
 IsNurseryAllocable(AllocKind kind)
 {
@@ -108,7 +107,6 @@ IsNurseryAllocable(AllocKind kind)
     JS_STATIC_ASSERT(JS_ARRAY_LENGTH(map) == FINALIZE_LIMIT);
     return map[kind];
 }
-#endif
 
 #if defined(JSGC_FJGENERATIONAL)
 // This is separate from IsNurseryAllocable() so that the latter can evolve
@@ -499,7 +497,6 @@ class ArenaList {
     }
 
 #ifdef JSGC_COMPACTING
-    size_t countUsedCells();
     ArenaHeader *removeRemainingArenas(ArenaHeader **arenap, const AutoLockGC &lock);
     ArenaHeader *pickArenasToRelocate(JSRuntime *runtime);
     ArenaHeader *relocateArenas(ArenaHeader *toRelocate, ArenaHeader *relocated);
@@ -845,7 +842,7 @@ class ArenaLists
 
     bool foregroundFinalize(FreeOp *fop, AllocKind thingKind, SliceBudget &sliceBudget,
                             SortedArenaList &sweepList);
-    static void backgroundFinalize(FreeOp *fop, ArenaHeader *listHead);
+    static void backgroundFinalize(FreeOp *fop, ArenaHeader *listHead, ArenaHeader **empty);
 
     void wipeDuringParallelExecution(JSRuntime *rt);
 
@@ -1040,11 +1037,8 @@ class GCHelperState
 
     void work();
 
-    /* Must be called with the GC lock taken. */
-    void startBackgroundSweep();
-
-    /* Must be called with the GC lock taken. */
-    void startBackgroundShrink();
+    void maybeStartBackgroundSweep(const AutoLockGC &lock);
+    void startBackgroundShrink(const AutoLockGC &lock);
 
     /* Must be called without the GC lock taken. */
     void waitBackgroundSweepEnd();
@@ -1224,8 +1218,6 @@ namespace gc {
 void
 MergeCompartments(JSCompartment *source, JSCompartment *target);
 
-#if defined(JSGC_GENERATIONAL) || defined(JSGC_COMPACTING)
-
 /*
  * This structure overlays a Cell in the Nursery and re-purposes its memory
  * for managing the Nursery collection process.
@@ -1332,14 +1324,6 @@ MaybeForwarded(T t)
 {
     return IsForwarded(t) ? Forwarded(t) : t;
 }
-
-#else
-
-template <typename T> inline bool IsForwarded(T t) { return false; }
-template <typename T> inline T Forwarded(T t) { return t; }
-template <typename T> inline T MaybeForwarded(T t) { return t; }
-
-#endif // JSGC_GENERATIONAL || JSGC_COMPACTING
 
 #ifdef JSGC_HASH_TABLE_CHECKS
 
@@ -1456,6 +1440,33 @@ class AutoEnterOOMUnsafeRegion {};
 // is appropriate.
 bool
 IsInsideGGCNursery(const gc::Cell *cell);
+
+// A singly linked list of zones.
+class ZoneList
+{
+    static Zone * const End;
+
+    Zone *head;
+    Zone *tail;
+
+  public:
+    ZoneList();
+    ~ZoneList();
+
+    bool isEmpty() const;
+    Zone *front() const;
+
+    void append(Zone *zone);
+    void transferFrom(ZoneList &other);
+    void removeFront();
+
+  private:
+    explicit ZoneList(Zone *singleZone);
+    void check() const;
+
+    ZoneList(const ZoneList &other) MOZ_DELETE;
+    ZoneList &operator=(const ZoneList &other) MOZ_DELETE;
+};
 
 } /* namespace gc */
 

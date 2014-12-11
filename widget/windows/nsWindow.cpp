@@ -187,7 +187,6 @@
 #endif
 
 #include "mozilla/layers/CompositorParent.h"
-#include "InputData.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -3740,48 +3739,8 @@ bool nsWindow::DispatchKeyboardEvent(WidgetGUIEvent* event)
   return ConvertStatus(status);
 }
 
-nsEventStatus nsWindow::MaybeDispatchAsyncWheelEvent(WidgetGUIEvent* aEvent)
-{
-  if (aEvent->mClass != eWheelEventClass) {
-    return nsEventStatus_eIgnore;
-  }
-
-  WidgetWheelEvent* event = aEvent->AsWheelEvent();
-
-  // Otherwise, scroll-zoom won't work.
-  if (event->IsControl()) {
-    return nsEventStatus_eIgnore;
-  }
-
-
-  // Other scrolling modes aren't supported yet.
-  if (event->deltaMode != nsIDOMWheelEvent::DOM_DELTA_LINE) {
-    return nsEventStatus_eIgnore;
-  }
-
-  ScrollWheelInput::ScrollMode scrollMode = ScrollWheelInput::SCROLLMODE_INSTANT;
-  if (Preferences::GetBool("general.smoothScroll"))
-    scrollMode = ScrollWheelInput::SCROLLMODE_SMOOTH;
-
-  ScreenPoint origin(event->refPoint.x, event->refPoint.y);
-  ScrollWheelInput input(event->time, event->timeStamp, 0,
-                         scrollMode,
-                         ScrollWheelInput::SCROLLDELTA_LINE,
-                         origin,
-                         event->lineOrPageDeltaX,
-                         event->lineOrPageDeltaY);
-
-  ScrollableLayerGuid ignoreGuid;
-  return mAPZC->ReceiveInputEvent(input, &ignoreGuid, nullptr);
-}
-
 bool nsWindow::DispatchScrollEvent(WidgetGUIEvent* aEvent)
 {
-  if (mAPZC) {
-    if (MaybeDispatchAsyncWheelEvent(aEvent) == nsEventStatus_eConsumeNoDefault)
-      return true;
-  }
-
   nsEventStatus status;
   DispatchEvent(aEvent, status);
   return ConvertStatus(status);
@@ -6773,20 +6732,11 @@ nsWindow::GetPreferredCompositorBackends(nsTArray<LayersBackend>& aHints)
     }
 
     ID3D11Device* device = gfxWindowsPlatform::GetPlatform()->GetD3D11Device();
-    if (device &&
-        device->GetFeatureLevel() >= D3D_FEATURE_LEVEL_10_0 &&
-        !DoesD3D11DeviceWork(device)) {
-      // bug 1083071 - bad things - fall back to basic layers
-      // This should not happen aside from driver bugs, and in particular
-      // should not happen on our test machines, so let's NS_ERROR to ensure
-      // that we would catch it as a test failure.
-      NS_ERROR("Can't use Direct3D 11 because of a driver bug");
-    } else {
-      if (!prefs.mPreferD3D9) {
-        aHints.AppendElement(LayersBackend::LAYERS_D3D11);
-      }
-      aHints.AppendElement(LayersBackend::LAYERS_D3D9);
+
+    if (!prefs.mPreferD3D9) {
+      aHints.AppendElement(LayersBackend::LAYERS_D3D11);
     }
+    aHints.AppendElement(LayersBackend::LAYERS_D3D9);
   }
   aHints.AppendElement(LayersBackend::LAYERS_BASIC);
 }

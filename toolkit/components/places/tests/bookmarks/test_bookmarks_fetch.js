@@ -255,6 +255,9 @@ add_task(function* fetch_byurl() {
                                                  title: "a bookmark" });
   checkBookmarkObject(bm1);
 
+  // Also ensure that fecth-by-url excludes the tags folder.
+  PlacesUtils.tagging.tagURI(uri(bm1.url.href), ["Test Tag"]);
+
   let bm2 = yield PlacesUtils.bookmarks.fetch({ url: bm1.url },
                                               gAccumulator.callback);
   checkBookmarkObject(bm2);
@@ -293,6 +296,9 @@ add_task(function* fetch_byurl() {
   Assert.equal(gAccumulator.results.length, 2);
   gAccumulator.results.forEach(checkBookmarkObject);
   Assert.deepEqual(gAccumulator.results[0], bm5);
+
+  // cleanup
+  PlacesUtils.tagging.untagURI(uri(bm1.url.href), ["Test Tag"]);
 });
 
 add_task(function* fetch_bykeyword_nonexisting() {
@@ -323,6 +329,7 @@ add_task(function* fetch_bykeyword() {
   Assert.equal(bm2.url.href, "http://bykeyword1.com/");
   Assert.equal(bm2.keyword, "bykeyword");
 
+  // Add a second url using the same keyword.
   let bm3 = yield PlacesUtils.bookmarks.insert({ parentGuid: PlacesUtils.bookmarks.unfiledGuid,
                                                  type: PlacesUtils.bookmarks.TYPE_BOOKMARK,
                                                  url: "http://bykeyword2.com/",
@@ -346,6 +353,16 @@ add_task(function* fetch_bykeyword() {
   Assert.equal(gAccumulator.results.length, 2);
   gAccumulator.results.forEach(checkBookmarkObject);
   Assert.deepEqual(gAccumulator.results[0], bm5);
+
+  // Check fetching by keyword is case-insensitive.
+  let bm6 = yield PlacesUtils.bookmarks.fetch({ keyword: "ByKeYwOrD" },
+                                              gAccumulator.callback);
+  checkBookmarkObject(bm6);
+  // Cannot use deepEqual cause lastModified changed.
+  Assert.equal(bm1.guid, bm6.guid);
+  Assert.equal(gAccumulator.results.length, 2);
+  gAccumulator.results.forEach(checkBookmarkObject);
+  Assert.deepEqual(gAccumulator.results[0], bm6);
 });
 
 function run_test() {

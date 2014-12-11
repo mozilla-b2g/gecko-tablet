@@ -15,7 +15,7 @@
 #include "ds/LifoAlloc.h"
 #include "jit/Bailouts.h"
 #include "jit/IonCode.h"
-#include "jit/IonMacroAssembler.h"
+#include "jit/MacroAssembler.h"
 
 namespace js {
 namespace jit {
@@ -93,6 +93,19 @@ struct PCMappingIndexEntry
     uint32_t bufferOffset;
 };
 
+// Describes a single AsmJSModule which jumps (via an FFI exit with the given
+// index) directly to a BaselineScript or IonScript.
+struct DependentAsmJSModuleExit
+{
+    const AsmJSModule *module;
+    size_t exitIndex;
+
+    DependentAsmJSModuleExit(const AsmJSModule *module, size_t exitIndex)
+      : module(module),
+        exitIndex(exitIndex)
+    { }
+};
+
 struct BaselineScript
 {
   public:
@@ -113,6 +126,10 @@ struct BaselineScript
 
     // Allocated space for fallback stubs.
     FallbackICStubSpace fallbackStubSpace_;
+
+    // If non-null, the list of AsmJSModules that contain an optimized call
+    // directly to this script.
+    Vector<DependentAsmJSModuleExit> *dependentAsmJSModules_;
 
     // Native code offset right before the scope chain is initialized.
     uint32_t prologueOffset_;
@@ -313,8 +330,8 @@ struct BaselineScript
     ICEntry &icEntry(size_t index);
     ICEntry *maybeICEntryFromReturnOffset(CodeOffsetLabel returnOffset);
     ICEntry &icEntryFromReturnOffset(CodeOffsetLabel returnOffset);
+    ICEntry &anyKindICEntryFromPCOffset(uint32_t pcOffset);
     ICEntry &icEntryFromPCOffset(uint32_t pcOffset);
-    ICEntry &icEntryForDebugModeRecompileFromPCOffset(uint32_t pcOffset);
     ICEntry &icEntryFromPCOffset(uint32_t pcOffset, ICEntry *prevLookedUpEntry);
     ICEntry *maybeICEntryFromReturnAddress(uint8_t *returnAddr);
     ICEntry &icEntryFromReturnAddress(uint8_t *returnAddr);
@@ -339,13 +356,25 @@ struct BaselineScript
     void copyPCMappingIndexEntries(const PCMappingIndexEntry *entries);
 
     void copyPCMappingEntries(const CompactBufferWriter &entries);
-    uint8_t *nativeCodeForPC(JSScript *script, jsbytecode *pc, PCMappingSlotInfo *slotInfo = nullptr);
+    uint8_t *maybeNativeCodeForPC(JSScript *script, jsbytecode *pc,
+                                  PCMappingSlotInfo *slotInfo = nullptr);
+    uint8_t *nativeCodeForPC(JSScript *script, jsbytecode *pc,
+                             PCMappingSlotInfo *slotInfo = nullptr)
+    {
+        uint8_t *code = maybeNativeCodeForPC(script, pc, slotInfo);
+        MOZ_ASSERT(code);
+        return code;
+    }
 
     jsbytecode *pcForReturnOffset(JSScript *script, uint32_t nativeOffset);
     jsbytecode *pcForReturnAddress(JSScript *script, uint8_t *nativeAddress);
 
     jsbytecode *pcForNativeAddress(JSScript *script, uint8_t *nativeAddress);
     jsbytecode *pcForNativeOffset(JSScript *script, uint32_t nativeOffset);
+
+    bool addDependentAsmJSModule(JSContext *cx, DependentAsmJSModuleExit exit);
+    void unlinkDependentAsmJSModules(FreeOp *fop);
+    void removeDependentAsmJSModule(DependentAsmJSModuleExit exit);
 
   private:
     jsbytecode *pcForNativeOffset(JSScript *script, uint32_t nativeOffset, bool isReturn);
@@ -394,10 +423,10 @@ CanEnterBaselineMethod(JSContext *cx, RunState &state);
 MethodStatus
 CanEnterBaselineAtBranch(JSContext *cx, InterpreterFrame *fp, bool newType);
 
-IonExecStatus
+JitExecStatus
 EnterBaselineMethod(JSContext *cx, RunState &state);
 
-IonExecStatus
+JitExecStatus
 EnterBaselineAtBranch(JSContext *cx, InterpreterFrame *fp, jsbytecode *pc);
 
 void
