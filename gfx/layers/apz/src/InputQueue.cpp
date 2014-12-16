@@ -127,7 +127,12 @@ InputQueue::ReceiveScrollWheelInput(const nsRefPtr<AsyncPanZoomController>& aTar
                                     uint64_t* aOutInputBlockId) {
   WheelBlockState* block = nullptr;
   if (!mInputBlockQueue.IsEmpty()) {
-    block = mInputBlockQueue.LastElement().get()->AsWheelBlock();
+    block = mInputBlockQueue.LastElement()->AsWheelBlock();
+
+    // If the block's APZC has been destroyed, request a new block.
+    if (block && block->GetTargetApzc()->IsDestroyed()) {
+      block = nullptr;
+    }
   }
 
   if (!block) {
@@ -178,6 +183,7 @@ InputQueue::CancelAnimationsForNewBlock(CancelableBlockState* aBlock)
       // and to disallow the touch event from being used as part of a fling.
       if (TouchBlockState* touch = aBlock->AsTouchBlock()) {
         touch->SetDuringFastMotion();
+        INPQ_LOG("block %p tagged as fast-motion\n", touch);
       }
     }
     aBlock->GetOverscrollHandoffChain()->CancelAnimations();
@@ -192,6 +198,10 @@ InputQueue::MaybeRequestContentResponse(const nsRefPtr<AsyncPanZoomController>& 
   if (!gfxPrefs::LayoutEventRegionsEnabled()) {
     waitForMainThread |= aTarget->NeedToWaitForContent();
   }
+  if (aBlock->AsTouchBlock() && aBlock->AsTouchBlock()->IsDuringFastMotion()) {
+    aBlock->SetConfirmedTargetApzc(aTarget);
+    waitForMainThread = false;
+  }
 
   if (waitForMainThread) {
     // We either don't know for sure if aTarget is the right APZC, or we may
@@ -203,7 +213,7 @@ InputQueue::MaybeRequestContentResponse(const nsRefPtr<AsyncPanZoomController>& 
     // Content won't prevent-default this, so we can just pretend like we scheduled
     // a timeout and it expired. Note that we will still receive a ContentReceivedInputBlock
     // callback for this block, and so we need to make sure we adjust the touch balance.
-    INPQ_LOG("not waiting for content response on block %p\n", block);
+    INPQ_LOG("not waiting for content response on block %p\n", aBlock);
     aBlock->TimeoutContentResponse();
   }
 }

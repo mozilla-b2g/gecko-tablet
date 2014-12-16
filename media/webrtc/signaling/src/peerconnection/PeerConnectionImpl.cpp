@@ -490,6 +490,9 @@ PeerConnectionImpl::ConvertRTCConfiguration(const RTCConfiguration& aSrc,
     if (!(isStun || isStuns || isTurn || isTurns)) {
       return NS_ERROR_FAILURE;
     }
+    if (isTurns || isStuns) {
+      continue; // TODO: Support TURNS and STUNS (Bug 1056934)
+    }
     nsAutoCString spec;
     rv = url->GetSpec(spec);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -949,17 +952,6 @@ PeerConnectionImpl::CreateFakeMediaStream(uint32_t aHint, DOMMediaStream** aRetv
 
   stream.forget(aRetval);
   return NS_OK;
-}
-
-// Stubbing this call out for now.
-// We can remove it when we are confident of datachannels being started
-// correctly on SDP negotiation (bug 852908)
-NS_IMETHODIMP
-PeerConnectionImpl::ConnectDataConnection(uint16_t aLocalport,
-                                          uint16_t aRemoteport,
-                                          uint16_t aNumstreams)
-{
-  return NS_OK; // InitializeDataChannel(aLocalport, aRemoteport, aNumstreams);
 }
 
 // Data channels won't work without a window, so in order for the C++ unit

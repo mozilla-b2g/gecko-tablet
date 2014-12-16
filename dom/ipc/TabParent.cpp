@@ -603,7 +603,9 @@ TabParent::Show(const nsIntSize& size)
         }
     }
 
-    ShowInfo info(EmptyString(), false, false);
+    TryCacheDPIAndScale();
+    ShowInfo info(EmptyString(), false, false, mDPI, mDefaultScale.scale);
+
     if (mFrameElement) {
       nsAutoString name;
       mFrameElement->GetAttr(kNameSpaceID_None, nsGkAtoms::name, name);
@@ -611,14 +613,15 @@ TabParent::Show(const nsIntSize& size)
         mFrameElement->HasAttr(kNameSpaceID_None, nsGkAtoms::allowfullscreen) ||
         mFrameElement->HasAttr(kNameSpaceID_None, nsGkAtoms::mozallowfullscreen);
       bool isPrivate = mFrameElement->HasAttr(kNameSpaceID_None, nsGkAtoms::mozprivatebrowsing);
-      info = ShowInfo(name, allowFullscreen, isPrivate);
+      info = ShowInfo(name, allowFullscreen, isPrivate, mDPI, mDefaultScale.scale);
     }
 
     unused << SendShow(size, info, scrolling, textureFactoryIdentifier, layersId, renderFrame);
 }
 
 void
-TabParent::UpdateDimensions(const nsIntRect& rect, const nsIntSize& size)
+TabParent::UpdateDimensions(const nsIntRect& rect, const nsIntSize& size,
+                            const nsIntPoint& aChromeDisp)
 {
   if (mIsDestroyed) {
     return;
@@ -634,7 +637,7 @@ TabParent::UpdateDimensions(const nsIntRect& rect, const nsIntSize& size)
     mDimensions = size;
     mOrientation = orientation;
 
-    unused << SendUpdateDimensions(mRect, mDimensions, mOrientation);
+    unused << SendUpdateDimensions(mRect, mDimensions, mOrientation, aChromeDisp);
   }
 }
 

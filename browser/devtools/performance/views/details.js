@@ -19,8 +19,7 @@ let DetailsView = {
   },
 
   /**
-   * Sets up the view with event binding, initializes
-   * subviews.
+   * Sets up the view with event binding, initializes subviews.
    */
   initialize: Task.async(function *() {
     this.el = $("#details-pane");
@@ -37,25 +36,6 @@ let DetailsView = {
   }),
 
   /**
-   * Select one of the DetailView's subviews to be rendered,
-   * hiding the others.
-   *
-   * @params {String} selectedView
-   *         Name of the view to be shown.
-   */
-  selectView: function (selectedView) {
-    this.el.selectedIndex = this.viewIndexes[selectedView];
-    this.emit(EVENTS.DETAILS_VIEW_SELECTED, selectedView);
-  },
-
-  /**
-   * Called when a view button is clicked.
-   */
-  _onViewToggle: function (e) {
-    this.selectView(e.target.getAttribute("data-view"));
-  },
-
-  /**
    * Unbinds events, destroys subviews.
    */
   destroy: Task.async(function *() {
@@ -65,7 +45,34 @@ let DetailsView = {
 
     yield CallTreeView.destroy();
     yield WaterfallView.destroy();
-  })
+  }),
+
+  /**
+   * Select one of the DetailView's subviews to be rendered,
+   * hiding the others.
+   *
+   * @params {String} selectedView
+   *         Name of the view to be shown.
+   */
+  selectView: function (selectedView) {
+    this.el.selectedIndex = this.viewIndexes[selectedView];
+
+    for (let button of $$("toolbarbutton[data-view]", $("#details-toolbar"))) {
+      if (button.getAttribute("data-view") === selectedView)
+        button.setAttribute("checked", true);
+      else
+        button.removeAttribute("checked");
+    }
+
+    this.emit(EVENTS.DETAILS_VIEW_SELECTED, selectedView);
+  },
+
+  /**
+   * Called when a view button is clicked.
+   */
+  _onViewToggle: function (e) {
+    this.selectView(e.target.getAttribute("data-view"));
+  }
 };
 
 /**

@@ -695,7 +695,7 @@ NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(CanvasPattern, mContext)
 class CanvasDrawObserver
 {
 public:
-  CanvasDrawObserver(CanvasRenderingContext2D* aCanvasContext);
+  explicit CanvasDrawObserver(CanvasRenderingContext2D* aCanvasContext);
 
   // Only enumerate draw calls that could affect the heuristic
   enum DrawCallType {
@@ -3420,7 +3420,7 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcess
 
         const gfxTextRun::DetailedGlyph *d = mTextRun->GetDetailedGlyphs(i);
 
-        if (glyphs[i].IsMissing()) {
+        if (glyphs[i].IsMissing() && d->mAdvance > 0) {
           newGlyph.mIndex = 0;
           if (rtl) {
             inlinePos = baselineOriginInline - advanceSum -

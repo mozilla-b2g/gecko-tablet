@@ -851,6 +851,9 @@ public:
   // The decoder monitor must be held.
   bool IsLogicallyPlaying();
 
+  // Re-create a decoded stream if audio being captured
+  void RecreateDecodedStreamIfNecessary(int64_t aStartTimeUSecs);
+
 #ifdef MOZ_EME
   // This takes the decoder monitor.
   virtual nsresult SetCDMProxy(CDMProxy* aProxy) MOZ_OVERRIDE;
@@ -1123,14 +1126,6 @@ protected:
   // can be read on any thread while holding the monitor, or on the main thread
   // without holding the monitor.
   nsAutoPtr<DecodedStreamData> mDecodedStream;
-
-  // True if this decoder is in dormant state.
-  // Should be true only when PlayState is PLAY_STATE_LOADING.
-  bool mIsDormant;
-
-  // True if this decoder is exiting from dormant state.
-  // Should be true only when PlayState is PLAY_STATE_LOADING.
-  bool mIsExitingDormant;
 
   // Set to one of the valid play states.
   // This can only be changed on the main thread while holding the decoder

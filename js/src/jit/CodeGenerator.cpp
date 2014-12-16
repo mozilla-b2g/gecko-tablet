@@ -4884,19 +4884,13 @@ CodeGenerator::visitTypedArrayElements(LTypedArrayElements *lir)
 }
 
 void
-CodeGenerator::visitTypedObjectProto(LTypedObjectProto *lir)
+CodeGenerator::visitTypedObjectDescr(LTypedObjectDescr *lir)
 {
     Register obj = ToRegister(lir->object());
-    MOZ_ASSERT(ToRegister(lir->output()) == ReturnReg);
+    Register out = ToRegister(lir->output());
 
-    // Eventually we ought to inline this helper function for
-    // efficiency, but it's mildly non-trivial since we must reach
-    // into the type object and so on.
-
-    const Register tempReg = ToRegister(lir->temp());
-    masm.setupUnalignedABICall(1, tempReg);
-    masm.passABIArg(obj);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, TypedObjectProto));
+    masm.loadPtr(Address(obj, JSObject::offsetOfType()), out);
+    masm.loadPtr(Address(out, types::TypeObject::offsetOfAddendum()), out);
 }
 
 void
@@ -9772,11 +9766,9 @@ CodeGenerator::visitInterruptCheck(LInterruptCheck *lir)
 void
 CodeGenerator::visitAsmJSInterruptCheck(LAsmJSInterruptCheck *lir)
 {
-    Register scratch = ToRegister(lir->scratch());
-    masm.movePtr(AsmJSImmPtr(AsmJSImm_RuntimeInterruptUint32), scratch);
-    masm.load32(Address(scratch, 0), scratch);
     Label rejoin;
-    masm.branch32(Assembler::Equal, scratch, Imm32(0), &rejoin);
+    masm.branch32(Assembler::Equal, AsmJSAbsoluteAddress(AsmJSImm_RuntimeInterruptUint32),
+                  Imm32(0), &rejoin);
     {
         uint32_t stackFixup = ComputeByteAlignment(masm.framePushed() + sizeof(AsmJSFrame),
                                                    ABIStackAlignment);

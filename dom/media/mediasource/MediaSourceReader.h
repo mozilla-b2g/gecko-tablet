@@ -46,15 +46,14 @@ public:
 
   bool IsWaitingMediaResources() MOZ_OVERRIDE;
 
-  void RequestAudioData() MOZ_OVERRIDE;
+  nsRefPtr<AudioDataPromise> RequestAudioData() MOZ_OVERRIDE;
+  nsRefPtr<VideoDataPromise>
+  RequestVideoData(bool aSkipToNextKeyframe, int64_t aTimeThreshold) MOZ_OVERRIDE;
 
   void OnAudioDecoded(AudioData* aSample);
-
-  void RequestVideoData(bool aSkipToNextKeyframe, int64_t aTimeThreshold) MOZ_OVERRIDE;
-
+  void OnAudioNotDecoded(NotDecodedReason aReason);
   void OnVideoDecoded(VideoData* aSample);
-
-  void OnNotDecoded(MediaData::Type aType, NotDecodedReason aReason);
+  void OnVideoNotDecoded(NotDecodedReason aReason);
 
   void OnSeekCompleted(nsresult aResult);
 
@@ -140,6 +139,9 @@ private:
   nsRefPtr<TrackBuffer> mAudioTrack;
   nsRefPtr<TrackBuffer> mVideoTrack;
 
+  MediaPromiseHolder<AudioDataPromise> mAudioPromise;
+  MediaPromiseHolder<VideoDataPromise> mVideoPromise;
+
 #ifdef MOZ_EME
   nsRefPtr<CDMProxy> mCDMProxy;
 #endif
@@ -178,7 +180,7 @@ private:
 
   bool mHasEssentialTrackBuffers;
 
-  void ContinueShutdown(bool aSuccess);
+  void ContinueShutdown();
   MediaPromiseHolder<ShutdownPromise> mMediaSourceShutdownPromise;
 #ifdef MOZ_FMP4
   nsRefPtr<SharedDecoderManager> mSharedDecoderManager;

@@ -13,7 +13,9 @@ var sharedUtils = loop.shared.utils;
 describe("loop.panel", function() {
   "use strict";
 
-  var sandbox, notifications, fakeXHR, fakeWindow, requests = [];
+  var sandbox, notifications;
+  var fakeXHR, fakeWindow, fakeMozLoop;
+  var requests = [];
 
   beforeEach(function(done) {
     sandbox = sinon.sandbox.create();
@@ -22,7 +24,7 @@ describe("loop.panel", function() {
     // https://github.com/cjohansen/Sinon.JS/issues/393
     fakeXHR.xhr.onCreate = function (xhr) {
       requests.push(xhr);
-    }
+    };
 
     fakeWindow = {
       close: sandbox.stub(),
@@ -32,7 +34,7 @@ describe("loop.panel", function() {
 
     notifications = new loop.shared.models.NotificationCollection();
 
-    navigator.mozLoop = {
+    fakeMozLoop = navigator.mozLoop = {
       doNotDisturb: true,
       fxAEnabled: true,
       getStrings: function() {
@@ -164,7 +166,7 @@ describe("loop.panel", function() {
 
       dispatcher = new loop.Dispatcher();
       roomStore = new loop.store.RoomStore(dispatcher, {
-        mozLoop: navigator.mozLoop
+        mozLoop: fakeMozLoop
       });
     });
 
@@ -173,6 +175,7 @@ describe("loop.panel", function() {
         notifications: notifications,
         client: fakeClient,
         showTabButtons: true,
+        mozLoop: fakeMozLoop,
         dispatcher: dispatcher,
         roomStore: roomStore
       }));
@@ -897,7 +900,7 @@ describe("loop.panel", function() {
   });
 
   describe("loop.panel.RoomList", function() {
-    var roomStore, dispatcher, fakeEmail;
+    var roomStore, dispatcher, fakeEmail, dispatch;
 
     beforeEach(function() {
       fakeEmail = "fakeEmail@example.com";
@@ -911,6 +914,7 @@ describe("loop.panel", function() {
         rooms: [],
         error: undefined
       });
+      dispatch = sandbox.stub(dispatcher, "dispatch");
     });
 
     function createTestComponent() {
@@ -922,8 +926,6 @@ describe("loop.panel", function() {
     }
 
     it("should dispatch a GetAllRooms action on mount", function() {
-      var dispatch = sandbox.stub(dispatcher, "dispatch");
-
       createTestComponent();
 
       sinon.assert.calledOnce(dispatch);
@@ -934,7 +936,6 @@ describe("loop.panel", function() {
        "conversation button",
       function() {
         navigator.mozLoop.userProfile = {email: fakeEmail};
-        var dispatch = sandbox.stub(dispatcher, "dispatch");
         var view = createTestComponent();
 
         TestUtils.Simulate.click(view.getDOMNode().querySelector("button"));
@@ -945,9 +946,17 @@ describe("loop.panel", function() {
         }));
       });
 
+    it("should close the panel when 'Start a Conversation' is clicked",
+      function() {
+        var view = createTestComponent();
+
+        TestUtils.Simulate.click(view.getDOMNode().querySelector("button"));
+
+        sinon.assert.calledOnce(fakeWindow.close);
+      });
+
     it("should disable the create button when a creation operation is ongoing",
       function() {
-        var dispatch = sandbox.stub(dispatcher, "dispatch");
         roomStore.setStoreState({pendingCreation: true});
 
         var view = createTestComponent();
@@ -958,7 +967,6 @@ describe("loop.panel", function() {
 
     it("should disable the create button when a list retrieval operation is pending",
       function() {
-        var dispatch = sandbox.stub(dispatcher, "dispatch");
         roomStore.setStoreState({pendingInitialRetrieval: true});
 
         var view = createTestComponent();
@@ -971,6 +979,13 @@ describe("loop.panel", function() {
   describe('loop.panel.ToSView', function() {
 
     it("should render when the value of loop.seenToS is not set", function() {
+      navigator.mozLoop.getLoopPref = function(key) {
+        return {
+          "gettingStarted.seen": true,
+          "seenToS": "unseen"
+        }[key];
+      };
+
       var view = TestUtils.renderIntoDocument(loop.panel.ToSView());
 
       TestUtils.findRenderedDOMComponentWithClass(view, "terms-service");
@@ -978,15 +993,32 @@ describe("loop.panel", function() {
 
     it("should not render when the value of loop.seenToS is set to 'seen'",
       function(done) {
-        navigator.mozLoop.getLoopPref = function() {
-          return "seen";
+        navigator.mozLoop.getLoopPref = function(key) {
+          return {
+            "gettingStarted.seen": true,
+            "seenToS": "seen"
+          }[key];
         };
 
         try {
-          TestUtils.findRenderedDOMComponentWithClass(view, "tos");
+          TestUtils.findRenderedDOMComponentWithClass(view, "terms-service");
         } catch (err) {
           done();
         }
     });
+
+    it("should render when the value of loop.gettingStarted.seen is false",
+       function() {
+         navigator.mozLoop.getLoopPref = function(key) {
+           return {
+             "gettingStarted.seen": false,
+             "seenToS": "seen"
+           }[key];
+         };
+         var view = TestUtils.renderIntoDocument(loop.panel.ToSView());
+
+         TestUtils.findRenderedDOMComponentWithClass(view, "terms-service");
+       });
+
   });
 });

@@ -4196,6 +4196,9 @@ class ICGetProp_Generic : public ICMonitoredStub
         return space->allocate<ICGetProp_Generic>(code, firstMonitorStub);
     }
 
+    static ICGetProp_Generic *Clone(JSContext *cx, ICStubSpace *space, ICStub *firstMonitorStub,
+                                    ICGetProp_Generic &other);
+
     class Compiler : public ICStubCompiler {
       protected:
         bool generateStubCode(MacroAssembler &masm);
@@ -4955,7 +4958,7 @@ class ICGetProp_CallNativePrototype : public ICGetPropCallPrototypeGetter
     };
 };
 
-class ICGetPropCallDOMProxyNativeStub : public ICMonitoredStub
+class ICGetPropCallDOMProxyNativeStub : public ICGetPropCallGetter
 {
   friend class ICStubSpace;
   protected:
@@ -4967,16 +4970,6 @@ class ICGetPropCallDOMProxyNativeStub : public ICMonitoredStub
 
     // Object shape of expected expando object. (nullptr if no expando object should be there)
     HeapPtrShape expandoShape_;
-
-    // Holder and its shape.
-    HeapPtrObject holder_;
-    HeapPtrShape holderShape_;
-
-    // Function to call.
-    HeapPtrFunction getter_;
-
-    // PC offset of call
-    uint32_t pcOffset_;
 
     ICGetPropCallDOMProxyNativeStub(ICStub::Kind kind, JitCode *stubCode,
                                     ICStub *firstMonitorStub, HandleShape shape,
@@ -4991,19 +4984,6 @@ class ICGetPropCallDOMProxyNativeStub : public ICMonitoredStub
     HeapPtrShape &expandoShape() {
         return expandoShape_;
     }
-    HeapPtrObject &holder() {
-        return holder_;
-    }
-    HeapPtrShape &holderShape() {
-        return holderShape_;
-    }
-    HeapPtrFunction &getter() {
-        return getter_;
-    }
-    uint32_t pcOffset() const {
-        return pcOffset_;
-    }
-
     static size_t offsetOfShape() {
         return offsetof(ICGetPropCallDOMProxyNativeStub, shape_);
     }
@@ -5012,18 +4992,6 @@ class ICGetPropCallDOMProxyNativeStub : public ICMonitoredStub
     }
     static size_t offsetOfExpandoShape() {
         return offsetof(ICGetPropCallDOMProxyNativeStub, expandoShape_);
-    }
-    static size_t offsetOfHolder() {
-        return offsetof(ICGetPropCallDOMProxyNativeStub, holder_);
-    }
-    static size_t offsetOfHolderShape() {
-        return offsetof(ICGetPropCallDOMProxyNativeStub, holderShape_);
-    }
-    static size_t offsetOfGetter() {
-        return offsetof(ICGetPropCallDOMProxyNativeStub, getter_);
-    }
-    static size_t offsetOfPCOffset() {
-        return offsetof(ICGetPropCallDOMProxyNativeStub, pcOffset_);
     }
 };
 

@@ -9,6 +9,7 @@
 #include "Workers.h"
 
 #include "nsIContentSecurityPolicy.h"
+#include "nsILoadGroup.h"
 #include "nsIWorkerDebugger.h"
 #include "nsPIDOMWindow.h"
 
@@ -49,9 +50,7 @@ class Function;
 }
 }
 
-#ifdef DEBUG
 struct PRThread;
-#endif
 
 BEGIN_WORKERS_NAMESPACE
 
@@ -59,10 +58,11 @@ class AutoSyncLoopHolder;
 class MessagePort;
 class SharedWorker;
 class WorkerControlRunnable;
+class WorkerDebugger;
 class WorkerGlobalScope;
 class WorkerPrivate;
 class WorkerRunnable;
-class WorkerDebugger;
+class WorkerThread;
 
 // If you change this, the corresponding list in nsIWorkerDebugger.idl needs to
 // be updated too.
@@ -155,6 +155,7 @@ public:
     nsCOMPtr<nsPIDOMWindow> mWindow;
     nsCOMPtr<nsIContentSecurityPolicy> mCSP;
     nsCOMPtr<nsIChannel> mChannel;
+    nsCOMPtr<nsILoadGroup> mLoadGroup;
 
     nsCString mDomain;
 
@@ -194,6 +195,9 @@ public:
 
       MOZ_ASSERT(!mChannel);
       aOther.mChannel.swap(mChannel);
+
+      MOZ_ASSERT(!mLoadGroup);
+      aOther.mLoadGroup.swap(mLoadGroup);
 
       mDomain = aOther.mDomain;
       mEvalAllowed = aOther.mEvalAllowed;
@@ -541,6 +545,13 @@ public:
     return mLoadInfo.mPrincipal;
   }
 
+  nsILoadGroup*
+  GetLoadGroup() const
+  {
+    AssertIsOnMainThread();
+    return mLoadInfo.mLoadGroup;
+  }
+
   // This method allows the principal to be retrieved off the main thread.
   // Principals are main-thread objects so the caller must ensure that all
   // access occurs on the main thread.
@@ -551,7 +562,7 @@ public:
   }
 
   void
-  SetPrincipal(nsIPrincipal* aPrincipal);
+  SetPrincipal(nsIPrincipal* aPrincipal, nsILoadGroup* aLoadGroup);
 
   bool
   UsesSystemPrincipal() const
@@ -779,6 +790,8 @@ class WorkerPrivate : public WorkerPrivateParent<WorkerPrivate>
   class MemoryReporter;
   friend class MemoryReporter;
 
+  friend class WorkerThread;
+
   enum GCTimerMode
   {
     PeriodicTimer = 0,
@@ -794,7 +807,8 @@ class WorkerPrivate : public WorkerPrivateParent<WorkerPrivate>
   JSContext* mJSContext;
   nsRefPtr<WorkerCrossThreadDispatcher> mCrossThreadDispatcher;
   nsTArray<nsCOMPtr<nsIRunnable>> mUndispatchedRunnablesForSyncLoop;
-  nsCOMPtr<nsIThread> mThread;
+  nsRefPtr<WorkerThread> mThread;
+  PRThread* mPRThread;
 
   // Things touched on worker thread only.
   nsRefPtr<WorkerGlobalScope> mScope;
@@ -844,11 +858,6 @@ class WorkerPrivate : public WorkerPrivateParent<WorkerPrivate>
   bool mPeriodicGCTimerRunning;
   bool mIdleGCTimerRunning;
   bool mWorkerScriptExecutedSuccessfully;
-
-#ifdef DEBUG
-  PRThread* mPRThread;
-#endif
-
   bool mPreferences[WORKERPREF_COUNT];
   bool mOnLine;
 
@@ -1045,7 +1054,7 @@ public:
   }
 
   void
-  SetThread(nsIThread* aThread);
+  SetThread(WorkerThread* aThread);
 
   void
   AssertIsOnWorkerThread() const

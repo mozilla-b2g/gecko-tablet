@@ -168,18 +168,15 @@ static bool type##SignMask(JSContext *cx, unsigned argc, Value *vp) { \
 const Class SimdTypeDescr::class_ = {
     "SIMD",
     JSCLASS_HAS_RESERVED_SLOTS(JS_DESCR_SLOTS) | JSCLASS_BACKGROUND_FINALIZE,
-    nullptr,                 /* addProperty */
-    nullptr,                 /* delProperty */
-    JS_PropertyStub,         /* getProperty */
-    JS_StrictPropertyStub,   /* setProperty */
-    nullptr,                 /* enumerate   */
-    nullptr,                 /* resolve     */
-    nullptr,                 /* convert     */
+    nullptr, /* addProperty */
+    nullptr, /* delProperty */
+    nullptr, /* getProperty */
+    nullptr, /* setProperty */
+    nullptr, /* enumerate */
+    nullptr, /* resolve */
+    nullptr, /* convert */
     TypeDescr::finalize,
-    call,
-    nullptr,                 /* hasInstance */
-    nullptr,                 /* construct   */
-    nullptr
+    call
 };
 
 // These classes just exist to group together various properties and so on.
@@ -281,7 +278,6 @@ CreateSimdClass(JSContext *cx,
     proto = NewObjectWithProto<TypedProto>(cx, objProto, nullptr, TenuredObject);
     if (!proto)
         return nullptr;
-    proto->initTypeDescrSlot(*typeDescr);
     typeDescr->initReservedSlot(JS_DESCR_SLOT_TYPROTO, ObjectValue(*proto));
 
     // Link constructor to prototype and install properties.
@@ -354,11 +350,7 @@ SimdTypeDescr::call(JSContext *cx, unsigned argc, Value *vp)
 
 const Class SIMDObject::class_ = {
     "SIMD",
-    JSCLASS_HAS_CACHED_PROTO(JSProto_SIMD),
-    nullptr,                 /* addProperty */
-    nullptr,                 /* delProperty */
-    JS_PropertyStub,         /* getProperty */
-    JS_StrictPropertyStub    /* setProperty */
+    JSCLASS_HAS_CACHED_PROTO(JSProto_SIMD)
 };
 
 JSObject *

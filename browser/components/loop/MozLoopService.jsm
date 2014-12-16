@@ -456,6 +456,20 @@ let MozLoopServiceInternal = {
                                           2 * 32, true);
     }
 
+    if (payloadObj) {
+      // Note: we must copy the object rather than mutate it, to avoid
+      // mutating the values of the object passed in.
+      let newPayloadObj = {};
+      for (let property of Object.getOwnPropertyNames(payloadObj)) {
+        if (typeof payloadObj[property] == "string") {
+          newPayloadObj[property] = CommonUtils.encodeUTF8(payloadObj[property]);
+        } else {
+          newPayloadObj[property] = payloadObj[property];
+        }
+      };
+      payloadObj = newPayloadObj;
+    }
+
     return gHawkClient.request(path, method, credentials, payloadObj).then((result) => {
       this.clearError("network");
       return result;
@@ -814,9 +828,15 @@ let MozLoopServiceInternal = {
 
         let window = chatbox.contentWindow;
 
-        window.addEventListener("unload", function onUnloadChat(evt) {
-          UITour.notify("Loop:ChatWindowClosed");
-        });
+        function socialFrameChanged(eventName) {
+          UITour.availableTargetsCache.clear();
+          UITour.notify(eventName);
+        }
+
+        window.addEventListener("socialFrameHide", socialFrameChanged.bind(null, "Loop:ChatWindowHidden"));
+        window.addEventListener("socialFrameShow", socialFrameChanged.bind(null, "Loop:ChatWindowShown"));
+        window.addEventListener("socialFrameDetached", socialFrameChanged.bind(null, "Loop:ChatWindowDetached"));
+        window.addEventListener("unload", socialFrameChanged.bind(null, "Loop:ChatWindowClosed"));
 
         injectLoopAPI(window);
 
@@ -1053,11 +1073,13 @@ this.MozLoopService = {
 
     // The Loop toolbar button should change icon when the room participant count
     // changes from 0 to something.
-    const onRoomsChange = () => {
-      MozLoopServiceInternal.notifyStatusChanged();
+    const onRoomsChange = (e) => {
+      // Pass the event name as notification reason for better logging.
+      MozLoopServiceInternal.notifyStatusChanged("room-" + e);
     };
     LoopRooms.on("add", onRoomsChange);
     LoopRooms.on("update", onRoomsChange);
+    LoopRooms.on("delete", onRoomsChange);
     LoopRooms.on("joined", (e, room, participant) => {
       // Don't alert if we're in the doNotDisturb mode, or the participant
       // is the owner - the content code deals with the rest of the sounds.

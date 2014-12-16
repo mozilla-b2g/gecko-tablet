@@ -192,7 +192,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     void visitTypedArrayElements(MTypedArrayElements *ins);
     void visitTypedObjectElements(MTypedObjectElements *ins);
     void visitSetTypedObjectOffset(MSetTypedObjectOffset *ins);
-    void visitTypedObjectProto(MTypedObjectProto *ins);
+    void visitTypedObjectDescr(MTypedObjectDescr *ins);
     void visitInitializedLength(MInitializedLength *ins);
     void visitSetInitializedLength(MSetInitializedLength *ins);
     void visitNot(MNot *ins);
@@ -283,7 +283,6 @@ class LIRGenerator : public LIRGeneratorSpecific
     void visitSimdShuffle(MSimdShuffle *ins);
     void visitSimdUnaryArith(MSimdUnaryArith *ins);
     void visitSimdBinaryComp(MSimdBinaryComp *ins);
-    void visitSimdBinaryArith(MSimdBinaryArith *ins);
     void visitSimdBinaryBitwise(MSimdBinaryBitwise *ins);
     void visitSimdShift(MSimdShift *ins);
     void visitSimdConstant(MSimdConstant *ins);

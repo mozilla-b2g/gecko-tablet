@@ -459,7 +459,7 @@ sandbox_addProperty(JSContext *cx, HandleObject obj, HandleId id, MutableHandleV
 static const js::Class SandboxClass = {
     "Sandbox",
     XPCONNECT_GLOBAL_FLAGS_WITH_EXTRA_SLOTS(1),
-    nullptr, nullptr, JS_PropertyStub, JS_StrictPropertyStub,
+    nullptr, nullptr, nullptr, nullptr,
     sandbox_enumerate, sandbox_resolve, sandbox_convert,  sandbox_finalize,
     nullptr, nullptr, nullptr, JS_GlobalObjectTraceHook,
     JS_NULL_CLASS_SPEC,
@@ -478,7 +478,7 @@ static const js::Class SandboxClass = {
 static const js::Class SandboxWriteToProtoClass = {
     "Sandbox",
     XPCONNECT_GLOBAL_FLAGS_WITH_EXTRA_SLOTS(1),
-    sandbox_addProperty, nullptr, JS_PropertyStub, JS_StrictPropertyStub,
+    sandbox_addProperty, nullptr, nullptr, nullptr,
     sandbox_enumerate, sandbox_resolve, sandbox_convert,  sandbox_finalize,
     nullptr, nullptr, nullptr, JS_GlobalObjectTraceHook,
     JS_NULL_CLASS_SPEC,
@@ -761,9 +761,7 @@ xpc::GlobalProperties::Parse(JSContext *cx, JS::HandleObject obj)
         }
         JSAutoByteString name(cx, nameValue.toString());
         NS_ENSURE_TRUE(name, false);
-        if (Promise && !strcmp(name.ptr(), "-Promise")) {
-            Promise = false;
-        } else if (!strcmp(name.ptr(), "CSS")) {
+        if (!strcmp(name.ptr(), "CSS")) {
             CSS = true;
         } else if (!strcmp(name.ptr(), "indexedDB")) {
             indexedDB = true;
@@ -797,9 +795,6 @@ bool
 xpc::GlobalProperties::Define(JSContext *cx, JS::HandleObject obj)
 {
     if (CSS && !dom::CSSBinding::GetConstructorObject(cx, obj))
-        return false;
-
-    if (Promise && !dom::PromiseBinding::GetConstructorObject(cx, obj))
         return false;
 
     if (indexedDB && AccessCheck::isChrome(obj) &&
@@ -969,6 +964,11 @@ xpc::CreateSandboxObject(JSContext *cx, MutableHandleValue vp, nsISupports *prin
             return NS_ERROR_XPC_UNEXPECTED;
 
         if (!options.globalProperties.Define(cx, sandbox))
+            return NS_ERROR_XPC_UNEXPECTED;
+
+        // Promise is supposed to be part of ES, and therefore should appear on
+        // every global.
+        if (!dom::PromiseBinding::GetConstructorObject(cx, sandbox))
             return NS_ERROR_XPC_UNEXPECTED;
 
         // Resolve standard classes eagerly to avoid triggering mirroring hooks for them.

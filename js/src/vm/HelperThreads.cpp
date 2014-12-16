@@ -28,19 +28,32 @@ using mozilla::DebugOnly;
 
 namespace js {
 
-GlobalHelperThreadState gHelperThreadState;
+GlobalHelperThreadState *gHelperThreadState = nullptr;
 
 } // namespace js
 
-void
-js::EnsureHelperThreadsInitialized(ExclusiveContext *cx)
+bool
+js::CreateHelperThreadsState()
 {
-    // If 'cx' is not a JSContext, we are already off the main thread and the
-    // helper threads would have already been initialized.
-    if (!cx->isJSContext())
-        return;
+    MOZ_ASSERT(!gHelperThreadState);
+    gHelperThreadState = js_new<GlobalHelperThreadState>();
+    return gHelperThreadState != nullptr;
+}
 
-    HelperThreadState().ensureInitialized();
+void
+js::DestroyHelperThreadsState()
+{
+    MOZ_ASSERT(gHelperThreadState);
+    gHelperThreadState->finish();
+    js_delete(gHelperThreadState);
+    gHelperThreadState = nullptr;
+}
+
+void
+js::EnsureHelperThreadsInitialized()
+{
+    MOZ_ASSERT(gHelperThreadState);
+    gHelperThreadState->ensureInitialized();
 }
 
 static size_t
@@ -85,8 +98,6 @@ js::StartOffThreadAsmJSCompile(ExclusiveContext *cx, AsmJSParallelTask *asmData)
 bool
 js::StartOffThreadIonCompile(JSContext *cx, jit::IonBuilder *builder)
 {
-    EnsureHelperThreadsInitialized(cx);
-
     AutoLockHelperThreadState lock;
 
     if (!HelperThreadState().ionWorklist().append(builder))
@@ -176,8 +187,7 @@ js::CancelOffThreadIonCompile(JSCompartment *compartment, JSScript *script)
 
 static const JSClass parseTaskGlobalClass = {
     "internal-parse-task-global", JSCLASS_GLOBAL_FLAGS,
-    nullptr,          nullptr,
-    JS_PropertyStub,  JS_StrictPropertyStub,
+    nullptr, nullptr, nullptr, nullptr,
     nullptr, nullptr, nullptr, nullptr,
     nullptr, nullptr, nullptr,
     JS_GlobalObjectTraceHook
@@ -309,8 +319,6 @@ js::StartOffThreadParseScript(JSContext *cx, const ReadOnlyCompileOptions &optio
     // Suppress GC so that calls below do not trigger a new incremental GC
     // which could require barriers on the atoms compartment.
     gc::AutoSuppressGC suppress(cx);
-
-    EnsureHelperThreadsInitialized(cx);
 
     JS::CompartmentOptions compartmentOptions(cx->compartment()->options());
     compartmentOptions.setZone(JS::FreshZone);
@@ -485,8 +493,10 @@ GlobalHelperThreadState::finish()
 {
     if (threads) {
         MOZ_ASSERT(CanUseExtraThreads());
-        for (size_t i = 0; i < threadCount; i++)
+        for (size_t i = 0; i < threadCount; i++) {
             threads[i].destroy();
+            threads[i].~HelperThread();
+        }
         js_free(threads);
     }
 
@@ -1202,7 +1212,7 @@ HelperThread::handleCompressionWorkload()
 
     {
         AutoUnlockHelperThreadState unlock;
-        compressionTask->result = compressionTask->work();
+        compressionTask->result = compressionTask->work(sourceCompressor);
     }
 
     compressionTask->helperThread = nullptr;
@@ -1215,8 +1225,6 @@ HelperThread::handleCompressionWorkload()
 bool
 js::StartOffThreadCompression(ExclusiveContext *cx, SourceCompressionTask *task)
 {
-    EnsureHelperThreadsInitialized(cx);
-
     AutoLockHelperThreadState lock;
 
     if (!HelperThreadState().compressionWorklist().append(task)) {

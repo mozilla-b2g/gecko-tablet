@@ -2295,8 +2295,8 @@ nsLayoutUtils::GetTransformToAncestorScale(nsIFrame* aFrame)
 }
 
 
-static nsIFrame*
-FindNearestCommonAncestorFrame(nsIFrame* aFrame1, nsIFrame* aFrame2)
+nsIFrame*
+nsLayoutUtils::FindNearestCommonAncestorFrame(nsIFrame* aFrame1, nsIFrame* aFrame2)
 {
   nsAutoTArray<nsIFrame*,100> ancestors1;
   nsAutoTArray<nsIFrame*,100> ancestors2;
@@ -2450,6 +2450,34 @@ nsLayoutUtils::ContainsPoint(const nsRect& aRect, const nsPoint& aPoint,
   nsRect rect = aRect;
   rect.Inflate(aInflateSize);
   return rect.Contains(aPoint);
+}
+
+bool
+nsLayoutUtils::IsRectVisibleInScrollFrames(nsIFrame* aFrame, const nsRect& aRect)
+{
+  nsIFrame* closestScrollFrame =
+    nsLayoutUtils::GetClosestFrameOfType(aFrame, nsGkAtoms::scrollFrame);
+
+  while (closestScrollFrame) {
+    nsIScrollableFrame* sf = do_QueryFrame(closestScrollFrame);
+    nsRect scrollPortRect = sf->GetScrollPortRect();
+
+    nsRect rectRelativeToScrollFrame = aRect;
+    nsLayoutUtils::TransformRect(aFrame, closestScrollFrame,
+                                 rectRelativeToScrollFrame);
+
+    // Check whether aRect is visible in the scroll frame or not.
+    if (!scrollPortRect.Intersects(rectRelativeToScrollFrame)) {
+      return false;
+    }
+
+    // Get next ancestor scroll frame.
+    closestScrollFrame =
+      nsLayoutUtils::GetClosestFrameOfType(closestScrollFrame->GetParent(),
+                                           nsGkAtoms::scrollFrame);
+  }
+
+  return true;
 }
 
 bool
@@ -5510,6 +5538,11 @@ struct SnappedImageDrawingParameters {
   // The region in tiled image space which will be drawn, with an associated
   // region to which sampling should be restricted.
   ImageRegion region;
+  // The default viewport size for SVG images, which we use unless a different
+  // one has been explicitly specified. This is the same as |size| except that
+  // it does not take into account any transformation on the gfxContext we're
+  // drawing to - for example, CSS transforms are not taken into account.
+  nsIntSize svgViewportSize;
   // Whether there's anything to draw at all.
   bool shouldDraw;
 
@@ -5520,10 +5553,12 @@ struct SnappedImageDrawingParameters {
 
   SnappedImageDrawingParameters(const gfxMatrix&   aImageSpaceToDeviceSpace,
                                 const nsIntSize&   aSize,
-                                const ImageRegion& aRegion)
+                                const ImageRegion& aRegion,
+                                const nsIntSize&   aSVGViewportSize)
    : imageSpaceToDeviceSpace(aImageSpaceToDeviceSpace)
    , size(aSize)
    , region(aRegion)
+   , svgViewportSize(aSVGViewportSize)
    , shouldDraw(true)
   {}
 };
@@ -5638,6 +5673,11 @@ ComputeSnappedImageDrawingParameters(gfxContext*     aCtx,
                                     aGraphicsFilter, aImageFlags);
   gfxSize imageSize(intImageSize.width, intImageSize.height);
 
+  nsIntSize svgViewportSize = currentMatrix.IsIdentity()
+      ? intImageSize
+      : nsIntSize(NSAppUnitsToIntPixels(dest.width, aAppUnitsPerDevPixel),
+                  NSAppUnitsToIntPixels(dest.height, aAppUnitsPerDevPixel));
+
   // Compute the set of pixels that would be sampled by an ideal rendering
   gfxPoint subimageTopLeft =
     MapToFloatImagePixels(imageSize, devPixelDest, devPixelFill.TopLeft());
@@ -5715,7 +5755,9 @@ ComputeSnappedImageDrawingParameters(gfxContext*     aCtx,
 
   ImageRegion region =
     ImageRegion::CreateWithSamplingRestriction(imageSpaceFill, subimage);
-  return SnappedImageDrawingParameters(transform, intImageSize, region);
+
+  return SnappedImageDrawingParameters(transform, intImageSize,
+                                       region, svgViewportSize);
 }
 
 
@@ -5753,8 +5795,14 @@ DrawImageInternal(gfxContext&            aContext,
   gfxContextMatrixAutoSaveRestore contextMatrixRestorer(&aContext);
   aContext.SetMatrix(params.imageSpaceToDeviceSpace);
 
+  Maybe<SVGImageContext> svgContext = ToMaybe(aSVGContext);
+  if (!svgContext) {
+    // Use the default viewport.
+    svgContext = Some(SVGImageContext(params.svgViewportSize, Nothing()));
+  }
+
   aImage->Draw(&aContext, params.size, params.region, imgIContainer::FRAME_CURRENT,
-               aGraphicsFilter, ToMaybe(aSVGContext), aImageFlags);
+               aGraphicsFilter, svgContext, aImageFlags);
 
   return NS_OK;
 }
@@ -6195,7 +6243,7 @@ nsLayoutUtils::GetTextRunFlagsForStyle(nsStyleContext* aStyleContext,
   }
   WritingMode wm(aStyleContext);
   if (wm.IsVertical()) {
-    switch (aStyleText->mTextOrientation) {
+    switch (aStyleContext->StyleVisibility()->mTextOrientation) {
     case NS_STYLE_TEXT_ORIENTATION_MIXED:
       result |= gfxTextRunFactory::TEXT_ORIENT_VERTICAL_MIXED;
       break;

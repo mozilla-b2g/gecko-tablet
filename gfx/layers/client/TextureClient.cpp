@@ -386,6 +386,10 @@ TextureClient::CreateForDrawing(ISurfaceAllocator* aAllocator,
     return texture;
   }
 
+  if (aAllocFlags & ALLOC_DISALLOW_BUFFERTEXTURECLIENT) {
+    return nullptr;
+  }
+
   if (texture) {
     NS_WARNING("Failed to allocate a TextureClient, falling back to BufferTextureClient.");
   }
@@ -884,6 +888,22 @@ SharedSurfaceTextureClient::ToSurfaceDescriptor(SurfaceDescriptor& aOutDescripto
 {
   aOutDescriptor = SharedSurfaceDescriptor((uintptr_t)mSurf);
   return true;
+}
+
+TemporaryRef<SyncObject>
+SyncObject::CreateSyncObject(SyncHandle aHandle)
+{
+  if (!aHandle) {
+    return nullptr;
+  }
+
+#ifdef XP_WIN
+  RefPtr<SyncObject> syncObject = new SyncObjectD3D11(aHandle);
+  return syncObject;
+#else
+  MOZ_ASSERT_UNREACHABLE();
+  return nullptr;
+#endif
 }
 
 }

@@ -86,7 +86,7 @@ bool xpc_IsReportableErrorCode(nsresult code)
 // PendingResult.
 class MOZ_STACK_CLASS AutoSavePendingResult {
 public:
-    AutoSavePendingResult(XPCContext *xpcc) :
+    explicit AutoSavePendingResult(XPCContext *xpcc) :
         mXPCContext(xpcc)
     {
         // Save any existing pending result and reset to NS_OK for this invocation.
@@ -1444,10 +1444,10 @@ FinalizeStub(JSFreeOp *fop, JSObject *obj)
 static const JSClass XPCOutParamClass = {
     "XPCOutParam",
     0,
-    nullptr,
-    nullptr,
-    JS_PropertyStub,
-    JS_StrictPropertyStub,
+    nullptr,   /* addProperty */
+    nullptr,   /* delProperty */
+    nullptr,   /* getProperty */
+    nullptr,   /* setProperty */
     nullptr,   /* enumerate */
     nullptr,   /* resolve */
     nullptr,   /* convert */

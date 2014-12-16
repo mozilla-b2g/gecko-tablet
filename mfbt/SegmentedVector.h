@@ -32,12 +32,24 @@
 
 namespace mozilla {
 
-// IdealSegmentSize is how big each segment will be in bytes (or as close as is
-// possible). It's best to choose a size that's a power-of-two (to avoid slop)
-// and moderately large (not too small so segment allocations are infrequent,
-// and not too large so that not too much space is wasted when the final
-// segment is not full). Something like 4096 or 8192 is probably good.
-template<typename T, size_t IdealSegmentSize,
+// |IdealSegmentSize| specifies how big each segment will be in bytes (or as
+// close as is possible). Use the following guidelines to choose a size.
+//
+// - It should be a power-of-two, to avoid slop.
+//
+// - It should not be too small, so that segment allocations are infrequent,
+//   and so that per-segment bookkeeping overhead is low. Typically each
+//   segment should be able to hold hundreds of elements, at least.
+//
+// - It should not be too large, so that OOMs are unlikely when allocating
+//   segments, and so that not too much space is wasted when the final segment
+//   is not full.
+//
+// The ideal size depends on how the SegmentedVector is used and the size of
+// |T|, but reasonable sizes include 1024, 4096 (the default), 8192, and 16384.
+//
+template<typename T,
+         size_t IdealSegmentSize = 4096,
          typename AllocPolicy = MallocAllocPolicy>
 class SegmentedVector : private AllocPolicy
 {
@@ -114,7 +126,7 @@ public:
   // check that the actual segment size is as close as possible to it. This
   // serves as a sanity check for SegmentedVectorCapacity's capacity
   // computation.
-  SegmentedVector(size_t aIdealSegmentSize = 0)
+  explicit SegmentedVector(size_t aIdealSegmentSize = 0)
   {
     // The difference between the actual segment size and the ideal segment
     // size should be less than the size of a single element... unless the
@@ -192,7 +204,7 @@ public:
     Segment* mSegment;
     size_t mIndex;
 
-    IterImpl(SegmentedVector* aVector)
+    explicit IterImpl(SegmentedVector* aVector)
       : mSegment(aVector->mSegments.getFirst())
       , mIndex(0)
     {}

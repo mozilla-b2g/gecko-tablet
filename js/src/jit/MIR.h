@@ -1883,7 +1883,7 @@ class MSimdBinaryArith : public MBinaryInstruction
     MSimdBinaryArith(MDefinition *left, MDefinition *right, Operation op, MIRType type)
       : MBinaryInstruction(left, right), operation_(op)
     {
-        MOZ_ASSERT_IF(type == MIRType_Int32x4, op == Add || op == Sub);
+        MOZ_ASSERT_IF(type == MIRType_Int32x4, op == Add || op == Sub || op == Mul);
         MOZ_ASSERT(IsSimdType(type));
         MOZ_ASSERT(left->type() == right->type());
         MOZ_ASSERT(left->type() == type);
@@ -2829,12 +2829,12 @@ class MNewTypedObject : public MNullaryInstruction
     }
 };
 
-class MTypedObjectProto
+class MTypedObjectDescr
   : public MUnaryInstruction,
     public SingleObjectPolicy::Data
 {
   private:
-    explicit MTypedObjectProto(MDefinition *object)
+    explicit MTypedObjectDescr(MDefinition *object)
       : MUnaryInstruction(object)
     {
         setResultType(MIRType_Object);
@@ -2842,10 +2842,10 @@ class MTypedObjectProto
     }
 
   public:
-    INSTRUCTION_HEADER(TypedObjectProto)
+    INSTRUCTION_HEADER(TypedObjectDescr)
 
-    static MTypedObjectProto *New(TempAllocator &alloc, MDefinition *object) {
-        return new(alloc) MTypedObjectProto(object);
+    static MTypedObjectDescr *New(TempAllocator &alloc, MDefinition *object) {
+        return new(alloc) MTypedObjectDescr(object);
     }
 
     MDefinition *object() const {
@@ -10507,7 +10507,7 @@ class MGetDOMProperty
     const JSJitInfo *info_;
 
   protected:
-    MGetDOMProperty(const JSJitInfo *jitinfo)
+    explicit MGetDOMProperty(const JSJitInfo *jitinfo)
       : info_(jitinfo)
     {
         MOZ_ASSERT(jitinfo);
@@ -10624,7 +10624,7 @@ class MGetDOMProperty
 class MGetDOMMember : public MGetDOMProperty
 {
     // We inherit everything from MGetDOMProperty except our possiblyCalls value
-    MGetDOMMember(const JSJitInfo *jitinfo)
+    explicit MGetDOMMember(const JSJitInfo *jitinfo)
         : MGetDOMProperty(jitinfo)
     {
     }
@@ -11343,10 +11343,8 @@ class MTypeBarrier
     }
 
     void printOpcode(FILE *fp) const;
+    bool congruentTo(const MDefinition *def) const;
 
-    bool congruentTo(const MDefinition *def) const {
-        return false;
-    }
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }

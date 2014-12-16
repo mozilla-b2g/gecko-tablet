@@ -5376,7 +5376,7 @@ class CheckSimdScalarArgs
     Type formalType_;
 
   public:
-    CheckSimdScalarArgs(AsmJSSimdType simdType)
+    explicit CheckSimdScalarArgs(AsmJSSimdType simdType)
       : simdType_(simdType), formalType_(SimdToCoercedScalarType(simdType))
     {}
 
@@ -9164,9 +9164,6 @@ EstablishPreconditions(ExclusiveContext *cx, AsmJSParser &parser)
 
     if (parser.pc->isArrowFunction())
         return Warn(parser, JSMSG_USE_ASM_TYPE_FAIL, "Disabled by arrow function context");
-
-    if (ParallelCompilationEnabled(cx))
-        EnsureHelperThreadsInitialized(cx);
 
     return true;
 }

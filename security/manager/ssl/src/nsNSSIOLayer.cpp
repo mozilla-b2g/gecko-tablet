@@ -103,12 +103,12 @@ typedef enum {ASK, AUTO} SSM_UserCertChoice;
 // from TLS 1.2 to earlier versions (bug 861310).
 static const bool FALSE_START_REQUIRE_FORWARD_SECRECY_DEFAULT = true;
 
-// XXX(perf bug 940787): We currently require NPN because there is a very
-// high (perfect so far) correlation between servers that are false-start-
-// tolerant and servers that support NPN, according to Google. Without this, we
-// will run into interop issues with a small percentage of servers that stop
-// responding when we attempt to false start.
-static const bool FALSE_START_REQUIRE_NPN_DEFAULT = true;
+// Historically, we have required that the server negotiate ALPN or NPN in
+// order to false start, as a compatibility hack to work around
+// implementations that just stop responding during false start. However, now
+// false start is resricted to modern crypto (TLS 1.2 and AEAD cipher suites)
+// so it is less likely that requring NPN or ALPN is still necessary.
+static const bool FALSE_START_REQUIRE_NPN_DEFAULT = false;
 
 } // unnamed namespace
 
@@ -1845,9 +1845,9 @@ nsSSLIOLayerHelpers::loadVersionFallbackLimit()
 {
   // see nsNSSComponent::setEnabledTLSVersions for pref handling rules
   uint32_t limit = Preferences::GetUint("security.tls.version.fallback-limit",
-                                        1); // 1 = TLS 1.0
-  SSLVersionRange defaults = { SSL_LIBRARY_VERSION_TLS_1_0,
-                               SSL_LIBRARY_VERSION_TLS_1_0 };
+                                        3); // 3 = TLS 1.2
+  SSLVersionRange defaults = { SSL_LIBRARY_VERSION_TLS_1_2,
+                               SSL_LIBRARY_VERSION_TLS_1_2 };
   SSLVersionRange filledInRange;
   nsNSSComponent::FillTLSVersionRange(filledInRange, limit, limit, defaults);
 

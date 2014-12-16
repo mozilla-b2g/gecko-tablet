@@ -60,7 +60,7 @@ LIRGeneratorX86Shared::visitPowHalf(MPowHalf *ins)
     MDefinition *input = ins->input();
     MOZ_ASSERT(input->type() == MIRType_Double);
     LPowHalfD *lir = new(alloc()) LPowHalfD(useRegisterAtStart(input));
-    defineReuseInput(lir, ins, 0);
+    define(lir, ins);
 }
 
 void
@@ -96,29 +96,13 @@ LIRGeneratorX86Shared::lowerForALU(LInstructionHelper<1, 2, 0> *ins, MDefinition
     defineReuseInput(ins, mir, 0);
 }
 
-static bool
-UseAVXEncoding(MIRType type)
-{
-    if (!Assembler::HasAVX())
-        return false;
-
-    // TODO: For now, we just do this for floating-point types, until the rest
-    // of the assembler support is done.
-    if (IsFloatingPointType(type))
-        return true;
-    if (IsSimdType(type) && IsFloatingPointType(SimdTypeToScalarType(type)))
-        return true;
-
-    return false;
-}
-
 template<size_t Temps>
 void
 LIRGeneratorX86Shared::lowerForFPU(LInstructionHelper<1, 2, Temps> *ins, MDefinition *mir, MDefinition *lhs, MDefinition *rhs)
 {
     // Without AVX, we'll need to use the x86 encodings where one of the
     // inputs must be the same location as the output.
-    if (!UseAVXEncoding(mir->type())) {
+    if (!Assembler::HasAVX()) {
         ins->setOperand(0, useRegisterAtStart(lhs));
         ins->setOperand(1, lhs != rhs ? use(rhs) : useAtStart(rhs));
         defineReuseInput(ins, mir, 0);
@@ -653,6 +637,37 @@ LIRGeneratorX86Shared::visitAsmJSAtomicBinopHeap(MAsmJSAtomicBinopHeap *ins)
         new(alloc()) LAsmJSAtomicBinopHeap(useRegister(ptr), value, tempDef);
 
     defineFixed(lir, ins, LAllocation(AnyRegister(eax)));
+}
+
+void
+LIRGeneratorX86Shared::visitSimdBinaryArith(MSimdBinaryArith *ins)
+{
+    MOZ_ASSERT(IsSimdType(ins->type()));
+
+    MDefinition *lhs = ins->lhs();
+    MDefinition *rhs = ins->rhs();
+
+    if (ins->isCommutative())
+        ReorderCommutative(&lhs, &rhs, ins);
+
+    if (ins->type() == MIRType_Int32x4) {
+        LSimdBinaryArithIx4 *lir = new(alloc()) LSimdBinaryArithIx4();
+        bool needsTemp = ins->operation() == MSimdBinaryArith::Mul && !MacroAssembler::HasSSE41();
+        lir->setTemp(0, needsTemp ? temp(LDefinition::INT32X4) : LDefinition::BogusTemp());
+        lowerForFPU(lir, ins, lhs, rhs);
+        return;
+    }
+
+    MOZ_ASSERT(ins->type() == MIRType_Float32x4, "unknown simd type on binary arith operation");
+
+    LSimdBinaryArithFx4 *lir = new(alloc()) LSimdBinaryArithFx4();
+
+    bool needsTemp = ins->operation() == MSimdBinaryArith::Max ||
+                     ins->operation() == MSimdBinaryArith::MinNum ||
+                     ins->operation() == MSimdBinaryArith::MaxNum;
+    lir->setTemp(0, needsTemp ? temp(LDefinition::FLOAT32X4) : LDefinition::BogusTemp());
+
+    lowerForFPU(lir, ins, lhs, rhs);
 }
 
 void

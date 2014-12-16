@@ -43,7 +43,6 @@
 #include "jswatchpoint.h"
 #include "jsweakmap.h"
 #include "jswrapper.h"
-#include "prmjtime.h"
 
 #include "asmjs/AsmJSLink.h"
 #include "builtin/AtomicsObject.h"
@@ -572,6 +571,9 @@ JS_Init(void)
         return false;
 #endif // EXPOSE_INTL_API
 
+    if (!CreateHelperThreadsState())
+        return false;
+
     jsInitState = Running;
     return true;
 }
@@ -591,7 +593,7 @@ JS_ShutDown(void)
     }
 #endif
 
-    HelperThreadState().finish();
+    DestroyHelperThreadsState();
 
     PRMJ_NowShutdown();
 
@@ -1252,8 +1254,7 @@ JS_ResolveStandardClass(JSContext *cx, HandleObject obj, HandleId id, bool *reso
     if (idstr == undefinedAtom) {
         *resolved = true;
         return JSObject::defineProperty(cx, obj, undefinedAtom->asPropertyName(),
-                                        UndefinedHandleValue,
-                                        JS_PropertyStub, JS_StrictPropertyStub,
+                                        UndefinedHandleValue, nullptr, nullptr,
                                         JSPROP_PERMANENT | JSPROP_READONLY);
     }
 
@@ -2716,23 +2717,10 @@ JS_AlreadyHasOwnPropertyById(JSContext *cx, HandleObject obj, HandleId id, bool 
         return true;
     }
 
-    // Check for an existing native property on the object. Be careful not to
-    // call any lookup or resolve hooks.
-    if (JSID_IS_INT(id)) {
-        uint32_t index = JSID_TO_INT(id);
-
-        if (obj->as<NativeObject>().containsDenseElement(index)) {
-            *foundp = true;
-            return true;
-        }
-
-        if (IsAnyTypedArray(obj) && index < AnyTypedArrayLength(obj)) {
-            *foundp = true;
-            return true;
-        }
-    }
-
-    *foundp = obj->as<NativeObject>().contains(cx, id);
+    RootedNativeObject nativeObj(cx, &obj->as<NativeObject>());
+    RootedShape prop(cx);
+    NativeLookupOwnPropertyNoResolve(cx, nativeObj, id, &prop);
+    *foundp = !!prop;
     return true;
 }
 
@@ -2862,6 +2850,19 @@ DefinePropertyById(JSContext *cx, HandleObject obj, HandleId id, HandleValue val
                           ? JS_FUNC_TO_DATA_PTR(JSObject *, setter)
                           : nullptr);
 
+    // In most places throughout the engine, a property with null getter and
+    // not JSPROP_GETTER/SETTER/SHARED has no getter, and the same for setters:
+    // it's just a plain old data property. However the JS_Define* APIs use
+    // null getter and setter to mean "default to the Class getProperty and
+    // setProperty ops".
+    if (!getter)
+        getter = obj->getClass()->getProperty;
+    if (!setter)
+        setter = obj->getClass()->setProperty;
+    if (getter == JS_PropertyStub)
+        getter = nullptr;
+    if (setter == JS_StrictPropertyStub)
+        setter = nullptr;
     return JSObject::defineGeneric(cx, obj, id, value, getter, setter, attrs);
 }
 
@@ -4001,7 +4002,8 @@ js_generic_native_method_dispatcher(JSContext *cx, unsigned argc, Value *vp)
 }
 
 JS_PUBLIC_API(bool)
-JS_DefineFunctions(JSContext *cx, HandleObject obj, const JSFunctionSpec *fs)
+JS_DefineFunctions(JSContext *cx, HandleObject obj, const JSFunctionSpec *fs,
+                   PropertyDefinitionBehavior behavior)
 {
     MOZ_ASSERT(!cx->runtime()->isAtomsCompartment(cx->compartment()));
     AssertHeapIsIdle(cx);
@@ -4013,11 +4015,24 @@ JS_DefineFunctions(JSContext *cx, HandleObject obj, const JSFunctionSpec *fs)
         if (!PropertySpecNameToId(cx, fs->name, &id))
             return false;
 
+        unsigned flags = fs->flags;
+        switch (behavior) {
+          case DefineAllProperties:
+            break;
+          case OnlyDefineLateProperties:
+            if (!(flags & JSPROP_DEFINE_LATE))
+                continue;
+            break;
+          default:
+            MOZ_ASSERT(behavior == DontDefineLateProperties);
+            if (flags & JSPROP_DEFINE_LATE)
+                continue;
+        }
+
         /*
          * Define a generic arity N+1 static method for the arity N prototype
          * method if flags contains JSFUN_GENERIC_NATIVE.
          */
-        unsigned flags = fs->flags;
         if (flags & JSFUN_GENERIC_NATIVE) {
             // We require that any consumers using JSFUN_GENERIC_NATIVE stash
             // the prototype and constructor in the global slots before invoking
@@ -6278,6 +6293,12 @@ JS_IsIdentifier(JSContext *cx, HandleString str, bool *isIdentifier)
 
     *isIdentifier = js::frontend::IsIdentifier(linearStr);
     return true;
+}
+
+JS_PUBLIC_API(bool)
+JS_IsIdentifier(const char16_t *chars, size_t length)
+{
+    return js::frontend::IsIdentifier(chars, length);
 }
 
 namespace JS {

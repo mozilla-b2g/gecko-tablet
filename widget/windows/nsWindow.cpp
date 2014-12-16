@@ -186,7 +186,7 @@
 #define SM_CONVERTIBLESLATEMODE 0x2003
 #endif
 
-#include "mozilla/layers/CompositorParent.h"
+#include "mozilla/layers/APZCTreeManager.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -3920,6 +3920,7 @@ bool nsWindow::DispatchMouseEvent(uint32_t aEventType, WPARAM wParam,
     event.message = NS_MOUSE_BUTTON_DOWN;
     event.button = aButton;
     sLastClickCount = 2;
+    sLastMouseDownTime = curMsgTime;
   }
   else if (aEventType == NS_MOUSE_BUTTON_UP) {
     // remember when this happened for the next mouse down
@@ -7664,19 +7665,6 @@ void nsWindow::PickerClosed()
   if (!mPickerDisplayCount && mDestroyCalled) {
     Destroy();
   }
-}
-
-CompositorParent* nsWindow::NewCompositorParent(int aSurfaceWidth,
-                                                int aSurfaceHeight)
-{
-  CompositorParent *compositor = new CompositorParent(this, false, aSurfaceWidth, aSurfaceHeight);
-
-  if (gfxPrefs::AsyncPanZoomEnabled()) {
-    mAPZC = CompositorParent::GetAPZCTreeManager(compositor->RootLayerTreeId());
-    APZCTreeManager::SetDPI(GetDPI());
-  }
-
-  return compositor;
 }
 
 /**************************************************************

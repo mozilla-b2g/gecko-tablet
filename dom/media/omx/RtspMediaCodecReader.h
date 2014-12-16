@@ -49,17 +49,18 @@ public:
   // ChannelMediaResource, it has a "cache" that can store the whole streaming
   // data so the |GetBuffered| function can retrieve useful time ranges.
   virtual nsresult GetBuffered(dom::TimeRanges* aBuffered) MOZ_OVERRIDE {
-    return NS_OK;
+    return NS_ERROR_NOT_IMPLEMENTED;
   }
 
   virtual void SetIdle() MOZ_OVERRIDE;
 
   // Disptach a DecodeVideoFrameTask to decode video data.
-  virtual void RequestVideoData(bool aSkipToNextKeyframe,
-                                int64_t aTimeThreshold) MOZ_OVERRIDE;
+  virtual nsRefPtr<VideoDataPromise>
+  RequestVideoData(bool aSkipToNextKeyframe,
+                   int64_t aTimeThreshold) MOZ_OVERRIDE;
 
   // Disptach a DecodeAudioDataTask to decode audio data.
-  virtual void RequestAudioData() MOZ_OVERRIDE;
+  virtual nsRefPtr<AudioDataPromise> RequestAudioData() MOZ_OVERRIDE;
 
   virtual nsresult ReadMetadata(MediaInfo* aInfo,
                                 MetadataTags** aTags) MOZ_OVERRIDE;

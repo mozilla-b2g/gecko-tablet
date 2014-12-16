@@ -12,6 +12,8 @@
 <body>
 <pre id="test">
 <script type="application/javascript;version=1.8">
+  SimpleTest.requestFlakyTimeout("untriaged");
+
   createHTML({
     bug: "1032839",
     title: "Replace video track",
@@ -37,17 +39,13 @@
         var track = stream.getVideoTracks()[0];
         var sender = test.pcLocal._pc.getSenders().find(isSenderOfTrack, track);
         ok(sender, "track has a sender");
+        var newtrack;
         navigator.mediaDevices.getUserMedia({video:true, fake: true})
         .then(function(newStream) {
-          var newtrack = newStream.getVideoTracks()[0];
-          return new Promise(function(resolve, reject) {
-            sender.replaceTrack(newtrack, function() {
-              resolve(newtrack);
-            }, reject);
-          });
+          newtrack = newStream.getVideoTracks()[0];
+          return sender.replaceTrack(newtrack);
         })
-        .then(function(newtrack) {
-          ok(true, "replaceTrack success callback is called");
+        .then(function() {
           is(sender.track, newtrack, "sender.track has been replaced");
         })
         .catch(function(reason) {
