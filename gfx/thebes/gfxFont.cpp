@@ -2271,6 +2271,18 @@ gfxFont::Measure(gfxTextRun *aTextRun,
         metrics.mBoundingBox -= gfxPoint(x, 0);
     }
 
+    // If the font may be rendered with a fake-italic effect, we need to allow
+    // for the top-right of the glyphs being skewed to the right, and the
+    // bottom-left being skewed further left.
+    if (mStyle.style != NS_FONT_STYLE_NORMAL && !mFontEntry->IsItalic()) {
+        gfxFloat extendLeftEdge =
+            ceil(OBLIQUE_SKEW_FACTOR * metrics.mBoundingBox.YMost());
+        gfxFloat extendRightEdge =
+            ceil(OBLIQUE_SKEW_FACTOR * -metrics.mBoundingBox.y);
+        metrics.mBoundingBox.width += extendLeftEdge + extendRightEdge;
+        metrics.mBoundingBox.x -= extendLeftEdge;
+    }
+
     if (baselineOffset != 0) {
         metrics.mAscent -= baselineOffset;
         metrics.mDescent += baselineOffset;
@@ -2896,7 +2908,8 @@ gfxFont::InitFakeSmallCapsRun(gfxContext     *aContext,
                 } else if (ch != ToLowerCase(ch)) {
                     // ch is upper case
                     chAction = (aSyntheticUpper ? kUppercaseReduce : kNoChange);
-                    if (mStyle.language == nsGkAtoms::el) {
+                    if (mStyle.explicitLanguage &&
+                        mStyle.language == nsGkAtoms::el) {
                         // In Greek, check for characters that will be modified by
                         // the GreekUpperCase mapping - this catches accented
                         // capitals where the accent is to be removed (bug 307039).
@@ -2948,7 +2961,8 @@ gfxFont::InitFakeSmallCapsRun(gfxContext     *aContext,
                     TransformString(origString,
                                     convertedString,
                                     true,
-                                    mStyle.language,
+                                    mStyle.explicitLanguage
+                                      ? mStyle.language : nullptr,
                                     charsToMergeArray,
                                     deletedCharsArray);
 
@@ -3584,13 +3598,15 @@ gfxFontStyle::gfxFontStyle() :
     style(NS_FONT_STYLE_NORMAL),
     allowSyntheticWeight(true), allowSyntheticStyle(true),
     noFallbackVariantFeatures(true),
+    explicitLanguage(false),
     variantCaps(NS_FONT_VARIANT_CAPS_NORMAL),
     variantSubSuper(NS_FONT_VARIANT_POSITION_NORMAL)
 {
 }
 
 gfxFontStyle::gfxFontStyle(uint8_t aStyle, uint16_t aWeight, int16_t aStretch,
-                           gfxFloat aSize, nsIAtom *aLanguage,
+                           gfxFloat aSize,
+                           nsIAtom *aLanguage, bool aExplicitLanguage,
                            float aSizeAdjust, bool aSystemFont,
                            bool aPrinterFont,
                            bool aAllowWeightSynthesis,
@@ -3606,6 +3622,7 @@ gfxFontStyle::gfxFontStyle(uint8_t aStyle, uint16_t aWeight, int16_t aStretch,
     allowSyntheticWeight(aAllowWeightSynthesis),
     allowSyntheticStyle(aAllowStyleSynthesis),
     noFallbackVariantFeatures(true),
+    explicitLanguage(aExplicitLanguage),
     variantCaps(NS_FONT_VARIANT_CAPS_NORMAL),
     variantSubSuper(NS_FONT_VARIANT_POSITION_NORMAL)
 {
@@ -3644,6 +3661,7 @@ gfxFontStyle::gfxFontStyle(const gfxFontStyle& aStyle) :
     allowSyntheticWeight(aStyle.allowSyntheticWeight),
     allowSyntheticStyle(aStyle.allowSyntheticStyle),
     noFallbackVariantFeatures(aStyle.noFallbackVariantFeatures),
+    explicitLanguage(aStyle.explicitLanguage),
     variantCaps(aStyle.variantCaps),
     variantSubSuper(aStyle.variantSubSuper)
 {

@@ -72,8 +72,8 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
     gfxImageFormat format
       = gfxPlatform::GetPlatform()->OptimalFormatForContent(contentType);
     TextureFlags flags = TextureFlags::DEFAULT;
-    if (mTextureFlags & TextureFlags::NEEDS_Y_FLIP) {
-      flags |= TextureFlags::NEEDS_Y_FLIP;
+    if (mTextureFlags & TextureFlags::ORIGIN_BOTTOM_LEFT) {
+      flags |= TextureFlags::ORIGIN_BOTTOM_LEFT;
     }
 
     gfx::SurfaceFormat surfaceFormat = gfx::ImageFormatToSurfaceFormat(format);
@@ -155,7 +155,8 @@ CanvasClientSharedSurface::CanvasClientSharedSurface(CompositableForwarder* aLay
 // Accelerated backends
 
 static TemporaryRef<TextureClient>
-TexClientFromShSurf(SharedSurface* surf, TextureFlags flags)
+TexClientFromShSurf(ISurfaceAllocator* aAllocator, SharedSurface* surf,
+                    TextureFlags flags)
 {
   switch (surf->mType) {
     case SharedSurfaceType::Basic:
@@ -167,7 +168,7 @@ TexClientFromShSurf(SharedSurface* surf, TextureFlags flags)
 #endif
 
     default:
-      return new SharedSurfaceTextureClient(flags, surf);
+      return new SharedSurfaceTextureClient(aAllocator, flags, surf);
   }
 }
 
@@ -364,7 +365,7 @@ CanvasClientSharedSurface::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
   auto flags = GetTextureFlags() | TextureFlags::IMMUTABLE;
 
   // Get a TexClient from our surf.
-  RefPtr<TextureClient> newTex = TexClientFromShSurf(surf, flags);
+  RefPtr<TextureClient> newTex = TexClientFromShSurf(GetForwarder(), surf, flags);
   if (!newTex) {
     auto manager = aLayer->ClientManager();
     auto shadowForwarder = manager->AsShadowForwarder();
@@ -373,6 +374,11 @@ CanvasClientSharedSurface::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
     newTex = TexClientFromReadback(surf, forwarder, flags, layersBackend);
   }
   MOZ_ASSERT(newTex);
+  if (!newTex) {
+    // May happen in a release build in case of memory pressure.
+    gfxCriticalError() << "Failed to allocate a TextureClient for SharedSurface Canvas. size: " << aSize;
+    return;
+  }
 
   // Add the new TexClient.
   MOZ_ALWAYS_TRUE( AddTextureClient(newTex) );

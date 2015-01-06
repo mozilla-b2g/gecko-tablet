@@ -15,11 +15,12 @@
 #include "mozilla/dom/DesktopNotification.h"
 #include "mozilla/dom/File.h"
 #include "nsGeolocation.h"
+#include "nsIClassOfService.h"
 #include "nsIHttpProtocolHandler.h"
 #include "nsIContentPolicy.h"
 #include "nsIContentSecurityPolicy.h"
 #include "nsContentPolicyUtils.h"
-#include "nsCrossSiteListenerProxy.h"
+#include "nsCORSListenerProxy.h"
 #include "nsISupportsPriority.h"
 #include "nsICachingChannel.h"
 #include "nsIWebContentHandlerRegistrar.h"
@@ -1190,9 +1191,17 @@ Navigator::SendBeacon(const nsAString& aUrl,
     p->SetPriority(nsISupportsPriority::PRIORITY_LOWEST);
   }
 
+  nsCOMPtr<nsIClassOfService> cos(do_QueryInterface(channel));
+  if (cos) {
+    cos->AddClassFlags(nsIClassOfService::Background);
+  }
+
   nsRefPtr<nsCORSListenerProxy> cors = new nsCORSListenerProxy(new BeaconStreamListener(),
                                                                principal,
                                                                true);
+
+  rv = cors->Init(channel, true);
+  NS_ENSURE_SUCCESS(rv, false);
 
   // Start a preflight if cross-origin and content type is not whitelisted
   rv = secMan->CheckSameOriginURI(documentURI, uri, false);

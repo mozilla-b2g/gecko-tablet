@@ -16,7 +16,7 @@
 #include "nsCOMPtr.h"
 
 #include "nsContentUtils.h"
-#include "nsCrossSiteListenerProxy.h"
+#include "nsCORSListenerProxy.h"
 #include "nsNetUtil.h"
 #include "nsMimeTypes.h"
 #include "nsStreamUtils.h"
@@ -59,7 +59,7 @@ public:
   NS_DECL_ISUPPORTS
 
   NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,
-                            nsISupports* aData, bool aAnonymize)
+                            nsISupports* aData, bool aAnonymize) MOZ_OVERRIDE
   {
     nsresult rv;
     nsTArray<ImageMemoryCounter> chrome;
@@ -1031,7 +1031,7 @@ imgLoader::imgLoader()
 already_AddRefed<imgLoader>
 imgLoader::GetInstance()
 {
-  static StaticRefPtr<imgLoader> singleton;
+  static nsRefPtr<imgLoader> singleton;
   if (!singleton) {
     singleton = imgLoader::Create();
     if (!singleton)

@@ -258,15 +258,15 @@ Result
 NSSCertDBTrustDomain::VerifySignedData(const SignedDataWithSignature& signedData,
                                        Input subjectPublicKeyInfo)
 {
-  return ::mozilla::pkix::VerifySignedData(signedData, subjectPublicKeyInfo,
-                                           mMinimumNonECCBits, mPinArg);
+  return ::mozilla::pkix::VerifySignedDataNSS(signedData, subjectPublicKeyInfo,
+                                              mMinimumNonECCBits, mPinArg);
 }
 
 Result
 NSSCertDBTrustDomain::DigestBuf(Input item,
                                 /*out*/ uint8_t* digestBuf, size_t digestBufLen)
 {
-  return ::mozilla::pkix::DigestBuf(item, digestBuf, digestBufLen);
+  return ::mozilla::pkix::DigestBufNSS(item, digestBuf, digestBufLen);
 }
 
 
@@ -372,6 +372,10 @@ NSSCertDBTrustDomain::CheckRevocation(EndEntityOrCA endEntityOrCA,
   // are known to serve expired responses due to bugs.
   // We keep track of the result of verifying the stapled response but don't
   // immediately return failure if the response has expired.
+  //
+  // We only set the OCSP stapling status if we're validating the end-entity
+  // certificate. Non-end-entity certificates would always be
+  // OCSP_STAPLING_NONE unless/until we implement multi-stapling.
   Result stapledOCSPResponseResult = Success;
   if (stapledOCSPResponse) {
     PR_ASSERT(endEntityOrCA == EndEntityOrCA::MustBeEndEntity);
@@ -401,7 +405,7 @@ NSSCertDBTrustDomain::CheckRevocation(EndEntityOrCA endEntityOrCA,
              ("NSSCertDBTrustDomain: stapled OCSP response: failure"));
       return stapledOCSPResponseResult;
     }
-  } else {
+  } else if (endEntityOrCA == EndEntityOrCA::MustBeEndEntity) {
     // no stapled OCSP response
     mOCSPStaplingStatus = CertVerifier::OCSP_STAPLING_NONE;
     PR_LOG(gCertVerifierLog, PR_LOG_DEBUG,
@@ -696,8 +700,8 @@ NSSCertDBTrustDomain::IsChainValid(const DERArray& certArray, Time time)
 Result
 NSSCertDBTrustDomain::CheckPublicKey(Input subjectPublicKeyInfo)
 {
-  return ::mozilla::pkix::CheckPublicKey(subjectPublicKeyInfo,
-                                         mMinimumNonECCBits);
+  return ::mozilla::pkix::CheckPublicKeyNSS(subjectPublicKeyInfo,
+                                            mMinimumNonECCBits);
 }
 
 namespace {

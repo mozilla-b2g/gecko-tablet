@@ -109,11 +109,17 @@ XPCOMUtils.defineLazyModuleGetter(this, "SharedPreferences",
 XPCOMUtils.defineLazyModuleGetter(this, "Notifications",
                                   "resource://gre/modules/Notifications.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "ReaderMode",
+                                  "resource://gre/modules/ReaderMode.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "GMPInstallManager",
+                                  "resource://gre/modules/GMPInstallManager.jsm");
+
 // Lazily-loaded browser scripts:
 [
   ["SelectHelper", "chrome://browser/content/SelectHelper.js"],
   ["InputWidgetHelper", "chrome://browser/content/InputWidgetHelper.js"],
-  ["AboutReader", "chrome://browser/content/aboutReader.js"],
+  ["AboutReader", "chrome://global/content/reader/aboutReader.js"],
   ["MasterPassword", "chrome://browser/content/MasterPassword.js"],
   ["PluginHelper", "chrome://browser/content/PluginHelper.js"],
   ["OfflineApps", "chrome://browser/content/OfflineApps.js"],
@@ -336,7 +342,11 @@ var BrowserApp = {
         Services.tm.mainThread.dispatch(function() {
           // Init LoginManager
           Cc["@mozilla.org/login-manager;1"].getService(Ci.nsILoginManager);
+          CastingApps.init();
         }, Ci.nsIThread.DISPATCH_NORMAL);
+
+        BrowserApp.gmpInstallManager = new GMPInstallManager();
+        BrowserApp.gmpInstallManager.simpleCheckAndInstall().then(null, () => {});
 
 #ifdef MOZ_SAFE_BROWSING
         Services.tm.mainThread.dispatch(function() {
@@ -346,6 +356,8 @@ var BrowserApp = {
 #endif
 #ifdef NIGHTLY_BUILD
         WebcompatReporter.init();
+        Telemetry.addData("TRACKING_PROTECTION_ENABLED",
+          Services.prefs.getBoolPref("privacy.trackingprotection.enabled"));
 #endif
       } catch(ex) { console.log(ex); }
     }, false);
@@ -435,7 +447,6 @@ var BrowserApp = {
     RemoteDebugger.init();
     UserAgentOverrides.init();
     DesktopUserAgent.init();
-    CastingApps.init();
     Distribution.init();
     Tabs.init();
 #ifdef ACCESSIBILITY
@@ -1188,6 +1199,10 @@ var BrowserApp = {
   },
 
   quit: function quit(aClear = { sanitize: {}, dontSaveSession: false }) {
+    if (this.gmpInstallManager) {
+      this.gmpInstallManager.uninit();
+    }
+
     // Figure out if there's at least one other browser window around.
     let lastBrowser = true;
     let e = Services.wm.getEnumerator("navigator:browser");
@@ -1333,7 +1348,6 @@ var BrowserApp = {
       // preferences to the correct type.
       switch (prefName) {
         // (string) index for determining which multiple choice value to display.
-        case "browser.chrome.titlebarMode":
         case "network.cookie.cookieBehavior":
         case "font.size.inflation.minTwips":
         case "home.sync.updateMode":
@@ -1384,7 +1398,6 @@ var BrowserApp = {
       // When sending to Java, we normalized special preferences that use
       // integers and strings to represent booleans. Here, we convert them back
       // to their actual types so we can store them.
-      case "browser.chrome.titlebarMode":
       case "network.cookie.cookieBehavior":
       case "font.size.inflation.minTwips":
       case "home.sync.updateMode":
@@ -4282,7 +4295,7 @@ Tab.prototype = {
         Reader.updatePageAction(this);
 
         // Once document is fully loaded, parse it
-        Reader.parseDocumentFromTab(this).then(article => {
+        ReaderMode.parseDocumentFromBrowser(this.browser).then(article => {
           // The loaded page may have changed while we were parsing the document. 
           // Make sure we've got the current one.
           let currentURL = this.browser.currentURI.specIgnoringRef;
@@ -4294,11 +4307,6 @@ Tab.prototype = {
 
           this.savedArticle = article;
           Reader.updatePageAction(this);
-
-          Messaging.sendRequest({
-            type: "Content:ReaderEnabled",
-            tabID: this.id
-          });
         }).catch(e => Cu.reportError("Error parsing document from tab: " + e));
       }
     }
@@ -6785,15 +6793,18 @@ var IdentityHandler = {
 
   getTrackingMode: function getTrackingMode(aState) {
     if (aState & Ci.nsIWebProgressListener.STATE_BLOCKED_TRACKING_CONTENT) {
+      Telemetry.addData("TRACKING_PROTECTION_SHIELD", 2);
       return this.TRACKING_MODE_CONTENT_BLOCKED;
     }
 
     // Only show an indicator for loaded tracking content if the pref to block it is enabled
     if ((aState & Ci.nsIWebProgressListener.STATE_LOADED_TRACKING_CONTENT) &&
          Services.prefs.getBoolPref("privacy.trackingprotection.enabled")) {
+      Telemetry.addData("TRACKING_PROTECTION_SHIELD", 1);
       return this.TRACKING_MODE_CONTENT_LOADED;
     }
 
+    Telemetry.addData("TRACKING_PROTECTION_SHIELD", 0);
     return this.TRACKING_MODE_UNKNOWN;
   },
 

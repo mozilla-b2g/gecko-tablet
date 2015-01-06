@@ -37,6 +37,7 @@
 #include "ImageContainer.h"
 #include "SharedThreadPool.h"
 #include "VideoFrameContainer.h"
+#include "VideoUtils.h"
 
 using namespace android;
 
@@ -999,7 +1000,7 @@ MediaCodecReader::DecodeVideoFrameSync(int64_t aTimeThreshold)
   return result;
 }
 
-void
+nsRefPtr<MediaDecoderReader::SeekPromise>
 MediaCodecReader::Seek(int64_t aTime,
                        int64_t aStartTime,
                        int64_t aEndTime,
@@ -1031,8 +1032,7 @@ MediaCodecReader::Seek(int64_t aTime,
     options.setSeekTo(aTime, MediaSource::ReadOptions::SEEK_PREVIOUS_SYNC);
     if (mVideoTrack.mSource->read(&source_buffer, &options) != OK ||
         source_buffer == nullptr) {
-      GetCallback()->OnSeekCompleted(NS_ERROR_FAILURE);
-      return;
+      return SeekPromise::CreateAndReject(NS_ERROR_FAILURE, __func__);
     }
     sp<MetaData> format = source_buffer->meta_data();
     if (format != nullptr) {
@@ -1056,7 +1056,7 @@ MediaCodecReader::Seek(int64_t aTime,
     MOZ_ASSERT(mAudioTrack.mTaskQueue->IsEmpty());
     DispatchAudioTask();
   }
-  GetCallback()->OnSeekCompleted(NS_OK);
+  return SeekPromise::CreateAndResolve(true, __func__);
 }
 
 bool
@@ -1251,7 +1251,9 @@ MediaCodecReader::DestroyMediaSources()
 {
   mAudioTrack.mSource = nullptr;
   mVideoTrack.mSource = nullptr;
+#if ANDROID_VERSION >= 21
   mAudioOffloadTrack.mSource = nullptr;
+#endif
 }
 
 void
@@ -1274,14 +1276,12 @@ MediaCodecReader::CreateTaskQueues()
 {
   if (mAudioTrack.mSource != nullptr && mAudioTrack.mCodec != nullptr &&
       !mAudioTrack.mTaskQueue) {
-    mAudioTrack.mTaskQueue = new MediaTaskQueue(
-      SharedThreadPool::Get(NS_LITERAL_CSTRING("MediaCodecReader Audio"), 1));
+    mAudioTrack.mTaskQueue = CreateMediaDecodeTaskQueue();
     NS_ENSURE_TRUE(mAudioTrack.mTaskQueue, false);
   }
- if (mVideoTrack.mSource != nullptr && mVideoTrack.mCodec != nullptr &&
-     !mVideoTrack.mTaskQueue) {
-    mVideoTrack.mTaskQueue = new MediaTaskQueue(
-      SharedThreadPool::Get(NS_LITERAL_CSTRING("MediaCodecReader Video"), 1));
+  if (mVideoTrack.mSource != nullptr && mVideoTrack.mCodec != nullptr &&
+      !mVideoTrack.mTaskQueue) {
+    mVideoTrack.mTaskQueue = CreateMediaDecodeTaskQueue();
     NS_ENSURE_TRUE(mVideoTrack.mTaskQueue, false);
   }
 
@@ -1328,7 +1328,15 @@ MediaCodecReader::CreateMediaCodec(sp<ALooper>& aLooper,
     if (aTrack.mType == Track::kVideo &&
         aTrack.mCodec->getCapability(&capability) == OK &&
         (capability & MediaCodecProxy::kCanExposeGraphicBuffer) == MediaCodecProxy::kCanExposeGraphicBuffer) {
+#if ANDROID_VERSION >= 21
+      android::sp<android::IGraphicBufferProducer> producer;
+      android::sp<android::IGonkGraphicBufferConsumer> consumer;
+      GonkBufferQueue::createBufferQueue(&producer, &consumer);
+      aTrack.mNativeWindow = new GonkNativeWindow(consumer);
+      aTrack.mGraphicBufferProducer = producer;
+#else
       aTrack.mNativeWindow = new GonkNativeWindow();
+#endif
     }
 
     if (!aAsync) {
@@ -1355,7 +1363,11 @@ MediaCodecReader::ConfigureMediaCodec(Track& aTrack)
 
     sp<Surface> surface;
     if (aTrack.mNativeWindow != nullptr) {
+#if ANDROID_VERSION >= 21
+      surface = new Surface(aTrack.mGraphicBufferProducer);
+#else
       surface = new Surface(aTrack.mNativeWindow->getBufferQueue());
+#endif
     }
 
     sp<MetaData> sourceFormat = aTrack.mSource->getFormat();
@@ -1400,6 +1412,9 @@ MediaCodecReader::DestroyMediaCodec(Track& aTrack)
 {
   aTrack.mCodec = nullptr;
   aTrack.mNativeWindow = nullptr;
+#if ANDROID_VERSION >= 21
+  aTrack.mGraphicBufferProducer = nullptr;
+#endif
 }
 
 bool

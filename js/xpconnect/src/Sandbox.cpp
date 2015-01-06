@@ -737,10 +737,10 @@ xpc::SandboxProxyHandler::getOwnEnumerablePropertyKeys(JSContext *cx,
 }
 
 bool
-xpc::SandboxProxyHandler::iterate(JSContext *cx, JS::Handle<JSObject*> proxy,
-                                  unsigned flags, JS::MutableHandle<JSObject*> objp) const
+xpc::SandboxProxyHandler::enumerate(JSContext *cx, JS::Handle<JSObject*> proxy,
+                                    JS::MutableHandle<JSObject*> objp) const
 {
-    return BaseProxyHandler::iterate(cx, proxy, flags, objp);
+    return BaseProxyHandler::enumerate(cx, proxy, objp);
 }
 
 bool
@@ -1415,6 +1415,10 @@ nsXPCComponents_utils_Sandbox::CallOrConstruct(nsIXPConnectWrappedNative *wrappe
         } else {
             ok = GetPrincipalOrSOP(cx, obj, getter_AddRefs(prinOrSop));
         }
+    } else if (args[0].isNull()) {
+        // Null means that we just pass prinOrSop = nullptr, and get an
+        // nsNullPrincipal.
+        ok = true;
     }
 
     if (!ok)

@@ -473,6 +473,8 @@ gbjar.sources += [
     'widget/Divider.java',
     'widget/DoorHanger.java',
     'widget/EllipsisTextView.java',
+    'widget/FadedMultiColorTextView.java',
+    'widget/FadedSingleColorTextView.java',
     'widget/FadedTextView.java',
     'widget/FaviconView.java',
     'widget/FloatingHintEditText.java',
@@ -540,6 +542,8 @@ if (CONFIG['MOZ_ANDROID_MAX_SDK_VERSION']):
 else:
     max_sdk_version = 999
 
+# Only bother to include new tablet code if we're building for tablet-capable
+# OS releases.
 if CONFIG['MOZ_ANDROID_NEW_TABLET_UI'] and max_sdk_version >= 11:
     gbjar.sources += [
         'tabs/TabStrip.java',
@@ -547,7 +551,6 @@ if CONFIG['MOZ_ANDROID_NEW_TABLET_UI'] and max_sdk_version >= 11:
         'tabs/TabStripItemView.java',
         'tabs/TabStripView.java'
     ]
-    ANDROID_RES_DIRS += [ SRCDIR + '/newtablet/res' ]
 
 gbjar.sources += sync_java_files
 gbjar.extra_jars += [

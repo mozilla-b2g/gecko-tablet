@@ -54,7 +54,7 @@ class PerThreadData;
 struct ThreadSafeContext;
 class AutoKeepAtoms;
 #ifdef JS_TRACE_LOGGING
-class TraceLogger;
+class TraceLoggerThread;
 #endif
 
 /* Thread Local Storage slot for storing the runtime for a thread. */
@@ -540,7 +540,7 @@ class PerThreadData : public PerThreadDataFriendFields
     irregexp::RegExpStack regexpStack;
 
 #ifdef JS_TRACE_LOGGING
-    TraceLogger         *traceLogger;
+    TraceLoggerThread   *traceLogger;
 #endif
 
   private:
@@ -808,7 +808,7 @@ struct JSRuntime : public JS::shadow::Runtime,
     size_t              numCompartments;
 
     /* Locale-specific callbacks for string conversion. */
-    JSLocaleCallbacks *localeCallbacks;
+    const JSLocaleCallbacks *localeCallbacks;
 
     /* Default locale for Internationalization API */
     char *defaultLocale;
@@ -847,6 +847,9 @@ struct JSRuntime : public JS::shadow::Runtime,
      * runtime if there is one.
      */
     js::NativeObject *selfHostingGlobal_;
+
+    static js::GlobalObject *
+    createSelfHostingGlobal(JSContext *cx);
 
     /* Space for interpreter frames. */
     js::InterpreterStack interpreterStack_;

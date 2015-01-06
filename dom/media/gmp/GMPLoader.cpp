@@ -156,21 +156,25 @@ GMPLoaderImpl::Load(const char* aLibPath,
       return false;
     }
     assert(top >= bottom);
-    SecureZeroMemory(bottom, (top - bottom));
+    // Inline instructions equivalent to RtlSecureZeroMemory().
+    // We can't just use RtlSecureZeroMemory here directly, as in debug
+    // builds, RtlSecureZeroMemory() can't be inlined, and the stack
+    // memory it uses would get wiped by itself running, causing crashes.
+    for (volatile uint8_t* p = (volatile uint8_t*)bottom; p < top; p++) {
+      *p = 0;
+    }
   } else
 #endif
   {
     nodeId = std::string(aOriginSalt, aOriginSalt + aOriginSaltLen);
   }
 
-#if defined(MOZ_GMP_SANDBOX)
   // Start the sandbox now that we've generated the device bound node id.
   // This must happen after the node id is bound to the device id, as
   // generating the device id requires privileges.
   if (mSandboxStarter) {
     mSandboxStarter->Start(aLibPath);
   }
-#endif
 
   // Load the GMP.
   PRLibSpec libSpec;

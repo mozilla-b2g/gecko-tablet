@@ -1837,7 +1837,7 @@ nsDocShell::ValidateOrigin(nsIDocShellTreeItem* aOriginTreeItem,
         originIsFile && targetIsFile;
 }
 
-NS_IMETHODIMP
+nsresult
 nsDocShell::GetEldestPresContext(nsPresContext** aPresContext)
 {
     NS_ENSURE_ARG_POINTER(aPresContext);
@@ -2887,6 +2887,7 @@ nsDocShell::PopProfileTimelineMarkers(JSContext* aCx,
   // docShell if an Layer marker type was recorded too.
 
   nsTArray<mozilla::dom::ProfileTimelineMarker> profileTimelineMarkers;
+  SequenceRooter<mozilla::dom::ProfileTimelineMarker> rooter(aCx, &profileTimelineMarkers);
 
   // If we see an unpaired START, we keep it around for the next call
   // to PopProfileTimelineMarkers.  We store the kept START objects in
@@ -2938,17 +2939,18 @@ nsDocShell::PopProfileTimelineMarkers(JSContext* aCx,
           } else {
             // But ignore paint start/end if no layer has been painted.
             if (!isPaint || (isPaint && hasSeenPaintedLayer)) {
-              mozilla::dom::ProfileTimelineMarker marker;
+              mozilla::dom::ProfileTimelineMarker* marker =
+                profileTimelineMarkers.AppendElement();
 
-              marker.mName = NS_ConvertUTF8toUTF16(startPayload->GetName());
-              marker.mStart = startPayload->GetTime();
-              marker.mEnd = endPayload->GetTime();
+              marker->mName = NS_ConvertUTF8toUTF16(startPayload->GetName());
+              marker->mStart = startPayload->GetTime();
+              marker->mEnd = endPayload->GetTime();
+              marker->mStack = startPayload->GetStack();
               if (isPaint) {
-                marker.mRectangles.Construct(layerRectangles);
-              } else {
-                startPayload->AddDetails(marker);
+                marker->mRectangles.Construct(layerRectangles);
               }
-              profileTimelineMarkers.AppendElement(marker);
+              startPayload->AddDetails(*marker);
+              endPayload->AddDetails(*marker);
             }
 
             // We want the start to be dropped either way.
@@ -7684,7 +7686,7 @@ nsDocShell::EndPageLoad(nsIWebProgress * aProgress,
 // nsDocShell: Content Viewer Management
 //*****************************************************************************   
 
-NS_IMETHODIMP
+nsresult
 nsDocShell::EnsureContentViewer()
 {
     if (mContentViewer)
@@ -8690,7 +8692,7 @@ nsDocShell::RestoreFromHistory()
     return privWin->FireDelayedDOMEvents();
 }
 
-NS_IMETHODIMP
+nsresult
 nsDocShell::CreateContentViewer(const char *aContentType,
                                 nsIRequest * request,
                                 nsIStreamListener ** aContentHandler)
@@ -8917,7 +8919,7 @@ nsDocShell::NewContentViewerObj(const char *aContentType,
     return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 nsDocShell::SetupNewViewer(nsIContentViewer * aNewViewer)
 {
     //
@@ -9188,7 +9190,7 @@ public:
 
     NS_IMETHODIMP
     OnComplete(nsIURI *aFaviconURI, uint32_t aDataLen,
-               const uint8_t *aData, const nsACString &aMimeType)
+               const uint8_t *aData, const nsACString &aMimeType) MOZ_OVERRIDE
     {
         // Continue only if there is an associated favicon.
         if (!aFaviconURI) {
@@ -10600,7 +10602,7 @@ AppendSegmentToString(nsIInputStream *in,
     return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 nsDocShell::AddHeadersToChannel(nsIInputStream *aHeadersData,
                                 nsIChannel *aGenericChannel)
 {
@@ -11729,7 +11731,7 @@ nsDocShell::AddToSessionHistory(nsIURI * aURI, nsIChannel * aChannel,
 }
 
 
-NS_IMETHODIMP
+nsresult
 nsDocShell::LoadHistoryEntry(nsISHEntry * aEntry, uint32_t aLoadType)
 {
     if (!IsNavigationAllowed()) {
@@ -11857,7 +11859,8 @@ NS_IMETHODIMP nsDocShell::GetShouldSaveLayoutState(bool* aShould)
     return NS_OK;
 }
 
-NS_IMETHODIMP nsDocShell::PersistLayoutHistoryState()
+nsresult
+nsDocShell::PersistLayoutHistoryState()
 {
     nsresult  rv = NS_OK;
     

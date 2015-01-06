@@ -59,10 +59,8 @@ CodeGeneratorARM::generateEpilogue()
 
 #ifdef JS_TRACE_LOGGING
     if (gen->info().executionMode() == SequentialExecution) {
-        if (!emitTracelogStopEvent(TraceLogger::IonMonkey))
-            return false;
-        if (!emitTracelogScriptStop())
-            return false;
+        emitTracelogStopEvent(TraceLogger_IonMonkey);
+        emitTracelogScriptStop();
     }
 #endif
 
@@ -1881,9 +1879,9 @@ CodeGeneratorARM::visitAsmJSStoreHeap(LAsmJSStoreHeap *ins)
         if (isFloat) {
             VFPRegister vd(ToFloatRegister(ins->value()));
             if (size == 32)
-                masm.ma_vstr(vd.singleOverlay(), HeapReg, ptrReg, 0, Assembler::Always);
+                masm.ma_vstr(vd.singleOverlay(), HeapReg, ptrReg, 0, 0, Assembler::Always);
             else
-                masm.ma_vstr(vd, HeapReg, ptrReg, 0, Assembler::Always);
+                masm.ma_vstr(vd, HeapReg, ptrReg, 0, 0, Assembler::Always);
         } else {
             masm.ma_dataTransferN(IsStore, size, isSigned, HeapReg, ptrReg,
                                   ToRegister(ins->value()), Offset, Assembler::Always);
@@ -1896,9 +1894,9 @@ CodeGeneratorARM::visitAsmJSStoreHeap(LAsmJSStoreHeap *ins)
     if (isFloat) {
         VFPRegister vd(ToFloatRegister(ins->value()));
         if (size == 32)
-            masm.ma_vstr(vd.singleOverlay(), HeapReg, ptrReg, 0, Assembler::Below);
+            masm.ma_vstr(vd.singleOverlay(), HeapReg, ptrReg, 0, 0, Assembler::Below);
         else
-            masm.ma_vstr(vd, HeapReg, ptrReg, 0, Assembler::Below);
+            masm.ma_vstr(vd, HeapReg, ptrReg, 0, 0, Assembler::Below);
     } else {
         masm.ma_dataTransferN(IsStore, size, isSigned, HeapReg, ptrReg,
                               ToRegister(ins->value()), Offset, Assembler::Below);

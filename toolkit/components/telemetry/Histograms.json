@@ -4577,6 +4577,44 @@
     "extended_statistics_ok": true,
     "description": "Time (ms) it takes to build the cache of the search service"
   },
+  "SEARCH_SERVICE_COUNTRY_FETCH_MS": {
+    "alert_emails": ["mhammond@mozilla.com", "gavin@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "linear",
+    "n_buckets": 20,
+    "high": 2000,
+    "description": "Time (ms) it takes to fetch the country code"
+  },
+  "SEARCH_SERVICE_COUNTRY_FETCH_TIMEOUT": {
+    "alert_emails": ["mhammond@mozilla.com", "gavin@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "flag",
+    "description": "If we saw a timeout fetching the country-code"
+  },
+  "SEARCH_SERVICE_COUNTRY_SUCCESS": {
+    "alert_emails": ["mhammond@mozilla.com", "gavin@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "description": "If we successfully fetched the country-code."
+  },
+  "SEARCH_SERVICE_COUNTRY_SUCCESS_WITHOUT_DATA": {
+    "alert_emails": ["mhammond@mozilla.com", "gavin@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "flag",
+    "description": "If we got a success response but no country-code"
+  },
+  "SEARCH_SERVICE_US_COUNTRY_MISMATCHED_TIMEZONE": {
+    "alert_emails": ["mhammond@mozilla.com", "gavin@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "flag",
+    "description": "Set if the fetched country-code indicates US but the time-zone heuristic doesn't"
+  },
+  "SEARCH_SERVICE_US_TIMEZONE_MISMATCHED_COUNTRY": {
+    "alert_emails": ["mhammond@mozilla.com", "gavin@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "flag",
+    "description": "Set if the time-zone heuristic indicates US but the fetched country code doesn't"
+  },
   "SOCIAL_ENABLED_ON_SESSION": {
     "expires_in_version": "never",
     "kind": "flag",
@@ -5922,6 +5960,21 @@
     "kind": "boolean",
     "description": "How many times has the devtool's Responsive View been opened via the toolbox button?"
   },
+  "DEVTOOLS_EYEDROPPER_OPENED_BOOLEAN": {
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "description": "How many times has the devtool's Eyedropper tool been opened?"
+  },
+  "DEVTOOLS_MENU_EYEDROPPER_OPENED_BOOLEAN": {
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "description": "How many times has the devtool's eyedropper been opened via the devtools menu?"
+  },
+  "DEVTOOLS_PICKER_EYEDROPPER_OPENED_BOOLEAN": {
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "description": "How many times has the devtool's eyedropper been opened via the color picker?"
+  },
   "DEVTOOLS_DEVELOPERTOOLBAR_OPENED_BOOLEAN": {
     "expires_in_version": "never",
     "kind": "boolean",
@@ -6046,6 +6099,21 @@
     "expires_in_version": "never",
     "kind": "flag",
     "description": "How many users have opened the devtool's Responsive View been opened via the toolbox button?"
+  },
+  "DEVTOOLS_EYEDROPPER_OPENED_PER_USER_FLAG": {
+    "expires_in_version": "never",
+    "kind": "flag",
+    "description": "How many users have opened the devtool's Eyedropper via the toolbox button?"
+  },
+  "DEVTOOLS_MENU_EYEDROPPER_OPENED_PER_USER_FLAG": {
+    "expires_in_version": "never",
+    "kind": "flag",
+    "description": "How many users have opened the devtool's Eyedropper via the devtools menu?"
+  },
+  "DEVTOOLS_PICKER_EYEDROPPER_OPENED_PER_USER_FLAG": {
+    "expires_in_version": "never",
+    "kind": "flag",
+    "description": "How many users have opened the devtool's Eyedropper via the color picker?"
   },
   "DEVTOOLS_DEVELOPERTOOLBAR_OPENED_PER_USER_FLAG": {
     "expires_in_version": "never",
@@ -6414,6 +6482,18 @@
     "kind": "enumerated",
     "n_values": "7",
     "description": "Final status of the CacheFileInputStream (0=ok, 1=other error, 2=out of memory, 3=disk full, 4=file corrupted, 5=file not found, 6=binding aborted)"
+  },
+  "DATABASE_LOCKED_EXCEPTION": {
+    "expires_in_version": "42",
+    "kind": "enumerated",
+    "description": "Record database locks when opening one of Fennec's databases. The index corresponds to how many attempts, beginning with 0.",
+    "n_values": "5"
+  },
+  "DATABASE_SUCCESSFUL_UNLOCK": {
+    "expires_in_version": "42",
+    "kind": "enumerated",
+    "description": "Record on which attempt we successfully unlocked a database. See DATABASE_LOCKED_EXCEPTION.",
+    "n_values": "5"
   },
   "SQLITEBRIDGE_PROVIDER_PASSWORDS_LOCKED": {
     "expires_in_version": "40",
@@ -6948,6 +7028,15 @@
     "extended_statistics_ok": true,
     "keyed": true,
     "description": "Time (ms) that the main thread has been blocked on NPP_NewStream in an IPC plugin"
+  },
+  "BLOCKED_ON_PLUGINASYNCSURROGATE_WAITFORINIT_MS": {
+    "expires_in_version": "40",
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": 20,
+    "extended_statistics_ok": true,
+    "keyed": true,
+    "description": "Time (ms) that the main thread has been blocked on PluginAsyncSurrogate::WaitForInit in an IPC plugin"
   },
   "BLOCKED_ON_PLUGIN_INSTANCE_DESTROY_MS": {
     "expires_in_version": "40",

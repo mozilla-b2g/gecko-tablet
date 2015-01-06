@@ -104,6 +104,16 @@ size_t MediaDecoderReader::SizeOfAudioQueueInBytes() const
   return functor.mSize;
 }
 
+size_t MediaDecoderReader::SizeOfVideoQueueInFrames()
+{
+  return mVideoQueue.GetSize();
+}
+
+size_t MediaDecoderReader::SizeOfAudioQueueInFrames()
+{
+  return mAudioQueue.GetSize();
+}
+
 nsresult MediaDecoderReader::ResetDecode()
 {
   nsresult res = NS_OK;
@@ -263,12 +273,6 @@ MediaDecoderReader::RequestAudioData()
   return p;
 }
 
-void
-MediaDecoderReader::SetCallback(RequestSampleCallback* aCallback)
-{
-  mSampleDecodedCallback = aCallback;
-}
-
 MediaTaskQueue*
 MediaDecoderReader::EnsureTaskQueue()
 {
@@ -286,10 +290,6 @@ MediaDecoderReader::EnsureTaskQueue()
 void
 MediaDecoderReader::BreakCycles()
 {
-  if (mSampleDecodedCallback) {
-    mSampleDecodedCallback->BreakCycles();
-    mSampleDecodedCallback = nullptr;
-  }
   mTaskQueue = nullptr;
 }
 

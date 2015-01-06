@@ -197,8 +197,7 @@ DebuggerMemory::drainAllocationsLog(JSContext *cx, unsigned argc, Value *vp)
         if (!obj)
             return false;
 
-        mozilla::UniquePtr<Debugger::AllocationSite, JS::DeletePolicy<Debugger::AllocationSite> >
-            allocSite(dbg->allocationsLog.popFirst());
+        Debugger::AllocationSite *allocSite = dbg->allocationsLog.getFirst();
         RootedValue frame(cx, ObjectOrNullValue(allocSite->frame));
         if (!JSObject::defineProperty(cx, obj, cx->names().frame, frame))
             return false;
@@ -208,6 +207,9 @@ DebuggerMemory::drainAllocationsLog(JSContext *cx, unsigned argc, Value *vp)
             return false;
 
         result->setDenseElement(i, ObjectValue(*obj));
+
+        MOZ_ALWAYS_TRUE(dbg->allocationsLog.popFirst() == allocSite);
+        js_delete(allocSite);
     }
 
     dbg->allocationsLogLength = 0;
@@ -757,22 +759,18 @@ DebuggerMemory::takeCensus(JSContext *cx, unsigned argc, Value *vp)
         return false;
 
     Debugger *dbg = memory->getDebugger();
+    RootedObject dbgObj(cx, dbg->object);
 
-    // Populate census.debuggeeZones and ensure that all of our debuggee globals
-    // are rooted so that they are visible in the RootList.
-    JS::AutoObjectVector debuggees(cx);
+    // Populate our target set of debuggee zones.
     for (GlobalObjectSet::Range r = dbg->allDebuggees(); !r.empty(); r.popFront()) {
-        if (!census.debuggeeZones.put(r.front()->zone()) ||
-            !debuggees.append(static_cast<JSObject *>(r.front())))
-        {
+        if (!census.debuggeeZones.put(r.front()->zone()))
             return false;
-        }
     }
 
     {
         Maybe<JS::AutoCheckCannotGC> maybeNoGC;
         JS::ubi::RootList rootList(cx, maybeNoGC);
-        if (!rootList.init(cx, census.debuggeeZones))
+        if (!rootList.init(dbgObj))
             return false;
 
         dbg::DefaultCensusTraversal traversal(cx, handler, maybeNoGC.ref());

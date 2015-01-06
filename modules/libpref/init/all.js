@@ -134,8 +134,12 @@ pref("dom.workers.maxPerDomain", 20);
 // Whether or not Shared Web Workers are enabled.
 pref("dom.workers.sharedWorkers.enabled", true);
 
-// WebSocket in workers are enabled.
+// WebSocket in workers are disabled by default.
+#ifdef RELEASE_BUILD
+pref("dom.workers.websocket.enabled", false);
+#else
 pref("dom.workers.websocket.enabled", true);
+#endif
 
 // Service workers
 pref("dom.serviceWorkers.enabled", false);
@@ -409,10 +413,10 @@ pref("media.getusermedia.screensharing.enabled", true);
 #endif
 
 #ifdef RELEASE_BUILD
-pref("media.getusermedia.screensharing.allowed_domains", "webex.com,*.webex.com,collaborate.com,*.collaborate.com,projectsquared.com,*.projectsquared.com,*.room.co,room.co,beta.talky.io,talky.io,example.com");
+pref("media.getusermedia.screensharing.allowed_domains", "webex.com,*.webex.com,collaborate.com,*.collaborate.com,projectsquared.com,*.projectsquared.com,*.room.co,room.co,beta.talky.io,talky.io,*.clearslide.com,example.com");
 #else
  // temporary value, not intended for release - bug 1049087
-pref("media.getusermedia.screensharing.allowed_domains", "mozilla.github.io,webex.com,*.webex.com,collaborate.com,*.collaborate.com,projectsquared.com,*.projectsquared.com,*.room.co,room.co,beta.talky.io,talky.io,example.com");
+pref("media.getusermedia.screensharing.allowed_domains", "mozilla.github.io,webex.com,*.webex.com,collaborate.com,*.collaborate.com,projectsquared.com,*.projectsquared.com,*.room.co,room.co,beta.talky.io,talky.io,*.clearslide.com,example.com");
 #endif
 // OS/X 10.6 and XP have screen/window sharing off by default due to various issues - Caveat emptor
 pref("media.getusermedia.screensharing.allow_on_old_platforms", false);
@@ -1284,6 +1288,7 @@ pref("network.http.spdy.enabled", true);
 pref("network.http.spdy.enabled.v3-1", true);
 pref("network.http.spdy.enabled.http2draft", true);
 pref("network.http.spdy.enabled.http2", true);
+pref("network.http.spdy.enabled.deps", true);
 pref("network.http.spdy.enforce-tls-profile", true);
 pref("network.http.spdy.chunk-size", 16000);
 pref("network.http.spdy.timeout", 180);
@@ -1297,13 +1302,8 @@ pref("network.http.spdy.push-allowance", 131072);
 
 // alt-svc allows separation of transport routing from
 // the origin host without using a proxy.
-#ifdef RELEASE_BUILD
-pref("network.http.altsvc.enabled", false);
-pref("network.http.altsvc.oe", false);
-#else
 pref("network.http.altsvc.enabled", true);
 pref("network.http.altsvc.oe", true);
-#endif
 
 pref("network.http.diagnostics", false);
 
@@ -1355,11 +1355,9 @@ pref("network.websocket.timeout.ping.request", 0);
 // event is sent to the javascript websockets application
 pref("network.websocket.timeout.ping.response", 10);
 
-// Defines whether or not to try and negotiate the stream-deflate compression
-// extension with the websocket server. Stream-Deflate has been removed from
-// the standards track document, but can still be used by servers who opt
-// into it.
-pref("network.websocket.extensions.stream-deflate", false);
+// Defines whether or not to try to negotiate the permessage compression
+// extension with the websocket server.
+pref("network.websocket.extensions.permessage-deflate", true);
 
 // the maximum number of concurrent websocket sessions. By specification there
 // is never more than one handshake oustanding to an individual host at
@@ -2226,10 +2224,8 @@ pref("layout.interruptible-reflow.enabled", true);
 // specific information is available).
 pref("layout.frame_rate", -1);
 
-// pref to dump the display list to the log. Useful for debugging invalidation problems.
-#ifdef MOZ_DUMP_PAINTING
+// pref to dump the display list to the log. Useful for debugging drawing.
 pref("layout.display-list.dump", false);
-#endif
 
 // pref to control precision of the frame rate timer. When true,
 // we use a "precise" timer, which means each notification fires
@@ -2245,6 +2241,13 @@ pref("layout.frame_rate.precise", false);
 
 // pref to control whether layout warnings that are hit quite often are enabled
 pref("layout.spammy_warnings.enabled", true);
+
+// Should we fragment floats inside CSS column layout?
+#ifdef RELEASE_BUILD
+pref("layout.float-fragments-inside-column.enabled", false);
+#else
+pref("layout.float-fragments-inside-column.enabled", true);
+#endif
 
 // Is support for the Web Animations API enabled?
 #ifdef RELEASE_BUILD
@@ -2361,6 +2364,8 @@ pref("dom.ipc.plugins.reportCrashURL", true);
 // How long we wait before unloading an idle plugin process.
 // Defaults to 30 seconds.
 pref("dom.ipc.plugins.unloadTimeoutSecs", 30);
+
+pref("dom.ipc.plugins.asyncInit", false);
 
 pref("dom.ipc.processCount", 1);
 
@@ -4416,3 +4421,61 @@ pref("intl.collation.mac.use_icu", true);
 
 // Enable meta-viewport support in remote APZ-enabled frames.
 pref("dom.meta-viewport.enabled", false);
+
+// MozSettings debugging prefs for each component
+pref("dom.mozSettings.SettingsDB.debug.enabled", false);
+pref("dom.mozSettings.SettingsManager.debug.enabled", false);
+pref("dom.mozSettings.SettingsRequestManager.debug.enabled", false);
+pref("dom.mozSettings.SettingsService.debug.enabled", false);
+
+// MozSettings verbose mode to track everything
+pref("dom.mozSettings.SettingsDB.verbose.enabled", false);
+pref("dom.mozSettings.SettingsManager.verbose.enabled", false);
+pref("dom.mozSettings.SettingsRequestManager.verbose.enabled", false);
+pref("dom.mozSettings.SettingsService.verbose.enabled", false);
+
+// Controlling whether we want to allow forcing some Settings
+// IndexedDB transactions to be opened as readonly or keep everything as
+// readwrite.
+pref("dom.mozSettings.allowForceReadOnly", false);
+
+#ifndef MOZ_WIDGET_GONK
+// GMPInstallManager prefs
+
+// Enables some extra logging (can reduce performance)
+pref("media.gmp-manager.log", false);
+
+// User-settable override to media.gmp-manager.url for testing purposes.
+//pref("media.gmp-manager.url.override", "");
+
+// Update service URL for GMP install/updates:
+pref("media.gmp-manager.url", "https://aus4.mozilla.org/update/3/GMP/%VERSION%/%BUILD_ID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/update.xml");
+
+// When |media.gmp-manager.cert.requireBuiltIn| is true or not specified the
+// final certificate and all certificates the connection is redirected to before
+// the final certificate for the url specified in the |media.gmp-manager.url|
+// preference must be built-in.
+pref("media.gmp-manager.cert.requireBuiltIn", true);
+
+// The |media.gmp-manager.certs.| preference branch contains branches that are
+// sequentially numbered starting at 1 that contain attribute name / value
+// pairs for the certificate used by the server that hosts the update xml file
+// as specified in the |media.gmp-manager.url| preference. When these preferences are
+// present the following conditions apply for a successful update check:
+// 1. the uri scheme must be https
+// 2. the preference name must exist as an attribute name on the certificate and
+//    the value for the name must be the same as the value for the attribute name
+//    on the certificate.
+// If these conditions aren't met it will be treated the same as when there is
+// no update available. This validation will not be performed when the
+// |media.gmp-manager.url.override| user preference has been set for testing updates or
+// when the |media.gmp-manager.cert.checkAttributes| preference is set to false. Also,
+// the |media.gmp-manager.url.override| preference should ONLY be used for testing.
+// IMPORTANT! app.update.certs.* prefs should also be updated if these
+// are updated.
+pref("media.gmp-manager.cert.checkAttributes", true);
+pref("media.gmp-manager.certs.1.issuerName", "CN=DigiCert Secure Server CA,O=DigiCert Inc,C=US");
+pref("media.gmp-manager.certs.1.commonName", "aus4.mozilla.org");
+pref("media.gmp-manager.certs.2.issuerName", "CN=Thawte SSL CA,O=\"Thawte, Inc.\",C=US");
+pref("media.gmp-manager.certs.2.commonName", "aus4.mozilla.org");
+#endif

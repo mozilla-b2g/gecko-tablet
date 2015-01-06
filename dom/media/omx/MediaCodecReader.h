@@ -100,10 +100,11 @@ public:
   // Moves the decode head to aTime microseconds. aStartTime and aEndTime
   // denote the start and end times of the media in usecs, and aCurrentTime
   // is the current playback position in microseconds.
-  virtual void Seek(int64_t aTime,
-                    int64_t aStartTime,
-                    int64_t aEndTime,
-                    int64_t aCurrentTime);
+  virtual nsRefPtr<SeekPromise>
+  Seek(int64_t aTime,
+       int64_t aStartTime,
+       int64_t aEndTime,
+       int64_t aCurrentTime) MOZ_OVERRIDE;
 
   virtual bool IsMediaSeekable() MOZ_OVERRIDE;
 
@@ -138,6 +139,9 @@ protected:
     android::Vector<android::sp<android::ABuffer> > mInputBuffers;
     android::Vector<android::sp<android::ABuffer> > mOutputBuffers;
     android::sp<android::GonkNativeWindow> mNativeWindow;
+#if ANDROID_VERSION >= 21
+    android::sp<android::IGraphicBufferProducer> mGraphicBufferProducer;
+#endif
 
     // pipeline copier
     nsAutoPtr<TrackInputCopier> mInputCopier;

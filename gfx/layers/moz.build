@@ -114,6 +114,7 @@ EXPORTS.mozilla.layers += [
     'apz/util/ActiveElementManager.h',
     'apz/util/APZCCallbackHelper.h',
     'apz/util/ChromeProcessController.h',
+    'apz/util/InputAPZContext.h',
     'AtomicRefCountedWithFinalize.h',
     'AxisPhysicsModel.h',
     'AxisPhysicsMSDModel.h',
@@ -246,6 +247,7 @@ UNIFIED_SOURCES += [
     'apz/util/ActiveElementManager.cpp',
     'apz/util/APZCCallbackHelper.cpp',
     'apz/util/ChromeProcessController.cpp',
+    'apz/util/InputAPZContext.cpp',
     'AxisPhysicsModel.cpp',
     'AxisPhysicsMSDModel.cpp',
     'basic/BasicCanvasLayer.cpp',
@@ -315,6 +317,7 @@ UNIFIED_SOURCES += [
     'LayerSorter.cpp',
     'opengl/CompositingRenderTargetOGL.cpp',
     'opengl/CompositorOGL.cpp',
+    'opengl/CompositorOGLVR.cpp',
     'opengl/GLBlitTextureImageHelper.cpp',
     'opengl/OGLShaderProgram.cpp',
     'opengl/TextureClientOGL.cpp',
@@ -377,10 +380,6 @@ if CONFIG['MOZ_DEBUG']:
 
 if CONFIG['MOZ_ENABLE_D3D10_LAYER']:
     DEFINES['MOZ_ENABLE_D3D10_LAYER'] = True
-
-GENERATED_FILES = [
-    'PremultiplyTables.h',
-]
 
 CXXFLAGS += [
     '-I%s/%s' % (CONFIG['ANDROID_SOURCE'], d) for d in [

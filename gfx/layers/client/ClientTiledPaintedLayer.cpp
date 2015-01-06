@@ -91,7 +91,7 @@ ClientTiledPaintedLayer::GetAncestorLayers(LayerMetricsWrapper* aOutScrollAncest
     if (!scrollAncestor && metrics.GetScrollId() != FrameMetrics::NULL_SCROLL_ID) {
       scrollAncestor = ancestor;
     }
-    if (!metrics.mDisplayPort.IsEmpty()) {
+    if (!metrics.GetDisplayPort().IsEmpty()) {
       displayPortAncestor = ancestor;
       // Any layer that has a displayport must be scrollable, so we can break
       // here.
@@ -152,7 +152,7 @@ ClientTiledPaintedLayer::BeginPaint()
   // Compute the critical display port that applies to this layer in the
   // LayoutDevice space of this layer.
   ParentLayerRect criticalDisplayPort =
-    (displayportMetrics.mCriticalDisplayPort * displayportMetrics.GetZoom())
+    (displayportMetrics.GetCriticalDisplayPort() * displayportMetrics.GetZoom())
     + displayportMetrics.mCompositionBounds.TopLeft();
   mPaintData.mCriticalDisplayPort = RoundedOut(
     ApplyParentLayerToLayerTransform(transformDisplayPortToLayer, criticalDisplayPort));
@@ -189,9 +189,9 @@ ClientTiledPaintedLayer::UseFastPath()
 
   bool multipleTransactionsNeeded = gfxPlatform::GetPlatform()->UseProgressivePaint()
                                  || gfxPrefs::UseLowPrecisionBuffer()
-                                 || !parentMetrics.mCriticalDisplayPort.IsEmpty();
+                                 || !parentMetrics.GetCriticalDisplayPort().IsEmpty();
   bool isFixed = GetIsFixedPosition() || GetParent()->GetIsFixedPosition();
-  return !multipleTransactionsNeeded || isFixed || parentMetrics.mDisplayPort.IsEmpty();
+  return !multipleTransactionsNeeded || isFixed || parentMetrics.GetDisplayPort().IsEmpty();
 }
 
 bool
@@ -468,6 +468,18 @@ ClientTiledPaintedLayer::RenderLayer()
   // If we get here, we've done all the high- and low-precision
   // paints we wanted to do, so we can finish the paint and chill.
   EndPaint();
+}
+
+void
+ClientTiledPaintedLayer::PrintInfo(std::stringstream& aStream, const char* aPrefix)
+{
+  PaintedLayer::PrintInfo(aStream, aPrefix);
+  if (mContentClient) {
+    aStream << "\n";
+    nsAutoCString pfx(aPrefix);
+    pfx += "  ";
+    mContentClient->PrintInfo(aStream, pfx.get());
+  }
 }
 
 } // mozilla

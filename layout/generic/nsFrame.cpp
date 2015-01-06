@@ -5302,6 +5302,19 @@ nsIFrame::MovePositionBy(const nsPoint& aTranslation)
   SetPosition(position);
 }
 
+nsRect
+nsIFrame::GetNormalRect() const
+{
+  // It might be faster to first check
+  // StyleDisplay()->IsRelativelyPositionedStyle().
+  nsPoint* normalPosition = static_cast<nsPoint*>
+    (Properties().Get(NormalPositionProperty()));
+  if (normalPosition) {
+    return nsRect(*normalPosition, GetSize());
+  }
+  return GetRect();
+}
+
 nsPoint
 nsIFrame::GetNormalPosition() const
 {
@@ -6085,9 +6098,8 @@ nsFrame::GetNextPrevLineFromeBlockFrame(nsPresContext* aPresContext,
       //we need to jump to new block frame.
       return NS_ERROR_FAILURE;
     }
-    uint32_t lineFlags;
     result = it->GetLine(searchingLine, &firstFrame, &lineFrameCount,
-                         rect, &lineFlags);
+                         rect);
     if (!lineFrameCount) 
       continue;
     if (NS_SUCCEEDED(result)){
@@ -6723,7 +6735,6 @@ nsIFrame::PeekOffset(nsPeekOffsetStruct* aPos)
       int32_t lineFrameCount;
       nsIFrame *firstFrame;
       nsRect usedRect;
-      uint32_t lineFlags;
       nsIFrame* baseFrame = nullptr;
       bool endOfLine = (eSelectEndLine == aPos->mAmount);
 
@@ -6744,7 +6755,7 @@ nsIFrame::PeekOffset(nsPeekOffsetStruct* aPos)
           }
         }
       } else {
-        it->GetLine(thisLine, &firstFrame, &lineFrameCount, usedRect, &lineFlags);
+        it->GetLine(thisLine, &firstFrame, &lineFrameCount, usedRect);
 
         nsIFrame* frame = firstFrame;
         for (int32_t count = lineFrameCount; count;
@@ -6976,9 +6987,8 @@ nsIFrame::GetFrameFromDirection(nsDirection aDirection, bool aVisual,
     } else {
       nsRect  nonUsedRect;
       int32_t lineFrameCount;
-      uint32_t lineFlags;
-      result = it->GetLine(thisLine, &firstFrame, &lineFrameCount,nonUsedRect,
-                           &lineFlags);
+      result = it->GetLine(thisLine, &firstFrame, &lineFrameCount,
+                           nonUsedRect);
       if (NS_FAILED(result))
         return result;
 
@@ -7070,6 +7080,9 @@ nsFrame::ChildIsDirty(nsIFrame* aChild)
 a11y::AccType
 nsFrame::AccessibleType()
 {
+  if (IsTableCaption() && !GetRect().IsEmpty()) {
+    return a11y::eHTMLCaptionType;
+  }
   return a11y::eNoType;
 }
 #endif
@@ -7738,9 +7751,18 @@ GetIBSplitSiblingForAnonymousBlock(const nsIFrame* aFrame)
 static nsIFrame*
 GetCorrectedParent(const nsIFrame* aFrame)
 {
-  nsIFrame *parent = aFrame->GetParent();
+  nsIFrame* parent = aFrame->GetParent();
   if (!parent) {
     return nullptr;
+  }
+
+  // For a table caption we want the _inner_ table frame (unless it's anonymous)
+  // as the style parent.
+  if (aFrame->IsTableCaption()) {
+    nsIFrame* innerTable = parent->GetFirstPrincipalChild();
+    if (!innerTable->StyleContext()->GetPseudo()) {
+      return innerTable;
+    }
   }
 
   // Outer tables are always anon boxes; if we're in here for an outer
@@ -8113,10 +8135,9 @@ nsFrame::RefreshSizeCache(nsBoxLayoutState& aState)
       nsIFrame* firstFrame = nullptr;
       int32_t framesOnLine;
       nsRect lineBounds;
-      uint32_t lineFlags;
 
       do {
-         lines->GetLine(count, &firstFrame, &framesOnLine, lineBounds, &lineFlags);
+         lines->GetLine(count, &firstFrame, &framesOnLine, lineBounds);
 
          if (lineBounds.height > metrics->mBlockMinSize.height)
            metrics->mBlockMinSize.height = lineBounds.height;
@@ -9443,7 +9464,6 @@ void DR_State::InitFrameTypeTable()
   AddFrameTypeInfo(nsGkAtoms::canvasFrame,           "canvas",    "canvas");
   AddFrameTypeInfo(nsGkAtoms::rootFrame,             "root",      "root");
   AddFrameTypeInfo(nsGkAtoms::scrollFrame,           "scroll",    "scroll");
-  AddFrameTypeInfo(nsGkAtoms::tableCaptionFrame,     "caption",   "tableCaption");
   AddFrameTypeInfo(nsGkAtoms::tableCellFrame,        "cell",      "tableCell");
   AddFrameTypeInfo(nsGkAtoms::bcTableCellFrame,      "bcCell",    "bcTableCell");
   AddFrameTypeInfo(nsGkAtoms::tableColFrame,         "col",       "tableCol");

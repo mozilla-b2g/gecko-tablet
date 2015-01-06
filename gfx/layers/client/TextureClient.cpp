@@ -22,6 +22,10 @@
 #include "mozilla/layers/PTextureChild.h"
 #include "SharedSurface.h"
 #include "GLContext.h"
+#include "mozilla/gfx/DataSurfaceHelpers.h" // for CreateDataSourceSurfaceByCloning
+#include "nsPrintfCString.h"            // for nsPrintfCString
+#include "LayersLogging.h"              // for AppendToString
+#include "gfxUtils.h"                   // for gfxUtils::GetAsLZ4Base64Str
 
 #ifdef XP_WIN
 #include "mozilla/layers/TextureD3D9.h"
@@ -89,7 +93,7 @@ public:
 
   bool Recv__delete__() MOZ_OVERRIDE;
 
-  bool RecvCompositorRecycle()
+  bool RecvCompositorRecycle() MOZ_OVERRIDE
   {
     RECYCLE_LOG("Receive recycle %p (%p)\n", mTextureClient, mWaitForRecycle.get());
     mWaitForRecycle = nullptr;
@@ -231,7 +235,7 @@ TextureClient::SetAddedToCompositableClient()
 bool
 TextureClient::InitIPDLActor(CompositableForwarder* aForwarder)
 {
-  MOZ_ASSERT(aForwarder);
+  MOZ_ASSERT(aForwarder && aForwarder->GetMessageLoop() == mAllocator->GetMessageLoop());
   if (mActor && mActor->GetForwarder() == aForwarder) {
     return true;
   }
@@ -246,7 +250,6 @@ TextureClient::InitIPDLActor(CompositableForwarder* aForwarder)
   MOZ_ASSERT(mActor);
   mActor->mForwarder = aForwarder;
   mActor->mTextureClient = this;
-  mAllocator = aForwarder;
   mShared = true;
   return mActor->IPCOpen();
 }
@@ -327,7 +330,7 @@ TextureClient::CreateForDrawing(ISurfaceAllocator* aAllocator,
       gfxWindowsPlatform::GetPlatform()->GetD2DDevice() &&
       aSize.width <= maxTextureSize &&
       aSize.height <= maxTextureSize) {
-    texture = new TextureClientD3D11(aFormat, aTextureFlags);
+    texture = new TextureClientD3D11(aAllocator, aFormat, aTextureFlags);
   }
   if (parentBackend == LayersBackend::LAYERS_D3D9 &&
       aMoz2DBackend == gfx::BackendType::CAIRO &&
@@ -335,14 +338,14 @@ TextureClient::CreateForDrawing(ISurfaceAllocator* aAllocator,
       aSize.width <= maxTextureSize &&
       aSize.height <= maxTextureSize) {
     if (gfxWindowsPlatform::GetPlatform()->GetD3D9Device()) {
-      texture = new CairoTextureClientD3D9(aFormat, aTextureFlags);
+      texture = new CairoTextureClientD3D9(aAllocator, aFormat, aTextureFlags);
     }
   }
 
   if (!texture && aFormat == SurfaceFormat::B8G8R8X8 &&
       aAllocator->IsSameProcess() &&
       aMoz2DBackend == gfx::BackendType::CAIRO) {
-    texture = new DIBTextureClient(aFormat, aTextureFlags);
+    texture = new DIBTextureClient(aAllocator, aFormat, aTextureFlags);
   }
 
 #endif
@@ -475,8 +478,9 @@ TextureClient::CreateWithBufferSize(ISurfaceAllocator* aAllocator,
   return texture;
 }
 
-TextureClient::TextureClient(TextureFlags aFlags)
-  : mFlags(aFlags)
+TextureClient::TextureClient(ISurfaceAllocator* aAllocator, TextureFlags aFlags)
+  : mAllocator(aAllocator)
+  , mFlags(aFlags)
   , mShared(false)
   , mValid(true)
   , mAddedToCompositableClient(false)
@@ -527,14 +531,12 @@ bool TextureClient::CopyToTextureClient(TextureClient* aTarget,
     return false;
   }
 
-  DrawTarget* destinationTarget = aTarget->BorrowDrawTarget();
-  DrawTarget* sourceTarget = BorrowDrawTarget();
+  RefPtr<DrawTarget> destinationTarget = aTarget->BorrowDrawTarget();
+  RefPtr<DrawTarget> sourceTarget = BorrowDrawTarget();
   RefPtr<gfx::SourceSurface> source = sourceTarget->Snapshot();
   destinationTarget->CopySurface(source,
                                  aRect ? *aRect : gfx::IntRect(gfx::IntPoint(0, 0), GetSize()),
                                  aPoint ? *aPoint : gfx::IntPoint(0, 0));
-  source = nullptr;
-
   return true;
 }
 
@@ -572,6 +574,28 @@ TextureClient::ShouldDeallocateInDestructor() const
   return !IsSharedWithCompositor() || (GetFlags() & TextureFlags::DEALLOCATE_CLIENT);
 }
 
+void
+TextureClient::PrintInfo(std::stringstream& aStream, const char* aPrefix)
+{
+  aStream << aPrefix;
+  aStream << nsPrintfCString("TextureClient (0x%p)", this).get();
+  AppendToString(aStream, GetSize(), " [size=", "]");
+  AppendToString(aStream, GetFormat(), " [format=", "]");
+  AppendToString(aStream, mFlags, " [flags=", "]");
+
+#ifdef MOZ_DUMP_PAINTING
+  if (gfxPrefs::LayersDumpTexture() || profiler_feature_active("layersdump")) {
+    nsAutoCString pfx(aPrefix);
+    pfx += "  ";
+
+    aStream << "\n" << pfx.get() << "Surface: ";
+    RefPtr<gfx::DataSourceSurface> dSurf = GetAsSurface();
+    if (dSurf) {
+      aStream << gfxUtils::GetAsLZ4Base64Str(dSurf).get();
+    }
+  }
+#endif
+}
 bool
 ShmemTextureClient::ToSurfaceDescriptor(SurfaceDescriptor& aDescriptor)
 {
@@ -686,8 +710,7 @@ BufferTextureClient::BufferTextureClient(ISurfaceAllocator* aAllocator,
                                          gfx::SurfaceFormat aFormat,
                                          gfx::BackendType aMoz2DBackend,
                                          TextureFlags aFlags)
-  : TextureClient(aFlags)
-  , mAllocator(aAllocator)
+  : TextureClient(aAllocator, aFlags)
   , mFormat(aFormat)
   , mBackend(aMoz2DBackend)
   , mOpenMode(OpenMode::OPEN_NONE)
@@ -708,12 +731,6 @@ BufferTextureClient::CreateSimilar(TextureFlags aFlags,
 
   RefPtr<TextureClient> newTex = newBufferTex.get();
   return newTex;
-}
-
-ISurfaceAllocator*
-BufferTextureClient::GetAllocator() const
-{
-  return mAllocator;
 }
 
 bool
@@ -866,12 +883,27 @@ BufferTextureClient::GetLockedData() const
   return serializer.GetData();
 }
 
+TemporaryRef<gfx::DataSourceSurface>
+BufferTextureClient::GetAsSurface()
+{
+  ImageDataSerializer serializer(GetBuffer(), GetBufferSize());
+  MOZ_ASSERT(serializer.IsValid());
+
+  RefPtr<gfx::DataSourceSurface> wrappingSurf =
+    gfx::Factory::CreateWrappingDataSourceSurface(serializer.GetData(),
+                                                  serializer.GetStride(),
+                                                  serializer.GetSize(),
+                                                  serializer.GetFormat());
+  return gfx::CreateDataSourceSurfaceByCloning(wrappingSurf);
+}
+
 ////////////////////////////////////////////////////////////////////////
 // SharedSurfaceTextureClient
 
-SharedSurfaceTextureClient::SharedSurfaceTextureClient(TextureFlags aFlags,
+SharedSurfaceTextureClient::SharedSurfaceTextureClient(ISurfaceAllocator* aAllocator,
+                                                       TextureFlags aFlags,
                                                        gl::SharedSurface* surf)
-  : TextureClient(aFlags)
+  : TextureClient(aAllocator, aFlags)
   , mIsLocked(false)
   , mSurf(surf)
   , mGL(mSurf->mGL)

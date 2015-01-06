@@ -104,6 +104,7 @@ class mozilla::gl::SkiaGLGlue : public GenericAtomicRefCounted {
 
 #include "nsIGfxInfo.h"
 #include "nsIXULRuntime.h"
+#include "VsyncSource.h"
 
 namespace mozilla {
 namespace layers {
@@ -548,8 +549,8 @@ gfxPlatform::Init()
 
     RegisterStrongMemoryReporter(new GfxMemoryImageReporter());
 
-    if (gfxPrefs::HardwareVsyncEnabled() && gfxPrefs::VsyncAlignedCompositor()) {
-      gPlatform->InitHardwareVsync();
+    if (XRE_IsParentProcess() && gfxPrefs::HardwareVsyncEnabled()) {
+      gPlatform->mVsyncSource = gPlatform->CreateHardwareVsyncSource();
     }
 }
 
@@ -597,6 +598,7 @@ gfxPlatform::Shutdown()
 
         gPlatform->mMemoryPressureObserver = nullptr;
         gPlatform->mSkiaGlue = nullptr;
+        gPlatform->mVsyncSource = nullptr;
     }
 
 #ifdef MOZ_WIDGET_ANDROID
@@ -664,16 +666,19 @@ gfxPlatform::ShutdownLayersIPC()
     }
     sLayersIPCIsUp = false;
 
-    if (XRE_GetProcessType() == GeckoProcessType_Default)
-    {
+    GeckoProcessType processType = XRE_GetProcessType();
+    if (processType == GeckoProcessType_Default) {
         // This must happen after the shutdown of media and widgets, which
         // are triggered by the NS_XPCOM_SHUTDOWN_OBSERVER_ID notification.
         layers::ImageBridgeChild::ShutDown();
+
 #ifdef MOZ_WIDGET_GONK
         layers::SharedBufferManagerChild::ShutDown();
 #endif
 
         layers::CompositorParent::ShutDown();
+    } else if (processType == GeckoProcessType_Content) {
+        layers::CompositorChild::ShutDown();
     }
 }
 

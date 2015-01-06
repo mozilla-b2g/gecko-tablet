@@ -172,6 +172,11 @@ WebrtcVideoConduit::~WebrtcVideoConduit()
   }
 }
 
+bool WebrtcVideoConduit::SetLocalSSRC(unsigned int ssrc)
+{
+  return !mPtrRTP->SetLocalSSRC(mChannel, ssrc);
+}
+
 bool WebrtcVideoConduit::GetLocalSSRC(unsigned int* ssrc)
 {
   return !mPtrRTP->GetLocalSSRC(mChannel, *ssrc);
@@ -180,6 +185,14 @@ bool WebrtcVideoConduit::GetLocalSSRC(unsigned int* ssrc)
 bool WebrtcVideoConduit::GetRemoteSSRC(unsigned int* ssrc)
 {
   return !mPtrRTP->GetRemoteSSRC(mChannel, *ssrc);
+}
+
+bool WebrtcVideoConduit::SetLocalCNAME(const char* cname)
+{
+  char temp[256];
+  strncpy(temp, cname, sizeof(temp) - 1);
+  temp[sizeof(temp) - 1] = 0;
+  return !mPtrRTP->SetRTCPCName(mChannel, temp);
 }
 
 bool WebrtcVideoConduit::GetVideoEncoderStats(double* framerateMean,
@@ -1137,7 +1150,7 @@ WebrtcVideoConduit::ReceivedRTCPPacket(const void *data, int len)
   if(mPtrViENetwork->ReceivedRTCPPacket(mChannel,data,len) == -1)
   {
     int error = mPtrViEBase->LastError();
-    CSFLogError(logTag, "%s RTP Processing Failed %d", __FUNCTION__, error);
+    CSFLogError(logTag, "%s RTCP Processing Failed %d", __FUNCTION__, error);
     if(error >= kViERtpRtcpInvalidChannelId && error <= kViERtpRtcpRtcpDisabled)
     {
       return kMediaConduitRTPProcessingFailed;

@@ -20,8 +20,10 @@ loop.standaloneRoomViews = (function(mozL10n) {
   var StandaloneRoomInfoArea = React.createClass({displayName: 'StandaloneRoomInfoArea',
     propTypes: {
       helper: React.PropTypes.instanceOf(loop.shared.utils.Helper).isRequired,
-      activeRoomStore:
-        React.PropTypes.instanceOf(loop.store.ActiveRoomStore).isRequired,
+      activeRoomStore: React.PropTypes.oneOfType([
+        React.PropTypes.instanceOf(loop.store.ActiveRoomStore),
+        React.PropTypes.instanceOf(loop.store.FxOSActiveRoomStore)
+      ]).isRequired,
       feedbackStore:
         React.PropTypes.instanceOf(loop.store.FeedbackStore).isRequired
     },
@@ -113,14 +115,20 @@ loop.standaloneRoomViews = (function(mozL10n) {
           );
         }
         case ROOM_STATES.ENDED: {
-          return (
-            React.DOM.div({className: "ended-conversation"}, 
-              sharedViews.FeedbackView({
-                feedbackStore: this.props.feedbackStore, 
-                onAfterFeedbackReceived: this.onFeedbackSent}
+          if (this.props.roomUsed)
+            return (
+              React.DOM.div({className: "ended-conversation"}, 
+                sharedViews.FeedbackView({
+                  feedbackStore: this.props.feedbackStore, 
+                  onAfterFeedbackReceived: this.onFeedbackSent}
+                )
               )
-            )
-          );
+            );
+
+          // In case the room was not used (no one was here), we
+          // bypass the feedback form.
+          this.onFeedbackSent();
+          return null;
         }
         case ROOM_STATES.FAILED: {
           return (
@@ -189,8 +197,10 @@ loop.standaloneRoomViews = (function(mozL10n) {
     ],
 
     propTypes: {
-      activeRoomStore:
-        React.PropTypes.instanceOf(loop.store.ActiveRoomStore).isRequired,
+      activeRoomStore: React.PropTypes.oneOfType([
+        React.PropTypes.instanceOf(loop.store.ActiveRoomStore),
+        React.PropTypes.instanceOf(loop.store.FxOSActiveRoomStore)
+      ]).isRequired,
       feedbackStore:
         React.PropTypes.instanceOf(loop.store.FeedbackStore).isRequired,
       dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired,
@@ -358,11 +368,15 @@ loop.standaloneRoomViews = (function(mozL10n) {
                                   joinRoom: this.joinRoom, 
                                   helper: this.props.helper, 
                                   activeRoomStore: this.props.activeRoomStore, 
-                                  feedbackStore: this.props.feedbackStore}), 
+                                  feedbackStore: this.props.feedbackStore, 
+                                  roomUsed: this.state.used}), 
           React.DOM.div({className: "video-layout-wrapper"}, 
             React.DOM.div({className: "conversation room-conversation"}, 
               React.DOM.h2({className: "room-name"}, this.state.roomName), 
               React.DOM.div({className: "media nested"}, 
+                React.DOM.span({className: "self-view-hidden-message"}, 
+                  mozL10n.get("self_view_hidden_message")
+                ), 
                 React.DOM.div({className: "video_wrapper remote_wrapper"}, 
                   React.DOM.div({className: "video_inner remote"})
                 ), 
@@ -379,6 +393,9 @@ loop.standaloneRoomViews = (function(mozL10n) {
                 enableHangup: this._roomIsActive()})
             )
           ), 
+          loop.fxOSMarketplaceViews.FxOSHiddenMarketplaceView({
+            marketplaceSrc: this.state.marketplaceSrc, 
+            onMarketplaceMessage: this.state.onMarketplaceMessage}), 
           StandaloneRoomFooter(null)
         )
       );

@@ -103,9 +103,9 @@ namespace layerscope {
 class LayersPacket;
 }
 
-#define MOZ_LAYER_DECL_NAME(n, e)                           \
-  virtual const char* Name() const { return n; }            \
-  virtual LayerType GetType() const { return e; }
+#define MOZ_LAYER_DECL_NAME(n, e)                              \
+  virtual const char* Name() const MOZ_OVERRIDE { return n; }  \
+  virtual LayerType GetType() const MOZ_OVERRIDE { return e; }
 
 /**
  * Base class for userdata objects attached to layers and layer managers.
@@ -670,6 +670,10 @@ public:
 
   virtual float RequestProperty(const nsAString& property) { return -1; }
 
+  const TimeStamp& GetAnimationReadyTime() const {
+    return mAnimationReadyTime;
+  }
+
 protected:
   nsRefPtr<Layer> mRoot;
   gfx::UserData mUserData;
@@ -693,6 +697,9 @@ protected:
   static PRLogModuleInfo* sLog;
   uint64_t mId;
   bool mInTransaction;
+  // The time when painting most recently finished. This is recorded so that
+  // we can time any play-pending animations from this point.
+  TimeStamp mAnimationReadyTime;
 private:
   struct FramesTimingRecording
   {
@@ -1100,6 +1107,11 @@ public:
   // This is only called when the layer tree is updated. Do not call this from
   // layout code.  To add an animation to this layer, use AddAnimation.
   void SetAnimations(const AnimationArray& aAnimations);
+  // Go through all animations in this layer and its children and, for
+  // any animations with a null start time, update their start time such
+  // that at |aReadyTime| the animation's current time corresponds to its
+  // 'initial current time' value.
+  void StartPendingAnimations(const TimeStamp& aReadyTime);
 
   // These are a parallel to AddAnimation and clearAnimations, except
   // they add pending animations that apply only when the next
@@ -1711,11 +1723,11 @@ public:
    */
   const nsIntRegion& GetValidRegion() const { return mValidRegion; }
 
-  virtual PaintedLayer* AsPaintedLayer() { return this; }
+  virtual PaintedLayer* AsPaintedLayer() MOZ_OVERRIDE { return this; }
 
   MOZ_LAYER_DECL_NAME("PaintedLayer", TYPE_PAINTED)
 
-  virtual void ComputeEffectiveTransforms(const gfx::Matrix4x4& aTransformToSurface)
+  virtual void ComputeEffectiveTransforms(const gfx::Matrix4x4& aTransformToSurface) MOZ_OVERRIDE
   {
     gfx::Matrix4x4 idealTransform = GetLocalTransform() * aTransformToSurface;
     gfx::Matrix residual;
@@ -1761,9 +1773,9 @@ protected:
     mContentFlags = 0; // Clear NO_TEXT, NO_TEXT_OVER_TRANSPARENT
   }
 
-  virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix);
+  virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix) MOZ_OVERRIDE;
 
-  virtual void DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent);
+  virtual void DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent) MOZ_OVERRIDE;
 
   /**
    * ComputeEffectiveTransforms snaps the ideal transform to get mEffectiveTransform.
@@ -1843,17 +1855,17 @@ public:
     Mutated();
   }
 
-  virtual void FillSpecificAttributes(SpecificLayerAttributes& aAttrs);
+  virtual void FillSpecificAttributes(SpecificLayerAttributes& aAttrs) MOZ_OVERRIDE;
 
   void SortChildrenBy3DZOrder(nsTArray<Layer*>& aArray);
 
   // These getters can be used anytime.
 
-  virtual ContainerLayer* AsContainerLayer() { return this; }
-  virtual const ContainerLayer* AsContainerLayer() const { return this; }
+  virtual ContainerLayer* AsContainerLayer() MOZ_OVERRIDE { return this; }
+  virtual const ContainerLayer* AsContainerLayer() const MOZ_OVERRIDE { return this; }
 
-  virtual Layer* GetFirstChild() const { return mFirstChild; }
-  virtual Layer* GetLastChild() const { return mLastChild; }
+  virtual Layer* GetFirstChild() const MOZ_OVERRIDE { return mFirstChild; }
+  virtual Layer* GetLastChild() const MOZ_OVERRIDE { return mLastChild; }
   float GetPreXScale() const { return mPreXScale; }
   float GetPreYScale() const { return mPreYScale; }
   float GetInheritedXScale() const { return mInheritedXScale; }
@@ -1867,7 +1879,7 @@ public:
    * container is backend-specific. ComputeEffectiveTransforms must also set
    * mUseIntermediateSurface.
    */
-  virtual void ComputeEffectiveTransforms(const gfx::Matrix4x4& aTransformToSurface) = 0;
+  virtual void ComputeEffectiveTransforms(const gfx::Matrix4x4& aTransformToSurface) MOZ_OVERRIDE = 0;
 
   /**
    * Call this only after ComputeEffectiveTransforms has been invoked
@@ -1944,9 +1956,9 @@ protected:
    */
   void ComputeEffectiveTransformsForChildren(const gfx::Matrix4x4& aTransformToSurface);
 
-  virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix);
+  virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix) MOZ_OVERRIDE;
 
-  virtual void DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent);
+  virtual void DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent) MOZ_OVERRIDE;
 
   Layer* mFirstChild;
   Layer* mLastChild;
@@ -1972,7 +1984,7 @@ protected:
  */
 class ColorLayer : public Layer {
 public:
-  virtual ColorLayer* AsColorLayer() { return this; }
+  virtual ColorLayer* AsColorLayer() MOZ_OVERRIDE { return this; }
 
   /**
    * CONSTRUCTION PHASE ONLY
@@ -2005,7 +2017,7 @@ public:
 
   MOZ_LAYER_DECL_NAME("ColorLayer", TYPE_COLOR)
 
-  virtual void ComputeEffectiveTransforms(const gfx::Matrix4x4& aTransformToSurface)
+  virtual void ComputeEffectiveTransforms(const gfx::Matrix4x4& aTransformToSurface) MOZ_OVERRIDE
   {
     gfx::Matrix4x4 idealTransform = GetLocalTransform() * aTransformToSurface;
     mEffectiveTransform = SnapTransformTranslation(idealTransform, nullptr);
@@ -2018,9 +2030,9 @@ protected:
       mColor(0.0, 0.0, 0.0, 0.0)
   {}
 
-  virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix);
+  virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix) MOZ_OVERRIDE;
 
-  virtual void DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent);
+  virtual void DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent) MOZ_OVERRIDE;
 
   nsIntRect mBounds;
   gfxRGBA mColor;
@@ -2151,7 +2163,7 @@ public:
 
   MOZ_LAYER_DECL_NAME("CanvasLayer", TYPE_CANVAS)
 
-  virtual void ComputeEffectiveTransforms(const gfx::Matrix4x4& aTransformToSurface)
+  virtual void ComputeEffectiveTransforms(const gfx::Matrix4x4& aTransformToSurface) MOZ_OVERRIDE
   {
     // Snap our local transform first, and snap the inherited transform as well.
     // This makes our snapping equivalent to what would happen if our content
@@ -2175,9 +2187,9 @@ protected:
     , mDirty(false)
   {}
 
-  virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix);
+  virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix) MOZ_OVERRIDE;
 
-  virtual void DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent);
+  virtual void DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent) MOZ_OVERRIDE;
 
   void FireDidTransactionCallback()
   {
@@ -2227,10 +2239,10 @@ private:
   virtual bool InsertAfter(Layer* aChild, Layer* aAfter) MOZ_OVERRIDE
   { MOZ_CRASH(); return false; }
 
-  virtual bool RemoveChild(Layer* aChild)
+  virtual bool RemoveChild(Layer* aChild) MOZ_OVERRIDE
   { MOZ_CRASH(); return false; }
 
-  virtual bool RepositionChild(Layer* aChild, Layer* aAfter)
+  virtual bool RepositionChild(Layer* aChild, Layer* aAfter) MOZ_OVERRIDE
   { MOZ_CRASH(); return false; }
 
   using Layer::SetFrameMetrics;
@@ -2283,14 +2295,14 @@ public:
   }
 
   // These getters can be used anytime.
-  virtual RefLayer* AsRefLayer() { return this; }
+  virtual RefLayer* AsRefLayer() MOZ_OVERRIDE { return this; }
 
   virtual int64_t GetReferentId() { return mId; }
 
   /**
    * DRAWING PHASE ONLY
    */
-  virtual void FillSpecificAttributes(SpecificLayerAttributes& aAttrs);
+  virtual void FillSpecificAttributes(SpecificLayerAttributes& aAttrs) MOZ_OVERRIDE;
 
   MOZ_LAYER_DECL_NAME("RefLayer", TYPE_REF)
 
@@ -2299,9 +2311,9 @@ protected:
     : ContainerLayer(aManager, aImplData) , mId(0)
   {}
 
-  virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix);
+  virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix) MOZ_OVERRIDE;
 
-  virtual void DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent);
+  virtual void DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent) MOZ_OVERRIDE;
 
   Layer* mTempReferent;
   // 0 is a special value that means "no ID".

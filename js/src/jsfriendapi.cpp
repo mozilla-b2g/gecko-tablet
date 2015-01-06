@@ -460,7 +460,7 @@ js::GetOutermostEnclosingFunctionOfScriptedCaller(JSContext *cx)
     if (!iter.isFunctionFrame())
         return nullptr;
 
-    RootedFunction curr(cx, iter.callee());
+    RootedFunction curr(cx, iter.callee(cx));
     for (StaticScopeIter<NoGC> i(curr); !i.done(); i++) {
         if (i.type() == StaticScopeIter<NoGC>::FUNCTION)
             curr = &i.fun();
@@ -639,7 +639,7 @@ js::ZoneGlobalsAreAllGray(JS::Zone *zone)
 {
     for (CompartmentsInZoneIter comp(zone); !comp.done(); comp.next()) {
         JSObject *obj = comp->maybeGlobal();
-        if (!obj || !JS::GCThingIsMarkedGray(obj))
+        if (!obj || !JS::ObjectIsMarkedGray(obj))
             return false;
     }
     return true;
@@ -761,12 +761,12 @@ FormatFrame(JSContext *cx, const ScriptFrameIter &iter, char *buf, int num,
     RootedScript script(cx, iter.script());
     jsbytecode* pc = iter.pc();
 
-    RootedObject scopeChain(cx, iter.scopeChain());
+    RootedObject scopeChain(cx, iter.scopeChain(cx));
     JSAutoCompartment ac(cx, scopeChain);
 
     const char *filename = script->filename();
     unsigned lineno = PCToLineNumber(script, pc);
-    RootedFunction fun(cx, iter.maybeCallee());
+    RootedFunction fun(cx, iter.maybeCallee(cx));
     RootedString funname(cx);
     if (fun)
         funname = fun->atom();
@@ -796,7 +796,7 @@ FormatFrame(JSContext *cx, const ScriptFrameIter &iter, char *buf, int num,
             if (i < iter.numFormalArgs() && script->formalIsAliased(i)) {
                 for (AliasedFormalIter fi(script); ; fi++) {
                     if (fi.frameIndex() == i) {
-                        arg = iter.callObj().aliasedVar(fi);
+                        arg = iter.callObj(cx).aliasedVar(fi);
                         break;
                     }
                 }
@@ -1114,7 +1114,7 @@ JS::IsIncrementalGCEnabled(JSRuntime *rt)
 JS_FRIEND_API(bool)
 JS::IsIncrementalGCInProgress(JSRuntime *rt)
 {
-    return rt->gc.isIncrementalGCInProgress();
+    return rt->gc.isIncrementalGCInProgress() && !rt->gc.isVerifyPreBarriersEnabled();
 }
 
 JS_FRIEND_API(void)
@@ -1433,12 +1433,6 @@ js::ReportErrorWithId(JSContext *cx, const char *msg, HandleId id)
 }
 
 #ifdef DEBUG
-JS_PUBLIC_API(bool)
-js::IsInRequest(JSContext *cx)
-{
-    return !!cx->runtime()->requestDepth;
-}
-
 bool
 js::HasObjectMovedOp(JSObject *obj) {
     return !!GetObjectClass(obj)->ext.objectMovedOp;

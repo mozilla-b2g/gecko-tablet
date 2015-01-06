@@ -105,6 +105,7 @@ class TextureClient;
 class CompositableClient;
 class CompositableForwarder;
 class SurfaceDescriptor;
+class GrallocImage;
 
 struct ImageBackendData
 {
@@ -166,6 +167,11 @@ public:
   bool IsSentToCompositor() { return mSent; }
 
   virtual TemporaryRef<gfx::SourceSurface> GetAsSourceSurface() = 0;
+
+  virtual GrallocImage* AsGrallocImage()
+  {
+    return nullptr;
+  }
 
 protected:
   Image(void* aImplData, ImageFormat aFormat) :
@@ -804,16 +810,16 @@ public:
     mSourceSurface = aData.mSourceSurface;
   }
 
-  virtual TemporaryRef<gfx::SourceSurface> GetAsSourceSurface()
+  virtual TemporaryRef<gfx::SourceSurface> GetAsSourceSurface() MOZ_OVERRIDE
   {
     return mSourceSurface.get();
   }
 
-  virtual ISharedImage* AsSharedImage() { return this; }
-  virtual uint8_t* GetBuffer() { return nullptr; }
+  virtual ISharedImage* AsSharedImage() MOZ_OVERRIDE { return this; }
+  virtual uint8_t* GetBuffer() MOZ_OVERRIDE { return nullptr; }
   virtual TextureClient* GetTextureClient(CompositableClient* aClient) MOZ_OVERRIDE;
 
-  gfx::IntSize GetSize() { return mSize; }
+  virtual gfx::IntSize GetSize() MOZ_OVERRIDE { return mSize; }
 
   CairoImage();
   ~CairoImage();

@@ -1222,7 +1222,7 @@ ShellObjectMetadataCallback(JSContext *cx, JSObject **pmetadata)
     for (NonBuiltinScriptFrameIter iter(cx); !iter.done(); ++iter) {
         if (iter.isFunctionFrame() && iter.compartment() == cx->compartment()) {
             id = INT_TO_JSID(stackIndex);
-            RootedObject callee(cx, iter.callee());
+            RootedObject callee(cx, iter.callee(cx));
             if (!JS_DefinePropertyById(cx, stack, id, callee, 0,
                                        JS_STUBGETTER, JS_STUBSETTER))
             {
@@ -1673,7 +1673,7 @@ static bool
 EnableTraceLogger(JSContext *cx, unsigned argc, jsval *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    TraceLogger *logger = TraceLoggerForMainThread(cx->runtime());
+    TraceLoggerThread *logger = TraceLoggerForMainThread(cx->runtime());
     args.rval().setBoolean(TraceLoggerEnable(logger, cx));
 
     return true;
@@ -1683,7 +1683,7 @@ static bool
 DisableTraceLogger(JSContext *cx, unsigned argc, jsval *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    TraceLogger *logger = TraceLoggerForMainThread(cx->runtime());
+    TraceLoggerThread *logger = TraceLoggerForMainThread(cx->runtime());
     args.rval().setBoolean(TraceLoggerDisable(logger));
 
     return true;
@@ -1724,8 +1724,9 @@ ObjectAddress(JSContext *cx, unsigned argc, jsval *vp)
 #ifdef JS_MORE_DETERMINISTIC
     args.rval().setInt32(0);
 #else
+    void *ptr = js::UncheckedUnwrap(&args[0].toObject(), true);
     char buffer[64];
-    JS_snprintf(buffer, sizeof(buffer), "%p", &args[0].toObject());
+    JS_snprintf(buffer, sizeof(buffer), "%p", ptr);
 
     JSString *str = JS_NewStringCopyZ(cx, buffer);
     if (!str)

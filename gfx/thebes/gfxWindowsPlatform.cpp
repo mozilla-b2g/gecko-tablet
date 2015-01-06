@@ -433,7 +433,7 @@ gfxWindowsPlatform::UpdateRenderMode()
     if (isVistaOrHigher && !safeMode && tryD2D &&
         device &&
         device->GetFeatureLevel() >= D3D_FEATURE_LEVEL_10_0 &&
-        DoesD3D11DeviceWork(device)) {
+        DoesD3D11TextureSharingWork(device)) {
 
         VerifyD2DDevice(d2dForceEnabled);
         if (mD2DDevice && GetD3D11Device()) {
@@ -1553,10 +1553,6 @@ gfxWindowsPlatform::GetDXGIAdapter()
   return mAdapter;
 }
 
-#define TEXTURE_SIZE 32
-
-// See bug 1083071. On some drivers, Direct3D 11 CreateShaderResourceView fails
-// with E_OUTOFMEMORY.
 bool DoesD3D11DeviceWork(ID3D11Device *device)
 {
   static bool checked;
@@ -1589,6 +1585,29 @@ bool DoesD3D11DeviceWork(ID3D11Device *device)
 #endif
       return false;
     }
+  }
+  result = true;
+  return true;
+}
+
+#define TEXTURE_SIZE 32
+
+// See bug 1083071. On some drivers, Direct3D 11 CreateShaderResourceView fails
+// with E_OUTOFMEMORY.
+bool DoesD3D11TextureSharingWork(ID3D11Device *device)
+{
+  static bool checked;
+  static bool result;
+
+  if (checked)
+      return result;
+  checked = true;
+
+  if (gfxPrefs::Direct2DForceEnabled() ||
+      gfxPrefs::LayersAccelerationForceEnabled())
+  {
+    result = true;
+    return true;
   }
 
   RefPtr<ID3D11Texture2D> texture;
@@ -1688,6 +1707,9 @@ bool DoesD3D11DeviceWork(ID3D11Device *device)
 
   // This if(FAILED()) is the one that actually fails on systems affected by bug 1083071.
   if (FAILED(device->CreateShaderResourceView(sharedTexture, NULL, byRef(sharedView)))) {
+#if defined(MOZ_CRASHREPORTER)
+    CrashReporter::AppendAppNotesToCrashReport(NS_LITERAL_CSTRING("CreateShaderResourceView failed\n"));
+#endif
     return false;
   }
 
@@ -1782,7 +1804,7 @@ gfxWindowsPlatform::InitD3D11Devices()
       adapter = nullptr;
     }
 
-    if (FAILED(hr)) {
+    if (FAILED(hr) || !DoesD3D11DeviceWork(mD3D11Device)) {
       if (gfxPrefs::LayersD3D11DisableWARP()) {
         return;
       }

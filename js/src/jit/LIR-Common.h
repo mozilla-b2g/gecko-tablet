@@ -43,6 +43,12 @@ class LNop : public LInstructionHelper<0, 0, 0>
     LIR_HEADER(Nop)
 };
 
+class LMop : public LInstructionHelper<0, 0, 0>
+{
+  public:
+    LIR_HEADER(Mop)
+};
+
 // An LOsiPoint captures a snapshot after a call and ensures enough space to
 // patch in a call to the invalidation mechanism.
 //
@@ -293,12 +299,8 @@ class LSimdShuffle : public LInstructionHelper<1, 2, 1>
 {
   public:
     LIR_HEADER(SimdShuffle);
-    LSimdShuffle(const LAllocation &lhs, const LAllocation &rhs, const LDefinition &temp)
-    {
-        setOperand(0, lhs);
-        setOperand(1, rhs);
-        setTemp(0, temp);
-    }
+    LSimdShuffle()
+    {}
 
     const LAllocation *lhs() {
         return getOperand(0);
@@ -476,7 +478,7 @@ class LSimdShift : public LInstructionHelper<1, 2, 0>
 
 // SIMD selection of lanes from two int32x4 or float32x4 arguments based on a
 // int32x4 argument.
-class LSimdSelect : public LInstructionHelper<1, 3, 0>
+class LSimdSelect : public LInstructionHelper<1, 3, 1>
 {
   public:
     LIR_HEADER(SimdSelect);
@@ -489,8 +491,11 @@ class LSimdSelect : public LInstructionHelper<1, 3, 0>
     const LAllocation *rhs() {
         return getOperand(2);
     }
-    MSimdTernaryBitwise::Operation operation() const {
-        return mir_->toSimdTernaryBitwise()->operation();
+    const LDefinition *temp() {
+        return getTemp(0);
+    }
+    MSimdSelect *mir() const {
+        return mir_->toSimdSelect();
     }
 };
 
@@ -1745,11 +1750,28 @@ class LGetDOMProperty : public LDOMPropertyInstructionHelper<BOX_PIECES, 0>
     }
 };
 
-class LGetDOMMember : public LInstructionHelper<BOX_PIECES, 1, 0>
+class LGetDOMMemberV : public LInstructionHelper<BOX_PIECES, 1, 0>
 {
   public:
-    LIR_HEADER(GetDOMMember);
-    explicit LGetDOMMember(const LAllocation &object) {
+    LIR_HEADER(GetDOMMemberV);
+    explicit LGetDOMMemberV(const LAllocation &object) {
+        setOperand(0, object);
+    }
+
+    const LAllocation *object() {
+        return getOperand(0);
+    }
+
+    MGetDOMMember *mir() const {
+        return mir_->toGetDOMMember();
+    }
+};
+
+class LGetDOMMemberT : public LInstructionHelper<1, 1, 0>
+{
+  public:
+    LIR_HEADER(GetDOMMemberT);
+    explicit LGetDOMMemberT(const LAllocation &object) {
         setOperand(0, object);
     }
 
@@ -6516,28 +6538,6 @@ class LIsObjectAndBranch : public LControlInstructionHelper<2, BOX_PIECES, 0>
     }
     MBasicBlock *ifFalse() const {
         return getSuccessor(1);
-    }
-};
-
-class LHaveSameClass : public LInstructionHelper<1, 2, 1>
-{
-  public:
-    LIR_HEADER(HaveSameClass);
-    LHaveSameClass(const LAllocation &left, const LAllocation &right,
-                   const LDefinition &temp) {
-        setOperand(0, left);
-        setOperand(1, right);
-        setTemp(0, temp);
-    }
-
-    const LAllocation *lhs() {
-        return getOperand(0);
-    }
-    const LAllocation *rhs() {
-        return getOperand(1);
-    }
-    MHaveSameClass *mir() const {
-        return mir_->toHaveSameClass();
     }
 };
 

@@ -52,7 +52,7 @@
 
 #include "nsIContentPolicy.h"
 #include "nsContentPolicyUtils.h"
-#include "nsCrossSiteListenerProxy.h"
+#include "nsCORSListenerProxy.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsICachingChannel.h"
 #include "nsLayoutUtils.h"
@@ -101,6 +101,7 @@ static PRLogModuleInfo* gMediaElementEventsLog;
 #include "nsIContentSecurityPolicy.h"
 
 #include "mozilla/Preferences.h"
+#include "mozilla/FloatingPoint.h"
 
 #include "nsIPermissionManager.h"
 #include "nsContentTypeParser.h"
@@ -692,7 +693,8 @@ void HTMLMediaElement::AbortExistingLoads()
 
 void HTMLMediaElement::NoSupportedMediaSourceError()
 {
-  NS_ASSERTION(mDelayingLoadEvent, "Load event not delayed during source selection?");
+  NS_ASSERTION(mNetworkState == NETWORK_LOADING,
+               "Not loading during source selection?");
 
   mError = new MediaError(this, nsIDOMMediaError::MEDIA_ERR_SRC_NOT_SUPPORTED);
   ChangeNetworkState(nsIDOMHTMLMediaElement::NETWORK_NO_SOURCE);
@@ -1369,7 +1371,7 @@ HTMLMediaElement::Seek(double aTime,
                        ErrorResult& aRv)
 {
   // aTime should be non-NaN.
-  MOZ_ASSERT(aTime == aTime);
+  MOZ_ASSERT(!mozilla::IsNaN(aTime));
 
   StopSuspendingAfterFirstFrame();
 
@@ -1493,7 +1495,7 @@ HTMLMediaElement::Seek(double aTime,
 NS_IMETHODIMP HTMLMediaElement::SetCurrentTime(double aCurrentTime)
 {
   // Detect for a NaN and invalid values.
-  if (aCurrentTime != aCurrentTime) {
+  if (mozilla::IsNaN(aCurrentTime)) {
     LOG(PR_LOG_DEBUG, ("%p SetCurrentTime(%f) failed: bad time", this, aCurrentTime));
     return NS_ERROR_FAILURE;
   }
@@ -1826,6 +1828,7 @@ HTMLMediaElement::CaptureStreamInternal(bool aFinishWhenEnded)
   out->mStream = DOMMediaStream::CreateTrackUnionStream(window, hints);
   nsRefPtr<nsIPrincipal> principal = GetCurrentPrincipal();
   out->mStream->CombineWithPrincipal(principal);
+  out->mStream->SetCORSMode(mCORSMode);
   out->mFinishWhenEnded = aFinishWhenEnded;
 
   mAudioCaptured = true;
@@ -2653,19 +2656,9 @@ nsresult HTMLMediaElement::FinishDecoderSetup(MediaDecoder* aDecoder,
   mDecoder->SetVolume(mMuted ? 0.0 : mVolume);
   mDecoder->SetPreservesPitch(mPreservesPitch);
   mDecoder->SetPlaybackRate(mPlaybackRate);
-
-#ifdef MOZ_EME
-  if (mMediaKeys) {
-    mDecoder->SetCDMProxy(mMediaKeys->GetCDMProxy());
-  }
-#endif
   if (mPreloadAction == HTMLMediaElement::PRELOAD_METADATA) {
     mDecoder->SetMinimizePrerollUntilPlaybackStarts();
   }
-
-  // Update decoder principal before we start decoding, since it
-  // can affect how we feed data to MediaStreams
-  NotifyDecoderPrincipalChanged();
 
   for (uint32_t i = 0; i < mOutputStreams.Length(); ++i) {
     OutputMediaStream* ms = &mOutputStreams[i];
@@ -2673,12 +2666,22 @@ nsresult HTMLMediaElement::FinishDecoderSetup(MediaDecoder* aDecoder,
         ms->mFinishWhenEnded);
   }
 
+  // Update decoder principal before we start decoding, since it
+  // can affect how we feed data to MediaStreams
+  NotifyDecoderPrincipalChanged();
+
   nsresult rv = aDecoder->Load(aListener, aCloneDonor);
   if (NS_FAILED(rv)) {
     mDecoder = nullptr;
     LOG(PR_LOG_DEBUG, ("%p Failed to load for decoder %p", this, aDecoder));
     return rv;
   }
+
+#ifdef MOZ_EME
+  if (mMediaKeys) {
+    mDecoder->SetCDMProxy(mMediaKeys->GetCDMProxy());
+  }
+#endif
 
   // Decoder successfully created, the decoder now owns the MediaResource
   // which owns the channel.
@@ -2991,6 +2994,14 @@ void HTMLMediaElement::Error(uint16_t aErrorCode)
                aErrorCode == nsIDOMMediaError::MEDIA_ERR_NETWORK ||
                aErrorCode == nsIDOMMediaError::MEDIA_ERR_ABORTED,
                "Only use nsIDOMMediaError codes!");
+
+  // Since we have multiple paths calling into DecodeError, e.g.
+  // MediaKeys::Terminated and EMEH264Decoder::Error. We should take the 1st
+  // one only in order not to fire multiple 'error' events.
+  if (mError) {
+    return;
+  }
+
   mError = new MediaError(this, aErrorCode);
   DispatchAsyncEvent(NS_LITERAL_STRING("error"));
   if (mReadyState == nsIDOMHTMLMediaElement::HAVE_NOTHING) {
@@ -3119,11 +3130,16 @@ void HTMLMediaElement::CheckProgress(bool aHaveNewProgress)
                    "timer dispatched when there was no timer");
       // Were stalled.  Restart timer.
       StartProgressTimer();
+      if (!mLoadedDataFired) {
+        ChangeDelayLoadStatus(true);
+      }
     }
   }
 
   if (now - mDataTime >= TimeDuration::FromMilliseconds(STALL_MS)) {
     DispatchAsyncEvent(NS_LITERAL_STRING("stalled"));
+    ChangeDelayLoadStatus(false);
+
     NS_ASSERTION(mProgressTimer, "detected stalled without timer");
     // Stop timer events, which prevents repeated stalled events until there
     // is more progress.
@@ -3236,10 +3252,7 @@ void HTMLMediaElement::UpdateReadyStateForData(MediaDecoderOwner::NextFrameStatu
   // autoplay elements for live streams will never play. Otherwise we
   // move to HAVE_ENOUGH_DATA if we can play through the entire media
   // without stopping to buffer.
-  MediaDecoder::Statistics stats = mDecoder->GetStatistics();
-  if (stats.mTotalBytes < 0 ? stats.mDownloadRateReliable
-                            : stats.mTotalBytes == stats.mDownloadPosition ||
-                              mDecoder->CanPlayThrough())
+  if (mDecoder->CanPlayThrough())
   {
     ChangeReadyState(nsIDOMHTMLMediaElement::HAVE_ENOUGH_DATA);
     return;
@@ -3499,10 +3512,12 @@ void HTMLMediaElement::NotifyDecoderPrincipalChanged()
   bool subsumes;
   mDecoder->UpdateSameOriginStatus(
     !principal ||
-    (NS_SUCCEEDED(NodePrincipal()->Subsumes(principal, &subsumes)) && subsumes));
+    (NS_SUCCEEDED(NodePrincipal()->Subsumes(principal, &subsumes)) && subsumes) ||
+    mCORSMode != CORS_NONE);
 
   for (uint32_t i = 0; i < mOutputStreams.Length(); ++i) {
     OutputMediaStream* ms = &mOutputStreams[i];
+    ms->mStream->SetCORSMode(mCORSMode);
     ms->mStream->CombineWithPrincipal(principal);
   }
 #ifdef MOZ_EME
@@ -3746,15 +3761,14 @@ void HTMLMediaElement::ChangeDelayLoadStatus(bool aDelay)
 
   mDelayingLoadEvent = aDelay;
 
+  LOG(PR_LOG_DEBUG, ("%p ChangeDelayLoadStatus(%d) doc=0x%p", this, aDelay, mLoadBlockedDoc.get()));
+  if (mDecoder) {
+    mDecoder->SetLoadInBackground(!aDelay);
+  }
   if (aDelay) {
     mLoadBlockedDoc = OwnerDoc();
     mLoadBlockedDoc->BlockOnload();
-    LOG(PR_LOG_DEBUG, ("%p ChangeDelayLoadStatus(%d) doc=0x%p", this, aDelay, mLoadBlockedDoc.get()));
   } else {
-    if (mDecoder) {
-      mDecoder->MoveLoadsToBackground();
-    }
-    LOG(PR_LOG_DEBUG, ("%p ChangeDelayLoadStatus(%d) doc=0x%p", this, aDelay, mLoadBlockedDoc.get()));
     // mLoadBlockedDoc might be null due to GC unlinking
     if (mLoadBlockedDoc) {
       mLoadBlockedDoc->UnblockOnload(false);

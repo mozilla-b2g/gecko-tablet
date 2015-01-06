@@ -92,36 +92,40 @@ NfcCallback.prototype = {
 /**
  * Implementation of NFCTag.
  *
- * @param window  global window object.
+ * @param window        global window object.
  * @param sessionToken  session token received from parent process.
- * @parem event   type of nsINfcTagEvent received from parent process.
+ * @param tagInfo       type of nsITagInfo received from parent process.
+ * @parem ndefInfo      type of nsITagNDEFInfo received from parent process.
  */
-function MozNFCTagImpl(window, sessionToken, event) {
+function MozNFCTagImpl(window, sessionToken, tagInfo, ndefInfo) {
   debug("In MozNFCTagImpl Constructor");
   this._nfcContentHelper = Cc["@mozilla.org/nfc/content-helper;1"]
                              .getService(Ci.nsINfcContentHelper);
   this._window = window;
   this.session = sessionToken;
-  this.techList = event.techList;
-  this.type = event.tagType || null;
-  this.maxNDEFSize = event.maxNDEFSize || null;
-  this.isReadOnly = event.isReadOnly || null;
-  this.isFormatable = event.isFormatable || null;
-  this.canBeMadeReadOnly = this.type ?
-                             (this.type == "type1" || this.type == "type2" ||
-                              this.type == "mifare_classic") :
-                             null;
+  this.techList = tagInfo.techList;
+  this.id = Cu.cloneInto(tagInfo.tagId, window);
+
+  if (ndefInfo) {
+    this.type = ndefInfo.tagType;
+    this.maxNDEFSize = ndefInfo.maxNDEFSize;
+    this.isReadOnly = ndefInfo.isReadOnly;
+    this.isFormatable = ndefInfo.isFormatable;
+    this.canBeMadeReadOnly = this.type == "type1" || this.type == "type2" ||
+                             this.type == "mifare_classic";
+  }
 }
 MozNFCTagImpl.prototype = {
   _nfcContentHelper: null,
   _window: null,
   session: null,
   techList: null,
+  id: null,
   type: null,
-  maxNDEFSize: 0,
-  isReadOnly: false,
-  isFormatable: false,
-  canBeMadeReadOnly: false,
+  maxNDEFSize: null,
+  isReadOnly: null,
+  isFormatable: null,
+  canBeMadeReadOnly: null,
   isLost: false,
 
   // NFCTag interface:
@@ -189,7 +193,7 @@ MozNFCTagImpl.prototype = {
   },
 
   classID: Components.ID("{4e1e2e90-3137-11e3-aa6e-0800200c9a66}"),
-  contractID: "@mozilla.org/nfc/NFCTag;1",
+  contractID: "@mozilla.org/nfc/tag;1",
   QueryInterface: XPCOMUtils.generateQI([Ci.nsISupports,
                                          Ci.nsIDOMGlobalPropertyInitializer]),
 };
@@ -241,7 +245,7 @@ MozNFCPeerImpl.prototype = {
   },
 
   classID: Components.ID("{c1b2bcf0-35eb-11e3-aa6e-0800200c9a66}"),
-  contractID: "@mozilla.org/nfc/NFCPeer;1",
+  contractID: "@mozilla.org/nfc/peer;1",
   QueryInterface: XPCOMUtils.generateQI([Ci.nsISupports,
                                          Ci.nsIDOMGlobalPropertyInitializer]),
 };
@@ -365,7 +369,7 @@ MozNFCImpl.prototype = {
     this._nfcContentHelper.unregisterTargetForPeerReady(appId);
   },
 
-  notifyTagFound: function notifyTagFound(sessionToken, event, records) {
+  notifyTagFound: function notifyTagFound(sessionToken, tagInfo, ndefInfo, records) {
     if (this.hasDeadWrapper()) {
       dump("this._window or this.__DOM_IMPL__ is a dead wrapper.");
       return;
@@ -383,7 +387,7 @@ MozNFCImpl.prototype = {
     this.eventService.addSystemEventListener(this._window, "visibilitychange",
       this, /* useCapture */false);
 
-    let tagImpl = new MozNFCTagImpl(this._window, sessionToken, event);
+    let tagImpl = new MozNFCTagImpl(this._window, sessionToken, tagInfo, ndefInfo);
     let tag = this._window.MozNFCTag._create(this._window, tagImpl);
     this.nfcTag = tag;
 
@@ -535,7 +539,7 @@ MozNFCImpl.prototype = {
   },
 
   classID: Components.ID("{6ff2b290-2573-11e3-8224-0800200c9a66}"),
-  contractID: "@mozilla.org/navigatorNfc;1",
+  contractID: "@mozilla.org/nfc/manager;1",
   QueryInterface: XPCOMUtils.generateQI([Ci.nsISupports,
                                          Ci.nsIDOMGlobalPropertyInitializer,
                                          Ci.nsINfcEventListener,
@@ -573,6 +577,10 @@ NFCTechDiscoveredWrapper.prototype = {
       let peer = aWindow.MozNFCPeer._create(aWindow, peerImpl);
       aMessage.peer = peer;
     }
+
+    delete aMessage.isP2P;
+    delete aMessage.sessionToken;
+
     return aMessage;
   },
 

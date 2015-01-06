@@ -900,6 +900,9 @@ TextRenderedRun::GetRunUserSpaceRect(nsPresContext* aContext,
   uint32_t offset, length;
   ConvertOriginalToSkipped(it, mTextFrameContentOffset, mTextFrameContentLength,
                            offset, length);
+  if (length == 0) {
+    return r;
+  }
 
   // Measure that range.
   gfxTextRun::Metrics metrics =
@@ -947,6 +950,7 @@ TextRenderedRun::GetRunUserSpaceRect(nsPresContext* aContext,
 
   // Include the stroke if requested.
   if ((aFlags & eIncludeStroke) &&
+      !fill.IsEmpty() &&
       nsSVGUtils::GetStrokeWidth(mFrame) > 0) {
     r.UnionEdges(nsSVGUtils::PathExtentsToMaxStrokeExtents(fill, mFrame,
                                                            gfxMatrix()));
@@ -3536,8 +3540,7 @@ SVGTextFrame::NotifySVGChanged(uint32_t aFlags)
       needNewBounds = true;
       needGlyphMetricsUpdate = true;
     }
-    if (StyleSVGReset()->mVectorEffect ==
-        NS_STYLE_VECTOR_EFFECT_NON_SCALING_STROKE) {
+    if (StyleSVGReset()->HasNonScalingStroke()) {
       // Stroke currently contributes to our mRect, and our stroke depends on
       // the transform to our outer-<svg> if |vector-effect:non-scaling-stroke|.
       needNewBounds = true;

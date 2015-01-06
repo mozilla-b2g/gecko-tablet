@@ -218,7 +218,6 @@ SelectionCarets::HandleEvent(WidgetEvent* aEvent)
     } else {
       mDragMode = NONE;
       mActiveTouchId = -1;
-      SetVisibility(false);
       LaunchLongTapDetector();
     }
   } else if (aEvent->message == NS_TOUCH_END ||
@@ -239,6 +238,16 @@ SelectionCarets::HandleEvent(WidgetEvent* aEvent)
     if (mDragMode == START_FRAME || mDragMode == END_FRAME) {
       if (mActiveTouchId == nowTouchId) {
         ptInRoot.y += mCaretCenterToDownPointOffsetY;
+
+        if (mDragMode == START_FRAME) {
+          if (ptInRoot.y > mDragDownYBoundary) {
+            ptInRoot.y = mDragDownYBoundary;
+          }
+        } else if (mDragMode == END_FRAME) {
+          if (ptInRoot.y < mDragUpYBoundary) {
+            ptInRoot.y = mDragUpYBoundary;
+          }
+        }
         return DragSelection(ptInRoot);
       }
 
@@ -253,7 +262,13 @@ SelectionCarets::HandleEvent(WidgetEvent* aEvent)
   } else if (aEvent->message == NS_MOUSE_MOZLONGTAP) {
     if (!mVisible) {
       SELECTIONCARETS_LOG("SelectWord from APZ");
-      SelectWord();
+      nsresult wordSelected = SelectWord();
+
+      if (NS_FAILED(wordSelected)) {
+        SELECTIONCARETS_LOG("SelectWord from APZ failed!")
+        return nsEventStatus_eIgnore;
+      }
+
       return nsEventStatus_eConsumeNoDefault;
     }
   }
@@ -283,6 +298,10 @@ SelectionCarets::SetVisibility(bool aVisible)
     SELECTIONCARETS_LOG("Set visibility %s, same as the old one",
                         (aVisible ? "shown" : "hidden"));
     return;
+  }
+
+  if (!aVisible) {
+    mSelectionVisibleInScrollFrames = false;
   }
 
   mVisible = aVisible;
@@ -515,6 +534,17 @@ SelectionCarets::UpdateSelectionCarets()
   SetEndFramePos(lastRectInCanvasFrame.BottomRight());
   SetVisibility(true);
 
+  nsRect firstRectInRootFrame = firstRectInStartFrame;
+  nsRect lastRectInRootFrame = lastRectInEndFrame;
+  nsLayoutUtils::TransformRect(startFrame, rootFrame, firstRectInRootFrame);
+  nsLayoutUtils::TransformRect(endFrame, rootFrame, lastRectInRootFrame);
+
+  // Use half of the first(last) rect as the dragup(dragdown) boundary
+  mDragUpYBoundary =
+    (firstRectInRootFrame.BottomLeft().y + firstRectInRootFrame.TopLeft().y) / 2;
+  mDragDownYBoundary =
+    (lastRectInRootFrame.BottomRight().y + lastRectInRootFrame.TopRight().y) / 2;
+
   nsRect rectStart = GetStartFrameRect();
   nsRect rectEnd = GetEndFrameRect();
   bool isTilt = rectStart.Intersects(rectEnd);
@@ -529,25 +559,25 @@ nsresult
 SelectionCarets::SelectWord()
 {
   if (!mPresShell) {
-    return NS_OK;
+    return NS_ERROR_UNEXPECTED;
   }
 
   nsIFrame* rootFrame = mPresShell->GetRootFrame();
   if (!rootFrame) {
-    return NS_OK;
+    return NS_ERROR_NOT_AVAILABLE;
   }
 
   // Find content offsets for mouse down point
   nsIFrame *ptFrame = nsLayoutUtils::GetFrameForPoint(rootFrame, mDownPoint,
     nsLayoutUtils::IGNORE_PAINT_SUPPRESSION | nsLayoutUtils::IGNORE_CROSS_DOC);
   if (!ptFrame) {
-    return NS_OK;
+    return NS_ERROR_FAILURE;
   }
 
   bool selectable;
   ptFrame->IsSelectable(&selectable, nullptr);
   if (!selectable) {
-    return NS_OK;
+    return NS_ERROR_FAILURE;
   }
 
   nsPoint ptInFrame = mDownPoint;
@@ -1055,6 +1085,7 @@ void
 SelectionCarets::NotifyBlur()
 {
   SetVisibility(false);
+  CancelLongTapDetector();
   DispatchSelectionStateChangedEvent(nullptr, SelectionState::Blur);
 }
 
@@ -1064,6 +1095,12 @@ SelectionCarets::NotifySelectionChanged(nsIDOMDocument* aDoc,
                                         int16_t aReason)
 {
   SELECTIONCARETS_LOG("aSel (%p), Reason=%d", aSel, aReason);
+
+  if (aSel != GetSelection()) {
+    SELECTIONCARETS_LOG("Return for selection mismatch!");
+    return NS_OK;
+  }
+
   if (!aReason || (aReason & (nsISelectionListener::DRAG_REASON |
                               nsISelectionListener::KEYPRESS_REASON |
                               nsISelectionListener::MOUSEDOWN_REASON))) {
@@ -1181,7 +1218,11 @@ SelectionCarets::FireLongTap(nsITimer* aTimer, void* aSelectionCarets)
                   "Unexpected timer");
 
   SELECTIONCARETS_LOG_STATIC("SelectWord from non-APZ");
-  self->SelectWord();
+  nsresult wordSelected = self->SelectWord();
+
+  if (NS_FAILED(wordSelected)) {
+    SELECTIONCARETS_LOG_STATIC("SelectWord from non-APZ failed!");
+  }
 }
 
 void
@@ -1208,7 +1249,6 @@ SelectionCarets::FireScrollEnd(nsITimer* aTimer, void* aSelectionCarets)
                   "Unexpected timer");
 
   SELECTIONCARETS_LOG_STATIC("Update selection carets!");
-  self->SetVisibility(true);
   self->UpdateSelectionCarets();
   self->DispatchSelectionStateChangedEvent(self->GetSelection(),
                                            SelectionState::Updateposition);
@@ -1221,8 +1261,12 @@ SelectionCarets::Reflow(DOMHighResTimeStamp aStart, DOMHighResTimeStamp aEnd)
     SELECTIONCARETS_LOG("Update selection carets after reflow!");
     UpdateSelectionCarets();
 
-    DispatchSelectionStateChangedEvent(GetSelection(),
-                                       SelectionState::Updateposition);
+    // We don't care selection state when we're at drag mode. We always hide
+    // bubble in drag mode. So, don't dispatch event here.
+    if (mDragMode == NONE) {
+      DispatchSelectionStateChangedEvent(GetSelection(),
+                                         SelectionState::Updateposition);
+    }
   }
   return NS_OK;
 }

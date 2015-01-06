@@ -187,6 +187,7 @@
 #endif
 
 #include "mozilla/layers/APZCTreeManager.h"
+#include "mozilla/layers/InputAPZContext.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -3742,7 +3743,19 @@ bool nsWindow::DispatchKeyboardEvent(WidgetGUIEvent* event)
 bool nsWindow::DispatchScrollEvent(WidgetGUIEvent* aEvent)
 {
   nsEventStatus status;
-  DispatchEvent(aEvent, status);
+
+  if (mAPZC && aEvent->mClass == eWheelEventClass) {
+    uint64_t inputBlockId = 0;
+    ScrollableLayerGuid guid;
+
+    nsEventStatus result = mAPZC->ReceiveInputEvent(*aEvent->AsWheelEvent(), &guid, &inputBlockId);
+    if (result == nsEventStatus_eConsumeNoDefault) {
+      return true;
+    }
+    status = DispatchEventForAPZ(aEvent, guid, inputBlockId);
+  } else {
+    DispatchEvent(aEvent, status);
+  }
   return ConvertStatus(status);
 }
 
@@ -5109,8 +5122,11 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
       break;
 
     case WM_APPCOMMAND:
-      result = HandleAppCommandMsg(wParam, lParam, aRetValue);
+    {
+      MSG nativeMsg = WinUtils::InitMSG(msg, wParam, lParam, mWnd);
+      result = HandleAppCommandMsg(nativeMsg, aRetValue);
       break;
+    }
 
     // The WM_ACTIVATE event is fired when a window is raised or lowered,
     // and the loword of wParam specifies which. But we don't want to tell
@@ -6737,7 +6753,10 @@ nsWindow::GetPreferredCompositorBackends(nsTArray<LayersBackend>& aHints)
     if (!prefs.mPreferD3D9) {
       aHints.AppendElement(LayersBackend::LAYERS_D3D11);
     }
-    aHints.AppendElement(LayersBackend::LAYERS_D3D9);
+    if (prefs.mPreferD3D9 || !mozilla::IsVistaOrLater()) {
+      // We don't want D3D9 except on Windows XP
+      aHints.AppendElement(LayersBackend::LAYERS_D3D9);
+    }
   }
   aHints.AppendElement(LayersBackend::LAYERS_BASIC);
 }

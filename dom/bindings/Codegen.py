@@ -2268,17 +2268,17 @@ class MethodDefiner(PropertyDefiner):
                     "condition": MemberCondition(None, None)
                 })
 
-        if (descriptor.interface.isJSImplemented() and
-            descriptor.interface.hasInterfaceObject()):
+        if descriptor.interface.isJSImplemented():
             if static:
-                self.chrome.append({
-                    "name": '_create',
-                    "nativeName": ("%s::_Create" % descriptor.name),
-                    "methodInfo": False,
-                    "length": 2,
-                    "flags": "0",
-                    "condition": MemberCondition(None, None)
-                })
+                if descriptor.interface.hasInterfaceObject():
+                    self.chrome.append({
+                        "name": '_create',
+                        "nativeName": ("%s::_Create" % descriptor.name),
+                        "methodInfo": False,
+                        "length": 2,
+                        "flags": "0",
+                        "condition": MemberCondition(None, None)
+                    })
             else:
                 for m in clearableCachedAttrs(descriptor):
                     attrName = MakeNativeName(m.identifier.name)
@@ -7681,9 +7681,9 @@ class CGEnumerateHook(CGAbstractBindingMethod):
             if (rv.Failed()) {
               return ThrowMethodFailedWithDetails(cx, rv, "%s", "enumerate");
             }
-            JS::Rooted<JS::Value> dummy(cx);
+            bool dummy;
             for (uint32_t i = 0; i < names.Length(); ++i) {
-              if (!JS_LookupUCProperty(cx, obj, names[i].get(), names[i].Length(), &dummy)) {
+              if (!JS_HasUCProperty(cx, obj, names[i].get(), names[i].Length(), &dummy)) {
                 return false;
               }
             }

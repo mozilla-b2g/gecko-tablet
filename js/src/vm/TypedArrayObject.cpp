@@ -781,10 +781,16 @@ TypedArrayObject::protoFunctions[] = {
     JS_FN("subarray", TypedArrayObject::subarray, 2, 0),
     JS_FN("set", TypedArrayObject::set, 2, 0),
     JS_FN("copyWithin", TypedArrayObject::copyWithin, 2, 0),
+    JS_SELF_HOSTED_FN("fill", "TypedArrayFill", 3, 0),
     JS_SELF_HOSTED_FN("find", "TypedArrayFind", 2, 0),
     JS_SELF_HOSTED_FN("findIndex", "TypedArrayFindIndex", 2, 0),
     JS_SELF_HOSTED_FN("indexOf", "TypedArrayIndexOf", 2, 0),
+    JS_SELF_HOSTED_FN("join", "TypedArrayJoin", 1, 0),
     JS_SELF_HOSTED_FN("lastIndexOf", "TypedArrayLastIndexOf", 2, 0),
+    JS_SELF_HOSTED_FN("reverse", "TypedArrayReverse", 0, 0),
+#ifdef NIGHTLY_BUILD
+    JS_SELF_HOSTED_FN("includes", "TypedArrayIncludes", 2, 0),
+#endif
     JS_FS_END
 };
 

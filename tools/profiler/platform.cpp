@@ -47,6 +47,7 @@ int         sInitCount = 0; // Each init must have a matched shutdown.
 static bool sIsProfiling = false; // is raced on
 static bool sIsGPUProfiling = false; // is raced on
 static bool sIsLayersDump = false; // is raced on
+static bool sIsDisplayListDump = false; // is raced on
 
 // env variables to control the profiler
 const char* PROFILER_MODE = "MOZ_PROFILER_MODE";
@@ -490,8 +491,8 @@ bool is_main_thread_name(const char* aName) {
 #define VARARGS_ASSIGN(foo, bar)     (foo) = (bar)
 #endif
 
-static void
-profiler_log(const char *fmt, va_list args)
+void
+mozilla_sampler_log(const char *fmt, va_list args)
 {
   if (profiler_is_active()) {
     // nsAutoCString AppendPrintf would be nicer but
@@ -560,7 +561,7 @@ void mozilla_sampler_init(void* stackTop)
   // platform specific initialization
   OS::Startup();
 
-  set_stderr_callback(profiler_log);
+  set_stderr_callback(mozilla_sampler_log);
 
   // We can't open pref so we use an environment variable
   // to know if we should trigger the profiler on startup
@@ -703,6 +704,8 @@ const char** mozilla_sampler_get_features()
     "privacy",
     // Dump the layer tree with the textures.
     "layersdump",
+    // Dump the display list with the textures.
+    "displaylistdump",
     // Add main thread I/O to the profile
     "mainthreadio",
     // Add RSS collection
@@ -802,6 +805,7 @@ void mozilla_sampler_start(int aProfileEntries, double aInterval,
   sIsProfiling = true;
   sIsGPUProfiling = t->ProfileGPU();
   sIsLayersDump = t->LayersDump();
+  sIsDisplayListDump = t->DisplayListDump();
 
   if (Sampler::CanNotifyObservers()) {
     nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
@@ -873,6 +877,7 @@ void mozilla_sampler_stop()
   sIsProfiling = false;
   sIsGPUProfiling = false;
   sIsLayersDump = false;
+  sIsDisplayListDump = false;
 
   if (Sampler::CanNotifyObservers()) {
     nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
@@ -915,6 +920,10 @@ bool mozilla_sampler_feature_active(const char* aName)
 
   if (strcmp(aName, "layersdump") == 0) {
     return sIsLayersDump;
+  }
+
+  if (strcmp(aName, "displaylistdump") == 0) {
+    return sIsDisplayListDump;
   }
 
   return false;

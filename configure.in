@@ -50,7 +50,7 @@ _SUBDIR_CONFIG_ARGS="$ac_configure_args"
 dnl Set the version number of the libs included with mozilla
 dnl ========================================================
 MOZJPEG=62
-MOZPNG=10614
+MOZPNG=10616
 NSPR_VERSION=4
 NSPR_MINVER=4.10.3
 NSS_VERSION=3
@@ -229,15 +229,6 @@ if test -n "$gonkdir" ; then
     fi
     STLPORT_CPPFLAGS="-I$_topsrcdir/build/stlport/stlport -I$gonkdir/ndk/sources/cxx-stl/system/include"
 
-    case "$target_cpu" in
-    arm)
-        ARCH_DIR=arch-arm
-        ;;
-    i?86)
-        ARCH_DIR=arch-x86
-        ;;
-    esac
-
     case "$ANDROID_VERSION" in
     15)
         GONK_INCLUDES="-I$gonkdir/frameworks/base/opengl/include -I$gonkdir/frameworks/base/native/include -I$gonkdir/frameworks/base/include -I$gonkdir/frameworks/base/services/camera -I$gonkdir/frameworks/base/include/media/ -I$gonkdir/frameworks/base/include/media/stagefright -I$gonkdir/frameworks/base/include/media/stagefright/openmax -I$gonkdir/frameworks/base/media/libstagefright/rtsp -I$gonkdir/frameworks/base/media/libstagefright/include -I$gonkdir/external/dbus -I$gonkdir/external/bluetooth/bluez/lib -I$gonkdir/dalvik/libnativehelper/include/nativehelper"
@@ -248,6 +239,7 @@ if test -n "$gonkdir" ; then
         MOZ_OMX_DECODER=1
         AC_SUBST(MOZ_OMX_DECODER)
         MOZ_RTSP=1
+        MOZ_FMP4=1
         ;;
     17|18)
         GONK_INCLUDES="-I$gonkdir/frameworks/native/include -I$gonkdir/frameworks/av/include -I$gonkdir/frameworks/av/include/media -I$gonkdir/frameworks/av/include/camera -I$gonkdir/frameworks/native/include/media/openmax -I$gonkdir/frameworks/av/media/libstagefright/include"
@@ -289,13 +281,21 @@ if test -n "$gonkdir" ; then
         MOZ_AUDIO_OFFLOAD=1
         AC_SUBST(MOZ_AUDIO_OFFLOAD)
         AC_DEFINE(MOZ_AUDIO_OFFLOAD)
-	MOZ_FMP4=1
+        MOZ_FMP4=1
+        ;;
+    21)
+        GONK_INCLUDES="-I$gonkdir/frameworks/native/include -I$gonkdir/frameworks/av/include -I$gonkdir/frameworks/av/include/media -I$gonkdir/frameworks/av/include/camera -I$gonkdir/frameworks/native/include/media/openmax -I$gonkdir/frameworks/av/media/libstagefright/include"
+        MOZ_AUDIO_OFFLOAD=1
+        MOZ_OMX_DECODER=1
+        AC_SUBST(MOZ_AUDIO_OFFLOAD)
+        AC_DEFINE(MOZ_AUDIO_OFFLOAD)
+        MOZ_FMP4=
         ;;
     *)
         AC_MSG_ERROR([Unsupported platform version: $ANDROID_VERSION])
         ;;
     esac
-    CPPFLAGS="-DANDROID -isystem $gonkdir/bionic/libc/$ARCH_DIR/include -isystem $gonkdir/bionic/libc/include/ -isystem $gonkdir/bionic/libc/kernel/common -isystem $gonkdir/bionic/libc/kernel/$ARCH_DIR -isystem $gonkdir/bionic/libm/include -I$gonkdir/system -I$gonkdir/system/core/include -isystem $gonkdir/bionic -I$gonkdir/hardware/libhardware/include -I$gonkdir/external/valgrind/fxos-include $GONK_INCLUDES $CPPFLAGS"
+    CPPFLAGS="-DANDROID $TARGET_C_INCLUDES -I$gonkdir/system -I$gonkdir/system/core/include -isystem $gonkdir/bionic -I$gonkdir/hardware/libhardware/include -I$gonkdir/external/valgrind/fxos-include $GONK_INCLUDES $CPPFLAGS"
     CFLAGS="-mandroid -fno-short-enums -fno-exceptions $CFLAGS"
     CXXFLAGS="-mandroid -fno-short-enums -fno-exceptions -Wno-psabi $CXXFLAGS $STLPORT_CPPFLAGS"
     dnl Add -llog by default, since we use it all over the place.
@@ -494,12 +494,7 @@ case "$target" in
         AC_DEFINE(_CRT_SECURE_NO_WARNINGS)
         AC_DEFINE(_CRT_NONSTDC_NO_WARNINGS)
 
-        if test "$_CC_MAJOR_VERSION" = "16"; then
-            _CC_SUITE=10
-            MSVS_VERSION=2010
-            MSVC_C_RUNTIME_DLL=msvcr100.dll
-            MSVC_CXX_RUNTIME_DLL=msvcp100.dll
-        elif test "$_CC_MAJOR_VERSION" = "17"; then
+        if test "$_CC_MAJOR_VERSION" = "17"; then
             _CC_SUITE=11
             MSVS_VERSION=2012
             MSVC_C_RUNTIME_DLL=msvcr110.dll
@@ -766,7 +761,6 @@ dnl ========================================================
 AC_PROG_INSTALL
 AC_PROG_LN_S
 
-if test -z "$TINDERBOX_SKIP_PERL_VERSION_CHECK"; then
 AC_MSG_CHECKING([for minimum required perl version >= $PERL_VERSION])
 _perl_version=`PERL_VERSION=$PERL_VERSION $PERL -e 'print "$]"; if ($] >= $ENV{PERL_VERSION}) { exit(0); } else { exit(1); }' 2>&5`
 _perl_res=$?
@@ -774,7 +768,6 @@ AC_MSG_RESULT([$_perl_version])
 
 if test "$_perl_res" != 0; then
     AC_MSG_ERROR([Perl $PERL_VERSION or higher is required.])
-fi
 fi
 
 AC_MSG_CHECKING([for full perl installation])
@@ -1304,6 +1297,20 @@ if test -n "$MOZ_MSAN"; then
     MOZ_PATH_PROG(LLVM_SYMBOLIZER, llvm-symbolizer)
 fi
 AC_SUBST(MOZ_MSAN)
+
+dnl ========================================================
+dnl = Use Thread Sanitizer
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(thread-sanitizer,
+[  --enable-thread-sanitizer       Enable Thread Sanitizer (default=no)],
+   MOZ_TSAN=1,
+   MOZ_TSAN= )
+if test -n "$MOZ_TSAN"; then
+    MOZ_LLVM_HACKS=1
+    AC_DEFINE(MOZ_TSAN)
+    MOZ_PATH_PROG(LLVM_SYMBOLIZER, llvm-symbolizer)
+fi
+AC_SUBST(MOZ_TSAN)
 
 # The LLVM symbolizer is used by all sanitizers
 AC_SUBST(LLVM_SYMBOLIZER)
@@ -2279,8 +2286,17 @@ ia64*-hpux*)
         dnl For profile-guided optimization
         PROFILE_GEN_CFLAGS="-GL"
         PROFILE_GEN_LDFLAGS="-LTCG:PGINSTRUMENT"
-        PROFILE_USE_CFLAGS="-GL"
-        PROFILE_USE_LDFLAGS="-LTCG:PGOPTIMIZE"
+        dnl XXX: PGO builds can fail with warnings treated as errors,
+        dnl specifically "no profile data available" appears to be
+        dnl treated as an error sometimes. This might be a consequence
+        dnl of using WARNINGS_AS_ERRORS in some modules, combined
+        dnl with the linker doing most of the work in the whole-program
+        dnl optimization/PGO case. I think it's probably a compiler bug,
+        dnl but we work around it here.
+        PROFILE_USE_CFLAGS="-GL -wd4624 -wd4952"
+        dnl XXX: should be -LTCG:PGOPTIMIZE, but that fails on libxul.
+        dnl Probably also a compiler bug, but what can you do?
+        PROFILE_USE_LDFLAGS="-LTCG:PGUPDATE"
         LDFLAGS="$LDFLAGS -DYNAMICBASE"
         dnl Minimum reqiurement of Gecko is VS2010 or later which supports
         dnl both SSSE3 and SSE4.1.
@@ -2655,12 +2671,7 @@ AC_SUBST(WRAP_SYSTEM_INCLUDES)
 AC_SUBST(VISIBILITY_FLAGS)
 
 MOZ_GCC_PR49911
-MOZ_GCC_PR39608
-if test "$OS_TARGET" != WINNT; then
-    # Only run this test with clang on non-Windows platforms, because clang
-    # cannot do enough code gen for now to make this test work correctly.
-    MOZ_LLVM_PR8927
-fi
+MOZ_LLVM_PR8927
 
 dnl Check for __force_align_arg_pointer__ for SSE2 on gcc
 dnl ========================================================
@@ -3280,20 +3291,6 @@ if test "$ac_cv_cpp_dynamic_cast_void_ptr" = yes ; then
    AC_DEFINE(HAVE_CPP_DYNAMIC_CAST_TO_VOID_PTR)
 fi
 
-dnl note that this one is reversed - if the test fails, then
-dnl we require implementations of unused virtual methods. Which
-dnl really blows because it means we'll have useless vtable
-dnl bloat.
-AC_CACHE_CHECK(whether C++ requires implementation of unused virtual methods,
-               ac_cv_cpp_unused_required,
-               [AC_TRY_LINK(class X {private: virtual void never_called();};,
-                               X x;,
-                               ac_cv_cpp_unused_required=no,
-                               ac_cv_cpp_unused_required=yes)])
-if test "$ac_cv_cpp_unused_required" = yes ; then
-   AC_DEFINE(NEED_CPP_UNUSED_IMPLEMENTATIONS)
-fi
-
 
 # try harder, when checking for __thread support, see bug 521750 comment #33 and below
 # We pass MOZ_OPTIMIZE_LDFLAGS to the linker because if dead_strip is
@@ -3398,9 +3395,25 @@ for file in $MALLOC_HEADERS; do
   fi
 done
 
-AC_CHECK_FUNCS(strndup posix_memalign memalign valloc)
+MOZ_CHECK_HEADERS(alloca.h)
+
+AC_CHECK_FUNCS(strndup posix_memalign memalign)
 
 AC_CHECK_FUNCS(malloc_usable_size)
+
+dnl In newer bionic headers, valloc is built but not defined,
+dnl so we check more carefully here.
+AC_MSG_CHECKING([for valloc in malloc.h])
+AC_EGREP_HEADER(valloc, malloc.h,
+                AC_DEFINE(HAVE_VALLOC)
+                AC_MSG_RESULT([yes]),
+                AC_MSG_RESULT([no]))
+
+AC_MSG_CHECKING([for valloc in unistd.h])
+AC_EGREP_HEADER(valloc, unistd.h,
+                AC_DEFINE(HAVE_VALLOC)
+                AC_MSG_RESULT([yes]),
+                AC_MSG_RESULT([no]))
 
 dnl See if compiler supports some gcc-style attributes
 
@@ -3861,7 +3874,6 @@ if test -n "$MOZ_FMP4"; then
 else
   MOZ_FMP4=
 fi
-MOZ_EME=1
 MOZ_FFMPEG=
 MOZ_WEBRTC=1
 MOZ_PEERCONNECTION=
@@ -4397,7 +4409,7 @@ fi
 
 if test "$COMPILE_ENVIRONMENT"; then
   if test "$MOZ_ENABLE_GTK3"; then
-    PKG_CHECK_MODULES(MOZ_GTK3, gtk+-3.0 >= $GTK3_VERSION gtk+-unix-print-3.0 glib-2.0 gobject-2.0 $GDK_PACKAGES)
+    PKG_CHECK_MODULES(MOZ_GTK3, gtk+-3.0 >= $GTK3_VERSION gtk+-unix-print-3.0 glib-2.0 gobject-2.0 atk-bridge-2.0 $GDK_PACKAGES)
     MOZ_GTK3_CFLAGS="-I${_topsrcdir}/widget/gtk/compat-gtk3 $MOZ_GTK3_CFLAGS"
     dnl Contrary to MOZ_GTK2_LIBS, MOZ_GTK3_LIBS needs to be literally added to TK_LIBS instead
     dnl of a make reference because of how TK_LIBS is mangled in toolkit/library/moz.build
@@ -5086,6 +5098,11 @@ if test -n "$MOZ_WEBRTC"; then
     esac
 fi
 
+dnl Temporary until webrtc works on gonk-L
+if test -n "$gonkdir" -a "$ANDROID_VERSION" -ge 21; then
+    MOZ_WEBRTC=
+fi
+
 AC_TRY_COMPILE([#include <linux/ethtool.h>],
                [ struct ethtool_cmd cmd; cmd.speed_hi = 0; ],
                MOZ_WEBRTC_HAVE_ETHTOOL_SPEED_HI=1)
@@ -5314,7 +5331,7 @@ dnl ========================================================
 dnl = Built-in fragmented MP4 support.
 dnl ========================================================
 
-if test "$OS_TARGET" = Android; then
+if test "$OS_TARGET" = Android -a -z "$gonkdir"; then
     MOZ_FMP4=1
 fi
 
@@ -5332,6 +5349,7 @@ MOZ_ARG_DISABLE_BOOL(fmp4,
 
 if test -n "$MOZ_FMP4"; then
     AC_DEFINE(MOZ_FMP4)
+    MOZ_EME=1
 fi;
 
 dnl ========================================================
@@ -5344,6 +5362,9 @@ MOZ_ARG_DISABLE_BOOL(eme,
     MOZ_EME=1)
 
 if test -n "$MOZ_EME"; then
+    if test -z "$MOZ_FMP4"; then
+        AC_MSG_ERROR([Encrypted Media Extension support requires Fragmented MP4 support])
+    fi
     AC_DEFINE(MOZ_EME)
 fi;
 
@@ -7203,7 +7224,7 @@ dnl ========================================================
 if test -z "$MOZ_MEMORY"; then
   if test -n "$MOZ_JEMALLOC3" -a -z "$MOZ_REPLACE_MALLOC"; then
     MOZ_NATIVE_JEMALLOC=1
-    AC_CHECK_FUNCS(mallctl nallocm,,
+    AC_CHECK_FUNCS(mallctl nallocx,,
       [MOZ_NATIVE_JEMALLOC=
        break])
     if test -n "$MOZ_NATIVE_JEMALLOC"; then
@@ -7475,7 +7496,6 @@ fi
 dnl ========================================================
 dnl = Offer a way to disable the startup cache
 dnl ========================================================
-MOZ_DISABLE_STARTUPCACHE=
 
 MOZ_ARG_DISABLE_BOOL(startupcache,
 [  --disable-startupcache          Disable startup cache ],
@@ -7486,7 +7506,9 @@ dnl bug 988880: disable startup cache on b2g
 if test -n "$MOZ_B2G"; then
   MOZ_DISABLE_STARTUPCACHE=1
 fi
-
+if test -n "$MOZ_DISABLE_STARTUPCACHE"; then
+  AC_DEFINE(MOZ_DISABLE_STARTUPCACHE)
+fi
 AC_SUBST(MOZ_DISABLE_STARTUPCACHE)
 
 dnl ========================================================
@@ -8988,7 +9010,6 @@ CPP_THROW_NEW
 HAVE_CPP_AMBIGUITY_RESOLVING_USING
 HAVE_CPP_DYNAMIC_CAST_TO_VOID_PTR
 HAVE_CPP_PARTIAL_SPECIALIZATION
-NEED_CPP_UNUSED_IMPLEMENTATIONS
 HAVE_GETPAGESIZE
 HAVE_ICONV
 HAVE_ICONV_WITH_CONST_INPUT
@@ -9063,7 +9084,7 @@ esac
 # Run jemalloc configure script
 
 if test -z "$MOZ_NATIVE_JEMALLOC" -a "$MOZ_MEMORY" && test -n "$MOZ_JEMALLOC3" -o -n "$MOZ_REPLACE_MALLOC"; then
-  ac_configure_args="--build=$build --host=$target --enable-stats --with-jemalloc-prefix=je_"
+  ac_configure_args="--build=$build --host=$target --enable-stats --with-jemalloc-prefix=je_ --disable-valgrind"
   if test -n "$MOZ_REPLACE_MALLOC"; then
     # When using replace_malloc, we always want memalign and valloc exported from jemalloc.
     ac_configure_args="$ac_configure_args ac_cv_func_memalign=yes"

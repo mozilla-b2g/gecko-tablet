@@ -10,6 +10,7 @@
 #define LIR_COMMON_OPCODE_LIST(_)   \
     _(Label)                        \
     _(Nop)                          \
+    _(Mop)                          \
     _(OsiPoint)                     \
     _(MoveGroup)                    \
     _(Integer)                      \
@@ -315,13 +316,13 @@
     _(InterruptCheckImplicit)       \
     _(ProfilerStackOp)              \
     _(GetDOMProperty)               \
-    _(GetDOMMember)                 \
+    _(GetDOMMemberV)                \
+    _(GetDOMMemberT)                \
     _(SetDOMProperty)               \
     _(CallDOMNative)                \
     _(IsCallable)                   \
     _(IsObject)                     \
     _(IsObjectAndBranch)            \
-    _(HaveSameClass)                \
     _(HasClass)                     \
     _(AsmJSLoadHeap)                \
     _(AsmJSStoreHeap)               \

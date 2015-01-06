@@ -1251,6 +1251,10 @@ class Value
         return JSVAL_TO_GCTHING_IMPL(data);
     }
 
+    GCCellPtr toGCCellPtr() const {
+        return GCCellPtr(toGCThing(), gcKind());
+    }
+
     bool toBoolean() const {
         MOZ_ASSERT(isBoolean());
         return JSVAL_TO_BOOLEAN_IMPL(data);
@@ -1918,7 +1922,7 @@ DOUBLE_TO_JSVAL(double d)
      * because GCC from XCode 3.1.4 miscompiles the above code.
      */
 #if defined(JS_VALUE_IS_CONSTEXPR)
-    return IMPL_TO_JSVAL(MOZ_UNLIKELY(d != d)
+    return IMPL_TO_JSVAL(MOZ_UNLIKELY(mozilla::IsNaN(d))
                          ? (jsval_layout) { .asBits = 0x7FF8000000000000LL }
                          : (jsval_layout) { .asDouble = d });
 #else

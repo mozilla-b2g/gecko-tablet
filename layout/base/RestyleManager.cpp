@@ -410,16 +410,14 @@ RestyleManager::RecomputePosition(nsIFrame* aFrame)
 
   // For relative positioning, we can simply update the frame rect
   if (display->IsRelativelyPositionedStyle()) {
-    if (display->IsInnerTableStyle()) {
-      // We don't currently support relative positioning of inner table
-      // elements (bug 35168).  If we apply offsets to things we haven't
-      // previously offset, we'll get confused.  So bail.
-      return true;
-    }
-
-
     // Move the frame
     if (display->mPosition == NS_STYLE_POSITION_STICKY) {
+      if (display->IsInnerTableStyle()) {
+        // We don't currently support sticky positioning of inner table
+        // elements (bug 975644). Bail.
+        return true;
+      }
+
       // Update sticky positioning for an entire element at once, starting with
       // the first continuation or ib-split sibling.
       // It's rare that the frame we already have isn't already the first
@@ -2617,7 +2615,7 @@ ElementRestyler::Restyle(nsRestyleHint aRestyleHint)
 
   nsRestyleHint hintToRestore = nsRestyleHint(0);
   if (mContent && mContent->IsElement() &&
-      // If we're we're resolving from the root of the frame tree (which
+      // If we're resolving from the root of the frame tree (which
       // we do in DoRebuildAllStyleData), we need to avoid getting the
       // root's restyle data until we get to its primary frame, since
       // it's the primary frame that has the styles for the root element
@@ -2637,12 +2635,6 @@ ElementRestyler::Restyle(nsRestyleHint aRestyleHint)
       descendants.SwapElements(restyleData->mDescendants);
     }
   }
-
-  // Some changes to animations don't affect the computed style and yet still
-  // require the layer to be updated. For example, pausing an animation via
-  // the Web Animations API won't affect an element's style but still
-  // requires us to pull the animation off the layer.
-  AddLayerChangesForAnimation();
 
   // If we are restyling this frame with eRestyle_Self or weaker hints,
   // we restyle children with nsRestyleHint(0).  But we pass the
@@ -2695,6 +2687,19 @@ ElementRestyler::Restyle(nsRestyleHint aRestyleHint)
 
     f = GetNextContinuationWithSameStyle(f, oldContext, &haveMoreContinuations);
   }
+
+  // Some changes to animations don't affect the computed style and yet still
+  // require the layer to be updated. For example, pausing an animation via
+  // the Web Animations API won't affect an element's style but still
+  // requires us to pull the animation off the layer.
+  //
+  // Although we only expect this code path to be called when computed style
+  // is not changing, we can sometimes reach this at the end of a transition
+  // when the animated style is being removed. Since
+  // AddLayerChangesForAnimation checks if mFrame has a transform style or not,
+  // we need to call it *after* calling RestyleSelf to ensure the animated
+  // transform has been removed first.
+  AddLayerChangesForAnimation();
 
   if (haveMoreContinuations && hintToRestore) {
     // If we have more continuations with different style (e.g., because
@@ -2904,10 +2909,10 @@ ElementRestyler::ComputeRestyleResultFromNewContext(nsIFrame* aSelf,
     return eRestyleResult_Continue;
   }
 
-  if (oldContext->IsDirectlyInsideRuby() !=
-        aNewContext->IsDirectlyInsideRuby()) {
-    LOG_RESTYLE_CONTINUE("NS_STYLE_IS_DIRECTLY_INSIDE_RUBY differes between old"
-                         " and new style contexts");
+  if (oldContext->IsInlineDescendantOfRuby() !=
+        aNewContext->IsInlineDescendantOfRuby()) {
+    LOG_RESTYLE_CONTINUE("NS_STYLE_IS_INLINE_DESCENDANT_OF_RUBY differes"
+                         "between old and new style contexts");
     return eRestyleResult_Continue;
   }
 

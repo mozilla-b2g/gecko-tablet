@@ -136,6 +136,7 @@ nsHttpTransaction::nsHttpTransaction()
     , mCountRecv(0)
     , mCountSent(0)
     , mAppId(NECKO_NO_APP_ID)
+    , mClassOfService(0)
 {
     LOG(("Creating nsHttpTransaction @%p\n", this));
     gHttpHandler->GetMaxPipelineObjectSize(&mMaxPipelineObjectSize);
@@ -551,11 +552,18 @@ nsHttpTransaction::OnTransportStatus(nsITransport* transport,
 
     if (status == NS_NET_STATUS_SENDING_TO) {
         // suppress progress when only writing request headers
-        if (!mHasRequestBody)
+        if (!mHasRequestBody) {
+            LOG(("nsHttpTransaction::OnTransportStatus %p "
+                 "SENDING_TO without request body\n", this));
             return;
+        }
 
         nsCOMPtr<nsISeekableStream> seekable = do_QueryInterface(mRequestStream);
-        MOZ_ASSERT(seekable, "Request stream isn't seekable?!?");
+        if (!seekable) {
+            LOG(("nsHttpTransaction::OnTransportStatus %p "
+                 "SENDING_TO without seekable request stream\n", this));
+            return;
+        }
 
         int64_t prog = 0;
         seekable->Tell(&prog);
@@ -1749,7 +1757,7 @@ nsHttpTransaction::CancelPipeline(uint32_t reason)
 }
 
 // Called when the transaction marked for blocking is associated with a connection
-// (i.e. added to a spdy session, an idle http connection, or placed into
+// (i.e. added to a new h1 conn, an idle http connection, or placed into
 // a http pipeline). It is safe to call this multiple times with it only
 // having an effect once.
 void

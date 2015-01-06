@@ -20,6 +20,9 @@
 #ifdef MOZ_WIDGET_GONK
 #include "GrallocImages.h"
 #endif
+#if defined(MOZ_WIDGET_GONK) && defined(MOZ_B2G_CAMERA)
+#include "GonkCameraImage.h"
+#endif
 #include "gfx2DGlue.h"
 #include "mozilla/gfx/2D.h"
 
@@ -58,6 +61,12 @@ ImageFactory::CreateImage(ImageFormat aFormat,
   }
   if (aFormat == ImageFormat::OVERLAY_IMAGE) {
     img = new OverlayImage();
+    return img.forget();
+  }
+#endif
+#if defined(MOZ_WIDGET_GONK) && defined(MOZ_B2G_CAMERA)
+  if (aFormat == ImageFormat::GONK_CAMERA_IMAGE) {
+    img = new GonkCameraImage();
     return img.forget();
   }
 #endif
@@ -137,7 +146,7 @@ ImageContainer::ImageContainer(int flag)
   if (flag == ENABLE_ASYNC && ImageBridgeChild::IsCreated()) {
     // the refcount of this ImageClient is 1. we don't use a RefPtr here because the refcount
     // of this class must be done on the ImageBridge thread.
-    mImageClient = ImageBridgeChild::GetSingleton()->CreateImageClient(CompositableType::IMAGE).drop();
+    mImageClient = ImageBridgeChild::GetSingleton()->CreateImageClient(CompositableType::IMAGE).take();
     MOZ_ASSERT(mImageClient);
   }
 }
@@ -160,7 +169,7 @@ ImageContainer::CreateImage(ImageFormat aFormat)
       // If this ImageContainer is async but the image type mismatch, fix it here
       if (ImageBridgeChild::IsCreated()) {
         ImageBridgeChild::DispatchReleaseImageClient(mImageClient);
-        mImageClient = ImageBridgeChild::GetSingleton()->CreateImageClient(CompositableType::IMAGE_OVERLAY).drop();
+        mImageClient = ImageBridgeChild::GetSingleton()->CreateImageClient(CompositableType::IMAGE_OVERLAY).take();
       }
     }
   }

@@ -49,26 +49,31 @@ using mozilla::PodCopy;
 using mozilla::PodZero;
 
 static inline jsid
-id_prototype(JSContext *cx) {
+id_prototype(JSContext *cx)
+{
     return NameToId(cx->names().prototype);
 }
 
+#ifdef DEBUG
+
 static inline jsid
-id___proto__(JSContext *cx) {
+id___proto__(JSContext *cx)
+{
     return NameToId(cx->names().proto);
 }
 
 static inline jsid
-id_constructor(JSContext *cx) {
+id_constructor(JSContext *cx)
+{
     return NameToId(cx->names().constructor);
 }
 
 static inline jsid
-id_caller(JSContext *cx) {
+id_caller(JSContext *cx)
+{
     return NameToId(cx->names().caller);
 }
 
-#ifdef DEBUG
 const char *
 types::TypeIdStringImpl(jsid id)
 {
@@ -84,6 +89,7 @@ types::TypeIdStringImpl(jsid id)
     PutEscapedString(bufs[which], 100, JSID_TO_FLAT_STRING(id), 0);
     return bufs[which];
 }
+
 #endif
 
 /////////////////////////////////////////////////////////////////////
@@ -2531,9 +2537,7 @@ TypeCompartment::print(JSContext *cx, bool force)
         return;
 
     for (gc::ZoneCellIter i(zone, gc::FINALIZE_SCRIPT); !i.done(); i.next()) {
-        // Note: use cx->runtime() instead of cx to work around IsInRequest(cx)
-        // assertion failures when we're called from DestroyContext.
-        RootedScript script(cx->runtime(), i.get<JSScript>());
+        RootedScript script(cx, i.get<JSScript>());
         if (script->types())
             script->types()->printTypes(cx, script);
     }
@@ -4120,12 +4124,13 @@ TypeNewScript::rollbackPartiallyInitializedObjects(JSContext *cx, TypeObject *ty
     if (!initializerList)
         return;
 
+    RootedFunction function(cx, fun);
     Vector<uint32_t, 32> pcOffsets(cx);
     for (ScriptFrameIter iter(cx); !iter.done(); ++iter) {
         pcOffsets.append(iter.script()->pcToOffset(iter.pc()));
 
         // This frame has no this.
-        if (!iter.isConstructing() || iter.callee() != fun)
+        if (!iter.isConstructing() || iter.matchCallee(cx, function))
             continue;
 
         Value thisv = iter.thisv(cx);
@@ -5265,7 +5270,12 @@ TypeObject::setAddendum(AddendumKind kind, void *addendum)
     MOZ_ASSERT(kind <= (OBJECT_FLAG_ADDENDUM_MASK >> OBJECT_FLAG_ADDENDUM_SHIFT));
     MOZ_ASSERT(!(flags_ & OBJECT_FLAG_ADDENDUM_MASK));
 
-    writeBarrierPre(this);
+    // Manually trigger barriers if we are clearing a TypeNewScript. Other
+    // kinds of addendums are immutable.
+    if (addendum_) {
+        MOZ_ASSERT(kind == Addendum_NewScript);
+        TypeNewScript::writeBarrierPre(newScript());
+    }
 
     flags_ |= kind << OBJECT_FLAG_ADDENDUM_SHIFT;
     addendum_ = addendum;

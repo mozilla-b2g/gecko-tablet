@@ -1928,7 +1928,7 @@ GetCaptionAdjustedParent(nsContainerFrame*  aParentFrame,
   *aAdjParentFrame = aParentFrame;
   bool haveCaption = false;
 
-  if (nsGkAtoms::tableCaptionFrame == aChildFrame->GetType()) {
+  if (aChildFrame->IsTableCaption()) {
     haveCaption = true;
     *aAdjParentFrame = ::AdjustCaptionParentFrame(aParentFrame);
   }
@@ -1955,10 +1955,10 @@ nsCSSFrameConstructor::AdjustParentFrame(nsContainerFrame**           aParentFra
 static void
 PullOutCaptionFrames(nsFrameItems& aItems, nsFrameItems& aCaptions)
 {
-  nsIFrame *child = aItems.FirstChild();
+  nsIFrame* child = aItems.FirstChild();
   while (child) {
-    nsIFrame *nextSibling = child->GetNextSibling();
-    if (nsGkAtoms::tableCaptionFrame == child->GetType()) {
+    nsIFrame* nextSibling = child->GetNextSibling();
+    if (child->IsTableCaption()) {
       aItems.RemoveFrame(child);
       aCaptions.AddChild(child);
     }
@@ -4525,36 +4525,42 @@ nsCSSFrameConstructor::FindDisplayData(const nsStyleDisplay* aDisplay,
                !mPresShell->GetPresContext()->IsPaginated(),
                "Shouldn't propagate scroll in paginated contexts");
 
-  // If the frame is a block-level frame and is scrollable, then wrap it in a
-  // scroll frame.
-  // XXX Ignore tables for the time being
-  // XXXbz it would be nice to combine this with the other block
-  // case... Think about how do do this?
-  if (aDisplay->IsBlockInsideStyle() &&
-      aDisplay->IsScrollableOverflow() &&
-      !propagatedScrollToViewport) {
-    // Except we don't want to do that for paginated contexts for
-    // frames that are block-outside and aren't frames for native
-    // anonymous stuff.
-    if (mPresShell->GetPresContext()->IsPaginated() &&
-        aDisplay->IsBlockOutsideStyle() &&
-        !aElement->IsInNativeAnonymousSubtree()) {
-      static const FrameConstructionData sForcedNonScrollableBlockData =
-        FULL_CTOR_FCDATA(FCDATA_FORCED_NON_SCROLLABLE_BLOCK,
-                         &nsCSSFrameConstructor::ConstructNonScrollableBlock);
-      return &sForcedNonScrollableBlockData;
+  if (aDisplay->IsBlockInsideStyle()) {
+    // If the frame is a block-level frame and is scrollable, then wrap it in a
+    // scroll frame.  Except we don't want to do that for paginated contexts for
+    // frames that are block-outside and aren't frames for native anonymous stuff.
+    // XXX Ignore tables for the time being (except caption)
+    const uint32_t kCaptionCtorFlags =
+      FCDATA_IS_TABLE_PART | FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeTable);
+    bool caption = aDisplay->mDisplay == NS_STYLE_DISPLAY_TABLE_CAPTION;
+    bool suppressScrollFrame = false;
+    bool needScrollFrame = aDisplay->IsScrollableOverflow() &&
+                           !propagatedScrollToViewport;
+    if (needScrollFrame) {
+      suppressScrollFrame = mPresShell->GetPresContext()->IsPaginated() &&
+                            aDisplay->IsBlockOutsideStyle() &&
+                            !aElement->IsInNativeAnonymousSubtree();
+      if (!suppressScrollFrame) {
+        static const FrameConstructionData sScrollableBlockData[2] =
+          { FULL_CTOR_FCDATA(0, &nsCSSFrameConstructor::ConstructScrollableBlock),
+            FULL_CTOR_FCDATA(kCaptionCtorFlags,
+                             &nsCSSFrameConstructor::ConstructScrollableBlock) };
+        return &sScrollableBlockData[caption];
+      }
     }
 
-    static const FrameConstructionData sScrollableBlockData =
-      FULL_CTOR_FCDATA(0, &nsCSSFrameConstructor::ConstructScrollableBlock);
-    return &sScrollableBlockData;
-  }
-
-  // Handle various non-scrollable blocks
-  if (aDisplay->IsBlockInsideStyle()) {
-    static const FrameConstructionData sNonScrollableBlockData =
-      FULL_CTOR_FCDATA(0, &nsCSSFrameConstructor::ConstructNonScrollableBlock);
-    return &sNonScrollableBlockData;
+    // Handle various non-scrollable blocks.
+    static const FrameConstructionData sNonScrollableBlockData[2][2] = {
+      { FULL_CTOR_FCDATA(0,
+                         &nsCSSFrameConstructor::ConstructNonScrollableBlock),
+        FULL_CTOR_FCDATA(kCaptionCtorFlags,
+                         &nsCSSFrameConstructor::ConstructNonScrollableBlock) },
+      { FULL_CTOR_FCDATA(FCDATA_FORCED_NON_SCROLLABLE_BLOCK,
+                         &nsCSSFrameConstructor::ConstructNonScrollableBlock),
+        FULL_CTOR_FCDATA(FCDATA_FORCED_NON_SCROLLABLE_BLOCK | kCaptionCtorFlags,
+                         &nsCSSFrameConstructor::ConstructNonScrollableBlock) }
+    };
+    return &sNonScrollableBlockData[suppressScrollFrame][caption];
   }
 
   // If this is for a <body> node and we've propagated the scroll-frame to the
@@ -4614,11 +4620,6 @@ nsCSSFrameConstructor::FindDisplayData(const nsStyleDisplay* aDisplay,
     // NOTE: In the unlikely event that we add another table-part here that has
     // a desired-parent-type (& hence triggers table fixup), we'll need to also
     // update the flexbox chunk in nsStyleContext::ApplyStyleFixups().
-    { NS_STYLE_DISPLAY_TABLE_CAPTION,
-      FCDATA_DECL(FCDATA_IS_TABLE_PART | FCDATA_ALLOW_BLOCK_STYLES |
-                  FCDATA_DISALLOW_OUT_OF_FLOW | FCDATA_SKIP_ABSPOS_PUSH |
-                  FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeTable),
-                  NS_NewTableCaptionFrame) },
     { NS_STYLE_DISPLAY_TABLE_ROW_GROUP,
       FULL_CTOR_FCDATA(FCDATA_IS_TABLE_PART |
                        FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeTable),
@@ -5691,13 +5692,6 @@ nsCSSFrameConstructor::AddFrameConstructionItemsInternal(nsFrameConstructorState
     aItems.AppendItem(data, aContent, aTag, aNameSpaceID,
                       pendingBinding, styleContext.forget(),
                       aSuppressWhiteSpaceOptimizations, aAnonChildren);
-  if (!item) {
-    if (isGeneratedContent) {
-      aContent->UnbindFromTree();
-    }
-    return;
-  }
-
   item->mIsText = isText;
   item->mIsGeneratedContent = isGeneratedContent;
   item->mIsAnonymousContentCreatorContent =
@@ -6076,8 +6070,11 @@ AdjustAppendParentForAfterContent(nsFrameManager* aFrameManager,
       if (child && child->IsPseudoFrame(aContainer) &&
           !child->IsGeneratedContentFrame()) {
         // Drill down into non-generated pseudo frames of aContainer.
-        parent = nsLayoutUtils::LastContinuationWithChild(do_QueryFrame(child));
-        continue;
+        nsContainerFrame* childAsContainer = do_QueryFrame(child);
+        if (childAsContainer) {
+          parent = nsLayoutUtils::LastContinuationWithChild(childAsContainer);
+          continue;
+        }
       }
 
       for (; child; child = child->GetPrevSibling()) {
@@ -8615,6 +8612,8 @@ nsCSSFrameConstructor::CreateContinuingFrame(nsPresContext*    aPresContext,
     newFrame = NS_NewInlineFrame(shell, styleContext);
     newFrame->Init(content, aParentFrame, aFrame);
   } else if (nsGkAtoms::blockFrame == frameType) {
+    MOZ_ASSERT(!aFrame->IsTableCaption(),
+               "no support for fragmenting table captions yet");
     newFrame = NS_NewBlockFrame(shell, styleContext);
     newFrame->Init(content, aParentFrame, aFrame);
 #ifdef MOZ_XUL
@@ -8623,6 +8622,8 @@ nsCSSFrameConstructor::CreateContinuingFrame(nsPresContext*    aPresContext,
     newFrame->Init(content, aParentFrame, aFrame);
 #endif
   } else if (nsGkAtoms::columnSetFrame == frameType) {
+    MOZ_ASSERT(!aFrame->IsTableCaption(),
+               "no support for fragmenting table captions yet");
     newFrame = NS_NewColumnSetFrame(shell, styleContext, nsFrameState(0));
     newFrame->Init(content, aParentFrame, aFrame);
   } else if (nsGkAtoms::pageFrame == frameType) {
@@ -9085,7 +9086,7 @@ nsCSSFrameConstructor::MaybeRecreateContainerForFrameRemoval(nsIFrame* aFrame,
         (inFlowFrame->GetType() == nsGkAtoms::tableColGroupFrame &&
          parent->GetFirstChild(nsIFrame::kColGroupList) == inFlowFrame) ||
         // Similar if we're a table-caption.
-        (inFlowFrame->GetType() == nsGkAtoms::tableCaptionFrame &&
+        (inFlowFrame->IsTableCaption() &&
          parent->GetFirstChild(nsIFrame::kCaptionList) == inFlowFrame)) {
       // We're the first or last frame in the pseudo.  Need to reframe.
       // Good enough to recreate frames for |parent|'s content
@@ -11397,6 +11398,9 @@ nsCSSFrameConstructor::ConstructBlock(nsFrameConstructorState& aState,
       ResolveAnonymousBoxStyle(nsCSSAnonBoxes::columnContent, aStyleContext);
     parent = columnSetFrame;
     *aNewFrame = columnSetFrame;
+    if (aPositionedFrameForAbsPosContainer == blockFrame) {
+      aPositionedFrameForAbsPosContainer = columnSetFrame;
+    }
 
     SetInitialSingleChild(columnSetFrame, blockFrame);
   }

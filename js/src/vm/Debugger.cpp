@@ -26,6 +26,7 @@
 #include "vm/ArgumentsObject.h"
 #include "vm/DebuggerMemory.h"
 #include "vm/SPSProfiler.h"
+#include "vm/TraceLogging.h"
 #include "vm/WrapperObject.h"
 
 #include "jsgcinlines.h"
@@ -90,6 +91,7 @@ extern const Class DebuggerSource_class;
 
 enum {
     JSSLOT_DEBUGSOURCE_OWNER,
+    JSSLOT_DEBUGSOURCE_TEXT,
     JSSLOT_DEBUGSOURCE_COUNT
 };
 
@@ -365,7 +367,13 @@ Debugger::Debugger(JSContext *cx, NativeObject *dbg)
     scripts(cx),
     sources(cx),
     objects(cx),
-    environments(cx)
+    environments(cx),
+#ifdef NIGHTLY_BUILD
+    traceLoggerLastDrainedId(0),
+    traceLoggerLastDrainedIteration(0),
+#endif
+    traceLoggerScriptedCallsLastDrainedId(0),
+    traceLoggerScriptedCallsLastDrainedIteration(0)
 {
     assertSameCompartment(cx, dbg);
 
@@ -1377,7 +1385,6 @@ Debugger::onTrap(JSContext *cx, MutableHandleValue vp)
         if (!site || !site->hasBreakpoint(bp))
             continue;
 
-
         /*
          * There are two reasons we have to check whether dbg is enabled and
          * debugging scriptGlobal.
@@ -1611,6 +1618,13 @@ Debugger::slowPathOnLogAllocationSite(JSContext *cx, HandleSavedFrame frame, int
     }
 
     return true;
+}
+
+bool
+Debugger::isDebuggee(const JSCompartment *compartment) const
+{
+    MOZ_ASSERT(compartment);
+    return compartment->isDebuggee() && debuggees.has(compartment->maybeGlobal());
 }
 
 bool
@@ -1864,20 +1878,15 @@ MarkBaselineScriptActiveIfObservable(JSScript *script, const Debugger::Execution
 }
 
 static bool
-AppendAndInvalidateScriptIfObservable(JSContext *cx, Zone *zone, JSScript *script,
-                                      const Debugger::ExecutionObservableSet &obs,
-                                      Vector<JSScript *> &scripts)
+AppendAndInvalidateScript(JSContext *cx, Zone *zone, JSScript *script, Vector<JSScript *> &scripts)
 {
-    if (obs.shouldRecompileOrInvalidate(script)) {
-        // Enter the script's compartment as addPendingRecompile attempts to
-        // cancel off-thread compilations, whose books are kept on the
-        // script's compartment.
-        MOZ_ASSERT(script->compartment()->zone() == zone);
-        AutoCompartment ac(cx, script->compartment());
-        zone->types.addPendingRecompile(cx, script);
-        return scripts.append(script);
-    }
-    return true;
+    // Enter the script's compartment as addPendingRecompile attempts to
+    // cancel off-thread compilations, whose books are kept on the
+    // script's compartment.
+    MOZ_ASSERT(script->compartment()->zone() == zone);
+    AutoCompartment ac(cx, script->compartment());
+    zone->types.addPendingRecompile(cx, script);
+    return scripts.append(script);
 }
 
 static bool
@@ -1923,13 +1932,19 @@ UpdateExecutionObservabilityOfScriptsInZone(JSContext *cx, Zone *zone,
     {
         types::AutoEnterAnalysis enter(fop, zone);
         if (JSScript *script = obs.singleScriptForZoneInvalidation()) {
-            if (!AppendAndInvalidateScriptIfObservable(cx, zone, script, obs, scripts))
-                return false;
+            if (obs.shouldRecompileOrInvalidate(script)) {
+                if (!AppendAndInvalidateScript(cx, zone, script, scripts))
+                    return false;
+            }
         } else {
             for (gc::ZoneCellIter iter(zone, gc::FINALIZE_SCRIPT); !iter.done(); iter.next()) {
                 JSScript *script = iter.get<JSScript>();
-                if (!AppendAndInvalidateScriptIfObservable(cx, zone, script, obs, scripts))
-                    return false;
+                if (obs.shouldRecompileOrInvalidate(script) &&
+                    !gc::IsScriptAboutToBeFinalized(&script))
+                {
+                    if (!AppendAndInvalidateScript(cx, zone, script, scripts))
+                        return false;
+                }
             }
         }
     }
@@ -3522,8 +3537,11 @@ class MOZ_STACK_CLASS Debugger::ObjectQuery
   public:
     /* Construct an ObjectQuery to use matching scripts for |dbg|. */
     ObjectQuery(JSContext *cx, Debugger *dbg) :
-        cx(cx), dbg(dbg), className(cx)
-    {}
+        objects(cx), cx(cx), dbg(dbg), className(cx)
+    { }
+
+    /* The vector that we are accumulating results in. */
+    AutoObjectVector objects;
 
     /*
      * Parse the query object |query|, and prepare to match only the objects it
@@ -3555,17 +3573,9 @@ class MOZ_STACK_CLASS Debugger::ObjectQuery
      * Traverse the heap to find all relevant objects and add them to the
      * provided vector.
      */
-    bool findObjects(AutoObjectVector &objs) {
+    bool findObjects() {
         if (!prepareQuery())
             return false;
-
-        // Ensure that all of our debuggee globals are rooted so that they are
-        // visible in the RootList.
-        JS::AutoObjectVector debuggees(cx);
-        for (GlobalObjectSet::Range r = dbg->allDebuggees(); !r.empty(); r.popFront()) {
-            if (!debuggees.append(r.front()))
-                return false;
-        }
 
         {
             /*
@@ -3575,7 +3585,7 @@ class MOZ_STACK_CLASS Debugger::ObjectQuery
             Maybe<JS::AutoCheckCannotGC> maybeNoGC;
             RootedObject dbgObj(cx, dbg->object);
             JS::ubi::RootList rootList(cx, maybeNoGC);
-            if (!rootList.init(cx, dbgObj))
+            if (!rootList.init(dbgObj))
                 return false;
 
             Traversal traversal(cx, *this, maybeNoGC.ref());
@@ -3583,35 +3593,8 @@ class MOZ_STACK_CLASS Debugger::ObjectQuery
                 return false;
             traversal.wantNames = false;
 
-            if (!traversal.addStart(JS::ubi::Node(&rootList)) ||
-                !traversal.traverse())
-            {
-                return false;
-            }
-
-            /*
-             * Iterate over the visited set of nodes and accumulate all
-             * |JSObject|s matching our criteria in the given vector.
-             */
-            for (Traversal::NodeMap::Range r = traversal.visited.all(); !r.empty(); r.popFront()) {
-                JS::ubi::Node node = r.front().key();
-                if (!node.is<JSObject>())
-                    continue;
-                MOZ_ASSERT(dbg->isDebuggee(node.compartment()));
-
-                JSObject *obj = node.as<JSObject>();
-
-                if (!className.isUndefined()) {
-                    const char *objClassName = obj->getClass()->name;
-                    if (strcmp(objClassName, classNameCString.ptr()) != 0)
-                        continue;
-                }
-
-                if (!objs.append(obj))
-                    return false;
-            }
-
-            return true;
+            return traversal.addStart(JS::ubi::Node(&rootList)) &&
+                   traversal.traverse();
         }
     }
 
@@ -3623,12 +3606,46 @@ class MOZ_STACK_CLASS Debugger::ObjectQuery
     bool operator() (Traversal &traversal, JS::ubi::Node origin, const JS::ubi::Edge &edge,
                      NodeData *, bool first)
     {
-        /* Only follow edges within our set of debuggee compartments. */
-        JSCompartment *comp = edge.referent.compartment();
-        if (first && comp && !dbg->isDebuggee(edge.referent.compartment()))
-            traversal.abandonReferent();
+        if (!first)
+            return true;
 
-        return true;
+        JS::ubi::Node referent = edge.referent;
+        /*
+         * Only follow edges within our set of debuggee compartments; we don't
+         * care about the heap's subgraphs outside of our debuggee compartments,
+         * so we abandon the referent. Either (1) there is not a path from this
+         * non-debuggee node back to a node in our debuggee compartments, and we
+         * don't need to follow edges to or from this node, or (2) there does
+         * exist some path from this non-debuggee node back to a node in our
+         * debuggee compartments. However, if that were true, then the incoming
+         * cross compartment edge back into a debuggee compartment is already
+         * listed as an edge in the RootList we started traversal with, and
+         * therefore we don't need to follow edges to or from this non-debuggee
+         * node.
+         */
+        JSCompartment *comp = referent.compartment();
+        if (comp && !dbg->isDebuggee(comp)) {
+            traversal.abandonReferent();
+            return true;
+        }
+
+        /*
+         * If the referent is an object and matches our query's restrictions,
+         * add it to the vector accumulating results.
+         */
+
+        if (!referent.is<JSObject>())
+            return true;
+
+        JSObject *obj = referent.as<JSObject>();
+
+        if (!className.isUndefined()) {
+            const char *objClassName = obj->getClass()->name;
+            if (strcmp(objClassName, classNameCString.ptr()) != 0)
+                return true;
+        }
+
+        return objects.append(obj);
     }
 
   private:
@@ -3676,17 +3693,10 @@ Debugger::findObjects(JSContext *cx, unsigned argc, Value *vp)
         query.omittedQuery();
     }
 
-    /*
-     * Accumulate the objects in an AutoObjectVector, instead of creating the JS
-     * array as we go, because we mustn't allocate JS objects or GC while we
-     * traverse the heap graph.
-     */
-    AutoObjectVector objects(cx);
-
-    if (!query.findObjects(objects))
+    if (!query.findObjects())
         return false;
 
-    size_t length = objects.length();
+    size_t length = query.objects.length();
     RootedArrayObject result(cx, NewDenseFullyAllocatedArray(cx, length));
     if (!result)
         return false;
@@ -3694,7 +3704,7 @@ Debugger::findObjects(JSContext *cx, unsigned argc, Value *vp)
     result->ensureDenseInitializedLength(cx, 0, length);
 
     for (size_t i = 0; i < length; i++) {
-        RootedValue debuggeeVal(cx, ObjectValue(*objects[i]));
+        RootedValue debuggeeVal(cx, ObjectValue(*query.objects[i]));
         if (!dbg->wrapDebuggeeValue(cx, &debuggeeVal))
             return false;
         result->setDenseElement(i, debuggeeVal);
@@ -3759,6 +3769,253 @@ Debugger::makeGlobalObjectReference(JSContext *cx, unsigned argc, Value *vp)
     return dbg->wrapDebuggeeValue(cx, args.rval());
 }
 
+static bool
+DefineProperty(JSContext *cx, HandleObject obj, HandleId id, const char *value, size_t n)
+{
+    JSString *text = JS_NewStringCopyN(cx, value, n);
+    if (!text)
+        return false;
+
+    RootedValue str(cx, StringValue(text));
+    return JS_DefinePropertyById(cx, obj, id, str, JSPROP_ENUMERATE);
+}
+
+#ifdef JS_TRACE_LOGGING
+# ifdef NIGHTLY_BUILD
+bool
+Debugger::setupTraceLogger(JSContext *cx, unsigned argc, Value *vp)
+{
+    THIS_DEBUGGER(cx, argc, vp, "setupTraceLogger", args, dbg);
+    if (!args.requireAtLeast(cx, "Debugger.setupTraceLogger", 1))
+        return false;
+
+    RootedObject obj(cx, ToObject(cx, args[0]));
+    if (!obj)
+        return false;
+
+    AutoIdVector ids(cx);
+    if (!GetPropertyKeys(cx, obj, JSITER_OWNONLY, &ids))
+        return false;
+
+    if (ids.length() == 0) {
+        args.rval().setBoolean(true);
+        return true;
+    }
+
+    Vector<uint32_t> textIds(cx);
+    if (!textIds.reserve(ids.length()))
+        return false;
+
+    Vector<bool> values(cx);
+    if (!values.reserve(ids.length()))
+        return false;
+
+    for (size_t i = 0; i < ids.length(); i++) {
+        if (!JSID_IS_STRING(ids[i])) {
+            args.rval().setBoolean(false);
+            return true;
+        }
+
+        JSString *id = JSID_TO_STRING(ids[i]);
+        JSLinearString *linear = id->ensureLinear(cx);
+        if (!linear)
+            return false;
+
+        uint32_t textId = TLStringToTextId(linear);
+
+        if (!TLTextIdIsToggable(textId)) {
+            args.rval().setBoolean(false);
+            return true;
+        }
+
+        RootedValue v(cx);
+        if (!JSObject::getGeneric(cx, obj, obj, ids[i], &v))
+            return false;
+
+        textIds.append(textId);
+        values.append(ToBoolean(v));
+    }
+
+    MOZ_ASSERT(ids.length() == textIds.length());
+    MOZ_ASSERT(textIds.length() == values.length());
+
+    for (size_t i = 0; i < textIds.length(); i++) {
+        if (values[i])
+            TraceLogEnableTextId(cx, textIds[i]);
+        else
+            TraceLogDisableTextId(cx, textIds[i]);
+    }
+
+    args.rval().setBoolean(true);
+    return true;
+}
+
+bool
+Debugger::drainTraceLogger(JSContext *cx, unsigned argc, Value *vp)
+{
+    THIS_DEBUGGER(cx, argc, vp, "drainTraceLogger", args, dbg);
+    if (!args.requireAtLeast(cx, "Debugger.drainTraceLogger", 0))
+        return false;
+
+    size_t num;
+    TraceLoggerThread *logger = TraceLoggerForMainThread(cx->runtime());
+    bool lostEvents = logger->lostEvents(dbg->traceLoggerLastDrainedIteration,
+                                         dbg->traceLoggerLastDrainedId);
+    EventEntry *events = logger->getEventsStartingAt(&dbg->traceLoggerLastDrainedIteration,
+                                                     &dbg->traceLoggerLastDrainedId,
+                                                     &num);
+
+    RootedObject array(cx, NewDenseEmptyArray(cx));
+    JSAtom *dataAtom = Atomize(cx, "data", strlen("data"));
+    if (!dataAtom)
+        return false;
+    RootedId dataId(cx, AtomToId(dataAtom));
+
+    /* Add all events to the array. */
+    uint32_t index = 0;
+    for (EventEntry *eventItem = events; eventItem < events + num; eventItem++, index++) {
+        RootedObject item(cx, NewObjectWithGivenProto(cx, &PlainObject::class_, nullptr, cx->global()));
+        if (!item)
+            return false;
+
+        const char *eventText = logger->eventText(eventItem->textId);
+        if (!DefineProperty(cx, item, dataId, eventText, strlen(eventText)))
+            return false;
+
+        RootedValue obj(cx, ObjectValue(*item));
+        if (!JS_DefineElement(cx, array, index, obj, JSPROP_ENUMERATE))
+            return false;
+    }
+
+    /* Add "lostEvents" indicating if there are events that were lost. */
+    RootedValue lost(cx, BooleanValue(lostEvents));
+    if (!JS_DefineProperty(cx, array, "lostEvents", lost, JSPROP_ENUMERATE))
+        return false;
+
+    args.rval().setObject(*array);
+
+    return true;
+}
+# endif // NIGHTLY_BUILD
+
+bool
+Debugger::setupTraceLoggerScriptCalls(JSContext *cx, unsigned argc, Value *vp)
+{
+    THIS_DEBUGGER(cx, argc, vp, "setupTraceLoggerScriptCalls", args, dbg);
+    if (!args.requireAtLeast(cx, "Debugger.setupTraceLoggerScriptCalls", 0))
+        return false;
+
+    TraceLogEnableTextId(cx, TraceLogger_Scripts);
+    TraceLogEnableTextId(cx, TraceLogger_InlinedScripts);
+    TraceLogDisableTextId(cx, TraceLogger_AnnotateScripts);
+
+    args.rval().setBoolean(true);
+
+    return true;
+}
+
+bool
+Debugger::startTraceLogger(JSContext *cx, unsigned argc, Value *vp)
+{
+    THIS_DEBUGGER(cx, argc, vp, "startTraceLogger", args, dbg);
+    if (!args.requireAtLeast(cx, "Debugger.startTraceLogger", 0))
+        return false;
+
+    TraceLoggerThread *logger = TraceLoggerForMainThread(cx->runtime());
+    TraceLoggerEnable(logger, cx);
+
+    args.rval().setUndefined();
+
+    return true;
+}
+
+bool
+Debugger::endTraceLogger(JSContext *cx, unsigned argc, Value *vp)
+{
+    THIS_DEBUGGER(cx, argc, vp, "endTraceLogger", args, dbg);
+    if (!args.requireAtLeast(cx, "Debugger.endTraceLogger", 0))
+        return false;
+
+    TraceLoggerThread *logger = TraceLoggerForMainThread(cx->runtime());
+    TraceLoggerDisable(logger);
+
+    args.rval().setUndefined();
+
+    return true;
+}
+
+bool
+Debugger::drainTraceLoggerScriptCalls(JSContext *cx, unsigned argc, Value *vp)
+{
+    THIS_DEBUGGER(cx, argc, vp, "drainTraceLoggerScriptCalls", args, dbg);
+    if (!args.requireAtLeast(cx, "Debugger.drainTraceLoggerScriptCalls", 0))
+        return false;
+
+    size_t num;
+    TraceLoggerThread *logger = TraceLoggerForMainThread(cx->runtime());
+    bool lostEvents = logger->lostEvents(dbg->traceLoggerScriptedCallsLastDrainedIteration,
+                                         dbg->traceLoggerScriptedCallsLastDrainedId);
+    EventEntry *events = logger->getEventsStartingAt(
+                                         &dbg->traceLoggerScriptedCallsLastDrainedIteration,
+                                         &dbg->traceLoggerScriptedCallsLastDrainedId,
+                                         &num);
+
+    RootedObject array(cx, NewDenseEmptyArray(cx));
+    RootedId fileNameId(cx, AtomToId(cx->names().fileName));
+    RootedId lineNumberId(cx, AtomToId(cx->names().lineNumber));
+    RootedId columnNumberId(cx, AtomToId(cx->names().columnNumber));
+    JSAtom *logTypeAtom = Atomize(cx, "logType", strlen("logType"));
+    if (!logTypeAtom)
+        return false;
+    RootedId logTypeId(cx, AtomToId(logTypeAtom));
+
+    /* Add all events to the array. */
+    uint32_t index = 0;
+    for (EventEntry *eventItem = events; eventItem < events + num; eventItem++) {
+        RootedObject item(cx, NewObjectWithGivenProto(cx, &PlainObject::class_, nullptr, cx->global()));
+        if (!item)
+            return false;
+
+        uint32_t textId = eventItem->textId;
+        if (textId != TraceLogger_Stop && !logger->textIdIsScriptEvent(textId))
+            continue;
+
+        const char *type = (textId == TraceLogger_Stop) ? "Stop" : "Script";
+        if (!DefineProperty(cx, item, logTypeId, type, strlen(type)))
+            return false;
+
+        if (textId != TraceLogger_Stop) {
+            const char *filename, *lineno, *colno;
+            size_t filename_len, lineno_len, colno_len;
+            logger->extractScriptDetails(textId, &filename, &filename_len, &lineno, &lineno_len,
+                                         &colno, &colno_len);
+
+            if (!DefineProperty(cx, item, fileNameId, filename, filename_len))
+                return false;
+            if (!DefineProperty(cx, item, lineNumberId, lineno, lineno_len))
+                return false;
+            if (!DefineProperty(cx, item, columnNumberId, colno, colno_len))
+                return false;
+        }
+
+        RootedValue obj(cx, ObjectValue(*item));
+        if (!JS_DefineElement(cx, array, index, obj, JSPROP_ENUMERATE))
+            return false;
+
+        index++;
+    }
+
+    /* Add "lostEvents" indicating if there are events that were lost. */
+    RootedValue lost(cx, BooleanValue(lostEvents));
+    if (!JS_DefineProperty(cx, array, "lostEvents", lost, JSPROP_ENUMERATE))
+        return false;
+
+    args.rval().setObject(*array);
+
+    return true;
+}
+#endif
+
 const JSPropertySpec Debugger::properties[] = {
     JS_PSGS("enabled", Debugger::getEnabled, Debugger::setEnabled, 0),
     JS_PSGS("onDebuggerStatement", Debugger::getOnDebuggerStatement,
@@ -3788,6 +4045,16 @@ const JSFunctionSpec Debugger::methods[] = {
     JS_FN("findObjects", Debugger::findObjects, 1, 0),
     JS_FN("findAllGlobals", Debugger::findAllGlobals, 0, 0),
     JS_FN("makeGlobalObjectReference", Debugger::makeGlobalObjectReference, 1, 0),
+#ifdef JS_TRACE_LOGGING
+    JS_FN("setupTraceLoggerScriptCalls", Debugger::setupTraceLoggerScriptCalls, 0, 0),
+    JS_FN("drainTraceLoggerScriptCalls", Debugger::drainTraceLoggerScriptCalls, 0, 0),
+    JS_FN("startTraceLogger", Debugger::startTraceLogger, 0, 0),
+    JS_FN("endTraceLogger", Debugger::endTraceLogger, 0, 0),
+# ifdef NIGHTLY_BUILD
+    JS_FN("setupTraceLogger", Debugger::setupTraceLogger, 1, 0),
+    JS_FN("drainTraceLogger", Debugger::drainTraceLogger, 0, 0),
+# endif
+#endif
     JS_FS_END
 };
 
@@ -4853,7 +5120,7 @@ DebuggerSource_construct(JSContext *cx, unsigned argc, Value *vp)
     return false;
 }
 
-static JSObject *
+static NativeObject *
 DebuggerSource_checkThis(JSContext *cx, const CallArgs &args, const char *fnname)
 {
     if (!args.thisv().isObject()) {
@@ -4868,18 +5135,20 @@ DebuggerSource_checkThis(JSContext *cx, const CallArgs &args, const char *fnname
         return nullptr;
     }
 
+    NativeObject *nthisobj = &thisobj->as<NativeObject>();
+
     if (!GetSourceReferent(thisobj)) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_INCOMPATIBLE_PROTO,
                              "Debugger.Frame", fnname, "prototype object");
         return nullptr;
     }
 
-    return thisobj;
+    return nthisobj;
 }
 
 #define THIS_DEBUGSOURCE_REFERENT(cx, argc, vp, fnname, args, obj, sourceObject)    \
     CallArgs args = CallArgsFromVp(argc, vp);                                       \
-    RootedObject obj(cx, DebuggerSource_checkThis(cx, args, fnname));               \
+    RootedNativeObject obj(cx, DebuggerSource_checkThis(cx, args, fnname));         \
     if (!obj)                                                                       \
         return false;                                                               \
     RootedScriptSource sourceObject(cx, GetSourceReferent(obj));                    \
@@ -4890,6 +5159,12 @@ static bool
 DebuggerSource_getText(JSContext *cx, unsigned argc, Value *vp)
 {
     THIS_DEBUGSOURCE_REFERENT(cx, argc, vp, "(get text)", args, obj, sourceObject);
+    Value textv = obj->getReservedSlot(JSSLOT_DEBUGSOURCE_TEXT);
+    if (!textv.isUndefined()) {
+        MOZ_ASSERT(textv.isString());
+        args.rval().set(textv);
+        return true;
+    }
 
     ScriptSource *ss = sourceObject->source();
     bool hasSourceData = ss->hasSourceData();
@@ -4902,6 +5177,7 @@ DebuggerSource_getText(JSContext *cx, unsigned argc, Value *vp)
         return false;
 
     args.rval().setString(str);
+    obj->setReservedSlot(JSSLOT_DEBUGSOURCE_TEXT, args.rval());
     return true;
 }
 
@@ -5327,7 +5603,7 @@ DebuggerFrame_getThis(JSContext *cx, unsigned argc, Value *vp)
     THIS_FRAME_ITER(cx, argc, vp, "get this", args, thisobj, _, iter);
     RootedValue thisv(cx);
     {
-        AutoCompartment ac(cx, iter.scopeChain());
+        AutoCompartment ac(cx, iter.scopeChain(cx));
         if (!iter.computeThis(cx))
             return false;
         thisv = iter.computedThisValue();
@@ -5731,7 +6007,7 @@ DebuggerGenericEval(JSContext *cx, const char *fullMethodName, const Value &code
 
     Maybe<AutoCompartment> ac;
     if (iter)
-        ac.emplace(cx, iter->scopeChain());
+        ac.emplace(cx, iter->scopeChain(cx));
     else
         ac.emplace(cx, scope);
 

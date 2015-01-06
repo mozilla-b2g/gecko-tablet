@@ -61,8 +61,25 @@ public:
     : mCreationSite(aCreationSite)
     , mMutex("MediaPromise Mutex")
   {
-    MOZ_COUNT_CTOR(MediaPromise);
     PROMISE_LOG("%s creating MediaPromise (%p)", mCreationSite, this);
+  }
+
+  static nsRefPtr<MediaPromise<ResolveValueT, RejectValueT>>
+  CreateAndResolve(ResolveValueType aResolveValue, const char* aResolveSite)
+  {
+    nsRefPtr<MediaPromise<ResolveValueT, RejectValueT>> p =
+      new MediaPromise<ResolveValueT, RejectValueT>(aResolveSite);
+    p->Resolve(aResolveValue, aResolveSite);
+    return p;
+  }
+
+  static nsRefPtr<MediaPromise<ResolveValueT, RejectValueT>>
+  CreateAndReject(RejectValueType aRejectValue, const char* aRejectSite)
+  {
+    nsRefPtr<MediaPromise<ResolveValueT, RejectValueT>> p =
+      new MediaPromise<ResolveValueT, RejectValueT>(aRejectSite);
+    p->Reject(aRejectValue, aRejectSite);
+    return p;
   }
 
 protected:
@@ -81,14 +98,10 @@ protected:
     public:
       ResolveRunnable(ThenValueBase* aThenValue, ResolveValueType aResolveValue)
         : mThenValue(aThenValue)
-        , mResolveValue(aResolveValue)
-      {
-        MOZ_COUNT_CTOR(ResolveRunnable);
-      }
+        , mResolveValue(aResolveValue) {}
 
       ~ResolveRunnable()
       {
-        MOZ_COUNT_DTOR(ResolveRunnable);
         MOZ_ASSERT(!mThenValue);
       }
 
@@ -112,14 +125,10 @@ protected:
     public:
       RejectRunnable(ThenValueBase* aThenValue, RejectValueType aRejectValue)
         : mThenValue(aThenValue)
-        , mRejectValue(aRejectValue)
-      {
-        MOZ_COUNT_CTOR(RejectRunnable);
-      }
+        , mRejectValue(aRejectValue) {}
 
       ~RejectRunnable()
       {
-        MOZ_COUNT_DTOR(RejectRunnable);
         MOZ_ASSERT(!mThenValue);
       }
 
@@ -309,7 +318,6 @@ protected:
 
   ~MediaPromise()
   {
-    MOZ_COUNT_DTOR(MediaPromise);
     PROMISE_LOG("MediaPromise::~MediaPromise [this=%p]", this);
     MOZ_ASSERT(!IsPending());
     MOZ_ASSERT(mThenValues.IsEmpty());

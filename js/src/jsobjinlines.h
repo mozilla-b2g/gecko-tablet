@@ -362,8 +362,7 @@ JSObject::setInitialElementsMaybeNonNative(js::HeapSlot *elements)
 }
 
 /* static */ inline bool
-JSObject::hasProperty(JSContext *cx, js::HandleObject obj,
-                      js::HandleId id, bool *foundp)
+JSObject::hasProperty(JSContext *cx, js::HandleObject obj, js::HandleId id, bool *foundp)
 {
     JS::RootedObject pobj(cx);
     js::RootedShape prop(cx);
@@ -373,6 +372,13 @@ JSObject::hasProperty(JSContext *cx, js::HandleObject obj,
     }
     *foundp = !!prop;
     return true;
+}
+
+/* static */ inline bool
+JSObject::hasProperty(JSContext *cx, js::HandleObject obj, js::PropertyName *name, bool *foundp)
+{
+    JS::RootedId id(cx, js::NameToId(name));
+    return hasProperty(cx, obj, id, foundp);
 }
 
 /* static */ inline bool
@@ -843,7 +849,8 @@ static MOZ_ALWAYS_INLINE bool
 NewObjectMetadata(ExclusiveContext *cxArg, JSObject **pmetadata)
 {
     // The metadata callback is invoked before each created object, except when
-    // analysis/compilation is active, to avoid recursion.
+    // analysis/compilation is active, to avoid recursion. It is also skipped
+    // when we allocate objects during a bailout, to prevent stack iterations.
     MOZ_ASSERT(!*pmetadata);
     if (JSContext *cx = cxArg->maybeJSContext()) {
         if (MOZ_UNLIKELY((size_t)cx->compartment()->hasObjectMetadataCallback()) &&

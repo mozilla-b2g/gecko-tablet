@@ -172,7 +172,6 @@
 #include "nsFrameLoader.h"
 #include "nsISupportsPrimitives.h"
 #include "nsXPCOMCID.h"
-#include "mozIThirdPartyUtil.h"
 #include "prlog.h"
 #include "prenv.h"
 #include "prprf.h"
@@ -260,6 +259,7 @@ using namespace mozilla::dom;
 using namespace mozilla::dom::ipc;
 using mozilla::TimeStamp;
 using mozilla::TimeDuration;
+using mozilla::dom::indexedDB::IDBFactory;
 
 nsGlobalWindow::WindowByIdTable *nsGlobalWindow::sWindowsById = nullptr;
 bool nsGlobalWindow::sWarnedAboutWindowInternal = false;
@@ -621,6 +621,8 @@ public:
   virtual bool delete_(JSContext *cx, JS::Handle<JSObject*> proxy,
                        JS::Handle<jsid> id,
                        bool *bp) const MOZ_OVERRIDE;
+  virtual bool enumerate(JSContext *cx, JS::Handle<JSObject*> proxy,
+                         JS::MutableHandle<JSObject*> vp) const MOZ_OVERRIDE;
   virtual bool preventExtensions(JSContext *cx,
                                  JS::Handle<JSObject*> proxy,
                                  bool *succeeded) const MOZ_OVERRIDE;
@@ -648,11 +650,6 @@ public:
                       JS::Handle<jsid> id, bool *bp) const MOZ_OVERRIDE;
   virtual bool getOwnEnumerablePropertyKeys(JSContext *cx, JS::Handle<JSObject*> proxy,
                                             JS::AutoIdVector &props) const MOZ_OVERRIDE;
-  virtual bool getEnumerablePropertyKeys(JSContext *cx, JS::Handle<JSObject*> proxy,
-                                         JS::AutoIdVector &props) const MOZ_OVERRIDE;
-  virtual bool iterate(JSContext *cx, JS::Handle<JSObject*> proxy,
-                       unsigned flags,
-                       JS::MutableHandle<JSObject*> objp) const MOZ_OVERRIDE;
   virtual const char *className(JSContext *cx,
                                 JS::Handle<JSObject*> wrapper) const MOZ_OVERRIDE;
 
@@ -928,28 +925,12 @@ nsOuterWindowProxy::getOwnEnumerablePropertyKeys(JSContext *cx, JS::Handle<JSObj
 }
 
 bool
-nsOuterWindowProxy::getEnumerablePropertyKeys(JSContext *cx, JS::Handle<JSObject*> proxy,
-                                              JS::AutoIdVector &props) const
+nsOuterWindowProxy::enumerate(JSContext *cx, JS::Handle<JSObject*> proxy,
+                              JS::MutableHandle<JSObject*> objp) const
 {
-  // Just our indexed stuff followed by our "normal" own property names.
-  if (!AppendIndexedPropertyNames(cx, proxy, props)) {
-    return false;
-  }
-
-  JS::AutoIdVector innerProps(cx);
-  if (!js::Wrapper::getEnumerablePropertyKeys(cx, proxy, innerProps)) {
-    return false;
-  }
-  return js::AppendUnique(cx, props, innerProps);
-}
-
-bool
-nsOuterWindowProxy::iterate(JSContext *cx, JS::Handle<JSObject*> proxy,
-                            unsigned flags, JS::MutableHandle<JSObject*> objp) const
-{
-  // BaseProxyHandler::iterate seems to do what we want here: fall
-  // back on the property names returned from keys() and enumerate().
-  return js::BaseProxyHandler::iterate(cx, proxy, flags, objp);
+  // BaseProxyHandler::enumerate seems to do what we want here: fall
+  // back on the property names returned from js::GetPropertyKeys()
+  return js::BaseProxyHandler::enumerate(cx, proxy, objp);
 }
 
 bool
@@ -1913,7 +1894,8 @@ nsGlobalWindow::UnmarkGrayTimers()
       if (f) {
         // Callable() already does xpc_UnmarkGrayObject.
         DebugOnly<JS::Handle<JSObject*> > o = f->Callable();
-        MOZ_ASSERT(!xpc_IsGrayGCThing(o.value), "Should have been unmarked");
+        MOZ_ASSERT(!JS::ObjectIsMarkedGray(o.value),
+                   "Should have been unmarked");
       }
     }
   }
@@ -2698,7 +2680,7 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
     newInnerWindow->mChromeEventHandler = mChromeEventHandler;
   }
 
-  mContext->GC(JS::gcreason::SET_NEW_DOCUMENT);
+  nsJSContext::PokeGC(JS::gcreason::SET_NEW_DOCUMENT);
   mContext->DidInitializeContext();
 
   // We wait to fire the debugger hook until the window is all set up and hooked
@@ -2921,7 +2903,7 @@ nsGlobalWindow::DetachFromDocShell()
   mChromeEventHandler = nullptr; // force release now
 
   if (mContext) {
-    mContext->GC(JS::gcreason::SET_DOC_SHELL);
+    nsJSContext::PokeGC(JS::gcreason::SET_DOC_SHELL);
     mContext = nullptr;
   }
 
@@ -8072,7 +8054,7 @@ PostMessageFreeTransferStructuredClone(uint32_t aTag, JS::TransferableOwnership 
   }
 }
 
-JSStructuredCloneCallbacks kPostMessageCallbacks = {
+const JSStructuredCloneCallbacks kPostMessageCallbacks = {
   PostMessageReadStructuredClone,
   PostMessageWriteStructuredClone,
   nullptr,
@@ -10602,71 +10584,11 @@ nsGlobalWindow::GetLocalStorage(nsISupports** aLocalStorage)
   return rv.ErrorCode();
 }
 
-static bool
-GetIndexedDBEnabledForAboutURI(nsIURI *aURI)
-{
-  nsCOMPtr<nsIAboutModule> module;
-  nsresult rv = NS_GetAboutModule(aURI, getter_AddRefs(module));
-  NS_ENSURE_SUCCESS(rv, false);
-
-  uint32_t flags;
-  rv = module->GetURIFlags(aURI, &flags);
-  NS_ENSURE_SUCCESS(rv, false);
-
-  return flags & nsIAboutModule::ENABLE_INDEXED_DB;
-}
-
-mozilla::dom::indexedDB::IDBFactory*
+IDBFactory*
 nsGlobalWindow::GetIndexedDB(ErrorResult& aError)
 {
-  using mozilla::dom::indexedDB::IDBFactory;
-
   if (!mIndexedDB) {
-    // If the document has the sandboxed origin flag set
-    // don't allow access to indexedDB.
-    if (mDoc && (mDoc->GetSandboxFlags() & SANDBOXED_ORIGIN)) {
-      aError.Throw(NS_ERROR_DOM_SECURITY_ERR);
-      return nullptr;
-    }
-
-    if (!IsChromeWindow()) {
-      // Whitelist about:home, since it doesn't have a base domain it would not
-      // pass the thirdPartyUtil check, though it should be able to use
-      // indexedDB.
-      bool skipThirdPartyCheck = false;
-      nsIPrincipal *principal = GetPrincipal();
-      if (principal) {
-        nsCOMPtr<nsIURI> uri;
-        principal->GetURI(getter_AddRefs(uri));
-
-        if (uri) {
-          bool isAbout = false;
-          if (NS_SUCCEEDED(uri->SchemeIs("about", &isAbout)) && isAbout) {
-            skipThirdPartyCheck = GetIndexedDBEnabledForAboutURI(uri);
-          }
-        }
-      }
-
-      if (!skipThirdPartyCheck) {
-        nsCOMPtr<mozIThirdPartyUtil> thirdPartyUtil =
-          do_GetService(THIRDPARTYUTIL_CONTRACTID);
-        if (!thirdPartyUtil) {
-          aError.Throw(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
-          return nullptr;
-        }
-
-        bool isThirdParty;
-        aError = thirdPartyUtil->IsThirdPartyWindow(this, nullptr,
-                                                    &isThirdParty);
-        if (aError.Failed() || isThirdParty) {
-          NS_WARN_IF_FALSE(aError.Failed(),
-                           "IndexedDB is not permitted in a third-party window.");
-          return nullptr;
-        }
-      }
-    }
-
-    // This may be null if being created from a file.
+    // This may keep mIndexedDB null without setting an error.
     aError = IDBFactory::CreateForWindow(this, getter_AddRefs(mIndexedDB));
   }
 

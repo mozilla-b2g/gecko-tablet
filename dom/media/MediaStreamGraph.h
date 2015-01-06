@@ -458,7 +458,7 @@ public:
   void AddListenerImpl(already_AddRefed<MediaStreamListener> aListener);
   void RemoveListenerImpl(MediaStreamListener* aListener);
   void RemoveAllListenersImpl();
-  void SetTrackEnabledImpl(TrackID aTrackID, bool aEnabled);
+  virtual void SetTrackEnabledImpl(TrackID aTrackID, bool aEnabled);
   /**
    * Returns true when this stream requires the contents of its inputs even if
    * its own outputs are not being consumed. This is used to signal inputs to
@@ -536,7 +536,7 @@ public:
 
   StreamBuffer::Track* EnsureTrack(TrackID aTrack);
 
-  void ApplyTrackDisabling(TrackID aTrackID, MediaSegment* aSegment, MediaSegment* aRawSegment = nullptr);
+  virtual void ApplyTrackDisabling(TrackID aTrackID, MediaSegment* aSegment, MediaSegment* aRawSegment = nullptr);
 
   DOMMediaStream* GetWrapper()
   {
@@ -751,6 +751,13 @@ public:
    */
   bool HaveEnoughBuffered(TrackID aID);
   /**
+   * Get the stream time of the end of the data that has been appended so far.
+   * Can be called from any thread but won't be useful if it can race with
+   * an AppendToTrack call, so should probably just be called from the thread
+   * that also calls AppendToTrack.
+   */
+  StreamTime GetEndOfAppendedData(TrackID aID);
+  /**
    * Ensures that aSignalRunnable will be dispatched to aSignalThread
    * when we don't have enough buffered data in the track (which could be
    * immediately). Will dispatch the runnable immediately if the track
@@ -776,15 +783,24 @@ public:
    */
   void FinishWithLockHeld();
   void Finish()
-    {
-      MutexAutoLock lock(mMutex);
-      FinishWithLockHeld();
-    }
+  {
+    MutexAutoLock lock(mMutex);
+    FinishWithLockHeld();
+  }
 
   // Overriding allows us to hold the mMutex lock while changing the track enable status
-  void SetTrackEnabledImpl(TrackID aTrackID, bool aEnabled) {
+  virtual void
+  SetTrackEnabledImpl(TrackID aTrackID, bool aEnabled) MOZ_OVERRIDE {
     MutexAutoLock lock(mMutex);
     MediaStream::SetTrackEnabledImpl(aTrackID, aEnabled);
+  }
+
+  // Overriding allows us to ensure mMutex is locked while changing the track enable status
+  virtual void
+  ApplyTrackDisabling(TrackID aTrackID, MediaSegment* aSegment,
+                      MediaSegment* aRawSegment = nullptr) MOZ_OVERRIDE {
+    mMutex.AssertCurrentThreadOwns();
+    MediaStream::ApplyTrackDisabling(aTrackID, aSegment, aRawSegment);
   }
 
   /**
@@ -839,13 +855,15 @@ protected:
     int mResamplerChannelCount;
 #endif
     StreamTime mStart;
-    // Each time the track updates are flushed to the media graph thread,
-    // this is cleared.
-    uint32_t mCommands;
+    // End-time of data already flushed to the track (excluding mData)
+    StreamTime mEndOfFlushedData;
     // Each time the track updates are flushed to the media graph thread,
     // the segment buffer is emptied.
     nsAutoPtr<MediaSegment> mData;
     nsTArray<ThreadAndRunnable> mDispatchWhenNotEnough;
+    // Each time the track updates are flushed to the media graph thread,
+    // this is cleared.
+    uint32_t mCommands;
     bool mHaveEnough;
   };
 

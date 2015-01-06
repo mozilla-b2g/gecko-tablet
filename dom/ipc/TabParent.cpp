@@ -19,6 +19,7 @@
 #include "mozilla/Hal.h"
 #include "mozilla/ipc/DocumentRendererParent.h"
 #include "mozilla/layers/CompositorParent.h"
+#include "mozilla/layers/InputAPZContext.h"
 #include "mozilla/layout/RenderFrameParent.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/net/NeckoChild.h"
@@ -215,6 +216,7 @@ namespace dom {
 TabParent* sEventCapturer;
 
 TabParent *TabParent::mIMETabParent = nullptr;
+TabParent::LayerToTabParentTable* TabParent::sLayerToTabParentTable = nullptr;
 
 NS_IMPL_ISUPPORTS(TabParent,
                   nsITabParent,
@@ -258,6 +260,37 @@ TabParent::TabParent(nsIContentParent* aManager,
 
 TabParent::~TabParent()
 {
+}
+
+TabParent*
+TabParent::GetTabParentFromLayersId(uint64_t aLayersId)
+{
+  if (!sLayerToTabParentTable) {
+    return nullptr;
+  }
+  return sLayerToTabParentTable->Get(aLayersId);
+}
+
+void
+TabParent::AddTabParentToTable(uint64_t aLayersId, TabParent* aTabParent)
+{
+  if (!sLayerToTabParentTable) {
+    sLayerToTabParentTable = new LayerToTabParentTable();
+  }
+  sLayerToTabParentTable->Put(aLayersId, aTabParent);
+}
+
+void
+TabParent::RemoveTabParentFromTable(uint64_t aLayersId)
+{
+  if (!sLayerToTabParentTable) {
+    return;
+  }
+  sLayerToTabParentTable->Remove(aLayersId);
+  if (sLayerToTabParentTable->Count() == 0) {
+    delete sLayerToTabParentTable;
+    sLayerToTabParentTable = nullptr;
+  }
 }
 
 void
@@ -305,6 +338,7 @@ TabParent::Destroy()
   unused << SendDestroy();
 
   if (RenderFrameParent* frame = GetRenderFrame()) {
+    RemoveTabParentFromTable(frame->GetLayersId());
     frame->Destroy();
   }
   mIsDestroyed = true;
@@ -599,6 +633,7 @@ TabParent::Show(const nsIntSize& size)
                                     &layersId,
                                     &success);
           MOZ_ASSERT(success);
+          AddTabParentToTable(layersId, this);
           unused << SendPRenderFrameConstructor(renderFrame);
         }
     }
@@ -2008,6 +2043,7 @@ TabParent::AllocPRenderFrameParent()
                             &layersId,
                             &success);
     MOZ_ASSERT(success);
+    AddTabParentToTable(layersId, this);
     return renderFrame;
   } else {
     return nullptr;
@@ -2103,6 +2139,25 @@ TabParent::MaybeForwardEventToRenderFrame(WidgetInputEvent& aEvent,
                                           ScrollableLayerGuid* aOutTargetGuid,
                                           uint64_t* aOutInputBlockId)
 {
+  if (aEvent.mClass == eWheelEventClass) {
+    // Wheel events must be sent to APZ directly from the widget. New APZ-
+    // aware events should follow suit and move there as well. However, we
+    // do need to inform the child process of the correct target and block
+    // id.
+    if (aOutTargetGuid) {
+      *aOutTargetGuid = InputAPZContext::GetTargetLayerGuid();
+    }
+    if (aOutInputBlockId) {
+      *aOutInputBlockId = InputAPZContext::GetInputBlockId();
+    }
+
+    // Let the widget know that the event will be sent to the child process,
+    // which will (hopefully) send a confirmation notice back to APZ.
+    InputAPZContext::SetRoutedToChildProcess();
+
+    return nsEventStatus_eIgnore;
+  }
+
   if (RenderFrameParent* rfp = GetRenderFrame()) {
     return rfp->NotifyInputEvent(aEvent, aOutTargetGuid, aOutInputBlockId);
   }

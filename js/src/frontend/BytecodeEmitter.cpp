@@ -1074,9 +1074,9 @@ EmitAtomOp(ExclusiveContext *cx, JSAtom *atom, JSOp op, BytecodeEmitter *bce)
 {
     MOZ_ASSERT(JOF_OPTYPE(op) == JOF_ATOM);
 
-    // .generator lookups should be emitted as JSOP_GETALIASEDVAR instead of
-    // JSOP_GETNAME etc, to bypass |with| objects on the scope chain.
-    MOZ_ASSERT_IF(op == JSOP_GETNAME || op == JSOP_GETGNAME, atom != cx->names().dotGenerator);
+    // .generator and .genrval lookups should be emitted as JSOP_GETALIASEDVAR
+    // instead of JSOP_GETNAME etc, to bypass |with| objects on the scope chain.
+    MOZ_ASSERT_IF(op == JSOP_GETNAME || op == JSOP_GETGNAME, !bce->sc->isDotVariable(atom));
 
     if (op == JSOP_GETPROP && atom == cx->names().length) {
         /* Specialize length accesses for the interpreter. */
@@ -4200,16 +4200,16 @@ ParseNode::getConstantValue(ExclusiveContext *cx, AllowConstantObjects allowObje
       case PNK_NULL:
         vp.setNull();
         return true;
-      case PNK_SPREAD:
-        return false;
       case PNK_CALLSITEOBJ:
       case PNK_ARRAY: {
         RootedValue value(cx);
         unsigned count;
         ParseNode *pn;
 
-        if (allowObjects == DontAllowObjects)
-            return false;
+        if (allowObjects == DontAllowObjects) {
+            vp.setMagic(JS_GENERIC_MAGIC);
+            return true;
+        }
         if (allowObjects == DontAllowNestedObjects)
             allowObjects = DontAllowObjects;
 
@@ -4231,6 +4231,10 @@ ParseNode::getConstantValue(ExclusiveContext *cx, AllowConstantObjects allowObje
         for (; pn; idx++, pn = pn->pn_next) {
             if (!pn->getConstantValue(cx, allowObjects, &value))
                 return false;
+            if (value.isMagic(JS_GENERIC_MAGIC)) {
+                vp.setMagic(JS_GENERIC_MAGIC);
+                return true;
+            }
             id = INT_TO_JSID(idx);
             if (!JSObject::defineGeneric(cx, obj, id, value, nullptr, nullptr, JSPROP_ENUMERATE))
                 return false;
@@ -4245,8 +4249,10 @@ ParseNode::getConstantValue(ExclusiveContext *cx, AllowConstantObjects allowObje
         MOZ_ASSERT(isOp(JSOP_NEWINIT));
         MOZ_ASSERT(!(pn_xflags & PNX_NONCONST));
 
-        if (allowObjects == DontAllowObjects)
-            return false;
+        if (allowObjects == DontAllowObjects) {
+            vp.setMagic(JS_GENERIC_MAGIC);
+            return true;
+        }
         if (allowObjects == DontAllowNestedObjects)
             allowObjects = DontAllowObjects;
 
@@ -4260,6 +4266,10 @@ ParseNode::getConstantValue(ExclusiveContext *cx, AllowConstantObjects allowObje
         for (ParseNode *pn = pn_head; pn; pn = pn->pn_next) {
             if (!pn->pn_right->getConstantValue(cx, allowObjects, &value))
                 return false;
+            if (value.isMagic(JS_GENERIC_MAGIC)) {
+                vp.setMagic(JS_GENERIC_MAGIC);
+                return true;
+            }
 
             ParseNode *pnid = pn->pn_left;
             if (pnid->isKind(PNK_NUMBER)) {
@@ -5589,6 +5599,16 @@ EmitContinue(ExclusiveContext *cx, BytecodeEmitter *bce, PropertyName *label)
 }
 
 static bool
+InTryBlockWithFinally(BytecodeEmitter *bce)
+{
+    for (StmtInfoBCE *stmt = bce->topStmt; stmt; stmt = stmt->down) {
+        if (stmt->type == STMT_FINALLY)
+            return true;
+    }
+    return false;
+}
+
+static bool
 EmitReturn(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
 {
     if (!UpdateSourceCoordNotes(cx, bce, pn->pn_pos.begin))
@@ -5600,7 +5620,7 @@ EmitReturn(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
     }
 
     /* Push a return value */
-    if (ParseNode *pn2 = pn->pn_kid) {
+    if (ParseNode *pn2 = pn->pn_left) {
         if (!EmitTree(cx, bce, pn2))
             return false;
     } else {
@@ -5628,8 +5648,25 @@ EmitReturn(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
     ptrdiff_t top = bce->offset();
 
     bool isGenerator = bce->sc->isFunctionBox() && bce->sc->asFunctionBox()->isGenerator();
-    if (Emit1(cx, bce, isGenerator ? JSOP_SETRVAL : JSOP_RETURN) < 0)
-         return false;
+    bool useGenRVal = false;
+    if (isGenerator) {
+        if (bce->sc->asFunctionBox()->isStarGenerator() && InTryBlockWithFinally(bce)) {
+            // Emit JSOP_SETALIASEDVAR .genrval to store the return value on the
+            // scope chain, so it's not lost when we yield in a finally block.
+            useGenRVal = true;
+            MOZ_ASSERT(pn->pn_right);
+            if (!EmitTree(cx, bce, pn->pn_right))
+                return false;
+            if (Emit1(cx, bce, JSOP_POP) < 0)
+                return false;
+        } else {
+            if (Emit1(cx, bce, JSOP_SETRVAL) < 0)
+                return false;
+        }
+    } else {
+        if (Emit1(cx, bce, JSOP_RETURN) < 0)
+            return false;
+    }
 
     NonLocalExitScope nle(cx, bce);
 
@@ -5638,9 +5675,17 @@ EmitReturn(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
 
     if (isGenerator) {
         ScopeCoordinate sc;
-        // We know that .generator is on the top scope chain node, as we just
-        // exited nested scopes.
+        // We know that .generator and .genrval are on the top scope chain node,
+        // as we just exited nested scopes.
         sc.setHops(0);
+        if (useGenRVal) {
+            MOZ_ALWAYS_TRUE(LookupAliasedNameSlot(bce, bce->script, cx->names().dotGenRVal, &sc));
+            if (!EmitAliasedVarOp(cx, JSOP_GETALIASEDVAR, sc, DontCheckLexical, bce))
+                return false;
+            if (Emit1(cx, bce, JSOP_SETRVAL) < 0)
+                return false;
+        }
+
         MOZ_ALWAYS_TRUE(LookupAliasedNameSlot(bce, bce->script, cx->names().dotGenerator, &sc));
         if (!EmitAliasedVarOp(cx, JSOP_GETALIASEDVAR, sc, DontCheckLexical, bce))
             return false;
@@ -7156,28 +7201,29 @@ frontend::EmitTree(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
             // If the array consists entirely of primitive values, make a
             // template object with copy on write elements that can be reused
             // every time the initializer executes.
-            RootedValue value(cx);
-            if (bce->emitterMode != BytecodeEmitter::SelfHosting &&
-                pn->pn_count != 0 &&
-                pn->getConstantValue(cx, ParseNode::DontAllowNestedObjects, &value))
-            {
-                // Note: the type of the template object might not yet reflect
-                // that the object has copy on write elements. When the
-                // interpreter or JIT compiler fetches the template, it should
-                // use types::GetOrFixupCopyOnWriteObject to make sure the type
-                // for the template is accurate. We don't do this here as we
-                // want to use types::InitObject, which requires a finished
-                // script.
-                NativeObject *obj = &value.toObject().as<NativeObject>();
-                if (!ObjectElements::MakeElementsCopyOnWrite(cx, obj))
+            if (bce->emitterMode != BytecodeEmitter::SelfHosting && pn->pn_count != 0) {
+                RootedValue value(cx);
+                if (!pn->getConstantValue(cx, ParseNode::DontAllowNestedObjects, &value))
                     return false;
+                if (!value.isMagic(JS_GENERIC_MAGIC)) {
+                    // Note: the type of the template object might not yet reflect
+                    // that the object has copy on write elements. When the
+                    // interpreter or JIT compiler fetches the template, it should
+                    // use types::GetOrFixupCopyOnWriteObject to make sure the type
+                    // for the template is accurate. We don't do this here as we
+                    // want to use types::InitObject, which requires a finished
+                    // script.
+                    NativeObject *obj = &value.toObject().as<NativeObject>();
+                    if (!ObjectElements::MakeElementsCopyOnWrite(cx, obj))
+                        return false;
 
-                ObjectBox *objbox = bce->parser->newObjectBox(obj);
-                if (!objbox)
-                    return false;
+                    ObjectBox *objbox = bce->parser->newObjectBox(obj);
+                    if (!objbox)
+                        return false;
 
-                ok = EmitObjectOp(cx, objbox, JSOP_NEWARRAY_COPYONWRITE, bce);
-                break;
+                    ok = EmitObjectOp(cx, objbox, JSOP_NEWARRAY_COPYONWRITE, bce);
+                    break;
+                }
             }
         }
 

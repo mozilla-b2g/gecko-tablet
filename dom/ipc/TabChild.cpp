@@ -245,14 +245,13 @@ TabChildBase::InitializeRootMetrics()
       ParentLayerPoint(),
       ParentLayerSize(ViewAs<ParentLayerPixel>(mInnerSize, PixelCastJustification::ScreenIsParentLayerForRoot)));
   mLastRootMetrics.SetZoom(mLastRootMetrics.CalculateIntrinsicScale());
-  mLastRootMetrics.mDevPixelsPerCSSPixel = WebWidget()->GetDefaultScale();
+  mLastRootMetrics.SetDevPixelsPerCSSPixel(WebWidget()->GetDefaultScale());
   // We use ParentLayerToLayerScale(1) below in order to turn the
   // async zoom amount into the gecko zoom amount.
-  mLastRootMetrics.mCumulativeResolution =
-    mLastRootMetrics.GetZoom() / mLastRootMetrics.mDevPixelsPerCSSPixel * ParentLayerToLayerScale(1);
+  mLastRootMetrics.SetCumulativeResolution(mLastRootMetrics.GetZoom() / mLastRootMetrics.GetDevPixelsPerCSSPixel() * ParentLayerToLayerScale(1));
   // This is the root layer, so the cumulative resolution is the same
   // as the resolution.
-  mLastRootMetrics.mPresShellResolution = mLastRootMetrics.mCumulativeResolution.scale;
+  mLastRootMetrics.mPresShellResolution = mLastRootMetrics.GetCumulativeResolution().scale;
   mLastRootMetrics.SetScrollOffset(CSSPoint(0, 0));
 
   TABC_LOG("After InitializeRootMetrics, mLastRootMetrics is %s\n",
@@ -384,7 +383,7 @@ TabChildBase::HandlePossibleViewportChange(const ScreenIntSize& aOldScreenSize)
       ParentLayerPoint(),
       ParentLayerSize(ViewAs<ParentLayerPixel>(mInnerSize, PixelCastJustification::ScreenIsParentLayerForRoot)));
   metrics.SetRootCompositionSize(
-      ScreenSize(mInnerSize) * ScreenToLayoutDeviceScale(1.0f) / metrics.mDevPixelsPerCSSPixel);
+      ScreenSize(mInnerSize) * ScreenToLayoutDeviceScale(1.0f) / metrics.GetDevPixelsPerCSSPixel());
 
   // This change to the zoom accounts for all types of changes I can conceive:
   // 1. screen size changes, CSS viewport does not (pages with no meta viewport
@@ -425,17 +424,17 @@ TabChildBase::HandlePossibleViewportChange(const ScreenIntSize& aOldScreenSize)
 
   if (nsIPresShell* shell = document->GetShell()) {
     if (nsPresContext* context = shell->GetPresContext()) {
-      metrics.mDevPixelsPerCSSPixel = CSSToLayoutDeviceScale(
-        (float)nsPresContext::AppUnitsPerCSSPixel() / context->AppUnitsPerDevPixel());
+      metrics.SetDevPixelsPerCSSPixel(CSSToLayoutDeviceScale(
+        (float)nsPresContext::AppUnitsPerCSSPixel() / context->AppUnitsPerDevPixel()));
     }
   }
 
-  metrics.mCumulativeResolution = metrics.GetZoom()
-                                / metrics.mDevPixelsPerCSSPixel
-                                * ParentLayerToLayerScale(1);
+  metrics.SetCumulativeResolution(metrics.GetZoom()
+                                / metrics.GetDevPixelsPerCSSPixel()
+                                * ParentLayerToLayerScale(1));
   // This is the root layer, so the cumulative resolution is the same
   // as the resolution.
-  metrics.mPresShellResolution = metrics.mCumulativeResolution.scale;
+  metrics.mPresShellResolution = metrics.GetCumulativeResolution().scale;
   utils->SetResolution(metrics.mPresShellResolution, metrics.mPresShellResolution);
 
   CSSSize scrollPort = metrics.CalculateCompositedSizeInCssPixels();
@@ -450,7 +449,7 @@ TabChildBase::HandlePossibleViewportChange(const ScreenIntSize& aOldScreenSize)
     // Return early rather than divide by 0.
     return false;
   }
-  metrics.mScrollableRect = CSSRect(CSSPoint(), pageSize);
+  metrics.SetScrollableRect(CSSRect(CSSPoint(), pageSize));
 
   // Calculate a display port _after_ having a scrollable rect because the
   // display port is clamped to the scrollable rect.
@@ -468,7 +467,7 @@ TabChildBase::HandlePossibleViewportChange(const ScreenIntSize& aOldScreenSize)
   if (viewportInfo.IsZoomAllowed() && scrollIdentifiersValid) {
     // If the CSS viewport is narrower than the screen (i.e. width <= device-width)
     // then we disable double-tap-to-zoom behaviour.
-    bool allowDoubleTapZoom = (viewport.width > screenW / metrics.mDevPixelsPerCSSPixel.scale);
+    bool allowDoubleTapZoom = (viewport.width > screenW / metrics.GetDevPixelsPerCSSPixel().scale);
     if (allowDoubleTapZoom != viewportInfo.IsDoubleTapZoomAllowed()) {
       viewportInfo.SetAllowDoubleTapZoom(allowDoubleTapZoom);
 
@@ -584,13 +583,13 @@ TabChildBase::ProcessUpdateFrame(const FrameMetrics& aFrameMetrics)
         data.AppendLiteral(" }");
     data.AppendLiteral(", \"cssPageRect\" : ");
         data.AppendLiteral("{ \"x\" : ");
-        data.AppendFloat(newMetrics.mScrollableRect.x);
+        data.AppendFloat(newMetrics.GetScrollableRect().x);
         data.AppendLiteral(", \"y\" : ");
-        data.AppendFloat(newMetrics.mScrollableRect.y);
+        data.AppendFloat(newMetrics.GetScrollableRect().y);
         data.AppendLiteral(", \"width\" : ");
-        data.AppendFloat(newMetrics.mScrollableRect.width);
+        data.AppendFloat(newMetrics.GetScrollableRect().width);
         data.AppendLiteral(", \"height\" : ");
-        data.AppendFloat(newMetrics.mScrollableRect.height);
+        data.AppendFloat(newMetrics.GetScrollableRect().height);
         data.AppendLiteral(" }");
     data.AppendLiteral(", \"cssCompositedRect\" : ");
         data.AppendLiteral("{ \"width\" : ");
@@ -832,6 +831,21 @@ TabChild::PreloadSlowThings()
 
     sPreallocatedTab = tab;
     ClearOnShutdown(&sPreallocatedTab);
+}
+
+/*static*/ void
+TabChild::PostForkPreload()
+{
+    // Preallocated Tab can be null if we are forked directly from b2g. In such
+    // case we don't need to preload anything, just return.
+    if (!sPreallocatedTab) {
+        return;
+    }
+
+    // Rebuild connections to parent.
+    sPreallocatedTab->RecvLoadRemoteScript(
+      NS_LITERAL_STRING("chrome://global/content/post-fork-preload.js"),
+      true);
 }
 
 /*static*/ already_AddRefed<TabChild>
@@ -3411,6 +3425,8 @@ TabChild::RecvRequestNotifyAfterRemotePaint()
 bool
 TabChild::RecvUIResolutionChanged()
 {
+  mDPI = 0;
+  mDefaultScale = 0;
   static_cast<PuppetWidget*>(mWidget.get())->ClearBackingScaleCache();
   nsCOMPtr<nsIDocument> document(GetDocument());
   nsCOMPtr<nsIPresShell> presShell = document->GetShell();

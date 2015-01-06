@@ -280,13 +280,13 @@ pref("browser.search.noCurrentEngine", true);
 pref("browser.search.official", true);
 #endif
 
-// Control media casting feature
+// Control media casting & mirroring features
 pref("browser.casting.enabled", true);
+pref("browser.mirroring.enabled", true);
 #ifdef RELEASE_BUILD
-pref("browser.mirroring.enabled", false);
+// Roku does not yet support mirroring in production
 pref("browser.mirroring.enabled.roku", false);
 #else
-pref("browser.mirroring.enabled", true);
 pref("browser.mirroring.enabled.roku", true);
 #endif
 
@@ -739,11 +739,6 @@ pref("layers.enable-tiles", true);
 // Enable the dynamic toolbar
 pref("browser.chrome.dynamictoolbar", true);
 
-// The mode of browser titlebar
-// 0: Show a current page title.
-// 1: Show a current page url.
-pref("browser.chrome.titlebarMode", 0);
-
 // Hide common parts of URLs like "www." or "http://"
 pref("browser.urlbar.trimURLs", true);
 
@@ -855,3 +850,6 @@ pref("device.storage.enabled", true);
 
 // Enable meta-viewport support for font inflation code
 pref("dom.meta-viewport.enabled", true);
+
+// Enable the OpenH264 plugin support in the addon manager.
+pref("media.gmp-gmpopenh264.provider.enabled", true);

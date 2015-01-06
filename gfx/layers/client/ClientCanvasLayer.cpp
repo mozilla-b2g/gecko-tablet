@@ -78,7 +78,7 @@ ClientCanvasLayer::Initialize(const Data& aData)
         if (mGLContext->GetContextType() == GLContextType::EGL) {
 #ifdef MOZ_WIDGET_GONK
           TextureFlags flags = TextureFlags::DEALLOCATE_CLIENT |
-                               TextureFlags::NEEDS_Y_FLIP;
+                               TextureFlags::ORIGIN_BOTTOM_LEFT;
           if (!aData.mIsGLAlphaPremult) {
             flags |= TextureFlags::NON_PREMULTIPLIED;
           }
@@ -111,7 +111,7 @@ ClientCanvasLayer::Initialize(const Data& aData)
       case mozilla::layers::LayersBackend::LAYERS_D3D10:
       case mozilla::layers::LayersBackend::LAYERS_D3D11: {
 #ifdef XP_WIN
-        if (mGLContext->IsANGLE() && DoesD3D11DeviceWork(gfxWindowsPlatform::GetPlatform()->GetD3D11Device())) {
+        if (mGLContext->IsANGLE() && DoesD3D11TextureSharingWork(gfxWindowsPlatform::GetPlatform()->GetD3D11Device())) {
           factory = SurfaceFactory_ANGLEShareHandle::Create(mGLContext, caps);
         }
 #endif
@@ -153,8 +153,8 @@ ClientCanvasLayer::RenderLayer()
 
   if (!mCanvasClient) {
     TextureFlags flags = TextureFlags::IMMEDIATE_UPLOAD;
-    if (mNeedsYFlip) {
-      flags |= TextureFlags::NEEDS_Y_FLIP;
+    if (mOriginPos == gl::OriginPos::BottomLeft) {
+      flags |= TextureFlags::ORIGIN_BOTTOM_LEFT;
     }
 
     if (!mGLContext) {

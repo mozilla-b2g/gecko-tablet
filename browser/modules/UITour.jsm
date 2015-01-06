@@ -143,13 +143,21 @@ this.UITour = {
       },
     }],
     ["loop-selectedRoomButtons", {
-      infoPanelPosition: "leftcenter bottomright",
+      infoPanelOffsetY: -20,
+      infoPanelPosition: "start_after",
       query: (aDocument) => {
         let chatbox = aDocument.querySelector("chatbox[src^='about\:loopconversation'][selected]");
-        if (!chatbox || !chatbox.contentDocument) {
+
+        // Check that the real target actually exists
+        if (!chatbox || !chatbox.contentDocument ||
+            !chatbox.contentDocument.querySelector(".call-action-group")) {
           return null;
         }
-        return chatbox.contentDocument.querySelector(".call-action-group");
+
+        // But anchor on the <browser> in the chatbox so the panel doesn't jump to undefined
+        // positions when the copy/email buttons disappear e.g. when the feedback form opens or
+        // somebody else joins the room.
+        return chatbox.content;
       },
     }],
     ["loop-signInUpLink", {
@@ -164,6 +172,7 @@ this.UITour = {
     ["privateWindow",  {query: "#privatebrowsing-button"}],
     ["quit",        {query: "#PanelUI-quit"}],
     ["search",      {
+      infoPanelOffsetX: 18,
       infoPanelPosition: "after_start",
       query: "#searchbar",
       widgetName: "search-container",
@@ -543,6 +552,16 @@ this.UITour = {
         break;
       }
 
+      case "setConfiguration": {
+        if (typeof data.configuration != "string") {
+          log.warn("setConfiguration: No configuration option specified");
+          return false;
+        }
+
+        this.setConfiguration(data.configuration, data.value);
+        break;
+      }
+
       case "showFirefoxAccounts": {
         // 'signup' is the only action that makes sense currently, so we don't
         // accept arbitrary actions just to be safe...
@@ -892,6 +911,8 @@ this.UITour = {
 
       deferred.resolve({
         addTargetListener: targetObject.addTargetListener,
+        infoPanelOffsetX: targetObject.infoPanelOffsetX,
+        infoPanelOffsetY: targetObject.infoPanelOffsetY,
         infoPanelPosition: targetObject.infoPanelPosition,
         node: node,
         removeTargetListener: targetObject.removeTargetListener,
@@ -1159,6 +1180,7 @@ this.UITour = {
       let tooltipTitle = document.getElementById("UITourTooltipTitle");
       let tooltipDesc = document.getElementById("UITourTooltipDescription");
       let tooltipIcon = document.getElementById("UITourTooltipIcon");
+      let tooltipIconContainer = document.getElementById("UITourTooltipIconContainer");
       let tooltipButtons = document.getElementById("UITourTooltipButtons");
 
       if (tooltip.state == "showing" || tooltip.state == "open") {
@@ -1168,7 +1190,7 @@ this.UITour = {
       tooltipTitle.textContent = aTitle || "";
       tooltipDesc.textContent = aDescription || "";
       tooltipIcon.src = aIconURL || "";
-      tooltipIcon.hidden = !aIconURL;
+      tooltipIconContainer.hidden = !aIconURL;
 
       while (tooltipButtons.firstChild)
         tooltipButtons.firstChild.remove();
@@ -1230,12 +1252,10 @@ this.UITour = {
         alignment = aAnchor.infoPanelPosition;
       }
 
-      let xOffset = 0, yOffset = 0;
-      if (aAnchor.targetName == "search") {
-        xOffset = 18;
-      }
+      let { infoPanelOffsetX: xOffset, infoPanelOffsetY: yOffset } = aAnchor;
+
       this._addAnnotationPanelMutationObserver(tooltip);
-      tooltip.openPopup(aAnchorEl, alignment, xOffset, yOffset);
+      tooltip.openPopup(aAnchorEl, alignment, xOffset || 0, yOffset || 0);
       if (tooltip.state == "closed") {
         document.defaultView.addEventListener("endmodalstate", function endModalStateHandler() {
           document.defaultView.removeEventListener("endmodalstate", endModalStateHandler);
@@ -1307,7 +1327,10 @@ this.UITour = {
       openMenuButton(menuBtn);
     } else if (aMenuName == "loop") {
       let toolbarButton = aWindow.LoopUI.toolbarButton;
-      if (!toolbarButton || !toolbarButton.node) {
+      // It's possible to have a node that isn't placed anywhere
+      if (!toolbarButton || !toolbarButton.node ||
+          !CustomizableUI.getPlacementOfWidget(toolbarButton.node.id)) {
+        log.debug("Can't show the Loop menu since the toolbarButton isn't placed");
         return;
       }
 
@@ -1320,7 +1343,7 @@ this.UITour = {
 
       // An event object is expected but we don't want to toggle the panel with a click if the panel
       // is already open.
-      aWindow.LoopUI.openCallPanel({ target: toolbarButton.node, }).then(() => {
+      aWindow.LoopUI.openCallPanel({ target: toolbarButton.node, }, "rooms").then(() => {
         if (aOpenCallback) {
           aOpenCallback();
         }
@@ -1474,6 +1497,18 @@ this.UITour = {
         break;
       default:
         log.error("getConfiguration: Unknown configuration requested: " + aConfiguration);
+        break;
+    }
+  },
+
+  setConfiguration: function(aConfiguration, aValue) {
+    switch (aConfiguration) {
+      case "Loop:ResumeTourOnFirstJoin":
+        // Ignore aValue in this case to avoid accidentally setting it to false.
+        Services.prefs.setBoolPref("loop.gettingStarted.resumeOnFirstJoin", true);
+        break;
+      default:
+        log.error("setConfiguration: Unknown configuration requested: " + aConfiguration);
         break;
     }
   },

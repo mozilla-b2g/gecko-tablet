@@ -103,6 +103,58 @@ let tests = [
     });
     LoopRooms.open("fakeTourRoom");
   },
+  function test_notifyLoopRoomURLCopied(done) {
+    gContentAPI.observe((event, params) => {
+      is(event, "Loop:ChatWindowOpened", "Loop chat window should've opened");
+      gContentAPI.observe((event, params) => {
+        is(event, "Loop:ChatWindowShown", "Check Loop:ChatWindowShown notification");
+
+        let chat = document.querySelector("#pinnedchats > chatbox");
+        gContentAPI.observe((event, params) => {
+          is(event, "Loop:RoomURLCopied", "Check Loop:RoomURLCopied notification");
+          gContentAPI.observe((event, params) => {
+            is(event, "Loop:ChatWindowClosed", "Check Loop:ChatWindowClosed notification");
+          });
+          chat.close();
+          done();
+        });
+        chat.content.contentDocument.querySelector(".btn-copy").click();
+      });
+    });
+    setupFakeRoom();
+    LoopRooms.open("fakeTourRoom");
+  },
+  function test_notifyLoopRoomURLEmailed(done) {
+    gContentAPI.observe((event, params) => {
+      is(event, "Loop:ChatWindowOpened", "Loop chat window should've opened");
+      gContentAPI.observe((event, params) => {
+        is(event, "Loop:ChatWindowShown", "Check Loop:ChatWindowShown notification");
+
+        let chat = document.querySelector("#pinnedchats > chatbox");
+        let composeEmailCalled = false;
+
+        gContentAPI.observe((event, params) => {
+          is(event, "Loop:RoomURLEmailed", "Check Loop:RoomURLEmailed notification");
+          ok(composeEmailCalled, "mozLoop.composeEmail should be called");
+          gContentAPI.observe((event, params) => {
+            is(event, "Loop:ChatWindowClosed", "Check Loop:ChatWindowClosed notification");
+          });
+          chat.close();
+          done();
+        });
+
+        let chatWin = chat.content.contentWindow;
+        let oldComposeEmail = chatWin.navigator.wrappedJSObject.mozLoop.composeEmail;
+        chatWin.navigator.wrappedJSObject.mozLoop.composeEmail = function(recipient, subject, body) {
+          ok(recipient, "composeEmail should be invoked with at least a recipient value");
+          composeEmailCalled = true;
+          chatWin.navigator.wrappedJSObject.mozLoop.composeEmail = oldComposeEmail;
+        };
+        chatWin.document.querySelector(".btn-email").click();
+      });
+    });
+    LoopRooms.open("fakeTourRoom");
+  },
   taskify(function* test_arrow_panel_position() {
     ise(loopButton.open, false, "Menu should initially be closed");
     let popup = document.getElementById("UITourTooltip");
@@ -121,6 +173,68 @@ let tests = [
     yield showInfoPromise(currentTarget, "This is " + currentTarget, "My arrow should be underneath");
     is(popup.popupBoxObject.alignmentPosition, "after_end", "Check " + currentTarget + " position");
   }),
+  taskify(function* test_setConfiguration() {
+    is(Services.prefs.getBoolPref("loop.gettingStarted.resumeOnFirstJoin"), false, "pref should be false but exist");
+    gContentAPI.setConfiguration("Loop:ResumeTourOnFirstJoin", true);
+
+    yield waitForConditionPromise(() => {
+      return Services.prefs.getBoolPref("loop.gettingStarted.resumeOnFirstJoin");
+    }, "Pref should change to true via setConfiguration");
+
+    Services.prefs.clearUserPref("loop.gettingStarted.resumeOnFirstJoin");
+  }),
+  taskify(function* test_resumeViaMenuPanel_roomClosedTabOpen() {
+    Services.prefs.setBoolPref("loop.gettingStarted.resumeOnFirstJoin", true);
+
+    // Create a fake room and then add a fake non-owner participant
+    let roomsMap = setupFakeRoom();
+    roomsMap.get("fakeTourRoom").participants = [{
+      owner: false,
+    }];
+
+    // Set the tour URL to be the current page with a different query param
+    let gettingStartedURL = gTestTab.linkedBrowser.currentURI.resolve("?gettingstarted=1");
+    Services.prefs.setCharPref("loop.gettingStarted.url", gettingStartedURL);
+
+    let observationPromise = new Promise((resolve) => {
+      gContentAPI.observe((event, params) => {
+        is(event, "Loop:IncomingConversation", "Page should have been notified about incoming conversation");
+        ise(params.conversationOpen, false, "conversationOpen should be false");
+        is(gBrowser.selectedTab, gTestTab, "The same tab should be selected");
+        resolve();
+      });
+    });
+
+    // Now open the menu while that non-owner is in the fake room to trigger resuming the tour
+    yield showMenuPromise("loop");
+
+    yield observationPromise;
+    Services.prefs.clearUserPref("loop.gettingStarted.resumeOnFirstJoin");
+  }),
+  taskify(function* test_resumeViaMenuPanel_roomClosedTabClosed() {
+    Services.prefs.setBoolPref("loop.gettingStarted.resumeOnFirstJoin", true);
+
+    // Create a fake room and then add a fake non-owner participant
+    let roomsMap = setupFakeRoom();
+    roomsMap.get("fakeTourRoom").participants = [{
+      owner: false,
+    }];
+
+    // Set the tour URL to a page that's not open yet
+    Services.prefs.setCharPref("loop.gettingStarted.url", gBrowser.currentURI.prePath);
+
+    let newTabPromise = waitForConditionPromise(() => {
+      return gBrowser.currentURI.path.contains("incomingConversation=waiting");
+    }, "New tab with incomingConversation=waiting should have opened");
+
+    // Now open the menu while that non-owner is in the fake room to trigger resuming the tour
+    yield showMenuPromise("loop");
+
+    yield newTabPromise;
+
+    yield gBrowser.removeCurrentTab();
+    Services.prefs.clearUserPref("loop.gettingStarted.resumeOnFirstJoin");
+  }),
 ];
 
 // End tests
@@ -132,17 +246,26 @@ function checkLoopPanelIsHidden() {
   is(loopButton.hasAttribute("open"), false, "Loop button should know that the panel is closed");
 }
 
+function setupFakeRoom() {
+  let room = {};
+  for (let prop of ["roomToken", "roomName", "roomOwner", "roomUrl", "participants"])
+    room[prop] = "fakeTourRoom";
+  let roomsMap = new Map([
+    [room.roomToken, room]
+  ]);
+  LoopRooms.stubCache(roomsMap);
+  return roomsMap;
+}
+
 if (Services.prefs.getBoolPref("loop.enabled")) {
   loopButton = window.LoopUI.toolbarButton.node;
   // The targets to highlight only appear after getting started is launched.
   Services.prefs.setBoolPref("loop.gettingStarted.seen", true);
-  Services.prefs.setCharPref("loop.server", "http://localhost");
-  Services.prefs.setCharPref("services.push.serverURL", "ws://localhost/");
 
   registerCleanupFunction(() => {
+    Services.prefs.clearUserPref("loop.gettingStarted.resumeOnFirstJoin");
     Services.prefs.clearUserPref("loop.gettingStarted.seen");
-    Services.prefs.clearUserPref("loop.server");
-    Services.prefs.clearUserPref("services.push.serverURL");
+    Services.prefs.clearUserPref("loop.gettingStarted.url");
 
     // Copied from browser/components/loop/test/mochitest/head.js
     // Remove the iframe after each test. This also avoids mochitest complaining
@@ -153,6 +276,9 @@ if (Services.prefs.getBoolPref("loop.enabled")) {
     if (frame) {
       frame.remove();
     }
+
+    // Remove the stubbed rooms
+    LoopRooms.stubCache(null);
   });
 } else {
   ok(true, "Loop is disabled so skip the UITour Loop tests");

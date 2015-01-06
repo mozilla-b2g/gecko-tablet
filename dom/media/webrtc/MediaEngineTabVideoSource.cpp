@@ -8,7 +8,6 @@
 #include "mozilla/gfx/2D.h"
 #include "mozilla/RefPtr.h"
 #include "nsGlobalWindow.h"
-#include "nsDOMWindowUtils.h"
 #include "nsIDOMClientRect.h"
 #include "nsIDocShell.h"
 #include "nsIPresShell.h"
@@ -192,24 +191,21 @@ MediaEngineTabVideoSource::Start(SourceMediaStream* aStream, TrackID aID)
 void
 MediaEngineTabVideoSource::NotifyPull(MediaStreamGraph*,
                                       SourceMediaStream* aSource,
-                                      TrackID aID, StreamTime aDesiredTime,
-                                      StreamTime& aLastEndTime)
+                                      TrackID aID, StreamTime aDesiredTime)
 {
   VideoSegment segment;
   MonitorAutoLock mon(mMonitor);
 
   // Note: we're not giving up mImage here
   nsRefPtr<layers::CairoImage> image = mImage;
-  StreamTime delta = aDesiredTime - aLastEndTime;
+  StreamTime delta = aDesiredTime - aSource->GetEndOfAppendedData(aID);
   if (delta > 0) {
     // nullptr images are allowed
     gfx::IntSize size = image ? image->GetSize() : IntSize(0, 0);
     segment.AppendFrame(image.forget().downcast<layers::Image>(), delta, size);
     // This can fail if either a) we haven't added the track yet, or b)
     // we've removed or finished the track.
-    if (aSource->AppendToTrack(aID, &(segment))) {
-      aLastEndTime = aDesiredTime;
-    }
+    aSource->AppendToTrack(aID, &(segment));
   }
 }
 
@@ -219,7 +215,6 @@ MediaEngineTabVideoSource::Draw() {
   IntSize size(mBufW, mBufH);
 
   nsresult rv;
-  float scale = 1.0;
 
   nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(mWindow);
 
@@ -227,38 +222,14 @@ MediaEngineTabVideoSource::Draw() {
     return;
   }
 
-  // take a screenshot, as wide as possible, proportional to the destination size
-  nsCOMPtr<nsIDOMWindowUtils> utils = do_GetInterface(win);
-  if (!utils) {
-    return;
-  }
-
-  nsCOMPtr<nsIDOMClientRect> rect;
-  rv = utils->GetRootBounds(getter_AddRefs(rect));
-  NS_ENSURE_SUCCESS_VOID(rv);
-  if (!rect) {
-    return;
-  }
-
-  float left, top, width, height;
-  rect->GetLeft(&left);
-  rect->GetTop(&top);
-  rect->GetWidth(&width);
-  rect->GetHeight(&height);
-
-  if (mScrollWithPage) {
-    nsPoint point;
-    utils->GetScrollXY(false, &point.x, &point.y);
-    left += point.x;
-    top += point.y;
-  }
+  int32_t width, height;
+  win->GetInnerWidth(&width);
+  win->GetInnerHeight(&height);
 
   if (width == 0 || height == 0) {
     return;
   }
 
-  int32_t srcX = left;
-  int32_t srcY = top;
   int32_t srcW;
   int32_t srcH;
 
@@ -279,14 +250,15 @@ MediaEngineTabVideoSource::Draw() {
   if (!presContext) {
     return;
   }
+
   nscolor bgColor = NS_RGB(255, 255, 255);
   nsCOMPtr<nsIPresShell> presShell = presContext->PresShell();
-  uint32_t renderDocFlags = (nsIPresShell::RENDER_IGNORE_VIEWPORT_SCROLLING |
-                             nsIPresShell::RENDER_DOCUMENT_RELATIVE);
-  nsRect r(nsPresContext::CSSPixelsToAppUnits(srcX / scale),
-           nsPresContext::CSSPixelsToAppUnits(srcY / scale),
-           nsPresContext::CSSPixelsToAppUnits(srcW / scale),
-           nsPresContext::CSSPixelsToAppUnits(srcH / scale));
+  uint32_t renderDocFlags = 0;
+  if (!mScrollWithPage) {
+    renderDocFlags |= nsIPresShell::RENDER_IGNORE_VIEWPORT_SCROLLING;
+  }
+  nsRect r(0, 0, nsPresContext::CSSPixelsToAppUnits((float)srcW),
+           nsPresContext::CSSPixelsToAppUnits((float)srcH));
 
   gfxImageFormat format = gfxImageFormat::RGB24;
   uint32_t stride = gfxASurface::FormatStrideForWidth(format, size.width);
@@ -302,9 +274,9 @@ MediaEngineTabVideoSource::Draw() {
     return;
   }
   nsRefPtr<gfxContext> context = new gfxContext(dt);
-  context->SetMatrix(
-    context->CurrentMatrix().Scale(scale * size.width / srcW,
-                                   scale * size.height / srcH));
+  context->SetMatrix(context->CurrentMatrix().Scale((float)size.width/srcW,
+                                                    (float)size.height/srcH));
+
   rv = presShell->RenderDocument(r, renderDocFlags, bgColor, context);
 
   NS_ENSURE_SUCCESS_VOID(rv);

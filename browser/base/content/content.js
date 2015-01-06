@@ -43,6 +43,11 @@ XPCOMUtils.defineLazyGetter(this, "SimpleServiceDiscovery", function() {
   });
   return ssdp;
 });
+XPCOMUtils.defineLazyGetter(this, "PageMenuChild", function() {
+  let tmp = {};
+  Cu.import("resource://gre/modules/PageMenu.jsm", tmp);
+  return new tmp.PageMenuChild();
+});
 
 // TabChildGlobal
 var global = this;
@@ -95,11 +100,15 @@ addMessageListener("MixedContent:ReenableProtection", function() {
 addMessageListener("SecondScreen:tab-mirror", function(message) {
   let app = SimpleServiceDiscovery.findAppForService(message.data.service);
   if (app) {
-    let width = content.scrollWidth;
-    let height = content.scrollHeight;
+    let width = content.innerWidth;
+    let height = content.innerHeight;
     let viewport = {cssWidth: width, cssHeight: height, width: width, height: height};
     app.mirror(function() {}, content, viewport, function() {}, content);
   }
+});
+
+addMessageListener("ContextMenu:DoCustomCommand", function(message) {
+  PageMenuChild.executeMenu(message.data);
 });
 
 addEventListener("DOMFormHasPassword", function(event) {
@@ -148,7 +157,8 @@ let handleContentContextMenu = function (event) {
         InlineSpellCheckerContent.initContextMenu(event, editFlags, this);
     }
 
-    sendSyncMessage("contextmenu", { editFlags, spellInfo, addonInfo }, { event, popupNode: event.target });
+    let customMenuItems = PageMenuChild.build(event.target);
+    sendSyncMessage("contextmenu", { editFlags, spellInfo, customMenuItems, addonInfo }, { event, popupNode: event.target });
   }
   else {
     // Break out to the parent window and pass the add-on info along
@@ -579,6 +589,7 @@ let ClickEventHandler = {
             event.preventDefault(); // Need to prevent the pageload.
           }
         }
+        json.noReferrer = BrowserUtils.linkHasNoReferrer(node)
       }
 
       sendAsyncMessage("Content:Click", json);

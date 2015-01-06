@@ -148,6 +148,9 @@
 
     <!-- Banner -->
     <dimen name="home_banner_height">72dp</dimen>
+    <dimen name="home_banner_close_width">42dp</dimen>
+    <dimen name="home_banner_icon_height">48dip</dimen>
+    <dimen name="home_banner_icon_width">48dip</dimen>
 
     <!-- Icon Grid -->
     <dimen name="icongrid_columnwidth">128dp</dimen>
@@ -190,8 +193,8 @@
     <dimen name="find_in_page_text_margin_right">12dip</dimen>
     <dimen name="find_in_page_text_padding_left">10dip</dimen>
     <dimen name="find_in_page_text_padding_right">10dip</dimen>
-    <dimen name="find_in_page_status_margin_right">15dip</dimen>
-    <dimen name="find_in_page_matchcase_margin_right">10dip</dimen>
+    <dimen name="find_in_page_status_margin_right">10dip</dimen>
+    <dimen name="find_in_page_matchcase_padding">10dip</dimen>
     <dimen name="find_in_page_control_margin_top">2dip</dimen>
 
 </resources>

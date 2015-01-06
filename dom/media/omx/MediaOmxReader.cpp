@@ -112,7 +112,7 @@ private:
       mOffset += length;
     }
 
-    if (mOffset < mFullLength) {
+    if (static_cast<uint64_t>(mOffset) < mFullLength) {
       // We cannot read data in the main thread because it
       // might block for too long. Instead we post an IO task
       // to the IO thread if there is more data available.
@@ -545,7 +545,8 @@ bool MediaOmxReader::DecodeAudioData()
                                       source.mAudioChannels));
 }
 
-void MediaOmxReader::Seek(int64_t aTarget, int64_t aStartTime, int64_t aEndTime, int64_t aCurrentTime)
+nsRefPtr<MediaDecoderReader::SeekPromise>
+MediaOmxReader::Seek(int64_t aTarget, int64_t aStartTime, int64_t aEndTime, int64_t aCurrentTime)
 {
   NS_ASSERTION(mDecoder->OnDecodeThread(), "Should be on decode thread.");
   EnsureActive();
@@ -571,7 +572,7 @@ void MediaOmxReader::Seek(int64_t aTarget, int64_t aStartTime, int64_t aEndTime,
     mAudioSeekTimeUs = mVideoSeekTimeUs = aTarget;
   }
 
-  GetCallback()->OnSeekCompleted(NS_OK);
+  return SeekPromise::CreateAndResolve(true, __func__);
 }
 
 void MediaOmxReader::SetIdle() {

@@ -69,6 +69,7 @@ enum Tag
   SET = UNIVERSAL | CONSTRUCTED | 0x11, // 0x31
   PrintableString = UNIVERSAL | 0x13,
   TeletexString = UNIVERSAL | 0x14,
+  IA5String = UNIVERSAL | 0x16,
   UTCTime = UNIVERSAL | 0x17,
   GENERALIZED_TIME = UNIVERSAL | 0x18,
 };
@@ -165,9 +166,6 @@ template <typename Decoder>
 inline Result
 Nested(Reader& input, uint8_t outerTag, uint8_t innerTag, Decoder decoder)
 {
-  // XXX: This doesn't work (in VS2010):
-  // return Nested(input, outerTag, bind(Nested, _1, innerTag, decoder));
-
   Reader nestedInput;
   Result rv = ExpectTagAndGetValue(input, outerTag, nestedInput);
   if (rv != Success) {

@@ -493,10 +493,8 @@ GlobalHelperThreadState::finish()
 {
     if (threads) {
         MOZ_ASSERT(CanUseExtraThreads());
-        for (size_t i = 0; i < threadCount; i++) {
+        for (size_t i = 0; i < threadCount; i++)
             threads[i].destroy();
-            threads[i].~HelperThread();
-        }
         js_free(threads);
     }
 
@@ -1060,9 +1058,10 @@ HelperThread::handleIonWorkload()
     ionBuilder = builder;
     ionBuilder->setPauseFlag(&pause);
 
-    TraceLogger *logger = TraceLoggerForCurrentThread();
-    AutoTraceLog logScript(logger, TraceLogCreateTextId(logger, ionBuilder->script()));
-    AutoTraceLog logCompile(logger, TraceLogger::IonCompilation);
+    TraceLoggerThread *logger = TraceLoggerForCurrentThread();
+    TraceLoggerEvent event(logger, TraceLogger_AnnotateScripts, ionBuilder->script());
+    AutoTraceLog logScript(logger, event);
+    AutoTraceLog logCompile(logger, TraceLogger_IonCompilation);
 
     JSRuntime *rt = ionBuilder->script()->compartment()->runtimeFromAnyThread();
 
@@ -1130,8 +1129,8 @@ CurrentHelperThread()
 void
 js::PauseCurrentHelperThread()
 {
-    TraceLogger *logger = TraceLoggerForCurrentThread();
-    AutoTraceLog logPaused(logger, TraceLogger::IonCompilationPaused);
+    TraceLoggerThread *logger = TraceLoggerForCurrentThread();
+    AutoTraceLog logPaused(logger, TraceLogger_IonCompilationPaused);
 
     HelperThread *thread = CurrentHelperThread();
 
@@ -1212,7 +1211,7 @@ HelperThread::handleCompressionWorkload()
 
     {
         AutoUnlockHelperThreadState unlock;
-        compressionTask->result = compressionTask->work(sourceCompressor);
+        compressionTask->result = compressionTask->work();
     }
 
     compressionTask->helperThread = nullptr;

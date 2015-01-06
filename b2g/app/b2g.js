@@ -995,10 +995,10 @@ pref("apz.pan_repaint_interval", 16);
 // APZ physics settings, tuned by UX designers
 pref("apz.fling_curve_function_x1", "0.41");
 pref("apz.fling_curve_function_y1", "0.0");
-pref("apz.fling_curve_function_x2", "0.76");
+pref("apz.fling_curve_function_x2", "0.80");
 pref("apz.fling_curve_function_y2", "1.0");
 pref("apz.fling_curve_threshold_inches_per_ms", "0.01");
-pref("apz.fling_friction", "0.0024");
+pref("apz.fling_friction", "0.00238");
 pref("apz.max_velocity_inches_per_ms", "0.07");
 
 // Tweak default displayport values to reduce the risk of running out of
@@ -1020,6 +1020,9 @@ pref("apz.overscroll.spring_friction", "0.02");
 pref("apz.overscroll.stop_distance_threshold", "5.0");
 pref("apz.overscroll.stop_velocity_threshold", "0.01");
 
+// For event-regions based hit-testing
+pref("layout.event-regions.enabled", true);
+
 // This preference allows FirefoxOS apps (and content, I think) to force
 // the use of software (instead of hardware accelerated) 2D canvases by
 // creating a context like this:
@@ -1036,6 +1039,9 @@ pref("browser.autofocus", false);
 
 // Enable wakelock
 pref("dom.wakelock.enabled", true);
+
+// Enable webapps add-ons
+pref("dom.apps.customization.enabled", true);
 
 // Enable touch caret by default
 pref("touchcaret.enabled", true);
@@ -1070,3 +1076,8 @@ pref("dom.mozSettings.SettingsDB.verbose.enabled", false);
 pref("dom.mozSettings.SettingsManager.verbose.enabled", false);
 pref("dom.mozSettings.SettingsRequestManager.verbose.enabled", false);
 pref("dom.mozSettings.SettingsService.verbose.enabled", false);
+
+// Controlling whether we want to allow forcing some Settings
+// IndexedDB transactions to be opened as readonly or keep everything as
+// readwrite.
+pref("dom.mozSettings.allowForceReadOnly", false);

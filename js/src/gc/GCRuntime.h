@@ -315,9 +315,15 @@ class GCRuntime
     bool triggerZoneGC(Zone *zone, JS::gcreason::Reason reason);
     bool maybeGC(Zone *zone);
     void maybePeriodicFullGC();
-    void minorGC(JS::gcreason::Reason reason);
+    void minorGC(JS::gcreason::Reason reason) {
+        gcstats::AutoPhase ap(stats, gcstats::PHASE_MINOR_GC);
+        minorGCImpl(reason, nullptr);
+    }
     void minorGC(JSContext *cx, JS::gcreason::Reason reason);
-    void evictNursery(JS::gcreason::Reason reason = JS::gcreason::EVICT_NURSERY) { minorGC(reason); }
+    void evictNursery(JS::gcreason::Reason reason = JS::gcreason::EVICT_NURSERY) {
+        gcstats::AutoPhase ap(stats, gcstats::PHASE_EVICT_NURSERY);
+        minorGCImpl(reason, nullptr);
+    }
     bool gcIfNeeded(JSContext *cx = nullptr);
     void gc(JSGCInvocationKind gckind, JS::gcreason::Reason reason);
     void gcSlice(JSGCInvocationKind gckind, JS::gcreason::Reason reason, int64_t millis = 0);
@@ -346,6 +352,7 @@ class GCRuntime
 
 #ifdef JS_GC_ZEAL
     const void *addressOfZealMode() { return &zealMode; }
+    void getZeal(uint8_t *zeal, uint32_t *frequency);
     void setZeal(uint8_t zeal, uint32_t frequency);
     bool parseAndSetZeal(const char *str);
     void setNextScheduled(uint32_t count);
@@ -429,7 +436,7 @@ class GCRuntime
     void disallowIncrementalGC() { incrementalAllowed = false; }
 
     bool isIncrementalGCEnabled() { return mode == JSGC_MODE_INCREMENTAL && incrementalAllowed; }
-    bool isIncrementalGCInProgress() { return state() != gc::NO_INCREMENTAL && !verifyPreData; }
+    bool isIncrementalGCInProgress() { return state() != gc::NO_INCREMENTAL; }
 
     bool isGenerationalGCEnabled() { return generationalDisabled == 0; }
     void disableGenerationalGC();
@@ -531,6 +538,8 @@ class GCRuntime
     void releaseArena(ArenaHeader *aheader, const AutoLockGC &lock);
 
   private:
+    void minorGCImpl(JS::gcreason::Reason reason, Nursery::TypeObjectList *pretenureTypes);
+
     // For ArenaLists::allocateFromArena()
     friend class ArenaLists;
     Chunk *pickChunk(const AutoLockGC &lock,
@@ -836,7 +845,7 @@ class GCRuntime
 
     bool poked;
 
-    volatile js::HeapState heapState;
+    mozilla::Atomic<js::HeapState> heapState;
 
     /*
      * ForkJoin workers enter and leave GC independently; this counter

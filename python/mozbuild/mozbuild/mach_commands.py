@@ -547,7 +547,11 @@ class Build(MachCommandBase):
         try:
             webbrowser.get(browser).open_new_tab(server.url)
         except Exception:
-            print('Please open %s in a browser.' % server.url)
+            print('Cannot get browser specified, trying the default instead.')
+            try:
+                browser = webbrowser.get().open_new_tab(server.url)
+            except Exception:
+                print('Please open %s in a browser.' % server.url)
 
         print('Hit CTRL+c to stop server.')
         server.run()
@@ -765,10 +769,11 @@ class GTestCommands(MachCommandBase):
             # current OS.
             debugger = mozdebug.get_default_debugger_name(mozdebug.DebuggerSearch.KeepLooking)
 
-        debuggerInfo = mozdebug.get_debugger_info(debugger, debugger_args)
-        if not debuggerInfo:
-            print("Could not find a suitable debugger in your PATH.")
-            return 1
+        if debugger:
+            debuggerInfo = mozdebug.get_debugger_info(debugger, debugger_args)
+            if not debuggerInfo:
+                print("Could not find a suitable debugger in your PATH.")
+                return 1
 
         # Parameters come from the CLI. We need to convert them before
         # their use.
@@ -942,10 +947,11 @@ class RunProgram(MachCommandBase):
                 # current OS.
                 debugger = mozdebug.get_default_debugger_name(mozdebug.DebuggerSearch.KeepLooking)
 
-            self.debuggerInfo = mozdebug.get_debugger_info(debugger, debugparams)
-            if not self.debuggerInfo:
-                print("Could not find a suitable debugger in your PATH.")
-                return 1
+            if debugger:
+                self.debuggerInfo = mozdebug.get_debugger_info(debugger, debugparams)
+                if not self.debuggerInfo:
+                    print("Could not find a suitable debugger in your PATH.")
+                    return 1
 
             # Parameters come from the CLI. We need to convert them before
             # their use.
@@ -978,6 +984,13 @@ class RunProgram(MachCommandBase):
             if show_dump_stats:
                 dmd_params.append('--show-dump-stats=yes')
 
+            bin_dir = os.path.dirname(binpath)
+            lib_name = self.substs['DLL_PREFIX'] + 'dmd' + self.substs['DLL_SUFFIX']
+            dmd_lib = os.path.join(bin_dir, lib_name)
+            if not os.path.exists(dmd_lib):
+                print("Please build with |--enable-dmd| to use DMD.")
+                return 1
+
             env_vars = {
                 "Darwin": {
                     "DYLD_INSERT_LIBRARIES": dmd_lib,
@@ -992,17 +1005,12 @@ class RunProgram(MachCommandBase):
                 },
             }
 
+            arch = self.substs['OS_ARCH']
+
             if dmd_params:
-                env_vars["DMD"] = " ".join(dmd_params)
+                env_vars[arch]["DMD"] = " ".join(dmd_params)
 
-            bin_dir = os.path.dirname(binpath)
-            lib_name = self.substs['DLL_PREFIX'] + 'dmd' + self.substs['DLL_SUFFIX']
-            dmd_lib = os.path.join(bin_dir, lib_name)
-            if not os.path.exists(dmd_lib):
-                print("Please build with |--enable-dmd| to use DMD.")
-                return 1
-
-            extra_env.update(env_vars.get(self.substs['OS_ARCH'], {}))
+            extra_env.update(env_vars.get(arch, {}))
 
         return self.run_process(args=args, ensure_exit_code=False,
             pass_thru=True, append_env=extra_env)

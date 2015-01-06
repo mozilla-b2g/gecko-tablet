@@ -43,6 +43,7 @@
 #include "nsISSLSocketControl.h"
 #include "sslt.h"
 #include "nsContentUtils.h"
+#include "nsIClassOfService.h"
 #include "nsIPermissionManager.h"
 #include "nsIPrincipal.h"
 #include "nsIScriptSecurityManager.h"
@@ -326,7 +327,6 @@ nsHttpChannel::Connect()
     mConnectionInfo->SetNoSpdy(mCaps & NS_HTTP_DISALLOW_SPDY);
 
     // Consider opening a TCP connection right away
-    RetrieveSSLOptions();
     SpeculativeConnect();
 
     // Don't allow resuming when cache must be used
@@ -455,8 +455,7 @@ nsHttpChannel::SpeculativeConnect()
         return;
 
     gHttpHandler->SpeculativeConnect(
-        mConnectionInfo, callbacks,
-        mCaps & (NS_HTTP_ALLOW_RSA_FALSESTART | NS_HTTP_DISALLOW_SPDY));
+        mConnectionInfo, callbacks, mCaps & NS_HTTP_DISALLOW_SPDY);
 }
 
 void
@@ -621,31 +620,6 @@ nsHttpChannel::SetupTransactionLoadGroupInfo()
         mTransaction->SetLoadGroupConnectionInfo(ci);
 }
 
-void
-nsHttpChannel::RetrieveSSLOptions()
-{
-    if (!IsHTTPS() || mPrivateBrowsing)
-        return;
-
-    nsIPrincipal *principal = GetPrincipal(true);
-    if (!principal)
-        return;
-
-    nsCOMPtr<nsIPermissionManager> permMgr =
-        services::GetPermissionManager();
-    if (!permMgr)
-        return;
-
-    uint32_t perm;
-    nsresult rv = permMgr->TestPermissionFromPrincipal(principal,
-                                                       "falsestart-rsa", &perm);
-    if (NS_SUCCEEDED(rv) && perm == nsIPermissionManager::ALLOW_ACTION) {
-        LOG(("nsHttpChannel::RetrieveSSLOptions [this=%p] "
-             "falsestart-rsa permission found\n", this));
-        mCaps |= NS_HTTP_ALLOW_RSA_FALSESTART;
-    }
-}
-
 static bool
 SafeForPipelining(nsHttpRequestHead::ParsedMethodType method,
                   const nsCString &methodString)
@@ -697,18 +671,34 @@ nsHttpChannel::SetupTransaction()
     // CONNECT does not count here). Also figure out what HTTP version to use.
     nsAutoCString buf, path;
     nsCString* requestURI;
-    if (mConnectionInfo->UsingConnect() ||
-        !mConnectionInfo->UsingHttpProxy()) {
-        rv = mURI->GetPath(path);
-        if (NS_FAILED(rv)) return rv;
-        // path may contain UTF-8 characters, so ensure that they're escaped.
-        if (NS_EscapeURL(path.get(), path.Length(), esc_OnlyNonASCII, buf))
-            requestURI = &buf;
-        else
-            requestURI = &path;
+
+    // This is the normal e2e H1 path syntax "/index.html"
+    rv = mURI->GetPath(path);
+    if (NS_FAILED(rv)) {
+        return rv;
+    }
+
+    // path may contain UTF-8 characters, so ensure that they're escaped.
+    if (NS_EscapeURL(path.get(), path.Length(), esc_OnlyNonASCII, buf)) {
+        requestURI = &buf;
+    } else {
+        requestURI = &path;
+    }
+
+    // trim off the #ref portion if any...
+    int32_t ref = requestURI->FindChar('#');
+    if (ref != kNotFound) {
+        requestURI->SetLength(ref);
+    }
+
+    if (mConnectionInfo->UsingConnect() || !mConnectionInfo->UsingHttpProxy()) {
         mRequestHead.SetVersion(gHttpHandler->HttpVersion());
     }
     else {
+        mRequestHead.SetPath(*requestURI);
+
+        // RequestURI should be the absolute uri H1 proxy syntax "http://foo/index.html"
+        // so we will overwrite the relative version in requestURI
         rv = mURI->GetUserPass(buf);
         if (NS_FAILED(rv)) return rv;
         if (!buf.IsEmpty() && ((strncmp(mSpec.get(), "http:", 5) == 0) ||
@@ -721,16 +711,18 @@ nsHttpChannel::SetupTransaction()
             rv = tempURI->GetAsciiSpec(path);
             if (NS_FAILED(rv)) return rv;
             requestURI = &path;
-        }
-        else
+        } else {
             requestURI = &mSpec;
+        }
+
+        // trim off the #ref portion if any...
+        int32_t ref = requestURI->FindChar('#');
+        if (ref != kNotFound) {
+            requestURI->SetLength(ref);
+        }
+
         mRequestHead.SetVersion(gHttpHandler->ProxyHttpVersion());
     }
-
-    // trim off the #ref portion if any...
-    int32_t ref = requestURI->FindChar('#');
-    if (ref != kNotFound)
-        requestURI->SetLength(ref);
 
     mRequestHead.SetRequestURI(*requestURI);
 
@@ -844,6 +836,7 @@ nsHttpChannel::SetupTransaction()
         return rv;
     }
 
+    mTransaction->SetClassOfService(mClassOfService);
     SetupTransactionLoadGroupInfo();
 
     rv = nsInputStreamPump::Create(getter_AddRefs(mTransactionPump),
@@ -1208,10 +1201,9 @@ nsHttpChannel::ProcessSSLInformation()
         !IsHTTPS() || mPrivateBrowsing)
         return;
 
-    nsCOMPtr<nsISSLSocketControl> ssl = do_QueryInterface(mSecurityInfo);
     nsCOMPtr<nsISSLStatusProvider> statusProvider =
         do_QueryInterface(mSecurityInfo);
-    if (!ssl || !statusProvider)
+    if (!statusProvider)
         return;
     nsCOMPtr<nsISSLStatus> sslstat;
     statusProvider->GetSSLStatus(getter_AddRefs(sslstat));
@@ -1258,45 +1250,6 @@ nsHttpChannel::ProcessSSLInformation()
                 AddSecurityMessage(consoleErrorTag, consoleErrorMessage);
             }
         }
-    }
-
-    // If certificate exceptions are being used don't record this information
-    // in the permission manager.
-    bool trustCheck;
-    if (NS_FAILED(sslstat->GetIsDomainMismatch(&trustCheck)) || trustCheck)
-        return;
-    if (NS_FAILED(sslstat->GetIsNotValidAtThisTime(&trustCheck)) || trustCheck)
-        return;
-    if (NS_FAILED(sslstat->GetIsUntrusted(&trustCheck)) || trustCheck)
-        return;
-
-    int16_t kea = ssl->GetKEAUsed();
-
-    nsIPrincipal *principal = GetPrincipal(true);
-    if (!principal)
-        return;
-
-    // set a permission manager flag that future transactions can
-    // use via RetrieveSSLOptions(()
-
-    nsCOMPtr<nsIPermissionManager> permMgr =
-        services::GetPermissionManager();
-    if (!permMgr)
-        return;
-
-    // Allow this to stand for a week
-    int64_t expireTime = (PR_Now() / PR_USEC_PER_MSEC) +
-        (86400 * 7 * PR_MSEC_PER_SEC);
-
-    if (kea == ssl_kea_rsa) {
-        permMgr->AddFromPrincipal(principal, "falsestart-rsa",
-                                  nsIPermissionManager::ALLOW_ACTION,
-                                  nsIPermissionManager::EXPIRE_TIME,
-                                  expireTime);
-        LOG(("nsHttpChannel::ProcessSSLInformation [this=%p] "
-             "falsestart-rsa permission granted for this host\n", this));
-    } else {
-        permMgr->RemoveFromPrincipal(principal, "falsestart-rsa");
     }
 }
 
@@ -1417,7 +1370,7 @@ nsHttpChannel::ProcessAltService()
 
         gHttpHandler->
             UpdateAltServiceMapping(mapping, proxyInfo, callbacks,
-                                    mCaps & (NS_HTTP_ALLOW_RSA_FALSESTART | NS_HTTP_DISALLOW_SPDY));
+                                    mCaps & NS_HTTP_DISALLOW_SPDY);
     }
 }
 
@@ -2833,10 +2786,8 @@ nsHttpChannel::OpenCacheEntry(bool isHttps)
     }
     NS_ENSURE_SUCCESS(rv, rv);
 
-    // Don't consider mLoadUnblocked here, since it's not indication of a demand
-    // to load prioritly. It's mostly used to load XHR requests, but those should
-    // not be considered as influencing the page load performance.
-    if (mLoadAsBlocking || (mLoadFlags & LOAD_INITIAL_DOCUMENT_URI))
+    if ((mClassOfService & nsIClassOfService::Leader) ||
+        (mLoadFlags & LOAD_INITIAL_DOCUMENT_URI))
         cacheEntryOpenFlags |= nsICacheStorage::OPEN_PRIORITY;
 
     // Only for backward compatibility with the old cache back end.
@@ -3315,7 +3266,9 @@ nsHttpChannel::OnCacheEntryAvailable(nsICacheEntry *entry,
     nsresult rv;
 
     LOG(("nsHttpChannel::OnCacheEntryAvailable [this=%p entry=%p "
-         "new=%d appcache=%p status=%x]\n", this, entry, aNew, aAppCache, status));
+         "new=%d appcache=%p status=%x mAppCache=%p mAppCacheForWrite=%p]\n",
+         this, entry, aNew, aAppCache, status,
+         mApplicationCache.get(), mApplicationCacheForWrite.get()));
 
     // if the channel's already fired onStopRequest, then we should ignore
     // this event.
@@ -3425,10 +3378,11 @@ nsHttpChannel::OnOfflineCacheEntryAvailable(nsICacheEntry *aEntry,
 
     nsresult rv;
 
-    if (!mApplicationCache)
-        mApplicationCache = aAppCache;
-
     if (NS_SUCCEEDED(aEntryStatus)) {
+        if (!mApplicationCache) {
+            mApplicationCache = aAppCache;
+        }
+
         // We successfully opened an offline cache session and the entry,
         // so indicate we will load from the offline cache.
         mLoadedFromApplicationCache = true;
@@ -3445,6 +3399,10 @@ nsHttpChannel::OnOfflineCacheEntryAvailable(nsICacheEntry *aEntry,
     }
 
     if (!mApplicationCacheForWrite && !mFallbackChannel) {
+        if (!mApplicationCache) {
+            mApplicationCache = aAppCache;
+        }
+
         // Check for namespace match.
         nsCOMPtr<nsIApplicationCacheNamespace> namespaceEntry;
         rv = mApplicationCache->GetMatchingNamespace(mSpec,
@@ -4643,6 +4601,7 @@ NS_INTERFACE_MAP_BEGIN(nsHttpChannel)
     NS_INTERFACE_MAP_ENTRY(nsIHttpChannel)
     NS_INTERFACE_MAP_ENTRY(nsICacheInfoChannel)
     NS_INTERFACE_MAP_ENTRY(nsICachingChannel)
+    NS_INTERFACE_MAP_ENTRY(nsIClassOfService)
     NS_INTERFACE_MAP_ENTRY(nsIUploadChannel)
     NS_INTERFACE_MAP_ENTRY(nsIUploadChannel2)
     NS_INTERFACE_MAP_ENTRY(nsICacheEntryOpenCallback)
@@ -4961,10 +4920,12 @@ nsHttpChannel::BeginConnect()
         mCaps &= ~(NS_HTTP_ALLOW_KEEPALIVE | NS_HTTP_ALLOW_PIPELINING);
 
     if (gHttpHandler->CriticalRequestPrioritization()) {
-        if (mLoadAsBlocking)
+        if (mClassOfService & nsIClassOfService::Leader) {
             mCaps |= NS_HTTP_LOAD_AS_BLOCKING;
-        if (mLoadUnblocked)
+        }
+        if (mClassOfService & nsIClassOfService::Unblocked) {
             mCaps |= NS_HTTP_LOAD_UNBLOCKED;
+        }
     }
 
     // Force-Reload should reset the persistent connection pool for this host
@@ -5029,6 +4990,30 @@ nsHttpChannel::SetPriority(int32_t value)
     mPriority = newValue;
     if (mTransaction)
         gHttpHandler->RescheduleTransaction(mTransaction, mPriority);
+    return NS_OK;
+}
+
+//-----------------------------------------------------------------------------
+// HttpChannel::nsIClassOfService
+//-----------------------------------------------------------------------------
+NS_IMETHODIMP
+nsHttpChannel::SetClassFlags(uint32_t inFlags)
+{
+    mClassOfService = inFlags;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsHttpChannel::AddClassFlags(uint32_t inFlags)
+{
+    mClassOfService |= inFlags;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsHttpChannel::ClearClassFlags(uint32_t inFlags)
+{
+    mClassOfService &= ~inFlags;
     return NS_OK;
 }
 
@@ -5810,7 +5795,10 @@ nsHttpChannel::OnTransportStatus(nsITransport *trans, nsresult status,
         }
 
         if (progress > 0) {
-            MOZ_ASSERT(progress <= progressMax, "unexpected progress values");
+            if (progress > progressMax) {
+                NS_WARNING("unexpected progress values");
+            }
+
             // Try to get mProgressSink if it was nulled out during OnStatus.
             if (!mProgressSink) {
                 GetCallback(mProgressSink);
@@ -5924,11 +5912,11 @@ class nsHttpChannelCacheKey MOZ_FINAL : public nsISupportsPRUint32,
 
     // Both interfaces declares toString method with the same signature.
     // Thus we have to delegate only to nsISupportsPRUint32 implementation.
-    NS_IMETHOD GetData(nsACString & aData)
+    NS_IMETHOD GetData(nsACString & aData) MOZ_OVERRIDE
     {
         return mSupportsCString->GetData(aData);
     }
-    NS_IMETHOD SetData(const nsACString & aData)
+    NS_IMETHOD SetData(const nsACString & aData) MOZ_OVERRIDE
     {
         return mSupportsCString->SetData(aData);
     }

@@ -290,7 +290,7 @@ var shell = {
     systemAppFrame.setAttribute('mozbrowser', 'true');
     systemAppFrame.setAttribute('mozapp', manifestURL);
     systemAppFrame.setAttribute('allowfullscreen', 'true');
-    systemAppFrame.setAttribute('style', "overflow: hidden; height: 100%; width: 100%; border: none;");
+    systemAppFrame.setAttribute('style', "overflow: hidden; height: 100%; width: 100%; border: none; position: absolute; left: 0; top: 0; right: 0; bottom: 0;");
     systemAppFrame.setAttribute('src', "data:text/html;charset=utf-8,%3C!DOCTYPE html>%3Cbody style='background:black;");
     let container = document.getElementById('container');
 #ifdef MOZ_WIDGET_COCOA
@@ -398,14 +398,14 @@ var shell = {
     }
 
     let mediaKeys = {
-      'MediaNextTrack': 'media-next-track-button',
-      'MediaPreviousTrack': 'media-previous-track-button',
+      'MediaTrackNext': 'media-next-track-button',
+      'MediaTrackPrevious': 'media-previous-track-button',
       'MediaPause': 'media-pause-button',
       'MediaPlay': 'media-play-button',
       'MediaPlayPause': 'media-play-pause-button',
       'MediaStop': 'media-stop-button',
       'MediaRewind': 'media-rewind-button',
-      'FastFwd': 'media-fast-forward-button'
+      'MediaFastForward': 'media-fast-forward-button'
     };
 
     let isMediaKey = false;
@@ -1230,7 +1230,7 @@ Services.obs.addObserver(function resetProfile(subject, topic, data) {
 }, 'b2g-reset-profile', false);
 
 /**
-  * CID of our implementation of nsIDownloadManagerUI.
+  * CID of our implementation of nsITransfer.
   */
 const kTransferCid = Components.ID("{1b4c85df-cbdd-4bb6-b04e-613caece083c}");
 

@@ -101,6 +101,15 @@ MIRType MIRTypeFromValue(const js::Value &vp)
      */                                                                         \
     _(RecoveredOnBailout)                                                       \
                                                                                 \
+    /* Some instructions might represent an object, but the memory of these
+     * objects might be incomplete if we have not recovered all the stores which
+     * were supposed to happen before. This flag is used to annotate
+     * instructions which might return a pointer to a memory area which is not
+     * yet fully initialized. This flag is used to ensure that stores are
+     * executed before returning the value.
+     */                                                                         \
+    _(IncompleteObject)                                                         \
+                                                                                \
     /* The current instruction got discarded from the MIR Graph. This is useful
      * when we want to iterate over resume points and instructions, while
      * handling instructions which are discarded without reporting to the
@@ -743,6 +752,13 @@ class MDefinition : public MNode
     MIR_OPCODE_LIST(OPCODE_CASTS)
 #   undef OPCODE_CASTS
 
+    bool isConstantValue() {
+        return isConstant() || (isBox() && getOperand(0)->isConstant());
+    }
+    const Value &constantValue();
+    const Value *constantVp();
+    bool constantToBoolean();
+
     inline MInstruction *toInstruction();
     inline const MInstruction *toInstruction() const;
     bool isInstruction() const {
@@ -1306,6 +1322,7 @@ class MSimdValueX4 : public MQuaternaryInstruction
       : MQuaternaryInstruction(x, y, z, w)
     {
         MOZ_ASSERT(IsSimdType(type));
+        MOZ_ASSERT(SimdTypeToLength(type) == 4);
         mozilla::DebugOnly<MIRType> scalarType = SimdTypeToScalarType(type);
         MOZ_ASSERT(scalarType == x->type());
         MOZ_ASSERT(scalarType == y->type());
@@ -1323,6 +1340,10 @@ class MSimdValueX4 : public MQuaternaryInstruction
                              MDefinition *y, MDefinition *z, MDefinition *w)
     {
         return new(alloc) MSimdValueX4(type, x, y, z, w);
+    }
+
+    bool canConsumeFloat32(MUse *use) const {
+        return SimdTypeToScalarType(type()) == MIRType_Float32;
     }
 
     AliasSet getAliasSet() const {
@@ -1359,6 +1380,10 @@ class MSimdSplatX4 : public MUnaryInstruction
     static MSimdSplatX4 *New(TempAllocator &alloc, MIRType type, MDefinition *v)
     {
         return new(alloc) MSimdSplatX4(type, v);
+    }
+
+    bool canConsumeFloat32(MUse *use) const {
+        return SimdTypeToScalarType(type()) == MIRType_Float32;
     }
 
     AliasSet getAliasSet() const {
@@ -1542,6 +1567,10 @@ class MSimdInsertElement : public MBinaryInstruction
         return lane_;
     }
 
+    bool canConsumeFloat32(MUse *use) const {
+        return use == getUseFor(1) && SimdTypeToScalarType(type()) == MIRType_Float32;
+    }
+
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
@@ -1690,7 +1719,7 @@ class MSimdShuffle : public MBinaryInstruction, public MSimdShuffleBase
     {
         // Swap operands so that new lanes come from LHS in majority.
         // In the balanced case, swap operands if needs be, in order to be able
-        // to do only one shufps on x86.
+        // to do only one vshufps on x86.
         unsigned lanesFromLHS = (laneX < 4) + (laneY < 4) + (laneZ < 4) + (laneW < 4);
         if (lanesFromLHS < 2 || (lanesFromLHS == 2 && laneX >= 4 && laneY >=4)) {
             laneX = (laneX + 4) % 8;
@@ -2005,18 +2034,13 @@ class MSimdShift : public MBinaryInstruction
     ALLOW_CLONE(MSimdShift)
 };
 
-class MSimdTernaryBitwise : public MTernaryInstruction
+class MSimdSelect : public MTernaryInstruction
 {
-  public:
-    enum Operation {
-        select
-    };
+    bool isElementWise_;
 
-  private:
-    Operation operation_;
-
-    MSimdTernaryBitwise(MDefinition *mask, MDefinition *lhs, MDefinition *rhs, Operation op, MIRType type)
-      : MTernaryInstruction(mask, lhs, rhs), operation_(op)
+    MSimdSelect(MDefinition *mask, MDefinition *lhs, MDefinition *rhs, MIRType type,
+                bool isElementWise)
+      : MTernaryInstruction(mask, lhs, rhs), isElementWise_(isElementWise)
     {
         MOZ_ASSERT(IsSimdType(type));
         MOZ_ASSERT(mask->type() == MIRType_Int32x4);
@@ -2027,20 +2051,32 @@ class MSimdTernaryBitwise : public MTernaryInstruction
     }
 
   public:
-    INSTRUCTION_HEADER(SimdTernaryBitwise);
-    static MSimdTernaryBitwise *NewAsmJS(TempAllocator &alloc, MDefinition *mask, MDefinition *lhs,
-                                         MDefinition *rhs, Operation op, MIRType t)
+    INSTRUCTION_HEADER(SimdSelect);
+    static MSimdSelect *NewAsmJS(TempAllocator &alloc, MDefinition *mask, MDefinition *lhs,
+                                 MDefinition *rhs, MIRType t, bool isElementWise)
     {
-        return new(alloc) MSimdTernaryBitwise(mask, lhs, rhs, op, t);
+        return new(alloc) MSimdSelect(mask, lhs, rhs, t, isElementWise);
+    }
+
+    MDefinition *mask() const {
+        return getOperand(0);
     }
 
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
 
-    Operation operation() const { return operation_; }
+    bool isElementWise() const {
+        return isElementWise_;
+    }
 
-    ALLOW_CLONE(MSimdTernaryBitwise)
+    bool congruentTo(const MDefinition *ins) const {
+        if (!congruentIfOperandsEqual(ins))
+            return false;
+        return isElementWise_ == ins->toSimdSelect()->isElementWise();
+    }
+
+    ALLOW_CLONE(MSimdSelect)
 };
 
 // Deep clone a constant JSObject.
@@ -2999,21 +3035,9 @@ class MArrayState
   private:
     uint32_t numElements_;
 
-    explicit MArrayState(MDefinition *arr)
-    {
-        // This instruction is only used as a summary for bailout paths.
-        setResultType(MIRType_Object);
-        setRecoveredOnBailout();
-        numElements_ = arr->toNewArray()->count();
-    }
+    explicit MArrayState(MDefinition *arr);
 
-    bool init(TempAllocator &alloc, MDefinition *obj, MDefinition *len) {
-        if (!MVariadicInstruction::init(alloc, numElements() + 2))
-            return false;
-        initOperand(0, obj);
-        initOperand(1, len);
-        return true;
-    }
+    bool init(TempAllocator &alloc, MDefinition *obj, MDefinition *len);
 
     void initElement(uint32_t index, MDefinition *def) {
         initOperand(index + 2, def);
@@ -3023,27 +3047,8 @@ class MArrayState
     INSTRUCTION_HEADER(ArrayState)
 
     static MArrayState *New(TempAllocator &alloc, MDefinition *arr, MDefinition *undefinedVal,
-                            MDefinition *initLength)
-    {
-        MArrayState *res = new(alloc) MArrayState(arr);
-        if (!res || !res->init(alloc, arr, initLength))
-            return nullptr;
-        for (size_t i = 0; i < res->numElements(); i++)
-            res->initElement(i, undefinedVal);
-        return res;
-    }
-
-    static MArrayState *Copy(TempAllocator &alloc, MArrayState *state)
-    {
-        MDefinition *arr = state->array();
-        MDefinition *len = state->initializedLength();
-        MArrayState *res = new(alloc) MArrayState(arr);
-        if (!res || !res->init(alloc, arr, len))
-            return nullptr;
-        for (size_t i = 0; i < res->numElements(); i++)
-            res->initElement(i, state->getElement(i));
-        return res;
-    }
+                            MDefinition *initLength);
+    static MArrayState *Copy(TempAllocator &alloc, MArrayState *state);
 
     MDefinition *array() const {
         return getOperand(0);
@@ -3361,11 +3366,11 @@ class MCallDOMNative : public MCall
         : MCall(target, numActualArgs, false)
     {
         // If our jitinfo is not marked movable, that means that our C++
-        // implementation is fallible or that we have no hope of ever doing the
-        // sort of argument analysis that would allow us to detemine that we're
-        // side-effect-free.  In the latter case we wouldn't get DCEd no matter
-        // what, but for the former case we have to explicitly say that we can't
-        // be DCEd.
+        // implementation is fallible or that it never wants to be eliminated or
+        // coalesced or that we have no hope of ever doing the sort of argument
+        // analysis that would allow us to detemine that we're side-effect-free.
+        // In the latter case we wouldn't get DCEd no matter what, but for the
+        // former two cases we have to explicitly say that we can't be DCEd.
         if (!getJitInfo()->isMovable)
             setGuard();
     }
@@ -7040,32 +7045,39 @@ struct LambdaFunctionInfo
 };
 
 class MLambda
-  : public MUnaryInstruction,
+  : public MBinaryInstruction,
     public SingleObjectPolicy::Data
 {
     LambdaFunctionInfo info_;
 
-    MLambda(types::CompilerConstraintList *constraints, MDefinition *scopeChain, JSFunction *fun)
-      : MUnaryInstruction(scopeChain), info_(fun)
+    MLambda(types::CompilerConstraintList *constraints, MDefinition *scopeChain, MConstant *cst)
+      : MBinaryInstruction(scopeChain, cst), info_(&cst->value().toObject().as<JSFunction>())
     {
         setResultType(MIRType_Object);
-        if (!fun->hasSingletonType() && !types::UseNewTypeForClone(fun))
-            setResultTypeSet(MakeSingletonTypeSet(constraints, fun));
+        if (!info().fun->hasSingletonType() && !types::UseNewTypeForClone(info().fun))
+            setResultTypeSet(MakeSingletonTypeSet(constraints, info().fun));
     }
 
   public:
     INSTRUCTION_HEADER(Lambda)
 
     static MLambda *New(TempAllocator &alloc, types::CompilerConstraintList *constraints,
-                        MDefinition *scopeChain, JSFunction *fun)
+                        MDefinition *scopeChain, MConstant *fun)
     {
         return new(alloc) MLambda(constraints, scopeChain, fun);
     }
     MDefinition *scopeChain() const {
         return getOperand(0);
     }
+    MConstant *functionOperand() const {
+        return getOperand(1)->toConstant();
+    }
     const LambdaFunctionInfo &info() const {
         return info_;
+    }
+    bool writeRecoverData(CompactBufferWriter &writer) const;
+    bool canRecoverOnBailout() const {
+        return true;
     }
 };
 
@@ -10593,14 +10605,18 @@ class MGetDOMProperty
     }
 
     bool congruentTo(const MDefinition *ins) const {
-        if (!isDomMovable())
-            return false;
-
         if (!ins->isGetDOMProperty())
             return false;
 
+        return congruentTo(ins->toGetDOMProperty());
+    }
+
+    bool congruentTo(const MGetDOMProperty *ins) const {
+        if (!isDomMovable())
+            return false;
+
         // Checking the jitinfo is the same as checking the constant function
-        if (!(info() == ins->toGetDOMProperty()->info()))
+        if (!(info() == ins->info()))
             return false;
 
         return congruentIfOperandsEqual(ins);
@@ -10623,10 +10639,12 @@ class MGetDOMProperty
 
 class MGetDOMMember : public MGetDOMProperty
 {
-    // We inherit everything from MGetDOMProperty except our possiblyCalls value
+    // We inherit everything from MGetDOMProperty except our
+    // possiblyCalls value and the congruentTo behavior.
     explicit MGetDOMMember(const JSJitInfo *jitinfo)
         : MGetDOMProperty(jitinfo)
     {
+        setResultType(MIRTypeFromValueType(jitinfo->returnType()));
     }
 
   public:
@@ -10643,6 +10661,13 @@ class MGetDOMMember : public MGetDOMProperty
 
     bool possiblyCalls() const {
         return false;
+    }
+
+    bool congruentTo(const MDefinition *ins) const {
+        if (!ins->isGetDOMMember())
+            return false;
+
+        return MGetDOMProperty::congruentTo(ins->toGetDOMMember());
     }
 };
 
@@ -11688,6 +11713,19 @@ class MNewDenseArrayPar : public MBinaryInstruction
     }
 };
 
+// This is an element of a spaghetti stack which is used to represent the memory
+// context which has to be restored in case of a bailout.
+struct MStoreToRecover : public TempObject, public InlineSpaghettiStackNode<MStoreToRecover>
+{
+    MDefinition *operand;
+
+    explicit MStoreToRecover(MDefinition *operand)
+      : operand(operand)
+    { }
+};
+
+typedef InlineSpaghettiStack<MStoreToRecover> MStoresToRecoverList;
+
 // A resume point contains the information needed to reconstruct the Baseline
 // state from a position in the JIT. See the big comment near resumeAfter() in
 // IonBuilder.cpp.
@@ -11708,7 +11746,14 @@ class MResumePoint MOZ_FINAL :
     friend class MBasicBlock;
     friend void AssertBasicGraphCoherency(MIRGraph &graph);
 
+    // List of stack slots needed to reconstruct the frame corresponding to the
+    // function which is compiled by IonBuilder.
     FixedList<MUse> operands_;
+
+    // List of stores needed to reconstruct the content of objects which are
+    // emulated by EmulateStateOf variants.
+    MStoresToRecoverList stores_;
+
     jsbytecode *pc_;
     MResumePoint *caller_;
     MInstruction *instruction_;
@@ -11737,16 +11782,21 @@ class MResumePoint MOZ_FINAL :
   public:
     static MResumePoint *New(TempAllocator &alloc, MBasicBlock *block, jsbytecode *pc,
                              MResumePoint *parent, Mode mode);
-    static MResumePoint *New(TempAllocator &alloc, MBasicBlock *block, jsbytecode *pc,
-                             MResumePoint *parent, Mode mode,
+    static MResumePoint *New(TempAllocator &alloc, MBasicBlock *block, MResumePoint *model,
                              const MDefinitionVector &operands);
     static MResumePoint *Copy(TempAllocator &alloc, MResumePoint *src);
 
     MNode::Kind kind() const {
         return MNode::ResumePoint;
     }
-    size_t numOperands() const {
+    size_t numAllocatedOperands() const {
         return operands_.length();
+    }
+    uint32_t stackDepth() const {
+        return numAllocatedOperands();
+    }
+    size_t numOperands() const {
+        return numAllocatedOperands();
     }
     size_t indexOf(const MUse *u) const MOZ_FINAL MOZ_OVERRIDE {
         MOZ_ASSERT(u >= &operands_[0]);
@@ -11770,9 +11820,6 @@ class MResumePoint MOZ_FINAL :
     }
     jsbytecode *pc() const {
         return pc_;
-    }
-    uint32_t stackDepth() const {
-        return operands_.length();
     }
     MResumePoint *caller() const {
         return caller_;
@@ -11807,13 +11854,26 @@ class MResumePoint MOZ_FINAL :
     }
 
     void releaseUses() {
-        for (size_t i = 0; i < operands_.length(); i++) {
+        for (size_t i = 0, e = numOperands(); i < e; i++) {
             if (operands_[i].hasProducer())
                 operands_[i].releaseProducer();
         }
     }
 
     bool writeRecoverData(CompactBufferWriter &writer) const;
+
+    // Register a store instruction on the current resume point. This
+    // instruction would be recovered when we are bailing out. The |cache|
+    // argument can be any resume point, it is used to share memory if we are
+    // doing the same modification.
+    void addStore(TempAllocator &alloc, MDefinition *store, const MResumePoint *cache = nullptr);
+
+    MStoresToRecoverList::iterator storesBegin() const {
+        return stores_.begin();
+    }
+    MStoresToRecoverList::iterator storesEnd() const {
+        return stores_.end();
+    }
 
     virtual void dump(FILE *fp) const;
     virtual void dump() const;
@@ -11862,29 +11922,6 @@ class MIsObject
     MDefinition *object() const {
         return getOperand(0);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
-    }
-};
-
-class MHaveSameClass
-  : public MBinaryInstruction,
-    public MixPolicy<ObjectPolicy<0>, ObjectPolicy<1> >::Data
-{
-    MHaveSameClass(MDefinition *left, MDefinition *right)
-      : MBinaryInstruction(left, right)
-    {
-        setResultType(MIRType_Boolean);
-        setMovable();
-    }
-
-  public:
-    INSTRUCTION_HEADER(HaveSameClass);
-
-    static MHaveSameClass *New(TempAllocator &alloc, MDefinition *left, MDefinition *right) {
-        return new(alloc) MHaveSameClass(left, right);
-    }
-
     bool congruentTo(const MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }

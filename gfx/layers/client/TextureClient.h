@@ -173,7 +173,8 @@ class TextureClient
   : public AtomicRefCountedWithFinalize<TextureClient>
 {
 public:
-  explicit TextureClient(TextureFlags aFlags = TextureFlags::DEFAULT);
+  explicit TextureClient(ISurfaceAllocator* aAllocator,
+                         TextureFlags aFlags = TextureFlags::DEFAULT);
   virtual ~TextureClient();
 
   // Creates and allocates a TextureClient usable with Moz2D.
@@ -280,6 +281,10 @@ public:
   {
     return gfx::SurfaceFormat::UNKNOWN;
   }
+
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() { return nullptr; }
+
+  virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix);
 
   /**
    * Copies a rectangle from this texture client to a position in aTarget.
@@ -553,11 +558,11 @@ public:
 
   virtual ~BufferTextureClient();
 
-  virtual bool IsAllocated() const = 0;
+  virtual bool IsAllocated() const MOZ_OVERRIDE = 0;
 
   virtual uint8_t* GetBuffer() const = 0;
 
-  virtual gfx::IntSize GetSize() const { return mSize; }
+  virtual gfx::IntSize GetSize() const MOZ_OVERRIDE { return mSize; }
 
   virtual bool Lock(OpenMode aMode) MOZ_OVERRIDE;
 
@@ -584,6 +589,8 @@ public:
                                 gfx::IntSize aCbCrSize,
                                 StereoMode aStereoMode) MOZ_OVERRIDE;
 
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
+
   virtual gfx::SurfaceFormat GetFormat() const MOZ_OVERRIDE { return mFormat; }
 
   // XXX - Bug 908196 - Make Allocate(uint32_t) and GetBufferSize() protected.
@@ -596,15 +603,12 @@ public:
 
   virtual bool HasInternalBuffer() const MOZ_OVERRIDE { return true; }
 
-  ISurfaceAllocator* GetAllocator() const;
-
   virtual TemporaryRef<TextureClient>
   CreateSimilar(TextureFlags aFlags = TextureFlags::DEFAULT,
                 TextureAllocationFlags aAllocFlags = ALLOC_DEFAULT) const MOZ_OVERRIDE;
 
 protected:
   RefPtr<gfx::DrawTarget> mDrawTarget;
-  RefPtr<ISurfaceAllocator> mAllocator;
   gfx::SurfaceFormat mFormat;
   gfx::IntSize mSize;
   gfx::BackendType mBackend;
@@ -683,7 +687,8 @@ protected:
 class SharedSurfaceTextureClient : public TextureClient
 {
 public:
-  SharedSurfaceTextureClient(TextureFlags aFlags, gl::SharedSurface* surf);
+  SharedSurfaceTextureClient(ISurfaceAllocator* aAllocator, TextureFlags aFlags,
+                             gl::SharedSurface* surf);
 
 protected:
   ~SharedSurfaceTextureClient();

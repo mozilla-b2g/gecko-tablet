@@ -1376,9 +1376,6 @@ JS_BeginRequest(JSContext *cx);
 extern JS_PUBLIC_API(void)
 JS_EndRequest(JSContext *cx);
 
-extern JS_PUBLIC_API(bool)
-JS_IsInRequest(JSRuntime *rt);
-
 namespace js {
 
 void
@@ -1412,32 +1409,6 @@ class JSAutoRequest
     static void *operator new(size_t) CPP_THROW_NEW { return 0; }
     static void operator delete(void *, size_t) { }
 #endif
-};
-
-class JSAutoCheckRequest
-{
-  public:
-    explicit JSAutoCheckRequest(JSContext *cx
-                                MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-    {
-#ifdef JS_DEBUG
-        mContext = cx;
-        MOZ_ASSERT(JS_IsInRequest(JS_GetRuntime(cx)));
-#endif
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-
-    ~JSAutoCheckRequest() {
-#ifdef JS_DEBUG
-        MOZ_ASSERT(JS_IsInRequest(JS_GetRuntime(mContext)));
-#endif
-    }
-
-  private:
-#ifdef JS_DEBUG
-    JSContext *mContext;
-#endif
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 extern JS_PUBLIC_API(void)
@@ -1601,7 +1572,8 @@ class JS_PUBLIC_API(ContextOptions) {
   public:
     ContextOptions()
       : privateIsNSISupports_(false),
-        dontReportUncaught_(false)
+        dontReportUncaught_(false),
+        autoJSAPIOwnsErrorReporting_(false)
     {
     }
 
@@ -1625,9 +1597,28 @@ class JS_PUBLIC_API(ContextOptions) {
         return *this;
     }
 
+    bool autoJSAPIOwnsErrorReporting() const { return autoJSAPIOwnsErrorReporting_; }
+    ContextOptions &setAutoJSAPIOwnsErrorReporting(bool flag) {
+        autoJSAPIOwnsErrorReporting_ = flag;
+        return *this;
+    }
+    ContextOptions &toggleAutoJSAPIOwnsErrorReporting() {
+        autoJSAPIOwnsErrorReporting_ = !autoJSAPIOwnsErrorReporting_;
+        return *this;
+    }
+
+
   private:
     bool privateIsNSISupports_ : 1;
     bool dontReportUncaught_ : 1;
+    // dontReportUncaught isn't respected by all JSAPI codepaths, particularly the
+    // JS_ReportError* functions that eventually report the error even when dontReportUncaught is
+    // set, if script is not running. We want a way to indicate that the embedder will always
+    // handle any exceptions, and that SpiderMonkey should just leave them on the context. This is
+    // the way we want to do all future error handling in Gecko - stealing the exception explicitly
+    // from the context and handling it as per the situation. This will eventually become the
+    // default and these 2 flags should go away.
+    bool autoJSAPIOwnsErrorReporting_ : 1;
 };
 
 JS_PUBLIC_API(ContextOptions &)
@@ -1928,7 +1919,7 @@ typedef struct JSCTypesCallbacks JSCTypesCallbacks;
  * to call this function again.
  */
 extern JS_PUBLIC_API(void)
-JS_SetCTypesCallbacks(JSObject *ctypesObj, JSCTypesCallbacks *callbacks);
+JS_SetCTypesCallbacks(JSObject *ctypesObj, const JSCTypesCallbacks *callbacks);
 #endif
 
 typedef bool
@@ -2265,8 +2256,7 @@ extern JS_PUBLIC_API(bool)
 JS_IsExternalString(JSString *str);
 
 /*
- * Return the 'closure' arg passed to JS_NewExternalStringWithClosure or
- * nullptr if the external string was created via JS_NewExternalString.
+ * Return the 'fin' arg passed to JS_NewExternalString.
  */
 extern JS_PUBLIC_API(const JSStringFinalizer *)
 JS_GetExternalStringFinalizer(JSString *str);
@@ -2999,13 +2989,6 @@ JS_HasProperty(JSContext *cx, JS::HandleObject obj, const char *name, bool *foun
 extern JS_PUBLIC_API(bool)
 JS_HasPropertyById(JSContext *cx, JS::HandleObject obj, JS::HandleId id, bool *foundp);
 
-extern JS_PUBLIC_API(bool)
-JS_LookupProperty(JSContext *cx, JS::HandleObject obj, const char *name, JS::MutableHandleValue vp);
-
-extern JS_PUBLIC_API(bool)
-JS_LookupPropertyById(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
-                      JS::MutableHandleValue vp);
-
 struct JSPropertyDescriptor {
     JSObject           *obj;
     unsigned           attrs;
@@ -3282,11 +3265,6 @@ JS_HasUCProperty(JSContext *cx, JS::HandleObject obj,
                  bool *vp);
 
 extern JS_PUBLIC_API(bool)
-JS_LookupUCProperty(JSContext *cx, JS::HandleObject obj,
-                    const char16_t *name, size_t namelen,
-                    JS::MutableHandleValue vp);
-
-extern JS_PUBLIC_API(bool)
 JS_GetUCProperty(JSContext *cx, JS::HandleObject obj,
                  const char16_t *name, size_t namelen,
                  JS::MutableHandleValue vp);
@@ -3353,9 +3331,6 @@ JS_AlreadyHasOwnElement(JSContext *cx, JS::HandleObject obj, uint32_t index, boo
 
 extern JS_PUBLIC_API(bool)
 JS_HasElement(JSContext *cx, JS::HandleObject obj, uint32_t index, bool *foundp);
-
-extern JS_PUBLIC_API(bool)
-JS_LookupElement(JSContext *cx, JS::HandleObject obj, uint32_t index, JS::MutableHandleValue vp);
 
 extern JS_PUBLIC_API(bool)
 JS_GetElement(JSContext *cx, JS::HandleObject obj, uint32_t index, JS::MutableHandleValue vp);
@@ -4694,13 +4669,13 @@ struct JSLocaleCallbacks {
  * JSRuntime.  Passing nullptr restores the default behaviour.
  */
 extern JS_PUBLIC_API(void)
-JS_SetLocaleCallbacks(JSRuntime *rt, JSLocaleCallbacks *callbacks);
+JS_SetLocaleCallbacks(JSRuntime *rt, const JSLocaleCallbacks *callbacks);
 
 /*
  * Return the address of the current locale callbacks struct, which may
  * be nullptr.
  */
-extern JS_PUBLIC_API(JSLocaleCallbacks *)
+extern JS_PUBLIC_API(const JSLocaleCallbacks *)
 JS_GetLocaleCallbacks(JSRuntime *rt);
 
 /************************************************************************/
@@ -5068,6 +5043,9 @@ JS_NewObjectForConstructor(JSContext *cx, const JSClass *clasp, const JS::CallAr
 
 #ifdef JS_GC_ZEAL
 #define JS_DEFAULT_ZEAL_FREQ 100
+
+extern JS_PUBLIC_API(void)
+JS_GetGCZeal(JSContext *cx, uint8_t *zeal, uint32_t *frequency);
 
 extern JS_PUBLIC_API(void)
 JS_SetGCZeal(JSContext *cx, uint8_t zeal, uint32_t frequency);

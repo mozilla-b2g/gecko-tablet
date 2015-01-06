@@ -166,11 +166,14 @@ loop.panel = (function(_, mozL10n) {
   });
 
   var GettingStartedView = React.createClass({
+    mixins: [sharedMixins.WindowCloseMixin],
+
     handleButtonClick: function() {
       navigator.mozLoop.openGettingStartedTour("getting-started");
       navigator.mozLoop.setLoopPref("gettingStarted.seen", true);
       var event = new CustomEvent("GettingStartedSeen");
       window.dispatchEvent(event);
+      this.closeWindow();
     },
 
     render: function() {
@@ -269,7 +272,7 @@ loop.panel = (function(_, mozL10n) {
    * Panel settings (gear) menu.
    */
   var SettingsDropdown = React.createClass({
-    mixins: [sharedMixins.DropdownMenuMixin],
+    mixins: [sharedMixins.DropdownMenuMixin, sharedMixins.WindowCloseMixin],
 
     handleClickSettingsEntry: function() {
       // XXX to be implemented at the same time as unhiding the entry
@@ -300,6 +303,7 @@ loop.panel = (function(_, mozL10n) {
 
     openGettingStartedTour: function() {
       navigator.mozLoop.openGettingStartedTour("settings-menu");
+      this.closeWindow();
     },
 
     render: function() {
@@ -564,7 +568,14 @@ loop.panel = (function(_, mozL10n) {
 
     handleFormSubmit: function(event) {
       event.preventDefault();
-      this.props.onChange(this.state.text);
+      // While we already validate for a non-empty string in the store, we need
+      // to check it at the component level to avoid desynchronized rendering
+      // issues.
+      if (this.state.text.trim()) {
+        this.props.onChange(this.state.text);
+      } else {
+        this.setState({text: this.props.text});
+      }
       this.setState({edit: false});
     },
 
@@ -726,6 +737,15 @@ loop.panel = (function(_, mozL10n) {
       this.stopListening(this.props.store);
     },
 
+    componentWillUpdate: function(nextProps, nextState) {
+      // If we've just created a room, close the panel - the store will open
+      // the room.
+      if (this.state.pendingCreation &&
+          !nextState.pendingCreation && !nextState.error) {
+        this.closeWindow();
+      }
+    },
+
     _onStoreStateChanged: function() {
       this.setState(this.props.store.getStoreState());
     },
@@ -743,8 +763,6 @@ loop.panel = (function(_, mozL10n) {
     },
 
     handleCreateButtonClick: function() {
-      this.closeWindow();
-
       this.props.dispatcher.dispatch(new sharedActions.CreateRoom({
         nameTemplate: mozL10n.get("rooms_default_room_name_template"),
         roomOwner: this.props.userDisplayName
@@ -999,7 +1017,8 @@ loop.panel = (function(_, mozL10n) {
     var notifications = new sharedModels.NotificationCollection();
     var dispatcher = new loop.Dispatcher();
     var roomStore = new loop.store.RoomStore(dispatcher, {
-      mozLoop: navigator.mozLoop
+      mozLoop: navigator.mozLoop,
+      notifications: notifications
     });
 
     React.renderComponent(<PanelView

@@ -205,19 +205,7 @@ if test -n "$gonkdir" ; then
     STLPORT_CPPFLAGS="-I$_topsrcdir/build/stlport/stlport -I$gonkdir/ndk/sources/cxx-stl/system/include"
     STLPORT_LIBS="-lstlport"
 
-    case "$target_cpu" in
-    arm)
-        ARCH_DIR=arch-arm
-        ;;
-    i?86)
-        ARCH_DIR=arch-x86
-        ;;
-    mips*)
-        ARCH_DIR=arch-mips
-        ;;
-    esac
-
-    CPPFLAGS="-DANDROID -isystem $gonkdir/bionic/libc/$ARCH_DIR/include -isystem $gonkdir/bionic/libc/include/ -isystem $gonkdir/bionic/libc/kernel/common -isystem $gonkdir/bionic/libc/kernel/$ARCH_DIR -isystem $gonkdir/bionic/libm/include -I$gonkdir/frameworks/base/native/include -I$gonkdir/system/core/include -isystem $gonkdir/bionic $CPPFLAGS -I$gonkdir/external/valgrind/fxos-include"
+    CPPFLAGS="-DANDROID $TARGET_C_INCLUDES -I$gonkdir/frameworks/base/native/include -I$gonkdir/system/core/include -isystem $gonkdir/bionic $CPPFLAGS -I$gonkdir/external/valgrind/fxos-include"
     CFLAGS="-mandroid -fno-short-enums -fno-exceptions $CFLAGS"
     CXXFLAGS="-mandroid -fno-short-enums -fno-exceptions -Wno-psabi $CXXFLAGS $STLPORT_CPPFLAGS"
     LIBS="$LIBS $STLPORT_LIBS"
@@ -439,9 +427,7 @@ case "$target" in
         AC_DEFINE(_CRT_SECURE_NO_WARNINGS)
         AC_DEFINE(_CRT_NONSTDC_NO_WARNINGS)
 
-        if test "$_CC_MAJOR_VERSION" = "16"; then
-            _CC_SUITE=10
-        elif test "$_CC_MAJOR_VERSION" = "17"; then
+        if test "$_CC_MAJOR_VERSION" = "17"; then
             _CC_SUITE=11
         elif test "$_CC_MAJOR_VERSION" = "18"; then
             _CC_SUITE=12
@@ -599,7 +585,6 @@ fi
 AC_MSG_RESULT([$TAR])
 AC_SUBST(TAR)
 
-if test -z "$TINDERBOX_SKIP_PERL_VERSION_CHECK"; then
 AC_MSG_CHECKING([for minimum required perl version >= $PERL_VERSION])
 _perl_version=`PERL_VERSION=$PERL_VERSION $PERL -e 'print "$]"; if ($] >= $ENV{PERL_VERSION}) { exit(0); } else { exit(1); }' 2>&5`
 _perl_res=$?
@@ -607,7 +592,6 @@ AC_MSG_RESULT([$_perl_version])
 
 if test "$_perl_res" != 0; then
     AC_MSG_ERROR([Perl $PERL_VERSION or higher is required.])
-fi
 fi
 
 AC_MSG_CHECKING([for full perl installation])
@@ -1091,6 +1075,20 @@ if test -n "$MOZ_MSAN"; then
     MOZ_PATH_PROG(LLVM_SYMBOLIZER, llvm-symbolizer)
 fi
 AC_SUBST(MOZ_MSAN)
+
+dnl ========================================================
+dnl = Use Thread Sanitizer
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(thread-sanitizer,
+[  --enable-thread-sanitizer       Enable Thread Sanitizer (default=no)],
+   MOZ_TSAN=1,
+   MOZ_TSAN= )
+if test -n "$MOZ_TSAN"; then
+    MOZ_LLVM_HACKS=1
+    AC_DEFINE(MOZ_TSAN)
+    MOZ_PATH_PROG(LLVM_SYMBOLIZER, llvm-symbolizer)
+fi
+AC_SUBST(MOZ_TSAN)
 
 # The LLVM symbolizer is used by all sanitizers
 AC_SUBST(LLVM_SYMBOLIZER)
@@ -1820,8 +1818,17 @@ ia64*-hpux*)
         dnl For profile-guided optimization
         PROFILE_GEN_CFLAGS="-GL"
         PROFILE_GEN_LDFLAGS="-LTCG:PGINSTRUMENT"
-        PROFILE_USE_CFLAGS="-GL"
-        PROFILE_USE_LDFLAGS="-LTCG:PGOPTIMIZE"
+        dnl XXX: PGO builds can fail with warnings treated as errors,
+        dnl specifically "no profile data available" appears to be
+        dnl treated as an error sometimes. This might be a consequence
+        dnl of using WARNINGS_AS_ERRORS in some modules, combined
+        dnl with the linker doing most of the work in the whole-program
+        dnl optimization/PGO case. I think it's probably a compiler bug,
+        dnl but we work around it here.
+        PROFILE_USE_CFLAGS="-GL -wd4624 -wd4952"
+        dnl XXX: should be -LTCG:PGOPTIMIZE, but that fails on libxul.
+        dnl Probably also a compiler bug, but what can you do?
+        PROFILE_USE_LDFLAGS="-LTCG:PGUPDATE"
         LDFLAGS="$LDFLAGS -DYNAMICBASE"
     fi
     AC_DEFINE(HAVE_SNPRINTF)
@@ -2234,12 +2241,7 @@ AC_SUBST(WRAP_SYSTEM_INCLUDES)
 AC_SUBST(VISIBILITY_FLAGS)
 
 MOZ_GCC_PR49911
-MOZ_GCC_PR39608
-if test "$OS_TARGET" != WINNT; then
-    # Only run this test with clang on non-Windows platforms, because clang
-    # cannot do enough code gen for now to make this test work correctly.
-    MOZ_LLVM_PR8927
-fi
+MOZ_LLVM_PR8927
 
 dnl Checks for header files.
 dnl ========================================================
@@ -2645,21 +2647,6 @@ if test "$ac_cv_cpp_dynamic_cast_void_ptr" = yes ; then
 fi
 
 
-dnl note that this one is reversed - if the test fails, then
-dnl we require implementations of unused virtual methods. Which
-dnl really blows because it means we'll have useless vtable
-dnl bloat.
-AC_CACHE_CHECK(whether C++ requires implementation of unused virtual methods,
-               ac_cv_cpp_unused_required,
-               [AC_TRY_LINK(class X {private: virtual void never_called();};,
-                               X x;,
-                               ac_cv_cpp_unused_required=no,
-                               ac_cv_cpp_unused_required=yes)])
-if test "$ac_cv_cpp_unused_required" = yes ; then
-   AC_DEFINE(NEED_CPP_UNUSED_IMPLEMENTATIONS)
-fi
-
-
 # try harder, when checking for __thread support, see bug 521750 comment #33 and below
 # We pass MOZ_OPTIMIZE_LDFLAGS to the linker because if dead_strip is
 # enabled, the linker in xcode 4.1 will crash. Without this it would crash when
@@ -2976,16 +2963,16 @@ AC_SUBST(MOZ_OPTIMIZE_SIZE_TWEAK)
 AC_SUBST(MOZ_PGO_OPTIMIZE_FLAGS)
 
 dnl ========================================================
-dnl = Enable trace logging
+dnl = Disable trace logging
 dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(trace-logging,
-[  --enable-trace-logging   Enable trace logging],
-    ENABLE_TRACE_LOGGING=1,
+ENABLE_TRACE_LOGGING=1
+MOZ_ARG_DISABLE_BOOL(trace-logging,
+[  --disable-trace-logging   Disable trace logging],
     ENABLE_TRACE_LOGGING= )
 
 AC_SUBST(ENABLE_TRACE_LOGGING)
 
-if test "$ENABLE_TRACE_LOGGING"; then
+if test -n "$ENABLE_TRACE_LOGGING"; then
     AC_DEFINE(JS_TRACE_LOGGING)
 fi
 

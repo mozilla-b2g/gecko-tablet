@@ -63,6 +63,7 @@ class CodeGenerator : public CodeGeneratorSpecific
 
     void visitLabel(LLabel *lir);
     void visitNop(LNop *lir);
+    void visitMop(LMop *lir);
     void visitOsiPoint(LOsiPoint *lir);
     void visitGoto(LGoto *lir);
     void visitTableSwitch(LTableSwitch *ins);
@@ -304,7 +305,8 @@ class CodeGenerator : public CodeGeneratorSpecific
     void visitCallInstanceOf(LCallInstanceOf *ins);
     void visitProfilerStackOp(LProfilerStackOp *lir);
     void visitGetDOMProperty(LGetDOMProperty *lir);
-    void visitGetDOMMember(LGetDOMMember *lir);
+    void visitGetDOMMemberV(LGetDOMMemberV *lir);
+    void visitGetDOMMemberT(LGetDOMMemberT *lir);
     void visitSetDOMProperty(LSetDOMProperty *lir);
     void visitCallDOMNative(LCallDOMNative *lir);
     void visitCallGetIntrinsicValue(LCallGetIntrinsicValue *lir);
@@ -312,7 +314,6 @@ class CodeGenerator : public CodeGeneratorSpecific
     void visitOutOfLineIsCallable(OutOfLineIsCallable *ool);
     void visitIsObject(LIsObject *lir);
     void visitIsObjectAndBranch(LIsObjectAndBranch *lir);
-    void visitHaveSameClass(LHaveSameClass *lir);
     void visitHasClass(LHasClass *lir);
     void visitAsmJSParameter(LAsmJSParameter *lir);
     void visitAsmJSReturn(LAsmJSReturn *ret);

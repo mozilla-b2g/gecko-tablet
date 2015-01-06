@@ -125,10 +125,6 @@ function TelephonyService() {
 
   this._cdmaCallWaitingNumber = null;
 
-  // _isActiveCall[clientId][callIndex] shows the active status of the call.
-  this._isActiveCall = {};
-  this._numActiveCall = 0;
-
   this._updateDebugFlag();
   this.defaultServiceId = this._getDefaultServiceId();
 
@@ -139,7 +135,6 @@ function TelephonyService() {
 
   for (let i = 0; i < this._numClients; ++i) {
     this._enumerateCallsForClient(i);
-    this._isActiveCall[i] = {};
     this._audioStates[i] = RIL.AUDIO_STATE_NO_CALL;
   }
 }
@@ -213,37 +208,6 @@ TelephonyService.prototype = {
         debug("listener for " + aMethodName + " threw an exception: " + e);
       }
     }
-  },
-
-  /**
-   * Track the active call and update the audio system as its state changes.
-   */
-  _updateActiveCall: function(aCall) {
-    let active = false;
-    let incoming = false;
-
-    switch (aCall.state) {
-      case nsITelephonyService.CALL_STATE_DIALING: // Fall through...
-      case nsITelephonyService.CALL_STATE_ALERTING:
-      case nsITelephonyService.CALL_STATE_CONNECTED:
-        active = true;
-        break;
-      case nsITelephonyService.CALL_STATE_INCOMING:
-        incoming = true;
-        break;
-      case nsITelephonyService.CALL_STATE_HELD: // Fall through...
-      case nsITelephonyService.CALL_STATE_DISCONNECTED:
-        break;
-    }
-
-    // Update active count and info.
-    let oldActive = this._isActiveCall[aCall.clientId][aCall.callIndex];
-    if (!oldActive && active) {
-      this._numActiveCall++;
-    } else if (oldActive && !active) {
-      this._numActiveCall--;
-    }
-    this._isActiveCall[aCall.clientId][aCall.callIndex] = active;
   },
 
   _updateAudioState: function(aAudioState) {
@@ -566,7 +530,7 @@ TelephonyService.prototype = {
           return;
         }
 
-        this._dialMMI(aClientId, mmi, aCallback, true);
+        this._dialMMI(aClientId, mmi, aCallback);
       }
     }
   },
@@ -645,10 +609,12 @@ TelephonyService.prototype = {
         Object.keys(this._currentCalls[aClientId])[0];
 
       if (currentCdmaCallIndex == null) {
-        aCallback.notifyDialCallSuccess(response.callIndex, response.number);
+        aCallback.notifyDialCallSuccess(aClientId, response.callIndex,
+                                        response.number);
       } else {
         // RIL doesn't hold the 2nd call. We create one by ourselves.
-        aCallback.notifyDialCallSuccess(CDMA_SECOND_CALL_INDEX, response.number);
+        aCallback.notifyDialCallSuccess(aClientId, CDMA_SECOND_CALL_INDEX,
+                                        response.number);
         this._addCdmaChildCall(aClientId, response.number, currentCdmaCallIndex);
       }
     });
@@ -664,15 +630,14 @@ TelephonyService.prototype = {
    * @param aStartNewSession
    *        True to start a new session for ussd request.
    */
-  _dialMMI: function(aClientId, aMmi, aCallback, aStartNewSession) {
+  _dialMMI: function(aClientId, aMmi, aCallback) {
     let mmiServiceCode = aMmi ?
       this._serviceCodeToKeyString(aMmi.serviceCode) : RIL.MMI_KS_SC_USSD;
 
     aCallback.notifyDialMMI(mmiServiceCode);
 
     this._sendToRilWorker(aClientId, "sendMMI",
-                          { mmi: aMmi,
-                            startNewSession: aStartNewSession }, response => {
+                          { mmi: aMmi }, response => {
       if (DEBUG) debug("MMI response: " + JSON.stringify(response));
 
       if (!response.success) {
@@ -907,6 +872,8 @@ TelephonyService.prototype = {
         return RIL.MMI_KS_SC_CALL_BARRING;
       case RIL.MMI_SC_CALL_WAITING:
         return RIL.MMI_KS_SC_CALL_WAITING;
+      case RIL.MMI_SC_CHANGE_PASSWORD:
+        return RIL.MMI_KS_SC_CHANGE_PASSWORD;
       default:
         return RIL.MMI_KS_SC_USSD;
     }
@@ -1157,8 +1124,6 @@ TelephonyService.prototype = {
       }
     }
 
-    this._updateActiveCall(aCall);
-
     if (!aCall.failCause ||
         aCall.failCause === RIL.GECKO_CALL_ERROR_NORMAL_CALL_CLEARING) {
       this._notifyAllListeners("callStateChanged", [aClientId,
@@ -1214,7 +1179,6 @@ TelephonyService.prototype = {
     }
 
     aCall.clientId = aClientId;
-    this._updateActiveCall(aCall);
 
     function pick(arg, defaultValue) {
       return typeof arg !== 'undefined' ? arg : defaultValue;
@@ -1302,13 +1266,7 @@ TelephonyService.prototype = {
             aMessage + " (sessionEnded : " + aSessionEnded + ")");
     }
 
-    gGonkMobileConnectionService.notifyUssdReceived(aClientId, aMessage,
-                                                    aSessionEnded);
-  },
-
-  dialMMI: function(aClientId, aMmiString, aCallback) {
-    let mmi = this._parseMMI(aMmiString, this._hasCalls(aClientId));
-    this._dialMMI(aClientId, mmi, aCallback, false);
+    gTelephonyMessenger.notifyUssdReceived(aClientId, aMessage, aSessionEnded);
   },
 
   /**
@@ -1355,7 +1313,6 @@ USSDReceivedWrapper.prototype = {
     let event = new aWindow.USSDReceivedEvent("ussdreceived", {
       serviceId: aMessage.serviceId,
       message: aMessage.message,
-      sessionEnded: aMessage.sessionEnded,
       session: session
     });
 

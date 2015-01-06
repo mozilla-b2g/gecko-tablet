@@ -8,6 +8,7 @@ package org.mozilla.gecko;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.lang.Override;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.URLEncoder;
 import java.util.EnumSet;
@@ -16,6 +17,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Vector;
 
+import android.support.v4.app.Fragment;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -148,7 +150,6 @@ public class BrowserApp extends GeckoApp
                                    LayerView.OnMetricsChangedListener,
                                    BrowserSearch.OnSearchListener,
                                    BrowserSearch.OnEditSuggestionListener,
-                                   HomePager.OnNewTabsListener,
                                    OnUrlOpenListener,
                                    OnUrlOpenInBackgroundListener,
                                    ActionModeCompat.Presenter,
@@ -652,16 +653,6 @@ public class BrowserApp extends GeckoApp
         // Set the maximum bits-per-pixel the favicon system cares about.
         IconDirectoryEntry.setMaxBPP(GeckoAppShell.getScreenDepth());
 
-        Class<?> mediaManagerClass = getMediaPlayerManager();
-        if (mediaManagerClass != null) {
-            try {
-                Method init = mediaManagerClass.getMethod("init", Context.class);
-                init.invoke(null, this);
-            } catch(Exception ex) {
-                Log.e(LOGTAG, "Error initializing media manager", ex);
-            }
-        }
-
         mTilesRecorder = new TilesRecorder();
     }
 
@@ -766,7 +757,7 @@ public class BrowserApp extends GeckoApp
         final boolean inGuestSession = GeckoProfile.get(this).inGuestMode();
         if (enableGuestSession != inGuestSession) {
             doRestart(getIntent());
-            GeckoAppShell.systemExit();
+            GeckoAppShell.gracefulExit();
             return;
         }
 
@@ -1164,16 +1155,6 @@ public class BrowserApp extends GeckoApp
             }
         }
 
-        Class<?> mediaManagerClass = getMediaPlayerManager();
-        if (mediaManagerClass != null) {
-            try {
-                Method destroy = mediaManagerClass.getMethod("onDestroy",  (Class[]) null);
-                destroy.invoke(null);
-            } catch(Exception ex) {
-                Log.e(LOGTAG, "Error destroying media manager", ex);
-            }
-        }
-
         super.onDestroy();
     }
 
@@ -1530,19 +1511,19 @@ public class BrowserApp extends GeckoApp
             }
 
         } else if ("Telemetry:Gather".equals(event)) {
-            Telemetry.HistogramAdd("PLACES_PAGES_COUNT",
+            Telemetry.addToHistogram("PLACES_PAGES_COUNT",
                     BrowserDB.getCount(getContentResolver(), "history"));
-            Telemetry.HistogramAdd("PLACES_BOOKMARKS_COUNT",
+            Telemetry.addToHistogram("PLACES_BOOKMARKS_COUNT",
                     BrowserDB.getCount(getContentResolver(), "bookmarks"));
-            Telemetry.HistogramAdd("FENNEC_FAVICONS_COUNT",
+            Telemetry.addToHistogram("FENNEC_FAVICONS_COUNT",
                     BrowserDB.getCount(getContentResolver(), "favicons"));
-            Telemetry.HistogramAdd("FENNEC_THUMBNAILS_COUNT",
+            Telemetry.addToHistogram("FENNEC_THUMBNAILS_COUNT",
                     BrowserDB.getCount(getContentResolver(), "thumbnails"));
-            Telemetry.HistogramAdd("FENNEC_READING_LIST_COUNT",
+            Telemetry.addToHistogram("FENNEC_READING_LIST_COUNT",
                     BrowserDB.getCount(getContentResolver(), "readinglist"));
-            Telemetry.HistogramAdd("BROWSER_IS_USER_DEFAULT", (isDefaultBrowser(Intent.ACTION_VIEW) ? 1 : 0));
+            Telemetry.addToHistogram("BROWSER_IS_USER_DEFAULT", (isDefaultBrowser(Intent.ACTION_VIEW) ? 1 : 0));
             if (Versions.feature16Plus) {
-                Telemetry.HistogramAdd("BROWSER_IS_ASSIST_DEFAULT", (isDefaultBrowser(Intent.ACTION_ASSIST) ? 1 : 0));
+                Telemetry.addToHistogram("BROWSER_IS_ASSIST_DEFAULT", (isDefaultBrowser(Intent.ACTION_ASSIST) ? 1 : 0));
             }
         } else if ("Updater:Launch".equals(event)) {
             handleUpdaterLaunch();
@@ -1600,6 +1581,29 @@ public class BrowserApp extends GeckoApp
                     }
                 });
 
+                if (AppConstants.MOZ_MEDIA_PLAYER) {
+                    // Check if the fragment is already added. This should never be true here, but this is
+                    // a nice safety check.
+                    // If casting is disabled, these classes aren't built. We use reflection to initialize them.
+                    final Class<?> mediaManagerClass = getMediaPlayerManager();
+
+                    if (mediaManagerClass != null) {
+                        try {
+                            final String tag = "";
+                            mediaManagerClass.getDeclaredField("MEDIA_PLAYER_TAG").get(tag);
+                            Log.i(LOGTAG, "Found tag " + tag);
+                            final Fragment frag = getSupportFragmentManager().findFragmentByTag(tag);
+                            if (frag == null) {
+                                final Method getInstance = mediaManagerClass.getMethod("newInstance", (Class[]) null);
+                                final Fragment mpm = (Fragment) getInstance.invoke(null);
+                                getSupportFragmentManager().beginTransaction().disallowAddToBackStack().add(mpm, tag).commit();
+                            }
+                        } catch (Exception ex) {
+                            Log.e(LOGTAG, "Error initializing media manager", ex);
+                        }
+                    }
+                }
+
                 if (AppConstants.MOZ_STUMBLER_BUILD_TIME_ENABLED) {
                     // Start (this acts as ping if started already) the stumbler lib; if the stumbler has queued data it will upload it.
                     // Stumbler operates on its own thread, and startup impact is further minimized by delaying work (such as upload) a few seconds.
@@ -1612,6 +1616,7 @@ public class BrowserApp extends GeckoApp
                         }
                     }, oneSecondInMillis);
                 }
+
                 super.handleMessage(event, message);
             } else if (event.equals("Gecko:Ready")) {
                 // Handle this message in GeckoApp, but also enable the Settings
@@ -3011,7 +3016,7 @@ public class BrowserApp extends GeckoApp
                         }
 
                         doRestart(args);
-                        GeckoAppShell.systemExit();
+                        GeckoAppShell.gracefulExit();
                     }
                 } catch(JSONException ex) {
                     Log.e(LOGTAG, "Exception reading guest mode prompt result", ex);
@@ -3156,18 +3161,6 @@ public class BrowserApp extends GeckoApp
                 callback.sendSuccess(url);
             }
         }).execute();
-    }
-
-    // HomePager.OnNewTabsListener
-    @Override
-    public void onNewTabs(List<String> urls) {
-        final EnumSet<OnUrlOpenListener.Flags> flags = EnumSet.of(OnUrlOpenListener.Flags.ALLOW_SWITCH_TO_TAB);
-
-        for (String url : urls) {
-            if (!maybeSwitchToTab(url, flags)) {
-                openUrlAndStopEditing(url, true);
-            }
-        }
     }
 
     // HomePager.OnUrlOpenListener

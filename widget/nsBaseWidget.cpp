@@ -43,8 +43,11 @@
 #include "mozilla/MouseEvents.h"
 #include "GLConsts.h"
 #include "mozilla/unused.h"
+#include "mozilla/VsyncDispatcher.h"
 #include "mozilla/layers/APZCTreeManager.h"
 #include "mozilla/layers/ChromeProcessController.h"
+#include "mozilla/layers/InputAPZContext.h"
+#include "mozilla/dom/TabParent.h"
 
 #ifdef ACCESSIBILITY
 #include "nsAccessibilityService.h"
@@ -111,6 +114,7 @@ nsBaseWidget::nsBaseWidget()
 : mWidgetListener(nullptr)
 , mAttachedWidgetListener(nullptr)
 , mContext(nullptr)
+, mCompositorVsyncDispatcher(nullptr)
 , mCursor(eCursor_standard)
 , mUpdateCursor(true)
 , mBorderStyle(eBorderStyle_none)
@@ -229,8 +233,12 @@ nsBaseWidget::~nsBaseWidget()
 
   NS_IF_RELEASE(mContext);
   delete mOriginalBounds;
-}
 
+  // Can have base widgets that are things like tooltips which don't have CompositorVsyncDispatchers
+  if (mCompositorVsyncDispatcher) {
+    mCompositorVsyncDispatcher->Shutdown();
+  }
+}
 
 //-------------------------------------------------------------------------
 //
@@ -934,6 +942,27 @@ void nsBaseWidget::ConfigureAPZCTreeManager()
   }
 }
 
+nsEventStatus
+nsBaseWidget::DispatchEventForAPZ(WidgetGUIEvent* aEvent,
+                                  const ScrollableLayerGuid& aGuid,
+                                  uint64_t aInputBlockId)
+{
+  InputAPZContext context(aGuid, aInputBlockId);
+
+  nsEventStatus status;
+  DispatchEvent(aEvent, status);
+
+  if (mAPZC && !context.WasRoutedToChildProcess()) {
+    // APZ did not find a dispatch-to-content region in the child process,
+    // and EventStateManager did not route the event into the child process.
+    // It's safe to communicate to APZ that the event has been processed.
+    mAPZC->SetTargetAPZC(aInputBlockId, aGuid);
+    mAPZC->ContentReceivedInputBlock(aInputBlockId, aEvent->mFlags.mDefaultPrevented);
+  }
+
+  return status;
+}
+
 void
 nsBaseWidget::GetPreferredCompositorBackends(nsTArray<LayersBackend>& aHints)
 {
@@ -942,6 +971,24 @@ nsBaseWidget::GetPreferredCompositorBackends(nsTArray<LayersBackend>& aHints)
   }
 
   aHints.AppendElement(LayersBackend::LAYERS_BASIC);
+}
+
+void nsBaseWidget::CreateCompositorVsyncDispatcher()
+{
+  if (gfxPrefs::HardwareVsyncEnabled()) {
+    // Parent directly listens to the vsync source whereas
+    // child process communicate via IPC
+    // Should be called AFTER gfxPlatform is initialized
+    if (XRE_IsParentProcess()) {
+      mCompositorVsyncDispatcher = new CompositorVsyncDispatcher();
+    }
+  }
+}
+
+CompositorVsyncDispatcher*
+nsBaseWidget::GetCompositorVsyncDispatcher()
+{
+  return mCompositorVsyncDispatcher;
 }
 
 void nsBaseWidget::CreateCompositor(int aWidth, int aHeight)
@@ -961,6 +1008,7 @@ void nsBaseWidget::CreateCompositor(int aWidth, int aHeight)
     return;
   }
 
+  CreateCompositorVsyncDispatcher();
   mCompositorParent = NewCompositorParent(aWidth, aHeight);
   MessageChannel *parentChannel = mCompositorParent->GetIPCChannel();
   nsRefPtr<ClientLayerManager> lm = new ClientLayerManager(this);

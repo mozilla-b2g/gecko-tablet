@@ -471,7 +471,8 @@ class Marionette(object):
                  emulator_binary=None, emulator_res=None, connect_to_running_emulator=False,
                  gecko_log=None, homedir=None, baseurl=None, no_window=False, logdir=None,
                  busybox=None, symbols_path=None, timeout=None, socket_timeout=360,
-                 device_serial=None, adb_path=None, process_args=None):
+                 device_serial=None, adb_path=None, process_args=None,
+                 adb_host=None, adb_port=None):
         self.host = host
         self.port = self.local_port = port
         self.bin = bin
@@ -488,8 +489,10 @@ class Marionette(object):
         self.no_window = no_window
         self._test_name = None
         self.timeout = timeout
-        self.socket_timeout=socket_timeout
+        self.socket_timeout = socket_timeout
         self.device_serial = device_serial
+        self.adb_host = adb_host
+        self.adb_port = adb_port
 
         if bin:
             port = int(self.port)
@@ -655,57 +658,63 @@ class Marionette(object):
                                  "result": result})
 
     def _handle_error(self, response):
-        if 'error' in response and isinstance(response['error'], dict):
-            status = response['error'].get('status', 500)
-            message = response['error'].get('message')
-            stacktrace = response['error'].get('stacktrace')
-            # status numbers come from
-            # http://code.google.com/p/selenium/wiki/JsonWireProtocol#Response_Status_Codes
-            if status == errors.ErrorCodes.NO_SUCH_ELEMENT:
-                raise errors.NoSuchElementException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.NO_SUCH_FRAME:
-                raise errors.NoSuchFrameException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.STALE_ELEMENT_REFERENCE:
-                raise errors.StaleElementException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.ELEMENT_NOT_VISIBLE:
-                raise errors.ElementNotVisibleException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.INVALID_ELEMENT_STATE:
-                raise errors.InvalidElementStateException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.UNKNOWN_ERROR:
-                raise errors.MarionetteException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.ELEMENT_IS_NOT_SELECTABLE:
-                raise errors.ElementNotSelectableException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.JAVASCRIPT_ERROR:
-                raise errors.JavascriptException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.XPATH_LOOKUP_ERROR:
-                raise errors.XPathLookupException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.TIMEOUT:
-                raise errors.TimeoutException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.NO_SUCH_WINDOW:
-                raise errors.NoSuchWindowException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.INVALID_COOKIE_DOMAIN:
-                raise errors.InvalidCookieDomainException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.UNABLE_TO_SET_COOKIE:
-                raise errors.UnableToSetCookieException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.NO_ALERT_OPEN:
-                raise errors.NoAlertPresentException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.SCRIPT_TIMEOUT:
-                raise errors.ScriptTimeoutException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.INVALID_SELECTOR \
-                 or status == errors.ErrorCodes.INVALID_XPATH_SELECTOR \
-                 or status == errors.ErrorCodes.INVALID_XPATH_SELECTOR_RETURN_TYPER:
-                raise errors.InvalidSelectorException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.MOVE_TARGET_OUT_OF_BOUNDS:
-                raise errors.MoveTargetOutOfBoundsException(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.FRAME_SEND_NOT_INITIALIZED_ERROR:
-                raise errors.FrameSendNotInitializedError(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.FRAME_SEND_FAILURE_ERROR:
-                raise errors.FrameSendFailureError(message=message, status=status, stacktrace=stacktrace)
-            elif status == errors.ErrorCodes.UNSUPPORTED_OPERATION:
-                raise errors.UnsupportedOperationException(message=message, status=status, stacktrace=stacktrace)
-            else:
-                raise errors.MarionetteException(message=message, status=status, stacktrace=stacktrace)
-        raise errors.MarionetteException(message=response, status=500)
+        if "error" not in response or not isinstance(response["error"], dict):
+            raise errors.MarionetteException(
+                "Malformed packet, expected key 'error' to be a dict: %s" % response)
+
+        error = response["error"]
+        status = error.get("status", 500)
+        message = error.get("message")
+        stacktrace = error.get("stacktrace")
+
+        # status numbers come from
+        # http://code.google.com/p/selenium/wiki/JsonWireProtocol#Response_Status_Codes
+        if status == errors.ErrorCodes.NO_SUCH_ELEMENT:
+            raise errors.NoSuchElementException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.NO_SUCH_FRAME:
+            raise errors.NoSuchFrameException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.STALE_ELEMENT_REFERENCE:
+            raise errors.StaleElementException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.ELEMENT_NOT_VISIBLE:
+            raise errors.ElementNotVisibleException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.ELEMENT_NOT_ACCESSIBLE:
+            raise errors.ElementNotAccessibleException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.INVALID_ELEMENT_STATE:
+            raise errors.InvalidElementStateException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.UNKNOWN_ERROR:
+            raise errors.MarionetteException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.ELEMENT_IS_NOT_SELECTABLE:
+            raise errors.ElementNotSelectableException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.JAVASCRIPT_ERROR:
+            raise errors.JavascriptException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.XPATH_LOOKUP_ERROR:
+            raise errors.XPathLookupException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.TIMEOUT:
+            raise errors.TimeoutException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.NO_SUCH_WINDOW:
+            raise errors.NoSuchWindowException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.INVALID_COOKIE_DOMAIN:
+            raise errors.InvalidCookieDomainException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.UNABLE_TO_SET_COOKIE:
+            raise errors.UnableToSetCookieException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.NO_ALERT_OPEN:
+            raise errors.NoAlertPresentException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.SCRIPT_TIMEOUT:
+            raise errors.ScriptTimeoutException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.INVALID_SELECTOR \
+             or status == errors.ErrorCodes.INVALID_XPATH_SELECTOR \
+             or status == errors.ErrorCodes.INVALID_XPATH_SELECTOR_RETURN_TYPER:
+            raise errors.InvalidSelectorException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.MOVE_TARGET_OUT_OF_BOUNDS:
+            raise errors.MoveTargetOutOfBoundsException(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.FRAME_SEND_NOT_INITIALIZED_ERROR:
+            raise errors.FrameSendNotInitializedError(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.FRAME_SEND_FAILURE_ERROR:
+            raise errors.FrameSendFailureError(message=message, status=status, stacktrace=stacktrace)
+        elif status == errors.ErrorCodes.UNSUPPORTED_OPERATION:
+            raise errors.UnsupportedOperationException(message=message, status=status, stacktrace=stacktrace)
+        else:
+            raise errors.MarionetteException(message=message, status=status, stacktrace=stacktrace)
 
     def _reset_timeouts(self):
         if self.timeout is not None:

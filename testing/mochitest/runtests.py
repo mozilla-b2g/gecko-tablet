@@ -108,10 +108,15 @@ class MessageLogger(object):
     VALID_ACTIONS = set(['suite_start', 'suite_end', 'test_start', 'test_end',
                          'test_status', 'log',
                          'buffering_on', 'buffering_off'])
+    TEST_PATH_PREFIXES = ['/tests/',
+                          'chrome://mochitests/content/browser/',
+                          'chrome://mochitests/content/chrome/']
+
 
     def __init__(self, logger, buffering=True):
         self.logger = logger
         self.buffering = buffering
+        self.restore_buffering = False
         self.tests_started = False
 
         # Message buffering
@@ -123,6 +128,16 @@ class MessageLogger(object):
     def valid_message(self, obj):
         """True if the given object is a valid structured message (only does a superficial validation)"""
         return isinstance(obj, dict) and 'action' in obj and obj['action'] in MessageLogger.VALID_ACTIONS
+
+    def _fix_test_name(self, message):
+      """Normalize a logged test path to match the relative path from the sourcedir.
+      """
+      if 'test' in message:
+        test = message['test']
+        for prefix in MessageLogger.TEST_PATH_PREFIXES:
+          if test.startswith(prefix):
+            message['test'] = test[len(prefix):]
+            break
 
     def parse_line(self, line):
         """Takes a given line of input (structured or not) and returns a list of structured messages"""
@@ -138,6 +153,7 @@ class MessageLogger(object):
                     message = dict(action='log', level='info', message=fragment, unstructured=True)
             except ValueError:
                 message = dict(action='log', level='info', message=fragment, unstructured=True)
+            self._fix_test_name(message)
             messages.append(message)
 
         return messages
@@ -160,42 +176,43 @@ class MessageLogger(object):
             unstructured = True
             message.pop('unstructured')
 
-        # Saving errors/failures to be shown at the end of the test run
-        is_error = 'expected' in message or (message['action'] == 'log' and message['message'].startswith('TEST-UNEXPECTED'))
-        if is_error:
+        # Error detection also supports "raw" errors (in log messages) because some tests
+        # manually dump 'TEST-UNEXPECTED-FAIL'.
+        if ('expected' in message or
+            (message['action'] == 'log' and message['message'].startswith('TEST-UNEXPECTED'))):
+            # Saving errors/failures to be shown at the end of the test run
             self.errors.append(message)
-
-        # If we don't do any buffering, or the tests haven't started, or the message was unstructured, it is directly logged
-        if not self.buffering or unstructured or not self.tests_started:
-            self.logger.log_raw(message)
-            return
-
-        # If a test ended, we clean the buffer
-        if message['action'] == 'test_end':
-            self.buffered_messages = []
-
-        # Buffering logic; Also supports "raw" errors (in log messages) because some tests manually dump 'TEST-UNEXPECTED-FAIL'
-        if not is_error and message['action'] not in self.BUFFERED_ACTIONS:
-            self.logger.log_raw(message)
-            return
-
-        # test_status messages buffering
-        if is_error:
+            self.restore_buffering = self.restore_buffering or self.buffering
+            self.buffering = False
             if self.buffered_messages:
                 snipped = len(self.buffered_messages) - self.BUFFERING_THRESHOLD
                 if snipped > 0:
-                  self.logger.info("<snipped {0} output lines - "
-                                   "if you need more context, please use "
-                                   "SimpleTest.requestCompleteLog() in your test>"
-                                   .format(snipped))
+                    self.logger.info("<snipped {0} output lines - "
+                                     "if you need more context, please use "
+                                     "SimpleTest.requestCompleteLog() in your test>"
+                                     .format(snipped))
                 # Dumping previously buffered messages
                 self.dump_buffered(limit=True)
 
             # Logging the error message
             self.logger.log_raw(message)
+        # If we don't do any buffering, or the tests haven't started, or the message was
+        # unstructured, it is directly logged.
+        elif any([not self.buffering,
+                  unstructured,
+                  not self.tests_started,
+                  message['action'] not in self.BUFFERED_ACTIONS]):
+            self.logger.log_raw(message)
         else:
             # Buffering the message
             self.buffered_messages.append(message)
+
+        # If a test ended, we clean the buffer
+        if message['action'] == 'test_end':
+            self.buffered_messages = []
+            if self.restore_buffering:
+                self.restore_buffering = False
+                self.buffering = True
 
     def write(self, line):
         messages = self.parse_line(line)
@@ -771,6 +788,18 @@ class MochitestUtilsMixin(object):
       dir = "file:///" + dir.replace("\\", "/")
     return dir
 
+  def writeChromeManifest(self, options):
+    manifest = os.path.join(options.profilePath, "tests.manifest")
+    with open(manifest, "w") as manifestFile:
+      # Register chrome directory.
+      chrometestDir = self.getChromeTestDir(options)
+      manifestFile.write("content mochitests %s contentaccessible=yes\n" % chrometestDir)
+
+      if options.testingModulesDir is not None:
+        manifestFile.write("resource testing-common file:///%s\n" %
+          options.testingModulesDir)
+    return manifest
+
   def addChromeToProfile(self, options):
     "Adds MochiKit chrome tests to the profile."
 
@@ -792,15 +821,7 @@ toolbar#nav-bar {
     with open(os.path.join(options.profilePath, "userChrome.css"), "a") as chromeFile:
       chromeFile.write(chrome)
 
-    manifest = os.path.join(options.profilePath, "tests.manifest")
-    with open(manifest, "w") as manifestFile:
-      # Register chrome directory.
-      chrometestDir = self.getChromeTestDir(options)
-      manifestFile.write("content mochitests %s contentaccessible=yes\n" % chrometestDir)
-
-      if options.testingModulesDir is not None:
-        manifestFile.write("resource testing-common file:///%s\n" %
-          options.testingModulesDir)
+    manifest = self.writeChromeManifest(options)
 
     # Call installChromeJar().
     if not os.path.isdir(os.path.join(SCRIPT_DIR, self.jarDir)):
@@ -1697,7 +1718,7 @@ class Mochitest(MochitestUtilsMixin):
         testsToRun = bisect.pre_test(options, testsToRun, status)
         # To inform that we are in the process of bisection, and to look for bleedthrough
         if options.bisectChunk != "default" and not bisection_log:
-            log.info("TEST-UNEXPECTED-FAIL | Bisection | Please ignore repeats and look for 'Bleedthrough' (if any) at the end of the failure list")
+            self.log.info("TEST-UNEXPECTED-FAIL | Bisection | Please ignore repeats and look for 'Bleedthrough' (if any) at the end of the failure list")
             bisection_log = 1
 
       result = self.doTests(options, onLaunch, testsToRun)
@@ -1740,6 +1761,7 @@ class Mochitest(MochitestUtilsMixin):
     options.totalChunks = None
     options.thisChunk = None
     options.chunkByDir = 0
+    result = 1 # default value, if no tests are run.
     inputTestPath = self.getTestPath(options)
     for dir in dirs:
       if inputTestPath and not inputTestPath.startswith(dir):
@@ -1786,9 +1808,11 @@ class Mochitest(MochitestUtilsMixin):
     # TODO: use mozrunner.local.debugger_arguments:
     # https://github.com/mozilla/mozbase/blob/master/mozrunner/mozrunner/local.py#L42
 
-    debuggerInfo = mozdebug.get_debugger_info(options.debugger,
-                                              options.debuggerArgs,
-                                              options.debuggerInteractive)
+    debuggerInfo = None
+    if options.debugger:
+        debuggerInfo = mozdebug.get_debugger_info(options.debugger,
+                                                  options.debuggerArgs,
+                                                  options.debuggerInteractive)
 
     if options.useTestMediaDevices:
       devices = findTestMediaDevices(self.log)

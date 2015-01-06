@@ -18,7 +18,7 @@
   // 1.1 Panel
   var PanelView = loop.panel.PanelView;
   // 1.2. Conversation Window
-  var IncomingCallView = loop.conversation.IncomingCallView;
+  var IncomingCallView = loop.conversationViews.IncomingCallView;
   var DesktopPendingConversationView = loop.conversationViews.PendingConversationView;
   var CallFailedView = loop.conversationViews.CallFailedView;
   var DesktopRoomConversationView = loop.roomViews.DesktopRoomConversationView;
@@ -704,7 +704,11 @@
   }
 
   window.addEventListener("DOMContentLoaded", function() {
-    React.renderComponent(<App />, document.body);
+    try {
+      React.renderComponent(<App />, document.body);
+    } catch(err) {
+      console.log(err);
+    }
 
     _renderComponentsInIframes();
 

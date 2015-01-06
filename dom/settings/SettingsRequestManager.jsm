@@ -17,12 +17,20 @@ Cu.import("resource://gre/modules/PermissionsTable.jsm");
 
 let DEBUG = false;
 let VERBOSE = false;
+let TRACK = false;
 
 try {
   DEBUG   =
     Services.prefs.getBoolPref("dom.mozSettings.SettingsRequestManager.debug.enabled");
   VERBOSE =
     Services.prefs.getBoolPref("dom.mozSettings.SettingsRequestManager.verbose.enabled");
+  TRACK =
+    Services.prefs.getBoolPref("dom.mozSettings.trackTasksUsage");
+} catch (ex) { }
+
+let allowForceReadOnly = false;
+try {
+  allowForceReadOnly = Services.prefs.getBoolPref("dom.mozSettings.allowForceReadOnly");
 } catch (ex) { }
 
 function debug(s) {
@@ -44,6 +52,8 @@ const kAllSettingsWritePermission      = "settings" + kSettingsWriteSuffix;
 // will be allowed depends on the exact permissions the app has.
 const kSomeSettingsReadPermission      = "settings-api" + kSettingsReadSuffix;
 const kSomeSettingsWritePermission     = "settings-api" + kSettingsWriteSuffix;
+// Time, in seconds, to consider the API is starting to jam
+const kSoftLockupDelta                 = 30;
 
 XPCOMUtils.defineLazyServiceGetter(this, "mrm",
                                    "@mozilla.org/memory-reporter-manager;1",
@@ -91,7 +101,7 @@ let SettingsPermissions = {
 };
 
 
-function SettingsLockInfo(aDB, aMsgMgr, aPrincipal, aLockID, aIsServiceLock, aWindowID) {
+function SettingsLockInfo(aDB, aMsgMgr, aPrincipal, aLockID, aIsServiceLock, aWindowID, aLockStack) {
   return {
     // ID Shared with the object on the child side
     lockID: aLockID,
@@ -99,6 +109,8 @@ function SettingsLockInfo(aDB, aMsgMgr, aPrincipal, aLockID, aIsServiceLock, aWi
     isServiceLock: aIsServiceLock,
     // Which inner window ID
     windowID: aWindowID,
+    // Where does this lock comes from
+    lockStack: aLockStack,
     // Tasks to be run once the lock is at the head of the queue
     tasks: [],
     // This is set to true once a transaction is ready to run, but is not at the
@@ -120,6 +132,12 @@ function SettingsLockInfo(aDB, aMsgMgr, aPrincipal, aLockID, aIsServiceLock, aWi
     canClear: true,
     // Lets us know if this lock has been used to clear at any point.
     hasCleared: false,
+    // forceReadOnly sets whether we want to do a read only transaction. Define
+    // true by default, and let queueTask() set this to false if we queue any
+    // "set" task. Since users of settings locks will queue all tasks before
+    // any idb transaction is created, we know we will have all needed
+    // information to set this before creating a transaction.
+    forceReadOnly: true,
     // Principal the lock was created under. We assume that the lock
     // will continue to exist under this principal for the duration of
     // its lifetime.
@@ -146,7 +164,8 @@ function SettingsLockInfo(aDB, aMsgMgr, aPrincipal, aLockID, aIsServiceLock, aWi
       // slightly slower on apps with full settings permissions, but
       // it means we don't have to do our own transaction order
       // bookkeeping.
-      if (!SettingsPermissions.hasSomeWritePermission(this.principal)) {
+      let canReadOnly = allowForceReadOnly && this.forceReadOnly;
+      if (canReadOnly || !SettingsPermissions.hasSomeWritePermission(this.principal)) {
         if (VERBOSE) debug("Making READONLY transaction for " + this.lockID);
         this._transaction = aDB._db.transaction(SETTINGSSTORE_NAME, "readonly");
       } else {
@@ -185,6 +204,11 @@ let SettingsRequestManager = {
              "Settings:CreateLock", "Settings:RegisterForMessages"],
   // Map of LockID to SettingsLockInfo objects
   lockInfo: {},
+  // Storing soft lockup detection infos
+  softLockup: {
+    lockId: null, // last lock dealt with
+    lockTs: null  // last time of dealing with
+  },
   // Queue of LockIDs. The LockID on the front of the queue is the only lock
   // that will have requests processed, all other locks will queue requests
   // until they hit the front of the queue.
@@ -195,7 +219,12 @@ let SettingsRequestManager = {
   // for message managers and check permissions on them before we send
   // settings notifications to child processes.
   observerPrincipalCache: new Map(),
-  tasksConsumed: 0,
+  totalProcessed: 0,
+  tasksConsumed: {},
+  totalSetProcessed: 0,
+  tasksSetConsumed: {},
+  totalGetProcessed: 0,
+  tasksGetConsumed: {},
 
   init: function() {
     if (VERBOSE) debug("init");
@@ -254,7 +283,11 @@ let SettingsRequestManager = {
       aData.settings = this._serializePreservingBinaries(aData.settings);
     }
 
-    this.lockInfo[aData.lockID].tasks.push({
+    if (aOperation === "set" || aOperation === "clear") {
+      lock.forceReadOnly = false;
+    }
+
+    lock.tasks.push({
       operation: aOperation,
       data: aData,
       defer: defer
@@ -634,6 +667,13 @@ let SettingsRequestManager = {
     }
     let currentTask = lock.tasks.shift();
     let promises = [];
+    if (TRACK) {
+      if (this.tasksConsumed[aLockID] === undefined) {
+        this.tasksConsumed[aLockID] = 0;
+        this.tasksGetConsumed[aLockID] = 0;
+        this.tasksSetConsumed[aLockID] = 0;
+      }
+    }
     while (currentTask) {
       if (VERBOSE) debug("Running Operation " + currentTask.operation);
       if (lock.finalizing) {
@@ -643,12 +683,23 @@ let SettingsRequestManager = {
         currentTask.defer.reject("Cannot call new task after finalizing");
       } else {
       let p;
-      this.tasksConsumed++;
+      this.totalProcessed++;
+      if (TRACK) {
+        this.tasksConsumed[aLockID]++;
+      }
       switch (currentTask.operation) {
         case "get":
+          this.totalGetProcessed++;
+          if (TRACK) {
+            this.tasksGetConsumed[aLockID]++;
+          }
           p = this.taskGet(currentTask);
           break;
         case "set":
+          this.totalSetProcessed++;
+          if (TRACK) {
+            this.tasksSetConsumed[aLockID]++;
+          }
           p = this.taskSet(currentTask);
           break;
         case "clear":
@@ -700,6 +751,7 @@ let SettingsRequestManager = {
     this.ensureConnection().then(
       function(task) {
         this.runTasks(lockID);
+        this.updateSoftLockup(lockID);
       }.bind(this), function(ret) {
         dump("-*- SettingsRequestManager: SETTINGS DATABASE ERROR: Cannot make DB connection!\n");
     });
@@ -737,23 +789,75 @@ let SettingsRequestManager = {
         continue;
       }
 
-      let path = "settings-locks/tasks/queue-length(id=" + lockId + ")";
+      let path = "settings-locks/tasks/lock(id=" + lockId + ")/";
 
-      aCallback.callback("", path,
+      aCallback.callback("", path + "alive",
                          Ci.nsIMemoryReporter.KIND_OTHER,
                          Ci.nsIMemoryReporter.UNITS_COUNT,
                          length,
-                         "Tasks queue length for this lock",
+                         "Alive tasks for this lock",
                          aData);
     }
 
     aCallback.callback("",
-                       "settings-locks/tasks/processed",
+                       "settings-locks/tasks-total/processed",
                        Ci.nsIMemoryReporter.KIND_OTHER,
                        Ci.nsIMemoryReporter.UNITS_COUNT,
-                       this.tasksConsumed,
-                       "The number of tasks that were executed.",
+                       this.totalProcessed,
+                       "The total number of tasks that were executed.",
                        aData);
+
+    aCallback.callback("",
+                       "settings-locks/tasks-total/set",
+                       Ci.nsIMemoryReporter.KIND_OTHER,
+                       Ci.nsIMemoryReporter.UNITS_COUNT,
+                       this.totalSetProcessed,
+                       "The total number of set tasks that were executed.",
+                       aData);
+
+    aCallback.callback("",
+                       "settings-locks/tasks-total/get",
+                       Ci.nsIMemoryReporter.KIND_OTHER,
+                       Ci.nsIMemoryReporter.UNITS_COUNT,
+                       this.totalGetProcessed,
+                       "The total number of get tasks that were executed.",
+                       aData);
+
+    // if TRACK is not enabled, then, no details are available
+    if (!TRACK) {
+      return;
+    }
+
+    for (let lockId of Object.keys(this.tasksConsumed)) {
+      let lock = this.lockInfo[lockId];
+      let length = 0;
+      if (lock) {
+        length = lock.tasks.length;
+      }
+
+      let path = "settings-locks/tasks/lock(id=" + lockId + ")/";
+
+      aCallback.callback("", path + "set",
+                         Ci.nsIMemoryReporter.KIND_OTHER,
+                         Ci.nsIMemoryReporter.UNITS_COUNT,
+                         this.tasksSetConsumed[lockId],
+                         "Set tasks for this lock.",
+                         aData);
+
+      aCallback.callback("", path + "get",
+                         Ci.nsIMemoryReporter.KIND_OTHER,
+                         Ci.nsIMemoryReporter.UNITS_COUNT,
+                         this.tasksGetConsumed[lockId],
+                         "Get tasks for this lock.",
+                         aData);
+
+      aCallback.callback("", path + "processed",
+                         Ci.nsIMemoryReporter.KIND_OTHER,
+                         Ci.nsIMemoryReporter.UNITS_COUNT,
+                         this.tasksConsumed[lockId],
+                         "Number of tasks that were executed.",
+                         aData);
+    }
   },
 
   sendSettingsChange: function(aKey, aValue, aIsServiceLock) {
@@ -812,20 +916,20 @@ let SettingsRequestManager = {
   removeLock: function(aLockID) {
     if (VERBOSE) debug("Removing lock " + aLockID);
     if (this.lockInfo[aLockID]) {
-    let transaction = this.lockInfo[aLockID]._transaction;
-    if (transaction) {
-      try {
-        transaction.abort();
-      } catch (e) {
-        if (e.name == "InvalidStateError") {
-          if (VERBOSE) debug("Transaction for " + aLockID + " closed already");
-        } else {
-          if (DEBUG) debug("Unexpected exception, throwing: " + e);
-          throw e;
+      let transaction = this.lockInfo[aLockID]._transaction;
+      if (transaction) {
+        try {
+          transaction.abort();
+        } catch (e) {
+          if (e.name == "InvalidStateError") {
+            if (VERBOSE) debug("Transaction for " + aLockID + " closed already");
+          } else {
+            if (DEBUG) debug("Unexpected exception, throwing: " + e);
+            throw e;
+          }
         }
       }
-    }
-    delete this.lockInfo[aLockID];
+      delete this.lockInfo[aLockID];
     }
     let index = this.settingsLockQueue.indexOf(aLockID);
     if (index > -1) {
@@ -889,6 +993,42 @@ let SettingsRequestManager = {
     }
   },
 
+  updateSoftLockup: function(aLockId) {
+    if (VERBOSE) debug("Treating lock " + aLockId + ", so updating soft lockup infos ...");
+
+    this.softLockup = {
+      lockId: aLockId,
+      lockTs: new Date()
+    };
+  },
+
+  checkSoftLockup: function() {
+    if (VERBOSE) debug("Checking for soft lockup ...");
+
+    if (this.settingsLockQueue.length === 0) {
+      if (VERBOSE) debug("Empty settings lock queue, no soft lockup ...");
+      return;
+    }
+
+    let head = this.settingsLockQueue[0];
+    if (head !== this.softLockup.lockId) {
+      if (VERBOSE) debug("Non matching head of settings lock queue, no soft lockup ...");
+      return;
+    }
+
+    let delta = (new Date() - this.softLockup.lockTs) / 1000;
+    if (delta < kSoftLockupDelta) {
+      if (VERBOSE) debug("Matching head of settings lock queue, but delta (" + delta + ") < 30 secs, no soft lockup ...");
+      return;
+    }
+
+    let msgBlocked = "Settings queue head blocked at " + head +
+                     " for " + delta + " secs, Settings API may be soft lockup. Lock from: " +
+                     this.lockInfo[head].lockStack;
+    Cu.reportError(msgBlocked);
+    if (DEBUG) debug(msgBlocked);
+  },
+
   receiveMessage: function(aMessage) {
     if (VERBOSE) debug("receiveMessage " + aMessage.name + ": " + JSON.stringify(aMessage.data));
 
@@ -914,6 +1054,7 @@ let SettingsRequestManager = {
       case "Settings:Clear":
       case "Settings:Run":
       case "Settings:Finalize":
+        this.checkSoftLockup();
         let kill_process = false;
         if (!msg.lockID) {
           Cu.reportError("Process sending request for lock that does not exist. Killing.");
@@ -967,13 +1108,19 @@ let SettingsRequestManager = {
           aMessage.target.assertPermission("lock-id-duplicate-kill");
           return;
         }
+
+        if (this.softLockup.lockId === null) {
+          this.updateSoftLockup(msg.lockID);
+        }
+
         this.settingsLockQueue.push(msg.lockID);
         this.lockInfo[msg.lockID] = SettingsLockInfo(this.settingsDB,
                                                      mm,
                                                      aMessage.principal,
                                                      msg.lockID,
                                                      msg.isServiceLock,
-                                                     msg.windowID);
+                                                     msg.windowID,
+                                                     msg.lockStack);
         break;
       case "Settings:Get":
         if (VERBOSE) debug("Received getRequest from " + msg.lockID);

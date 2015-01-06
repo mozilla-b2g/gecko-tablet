@@ -1159,6 +1159,7 @@ const std::string kBasicAudioVideoOffer =
 "a=candidate:6 2 UDP 16515070 162.222.183.171 50340 typ relay raddr 162.222.183.171 rport 50340" CRLF
 "a=candidate:0 2 UDP 2130379006 10.0.0.36 55428 typ host" CRLF
 "a=end-of-candidates" CRLF
+"a=ssrc:5150" CRLF
 "m=video 9 RTP/SAVPF 120" CRLF
 "c=IN IP6 ::1" CRLF
 "a=mid:second" CRLF
@@ -1181,6 +1182,8 @@ const std::string kBasicAudioVideoOffer =
 "a=candidate:3 1 UDP 100401151 162.222.183.171 62935 typ relay raddr 162.222.183.171 rport 62935" CRLF
 "a=candidate:3 2 UDP 100401150 162.222.183.171 61026 typ relay raddr 162.222.183.171 rport 61026" CRLF
 "a=end-of-candidates" CRLF
+"a=ssrc:1111 foo" CRLF
+"a=ssrc:1111 foo:bar" CRLF
 "m=audio 9 RTP/SAVPF 0" CRLF
 "a=mid:third" CRLF
 "a=rtpmap:0 PCMU/8000" CRLF
@@ -1327,6 +1330,29 @@ TEST_P(NewSdpTest, CheckSetup) {
       mSdp->GetMediaSection(1).GetAttributeList().GetSetup().mRole);
   ASSERT_FALSE(mSdp->GetMediaSection(2).GetAttributeList().HasAttribute(
         SdpAttribute::kSetupAttribute));
+}
+
+TEST_P(NewSdpTest, CheckSsrc)
+{
+  ParseSdp(kBasicAudioVideoOffer);
+  ASSERT_TRUE(mSdp) << "Parse failed: " << GetParseErrors();
+  ASSERT_EQ(3U, mSdp->GetMediaSectionCount()) << "Wrong number of media sections";
+
+  ASSERT_TRUE(mSdp->GetMediaSection(0).GetAttributeList().HasAttribute(
+      SdpAttribute::kSsrcAttribute));
+  auto ssrcs = mSdp->GetMediaSection(0).GetAttributeList().GetSsrc().mSsrcs;
+  ASSERT_EQ(1U, ssrcs.size());
+  ASSERT_EQ(5150U, ssrcs[0].ssrc);
+  ASSERT_EQ("", ssrcs[0].attribute);
+
+  ASSERT_TRUE(mSdp->GetMediaSection(1).GetAttributeList().HasAttribute(
+      SdpAttribute::kSsrcAttribute));
+  ssrcs = mSdp->GetMediaSection(1).GetAttributeList().GetSsrc().mSsrcs;
+  ASSERT_EQ(2U, ssrcs.size());
+  ASSERT_EQ(1111U, ssrcs[0].ssrc);
+  ASSERT_EQ("foo", ssrcs[0].attribute);
+  ASSERT_EQ(1111U, ssrcs[1].ssrc);
+  ASSERT_EQ("foo:bar", ssrcs[1].attribute);
 }
 
 TEST_P(NewSdpTest, CheckRtpmap) {
@@ -1487,7 +1513,7 @@ TEST_P(NewSdpTest, CheckFormatParameters) {
         video_format_params[0].parameters.get()));
   ASSERT_EQ((uint32_t)0x42a01e, h264_parameters->profile_level_id);
   ASSERT_EQ(0U, h264_parameters->packetization_mode);
-  ASSERT_EQ(false, h264_parameters->level_asymmetry_allowed);
+  ASSERT_FALSE(static_cast<bool>(h264_parameters->level_asymmetry_allowed));
   ASSERT_EQ(0U, h264_parameters->max_mbps);
   ASSERT_EQ(0U, h264_parameters->max_fs);
   ASSERT_EQ(0U, h264_parameters->max_cpb);
@@ -1503,7 +1529,7 @@ TEST_P(NewSdpTest, CheckFormatParameters) {
         video_format_params[1].parameters.get());
   ASSERT_EQ((uint32_t)0x42a00d, h264_parameters->profile_level_id);
   ASSERT_EQ(1U, h264_parameters->packetization_mode);
-  ASSERT_EQ(true, h264_parameters->level_asymmetry_allowed);
+  ASSERT_TRUE(static_cast<bool>(h264_parameters->level_asymmetry_allowed));
   ASSERT_EQ(42000U, h264_parameters->max_mbps);
   ASSERT_EQ(1400U, h264_parameters->max_fs);
   ASSERT_EQ(1000U, h264_parameters->max_cpb);
@@ -1782,6 +1808,7 @@ const std::string kBasicAudioVideoDataOffer =
 "a=rtcp-fb:97 nack" CRLF
 "a=rtcp-fb:97 nack pli" CRLF
 "a=rtcp-fb:97 ccm fir" CRLF
+"a=rtcp-fb:* ccm tmmbr" CRLF
 "a=setup:actpass" CRLF
 "a=rtcp-mux" CRLF
 "m=application 9 DTLS/SCTP 5000" CRLF
@@ -1868,7 +1895,7 @@ TEST_P(NewSdpTest, CheckRtcpFb) {
   auto& video_attrs = mSdp->GetMediaSection(1).GetAttributeList();
   ASSERT_TRUE(video_attrs.HasAttribute(SdpAttribute::kRtcpFbAttribute));
   auto& rtcpfbs = video_attrs.GetRtcpFb().mFeedbacks;
-  ASSERT_EQ(18U, rtcpfbs.size());
+  ASSERT_EQ(19U, rtcpfbs.size());
   CheckRtcpFb(rtcpfbs[0], "120", SdpRtcpFbAttributeList::kAck, "rpsi");
   CheckRtcpFb(rtcpfbs[1], "120", SdpRtcpFbAttributeList::kAck, "app", "foo");
   CheckRtcpFb(rtcpfbs[2], "120", SdpRtcpFbAttributeList::kNack, "");
@@ -1887,6 +1914,7 @@ TEST_P(NewSdpTest, CheckRtcpFb) {
   CheckRtcpFb(rtcpfbs[15], "97",  SdpRtcpFbAttributeList::kNack, "");
   CheckRtcpFb(rtcpfbs[16], "97",  SdpRtcpFbAttributeList::kNack, "pli");
   CheckRtcpFb(rtcpfbs[17], "97", SdpRtcpFbAttributeList::kCcm, "fir");
+  CheckRtcpFb(rtcpfbs[18], "*", SdpRtcpFbAttributeList::kCcm, "tmmbr");
 }
 
 TEST_P(NewSdpTest, CheckSctpmap) {
