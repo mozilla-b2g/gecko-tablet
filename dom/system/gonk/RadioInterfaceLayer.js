@@ -101,7 +101,8 @@ const RIL_IPC_ICCMANAGER_MSG_NAMES = [
   "RIL:ReadIccContacts",
   "RIL:UpdateIccContact",
   "RIL:RegisterIccMsg",
-  "RIL:MatchMvno"
+  "RIL:MatchMvno",
+  "RIL:GetServiceState"
 ];
 
 // set to true in ril_consts.js to see debug messages
@@ -1836,6 +1837,9 @@ RadioInterface.prototype = {
       case "RIL:MatchMvno":
         this.matchMvno(msg.target, msg.json.data);
         break;
+      case "RIL:GetServiceState":
+        this.workerMessenger.sendWithIPCMessage(msg, "getIccServiceState");
+        break;
     }
     return null;
   },
@@ -1993,20 +1997,20 @@ RadioInterface.prototype = {
   matchMvno: function(target, message) {
     if (DEBUG) this.debug("matchMvno: " + JSON.stringify(message));
 
-    if (!message || !message.mvnoType || !message.mvnoData) {
+    if (!message || !message.mvnoData) {
       message.errorMsg = RIL.GECKO_ERROR_INVALID_PARAMETER;
     }
 
     if (!message.errorMsg) {
       switch (message.mvnoType) {
-        case "imsi":
+        case RIL.GECKO_CARDMVNO_TYPE_IMSI:
           if (!this.rilContext.imsi) {
             message.errorMsg = RIL.GECKO_ERROR_GENERIC_FAILURE;
             break;
           }
           message.result = this.isImsiMatches(message.mvnoData);
           break;
-        case "spn":
+        case RIL.GECKO_CARDMVNO_TYPE_SPN:
           let spn = this.rilContext.iccInfo && this.rilContext.iccInfo.spn;
           if (!spn) {
             message.errorMsg = RIL.GECKO_ERROR_GENERIC_FAILURE;
@@ -2014,7 +2018,7 @@ RadioInterface.prototype = {
           }
           message.result = spn == message.mvnoData;
           break;
-        case "gid":
+        case RIL.GECKO_CARDMVNO_TYPE_GID:
           this.workerMessenger.send("getGID1", null, (function(response) {
             let gid = response.gid1;
             let mvnoDataLength = message.mvnoData.length;

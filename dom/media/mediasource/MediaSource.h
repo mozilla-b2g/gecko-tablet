@@ -60,6 +60,8 @@ public:
 
   void EndOfStream(const Optional<MediaSourceEndOfStreamError>& aError, ErrorResult& aRv);
   static bool IsTypeSupported(const GlobalObject&, const nsAString& aType);
+
+  static bool Enabled(JSContext* cx, JSObject* aGlobal);
   /** End WebIDL Methods. */
 
   NS_DECL_ISUPPORTS_INHERITED
@@ -111,6 +113,8 @@ private:
   // MediaSourceDecoder uses DurationChange to set the duration
   // without hitting the checks in SetDuration.
   friend class mozilla::MediaSourceDecoder;
+  // SourceBuffer uses SetDuration
+  friend class mozilla::dom::SourceBuffer;
 
   ~MediaSource();
 
@@ -124,10 +128,16 @@ private:
 
   void InitializationEvent();
 
+  // SetDuration with no checks.
+  void SetDuration(double aDuration);
+
   nsRefPtr<SourceBufferList> mSourceBuffers;
   nsRefPtr<SourceBufferList> mActiveSourceBuffers;
 
   nsRefPtr<MediaSourceDecoder> mDecoder;
+  // Ensures the media element remains alive to dispatch progress and
+  // durationchanged events.
+  nsRefPtr<HTMLMediaElement> mMediaElement;
 
   nsRefPtr<nsIPrincipal> mPrincipal;
 

@@ -18,7 +18,6 @@
 #define mozilla_imagelib_RasterImage_h_
 
 #include "Image.h"
-#include "FrameBlender.h"
 #include "nsCOMPtr.h"
 #include "imgIContainer.h"
 #include "nsIProperties.h"
@@ -159,7 +158,7 @@ public:
   // Methods inherited from Image
   nsresult Init(const char* aMimeType,
                 uint32_t aFlags) MOZ_OVERRIDE;
-  virtual nsIntRect FrameRect(uint32_t aWhichFrame) MOZ_OVERRIDE;
+
   virtual void OnSurfaceDiscarded() MOZ_OVERRIDE;
 
   // Raster-specific methods
@@ -169,7 +168,7 @@ public:
                                       uint32_t* aWriteCount);
 
   /* The total number of frames in this image. */
-  uint32_t GetNumFrames() const;
+  uint32_t GetNumFrames() const { return mFrameCount; }
 
   virtual size_t SizeOfSourceWithComputedFallback(MallocSizeOf aMallocSizeOf) const MOZ_OVERRIDE;
   virtual size_t SizeOfDecoded(gfxMemoryLocation aLocation,
@@ -178,7 +177,13 @@ public:
   /* Triggers discarding. */
   void Discard();
 
-  /* Callbacks for decoders */
+
+  //////////////////////////////////////////////////////////////////////////////
+  // Decoder callbacks.
+  //////////////////////////////////////////////////////////////////////////////
+
+  void OnAddedFrame(uint32_t aNewFrameCount, const nsIntRect& aNewRefreshArea);
+
   /** Sets the size and inherent orientation of the container. This should only
    * be called by the decoder. This function may be called multiple times, but
    * will throw an error if subsequent calls do not match the first.
@@ -186,28 +191,18 @@ public:
   nsresult SetSize(int32_t aWidth, int32_t aHeight, Orientation aOrientation);
 
   /**
-   * Ensures that a given frame number exists with the given parameters, and
-   * returns a RawAccessFrameRef for that frame.
-   * It is not possible to create sparse frame arrays; you can only append
-   * frames to the current frame array, or if there is only one frame in the
-   * array, replace that frame.
-   * If a non-paletted frame is desired, pass 0 for aPaletteDepth.
-   */
-  RawAccessFrameRef EnsureFrame(uint32_t aFrameNum,
-                                const nsIntRect& aFrameRect,
-                                uint32_t aDecodeFlags,
-                                gfx::SurfaceFormat aFormat,
-                                uint8_t aPaletteDepth,
-                                imgFrame* aPreviousFrame);
-
-  /* notification that the entire image has been decoded */
-  void DecodingComplete(imgFrame* aFinalFrame);
-
-  /**
    * Number of times to loop the image.
    * @note -1 means forever.
    */
   void     SetLoopCount(int32_t aLoopCount);
+
+  /* notification that the entire image has been decoded */
+  void DecodingComplete(imgFrame* aFinalFrame);
+
+
+  //////////////////////////////////////////////////////////////////////////////
+  // Network callbacks.
+  //////////////////////////////////////////////////////////////////////////////
 
   /* Add compressed source data to the imgContainer.
    *
@@ -228,7 +223,6 @@ public:
                                        nsISupports* aContext,
                                        nsresult aStatus,
                                        bool aLastPart) MOZ_OVERRIDE;
-  virtual nsresult OnNewSourceData() MOZ_OVERRIDE;
 
   static already_AddRefed<nsIEventTarget> GetEventTarget();
 
@@ -310,12 +304,6 @@ private:
   size_t SizeOfDecodedWithComputedFallbackIfHeap(gfxMemoryLocation aLocation,
                                                  MallocSizeOf aMallocSizeOf) const;
 
-  RawAccessFrameRef InternalAddFrame(uint32_t aFrameNum,
-                                     const nsIntRect& aFrameRect,
-                                     uint32_t aDecodeFlags,
-                                     gfx::SurfaceFormat aFormat,
-                                     uint8_t aPaletteDepth,
-                                     imgFrame* aPreviousFrame);
   nsresult DoImageDataComplete();
 
   already_AddRefed<layers::Image> GetCurrentImage();
@@ -348,14 +336,9 @@ private: // data
   // and imgIContainer::FLAG_DECODE_NO_COLORSPACE_CONVERSION.
   uint32_t                   mFrameDecodeFlags;
 
-  //! All the frames of the image.
-  Maybe<FrameBlender>       mFrameBlender;
-
-  //! The last frame we decoded for multipart images.
-  DrawableFrameRef          mMultipartDecodedFrame;
-
   nsCOMPtr<nsIProperties>   mProperties;
 
+  //! All the frames of the image.
   // IMPORTANT: if you use mAnim in a method, call EnsureImageIsDecoded() first to ensure
   // that the frames actually exist (they may have been discarded to save memory, or
   // we maybe decoding on draw).
@@ -400,6 +383,9 @@ private: // data
   DecodeStatus               mDecodeStatus;
   // END LOCKED MEMBER VARIABLES
 
+  // The number of frames this image has.
+  uint32_t                   mFrameCount;
+
   // Notification state. Used to avoid recursive notifications.
   Progress                   mNotifyProgress;
   nsIntRect                  mNotifyInvalidRect;
@@ -408,13 +394,12 @@ private: // data
   // Boolean flags (clustered together to conserve space):
   bool                       mHasSize:1;       // Has SetSize() been called?
   bool                       mDecodeOnDraw:1;  // Decoding on draw?
-  bool                       mMultipart:1;     // Multipart?
+  bool                       mTransient:1;     // Is the image short-lived?
   bool                       mDiscardable:1;   // Is container discardable?
   bool                       mHasSourceData:1; // Do we have source data?
 
   // Do we have the frames in decoded form?
   bool                       mDecoded:1;
-  bool                       mHasFirstFrame:1;
   bool                       mHasBeenDecoded:1;
 
   // Whether we're waiting to start animation. If we get a StartAnimation() call
@@ -441,8 +426,8 @@ private: // data
   nsresult WantDecodedFrames(uint32_t aFlags, bool aShouldSyncNotify);
   nsresult SyncDecode();
   nsresult InitDecoder(bool aDoSizeDecode);
-  nsresult WriteToDecoder(const char *aBuffer, uint32_t aCount, DecodeStrategy aStrategy);
-  nsresult DecodeSomeData(size_t aMaxBytes, DecodeStrategy aStrategy);
+  nsresult WriteToDecoder(const char *aBuffer, uint32_t aCount);
+  nsresult DecodeSomeData(size_t aMaxBytes);
   bool     IsDecodeFinished();
   TimeStamp mDrawStartTime;
 

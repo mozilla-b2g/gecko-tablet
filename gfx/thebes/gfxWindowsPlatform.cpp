@@ -23,6 +23,7 @@
 #include "nsIFile.h"
 #include "plbase64.h"
 #include "nsIXULRuntime.h"
+#include "imgLoader.h"
 
 #include "nsIGfxInfo.h"
 #include "GfxDriverInfo.h"
@@ -326,7 +327,6 @@ NS_IMPL_ISUPPORTS(GPUAdapterReporter, nsIMemoryReporter)
 
 gfxWindowsPlatform::gfxWindowsPlatform()
   : mD3D11DeviceInitialized(false)
-  , mPrefFonts(32)
 {
     mUseClearTypeForDownloadableFonts = UNINITIALIZED_VALUE;
     mUseClearTypeAlways = UNINITIALIZED_VALUE;
@@ -385,6 +385,17 @@ gfxWindowsPlatform::UpdateRenderMode()
 /* Pick the default render mode for
  * desktop.
  */
+    if (DidRenderingDeviceReset()) {
+      mD3D11DeviceInitialized = false;
+      mD3D11Device = nullptr;
+      mD3D11ContentDevice = nullptr;
+      mAdapter = nullptr;
+
+      imgLoader::Singleton()->ClearCache(true);
+      imgLoader::Singleton()->ClearCache(false);
+      Factory::SetDirect3D11Device(nullptr);
+    }
+
     mRenderMode = RENDER_GDI;
 
     bool isVistaOrHigher = IsVistaOrLater();
@@ -486,18 +497,14 @@ gfxWindowsPlatform::UpdateRenderMode()
     if (mRenderMode == RENDER_DIRECT2D) {
       canvasMask |= BackendTypeBit(BackendType::DIRECT2D);
       contentMask |= BackendTypeBit(BackendType::DIRECT2D);
-#ifdef USE_D2D1_1
       if (gfxPrefs::Direct2DUse1_1() && Factory::SupportsD2D1() &&
           GetD3D11ContentDevice()) {
         contentMask |= BackendTypeBit(BackendType::DIRECT2D1_1);
         canvasMask |= BackendTypeBit(BackendType::DIRECT2D1_1);
         defaultBackend = BackendType::DIRECT2D1_1;
       } else {
-#endif
         defaultBackend = BackendType::DIRECT2D;
-#ifdef USE_D2D1_1
       }
-#endif
     } else {
       canvasMask |= BackendTypeBit(BackendType::SKIA);
     }
@@ -620,13 +627,11 @@ gfxWindowsPlatform::VerifyD2DDevice(bool aAttemptForce)
         mozilla::gfx::Factory::SetDirect3D10Device(cairo_d2d_device_get_device(mD2DDevice));
     }
 
-#ifdef USE_D2D1_1
     ScopedGfxFeatureReporter reporter1_1("D2D1.1");
 
     if (Factory::SupportsD2D1()) {
       reporter1_1.SetSuccessful();
     }
-#endif
 #endif
 }
 
@@ -1042,7 +1047,22 @@ gfxWindowsPlatform::IsFontFormatSupported(nsIURI *aFontURI, uint32_t aFormatFlag
 bool
 gfxWindowsPlatform::DidRenderingDeviceReset()
 {
-  return GetD3D10Device() && GetD3D10Device()->GetDeviceRemovedReason() != S_OK;
+  if (mD3D11Device) {
+    if (mD3D11Device->GetDeviceRemovedReason() != S_OK) {
+      return true;
+    }
+  }
+  if (mD3D11ContentDevice) {
+    if (mD3D11ContentDevice->GetDeviceRemovedReason() != S_OK) {
+      return true;
+    }
+  }
+  if (GetD3D10Device()) {
+    if (GetD3D10Device()->GetDeviceRemovedReason() != S_OK) {
+      return true;
+    }
+  }
+  return false;
 }
 
 gfxFontFamily *
@@ -1096,18 +1116,6 @@ gfxWindowsPlatform::GetPlatformCMSOutputProfile(void* &mem, size_t &mem_size)
                 NS_ConvertUTF16toUTF8(str).get());
 #endif // DEBUG_tor
 #endif // _WIN32
-}
-
-bool
-gfxWindowsPlatform::GetPrefFontEntries(const nsCString& aKey, nsTArray<nsRefPtr<gfxFontEntry> > *array)
-{
-    return mPrefFonts.Get(aKey, array);
-}
-
-void
-gfxWindowsPlatform::SetPrefFontEntries(const nsCString& aKey, nsTArray<nsRefPtr<gfxFontEntry> >& array)
-{
-    mPrefFonts.Put(aKey, array);
 }
 
 bool
@@ -1838,7 +1846,6 @@ gfxWindowsPlatform::InitD3D11Devices()
 
   mD3D11Device->SetExceptionMode(0);
 
-#ifdef USE_D2D1_1
   // We create our device for D2D content drawing here. Normally we don't use
   // D2D content drawing when using WARP. However when WARP is forced by
   // default we will let Direct2D use WARP as well.
@@ -1864,7 +1871,6 @@ gfxWindowsPlatform::InitD3D11Devices()
 
     Factory::SetDirect3D11Device(mD3D11ContentDevice);
   }
-#endif
 
   // We leak these everywhere and we need them our entire runtime anyway, let's
   // leak it here as well.

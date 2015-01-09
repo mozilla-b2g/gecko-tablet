@@ -36,7 +36,6 @@ namespace gc {
 struct Cell;
 class Collector;
 class MinorCollectionTracer;
-class ForkJoinNursery;
 } /* namespace gc */
 
 namespace types {
@@ -88,7 +87,7 @@ class Nursery
      * Check whether an arbitrary pointer is within the nursery. This is
      * slower than IsInsideNursery(Cell*), but works on all types of pointers.
      */
-    MOZ_ALWAYS_INLINE bool isInside(gc::Cell *cellp) const MOZ_DELETE;
+    MOZ_ALWAYS_INLINE bool isInside(gc::Cell *cellp) const = delete;
     MOZ_ALWAYS_INLINE bool isInside(const void *p) const {
         return uintptr_t(p) >= heapStart_ && uintptr_t(p) < heapEnd_;
     }
@@ -134,8 +133,6 @@ class Nursery
 
     /* Forward a slots/elements pointer stored in an Ion frame. */
     void forwardBufferPointer(HeapSlot **pSlotsElems);
-
-    static void forwardBufferPointer(JSTracer* trc, HeapSlot **pSlotsElems);
 
     void maybeSetForwardingPointer(JSTracer *trc, void *oldData, void *newData, bool direct) {
         if (IsMinorCollectionTracer(trc) && isInside(oldData))

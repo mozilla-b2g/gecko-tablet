@@ -877,6 +877,7 @@ protected:
     bool                       mAllowKeywordFixup;
     bool                       mIsOffScreenBrowser;
     bool                       mIsActive;
+    bool                       mIsPrerendered;
     bool                       mIsAppTab;
     bool                       mUseGlobalHistory;
     bool                       mInPrivateBrowsing;
@@ -927,6 +928,11 @@ protected:
     static nsIURIFixup *sURIFixup;
 
     nsRefPtr<nsDOMNavigationTiming> mTiming;
+
+    // This flag means that mTiming has been initialized but nulled out.
+    // We will check the innerWin's timing before creating a new one
+    // in MaybeInitTiming()
+    bool                            mBlankTiming;
 
     // Are we a regular frame, a browser frame, or an app frame?
     FrameType mFrameType;

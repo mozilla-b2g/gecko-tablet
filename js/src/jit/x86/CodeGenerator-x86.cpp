@@ -6,6 +6,7 @@
 
 #include "jit/x86/CodeGenerator-x86.h"
 
+#include "mozilla/Casting.h"
 #include "mozilla/DebugOnly.h"
 
 #include "jsnum.h"
@@ -13,6 +14,7 @@
 #include "jit/IonCaches.h"
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
+#include "js/Conversions.h"
 #include "vm/Shape.h"
 
 #include "jsscriptinlines.h"
@@ -23,6 +25,7 @@
 using namespace js;
 using namespace js::jit;
 
+using mozilla::BitwiseCast;
 using mozilla::DebugOnly;
 using mozilla::FloatingPoint;
 using JS::GenericNaN;
@@ -688,53 +691,6 @@ DispatchIonCache::initializeAddCacheState(LInstruction *ins, AddCacheState *addS
     MOZ_CRASH("x86 needs manual assignment of dispatchScratch");
 }
 
-void
-GetPropertyParIC::initializeAddCacheState(LInstruction *ins, AddCacheState *addState)
-{
-    // We don't have a scratch register, but only use the temp if we needed
-    // one, it's BogusTemp otherwise.
-    MOZ_ASSERT(ins->isGetPropertyCacheV() || ins->isGetPropertyCacheT());
-    if (ins->isGetPropertyCacheV() || ins->toGetPropertyCacheT()->temp()->isBogusTemp())
-        addState->dispatchScratch = output_.scratchReg().gpr();
-    else
-        addState->dispatchScratch = ToRegister(ins->toGetPropertyCacheT()->temp());
-}
-
-void
-GetElementParIC::initializeAddCacheState(LInstruction *ins, AddCacheState *addState)
-{
-    // We don't have a scratch register, but only use the temp if we needed
-    // one, it's BogusTemp otherwise.
-    MOZ_ASSERT(ins->isGetElementCacheV() || ins->isGetElementCacheT());
-    if (ins->isGetElementCacheV() || ins->toGetElementCacheT()->temp()->isBogusTemp())
-        addState->dispatchScratch = output_.scratchReg().gpr();
-    else
-        addState->dispatchScratch = ToRegister(ins->toGetElementCacheT()->temp());
-}
-
-void
-SetPropertyParIC::initializeAddCacheState(LInstruction *ins, AddCacheState *addState)
-{
-    // We don't have an output register to reuse, so we always need a temp.
-    MOZ_ASSERT(ins->isSetPropertyCacheV() || ins->isSetPropertyCacheT());
-    if (ins->isSetPropertyCacheV())
-        addState->dispatchScratch = ToRegister(ins->toSetPropertyCacheV()->tempForDispatchCache());
-    else
-        addState->dispatchScratch = ToRegister(ins->toSetPropertyCacheT()->tempForDispatchCache());
-}
-
-void
-SetElementParIC::initializeAddCacheState(LInstruction *ins, AddCacheState *addState)
-{
-    // We don't have an output register to reuse, but luckily SetElementCache
-    // already needs a temp.
-    MOZ_ASSERT(ins->isSetElementCacheV() || ins->isSetElementCacheT());
-    if (ins->isSetElementCacheV())
-        addState->dispatchScratch = ToRegister(ins->toSetElementCacheV()->temp());
-    else
-        addState->dispatchScratch = ToRegister(ins->toSetElementCacheT()->temp());
-}
-
 namespace js {
 namespace jit {
 
@@ -880,7 +836,7 @@ CodeGeneratorX86::visitOutOfLineTruncate(OutOfLineTruncate *ool)
         if (gen->compilingAsmJS())
             masm.callWithABI(AsmJSImm_ToInt32);
         else
-            masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, js::ToInt32));
+            masm.callWithABI(BitwiseCast<void*, int32_t(*)(double)>(JS::ToInt32));
         masm.storeCallResult(output);
 
         restoreVolatile(output);
@@ -972,7 +928,7 @@ CodeGeneratorX86::visitOutOfLineTruncateFloat32(OutOfLineTruncateFloat32 *ool)
         if (gen->compilingAsmJS())
             masm.callWithABI(AsmJSImm_ToInt32);
         else
-            masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, js::ToInt32));
+            masm.callWithABI(BitwiseCast<void*, int32_t(*)(double)>(JS::ToInt32));
 
         masm.storeCallResult(output);
         masm.pop(input);

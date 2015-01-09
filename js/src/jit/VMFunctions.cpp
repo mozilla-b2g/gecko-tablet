@@ -503,7 +503,7 @@ SetProperty(JSContext *cx, HandleObject obj, HandlePropertyName name, HandleValu
     }
 
     if (MOZ_LIKELY(!obj->getOps()->setProperty)) {
-        return baseops::SetPropertyHelper<SequentialExecution>(
+        return baseops::SetPropertyHelper(
             cx, obj.as<NativeObject>(), obj.as<NativeObject>(), id,
             (op == JSOP_SETNAME || op == JSOP_STRICTSETNAME ||
              op == JSOP_SETGNAME || op == JSOP_STRICTSETGNAME)
@@ -1166,9 +1166,8 @@ SetDenseElement(JSContext *cx, HandleNativeObject obj, int32_t index, HandleValu
                 bool strict)
 {
     // This function is called from Ion code for StoreElementHole's OOL path.
-    // In this case we know the object is native, has no indexed properties
-    // and we can use setDenseElement instead of setDenseElementWithType.
-    MOZ_ASSERT(!obj->isIndexed());
+    // In this case we know the object is native and we can use setDenseElement
+    // instead of setDenseElementWithType.
 
     NativeObject::EnsureDenseResult result = NativeObject::ED_SPARSE;
     do {

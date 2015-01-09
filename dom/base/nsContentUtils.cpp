@@ -339,7 +339,7 @@ public:
   NS_DECL_ISUPPORTS
 
   NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,
-                            nsISupports* aData, bool aAnonymize)
+                            nsISupports* aData, bool aAnonymize) MOZ_OVERRIDE
   {
     // We don't measure the |EventListenerManager| objects pointed to by the
     // entries because those references are non-owning.
@@ -411,7 +411,7 @@ class CharsetDetectionObserver MOZ_FINAL : public nsICharsetDetectionObserver
 public:
   NS_DECL_ISUPPORTS
 
-  NS_IMETHOD Notify(const char *aCharset, nsDetectionConfident aConf)
+  NS_IMETHOD Notify(const char *aCharset, nsDetectionConfident aConf) MOZ_OVERRIDE
   {
     mCharset = aCharset;
     return NS_OK;
@@ -3364,12 +3364,7 @@ nsContentUtils::ReportToConsoleNonLocalized(const nsAString& aErrorText,
   if (!aLineNumber) {
     JSContext *cx = GetCurrentJSContext();
     if (cx) {
-      const char* filename;
-      uint32_t lineno;
-      if (nsJSUtils::GetCallingLocation(cx, &filename, &lineno)) {
-        spec = filename;
-        aLineNumber = lineno;
-      }
+      nsJSUtils::GetCallingLocation(cx, spec, &aLineNumber);
     }
   }
   if (spec.IsEmpty() && aURI)
@@ -3959,8 +3954,7 @@ nsContentUtils::TraverseListenerManager(nsINode *aNode,
 
   EventListenerManagerMapEntry *entry =
     static_cast<EventListenerManagerMapEntry *>
-               (PL_DHashTableOperate(&sEventListenerManagersHash, aNode,
-                                        PL_DHASH_LOOKUP));
+               (PL_DHashTableLookup(&sEventListenerManagersHash, aNode));
   if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
     CycleCollectionNoteChild(cb, entry->mListenerManager.get(),
                              "[via hash] mListenerManager");
@@ -3979,8 +3973,7 @@ nsContentUtils::GetListenerManagerForNode(nsINode *aNode)
 
   EventListenerManagerMapEntry *entry =
     static_cast<EventListenerManagerMapEntry *>
-               (PL_DHashTableOperate(&sEventListenerManagersHash, aNode,
-                                        PL_DHASH_ADD));
+               (PL_DHashTableAdd(&sEventListenerManagersHash, aNode));
 
   if (!entry) {
     return nullptr;
@@ -4011,8 +4004,7 @@ nsContentUtils::GetExistingListenerManagerForNode(const nsINode *aNode)
 
   EventListenerManagerMapEntry *entry =
     static_cast<EventListenerManagerMapEntry *>
-               (PL_DHashTableOperate(&sEventListenerManagersHash, aNode,
-                                        PL_DHASH_LOOKUP));
+               (PL_DHashTableLookup(&sEventListenerManagersHash, aNode));
   if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
     return entry->mListenerManager;
   }
@@ -4027,8 +4019,7 @@ nsContentUtils::RemoveListenerManager(nsINode *aNode)
   if (sEventListenerManagersHash.ops) {
     EventListenerManagerMapEntry *entry =
       static_cast<EventListenerManagerMapEntry *>
-                 (PL_DHashTableOperate(&sEventListenerManagersHash, aNode,
-                                          PL_DHASH_LOOKUP));
+                 (PL_DHashTableLookup(&sEventListenerManagersHash, aNode));
     if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
       nsRefPtr<EventListenerManager> listenerManager;
       listenerManager.swap(entry->mListenerManager);

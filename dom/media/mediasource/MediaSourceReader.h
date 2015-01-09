@@ -88,7 +88,7 @@ public:
   // through.
   bool UseBufferingHeuristics() MOZ_OVERRIDE { return false; }
 
-  bool IsMediaSeekable() { return true; }
+  bool IsMediaSeekable() MOZ_OVERRIDE { return true; }
 
   nsresult ReadMetadata(MediaInfo* aInfo, MetadataTags** aTags) MOZ_OVERRIDE;
   void ReadUpdatedMetadata(MediaInfo* aInfo) MOZ_OVERRIDE;
@@ -99,7 +99,8 @@ public:
   // Acquires the decoder monitor, and is thus callable on any thread.
   nsresult GetBuffered(dom::TimeRanges* aBuffered) MOZ_OVERRIDE;
 
-  already_AddRefed<SourceBufferDecoder> CreateSubDecoder(const nsACString& aType);
+  already_AddRefed<SourceBufferDecoder> CreateSubDecoder(const nsACString& aType,
+                                                         int64_t aTimestampOffset /* microseconds */);
 
   void AddTrackBuffer(TrackBuffer* aTrackBuffer);
   void RemoveTrackBuffer(TrackBuffer* aTrackBuffer);
@@ -107,7 +108,7 @@ public:
 
   nsRefPtr<ShutdownPromise> Shutdown() MOZ_OVERRIDE;
 
-  virtual void BreakCycles();
+  virtual void BreakCycles() MOZ_OVERRIDE;
 
   bool IsShutdown()
   {

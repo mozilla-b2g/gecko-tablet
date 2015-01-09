@@ -199,6 +199,7 @@ static void SetThreadPriority()
 CompositorVsyncObserver::CompositorVsyncObserver(CompositorParent* aCompositorParent, nsIWidget* aWidget)
   : mNeedsComposite(false)
   , mIsObservingVsync(false)
+  , mVsyncNotificationsSkipped(0)
   , mCompositorParent(aCompositorParent)
   , mCurrentCompositeTaskMonitor("CurrentCompositeTaskMonitor")
   , mCurrentCompositeTask(nullptr)
@@ -285,6 +286,9 @@ CompositorVsyncObserver::Composite(TimeStamp aVsyncTimestamp)
   if (mNeedsComposite && mCompositorParent) {
     mNeedsComposite = false;
     mCompositorParent->CompositeCallback(aVsyncTimestamp);
+    mVsyncNotificationsSkipped = 0;
+  } else if (mVsyncNotificationsSkipped++ > gfxPrefs::CompositorUnobserveCount()) {
+    UnobserveVsync();
   }
 
   DispatchTouchEvents(aVsyncTimestamp);
@@ -729,7 +733,7 @@ CompositorParent::NotifyShadowTreeTransaction(uint64_t aId, bool aIsFirstPaint,
       mLayerManager &&
       mLayerManager->GetRoot()) {
     AutoResolveRefLayers resolve(mCompositionManager);
-    mApzcTreeManager->UpdatePanZoomControllerTree(this, mLayerManager->GetRoot(),
+    mApzcTreeManager->UpdateHitTestingTree(this, mLayerManager->GetRoot(),
         aIsFirstPaint, aId, aPaintSequenceNumber);
 
     mLayerManager->NotifyShadowTreeTransaction();
@@ -1002,7 +1006,7 @@ CompositorParent::ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
 
   if (mApzcTreeManager && !aIsRepeatTransaction) {
     AutoResolveRefLayers resolve(mCompositionManager);
-    mApzcTreeManager->UpdatePanZoomControllerTree(this, root, aIsFirstPaint,
+    mApzcTreeManager->UpdateHitTestingTree(this, root, aIsFirstPaint,
         mRootLayerTreeID, aPaintSequenceNumber);
   }
 

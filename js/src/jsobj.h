@@ -78,10 +78,6 @@ class NormalArgumentsObject;
 class SetObject;
 class StrictArgumentsObject;
 
-namespace gc {
-class ForkJoinNursery;
-}
-
 }  /* namespace js */
 
 /*
@@ -117,7 +113,6 @@ class JSObject : public js::gc::Cell
     friend class js::GCMarker;
     friend class js::NewObjectCache;
     friend class js::Nursery;
-    friend class js::gc::ForkJoinNursery;
 
     /* Make the type object to use for LAZY_TYPE objects. */
     static js::types::TypeObject *makeLazyType(JSContext *cx, js::HandleObject obj);
@@ -573,9 +568,9 @@ class JSObject : public js::gc::Cell
                                    bool *foundp);
 
   public:
-    static bool reportReadOnly(js::ThreadSafeContext *cx, jsid id, unsigned report = JSREPORT_ERROR);
-    bool reportNotConfigurable(js::ThreadSafeContext *cx, jsid id, unsigned report = JSREPORT_ERROR);
-    bool reportNotExtensible(js::ThreadSafeContext *cx, unsigned report = JSREPORT_ERROR);
+    static bool reportReadOnly(JSContext *cx, jsid id, unsigned report = JSREPORT_ERROR);
+    bool reportNotConfigurable(JSContext *cx, jsid id, unsigned report = JSREPORT_ERROR);
+    bool reportNotExtensible(JSContext *cx, unsigned report = JSREPORT_ERROR);
 
     /*
      * Get the property with the given id, then call it as a function with the
@@ -758,9 +753,9 @@ class JSObject : public js::gc::Cell
     js::HeapPtrTypeObject *addressOfType() { return &type_; }
 
   private:
-    JSObject() MOZ_DELETE;
-    JSObject(const JSObject &other) MOZ_DELETE;
-    void operator=(const JSObject &other) MOZ_DELETE;
+    JSObject() = delete;
+    JSObject(const JSObject &other) = delete;
+    void operator=(const JSObject &other) = delete;
 };
 
 template <class U>
@@ -1101,14 +1096,14 @@ js_FindVariableScope(JSContext *cx, JSFunction **funp);
 namespace js {
 
 bool
-LookupPropertyPure(ThreadSafeContext *cx, JSObject *obj, jsid id, NativeObject **objp,
+LookupPropertyPure(ExclusiveContext *cx, JSObject *obj, jsid id, NativeObject **objp,
                    Shape **propp);
 
 bool
-GetPropertyPure(ThreadSafeContext *cx, JSObject *obj, jsid id, Value *vp);
+GetPropertyPure(ExclusiveContext *cx, JSObject *obj, jsid id, Value *vp);
 
 inline bool
-GetPropertyPure(ThreadSafeContext *cx, JSObject *obj, PropertyName *name, Value *vp)
+GetPropertyPure(ExclusiveContext *cx, JSObject *obj, PropertyName *name, Value *vp)
 {
     return GetPropertyPure(cx, obj, NameToId(name), vp);
 }
@@ -1132,7 +1127,7 @@ extern bool
 IsDelegateOfObject(JSContext *cx, HandleObject protoObj, JSObject* obj, bool *result);
 
 bool
-GetObjectElementOperationPure(ThreadSafeContext *cx, JSObject *obj, const Value &prop, Value *vp);
+GetObjectElementOperationPure(ExclusiveContext *cx, JSObject *obj, const Value &prop, Value *vp);
 
 /* Wrap boolean, number or string as Boolean, Number or String object. */
 extern JSObject *
@@ -1142,30 +1137,13 @@ PrimitiveToObject(JSContext *cx, const Value &v);
 
 namespace js {
 
-/*
- * Invokes the ES5 ToObject algorithm on vp, returning the result. If vp might
- * already be an object, use ToObject. reportCantConvert controls how null and
- * undefined errors are reported.
- */
-extern JSObject *
-ToObjectSlow(JSContext *cx, HandleValue vp, bool reportScanStack);
-
-/* For object conversion in e.g. native functions. */
-MOZ_ALWAYS_INLINE JSObject *
-ToObject(JSContext *cx, HandleValue vp)
-{
-    if (vp.isObject())
-        return &vp.toObject();
-    return ToObjectSlow(cx, vp, false);
-}
-
 /* For converting stack values to objects. */
 MOZ_ALWAYS_INLINE JSObject *
 ToObjectFromStack(JSContext *cx, HandleValue vp)
 {
     if (vp.isObject())
         return &vp.toObject();
-    return ToObjectSlow(cx, vp, true);
+    return js::ToObjectSlow(cx, vp, true);
 }
 
 template<XDRMode mode>

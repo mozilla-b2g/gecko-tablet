@@ -1728,13 +1728,13 @@ public:
 
 private:
   // Redeclare the frame-related methods from PositionTracker as private with
-  // MOZ_DELETE, to be sure (at compile time) that no client code can invoke
+  // = delete, to be sure (at compile time) that no client code can invoke
   // them. (Unlike the other PositionTracker derived classes, this class here
   // deals with FlexLines, not with individual FlexItems or frames.)
-  void EnterMargin(const nsMargin& aMargin) MOZ_DELETE;
-  void ExitMargin(const nsMargin& aMargin) MOZ_DELETE;
-  void EnterChildFrame(nscoord aChildFrameSize) MOZ_DELETE;
-  void ExitChildFrame(nscoord aChildFrameSize) MOZ_DELETE;
+  void EnterMargin(const nsMargin& aMargin) = delete;
+  void ExitMargin(const nsMargin& aMargin) = delete;
+  void EnterChildFrame(nscoord aChildFrameSize) = delete;
+  void ExitChildFrame(nscoord aChildFrameSize) = delete;
 
   nscoord  mPackingSpaceRemaining;
   uint32_t mNumPackingSpacesRemaining;
@@ -3608,6 +3608,9 @@ nsFlexContainerFrame::DoFlexLayout(nsPresContext*           aPresContext,
   containerBorderPadding.ApplySkipSides(GetSkipSides(&aReflowState));
   const nsPoint containerContentBoxOrigin(containerBorderPadding.left,
                                           containerBorderPadding.top);
+  WritingMode outerWM = aReflowState.GetWritingMode();
+  nscoord containerWidth = IsAxisHorizontal(aAxisTracker.GetMainAxis()) ?
+                             aContentBoxMainSize : contentBoxCrossSize;
 
   // FINAL REFLOW: Give each child frame another chance to reflow, now that
   // we know its final size and position.
@@ -3622,6 +3625,11 @@ nsFlexContainerFrame::DoFlexLayout(nsPresContext*           aPresContext,
       // Adjust physicalPosn to be relative to the container's border-box
       // (i.e. its frame rect), instead of the container's content-box:
       physicalPosn += containerContentBoxOrigin;
+
+      //XXX Can we calculate the logical position more directly instead
+      //    of this double conversion?
+      LogicalPoint framePos(outerWM, physicalPosn,
+                            containerWidth - item->Frame()->GetRect().width);
 
       WritingMode wm = item->Frame()->GetWritingMode();
       LogicalSize availSize = aReflowState.ComputedSize(wm);
@@ -3685,7 +3693,7 @@ nsFlexContainerFrame::DoFlexLayout(nsPresContext*           aPresContext,
       nsReflowStatus childReflowStatus;
       ReflowChild(item->Frame(), aPresContext,
                   childDesiredSize, childReflowState,
-                  physicalPosn.x, physicalPosn.y,
+                  outerWM, framePos, containerWidth,
                   0, childReflowStatus);
 
       // XXXdholbert Once we do pagination / splitting, we'll need to actually
@@ -3696,11 +3704,11 @@ nsFlexContainerFrame::DoFlexLayout(nsPresContext*           aPresContext,
                  "We gave flex item unconstrained available height, so it "
                  "should be complete");
 
-      childReflowState.ApplyRelativePositioning(&physicalPosn);
+      childReflowState.ApplyRelativePositioning(&framePos, containerWidth);
 
       FinishReflowChild(item->Frame(), aPresContext,
                         childDesiredSize, &childReflowState,
-                        physicalPosn.x, physicalPosn.y, 0);
+                        outerWM, framePos, containerWidth, 0);
 
       // If this is our first child and we haven't established a baseline for
       // the container yet (i.e. if we don't have 'align-self: baseline' on any
@@ -3712,11 +3720,10 @@ nsFlexContainerFrame::DoFlexLayout(nsPresContext*           aPresContext,
         // (We use GetNormalPosition() instead of physicalPosn because we don't
         // want relative positioning on the child to affect the baseline that we
         // read from it).
-        WritingMode wm = aReflowState.GetWritingMode();
-        flexContainerAscent =
-          item->Frame()->GetLogicalNormalPosition(wm,
-                                                  childDesiredSize.Width()).B(wm) +
-          childDesiredSize.BlockStartAscent();
+        flexContainerAscent = item->Frame()->GetLogicalNormalPosition(
+                                outerWM,
+                                childDesiredSize.Width()).B(outerWM) +
+                              childDesiredSize.BlockStartAscent();
       }
     }
   }

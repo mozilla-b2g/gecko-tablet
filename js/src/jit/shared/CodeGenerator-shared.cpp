@@ -15,7 +15,7 @@
 #include "jit/MacroAssembler.h"
 #include "jit/MIR.h"
 #include "jit/MIRGenerator.h"
-#include "jit/ParallelFunctions.h"
+#include "js/Conversions.h"
 #include "vm/TraceLogging.h"
 
 #include "jit/JitFrames-inl.h"
@@ -23,6 +23,7 @@
 using namespace js;
 using namespace js::jit;
 
+using mozilla::BitwiseCast;
 using mozilla::DebugOnly;
 
 namespace js {
@@ -491,13 +492,6 @@ CodeGeneratorShared::assignBailoutId(LSnapshot *snapshot)
     // Can we not use bailout tables at all?
     if (!deoptTable_)
         return false;
-
-    // We do not generate a bailout table for parallel code.
-    switch (gen->info().executionMode()) {
-      case SequentialExecution: break;
-      case ParallelExecution: return false;
-      default: MOZ_CRASH("No such execution mode");
-    }
 
     MOZ_ASSERT(frameClass_ != FrameSizeClass::None());
 
@@ -972,9 +966,6 @@ CodeGeneratorShared::shouldVerifyOsiPointRegs(LSafepoint *safepoint)
     if (!checkOsiPointRegisters)
         return false;
 
-    if (gen->info().executionMode() != SequentialExecution)
-        return false;
-
     if (safepoint->liveRegs().empty(true) && safepoint->liveRegs().empty(false))
         return false; // No registers to check.
 
@@ -1146,7 +1137,7 @@ CodeGeneratorShared::visitOutOfLineTruncateSlow(OutOfLineTruncateSlow *ool)
     if (gen->compilingAsmJS())
         masm.callWithABI(AsmJSImm_ToInt32);
     else
-        masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, js::ToInt32));
+        masm.callWithABI(BitwiseCast<void*, int32_t(*)(double)>(JS::ToInt32));
     masm.storeCallResult(dest);
 
 #ifndef JS_CODEGEN_ARM
@@ -1257,7 +1248,7 @@ CodeGeneratorShared::labelForBackedgeWithImplicitCheck(MBasicBlock *mir)
             } else {
                 // The interrupt check should be the first instruction in the
                 // loop header other than the initial label and move groups.
-                MOZ_ASSERT(iter->isInterruptCheck() || iter->isInterruptCheckPar());
+                MOZ_ASSERT(iter->isInterruptCheck());
                 return nullptr;
             }
         }

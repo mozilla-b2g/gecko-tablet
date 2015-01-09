@@ -588,7 +588,7 @@ class NonLocalExitScope {
     const int savedDepth;
     uint32_t openScopeIndex;
 
-    NonLocalExitScope(const NonLocalExitScope &) MOZ_DELETE;
+    NonLocalExitScope(const NonLocalExitScope &) = delete;
 
   public:
     explicit NonLocalExitScope(ExclusiveContext *cx_, BytecodeEmitter *bce_)
@@ -5386,8 +5386,8 @@ EmitFunc(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
             if (!EmitFunctionScript(cx, &bce2, pn->pn_body))
                 return false;
 
-            if (funbox->usesArguments && funbox->usesApply)
-                script->setUsesArgumentsAndApply();
+            if (funbox->usesArguments && funbox->usesApply && funbox->usesThis)
+                script->setUsesArgumentsApplyAndThis();
         }
     } else {
         MOZ_ASSERT(IsAsmJSModuleNative(fun->native()));

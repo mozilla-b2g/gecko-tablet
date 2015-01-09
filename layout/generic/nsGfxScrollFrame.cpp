@@ -87,12 +87,12 @@ BuildScrollContainerLayers()
 nsHTMLScrollFrame*
 NS_NewHTMLScrollFrame(nsIPresShell* aPresShell, nsStyleContext* aContext, bool aIsRoot)
 {
-  return new (aPresShell) nsHTMLScrollFrame(aPresShell, aContext, aIsRoot);
+  return new (aPresShell) nsHTMLScrollFrame(aContext, aIsRoot);
 }
 
 NS_IMPL_FRAMEARENA_HELPERS(nsHTMLScrollFrame)
 
-nsHTMLScrollFrame::nsHTMLScrollFrame(nsIPresShell* aShell, nsStyleContext* aContext, bool aIsRoot)
+nsHTMLScrollFrame::nsHTMLScrollFrame(nsStyleContext* aContext, bool aIsRoot)
   : nsContainerFrame(aContext),
     mHelper(ALLOW_THIS_IN_INITIALIZER_LIST(this), aIsRoot)
 {
@@ -503,8 +503,11 @@ nsHTMLScrollFrame::ReflowScrolledFrame(ScrollReflowState* aState,
   mHelper.mHasVerticalScrollbar = aAssumeVScroll;
 
   nsReflowStatus status;
+  // No need to pass a container-width to ReflowChild or
+  // FinishReflowChild, because it's only used there when positioning
+  // the frame (i.e. if NS_FRAME_NO_MOVE_FRAME isn't set)
   ReflowChild(mHelper.mScrolledFrame, presContext, *aMetrics,
-              kidReflowState, 0, 0,
+              kidReflowState, wm, LogicalPoint(wm), 0,
               NS_FRAME_NO_MOVE_FRAME, status);
 
   mHelper.mHasHorizontalScrollbar = didHaveHorizontalScrollbar;
@@ -516,7 +519,7 @@ nsHTMLScrollFrame::ReflowScrolledFrame(ScrollReflowState* aState,
   // which will usually be different from the scrollport height;
   // invalidating the difference will cause unnecessary repainting.
   FinishReflowChild(mHelper.mScrolledFrame, presContext,
-                    *aMetrics, &kidReflowState, 0, 0,
+                    *aMetrics, &kidReflowState, wm, LogicalPoint(wm), 0,
                     NS_FRAME_NO_MOVE_FRAME | NS_FRAME_NO_SIZE_VIEW);
 
   // XXX Some frames (e.g., nsPluginFrame, nsFrameFrame, nsTextFrame) don't bother
@@ -959,15 +962,15 @@ nsXULScrollFrame*
 NS_NewXULScrollFrame(nsIPresShell* aPresShell, nsStyleContext* aContext,
                      bool aIsRoot, bool aClipAllDescendants)
 {
-  return new (aPresShell) nsXULScrollFrame(aPresShell, aContext, aIsRoot,
+  return new (aPresShell) nsXULScrollFrame(aContext, aIsRoot,
                                            aClipAllDescendants);
 }
 
 NS_IMPL_FRAMEARENA_HELPERS(nsXULScrollFrame)
 
-nsXULScrollFrame::nsXULScrollFrame(nsIPresShell* aShell, nsStyleContext* aContext,
+nsXULScrollFrame::nsXULScrollFrame(nsStyleContext* aContext,
                                    bool aIsRoot, bool aClipAllDescendants)
-  : nsBoxFrame(aShell, aContext, aIsRoot),
+  : nsBoxFrame(aContext, aIsRoot),
     mHelper(ALLOW_THIS_IN_INITIALIZER_LIST(this), aIsRoot)
 {
   SetLayoutManager(nullptr);
@@ -1425,7 +1428,7 @@ public:
   {
   }
 
-  NS_INLINE_DECL_REFCOUNTING(AsyncSmoothMSDScroll)
+  NS_INLINE_DECL_REFCOUNTING(AsyncSmoothMSDScroll, MOZ_OVERRIDE)
 
   nsSize GetVelocity() {
     // In nscoords per second
@@ -1617,7 +1620,7 @@ protected:
 // The next section is observer/callback management
 // Bodies of WillRefresh and RefreshDriver contain ScrollFrameHelper specific code.
 public:
-  NS_INLINE_DECL_REFCOUNTING(AsyncScroll)
+  NS_INLINE_DECL_REFCOUNTING(AsyncScroll, MOZ_OVERRIDE)
 
   /*
    * Set a refresh observer for smooth scroll iterations (and start observing).
@@ -1892,6 +1895,7 @@ ScrollFrameHelper::ScrollFrameHelper(nsContainerFrame* aOuter,
   , mShouldBuildScrollableLayer(false)
   , mHasBeenScrolled(false)
   , mIsResolutionSet(false)
+  , mScaleToResolution(false)
 {
   if (LookAndFeel::GetInt(LookAndFeel::eIntID_UseOverlayScrollbars) != 0) {
     mScrollbarActivity = new ScrollbarActivity(do_QueryFrame(aOuter));
@@ -3261,6 +3265,16 @@ ScrollFrameHelper::SetResolution(const gfxSize& aResolution)
 {
   mResolution = aResolution;
   mIsResolutionSet = true;
+  mScaleToResolution = false;
+}
+
+void
+ScrollFrameHelper::SetResolutionAndScaleTo(const gfxSize& aResolution)
+{
+  MOZ_ASSERT(mIsRoot);  // This API should only be called on root scroll frames.
+  mResolution = aResolution;
+  mIsResolutionSet = true;
+  mScaleToResolution = true;
 }
 
 static void
@@ -5058,6 +5072,7 @@ ScrollFrameHelper::SaveState() const
   }
   state->SetScrollState(pt);
   state->SetResolution(mResolution);
+  state->SetScaleToResolution(mScaleToResolution);
   return state;
 }
 
@@ -5069,9 +5084,18 @@ ScrollFrameHelper::RestoreState(nsPresState* aState)
   mLastPos = mScrolledFrame ? GetLogicalScrollPosition() : nsPoint(0,0);
   mResolution = aState->GetResolution();
   mIsResolutionSet = true;
+  mScaleToResolution = aState->GetScaleToResolution();
+
+  // Scaling-to-resolution should only be used on root scroll frames.
+  MOZ_ASSERT(mIsRoot || !mScaleToResolution);
 
   if (mIsRoot) {
-    mOuter->PresContext()->PresShell()->SetResolution(mResolution.width, mResolution.height);
+    nsIPresShell* presShell = mOuter->PresContext()->PresShell();
+    if (mScaleToResolution) {
+      presShell->SetResolutionAndScaleTo(mResolution.width, mResolution.height);
+    } else {
+      presShell->SetResolution(mResolution.width, mResolution.height);
+    }
   }
 }
 

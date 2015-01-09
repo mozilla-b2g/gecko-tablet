@@ -1613,7 +1613,7 @@ NativePropertyHooks sWorkerNativePropertyHooks = {
 bool
 GetPropertyOnPrototype(JSContext* cx, JS::Handle<JSObject*> proxy,
                        JS::Handle<jsid> id, bool* found,
-                       JS::Value* vp)
+                       JS::MutableHandle<JS::Value> vp)
 {
   JS::Rooted<JSObject*> proto(cx);
   if (!js::GetObjectProto(cx, proxy, &proto)) {
@@ -1624,33 +1624,31 @@ GetPropertyOnPrototype(JSContext* cx, JS::Handle<JSObject*> proxy,
     return true;
   }
 
-  bool hasProp;
-  if (!JS_HasPropertyById(cx, proto, id, &hasProp)) {
+  if (!JS_HasPropertyById(cx, proto, id, found)) {
     return false;
   }
 
-  *found = hasProp;
-  if (!hasProp || !vp) {
+  if (!*found) {
     return true;
   }
 
-  JS::Rooted<JS::Value> value(cx);
-  if (!JS_ForwardGetPropertyTo(cx, proto, id, proxy, &value)) {
-    return false;
-  }
-
-  *vp = value;
-  return true;
+  return JS_ForwardGetPropertyTo(cx, proto, id, proxy, vp);
 }
 
 bool
 HasPropertyOnPrototype(JSContext* cx, JS::Handle<JSObject*> proxy,
-                       JS::Handle<jsid> id)
+                       JS::Handle<jsid> id, bool* has)
 {
-  bool found;
-  // We ignore an error from GetPropertyOnPrototype.  We pass nullptr
-  // for vp so that GetPropertyOnPrototype won't actually do a get.
-  return !GetPropertyOnPrototype(cx, proxy, id, &found, nullptr) || found;
+  JS::Rooted<JSObject*> proto(cx);
+  if (!js::GetObjectProto(cx, proxy, &proto)) {
+    return false;
+  }
+  if (!proto) {
+    *has = false;
+    return true;
+  }
+
+  return JS_HasPropertyById(cx, proto, id, has);
 }
 
 bool
@@ -1670,7 +1668,16 @@ AppendNamedPropertyIds(JSContext* cx, JS::Handle<JSObject*> proxy,
       return false;
     }
 
-    if (shadowPrototypeProperties || !HasPropertyOnPrototype(cx, proxy, id)) {
+    bool shouldAppend = shadowPrototypeProperties;
+    if (!shouldAppend) {
+      bool has;
+      if (!HasPropertyOnPrototype(cx, proxy, id, &has)) {
+        return false;
+      }
+      shouldAppend = !has;
+    }
+
+    if (shouldAppend) {
       if (!props.append(id)) {
         return false;
       }
@@ -2061,8 +2068,8 @@ ReportLenientThisUnwrappingFailure(JSContext* cx, JSObject* obj)
 }
 
 bool
-GetWindowForJSImplementedObject(JSContext* cx, JS::Handle<JSObject*> obj,
-                                nsPIDOMWindow** window)
+GetContentGlobalForJSImplementedObject(JSContext* cx, JS::Handle<JSObject*> obj,
+                                       nsIGlobalObject** globalObj)
 {
   // Be very careful to not get tricked here.
   MOZ_ASSERT(NS_IsMainThread());
@@ -2088,37 +2095,36 @@ GetWindowForJSImplementedObject(JSContext* cx, JS::Handle<JSObject*> obj,
     return false;
   }
 
-  // It's OK if we have null here: that just means the content-side
-  // object really wasn't associated with any window.
-  nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(global.GetAsSupports()));
-  win.forget(window);
+  DebugOnly<nsresult> rv = CallQueryInterface(global.GetAsSupports(), globalObj);
+  MOZ_ASSERT(NS_SUCCEEDED(rv));
+  MOZ_ASSERT(*globalObj);
   return true;
 }
 
-already_AddRefed<nsPIDOMWindow>
+already_AddRefed<nsIGlobalObject>
 ConstructJSImplementation(JSContext* aCx, const char* aContractId,
                           const GlobalObject& aGlobal,
                           JS::MutableHandle<JSObject*> aObject,
                           ErrorResult& aRv)
 {
-  // Get the window to use as a parent and for initialization.
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.GetAsSupports());
-  if (!window) {
+  // Get the global object to use as a parent and for initialization.
+  nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
+  if (!global) {
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
   }
 
-  ConstructJSImplementation(aCx, aContractId, window, aObject, aRv);
+  ConstructJSImplementation(aCx, aContractId, global, aObject, aRv);
 
   if (aRv.Failed()) {
     return nullptr;
   }
-  return window.forget();
+  return global.forget();
 }
 
 void
 ConstructJSImplementation(JSContext* aCx, const char* aContractId,
-                          nsPIDOMWindow* aWindow,
+                          nsIGlobalObject* aGlobal,
                           JS::MutableHandle<JSObject*> aObject,
                           ErrorResult& aRv)
 {
@@ -2138,12 +2144,14 @@ ConstructJSImplementation(JSContext* aCx, const char* aContractId,
       aRv.Throw(rv);
       return;
     }
-    // Initialize the object, if it implements nsIDOMGlobalPropertyInitializer.
+    // Initialize the object, if it implements nsIDOMGlobalPropertyInitializer
+    // and our global is a window.
     nsCOMPtr<nsIDOMGlobalPropertyInitializer> gpi =
       do_QueryInterface(implISupports);
+    nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal);
     if (gpi) {
       JS::Rooted<JS::Value> initReturn(aCx);
-      rv = gpi->Init(aWindow, &initReturn);
+      rv = gpi->Init(window, &initReturn);
       if (NS_FAILED(rv)) {
         aRv.Throw(rv);
         return;

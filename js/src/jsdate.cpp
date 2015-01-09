@@ -35,11 +35,11 @@
 #include "jswrapper.h"
 #include "prmjtime.h"
 
+#include "js/Conversions.h"
 #include "js/Date.h"
 #include "vm/DateTime.h"
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
-#include "vm/NumericConversions.h"
 #include "vm/String.h"
 #include "vm/StringBuffer.h"
 
@@ -54,6 +54,7 @@ using mozilla::IsNaN;
 
 using JS::AutoCheckCannotGC;
 using JS::GenericNaN;
+using JS::ToInteger;
 
 /*
  * The JS 'Date' object is patterned after the Java 'Date' object.
@@ -303,7 +304,7 @@ DayFromMonth(int month, bool isLeapYear)
 
 template<typename T>
 static inline int
-DayFromMonth(T month, bool isLeapYear) MOZ_DELETE;
+DayFromMonth(T month, bool isLeapYear) = delete;
 
 /* ES5 15.9.1.12 (out of order to accommodate DaylightSavingTA). */
 static double

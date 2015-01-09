@@ -127,8 +127,8 @@ public:
 
     virtual bool RecvMoveFocus(const bool& aForward) MOZ_OVERRIDE;
     virtual bool RecvEvent(const RemoteDOMEvent& aEvent) MOZ_OVERRIDE;
-    virtual bool RecvReplyKeyEvent(const WidgetKeyboardEvent& event);
-    virtual bool RecvDispatchAfterKeyboardEvent(const WidgetKeyboardEvent& event);
+    virtual bool RecvReplyKeyEvent(const WidgetKeyboardEvent& aEvent) MOZ_OVERRIDE;
+    virtual bool RecvDispatchAfterKeyboardEvent(const WidgetKeyboardEvent& aEvent) MOZ_OVERRIDE;
     virtual bool RecvBrowserFrameOpenWindow(PBrowserParent* aOpener,
                                             const nsString& aURL,
                                             const nsString& aName,
@@ -178,6 +178,11 @@ public:
     virtual bool RecvNotifyIMETextHint(const nsString& aText) MOZ_OVERRIDE;
     virtual bool RecvNotifyIMEMouseButtonEvent(const widget::IMENotification& aEventMessage,
                                                bool* aConsumedByIME) MOZ_OVERRIDE;
+    virtual bool RecvNotifyIMEEditorRect(const nsIntRect& aRect) MOZ_OVERRIDE;
+    virtual bool RecvNotifyIMEPositionChange(
+                   const nsIntRect& aEditoRect,
+                   const InfallibleTArray<nsIntRect>& aCompositionRects,
+                   const nsIntRect& aCaretRect) MOZ_OVERRIDE;
     virtual bool RecvEndIMEComposition(const bool& aCancel,
                                        nsString* aComposition) MOZ_OVERRIDE;
     virtual bool RecvGetInputContext(int32_t* aIMEEnabled,
@@ -197,9 +202,9 @@ public:
     virtual bool RecvSetCursor(const uint32_t& aValue, const bool& aForce) MOZ_OVERRIDE;
     virtual bool RecvSetBackgroundColor(const nscolor& aValue) MOZ_OVERRIDE;
     virtual bool RecvSetStatus(const uint32_t& aType, const nsString& aStatus) MOZ_OVERRIDE;
-    virtual bool RecvIsParentWindowMainWidgetVisible(bool* aIsVisible);
-    virtual bool RecvShowTooltip(const uint32_t& aX, const uint32_t& aY, const nsString& aTooltip);
-    virtual bool RecvHideTooltip();
+    virtual bool RecvIsParentWindowMainWidgetVisible(bool* aIsVisible) MOZ_OVERRIDE;
+    virtual bool RecvShowTooltip(const uint32_t& aX, const uint32_t& aY, const nsString& aTooltip) MOZ_OVERRIDE;
+    virtual bool RecvHideTooltip() MOZ_OVERRIDE;
     virtual bool RecvGetDPI(float* aValue) MOZ_OVERRIDE;
     virtual bool RecvGetDefaultScale(double* aValue) MOZ_OVERRIDE;
     virtual bool RecvGetWidgetNativeData(WindowsHandle* aValue) MOZ_OVERRIDE;
@@ -398,6 +403,7 @@ protected:
     InfallibleTArray<nsIntRect> mIMECompositionRects;
     uint32_t mIMECaretOffset;
     nsIntRect mIMECaretRect;
+    nsIntRect mIMEEditorRect;
 
     // The number of event series we're currently capturing.
     int32_t mEventCaptureDepth;

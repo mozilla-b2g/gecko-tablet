@@ -194,6 +194,10 @@ description > html|a {
   padding-bottom: 0; /* no padding needed in inContent prefs */
 }
 
+#tabsElement {
+  -moz-margin-end: 4px; /* add the 4px end-margin of other elements */
+}
+
 #encryptionPanel {
   margin-top: 15px;
 }
@@ -291,6 +295,11 @@ description > html|a {
 /**
  * Sync migration
  */
+#sync-migrate-upgrade-description {
+  /* description elts need a min-width to wrap correctly - bug 630864? */
+  min-width: 100px
+}
+
 #sync-migration {
   border: 1px solid rgba(0, 0, 0, 0.32);
   background-color: InfoBackground;

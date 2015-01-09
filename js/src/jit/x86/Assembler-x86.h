@@ -60,13 +60,6 @@ static MOZ_CONSTEXPR_VAR Register CallTempReg3 = ecx;
 static MOZ_CONSTEXPR_VAR Register CallTempReg4 = esi;
 static MOZ_CONSTEXPR_VAR Register CallTempReg5 = edx;
 
-// The convention used by the ForkJoinGetSlice stub. None of these can be eax
-// or edx, which the stub also needs for cmpxchg and div, respectively.
-static MOZ_CONSTEXPR_VAR Register ForkJoinGetSliceReg_cx = edi;
-static MOZ_CONSTEXPR_VAR Register ForkJoinGetSliceReg_temp0 = ebx;
-static MOZ_CONSTEXPR_VAR Register ForkJoinGetSliceReg_temp1 = ecx;
-static MOZ_CONSTEXPR_VAR Register ForkJoinGetSliceReg_output = esi;
-
 // We have no arg regs, so our NonArgRegs are just our CallTempReg*
 static MOZ_CONSTEXPR_VAR Register CallTempNonArgRegs[] = { edi, eax, ebx, ecx, esi, edx };
 static const uint32_t NumCallTempNonArgRegs =
@@ -115,16 +108,21 @@ static const uint32_t ABIStackAlignment = 16;
 #else
 static const uint32_t ABIStackAlignment = 4;
 #endif
-static const uint32_t CodeAlignment = 8;
+static const uint32_t CodeAlignment = 16;
 
 // This boolean indicates whether we support SIMD instructions flavoured for
 // this architecture or not. Rather than a method in the LIRGenerator, it is
 // here such that it is accessible from the entire codebase. Once full support
 // for SIMD is reached on all tier-1 platforms, this constant can be deleted.
 static const bool SupportsSimd = true;
-static const uint32_t SimdStackAlignment = 16;
+static const uint32_t SimdMemoryAlignment = 16;
 
-static const uint32_t AsmJSStackAlignment = SimdStackAlignment;
+static_assert(CodeAlignment % SimdMemoryAlignment == 0,
+  "Code alignment should be larger than any of the alignment which are used for "
+  "the constant sections of the code buffer.  Thus it should be larger than the "
+  "alignment for SIMD constants.");
+
+static const uint32_t AsmJSStackAlignment = SimdMemoryAlignment;
 
 struct ImmTag : public Imm32
 {

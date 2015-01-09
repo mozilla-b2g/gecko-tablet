@@ -1465,7 +1465,8 @@ StartPendingAnimationsOnSubDocuments(nsIDocument* aDocument, void* aReadyTime)
     // If paint-suppression is in effect then we haven't finished painting
     // this document yet so we shouldn't start animations
     if (!shell || !shell->IsPaintingSuppressed()) {
-      tracker->StartPendingPlayers(*static_cast<TimeStamp*>(aReadyTime));
+      const TimeStamp& readyTime = *static_cast<TimeStamp*>(aReadyTime);
+      tracker->StartPendingPlayersOnNextTick(readyTime);
     }
   }
   aDocument->EnumerateSubDocuments(StartPendingAnimationsOnSubDocuments,
@@ -1579,6 +1580,8 @@ already_AddRefed<LayerManager> nsDisplayList::PaintRoot(nsDisplayListBuilder* aB
   // Root is being scaled up by the X/Y resolution. Scale it back down.
   root->SetPostScale(1.0f/containerParameters.mXScale,
                      1.0f/containerParameters.mYScale);
+  root->SetScaleToResolution(presShell->ScaleToResolution(),
+      containerParameters.mXScale);
 
   if (gfxPrefs::LayoutUseContainersForRootFrames()) {
     bool isRoot = presContext->IsRootContentDocument();
@@ -3390,6 +3393,8 @@ nsDisplayWrapList::nsDisplayWrapList(nsDisplayListBuilder* aBuilder,
 {
   MOZ_COUNT_CTOR(nsDisplayWrapList);
 
+  mBaseVisibleRect = mVisibleRect;
+
   mList.AppendToTop(aList);
   UpdateBounds(aBuilder);
 
@@ -3437,6 +3442,8 @@ nsDisplayWrapList::nsDisplayWrapList(nsDisplayListBuilder* aBuilder,
   , mHasZIndexOverride(false)
 {
   MOZ_COUNT_CTOR(nsDisplayWrapList);
+
+  mBaseVisibleRect = mVisibleRect;
 
   mList.AppendToTop(aItem);
   UpdateBounds(aBuilder);
@@ -4153,6 +4160,8 @@ nsDisplayResolution::BuildLayer(nsDisplayListBuilder* aBuilder,
     aBuilder, aManager, containerParameters);
   layer->SetPostScale(1.0f / presShell->GetXResolution(),
                       1.0f / presShell->GetYResolution());
+  layer->AsContainerLayer()->SetScaleToResolution(
+      presShell->ScaleToResolution(), presShell->GetXResolution());
   return layer.forget();
 }
 

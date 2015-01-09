@@ -11,7 +11,6 @@
 #include "jsobj.h"
 #include "jsscript.h"
 
-#include "gc/ForkJoinNursery.h"
 #include "gc/Marking.h"
 #include "jit/BaselineDebugModeOSR.h"
 #include "jit/BaselineFrame.h"
@@ -22,7 +21,6 @@
 #include "jit/JitCompartment.h"
 #include "jit/JitSpewer.h"
 #include "jit/MacroAssembler.h"
-#include "jit/ParallelFunctions.h"
 #include "jit/PcScriptCache.h"
 #include "jit/Recover.h"
 #include "jit/Safepoints.h"
@@ -94,18 +92,16 @@ JitFrameIterator::JitFrameIterator()
     type_(JitFrame_Exit),
     returnAddressToFp_(nullptr),
     frameSize_(0),
-    mode_(SequentialExecution),
     cachedSafepointIndex_(nullptr),
     activation_(nullptr)
 {
 }
 
-JitFrameIterator::JitFrameIterator(ThreadSafeContext *cx)
+JitFrameIterator::JitFrameIterator(JSContext *cx)
   : current_(cx->perThreadData->jitTop),
     type_(JitFrame_Exit),
     returnAddressToFp_(nullptr),
     frameSize_(0),
-    mode_(cx->isForkJoinContext() ? ParallelExecution : SequentialExecution),
     cachedSafepointIndex_(nullptr),
     activation_(cx->perThreadData->activation()->asJit())
 {
@@ -121,8 +117,6 @@ JitFrameIterator::JitFrameIterator(const ActivationIterator &activations)
     type_(JitFrame_Exit),
     returnAddressToFp_(nullptr),
     frameSize_(0),
-    mode_(activations->asJit()->cx()->isForkJoinContext() ? ParallelExecution
-                                                          : SequentialExecution),
     cachedSafepointIndex_(nullptr),
     activation_(activations->asJit())
 {
@@ -152,14 +146,8 @@ JitFrameIterator::checkInvalidation(IonScript **ionScriptOut) const
     uint8_t *returnAddr = returnAddressToFp();
     // N.B. the current IonScript is not the same as the frame's
     // IonScript if the frame has since been invalidated.
-    bool invalidated;
-    if (mode_ == ParallelExecution) {
-        // Parallel execution does not have invalidating bailouts.
-        invalidated = false;
-    } else {
-        invalidated = !script->hasIonScript() ||
-            !script->ionScript()->containsReturnAddress(returnAddr);
-    }
+    bool invalidated = !script->hasIonScript() ||
+                       !script->ionScript()->containsReturnAddress(returnAddr);
     if (!invalidated)
         return false;
 
@@ -874,29 +862,6 @@ HandleException(ResumeFromException *rfe)
 }
 
 void
-HandleParallelFailure(ResumeFromException *rfe)
-{
-    parallel::Spew(parallel::SpewBailouts, "Bailing from VM reentry");
-
-    ForkJoinContext *cx = ForkJoinContext::current();
-    JitFrameIterator frameIter(cx);
-
-    // Advance to the first Ion frame so we can pull out the BailoutKind.
-    while (!frameIter.isIonJS())
-        ++frameIter;
-    SnapshotIterator snapIter(frameIter);
-
-    cx->bailoutRecord->setIonBailoutKind(snapIter.bailoutKind());
-    while (!frameIter.done())
-        ++frameIter;
-
-    rfe->kind = ResumeFromException::RESUME_ENTRY_FRAME;
-
-    MOZ_ASSERT(frameIter.done());
-    rfe->stackPointer = frameIter.fp();
-}
-
-void
 EnsureExitFrame(CommonFrameLayout *frame)
 {
     if (frame->prevType() == JitFrame_Unwound_IonJS ||
@@ -1118,7 +1083,6 @@ MarkBailoutFrame(JSTracer *trc, const JitFrameIterator &frame)
 
 }
 
-template <typename T>
 void
 UpdateIonJSFrameForMinorGC(JSTracer *trc, const JitFrameIterator &frame)
 {
@@ -1136,6 +1100,8 @@ UpdateIonJSFrameForMinorGC(JSTracer *trc, const JitFrameIterator &frame)
         ionScript = frame.ionScriptFromCalleeToken();
     }
 
+    Nursery &nursery = trc->runtime()->gc.nursery;
+
     const SafepointIndex *si = ionScript->getSafepointIndex(frame.returnAddressToFp());
     SafepointReader safepoint(ionScript, si);
 
@@ -1144,7 +1110,7 @@ UpdateIonJSFrameForMinorGC(JSTracer *trc, const JitFrameIterator &frame)
     for (GeneralRegisterBackwardIterator iter(safepoint.allGprSpills()); iter.more(); iter++) {
         --spill;
         if (slotsRegs.has(*iter))
-            T::forwardBufferPointer(trc, reinterpret_cast<HeapSlot **>(spill));
+            nursery.forwardBufferPointer(reinterpret_cast<HeapSlot **>(spill));
     }
 
     // Skip to the right place in the safepoint
@@ -1158,13 +1124,7 @@ UpdateIonJSFrameForMinorGC(JSTracer *trc, const JitFrameIterator &frame)
 
     while (safepoint.getSlotsOrElementsSlot(&slot)) {
         HeapSlot **slots = reinterpret_cast<HeapSlot **>(layout->slotRef(slot));
-#ifdef JSGC_FJGENERATIONAL
-        if (trc->callback == gc::ForkJoinNursery::MinorGCCallback) {
-            gc::ForkJoinNursery::forwardBufferPointer(trc, slots);
-            continue;
-        }
-#endif
-        trc->runtime()->gc.nursery.forwardBufferPointer(slots);
+        nursery.forwardBufferPointer(slots);
     }
 }
 
@@ -1486,29 +1446,16 @@ TopmostIonActivationCompartment(JSRuntime *rt)
     return nullptr;
 }
 
-template <typename T>
 void UpdateJitActivationsForMinorGC(PerThreadData *ptd, JSTracer *trc)
 {
-#ifdef JSGC_FJGENERATIONAL
-    MOZ_ASSERT(trc->runtime()->isHeapMinorCollecting() || trc->runtime()->isFJMinorCollecting());
-#else
     MOZ_ASSERT(trc->runtime()->isHeapMinorCollecting());
-#endif
     for (JitActivationIterator activations(ptd); !activations.done(); ++activations) {
         for (JitFrameIterator frames(activations); !frames.done(); ++frames) {
             if (frames.type() == JitFrame_IonJS)
-                UpdateIonJSFrameForMinorGC<T>(trc, frames);
+                UpdateIonJSFrameForMinorGC(trc, frames);
         }
     }
 }
-
-template
-void UpdateJitActivationsForMinorGC<Nursery>(PerThreadData *ptd, JSTracer *trc);
-
-#ifdef JSGC_FJGENERATIONAL
-template
-void UpdateJitActivationsForMinorGC<gc::ForkJoinNursery>(PerThreadData *ptd, JSTracer *trc);
-#endif
 
 void
 GetPcScript(JSContext *cx, JSScript **scriptRes, jsbytecode **pcRes)
@@ -2230,15 +2177,7 @@ JitFrameIterator::ionScriptFromCalleeToken() const
 {
     MOZ_ASSERT(isIonJS());
     MOZ_ASSERT(!checkInvalidation());
-
-    switch (mode_) {
-      case SequentialExecution:
-        return script()->ionScript();
-      case ParallelExecution:
-        return script()->parallelIonScript();
-      default:
-        MOZ_CRASH("No such execution mode");
-    }
+    return script()->ionScript();
 }
 
 const SafepointIndex *
@@ -2267,7 +2206,7 @@ JitFrameIterator::osiIndex() const
     return ionScript()->getOsiIndex(reader.osiReturnPointOffset());
 }
 
-InlineFrameIterator::InlineFrameIterator(ThreadSafeContext *cx, const JitFrameIterator *iter)
+InlineFrameIterator::InlineFrameIterator(JSContext *cx, const JitFrameIterator *iter)
   : calleeTemplate_(cx),
     calleeRVA_(),
     script_(cx)
@@ -2283,7 +2222,7 @@ InlineFrameIterator::InlineFrameIterator(JSRuntime *rt, const JitFrameIterator *
     resetOn(iter);
 }
 
-InlineFrameIterator::InlineFrameIterator(ThreadSafeContext *cx, const InlineFrameIterator *iter)
+InlineFrameIterator::InlineFrameIterator(JSContext *cx, const InlineFrameIterator *iter)
   : frame_(iter ? iter->frame_ : nullptr),
     framesRead_(0),
     frameCount_(iter ? iter->frameCount_ : UINT32_MAX),

@@ -27,7 +27,7 @@
 #include "nsSize.h"                     // for nsIntSize
 #include "gfxReusableSharedImageSurfaceWrapper.h"
 #include "nsExpirationTracker.h"        // for nsExpirationTracker
-#include "nsMathUtils.h"               // for NS_roundf
+#include "nsMathUtils.h"               // for NS_lroundf
 #include "gfx2DGlue.h"
 #include "LayersLogging.h"
 #include "UnitTransforms.h"             // for TransformTo
@@ -151,11 +151,9 @@ ComputeViewTransform(const FrameMetrics& aContentMetrics, const FrameMetrics& aC
   // but with aContentMetrics used in place of mLastContentPaintMetrics, because they
   // should be equivalent, modulo race conditions while transactions are inflight.
 
-  LayerToParentLayerScale scale(aCompositorMetrics.mPresShellResolution
-                                * aCompositorMetrics.GetAsyncZoom().scale);
   ParentLayerPoint translation = (aCompositorMetrics.GetScrollOffset() - aContentMetrics.GetScrollOffset())
                                * aCompositorMetrics.GetZoom();
-  return ViewTransform(scale, -translation);
+  return ViewTransform(aCompositorMetrics.GetAsyncZoom(), -translation);
 }
 
 bool
@@ -791,7 +789,7 @@ TileClient::GetTileDescriptor()
     // AddRef here and Release when receiving on the host side to make sure the
     // reference count doesn't go to zero before the host receives the message.
     // see TiledLayerBufferComposite::TiledLayerBufferComposite
-    mFrontLock->AddRef();
+    mFrontLock.get()->AddRef();
   }
 
   if (mFrontLock->GetType() == gfxSharedReadLock::TYPE_MEMORY) {
@@ -1191,7 +1189,7 @@ ClientTiledLayerBuffer::ValidateTile(TileClient aTile,
 
       // Mark the newly updated area as invalid in the front buffer
       aTile.mInvalidFront.Or(aTile.mInvalidFront,
-        nsIntRect(NS_roundf(drawRect.x), NS_roundf(drawRect.y),
+        nsIntRect(NS_lroundf(drawRect.x), NS_lroundf(drawRect.y),
                   drawRect.width, drawRect.height));
 
       if (mode == SurfaceMode::SURFACE_COMPONENT_ALPHA) {
@@ -1237,11 +1235,11 @@ ClientTiledLayerBuffer::ValidateTile(TileClient aTile,
                        dirtyRect->height);
     drawRect.Scale(mResolution);
 
-    gfx::IntRect copyRect(NS_roundf((dirtyRect->x - mSinglePaintBufferOffset.x) * mResolution),
-                          NS_roundf((dirtyRect->y - mSinglePaintBufferOffset.y) * mResolution),
+    gfx::IntRect copyRect(NS_lroundf((dirtyRect->x - mSinglePaintBufferOffset.x) * mResolution),
+                          NS_lroundf((dirtyRect->y - mSinglePaintBufferOffset.y) * mResolution),
                           drawRect.width,
                           drawRect.height);
-    gfx::IntPoint copyTarget(NS_roundf(drawRect.x), NS_roundf(drawRect.y));
+    gfx::IntPoint copyTarget(NS_lroundf(drawRect.x), NS_lroundf(drawRect.y));
     drawTarget->CopySurface(source, copyRect, copyTarget);
 
     // Mark the newly updated area as invalid in the front buffer
@@ -1284,8 +1282,8 @@ ClientTiledLayerBuffer::ValidateTile(TileClient aTile,
     nsIntRect(aTileOrigin.x, aTileOrigin.y,
               GetScaledTileSize().width, GetScaledTileSize().height);
   // Intersect this area with the portion that's invalid.
-  tileRegion = tileRegion.Sub(tileRegion, GetValidRegion());
-  tileRegion = tileRegion.Sub(tileRegion, aDirtyRegion); // Has now been validated
+  tileRegion.SubOut(GetValidRegion());
+  tileRegion.SubOut(aDirtyRegion); // Has now been validated
 
   backBuffer->SetWaste(tileRegion.Area() * mResolution * mResolution);
   backBuffer->Unlock();
@@ -1318,8 +1316,7 @@ ClientTiledLayerBuffer::ValidateTile(TileClient aTile,
  * (which was generated in GetTransformToAncestorsParentLayer), and
  * modifies it with the ViewTransform from the compositor side so that
  * it reflects what the compositor is actually rendering. This operation
- * basically replaces the nontransient async transform that was injected
- * in GetTransformToAncestorsParentLayer with the complete async transform.
+ * basically adds in the layer's async transform.
  * This function then returns the scroll ancestor's composition bounds,
  * transformed into the painted layer's LayerPixel coordinates, accounting
  * for the compositor state.
@@ -1329,22 +1326,8 @@ GetCompositorSideCompositionBounds(const LayerMetricsWrapper& aScrollAncestor,
                                    const Matrix4x4& aTransformToCompBounds,
                                    const ViewTransform& aAPZTransform)
 {
-  Matrix4x4 nonTransientAPZUntransform = Matrix4x4::Scaling(
-    aScrollAncestor.Metrics().mPresShellResolution,
-    aScrollAncestor.Metrics().mPresShellResolution,
-    1.f);
-  nonTransientAPZUntransform.Invert();
-
-  // Take off the last "term" of aTransformToCompBounds, which
-  // is the APZ's nontransient async transform. Replace it with
-  // the APZ's async transform (this includes the nontransient
-  // component as well).
-  Matrix4x4 transform = aTransformToCompBounds
-                      * nonTransientAPZUntransform
-                      * Matrix4x4(aAPZTransform);
-  transform.Invert();
-
-  return TransformTo<LayerPixel>(transform,
+  Matrix4x4 transform = aTransformToCompBounds * Matrix4x4(aAPZTransform);
+  return TransformTo<LayerPixel>(transform.Inverse(),
             aScrollAncestor.Metrics().mCompositionBounds);
 }
 
@@ -1506,6 +1489,11 @@ ClientTiledLayerBuffer::ComputeProgressiveUpdateRegion(const nsIntRegion& aInval
   while (true) {
     aRegionToPaint.And(aInvalidRegion, tileBounds);
     if (!aRegionToPaint.IsEmpty()) {
+      if (mResolution != 1) {
+        // Paint the entire tile for low-res. This is aimed to fixing low-res resampling
+        // and to avoid doing costly region accurate painting for a small area.
+        aRegionToPaint = tileBounds;
+      }
       break;
     }
     if (Abs(scrollDiffY) >= Abs(scrollDiffX)) {

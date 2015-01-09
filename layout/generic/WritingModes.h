@@ -562,10 +562,16 @@ public:
                            aContainerWidth);
   }
 
-  bool operator==(LogicalPoint aOther) const
+  bool operator==(const LogicalPoint& aOther) const
   {
     CHECK_WRITING_MODE(aOther.GetWritingMode());
     return mPoint == aOther.mPoint;
+  }
+
+  bool operator!=(const LogicalPoint& aOther) const
+  {
+    CHECK_WRITING_MODE(aOther.GetWritingMode());
+    return mPoint != aOther.mPoint;
   }
 
   LogicalPoint operator+(const LogicalPoint& aOther) const
@@ -628,7 +634,7 @@ private:
 #endif
 
   // We don't allow construction of a LogicalPoint with no writing mode.
-  LogicalPoint() MOZ_DELETE;
+  LogicalPoint() = delete;
 
   // Accessors that don't take or check a WritingMode value.
   // These are for internal use only; they are called by methods that have
@@ -837,7 +843,7 @@ public:
 private:
   friend class LogicalRect;
 
-  LogicalSize() MOZ_DELETE;
+  LogicalSize() = delete;
 
 #ifdef DEBUG
   WritingMode GetWritingMode() const { return mWritingMode; }
@@ -1119,7 +1125,7 @@ public:
             mMargin.right == 0 && mMargin.bottom == 0);
   }
 
-  LogicalMargin operator+(const LogicalMargin& aMargin) {
+  LogicalMargin operator+(const LogicalMargin& aMargin) const {
     CHECK_WRITING_MODE(aMargin.GetWritingMode());
     return LogicalMargin(GetWritingMode(),
                          BStart() + aMargin.BStart(),
@@ -1128,7 +1134,7 @@ public:
                          IStart() + aMargin.IStart());
   }
 
-  LogicalMargin operator-(const LogicalMargin& aMargin) {
+  LogicalMargin operator-(const LogicalMargin& aMargin) const {
     CHECK_WRITING_MODE(aMargin.GetWritingMode());
     return LogicalMargin(GetWritingMode(),
                          BStart() - aMargin.BStart(),
@@ -1140,7 +1146,7 @@ public:
 private:
   friend class LogicalRect;
 
-  LogicalMargin() MOZ_DELETE;
+  LogicalMargin() = delete;
 
 #ifdef DEBUG
   WritingMode GetWritingMode() const { return mWritingMode; }
@@ -1552,19 +1558,6 @@ public:
     }
   }
 
-  nsPoint GetPhysicalPosition(WritingMode aWritingMode,
-                              nscoord aContainerWidth) const
-  {
-    CHECK_WRITING_MODE(aWritingMode);
-    if (aWritingMode.IsVertical()) {
-      return nsPoint(aWritingMode.IsVerticalLR() ? BStart() : aContainerWidth - BEnd(),
-                     IStart());
-    } else {
-      return nsPoint(aWritingMode.IsBidiLTR() ? IStart() : aContainerWidth - IEnd(),
-                     BStart());
-    }
-  }
-
   /**
    * Return a LogicalRect representing this rect in a different writing mode
    */
@@ -1578,7 +1571,7 @@ public:
   }
 
 private:
-  LogicalRect() MOZ_DELETE;
+  LogicalRect() = delete;
 
 #ifdef DEBUG
   WritingMode GetWritingMode() const { return mWritingMode; }

@@ -1069,7 +1069,7 @@ TypeAnalyzer::adjustPhiInputs(MPhi *phi)
             // the original box.
             phi->replaceOperand(i, in->toUnbox()->input());
         } else {
-            MDefinition *box = BoxInputsPolicy::alwaysBoxAt(alloc(), in->block()->lastIns(), in);
+            MDefinition *box = AlwaysBoxAt(alloc(), in->block()->lastIns(), in);
             phi->replaceOperand(i, box);
         }
     }
@@ -2065,7 +2065,6 @@ IsResumableMIRType(MIRType type)
       case MIRType_Pointer:
       case MIRType_Shape:
       case MIRType_TypeObject:
-      case MIRType_ForkJoinContext:
       case MIRType_Float32x4:
       case MIRType_Int32x4:
       case MIRType_Doublex2:

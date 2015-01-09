@@ -74,6 +74,15 @@ NfcCallback.prototype = {
     resolver.resolve(aRecords);
   },
 
+  notifySuccessWithByteArray: function notifySuccessWithByteArray(aArray) {
+    let resolver = this.takePromiseResolver(atob(this._requestId));
+    if (!resolver) {
+      debug("can not find promise resolver for id: " + this._requestId);
+      return;
+    }
+    resolver.resolve(aArray);
+  },
+
   notifyError: function notifyError(aErrorMsg) {
     let resolver = this.takePromiseResolver(atob(this._requestId));
     if (!resolver) {
@@ -192,6 +201,20 @@ MozNFCTagImpl.prototype = {
     return callback.promise;
   },
 
+  transceive: function transceive(tech, cmd) {
+    if (this.isLost) {
+      throw new this._window.DOMError("InvalidStateError", "NFCTag object is invalid");
+    }
+
+    let callback = new NfcCallback(this._window);
+    this._nfcContentHelper.transceive(this.session, tech, cmd, callback);
+    return callback.promise;
+  },
+
+  notifyLost: function notifyLost() {
+    this.isLost = true;
+  },
+
   classID: Components.ID("{4e1e2e90-3137-11e3-aa6e-0800200c9a66}"),
   contractID: "@mozilla.org/nfc/tag;1",
   QueryInterface: XPCOMUtils.generateQI([Ci.nsISupports,
@@ -242,6 +265,10 @@ MozNFCPeerImpl.prototype = {
     this._nfcContentHelper.sendFile(Cu.cloneInto(data, this._window),
                                     this.session, callback);
     return callback.promise;
+  },
+
+  notifyLost: function notifyLost() {
+    this.isLost = true;
   },
 
   classID: Components.ID("{c1b2bcf0-35eb-11e3-aa6e-0800200c9a66}"),
@@ -432,7 +459,7 @@ MozNFCImpl.prototype = {
         this, /* useCapture */false);
     }
 
-    this.nfcTag.isLost = true;
+    this.nfcTag.notifyLost();
     this.nfcTag = null;
 
     debug("fire ontaglost " + sessionToken);
@@ -491,7 +518,7 @@ MozNFCImpl.prototype = {
         this, /* useCapture */false);
     }
 
-    this.nfcPeer.isLost = true;
+    this.nfcPeer.notifyLost();
     this.nfcPeer = null;
 
     debug("fire onpeerlost");

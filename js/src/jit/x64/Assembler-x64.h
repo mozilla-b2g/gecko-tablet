@@ -134,13 +134,6 @@ static MOZ_CONSTEXPR_VAR uint32_t NumFloatArgRegs = 8;
 static MOZ_CONSTEXPR_VAR FloatRegister FloatArgRegs[NumFloatArgRegs] = { xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7 };
 #endif
 
-// The convention used by the ForkJoinGetSlice stub. None of these can be rax
-// or rdx, which the stub also needs for cmpxchg and div, respectively.
-static MOZ_CONSTEXPR_VAR Register ForkJoinGetSliceReg_cx = rdi;
-static MOZ_CONSTEXPR_VAR Register ForkJoinGetSliceReg_temp0 = rbx;
-static MOZ_CONSTEXPR_VAR Register ForkJoinGetSliceReg_temp1 = rcx;
-static MOZ_CONSTEXPR_VAR Register ForkJoinGetSliceReg_output = rsi;
-
 // Registers used in the GenerateFFIIonExit Enable Activation block.
 static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegCallee = r10;
 static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegE0 = rax;
@@ -185,16 +178,21 @@ static MOZ_CONSTEXPR_VAR Register OsrFrameReg = IntArgReg3;
 static MOZ_CONSTEXPR_VAR Register PreBarrierReg = rdx;
 
 static const uint32_t ABIStackAlignment = 16;
-static const uint32_t CodeAlignment = 8;
+static const uint32_t CodeAlignment = 16;
 
 // This boolean indicates whether we support SIMD instructions flavoured for
 // this architecture or not. Rather than a method in the LIRGenerator, it is
 // here such that it is accessible from the entire codebase. Once full support
 // for SIMD is reached on all tier-1 platforms, this constant can be deleted.
 static const bool SupportsSimd = true;
-static const uint32_t SimdStackAlignment = 16;
+static const uint32_t SimdMemoryAlignment = 16;
 
-static const uint32_t AsmJSStackAlignment = SimdStackAlignment;
+static_assert(CodeAlignment % SimdMemoryAlignment == 0,
+  "Code alignment should be larger than any of the alignment which are used for "
+  "the constant sections of the code buffer.  Thus it should be larger than the "
+  "alignment for SIMD constants.");
+
+static const uint32_t AsmJSStackAlignment = SimdMemoryAlignment;
 
 static const Scale ScalePointer = TimesEight;
 

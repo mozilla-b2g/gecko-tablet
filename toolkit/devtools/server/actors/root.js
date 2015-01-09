@@ -10,15 +10,11 @@ const { Cc, Ci, Cu } = require("chrome");
 const Services = require("Services");
 const { ActorPool, appendExtraActors, createExtraActors } = require("devtools/server/actors/common");
 const { DebuggerServer } = require("devtools/server/main");
-const { dumpProtocolSpec } = require("devtools/server/protocol");
 const makeDebugger = require("./utils/make-debugger");
-const DevToolsUtils = require("devtools/toolkit/DevToolsUtils");
 
-DevToolsUtils.defineLazyGetter(this, "StyleSheetActor", () => {
-  return require("devtools/server/actors/stylesheets").StyleSheetActor;
-});
+loader.lazyRequireGetter(this, "StyleSheetActor", "devtools/server/actors/stylesheets", true);
 
-DevToolsUtils.defineLazyGetter(this, "ppmm", () => {
+loader.lazyGetter(this, "ppmm", () => {
   return Cc["@mozilla.org/parentprocessmessagemanager;1"].getService(Ci.nsIMessageBroadcaster);
 });
 
@@ -158,8 +154,6 @@ RootActor.prototype = {
     addNewRule: true,
     // Whether the dom node actor implements the getUniqueSelector method
     getUniqueSelector: true,
-    // Whether the director scripts are supported
-    directorScripts: true,
     // Whether the debugger server supports
     // blackboxing/pretty-printing (not supported in Fever Dream yet)
     noBlackBoxing: false,
@@ -404,7 +398,9 @@ RootActor.prototype = {
     return Cu.cloneInto(aRequest, {});
   },
 
-  onProtocolDescription: dumpProtocolSpec,
+  onProtocolDescription: function () {
+    return require("devtools/server/protocol").dumpProtocolSpec();
+  },
 
   /* Support for DebuggerServer.addGlobalActor. */
   _createExtraActors: createExtraActors,

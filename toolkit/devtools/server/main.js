@@ -33,7 +33,6 @@ this.Cc = Cc;
 this.CC = CC;
 this.Cu = Cu;
 this.Cr = Cr;
-this.Debugger = Debugger;
 this.Services = Services;
 this.ActorPool = ActorPool;
 this.DevToolsUtils = DevToolsUtils;
@@ -76,7 +75,8 @@ function loadSubScript(aURL)
   }
 }
 
-let events = require("sdk/event/core");
+loader.lazyRequireGetter(this, "events", "sdk/event/core");
+
 let {defer, resolve, reject, all} = require("devtools/toolkit/deprecated-sync-thenables");
 this.defer = defer;
 this.resolve = resolve;
@@ -176,7 +176,7 @@ var DebuggerServer = {
     this._initialized = true;
   },
 
-  protocol: require("devtools/server/protocol"),
+  get protocol() require("devtools/server/protocol"),
 
   /**
    * Initialize the debugger server's transport variables.  This can be
@@ -389,11 +389,6 @@ var DebuggerServer = {
       constructor: "DeviceActor",
       type: { global: true }
     });
-    this.registerModule("devtools/server/actors/director-registry", {
-      prefix: "directorRegistry",
-      constructor: "DirectorRegistryActor",
-      type: { global: true }
-    });
   },
 
   /**
@@ -508,11 +503,6 @@ var DebuggerServer = {
       prefix: "timeline",
       constructor: "TimelineActor",
       type: { global: true, tab: true }
-    });
-    this.registerModule("devtools/server/actors/director-manager", {
-      prefix: "directorManager",
-      constructor: "DirectorManagerActor",
-      type: { global: false, tab: true }
     });
     if ("nsIProfiler" in Ci) {
       this.registerModule("devtools/server/actors/profiler", {
@@ -741,6 +731,31 @@ var DebuggerServer = {
   get isInChildProcess() !!this.parentMessageManager,
 
   /**
+   * In a chrome parent process, ask all content child processes
+   * to execute a given module setup helper.
+   *
+   * @param module
+   *        The module to be required
+   * @param setupChild
+   *        The name of the setup helper exported by the above module
+   *        (setup helper signature: function ({mm}) { ... })
+   */
+  setupInChild: function({ module, setupChild, args }) {
+    if (this.isInChildProcess) {
+      return;
+    }
+
+    const gMessageManager = Cc["@mozilla.org/globalmessagemanager;1"].
+      getService(Ci.nsIMessageListenerManager);
+
+    gMessageManager.broadcastAsyncMessage("debug:setup-in-child", {
+      module: module,
+      setupChild: setupChild,
+      args: args,
+    });
+  },
+
+  /**
    * In a content child process, ask the DebuggerServer in the parent process
    * to execute a given module setup helper.
    *
@@ -838,6 +853,8 @@ var DebuggerServer = {
 
       let { NetworkMonitorManager } = require("devtools/toolkit/webconsole/network-monitor");
       netMonitor = new NetworkMonitorManager(aFrame, actor.actor);
+
+      events.emit(DebuggerServer, "new-child-process", { mm: mm });
 
       deferred.resolve(actor);
     }).bind(this);

@@ -20,7 +20,7 @@
 #ifdef MOZ_WIDGET_GONK
 #include "GrallocImages.h"
 #endif
-#if defined(MOZ_WIDGET_GONK) && defined(MOZ_B2G_CAMERA)
+#if defined(MOZ_WIDGET_GONK) && defined(MOZ_B2G_CAMERA) && defined(MOZ_WEBRTC)
 #include "GonkCameraImage.h"
 #endif
 #include "gfx2DGlue.h"
@@ -64,7 +64,7 @@ ImageFactory::CreateImage(ImageFormat aFormat,
     return img.forget();
   }
 #endif
-#if defined(MOZ_WIDGET_GONK) && defined(MOZ_B2G_CAMERA)
+#if defined(MOZ_WIDGET_GONK) && defined(MOZ_B2G_CAMERA) && defined(MOZ_WEBRTC)
   if (aFormat == ImageFormat::GONK_CAMERA_IMAGE) {
     img = new GonkCameraImage();
     return img.forget();
@@ -282,8 +282,8 @@ ImageContainer::LockCurrentAsSourceSurface(gfx::IntSize *aSize, Image** aCurrent
   ReentrantMonitorAutoEnter mon(mReentrantMonitor);
 
   if (aCurrentImage) {
-    NS_IF_ADDREF(mActiveImage);
-    *aCurrentImage = mActiveImage.get();
+    nsRefPtr<Image> activeImage(mActiveImage);
+    activeImage.forget(aCurrentImage);
   }
 
   if (!mActiveImage) {

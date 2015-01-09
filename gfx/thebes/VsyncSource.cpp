@@ -7,6 +7,7 @@
 #include "gfxPlatform.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/VsyncDispatcher.h"
+#include "MainThreadUtils.h"
 
 using namespace mozilla;
 using namespace mozilla::gfx;
@@ -34,7 +35,7 @@ VsyncSource::FindDisplay(CompositorVsyncDispatcher* aCompositorVsyncDispatcher)
 void
 VsyncSource::Display::NotifyVsync(TimeStamp aVsyncTimestamp)
 {
-  // Called on the hardware vsync thread
+  // Called on the vsync thread
   for (size_t i = 0; i < mCompositorVsyncDispatchers.Length(); i++) {
     mCompositorVsyncDispatchers[i]->NotifyVsync(aVsyncTimestamp);
   }

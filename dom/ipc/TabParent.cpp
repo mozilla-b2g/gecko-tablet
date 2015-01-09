@@ -1489,6 +1489,36 @@ TabParent::RecvNotifyIMEMouseButtonEvent(
 }
 
 bool
+TabParent::RecvNotifyIMEEditorRect(const nsIntRect& aRect)
+{
+  mIMEEditorRect = aRect;
+  return true;
+}
+
+bool
+TabParent::RecvNotifyIMEPositionChange(
+             const nsIntRect& aEditorRect,
+             const InfallibleTArray<nsIntRect>& aCompositionRects,
+             const nsIntRect& aCaretRect)
+{
+  mIMEEditorRect = aEditorRect;
+  mIMECompositionRects = aCompositionRects;
+  mIMECaretRect = aCaretRect;
+
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (!widget) {
+    return true;
+  }
+
+  const nsIMEUpdatePreference updatePreference =
+    widget->GetIMEUpdatePreference();
+  if (updatePreference.WantPositionChanged()) {
+    widget->NotifyIME(IMENotification(NOTIFY_IME_OF_POSITION_CHANGE));
+  }
+  return true;
+}
+
+bool
 TabParent::RecvRequestFocus(const bool& aCanRaise)
 {
   nsCOMPtr<nsIFocusManager> fm = nsFocusManager::GetFocusManager();
@@ -1633,6 +1663,8 @@ TabParent::RecvDispatchAfterKeyboardEvent(const WidgetKeyboardEvent& aEvent)
  *   Cocoa widget always queries selected offset, so it works on it.
  *
  * For NS_QUERY_CARET_RECT, fail if cached offset isn't equals to input
+ *
+ * For NS_QUERY_EDITOR_RECT, always success
  */
 bool
 TabParent::HandleQueryContentEvent(WidgetQueryContentEvent& aEvent)
@@ -1714,6 +1746,12 @@ TabParent::HandleQueryContentEvent(WidgetQueryContentEvent& aEvent)
 
       aEvent.mReply.mOffset = mIMECaretOffset;
       aEvent.mReply.mRect = mIMECaretRect - GetChildProcessOffset();
+      aEvent.mSucceeded = true;
+    }
+    break;
+  case NS_QUERY_EDITOR_RECT:
+    {
+      aEvent.mReply.mRect = mIMEEditorRect - GetChildProcessOffset();
       aEvent.mSucceeded = true;
     }
     break;
@@ -2373,7 +2411,7 @@ public:
   }
 
   NS_DECL_ISUPPORTS
-#define NO_IMPL { return NS_ERROR_NOT_IMPLEMENTED; }
+#define NO_IMPL MOZ_OVERRIDE { return NS_ERROR_NOT_IMPLEMENTED; }
   NS_IMETHOD GetName(nsACString&) NO_IMPL
   NS_IMETHOD IsPending(bool*) NO_IMPL
   NS_IMETHOD GetStatus(nsresult*) NO_IMPL
@@ -2386,7 +2424,7 @@ public:
   NS_IMETHOD GetLoadFlags(nsLoadFlags*) NO_IMPL
   NS_IMETHOD GetOriginalURI(nsIURI**) NO_IMPL
   NS_IMETHOD SetOriginalURI(nsIURI*) NO_IMPL
-  NS_IMETHOD GetURI(nsIURI** aUri)
+  NS_IMETHOD GetURI(nsIURI** aUri) MOZ_OVERRIDE
   {
     NS_IF_ADDREF(mUri);
     *aUri = mUri;
@@ -2394,17 +2432,17 @@ public:
   }
   NS_IMETHOD GetOwner(nsISupports**) NO_IMPL
   NS_IMETHOD SetOwner(nsISupports*) NO_IMPL
-  NS_IMETHOD GetLoadInfo(nsILoadInfo** aLoadInfo)
+  NS_IMETHOD GetLoadInfo(nsILoadInfo** aLoadInfo) MOZ_OVERRIDE
   {
     NS_IF_ADDREF(*aLoadInfo = mLoadInfo);
     return NS_OK;
   }
-  NS_IMETHOD SetLoadInfo(nsILoadInfo* aLoadInfo)
+  NS_IMETHOD SetLoadInfo(nsILoadInfo* aLoadInfo) MOZ_OVERRIDE
   {
     mLoadInfo = aLoadInfo;
     return NS_OK;
   }
-  NS_IMETHOD GetNotificationCallbacks(nsIInterfaceRequestor** aRequestor)
+  NS_IMETHOD GetNotificationCallbacks(nsIInterfaceRequestor** aRequestor) MOZ_OVERRIDE
   {
     NS_ADDREF(*aRequestor = this);
     return NS_OK;
@@ -2424,15 +2462,15 @@ public:
   NS_IMETHOD GetContentDispositionFilename(nsAString&) NO_IMPL
   NS_IMETHOD SetContentDispositionFilename(const nsAString&) NO_IMPL
   NS_IMETHOD GetContentDispositionHeader(nsACString&) NO_IMPL
-  NS_IMETHOD OnAuthAvailable(nsISupports *aContext, nsIAuthInformation *aAuthInfo);
-  NS_IMETHOD OnAuthCancelled(nsISupports *aContext, bool userCancel);
-  NS_IMETHOD GetInterface(const nsIID & uuid, void **result)
+  NS_IMETHOD OnAuthAvailable(nsISupports *aContext, nsIAuthInformation *aAuthInfo) MOZ_OVERRIDE;
+  NS_IMETHOD OnAuthCancelled(nsISupports *aContext, bool userCancel) MOZ_OVERRIDE;
+  NS_IMETHOD GetInterface(const nsIID & uuid, void **result) MOZ_OVERRIDE
   {
     return QueryInterface(uuid, result);
   }
   NS_IMETHOD GetAssociatedWindow(nsIDOMWindow**) NO_IMPL
   NS_IMETHOD GetTopWindow(nsIDOMWindow**) NO_IMPL
-  NS_IMETHOD GetTopFrameElement(nsIDOMElement** aElement)
+  NS_IMETHOD GetTopFrameElement(nsIDOMElement** aElement) MOZ_OVERRIDE
   {
     nsCOMPtr<nsIDOMElement> elem = do_QueryInterface(mElement);
     elem.forget(aElement);

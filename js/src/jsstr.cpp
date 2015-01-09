@@ -32,12 +32,12 @@
 
 #include "builtin/Intl.h"
 #include "builtin/RegExp.h"
+#include "js/Conversions.h"
 #if ENABLE_INTL_API
 #include "unicode/unorm.h"
 #endif
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
-#include "vm/NumericConversions.h"
 #include "vm/Opcodes.h"
 #include "vm/RegExpObject.h"
 #include "vm/RegExpStatics.h"
@@ -57,6 +57,8 @@ using namespace js::unicode;
 
 using JS::Symbol;
 using JS::SymbolCode;
+using JS::ToInt32;
+using JS::ToUint32;
 
 using mozilla::AssertedCast;
 using mozilla::CheckedInt;
@@ -1662,7 +1664,7 @@ js::str_lastIndexOf(JSContext *cx, unsigned argc, Value *vp)
             if (!ToNumber(cx, args[1], &d))
                 return false;
             if (!IsNaN(d)) {
-                d = ToInteger(d);
+                d = JS::ToInteger(d);
                 if (d <= 0)
                     start = 0;
                 else if (d < start)
@@ -2183,8 +2185,8 @@ class MOZ_STACK_CLASS StringRegExpGuard
     }
 
   private:
-    StringRegExpGuard(const StringRegExpGuard &) MOZ_DELETE;
-    void operator=(const StringRegExpGuard &) MOZ_DELETE;
+    StringRegExpGuard(const StringRegExpGuard &) = delete;
+    void operator=(const StringRegExpGuard &) = delete;
 };
 
 } /* anonymous namespace */
@@ -2436,8 +2438,8 @@ class RopeBuilder {
     JSContext *cx;
     RootedString res;
 
-    RopeBuilder(const RopeBuilder &other) MOZ_DELETE;
-    void operator=(const RopeBuilder &other) MOZ_DELETE;
+    RopeBuilder(const RopeBuilder &other) = delete;
+    void operator=(const RopeBuilder &other) = delete;
 
   public:
     explicit RopeBuilder(JSContext *cx)
@@ -4440,7 +4442,7 @@ js_strcmp(const char16_t *lhs, const char16_t *rhs)
 }
 
 UniquePtr<char[], JS::FreePolicy>
-js::DuplicateString(js::ThreadSafeContext *cx, const char *s)
+js::DuplicateString(js::ExclusiveContext *cx, const char *s)
 {
     size_t n = strlen(s) + 1;
     auto ret = cx->make_pod_array<char>(n);
@@ -4451,7 +4453,7 @@ js::DuplicateString(js::ThreadSafeContext *cx, const char *s)
 }
 
 UniquePtr<char16_t[], JS::FreePolicy>
-js::DuplicateString(js::ThreadSafeContext *cx, const char16_t *s)
+js::DuplicateString(js::ExclusiveContext *cx, const char16_t *s)
 {
     size_t n = js_strlen(s) + 1;
     auto ret = cx->make_pod_array<char16_t>(n);
@@ -4480,7 +4482,7 @@ template const char16_t *
 js_strchr_limit(const char16_t *s, char16_t c, const char16_t *limit);
 
 char16_t *
-js::InflateString(ThreadSafeContext *cx, const char *bytes, size_t *lengthp)
+js::InflateString(ExclusiveContext *cx, const char *bytes, size_t *lengthp)
 {
     size_t nchars;
     char16_t *chars;

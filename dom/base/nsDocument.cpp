@@ -3282,6 +3282,15 @@ nsDocument::GetUndoManager()
   return undoManager.forget();
 }
 
+bool
+nsDocument::IsWebAnimationsEnabled(JSContext* /*unused*/, JSObject* /*unused*/)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  return nsContentUtils::IsCallerChrome() ||
+         Preferences::GetBool("dom.animations-api.core.enabled");
+}
+
 AnimationTimeline*
 nsDocument::Timeline()
 {
@@ -3951,8 +3960,7 @@ nsDocument::SetSubDocumentFor(Element* aElement, nsIDocument* aSubDoc)
     if (mSubDocuments) {
       SubDocMapEntry *entry =
         static_cast<SubDocMapEntry*>
-                   (PL_DHashTableOperate(mSubDocuments, aElement,
-                                         PL_DHASH_LOOKUP));
+                   (PL_DHashTableLookup(mSubDocuments, aElement));
 
       if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
         PL_DHashTableRawRemove(mSubDocuments, entry);
@@ -3984,8 +3992,7 @@ nsDocument::SetSubDocumentFor(Element* aElement, nsIDocument* aSubDoc)
     // Add a mapping to the hash table
     SubDocMapEntry *entry =
       static_cast<SubDocMapEntry*>
-                 (PL_DHashTableOperate(mSubDocuments, aElement,
-                                       PL_DHASH_ADD));
+                 (PL_DHashTableAdd(mSubDocuments, aElement));
 
     if (!entry) {
       return NS_ERROR_OUT_OF_MEMORY;
@@ -4013,8 +4020,7 @@ nsDocument::GetSubDocumentFor(nsIContent *aContent) const
   if (mSubDocuments && aContent->IsElement()) {
     SubDocMapEntry *entry =
       static_cast<SubDocMapEntry*>
-                 (PL_DHashTableOperate(mSubDocuments, aContent->AsElement(),
-                                       PL_DHASH_LOOKUP));
+                 (PL_DHashTableLookup(mSubDocuments, aContent->AsElement()));
 
     if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
       return entry->mSubDocument;
@@ -9697,7 +9703,7 @@ class StubCSSLoaderObserver MOZ_FINAL : public nsICSSLoaderObserver {
   ~StubCSSLoaderObserver() {}
 public:
   NS_IMETHOD
-  StyleSheetLoaded(CSSStyleSheet*, bool, nsresult)
+  StyleSheetLoaded(CSSStyleSheet*, bool, nsresult) MOZ_OVERRIDE
   {
     return NS_OK;
   }
@@ -11837,7 +11843,7 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSICONTENTPERMISSIONREQUEST
 
-  NS_IMETHOD Run()
+  NS_IMETHOD Run() MOZ_OVERRIDE
   {
     nsCOMPtr<Element> e = do_QueryReferent(mElement);
     nsCOMPtr<nsIDocument> d = do_QueryReferent(mDocument);

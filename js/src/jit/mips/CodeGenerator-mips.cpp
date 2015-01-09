@@ -17,6 +17,7 @@
 #include "jit/JitFrames.h"
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
+#include "js/Conversions.h"
 #include "vm/Shape.h"
 #include "vm/TraceLogging.h"
 
@@ -30,6 +31,7 @@ using namespace js::jit;
 using mozilla::FloorLog2;
 using mozilla::NegativeInfinity;
 using JS::GenericNaN;
+using JS::ToInt32;
 
 // shared
 CodeGeneratorMIPS::CodeGeneratorMIPS(MIRGenerator *gen, LIRGraph *graph, MacroAssembler *masm)
@@ -166,7 +168,7 @@ CodeGeneratorMIPS::generateOutOfLineCode()
         // the same.
         masm.move32(Imm32(frameSize()), ra);
 
-        JitCode *handler = gen->jitRuntime()->getGenericBailoutHandler(gen->info().executionMode());
+        JitCode *handler = gen->jitRuntime()->getGenericBailoutHandler();
 
         masm.branch(handler);
     }
@@ -2148,16 +2150,4 @@ CodeGeneratorMIPS::visitNegF(LNegF *ins)
     FloatRegister output = ToFloatRegister(ins->output());
 
     masm.as_negs(output, input);
-}
-
-void
-CodeGeneratorMIPS::visitForkJoinGetSlice(LForkJoinGetSlice *ins)
-{
-    MOZ_CRASH("NYI");
-}
-
-JitCode *
-JitRuntime::generateForkJoinGetSliceStub(JSContext *cx)
-{
-    MOZ_CRASH("NYI");
 }

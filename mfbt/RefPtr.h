@@ -275,7 +275,7 @@ public:
 
   T* get() const { return mPtr; }
   operator T*() const { return mPtr; }
-  T* operator->() const { return mPtr; }
+  T* operator->() const MOZ_NO_ADDREF_RELEASE_ON_RETURN { return mPtr; }
   T& operator*() const { return *mPtr; }
   template<typename U>
   operator TemporaryRef<U>() { return TemporaryRef<U>(mPtr); }
@@ -340,8 +340,8 @@ private:
 
   mutable T* MOZ_OWNING_REF mPtr;
 
-  TemporaryRef() MOZ_DELETE;
-  void operator=(const TemporaryRef&) MOZ_DELETE;
+  TemporaryRef() = delete;
+  void operator=(const TemporaryRef&) = delete;
 };
 
 /**
@@ -378,8 +378,8 @@ private:
   RefPtr<T>& mRefPtr;
   T* mTmp;
 
-  OutParamRef() MOZ_DELETE;
-  OutParamRef& operator=(const OutParamRef&) MOZ_DELETE;
+  OutParamRef() = delete;
+  OutParamRef& operator=(const OutParamRef&) = delete;
 };
 
 /**

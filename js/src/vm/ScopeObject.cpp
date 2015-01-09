@@ -336,10 +336,8 @@ DeclEnvObject::createTemplateObject(JSContext *cx, HandleFunction fun, gc::Initi
     MOZ_ASSERT(getter != JS_PropertyStub);
     MOZ_ASSERT(setter != JS_StrictPropertyStub);
 
-    if (!NativeObject::putProperty<SequentialExecution>(cx, obj, id, getter, setter, lambdaSlot(),
-                                                        attrs, 0)) {
+    if (!NativeObject::putProperty(cx, obj, id, getter, setter, lambdaSlot(), attrs, 0))
         return nullptr;
-    }
 
     MOZ_ASSERT(!obj->hasDynamicSlots());
     return &obj->as<DeclEnvObject>();
@@ -702,8 +700,8 @@ StaticBlockObject::addVar(ExclusiveContext *cx, Handle<StaticBlockObject*> block
     *redeclared = false;
 
     /* Inline NativeObject::addProperty in order to trap the redefinition case. */
-    Shape **spp;
-    if (Shape::search(cx, block->lastProperty(), id, &spp, true)) {
+    ShapeTable::Entry *entry;
+    if (Shape::search(cx, block->lastProperty(), id, &entry, true)) {
         *redeclared = true;
         return nullptr;
     }
@@ -715,14 +713,14 @@ StaticBlockObject::addVar(ExclusiveContext *cx, Handle<StaticBlockObject*> block
     uint32_t slot = JSSLOT_FREE(&BlockObject::class_) + index;
     uint32_t readonly = constant ? JSPROP_READONLY : 0;
     uint32_t propFlags = readonly | JSPROP_ENUMERATE | JSPROP_PERMANENT;
-    return NativeObject::addPropertyInternal<SequentialExecution>(cx, block, id,
-                                                                  /* getter = */ nullptr,
-                                                                  /* setter = */ nullptr,
-                                                                  slot,
-                                                                  propFlags,
-                                                                  /* attrs = */ 0,
-                                                                  spp,
-                                                                  /* allowDictionary = */ false);
+    return NativeObject::addPropertyInternal(cx, block, id,
+                                             /* getter = */ nullptr,
+                                             /* setter = */ nullptr,
+                                             slot,
+                                             propFlags,
+                                             /* attrs = */ 0,
+                                             entry,
+                                             /* allowDictionary = */ false);
 }
 
 const Class BlockObject::class_ = {

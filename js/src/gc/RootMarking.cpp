@@ -18,7 +18,6 @@
 
 #include "builtin/MapObject.h"
 #include "frontend/BytecodeCompiler.h"
-#include "gc/ForkJoinNursery.h"
 #include "gc/GCInternals.h"
 #include "gc/Marking.h"
 #include "jit/MacroAssembler.h"
@@ -118,12 +117,6 @@ MarkExactStackRootsAcrossTypes(T context, JSTracer *trc)
     MarkExactStackRootList<JSPropertyDescriptor, MarkPropertyDescriptorRoot>(
         trc, context, "JSPropertyDescriptor");
     MarkExactStackRootList<PropDesc, MarkPropDescRoot>(trc, context, "PropDesc");
-}
-
-static void
-MarkExactStackRoots(ThreadSafeContext* cx, JSTracer *trc)
-{
-    MarkExactStackRootsAcrossTypes<ThreadSafeContext*>(cx, trc);
 }
 
 static void
@@ -416,27 +409,6 @@ js::gc::MarkPersistentRootedChains(JSTracer *trc)
     PersistentRootedMarker<Value>::markChain<MarkValueRoot>(trc, rt->valuePersistentRooteds,
                                                             "PersistentRooted<Value>");
 }
-
-#ifdef JSGC_FJGENERATIONAL
-void
-js::gc::MarkForkJoinStack(ForkJoinNurseryCollectionTracer *trc)
-{
-    ForkJoinContext *cx = ForkJoinContext::current();
-    PerThreadData *ptd = cx->perThreadData;
-
-    AutoGCRooter::traceAllInContext(cx, trc);
-    MarkExactStackRoots(cx, trc);
-    jit::MarkJitActivations(ptd, trc);
-
-#ifdef DEBUG
-    // There should be only JIT activations on the stack
-    for (ActivationIterator iter(ptd); !iter.done(); ++iter) {
-        Activation *act = iter.activation();
-        MOZ_ASSERT(act->isJit());
-    }
-#endif
-}
-#endif  // JSGC_FJGENERATIONAL
 
 void
 js::gc::GCRuntime::markRuntime(JSTracer *trc,

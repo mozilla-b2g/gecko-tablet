@@ -321,8 +321,8 @@ class AutoHashMapRooter : protected AutoGCRooter
     friend void AutoGCRooter::trace(JSTracer *trc);
 
   private:
-    AutoHashMapRooter(const AutoHashMapRooter &hmr) MOZ_DELETE;
-    AutoHashMapRooter &operator=(const AutoHashMapRooter &hmr) MOZ_DELETE;
+    AutoHashMapRooter(const AutoHashMapRooter &hmr) = delete;
+    AutoHashMapRooter &operator=(const AutoHashMapRooter &hmr) = delete;
 
     HashMapImpl map;
 
@@ -430,8 +430,8 @@ class AutoHashSetRooter : protected AutoGCRooter
     friend void AutoGCRooter::trace(JSTracer *trc);
 
   private:
-    AutoHashSetRooter(const AutoHashSetRooter &hmr) MOZ_DELETE;
-    AutoHashSetRooter &operator=(const AutoHashSetRooter &hmr) MOZ_DELETE;
+    AutoHashSetRooter(const AutoHashSetRooter &hmr) = delete;
+    AutoHashSetRooter &operator=(const AutoHashSetRooter &hmr) = delete;
 
     HashSetImpl set;
 
@@ -932,8 +932,8 @@ class MOZ_STACK_CLASS SourceBufferHolder MOZ_FINAL
     }
 
   private:
-    SourceBufferHolder(SourceBufferHolder &) MOZ_DELETE;
-    SourceBufferHolder &operator=(SourceBufferHolder &) MOZ_DELETE;
+    SourceBufferHolder(SourceBufferHolder &) = delete;
+    SourceBufferHolder &operator=(SourceBufferHolder &) = delete;
 
     const char16_t *data_;
     size_t length_;
@@ -1116,6 +1116,13 @@ ToBooleanSlow(JS::HandleValue v);
  */
 extern JS_PUBLIC_API(JSString*)
 ToStringSlow(JSContext *cx, JS::HandleValue v);
+
+/*
+ * DO NOT CALL THIS. Use JS::ToObject.
+ */
+extern JS_PUBLIC_API(JSObject*)
+ToObjectSlow(JSContext *cx, JS::HandleValue vp, bool reportScanStack);
+
 } /* namespace js */
 
 namespace JS {
@@ -1159,6 +1166,15 @@ ToString(JSContext *cx, HandleValue v)
     if (v.isString())
         return v.toString();
     return js::ToStringSlow(cx, v);
+}
+
+/* ES5 9.9 ToObject. */
+MOZ_ALWAYS_INLINE JSObject*
+ToObject(JSContext *cx, HandleValue vp)
+{
+    if (vp.isObject())
+        return &vp.toObject();
+    return js::ToObjectSlow(cx, vp, false);
 }
 
 /*
@@ -2338,8 +2354,8 @@ class AutoIdArray : private AutoGCRooter
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 
     /* No copy or assignment semantics. */
-    AutoIdArray(AutoIdArray &ida) MOZ_DELETE;
-    void operator=(AutoIdArray &ida) MOZ_DELETE;
+    AutoIdArray(AutoIdArray &ida) = delete;
+    void operator=(AutoIdArray &ida) = delete;
 };
 
 } /* namespace JS */
@@ -3214,6 +3230,10 @@ extern JS_PUBLIC_API(bool)
 JS_SetPropertyById(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::HandleValue v);
 
 extern JS_PUBLIC_API(bool)
+JS_ForwardSetPropertyTo(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::HandleValue onBehalfOf,
+                        bool strict, JS::HandleValue vp);
+
+extern JS_PUBLIC_API(bool)
 JS_DeleteProperty(JSContext *cx, JS::HandleObject obj, const char *name);
 
 extern JS_PUBLIC_API(bool)
@@ -3740,7 +3760,7 @@ class JS_FRIEND_API(ReadOnlyCompileOptions)
 
   private:
     static JSObject * const nullObjectPtr;
-    void operator=(const ReadOnlyCompileOptions &) MOZ_DELETE;
+    void operator=(const ReadOnlyCompileOptions &) = delete;
 };
 
 /*
@@ -3830,7 +3850,7 @@ class JS_FRIEND_API(OwningCompileOptions) : public ReadOnlyCompileOptions
     }
 
   private:
-    void operator=(const CompileOptions &rhs) MOZ_DELETE;
+    void operator=(const CompileOptions &rhs) = delete;
 };
 
 /*
@@ -3916,7 +3936,7 @@ class MOZ_STACK_CLASS JS_FRIEND_API(CompileOptions) : public ReadOnlyCompileOpti
     }
 
   private:
-    void operator=(const CompileOptions &rhs) MOZ_DELETE;
+    void operator=(const CompileOptions &rhs) = delete;
 };
 
 /*
@@ -5045,7 +5065,7 @@ JS_NewObjectForConstructor(JSContext *cx, const JSClass *clasp, const JS::CallAr
 #define JS_DEFAULT_ZEAL_FREQ 100
 
 extern JS_PUBLIC_API(void)
-JS_GetGCZeal(JSContext *cx, uint8_t *zeal, uint32_t *frequency);
+JS_GetGCZeal(JSContext *cx, uint8_t *zeal, uint32_t *frequency, uint32_t *nextScheduled);
 
 extern JS_PUBLIC_API(void)
 JS_SetGCZeal(JSContext *cx, uint8_t zeal, uint32_t frequency);
@@ -5121,8 +5141,8 @@ class MOZ_STACK_CLASS JS_PUBLIC_API(AutoFilename)
 {
     void *scriptSource_;
 
-    AutoFilename(const AutoFilename &) MOZ_DELETE;
-    void operator=(const AutoFilename &) MOZ_DELETE;
+    AutoFilename(const AutoFilename &) = delete;
+    void operator=(const AutoFilename &) = delete;
 
   public:
     AutoFilename() : scriptSource_(nullptr) {}
@@ -5318,8 +5338,8 @@ class MOZ_STACK_CLASS JS_PUBLIC_API(ForOfIterator) {
 
     static const uint32_t NOT_ARRAY = UINT32_MAX;
 
-    ForOfIterator(const ForOfIterator &) MOZ_DELETE;
-    ForOfIterator &operator=(const ForOfIterator &) MOZ_DELETE;
+    ForOfIterator(const ForOfIterator &) = delete;
+    ForOfIterator &operator=(const ForOfIterator &) = delete;
 
   public:
     explicit ForOfIterator(JSContext *cx) : cx_(cx), iterator(cx_), index(NOT_ARRAY) { }

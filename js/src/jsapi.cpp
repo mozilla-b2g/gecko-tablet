@@ -61,6 +61,7 @@
 #include "gc/Marking.h"
 #include "jit/JitCommon.h"
 #include "js/CharacterEncoding.h"
+#include "js/Conversions.h"
 #include "js/SliceBudget.h"
 #include "js/StructuredClone.h"
 #if ENABLE_INTL_API
@@ -72,7 +73,6 @@
 #include "vm/ErrorObject.h"
 #include "vm/HelperThreads.h"
 #include "vm/Interpreter.h"
-#include "vm/NumericConversions.h"
 #include "vm/RegExpStatics.h"
 #include "vm/Runtime.h"
 #include "vm/SavedStacks.h"
@@ -105,6 +105,9 @@ using mozilla::PodZero;
 using mozilla::UniquePtr;
 
 using JS::AutoGCRooter;
+using JS::ToInt32;
+using JS::ToInteger;
+using JS::ToUint32;
 
 using js::frontend::Parser;
 
@@ -3054,6 +3057,24 @@ JS_SetPropertyById(JSContext *cx, HandleObject obj, HandleId id, HandleValue v)
     return JSObject::setGeneric(cx, obj, obj, id, &value, false);
 }
 
+JS_PUBLIC_API(bool)
+JS_ForwardSetPropertyTo(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::HandleValue onBehalfOf,
+                        bool strict, JS::HandleValue v)
+{
+    AssertHeapIsIdle(cx);
+    CHECK_REQUEST(cx);
+    assertSameCompartment(cx, obj, id);
+    assertSameCompartment(cx, onBehalfOf);
+
+    // XXX Bug 603201 will eliminate this ToObject.
+    RootedObject receiver(cx, ToObject(cx, onBehalfOf));
+    if (!receiver)
+        return false;
+
+    RootedValue value(cx, v);
+    return JSObject::setGeneric(cx, obj, receiver, id, &value, strict);
+}
+
 static bool
 SetElement(JSContext *cx, HandleObject obj, uint32_t index, MutableHandleValue vp)
 {
@@ -5726,9 +5747,9 @@ JS_AbortIfWrongThread(JSRuntime *rt)
 
 #ifdef JS_GC_ZEAL
 JS_PUBLIC_API(void)
-JS_GetGCZeal(JSContext *cx, uint8_t *zeal, uint32_t *frequency)
+JS_GetGCZeal(JSContext *cx, uint8_t *zeal, uint32_t *frequency, uint32_t *nextScheduled)
 {
-    cx->runtime()->gc.getZeal(zeal, frequency);
+    cx->runtime()->gc.getZeal(zeal, frequency, nextScheduled);
 }
 
 JS_PUBLIC_API(void)

@@ -616,23 +616,25 @@ RilObject.prototype = {
         this.enterICCPUK2(options);
         break;
       case GECKO_CARDLOCK_NCK:
+      case GECKO_CARDLOCK_NSCK:
       case GECKO_CARDLOCK_NCK1:
       case GECKO_CARDLOCK_NCK2:
       case GECKO_CARDLOCK_HNCK:
       case GECKO_CARDLOCK_CCK:
       case GECKO_CARDLOCK_SPCK:
+      case GECKO_CARDLOCK_PCK:
       case GECKO_CARDLOCK_RCCK:
       case GECKO_CARDLOCK_RSPCK:
       case GECKO_CARDLOCK_NCK_PUK:
+      case GECKO_CARDLOCK_NSCK_PUK:
       case GECKO_CARDLOCK_NCK1_PUK:
       case GECKO_CARDLOCK_NCK2_PUK:
       case GECKO_CARDLOCK_HNCK_PUK:
       case GECKO_CARDLOCK_CCK_PUK:
       case GECKO_CARDLOCK_SPCK_PUK:
+      case GECKO_CARDLOCK_PCK_PUK:
       case GECKO_CARDLOCK_RCCK_PUK: // Fall through.
       case GECKO_CARDLOCK_RSPCK_PUK:
-        options.personlization =
-          GECKO_PERSO_LOCK_TO_CARD_PERSO_LOCK[options.lockType];
         this.enterDepersonalization(options);
         break;
       default:
@@ -690,7 +692,7 @@ RilObject.prototype = {
   enterDepersonalization: function(options) {
     let Buf = this.context.Buf;
     Buf.newParcel(REQUEST_ENTER_NETWORK_DEPERSONALIZATION_CODE, options);
-    Buf.writeInt32(options.personlization);
+    Buf.writeInt32(1);
     Buf.writeString(options.password);
     Buf.sendParcel();
   },
@@ -863,8 +865,11 @@ RilObject.prototype = {
       case GECKO_CARDLOCK_PUK:
       case GECKO_CARDLOCK_PUK2:
       case GECKO_CARDLOCK_NCK:
+      case GECKO_CARDLOCK_NSCK:
       case GECKO_CARDLOCK_CCK: // Fall through.
       case GECKO_CARDLOCK_SPCK:
+      // TODO: Bug 1116072: identify the mapping between RIL_PERSOSUBSTATE_SIM_SIM
+      //       @ ril.h and TS 27.007, clause 8.65 for GECKO_CARDLOCK_SPCK.
         options.selCode = GECKO_CARDLOCK_TO_SEL_CODE[options.lockType];
         break;
       default:
@@ -1504,6 +1509,22 @@ RilObject.prototype = {
   },
 
   /**
+   * Get UICC service state
+   */
+  getIccServiceState: function(options) {
+    switch (options.service) {
+      case GECKO_CARDSERVICE_FDN:
+        let ICCUtilsHelper = this.context.ICCUtilsHelper;
+        options.result = ICCUtilsHelper.isICCServiceAvailable("FDN");
+        break;
+      default:
+        options.errorMsg = GECKO_ERROR_REQUEST_NOT_SUPPORTED;
+        break;
+    }
+    this.sendChromeMessage(options);
+  },
+
+  /**
    * Enable/Disable UICC subscription
    */
   setUiccSubscription: function(options) {
@@ -1687,7 +1708,7 @@ RilObject.prototype = {
    */
   hangUpAll: function() {
     for (let callIndex in this.currentCalls) {
-      this.hangUp({callIndex: callIndex});
+      this.hangUpCall({callIndex: callIndex});
     }
   },
 
@@ -1697,9 +1718,14 @@ RilObject.prototype = {
    * @param callIndex
    *        Call index (1-based) as reported by REQUEST_GET_CURRENT_CALLS.
    */
-  hangUp: function(options) {
+  hangUpCall: function(options) {
     let call = this.currentCalls[options.callIndex];
     if (!call) {
+      // |hangUpCall()| is used to remove a call from the current call list,
+      // so we consider it as an successful case when hanging up a call that
+      // doesn't exist in the current call list.
+      options.success = true;
+      this.sendChromeMessage(options);
       return;
     }
 
@@ -1781,6 +1807,9 @@ RilObject.prototype = {
   answerCall: function(options) {
     let call = this.currentCalls[options.callIndex];
     if (!call) {
+      options.success = false;
+      options.errorMsg = GECKO_ERROR_GENERIC_FAILURE;
+      this.sendChromeMessage(options);
       return;
     }
 
@@ -1791,13 +1820,19 @@ RilObject.prototype = {
     switch (call.state) {
       case CALL_STATE_INCOMING:
         this.telephonyRequestQueue.push(REQUEST_ANSWER, () => {
-          this.context.Buf.simpleRequest(REQUEST_ANSWER);
+          this.context.Buf.simpleRequest(REQUEST_ANSWER, options);
         });
         break;
       case CALL_STATE_WAITING:
         // Answer the waiting (second) call, and hold the first call.
         this.switchActiveCall(options);
         break;
+      default:
+        if (DEBUG) this.context.debug("AnswerCall: Invalid call state");
+
+        options.success = false;
+        options.errorMsg = GECKO_ERROR_GENERIC_FAILURE;
+        this.sendChromeMessage(options);
     }
   },
 
@@ -1808,12 +1843,13 @@ RilObject.prototype = {
    *        Call index of the call to reject.
    */
   rejectCall: function(options) {
-    // Check for races. Since we dispatched the incoming/waiting call
-    // notification the incoming/waiting call may have changed. The main
-    // thread thinks that it is rejecting the call with the given index,
-    // so only reject if that is still incoming/waiting.
     let call = this.currentCalls[options.callIndex];
     if (!call) {
+      // |hangUpCall()| is used to remove an imcoming call from the current
+      // call list, so we consider it as an successful case when rejecting
+      // a call that doesn't exist in the current call list.
+      options.success = true;
+      this.sendChromeMessage(options);
       return;
     }
 
@@ -1825,6 +1861,10 @@ RilObject.prototype = {
       return;
     }
 
+    // Check for races. Since we dispatched the incoming/waiting call
+    // notification the incoming/waiting call may have changed. The main
+    // thread thinks that it is rejecting the call with the given index,
+    // so only reject if that is still incoming/waiting.
     switch (call.state) {
       case CALL_STATE_INCOMING:
         this.udub(options);
@@ -1833,6 +1873,12 @@ RilObject.prototype = {
         // Reject the waiting (second) call, and remain the first call.
         this.hangUpBackground(options);
         break;
+      default:
+        if (DEBUG) this.context.debug("RejectCall: Invalid call state");
+
+        options.success = false;
+        options.errorMsg = GECKO_ERROR_GENERIC_FAILURE;
+        this.sendChromeMessage(options);
     }
   },
 
@@ -1921,7 +1967,7 @@ RilObject.prototype = {
       }
 
       options.callIndex = 1;
-      this.hangUp(options);
+      this.hangUpCall(options);
       return;
     }
 
@@ -2219,7 +2265,7 @@ RilObject.prototype = {
    */
   startTone: function(options) {
     let Buf = this.context.Buf;
-    Buf.newParcel(REQUEST_DTMF_START);
+    Buf.newParcel(REQUEST_DTMF_START, options);
     Buf.writeString(options.dtmfChar);
     Buf.sendParcel();
   },
@@ -4085,7 +4131,7 @@ RilObject.prototype = {
 
   _addVoiceCall: function(newCall) {
     newCall.number = this._formatInternationalNumber(newCall.number, newCall.toa);
-    newCall.isOutgoing = !(newCall.state == CALL_STATE_INCOMING);
+    newCall.isOutgoing = !newCall.isMT;
     newCall.isConference = false;
 
     this.currentCalls[newCall.callIndex] = newCall;
@@ -5487,6 +5533,10 @@ RilObject.prototype[REQUEST_GET_IMSI] = function REQUEST_GET_IMSI(length, option
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_HANGUP] = function REQUEST_HANGUP(length, options) {
+  if (options.rilMessageType == null) {
+    return;
+  }
+
   options.success = (options.rilRequestError === 0);
   options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
   this.sendChromeMessage(options);
@@ -5514,6 +5564,11 @@ RilObject.prototype[REQUEST_CONFERENCE] = function REQUEST_CONFERENCE(length, op
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_UDUB] = function REQUEST_UDUB(length, options) {
+  options.success = (options.rilRequestError === 0);
+  if (!options.success) {
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+  }
+  this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_LAST_CALL_FAIL_CAUSE] = function REQUEST_LAST_CALL_FAIL_CAUSE(length, options) {
   let Buf = this.context.Buf;
@@ -5968,6 +6023,11 @@ RilObject.prototype[REQUEST_GET_IMEISV] = function REQUEST_GET_IMEISV(length, op
   this.IMEISV = this.context.Buf.readString();
 };
 RilObject.prototype[REQUEST_ANSWER] = function REQUEST_ANSWER(length, options) {
+  options.success = (options.rilRequestError === 0);
+  if (!options.success) {
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+  }
+  this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_DEACTIVATE_DATA_CALL] = function REQUEST_DEACTIVATE_DATA_CALL(length, options) {
   if (options.rilRequestError) {
@@ -6148,7 +6208,13 @@ RilObject.prototype[REQUEST_QUERY_AVAILABLE_NETWORKS] = function REQUEST_QUERY_A
   }
   this.sendChromeMessage(options);
 };
-RilObject.prototype[REQUEST_DTMF_START] = null;
+RilObject.prototype[REQUEST_DTMF_START] = function REQUEST_DTMF_START(length, options) {
+  options.success = (options.rilRequestError === 0);
+  if (!options.success) {
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+  }
+  this.sendChromeMessage(options);
+};
 RilObject.prototype[REQUEST_DTMF_STOP] = null;
 RilObject.prototype[REQUEST_BASEBAND_VERSION] = function REQUEST_BASEBAND_VERSION(length, options) {
   if (options.rilRequestError) {
@@ -15232,6 +15298,7 @@ ICCContactHelperObject.prototype = {
    */
   readICCContacts: function(appType, contactType, onsuccess, onerror) {
     let ICCRecordHelper = this.context.ICCRecordHelper;
+    let ICCUtilsHelper = this.context.ICCUtilsHelper;
 
     switch (contactType) {
       case GECKO_CARDCONTACT_TYPE_ADN:
@@ -15242,10 +15309,13 @@ ICCContactHelperObject.prototype = {
         }
         break;
       case GECKO_CARDCONTACT_TYPE_FDN:
+        if (!ICCUtilsHelper.isICCServiceAvailable("FDN")) {
+          onerror(CONTACT_ERR_CONTACT_TYPE_NOT_SUPPORTED);
+          break;
+        }
         ICCRecordHelper.readADNLike(ICC_EF_FDN, onsuccess, onerror);
         break;
       case GECKO_CARDCONTACT_TYPE_SDN:
-        let ICCUtilsHelper = this.context.ICCUtilsHelper;
         if (!ICCUtilsHelper.isICCServiceAvailable("SDN")) {
           onerror(CONTACT_ERR_CONTACT_TYPE_NOT_SUPPORTED);
           break;
@@ -15372,6 +15442,7 @@ ICCContactHelperObject.prototype = {
    */
   updateICCContact: function(appType, contactType, contact, pin2, onsuccess, onerror) {
     let ICCRecordHelper = this.context.ICCRecordHelper;
+    let ICCUtilsHelper = this.context.ICCUtilsHelper;
 
     switch (contactType) {
       case GECKO_CARDCONTACT_TYPE_ADN:
@@ -15385,6 +15456,10 @@ ICCContactHelperObject.prototype = {
         if (!pin2) {
           onerror(GECKO_ERROR_SIM_PIN2);
           return;
+        }
+        if (!ICCUtilsHelper.isICCServiceAvailable("FDN")) {
+          onerror(CONTACT_ERR_CONTACT_TYPE_NOT_SUPPORTED);
+          break;
         }
         ICCRecordHelper.updateADNLike(ICC_EF_FDN, contact, pin2, onsuccess, onerror);
         break;
