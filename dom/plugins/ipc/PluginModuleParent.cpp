@@ -377,6 +377,7 @@ PluginModuleChromeParent::LoadModule(const char* aFilePath, uint32_t aPluginId,
         parent->mShutdown = true;
         return nullptr;
     }
+    parent->mIsFlashPlugin = aPluginTag->mIsFlashPlugin;
     if (!parent->mIsStartingAsync) {
         int32_t launchTimeoutSecs = Preferences::GetInt(kLaunchTimeoutPref, 0);
         if (!parent->mSubprocess->WaitUntilConnected(launchTimeoutSecs * 1000)) {
@@ -386,7 +387,6 @@ PluginModuleChromeParent::LoadModule(const char* aFilePath, uint32_t aPluginId,
     }
     TimeStamp launchEnd = TimeStamp::Now();
     parent->mTimeBlocked = (launchEnd - launchStart);
-    parent->mIsFlashPlugin = aPluginTag->mIsFlashPlugin;
     return parent.forget();
 }
 
@@ -488,7 +488,7 @@ PluginModuleParent::PluginModuleParent(bool aIsChrome)
     , mGetSitesWithDataSupported(false)
     , mNPNIface(nullptr)
     , mPlugin(nullptr)
-    , mTaskFactory(MOZ_THIS_IN_INITIALIZER_LIST())
+    , mTaskFactory(this)
     , mIsStartingAsync(false)
     , mNPInitialized(false)
     , mAsyncNewRv(NS_ERROR_NOT_INITIALIZED)
@@ -521,7 +521,7 @@ PluginModuleChromeParent::PluginModuleChromeParent(const char* aFilePath, uint32
     : PluginModuleParent(true)
     , mSubprocess(new PluginProcessParent(aFilePath))
     , mPluginId(aPluginId)
-    , mChromeTaskFactory(MOZ_THIS_IN_INITIALIZER_LIST())
+    , mChromeTaskFactory(this)
     , mHangAnnotationFlags(0)
 #ifdef XP_WIN
     , mPluginCpuUsageOnHang()

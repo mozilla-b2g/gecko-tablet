@@ -53,7 +53,6 @@ class SurfaceCacheImpl;
 // The single surface cache instance.
 static StaticRefPtr<SurfaceCacheImpl> sInstance;
 
-
 ///////////////////////////////////////////////////////////////////////////////
 // SurfaceCache Implementation
 ///////////////////////////////////////////////////////////////////////////////
@@ -277,8 +276,7 @@ public:
   SurfaceCacheImpl(uint32_t aSurfaceCacheExpirationTimeMS,
                    uint32_t aSurfaceCacheDiscardFactor,
                    uint32_t aSurfaceCacheSize)
-    : mExpirationTracker(MOZ_THIS_IN_INITIALIZER_LIST(),
-                         aSurfaceCacheExpirationTimeMS)
+    : mExpirationTracker(this, aSurfaceCacheExpirationTimeMS)
     , mMemoryPressureObserver(new MemoryPressureObserver)
     , mMutex("SurfaceCache")
     , mDiscardFactor(aSurfaceCacheDiscardFactor)
@@ -306,19 +304,22 @@ public:
 
   Mutex& GetMutex() { return mMutex; }
 
-  bool Insert(imgFrame*         aSurface,
-              const Cost        aCost,
-              const ImageKey    aImageKey,
-              const SurfaceKey& aSurfaceKey,
-              Lifetime          aLifetime)
+  InsertOutcome Insert(imgFrame*         aSurface,
+                       const Cost        aCost,
+                       const ImageKey    aImageKey,
+                       const SurfaceKey& aSurfaceKey,
+                       Lifetime          aLifetime)
   {
-    MOZ_ASSERT(!Lookup(aImageKey, aSurfaceKey),
-               "Inserting a duplicate surface into the SurfaceCache");
+    // If this is a duplicate surface, refuse to replace the original.
+    if (MOZ_UNLIKELY(Lookup(aImageKey, aSurfaceKey))) {
+      return InsertOutcome::FAILURE_ALREADY_PRESENT;
+    }
 
     // If this is bigger than we can hold after discarding everything we can,
     // refuse to cache it.
-    if (!CanHoldAfterDiscarding(aCost))
-      return false;
+    if (MOZ_UNLIKELY(!CanHoldAfterDiscarding(aCost))) {
+      return InsertOutcome::FAILURE;
+    }
 
     // Remove elements in order of cost until we can fit this in the cache. Note
     // that locked surfaces aren't in mCosts, so we never remove them here.
@@ -343,7 +344,7 @@ public:
     if (cache->IsLocked() && aLifetime == Lifetime::Persistent) {
       surface->SetLocked(true);
       if (!surface->IsLocked()) {
-        return false;
+        return InsertOutcome::FAILURE;
       }
     }
 
@@ -352,7 +353,7 @@ public:
     cache->Insert(aSurfaceKey, surface);
     StartTracking(surface);
 
-    return true;
+    return InsertOutcome::SUCCESS;
   }
 
   void Remove(CachedSurface* aSurface)
@@ -704,7 +705,6 @@ private:
     virtual ~MemoryPressureObserver() { }
   };
 
-
   nsTArray<CostEntry>                                       mCosts;
   nsRefPtrHashtable<nsPtrHashKey<Image>, ImageSurfaceCache> mImageCaches;
   SurfaceTracker                                            mExpirationTracker;
@@ -798,14 +798,14 @@ SurfaceCache::Lookup(const ImageKey    aImageKey,
   return sInstance->Lookup(aImageKey, aSurfaceKey);
 }
 
-/* static */ bool
+/* static */ InsertOutcome
 SurfaceCache::Insert(imgFrame*         aSurface,
                      const ImageKey    aImageKey,
                      const SurfaceKey& aSurfaceKey,
                      Lifetime          aLifetime)
 {
   if (!sInstance) {
-    return false;
+    return InsertOutcome::FAILURE;
   }
 
   MutexAutoLock lock(sInstance->GetMutex());

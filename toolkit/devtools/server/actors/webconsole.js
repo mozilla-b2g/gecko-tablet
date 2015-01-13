@@ -83,7 +83,6 @@ function WebConsoleActor(aConnection, aParentActor)
 
   this.traits = {
     customNetworkRequest: !this._parentIsContentActor,
-    transferredResponseSize: true,
     evaluateJSAsync: true
   };
 }
@@ -1756,6 +1755,20 @@ NetworkEventActor.prototype =
   },
 
   /**
+   * The "getSecurityInfo" packet type handler.
+   *
+   * @return object
+   *         The response packet - connection security information.
+   */
+  onGetSecurityInfo: function NEA_onGetSecurityInfo()
+  {
+    return {
+      from: this.actorID,
+      securityInfo: this._securityInfo,
+    };
+  },
+
+  /**
    * The "getResponseHeaders" packet type handler.
    *
    * @return object
@@ -1911,6 +1924,26 @@ NetworkEventActor.prototype =
   },
 
   /**
+   * Add connection security information.
+   *
+   * @param object info
+   *        The object containing security information.
+   */
+  addSecurityInfo: function NEA_addSecurityInfo(info)
+  {
+    this._securityInfo = info;
+
+    let packet = {
+      from: this.actorID,
+      type: "networkEventUpdate",
+      updateType: "securityInfo",
+      state: info.state,
+    };
+
+    this.conn.send(packet);
+  },
+
+  /**
    * Add network response headers.
    *
    * @param array aHeaders
@@ -1976,7 +2009,6 @@ NetworkEventActor.prototype =
       updateType: "responseContent",
       mimeType: aContent.mimeType,
       contentSize: aContent.text.length,
-      transferredSize: aContent.transferredSize,
       discardResponseBody: aDiscardedResponseBody,
     };
 
@@ -2034,4 +2066,5 @@ NetworkEventActor.prototype.requestTypes =
   "getResponseCookies": NetworkEventActor.prototype.onGetResponseCookies,
   "getResponseContent": NetworkEventActor.prototype.onGetResponseContent,
   "getEventTimings": NetworkEventActor.prototype.onGetEventTimings,
+  "getSecurityInfo": NetworkEventActor.prototype.onGetSecurityInfo,
 };

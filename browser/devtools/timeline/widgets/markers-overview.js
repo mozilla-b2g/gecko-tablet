@@ -21,9 +21,8 @@ loader.lazyRequireGetter(this, "L10N",
   "devtools/timeline/global", true);
 
 const OVERVIEW_HEADER_HEIGHT = 14; // px
-const OVERVIEW_ROW_HEIGHT = 11; // row height
+const OVERVIEW_ROW_HEIGHT = 11; // px
 
-const OVERVIEW_BODY_HEIGHT = 55; // 11px * 5 groups
 const OVERVIEW_SELECTION_LINE_COLOR = "#666";
 const OVERVIEW_CLIPHEAD_LINE_COLOR = "#555";
 
@@ -241,7 +240,7 @@ MarkersOverview.prototype = Heritage.extend(AbstractCanvasGraph.prototype, {
     this.selectionStripesColor = setAlpha("#fff", 0.1);
     this.headerBackgroundColor = getColor("body-background", theme);
     this.headerTextColor = getColor("body-color", theme);
-    this.headerTimelineStrokeColor = setAlpha(getColor("body-color-alt", theme), 0.1);
+    this.headerTimelineStrokeColor = setAlpha(getColor("body-color-alt", theme), 0.25);
     this.alternatingBackgroundColor = setAlpha(getColor("body-color", theme), 0.05);
   }
 });

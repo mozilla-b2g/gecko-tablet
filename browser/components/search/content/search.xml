@@ -678,6 +678,7 @@
       ]]></destructor>
 
       <field name="_ignoreFocus">false</field>
+      <field name="_clickClosedPopup">false</field>
 
       <method name="rebuildPopup">
         <body><![CDATA[
@@ -749,12 +750,30 @@
         this.openSuggestionsPanel();
       ]]></handler>
 
+      <handler event="mousedown" phase="capturing">
+      <![CDATA[
+        if (event.originalTarget.getAttribute("anonid") == "searchbar-search-button") {
+          this._clickClosedPopup = this._textbox.popup._isHiding;
+        }
+      ]]></handler>
+
       <handler event="click" button="0">
       <![CDATA[
+        // Ignore clicks on the search go button.
+        if (event.originalTarget.getAttribute("anonid") == "search-go-button") {
+          return;
+        }
+
+        let isIconClick = event.originalTarget.getAttribute("anonid") == "searchbar-search-button";
+
+        // Ignore clicks on the icon if they were made to close the popup
+        if (isIconClick && this._clickClosedPopup) {
+          return;
+        }
+
         // Open the suggestions whenever clicking on the search icon or if there
         // is text in the textbox.
-        if (event.originalTarget.getAttribute("anonid") == "searchbar-search-button" ||
-            this._textbox.value) {
+        if (isIconClick || this._textbox.value) {
           this.openSuggestionsPanel(true);
         }
       ]]></handler>
@@ -900,10 +919,6 @@
             // but since we're overriding openPopup we need to unhide the panel
             // ourselves.
             popup.hidden = false;
-
-            // showHistoryPopup sets consumeoutsideclicks to true so reset it
-            // here
-            popup.setAttribute("consumeoutsideclicks", "false");
 
             popup.mInput = this;
             popup.view = this.controller.QueryInterface(Components.interfaces.nsITreeView);

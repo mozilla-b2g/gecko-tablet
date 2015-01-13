@@ -973,7 +973,7 @@
     <resources>
       <stylesheet src="chrome://browser/skin/searchbar.css"/>
     </resources>
-    <content ignorekeys="true" level="top">
+    <content ignorekeys="true" level="top" consumeoutsideclicks="never">
       <xul:hbox xbl:inherits="collapsed=showonlysettings" anonid="searchbar-engine"
                 class="search-panel-header search-panel-current-engine">
         <xul:image class="searchbar-engine-image" xbl:inherits="src"/>
@@ -988,13 +988,18 @@
         </xul:treecols>
         <xul:treechildren class="autocomplete-treebody"/>
       </xul:tree>
-      <xul:hbox anonid="search-panel-one-offs-header"
+      <xul:deck anonid="search-panel-one-offs-header"
+                selectedIndex="0"
                 class="search-panel-header search-panel-current-input"
                 xbl:inherits="hidden=showonlysettings">
-        <xul:label anonid="searchbar-oneoffheader-before" value="&searchFor.label;"/>
-        <xul:label anonid="searchbar-oneoffheader-searchtext" flex="1" crop="end" class="search-panel-input-value"/>
-        <xul:label anonid="searchbar-oneoffheader-after" flex="10000" value="&searchWith.label;"/>
-      </xul:hbox>
+        <xul:label anonid="searchbar-oneoffheader-search" value="&searchWithHeader.label;"/>
+        <xul:hbox anonid="search-panel-searchforwith"
+                  class="search-panel-current-input">
+          <xul:label anonid="searchbar-oneoffheader-before" value="&searchFor.label;"/>
+          <xul:label anonid="searchbar-oneoffheader-searchtext" flex="1" crop="end" class="search-panel-input-value"/>
+          <xul:label anonid="searchbar-oneoffheader-after" flex="10000" value="&searchWith.label;"/>
+        </xul:hbox>
+      </xul:deck>
       <xul:description anonid="search-panel-one-offs"
                        class="search-panel-one-offs"
                        xbl:inherits="hidden=showonlysettings"/>
@@ -1006,6 +1011,12 @@
                   label="&changeSearchSettings.button;"/>
     </content>
     <implementation>
+      <!-- Popup rollup is triggered by native events before the mousedown event
+           reaches the DOM. The will be set to true by the popuphiding event and
+           false after the mousedown event has been triggered to detect what
+           caused rollup. -->
+      <field name="_isHiding">false</field>
+
       <method name="updateHeader">
         <body><![CDATA[
           let currentEngine = Services.search.currentEngine;
@@ -1059,12 +1070,20 @@
         let headerSearchText =
           document.getAnonymousElementByAttribute(this, "anonid",
                                                   "searchbar-oneoffheader-searchtext");
+        let headerPanel =
+          document.getAnonymousElementByAttribute(this, "anonid",
+                                                  "search-panel-one-offs-header");
         let textbox = searchbar.textbox;
         let self = this;
         let inputHandler = function() {
           headerSearchText.setAttribute("value", textbox.value);
-          if (textbox.value)
+          if (textbox.value) {
             self.removeAttribute("showonlysettings");
+            headerPanel.selectedIndex = 1;
+          }
+          else {
+            headerPanel.selectedIndex = 0;
+          }
         };
         textbox.addEventListener("input", inputHandler);
         this.addEventListener("popuphiding", function hiding() {
@@ -1132,21 +1151,26 @@
                                                              "search-panel-one-offs-header")
         header.collapsed = list.collapsed = !engines.length;
 
-        if (!engines.length)
-          return;
-
         // 49px is the min-width of each search engine button,
         // adapt this const when changing the css.
         // It's actually 48px + 1px of right border.
         const ENGINE_WIDTH = 49;
-
         let panel = document.getElementById("PopupSearchAutoComplete");
-        // The + 23 is because the panel width only spans to the textbox
-        // size, but we also want it to include the magnifier icon's width.
-        let minWidth = parseInt(panel.width) + 23;
-        // Ensure the panel is wide enough to fit at least 3 engines.
-        minWidth = Math.max(minWidth, ENGINE_WIDTH * 3);
+        // The panel width only spans to the textbox size, but we also want it
+        // to include the magnifier icon's width.
+        let ltr = getComputedStyle(this).direction == "ltr";
+        let magnifierWidth = parseInt(getComputedStyle(panel)[
+                               ltr ? "marginLeft" : "marginRight"
+                             ]) * -1;
+        let minWidth = parseInt(panel.width) + magnifierWidth;
+        if (engines.length) {
+          // Ensure the panel is wide enough to fit at least 3 engines.
+          minWidth = Math.max(minWidth, ENGINE_WIDTH * 3);
+        }
         panel.setAttribute("style", "min-width: " + minWidth + "px");
+
+        if (!engines.length)
+          return;
 
         let panelWidth = parseInt(panel.clientWidth);
         // The + 1 is because the last button doesn't have a right border.
@@ -1245,6 +1269,13 @@
                                     target.getAttribute("src"), false,
                                     installCallback);
         }
+      ]]></handler>
+
+      <handler event="popuphiding"><![CDATA[
+        this._isHiding = true;
+        setTimeout(() => {
+          this._isHiding = false;
+        }, 0);
       ]]></handler>
     </handlers>
   </binding>

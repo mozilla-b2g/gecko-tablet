@@ -28,6 +28,7 @@ Decoder::Decoder(RasterImage &aImage)
   , mChunkCount(0)
   , mDecodeFlags(0)
   , mBytesDecoded(0)
+  , mSendPartialInvalidations(false)
   , mDecodeDone(false)
   , mDataError(false)
   , mFrameCount(0)
@@ -312,12 +313,14 @@ Decoder::EnsureFrame(uint32_t aFrameNum,
              aPreviousFrame->GetPaletteDepth() != aPaletteDepth,
              "Replacing first frame with the same kind of frame?");
 
-  // Remove the old frame from the SurfaceCache.
+  // Remove the old frame from the SurfaceCache and release our reference to it.
   IntSize prevFrameSize = aPreviousFrame->GetImageSize();
   SurfaceCache::RemoveSurface(ImageKey(&mImage),
                               RasterSurfaceKey(prevFrameSize, aDecodeFlags, 0));
   mFrameCount = 0;
   mInFrame = false;
+  mCurrentFrame->Abort();
+  mCurrentFrame = RawAccessFrameRef();
 
   // Add the new frame as usual.
   return InternalAddFrame(aFrameNum, aFrameRect, aDecodeFlags, aFormat,
@@ -361,16 +364,18 @@ Decoder::InternalAddFrame(uint32_t aFrameNum,
 
   RawAccessFrameRef ref = frame->RawAccessRef();
   if (!ref) {
+    frame->Abort();
     return RawAccessFrameRef();
   }
 
-  bool succeeded =
+  InsertOutcome outcome =
     SurfaceCache::Insert(frame, ImageKey(&mImage),
                          RasterSurfaceKey(imageSize.ToIntSize(),
                                           aDecodeFlags,
                                           aFrameNum),
                          Lifetime::Persistent);
-  if (!succeeded) {
+  if (outcome != InsertOutcome::SUCCESS) {
+    ref->Abort();
     return RawAccessFrameRef();
   }
 
@@ -483,6 +488,12 @@ Decoder::PostFrameStop(Opacity aFrameOpacity /* = Opacity::TRANSPARENT */,
   mCurrentFrame->Finish(aFrameOpacity, aDisposalMethod, aTimeout, aBlendMethod);
 
   mProgress |= FLAG_FRAME_COMPLETE | FLAG_ONLOAD_UNBLOCKED;
+
+  // If we're not sending partial invalidations, then we send an invalidation
+  // here when the first frame is complete.
+  if (!mSendPartialInvalidations && !mIsAnimated) {
+    mInvalidRect.UnionRect(mInvalidRect, mCurrentFrame->GetRect());
+  }
 }
 
 void
@@ -492,9 +503,12 @@ Decoder::PostInvalidation(nsIntRect& aRect)
   NS_ABORT_IF_FALSE(mInFrame, "Can't invalidate when not mid-frame!");
   NS_ABORT_IF_FALSE(mCurrentFrame, "Can't invalidate when not mid-frame!");
 
-  // Account for the new region
-  mInvalidRect.UnionRect(mInvalidRect, aRect);
-  mCurrentFrame->ImageUpdated(aRect);
+  // Record this invalidation, unless we're not sending partial invalidations
+  // or we're past the first frame.
+  if (mSendPartialInvalidations && !mIsAnimated) {
+    mInvalidRect.UnionRect(mInvalidRect, aRect);
+    mCurrentFrame->ImageUpdated(aRect);
+  }
 }
 
 void
@@ -514,6 +528,10 @@ void
 Decoder::PostDataError()
 {
   mDataError = true;
+
+  if (mInFrame && mCurrentFrame) {
+    mCurrentFrame->Abort();
+  }
 }
 
 void
@@ -526,6 +544,10 @@ Decoder::PostDecoderError(nsresult aFailureCode)
   // XXXbholley - we should report the image URI here, but imgContainer
   // needs to know its URI first
   NS_WARNING("Image decoding error - This is probably a bug!");
+
+  if (mInFrame && mCurrentFrame) {
+    mCurrentFrame->Abort();
+  }
 }
 
 void

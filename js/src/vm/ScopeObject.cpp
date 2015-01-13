@@ -1353,7 +1353,7 @@ class DebugScopeProxy : public BaseProxyHandler
                 return true;
 
             if (bi->kind() == Binding::VARIABLE || bi->kind() == Binding::CONSTANT) {
-                if (script->bodyLevelLocalIsAliased(bi.localIndex()))
+                if (script->bindingIsAliased(bi))
                     return true;
 
                 uint32_t i = bi.frameIndex();
@@ -1574,7 +1574,7 @@ class DebugScopeProxy : public BaseProxyHandler
     }
 
     bool getOwnPropertyDescriptor(JSContext *cx, HandleObject proxy, HandleId id,
-                                  MutableHandle<PropertyDescriptor> desc) const
+                                  MutableHandle<PropertyDescriptor> desc) const MOZ_OVERRIDE
     {
         Rooted<DebugScopeObject*> debugScope(cx, &proxy->as<DebugScopeObject>());
         Rooted<ScopeObject*> scope(cx, &debugScope->scope());
@@ -1732,7 +1732,7 @@ class DebugScopeProxy : public BaseProxyHandler
                                      JS_PROPERTYOP_SETTER(desc.setter()));
     }
 
-    bool ownPropertyKeys(JSContext *cx, HandleObject proxy, AutoIdVector &props) const
+    bool ownPropertyKeys(JSContext *cx, HandleObject proxy, AutoIdVector &props) const MOZ_OVERRIDE
     {
         Rooted<ScopeObject*> scope(cx, &proxy->as<DebugScopeObject>().scope());
 
@@ -2382,6 +2382,31 @@ DebugScopes::hasLiveScope(ScopeObject &scope)
         return &p->value();
 
     return nullptr;
+}
+
+/* static */ void
+DebugScopes::unsetPrevUpToDateUntil(JSContext *cx, AbstractFramePtr until)
+{
+    // This is the one exception where fp->prevUpToDate() is cleared without
+    // popping the frame. When a frame is rematerialized, all frames younger
+    // than the rematerialized frame have their prevUpToDate set to
+    // false. This is because unrematerialized Ion frames have no usable
+    // AbstractFramePtr, and so are skipped by the updateLiveScopes. If in the
+    // future a frame suddenly gains a usable AbstractFramePtr via
+    // rematerialization, the prevUpToDate invariant will no longer hold.
+    for (AllFramesIter i(cx); !i.done(); ++i) {
+        if (!i.hasUsableAbstractFramePtr())
+            continue;
+
+        AbstractFramePtr frame = i.abstractFramePtr();
+        if (frame == until)
+            return;
+
+        if (frame.scopeChain()->compartment() != cx->compartment())
+            continue;
+
+        frame.unsetPrevUpToDate();
+    }
 }
 
 /* static */ void

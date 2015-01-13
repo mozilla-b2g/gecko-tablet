@@ -142,21 +142,27 @@ private:
         MOZ_ASSERT(NS_IsMainThread());
         MOZ_ASSERT(mTabParent);
         MOZ_ASSERT(mEventTarget);
-        MOZ_ASSERT(mFD);
 
         nsRefPtr<TabParent> tabParent;
         mTabParent.swap(tabParent);
 
         using mozilla::ipc::FileDescriptor;
 
-        FileDescriptor::PlatformHandleType handle =
-            FileDescriptor::PlatformHandleType(PR_FileDesc2NativeHandle(mFD));
+        FileDescriptor fd;
+        if (mFD) {
+            FileDescriptor::PlatformHandleType handle =
+                FileDescriptor::PlatformHandleType(PR_FileDesc2NativeHandle(mFD));
+            fd = FileDescriptor(handle);
+        }
 
         // Our TabParent may have been destroyed already.  If so, don't send any
         // fds over, just go back to the IO thread and close them.
         if (!tabParent->IsDestroyed()) {
-          mozilla::unused << tabParent->SendCacheFileDescriptor(mPath,
-                                                                FileDescriptor(handle));
+            mozilla::unused << tabParent->SendCacheFileDescriptor(mPath, fd);
+        }
+
+        if (!mFD) {
+            return;
         }
 
         nsCOMPtr<nsIEventTarget> eventTarget;
@@ -171,7 +177,8 @@ private:
         }
     }
 
-    void OpenFile()
+    // Helper method to avoid gnarly control flow for failures.
+    void OpenFileImpl()
     {
         MOZ_ASSERT(!NS_IsMainThread());
         MOZ_ASSERT(!mFD);
@@ -185,10 +192,21 @@ private:
         NS_ENSURE_SUCCESS_VOID(rv);
 
         mFD = fd;
+    }
+
+    void OpenFile()
+    {
+        MOZ_ASSERT(!NS_IsMainThread());
+
+        OpenFileImpl();
 
         if (NS_FAILED(NS_DispatchToMainThread(this))) {
             NS_WARNING("Failed to dispatch to main thread!");
 
+            // Intentionally leak the runnable (but not the fd) rather
+            // than crash when trying to release a main thread object
+            // off the main thread.
+            mTabParent.forget();
             CloseFile();
         }
     }
@@ -254,6 +272,7 @@ TabParent::TabParent(nsIContentParent* aManager,
   , mChromeFlags(aChromeFlags)
   , mInitedByParent(false)
   , mTabId(aTabId)
+  , mSkipLoad(false)
 {
   MOZ_ASSERT(aManager);
 }
@@ -431,18 +450,49 @@ TabParent::RecvEvent(const RemoteDOMEvent& aEvent)
   return true;
 }
 
-bool
-TabParent::AnswerCreateWindow(const uint32_t& aChromeFlags,
-                              const bool& aCalledFromJS,
-                              const bool& aPositionSpecified,
-                              const bool& aSizeSpecified,
-                              const nsString& aURI,
-                              const nsString& aName,
-                              const nsString& aFeatures,
-                              const nsString& aBaseURI,
-                              bool* aWindowIsNew,
-                              PBrowserParent** aRetVal)
+struct MOZ_STACK_CLASS TabParent::AutoUseNewTab MOZ_FINAL
 {
+public:
+  AutoUseNewTab(TabParent* aNewTab, bool* aWindowIsNew)
+   : mNewTab(aNewTab), mWindowIsNew(aWindowIsNew)
+  {
+    MOZ_ASSERT(!TabParent::sNextTabParent);
+    TabParent::sNextTabParent = aNewTab;
+    aNewTab->mSkipLoad = true;
+  }
+
+  ~AutoUseNewTab()
+  {
+    mNewTab->mSkipLoad = false;
+
+    if (TabParent::sNextTabParent) {
+      MOZ_ASSERT(TabParent::sNextTabParent == mNewTab);
+      TabParent::sNextTabParent = nullptr;
+      *mWindowIsNew = false;
+    }
+  }
+
+private:
+  TabParent* mNewTab;
+  bool* mWindowIsNew;
+};
+
+bool
+TabParent::RecvCreateWindow(PBrowserParent* aNewTab,
+                            const uint32_t& aChromeFlags,
+                            const bool& aCalledFromJS,
+                            const bool& aPositionSpecified,
+                            const bool& aSizeSpecified,
+                            const nsString& aURI,
+                            const nsString& aName,
+                            const nsString& aFeatures,
+                            const nsString& aBaseURI,
+                            bool* aWindowIsNew,
+                            InfallibleTArray<FrameScriptInfo>* aFrameScripts)
+{
+  // We always expect to open a new window here. If we don't, it's an error.
+  *aWindowIsNew = true;
+
   if (IsBrowserOrApp()) {
     return false;
   }
@@ -451,6 +501,8 @@ TabParent::AnswerCreateWindow(const uint32_t& aChromeFlags,
   nsCOMPtr<nsPIWindowWatcher> pwwatch =
     do_GetService(NS_WINDOWWATCHER_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, false);
+
+  TabParent* newTab = static_cast<TabParent*>(aNewTab);
 
   nsCOMPtr<nsIContent> frame(do_QueryInterface(mFrameElement));
   NS_ENSURE_TRUE(frame, false);
@@ -465,8 +517,6 @@ TabParent::AnswerCreateWindow(const uint32_t& aChromeFlags,
   MOZ_ASSERT(openLocation == nsIBrowserDOMWindow::OPEN_NEWTAB ||
              openLocation == nsIBrowserDOMWindow::OPEN_NEWWINDOW);
 
-  *aWindowIsNew = true;
-
   // Opening new tabs is the easy case...
   if (openLocation == nsIBrowserDOMWindow::OPEN_NEWTAB) {
     NS_ENSURE_TRUE(mBrowserDOMWindow, false);
@@ -479,17 +529,18 @@ TabParent::AnswerCreateWindow(const uint32_t& aChromeFlags,
     params->SetReferrer(aBaseURI);
     params->SetIsPrivate(isPrivate);
 
+    AutoUseNewTab aunt(newTab, aWindowIsNew);
+
     nsCOMPtr<nsIFrameLoaderOwner> frameLoaderOwner;
     mBrowserDOMWindow->OpenURIInFrame(nullptr, params,
-                                      nsIBrowserDOMWindow::OPEN_NEWTAB,
+                                      openLocation,
                                       nsIBrowserDOMWindow::OPEN_NEW,
                                       getter_AddRefs(frameLoaderOwner));
-    NS_ENSURE_TRUE(frameLoaderOwner, false);
+    if (!frameLoaderOwner) {
+      *aWindowIsNew = false;
+    }
 
-    nsRefPtr<nsFrameLoader> frameLoader = frameLoaderOwner->GetFrameLoader();
-    NS_ENSURE_TRUE(frameLoader, false);
-
-    *aRetVal = frameLoader->GetRemoteBrowser();
+    aFrameScripts->SwapElements(newTab->mDelayedFrameScripts);
     return true;
   }
 
@@ -512,6 +563,8 @@ TabParent::AnswerCreateWindow(const uint32_t& aChromeFlags,
 
   nsCOMPtr<nsIDOMWindow> window;
 
+  AutoUseNewTab aunt(newTab, aWindowIsNew);
+
   rv = pwwatch->OpenWindow2(parent, finalURIString.get(),
                             NS_ConvertUTF16toUTF8(aName).get(),
                             NS_ConvertUTF16toUTF8(aFeatures).get(), aCalledFromJS,
@@ -527,14 +580,44 @@ TabParent::AnswerCreateWindow(const uint32_t& aChromeFlags,
   nsCOMPtr<nsITabParent> newRemoteTab = newDocShell->GetOpenedRemote();
   NS_ENSURE_TRUE(newRemoteTab, false);
 
-  *aRetVal = static_cast<TabParent*>(newRemoteTab.get());
+  MOZ_ASSERT(static_cast<TabParent*>(newRemoteTab.get()) == newTab);
+
+  aFrameScripts->SwapElements(newTab->mDelayedFrameScripts);
   return true;
+}
+
+TabParent* TabParent::sNextTabParent;
+
+/* static */ TabParent*
+TabParent::GetNextTabParent()
+{
+  TabParent* result = sNextTabParent;
+  sNextTabParent = nullptr;
+  return result;
+}
+
+bool
+TabParent::SendLoadRemoteScript(const nsString& aURL,
+                                const bool& aRunInGlobalScope)
+{
+  if (mSkipLoad) {
+    mDelayedFrameScripts.AppendElement(FrameScriptInfo(aURL, aRunInGlobalScope));
+    return true;
+  }
+
+  MOZ_ASSERT(mDelayedFrameScripts.IsEmpty());
+  return PBrowserParent::SendLoadRemoteScript(aURL, aRunInGlobalScope);
 }
 
 void
 TabParent::LoadURL(nsIURI* aURI)
 {
     MOZ_ASSERT(aURI);
+
+    if (mSkipLoad) {
+        // Don't send the message if the child wants to load its own URL.
+        return;
+    }
 
     if (mIsDestroyed) {
         return;
@@ -2177,7 +2260,11 @@ TabParent::MaybeForwardEventToRenderFrame(WidgetInputEvent& aEvent,
                                           ScrollableLayerGuid* aOutTargetGuid,
                                           uint64_t* aOutInputBlockId)
 {
-  if (aEvent.mClass == eWheelEventClass) {
+  if (aEvent.mClass == eWheelEventClass
+#ifdef MOZ_WIDGET_GONK
+      || aEvent.mClass == eTouchEventClass
+#endif
+     ) {
     // Wheel events must be sent to APZ directly from the widget. New APZ-
     // aware events should follow suit and move there as well. However, we
     // do need to inform the child process of the correct target and block

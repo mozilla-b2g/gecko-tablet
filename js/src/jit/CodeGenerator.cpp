@@ -4193,6 +4193,36 @@ CodeGenerator::visitNewTypedObject(LNewTypedObject *lir)
     masm.bind(ool->rejoin());
 }
 
+void
+CodeGenerator::visitSimdBox(LSimdBox *lir)
+{
+    FloatRegister in = ToFloatRegister(lir->input());
+    Register object = ToRegister(lir->output());
+    Register temp = ToRegister(lir->temp());
+    InlineTypedObject *templateObject = lir->mir()->templateObject();
+    gc::InitialHeap initialHeap = lir->mir()->initialHeap();
+    MIRType type = lir->mir()->input()->type();
+
+    // :TODO: We cannot spill SIMD registers (Bug 1112164) from safepoints, thus
+    // we cannot use the same oolCallVM as visitNewTypedObject for allocating
+    // SIMD Typed Objects if we are at the end of the nursery. (Bug 1119303)
+    Label bail;
+    masm.createGCObject(object, temp, templateObject, initialHeap, &bail);
+    bailoutFrom(&bail, lir->snapshot());
+
+    Address objectData(object, InlineTypedObject::offsetOfDataStart());
+    switch (type) {
+      case MIRType_Int32x4:
+        masm.storeUnalignedInt32x4(in, objectData);
+        break;
+      case MIRType_Float32x4:
+        masm.storeUnalignedFloat32x4(in, objectData);
+        break;
+      default:
+        MOZ_CRASH("Unknown SIMD kind when generating code for SimdBox.");
+    }
+}
+
 typedef js::DeclEnvObject *(*NewDeclEnvObjectFn)(JSContext *, HandleFunction, gc::InitialHeap);
 static const VMFunction NewDeclEnvObjectInfo =
     FunctionInfo<NewDeclEnvObjectFn>(DeclEnvObject::createTemplateObject);
@@ -4430,7 +4460,7 @@ CodeGenerator::visitCreateThisWithProto(LCreateThisWithProto *lir)
 }
 
 typedef JSObject *(*NewGCObjectFn)(JSContext *cx, gc::AllocKind allocKind,
-                                   gc::InitialHeap initialHeap);
+                                   gc::InitialHeap initialHeap, const js::Class *clasp);
 static const VMFunction NewGCObjectInfo =
     FunctionInfo<NewGCObjectFn>(js::jit::NewGCObject);
 
@@ -4440,11 +4470,13 @@ CodeGenerator::visitCreateThisWithTemplate(LCreateThisWithTemplate *lir)
     PlainObject *templateObject = lir->mir()->templateObject();
     gc::AllocKind allocKind = templateObject->asTenured().getAllocKind();
     gc::InitialHeap initialHeap = lir->mir()->initialHeap();
+    const js::Class *clasp = templateObject->type()->clasp();
     Register objReg = ToRegister(lir->output());
     Register tempReg = ToRegister(lir->temp());
 
     OutOfLineCode *ool = oolCallVM(NewGCObjectInfo, lir,
-                                   (ArgList(), Imm32(allocKind), Imm32(initialHeap)),
+                                   (ArgList(), Imm32(allocKind), Imm32(initialHeap),
+                                    ImmPtr(clasp)),
                                    StoreRegisterTo(objReg));
 
     // Allocate. If the FreeList is empty, call to VM, which may GC.
@@ -5386,14 +5418,31 @@ ConcatFatInlineString(MacroAssembler &masm, Register lhs, Register rhs, Register
     masm.branchIfRope(lhs, failure);
     masm.branchIfRope(rhs, failure);
 
-    // Allocate a JSFatInlineString.
-    masm.newGCFatInlineString(output, temp1, failure);
+    // Allocate a JSInlineString or JSFatInlineString.
+    size_t maxLengthInline = isTwoByte
+                             ? JSInlineString::MAX_LENGTH_TWO_BYTE
+                             : JSInlineString::MAX_LENGTH_LATIN1;
+    Label isFat, allocDone;
+    masm.branch32(Assembler::Above, temp2, Imm32(maxLengthInline), &isFat);
+    {
+        uint32_t flags = JSString::INIT_INLINE_FLAGS;
+        if (!isTwoByte)
+            flags |= JSString::LATIN1_CHARS_BIT;
+        masm.newGCString(output, temp1, failure);
+        masm.store32(Imm32(flags), Address(output, JSString::offsetOfFlags()));
+        masm.jump(&allocDone);
+    }
+    masm.bind(&isFat);
+    {
+        uint32_t flags = JSString::INIT_FAT_INLINE_FLAGS;
+        if (!isTwoByte)
+            flags |= JSString::LATIN1_CHARS_BIT;
+        masm.newGCFatInlineString(output, temp1, failure);
+        masm.store32(Imm32(flags), Address(output, JSString::offsetOfFlags()));
+    }
+    masm.bind(&allocDone);
 
-    // Store length and flags.
-    uint32_t flags = JSString::INIT_FAT_INLINE_FLAGS;
-    if (!isTwoByte)
-        flags |= JSString::LATIN1_CHARS_BIT;
-    masm.store32(Imm32(flags), Address(output, JSString::offsetOfFlags()));
+    // Store length.
     masm.store32(temp2, Address(output, JSString::offsetOfLength()));
 
     // Load chars pointer in temp2.
@@ -6917,7 +6966,7 @@ CodeGenerator::generate()
     if (!snapshots_.init())
         return false;
 
-    if (!safepoints_.init(gen->alloc(), graph.totalSlotCount()))
+    if (!safepoints_.init(gen->alloc()))
         return false;
 
     if (!generatePrologue())

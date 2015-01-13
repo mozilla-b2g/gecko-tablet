@@ -20,6 +20,7 @@
   <script type="application/javascript" src="performance/views/details.js"/>
   <script type="application/javascript" src="performance/views/details-call-tree.js"/>
   <script type="application/javascript" src="performance/views/details-waterfall.js"/>
+  <script type="application/javascript" src="performance/views/details-flamegraph.js"/>
 
   <vbox class="theme-body" flex="1">
     <toolbar id="performance-toolbar" class="devtools-toolbar">
@@ -27,9 +28,17 @@
         <toolbarbutton id="record-button"
                        class="devtools-toolbarbutton"
                        tooltiptext="&profilerUI.recordButton.tooltip;"/>
-        <toolbarbutton id="clear-button"
+      </hbox>
+      <hbox id="performance-toolbar-controls-detail-views" class="devtools-toolbarbutton-group">
+        <toolbarbutton id="select-waterfall-view"
                        class="devtools-toolbarbutton"
-                       label="&profilerUI.clearButton;"/>
+                       data-view="waterfall" />
+        <toolbarbutton id="select-calltree-view"
+                       class="devtools-toolbarbutton"
+                       data-view="calltree" />
+        <toolbarbutton id="select-flamegraph-view"
+                       class="devtools-toolbarbutton"
+                       data-view="flamegraph" />
       </hbox>
       <spacer flex="1"></spacer>
       <hbox id="performance-toolbar-controls-storage" class="devtools-toolbarbutton-group">
@@ -39,31 +48,22 @@
         <toolbarbutton id="export-button"
                        class="devtools-toolbarbutton"
                        label="&profilerUI.exportButton;"/>
+        <toolbarbutton id="clear-button"
+                       class="devtools-toolbarbutton"
+                       label="&profilerUI.clearButton;"/>
       </hbox>
     </toolbar>
 
     <vbox id="overview-pane">
-      <hbox id="time-framerate"/>
       <hbox id="markers-overview"/>
       <hbox id="memory-overview"/>
+      <hbox id="time-framerate"/>
     </vbox>
 
-    <toolbar id="details-toolbar" class="devtools-toolbar">
-      <hbox class="devtools-toolbarbutton-group">
-        <toolbarbutton id="select-waterfall-view"
-                       class="devtools-toolbarbutton"
-                       tooltiptext="waterfall"
-                       data-view="waterfall" />
-        <toolbarbutton id="select-calltree-view"
-                       class="devtools-toolbarbutton"
-                       tooltiptext="calltree"
-                       data-view="calltree" />
-      </hbox>
-    </toolbar>
-
     <deck id="details-pane" flex="1">
-      <hbox id="waterfall-view">
-        <vbox id="waterfall-graph" flex="1" />
+
+      <hbox id="waterfall-view" flex="1">
+        <vbox id="waterfall-breakdown" flex="1" />
         <splitter class="devtools-side-splitter"/>
         <vbox id="waterfall-details"
               class="theme-sidebar"
@@ -71,7 +71,7 @@
               height="150"/>
       </hbox>
 
-      <vbox id="calltree-view" class="call-tree" flex="1">
+      <vbox id="calltree-view" flex="1">
         <hbox class="call-tree-headers-container">
           <label class="plain call-tree-header"
                  type="duration"
@@ -100,6 +100,9 @@
         </hbox>
         <vbox class="call-tree-cells-container" flex="1"/>
       </vbox>
+
+      <hbox id="flamegraph-view" flex="1">
+      </hbox>
     </deck>
   </vbox>
 </window>

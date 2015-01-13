@@ -1477,8 +1477,6 @@ jit::JitActivation::clearRematerializedFrames()
 jit::RematerializedFrame *
 jit::JitActivation::getRematerializedFrame(JSContext *cx, const JitFrameIterator &iter, size_t inlineDepth)
 {
-    // Only allow rematerializing from the same thread.
-    MOZ_ASSERT(cx->perThreadData == cx_->perThreadData);
     MOZ_ASSERT(iter.activation() == this);
     MOZ_ASSERT(iter.isIonScripted());
 
@@ -1503,8 +1501,22 @@ jit::JitActivation::getRematerializedFrame(JSContext *cx, const JitFrameIterator
         // preserve identity. Therefore, we always rematerialize an uninlined
         // frame and all its inlined frames at once.
         InlineFrameIterator inlineIter(cx, &iter);
-        if (!RematerializedFrame::RematerializeInlineFrames(cx, top, inlineIter, p->value()))
+        MaybeReadFallback recover(cx, this, &iter);
+
+        // Frames are often rematerialized with the cx inside a Debugger's
+        // compartment. To recover slots and to create CallObjects, we need to
+        // be in the activation's compartment.
+        AutoCompartment ac(cx, compartment_);
+
+        if (!RematerializedFrame::RematerializeInlineFrames(cx, top, inlineIter, recover,
+                                                            p->value()))
+        {
             return nullptr;
+        }
+
+        // All frames younger than the rematerialized frame need to have their
+        // prevUpToDate flag cleared.
+        DebugScopes::unsetPrevUpToDateUntil(cx, p->value()[inlineDepth]);
     }
 
     return p->value()[inlineDepth];
