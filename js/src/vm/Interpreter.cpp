@@ -1121,7 +1121,7 @@ HandleError(JSContext *cx, InterpreterRegs &regs)
             if (exception.isMagic(JS_GENERATOR_CLOSING)) {
                 cx->clearPendingException();
                 ok = true;
-                regs.fp()->clearReturnValue();
+                SetReturnValueForClosingGenerator(cx, regs.fp());
             }
         }
     } else {
@@ -2522,7 +2522,7 @@ CASE(JSOP_FUNCALL)
 {
     if (REGS.fp()->hasPushedSPSFrame())
         cx->runtime()->spsProfiler.updatePC(script, REGS.pc);
-    MOZ_ASSERT(REGS.stackDepth() >= 2 + GET_ARGC(REGS.pc));
+    MOZ_ASSERT(REGS.stackDepth() >= 2u + GET_ARGC(REGS.pc));
     CallArgs args = CallArgsFromSp(GET_ARGC(REGS.pc), REGS.sp);
 
     bool construct = (*REGS.pc == JSOP_NEW);

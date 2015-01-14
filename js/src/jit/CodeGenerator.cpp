@@ -1188,17 +1188,17 @@ CreateDependentString(MacroAssembler &masm, const JSAtomState &names,
     masm.branch32(Assembler::Above, temp1, Imm32(maxInlineLength), &notInline);
 
     {
-        // Make a normal or fat inline string.
+        // Make a thin or fat inline string.
         Label stringAllocated, fatInline;
 
-        int32_t maxNormalInlineLength = latin1
-                                        ? (int32_t) JSInlineString::MAX_LENGTH_LATIN1
-                                        : (int32_t) JSInlineString::MAX_LENGTH_TWO_BYTE;
-        masm.branch32(Assembler::Above, temp1, Imm32(maxNormalInlineLength), &fatInline);
+        int32_t maxThinInlineLength = latin1
+                                      ? (int32_t) JSThinInlineString::MAX_LENGTH_LATIN1
+                                      : (int32_t) JSThinInlineString::MAX_LENGTH_TWO_BYTE;
+        masm.branch32(Assembler::Above, temp1, Imm32(maxThinInlineLength), &fatInline);
 
-        int32_t normalFlags = (latin1 ? JSString::LATIN1_CHARS_BIT : 0) | JSString::INIT_INLINE_FLAGS;
+        int32_t thinFlags = (latin1 ? JSString::LATIN1_CHARS_BIT : 0) | JSString::INIT_THIN_INLINE_FLAGS;
         masm.newGCString(string, temp2, failure);
-        masm.store32(Imm32(normalFlags), Address(string, JSString::offsetOfFlags()));
+        masm.store32(Imm32(thinFlags), Address(string, JSString::offsetOfFlags()));
         masm.jump(&stringAllocated);
 
         masm.bind(&fatInline);
@@ -3610,6 +3610,14 @@ CodeGenerator::emitObjectOrStringResultChecks(LInstruction *lir, MDefinition *mi
         masm.jump(&ok);
 
         masm.bind(&miss);
+
+        // Type set guards might miss when an object's type changes and its
+        // properties become unknown, so check for this case.
+        masm.loadPtr(Address(output, JSObject::offsetOfType()), temp);
+        masm.branchTestPtr(Assembler::NonZero,
+                           Address(temp, types::TypeObject::offsetOfFlags()),
+                           Imm32(types::OBJECT_FLAG_UNKNOWN_PROPERTIES), &ok);
+
         masm.assumeUnreachable("MIR instruction returned object with unexpected type");
 
         masm.bind(&ok);
@@ -3679,6 +3687,18 @@ CodeGenerator::emitValueResultChecks(LInstruction *lir, MDefinition *mir)
         masm.jump(&ok);
 
         masm.bind(&miss);
+
+        // Type set guards might miss when an object's type changes and its
+        // properties become unknown, so check for this case.
+        Label realMiss;
+        masm.branchTestObject(Assembler::NotEqual, output, &realMiss);
+        Register payload = masm.extractObject(output, temp1);
+        masm.loadPtr(Address(payload, JSObject::offsetOfType()), temp1);
+        masm.branchTestPtr(Assembler::NonZero,
+                           Address(temp1, types::TypeObject::offsetOfFlags()),
+                           Imm32(types::OBJECT_FLAG_UNKNOWN_PROPERTIES), &ok);
+        masm.bind(&realMiss);
+
         masm.assumeUnreachable("MIR instruction returned value with unexpected type");
 
         masm.bind(&ok);
@@ -5408,9 +5428,9 @@ CopyStringCharsMaybeInflate(MacroAssembler &masm, Register input, Register destC
 }
 
 static void
-ConcatFatInlineString(MacroAssembler &masm, Register lhs, Register rhs, Register output,
-                      Register temp1, Register temp2, Register temp3,
-                      Label *failure, Label *failurePopTemps, bool isTwoByte)
+ConcatInlineString(MacroAssembler &masm, Register lhs, Register rhs, Register output,
+                   Register temp1, Register temp2, Register temp3,
+                   Label *failure, Label *failurePopTemps, bool isTwoByte)
 {
     // State: result length in temp2.
 
@@ -5418,14 +5438,17 @@ ConcatFatInlineString(MacroAssembler &masm, Register lhs, Register rhs, Register
     masm.branchIfRope(lhs, failure);
     masm.branchIfRope(rhs, failure);
 
-    // Allocate a JSInlineString or JSFatInlineString.
-    size_t maxLengthInline = isTwoByte
-                             ? JSInlineString::MAX_LENGTH_TWO_BYTE
-                             : JSInlineString::MAX_LENGTH_LATIN1;
+    // Allocate a JSThinInlineString or JSFatInlineString.
+    size_t maxThinInlineLength;
+    if (isTwoByte)
+        maxThinInlineLength = JSThinInlineString::MAX_LENGTH_TWO_BYTE;
+    else
+        maxThinInlineLength = JSThinInlineString::MAX_LENGTH_LATIN1;
+
     Label isFat, allocDone;
-    masm.branch32(Assembler::Above, temp2, Imm32(maxLengthInline), &isFat);
+    masm.branch32(Assembler::Above, temp2, Imm32(maxThinInlineLength), &isFat);
     {
-        uint32_t flags = JSString::INIT_INLINE_FLAGS;
+        uint32_t flags = JSString::INIT_THIN_INLINE_FLAGS;
         if (!isTwoByte)
             flags |= JSString::LATIN1_CHARS_BIT;
         masm.newGCString(output, temp1, failure);
@@ -5674,12 +5697,12 @@ JitCompartment::generateStringConcatStub(JSContext *cx)
     masm.ret();
 
     masm.bind(&isFatInlineTwoByte);
-    ConcatFatInlineString(masm, lhs, rhs, output, temp1, temp2, temp3,
-                          &failure, &failurePopTemps, true);
+    ConcatInlineString(masm, lhs, rhs, output, temp1, temp2, temp3,
+                       &failure, &failurePopTemps, true);
 
     masm.bind(&isFatInlineLatin1);
-    ConcatFatInlineString(masm, lhs, rhs, output, temp1, temp2, temp3,
-                          &failure, &failurePopTemps, false);
+    ConcatInlineString(masm, lhs, rhs, output, temp1, temp2, temp3,
+                       &failure, &failurePopTemps, false);
 
     masm.bind(&failurePopTemps);
     masm.pop(temp2);
@@ -6996,13 +7019,6 @@ CodeGenerator::generate()
         return false;
 
     masm.bind(&skipPrologue);
-
-#ifdef JS_TRACE_LOGGING
-    if (!gen->compilingAsmJS()) {
-        emitTracelogScriptStart();
-        emitTracelogStartEvent(TraceLogger_IonMonkey);
-    }
-#endif
 
 #ifdef DEBUG
     // Assert that the argument types are correct.

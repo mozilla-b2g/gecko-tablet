@@ -167,6 +167,30 @@ JS_GetEmptyString(JSRuntime *rt)
     return rt->emptyString;
 }
 
+JS_PUBLIC_API(bool)
+JS_GetCompartmentStats(JSRuntime *rt, CompartmentStatsVector &stats)
+{
+    if (!stats.resizeUninitialized(rt->numCompartments))
+        return false;
+
+    size_t pos = 0;
+    for (CompartmentsIter c(rt, WithAtoms); !c.done(); c.next()) {
+        CompartmentTimeStats *stat = &stats[pos];
+        stat->time = c.get()->totalTime;
+        stat->compartment = c.get();
+        stat->addonId = c.get()->addonId;
+        if (rt->compartmentNameCallback) {
+            (*rt->compartmentNameCallback)(rt, stat->compartment,
+                                           stat->compartmentName,
+                                           MOZ_ARRAY_LENGTH(stat->compartmentName));
+        } else {
+            strcpy(stat->compartmentName, "<unknown>");
+        }
+        pos++;
+    }
+    return true;
+}
+
 namespace js {
 
 void
@@ -564,9 +588,6 @@ JS_Init(void)
     if (!jit::InitializeIon())
         return false;
 
-    if (!ForkJoinContext::initializeTls())
-        return false;
-
 #if EXPOSE_INTL_API
     UErrorCode err = U_ZERO_ERROR;
     u_init(&err);
@@ -597,6 +618,11 @@ JS_ShutDown(void)
 #endif
 
     DestroyHelperThreadsState();
+
+#ifdef JS_TRACE_LOGGING
+    DestroyTraceLoggerThreadState();
+    DestroyTraceLoggerGraphState();
+#endif
 
     PRMJ_NowShutdown();
 
