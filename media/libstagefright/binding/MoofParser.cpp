@@ -4,6 +4,7 @@
 
 #include "mp4_demuxer/MoofParser.h"
 #include "mp4_demuxer/Box.h"
+#include "mp4_demuxer/SinfParser.h"
 #include <limits>
 
 namespace mp4_demuxer
@@ -28,7 +29,7 @@ MoofParser::RebuildFragmentedIndex(BoxContext& aContext)
       mInitRange = MediaByteRange(0, box.Range().mEnd);
       ParseMoov(box);
     } else if (box.IsType("moof")) {
-      Moof moof(box, mTrex, mMdhd, mEdts, mTimestampOffset);
+      Moof moof(box, mTrex, mMdhd, mEdts, mSinf, mTimestampOffset);
 
       if (!mMoofs.IsEmpty()) {
         // Stitch time ranges together in the case of a (hopefully small) time
@@ -147,6 +148,8 @@ MoofParser::ParseMdia(Box& aBox, Tkhd& aTkhd)
   for (Box box = aBox.FirstChild(); box.IsAvailable(); box = box.Next()) {
     if (box.IsType("mdhd")) {
       mMdhd = Mdhd(box);
+    } else if (box.IsType("minf")) {
+      ParseMinf(box);
     }
   }
 }
@@ -164,12 +167,59 @@ MoofParser::ParseMvex(Box& aBox)
   }
 }
 
-Moof::Moof(Box& aBox, Trex& aTrex, Mdhd& aMdhd, Edts& aEdts, Microseconds aTimestampOffset) :
+void
+MoofParser::ParseMinf(Box& aBox)
+{
+  for (Box box = aBox.FirstChild(); box.IsAvailable(); box = box.Next()) {
+    if (box.IsType("stbl")) {
+      ParseStbl(box);
+    }
+  }
+}
+
+void
+MoofParser::ParseStbl(Box& aBox)
+{
+  for (Box box = aBox.FirstChild(); box.IsAvailable(); box = box.Next()) {
+    if (box.IsType("stsd")) {
+      ParseStsd(box);
+    }
+  }
+}
+
+void
+MoofParser::ParseStsd(Box& aBox)
+{
+  for (Box box = aBox.FirstChild(); box.IsAvailable(); box = box.Next()) {
+    if (box.IsType("encv") || box.IsType("enca")) {
+      ParseEncrypted(box);
+    }
+  }
+}
+
+void
+MoofParser::ParseEncrypted(Box& aBox)
+{
+  for (Box box = aBox.FirstChild(); box.IsAvailable(); box = box.Next()) {
+    // Some MP4 files have been found to have multiple sinf boxes in the same
+    // enc* box. This does not match spec anyway, so just choose the first
+    // one that parses properly.
+    if (box.IsType("sinf")) {
+      mSinf = Sinf(box);
+
+      if (mSinf.IsValid()) {
+        break;
+      }
+    }
+  }
+}
+
+Moof::Moof(Box& aBox, Trex& aTrex, Mdhd& aMdhd, Edts& aEdts, Sinf& aSinf, Microseconds aTimestampOffset) :
     mRange(aBox.Range()), mTimestampOffset(aTimestampOffset), mMaxRoundingError(0)
 {
   for (Box box = aBox.FirstChild(); box.IsAvailable(); box = box.Next()) {
     if (box.IsType("traf")) {
-      ParseTraf(box, aTrex, aMdhd, aEdts);
+      ParseTraf(box, aTrex, aMdhd, aEdts, aSinf);
     }
   }
   ProcessCenc();
@@ -240,7 +290,7 @@ Moof::ProcessCenc()
 }
 
 void
-Moof::ParseTraf(Box& aBox, Trex& aTrex, Mdhd& aMdhd, Edts& aEdts)
+Moof::ParseTraf(Box& aBox, Trex& aTrex, Mdhd& aMdhd, Edts& aEdts, Sinf& aSinf)
 {
   Tfhd tfhd(aTrex);
   Tfdt tfdt;
@@ -253,9 +303,9 @@ Moof::ParseTraf(Box& aBox, Trex& aTrex, Mdhd& aMdhd, Edts& aEdts)
       } else if (box.IsType("trun")) {
         ParseTrun(box, tfhd, tfdt, aMdhd, aEdts);
       } else if (box.IsType("saiz")) {
-        mSaizs.AppendElement(Saiz(box));
+        mSaizs.AppendElement(Saiz(box, aSinf.mDefaultEncryptionType));
       } else if (box.IsType("saio")) {
-        mSaios.AppendElement(Saio(box));
+        mSaios.AppendElement(Saio(box, aSinf.mDefaultEncryptionType));
       }
     }
   }
@@ -286,21 +336,43 @@ public:
 void
 Moof::ParseTrun(Box& aBox, Tfhd& aTfhd, Tfdt& aTfdt, Mdhd& aMdhd, Edts& aEdts)
 {
-  if (!aMdhd.mTimescale) {
+  if (!aTfhd.IsValid() || !aTfdt.IsValid() ||
+      !aMdhd.IsValid() || !aEdts.IsValid()) {
     return;
   }
 
   BoxReader reader(aBox);
+  if (!reader->CanReadType<uint32_t>()) {
+    return;
+  }
   uint32_t flags = reader->ReadU32();
   if ((flags & 0x404) == 0x404) {
     // Can't use these flags together
     reader->DiscardRemaining();
+    mValid = true;
     return;
   }
   uint8_t version = flags >> 24;
 
+  if (!reader->CanReadType<uint32_t>()) {
+    return;
+  }
   uint32_t sampleCount = reader->ReadU32();
   if (sampleCount == 0) {
+    mValid = true;
+    return;
+  }
+
+  size_t need =
+    ((flags & 1) ? sizeof(uint32_t) : 0) +
+    ((flags & 4) ? sizeof(uint32_t) : 0);
+  uint16_t flag[] = { 0x100, 0x200, 0x400, 0x800, 0 };
+  for (size_t i = 0; flag[i]; i++) {
+    if (flags & flag[i]) {
+      need += sizeof(uint32_t) * sampleCount;
+    }
+  }
+  if (reader->Remaining() < need) {
     return;
   }
 
@@ -354,13 +426,22 @@ Moof::ParseTrun(Box& aBox, Tfhd& aTfhd, Tfdt& aTfdt, Mdhd& aMdhd, Edts& aEdts)
   }
   mTimeRange = Interval<Microseconds>(ctsOrder[0]->mCompositionRange.start,
       ctsOrder.LastElement()->mCompositionRange.end);
+  mValid = true;
 }
 
 Tkhd::Tkhd(Box& aBox)
 {
   BoxReader reader(aBox);
+  if (!reader->CanReadType<uint32_t>()) {
+    return;
+  }
   uint32_t flags = reader->ReadU32();
   uint8_t version = flags >> 24;
+  size_t need =
+    3*(version ? sizeof(int64_t) : sizeof(int32_t)) + 2*sizeof(int32_t);
+  if (reader->Remaining() < need) {
+    return;
+  }
   if (version == 0) {
     mCreationTime = reader->ReadU32();
     mModificationTime = reader->ReadU32();
@@ -378,13 +459,23 @@ Tkhd::Tkhd(Box& aBox)
   }
   // More stuff that we don't care about
   reader->DiscardRemaining();
+  mValid = true;
 }
 
 Mdhd::Mdhd(Box& aBox)
 {
   BoxReader reader(aBox);
+  if (!reader->CanReadType<uint32_t>()) {
+    return;
+  }
   uint32_t flags = reader->ReadU32();
   uint8_t version = flags >> 24;
+  size_t need =
+    3*(version ? sizeof(int64_t) : sizeof(int32_t)) + 2*sizeof(uint32_t);
+  if (reader->Remaining() < need) {
+    return;
+  }
+
   if (version == 0) {
     mCreationTime = reader->ReadU32();
     mModificationTime = reader->ReadU32();
@@ -398,17 +489,24 @@ Mdhd::Mdhd(Box& aBox)
   }
   // language and pre_defined=0
   reader->ReadU32();
+  if (mTimescale) {
+    mValid = true;
+  }
 }
 
 Trex::Trex(Box& aBox)
 {
   BoxReader reader(aBox);
+  if (reader->Remaining() < 6*sizeof(uint32_t)) {
+    return;
+  }
   mFlags = reader->ReadU32();
   mTrackId = reader->ReadU32();
   mDefaultSampleDescriptionIndex = reader->ReadU32();
   mDefaultSampleDuration = reader->ReadU32();
   mDefaultSampleSize = reader->ReadU32();
   mDefaultSampleFlags = reader->ReadU32();
+  mValid = true;
 }
 
 Tfhd::Tfhd(Box& aBox, Trex& aTrex) : Trex(aTrex)
@@ -418,7 +516,20 @@ Tfhd::Tfhd(Box& aBox, Trex& aTrex) : Trex(aTrex)
   MOZ_ASSERT(aBox.Parent()->Parent()->IsType("moof"));
 
   BoxReader reader(aBox);
+  if (!reader->CanReadType<uint32_t>()) {
+    return;
+  }
   mFlags = reader->ReadU32();
+  size_t need = sizeof(uint32_t) /* trackid */;
+  uint8_t flag[] = { 1, 2, 8, 0x10, 0x20, 0 };
+  for (size_t i = 0; flag[i]; i++) {
+    if (mFlags & flag[i]) {
+      need += sizeof(uint32_t);
+    }
+  }
+  if (reader->Remaining() < need) {
+    return;
+  }
   mBaseDataOffset =
     mFlags & 1 ? reader->ReadU32() : aBox.Parent()->Parent()->Offset();
   mTrackId = reader->ReadU32();
@@ -434,19 +545,28 @@ Tfhd::Tfhd(Box& aBox, Trex& aTrex) : Trex(aTrex)
   if (mFlags & 0x20) {
     mDefaultSampleFlags = reader->ReadU32();
   }
+  mValid = true;
 }
 
 Tfdt::Tfdt(Box& aBox)
 {
   BoxReader reader(aBox);
+  if (!reader->CanReadType<uint32_t>()) {
+    return;
+  }
   uint32_t flags = reader->ReadU32();
   uint8_t version = flags >> 24;
+  size_t need = version ? sizeof(uint64_t) : sizeof(uint32_t) ;
+  if (reader->Remaining() < need) {
+    return;
+  }
   if (version == 0) {
     mBaseMediaDecodeTime = reader->ReadU32();
   } else if (version == 1) {
     mBaseMediaDecodeTime = reader->ReadU64();
   }
   reader->DiscardRemaining();
+  mValid = true;
 }
 
 Edts::Edts(Box& aBox)
@@ -458,9 +578,16 @@ Edts::Edts(Box& aBox)
   }
 
   BoxReader reader(child);
+  if (!reader->CanReadType<uint32_t>()) {
+    return;
+  }
   uint32_t flags = reader->ReadU32();
   uint8_t version = flags >> 24;
-
+  size_t need =
+    sizeof(uint32_t) + 2*(version ? sizeof(int64_t) : sizeof(uint32_t));
+  if (reader->Remaining() < need) {
+    return;
+  }
   uint32_t entryCount = reader->ReadU32();
   NS_ASSERTION(entryCount == 1, "Can't handle videos with multiple edits");
   if (entryCount != 1) {
@@ -480,12 +607,21 @@ Edts::Edts(Box& aBox)
   reader->DiscardRemaining();
 }
 
-Saiz::Saiz(Box& aBox) : mAuxInfoType("sinf"), mAuxInfoTypeParameter(0)
+Saiz::Saiz(Box& aBox, AtomType aDefaultType)
+  : mAuxInfoType(aDefaultType)
+  , mAuxInfoTypeParameter(0)
 {
   BoxReader reader(aBox);
+  if (!reader->CanReadType<uint32_t>()) {
+    return;
+  }
   uint32_t flags = reader->ReadU32();
   uint8_t version = flags >> 24;
-
+  size_t need =
+    ((flags & 1) ? 2*sizeof(uint32_t) : 0) + sizeof(uint8_t) + sizeof(uint32_t);
+  if (reader->Remaining() < need) {
+    return;
+  }
   if (flags & 1) {
     mAuxInfoType = reader->ReadU32();
     mAuxInfoTypeParameter = reader->ReadU32();
@@ -497,21 +633,36 @@ Saiz::Saiz(Box& aBox) : mAuxInfoType("sinf"), mAuxInfoTypeParameter(0)
       mSampleInfoSize.AppendElement(defaultSampleInfoSize);
     }
   } else {
-    reader->ReadArray(mSampleInfoSize, count);
+    if (!reader->ReadArray(mSampleInfoSize, count)) {
+      return;
+    }
   }
+  mValid = true;
 }
 
-Saio::Saio(Box& aBox) : mAuxInfoType("sinf"), mAuxInfoTypeParameter(0)
+Saio::Saio(Box& aBox, AtomType aDefaultType)
+  : mAuxInfoType(aDefaultType)
+  , mAuxInfoTypeParameter(0)
 {
   BoxReader reader(aBox);
+  if (!reader->CanReadType<uint32_t>()) {
+    return;
+  }
   uint32_t flags = reader->ReadU32();
   uint8_t version = flags >> 24;
-
+  size_t need = ((flags & 1) ? (2*sizeof(uint32_t)) : 0) + sizeof(uint32_t);
+  if (reader->Remaining() < need) {
+    return;
+  }
   if (flags & 1) {
     mAuxInfoType = reader->ReadU32();
     mAuxInfoTypeParameter = reader->ReadU32();
   }
   size_t count = reader->ReadU32();
+  need = (version ? sizeof(uint64_t) : sizeof(uint32_t)) * count;
+  if (reader->Remaining() < count) {
+    return;
+  }
   mOffsets.SetCapacity(count);
   if (version == 0) {
     for (size_t i = 0; i < count; i++) {
@@ -522,5 +673,6 @@ Saio::Saio(Box& aBox) : mAuxInfoType("sinf"), mAuxInfoTypeParameter(0)
       mOffsets.AppendElement(reader->ReadU64());
     }
   }
+  mValid = true;
 }
 }

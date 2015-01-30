@@ -169,6 +169,8 @@ public:
   explicit CrashStatsLogForwarder(const char* aKey);
   virtual void Log(const std::string& aString) MOZ_OVERRIDE;
 
+  virtual std::vector<std::pair<int32_t,std::string> > StringsVectorCopy() MOZ_OVERRIDE;
+
   void SetCircularBufferSize(uint32_t aCapacity);
 
 private:
@@ -199,6 +201,13 @@ void CrashStatsLogForwarder::SetCircularBufferSize(uint32_t aCapacity)
 
   mMaxCapacity = aCapacity;
   mBuffer.reserve(static_cast<size_t>(aCapacity));
+}
+
+std::vector<std::pair<int32_t,std::string> >
+CrashStatsLogForwarder::StringsVectorCopy()
+{
+  MutexAutoLock lock(mMutex);
+  return mBuffer;
 }
 
 bool
@@ -672,19 +681,16 @@ gfxPlatform::ShutdownLayersIPC()
     }
     sLayersIPCIsUp = false;
 
-    GeckoProcessType processType = XRE_GetProcessType();
-    if (processType == GeckoProcessType_Default) {
+    if (XRE_GetProcessType() == GeckoProcessType_Default)
+    {
         // This must happen after the shutdown of media and widgets, which
         // are triggered by the NS_XPCOM_SHUTDOWN_OBSERVER_ID notification.
         layers::ImageBridgeChild::ShutDown();
-
 #ifdef MOZ_WIDGET_GONK
         layers::SharedBufferManagerChild::ShutDown();
 #endif
 
         layers::CompositorParent::ShutDown();
-    } else if (processType == GeckoProcessType_Content) {
-        layers::CompositorChild::ShutDown();
     }
 }
 
@@ -2158,6 +2164,7 @@ gfxPlatform::OptimalFormatForContent(gfxContentType aContent)
  */
 static bool sLayersSupportsD3D9 = false;
 static bool sLayersSupportsD3D11 = false;
+static bool sLayersSupportsDXVA = false;
 static bool sBufferRotationCheckPref = true;
 static bool sPrefBrowserTabsRemoteAutostart = false;
 
@@ -2199,6 +2206,11 @@ InitLayersAccelerationPrefs()
           // Always support D3D11 when WARP is allowed.
           sLayersSupportsD3D11 = true;
         }
+        if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_DXVA, &status))) {
+          if (status == nsIGfxInfo::FEATURE_STATUS_OK) {
+            sLayersSupportsDXVA = true;
+          }
+        }
       }
     }
 #endif
@@ -2223,6 +2235,15 @@ gfxPlatform::CanUseDirect3D11()
   // safe to init the prefs etc. from here.
   MOZ_ASSERT(sLayersAccelerationPrefsInitialized);
   return sLayersSupportsD3D11;
+}
+
+bool
+gfxPlatform::CanUseDXVA()
+{
+  // this function is called from the compositor thread, so it is not
+  // safe to init the prefs etc. from here.
+  MOZ_ASSERT(sLayersAccelerationPrefsInitialized);
+  return sLayersSupportsDXVA;
 }
 
 bool

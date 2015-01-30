@@ -101,8 +101,8 @@ protected:
     RecvPPluginInstanceConstructor(PPluginInstanceChild* aActor,
                                    const nsCString& aMimeType,
                                    const uint16_t& aMode,
-                                   const InfallibleTArray<nsCString>& aNames,
-                                   const InfallibleTArray<nsCString>& aValues)
+                                   InfallibleTArray<nsCString>&& aNames,
+                                   InfallibleTArray<nsCString>&& aValues)
                                    MOZ_OVERRIDE;
     virtual bool
     AnswerNP_Shutdown(NPError *rv) MOZ_OVERRIDE;
@@ -149,8 +149,8 @@ protected:
 
     virtual bool RecvStartProfiler(const uint32_t& aEntries,
                                    const double& aInterval,
-                                   const nsTArray<nsCString>& aFeatures,
-                                   const nsTArray<nsCString>& aThreadNameFilters) MOZ_OVERRIDE;
+                                   nsTArray<nsCString>&& aFeatures,
+                                   nsTArray<nsCString>&& aThreadNameFilters) MOZ_OVERRIDE;
     virtual bool RecvStopProfiler() MOZ_OVERRIDE;
     virtual bool AnswerGetProfile(nsCString* aProfile) MOZ_OVERRIDE;
 
@@ -283,6 +283,11 @@ public:
         // CGContextRef we pass to it in NPP_HandleEvent(NPCocoaEventDrawRect)
         // outside of that call.  See bug 804606.
         QUIRK_FLASH_AVOID_CGMODE_CRASHES                = 1 << 10,
+        // Mac: Work around a Flash ActionScript bug that causes long hangs if
+        // Flash thinks HiDPI support is available. Adobe is tracking this as
+        // ADBE 3921114. If this turns out to be Adobe's fault and they fix it,
+        // we'll no longer need this quirk. See bug 1118615.
+        QUIRK_FLASH_HIDE_HIDPI_SUPPORT                  = 1 << 11,
     };
 
     int GetQuirks() { return mQuirks; }
@@ -302,7 +307,6 @@ private:
 
 #if defined(OS_WIN)
     void HookProtectedMode();
-    void CleanupProtectedModeHook();
 #endif
 
 #if defined(MOZ_WIDGET_GTK)

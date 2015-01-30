@@ -29,6 +29,11 @@ namespace mozilla {
 class ErrorResult;
 template <typename T> class AsyncEventRunner;
 
+enum MSRangeRemovalAction: uint8_t {
+  RUN = 0,
+  SKIP = 1
+};
+
 namespace dom {
 
 class GlobalObject;
@@ -109,6 +114,10 @@ public:
   void Dump(const char* aPath);
 #endif
 
+  // Returns a string describing the state of the MediaSource internal
+  // buffered data. Used for debugging purposes.
+  void GetMozDebugReaderData(nsAString& aString);
+
 private:
   // MediaSourceDecoder uses DurationChange to set the duration
   // without hitting the checks in SetDuration.
@@ -129,7 +138,7 @@ private:
   void InitializationEvent();
 
   // SetDuration with no checks.
-  void SetDuration(double aDuration);
+  void SetDuration(double aDuration, MSRangeRemovalAction aAction);
 
   nsRefPtr<SourceBufferList> mSourceBuffers;
   nsRefPtr<SourceBufferList> mActiveSourceBuffers;

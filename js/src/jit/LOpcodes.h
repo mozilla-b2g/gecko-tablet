@@ -18,6 +18,7 @@
     _(Double)                       \
     _(Float32)                      \
     _(SimdBox)                      \
+    _(SimdUnbox)                    \
     _(SimdSplatX4)                  \
     _(Int32x4)                      \
     _(Float32x4)                    \
@@ -305,7 +306,6 @@
     _(InterruptCheck)               \
     _(AsmJSInterruptCheck)          \
     _(InterruptCheckImplicit)       \
-    _(ProfilerStackOp)              \
     _(GetDOMProperty)               \
     _(GetDOMMemberV)                \
     _(GetDOMMemberT)                \

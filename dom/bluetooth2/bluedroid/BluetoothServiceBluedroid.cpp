@@ -64,6 +64,8 @@ static nsString sAdapterBdName;
 static bool sAdapterDiscoverable(false);
 static bool sAdapterDiscovering(false);
 static bool sAdapterEnabled(false);
+// InfallibleTArray is an alias for nsTArray.
+static InfallibleTArray<nsString> sAdapterBondedAddressArray;
 
 static BluetoothInterface* sBtInterface;
 static nsTArray<nsRefPtr<BluetoothProfileController> > sControllerArray;
@@ -422,6 +424,8 @@ BluetoothServiceBluedroid::GetAdaptersInternal(
                           "Discoverable", sAdapterDiscoverable);
     BT_APPEND_NAMED_VALUE(properties.get_ArrayOfBluetoothNamedValue(),
                           "Discovering", sAdapterDiscovering);
+    BT_APPEND_NAMED_VALUE(properties.get_ArrayOfBluetoothNamedValue(),
+                          "PairedDevices", sAdapterBondedAddressArray);
 
     BT_APPEND_NAMED_VALUE(adaptersProperties.get_ArrayOfBluetoothNamedValue(),
                           "Adapter", properties);
@@ -1190,6 +1194,10 @@ BluetoothServiceBluedroid::AdapterStateChangedNotification(bool aState)
       sAdapterDiscovering = false;
       BT_APPEND_NAMED_VALUE(props, "Discovering", false);
     }
+    if (!sAdapterBondedAddressArray.IsEmpty()) {
+      BT_APPEND_NAMED_VALUE(props, "PairedDevices",
+                            InfallibleTArray<nsString>());
+    }
 
     BluetoothSignal signal(NS_LITERAL_STRING("PropertyChanged"),
                            NS_LITERAL_STRING(KEY_ADAPTER), props);
@@ -1279,13 +1287,15 @@ BluetoothServiceBluedroid::AdapterPropertiesNotification(
       BT_LOGD("Adapter property: BONDED_DEVICES. Count: %d",
               p.mStringArray.Length());
 
-      nsTArray<nsString> pairedDeviceAddresses;
+      // Whenever reloading paired devices, force refresh
+      sAdapterBondedAddressArray.Clear();
+
       for (size_t index = 0; index < p.mStringArray.Length(); index++) {
-        pairedDeviceAddresses.AppendElement(p.mStringArray[index]);
+        sAdapterBondedAddressArray.AppendElement(p.mStringArray[index]);
       }
 
-      BT_APPEND_NAMED_VALUE(propertiesArray, "PairedDevices", pairedDeviceAddresses);
-
+      BT_APPEND_NAMED_VALUE(propertiesArray, "PairedDevices",
+                            sAdapterBondedAddressArray);
     } else if (p.mType == PROPERTY_UNKNOWN) {
       /* Bug 1065999: working around unknown properties */
     } else {
@@ -1500,6 +1510,7 @@ BluetoothServiceBluedroid::PinRequestNotification(const nsAString& aRemoteBdAddr
   InfallibleTArray<BluetoothNamedValue> propertiesArray;
 
   BT_APPEND_NAMED_VALUE(propertiesArray, "address", nsString(aRemoteBdAddr));
+  BT_APPEND_NAMED_VALUE(propertiesArray, "name", nsString(aBdName));
   BT_APPEND_NAMED_VALUE(propertiesArray, "passkey", EmptyString());
   BT_APPEND_NAMED_VALUE(propertiesArray, "type",
                         NS_LITERAL_STRING(PAIRING_REQ_TYPE_ENTERPINCODE));
@@ -1546,6 +1557,7 @@ BluetoothServiceBluedroid::SspRequestNotification(
   }
 
   BT_APPEND_NAMED_VALUE(propertiesArray, "address", nsString(aRemoteBdAddr));
+  BT_APPEND_NAMED_VALUE(propertiesArray, "name", nsString(aBdName));
   BT_APPEND_NAMED_VALUE(propertiesArray, "passkey", passkey);
   BT_APPEND_NAMED_VALUE(propertiesArray, "type", pairingType);
 
@@ -1567,6 +1579,16 @@ BluetoothServiceBluedroid::BondStateChangedNotification(
   }
 
   bool bonded = (aState == BOND_STATE_BONDED);
+
+  // Update bonded address array
+  nsString remoteBdAddr = nsString(aRemoteBdAddr);
+  if (bonded) {
+    if (!sAdapterBondedAddressArray.Contains(remoteBdAddr)) {
+      sAdapterBondedAddressArray.AppendElement(remoteBdAddr);
+    }
+  } else {
+    sAdapterBondedAddressArray.RemoveElement(remoteBdAddr);
+  }
 
   // Update attribute BluetoothDevice.paired
   InfallibleTArray<BluetoothNamedValue> propertiesArray;
@@ -1592,7 +1614,6 @@ BluetoothServiceBluedroid::BondStateChangedNotification(
     DispatchBluetoothReply(sBondingRunnableArray[0],
                            BluetoothValue(true), EmptyString());
     sBondingRunnableArray.RemoveElementAt(0);
-
   } else if (!bonded && !sUnbondingRunnableArray.IsEmpty()) {
     DispatchBluetoothReply(sUnbondingRunnableArray[0],
                            BluetoothValue(true), EmptyString());

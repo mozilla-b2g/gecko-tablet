@@ -325,7 +325,7 @@ class ComplexTypeDescr : public TypeDescr
 };
 
 /*
- * Type descriptors `float32x4` and `int32x4`
+ * Type descriptors `float32x4`, `int32x4` and `float64x2`
  */
 class SimdTypeDescr : public ComplexTypeDescr
 {
@@ -333,6 +333,7 @@ class SimdTypeDescr : public ComplexTypeDescr
     enum Type {
         TYPE_INT32 = JS_SIMDTYPEREPR_INT32,
         TYPE_FLOAT32 = JS_SIMDTYPEREPR_FLOAT32,
+        TYPE_FLOAT64 = JS_SIMDTYPEREPR_FLOAT64
     };
 
     static const type::Kind Kind = type::Simd;
@@ -340,6 +341,7 @@ class SimdTypeDescr : public ComplexTypeDescr
     static const Class class_;
     static int32_t size(Type t);
     static int32_t alignment(Type t);
+    static int32_t lanes(Type t);
 
     SimdTypeDescr::Type type() const {
         return (SimdTypeDescr::Type) getReservedSlot(JS_DESCR_SLOT_TYPE).toInt32();
@@ -350,8 +352,9 @@ class SimdTypeDescr : public ComplexTypeDescr
 };
 
 #define JS_FOR_EACH_SIMD_TYPE_REPR(macro_)                             \
-    macro_(SimdTypeDescr::TYPE_INT32, int32_t, int32)                  \
-    macro_(SimdTypeDescr::TYPE_FLOAT32, float, float32)
+    macro_(SimdTypeDescr::TYPE_INT32, int32_t, int32, 4)               \
+    macro_(SimdTypeDescr::TYPE_FLOAT32, float, float32, 4)             \
+    macro_(SimdTypeDescr::TYPE_FLOAT64, double, float64, 2)
 
 bool IsTypedObjectClass(const Class *clasp); // Defined below
 bool IsTypedObjectArray(JSObject& obj);
@@ -561,8 +564,9 @@ class TypedObject : public JSObject
     static bool obj_setElement(JSContext *cx, HandleObject obj, uint32_t index,
                                MutableHandleValue vp, bool strict);
 
-    static bool obj_getGenericAttributes(JSContext *cx, HandleObject obj,
-                                         HandleId id, unsigned *attrsp);
+    static bool obj_getOwnPropertyDescriptor(JSContext *cx, HandleObject obj, HandleId id,
+                                             MutableHandle<JSPropertyDescriptor> desc);
+
     static bool obj_setGenericAttributes(JSContext *cx, HandleObject obj,
                                          HandleId id, unsigned *attrsp);
 
@@ -723,20 +727,13 @@ class InlineTypedObject : public TypedObject
     uint8_t data_[1];
 
   public:
-    static const size_t MaximumSize =
-        sizeof(NativeObject) - sizeof(TypedObject) + NativeObject::MAX_FIXED_SLOTS * sizeof(Value);
+    static const size_t MaximumSize = JSObject::MAX_BYTE_SIZE - sizeof(TypedObject);
 
     static gc::AllocKind allocKindForTypeDescriptor(TypeDescr *descr) {
         size_t nbytes = descr->size();
         MOZ_ASSERT(nbytes <= MaximumSize);
 
-        if (nbytes <= sizeof(NativeObject) - sizeof(TypedObject))
-            return gc::FINALIZE_OBJECT0;
-        nbytes -= sizeof(NativeObject) - sizeof(TypedObject);
-
-        size_t dataSlots = AlignBytes(nbytes, sizeof(Value)) / sizeof(Value);
-        MOZ_ASSERT(nbytes <= dataSlots * sizeof(Value));
-        return gc::GetGCObjectKind(dataSlots);
+        return gc::GetGCObjectKindForBytes(nbytes + sizeof(TypedObject));
     }
 
     uint8_t *inlineTypedMem() const {
@@ -879,6 +876,14 @@ bool GetTypedObjectModule(JSContext *cx, unsigned argc, Value *vp);
  * been initialized for this to be safe.
  */
 bool GetFloat32x4TypeDescr(JSContext *cx, unsigned argc, Value *vp);
+
+/*
+ * Usage: GetFloat64x2TypeDescr()
+ *
+ * Returns the float64x2 type object. SIMD pseudo-module must have
+ * been initialized for this to be safe.
+ */
+bool GetFloat64x2TypeDescr(JSContext *cx, unsigned argc, Value *vp);
 
 /*
  * Usage: GetInt32x4TypeDescr()

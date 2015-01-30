@@ -73,6 +73,18 @@ IdToObjectMap::remove(ObjectId id)
     table_.remove(id);
 }
 
+void
+IdToObjectMap::clear()
+{
+    table_.clear();
+}
+
+bool
+IdToObjectMap::empty() const
+{
+    return table_.empty();
+}
+
 ObjectToIdMap::ObjectToIdMap()
   : table_(nullptr)
 {
@@ -157,6 +169,12 @@ ObjectToIdMap::remove(JSObject *obj)
     table_->remove(obj);
 }
 
+void
+ObjectToIdMap::clear()
+{
+    table_->clear();
+}
+
 bool JavaScriptShared::sLoggingInitialized;
 bool JavaScriptShared::sLoggingEnabled;
 bool JavaScriptShared::sStackLoggingEnabled;
@@ -179,6 +197,11 @@ JavaScriptShared::JavaScriptShared(JSRuntime *rt)
                                          "dom.ipc.cpows.log.stack", false);
         }
     }
+}
+
+JavaScriptShared::~JavaScriptShared()
+{
+    MOZ_RELEASE_ASSERT(cpows_.empty());
 }
 
 bool
@@ -649,7 +672,8 @@ JavaScriptShared::fromObjectOrNullVariant(JSContext *cx, ObjectOrNullVariant obj
     return fromObjectVariant(cx, objVar.get_ObjectVariant());
 }
 
-CpowIdHolder::CpowIdHolder(dom::CPOWManagerGetter *managerGetter, const InfallibleTArray<CpowEntry> &cpows)
+CrossProcessCpowHolder::CrossProcessCpowHolder(dom::CPOWManagerGetter *managerGetter,
+                                               const InfallibleTArray<CpowEntry> &cpows)
   : js_(nullptr),
     cpows_(cpows)
 {
@@ -659,7 +683,7 @@ CpowIdHolder::CpowIdHolder(dom::CPOWManagerGetter *managerGetter, const Infallib
 }
 
 bool
-CpowIdHolder::ToObject(JSContext *cx, JS::MutableHandleObject objp)
+CrossProcessCpowHolder::ToObject(JSContext *cx, JS::MutableHandleObject objp)
 {
     if (!cpows_.Length())
         return true;
@@ -676,7 +700,7 @@ JavaScriptShared::Unwrap(JSContext *cx, const InfallibleTArray<CpowEntry> &aCpow
     if (!aCpows.Length())
         return true;
 
-    RootedObject obj(cx, JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr()));
+    RootedObject obj(cx, JS_NewPlainObject(cx));
     if (!obj)
         return false;
 
@@ -733,4 +757,16 @@ JavaScriptShared::Wrap(JSContext *cx, HandleObject aObj, InfallibleTArray<CpowEn
     }
 
     return true;
+}
+
+CPOWManager*
+mozilla::jsipc::CPOWManagerFor(PJavaScriptParent* aParent)
+{
+    return static_cast<JavaScriptParent *>(aParent);
+}
+
+CPOWManager*
+mozilla::jsipc::CPOWManagerFor(PJavaScriptChild* aChild)
+{
+    return static_cast<JavaScriptChild *>(aChild);
 }

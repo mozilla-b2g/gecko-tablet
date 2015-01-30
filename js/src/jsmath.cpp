@@ -298,6 +298,18 @@ js::math_ceil_impl(double x)
 }
 
 bool
+js::math_ceil_handle(JSContext *cx, HandleValue v, MutableHandleValue res)
+{
+    double d;
+    if(!ToNumber(cx, v, &d))
+        return false;
+
+    double result = math_ceil_impl(d);
+    res.setDouble(result);
+    return true;
+}
+
+bool
 js::math_ceil(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -307,13 +319,7 @@ js::math_ceil(JSContext *cx, unsigned argc, Value *vp)
         return true;
     }
 
-    double x;
-    if (!ToNumber(cx, args[0], &x))
-        return false;
-
-    double z = math_ceil_impl(x);
-    args.rval().setNumber(z);
-    return true;
+    return math_ceil_handle(cx, args[0], args.rval());
 }
 
 bool
@@ -435,7 +441,7 @@ bool
 js::math_floor_handle(JSContext *cx, HandleValue v, MutableHandleValue r)
 {
     double d;
-    if(!ToNumber(cx, v, &d))
+    if (!ToNumber(cx, v, &d))
         return false;
 
     double z = math_floor_impl(d);
@@ -506,12 +512,7 @@ js::math_fround(JSContext *cx, unsigned argc, Value *vp)
         return true;
     }
 
-    float f;
-    if (!RoundFloat32(cx, args[0], &f))
-        return false;
-
-    args.rval().setDouble(static_cast<double>(f));
-    return true;
+    return RoundFloat32(cx, args[0], args.rval());
 }
 
 #if defined(SOLARIS) && defined(__GNUC__)
@@ -524,7 +525,7 @@ double
 js::math_log_impl(MathCache *cache, double x)
 {
     LOG_IF_OUT_OF_RANGE(x);
-    return cache->lookup(log, x, MathCache::Log);
+    return cache->lookup(math_log_uncached, x, MathCache::Log);
 }
 
 double
@@ -537,6 +538,22 @@ js::math_log_uncached(double x)
 #undef LOG_IF_OUT_OF_RANGE
 
 bool
+js::math_log_handle(JSContext *cx, HandleValue val, MutableHandleValue res)
+{
+    double in;
+    if (!ToNumber(cx, val, &in))
+        return false;
+
+    MathCache *mathCache = cx->runtime()->getMathCache(cx);
+    if (!mathCache)
+        return false;
+
+    double out = math_log_impl(mathCache, in);
+    res.setNumber(out);
+    return true;
+}
+
+bool
 js::math_log(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -546,17 +563,7 @@ js::math_log(JSContext *cx, unsigned argc, Value *vp)
         return true;
     }
 
-    double x;
-    if (!ToNumber(cx, args[0], &x))
-        return false;
-
-    MathCache *mathCache = cx->runtime()->getMathCache(cx);
-    if (!mathCache)
-        return false;
-
-    double z = math_log_impl(mathCache, x);
-    args.rval().setNumber(z);
-    return true;
+    return math_log_handle(cx, args[0], args.rval());
 }
 
 double
@@ -1371,6 +1378,50 @@ js::ecmaHypot(double x, double y)
     return hypot(x, y);
 }
 
+static inline
+void
+hypot_step(double &scale, double &sumsq, double x)
+{
+    double xabs = mozilla::Abs(x);
+    if (scale < xabs) {
+        sumsq = 1 + sumsq * (scale / xabs) * (scale / xabs);
+        scale = xabs;
+    } else if (scale != 0) {
+        sumsq += (xabs / scale) * (xabs / scale);
+    }
+}
+
+double
+js::hypot4(double x, double y, double z, double w)
+{
+    /* Check for infinity or NaNs so that we can return immediatelly.
+     * Does not need to be WIN_XP specific as ecmaHypot
+     */
+    if (mozilla::IsInfinite(x) || mozilla::IsInfinite(y) ||
+            mozilla::IsInfinite(z) || mozilla::IsInfinite(w))
+        return mozilla::PositiveInfinity<double>();
+
+    if (mozilla::IsNaN(x) || mozilla::IsNaN(y) || mozilla::IsNaN(z) ||
+            mozilla::IsNaN(w))
+        return GenericNaN();
+
+    double scale = 0;
+    double sumsq = 1;
+
+    hypot_step(scale, sumsq, x);
+    hypot_step(scale, sumsq, y);
+    hypot_step(scale, sumsq, z);
+    hypot_step(scale, sumsq, w);
+
+    return scale * sqrt(sumsq);
+}
+
+double
+js::hypot3(double x, double y, double z)
+{
+    return hypot4(x, y, z, 0.0);
+}
+
 bool
 js::math_hypot(JSContext *cx, unsigned argc, Value *vp)
 {
@@ -1408,15 +1459,10 @@ js::math_hypot_handle(JSContext *cx, HandleValueArray args, MutableHandleValue r
 
         isInfinite |= mozilla::IsInfinite(x);
         isNaN |= mozilla::IsNaN(x);
+        if (isInfinite || isNaN)
+            continue;
 
-        double xabs = mozilla::Abs(x);
-
-        if (scale < xabs) {
-            sumsq = 1 + sumsq * (scale / xabs) * (scale / xabs);
-            scale = xabs;
-        } else if (scale != 0) {
-            sumsq += (xabs / scale) * (xabs / scale);
-        }
+        hypot_step(scale, sumsq, x);
     }
 
     double result = isInfinite ? PositiveInfinity<double>() :
@@ -1570,12 +1616,8 @@ js_InitMathClass(JSContext *cx, HandleObject obj)
     if (!Math)
         return nullptr;
 
-    if (!JS_DefineProperty(cx, obj, js_Math_str, Math, 0,
-                           JS_STUBGETTER, JS_STUBSETTER))
-    {
+    if (!JS_DefineProperty(cx, obj, js_Math_str, Math, 0, JS_STUBGETTER, JS_STUBSETTER))
         return nullptr;
-    }
-
     if (!JS_DefineFunctions(cx, Math, math_static_methods))
         return nullptr;
     if (!JS_DefineConstDoubles(cx, Math, math_constants))

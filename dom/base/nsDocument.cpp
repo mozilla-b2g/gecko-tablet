@@ -1337,8 +1337,7 @@ nsExternalResourceMap::PendingLoad::StartLoad(nsIURI* aURI,
 
   nsIDocument* doc = aRequestingNode->OwnerDoc();
 
-  nsCOMPtr<nsIInterfaceRequestor> req = nsContentUtils::GetSameOriginChecker();
-  NS_ENSURE_TRUE(req, NS_ERROR_OUT_OF_MEMORY);
+  nsCOMPtr<nsIInterfaceRequestor> req = nsContentUtils::SameOriginChecker();
 
   nsCOMPtr<nsILoadGroup> loadGroup = doc->GetDocumentLoadGroup();
   nsCOMPtr<nsIChannel> channel;
@@ -2032,7 +2031,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDocument)
     tmp->mAnimationController->Traverse(&cb);
   }
 
-  if (tmp->mSubDocuments && tmp->mSubDocuments->ops) {
+  if (tmp->mSubDocuments && tmp->mSubDocuments->IsInitialized()) {
     PL_DHashTableEnumerate(tmp->mSubDocuments, SubDocTraverser, &cb);
   }
 
@@ -2290,6 +2289,11 @@ nsDocument::Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup)
   }
 
   ResetToURI(uri, aLoadGroup, principal);
+
+  // Note that, since mTiming does not change during a reset, the
+  // navigationStart time remains unchanged and therefore any future new
+  // timeline will have the same global clock time as the old one.
+  mAnimationTimeline = nullptr;
 
   nsCOMPtr<nsIPropertyBag2> bag = do_QueryInterface(aChannel);
   if (bag) {
@@ -3617,7 +3621,7 @@ nsDocument::SetBaseURI(nsIURI* aURI)
   nsCOMPtr<nsIContentSecurityPolicy> csp;
   nsresult rv = NodePrincipal()->GetCsp(getter_AddRefs(csp));
   NS_ENSURE_SUCCESS(rv, rv);
-  if (csp) {
+  if (csp && aURI) {
     bool permitsBaseURI = false;
 
     // base-uri is only enforced if explicitly defined in the
@@ -3960,9 +3964,9 @@ nsDocument::SetSubDocumentFor(Element* aElement, nsIDocument* aSubDoc)
     if (mSubDocuments) {
       SubDocMapEntry *entry =
         static_cast<SubDocMapEntry*>
-                   (PL_DHashTableLookup(mSubDocuments, aElement));
+                   (PL_DHashTableSearch(mSubDocuments, aElement));
 
-      if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
+      if (entry) {
         PL_DHashTableRawRemove(mSubDocuments, entry);
       }
     }
@@ -3972,18 +3976,14 @@ nsDocument::SetSubDocumentFor(Element* aElement, nsIDocument* aSubDoc)
 
       static const PLDHashTableOps hash_table_ops =
       {
-        PL_DHashAllocTable,
-        PL_DHashFreeTable,
         PL_DHashVoidPtrKeyStub,
         PL_DHashMatchEntryStub,
         PL_DHashMoveEntryStub,
         SubDocClearEntry,
-        PL_DHashFinalizeStub,
         SubDocInitEntry
       };
 
-      mSubDocuments = PL_NewDHashTable(&hash_table_ops, nullptr,
-                                       sizeof(SubDocMapEntry));
+      mSubDocuments = PL_NewDHashTable(&hash_table_ops, sizeof(SubDocMapEntry));
       if (!mSubDocuments) {
         return NS_ERROR_OUT_OF_MEMORY;
       }
@@ -4020,9 +4020,9 @@ nsDocument::GetSubDocumentFor(nsIContent *aContent) const
   if (mSubDocuments && aContent->IsElement()) {
     SubDocMapEntry *entry =
       static_cast<SubDocMapEntry*>
-                 (PL_DHashTableLookup(mSubDocuments, aContent->AsElement()));
+                 (PL_DHashTableSearch(mSubDocuments, aContent->AsElement()));
 
-    if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
+    if (entry) {
       return entry->mSubDocument;
     }
   }
@@ -4717,7 +4717,23 @@ nsDocument::SetScriptGlobalObject(nsIScriptGlobalObject *aScriptGlobalObject)
   // still test false at this point and no state change will happen) or we're
   // doing the initial document load and don't want to fire the event for this
   // change.
+  dom::VisibilityState oldState = mVisibilityState;
   mVisibilityState = GetVisibilityState();
+  // When the visibility is changed, notify it to observers.
+  // Some observers need the notification, for example HTMLMediaElement uses
+  // it to update internal media resource allocation.
+  // When video is loaded via VideoDocument, HTMLMediaElement and MediaDecoder
+  // creation are already done before nsDocument::SetScriptGlobalObject() call.
+  // MediaDecoder decides whether starting decoding is decided based on
+  // document's visibility. When the MediaDecoder is created,
+  // nsDocument::SetScriptGlobalObject() is not yet called and document is
+  // hidden state. Therefore the MediaDecoder decides that decoding is
+  // not yet necessary. But soon after nsDocument::SetScriptGlobalObject()
+  // call, the document becomes not hidden. At the time, MediaDecoder needs
+  // to know it and needs to start updating decoding.
+  if (oldState != mVisibilityState) {
+    EnumerateActivityObservers(NotifyActivityChanged, nullptr);
+  }
 
   // The global in the template contents owner document should be the same.
   if (mTemplateContentsOwner && mTemplateContentsOwner != this) {
@@ -5256,6 +5272,7 @@ nsIDocument::InsertAnonymousContent(Element& aElement, ErrorResult& aRv)
     return nullptr;
   }
 
+  nsAutoScriptBlocker scriptBlocker;
   nsCOMPtr<Element> container = shell->GetCanvasFrame()
                                      ->GetCustomContentContainer();
   if (!container) {
@@ -5280,6 +5297,8 @@ nsIDocument::InsertAnonymousContent(Element& aElement, ErrorResult& aRv)
     new AnonymousContent(clonedElement->AsElement());
   mAnonymousContents.AppendElement(anonymousContent);
 
+  shell->GetCanvasFrame()->ShowCustomContentContainer();
+
   return anonymousContent.forget();
 }
 
@@ -5293,6 +5312,7 @@ nsIDocument::RemoveAnonymousContent(AnonymousContent& aContent,
     return;
   }
 
+  nsAutoScriptBlocker scriptBlocker;
   nsCOMPtr<Element> container = shell->GetCanvasFrame()
                                      ->GetCustomContentContainer();
   if (!container) {
@@ -5317,6 +5337,9 @@ nsIDocument::RemoveAnonymousContent(AnonymousContent& aContent,
 
       break;
     }
+  }
+  if (mAnonymousContents.IsEmpty()) {
+    shell->GetCanvasFrame()->HideCustomContentContainer();
   }
 }
 

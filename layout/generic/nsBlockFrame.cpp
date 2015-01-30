@@ -2921,10 +2921,22 @@ nsBlockFrame::AttributeChanged(int32_t         aNameSpaceID,
 }
 
 static inline bool
-IsNonAutoNonZeroHeight(const nsStyleCoord& aCoord)
+IsNonAutoNonZeroBSize(const nsStyleCoord& aCoord)
 {
-  if (aCoord.GetUnit() == eStyleUnit_Auto)
+  nsStyleUnit unit = aCoord.GetUnit();
+  if (unit == eStyleUnit_Auto ||
+      // The enumerated values were originally aimed at inline-size
+      // (or width, as it was before logicalization). For now, let them
+      // return false here, so we treat them like 'auto' pending a
+      // real implementation. (See bug 1126420.)
+      //
+      // FIXME (bug 567039, bug 527285)
+      // This isn't correct for the 'fill' value, which should more
+      // likely (but not necessarily, depending on the available space)
+      // be returning true.
+      unit == eStyleUnit_Enumerated) {
     return false;
+  }
   if (aCoord.IsCoordPercentCalcUnit()) {
     // If we evaluate the length/percent/calc at a percentage basis of
     // both nscoord_MAX and 0, and it's zero both ways, then it's a zero
@@ -2943,22 +2955,42 @@ nsBlockFrame::IsSelfEmpty()
   // Blocks which are margin-roots (including inline-blocks) cannot be treated
   // as empty for margin-collapsing and other purposes. They're more like
   // replaced elements.
-  if (GetStateBits() & NS_BLOCK_MARGIN_ROOT)
+  if (GetStateBits() & NS_BLOCK_MARGIN_ROOT) {
     return false;
+  }
 
   const nsStylePosition* position = StylePosition();
+  bool vertical = GetWritingMode().IsVertical();
 
-  if (IsNonAutoNonZeroHeight(position->mMinHeight) ||
-      IsNonAutoNonZeroHeight(position->mHeight))
-    return false;
+  if (vertical) {
+    if (IsNonAutoNonZeroBSize(position->mMinWidth) ||
+        IsNonAutoNonZeroBSize(position->mWidth)) {
+      return false;
+    }
+  } else {
+    if (IsNonAutoNonZeroBSize(position->mMinHeight) ||
+        IsNonAutoNonZeroBSize(position->mHeight)) {
+      return false;
+    }
+  }
 
   const nsStyleBorder* border = StyleBorder();
   const nsStylePadding* padding = StylePadding();
-  if (border->GetComputedBorderWidth(NS_SIDE_TOP) != 0 ||
-      border->GetComputedBorderWidth(NS_SIDE_BOTTOM) != 0 ||
-      !nsLayoutUtils::IsPaddingZero(padding->mPadding.GetTop()) ||
-      !nsLayoutUtils::IsPaddingZero(padding->mPadding.GetBottom())) {
-    return false;
+
+  if (vertical) {
+    if (border->GetComputedBorderWidth(NS_SIDE_LEFT) != 0 ||
+        border->GetComputedBorderWidth(NS_SIDE_RIGHT) != 0 ||
+        !nsLayoutUtils::IsPaddingZero(padding->mPadding.GetLeft()) ||
+        !nsLayoutUtils::IsPaddingZero(padding->mPadding.GetRight())) {
+      return false;
+    }
+  } else {
+    if (border->GetComputedBorderWidth(NS_SIDE_TOP) != 0 ||
+        border->GetComputedBorderWidth(NS_SIDE_BOTTOM) != 0 ||
+        !nsLayoutUtils::IsPaddingZero(padding->mPadding.GetTop()) ||
+        !nsLayoutUtils::IsPaddingZero(padding->mPadding.GetBottom())) {
+      return false;
+    }
   }
 
   if (HasOutsideBullet() && !BulletIsEmpty()) {

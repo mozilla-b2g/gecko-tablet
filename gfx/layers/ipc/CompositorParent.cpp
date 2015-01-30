@@ -84,6 +84,7 @@ CompositorParent::LayerTreeState::LayerTreeState()
   , mLayerManager(nullptr)
   , mCrossProcessParent(nullptr)
   , mLayerTree(nullptr)
+  , mUpdatedPluginDataAvailable(false)
 {
 }
 
@@ -215,6 +216,8 @@ CompositorVsyncObserver::CompositorVsyncObserver(CompositorParent* aCompositorPa
   , mCompositorParent(aCompositorParent)
   , mCurrentCompositeTaskMonitor("CurrentCompositeTaskMonitor")
   , mCurrentCompositeTask(nullptr)
+  , mSetNeedsCompositeMonitor("SetNeedsCompositeMonitor")
+  , mSetNeedsCompositeTask(nullptr)
 {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(aWidget != nullptr);
@@ -226,12 +229,30 @@ CompositorVsyncObserver::CompositorVsyncObserver(CompositorParent* aCompositorPa
 
 CompositorVsyncObserver::~CompositorVsyncObserver()
 {
-  MOZ_ASSERT(CompositorParent::IsInCompositorThread());
   MOZ_ASSERT(!mIsObservingVsync);
   // The CompositorVsyncDispatcher is cleaned up before this in the nsBaseWidget, which stops vsync listeners
-  CancelCurrentCompositeTask();
   mCompositorParent = nullptr;
   mCompositorVsyncDispatcher = nullptr;
+}
+
+void
+CompositorVsyncObserver::Destroy()
+{
+  MOZ_ASSERT(CompositorParent::IsInCompositorThread());
+  UnobserveVsync();
+  CancelCurrentCompositeTask();
+  CancelCurrentSetNeedsCompositeTask();
+}
+
+void
+CompositorVsyncObserver::CancelCurrentSetNeedsCompositeTask()
+{
+  MOZ_ASSERT(CompositorParent::IsInCompositorThread());
+  MonitorAutoLock lock(mSetNeedsCompositeMonitor);
+  if (mSetNeedsCompositeTask) {
+    mSetNeedsCompositeTask->Cancel();
+    mSetNeedsCompositeTask = nullptr;
+  }
   mNeedsComposite = false;
 }
 
@@ -245,11 +266,17 @@ CompositorVsyncObserver::~CompositorVsyncObserver()
 void
 CompositorVsyncObserver::SetNeedsComposite(bool aNeedsComposite)
 {
-  if (aNeedsComposite && !CompositorParent::IsInCompositorThread()) {
-    CompositorParent::CompositorLoop()->PostTask(FROM_HERE,
-      NewRunnableMethod(this,
-                        &CompositorVsyncObserver::SetNeedsComposite,
-                        aNeedsComposite));
+  if (!CompositorParent::IsInCompositorThread()) {
+    MonitorAutoLock lock(mSetNeedsCompositeMonitor);
+    mSetNeedsCompositeTask = NewRunnableMethod(this,
+                                              &CompositorVsyncObserver::SetNeedsComposite,
+                                              aNeedsComposite);
+    MOZ_ASSERT(CompositorParent::CompositorLoop());
+    CompositorParent::CompositorLoop()->PostTask(FROM_HERE, mSetNeedsCompositeTask);
+    return;
+  } else {
+    MonitorAutoLock lock(mSetNeedsCompositeMonitor);
+    mSetNeedsCompositeTask = nullptr;
   }
 
   mNeedsComposite = aNeedsComposite;
@@ -270,6 +297,7 @@ CompositorVsyncObserver::NotifyVsync(TimeStamp aVsyncTimestamp)
     mCurrentCompositeTask = NewRunnableMethod(this,
                                               &CompositorVsyncObserver::Composite,
                                               aVsyncTimestamp);
+    MOZ_ASSERT(CompositorParent::CompositorLoop());
     CompositorParent::CompositorLoop()->PostTask(FROM_HERE, mCurrentCompositeTask);
   }
   return true;
@@ -324,7 +352,7 @@ CompositorVsyncObserver::ObserveVsync()
 void
 CompositorVsyncObserver::UnobserveVsync()
 {
-  MOZ_ASSERT(CompositorParent::IsInCompositorThread() || NS_IsMainThread());
+  MOZ_ASSERT(CompositorParent::IsInCompositorThread());
   mCompositorVsyncDispatcher->SetCompositorVsyncObserver(nullptr);
   mIsObservingVsync = false;
 }
@@ -390,6 +418,7 @@ CompositorParent::CompositorParent(nsIWidget* aWidget,
   // FIXME: This holds on the the fact that right now the only thing that
   // can destroy this instance is initialized on the compositor thread after
   // this task has been processed.
+  MOZ_ASSERT(CompositorLoop());
   CompositorLoop()->PostTask(FROM_HERE, NewRunnableFunction(&AddCompositor,
                                                           this, &mCompositorID));
 
@@ -437,6 +466,7 @@ CompositorParent::Destroy()
   NS_ABORT_IF_FALSE(ManagedPLayerTransactionParent().Length() == 0,
                     "CompositorParent destroyed before managed PLayerTransactionParent");
 
+  MOZ_ASSERT(mPaused); // Ensure RecvWillStop was called
   // Ensure that the layer manager is destructed on the compositor thread.
   mLayerManager = nullptr;
   if (mCompositor) {
@@ -454,7 +484,7 @@ CompositorParent::Destroy()
     sIndirectLayerTrees.erase(mRootLayerTreeID);
   }
   if (mCompositorVsyncObserver) {
-    mCompositorVsyncObserver->UnobserveVsync();
+    mCompositorVsyncObserver->Destroy();
     mCompositorVsyncObserver = nullptr;
   }
 }
@@ -481,6 +511,7 @@ CompositorParent::RecvWillStop()
       if (lts->mParent == this) {
         mLayerManager->ClearCachedResources(lts->mRoot);
         lts->mLayerManager = nullptr;
+        lts->mParent = nullptr;
       }
     }
     mLayerManager->Destroy();
@@ -619,6 +650,7 @@ void
 CompositorParent::ScheduleRenderOnCompositorThread()
 {
   CancelableTask *renderTask = NewRunnableMethod(this, &CompositorParent::ScheduleComposition);
+  MOZ_ASSERT(CompositorLoop());
   CompositorLoop()->PostTask(FROM_HERE, renderTask);
 }
 
@@ -715,6 +747,7 @@ CompositorParent::SchedulePauseOnCompositorThread()
 
   CancelableTask *pauseTask = NewRunnableMethod(this,
                                                 &CompositorParent::PauseComposition);
+  MOZ_ASSERT(CompositorLoop());
   CompositorLoop()->PostTask(FROM_HERE, pauseTask);
 
   // Wait until the pause has actually been processed by the compositor thread
@@ -728,6 +761,7 @@ CompositorParent::ScheduleResumeOnCompositorThread(int width, int height)
 
   CancelableTask *resumeTask =
     NewRunnableMethod(this, &CompositorParent::ResumeCompositionAndResize, width, height);
+  MOZ_ASSERT(CompositorLoop());
   CompositorLoop()->PostTask(FROM_HERE, resumeTask);
 
   // Wait until the resume has actually been processed by the compositor thread
@@ -792,7 +826,7 @@ CompositorParent::ScheduleSoftwareTimerComposition()
 {
   MOZ_ASSERT(!gfxPrefs::VsyncAlignedCompositor());
 
-  if (mCurrentCompositeTask || mPaused) {
+  if (mCurrentCompositeTask) {
     return;
   }
 
@@ -829,6 +863,10 @@ void
 CompositorParent::ScheduleComposition()
 {
   MOZ_ASSERT(IsInCompositorThread());
+  if (mPaused) {
+    return;
+  }
+
   if (gfxPrefs::VsyncAlignedCompositor()) {
     mCompositorVsyncObserver->SetNeedsComposite(true);
   } else {
@@ -854,8 +892,8 @@ CompositorParent::CompositeCallback(TimeStamp aScheduleTime)
 
 // Go down the composite layer tree, setting properties to match their
 // content-side counterparts.
-static void
-SetShadowProperties(Layer* aLayer)
+/* static */ void
+CompositorParent::SetShadowProperties(Layer* aLayer)
 {
   // FIXME: Bug 717688 -- Do these updates in LayerTransactionParent::RecvUpdate.
   LayerComposite* layerComposite = aLayer->AsLayerComposite();
@@ -1010,6 +1048,7 @@ void
 CompositorParent::ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
                                       const uint64_t& aTransactionId,
                                       const TargetConfig& aTargetConfig,
+                                      const InfallibleTArray<PluginWindowData>& aUnused,
                                       bool aIsFirstPaint,
                                       bool aScheduleComposite,
                                       uint32_t aPaintSequenceNumber,
@@ -1248,6 +1287,7 @@ CompositorParent* CompositorParent::RemoveCompositor(uint64_t id)
 bool
 CompositorParent::RecvNotifyChildCreated(const uint64_t& child)
 {
+  MonitorAutoLock lock(*sIndirectLayerTreesLock);
   NotifyChildCreated(child);
   return true;
 }
@@ -1255,7 +1295,7 @@ CompositorParent::RecvNotifyChildCreated(const uint64_t& child)
 void
 CompositorParent::NotifyChildCreated(const uint64_t& aChild)
 {
-  MonitorAutoLock lock(*sIndirectLayerTreesLock);
+  sIndirectLayerTreesLock->AssertCurrentThreadOwns();
   sIndirectLayerTrees[aChild].mParent = this;
   sIndirectLayerTrees[aChild].mLayerManager = mLayerManager;
 }
@@ -1263,8 +1303,8 @@ CompositorParent::NotifyChildCreated(const uint64_t& aChild)
 bool
 CompositorParent::RecvAdoptChild(const uint64_t& child)
 {
-  NotifyChildCreated(child);
   MonitorAutoLock lock(*sIndirectLayerTreesLock);
+  NotifyChildCreated(child);
   if (sIndirectLayerTrees[child].mLayerTree) {
     sIndirectLayerTrees[child].mLayerTree->mLayerManager = mLayerManager;
   }
@@ -1297,6 +1337,7 @@ CompositorParent::DeallocateLayerTreeId(uint64_t aId)
   // Here main thread notifies compositor to remove an element from
   // sIndirectLayerTrees. This removed element might be queried soon.
   // Checking the elements of sIndirectLayerTrees exist or not before using.
+  MOZ_ASSERT(CompositorLoop());
   CompositorLoop()->PostTask(FROM_HERE,
                              NewRunnableFunction(&EraseLayerState, aId));
 }
@@ -1452,6 +1493,7 @@ public:
   virtual void ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
                                    const uint64_t& aTransactionId,
                                    const TargetConfig& aTargetConfig,
+                                   const InfallibleTArray<PluginWindowData>& aPlugins,
                                    bool aIsFirstPaint,
                                    bool aScheduleComposite,
                                    uint32_t aPaintSequenceNumber,
@@ -1654,6 +1696,7 @@ CrossProcessCompositorParent::ShadowLayersUpdated(
   LayerTransactionParent* aLayerTree,
   const uint64_t& aTransactionId,
   const TargetConfig& aTargetConfig,
+  const InfallibleTArray<PluginWindowData>& aPlugins,
   bool aIsFirstPaint,
   bool aScheduleComposite,
   uint32_t aPaintSequenceNumber,
@@ -1663,7 +1706,7 @@ CrossProcessCompositorParent::ShadowLayersUpdated(
 
   MOZ_ASSERT(id != 0);
 
-  const CompositorParent::LayerTreeState* state = CompositorParent::GetIndirectShadowTree(id);
+  CompositorParent::LayerTreeState* state = CompositorParent::GetIndirectShadowTree(id);
   if (!state) {
     return;
   }
@@ -1672,9 +1715,13 @@ CrossProcessCompositorParent::ShadowLayersUpdated(
 
   Layer* shadowRoot = aLayerTree->GetRoot();
   if (shadowRoot) {
-    SetShadowProperties(shadowRoot);
+    CompositorParent::SetShadowProperties(shadowRoot);
   }
   UpdateIndirectTree(id, shadowRoot, aTargetConfig);
+
+  // Cache the plugin data for this remote layer tree
+  state->mPluginData = aPlugins;
+  state->mUpdatedPluginDataAvailable = !!state->mPluginData.Length();
 
   state->mParent->NotifyShadowTreeTransaction(id, aIsFirstPaint, aScheduleComposite,
       aPaintSequenceNumber, aIsRepeatTransaction);
@@ -1688,6 +1735,62 @@ CrossProcessCompositorParent::ShadowLayersUpdated(
   aLayerTree->SetPendingTransactionId(aTransactionId);
 }
 
+// Sends plugin window state changes to the main thread
+static void
+UpdatePluginWindowState(uint64_t aId)
+{
+  CompositorParent::LayerTreeState& lts = sIndirectLayerTrees[aId];
+  if (!lts.mPluginData.Length()) {
+    return;
+  }
+
+  bool shouldComposePlugin = !!lts.mRoot &&
+                             !!lts.mRoot->GetParent() &&
+                             lts.mUpdatedPluginDataAvailable;
+
+  bool shouldHidePlugin = (!lts.mRoot ||
+                           !lts.mRoot->GetParent()) &&
+                          !lts.mUpdatedPluginDataAvailable;
+
+  if (shouldComposePlugin) {
+    // Retrieve the offset and visible region of the layer that hosts
+    // the plugins, CompositorChild needs these in calculating proper
+    // plugin clipping.
+    LayerTransactionParent* layerTree = lts.mLayerTree;
+    Layer* contentRoot = layerTree->GetRoot();
+    if (contentRoot) {
+      nsIntPoint offset;
+      nsIntRegion visibleRegion;
+      if (contentRoot->GetVisibleRegionRelativeToRootLayer(visibleRegion,
+                                                           &offset)) {
+        unused <<
+          lts.mParent->SendUpdatePluginConfigurations(offset, visibleRegion,
+                                                      lts.mPluginData);
+        lts.mUpdatedPluginDataAvailable = false;
+      } else {
+        shouldHidePlugin = true;
+      }
+    }
+  }
+
+  // Hide all plugins, this remote layer tree is no longer active
+  if (shouldHidePlugin) {
+    // hide all the plugins
+    for (uint32_t pluginsIdx = 0; pluginsIdx < lts.mPluginData.Length();
+         pluginsIdx++) {
+      lts.mPluginData[pluginsIdx].visible() = false;
+    }
+    nsIntPoint offset;
+    nsIntRegion region;
+    unused << lts.mParent->SendUpdatePluginConfigurations(offset,
+                                                          region,
+                                                          lts.mPluginData);
+    // Clear because there's no recovering from this until we receive
+    // new shadow layer plugin data in ShadowLayersUpdated.
+    lts.mPluginData.Clear();
+  }
+}
+
 void
 CrossProcessCompositorParent::DidComposite(uint64_t aId)
 {
@@ -1697,6 +1800,7 @@ CrossProcessCompositorParent::DidComposite(uint64_t aId)
     unused << SendDidComposite(aId, layerTree->GetPendingTransactionId());
     layerTree->SetPendingTransactionId(0);
   }
+  UpdatePluginWindowState(aId);
 }
 
 void
@@ -1709,7 +1813,9 @@ CrossProcessCompositorParent::ForceComposite(LayerTransactionParent* aLayerTree)
     MonitorAutoLock lock(*sIndirectLayerTreesLock);
     parent = sIndirectLayerTrees[id].mParent;
   }
-  parent->ForceComposite(aLayerTree);
+  if (parent) {
+    parent->ForceComposite(aLayerTree);
+  }
 }
 
 bool

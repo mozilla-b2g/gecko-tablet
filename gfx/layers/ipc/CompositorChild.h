@@ -64,11 +64,21 @@ public:
 
   static bool ChildProcessHasCompositor() { return sCompositor != nullptr; }
 
-  virtual bool RecvInvalidateAll() MOZ_OVERRIDE;
-  virtual bool RecvOverfill(const uint32_t &aOverfill) MOZ_OVERRIDE;
   void AddOverfillObserver(ClientLayerManager* aLayerManager);
 
-  virtual bool RecvDidComposite(const uint64_t& aId, const uint64_t& aTransactionId) MOZ_OVERRIDE;
+  virtual bool
+  RecvDidComposite(const uint64_t& aId, const uint64_t& aTransactionId) MOZ_OVERRIDE;
+
+  virtual bool
+  RecvInvalidateAll() MOZ_OVERRIDE;
+
+  virtual bool
+  RecvOverfill(const uint32_t &aOverfill) MOZ_OVERRIDE;
+
+  virtual bool
+  RecvUpdatePluginConfigurations(const nsIntPoint& aContentOffset,
+                                 const nsIntRegion& aVisibleRegion,
+                                 nsTArray<PluginWindowData>&& aPlugins) MOZ_OVERRIDE;
 
   /**
    * Request that the parent tell us when graphics are ready on GPU.
@@ -79,8 +89,6 @@ public:
   void RequestNotifyAfterRemotePaint(TabChild* aTabChild);
 
   void CancelNotifyAfterRemotePaint(TabChild* aTabChild);
-
-  static void ShutDown();
 
 private:
   // Private destructor, to discourage deletion outside of Release():

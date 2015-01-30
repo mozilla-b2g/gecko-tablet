@@ -2111,13 +2111,15 @@ void nsCocoaWindow::SetPopupWindowLevel()
   }
 }
 
-NS_IMETHODIMP
-nsCocoaWindow::NotifyIME(const IMENotification& aIMENotification)
+nsresult
+nsCocoaWindow::NotifyIMEInternal(const IMENotification& aIMENotification)
 {
   switch (aIMENotification.mMessage) {
     case NOTIFY_IME_OF_FOCUS:
       if (mInputContext.IsPasswordEditor()) {
         TextInputHandler::EnableSecureEventInput();
+      } else {
+        TextInputHandler::EnsureSecureEventInputDisabled();
       }
       return NS_OK;
     case NOTIFY_IME_OF_BLUR:
@@ -3266,9 +3268,15 @@ static const NSString* kStateShowsToolbarButton = @"showsToolbarButton";
 
 - (NSPoint)windowButtonsPositionWithDefaultPosition:(NSPoint)aDefaultPosition
 {
-  if ([self drawsContentsIntoWindowFrame] && !NSIsEmptyRect(mWindowButtonsRect)) {
-    return NSMakePoint(std::max(mWindowButtonsRect.origin.x, aDefaultPosition.x),
-                       std::min(mWindowButtonsRect.origin.y, aDefaultPosition.y));
+  if ([self drawsContentsIntoWindowFrame]) {
+    if (NSIsEmptyRect(mWindowButtonsRect)) {
+      // Empty rect. Let's hide the buttons.
+      // Position is in non-flipped window coordinates. Using frame's height
+      // for the vertical coordinate will move the buttons above the window,
+      // making them invisible.
+      return NSMakePoint(0, [self frame].size.height);
+    }
+    return NSMakePoint(mWindowButtonsRect.origin.x, mWindowButtonsRect.origin.y);
   }
   return aDefaultPosition;
 }

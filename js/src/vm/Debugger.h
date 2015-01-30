@@ -425,7 +425,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     static const JSPropertySpec properties[];
     static const JSFunctionSpec methods[];
 
-    static bool getNewestAbstractFramePtr(JSContext *cx);
+    static void removeFromFrameMapsAndClearBreakpointsIn(JSContext *cx, AbstractFramePtr frame);
     static bool updateExecutionObservabilityOfFrames(JSContext *cx, const ExecutionObservableSet &obs,
                                                      IsObserving observing);
     static bool updateExecutionObservabilityOfScripts(JSContext *cx, const ExecutionObservableSet &obs,
@@ -607,8 +607,10 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     static JSTrapStatus onSingleStep(JSContext *cx, MutableHandleValue vp);
     static bool handleBaselineOsr(JSContext *cx, InterpreterFrame *from, jit::BaselineFrame *to);
     static bool handleIonBailout(JSContext *cx, jit::RematerializedFrame *from, jit::BaselineFrame *to);
+    static void handleUnrecoverableIonBailoutError(JSContext *cx, jit::RematerializedFrame *frame);
     static void propagateForcedReturn(JSContext *cx, AbstractFramePtr frame, HandleValue rval);
     static bool hasLiveHook(GlobalObject *global, Hook which);
+    static void assertNotInFrameMaps(AbstractFramePtr frame);
 
     /************************************* Functions for use by Debugger.cpp. */
 
@@ -909,11 +911,6 @@ Debugger::onLogAllocationSite(JSContext *cx, HandleSavedFrame frame, int64_t whe
         return true;
     return Debugger::slowPathOnLogAllocationSite(cx, frame, when, *dbgs);
 }
-
-extern bool
-EvaluateInEnv(JSContext *cx, Handle<Env*> env, HandleValue thisv, AbstractFramePtr frame,
-              mozilla::Range<const char16_t> chars, const char *filename, unsigned lineno,
-              MutableHandleValue rval);
 
 bool ReportObjectRequired(JSContext *cx);
 

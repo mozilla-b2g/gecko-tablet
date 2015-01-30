@@ -2723,13 +2723,14 @@ public:
   {
   }
 
+  void NotifySelectionBackgroundNeedsFill(const Rect& aBackgroundRect,
+                                          nscolor aColor,
+                                          DrawTarget& aDrawTarget) MOZ_OVERRIDE;
   void NotifyBeforeText(nscolor aColor) MOZ_OVERRIDE;
   void NotifyGlyphPathEmitted() MOZ_OVERRIDE;
   void NotifyBeforeSVGGlyphPainted() MOZ_OVERRIDE;
   void NotifyAfterSVGGlyphPainted() MOZ_OVERRIDE;
   void NotifyAfterText() MOZ_OVERRIDE;
-  void NotifyBeforeSelectionBackground(nscolor aColor) MOZ_OVERRIDE;
-  void NotifySelectionBackgroundPathEmitted() MOZ_OVERRIDE;
   void NotifyBeforeDecorationLine(nscolor aColor) MOZ_OVERRIDE;
   void NotifyDecorationLinePathEmitted() MOZ_OVERRIDE;
   void NotifyBeforeSelectionDecorationLine(nscolor aColor) MOZ_OVERRIDE;
@@ -2787,6 +2788,27 @@ private:
 };
 
 void
+SVGTextDrawPathCallbacks::NotifySelectionBackgroundNeedsFill(
+                                                      const Rect& aBackgroundRect,
+                                                      nscolor aColor,
+                                                      DrawTarget& aDrawTarget)
+{
+  if (IsClipPathChild()) {
+    // Don't paint selection backgrounds when in a clip path.
+    return;
+  }
+
+  mColor = aColor; // currently needed by MakeFillPattern
+
+  GeneralPattern fillPattern;
+  MakeFillPattern(&fillPattern);
+  if (fillPattern.GetPattern()) {
+    DrawOptions drawOptions(aColor == NS_40PERCENT_FOREGROUND_COLOR ? 0.4 : 1.0);
+    aDrawTarget.FillRect(aBackgroundRect, fillPattern, drawOptions);
+  }
+}
+
+void
 SVGTextDrawPathCallbacks::NotifyBeforeText(nscolor aColor)
 {
   mColor = aColor;
@@ -2817,41 +2839,6 @@ SVGTextDrawPathCallbacks::NotifyAfterSVGGlyphPainted()
 void
 SVGTextDrawPathCallbacks::NotifyAfterText()
 {
-  gfx->Restore();
-}
-
-void
-SVGTextDrawPathCallbacks::NotifyBeforeSelectionBackground(nscolor aColor)
-{
-  if (IsClipPathChild()) {
-    // Don't paint selection backgrounds when in a clip path.
-    return;
-  }
-
-  mColor = aColor;
-  gfx->Save();
-}
-
-void
-SVGTextDrawPathCallbacks::NotifySelectionBackgroundPathEmitted()
-{
-  if (IsClipPathChild()) {
-    // Don't paint selection backgrounds when in a clip path.
-    return;
-  }
-
-  GeneralPattern fillPattern;
-  MakeFillPattern(&fillPattern);
-  if (fillPattern.GetPattern()) {
-    RefPtr<Path> path = gfx->GetPath();
-    FillRule fillRule = nsSVGUtils::ToFillRule(mFrame->StyleSVG()->mFillRule);
-    if (fillRule != path->GetFillRule()) {
-      RefPtr<PathBuilder> builder = path->CopyToBuilder(fillRule);
-      path = builder->Finish();
-    }
-    DrawOptions drawOptions(mColor == NS_40PERCENT_FOREGROUND_COLOR ? 0.4 : 1.0);
-    gfx->GetDrawTarget()->Fill(path, fillPattern, drawOptions);
-  }
   gfx->Restore();
 }
 
@@ -2916,8 +2903,9 @@ void
 SVGTextDrawPathCallbacks::HandleTextGeometry()
 {
   if (IsClipPathChild()) {
-    gfx->SetColor(gfxRGBA(1.0f, 1.0f, 1.0f, 1.0f));
-    gfx->Fill();
+    RefPtr<Path> path = gfx->GetPath();
+    ColorPattern white(Color(1.f, 1.f, 1.f, 1.f)); // for masking, so no ToDeviceColor
+    gfx->GetDrawTarget()->Fill(path, white);
   } else {
     // Normal painting.
     gfxContextMatrixAutoSaveRestore saveMatrix(gfx);
@@ -2984,11 +2972,15 @@ SVGTextDrawPathCallbacks::FillGeometry()
   GeneralPattern fillPattern;
   MakeFillPattern(&fillPattern);
   if (fillPattern.GetPattern()) {
-    gfx->SetFillRule(
-      nsSVGUtils::ToFillRule(
-        IsClipPathChild() ?
-          mFrame->StyleSVG()->mClipRule : mFrame->StyleSVG()->mFillRule));
-    gfx->Fill(fillPattern);
+    RefPtr<Path> path = gfx->GetPath();
+    FillRule fillRule = nsSVGUtils::ToFillRule(IsClipPathChild() ?
+                          mFrame->StyleSVG()->mClipRule :
+                          mFrame->StyleSVG()->mFillRule);
+    if (fillRule != path->GetFillRule()) {
+      RefPtr<PathBuilder> builder = path->CopyToBuilder(fillRule);
+      path = builder->Finish();
+    }
+    gfx->GetDrawTarget()->Fill(path, fillPattern);
   }
 }
 
@@ -4816,8 +4808,8 @@ SVGTextFrame::AdjustPositionsForClusters()
   }
 }
 
-nsIFrame*
-SVGTextFrame::GetTextPathPathFrame(nsIFrame* aTextPathFrame)
+SVGPathElement*
+SVGTextFrame::GetTextPathPathElement(nsIFrame* aTextPathFrame)
 {
   nsSVGTextPathProperty *property = static_cast<nsSVGTextPathProperty*>
     (aTextPathFrame->Properties().Get(nsSVGEffects::HrefProperty()));
@@ -4842,20 +4834,18 @@ SVGTextFrame::GetTextPathPathFrame(nsIFrame* aTextPathFrame)
       return nullptr;
   }
 
-  return property->GetReferencedFrame(nsGkAtoms::svgPathGeometryFrame, nullptr);
+  Element* element = property->GetReferencedElement();
+  return (element && element->IsSVG(nsGkAtoms::path)) ?
+    static_cast<SVGPathElement*>(element) : nullptr;
 }
 
 TemporaryRef<Path>
 SVGTextFrame::GetTextPath(nsIFrame* aTextPathFrame)
 {
-  nsIFrame *pathFrame = GetTextPathPathFrame(aTextPathFrame);
-
-  if (!pathFrame) {
+  SVGPathElement* element = GetTextPathPathElement(aTextPathFrame);
+  if (!element) {
     return nullptr;
   }
-
-  nsSVGPathGeometryElement *element =
-    static_cast<nsSVGPathGeometryElement*>(pathFrame->GetContent());
 
   RefPtr<Path> path = element->GetOrBuildPathForMeasuring();
   if (!path) {
@@ -4875,12 +4865,11 @@ SVGTextFrame::GetTextPath(nsIFrame* aTextPathFrame)
 gfxFloat
 SVGTextFrame::GetOffsetScale(nsIFrame* aTextPathFrame)
 {
-  nsIFrame *pathFrame = GetTextPathPathFrame(aTextPathFrame);
-  if (!pathFrame)
+  SVGPathElement* pathElement = GetTextPathPathElement(aTextPathFrame);
+  if (!pathElement)
     return 1.0;
 
-  return static_cast<dom::SVGPathElement*>(pathFrame->GetContent())->
-    GetPathLengthScale(dom::SVGPathElement::eForTextPath);
+  return pathElement->GetPathLengthScale(dom::SVGPathElement::eForTextPath);
 }
 
 gfxFloat

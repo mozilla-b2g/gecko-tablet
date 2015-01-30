@@ -1500,6 +1500,22 @@ nsHttpConnectionMgr::MakeNewConnection(nsConnectionEntry *ent,
         }
     }
 
+    // consider null transactions that are being used to drive the ssl handshake if
+    // the transaction creating this connection can re-use persistent connections
+    if (trans->Caps() & NS_HTTP_ALLOW_KEEPALIVE) {
+        uint32_t activeLength = ent->mActiveConns.Length();
+        for (uint32_t i = 0; i < activeLength; i++) {
+            nsAHttpTransaction *activeTrans = ent->mActiveConns[i]->Transaction();
+            NullHttpTransaction *nullTrans = activeTrans ? activeTrans->QueryNullTransaction() : nullptr;
+            if (nullTrans && nullTrans->Claim()) {
+                LOG(("nsHttpConnectionMgr::MakeNewConnection [ci = %s] "
+                     "Claiming a null transaction for later use\n",
+                     ent->mConnInfo->HashKey().get()));
+                return NS_OK;
+            }
+        }
+    }
+
     // If this host is trying to negotiate a SPDY session right now,
     // don't create any new connections until the result of the
     // negotiation is known.
@@ -3426,8 +3442,8 @@ nsHalfOpenSocket::OnOutputStreamReady(nsIAsyncOutputStream *out)
 NS_IMETHODIMP
 nsHttpConnectionMgr::nsHalfOpenSocket::OnTransportStatus(nsITransport *trans,
                                                          nsresult status,
-                                                         uint64_t progress,
-                                                         uint64_t progressMax)
+                                                         int64_t progress,
+                                                         int64_t progressMax)
 {
     MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
 

@@ -456,6 +456,11 @@ class MDefinition : public MNode
     InlineScriptTree *trackedTree() const {
         return trackedSite_ ? trackedSite_->tree() : nullptr;
     }
+    TrackedOptimizations *trackedOptimizations() const {
+        return trackedSite_ && trackedSite_->hasOptimizations()
+               ? trackedSite_->optimizations()
+               : nullptr;
+    }
 
     JSScript *profilerLeaveScript() const {
         return trackedTree()->outermostCaller()->script();
@@ -1279,6 +1284,8 @@ class MConstant : public MNullaryInstruction
     INSTRUCTION_HEADER(Constant)
     static MConstant *New(TempAllocator &alloc, const Value &v,
                           types::CompilerConstraintList *constraints = nullptr);
+    static MConstant *NewTypedValue(TempAllocator &alloc, const Value &v, MIRType type,
+                                    types::CompilerConstraintList *constraints = nullptr);
     static MConstant *NewAsmJS(TempAllocator &alloc, const Value &v, MIRType type);
     static MConstant *NewConstraintlessObject(TempAllocator &alloc, JSObject *v);
 
@@ -1920,7 +1927,7 @@ class MSimdBinaryComp
 
 class MSimdBinaryArith
   : public MBinaryInstruction,
-    public NoTypePolicy::Data
+    public MixPolicy<SimdSameAsReturnedTypePolicy<0>, SimdSameAsReturnedTypePolicy<1> >::Data
 {
   public:
     enum Operation {
@@ -1956,8 +1963,6 @@ class MSimdBinaryArith
     {
         MOZ_ASSERT_IF(type == MIRType_Int32x4, op == Add || op == Sub || op == Mul);
         MOZ_ASSERT(IsSimdType(type));
-        MOZ_ASSERT(left->type() == right->type());
-        MOZ_ASSERT(left->type() == type);
         setResultType(type);
         setMovable();
         if (op == Add || op == Mul || op == Min || op == Max)
@@ -1966,10 +1971,18 @@ class MSimdBinaryArith
 
   public:
     INSTRUCTION_HEADER(SimdBinaryArith)
+    static MSimdBinaryArith *New(TempAllocator &alloc, MDefinition *left, MDefinition *right,
+                                 Operation op, MIRType t)
+    {
+        return new(alloc) MSimdBinaryArith(left, right, op, t);
+    }
+
     static MSimdBinaryArith *NewAsmJS(TempAllocator &alloc, MDefinition *left, MDefinition *right,
                                       Operation op, MIRType t)
     {
-        return new(alloc) MSimdBinaryArith(left, right, op, t);
+        MOZ_ASSERT(left->type() == right->type());
+        MOZ_ASSERT(left->type() == t);
+        return New(alloc, left, right, op, t);
     }
 
     AliasSet getAliasSet() const MOZ_OVERRIDE {
@@ -2791,17 +2804,21 @@ class MNewObject
   : public MUnaryInstruction,
     public NoTypePolicy::Data
 {
+  public:
+    enum Mode { ObjectLiteral, ObjectCreate };
+
+  private:
     gc::InitialHeap initialHeap_;
-    bool templateObjectIsClassPrototype_;
+    Mode mode_;
 
     MNewObject(types::CompilerConstraintList *constraints, MConstant *templateConst,
-               gc::InitialHeap initialHeap, bool templateObjectIsClassPrototype)
+               gc::InitialHeap initialHeap, Mode mode)
       : MUnaryInstruction(templateConst),
         initialHeap_(initialHeap),
-        templateObjectIsClassPrototype_(templateObjectIsClassPrototype)
+        mode_(mode)
     {
         PlainObject *obj = templateObject();
-        MOZ_ASSERT_IF(templateObjectIsClassPrototype, !shouldUseVM());
+        MOZ_ASSERT_IF(mode != ObjectLiteral, !shouldUseVM());
         setResultType(MIRType_Object);
         if (!obj->hasSingletonType())
             setResultTypeSet(MakeSingletonTypeSet(constraints, obj));
@@ -2819,18 +2836,17 @@ class MNewObject
 
     static MNewObject *New(TempAllocator &alloc, types::CompilerConstraintList *constraints,
                            MConstant *templateConst, gc::InitialHeap initialHeap,
-                           bool templateObjectIsClassPrototype)
+                           Mode mode)
     {
-        return new(alloc) MNewObject(constraints, templateConst, initialHeap,
-                                     templateObjectIsClassPrototype);
+        return new(alloc) MNewObject(constraints, templateConst, initialHeap, mode);
     }
 
     // Returns true if the code generator should call through to the
     // VM rather than the fast path.
     bool shouldUseVM() const;
 
-    bool templateObjectIsClassPrototype() const {
-        return templateObjectIsClassPrototype_;
+    Mode mode() const {
+        return mode_;
     }
 
     PlainObject *templateObject() const {
@@ -2961,6 +2977,44 @@ class MSimdBox
 
     gc::InitialHeap initialHeap() const {
         return initialHeap_;
+    }
+
+    bool congruentTo(const MDefinition *ins) const MOZ_OVERRIDE {
+        if (congruentIfOperandsEqual(ins)) {
+            MOZ_ASSERT(ins->toSimdBox()->initialHeap() == initialHeap());
+            // The template object is likely to be different, but represents the
+            // same kind of objects as the MIRTypes are identical.
+            return true;
+        }
+
+        return false;
+    }
+
+    AliasSet getAliasSet() const MOZ_OVERRIDE {
+        return AliasSet::None();
+    }
+};
+
+class MSimdUnbox
+  : public MUnaryInstruction,
+    public SingleObjectPolicy::Data
+{
+  protected:
+    MSimdUnbox(MDefinition *op, MIRType type)
+      : MUnaryInstruction(op)
+    {
+        MOZ_ASSERT(IsSimdType(type));
+        setMovable();
+        setResultType(type);
+    }
+
+  public:
+    INSTRUCTION_HEADER(SimdUnbox)
+    ALLOW_CLONE(MSimdUnbox)
+
+    static MSimdUnbox *New(TempAllocator &alloc, MDefinition *op, MIRType type)
+    {
+        return new(alloc) MSimdUnbox(op, type);
     }
 
     AliasSet getAliasSet() const MOZ_OVERRIDE {
@@ -4109,6 +4163,28 @@ class MGuardString
     }
 };
 
+class MPolyInlineGuard
+  : public MUnaryInstruction,
+    public SingleObjectPolicy::Data
+{
+    explicit MPolyInlineGuard(MDefinition *ins)
+      : MUnaryInstruction(ins)
+    {
+        setGuard();
+        setResultType(MIRType_Object);
+    }
+
+  public:
+    INSTRUCTION_HEADER(PolyInlineGuard)
+
+    static MPolyInlineGuard *New(TempAllocator &alloc, MDefinition *ins) {
+        return new(alloc) MPolyInlineGuard(ins);
+    }
+    AliasSet getAliasSet() const MOZ_OVERRIDE {
+        return AliasSet::None();
+    }
+};
+
 class MAssertRange
   : public MUnaryInstruction,
     public NoTypePolicy::Data
@@ -4722,6 +4798,11 @@ class MTruncateToInt32
         return true;
     }
 #endif
+
+    bool writeRecoverData(CompactBufferWriter &writer) const MOZ_OVERRIDE;
+    bool canRecoverOnBailout() const MOZ_OVERRIDE {
+        return input()->type() < MIRType_Symbol;
+    }
 
     ALLOW_CLONE(MTruncateToInt32)
 };
@@ -5431,11 +5512,10 @@ class MAtan2
 
 // Inline implementation of Math.hypot().
 class MHypot
-  : public MBinaryInstruction,
-    public MixPolicy<DoublePolicy<0>, DoublePolicy<1> >::Data
+  : public MVariadicInstruction,
+    public AllDoublePolicy::Data
 {
-    MHypot(MDefinition *y, MDefinition *x)
-      : MBinaryInstruction(x, y)
+    MHypot()
     {
         setResultType(MIRType_Double);
         setMovable();
@@ -5443,17 +5523,7 @@ class MHypot
 
   public:
     INSTRUCTION_HEADER(Hypot)
-    static MHypot *New(TempAllocator &alloc, MDefinition *x, MDefinition *y) {
-        return new(alloc) MHypot(y, x);
-    }
-
-    MDefinition *x() const {
-        return getOperand(0);
-    }
-
-    MDefinition *y() const {
-        return getOperand(1);
-    }
+    static MHypot *New(TempAllocator &alloc, const MDefinitionVector &vector);
 
     bool congruentTo(const MDefinition *ins) const MOZ_OVERRIDE {
         return congruentIfOperandsEqual(ins);
@@ -5472,7 +5542,14 @@ class MHypot
         return true;
     }
 
-    ALLOW_CLONE(MHypot)
+    bool canClone() const MOZ_OVERRIDE {
+        return true;
+    }
+
+    MInstruction *clone(TempAllocator &alloc,
+                        const MDefinitionVector &inputs) const MOZ_OVERRIDE {
+       return MHypot::New(alloc, inputs);
+    }
 };
 
 // Inline implementation of Math.pow().
@@ -5670,6 +5747,8 @@ class MMathFunction
         return true;
     }
 
+    MDefinition *foldsTo(TempAllocator &alloc) MOZ_OVERRIDE;
+
     void printOpcode(FILE *fp) const MOZ_OVERRIDE;
 
     static const char *FunctionName(Function function);
@@ -5683,6 +5762,7 @@ class MMathFunction
     bool canRecoverOnBailout() const MOZ_OVERRIDE {
         switch(function_) {
           case Sin:
+          case Log:
           case Round:
             return true;
           default:
@@ -6090,6 +6170,7 @@ class MConcat
         return new(alloc) MConcat(left, right);
     }
 
+    MDefinition *foldsTo(TempAllocator &alloc) MOZ_OVERRIDE;
     bool congruentTo(const MDefinition *ins) const MOZ_OVERRIDE {
         return congruentIfOperandsEqual(ins);
     }
@@ -9307,13 +9388,13 @@ class MGetPropertyPolymorphic
 // one of the shapes observed by the baseline IC, else bails out.
 class MSetPropertyPolymorphic
   : public MBinaryInstruction,
-    public SingleObjectPolicy::Data
+    public MixPolicy<SingleObjectPolicy, NoFloatPolicy<1> >::Data
 {
     struct Entry {
         // The shape to guard against.
         Shape *objShape;
 
-        // The property to laod.
+        // The property to load.
         Shape *shape;
     };
 
@@ -9373,10 +9454,14 @@ class MDispatchInstruction
     // Map from JSFunction* -> MBasicBlock.
     struct Entry {
         JSFunction *func;
+        // If |func| has a singleton type, |funcType| is null. Otherwise,
+        // |funcType| holds the TypeObject for |func|, and dispatch guards
+        // on the type instead of directly on the function.
+        types::TypeObject *funcType;
         MBasicBlock *block;
 
-        Entry(JSFunction *func, MBasicBlock *block)
-          : func(func), block(block)
+        Entry(JSFunction *func, types::TypeObject *funcType, MBasicBlock *block)
+          : func(func), funcType(funcType), block(block)
         { }
     };
     Vector<Entry, 4, JitAllocPolicy> map_;
@@ -9444,14 +9529,17 @@ class MDispatchInstruction
     }
 
   public:
-    void addCase(JSFunction *func, MBasicBlock *block) {
-        map_.append(Entry(func, block));
+    void addCase(JSFunction *func, types::TypeObject *funcType, MBasicBlock *block) {
+        map_.append(Entry(func, funcType, block));
     }
     uint32_t numCases() const {
         return map_.length();
     }
     JSFunction *getCase(uint32_t i) const {
         return map_[i].func;
+    }
+    types::TypeObject *getCaseTypeObject(uint32_t i) const {
+        return map_[i].funcType;
     }
     MBasicBlock *getCaseBlock(uint32_t i) const {
         return map_[i].block;
@@ -10728,6 +10816,10 @@ class MCeil
         return congruentIfOperandsEqual(ins);
     }
     void computeRange(TempAllocator &alloc) MOZ_OVERRIDE;
+    bool writeRecoverData(CompactBufferWriter &writer) const MOZ_OVERRIDE;
+    bool canRecoverOnBailout() const MOZ_OVERRIDE {
+        return true;
+    }
 
     ALLOW_CLONE(MCeil)
 };
@@ -11436,48 +11528,6 @@ class MNewStringObject :
     }
 
     StringObject *templateObj() const;
-};
-
-// Node that represents that a script has begun executing. This comes at the
-// start of the function and is called once per function (including inline
-// ones)
-class MProfilerStackOp : public MNullaryInstruction
-{
-  public:
-    enum Type {
-        Enter,        // a function has begun executing and it is not inline
-        Exit          // any function has exited and is not inline
-    };
-
-  private:
-    JSScript *script_;
-    Type type_;
-
-    MProfilerStackOp(JSScript *script, Type type)
-      : script_(script), type_(type)
-    {
-        MOZ_ASSERT(script);
-        setGuard();
-    }
-
-  public:
-    INSTRUCTION_HEADER(ProfilerStackOp)
-
-    static MProfilerStackOp *New(TempAllocator &alloc, JSScript *script, Type type) {
-        return new(alloc) MProfilerStackOp(script, type);
-    }
-
-    JSScript *script() {
-        return script_;
-    }
-
-    Type type() {
-        return type_;
-    }
-
-    AliasSet getAliasSet() const MOZ_OVERRIDE {
-        return AliasSet::None();
-    }
 };
 
 // This is an alias for MLoadFixedSlot.

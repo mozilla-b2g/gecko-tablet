@@ -24,7 +24,6 @@
 #include "gfxPrefs.h"
 #include "libui/Input.h"
 #include "mozilla/ClearOnShutdown.h"
-#include "mozilla/MouseEvents.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/TouchEvents.h"
@@ -225,19 +224,15 @@ Interpolate(int start, int end, TimeDuration aFrameDiff, TimeDuration aTouchDiff
 static const SingleTouchData&
 GetTouchByID(const SingleTouchData& aCurrentTouch, MultiTouchInput& aOtherTouch)
 {
-  int32_t id = aCurrentTouch.mIdentifier;
-  for (size_t i = 0; i < aOtherTouch.mTouches.Length(); i++) {
-    SingleTouchData& touch = aOtherTouch.mTouches[i];
-    if (touch.mIdentifier == id) {
-      return touch;
-    }
+  int32_t index = aOtherTouch.IndexOfTouch(aCurrentTouch.mIdentifier);
+  if (index < 0) {
+    // We can have situations where a previous touch event had 2 fingers
+    // and we lift 1 finger off. In those cases, we won't find the touch event
+    // with given id, so just return the current touch, which will be resampled
+    // without modification and dispatched.
+    return aCurrentTouch;
   }
-
-  // We can have situations where a previous touch event had 2 fingers
-  // and we lift 1 finger off. In those cases, we won't find the touch event
-  // with given id, so just return the current touch, which will be resampled
-  // without modification and dispatched.
-  return aCurrentTouch;
+  return aOtherTouch.mTouches[index];
 }
 
 
@@ -333,21 +328,6 @@ GeckoTouchDispatcher::ResampleTouchMoves(MultiTouchInput& aOutTouch, TimeStamp a
   aOutTouch.mTimeStamp = sampleTime;
 }
 
-// Some touch events get sent as mouse events. If APZ doesn't capture the event
-// and if a touch only has 1 touch input, we can send a mouse event.
-void
-GeckoTouchDispatcher::DispatchMouseEvent(MultiTouchInput& aMultiTouch,
-                                         bool aForwardToChildren)
-{
-  WidgetMouseEvent mouseEvent = aMultiTouch.ToWidgetMouseEvent(nullptr);
-  if (mouseEvent.message == NS_EVENT_NULL) {
-    return;
-  }
-
-  mouseEvent.mFlags.mNoCrossProcessBoundaryForwarding = !aForwardToChildren;
-  nsWindow::DispatchInputEvent(mouseEvent);
-}
-
 static bool
 IsExpired(const MultiTouchInput& aTouch)
 {
@@ -372,9 +352,7 @@ GeckoTouchDispatcher::DispatchTouchEvent(MultiTouchInput& aMultiTouch)
     return;
   }
 
-  bool captured = false;
-  WidgetTouchEvent event = aMultiTouch.ToWidgetTouchEvent(nullptr);
-  nsEventStatus status = nsWindow::DispatchInputEvent(event, &captured);
+  nsWindow::DispatchTouchInput(aMultiTouch);
 
   if (mEnabledUniformityInfo && profiler_is_active()) {
     const char* touchAction = "Invalid";
@@ -394,11 +372,6 @@ GeckoTouchDispatcher::DispatchTouchEvent(MultiTouchInput& aMultiTouch)
     const ScreenIntPoint& touchPoint = aMultiTouch.mTouches[0].mScreenPoint;
     TouchDataPayload* payload = new TouchDataPayload(touchPoint);
     PROFILER_MARKER_PAYLOAD(touchAction, payload);
-  }
-
-  if (!captured && (aMultiTouch.mTouches.Length() == 1)) {
-    bool forwardToChildren = status != nsEventStatus_eConsumeNoDefault;
-    DispatchMouseEvent(aMultiTouch, forwardToChildren);
   }
 }
 

@@ -19,6 +19,7 @@ loop.webapp = (function($, _, OT, mozL10n) {
   var sharedModels = loop.shared.models;
   var sharedViews = loop.shared.views;
   var sharedUtils = loop.shared.utils;
+  var WEBSOCKET_REASONS = loop.shared.utils.WEBSOCKET_REASONS;
 
   var multiplexGum = loop.standaloneMedia.multiplexGum;
 
@@ -562,7 +563,6 @@ loop.webapp = (function($, _, OT, mozL10n) {
       conversation: React.PropTypes.instanceOf(sharedModels.ConversationModel)
                          .isRequired,
       sdk: React.PropTypes.object.isRequired,
-      feedbackStore: React.PropTypes.instanceOf(loop.store.FeedbackStore),
       onAfterFeedbackReceived: React.PropTypes.func.isRequired
     },
 
@@ -573,7 +573,6 @@ loop.webapp = (function($, _, OT, mozL10n) {
       return (
         React.createElement("div", {className: "ended-conversation"}, 
           React.createElement(sharedViews.FeedbackView, {
-            feedbackStore: this.props.feedbackStore, 
             onAfterFeedbackReceived: this.props.onAfterFeedbackReceived}
           ), 
           React.createElement(sharedViews.ConversationView, {
@@ -630,11 +629,11 @@ loop.webapp = (function($, _, OT, mozL10n) {
         React.PropTypes.instanceOf(sharedModels.ConversationModel),
         React.PropTypes.instanceOf(FxOSConversationModel)
       ]).isRequired,
+      dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired,
       helper: React.PropTypes.instanceOf(sharedUtils.Helper).isRequired,
       notifications: React.PropTypes.instanceOf(sharedModels.NotificationCollection)
                           .isRequired,
-      sdk: React.PropTypes.object.isRequired,
-      feedbackStore: React.PropTypes.instanceOf(loop.store.FeedbackStore)
+      sdk: React.PropTypes.object.isRequired
     },
 
     getInitialState: function() {
@@ -665,7 +664,7 @@ loop.webapp = (function($, _, OT, mozL10n) {
     },
 
     resetCallStatus: function() {
-      this.props.feedbackStore.dispatchAction(new sharedActions.FeedbackComplete());
+      this.props.dispatcher.dispatch(new sharedActions.FeedbackComplete());
       return function() {
         this.setState({callStatus: "start"});
       }.bind(this);
@@ -718,7 +717,6 @@ loop.webapp = (function($, _, OT, mozL10n) {
             React.createElement(EndedConversationView, {
               sdk: this.props.sdk, 
               conversation: this.props.conversation, 
-              feedbackStore: this.props.feedbackStore, 
               onAfterFeedbackReceived: this.resetCallStatus()}
             )
           );
@@ -892,7 +890,7 @@ loop.webapp = (function($, _, OT, mozL10n) {
     _handleCallTerminated: function(reason) {
       multiplexGum.reset();
 
-      if (reason === "cancel") {
+      if (reason === WEBSOCKET_REASONS.CANCEL) {
         this.setState({callStatus: "start"});
         return;
       }
@@ -941,8 +939,7 @@ loop.webapp = (function($, _, OT, mozL10n) {
         React.PropTypes.instanceOf(loop.store.ActiveRoomStore),
         React.PropTypes.instanceOf(loop.store.FxOSActiveRoomStore)
       ]).isRequired,
-      dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired,
-      feedbackStore: React.PropTypes.instanceOf(loop.store.FeedbackStore)
+      dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired
     },
 
     getInitialState: function() {
@@ -975,11 +972,11 @@ loop.webapp = (function($, _, OT, mozL10n) {
           return (
             React.createElement(OutgoingConversationView, {
                client: this.props.client, 
+               dispatcher: this.props.dispatcher, 
                conversation: this.props.conversation, 
                helper: this.props.helper, 
                notifications: this.props.notifications, 
-               sdk: this.props.sdk, 
-               feedbackStore: this.props.feedbackStore}
+               sdk: this.props.sdk}
             )
           );
         }
@@ -987,7 +984,6 @@ loop.webapp = (function($, _, OT, mozL10n) {
           return (
             React.createElement(loop.standaloneRoomViews.StandaloneRoomView, {
               activeRoomStore: this.props.activeRoomStore, 
-              feedbackStore: this.props.feedbackStore, 
               dispatcher: this.props.dispatcher, 
               helper: this.props.helper}
             )
@@ -1074,6 +1070,8 @@ loop.webapp = (function($, _, OT, mozL10n) {
       feedbackClient: feedbackClient
     });
 
+    loop.store.StoreMixin.register({feedbackStore: feedbackStore});
+
     window.addEventListener("unload", function() {
       dispatcher.dispatch(new sharedActions.WindowUnload());
     });
@@ -1084,7 +1082,6 @@ loop.webapp = (function($, _, OT, mozL10n) {
       helper: helper, 
       notifications: notifications, 
       sdk: OT, 
-      feedbackStore: feedbackStore, 
       standaloneAppStore: standaloneAppStore, 
       activeRoomStore: activeRoomStore, 
       dispatcher: dispatcher}

@@ -10,6 +10,7 @@
 
 #include "jsprf.h"
 
+#include "gc/GCInternals.h"
 #include "jit/IonCode.h"
 #include "js/SliceBudget.h"
 #include "vm/ArgumentsObject.h"
@@ -18,6 +19,7 @@
 #include "vm/Shape.h"
 #include "vm/Symbol.h"
 #include "vm/TypedArrayObject.h"
+#include "vm/UnboxedObject.h"
 
 #include "jscompartmentinlines.h"
 #include "jsinferinlines.h"
@@ -160,18 +162,14 @@ CheckMarkedThing(JSTracer *trc, T **thingp)
     T *thing = *thingp;
     MOZ_ASSERT(*thingp);
 
-#ifdef JSGC_COMPACTING
     thing = MaybeForwarded(thing);
-#endif
 
     /* This function uses data that's not available in the nursery. */
     if (IsInsideNursery(thing))
         return;
 
-#ifdef JSGC_COMPACTING
     MOZ_ASSERT_IF(!MovingTracer::IsMovingTracer(trc) && !Nursery::IsMinorCollectionTracer(trc),
                   !IsForwarded(*thingp));
-#endif
 
     /*
      * Permanent atoms are not associated with this runtime, but will be ignored
@@ -183,13 +181,8 @@ CheckMarkedThing(JSTracer *trc, T **thingp)
     Zone *zone = thing->zoneFromAnyThread();
     JSRuntime *rt = trc->runtime();
 
-#ifdef JSGC_COMPACTING
     MOZ_ASSERT_IF(!MovingTracer::IsMovingTracer(trc), CurrentThreadCanAccessZone(zone));
     MOZ_ASSERT_IF(!MovingTracer::IsMovingTracer(trc), CurrentThreadCanAccessRuntime(rt));
-#else
-    MOZ_ASSERT(CurrentThreadCanAccessZone(zone));
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt));
-#endif
 
     MOZ_ASSERT(zone->runtimeFromAnyThread() == trc->runtime());
     MOZ_ASSERT(trc->hasTracingDetails());
@@ -217,9 +210,11 @@ CheckMarkedThing(JSTracer *trc, T **thingp)
      * Try to assert that the thing is allocated.  This is complicated by the
      * fact that allocated things may still contain the poison pattern if that
      * part has not been overwritten, and that the free span list head in the
-     * ArenaHeader may not be synced with the real one in ArenaLists.
+     * ArenaHeader may not be synced with the real one in ArenaLists.  Also,
+     * background sweeping may be running and concurrently modifiying the free
+     * list.
      */
-    MOZ_ASSERT_IF(IsThingPoisoned(thing) && rt->isHeapBusy(),
+    MOZ_ASSERT_IF(IsThingPoisoned(thing) && rt->isHeapBusy() && !rt->gc.isBackgroundSweeping(),
                   !InFreeList(thing->asTenured().arenaHeader(), thing));
 #endif
 }
@@ -436,10 +431,8 @@ IsMarkedFromAnyThread(T **thingp)
     Zone *zone = (*thingp)->asTenured().zoneFromAnyThread();
     if (!zone->isCollectingFromAnyThread() || zone->isGCFinished())
         return true;
-#ifdef JSGC_COMPACTING
     if (zone->isGCCompacting() && IsForwarded(*thingp))
         *thingp = Forwarded(*thingp);
-#endif
     return (*thingp)->asTenured().isMarked();
 }
 
@@ -480,12 +473,10 @@ IsAboutToBeFinalizedFromAnyThread(T **thingp)
             return false;
         return !thing->asTenured().isMarked();
     }
-#ifdef JSGC_COMPACTING
     else if (zone->isGCCompacting() && IsForwarded(thing)) {
         *thingp = Forwarded(thing);
         return false;
     }
-#endif
 
     return false;
 }
@@ -503,11 +494,10 @@ UpdateIfRelocated(JSRuntime *rt, T **thingp)
         return *thingp;
     }
 
-#ifdef JSGC_COMPACTING
     Zone *zone = (*thingp)->zone();
     if (zone->isGCCompacting() && IsForwarded(*thingp))
         *thingp = Forwarded(*thingp);
-#endif
+
     return *thingp;
 }
 
@@ -1449,6 +1439,9 @@ ScanTypeObject(GCMarker *gcmarker, types::TypeObject *type)
     if (type->newScript())
         type->newScript()->trace(gcmarker);
 
+    if (type->maybeUnboxedLayout())
+        type->unboxedLayout().trace(gcmarker);
+
     if (TypeDescr *descr = type->maybeTypeDescr())
         PushMarkStack(gcmarker, descr);
 
@@ -1474,6 +1467,9 @@ gc::MarkChildren(JSTracer *trc, types::TypeObject *type)
 
     if (type->newScript())
         type->newScript()->trace(trc);
+
+    if (type->maybeUnboxedLayout())
+        type->unboxedLayout().trace(trc);
 
     if (JSObject *descr = type->maybeTypeDescr()) {
         MarkObjectUnbarriered(trc, &descr, "type_descr");
@@ -1711,6 +1707,9 @@ GCMarker::processMarkStackTop(SliceBudget &budget)
     HeapSlot *vp, *end;
     JSObject *obj;
 
+    const int32_t *unboxedTraceList;
+    uint8_t *unboxedMemory;
+
     uintptr_t addr = stack.pop();
     uintptr_t tag = addr & StackTagMask;
     addr &= ~StackTagMask;
@@ -1756,28 +1755,23 @@ GCMarker::processMarkStackTop(SliceBudget &budget)
     }
     return;
 
-  scan_typed_obj:
+  scan_unboxed:
     {
-        TypeDescr *descr = &obj->as<InlineOpaqueTypedObject>().typeDescr();
-        if (!descr->hasTraceList())
-            return;
-        const int32_t *list = descr->traceList();
-        uint8_t *memory = obj->as<InlineOpaqueTypedObject>().inlineTypedMem();
-        while (*list != -1) {
-            JSString *str = *reinterpret_cast<JSString **>(memory + *list);
+        while (*unboxedTraceList != -1) {
+            JSString *str = *reinterpret_cast<JSString **>(unboxedMemory + *unboxedTraceList);
             markAndScanString(obj, str);
-            list++;
+            unboxedTraceList++;
         }
-        list++;
-        while (*list != -1) {
-            JSObject *obj2 = *reinterpret_cast<JSObject **>(memory + *list);
+        unboxedTraceList++;
+        while (*unboxedTraceList != -1) {
+            JSObject *obj2 = *reinterpret_cast<JSObject **>(unboxedMemory + *unboxedTraceList);
             if (obj2 && markObject(obj, obj2))
                 pushObject(obj2);
-            list++;
+            unboxedTraceList++;
         }
-        list++;
-        while (*list != -1) {
-            const Value &v = *reinterpret_cast<Value *>(memory + *list);
+        unboxedTraceList++;
+        while (*unboxedTraceList != -1) {
+            const Value &v = *reinterpret_cast<Value *>(unboxedMemory + *unboxedTraceList);
             if (v.isString()) {
                 markAndScanString(obj, v.toString());
             } else if (v.isObject()) {
@@ -1787,7 +1781,7 @@ GCMarker::processMarkStackTop(SliceBudget &budget)
             } else if (v.isSymbol()) {
                 markAndScanSymbol(obj, v.toSymbol());
             }
-            list++;
+            unboxedTraceList++;
         }
         return;
     }
@@ -1814,13 +1808,25 @@ GCMarker::processMarkStackTop(SliceBudget &budget)
             // Global objects all have the same trace hook. That hook is safe without barriers
             // if the global has no custom trace hook of its own, or has been moved to a different
             // compartment, and so can't have one.
-            MOZ_ASSERT_IF(runtime()->gc.isIncrementalGCEnabled() &&
-                          !(clasp->trace == JS_GlobalObjectTraceHook &&
-                            (!obj->compartment()->options().getTrace() ||
-                             !obj->isOwnGlobal())),
+            MOZ_ASSERT_IF(!(clasp->trace == JS_GlobalObjectTraceHook &&
+                            (!obj->compartment()->options().getTrace() || !obj->isOwnGlobal())),
                           clasp->flags & JSCLASS_IMPLEMENTS_BARRIERS);
-            if (clasp->trace == InlineTypedObject::obj_trace)
-                goto scan_typed_obj;
+            if (clasp->trace == InlineTypedObject::obj_trace) {
+                TypeDescr *descr = &obj->as<InlineOpaqueTypedObject>().typeDescr();
+                if (!descr->hasTraceList())
+                    return;
+                unboxedTraceList = descr->traceList();
+                unboxedMemory = obj->as<InlineOpaqueTypedObject>().inlineTypedMem();
+                goto scan_unboxed;
+            }
+            if (clasp == &UnboxedPlainObject::class_) {
+                const UnboxedLayout &layout = obj->as<UnboxedPlainObject>().layout();
+                unboxedTraceList = layout.traceList();
+                if (!unboxedTraceList)
+                    return;
+                unboxedMemory = obj->as<UnboxedPlainObject>().data();
+                goto scan_unboxed;
+            }
             clasp->trace(this, obj);
         }
 

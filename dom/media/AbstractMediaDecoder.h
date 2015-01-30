@@ -91,9 +91,9 @@ public:
   // Return true if the transport layer supports seeking.
   virtual bool IsMediaSeekable() = 0;
 
-  virtual void MetadataLoaded(nsAutoPtr<MediaInfo> aInfo, nsAutoPtr<MetadataTags> aTags) = 0;
+  virtual void MetadataLoaded(nsAutoPtr<MediaInfo> aInfo, nsAutoPtr<MetadataTags> aTags, bool aRestoredFromDormant) = 0;
   virtual void QueueMetadata(int64_t aTime, nsAutoPtr<MediaInfo> aInfo, nsAutoPtr<MetadataTags> aTags) = 0;
-  virtual void FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo) = 0;
+  virtual void FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo, bool aRestoredFromDormant) = 0;
 
   virtual void RemoveMediaTracks() = 0;
 
@@ -164,15 +164,18 @@ class MetadataContainer
 protected:
   MetadataContainer(AbstractMediaDecoder* aDecoder,
                     nsAutoPtr<MediaInfo> aInfo,
-                    nsAutoPtr<MetadataTags> aTags)
+                    nsAutoPtr<MetadataTags> aTags,
+                    bool aRestoredFromDormant)
     : mDecoder(aDecoder),
       mInfo(aInfo),
-      mTags(aTags)
+      mTags(aTags),
+      mRestoredFromDormant(aRestoredFromDormant)
   {}
 
   nsRefPtr<AbstractMediaDecoder> mDecoder;
   nsAutoPtr<MediaInfo>  mInfo;
   nsAutoPtr<MetadataTags> mTags;
+  bool mRestoredFromDormant;
 };
 
 class MetadataEventRunner : public nsRunnable, private MetadataContainer
@@ -180,13 +183,14 @@ class MetadataEventRunner : public nsRunnable, private MetadataContainer
 public:
   MetadataEventRunner(AbstractMediaDecoder* aDecoder,
                       nsAutoPtr<MediaInfo> aInfo,
-                      nsAutoPtr<MetadataTags> aTags)
-    : MetadataContainer(aDecoder, aInfo, aTags)
+                      nsAutoPtr<MetadataTags> aTags,
+                      bool aRestoredFromDormant = false)
+    : MetadataContainer(aDecoder, aInfo, aTags, aRestoredFromDormant)
   {}
 
   NS_IMETHOD Run() MOZ_OVERRIDE
   {
-    mDecoder->MetadataLoaded(mInfo, mTags);
+    mDecoder->MetadataLoaded(mInfo, mTags, mRestoredFromDormant);
     return NS_OK;
   }
 };
@@ -195,13 +199,14 @@ class FirstFrameLoadedEventRunner : public nsRunnable, private MetadataContainer
 {
 public:
   FirstFrameLoadedEventRunner(AbstractMediaDecoder* aDecoder,
-                              nsAutoPtr<MediaInfo> aInfo)
-    : MetadataContainer(aDecoder, aInfo, nsAutoPtr<MetadataTags>(nullptr))
+                              nsAutoPtr<MediaInfo> aInfo,
+                              bool aRestoredFromDormant = false)
+    : MetadataContainer(aDecoder, aInfo, nsAutoPtr<MetadataTags>(nullptr), aRestoredFromDormant)
   {}
 
   NS_IMETHOD Run() MOZ_OVERRIDE
   {
-    mDecoder->FirstFrameLoaded(mInfo);
+    mDecoder->FirstFrameLoaded(mInfo, mRestoredFromDormant);
     return NS_OK;
   }
 };
@@ -211,16 +216,17 @@ class MetadataUpdatedEventRunner : public nsRunnable, private MetadataContainer
 public:
   MetadataUpdatedEventRunner(AbstractMediaDecoder* aDecoder,
                              nsAutoPtr<MediaInfo> aInfo,
-                             nsAutoPtr<MetadataTags> aTags)
-    : MetadataContainer(aDecoder, aInfo, aTags)
+                             nsAutoPtr<MetadataTags> aTags,
+                             bool aRestoredFromDormant = false)
+    : MetadataContainer(aDecoder, aInfo, aTags, aRestoredFromDormant)
   {}
 
   NS_IMETHOD Run() MOZ_OVERRIDE
   {
     nsAutoPtr<MediaInfo> info(new MediaInfo());
     *info = *mInfo;
-    mDecoder->MetadataLoaded(info, mTags);
-    mDecoder->FirstFrameLoaded(mInfo);
+    mDecoder->MetadataLoaded(info, mTags, mRestoredFromDormant);
+    mDecoder->FirstFrameLoaded(mInfo, mRestoredFromDormant);
     return NS_OK;
   }
 };

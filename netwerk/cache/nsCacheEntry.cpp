@@ -377,13 +377,10 @@ nsCacheEntryInfo::IsStreamBased(bool * result)
 const PLDHashTableOps
 nsCacheEntryHashTable::ops =
 {
-    PL_DHashAllocTable,
-    PL_DHashFreeTable,
     HashKey,
     MatchEntry,
     MoveEntry,
-    ClearEntry,
-    PL_DHashFinalizeStub
+    ClearEntry
 };
 
 
@@ -406,7 +403,7 @@ nsresult
 nsCacheEntryHashTable::Init()
 {
     nsresult rv = NS_OK;
-    initialized = PL_DHashTableInit(&table, &ops, nullptr,
+    initialized = PL_DHashTableInit(&table, &ops,
                                     sizeof(nsCacheEntryHashTableEntry),
                                     fallible_t(), 256);
 
@@ -428,17 +425,12 @@ nsCacheEntryHashTable::Shutdown()
 nsCacheEntry *
 nsCacheEntryHashTable::GetEntry( const nsCString * key)
 {
-    PLDHashEntryHdr *hashEntry;
-    nsCacheEntry    *result = nullptr;
-
     NS_ASSERTION(initialized, "nsCacheEntryHashTable not initialized");
     if (!initialized)  return nullptr;
-    
-    hashEntry = PL_DHashTableLookup(&table, key);
-    if (PL_DHASH_ENTRY_IS_BUSY(hashEntry)) {
-        result = ((nsCacheEntryHashTableEntry *)hashEntry)->cacheEntry;
-    }
-    return result;
+
+    PLDHashEntryHdr *hashEntry = PL_DHashTableSearch(&table, key);
+    return hashEntry ? ((nsCacheEntryHashTableEntry *)hashEntry)->cacheEntry
+                     : nullptr;
 }
 
 

@@ -7,10 +7,12 @@ package org.mozilla.gecko.fxa.activities;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+import org.mozilla.gecko.AppConstants;
 import org.mozilla.gecko.R;
 import org.mozilla.gecko.background.common.log.Logger;
 import org.mozilla.gecko.background.fxa.FxAccountClient10.RequestDelegate;
@@ -33,6 +35,8 @@ import org.mozilla.gecko.sync.setup.activities.ActivityUtils;
 
 import android.accounts.Account;
 import android.accounts.AccountManager;
+import android.animation.LayoutTransition;
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
 import android.os.AsyncTask;
@@ -49,6 +53,7 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.View.OnFocusChangeListener;
+import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.Button;
@@ -62,6 +67,8 @@ abstract public class FxAccountAbstractSetupActivity extends FxAccountAbstractAc
   public static final String EXTRA_PASSWORD = "password";
   public static final String EXTRA_PASSWORD_SHOWN = "password_shown";
   public static final String EXTRA_YEAR = "year";
+  public static final String EXTRA_MONTH = "month";
+  public static final String EXTRA_DAY = "day";
   public static final String EXTRA_EXTRAS = "extras";
 
   public static final String JSON_KEY_AUTH = "auth";
@@ -144,7 +151,14 @@ abstract public class FxAccountAbstractSetupActivity extends FxAccountAbstractAc
   }
 
   protected void hideRemoteError() {
-    remoteErrorTextView.setVisibility(View.INVISIBLE);
+    if (AppConstants.Versions.feature11Plus) {
+      // On v11+, we remove the view entirely, which triggers a smooth
+      // animation.
+      remoteErrorTextView.setVisibility(View.GONE);
+    } else {
+      // On earlier versions, we just hide the error.
+      remoteErrorTextView.setVisibility(View.INVISIBLE);
+    }
   }
 
   protected void showRemoteError(Exception e, int defaultResourceId) {
@@ -425,6 +439,16 @@ abstract public class FxAccountAbstractSetupActivity extends FxAccountAbstractAc
     super.onCreate(savedInstanceState);
   }
 
+  @SuppressLint("NewApi")
+  protected void maybeEnableAnimations() {
+    // On v11+, we animate the error display being added and removed. This saves
+    // us some vertical space when we start the activity.
+    if (AppConstants.Versions.feature11Plus) {
+      final ViewGroup container = (ViewGroup) remoteErrorTextView.getParent();
+      container.setLayoutTransition(new LayoutTransition());
+    }
+  }
+
   protected void updateFromIntentExtras() {
     // Only set email/password in onCreate; we don't want to overwrite edited values onResume.
     if (getIntent() != null && getIntent().getExtras() != null) {
@@ -564,5 +588,11 @@ abstract public class FxAccountAbstractSetupActivity extends FxAccountAbstractAc
   protected void setCustomServerViewVisibility(int visibility) {
     ensureFindViewById(null, R.id.account_server_layout, "account server layout").setVisibility(visibility);
     ensureFindViewById(null, R.id.sync_server_layout, "sync server layout").setVisibility(visibility);
+  }
+
+  protected Map<String, String> getQueryParameters() {
+    final Map<String, String> queryParameters = new HashMap<>();
+    queryParameters.put("service", "sync");
+    return queryParameters;
   }
 }

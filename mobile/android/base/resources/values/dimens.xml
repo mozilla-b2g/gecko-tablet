@@ -22,6 +22,10 @@
     <dimen name="new_tablet_nav_button_width_half">21dp</dimen>
     <dimen name="new_tablet_nav_button_width_plus_half">63dp</dimen>
 
+    <!-- This is the system default for the vertical padding for the divider of the TabWidget.
+         Used to mimic the divider padding on the tablet tabs panel back button. -->
+    <dimen name="new_tablet_tab_panel_divider_vertical_padding">12dp</dimen>
+
     <dimen name="new_tablet_tab_strip_height">48dp</dimen>
     <dimen name="new_tablet_tab_strip_item_width">208dp</dimen>
     <dimen name="new_tablet_tab_strip_item_margin">-28dp</dimen>
@@ -57,6 +61,9 @@
          database. The largest available size is always stored in the database, regardless of this
          value.-->
     <dimen name="favicon_largest_interesting_size">32dp</dimen>
+
+    <dimen name="firstrun_content_width">300dp</dimen>
+    <dimen name="firstrun_min_height">180dp</dimen>
 
     <!-- Site security icon -->
     <!-- If one of these values changes, they all should. -->
@@ -187,6 +194,8 @@
     <dimen name="tab_history_title_text_size">14sp</dimen>
     <dimen name="tab_history_bg_width">2dp</dimen>
     <dimen name="tab_history_border_padding">2dp</dimen>
+
+    <dimen name="horizontal_drag_area">256dp</dimen>
 
     <!-- Find-In-Page dialog dimensions. -->
     <dimen name="find_in_page_text_margin_left">5dip</dimen>

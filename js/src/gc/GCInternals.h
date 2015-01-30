@@ -143,16 +143,14 @@ void
 CheckHashTablesAfterMovingGC(JSRuntime *rt);
 #endif
 
-#ifdef JSGC_COMPACTING
 struct MovingTracer : JSTracer {
-    MovingTracer(JSRuntime *rt) : JSTracer(rt, Visit, TraceWeakMapKeysValues) {}
+    explicit MovingTracer(JSRuntime *rt) : JSTracer(rt, Visit, TraceWeakMapKeysValues) {}
 
     static void Visit(JSTracer *jstrc, void **thingp, JSGCTraceKind kind);
     static bool IsMovingTracer(JSTracer *trc) {
         return trc->callback == Visit;
     }
 };
-#endif
 
 } /* namespace gc */
 } /* namespace js */

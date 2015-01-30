@@ -1210,6 +1210,11 @@
     "kind": "boolean",
     "description": "Whether a HTTP transaction routed via Alt-Svc was scheme=http"
   },
+  "HTTP_WAP_CONTENT_TYPE_RECEIVED": {
+    "expires_in_version": "40",
+    "kind": "boolean",
+    "description": "Whether a WAP content type response is served to the browser."
+  },
   "SSL_HANDSHAKE_VERSION": {
     "expires_in_version": "never",
     "kind": "enumerated",
@@ -2228,13 +2233,13 @@
     "extended_statistics_ok": true,
     "description": "Number of times nsINetworkPredictor::Learn doesn't continue because the queue is full"
   },
-  "PREDICTOR_PREDICT_WAIT_TIME": {
+  "PREDICTOR_WAIT_TIME": {
     "expires_in_version": "never",
     "kind": "exponential",
     "high": "3000",
     "n_buckets": 10,
     "extended_statistics_ok": true,
-    "description": "Amount of time a predict event waits in the queue (ms)"
+    "description": "Amount of time a predictor event waits in the queue (ms)"
   },
   "PREDICTOR_PREDICT_WORK_TIME": {
     "expires_in_version": "never",
@@ -2243,14 +2248,6 @@
     "n_buckets": 10,
     "extended_statistics_ok": true,
     "description": "Amount of time spent doing the work for predict (ms)"
-  },
-  "PREDICTOR_LEARN_WAIT_TIME": {
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": "3000",
-    "n_buckets": 10,
-    "extended_statistics_ok": true,
-    "description": "Amount of time a learn event waits in the queue (ms)"
   },
   "PREDICTOR_LEARN_WORK_TIME": {
     "expires_in_version": "never",
@@ -6625,7 +6622,7 @@
     "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": "36",
-    "description": "ECDHE KEA (TLS_ECDHE_*) curve (1=P-256, 2=P-384, 3=P-521) in full handshake"
+    "description": "ECDHE KEA (TLS_ECDHE_*) curve (23=P-256, 24=P-384, 25=P-521) in full handshake"
   },
   "SSL_AUTH_ALGORITHM_FULL": {
     "expires_in_version": "never",
@@ -6649,7 +6646,7 @@
     "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": "36",
-    "description": "ECDSA signature curve for TLS_*_ECDSA_* in full handshake (1=P-256, 2=P-384, 3=P-521)"
+    "description": "ECDSA signature curve for TLS_*_ECDSA_* in full handshake (23=P-256, 24=P-384, 25=P-521)"
   },
   "SSL_SYMMETRIC_CIPHER_FULL": {
     "expires_in_version": "never",
@@ -6803,7 +6800,7 @@
     "description": "If any version of Firefox Sync is configured for this device"
   },
   "WEAVE_CONFIGURED_MASTER_PASSWORD": {
-    "expires_in_version": "default",
+    "expires_in_version": "never",
     "kind": "boolean",
     "description": "If both Firefox Sync and Master Password are configured for this device"
   },
@@ -6874,7 +6871,7 @@
     "description": "Algorithms used with WebCrypto (see table in WebCryptoTask.cpp)"
   },
   "MASTER_PASSWORD_ENABLED": {
-    "expires_in_version": "40",
+    "expires_in_version": "never",
     "kind": "flag",
     "description": "If a master-password is enabled for this profile"
   },
@@ -6982,7 +6979,7 @@
     "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": 4,
-    "description": "Tracking protection shield (0 = not shown, 1 = blocked, 2 = loaded, 3 = due to mixed content"
+    "description": "Tracking protection shield (0 = not shown, 1 = loaded, 2 = blocked, 3 = due to mixed content"
   },
   "TRACKING_PROTECTION_EVENTS": {
     "expires_in_version": "never",
@@ -7157,5 +7154,157 @@
     "high": "1024",
     "n_buckets": 16,
     "description": "The number of entries in persistent DataStorage (HSTS and HPKP data, basically)"
+  },
+  "FX_SANITIZE_TOTAL": {
+    "alert_emails": ["firefox-dev@mozilla.org", "gavin@mozilla.com"],
+    "expires_in_version": "40",
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 20,
+    "extended_statistics_ok": true,
+    "description": "Sanitize: Total time it takes to sanitize (ms)"
+  },
+  "FX_SANITIZE_CACHE": {
+    "alert_emails": ["firefox-dev@mozilla.org", "gavin@mozilla.com"],
+    "expires_in_version": "40",
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 20,
+    "extended_statistics_ok": true,
+    "description": "Sanitize: Time it takes to sanitize the cache (ms)"
+  },
+  "FX_SANITIZE_COOKIES": {
+    "alert_emails": ["firefox-dev@mozilla.org", "gavin@mozilla.com"],
+    "expires_in_version": "40",
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 20,
+    "extended_statistics_ok": true,
+    "description": "Sanitize: Time it takes to sanitize cookies (ms)"
+  },
+  "FX_SANITIZE_OFFLINEAPPS": {
+    "alert_emails": ["firefox-dev@mozilla.org", "gavin@mozilla.com"],
+    "expires_in_version": "40",
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 20,
+    "extended_statistics_ok": true,
+    "description": "Sanitize: Time it takes to sanitize stored offline app data (ms)"
+  },
+  "FX_SANITIZE_HISTORY": {
+    "alert_emails": ["firefox-dev@mozilla.org", "gavin@mozilla.com"],
+    "expires_in_version": "40",
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 20,
+    "extended_statistics_ok": true,
+    "description": "Sanitize: Time it takes to sanitize history (ms)"
+  },
+  "FX_SANITIZE_FORMDATA": {
+    "alert_emails": ["firefox-dev@mozilla.org", "gavin@mozilla.com"],
+    "expires_in_version": "40",
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 20,
+    "extended_statistics_ok": true,
+    "description": "Sanitize: Time it takes to sanitize stored form data (ms)"
+  },
+  "FX_SANITIZE_DOWNLOADS": {
+    "alert_emails": ["firefox-dev@mozilla.org", "gavin@mozilla.com"],
+    "expires_in_version": "40",
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 20,
+    "extended_statistics_ok": true,
+    "description": "Sanitize: Time it takes to sanitize recent downloads (ms)"
+  },
+  "FX_SANITIZE_PASSWORDS": {
+    "alert_emails": ["firefox-dev@mozilla.org", "gavin@mozilla.com"],
+    "expires_in_version": "40",
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 20,
+    "extended_statistics_ok": true,
+    "description": "Sanitize: Time it takes to sanitize saved passwords (ms)"
+  },
+  "FX_SANITIZE_SESSIONS": {
+    "alert_emails": ["firefox-dev@mozilla.org", "gavin@mozilla.com"],
+    "expires_in_version": "40",
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 20,
+    "extended_statistics_ok": true,
+    "description": "Sanitize: Time it takes to sanitize saved sessions (ms)"
+  },
+  "FX_SANITIZE_SITESETTINGS": {
+    "alert_emails": ["firefox-dev@mozilla.org", "gavin@mozilla.com"],
+    "expires_in_version": "40",
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 20,
+    "extended_statistics_ok": true,
+    "description": "Sanitize: Time it takes to sanitize site-specific settings (ms)"
+  },
+  "FX_SANITIZE_OPENWINDOWS": {
+    "alert_emails": ["firefox-dev@mozilla.org", "gavin@mozilla.com"],
+    "expires_in_version": "40",
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 20,
+    "extended_statistics_ok": true,
+    "description": "Sanitize: Time it takes to sanitize the open windows list (ms)"
+  },
+  "PWMGR_BLOCKLIST_NUM_SITES": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 100,
+    "n_buckets" : 10,
+    "extended_statistics_ok": true,
+    "description": "The number of sites for which the user has explicitly rejected saving logins"
+  },
+  "PWMGR_NUM_SAVED_PASSWORDS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 750,
+    "n_buckets" : 50,
+    "extended_statistics_ok": true,
+    "description": "The number of saved signons in storage"
+  },
+  "PWMGR_SAVING_ENABLED": {
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "description": "Number of users who have password saving on globally"
+  },
+  "PWMGR_USERNAME_PRESENT": {
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "description": "Whether a saved login has a username"
+  },
+  "FENNEC_SYNC11_MIGRATION_SENTINELS_SEEN": {
+    "expires_in_version": "45",
+    "kind": "count",
+    "description": "The number of Sync 1.1 -> Sync 1.5 migration sentinels seen by Android Sync."
+  },
+  "FENNEC_SYNC11_MIGRATIONS_FAILED": {
+    "expires_in_version": "45",
+    "kind": "count",
+    "description": "The number of Sync 1.1 -> Sync 1.5 migrations that failed during Android Sync."
+  },
+  "FENNEC_SYNC11_MIGRATIONS_SUCCEEDED": {
+    "expires_in_version": "45",
+    "kind": "count",
+    "description": "The number of Sync 1.1 -> Sync 1.5 migrations that succeeded during Android Sync."
+  },
+  "FENNEC_SYNC11_MIGRATION_NOTIFICATIONS_OFFERED": {
+    "expires_in_version": "45",
+    "kind": "exponential",
+    "high": 500,
+    "n_buckets": 5,
+    "description": "The number of Sync 1.5 'complete upgrade/migration' notifications offered by Android Sync."
+  },
+  "FENNEC_SYNC11_MIGRATIONS_COMPLETED": {
+    "expires_in_version": "45",
+    "kind": "count",
+    "description": "The number of Sync 1.5 migrations completed by Android Sync."
   }
 }

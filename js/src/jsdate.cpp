@@ -522,7 +522,7 @@ date_convert(JSContext *cx, HandleObject obj, JSType hint, MutableHandleValue vp
     MOZ_ASSERT(hint == JSTYPE_NUMBER || hint == JSTYPE_STRING || hint == JSTYPE_VOID);
     MOZ_ASSERT(obj->is<DateObject>());
 
-    return DefaultValue(cx, obj, (hint == JSTYPE_VOID) ? JSTYPE_STRING : hint, vp);
+    return JS::OrdinaryToPrimitive(cx, obj, hint == JSTYPE_VOID ? JSTYPE_STRING : hint, vp);
 }
 
 /* for use by date_parse */
@@ -2384,6 +2384,20 @@ print_iso_string(char* buf, size_t size, double utctime)
                 int(msFromTime(utctime)));
 }
 
+static void
+print_iso_extended_string(char* buf, size_t size, double utctime)
+{
+    MOZ_ASSERT(TimeClip(utctime) == utctime);
+    JS_snprintf(buf, size, "%+.6d-%.2d-%.2dT%.2d:%.2d:%.2d.%.3dZ",
+                int(YearFromTime(utctime)),
+                int(MonthFromTime(utctime)) + 1,
+                int(DateFromTime(utctime)),
+                int(HourFromTime(utctime)),
+                int(MinFromTime(utctime)),
+                int(SecFromTime(utctime)),
+                int(msFromTime(utctime)));
+}
+
 /* ES5 B.2.6. */
 MOZ_ALWAYS_INLINE bool
 date_toGMTString_impl(JSContext *cx, CallArgs args)
@@ -2403,7 +2417,6 @@ date_toGMTString_impl(JSContext *cx, CallArgs args)
     return true;
 }
 
-/* ES5 15.9.5.43. */
 static bool
 date_toGMTString(JSContext *cx, unsigned argc, Value *vp)
 {
@@ -2411,6 +2424,7 @@ date_toGMTString(JSContext *cx, unsigned argc, Value *vp)
     return CallNonGenericMethod<IsDate, date_toGMTString_impl>(cx, args);
 }
 
+/* ES6 draft 2015-01-15 20.3.4.36. */
 MOZ_ALWAYS_INLINE bool
 date_toISOString_impl(JSContext *cx, CallArgs args)
 {
@@ -2421,7 +2435,11 @@ date_toISOString_impl(JSContext *cx, CallArgs args)
     }
 
     char buf[100];
-    print_iso_string(buf, sizeof buf, utctime);
+    int year = int(YearFromTime(utctime));
+    if (year < 0 || year > 9999)
+        print_iso_extended_string(buf, sizeof buf, utctime);
+    else
+        print_iso_string(buf, sizeof buf, utctime);
 
     JSString *str = JS_NewStringCopyZ(cx, buf);
     if (!str)
@@ -2462,7 +2480,7 @@ date_toJSON(JSContext *cx, unsigned argc, Value *vp)
 
     /* Step 4. */
     RootedValue toISO(cx);
-    if (!JSObject::getProperty(cx, obj, obj, cx->names().toISOString, &toISO))
+    if (!GetProperty(cx, obj, obj, cx->names().toISOString, &toISO))
         return false;
 
     /* Step 5. */
@@ -3012,9 +3030,9 @@ FinishDateClassInit(JSContext *cx, HandleObject ctor, HandleObject proto)
     RootedValue toUTCStringFun(cx);
     RootedId toUTCStringId(cx, NameToId(cx->names().toUTCString));
     RootedId toGMTStringId(cx, NameToId(cx->names().toGMTString));
-    return baseops::GetProperty(cx, proto.as<DateObject>(), toUTCStringId, &toUTCStringFun) &&
-           baseops::DefineGeneric(cx, proto.as<DateObject>(), toGMTStringId, toUTCStringFun,
-                                  nullptr, nullptr, 0);
+    return NativeGetProperty(cx, proto.as<DateObject>(), toUTCStringId, &toUTCStringFun) &&
+           NativeDefineProperty(cx, proto.as<DateObject>(), toGMTStringId, toUTCStringFun,
+                                nullptr, nullptr, 0);
 }
 
 const Class DateObject::class_ = {

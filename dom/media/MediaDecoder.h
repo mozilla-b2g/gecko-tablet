@@ -188,6 +188,7 @@ destroying the MediaDecoder object.
 #include "nsCOMPtr.h"
 #include "nsIObserver.h"
 #include "nsAutoPtr.h"
+#include "nsITimer.h"
 #include "MediaResource.h"
 #include "mozilla/dom/AudioChannelBinding.h"
 #include "mozilla/gfx/Rect.h"
@@ -360,11 +361,14 @@ public:
   // called.
   virtual nsresult Play();
 
-  // Set/Unset dormant state if necessary.
+  // Notify activity of the decoder owner is changed.
+  // Based on the activity, dormant state is updated.
   // Dormant state is a state to free all scarce media resources
   //  (like hw video codec), did not decoding and stay dormant.
   // It is used to share scarece media resources in system.
-  virtual void SetDormantIfNecessary(bool aDormant);
+  virtual void NotifyOwnerActivityChanged();
+
+  void UpdateDormantState(bool aDormantTimeout, bool aActivity);
 
   // Pause video playback.
   virtual void Pause();
@@ -775,11 +779,13 @@ public:
   // Called when the metadata from the media file has been loaded by the
   // state machine. Call on the main thread only.
   virtual void MetadataLoaded(nsAutoPtr<MediaInfo> aInfo,
-                              nsAutoPtr<MetadataTags> aTags) MOZ_OVERRIDE;
+                              nsAutoPtr<MetadataTags> aTags,
+                              bool aRestoredFromDormant) MOZ_OVERRIDE;
 
   // Called when the first audio and/or video from the media file has been loaded
   // by the state machine. Call on the main thread only.
-  virtual void FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo) MOZ_OVERRIDE;
+  virtual void FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo,
+                                bool aRestoredFromDormant) MOZ_OVERRIDE;
 
   // Called from MetadataLoaded(). Creates audio tracks and adds them to its
   // owner's audio track list, and implies to video tracks respectively.
@@ -1019,6 +1025,14 @@ protected:
   virtual ~MediaDecoder();
   void SetStateMachineParameters();
 
+  static void DormantTimerExpired(nsITimer *aTimer, void *aClosure);
+
+  // Start a timer for heuristic dormant.
+  void StartDormantTimer();
+
+  // Cancel a timer for heuristic dormant.
+  void CancelDormantTimer();
+
   /******
    * The following members should be accessed with the decoder lock held.
    ******/
@@ -1213,6 +1227,21 @@ protected:
   // Stores media info, including info of audio tracks and video tracks, should
   // only be accessed from main thread.
   nsAutoPtr<MediaInfo> mInfo;
+
+  // True if MediaDecoder is in dormant state.
+  bool mIsDormant;
+
+  // True if heuristic dormant is supported.
+  const bool mIsHeuristicDormantSupported;
+
+  // Timeout ms of heuristic dormant timer.
+  const int mHeuristicDormantTimeout;
+
+  // True if MediaDecoder is in dormant by heuristic.
+  bool mIsHeuristicDormant;
+
+  // Timer to schedule updating dormant state.
+  nsCOMPtr<nsITimer> mDormantTimer;
 };
 
 } // namespace mozilla

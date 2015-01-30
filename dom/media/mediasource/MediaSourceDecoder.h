@@ -21,6 +21,7 @@ class MediaResource;
 class MediaDecoderStateMachine;
 class SourceBufferDecoder;
 class TrackBuffer;
+enum MSRangeRemovalAction : uint8_t;
 
 namespace dom {
 
@@ -56,7 +57,7 @@ public:
   bool IsExpectingMoreData() MOZ_OVERRIDE;
 
   void SetDecodedDuration(int64_t aDuration);
-  void SetMediaSourceDuration(double aDuration);
+  void SetMediaSourceDuration(double aDuration, MSRangeRemovalAction aAction);
   double GetMediaSourceDuration();
   void DurationChanged(double aOldDuration, double aNewDuration);
 
@@ -74,7 +75,20 @@ public:
 
   MediaSourceReader* GetReader() { return mReader; }
 
+  // Returns true if aReader is a currently active audio or video
+  // reader in this decoders MediaSourceReader.
+  bool IsActiveReader(MediaDecoderReader* aReader);
+
+  // Returns a string describing the state of the MediaSource internal
+  // buffered data. Used for debugging purposes.
+  void GetMozDebugReaderData(nsAString& aString);
+
 private:
+  void DoSetMediaSourceDuration(double aDuration);
+  void ScheduleDurationChange(double aOldDuration,
+                              double aNewDuration,
+                              MSRangeRemovalAction aAction);
+
   // The owning MediaSource holds a strong reference to this decoder, and
   // calls Attach/DetachMediaSource on this decoder to set and clear
   // mMediaSource.

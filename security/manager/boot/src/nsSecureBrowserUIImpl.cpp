@@ -80,13 +80,10 @@ RequestMapInitEntry(PLDHashTable *table, PLDHashEntryHdr *hdr,
 }
 
 static const PLDHashTableOps gMapOps = {
-  PL_DHashAllocTable,
-  PL_DHashFreeTable,
   PL_DHashVoidPtrKeyStub,
   RequestMapMatchEntry,
   PL_DHashMoveEntryStub,
   PL_DHashClearEntryStub,
-  PL_DHashFinalizeStub,
   RequestMapInitEntry
 };
 
@@ -126,7 +123,6 @@ nsSecureBrowserUIImpl::nsSecureBrowserUIImpl()
   , mOnStateLocationChangeReentranceDetection(0)
 #endif
 {
-  mTransferringRequests.ops = nullptr;
   ResetStateTracking();
   
 #if defined(PR_LOGGING)
@@ -137,9 +133,8 @@ nsSecureBrowserUIImpl::nsSecureBrowserUIImpl()
 
 nsSecureBrowserUIImpl::~nsSecureBrowserUIImpl()
 {
-  if (mTransferringRequests.ops) {
+  if (mTransferringRequests.IsInitialized()) {
     PL_DHashTableFinish(&mTransferringRequests);
-    mTransferringRequests.ops = nullptr;
   }
 }
 
@@ -472,12 +467,10 @@ void nsSecureBrowserUIImpl::ResetStateTracking()
   ReentrantMonitorAutoEnter lock(mReentrantMonitor);
 
   mDocumentRequestsInProgress = 0;
-  if (mTransferringRequests.ops) {
+  if (mTransferringRequests.IsInitialized()) {
     PL_DHashTableFinish(&mTransferringRequests);
-    mTransferringRequests.ops = nullptr;
   }
-  PL_DHashTableInit(&mTransferringRequests, &gMapOps, nullptr,
-                    sizeof(RequestHashEntry));
+  PL_DHashTableInit(&mTransferringRequests, &gMapOps, sizeof(RequestHashEntry));
 }
 
 void
@@ -975,11 +968,8 @@ nsSecureBrowserUIImpl::OnStateChange(nsIWebProgress* aWebProgress,
   {
     { /* scope for the ReentrantMonitorAutoEnter */
       ReentrantMonitorAutoEnter lock(mReentrantMonitor);
-      PLDHashEntryHdr *entry = PL_DHashTableLookup(&mTransferringRequests, aRequest);
-      if (PL_DHASH_ENTRY_IS_BUSY(entry))
-      {
+      if (PL_DHashTableSearch(&mTransferringRequests, aRequest)) {
         PL_DHashTableRemove(&mTransferringRequests, aRequest);
-
         requestHasTransferedData = true;
       }
     }

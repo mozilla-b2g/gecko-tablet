@@ -212,7 +212,7 @@ PreprocessValue(JSContext *cx, HandleObject holder, KeyType key, MutableHandleVa
     if (vp.isObject()) {
         RootedValue toJSON(cx);
         RootedObject obj(cx, &vp.toObject());
-        if (!JSObject::getProperty(cx, obj, obj, cx->names().toJSON, &toJSON))
+        if (!GetProperty(cx, obj, obj, cx->names().toJSON, &toJSON))
             return false;
 
         if (IsCallable(toJSON)) {
@@ -263,14 +263,15 @@ PreprocessValue(JSContext *cx, HandleObject holder, KeyType key, MutableHandleVa
             double d;
             if (!ToNumber(cx, vp, &d))
                 return false;
-            vp.set(NumberValue(d));
+            vp.setNumber(d);
         } else if (ObjectClassIs(obj, ESClass_String, cx)) {
             JSString *str = ToStringSlow<CanGC>(cx, vp);
             if (!str)
                 return false;
-            vp.set(StringValue(str));
+            vp.setString(str);
         } else if (ObjectClassIs(obj, ESClass_Boolean, cx)) {
-            vp.setBoolean(BooleanGetPrimitiveValue(obj));
+            if (!Unbox(cx, obj, vp))
+                return false;
         }
     }
 
@@ -321,7 +322,7 @@ JO(JSContext *cx, HandleObject obj, StringifyContext *scx)
     Maybe<AutoIdVector> ids;
     const AutoIdVector *props;
     if (scx->replacer && !scx->replacer->isCallable()) {
-        MOZ_ASSERT(JS_IsArrayObject(cx, scx->replacer));
+        MOZ_ASSERT(IsArray(scx->replacer, cx));
         props = &scx->propertyList;
     } else {
         MOZ_ASSERT_IF(scx->replacer, scx->propertyList.length() == 0);
@@ -347,7 +348,7 @@ JO(JSContext *cx, HandleObject obj, StringifyContext *scx)
          */
         id = propertyList[i];
         RootedValue outputValue(cx);
-        if (!JSObject::getGeneric(cx, obj, obj, id, &outputValue))
+        if (!GetProperty(cx, obj, obj, id, &outputValue))
             return false;
         if (!PreprocessValue(cx, obj, HandleId(id), &outputValue, scx))
             return false;
@@ -428,7 +429,7 @@ JA(JSContext *cx, HandleObject obj, StringifyContext *scx)
              * and the replacer and maybe unboxing, and interpreting some
              * values as |null| in separate steps.
              */
-            if (!JSObject::getElement(cx, obj, obj, i, &outputValue))
+            if (!GetElement(cx, obj, obj, i, &outputValue))
                 return false;
             if (!PreprocessValue(cx, obj, i, &outputValue, scx))
                 return false;
@@ -506,7 +507,7 @@ Str(JSContext *cx, const Value &v, StringifyContext *scx)
 
     scx->depth++;
     bool ok;
-    if (ObjectClassIs(obj, ESClass_Array, cx))
+    if (IsArray(obj, cx))
         ok = JA(cx, obj, scx);
     else
         ok = JO(cx, obj, scx);
@@ -528,7 +529,7 @@ js_Stringify(JSContext *cx, MutableHandleValue vp, JSObject *replacer_, Value sp
     if (replacer) {
         if (replacer->isCallable()) {
             /* Step 4a(i): use replacer to transform values.  */
-        } else if (ObjectClassIs(replacer, ESClass_Array, cx)) {
+        } else if (IsArray(replacer, cx)) {
             /*
              * Step 4b: The spec algorithm is unhelpfully vague about the exact
              * steps taken when the replacer is an array, regarding the exact
@@ -559,7 +560,8 @@ js_Stringify(JSContext *cx, MutableHandleValue vp, JSObject *replacer_, Value sp
 
             /* Step 4b(ii). */
             uint32_t len;
-            JS_ALWAYS_TRUE(GetLengthProperty(cx, replacer, &len));
+            if (!GetLengthProperty(cx, replacer, &len))
+                return false;
             if (replacer->is<ArrayObject>() && !replacer->isIndexed())
                 len = Min(len, replacer->as<ArrayObject>().getDenseInitializedLength());
 
@@ -582,7 +584,7 @@ js_Stringify(JSContext *cx, MutableHandleValue vp, JSObject *replacer_, Value sp
                     return false;
 
                 /* Step 4b(iv)(2). */
-                if (!JSObject::getElement(cx, replacer, replacer, i, &v))
+                if (!GetElement(cx, replacer, replacer, i, &v))
                     return false;
 
                 RootedId id(cx);
@@ -664,7 +666,7 @@ js_Stringify(JSContext *cx, MutableHandleValue vp, JSObject *replacer_, Value sp
 
     /* Step 10. */
     RootedId emptyId(cx, NameToId(cx->names().empty));
-    if (!DefineNativeProperty(cx, wrapper, emptyId, vp, nullptr, nullptr, JSPROP_ENUMERATE))
+    if (!NativeDefineProperty(cx, wrapper, emptyId, vp, nullptr, nullptr, JSPROP_ENUMERATE))
         return false;
 
     /* Step 11. */
@@ -685,14 +687,14 @@ Walk(JSContext *cx, HandleObject holder, HandleId name, HandleValue reviver, Mut
 
     /* Step 1. */
     RootedValue val(cx);
-    if (!JSObject::getGeneric(cx, holder, holder, name, &val))
+    if (!GetProperty(cx, holder, holder, name, &val))
         return false;
 
     /* Step 2. */
     if (val.isObject()) {
         RootedObject obj(cx, &val.toObject());
 
-        if (ObjectClassIs(obj, ESClass_Array, cx)) {
+        if (IsArray(obj, cx)) {
             /* Step 2a(ii). */
             uint32_t length;
             if (!GetLengthProperty(cx, obj, &length))
@@ -712,13 +714,13 @@ Walk(JSContext *cx, HandleObject holder, HandleId name, HandleValue reviver, Mut
                 if (newElement.isUndefined()) {
                     /* Step 2a(iii)(2). */
                     bool succeeded;
-                    if (!JSObject::deleteGeneric(cx, obj, id, &succeeded))
+                    if (!DeleteProperty(cx, obj, id, &succeeded))
                         return false;
                 } else {
                     /* Step 2a(iii)(3). */
                     // XXX This definition should ignore success/failure, when
                     //     our property-definition APIs indicate that.
-                    if (!JSObject::defineGeneric(cx, obj, id, newElement))
+                    if (!DefineProperty(cx, obj, id, newElement))
                         return false;
                 }
             }
@@ -740,13 +742,13 @@ Walk(JSContext *cx, HandleObject holder, HandleId name, HandleValue reviver, Mut
                 if (newElement.isUndefined()) {
                     /* Step 2b(ii)(2). */
                     bool succeeded;
-                    if (!JSObject::deleteGeneric(cx, obj, id, &succeeded))
+                    if (!DeleteProperty(cx, obj, id, &succeeded))
                         return false;
                 } else {
                     /* Step 2b(ii)(3). */
                     // XXX This definition should ignore success/failure, when
                     //     our property-definition APIs indicate that.
-                    if (!JSObject::defineGeneric(cx, obj, id, newElement))
+                    if (!DefineProperty(cx, obj, id, newElement))
                         return false;
                 }
             }
@@ -780,7 +782,7 @@ Revive(JSContext *cx, HandleValue reviver, MutableHandleValue vp)
     if (!obj)
         return false;
 
-    if (!JSObject::defineProperty(cx, obj, cx->names().empty, vp))
+    if (!DefineProperty(cx, obj, cx->names().empty, vp))
         return false;
 
     Rooted<jsid> id(cx, NameToId(cx->names().empty));
@@ -892,16 +894,10 @@ js_InitJSONClass(JSContext *cx, HandleObject obj)
 {
     Rooted<GlobalObject*> global(cx, &obj->as<GlobalObject>());
 
-    /*
-     * JSON requires that Boolean.prototype.valueOf be created and stashed in a
-     * reserved slot on the global object; see js::BooleanGetPrimitiveValueSlow
-     * called from PreprocessValue above.
-     */
-    if (!GlobalObject::getOrCreateBooleanPrototype(cx, global))
+    RootedObject proto(cx, global->getOrCreateObjectPrototype(cx));
+    if (!proto)
         return nullptr;
-
-    RootedObject proto(cx, obj->as<GlobalObject>().getOrCreateObjectPrototype(cx));
-    RootedObject JSON(cx, NewObjectWithClassProto(cx, &JSONClass, proto, global, SingletonObject));
+    RootedObject JSON(cx, NewObjectWithGivenProto(cx, &JSONClass, proto, global, SingletonObject));
     if (!JSON)
         return nullptr;
 

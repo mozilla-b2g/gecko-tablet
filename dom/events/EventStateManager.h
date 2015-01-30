@@ -7,7 +7,6 @@
 #define mozilla_EventStateManager_h_
 
 #include "mozilla/EventForwards.h"
-#include "mozilla/TypedEnum.h"
 
 #include "nsIObserver.h"
 #include "nsWeakReference.h"
@@ -429,7 +428,7 @@ protected:
     /**
      * Computes the default action for the aEvent with the prefs.
      */
-    enum Action MOZ_ENUM_TYPE(uint8_t)
+    enum Action : uint8_t
     {
       ACTION_NONE = 0,
       ACTION_SCROLL,
@@ -815,6 +814,9 @@ private:
   static PLDHashOperator ResetLastOverForContent(const uint32_t& aIdx,
                                                  nsRefPtr<OverOutElementsWrapper>& aChunk,
                                                  void* aClosure);
+  void PostHandleKeyboardEvent(WidgetKeyboardEvent* aKeyboardEvent,
+                               nsEventStatus& aStatus,
+                               bool dispatchedToContentProcess);
 
   int32_t     mLockCursor;
 

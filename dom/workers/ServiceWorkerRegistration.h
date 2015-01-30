@@ -8,6 +8,7 @@
 #define mozilla_dom_ServiceWorkerRegistration_h
 
 #include "mozilla/DOMEventTargetHelper.h"
+#include "mozilla/dom/ServiceWorkerBinding.h"
 #include "mozilla/dom/ServiceWorkerCommon.h"
 
 class nsPIDOMWindow;
@@ -55,12 +56,11 @@ public:
   Unregister(ErrorResult& aRv);
 
   // Useful methods for ServiceWorkerManager:
-
-  nsIURI*
-  GetDocumentURI() const;
-
   void
   InvalidateWorkerReference(WhichServiceWorker aWhichOnes);
+
+  void
+  QueueStateChangeEvent(WhichServiceWorker aWhichOne, ServiceWorkerState aState) const;
 
   // DOMEventTargethelper
   virtual void DisconnectFromOwner() MOZ_OVERRIDE;

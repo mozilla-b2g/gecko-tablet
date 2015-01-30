@@ -68,6 +68,7 @@
 
 #include "jsapi.h"
 #include "jsfriendapi.h"
+#include "js/Conversions.h"
 
 #include "mozilla/Alignment.h"
 #include "mozilla/Assertions.h"
@@ -2995,16 +2996,7 @@ CanvasRenderingContext2D::SetFont(const nsAString& font,
 
   const nsStyleFont* fontStyle = sc->StyleFont();
 
-  nsIAtom* language = fontStyle->mLanguage;
-  if (!language) {
-    language = presShell->GetPresContext()->GetLanguageFromCharset();
-  }
-
-  // use CSS pixels instead of dev pixels to avoid being affected by page zoom
-  const uint32_t aupcp = nsPresContext::AppUnitsPerCSSPixel();
-
-  bool printerFont = (presShell->GetPresContext()->Type() == nsPresContext::eContext_PrintPreview ||
-                      presShell->GetPresContext()->Type() == nsPresContext::eContext_Print);
+  nsPresContext *c = presShell->GetPresContext();
 
   // Purposely ignore the font size that respects the user's minimum
   // font preference (fontStyle->mFont.size) in favor of the computed
@@ -3012,28 +3004,28 @@ CanvasRenderingContext2D::SetFont(const nsAString& font,
   // https://bugzilla.mozilla.org/show_bug.cgi?id=698652.
   MOZ_ASSERT(!fontStyle->mAllowZoom,
              "expected text zoom to be disabled on this nsStyleFont");
-  gfxFontStyle style(fontStyle->mFont.style,
-                     fontStyle->mFont.weight,
-                     fontStyle->mFont.stretch,
-                     NSAppUnitsToFloatPixels(fontStyle->mSize, float(aupcp)),
-                     language,
-                     fontStyle->mExplicitLanguage,
-                     fontStyle->mFont.sizeAdjust,
-                     fontStyle->mFont.systemFont,
-                     printerFont,
-                     fontStyle->mFont.synthesis & NS_FONT_SYNTHESIS_WEIGHT,
-                     fontStyle->mFont.synthesis & NS_FONT_SYNTHESIS_STYLE,
-                     fontStyle->mFont.languageOverride);
+  nsFont resizedFont(fontStyle->mFont);
+  // Create a font group working in units of CSS pixels instead of the usual
+  // device pixels, to avoid being affected by page zoom. nsFontMetrics will
+  // convert nsFont size in app units to device pixels for the font group, so
+  // here we first apply to the size the equivalent of a conversion from device
+  // pixels to CSS pixels, to adjust for the difference in expectations from
+  // other nsFontMetrics clients.
+  resizedFont.size =
+    (fontStyle->mSize * c->AppUnitsPerDevPixel()) / c->AppUnitsPerCSSPixel();
 
-  fontStyle->mFont.AddFontFeaturesToStyle(&style);
+  nsRefPtr<nsFontMetrics> metrics;
+  c->DeviceContext()->GetMetricsFor(resizedFont,
+                                    fontStyle->mLanguage,
+                                    fontStyle->mExplicitLanguage,
+                                    gfxFont::eHorizontal,
+                                    c->GetUserFontSet(),
+                                    c->GetTextPerfMetrics(),
+                                    *getter_AddRefs(metrics));
 
-  nsPresContext *c = presShell->GetPresContext();
-  CurrentState().fontGroup =
-      gfxPlatform::GetPlatform()->CreateFontGroup(fontStyle->mFont.fontlist,
-                                                  &style,
-                                                  c->GetUserFontSet());
+  gfxFontGroup* newFontGroup = metrics->GetThebesFontGroup();
+  CurrentState().fontGroup = newFontGroup;
   NS_ASSERTION(CurrentState().fontGroup, "Could not get font group");
-  CurrentState().fontGroup->SetTextPerfMetrics(c->GetTextPerfMetrics());
   CurrentState().font = usedFont;
   CurrentState().fontFont = fontStyle->mFont;
   CurrentState().fontFont.size = fontStyle->mSize;
@@ -3228,6 +3220,12 @@ CanvasRenderingContext2D::RemoveHitRegion(const nsAString& id)
       return;
     }
   }
+}
+
+void
+CanvasRenderingContext2D::ClearHitRegions()
+{
+  mHitRegionsOptions.Clear();
 }
 
 bool
@@ -4823,10 +4821,10 @@ CanvasRenderingContext2D::GetImageData(JSContext* aCx, double aSx,
     return nullptr;
   }
 
-  int32_t x = JS_DoubleToInt32(aSx);
-  int32_t y = JS_DoubleToInt32(aSy);
-  int32_t wi = JS_DoubleToInt32(aSw);
-  int32_t hi = JS_DoubleToInt32(aSh);
+  int32_t x = JS::ToInt32(aSx);
+  int32_t y = JS::ToInt32(aSy);
+  int32_t wi = JS::ToInt32(aSw);
+  int32_t hi = JS::ToInt32(aSh);
 
   // Handle negative width and height by flipping the rectangle over in the
   // relevant direction.
@@ -5019,7 +5017,7 @@ CanvasRenderingContext2D::PutImageData(ImageData& imageData, double dx,
   DebugOnly<bool> inited = arr.Init(imageData.GetDataObject());
   MOZ_ASSERT(inited);
 
-  error = PutImageData_explicit(JS_DoubleToInt32(dx), JS_DoubleToInt32(dy),
+  error = PutImageData_explicit(JS::ToInt32(dx), JS::ToInt32(dy),
                                 imageData.Width(), imageData.Height(),
                                 &arr, false, 0, 0, 0, 0);
 }
@@ -5035,13 +5033,13 @@ CanvasRenderingContext2D::PutImageData(ImageData& imageData, double dx,
   DebugOnly<bool> inited = arr.Init(imageData.GetDataObject());
   MOZ_ASSERT(inited);
 
-  error = PutImageData_explicit(JS_DoubleToInt32(dx), JS_DoubleToInt32(dy),
+  error = PutImageData_explicit(JS::ToInt32(dx), JS::ToInt32(dy),
                                 imageData.Width(), imageData.Height(),
                                 &arr, true,
-                                JS_DoubleToInt32(dirtyX),
-                                JS_DoubleToInt32(dirtyY),
-                                JS_DoubleToInt32(dirtyWidth),
-                                JS_DoubleToInt32(dirtyHeight));
+                                JS::ToInt32(dirtyX),
+                                JS::ToInt32(dirtyY),
+                                JS::ToInt32(dirtyWidth),
+                                JS::ToInt32(dirtyHeight));
 }
 
 // void putImageData (in ImageData d, in float x, in float y);
@@ -5209,8 +5207,8 @@ CanvasRenderingContext2D::CreateImageData(JSContext* cx, double sw,
     return nullptr;
   }
 
-  int32_t wi = JS_DoubleToInt32(sw);
-  int32_t hi = JS_DoubleToInt32(sh);
+  int32_t wi = JS::ToInt32(sw);
+  int32_t hi = JS::ToInt32(sh);
 
   uint32_t w = Abs(wi);
   uint32_t h = Abs(hi);

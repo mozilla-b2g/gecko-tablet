@@ -29,10 +29,13 @@ class nsIPrincipal;
 class nsIURI;
 class nsIWidget;
 class nsILoadContext;
-class CpowHolder;
 class nsIDocShell;
 
 namespace mozilla {
+
+namespace jsipc {
+class CpowHolder;
+}
 
 namespace layers {
 struct FrameMetrics;
@@ -134,29 +137,31 @@ public:
                                             const nsString& aName,
                                             const nsString& aFeatures,
                                             bool* aOutWindowOpened) MOZ_OVERRIDE;
-    virtual bool AnswerCreateWindow(const uint32_t& aChromeFlags,
-                                    const bool& aCalledFromJS,
-                                    const bool& aPositionSpecified,
-                                    const bool& aSizeSpecified,
-                                    const nsString& aURI,
-                                    const nsString& aName,
-                                    const nsString& aFeatures,
-                                    const nsString& aBaseURI,
-                                    bool* aWindowIsNew,
-                                    PBrowserParent** aRetVal) MOZ_OVERRIDE;
+    virtual bool RecvCreateWindow(PBrowserParent* aOpener,
+                                  const uint32_t& aChromeFlags,
+                                  const bool& aCalledFromJS,
+                                  const bool& aPositionSpecified,
+                                  const bool& aSizeSpecified,
+                                  const nsString& aURI,
+                                  const nsString& aName,
+                                  const nsString& aFeatures,
+                                  const nsString& aBaseURI,
+                                  bool* aWindowIsNew,
+                                  InfallibleTArray<FrameScriptInfo>* aFrameScripts,
+                                  nsCString* aURLToLoad) MOZ_OVERRIDE;
     virtual bool RecvSyncMessage(const nsString& aMessage,
                                  const ClonedMessageData& aData,
-                                 const InfallibleTArray<CpowEntry>& aCpows,
+                                 InfallibleTArray<CpowEntry>&& aCpows,
                                  const IPC::Principal& aPrincipal,
                                  InfallibleTArray<nsString>* aJSONRetVal) MOZ_OVERRIDE;
     virtual bool RecvRpcMessage(const nsString& aMessage,
                                 const ClonedMessageData& aData,
-                                const InfallibleTArray<CpowEntry>& aCpows,
+                                InfallibleTArray<CpowEntry>&& aCpows,
                                 const IPC::Principal& aPrincipal,
                                 InfallibleTArray<nsString>* aJSONRetVal) MOZ_OVERRIDE;
     virtual bool RecvAsyncMessage(const nsString& aMessage,
                                   const ClonedMessageData& aData,
-                                  const InfallibleTArray<CpowEntry>& aCpows,
+                                  InfallibleTArray<CpowEntry>&& aCpows,
                                   const IPC::Principal& aPrincipal) MOZ_OVERRIDE;
     virtual bool RecvNotifyIMEFocus(const bool& aFocus,
                                     nsIMEUpdatePreference* aPreference,
@@ -167,7 +172,7 @@ public:
                                          const bool& aCausedByComposition) MOZ_OVERRIDE;
     virtual bool RecvNotifyIMESelectedCompositionRect(
                    const uint32_t& aOffset,
-                   const InfallibleTArray<nsIntRect>& aRects,
+                   InfallibleTArray<nsIntRect>&& aRects,
                    const uint32_t& aCaretOffset,
                    const nsIntRect& aCaretRect) MOZ_OVERRIDE;
     virtual bool RecvNotifyIMESelection(const uint32_t& aSeqno,
@@ -181,7 +186,7 @@ public:
     virtual bool RecvNotifyIMEEditorRect(const nsIntRect& aRect) MOZ_OVERRIDE;
     virtual bool RecvNotifyIMEPositionChange(
                    const nsIntRect& aEditoRect,
-                   const InfallibleTArray<nsIntRect>& aCompositionRects,
+                   InfallibleTArray<nsIntRect>&& aCompositionRects,
                    const nsIntRect& aCaretRect) MOZ_OVERRIDE;
     virtual bool RecvEndIMEComposition(const bool& aCancel,
                                        nsString* aComposition) MOZ_OVERRIDE;
@@ -197,8 +202,8 @@ public:
                                      const int32_t& aFocusChange) MOZ_OVERRIDE;
     virtual bool RecvRequestFocus(const bool& aCanRaise) MOZ_OVERRIDE;
     virtual bool RecvEnableDisableCommands(const nsString& aAction,
-                                           const nsTArray<nsCString>& aEnabledCommands,
-                                           const nsTArray<nsCString>& aDisabledCommands) MOZ_OVERRIDE;
+                                           nsTArray<nsCString>&& aEnabledCommands,
+                                           nsTArray<nsCString>&& aDisabledCommands) MOZ_OVERRIDE;
     virtual bool RecvSetCursor(const uint32_t& aValue, const bool& aForce) MOZ_OVERRIDE;
     virtual bool RecvSetBackgroundColor(const nscolor& aValue) MOZ_OVERRIDE;
     virtual bool RecvSetStatus(const uint32_t& aType, const nsString& aStatus) MOZ_OVERRIDE;
@@ -219,7 +224,7 @@ public:
                                                const uint64_t& aInputBlockId,
                                                const bool& aPreventDefault) MOZ_OVERRIDE;
     virtual bool RecvSetTargetAPZC(const uint64_t& aInputBlockId,
-                                   const nsTArray<ScrollableLayerGuid>& aTargets) MOZ_OVERRIDE;
+                                   nsTArray<ScrollableLayerGuid>&& aTargets) MOZ_OVERRIDE;
 
     virtual PColorPickerParent*
     AllocPColorPickerParent(const nsString& aTitle, const nsString& aInitialColor) MOZ_OVERRIDE;
@@ -352,11 +357,16 @@ public:
     void SetInitedByParent() { mInitedByParent = true; }
     bool IsInitedByParent() const { return mInitedByParent; }
 
+    static TabParent* GetNextTabParent();
+
+    bool SendLoadRemoteScript(const nsString& aURL,
+                              const bool& aRunInGlobalScope);
+
 protected:
     bool ReceiveMessage(const nsString& aMessage,
                         bool aSync,
                         const StructuredCloneData* aCloneData,
-                        CpowHolder* aCpows,
+                        mozilla::jsipc::CpowHolder* aCpows,
                         nsIPrincipal* aPrincipal,
                         InfallibleTArray<nsString>* aJSONRetVal = nullptr);
 
@@ -382,6 +392,10 @@ protected:
                                         ScrollingBehavior* aScrolling,
                                         TextureFactoryIdentifier* aTextureFactoryIdentifier,
                                         uint64_t* aLayersId) MOZ_OVERRIDE;
+
+    virtual bool RecvSetDimensions(const uint32_t& aFlags,
+                                   const int32_t& aX, const int32_t& aY,
+                                   const int32_t& aCx, const int32_t& aCy) MOZ_OVERRIDE;
 
     bool SendCompositionChangeEvent(mozilla::WidgetCompositionEvent& event);
 
@@ -467,6 +481,44 @@ private:
     nsCOMPtr<nsILoadContext> mLoadContext;
 
     TabId mTabId;
+
+    // Helper class for RecvCreateWindow.
+    struct AutoUseNewTab;
+
+    // When loading a new tab or window via window.open, the child process sends
+    // a new PBrowser to use. We store that tab in sNextTabParent and then
+    // proceed through the browser's normal paths to create a new
+    // window/tab. When it comes time to create a new TabParent, we instead use
+    // sNextTabParent.
+    static TabParent* sNextTabParent;
+
+    // When loading a new tab or window via window.open, the child is
+    // responsible for loading the URL it wants into the new TabChild. When the
+    // parent receives the CreateWindow message, though, it sends a LoadURL
+    // message, usually for about:blank. It's important for the about:blank load
+    // to get processed because the Firefox frontend expects every new window to
+    // immediately start loading something (see bug 1123090). However, we want
+    // the child to process the LoadURL message before it returns from
+    // ProvideWindow so that the URL sent from the parent doesn't override the
+    // child's URL. This is not possible using our IPC mechanisms. To solve the
+    // problem, we skip sending the LoadURL message in the parent and instead
+    // return the URL as a result from CreateWindow. The child simulates
+    // receiving a LoadURL message before returning from ProvideWindow.
+    //
+    // The mCreatingWindow flag is set while dispatching CreateWindow. During
+    // that time, any LoadURL calls are skipped and the URL is stored in
+    // mSkippedURL.
+    bool mCreatingWindow;
+    nsCString mDelayedURL;
+
+    // When loading a new tab or window via window.open, we want to ensure that
+    // frame scripts for that tab are loaded before any scripts start to run in
+    // the window. We can't load the frame scripts the normal way, using
+    // separate IPC messages, since they won't be processed by the child until
+    // returning to the event loop, which is too late. Instead, we queue up
+    // frame scripts that we intend to load and send them as part of the
+    // CreateWindow response. Then TabChild loads them immediately.
+    nsTArray<FrameScriptInfo> mDelayedFrameScripts;
 
 private:
     // This is used when APZ needs to find the TabParent associated with a layer

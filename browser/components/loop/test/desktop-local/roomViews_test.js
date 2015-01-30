@@ -20,7 +20,9 @@ describe("loop.roomViews", function () {
         mozLoop: {
           getAudioBlob: sinon.stub()
         }
-      }
+      },
+      addEventListener: function() {},
+      removeEventListener: function() {}
     };
     loop.shared.mixins.setRootObject(fakeWindow);
 
@@ -200,6 +202,11 @@ describe("loop.roomViews", function () {
     var view;
 
     beforeEach(function() {
+      loop.store.StoreMixin.register({
+        feedbackStore: new loop.store.FeedbackStore(dispatcher, {
+          feedbackClient: {}
+        })
+      });
       sandbox.stub(dispatcher, "dispatch");
     });
 
@@ -207,10 +214,7 @@ describe("loop.roomViews", function () {
       return TestUtils.renderIntoDocument(
         React.createElement(loop.roomViews.DesktopRoomConversationView, {
           dispatcher: dispatcher,
-          roomStore: roomStore,
-          feedbackStore: new loop.store.FeedbackStore(dispatcher, {
-            feedbackClient: {}
-          })
+          roomStore: roomStore
         }));
     }
 

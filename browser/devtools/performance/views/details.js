@@ -11,12 +11,12 @@ const DEFAULT_DETAILS_SUBVIEW = "waterfall";
  */
 let DetailsView = {
   /**
-   * Name to index mapping of subviews, used by selecting view.
+   * Name to node+object mapping of subviews.
    */
-  viewIndexes: {
-    waterfall: 0,
-    calltree: 1,
-    flamegraph: 2
+  components: {
+    waterfall: { id: "waterfall-view", view: WaterfallView },
+    calltree: { id: "calltree-view", view: CallTreeView },
+    flamegraph: { id: "flamegraph-view", view: FlameGraphView }
   },
 
   /**
@@ -32,9 +32,9 @@ let DetailsView = {
       button.addEventListener("command", this._onViewToggle);
     }
 
-    yield CallTreeView.initialize();
-    yield WaterfallView.initialize();
-    yield FlameGraphView.initialize();
+    for (let [_, { view }] of Iterator(this.components)) {
+      yield view.initialize();
+    }
 
     this.selectView(DEFAULT_DETAILS_SUBVIEW);
   }),
@@ -47,31 +47,65 @@ let DetailsView = {
       button.removeEventListener("command", this._onViewToggle);
     }
 
-    yield CallTreeView.destroy();
-    yield WaterfallView.destroy();
-    yield FlameGraphView.destroy();
+    for (let [_, { view }] of Iterator(this.components)) {
+      yield view.destroy();
+    }
   }),
 
   /**
    * Select one of the DetailView's subviews to be rendered,
    * hiding the others.
    *
-   * @params {String} selectedView
-   *         Name of the view to be shown.
+   * @param String viewName
+   *        Name of the view to be shown.
    */
-  selectView: function (selectedView) {
-    this.el.selectedIndex = this.viewIndexes[selectedView];
+  selectView: function (viewName) {
+    this.el.selectedPanel = $("#" + this.components[viewName].id);
 
     for (let button of $$("toolbarbutton[data-view]", this.toolbar)) {
-      if (button.getAttribute("data-view") === selectedView) {
+      if (button.getAttribute("data-view") === viewName) {
         button.setAttribute("checked", true);
       } else {
         button.removeAttribute("checked");
       }
     }
 
-    this.emit(EVENTS.DETAILS_VIEW_SELECTED, selectedView);
+    this.emit(EVENTS.DETAILS_VIEW_SELECTED, viewName);
   },
+
+  /**
+   * Checks if the provided view is currently selected.
+   *
+   * @param object viewObject
+   * @return boolean
+   */
+  isViewSelected: function(viewObject) {
+    let selectedPanel = this.el.selectedPanel;
+    let selectedId = selectedPanel.id;
+
+    for (let [, { id, view }] of Iterator(this.components)) {
+      if (id == selectedId && view == viewObject) {
+        return true;
+      }
+    }
+
+    return false;
+  },
+
+  /**
+   * Resolves when the provided view is selected. If already selected,
+   * the returned promise resolves immediately.
+   *
+   * @param object viewObject
+   * @return object
+   */
+  whenViewSelected: Task.async(function*(viewObject) {
+    if (this.isViewSelected(viewObject)) {
+      return promise.resolve();
+    }
+    yield this.once(EVENTS.DETAILS_VIEW_SELECTED);
+    return this.whenViewSelected(viewObject);
+  }),
 
   /**
    * Called when a view button is clicked.

@@ -1540,7 +1540,8 @@ nsWindow::InitKeyEvent(WidgetKeyboardEvent& event, AndroidGeckoEvent& key,
     event.mIsRepeat =
         (event.message == NS_KEY_DOWN || event.message == NS_KEY_PRESS) &&
         (!!(key.Flags() & AKEY_EVENT_FLAG_LONG_PRESS) || !!key.RepeatCount());
-    event.location = key.DomKeyLocation();
+    event.location =
+        WidgetKeyboardEvent::ComputeLocationFromCodeValue(event.mCodeNameIndex);
     event.time = key.Time();
 
     if (gMenu)
@@ -2047,8 +2048,8 @@ nsWindow::UserActivity()
   }
 }
 
-NS_IMETHODIMP
-nsWindow::NotifyIME(const IMENotification& aIMENotification)
+nsresult
+nsWindow::NotifyIMEInternal(const IMENotification& aIMENotification)
 {
     switch (aIMENotification.mMessage) {
         case REQUEST_TO_COMMIT_COMPOSITION:
@@ -2124,6 +2125,8 @@ nsWindow::SetInputContext(const InputContext& aContext,
             aContext.mIMEState.mEnabled, aContext.mIMEState.mOpen,
             aAction.mCause, aAction.mFocusChange);
 
+    mInputContext = aContext;
+
     // Ensure that opening the virtual keyboard is allowed for this specific
     // InputContext depending on the content.ime.strict.policy pref
     if (aContext.mIMEState.mEnabled != IMEState::DISABLED && 
@@ -2141,19 +2144,8 @@ nsWindow::SetInputContext(const InputContext& aContext,
     if (aContext.mIMEState.mEnabled == IMEState::PLUGIN &&
         aContext.mIMEState.mOpen != IMEState::OPEN) {
         enabled = IMEState::DISABLED;
-
-    } else if (aContext.mMayBeIMEUnaware) {
-        // Normal text editing using Android virtual keyboards doesn't always
-        // generate key events. However, when an input field has key event
-        // listeners but not input/composition event listeners, the page expects
-        // to receive key events for every input. Therefore, for better web
-        // compatibility, we use a special mode that always generates key events
-        // in this situation. This "key-events-only" mode is the same as the
-        // "plugin" mode, so switch to plugin mode if we are forcing key events.
-        enabled = IMEState::PLUGIN;
     }
 
-    mInputContext = aContext;
     mInputContext.mIMEState.mEnabled = enabled;
 
     if (enabled == IMEState::ENABLED && aAction.UserMightRequestOpenVKB()) {

@@ -87,6 +87,8 @@ using mozilla::DefaultXDisplay;
 #include "GLContext.h"
 #endif
 
+#include "mozilla/dom/TabChild.h"
+
 #ifdef CreateEvent // Thank you MS.
 #undef CreateEvent
 #endif
@@ -392,6 +394,34 @@ nsPluginFrame::GetMinISize(nsRenderingContext *aRenderingContext)
 nsPluginFrame::GetPrefISize(nsRenderingContext *aRenderingContext)
 {
   return nsPluginFrame::GetMinISize(aRenderingContext);
+}
+
+void
+nsPluginFrame::GetWidgetConfiguration(nsTArray<nsIWidget::Configuration>* aConfigurations)
+{
+  if (!mWidget) {
+    return;
+  }
+
+  if (!mWidget->GetParent()) {
+    // Plugin widgets should not be toplevel except when they're out of the
+    // document, in which case the plugin should not be registered for
+    // geometry updates and this should not be called. But apparently we
+    // have bugs where mWidget sometimes is toplevel here. Bail out.
+    NS_ERROR("Plugin widgets registered for geometry updates should not be toplevel");
+    return;
+  }
+
+  nsIWidget::Configuration* configuration = aConfigurations->AppendElement();
+  configuration->mChild = mWidget;
+  configuration->mBounds = mNextConfigurationBounds;
+  configuration->mClipRegion = mNextConfigurationClipRegion;
+#if defined(XP_WIN) || defined(MOZ_WIDGET_GTK)
+  if (XRE_GetProcessType() == GeckoProcessType_Content) {
+    configuration->mWindowID = (uintptr_t)mWidget->GetNativeData(NS_NATIVE_PLUGIN_PORT);
+    configuration->mVisible = mWidget->IsVisible();
+  }
+#endif // defined(XP_WIN) || defined(MOZ_WIDGET_GTK)
 }
 
 void
@@ -1003,7 +1033,11 @@ nsPluginFrame::NotifyPluginReflowObservers()
 void
 nsPluginFrame::DidSetWidgetGeometry()
 {
-#ifndef XP_MACOSX
+#if defined(XP_MACOSX)
+  if (mInstanceOwner) {
+    mInstanceOwner->FixUpPluginWindow(nsPluginInstanceOwner::ePluginPaintEnable);
+  }
+#else
   if (!mWidget && mInstanceOwner) {
     // UpdateWindowVisibility will notify the plugin of position changes
     // by updating the NPWindow and calling NPP_SetWindow/AsyncSetWindow.
@@ -1014,8 +1048,6 @@ nsPluginFrame::DidSetWidgetGeometry()
       nsLayoutUtils::IsPopup(nsLayoutUtils::GetDisplayRootFrame(this)) ||
       !mNextConfigurationBounds.IsEmpty());
   }
-#else
-  CallSetWindow(false);
 #endif
 }
 

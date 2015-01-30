@@ -162,7 +162,7 @@ public:
     nsString mTypeString; // for non-main-threads
     uint16_t mEventType;
 
-    enum ListenerType MOZ_ENUM_TYPE(uint8_t)
+    enum ListenerType : uint8_t
     {
       eNativeListener = 0,
       eJSEventListener,
@@ -403,19 +403,6 @@ public:
   bool MayHaveMouseEnterLeaveEventListener() { return mMayHaveMouseEnterLeaveEventListener; }
   bool MayHavePointerEnterLeaveEventListener() { return mMayHavePointerEnterLeaveEventListener; }
 
-  /**
-   * Returns true if there may be a key event listener (keydown, keypress,
-   * or keyup) registered, or false if there definitely isn't.
-   */
-  bool MayHaveKeyEventListener() { return mMayHaveKeyEventListener; }
-
-  /**
-   * Returns true if there may be an advanced input event listener (input,
-   * compositionstart, compositionupdate, or compositionend) registered,
-   * or false if there definitely isn't.
-   */
-  bool MayHaveInputOrCompositionEventListener() { return mMayHaveInputOrCompositionEventListener; }
-
   size_t SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const;
 
   uint32_t ListenerCount() const
@@ -566,14 +553,12 @@ protected:
   uint32_t mMayHaveScrollWheelEventListener : 1;
   uint32_t mMayHaveMouseEnterLeaveEventListener : 1;
   uint32_t mMayHavePointerEnterLeaveEventListener : 1;
-  uint32_t mMayHaveKeyEventListener : 1;
-  uint32_t mMayHaveInputOrCompositionEventListener : 1;
   uint32_t mClearingListeners : 1;
   uint32_t mIsMainThreadELM : 1;
-  uint32_t mNoListenerForEvent : 20;
+  uint32_t mNoListenerForEvent : 23;
 
   nsAutoTObserverArray<Listener, 2> mListeners;
-  dom::EventTarget* mTarget;  // WEAK
+  dom::EventTarget* MOZ_NON_OWNING_REF mTarget;
   nsCOMPtr<nsIAtom> mNoListenerForEventAtom;
 
   friend class ELMCreationDetector;

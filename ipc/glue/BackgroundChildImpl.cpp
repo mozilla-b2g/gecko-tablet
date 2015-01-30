@@ -5,12 +5,14 @@
 #include "BackgroundChildImpl.h"
 
 #include "ActorsChild.h" // IndexedDB
+#include "BroadcastChannelChild.h"
 #include "FileDescriptorSetChild.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/dom/PBlobChild.h"
 #include "mozilla/dom/indexedDB/PBackgroundIDBFactoryChild.h"
 #include "mozilla/dom/ipc/BlobChild.h"
 #include "mozilla/ipc/PBackgroundTestChild.h"
+#include "mozilla/layout/VsyncChild.h"
 #include "nsID.h"
 #include "nsTraceRefcnt.h"
 
@@ -182,6 +184,50 @@ BackgroundChildImpl::DeallocPFileDescriptorSetChild(
   MOZ_ASSERT(aActor);
 
   delete static_cast<FileDescriptorSetChild*>(aActor);
+  return true;
+}
+
+BackgroundChildImpl::PVsyncChild*
+BackgroundChildImpl::AllocPVsyncChild()
+{
+  nsRefPtr<mozilla::layout::VsyncChild> actor = new mozilla::layout::VsyncChild();
+  // There still has one ref-count after return, and it will be released in
+  // DeallocPVsyncChild().
+  return actor.forget().take();
+}
+
+bool
+BackgroundChildImpl::DeallocPVsyncChild(PVsyncChild* aActor)
+{
+  MOZ_ASSERT(aActor);
+
+  // This actor already has one ref-count. Please check AllocPVsyncChild().
+  nsRefPtr<mozilla::layout::VsyncChild> actor =
+      dont_AddRef(static_cast<mozilla::layout::VsyncChild*>(aActor));
+  return true;
+}
+
+// -----------------------------------------------------------------------------
+// BroadcastChannel API
+// -----------------------------------------------------------------------------
+
+dom::PBroadcastChannelChild*
+BackgroundChildImpl::AllocPBroadcastChannelChild(const PrincipalInfo& aPrincipalInfo,
+                                                 const nsString& aOrigin,
+                                                 const nsString& aChannel)
+{
+  nsRefPtr<dom::BroadcastChannelChild> agent =
+    new dom::BroadcastChannelChild(aOrigin, aChannel);
+  return agent.forget().take();
+}
+
+bool
+BackgroundChildImpl::DeallocPBroadcastChannelChild(
+                                                 PBroadcastChannelChild* aActor)
+{
+  nsRefPtr<dom::BroadcastChannelChild> child =
+    dont_AddRef(static_cast<dom::BroadcastChannelChild*>(aActor));
+  MOZ_ASSERT(child);
   return true;
 }
 

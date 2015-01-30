@@ -9,6 +9,7 @@
 
 #include "imgLoader.h"
 #include "imgRequestProxy.h"
+#include "DecodePool.h"
 #include "ProgressTracker.h"
 #include "ImageFactory.h"
 #include "Image.h"
@@ -232,7 +233,8 @@ nsresult imgRequest::RemoveProxy(imgRequestProxy *proxy, nsresult aStatus)
        This way, if a proxy is destroyed without calling cancel on it, it won't leak
        and won't leave a bad pointer in the observer list.
      */
-    if (progressTracker->IsLoading() && NS_FAILED(aStatus)) {
+    if (!(progressTracker->GetProgress() & FLAG_LAST_PART_COMPLETE) &&
+        NS_FAILED(aStatus)) {
       LOG_MSG(GetImgLog(), "imgRequest::RemoveProxy", "load in progress.  canceling");
 
       this->Cancel(NS_BINDING_ABORTED);
@@ -308,7 +310,7 @@ void imgRequest::ContinueCancel(nsresult aStatus)
 
   RemoveFromCache();
 
-  if (mRequest && progressTracker->IsLoading()) {
+  if (mRequest && !(progressTracker->GetProgress() & FLAG_LAST_PART_COMPLETE)) {
      mRequest->Cancel(aStatus);
   }
 }
@@ -694,14 +696,13 @@ NS_IMETHODIMP imgRequest::OnStartRequest(nsIRequest *aRequest, nsISupports *ctxt
   nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aRequest);
   nsCOMPtr<nsIThreadRetargetableRequest> retargetable =
     do_QueryInterface(aRequest);
-  if (httpChannel && retargetable &&
-      ImageFactory::CanRetargetOnDataAvailable(mURI, mIsMultiPartChannel)) {
+  if (httpChannel && retargetable) {
     nsAutoCString mimeType;
     nsresult rv = httpChannel->GetContentType(mimeType);
     if (NS_SUCCEEDED(rv) && !mimeType.EqualsLiteral(IMAGE_SVG_XML)) {
-      // Image object not created until OnDataAvailable, so forward to static
-      // DecodePool directly.
-      nsCOMPtr<nsIEventTarget> target = RasterImage::GetEventTarget();
+      // Retarget OnDataAvailable to the DecodePool's IO thread.
+      nsCOMPtr<nsIEventTarget> target =
+        DecodePool::Singleton()->GetIOEventTarget();
       rv = retargetable->RetargetDeliveryTo(target);
     }
     PR_LOG(GetImgLog(), PR_LOG_WARNING,

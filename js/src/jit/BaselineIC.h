@@ -212,7 +212,7 @@ class ICEntry
     uint32_t returnOffset_;
 
     // The PC of this IC's bytecode op within the JSScript.
-    uint32_t pcOffset_ : 29;
+    uint32_t pcOffset_ : 28;
 
   public:
     enum Kind {
@@ -229,6 +229,13 @@ class ICEntry
         // the prologue).
         Kind_NonOpCallVM,
 
+        // A fake IC entry for returning from a callVM to the interrupt
+        // handler via the over-recursion check on function entry.
+        Kind_StackCheck,
+
+        // As above, but for the early check. See emitStackCheck.
+        Kind_EarlyStackCheck,
+
         // A fake IC entry for returning from DebugTrapHandler.
         Kind_DebugTrap,
 
@@ -242,7 +249,7 @@ class ICEntry
 
   private:
     // What this IC is for.
-    Kind kind_ : 3;
+    Kind kind_ : 4;
 
     // Set the kind and asserts that it's sane.
     void setKind(Kind kind) {
@@ -255,10 +262,10 @@ class ICEntry
     ICEntry(uint32_t pcOffset, Kind kind)
       : firstStub_(nullptr), returnOffset_(), pcOffset_(pcOffset)
     {
-        // The offset must fit in at least 29 bits, since we shave off 3 for
+        // The offset must fit in at least 28 bits, since we shave off 4 for
         // the Kind enum.
         MOZ_ASSERT(pcOffset_ == pcOffset);
-        JS_STATIC_ASSERT(BaselineScript::MAX_JSSCRIPT_LENGTH < 0x1fffffffu);
+        JS_STATIC_ASSERT(BaselineScript::MAX_JSSCRIPT_LENGTH <= (1u << 28) - 1);
         MOZ_ASSERT(pcOffset <= BaselineScript::MAX_JSSCRIPT_LENGTH);
         setKind(kind);
     }
@@ -289,23 +296,15 @@ class ICEntry
 
     Kind kind() const {
         // MSVC compiles enums as signed.
-        return (Kind)(kind_ & 0x7);
+        return Kind(kind_ & 0xf);
     }
     bool isForOp() const {
         return kind() == Kind_Op;
     }
 
-    void setForDebugPrologue() {
-        MOZ_ASSERT(kind() == Kind_CallVM);
-        setKind(Kind_DebugPrologue);
-    }
-    void setForDebugEpilogue() {
-        MOZ_ASSERT(kind() == Kind_CallVM);
-        setKind(Kind_DebugEpilogue);
-    }
-    void setForNonOpCallVM() {
-        MOZ_ASSERT(kind() == Kind_CallVM);
-        setKind(Kind_NonOpCallVM);
+    void setFakeKind(Kind kind) {
+        MOZ_ASSERT(kind != Kind_Op && kind != Kind_NonOp);
+        setKind(kind);
     }
 
     bool hasStub() const {
@@ -334,9 +333,6 @@ class ICEntry
 // List of baseline IC stub kinds.
 #define IC_STUB_KIND_LIST(_)    \
     _(WarmUpCounter_Fallback)   \
-                                \
-    _(Profiler_Fallback)        \
-    _(Profiler_PushFunction)    \
                                 \
     _(TypeMonitor_Fallback)     \
     _(TypeMonitor_SingleObject) \
@@ -1122,11 +1118,6 @@ class ICStubCompiler
     // given label.
     void guardProfilingEnabled(MacroAssembler &masm, Register scratch, Label *skip);
 
-    // Higher-level helper to emit an update to the profiler pseudo-stack.
-    void emitProfilingUpdate(MacroAssembler &masm, Register pcIdx, Register scratch,
-                             uint32_t stubPcOffset);
-    void emitProfilingUpdate(MacroAssembler &masm, GeneralRegisterSet regs, uint32_t stubPcOffset);
-
     inline GeneralRegisterSet availableGeneralRegs(size_t numInputs) const {
         GeneralRegisterSet regs(GeneralRegisterSet::All());
         MOZ_ASSERT(!regs.has(BaselineStackReg));
@@ -1225,91 +1216,6 @@ class ICWarmUpCounter_Fallback : public ICFallbackStub
 
         ICWarmUpCounter_Fallback *getStub(ICStubSpace *space) {
             return ICWarmUpCounter_Fallback::New(space, getStubCode());
-        }
-    };
-};
-
-// Profiler_Fallback
-
-class ICProfiler_Fallback : public ICFallbackStub
-{
-    friend class ICStubSpace;
-
-    explicit ICProfiler_Fallback(JitCode *stubCode)
-      : ICFallbackStub(ICStub::Profiler_Fallback, stubCode)
-    { }
-
-  public:
-    static inline ICProfiler_Fallback *New(ICStubSpace *space, JitCode *code) {
-        if (!code)
-            return nullptr;
-        return space->allocate<ICProfiler_Fallback>(code);
-    }
-
-    // Compiler for this stub kind.
-    class Compiler : public ICStubCompiler {
-      protected:
-        bool generateStubCode(MacroAssembler &masm);
-
-      public:
-        explicit Compiler(JSContext *cx)
-          : ICStubCompiler(cx, ICStub::Profiler_Fallback)
-        { }
-
-        ICProfiler_Fallback *getStub(ICStubSpace *space) {
-            return ICProfiler_Fallback::New(space, getStubCode());
-        }
-    };
-};
-
-// Profiler_PushFunction
-
-class ICProfiler_PushFunction : public ICStub
-{
-    friend class ICStubSpace;
-
-  protected:
-    const char *str_;
-    HeapPtrScript script_;
-
-    ICProfiler_PushFunction(JitCode *stubCode, const char *str, HandleScript script);
-
-  public:
-    static inline ICProfiler_PushFunction *New(ICStubSpace *space, JitCode *code,
-                                               const char *str, HandleScript script)
-    {
-        if (!code)
-            return nullptr;
-        return space->allocate<ICProfiler_PushFunction>(code, str, script);
-    }
-
-    HeapPtrScript &script() {
-        return script_;
-    }
-
-    static size_t offsetOfStr() {
-        return offsetof(ICProfiler_PushFunction, str_);
-    }
-    static size_t offsetOfScript() {
-        return offsetof(ICProfiler_PushFunction, script_);
-    }
-
-    // Compiler for this stub kind.
-    class Compiler : public ICStubCompiler {
-      protected:
-        const char *str_;
-        RootedScript script_;
-        bool generateStubCode(MacroAssembler &masm);
-
-      public:
-        Compiler(JSContext *cx, const char *str, HandleScript script)
-          : ICStubCompiler(cx, ICStub::Profiler_PushFunction),
-            str_(str),
-            script_(cx, script)
-        { }
-
-        ICProfiler_PushFunction *getStub(ICStubSpace *space) {
-            return ICProfiler_PushFunction::New(space, getStubCode(), str_, script_);
         }
     };
 };
@@ -6015,7 +5921,7 @@ class ICCall_Native : public ICMonitoredStub
 
   protected:
     HeapPtrFunction callee_;
-    HeapPtrNativeObject templateObject_;
+    HeapPtrObject templateObject_;
     uint32_t pcOffset_;
 
 #if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
@@ -6023,12 +5929,12 @@ class ICCall_Native : public ICMonitoredStub
 #endif
 
     ICCall_Native(JitCode *stubCode, ICStub *firstMonitorStub,
-                  HandleFunction callee, HandleNativeObject templateObject,
+                  HandleFunction callee, HandleObject templateObject,
                   uint32_t pcOffset);
 
   public:
     static inline ICCall_Native *New(ICStubSpace *space, JitCode *code, ICStub *firstMonitorStub,
-                                     HandleFunction callee, HandleNativeObject templateObject,
+                                     HandleFunction callee, HandleObject templateObject,
                                      uint32_t pcOffset)
     {
         if (!code)
@@ -6043,7 +5949,7 @@ class ICCall_Native : public ICMonitoredStub
     HeapPtrFunction &callee() {
         return callee_;
     }
-    HeapPtrNativeObject &templateObject() {
+    HeapPtrObject &templateObject() {
         return templateObject_;
     }
 
@@ -6067,7 +5973,7 @@ class ICCall_Native : public ICMonitoredStub
         bool isConstructing_;
         bool isSpread_;
         RootedFunction callee_;
-        RootedNativeObject templateObject_;
+        RootedObject templateObject_;
         uint32_t pcOffset_;
         bool generateStubCode(MacroAssembler &masm);
 
@@ -6078,7 +5984,7 @@ class ICCall_Native : public ICMonitoredStub
 
       public:
         Compiler(JSContext *cx, ICStub *firstMonitorStub,
-                 HandleFunction callee, HandleNativeObject templateObject,
+                 HandleFunction callee, HandleObject templateObject,
                  bool isConstructing, bool isSpread, uint32_t pcOffset)
           : ICCallStubCompiler(cx, ICStub::Call_Native),
             firstMonitorStub_(firstMonitorStub),

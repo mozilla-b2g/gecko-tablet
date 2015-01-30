@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include <algorithm>
 #include "WMFVideoMFTManager.h"
 #include "MediaDecoderReader.h"
 #include "WMFUtils.h"
@@ -17,6 +18,7 @@
 #include "mp4_demuxer/DecoderData.h"
 #include "prlog.h"
 #include "gfx2DGlue.h"
+#include "gfxWindowsPlatform.h"
 
 #ifdef PR_LOGGING
 PRLogModuleInfo* GetDemuxerLog();
@@ -98,7 +100,9 @@ WMFVideoMFTManager::~WMFVideoMFTManager()
 {
   MOZ_COUNT_DTOR(WMFVideoMFTManager);
   // Ensure DXVA/D3D9 related objects are released on the main thread.
-  DeleteOnMainThread(mDXVA2Manager);
+  if (mDXVA2Manager) {
+    DeleteOnMainThread(mDXVA2Manager);
+  }
 }
 
 const GUID&
@@ -138,6 +142,8 @@ public:
 bool
 WMFVideoMFTManager::InitializeDXVA()
 {
+  MOZ_ASSERT(!mDXVA2Manager);
+
   // If we use DXVA but aren't running with a D3D layer manager then the
   // readback of decoded video frames from GPU to CPU memory grinds painting
   // to a halt, and makes playback performance *worse*.
@@ -145,6 +151,11 @@ WMFVideoMFTManager::InitializeDXVA()
       (mLayersBackend != LayersBackend::LAYERS_D3D9 &&
        mLayersBackend != LayersBackend::LAYERS_D3D10 &&
        mLayersBackend != LayersBackend::LAYERS_D3D11)) {
+    return false;
+  }
+
+  if (gfxWindowsPlatform::GetPlatform()->IsWARP() ||
+      !gfxPlatform::CanUseDXVA()) {
     return false;
   }
 
@@ -187,21 +198,31 @@ WMFVideoMFTManager::Init()
   }
 
   // Setup the input/output media types.
-  RefPtr<IMFMediaType> type;
-  hr = wmf::MFCreateMediaType(byRef(type));
+  RefPtr<IMFMediaType> inputType;
+  hr = wmf::MFCreateMediaType(byRef(inputType));
   NS_ENSURE_TRUE(SUCCEEDED(hr), nullptr);
 
-  hr = type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+  hr = inputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
   NS_ENSURE_TRUE(SUCCEEDED(hr), nullptr);
 
-  hr = type->SetGUID(MF_MT_SUBTYPE, GetMediaSubtypeGUID());
+  hr = inputType->SetGUID(MF_MT_SUBTYPE, GetMediaSubtypeGUID());
   NS_ENSURE_TRUE(SUCCEEDED(hr), nullptr);
 
-  hr = type->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_MixedInterlaceOrProgressive);
+  hr = inputType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_MixedInterlaceOrProgressive);
   NS_ENSURE_TRUE(SUCCEEDED(hr), nullptr);
 
-  GUID outputType = mUseHwAccel ? MFVideoFormat_NV12 : MFVideoFormat_YV12;
-  hr = decoder->SetMediaTypes(type, outputType);
+  RefPtr<IMFMediaType> outputType;
+  hr = wmf::MFCreateMediaType(byRef(outputType));
+  NS_ENSURE_TRUE(SUCCEEDED(hr), nullptr);
+
+  hr = outputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+  NS_ENSURE_TRUE(SUCCEEDED(hr), nullptr);
+
+  GUID outputSubType = mUseHwAccel ? MFVideoFormat_NV12 : MFVideoFormat_YV12;
+  hr = outputType->SetGUID(MF_MT_SUBTYPE, outputSubType);
+  NS_ENSURE_TRUE(SUCCEEDED(hr), nullptr);
+
+  hr = decoder->SetMediaTypes(inputType, outputType);
   NS_ENSURE_TRUE(SUCCEEDED(hr), nullptr);
 
   mDecoder = decoder;
@@ -362,7 +383,7 @@ WMFVideoMFTManager::CreateBasicVideoFrame(IMFSample* aSample,
   nsRefPtr<VideoData> v = VideoData::Create(mVideoInfo,
                                             mImageContainer,
                                             aStreamOffset,
-                                            pts,
+                                            std::max(0LL, pts),
                                             duration,
                                             b,
                                             false,
@@ -471,6 +492,7 @@ void
 WMFVideoMFTManager::Shutdown()
 {
   mDecoder = nullptr;
+  DeleteOnMainThread(mDXVA2Manager);
 }
 
 } // namespace mozilla

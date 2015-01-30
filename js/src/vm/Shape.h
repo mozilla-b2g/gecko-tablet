@@ -86,7 +86,7 @@
  *
  * To find the Shape for a particular property of an object initially requires
  * a linear search. But if the number of searches starting at any particular
- * Shape in the property tree exceeds MAX_LINEAR_SEARCHES and the Shape's
+ * Shape in the property tree exceeds LINEAR_SEARCHES_MAX and the Shape's
  * lineage has (excluding the EmptyShape) at least MIN_ENTRIES, we create an
  * auxiliary hash table -- the ShapeTable -- that allows faster lookup.
  * Furthermore, a ShapeTable is always created for dictionary mode lists,
@@ -227,10 +227,8 @@ class ShapeTable {
     bool change(int log2Delta, ExclusiveContext *cx);
     Entry &search(jsid id, bool adding);
 
-#ifdef JSGC_COMPACTING
     /* Update entries whose shapes have been moved */
     void fixupAfterMovingGC();
-#endif
 
   private:
     Entry &getEntry(uint32_t i) const {
@@ -408,7 +406,11 @@ class BaseShape : public gc::TenuredCell
         QUALIFIED_VAROBJ    = 0x2000,
         UNQUALIFIED_VAROBJ  = 0x4000,
 
-        OBJECT_FLAG_MASK    = 0x7ff8
+        // For a function used as an interpreted constructor, whether a 'new'
+        // type had constructor information cleared.
+        NEW_SCRIPT_CLEARED  = 0x8000,
+
+        OBJECT_FLAG_MASK    = 0xfff8
     };
 
   private:
@@ -530,9 +532,8 @@ class BaseShape : public gc::TenuredCell
             gc::MarkObject(trc, &metadata, "metadata");
     }
 
-#ifdef JSGC_COMPACTING
     void fixupAfterMovingGC();
-#endif
+    bool fixupBaseShapeTableEntry();
 
   private:
     static void staticAsserts() {
@@ -921,7 +922,6 @@ class Shape : public gc::TenuredCell
                setter() == rawSetter;
     }
 
-    bool get(JSContext* cx, HandleObject receiver, JSObject *obj, JSObject *pobj, MutableHandleValue vp);
     bool set(JSContext* cx, HandleObject obj, HandleObject receiver, bool strict, MutableHandleValue vp);
 
     BaseShape *base() const { return base_.get(); }
@@ -1061,9 +1061,7 @@ class Shape : public gc::TenuredCell
     inline Shape *search(ExclusiveContext *cx, jsid id);
     inline Shape *searchLinear(jsid id);
 
-#ifdef JSGC_COMPACTING
     void fixupAfterMovingGC();
-#endif
 
     /* For JIT usage */
     static inline size_t offsetOfBase() { return offsetof(Shape, base_); }
@@ -1071,10 +1069,8 @@ class Shape : public gc::TenuredCell
     static inline uint32_t fixedSlotsMask() { return FIXED_SLOTS_MASK; }
 
   private:
-#ifdef JSGC_COMPACTING
     void fixupDictionaryShapeAfterMovingGC();
     void fixupShapeTreeAfterMovingGC();
-#endif
 
     static void staticAsserts() {
         JS_STATIC_ASSERT(offsetof(Shape, base_) == offsetof(js::shadow::Shape, base));

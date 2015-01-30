@@ -42,6 +42,7 @@ class LayerTransactionParent : public PLayerTransactionParent,
   typedef InfallibleTArray<Edit> EditArray;
   typedef InfallibleTArray<EditReply> EditReplyArray;
   typedef InfallibleTArray<AsyncChildMessageData> AsyncChildMessageArray;
+  typedef InfallibleTArray<PluginWindowData> PluginsArray;
 
 public:
   LayerTransactionParent(LayerManagerComposite* aManager,
@@ -103,9 +104,10 @@ public:
 protected:
   virtual bool RecvShutdown() MOZ_OVERRIDE;
 
-  virtual bool RecvUpdate(const EditArray& cset,
+  virtual bool RecvUpdate(EditArray&& cset,
                           const uint64_t& aTransactionId,
                           const TargetConfig& targetConfig,
+                          PluginsArray&& aPlugins,
                           const bool& isFirstPaint,
                           const bool& scheduleComposite,
                           const uint32_t& paintSequenceNumber,
@@ -113,9 +115,10 @@ protected:
                           const mozilla::TimeStamp& aTransactionStart,
                           EditReplyArray* reply) MOZ_OVERRIDE;
 
-  virtual bool RecvUpdateNoSwap(const EditArray& cset,
+  virtual bool RecvUpdateNoSwap(EditArray&& cset,
                                 const uint64_t& aTransactionId,
                                 const TargetConfig& targetConfig,
+                                PluginsArray&& aPlugins,
                                 const bool& isFirstPaint,
                                 const bool& scheduleComposite,
                                 const uint32_t& paintSequenceNumber,
@@ -147,7 +150,7 @@ protected:
   virtual bool DeallocPTextureParent(PTextureParent* actor) MOZ_OVERRIDE;
 
   virtual bool
-  RecvChildAsyncMessages(const InfallibleTArray<AsyncChildMessageData>& aMessages) MOZ_OVERRIDE;
+  RecvChildAsyncMessages(InfallibleTArray<AsyncChildMessageData>&& aMessages) MOZ_OVERRIDE;
 
   virtual void ActorDestroy(ActorDestroyReason why) MOZ_OVERRIDE;
 

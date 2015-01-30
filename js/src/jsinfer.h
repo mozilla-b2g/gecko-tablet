@@ -10,7 +10,6 @@
 #define jsinfer_h
 
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/TypedEnum.h"
 
 #include "jsalloc.h"
 #include "jsfriendapi.h"
@@ -28,6 +27,7 @@
 namespace js {
 
 class TypeDescr;
+class UnboxedLayout;
 
 class TaggedProto
 {
@@ -116,61 +116,6 @@ class RootedBase<TaggedProto> : public TaggedProtoOperations<Rooted<TaggedProto>
 };
 
 class CallObject;
-
-/*
- * Execution Mode Overview
- *
- * JavaScript code executes sequentially.  Functions which have
- * similar but not identical behavior between execution modes can be
- * templated on the mode. Such functions use a context parameter type
- * from ExecutionModeTraits below indicating whether they are only
- * permitted constrained operations (such as thread safety, and side
- * effects limited to being thread-local), or whether they can have
- * arbitrary side effects.
- */
-
-enum ExecutionMode {
-    /* Normal JavaScript execution. */
-    SequentialExecution,
-
-    /*
-     * Modes after this point are internal and are not counted in
-     * NumExecutionModes below.
-     */
-
-    /*
-     * MIR analysis performed when invoking 'new' on a script, to determine
-     * definite properties. Used by the optimizing JIT.
-     */
-    DefinitePropertiesAnalysis,
-
-    /*
-     * MIR analysis performed when executing a script which uses its arguments,
-     * when it is not known whether a lazy arguments value can be used.
-     */
-    ArgumentsUsageAnalysis
-};
-
-inline const char *
-ExecutionModeString(ExecutionMode mode)
-{
-    switch (mode) {
-      case SequentialExecution:
-        return "SequentialExecution";
-      case DefinitePropertiesAnalysis:
-        return "DefinitePropertiesAnalysis";
-      case ArgumentsUsageAnalysis:
-        return "ArgumentsUsageAnalysis";
-      default:
-        MOZ_CRASH("Invalid ExecutionMode");
-    }
-}
-
-/*
- * Not as part of the enum so we don't get warnings about unhandled enum
- * values.
- */
-static const unsigned NumExecutionModes = SequentialExecution + 1;
 
 namespace jit {
     struct IonScript;
@@ -348,7 +293,7 @@ public:
 };
 
 /* Flags and other state stored in TypeSet::flags */
-enum MOZ_ENUM_TYPE(uint32_t) {
+enum : uint32_t {
     TYPE_FLAG_UNDEFINED =   0x1,
     TYPE_FLAG_NULL      =   0x2,
     TYPE_FLAG_BOOLEAN   =   0x4,
@@ -407,7 +352,7 @@ enum MOZ_ENUM_TYPE(uint32_t) {
 typedef uint32_t TypeFlags;
 
 /* Flags and other state stored in TypeObject::flags */
-enum MOZ_ENUM_TYPE(uint32_t) {
+enum : uint32_t {
     /* Whether this type object is associated with some allocation site. */
     OBJECT_FLAG_FROM_ALLOCATION_SITE  = 0x1,
 
@@ -462,23 +407,26 @@ enum MOZ_ENUM_TYPE(uint32_t) {
     /* Whether objects with this type might have copy on write elements. */
     OBJECT_FLAG_COPY_ON_WRITE         = 0x01000000,
 
+    /* Whether this type has had its 'new' script cleared in the past. */
+    OBJECT_FLAG_NEW_SCRIPT_CLEARED    = 0x02000000,
+
     /*
      * Whether all properties of this object are considered unknown.
      * If set, all other flags in DYNAMIC_MASK will also be set.
      */
-    OBJECT_FLAG_UNKNOWN_PROPERTIES    = 0x02000000,
+    OBJECT_FLAG_UNKNOWN_PROPERTIES    = 0x04000000,
 
     /* Flags which indicate dynamic properties of represented objects. */
-    OBJECT_FLAG_DYNAMIC_MASK          = 0x03ff0000,
+    OBJECT_FLAG_DYNAMIC_MASK          = 0x07ff0000,
 
     // Mask/shift for the kind of addendum attached to this type object.
-    OBJECT_FLAG_ADDENDUM_MASK         = 0x0c000000,
-    OBJECT_FLAG_ADDENDUM_SHIFT        = 26,
+    OBJECT_FLAG_ADDENDUM_MASK         = 0x38000000,
+    OBJECT_FLAG_ADDENDUM_SHIFT        = 27,
 
     // Mask/shift for this type object's generation. If out of sync with the
     // TypeZone's generation, this TypeObject hasn't been swept yet.
-    OBJECT_FLAG_GENERATION_MASK       = 0x10000000,
-    OBJECT_FLAG_GENERATION_SHIFT      = 28,
+    OBJECT_FLAG_GENERATION_MASK       = 0x40000000,
+    OBJECT_FLAG_GENERATION_SHIFT      = 30,
 };
 typedef uint32_t TypeObjectFlags;
 
@@ -563,7 +511,7 @@ class TypeSet
 
     /* Get a list of all types in this set. */
     typedef Vector<Type, 1, SystemAllocPolicy> TypeList;
-    bool enumerateTypes(TypeList *list);
+    bool enumerateTypes(TypeList *list) const;
 
     /*
      * Iterate through the objects in this set. getObjectCount overapproximates
@@ -691,7 +639,6 @@ class HeapTypeSet : public ConstraintTypeSet
   public:
     /* Mark this type set as representing a non-data property. */
     inline void setNonDataProperty(ExclusiveContext *cx);
-    inline void setNonDataPropertyIgnoringConstraints(); // Variant for use during GC.
 
     /* Mark this type set as representing a non-writable property. */
     inline void setNonWritableProperty(ExclusiveContext *cx);
@@ -850,6 +797,38 @@ struct Property
     static jsid getKey(Property *p) { return p->id; }
 };
 
+// For types where only a small number of objects have been allocated, this
+// structure keeps track of all objects with the type in existence. Once
+// COUNT objects have been allocated, this structure is cleared and the objects
+// are analyzed, to perform the new script properties analyses or determine if
+// an unboxed representation can be used.
+class PreliminaryObjectArray
+{
+  public:
+    static const uint32_t COUNT = 20;
+
+  private:
+    // All objects with the type which have been allocated. The pointers in
+    // this array are weak.
+    JSObject *objects[COUNT];
+
+  public:
+    PreliminaryObjectArray() {
+        mozilla::PodZero(this);
+    }
+
+    void registerNewObject(JSObject *res);
+    void unregisterNewObject(JSObject *res);
+
+    JSObject *get(size_t i) const {
+        MOZ_ASSERT(i < COUNT);
+        return objects[i];
+    }
+
+    bool full() const;
+    void sweep();
+};
+
 // New script properties analyses overview.
 //
 // When constructing objects using 'new' on a script, we attempt to determine
@@ -907,21 +886,18 @@ class TypeNewScript
     // Scripted function which this information was computed for.
     // If instances of the associated type object are created without calling
     // 'new' on this function, the new script information is cleared.
-    HeapPtrFunction fun;
+    HeapPtrFunction function_;
 
-    // If fewer than PRELIMINARY_OBJECT_COUNT instances of the type are
-    // created, this array holds pointers to each of those objects. When the
-    // threshold has been reached, the definite and acquired properties
-    // analyses are performed and this array is cleared. The pointers in this
-    // array are weak.
-    static const uint32_t PRELIMINARY_OBJECT_COUNT = 20;
-    PlainObject **preliminaryObjects;
+    // Any preliminary objects with the type. The analyses are not performed
+    // until this array is cleared.
+    PreliminaryObjectArray *preliminaryObjects;
 
     // After the new script properties analyses have been performed, a template
     // object to use for newly constructed objects. The shape of this object
     // reflects all definite properties the object will have, and the
-    // allocation kind to use. Note that this is actually a PlainObject, but is
-    // JSObject here to avoid cyclic include dependencies.
+    // allocation kind to use. This is null if the new objects have an unboxed
+    // layout, in which case the UnboxedLayout provides the initial structure
+    // of the object.
     HeapPtrPlainObject templateObject_;
 
     // Order in which definite properties become initialized. We need this in
@@ -948,22 +924,14 @@ class TypeNewScript
   public:
     TypeNewScript() { mozilla::PodZero(this); }
     ~TypeNewScript() {
-        js_free(preliminaryObjects);
+        js_delete(preliminaryObjects);
         js_free(initializerList);
     }
 
     static inline void writeBarrierPre(TypeNewScript *newScript);
 
     bool analyzed() const {
-        if (preliminaryObjects) {
-            MOZ_ASSERT(!templateObject());
-            MOZ_ASSERT(!initializerList);
-            MOZ_ASSERT(!initializedShape());
-            MOZ_ASSERT(!initializedType());
-            return false;
-        }
-        MOZ_ASSERT(templateObject());
-        return true;
+        return preliminaryObjects == nullptr;
     }
 
     PlainObject *templateObject() const {
@@ -978,20 +946,22 @@ class TypeNewScript
         return initializedType_;
     }
 
+    JSFunction *function() const {
+        return function_;
+    }
+
     void trace(JSTracer *trc);
     void sweep();
-
-#ifdef JSGC_COMPACTING
-    void fixupAfterMovingGC();
-#endif
 
     void registerNewObject(PlainObject *res);
     void unregisterNewObject(PlainObject *res);
     bool maybeAnalyze(JSContext *cx, TypeObject *type, bool *regenerate, bool force = false);
 
-    void rollbackPartiallyInitializedObjects(JSContext *cx, TypeObject *type);
+    bool rollbackPartiallyInitializedObjects(JSContext *cx, TypeObject *type);
 
     static void make(JSContext *cx, TypeObject *type, JSFunction *fun);
+
+    size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
 };
 
 /*
@@ -1038,7 +1008,6 @@ struct TypeObject : public gc::TenuredCell
     }
 
     void setClasp(const Class *clasp) {
-        MOZ_ASSERT(singleton());
         clasp_ = clasp;
     }
 
@@ -1086,6 +1055,11 @@ struct TypeObject : public gc::TenuredCell
         // function, the addendum stores a TypeNewScript.
         Addendum_NewScript,
 
+        // When objects with this type have an unboxed representation, the
+        // addendum stores an UnboxedLayout (which might have a TypeNewScript
+        // as well, if the type is also constructed using 'new').
+        Addendum_UnboxedLayout,
+
         // When used by typed objects, the addendum stores a TypeDescr.
         Addendum_TypeDescr
     };
@@ -1094,7 +1068,7 @@ struct TypeObject : public gc::TenuredCell
     // format is indicated by the object's addendum kind.
     void *addendum_;
 
-    void setAddendum(AddendumKind kind, void *addendum);
+    void setAddendum(AddendumKind kind, void *addendum, bool writeBarrier = true);
 
     AddendumKind addendumKind() const {
         return (AddendumKind)
@@ -1102,10 +1076,19 @@ struct TypeObject : public gc::TenuredCell
     }
 
     TypeNewScript *newScriptDontCheckGeneration() const {
-        return addendumKind() == Addendum_NewScript
-               ? reinterpret_cast<TypeNewScript *>(addendum_)
-               : nullptr;
+        if (addendumKind() == Addendum_NewScript)
+            return reinterpret_cast<TypeNewScript *>(addendum_);
+        return nullptr;
     }
+
+    UnboxedLayout *maybeUnboxedLayoutDontCheckGeneration() const {
+        if (addendumKind() == Addendum_UnboxedLayout)
+            return reinterpret_cast<UnboxedLayout *>(addendum_);
+        return nullptr;
+    }
+
+    TypeNewScript *anyNewScript();
+    void detachNewScript(bool writeBarrier);
 
   public:
 
@@ -1131,6 +1114,20 @@ struct TypeObject : public gc::TenuredCell
 
     void setNewScript(TypeNewScript *newScript) {
         setAddendum(Addendum_NewScript, newScript);
+    }
+
+    UnboxedLayout *maybeUnboxedLayout() {
+        maybeSweep(nullptr);
+        return maybeUnboxedLayoutDontCheckGeneration();
+    }
+
+    UnboxedLayout &unboxedLayout() {
+        MOZ_ASSERT(addendumKind() == Addendum_UnboxedLayout);
+        return *maybeUnboxedLayout();
+    }
+
+    void setUnboxedLayout(UnboxedLayout *layout) {
+        setAddendum(Addendum_UnboxedLayout, layout);
     }
 
     TypeDescr *maybeTypeDescr() {
@@ -1172,8 +1169,8 @@ struct TypeObject : public gc::TenuredCell
      * values that can be read out of that property in actual JS objects.
      * In native objects, property types account for plain data properties
      * (those with a slot and no getter or setter hook) and dense elements.
-     * In typed objects, property types account for object and value properties
-     * and elements in the object.
+     * In typed objects and unboxed objects, property types account for object
+     * and value properties and elements in the object.
      *
      * For accesses on these properties, the correspondence is as follows:
      *
@@ -1196,9 +1193,10 @@ struct TypeObject : public gc::TenuredCell
      * 2. Array lengths are special cased by the compiler and VM and are not
      *    reflected in property types.
      *
-     * 3. In typed objects, the initial values of properties (null pointers and
-     *    undefined values) are not reflected in the property types. These
-     *    values are always possible when reading the property.
+     * 3. In typed objects (but not unboxed objects), the initial values of
+     *    properties (null pointers and undefined values) are not reflected in
+     *    the property types. These values are always possible when reading the
+     *    property.
      *
      * We establish these by using write barriers on calls to setProperty and
      * defineProperty which are on native properties, and on any jitcode which
@@ -1296,13 +1294,10 @@ struct TypeObject : public gc::TenuredCell
         flags_ |= generation << OBJECT_FLAG_GENERATION_SHIFT;
     }
 
-#ifdef JSGC_COMPACTING
-    void fixupAfterMovingGC();
-#endif
-
     size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
 
     inline void finalize(FreeOp *fop);
+    void fixupAfterMovingGC() {}
 
     static inline ThingRootKind rootKind() { return THING_ROOT_TYPE_OBJECT; }
 
@@ -1494,8 +1489,8 @@ class RecompileInfo;
 // constraints for the compilation. Returns whether the type constraints
 // still hold.
 bool
-FinishCompilation(JSContext *cx, HandleScript script, ExecutionMode executionMode,
-                  CompilerConstraintList *constraints, RecompileInfo *precompileInfo);
+FinishCompilation(JSContext *cx, HandleScript script, CompilerConstraintList *constraints,
+                  RecompileInfo *precompileInfo);
 
 // Update the actual types in any scripts queried by constraints with any
 // speculative types added during the definite properties analysis.
@@ -1618,30 +1613,28 @@ class CompilerOutput
     // If this compilation has not been invalidated, the associated script and
     // kind of compilation being performed.
     JSScript *script_;
-    ExecutionMode mode_ : 2;
 
     // Whether this compilation is about to be invalidated.
     bool pendingInvalidation_ : 1;
 
     // During sweeping, the list of compiler outputs is compacted and invalidated
     // outputs are removed. This gives the new index for a valid compiler output.
-    uint32_t sweepIndex_ : 29;
+    uint32_t sweepIndex_ : 31;
 
   public:
-    static const uint32_t INVALID_SWEEP_INDEX = (1 << 29) - 1;
+    static const uint32_t INVALID_SWEEP_INDEX = static_cast<uint32_t>(1 << 31) - 1;
 
     CompilerOutput()
-      : script_(nullptr), mode_(SequentialExecution),
+      : script_(nullptr),
         pendingInvalidation_(false), sweepIndex_(INVALID_SWEEP_INDEX)
     {}
 
-    CompilerOutput(JSScript *script, ExecutionMode mode)
-      : script_(script), mode_(mode),
+    explicit CompilerOutput(JSScript *script)
+      : script_(script),
         pendingInvalidation_(false), sweepIndex_(INVALID_SWEEP_INDEX)
     {}
 
     JSScript *script() const { return script_; }
-    inline ExecutionMode mode() const { return mode_; }
 
     inline jit::IonScript *ion() const;
 
@@ -1834,7 +1827,7 @@ inline const char * TypeObjectString(TypeObject *type) { return nullptr; }
 #endif
 
 /* Print a warning, dump state and abort the program. */
-MOZ_NORETURN void TypeFailure(JSContext *cx, const char *fmt, ...);
+MOZ_NORETURN MOZ_COLD void TypeFailure(JSContext *cx, const char *fmt, ...);
 
 } /* namespace types */
 } /* namespace js */

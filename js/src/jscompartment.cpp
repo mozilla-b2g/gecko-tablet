@@ -649,14 +649,13 @@ JSCompartment::sweepCrossCompartmentWrappers()
     }
 }
 
-#ifdef JSGC_COMPACTING
-
 void JSCompartment::fixupAfterMovingGC()
 {
     fixupGlobal();
     fixupNewTypeObjectTable(newTypeObjects);
     fixupNewTypeObjectTable(lazyTypeObjects);
     fixupInitialShapeTable();
+    fixupBaseShapeTable();
 }
 
 void
@@ -666,8 +665,6 @@ JSCompartment::fixupGlobal()
     if (global)
         global_.set(MaybeForwarded(global));
 }
-
-#endif // JSGC_COMPACTING
 
 void
 JSCompartment::purge()

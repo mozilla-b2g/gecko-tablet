@@ -2674,6 +2674,67 @@ NodeAllowsClickThrough(nsINode* aNode)
 }
 #endif
 
+void
+EventStateManager::PostHandleKeyboardEvent(WidgetKeyboardEvent* aKeyboardEvent,
+                                           nsEventStatus& aStatus,
+                                           bool dispatchedToContentProcess)
+{
+  if (aStatus == nsEventStatus_eConsumeNoDefault) {
+    return;
+  }
+
+  // XXX Currently, our automated tests don't support mKeyNameIndex.
+  //     Therefore, we still need to handle this with keyCode.
+  switch(aKeyboardEvent->keyCode) {
+    case NS_VK_TAB:
+    case NS_VK_F6:
+      // This is to prevent keyboard scrolling while alt modifier in use.
+      if (!aKeyboardEvent->IsAlt()) {
+        // Handling the tab event after it was sent to content is bad,
+        // because to the FocusManager the remote-browser looks like one
+        // element, so we would just move the focus to the next element
+        // in chrome, instead of handling it in content.
+        if (dispatchedToContentProcess)
+          break;
+
+        EnsureDocument(mPresContext);
+        nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+        if (fm && mDocument) {
+          // Shift focus forward or back depending on shift key
+          bool isDocMove =
+            aKeyboardEvent->IsControl() || aKeyboardEvent->keyCode == NS_VK_F6;
+          uint32_t dir = aKeyboardEvent->IsShift() ?
+            (isDocMove ? static_cast<uint32_t>(nsIFocusManager::MOVEFOCUS_BACKWARDDOC) :
+                         static_cast<uint32_t>(nsIFocusManager::MOVEFOCUS_BACKWARD)) :
+            (isDocMove ? static_cast<uint32_t>(nsIFocusManager::MOVEFOCUS_FORWARDDOC) :
+                         static_cast<uint32_t>(nsIFocusManager::MOVEFOCUS_FORWARD));
+          nsCOMPtr<nsIDOMElement> result;
+          fm->MoveFocus(mDocument->GetWindow(), nullptr, dir,
+                        nsIFocusManager::FLAG_BYKEY,
+                        getter_AddRefs(result));
+        }
+        aStatus = nsEventStatus_eConsumeNoDefault;
+      }
+      return;
+    case 0:
+      // We handle keys with no specific keycode value below.
+      break;
+    default:
+      return;
+  }
+
+  switch(aKeyboardEvent->mKeyNameIndex) {
+    case KEY_NAME_INDEX_ZoomIn:
+    case KEY_NAME_INDEX_ZoomOut:
+      ChangeFullZoom(
+        aKeyboardEvent->mKeyNameIndex == KEY_NAME_INDEX_ZoomIn ? 1 : -1);
+      aStatus = nsEventStatus_eConsumeNoDefault;
+      break;
+    default:
+      break;
+  }
+}
+
 nsresult
 EventStateManager::PostHandleEvent(nsPresContext* aPresContext,
                                    WidgetEvent* aEvent,
@@ -3185,40 +3246,9 @@ EventStateManager::PostHandleEvent(nsPresContext* aPresContext,
     break;
 
   case NS_KEY_PRESS:
-    if (nsEventStatus_eConsumeNoDefault != *aStatus) {
+    {
       WidgetKeyboardEvent* keyEvent = aEvent->AsKeyboardEvent();
-      //This is to prevent keyboard scrolling while alt modifier in use.
-      if (!keyEvent->IsAlt()) {
-        switch(keyEvent->keyCode) {
-          case NS_VK_TAB:
-          case NS_VK_F6:
-            // Handling the tab event after it was sent to content is bad,
-            // because to the FocusManager the remote-browser looks like one
-            // element, so we would just move the focus to the next element
-            // in chrome, instead of handling it in content.
-            if (dispatchedToContentProcess)
-              break;
-
-            EnsureDocument(mPresContext);
-            nsIFocusManager* fm = nsFocusManager::GetFocusManager();
-            if (fm && mDocument) {
-              // Shift focus forward or back depending on shift key
-              bool isDocMove =
-                keyEvent->IsControl() || keyEvent->keyCode == NS_VK_F6;
-              uint32_t dir = keyEvent->IsShift() ?
-                  (isDocMove ? static_cast<uint32_t>(nsIFocusManager::MOVEFOCUS_BACKWARDDOC) :
-                               static_cast<uint32_t>(nsIFocusManager::MOVEFOCUS_BACKWARD)) :
-                  (isDocMove ? static_cast<uint32_t>(nsIFocusManager::MOVEFOCUS_FORWARDDOC) :
-                               static_cast<uint32_t>(nsIFocusManager::MOVEFOCUS_FORWARD));
-              nsCOMPtr<nsIDOMElement> result;
-              fm->MoveFocus(mDocument->GetWindow(), nullptr, dir,
-                            nsIFocusManager::FLAG_BYKEY,
-                            getter_AddRefs(result));
-            }
-            *aStatus = nsEventStatus_eConsumeNoDefault;
-            break;
-        }
-      }
+      PostHandleKeyboardEvent(keyEvent, *aStatus, dispatchedToContentProcess);
     }
     break;
 
@@ -4660,6 +4690,11 @@ EventStateManager::SetContentState(nsIContent* aContent, EventStates aState)
     }
 
     if (aState == NS_EVENT_STATE_ACTIVE) {
+      // Editable content can never become active since their default actions
+      // are disabled.
+      if (aContent && aContent->IsEditable()) {
+        aContent = nullptr;
+      }
       if (aContent != mActiveContent) {
         notifyContent1 = aContent;
         notifyContent2 = mActiveContent;

@@ -134,7 +134,6 @@ public:
   const static uint32_t kQueueTailRoom    =  4096;
   const static uint32_t kQueueReserved    =  1024;
 
-  const static uint32_t kDefaultMaxConcurrent = 100;
   const static uint32_t kMaxStreamID = 0x7800000;
 
   // This is a sentinel for a deleted stream. It is not a valid
@@ -178,6 +177,7 @@ public:
 
   uint32_t GetServerInitialStreamWindow() { return mServerInitialStreamWindow; }
 
+  bool TryToActivate(SpdyStream31 *stream);
   void ConnectPushedStream(SpdyStream31 *stream);
   void DecrementConcurrent(SpdyStream31 *stream);
 
@@ -223,8 +223,6 @@ private:
   void        SetWriteCallbacks();
   void        RealignOutputQueue();
 
-  bool        RoomForMoreConcurrent();
-  void        ActivateStream(SpdyStream31 *);
   void        ProcessPending();
   nsresult    SetInputFrameDataStream(uint32_t);
   bool        VerifyStream(SpdyStream31 *, uint32_t);
@@ -233,6 +231,10 @@ private:
   void        UpdateLocalRwin(SpdyStream31 *stream, uint32_t bytes);
   void        UpdateLocalStreamWindow(SpdyStream31 *stream, uint32_t bytes);
   void        UpdateLocalSessionWindow(uint32_t bytes);
+
+  bool        RoomForMoreConcurrent();
+  void        IncrementConcurrent(SpdyStream31 *stream);
+  void        QueueStream(SpdyStream31 *stream);
 
   // a wrapper for all calls to the nshttpconnection level segment writer. Used
   // to track network I/O for timeout purposes

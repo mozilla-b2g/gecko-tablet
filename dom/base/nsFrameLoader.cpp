@@ -80,6 +80,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/unused.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/jsipc/CrossProcessObjectWrappers.h"
 #include "mozilla/layout/RenderFrameParent.h"
 #include "nsIAppsService.h"
 #include "GeckoProfiler.h"
@@ -88,7 +89,6 @@
 #include "mozilla/dom/HTMLIFrameElement.h"
 #include "mozilla/dom/SVGIFrameElement.h"
 #include "nsSandboxFlags.h"
-#include "JavaScriptParent.h"
 #include "mozilla/layers/CompositorChild.h"
 
 #include "mozilla/dom/StructuredCloneUtils.h"
@@ -1963,10 +1963,11 @@ nsFrameLoader::UpdatePositionAndSize(nsSubDocumentFrame *aIFrame)
     }
     return NS_OK;
   }
-  return UpdateBaseWindowPositionAndSize(aIFrame);
+  UpdateBaseWindowPositionAndSize(aIFrame);
+  return NS_OK;
 }
 
-nsresult
+void
 nsFrameLoader::UpdateBaseWindowPositionAndSize(nsSubDocumentFrame *aIFrame)
 {
   nsCOMPtr<nsIDocShell> docShell;
@@ -1980,19 +1981,17 @@ nsFrameLoader::UpdateBaseWindowPositionAndSize(nsSubDocumentFrame *aIFrame)
 
     nsWeakFrame weakFrame(aIFrame);
 
-    baseWindow->GetPositionAndSize(&x, &y, nullptr, nullptr);
+    baseWindow->GetPosition(&x, &y);
 
     if (!weakFrame.IsAlive()) {
-      // GetPositionAndSize() killed us
-      return NS_OK;
+      // GetPosition() killed us
+      return;
     }
 
     nsIntSize size = aIFrame->GetSubdocumentSize();
 
     baseWindow->SetPositionAndSize(x, y, size.width, size.height, false);
   }
-
-  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -2305,7 +2304,7 @@ nsFrameLoader::CreateStaticClone(nsIFrameLoader* aDest)
 bool
 nsFrameLoader::DoLoadFrameScript(const nsAString& aURL, bool aRunInGlobalScope)
 {
-  mozilla::dom::PBrowserParent* tabParent = GetRemoteBrowser();
+  auto* tabParent = static_cast<TabParent*>(GetRemoteBrowser());
   if (tabParent) {
     return tabParent->SendLoadRemoteScript(nsString(aURL), aRunInGlobalScope);
   }

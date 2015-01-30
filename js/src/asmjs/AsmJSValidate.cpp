@@ -635,6 +635,7 @@ class RetType
     RetType() : which_(Which(-1)) {}
     MOZ_IMPLICIT RetType(Which w) : which_(w) {}
     MOZ_IMPLICIT RetType(AsmJSCoercion coercion) {
+        which_ = Which(-1);  // initialize to silence GCC warning
         switch (coercion) {
           case AsmJS_ToInt32: which_ = Signed; break;
           case AsmJS_ToNumber: which_ = Double; break;
@@ -2404,7 +2405,7 @@ class FunctionCompiler
         jitContext_.emplace(m_.cx(), alloc_);
 
         graph_  = lifo_.new_<MIRGraph>(alloc_);
-        info_   = lifo_.new_<CompileInfo>(locals_.count(), SequentialExecution);
+        info_   = lifo_.new_<CompileInfo>(locals_.count());
         const OptimizationInfo *optimizationInfo = js_IonOptimizations.get(Optimization_AsmJS);
         const JitCompileOptions options;
         mirGen_ = lifo_.new_<MIRGenerator>(CompileCompartment::get(cx()->compartment()),
@@ -3031,7 +3032,7 @@ class FunctionCompiler
         uint32_t line, column;
         m_.tokenStream().srcCoords.lineNumAndColumnIndex(call.node_->pn_pos.begin, &line, &column);
 
-        CallSiteDesc::Kind kind;
+        CallSiteDesc::Kind kind = CallSiteDesc::Kind(-1);  // initialize to silence GCC warning
         switch (callee.which()) {
           case MAsmJSCall::Callee::Internal: kind = CallSiteDesc::Relative; break;
           case MAsmJSCall::Callee::Dynamic:  kind = CallSiteDesc::Register; break;
@@ -7292,7 +7293,7 @@ CheckChangeHeap(ModuleCompiler &m, ParseNode *fn, bool *validated)
     if (ParseNode *elseStmt = TernaryKid3(stmtIter))
         return m.fail(elseStmt, "unexpected else statement");
 
-    uint32_t mask, min, max;
+    uint32_t mask, min = 0, max;  // initialize min to silence GCC warning
     if (!CheckHeapLengthCondition(m, cond, newBufferName, &mask, &min, &max))
         return false;
 
@@ -7416,7 +7417,7 @@ CheckFunction(ModuleCompiler &m, LifoAlloc &lifo, MIRGenerator **mir, ModuleComp
     // the backing LifoAlloc after parsing/compiling each function.
     AsmJSParser::Mark mark = m.parser().mark();
 
-    ParseNode *fn;
+    ParseNode *fn = nullptr;  // initialize to silence GCC warning
     if (!ParseFunction(m, &fn))
         return false;
 
@@ -8504,27 +8505,50 @@ GenerateFFIIonExit(ModuleCompiler &m, const ModuleCompiler::ExitDescriptor &exit
 
         // The following is inlined:
         //   JSContext *cx = activation->cx();
-        //   Activation *act = cx->mainThread().activation();
+        //   Activation *act = cx->runtime()->activation();
         //   act.active_ = true;
-        //   act.prevJitTop_ = cx->mainThread().jitTop;
-        //   act.prevJitJSContext_ = cx->mainThread().jitJSContext;
-        //   cx->mainThread().jitJSContext = cx;
+        //   act.prevJitTop_ = cx->runtime()->jitTop;
+        //   act.prevJitJSContext_ = cx->runtime()->jitJSContext;
+        //   cx->runtime()->jitJSContext = cx;
+        //   act.prevJitActivation_ = cx->runtime()->jitActivation;
+        //   cx->runtime()->jitActivation = act;
+        //   act.prevProfilingActivation_ = cx->runtime()->profilingActivation;
+        //   cx->runtime()->profilingActivation_ = act;
         // On the ARM store8() uses the secondScratchReg (lr) as a temp.
-        size_t offsetOfActivation = offsetof(JSRuntime, mainThread) +
-                                    PerThreadData::offsetOfActivation();
-        size_t offsetOfJitTop = offsetof(JSRuntime, mainThread) + offsetof(PerThreadData, jitTop);
-        size_t offsetOfJitJSContext = offsetof(JSRuntime, mainThread) +
-                                      offsetof(PerThreadData, jitJSContext);
+        size_t offsetOfActivation = JSRuntime::offsetOfActivation();
+        size_t offsetOfJitTop = offsetof(JSRuntime, jitTop);
+        size_t offsetOfJitJSContext = offsetof(JSRuntime, jitJSContext);
+        size_t offsetOfJitActivation = offsetof(JSRuntime, jitActivation);
+        size_t offsetOfProfilingActivation = JSRuntime::offsetOfProfilingActivation();
         masm.loadAsmJSActivation(reg0);
         masm.loadPtr(Address(reg0, AsmJSActivation::offsetOfContext()), reg3);
         masm.loadPtr(Address(reg3, JSContext::offsetOfRuntime()), reg0);
         masm.loadPtr(Address(reg0, offsetOfActivation), reg1);
+
+        //   act.active_ = true;
         masm.store8(Imm32(1), Address(reg1, JitActivation::offsetOfActiveUint8()));
+
+        //   act.prevJitTop_ = cx->runtime()->jitTop;
         masm.loadPtr(Address(reg0, offsetOfJitTop), reg2);
         masm.storePtr(reg2, Address(reg1, JitActivation::offsetOfPrevJitTop()));
+
+        //   act.prevJitJSContext_ = cx->runtime()->jitJSContext;
         masm.loadPtr(Address(reg0, offsetOfJitJSContext), reg2);
         masm.storePtr(reg2, Address(reg1, JitActivation::offsetOfPrevJitJSContext()));
+        //   cx->runtime()->jitJSContext = cx;
         masm.storePtr(reg3, Address(reg0, offsetOfJitJSContext));
+
+        //   act.prevJitActivation_ = cx->runtime()->jitActivation;
+        masm.loadPtr(Address(reg0, offsetOfJitActivation), reg2);
+        masm.storePtr(reg2, Address(reg1, JitActivation::offsetOfPrevJitActivation()));
+        //   cx->runtime()->jitActivation = act;
+        masm.storePtr(reg1, Address(reg0, offsetOfJitActivation));
+
+        //   act.prevProfilingActivation_ = cx->runtime()->profilingActivation;
+        masm.loadPtr(Address(reg0, offsetOfProfilingActivation), reg2);
+        masm.storePtr(reg2, Address(reg1, Activation::offsetOfPrevProfiling()));
+        //   cx->runtime()->profilingActivation_ = act;
+        masm.storePtr(reg1, Address(reg0, offsetOfProfilingActivation));
     }
 
     // 2. Call
@@ -8544,22 +8568,39 @@ GenerateFFIIonExit(ModuleCompiler &m, const ModuleCompiler::ExitDescriptor &exit
         Register reg2 = AsmJSIonExitRegD2;
 
         // The following is inlined:
-        //   rt->mainThread.activation()->active_ = false;
-        //   rt->mainThread.jitTop = prevJitTop_;
-        //   rt->mainThread.jitJSContext = prevJitJSContext_;
+        //   rt->profilingActivation = prevProfilingActivation_;
+        //   rt->activation()->active_ = false;
+        //   rt->jitTop = prevJitTop_;
+        //   rt->jitJSContext = prevJitJSContext_;
+        //   rt->jitActivation = prevJitActivation_;
         // On the ARM store8() uses the secondScratchReg (lr) as a temp.
-        size_t offsetOfActivation = offsetof(JSRuntime, mainThread) +
-                                    PerThreadData::offsetOfActivation();
-        size_t offsetOfJitTop = offsetof(JSRuntime, mainThread) + offsetof(PerThreadData, jitTop);
-        size_t offsetOfJitJSContext = offsetof(JSRuntime, mainThread) +
-                                      offsetof(PerThreadData, jitJSContext);
+        size_t offsetOfActivation = JSRuntime::offsetOfActivation();
+        size_t offsetOfJitTop = offsetof(JSRuntime, jitTop);
+        size_t offsetOfJitJSContext = offsetof(JSRuntime, jitJSContext);
+        size_t offsetOfJitActivation = offsetof(JSRuntime, jitActivation);
+        size_t offsetOfProfilingActivation = JSRuntime::offsetOfProfilingActivation();
+
         masm.movePtr(AsmJSImmPtr(AsmJSImm_Runtime), reg0);
         masm.loadPtr(Address(reg0, offsetOfActivation), reg1);
-        masm.store8(Imm32(0), Address(reg1, JitActivation::offsetOfActiveUint8()));
+
+        //   rt->jitTop = prevJitTop_;
         masm.loadPtr(Address(reg1, JitActivation::offsetOfPrevJitTop()), reg2);
         masm.storePtr(reg2, Address(reg0, offsetOfJitTop));
+
+        //   rt->profilingActivation = rt->activation()->prevProfiling_;
+        masm.loadPtr(Address(reg1, Activation::offsetOfPrevProfiling()), reg2);
+        masm.storePtr(reg2, Address(reg0, offsetOfProfilingActivation));
+
+        //   rt->activation()->active_ = false;
+        masm.store8(Imm32(0), Address(reg1, JitActivation::offsetOfActiveUint8()));
+
+        //   rt->jitJSContext = prevJitJSContext_;
         masm.loadPtr(Address(reg1, JitActivation::offsetOfPrevJitJSContext()), reg2);
         masm.storePtr(reg2, Address(reg0, offsetOfJitJSContext));
+
+        //   rt->jitActivation = prevJitActivation_;
+        masm.loadPtr(Address(reg1, JitActivation::offsetOfPrevJitActivation()), reg2);
+        masm.storePtr(reg2, Address(reg0, offsetOfJitActivation));
     }
 
     MOZ_ASSERT(masm.framePushed() == framePushed);

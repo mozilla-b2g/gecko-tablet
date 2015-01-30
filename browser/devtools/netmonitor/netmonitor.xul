@@ -103,6 +103,16 @@
                         flex="1">
                 </button>
               </hbox>
+              <hbox id="requests-menu-transferred-header-box"
+                    class="requests-menu-header requests-menu-transferred"
+                    align="center">
+                <button id="requests-menu-transferred-button"
+                        class="requests-menu-header-button requests-menu-transferred"
+                        data-key="transferred"
+                        label="&netmonitorUI.toolbar.transferred;"
+                        flex="1">
+                </button>
+              </hbox>
               <hbox id="requests-menu-size-header-box"
                     class="requests-menu-header requests-menu-size"
                     align="center">
@@ -180,6 +190,8 @@
                        flex="1"/>
               </hbox>
               <label class="plain requests-menu-subitem requests-menu-type"
+                     crop="end"/>
+              <label class="plain requests-menu-subitem requests-menu-transferred"
                      crop="end"/>
               <label class="plain requests-menu-subitem requests-menu-size"
                      crop="end"/>
@@ -494,6 +506,9 @@
                                  class="plain tabpanel-summary-value devtools-monospace"
                                  crop="end"
                                  flex="1"/>
+                          <image class="security-warning-icon"
+                                 id="security-warning-sslv3"
+                                 tooltiptext="&netmonitorUI.security.warning.sslv3;" />
                         </hbox>
                         <hbox id="security-ciphersuite"
                               class="tabpanel-summary-container"
@@ -504,6 +519,9 @@
                                  class="plain tabpanel-summary-value devtools-monospace"
                                  crop="end"
                                  flex="1"/>
+                          <image class="security-warning-icon"
+                                 id="security-warning-cipher"
+                                 tooltiptext="&netmonitorUI.security.warning.cipher;" />
                         </hbox>
                       </vbox>
                     </vbox>

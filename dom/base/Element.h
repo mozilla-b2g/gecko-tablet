@@ -285,6 +285,11 @@ public:
   virtual bool IsLabelable() const;
 
   /**
+   * Returns if the element is interactive content as per HTML specification.
+   */
+  virtual bool IsInteractiveHTMLContent() const;
+
+  /**
    * Is the attribute named stored in the mapped attributes?
    *
    * // XXXbz we use this method in HasAttributeDependentStyle, so svg
@@ -1296,7 +1301,7 @@ public:
                                    nsIContent* aContent,
                                    nsIDocument* aDoc);
 
-  NS_IMETHOD Run();
+  NS_IMETHOD Run() MOZ_OVERRIDE;
 private:
   virtual ~RemoveFromBindingManagerRunnable();
   nsRefPtr<nsBindingManager> mManager;

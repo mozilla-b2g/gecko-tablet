@@ -3036,7 +3036,7 @@ private:
   virtual bool
   RecvPBackgroundIDBTransactionConstructor(
                                     PBackgroundIDBTransactionParent* aActor,
-                                    const nsTArray<nsString>& aObjectStoreNames,
+                                    InfallibleTArray<nsString>&& aObjectStoreNames,
                                     const Mode& aMode)
                                     MOZ_OVERRIDE;
 
@@ -3939,7 +3939,6 @@ protected:
   nsCString mDatabaseId;
   State mState;
   bool mIsApp;
-  bool mHasUnlimStoragePerm;
   bool mEnforcingQuota;
   const bool mDeleting;
   bool mBlockedQuotaManager;
@@ -6526,7 +6525,7 @@ Database::AllocPBackgroundIDBTransactionParent(
 bool
 Database::RecvPBackgroundIDBTransactionConstructor(
                                     PBackgroundIDBTransactionParent* aActor,
-                                    const nsTArray<nsString>& aObjectStoreNames,
+                                    InfallibleTArray<nsString>&& aObjectStoreNames,
                                     const Mode& aMode)
 {
   AssertIsOnBackgroundThread();
@@ -10503,7 +10502,6 @@ FactoryOp::FactoryOp(Factory* aFactory,
   , mCommonParams(aCommonParams)
   , mState(State_Initial)
   , mIsApp(false)
-  , mHasUnlimStoragePerm(false)
   , mEnforcingQuota(true)
   , mDeleting(aDeleting)
   , mBlockedQuotaManager(false)
@@ -10819,15 +10817,13 @@ FactoryOp::CheckPermission(ContentParent* aContentParent,
     }
 
     if (State_Initial == mState) {
-      QuotaManager::GetInfoForChrome(&mGroup, &mOrigin, &mIsApp,
-                                     &mHasUnlimStoragePerm);
+      QuotaManager::GetInfoForChrome(&mGroup, &mOrigin, &mIsApp);
 
       MOZ_ASSERT(!QuotaManager::IsFirstPromptRequired(persistenceType, mOrigin,
                                                       mIsApp));
 
       mEnforcingQuota =
-        QuotaManager::IsQuotaEnforced(persistenceType, mOrigin, mIsApp,
-                                      mHasUnlimStoragePerm);
+        QuotaManager::IsQuotaEnforced(persistenceType, mOrigin, mIsApp);
     }
 
     *aPermission = PermissionRequestBase::kPermissionAllowed;
@@ -10846,9 +10842,7 @@ FactoryOp::CheckPermission(ContentParent* aContentParent,
   nsCString group;
   nsCString origin;
   bool isApp;
-  bool hasUnlimStoragePerm;
-  rv = QuotaManager::GetInfoFromPrincipal(principal, &group, &origin,
-                                          &isApp, &hasUnlimStoragePerm);
+  rv = QuotaManager::GetInfoFromPrincipal(principal, &group, &origin, &isApp);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -10893,11 +10887,9 @@ FactoryOp::CheckPermission(ContentParent* aContentParent,
     mGroup = group;
     mOrigin = origin;
     mIsApp = isApp;
-    mHasUnlimStoragePerm = hasUnlimStoragePerm;
 
     mEnforcingQuota =
-      QuotaManager::IsQuotaEnforced(persistenceType, mOrigin, mIsApp,
-                                    mHasUnlimStoragePerm);
+      QuotaManager::IsQuotaEnforced(persistenceType, mOrigin, mIsApp);
   }
 
   *aPermission = permission;
@@ -11289,7 +11281,6 @@ OpenDatabaseOp::DoDatabaseWork()
                                             mGroup,
                                             mOrigin,
                                             mIsApp,
-                                            mHasUnlimStoragePerm,
                                             getter_AddRefs(dbDirectory));
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
@@ -12282,12 +12273,12 @@ OpenDatabaseOp::AssertMetadataConsistency(const FullDatabaseMetadata* aMetadata)
   MOZ_ASSERT(thisDB->mDatabaseId == otherDB->mDatabaseId);
   MOZ_ASSERT(thisDB->mFilePath == otherDB->mFilePath);
 
-  // The newer database metadata (db2) reflects the latest objectStore and index
-  // ids that have committed to disk. The in-memory metadata (db1) keeps track
-  // of objectStores and indexes that were created and then removed as well, so
-  // the next ids for db1 may be higher than for db2.
-  MOZ_ASSERT(thisDB->mNextObjectStoreId >= otherDB->mNextObjectStoreId);
-  MOZ_ASSERT(thisDB->mNextIndexId >= otherDB->mNextIndexId);
+  // |thisDB| reflects the latest objectStore and index ids that have committed
+  // to disk. The in-memory metadata |otherDB| keeps track of objectStores and
+  // indexes that were created and then removed as well, so the next ids for
+  // |otherDB| may be higher than for |thisDB|.
+  MOZ_ASSERT(thisDB->mNextObjectStoreId <= otherDB->mNextObjectStoreId);
+  MOZ_ASSERT(thisDB->mNextIndexId <= otherDB->mNextIndexId);
 
   MOZ_ASSERT(thisDB->mObjectStores.Count() == otherDB->mObjectStores.Count());
 

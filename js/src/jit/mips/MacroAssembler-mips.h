@@ -67,12 +67,13 @@ static_assert(1 << defaultShift == sizeof(jsval), "The defaultShift is wrong");
 
 class MacroAssemblerMIPS : public Assembler
 {
-  protected:
+  public:
     // higher level tag testing code
     Operand ToPayload(Operand base);
     Address ToPayload(Address base) {
         return ToPayload(Operand(base)).toAddress();
     }
+  protected:
     Operand ToType(Operand base);
     Address ToType(Address base) {
         return ToType(Operand(base)).toAddress();
@@ -184,6 +185,7 @@ class MacroAssemblerMIPS : public Assembler
     // arithmetic based ops
     // add
     void ma_addu(Register rd, Register rs, Imm32 imm);
+    void ma_addu(Register rd, Register rs, Register rt);
     void ma_addu(Register rd, Register rs);
     void ma_addu(Register rd, Imm32 imm);
     void ma_addTestOverflow(Register rd, Register rs, Register rt, Label *overflow);
@@ -230,7 +232,7 @@ class MacroAssemblerMIPS : public Assembler
     void ma_b(Register lhs, ImmGCPtr imm, Label *l, Condition c, JumpKind jumpKind = LongJump) {
         MOZ_ASSERT(lhs != ScratchRegister);
         ma_li(ScratchRegister, imm);
-        ma_b(lhs, Imm32(uint32_t(imm.value)), l, c, jumpKind);
+        ma_b(lhs, ScratchRegister, l, c, jumpKind);
     }
     void ma_b(Register lhs, Address addr, Label *l, Condition c, JumpKind jumpKind = LongJump);
     void ma_b(Address addr, Imm32 imm, Label *l, Condition c, JumpKind jumpKind = LongJump);
@@ -1470,6 +1472,10 @@ public:
         MOZ_ASSERT(Imm16::IsInSignedRange(AsmJSHeapGlobalDataOffset - AsmJSGlobalRegBias));
         loadPtr(Address(GlobalReg, AsmJSHeapGlobalDataOffset - AsmJSGlobalRegBias), HeapReg);
     }
+
+    // Instrumentation for entering and leaving the profiler.
+    void profilerEnterFrame(Register framePtr, Register scratch);
+    void profilerExitFrame();
 };
 
 typedef MacroAssemblerMIPSCompat MacroAssemblerSpecific;

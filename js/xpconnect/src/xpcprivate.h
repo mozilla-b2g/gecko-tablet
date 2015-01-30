@@ -129,7 +129,6 @@
 #include "nsString.h"
 #include "nsReadableUtils.h"
 #include "nsXPIDLString.h"
-#include "nsAutoJSValHolder.h"
 
 #include "MainThreadUtils.h"
 
@@ -305,12 +304,12 @@ public:
     nsresult GetInfoForName(const char * name, nsIInterfaceInfo** info);
 
     virtual nsIPrincipal* GetPrincipal(JSObject* obj,
-                                       bool allowShortCircuit) const;
+                                       bool allowShortCircuit) const MOZ_OVERRIDE;
 
     void RecordTraversal(void *p, nsISupports *s);
     virtual char* DebugPrintJSStack(bool showArgs,
                                     bool showLocals,
-                                    bool showThisProps);
+                                    bool showThisProps) MOZ_OVERRIDE;
 
 
     static bool ReportAllJSExceptions()
@@ -624,8 +623,14 @@ public:
 
     PRTime GetWatchdogTimestamp(WatchdogTimestampCategory aCategory);
 
-    void OnProcessNextEvent() { mSlowScriptCheckpoint = mozilla::TimeStamp::NowLoRes(); }
-    void OnAfterProcessNextEvent() { mSlowScriptCheckpoint = mozilla::TimeStamp(); }
+    void OnProcessNextEvent() {
+        mSlowScriptCheckpoint = mozilla::TimeStamp::NowLoRes();
+        mSlowScriptSecondHalf = false;
+    }
+    void OnAfterProcessNextEvent() {
+        mSlowScriptCheckpoint = mozilla::TimeStamp();
+        mSlowScriptSecondHalf = false;
+    }
 
     nsTArray<nsXPCWrappedJS*>& WrappedJSToReleaseArray() { return mWrappedJSToReleaseArray; }
 
@@ -669,6 +674,23 @@ private:
     JS::PersistentRootedObject mCompilationScope;
     nsRefPtr<AsyncFreeSnowWhite> mAsyncSnowWhiteFreer;
 
+    // If we spend too much time running JS code in an event handler, then we
+    // want to show the slow script UI. The timeout T is controlled by prefs. We
+    // invoke the interrupt callback once after T/2 seconds and set
+    // mSlowScriptSecondHalf to true. After another T/2 seconds, we invoke the
+    // interrupt callback again. Since mSlowScriptSecondHalf is now true, it
+    // shows the slow script UI. The reason we invoke the callback twice is to
+    // ensure that putting the computer to sleep while running a script doesn't
+    // cause the UI to be shown. If the laptop goes to sleep during one of the
+    // timeout periods, the script still has the other T/2 seconds to complete
+    // before the slow script UI is shown.
+    bool mSlowScriptSecondHalf;
+
+    // mSlowScriptCheckpoint is set to the time when:
+    // 1. We started processing the current event, or
+    // 2. mSlowScriptSecondHalf was set to true
+    // (whichever comes later). We use it to determine whether the interrupt
+    // callback needs to do anything.
     mozilla::TimeStamp mSlowScriptCheckpoint;
 
     friend class Watchdog;
@@ -963,7 +985,7 @@ XPC_WN_JSOp_ThisObject(JSContext *cx, JS::HandleObject obj);
         nullptr, /* setGeneric    */                                          \
         nullptr, /* setProperty    */                                         \
         nullptr, /* setElement    */                                          \
-        nullptr, /* getGenericAttributes  */                                  \
+        nullptr, /* getOwnPropertyDescriptor */                               \
         nullptr, /* setGenericAttributes  */                                  \
         nullptr, /* deleteGeneric */                                          \
         nullptr, nullptr, /* watch/unwatch */                                 \
@@ -986,7 +1008,7 @@ XPC_WN_JSOp_ThisObject(JSContext *cx, JS::HandleObject obj);
         nullptr, /* setGeneric    */                                          \
         nullptr, /* setProperty    */                                         \
         nullptr, /* setElement    */                                          \
-        nullptr, /* getGenericAttributes  */                                  \
+        nullptr, /* getOwnPropertyDescriptor */                               \
         nullptr, /* setGenericAttributes  */                                  \
         nullptr, /* deleteGeneric */                                          \
         nullptr, nullptr, /* watch/unwatch */                                 \
@@ -1065,9 +1087,12 @@ public:
     static void
     TraceWrappedNativesInAllScopes(JSTracer* trc, XPCJSRuntime* rt);
 
-    void TraceInside(JSTracer *trc) {
+    void TraceSelf(JSTracer *trc) {
         MOZ_ASSERT(mGlobalJSObject);
         mGlobalJSObject.trace(trc, "XPCWrappedNativeScope::mGlobalJSObject");
+    }
+
+    void TraceInside(JSTracer *trc) {
         if (mContentXBLScope)
             mContentXBLScope.trace(trc, "XPCWrappedNativeScope::mXBLScope");
         for (size_t i = 0; i < mAddonScopes.Length(); i++)
@@ -1847,7 +1872,7 @@ public:
                 mScriptableInfo->Mark();
         }
 
-        GetScope()->TraceInside(trc);
+        GetScope()->TraceSelf(trc);
     }
 
     void TraceJS(JSTracer *trc) {
@@ -2162,7 +2187,7 @@ public:
         if (HasProto())
             GetProto()->TraceSelf(trc);
         else
-            GetScope()->TraceInside(trc);
+            GetScope()->TraceSelf(trc);
         if (mFlatJSObject && JS_IsGlobalObject(mFlatJSObject))
         {
             xpc::TraceXPCGlobal(trc, mFlatJSObject);
@@ -2296,7 +2321,7 @@ class nsXPCWrappedJSClass : public nsIXPCWrappedJSClass
 {
     // all the interface method declarations...
     NS_DECL_ISUPPORTS
-    NS_IMETHOD DebugDump(int16_t depth);
+    NS_IMETHOD DebugDump(int16_t depth) MOZ_OVERRIDE;
 public:
 
     static already_AddRefed<nsXPCWrappedJSClass>
@@ -2402,7 +2427,7 @@ public:
 
     NS_IMETHOD CallMethod(uint16_t methodIndex,
                           const XPTMethodDescriptor *info,
-                          nsXPTCMiniVariant* params);
+                          nsXPTCMiniVariant* params) MOZ_OVERRIDE;
 
     /*
     * This is rarely called directly. Instead one usually calls

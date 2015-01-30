@@ -320,7 +320,7 @@ GlobalObject::valueIsEval(Value val)
 GlobalObject::initStandardClasses(JSContext *cx, Handle<GlobalObject*> global)
 {
     /* Define a top-level property 'undefined' with the undefined value. */
-    if (!JSObject::defineProperty(cx, global, cx->names().undefined, UndefinedHandleValue,
+    if (!DefineProperty(cx, global, cx->names().undefined, UndefinedHandleValue,
                                   nullptr, nullptr, JSPROP_PERMANENT | JSPROP_READONLY))
     {
         return false;
@@ -367,8 +367,8 @@ GlobalObject::initSelfHostingBuiltins(JSContext *cx, Handle<GlobalObject*> globa
                                       const JSFunctionSpec *builtins)
 {
     // Define a top-level property 'undefined' with the undefined value.
-    if (!JSObject::defineProperty(cx, global, cx->names().undefined, UndefinedHandleValue,
-                                  nullptr, nullptr, JSPROP_PERMANENT | JSPROP_READONLY))
+    if (!DefineProperty(cx, global, cx->names().undefined, UndefinedHandleValue,
+                        nullptr, nullptr, JSPROP_PERMANENT | JSPROP_READONLY))
     {
         return false;
     }
@@ -376,11 +376,7 @@ GlobalObject::initSelfHostingBuiltins(JSContext *cx, Handle<GlobalObject*> globa
     // Define a top-level property 'std_iterator' with the name of the method
     // used by for-of loops to create an iterator.
     RootedValue std_iterator(cx);
-#ifdef JS_HAS_SYMBOLS
     std_iterator.setSymbol(cx->wellKnownSymbols().get(JS::SymbolCode::iterator));
-#else
-    std_iterator.setString(cx->names().std_iterator);
-#endif
     if (!JS_DefineProperty(cx, global, "std_iterator", std_iterator,
                            JSPROP_PERMANENT | JSPROP_READONLY))
     {
@@ -476,10 +472,10 @@ js::LinkConstructorAndPrototype(JSContext *cx, JSObject *ctor_, JSObject *proto_
     RootedValue protoVal(cx, ObjectValue(*proto));
     RootedValue ctorVal(cx, ObjectValue(*ctor));
 
-    return JSObject::defineProperty(cx, ctor, cx->names().prototype, protoVal,
-                                    nullptr, nullptr, JSPROP_PERMANENT | JSPROP_READONLY) &&
-           JSObject::defineProperty(cx, proto, cx->names().constructor, ctorVal,
-                                    nullptr, nullptr, 0);
+    return DefineProperty(cx, ctor, cx->names().prototype, protoVal,
+                          nullptr, nullptr, JSPROP_PERMANENT | JSPROP_READONLY) &&
+           DefineProperty(cx, proto, cx->names().constructor, ctorVal,
+                          nullptr, nullptr, 0);
 }
 
 bool

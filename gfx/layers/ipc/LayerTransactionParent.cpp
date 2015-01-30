@@ -190,16 +190,17 @@ LayerTransactionParent::GetCompositorBackendType() const
 }
 
 bool
-LayerTransactionParent::RecvUpdateNoSwap(const InfallibleTArray<Edit>& cset,
+LayerTransactionParent::RecvUpdateNoSwap(InfallibleTArray<Edit>&& cset,
                                          const uint64_t& aTransactionId,
                                          const TargetConfig& targetConfig,
+                                         PluginsArray&& aPlugins,
                                          const bool& isFirstPaint,
                                          const bool& scheduleComposite,
                                          const uint32_t& paintSequenceNumber,
                                          const bool& isRepeatTransaction,
                                          const mozilla::TimeStamp& aTransactionStart)
 {
-  return RecvUpdate(cset, aTransactionId, targetConfig, isFirstPaint,
+  return RecvUpdate(Move(cset), aTransactionId, targetConfig, Move(aPlugins), isFirstPaint,
       scheduleComposite, paintSequenceNumber, isRepeatTransaction,
       aTransactionStart, nullptr);
 }
@@ -220,9 +221,10 @@ private:
 };
 
 bool
-LayerTransactionParent::RecvUpdate(const InfallibleTArray<Edit>& cset,
+LayerTransactionParent::RecvUpdate(InfallibleTArray<Edit>&& cset,
                                    const uint64_t& aTransactionId,
                                    const TargetConfig& targetConfig,
+                                   PluginsArray&& aPlugins,
                                    const bool& isFirstPaint,
                                    const bool& scheduleComposite,
                                    const uint32_t& paintSequenceNumber,
@@ -581,7 +583,8 @@ LayerTransactionParent::RecvUpdate(const InfallibleTArray<Edit>& cset,
   }
 
   mShadowLayersManager->ShadowLayersUpdated(this, aTransactionId, targetConfig,
-      isFirstPaint, scheduleComposite, paintSequenceNumber, isRepeatTransaction);
+                                            aPlugins, isFirstPaint, scheduleComposite,
+                                            paintSequenceNumber, isRepeatTransaction);
 
   {
     AutoResolveRefLayers resolve(mShadowLayersManager->GetCompositionManager(this));
@@ -878,7 +881,7 @@ LayerTransactionParent::DeallocPTextureParent(PTextureParent* actor)
 }
 
 bool
-LayerTransactionParent::RecvChildAsyncMessages(const InfallibleTArray<AsyncChildMessageData>& aMessages)
+LayerTransactionParent::RecvChildAsyncMessages(InfallibleTArray<AsyncChildMessageData>&& aMessages)
 {
   AutoLayerTransactionParentAsyncMessageSender autoAsyncMessageSender(this);
 

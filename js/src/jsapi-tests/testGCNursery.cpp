@@ -60,6 +60,12 @@ static const js::Class NurseryClass = {
 
 BEGIN_TEST(testGCNurseryFinalizer)
 {
+#ifdef JS_GC_ZEAL
+    // Running extra GCs during this test will make us get incorrect
+    // finalization counts.
+    AutoLeaveZeal nozeal(cx);
+#endif /* JS_GC_ZEAL */
+
     JS::RootedObject obj(cx);
 
     obj = JS_NewObject(cx, Jsvalify(&TenuredClass), JS::NullPtr(), JS::NullPtr());
@@ -70,9 +76,9 @@ BEGIN_TEST(testGCNurseryFinalizer)
     CHECK(ranFinalizer == 0);
 
     // Null finalization list with non-empty nursery.
-    obj = JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr());
-    obj = JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr());
-    obj = JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr());
+    obj = JS_NewPlainObject(cx);
+    obj = JS_NewPlainObject(cx);
+    obj = JS_NewPlainObject(cx);
     CHECK(js::gc::IsInsideNursery(obj));
     obj = nullptr;
     rt->gc.minorGC(JS::gcreason::EVICT_NURSERY);
@@ -97,15 +103,15 @@ BEGIN_TEST(testGCNurseryFinalizer)
     ranFinalizer = 0;
 
     // Interleaved finalizable things in nursery.
-    obj = JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr());
+    obj = JS_NewPlainObject(cx);
     obj = JS_NewObject(cx, Jsvalify(&NurseryClass), JS::NullPtr(), JS::NullPtr());
-    obj = JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr());
+    obj = JS_NewPlainObject(cx);
     obj = JS_NewObject(cx, Jsvalify(&NurseryClass), JS::NullPtr(), JS::NullPtr());
-    obj = JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr());
+    obj = JS_NewPlainObject(cx);
     obj = JS_NewObject(cx, Jsvalify(&NurseryClass), JS::NullPtr(), JS::NullPtr());
-    obj = JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr());
+    obj = JS_NewPlainObject(cx);
     obj = JS_NewObject(cx, Jsvalify(&NurseryClass), JS::NullPtr(), JS::NullPtr());
-    obj = JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr());
+    obj = JS_NewPlainObject(cx);
     CHECK(js::gc::IsInsideNursery(obj));
     obj = nullptr;
     rt->gc.minorGC(JS::gcreason::EVICT_NURSERY);

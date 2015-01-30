@@ -693,6 +693,7 @@ protected:
      */
     void MaybeInitTiming();
 
+public:
     // Event type dispatched by RestorePresentation
     class RestorePresentationEvent : public nsRunnable {
     public:
@@ -702,6 +703,7 @@ protected:
     private:
         nsRefPtr<nsDocShell> mDocShell;
     };
+protected:
 
     bool JustStartedNetworkLoad();
 
@@ -947,6 +949,9 @@ protected:
     // find it by walking up the docshell hierarchy.)
     uint32_t mOwnOrContainingAppId;
 
+    nsString mPaymentRequestId;
+
+    nsString GetInheritedPaymentRequestId();
 private:
     nsCString         mForcedCharset;
     nsCString         mParentCharset;

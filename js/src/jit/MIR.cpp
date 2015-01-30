@@ -144,10 +144,16 @@ EvaluateConstantOperands(TempAllocator &alloc, MBinaryInstruction *ins, bool *pt
         ret.setNumber(lhs.toNumber() * rhs.toNumber());
         break;
       case MDefinition::Op_Div:
-        ret.setNumber(NumberDiv(lhs.toNumber(), rhs.toNumber()));
+        if (ins->toDiv()->isUnsigned())
+            ret.setInt32(rhs.isInt32(0) ? 0 : uint32_t(lhs.toInt32()) / uint32_t(rhs.toInt32()));
+        else
+            ret.setNumber(NumberDiv(lhs.toNumber(), rhs.toNumber()));
         break;
       case MDefinition::Op_Mod:
-        ret.setNumber(NumberMod(lhs.toNumber(), rhs.toNumber()));
+        if (ins->toMod()->isUnsigned())
+            ret.setInt32(rhs.isInt32(0) ? 0 : uint32_t(lhs.toInt32()) % uint32_t(rhs.toInt32()));
+        else
+            ret.setNumber(NumberMod(lhs.toNumber(), rhs.toNumber()));
         break;
       default:
         MOZ_CRASH("NYI");
@@ -621,12 +627,18 @@ MConstant::New(TempAllocator &alloc, const Value &v, types::CompilerConstraintLi
 }
 
 MConstant *
-MConstant::NewAsmJS(TempAllocator &alloc, const Value &v, MIRType type)
+MConstant::NewTypedValue(TempAllocator &alloc, const Value &v, MIRType type, types::CompilerConstraintList *constraints)
 {
     MOZ_ASSERT(!IsSimdType(type));
-    MConstant *constant = new(alloc) MConstant(v, nullptr);
+    MConstant *constant = new(alloc) MConstant(v, constraints);
     constant->setResultType(type);
     return constant;
+}
+
+MConstant *
+MConstant::NewAsmJS(TempAllocator &alloc, const Value &v, MIRType type)
+{
+    return NewTypedValue(alloc, v, type);
 }
 
 MConstant *
@@ -964,6 +976,101 @@ MMathFunction::printOpcode(FILE *fp) const
     fprintf(fp, " %s", FunctionName(function()));
 }
 
+MDefinition *
+MMathFunction::foldsTo(TempAllocator &alloc)
+{
+    MDefinition *input = getOperand(0);
+    if (!input->isConstant())
+        return this;
+
+    Value val = input->toConstant()->value();
+    if (!val.isNumber())
+        return this;
+
+    double in = val.toNumber();
+    double out;
+    switch (function_) {
+      case Log:
+        out = js::math_log_uncached(in);
+        break;
+      case Sin:
+        out = js::math_sin_uncached(in);
+        break;
+      case Cos:
+        out = js::math_cos_uncached(in);
+        break;
+      case Exp:
+        out = js::math_exp_uncached(in);
+        break;
+      case Tan:
+        out = js::math_tan_uncached(in);
+        break;
+      case ACos:
+        out = js::math_acos_uncached(in);
+        break;
+      case ASin:
+        out = js::math_asin_uncached(in);
+        break;
+      case ATan:
+        out = js::math_atan_uncached(in);
+        break;
+      case Log10:
+        out = js::math_log10_uncached(in);
+        break;
+      case Log2:
+        out = js::math_log2_uncached(in);
+        break;
+      case Log1P:
+        out = js::math_log1p_uncached(in);
+        break;
+      case ExpM1:
+        out = js::math_expm1_uncached(in);
+        break;
+      case CosH:
+        out = js::math_cosh_uncached(in);
+        break;
+      case SinH:
+        out = js::math_sinh_uncached(in);
+        break;
+      case TanH:
+        out = js::math_tanh_uncached(in);
+        break;
+      case ACosH:
+        out = js::math_acosh_uncached(in);
+        break;
+      case ASinH:
+        out = js::math_asinh_uncached(in);
+        break;
+      case ATanH:
+        out = js::math_atanh_uncached(in);
+        break;
+      case Sign:
+        out = js::math_sign_uncached(in);
+        break;
+      case Trunc:
+        out = js::math_trunc_uncached(in);
+        break;
+      case Cbrt:
+        out = js::math_cbrt_uncached(in);
+        break;
+      case Floor:
+        out = js::math_floor_impl(in);
+        break;
+      case Ceil:
+        out = js::math_ceil_impl(in);
+        break;
+      case Round:
+        out = js::math_round_impl(in);
+        break;
+      default:
+        return this;
+    }
+
+    if (input->type() == MIRType_Float32)
+        return MConstant::NewTypedValue(alloc, DoubleValue(out), MIRType_Float32);
+    return MConstant::New(alloc, DoubleValue(out));
+}
+
 MParameter *
 MParameter::New(TempAllocator &alloc, int32_t index, types::TemporaryTypeSet *types)
 {
@@ -1138,6 +1245,18 @@ MStringLength::foldsTo(TempAllocator &alloc)
         JSAtom *atom = &value.toString()->asAtom();
         return MConstant::New(alloc, Int32Value(atom->length()));
     }
+
+    return this;
+}
+
+MDefinition *
+MConcat::foldsTo(TempAllocator &alloc)
+{
+    if (lhs()->isConstantValue() && lhs()->constantValue().toString()->empty())
+        return rhs();
+
+    if (rhs()->isConstantValue() && rhs()->constantValue().toString()->empty())
+        return lhs();
 
     return this;
 }
@@ -1921,6 +2040,37 @@ MMinMax::foldsTo(TempAllocator &alloc)
     if (!lhs()->isConstant() && !rhs()->isConstant())
         return this;
 
+    // Directly apply math utility to compare the rhs() and lhs() when
+    // they are both constants.
+    if (lhs()->isConstant() && rhs()->isConstant()) {
+        Value lval = lhs()->toConstant()->value();
+        Value rval = rhs()->toConstant()->value();
+        if (!lval.isNumber() || !rval.isNumber())
+            return this;
+
+        double lnum = lval.toNumber();
+        double rnum = rval.toNumber();
+        double result;
+        if (isMax())
+            result = js::math_max_impl(lnum, rnum);
+        else
+            result = js::math_min_impl(lnum, rnum);
+
+        // The folded MConstant should maintain the same MIRType with
+        // the original MMinMax.
+        if (type() == MIRType_Int32) {
+            int32_t cast;
+            if (mozilla::NumberEqualsInt32(result, &cast))
+                return MConstant::New(alloc, Int32Value(cast));
+        } else {
+            MOZ_ASSERT(IsFloatingPointType(type()));
+            MConstant *constant = MConstant::New(alloc, DoubleValue(result));
+            if (type() == MIRType_Float32)
+                constant->setResultType(MIRType_Float32);
+            return constant;
+        }
+    }
+
     MDefinition *operand = lhs()->isConstantValue() ? rhs() : lhs();
     const js::Value &val = lhs()->isConstantValue() ? lhs()->constantValue() : rhs()->constantValue();
 
@@ -2080,6 +2230,18 @@ MMathFunction::trySpecializeFloat32(TempAllocator &alloc)
     setPolicyType(MIRType_Float32);
 }
 
+MHypot *MHypot::New(TempAllocator &alloc, const MDefinitionVector & vector)
+{
+    uint32_t length = vector.length();
+    MHypot * hypot = new(alloc) MHypot;
+    if (!hypot->init(alloc, length))
+        return nullptr;
+
+    for (uint32_t i = 0; i < length; ++i)
+        hypot->initOperand(i, vector[i]);
+    return hypot;
+}
+
 bool
 MAdd::fallible() const
 {
@@ -2194,14 +2356,6 @@ MBinaryArithInstruction::infer(TempAllocator &alloc, BaselineInspector *inspecto
     MOZ_ASSERT(this->type() == MIRType_Value);
 
     specialization_ = MIRType_None;
-
-    // Don't specialize if one operand could be an object or symbol. If we
-    // specialize as int32 or double based on baseline feedback, we could DCE
-    // this instruction and fail to invoke any valueOf methods.
-    if (getOperand(0)->mightBeType(MIRType_Object) || getOperand(1)->mightBeType(MIRType_Object))
-        return;
-    if (getOperand(0)->mightBeType(MIRType_Symbol) || getOperand(1)->mightBeType(MIRType_Symbol))
-        return;
 
     // Anything complex - strings, symbols, and objects - are not specialized
     // unless baseline type hints suggest it might be profitable
@@ -2890,6 +3044,32 @@ MDefinition *
 MToInt32::foldsTo(TempAllocator &alloc)
 {
     MDefinition *input = getOperand(0);
+
+    // Fold this operation if the input operand is constant.
+    if (input->isConstant()) {
+        Value val = input->toConstant()->value();
+        DebugOnly<MacroAssembler::IntConversionInputKind> convert = conversion();
+        switch (input->type()) {
+          case MIRType_Null:
+            MOZ_ASSERT(convert == MacroAssembler::IntConversion_Any);
+            return MConstant::New(alloc, Int32Value(0));
+          case MIRType_Boolean:
+            MOZ_ASSERT(convert == MacroAssembler::IntConversion_Any ||
+                       convert == MacroAssembler::IntConversion_NumbersOrBoolsOnly);
+            return MConstant::New(alloc, Int32Value(val.toBoolean()));
+          case MIRType_Int32:
+            return MConstant::New(alloc, Int32Value(val.toInt32()));
+          case MIRType_Float32:
+          case MIRType_Double:
+            int32_t ival;
+            // Only the value within the range of Int32 can be substitued as constant.
+            if (mozilla::NumberEqualsInt32(val.toNumber(), &ival))
+                return MConstant::New(alloc, Int32Value(ival));
+          default:
+            break;
+        }
+    }
+
     if (input->type() == MIRType_Int32)
         return input;
     return this;

@@ -55,6 +55,7 @@ WEBIDL_FILES = [
     'BiquadFilterNode.webidl',
     'Blob.webidl',
     'BoxObject.webidl',
+    'BroadcastChannel.webidl',
     'BrowserElement.webidl',
     'BrowserElementDictionaries.webidl',
     'CallsList.webidl',
@@ -129,6 +130,7 @@ WEBIDL_FILES = [
     'EventListener.webidl',
     'EventSource.webidl',
     'EventTarget.webidl',
+    'ExtendableEvent.webidl',
     'Fetch.webidl',
     'File.webidl',
     'FileList.webidl',
@@ -244,7 +246,6 @@ WEBIDL_FILES = [
     'InputMethod.webidl',
     'InspectorUtils.webidl',
     'InstallEvent.webidl',
-    'InstallPhaseEvent.webidl',
     'InterAppConnection.webidl',
     'InterAppConnectionRequest.webidl',
     'InterAppMessagePort.webidl',
@@ -807,4 +808,9 @@ if CONFIG['MOZ_EME']:
         'MediaKeys.webidl',
         'MediaKeySession.webidl',
         'MediaKeySystemAccess.webidl',
+    ]
+
+if CONFIG['MOZ_PAY']:
+    WEBIDL_FILES += [
+        'MozPaymentProvider.webidl'
     ]

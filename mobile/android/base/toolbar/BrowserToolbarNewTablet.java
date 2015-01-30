@@ -173,6 +173,12 @@ class BrowserToolbarNewTablet extends BrowserToolbarTabletBase {
     }
 
     @Override
+    public void setToolBarButtonsAlpha(float alpha) {
+        // Do nothing;
+    }
+
+
+    @Override
     public void startEditing(final String url, final PropertyAnimator animator) {
         // We already know the forward button state - no need to store it here.
         backButtonWasEnabledOnStartEditing = backButton.isEnabled();
@@ -191,10 +197,14 @@ class BrowserToolbarNewTablet extends BrowserToolbarTabletBase {
 
     @Override
     public String cancelEdit() {
-        stopEditingNewTablet();
+        // This can get called when we're not editing but we only want
+        // to make these changes when leaving editing mode.
+        if (isEditing()) {
+            stopEditingNewTablet();
 
-        setButtonEnabled(backButton, backButtonWasEnabledOnStartEditing);
-        updateForwardButtonState(forwardButtonState);
+            setButtonEnabled(backButton, backButtonWasEnabledOnStartEditing);
+            updateForwardButtonState(forwardButtonState);
+        }
 
         return super.cancelEdit();
     }

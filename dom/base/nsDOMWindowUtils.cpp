@@ -13,7 +13,6 @@
 #include "nsError.h"
 #include "nsIDOMEvent.h"
 #include "nsQueryContentEventResult.h"
-#include "CompositionStringSynthesizer.h"
 #include "nsGlobalWindow.h"
 #include "nsIDocument.h"
 #include "nsFocusManager.h"
@@ -40,6 +39,7 @@
 #include "mozilla/MiscEvents.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/TextEvents.h"
+#include "mozilla/TextEventDispatcher.h"
 #include "mozilla/TouchEvents.h"
 
 #include "nsViewManager.h"
@@ -1220,8 +1220,7 @@ nsDOMWindowUtils::SendKeyEvent(const nsAString& aType,
 
   uint32_t locationFlag = (aAdditionalFlags &
     (KEY_FLAG_LOCATION_STANDARD | KEY_FLAG_LOCATION_LEFT |
-     KEY_FLAG_LOCATION_RIGHT | KEY_FLAG_LOCATION_NUMPAD |
-     KEY_FLAG_LOCATION_MOBILE | KEY_FLAG_LOCATION_JOYSTICK));
+     KEY_FLAG_LOCATION_RIGHT | KEY_FLAG_LOCATION_NUMPAD));
   switch (locationFlag) {
     case KEY_FLAG_LOCATION_STANDARD:
       event.location = nsIDOMKeyEvent::DOM_KEY_LOCATION_STANDARD;
@@ -1234,12 +1233,6 @@ nsDOMWindowUtils::SendKeyEvent(const nsAString& aType,
       break;
     case KEY_FLAG_LOCATION_NUMPAD:
       event.location = nsIDOMKeyEvent::DOM_KEY_LOCATION_NUMPAD;
-      break;
-    case KEY_FLAG_LOCATION_MOBILE:
-      event.location = nsIDOMKeyEvent::DOM_KEY_LOCATION_MOBILE;
-      break;
-    case KEY_FLAG_LOCATION_JOYSTICK:
-      event.location = nsIDOMKeyEvent::DOM_KEY_LOCATION_JOYSTICK;
       break;
     default:
       if (locationFlag != 0) {
@@ -2134,80 +2127,6 @@ InitEvent(WidgetGUIEvent& aEvent, LayoutDeviceIntPoint* aPt = nullptr)
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::SendCompositionEvent(const nsAString& aType,
-                                       const nsAString& aData,
-                                       const nsAString& aLocale)
-{
-  MOZ_RELEASE_ASSERT(nsContentUtils::IsCallerChrome());
-
-  // get the widget to send the event to
-  nsCOMPtr<nsIWidget> widget = GetWidget();
-  if (!widget) {
-    return NS_ERROR_FAILURE;
-  }
-
-  uint32_t msg;
-  if (aType.EqualsLiteral("compositionstart")) {
-    msg = NS_COMPOSITION_START;
-  } else if (aType.EqualsLiteral("compositionend")) {
-    // Now we don't support manually dispatching composition end with this
-    // API.  A compositionend is dispatched when this is called with
-    // compositioncommitasis or compositioncommit automatically.  For backward
-    // compatibility, this shouldn't return error in this case.
-    NS_WARNING("Don't call nsIDOMWindowUtils.sendCompositionEvent() for "
-               "compositionend.  Instead, use it with compositioncommitasis or "
-               "compositioncommit.  Then, compositionend will be automatically "
-               "dispatched.");
-    return NS_OK;
-  } else if (aType.EqualsLiteral("compositionupdate")) {
-    // Now we don't support manually dispatching composition update with this
-    // API.  A compositionupdate is dispatched when a DOM text event modifies
-    // composition string automatically.  For backward compatibility, this
-    // shouldn't return error in this case.
-    NS_WARNING("Don't call nsIDOMWindowUtils.sendCompositionEvent() for "
-               "compositionupdate since it's ignored and the event is "
-               "fired automatically when it's necessary");
-    return NS_OK;
-  } else if (aType.EqualsLiteral("compositioncommitasis")) {
-    msg = NS_COMPOSITION_COMMIT_AS_IS;
-  } else if (aType.EqualsLiteral("compositioncommit")) {
-    msg = NS_COMPOSITION_COMMIT;
-  } else {
-    return NS_ERROR_FAILURE;
-  }
-
-  WidgetCompositionEvent compositionEvent(true, msg, widget);
-  InitEvent(compositionEvent);
-  if (msg != NS_COMPOSITION_START && msg != NS_COMPOSITION_COMMIT_AS_IS) {
-    compositionEvent.mData = aData;
-  }
-
-  compositionEvent.mFlags.mIsSynthesizedForTests = true;
-
-  nsEventStatus status;
-  nsresult rv = widget->DispatchEvent(&compositionEvent, status);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDOMWindowUtils::CreateCompositionStringSynthesizer(
-                    nsICompositionStringSynthesizer** aResult)
-{
-  NS_ENSURE_ARG_POINTER(aResult);
-  *aResult = nullptr;
-
-  MOZ_RELEASE_ASSERT(nsContentUtils::IsCallerChrome());
-
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
-  NS_ENSURE_TRUE(window, NS_ERROR_NOT_AVAILABLE);
-
-  NS_ADDREF(*aResult = new CompositionStringSynthesizer(window));
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsDOMWindowUtils::SendQueryContentEvent(uint32_t aType,
                                         uint32_t aOffset, uint32_t aLength,
                                         int32_t aX, int32_t aY,
@@ -2774,18 +2693,10 @@ nsDOMWindowUtils::ComputeAnimationDistance(nsIDOMElement* aElement,
   nsCOMPtr<nsIContent> content = do_QueryInterface(aElement, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Convert direction-dependent properties as appropriate, e.g.,
-  // border-left to border-left-value.
   nsCSSProperty property =
     nsCSSProps::LookupProperty(aProperty, nsCSSProps::eIgnoreEnabledState);
   if (property != eCSSProperty_UNKNOWN && nsCSSProps::IsShorthand(property)) {
-    nsCSSProperty subprop0 = *nsCSSProps::SubpropertyEntryFor(property);
-    if (nsCSSProps::PropHasFlags(subprop0, CSS_PROPERTY_REPORT_OTHER_NAME) &&
-        nsCSSProps::OtherNameFor(subprop0) == property) {
-      property = subprop0;
-    } else {
-      property = eCSSProperty_UNKNOWN;
-    }
+    property = eCSSProperty_UNKNOWN;
   }
 
   NS_ABORT_IF_FALSE(property == eCSSProperty_UNKNOWN ||
@@ -3159,8 +3070,7 @@ nsDOMWindowUtils::GetFileReferences(const nsAString& aDatabaseName, int64_t aId,
 
   nsCString origin;
   nsresult rv =
-    quota::QuotaManager::GetInfoFromWindow(window, nullptr, &origin, nullptr,
-                                           nullptr);
+    quota::QuotaManager::GetInfoFromWindow(window, nullptr, &origin, nullptr);
   NS_ENSURE_SUCCESS(rv, rv);
 
   IDBOpenDBOptions options;

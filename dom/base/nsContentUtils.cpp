@@ -344,7 +344,7 @@ public:
   {
     // We don't measure the |EventListenerManager| objects pointed to by the
     // entries because those references are non-owning.
-    int64_t amount = sEventListenerManagersHash.ops
+    int64_t amount = sEventListenerManagersHash.IsInitialized()
                    ? PL_DHashTableSizeOfExcludingThis(
                        &sEventListenerManagersHash, nullptr, MallocSizeOf)
                    : 0;
@@ -397,10 +397,10 @@ EventListenerManagerHashClearEntry(PLDHashTable *table, PLDHashEntryHdr *entry)
   lm->~EventListenerManagerMapEntry();
 }
 
-class SameOriginChecker MOZ_FINAL : public nsIChannelEventSink,
-                                    public nsIInterfaceRequestor
+class SameOriginCheckerImpl MOZ_FINAL : public nsIChannelEventSink,
+                                        public nsIInterfaceRequestor
 {
-  ~SameOriginChecker() {}
+  ~SameOriginCheckerImpl() {}
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSICHANNELEVENTSINK
@@ -476,21 +476,18 @@ nsContentUtils::Init()
   if (!InitializeEventTable())
     return NS_ERROR_FAILURE;
 
-  if (!sEventListenerManagersHash.ops) {
+  if (!sEventListenerManagersHash.IsInitialized()) {
     static const PLDHashTableOps hash_table_ops =
     {
-      PL_DHashAllocTable,
-      PL_DHashFreeTable,
       PL_DHashVoidPtrKeyStub,
       PL_DHashMatchEntryStub,
       PL_DHashMoveEntryStub,
       EventListenerManagerHashClearEntry,
-      PL_DHashFinalizeStub,
       EventListenerManagerHashInitEntry
     };
 
     PL_DHashTableInit(&sEventListenerManagersHash, &hash_table_ops,
-                      nullptr, sizeof(EventListenerManagerMapEntry));
+                      sizeof(EventListenerManagerMapEntry));
 
     RegisterStrongMemoryReporter(new DOMEventListenerManagersHashReporter());
   }
@@ -1548,32 +1545,6 @@ nsContentUtils::IsHTMLBlock(nsIAtom* aLocalName)
 
 /* static */
 bool
-nsContentUtils::IsHTMLVoid(nsIAtom* aLocalName)
-{
-  return
-    (aLocalName == nsGkAtoms::area) ||
-    (aLocalName == nsGkAtoms::base) ||
-    (aLocalName == nsGkAtoms::basefont) ||
-    (aLocalName == nsGkAtoms::bgsound) ||
-    (aLocalName == nsGkAtoms::br) ||
-    (aLocalName == nsGkAtoms::col) ||
-    (aLocalName == nsGkAtoms::command) ||
-    (aLocalName == nsGkAtoms::embed) ||
-    (aLocalName == nsGkAtoms::frame) ||
-    (aLocalName == nsGkAtoms::hr) ||
-    (aLocalName == nsGkAtoms::img) ||
-    (aLocalName == nsGkAtoms::input) ||
-    (aLocalName == nsGkAtoms::keygen) ||
-    (aLocalName == nsGkAtoms::link) ||
-    (aLocalName == nsGkAtoms::meta) ||
-    (aLocalName == nsGkAtoms::param) ||
-    (aLocalName == nsGkAtoms::source) ||
-    (aLocalName == nsGkAtoms::track) ||
-    (aLocalName == nsGkAtoms::wbr);
-}
-
-/* static */
-bool
 nsContentUtils::ParseIntMarginValue(const nsAString& aString, nsIntMargin& result)
 {
   nsAutoString marginStr(aString);
@@ -1790,7 +1761,7 @@ nsContentUtils::Shutdown()
   delete sUserDefinedEvents;
   sUserDefinedEvents = nullptr;
 
-  if (sEventListenerManagersHash.ops) {
+  if (sEventListenerManagersHash.IsInitialized()) {
     NS_ASSERTION(sEventListenerManagersHash.EntryCount() == 0,
                  "Event listener manager hash not empty at shutdown!");
 
@@ -1805,7 +1776,6 @@ nsContentUtils::Shutdown()
 
     if (sEventListenerManagersHash.EntryCount() == 0) {
       PL_DHashTableFinish(&sEventListenerManagersHash);
-      sEventListenerManagersHash.ops = nullptr;
     }
   }
 
@@ -3650,7 +3620,8 @@ nsresult
 nsContentUtils::DispatchEvent(nsIDocument* aDoc, nsISupports* aTarget,
                               const nsAString& aEventName,
                               bool aCanBubble, bool aCancelable,
-                              bool aTrusted, bool *aDefaultAction)
+                              bool aTrusted, bool *aDefaultAction,
+                              bool aOnlyChromeDispatch)
 {
   nsCOMPtr<nsIDOMEvent> event;
   nsCOMPtr<EventTarget> target;
@@ -3658,6 +3629,7 @@ nsContentUtils::DispatchEvent(nsIDocument* aDoc, nsISupports* aTarget,
                                   aCancelable, aTrusted, getter_AddRefs(event),
                                   getter_AddRefs(target));
   NS_ENSURE_SUCCESS(rv, rv);
+  event->GetInternalNSEvent()->mFlags.mOnlyChromeDispatch = aOnlyChromeDispatch;
 
   bool dummy;
   return target->DispatchEvent(event, aDefaultAction ? aDefaultAction : &dummy);
@@ -3692,6 +3664,17 @@ nsContentUtils::DispatchChromeEvent(nsIDocument *aDoc,
     *aDefaultAction = (status != nsEventStatus_eConsumeNoDefault);
   }
   return rv;
+}
+
+nsresult
+nsContentUtils::DispatchEventOnlyToChrome(nsIDocument* aDoc,
+                                          nsISupports* aTarget,
+                                          const nsAString& aEventName,
+                                          bool aCanBubble, bool aCancelable,
+                                          bool* aDefaultAction)
+{
+  return DispatchEvent(aDoc, aTarget, aEventName, aCanBubble, aCancelable,
+                       true, aDefaultAction, true);
 }
 
 /* static */
@@ -3940,7 +3923,7 @@ ListenerEnumerator(PLDHashTable* aTable, PLDHashEntryHdr* aEntry,
 void
 nsContentUtils::UnmarkGrayJSListenersInCCGenerationDocuments(uint32_t aGeneration)
 {
-  if (sEventListenerManagersHash.ops) {
+  if (sEventListenerManagersHash.IsInitialized()) {
     PL_DHashTableEnumerate(&sEventListenerManagersHash, ListenerEnumerator,
                            &aGeneration);
   }
@@ -3951,15 +3934,15 @@ void
 nsContentUtils::TraverseListenerManager(nsINode *aNode,
                                         nsCycleCollectionTraversalCallback &cb)
 {
-  if (!sEventListenerManagersHash.ops) {
+  if (!sEventListenerManagersHash.IsInitialized()) {
     // We're already shut down, just return.
     return;
   }
 
   EventListenerManagerMapEntry *entry =
     static_cast<EventListenerManagerMapEntry *>
-               (PL_DHashTableLookup(&sEventListenerManagersHash, aNode));
-  if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
+               (PL_DHashTableSearch(&sEventListenerManagersHash, aNode));
+  if (entry) {
     CycleCollectionNoteChild(cb, entry->mListenerManager.get(),
                              "[via hash] mListenerManager");
   }
@@ -3968,7 +3951,7 @@ nsContentUtils::TraverseListenerManager(nsINode *aNode,
 EventListenerManager*
 nsContentUtils::GetListenerManagerForNode(nsINode *aNode)
 {
-  if (!sEventListenerManagersHash.ops) {
+  if (!sEventListenerManagersHash.IsInitialized()) {
     // We're already shut down, don't bother creating an event listener
     // manager.
 
@@ -3998,8 +3981,8 @@ nsContentUtils::GetExistingListenerManagerForNode(const nsINode *aNode)
   if (!aNode->HasFlag(NODE_HAS_LISTENERMANAGER)) {
     return nullptr;
   }
-  
-  if (!sEventListenerManagersHash.ops) {
+
+  if (!sEventListenerManagersHash.IsInitialized()) {
     // We're already shut down, don't bother creating an event listener
     // manager.
 
@@ -4008,8 +3991,8 @@ nsContentUtils::GetExistingListenerManagerForNode(const nsINode *aNode)
 
   EventListenerManagerMapEntry *entry =
     static_cast<EventListenerManagerMapEntry *>
-               (PL_DHashTableLookup(&sEventListenerManagersHash, aNode));
-  if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
+               (PL_DHashTableSearch(&sEventListenerManagersHash, aNode));
+  if (entry) {
     return entry->mListenerManager;
   }
 
@@ -4020,11 +4003,11 @@ nsContentUtils::GetExistingListenerManagerForNode(const nsINode *aNode)
 void
 nsContentUtils::RemoveListenerManager(nsINode *aNode)
 {
-  if (sEventListenerManagersHash.ops) {
+  if (sEventListenerManagersHash.IsInitialized()) {
     EventListenerManagerMapEntry *entry =
       static_cast<EventListenerManagerMapEntry *>
-                 (PL_DHashTableLookup(&sEventListenerManagersHash, aNode));
-    if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
+                 (PL_DHashTableSearch(&sEventListenerManagersHash, aNode));
+    if (entry) {
       nsRefPtr<EventListenerManager> listenerManager;
       listenerManager.swap(entry->mListenerManager);
       // Remove the entry and *then* do operations that could cause further
@@ -5665,11 +5648,11 @@ nsContentUtils::StringContainsASCIIUpper(const nsAString& aStr)
 
 /* static */
 nsIInterfaceRequestor*
-nsContentUtils::GetSameOriginChecker()
+nsContentUtils::SameOriginChecker()
 {
   if (!sSameOriginChecker) {
-    sSameOriginChecker = new SameOriginChecker();
-    NS_IF_ADDREF(sSameOriginChecker);
+    sSameOriginChecker = new SameOriginCheckerImpl();
+    NS_ADDREF(sSameOriginChecker);
   }
   return sSameOriginChecker;
 }
@@ -5700,15 +5683,15 @@ nsContentUtils::CheckSameOrigin(nsIChannel *aOldChannel, nsIChannel *aNewChannel
   return rv;
 }
 
-NS_IMPL_ISUPPORTS(SameOriginChecker,
+NS_IMPL_ISUPPORTS(SameOriginCheckerImpl,
                   nsIChannelEventSink,
                   nsIInterfaceRequestor)
 
 NS_IMETHODIMP
-SameOriginChecker::AsyncOnChannelRedirect(nsIChannel *aOldChannel,
-                                          nsIChannel *aNewChannel,
-                                          uint32_t aFlags,
-                                          nsIAsyncVerifyRedirectCallback *cb)
+SameOriginCheckerImpl::AsyncOnChannelRedirect(nsIChannel* aOldChannel,
+                                              nsIChannel* aNewChannel,
+                                              uint32_t aFlags,
+                                              nsIAsyncVerifyRedirectCallback* cb)
 {
   NS_PRECONDITION(aNewChannel, "Redirecting to null channel?");
 
@@ -5721,7 +5704,7 @@ SameOriginChecker::AsyncOnChannelRedirect(nsIChannel *aOldChannel,
 }
 
 NS_IMETHODIMP
-SameOriginChecker::GetInterface(const nsIID & aIID, void **aResult)
+SameOriginCheckerImpl::GetInterface(const nsIID& aIID, void** aResult)
 {
   return QueryInterface(aIID, aResult);
 }
@@ -6259,15 +6242,31 @@ void nsContentUtils::RemoveNewlines(nsString &aString)
 void
 nsContentUtils::PlatformToDOMLineBreaks(nsString &aString)
 {
+  if (!PlatformToDOMLineBreaks(aString, mozilla::fallible_t())) {
+    aString.AllocFailed(aString.Length());
+  }
+}
+
+bool
+nsContentUtils::PlatformToDOMLineBreaks(nsString& aString, const fallible_t& aFallible)
+{
   if (aString.FindChar(char16_t('\r')) != -1) {
     // Windows linebreaks: Map CRLF to LF:
-    aString.ReplaceSubstring(MOZ_UTF16("\r\n"),
-                             MOZ_UTF16("\n"));
+    if (!aString.ReplaceSubstring(MOZ_UTF16("\r\n"),
+                                  MOZ_UTF16("\n"),
+                                  aFallible)) {
+      return false;
+    }
 
     // Mac linebreaks: Map any remaining CR to LF:
-    aString.ReplaceSubstring(MOZ_UTF16("\r"),
-                             MOZ_UTF16("\n"));
+    if (!aString.ReplaceSubstring(MOZ_UTF16("\r"),
+                                  MOZ_UTF16("\n"),
+                                  aFallible)) {
+      return false;
+    }
   }
+
+  return true;
 }
 
 void

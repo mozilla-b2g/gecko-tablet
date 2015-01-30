@@ -24,6 +24,7 @@
 #include "mozilla/a11y/DocAccessibleChild.h"
 #endif
 #include "mozilla/Preferences.h"
+#include "mozilla/ProcessHangMonitorIPC.h"
 #include "mozilla/docshell/OfflineCacheUpdateChild.h"
 #include "mozilla/dom/ContentBridgeChild.h"
 #include "mozilla/dom/ContentBridgeParent.h"
@@ -40,6 +41,7 @@
 #include "mozilla/ipc/FileDescriptorUtils.h"
 #include "mozilla/ipc/GeckoChildProcessHost.h"
 #include "mozilla/ipc/TestShellChild.h"
+#include "mozilla/jsipc/CrossProcessObjectWrappers.h"
 #include "mozilla/layers/CompositorChild.h"
 #include "mozilla/layers/ImageBridgeChild.h"
 #include "mozilla/layers/PCompositorChild.h"
@@ -162,7 +164,6 @@
 #include "nsIPrincipal.h"
 #include "nsDeviceStorage.h"
 #include "AudioChannelService.h"
-#include "JavaScriptChild.h"
 #include "mozilla/dom/DataStoreService.h"
 #include "mozilla/dom/telephony/PTelephonyChild.h"
 #include "mozilla/dom/time/DateCacheCleaner.h"
@@ -999,6 +1000,13 @@ ContentChild::AllocPBackgroundChild(Transport* aTransport,
     return BackgroundChild::Alloc(aTransport, aOtherProcess);
 }
 
+PProcessHangMonitorChild*
+ContentChild::AllocPProcessHangMonitorChild(Transport* aTransport,
+                                            ProcessId aOtherProcess)
+{
+    return CreateHangMonitorChild(aTransport, aOtherProcess);
+}
+
 #if defined(XP_WIN) && defined(MOZ_CONTENT_SANDBOX)
 static void
 SetUpSandboxEnvironment()
@@ -1395,14 +1403,13 @@ ContentChild::DeallocPTestShellChild(PTestShellChild* shell)
     return true;
 }
 
-jsipc::JavaScriptShared*
+jsipc::CPOWManager*
 ContentChild::GetCPOWManager()
 {
     if (ManagedPJavaScriptChild().Length()) {
-        return static_cast<JavaScriptChild*>(ManagedPJavaScriptChild()[0]);
+        return CPOWManagerFor(ManagedPJavaScriptChild()[0]);
     }
-    JavaScriptChild* actor = static_cast<JavaScriptChild*>(SendPJavaScriptConstructor());
-    return actor;
+    return CPOWManagerFor(SendPJavaScriptConstructor());
 }
 
 bool
@@ -1712,9 +1719,9 @@ ContentChild::DeallocPSpeechSynthesisChild(PSpeechSynthesisChild* aActor)
 }
 
 bool
-ContentChild::RecvRegisterChrome(const InfallibleTArray<ChromePackage>& packages,
-                                 const InfallibleTArray<ResourceMapping>& resources,
-                                 const InfallibleTArray<OverrideMapping>& overrides,
+ContentChild::RecvRegisterChrome(InfallibleTArray<ChromePackage>&& packages,
+                                 InfallibleTArray<ResourceMapping>&& resources,
+                                 InfallibleTArray<OverrideMapping>&& overrides,
                                  const nsCString& locale,
                                  const bool& reset)
 {
@@ -1897,13 +1904,13 @@ ContentChild::RecvNotifyVisited(const URIParams& aURI)
 bool
 ContentChild::RecvAsyncMessage(const nsString& aMsg,
                                const ClonedMessageData& aData,
-                               const InfallibleTArray<CpowEntry>& aCpows,
+                               InfallibleTArray<CpowEntry>&& aCpows,
                                const IPC::Principal& aPrincipal)
 {
     nsRefPtr<nsFrameMessageManager> cpm = nsFrameMessageManager::sChildProcessManager;
     if (cpm) {
         StructuredCloneData cloneData = ipc::UnpackClonedMessageDataForChild(aData);
-        CpowIdHolder cpows(this, aCpows);
+        CrossProcessCpowHolder cpows(this, aCpows);
         cpm->ReceiveMessage(static_cast<nsIContentFrameMessageManager*>(cpm.get()),
                             aMsg, false, &cloneData, &cpows, aPrincipal, nullptr);
     }
@@ -1934,7 +1941,7 @@ ContentChild::RecvGeolocationError(const uint16_t& errorCode)
 }
 
 bool
-ContentChild::RecvUpdateDictionaryList(const InfallibleTArray<nsString>& aDictionaries)
+ContentChild::RecvUpdateDictionaryList(InfallibleTArray<nsString>&& aDictionaries)
 {
     mAvailableDictionaries = aDictionaries;
     mozInlineSpellChecker::UpdateCanEnableInlineSpellChecking();
@@ -2126,6 +2133,18 @@ ContentChild::RecvLastPrivateDocShellDestroyed()
 {
     nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
     obs->NotifyObservers(nullptr, "last-pb-context-exited", nullptr);
+    return true;
+}
+
+bool
+ContentChild::RecvVolumes(nsTArray<VolumeInfo>&& aVolumes)
+{
+#ifdef MOZ_WIDGET_GONK
+    nsRefPtr<nsVolumeService> vs = nsVolumeService::GetSingleton();
+    if (vs) {
+        vs->RecvVolumesFromParent(aVolumes);
+    }
+#endif
     return true;
 }
 
@@ -2435,8 +2454,8 @@ ContentChild::RecvOnAppThemeChanged()
 bool
 ContentChild::RecvStartProfiler(const uint32_t& aEntries,
                                 const double& aInterval,
-                                const nsTArray<nsCString>& aFeatures,
-                                const nsTArray<nsCString>& aThreadNameFilters)
+                                nsTArray<nsCString>&& aFeatures,
+                                nsTArray<nsCString>&& aThreadNameFilters)
 {
     nsTArray<const char*> featureArray;
     for (size_t i = 0; i < aFeatures.Length(); ++i) {
@@ -2477,7 +2496,9 @@ ContentChild::RecvGetProfile(nsCString* aProfile)
 bool
 ContentChild::RecvLoadPluginResult(const uint32_t& aPluginId, const bool& aResult)
 {
-    plugins::PluginModuleContentParent::OnLoadPluginResult(aPluginId, aResult);
+    bool finalResult = aResult && SendConnectPluginBridge(aPluginId);
+    plugins::PluginModuleContentParent::OnLoadPluginResult(aPluginId,
+                                                           finalResult);
     return true;
 }
 
@@ -2513,6 +2534,41 @@ ContentChild::GetBrowserOrId(TabChild* aTabChild)
     else {
         return PBrowserOrId(aTabChild->GetTabId());
     }
+}
+
+// This code goes here rather than nsGlobalWindow.cpp because nsGlobalWindow.cpp
+// can't include ContentChild.h since it includes windows.h.
+
+static uint64_t gNextWindowID = 0;
+
+// We use only 53 bits for the window ID so that it can be converted to and from
+// a JS value without loss of precision. The upper bits of the window ID hold the
+// process ID. The lower bits identify the window.
+static const uint64_t kWindowIDTotalBits = 53;
+static const uint64_t kWindowIDProcessBits = 22;
+static const uint64_t kWindowIDWindowBits = kWindowIDTotalBits - kWindowIDProcessBits;
+
+// Try to return a window ID that is unique across processes and that will never
+// be recycled.
+uint64_t
+NextWindowID()
+{
+  uint64_t processID = 0;
+  if (XRE_GetProcessType() == GeckoProcessType_Content) {
+    ContentChild* cc = ContentChild::GetSingleton();
+    processID = cc->GetID();
+  }
+
+  MOZ_RELEASE_ASSERT(processID < (uint64_t(1) << kWindowIDProcessBits));
+  uint64_t processBits = processID & ((uint64_t(1) << kWindowIDProcessBits) - 1);
+
+  // Make sure no actual window ends up with mWindowID == 0.
+  uint64_t windowID = ++gNextWindowID;
+
+  MOZ_RELEASE_ASSERT(windowID < (uint64_t(1) << kWindowIDWindowBits));
+  uint64_t windowBits = windowID & ((uint64_t(1) << kWindowIDWindowBits) - 1);
+
+  return (processBits << kWindowIDWindowBits) | windowBits;
 }
 
 } // namespace dom

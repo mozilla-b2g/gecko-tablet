@@ -1,4 +1,3 @@
-#filter substitution
 // -*- Mode: js2; tab-width: 2; indent-tabs-mode: nil; js2-basic-offset: 2; js2-skip-preprocessor-directives: t; -*-
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -10,6 +9,7 @@ let Ci = Components.interfaces;
 let Cu = Components.utils;
 let Cr = Components.results;
 
+Cu.import("resource://gre/modules/AppConstants.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/AddonManager.jsm");
@@ -17,9 +17,9 @@ Cu.import('resource://gre/modules/Payment.jsm');
 Cu.import("resource://gre/modules/NotificationDB.jsm");
 Cu.import("resource://gre/modules/SpatialNavigation.jsm");
 
-#ifdef ACCESSIBILITY
-Cu.import("resource://gre/modules/accessibility/AccessFu.jsm");
-#endif
+if (AppConstants.ACCESSIBILITY) {
+  Cu.import("resource://gre/modules/accessibility/AccessFu.jsm");
+}
 
 XPCOMUtils.defineLazyModuleGetter(this, "DownloadNotifications",
                                   "resource://gre/modules/DownloadNotifications.jsm");
@@ -57,10 +57,10 @@ XPCOMUtils.defineLazyModuleGetter(this, "LoginManagerParent",
 XPCOMUtils.defineLazyModuleGetter(this, "Task", "resource://gre/modules/Task.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
 
-#ifdef MOZ_SAFE_BROWSING
-XPCOMUtils.defineLazyModuleGetter(this, "SafeBrowsing",
-                                  "resource://gre/modules/SafeBrowsing.jsm");
-#endif
+if (AppConstants.MOZ_SAFE_BROWSING) {
+  XPCOMUtils.defineLazyModuleGetter(this, "SafeBrowsing",
+                                    "resource://gre/modules/SafeBrowsing.jsm");
+}
 
 XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
                                   "resource://gre/modules/PrivateBrowsingUtils.jsm");
@@ -87,10 +87,10 @@ XPCOMUtils.defineLazyServiceGetter(this, "uuidgen",
 XPCOMUtils.defineLazyModuleGetter(this, "SimpleServiceDiscovery",
                                   "resource://gre/modules/SimpleServiceDiscovery.jsm");
 
-#ifdef NIGHTLY_BUILD
-XPCOMUtils.defineLazyModuleGetter(this, "ShumwayUtils",
-                                  "resource://shumway/ShumwayUtils.jsm");
-#endif
+if (AppConstants.NIGHTLY_BUILD) {
+  XPCOMUtils.defineLazyModuleGetter(this, "ShumwayUtils",
+                                    "resource://shumway/ShumwayUtils.jsm");
+}
 
 XPCOMUtils.defineLazyModuleGetter(this, "WebappManager",
                                   "resource://gre/modules/WebappManager.jsm");
@@ -113,8 +113,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "Notifications",
 XPCOMUtils.defineLazyModuleGetter(this, "GMPInstallManager",
                                   "resource://gre/modules/GMPInstallManager.jsm");
 
-// Lazily-loaded browser scripts:
-[
+let lazilyLoadedBrowserScripts = [
   ["SelectHelper", "chrome://browser/content/SelectHelper.js"],
   ["InputWidgetHelper", "chrome://browser/content/InputWidgetHelper.js"],
   ["MasterPassword", "chrome://browser/content/MasterPassword.js"],
@@ -123,10 +122,13 @@ XPCOMUtils.defineLazyModuleGetter(this, "GMPInstallManager",
   ["Linkifier", "chrome://browser/content/Linkify.js"],
   ["ZoomHelper", "chrome://browser/content/ZoomHelper.js"],
   ["CastingApps", "chrome://browser/content/CastingApps.js"],
-#ifdef NIGHTLY_BUILD
-  ["WebcompatReporter", "chrome://browser/content/WebcompatReporter.js"],
-#endif
-].forEach(function (aScript) {
+];
+if (AppConstants.NIGHTLY_BUILD) {
+  lazilyLoadedBrowserScripts.push(
+    ["WebcompatReporter", "chrome://browser/content/WebcompatReporter.js"]);
+}
+
+lazilyLoadedBrowserScripts.forEach(function (aScript) {
   let [name, script] = aScript;
   XPCOMUtils.defineLazyGetter(window, name, function() {
     let sandbox = {};
@@ -135,10 +137,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "GMPInstallManager",
   });
 });
 
-[
-#ifdef MOZ_WEBRTC
-  ["WebrtcUI", ["getUserMedia:request", "recording-device-events"], "chrome://browser/content/WebrtcUI.js"],
-#endif
+let lazilyLoadedObserverScripts = [
   ["MemoryObserver", ["memory-pressure", "Memory:Dump"], "chrome://browser/content/MemoryObserver.js"],
   ["ConsoleAPI", ["console-api-log-event"], "chrome://browser/content/ConsoleAPI.js"],
   ["FindHelper", ["FindInPage:Opened", "FindInPage:Closed", "Tab:Selected"], "chrome://browser/content/FindHelper.js"],
@@ -148,7 +147,13 @@ XPCOMUtils.defineLazyModuleGetter(this, "GMPInstallManager",
   ["SelectionHandler", ["TextSelection:Get"], "chrome://browser/content/SelectionHandler.js"],
   ["EmbedRT", ["GeckoView:ImportScript"], "chrome://browser/content/EmbedRT.js"],
   ["Reader", ["Reader:Added", "Reader:Removed", "Gesture:DoubleTap"], "chrome://browser/content/Reader.js"],
-].forEach(function (aScript) {
+];
+if (AppConstants.MOZ_WEBRTC) {
+  lazilyLoadedObserverScripts.push(
+    ["WebrtcUI", ["getUserMedia:request", "recording-device-events"], "chrome://browser/content/WebrtcUI.js"])
+}
+
+lazilyLoadedObserverScripts.forEach(function (aScript) {
   let [name, notifications, script] = aScript;
   XPCOMUtils.defineLazyGetter(window, name, function() {
     let sandbox = {};
@@ -177,7 +182,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "GMPInstallManager",
     "Reader:ShowToast",
     "Reader:ToolbarVisibility",
     "Reader:SystemUIVisibility",
-    "Reader:UpdateIsArticle",
+    "Reader:UpdateReaderButton",
   ], "chrome://browser/content/Reader.js"],
 ].forEach(aScript => {
   let [name, messages, script] = aScript;
@@ -227,10 +232,10 @@ XPCOMUtils.defineLazyServiceGetter(this, "DOMUtils",
 XPCOMUtils.defineLazyServiceGetter(window, "URIFixup",
   "@mozilla.org/docshell/urifixup;1", "nsIURIFixup");
 
-#ifdef MOZ_WEBRTC
-XPCOMUtils.defineLazyServiceGetter(this, "MediaManagerService",
-  "@mozilla.org/mediaManagerService;1", "nsIMediaManagerService");
-#endif
+if (AppConstants.MOZ_WEBRTC) {
+  XPCOMUtils.defineLazyServiceGetter(this, "MediaManagerService",
+    "@mozilla.org/mediaManagerService;1", "nsIMediaManagerService");
+}
 
 const kStateActive = 0x00000001; // :active pseudoclass for elements
 
@@ -287,20 +292,14 @@ function convertFromTwipsToPx(aSize) {
   return aSize/240 * 16.0;
 }
 
-#ifdef MOZ_CRASHREPORTER
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-XPCOMUtils.defineLazyServiceGetter(this, "CrashReporter",
-  "@mozilla.org/xre/app-info;1", "nsICrashReporter");
-#endif
-
 XPCOMUtils.defineLazyGetter(this, "ContentAreaUtils", function() {
   let ContentAreaUtils = {};
   Services.scriptloader.loadSubScript("chrome://global/content/contentAreaUtils.js", ContentAreaUtils);
   return ContentAreaUtils;
 });
 
-XPCOMUtils.defineLazyModuleGetter(this, "Rect",
-                                  "resource://gre/modules/Geometry.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "Rect", "resource://gre/modules/Geometry.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "Point", "resource://gre/modules/Geometry.jsm");
 
 function resolveGeckoURI(aURI) {
   if (!aURI)
@@ -382,17 +381,18 @@ var BrowserApp = {
           }, 1000 * 60);
         }, Ci.nsIThread.DISPATCH_NORMAL);
 
-#ifdef MOZ_SAFE_BROWSING
-        Services.tm.mainThread.dispatch(function() {
-          // Bug 778855 - Perf regression if we do this here. To be addressed in bug 779008.
-          SafeBrowsing.init();
-        }, Ci.nsIThread.DISPATCH_NORMAL);
-#endif
-#ifdef NIGHTLY_BUILD
-        WebcompatReporter.init();
-        Telemetry.addData("TRACKING_PROTECTION_ENABLED",
-          Services.prefs.getBoolPref("privacy.trackingprotection.enabled"));
-#endif
+        if (AppConstants.MOZ_SAFE_BROWSING) {
+          Services.tm.mainThread.dispatch(function() {
+            // Bug 778855 - Perf regression if we do this here. To be addressed in bug 779008.
+            SafeBrowsing.init();
+          }, Ci.nsIThread.DISPATCH_NORMAL);
+        }
+
+        if (AppConstants.NIGHTLY_BUILD) {
+          WebcompatReporter.init();
+          Telemetry.addData("TRACKING_PROTECTION_ENABLED",
+            Services.prefs.getBoolPref("privacy.trackingprotection.enabled"));
+        }
       } catch(ex) { console.log(ex); }
     }, false);
 
@@ -483,12 +483,12 @@ var BrowserApp = {
     Distribution.init();
     Tabs.init();
     SearchEngines.init();
-#ifdef ACCESSIBILITY
-    AccessFu.attach(window);
-#endif
-#ifdef NIGHTLY_BUILD
-    ShumwayUtils.init();
-#endif
+    if (AppConstants.ACCESSIBILITY) {
+      AccessFu.attach(window);
+    }
+    if (AppConstants.NIGHTLY_BUILD) {
+      ShumwayUtils.init();
+    }
 
     let url = null;
     if ("arguments" in window) {
@@ -548,7 +548,7 @@ var BrowserApp = {
       savedMilestone = Services.prefs.getCharPref("browser.startup.homepage_override.mstone");
     } catch (e) {
     }
-#expand    let ourMilestone = "__MOZ_APP_VERSION__";
+    let ourMilestone = AppConstants.MOZ_APP_VERSION;
     this._startupStatus = "";
     if (ourMilestone != savedMilestone) {
       Services.prefs.setCharPref("browser.startup.homepage_override.mstone", ourMilestone);
@@ -1335,14 +1335,15 @@ var BrowserApp = {
           pref.value = MasterPassword.enabled;
           prefs.push(pref);
           continue;
-#ifdef MOZ_CRASHREPORTER
         // Crash reporter submit pref must be fetched from nsICrashReporter service.
         case "datareporting.crashreporter.submitEnabled":
-          pref.type = "bool";
-          pref.value = CrashReporter.submitReports;
-          prefs.push(pref);
+          let crashReporterBuilt = "nsICrashReporter" in Ci && Services.appinfo instanceof Ci.nsICrashReporter;
+          if (crashReporterBuilt) {
+            pref.type = "bool";
+            pref.value = Services.appinfo.submitReports;
+            prefs.push(pref);
+          }
           continue;
-#endif
       }
 
       try {
@@ -1421,12 +1422,14 @@ var BrowserApp = {
         Services.prefs.setBoolPref(SearchEngines.PREF_SUGGEST_PROMPTED, true);
         break;
 
-#ifdef MOZ_CRASHREPORTER
       // Crash reporter preference is in a service; set and return.
       case "datareporting.crashreporter.submitEnabled":
-        CrashReporter.submitReports = json.value;
+        let crashReporterBuilt = "nsICrashReporter" in Ci && Services.appinfo instanceof Ci.nsICrashReporter;
+        if (crashReporterBuilt) {
+          Services.appinfo.submitReports = json.value;
+        }
         return;
-#endif
+
       // When sending to Java, we normalized special preferences that use
       // integers and strings to represent booleans. Here, we convert them back
       // to their actual types so we can store them.
@@ -2597,14 +2600,20 @@ var NativeWindow = {
       if (SelectionHandler.canSelect(this._target)) {
         // If textSelection WORD is successful,
         // consume / preventDefault the context menu event.
-        if (SelectionHandler.startSelection(this._target,
-          { mode: SelectionHandler.SELECT_AT_POINT, x: event.clientX, y: event.clientY })) {
+        let selectionResult = SelectionHandler.startSelection(this._target,
+          { mode: SelectionHandler.SELECT_AT_POINT,
+            x: event.clientX,
+            y: event.clientY
+          }
+        );
+        if (selectionResult === SelectionHandler.ERROR_NONE) {
           event.preventDefault();
           return;
         }
+
         // If textSelection caret-attachment is successful,
         // consume / preventDefault the context menu event.
-        if (SelectionHandler.attachCaret(this._target)) {
+        if (SelectionHandler.attachCaret(this._target) === SelectionHandler.ERROR_NONE) {
           event.preventDefault();
           return;
         }
@@ -3050,8 +3059,7 @@ var DesktopUserAgent = {
   },
 
   onRequest: function(channel, defaultUA) {
-#ifdef NIGHTLY_BUILD
-    if (this.TCO_DOMAIN == channel.URI.host) {
+    if (AppConstants.NIGHTLY_BUILD && this.TCO_DOMAIN == channel.URI.host) {
       // Force the referrer
       channel.referrer = channel.URI;
 
@@ -3059,7 +3067,6 @@ var DesktopUserAgent = {
       // "Gecko/x.y Firefox/x.y" part
       return defaultUA.replace(this.TCO_REPLACE, "");
     }
-#endif
 
     let channelWindow = this._getWindowForRequest(channel);
     let tab = BrowserApp.getTabForWindow(channelWindow);
@@ -3271,7 +3278,6 @@ function Tab(aURL, aParams) {
   this.clickToPlayPluginsActivated = false;
   this.desktopMode = false;
   this.originalURI = null;
-  this.isArticle = false;
   this.hasTouchListener = false;
   this.browserWidth = 0;
   this.browserHeight = 0;
@@ -4445,8 +4451,7 @@ Tab.prototype = {
       ExternalApps.updatePageActionUri(fixedURI);
     }
 
-    let webNav = BrowserApp.selectedTab.window
-        .QueryInterface(Ci.nsIInterfaceRequestor)
+    let webNav = contentWin.QueryInterface(Ci.nsIInterfaceRequestor)
         .getInterface(Ci.nsIWebNavigation);
 
     let message = {
@@ -4864,10 +4869,6 @@ Tab.prototype = {
     }
   },
 
-  get readerActive() {
-    return this.browser.currentURI.spec.startsWith("about:reader");
-  },
-
   // nsIBrowserTab
   get window() {
     if (!this.browser)
@@ -4980,6 +4981,11 @@ var BrowserEventHandler = {
       return;
     }
 
+    this._inCluster = aEvent.hitCluster;
+    if (this._inCluster) {
+      return;  // No highlight for a cluster of links
+    }
+
     let uri = this._getLinkURI(target);
     if (uri) {
       try {
@@ -5085,22 +5091,28 @@ var BrowserEventHandler = {
           // If the element was previously focused, show the caret attached to it.
           let element = this._highlightElement;
           if (element && element == BrowserApp.getFocusedInput(BrowserApp.selectedBrowser)) {
-            SelectionHandler.attachCaret(element);
+            let result = SelectionHandler.attachCaret(element);
+            if (result !== SelectionHandler.ERROR_NONE) {
+              dump("Unexpected failure during caret attach: " + result);
+            }
           }
         } catch(e) {
           Cu.reportError(e);
         }
 
-        // The _highlightElement was chosen after fluffing the touch events
-        // that led to this SingleTap, so by fluffing the mouse events, they
-        // should find the same target since we fluff them again below.
         let data = JSON.parse(aData);
         let {x, y} = data;
 
-        this._sendMouseEvent("mousemove", x, y);
-        this._sendMouseEvent("mousedown", x, y);
-        this._sendMouseEvent("mouseup",   x, y);
-
+        if (this._inCluster) {
+          this._clusterClicked(x, y);
+        } else {
+          // The _highlightElement was chosen after fluffing the touch events
+          // that led to this SingleTap, so by fluffing the mouse events, they
+          // should find the same target since we fluff them again below.
+          this._sendMouseEvent("mousemove", x, y);
+          this._sendMouseEvent("mousedown", x, y);
+          this._sendMouseEvent("mouseup",   x, y);
+        }
         // scrollToFocusedInput does its own checks to find out if an element should be zoomed into
         BrowserApp.scrollToFocusedInput(BrowserApp.selectedBrowser);
 
@@ -5121,6 +5133,16 @@ var BrowserEventHandler = {
         dump('BrowserEventHandler.handleUserEvent: unexpected topic "' + aTopic + '"');
         break;
     }
+  },
+
+  _clusterClicked: function(aX, aY) {
+    Messaging.sendRequest({
+      type: "Gesture:clusteredLinksClicked",
+      clickPosition: {
+        x: aX,
+        y: aY
+      }
+    });
   },
 
   onDoubleTap: function(aData) {
@@ -5854,12 +5876,9 @@ let HealthReportStatusListener = {
   PREF_ACCEPT_LANG: "intl.accept_languages",
   PREF_BLOCKLIST_ENABLED: "extensions.blocklist.enabled",
 
-  PREF_TELEMETRY_ENABLED:
-#ifdef MOZ_TELEMETRY_REPORTING
-    "toolkit.telemetry.enabled",
-#else
+  PREF_TELEMETRY_ENABLED: AppConstants.MOZ_TELEMETRY_REPORTING ?
+    "toolkit.telemetry.enabled" :
     null,
-#endif
 
   init: function () {
     try {
@@ -6531,20 +6550,12 @@ var IndexedDB = {
   _permissionsPrompt: "indexedDB-permissions-prompt",
   _permissionsResponse: "indexedDB-permissions-response",
 
-  _quotaPrompt: "indexedDB-quota-prompt",
-  _quotaResponse: "indexedDB-quota-response",
-  _quotaCancel: "indexedDB-quota-cancel",
-
   init: function IndexedDB_init() {
     Services.obs.addObserver(this, this._permissionsPrompt, false);
-    Services.obs.addObserver(this, this._quotaPrompt, false);
-    Services.obs.addObserver(this, this._quotaCancel, false);
   },
 
   observe: function IndexedDB_observe(subject, topic, data) {
-    if (topic != this._permissionsPrompt &&
-        topic != this._quotaPrompt &&
-        topic != this._quotaCancel) {
+    if (topic != this._permissionsPrompt) {
       throw new Error("Unexpected topic!");
     }
 
@@ -6564,11 +6575,6 @@ var IndexedDB = {
     if (topic == this._permissionsPrompt) {
       message = strings.formatStringFromName("offlineApps.ask", [host], 1);
       responseTopic = this._permissionsResponse;
-    } else if (topic == this._quotaPrompt) {
-      message = strings.formatStringFromName("indexedDBQuota.wantsTo", [ host, data ], 2);
-      responseTopic = this._quotaResponse;
-    } else if (topic == this._quotaCancel) {
-      responseTopic = this._quotaResponse;
     }
 
     const firstTimeoutDuration = 300000; // 5 minutes
@@ -6593,13 +6599,6 @@ var IndexedDB = {
 
       // And tell the page that the popup timed out.
       observer.observe(null, responseTopic, Ci.nsIPermissionManager.UNKNOWN_ACTION);
-    }
-
-    if (topic == this._quotaCancel) {
-      NativeWindow.doorhanger.hide(notificationID, tab.id);
-      timeoutNotification();
-      observer.observe(null, responseTopic, Ci.nsIPermissionManager.UNKNOWN_ACTION);
-      return;
     }
 
     let buttons = [{
@@ -7320,7 +7319,8 @@ var RemoteDebugger = {
    * Prompt the user to accept or decline the incoming connection.
    * This is passed to DebuggerService.init as a callback.
    *
-   * @return true if the connection should be permitted, false otherwise
+   * @return An AuthenticationResult value.
+   *         A promise that will be resolved to the above is also allowed.
    */
   _showConnectionPrompt: function rd_showConnectionPrompt() {
     let title = Strings.browser.GetStringFromName("remoteIncomingPromptTitle");
@@ -7352,12 +7352,11 @@ var RemoteDebugger = {
       thread.processNextEvent(true);
 
     if (result === 0)
-      return true;
+      return DebuggerServer.AuthenticationResult.ALLOW;
     if (result === 2) {
-      Services.prefs.setBoolPref("devtools.debugger.remote-enabled", false);
-      this._stop();
+      return DebuggerServer.AuthenticationResult.DISABLE_ALL;
     }
-    return false;
+    return DebuggerServer.AuthenticationResult.DENY;
   },
 
   _restart: function rd_restart() {
@@ -7376,9 +7375,12 @@ var RemoteDebugger = {
       let pathOrPort = this._getPath();
       if (!pathOrPort)
         pathOrPort = this._getPort();
+      let AuthenticatorType = DebuggerServer.Authenticators.get("PROMPT");
+      let authenticator = new AuthenticatorType.Server();
+      authenticator.allowConnection = this._showConnectionPrompt.bind(this);
       let listener = DebuggerServer.createListener();
       listener.portOrPath = pathOrPort;
-      listener.allowConnection = this._showConnectionPrompt.bind(this);
+      listener.authenticator = authenticator;
       listener.open();
       dump("Remote debugger listening at path " + pathOrPort);
     } catch(e) {
@@ -7549,6 +7551,7 @@ var Distribution = {
   _file: null,
 
   init: function dc_init() {
+    Services.obs.addObserver(this, "Distribution:Changed", false);
     Services.obs.addObserver(this, "Distribution:Set", false);
     Services.obs.addObserver(this, "prefservice:after-app-defaults", false);
     Services.obs.addObserver(this, "Campaign:Set", false);
@@ -7562,6 +7565,15 @@ var Distribution = {
 
   observe: function dc_observe(aSubject, aTopic, aData) {
     switch (aTopic) {
+      case "Distribution:Changed":
+        // Re-init the search service.
+        try {
+          Services.search._asyncReInit();
+        } catch (e) {
+          console.log("Unable to reinit search service.");
+        }
+        // Fall through.
+
       case "Distribution:Set":
         // Reload the default prefs so we can observe "prefservice:after-app-defaults"
         Services.prefs.QueryInterface(Ci.nsIObserver).observe(null, "reload-default-prefs", null);

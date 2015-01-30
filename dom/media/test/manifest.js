@@ -14,7 +14,7 @@ var gSmallTests = [
   { name:"seek.webm", type:"video/webm", width:320, height:240, duration:3.966 },
   { name:"vp9.webm", type:"video/webm", width:320, height:240, duration:4 },
   { name:"detodos.opus", type:"audio/ogg; codecs=opus", duration:2.9135 },
-  { name:"gizmo.mp4", type:"video/mp4", duration:5.56 },
+  { name:"gizmo.mp4", type:"video/mp4", width:560, height:320, duration:5.56 },
   { name:"bogus.duh", type:"bogus/duh" }
 ];
 
@@ -653,6 +653,18 @@ var gEMETests = [
     duration:0.47
   },
   {
+    name:"short-cenc.mp4",
+    type:"video/mp4; codecs=\"avc1.64000d,mp4a.40.2\"",
+    keys: {
+      // "keyid" : "key"
+      "7e571d017e571d017e571d017e571d01" : "7e5711117e5711117e5711117e571111",
+      "7e571d027e571d027e571d027e571d02" : "7e5722227e5722227e5722227e572222",
+    },
+    sessionType:"temporary",
+    duration:0.47,
+    crossOrigin:true,
+  },
+  {
     name:"gizmo-frag-cencinit.mp4",
     fragments: [ "gizmo-frag-cencinit.mp4", "gizmo-frag-cenc1.m4s", "gizmo-frag-cenc2.m4s" ],
     type:"video/mp4; codecs=\"avc1.64000d,mp4a.40.2\"",
@@ -663,6 +675,19 @@ var gEMETests = [
     },
     sessionType:"temporary",
     duration:2.00,
+  },
+  {
+    name:"gizmo-frag-cencinit.mp4",
+    fragments: [ "gizmo-frag-cencinit.mp4", "gizmo-frag-cenc1.m4s", "gizmo-frag-cenc2.m4s" ],
+    type:"video/mp4; codecs=\"avc1.64000d,mp4a.40.2\"",
+    keys: {
+      // "keyid" : "key"
+      "7e571d037e571d037e571d037e571d03" : "7e5733337e5733337e5733337e573333",
+      "7e571d047e571d047e571d047e571d04" : "7e5744447e5744447e5744447e574444",
+    },
+    sessionType:"temporary",
+    duration:2.00,
+    crossOrigin:true,
   },
 ];
 
@@ -677,6 +702,8 @@ function checkMetadata(msg, e, test) {
     ok(Math.abs(e.duration - test.duration) < 0.1,
        msg + " duration (" + e.duration + ") should be around " + test.duration);
   }
+  is(!!test.keys, SpecialPowers.do_lookupGetter(e, "isEncrypted").apply(e),
+     msg + " isEncrypted should be true if we have decryption keys");
 }
 
 // Returns the first test from candidates array which we can play with the

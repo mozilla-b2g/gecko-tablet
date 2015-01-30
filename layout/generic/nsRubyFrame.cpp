@@ -13,6 +13,7 @@
 #include "RubyUtils.h"
 #include "nsRubyBaseContainerFrame.h"
 #include "nsRubyTextContainerFrame.h"
+#include "mozilla/Maybe.h"
 
 using namespace mozilla;
 
@@ -23,7 +24,7 @@ using namespace mozilla;
 
 NS_QUERYFRAME_HEAD(nsRubyFrame)
   NS_QUERYFRAME_ENTRY(nsRubyFrame)
-NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
+NS_QUERYFRAME_TAIL_INHERITING(nsRubyFrameSuper)
 
 NS_IMPL_FRAMEARENA_HELPERS(nsRubyFrame)
 
@@ -48,8 +49,10 @@ nsRubyFrame::GetType() const
 /* virtual */ bool
 nsRubyFrame::IsFrameOfType(uint32_t aFlags) const
 {
-  return nsContainerFrame::IsFrameOfType(aFlags &
-    ~(nsIFrame::eLineParticipant));
+  if (aFlags & eBidiInlineContainer) {
+    return false;
+  }
+  return nsRubyFrameSuper::IsFrameOfType(aFlags);
 }
 
 #ifdef DEBUG_FRAME_DUMP
@@ -121,32 +124,6 @@ nsRubyFrame::AddInlinePrefISize(nsRenderingContext *aRenderingContext,
   aData->currentLine += sum;
 }
 
-/* virtual */ LogicalSize
-nsRubyFrame::ComputeSize(nsRenderingContext *aRenderingContext,
-                           WritingMode aWM,
-                           const LogicalSize& aCBSize,
-                           nscoord aAvailableISize,
-                           const LogicalSize& aMargin,
-                           const LogicalSize& aBorder,
-                           const LogicalSize& aPadding,
-                           ComputeSizeFlags aFlags)
-{
-  // Ruby frame is inline, hence don't compute size before reflow.
-  return LogicalSize(aWM, NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE);
-}
-
-/* virtual */ nscoord
-nsRubyFrame::GetLogicalBaseline(WritingMode aWritingMode) const
-{
-  return mBaseline;
-}
-
-/* virtual */ bool
-nsRubyFrame::CanContinueTextRun() const
-{
-  return true;
-}
-
 /* virtual */ void
 nsRubyFrame::Reflow(nsPresContext* aPresContext,
                     nsHTMLReflowMetrics& aDesiredSize,
@@ -173,12 +150,18 @@ nsRubyFrame::Reflow(nsPresContext* aPresContext,
   WritingMode frameWM = aReflowState.GetWritingMode();
   WritingMode lineWM = aReflowState.mLineLayout->GetWritingMode();
   LogicalMargin borderPadding = aReflowState.ComputedLogicalBorderPadding();
-  nscoord startEdge = borderPadding.IStart(frameWM);
-  nscoord endEdge = aReflowState.AvailableISize() - borderPadding.IEnd(frameWM);
+  nscoord startEdge = 0;
+  const bool boxDecorationBreakClone =
+    StyleBorder()->mBoxDecorationBreak == NS_STYLE_BOX_DECORATION_BREAK_CLONE;
+  if (boxDecorationBreakClone || !GetPrevContinuation()) {
+    startEdge = borderPadding.IStart(frameWM);
+  }
   NS_ASSERTION(aReflowState.AvailableISize() != NS_UNCONSTRAINEDSIZE,
                "should no longer use available widths");
+  nscoord availableISize = aReflowState.AvailableISize();
+  availableISize -= startEdge + borderPadding.IEnd(frameWM);
   aReflowState.mLineLayout->BeginSpan(this, &aReflowState,
-                                      startEdge, endEdge, &mBaseline);
+                                      startEdge, availableISize, &mBaseline);
 
   aStatus = NS_FRAME_COMPLETE;
   for (SegmentEnumerator e(this); !e.AtEnd(); e.Next()) {
@@ -204,26 +187,16 @@ nsRubyFrame::Reflow(nsPresContext* aPresContext,
   MOZ_ASSERT(!NS_FRAME_OVERFLOW_IS_INCOMPLETE(aStatus));
 
   aDesiredSize.ISize(lineWM) = aReflowState.mLineLayout->EndSpan(this);
-  nsLayoutUtils::SetBSizeFromFontMetrics(this, aDesiredSize, aReflowState,
+  if (boxDecorationBreakClone || !GetPrevContinuation()) {
+    aDesiredSize.ISize(lineWM) += borderPadding.IStart(frameWM);
+  }
+  if (boxDecorationBreakClone || NS_FRAME_IS_COMPLETE(aStatus)) {
+    aDesiredSize.ISize(lineWM) += borderPadding.IEnd(frameWM);
+  }
+
+  nsLayoutUtils::SetBSizeFromFontMetrics(this, aDesiredSize,
                                          borderPadding, lineWM, frameWM);
 }
-
-#ifdef DEBUG
-static void
-SanityCheckRubyPosition(int8_t aRubyPosition)
-{
-  uint8_t horizontalPosition = aRubyPosition &
-    (NS_STYLE_RUBY_POSITION_LEFT | NS_STYLE_RUBY_POSITION_RIGHT);
-  MOZ_ASSERT(horizontalPosition == NS_STYLE_RUBY_POSITION_LEFT ||
-             horizontalPosition == NS_STYLE_RUBY_POSITION_RIGHT);
-  uint8_t verticalPosition = aRubyPosition &
-    (NS_STYLE_RUBY_POSITION_OVER | NS_STYLE_RUBY_POSITION_UNDER |
-     NS_STYLE_RUBY_POSITION_INTER_CHARACTER);
-  MOZ_ASSERT(verticalPosition == NS_STYLE_RUBY_POSITION_OVER ||
-             verticalPosition == NS_STYLE_RUBY_POSITION_UNDER ||
-             verticalPosition == NS_STYLE_RUBY_POSITION_INTER_CHARACTER);
-}
-#endif
 
 void
 nsRubyFrame::ReflowSegment(nsPresContext* aPresContext,
@@ -350,39 +323,46 @@ nsRubyFrame::ReflowSegment(nsPresContext* aPresContext,
     nscoord reservedISize = RubyUtils::GetReservedISize(textContainer);
     segmentISize = std::max(segmentISize, isize + reservedISize);
 
-    nscoord x, y;
     uint8_t rubyPosition = textContainer->StyleText()->mRubyPosition;
-#ifdef DEBUG
-    SanityCheckRubyPosition(rubyPosition);
-#endif
-    if (lineWM.IsVertical()) {
-      // writing-mode is vertical, so bsize is the annotation's *width*
-      if (rubyPosition & NS_STYLE_RUBY_POSITION_LEFT) {
-        x = offsetRect.X() - bsize;
-        offsetRect.SetLeftEdge(x);
-      } else {
-        x = offsetRect.XMost();
-        offsetRect.SetRightEdge(x + bsize);
-      }
-      y = offsetRect.Y();
+    MOZ_ASSERT(rubyPosition == NS_STYLE_RUBY_POSITION_OVER ||
+               rubyPosition == NS_STYLE_RUBY_POSITION_UNDER);
+    Maybe<Side> side;
+    if (rubyPosition == NS_STYLE_RUBY_POSITION_OVER) {
+      side.emplace(lineWM.PhysicalSide(eLineRelativeDirOver));
+    } else if (rubyPosition == NS_STYLE_RUBY_POSITION_UNDER) {
+      side.emplace(lineWM.PhysicalSide(eLineRelativeDirUnder));
     } else {
-      // writing-mode is horizontal, so bsize is the annotation's *height*
-      x = offsetRect.X();
-      if (rubyPosition & NS_STYLE_RUBY_POSITION_OVER) {
-        y = offsetRect.Y() - bsize;
-        offsetRect.SetTopEdge(y);
-      } else if (rubyPosition & NS_STYLE_RUBY_POSITION_UNDER) {
-        y = offsetRect.YMost();
-        offsetRect.SetBottomEdge(y + bsize);
-      } else {
-        // XXX inter-character support in bug 1055672
-        MOZ_ASSERT_UNREACHABLE("Unsupported ruby-position");
-        y = offsetRect.Y();
+      // XXX inter-character support in bug 1055672
+      MOZ_ASSERT_UNREACHABLE("Unsupported ruby-position");
+    }
+
+    nsPoint position;
+    if (side.isSome()) {
+      switch (side.value()) {
+      case eSideLeft:
+        offsetRect.SetLeftEdge(offsetRect.X() - bsize);
+        position = offsetRect.TopLeft();
+        break;
+      case eSideRight:
+        position = offsetRect.TopRight();
+        offsetRect.SetRightEdge(offsetRect.XMost() + bsize);
+        break;
+      case eSideTop:
+        offsetRect.SetTopEdge(offsetRect.Y() - bsize);
+        position = offsetRect.TopLeft();
+        break;
+      case eSideBottom:
+        position = offsetRect.BottomLeft();
+        offsetRect.SetBottomEdge(offsetRect.YMost() + bsize);
+        break;
       }
     }
     FinishReflowChild(textContainer, aPresContext, textMetrics,
-                      &textReflowState, x, y, 0);
+                      &textReflowState, position.x, position.y, 0);
   }
+  MOZ_ASSERT(LogicalSize(lineWM, baseRect.Size()).ISize(lineWM) ==
+             LogicalSize(lineWM, offsetRect.Size()).ISize(lineWM),
+             "Annotations should only be placed on the block directions");
 
   nscoord deltaISize = segmentISize - baseMetrics.ISize(lineWM);
   if (deltaISize <= 0) {

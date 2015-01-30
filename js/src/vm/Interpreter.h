@@ -246,7 +246,7 @@ UnwindScope(JSContext *cx, ScopeIter &si, jsbytecode *pc);
 
 // Unwind all scopes.
 extern void
-UnwindAllScopes(JSContext *cx, ScopeIter &si);
+UnwindAllScopesInFrame(JSContext *cx, ScopeIter &si);
 
 // Compute the pc needed to unwind the scope to the beginning of the block
 // pointed to by the try note.
@@ -396,8 +396,8 @@ SpreadCallOperation(JSContext *cx, HandleScript script, jsbytecode *pc, HandleVa
 inline bool
 SetConstOperation(JSContext *cx, HandleObject varobj, HandlePropertyName name, HandleValue rval)
 {
-    return JSObject::defineProperty(cx, varobj, name, rval, nullptr, nullptr,
-                                    JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_READONLY);
+    return DefineProperty(cx, varobj, name, rval, nullptr, nullptr,
+                          JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_READONLY);
 }
 
 void

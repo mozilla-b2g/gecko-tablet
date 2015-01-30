@@ -918,10 +918,19 @@ ChannelMediaResource::RecreateChannel()
   nsCOMPtr<nsILoadGroup> loadGroup = element->GetDocumentLoadGroup();
   NS_ENSURE_TRUE(loadGroup, NS_ERROR_NULL_POINTER);
 
+  nsSecurityFlags securityFlags = nsILoadInfo::SEC_NORMAL;
+  if (nsContentUtils::ChannelShouldInheritPrincipal(element->NodePrincipal(),
+                                                    mURI,
+                                                    false, // aInheritForAboutBlank
+                                                    false // aForceInherit
+                                                    )) {
+    securityFlags = nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL;
+  }
+
   nsresult rv = NS_NewChannel(getter_AddRefs(mChannel),
                               mURI,
                               element,
-                              nsILoadInfo::SEC_NORMAL,
+                              securityFlags,
                               nsIContentPolicy::TYPE_MEDIA,
                               loadGroup,
                               nullptr,  // aCallbacks
@@ -1436,12 +1445,21 @@ already_AddRefed<MediaResource> FileMediaResource::CloneData(MediaDecoder* aDeco
   nsCOMPtr<nsILoadGroup> loadGroup = element->GetDocumentLoadGroup();
   NS_ENSURE_TRUE(loadGroup, nullptr);
 
+  nsSecurityFlags securityFlags = nsILoadInfo::SEC_NORMAL;
+  if (nsContentUtils::ChannelShouldInheritPrincipal(element->NodePrincipal(),
+                                                    mURI,
+                                                    false, // aInheritForAboutBlank
+                                                    false // aForceInherit
+                                                    )) {
+    securityFlags = nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL;
+  }
+
   nsCOMPtr<nsIChannel> channel;
   nsresult rv =
     NS_NewChannel(getter_AddRefs(channel),
                   mURI,
                   element,
-                  nsILoadInfo::SEC_NORMAL,
+                  securityFlags,
                   nsIContentPolicy::TYPE_MEDIA,
                   loadGroup);
 
@@ -1457,6 +1475,9 @@ nsresult FileMediaResource::ReadFromCache(char* aBuffer, int64_t aOffset, uint32
   MutexAutoLock lock(mLock);
 
   EnsureSizeInitialized();
+  if (!aCount) {
+    return NS_OK;
+  }
   int64_t offset = 0;
   nsresult res = mSeekable->Tell(&offset);
   NS_ENSURE_SUCCESS(res,res);
@@ -1468,6 +1489,9 @@ nsresult FileMediaResource::ReadFromCache(char* aBuffer, int64_t aOffset, uint32
     uint32_t bytesToRead = aCount - bytesRead;
     res = mInput->Read(aBuffer, bytesToRead, &x);
     bytesRead += x;
+    if (!x) {
+      res = NS_ERROR_FAILURE;
+    }
   } while (bytesRead != aCount && res == NS_OK);
 
   // Reset read head to original position so we don't disturb any other

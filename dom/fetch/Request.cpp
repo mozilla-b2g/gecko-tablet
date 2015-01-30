@@ -151,23 +151,35 @@ Request::Constructor(const GlobalObject& aGlobal,
     request->SetCredentialsMode(credentials);
   }
 
+  // Request constructor step 14.
   if (aInit.mMethod.WasPassed()) {
-    nsCString method = aInit.mMethod.Value();
-    ToLowerCase(method);
+    nsAutoCString method(aInit.mMethod.Value());
+    nsAutoCString upperCaseMethod = method;
+    ToUpperCase(upperCaseMethod);
 
-    if (!method.EqualsASCII("options") &&
-        !method.EqualsASCII("get") &&
-        !method.EqualsASCII("head") &&
-        !method.EqualsASCII("post") &&
-        !method.EqualsASCII("put") &&
-        !method.EqualsASCII("delete")) {
+    // Step 14.1. Disallow forbidden methods, and anything that is not a HTTP
+    // token, since HTTP states that Method may be any of the defined values or
+    // a token (extension method).
+    if (upperCaseMethod.EqualsLiteral("CONNECT") ||
+        upperCaseMethod.EqualsLiteral("TRACE") ||
+        upperCaseMethod.EqualsLiteral("TRACK") ||
+        !NS_IsValidHTTPToken(method)) {
       NS_ConvertUTF8toUTF16 label(method);
       aRv.ThrowTypeError(MSG_INVALID_REQUEST_METHOD, &label);
       return nullptr;
     }
 
-    ToUpperCase(method);
-    request->SetMethod(method);
+    // Step 14.2
+    if (upperCaseMethod.EqualsLiteral("DELETE") ||
+        upperCaseMethod.EqualsLiteral("GET") ||
+        upperCaseMethod.EqualsLiteral("HEAD") ||
+        upperCaseMethod.EqualsLiteral("POST") ||
+        upperCaseMethod.EqualsLiteral("PUT") ||
+        upperCaseMethod.EqualsLiteral("OPTIONS")) {
+      request->SetMethod(upperCaseMethod);
+    } else {
+      request->SetMethod(method);
+    }
   }
 
   nsRefPtr<InternalHeaders> requestHeaders = request->Headers();
@@ -206,6 +218,15 @@ Request::Constructor(const GlobalObject& aGlobal,
   }
 
   if (aInit.mBody.WasPassed()) {
+    // HEAD and GET are not allowed to have a body.
+    nsAutoCString method;
+    request->GetMethod(method);
+    // method is guaranteed to be uppercase due to step 14.2 above.
+    if (method.EqualsLiteral("HEAD") || method.EqualsLiteral("GET")) {
+      aRv.ThrowTypeError(MSG_NO_BODY_ALLOWED_FOR_GET_AND_HEAD);
+      return nullptr;
+    }
+
     const OwningArrayBufferOrArrayBufferViewOrBlobOrUSVStringOrURLSearchParams& bodyInit = aInit.mBody.Value();
     nsCOMPtr<nsIInputStream> stream;
     nsCString contentType;

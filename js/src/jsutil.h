@@ -43,6 +43,9 @@ js_memcpy(void *dst_, const void *src_, size_t len)
 
 namespace js {
 
+MOZ_NORETURN MOZ_COLD void
+CrashAtUnhandlableOOM(const char *reason);
+
 template <class T>
 struct AlignmentTestStruct
 {
@@ -359,7 +362,6 @@ typedef size_t jsbitmap;
     JS_END_MACRO
 #elif MOZ_IS_GCC
 
-#if MOZ_GCC_VERSION_AT_LEAST(4, 6, 0)
 # define JS_SILENCE_UNUSED_VALUE_IN_EXPR(expr)                                \
     JS_BEGIN_MACRO                                                            \
         _Pragma("GCC diagnostic push")                                        \
@@ -367,7 +369,6 @@ typedef size_t jsbitmap;
         expr;                                                                 \
         _Pragma("GCC diagnostic pop")                                         \
     JS_END_MACRO
-#endif
 #endif
 
 #if !defined(JS_SILENCE_UNUSED_VALUE_IN_EXPR)

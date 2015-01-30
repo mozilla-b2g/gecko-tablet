@@ -20,7 +20,7 @@ chrome.jar:
   skin/aboutHealthReport.css                (aboutHealthReport.css)
 #endif
   skin/aboutMemory.css                      (aboutMemory.css)
-* skin/aboutPrivateBrowsing.css             (aboutPrivateBrowsing.css)
+  skin/aboutPrivateBrowsing.css             (aboutPrivateBrowsing.css)
   skin/aboutReader.css                      (aboutReader.css)
   skin/aboutSupport.css                     (aboutSupport.css)
   skin/browser.css                          (browser.css)
@@ -34,6 +34,11 @@ chrome.jar:
 % override chrome://global/skin/aboutSupport.css chrome://browser/skin/aboutSupport.css
 % override chrome://global/skin/media/videocontrols.css chrome://browser/skin/touchcontrols.css
 % override chrome://global/skin/netError.css chrome://browser/skin/netError.css
+
+#ifdef MOZ_PAY
+  skin/payment.css                         (payment.css)
+#endif
+#
 
 #ifdef NIGHTLY_BUILD
 * skin/aboutPasswords.css                   (aboutPasswords.css)
@@ -80,12 +85,7 @@ chrome.jar:
   skin/images/about-btn-darkgrey.png        (images/about-btn-darkgrey.png)
   skin/images/logo-hdpi.png                 (images/logo-hdpi.png)
   skin/images/wordmark-hdpi.png             (images/wordmark-hdpi.png)
-  skin/images/reader-plus-icon-mdpi.png     (images/reader-plus-icon-mdpi.png)
-  skin/images/reader-plus-icon-hdpi.png     (images/reader-plus-icon-hdpi.png)
-  skin/images/reader-plus-icon-xhdpi.png    (images/reader-plus-icon-xhdpi.png)
-  skin/images/reader-minus-icon-mdpi.png    (images/reader-minus-icon-mdpi.png)
-  skin/images/reader-minus-icon-hdpi.png    (images/reader-minus-icon-hdpi.png)
-  skin/images/reader-minus-icon-xhdpi.png   (images/reader-minus-icon-xhdpi.png)
+  skin/images/config-plus.png               (images/config-plus.png)
   skin/images/reader-dropdown-arrow-mdpi.png     (images/reader-dropdown-arrow-mdpi.png)
   skin/images/reader-dropdown-arrow-hdpi.png     (images/reader-dropdown-arrow-hdpi.png)
   skin/images/reader-dropdown-arrow-xhdpi.png    (images/reader-dropdown-arrow-xhdpi.png)

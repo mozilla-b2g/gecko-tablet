@@ -46,11 +46,19 @@ public:
   void SetCompositorVsyncObserver(VsyncObserver* aVsyncObserver);
   void Shutdown();
 
+  // This can be used to enable or disable thread assertions.
+  // This is useful for gtests because usually things run
+  // in only one thread in that environment
+  static void SetThreadAssertionsEnabled(bool aEnable);
+
 private:
+  void AssertOnCompositorThread();
   virtual ~CompositorVsyncDispatcher();
+  void ObserveVsync(bool aEnable);
 
   Mutex mCompositorObserverLock;
   nsRefPtr<VsyncObserver> mCompositorVsyncObserver;
+  bool mDidShutdown;
 };
 
 // Dispatch vsync event to ipc actor parent and chrome RefreshTimer.
@@ -77,6 +85,8 @@ public:
 
 private:
   virtual ~RefreshTimerVsyncDispatcher();
+  void UpdateVsyncStatus();
+  bool NeedsVsync();
 
   Mutex mRefreshTimersLock;
   nsRefPtr<VsyncObserver> mParentRefreshTimer;

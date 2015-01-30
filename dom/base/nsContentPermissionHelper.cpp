@@ -474,7 +474,7 @@ RemotePermissionRequest::DoAllow(JS::HandleValue aChoices)
 // PContentPermissionRequestChild
 bool
 RemotePermissionRequest::Recv__delete__(const bool& aAllow,
-                                        const nsTArray<PermissionChoice>& aChoices)
+                                        InfallibleTArray<PermissionChoice>&& aChoices)
 {
   if (aAllow && mWindow->IsCurrentInnerWindow()) {
     // Use 'undefined' if no choice is provided.
@@ -492,7 +492,7 @@ RemotePermissionRequest::Recv__delete__(const bool& aAllow,
 
     JSContext* cx = jsapi.cx();
     JS::Rooted<JSObject*> obj(cx);
-    obj = JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr());
+    obj = JS_NewPlainObject(cx);
     for (uint32_t i = 0; i < aChoices.Length(); ++i) {
       const nsString& choice = aChoices[i].choice();
       const nsCString& type = aChoices[i].type();

@@ -84,7 +84,7 @@ namespace mozilla {
 namespace mozilla {
 namespace gl {
 
-MOZ_BEGIN_ENUM_CLASS(GLFeature)
+enum class GLFeature {
     bind_buffer_offset,
     blend_minmax,
     clear_buffers,
@@ -134,17 +134,17 @@ MOZ_BEGIN_ENUM_CLASS(GLFeature)
     uniform_matrix_nonsquare,
     vertex_array_object,
     EnumMax
-MOZ_END_ENUM_CLASS(GLFeature)
+};
 
-MOZ_BEGIN_ENUM_CLASS(ContextProfile, uint8_t)
+enum class ContextProfile : uint8_t {
     Unknown = 0,
     OpenGL, // only for IsAtLeast's <profile> parameter
     OpenGLCore,
     OpenGLCompatibility,
     OpenGLES
-MOZ_END_ENUM_CLASS(ContextProfile)
+};
 
-MOZ_BEGIN_ENUM_CLASS(GLVendor)
+enum class GLVendor {
     Intel,
     NVIDIA,
     ATI,
@@ -154,9 +154,9 @@ MOZ_BEGIN_ENUM_CLASS(GLVendor)
     Vivante,
     VMware,
     Other
-MOZ_END_ENUM_CLASS(GLVendor)
+};
 
-MOZ_BEGIN_ENUM_CLASS(GLRenderer)
+enum class GLRenderer {
     Adreno200,
     Adreno205,
     AdrenoTM200,
@@ -170,7 +170,7 @@ MOZ_BEGIN_ENUM_CLASS(GLRenderer)
     IntelHD3000,
     MicrosoftBasicRenderDriver,
     Other
-MOZ_END_ENUM_CLASS(GLRenderer)
+};
 
 class GLContext
     : public GLLibraryLoader
@@ -2015,7 +2015,7 @@ public:
         AFTER_GL_CALL;
     }
 
-    void fShaderSource(GLuint shader, GLsizei count, const GLchar** strings, const GLint* lengths) {
+    void fShaderSource(GLuint shader, GLsizei count, const GLchar* const* strings, const GLint* lengths) {
         BEFORE_GL_CALL;
         mSymbols.fShaderSource(shader, count, strings, lengths);
         AFTER_GL_CALL;

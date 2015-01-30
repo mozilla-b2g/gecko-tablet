@@ -78,6 +78,7 @@ SelectionCarets::SelectionCarets(nsIPresShell* aPresShell)
   , mCaretCenterToDownPointOffsetY(0)
   , mDragMode(NONE)
   , mAsyncPanZoomEnabled(false)
+  , mInAsyncPanZoomGesture(false)
   , mEndCaretVisible(false)
   , mStartCaretVisible(false)
   , mSelectionVisibleInScrollFrames(true)
@@ -584,18 +585,30 @@ SelectionCarets::SelectWord()
   nsPoint ptInFrame = mDownPoint;
   nsLayoutUtils::TransformPoint(rootFrame, ptFrame, ptInFrame);
 
-  // If target frame is editable, we should move focus to targe frame. If
-  // target frame isn't editable and our focus content is editable, we should
+  nsIFrame* currFrame = ptFrame;
+  nsIContent* newFocusContent = nullptr;
+  while (currFrame) {
+    int32_t tabIndexUnused = 0;
+    if (currFrame->IsFocusable(&tabIndexUnused, true)) {
+      newFocusContent = currFrame->GetContent();
+      nsCOMPtr<nsIDOMElement> domElement(do_QueryInterface(newFocusContent));
+      if (domElement)
+        break;
+    }
+    currFrame = currFrame->GetParent();
+  }
+
+
+  // If target frame is focusable, we should move focus to it. If target frame
+  // isn't focusable, and our previous focused content is editable, we should
   // clear focus.
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   nsIContent* editingHost = ptFrame->GetContent()->GetEditingHost();
-  if (editingHost) {
-    nsCOMPtr<nsIDOMElement> elt = do_QueryInterface(editingHost->GetParent());
-    if (elt) {
-      fm->SetFocus(elt, 0);
-    }
+  if (newFocusContent && currFrame) {
+    nsCOMPtr<nsIDOMElement> domElement(do_QueryInterface(newFocusContent));
+    fm->SetFocus(domElement,0);
 
-    if (!nsContentUtils::HasNonEmptyTextContent(
+    if (editingHost && !nsContentUtils::HasNonEmptyTextContent(
           editingHost, nsContentUtils::eRecurseIntoChildren)) {
       SELECTIONCARETS_LOG("Select a editable content %p with empty text",
                           editingHost);
@@ -685,6 +698,7 @@ CompareRangeWithContentOffset(nsRange* aRange,
                          true,
                          true,  //limit on scrolled views
                          false,
+                         false,
                          false);
   nsresult rv = theFrame->PeekOffset(&pos);
   if (NS_FAILED(rv)) {
@@ -759,8 +773,10 @@ SelectionCarets::DragSelection(const nsPoint &movePoint)
     return nsEventStatus_eConsumeNoDefault;
   }
 
+  // Limit the drag behavior not to cross the end of last selection range
+  // when drag the start frame and vice versa
   nsRefPtr<nsRange> range = mDragMode == START_FRAME ?
-    selection->GetRangeAt(0) : selection->GetRangeAt(rangeCount - 1);
+    selection->GetRangeAt(rangeCount - 1) : selection->GetRangeAt(0);
   if (!CompareRangeWithContentOffset(range, fs, offsets, mDragMode)) {
     return nsEventStatus_eConsumeNoDefault;
   }
@@ -1168,6 +1184,7 @@ DispatchScrollViewChangeEvent(nsIPresShell *aPresShell, const dom::ScrollState a
 void
 SelectionCarets::AsyncPanZoomStarted(const mozilla::CSSIntPoint aScrollPos)
 {
+  mInAsyncPanZoomGesture = true;
   SetVisibility(false);
 
   SELECTIONCARETS_LOG("Dispatch scroll started with position x=%d, y=%d",
@@ -1178,6 +1195,7 @@ SelectionCarets::AsyncPanZoomStarted(const mozilla::CSSIntPoint aScrollPos)
 void
 SelectionCarets::AsyncPanZoomStopped(const mozilla::CSSIntPoint aScrollPos)
 {
+  mInAsyncPanZoomGesture = false;
   SELECTIONCARETS_LOG("Update selection carets after APZ is stopped!");
   UpdateSelectionCarets();
 
@@ -1194,12 +1212,20 @@ SelectionCarets::AsyncPanZoomStopped(const mozilla::CSSIntPoint aScrollPos)
 void
 SelectionCarets::ScrollPositionChanged()
 {
-  if (!mAsyncPanZoomEnabled && mVisible) {
-    SetVisibility(false);
-    //TODO: handling scrolling for selection bubble when APZ is off
+  if (mVisible) {
+    if (!mAsyncPanZoomEnabled) {
+      SetVisibility(false);
+      //TODO: handling scrolling for selection bubble when APZ is off
 
-    SELECTIONCARETS_LOG("Launch scroll end detector");
-    LaunchScrollEndDetector();
+      SELECTIONCARETS_LOG("Launch scroll end detector");
+      LaunchScrollEndDetector();
+    } else {
+      if (!mInAsyncPanZoomGesture) {
+        UpdateSelectionCarets();
+        DispatchSelectionStateChangedEvent(GetSelection(),
+                                           SelectionState::Updateposition);
+      }
+    }
   }
 }
 

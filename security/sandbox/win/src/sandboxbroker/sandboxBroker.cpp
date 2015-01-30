@@ -117,17 +117,66 @@ SandboxBroker::SetSecurityLevelForContentProcess(bool aMoreStrict)
 #endif
 
 bool
-SandboxBroker::SetSecurityLevelForPluginProcess()
+SandboxBroker::SetSecurityLevelForPluginProcess(bool aMoreStrict)
 {
   if (!mPolicy) {
     return false;
   }
 
-  auto result = mPolicy->SetJobLevel(sandbox::JOB_NONE, 0);
-  bool ret = (sandbox::SBOX_ALL_OK == result);
-  result = mPolicy->SetTokenLevel(sandbox::USER_UNPROTECTED,
-                                  sandbox::USER_UNPROTECTED);
+  sandbox::ResultCode result;
+  bool ret;
+  if (aMoreStrict) {
+    result = mPolicy->SetJobLevel(sandbox::JOB_UNPROTECTED,
+                                     0 /* ui_exceptions */);
+    ret = (sandbox::SBOX_ALL_OK == result);
+
+    result = mPolicy->SetTokenLevel(sandbox::USER_RESTRICTED_SAME_ACCESS,
+                                    sandbox::USER_INTERACTIVE);
+    ret = ret && (sandbox::SBOX_ALL_OK == result);
+
+    sandbox::MitigationFlags mitigations =
+      sandbox::MITIGATION_BOTTOM_UP_ASLR |
+      sandbox::MITIGATION_HEAP_TERMINATE |
+      sandbox::MITIGATION_SEHOP |
+      sandbox::MITIGATION_DEP_NO_ATL_THUNK |
+      sandbox::MITIGATION_DEP;
+
+    result = mPolicy->SetProcessMitigations(mitigations);
+    ret = ret && (sandbox::SBOX_ALL_OK == result);
+
+    mitigations =
+      sandbox::MITIGATION_STRICT_HANDLE_CHECKS;
+
+    result = mPolicy->SetDelayedProcessMitigations(mitigations);
+    ret = ret && (sandbox::SBOX_ALL_OK == result);
+
+    // The following is required for the Java plugin.
+    result = mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_FILES,
+                              sandbox::TargetPolicy::FILES_ALLOW_ANY,
+                              L"\\??\\pipe\\jpi2_pid*_pipe*");
+    ret = ret && (sandbox::SBOX_ALL_OK == result);
+
+  } else {
+    result = mPolicy->SetJobLevel(sandbox::JOB_NONE,
+                                     0 /* ui_exceptions */);
+    ret = (sandbox::SBOX_ALL_OK == result);
+
+    result = mPolicy->SetTokenLevel(sandbox::USER_RESTRICTED_SAME_ACCESS,
+                                    sandbox::USER_NON_ADMIN);
+    ret = ret && (sandbox::SBOX_ALL_OK == result);
+  }
+
+  result = mPolicy->SetDelayedIntegrityLevel(sandbox::INTEGRITY_LEVEL_MEDIUM);
   ret = ret && (sandbox::SBOX_ALL_OK == result);
+
+  // Add the policy for the client side of a pipe. It is just a file
+  // in the \pipe\ namespace. We restrict it to pipes that start with
+  // "chrome." so the sandboxed process cannot connect to system services.
+  result = mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_FILES,
+                            sandbox::TargetPolicy::FILES_ALLOW_ANY,
+                            L"\\??\\pipe\\chrome.*");
+  ret = ret && (sandbox::SBOX_ALL_OK == result);
+
   return ret;
 }
 
@@ -158,7 +207,7 @@ SandboxBroker::SetSecurityLevelForGMPlugin()
   bool ret = (sandbox::SBOX_ALL_OK == result);
   result =
     mPolicy->SetTokenLevel(sandbox::USER_RESTRICTED_SAME_ACCESS,
-                           sandbox::USER_RESTRICTED);
+                           sandbox::USER_LOCKDOWN);
   ret = ret && (sandbox::SBOX_ALL_OK == result);
 
   result = mPolicy->SetAlternateDesktop(true);
@@ -169,6 +218,20 @@ SandboxBroker::SetSecurityLevelForGMPlugin()
 
   result =
     mPolicy->SetDelayedIntegrityLevel(sandbox::INTEGRITY_LEVEL_UNTRUSTED);
+  ret = ret && (sandbox::SBOX_ALL_OK == result);
+
+  sandbox::MitigationFlags mitigations =
+    sandbox::MITIGATION_HEAP_TERMINATE |
+    sandbox::MITIGATION_SEHOP |
+    sandbox::MITIGATION_DEP;
+
+  result = mPolicy->SetProcessMitigations(mitigations);
+  ret = ret && (sandbox::SBOX_ALL_OK == result);
+
+  mitigations =
+    sandbox::MITIGATION_DLL_SEARCH_ORDER;
+
+  result = mPolicy->SetDelayedProcessMitigations(mitigations);
   ret = ret && (sandbox::SBOX_ALL_OK == result);
 
   // Add the policy for the client side of a pipe. It is just a file

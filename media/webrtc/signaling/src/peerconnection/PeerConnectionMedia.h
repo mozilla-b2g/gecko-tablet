@@ -13,7 +13,9 @@
 #include "prlock.h"
 
 #include "mozilla/RefPtr.h"
+#include "mozilla/UniquePtr.h"
 #include "nsComponentManagerUtils.h"
+#include "nsIProtocolProxyCallback.h"
 
 #ifdef USE_FAKE_MEDIA_STREAMS
 #include "FakeMediaStreams.h"
@@ -196,18 +198,38 @@ public:
     return mMediaStream;
   }
 
+  nsresult StorePipeline(
+      const std::string& trackId,
+      const mozilla::RefPtr<mozilla::MediaPipeline>& aPipeline);
+
+  void AddTrack(const std::string& trackId) { mTracks.insert(trackId); }
+  void RemoveTrack(const std::string& trackId) { mTracks.erase(trackId); }
+  bool HasTrack(const std::string& trackId) const
+  {
+    return !!mTracks.count(trackId);
+  }
+  size_t GetTrackCount() const { return mTracks.size(); }
+
   // This method exists for stats and the unittests.
   // It allows visibility into the pipelines and flows.
-  const std::map<mozilla::TrackID, mozilla::RefPtr<mozilla::MediaPipeline>>&
+  const std::map<std::string, mozilla::RefPtr<mozilla::MediaPipeline>>&
   GetPipelines() const { return mPipelines; }
-  mozilla::RefPtr<mozilla::MediaPipeline> GetPipelineByLevel_m(int aMLine);
+  mozilla::RefPtr<mozilla::MediaPipeline> GetPipelineByTrackId_m(
+      const std::string& trackId);
   const std::string& GetId() const { return mId; }
 
+  void DetachTransport_s();
+  void DetachMedia_m();
+  bool AnyCodecHasPluginID(uint64_t aPluginID);
 protected:
-  std::map<mozilla::TrackID, mozilla::RefPtr<mozilla::MediaPipeline>> mPipelines;
   nsRefPtr<DOMMediaStream> mMediaStream;
   PeerConnectionMedia *mParent;
   const std::string mId;
+  // These get set up before we generate our local description, the pipelines
+  // are set up once offer/answer completes.
+  std::set<std::string> mTracks;
+  // Indexed by track id, might contain pipelines for removed tracks
+  std::map<std::string, mozilla::RefPtr<mozilla::MediaPipeline>> mPipelines;
 };
 
 // TODO(ekr@rtfm.com): Refactor {Local,Remote}SourceStreamInfo
@@ -222,40 +244,19 @@ public:
                         const std::string& aId)
      : SourceStreamInfo(aMediaStream, aParent, aId) {}
 
-  // Returns the mPipelines index for the track or -1.
-#if 0
-  int HasTrack(DOMMediaStream* aStream, mozilla::TrackID aMLine);
-#endif
-  int HasTrackType(DOMMediaStream* aStream, bool aIsVideo);
   // XXX NOTE: does not change mMediaStream, even if it replaces the last track
   // in a LocalSourceStreamInfo.  Revise when we have support for multiple tracks
   // of a type.
-  // Note aMLine != aOldTrack!  It's the result of HasTrackType()
-  nsresult ReplaceTrack(int aMLine, DOMMediaStream* aNewStream, mozilla::TrackID aNewTrack);
-
-  void StorePipeline(int aMLine,
-                     mozilla::RefPtr<mozilla::MediaPipelineTransmit> aPipeline);
+  nsresult ReplaceTrack(const std::string& oldTrackId,
+                        DOMMediaStream* aNewStream,
+                        const std::string& aNewTrack);
 
 #ifdef MOZILLA_INTERNAL_API
   void UpdateSinkIdentity_m(nsIPrincipal* aPrincipal,
                             const mozilla::PeerIdentity* aSinkIdentity);
 #endif
 
-  void ExpectAudio(const mozilla::TrackID);
-  void ExpectVideo(const mozilla::TrackID);
-  void RemoveAudio(const mozilla::TrackID);
-  void RemoveVideo(const mozilla::TrackID);
-  unsigned AudioTrackCount();
-  unsigned VideoTrackCount();
-  void DetachTransport_s();
-  void DetachMedia_m();
-
-  bool AnyCodecHasPluginID(uint64_t aPluginID);
-
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(LocalSourceStreamInfo)
-private:
-  nsTArray<mozilla::TrackID> mAudioTracks;
-  nsTArray<mozilla::TrackID> mVideoTracks;
 };
 
 class RemoteSourceStreamInfo : public SourceStreamInfo {
@@ -264,28 +265,17 @@ class RemoteSourceStreamInfo : public SourceStreamInfo {
   RemoteSourceStreamInfo(already_AddRefed<DOMMediaStream> aMediaStream,
                          PeerConnectionMedia *aParent,
                          const std::string& aId)
-    : SourceStreamInfo(aMediaStream, aParent, aId),
-      mTrackTypeHints(0) {
+    : SourceStreamInfo(aMediaStream, aParent, aId)
+  {
   }
 
-  void StorePipeline(int aMLine, bool aIsVideo,
-                     mozilla::RefPtr<mozilla::MediaPipelineReceive> aPipeline);
-
-  void DetachTransport_s();
-  void DetachMedia_m();
+  void SyncPipeline(RefPtr<MediaPipelineReceive> aPipeline);
 
 #ifdef MOZILLA_INTERNAL_API
   void UpdatePrincipal_m(nsIPrincipal* aPrincipal);
 #endif
 
-  bool AnyCodecHasPluginID(uint64_t aPluginID);
-
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(RemoteSourceStreamInfo)
-
-public:
-  DOMMediaStream::TrackTypeHints mTrackTypeHints;
- private:
-  std::map<int, bool> mTypes;
 };
 
 class PeerConnectionMedia : public sigslot::has_slots<> {
@@ -331,14 +321,18 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
   // Handle complete media pipelines.
   nsresult UpdateMediaPipelines(const mozilla::JsepSession& session);
 
-  // Add a stream (main thread only)
-  nsresult AddStream(DOMMediaStream* aMediaStream, uint32_t hints,
-                     std::string* stream_id);
+  // Add a track (main thread only)
+  // TODO(bug 1089798): Once DOMMediaStream has an id field, use it instead of
+  // letting PCMedia choose a streamId
+  nsresult AddTrack(DOMMediaStream* aMediaStream,
+                    std::string* streamId,
+                    const std::string& trackId);
 
-  // Remove a stream (main thread only)
-  nsresult RemoveStream(DOMMediaStream* aMediaStream,
-                        uint32_t hints,
-                        uint32_t *stream_id);
+  // Remove a track (main thread only)
+  // TODO(bug 1089798): Once DOMMediaStream has an id field, use it instead of
+  // passing |aMediaStream|
+  nsresult RemoveTrack(DOMMediaStream* aMediaStream,
+                       const std::string& trackId);
 
   // Get a specific local stream
   uint32_t LocalStreamsLength()
@@ -347,6 +341,8 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
   }
   LocalSourceStreamInfo* GetLocalStreamByIndex(int index);
   LocalSourceStreamInfo* GetLocalStreamById(const std::string& id);
+  LocalSourceStreamInfo* GetLocalStreamByDomStream(
+      const DOMMediaStream& stream);
 
   // Get a specific remote stream
   uint32_t RemoteStreamsLength()
@@ -356,14 +352,16 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
 
   RemoteSourceStreamInfo* GetRemoteStreamByIndex(size_t index);
   RemoteSourceStreamInfo* GetRemoteStreamById(const std::string& id);
+  RemoteSourceStreamInfo* GetRemoteStreamByDomStream(
+      const DOMMediaStream& stream);
+
 
   bool UpdateFilterFromRemoteDescription_m(
-      int aMLine,
+      const std::string& trackId,
       nsAutoPtr<mozilla::MediaPipelineFilter> filter);
 
   // Add a remote stream.
   nsresult AddRemoteStream(nsRefPtr<RemoteSourceStreamInfo> aInfo);
-  nsresult AddRemoteStreamHint(int aIndex, bool aIsVideo);
 
 #ifdef MOZILLA_INTERNAL_API
   // In cases where the peer isn't yet identified, we disable the pipeline (not
@@ -434,6 +432,22 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
       SignalEndOfLocalCandidates;
 
  private:
+  class ProtocolProxyQueryHandler : public nsIProtocolProxyCallback {
+   public:
+    explicit ProtocolProxyQueryHandler(PeerConnectionMedia *pcm) :
+      pcm_(pcm) {}
+
+    NS_IMETHODIMP OnProxyAvailable(nsICancelable *request,
+                                   nsIChannel *aChannel,
+                                   nsIProxyInfo *proxyinfo,
+                                   nsresult result) MOZ_OVERRIDE;
+    NS_DECL_ISUPPORTS
+
+   private:
+      RefPtr<PeerConnectionMedia> pcm_;
+      virtual ~ProtocolProxyQueryHandler() {}
+  };
+
   // Shutdown media transport. Must be called on STS thread.
   void ShutdownMediaTransport_s();
 
@@ -447,6 +461,9 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
                               const std::string& aUfrag,
                               const std::string& aPassword,
                               const std::vector<std::string>& aCandidateList);
+  void GatherIfReady();
+  void FlushIceCtxOperationQueueIfReady();
+  void PerformOrEnqueueIceCtxOperation(const nsRefPtr<nsIRunnable>& runnable);
   void EnsureIceGathering_s();
   void StartIceChecks_s(bool aIsControlling,
                         bool aIsIceLite,
@@ -478,6 +495,9 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
   void EndOfLocalCandidates_m(const std::string& aDefaultAddr,
                               uint16_t aDefaultPort,
                               uint16_t aMLine);
+  bool IsIceCtxReady() const {
+    return mProxyResolveCompleted;
+  }
 
 
   // The parent PC
@@ -519,6 +539,21 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
 
   // The STS thread.
   nsCOMPtr<nsIEventTarget> mSTSThread;
+
+  // Used whenever we need to dispatch a runnable to STS to tweak something
+  // on our ICE ctx, but are not ready to do so at the moment (eg; we are
+  // waiting to get a callback with our http proxy config before we start
+  // gathering or start checking)
+  std::vector<nsRefPtr<nsIRunnable>> mQueuedIceCtxOperations;
+
+  // Used to cancel any ongoing proxy request.
+  nsCOMPtr<nsICancelable> mProxyRequest;
+
+  // Used to track the state of the request.
+  bool mProxyResolveCompleted;
+
+  // Used to store the result of the request.
+  UniquePtr<NrIceProxyServer> mProxyServer;
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(PeerConnectionMedia)
 };

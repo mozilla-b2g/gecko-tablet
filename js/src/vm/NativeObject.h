@@ -185,6 +185,8 @@ class ObjectElements
     friend class ArrayObject;
     friend class Nursery;
 
+    friend bool js::SetIntegrityLevel(JSContext *cx, HandleObject obj, IntegrityLevel level);
+
     friend bool
     ArraySetLength(JSContext *cx, Handle<ArrayObject*> obj, HandleId id,
                    unsigned attrs, HandleValue value, bool setterIsStrict);
@@ -371,6 +373,8 @@ class NativeObject : public JSObject
 
         static_assert(MAX_FIXED_SLOTS <= Shape::FIXED_SLOTS_MAX,
                       "verify numFixedSlots() bitfield is big enough");
+        static_assert(sizeof(NativeObject) + MAX_FIXED_SLOTS * sizeof(Value) == JSObject::MAX_BYTE_SIZE,
+                      "inconsistent maximum object size");
     }
 
   public:
@@ -407,6 +411,11 @@ class NativeObject : public JSObject
     // object, and only when the object will not require dynamic slots to cover
     // the new properties.
     void setLastPropertyShrinkFixedSlots(Shape *shape);
+
+    // As for setLastProperty(), but changes the class associated with the
+    // object to a non-native one. This leaves the object with a type and shape
+    // that are (temporarily) inconsistent.
+    void setLastPropertyMakeNonNative(Shape *shape);
 
   protected:
 #ifdef DEBUG
@@ -606,7 +615,7 @@ class NativeObject : public JSObject
         return lookup(cx, shape->propid()) == shape;
     }
 
-    /* Contextless; can be called from parallel code. */
+    /* Contextless; can be called from other pure code. */
     Shape *lookupPure(jsid id);
     Shape *lookupPure(PropertyName *name) {
         return lookupPure(NameToId(name));
@@ -1218,13 +1227,86 @@ IsObjectValueInCompartment(Value v, JSCompartment *comp)
 }
 #endif
 
+
+/*** Standard internal methods *******************************************************************/
+
 /*
- * The baseops namespace encapsulates the default behavior when performing
- * various operations on an object, irrespective of hooks installed in the
- * object's class. In general, instance methods on the object itself should be
- * called instead of calling these methods directly.
+ * These functions should follow the algorithms in ES6 draft rev 29 section 9.1
+ * ("Ordinary Object Internal Methods"). It's an ongoing project.
+ *
+ * Many native objects are not "ordinary" in ES6, so these functions also have
+ * to serve some of the special needs of Functions (9.2, 9.3, 9.4.1), Arrays
+ * (9.4.2), Strings (9.4.3), and so on.
  */
-namespace baseops {
+
+extern bool
+NativeDefineProperty(ExclusiveContext *cx, HandleNativeObject obj, HandleId id, HandleValue value,
+                     JSPropertyOp getter, JSStrictPropertyOp setter, unsigned attrs);
+
+inline bool
+NativeDefineProperty(ExclusiveContext *cx, HandleNativeObject obj, PropertyName *name,
+                     HandleValue value, PropertyOp getter, StrictPropertyOp setter,
+                     unsigned attrs);
+
+extern bool
+NativeDefineElement(ExclusiveContext *cx, HandleNativeObject obj, uint32_t index, HandleValue value,
+                    JSPropertyOp getter, JSStrictPropertyOp setter, unsigned attrs);
+
+extern bool
+NativeGetProperty(JSContext *cx, HandleNativeObject obj, HandleObject receiver, HandleId id,
+                  MutableHandleValue vp);
+
+extern bool
+NativeGetPropertyNoGC(JSContext *cx, NativeObject *obj, JSObject *receiver, jsid id, Value *vp);
+
+extern bool
+NativeGetElement(JSContext *cx, HandleNativeObject obj, HandleObject receiver, uint32_t index,
+                 MutableHandleValue vp);
+
+inline bool
+NativeGetProperty(JSContext *cx, HandleNativeObject obj, HandleId id, MutableHandleValue vp)
+{
+    return NativeGetProperty(cx, obj, obj, id, vp);
+}
+
+inline bool
+NativeGetElement(JSContext *cx, HandleNativeObject obj, uint32_t index, MutableHandleValue vp)
+{
+    return NativeGetElement(cx, obj, obj, index, vp);
+}
+
+/*
+ * Indicates whether an assignment operation is qualified (`x.y = 0`) or
+ * unqualified (`y = 0`). In strict mode, the latter is an error if no such
+ * variable already exists.
+ *
+ * Used as an argument to NativeSetProperty.
+ */
+enum QualifiedBool {
+    Unqualified = 0,
+    Qualified = 1
+};
+
+extern bool
+NativeSetProperty(JSContext *cx, HandleNativeObject obj, HandleObject receiver, HandleId id,
+                  QualifiedBool qualified, MutableHandleValue vp, bool strict);
+
+extern bool
+NativeSetElement(JSContext *cx, HandleNativeObject obj, HandleObject receiver, uint32_t index,
+                 MutableHandleValue vp, bool strict);
+
+extern bool
+NativeDeleteProperty(JSContext *cx, HandleNativeObject obj, HandleId id, bool *succeeded);
+
+
+/*** SpiderMonkey nonstandard internal methods ***************************************************/
+
+template <AllowGC allowGC>
+extern bool
+NativeLookupOwnProperty(ExclusiveContext *cx,
+                        typename MaybeRooted<NativeObject*, allowGC>::HandleType obj,
+                        typename MaybeRooted<jsid, allowGC>::HandleType id,
+                        typename MaybeRooted<Shape*, allowGC>::MutableHandleType propp);
 
 /*
  * On success, and if id was found, return true with *objp non-null and with a
@@ -1233,91 +1315,36 @@ namespace baseops {
  */
 template <AllowGC allowGC>
 extern bool
-LookupProperty(ExclusiveContext *cx,
-               typename MaybeRooted<NativeObject*, allowGC>::HandleType obj,
-               typename MaybeRooted<jsid, allowGC>::HandleType id,
-               typename MaybeRooted<JSObject*, allowGC>::MutableHandleType objp,
-               typename MaybeRooted<Shape*, allowGC>::MutableHandleType propp);
-
-extern bool
-LookupElement(JSContext *cx, HandleNativeObject obj, uint32_t index,
-              MutableHandleObject objp, MutableHandleShape propp);
-
-extern bool
-DefineGeneric(ExclusiveContext *cx, HandleNativeObject obj, HandleId id, HandleValue value,
-              JSPropertyOp getter, JSStrictPropertyOp setter, unsigned attrs);
-
-extern bool
-DefineElement(ExclusiveContext *cx, HandleNativeObject obj, uint32_t index, HandleValue value,
-              JSPropertyOp getter, JSStrictPropertyOp setter, unsigned attrs);
-
-extern bool
-GetProperty(JSContext *cx, HandleNativeObject obj, HandleObject receiver, HandleId id, MutableHandleValue vp);
-
-extern bool
-GetPropertyNoGC(JSContext *cx, NativeObject *obj, JSObject *receiver, jsid id, Value *vp);
-
-extern bool
-GetElement(JSContext *cx, HandleNativeObject obj, HandleObject receiver,
-           uint32_t index, MutableHandleValue vp);
+NativeLookupProperty(ExclusiveContext *cx,
+                     typename MaybeRooted<NativeObject*, allowGC>::HandleType obj,
+                     typename MaybeRooted<jsid, allowGC>::HandleType id,
+                     typename MaybeRooted<JSObject*, allowGC>::MutableHandleType objp,
+                     typename MaybeRooted<Shape*, allowGC>::MutableHandleType propp);
 
 inline bool
-GetProperty(JSContext *cx, HandleNativeObject obj, HandleId id, MutableHandleValue vp)
-{
-    return GetProperty(cx, obj, obj, id, vp);
-}
+NativeLookupProperty(ExclusiveContext *cx, HandleNativeObject obj, PropertyName *name,
+                     MutableHandleObject objp, MutableHandleShape propp);
 
-inline bool
-GetElement(JSContext *cx, HandleNativeObject obj, uint32_t index, MutableHandleValue vp)
-{
-    return GetElement(cx, obj, obj, index, vp);
-}
+extern bool
+NativeLookupElement(JSContext *cx, HandleNativeObject obj, uint32_t index,
+                    MutableHandleObject objp, MutableHandleShape propp);
 
 /*
- * Indicates whether an assignment operation is qualified (`x.y = 0`) or
- * unqualified (`y = 0`). In strict mode, the latter is an error if no such
- * variable already exists.
+ * Get a property from `receiver`, after having already done a lookup and found
+ * the property on a native object `obj`.
  *
- * Used as an argument to baseops::SetPropertyHelper.
- */
-enum QualifiedBool {
-    Unqualified = 0,
-    Qualified = 1
-};
-
-extern bool
-SetPropertyHelper(JSContext *cx, HandleNativeObject obj, HandleObject receiver, HandleId id,
-                  QualifiedBool qualified, MutableHandleValue vp, bool strict);
-
-extern bool
-SetElementHelper(JSContext *cx, HandleNativeObject obj, HandleObject receiver, uint32_t index,
-                 MutableHandleValue vp, bool strict);
-
-extern bool
-GetAttributes(JSContext *cx, HandleNativeObject obj, HandleId id, unsigned *attrsp);
-
-extern bool
-SetAttributes(JSContext *cx, HandleNativeObject obj, HandleId id, unsigned *attrsp);
-
-extern bool
-DeleteGeneric(JSContext *cx, HandleNativeObject obj, HandleId id, bool *succeeded);
-
-} /* namespace js::baseops */
-
-/*
- * Return successfully added or changed shape or nullptr on error.
+ * `shape` must not be null and must not be an implicit dense property. It must
+ * be present in obj's shape chain.
  */
 extern bool
-DefineNativeProperty(ExclusiveContext *cx, HandleNativeObject obj, HandleId id, HandleValue value,
-                     PropertyOp getter, StrictPropertyOp setter, unsigned attrs);
+NativeGetExistingProperty(JSContext *cx, HandleObject receiver, HandleNativeObject obj,
+                          HandleShape shape, MutableHandle<Value> vp);
 
 extern bool
-LookupNativeProperty(ExclusiveContext *cx, HandleNativeObject obj, HandleId id,
-                     js::MutableHandleObject objp, js::MutableHandleShape propp);
+NativeSetPropertyAttributes(JSContext *cx, HandleNativeObject obj, HandleId id, unsigned *attrsp);
 
-bool
-NativeGet(JSContext *cx, HandleObject obj, HandleNativeObject pobj,
-          HandleShape shape, MutableHandle<Value> vp);
+
+/* * */
 
 /*
  * If obj has an already-resolved data property for id, return true and
@@ -1338,72 +1365,6 @@ template <>
 inline bool
 JSObject::is<js::NativeObject>() const { return isNative(); }
 
-/* static */ inline bool
-JSObject::lookupElement(JSContext *cx, js::HandleObject obj, uint32_t index,
-                        js::MutableHandleObject objp, js::MutableHandleShape propp)
-{
-    js::LookupElementOp op = obj->getOps()->lookupElement;
-    if (op)
-        return op(cx, obj, index, objp, propp);
-    return js::baseops::LookupElement(cx, obj.as<js::NativeObject>(), index, objp, propp);
-}
-
-/* static */ inline bool
-JSObject::getGeneric(JSContext *cx, js::HandleObject obj, js::HandleObject receiver,
-                     js::HandleId id, js::MutableHandleValue vp)
-{
-    MOZ_ASSERT(!!obj->getOps()->getGeneric == !!obj->getOps()->getProperty);
-    js::GenericIdOp op = obj->getOps()->getGeneric;
-    if (op) {
-        if (!op(cx, obj, receiver, id, vp))
-            return false;
-    } else {
-        if (!js::baseops::GetProperty(cx, obj.as<js::NativeObject>(), receiver, id, vp))
-            return false;
-    }
-    return true;
-}
-
-/* static */ inline bool
-JSObject::getGenericNoGC(JSContext *cx, JSObject *obj, JSObject *receiver,
-                         jsid id, js::Value *vp)
-{
-    js::GenericIdOp op = obj->getOps()->getGeneric;
-    if (op)
-        return false;
-    return js::baseops::GetPropertyNoGC(cx, &obj->as<js::NativeObject>(), receiver, id, vp);
-}
-
-/* static */ inline bool
-JSObject::setGeneric(JSContext *cx, js::HandleObject obj, js::HandleObject receiver,
-                     js::HandleId id, js::MutableHandleValue vp, bool strict)
-{
-    if (obj->getOps()->setGeneric)
-        return nonNativeSetProperty(cx, obj, receiver, id, vp, strict);
-    return js::baseops::SetPropertyHelper(cx, obj.as<js::NativeObject>(),
-                                          receiver, id, js::baseops::Qualified, vp, strict);
-}
-
-/* static */ inline bool
-JSObject::setElement(JSContext *cx, js::HandleObject obj, js::HandleObject receiver,
-                     uint32_t index, js::MutableHandleValue vp, bool strict)
-{
-    if (obj->getOps()->setElement)
-        return nonNativeSetElement(cx, obj, receiver, index, vp, strict);
-    return js::baseops::SetElementHelper(cx, obj.as<js::NativeObject>(),
-                                         receiver, index, vp, strict);
-}
-
-/* static */ inline bool
-JSObject::getGenericAttributes(JSContext *cx, js::HandleObject obj,
-                               js::HandleId id, unsigned *attrsp)
-{
-    js::GenericAttributesOp op = obj->getOps()->getGenericAttributes;
-    if (op)
-        return op(cx, obj, id, attrsp);
-    return js::baseops::GetAttributes(cx, obj.as<js::NativeObject>(), id, attrsp);
-}
-
 namespace js {
 
 // Alternate to JSObject::as<NativeObject>() that tolerates null pointers.
@@ -1414,5 +1375,44 @@ MaybeNativeObject(JSObject *obj)
 }
 
 } // namespace js
+
+
+/*** Inline functions declared in jsobj.h that use the native declarations above *****************/
+
+inline bool
+js::GetProperty(JSContext *cx, HandleObject obj, HandleObject receiver, HandleId id,
+                MutableHandleValue vp)
+{
+    MOZ_ASSERT(!!obj->getOps()->getGeneric == !!obj->getOps()->getProperty);
+    if (GenericIdOp op = obj->getOps()->getGeneric)
+        return op(cx, obj, receiver, id, vp);
+    return NativeGetProperty(cx, obj.as<NativeObject>(), receiver, id, vp);
+}
+
+inline bool
+js::GetPropertyNoGC(JSContext *cx, JSObject *obj, JSObject *receiver, jsid id, Value *vp)
+{
+    if (obj->getOps()->getGeneric)
+        return false;
+    return NativeGetPropertyNoGC(cx, &obj->as<NativeObject>(), receiver, id, vp);
+}
+
+inline bool
+js::SetProperty(JSContext *cx, HandleObject obj, HandleObject receiver,
+                HandleId id, MutableHandleValue vp, bool strict)
+{
+    if (obj->getOps()->setGeneric)
+        return JSObject::nonNativeSetProperty(cx, obj, receiver, id, vp, strict);
+    return NativeSetProperty(cx, obj.as<NativeObject>(), receiver, id, Qualified, vp, strict);
+}
+
+inline bool
+js::SetElement(JSContext *cx, HandleObject obj, HandleObject receiver, uint32_t index,
+               MutableHandleValue vp, bool strict)
+{
+    if (obj->getOps()->setElement)
+        return JSObject::nonNativeSetElement(cx, obj, receiver, index, vp, strict);
+    return NativeSetElement(cx, obj.as<NativeObject>(), receiver, index, vp, strict);
+}
 
 #endif /* vm_NativeObject_h */

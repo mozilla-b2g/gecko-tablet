@@ -7,14 +7,20 @@
 #ifndef mozilla_layers_APZUtils_h
 #define mozilla_layers_APZUtils_h
 
+#include <stdint.h>                     // for uint32_t
+
 namespace mozilla {
 namespace layers {
 
 enum HitTestResult {
-  NoApzcHit,
-  ApzcHitRegion,
-  ApzcContentRegion,
-  OverscrolledApzc,
+  HitNothing,
+  HitLayer,
+  HitDispatchToContentRegion,
+};
+
+enum CancelAnimationFlags : uint32_t {
+  Default = 0,            /* Cancel all animations */
+  ExcludeOverscroll = 1   /* Don't clear overscroll */
 };
 
 }

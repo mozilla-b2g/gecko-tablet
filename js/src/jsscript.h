@@ -969,7 +969,7 @@ class JSScript : public js::gc::TenuredCell
     // 'this', 'arguments' and f.apply() are used. This is likely to be a wrapper.
     bool usesArgumentsApplyAndThis_:1;
 
-    // PJS FIXME
+    // PJS FIXME bug 1121433 - clone at call site may be obsolete
     /* script is attempted to be cloned anew at each callsite. This is
        temporarily needed for ParallelArray selfhosted code until type
        information can be made context sensitive. See discussion in
@@ -1011,6 +1011,11 @@ class JSScript : public js::gc::TenuredCell
     // This should be a uint32 but is instead a bool so that MSVC packs it
     // correctly.
     bool typesGeneration_:1;
+
+    // Do not relazify this script. This is only used by the relazify()
+    // testing function for scripts that are on the stack. Usually we don't
+    // relazify functions in compartments with scripts on the stack.
+    bool doNotRelazify_:1;
 
     // Add padding so JSScript is gc::Cell aligned. Make padding protected
     // instead of private to suppress -Wunused-private-field compiler warnings.
@@ -1316,6 +1321,10 @@ class JSScript : public js::gc::TenuredCell
         typesGeneration_ = (bool) generation;
     }
 
+    void setDoNotRelazify(bool b) {
+        doNotRelazify_ = b;
+    }
+
     bool hasAnyIonScript() const {
         return hasIonScript();
     }
@@ -1395,7 +1404,8 @@ class JSScript : public js::gc::TenuredCell
 
     bool isRelazifiable() const {
         return (selfHosted() || lazyScript) &&
-               !isGenerator() && !hasBaselineScript() && !hasAnyIonScript();
+               !isGenerator() && !hasBaselineScript() && !hasAnyIonScript() &&
+               !hasScriptCounts() && !doNotRelazify_;
     }
     void setLazyScript(js::LazyScript *lazy) {
         lazyScript = lazy;
@@ -1620,7 +1630,15 @@ class JSScript : public js::gc::TenuredCell
         return arr->vector[index];
     }
 
-    js::NestedScopeObject *getStaticScope(jsbytecode *pc);
+    js::NestedScopeObject *getStaticBlockScope(jsbytecode *pc);
+
+    // Returns the innermost static scope at pc if it falls within the extent
+    // of the script. Returns nullptr otherwise.
+    JSObject *innermostStaticScopeInScript(jsbytecode *pc);
+
+    // As innermostStaticScopeInScript, but returns the enclosing static scope
+    // if the innermost static scope falls without the extent of the script.
+    JSObject *innermostStaticScope(jsbytecode *pc);
 
     /*
      * The isEmpty method tells whether this script has code that computes any
@@ -1865,7 +1883,7 @@ class LazyScript : public gc::TenuredCell
         uint32_t version : 8;
 
         uint32_t numFreeVariables : 24;
-        uint32_t numInnerFunctions : 23;
+        uint32_t numInnerFunctions : 22;
 
         uint32_t generatorKindBits : 2;
 
@@ -1873,6 +1891,7 @@ class LazyScript : public gc::TenuredCell
         uint32_t strict : 1;
         uint32_t bindingsAccessedDynamically : 1;
         uint32_t hasDebuggerStatement : 1;
+        uint32_t hasDirectEval : 1;
         uint32_t directlyInsideEval : 1;
         uint32_t usesArgumentsApplyAndThis : 1;
         uint32_t hasBeenCloned : 1;
@@ -1996,6 +2015,13 @@ class LazyScript : public gc::TenuredCell
     }
     void setHasDebuggerStatement() {
         p_.hasDebuggerStatement = true;
+    }
+
+    bool hasDirectEval() const {
+        return p_.hasDirectEval;
+    }
+    void setHasDirectEval() {
+        p_.hasDirectEval = true;
     }
 
     bool directlyInsideEval() const {

@@ -22,6 +22,7 @@
 #include "gfxPlatform.h"
 #include "gfxTypes.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/Atomics.h"
 #include "nsTArray.h"
 #include "nsDataHashtable.h"
 
@@ -211,10 +212,6 @@ public:
 
     virtual bool DidRenderingDeviceReset();
 
-    /* Find a FontFamily/FontEntry object that represents a font on your system given a name */
-    gfxFontFamily *FindFontFamily(const nsAString& aName);
-    gfxFontEntry *FindFontEntry(const nsAString& aName, const gfxFontStyle& aFontStyle);
-
     // ClearType is not always enabled even when available (e.g. Windows XP)
     // if either of these prefs are enabled and apply, use ClearType rendering
     bool UseClearTypeForDownloadableFonts();
@@ -254,6 +251,10 @@ public:
 
     static bool IsOptimus();
 
+    bool IsWARP() { return mIsWARP; }
+
+    static mozilla::Atomic<size_t> sD3D11MemoryUsed;
+
 protected:
     RenderMode mRenderMode;
 
@@ -283,6 +284,7 @@ private:
     mozilla::RefPtr<ID3D11Device> mD3D11ContentDevice;
     bool mD3D11DeviceInitialized;
     mozilla::RefPtr<mozilla::layers::ReadbackManagerD3D11> mD3D11ReadbackManager;
+    bool mIsWARP;
 
     virtual void GetPlatformCMSOutputProfile(void* &mem, size_t &size);
 };

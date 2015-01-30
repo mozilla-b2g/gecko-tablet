@@ -11,7 +11,7 @@ function testDefaultCtor() {
   is(req.method, "GET", "Default Request method is GET");
   ok(req.headers instanceof Headers, "Request should have non-null Headers object");
   is(req.url, self.location.href, "URL should be resolved with entry settings object's API base URL");
-  is(req.referrer, "", "Default referrer is `client` which serializes to empty string.");
+  is(req.referrer, "about:client", "Default referrer is `client` which serializes to about:client.");
   is(req.mode, "cors", "Request mode for string input is cors");
   is(req.credentials, "omit", "Default Request credentials is omit");
 
@@ -19,7 +19,7 @@ function testDefaultCtor() {
   is(req.method, "GET", "Default Request method is GET");
   ok(req.headers instanceof Headers, "Request should have non-null Headers object");
   is(req.url, self.location.href, "URL should be resolved with entry settings object's API base URL");
-  is(req.referrer, "", "Default referrer is `client` which serializes to empty string.");
+  is(req.referrer, "about:client", "Default referrer is `client` which serializes to about:client.");
   is(req.mode, "cors", "Request mode string input is cors");
   is(req.credentials, "omit", "Default Request credentials is omit");
 }
@@ -37,14 +37,14 @@ function testClone() {
   is(req.headers.get('content-length'), "5", "Request content-length should be 5.");
   ok(req.url === (new URL("./cloned_request.txt", self.location.href)).href,
        "URL should be resolved with entry settings object's API base URL");
-  ok(req.referrer === "", "Default referrer is `client` which serializes to empty string.");
+  ok(req.referrer === "about:client", "Default referrer is `client` which serializes to about:client.");
   ok(req.mode === "same-origin", "Request mode is same-origin");
   ok(req.credentials === "same-origin", "Default credentials is same-origin");
 }
 
 function testUsedRequest() {
   // Passing a used request should fail.
-  var req = new Request("", { body: "This is foo" });
+  var req = new Request("", { method: 'post', body: "This is foo" });
   var p1 = req.text().then(function(v) {
     try {
       var req2 = new Request(req);
@@ -55,7 +55,7 @@ function testUsedRequest() {
   });
 
   // Passing a request should set the request as used.
-  var reqA = new Request("", { body: "This is foo" });
+  var reqA = new Request("", { method: 'post', body: "This is foo" });
   var reqB = new Request(reqA);
   is(reqA.bodyUsed, true, "Passing a Request to another Request should set the former as used");
   return p1;
@@ -78,17 +78,33 @@ function testBug1109574() {
 }
 
 function testMethod() {
-  var allowed = ["delete", "get", "head", "options", "post", "put"];
+  // These get normalized.
+  var allowed = ["delete", "get", "head", "options", "post", "put" ];
   for (var i = 0; i < allowed.length; ++i) {
     try {
       var r = new Request("", { method: allowed[i] });
       ok(true, "Method " + allowed[i] + " should be allowed");
+      is(r.method, allowed[i].toUpperCase(),
+         "Standard HTTP method " + allowed[i] + " should be normalized");
     } catch(e) {
       ok(false, "Method " + allowed[i] + " should be allowed");
     }
   }
 
-  var forbidden = ["aardvark", "connect", "trace", "track"];
+  var allowed = [ "pAtCh", "foo" ];
+  for (var i = 0; i < allowed.length; ++i) {
+    try {
+      var r = new Request("", { method: allowed[i] });
+      ok(true, "Method " + allowed[i] + " should be allowed");
+      is(r.method, allowed[i],
+         "Non-standard but valid HTTP method " + allowed[i] +
+         " should not be normalized");
+    } catch(e) {
+      ok(false, "Method " + allowed[i] + " should be allowed");
+    }
+  }
+
+  var forbidden = ["connect", "trace", "track", "<invalid token??"];
   for (var i = 0; i < forbidden.length; ++i) {
     try {
       var r = new Request("", { method: forbidden[i] });
@@ -117,6 +133,24 @@ function testMethod() {
       ok(true, "Method " + forbiddenNoCors[i] + " should be forbidden in no-cors mode");
     }
   }
+
+  // HEAD/GET requests cannot have a body.
+  try {
+    var r = new Request("", { method: "get", body: "hello" });
+    ok(false, "HEAD/GET request cannot have a body");
+  } catch(e) {
+    is(e.name, "TypeError", "HEAD/GET request cannot have a body");
+  }
+
+  try {
+    var r = new Request("", { method: "head", body: "hello" });
+    ok(false, "HEAD/GET request cannot have a body");
+  } catch(e) {
+    is(e.name, "TypeError", "HEAD/GET request cannot have a body");
+  }
+
+  // Non HEAD/GET should not throw.
+  var r = new Request("", { method: "patch", body: "hello" });
 }
 
 function testUrlFragment() {
@@ -125,7 +159,7 @@ function testUrlFragment() {
 }
 
 function testBodyUsed() {
-  var req = new Request("./bodyused", { body: "Sample body" });
+  var req = new Request("./bodyused", { method: 'post', body: "Sample body" });
   is(req.bodyUsed, false, "bodyUsed is initially false.");
   return req.text().then((v) => {
     is(v, "Sample body", "Body should match");
@@ -141,23 +175,23 @@ function testBodyUsed() {
 
 function testBodyCreation() {
   var text = "κόσμε";
-  var req1 = new Request("", { body: text });
+  var req1 = new Request("", { method: 'post', body: text });
   var p1 = req1.text().then(function(v) {
     ok(typeof v === "string", "Should resolve to string");
     is(text, v, "Extracted string should match");
   });
 
-  var req2 = new Request("", { body: new Uint8Array([72, 101, 108, 108, 111]) });
+  var req2 = new Request("", { method: 'post', body: new Uint8Array([72, 101, 108, 108, 111]) });
   var p2 = req2.text().then(function(v) {
     is("Hello", v, "Extracted string should match");
   });
 
-  var req2b = new Request("", { body: (new Uint8Array([72, 101, 108, 108, 111])).buffer });
+  var req2b = new Request("", { method: 'post', body: (new Uint8Array([72, 101, 108, 108, 111])).buffer });
   var p2b = req2b.text().then(function(v) {
     is("Hello", v, "Extracted string should match");
   });
 
-  var reqblob = new Request("", { body: new Blob([text]) });
+  var reqblob = new Request("", { method: 'post', body: new Blob([text]) });
   var pblob = reqblob.text().then(function(v) {
     is(v, text, "Extracted string should match");
   });
@@ -166,7 +200,7 @@ function testBodyCreation() {
   params.append("item", "Geckos");
   params.append("feature", "stickyfeet");
   params.append("quantity", "700");
-  var req3 = new Request("", { body: params });
+  var req3 = new Request("", { method: 'post', body: params });
   var p3 = req3.text().then(function(v) {
     var extracted = new URLSearchParams(v);
     is(extracted.get("item"), "Geckos", "Param should match");
@@ -179,7 +213,7 @@ function testBodyCreation() {
 
 function testBodyExtraction() {
   var text = "κόσμε";
-  var newReq = function() { return new Request("", { body: text }); }
+  var newReq = function() { return new Request("", { method: 'post', body: text }); }
   return newReq().text().then(function(v) {
     ok(typeof v === "string", "Should resolve to string");
     is(text, v, "Extracted string should match");
@@ -190,12 +224,11 @@ function testBodyExtraction() {
       is(fs.readAsText(v), text, "Decoded Blob should match original");
     });
   }).then(function() {
-    // FIXME(nsm): Enable once Bug 1107777 and Bug 1072144 have been fixed.
-    //return newReq().json().then(function(v) {
-    //  ok(false, "Invalid json should reject");
-    //}, function(e) {
-    //  ok(true, "Invalid json should reject");
-    //})
+    return newReq().json().then(function(v) {
+      ok(false, "Invalid json should reject");
+    }, function(e) {
+      ok(true, "Invalid json should reject");
+    })
   }).then(function() {
     return newReq().arrayBuffer().then(function(v) {
       ok(v instanceof ArrayBuffer, "Should resolve to ArrayBuffer");

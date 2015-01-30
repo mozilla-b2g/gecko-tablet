@@ -36,6 +36,9 @@
 using namespace mozilla::layers;
 using namespace mozilla::dom;
 
+// Default timeout msecs until try to enter dormant state by heuristic.
+static const int DEFAULT_HEURISTIC_DORMANT_TIMEOUT_MSECS = 60000;
+
 namespace mozilla {
 
 // Number of estimated seconds worth of data we need to have buffered
@@ -118,20 +121,69 @@ NS_IMPL_ISUPPORTS(MediaMemoryTracker, nsIMemoryReporter)
 
 NS_IMPL_ISUPPORTS(MediaDecoder, nsIObserver)
 
-void MediaDecoder::SetDormantIfNecessary(bool aDormant)
+void MediaDecoder::NotifyOwnerActivityChanged()
 {
   MOZ_ASSERT(NS_IsMainThread());
   ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
 
-  if (!mDecoderStateMachine ||
-      !mDecoderStateMachine->IsDormantNeeded() ||
-      mPlayState == PLAY_STATE_SHUTDOWN) {
+  if (!mOwner) {
+    NS_WARNING("MediaDecoder without a decoder owner, can't update dormant");
     return;
   }
 
-  if(aDormant) {
+  UpdateDormantState(false /* aDormantTimeout */, false /* aActivity */);
+  // Start dormant timer if necessary
+  StartDormantTimer();
+}
+
+void MediaDecoder::UpdateDormantState(bool aDormantTimeout, bool aActivity)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  GetReentrantMonitor().AssertCurrentThreadIn();
+
+  if (!mDecoderStateMachine ||
+      mPlayState == PLAY_STATE_SHUTDOWN ||
+      !mOwner->GetVideoFrameContainer() ||
+      !mDecoderStateMachine->IsDormantNeeded())
+  {
+    return;
+  }
+
+  bool prevDormant = mIsDormant;
+  mIsDormant = false;
+  if (!mOwner->IsActive()) {
+    mIsDormant = true;
+  }
+#ifdef MOZ_WIDGET_GONK
+  if (mOwner->IsHidden()) {
+    mIsDormant = true;
+  }
+#endif
+  // Try to enable dormant by idle heuristic, when the owner is hidden.
+  bool prevHeuristicDormant = mIsHeuristicDormant;
+  mIsHeuristicDormant = false;
+  if (mIsHeuristicDormantSupported && mOwner->IsHidden()) {
+    if (aDormantTimeout && !aActivity &&
+        (mPlayState == PLAY_STATE_PAUSED || mPlayState == PLAY_STATE_ENDED)) {
+      // Enable heuristic dormant
+      mIsHeuristicDormant = true;
+    } else if(prevHeuristicDormant && !aActivity) {
+      // Continue heuristic dormant
+      mIsHeuristicDormant = true;
+    }
+
+    if (mIsHeuristicDormant) {
+      mIsDormant = true;
+    }
+  }
+
+  if (prevDormant == mIsDormant) {
+    // No update to dormant state
+    return;
+  }
+
+  if (mIsDormant) {
     // enter dormant state
-    DestroyDecodedStream();
     mDecoderStateMachine->SetDormant(true);
 
     int64_t timeUsecs = 0;
@@ -144,6 +196,47 @@ void MediaDecoder::SetDormantIfNecessary(bool aDormant)
     // exit dormant state
     // trigger to state machine.
     mDecoderStateMachine->SetDormant(false);
+  }
+}
+
+void MediaDecoder::DormantTimerExpired(nsITimer* aTimer, void* aClosure)
+{
+  MOZ_ASSERT(aClosure);
+  MediaDecoder* decoder = static_cast<MediaDecoder*>(aClosure);
+  ReentrantMonitorAutoEnter mon(decoder->GetReentrantMonitor());
+  decoder->UpdateDormantState(true /* aDormantTimeout */,
+                              false /* aActivity */);
+}
+
+void MediaDecoder::StartDormantTimer()
+{
+  if (!mIsHeuristicDormantSupported) {
+    return;
+  }
+
+  if (mIsHeuristicDormant ||
+      mShuttingDown ||
+      !mOwner ||
+      !mOwner->IsHidden() ||
+      (mPlayState != PLAY_STATE_PAUSED &&
+       mPlayState != PLAY_STATE_ENDED))
+  {
+    return;
+  }
+
+  if (!mDormantTimer) {
+    mDormantTimer = do_CreateInstance("@mozilla.org/timer;1");
+  }
+  mDormantTimer->InitWithFuncCallback(&MediaDecoder::DormantTimerExpired,
+                                      this,
+                                      mHeuristicDormantTimeout,
+                                      nsITimer::TYPE_ONE_SHOT);
+}
+
+void MediaDecoder::CancelDormantTimer()
+{
+  if (mDormantTimer) {
+    mDormantTimer->Cancel();
   }
 }
 
@@ -451,7 +544,14 @@ MediaDecoder::MediaDecoder() :
   mShuttingDown(false),
   mPausedForPlaybackRateNull(false),
   mMinimizePreroll(false),
-  mMediaTracksConstructed(false)
+  mMediaTracksConstructed(false),
+  mIsDormant(false),
+  mIsHeuristicDormantSupported(
+    Preferences::GetBool("media.decoder.heuristic.dormant.enabled", false)),
+  mHeuristicDormantTimeout(
+    Preferences::GetInt("media.decoder.heuristic.dormant.timeout",
+                        DEFAULT_HEURISTIC_DORMANT_TIMEOUT_MSECS)),
+  mIsHeuristicDormant(false)
 {
   MOZ_COUNT_CTOR(MediaDecoder);
   MOZ_ASSERT(NS_IsMainThread());
@@ -499,6 +599,8 @@ void MediaDecoder::Shutdown()
   if (mResource) {
     mResource->Close();
   }
+
+  CancelDormantTimer();
 
   ChangeState(PLAY_STATE_SHUTDOWN);
 
@@ -601,6 +703,8 @@ nsresult MediaDecoder::Play()
 {
   MOZ_ASSERT(NS_IsMainThread());
   ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
+  UpdateDormantState(false /* aDormantTimeout */, true /* aActivity */);
+
   NS_ASSERTION(mDecoderStateMachine != nullptr, "Should have state machine.");
   if (mPausedForPlaybackRateNull) {
     return NS_OK;
@@ -623,6 +727,7 @@ nsresult MediaDecoder::Seek(double aTime, SeekTarget::Type aSeekType)
 {
   MOZ_ASSERT(NS_IsMainThread());
   ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
+  UpdateDormantState(false /* aDormantTimeout */, true /* aActivity */);
 
   NS_ABORT_IF_FALSE(aTime >= 0.0, "Cannot seek to a negative value.");
 
@@ -633,10 +738,8 @@ nsresult MediaDecoder::Seek(double aTime, SeekTarget::Type aSeekType)
   mRequestedSeekTarget = SeekTarget(timeUsecs, aSeekType);
   mCurrentTime = aTime;
 
-  // If we are already in the seeking state, then setting mRequestedSeekTarget
-  // above will result in the new seek occurring when the current seek
-  // completes.
-  if (mPlayState != PLAY_STATE_LOADING && mPlayState != PLAY_STATE_SEEKING) {
+  // If we are already in the seeking state, the new seek overrides the old one.
+  if (mPlayState != PLAY_STATE_LOADING) {
     bool paused = false;
     if (mOwner) {
       paused = mOwner->GetPaused();
@@ -697,7 +800,8 @@ MediaDecoder::IsExpectingMoreData()
 }
 
 void MediaDecoder::MetadataLoaded(nsAutoPtr<MediaInfo> aInfo,
-                                  nsAutoPtr<MetadataTags> aTags)
+                                  nsAutoPtr<MetadataTags> aTags,
+                                  bool aRestoredFromDormant)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
@@ -727,11 +831,14 @@ void MediaDecoder::MetadataLoaded(nsAutoPtr<MediaInfo> aInfo,
     // Make sure the element and the frame (if any) are told about
     // our new size.
     Invalidate();
-    mOwner->MetadataLoaded(mInfo, nsAutoPtr<const MetadataTags>(aTags.forget()));
+    if (!aRestoredFromDormant) {
+      mOwner->MetadataLoaded(mInfo, nsAutoPtr<const MetadataTags>(aTags.forget()));
+    }
   }
 }
 
-void MediaDecoder::FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo)
+void MediaDecoder::FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo,
+                                    bool aRestoredFromDormant)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
@@ -747,7 +854,9 @@ void MediaDecoder::FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo)
 
   if (mOwner) {
     Invalidate();
-    mOwner->FirstFrameLoaded();
+    if (!aRestoredFromDormant) {
+      mOwner->FirstFrameLoaded();
+    }
   }
 
   // This can run cache callbacks.
@@ -1167,6 +1276,10 @@ void MediaDecoder::ChangeState(PlayState aState)
 
   ApplyStateToStateMachine(mPlayState);
 
+  CancelDormantTimer();
+  // Start dormant timer if necessary
+  StartDormantTimer();
+
   GetReentrantMonitor().NotifyAll();
 }
 
@@ -1185,7 +1298,9 @@ void MediaDecoder::ApplyStateToStateMachine(PlayState aState)
         mRequestedSeekTarget.Reset();
         break;
       default:
-        /* No action needed */
+        // The state machine checks for things like PAUSED in RunStateMachine.
+        // Make sure to keep it in the loop.
+        ScheduleStateMachineThread();
         break;
     }
   }
@@ -1250,7 +1365,7 @@ void MediaDecoder::DurationChanged()
 
   if (mOwner && oldDuration != mDuration && !IsInfinite()) {
     DECODER_LOG("Duration changed to %lld", mDuration);
-    mOwner->DispatchEvent(NS_LITERAL_STRING("durationchange"));
+    mOwner->DispatchAsyncEvent(NS_LITERAL_STRING("durationchange"));
   }
 }
 

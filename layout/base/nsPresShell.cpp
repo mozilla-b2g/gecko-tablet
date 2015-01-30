@@ -801,6 +801,7 @@ PresShell::PresShell()
 
   mPaintingIsFrozen = false;
   mHasCSSBackgroundColor = true;
+  mIsLastChromeOnlyEscapeKeyConsumed = false;
 }
 
 NS_IMPL_ISUPPORTS(PresShell, nsIPresShell, nsIDocumentObserver,
@@ -8005,7 +8006,10 @@ PresShell::HandleEventInternal(WidgetEvent* aEvent, nsEventStatus* aStatus)
             aEvent->mFlags.mDefaultPrevented = true;
             aEvent->mFlags.mOnlyChromeDispatch = true;
 
-            if (aEvent->message == NS_KEY_UP) {
+            // The event listeners in chrome can prevent this ESC behavior by
+            // calling prevent default on the preceding keydown/press events.
+            if (!mIsLastChromeOnlyEscapeKeyConsumed &&
+                aEvent->message == NS_KEY_UP) {
               // ESC key released while in DOM fullscreen mode.
               // If fullscreen is running in content-only mode, exit the target
               // doctree branch from fullscreen, otherwise fully exit all
@@ -8021,7 +8025,7 @@ PresShell::HandleEventInternal(WidgetEvent* aEvent, nsEventStatus* aStatus)
           }
           nsCOMPtr<nsIDocument> pointerLockedDoc =
             do_QueryReferent(EventStateManager::sPointerLockedDoc);
-          if (pointerLockedDoc) {
+          if (!mIsLastChromeOnlyEscapeKeyConsumed && pointerLockedDoc) {
             aEvent->mFlags.mDefaultPrevented = true;
             aEvent->mFlags.mOnlyChromeDispatch = true;
             if (aEvent->message == NS_KEY_UP) {
@@ -8256,11 +8260,30 @@ PresShell::HandleEventInternal(WidgetEvent* aEvent, nsEventStatus* aStatus)
       }
     }
 
-    if (aEvent->message == NS_MOUSE_BUTTON_UP) {
+    switch (aEvent->message) {
+    case NS_KEY_PRESS:
+    case NS_KEY_DOWN:
+    case NS_KEY_UP: {
+      if (aEvent->AsKeyboardEvent()->keyCode == NS_VK_ESCAPE) {
+        if (aEvent->message == NS_KEY_UP) {
+          // Reset this flag after key up is handled.
+          mIsLastChromeOnlyEscapeKeyConsumed = false;
+        } else {
+          if (aEvent->mFlags.mOnlyChromeDispatch &&
+              aEvent->mFlags.mDefaultPreventedByChrome) {
+            mIsLastChromeOnlyEscapeKeyConsumed = true;
+          }
+        }
+      }
+      break;
+    }
+    case NS_MOUSE_BUTTON_UP:
       // reset the capturing content now that the mouse button is up
       SetCapturingContent(nullptr, 0);
-    } else if (aEvent->message == NS_MOUSE_MOVE) {
+      break;
+    case NS_MOUSE_MOVE:
       nsIPresShell::AllowMouseCapture(false);
+      break;
     }
   }
   return rv;
@@ -8800,17 +8823,21 @@ PresShell::ShouldIgnoreInvalidation()
 void
 PresShell::WillPaint()
 {
+  // Check the simplest things first.  In particular, it's important to
+  // check mIsActive before making any of the more expensive calls such
+  // as GetRootPresContext, for the case of a browser with a large
+  // number of tabs.
+  // Don't bother doing anything if some viewmanager in our tree is painting
+  // while we still have painting suppressed or we are not active.
+  if (!mIsActive || mPaintingSuppressed || !IsVisible()) {
+    return;
+  }
+
   nsRootPresContext* rootPresContext = mPresContext->GetRootPresContext();
   if (!rootPresContext) {
     // In some edge cases, such as when we don't have a root frame yet,
     // we can't find the root prescontext. There's nothing to do in that
     // case.
-    return;
-  }
-
-  // Don't bother doing anything if some viewmanager in our tree is painting
-  // while we still have painting suppressed or we are not active.
-  if (mPaintingSuppressed || !mIsActive || !IsVisible()) {
     return;
   }
 

@@ -9,9 +9,9 @@
 #define mozilla_jsipc_JavaScriptShared_h__
 
 #include "mozilla/dom/DOMTypes.h"
+#include "mozilla/jsipc/CrossProcessObjectWrappers.h"
 #include "mozilla/jsipc/PJavaScript.h"
 #include "nsJSUtils.h"
-#include "nsFrameMessageManager.h"
 
 namespace mozilla {
 
@@ -65,18 +65,6 @@ class ObjectId {
 
 class JavaScriptShared;
 
-class CpowIdHolder : public CpowHolder
-{
-  public:
-    CpowIdHolder(dom::CPOWManagerGetter *managerGetter, const InfallibleTArray<CpowEntry> &cpows);
-
-    bool ToObject(JSContext *cx, JS::MutableHandleObject objp);
-
-  private:
-    JavaScriptShared *js_;
-    const InfallibleTArray<CpowEntry> &cpows_;
-};
-
 // DefaultHasher<T> requires that T coerce to an integral type. We could make
 // ObjectId do that, but doing so would weaken our type invariants, so we just
 // reimplement it manually.
@@ -110,6 +98,9 @@ class IdToObjectMap
     JSObject *find(ObjectId id);
     void remove(ObjectId id);
 
+    void clear();
+    bool empty() const;
+
   private:
     Table table_;
 };
@@ -131,6 +122,7 @@ class ObjectToIdMap
     bool add(JSContext *cx, JSObject *obj, ObjectId id);
     ObjectId find(JSObject *obj);
     void remove(JSObject *obj);
+    void clear();
 
   private:
     static void keyMarkCallback(JSTracer *trc, JSObject *key, void *data);
@@ -140,11 +132,11 @@ class ObjectToIdMap
 
 class Logging;
 
-class JavaScriptShared
+class JavaScriptShared : public CPOWManager
 {
   public:
     explicit JavaScriptShared(JSRuntime *rt);
-    virtual ~JavaScriptShared() {}
+    virtual ~JavaScriptShared();
 
     bool init();
 

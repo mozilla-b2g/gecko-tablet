@@ -181,7 +181,6 @@ MediaEngineDefaultVideoSource::Stop(SourceMediaStream *aSource, TrackID aID)
       aSource->EndTrack(kTrackCount + i);
     }
   }
-  aSource->Finish();
 
   mState = kStopped;
   return NS_OK;
@@ -438,7 +437,6 @@ MediaEngineDefaultAudioSource::Stop(SourceMediaStream *aSource, TrackID aID)
       aSource->EndTrack(kTrackCount + kFakeVideoTrackCount+i);
     }
   }
-  aSource->Finish();
 
   mState = kStopped;
   return NS_OK;
@@ -469,12 +467,12 @@ MediaEngineDefaultAudioSource::Notify(nsITimer* aTimer)
 }
 
 void
-MediaEngineDefault::EnumerateVideoDevices(MediaSourceType aMediaSource,
+MediaEngineDefault::EnumerateVideoDevices(dom::MediaSourceEnum aMediaSource,
                                           nsTArray<nsRefPtr<MediaEngineVideoSource> >* aVSources) {
   MutexAutoLock lock(mMutex);
 
   // only supports camera sources (for now).  See Bug 1038241
-  if (aMediaSource != MediaSourceType::Camera) {
+  if (aMediaSource != dom::MediaSourceEnum::Camera) {
     return;
   }
 
@@ -490,7 +488,7 @@ MediaEngineDefault::EnumerateVideoDevices(MediaSourceType aMediaSource,
 }
 
 void
-MediaEngineDefault::EnumerateAudioDevices(MediaSourceType aMediaSource,
+MediaEngineDefault::EnumerateAudioDevices(dom::MediaSourceEnum aMediaSource,
                                           nsTArray<nsRefPtr<MediaEngineAudioSource> >* aASources) {
   MutexAutoLock lock(mMutex);
   int32_t len = mASources.Length();

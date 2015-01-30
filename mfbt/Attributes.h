@@ -94,12 +94,8 @@
 #      define MOZ_HAVE_CXX11_OVERRIDE
 #      define MOZ_HAVE_CXX11_FINAL       final
 #    endif
-#    if MOZ_GCC_VERSION_AT_LEAST(4, 6, 0)
 #      define MOZ_HAVE_CXX11_CONSTEXPR
-#    endif
-#    if MOZ_GCC_VERSION_AT_LEAST(4, 5, 0)
 #      define MOZ_HAVE_EXPLICIT_CONVERSION
-#    endif
 #  else
      /* __final is a non-C++11 GCC synonym for 'final', per GCC r176655. */
 #    if MOZ_GCC_VERSION_AT_LEAST(4, 7, 0)
@@ -193,6 +189,27 @@
 #  define MOZ_NORETURN          MOZ_HAVE_NORETURN
 #else
 #  define MOZ_NORETURN          /* no support */
+#endif
+
+/**
+ * MOZ_COLD tells the compiler that a function is "cold", meaning infrequently
+ * executed. This may lead it to optimize for size more aggressively than speed,
+ * or to allocate the body of the function in a distant part of the text segment
+ * to help keep it from taking up unnecessary icache when it isn't in use.
+ *
+ * Place this attribute at the very beginning of a function definition. For
+ * example, write
+ *
+ *   MOZ_COLD int foo();
+ *
+ * or
+ *
+ *   MOZ_COLD int foo() { return 42; }
+ */
+#if defined(__GNUC__) || defined(__clang__)
+#  define MOZ_COLD __attribute__ ((cold))
+#else
+#  define MOZ_COLD
 #endif
 
 /*

@@ -24,6 +24,7 @@ html|h1 {
   font-size: 2.5em;
   font-weight: lighter;
   line-height: 1.2;
+  color: #333;
   margin: 0;
   margin-bottom: .5em;
 }
@@ -382,24 +383,23 @@ xul|textbox[disabled="true"] {
 /* Links */
 
 html|a,
-xul|*.text-link,
-xul|*.inline-link {
-  font-size: 1.25rem;
+.text-link,
+.inline-link {
   line-height: 22px;
   color: #0095dd;
   text-decoration: none;
 }
 
 html|a:hover,
-xul|*.text-link:hover,
-xul|*.inline-link:hover {
-  color: #4cb1ff;
-  text-decoration: none;
+.text-link:hover,
+.inline-link:hover {
+  color: #178ce5;
+  text-decoration: underline;
 }
 
 html|a:hover:active,
-xul|*.text-link:hover:active,
-xul|*.inline-link:hover:active {
+.text-link:hover:active,
+.inline-link:hover:active {
   color: #ff9500;
   text-decoration: none;
 }
@@ -641,7 +641,7 @@ xul|treecolpicker {
   padding: 5px 10px;
 }
 
-xul|treecol:not([hideheader="true"]):hover,
+xul|treecol:not([hideheader="true"]):not([sortable="false"]):hover,
 xul|treecolpicker:hover {
   background-color: #dadada;
   color: #333;

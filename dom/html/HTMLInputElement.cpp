@@ -1271,7 +1271,8 @@ HTMLInputElement::Clone(mozilla::dom::NodeInfo* aNodeInfo, nsINode** aResult) co
         nsAutoString value;
         GetValueInternal(value);
         // SetValueInternal handles setting the VALUE_CHANGED bit for us
-        it->SetValueInternal(value, false, true);
+        rv = it->SetValueInternal(value, false, true);
+        NS_ENSURE_SUCCESS(rv, rv);
       }
       break;
     case VALUE_MODE_FILENAME:
@@ -1446,7 +1447,8 @@ HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
         // if @max in the example above were to change from 1 to -1.
         nsAutoString value;
         GetValue(value);
-        SetValueInternal(value, false, false);
+        nsresult rv = SetValueInternal(value, false, false);
+        NS_ENSURE_SUCCESS(rv, rv);
         MOZ_ASSERT(!GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW),
                    "HTML5 spec does not allow this");
       }
@@ -1458,7 +1460,8 @@ HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
         // See @max comment
         nsAutoString value;
         GetValue(value);
-        SetValueInternal(value, false, false);
+        nsresult rv = SetValueInternal(value, false, false);
+        NS_ENSURE_SUCCESS(rv, rv);
         MOZ_ASSERT(!GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW),
                    "HTML5 spec does not allow this");
       }
@@ -1468,7 +1471,8 @@ HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
         // See @max comment
         nsAutoString value;
         GetValue(value);
-        SetValueInternal(value, false, false);
+        nsresult rv = SetValueInternal(value, false, false);
+        NS_ENSURE_SUCCESS(rv, rv);
         MOZ_ASSERT(!GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW),
                    "HTML5 spec does not allow this");
       }
@@ -1838,13 +1842,21 @@ HTMLInputElement::SetValue(const nsAString& aValue, ErrorResult& aRv)
       nsAutoString currentValue;
       GetValue(currentValue);
 
-      SetValueInternal(aValue, false, true);
+      nsresult rv = SetValueInternal(aValue, false, true);
+      if (NS_FAILED(rv)) {
+        aRv.Throw(rv);
+        return;
+      }
 
       if (mFocusedValue.Equals(currentValue)) {
         GetValue(mFocusedValue);
       }
     } else {
-      SetValueInternal(aValue, false, true);
+      nsresult rv = SetValueInternal(aValue, false, true);
+      if (NS_FAILED(rv)) {
+        aRv.Throw(rv);
+        return;
+      }
     }
   }
 }
@@ -2317,6 +2329,16 @@ HTMLInputElement::MozGetFileNameArray(uint32_t* aLength, char16_t*** aFileNames)
 }
 
 void
+HTMLInputElement::MozSetFileArray(const Sequence<OwningNonNull<File>>& aFiles)
+{
+  nsTArray<nsRefPtr<File>> files;
+  for (uint32_t i = 0; i < aFiles.Length(); ++i) {
+    files.AppendElement(aFiles[i]);
+  }
+  SetFiles(files, true);
+}
+
+void
 HTMLInputElement::MozSetFileNameArray(const Sequence< nsString >& aFileNames)
 {
   nsTArray<nsRefPtr<File>> files;
@@ -2413,7 +2435,8 @@ HTMLInputElement::SetUserInput(const nsAString& aValue)
     MozSetFileNameArray(list);
     return NS_OK;
   } else {
-    SetValueInternal(aValue, true, true);
+    nsresult rv = SetValueInternal(aValue, true, true);
+    NS_ENSURE_SUCCESS(rv, rv);
   }
 
   nsContentUtils::DispatchTrustedEvent(OwnerDoc(),
@@ -2839,7 +2862,9 @@ HTMLInputElement::SetValueInternal(const nsAString& aValue,
       }
 
       if (IsSingleLineTextControl(false)) {
-        mInputData.mState->SetValue(value, aUserInput, aSetValueChanged);
+        if (!mInputData.mState->SetValue(value, aUserInput, aSetValueChanged)) {
+          return NS_ERROR_OUT_OF_MEMORY;
+        }
         if (mType == NS_FORM_INPUT_EMAIL) {
           UpdateAllValidityStates(mParserCreating);
         }
@@ -3196,6 +3221,12 @@ HTMLInputElement::Focus(ErrorResult& aError)
   return;
 }
 
+bool
+HTMLInputElement::IsInteractiveHTMLContent() const
+{
+  return mType != NS_FORM_INPUT_HIDDEN;
+}
+
 NS_IMETHODIMP
 HTMLInputElement::Select()
 {
@@ -3434,7 +3465,8 @@ HTMLInputElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
     if (IsExperimentalMobileType(mType)) {
       nsAutoString aValue;
       GetValueInternal(aValue);
-      SetValueInternal(aValue, false, false);
+      nsresult rv = SetValueInternal(aValue, false, false);
+      NS_ENSURE_SUCCESS(rv, rv);
     }
     FireChangeEventIfNeeded();
   }
@@ -3554,7 +3586,8 @@ HTMLInputElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
         numberControlFrame->GetValueOfAnonTextControl(value);
         numberControlFrame->HandlingInputEvent(true);
         nsWeakFrame weakNumberControlFrame(numberControlFrame);
-        SetValueInternal(value, true, true);
+        rv = SetValueInternal(value, true, true);
+        NS_ENSURE_SUCCESS(rv, rv);
         if (weakNumberControlFrame.IsAlive()) {
           numberControlFrame->HandlingInputEvent(false);
         }
@@ -3628,6 +3661,8 @@ HTMLInputElement::CancelRangeThumbDrag(bool aIsForUserEvent)
     // TODO: decide what we should do here - bug 851782.
     nsAutoString val;
     ConvertNumberToString(mRangeThumbDragStartValue, val);
+    // TODO: What should we do if SetValueInternal fails?  (The allocation
+    // is small, so we should be fine here.)
     SetValueInternal(val, true, true);
     nsRangeFrame* frame = do_QueryFrame(GetPrimaryFrame());
     if (frame) {
@@ -3646,6 +3681,8 @@ HTMLInputElement::SetValueOfRangeForUserEvent(Decimal aValue)
 
   nsAutoString val;
   ConvertNumberToString(aValue, val);
+  // TODO: What should we do if SetValueInternal fails?  (The allocation
+  // is small, so we should be fine here.)
   SetValueInternal(val, true, true);
   nsRangeFrame* frame = do_QueryFrame(GetPrimaryFrame());
   if (frame) {
@@ -3737,6 +3774,8 @@ HTMLInputElement::StepNumberControlForUserEvent(int32_t aDirection)
 
   nsAutoString newVal;
   ConvertNumberToString(newValue, newVal);
+  // TODO: What should we do if SetValueInternal fails?  (The allocation
+  // is small, so we should be fine here.)
   SetValueInternal(newVal, true, true);
 
   nsContentUtils::DispatchTrustedEvent(OwnerDoc(),
@@ -4533,6 +4572,9 @@ HTMLInputElement::HandleTypeChange(uint8_t aNewType)
         } else {
           value = aOldValue;
         }
+        // TODO: What should we do if SetValueInternal fails?  (The allocation
+        // may potentially be big, but most likely we've failed to allocate
+        // before the type change.)
         SetValueInternal(value, false, false);
       }
       break;
@@ -5216,7 +5258,11 @@ HTMLInputElement::SetRangeText(const nsAString& aReplacement, uint32_t aStart,
 
   if (aStart <= aEnd) {
     value.Replace(aStart, aEnd - aStart, aReplacement);
-    SetValueInternal(value, false, false);
+    nsresult rv = SetValueInternal(value, false, false);
+    if (NS_FAILED(rv)) {
+      aRv.Throw(rv);
+      return;
+    }
   }
 
   uint32_t newEnd = aStart + aReplacement.Length();
@@ -5775,6 +5821,9 @@ HTMLInputElement::DoneCreatingElement()
   if (GetValueMode() == VALUE_MODE_VALUE) {
     nsAutoString aValue;
     GetValue(aValue);
+    // TODO: What should we do if SetValueInternal fails?  (The allocation
+    // may potentially be big, but most likely we've failed to allocate
+    // before the type change.)
     SetValueInternal(aValue, false, false);
   }
 
@@ -5929,8 +5978,10 @@ HTMLInputElement::RestoreState(nsPresState* aState)
           break;
         }
 
+        // TODO: What should we do if SetValueInternal fails?  (The allocation
+        // may potentially be big, but most likely we've failed to allocate
+        // before the type change.)
         SetValueInternal(inputState->GetValue(), false, true);
-        break;
         break;
     }
   }
@@ -6570,27 +6621,32 @@ HTMLInputElement::HasStepMismatch(bool aUseZeroIfValueNaN) const
 }
 
 /**
- * Splits the string on the first "@" character and punycode encodes the first
- * and second parts separately before rejoining them with an "@" and returning
- * the result via the aEncodedEmail out-param. Returns false if there is no
- * "@" caracter, if the "@" character is at the start or end, or if the
- * conversion to punycode fails.
+ * Takes aEmail and attempts to convert everything after the first "@"
+ * character (if anything) to punycode before returning the complete result via
+ * the aEncodedEmail out-param. The aIndexOfAt out-param is set to the index of
+ * the "@" character.
  *
- * This function exists because ConvertUTF8toACE() treats 'username@domain' as
- * a single label, but we need to encode the username and domain parts
- * separately.
+ * If no "@" is found in aEmail, aEncodedEmail is simply set to aEmail and
+ * the aIndexOfAt out-param is set to kNotFound.
+ *
+ * Returns true in all cases unless an attempt to punycode encode fails. If
+ * false is returned, aEncodedEmail has not been set.
+ *
+ * This function exists because ConvertUTF8toACE() splits on ".", meaning that
+ * for 'user.name@sld.tld' it would treat "name@sld" as a label. We want to
+ * encode the domain part only.
  */
 static bool PunycodeEncodeEmailAddress(const nsAString& aEmail,
                                        nsAutoCString& aEncodedEmail,
                                        uint32_t* aIndexOfAt)
 {
   nsAutoCString value = NS_ConvertUTF16toUTF8(aEmail);
-  uint32_t length = value.Length();
+  *aIndexOfAt = (uint32_t)value.FindChar('@');
 
-  uint32_t atPos = (uint32_t)value.FindChar('@');
-  // Email addresses must contain a '@', but can't begin or end with it.
-  if (atPos == (uint32_t)kNotFound || atPos == 0 || atPos == length - 1) {
-    return false;
+  if (*aIndexOfAt == (uint32_t)kNotFound ||
+      *aIndexOfAt == value.Length() - 1) {
+    aEncodedEmail = value;
+    return true;
   }
 
   nsCOMPtr<nsIIDNService> idnSrv = do_GetService(NS_IDNSERVICE_CONTRACTID);
@@ -6599,29 +6655,19 @@ static bool PunycodeEncodeEmailAddress(const nsAString& aEmail,
     return false;
   }
 
-  const nsDependentCSubstring username = Substring(value, 0, atPos);
-  bool ace;
-  if (NS_SUCCEEDED(idnSrv->IsACE(username, &ace)) && !ace) {
-    nsAutoCString usernameACE;
-    // TODO: Bug 901347: Usernames longer than 63 chars are not converted by
-    // ConvertUTF8toACE(). For now, continue on even if the conversion fails.
-    if (NS_SUCCEEDED(idnSrv->ConvertUTF8toACE(username, usernameACE))) {
-      value.Replace(0, atPos, usernameACE);
-      atPos = usernameACE.Length();
-    }
-  }
+  uint32_t indexOfDomain = *aIndexOfAt + 1;
 
-  const nsDependentCSubstring domain = Substring(value, atPos + 1);
+  const nsDependentCSubstring domain = Substring(value, indexOfDomain);
+  bool ace;
   if (NS_SUCCEEDED(idnSrv->IsACE(domain, &ace)) && !ace) {
     nsAutoCString domainACE;
     if (NS_FAILED(idnSrv->ConvertUTF8toACE(domain, domainACE))) {
       return false;
     }
-    value.Replace(atPos + 1, domain.Length(), domainACE);
+    value.Replace(indexOfDomain, domain.Length(), domainACE);
   }
 
   aEncodedEmail = value;
-  *aIndexOfAt = atPos;
   return true;
 }
 
@@ -7071,8 +7117,10 @@ HTMLInputElement::IsValidEmailAddress(const nsAString& aValue)
 
   uint32_t atPos;
   nsAutoCString value;
-  // This call also checks whether aValue contains a correctly-placed '@' sign.
-  if (!PunycodeEncodeEmailAddress(aValue, value, &atPos)) {
+  if (!PunycodeEncodeEmailAddress(aValue, value, &atPos) ||
+      atPos == (uint32_t)kNotFound || atPos == 0 || atPos == value.Length() - 1) {
+    // Could not encode, or "@" was not found, or it was at the start or end
+    // of the input - in all cases, not a valid email address.
     return false;
   }
 

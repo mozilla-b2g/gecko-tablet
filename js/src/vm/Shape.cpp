@@ -256,7 +256,6 @@ ShapeTable::search(jsid id, bool adding)
     MOZ_CRASH("Shape::search failed to find an expected entry.");
 }
 
-#ifdef JSGC_COMPACTING
 void
 ShapeTable::fixupAfterMovingGC()
 {
@@ -268,7 +267,6 @@ ShapeTable::fixupAfterMovingGC()
             entry.setPreservingCollision(Forwarded(shape));
     }
 }
-#endif
 
 bool
 ShapeTable::change(int log2Delta, ExclusiveContext *cx)
@@ -496,7 +494,7 @@ NativeObject::addProperty(ExclusiveContext *cx, HandleNativeObject obj, HandleId
     MOZ_ASSERT(setter != JS_StrictPropertyStub);
 
     bool extensible;
-    if (!JSObject::isExtensible(cx, obj, &extensible))
+    if (!IsExtensible(cx, obj, &extensible))
         return nullptr;
     if (!extensible) {
         if (cx->isJSContext())
@@ -642,7 +640,12 @@ js::NewReshapedObject(JSContext *cx, HandleTypeObject type, JSObject *parent,
 
     /* Construct the new shape, without updating type information. */
     RootedId id(cx);
-    RootedShape newShape(cx, res->lastProperty());
+    RootedShape newShape(cx, EmptyShape::getInitialShape(cx, res->getClass(),
+                                                         res->getTaggedProto(),
+                                                         res->getMetadata(),
+                                                         res->getParent(),
+                                                         res->numFixedSlots(),
+                                                         shape->getObjectFlags()));
     for (unsigned i = 0; i < ids.length(); i++) {
         id = ids[i];
         MOZ_ASSERT(!res->contains(cx, id));
@@ -735,7 +738,7 @@ NativeObject::putProperty(ExclusiveContext *cx, HandleNativeObject obj, HandleId
          */
         bool extensible;
 
-        if (!JSObject::isExtensible(cx, obj, &extensible))
+        if (!IsExtensible(cx, obj, &extensible))
             return nullptr;
 
         if (!extensible) {
@@ -1080,7 +1083,6 @@ NativeObject::rollbackProperties(ExclusiveContext *cx, HandleNativeObject obj, u
             uint32_t slot = obj->lastProperty()->slot();
             if (slot < slotSpan)
                 break;
-            MOZ_ASSERT(obj->getSlot(slot).isUndefined());
         }
         if (!obj->removeProperty(cx, obj->lastProperty()->propid()))
             return false;
@@ -1230,38 +1232,6 @@ Shape::setObjectMetadata(JSContext *cx, JSObject *metadata, TaggedProto proto, S
     return replaceLastProperty(cx, base, proto, lastRoot);
 }
 
-/* static */ bool
-JSObject::preventExtensions(JSContext *cx, HandleObject obj, bool *succeeded)
-{
-    if (obj->is<ProxyObject>())
-        return js::Proxy::preventExtensions(cx, obj, succeeded);
-
-    if (!obj->nonProxyIsExtensible()) {
-        *succeeded = true;
-        return true;
-    }
-
-    /*
-     * Force lazy properties to be resolved by iterating over the objects' own
-     * properties.
-     */
-    AutoIdVector props(cx);
-    if (!js::GetPropertyKeys(cx, obj, JSITER_HIDDEN | JSITER_OWNONLY, &props))
-        return false;
-
-    /*
-     * Convert all dense elements to sparse properties. This will shrink the
-     * initialized length and capacity of the object to zero and ensure that no
-     * new dense elements can be added without calling growElements(), which
-     * checks isExtensible().
-     */
-    if (obj->isNative() && !NativeObject::sparsifyDenseElements(cx, obj.as<NativeObject>()))
-        return false;
-
-    *succeeded = true;
-    return obj->setFlag(cx, BaseShape::NOT_EXTENSIBLE, GENERATE_SHAPE);
-}
-
 bool
 JSObject::setFlag(ExclusiveContext *cx, /*BaseShape::Flag*/ uint32_t flag_,
                   GenerateShape generateShape)
@@ -1396,19 +1366,53 @@ BaseShape::assertConsistency()
 #endif
 }
 
+bool
+BaseShape::fixupBaseShapeTableEntry()
+{
+    bool updated = false;
+    if (parent && IsForwarded(parent.get())) {
+        parent = Forwarded(parent.get());
+        updated = true;
+    }
+    if (metadata && IsForwarded(metadata.get())) {
+        metadata = Forwarded(metadata.get());
+        updated = true;
+    }
+    return updated;
+}
+
+void
+JSCompartment::fixupBaseShapeTable()
+{
+    if (!baseShapes.initialized())
+        return;
+
+    for (BaseShapeSet::Enum e(baseShapes); !e.empty(); e.popFront()) {
+        UnownedBaseShape *base = e.front().unbarrieredGet();
+        if (base->fixupBaseShapeTableEntry()) {
+            StackBaseShape sbase(base);
+            ReadBarriered<UnownedBaseShape *> b(base);
+            e.rekeyFront(&sbase, b);
+        }
+    }
+}
+
 void
 JSCompartment::sweepBaseShapeTable()
 {
-    if (baseShapes.initialized()) {
-        for (BaseShapeSet::Enum e(baseShapes); !e.empty(); e.popFront()) {
-            UnownedBaseShape *base = e.front().unbarrieredGet();
-            if (IsBaseShapeAboutToBeFinalizedFromAnyThread(&base)) {
-                e.removeFront();
-            } else if (base != e.front().unbarrieredGet()) {
-                StackBaseShape sbase(base);
-                ReadBarriered<UnownedBaseShape *> b(base);
-                e.rekeyFront(&sbase, b);
-            }
+    if (!baseShapes.initialized())
+        return;
+
+    for (BaseShapeSet::Enum e(baseShapes); !e.empty(); e.popFront()) {
+        UnownedBaseShape *base = e.front().unbarrieredGet();
+        MOZ_ASSERT_IF(base->getObjectParent(), !IsForwarded(base->getObjectParent()));
+        MOZ_ASSERT_IF(base->getObjectMetadata(), !IsForwarded(base->getObjectMetadata()));
+        if (IsBaseShapeAboutToBeFinalizedFromAnyThread(&base)) {
+            e.removeFront();
+        } else if (base != e.front().unbarrieredGet()) {
+            StackBaseShape sbase(base);
+            ReadBarriered<UnownedBaseShape *> b(base);
+            e.rekeyFront(&sbase, b);
         }
     }
 }
@@ -1725,7 +1729,6 @@ JSCompartment::sweepInitialShapeTable()
     }
 }
 
-#ifdef JSGC_COMPACTING
 void
 JSCompartment::fixupInitialShapeTable()
 {
@@ -1764,7 +1767,6 @@ JSCompartment::fixupInitialShapeTable()
         }
     }
 }
-#endif // JSGC_COMPACTING
 
 void
 AutoRooterGetterSetter::Inner::trace(JSTracer *trc)

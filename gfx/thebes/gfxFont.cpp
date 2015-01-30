@@ -442,34 +442,37 @@ LookupAlternateValues(gfxFontFeatureValueSet *featureLookup,
     }
 }
 
-/* static */ bool
+/* static */ void
 gfxFontShaper::MergeFontFeatures(
     const gfxFontStyle *aStyle,
     const nsTArray<gfxFontFeature>& aFontFeatures,
     bool aDisableLigatures,
     const nsAString& aFamilyName,
     bool aAddSmallCaps,
-    nsDataHashtable<nsUint32HashKey,uint32_t>& aMergedFeatures)
+    PLDHashOperator (*aHandleFeature)(const uint32_t&, uint32_t&, void*),
+    void* aHandleFeatureData)
 {
     uint32_t numAlts = aStyle->alternateValues.Length();
     const nsTArray<gfxFontFeature>& styleRuleFeatures =
         aStyle->featureSettings;
 
-    // bail immediately if nothing to do
+    // Bail immediately if nothing to do, which is the common case.
     if (styleRuleFeatures.IsEmpty() &&
         aFontFeatures.IsEmpty() &&
         !aDisableLigatures &&
         aStyle->variantCaps == NS_FONT_VARIANT_CAPS_NORMAL &&
         aStyle->variantSubSuper == NS_FONT_VARIANT_POSITION_NORMAL &&
         numAlts == 0) {
-        return false;
+        return;
     }
+
+    nsDataHashtable<nsUint32HashKey,uint32_t> mergedFeatures;
 
     // Ligature features are enabled by default in the generic shaper,
     // so we explicitly turn them off if necessary (for letter-spacing)
     if (aDisableLigatures) {
-        aMergedFeatures.Put(HB_TAG('l','i','g','a'), 0);
-        aMergedFeatures.Put(HB_TAG('c','l','i','g'), 0);
+        mergedFeatures.Put(HB_TAG('l','i','g','a'), 0);
+        mergedFeatures.Put(HB_TAG('c','l','i','g'), 0);
     }
 
     // add feature values from font
@@ -478,7 +481,7 @@ gfxFontShaper::MergeFontFeatures(
     count = aFontFeatures.Length();
     for (i = 0; i < count; i++) {
         const gfxFontFeature& feature = aFontFeatures.ElementAt(i);
-        aMergedFeatures.Put(feature.mTag, feature.mValue);
+        mergedFeatures.Put(feature.mTag, feature.mValue);
     }
 
     // font-variant-caps - handled here due to the need for fallback handling
@@ -486,27 +489,27 @@ gfxFontShaper::MergeFontFeatures(
     uint32_t variantCaps = aStyle->variantCaps;
     switch (variantCaps) {
         case NS_FONT_VARIANT_CAPS_ALLSMALL:
-            aMergedFeatures.Put(HB_TAG('c','2','s','c'), 1);
+            mergedFeatures.Put(HB_TAG('c','2','s','c'), 1);
             // fall through to the small-caps case
         case NS_FONT_VARIANT_CAPS_SMALLCAPS:
-            aMergedFeatures.Put(HB_TAG('s','m','c','p'), 1);
+            mergedFeatures.Put(HB_TAG('s','m','c','p'), 1);
             break;
 
         case NS_FONT_VARIANT_CAPS_ALLPETITE:
-            aMergedFeatures.Put(aAddSmallCaps ? HB_TAG('c','2','s','c') :
-                                                HB_TAG('c','2','p','c'), 1);
+            mergedFeatures.Put(aAddSmallCaps ? HB_TAG('c','2','s','c') :
+                                               HB_TAG('c','2','p','c'), 1);
         // fall through to the petite-caps case
         case NS_FONT_VARIANT_CAPS_PETITECAPS:
-            aMergedFeatures.Put(aAddSmallCaps ? HB_TAG('s','m','c','p') :
-                                                HB_TAG('p','c','a','p'), 1);
+            mergedFeatures.Put(aAddSmallCaps ? HB_TAG('s','m','c','p') :
+                                               HB_TAG('p','c','a','p'), 1);
         break;
 
         case NS_FONT_VARIANT_CAPS_TITLING:
-            aMergedFeatures.Put(HB_TAG('t','i','t','l'), 1);
+            mergedFeatures.Put(HB_TAG('t','i','t','l'), 1);
             break;
 
         case NS_FONT_VARIANT_CAPS_UNICASE:
-            aMergedFeatures.Put(HB_TAG('u','n','i','c'), 1);
+            mergedFeatures.Put(HB_TAG('u','n','i','c'), 1);
             break;
 
         default:
@@ -516,10 +519,10 @@ gfxFontShaper::MergeFontFeatures(
     // font-variant-position - handled here due to the need for fallback
     switch (aStyle->variantSubSuper) {
         case NS_FONT_VARIANT_POSITION_SUPER:
-            aMergedFeatures.Put(HB_TAG('s','u','p','s'), 1);
+            mergedFeatures.Put(HB_TAG('s','u','p','s'), 1);
             break;
         case NS_FONT_VARIANT_POSITION_SUB:
-            aMergedFeatures.Put(HB_TAG('s','u','b','s'), 1);
+            mergedFeatures.Put(HB_TAG('s','u','b','s'), 1);
             break;
         default:
             break;
@@ -536,7 +539,7 @@ gfxFontShaper::MergeFontFeatures(
         count = featureList.Length();
         for (i = 0; i < count; i++) {
             const gfxFontFeature& feature = featureList.ElementAt(i);
-            aMergedFeatures.Put(feature.mTag, feature.mValue);
+            mergedFeatures.Put(feature.mTag, feature.mValue);
         }
     }
 
@@ -544,10 +547,12 @@ gfxFontShaper::MergeFontFeatures(
     count = styleRuleFeatures.Length();
     for (i = 0; i < count; i++) {
         const gfxFontFeature& feature = styleRuleFeatures.ElementAt(i);
-        aMergedFeatures.Put(feature.mTag, feature.mValue);
+        mergedFeatures.Put(feature.mTag, feature.mValue);
     }
 
-    return aMergedFeatures.Count() != 0;
+    if (mergedFeatures.Count() != 0) {
+        mergedFeatures.Enumerate(aHandleFeature, aHandleFeatureData);
+    }
 }
 
 void
@@ -2269,7 +2274,7 @@ gfxFont::Measure(gfxTextRun *aTextRun,
                     if (isRTL) {
                         glyphRect -= gfxPoint(advance, 0);
                     }
-                    glyphRect += gfxPoint(x, 0);
+                    glyphRect += glyphPt;
                     metrics.mBoundingBox = metrics.mBoundingBox.Union(glyphRect);
                     x += direction*advance;
                 }
@@ -3232,12 +3237,12 @@ gfxFont::InitMetricsFromSfntTables(Metrics& aMetrics)
     if (os2Table) {
         const OS2Table *os2 =
             reinterpret_cast<const OS2Table*>(hb_blob_get_data(os2Table, &len));
+        // although sxHeight is a signed field, we consider negative values to
+        // be erroneous and just ignore them
         if (len >= offsetof(OS2Table, sxHeight) + sizeof(int16_t) &&
-            uint16_t(os2->version) >= 2) {
+            uint16_t(os2->version) >= 2 && int16_t(os2->sxHeight) > 0) {
             // version 2 and later includes the x-height field
             SET_SIGNED(xHeight, os2->sxHeight);
-            // Abs because of negative xHeight seen in Kokonor (Tibetan) font
-            aMetrics.xHeight = Abs(aMetrics.xHeight);
         }
         // this should always be present in any valid OS/2 of any version
         if (len >= offsetof(OS2Table, sTypoLineGap) + sizeof(int16_t)) {

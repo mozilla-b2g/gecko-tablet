@@ -89,9 +89,9 @@ public:
 
   static TemporaryRef<SyncObject> CreateSyncObject(SyncHandle aHandle);
 
-  MOZ_BEGIN_NESTED_ENUM_CLASS(SyncType)
+  enum class SyncType {
     D3D11,
-  MOZ_END_NESTED_ENUM_CLASS(SyncType)
+  };
 
   virtual SyncType GetSyncType() = 0;
   virtual void FinalizeFrame() = 0;
@@ -426,8 +426,10 @@ public:
    * If the texture flags contain TextureFlags::DEALLOCATE_CLIENT, the destruction
    * will be synchronously coordinated with the compositor side, otherwise it
    * will be done asynchronously.
+   * If sync is true, the destruction will be synchronous regardless of the
+   * texture's flags (bad for performance, use with care).
    */
-  void ForceRemove();
+  void ForceRemove(bool sync = false);
 
   virtual void SetReleaseFenceHandle(FenceHandle aReleaseFenceHandle)
   {
@@ -457,7 +459,7 @@ public:
   /**
    * This function waits until the buffer is no longer being used.
    */
-  virtual void WaitForBufferOwnership() {}
+  virtual void WaitForBufferOwnership(bool aWaitReleaseFence = true) {}
 
   /**
    * Track how much of this texture is wasted.

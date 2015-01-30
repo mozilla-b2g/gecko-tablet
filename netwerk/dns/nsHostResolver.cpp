@@ -463,13 +463,10 @@ HostDB_InitEntry(PLDHashTable *table,
 
 static const PLDHashTableOps gHostDB_ops =
 {
-    PL_DHashAllocTable,
-    PL_DHashFreeTable,
     HostDB_HashKey,
     HostDB_MatchEntry,
     HostDB_MoveEntry,
     HostDB_ClearEntry,
-    PL_DHashFinalizeStub,
     HostDB_InitEntry,
 };
 
@@ -557,7 +554,7 @@ nsHostResolver::Init()
         return NS_ERROR_FAILURE;
     }
 
-    PL_DHashTableInit(&mDB, &gHostDB_ops, nullptr, sizeof(nsHostDBEnt), 0);
+    PL_DHashTableInit(&mDB, &gHostDB_ops, sizeof(nsHostDBEnt), 0);
 
     mShutdown = false;
 
@@ -761,8 +758,8 @@ nsHostResolver::ResolveHost(const char            *host,
             nsHostDBEnt *he = static_cast<nsHostDBEnt *>
                                          (PL_DHashTableAdd(&mDB, &key));
 
-            // if the record is null, then HostDB_InitEntry failed.
-            if (!he || !he->rec) {
+            // if the record is null, the hash table OOM'd.
+            if (!he) {
                 LOG(("  Out of memory: no cache entry for [%s].\n", host));
                 rv = NS_ERROR_OUT_OF_MEMORY;
             }
@@ -832,13 +829,11 @@ nsHostResolver::ResolveHost(const char            *host,
                     // First, search for an entry with AF_UNSPEC
                     const nsHostKey unspecKey = { host, flags, PR_AF_UNSPEC };
                     nsHostDBEnt *unspecHe = static_cast<nsHostDBEnt *>
-                        (PL_DHashTableLookup(&mDB, &unspecKey));
-                    NS_ASSERTION(PL_DHASH_ENTRY_IS_FREE(unspecHe) ||
-                                 (PL_DHASH_ENTRY_IS_BUSY(unspecHe) &&
-                                  unspecHe->rec),
+                        (PL_DHashTableSearch(&mDB, &unspecKey));
+                    NS_ASSERTION(!unspecHe ||
+                                 (unspecHe && unspecHe->rec),
                                 "Valid host entries should contain a record");
-                    if (PL_DHASH_ENTRY_IS_BUSY(unspecHe) &&
-                        unspecHe->rec &&
+                    if (unspecHe &&
                         unspecHe->rec->HasUsableResult(TimeStamp::NowLoRes(), flags)) {
 
                         MOZ_ASSERT(unspecHe->rec->addr_info || unspecHe->rec->negative,
@@ -960,8 +955,8 @@ nsHostResolver::DetachCallback(const char            *host,
 
         nsHostKey key = { host, flags, af };
         nsHostDBEnt *he = static_cast<nsHostDBEnt *>
-                                     (PL_DHashTableLookup(&mDB, &key));
-        if (he && he->rec) {
+                                     (PL_DHashTableSearch(&mDB, &key));
+        if (he) {
             // walk list looking for |callback|... we cannot assume
             // that it will be there!
             PRCList *node = he->rec->callbacks.next;
@@ -1308,8 +1303,8 @@ nsHostResolver::CancelAsyncRequest(const char            *host,
     // Lookup the host record associated with host, flags & address family
     nsHostKey key = { host, flags, af };
     nsHostDBEnt *he = static_cast<nsHostDBEnt *>
-                      (PL_DHashTableLookup(&mDB, &key));
-    if (he && he->rec) {
+                      (PL_DHashTableSearch(&mDB, &key));
+    if (he) {
         nsHostRecord* recPtr = nullptr;
         PRCList *node = he->rec->callbacks.next;
         // Remove the first nsDNSAsyncRequest callback which matches the
@@ -1383,10 +1378,6 @@ nsHostResolver::ThreadFunc(void *arg)
         LOG(("DNS lookup thread - Calling getaddrinfo for host [%s].\n",
              rec->host));
 
-        int flags = PR_AI_ADDRCONFIG;
-        if (!(rec->flags & RES_CANON_NAME))
-            flags |= PR_AI_NOCANONNAME;
-
         TimeStamp startTime = TimeStamp::Now();
         MOZ_EVENT_TRACER_EXEC(rec, "net::dns::resolve");
 
@@ -1400,10 +1391,10 @@ nsHostResolver::ThreadFunc(void *arg)
         // because PR_GetAddrInfoByName doesn't support PR_AF_INET6.
         bool disableIPv4 = rec->af == PR_AF_INET6;
         uint16_t af = disableIPv4 ? PR_AF_UNSPEC : rec->af;
-        nsresult status = GetAddrInfo(rec->host, af, flags, &ai, getTtl);
+        nsresult status = GetAddrInfo(rec->host, af, rec->flags, &ai, getTtl);
 #if defined(RES_RETRY_ON_FAILURE)
         if (NS_FAILED(status) && rs.Reset()) {
-            status = GetAddrInfo(rec->host, af, flags, &ai, getTtl);
+            status = GetAddrInfo(rec->host, af, rec->flags, &ai, getTtl);
         }
 #endif
 

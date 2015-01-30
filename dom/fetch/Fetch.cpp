@@ -19,6 +19,7 @@
 
 #include "mozilla/ErrorResult.h"
 #include "mozilla/dom/EncodingUtils.h"
+#include "mozilla/dom/Exceptions.h"
 #include "mozilla/dom/FetchDriver.h"
 #include "mozilla/dom/File.h"
 #include "mozilla/dom/Headers.h"
@@ -28,6 +29,7 @@
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/URLSearchParams.h"
 
+#include "InternalRequest.h"
 #include "InternalResponse.h"
 
 #include "WorkerPrivate.h"
@@ -136,9 +138,6 @@ public:
   void
   OnResponseAvailable(InternalResponse* aResponse) MOZ_OVERRIDE;
 
-  void
-  OnResponseEnd() MOZ_OVERRIDE;
-
 private:
   ~MainThreadFetchResolver();
 };
@@ -176,6 +175,11 @@ public:
     nsCOMPtr<nsIPrincipal> principal = mResolver->GetWorkerPrivate()->GetPrincipal();
     nsCOMPtr<nsILoadGroup> loadGroup = mResolver->GetWorkerPrivate()->GetLoadGroup();
     nsRefPtr<FetchDriver> fetch = new FetchDriver(mRequest, principal, loadGroup);
+    nsIDocument* doc = mResolver->GetWorkerPrivate()->GetDocument();
+    if (doc) {
+      fetch->SetReferrerPolicy(doc->GetReferrerPolicy());
+    }
+
     nsresult rv = fetch->Fetch(mResolver);
     // Right now we only support async fetch, which should never directly fail.
     if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -207,13 +211,10 @@ FetchRequest(nsIGlobalObject* aGlobal, const RequestOrUSVString& aInput,
   }
 
   nsRefPtr<InternalRequest> r = request->GetInternalRequest();
-  if (!r->ReferrerIsNone()) {
-    nsAutoCString ref;
-    aRv = GetRequestReferrer(aGlobal, r, ref);
-    if (NS_WARN_IF(aRv.Failed())) {
-      return nullptr;
-    }
-    r->SetReferrer(ref);
+
+  aRv = UpdateRequestReferrer(aGlobal, r);
+  if (NS_WARN_IF(aRv.Failed())) {
+    return nullptr;
   }
 
   if (NS_IsMainThread()) {
@@ -233,6 +234,7 @@ FetchRequest(nsIGlobalObject* aGlobal, const RequestOrUSVString& aInput,
     nsCOMPtr<nsILoadGroup> loadGroup = doc->GetDocumentLoadGroup();
     nsRefPtr<FetchDriver> fetch =
       new FetchDriver(r, doc->NodePrincipal(), loadGroup);
+    fetch->SetReferrerPolicy(doc->GetReferrerPolicy());
     aRv = fetch->Fetch(resolver);
     if (NS_WARN_IF(aRv.Failed())) {
       return nullptr;
@@ -240,6 +242,11 @@ FetchRequest(nsIGlobalObject* aGlobal, const RequestOrUSVString& aInput,
   } else {
     WorkerPrivate* worker = GetCurrentThreadWorkerPrivate();
     MOZ_ASSERT(worker);
+
+    if (worker->IsServiceWorker()) {
+      r->SetSkipServiceWorker();
+    }
+
     nsRefPtr<MainThreadFetchRunnable> run = new MainThreadFetchRunnable(worker, p, r);
     if (NS_FAILED(NS_DispatchToMainThread(run))) {
       NS_WARNING("MainThreadFetchRunnable dispatch failed!");
@@ -260,17 +267,15 @@ MainThreadFetchResolver::OnResponseAvailable(InternalResponse* aResponse)
   NS_ASSERT_OWNINGTHREAD(MainThreadFetchResolver);
   AssertIsOnMainThread();
 
-  nsCOMPtr<nsIGlobalObject> go = mPromise->GetParentObject();
-  mResponse = new Response(go, aResponse);
-  mPromise->MaybeResolve(mResponse);
-}
-
-void
-MainThreadFetchResolver::OnResponseEnd()
-{
-  NS_ASSERT_OWNINGTHREAD(MainThreadFetchResolver);
-  AssertIsOnMainThread();
-  MOZ_ASSERT(mResponse);
+  if (aResponse->Type() != ResponseType::Error) {
+    nsCOMPtr<nsIGlobalObject> go = mPromise->GetParentObject();
+    mResponse = new Response(go, aResponse);
+    mPromise->MaybeResolve(mResponse);
+  } else {
+    ErrorResult result;
+    result.ThrowTypeError(MSG_FETCH_FAILED);
+    mPromise->MaybeReject(result);
+  }
 }
 
 MainThreadFetchResolver::~MainThreadFetchResolver()
@@ -298,11 +303,18 @@ public:
     aWorkerPrivate->AssertIsOnWorkerThread();
     MOZ_ASSERT(aWorkerPrivate == mResolver->GetWorkerPrivate());
 
-    nsRefPtr<nsIGlobalObject> global = aWorkerPrivate->GlobalScope();
-    mResolver->mResponse = new Response(global, mInternalResponse);
-
     nsRefPtr<Promise> promise = mResolver->mFetchPromise.forget();
-    promise->MaybeResolve(mResolver->mResponse);
+
+    if (mInternalResponse->Type() != ResponseType::Error) {
+      nsRefPtr<nsIGlobalObject> global = aWorkerPrivate->GlobalScope();
+      mResolver->mResponse = new Response(global, mInternalResponse);
+
+      promise->MaybeResolve(mResolver->mResponse);
+    } else {
+      ErrorResult result;
+      result.ThrowTypeError(MSG_FETCH_FAILED);
+      promise->MaybeReject(result);
+    }
 
     return true;
   }
@@ -324,7 +336,6 @@ public:
     MOZ_ASSERT(aWorkerPrivate);
     aWorkerPrivate->AssertIsOnWorkerThread();
     MOZ_ASSERT(aWorkerPrivate == mResolver->GetWorkerPrivate());
-    MOZ_ASSERT(mResolver->mResponse);
 
     mResolver->CleanUp(aCx);
     return true;
@@ -368,15 +379,19 @@ WorkerFetchResolver::OnResponseEnd()
   }
 }
 
-// Empty string for no-referrer. FIXME(nsm): Does returning empty string
-// actually lead to no-referrer in the base channel?
+// This method sets the request's referrerURL, as specified by the "determine
+// request's referrer" steps from Referrer Policy [1].
 // The actual referrer policy and stripping is dealt with by HttpBaseChannel,
-// this always returns the full API referrer URL of the relevant global.
+// this always sets the full API referrer URL of the relevant global if it is
+// not already a url or no-referrer.
+// [1]: https://w3c.github.io/webappsec/specs/referrer-policy/#determine-requests-referrer
 nsresult
-GetRequestReferrer(nsIGlobalObject* aGlobal, const InternalRequest* aRequest, nsCString& aReferrer)
+UpdateRequestReferrer(nsIGlobalObject* aGlobal, InternalRequest* aRequest)
 {
-  if (aRequest->ReferrerIsURL()) {
-    aReferrer = aRequest->ReferrerAsURL();
+  nsAutoString originalReferrer;
+  aRequest->GetReferrer(originalReferrer);
+  // If it is no-referrer ("") or a URL, don't modify.
+  if (!originalReferrer.EqualsLiteral(kFETCH_CLIENT_REFERRER_STR)) {
     return NS_OK;
   }
 
@@ -384,24 +399,16 @@ GetRequestReferrer(nsIGlobalObject* aGlobal, const InternalRequest* aRequest, ns
   if (window) {
     nsCOMPtr<nsIDocument> doc = window->GetExtantDoc();
     if (doc) {
-      nsCOMPtr<nsIURI> docURI = doc->GetDocumentURI();
-      nsAutoCString origin;
-      nsresult rv = nsContentUtils::GetASCIIOrigin(docURI, origin);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
-
       nsAutoString referrer;
       doc->GetReferrer(referrer);
-      aReferrer = NS_ConvertUTF16toUTF8(referrer);
+      aRequest->SetReferrer(referrer);
     }
   } else {
     WorkerPrivate* worker = GetCurrentThreadWorkerPrivate();
     MOZ_ASSERT(worker);
     worker->AssertIsOnWorkerThread();
-    aReferrer = worker->GetLocationInfo().mHref;
-    // XXX(nsm): Algorithm says "If source is not a URL..." but when is it
-    // not a URL?
+    WorkerPrivate::LocationInfo& info = worker->GetLocationInfo();
+    aRequest->SetReferrer(NS_ConvertUTF8toUTF16(info.mHref));
   }
 
   return NS_OK;
@@ -730,7 +737,7 @@ public:
                    nsISupports* aCtxt,
                    nsresult aStatus,
                    uint32_t aResultLength,
-                   const uint8_t* aResult)
+                   const uint8_t* aResult) MOZ_OVERRIDE
   {
     MOZ_ASSERT(NS_IsMainThread());
 
@@ -971,8 +978,10 @@ FetchBody<Derived>::BeginConsumeBodyMainThread()
   nsCOMPtr<nsIInputStream> stream;
   DerivedClass()->GetBody(getter_AddRefs(stream));
   if (!stream) {
-    NS_WARNING("Could not get stream");
-    return;
+    rv = NS_NewCStringInputStream(getter_AddRefs(stream), EmptyCString());
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return;
+    }
   }
 
   nsCOMPtr<nsIInputStreamPump> pump;
@@ -1070,9 +1079,9 @@ FetchBody<Derived>::ContinueConsumeBody(nsresult aStatus, uint32_t aResultLength
   // Finish successfully consuming body according to type.
   MOZ_ASSERT(aResult);
 
-  AutoJSAPI api;
-  api.Init(DerivedClass()->GetParentObject());
-  JSContext* cx = api.cx();
+  AutoJSAPI jsapi;
+  jsapi.Init(DerivedClass()->GetParentObject());
+  JSContext* cx = jsapi.cx();
 
   switch (mConsumeType) {
     case CONSUME_ARRAYBUFFER: {
@@ -1119,13 +1128,20 @@ FetchBody<Derived>::ContinueConsumeBody(nsresult aStatus, uint32_t aResultLength
         return;
       }
 
+      AutoForceSetExceptionOnContext forceExn(cx);
       JS::Rooted<JS::Value> json(cx);
       if (!JS_ParseJSON(cx, decoded.get(), decoded.Length(), &json)) {
-        JS::Rooted<JS::Value> exn(cx);
-        if (JS_GetPendingException(cx, &exn)) {
-          JS_ClearPendingException(cx);
-          localPromise->MaybeReject(cx, exn);
+        if (!JS_IsExceptionPending(cx)) {
+          localPromise->MaybeReject(NS_ERROR_DOM_UNKNOWN_ERR);
+          return;
         }
+
+        JS::Rooted<JS::Value> exn(cx);
+        DebugOnly<bool> gotException = JS_GetPendingException(cx, &exn);
+        MOZ_ASSERT(gotException);
+
+        JS_ClearPendingException(cx);
+        localPromise->MaybeReject(cx, exn);
         return;
       }
 

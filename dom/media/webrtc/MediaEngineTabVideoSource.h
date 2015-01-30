@@ -29,8 +29,8 @@ class MediaEngineTabVideoSource : public MediaEngineVideoSource, nsIDOMEventList
     virtual nsresult Stop(mozilla::SourceMediaStream*, mozilla::TrackID) MOZ_OVERRIDE;
     virtual nsresult Config(bool, uint32_t, bool, uint32_t, bool, uint32_t, int32_t) MOZ_OVERRIDE;
     virtual bool IsFake() MOZ_OVERRIDE;
-    virtual const MediaSourceType GetMediaSource() MOZ_OVERRIDE {
-      return MediaSourceType::Browser;
+    virtual const dom::MediaSourceEnum GetMediaSource() MOZ_OVERRIDE {
+      return dom::MediaSourceEnum::Browser;
     }
     virtual bool SatisfiesConstraintSets(
       const nsTArray<const dom::MediaTrackConstraintSet*>& aConstraintSets) MOZ_OVERRIDE
@@ -70,12 +70,13 @@ protected:
     ~MediaEngineTabVideoSource() {}
 
 private:
-    int mBufW;
-    int mBufH;
+    int mBufWidthMax;
+    int mBufHeightMax;
     int64_t mWindowId;
     bool mScrollWithPage;
     int mTimePerFrame;
     ScopedFreePtr<unsigned char> mData;
+    size_t mDataSize;
     nsCOMPtr<nsIDOMWindow> mWindow;
     nsRefPtr<layers::CairoImage> mImage;
     nsCOMPtr<nsITimer> mTimer;

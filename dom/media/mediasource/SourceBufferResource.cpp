@@ -11,6 +11,7 @@
 #include "nsISeekableStream.h"
 #include "nsISupports.h"
 #include "prlog.h"
+#include "MediaData.h"
 
 #ifdef PR_LOGGING
 PRLogModuleInfo* GetSourceBufferResourceLog()
@@ -172,11 +173,12 @@ SourceBufferResource::ReadFromCache(char* aBuffer, int64_t aOffset, uint32_t aCo
 }
 
 uint32_t
-SourceBufferResource::EvictData(uint32_t aThreshold)
+SourceBufferResource::EvictData(uint64_t aPlaybackOffset, uint32_t aThreshold)
 {
-  SBR_DEBUG("SourceBufferResource(%p)::EvictData(aThreshold=%u)", this, aThreshold);
+  SBR_DEBUG("SourceBufferResource(%p)::EvictData(aPlaybackOffset=%llu,"
+            "aThreshold=%u)", this, aPlaybackOffset, aThreshold);
   ReentrantMonitorAutoEnter mon(mMonitor);
-  return mInputBuffer.Evict(mOffset, aThreshold);
+  return mInputBuffer.Evict(aPlaybackOffset, aThreshold);
 }
 
 void
@@ -186,16 +188,26 @@ SourceBufferResource::EvictBefore(uint64_t aOffset)
   ReentrantMonitorAutoEnter mon(mMonitor);
   // If aOffset is past the current playback offset we don't evict.
   if (aOffset < mOffset) {
-    mInputBuffer.Evict(aOffset, 0);
+    mInputBuffer.EvictBefore(aOffset);
   }
 }
 
-void
-SourceBufferResource::AppendData(const uint8_t* aData, uint32_t aLength)
+uint32_t
+SourceBufferResource::EvictAll()
 {
-  SBR_DEBUG("SourceBufferResource(%p)::AppendData(aData=%p, aLength=%u)", this, aData, aLength);
+  SBR_DEBUG("SourceBufferResource(%p)::EvictAll()", this);
   ReentrantMonitorAutoEnter mon(mMonitor);
-  mInputBuffer.AppendItem(aData, aLength);
+  return mInputBuffer.EvictAll();
+}
+
+void
+SourceBufferResource::AppendData(LargeDataBuffer* aData)
+{
+  SBR_DEBUG("SourceBufferResource(%p)::AppendData(aData=%p, aLength=%u)", this,
+            aData->Elements(), aData->Length());
+  ReentrantMonitorAutoEnter mon(mMonitor);
+  mInputBuffer.AppendItem(aData);
+  mEnded = false;
   mon.NotifyAll();
 }
 

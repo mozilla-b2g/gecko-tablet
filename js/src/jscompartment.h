@@ -398,12 +398,11 @@ struct JSCompartment
     void purge();
     void clearTables();
 
-#ifdef JSGC_COMPACTING
     void fixupInitialShapeTable();
     void fixupNewTypeObjectTable(js::types::NewTypeObjectTable &table);
     void fixupAfterMovingGC();
     void fixupGlobal();
-#endif
+    void fixupBaseShapeTable();
 
     bool hasObjectMetadataCallback() const { return objectMetadataCallback; }
     void setObjectMetadataCallback(js::ObjectMetadataCallback callback);

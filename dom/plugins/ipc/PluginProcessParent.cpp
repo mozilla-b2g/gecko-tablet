@@ -14,6 +14,10 @@
 #include "mozilla/Telemetry.h"
 #include "nsThreadUtils.h"
 
+#if defined(XP_WIN) && defined(MOZ_SANDBOX)
+#include "mozilla/Preferences.h"
+#endif
+
 using std::vector;
 using std::string;
 
@@ -43,8 +47,20 @@ PluginProcessParent::~PluginProcessParent()
 }
 
 bool
-PluginProcessParent::Launch(mozilla::UniquePtr<LaunchCompleteTask> aLaunchCompleteTask)
+PluginProcessParent::Launch(mozilla::UniquePtr<LaunchCompleteTask> aLaunchCompleteTask,
+                            bool aEnableSandbox)
 {
+#if defined(XP_WIN) && defined(MOZ_SANDBOX)
+    mEnableNPAPISandbox = aEnableSandbox;
+    mMoreStrictSandbox =
+      Preferences::GetBool("dom.ipc.plugins.moreStrictSandbox");
+#else
+    if (aEnableSandbox) {
+        MOZ_ASSERT(false,
+                   "Can't enable an NPAPI process sandbox for platform/build.");
+    }
+#endif
+
     ProcessArchitecture currentArchitecture = base::GetCurrentProcessArchitecture();
     uint32_t containerArchitectures = GetSupportedArchitecturesForProcessType(GeckoProcessType_Plugin);
 

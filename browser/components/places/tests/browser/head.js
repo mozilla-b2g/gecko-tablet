@@ -6,6 +6,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
   "resource://gre/modules/NetUtil.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Promise",
   "resource://gre/modules/Promise.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "PlacesTestUtils",
+  "resource://testing-common/PlacesTestUtils.jsm");
 
 // We need to cache this before test runs...
 let cachedLeftPaneFolderIdGetter;
@@ -71,21 +73,6 @@ function promiseClipboard(aPopulateClipboardFn, aFlavor) {
                    function () { deferred.resolve(); },
                    aFlavor);
   return deferred.promise;
-}
-
-/**
- * Waits for completion of a clear history operation, before
- * proceeding with aCallback.
- *
- * @param aCallback
- *        Function to be called when done.
- */
-function waitForClearHistory(aCallback) {
-  Services.obs.addObserver(function observeCH(aSubject, aTopic, aData) {
-    Services.obs.removeObserver(observeCH, PlacesUtils.TOPIC_EXPIRATION_FINISHED);
-    aCallback();
-  }, PlacesUtils.TOPIC_EXPIRATION_FINISHED, false);
-  PlacesUtils.bhistory.removeAllPages();
 }
 
 /**
@@ -374,35 +361,67 @@ function promiseHistoryNotification(notification, conditionFn) {
 }
 
 /**
- * Clears history asynchronously.
+ * Makes the specified toolbar visible or invisible and returns a Promise object
+ * that is resolved when the toolbar has completed any animations associated
+ * with hiding or showing the toolbar.
+ *
+ * Note that this code assumes that changes to a toolbar's visibility trigger
+ * a transition on the max-height property of the toolbar element.
+ * Changes to this styling could cause the returned Promise object to be
+ * resolved too early or not at all.
+ *
+ * @param aToolbar
+ *        The toolbar to update.
+ * @param aVisible
+ *        True to make the toolbar visible, false to make it hidden.
  *
  * @return {Promise}
- * @resolves When history has been cleared.
+ * @resolves Any animation associated with updating the toolbar's visibility has
+ *           finished.
  * @rejects Never.
  */
-function promiseClearHistory() {
-  let promise = promiseTopicObserved(PlacesUtils.TOPIC_EXPIRATION_FINISHED);
-  PlacesUtils.bhistory.removeAllPages();
-  return promise;
+function promiseSetToolbarVisibility(aToolbar, aVisible, aCallback) {
+  return new Promise((resolve, reject) => {
+    function listener(event) {
+      if (event.propertyName == "max-height") {
+        aToolbar.removeEventListener("transitionend", listener);
+        resolve();
+      }
+    }
+
+    let transitionProperties =
+      window.getComputedStyle(aToolbar).transitionProperty.split(", ");
+    if (isToolbarVisible(aToolbar) != aVisible &&
+        transitionProperties.some(
+          prop => prop == "max-height" || prop == "all"
+        )) {
+      // Just because max-height is a transitionable property doesn't mean
+      // a transition will be triggered, but it's more likely.
+      aToolbar.addEventListener("transitionend", listener);
+      setToolbarVisibility(aToolbar, aVisible);
+      return;
+    }
+
+    // No animation to wait for
+    setToolbarVisibility(aToolbar, aVisible);
+    resolve();
+  });
 }
 
 /**
- * Allows waiting for an observer notification once.
+ * Helper function to determine if the given toolbar is in the visible
+ * state according to its autohide/collapsed attribute.
  *
- * @param topic
- *        Notification topic to observe.
+ * @aToolbar The toolbar to query.
  *
- * @return {Promise}
- * @resolves The array [subject, data] from the observed notification.
- * @rejects Never.
+ * @returns True if the relevant attribute on |aToolbar| indicates it is
+ *          visible, false otherwise.
  */
-function promiseTopicObserved(topic)
-{
-  let deferred = Promise.defer();
-  info("Waiting for observer topic " + topic);
-  Services.obs.addObserver(function PTO_observe(subject, topic, data) {
-    Services.obs.removeObserver(PTO_observe, topic);
-    deferred.resolve([subject, data]);
-  }, topic, false);
-  return deferred.promise;
+function isToolbarVisible(aToolbar) {
+  let hidingAttribute = aToolbar.getAttribute("type") == "menubar"
+                        ? "autohide"
+                        : "collapsed";
+  let hidingValue = aToolbar.getAttribute(hidingAttribute).toLowerCase();
+  // Check for both collapsed="true" and collapsed="collapsed"
+  return hidingValue !== "true" && hidingValue !== hidingAttribute;
 }

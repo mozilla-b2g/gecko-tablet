@@ -6,76 +6,44 @@
 /**
  * CallTree view containing profiler call tree, controlled by DetailsView.
  */
-let CallTreeView = {
+let CallTreeView = Heritage.extend(DetailsSubview, {
+  rangeChangeDebounceTime: 50, // ms
+
   /**
    * Sets up the view with event binding.
    */
   initialize: function () {
-    this._callTree = $(".call-tree-cells-container");
-    this._onRecordingStopped = this._onRecordingStopped.bind(this);
-    this._onRecordingSelected = this._onRecordingSelected.bind(this);
-    this._onRangeChange = this._onRangeChange.bind(this);
+    DetailsSubview.initialize.call(this);
+
+    this._onPrefChanged = this._onPrefChanged.bind(this);
     this._onLink = this._onLink.bind(this);
 
-    PerformanceController.on(EVENTS.RECORDING_STOPPED, this._onRecordingStopped);
-    PerformanceController.on(EVENTS.RECORDING_SELECTED, this._onRecordingSelected);
-    OverviewView.on(EVENTS.OVERVIEW_RANGE_SELECTED, this._onRangeChange);
-    OverviewView.on(EVENTS.OVERVIEW_RANGE_CLEARED, this._onRangeChange);
+    PerformanceController.on(EVENTS.PREF_CHANGED, this._onPrefChanged);
   },
 
   /**
    * Unbinds events.
    */
   destroy: function () {
-    PerformanceController.off(EVENTS.RECORDING_STOPPED, this._onRecordingStopped);
-    PerformanceController.off(EVENTS.RECORDING_SELECTED, this._onRecordingSelected);
-    OverviewView.off(EVENTS.OVERVIEW_RANGE_SELECTED, this._onRangeChange);
-    OverviewView.off(EVENTS.OVERVIEW_RANGE_CLEARED, this._onRangeChange);
+    DetailsSubview.destroy.call(this);
+
+    PerformanceController.off(EVENTS.PREF_CHANGED, this._onPrefChanged);
   },
 
   /**
    * Method for handling all the set up for rendering a new call tree.
+   *
+   * @param object interval [optional]
+   *        The { startTime, endTime }, in milliseconds.
+   * @param object options [optional]
+   *        Additional options for new the call tree.
    */
-  render: function (profilerData, beginAt, endAt, options={}) {
-    // Empty recordings might yield no profiler data.
-    if (profilerData.profile == null) {
-      return;
-    }
-    let threadNode = this._prepareCallTree(profilerData, beginAt, endAt, options);
+  render: function (interval={}, options={}) {
+    let recording = PerformanceController.getCurrentRecording();
+    let profile = recording.getProfile();
+    let threadNode = this._prepareCallTree(profile, interval, options);
     this._populateCallTree(threadNode, options);
     this.emit(EVENTS.CALL_TREE_RENDERED);
-  },
-
-  /**
-   * Called when recording is stopped.
-   */
-  _onRecordingStopped: function () {
-    let profilerData = PerformanceController.getProfilerData();
-    this.render(profilerData);
-  },
-
-  /**
-   * Called when a recording has been selected.
-   */
-  _onRecordingSelected: function (_, recording) {
-    // If not recording, then this recording is done and we can render all of it
-    // Otherwise, TODO in bug 1120699 will hide the details view altogether if
-    // this is still recording.
-    if (!recording.isRecording()) {
-      let profilerData = recording.getProfilerData();
-      this.render(profilerData);
-    }
-  },
-
-  /**
-   * Fired when a range is selected or cleared in the OverviewView.
-   */
-  _onRangeChange: function (_, params) {
-    // When a range is cleared, we'll have no beginAt/endAt data,
-    // so the rebuild will just render all the data again.
-    let profilerData = PerformanceController.getProfilerData();
-    let { beginAt, endAt } = params || {};
-    this.render(profilerData, beginAt, endAt);
   },
 
   /**
@@ -92,13 +60,17 @@ let CallTreeView = {
    * Called when the recording is stopped and prepares data to
    * populate the call tree.
    */
-  _prepareCallTree: function (profilerData, beginAt, endAt, options) {
-    let threadSamples = profilerData.profile.threads[0].samples;
+  _prepareCallTree: function (profile, { startTime, endTime }, options) {
+    let threadSamples = profile.threads[0].samples;
     let contentOnly = !Prefs.showPlatformData;
-    // TODO handle inverted tree bug 1102347
-    let invertTree = false;
+    let invertTree = PerformanceController.getPref("invert-call-tree");
 
-    let threadNode = new ThreadNode(threadSamples, contentOnly, beginAt, endAt, invertTree);
+    let threadNode = new ThreadNode(threadSamples,
+      { startTime, endTime, contentOnly, invertTree });
+
+    // If we have an empty profile (no samples), then don't invert the tree, as
+    // it would hide the root node and a completely blank call tree space can be
+    // mis-interpreted as an error.
     options.inverted = invertTree && threadNode.samples > 0;
 
     return threadNode;
@@ -109,28 +81,38 @@ let CallTreeView = {
    */
   _populateCallTree: function (frameNode, options={}) {
     let root = new CallView({
-      autoExpandDepth: options.inverted ? 0 : undefined,
       frame: frameNode,
+      inverted: options.inverted,
+      // Root nodes are hidden in inverted call trees.
       hidden: options.inverted,
-      inverted: options.inverted
+      // Call trees should only auto-expand when not inverted. Passing undefined
+      // will default to the CALL_TREE_AUTO_EXPAND depth.
+      autoExpandDepth: options.inverted ? 0 : undefined,
     });
 
-    // Bind events
+    // Bind events.
     root.on("link", this._onLink);
 
     // Clear out other call trees.
-    this._callTree.innerHTML = "";
-    root.attachTo(this._callTree);
+    let container = $(".call-tree-cells-container");
+    container.innerHTML = "";
+    root.attachTo(container);
 
+    // When platform data isn't shown, hide the cateogry labels, since they're
+    // only available for C++ frames.
     let contentOnly = !Prefs.showPlatformData;
     root.toggleCategories(!contentOnly);
-  }
-};
+  },
 
-/**
- * Convenient way of emitting events from the view.
- */
-EventEmitter.decorate(CallTreeView);
+  /**
+   * Called when a preference under "devtools.performance.ui." is changed.
+   */
+  _onPrefChanged: function (_, prefName, value) {
+    if (prefName === "invert-call-tree") {
+      this.render(OverviewView.getTimeInterval());
+    }
+  }
+});
 
 /**
  * Opens/selects the debugger in this toolbox and jumps to the specified

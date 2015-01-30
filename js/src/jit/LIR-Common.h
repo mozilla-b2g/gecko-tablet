@@ -157,6 +157,26 @@ class LSimdBox : public LInstructionHelper<1, 1, 1>
     }
 };
 
+class LSimdUnbox : public LInstructionHelper<1, 1, 1>
+{
+  public:
+    LIR_HEADER(SimdUnbox)
+
+    LSimdUnbox(const LAllocation &obj, const LDefinition &temp)
+    {
+        setOperand(0, obj);
+        setTemp(0, temp);
+    }
+
+    const LDefinition *temp() {
+        return getTemp(0);
+    }
+
+    MSimdUnbox *mir() const {
+        return mir_->toSimdUnbox();
+    }
+};
+
 // Constructs a SIMD value with 4 equal components (e.g. int32x4, float32x4).
 class LSimdSplatX4 : public LInstructionHelper<1, 1, 0>
 {
@@ -2945,15 +2965,39 @@ class LAtan2D : public LCallInstructionHelper<1, 2, 1>
     }
 };
 
-class LHypot : public LCallInstructionHelper<1, 2, 1>
+class LHypot : public LCallInstructionHelper<1, 4, 1>
 {
+    uint32_t numOperands_;
   public:
     LIR_HEADER(Hypot)
-    LHypot(const LAllocation &x, const LAllocation &y, const LDefinition &temp) {
+    LHypot(const LAllocation &x, const LAllocation &y, const LDefinition &temp)
+      : numOperands_(2)
+    {
         setOperand(0, x);
         setOperand(1, y);
         setTemp(0, temp);
     }
+
+    LHypot(const LAllocation &x, const LAllocation &y, const LAllocation &z, const LDefinition &temp)
+      : numOperands_(3)
+    {
+        setOperand(0, x);
+        setOperand(1, y);
+        setOperand(2, z);
+        setTemp(0, temp);
+    }
+
+    LHypot(const LAllocation &x, const LAllocation &y, const LAllocation &z, const LAllocation &w, const LDefinition &temp)
+      : numOperands_(4)
+    {
+        setOperand(0, x);
+        setOperand(1, y);
+        setOperand(2, z);
+        setOperand(3, w);
+        setTemp(0, temp);
+    }
+
+    uint32_t numArgs() const { return numOperands_; }
 
     const LAllocation *x() {
         return getOperand(0);
@@ -3666,7 +3710,7 @@ class LStart : public LInstructionHelper<0, 0, 0>
 
 // Passed the BaselineFrame address in the OsrFrameReg by SideCannon().
 // Forwards this object to the LOsrValues for Value materialization.
-class LOsrEntry : public LInstructionHelper<1, 0, 0>
+class LOsrEntry : public LInstructionHelper<1, 0, 1>
 {
   protected:
     Label label_;
@@ -3675,9 +3719,11 @@ class LOsrEntry : public LInstructionHelper<1, 0, 0>
   public:
     LIR_HEADER(OsrEntry)
 
-    LOsrEntry()
+    explicit LOsrEntry(const LDefinition &temp)
       : frameDepth_(0)
-    { }
+    {
+        setTemp(0, temp);
+    }
 
     void setFrameDepth(uint32_t depth) {
         frameDepth_ = depth;
@@ -3688,7 +3734,9 @@ class LOsrEntry : public LInstructionHelper<1, 0, 0>
     Label *label() {
         return &label_;
     }
-
+    const LDefinition *temp() {
+        return getTemp(0);
+    }
 };
 
 // Materialize a Value stored in an interpreter frame for OSR.
@@ -6159,28 +6207,6 @@ class LCallInstanceOf : public LCallInstructionHelper<1, BOX_PIECES+1, 0>
 
     static const size_t LHS = 0;
     static const size_t RHS = BOX_PIECES;
-};
-
-class LProfilerStackOp : public LInstructionHelper<0, 0, 1>
-{
-  public:
-    LIR_HEADER(ProfilerStackOp)
-
-    explicit LProfilerStackOp(const LDefinition &temp) {
-        setTemp(0, temp);
-    }
-
-    const LDefinition *temp() {
-        return getTemp(0);
-    }
-
-    JSScript *script() {
-        return mir_->toProfilerStackOp()->script();
-    }
-
-    MProfilerStackOp::Type type() {
-        return mir_->toProfilerStackOp()->type();
-    }
 };
 
 class LIsCallable : public LInstructionHelper<1, 1, 0>

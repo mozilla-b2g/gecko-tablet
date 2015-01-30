@@ -334,14 +334,16 @@
               Cu.reportError(ex);
             }
 
-            function loadCurrent() {
+            let loadCurrent = () => {
               openUILinkIn(url, "current", {
                 allowThirdPartyFixup: true,
                 disallowInheritPrincipal: !mayInheritPrincipal,
                 allowPinnedTabHostChange: true,
                 postData: postData
               });
-            }
+              // Ensure the start of the URL is visible for UX reasons:
+              this.selectionStart = this.selectionEnd = 0;
+            };
 
             // Focus the content area before triggering loads, since if the load
             // occurs in a new tab, we want focus to be restored to the content
@@ -922,13 +924,16 @@
 
           var controller = this.view.QueryInterface(Components.interfaces.nsIAutoCompleteController);
 
-          // Check for unmodified left-click, and use default behavior
           var searchBar = BrowserSearch.searchBar;
-          searchBar.telemetrySearchDetails = {
-            index: controller.selection.currentIndex,
-            kind: "mouse"
-          };
+          var popupForSearchBar = searchBar && searchBar.textbox == this.mInput;
+          if (popupForSearchBar) {
+            searchBar.telemetrySearchDetails = {
+              index: controller.selection.currentIndex,
+              kind: "mouse"
+            };
+          }
 
+          // Check for unmodified left-click, and use default behavior
           if (aEvent.button == 0 && !aEvent.shiftKey && !aEvent.ctrlKey &&
               !aEvent.altKey && !aEvent.metaKey) {
             controller.handleEnter(true);
@@ -936,7 +941,7 @@
           }
 
           // Check for middle-click or modified clicks on the search bar
-          if (searchBar && searchBar.textbox == this.mInput) {
+          if (popupForSearchBar) {
             // Handle search bar popup clicks
             var search = controller.getValueAt(this.selectedIndex);
 
@@ -1149,7 +1154,8 @@
 
         let header = document.getAnonymousElementByAttribute(this, "anonid",
                                                              "search-panel-one-offs-header")
-        header.collapsed = list.collapsed = !engines.length;
+        // header is a xul:deck so collapsed doesn't work on it, see bug 589569.
+        header.hidden = list.collapsed = !engines.length;
 
         // 49px is the min-width of each search engine button,
         // adapt this const when changing the css.
@@ -1167,7 +1173,7 @@
           // Ensure the panel is wide enough to fit at least 3 engines.
           minWidth = Math.max(minWidth, ENGINE_WIDTH * 3);
         }
-        panel.setAttribute("style", "min-width: " + minWidth + "px");
+        panel.style.minWidth = minWidth + "px";
 
         if (!engines.length)
           return;
@@ -1262,11 +1268,14 @@
             onSuccess: function(engine) {
               event.target.hidePopup();
               BrowserSearch.searchBar.openSuggestionsPanel();
+            },
+            onError: function(errorCode) {
+              Components.utils.reportError("Error adding search engine: " + errorCode);
             }
           }
           Services.search.addEngine(target.getAttribute("uri"),
                                     Ci.nsISearchEngine.DATA_XML,
-                                    target.getAttribute("src"), false,
+                                    target.getAttribute("image"), false,
                                     installCallback);
         }
       ]]></handler>
@@ -2205,7 +2214,6 @@
         _doorhangerTitle.value =
           gNavigatorBundle.getFormattedString(
             "badContentBlocked.notblocked.message", [this._brandShortName]);
-
         if (this.notification.options.state &
             Ci.nsIWebProgressListener.STATE_BLOCKED_MIXED_ACTIVE_CONTENT) {
           _doorhangerTitle.value =
@@ -2246,6 +2254,10 @@
             Services.urlFormatter.formatURLPref("app.support.baseURL")
               + "tracking-protection";
         }
+        if (Services.prefs.getBoolPref("privacy.trackingprotection.enabled")) {
+          let histogram = Services.telemetry.getHistogramById("TRACKING_PROTECTION_EVENTS");
+          histogram.add(0);
+        }
       ]]></constructor>
       <method name="disableMixedContentProtection">
         <body><![CDATA[
@@ -2277,7 +2289,7 @@
             null, null);
           // Add the current host in the 'trackingprotection' consumer of
           // the permission manager using a normalized URI. This effectively
-          // places this host on the tracking protection white list.
+          // places this host on the tracking protection allowlist.
           Services.perms.add(normalizedUrl,
             "trackingprotection", Services.perms.ALLOW_ACTION);
           // Telemetry for disable protection
@@ -2291,7 +2303,7 @@
         <body><![CDATA[
           // Remove the current host from the 'trackingprotection' consumer
           // of the permission manager. This effectively removes this host
-          // from the tracking protection white list (any list actually).
+          // from the tracking protection allowlist.
           Services.perms.remove(gBrowser.selectedBrowser.currentURI.host,
             "trackingprotection");
           // Telemetry for enable protection

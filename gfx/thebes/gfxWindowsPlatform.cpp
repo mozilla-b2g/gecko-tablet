@@ -325,8 +325,28 @@ public:
 
 NS_IMPL_ISUPPORTS(GPUAdapterReporter, nsIMemoryReporter)
 
+
+Atomic<size_t> gfxWindowsPlatform::sD3D11MemoryUsed;
+
+class D3D11TextureReporter MOZ_FINAL : public nsIMemoryReporter
+{
+public:
+  NS_DECL_ISUPPORTS
+
+  NS_IMETHOD CollectReports(nsIHandleReportCallback *aHandleReport,
+                            nsISupports* aData, bool aAnonymize) MOZ_OVERRIDE
+  {
+      return MOZ_COLLECT_REPORT("d3d11-shared-textures", KIND_OTHER, UNITS_BYTES,
+                                gfxWindowsPlatform::sD3D11MemoryUsed,
+                                "Memory used for D3D11 shared textures");
+  }
+};
+
+NS_IMPL_ISUPPORTS(D3D11TextureReporter, nsIMemoryReporter)
+
 gfxWindowsPlatform::gfxWindowsPlatform()
   : mD3D11DeviceInitialized(false)
+  , mIsWARP(false)
 {
     mUseClearTypeForDownloadableFonts = UNINITIALIZED_VALUE;
     mUseClearTypeAlways = UNINITIALIZED_VALUE;
@@ -351,6 +371,7 @@ gfxWindowsPlatform::gfxWindowsPlatform()
     UpdateRenderMode();
 
     RegisterStrongMemoryReporter(new GPUAdapterReporter());
+    RegisterStrongMemoryReporter(new D3D11TextureReporter());
 }
 
 gfxWindowsPlatform::~gfxWindowsPlatform()
@@ -385,6 +406,7 @@ gfxWindowsPlatform::UpdateRenderMode()
 /* Pick the default render mode for
  * desktop.
  */
+    bool didReset = false;
     if (DidRenderingDeviceReset()) {
       mD3D11DeviceInitialized = false;
       mD3D11Device = nullptr;
@@ -394,6 +416,8 @@ gfxWindowsPlatform::UpdateRenderMode()
       imgLoader::Singleton()->ClearCache(true);
       imgLoader::Singleton()->ClearCache(false);
       Factory::SetDirect3D11Device(nullptr);
+
+      didReset = true;
     }
 
     mRenderMode = RENDER_GDI;
@@ -511,6 +535,10 @@ gfxWindowsPlatform::UpdateRenderMode()
     contentMask |= BackendTypeBit(BackendType::SKIA);
     InitBackendPrefs(canvasMask, defaultBackend,
                      contentMask, defaultBackend);
+
+    if (didReset) {
+      mScreenReferenceDrawTarget = CreateOffscreenContentDrawTarget(IntSize(1, 1), SurfaceFormat::B8G8R8A8);
+    }
 }
 
 #ifdef CAIRO_HAS_D2D_SURFACE
@@ -1063,23 +1091,6 @@ gfxWindowsPlatform::DidRenderingDeviceReset()
     }
   }
   return false;
-}
-
-gfxFontFamily *
-gfxWindowsPlatform::FindFontFamily(const nsAString& aName)
-{
-    return gfxPlatformFontList::PlatformFontList()->FindFamily(aName);
-}
-
-gfxFontEntry *
-gfxWindowsPlatform::FindFontEntry(const nsAString& aName, const gfxFontStyle& aFontStyle)
-{
-    nsRefPtr<gfxFontFamily> ff = FindFontFamily(aName);
-    if (!ff)
-        return nullptr;
-
-    bool aNeedsBold;
-    return ff->FindFontForStyle(aFontStyle, aNeedsBold);
 }
 
 void
@@ -1804,6 +1815,7 @@ gfxWindowsPlatform::InitD3D11Devices()
       MOZ_CRASH();
     }
 
+    mIsWARP = true;
     reporterWARP.SetSuccessful();
   }
 

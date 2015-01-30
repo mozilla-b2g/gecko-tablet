@@ -325,9 +325,11 @@ ArgSetter(JSContext *cx, HandleObject obj, HandleId id, bool strict, MutableHand
         return true;
     Handle<NormalArgumentsObject*> argsobj = obj.as<NormalArgumentsObject>();
 
-    unsigned attrs;
-    if (!baseops::GetAttributes(cx, argsobj, id, &attrs))
+    Rooted<PropertyDescriptor> desc(cx);
+    if (!GetOwnPropertyDescriptor(cx, argsobj, id, &desc))
         return false;
+    MOZ_ASSERT(desc.object());
+    unsigned attrs = desc.attributes();
     MOZ_ASSERT(!(attrs & JSPROP_READONLY));
     attrs &= (JSPROP_ENUMERATE | JSPROP_PERMANENT); /* only valid attributes */
 
@@ -353,8 +355,8 @@ ArgSetter(JSContext *cx, HandleObject obj, HandleId id, bool strict, MutableHand
      * has changed the prototype to an object that has a setter for this id.
      */
     bool succeeded;
-    return baseops::DeleteGeneric(cx, argsobj, id, &succeeded) &&
-           baseops::DefineGeneric(cx, argsobj, id, vp, nullptr, nullptr, attrs);
+    return NativeDeleteProperty(cx, argsobj, id, &succeeded) &&
+           NativeDefineProperty(cx, argsobj, id, vp, nullptr, nullptr, attrs);
 }
 
 static bool
@@ -380,7 +382,7 @@ args_resolve(JSContext *cx, HandleObject obj, HandleId id, bool *resolvedp)
             return true;
     }
 
-    if (!baseops::DefineGeneric(cx, argsobj, id, UndefinedHandleValue, ArgGetter, ArgSetter, attrs))
+    if (!NativeDefineProperty(cx, argsobj, id, UndefinedHandleValue, ArgGetter, ArgSetter, attrs))
         return false;
 
     *resolvedp = true;
@@ -407,7 +409,7 @@ args_enumerate(JSContext *cx, HandleObject obj)
 
         RootedObject pobj(cx);
         RootedShape prop(cx);
-        if (!baseops::LookupProperty<CanGC>(cx, argsobj, id, &pobj, &prop))
+        if (!NativeLookupProperty<CanGC>(cx, argsobj, id, &pobj, &prop))
             return false;
     }
     return true;
@@ -444,9 +446,11 @@ StrictArgSetter(JSContext *cx, HandleObject obj, HandleId id, bool strict, Mutab
         return true;
     Handle<StrictArgumentsObject*> argsobj = obj.as<StrictArgumentsObject>();
 
-    unsigned attrs;
-    if (!baseops::GetAttributes(cx, argsobj, id, &attrs))
+    Rooted<PropertyDescriptor> desc(cx);
+    if (!GetOwnPropertyDescriptor(cx, argsobj, id, &desc))
         return false;
+    MOZ_ASSERT(desc.object());
+    unsigned attrs = desc.attributes();
     MOZ_ASSERT(!(attrs & JSPROP_READONLY));
     attrs &= (JSPROP_ENUMERATE | JSPROP_PERMANENT); /* only valid attributes */
 
@@ -466,8 +470,8 @@ StrictArgSetter(JSContext *cx, HandleObject obj, HandleId id, bool strict, Mutab
      * corresponding reserved slot so the GC can collect its value.
      */
     bool succeeded;
-    return baseops::DeleteGeneric(cx, argsobj, id, &succeeded) &&
-           baseops::DefineGeneric(cx, argsobj, id, vp, nullptr, nullptr, attrs);
+    return NativeDeleteProperty(cx, argsobj, id, &succeeded) &&
+           NativeDefineProperty(cx, argsobj, id, vp, nullptr, nullptr, attrs);
 }
 
 static bool
@@ -497,7 +501,7 @@ strictargs_resolve(JSContext *cx, HandleObject obj, HandleId id, bool *resolvedp
         setter = CastAsStrictPropertyOp(argsobj->global().getThrowTypeError());
     }
 
-    if (!baseops::DefineGeneric(cx, argsobj, id, UndefinedHandleValue, getter, setter, attrs))
+    if (!NativeDefineProperty(cx, argsobj, id, UndefinedHandleValue, getter, setter, attrs))
         return false;
 
     *resolvedp = true;
@@ -519,22 +523,22 @@ strictargs_enumerate(JSContext *cx, HandleObject obj)
 
     // length
     id = NameToId(cx->names().length);
-    if (!baseops::LookupProperty<CanGC>(cx, argsobj, id, &pobj, &prop))
+    if (!NativeLookupProperty<CanGC>(cx, argsobj, id, &pobj, &prop))
         return false;
 
     // callee
     id = NameToId(cx->names().callee);
-    if (!baseops::LookupProperty<CanGC>(cx, argsobj, id, &pobj, &prop))
+    if (!NativeLookupProperty<CanGC>(cx, argsobj, id, &pobj, &prop))
         return false;
 
     // caller
     id = NameToId(cx->names().caller);
-    if (!baseops::LookupProperty<CanGC>(cx, argsobj, id, &pobj, &prop))
+    if (!NativeLookupProperty<CanGC>(cx, argsobj, id, &pobj, &prop))
         return false;
 
     for (uint32_t i = 0, argc = argsobj->initialLength(); i < argc; i++) {
         id = INT_TO_JSID(i);
-        if (!baseops::LookupProperty<CanGC>(cx, argsobj, id, &pobj, &prop))
+        if (!NativeLookupProperty<CanGC>(cx, argsobj, id, &pobj, &prop))
             return false;
     }
 

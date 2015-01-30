@@ -154,6 +154,7 @@ public:
     virtual bool RecvBridgeToChildProcess(const ContentParentId& aCpId) MOZ_OVERRIDE;
 
     virtual bool RecvLoadPlugin(const uint32_t& aPluginId) MOZ_OVERRIDE;
+    virtual bool RecvConnectPluginBridge(const uint32_t& aPluginId) MOZ_OVERRIDE;
     virtual bool RecvFindPlugins(const uint32_t& aPluginEpoch,
                                  nsTArray<PluginTag>* aPlugins,
                                  uint32_t* aNewPluginEpoch) MOZ_OVERRIDE;
@@ -188,7 +189,7 @@ public:
     TestShellParent* CreateTestShell();
     bool DestroyTestShell(TestShellParent* aTestShell);
     TestShellParent* GetTestShellSingleton();
-    jsipc::JavaScriptShared* GetCPOWManager() MOZ_OVERRIDE;
+    jsipc::CPOWManager* GetCPOWManager() MOZ_OVERRIDE;
 
     static TabId
     AllocateTabId(const TabId& aOpenerTabId,
@@ -394,7 +395,7 @@ private:
     ContentParent(ContentParent* aTemplate,
                   const nsAString& aAppManifestURL,
                   base::ProcessHandle aPid,
-                  const nsTArray<ProtocolFdMapping>& aFds);
+                  InfallibleTArray<ProtocolFdMapping>&& aFds);
 #endif
 
     // The common initialization for the constructors.
@@ -408,6 +409,11 @@ private:
     virtual ~ContentParent();
 
     void Init();
+
+    // Some information could be sent to content very early, it
+    // should be send from this function. This function should only be
+    // called after the process has been transformed to app or browser.
+    void ForwardKnownInfo();
 
     // If the frame element indicates that the child process is "critical" and
     // has a pending system message, this function acquires the CPU wake lock on
@@ -483,6 +489,10 @@ private:
     PBackgroundParent*
     AllocPBackgroundParent(Transport* aTransport, ProcessId aOtherProcess)
                            MOZ_OVERRIDE;
+
+    PProcessHangMonitorParent*
+    AllocPProcessHangMonitorParent(Transport* aTransport,
+                                   ProcessId aOtherProcess) MOZ_OVERRIDE;
 
     virtual bool RecvGetProcessAttributes(ContentParentId* aCpId,
                                           bool* aIsForApp,
@@ -638,17 +648,17 @@ private:
 
     virtual bool RecvSyncMessage(const nsString& aMsg,
                                  const ClonedMessageData& aData,
-                                 const InfallibleTArray<CpowEntry>& aCpows,
+                                 InfallibleTArray<CpowEntry>&& aCpows,
                                  const IPC::Principal& aPrincipal,
                                  InfallibleTArray<nsString>* aRetvals) MOZ_OVERRIDE;
     virtual bool RecvRpcMessage(const nsString& aMsg,
                                 const ClonedMessageData& aData,
-                                const InfallibleTArray<CpowEntry>& aCpows,
+                                InfallibleTArray<CpowEntry>&& aCpows,
                                 const IPC::Principal& aPrincipal,
                                 InfallibleTArray<nsString>* aRetvals) MOZ_OVERRIDE;
     virtual bool RecvAsyncMessage(const nsString& aMsg,
                                   const ClonedMessageData& aData,
-                                  const InfallibleTArray<CpowEntry>& aCpows,
+                                  InfallibleTArray<CpowEntry>&& aCpows,
                                   const IPC::Principal& aPrincipal) MOZ_OVERRIDE;
 
     virtual bool RecvFilePathUpdateNotify(const nsString& aType,
@@ -690,7 +700,6 @@ private:
     virtual bool RecvAudioChannelChangeDefVolChannel(const int32_t& aChannel,
                                                      const bool& aHidden) MOZ_OVERRIDE;
     virtual bool RecvGetSystemMemory(const uint64_t& getterId) MOZ_OVERRIDE;
-    virtual bool RecvGetVolumes(InfallibleTArray<VolumeInfo>* aResult) MOZ_OVERRIDE;
 
     virtual bool RecvDataStoreGetStores(
                        const nsString& aName,
@@ -709,7 +718,7 @@ private:
     virtual bool RecvNuwaWaitForFreeze() MOZ_OVERRIDE;
 
     virtual bool RecvAddNewProcess(const uint32_t& aPid,
-                                   const InfallibleTArray<ProtocolFdMapping>& aFds) MOZ_OVERRIDE;
+                                   InfallibleTArray<ProtocolFdMapping>&& aFds) MOZ_OVERRIDE;
 
     virtual bool RecvCreateFakeVolume(const nsString& fsName, const nsString& mountPoint) MOZ_OVERRIDE;
 
@@ -807,6 +816,10 @@ private:
     // through.
     bool mIsAlive;
 
+    // True only the if process is already a browser or app or has
+    // been transformed into one.
+    bool mMetamorphosed;
+
     bool mSendPermissionUpdates;
     bool mSendDataStoreInfos;
     bool mIsForBrowser;
@@ -838,6 +851,8 @@ private:
     static int32_t sNuwaPid;
     static bool sNuwaReady;
 #endif
+
+    PProcessHangMonitorParent* mHangMonitorActor;
 };
 
 } // namespace dom

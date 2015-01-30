@@ -359,7 +359,7 @@ sandbox_convert(JSContext *cx, HandleObject obj, JSType type, MutableHandleValue
         return true;
     }
 
-    return JS::OrdinaryToPrimitive(cx, obj, type, vp);
+    return OrdinaryToPrimitive(cx, obj, type, vp);
 }
 
 static bool
@@ -454,7 +454,8 @@ sandbox_addProperty(JSContext *cx, HandleObject obj, HandleId id, MutableHandleV
         if (!JS_SetPropertyById(cx, proto, id, vp))
             return false;
     } else {
-        if (!JS_CopyPropertyFrom(cx, id, unwrappedProto, obj))
+        if (!JS_CopyPropertyFrom(cx, id, unwrappedProto, obj,
+                                 MakeNonConfigurableIntoConfigurable))
             return false;
     }
 

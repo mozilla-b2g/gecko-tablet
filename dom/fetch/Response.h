@@ -62,6 +62,13 @@ public:
     return mInternalResponse->GetStatus();
   }
 
+  bool
+  Ok() const
+  {
+    return mInternalResponse->GetStatus() >= 200 &&
+           mInternalResponse->GetStatus() <= 299;
+  }
+
   void
   GetStatusText(nsCString& aStatusText) const
   {
@@ -83,7 +90,7 @@ public:
   Error(const GlobalObject& aGlobal);
 
   static already_AddRefed<Response>
-  Redirect(const GlobalObject& aGlobal, const nsAString& aUrl, uint16_t aStatus);
+  Redirect(const GlobalObject& aGlobal, const nsAString& aUrl, uint16_t aStatus, ErrorResult& aRv);
 
   static already_AddRefed<Response>
   Constructor(const GlobalObject& aGlobal,

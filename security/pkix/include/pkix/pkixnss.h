@@ -51,8 +51,9 @@ Result VerifySignedDataNSS(const SignedDataWithSignature& sd,
 Result DigestBufNSS(Input item, /*out*/ uint8_t* digestBuf,
                     size_t digestBufLen);
 
-// Checks, for RSA keys and DSA keys, that the modulus is at least the given
-// number of bits.
+// Checks, for RSA keys, that the modulus is at least the given number of bits.
+// Checks, for ECC keys, that the curve used is one of the NIST P-256, P-384,
+// or P-521 curves.
 Result CheckPublicKeyNSS(Input subjectPublicKeyInfo,
                          unsigned int minimumNonECCBits);
 
@@ -69,7 +70,8 @@ PRErrorCode MapResultToPRErrorCode(Result result);
 static const PRErrorCode ERROR_BASE = -0x4000;
 static const PRErrorCode ERROR_LIMIT = ERROR_BASE + 1000;
 
-enum ErrorCode {
+enum ErrorCode
+{
   MOZILLA_PKIX_ERROR_KEY_PINNING_FAILURE = ERROR_BASE + 0,
   MOZILLA_PKIX_ERROR_CA_CERT_USED_AS_END_ENTITY = ERROR_BASE + 1,
   MOZILLA_PKIX_ERROR_INADEQUATE_KEY_SIZE = ERROR_BASE + 2,

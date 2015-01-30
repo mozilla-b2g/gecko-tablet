@@ -2094,6 +2094,8 @@ this.XPIProvider = {
       // Changes to installed extensions may have changed which theme is selected
       this.applyThemeChange();
 
+      AddonManagerPrivate.markProviderSafe(this);
+
       if (aAppChanged === undefined) {
         // For new profiles we will never need to show the add-on selection UI
         Services.prefs.setBoolPref(PREF_SHOWN_SELECTION_UI, true);
@@ -2394,7 +2396,9 @@ this.XPIProvider = {
     }
     catch (e) { }
 
-    Cu.import("resource://gre/modules/TelemetryPing.jsm", {}).TelemetryPing.setAddOns(data);
+    let TelemetrySession =
+      Cu.import("resource://gre/modules/TelemetrySession.jsm", {}).TelemetrySession;
+    TelemetrySession.setAddOns(data);
   },
 
   /**
@@ -4443,6 +4447,13 @@ this.XPIProvider = {
       if (aMethod == "shutdown" && aReason != BOOTSTRAP_REASONS.APP_SHUTDOWN) {
         logger.debug("Removing manifest for " + aFile.path);
         Components.manager.removeBootstrappedManifestLocation(aFile);
+
+        let manifest = getURIForResourceInFile(aFile, "chrome.manifest");
+        for (let line of ChromeManifestParser.parseSync(manifest)) {
+          if (line.type == "resource") {
+            ResProtocolHandler.setSubstitution(line.args[0], null);
+          }
+        }
       }
       this.setTelemetry(aAddon.id, aMethod + "_MS", new Date() - timeStart);
     }
