@@ -53,10 +53,20 @@ struct JARURIParams
   nsCString charset;
 };
 
-struct GenericURIParams
+struct IconURIParams
 {
-  nsCString spec;
-  nsCString charset;
+  OptionalURIParams uri;
+  uint32_t size;
+  nsCString contentType;
+  nsCString fileName;
+  nsCString stockIcon;
+  int32_t iconSize;
+  int32_t iconState;
+};
+
+struct NullPrincipalURIParams
+{
+  // Purposefully empty. Null principal URIs do not round-trip.
 };
 
 union URIParams
@@ -64,7 +74,8 @@ union URIParams
   SimpleURIParams;
   StandardURLParams;
   JARURIParams;
-  GenericURIParams;
+  IconURIParams;
+  NullPrincipalURIParams;
 };
 
 union OptionalURIParams

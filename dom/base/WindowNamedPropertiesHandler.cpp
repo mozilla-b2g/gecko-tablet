@@ -19,6 +19,13 @@ namespace dom {
 static bool
 ShouldExposeChildWindow(nsString& aNameBeingResolved, nsIDOMWindow *aChild)
 {
+  nsCOMPtr<nsPIDOMWindow> piWin = do_QueryInterface(aChild);
+  NS_ENSURE_TRUE(piWin, false);
+  Element* e = piWin->GetFrameElementInternal();
+  if (e && e->IsInShadowTree()) {
+    return false;
+  }
+
   // If we're same-origin with the child, go ahead and expose it.
   nsCOMPtr<nsIScriptObjectPrincipal> sop = do_QueryInterface(aChild);
   NS_ENSURE_TRUE(sop, false);
@@ -63,9 +70,6 @@ ShouldExposeChildWindow(nsString& aNameBeingResolved, nsIDOMWindow *aChild)
   // allow the child to arbitrarily pollute the parent namespace, and requires
   // cross-origin communication only in a limited set of cases that can be
   // computed independently by the parent.
-  nsCOMPtr<nsPIDOMWindow> piWin = do_QueryInterface(aChild);
-  NS_ENSURE_TRUE(piWin, false);
-  Element* e = piWin->GetFrameElementInternal();
   return e && e->AttrValueIs(kNameSpaceID_None, nsGkAtoms::name,
                              aNameBeingResolved, eCaseMatters);
 }
@@ -159,7 +163,7 @@ WindowNamedPropertiesHandler::defineProperty(JSContext* aCx,
 {
   ErrorResult rv;
   rv.ThrowTypeError(MSG_DEFINEPROPERTY_ON_GSP);
-  rv.ReportTypeError(aCx);
+  rv.ReportErrorWithMessage(aCx);
   return false;
 }
 

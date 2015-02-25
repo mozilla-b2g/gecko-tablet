@@ -265,7 +265,7 @@ MediaEngineWebRTCAudioSource::Config(bool aEchoOn, uint32_t aEcho,
 }
 
 nsresult
-MediaEngineWebRTCAudioSource::Allocate(const AudioTrackConstraintsN &aConstraints,
+MediaEngineWebRTCAudioSource::Allocate(const dom::MediaTrackConstraints &aConstraints,
                                        const MediaEnginePrefs &aPrefs)
 {
   if (mState == kReleased) {
@@ -328,8 +328,8 @@ MediaEngineWebRTCAudioSource::Start(SourceMediaStream* aStream, TrackID aID)
   }
 
   AudioSegment* segment = new AudioSegment();
-  aStream->AddAudioTrack(aID, SAMPLE_FREQUENCY, 0, segment);
-  aStream->AdvanceKnownTracksTime(STREAM_TIME_MAX);
+  aStream->AddAudioTrack(aID, SAMPLE_FREQUENCY, 0, segment, SourceMediaStream::ADDTRACK_QUEUED);
+
   // XXX Make this based on the pref.
   aStream->RegisterForAudioMixing();
   LOG(("Start audio for stream %p", aStream));

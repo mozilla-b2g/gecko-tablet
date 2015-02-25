@@ -99,9 +99,8 @@ GlobalNameHashClearEntry(PLDHashTable *table, PLDHashEntryHdr *entry)
   memset(&e->mGlobalName, 0, sizeof(nsGlobalNameStruct));
 }
 
-static bool
-GlobalNameHashInitEntry(PLDHashTable *table, PLDHashEntryHdr *entry,
-                        const void *key)
+static void
+GlobalNameHashInitEntry(PLDHashEntryHdr *entry, const void *key)
 {
   GlobalNameMapEntry *e = static_cast<GlobalNameMapEntry *>(entry);
   const nsAString *keyStr = static_cast<const nsAString *>(key);
@@ -112,7 +111,6 @@ GlobalNameHashInitEntry(PLDHashTable *table, PLDHashEntryHdr *entry,
   // This will set e->mGlobalName.mType to
   // nsGlobalNameStruct::eTypeNotInitialized
   memset(&e->mGlobalName, 0, sizeof(nsGlobalNameStruct));
-  return true;
 }
 
 NS_IMPL_ISUPPORTS(
@@ -142,9 +140,8 @@ nsGlobalNameStruct *
 nsScriptNameSpaceManager::AddToHash(PLDHashTable *aTable, const nsAString *aKey,
                                     const char16_t **aClassName)
 {
-  GlobalNameMapEntry *entry =
-    static_cast<GlobalNameMapEntry *>
-               (PL_DHashTableAdd(aTable, aKey));
+  GlobalNameMapEntry *entry = static_cast<GlobalNameMapEntry *>
+    (PL_DHashTableAdd(aTable, aKey, fallible));
 
   if (!entry) {
     return nullptr;
@@ -328,13 +325,13 @@ nsScriptNameSpaceManager::Init()
 
   mIsInitialized = PL_DHashTableInit(&mGlobalNames, &hash_table_ops,
                                      sizeof(GlobalNameMapEntry),
-                                     fallible_t(),
+                                     fallible,
                                      GLOBALNAME_HASHTABLE_INITIAL_LENGTH);
   NS_ENSURE_TRUE(mIsInitialized, NS_ERROR_OUT_OF_MEMORY);
 
   mIsInitialized = PL_DHashTableInit(&mNavigatorNames, &hash_table_ops,
                                      sizeof(GlobalNameMapEntry),
-                                     fallible_t(),
+                                     fallible,
                                      GLOBALNAME_HASHTABLE_INITIAL_LENGTH);
   if (!mIsInitialized) {
     PL_DHashTableFinish(&mGlobalNames);

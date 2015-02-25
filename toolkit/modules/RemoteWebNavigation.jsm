@@ -18,12 +18,21 @@ function makeURI(url)
 
 function RemoteWebNavigation(browser)
 {
-  this._browser = browser;
-  this._browser.messageManager.addMessageListener("WebNavigation:setHistory", this);
+  this.swapBrowser(browser);
 }
 
 RemoteWebNavigation.prototype = {
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIWebNavigation, Ci.nsISupports]),
+
+  swapBrowser: function(aBrowser) {
+    if (this._messageManager) {
+      this._messageManager.removeMessageListener("WebNavigation:setHistory", this);
+    }
+
+    this._browser = aBrowser;
+    this._messageManager = aBrowser.messageManager;
+    this._messageManager.addMessageListener("WebNavigation:setHistory", this);
+  },
 
   LOAD_FLAGS_MASK: 65535,
   LOAD_FLAGS_NONE: 0,
@@ -61,7 +70,6 @@ RemoteWebNavigation.prototype = {
     if (aPostData || aHeaders)
       throw Components.Exception("RemoteWebNavigation doesn't accept postdata or headers.", Cr.NS_ERROR_INVALID_ARGS);
 
-    this._browser._contentTitle = "";
     this._sendMessage("WebNavigation:LoadURI", {
       uri: aURI,
       flags: aLoadFlags,

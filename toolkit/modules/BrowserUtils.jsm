@@ -74,6 +74,10 @@ this.BrowserUtils = {
     return Services.io.newFileURI(aFile);
   },
 
+  makeURIFromCPOW: function(aCPOWURI) {
+    return Services.io.newURI(aCPOWURI.spec, aCPOWURI.originCharset, null);
+  },
+
   /**
    * Return the current focus element and window. If the current focus
    * is in a content process, then this function returns CPOWs
@@ -213,8 +217,11 @@ this.BrowserUtils = {
    * @return a boolean indicating if linkNode has a rel="noreferrer" attribute.
    */
   linkHasNoReferrer: function (linkNode) {
+    // A null linkNode typically means that we're checking a link that wasn't
+    // provided via an <a> link, like a text-selected URL.  Don't leak
+    // referrer information in this case.
     if (!linkNode)
-      return false;
+      return true;
 
     let rel = linkNode.getAttribute("rel");
     if (!rel)

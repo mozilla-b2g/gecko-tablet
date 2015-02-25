@@ -85,12 +85,12 @@ nsHTMLEntities::AddRefTable(void)
   if (!gTableRefCnt) {
     if (!PL_DHashTableInit(&gEntityToUnicode, &EntityToUnicodeOps,
                            sizeof(EntityNodeEntry),
-                           fallible_t(), NS_HTML_ENTITY_COUNT)) {
+                           fallible, NS_HTML_ENTITY_COUNT)) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
     if (!PL_DHashTableInit(&gUnicodeToEntity, &UnicodeToEntityOps,
                            sizeof(EntityNodeEntry),
-                           fallible_t(), NS_HTML_ENTITY_COUNT)) {
+                           fallible, NS_HTML_ENTITY_COUNT)) {
       PL_DHashTableFinish(&gEntityToUnicode);
       return NS_ERROR_OUT_OF_MEMORY;
     }
@@ -101,7 +101,7 @@ nsHTMLEntities::AddRefTable(void)
       // add to Entity->Unicode table
       EntityNodeEntry* entry =
         static_cast<EntityNodeEntry*>
-                   (PL_DHashTableAdd(&gEntityToUnicode, node->mStr));
+                   (PL_DHashTableAdd(&gEntityToUnicode, node->mStr, fallible));
       NS_ASSERTION(entry, "Error adding an entry");
       // Prefer earlier entries when we have duplication.
       if (!entry->node)
@@ -110,7 +110,8 @@ nsHTMLEntities::AddRefTable(void)
       // add to Unicode->Entity table
       entry = static_cast<EntityNodeEntry*>
                          (PL_DHashTableAdd(&gUnicodeToEntity,
-                                           NS_INT32_TO_PTR(node->mUnicode)));
+                                           NS_INT32_TO_PTR(node->mUnicode),
+                                           fallible));
       NS_ASSERTION(entry, "Error adding an entry");
       // Prefer earlier entries when we have duplication.
       if (!entry->node)

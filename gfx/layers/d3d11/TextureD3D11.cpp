@@ -179,9 +179,9 @@ TextureClientD3D11::~TextureClientD3D11()
 {
   if (mActor) {
     if (mTexture) {
-      KeepUntilFullDeallocation(new TKeepAlive<ID3D10Texture2D>(mTexture10));
+      KeepUntilFullDeallocation(MakeUnique<TKeepAlive<ID3D10Texture2D>>(mTexture10));
     } else if (mTexture10) {
-      KeepUntilFullDeallocation(new TKeepAlive<ID3D11Texture2D>(mTexture));
+      KeepUntilFullDeallocation(MakeUnique<TKeepAlive<ID3D11Texture2D>>(mTexture));
     }
   }
 #ifdef DEBUG
@@ -499,11 +499,11 @@ TextureClientD3D11::ToSurfaceDescriptor(SurfaceDescriptor& aOutDescriptor)
 DXGITextureHostD3D11::DXGITextureHostD3D11(TextureFlags aFlags,
                                            const SurfaceDescriptorD3D10& aDescriptor)
   : TextureHost(aFlags)
+  , mSize(aDescriptor.size())
   , mHandle(aDescriptor.handle())
   , mFormat(aDescriptor.format())
   , mIsLocked(false)
 {
-  OpenSharedHandle();
 }
 
 bool
@@ -825,7 +825,7 @@ SyncObjectD3D11::FinalizeFrame()
   if (mD3D10SyncedTextures.size()) {
     RefPtr<IDXGIKeyedMutex> mutex;
     hr = mD3D10Texture->QueryInterface((IDXGIKeyedMutex**)byRef(mutex));
-    hr = mutex->AcquireSync(0, 10000);
+    hr = mutex->AcquireSync(0, 20000);
 
     if (hr == WAIT_TIMEOUT) {
       MOZ_CRASH();

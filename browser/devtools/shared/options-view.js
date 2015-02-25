@@ -21,6 +21,9 @@ const OptionsView = function (options={}) {
   let { document } = this.window;
   this.$ = document.querySelector.bind(document);
   this.$$ = document.querySelectorAll.bind(document);
+  // Get the corresponding button that opens the popup by looking
+  // for an element with a `popup` attribute matching the menu's ID
+  this.button = this.$(`[popup=${this.menupopup.getAttribute("id")}]`);
 
   this.prefObserver = new PrefObserver(this.branchName);
 
@@ -93,6 +96,13 @@ OptionsView.prototype = {
     let $el = this.$(`menuitem[data-pref="${prefName}"]`, this.menupopup);
     let value = this.prefObserver.get(prefName);
 
+    // If options panel does not contain a menuitem for the
+    // pref, emit an event and do nothing.
+    if (!$el) {
+      this.emit(PREF_CHANGE_EVENT, prefName);
+      return;
+    }
+
     if (value) {
       $el.setAttribute("checked", value);
     } else {
@@ -119,6 +129,7 @@ OptionsView.prototype = {
    * Fires an event used in tests.
    */
   _onPopupShown: function () {
+    this.button.setAttribute("open", true);
     this.emit(OPTIONS_SHOWN_EVENT);
   },
 
@@ -127,6 +138,7 @@ OptionsView.prototype = {
    * Fires an event used in tests.
    */
   _onPopupHidden: function () {
+    this.button.removeAttribute("open");
     this.emit(OPTIONS_HIDDEN_EVENT);
   }
 };

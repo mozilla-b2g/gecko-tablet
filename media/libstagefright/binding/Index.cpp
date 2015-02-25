@@ -100,7 +100,10 @@ MP4Sample* SampleIterator::GetNext()
   sample->size = s->mByteRange.Length();
 
   // Do the blocking read
-  sample->data = sample->extra_buffer = new uint8_t[sample->size];
+  sample->data = sample->extra_buffer = new (fallible) uint8_t[sample->size];
+  if (!sample->data) {
+    return nullptr;
+  }
 
   size_t bytesRead;
   if (!mIndex->mSource->ReadAt(sample->byte_offset, sample->data, sample->size,
@@ -154,7 +157,10 @@ MP4Sample* SampleIterator::GetNext()
 Sample* SampleIterator::Get()
 {
   if (!mIndex->mMoofParser) {
-    return nullptr;
+    MOZ_ASSERT(!mCurrentMoof);
+    return mCurrentSample < mIndex->mIndex.Length()
+      ? &mIndex->mIndex[mCurrentSample]
+      : nullptr;
   }
 
   nsTArray<Moof>& moofs = mIndex->mMoofParser->Moofs();
@@ -206,36 +212,24 @@ void SampleIterator::Seek(Microseconds aTime)
 Microseconds
 SampleIterator::GetNextKeyframeTime()
 {
-  nsTArray<Moof>& moofs = mIndex->mMoofParser->Moofs();
-  size_t sample = mCurrentSample + 1;
-  size_t moof = mCurrentMoof;
-  while (true) {
-    while (true) {
-      if (moof == moofs.Length()) {
-        return -1;
-      }
-      if (sample < moofs[moof].mIndex.Length()) {
-        break;
-      }
-      sample = 0;
-      ++moof;
+  SampleIterator itr(*this);
+  Sample* sample;
+  while (!!(sample = itr.Get())) {
+    if (sample->mSync) {
+      return sample->mCompositionRange.start;
     }
-    if (moofs[moof].mIndex[sample].mSync) {
-      return moofs[moof].mIndex[sample].mDecodeTime;
-    }
-    ++sample;
+    itr.Next();
   }
-  MOZ_ASSERT(false); // should not be reached.
+  return -1;
 }
 
 Index::Index(const stagefright::Vector<MediaSource::Indice>& aIndex,
-             Stream* aSource, uint32_t aTrackId, Microseconds aTimestampOffset,
-             Monitor* aMonitor)
+             Stream* aSource, uint32_t aTrackId, Monitor* aMonitor)
   : mSource(aSource)
   , mMonitor(aMonitor)
 {
   if (aIndex.isEmpty()) {
-    mMoofParser = new MoofParser(aSource, aTrackId, aTimestampOffset, aMonitor);
+    mMoofParser = new MoofParser(aSource, aTrackId, aMonitor);
   } else {
     for (size_t i = 0; i < aIndex.size(); i++) {
       const MediaSource::Indice& indice = aIndex[i];

@@ -280,12 +280,14 @@ pref("browser.search.noCurrentEngine", true);
 
 // Control media casting & mirroring features
 pref("browser.casting.enabled", true);
-pref("browser.mirroring.enabled", true);
 #ifdef RELEASE_BUILD
 // Roku does not yet support mirroring in production
 pref("browser.mirroring.enabled.roku", false);
+// Chromecast mirroring is broken (bug 1131084)
+pref("browser.mirroring.enabled", false);
 #else
 pref("browser.mirroring.enabled.roku", true);
+pref("browser.mirroring.enabled", true);
 #endif
 
 // Enable sparse localization by setting a few package locale overrides
@@ -295,11 +297,6 @@ pref("chrome.override_package.passwordmgr", "browser");
 
 // enable xul error pages
 pref("browser.xul.error_pages.enabled", true);
-
-pref("browser.history.grouping", "day");
-pref("browser.history.showSessions", false);
-pref("browser.sessionhistory.max_entries", 50);
-pref("browser.history_expire_sites", 40000);
 
 // disable color management
 pref("gfx.color_management.mode", 0);
@@ -400,6 +397,7 @@ pref("font.size.inflation.minTwips", 120);
 pref("browser.ui.zoom.force-user-scalable", false);
 
 pref("ui.zoomedview.enabled", false);
+pref("ui.zoomedview.limitReadableSize", 8);  // value in layer pixels
 
 pref("ui.touch.radius.enabled", false);
 pref("ui.touch.radius.leftmm", 3);
@@ -504,14 +502,13 @@ pref("app.update.timerMinimumDelay", 30); // seconds
 // used by update service to decide whether or not to
 // automatically download an update
 pref("app.update.autodownload", "wifi");
+pref("app.update.url.android", "https://aus4.mozilla.org/update/4/%PRODUCT%/%VERSION%/%BUILD_ID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/%MOZ_VERSION%/update.xml");
 
 #ifdef MOZ_UPDATER
 /* prefs used specifically for updating the app */
 pref("app.update.enabled", false);
 pref("app.update.channel", "@MOZ_UPDATE_CHANNEL@");
 
-// If you are looking for app.update.url, we no longer use it.
-// See mobile/android/base/updater/UpdateServiceHelper.java
 #endif
 
 // replace newlines with spaces on paste into single-line text boxes
@@ -848,10 +845,16 @@ pref("device.storage.enabled", true);
 // Enable meta-viewport support for font inflation code
 pref("dom.meta-viewport.enabled", true);
 
-// Enable the OpenH264 plugin support in the addon manager.
-pref("media.gmp-gmpopenh264.provider.enabled", true);
+// Enable GMP support in the addon manager.
+pref("media.gmp-provider.enabled", true);
 
-// The default color scheme in reader mode (light, dark, print, auto)
+// The default color scheme in reader mode (light, dark, auto)
 // auto = color automatically adjusts according to ambient light level
 // (auto only works on platforms where the 'devicelight' event is enabled)
 pref("reader.color_scheme", "auto");
+
+// Color scheme values available in reader mode UI.
+pref("reader.color_scheme.values", "[\"light\",\"dark\",\"auto\"]");
+
+// Whether to use a vertical or horizontal toolbar.
+pref("reader.toolbar.vertical", false);

@@ -96,6 +96,10 @@ var gTrackTests = [
   { name:"bogus.duh", type:"bogus/duh" }
 ];
 
+var gClosingConnectionsTest = [
+  { name:"seek.ogv", type:"video/ogg", duration:3.966 }
+];
+
 // Used by any media recorder test. Need one test file per decoder backend
 // currently supported by the media encoder.
 var gMediaRecorderTests = [
@@ -641,29 +645,6 @@ var gMetadataTests = [
 
 // Test files for Encrypted Media Extensions
 var gEMETests = [
-  {
-    name:"short-cenc.mp4",
-    type:"video/mp4; codecs=\"avc1.64000d,mp4a.40.2\"",
-    keys: {
-      // "keyid" : "key"
-      "7e571d017e571d017e571d017e571d01" : "7e5711117e5711117e5711117e571111",
-      "7e571d027e571d027e571d027e571d02" : "7e5722227e5722227e5722227e572222",
-    },
-    sessionType:"temporary",
-    duration:0.47
-  },
-  {
-    name:"short-cenc.mp4",
-    type:"video/mp4; codecs=\"avc1.64000d,mp4a.40.2\"",
-    keys: {
-      // "keyid" : "key"
-      "7e571d017e571d017e571d017e571d01" : "7e5711117e5711117e5711117e571111",
-      "7e571d027e571d027e571d027e571d02" : "7e5722227e5722227e5722227e572222",
-    },
-    sessionType:"temporary",
-    duration:0.47,
-    crossOrigin:true,
-  },
   {
     name:"gizmo-frag-cencinit.mp4",
     fragments: [ "gizmo-frag-cencinit.mp4", "gizmo-frag-cenc1.m4s", "gizmo-frag-cenc2.m4s" ],

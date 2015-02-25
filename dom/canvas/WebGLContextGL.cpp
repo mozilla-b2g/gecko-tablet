@@ -48,7 +48,6 @@
 #include "mozilla/dom/ImageData.h"
 #include "mozilla/dom/ToJSValue.h"
 #include "mozilla/Endian.h"
-#include "mozilla/fallible.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -1864,6 +1863,84 @@ SetFullAlpha(void* data, GLenum format, GLenum type, size_t width,
     return false;
 }
 
+static void
+ReadPixelsAndConvert(gl::GLContext* gl, GLint x, GLint y, GLsizei width, GLsizei height,
+                     GLenum readFormat, GLenum readType, size_t pixelStorePackAlignment,
+                     GLenum destFormat, GLenum destType, void* destBytes)
+{
+    if (readFormat == destFormat && readType == destType) {
+        gl->fReadPixels(x, y, width, height, destFormat, destType, destBytes);
+        return;
+    }
+
+    if (readFormat == LOCAL_GL_RGBA &&
+        readType == LOCAL_GL_HALF_FLOAT &&
+        destFormat == LOCAL_GL_RGBA &&
+        destType == LOCAL_GL_FLOAT)
+    {
+        size_t readBytesPerPixel = sizeof(uint16_t) * 4;
+        size_t destBytesPerPixel = sizeof(float) * 4;
+
+        size_t readBytesPerRow = readBytesPerPixel * width;
+
+        size_t readStride = RoundUpToMultipleOf(readBytesPerRow, pixelStorePackAlignment);
+        size_t destStride = RoundUpToMultipleOf(destBytesPerPixel * width,
+                                                pixelStorePackAlignment);
+
+        size_t bytesNeeded = ((height - 1) * readStride) + readBytesPerRow;
+        UniquePtr<uint8_t[]> readBuffer(new uint8_t[bytesNeeded]);
+
+        gl->fReadPixels(x, y, width, height, readFormat, readType, readBuffer.get());
+
+        size_t channelsPerRow = width * 4;
+        for (size_t j = 0; j < (size_t)height; j++) {
+            uint16_t* src = (uint16_t*)(readBuffer.get()) + j*readStride;
+            float* dst = (float*)(destBytes) + j*destStride;
+
+            uint16_t* srcEnd = src + channelsPerRow;
+            while (src != srcEnd) {
+                *dst = unpackFromFloat16(*src);
+
+                ++src;
+                ++dst;
+            }
+        }
+
+        return;
+    }
+
+    MOZ_CRASH("bad format/type");
+}
+
+static bool
+IsFormatAndTypeUnpackable(GLenum format, GLenum type)
+{
+    switch (type) {
+    case LOCAL_GL_UNSIGNED_BYTE:
+    case LOCAL_GL_FLOAT:
+    case LOCAL_GL_HALF_FLOAT:
+    case LOCAL_GL_HALF_FLOAT_OES:
+        switch (format) {
+        case LOCAL_GL_ALPHA:
+        case LOCAL_GL_RGB:
+        case LOCAL_GL_RGBA:
+            return true;
+        default:
+            return false;
+        }
+
+    case LOCAL_GL_UNSIGNED_SHORT_4_4_4_4:
+    case LOCAL_GL_UNSIGNED_SHORT_5_5_5_1:
+        return format == LOCAL_GL_RGBA;
+
+    case LOCAL_GL_UNSIGNED_SHORT_5_6_5:
+        return format == LOCAL_GL_RGB;
+
+    default:
+        return false;
+    }
+}
+
 void
 WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
                          GLsizei height, GLenum format,
@@ -1884,59 +1961,61 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
     if (pixels.IsNull())
         return ErrorInvalidValue("readPixels: null destination buffer");
 
+    if (!IsFormatAndTypeUnpackable(format, type))
+        return ErrorInvalidEnum("readPixels: Bad format or type.");
+
     const WebGLRectangleObject* framebufferRect = CurValidReadFBRectObject();
     GLsizei framebufferWidth = framebufferRect ? framebufferRect->Width() : 0;
     GLsizei framebufferHeight = framebufferRect ? framebufferRect->Height() : 0;
 
-    uint32_t channels = 0;
+    int channels = 0;
 
     // Check the format param
     switch (format) {
-        case LOCAL_GL_ALPHA:
-            channels = 1;
-            break;
-        case LOCAL_GL_RGB:
-            channels = 3;
-            break;
-        case LOCAL_GL_RGBA:
-            channels = 4;
-            break;
-        default:
-            return ErrorInvalidEnum("readPixels: Bad format");
+    case LOCAL_GL_ALPHA:
+        channels = 1;
+        break;
+    case LOCAL_GL_RGB:
+        channels = 3;
+        break;
+    case LOCAL_GL_RGBA:
+        channels = 4;
+        break;
+    default:
+        MOZ_CRASH("bad `format`");
     }
 
-    uint32_t bytesPerPixel = 0;
-    int requiredDataType = 0;
 
     // Check the type param
-    bool isReadTypeValid = false;
-    bool isReadTypeFloat = false;
+    int bytesPerPixel;
+    int requiredDataType;
     switch (type) {
-        case LOCAL_GL_UNSIGNED_BYTE:
-            isReadTypeValid = true;
-            bytesPerPixel = 1*channels;
-            requiredDataType = js::Scalar::Uint8;
-            break;
-        case LOCAL_GL_UNSIGNED_SHORT_4_4_4_4:
-        case LOCAL_GL_UNSIGNED_SHORT_5_5_5_1:
-        case LOCAL_GL_UNSIGNED_SHORT_5_6_5:
-            isReadTypeValid = true;
-            bytesPerPixel = 2;
-            requiredDataType = js::Scalar::Uint16;
-            break;
-        case LOCAL_GL_FLOAT:
-            if (IsExtensionEnabled(WebGLExtensionID::WEBGL_color_buffer_float) ||
-                IsExtensionEnabled(WebGLExtensionID::EXT_color_buffer_half_float))
-            {
-                isReadTypeValid = true;
-                isReadTypeFloat = true;
-                bytesPerPixel = 4*channels;
-                requiredDataType = js::Scalar::Float32;
-            }
-            break;
+    case LOCAL_GL_UNSIGNED_BYTE:
+        bytesPerPixel = 1*channels;
+        requiredDataType = js::Scalar::Uint8;
+        break;
+
+    case LOCAL_GL_UNSIGNED_SHORT_4_4_4_4:
+    case LOCAL_GL_UNSIGNED_SHORT_5_5_5_1:
+    case LOCAL_GL_UNSIGNED_SHORT_5_6_5:
+        bytesPerPixel = 2;
+        requiredDataType = js::Scalar::Uint16;
+        break;
+
+    case LOCAL_GL_FLOAT:
+        bytesPerPixel = 4*channels;
+        requiredDataType = js::Scalar::Float32;
+        break;
+
+    case LOCAL_GL_HALF_FLOAT:
+    case LOCAL_GL_HALF_FLOAT_OES:
+        bytesPerPixel = 2*channels;
+        requiredDataType = js::Scalar::Uint16;
+        break;
+
+    default:
+        MOZ_CRASH("bad `type`");
     }
-    if (!isReadTypeValid)
-        return ErrorInvalidEnum("readPixels: Bad type", type);
 
     const ArrayBufferView& pixbuf = pixels.Value();
     int dataType = JS_GetArrayBufferViewType(pixbuf.Obj());
@@ -1971,66 +2050,56 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
         return rv.Throw(NS_ERROR_OUT_OF_MEMORY);
     }
 
-    bool isSourceTypeFloat = false;
-    if (mBoundReadFramebuffer &&
-        mBoundReadFramebuffer->ColorAttachmentCount() &&
-        mBoundReadFramebuffer->ColorAttachment(0).IsDefined())
-    {
-        isSourceTypeFloat = mBoundReadFramebuffer->ColorAttachment(0).IsReadableFloat();
-    }
-
-    if (isReadTypeFloat != isSourceTypeFloat)
-        return ErrorInvalidOperation("readPixels: Invalid type floatness");
-
-    // Check the format and type params to assure they are an acceptable pair (as per spec)
     MakeContextCurrent();
 
+    bool isSourceTypeFloat;
     if (mBoundReadFramebuffer) {
-        // prevent readback of arbitrary video memory through uninitialized renderbuffers!
-        if (!mBoundReadFramebuffer->CheckAndInitializeAttachments())
-            return ErrorInvalidFramebufferOperation("readPixels: incomplete framebuffer");
+        TexInternalFormat srcFormat;
+        if (!mBoundReadFramebuffer->ValidateForRead("readPixels", &srcFormat))
+            return;
 
-        GLenum readPlaneBits = LOCAL_GL_COLOR_BUFFER_BIT;
-        if (!mBoundReadFramebuffer->HasCompletePlanes(readPlaneBits)) {
-            return ErrorInvalidOperation("readPixels: Read source attachment doesn't have the"
-                                         " correct color/depth/stencil type.");
-        }
+        MOZ_ASSERT(srcFormat != LOCAL_GL_NONE);
+        TexType type = TypeFromInternalFormat(srcFormat);
+        isSourceTypeFloat = (type == LOCAL_GL_FLOAT ||
+                             type == LOCAL_GL_HALF_FLOAT);
     } else {
-      ClearBackbufferIfNeeded();
+        ClearBackbufferIfNeeded();
+
+        isSourceTypeFloat = false;
     }
 
-    bool isFormatAndTypeValid = false;
+    // Check the format and type params to assure they are an acceptable pair (as per spec)
+
+    const GLenum mainReadFormat = LOCAL_GL_RGBA;
+    const GLenum mainReadType = isSourceTypeFloat ? LOCAL_GL_FLOAT
+                                                  : LOCAL_GL_UNSIGNED_BYTE;
+
+    GLenum auxReadFormat = mainReadFormat;
+    GLenum auxReadType = mainReadType;
 
     // OpenGL ES 2.0 $4.3.1 - IMPLEMENTATION_COLOR_READ_{TYPE/FORMAT} is a valid
     // combination for glReadPixels().
     if (gl->IsSupported(gl::GLFeature::ES2_compatibility)) {
-        GLenum implType = 0;
-        GLenum implFormat = 0;
-
-        gl->fGetIntegerv(LOCAL_GL_IMPLEMENTATION_COLOR_READ_TYPE,
-                         reinterpret_cast<GLint*>(&implType));
         gl->fGetIntegerv(LOCAL_GL_IMPLEMENTATION_COLOR_READ_FORMAT,
-                         reinterpret_cast<GLint*>(&implFormat));
-
-        if (type == implType && format == implFormat) {
-            isFormatAndTypeValid = true;
-        }
+                         reinterpret_cast<GLint*>(&auxReadFormat));
+        gl->fGetIntegerv(LOCAL_GL_IMPLEMENTATION_COLOR_READ_TYPE,
+                         reinterpret_cast<GLint*>(&auxReadType));
     }
 
-    switch (format) {
-        case LOCAL_GL_RGBA: {
-            switch (type) {
-                case LOCAL_GL_UNSIGNED_BYTE:
-                case LOCAL_GL_FLOAT:
-                    isFormatAndTypeValid = true;
-                    break;
-            }
-            break;
-        }
-    }
-
-    if (!isFormatAndTypeValid) {
+    const bool mainMatches = (format == mainReadFormat && type == mainReadType);
+    const bool auxMatches = (format == auxReadFormat && type == auxReadType);
+    const bool isValid = mainMatches || auxMatches;
+    if (!isValid)
         return ErrorInvalidOperation("readPixels: Invalid format/type pair");
+
+    GLenum readType = type;
+    if (gl->WorkAroundDriverBugs() && gl->IsANGLE()) {
+        if (type == LOCAL_GL_FLOAT &&
+            auxReadFormat == format &&
+            auxReadType == LOCAL_GL_HALF_FLOAT)
+        {
+            readType = auxReadType;
+        }
     }
 
     // Now that the errors are out of the way, on to actually reading
@@ -2041,7 +2110,10 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
 
     if (CanvasUtils::CheckSaneSubrectSize(x, y, width, height, framebufferWidth, framebufferHeight)) {
         // the easy case: we're not reading out-of-range pixels
-        gl->fReadPixels(x, y, width, height, format, type, data);
+
+        // Effectively: gl->fReadPixels(x, y, width, height, format, type, dest);
+        ReadPixelsAndConvert(gl, x, y, width, height, format, readType,
+                             mPixelStorePackAlignment, format, type, data);
     } else {
         // the rectangle doesn't fit entirely in the bound buffer. We then have to set to zero the part
         // of the buffer that correspond to out-of-range pixels. We don't want to rely on system OpenGL
@@ -2086,12 +2158,15 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
         uint32_t subrect_byteLength = (subrect_height-1)*subrect_alignedRowSize + subrect_plainRowSize;
 
         // create subrect buffer, call glReadPixels, copy pixels into destination buffer, delete subrect buffer
-        UniquePtr<GLubyte> subrect_data(new ((fallible_t())) GLubyte[subrect_byteLength]);
+        UniquePtr<GLubyte> subrect_data(new (fallible) GLubyte[subrect_byteLength]);
         if (!subrect_data)
             return ErrorOutOfMemory("readPixels: subrect_data");
 
-        gl->fReadPixels(subrect_x, subrect_y, subrect_width, subrect_height,
-                        format, type, subrect_data.get());
+        // Effectively: gl->fReadPixels(subrect_x, subrect_y, subrect_width,
+        //                              subrect_height, format, type, subrect_data.get());
+        ReadPixelsAndConvert(gl, subrect_x, subrect_y, subrect_width, subrect_height,
+                             format, readType, mPixelStorePackAlignment, format, type,
+                             subrect_data.get());
 
         // notice that this for loop terminates because we already checked that subrect_height is at most height
         for (GLint y_inside_subrect = 0; y_inside_subrect < subrect_height; ++y_inside_subrect) {
@@ -2107,7 +2182,6 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
 
     // if we're reading alpha, we may need to do fixup.  Note that we don't allow
     // GL_ALPHA to readpixels currently, but we had the code written for it already.
-
     const bool formatHasAlpha = format == LOCAL_GL_ALPHA ||
                                 format == LOCAL_GL_RGBA;
     if (!formatHasAlpha)
@@ -2130,93 +2204,154 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
 }
 
 void
-WebGLContext::RenderbufferStorage(GLenum target, GLenum internalformat, GLsizei width, GLsizei height)
+WebGLContext::RenderbufferStorage_base(const char* funcName, GLenum target,
+                                       GLsizei samples,
+                                       GLenum internalFormat, GLsizei width,
+                                       GLsizei height)
 {
     if (IsContextLost())
         return;
 
-    if (!mBoundRenderbuffer)
-        return ErrorInvalidOperation("renderbufferStorage called on renderbuffer 0");
+    if (!mBoundRenderbuffer) {
+        ErrorInvalidOperation("%s: Called on renderbuffer 0.", funcName);
+        return;
+    }
 
-    if (target != LOCAL_GL_RENDERBUFFER)
-        return ErrorInvalidEnumInfo("renderbufferStorage: target", target);
+    if (target != LOCAL_GL_RENDERBUFFER) {
+        ErrorInvalidEnumInfo("`target`", funcName, target);
+        return;
+    }
 
-    if (width < 0 || height < 0)
-        return ErrorInvalidValue("renderbufferStorage: width and height must be >= 0");
+    if (samples < 0 || samples > mGLMaxSamples) {
+        ErrorInvalidValue("%s: `samples` is out of the valid range.", funcName);
+        return;
+    }
 
-    if (width > mGLMaxRenderbufferSize || height > mGLMaxRenderbufferSize)
-        return ErrorInvalidValue("renderbufferStorage: width or height exceeds maximum renderbuffer size");
+    if (width < 0 || height < 0) {
+        ErrorInvalidValue("%s: Width and height must be >= 0.", funcName);
+        return;
+    }
+
+    if (width > mGLMaxRenderbufferSize || height > mGLMaxRenderbufferSize) {
+        ErrorInvalidValue("%s: Width or height exceeds maximum renderbuffer"
+                          " size.", funcName);
+        return;
+    }
+
+    bool isFormatValid = false;
+    switch (internalFormat) {
+    case LOCAL_GL_RGBA4:
+    case LOCAL_GL_RGB5_A1:
+    case LOCAL_GL_RGB565:
+    case LOCAL_GL_DEPTH_COMPONENT16:
+    case LOCAL_GL_STENCIL_INDEX8:
+    case LOCAL_GL_DEPTH_STENCIL:
+        isFormatValid = true;
+        break;
+
+    case LOCAL_GL_SRGB8_ALPHA8_EXT:
+        if (IsExtensionEnabled(WebGLExtensionID::EXT_sRGB))
+            isFormatValid = true;
+        break;
+
+    case LOCAL_GL_RGB16F:
+    case LOCAL_GL_RGBA16F:
+        if (IsExtensionEnabled(WebGLExtensionID::OES_texture_half_float) &&
+            IsExtensionEnabled(WebGLExtensionID::EXT_color_buffer_half_float))
+        {
+            isFormatValid = true;
+        }
+        break;
+
+    case LOCAL_GL_RGB32F:
+    case LOCAL_GL_RGBA32F:
+        if (IsExtensionEnabled(WebGLExtensionID::OES_texture_float) &&
+            IsExtensionEnabled(WebGLExtensionID::WEBGL_color_buffer_float))
+        {
+            isFormatValid = true;
+        }
+        break;
+
+    default:
+        break;
+    }
+
+    if (!isFormatValid) {
+        ErrorInvalidEnumInfo("`internalFormat`", funcName, internalFormat);
+        return;
+    }
 
     // certain OpenGL ES renderbuffer formats may not exist on desktop OpenGL
-    GLenum internalformatForGL = internalformat;
+    GLenum internalFormatForGL = internalFormat;
 
-    switch (internalformat) {
+    switch (internalFormat) {
     case LOCAL_GL_RGBA4:
     case LOCAL_GL_RGB5_A1:
         // 16-bit RGBA formats are not supported on desktop GL
-        if (!gl->IsGLES()) internalformatForGL = LOCAL_GL_RGBA8;
+        if (!gl->IsGLES())
+            internalFormatForGL = LOCAL_GL_RGBA8;
         break;
+
     case LOCAL_GL_RGB565:
         // the RGB565 format is not supported on desktop GL
-        if (!gl->IsGLES()) internalformatForGL = LOCAL_GL_RGB8;
+        if (!gl->IsGLES())
+            internalFormatForGL = LOCAL_GL_RGB8;
         break;
+
     case LOCAL_GL_DEPTH_COMPONENT16:
         if (!gl->IsGLES() || gl->IsExtensionSupported(gl::GLContext::OES_depth24))
-            internalformatForGL = LOCAL_GL_DEPTH_COMPONENT24;
+            internalFormatForGL = LOCAL_GL_DEPTH_COMPONENT24;
         else if (gl->IsExtensionSupported(gl::GLContext::OES_packed_depth_stencil))
-            internalformatForGL = LOCAL_GL_DEPTH24_STENCIL8;
+            internalFormatForGL = LOCAL_GL_DEPTH24_STENCIL8;
         break;
-    case LOCAL_GL_STENCIL_INDEX8:
-        break;
+
     case LOCAL_GL_DEPTH_STENCIL:
         // We emulate this in WebGLRenderbuffer if we don't have the requisite extension.
-        internalformatForGL = LOCAL_GL_DEPTH24_STENCIL8;
+        internalFormatForGL = LOCAL_GL_DEPTH24_STENCIL8;
         break;
-    case LOCAL_GL_SRGB8_ALPHA8_EXT:
-        break;
-    case LOCAL_GL_RGB16F:
-    case LOCAL_GL_RGBA16F: {
-        bool hasExtensions = IsExtensionEnabled(WebGLExtensionID::OES_texture_half_float) &&
-                             IsExtensionEnabled(WebGLExtensionID::EXT_color_buffer_half_float);
-        if (!hasExtensions)
-            return ErrorInvalidEnumInfo("renderbufferStorage: internalformat", internalformat);
-        break;
-    }
-    case LOCAL_GL_RGB32F:
-    case LOCAL_GL_RGBA32F: {
-        bool hasExtensions = IsExtensionEnabled(WebGLExtensionID::OES_texture_float) &&
-                             IsExtensionEnabled(WebGLExtensionID::WEBGL_color_buffer_float);
-        if (!hasExtensions)
-            return ErrorInvalidEnumInfo("renderbufferStorage: internalformat", internalformat);
-        break;
-    }
+
     default:
-        return ErrorInvalidEnumInfo("renderbufferStorage: internalformat", internalformat);
+        break;
     }
+
+    // Validation complete.
 
     MakeContextCurrent();
 
-    bool sizeChanges = width != mBoundRenderbuffer->Width() ||
-                       height != mBoundRenderbuffer->Height() ||
-                       internalformat != mBoundRenderbuffer->InternalFormat();
-    if (sizeChanges) {
+    bool willRealloc = samples != mBoundRenderbuffer->Samples() ||
+                       internalFormat != mBoundRenderbuffer->InternalFormat() ||
+                       width != mBoundRenderbuffer->Width() ||
+                       height != mBoundRenderbuffer->Height();
+
+    if (willRealloc) {
         // Invalidate framebuffer status cache
         mBoundRenderbuffer->NotifyFBsStatusChanged();
         GetAndFlushUnderlyingGLErrors();
-        mBoundRenderbuffer->RenderbufferStorage(internalformatForGL, width, height);
+        mBoundRenderbuffer->RenderbufferStorage(samples, internalFormatForGL,
+                                                width, height);
         GLenum error = GetAndFlushUnderlyingGLErrors();
         if (error) {
-            GenerateWarning("renderbufferStorage generated error %s", ErrorName(error));
+            GenerateWarning("%s generated error %s", funcName,
+                            ErrorName(error));
             return;
         }
     } else {
-        mBoundRenderbuffer->RenderbufferStorage(internalformatForGL, width, height);
+        mBoundRenderbuffer->RenderbufferStorage(samples, internalFormatForGL,
+                                                width, height);
     }
 
-    mBoundRenderbuffer->SetInternalFormat(internalformat);
-    mBoundRenderbuffer->SetInternalFormatForGL(internalformatForGL);
+    mBoundRenderbuffer->SetSamples(samples);
+    mBoundRenderbuffer->SetInternalFormat(internalFormat);
+    mBoundRenderbuffer->SetInternalFormatForGL(internalFormatForGL);
     mBoundRenderbuffer->setDimensions(width, height);
     mBoundRenderbuffer->SetImageDataStatus(WebGLImageDataStatus::UninitializedImageData);
+}
+
+void
+WebGLContext::RenderbufferStorage(GLenum target, GLenum internalFormat, GLsizei width, GLsizei height)
+{
+    RenderbufferStorage_base("renderbufferStorage", target, 0,
+                             internalFormat, width, height);
 }
 
 void
@@ -3203,7 +3338,7 @@ WebGLContext::TexImage2D_base(TexImageTarget texImageTarget, GLint level,
         else
         {
             size_t convertedDataSize = height * dstStride;
-            convertedData = new ((fallible_t())) uint8_t[convertedDataSize];
+            convertedData = new (fallible) uint8_t[convertedDataSize];
             if (!convertedData) {
                 ErrorOutOfMemory("texImage2D: Ran out of memory when allocating"
                                  " a buffer for doing format conversion.");
@@ -3404,7 +3539,7 @@ WebGLContext::TexSubImage2D_base(TexImageTarget texImageTarget, GLint level,
 
     if (!noConversion) {
         size_t convertedDataSize = height * dstStride;
-        convertedData = new ((fallible_t())) uint8_t[convertedDataSize];
+        convertedData = new (fallible) uint8_t[convertedDataSize];
         if (!convertedData) {
             ErrorOutOfMemory("texImage2D: Ran out of memory when allocating"
                              " a buffer for doing format conversion.");
@@ -3543,7 +3678,7 @@ mozilla::GetWebGLTexelFormat(TexInternalFormat effectiveInternalFormat)
 }
 
 void
-WebGLContext::BlendColor(GLclampf r, GLclampf g, GLclampf b, GLclampf a) {
+WebGLContext::BlendColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a) {
     if (IsContextLost())
         return;
     MakeContextCurrent();

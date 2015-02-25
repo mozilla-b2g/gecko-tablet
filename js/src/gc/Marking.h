@@ -37,10 +37,6 @@ struct IonScript;
 struct VMFunction;
 }
 
-namespace types {
-class Type;
-}
-
 namespace gc {
 
 /*** Object Marking ***/
@@ -132,7 +128,7 @@ DeclMarker(String, JSFlatString)
 DeclMarker(String, JSLinearString)
 DeclMarker(String, PropertyName)
 DeclMarker(Symbol, JS::Symbol)
-DeclMarker(TypeObject, types::TypeObject)
+DeclMarker(ObjectGroup, ObjectGroup)
 
 #undef DeclMarker
 
@@ -212,9 +208,6 @@ MarkValueRootRange(JSTracer *trc, Value *begin, Value *end, const char *name)
 {
     MarkValueRootRange(trc, end - begin, begin, name);
 }
-
-void
-MarkTypeRoot(JSTracer *trc, types::Type *v, const char *name);
 
 bool
 IsValueMarked(Value *v);
@@ -326,15 +319,6 @@ Mark(JSTracer *trc, ScopeObject **obj, const char *name)
 {
     MarkObjectUnbarriered(trc, obj, name);
 }
-
-bool
-IsCellMarked(Cell **thingp);
-
-bool
-IsCellAboutToBeFinalized(Cell **thing);
-
-bool
-IsCellAboutToBeFinalizedFromAnyThread(Cell **thing);
 
 inline bool
 IsMarked(BarrieredBase<Value> *v)

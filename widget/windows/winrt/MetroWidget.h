@@ -95,7 +95,6 @@ public:
   NS_IMETHOD    Create(nsIWidget *aParent,
                        nsNativeWidget aNativeParent,
                        const nsIntRect &aRect,
-                       nsDeviceContext *aContext,
                        nsWidgetInitData *aInitData = nullptr);
   NS_IMETHOD    Destroy();
   NS_IMETHOD    EnableDragDrop(bool aEnable);
@@ -128,10 +127,10 @@ public:
                                             uint32_t aModifierFlags,
                                             const nsAString& aCharacters,
                                             const nsAString& aUnmodifiedCharacters);
-  virtual nsresult SynthesizeNativeMouseEvent(nsIntPoint aPoint,
+  virtual nsresult SynthesizeNativeMouseEvent(mozilla::LayoutDeviceIntPoint aPoint,
                                               uint32_t aNativeMessage,
                                               uint32_t aModifierFlags);
-  virtual nsresult SynthesizeNativeMouseScrollEvent(nsIntPoint aPoint,
+  virtual nsresult SynthesizeNativeMouseScrollEvent(mozilla::LayoutDeviceIntPoint aPoint,
                                                     uint32_t aNativeMessage,
                                                     double aDeltaX,
                                                     double aDeltaY,
@@ -172,7 +171,7 @@ public:
   virtual nsresult ConfigureChildren(const nsTArray<Configuration>& aConfigurations);
   virtual void* GetNativeData(uint32_t aDataType);
   virtual void  FreeNativeData(void * data, uint32_t aDataType);
-  virtual nsIntPoint WidgetToScreenOffset();
+  virtual mozilla::LayoutDeviceIntPoint WidgetToScreenOffset();
 
   already_AddRefed<nsIPresShell> GetPresShell();
 

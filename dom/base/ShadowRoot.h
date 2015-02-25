@@ -127,6 +127,14 @@ public:
   Element* Host();
   ShadowRoot* GetOlderShadowRoot() { return mOlderShadow; }
   void StyleSheetChanged();
+
+  bool IsComposedDocParticipant() { return mIsComposedDocParticipant; }
+  void SetIsComposedDocParticipant(bool aIsComposedDocParticipant)
+  {
+    mIsComposedDocParticipant = aIsComposedDocParticipant;
+  }
+
+  virtual void DestroyContent() MOZ_OVERRIDE;
 protected:
   virtual ~ShadowRoot();
 
@@ -171,6 +179,12 @@ protected:
   // the insertion points. After this flag is set, nodes will be distributed
   // on the next mutation event.
   bool mInsertionPointChanged;
+
+  // Flag to indicate whether the descendants of this shadow root are part of the
+  // composed document. Ideally, we would use a node flag on nodes to
+  // mark whether it is in the composed document, but we have run out of flags
+  // so instead we track it here.
+  bool mIsComposedDocParticipant;
 };
 
 class ShadowRootStyleSheetList : public StyleSheetList

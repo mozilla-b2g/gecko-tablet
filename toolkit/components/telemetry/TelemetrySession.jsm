@@ -41,6 +41,7 @@ const PREF_ENABLED = PREF_BRANCH + "enabled";
 const PREF_PREVIOUS_BUILDID = PREF_BRANCH + "previousBuildID";
 const PREF_CACHED_CLIENTID = PREF_BRANCH + "cachedClientID"
 const PREF_FHR_UPLOAD_ENABLED = "datareporting.healthreport.uploadEnabled";
+const PREF_ASYNC_PLUGIN_INIT = "dom.ipc.plugins.asyncInit";
 
 const MESSAGE_TELEMETRY_PAYLOAD = "Telemetry:Payload";
 
@@ -460,7 +461,8 @@ let Impl = {
   getHistograms: function getHistograms(hls) {
     this._log.trace("getHistograms");
 
-    let registered = Telemetry.registeredHistograms([]);
+    let registered =
+      Telemetry.registeredHistograms(Ci.nsITelemetry.DATASET_RELEASE_CHANNEL_OPTIN, []);
     let ret = {};
 
     for (let name of registered) {
@@ -496,7 +498,8 @@ let Impl = {
   getKeyedHistograms: function() {
     this._log.trace("getKeyedHistograms");
 
-    let registered = Telemetry.registeredKeyedHistograms([]);
+    let registered =
+      Telemetry.registeredKeyedHistograms(Ci.nsITelemetry.DATASET_RELEASE_CHANNEL_OPTIN, []);
     let ret = {};
 
     for (let id of registered) {
@@ -545,7 +548,8 @@ let Impl = {
       appUpdateChannel: UpdateChannel.get(),
       platformBuildID: ai.platformBuildID,
       revision: HISTOGRAMS_FILE_VERSION,
-      locale: getLocale()
+      locale: getLocale(),
+      asyncPluginInit: Preferences.get(PREF_ASYNC_PLUGIN_INIT, false)
     };
 
     // In order to share profile data, the appName used for Metro Firefox is "Firefox",
@@ -771,7 +775,8 @@ let Impl = {
   gatherStartupHistograms: function gatherStartupHistograms() {
     this._log.trace("gatherStartupHistograms");
 
-    let info = Telemetry.registeredHistograms([]);
+    let info =
+      Telemetry.registeredHistograms(Ci.nsITelemetry.DATASET_RELEASE_CHANNEL_OPTIN, []);
     let snapshots = Telemetry.histogramSnapshots;
     for (let name of info) {
       // Only duplicate histograms with actual data.

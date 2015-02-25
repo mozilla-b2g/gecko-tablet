@@ -3007,7 +3007,7 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     shouldBuildLayer = true;
   } else {
     shouldBuildLayer =
-      nsLayoutUtils::WantSubAPZC() &&
+      gfxPrefs::AsyncPanZoomEnabled() &&
       WantAsyncScroll() &&
       // If we are using containers for root frames, and we are the root
       // scroll frame for the display root, then we don't need a scroll
@@ -3072,6 +3072,22 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     }
 
     mOuter->BuildDisplayListForChild(aBuilder, mScrolledFrame, dirtyRect, scrolledContent);
+
+    if (idSetter.ShouldForceLayerForScrollParent() &&
+        !gfxPrefs::LayoutUseContainersForRootFrames())
+    {
+      // Note that forcing layerization of scroll parents follows the scroll
+      // handoff chain which is subject to the out-of-flow-frames caveat noted
+      // above (where the idSetter variable is created).
+      //
+      // This is not compatible when using containes for root scrollframes.
+      MOZ_ASSERT(shouldBuildLayer && mScrolledFrame->GetContent());
+      mShouldBuildScrollableLayer = true;
+    }
+  }
+
+  if (mShouldBuildScrollableLayer && !gfxPrefs::LayoutUseContainersForRootFrames()) {
+    aBuilder->ForceLayerForScrollParent();
   }
 
   if (MOZ_UNLIKELY(mOuter->StyleDisplay()->mOverflowClipBox ==
@@ -3177,9 +3193,10 @@ ScrollFrameHelper::ComputeFrameMetrics(Layer* aLayer,
   bool isRoot = mIsRoot && mOuter->PresContext()->IsRootContentDocument();
 
   *aOutput->AppendElement() =
-      nsDisplayScrollLayer::ComputeFrameMetrics(mScrolledFrame, mOuter,
+      nsDisplayScrollLayer::ComputeFrameMetrics(
+        mScrolledFrame, mOuter, mOuter->GetContent(),
         aContainerReferenceFrame, aLayer, mScrollParentID,
-        scrollport, false, isRoot, aParameters);
+        scrollport, isRoot, aParameters);
 }
 
 bool

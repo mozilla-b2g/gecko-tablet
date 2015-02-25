@@ -403,7 +403,7 @@ public:
    * It's a temporary hack to ensure that DXGI textures don't get destroyed
    * between serialization and deserialization.
    */
-  void KeepUntilFullDeallocation(KeepAlive* aKeep);
+  void KeepUntilFullDeallocation(UniquePtr<KeepAlive> aKeep);
 
   /**
    * Create and init the TextureChild/Parent IPDL actor pair.
@@ -600,8 +600,6 @@ public:
   virtual bool AllocateForYCbCr(gfx::IntSize aYSize,
                                 gfx::IntSize aCbCrSize,
                                 StereoMode aStereoMode) MOZ_OVERRIDE;
-
-  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 
   virtual gfx::SurfaceFormat GetFormat() const MOZ_OVERRIDE { return mFormat; }
 

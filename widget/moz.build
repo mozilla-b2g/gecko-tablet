@@ -15,6 +15,7 @@ if toolkit == 'windows':
     DIRS += ['windows']
 
     XPIDL_SOURCES += [
+        'nsIGfxInfo2.idl',
         'nsIJumpListBuilder.idl',
         'nsIJumpListItem.idl',
         'nsIPrintSettingsWin.idl',
@@ -117,6 +118,7 @@ EXPORTS.mozilla += [
     'ContentEvents.h',
     'EventClassList.h',
     'EventForwards.h',
+    'FontRange.h',
     'LookAndFeel.h',
     'MiscEvents.h',
     'MouseEvents.h',

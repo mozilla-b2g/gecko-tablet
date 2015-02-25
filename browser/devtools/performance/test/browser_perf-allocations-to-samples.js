@@ -20,23 +20,23 @@ let TEST_DATA = {
   sites: [0, 0, 1, 2, 3],
   timestamps: [50, 100, 150, 200, 250],
   frames: [
-    null,
-    {
+    null, {
       source: "A",
       line: 1,
       column: 2,
+      functionDisplayName: "x",
       parent: 0
-    },
-    {
+    }, {
       source: "B",
       line: 3,
       column: 4,
+      functionDisplayName: "y",
       parent: 1
-    },
-    {
+    }, {
       source: "C",
       line: 5,
       column: 6,
+      functionDisplayName: null,
       parent: 2
     }
   ],
@@ -52,25 +52,25 @@ let EXPECTED_OUTPUT = [{
 }, {
   time: 150,
   frames: [{
-    location: "A:1:2",
+    location: "x (A:1:2)",
     allocations: 22
   }]
 }, {
   time: 200,
   frames: [{
-    location: "A:1:2",
+    location: "x (A:1:2)",
     allocations: 22
   }, {
-    location: "B:3:4",
+    location: "y (B:3:4)",
     allocations: 33
   }]
 }, {
   time: 250,
   frames: [{
-    location: "A:1:2",
+    location: "x (A:1:2)",
     allocations: 22
   }, {
-    location: "B:3:4",
+    location: "y (B:3:4)",
     allocations: 33
   }, {
     location: "C:5:6",

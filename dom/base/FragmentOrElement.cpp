@@ -1184,6 +1184,10 @@ FragmentOrElement::DestroyContent()
     // The child can remove itself from the parent in BindToTree.
     mAttrsAndChildren.ChildAt(i)->DestroyContent();
   }
+  ShadowRoot* shadowRoot = GetShadowRoot();
+  if (shadowRoot) {
+    shadowRoot->DestroyContent();
+  }
 }
 
 void
@@ -2202,7 +2206,7 @@ public:
 
   bool ToString(nsAString& aOut)
   {
-    if (!aOut.SetCapacity(mLength, fallible_t())) {
+    if (!aOut.SetCapacity(mLength, fallible)) {
       return false;
     }
 

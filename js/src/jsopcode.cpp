@@ -39,7 +39,6 @@
 
 #include "jscntxtinlines.h"
 #include "jscompartmentinlines.h"
-#include "jsinferinlines.h"
 #include "jsobjinlines.h"
 #include "jsscriptinlines.h"
 
@@ -1621,6 +1620,8 @@ ExpressionDecompiler::decompilePC(jsbytecode *pc)
             return false;
         return write(str);
       }
+      case JSOP_VOID:
+        return write("void ") && decompilePCForStackOperand(pc, -1);
       default:
         break;
     }

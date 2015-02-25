@@ -181,12 +181,7 @@ TabWidthStore::ApplySpacing(gfxTextRun::PropertyProvider::Spacing *aSpacing,
   }
 }
 
-static void DestroyTabWidth(void* aPropertyValue)
-{
-  delete static_cast<TabWidthStore*>(aPropertyValue);
-}
-
-NS_DECLARE_FRAME_PROPERTY(TabWidthProperty, DestroyTabWidth)
+NS_DECLARE_FRAME_PROPERTY(TabWidthProperty, DeleteValue<TabWidthStore>)
 
 NS_DECLARE_FRAME_PROPERTY(OffsetToFrameProperty, nullptr)
 
@@ -204,18 +199,14 @@ private:
   nsTextFrame* mFrame;
 };
 
-static void DestroyGlyphObserverList(void* aPropertyValue)
-{
-  delete static_cast<nsTArray<nsAutoPtr<GlyphObserver> >*>(aPropertyValue);
-}
-
 /**
  * This property is set on text frames with TEXT_IN_TEXTRUN_USER_DATA set that
  * have potentially-animated glyphs.
  * The only reason this list is in a property is to automatically destroy the
  * list when the frame is deleted, unregistering the observers.
  */
-NS_DECLARE_FRAME_PROPERTY(TextFrameGlyphObservers, DestroyGlyphObserverList);
+NS_DECLARE_FRAME_PROPERTY(TextFrameGlyphObservers,
+                          DeleteValue<nsTArray<nsAutoPtr<GlyphObserver>>>);
 
 static const nsFrameState TEXT_REFLOW_FLAGS =
    TEXT_FIRST_LETTER |
@@ -1158,17 +1149,9 @@ CanTextCrossFrameBoundary(nsIFrame* aFrame, nsIAtom* aType)
       result.mScanSiblings = true;
       result.mTextRunCanCrossFrameBoundary = true;
       result.mLineBreakerCanCrossFrameBoundary = true;
-    } else if (aFrame->GetType() == nsGkAtoms::rubyTextFrame ||
-               aFrame->GetType() == nsGkAtoms::rubyTextContainerFrame) {
-      result.mFrameToScan = aFrame->GetFirstPrincipalChild();
-      result.mOverflowFrameToScan =
-        aFrame->GetFirstChild(nsIFrame::kOverflowList);
-      NS_WARN_IF_FALSE(!result.mOverflowFrameToScan,
-                       "Scanning overflow inline frames is something we should avoid");
-      result.mScanSiblings = true;
-      result.mTextRunCanCrossFrameBoundary = false;
-      result.mLineBreakerCanCrossFrameBoundary = false;
     } else {
+      MOZ_ASSERT(aType != nsGkAtoms::rubyTextContainerFrame,
+                 "Shouldn't call this method for ruby text container");
       result.mFrameToScan = nullptr;
       result.mOverflowFrameToScan = nullptr;
       result.mTextRunCanCrossFrameBoundary = false;
@@ -1182,6 +1165,12 @@ BuildTextRunsScanner::FindBoundaryResult
 BuildTextRunsScanner::FindBoundaries(nsIFrame* aFrame, FindBoundaryState* aState)
 {
   nsIAtom* frameType = aFrame->GetType();
+  if (frameType == nsGkAtoms::rubyTextContainerFrame) {
+    // Don't stop a text run for ruby text container. We want ruby text
+    // containers to be skipped, but continue the text run across them.
+    return FB_CONTINUE;
+  }
+
   nsTextFrame* textFrame = frameType == nsGkAtoms::textFrame
     ? static_cast<nsTextFrame*>(aFrame) : nullptr;
   if (textFrame) {
@@ -1266,8 +1255,7 @@ BuildTextRuns(gfxContext* aContext, nsTextFrame* aForFrame,
               const nsLineList::iterator* aForFrameLine,
               nsTextFrame::TextRunType aWhichTextRun)
 {
-  NS_ASSERTION(aForFrame || aLineContainer,
-               "One of aForFrame or aLineContainer must be set!");
+  MOZ_ASSERT(aForFrame, "for no frame?");
   NS_ASSERTION(!aForFrameLine || aLineContainer,
                "line but no line container");
   
@@ -1279,24 +1267,20 @@ BuildTextRuns(gfxContext* aContext, nsTextFrame* aForFrame,
     }
     aLineContainer = FindLineContainer(lineContainerChild);
   } else {
-    NS_ASSERTION(!aForFrame ||
-                 (aLineContainer == FindLineContainer(aForFrame) ||
-                  aLineContainer->GetType() == nsGkAtoms::rubyTextContainerFrame ||
+    NS_ASSERTION((aLineContainer == FindLineContainer(aForFrame) ||
                   (aLineContainer->GetType() == nsGkAtoms::letterFrame &&
                    aLineContainer->IsFloating())),
                  "Wrong line container hint");
   }
 
-  if (aForFrame) {
-    if (aForFrame->HasAnyStateBits(TEXT_IS_IN_TOKEN_MATHML)) {
-      aLineContainer->AddStateBits(TEXT_IS_IN_TOKEN_MATHML);
-      if (aForFrame->HasAnyStateBits(NS_FRAME_IS_IN_SINGLE_CHAR_MI)) {
-        aLineContainer->AddStateBits(NS_FRAME_IS_IN_SINGLE_CHAR_MI);
-      }
+  if (aForFrame->HasAnyStateBits(TEXT_IS_IN_TOKEN_MATHML)) {
+    aLineContainer->AddStateBits(TEXT_IS_IN_TOKEN_MATHML);
+    if (aForFrame->HasAnyStateBits(NS_FRAME_IS_IN_SINGLE_CHAR_MI)) {
+      aLineContainer->AddStateBits(NS_FRAME_IS_IN_SINGLE_CHAR_MI);
     }
-    if (aForFrame->HasAnyStateBits(NS_FRAME_MATHML_SCRIPT_DESCENDANT)) {
-      aLineContainer->AddStateBits(NS_FRAME_MATHML_SCRIPT_DESCENDANT);
-    }
+  }
+  if (aForFrame->HasAnyStateBits(NS_FRAME_MATHML_SCRIPT_DESCENDANT)) {
+    aLineContainer->AddStateBits(NS_FRAME_MATHML_SCRIPT_DESCENDANT);
   }
 
   nsPresContext* presContext = aLineContainer->PresContext();
@@ -1306,13 +1290,26 @@ BuildTextRuns(gfxContext* aContext, nsTextFrame* aForFrame,
   nsBlockFrame* block = nsLayoutUtils::GetAsBlock(aLineContainer);
 
   if (!block) {
-    NS_ASSERTION(!aLineContainer->GetPrevInFlow() && !aLineContainer->GetNextInFlow(),
-                 "Breakable non-block line containers not supported");
+    nsIFrame* textRunContainer = aLineContainer;
+    if (aLineContainer->GetType() == nsGkAtoms::rubyTextContainerFrame) {
+      textRunContainer = aForFrame;
+      while (textRunContainer &&
+             textRunContainer->GetType() != nsGkAtoms::rubyTextFrame) {
+        textRunContainer = textRunContainer->GetParent();
+      }
+      MOZ_ASSERT(textRunContainer &&
+                 textRunContainer->GetParent() == aLineContainer);
+    } else {
+      NS_ASSERTION(
+        !aLineContainer->GetPrevInFlow() && !aLineContainer->GetNextInFlow(),
+        "Breakable non-block line containers other than "
+        "ruby text container is not supported");
+    }
     // Just loop through all the children of the linecontainer ... it's really
     // just one line
     scanner.SetAtStartOfLine();
     scanner.SetCommonAncestorWithLastFrame(nullptr);
-    nsIFrame* child = aLineContainer->GetFirstPrincipalChild();
+    nsIFrame* child = textRunContainer->GetFirstPrincipalChild();
     while (child) {
       scanner.ScanFrame(child);
       child = child->GetNextSibling();
@@ -1672,12 +1669,18 @@ BuildTextRunsScanner::ContinueTextRunAcrossFrames(nsTextFrame* aFrame1, nsTextFr
 
 void BuildTextRunsScanner::ScanFrame(nsIFrame* aFrame)
 {
+  nsIAtom* frameType = aFrame->GetType();
+  if (frameType == nsGkAtoms::rubyTextContainerFrame) {
+    // Don't include any ruby text container into the text run.
+    return;
+  }
+
   // First check if we can extend the current mapped frame block. This is common.
   if (mMappedFlows.Length() > 0) {
     MappedFlow* mappedFlow = &mMappedFlows[mMappedFlows.Length() - 1];
     if (mappedFlow->mEndFrame == aFrame &&
         (aFrame->GetStateBits() & NS_FRAME_IS_FLUID_CONTINUATION)) {
-      NS_ASSERTION(aFrame->GetType() == nsGkAtoms::textFrame,
+      NS_ASSERTION(frameType == nsGkAtoms::textFrame,
                    "Flow-sibling of a text frame is not a text frame?");
 
       // Don't do this optimization if mLastFrame has a terminal newline...
@@ -1691,7 +1694,6 @@ void BuildTextRunsScanner::ScanFrame(nsIFrame* aFrame)
     }
   }
 
-  nsIAtom* frameType = aFrame->GetType();
   // Now see if we can add a new set of frames to the current textrun
   if (frameType == nsGkAtoms::textFrame) {
     nsTextFrame* frame = static_cast<nsTextFrame*>(aFrame);
@@ -2134,21 +2136,26 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
       new MathMLTextRunFactory(transformingFactory.forget(), mathFlags,
                                sstyScriptLevel, fontInflation);
   }
-  nsTArray<nsStyleContext*> styles;
+  nsTArray<nsRefPtr<nsTransformedCharStyle>> styles;
   if (transformingFactory) {
     iter.SetOriginalOffset(0);
     for (uint32_t i = 0; i < mMappedFlows.Length(); ++i) {
       MappedFlow* mappedFlow = &mMappedFlows[i];
       nsTextFrame* f;
+      nsStyleContext* sc = nullptr;
+      nsRefPtr<nsTransformedCharStyle> charStyle;
       for (f = mappedFlow->mStartFrame; f != mappedFlow->mEndFrame;
            f = static_cast<nsTextFrame*>(f->GetNextContinuation())) {
         uint32_t offset = iter.GetSkippedOffset();
         iter.AdvanceOriginal(f->GetContentLength());
         uint32_t end = iter.GetSkippedOffset();
-        nsStyleContext* sc = f->StyleContext();
+        if (sc != f->StyleContext()) {
+          sc = f->StyleContext();
+          charStyle = new nsTransformedCharStyle(sc);
+        }
         uint32_t j;
         for (j = offset; j < end; ++j) {
-          styles.AppendElement(sc);
+          styles.AppendElement(charStyle);
         }
       }
     }
@@ -2169,7 +2176,7 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
     if (transformingFactory) {
       textRun = transformingFactory->MakeTextRun(text, transformedLength,
                                                  &params, fontGroup, textFlags,
-                                                 styles.Elements(), true);
+                                                 Move(styles), true);
       if (textRun) {
         // ownership of the factory has passed to the textrun
         transformingFactory.forget();
@@ -2184,7 +2191,7 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
     if (transformingFactory) {
       textRun = transformingFactory->MakeTextRun(text, transformedLength,
                                                  &params, fontGroup, textFlags,
-                                                 styles.Elements(), true);
+                                                 Move(styles), true);
       if (textRun) {
         // ownership of the factory has passed to the textrun
         transformingFactory.forget();
@@ -4381,7 +4388,7 @@ nsTextFrame::SetTextRun(gfxTextRun* aTextRun, TextRunType aWhichTextRun,
     }
     SetFontSizeInflation(aInflation);
   } else {
-    NS_ABORT_IF_FALSE(aInflation == 1.0f, "unexpected inflation");
+    MOZ_ASSERT(aInflation == 1.0f, "unexpected inflation");
     if (HasFontSizeInflation()) {
       Properties().Set(UninflatedTextRunProperty(), aTextRun);
       return;
@@ -5222,18 +5229,13 @@ PaintDecorationLine(nsIFrame* aFrame,
 {
   nscolor lineColor = aOverrideColor ? *aOverrideColor : aColor;
   if (aCallbacks) {
-    if (aDecorationType == eNormalDecoration) {
-      aCallbacks->NotifyBeforeDecorationLine(lineColor);
-    } else {
-      aCallbacks->NotifyBeforeSelectionDecorationLine(lineColor);
-    }
-    nsCSSRendering::DecorationLineToPath(aFrame, aCtx, aDirtyRect, lineColor,
-      aPt, aICoordInFrame, aLineSize, aAscent, aOffset, aDecoration, aStyle,
+    Rect path = nsCSSRendering::DecorationLineToPath(ToRect(aDirtyRect),
+      ToPoint(aPt), ToSize(aLineSize), aAscent, aOffset, aDecoration, aStyle,
       aVertical, aDescentLimit);
     if (aDecorationType == eNormalDecoration) {
-      aCallbacks->NotifyDecorationLinePathEmitted();
+      aCallbacks->PaintDecorationLine(path, lineColor);
     } else {
-      aCallbacks->NotifySelectionDecorationLinePathEmitted();
+      aCallbacks->PaintSelectionDecorationLine(path, lineColor);
     }
   } else {
     nsCSSRendering::PaintDecorationLine(aFrame, *aCtx->GetDrawTarget(),
@@ -5543,7 +5545,8 @@ nsTextFrame::PaintOneShadow(uint32_t aOffset, uint32_t aLength,
                             const gfxPoint& aFramePt, const gfxPoint& aTextBaselinePt,
                             gfxContext* aCtx, const nscolor& aForegroundColor,
                             const nsCharClipDisplayItem::ClipEdges& aClipEdges,
-                            nscoord aLeftSideOffset, gfxRect& aBoundingBox)
+                            nscoord aLeftSideOffset, gfxRect& aBoundingBox,
+                            uint32_t aBlurFlags)
 {
   PROFILER_LABEL("nsTextFrame", "PaintOneShadow",
     js::ProfileEntry::Category::GRAPHICS);
@@ -5564,7 +5567,8 @@ nsTextFrame::PaintOneShadow(uint32_t aOffset, uint32_t aLength,
   nsContextBoxBlur contextBoxBlur;
   gfxContext* shadowContext = contextBoxBlur.Init(shadowRect, 0, blurRadius,
                                                   PresContext()->AppUnitsPerDevPixel(),
-                                                  aCtx, aDirtyRect, nullptr);
+                                                  aCtx, aDirtyRect, nullptr,
+                                                  aBlurFlags);
   if (!shadowContext)
     return;
 
@@ -6076,13 +6080,28 @@ nsTextFrame::PaintShadows(nsCSSShadowArray* aShadow,
       shadowMetrics.mAdvanceWidth, shadowMetrics.mAscent + shadowMetrics.mDescent);
   shadowMetrics.mBoundingBox.UnionRect(shadowMetrics.mBoundingBox,
                                        decorationRect);
+
+  // If the textrun uses any color or SVG fonts, we need to force use of a mask
+  // for shadow rendering even if blur radius is zero.
+  uint32_t blurFlags = 0;
+  uint32_t numGlyphRuns;
+  const gfxTextRun::GlyphRun* run = mTextRun->GetGlyphRuns(&numGlyphRuns);
+  while (numGlyphRuns-- > 0) {
+    if (run->mFont->AlwaysNeedsMaskForShadow()) {
+      blurFlags = nsContextBoxBlur::FORCE_MASK;
+      break;
+    }
+    run++;
+  }
+
   for (uint32_t i = aShadow->Length(); i > 0; --i) {
     PaintOneShadow(aOffset, aLength,
                    aShadow->ShadowAt(i - 1), &aProvider,
                    aDirtyRect, aFramePt, aTextBaselinePt, aCtx,
                    aForegroundColor, aClipEdges,
                    aLeftEdgeOffset,
-                   shadowMetrics.mBoundingBox);
+                   shadowMetrics.mBoundingBox,
+                   blurFlags);
   }
 }
 
@@ -6112,9 +6131,15 @@ nsTextFrame::PaintText(nsRenderingContext* aRenderingContext, nsPoint aPt,
   gfxPoint framePt(aPt.x, aPt.y);
   gfxPoint textBaselinePt;
   if (verticalRun) {
-    textBaselinePt = // XXX sideways-left will need different handling here
-      gfxPoint(aPt.x + (wm.IsVerticalLR() ? mAscent : frameWidth - mAscent),
-               rtl ? aPt.y + GetSize().height : aPt.y);
+    if (wm.IsVerticalLR()) {
+      textBaselinePt.x =
+        nsLayoutUtils::GetSnappedBaselineX(this, ctx, aPt.x, mAscent);
+    } else {
+      textBaselinePt.x =
+        nsLayoutUtils::GetSnappedBaselineX(this, ctx, aPt.x + frameWidth,
+                                           -mAscent);
+    }
+    textBaselinePt.y = rtl ? aPt.y + GetSize().height : aPt.y;
   } else {
     textBaselinePt = gfxPoint(rtl ? gfxFloat(aPt.x + frameWidth) : framePt.x,
              nsLayoutUtils::GetSnappedBaselineY(this, ctx, aPt.y, mAscent));
@@ -8494,6 +8519,7 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
   bool emptyTextAtStartOfLine = atStartOfLine && length == 0;
   if (!breakAfter && charsFit == length && !emptyTextAtStartOfLine &&
       transformedOffset + transformedLength == mTextRun->GetLength() &&
+      !StyleContext()->IsInlineDescendantOfRuby() &&
       (mTextRun->GetFlags() & nsTextFrameUtils::TEXT_HAS_TRAILING_BREAK)) {
     // We placed all the text in the textrun and we have a break opportunity at
     // the end of the textrun. We need to record it because the following

@@ -185,7 +185,7 @@ ClientLayerManager::BeginTransactionWithTarget(gfxContext* aTarget)
   NS_ASSERTION(!InTransaction(), "Nested transactions not allowed");
   mPhase = PHASE_CONSTRUCTION;
 
-  NS_ABORT_IF_FALSE(mKeepAlive.IsEmpty(), "uncommitted txn?");
+  MOZ_ASSERT(mKeepAlive.IsEmpty(), "uncommitted txn?");
   nsRefPtr<gfxContext> targetContext = aTarget;
 
   // If the last transaction was incomplete (a failed DoEmptyTransaction),
@@ -587,17 +587,6 @@ ClientLayerManager::ForwardTransaction(bool aScheduleComposite)
 
         break;
       }
-      case EditReply::TOpTextureSwap: {
-        MOZ_LAYERS_LOG(("[LayersForwarder] TextureSwap"));
-
-        const OpTextureSwap& ots = reply.get_OpTextureSwap();
-
-        CompositableClient* compositable =
-          CompositableClient::FromIPDLActor(ots.compositableChild());
-        MOZ_ASSERT(compositable);
-        compositable->SetDescriptorFromReply(ots.textureId(), ots.image());
-        break;
-      }
       case EditReply::TReturnReleaseFence: {
         const ReturnReleaseFence& rep = reply.get_ReturnReleaseFence();
         FenceHandle fence = rep.fence();
@@ -644,11 +633,11 @@ ClientLayerManager::ForwardTransaction(bool aScheduleComposite)
 ShadowableLayer*
 ClientLayerManager::Hold(Layer* aLayer)
 {
-  NS_ABORT_IF_FALSE(HasShadowManager(),
-                    "top-level tree, no shadow tree to remote to");
+  MOZ_ASSERT(HasShadowManager(),
+             "top-level tree, no shadow tree to remote to");
 
   ShadowableLayer* shadowable = ClientLayer::ToClientLayer(aLayer);
-  NS_ABORT_IF_FALSE(shadowable, "trying to remote an unshadowable layer");
+  MOZ_ASSERT(shadowable, "trying to remote an unshadowable layer");
 
   mKeepAlive.AppendElement(aLayer);
   return shadowable;
@@ -712,6 +701,10 @@ ClientLayerManager::ReportClientLost(TextureClient& aClient) {
 void
 ClientLayerManager::ClearCachedResources(Layer* aSubtree)
 {
+  if (mDestroyed) {
+    // ClearCachedResource was already called by ClientLayerManager::Destroy
+    return;
+  }
   MOZ_ASSERT(!HasShadowManager() || !aSubtree);
   mForwarder->ClearCachedResources();
   if (aSubtree) {

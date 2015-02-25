@@ -59,6 +59,29 @@ exports.RecordingUtils.offsetMarkerTimes = function(markers, timeOffset) {
 }
 
 /**
+ * Offsets and scales all the timestamps in the provided array by the
+ * specified time and scale factor.
+ *
+ * @param array array
+ *        A list of timestamps received from the backend.
+ * @param number timeOffset
+ *        The amount of time to offset by (in milliseconds).
+ * @param number timeScale
+ *        The factor to scale by, after offsetting.
+ */
+exports.RecordingUtils.offsetAndScaleTimestamps = function(timestamps, timeOffset, timeScale) {
+  for (let i = 0, len = timestamps.length; i < len; i++) {
+    timestamps[i] -= timeOffset;
+    timestamps[i] /= timeScale;
+  }
+}
+
+/**
+ * Cache used in `RecordingUtils.getSamplesFromAllocations`.
+ */
+let gSamplesFromAllocationCache = new WeakMap();
+
+/**
  * Converts allocation data from the memory actor to something that follows
  * the same structure as the samples data received from the profiler.
  *
@@ -70,6 +93,11 @@ exports.RecordingUtils.offsetMarkerTimes = function(markers, timeOffset) {
  *         The samples data.
  */
 exports.RecordingUtils.getSamplesFromAllocations = function(allocations) {
+  let cached = gSamplesFromAllocationCache.get(allocations);
+  if (cached) {
+    return cached;
+  }
+
   let { sites, timestamps, frames, counts } = allocations;
   let samples = [];
 
@@ -83,10 +111,14 @@ exports.RecordingUtils.getSamplesFromAllocations = function(allocations) {
     samples.push(sample);
 
     while (frame) {
+      let source = frame.source + ":" + frame.line + ":" + frame.column;
+      let funcName = frame.functionDisplayName || "";
+
       sample.frames.push({
-        location: frame.source + ":" + frame.line + ":" + frame.column,
+        location: funcName ? funcName + " (" + source + ")" : source,
         allocations: count
       });
+
       site = frame.parent;
       frame = frames[site];
       count = counts[site];
@@ -95,5 +127,6 @@ exports.RecordingUtils.getSamplesFromAllocations = function(allocations) {
     sample.frames.reverse();
   }
 
+  gSamplesFromAllocationCache.set(allocations, samples);
   return samples;
 }

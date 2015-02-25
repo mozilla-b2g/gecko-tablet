@@ -924,7 +924,8 @@ ContainerLayer::ContainerLayer(LayerManager* aManager, void* aImplData)
     mUseIntermediateSurface(false),
     mSupportsComponentAlphaChildren(false),
     mMayHaveReadbackChild(false),
-    mChildrenChanged(false)
+    mChildrenChanged(false),
+    mEventRegionsOverride(EventRegionsOverride::NoOverride)
 {
   mContentFlags = 0; // Clear NO_TEXT, NO_TEXT_OVER_TRANSPARENT
 }
@@ -1081,6 +1082,7 @@ ContainerLayer::FillSpecificAttributes(SpecificLayerAttributes& aAttrs)
   aAttrs = ContainerLayerAttributes(mPreXScale, mPreYScale,
                                     mInheritedXScale, mInheritedYScale,
                                     mPresShellResolution, mScaleToResolution,
+                                    mEventRegionsOverride,
                                     reinterpret_cast<uint64_t>(mHMDInfo.get()));
 }
 
@@ -1272,7 +1274,7 @@ ContainerLayer::DidInsertChild(Layer* aLayer)
 void
 RefLayer::FillSpecificAttributes(SpecificLayerAttributes& aAttrs)
 {
-  aAttrs = RefLayerAttributes(GetReferentId());
+  aAttrs = RefLayerAttributes(GetReferentId(), mEventRegionsOverride);
 }
 
 /** 
@@ -1748,6 +1750,12 @@ ContainerLayer::PrintInfo(std::stringstream& aStream, const char* aPrefix)
   if (mScaleToResolution) {
     aStream << nsPrintfCString(" [presShellResolution=%g]", mPresShellResolution).get();
   }
+  if (mEventRegionsOverride & EventRegionsOverride::ForceDispatchToContent) {
+    aStream << " [force-dtc]";
+  }
+  if (mEventRegionsOverride & EventRegionsOverride::ForceEmptyHitRegion) {
+    aStream << " [force-ehr]";
+  }
   if (mHMDInfo) {
     aStream << nsPrintfCString(" [hmd=%p]", mHMDInfo.get()).get();
   }
@@ -2020,8 +2028,8 @@ LayerManager::InitLog()
 /*static*/ bool
 LayerManager::IsLogEnabled()
 {
-  NS_ABORT_IF_FALSE(!!sLog,
-                    "layer manager must be created before logging is allowed");
+  MOZ_ASSERT(!!sLog,
+             "layer manager must be created before logging is allowed");
   return PR_LOG_TEST(sLog, PR_LOG_DEBUG);
 }
 

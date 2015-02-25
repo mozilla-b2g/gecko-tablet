@@ -1,6 +1,8 @@
 let gMimeSvc = Cc["@mozilla.org/mime;1"].getService(Ci.nsIMIMEService);
 let gHandlerSvc = Cc["@mozilla.org/uriloader/handler-service;1"].getService(Ci.nsIHandlerService);
 
+Services.prefs.setBoolPref("browser.preferences.inContent", true);
+
 function setupFakeHandler() {
   let info = gMimeSvc.getFromTypeAndExtension("text/plain", "foo.txt");
   ok(info.possibleLocalHandlers.length, "Should have at least one known handler");
@@ -30,7 +32,9 @@ add_task(function*() {
 
   let chooseItem = list.firstChild.querySelector(".choose-app-item");
   let dialogLoadedPromise = promiseLoadSubDialog("chrome://global/content/appPicker.xul");
-  chooseItem.click();
+  let cmdEvent = win.document.createEvent("xulcommandevent");
+  cmdEvent.initCommandEvent("command", true, true, win, 0, false, false, false, false, null);
+  chooseItem.dispatchEvent(cmdEvent);
 
   let dialog = yield dialogLoadedPromise;
   info("Dialog loaded");
@@ -57,7 +61,9 @@ add_task(function*() {
   dialogLoadedPromise = promiseLoadSubDialog("chrome://browser/content/preferences/applicationManager.xul");
 
   let manageItem = list.firstChild.querySelector(".manage-app-item");
-  manageItem.click();
+  cmdEvent = win.document.createEvent("xulcommandevent");
+  cmdEvent.initCommandEvent("command", true, true, win, 0, false, false, false, false, null);
+  manageItem.dispatchEvent(cmdEvent);
 
   dialog = yield dialogLoadedPromise;
   info("Dialog loaded the second time");
@@ -88,5 +94,6 @@ add_task(function*() {
 registerCleanupFunction(function() {
   let infoToModify = gMimeSvc.getFromTypeAndExtension("text/x-test-handler", null);
   gHandlerSvc.remove(infoToModify);
+  Services.prefs.clearUserPref("browser.preferences.inContent");
 });
 

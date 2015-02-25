@@ -103,7 +103,7 @@ abstract class BaseTest extends BaseRobocopTest {
         super.setUp();
 
         mDevice = new Device();
-        mDatabaseHelper = new DatabaseHelper(mActivity, mAsserter);
+        mDatabaseHelper = new DatabaseHelper(getActivity(), mAsserter);
 
         // Ensure Robocop tests have access to network, and are run with Display powered on.
         throwIfHttpGetFails();
@@ -315,27 +315,6 @@ abstract class BaseTest extends BaseRobocopTest {
             mAsserter.dumpLog("waitForCondition timeout after " + timeout + " ms.");
         }
         return result;
-    }
-
-    /**
-     * @deprecated use {@link #waitForCondition(Condition, int)} instead
-     */
-    @Deprecated
-    protected final boolean waitForTest(final BooleanTest t, final int timeout) {
-        final boolean isSatisfied = mSolo.waitForCondition(new Condition() {
-            @Override
-            public boolean isSatisfied() {
-                return t.test();
-            }
-        }, timeout);
-
-        if (!isSatisfied) {
-            // log out wait failure for diagnostic purposes only;
-            // a failed wait may be normal and does not necessarily
-            // warrant a test assertion/failure
-            mAsserter.dumpLog("waitForTest timeout after " + timeout + " ms");
-        }
-        return isSatisfied;
     }
 
     protected interface BooleanTest {
@@ -732,7 +711,7 @@ abstract class BaseTest extends BaseRobocopTest {
     }
 
     public final void runOnUiThreadSync(Runnable runnable) {
-        RobocopUtils.runOnUiThreadSync(mActivity, runnable);
+        RobocopUtils.runOnUiThreadSync(getActivity(), runnable);
     }
 
     /* Tap the "star" (bookmark) button to bookmark or un-bookmark the current page */

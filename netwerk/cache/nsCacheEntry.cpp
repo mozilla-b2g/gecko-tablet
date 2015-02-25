@@ -405,7 +405,7 @@ nsCacheEntryHashTable::Init()
     nsresult rv = NS_OK;
     initialized = PL_DHashTableInit(&table, &ops,
                                     sizeof(nsCacheEntryHashTableEntry),
-                                    fallible_t(), 256);
+                                    fallible, 256);
 
     if (!initialized) rv = NS_ERROR_OUT_OF_MEMORY;
 
@@ -443,7 +443,7 @@ nsCacheEntryHashTable::AddEntry( nsCacheEntry *cacheEntry)
     if (!initialized)  return NS_ERROR_NOT_INITIALIZED;
     if (!cacheEntry)   return NS_ERROR_NULL_POINTER;
 
-    hashEntry = PL_DHashTableAdd(&table, &(cacheEntry->mKey));
+    hashEntry = PL_DHashTableAdd(&table, &(cacheEntry->mKey), fallible);
 #ifndef DEBUG_dougt
     NS_ASSERTION(((nsCacheEntryHashTableEntry *)hashEntry)->cacheEntry == 0,
                  "### nsCacheEntryHashTable::AddEntry - entry already used");

@@ -930,6 +930,13 @@ MacroAssemblerMIPS::ma_b(Address addr, Imm32 imm, Label *label, Condition c, Jum
 }
 
 void
+MacroAssemblerMIPS::ma_b(Address addr, ImmGCPtr imm, Label *label, Condition c, JumpKind jumpKind)
+{
+    ma_lw(SecondScratchReg, addr);
+    ma_b(SecondScratchReg, imm, label, c, jumpKind);
+}
+
+void
 MacroAssemblerMIPS::ma_b(Label *label, JumpKind jumpKind)
 {
     branchWithCode(getBranchCode(BranchIsJump), label, jumpKind);
@@ -1553,16 +1560,6 @@ MacroAssemblerMIPSCompat::callJit(Register callee)
         adjustFrame(sizeof(uint32_t));
         ma_callJit(callee);
     }
-}
-void
-MacroAssemblerMIPSCompat::callJitFromAsmJS(Register callee)
-{
-    ma_callJitNoPush(callee);
-
-    // The JIT ABI has the callee pop the return address off the stack.
-    // The asm.js caller assumes that the call leaves sp unchanged, so bump
-    // the stack.
-    subPtr(Imm32(sizeof(void*)), StackPointer);
 }
 
 void
@@ -2384,6 +2381,14 @@ MacroAssemblerMIPSCompat::branchTestObject(Condition cond, const BaseIndex &src,
 {
     MOZ_ASSERT(cond == Equal || cond == NotEqual);
     extractTag(src, SecondScratchReg);
+    ma_b(SecondScratchReg, ImmTag(JSVAL_TAG_OBJECT), label, cond);
+}
+
+void
+MacroAssemblerMIPSCompat::branchTestObject(Condition cond, const Address &address, Label *label)
+{
+    MOZ_ASSERT(cond == Equal || cond == NotEqual);
+    extractTag(address, SecondScratchReg);
     ma_b(SecondScratchReg, ImmTag(JSVAL_TAG_OBJECT), label, cond);
 }
 
@@ -3348,7 +3353,7 @@ MacroAssemblerMIPSCompat::checkStackAlignment()
     Label aligned;
     as_andi(ScratchRegister, sp, ABIStackAlignment - 1);
     ma_b(ScratchRegister, zero, &aligned, Equal, ShortJump);
-    as_break(MAX_BREAK_CODE);
+    as_break(BREAK_STACK_UNALIGNED);
     bind(&aligned);
 #endif
 }

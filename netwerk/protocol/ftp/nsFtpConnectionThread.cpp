@@ -41,6 +41,8 @@
 #include "nsISocketTransportService.h"
 #include "nsIURI.h"
 #include "nsICacheSession.h"
+#include "nsILoadInfo.h"
+#include "nsNullPrincipal.h"
 
 #ifdef MOZ_WIDGET_GONK
 #include "NetStatistics.h"
@@ -2313,7 +2315,8 @@ nsFtpState::SaveNetworkStats(bool enforce)
     // Create the event to save the network statistics.
     // the event is then dispathed to the main thread.
     nsRefPtr<nsRunnable> event =
-        new SaveNetworkStatsEvent(appId, mActiveNetwork, mCountRecv, 0, false);
+        new SaveNetworkStatsEvent(appId, isInBrowser, mActiveNetwork,
+                                  mCountRecv, 0, false);
     NS_DispatchToMainThread(event);
 
     // Reset the counters after saving.
@@ -2380,7 +2383,10 @@ CreateHTTPProxiedChannel(nsIChannel *channel, nsIProxyInfo *pi, nsIChannel **new
     nsCOMPtr<nsIURI> uri;
     channel->GetURI(getter_AddRefs(uri));
 
-    return pph->NewProxiedChannel(uri, pi, 0, nullptr, newChannel);
+    nsCOMPtr<nsILoadInfo> loadInfo;
+    channel->GetLoadInfo(getter_AddRefs(loadInfo));
+
+    return pph->NewProxiedChannel2(uri, pi, 0, nullptr, loadInfo, newChannel);
 }
 
 NS_IMETHODIMP

@@ -430,6 +430,7 @@ WinUtils::DwmSetWindowAttributeProc WinUtils::dwmSetWindowAttributePtr = nullptr
 WinUtils::DwmInvalidateIconicBitmapsProc WinUtils::dwmInvalidateIconicBitmapsPtr = nullptr;
 WinUtils::DwmDefWindowProcProc WinUtils::dwmDwmDefWindowProcPtr = nullptr;
 WinUtils::DwmGetCompositionTimingInfoProc WinUtils::dwmGetCompositionTimingInfoPtr = nullptr;
+WinUtils::DwmFlushProc WinUtils::dwmFlushProcPtr = nullptr;
 
 /* static */
 void
@@ -453,6 +454,7 @@ WinUtils::Initialize()
       dwmInvalidateIconicBitmapsPtr = (DwmInvalidateIconicBitmapsProc)::GetProcAddress(sDwmDll, "DwmInvalidateIconicBitmaps");
       dwmDwmDefWindowProcPtr = (DwmDefWindowProcProc)::GetProcAddress(sDwmDll, "DwmDefWindowProc");
       dwmGetCompositionTimingInfoPtr = (DwmGetCompositionTimingInfoProc)::GetProcAddress(sDwmDll, "DwmGetCompositionTimingInfo");
+      dwmFlushProcPtr = (DwmFlushProc)::GetProcAddress(sDwmDll, "DwmFlush");
     }
   }
 }
@@ -479,12 +481,11 @@ WinUtils::LogW(const wchar_t *fmt, ...)
   OutputDebugStringW(buffer);
   OutputDebugStringW(L"\n");
 
-  int len = wcslen(buffer);
+  int len = WideCharToMultiByte(CP_ACP, 0, buffer, -1, nullptr, 0, nullptr, nullptr);
   if (len) {
-    char* utf8 = new char[len+1];
-    memset(utf8, 0, sizeof(utf8));
+    char* utf8 = new char[len];
     if (WideCharToMultiByte(CP_ACP, 0, buffer,
-                            -1, utf8, len+1, nullptr,
+                            -1, utf8, len, nullptr,
                             nullptr) > 0) {
       // desktop console
       printf("%s\n", utf8);
@@ -753,7 +754,7 @@ GetNSWindowPropName()
 {
   static wchar_t sPropName[40] = L"";
   if (!*sPropName) {
-    _snwprintf(sPropName, 39, L"MozillansIWidgetPtr%p",
+    _snwprintf(sPropName, 39, L"MozillansIWidgetPtr%u",
                ::GetCurrentProcessId());
     sPropName[39] = '\0';
   }
@@ -1075,11 +1076,11 @@ WinUtils::InvalidatePluginAsWorkaround(nsIWidget *aWidget, const nsIntRect &aRec
 }
 
 #ifdef MOZ_PLACES
-/************************************************************************/
-/* Constructs as AsyncFaviconDataReady Object
-/* @param aIOThread : the thread which performs the action
-/* @param aURLShortcut : Differentiates between (false)Jumplistcache and (true)Shortcutcache
-/************************************************************************/
+/************************************************************************
+ * Constructs as AsyncFaviconDataReady Object
+ * @param aIOThread : the thread which performs the action
+ * @param aURLShortcut : Differentiates between (false)Jumplistcache and (true)Shortcutcache
+ ************************************************************************/
 
 AsyncFaviconDataReady::AsyncFaviconDataReady(nsIURI *aNewURI, 
                                              nsCOMPtr<nsIThread> &aIOThread, 

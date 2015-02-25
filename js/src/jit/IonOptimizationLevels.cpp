@@ -34,14 +34,14 @@ OptimizationInfo::initNormalOptimizationInfo()
     loopUnrolling_ = true;
     autoTruncate_ = true;
     sink_ = true;
-    registerAllocator_ = RegisterAllocator_LSRA;
+    registerAllocator_ = RegisterAllocator_Backtracking;
 
     inlineMaxTotalBytecodeLength_ = 1000;
     inliningMaxCallerBytecodeLength_ = 10000;
     maxInlineDepth_ = 3;
     scalarReplacement_ = true;
     smallFunctionMaxInlineDepth_ = 10;
-    compilerWarmUpThreshold_ = 1000;
+    compilerWarmUpThreshold_ = CompilerWarmupThreshold;
     inliningWarmUpThresholdFactor_ = 0.125;
     inliningRecompileThresholdFactor_ = 4;
 }
@@ -73,8 +73,8 @@ OptimizationInfo::compilerWarmUpThreshold(JSScript *script, jsbytecode *pc) cons
         pc = nullptr;
 
     uint32_t warmUpThreshold = compilerWarmUpThreshold_;
-    if (js_JitOptions.forceDefaultIonWarmUpThreshold)
-        warmUpThreshold = js_JitOptions.forcedDefaultIonWarmUpThreshold;
+    if (js_JitOptions.forcedDefaultIonWarmUpThreshold.isSome())
+        warmUpThreshold = js_JitOptions.forcedDefaultIonWarmUpThreshold.ref();
 
     // If the script is too large to compile on the main thread, we can still
     // compile it off thread. In these cases, increase the warm-up counter

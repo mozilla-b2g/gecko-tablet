@@ -15,6 +15,7 @@
 #include "nsAutoPtr.h"
 #include "nsWidgetInitData.h"
 #include "nsTArray.h"
+#include "nsITheme.h"
 #include "nsITimer.h"
 #include "nsXULAppAPI.h"
 #include "mozilla/EventForwards.h"
@@ -112,8 +113,8 @@ typedef void* nsNativeWidget;
 #define NS_NATIVE_PLUGIN_ID            105
 
 #define NS_IWIDGET_IID \
-{ 0xa7db3e01, 0xb8fe, 0x4122, \
-  { 0xbe, 0xa6, 0x45, 0x6c, 0xdd, 0x85, 0x30, 0x64 } };
+{ 0x316E4600, 0x15DB, 0x47AE, \
+  { 0xBF, 0xE4, 0x5B, 0xCD, 0xFF, 0x80, 0x80, 0x83 } };
 
 /*
  * Window shadow styles
@@ -740,14 +741,15 @@ class nsIWidget : public nsISupports {
 
     // Used in UpdateThemeGeometries.
     struct ThemeGeometry {
-      // The -moz-appearance value for the themed widget
-      uint8_t mWidgetType;
+      // The ThemeGeometryType value for the themed widget, see
+      // nsITheme::ThemeGeometryTypeForWidget.
+      nsITheme::ThemeGeometryType mType;
       // The device-pixel rect within the window for the themed widget
       nsIntRect mRect;
 
-      ThemeGeometry(uint8_t aWidgetType, const nsIntRect& aRect)
-       : mWidgetType(aWidgetType)
-       , mRect(aRect)
+      ThemeGeometry(nsITheme::ThemeGeometryType aType, const nsIntRect& aRect)
+        : mType(aType)
+        , mRect(aRect)
       { }
     };
 
@@ -791,14 +793,12 @@ class nsIWidget : public nsISupports {
      * @param     aParent       parent nsIWidget
      * @param     aNativeParent native parent widget
      * @param     aRect         the widget dimension
-     * @param     aContext
      * @param     aInitData     data that is used for widget initialization
      *
      */
     NS_IMETHOD Create(nsIWidget        *aParent,
                       nsNativeWidget   aNativeParent,
                       const nsIntRect  &aRect,
-                      nsDeviceContext *aContext,
                       nsWidgetInitData *aInitData = nullptr) = 0;
 
     /**
@@ -819,7 +819,6 @@ class nsIWidget : public nsISupports {
      */
     virtual already_AddRefed<nsIWidget>
     CreateChild(const nsIntRect  &aRect,
-                nsDeviceContext  *aContext,
                 nsWidgetInitData *aInitData = nullptr,
                 bool             aForceUseIWidgetParent = false) = 0;
 
@@ -836,10 +835,8 @@ class nsIWidget : public nsISupports {
      *
      * aUseAttachedEvents if true, events are sent to the attached listener
      * instead of the normal listener.
-     * aContext The new device context for the view
      */
-    NS_IMETHOD AttachViewToTopLevel(bool aUseAttachedEvents,
-                                    nsDeviceContext *aContext) = 0;
+    NS_IMETHOD AttachViewToTopLevel(bool aUseAttachedEvents) = 0;
 
     /**
      * Accessor functions to get and set the attached listener. Used by
@@ -1642,9 +1639,6 @@ class nsIWidget : public nsISupports {
     virtual void SetNativeData(uint32_t aDataType, uintptr_t aVal) = 0;
     virtual void FreeNativeData(void * data, uint32_t aDataType) = 0;//~~~
 
-    // GetDeviceContext returns a weak pointer to this widget's device context
-    virtual nsDeviceContext* GetDeviceContext() = 0;
-
     //@}
 
     /**
@@ -1668,12 +1662,16 @@ class nsIWidget : public nsISupports {
     NS_IMETHOD SetIcon(const nsAString& anIconSpec) = 0;
 
     /**
-     * Return this widget's origin in screen coordinates.
+     * Return this widget's origin in screen coordinates. The untyped version
+     * exists temporarily to ease conversion to typed coordinates.
      *
      * @return screen coordinates stored in the x,y members
      */
 
-    virtual nsIntPoint WidgetToScreenOffset() = 0;
+    virtual mozilla::LayoutDeviceIntPoint WidgetToScreenOffset() = 0;
+    virtual nsIntPoint WidgetToScreenOffsetUntyped() {
+      return mozilla::LayoutDeviceIntPoint::ToUntyped(WidgetToScreenOffset());
+    }
 
     /**
      * Given the specified client size, return the corresponding window size,
@@ -1852,7 +1850,7 @@ class nsIWidget : public nsISupports {
      * @param aModifierFlags *platform-specific* modifier flags (ignored
      * on Windows)
      */
-    virtual nsresult SynthesizeNativeMouseEvent(nsIntPoint aPoint,
+    virtual nsresult SynthesizeNativeMouseEvent(mozilla::LayoutDeviceIntPoint aPoint,
                                                 uint32_t aNativeMessage,
                                                 uint32_t aModifierFlags) = 0;
 
@@ -1860,7 +1858,7 @@ class nsIWidget : public nsISupports {
      * A shortcut to SynthesizeNativeMouseEvent, abstracting away the native message.
      * aPoint is location in device pixels to which the mouse pointer moves to.
      */
-    virtual nsresult SynthesizeNativeMouseMove(nsIntPoint aPoint) = 0;
+    virtual nsresult SynthesizeNativeMouseMove(mozilla::LayoutDeviceIntPoint aPoint) = 0;
 
     /**
      * Utility method intended for testing. Dispatching native mouse scroll
@@ -1883,7 +1881,7 @@ class nsIWidget : public nsISupports {
      * @param aAdditionalFlags  See nsIDOMWidnowUtils' consts and their
      *                          document.
      */
-    virtual nsresult SynthesizeNativeMouseScrollEvent(nsIntPoint aPoint,
+    virtual nsresult SynthesizeNativeMouseScrollEvent(mozilla::LayoutDeviceIntPoint aPoint,
                                                       uint32_t aNativeMessage,
                                                       double aDeltaX,
                                                       double aDeltaY,
@@ -2009,6 +2007,28 @@ public:
      *         IME, this returns NS_SUCCESS_EVENT_CONSUMED.
      */
     NS_IMETHOD NotifyIME(const IMENotification& aIMENotification) = 0;
+
+    /**
+     * Start plugin IME.  If this results in a string getting committed, the
+     * result is in aCommitted (otherwise aCommitted is empty).
+     *
+     * aKeyboardEvent     The event with which plugin IME is to be started
+     * panelX and panelY  Location in screen coordinates of the IME input panel
+     *                    (should be just under the plugin)
+     * aCommitted         The string committed during IME -- otherwise empty
+     */
+    NS_IMETHOD StartPluginIME(const mozilla::WidgetKeyboardEvent& aKeyboardEvent,
+                              int32_t aPanelX, int32_t aPanelY,
+                              nsString& aCommitted) = 0;
+
+    /**
+     * Tells the widget whether or not a plugin (inside the widget) has the
+     * keyboard focus.  Should be sent when the keyboard focus changes too or
+     * from a plugin.
+     *
+     * aFocused  Whether or not a plugin is focused
+     */
+    NS_IMETHOD SetPluginFocused(bool& aFocused) = 0;
 
     /*
      * Notifies the input context changes.

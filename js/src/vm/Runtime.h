@@ -20,20 +20,21 @@
 
 #include "jsatom.h"
 #include "jsclist.h"
-#ifdef DEBUG
-# include "jsproxy.h"
-#endif
 #include "jsscript.h"
 
 #ifdef XP_MACOSX
 # include "asmjs/AsmJSSignalHandlers.h"
 #endif
+#include "builtin/AtomicsObject.h"
 #include "ds/FixedSizeHash.h"
 #include "frontend/ParseMaps.h"
 #include "gc/GCRuntime.h"
 #include "gc/Tracer.h"
 #include "irregexp/RegExpStack.h"
 #include "js/HashTable.h"
+#ifdef DEBUG
+# include "js/Proxy.h" // For AutoEnterPolicy
+#endif
 #include "js/Vector.h"
 #include "vm/CommonPropertyNames.h"
 #include "vm/DateTime.h"
@@ -287,8 +288,8 @@ class NewObjectCache
     inline bool lookupGlobal(const Class *clasp, js::GlobalObject *global, gc::AllocKind kind,
                              EntryIndex *pentry);
 
-    bool lookupType(js::types::TypeObject *type, gc::AllocKind kind, EntryIndex *pentry) {
-        return lookup(type->clasp(), type, kind, pentry);
+    bool lookupGroup(js::ObjectGroup *group, gc::AllocKind kind, EntryIndex *pentry) {
+        return lookup(group->clasp(), group, kind, pentry);
     }
 
     /*
@@ -296,7 +297,6 @@ class NewObjectCache
      * nullptr if returning the object could possibly trigger GC (does not
      * indicate failure).
      */
-    template <AllowGC allowGC>
     inline JSObject *newObjectFromHit(JSContext *cx, EntryIndex entry, js::gc::InitialHeap heap);
 
     /* Fill an entry after a cache miss. */
@@ -306,11 +306,11 @@ class NewObjectCache
     inline void fillGlobal(EntryIndex entry, const Class *clasp, js::GlobalObject *global,
                            gc::AllocKind kind, NativeObject *obj);
 
-    void fillType(EntryIndex entry, js::types::TypeObject *type, gc::AllocKind kind,
-                  NativeObject *obj)
+    void fillGroup(EntryIndex entry, js::ObjectGroup *group, gc::AllocKind kind,
+                   NativeObject *obj)
     {
-        MOZ_ASSERT(obj->type() == type);
-        return fill(entry, type->clasp(), type, kind, obj);
+        MOZ_ASSERT(obj->group() == group);
+        return fill(entry, group->clasp(), group, kind, obj);
     }
 
     /* Invalidate any entries which might produce an object with shape/proto. */
@@ -347,7 +347,7 @@ class NewObjectCache
     static void copyCachedToObject(JSObject *dst, JSObject *src, gc::AllocKind kind) {
         js_memcpy(dst, src, gc::Arena::thingSize(kind));
         Shape::writeBarrierPost(dst->shape_, &dst->shape_);
-        types::TypeObject::writeBarrierPost(dst->type_, &dst->type_);
+        ObjectGroup::writeBarrierPost(dst->group_, &dst->group_);
     }
 };
 
@@ -774,7 +774,9 @@ struct JSRuntime : public JS::shadow::Runtime,
         return numExclusiveThreads > 0;
     }
 
-    /* How many compartments there are across all zones. */
+    // How many compartments there are across all zones. This number includes
+    // ExclusiveContext compartments, so it isn't necessarily equal to the
+    // number of compartments visited by CompartmentsIter.
     size_t              numCompartments;
 
     /* Locale-specific callbacks for string conversion. */
@@ -786,8 +788,8 @@ struct JSRuntime : public JS::shadow::Runtime,
     /* Default JSVersion. */
     JSVersion defaultVersion_;
 
-    /* Futex API, if installed */
-    JS::PerRuntimeFutexAPI *futexAPI_;
+    /* Futex state, used by futexWait and futexWake on the Atomics object */
+    js::FutexRuntime fx;
 
   private:
     /* See comment for JS_AbortIfWrongThread in jsapi.h. */
@@ -805,11 +807,6 @@ struct JSRuntime : public JS::shadow::Runtime,
     js::LifoAlloc tempLifoAlloc;
 
   private:
-    /*
-     * Both of these allocators are used for regular expression code which is shared at the
-     * thread-data level.
-     */
-    js::jit::ExecutableAllocator *execAlloc_;
     js::jit::JitRuntime *jitRuntime_;
 
     /*
@@ -824,20 +821,9 @@ struct JSRuntime : public JS::shadow::Runtime,
     /* Space for interpreter frames. */
     js::InterpreterStack interpreterStack_;
 
-    js::jit::ExecutableAllocator *createExecutableAllocator(JSContext *cx);
     js::jit::JitRuntime *createJitRuntime(JSContext *cx);
 
   public:
-    js::jit::ExecutableAllocator *getExecAlloc(JSContext *cx) {
-        return execAlloc_ ? execAlloc_ : createExecutableAllocator(cx);
-    }
-    js::jit::ExecutableAllocator &execAlloc() {
-        MOZ_ASSERT(execAlloc_);
-        return *execAlloc_;
-    }
-    js::jit::ExecutableAllocator *maybeExecAlloc() {
-        return execAlloc_;
-    }
     js::jit::JitRuntime *getJitRuntime(JSContext *cx) {
         return jitRuntime_ ? jitRuntime_ : createJitRuntime(cx);
     }
@@ -986,10 +972,6 @@ struct JSRuntime : public JS::shadow::Runtime,
     }
 
     mozilla::UniquePtr<js::SourceHook> sourceHook;
-
-#ifdef NIGHTLY_BUILD
-    js::AssertOnScriptEntryHook assertOnScriptEntryHook_;
-#endif
 
     /* SPS profiling metadata */
     js::SPSProfiler     spsProfiler;

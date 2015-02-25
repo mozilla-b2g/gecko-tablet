@@ -132,10 +132,10 @@ InterpreterFrame::createRestParameter(JSContext *cx)
     unsigned nformal = fun()->nargs() - 1, nactual = numActualArgs();
     unsigned nrest = (nactual > nformal) ? nactual - nformal : 0;
     Value *restvp = argv() + nformal;
-    ArrayObject *obj = NewDenseCopiedArray(cx, nrest, restvp, nullptr);
+    ArrayObject *obj = NewDenseCopiedArray(cx, nrest, restvp, NullPtr());
     if (!obj)
         return nullptr;
-    types::FixRestArgumentsType(cx, obj);
+    ObjectGroup::fixRestArgumentsGroup(cx, obj);
     return obj;
 }
 
@@ -218,7 +218,7 @@ InterpreterFrame::prologue(JSContext *cx)
     if (isConstructing() && functionThis().isPrimitive()) {
         RootedObject callee(cx, &this->callee());
         JSObject *obj = CreateThisForFunction(cx, callee,
-                                              useNewType() ? SingletonObject : GenericObject);
+                                              createSingleton() ? SingletonObject : GenericObject);
         if (!obj)
             return false;
         functionThis() = ObjectValue(*obj);
@@ -1866,6 +1866,7 @@ JS::ProfilingFrameIterator::extractStack(Frame *frames, uint32_t offset, uint32_
         frames[offset].returnAddress = nullptr;
         frames[offset].activation = activation_;
         frames[offset].label = asmJSIter().label();
+        frames[offset].hasTrackedOptimizations = false;
         return 1;
     }
 
@@ -1875,8 +1876,7 @@ JS::ProfilingFrameIterator::extractStack(Frame *frames, uint32_t offset, uint32_
     // Look up an entry for the return address.
     jit::JitcodeGlobalTable *table = rt_->jitRuntime()->getJitcodeGlobalTable();
     jit::JitcodeGlobalEntry entry;
-    mozilla::DebugOnly<bool> result = table->lookup(returnAddr, &entry, rt_);
-    MOZ_ASSERT(result);
+    table->lookupInfallible(returnAddr, &entry, rt_);
 
     MOZ_ASSERT(entry.isIon() || entry.isIonCache() || entry.isBaseline() || entry.isDummy());
 
@@ -1898,7 +1898,21 @@ JS::ProfilingFrameIterator::extractStack(Frame *frames, uint32_t offset, uint32_
         frames[offset + i].returnAddress = returnAddr;
         frames[offset + i].activation = activation_;
         frames[offset + i].label = labels[i];
+        frames[offset + i].hasTrackedOptimizations = false;
     }
+
+    // Extract the index into the side table of optimization information and
+    // store it on the youngest frame. All inlined frames will have the same
+    // optimization information by virtue of sharing the JitcodeGlobalEntry,
+    // but such information is only interpretable on the youngest frame.
+    //
+    // FIXMEshu: disabled until we can ensure the optimization info is live
+    // when we write out the JSON stream of the profile.
+    if (false && entry.hasTrackedOptimizations()) {
+        mozilla::Maybe<uint8_t> index = entry.trackedOptimizationIndexAtAddr(returnAddr);
+        frames[offset].hasTrackedOptimizations = index.isSome();
+    }
+
     return depth;
 }
 

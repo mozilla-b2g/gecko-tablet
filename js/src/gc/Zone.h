@@ -12,11 +12,11 @@
 #include "mozilla/MemoryReporting.h"
 
 #include "jscntxt.h"
-#include "jsinfer.h"
 
 #include "gc/FindSCCs.h"
 #include "gc/GCRuntime.h"
 #include "js/TracingAPI.h"
+#include "vm/TypeInference.h"
 
 namespace js {
 
@@ -237,7 +237,7 @@ struct Zone : public JS::shadow::Zone,
   public:
     js::gc::ArenaLists arenas;
 
-    js::types::TypeZone types;
+    js::TypeZone types;
 
     // The set of compartments in this zone.
     typedef js::Vector<JSCompartment *, 1, js::SystemAllocPolicy> CompartmentVector;

@@ -184,7 +184,13 @@ TabTarget.prototype = {
    * Returns a promise for the protocol description from the root actor.
    * Used internally with `target.actorHasMethod`. Takes advantage of
    * caching if definition was fetched previously with the corresponding
-   * actor information. Must be a remote target.
+   * actor information. Actors are lazily loaded, so not only must the tool using
+   * a specific actor be in use, the actors are only registered after invoking
+   * a method (for performance reasons, added in bug 988237), so to use these actor
+   * detection methods, one must already be communicating with a specific actor of
+   * that type.
+   *
+   * Must be a remote target.
    *
    * @return {Promise}
    * {
@@ -250,7 +256,8 @@ TabTarget.prototype = {
 
   /**
    * Queries the protocol description to see if an actor has
-   * an available method. The actor must already be lazily-loaded,
+   * an available method. The actor must already be lazily-loaded (read
+   * the restrictions in the `getActorDescription` comments),
    * so this is for use inside of tool. Returns a promise that
    * resolves to a boolean. Must be a remote target.
    *
@@ -593,7 +600,10 @@ TabTarget.prototype = {
         // The client was handed to us, so we are not responsible for closing
         // it. We just need to detach from the tab, if already attached.
         if (this.activeTab) {
-          this.activeTab.detach(cleanupAndResolve);
+          // |detach| may fail if the connection is already dead, so proceed
+          // cleanup directly after this.
+          this.activeTab.detach();
+          cleanupAndResolve();
         } else {
           cleanupAndResolve();
         }

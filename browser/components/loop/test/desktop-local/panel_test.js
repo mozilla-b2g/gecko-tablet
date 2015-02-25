@@ -17,7 +17,7 @@ describe("loop.panel", function() {
   var fakeXHR, fakeWindow, fakeMozLoop;
   var requests = [];
 
-  beforeEach(function(done) {
+  beforeEach(function() {
     sandbox = sinon.sandbox.create();
     fakeXHR = sandbox.useFakeXMLHttpRequest();
     requests = [];
@@ -60,12 +60,11 @@ describe("loop.panel", function() {
         },
         on: sandbox.stub()
       },
-      confirm: sandbox.stub()
+      confirm: sandbox.stub(),
+      notifyUITour: sandbox.stub()
     };
 
     document.mozL10n.initialize(navigator.mozLoop);
-    // XXX prevent a race whenever mozL10n hasn't been initialized yet
-    setTimeout(done, 0);
   });
 
   afterEach(function() {
@@ -259,6 +258,17 @@ describe("loop.panel", function() {
       });
     });
 
+    it("should hide the account entry when FxA is not enabled", function() {
+        navigator.mozLoop.userProfile = {email: "test@example.com"};
+        navigator.mozLoop.fxAEnabled = false;
+
+        var view = TestUtils.renderIntoDocument(
+          React.createElement(loop.panel.SettingsDropdown));
+
+        expect(view.getDOMNode().querySelectorAll(".icon-account"))
+          .to.have.length.of(0);
+      });
+
     describe("SettingsDropdown", function() {
       beforeEach(function() {
         navigator.mozLoop.logInToFxA = sandbox.stub();
@@ -268,14 +278,6 @@ describe("loop.panel", function() {
 
       afterEach(function() {
         navigator.mozLoop.fxAEnabled = true;
-      });
-
-      it("should be hidden if FxA is not enabled",
-        function() {
-          navigator.mozLoop.fxAEnabled = false;
-          var view = TestUtils.renderIntoDocument(
-            React.createElement(loop.panel.SettingsDropdown));
-          expect(view.getDOMNode()).to.be.null;
       });
 
       it("should show a signin entry when user is not authenticated",

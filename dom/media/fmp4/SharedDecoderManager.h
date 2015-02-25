@@ -28,7 +28,7 @@ public:
     PlatformDecoderModule* aPDM,
     const mp4_demuxer::VideoDecoderConfig& aConfig,
     layers::LayersBackend aLayersBackend,
-    layers::ImageContainer* aImageContainer, MediaTaskQueue* aVideoTaskQueue,
+    layers::ImageContainer* aImageContainer, FlushableMediaTaskQueue* aVideoTaskQueue,
     MediaDataDecoderCallback* aCallback);
 
   void SetReader(MediaDecoderReader* aReader);
@@ -45,7 +45,7 @@ private:
   void DrainComplete();
 
   nsRefPtr<MediaDataDecoder> mDecoder;
-  nsRefPtr<MediaTaskQueue> mTaskQueue;
+  nsRefPtr<FlushableMediaTaskQueue> mTaskQueue;
   SharedDecoderProxy* mActiveProxy;
   MediaDataDecoderCallback* mActiveCallback;
   nsAutoPtr<MediaDataDecoderCallback> mCallback;
@@ -70,6 +70,7 @@ public:
   virtual bool IsDormantNeeded() MOZ_OVERRIDE;
   virtual void ReleaseMediaResources() MOZ_OVERRIDE;
   virtual void ReleaseDecoder() MOZ_OVERRIDE;
+  virtual bool IsHardwareAccelerated() const MOZ_OVERRIDE;
 
   friend class SharedDecoderManager;
 

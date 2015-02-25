@@ -781,9 +781,8 @@ XULDocument::AddBroadcastListenerFor(Element& aBroadcaster, Element& aListener,
                    (PL_DHashTableSearch(mBroadcasterMap, &aBroadcaster));
 
     if (!entry) {
-        entry =
-            static_cast<BroadcasterMapEntry*>
-                       (PL_DHashTableAdd(mBroadcasterMap, &aBroadcaster));
+        entry = static_cast<BroadcasterMapEntry*>
+            (PL_DHashTableAdd(mBroadcasterMap, &aBroadcaster, fallible));
 
         if (! entry) {
             aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
@@ -931,7 +930,7 @@ XULDocument::AttributeWillChange(nsIDocument* aDocument,
                                  Element* aElement, int32_t aNameSpaceID,
                                  nsIAtom* aAttribute, int32_t aModType)
 {
-    NS_ABORT_IF_FALSE(aElement, "Null content!");
+    MOZ_ASSERT(aElement, "Null content!");
     NS_PRECONDITION(aAttribute, "Must have an attribute that's changing!");
 
     // XXXbz check aNameSpaceID, dammit!

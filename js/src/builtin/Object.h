@@ -9,6 +9,8 @@
 
 #include "jsapi.h"
 
+#include "vm/NativeObject.h"
+
 namespace JS {
 class CallArgs;
 class Value;
@@ -25,7 +27,7 @@ obj_valueOf(JSContext *cx, unsigned argc, JS::Value *vp);
 
 PlainObject *
 ObjectCreateImpl(JSContext *cx, HandleObject proto, NewObjectKind newKind = GenericObject,
-                 HandleTypeObject type = js::NullPtr());
+                 HandleObjectGroup group = js::NullPtr());
 
 PlainObject *
 ObjectCreateWithTemplate(JSContext *cx, HandlePlainObject templateObj);

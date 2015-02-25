@@ -83,9 +83,20 @@ XPCOMUtils.defineLazyGetter(this, "gPref", function bls_gPref() {
          QueryInterface(Ci.nsIPrefBranch);
 });
 
+// From appinfo in Services.jsm. It is not possible to use the one in
+// Services.jsm since it will not successfully QueryInterface nsIXULAppInfo in
+// xpcshell tests due to other code calling Services.appinfo before the
+// nsIXULAppInfo is created by the tests.
 XPCOMUtils.defineLazyGetter(this, "gApp", function bls_gApp() {
-  return Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULAppInfo).
-         QueryInterface(Ci.nsIXULRuntime);
+  let appinfo = Cc["@mozilla.org/xre/app-info;1"]
+                  .getService(Ci.nsIXULRuntime);
+  try {
+    appinfo.QueryInterface(Ci.nsIXULAppInfo);
+  } catch (ex if ex instanceof Components.Exception &&
+                 ex.result == Cr.NS_NOINTERFACE) {
+    // Not all applications implement nsIXULAppInfo (e.g. xpcshell doesn't).
+  }
+  return appinfo;
 });
 
 XPCOMUtils.defineLazyGetter(this, "gABI", function bls_gABI() {
@@ -278,15 +289,15 @@ function parseRegExp(aStr) {
  *          The nsIPluginTag to get the blocklist state for.
  * @returns True if the blockEntry matches the plugin, false otherwise.
  */
-function hasMatchingPluginName(blockEntry, plugin) {
+function matchesAllPluginNames(blockEntry, plugin) {
   for (let name in blockEntry.matches) {
-    if ((name in plugin) &&
-        typeof(plugin[name]) == "string" &&
-        blockEntry.matches[name].test(plugin[name])) {
-      return true;
+    if (!(name in plugin) ||
+        typeof(plugin[name]) != "string" ||
+        !blockEntry.matches[name].test(plugin[name])) {
+      return false;
     }
   }
-  return false;
+  return true;
 }
 
 /**
@@ -394,6 +405,10 @@ Blocklist.prototype = {
   _getAddonBlocklistState: function Blocklist_getAddonBlocklistStateCall(addon,
                            addonEntries, appVersion, toolkitVersion) {
     if (!gBlocklistEnabled)
+      return Ci.nsIBlocklistService.STATE_NOT_BLOCKED;
+
+    // Not all applications implement nsIXULAppInfo (e.g. xpcshell doesn't).
+    if (!appVersion && !gApp.version)
       return Ci.nsIBlocklistService.STATE_NOT_BLOCKED;
 
     if (!appVersion)
@@ -529,9 +544,13 @@ Blocklist.prototype = {
       pingCountTotal = 1;
 
     dsURI = dsURI.replace(/%APP_ID%/g, gApp.ID);
-    dsURI = dsURI.replace(/%APP_VERSION%/g, gApp.version);
+    // Not all applications implement nsIXULAppInfo (e.g. xpcshell doesn't).
+    if (gApp.version)
+      dsURI = dsURI.replace(/%APP_VERSION%/g, gApp.version);
     dsURI = dsURI.replace(/%PRODUCT%/g, gApp.name);
-    dsURI = dsURI.replace(/%VERSION%/g, gApp.version);
+    // Not all applications implement nsIXULAppInfo (e.g. xpcshell doesn't).
+    if (gApp.version)
+      dsURI = dsURI.replace(/%VERSION%/g, gApp.version);
     dsURI = dsURI.replace(/%BUILD_ID%/g, gApp.appBuildID);
     dsURI = dsURI.replace(/%BUILD_TARGET%/g, gApp.OS + "_" + gABI);
     dsURI = dsURI.replace(/%OS_VERSION%/g, gOSVersion);
@@ -1048,6 +1067,10 @@ Blocklist.prototype = {
     if (!gBlocklistEnabled)
       return Ci.nsIBlocklistService.STATE_NOT_BLOCKED;
 
+    // Not all applications implement nsIXULAppInfo (e.g. xpcshell doesn't).
+    if (!appVersion && !gApp.version)
+      return Ci.nsIBlocklistService.STATE_NOT_BLOCKED;
+
     if (!appVersion)
       appVersion = gApp.version;
     if (!toolkitVersion)
@@ -1103,7 +1126,7 @@ Blocklist.prototype = {
       this._loadBlocklist();
 
     for each (let blockEntry in this._pluginEntries) {
-      if (hasMatchingPluginName(blockEntry, plugin)) {
+      if (matchesAllPluginNames(blockEntry, plugin)) {
         return blockEntry;
       }
     }

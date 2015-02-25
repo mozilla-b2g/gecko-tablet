@@ -289,15 +289,11 @@ MakeFrameDescriptor(uint32_t frameSize, FrameType type)
 
 // Returns the JSScript associated with the topmost JIT frame.
 inline JSScript *
-GetTopJitJSScript(JSContext *cx, void **returnAddrOut = nullptr)
+GetTopJitJSScript(JSContext *cx)
 {
     JitFrameIterator iter(cx);
     MOZ_ASSERT(iter.type() == JitFrame_Exit);
     ++iter;
-
-    MOZ_ASSERT(iter.returnAddressToFp() != nullptr);
-    if (returnAddrOut)
-        *returnAddrOut = (void *) iter.returnAddressToFp();
 
     if (iter.isBaselineStub()) {
         ++iter;
@@ -425,6 +421,21 @@ class RectifierFrameLayout : public JitFrameLayout
   public:
     static inline size_t Size() {
         return sizeof(RectifierFrameLayout);
+    }
+};
+
+class IonAccessorICFrameLayout : public CommonFrameLayout
+{
+  protected:
+    // Pointer to root the stub's JitCode.
+    JitCode *stubCode_;
+
+  public:
+    JitCode **stubCode() {
+        return &stubCode_;
+    }
+    static size_t Size() {
+        return sizeof(IonAccessorICFrameLayout);
     }
 };
 

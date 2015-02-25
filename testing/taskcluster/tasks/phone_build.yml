@@ -8,10 +8,14 @@ task:
   deadline: '{{#from_now}}24 hours{{/from_now}}'
   metadata:
     source: http://todo.com/soon
-    owner: {{owner}}
+    owner: mozilla-taskcluster-maintenance@mozilla.com
+
+  tags:
+    createdForUser: {{owner}}
 
   workerType: b2gbuild
   provisionerId: aws-provisioner
+  schedulerId: task-graph-scheduler
 
   scopes:
     # Nearly all of our build tasks use tc-vcs so just include the scope across
@@ -47,4 +51,6 @@ task:
 
   extra:
     treeherder:
+      groupSymbol: tc
+      groupName: Submitted by taskcluster
       symbol: B

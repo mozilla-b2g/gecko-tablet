@@ -25,13 +25,6 @@
 #endif
 #include "nsGkAtoms.h"
 
-// Something on Linux #defines None, which is an entry in the
-// MediaWaitingFor enum, so undef it here before including the binfing,
-// so that the build doesn't fail...
-#ifdef None
-#undef None
-#endif
-
 // X.h on Linux #defines CurrentTime as 0L, so we have to #undef it here.
 #ifdef CurrentTime
 #undef CurrentTime
@@ -552,8 +545,6 @@ public:
   already_AddRefed<Promise> SetMediaKeys(MediaKeys* mediaKeys,
                                          ErrorResult& aRv);
 
-  MediaWaitingFor WaitingFor() const;
-
   mozilla::dom::EventHandlerNonNull* GetOnencrypted();
   void SetOnencrypted(mozilla::dom::EventHandlerNonNull* listener);
 
@@ -629,6 +620,11 @@ public:
     return FinishDecoderSetup(aDecoder, aStream, nullptr, nullptr);
   }
 
+  // Returns true if the media element is being destroyed. Used in
+  // dormancy checks to prevent dormant processing for an element
+  // that will soon be gone.
+  bool IsBeingDestroyed();
+
 protected:
   virtual ~HTMLMediaElement();
 
@@ -636,7 +632,7 @@ protected:
   class MediaStreamTracksAvailableCallback;
   class StreamListener;
 
-  virtual void GetItemValueText(nsAString& text) MOZ_OVERRIDE;
+  virtual void GetItemValueText(DOMString& text) MOZ_OVERRIDE;
   virtual void SetItemValueText(const nsAString& text) MOZ_OVERRIDE;
 
   class WakeLockBoolWrapper {
@@ -971,6 +967,8 @@ protected:
     GetPaused(&isPaused);
     return isPaused;
   }
+
+  void ReportMSETelemetry();
 
   // Check the permissions for audiochannel.
   bool CheckAudioChannelPermissions(const nsAString& aType);
@@ -1336,8 +1334,6 @@ protected:
   nsRefPtr<AudioTrackList> mAudioTrackList;
 
   nsRefPtr<VideoTrackList> mVideoTrackList;
-
-  MediaWaitingFor mWaitingFor;
 
   enum ElementInTreeState {
     // The MediaElement is not in the DOM tree now.

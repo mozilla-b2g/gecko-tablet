@@ -21,11 +21,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "pkix/pkix.h"
 #include "pkixcheck.h"
 #include "pkixder.h"
 #include "pkixgtest.h"
-#include "pkixtestutil.h"
 #include "pkixutil.h"
 
 namespace mozilla { namespace pkix {
@@ -72,7 +70,8 @@ struct PresentedMatchesReference
   { \
     ByteString(reinterpret_cast<const uint8_t*>(a), sizeof(a) - 1), \
     ByteString(reinterpret_cast<const uint8_t*>(b), sizeof(b) - 1), \
-    Result::ERROR_BAD_DER \
+    Result::ERROR_BAD_DER, \
+    false \
   }
 
 static const PresentedMatchesReference DNSID_MATCH_PARAMS[] =

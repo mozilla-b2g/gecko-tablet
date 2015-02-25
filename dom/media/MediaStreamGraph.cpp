@@ -535,22 +535,18 @@ MediaStreamGraphImpl::UpdateStreamOrder()
     // If this is a AudioNodeStream, force a AudioCallbackDriver.
     if (stream->AsAudioNodeStream()) {
       audioTrackPresent = true;
-    }
-    for (StreamBuffer::TrackIter tracks(stream->GetStreamBuffer(), MediaSegment::AUDIO);
-         !tracks.IsEnded(); tracks.Next()) {
-      audioTrackPresent = true;
+    } else {
+      for (StreamBuffer::TrackIter tracks(stream->GetStreamBuffer(), MediaSegment::AUDIO);
+           !tracks.IsEnded(); tracks.Next()) {
+        audioTrackPresent = true;
+      }
     }
   }
 
   if (!audioTrackPresent &&
       CurrentDriver()->AsAudioCallbackDriver()) {
-    bool started;
-    {
-      MonitorAutoLock mon(mMonitor);
-      started = CurrentDriver()->AsAudioCallbackDriver()->IsStarted();
-    }
-    if (started) {
-      MonitorAutoLock mon(mMonitor);
+    MonitorAutoLock mon(mMonitor);
+    if (CurrentDriver()->AsAudioCallbackDriver()->IsStarted()) {
       if (mLifecycleState == LIFECYCLE_RUNNING) {
         SystemClockDriver* driver = new SystemClockDriver(this);
         CurrentDriver()->SwitchAtNextIteration(driver);
@@ -569,6 +565,12 @@ MediaStreamGraphImpl::UpdateStreamOrder()
     }
   }
 #endif
+
+  if (!mStreamOrderDirty) {
+    return;
+  }
+
+  mStreamOrderDirty = false;
 
   // The algorithm for finding cycles is based on Tim Leslie's iterative
   // implementation [1][2] of Pearce's variant [3] of Tarjan's strongly
@@ -1262,9 +1264,7 @@ MediaStreamGraphImpl::UpdateGraph(GraphTime aEndBlockingDecision)
   }
   mFrontMessageQueue.Clear();
 
-  if (mStreamOrderDirty) {
-    UpdateStreamOrder();
-  }
+  UpdateStreamOrder();
 
   bool ensureNextIteration = false;
 
@@ -2275,10 +2275,12 @@ SourceMediaStream::SetPullEnabled(bool aEnabled)
 
 void
 SourceMediaStream::AddTrackInternal(TrackID aID, TrackRate aRate, StreamTime aStart,
-                                    MediaSegment* aSegment)
+                                    MediaSegment* aSegment, uint32_t aFlags)
 {
   MutexAutoLock lock(mMutex);
-  TrackData* data = mUpdateTracks.AppendElement();
+  nsTArray<TrackData> *track_data = (aFlags & ADDTRACK_QUEUED) ?
+                                    &mPendingTracks : &mUpdateTracks;
+  TrackData* data = track_data->AppendElement();
   data->mID = aID;
   data->mInputRate = aRate;
   data->mStart = aStart;
@@ -2286,6 +2288,16 @@ SourceMediaStream::AddTrackInternal(TrackID aID, TrackRate aRate, StreamTime aSt
   data->mCommands = TRACK_CREATE;
   data->mData = aSegment;
   data->mHaveEnough = false;
+  if (!(aFlags & ADDTRACK_QUEUED) && GraphImpl()) {
+    GraphImpl()->EnsureNextIteration();
+  }
+}
+
+void
+SourceMediaStream::FinishAddTracks()
+{
+  MutexAutoLock lock(mMutex);
+  mUpdateTracks.MoveElementsFrom(mPendingTracks);
   if (GraphImpl()) {
     GraphImpl()->EnsureNextIteration();
   }
@@ -2515,6 +2527,7 @@ SourceMediaStream::EndAllTrackAndFinish()
     SourceMediaStream::TrackData* data = &mUpdateTracks[i];
     data->mCommands |= TRACK_END;
   }
+  mPendingTracks.Clear();
   FinishWithLockHeld();
   // we will call NotifyEvent() to let GetUserMedia know
 }

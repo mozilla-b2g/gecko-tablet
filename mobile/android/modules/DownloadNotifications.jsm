@@ -21,24 +21,6 @@ let Log = Cu.import("resource://gre/modules/AndroidLog.jsm", {}).AndroidLog.i.bi
 XPCOMUtils.defineLazyGetter(this, "strings",
                             () => Services.strings.createBundle("chrome://browser/locale/browser.properties"));
 
-/**
- * CID of Downloads.jsm's implementation of nsITransfer.
- */
-const kTransferCid = Components.ID("{1b4c85df-cbdd-4bb6-b04e-613caece083c}");
-
-/**
- * Contract ID of the service implementing nsITransfer.
- */
-const kTransferContractId = "@mozilla.org/transfer;1";
-
-// Override Toolkit's nsITransfer implementation with the one from the
-// JavaScript API for downloads.  This will eventually be removed when
-// nsIDownloadManager will not be available anymore (bug 851471).  The
-// old code in this module will be removed in bug 899110.
-Components.manager.QueryInterface(Ci.nsIComponentRegistrar)
-                  .registerFactory(kTransferCid, "",
-                                   kTransferContractId, null);
-
 Object.defineProperty(this, "window",
                       { get: () => Services.wm.getMostRecentWindow("navigator:browser") });
 
@@ -236,6 +218,12 @@ DownloadNotification.prototype = {
 
     if (this._show) {
       if (!this.id) {
+        this.id = Notifications.create(this.options);
+      } else if (!this.options.ongoing) {
+        // We need to explictly cancel ongoing notifications,
+        // since updating them to be non-ongoing doesn't seem
+        // to work. See bug 1130834.
+        Notifications.cancel(this.id);
         this.id = Notifications.create(this.options);
       } else {
         Notifications.update(this.id, this.options);

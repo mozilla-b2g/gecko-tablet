@@ -124,35 +124,54 @@
 
   var SVGIcon = React.createClass({
     render: function() {
+      var sizeUnit = this.props.size.split("x")[0] + "px";
       return (
         <span className="svg-icon" style={{
-          "background-image": "url(/content/shared/img/icons-16x16.svg#" + this.props.shapeId + ")"
+          "backgroundImage": "url(../content/shared/img/icons-" + this.props.size +
+                              ".svg#" + this.props.shapeId + ")",
+          "backgroundSize": sizeUnit + " " + sizeUnit
         }} />
       );
     }
   });
 
   var SVGIcons = React.createClass({
-    shapes: [
-      "audio", "audio-hover", "audio-active", "block",
-      "block-red", "block-hover", "block-active", "contacts", "contacts-hover",
-      "contacts-active", "copy", "checkmark", "google", "google-hover",
-      "google-active", "history", "history-hover", "history-active", "leave",
-      "precall", "precall-hover", "precall-active", "settings", "settings-hover",
-      "settings-active", "tag", "tag-hover", "tag-active", "trash", "unblock",
-      "unblock-hover", "unblock-active", "video", "video-hover", "video-active"
-    ],
+    shapes: {
+      "10x10": ["close", "close-active", "close-disabled", "dropdown",
+        "dropdown-white", "dropdown-active", "dropdown-disabled", "expand",
+        "expand-active", "expand-disabled", "minimize", "minimize-active",
+        "minimize-disabled"
+      ],
+      "14x14": ["audio", "audio-active", "audio-disabled", "facemute",
+        "facemute-active", "facemute-disabled", "hangup", "hangup-active",
+        "hangup-disabled", "incoming", "incoming-active", "incoming-disabled",
+        "link", "link-active", "link-disabled", "mute", "mute-active",
+        "mute-disabled", "pause", "pause-active", "pause-disabled", "video",
+        "video-white", "video-active", "video-disabled", "volume", "volume-active",
+        "volume-disabled"
+      ],
+      "16x16": ["audio", "audio-hover", "audio-active", "block", "block-red",
+        "block-hover", "block-active", "contacts", "contacts-hover", "contacts-active",
+        "copy", "checkmark", "google", "google-hover", "google-active", "history",
+        "history-hover", "history-active", "leave", "precall", "precall-hover",
+        "precall-active", "screen-white", "screenmute-white", "settings",
+        "settings-hover", "settings-active", "tag", "tag-hover", "tag-active",
+        "trash", "unblock", "unblock-hover", "unblock-active", "video", "video-hover",
+        "video-active", "tour"
+      ]
+    },
 
     render: function() {
+      var icons = this.shapes[this.props.size].map(function(shapeId, i) {
+        return (
+          <li key={this.props.size + "-" + i} className="svg-icon-entry">
+            <p><SVGIcon shapeId={shapeId} size={this.props.size} /></p>
+            <p>{shapeId}</p>
+          </li>
+        );
+      }, this);
       return (
-        <div className="svg-icon-list">{
-          this.shapes.map(function(shapeId, i) {
-            return <div key={i} className="svg-icon-entry">
-              <p><SVGIcon shapeId={shapeId} /></p>
-              <p>{shapeId}</p>
-            </div>;
-          }, this)
-        }</div>
+        <ul className="svg-icon-list">{icons}</ul>
       );
     }
   });
@@ -171,7 +190,7 @@
             <a href={this.makeId("#")}>&nbsp;¶</a>
           </h3>
           <div className={cx({comp: true, dashed: this.props.dashed})}
-               style={this.props.style || {}}>
+               style={this.props.style}>
             {this.props.children}
           </div>
         </div>
@@ -182,7 +201,7 @@
   var Section = React.createClass({
     render: function() {
       return (
-        <section id={this.props.name}>
+        <section id={this.props.name} className={this.props.className}>
           <h1>{this.props.name}</h1>
           {this.props.children}
         </section>
@@ -268,14 +287,14 @@
           </Section>
 
           <Section name="IncomingCallView">
-            <Example summary="Default / incoming video call" dashed="true" style={{width: "260px", height: "254px"}}>
+            <Example summary="Default / incoming video call" dashed="true" style={{width: "300px", height: "272px"}}>
               <div className="fx-embedded">
                 <IncomingCallView model={mockConversationModel}
                                   video={true} />
               </div>
             </Example>
 
-            <Example summary="Default / incoming audio only call" dashed="true" style={{width: "260px", height: "254px"}}>
+            <Example summary="Default / incoming audio only call" dashed="true" style={{width: "300px", height: "272px"}}>
               <div className="fx-embedded">
                 <IncomingCallView model={mockConversationModel}
                                   video={false} />
@@ -284,7 +303,7 @@
           </Section>
 
           <Section name="IncomingCallView-ActiveState">
-            <Example summary="Default" dashed="true" style={{width: "260px", height: "254px"}}>
+            <Example summary="Default" dashed="true" style={{width: "300px", height: "272px"}}>
               <div className="fx-embedded" >
                 <IncomingCallView  model={mockConversationModel}
                                    showMenu={true} />
@@ -295,19 +314,19 @@
           <Section name="ConversationToolbar">
             <h2>Desktop Conversation Window</h2>
             <div className="fx-embedded override-position">
-              <Example summary="Default (260x265)" dashed="true">
+              <Example summary="Default" dashed="true" style={{width: "300px", height: "272px"}}>
                 <ConversationToolbar video={{enabled: true}}
                                      audio={{enabled: true}}
                                      hangup={noop}
                                      publishStream={noop} />
               </Example>
-              <Example summary="Video muted">
+              <Example summary="Video muted" style={{width: "300px", height: "272px"}}>
                 <ConversationToolbar video={{enabled: false}}
                                      audio={{enabled: true}}
                                      hangup={noop}
                                      publishStream={noop} />
               </Example>
-              <Example summary="Audio muted">
+              <Example summary="Audio muted" style={{width: "300px", height: "272px"}}>
                 <ConversationToolbar video={{enabled: true}}
                                      audio={{enabled: false}}
                                      hangup={noop}
@@ -364,7 +383,7 @@
 
           <Section name="PendingConversationView (Desktop)">
             <Example summary="Connecting" dashed="true"
-                     style={{width: "260px", height: "265px"}}>
+                     style={{width: "300px", height: "272px"}}>
               <div className="fx-embedded">
                 <DesktopPendingConversationView callState={"gather"}
                                                 contact={mockContact}
@@ -375,13 +394,13 @@
 
           <Section name="CallFailedView">
             <Example summary="Call Failed" dashed="true"
-                     style={{width: "260px", height: "265px"}}>
+                     style={{width: "300px", height: "272px"}}>
               <div className="fx-embedded">
                 <CallFailedView dispatcher={dispatcher} store={conversationStore} />
               </div>
             </Example>
             <Example summary="Call Failed — with call URL error" dashed="true"
-                     style={{width: "260px", height: "265px"}}>
+                     style={{width: "300px", height: "272px"}}>
               <div className="fx-embedded">
                 <CallFailedView dispatcher={dispatcher} emailLinkError={true}
                                 store={conversationStore} />
@@ -411,7 +430,7 @@
 
           <Section name="ConversationView">
             <Example summary="Desktop conversation window" dashed="true"
-                     style={{width: "260px", height: "265px"}}>
+                     style={{width: "300px", height: "272px"}}>
               <div className="fx-embedded">
                 <ConversationView sdk={mockSDK}
                                   model={mockConversationModel}
@@ -433,7 +452,7 @@
             </Example>
 
             <Example summary="Desktop conversation window local audio stream"
-                     dashed="true" style={{width: "260px", height: "265px"}}>
+                     dashed="true" style={{width: "300px", height: "272px"}}>
               <div className="fx-embedded">
                 <ConversationView sdk={mockSDK}
                                   video={{enabled: false}}
@@ -484,23 +503,23 @@
               <strong>Note:</strong> For the useable demo, you can access submitted data at&nbsp;
               <a href="https://input.allizom.org/">input.allizom.org</a>.
             </p>
-            <Example summary="Default (useable demo)" dashed="true" style={{width: "260px"}}>
+            <Example summary="Default (useable demo)" dashed="true" style={{width: "300px", height: "272px"}}>
               <FeedbackView feedbackStore={feedbackStore} />
             </Example>
-            <Example summary="Detailed form" dashed="true" style={{width: "260px"}}>
+            <Example summary="Detailed form" dashed="true" style={{width: "300px", height: "272px"}}>
               <FeedbackView feedbackStore={feedbackStore} feedbackState={FEEDBACK_STATES.DETAILS} />
             </Example>
-            <Example summary="Thank you!" dashed="true" style={{width: "260px"}}>
+            <Example summary="Thank you!" dashed="true" style={{width: "300px", height: "272px"}}>
               <FeedbackView feedbackStore={feedbackStore} feedbackState={FEEDBACK_STATES.SENT} />
             </Example>
           </Section>
 
           <Section name="CallUrlExpiredView">
             <Example summary="Firefox User">
-              <CallUrlExpiredView helper={{isFirefox: returnTrue}} />
+              <CallUrlExpiredView isFirefox={true} />
             </Example>
             <Example summary="Non-Firefox User">
-              <CallUrlExpiredView helper={{isFirefox: returnFalse}} />
+              <CallUrlExpiredView isFirefox={false} />
             </Example>
           </Section>
 
@@ -547,7 +566,7 @@
           <Section name="UnsupportedBrowserView">
             <Example summary="Standalone Unsupported Browser">
               <div className="standalone">
-                <UnsupportedBrowserView helper={{isFirefox: returnFalse}}/>
+                <UnsupportedBrowserView isFirefox={false}/>
               </div>
             </Example>
           </Section>
@@ -555,7 +574,7 @@
           <Section name="UnsupportedDeviceView">
             <Example summary="Standalone Unsupported Device">
               <div className="standalone">
-                <UnsupportedDeviceView />
+                <UnsupportedDeviceView platform="ios"/>
               </div>
             </Example>
           </Section>
@@ -567,6 +586,7 @@
                 <DesktopRoomConversationView
                   roomStore={roomStore}
                   dispatcher={dispatcher}
+                  mozLoop={navigator.mozLoop}
                   roomState={ROOM_STATES.INIT} />
               </div>
             </Example>
@@ -577,6 +597,7 @@
                 <DesktopRoomConversationView
                   roomStore={roomStore}
                   dispatcher={dispatcher}
+                  mozLoop={navigator.mozLoop}
                   roomState={ROOM_STATES.HAS_PARTICIPANTS} />
               </div>
             </Example>
@@ -589,7 +610,7 @@
                   dispatcher={dispatcher}
                   activeRoomStore={activeRoomStore}
                   roomState={ROOM_STATES.READY}
-                  helper={{isFirefox: returnTrue}} />
+                  isFirefox={true} />
               </div>
             </Example>
 
@@ -599,7 +620,7 @@
                   dispatcher={dispatcher}
                   activeRoomStore={activeRoomStore}
                   roomState={ROOM_STATES.JOINED}
-                  helper={{isFirefox: returnTrue}} />
+                  isFirefox={true} />
               </div>
             </Example>
 
@@ -609,7 +630,7 @@
                   dispatcher={dispatcher}
                   activeRoomStore={activeRoomStore}
                   roomState={ROOM_STATES.HAS_PARTICIPANTS}
-                  helper={{isFirefox: returnTrue}} />
+                  isFirefox={true} />
               </div>
             </Example>
 
@@ -619,7 +640,7 @@
                   dispatcher={dispatcher}
                   activeRoomStore={activeRoomStore}
                   roomState={ROOM_STATES.FULL}
-                  helper={{isFirefox: returnTrue}} />
+                  isFirefox={true} />
               </div>
             </Example>
 
@@ -629,7 +650,7 @@
                   dispatcher={dispatcher}
                   activeRoomStore={activeRoomStore}
                   roomState={ROOM_STATES.FULL}
-                  helper={{isFirefox: returnFalse}} />
+                  isFirefox={false} />
               </div>
             </Example>
 
@@ -640,7 +661,7 @@
                   activeRoomStore={activeRoomStore}
                   feedbackStore={feedbackStore}
                   roomState={ROOM_STATES.ENDED}
-                  helper={{isFirefox: returnFalse}} />
+                  isFirefox={false} />
               </div>
             </Example>
 
@@ -650,14 +671,20 @@
                   dispatcher={dispatcher}
                   activeRoomStore={activeRoomStore}
                   roomState={ROOM_STATES.FAILED}
-                  helper={{isFirefox: returnFalse}} />
+                  isFirefox={false} />
               </div>
             </Example>
           </Section>
 
-          <Section name="SVG icons preview">
+          <Section name="SVG icons preview" className="svg-icons">
+            <Example summary="10x10">
+              <SVGIcons size="10x10"/>
+            </Example>
+            <Example summary="14x14">
+              <SVGIcons size="14x14" />
+            </Example>
             <Example summary="16x16">
-              <SVGIcons />
+              <SVGIcons size="16x16"/>
             </Example>
           </Section>
 

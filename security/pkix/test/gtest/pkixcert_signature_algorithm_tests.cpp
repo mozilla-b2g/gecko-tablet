@@ -3,9 +3,7 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-#include "pkix/pkix.h"
 #include "pkixgtest.h"
-#include "pkixtestutil.h"
 
 using namespace mozilla::pkix;
 using namespace mozilla::pkix::test;
@@ -45,7 +43,7 @@ CreateCert(const char* issuerCN,
   return certDER;
 }
 
-class AlgorithmTestsTrustDomain final : public TrustDomain
+class AlgorithmTestsTrustDomain final : public DefaultCryptoTrustDomain
 {
 public:
   AlgorithmTestsTrustDomain(const ByteString& rootDER,
@@ -101,24 +99,6 @@ private:
   Result IsChainValid(const DERArray&, Time) override
   {
     return Success;
-  }
-
-  Result VerifySignedData(const SignedDataWithSignature& signedData,
-                          Input subjectPublicKeyInfo) override
-  {
-    EXPECT_NE(SignatureAlgorithm::unsupported_algorithm, signedData.algorithm);
-    return TestVerifySignedData(signedData, subjectPublicKeyInfo);
-  }
-
-  Result DigestBuf(Input, uint8_t*, size_t) override
-  {
-    ADD_FAILURE();
-    return Result::FATAL_ERROR_LIBRARY_FAILURE;
-  }
-
-  Result CheckPublicKey(Input subjectPublicKeyInfo) override
-  {
-    return TestCheckPublicKey(subjectPublicKeyInfo);
   }
 
   ByteString rootDER;

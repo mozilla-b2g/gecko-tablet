@@ -72,6 +72,7 @@ public:
   Animation* GetSource() const { return mSource; }
   AnimationTimeline* Timeline() const { return mTimeline; }
   Nullable<TimeDuration> GetStartTime() const { return mStartTime; }
+  void SetStartTime(const Nullable<TimeDuration>& aNewStartTime);
   Nullable<TimeDuration> GetCurrentTime() const;
   AnimationPlayState PlayState() const;
   virtual Promise* GetReady(ErrorResult& aRv);
@@ -84,6 +85,7 @@ public:
   // script but when called from script we (or one of our subclasses) perform
   // extra steps such as flushing style or converting the return type.
   Nullable<double> GetStartTimeAsDouble() const;
+  void SetStartTimeAsDouble(const Nullable<double>& aStartTime);
   Nullable<double> GetCurrentTimeAsDouble() const;
   virtual AnimationPlayState PlayStateFromJS() const { return PlayState(); }
   virtual void PlayFromJS() { Play(); }
@@ -148,6 +150,26 @@ public:
   // removing the player from any PendingPlayerTracker it may have been added
   // to.
   void StartNow();
+
+  /**
+   * When StartOnNextTick is called, we store the ready time but we don't apply
+   * it until the next tick. In the meantime, GetStartTime() will return null.
+   *
+   * However, if we build layer animations again before the next tick, we
+   * should initialize them with the start time that GetStartTime() will return
+   * on the next tick.
+   *
+   * If we were to simply set the start time of layer animations to null, their
+   * start time would be updated to the current wallclock time when rendering
+   * finishes, thus making them out of sync with the start time stored here.
+   * This, in turn, will make the animation jump backwards when we build
+   * animations on the next tick and apply the start time stored here.
+   *
+   * This method returns the start time, if resolved. Otherwise, if we have
+   * a pending ready time, it returns the corresponding start time. If neither
+   * of those are available, it returns null.
+   */
+  Nullable<TimeDuration> GetCurrentOrPendingStartTime() const;
 
   void Cancel();
 

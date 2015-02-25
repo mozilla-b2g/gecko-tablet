@@ -116,6 +116,9 @@
       <field name="mIsBusy">
         false
       </field>
+      <field name="_outerWindowIDBrowserMap">
+        new Map();
+      </field>
       <field name="arrowKeysShouldWrap" readonly="true">
 #ifdef XP_MACOSX
         true
@@ -377,6 +380,15 @@
           <![CDATA[
             var tab = this._getTabForContentWindow(aWindow);
             return tab ? tab.linkedBrowser : null;
+          ]]>
+        </body>
+      </method>
+
+      <method name="getBrowserForOuterWindowID">
+        <parameter name="aID"/>
+        <body>
+          <![CDATA[
+            return this._outerWindowIDBrowserMap.get(aID);
           ]]>
         </body>
       </method>
@@ -664,8 +676,12 @@
                 // We need to add 2 because loadURIWithFlags may have
                 // cancelled a pending load which would have cleared
                 // its anchor scroll detection temporary increment.
-                if (aWebProgress.isTopLevel)
+                if (aWebProgress.isTopLevel) {
                   this.mBrowser.userTypedClear += 2;
+
+                  // If the browser is loading it must not be crashed anymore
+                  this.mTab.removeAttribute("crashed");
+                }
 
                 if (this._shouldShowProgress(aRequest)) {
                   if (!(aStateFlags & nsIWebProgressListener.STATE_RESTORING)) {
@@ -1362,6 +1378,8 @@
             var aRelatedToCurrent;
             var aAllowMixedContent;
             var aSkipAnimation;
+            var aForceNotRemote;
+            var aNoReferrer;
             if (arguments.length == 2 &&
                 typeof arguments[1] == "object" &&
                 !(arguments[1] instanceof Ci.nsIURI)) {
@@ -1375,6 +1393,8 @@
               aRelatedToCurrent     = params.relatedToCurrent;
               aAllowMixedContent    = params.allowMixedContent;
               aSkipAnimation        = params.skipAnimation;
+              aForceNotRemote       = params.forceNotRemote;
+              aNoReferrer           = params.noReferrer;
             }
 
             var bgLoad = (aLoadInBackground != null) ? aLoadInBackground :
@@ -1389,7 +1409,9 @@
                                   fromExternal: aFromExternal,
                                   relatedToCurrent: aRelatedToCurrent,
                                   skipAnimation: aSkipAnimation,
-                                  allowMixedContent: aAllowMixedContent });
+                                  allowMixedContent: aAllowMixedContent,
+                                  forceNotRemote: aForceNotRemote,
+                                  noReferrer: aNoReferrer });
             if (!bgLoad)
               this.selectedTab = tab;
 
@@ -1484,6 +1506,10 @@
 
             if (aShouldBeRemote) {
               tab.setAttribute("remote", "true");
+              // Switching the browser to be remote will connect to a new child
+              // process so the browser can no longer be considered to be
+              // crashed.
+              tab.removeAttribute("crashed");
             } else {
               tab.removeAttribute("remote");
               aBrowser.messageManager.sendAsyncMessage("Browser:AppTab", { isAppTab: tab.pinned })
@@ -1506,9 +1532,18 @@
         <parameter name="aURL"/>
         <body>
           <![CDATA[
-            let shouldBeRemote = gMultiProcessBrowser &&
-                                 E10SUtils.shouldBrowserBeRemote(aURL);
-            return this.updateBrowserRemoteness(aBrowser, shouldBeRemote);
+            if (!gMultiProcessBrowser)
+              return this.updateBrowserRemoteness(aBrowser, false);
+
+            let process = aBrowser.isRemoteBrowser ? Ci.nsIXULRuntime.PROCESS_TYPE_CONTENT
+                                                   : Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT;
+
+            // If this URL can't load in the browser's current process then flip
+            // it to the other process
+            if (!E10SUtils.canLoadURIInProcess(aURL, process))
+              return this.updateBrowserRemoteness(aBrowser, !aBrowser.isRemoteBrowser);
+
+            return false;
           ]]>
         </body>
       </method>
@@ -1655,6 +1690,8 @@
             var aRelatedToCurrent;
             var aSkipAnimation;
             var aAllowMixedContent;
+            var aForceNotRemote;
+            var aNoReferrer;
             if (arguments.length == 2 &&
                 typeof arguments[1] == "object" &&
                 !(arguments[1] instanceof Ci.nsIURI)) {
@@ -1668,6 +1705,8 @@
               aRelatedToCurrent     = params.relatedToCurrent;
               aSkipAnimation        = params.skipAnimation;
               aAllowMixedContent    = params.allowMixedContent;
+              aForceNotRemote       = params.forceNotRemote;
+              aNoReferrer           = params.noReferrer;
             }
 
             // if we're adding tabs, we're past interrupt mode, ditch the owner
@@ -1682,7 +1721,11 @@
             t.setAttribute("onerror", "this.removeAttribute('image');");
             t.className = "tabbrowser-tab";
 
-            let remote = gMultiProcessBrowser && E10SUtils.shouldBrowserBeRemote(aURI);
+            // The new browser should be remote if this is an e10s window and
+            // the uri to load can be loaded remotely.
+            let remote = gMultiProcessBrowser &&
+                         !aForceNotRemote &&
+                         E10SUtils.canLoadURIInProcess(aURI, Ci.nsIXULRuntime.PROCESS_TYPE_CONTENT);
             if (remote)
               t.setAttribute("remote", "true");
 
@@ -1725,6 +1768,13 @@
             if (!b) {
               // No preloaded browser found, create one.
               b = this._createBrowser({remote, uriIsAboutBlank});
+            }
+
+            // A remote browser doesn't initially have the outerWindowID
+            // set. Once a remote browser initializes, it sends the Browser:Init
+            // message, and we map the browser at that point.
+            if (!remote) {
+              this._outerWindowIDBrowserMap.set(b.outerWindowID, b);
             }
 
             let notificationbox = this.getNotificationBox(b);
@@ -1800,7 +1850,9 @@
               if (aAllowMixedContent)
                 flags |= Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_MIXED_CONTENT;
               try {
-                b.loadURIWithFlags(aURI, flags, aReferrerURI, aCharset, aPostData);
+                b.loadURIWithFlags(aURI, flags,
+                                   aNoReferrer ? null : aReferrerURI,
+                                   aCharset, aPostData);
               } catch (ex) {
                 Cu.reportError(ex);
               }
@@ -2192,6 +2244,7 @@
             this.mTabListeners.splice(aTab._tPos, 1);
 
             var browser = this.getBrowserForTab(aTab);
+            this._outerWindowIDBrowserMap.delete(browser.outerWindowID);
 
             // Because of the way XBL works (fields just set JS
             // properties on the element) and the code we have in place
@@ -3192,6 +3245,8 @@
               let tab = this.getTabForBrowser(browser);
               if (!tab)
                 return;
+
+              this._outerWindowIDBrowserMap.set(browser.outerWindowID, browser);
               browser.messageManager.sendAsyncMessage("Browser:AppTab", { isAppTab: tab.pinned })
               break;
             }
@@ -3258,6 +3313,9 @@
             // If this window has remote tabs, switch to our tabpanels fork
             // which does asynchronous tab switching.
             this.mPanelContainer.classList.add("tabbrowser-tabpanels");
+          } else {
+            this._outerWindowIDBrowserMap.set(this.mCurrentBrowser.outerWindowID,
+                                              this.mCurrentBrowser);
           }
           messageManager.addMessageListener("DOMWebNotificationClicked", this);
         ]]>
@@ -3579,6 +3637,7 @@
           browser.docShell.displayLoadError(Cr.NS_ERROR_CONTENT_CRASHED, uri, null);
           browser.removeAttribute("crashedPageTitle");
           let tab = this.getTabForBrowser(browser);
+          tab.setAttribute("crashed", true);
           this.setIcon(tab, icon);
         ]]>
       </handler>
@@ -4980,10 +5039,13 @@
                      class="tab-throbber"
                      role="presentation"
                      layer="true" />
-          <xul:image xbl:inherits="src=image,fadein,pinned,selected"
+          <xul:image xbl:inherits="src=image,fadein,pinned,selected,busy,crashed"
                      anonid="tab-icon-image"
                      class="tab-icon-image"
                      validate="never"
+                     role="presentation"/>
+          <xul:image xbl:inherits="crashed,busy"
+                     class="tab-icon-overlay"
                      role="presentation"/>
           <xul:label flex="1"
                      anonid="tab-label"
@@ -5443,29 +5505,29 @@
             var event = document.createEvent("Events");
             event.initEvent("select", true, true);
             this.dispatchEvent(event);
+
+            this._selectedIndex = val;
+
+            switchPromise.then(() => {
+              // If we cannot find the tabpanel that we were trying to switch to, then
+              // it must have been removed before our Promise could be resolved. In
+              // that case, we just cancel the tab switch.
+              var updatedTabIndex = Array.indexOf(this.childNodes, newPanel);
+              if (updatedTabIndex == -1) {
+                gBrowser._cancelTabSwitch(toTab);
+              } else {
+                this.setAttribute("selectedIndex", updatedTabIndex);
+                gBrowser._finalizeTabSwitch(toTab, fromTab);
+              }
+            }, () => {
+              // If the promise rejected, that means we don't want to actually
+              // flip the deck, so we cancel the tab switch.
+              // We need to nullcheck the method we're about to call because
+              // the binding might be dead at this point.
+              if (gBrowser._cancelTabSwitch)
+                gBrowser._cancelTabSwitch(toTab);
+            });
           }
-
-          this._selectedIndex = val;
-
-          switchPromise.then(() => {
-            // If we cannot find the tabpanel that we were trying to switch to, then
-            // it must have been removed before our Promise could be resolved. In
-            // that case, we just cancel the tab switch.
-            var updatedTabIndex = Array.indexOf(this.childNodes, newPanel);
-            if (updatedTabIndex == -1) {
-              gBrowser._cancelTabSwitch(toTab);
-            } else {
-              this.setAttribute("selectedIndex", updatedTabIndex);
-              gBrowser._finalizeTabSwitch(toTab, fromTab);
-            }
-          }, () => {
-            // If the promise rejected, that means we don't want to actually
-            // flip the deck, so we cancel the tab switch.
-            // We need to nullcheck the method we're about to call because
-            // the binding might be dead at this point.
-            if (gBrowser._cancelTabSwitch)
-              gBrowser._cancelTabSwitch(toTab);
-          });
 
           return val;
         ]]>

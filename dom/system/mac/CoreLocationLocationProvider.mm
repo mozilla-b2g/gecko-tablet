@@ -12,6 +12,7 @@
 #include "CoreLocationLocationProvider.h"
 #include "nsCocoaFeatures.h"
 #include "prtime.h"
+#include "mozilla/Telemetry.h"
 
 #include <CoreLocation/CLError.h>
 #include <CoreLocation/CLLocation.h>
@@ -44,7 +45,7 @@ static const CLLocationAccuracy kDEFAULT_ACCURACY = kCLLocationAccuracyNearestTe
 @implementation LocationDelegate
 - (id) init:(CoreLocationLocationProvider*) aProvider
 {
-  if (self = [super init]) {
+  if ((self = [super init])) {
     mProvider = aProvider;
   }
 
@@ -58,14 +59,13 @@ static const CLLocationAccuracy kDEFAULT_ACCURACY = kCLLocationAccuracyNearestTe
   }
 
   [mHandoffTimer invalidate];
+  [mHandoffTimer release];
   mHandoffTimer = nil;
 }
 
 - (void)handoffToGeoIPProvider
 {
-  // Single-shot timers are invalid once executed and are released by the run loop
-  mHandoffTimer = nil;
-
+  [self shutdownHandoffTimer];
   mProvider->CreateMLSFallbackProvider();
 }
 
@@ -96,11 +96,11 @@ static const CLLocationAccuracy kDEFAULT_ACCURACY = kCLLocationAccuracyNearestTe
     // The 2 sec delay is arbitrarily large enough that CL has a reasonable head start and
     // if it is likely to succeed, it should complete before the MLS provider.
     // Take note that in locationManager:didUpdateLocations: the handoff to MLS is stopped.
-    mHandoffTimer = [NSTimer scheduledTimerWithTimeInterval:2.0
+    mHandoffTimer = [[NSTimer scheduledTimerWithTimeInterval:2.0
                                                      target:self
                                                    selector:@selector(handoffToGeoIPProvider)
                                                    userInfo:nil
-                                                    repeats:NO];
+                                                    repeats:NO] retain];
   }
 }
 
@@ -126,6 +126,7 @@ static const CLLocationAccuracy kDEFAULT_ACCURACY = kCLLocationAccuracyNearestTe
                       PR_Now());
 
   mProvider->Update(geoPosition);
+  Telemetry::Accumulate(Telemetry::GEOLOCATION_OSX_SOURCE_IS_MLS, false);
 }
 @end
 
@@ -146,6 +147,7 @@ CoreLocationLocationProvider::MLSUpdate::Update(nsIDOMGeoPosition *position)
   }
 
   mParentLocationProvider.Update(position);
+  Telemetry::Accumulate(Telemetry::GEOLOCATION_OSX_SOURCE_IS_MLS, true);
   return NS_OK;
 }
 
@@ -161,7 +163,6 @@ CoreLocationLocationProvider::MLSUpdate::NotifyError(uint16_t error)
   mParentLocationProvider.NotifyError(error);
   return NS_OK;
 }
-
 
 class CoreLocationObjects {
 public:

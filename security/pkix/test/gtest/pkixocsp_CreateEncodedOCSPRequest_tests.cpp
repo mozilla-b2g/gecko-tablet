@@ -22,59 +22,27 @@
  * limitations under the License.
  */
 
-#include "gtest/gtest.h"
-#include "pkix/pkix.h"
+#include "pkixgtest.h"
 #include "pkixder.h"
-#include "pkixtestutil.h"
 
 using namespace mozilla::pkix;
 using namespace mozilla::pkix::test;
 
-class CreateEncodedOCSPRequestTrustDomain final : public TrustDomain
+class CreateEncodedOCSPRequestTrustDomain final
+  : public EverythingFailsByDefaultTrustDomain
 {
 private:
-  Result GetCertTrust(EndEntityOrCA, const CertPolicyId&, Input,
-                      /*out*/ TrustLevel&) override
-  {
-    ADD_FAILURE();
-    return Result::FATAL_ERROR_LIBRARY_FAILURE;
-  }
-
-  Result FindIssuer(Input, IssuerChecker&, Time) override
-  {
-    ADD_FAILURE();
-    return Result::FATAL_ERROR_LIBRARY_FAILURE;
-  }
-
-  Result CheckRevocation(EndEntityOrCA, const CertID&, Time, const Input*,
-                         const Input*) override
-  {
-    ADD_FAILURE();
-    return Result::FATAL_ERROR_LIBRARY_FAILURE;
-  }
-
-  Result IsChainValid(const DERArray&, Time) override
-  {
-    ADD_FAILURE();
-    return Result::FATAL_ERROR_LIBRARY_FAILURE;
-  }
-
-  Result VerifySignedData(const SignedDataWithSignature&, Input) override
-  {
-    ADD_FAILURE();
-    return Result::FATAL_ERROR_LIBRARY_FAILURE;
-  }
-
-  Result DigestBuf(Input item, /*out*/ uint8_t *digestBuf, size_t digestBufLen)
+  Result DigestBuf(Input item, DigestAlgorithm digestAlg,
+                   /*out*/ uint8_t *digestBuf, size_t digestBufLen)
                    override
   {
-    return TestDigestBuf(item, digestBuf, digestBufLen);
+    return TestDigestBuf(item, digestAlg, digestBuf, digestBufLen);
   }
 
-  Result CheckPublicKey(Input subjectPublicKeyInfo) override
+  Result CheckRSAPublicKeyModulusSizeInBits(EndEntityOrCA, unsigned int)
+                                            override
   {
-    ADD_FAILURE();
-    return Result::FATAL_ERROR_LIBRARY_FAILURE;
+    return Success;
   }
 };
 

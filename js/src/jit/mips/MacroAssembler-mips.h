@@ -236,6 +236,7 @@ class MacroAssemblerMIPS : public Assembler
     }
     void ma_b(Register lhs, Address addr, Label *l, Condition c, JumpKind jumpKind = LongJump);
     void ma_b(Address addr, Imm32 imm, Label *l, Condition c, JumpKind jumpKind = LongJump);
+    void ma_b(Address addr, ImmGCPtr imm, Label *l, Condition c, JumpKind jumpKind = LongJump);
     void ma_b(Address addr, Register rhs, Label *l, Condition c, JumpKind jumpKind = LongJump) {
         MOZ_ASSERT(rhs != ScratchRegister);
         ma_lw(ScratchRegister, addr);
@@ -686,6 +687,7 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS
     void branchTestObject(Condition cond, const ValueOperand &value, Label *label);
     void branchTestObject(Condition cond, Register tag, Label *label);
     void branchTestObject(Condition cond, const BaseIndex &src, Label *label);
+    void branchTestObject(Condition cond, const Address &src, Label *label);
     void testObjectSet(Condition cond, const ValueOperand &value, Register dest);
 
     void branchTestString(Condition cond, const ValueOperand &value, Label *label);
@@ -868,6 +870,19 @@ public:
     template <typename T>
     void storeUnboxedValue(ConstantOrRegister value, MIRType valueType, const T &dest,
                            MIRType slotType);
+
+    template <typename T>
+    void storeUnboxedPayload(ValueOperand value, T address, size_t nbytes) {
+        switch (nbytes) {
+          case 4:
+            storePtr(value.payloadReg(), address);
+            return;
+          case 1:
+            store8(value.payloadReg(), address);
+            return;
+          default: MOZ_CRASH("Bad payload width");
+        }
+    }
 
     void moveValue(const Value &val, const ValueOperand &dest);
 
@@ -1148,7 +1163,7 @@ public:
     // Makes a call using the only two methods that it is sane for indep code
     // to make a call.
     void callJit(Register callee);
-    void callJitFromAsmJS(Register callee);
+    void callJitFromAsmJS(Register callee) { call(callee); }
 
     void reserveStack(uint32_t amount);
     void freeStack(uint32_t amount);

@@ -17,6 +17,11 @@
 #include "nsIScriptError.h"
 #include "nsIWidget.h"
 #include "nsContentUtils.h"
+#ifdef XP_MACOSX
+#include "mozilla/EventDispatcher.h"
+#include "mozilla/dom/Event.h"
+#include "mozilla/dom/HTMLObjectElement.h"
+#endif
 
 NS_IMPL_NS_NEW_HTML_ELEMENT_CHECK_PARSER(SharedObject)
 
@@ -36,7 +41,7 @@ HTMLSharedObjectElement::HTMLSharedObjectElement(already_AddRefed<mozilla::dom::
 }
 
 void
-HTMLSharedObjectElement::GetItemValueText(nsAString& aValue)
+HTMLSharedObjectElement::GetItemValueText(DOMString& aValue)
 {
   if (mNodeInfo->Equals(nsGkAtoms::applet)) {
     nsGenericHTMLElement::GetItemValueText(aValue);
@@ -75,7 +80,7 @@ HTMLSharedObjectElement::DoneAddingChildren(bool aHaveNotified)
 
     // If we're already in a document, we need to trigger the load
     // Otherwise, BindToTree takes care of that.
-    if (IsInDoc()) {
+    if (IsInComposedDoc()) {
       StartObjectLoad(aHaveNotified);
     }
   }
@@ -107,6 +112,17 @@ NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLSharedObjectElement)
 NS_INTERFACE_MAP_END_INHERITING(nsGenericHTMLElement)
 
 NS_IMPL_ELEMENT_CLONE(HTMLSharedObjectElement)
+
+#ifdef XP_MACOSX
+
+NS_IMETHODIMP
+HTMLSharedObjectElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
+{
+  HTMLObjectElement::HandleFocusBlurPlugin(this, aVisitor.mEvent);
+  return NS_OK;
+}
+
+#endif // #ifdef XP_MACOSX
 
 nsresult
 HTMLSharedObjectElement::BindToTree(nsIDocument *aDocument,
@@ -164,7 +180,7 @@ HTMLSharedObjectElement::SetAttr(int32_t aNameSpaceID, nsIAtom *aName,
   // We also don't want to start loading the object when we're not yet in
   // a document, just in case that the caller wants to set additional
   // attributes before inserting the node into the document.
-  if (aNotify && IsInDoc() && mIsDoneAddingChildren &&
+  if (aNotify && IsInComposedDoc() && mIsDoneAddingChildren &&
       aNameSpaceID == kNameSpaceID_None && aName == URIAttrName()) {
     return LoadObject(aNotify, true);
   }
@@ -297,7 +313,7 @@ HTMLSharedObjectElement::StartObjectLoad(bool aNotify)
 {
   // BindToTree can call us asynchronously, and we may be removed from the tree
   // in the interim
-  if (!IsInDoc() || !OwnerDoc()->IsActive()) {
+  if (!IsInComposedDoc() || !OwnerDoc()->IsActive()) {
     return;
   }
 

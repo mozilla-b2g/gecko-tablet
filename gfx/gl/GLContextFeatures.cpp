@@ -275,6 +275,16 @@ static const FeatureInfo sFeatureInfoArr[] = {
          */
     },
     {
+        "get_string_indexed",
+        GLVersion::GL3,
+        GLESVersion::ES3,
+        GLContext::Extension_None,
+        {
+            GLContext::Extensions_End
+        }
+        // glGetStringi
+    },
+    {
         "gpu_shader4",
         GLVersion::GL3,
         GLESVersion::ES3,
@@ -397,6 +407,15 @@ static const FeatureInfo sFeatureInfoArr[] = {
          * ARB_occlusion_query (added in OpenGL 2.0) and EXT_occlusion_query_boolean
          * (added in OpenGL ES 3.0)
          */
+    },
+    {
+        "read_buffer",
+        GLVersion::GL2,
+        GLESVersion::ES3,
+        GLContext::Extension_None,
+        {
+            GLContext::Extensions_End
+        }
     },
     {
         "renderbuffer_color_float",

@@ -4,7 +4,8 @@
     <meta name="viewport" content="initial-scale=1.0"/>
     <script type="application/javascript"
       src="chrome://mochikit/content/tests/SimpleTest/EventUtils.js"></script>
-    <script type="application/javascript">
+    <script type="application/javascript" src="SelectionUtils.js"></script>
+    <script type="application/javascript;version=1.8">
 
 // Used to create handle movement events for SelectionHandler.
 const ANCHOR = "ANCHOR";
@@ -18,14 +19,9 @@ const EST_SEL_TEXT_BOUND_CHARS = 5;
 const EST_SEL_LINE_CHG_PTS = 10;
 
 
-const { classes: Cc, interfaces: Ci, results: Cr, utils: Cu } = Components;
-Cu.import("resource://gre/modules/Messaging.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import('resource://gre/modules/Geometry.jsm');
-
 // Distance between text selection lines. Reality tested, and also
 // Used to perform multi-line selection selections.
-var selectionLineHeight = 0;
+let selectionLineHeight = 0;
 
 /* =================================================================================
  *
@@ -60,8 +56,8 @@ function startTests() {
  */
 function testLTR_selectionPoints() {
   // Select entire LTRTextArea.
-  var sh = getSelectionHandler();
-  var element = document.getElementById("LTRTextarea");
+  let sh = getSelectionHandler();
+  let element = document.getElementById("LTRTextarea");
   sh.startSelection(element);
 
   return Promise.all([
@@ -71,17 +67,17 @@ function testLTR_selectionPoints() {
   ]).then(function() {
     // setSelectionRange() (in editable elements), gets us a single-line selection of
     // midpoint character +- EST_SEL_TEXT_BOUND_CHARS chars on either side.
-    var midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
+    let midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
     element.setSelectionRange(midpointSelCharOffset - EST_SEL_TEXT_BOUND_CHARS,
                               midpointSelCharOffset + EST_SEL_TEXT_BOUND_CHARS);
 
     // Grab values that are cleared by closing selection.
-    var selection = { anchorPt : new Point(sh._cache.anchorPt.x, sh._cache.anchorPt.y),
+    let selection = { anchorPt : new Point(sh._cache.anchorPt.x, sh._cache.anchorPt.y),
                       focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
-    var midpointSelText = sh._getSelectedText();
+    let midpointSelText = sh._getSelectedText();
 
     // Close selection and complete test.
-    sh.observe(null, "TextSelection:End", {});
+    Services.obs.notifyObservers(null, "TextSelection:End", {});
 
     return Promise.all([
       selectionExists(selection, "LTR Selection existed at points"),
@@ -104,8 +100,8 @@ function testLTR_selectionPoints() {
  */
 function testRTL_selectionPoints() {
   // Select entire RTLTextArea.
-  var sh = getSelectionHandler();
-  var element = document.getElementById("RTLTextarea");
+  let sh = getSelectionHandler();
+  let element = document.getElementById("RTLTextarea");
   sh.startSelection(element);
 
   return Promise.all([
@@ -115,17 +111,17 @@ function testRTL_selectionPoints() {
   ]).then(function() {
     // setSelectionRange() (in editable elements), gets us a single-line selection of
     // midpoint character +- EST_SEL_TEXT_BOUND_CHARS chars on either side.
-    var midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
+    let midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
     element.setSelectionRange(midpointSelCharOffset - EST_SEL_TEXT_BOUND_CHARS,
                               midpointSelCharOffset + EST_SEL_TEXT_BOUND_CHARS);
 
     // Grab values that are cleared by closing selection.
-    var selection = { anchorPt : new Point(sh._cache.anchorPt.x, sh._cache.anchorPt.y),
+    let selection = { anchorPt : new Point(sh._cache.anchorPt.x, sh._cache.anchorPt.y),
                       focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
-    var midpointSelText = sh._getSelectedText();
+    let midpointSelText = sh._getSelectedText();
 
     // Close selection and complete test.
-    sh.observe(null, "TextSelection:End", {});
+    Services.obs.notifyObservers(null, "TextSelection:End", {});
 
     return Promise.all([
       selectionExists(selection, "RTL Selection existed at points"),
@@ -150,14 +146,14 @@ function testRTL_selectionPoints() {
  * The result is used later to ensure more-precise handle up/down movements.
  */
 function test_selectionLineHeight() {
-  var sh = getSelectionHandler();
-  var element = document.getElementById("LTRTextarea");
-  var initialSelection = null;
-  var changedSelection = null;
+  let sh = getSelectionHandler();
+  let element = document.getElementById("LTRTextarea");
+  let initialSelection = null;
+  let changedSelection = null;
 
   // Select entire textarea, refine selection to midpoint string.
   sh.startSelection(element);
-  var midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
+  let midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
   element.setSelectionRange(midpointSelCharOffset - EST_SEL_TEXT_BOUND_CHARS,
                             midpointSelCharOffset + EST_SEL_TEXT_BOUND_CHARS);
 
@@ -166,13 +162,13 @@ function test_selectionLineHeight() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Force selection focus to next lower line (estimate distance required).
-  sh.observe(null, "TextSelection:Move",
+  Services.obs.notifyObservers(null, "TextSelection:Move",
     JSON.stringify({ handleType : FOCUS,
       x : initialSelection.focusPt.x,
       y : initialSelection.focusPt.y + EST_SEL_LINE_CHG_PTS
     })
   );
-  sh.observe(null, "TextSelection:Position",
+  Services.obs.notifyObservers(null, "TextSelection:Position",
     JSON.stringify({ handleType : FOCUS })
   );
 
@@ -190,7 +186,7 @@ function test_selectionLineHeight() {
 
   ]).then(function() {
     // Complete test, and report.
-    sh.observe(null, "TextSelection:End", {});
+    Services.obs.notifyObservers(null, "TextSelection:End", {});
 
     return Promise.all([
       greaterThan(selectionLineHeight, 0, "Distance from one line to another " +
@@ -210,14 +206,14 @@ function test_selectionLineHeight() {
  * This tests what happens during focus handle down movements.
  */
 function testLTR_moveFocusHandleDown() {
-  var sh = getSelectionHandler();
-  var element = document.getElementById("LTRTextarea");
-  var initialSelection = null;
-  var changedSelection = null;
+  let sh = getSelectionHandler();
+  let element = document.getElementById("LTRTextarea");
+  let initialSelection = null;
+  let changedSelection = null;
 
   // Select entire textarea, refine selection to midpoint string.
   sh.startSelection(element);
-  var midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
+  let midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
   element.setSelectionRange(midpointSelCharOffset - EST_SEL_TEXT_BOUND_CHARS,
                             midpointSelCharOffset + EST_SEL_TEXT_BOUND_CHARS);
 
@@ -226,13 +222,13 @@ function testLTR_moveFocusHandleDown() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Force selection focus to next lower line (estimate distance required).
-  sh.observe(null, "TextSelection:Move",
+  Services.obs.notifyObservers(null, "TextSelection:Move",
     JSON.stringify({ handleType : FOCUS,
       x : initialSelection.focusPt.x,
       y : initialSelection.focusPt.y + EST_SEL_LINE_CHG_PTS
     })
   );
-  sh.observe(null, "TextSelection:Position",
+  Services.obs.notifyObservers(null, "TextSelection:Position",
     JSON.stringify({ handleType : FOCUS })
   );
 
@@ -241,7 +237,7 @@ function testLTR_moveFocusHandleDown() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Complete test, and report.
-  sh.observe(null, "TextSelection:End", {});
+  Services.obs.notifyObservers(null, "TextSelection:End", {});
 
   return Promise.all([
     ok(true, "testLTR_moveFocusHandleDown - Test Starts."),
@@ -275,14 +271,14 @@ function testLTR_moveFocusHandleDown() {
  */
 
 function testLTR_moveFocusHandleUp() {
-  var sh = getSelectionHandler();
-  var element = document.getElementById("LTRTextarea");
-  var initialSelection = null;
-  var changedSelection = null;
+  let sh = getSelectionHandler();
+  let element = document.getElementById("LTRTextarea");
+  let initialSelection = null;
+  let changedSelection = null;
 
   // Select entire textarea, refine selection to midpoint string.
   sh.startSelection(element);
-  var midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
+  let midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
   element.setSelectionRange(midpointSelCharOffset - EST_SEL_TEXT_BOUND_CHARS,
                             midpointSelCharOffset + EST_SEL_TEXT_BOUND_CHARS);
 
@@ -291,13 +287,13 @@ function testLTR_moveFocusHandleUp() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Force selection focus to next upper line (estimate distance required).
-  sh.observe(null, "TextSelection:Move",
+  Services.obs.notifyObservers(null, "TextSelection:Move",
     JSON.stringify({ handleType : FOCUS,
       x : initialSelection.focusPt.x,
       y : initialSelection.focusPt.y - selectionLineHeight - EST_SEL_LINE_CHG_PTS
     })
   );
-  sh.observe(null, "TextSelection:Position",
+  Services.obs.notifyObservers(null, "TextSelection:Position",
     JSON.stringify({ handleType : FOCUS })
   );
 
@@ -306,7 +302,7 @@ function testLTR_moveFocusHandleUp() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Complete test, and report.
-  sh.observe(null, "TextSelection:End", {});
+  Services.obs.notifyObservers(null, "TextSelection:End", {});
 
   return Promise.all([
     ok(true, "testLTR_moveFocusHandleUp - Test Starts."),
@@ -343,14 +339,14 @@ function testLTR_moveFocusHandleUp() {
  * This tests what happens during anchor handle up movements.
  */
 function testLTR_moveAnchorHandleUp() {
-  var sh = getSelectionHandler();
-  var element = document.getElementById("LTRTextarea");
-  var initialSelection = null;
-  var changedSelection = null;
+  let sh = getSelectionHandler();
+  let element = document.getElementById("LTRTextarea");
+  let initialSelection = null;
+  let changedSelection = null;
 
   // Select entire textarea, refine selection to midpoint string.
   sh.startSelection(element);
-  var midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
+  let midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
   element.setSelectionRange(midpointSelCharOffset - EST_SEL_TEXT_BOUND_CHARS,
                             midpointSelCharOffset + EST_SEL_TEXT_BOUND_CHARS);
 
@@ -359,13 +355,13 @@ function testLTR_moveAnchorHandleUp() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Force selection anchor to next upper line (estimate distance required).
-  sh.observe(null, "TextSelection:Move",
+  Services.obs.notifyObservers(null, "TextSelection:Move",
     JSON.stringify({ handleType : ANCHOR,
       x : initialSelection.anchorPt.x,
       y : initialSelection.anchorPt.y - selectionLineHeight - EST_SEL_LINE_CHG_PTS
     })
   );
-  sh.observe(null, "TextSelection:Position",
+  Services.obs.notifyObservers(null, "TextSelection:Position",
     JSON.stringify({ handleType : ANCHOR })
   );
 
@@ -374,7 +370,7 @@ function testLTR_moveAnchorHandleUp() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Complete test, and report.
-  sh.observe(null, "TextSelection:End", {});
+  Services.obs.notifyObservers(null, "TextSelection:End", {});
 
   return Promise.all([
     ok(true, "testLTR_moveAnchorHandleUp - Test Starts."),
@@ -407,14 +403,14 @@ function testLTR_moveAnchorHandleUp() {
  * This tests what happens during anchor handle down movements.
  */
 function testLTR_moveAnchorHandleDown() {
-  var sh = getSelectionHandler();
-  var element = document.getElementById("LTRTextarea");
-  var initialSelection = null;
-  var changedSelection = null;
+  let sh = getSelectionHandler();
+  let element = document.getElementById("LTRTextarea");
+  let initialSelection = null;
+  let changedSelection = null;
 
   // Select entire textarea, refine selection to midpoint string.
   sh.startSelection(element);
-  var midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
+  let midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
   element.setSelectionRange(midpointSelCharOffset - EST_SEL_TEXT_BOUND_CHARS,
                             midpointSelCharOffset + EST_SEL_TEXT_BOUND_CHARS);
 
@@ -423,13 +419,13 @@ function testLTR_moveAnchorHandleDown() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Force selection anchor to next lower line (estimate distance required).
-  sh.observe(null, "TextSelection:Move",
+  Services.obs.notifyObservers(null, "TextSelection:Move",
     JSON.stringify({ handleType : ANCHOR,
       x : initialSelection.anchorPt.x,
       y : initialSelection.anchorPt.y + EST_SEL_LINE_CHG_PTS
     })
   );
-  sh.observe(null, "TextSelection:Position",
+  Services.obs.notifyObservers(null, "TextSelection:Position",
     JSON.stringify({ handleType : ANCHOR })
   );
 
@@ -438,7 +434,7 @@ function testLTR_moveAnchorHandleDown() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Complete test, and report.
-  sh.observe(null, "TextSelection:End", {});
+  Services.obs.notifyObservers(null, "TextSelection:End", {});
 
   return Promise.all([
     ok(true, "testLTR_moveAnchorHandleDown - Test Starts."),
@@ -475,14 +471,14 @@ function testLTR_moveAnchorHandleDown() {
  * This tests what happens during focus handle down movements.
  */
 function testRTL_moveFocusHandleDown() {
-  var sh = getSelectionHandler();
-  var element = document.getElementById("RTLTextarea");
-  var initialSelection = null;
-  var changedSelection = null;
+  let sh = getSelectionHandler();
+  let element = document.getElementById("RTLTextarea");
+  let initialSelection = null;
+  let changedSelection = null;
 
   // Select entire textarea, refine selection to midpoint string.
   sh.startSelection(element);
-  var midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
+  let midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
   element.setSelectionRange(midpointSelCharOffset - EST_SEL_TEXT_BOUND_CHARS,
                             midpointSelCharOffset + EST_SEL_TEXT_BOUND_CHARS);
 
@@ -491,13 +487,13 @@ function testRTL_moveFocusHandleDown() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Force selection focus to next lower line (estimate distance required).
-  sh.observe(null, "TextSelection:Move",
+  Services.obs.notifyObservers(null, "TextSelection:Move",
     JSON.stringify({ handleType : FOCUS,
       x : initialSelection.focusPt.x,
       y : initialSelection.focusPt.y + EST_SEL_LINE_CHG_PTS
     })
   );
-  sh.observe(null, "TextSelection:Position",
+  Services.obs.notifyObservers(null, "TextSelection:Position",
     JSON.stringify({ handleType : FOCUS })
   );
 
@@ -506,7 +502,7 @@ function testRTL_moveFocusHandleDown() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Complete test, and report.
-  sh.observe(null, "TextSelection:End", {});
+  Services.obs.notifyObservers(null, "TextSelection:End", {});
 
   return Promise.all([
     ok(true, "testRTL_moveFocusHandleDown - Test Starts."),
@@ -539,14 +535,14 @@ function testRTL_moveFocusHandleDown() {
  * This tests what happens during focus handle up movements.
  */
 function testRTL_moveFocusHandleUp() {
-  var sh = getSelectionHandler();
-  var element = document.getElementById("RTLTextarea");
-  var initialSelection = null;
-  var changedSelection = null;
+  let sh = getSelectionHandler();
+  let element = document.getElementById("RTLTextarea");
+  let initialSelection = null;
+  let changedSelection = null;
 
   // Select entire textarea, refine selection to midpoint string.
   sh.startSelection(element);
-  var midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
+  let midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
   element.setSelectionRange(midpointSelCharOffset - EST_SEL_TEXT_BOUND_CHARS,
                             midpointSelCharOffset + EST_SEL_TEXT_BOUND_CHARS);
 
@@ -555,13 +551,13 @@ function testRTL_moveFocusHandleUp() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Force selection focus to next upper line (estimate distance required).
-  sh.observe(null, "TextSelection:Move",
+  Services.obs.notifyObservers(null, "TextSelection:Move",
     JSON.stringify({ handleType : FOCUS,
       x : initialSelection.focusPt.x,
       y : initialSelection.focusPt.y - selectionLineHeight - EST_SEL_LINE_CHG_PTS
     })
   );
-  sh.observe(null, "TextSelection:Position",
+  Services.obs.notifyObservers(null, "TextSelection:Position",
     JSON.stringify({ handleType : FOCUS })
   );
 
@@ -570,7 +566,7 @@ function testRTL_moveFocusHandleUp() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Complete test, and report.
-  sh.observe(null, "TextSelection:End", {});
+  Services.obs.notifyObservers(null, "TextSelection:End", {});
 
   return Promise.all([
     ok(true, "testRTL_moveFocusHandleUp - Test Starts."),
@@ -607,14 +603,14 @@ function testRTL_moveFocusHandleUp() {
  * This tests what happens during anchor handle up movements.
  */
 function testRTL_moveAnchorHandleUp() {
-  var sh = getSelectionHandler();
-  var element = document.getElementById("RTLTextarea");
-  var initialSelection = null;
-  var changedSelection = null;
+  let sh = getSelectionHandler();
+  let element = document.getElementById("RTLTextarea");
+  let initialSelection = null;
+  let changedSelection = null;
 
   // Select entire textarea, refine selection to midpoint string.
   sh.startSelection(element);
-  var midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
+  let midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
   element.setSelectionRange(midpointSelCharOffset - EST_SEL_TEXT_BOUND_CHARS,
                             midpointSelCharOffset + EST_SEL_TEXT_BOUND_CHARS);
 
@@ -623,13 +619,13 @@ function testRTL_moveAnchorHandleUp() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Force selection anchor to next upper line (estimate distance required).
-  sh.observe(null, "TextSelection:Move",
+  Services.obs.notifyObservers(null, "TextSelection:Move",
     JSON.stringify({ handleType : ANCHOR,
       x : initialSelection.anchorPt.x,
       y : initialSelection.anchorPt.y - selectionLineHeight - EST_SEL_LINE_CHG_PTS
     })
   );
-  sh.observe(null, "TextSelection:Position",
+  Services.obs.notifyObservers(null, "TextSelection:Position",
     JSON.stringify({ handleType : ANCHOR })
   );
 
@@ -638,7 +634,7 @@ function testRTL_moveAnchorHandleUp() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Complete test, and report.
-  sh.observe(null, "TextSelection:End", {});
+  Services.obs.notifyObservers(null, "TextSelection:End", {});
 
   return Promise.all([
     ok(true, "testRTL_moveAnchorHandleUp - Test Starts."),
@@ -671,14 +667,14 @@ function testRTL_moveAnchorHandleUp() {
  * This tests what happens during anchor handle down movements.
  */
 function testRTL_moveAnchorHandleDown() {
-  var sh = getSelectionHandler();
-  var element = document.getElementById("RTLTextarea");
-  var initialSelection = null;
-  var changedSelection = null;
+  let sh = getSelectionHandler();
+  let element = document.getElementById("RTLTextarea");
+  let initialSelection = null;
+  let changedSelection = null;
 
   // Select entire textarea, refine selection to midpoint string.
   sh.startSelection(element);
-  var midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
+  let midpointSelCharOffset = (element.selectionStart + element.selectionEnd) / 2;
   element.setSelectionRange(midpointSelCharOffset - EST_SEL_TEXT_BOUND_CHARS,
                             midpointSelCharOffset + EST_SEL_TEXT_BOUND_CHARS);
 
@@ -687,13 +683,13 @@ function testRTL_moveAnchorHandleDown() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Force selection anchor to next lower line (estimate distance required).
-  sh.observe(null, "TextSelection:Move",
+  Services.obs.notifyObservers(null, "TextSelection:Move",
     JSON.stringify({ handleType : ANCHOR,
       x : initialSelection.anchorPt.x,
       y : initialSelection.anchorPt.y + EST_SEL_LINE_CHG_PTS
     })
   );
-  sh.observe(null, "TextSelection:Position",
+  Services.obs.notifyObservers(null, "TextSelection:Position",
     JSON.stringify({ handleType : ANCHOR })
   );
 
@@ -702,7 +698,7 @@ function testRTL_moveAnchorHandleDown() {
                        focusPt : new Point(sh._cache.focusPt.x, sh._cache.focusPt.y) };
 
   // Complete test, and report.
-  sh.observe(null, "TextSelection:End", {});
+  Services.obs.notifyObservers(null, "TextSelection:End", {});
 
   return Promise.all([
     ok(true, "testRTL_moveAnchorHandleDown - Test Starts."),
@@ -731,106 +727,6 @@ function testRTL_moveAnchorHandleDown() {
   ]);
 }
 
-/* =================================================================================
- *
- * After finish of all selection tests, wrap up and go home.
- *
- */
-function finishTests() {
-  Messaging.sendRequest({
-    type: "Robocop:testTextareaSelections",
-    result: true,
-    msg: "Done!",
-    done: true
-  });
-}
-
-/* ============================== Utility functions ======================
- *
- * Common functions available to all tests.
- *
- */
-function getSelectionHandler() {
-  return (!this._selectionHandler) ?
-    this._selectionHandler = Services.wm.getMostRecentWindow("navigator:browser").SelectionHandler :
-    this._selectionHandler;
-}
-
-function todo(result, msg) {
-  return Messaging.sendRequestForResult({
-    type: "Robocop:testTextareaSelections",
-    todo: result,
-    msg: msg
-  });
-}
-
-function ok(result, msg) {
-  return Messaging.sendRequestForResult({
-    type: "Robocop:testTextareaSelections",
-    result: result,
-    msg: msg
-  });
-}
-
-function is(one, two, msg) {
-  return Messaging.sendRequestForResult({
-    type: "Robocop:testTextareaSelections",
-    result: one === two,
-    msg: msg + " : " + one + " === " + two
-  });
-}
-
-function lessThan(n1, n2, msg) {
-  return Messaging.sendRequestForResult({
-    type: "Robocop:testTextareaSelections",
-    result: n1 < n2,
-    msg: msg + " : " + n1 + " < " + n2
-  });
-}
-
-function greaterThan(n1, n2, msg) {
-  return Messaging.sendRequestForResult({
-    type: "Robocop:testTextareaSelections",
-    result: n1 > n2,
-    msg: msg + " : " + n1 + " > " + n2
-  });
-}
-
-// Use fuzzy logic to compare screen coords.
-function truncPoint(point) {
-  return new Point(Math.trunc(point.x), Math.trunc(point.y));
-}
-
-function pointEquals(p1, p2, msg) {
-  return Messaging.sendRequestForResult({
-    type: "Robocop:testTextareaSelections",
-    result: truncPoint(p1).equals(truncPoint(p2)),
-    msg: msg + " : " + p1.toString() + " == " + p2.toString()
-  });
-}
-
-function pointNotEquals(p1, p2, msg) {
-  return Messaging.sendRequestForResult({
-    type: "Robocop:testTextareaSelections",
-    result: !truncPoint(p1).equals(truncPoint(p2)),
-    msg: msg + " : " + p1.toString() + " == " + p2.toString()
-  });
-}
-
-function selectionExists(selection, msg) {
-  return Messaging.sendRequestForResult({
-    type: "Robocop:testTextareaSelections",
-    result: !truncPoint(selection.anchorPt).equals(truncPoint(selection.focusPt)),
-    msg: msg + " : anchor:" + selection.anchorPt.toString() +
-      " focus:" + selection.focusPt.toString()
-  });
-}
-
-/* =================================================================================
- *
- * Page definition for all tests.
- *
- */
     </script>
   </head>
 

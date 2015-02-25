@@ -12,7 +12,7 @@
 #include "nsContentCID.h"
 #include "nsServiceManagerUtils.h"
 #include "MainThreadUtils.h"
-#include "mozilla/EMELog.h"
+#include "mozilla/EMEUtils.h"
 #include "nsIConsoleService.h"
 #include "prenv.h"
 #include "mozilla/PodOperations.h"
@@ -436,7 +436,7 @@ CDMProxy::OnSessionMessage(const nsAString& aSessionId,
 }
 
 void
-CDMProxy::OnKeysChange(const nsAString& aSessionId)
+CDMProxy::OnKeyStatusesChange(const nsAString& aSessionId)
 {
   MOZ_ASSERT(NS_IsMainThread());
   if (mKeys.IsNull()) {
@@ -444,7 +444,7 @@ CDMProxy::OnKeysChange(const nsAString& aSessionId)
   }
   nsRefPtr<dom::MediaKeySession> session(mKeys->GetSession(aSessionId));
   if (session) {
-    session->DispatchKeysChange();
+    session->DispatchKeyStatusesChange();
   }
 }
 

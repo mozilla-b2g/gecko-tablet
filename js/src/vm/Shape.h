@@ -16,7 +16,6 @@
 
 #include "jsapi.h"
 #include "jsfriendapi.h"
-#include "jsinfer.h"
 #include "jspropertytree.h"
 #include "jstypes.h"
 #include "NamespaceImports.h"
@@ -29,6 +28,7 @@
 #include "js/MemoryMetrics.h"
 #include "js/RootingAPI.h"
 #include "js/UbiNode.h"
+#include "vm/ObjectGroup.h"
 #include "vm/PropDesc.h"
 
 #ifdef _MSC_VER
@@ -227,9 +227,6 @@ class ShapeTable {
     bool change(int log2Delta, ExclusiveContext *cx);
     Entry &search(jsid id, bool adding);
 
-    /* Update entries whose shapes have been moved */
-    void fixupAfterMovingGC();
-
   private:
     Entry &getEntry(uint32_t i) const {
         MOZ_ASSERT(i < capacity());
@@ -391,7 +388,7 @@ class BaseShape : public gc::TenuredCell
         HAD_ELEMENTS_ACCESS =   0x80,
         WATCHED             =  0x100,
         ITERATED_SINGLETON  =  0x200,
-        NEW_TYPE_UNKNOWN    =  0x400,
+        NEW_GROUP_UNKNOWN   =  0x400,
         UNCACHEABLE_PROTO   =  0x800,
         IMMUTABLE_PROTOTYPE = 0x1000,
 
@@ -532,7 +529,7 @@ class BaseShape : public gc::TenuredCell
             gc::MarkObject(trc, &metadata, "metadata");
     }
 
-    void fixupAfterMovingGC();
+    void fixupAfterMovingGC() {}
     bool fixupBaseShapeTableEntry();
 
   private:
@@ -582,8 +579,6 @@ BaseShape::baseUnowned()
 /* Entries for the per-compartment baseShapes set of unowned base shapes. */
 struct StackBaseShape : public DefaultHasher<ReadBarrieredUnownedBaseShape>
 {
-    typedef const StackBaseShape *Lookup;
-
     uint32_t flags;
     const Class *clasp;
     JSObject *parent;
@@ -602,8 +597,50 @@ struct StackBaseShape : public DefaultHasher<ReadBarrieredUnownedBaseShape>
                           JSObject *parent, JSObject *metadata, uint32_t objectFlags);
     explicit inline StackBaseShape(Shape *shape);
 
-    static inline HashNumber hash(const StackBaseShape *lookup);
-    static inline bool match(UnownedBaseShape *key, const StackBaseShape *lookup);
+    struct Lookup
+    {
+        uint32_t flags;
+        const Class *clasp;
+        JSObject *hashParent;
+        JSObject *matchParent;
+        JSObject *hashMetadata;
+        JSObject *matchMetadata;
+
+        MOZ_IMPLICIT Lookup(const StackBaseShape &base)
+          : flags(base.flags),
+            clasp(base.clasp),
+            hashParent(base.parent),
+            matchParent(base.parent),
+            hashMetadata(base.metadata),
+            matchMetadata(base.metadata)
+        {}
+
+        MOZ_IMPLICIT Lookup(UnownedBaseShape *base)
+          : flags(base->getObjectFlags()),
+            clasp(base->clasp()),
+            hashParent(base->getObjectParent()),
+            matchParent(base->getObjectParent()),
+            hashMetadata(base->getObjectMetadata()),
+            matchMetadata(base->getObjectMetadata())
+        {
+            MOZ_ASSERT(!base->isOwned());
+        }
+
+        // For use by generational GC post barriers.
+        Lookup(uint32_t flags, const Class *clasp,
+               JSObject *hashParent, JSObject *matchParent,
+               JSObject *hashMetadata, JSObject *matchMetadata)
+          : flags(flags),
+            clasp(clasp),
+            hashParent(hashParent),
+            matchParent(matchParent),
+            hashMetadata(hashMetadata),
+            matchMetadata(matchMetadata)
+        {}
+    };
+
+    static inline HashNumber hash(const Lookup& lookup);
+    static inline bool match(UnownedBaseShape *key, const Lookup& lookup);
 
     // For RootedGeneric<StackBaseShape*>
     void trace(JSTracer *trc);
@@ -797,8 +834,8 @@ class Shape : public gc::TenuredCell
                                   JSObject *obj, TaggedProto proto, Shape *last);
     static Shape *setObjectMetadata(JSContext *cx,
                                     JSObject *metadata, TaggedProto proto, Shape *last);
-    static Shape *setObjectFlag(ExclusiveContext *cx,
-                                BaseShape::Flag flag, TaggedProto proto, Shape *last);
+    static Shape *setObjectFlags(ExclusiveContext *cx,
+                                 BaseShape::Flag flag, TaggedProto proto, Shape *last);
 
     uint32_t getObjectFlags() const { return base()->getObjectFlags(); }
     bool hasObjectFlag(BaseShape::Flag flag) const {
@@ -922,7 +959,8 @@ class Shape : public gc::TenuredCell
                setter() == rawSetter;
     }
 
-    bool set(JSContext* cx, HandleObject obj, HandleObject receiver, bool strict, MutableHandleValue vp);
+    bool set(JSContext* cx, HandleNativeObject obj, HandleObject receiver, bool strict,
+             MutableHandleValue vp);
 
     BaseShape *base() const { return base_.get(); }
 
@@ -1157,11 +1195,11 @@ struct EmptyShape : public js::Shape
      * shape if none was found.
      */
     static Shape *getInitialShape(ExclusiveContext *cx, const Class *clasp,
-                                  TaggedProto proto, JSObject *metadata,
-                                  JSObject *parent, size_t nfixed, uint32_t objectFlags = 0);
+                                  TaggedProto proto, JSObject *parent,
+                                  JSObject *metadata, size_t nfixed, uint32_t objectFlags = 0);
     static Shape *getInitialShape(ExclusiveContext *cx, const Class *clasp,
-                                  TaggedProto proto, JSObject *metadata,
-                                  JSObject *parent, gc::AllocKind kind, uint32_t objectFlags = 0);
+                                  TaggedProto proto, JSObject *parent,
+                                  JSObject *metadata, gc::AllocKind kind, uint32_t objectFlags = 0);
 
     /*
      * Reinsert an alternate initial shape, to be returned by future
@@ -1495,8 +1533,9 @@ template<> struct RootKind<BaseShape *> : SpecificRootKind<BaseShape *, THING_RO
 // properties of non-native objects, and dense elements for native objects.
 // Use separate APIs for these two cases.
 
+template <AllowGC allowGC>
 static inline void
-MarkNonNativePropertyFound(MutableHandleShape propp)
+MarkNonNativePropertyFound(typename MaybeRooted<Shape*, allowGC>::MutableHandleType propp)
 {
     propp.set(reinterpret_cast<Shape*>(1));
 }
@@ -1513,6 +1552,10 @@ IsImplicitDenseOrTypedArrayElement(Shape *prop)
 {
     return prop == reinterpret_cast<Shape*>(1);
 }
+
+Shape *
+ReshapeForParentAndAllocKind(JSContext *cx, Shape *shape, TaggedProto proto, JSObject *parent,
+                             gc::AllocKind allocKind);
 
 } // namespace js
 

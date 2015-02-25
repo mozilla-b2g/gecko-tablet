@@ -214,8 +214,7 @@ function checkPayloadInfo(payload, reason) {
   }
 }
 
-function checkPayload(request, reason, successfulPings) {
-  let payload = decodeRequestPayload(request);
+function checkPayload(request, payload, reason, successfulPings) {
   // Take off ["","submit","telemetry"].
   let pathComponents = request.path.split("/").slice(3);
 
@@ -259,7 +258,7 @@ function checkPayload(request, reason, successfulPings) {
   do_check_true(TELEMETRY_TEST_FLAG in payload.histograms);
   do_check_true(TELEMETRY_TEST_COUNT in payload.histograms);
 
-  let rh = Telemetry.registeredHistograms([]);
+  let rh = Telemetry.registeredHistograms(Ci.nsITelemetry.DATASET_RELEASE_CHANNEL_OPTIN, []);
   for (let name of rh) {
     if (/SQLITE/.test(name) && name in payload.histograms) {
       do_check_true(("STARTUP_" + name) in payload.histograms); 
@@ -599,11 +598,11 @@ add_task(function* test_saveLoadPing() {
 
   // Check we have the correct two requests. Ordering is not guaranteed.
   if (payload1.info.reason === "test-ping") {
-    checkPayloadInfo(payload1, "test-ping");
-    checkPayloadInfo(payload2, "saved-session");
+    checkPayload(request1, payload1, "test-ping", 1);
+    checkPayload(request2, payload2, "saved-session", 1);
   } else {
-    checkPayloadInfo(payload1, "saved-session");
-    checkPayloadInfo(payload2, "test-ping");
+    checkPayload(request1, payload1, "saved-session", 1);
+    checkPayload(request2, payload2, "test-ping", 1);
   }
 });
 

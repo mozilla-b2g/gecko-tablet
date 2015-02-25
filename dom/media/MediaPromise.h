@@ -62,6 +62,10 @@ public:
   typedef RejectValueT RejectValueType;
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MediaPromise)
+
+protected:
+  // MediaPromise is the public type, and never constructed directly. Construct
+  // a MediaPromise::Private, defined below.
   explicit MediaPromise(const char* aCreationSite)
     : mCreationSite(aCreationSite)
     , mMutex("MediaPromise Mutex")
@@ -70,20 +74,30 @@ public:
     PROMISE_LOG("%s creating MediaPromise (%p)", mCreationSite, this);
   }
 
+public:
+  // MediaPromise::Private allows us to separate the public interface (upon which
+  // consumers of the promise may invoke methods like Then()) from the private
+  // interface (upon which the creator of the promise may invoke Resolve() or
+  // Reject()). APIs should create and store a MediaPromise::Private (usually
+  // via a MediaPromiseHolder), and return a MediaPromise to consumers.
+  //
+  // NB: We can include the definition of this class inline once B2G ICS is gone.
+  class Private;
+
   static nsRefPtr<MediaPromise>
   CreateAndResolve(ResolveValueType aResolveValue, const char* aResolveSite)
   {
-    nsRefPtr<MediaPromise> p = new MediaPromise(aResolveSite);
+    nsRefPtr<typename MediaPromise::Private> p = new MediaPromise::Private(aResolveSite);
     p->Resolve(aResolveValue, aResolveSite);
-    return p;
+    return Move(p);
   }
 
   static nsRefPtr<MediaPromise>
   CreateAndReject(RejectValueType aRejectValue, const char* aRejectSite)
   {
-    nsRefPtr<MediaPromise> p = new MediaPromise(aRejectSite);
+    nsRefPtr<typename MediaPromise::Private> p = new MediaPromise::Private(aRejectSite);
     p->Reject(aRejectValue, aRejectSite);
-    return p;
+    return Move(p);
   }
 
   class Consumer
@@ -94,7 +108,7 @@ public:
     void Disconnect()
     {
       AssertOnDispatchThread();
-      MOZ_RELEASE_ASSERT(!mComplete);
+      MOZ_DIAGNOSTIC_ASSERT(!mComplete);
       mDisconnected = true;
     }
 
@@ -240,8 +254,7 @@ protected:
     }
 
 #ifdef DEBUG
-  // Can't mark MOZ_OVERRIDE due to bug in clang builders we use for osx b2g desktop. :-(
-  virtual void AssertOnDispatchThread()
+  virtual void AssertOnDispatchThread() MOZ_OVERRIDE
   {
     detail::AssertOnThread(mResponseTarget);
   }
@@ -253,6 +266,9 @@ protected:
       Consumer::mComplete = true;
       if (Consumer::mDisconnected) {
         PROMISE_LOG("ThenValue::DoResolve disconnected - bailing out [this=%p]", this);
+        // Null these out for the same reasons described below.
+        mResponseTarget = nullptr;
+        mThisVal = nullptr;
         return;
       }
       InvokeCallbackMethod(mThisVal.get(), mResolveMethod, aResolveValue);
@@ -270,6 +286,9 @@ protected:
       Consumer::mComplete = true;
       if (Consumer::mDisconnected) {
         PROMISE_LOG("ThenValue::DoReject disconnected - bailing out [this=%p]", this);
+        // Null these out for the same reasons described below.
+        mResponseTarget = nullptr;
+        mThisVal = nullptr;
         return;
       }
       InvokeCallbackMethod(mThisVal.get(), mRejectMethod, aRejectValue);
@@ -296,7 +315,7 @@ public:
                                          ResolveMethodType aResolveMethod, RejectMethodType aRejectMethod)
   {
     MutexAutoLock lock(mMutex);
-    MOZ_RELEASE_ASSERT(!IsExclusive || !mHaveConsumer);
+    MOZ_DIAGNOSTIC_ASSERT(!IsExclusive || !mHaveConsumer);
     mHaveConsumer = true;
     nsRefPtr<ThenValueBase> thenValue = new ThenValue<TargetType, ThisType, ResolveMethodType,
                                                       RejectMethodType>(aResponseTarget, aThisVal,
@@ -323,12 +342,12 @@ public:
     return;
   }
 
-  void ChainTo(already_AddRefed<MediaPromise> aChainedPromise, const char* aCallSite)
+  void ChainTo(already_AddRefed<Private> aChainedPromise, const char* aCallSite)
   {
     MutexAutoLock lock(mMutex);
-    MOZ_RELEASE_ASSERT(!IsExclusive || !mHaveConsumer);
+    MOZ_DIAGNOSTIC_ASSERT(!IsExclusive || !mHaveConsumer);
     mHaveConsumer = true;
-    nsRefPtr<MediaPromise> chainedPromise = aChainedPromise;
+    nsRefPtr<Private> chainedPromise = aChainedPromise;
     PROMISE_LOG("%s invoking Chain() [this=%p, chainedPromise=%p, isPending=%d]",
                 aCallSite, this, chainedPromise.get(), (int) IsPending());
     if (!IsPending()) {
@@ -336,24 +355,6 @@ public:
     } else {
       mChainedPromises.AppendElement(chainedPromise);
     }
-  }
-
-  void Resolve(ResolveValueType aResolveValue, const char* aResolveSite)
-  {
-    MutexAutoLock lock(mMutex);
-    MOZ_ASSERT(IsPending());
-    PROMISE_LOG("%s resolving MediaPromise (%p created at %s)", aResolveSite, this, mCreationSite);
-    mResolveValue.emplace(aResolveValue);
-    DispatchAll();
-  }
-
-  void Reject(RejectValueType aRejectValue, const char* aRejectSite)
-  {
-    MutexAutoLock lock(mMutex);
-    MOZ_ASSERT(IsPending());
-    PROMISE_LOG("%s rejecting MediaPromise (%p created at %s)", aRejectSite, this, mCreationSite);
-    mRejectValue.emplace(aRejectValue);
-    DispatchAll();
   }
 
 protected:
@@ -372,7 +373,7 @@ protected:
     mChainedPromises.Clear();
   }
 
-  void ForwardTo(MediaPromise* aOther)
+  void ForwardTo(Private* aOther)
   {
     MOZ_ASSERT(!IsPending());
     if (mResolveValue.isSome()) {
@@ -395,8 +396,34 @@ protected:
   Maybe<ResolveValueType> mResolveValue;
   Maybe<RejectValueType> mRejectValue;
   nsTArray<nsRefPtr<ThenValueBase>> mThenValues;
-  nsTArray<nsRefPtr<MediaPromise>> mChainedPromises;
+  nsTArray<nsRefPtr<Private>> mChainedPromises;
   bool mHaveConsumer;
+};
+
+template<typename ResolveValueT, typename RejectValueT, bool IsExclusive>
+class MediaPromise<ResolveValueT, RejectValueT, IsExclusive>::Private
+  : public MediaPromise<ResolveValueT, RejectValueT, IsExclusive>
+{
+public:
+  explicit Private(const char* aCreationSite) : MediaPromise(aCreationSite) {}
+
+  void Resolve(ResolveValueT aResolveValue, const char* aResolveSite)
+  {
+    MutexAutoLock lock(mMutex);
+    MOZ_ASSERT(IsPending());
+    PROMISE_LOG("%s resolving MediaPromise (%p created at %s)", aResolveSite, this, mCreationSite);
+    mResolveValue.emplace(aResolveValue);
+    DispatchAll();
+  }
+
+  void Reject(RejectValueT aRejectValue, const char* aRejectSite)
+  {
+    MutexAutoLock lock(mMutex);
+    MOZ_ASSERT(IsPending());
+    PROMISE_LOG("%s rejecting MediaPromise (%p created at %s)", aRejectSite, this, mCreationSite);
+    mRejectValue.emplace(aRejectValue);
+    DispatchAll();
+  }
 };
 
 /*
@@ -417,9 +444,9 @@ public:
       mMonitor->AssertCurrentThreadOwns();
     }
     if (!mPromise) {
-      mPromise = new PromiseType(aMethodName);
+      mPromise = new (typename PromiseType::Private)(aMethodName);
     }
-    nsRefPtr<PromiseType> p = mPromise;
+    nsRefPtr<PromiseType> p = mPromise.get();
     return p.forget();
   }
 
@@ -434,13 +461,13 @@ public:
     return !mPromise;
   }
 
-  already_AddRefed<PromiseType> Steal()
+  already_AddRefed<typename PromiseType::Private> Steal()
   {
     if (mMonitor) {
       mMonitor->AssertCurrentThreadOwns();
     }
 
-    nsRefPtr<PromiseType> p = mPromise;
+    nsRefPtr<typename PromiseType::Private> p = mPromise;
     mPromise = nullptr;
     return p.forget();
   }
@@ -485,7 +512,7 @@ public:
 
 private:
   Monitor* mMonitor;
-  nsRefPtr<PromiseType> mPromise;
+  nsRefPtr<typename PromiseType::Private> mPromise;
 };
 
 /*
@@ -501,13 +528,13 @@ public:
 
   void Begin(already_AddRefed<typename PromiseType::Consumer> aConsumer)
   {
-    MOZ_RELEASE_ASSERT(!Exists());
+    MOZ_DIAGNOSTIC_ASSERT(!Exists());
     mConsumer = aConsumer;
   }
 
   void Complete()
   {
-    MOZ_RELEASE_ASSERT(Exists());
+    MOZ_DIAGNOSTIC_ASSERT(Exists());
     mConsumer = nullptr;
   }
 
@@ -530,6 +557,113 @@ public:
 private:
   nsRefPtr<typename PromiseType::Consumer> mConsumer;
 };
+
+// Proxy Media Calls.
+//
+// This machinery allows callers to schedule a promise-returning method to be
+// invoked asynchronously on a given thread, while at the same time receiving
+// a promise upon which to invoke Then() immediately. ProxyMediaCall dispatches
+// a task to invoke the method on the proper thread and also chain the resulting
+// promise to the one that the caller received, so that resolve/reject values
+// are forwarded through.
+
+namespace detail {
+
+template<typename PromiseType>
+class MethodCallBase
+{
+public:
+  MethodCallBase() { MOZ_COUNT_CTOR(MethodCallBase); }
+  virtual nsRefPtr<PromiseType> Invoke() = 0;
+  virtual ~MethodCallBase() { MOZ_COUNT_DTOR(MethodCallBase); };
+};
+
+template<typename PromiseType, typename ThisType>
+class MethodCallWithNoArgs : public MethodCallBase<PromiseType>
+{
+public:
+  typedef nsRefPtr<PromiseType>(ThisType::*Type)();
+  MethodCallWithNoArgs(ThisType* aThisVal, Type aMethod)
+    : mThisVal(aThisVal), mMethod(aMethod) {}
+  nsRefPtr<PromiseType> Invoke() MOZ_OVERRIDE { return ((*mThisVal).*mMethod)(); }
+protected:
+  nsRefPtr<ThisType> mThisVal;
+  Type mMethod;
+};
+
+// NB: MethodCallWithOneArg definition should go here, if/when it is needed.
+
+template<typename PromiseType, typename ThisType, typename Arg1Type, typename Arg2Type>
+class MethodCallWithTwoArgs : public MethodCallBase<PromiseType>
+{
+public:
+  typedef nsRefPtr<PromiseType>(ThisType::*Type)(Arg1Type, Arg2Type);
+  MethodCallWithTwoArgs(ThisType* aThisVal, Type aMethod, Arg1Type aArg1, Arg2Type aArg2)
+    : mThisVal(aThisVal), mMethod(aMethod), mArg1(aArg1), mArg2(aArg2) {}
+  nsRefPtr<PromiseType> Invoke() MOZ_OVERRIDE { return ((*mThisVal).*mMethod)(mArg1, mArg2); }
+protected:
+  nsRefPtr<ThisType> mThisVal;
+  Type mMethod;
+  Arg1Type mArg1;
+  Arg2Type mArg2;
+};
+
+template<typename PromiseType>
+class ProxyRunnable : public nsRunnable
+{
+public:
+  ProxyRunnable(typename PromiseType::Private* aProxyPromise, MethodCallBase<PromiseType>* aMethodCall)
+    : mProxyPromise(aProxyPromise), mMethodCall(aMethodCall) {}
+
+  NS_IMETHODIMP Run()
+  {
+    nsRefPtr<PromiseType> p = mMethodCall->Invoke();
+    mMethodCall = nullptr;
+    p->ChainTo(mProxyPromise.forget(), "<Proxy Promise>");
+    return NS_OK;
+  }
+
+private:
+  nsRefPtr<typename PromiseType::Private> mProxyPromise;
+  nsAutoPtr<MethodCallBase<PromiseType>> mMethodCall;
+};
+
+template<typename PromiseType, typename TargetType>
+static nsRefPtr<PromiseType>
+ProxyInternal(TargetType* aTarget, MethodCallBase<PromiseType>* aMethodCall, const char* aCallerName)
+{
+  nsRefPtr<typename PromiseType::Private> p = new (typename PromiseType::Private)(aCallerName);
+  nsRefPtr<ProxyRunnable<PromiseType>> r = new ProxyRunnable<PromiseType>(p, aMethodCall);
+  nsresult rv = detail::DispatchMediaPromiseRunnable(aTarget, r);
+  MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv));
+  (void) rv; // Avoid compilation failures in builds with MOZ_DIAGNOSTIC_ASSERT disabled.
+  return Move(p);
+}
+
+} // namespace detail
+
+template<typename PromiseType, typename TargetType, typename ThisType>
+static nsRefPtr<PromiseType>
+ProxyMediaCall(TargetType* aTarget, ThisType* aThisVal, const char* aCallerName,
+               nsRefPtr<PromiseType>(ThisType::*aMethod)())
+{
+  typedef detail::MethodCallWithNoArgs<PromiseType, ThisType> MethodCallType;
+  MethodCallType* methodCall = new MethodCallType(aThisVal, aMethod);
+  return detail::ProxyInternal(aTarget, methodCall, aCallerName);
+}
+
+// NB: One-arg overload should go here, if/when it is needed.
+
+template<typename PromiseType, typename TargetType, typename ThisType,
+         typename Arg1Type, typename Arg2Type>
+static nsRefPtr<PromiseType>
+ProxyMediaCall(TargetType* aTarget, ThisType* aThisVal, const char* aCallerName,
+               nsRefPtr<PromiseType>(ThisType::*aMethod)(Arg1Type, Arg2Type), Arg1Type aArg1, Arg2Type aArg2)
+{
+  typedef detail::MethodCallWithTwoArgs<PromiseType, ThisType, Arg1Type, Arg2Type> MethodCallType;
+  MethodCallType* methodCall = new MethodCallType(aThisVal, aMethod, aArg1, aArg2);
+  return detail::ProxyInternal(aTarget, methodCall, aCallerName);
+}
 
 #undef PROMISE_LOG
 

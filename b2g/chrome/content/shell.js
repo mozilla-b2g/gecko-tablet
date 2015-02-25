@@ -70,6 +70,11 @@ XPCOMUtils.defineLazyServiceGetter(Services, 'captivePortalDetector',
                                   'nsICaptivePortalDetector');
 #endif
 
+#ifdef MOZ_SAFE_BROWSING
+XPCOMUtils.defineLazyModuleGetter(this, "SafeBrowsing",
+              "resource://gre/modules/SafeBrowsing.jsm");
+#endif
+
 function getContentWindow() {
   return shell.contentBrowser.contentWindow;
 }
@@ -306,8 +311,7 @@ var shell = {
     systemAppFrame.setAttribute('mozbrowser', 'true');
     systemAppFrame.setAttribute('mozapp', manifestURL);
     systemAppFrame.setAttribute('allowfullscreen', 'true');
-    systemAppFrame.setAttribute('style', "overflow: hidden; height: 100%; width: 100%; border: none; position: absolute; left: 0; top: 0; right: 0; bottom: 0;");
-    systemAppFrame.setAttribute('src', "data:text/html;charset=utf-8,%3C!DOCTYPE html>%3Cbody style='background:black;");
+    systemAppFrame.setAttribute('src', 'blank.html');
     let container = document.getElementById('container');
 #ifdef MOZ_WIDGET_COCOA
     // See shell.html
@@ -347,7 +351,6 @@ var shell = {
     this.contentBrowser.addEventListener('mozbrowserloadstart', this, true);
     this.contentBrowser.addEventListener('mozbrowserselectionstatechanged', this, true);
     this.contentBrowser.addEventListener('mozbrowserscrollviewchange', this, true);
-    this.contentBrowser.addEventListener('mozbrowsertouchcarettap', this, true);
 
     CustomEventManager.init();
     WebappsHelper.init();
@@ -362,6 +365,11 @@ var shell = {
     ppmm.addMessageListener("sms-handler", this);
     ppmm.addMessageListener("mail-handler", this);
     ppmm.addMessageListener("file-picker", this);
+#ifdef MOZ_SAFE_BROWSING
+    setTimeout(function() {
+      SafeBrowsing.init();
+    }, 5000);
+#endif
   },
 
   stop: function shell_stop() {
@@ -374,7 +382,6 @@ var shell = {
     this.contentBrowser.removeEventListener('mozbrowserloadstart', this, true);
     this.contentBrowser.removeEventListener('mozbrowserselectionstatechanged', this, true);
     this.contentBrowser.removeEventListener('mozbrowserscrollviewchange', this, true);
-    this.contentBrowser.removeEventListener('mozbrowsertouchcarettap', this, true);
     ppmm.removeMessageListener("content-handler", this);
 
     UserAgentOverrides.uninit();
@@ -466,12 +473,6 @@ var shell = {
       case 'mozbrowserscrollviewchange':
         this.sendChromeEvent({
           type: 'scrollviewchange',
-          detail: evt.detail,
-        });
-        break;
-      case 'mozbrowsertouchcarettap':
-        this.sendChromeEvent({
-          type: 'touchcarettap',
           detail: evt.detail,
         });
         break;
@@ -627,6 +628,10 @@ var shell = {
     content.addEventListener('load', function shell_homeLoaded() {
       content.removeEventListener('load', shell_homeLoaded);
       shell.isHomeLoaded = true;
+
+      if (Services.prefs.getBoolPref('b2g.orientation.animate')) {
+        Cu.import('resource://gre/modules/OrientationChangeHandler.jsm');
+      }
 
 #ifdef MOZ_WIDGET_GONK
       libcutils.property_set('sys.boot_completed', '1');
@@ -1167,20 +1172,3 @@ Services.obs.addObserver(function resetProfile(subject, topic, data) {
                      .getService(Ci.nsIAppStartup);
   appStartup.quit(Ci.nsIAppStartup.eForceQuit);
 }, 'b2g-reset-profile', false);
-
-/**
-  * CID of our implementation of nsITransfer.
-  */
-const kTransferCid = Components.ID("{1b4c85df-cbdd-4bb6-b04e-613caece083c}");
-
-/**
-  * Contract ID of the service implementing nsITransfer.
-  */
-const kTransferContractId = "@mozilla.org/transfer;1";
-
-// Override Toolkit's nsITransfer implementation with the one from the
-// JavaScript API for downloads.  This will eventually be removed when
-// nsIDownloadManager will not be available anymore (bug 851471).
-Components.manager.QueryInterface(Ci.nsIComponentRegistrar)
-                  .registerFactory(kTransferCid, "",
-                                   kTransferContractId, null);

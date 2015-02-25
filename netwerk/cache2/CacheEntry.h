@@ -113,7 +113,7 @@ public:
 
   // Accessed only on the service management thread
   double mFrecency;
-  uint32_t mSortingExpirationTime;
+  ::mozilla::Atomic<uint32_t, ::mozilla::Relaxed> mSortingExpirationTime;
 
   // Memory reporting
   size_t SizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
@@ -152,6 +152,7 @@ private:
     nsCOMPtr<nsICacheEntryOpenCallback> mCallback;
     nsCOMPtr<nsIThread> mTargetThread;
     bool mReadOnly : 1;
+    bool mRevalidating : 1;
     bool mCheckOnAnyThread : 1;
     bool mRecheckAfterWrite : 1;
     bool mNotWanted : 1;
@@ -265,7 +266,11 @@ private:
   nsCOMPtr<nsICacheEntryDoomCallback> mDoomCallback;
 
   nsRefPtr<CacheFile> mFile;
-  nsresult mFileStatus;
+
+  // Using ReleaseAcquire since we only control access to mFile with this.
+  // When mFileStatus is read and found success it is ensured there is mFile and
+  // that it is after a successful call to Init().
+  ::mozilla::Atomic<nsresult, ::mozilla::ReleaseAcquire> mFileStatus;
   nsCOMPtr<nsIURI> mURI;
   nsCString mEnhanceID;
   nsCString mStorageID;

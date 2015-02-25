@@ -566,7 +566,7 @@ this.BrowserUITelemetry = {
     if (Components.isSuccessCode(searchResult)) {
       result.currentSearchEngine = Services.search.currentEngine.name;
     }
-
+    result.oneOffSearchEnabled = Services.prefs.getBoolPref("browser.search.showOneOffButtons");
     return result;
   },
 
@@ -597,6 +597,10 @@ this.BrowserUITelemetry = {
 
   countSearchSettingsEvent: function(source) {
     this._countEvent(["click-builtin-item", source, "search-settings"]);
+  },
+
+  countPanicEvent: function(timeId) {
+    this._countEvent(["forget-button", timeId]);
   },
 
   _logAwesomeBarSearchResult: function (url) {
@@ -669,6 +673,7 @@ this.BrowserUITelemetry = {
     "spell-add-dictionaries-main", "spell-dictionaries",
     "spell-dictionaries-menu", "spell-add-dictionaries",
     "bidi-text-direction-toggle", "bidi-page-direction-toggle", "inspect",
+    "media-eme-learn-more"
   ]),
 
   _contextMenuInteractions: {},

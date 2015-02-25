@@ -1,24 +1,29 @@
+/* -*- Mode: Java; c-basic-offset: 4; tab-width: 20; indent-tabs-mode: nil; -*-
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.gecko;
 
-import java.text.DecimalFormat;
-
-import java.nio.ByteBuffer;
+import org.mozilla.gecko.gfx.ImmutableViewportMetrics;
+import org.mozilla.gecko.gfx.LayerView;
+import org.mozilla.gecko.gfx.PanZoomController;
+import org.mozilla.gecko.gfx.PointUtils;
+import org.mozilla.gecko.mozglue.DirectBufferAllocator;
+import org.mozilla.gecko.util.GeckoEventListener;
+import org.mozilla.gecko.util.ThreadUtils;
 
 import org.json.JSONException;
 import org.json.JSONObject;
-import org.mozilla.gecko.gfx.ImmutableViewportMetrics;
-import org.mozilla.gecko.gfx.LayerView;
-import org.mozilla.gecko.util.GeckoEventListener;
-import org.mozilla.gecko.util.ThreadUtils;
-import org.mozilla.gecko.mozglue.DirectBufferAllocator;
 
 import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
-import android.graphics.Matrix;
-import android.graphics.PointF;
-import android.graphics.drawable.BitmapDrawable;
 import android.graphics.BitmapFactory;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.Matrix;
+import android.graphics.Point;
+import android.graphics.PointF;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.MotionEvent;
@@ -28,39 +33,42 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.RelativeLayout;
 
+import java.nio.ByteBuffer;
+import java.text.DecimalFormat;
+
 public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChangedListener,
-        LayerView.OnZoomedViewListener, GeckoEventListener {
+        LayerView.ZoomedViewListener, GeckoEventListener {
     private static final String LOGTAG = "Gecko" + ZoomedView.class.getSimpleName();
 
-    private static final int ZOOM_FACTOR = 2;
+    private static final int DEFAULT_ZOOM_FACTOR = 3;
     private static final int W_CAPTURED_VIEW_IN_PERCENT = 80;
     private static final int H_CAPTURED_VIEW_IN_PERCENT = 50;
     private static final int MINIMUM_DELAY_BETWEEN_TWO_RENDER_CALLS_NS = 1000000;
     private static final int DELAY_BEFORE_NEXT_RENDER_REQUEST_MS = 2000;
 
+    private int zoomFactor;
     private ImageView zoomedImageView;
     private LayerView layerView;
-    private MotionEvent actionDownEvent;
     private int viewWidth;
     private int viewHeight;
-    private int xLastPosition;
-    private int yLastPosition;
+    private Point lastPosition;
     private boolean shouldSetVisibleOnUpdate;
     private PointF returnValue;
 
     private boolean stopUpdateView;
 
-    private int lastOrientation = 0;
+    private int lastOrientation;
 
     private ByteBuffer buffer;
     private Runnable requestRenderRunnable;
-    private long startTimeReRender = 0;
-    private long lastStartTimeReRender = 0;
+    private long startTimeReRender;
+    private long lastStartTimeReRender;
 
     private class ZoomedViewTouchListener implements View.OnTouchListener {
         private float originRawX;
         private float originRawY;
-        private int touchState;
+        private boolean dragged;
+        private MotionEvent actionDownEvent;
 
         @Override
         public boolean onTouch(View view, MotionEvent event) {
@@ -71,14 +79,16 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
             switch (event.getAction()) {
             case MotionEvent.ACTION_MOVE:
                 if (moveZoomedView(event)) {
-                    touchState = MotionEvent.ACTION_MOVE;
+                    dragged = true;
                 }
                 break;
 
             case MotionEvent.ACTION_UP:
-                if (touchState == MotionEvent.ACTION_MOVE) {
-                    touchState = -1;
+                if (dragged) {
+                    dragged = false;
                 } else {
+                    GeckoEvent eClickInZoomedView = GeckoEvent.createBroadcastEvent("Gesture:ClickInZoomedView", "");
+                    GeckoAppShell.sendEventToGecko(eClickInZoomedView);
                     layerView.dispatchTouchEvent(actionDownEvent);
                     actionDownEvent.recycle();
                     PointF convertedPosition = getUnzoomedPositionFromPointInZoomedView(event.getX(), event.getY());
@@ -91,7 +101,7 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
                 break;
 
             case MotionEvent.ACTION_DOWN:
-                touchState = -1;
+                dragged = false;
                 originRawX = event.getRawX();
                 originRawY = event.getRawY();
                 PointF convertedPosition = getUnzoomedPositionFromPointInZoomedView(event.getX(), event.getY());
@@ -105,8 +115,8 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
 
         private boolean moveZoomedView(MotionEvent event) {
             RelativeLayout.LayoutParams params = (RelativeLayout.LayoutParams) ZoomedView.this.getLayoutParams();
-            if ((touchState != MotionEvent.ACTION_MOVE) && (Math.abs((int) (event.getRawX() - originRawX)) < 1)
-                    && (Math.abs((int) (event.getRawY() - originRawY)) < 1)) {
+            if ((!dragged) && (Math.abs((int) (event.getRawX() - originRawX)) < PanZoomController.CLICK_THRESHOLD)
+                    && (Math.abs((int) (event.getRawY() - originRawY)) < PanZoomController.CLICK_THRESHOLD)) {
                 // When the user just touches the screen ACTION_MOVE can be detected for a very small delta on position.
                 // In this case, the move is ignored if the delta is lower than 1 unit.
                 return false;
@@ -177,7 +187,7 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
         final float parentHeight = metrics.getHeight();
         RelativeLayout.LayoutParams params = (RelativeLayout.LayoutParams) getLayoutParams();
 
-        returnValue.x = (int) ((x / ZOOM_FACTOR) +     // Conversion of the x offset inside the zoomed view (using the scale factor)
+        returnValue.x = (int) ((x / zoomFactor) +     // Conversion of the x offset inside the zoomed view (using the scale factor)
 
                         offset.x +               // The offset of the layerView
 
@@ -185,17 +195,17 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
                          *   Minimum value for the left side of the zoomed view is 0
                          *     and we return 0 after conversion
                          *   Maximum value for the left side of the zoomed view is (parentWidth - offset.x - viewWidth)
-                         *     and we return (parentWidth - offset.x - (viewWidth / ZOOM_FACTOR)) after conversion.
+                         *     and we return (parentWidth - offset.x - (viewWidth / zoomFactor)) after conversion.
                          */
                         (((float) params.leftMargin) - offset.x) *
-                            ((parentWidth - offset.x - (viewWidth / ZOOM_FACTOR)) /
+                            ((parentWidth - offset.x - (viewWidth / zoomFactor)) /
                             (parentWidth - offset.x - viewWidth)));
 
         // Same comments here vertically
-        returnValue.y = (int) ((y / ZOOM_FACTOR) +
+        returnValue.y = (int) ((y / zoomFactor) +
                         offset.y +
                         (((float) params.topMargin) - offset.y) *
-                            ((parentHeight - offset.y - (viewHeight / ZOOM_FACTOR)) /
+                            ((parentHeight - offset.y - (viewHeight / zoomFactor)) /
                             (parentHeight - offset.y - viewHeight)));
 
         return returnValue;
@@ -212,7 +222,7 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
         final float parentWidth = metrics.getWidth();
         final float parentHeight = metrics.getHeight();
 
-        returnValue.x = (int) ((((x - (viewWidth / (2 * ZOOM_FACTOR)))) /   // Translation to get the left side position of the zoomed view
+        returnValue.x = (int) ((((x - (viewWidth / (2 * zoomFactor)))) /   // Translation to get the left side position of the zoomed view
                                                                         // centered on x (the value 2 to get the middle).
 
                         /* Conversion of the left side position of the zoomed view.
@@ -221,14 +231,14 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
                          * and not in a multiplication to convert the position from
                          * the LayerView to the ZoomedView.
                          */
-                        ((parentWidth - offset.x - (viewWidth / ZOOM_FACTOR)) /
+                        ((parentWidth - offset.x - (viewWidth / zoomFactor)) /
                         (parentWidth - offset.x - viewWidth)))
 
                 + offset.x);     // The offset of the layerView
 
         // Same comments here vertically
-        returnValue.y = (int) ((((y - (viewHeight / (2 * ZOOM_FACTOR)))) /
-                        ((parentHeight - offset.y - (viewHeight / ZOOM_FACTOR)) /
+        returnValue.y = (int) ((((y - (viewHeight / (2 * zoomFactor)))) /
+                        ((parentHeight - offset.y - (viewHeight / zoomFactor)) /
                         (parentHeight - offset.y - viewHeight)))
                 + offset.y);
 
@@ -236,10 +246,6 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
     }
 
     private void moveZoomedView(ImmutableViewportMetrics metrics, float newLeftMargin, float newTopMargin) {
-        if (layerView == null) {
-            return;
-        }
-
         final float parentWidth = metrics.getWidth();
         final float parentHeight = metrics.getHeight();
         RelativeLayout.LayoutParams newLayoutParams = (RelativeLayout.LayoutParams) getLayoutParams();
@@ -253,7 +259,7 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
 
         if (newTopMargin < topMarginMin) {
             newLayoutParams.topMargin = topMarginMin;
-        } else if (newTopMargin + viewHeight >= parentHeight) {
+        } else if (newTopMargin + viewHeight > parentHeight) {
             newLayoutParams.topMargin = (int) (parentHeight - viewHeight);
         }
 
@@ -265,8 +271,7 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
 
         setLayoutParams(newLayoutParams);
         PointF convertedPosition = getUnzoomedPositionFromPointInZoomedView(0, 0);
-        xLastPosition = Math.round(convertedPosition.x);
-        yLastPosition = Math.round(convertedPosition.y);
+        lastPosition = PointUtils.round(convertedPosition);
         requestZoomedViewRender();
     }
 
@@ -282,7 +287,7 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
         }
     }
 
-    public void refreshZoomedViewSize(ImmutableViewportMetrics viewport) {
+    private void refreshZoomedViewSize(ImmutableViewportMetrics viewport) {
         if (layerView == null) {
             return;
         }
@@ -292,27 +297,32 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
         moveZoomedView(viewport, params.leftMargin, params.topMargin);
     }
 
-    public void setCapturedSize(ImmutableViewportMetrics metrics) {
-        if (layerView == null) {
-            return;
-        }
+    private void setCapturedSize(ImmutableViewportMetrics metrics) {
         float parentMinSize = Math.min(metrics.getWidth(), metrics.getHeight());
-        viewWidth = (int) (parentMinSize * W_CAPTURED_VIEW_IN_PERCENT / (ZOOM_FACTOR * 100.0)) * ZOOM_FACTOR;
-        viewHeight = (int) (parentMinSize * H_CAPTURED_VIEW_IN_PERCENT / (ZOOM_FACTOR * 100.0)) * ZOOM_FACTOR;
+        // For metrics.zoomFactor lower than 1, the zoom factor of the zoomed view is calculated
+        // to get always the same size for the content in the zoomed view.
+        // For metrics.zoomFactor greater than 1, the zoom factor is always set to the default
+        // value DEFAULT_ZOOM_FACTOR, thus the zoomed view is always a zoom of the normal view.
+        zoomFactor = Math.max(DEFAULT_ZOOM_FACTOR, (int) (DEFAULT_ZOOM_FACTOR / metrics.zoomFactor));
+        viewWidth = (int) (parentMinSize * W_CAPTURED_VIEW_IN_PERCENT / (zoomFactor * 100.0)) * zoomFactor;
+        viewHeight = (int) (parentMinSize * H_CAPTURED_VIEW_IN_PERCENT / (zoomFactor * 100.0)) * zoomFactor;
+        // Display in zoomedview is corrupted when width is an odd number
+        // More details about this issue here: bug 776906 comment 11
+        viewWidth &= ~0x1;
     }
 
-    public void shouldBlockUpdate(boolean shouldBlockUpdate) {
+    private void shouldBlockUpdate(boolean shouldBlockUpdate) {
         stopUpdateView = shouldBlockUpdate;
     }
 
-    public Bitmap.Config getBitmapConfig() {
+    private Bitmap.Config getBitmapConfig() {
         return (GeckoAppShell.getScreenDepth() == 24) ? Bitmap.Config.ARGB_8888 : Bitmap.Config.RGB_565;
     }
 
-    public void startZoomDisplay(LayerView aLayerView, final int leftFromGecko, final int topFromGecko) {
+    private void startZoomDisplay(LayerView aLayerView, final int leftFromGecko, final int topFromGecko) {
         if (layerView == null) {
             layerView = aLayerView;
-            layerView.addOnZoomedViewListener(this);
+            layerView.addZoomedViewListener(this);
             layerView.setOnMetricsChangedZoomedViewportListener(this);
             ImmutableViewportMetrics metrics = layerView.getViewportMetrics();
             setCapturedSize(metrics);
@@ -322,13 +332,13 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
         moveUsingGeckoPosition(leftFromGecko, topFromGecko);
     }
 
-    public void stopZoomDisplay() {
+    private void stopZoomDisplay() {
         shouldSetVisibleOnUpdate = false;
         this.setVisibility(View.GONE);
         ThreadUtils.removeCallbacksFromUiThread(requestRenderRunnable);
         if (layerView != null) {
             layerView.setOnMetricsChangedZoomedViewportListener(null);
-            layerView.removeOnZoomedViewListener(this);
+            layerView.removeZoomedViewListener(this);
             layerView = null;
         }
     }
@@ -362,9 +372,6 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
     }
 
     private void moveUsingGeckoPosition(int leftFromGecko, int topFromGecko) {
-        if (layerView == null) {
-            return;
-        }
         ImmutableViewportMetrics metrics = layerView.getViewportMetrics();
         PointF convertedPosition = getZoomedViewTopLeftPositionFromTouchPosition((leftFromGecko * metrics.zoomFactor),
                 (topFromGecko * metrics.zoomFactor));
@@ -379,9 +386,6 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
         ThreadUtils.postToUiThread(new Runnable() {
             @Override
             public void run() {
-                if (layerView == null) {
-                    return;
-                }
                 shouldBlockUpdate(false);
                 refreshZoomedViewSize(viewport);
             }
@@ -477,11 +481,11 @@ public class ZoomedView extends FrameLayout implements LayerView.OnMetricsChange
         PointF origin = metrics.getOrigin();
         PointF offset = metrics.getMarginOffset();
 
-        final int xPos = (int) (origin.x - offset.x) + xLastPosition;
-        final int yPos = (int) (origin.y - offset.y) + yLastPosition;
+        final int xPos = (int) (origin.x - offset.x) + lastPosition.x;
+        final int yPos = (int) (origin.y - offset.y) + lastPosition.y;
 
         GeckoEvent e = GeckoEvent.createZoomedViewEvent(tabId, xPos, yPos, viewWidth,
-                viewHeight, (float) (2.0 * metrics.zoomFactor), buffer);
+                viewHeight, zoomFactor * metrics.zoomFactor, buffer);
         GeckoAppShell.sendEventToGecko(e);
     }
 

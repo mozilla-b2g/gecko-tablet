@@ -28,14 +28,14 @@ class CodeGeneratorX86 : public CodeGeneratorX86Shared
     ValueOperand ToOutValue(LInstruction *ins);
     ValueOperand ToTempValue(LInstruction *ins, size_t pos);
 
-    template<typename T>
-    void loadAndNoteViewTypeElement(Scalar::Type vt, const T &srcAddr, const LDefinition *out);
-    template<typename T>
-    void load(Scalar::Type vt, const T &srcAddr, const LDefinition *out);
-    template<typename T>
-    void storeAndNoteViewTypeElement(Scalar::Type vt, const LAllocation *value, const T &dstAddr);
-    template<typename T>
-    void store(Scalar::Type vt, const LAllocation *value, const T &dstAddr);
+    void load(Scalar::Type vt, const Operand &srcAddr, const LDefinition *out);
+    void store(Scalar::Type vt, const LAllocation *value, const Operand &dstAddr);
+
+    void loadSimd(Scalar::Type type, unsigned numElems, const Operand &srcAddr, FloatRegister out);
+    void emitSimdLoad(LAsmJSLoadHeap *ins);
+
+    void storeSimd(Scalar::Type type, unsigned numElems, FloatRegister in, const Operand &dstAddr);
+    void emitSimdStore(LAsmJSStoreHeap *ins);
 
     void memoryBarrier(MemoryBarrierBits barrier);
 

@@ -22,7 +22,7 @@ PRLogModuleInfo* GetDemuxerLog();
 namespace mozilla {
 
 WMFMediaDataDecoder::WMFMediaDataDecoder(MFTManager* aMFTManager,
-                                         MediaTaskQueue* aTaskQueue,
+                                         FlushableMediaTaskQueue* aTaskQueue,
                                          MediaDataDecoderCallback* aCallback)
   : mTaskQueue(aTaskQueue)
   , mCallback(aCallback)
@@ -177,6 +177,11 @@ void
 WMFMediaDataDecoder::ReleaseDecoder()
 {
   ReleaseMediaResources();
+}
+
+bool
+WMFMediaDataDecoder::IsHardwareAccelerated() const {
+  return mMFTManager && mMFTManager->IsHardwareAccelerated();
 }
 
 } // namespace mozilla

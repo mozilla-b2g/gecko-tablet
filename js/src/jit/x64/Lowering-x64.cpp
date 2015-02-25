@@ -80,6 +80,15 @@ void
 LIRGeneratorX64::visitUnbox(MUnbox *unbox)
 {
     MDefinition *box = unbox->getOperand(0);
+
+    if (box->type() == MIRType_ObjectOrNull) {
+        LUnboxObjectOrNull *lir = new(alloc()) LUnboxObjectOrNull(useRegisterAtStart(box));
+        if (unbox->fallible())
+            assignSnapshot(lir, unbox->bailoutKind());
+        defineReuseInput(lir, unbox, 0);
+        return;
+    }
+
     MOZ_ASSERT(box->type() == MIRType_Value);
 
     LUnboxBase *lir;
@@ -144,14 +153,11 @@ LIRGeneratorX64::visitAsmJSLoadHeap(MAsmJSLoadHeap *ins)
     MDefinition *ptr = ins->ptr();
     MOZ_ASSERT(ptr->type() == MIRType_Int32);
 
-    // Only a positive index is accepted because a negative offset encoded as an
-    // offset in the addressing mode would not wrap back into the protected area
-    // reserved for the heap. For simplicity (and since we don't care about
-    // getting maximum performance in these cases) only allow constant
-    // opererands when skipping bounds checks.
-    LAllocation ptrAlloc = ins->needsBoundsCheck()
+    // For simplicity, require a register if we're going to emit a bounds-check
+    // branch, so that we don't have special cases for constants.
+    LAllocation ptrAlloc = gen->needsAsmJSBoundsCheckBranch(ins)
                            ? useRegisterAtStart(ptr)
-                           : useRegisterOrNonNegativeConstantAtStart(ptr);
+                           : useRegisterOrZeroAtStart(ptr);
 
     define(new(alloc()) LAsmJSLoadHeap(ptrAlloc), ins);
 }
@@ -162,17 +168,14 @@ LIRGeneratorX64::visitAsmJSStoreHeap(MAsmJSStoreHeap *ins)
     MDefinition *ptr = ins->ptr();
     MOZ_ASSERT(ptr->type() == MIRType_Int32);
 
-    // Only a positive index is accepted because a negative offset encoded as an
-    // offset in the addressing mode would not wrap back into the protected area
-    // reserved for the heap. For simplicity (and since we don't care about
-    // getting maximum performance in these cases) only allow constant
-    // opererands when skipping bounds checks.
-    LAllocation ptrAlloc = ins->needsBoundsCheck()
+    // For simplicity, require a register if we're going to emit a bounds-check
+    // branch, so that we don't have special cases for constants.
+    LAllocation ptrAlloc = gen->needsAsmJSBoundsCheckBranch(ins)
                            ? useRegisterAtStart(ptr)
-                           : useRegisterOrNonNegativeConstantAtStart(ptr);
+                           : useRegisterOrZeroAtStart(ptr);
 
     LAsmJSStoreHeap *lir = nullptr;  // initialize to silence GCC warning
-    switch (ins->viewType()) {
+    switch (ins->accessType()) {
       case Scalar::Int8:
       case Scalar::Uint8:
       case Scalar::Int16:
@@ -191,7 +194,6 @@ LIRGeneratorX64::visitAsmJSStoreHeap(MAsmJSStoreHeap *ins)
       case Scalar::MaxTypedArrayViewType:
         MOZ_CRASH("unexpected array type");
     }
-
     add(lir, ins);
 }
 

@@ -210,7 +210,7 @@ public:
      */
     virtual bool IsFontFormatSupported(nsIURI *aFontURI, uint32_t aFormatFlags);
 
-    virtual bool DidRenderingDeviceReset();
+    virtual bool DidRenderingDeviceReset(DeviceResetReason* aResetReason = nullptr);
 
     // ClearType is not always enabled even when available (e.g. Windows XP)
     // if either of these prefs are enabled and apply, use ClearType rendering
@@ -253,7 +253,11 @@ public:
 
     bool IsWARP() { return mIsWARP; }
 
+    virtual already_AddRefed<mozilla::gfx::VsyncSource> CreateHardwareVsyncSource() MOZ_OVERRIDE;
     static mozilla::Atomic<size_t> sD3D11MemoryUsed;
+    static mozilla::Atomic<size_t> sD3D9MemoryUsed;
+    static mozilla::Atomic<size_t> sD3D9SurfaceImageUsed;
+    static mozilla::Atomic<size_t> sD3D9SharedTextureUsed;
 
 protected:
     RenderMode mRenderMode;

@@ -20,6 +20,10 @@
 #include "nsNPAPIPluginInstance.h"
 #include "nsIWidget.h"
 #include "nsContentUtils.h"
+#ifdef XP_MACOSX
+#include "mozilla/EventDispatcher.h"
+#include "mozilla/dom/Event.h"
+#endif
 
 namespace mozilla {
 namespace dom {
@@ -64,7 +68,7 @@ HTMLObjectElement::DoneAddingChildren(bool aHaveNotified)
 
   // If we're already in a document, we need to trigger the load
   // Otherwise, BindToTree takes care of that.
-  if (IsInDoc()) {
+  if (IsInComposedDoc()) {
     StartObjectLoad(aHaveNotified);
   }
 }
@@ -104,6 +108,55 @@ NS_IMPL_ELEMENT_CLONE(HTMLObjectElement)
 // nsIConstraintValidation
 NS_IMPL_NSICONSTRAINTVALIDATION(HTMLObjectElement)
 
+#ifdef XP_MACOSX
+
+static nsIWidget* GetWidget(Element* aElement)
+{
+  nsIWidget* retval = NULL;
+  nsIFrame* frame = aElement->GetPrimaryFrame();
+  if (frame) {
+    retval = frame->GetNearestWidget();
+  }
+  return retval;
+}
+
+static void OnFocusBlurPlugin(Element* aElement, bool aFocus)
+{
+  nsIWidget* widget = GetWidget(aElement);
+  if (widget) {
+    bool value = aFocus;
+    widget->SetPluginFocused(value);
+  }
+}
+
+void
+HTMLObjectElement::HandleFocusBlurPlugin(Element* aElement,
+                                         WidgetEvent* aEvent)
+{
+  if (!aEvent->mFlags.mIsTrusted) {
+    return;
+  }
+  switch (aEvent->message) {
+    case NS_FOCUS_CONTENT: {
+      OnFocusBlurPlugin(aElement, true);
+      break;
+    }
+    case NS_BLUR_CONTENT: {
+      OnFocusBlurPlugin(aElement, false);
+      break;
+    }
+  }
+}
+
+NS_IMETHODIMP
+HTMLObjectElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
+{
+  HandleFocusBlurPlugin(this, aVisitor.mEvent);
+  return NS_OK;
+}
+
+#endif // #ifdef XP_MACOSX
+
 NS_IMETHODIMP
 HTMLObjectElement::GetForm(nsIDOMHTMLFormElement **aForm)
 {
@@ -111,7 +164,7 @@ HTMLObjectElement::GetForm(nsIDOMHTMLFormElement **aForm)
 }
 
 void
-HTMLObjectElement::GetItemValueText(nsAString& aValue)
+HTMLObjectElement::GetItemValueText(DOMString& aValue)
 {
   GetData(aValue);
 }
@@ -178,7 +231,7 @@ HTMLObjectElement::SetAttr(int32_t aNameSpaceID, nsIAtom *aName,
   // We also don't want to start loading the object when we're not yet in
   // a document, just in case that the caller wants to set additional
   // attributes before inserting the node into the document.
-  if (aNotify && IsInDoc() && mIsDoneAddingChildren &&
+  if (aNotify && IsInComposedDoc() && mIsDoneAddingChildren &&
       aNameSpaceID == kNameSpaceID_None && aName == nsGkAtoms::data) {
     return LoadObject(aNotify, true);
   }
@@ -195,7 +248,7 @@ HTMLObjectElement::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aAttribute,
   NS_ENSURE_SUCCESS(rv, rv);
 
   // See comment in SetAttr
-  if (aNotify && IsInDoc() && mIsDoneAddingChildren &&
+  if (aNotify && IsInComposedDoc() && mIsDoneAddingChildren &&
       aNameSpaceID == kNameSpaceID_None && aAttribute == nsGkAtoms::data) {
     return LoadObject(aNotify, true);
   }
@@ -407,7 +460,7 @@ HTMLObjectElement::StartObjectLoad(bool aNotify)
 {
   // BindToTree can call us asynchronously, and we may be removed from the tree
   // in the interim
-  if (!IsInDoc() || !OwnerDoc()->IsActive()) {
+  if (!IsInComposedDoc() || !OwnerDoc()->IsActive()) {
     return;
   }
 

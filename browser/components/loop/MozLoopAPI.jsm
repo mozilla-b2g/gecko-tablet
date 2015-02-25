@@ -257,6 +257,30 @@ function injectLoopAPI(targetWindow) {
       }
     },
 
+    getActiveTabWindowId: {
+      enumerable: true,
+      writable: true,
+      value: function(callback) {
+        let win = Services.wm.getMostRecentWindow("navigator:browser");
+        let browser = win && win.gBrowser.selectedTab.linkedBrowser;
+        if (!win || !browser) {
+          // This may happen when an undocked conversation window is the only
+          // window left.
+          let err = new Error("No tabs available to share.");
+          MozLoopService.log.error(err);
+          callback(cloneValueInto(err, targetWindow));
+          return;
+        }
+
+        let mm = browser.messageManager;
+        mm.addMessageListener("webrtc:response:StartBrowserSharing", function listener(message) {
+          mm.removeMessageListener("webrtc:response:StartBrowserSharing", listener);
+          callback(null, message.data.windowID);
+        });
+        mm.sendAsyncMessage("webrtc:StartBrowserSharing");
+      }
+    },
+
     /**
      * Returns the window data for a specific conversation window id.
      *
@@ -738,15 +762,33 @@ function injectLoopAPI(targetWindow) {
      * Notifies the UITour module that an event occurred that it might be
      * interested in.
      *
-     * @param {String} subject Subject of the notification
+     * @param {String} subject  Subject of the notification
+     * @param {mixed}  [params] Optional parameters, providing more details to
+     *                          the notification subject
      */
     notifyUITour: {
       enumerable: true,
       writable: true,
-      value: function(subject) {
-        UITour.notify(subject);
+      value: function(subject, params) {
+        UITour.notify(subject, params);
       }
     },
+
+    /**
+     * Used to record the screen sharing state for a window so that it can
+     * be reflected on the toolbar button.
+     *
+     * @param {String} windowId The id of the conversation window the state
+     *                          is being changed for.
+     * @param {Boolean} active  Whether or not screen sharing is now active.
+     */
+    setScreenShareState: {
+      enumerable: true,
+      writable: true,
+      value: function(windowId, active) {
+        MozLoopService.setScreenShareState(windowId, active);
+      }
+    }
   };
 
   function onStatusChanged(aSubject, aTopic, aData) {

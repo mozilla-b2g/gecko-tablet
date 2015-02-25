@@ -44,6 +44,18 @@ builds:
         task: tasks/builds/b2g_emulator_ics_opt.yml
       debug:
         task: tasks/builds/b2g_emulator_ics_debug.yml
+  flame-kk:
+    platforms:
+      - b2g
+    types:
+      opt:
+        task: tasks/builds/b2g_flame_kk_opt.yml
+  flame-kk-eng:
+    platforms:
+      - b2g
+    types:
+      opt:
+        task: tasks/builds/b2g_flame_kk_eng.yml
 
 tests:
   cppunit:
@@ -100,14 +112,24 @@ tests:
         task: tasks/tests/b2g_gaia_unit.yml
   marionette:
     allowed_build_tasks:
+      tasks/builds/b2g_emulator_kk_opt.yml:
+        task: tasks/tests/b2g_emulator_marionette.yml
       tasks/builds/b2g_emulator_ics_opt.yml:
         task: tasks/tests/b2g_emulator_marionette.yml
   marionette-webapi:
     allowed_build_tasks:
+      tasks/builds/b2g_emulator_kk_opt.yml:
+        task: tasks/tests/b2g_emulator_marionette_webapi.yml
       tasks/builds/b2g_emulator_ics_opt.yml:
         task: tasks/tests/b2g_emulator_marionette_webapi.yml
   mochitest:
     allowed_build_tasks:
+      tasks/builds/b2g_emulator_kk_debug.yml:
+        task: tasks/tests/b2g_emulator_mochitest.yml
+        chunks: 20
+      tasks/builds/b2g_emulator_kk_opt.yml:
+        task: tasks/tests/b2g_emulator_mochitest.yml
+        chunks: 20
       tasks/builds/b2g_emulator_ics_opt.yml:
         task: tasks/tests/b2g_emulator_mochitest.yml
         chunks: 9
@@ -127,6 +149,9 @@ tests:
       tasks/builds/mulet_linux.yml:
         task: tasks/tests/mulet_reftests.yml
         chunks: 6
+      tasks/builds/b2g_emulator_kk_opt.yml:
+        task: tasks/tests/b2g_emulator_reftest.yml
+        chunks: 20
       tasks/builds/b2g_emulator_ics_opt.yml:
         task: tasks/tests/b2g_emulator_reftest.yml
         chunks: 20
@@ -137,6 +162,8 @@ tests:
         chunks: 1
   xpcshell:
     allowed_build_tasks:
+      tasks/builds/b2g_emulator_kk_opt.yml:
+        task: tasks/tests/b2g_emulator_xpcshell.yml
       tasks/builds/b2g_emulator_ics_opt.yml:
         task: tasks/tests/b2g_emulator_xpcshell.yml
       tasks/builds/b2g_emulator_ics_debug.yml:

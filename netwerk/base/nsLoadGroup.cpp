@@ -78,16 +78,14 @@ RequestHashClearEntry(PLDHashTable *table, PLDHashEntryHdr *entry)
     e->~RequestMapEntry();
 }
 
-static bool
-RequestHashInitEntry(PLDHashTable *table, PLDHashEntryHdr *entry,
-                     const void *key)
+static void
+RequestHashInitEntry(PLDHashEntryHdr *entry, const void *key)
 {
     const nsIRequest *const_request = static_cast<const nsIRequest *>(key);
     nsIRequest *request = const_cast<nsIRequest *>(const_request);
 
     // Initialize the entry with placement new
     new (entry) RequestMapEntry(request);
-    return true;
 }
 
 
@@ -511,9 +509,8 @@ nsLoadGroup::AddRequest(nsIRequest *request, nsISupports* ctxt)
     // Add the request to the list of active requests...
     //
 
-    RequestMapEntry *entry =
-        static_cast<RequestMapEntry *>
-                   (PL_DHashTableAdd(&mRequests, request));
+    RequestMapEntry *entry = static_cast<RequestMapEntry *>
+        (PL_DHashTableAdd(&mRequests, request, fallible));
 
     if (!entry) {
         return NS_ERROR_OUT_OF_MEMORY;

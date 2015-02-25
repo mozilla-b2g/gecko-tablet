@@ -304,6 +304,8 @@ public:
     virtual bool RecvNotifyAlertsObserver(const nsCString& aType,
                                           const nsString& aData) MOZ_OVERRIDE;
 
+    virtual bool RecvLoadProcessScript(const nsString& aURL) MOZ_OVERRIDE;
+
     virtual bool RecvAsyncMessage(const nsString& aMsg,
                                   const ClonedMessageData& aData,
                                   InfallibleTArray<CpowEntry>&& aCpows,
@@ -441,7 +443,7 @@ public:
 private:
     virtual void ActorDestroy(ActorDestroyReason why) MOZ_OVERRIDE;
 
-    virtual void ProcessingError(Result what) MOZ_OVERRIDE;
+    virtual void ProcessingError(Result aCode, const char* aReason) MOZ_OVERRIDE;
 
     /**
      * Exit *now*.  Do not shut down XPCOM, do not pass Go, do not run

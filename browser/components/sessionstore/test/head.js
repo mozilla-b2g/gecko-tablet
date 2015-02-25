@@ -6,6 +6,7 @@ const TAB_STATE_NEEDS_RESTORE = 1;
 const TAB_STATE_RESTORING = 2;
 
 const ROOT = getRootDirectory(gTestPath);
+const HTTPROOT = ROOT.replace("chrome://mochitests/content/", "http://example.com/");
 const FRAME_SCRIPTS = [
   ROOT + "content.js",
   ROOT + "content-forms.js"
@@ -488,13 +489,17 @@ function promiseDelayedStartupFinished(aWindow) {
   return new Promise(resolve => whenDelayedStartupFinished(aWindow, resolve));
 }
 
-function promiseTabRestored(tab) {
+function promiseEvent(element, eventType, isCapturing = false) {
   return new Promise(resolve => {
-    tab.addEventListener("SSTabRestored", function onRestored() {
-      tab.removeEventListener("SSTabRestored", onRestored);
-      resolve();
-    });
+    element.addEventListener(eventType, function listener(event) {
+      element.removeEventListener(eventType, listener, isCapturing);
+      resolve(event);
+    }, isCapturing);
   });
+}
+
+function promiseTabRestored(tab) {
+  return promiseEvent(tab, "SSTabRestored");
 }
 
 function sendMessage(browser, name, data = {}) {

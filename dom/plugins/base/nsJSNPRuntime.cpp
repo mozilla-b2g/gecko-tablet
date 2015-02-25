@@ -222,21 +222,13 @@ const static js::Class sNPObjectJSWrapperClass =
       NPObjWrapper_ObjectMoved
     },
     {
-        nullptr, // lookupGeneric
         nullptr, // lookupProperty
-        nullptr, // lookupElement
-        nullptr, // defineGeneric
         nullptr, // defineProperty
-        nullptr, // defineElement
-        nullptr, // getGeneric
+        nullptr, // hasProperty
         nullptr, // getProperty
-        nullptr, // getElement
-        nullptr, // setGeneric
         nullptr, // setProperty
-        nullptr, // setElement
         nullptr, // getOwnPropertyDescriptor
-        nullptr, // setGenericAttributes
-        nullptr, // deleteGeneric
+        nullptr, // deleteProperty
         nullptr, nullptr, // watch/unwatch
         nullptr, // getElements
         NPObjWrapper_Enumerate,
@@ -1880,7 +1872,7 @@ nsNPObjWrapper::GetNewOrUsed(NPP npp, JSContext *cx, NPObject *npobj)
   }
 
   NPObjWrapperHashEntry *entry = static_cast<NPObjWrapperHashEntry *>
-    (PL_DHashTableAdd(&sNPObjWrappers, npobj));
+    (PL_DHashTableAdd(&sNPObjWrappers, npobj, fallible));
 
   if (!entry) {
     // Out of memory
@@ -1906,8 +1898,7 @@ nsNPObjWrapper::GetNewOrUsed(NPP npp, JSContext *cx, NPObject *npobj)
 
   // No existing JSObject, create one.
 
-  JS::Rooted<JSObject*> obj(cx, ::JS_NewObject(cx, js::Jsvalify(&sNPObjectJSWrapperClass),
-                                               JS::NullPtr(), JS::NullPtr()));
+  JS::Rooted<JSObject*> obj(cx, ::JS_NewObject(cx, js::Jsvalify(&sNPObjectJSWrapperClass)));
 
   if (generation != sNPObjWrappers.Generation()) {
       // Reload entry if the JS_NewObject call caused a GC and reallocated
@@ -2044,7 +2035,7 @@ LookupNPP(NPObject *npobj)
   }
 
   NPObjWrapperHashEntry *entry = static_cast<NPObjWrapperHashEntry *>
-    (PL_DHashTableAdd(&sNPObjWrappers, npobj));
+    (PL_DHashTableAdd(&sNPObjWrappers, npobj, fallible));
 
   if (!entry) {
     return nullptr;
@@ -2076,7 +2067,7 @@ CreateNPObjectMember(NPP npp, JSContext *cx, JSObject *obj, NPObject* npobj,
   // during initialization.
   memset(memberPrivate, 0, sizeof(NPObjectMemberPrivate));
 
-  JSObject *memobj = ::JS_NewObject(cx, &sNPObjectMemberClass, JS::NullPtr(), JS::NullPtr());
+  JSObject *memobj = ::JS_NewObject(cx, &sNPObjectMemberClass);
   if (!memobj) {
     PR_Free(memberPrivate);
     return false;

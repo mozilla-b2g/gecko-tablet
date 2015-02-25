@@ -22,10 +22,8 @@
  * limitations under the License.
  */
 
-#include "pkix/pkix.h"
 #include "pkixder.h"
 #include "pkixgtest.h"
-#include "pkixtestutil.h"
 
 using namespace mozilla::pkix;
 using namespace mozilla::pkix::test;
@@ -60,21 +58,14 @@ CreateCertWithOneExtension(const char* subjectStr, const ByteString& extension)
   return CreateCertWithExtensions(subjectStr, extensions);
 }
 
-class TrustEverythingTrustDomain final : public TrustDomain
+class TrustEverythingTrustDomain final : public DefaultCryptoTrustDomain
 {
 private:
-  Result GetCertTrust(EndEntityOrCA, const CertPolicyId&, Input candidateCert,
+  Result GetCertTrust(EndEntityOrCA, const CertPolicyId&, Input,
                       /*out*/ TrustLevel& trustLevel) override
   {
     trustLevel = TrustLevel::TrustAnchor;
     return Success;
-  }
-
-  Result FindIssuer(Input /*encodedIssuerName*/, IssuerChecker& /*checker*/,
-                    Time /*time*/) override
-  {
-    ADD_FAILURE();
-    return Result::FATAL_ERROR_LIBRARY_FAILURE;
   }
 
   Result CheckRevocation(EndEntityOrCA, const CertID&, Time,
@@ -87,23 +78,6 @@ private:
   Result IsChainValid(const DERArray&, Time) override
   {
     return Success;
-  }
-
-  Result VerifySignedData(const SignedDataWithSignature& signedData,
-                          Input subjectPublicKeyInfo) override
-  {
-    return TestVerifySignedData(signedData, subjectPublicKeyInfo);
-  }
-
-  Result DigestBuf(Input, /*out*/ uint8_t*, size_t) override
-  {
-    ADD_FAILURE();
-    return Result::FATAL_ERROR_LIBRARY_FAILURE;
-  }
-
-  Result CheckPublicKey(Input subjectPublicKeyInfo) override
-  {
-    return TestCheckPublicKey(subjectPublicKeyInfo);
   }
 };
 

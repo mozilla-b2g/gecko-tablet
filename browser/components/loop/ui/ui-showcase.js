@@ -124,35 +124,54 @@
 
   var SVGIcon = React.createClass({displayName: "SVGIcon",
     render: function() {
+      var sizeUnit = this.props.size.split("x")[0] + "px";
       return (
         React.createElement("span", {className: "svg-icon", style: {
-          "background-image": "url(/content/shared/img/icons-16x16.svg#" + this.props.shapeId + ")"
+          "backgroundImage": "url(../content/shared/img/icons-" + this.props.size +
+                              ".svg#" + this.props.shapeId + ")",
+          "backgroundSize": sizeUnit + " " + sizeUnit
         }})
       );
     }
   });
 
   var SVGIcons = React.createClass({displayName: "SVGIcons",
-    shapes: [
-      "audio", "audio-hover", "audio-active", "block",
-      "block-red", "block-hover", "block-active", "contacts", "contacts-hover",
-      "contacts-active", "copy", "checkmark", "google", "google-hover",
-      "google-active", "history", "history-hover", "history-active", "leave",
-      "precall", "precall-hover", "precall-active", "settings", "settings-hover",
-      "settings-active", "tag", "tag-hover", "tag-active", "trash", "unblock",
-      "unblock-hover", "unblock-active", "video", "video-hover", "video-active"
-    ],
+    shapes: {
+      "10x10": ["close", "close-active", "close-disabled", "dropdown",
+        "dropdown-white", "dropdown-active", "dropdown-disabled", "expand",
+        "expand-active", "expand-disabled", "minimize", "minimize-active",
+        "minimize-disabled"
+      ],
+      "14x14": ["audio", "audio-active", "audio-disabled", "facemute",
+        "facemute-active", "facemute-disabled", "hangup", "hangup-active",
+        "hangup-disabled", "incoming", "incoming-active", "incoming-disabled",
+        "link", "link-active", "link-disabled", "mute", "mute-active",
+        "mute-disabled", "pause", "pause-active", "pause-disabled", "video",
+        "video-white", "video-active", "video-disabled", "volume", "volume-active",
+        "volume-disabled"
+      ],
+      "16x16": ["audio", "audio-hover", "audio-active", "block", "block-red",
+        "block-hover", "block-active", "contacts", "contacts-hover", "contacts-active",
+        "copy", "checkmark", "google", "google-hover", "google-active", "history",
+        "history-hover", "history-active", "leave", "precall", "precall-hover",
+        "precall-active", "screen-white", "screenmute-white", "settings",
+        "settings-hover", "settings-active", "tag", "tag-hover", "tag-active",
+        "trash", "unblock", "unblock-hover", "unblock-active", "video", "video-hover",
+        "video-active", "tour"
+      ]
+    },
 
     render: function() {
+      var icons = this.shapes[this.props.size].map(function(shapeId, i) {
+        return (
+          React.createElement("li", {key: this.props.size + "-" + i, className: "svg-icon-entry"}, 
+            React.createElement("p", null, React.createElement(SVGIcon, {shapeId: shapeId, size: this.props.size})), 
+            React.createElement("p", null, shapeId)
+          )
+        );
+      }, this);
       return (
-        React.createElement("div", {className: "svg-icon-list"}, 
-          this.shapes.map(function(shapeId, i) {
-            return React.createElement("div", {key: i, className: "svg-icon-entry"}, 
-              React.createElement("p", null, React.createElement(SVGIcon, {shapeId: shapeId})), 
-              React.createElement("p", null, shapeId)
-            );
-          }, this)
-        )
+        React.createElement("ul", {className: "svg-icon-list"}, icons)
       );
     }
   });
@@ -171,7 +190,7 @@
             React.createElement("a", {href: this.makeId("#")}, " ¶")
           ), 
           React.createElement("div", {className: cx({comp: true, dashed: this.props.dashed}), 
-               style: this.props.style || {}}, 
+               style: this.props.style}, 
             this.props.children
           )
         )
@@ -182,7 +201,7 @@
   var Section = React.createClass({displayName: "Section",
     render: function() {
       return (
-        React.createElement("section", {id: this.props.name}, 
+        React.createElement("section", {id: this.props.name, className: this.props.className}, 
           React.createElement("h1", null, this.props.name), 
           this.props.children
         )
@@ -268,14 +287,14 @@
           ), 
 
           React.createElement(Section, {name: "IncomingCallView"}, 
-            React.createElement(Example, {summary: "Default / incoming video call", dashed: "true", style: {width: "260px", height: "254px"}}, 
+            React.createElement(Example, {summary: "Default / incoming video call", dashed: "true", style: {width: "300px", height: "272px"}}, 
               React.createElement("div", {className: "fx-embedded"}, 
                 React.createElement(IncomingCallView, {model: mockConversationModel, 
                                   video: true})
               )
             ), 
 
-            React.createElement(Example, {summary: "Default / incoming audio only call", dashed: "true", style: {width: "260px", height: "254px"}}, 
+            React.createElement(Example, {summary: "Default / incoming audio only call", dashed: "true", style: {width: "300px", height: "272px"}}, 
               React.createElement("div", {className: "fx-embedded"}, 
                 React.createElement(IncomingCallView, {model: mockConversationModel, 
                                   video: false})
@@ -284,7 +303,7 @@
           ), 
 
           React.createElement(Section, {name: "IncomingCallView-ActiveState"}, 
-            React.createElement(Example, {summary: "Default", dashed: "true", style: {width: "260px", height: "254px"}}, 
+            React.createElement(Example, {summary: "Default", dashed: "true", style: {width: "300px", height: "272px"}}, 
               React.createElement("div", {className: "fx-embedded"}, 
                 React.createElement(IncomingCallView, {model: mockConversationModel, 
                                    showMenu: true})
@@ -295,19 +314,19 @@
           React.createElement(Section, {name: "ConversationToolbar"}, 
             React.createElement("h2", null, "Desktop Conversation Window"), 
             React.createElement("div", {className: "fx-embedded override-position"}, 
-              React.createElement(Example, {summary: "Default (260x265)", dashed: "true"}, 
+              React.createElement(Example, {summary: "Default", dashed: "true", style: {width: "300px", height: "272px"}}, 
                 React.createElement(ConversationToolbar, {video: {enabled: true}, 
                                      audio: {enabled: true}, 
                                      hangup: noop, 
                                      publishStream: noop})
               ), 
-              React.createElement(Example, {summary: "Video muted"}, 
+              React.createElement(Example, {summary: "Video muted", style: {width: "300px", height: "272px"}}, 
                 React.createElement(ConversationToolbar, {video: {enabled: false}, 
                                      audio: {enabled: true}, 
                                      hangup: noop, 
                                      publishStream: noop})
               ), 
-              React.createElement(Example, {summary: "Audio muted"}, 
+              React.createElement(Example, {summary: "Audio muted", style: {width: "300px", height: "272px"}}, 
                 React.createElement(ConversationToolbar, {video: {enabled: true}, 
                                      audio: {enabled: false}, 
                                      hangup: noop, 
@@ -364,7 +383,7 @@
 
           React.createElement(Section, {name: "PendingConversationView (Desktop)"}, 
             React.createElement(Example, {summary: "Connecting", dashed: "true", 
-                     style: {width: "260px", height: "265px"}}, 
+                     style: {width: "300px", height: "272px"}}, 
               React.createElement("div", {className: "fx-embedded"}, 
                 React.createElement(DesktopPendingConversationView, {callState: "gather", 
                                                 contact: mockContact, 
@@ -375,13 +394,13 @@
 
           React.createElement(Section, {name: "CallFailedView"}, 
             React.createElement(Example, {summary: "Call Failed", dashed: "true", 
-                     style: {width: "260px", height: "265px"}}, 
+                     style: {width: "300px", height: "272px"}}, 
               React.createElement("div", {className: "fx-embedded"}, 
                 React.createElement(CallFailedView, {dispatcher: dispatcher, store: conversationStore})
               )
             ), 
             React.createElement(Example, {summary: "Call Failed — with call URL error", dashed: "true", 
-                     style: {width: "260px", height: "265px"}}, 
+                     style: {width: "300px", height: "272px"}}, 
               React.createElement("div", {className: "fx-embedded"}, 
                 React.createElement(CallFailedView, {dispatcher: dispatcher, emailLinkError: true, 
                                 store: conversationStore})
@@ -411,7 +430,7 @@
 
           React.createElement(Section, {name: "ConversationView"}, 
             React.createElement(Example, {summary: "Desktop conversation window", dashed: "true", 
-                     style: {width: "260px", height: "265px"}}, 
+                     style: {width: "300px", height: "272px"}}, 
               React.createElement("div", {className: "fx-embedded"}, 
                 React.createElement(ConversationView, {sdk: mockSDK, 
                                   model: mockConversationModel, 
@@ -433,7 +452,7 @@
             ), 
 
             React.createElement(Example, {summary: "Desktop conversation window local audio stream", 
-                     dashed: "true", style: {width: "260px", height: "265px"}}, 
+                     dashed: "true", style: {width: "300px", height: "272px"}}, 
               React.createElement("div", {className: "fx-embedded"}, 
                 React.createElement(ConversationView, {sdk: mockSDK, 
                                   video: {enabled: false}, 
@@ -484,23 +503,23 @@
               React.createElement("strong", null, "Note:"), " For the useable demo, you can access submitted data at ", 
               React.createElement("a", {href: "https://input.allizom.org/"}, "input.allizom.org"), "."
             ), 
-            React.createElement(Example, {summary: "Default (useable demo)", dashed: "true", style: {width: "260px"}}, 
+            React.createElement(Example, {summary: "Default (useable demo)", dashed: "true", style: {width: "300px", height: "272px"}}, 
               React.createElement(FeedbackView, {feedbackStore: feedbackStore})
             ), 
-            React.createElement(Example, {summary: "Detailed form", dashed: "true", style: {width: "260px"}}, 
+            React.createElement(Example, {summary: "Detailed form", dashed: "true", style: {width: "300px", height: "272px"}}, 
               React.createElement(FeedbackView, {feedbackStore: feedbackStore, feedbackState: FEEDBACK_STATES.DETAILS})
             ), 
-            React.createElement(Example, {summary: "Thank you!", dashed: "true", style: {width: "260px"}}, 
+            React.createElement(Example, {summary: "Thank you!", dashed: "true", style: {width: "300px", height: "272px"}}, 
               React.createElement(FeedbackView, {feedbackStore: feedbackStore, feedbackState: FEEDBACK_STATES.SENT})
             )
           ), 
 
           React.createElement(Section, {name: "CallUrlExpiredView"}, 
             React.createElement(Example, {summary: "Firefox User"}, 
-              React.createElement(CallUrlExpiredView, {helper: {isFirefox: returnTrue}})
+              React.createElement(CallUrlExpiredView, {isFirefox: true})
             ), 
             React.createElement(Example, {summary: "Non-Firefox User"}, 
-              React.createElement(CallUrlExpiredView, {helper: {isFirefox: returnFalse}})
+              React.createElement(CallUrlExpiredView, {isFirefox: false})
             )
           ), 
 
@@ -547,7 +566,7 @@
           React.createElement(Section, {name: "UnsupportedBrowserView"}, 
             React.createElement(Example, {summary: "Standalone Unsupported Browser"}, 
               React.createElement("div", {className: "standalone"}, 
-                React.createElement(UnsupportedBrowserView, {helper: {isFirefox: returnFalse}})
+                React.createElement(UnsupportedBrowserView, {isFirefox: false})
               )
             )
           ), 
@@ -555,7 +574,7 @@
           React.createElement(Section, {name: "UnsupportedDeviceView"}, 
             React.createElement(Example, {summary: "Standalone Unsupported Device"}, 
               React.createElement("div", {className: "standalone"}, 
-                React.createElement(UnsupportedDeviceView, null)
+                React.createElement(UnsupportedDeviceView, {platform: "ios"})
               )
             )
           ), 
@@ -567,6 +586,7 @@
                 React.createElement(DesktopRoomConversationView, {
                   roomStore: roomStore, 
                   dispatcher: dispatcher, 
+                  mozLoop: navigator.mozLoop, 
                   roomState: ROOM_STATES.INIT})
               )
             ), 
@@ -577,6 +597,7 @@
                 React.createElement(DesktopRoomConversationView, {
                   roomStore: roomStore, 
                   dispatcher: dispatcher, 
+                  mozLoop: navigator.mozLoop, 
                   roomState: ROOM_STATES.HAS_PARTICIPANTS})
               )
             )
@@ -589,7 +610,7 @@
                   dispatcher: dispatcher, 
                   activeRoomStore: activeRoomStore, 
                   roomState: ROOM_STATES.READY, 
-                  helper: {isFirefox: returnTrue}})
+                  isFirefox: true})
               )
             ), 
 
@@ -599,7 +620,7 @@
                   dispatcher: dispatcher, 
                   activeRoomStore: activeRoomStore, 
                   roomState: ROOM_STATES.JOINED, 
-                  helper: {isFirefox: returnTrue}})
+                  isFirefox: true})
               )
             ), 
 
@@ -609,7 +630,7 @@
                   dispatcher: dispatcher, 
                   activeRoomStore: activeRoomStore, 
                   roomState: ROOM_STATES.HAS_PARTICIPANTS, 
-                  helper: {isFirefox: returnTrue}})
+                  isFirefox: true})
               )
             ), 
 
@@ -619,7 +640,7 @@
                   dispatcher: dispatcher, 
                   activeRoomStore: activeRoomStore, 
                   roomState: ROOM_STATES.FULL, 
-                  helper: {isFirefox: returnTrue}})
+                  isFirefox: true})
               )
             ), 
 
@@ -629,7 +650,7 @@
                   dispatcher: dispatcher, 
                   activeRoomStore: activeRoomStore, 
                   roomState: ROOM_STATES.FULL, 
-                  helper: {isFirefox: returnFalse}})
+                  isFirefox: false})
               )
             ), 
 
@@ -640,7 +661,7 @@
                   activeRoomStore: activeRoomStore, 
                   feedbackStore: feedbackStore, 
                   roomState: ROOM_STATES.ENDED, 
-                  helper: {isFirefox: returnFalse}})
+                  isFirefox: false})
               )
             ), 
 
@@ -650,14 +671,20 @@
                   dispatcher: dispatcher, 
                   activeRoomStore: activeRoomStore, 
                   roomState: ROOM_STATES.FAILED, 
-                  helper: {isFirefox: returnFalse}})
+                  isFirefox: false})
               )
             )
           ), 
 
-          React.createElement(Section, {name: "SVG icons preview"}, 
+          React.createElement(Section, {name: "SVG icons preview", className: "svg-icons"}, 
+            React.createElement(Example, {summary: "10x10"}, 
+              React.createElement(SVGIcons, {size: "10x10"})
+            ), 
+            React.createElement(Example, {summary: "14x14"}, 
+              React.createElement(SVGIcons, {size: "14x14"})
+            ), 
             React.createElement(Example, {summary: "16x16"}, 
-              React.createElement(SVGIcons, null)
+              React.createElement(SVGIcons, {size: "16x16"})
             )
           )
 

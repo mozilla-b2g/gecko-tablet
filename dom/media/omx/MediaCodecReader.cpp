@@ -327,12 +327,6 @@ MediaCodecReader::UpdateIsWaitingMediaResources()
                         (!mVideoTrack.mCodec->allocated());
 }
 
-bool
-MediaCodecReader::IsDormantNeeded()
-{
-  return mVideoTrack.mSource != nullptr;
-}
-
 void
 MediaCodecReader::ReleaseMediaResources()
 {
@@ -1263,7 +1257,8 @@ MediaCodecReader::CreateMediaSources()
     mAudioOffloadTrack.mSource = mExtractor->getTrack(audioTrackIndex);
   }
 
-  if (videoTrackIndex != invalidTrackIndex && mVideoTrack.mSource == nullptr) {
+  if (videoTrackIndex != invalidTrackIndex && mVideoTrack.mSource == nullptr &&
+      mDecoder->GetImageContainer()) {
     sp<MediaSource> videoSource = mExtractor->getTrack(videoTrackIndex);
     if (videoSource != nullptr && videoSource->start() == OK) {
       mVideoTrack.mSource = videoSource;
@@ -1311,12 +1306,12 @@ MediaCodecReader::CreateTaskQueues()
 {
   if (mAudioTrack.mSource != nullptr && mAudioTrack.mCodec != nullptr &&
       !mAudioTrack.mTaskQueue) {
-    mAudioTrack.mTaskQueue = CreateMediaDecodeTaskQueue();
+    mAudioTrack.mTaskQueue = CreateFlushableMediaDecodeTaskQueue();
     NS_ENSURE_TRUE(mAudioTrack.mTaskQueue, false);
   }
   if (mVideoTrack.mSource != nullptr && mVideoTrack.mCodec != nullptr &&
       !mVideoTrack.mTaskQueue) {
-    mVideoTrack.mTaskQueue = CreateMediaDecodeTaskQueue();
+    mVideoTrack.mTaskQueue = CreateFlushableMediaDecodeTaskQueue();
     NS_ENSURE_TRUE(mVideoTrack.mTaskQueue, false);
     mVideoTrack.mReleaseBufferTaskQueue = CreateMediaDecodeTaskQueue();
     NS_ENSURE_TRUE(mVideoTrack.mReleaseBufferTaskQueue, false);

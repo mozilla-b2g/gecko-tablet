@@ -67,7 +67,7 @@ ShadowRoot::ShadowRoot(nsIContent* aContent,
                        nsXBLPrototypeBinding* aProtoBinding)
   : DocumentFragment(aNodeInfo), mPoolHost(aContent),
     mProtoBinding(aProtoBinding), mShadowElement(nullptr),
-    mInsertionPointChanged(false)
+    mInsertionPointChanged(false), mIsComposedDocParticipant(false)
 {
   SetHost(aContent);
 
@@ -709,6 +709,15 @@ ShadowRoot::ContentRemoved(nsIDocument* aDocument,
   if (IsPooledNode(aChild, aContainer, mPoolHost)) {
     RemoveDistributedNode(aChild);
   }
+}
+
+void
+ShadowRoot::DestroyContent()
+{
+  if (mOlderShadow) {
+    mOlderShadow->DestroyContent();
+  }
+  DocumentFragment::DestroyContent();
 }
 
 NS_IMPL_CYCLE_COLLECTION_INHERITED(ShadowRootStyleSheetList, StyleSheetList,

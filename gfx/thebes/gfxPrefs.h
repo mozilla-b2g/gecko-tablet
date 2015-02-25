@@ -173,7 +173,6 @@ private:
   DECL_GFX_PREF(Live, "apz.pan_repaint_interval",              APZPanRepaintInterval, int32_t, 250);
   DECL_GFX_PREF(Live, "apz.printtree",                         APZPrintTree, bool, false);
   DECL_GFX_PREF(Live, "apz.smooth_scroll_repaint_interval",    APZSmoothScrollRepaintInterval, int32_t, 75);
-  DECL_GFX_PREF(Live, "apz.subframe.enabled",                  APZSubframeEnabled, bool, false);
   DECL_GFX_PREF(Once, "apz.test.logging_enabled",              APZTestLoggingEnabled, bool, false);
   DECL_GFX_PREF(Live, "apz.touch_start_tolerance",             APZTouchStartTolerance, float, 1.0f/4.5f);
   DECL_GFX_PREF(Live, "apz.use_paint_duration",                APZUsePaintDuration, bool, true);
@@ -276,7 +275,10 @@ private:
   DECL_GFX_PREF(Live, "layers.dump-texture",                   LayersDumpTexture, bool, false);
 #ifdef MOZ_DUMP_PAINTING
   DECL_GFX_PREF(Live, "layers.dump-decision",                  LayersDumpDecision, bool, false);
+  DECL_GFX_PREF(Live, "layers.dump-client-layers",             DumpClientLayers, bool, false);
+  DECL_GFX_PREF(Live, "layers.dump-host-layers",               DumpHostLayers, bool, false);
 #endif
+  DECL_GFX_PREF(Live, "layers.transaction.warning-ms",         LayerTransactionWarning, uint32_t, 200);
 
   // 0 is "no change" for contrast, positive values increase it, negative values
   // decrease it until we hit mid gray at -1 contrast, after that it gets weird.
@@ -310,7 +312,7 @@ private:
   DECL_GFX_PREF(Once, "layers.d3d11.force-warp",               LayersD3D11ForceWARP, bool, false);
   DECL_GFX_PREF(Once, "layers.prefer-d3d9",                    LayersPreferD3D9, bool, false);
   DECL_GFX_PREF(Once, "layers.prefer-opengl",                  LayersPreferOpenGL, bool, false);
-  DECL_GFX_PREF(Once, "layers.progressive-paint",              ProgressivePaintDoNotUseDirectly, bool, false);
+  DECL_GFX_PREF(Live, "layers.progressive-paint",              ProgressivePaintDoNotUseDirectly, bool, false);
   DECL_GFX_PREF(Once, "layers.uniformity-info",                UniformityInfo, bool, false);
   DECL_GFX_PREF(Once, "layers.gralloc.disable",                DisableGralloc, bool, false);
 

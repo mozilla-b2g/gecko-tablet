@@ -134,11 +134,9 @@ JSRuntime::JSRuntime(JSRuntime *parentRuntime)
     localeCallbacks(nullptr),
     defaultLocale(nullptr),
     defaultVersion_(JSVERSION_DEFAULT),
-    futexAPI_(nullptr),
     ownerThread_(nullptr),
     ownerThreadNative_(0),
     tempLifoAlloc(TEMP_LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
-    execAlloc_(nullptr),
     jitRuntime_(nullptr),
     selfHostingGlobal_(nullptr),
     nativeStackBase(GetNativeStackBase()),
@@ -164,9 +162,6 @@ JSRuntime::JSRuntime(JSRuntime *parentRuntime)
     negativeInfinityValue(DoubleValue(NegativeInfinity<double>())),
     positiveInfinityValue(DoubleValue(PositiveInfinity<double>())),
     emptyString(nullptr),
-#ifdef NIGHTLY_BUILD
-    assertOnScriptEntryHook_(nullptr),
-#endif
     spsProfiler(thisFromCtor()),
     profilingScripts(false),
     suppressProfilerSampling(false),
@@ -330,6 +325,9 @@ JSRuntime::init(uint32_t maxbytes, uint32_t maxNurseryBytes)
     if (!spsProfiler.init())
         return false;
 
+    if (!fx.initInstance())
+        return false;
+
     return true;
 }
 
@@ -337,8 +335,7 @@ JSRuntime::~JSRuntime()
 {
     MOZ_ASSERT(!isHeapBusy());
 
-    delete futexAPI_;
-    futexAPI_ = nullptr;
+    fx.destroyInstance();
 
     if (gcInitialized) {
         /* Free source hook early, as its destructor may want to delete roots. */
@@ -425,7 +422,6 @@ JSRuntime::~JSRuntime()
     js_free(defaultLocale);
     js_delete(mathCache_);
     js_delete(jitRuntime_);
-    js_delete(execAlloc_);  /* Delete after jitRuntime_. */
 
     js_delete(ionPcScriptCache);
 
@@ -510,11 +506,8 @@ JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::Runtim
     for (ScriptDataTable::Range r = scriptDataTable().all(); !r.empty(); r.popFront())
         rtSizes->scriptData += mallocSizeOf(r.front());
 
-    if (execAlloc_)
-        execAlloc_->addSizeOfCode(&rtSizes->code);
-
-    if (jitRuntime() && jitRuntime()->ionAlloc(this))
-        jitRuntime()->ionAlloc(this)->addSizeOfCode(&rtSizes->code);
+    if (jitRuntime_)
+        jitRuntime_->execAlloc().addSizeOfCode(&rtSizes->code);
 
     rtSizes->gc.marker += gc.marker.sizeOfExcludingThis(mallocSizeOf);
     rtSizes->gc.nurseryCommitted += gc.nursery.sizeOfHeapCommitted();
@@ -528,7 +521,7 @@ InvokeInterruptCallback(JSContext *cx)
 {
     MOZ_ASSERT(cx->runtime()->requestDepth >= 1);
 
-    cx->gcIfNeeded();
+    cx->runtime()->gc.gcIfRequested();
 
     // A worker thread may have requested an interrupt after finishing an Ion
     // compilation.
@@ -610,8 +603,18 @@ JSRuntime::requestInterrupt(InterruptMode mode)
     interrupt_ = true;
     jitStackLimit_ = UINTPTR_MAX;
 
-    if (mode == JSRuntime::RequestInterruptUrgent)
+    if (mode == JSRuntime::RequestInterruptUrgent) {
+        // If this interrupt is urgent (slow script dialog and garbage
+        // collection among others), take additional steps to
+        // interrupt corner cases where the above fields are not
+        // regularly polled.  Wake both ilooping JIT code and
+        // futexWait.
+        fx.lock();
+        if (fx.isWaiting())
+            fx.wake(FutexRuntime::WakeForJSInterrupt);
+        fx.unlock();
         InterruptRunningJitCode(this);
+    }
 }
 
 bool
@@ -624,18 +627,6 @@ JSRuntime::handleInterrupt(JSContext *cx)
         return InvokeInterruptCallback(cx);
     }
     return true;
-}
-
-jit::ExecutableAllocator *
-JSRuntime::createExecutableAllocator(JSContext *cx)
-{
-    MOZ_ASSERT(!execAlloc_);
-    MOZ_ASSERT(cx->runtime() == this);
-
-    execAlloc_ = js_new<jit::ExecutableAllocator>();
-    if (!execAlloc_)
-        js_ReportOutOfMemory(cx);
-    return execAlloc_;
 }
 
 MathCache *

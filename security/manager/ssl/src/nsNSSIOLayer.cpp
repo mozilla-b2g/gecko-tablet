@@ -9,6 +9,7 @@
 #include "pkix/ScopedPtr.h"
 #include "pkix/pkixtypes.h"
 #include "nsNSSComponent.h"
+#include "mozilla/BinarySearch.h"
 #include "mozilla/Casting.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Telemetry.h"
@@ -51,6 +52,8 @@
 #include "keyhi.h"
 
 #include <algorithm>
+
+#include "IntolerantFallbackList.inc"
 
 using namespace mozilla;
 using namespace mozilla::psm;
@@ -864,8 +867,7 @@ bool
 nsSSLIOLayerHelpers::fallbackLimitReached(const nsACString& hostName,
                                           uint16_t intolerant)
 {
-  MutexAutoLock lock(mutex);
-  if (mInsecureFallbackSites.Contains(hostName)) {
+  if (isInsecureFallbackSite(hostName)) {
     return intolerant <= SSL_LIBRARY_VERSION_TLS_1_0;
   }
   return intolerant <= mVersionFallbackLimit;
@@ -1185,16 +1187,12 @@ uint32_t tlsIntoleranceTelemetryBucket(PRErrorCode err)
     case SSL_ERROR_BAD_MAC_READ: return 2;
     case SSL_ERROR_HANDSHAKE_FAILURE_ALERT: return 3;
     case SSL_ERROR_HANDSHAKE_UNEXPECTED_ALERT: return 4;
-    case SSL_ERROR_CLIENT_KEY_EXCHANGE_FAILURE: return 5;
     case SSL_ERROR_ILLEGAL_PARAMETER_ALERT: return 6;
     case SSL_ERROR_NO_CYPHER_OVERLAP: return 7;
-    case SSL_ERROR_BAD_SERVER: return 8;
-    case SSL_ERROR_BAD_BLOCK_PADDING: return 9;
+    case SSL_ERROR_UNSUPPORTED_VERSION: return 10;
     case SSL_ERROR_PROTOCOL_VERSION_ALERT: return 11;
-    case SSL_ERROR_RX_MALFORMED_FINISHED: return 12;
     case SSL_ERROR_BAD_HANDSHAKE_HASH_VALUE: return 13;
     case SSL_ERROR_DECODE_ERROR_ALERT: return 14;
-    case SSL_ERROR_RX_UNKNOWN_ALERT: return 15;
     case PR_CONNECT_RESET_ERROR: return 16;
     case PR_END_OF_FILE_ERROR: return 17;
     default: return 0;
@@ -1209,6 +1207,13 @@ retryDueToTLSIntolerance(PRErrorCode err, nsNSSSocketInfo* socketInfo)
   // Note this only happens during the initial SSL handshake.
 
   SSLVersionRange range = socketInfo->GetTLSVersionRange();
+  nsSSLIOLayerHelpers& helpers = socketInfo->SharedState().IOLayerHelpers();
+
+  if (err == SSL_ERROR_UNSUPPORTED_VERSION &&
+      range.min == SSL_LIBRARY_VERSION_TLS_1_0) {
+    socketInfo->SetSecurityState(nsIWebProgressListener::STATE_IS_INSECURE |
+                                 nsIWebProgressListener::STATE_USES_SSL_3);
+  }
 
   if (err == SSL_ERROR_INAPPROPRIATE_FALLBACK_ALERT) {
     // This is a clear signal that we've fallen back too many versions.  Treat
@@ -1218,21 +1223,31 @@ retryDueToTLSIntolerance(PRErrorCode err, nsNSSSocketInfo* socketInfo)
     // First, track the original cause of the version fallback.  This uses the
     // same buckets as the telemetry below, except that bucket 0 will include
     // all cases where there wasn't an original reason.
-    PRErrorCode originalReason = socketInfo->SharedState().IOLayerHelpers()
-      .getIntoleranceReason(socketInfo->GetHostName(), socketInfo->GetPort());
+    PRErrorCode originalReason =
+      helpers.getIntoleranceReason(socketInfo->GetHostName(),
+                                   socketInfo->GetPort());
     Telemetry::Accumulate(Telemetry::SSL_VERSION_FALLBACK_INAPPROPRIATE,
                           tlsIntoleranceTelemetryBucket(originalReason));
 
-    socketInfo->SharedState().IOLayerHelpers()
-      .forgetIntolerance(socketInfo->GetHostName(), socketInfo->GetPort());
+    helpers.forgetIntolerance(socketInfo->GetHostName(),
+                              socketInfo->GetPort());
 
     return false;
   }
-  if ((err == SSL_ERROR_NO_CYPHER_OVERLAP || err == PR_END_OF_FILE_ERROR) &&
+
+  // Disallow PR_CONNECT_RESET_ERROR if fallback limit reached.
+  bool fallbackLimitReached =
+    helpers.fallbackLimitReached(socketInfo->GetHostName(), range.max);
+  if (err == PR_CONNECT_RESET_ERROR && fallbackLimitReached) {
+    return false;
+  }
+
+  if ((err == SSL_ERROR_NO_CYPHER_OVERLAP || err == PR_END_OF_FILE_ERROR ||
+       err == PR_CONNECT_RESET_ERROR) &&
+      !fallbackLimitReached &&
       nsNSSComponent::AreAnyWeakCiphersEnabled()) {
-    if (socketInfo->SharedState().IOLayerHelpers()
-                  .rememberStrongCiphersFailed(socketInfo->GetHostName(),
-                                               socketInfo->GetPort(), err)) {
+    if (helpers.rememberStrongCiphersFailed(socketInfo->GetHostName(),
+                                            socketInfo->GetPort(), err)) {
       Telemetry::Accumulate(Telemetry::SSL_WEAK_CIPHERS_FALLBACK,
                             tlsIntoleranceTelemetryBucket(err));
       return true;
@@ -1294,10 +1309,9 @@ retryDueToTLSIntolerance(PRErrorCode err, nsNSSSocketInfo* socketInfo)
   // TLS intolerance fallback due to remembered tolerance.
   Telemetry::Accumulate(pre, reason);
 
-  if (!socketInfo->SharedState().IOLayerHelpers()
-                 .rememberIntolerantAtVersion(socketInfo->GetHostName(),
-                                              socketInfo->GetPort(),
-                                              range.min, range.max, err)) {
+  if (!helpers.rememberIntolerantAtVersion(socketInfo->GetHostName(),
+                                           socketInfo->GetPort(),
+                                           range.min, range.max, err)) {
     return false;
   }
 
@@ -1455,7 +1469,8 @@ nsSSLIOLayerHelpers::nsSSLIOLayerHelpers()
   : mTreatUnsafeNegotiationAsBroken(false)
   , mWarnLevelMissingRFC5746(1)
   , mTLSIntoleranceInfo()
-  , mFalseStartRequireNPN(true)
+  , mFalseStartRequireNPN(false)
+  , mUseStaticFallbackList(true)
   , mVersionFallbackLimit(SSL_LIBRARY_VERSION_TLS_1_0)
   , mutex("nsSSLIOLayerHelpers.mutex")
 {
@@ -1679,6 +1694,9 @@ PrefObserver::Observe(nsISupports* aSubject, const char* aTopic,
       nsCString insecureFallbackHosts;
       Preferences::GetCString("security.tls.insecure_fallback_hosts", &insecureFallbackHosts);
       mOwner->setInsecureFallbackSites(insecureFallbackHosts);
+    } else if (prefName.EqualsLiteral("security.tls.insecure_fallback_hosts.use_static_list")) {
+      mOwner->mUseStaticFallbackList =
+        Preferences::GetBool("security.tls.insecure_fallback_hosts.use_static_list", true);
     }
   }
   return NS_OK;
@@ -1780,6 +1798,8 @@ nsSSLIOLayerHelpers::Init()
   nsCString insecureFallbackHosts;
   Preferences::GetCString("security.tls.insecure_fallback_hosts", &insecureFallbackHosts);
   setInsecureFallbackSites(insecureFallbackHosts);
+  mUseStaticFallbackList =
+    Preferences::GetBool("security.tls.insecure_fallback_hosts.use_static_list", true);
 
   mPrefObserver = new PrefObserver(this);
   Preferences::AddStrongObserver(mPrefObserver,
@@ -1836,6 +1856,35 @@ nsSSLIOLayerHelpers::setInsecureFallbackSites(const nsCString& str)
       mInsecureFallbackSites.PutEntry(host);
     }
   }
+}
+
+struct FallbackListComparator
+{
+  explicit FallbackListComparator(const char* aTarget)
+    : mTarget(aTarget)
+  {}
+
+  int operator()(const char* aVal) const {
+    return strcmp(mTarget, aVal);
+  }
+
+private:
+  const char* mTarget;
+};
+
+bool
+nsSSLIOLayerHelpers::isInsecureFallbackSite(const nsACString& hostname)
+{
+  size_t match;
+  if (mUseStaticFallbackList &&
+      BinarySearchIf(kIntolerantFallbackList, 0,
+        ArrayLength(kIntolerantFallbackList),
+        FallbackListComparator(PromiseFlatCString(hostname).get()),
+        &match)) {
+    return true;
+  }
+  MutexAutoLock lock(mutex);
+  return mInsecureFallbackSites.Contains(hostname);
 }
 
 void

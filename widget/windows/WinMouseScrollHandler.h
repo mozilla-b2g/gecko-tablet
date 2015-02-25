@@ -12,6 +12,7 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/TimeStamp.h"
+#include "Units.h"
 #include <windows.h>
 
 class nsWindowBase;
@@ -43,7 +44,7 @@ public:
    * this method.
    */
   static nsresult SynthesizeNativeMouseScrollEvent(nsWindowBase* aWidget,
-                                                   const nsIntPoint& aPoint,
+                                                   const LayoutDeviceIntPoint& aPoint,
                                                    uint32_t aNativeMessage,
                                                    int32_t aDelta,
                                                    uint32_t aModifierFlags,
@@ -288,8 +289,8 @@ private:
     bool IsPageScroll(bool aForVertical) const
     {
       MOZ_ASSERT(mInitialized, "SystemSettings must be initialized");
-      return aForVertical ? (mScrollLines == WHEEL_PAGESCROLL) :
-                            (mScrollChars == WHEEL_PAGESCROLL);
+      return aForVertical ? (uint32_t(mScrollLines) == WHEEL_PAGESCROLL) :
+                            (uint32_t(mScrollChars) == WHEEL_PAGESCROLL);
     }
 
   private:

@@ -365,7 +365,10 @@ let AppManager = exports.AppManager = {
       try {
         // Reset the connection's state to defaults
         this.connection.resetOptions();
-        deferred.resolve(this.selectedRuntime.connect(this.connection));
+        // Only watch for errors here.  Final resolution occurs above, once
+        // we've reached the CONNECTED state.
+        this.selectedRuntime.connect(this.connection)
+                            .then(null, e => deferred.reject(e));
       } catch(e) {
         deferred.reject(e);
       }
@@ -478,7 +481,10 @@ let AppManager = exports.AppManager = {
     return Task.spawn(function* () {
       let self = AppManager;
 
-      let packageDir = yield ProjectBuilding.build(project);
+      let packageDir = yield ProjectBuilding.build({
+        project: project,
+        logger: self.update.bind(self, "pre-package")
+      });
 
       yield self.validateProject(project);
 

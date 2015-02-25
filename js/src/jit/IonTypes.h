@@ -9,6 +9,7 @@
 
 #include "mozilla/HashFunctions.h"
 
+#include "jsfriendapi.h"
 #include "jstypes.h"
 
 #include "js/Value.h"
@@ -379,8 +380,8 @@ enum MIRType
     MIRType_Elements,                  // An elements vector
     MIRType_Pointer,                   // An opaque pointer that receives no special treatment
     MIRType_Shape,                     // A Shape pointer.
-    MIRType_TypeObject,                // A TypeObject pointer.
-    MIRType_Last = MIRType_TypeObject,
+    MIRType_ObjectGroup,               // An ObjectGroup pointer.
+    MIRType_Last = MIRType_ObjectGroup,
     MIRType_Float32x4 = MIRType_Float32 | (2 << VECTOR_SCALE_SHIFT),
     MIRType_Int32x4   = MIRType_Int32   | (2 << VECTOR_SCALE_SHIFT),
     MIRType_Doublex2  = MIRType_Double  | (1 << VECTOR_SCALE_SHIFT)
@@ -550,6 +551,29 @@ SimdTypeToLength(MIRType type)
 {
     MOZ_ASSERT(IsSimdType(type));
     return 1 << ((type >> VECTOR_SCALE_SHIFT) & VECTOR_SCALE_MASK);
+}
+
+static inline unsigned
+ScalarTypeToLength(Scalar::Type type)
+{
+    switch (type) {
+      case Scalar::Int8:
+      case Scalar::Uint8:
+      case Scalar::Int16:
+      case Scalar::Uint16:
+      case Scalar::Int32:
+      case Scalar::Uint32:
+      case Scalar::Float32:
+      case Scalar::Float64:
+      case Scalar::Uint8Clamped:
+        return 1;
+      case Scalar::Float32x4:
+      case Scalar::Int32x4:
+        return 4;
+      case Scalar::MaxTypedArrayViewType:
+        break;
+    }
+    MOZ_CRASH("unexpected SIMD kind");
 }
 
 static inline MIRType

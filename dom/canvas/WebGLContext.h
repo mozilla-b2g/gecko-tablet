@@ -254,7 +254,9 @@ public:
     void ErrorInvalidOperation(const char* fmt = 0, ...);
     void ErrorInvalidValue(const char* fmt = 0, ...);
     void ErrorInvalidFramebufferOperation(const char* fmt = 0, ...);
-    void ErrorInvalidEnumInfo(const char* info, GLenum enumvalue);
+    void ErrorInvalidEnumInfo(const char* info, GLenum enumValue);
+    void ErrorInvalidEnumInfo(const char* info, const char* funcName,
+                              GLenum enumValue);
     void ErrorOutOfMemory(const char* fmt = 0, ...);
 
     const char* ErrorName(GLenum error);
@@ -531,6 +533,11 @@ public:
                     ErrorResult& rv);
     void RenderbufferStorage(GLenum target, GLenum internalFormat,
                              GLsizei width, GLsizei height);
+protected:
+    void RenderbufferStorage_base(const char* funcName, GLenum target,
+                                  GLsizei samples, GLenum internalformat,
+                                  GLsizei width, GLsizei height);
+public:
     void SampleCoverage(GLclampf value, WebGLboolean invert);
     void Scissor(GLint x, GLint y, GLsizei width, GLsizei height);
     void ShaderSource(WebGLShader* shader, const nsAString& source);
@@ -1085,9 +1092,7 @@ protected:
                                               GLenum pname);
 
     // Returns x rounded to the next highest multiple of y.
-    static CheckedUint32 RoundedToNextMultipleOf(CheckedUint32 x,
-                                                 CheckedUint32 y)
-    {
+    static CheckedUint32 RoundedToNextMultipleOf(CheckedUint32 x, CheckedUint32 y) {
         return ((x + y - 1) / y) * y;
     }
 
@@ -1146,8 +1151,9 @@ protected:
     int32_t mGLMaxVertexUniformVectors;
     int32_t mGLMaxColorAttachments;
     int32_t mGLMaxDrawBuffers;
-    GLuint  mGLMaxTransformFeedbackSeparateAttribs;
+    uint32_t  mGLMaxTransformFeedbackSeparateAttribs;
     GLuint  mGLMaxUniformBufferBindings;
+    GLsizei mGLMaxSamples;
 
 public:
     GLuint MaxVertexAttribs() const {
@@ -1209,9 +1215,10 @@ protected:
 
     // -------------------------------------------------------------------------
     // WebGL 2 specifics (implemented in WebGL2Context.cpp)
-
+public:
     virtual bool IsWebGL2() const = 0;
 
+protected:
     bool InitWebGL2();
 
     // -------------------------------------------------------------------------
@@ -1420,6 +1427,10 @@ protected:
     RefPtr<const webgl::LinkedProgramInfo> mActiveProgramLinkInfo;
 
     uint32_t mMaxFramebufferColorAttachments;
+
+    GLenum LastColorAttachment() const {
+        return LOCAL_GL_COLOR_ATTACHMENT0 + mMaxFramebufferColorAttachments - 1;
+    }
 
     bool ValidateFramebufferTarget(GLenum target, const char* const info);
 
@@ -1679,6 +1690,8 @@ private:
 
     WebGLContext* mWebGL;
 };
+
+size_t RoundUpToMultipleOf(size_t value, size_t multiple);
 
 } // namespace mozilla
 
