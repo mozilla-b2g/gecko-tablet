@@ -21,6 +21,7 @@
 #include "nsCocoaUtils.h"
 #include "WidgetUtils.h"
 #include "nsPrintfCString.h"
+#include "ComplexTextInputPanel.h"
 
 using namespace mozilla;
 using namespace mozilla::widget;
@@ -3366,6 +3367,10 @@ IMEInputHandler::OnDestroyWidget(nsChildView* aDestroyingWidget)
     sFocusedIMEHandler->OnDestroyWidget(aDestroyingWidget);
   }
 
+  if (!TextInputHandlerBase::OnDestroyWidget(aDestroyingWidget)) {
+    return false;
+  }
+
   if (IsIMEComposing()) {
     // If our view is in the composition, we should clean up it.
     CancelIMEComposition();
@@ -3575,7 +3580,7 @@ IMEInputHandler::IsOrWouldBeFocused()
   NS_ENSURE_TRUE(!Destroyed(), false);
   NSWindow* window = [mView window];
   NS_ENSURE_TRUE(window, false);
-  return [window firstResponder] == mView;
+  return [window firstResponder] == mView && ![window attachedSheet];
 
   NS_OBJC_END_TRY_ABORT_BLOCK_RETURN(false);
 }

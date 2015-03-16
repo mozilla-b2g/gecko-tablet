@@ -59,7 +59,11 @@ let RemoteDebugger = {
       this._handleAllowResult = detail => {
         this._handleAllowResult = null;
         this._promptingForAllow = null;
-        if (detail.value) {
+        // Newer Gaia supplies |authResult|, which is one of the
+        // AuthenticationResult values.
+        if (detail.authResult) {
+          resolve(detail.authResult);
+        } else if (detail.value) {
           resolve(DebuggerServer.AuthenticationResult.ALLOW);
         } else {
           resolve(DebuggerServer.AuthenticationResult.DENY);
@@ -177,6 +181,11 @@ let RemoteDebugger = {
     // the parent process, unless we enable certified apps debugging.
     let restrictPrivileges = Services.prefs.getBoolPref("devtools.debugger.forbid-certified-apps");
     DebuggerServer.addBrowserActors("navigator:browser", restrictPrivileges);
+
+    // Allow debugging of chrome for any process
+    if (!restrictPrivileges) {
+      DebuggerServer.allowChromeProcess = true;
+    }
 
     /**
      * Construct a root actor appropriate for use in a server running in B2G.

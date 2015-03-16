@@ -73,7 +73,7 @@ CloneModule(JSContext *cx, MutableHandle<AsmJSModuleObject*> moduleObj)
 static bool
 LinkFail(JSContext *cx, const char *str)
 {
-    JS_ReportErrorFlagsAndNumber(cx, JSREPORT_WARNING, js_GetErrorMessage,
+    JS_ReportErrorFlagsAndNumber(cx, JSREPORT_WARNING, GetErrorMessage,
                                  nullptr, JSMSG_USE_ASM_LINK_FAIL, str);
     return false;
 }
@@ -96,7 +96,7 @@ GetDataProperty(JSContext *cx, HandleValue objVal, HandlePropertyName field, Mut
     if (!desc.object())
         return LinkFail(cx, "property not present on object");
 
-    if (desc.hasGetterOrSetterObject())
+    if (!desc.isDataDescriptor())
         return LinkFail(cx, "property is not a data property");
 
     v.set(desc.value());
@@ -252,7 +252,7 @@ ValidateByteLength(JSContext *cx, HandleValue globalVal)
     RootedFunction fun(cx, &v.toObject().as<JSFunction>());
 
     RootedValue boundTarget(cx, ObjectValue(*fun->getBoundFunctionTarget()));
-    if (!IsNativeFunction(boundTarget, js_fun_call))
+    if (!IsNativeFunction(boundTarget, fun_call))
         return LinkFail(cx, "bound target of byteLength must be Function.prototype.call");
 
     RootedValue boundThis(cx, fun->getBoundFunctionThis());
@@ -736,7 +736,7 @@ CallAsmJS(JSContext *cx, unsigned argc, Value *vp)
     // since these can technically pop out anywhere and the full fix may
     // actually OOM when trying to allocate the PROT_NONE memory.
     if (module.hasDetachedHeap()) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_OUT_OF_MEMORY);
+        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_OUT_OF_MEMORY);
         return false;
     }
 
@@ -751,7 +751,7 @@ CallAsmJS(JSContext *cx, unsigned argc, Value *vp)
 
         // Call the per-exported-function trampoline created by GenerateEntry.
         AsmJSModule::CodePtr enter = module.entryTrampoline(func);
-        if (!CALL_GENERATED_ASMJS(enter, coercedArgs.begin(), module.globalData()))
+        if (!CALL_GENERATED_2(enter, coercedArgs.begin(), module.globalData()))
             return false;
     }
 
@@ -799,8 +799,10 @@ NewExportedFunction(JSContext *cx, const AsmJSModule::ExportedFunction &func,
 {
     RootedPropertyName name(cx, func.name());
     unsigned numArgs = func.isChangeHeap() ? 1 : func.numArgs();
-    JSFunction *fun = NewFunction(cx, NullPtr(), CallAsmJS, numArgs, JSFunction::ASMJS_CTOR,
-                                  cx->global(), name, JSFunction::ExtendedFinalizeKind);
+    JSFunction *fun =
+        NewNativeConstructor(cx, CallAsmJS, numArgs, name,
+                             JSFunction::ExtendedFinalizeKind, GenericObject,
+                             JSFunction::ASMJS_CTOR);
     if (!fun)
         return nullptr;
 
@@ -821,9 +823,9 @@ HandleDynamicLinkFailure(JSContext *cx, CallArgs args, AsmJSModule &module, Hand
     if (!src)
         return false;
 
-    RootedFunction fun(cx, NewFunction(cx, NullPtr(), nullptr, 0, JSFunction::INTERPRETED,
-                                       cx->global(), name, JSFunction::FinalizeKind,
-                                       TenuredObject));
+    RootedFunction fun(cx, NewScriptedFunction(cx, 0, JSFunction::INTERPRETED,
+                                               name, JSFunction::FinalizeKind,
+                                               TenuredObject));
     if (!fun)
         return false;
 
@@ -1092,9 +1094,10 @@ js::NewAsmJSModuleFunction(ExclusiveContext *cx, JSFunction *origFun, HandleObje
 
     JSFunction::Flags flags = origFun->isLambda() ? JSFunction::ASMJS_LAMBDA_CTOR
                                                   : JSFunction::ASMJS_CTOR;
-    JSFunction *moduleFun = NewFunction(cx, NullPtr(), LinkAsmJS, origFun->nargs(),
-                                        flags, NullPtr(), name,
-                                        JSFunction::ExtendedFinalizeKind, TenuredObject);
+    JSFunction *moduleFun =
+        NewNativeConstructor(cx, LinkAsmJS, origFun->nargs(), name,
+                             JSFunction::ExtendedFinalizeKind, TenuredObject,
+                             flags);
     if (!moduleFun)
         return nullptr;
 
@@ -1235,7 +1238,7 @@ js::IsAsmJSModuleLoadedFromCache(JSContext *cx, unsigned argc, Value *vp)
 
     JSFunction *fun;
     if (!args.hasDefined(0) || !IsMaybeWrappedNativeFunction(args[0], LinkAsmJS, &fun)) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_USE_ASM_TYPE_FAIL,
+        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_USE_ASM_TYPE_FAIL,
                              "argument passed to isAsmJSModuleLoadedFromCache is not a "
                              "validated asm.js module");
         return false;

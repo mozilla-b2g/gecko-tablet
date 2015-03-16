@@ -65,7 +65,13 @@ public class MozResponse {
     if (body != null) {
       return body;
     }
-    InputStreamReader is = new InputStreamReader(this.response.getEntity().getContent());
+    final HttpEntity entity = this.response.getEntity();
+    if (entity == null) {
+      body = null;
+      return null;
+    }
+
+    InputStreamReader is = new InputStreamReader(entity.getContent());
     // Oh, Java, you are so evil.
     body = new Scanner(is).useDelimiter("\\A").next();
     return body;
@@ -171,5 +177,16 @@ public class MozResponse {
    */
   public int backoffInSeconds() throws NumberFormatException {
     return this.getIntegerHeader("x-backoff");
+  }
+
+  public void logResponseBody(final String logTag) {
+    if (!Logger.LOG_PERSONAL_INFORMATION) {
+      return;
+    }
+    try {
+      Logger.pii(logTag, "Response body: " + body());
+    } catch (Throwable e) {
+      Logger.debug(logTag, "No response body.");
+    }
   }
 }

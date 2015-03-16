@@ -494,7 +494,9 @@ enum ExitFrameTokenValues
     IonDOMMethodExitFrameLayoutToken      = 0x3,
     IonOOLNativeExitFrameLayoutToken      = 0x4,
     IonOOLPropertyOpExitFrameLayoutToken  = 0x5,
-    IonOOLProxyExitFrameLayoutToken       = 0x6,
+    IonOOLSetterOpExitFrameLayoutToken    = 0x6,
+    IonOOLProxyExitFrameLayoutToken       = 0x7,
+    LazyLinkExitFrameLayoutToken          = 0xFE,
     ExitFrameLayoutBareToken              = 0xFF
 };
 
@@ -627,7 +629,7 @@ class IonOOLNativeExitFrameLayout
 
 class IonOOLPropertyOpExitFrameLayout
 {
-  protected: // only to silence a clang warning about unused private fields
+  protected:
     ExitFooterFrame footer_;
     ExitFrameLayout exit_;
 
@@ -652,6 +654,14 @@ class IonOOLPropertyOpExitFrameLayout
         return sizeof(IonOOLPropertyOpExitFrameLayout);
     }
 
+    static size_t offsetOfObject() {
+        return offsetof(IonOOLPropertyOpExitFrameLayout, obj_);
+    }
+
+    static size_t offsetOfId() {
+        return offsetof(IonOOLPropertyOpExitFrameLayout, id_);
+    }
+
     static size_t offsetOfResult() {
         return offsetof(IonOOLPropertyOpExitFrameLayout, vp0_);
     }
@@ -670,15 +680,35 @@ class IonOOLPropertyOpExitFrameLayout
     }
 };
 
+class IonOOLSetterOpExitFrameLayout : public IonOOLPropertyOpExitFrameLayout
+{
+  protected: // only to silence a clang warning about unused private fields
+    JS::ObjectOpResult result_;
+
+  public:
+    static JitCode *Token() { return (JitCode *)IonOOLSetterOpExitFrameLayoutToken; }
+
+    static size_t offsetOfObjectOpResult() {
+        return offsetof(IonOOLSetterOpExitFrameLayout, result_);
+    }
+
+    static size_t Size() {
+        return sizeof(IonOOLSetterOpExitFrameLayout);
+    }
+};
+
 // Proxy::get(JSContext *cx, HandleObject proxy, HandleObject receiver, HandleId id,
 //            MutableHandleValue vp)
 // Proxy::set(JSContext *cx, HandleObject proxy, HandleObject receiver, HandleId id,
-//            bool strict, MutableHandleValue vp)
+//            MutableHandleValue vp, ObjectOpResult &result)
 class IonOOLProxyExitFrameLayout
 {
   protected: // only to silence a clang warning about unused private fields
     ExitFooterFrame footer_;
     ExitFrameLayout exit_;
+
+    // result out-parameter (unused for Proxy::get)
+    JS::ObjectOpResult result_;
 
     // The proxy object.
     JSObject *proxy_;
@@ -704,8 +734,20 @@ class IonOOLProxyExitFrameLayout
         return sizeof(IonOOLProxyExitFrameLayout);
     }
 
+    static size_t offsetOfObject() {
+        return offsetof(IonOOLProxyExitFrameLayout, proxy_);
+    }
+
     static size_t offsetOfResult() {
         return offsetof(IonOOLProxyExitFrameLayout, vp0_);
+    }
+
+    static size_t offsetOfId() {
+        return offsetof(IonOOLProxyExitFrameLayout, id_);
+    }
+
+    static size_t offsetOfObjectOpResult() {
+        return offsetof(IonOOLProxyExitFrameLayout, result_);
     }
 
     inline JitCode **stubCode() {
@@ -833,6 +875,43 @@ struct IonDOMMethodExitFrameLayoutTraits {
         offsetof(IonDOMMethodExitFrameLayout, argv_);
 };
 
+// Cannot inherit implementation since we need to extend the top of
+// ExitFrameLayout.
+class LazyLinkExitFrameLayout
+{
+  protected: // silence clang warning about unused private fields
+    JitCode *stubCode_;
+    ExitFooterFrame footer_;
+    JitFrameLayout exit_;
+
+  public:
+    static JitCode *Token() { return (JitCode *) LazyLinkExitFrameLayoutToken; }
+
+    static inline size_t Size() {
+        return sizeof(LazyLinkExitFrameLayout);
+    }
+
+    inline JitCode **stubCode() {
+        return &stubCode_;
+    }
+    inline JitFrameLayout *jsFrame() {
+        return &exit_;
+    }
+    static size_t offsetOfExitFrame() {
+        return offsetof(LazyLinkExitFrameLayout, exit_);
+    }
+};
+
+template <>
+inline LazyLinkExitFrameLayout *
+ExitFrameLayout::as<LazyLinkExitFrameLayout>()
+{
+    MOZ_ASSERT(is<LazyLinkExitFrameLayout>());
+    uint8_t *sp = reinterpret_cast<uint8_t *>(this);
+    sp -= LazyLinkExitFrameLayout::offsetOfExitFrame();
+    return reinterpret_cast<LazyLinkExitFrameLayout *>(sp);
+}
+
 class ICStub;
 
 class BaselineStubFrameLayout : public CommonFrameLayout
@@ -867,8 +946,8 @@ class BaselineStubFrameLayout : public CommonFrameLayout
 // An invalidation bailout stack is at the stack pointer for the callee frame.
 class InvalidationBailoutStack
 {
-    mozilla::Array<double, FloatRegisters::TotalPhys> fpregs_;
-    mozilla::Array<uintptr_t, Registers::Total> regs_;
+    RegisterDump::FPUArray fpregs_;
+    RegisterDump::GPRArray regs_;
     IonScript   *ionScript_;
     uint8_t       *osiPointReturnAddress_;
 

@@ -21,6 +21,7 @@
     macro(ArrayIteratorNext, ArrayIteratorNext, "ArrayIteratorNext") \
     macro(ArrayType, ArrayType, "ArrayType") \
     macro(ArrayValues, ArrayValues, "ArrayValues") \
+    macro(Async, Async, "Async") \
     macro(buffer, buffer, "buffer") \
     macro(builder, builder, "builder") \
     macro(byteLength, byteLength, "byteLength") \
@@ -180,6 +181,7 @@
     macro(signMask, signMask, "signMask") \
     macro(source, source, "source") \
     macro(stack, stack, "stack") \
+    macro(static, static_, "static") \
     macro(sticky, sticky, "sticky") \
     macro(strings, strings, "strings") \
     macro(StructType, StructType, "StructType") \

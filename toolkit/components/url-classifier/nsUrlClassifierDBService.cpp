@@ -18,6 +18,7 @@
 #include "nsIProperties.h"
 #include "nsToolkitCompsCID.h"
 #include "nsIUrlClassifierUtils.h"
+#include "nsIXULRuntime.h"
 #include "nsUrlClassifierDBService.h"
 #include "nsUrlClassifierUtils.h"
 #include "nsUrlClassifierProxies.h"
@@ -669,9 +670,17 @@ nsUrlClassifierDBServiceWorker::CacheCompletions(CacheResultArray *results)
       TableUpdate * tu = pParse->GetTableUpdate(resultsPtr->ElementAt(i).table);
       LOG(("CacheCompletion Addchunk %d hash %X", resultsPtr->ElementAt(i).entry.addChunk,
            resultsPtr->ElementAt(i).entry.ToUint32()));
-      tu->NewAddComplete(resultsPtr->ElementAt(i).entry.addChunk,
-                         resultsPtr->ElementAt(i).entry.complete);
-      tu->NewAddChunk(resultsPtr->ElementAt(i).entry.addChunk);
+      rv = tu->NewAddComplete(resultsPtr->ElementAt(i).entry.addChunk,
+                              resultsPtr->ElementAt(i).entry.complete);
+      if (NS_FAILED(rv)) {
+        // We can bail without leaking here because ForgetTableUpdates
+        // hasn't been called yet.
+        return rv;
+      }
+      rv = tu->NewAddChunk(resultsPtr->ElementAt(i).entry.addChunk);
+      if (NS_FAILED(rv)) {
+        return rv;
+      }
       tu->SetLocalUpdate();
       updates.AppendElement(tu);
       pParse->ForgetTableUpdates();
@@ -1093,6 +1102,14 @@ nsUrlClassifierDBService::Init()
     gUrlClassifierDbServiceLog = PR_NewLogModule("UrlClassifierDbService");
 #endif
   MOZ_ASSERT(NS_IsMainThread(), "Must initialize DB service on main thread");
+  nsCOMPtr<nsIXULRuntime> appInfo = do_GetService("@mozilla.org/xre/app-info;1");
+  if (appInfo) {
+    bool inSafeMode = false;
+    appInfo->GetInSafeMode(&inSafeMode);
+    if (inSafeMode) {
+      return NS_ERROR_NOT_AVAILABLE;
+    }
+  }
 
   // Retrieve all the preferences.
   mCheckMalware = Preferences::GetBool(CHECK_MALWARE_PREF,

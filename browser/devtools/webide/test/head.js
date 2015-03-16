@@ -36,6 +36,7 @@ SimpleTest.registerCleanupFunction(() => {
   Services.prefs.clearUserPref("devtools.webide.enableLocalRuntime");
   Services.prefs.clearUserPref("devtools.webide.autoinstallADBHelper");
   Services.prefs.clearUserPref("devtools.webide.autoinstallFxdtAdapters");
+  Services.prefs.clearUserPref("devtools.webide.sidebars");
 });
 
 function openWebIDE(autoInstallAddons) {
@@ -103,8 +104,10 @@ function nextTick() {
 }
 
 function waitForUpdate(win, update) {
+  info("Wait: " + update);
   let deferred = promise.defer();
   win.AppManager.on("app-manager-update", function onUpdate(e, what) {
+    info("Got: " + what);
     if (what !== update) {
       return;
     }

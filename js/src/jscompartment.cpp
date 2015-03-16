@@ -35,6 +35,7 @@ using namespace js::gc;
 using namespace js::jit;
 
 using mozilla::DebugOnly;
+using mozilla::PodArrayZero;
 
 JSCompartment::JSCompartment(Zone *zone, const JS::CompartmentOptions &options = JS::CompartmentOptions())
   : options_(options),
@@ -44,6 +45,7 @@ JSCompartment::JSCompartment(Zone *zone, const JS::CompartmentOptions &options =
     isSystem(false),
     isSelfHosting(false),
     marked(true),
+    warnedAboutNoSuchMethod(false),
     addonId(options.addonIdOrNull()),
 #ifdef DEBUG
     firedOnNewGlobalObject(false),
@@ -143,7 +145,7 @@ JSRuntime::createJitRuntime(JSContext *cx)
     jitRuntime_ = jrt;
 
     if (!jitRuntime_->initialize(cx)) {
-        js_ReportOutOfMemory(cx);
+        ReportOutOfMemory(cx);
 
         js_delete(jitRuntime_);
         jitRuntime_ = nullptr;
@@ -426,7 +428,6 @@ JSCompartment::wrap(JSContext *cx, MutableHandleObject obj, HandleObject existin
     if (WrapperMap::Ptr p = crossCompartmentWrappers.lookup(CrossCompartmentKey(key))) {
         obj.set(&p->value().get().toObject());
         MOZ_ASSERT(obj->is<CrossCompartmentWrapperObject>());
-        MOZ_ASSERT(obj->getParent() == global);
         return true;
     }
 
@@ -436,14 +437,13 @@ JSCompartment::wrap(JSContext *cx, MutableHandleObject obj, HandleObject existin
         if (!existing->getTaggedProto().isLazy() ||
             // Note: Class asserted above, so all that's left to check is callability
             existing->isCallable() ||
-            existing->getParent() != global ||
             obj->isCallable())
         {
             existing = nullptr;
         }
     }
 
-    obj.set(cb->wrap(cx, existing, obj, global));
+    obj.set(cb->wrap(cx, existing, obj));
     if (!obj)
         return false;
 
@@ -470,35 +470,6 @@ JSCompartment::wrap(JSContext *cx, MutableHandle<PropertyDescriptor> desc)
     }
 
     return wrap(cx, desc.value());
-}
-
-bool
-JSCompartment::wrap(JSContext *cx, MutableHandle<PropDesc> desc)
-{
-    if (desc.isUndefined())
-        return true;
-
-    JSCompartment *comp = cx->compartment();
-
-    if (desc.hasValue()) {
-        RootedValue value(cx, desc.value());
-        if (!comp->wrap(cx, &value))
-            return false;
-        desc.setValue(value);
-    }
-    if (desc.hasGet()) {
-        RootedValue get(cx, desc.getterValue());
-        if (!comp->wrap(cx, &get))
-            return false;
-        desc.setGetter(get);
-    }
-    if (desc.hasSet()) {
-        RootedValue set(cx, desc.setterValue());
-        if (!comp->wrap(cx, &set))
-            return false;
-        desc.setSetter(set);
-    }
-    return true;
 }
 
 /*
@@ -757,7 +728,7 @@ CreateLazyScriptsForCompartment(JSContext *cx)
     // which do not have an uncompiled enclosing script. The last condition is
     // so that we don't compile lazy scripts whose enclosing scripts failed to
     // compile, indicating that the lazy script did not escape the script.
-    for (gc::ZoneCellIter i(cx->zone(), gc::FINALIZE_LAZY_SCRIPT); !i.done(); i.next()) {
+    for (gc::ZoneCellIter i(cx->zone(), gc::AllocKind::LAZY_SCRIPT); !i.done(); i.next()) {
         LazyScript *lazy = i.get<LazyScript>();
         JSFunction *fun = lazy->functionNonDelazifying();
         if (fun->compartment() == cx->compartment() &&
@@ -836,7 +807,7 @@ JSCompartment::unsetIsDebuggee()
 void
 JSCompartment::clearBreakpointsIn(FreeOp *fop, js::Debugger *dbg, HandleObject handler)
 {
-    for (gc::ZoneCellIter i(zone(), gc::FINALIZE_SCRIPT); !i.done(); i.next()) {
+    for (gc::ZoneCellIter i(zone(), gc::AllocKind::SCRIPT); !i.done(); i.next()) {
         JSScript *script = i.get<JSScript>();
         if (script->compartment() == this && script->hasAnyBreakpointsOrStepMode())
             script->clearBreakpointsIn(fop, dbg, handler);

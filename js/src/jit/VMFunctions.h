@@ -252,11 +252,6 @@ struct VMFunction
     }
 
     VMFunction(const VMFunction &o) {
-        init(o);
-    }
-
-    void init(const VMFunction &o) {
-        MOZ_ASSERT(!wrapped);
         *this = o;
         addToFunctions();
     }
@@ -638,7 +633,7 @@ class AutoDetectInvalidation
 
 bool InvokeFunction(JSContext *cx, HandleObject obj0, uint32_t argc, Value *argv, Value *rval);
 JSObject *NewGCObject(JSContext *cx, gc::AllocKind allocKind, gc::InitialHeap initialHeap,
-                      const js::Class *clasp);
+                      size_t ndynamic, const js::Class *clasp);
 
 bool CheckOverRecursed(JSContext *cx);
 bool CheckOverRecursedWithExtra(JSContext *cx, BaselineFrame *frame,
@@ -647,7 +642,8 @@ bool CheckOverRecursedWithExtra(JSContext *cx, BaselineFrame *frame,
 bool DefVarOrConst(JSContext *cx, HandlePropertyName dn, unsigned attrs, HandleObject scopeChain);
 bool SetConst(JSContext *cx, HandlePropertyName name, HandleObject scopeChain, HandleValue rval);
 bool MutatePrototype(JSContext *cx, HandlePlainObject obj, HandleValue value);
-bool InitProp(JSContext *cx, HandleNativeObject obj, HandlePropertyName name, HandleValue value);
+bool InitProp(JSContext *cx, HandleObject obj, HandlePropertyName name, HandleValue value,
+              jsbytecode *pc);
 
 template<bool Equal>
 bool LooselyEqual(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, bool *res);
@@ -662,8 +658,6 @@ bool GreaterThanOrEqual(JSContext *cx, MutableHandleValue lhs, MutableHandleValu
 
 template<bool Equal>
 bool StringsEqual(JSContext *cx, HandleString left, HandleString right, bool *res);
-
-JSObject *NewInitObject(JSContext *cx, HandlePlainObject templateObject);
 
 bool ArrayPopDense(JSContext *cx, HandleObject obj, MutableHandleValue rval);
 bool ArrayPushDense(JSContext *cx, HandleArrayObject obj, HandleValue v, uint32_t *length);

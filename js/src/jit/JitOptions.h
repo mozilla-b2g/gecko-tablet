@@ -47,6 +47,7 @@ struct JitOptions
 #endif
     bool checkRangeAnalysis;
     bool disableScalarReplacement;
+    bool disableEagerSimdUnbox;
     bool disableGvn;
     bool disableLicm;
     bool disableInlining;
@@ -55,6 +56,7 @@ struct JitOptions
     bool disableSink;
     bool disableLoopUnrolling;
     bool disableEaa;
+    bool disableAma;
     bool eagerCompilation;
     mozilla::Maybe<uint32_t> forcedDefaultIonWarmUpThreshold;
     mozilla::Maybe<IonRegisterAllocator> forcedRegisterAllocator;

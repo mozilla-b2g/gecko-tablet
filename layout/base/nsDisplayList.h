@@ -345,7 +345,11 @@ public:
   }
   bool IsBuildingLayerEventRegions()
   {
-    return (gfxPrefs::LayoutEventRegionsEnabled() && mMode == PAINTING);
+    if (mMode == PAINTING) {
+      return (gfxPrefs::LayoutEventRegionsEnabled() ||
+              gfxPrefs::AsyncPanZoomEnabled());
+    }
+    return false;
   }
   bool IsInsidePointerEventsNoneDoc()
   {
@@ -3686,6 +3690,12 @@ public:
 
   explicit nsCharClipDisplayItem(nsIFrame* aFrame)
     : nsDisplayItem(aFrame) {}
+
+  virtual nsDisplayItemGeometry* AllocateGeometry(nsDisplayListBuilder* aBuilder) MOZ_OVERRIDE;
+
+  virtual void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
+                                         const nsDisplayItemGeometry* aGeometry,
+                                         nsRegion* aInvalidRegion) MOZ_OVERRIDE;
 
   struct ClipEdges {
     ClipEdges(const nsDisplayItem& aItem,

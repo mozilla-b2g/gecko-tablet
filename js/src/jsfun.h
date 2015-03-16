@@ -60,7 +60,7 @@ class JSFunction : public js::NativeObject
                                LAMBDA | SELF_HOSTED | SELF_HOSTED_CTOR | HAS_REST | ASMJS | ARROW
     };
 
-    static_assert(INTERPRETED == JS_FUNCTION_INTERPRETED_BIT,
+    static_assert((INTERPRETED | INTERPRETED_LAZY) == js::JS_FUNCTION_INTERPRETED_BITS,
                   "jsfriendapi.h's JSFunction::INTERPRETED-alike is wrong");
 
   private:
@@ -431,11 +431,11 @@ class JSFunction : public js::NativeObject
     }
 
 #if JS_BITS_PER_WORD == 32
-    static const js::gc::AllocKind FinalizeKind = js::gc::FINALIZE_OBJECT2_BACKGROUND;
-    static const js::gc::AllocKind ExtendedFinalizeKind = js::gc::FINALIZE_OBJECT4_BACKGROUND;
+    static const js::gc::AllocKind FinalizeKind = js::gc::AllocKind::OBJECT2_BACKGROUND;
+    static const js::gc::AllocKind ExtendedFinalizeKind = js::gc::AllocKind::OBJECT4_BACKGROUND;
 #else
-    static const js::gc::AllocKind FinalizeKind = js::gc::FINALIZE_OBJECT4_BACKGROUND;
-    static const js::gc::AllocKind ExtendedFinalizeKind = js::gc::FINALIZE_OBJECT8_BACKGROUND;
+    static const js::gc::AllocKind FinalizeKind = js::gc::AllocKind::OBJECT4_BACKGROUND;
+    static const js::gc::AllocKind ExtendedFinalizeKind = js::gc::AllocKind::OBJECT8_BACKGROUND;
 #endif
 
     inline void trace(JSTracer *trc);
@@ -494,14 +494,6 @@ static_assert(sizeof(JSFunction) == sizeof(js::shadow::Function),
 extern JSString *
 fun_toStringHelper(JSContext *cx, js::HandleObject obj, unsigned indent);
 
-inline JSFunction::Flags
-JSAPIToJSFunctionFlags(unsigned flags)
-{
-    return (flags & JSFUN_CONSTRUCTOR)
-           ? JSFunction::NATIVE_CTOR
-           : JSFunction::NATIVE_FUN;
-}
-
 namespace js {
 
 extern bool
@@ -510,16 +502,35 @@ Function(JSContext *cx, unsigned argc, Value *vp);
 extern bool
 Generator(JSContext *cx, unsigned argc, Value *vp);
 
+// Allocate a new function backed by a JSNative.
 extern JSFunction *
-NewFunction(ExclusiveContext *cx, HandleObject funobj, JSNative native, unsigned nargs,
-            JSFunction::Flags flags, HandleObject parent, HandleAtom atom,
-            gc::AllocKind allocKind = JSFunction::FinalizeKind,
-            NewObjectKind newKind = GenericObject);
+NewNativeFunction(ExclusiveContext *cx, JSNative native, unsigned nargs, HandleAtom atom,
+                  gc::AllocKind allocKind = JSFunction::FinalizeKind,
+                  NewObjectKind newKind = GenericObject);
 
-// If proto is nullptr, Function.prototype is used instead.
+// Allocate a new constructor backed by a JSNative.
 extern JSFunction *
-NewFunctionWithProto(ExclusiveContext *cx, HandleObject funobj, JSNative native, unsigned nargs,
-                     JSFunction::Flags flags, HandleObject parent, HandleAtom atom,
+NewNativeConstructor(ExclusiveContext *cx, JSNative native, unsigned nargs, HandleAtom atom,
+                     gc::AllocKind allocKind = JSFunction::FinalizeKind,
+                     NewObjectKind newKind = GenericObject,
+                     JSFunction::Flags flags = JSFunction::NATIVE_CTOR);
+
+// Allocate a new scripted function.  If enclosingDynamicScope is null, the
+// global will be used.  In all cases the parent of the resulting object will be
+// the global.
+extern JSFunction *
+NewScriptedFunction(ExclusiveContext *cx, unsigned nargs, JSFunction::Flags flags,
+                    HandleAtom atom, gc::AllocKind allocKind = JSFunction::FinalizeKind,
+                    NewObjectKind newKind = GenericObject,
+                    HandleObject enclosingDynamicScope = NullPtr());
+
+// If proto is nullptr, Function.prototype is used instead.  If
+// enclosingDynamicScope is null, the function will have a null environment()
+// (yes, null, not the global).  In all cases, the global will be used as the
+// parent.
+extern JSFunction *
+NewFunctionWithProto(ExclusiveContext *cx, JSNative native, unsigned nargs,
+                     JSFunction::Flags flags, HandleObject enclosingDynamicScope, HandleAtom atom,
                      HandleObject proto, gc::AllocKind allocKind = JSFunction::FinalizeKind,
                      NewObjectKind newKind = GenericObject);
 
@@ -578,7 +589,8 @@ CloneFunctionObjectUseSameScript(JSCompartment *compartment, HandleFunction fun)
 extern JSFunction *
 CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent,
                     gc::AllocKind kind = JSFunction::FinalizeKind,
-                    NewObjectKind newKindArg = GenericObject);
+                    NewObjectKind newKindArg = GenericObject,
+                    HandleObject proto = NullPtr());
 
 extern bool
 FindBody(JSContext *cx, HandleFunction fun, HandleLinearString src, size_t *bodyStart,
@@ -663,17 +675,17 @@ CallOrConstructBoundFunction(JSContext *, unsigned, js::Value *);
 
 extern const JSFunctionSpec function_methods[];
 
-} /* namespace js */
+extern bool
+fun_apply(JSContext *cx, unsigned argc, Value *vp);
 
 extern bool
-js_fun_apply(JSContext *cx, unsigned argc, js::Value *vp);
-
-extern bool
-js_fun_call(JSContext *cx, unsigned argc, js::Value *vp);
+fun_call(JSContext *cx, unsigned argc, Value *vp);
 
 extern JSObject *
-js_fun_bind(JSContext *cx, js::HandleObject target, js::HandleValue thisArg,
-            js::Value *boundArgs, unsigned argslen);
+fun_bind(JSContext *cx, HandleObject target, HandleValue thisArg,
+         Value *boundArgs, unsigned argslen);
+
+} /* namespace js */
 
 #ifdef DEBUG
 namespace JS {

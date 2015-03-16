@@ -19,6 +19,7 @@
 #include "jit/BaselineRegisters.h"
 #include "vm/ArrayObject.h"
 #include "vm/TypedArrayCommon.h"
+#include "vm/UnboxedObject.h"
 
 namespace js {
 
@@ -348,6 +349,7 @@ class ICEntry
                                 \
     _(NewArray_Fallback)        \
     _(NewObject_Fallback)       \
+    _(NewObject_WithTemplate)   \
                                 \
     _(Compare_Fallback)         \
     _(Compare_Int32)            \
@@ -430,12 +432,10 @@ class ICEntry
     _(GetProp_Native)           \
     _(GetProp_NativeDoesNotExist) \
     _(GetProp_NativePrototype)  \
-    _(GetProp_UnboxedPrototype) \
     _(GetProp_Unboxed)          \
     _(GetProp_TypedObject)      \
     _(GetProp_CallScripted)     \
     _(GetProp_CallNative)       \
-    _(GetProp_CallNativePrototype)\
     _(GetProp_CallDOMProxyNative)\
     _(GetProp_CallDOMProxyWithGenerationNative)\
     _(GetProp_DOMProxyShadowed) \
@@ -826,7 +826,6 @@ class ICStub
           case GetElem_NativePrototypeCallScripted:
           case GetProp_CallScripted:
           case GetProp_CallNative:
-          case GetProp_CallNativePrototype:
           case GetProp_CallDOMProxyNative:
           case GetProp_CallDOMProxyWithGenerationNative:
           case GetProp_DOMProxyShadowed:
@@ -843,7 +842,6 @@ class ICStub
           case GetElem_Dense:
           case GetElem_Arguments:
           case GetProp_NativePrototype:
-          case GetProp_UnboxedPrototype:
           case GetProp_Native:
 #endif
             return true;
@@ -1769,31 +1767,42 @@ class ICNewObject_Fallback : public ICFallbackStub
 {
     friend class ICStubSpace;
 
-    HeapPtrPlainObject templateObject_;
+    HeapPtrObject templateObject_;
 
-    ICNewObject_Fallback(JitCode *stubCode, PlainObject *templateObject)
-      : ICFallbackStub(ICStub::NewObject_Fallback, stubCode), templateObject_(templateObject)
+    explicit ICNewObject_Fallback(JitCode *stubCode)
+      : ICFallbackStub(ICStub::NewObject_Fallback, stubCode), templateObject_(nullptr)
     {}
 
   public:
     class Compiler : public ICStubCompiler {
-        RootedPlainObject templateObject;
         bool generateStubCode(MacroAssembler &masm);
 
       public:
-        Compiler(JSContext *cx, PlainObject *templateObject)
-          : ICStubCompiler(cx, ICStub::NewObject_Fallback),
-            templateObject(cx, templateObject)
+        explicit Compiler(JSContext *cx)
+          : ICStubCompiler(cx, ICStub::NewObject_Fallback)
         {}
 
         ICStub *getStub(ICStubSpace *space) {
-            return ICStub::New<ICNewObject_Fallback>(space, getStubCode(), templateObject);
+            return ICStub::New<ICNewObject_Fallback>(space, getStubCode());
         }
     };
 
-    HeapPtrPlainObject &templateObject() {
+    HeapPtrObject &templateObject() {
         return templateObject_;
     }
+
+    void setTemplateObject(JSObject *obj) {
+        templateObject_ = obj;
+    }
+};
+
+class ICNewObject_WithTemplate : public ICStub
+{
+    friend class ICStubSpace;
+
+    explicit ICNewObject_WithTemplate(JitCode *stubCode)
+      : ICStub(ICStub::NewObject_WithTemplate, stubCode)
+    {}
 };
 
 // Compare
@@ -2910,7 +2919,7 @@ class ICGetElemNativeCompiler : public ICStubCompiler
     {}
 
     ICStub *getStub(ICStubSpace *space) {
-        RootedShape shape(cx, obj_->lastProperty());
+        RootedShape shape(cx, obj_->as<NativeObject>().lastProperty());
         if (kind == ICStub::GetElem_NativeSlot) {
             MOZ_ASSERT(obj_ == holder_);
             return ICStub::New<ICGetElem_NativeSlot>(
@@ -2919,7 +2928,7 @@ class ICGetElemNativeCompiler : public ICStubCompiler
         }
 
         MOZ_ASSERT(obj_ != holder_);
-        RootedShape holderShape(cx, holder_->lastProperty());
+        RootedShape holderShape(cx, holder_->as<NativeObject>().lastProperty());
         if (kind == ICStub::GetElem_NativePrototypeSlot) {
             return ICStub::New<ICGetElem_NativePrototypeSlot>(
                     space, getStubCode(), firstMonitorStub_, shape, name_, acctype_, needsAtomize_,
@@ -3801,7 +3810,7 @@ class ICGetProp_Primitive : public ICMonitoredStub
         {}
 
         ICStub *getStub(ICStubSpace *space) {
-            RootedShape protoShape(cx, prototype_->lastProperty());
+            RootedShape protoShape(cx, prototype_->as<NativeObject>().lastProperty());
             return ICStub::New<ICGetProp_Primitive>(space, getStubCode(), firstMonitorStub_,
                                                     protoShape, offset_);
         }
@@ -3883,22 +3892,99 @@ class ICGetProp_Native : public ICGetPropNativeStub
                                    ICGetProp_Native &other);
 };
 
-// Stub for accessing a property on a native object's prototype. Note that due to
-// the shape teleporting optimization, we only have to guard on the object's shape
-// and the holder's shape.
+// Structure encapsulating the guarding that needs to be done on an object
+// which might be either native or unboxed. In the former case, only the
+// object's shape needs to be guarded. In the latter case, only the object's
+// group needs to be guarded.
+class ReceiverGuard
+{
+    HeapPtrShape shape_;
+    HeapPtrObjectGroup group_;
+
+  public:
+    typedef uintptr_t Token;
+
+    static Token shapeToken(Shape *shape) {
+        return reinterpret_cast<Token>(shape) | 1;
+    }
+
+    static Token groupToken(ObjectGroup *group) {
+        return reinterpret_cast<Token>(group);
+    }
+
+    static Shape *tokenShape(Token token) {
+        if (token & 1)
+            return reinterpret_cast<Shape *>(token & ~1);
+        return nullptr;
+    }
+
+    static ObjectGroup *tokenGroup(Token token) {
+        if (!(token & 1))
+            return reinterpret_cast<ObjectGroup *>(token);
+        return nullptr;
+    }
+
+    static Token objectToken(JSObject *obj) {
+        if (obj->is<UnboxedPlainObject>())
+            return groupToken(obj->group());
+        return shapeToken(obj->maybeShape());
+    }
+
+    explicit ReceiverGuard(Token token)
+      : shape_(tokenShape(token)), group_(tokenGroup(token))
+    {
+        MOZ_ASSERT(shape_ || group_);
+    }
+
+    void update(Token token) {
+        MOZ_ASSERT(!!shape_ == !!tokenShape(token));
+        MOZ_ASSERT(!!group_ == !!tokenGroup(token));
+        shape_ = tokenShape(token);
+        group_ = tokenGroup(token);
+        MOZ_ASSERT(shape_ || group_);
+    }
+
+    void trace(JSTracer *trc);
+
+    Token token() {
+        MOZ_ASSERT(!!shape_ != !!group_);
+        if (shape_)
+            return shapeToken(shape_);
+        return groupToken(group_);
+    }
+
+    Shape *shape() const {
+        return shape_;
+    }
+    ObjectGroup *group() const {
+        return group_;
+    }
+
+    static size_t offsetOfShape() {
+        return offsetof(ReceiverGuard, shape_);
+    }
+    static size_t offsetOfGroup() {
+        return offsetof(ReceiverGuard, group_);
+    }
+};
+
+// Stub for accessing a property on the native prototype of a native or unboxed
+// object. Note that due to the shape teleporting optimization, we only have to
+// guard on the object's shape/group and the holder's shape.
 class ICGetProp_NativePrototype : public ICGetPropNativeStub
 {
     friend class ICStubSpace;
 
   protected:
-    // Object shape (lastProperty).
-    HeapPtrShape shape_;
+    // Object shape/group.
+    ReceiverGuard guard_;
 
     // Holder and its shape.
     HeapPtrObject holder_;
     HeapPtrShape holderShape_;
 
-    ICGetProp_NativePrototype(JitCode *stubCode, ICStub *firstMonitorStub, Shape *shape,
+    ICGetProp_NativePrototype(JitCode *stubCode, ICStub *firstMonitorStub,
+                              ReceiverGuard::Token guard,
                               uint32_t offset, JSObject *holder, Shape *holderShape);
 
   public:
@@ -3907,8 +3993,8 @@ class ICGetProp_NativePrototype : public ICGetPropNativeStub
                                             ICGetProp_NativePrototype &other);
 
   public:
-    HeapPtrShape &shape() {
-        return shape_;
+    ReceiverGuard &guard() {
+        return guard_;
     }
     HeapPtrObject &holder() {
         return holder_;
@@ -3916,59 +4002,14 @@ class ICGetProp_NativePrototype : public ICGetPropNativeStub
     HeapPtrShape &holderShape() {
         return holderShape_;
     }
-    static size_t offsetOfShape() {
-        return offsetof(ICGetProp_NativePrototype, shape_);
+    static size_t offsetOfGuard() {
+        return offsetof(ICGetProp_NativePrototype, guard_);
     }
     static size_t offsetOfHolder() {
         return offsetof(ICGetProp_NativePrototype, holder_);
     }
     static size_t offsetOfHolderShape() {
         return offsetof(ICGetProp_NativePrototype, holderShape_);
-    }
-};
-
-// Stub for accessing a property on an unboxed object's native prototype. Note
-// that due to the shape teleporting optimization, we only have to guard on the
-// object's type and the holder's shape.
-class ICGetProp_UnboxedPrototype : public ICGetPropNativeStub
-{
-    friend class ICStubSpace;
-
-  protected:
-    // Object group.
-    HeapPtrObjectGroup group_;
-
-    // Holder and its shape.
-    HeapPtrObject holder_;
-    HeapPtrShape holderShape_;
-
-    ICGetProp_UnboxedPrototype(JitCode *stubCode, ICStub *firstMonitorStub,
-                               ObjectGroup *group,
-                               uint32_t offset, JSObject *holder, Shape *holderShape);
-
-  public:
-    static ICGetProp_UnboxedPrototype *Clone(ICStubSpace *space,
-                                             ICStub *firstMonitorStub,
-                                             ICGetProp_UnboxedPrototype &other);
-
-  public:
-    HeapPtrObjectGroup &group() {
-        return group_;
-    }
-    HeapPtrObject &holder() {
-        return holder_;
-    }
-    HeapPtrShape &holderShape() {
-        return holderShape_;
-    }
-    static size_t offsetOfGroup() {
-        return offsetof(ICGetProp_UnboxedPrototype, group_);
-    }
-    static size_t offsetOfHolder() {
-        return offsetof(ICGetProp_UnboxedPrototype, holder_);
-    }
-    static size_t offsetOfHolderShape() {
-        return offsetof(ICGetProp_UnboxedPrototype, holderShape_);
     }
 };
 
@@ -3988,16 +4029,11 @@ class ICGetPropNativeCompiler : public ICStubCompiler
 
   protected:
     virtual int32_t getKey() const {
-#if JS_HAS_NO_SUCH_METHOD
         return static_cast<int32_t>(kind) |
                (static_cast<int32_t>(isCallProp_) << 16) |
                (static_cast<int32_t>(isFixedSlot_) << 17) |
-               (static_cast<int32_t>(inputDefinitelyObject_) << 18);
-#else
-        return static_cast<int32_t>(kind) |
-               (static_cast<int32_t>(isFixedSlot_) << 16) |
-               (static_cast<int32_t>(inputDefinitelyObject_) << 17);
-#endif
+               (static_cast<int32_t>(inputDefinitelyObject_) << 18) |
+               (static_cast<int32_t>(obj_->isNative()) << 19);
     }
 
   public:
@@ -4025,10 +4061,13 @@ class ICGetProp_NativeDoesNotExist : public ICMonitoredStub
 {
     friend class ICStubSpace;
   public:
+    ReceiverGuard guard_;
+
     static const size_t MAX_PROTO_CHAIN_DEPTH = 8;
 
   protected:
     ICGetProp_NativeDoesNotExist(JitCode *stubCode, ICStub *firstMonitorStub,
+                                 ReceiverGuard::Token guard,
                                  size_t protoChainDepth);
 
   public:
@@ -4043,6 +4082,14 @@ class ICGetProp_NativeDoesNotExist : public ICMonitoredStub
         return static_cast<ICGetProp_NativeDoesNotExistImpl<ProtoChainDepth> *>(this);
     }
 
+    ReceiverGuard &guard() {
+        return guard_;
+    }
+
+    static size_t offsetOfGuard() {
+        return offsetof(ICGetProp_NativeDoesNotExist, guard_);
+    }
+
     static size_t offsetOfShape(size_t idx);
 };
 
@@ -4052,17 +4099,19 @@ class ICGetProp_NativeDoesNotExistImpl : public ICGetProp_NativeDoesNotExist
     friend class ICStubSpace;
   public:
     static const size_t MAX_PROTO_CHAIN_DEPTH = 8;
-    static const size_t NumShapes = ProtoChainDepth + 1;
+    static const size_t NumShapes = ProtoChainDepth;
 
   private:
     mozilla::Array<HeapPtrShape, NumShapes> shapes_;
 
     ICGetProp_NativeDoesNotExistImpl(JitCode *stubCode, ICStub *firstMonitorStub,
+                                     ReceiverGuard::Token guard,
                                      const AutoShapeVector *shapes);
 
   public:
     void traceShapes(JSTracer *trc) {
-        for (size_t i = 0; i < NumShapes; i++)
+        // Note: using int32_t here to avoid gcc warning.
+        for (int32_t i = 0; i < int32_t(NumShapes); i++)
             MarkShape(trc, &shapes_[i], "baseline-getpropnativedoesnotexist-stub-shape");
     }
 
@@ -4079,7 +4128,9 @@ class ICGetPropNativeDoesNotExistCompiler : public ICStubCompiler
 
   protected:
     virtual int32_t getKey() const {
-        return static_cast<int32_t>(kind) | (static_cast<int32_t>(protoChainDepth_) << 16);
+        return static_cast<int32_t>(kind) |
+               (static_cast<int32_t>(obj_->isNative()) << 16) |
+               (static_cast<int32_t>(protoChainDepth_) << 17);
     }
 
     bool generateStubCode(MacroAssembler &masm);
@@ -4090,8 +4141,8 @@ class ICGetPropNativeDoesNotExistCompiler : public ICStubCompiler
 
     template <size_t ProtoChainDepth>
     ICStub *getStubSpecific(ICStubSpace *space, const AutoShapeVector *shapes) {
-        return ICStub::New<ICGetProp_NativeDoesNotExistImpl<ProtoChainDepth>>(space, getStubCode(),
-                                                                              firstMonitorStub_, shapes);
+        return ICStub::New<ICGetProp_NativeDoesNotExistImpl<ProtoChainDepth> >
+            (space, getStubCode(), firstMonitorStub_, ReceiverGuard::objectToken(obj_), shapes);
     }
 
     ICStub *getStub(ICStubSpace *space);
@@ -4228,8 +4279,15 @@ class ICGetPropCallGetter : public ICMonitoredStub
     friend class ICStubSpace;
 
   protected:
-    // We don't strictly need this for own property getters, but we need it to do
-    // Ion optimizations, so we should keep it around.
+    // Shape/group of receiver object. Used for both own and proto getters.
+    // In the GetPropCallDOMProxyNative case, the receiver guard enforces
+    // the proxy handler, because Shape implies Class.
+    ReceiverGuard receiverGuard_;
+
+    // Holder and holder shape. For own getters, guarding on receiverGuard_ is
+    // sufficient, although Ion may use holder_ and holderShape_ even for own
+    // getters. In this case holderShape_ == receiverGuard_.shape_ (isOwnGetter
+    // below relies on this).
     HeapPtrObject holder_;
 
     HeapPtrShape holderShape_;
@@ -4240,7 +4298,8 @@ class ICGetPropCallGetter : public ICMonitoredStub
     // PC offset of call
     uint32_t pcOffset_;
 
-    ICGetPropCallGetter(Kind kind, JitCode *stubCode, ICStub *firstMonitorStub, JSObject *holder,
+    ICGetPropCallGetter(Kind kind, JitCode *stubCode, ICStub *firstMonitorStub,
+                        ReceiverGuard::Token receiverGuard, JSObject *holder,
                         Shape *holderShape, JSFunction *getter, uint32_t pcOffset);
 
   public:
@@ -4252,6 +4311,9 @@ class ICGetPropCallGetter : public ICMonitoredStub
     }
     HeapPtrFunction &getter() {
         return getter_;
+    }
+    ReceiverGuard &receiverGuard() {
+        return receiverGuard_;
     }
 
     static size_t offsetOfHolder() {
@@ -4266,132 +4328,106 @@ class ICGetPropCallGetter : public ICMonitoredStub
     static size_t offsetOfPCOffset() {
         return offsetof(ICGetPropCallGetter, pcOffset_);
     }
+    static size_t offsetOfReceiverGuard() {
+        return offsetof(ICGetPropCallGetter, receiverGuard_);
+    }
+
+    bool isOwnGetter() const {
+        MOZ_ASSERT(holder_->isNative());
+        MOZ_ASSERT(holderShape_);
+        return receiverGuard_.shape() == holderShape_;
+    }
 
     class Compiler : public ICStubCompiler {
       protected:
         ICStub *firstMonitorStub_;
+        RootedObject receiver_;
         RootedObject holder_;
         RootedFunction getter_;
         uint32_t pcOffset_;
         const Class *outerClass_;
 
         virtual int32_t getKey() const {
+            // ICGetProp_CallNative::Compiler::getKey adds more bits to our
+            // return value, so be careful when making changes here.
             return static_cast<int32_t>(kind) |
-                   (static_cast<int32_t>(!!outerClass_) << 16);
+                   (static_cast<int32_t>(receiver_->isNative()) << 16) |
+                   (static_cast<int32_t>(!!outerClass_) << 17) |
+                   (static_cast<int32_t>(receiver_ != holder_) << 18);
         }
 
       public:
         Compiler(JSContext *cx, ICStub::Kind kind, ICStub *firstMonitorStub,
-                 HandleObject holder, HandleFunction getter, uint32_t pcOffset,
-                 const Class *outerClass)
+                 HandleObject receiver, HandleObject holder, HandleFunction getter,
+                 uint32_t pcOffset, const Class *outerClass)
           : ICStubCompiler(cx, kind),
             firstMonitorStub_(firstMonitorStub),
+            receiver_(cx, receiver),
             holder_(cx, holder),
             getter_(cx, getter),
             pcOffset_(pcOffset),
             outerClass_(outerClass)
         {
             MOZ_ASSERT(kind == ICStub::GetProp_CallScripted ||
-                       kind == ICStub::GetProp_CallNative ||
-                       kind == ICStub::GetProp_CallNativePrototype);
-        }
-    };
-};
-
-// Stub for calling a getter (native or scripted) on a native object when the getter is kept on
-// the proto-chain.
-class ICGetPropCallPrototypeGetter : public ICGetPropCallGetter
-{
-    friend class ICStubSpace;
-
-  protected:
-    // shape of receiver object.
-    HeapPtrShape receiverShape_;
-
-    ICGetPropCallPrototypeGetter(Kind kind, JitCode *stubCode, ICStub *firstMonitorStub,
-                                 Shape *receiverShape,
-                                 JSObject *holder, Shape *holderShape,
-                                 JSFunction *getter, uint32_t pcOffset);
-
-  public:
-    HeapPtrShape &receiverShape() {
-        return receiverShape_;
-    }
-
-    static size_t offsetOfReceiverShape() {
-        return offsetof(ICGetPropCallPrototypeGetter, receiverShape_);
-    }
-
-    class Compiler : public ICGetPropCallGetter::Compiler {
-      protected:
-        RootedObject receiver_;
-
-      public:
-        Compiler(JSContext *cx, ICStub::Kind kind, ICStub *firstMonitorStub,
-                 HandleObject obj, HandleObject holder, HandleFunction getter, uint32_t pcOffset,
-                 const Class *outerClass)
-          : ICGetPropCallGetter::Compiler(cx, kind, firstMonitorStub, holder, getter, pcOffset,
-                                          outerClass),
-            receiver_(cx, obj)
-        {
-            MOZ_ASSERT(kind == ICStub::GetProp_CallScripted ||
-                       kind == ICStub::GetProp_CallNativePrototype);
+                       kind == ICStub::GetProp_CallNative);
         }
     };
 };
 
 // Stub for calling a scripted getter on a native object when the getter is kept on the
 // proto-chain.
-class ICGetProp_CallScripted : public ICGetPropCallPrototypeGetter
+class ICGetProp_CallScripted : public ICGetPropCallGetter
 {
     friend class ICStubSpace;
 
   protected:
     ICGetProp_CallScripted(JitCode *stubCode, ICStub *firstMonitorStub,
-                           Shape *receiverShape, JSObject *holder, Shape *holderShape,
+                           ReceiverGuard::Token receiverGuard,
+                           JSObject *holder, Shape *holderShape,
                            JSFunction *getter, uint32_t pcOffset)
-      : ICGetPropCallPrototypeGetter(GetProp_CallScripted, stubCode, firstMonitorStub,
-                                     receiverShape, holder, holderShape, getter, pcOffset)
+      : ICGetPropCallGetter(GetProp_CallScripted, stubCode, firstMonitorStub,
+                            receiverGuard, holder, holderShape, getter, pcOffset)
     {}
 
   public:
     static ICGetProp_CallScripted *Clone(ICStubSpace *space,
                                          ICStub *firstMonitorStub, ICGetProp_CallScripted &other);
 
-    class Compiler : public ICGetPropCallPrototypeGetter::Compiler {
+    class Compiler : public ICGetPropCallGetter::Compiler {
       protected:
         bool generateStubCode(MacroAssembler &masm);
 
       public:
         Compiler(JSContext *cx, ICStub *firstMonitorStub, HandleObject obj,
                  HandleObject holder, HandleFunction getter, uint32_t pcOffset)
-          : ICGetPropCallPrototypeGetter::Compiler(cx, ICStub::GetProp_CallScripted,
-                                                   firstMonitorStub, obj, holder,
-                                                   getter, pcOffset, /* outerClass = */ nullptr)
+          : ICGetPropCallGetter::Compiler(cx, ICStub::GetProp_CallScripted,
+                                          firstMonitorStub, obj, holder,
+                                          getter, pcOffset, /* outerClass = */ nullptr)
         {}
 
         ICStub *getStub(ICStubSpace *space) {
-            RootedShape receiverShape(cx, receiver_->lastProperty());
-            RootedShape holderShape(cx, holder_->lastProperty());
+            ReceiverGuard::Token guard = ReceiverGuard::objectToken(receiver_);
+            Shape *holderShape = holder_->as<NativeObject>().lastProperty();
             return ICStub::New<ICGetProp_CallScripted>(space, getStubCode(), firstMonitorStub_,
-                                                       receiverShape, holder_, holderShape, getter_,
+                                                       guard, holder_, holderShape, getter_,
                                                        pcOffset_);
         }
     };
 };
 
-// Stub for calling an own native getter on a native object.
+// Stub for calling a native getter on a native object.
 class ICGetProp_CallNative : public ICGetPropCallGetter
 {
     friend class ICStubSpace;
 
   protected:
 
-    ICGetProp_CallNative(JitCode *stubCode, ICStub *firstMonitorStub, JSObject *obj,
-                         Shape *shape, JSFunction *getter, uint32_t pcOffset)
-      : ICGetPropCallGetter(GetProp_CallNative, stubCode, firstMonitorStub, obj, shape,
-                            getter, pcOffset)
-    { }
+    ICGetProp_CallNative(JitCode *stubCode, ICStub *firstMonitorStub,
+                         ReceiverGuard::Token receiverGuard, JSObject *holder, Shape *holderShape,
+                         JSFunction *getter, uint32_t pcOffset)
+      : ICGetPropCallGetter(GetProp_CallNative, stubCode, firstMonitorStub,
+                            receiverGuard, holder, holderShape, getter, pcOffset)
+    {}
 
   public:
     static ICGetProp_CallNative *Clone(ICStubSpace *space, ICStub *firstMonitorStub,
@@ -4404,71 +4440,27 @@ class ICGetProp_CallNative : public ICGetPropCallGetter
         bool generateStubCode(MacroAssembler &masm);
 
         virtual int32_t getKey() const {
-            return static_cast<int32_t>(kind) |
-                   (static_cast<int32_t>(inputDefinitelyObject_) << 16);
+            int32_t baseKey = ICGetPropCallGetter::Compiler::getKey();
+            MOZ_ASSERT((baseKey >> 19) == 0);
+            return baseKey | (static_cast<int32_t>(inputDefinitelyObject_) << 19);
         }
 
       public:
-        Compiler(JSContext *cx, ICStub *firstMonitorStub, HandleObject obj,
-                 HandleFunction getter, uint32_t pcOffset, const Class *outerClass,
-                 bool inputDefinitelyObject = false)
-          : ICGetPropCallGetter::Compiler(cx, ICStub::GetProp_CallNative, firstMonitorStub,
-                                          obj, getter, pcOffset, outerClass),
-            inputDefinitelyObject_(inputDefinitelyObject)
-        {}
-
-        ICStub *getStub(ICStubSpace *space) {
-            RootedShape shape(cx, holder_->lastProperty());
-            return ICStub::New<ICGetProp_CallNative>(space, getStubCode(), firstMonitorStub_,
-                                                     holder_, shape, getter_, pcOffset_);
-        }
-    };
-};
-
-// Stub for calling an native getter on a native object when the getter is kept on the proto-chain.
-class ICGetProp_CallNativePrototype : public ICGetPropCallPrototypeGetter
-{
-    friend class ICStubSpace;
-
-  protected:
-    ICGetProp_CallNativePrototype(JitCode *stubCode, ICStub *firstMonitorStub,
-                         Shape *receiverShape, JSObject *holder, Shape *holderShape,
-                         JSFunction *getter, uint32_t pcOffset)
-      : ICGetPropCallPrototypeGetter(GetProp_CallNativePrototype, stubCode, firstMonitorStub,
-                                     receiverShape, holder, holderShape, getter, pcOffset)
-    {}
-
-  public:
-    static ICGetProp_CallNativePrototype *Clone(ICStubSpace *space,
-                                                ICStub *firstMonitorStub,
-                                                ICGetProp_CallNativePrototype &other);
-
-    class Compiler : public ICGetPropCallPrototypeGetter::Compiler {
-        bool inputDefinitelyObject_;
-      protected:
-        bool generateStubCode(MacroAssembler &masm);
-
-        virtual int32_t getKey() const {
-            return static_cast<int32_t>(kind) |
-                   (static_cast<int32_t>(inputDefinitelyObject_) << 16);
-        }
-
-      public:
-        Compiler(JSContext *cx, ICStub *firstMonitorStub, HandleObject obj,
+        Compiler(JSContext *cx, ICStub *firstMonitorStub, HandleObject receiver,
                  HandleObject holder, HandleFunction getter, uint32_t pcOffset,
                  const Class *outerClass, bool inputDefinitelyObject = false)
-          : ICGetPropCallPrototypeGetter::Compiler(cx, ICStub::GetProp_CallNativePrototype,
-                                                   firstMonitorStub, obj, holder,
-                                                   getter, pcOffset, outerClass),
+          : ICGetPropCallGetter::Compiler(cx, ICStub::GetProp_CallNative,
+                                          firstMonitorStub, receiver, holder,
+                                          getter, pcOffset, outerClass),
             inputDefinitelyObject_(inputDefinitelyObject)
         {}
 
         ICStub *getStub(ICStubSpace *space) {
-            RootedShape receiverShape(cx, receiver_->lastProperty());
-            RootedShape holderShape(cx, holder_->lastProperty());
-            return ICStub::New<ICGetProp_CallNativePrototype>(space, getStubCode(), firstMonitorStub_,
-                                                              receiverShape, holder_, holderShape,
-                                                              getter_, pcOffset_);
+            ReceiverGuard::Token guard = ReceiverGuard::objectToken(receiver_);
+            Shape *holderShape = holder_->as<NativeObject>().lastProperty();
+            return ICStub::New<ICGetProp_CallNative>(space, getStubCode(), firstMonitorStub_,
+                                                     guard, holder_, holderShape,
+                                                     getter_, pcOffset_);
         }
     };
 };
@@ -4477,9 +4469,6 @@ class ICGetPropCallDOMProxyNativeStub : public ICGetPropCallGetter
 {
   friend class ICStubSpace;
   protected:
-    // Shape of the DOMProxy.  This enforces its class and hence its proxy handler.
-    HeapPtrShape shape_;
-
     // Object shape of expected expando object. (nullptr if no expando object should be there)
     HeapPtrShape expandoShape_;
 
@@ -4490,14 +4479,8 @@ class ICGetPropCallDOMProxyNativeStub : public ICGetPropCallGetter
                                     JSFunction *getter, uint32_t pcOffset);
 
   public:
-    HeapPtrShape &shape() {
-        return shape_;
-    }
     HeapPtrShape &expandoShape() {
         return expandoShape_;
-    }
-    static size_t offsetOfShape() {
-        return offsetof(ICGetPropCallDOMProxyNativeStub, shape_);
     }
     static size_t offsetOfExpandoShape() {
         return offsetof(ICGetPropCallDOMProxyNativeStub, expandoShape_);
@@ -4915,7 +4898,7 @@ class ICSetPropNativeAddCompiler : public ICStubCompiler
         if (newGroup == oldGroup_)
             newGroup = nullptr;
 
-        RootedShape newShape(cx, obj_->lastProperty());
+        RootedShape newShape(cx, obj_->as<NativeObject>().lastProperty());
 
         return ICStub::New<ICSetProp_NativeAddImpl<ProtoChainDepth>>(
                     space, getStubCode(), oldGroup_, shapes, newShape, newGroup, offset_);
@@ -5074,14 +5057,14 @@ class ICSetProp_TypedObject : public ICUpdatedStub
     };
 };
 
-// Base stub for calling a setters on a native object.
+// Base stub for calling a setters on a native or unboxed object.
 class ICSetPropCallSetter : public ICStub
 {
     friend class ICStubSpace;
 
   protected:
-    // Object shape (lastProperty).
-    HeapPtrShape shape_;
+    // Object shape/group.
+    ReceiverGuard guard_;
 
     // Holder and shape.
     HeapPtrObject holder_;
@@ -5093,12 +5076,12 @@ class ICSetPropCallSetter : public ICStub
     // PC of call, for profiler
     uint32_t pcOffset_;
 
-    ICSetPropCallSetter(Kind kind, JitCode *stubCode, Shape *shape, JSObject *holder,
+    ICSetPropCallSetter(Kind kind, JitCode *stubCode, ReceiverGuard::Token guard, JSObject *holder,
                         Shape *holderShape, JSFunction *setter, uint32_t pcOffset);
 
   public:
-    HeapPtrShape &shape() {
-        return shape_;
+    ReceiverGuard &guard() {
+        return guard_;
     }
     HeapPtrObject &holder() {
         return holder_;
@@ -5110,8 +5093,8 @@ class ICSetPropCallSetter : public ICStub
         return setter_;
     }
 
-    static size_t offsetOfShape() {
-        return offsetof(ICSetPropCallSetter, shape_);
+    static size_t offsetOfGuard() {
+        return offsetof(ICSetPropCallSetter, guard_);
     }
     static size_t offsetOfHolder() {
         return offsetof(ICSetPropCallSetter, holder_);
@@ -5133,6 +5116,11 @@ class ICSetPropCallSetter : public ICStub
         RootedFunction setter_;
         uint32_t pcOffset_;
 
+        virtual int32_t getKey() const {
+            return static_cast<int32_t>(kind) |
+                   (static_cast<int32_t>(obj_->isNative()) << 16);
+        }
+
       public:
         Compiler(JSContext *cx, ICStub::Kind kind, HandleObject obj, HandleObject holder,
                  HandleFunction setter, uint32_t pcOffset)
@@ -5153,9 +5141,9 @@ class ICSetProp_CallScripted : public ICSetPropCallSetter
     friend class ICStubSpace;
 
   protected:
-    ICSetProp_CallScripted(JitCode *stubCode, Shape *shape, JSObject *holder,
+    ICSetProp_CallScripted(JitCode *stubCode, ReceiverGuard::Token guard, JSObject *holder,
                            Shape *holderShape, JSFunction *setter, uint32_t pcOffset)
-      : ICSetPropCallSetter(SetProp_CallScripted, stubCode, shape, holder, holderShape,
+      : ICSetPropCallSetter(SetProp_CallScripted, stubCode, guard, holder, holderShape,
                             setter, pcOffset)
     {}
 
@@ -5175,9 +5163,9 @@ class ICSetProp_CallScripted : public ICSetPropCallSetter
         {}
 
         ICStub *getStub(ICStubSpace *space) {
-            RootedShape shape(cx, obj_->lastProperty());
-            RootedShape holderShape(cx, holder_->lastProperty());
-            return ICStub::New<ICSetProp_CallScripted>(space, getStubCode(), shape, holder_,
+            ReceiverGuard::Token guard = ReceiverGuard::objectToken(obj_);
+            Shape *holderShape = holder_->as<NativeObject>().lastProperty();
+            return ICStub::New<ICSetProp_CallScripted>(space, getStubCode(), guard, holder_,
                                                        holderShape, setter_, pcOffset_);
         }
     };
@@ -5189,9 +5177,9 @@ class ICSetProp_CallNative : public ICSetPropCallSetter
     friend class ICStubSpace;
 
   protected:
-    ICSetProp_CallNative(JitCode *stubCode, Shape *shape, JSObject *holder,
+    ICSetProp_CallNative(JitCode *stubCode, ReceiverGuard::Token guard, JSObject *holder,
                          Shape *holderShape, JSFunction *setter, uint32_t pcOffset)
-      : ICSetPropCallSetter(SetProp_CallNative, stubCode, shape, holder, holderShape,
+      : ICSetPropCallSetter(SetProp_CallNative, stubCode, guard, holder, holderShape,
                             setter, pcOffset)
     {}
 
@@ -5211,9 +5199,9 @@ class ICSetProp_CallNative : public ICSetPropCallSetter
         {}
 
         ICStub *getStub(ICStubSpace *space) {
-            RootedShape shape(cx, obj_->lastProperty());
-            RootedShape holderShape(cx, holder_->lastProperty());
-            return ICStub::New<ICSetProp_CallNative>(space, getStubCode(), shape, holder_,
+            ReceiverGuard::Token guard = ReceiverGuard::objectToken(obj_);
+            Shape *holderShape = holder_->as<NativeObject>().lastProperty();
+            return ICStub::New<ICSetProp_CallNative>(space, getStubCode(), guard, holder_,
                                                      holderShape, setter_, pcOffset_);
         }
     };

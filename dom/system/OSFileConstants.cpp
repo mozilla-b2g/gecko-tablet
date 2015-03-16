@@ -727,9 +727,11 @@ static const dom::ConstantSpec gWinProperties[] =
   // CreateFile attributes
   INT_CONSTANT(FILE_ATTRIBUTE_ARCHIVE),
   INT_CONSTANT(FILE_ATTRIBUTE_DIRECTORY),
+  INT_CONSTANT(FILE_ATTRIBUTE_HIDDEN),
   INT_CONSTANT(FILE_ATTRIBUTE_NORMAL),
   INT_CONSTANT(FILE_ATTRIBUTE_READONLY),
   INT_CONSTANT(FILE_ATTRIBUTE_REPARSE_POINT),
+  INT_CONSTANT(FILE_ATTRIBUTE_SYSTEM),
   INT_CONSTANT(FILE_ATTRIBUTE_TEMPORARY),
   INT_CONSTANT(FILE_FLAG_BACKUP_SEMANTICS),
 
@@ -800,7 +802,7 @@ JSObject *GetOrCreateObjectProperty(JSContext *cx, JS::Handle<JSObject*> aObject
       return &val.toObject();
     }
 
-    JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr,
+    JS_ReportErrorNumber(cx, js::GetErrorMessage, nullptr,
       JSMSG_UNEXPECTED_TYPE, aProperty, "not an object");
     return nullptr;
   }
@@ -839,7 +841,7 @@ bool DefineOSFileConstants(JSContext *cx, JS::Handle<JSObject*> global)
     // |gInitialized == true| but |gPaths == nullptr|. We cannot
     // |MOZ_ASSERT| this, as this would kill precompile_cache.js,
     // so we simply return an error.
-    JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr,
+    JS_ReportErrorNumber(cx, js::GetErrorMessage, nullptr,
       JSMSG_CANT_OPEN, "OSFileConstants", "initialization has failed");
     return false;
   }

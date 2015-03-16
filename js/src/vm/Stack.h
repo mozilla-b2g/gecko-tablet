@@ -35,6 +35,8 @@ class StaticBlockObject;
 
 class ScopeCoordinate;
 
+class SavedFrame;
+
 // VM stack layout
 //
 // A JSRuntime's stack consists of a linked list of activations. Every activation
@@ -234,6 +236,11 @@ class AbstractFramePtr
 
     inline void popBlock(JSContext *cx) const;
     inline void popWith(JSContext *cx) const;
+
+    friend void GDBTestInitAbstractFramePtr(AbstractFramePtr &, void *);
+    friend void GDBTestInitAbstractFramePtr(AbstractFramePtr &, InterpreterFrame *);
+    friend void GDBTestInitAbstractFramePtr(AbstractFramePtr &, jit::BaselineFrame *);
+    friend void GDBTestInitAbstractFramePtr(AbstractFramePtr &, jit::RematerializedFrame *);
 };
 
 class NullFramePtr : public AbstractFramePtr
@@ -304,7 +311,7 @@ class InterpreterFrame
         PREV_UP_TO_DATE    =     0x4000,  /* see DebugScopes::updateLiveScopes */
 
         /*
-         * See comment above 'debugMode' in jscompartment.h for explanation of
+         * See comment above 'isDebuggee' in jscompartment.h for explanation of
          * invariants of debuggee compartments, scripts, and frames.
          */
         DEBUGGEE           =     0x8000,  /* Execution is being observed by Debugger */
@@ -938,6 +945,9 @@ class InterpreterRegs
     HandleValue stackHandleAt(int i) const {
         return HandleValue::fromMarkedLocation(&sp[i]);
     }
+
+    friend void GDBTestInitInterpreterRegs(InterpreterRegs &, js::InterpreterFrame *,
+                                           JS::Value *, uint8_t *);
 };
 
 /*****************************************************************************/
@@ -1064,6 +1074,17 @@ class Activation
     // data structures instead.
     size_t hideScriptedCallerCount_;
 
+    // Youngest saved frame of an async stack that will be iterated during stack
+    // capture in place of the actual stack of previous activations. Note that
+    // the stack of this activation is captured entirely before this is used.
+    //
+    // Usually this is nullptr, meaning that normal stack capture will occur.
+    // When this is set, the stack of any previous activation is ignored.
+    Rooted<SavedFrame *> asyncStack_;
+
+    // Value of asyncCause to be attached to asyncStack_.
+    RootedString asyncCause_;
+
     enum Kind { Interpreter, Jit, AsmJS };
     Kind kind_;
 
@@ -1134,6 +1155,14 @@ class Activation
 
     static size_t offsetOfPrevProfiling() {
         return offsetof(Activation, prevProfiling_);
+    }
+
+    SavedFrame *asyncStack() {
+        return asyncStack_;
+    }
+
+    JSString *asyncCause() {
+        return asyncCause_;
     }
 
   private:
@@ -1308,6 +1337,9 @@ class JitActivation : public Activation
 
     uint8_t *prevJitTop() const {
         return prevJitTop_;
+    }
+    JitActivation *prevJitActivation() const {
+        return prevJitActivation_;
     }
     static size_t offsetOfPrevJitTop() {
         return offsetof(JitActivation, prevJitTop_);

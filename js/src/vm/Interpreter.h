@@ -51,7 +51,7 @@ enum MaybeConstruct {
  * before it reaches |v|. If it's -1, the decompiler will search the stack.
  */
 extern bool
-ReportIsNotFunction(JSContext *cx, HandleValue v, int numToSkip = -1,
+ReportIsNotFunction(JSContext *cx, HandleValue v, int numToSkip,
                     MaybeConstruct construct = NO_CONSTRUCT);
 
 /* See ReportIsNotFunction comment for the meaning of numToSkip. */
@@ -343,11 +343,11 @@ UrshValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, Mutabl
 
 template <bool strict>
 bool
-DeleteProperty(JSContext *ctx, HandleValue val, HandlePropertyName name, bool *bv);
+DeletePropertyJit(JSContext *ctx, HandleValue val, HandlePropertyName name, bool *bv);
 
 template <bool strict>
 bool
-DeleteElement(JSContext *cx, HandleValue val, HandleValue index, bool *bv);
+DeleteElementJit(JSContext *cx, HandleValue val, HandleValue index, bool *bv);
 
 bool
 DefFunOperation(JSContext *cx, HandleScript script, HandleObject scopeChain, HandleFunction funArg);
@@ -377,6 +377,9 @@ bool
 InitGetterSetterOperation(JSContext *cx, jsbytecode *pc, HandleObject obj, HandlePropertyName name,
                           HandleObject val);
 
+unsigned
+GetInitDataPropAttrs(JSOp op);
+
 bool
 EnterWithOperation(JSContext *cx, AbstractFramePtr frame, HandleValue val, HandleObject staticWith);
 
@@ -388,6 +391,13 @@ InitGetterSetterOperation(JSContext *cx, jsbytecode *pc, HandleObject obj, Handl
 bool
 SpreadCallOperation(JSContext *cx, HandleScript script, jsbytecode *pc, HandleValue thisv,
                     HandleValue callee, HandleValue arr, MutableHandleValue res);
+
+JSObject *
+NewObjectOperation(JSContext *cx, HandleScript script, jsbytecode *pc,
+                   NewObjectKind newKind = GenericObject);
+
+JSObject *
+NewObjectOperationWithTemplate(JSContext *cx, HandleObject templateObject);
 
 inline bool
 SetConstOperation(JSContext *cx, HandleObject varobj, HandlePropertyName name, HandleValue rval)

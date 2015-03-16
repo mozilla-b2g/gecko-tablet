@@ -350,7 +350,7 @@ class DeviceManagerADB(DeviceManager):
             self._checkCmd(["shell"] + cmd)
             return outputFile
 
-        acmd = ["shell", "am", "start", "-W"]
+        acmd = ["-W"]
         cmd = ' '.join(cmd).strip()
         i = cmd.find(" ")
         # SUT identifies the URL by looking for :\\ -- another strategy to consider
@@ -379,7 +379,9 @@ class DeviceManagerADB(DeviceManager):
                 envCnt += 1
         if uri != "":
             acmd.append("-d")
-            acmd.append(''.join(['\'',uri, '\'']));
+            acmd.append(uri)
+
+        acmd = ["shell", ' '.join(map(lambda x: '"' + x + '"', ["am", "start"] + acmd))]
         self._logger.info(acmd)
         self._checkCmd(acmd)
         return outputFile
@@ -512,7 +514,8 @@ class DeviceManagerADB(DeviceManager):
                     [int(g or 0) for g in m.groups()[1:]])
             ret["uptime"] = uptime
         if directive == "process" or directive == "all":
-            ret["process"] = self.shellCheckOutput(["ps"])
+            data = self.shellCheckOutput(["ps"])
+            ret["process"] = data.split('\n')
         if directive == "systime" or directive == "all":
             ret["systime"] = self.shellCheckOutput(["date"])
         if directive == "memtotal" or directive == "all":
@@ -521,6 +524,9 @@ class DeviceManagerADB(DeviceManager):
                 key, value = line.split(":")
                 meminfo[key] = value.strip()
             ret["memtotal"] = meminfo["MemTotal"]
+        if directive == "disk" or directive == "all":
+            data = self.shellCheckOutput(["df", "/data", "/system", "/sdcard"])
+            ret["disk"] = data.split('\n')
         self._logger.debug("getInfo: %s" % ret)
         return ret
 

@@ -82,6 +82,8 @@ let RILQUIRKS_DATA_REGISTRATION_ON_DEMAND;
 // Ril quirk to control the uicc/data subscription.
 let RILQUIRKS_SUBSCRIPTION_CONTROL;
 
+let RILQUIRKS_SIGNAL_EXTRA_INT32;
+
 const TELEPHONY_REQUESTS = [
   REQUEST_GET_CURRENT_CALLS,
   REQUEST_ANSWER,
@@ -2027,7 +2029,6 @@ RilObject.prototype = {
     }
 
     options.smscAddress = this.SMSC;
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendChromeMessage(options);
   },
 
@@ -3202,9 +3203,6 @@ RilObject.prototype = {
    */
   _processEnterAndChangeICCResponses: function(length, options) {
     options.success = (options.rilRequestError === 0);
-    if (!options.success) {
-      options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-    }
     options.retryCount = length ? this.context.Buf.readInt32List()[0] : -1;
     if (options.rilMessageType != "sendMMI") {
       this.sendChromeMessage(options);
@@ -3376,15 +3374,12 @@ RilObject.prototype = {
    *
    * @return The object of signal strength info.
    *         Or null if invalid signal input.
+   *
+   * TODO: Bug 982013: reconsider the format of signal strength APIs for
+   *       GSM/CDMA/LTE to expose details, such as rsrp and rsnnr,
+   *       individually.
    */
   _processLteSignal: function(signal) {
-    // Valid values are 0-63 as defined in TS 27.007 clause 8.69.
-    if (signal.lteSignalStrength === undefined ||
-        signal.lteSignalStrength < 0 ||
-        signal.lteSignalStrength > 63) {
-      return null;
-    }
-
     let info = {
       voice: {
         signalStrength:    null,
@@ -3396,16 +3391,51 @@ RilObject.prototype = {
       }
     };
 
-    // TODO: Bug 982013: reconsider signalStrength/relSignalStrength APIs for
-    //       GSM/CDMA/LTE, and take rsrp/rssnr into account for LTE case then.
-    let signalStrength = -111 + signal.lteSignalStrength;
+    // Referring to AOSP, use lteRSRP for signalStrength in dBm.
+    let signalStrength = (signal.lteRSRP === undefined || signal.lteRSRP === 0x7FFFFFFF) ?
+                         null : signal.lteRSRP;
     info.voice.signalStrength = info.data.signalStrength = signalStrength;
-    // 0 and 12 are referred to AOSP's implementation. These values are not
-    // constants and can be customized based on different requirements.
-    let signalLevel = this._processSignalLevel(signal.lteSignalStrength, 0, 12);
-    info.voice.relSignalStrength = info.data.relSignalStrength = signalLevel;
 
-    return info;
+    // Referring to AOSP, first determine signalLevel based on RSRP and RSSNR,
+    // then on lteSignalStrength if RSRP and RSSNR are invalid.
+    let rsrpLevel = -1;
+    let rssnrLevel = -1;
+    if (signal.lteRSRP !== undefined &&
+        signal.lteRSRP !== 0x7FFFFFFF &&
+        signal.lteRSRP >= 44 &&
+        signal.lteRSRP <= 140) {
+      rsrpLevel = this._processSignalLevel(signal.lteRSRP * -1, -115, -85);
+    }
+
+    if (signal.lteRSSNR !== undefined &&
+        signal.lteRSSNR !== 0x7FFFFFFF &&
+        signal.lteRSSNR >= -200 &&
+        signal.lteRSSNR <= 300) {
+      rssnrLevel = this._processSignalLevel(signal.lteRSSNR, -30, 130);
+    }
+
+    if (rsrpLevel !== -1 && rssnrLevel !== -1) {
+      info.voice.relSignalStrength = info.data.relSignalStrength =
+        Math.min(rsrpLevel, rssnrLevel);
+      return info;
+    }
+
+    let level = Math.max(rsrpLevel, rssnrLevel);
+    if (level !== -1) {
+      info.voice.relSignalStrength = info.data.relSignalStrength = level;
+      return info;
+    }
+
+    // Valid values are 0-63 as defined in TS 27.007 clause 8.69.
+    if (signal.lteSignalStrength !== undefined &&
+        signal.lteSignalStrength >= 0 &&
+        signal.lteSignalStrength <= 63) {
+      level = this._processSignalLevel(signal.lteSignalStrength, 0, 12);
+      info.voice.relSignalStrength = info.data.relSignalStrength = level;
+      return info;
+    }
+
+    return null;
   },
 
   _processSignalStrength: function(signal) {
@@ -3889,9 +3919,7 @@ RilObject.prototype = {
     // Should not include token for unsolicited response.
     delete message.rilMessageToken;
     message.rilMessageType = "datacallerror";
-    if (errorCode == ERROR_GENERIC_FAILURE) {
-      message.errorMsg = RIL_ERROR_TO_GECKO_ERROR[errorCode];
-    } else {
+    if (errorCode !== ERROR_GENERIC_FAILURE) {
       message.errorMsg = RIL_DATACALL_FAILCAUSE_TO_GECKO_DATACALL_ERROR[errorCode];
     }
     this.sendChromeMessage(message);
@@ -5097,7 +5125,6 @@ RilObject.prototype = {
     }
 
     options.success = (options.rilRequestError === 0);
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendChromeMessage(options);
   },
 
@@ -5323,15 +5350,18 @@ RilObject.prototype[REQUEST_SIGNAL_STRENGTH] = function REQUEST_SIGNAL_STRENGTH(
   }
 
   let Buf = this.context.Buf;
-  let signal = {
-    gsmSignalStrength: Buf.readInt32(),
-    gsmBitErrorRate:   Buf.readInt32(),
-    cdmaDBM:           Buf.readInt32(),
-    cdmaECIO:          Buf.readInt32(),
-    evdoDBM:           Buf.readInt32(),
-    evdoECIO:          Buf.readInt32(),
-    evdoSNR:           Buf.readInt32()
-  };
+  let signal = {};
+
+  signal.gsmSignalStrength = Buf.readInt32();
+  signal.gsmBitErrorRate = Buf.readInt32();
+  if (RILQUIRKS_SIGNAL_EXTRA_INT32) {
+    Buf.readInt32();
+  }
+  signal.cdmaDBM = Buf.readInt32();
+  signal.cdmaECIO = Buf.readInt32();
+  signal.evdoDBM = Buf.readInt32();
+  signal.evdoECIO = Buf.readInt32();
+  signal.evdoSNR = Buf.readInt32();
 
   if (!this.v5Legacy) {
     signal.lteSignalStrength = Buf.readInt32();
@@ -5400,7 +5430,6 @@ RilObject.prototype[REQUEST_RADIO_POWER] = function REQUEST_RADIO_POWER(length, 
     return;
   }
 
-  options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_DTMF] = null;
@@ -5450,8 +5479,7 @@ RilObject.prototype[REQUEST_SETUP_DATA_CALL] = function REQUEST_SETUP_DATA_CALL(
 RilObject.prototype[REQUEST_SIM_IO] = function REQUEST_SIM_IO(length, options) {
   if (options.rilRequestError) {
     if (options.onerror) {
-      options.onerror(RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError] ||
-                      GECKO_ERROR_GENERIC_FAILURE);
+      options.onerror(options.errorMsg);
     }
     return;
   }
@@ -5486,7 +5514,6 @@ RilObject.prototype[REQUEST_SEND_USSD] = function REQUEST_SEND_USSD(length, opti
     this.context.debug("REQUEST_SEND_USSD " + JSON.stringify(options));
   }
   options.success = (this._ussdSession = options.rilRequestError === 0);
-  options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_CANCEL_USSD] = function REQUEST_CANCEL_USSD(length, options) {
@@ -5496,7 +5523,6 @@ RilObject.prototype[REQUEST_CANCEL_USSD] = function REQUEST_CANCEL_USSD(length, 
 
   options.success = (options.rilRequestError === 0);
   this._ussdSession = !options.success;
-  options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
 
   // The cancelUSSD is triggered by ril_worker itself.
   if (this.cachedUSSDRequest) {
@@ -5511,7 +5537,6 @@ RilObject.prototype[REQUEST_CANCEL_USSD] = function REQUEST_CANCEL_USSD(length, 
 RilObject.prototype[REQUEST_GET_CLIR] = function REQUEST_GET_CLIR(length, options) {
   options.success = (options.rilRequestError === 0);
   if (!options.success) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendChromeMessage(options);
     return;
   }
@@ -5599,9 +5624,7 @@ RilObject.prototype[REQUEST_SET_CLIR] = function REQUEST_SET_CLIR(length, option
     return;
   }
   options.success = (options.rilRequestError === 0);
-  if (!options.success) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  } else if (options.rilMessageType === "sendMMI") {
+  if (options.success && options.rilMessageType === "sendMMI") {
     switch (options.procedure) {
       case MMI_PROCEDURE_ACTIVATION:
         options.statusMessage = MMI_SM_KS_SERVICE_ENABLED;
@@ -5618,7 +5641,6 @@ RilObject.prototype[REQUEST_QUERY_CALL_FORWARD_STATUS] =
   function REQUEST_QUERY_CALL_FORWARD_STATUS(length, options) {
   options.success = (options.rilRequestError === 0);
   if (!options.success) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendChromeMessage(options);
     return;
   }
@@ -5658,9 +5680,7 @@ RilObject.prototype[REQUEST_QUERY_CALL_FORWARD_STATUS] =
 RilObject.prototype[REQUEST_SET_CALL_FORWARD] =
     function REQUEST_SET_CALL_FORWARD(length, options) {
   options.success = (options.rilRequestError === 0);
-  if (!options.success) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  } else if (options.rilMessageType === "sendMMI") {
+  if (options.success && options.rilMessageType === "sendMMI") {
     switch (options.action) {
       case CALL_FORWARD_ACTION_ENABLE:
         options.statusMessage = MMI_SM_KS_SERVICE_ENABLED;
@@ -5682,8 +5702,6 @@ RilObject.prototype[REQUEST_QUERY_CALL_WAITING] =
   function REQUEST_QUERY_CALL_WAITING(length, options) {
   options.success = (options.rilRequestError === 0);
   if (!options.success) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-
     if (options.callback) {
       // Prevent DataCloneError when sending chrome messages.
       delete options.callback;
@@ -5708,8 +5726,6 @@ RilObject.prototype[REQUEST_QUERY_CALL_WAITING] =
 RilObject.prototype[REQUEST_SET_CALL_WAITING] = function REQUEST_SET_CALL_WAITING(length, options) {
   options.success = (options.rilRequestError === 0);
   if (!options.success) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-
     if (options.callback) {
       // Prevent DataCloneError when sending chrome messages.
       delete options.callback;
@@ -5736,8 +5752,7 @@ RilObject.prototype[REQUEST_GET_IMEI] = function REQUEST_GET_IMEI(length, option
   }
 
   options.success = (options.rilRequestError === 0);
-  options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  if ((!options.success || this.IMEI == null) && !options.errorMsg) {
+  if (options.success && this.IMEI == null) {
     options.errorMsg = GECKO_ERROR_GENERIC_FAILURE;
   }
   options.statusMessage = this.IMEI;
@@ -5767,7 +5782,6 @@ RilObject.prototype[REQUEST_DEACTIVATE_DATA_CALL] = function REQUEST_DEACTIVATE_
 RilObject.prototype[REQUEST_QUERY_FACILITY_LOCK] = function REQUEST_QUERY_FACILITY_LOCK(length, options) {
   options.success = (options.rilRequestError === 0);
   if (!options.success) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendChromeMessage(options);
     return;
   }
@@ -5809,10 +5823,6 @@ RilObject.prototype[REQUEST_QUERY_FACILITY_LOCK] = function REQUEST_QUERY_FACILI
 };
 RilObject.prototype[REQUEST_SET_FACILITY_LOCK] = function REQUEST_SET_FACILITY_LOCK(length, options) {
   options.success = (options.rilRequestError === 0);
-  if (!options.success) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  }
-
   options.retryCount = length ? this.context.Buf.readInt32List()[0] : -1;
 
   if (options.success && (options.rilMessageType === "sendMMI")) {
@@ -5829,10 +5839,6 @@ RilObject.prototype[REQUEST_SET_FACILITY_LOCK] = function REQUEST_SET_FACILITY_L
 };
 RilObject.prototype[REQUEST_CHANGE_BARRING_PASSWORD] =
   function REQUEST_CHANGE_BARRING_PASSWORD(length, options) {
-  if (options.rilRequestError) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  }
-
   if (options.rilMessageType != "sendMMI") {
     this.sendChromeMessage(options);
     return;
@@ -5866,36 +5872,25 @@ RilObject.prototype[REQUEST_QUERY_NETWORK_SELECTION_MODE] = function REQUEST_QUE
   this._updateNetworkSelectionMode(selectionMode);
 };
 RilObject.prototype[REQUEST_SET_NETWORK_SELECTION_AUTOMATIC] = function REQUEST_SET_NETWORK_SELECTION_AUTOMATIC(length, options) {
-  if (options.rilRequestError) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  } else {
+  if (!options.rilRequestError) {
     this._updateNetworkSelectionMode(GECKO_NETWORK_SELECTION_AUTOMATIC);
   }
-
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_SET_NETWORK_SELECTION_MANUAL] = function REQUEST_SET_NETWORK_SELECTION_MANUAL(length, options) {
-  if (options.rilRequestError) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  } else {
+  if (!options.rilRequestError) {
     this._updateNetworkSelectionMode(GECKO_NETWORK_SELECTION_MANUAL);
   }
-
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_QUERY_AVAILABLE_NETWORKS] = function REQUEST_QUERY_AVAILABLE_NETWORKS(length, options) {
-  if (options.rilRequestError) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  } else {
+  if (!options.rilRequestError) {
     options.networks = this._processNetworks();
   }
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_DTMF_START] = function REQUEST_DTMF_START(length, options) {
   options.success = (options.rilRequestError === 0);
-  if (!options.success) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  }
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_DTMF_STOP] = null;
@@ -5915,7 +5910,6 @@ RilObject.prototype[REQUEST_GET_MUTE] = null;
 RilObject.prototype[REQUEST_QUERY_CLIP] = function REQUEST_QUERY_CLIP(length, options) {
   options.success = (options.rilRequestError === 0);
   if (!options.success) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendChromeMessage(options);
     return;
   }
@@ -6066,14 +6060,10 @@ RilObject.prototype[REQUEST_STK_SEND_TERMINAL_RESPONSE] = null;
 RilObject.prototype[REQUEST_STK_HANDLE_CALL_SETUP_REQUESTED_FROM_SIM] = null;
 RilObject.prototype[REQUEST_EXPLICIT_CALL_TRANSFER] = null;
 RilObject.prototype[REQUEST_SET_PREFERRED_NETWORK_TYPE] = function REQUEST_SET_PREFERRED_NETWORK_TYPE(length, options) {
-  if (options.rilRequestError) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  }
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_GET_PREFERRED_NETWORK_TYPE] = function REQUEST_GET_PREFERRED_NETWORK_TYPE(length, options) {
   if (options.rilRequestError) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendChromeMessage(options);
     return;
   }
@@ -6083,7 +6073,6 @@ RilObject.prototype[REQUEST_GET_PREFERRED_NETWORK_TYPE] = function REQUEST_GET_P
 };
 RilObject.prototype[REQUEST_GET_NEIGHBORING_CELL_IDS] = function REQUEST_GET_NEIGHBORING_CELL_IDS(length, options) {
   if (options.rilRequestError) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendChromeMessage(options);
     return;
   }
@@ -6147,7 +6136,6 @@ RilObject.prototype[REQUEST_GET_NEIGHBORING_CELL_IDS] = function REQUEST_GET_NEI
 };
 RilObject.prototype[REQUEST_GET_CELL_INFO_LIST] = function REQUEST_GET_CELL_INFO_LIST(length, options) {
   if (options.rilRequestError) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendChromeMessage(options);
     return;
   }
@@ -6208,15 +6196,10 @@ RilObject.prototype[REQUEST_GET_CELL_INFO_LIST] = function REQUEST_GET_CELL_INFO
 RilObject.prototype[REQUEST_SET_LOCATION_UPDATES] = null;
 RilObject.prototype[REQUEST_CDMA_SET_SUBSCRIPTION_SOURCE] = null;
 RilObject.prototype[REQUEST_CDMA_SET_ROAMING_PREFERENCE] = function REQUEST_CDMA_SET_ROAMING_PREFERENCE(length, options) {
-  if (options.rilRequestError) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  }
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_CDMA_QUERY_ROAMING_PREFERENCE] = function REQUEST_CDMA_QUERY_ROAMING_PREFERENCE(length, options) {
-  if (options.rilRequestError) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  } else {
+  if (!options.rilRequestError) {
     options.mode = this.context.Buf.readInt32List()[0];
   }
   this.sendChromeMessage(options);
@@ -6224,17 +6207,10 @@ RilObject.prototype[REQUEST_CDMA_QUERY_ROAMING_PREFERENCE] = function REQUEST_CD
 RilObject.prototype[REQUEST_SET_TTY_MODE] = null;
 RilObject.prototype[REQUEST_QUERY_TTY_MODE] = null;
 RilObject.prototype[REQUEST_CDMA_SET_PREFERRED_VOICE_PRIVACY_MODE] = function REQUEST_CDMA_SET_PREFERRED_VOICE_PRIVACY_MODE(length, options) {
-  if (options.rilRequestError) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-    this.sendChromeMessage(options);
-    return;
-  }
-
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_CDMA_QUERY_PREFERRED_VOICE_PRIVACY_MODE] = function REQUEST_CDMA_QUERY_PREFERRED_VOICE_PRIVACY_MODE(length, options) {
   if (options.rilRequestError) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendChromeMessage(options);
     return;
   }
@@ -6302,9 +6278,6 @@ RilObject.prototype[REQUEST_EXIT_EMERGENCY_CALLBACK_MODE] = function REQUEST_EXI
   }
 
   options.success = (options.rilRequestError === 0);
-  if (!options.success) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  }
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_GET_SMSC_ADDRESS] = function REQUEST_GET_SMSC_ADDRESS(length, options) {
@@ -6315,7 +6288,6 @@ RilObject.prototype[REQUEST_GET_SMSC_ADDRESS] = function REQUEST_GET_SMSC_ADDRES
   }
 
   options.smscAddress = this.SMSC;
-  options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_SET_SMSC_ADDRESS] = null;
@@ -6372,15 +6344,13 @@ RilObject.prototype[REQUEST_IMS_SEND_SMS] = null;
 RilObject.prototype[REQUEST_SIM_TRANSMIT_APDU_BASIC] = null;
 RilObject.prototype[REQUEST_SIM_OPEN_CHANNEL] = function REQUEST_SIM_OPEN_CHANNEL(length, options) {
   if (options.rilRequestError) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendChromeMessage(options);
     return;
   }
 
-  options.channel = this.context.Buf.readInt32();
-  if (DEBUG) {
-    this.context.debug("Setting channel number in options: " + options.channel);
-  }
+  options.channel = this.context.Buf.readInt32List()[0];
+  // onwards may optionally contain the select response for the open channel
+  // command with one byte per integer.
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_SIM_CLOSE_CHANNEL] = function REQUEST_SIM_CLOSE_CHANNEL(length, options) {
@@ -6388,7 +6358,6 @@ RilObject.prototype[REQUEST_SIM_CLOSE_CHANNEL] = function REQUEST_SIM_CLOSE_CHAN
 };
 RilObject.prototype[REQUEST_SIM_TRANSMIT_APDU_CHANNEL] = function REQUEST_SIM_TRANSMIT_APDU_CHANNEL(length, options) {
   if (options.rilRequestError) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendChromeMessage(options);
     return;
   }
@@ -6428,16 +6397,10 @@ RilObject.prototype[REQUEST_SET_DATA_SUBSCRIPTION] = function REQUEST_SET_DATA_S
     return;
   }
   options.success = (options.rilRequestError === 0);
-  if (!options.success) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  }
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_GET_UNLOCK_RETRY_COUNT] = function REQUEST_GET_UNLOCK_RETRY_COUNT(length, options) {
   options.success = (options.rilRequestError === 0);
-  if (!options.success) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  }
   options.retryCount = length ? this.context.Buf.readInt32List()[0] : -1;
   this.sendChromeMessage(options);
 };
@@ -6447,16 +6410,10 @@ RilObject.prototype[RIL_REQUEST_GPRS_ATTACH] = function RIL_REQUEST_GPRS_ATTACH(
     return;
   }
   options.success = (options.rilRequestError === 0);
-  if (!options.success) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  }
   this.sendChromeMessage(options);
 };
 RilObject.prototype[RIL_REQUEST_GPRS_DETACH] = function RIL_REQUEST_GPRS_DETACH(length, options) {
   options.success = (options.rilRequestError === 0);
-  if (!options.success) {
-    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-  }
   this.sendChromeMessage(options);
 };
 RilObject.prototype[UNSOLICITED_RESPONSE_RADIO_STATE_CHANGED] = function UNSOLICITED_RESPONSE_RADIO_STATE_CHANGED() {
@@ -7415,14 +7372,20 @@ GsmPDUHelperObject.prototype = {
           let dstp = (this.readHexOctet() << 8) | this.readHexOctet();
           let orip = (this.readHexOctet() << 8) | this.readHexOctet();
           dataAvailable -= 4;
-          // 3GPP TS 23.040 clause 9.2.3.24.4: "A receiving entity shall
-          // ignore any information element where the value of the
-          // Information-Element-Data is Reserved or not supported"
-          if ((dstp < PDU_APA_VALID_16BIT_PORTS)
-              && (orip < PDU_APA_VALID_16BIT_PORTS)) {
-            header.destinationPort = dstp;
-            header.originatorPort = orip;
+          if ((dstp >= PDU_APA_VALID_16BIT_PORTS) ||
+              (orip >= PDU_APA_VALID_16BIT_PORTS)) {
+            // 3GPP TS 23.040 clause 9.2.3.24.4: "A receiving entity shall
+            // ignore any information element where the value of the
+            // Information-Element-Data is Reserved or not supported"
+            // Bug 1130292, some carriers set originatorPort to reserved port
+            // numbers for wap push. We rise this as a warning in debug message
+            // instead of ingoring this IEI to allow user to receive Wap Push
+            // under these carriers.
+            this.context.debug("Warning: Invalid port numbers [dstp, orip]: " +
+                               JSON.stringify([dstp, orip]));
           }
+          header.destinationPort = dstp;
+          header.originatorPort = orip;
           break;
         }
         case PDU_IEI_CONCATENATED_SHORT_MESSAGES_16BIT: {
@@ -16087,6 +16050,7 @@ let ContextPool = {
     RILQUIRKS_SEND_STK_PROFILE_DOWNLOAD = quirks.sendStkProfileDownload;
     RILQUIRKS_DATA_REGISTRATION_ON_DEMAND = quirks.dataRegistrationOnDemand;
     RILQUIRKS_SUBSCRIPTION_CONTROL = quirks.subscriptionControl;
+    RILQUIRKS_SIGNAL_EXTRA_INT32 = quirks.signalExtraInt;
   },
 
   setDebugFlag: function(aOptions) {

@@ -73,6 +73,13 @@ public:
   void* operator new(size_t sz, nsPresContext* aPresContext) CPP_THROW_NEW;
   void Destroy();
 
+#ifdef DEBUG
+  /**
+   * Initializes a cached pref, which is only used in DEBUG code.
+   */
+  static void Initialize();
+#endif
+
   nsrefcnt AddRef() {
     if (mRefCnt == UINT32_MAX) {
       NS_WARNING("refcount overflow, leaking object");
@@ -145,11 +152,13 @@ public:
   bool HasTextDecorationLines() const
     { return !!(mBits & NS_STYLE_HAS_TEXT_DECORATION_LINES); }
 
-  // Whether this style context or any of its inline-level ancestors
-  // is directly contained by a ruby box? It is used to inlinize
-  // block-level descendants and suppress line breaks inside ruby.
-  bool IsInlineDescendantOfRuby() const
-    { return !!(mBits & NS_STYLE_IS_INLINE_DESCENDANT_OF_RUBY); }
+  // Whether any line break inside should be suppressed? If this returns
+  // true, the line should not be broken inside, which means inlines act
+  // as if nowrap is set, <br> is suppressed, and blocks are inlinized.
+  // This bit is propogated to all children of line partitipants. It is
+  // currenlty used by ruby to make its content frames unbreakable.
+  bool ShouldSuppressLineBreak() const
+    { return !!(mBits & NS_STYLE_SUPPRESS_LINEBREAK); }
 
   // Does this style context represent the style for a pseudo-element or
   // inherit data from such a style context?  Whether this returns true
@@ -324,8 +333,6 @@ public:
   #include "nsStyleStructList.h"
   #undef STYLE_STRUCT
 
-  void* GetUniqueStyleData(const nsStyleStructID& aSID);
-
   /**
    * Compute the style changes needed during restyling when this style
    * context is being replaced by aOther.  (This is nonsymmetric since
@@ -434,6 +441,9 @@ private:
 
   void AddChild(nsStyleContext* aChild);
   void RemoveChild(nsStyleContext* aChild);
+
+  void* GetUniqueStyleData(const nsStyleStructID& aSID);
+  void* CreateEmptyStyleData(const nsStyleStructID& aSID);
 
   void ApplyStyleFixups(bool aSkipParentDisplayBasedStyleFixup);
 

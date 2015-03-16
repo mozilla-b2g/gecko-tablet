@@ -13,6 +13,7 @@
 #include "prmjtime.h"
 
 #include "frontend/BytecodeCompiler.h"
+#include "gc/GCInternals.h"
 #include "jit/IonBuilder.h"
 #include "vm/Debugger.h"
 #include "vm/TraceLogging.h"
@@ -739,6 +740,11 @@ GlobalHelperThreadState::canStartGCParallelTask()
     return !gcParallelWorklist().empty();
 }
 
+js::GCParallelTask::~GCParallelTask()
+{
+    join();
+}
+
 bool
 js::GCParallelTask::startWithLockHeld()
 {
@@ -900,11 +906,15 @@ GlobalHelperThreadState::finishParseTask(JSContext *maybecx, JSRuntime *rt, void
     // Point the prototypes of any objects in the script's compartment to refer
     // to the corresponding prototype in the new compartment. This will briefly
     // create cross compartment pointers, which will be fixed by the
-    // MergeCompartments call below.
-    for (gc::ZoneCellIter iter(parseTask->cx->zone(), gc::FINALIZE_OBJECT_GROUP);
+    // MergeCompartments call below.  It's not safe for a GC to observe this
+    // state, so finish any ongoing GC first and assert that we can't trigger
+    // another one.
+    gc::AutoFinishGC finishGC(rt);
+    for (gc::ZoneCellIter iter(parseTask->cx->zone(), gc::AllocKind::OBJECT_GROUP);
          !iter.done();
          iter.next())
     {
+        JS::AutoAssertNoAlloc noAlloc(rt);
         ObjectGroup *group = iter.get<ObjectGroup>();
         TaggedProto proto(group->proto());
         if (!proto.isObject())
@@ -936,7 +946,7 @@ GlobalHelperThreadState::finishParseTask(JSContext *maybecx, JSRuntime *rt, void
     for (size_t i = 0; i < parseTask->errors.length(); i++)
         parseTask->errors[i]->throwError(cx);
     if (parseTask->overRecursed)
-        js_ReportOverRecursed(cx);
+        ReportOverRecursed(cx);
     if (cx->isExceptionPending())
         return nullptr;
 
@@ -1244,7 +1254,7 @@ js::StartOffThreadCompression(ExclusiveContext *cx, SourceCompressionTask *task)
 
     if (!HelperThreadState().compressionWorklist().append(task)) {
         if (JSContext *maybecx = cx->maybeJSContext())
-            js_ReportOutOfMemory(maybecx);
+            ReportOutOfMemory(maybecx);
         return false;
     }
 
@@ -1291,7 +1301,7 @@ SourceCompressionTask::complete()
         js_free(compressed);
 
         if (result == OOM)
-            js_ReportOutOfMemory(cx);
+            ReportOutOfMemory(cx);
         else if (result == Aborted && !ss->ensureOwnsSource(cx))
             result = OOM;
     }

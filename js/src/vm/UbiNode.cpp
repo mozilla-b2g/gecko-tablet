@@ -43,6 +43,7 @@ using JS::ubi::SimpleEdge;
 using JS::ubi::SimpleEdgeVector;
 using JS::ubi::TracerConcrete;
 using JS::ubi::TracerConcreteWithCompartment;
+using JS::ubi::TracerConcreteWithCompartmentAndClassName;
 
 // All operations on null ubi::Nodes crash.
 const char16_t *Concrete<void>::typeName() const          { MOZ_CRASH("null ubi::Node"); }
@@ -222,6 +223,13 @@ TracerConcreteWithCompartment<Referent>::compartment() const
     return TracerBase::get().compartment();
 }
 
+template<typename Referent>
+const char *
+TracerConcreteWithCompartmentAndClassName<Referent>::jsObjectClassName() const
+{
+    return TracerBase::get().getClass()->name;
+}
+
 template<> const char16_t TracerConcrete<JSObject>::concreteTypeName[] =
     MOZ_UTF16("JSObject");
 template<> const char16_t TracerConcrete<JSString>::concreteTypeName[] =
@@ -317,7 +325,7 @@ RootList::init(HandleObject debuggees)
     if (!debuggeeZones.init())
         return false;
 
-    for (js::GlobalObjectSet::Range r = dbg->allDebuggees(); !r.empty(); r.popFront()) {
+    for (js::WeakGlobalObjectSet::Range r = dbg->allDebuggees(); !r.empty(); r.popFront()) {
         if (!debuggeeZones.put(r.front()->zone()))
             return false;
     }
@@ -326,7 +334,7 @@ RootList::init(HandleObject debuggees)
         return false;
 
     // Ensure that each of our debuggee globals are in the root list.
-    for (js::GlobalObjectSet::Range r = dbg->allDebuggees(); !r.empty(); r.popFront()) {
+    for (js::WeakGlobalObjectSet::Range r = dbg->allDebuggees(); !r.empty(); r.popFront()) {
         if (!addRoot(JS::ubi::Node(static_cast<JSObject *>(r.front())),
                      MOZ_UTF16("debuggee global")))
         {

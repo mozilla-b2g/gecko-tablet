@@ -19,7 +19,8 @@ loader.lazyRequireGetter(this, "StackFrameCache",
  *
  * @param String expectedState
  *        The expected state.
- *
+ * @param String activity
+ *        Additional info about what's going on.
  * @param Function method
  *        The actor method to proceed with when the actor is in the expected
  *        state.
@@ -27,11 +28,12 @@ loader.lazyRequireGetter(this, "StackFrameCache",
  * @returns Function
  *          The decorated method.
  */
-function expectState(expectedState, method) {
+function expectState(expectedState, method, activity) {
   return function(...args) {
     if (this.state !== expectedState) {
-      const msg = "Wrong State: Expected '" + expectedState + "', but current "
-                + "state is '" + this.state + "'";
+      const msg = `Wrong state while ${activity}:` +
+                  `Expected '${expectedState}',` +
+                  `but current state is '${this.state}'.`;
       return Promise.reject(new Error(msg));
     }
 
@@ -43,7 +45,12 @@ types.addDictType("AllocationsRecordingOptions", {
   // The probability we sample any given allocation when recording
   // allocations. Must be between 0.0 and 1.0. Defaults to 1.0, or sampling
   // every allocation.
-  probability: "number"
+  probability: "number",
+
+  // The maximum number of of allocation events to keep in the allocations
+  // log. If new allocations arrive, when we are already at capacity, the oldest
+  // allocation event is lost. This number must fit in a 32 bit signed integer.
+  maxLogLength: "number"
 });
 
 /**
@@ -91,7 +98,8 @@ let MemoryActor = protocol.ActorClass({
   attach: method(expectState("detached", function() {
     this.dbg.addDebuggees();
     this.state = "attached";
-  }), {
+  },
+  `attaching to the debugger`), {
     request: {},
     response: {
       type: "attached"
@@ -106,10 +114,22 @@ let MemoryActor = protocol.ActorClass({
     this.dbg.enabled = false;
     this._dbg = null;
     this.state = "detached";
-  }), {
+  },
+  `detaching from the debugger`), {
     request: {},
     response: {
       type: "detached"
+    }
+  }),
+
+  /**
+   * Gets the current MemoryActor attach/detach state.
+   */
+  getState: method(function() {
+    return this.state;
+  }, {
+    response: {
+      state: RetVal(0, "string")
     }
   }),
 
@@ -148,7 +168,8 @@ let MemoryActor = protocol.ActorClass({
    */
   takeCensus: method(expectState("attached", function() {
     return this.dbg.memory.takeCensus();
-  }), {
+  },
+  `taking census`), {
     request: {},
     response: RetVal("json")
   }),
@@ -161,13 +182,18 @@ let MemoryActor = protocol.ActorClass({
    */
   startRecordingAllocations: method(expectState("attached", function(options = {}) {
     this._frameCache.initFrames();
+
     this.dbg.memory.allocationSamplingProbability = options.probability != null
       ? options.probability
       : 1.0;
+    if (options.maxLogLength != null) {
+      this.dbg.memory.maxAllocationsLogLength = options.maxLogLength;
+    }
     this.dbg.memory.trackingAllocationSites = true;
 
     return Date.now();
-  }), {
+  },
+  `starting recording allocations`), {
     request: {
       options: Arg(0, "nullable:AllocationsRecordingOptions")
     },
@@ -185,11 +211,29 @@ let MemoryActor = protocol.ActorClass({
     this._clearFrames();
 
     return Date.now();
-  }), {
+  },
+  `stopping recording allocations`), {
     request: {},
     response: {
       // Accept `nullable` in the case of server Gecko <= 37, handled on the front
       value: RetVal(0, "nullable:number")
+    }
+  }),
+
+  /**
+   * Return settings used in `startRecordingAllocations` for `probability`
+   * and `maxLogLength`. Currently only uses in tests.
+   */
+  getAllocationsSettings: method(expectState("attached", function() {
+    return {
+      maxLogLength: this.dbg.memory.maxAllocationsLogLength,
+      probability: this.dbg.memory.allocationSamplingProbability
+    };
+  },
+  `getting allocations settings`), {
+    request: {},
+    response: {
+      options: RetVal(0, "json")
     }
   }),
 
@@ -253,6 +297,15 @@ let MemoryActor = protocol.ActorClass({
    *          profiling and done only when necessary.
    */
   getAllocations: method(expectState("attached", function() {
+    if (this.dbg.memory.allocationsLogOverflowed) {
+      // Since the last time we drained the allocations log, there have been
+      // more allocations than the log's capacity, and we lost some data. There
+      // isn't anything actionable we can do about this, but put a message in
+      // the browser console so we at least know that it occurred.
+      reportException("MemoryActor.prototype.getAllocations",
+                      "Warning: allocations log overflowed and lost some data.");
+    }
+
     const allocations = this.dbg.memory.drainAllocationsLog()
     const packet = {
       allocations: [],
@@ -278,7 +331,8 @@ let MemoryActor = protocol.ActorClass({
     }
 
     return this._frameCache.updateFramePacket(packet);
-  }), {
+  },
+  `getting allocations`), {
     request: {},
     response: RetVal("json")
   }),

@@ -37,6 +37,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "ContentSearch",
                                   "resource:///modules/ContentSearch.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "AboutHome",
                                   "resource:///modules/AboutHome.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "Log",
+                                  "resource://gre/modules/Log.jsm");
 XPCOMUtils.defineLazyServiceGetter(this, "Favicons",
                                    "@mozilla.org/browser/favicon-service;1",
                                    "mozIAsyncFavicons");
@@ -2947,7 +2949,10 @@ function BrowserFullScreen()
 }
 
 function mirrorShow(popup) {
-  let services = CastingApps.getServicesForMirroring();
+  let services = [];
+  if (Services.prefs.getBoolPref("browser.casting.enabled")) {
+    services = CastingApps.getServicesForMirroring();
+  }
   popup.ownerDocument.getElementById("menu_mirrorTabCmd").hidden = !services.length;
 }
 
@@ -2957,8 +2962,11 @@ function mirrorMenuItemClicked(event) {
 }
 
 function populateMirrorTabMenu(popup) {
-  let videoEl = this.target;
   popup.innerHTML = null;
+  if (!Services.prefs.getBoolPref("browser.casting.enabled")) {
+    return;
+  }
+  let videoEl = this.target;
   let doc = popup.ownerDocument;
   let services = CastingApps.getServicesForMirroring();
   services.forEach(service => {
@@ -3486,6 +3494,12 @@ const BrowserSearch = {
     if (engine) {
       BrowserSearch.recordSearchInHealthReport(engine, "contextmenu");
     }
+  },
+
+  pasteAndSearch: function (event) {
+    BrowserSearch.searchBar.select();
+    goDoCommand("cmd_paste");
+    BrowserSearch.searchBar.handleSearchCommand(event);
   },
 
   /**
@@ -6475,17 +6489,6 @@ function AddKeywordForSearchField() {
                                    }, window);
 }
 
-function SwitchDocumentDirection(aWindow) {
-  // document.dir can also be "auto", in which case it won't change
-  if (aWindow.document.dir == "ltr" || aWindow.document.dir == "") {
-    aWindow.document.dir = "rtl";
-  } else if (aWindow.document.dir == "rtl") {
-    aWindow.document.dir = "ltr";
-  }
-  for (var run = 0; run < aWindow.frames.length; run++)
-    SwitchDocumentDirection(aWindow.frames[run]);
-}
-
 function convertFromUnicode(charset, str)
 {
   try {
@@ -7322,23 +7325,23 @@ function switchToTabHavingURI(aURI, aOpenNew, aOpenParams={}) {
                            browser.currentURI.equals(aURI)) {
         // Focus the matching window & tab
         aWindow.focus();
-        aWindow.gBrowser.tabContainer.selectedIndex = i;
         if (ignoreFragment) {
           let spec = aURI.spec;
           if (!aURI.ref)
             spec += "#";
           browser.loadURI(spec);
         }
+        aWindow.gBrowser.tabContainer.selectedIndex = i;
         return true;
       }
       if (ignoreQueryString || replaceQueryString) {
         if (browser.currentURI.spec.split("?")[0] == aURI.spec.split("?")[0]) {
           // Focus the matching window & tab
           aWindow.focus();
-          aWindow.gBrowser.tabContainer.selectedIndex = i;
           if (replaceQueryString) {
             browser.loadURI(aURI.spec);
           }
+          aWindow.gBrowser.tabContainer.selectedIndex = i;
           return true;
         }
       }

@@ -182,10 +182,7 @@ public:
                           size_t numNewVideoTracks,
                           const std::string& pcHandle,
                           nsRefPtr<PeerConnectionObserver> aObserver)
-  : DOMMediaStream::OnTracksAvailableCallback(
-      // Once DOMMediaStream can handle more than one of each, this will change.
-      (numNewAudioTracks ? DOMMediaStream::HINT_CONTENTS_AUDIO : 0) |
-      (numNewVideoTracks ? DOMMediaStream::HINT_CONTENTS_VIDEO : 0))
+  : DOMMediaStream::OnTracksAvailableCallback()
   , mObserver(aObserver)
   , mPcHandle(pcHandle)
   {}
@@ -450,10 +447,10 @@ PeerConnectionImpl::~PeerConnectionImpl()
 }
 
 already_AddRefed<DOMMediaStream>
-PeerConnectionImpl::MakeMediaStream(uint32_t aHint)
+PeerConnectionImpl::MakeMediaStream()
 {
   nsRefPtr<DOMMediaStream> stream =
-    DOMMediaStream::CreateSourceStream(GetWindow(), aHint);
+    DOMMediaStream::CreateSourceStream(GetWindow());
 
 #ifdef MOZILLA_INTERNAL_API
   // Make the stream data (audio/video samples) accessible to the receiving page.
@@ -486,16 +483,10 @@ PeerConnectionImpl::CreateRemoteSourceStreamInfo(nsRefPtr<RemoteSourceStreamInfo
   MOZ_ASSERT(aInfo);
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
 
-  // We need to pass a dummy hint here because FakeMediaStream currently
-  // needs to actually propagate a hint for local streams.
-  // TODO(ekr@rtfm.com): Clean up when we have explicit track lists.
-  // See bug 834835.
-  nsRefPtr<DOMMediaStream> stream = MakeMediaStream(0);
+  nsRefPtr<DOMMediaStream> stream = MakeMediaStream();
   if (!stream) {
     return NS_ERROR_FAILURE;
   }
-
-  static_cast<SourceMediaStream*>(stream->GetStream())->SetPullEnabled(true);
 
   nsRefPtr<RemoteSourceStreamInfo> remote;
   remote = new RemoteSourceStreamInfo(stream.forget(), mMedia, aStreamID);
@@ -912,6 +903,10 @@ PeerConnectionImpl::ConfigureJsepSessionCodecs() {
 
   bool h264Enabled = hardwareH264Supported || softwareH264Enabled;
 
+  bool vp9Enabled = false;
+  branch->GetBoolPref("media.peerconnection.video.vp9_enabled",
+                      &vp9Enabled);
+  
   auto& codecs = mJsepSession->Codecs();
 
   // We use this to sort the list of codecs once everything is configured
@@ -961,7 +956,11 @@ PeerConnectionImpl::ConfigureJsepSessionCodecs() {
             if (hardwareH264Supported) {
               comparator.AddHardwareCodec(videoCodec.mDefaultPt);
             }
-          } else if (codec.mName == "VP8") {
+          } else if (codec.mName == "VP8" || codec.mName == "VP9") {
+            if (videoCodec.mName == "VP9" && !vp9Enabled) {
+              videoCodec.mEnabled = false;
+              break;
+            }
             int32_t maxFs = 0;
             branch->GetIntPref("media.navigator.video.max_fs", &maxFs);
             if (maxFs <= 0) {
@@ -975,6 +974,7 @@ PeerConnectionImpl::ConfigureJsepSessionCodecs() {
               maxFr = 60; // We must specify something other than 0
             }
             videoCodec.mMaxFr = maxFr;
+
           }
         }
         break;
@@ -2086,74 +2086,85 @@ PeerConnectionImpl::RemoveTrack(MediaStreamTrack& aTrack) {
 
 NS_IMETHODIMP
 PeerConnectionImpl::ReplaceTrack(MediaStreamTrack& aThisTrack,
-                                 MediaStreamTrack& aWithTrack,
-                                 DOMMediaStream& aStream) {
+                                 MediaStreamTrack& aWithTrack) {
   PC_AUTO_ENTER_API_CALL(true);
 
-  JSErrorResult jrv;
   nsRefPtr<PeerConnectionObserver> pco = do_QueryObjectReferent(mPCObserver);
   if (!pco) {
     return NS_ERROR_UNEXPECTED;
   }
+  JSErrorResult jrv;
 
+#ifdef MOZILLA_INTERNAL_API
+  if (&aThisTrack == &aWithTrack) {
+    pco->OnReplaceTrackSuccess(jrv);
+    if (jrv.Failed()) {
+      CSFLogError(logTag, "Error firing replaceTrack success callback");
+      return NS_ERROR_UNEXPECTED;
+    }
+    return NS_OK;
+  }
+
+  nsString thisKind;
+  aThisTrack.GetKind(thisKind);
+  nsString withKind;
+  aWithTrack.GetKind(withKind);
+
+  if (thisKind != withKind) {
+    pco->OnReplaceTrackError(kIncompatibleMediaStreamTrack,
+                             ObString(mJsepSession->GetLastError().c_str()),
+                             jrv);
+    if (jrv.Failed()) {
+      CSFLogError(logTag, "Error firing replaceTrack success callback");
+      return NS_ERROR_UNEXPECTED;
+    }
+    return NS_OK;
+  }
+#endif
   std::string origTrackId = PeerConnectionImpl::GetTrackId(aThisTrack);
   std::string newTrackId = PeerConnectionImpl::GetTrackId(aWithTrack);
 
-  // TODO: Do an aStream.HasTrack() check on both track args someday.
-  //
-  // The proposed API will be that both tracks must already be in the same
-  // stream. However, since our MediaStreams currently are limited to one
-  // track per type, we allow replacement with an outside track not already
-  // in the same stream. This works because sync happens receiver-side and
-  // timestamps are tied to capture.
+  std::string origStreamId =
+    PeerConnectionImpl::GetStreamId(*aThisTrack.GetStream());
+  std::string newStreamId =
+    PeerConnectionImpl::GetStreamId(*aWithTrack.GetStream());
 
-  if (!aStream.HasTrack(aThisTrack)) {
-    CSFLogError(logTag, "Track to replace (%s) is not in stream",
-                        origTrackId.c_str());
-    pco->OnReplaceTrackError(kInvalidMediastreamTrack,
-                             ObString("Track to replace is not in stream"),
-                             jrv);
-    return NS_OK;
-  }
-
-  // XXX This MUST be addressed when we add multiple tracks of a type!!
-  // This is needed because the track IDs used by MSG are from TrackUnion
-  // (for getUserMedia streams) and aren't the same as the values the source tracks
-  // have.  Solution is to have JsepSession read track ids and use those.
-
-  // Because DirectListeners see the SourceMediaStream's TrackID's, and not the
-  // TrackUnionStream's TrackID's, this value won't currently match what is used in
-  // MediaPipelineTransmit.  Bug 1056652
-  //  TrackID thisID = aThisTrack.GetTrackID();
-  //
-
-  std::string streamId = PeerConnectionImpl::GetStreamId(aStream);
-  nsRefPtr<LocalSourceStreamInfo> info = media()->GetLocalStreamById(streamId);
-
-  if (!info || !info->HasTrack(origTrackId)) {
-    CSFLogError(logTag, "Track to replace (%s) was never added",
-                        origTrackId.c_str());
-    pco->OnReplaceTrackError(kInvalidMediastreamTrack,
-                             ObString("Track to replace was never added"),
-                             jrv);
-    return NS_OK;
-  }
-
-  nsresult rv =
-    info->ReplaceTrack(origTrackId, aWithTrack.GetStream(), newTrackId);
+  nsresult rv = mJsepSession->ReplaceTrack(origStreamId,
+                                           origTrackId,
+                                           newStreamId,
+                                           newTrackId);
   if (NS_FAILED(rv)) {
-    CSFLogError(logTag, "Failed to replace track (%s)",
-                        origTrackId.c_str());
-    pco->OnReplaceTrackError(kInternalError,
+    pco->OnReplaceTrackError(kInvalidMediastreamTrack,
+                             ObString(mJsepSession->GetLastError().c_str()),
+                             jrv);
+    if (jrv.Failed()) {
+      CSFLogError(logTag, "Error firing replaceTrack error callback");
+      return NS_ERROR_UNEXPECTED;
+    }
+    return NS_OK;
+  }
+
+  rv = media()->ReplaceTrack(origStreamId,
+                             origTrackId,
+                             aWithTrack.GetStream(),
+                             newStreamId,
+                             newTrackId);
+
+  if (NS_FAILED(rv)) {
+    CSFLogError(logTag, "Unexpected error in ReplaceTrack: %d",
+                        static_cast<int>(rv));
+    pco->OnReplaceTrackError(kInvalidMediastreamTrack,
                              ObString("Failed to replace track"),
                              jrv);
+    if (jrv.Failed()) {
+      CSFLogError(logTag, "Error firing replaceTrack error callback");
+      return NS_ERROR_UNEXPECTED;
+    }
     return NS_OK;
   }
-
   pco->OnReplaceTrackSuccess(jrv);
-
   if (jrv.Failed()) {
-    CSFLogError(logTag, "Error firing replaceTrack callback");
+    CSFLogError(logTag, "Error firing replaceTrack success callback");
     return NS_ERROR_UNEXPECTED;
   }
 

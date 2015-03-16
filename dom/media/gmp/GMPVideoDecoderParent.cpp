@@ -69,7 +69,7 @@ void
 GMPVideoDecoderParent::Close()
 {
   LOGD(("%s: %p", __FUNCTION__, this));
-  MOZ_ASSERT(mPlugin->GMPThread() == NS_GetCurrentThread());
+  MOZ_ASSERT(!mPlugin || mPlugin->GMPThread() == NS_GetCurrentThread());
   // Consumer is done with us; we can shut down.  No more callbacks should
   // be made to mCallback.  Note: do this before Shutdown()!
   mCallback = nullptr;
@@ -187,7 +187,7 @@ nsresult
 GMPVideoDecoderParent::Shutdown()
 {
   LOGD(("%s: %p", __FUNCTION__, this));
-  MOZ_ASSERT(mPlugin->GMPThread() == NS_GetCurrentThread());
+  MOZ_ASSERT(!mPlugin || mPlugin->GMPThread() == NS_GetCurrentThread());
 
   if (mShuttingDown) {
     return NS_OK;

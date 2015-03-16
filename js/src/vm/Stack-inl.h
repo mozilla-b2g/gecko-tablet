@@ -250,7 +250,7 @@ InterpreterStack::allocateFrame(JSContext *cx, size_t size)
         maxFrames = MAX_FRAMES;
 
     if (MOZ_UNLIKELY(frameCount_ >= maxFrames)) {
-        js_ReportOverRecursed(cx);
+        ReportOverRecursed(cx);
         return nullptr;
     }
 
@@ -826,8 +826,12 @@ Activation::Activation(JSContext *cx, Kind kind)
     prevProfiling_(prev_ ? prev_->mostRecentProfiling() : nullptr),
     savedFrameChain_(0),
     hideScriptedCallerCount_(0),
+    asyncStack_(cx, cx->runtime_->asyncStackForNewActivations),
+    asyncCause_(cx, cx->runtime_->asyncCauseForNewActivations),
     kind_(kind)
 {
+    cx->runtime_->asyncStackForNewActivations = nullptr;
+    cx->runtime_->asyncCauseForNewActivations = nullptr;
     cx->runtime_->activation_ = this;
 }
 
@@ -837,6 +841,8 @@ Activation::~Activation()
     MOZ_ASSERT(cx_->runtime_->activation_ == this);
     MOZ_ASSERT(hideScriptedCallerCount_ == 0);
     cx_->runtime_->activation_ = prev_;
+    cx_->runtime_->asyncCauseForNewActivations = asyncCause_;
+    cx_->runtime_->asyncStackForNewActivations = asyncStack_;
 }
 
 bool

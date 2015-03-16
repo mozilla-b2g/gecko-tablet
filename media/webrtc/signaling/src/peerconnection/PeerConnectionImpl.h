@@ -264,7 +264,7 @@ public:
                                           IceConfiguration *aDst);
   static nsresult AddIceServer(const RTCIceServer& aServer,
                                IceConfiguration* aDst);
-  already_AddRefed<DOMMediaStream> MakeMediaStream(uint32_t aHint);
+  already_AddRefed<DOMMediaStream> MakeMediaStream();
 
   nsresult CreateRemoteSourceStreamInfo(nsRefPtr<RemoteSourceStreamInfo>* aInfo,
                                         const std::string& aId);
@@ -418,10 +418,9 @@ public:
 
   NS_IMETHODIMP_TO_ERRORRESULT(ReplaceTrack, ErrorResult &rv,
                                mozilla::dom::MediaStreamTrack& aThisTrack,
-                               mozilla::dom::MediaStreamTrack& aWithTrack,
-                               DOMMediaStream& aStream)
+                               mozilla::dom::MediaStreamTrack& aWithTrack)
   {
-    rv = ReplaceTrack(aThisTrack, aWithTrack, aStream);
+    rv = ReplaceTrack(aThisTrack, aWithTrack);
   }
 
   nsresult GetPeerIdentity(nsAString& peerIdentity)

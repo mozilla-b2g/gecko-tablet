@@ -35,29 +35,40 @@ body {
   font-family: serif;
 }
 
-.font-size1,
-.font-size1-sample {
+.font-size1 {
+  font-size: 10px;
+}
+
+.font-size2 {
+  font-size: 12px;
+}
+
+.font-size3 {
   font-size: 14px;
 }
 
-.font-size2,
-.font-size2-sample {
+.font-size4  {
   font-size: 16px;
 }
 
-.font-size3,
-.font-size3-sample {
+.font-size5 {
   font-size: 18px;
 }
 
-.font-size4,
-.font-size4-sample {
+.font-size6 {
   font-size: 20px;
 }
 
-.font-size5,
-.font-size5-sample {
+.font-size7 {
   font-size: 22px;
+}
+
+.font-size8 {
+  font-size: 24px;
+}
+
+.font-size9 {
+  font-size: 26px;
 }
 
 
@@ -88,12 +99,12 @@ body {
   color: #0095dd;
 }
 
-.light > .header > .domain,
-.sepia > .header > .domain {
+.light > .container > .header > .domain,
+.sepia > .container > .header > .domain {
   border-bottom-color: #333333;
 }
 
-.dark > .header > .domain {
+.dark > .container > .header > .domain {
   border-bottom-color: #eeeeee;
 }
 
@@ -193,12 +204,12 @@ body {
   -moz-padding-start: 16px;
 }
 
-.light > .content blockquote,
-.sepia > .content blockquote {
+.light > .container > .content blockquote,
+.sepia > .container > .content blockquote {
   -moz-border-start: 2px solid #333333;
 }
 
-.dark > .content blockquote {
+.dark > .container > .content blockquote {
   -moz-border-start: 2px solid #eeeeee;
 }
 
@@ -217,7 +228,7 @@ body {
   list-style: decimal;
 }
 
-/* Toolbar */
+/*======= Controls toolbar =======*/
 
 .toolbar {
   font-family: sans-serif;
@@ -248,6 +259,10 @@ body {
   border-bottom: 1px solid #c1c1c1;
 }
 
+.button[hidden] {
+  display: none;
+}
+
 .dropdown {
   text-align: center;
   list-style: none;
@@ -260,18 +275,19 @@ body {
   padding: 0px;
 }
 
+/*======= Font style popup =======*/
+
 .dropdown-popup {
+  min-width: 250px;
   text-align: start;
   position: absolute;
   left: 48px; /* offset to account for toolbar width */
   z-index: 1000;
   background-color: #FBFBFB;
-  font-size: 14px;
   visibility: hidden;
   border-radius: 4px;
   border: 1px solid #B5B5B5;
   box-shadow: 0px 1px 12px #666;
-  color: black;
 }
 
 .dropdown-popup > hr {
@@ -297,79 +313,88 @@ body {
 }
 
 #font-type-buttons,
-.segmented-button {
+#font-size-buttons,
+#color-scheme-buttons {
   display: flex;
   flex-direction: row;
-  list-style: none;
-  white-space: nowrap;
-  padding: 0;
 }
 
-#font-type-buttons > li,
-.segmented-button > li {
-  flex: 1 0 auto;
+#font-type-buttons > button,
+#font-size-buttons > button,
+#color-scheme-buttons > button {
   text-align: center;
   border-left: 1px solid #B5B5B5;
+  border-right: 0;
+  border-top: 0;
+  border-bottom: 0;
   padding: 10px;
 }
 
-#font-type-buttons > li {
-  width: 50px; /* combined with flex, this acts as a minimum width */
+#font-type-buttons > button,
+#font-size-buttons > button {
+  width: 50%;
+  background-color: transparent;
 }
 
-.segmented-button > li {
-  width: 30px; /* combined with flex, this acts as a minimum width */
-  line-height: 20px;
+#color-scheme-buttons > button {
+  width: 33%;
+  font-size: 14px;
 }
 
-#font-type-buttons > li:first-child,
-.segmented-button > li:first-child {
+#font-type-buttons > button:first-child,
+#font-size-buttons > button:first-child,
+#color-scheme-buttons > button:first-child {
   border-left: 0px;
 }
 
-#font-type-buttons > li > a,
-.segmented-button > li > a {
-  vertical-align: middle;
-  text-decoration: none;
-}
-
-#font-type-buttons > li > a {
+#font-type-buttons > button {
   display: inline-block;
   font-size: 48px;
-  line-height: 50px;
+  border-bottom: 3px solid transparent;
 }
 
-.segmented-button > li > a {
-  display: block;
-  font-family: sans-serif;
-  font-weight: lighter;
-}
-
-#font-type-buttons > li:active:hover,
-#font-type-buttons > li.selected {
+#font-type-buttons > button:active:hover,
+#font-type-buttons > button.selected {
   border-bottom: 3px solid #FC6420;
 }
 
+#font-type-buttons > button > div {
+  color: #666;
+  font-size: 12px;
+}
+
 .button:hover,
-#font-size-buttons > li:hover {
+#font-size-buttons > button:hover {
   background-color: #EBEBEB;
 }
 
 .dropdown.open,
 .button:active,
-#font-size-buttons > li:active,
-#font-size-buttons > li.selected {
+#font-size-buttons > button:active,
+#font-size-buttons > button.selected {
   background-color: #DADADA;
 }
 
-#font-type-buttons > li > .sans-serif {
-  font-weight: lighter;
+/* Only used on Android */
+#font-size-sample {
+  display: none;
 }
 
-#font-type-buttons > li > div {
-  color: #666;
-  font-size: 12px;
+.serif-button {
+  font-family: serif;
 }
+
+.minus-button,
+.plus-button {
+  background-color: transparent;
+  border: 0;
+  height: 50px;
+  background-size: 18px 18px;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+/*======= Toolbar icons =======*/
 
 /* Android-only controls */
 .share-button {
@@ -402,4 +427,15 @@ body {
 
 .list-button {
   background-image: url("chrome://global/skin/reader/RM-Reading-List-24x24.svg");
+}
+.list-button.on {
+  background-color: #d9d9d9;
+}
+
+.minus-button {
+  background-image: url("chrome://global/skin/reader/RM-Minus-24x24.svg");
+}
+
+.plus-button {
+  background-image: url("chrome://global/skin/reader/RM-Plus-24x24.svg");
 }

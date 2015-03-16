@@ -119,10 +119,17 @@ void Axis::StartTouch(ParentLayerCoord aPos, uint32_t aTimestampMs) {
 
 bool Axis::AdjustDisplacement(ParentLayerCoord aDisplacement,
                               /* ParentLayerCoord */ float& aDisplacementOut,
-                              /* ParentLayerCoord */ float& aOverscrollAmountOut)
+                              /* ParentLayerCoord */ float&
+                              aOverscrollAmountOut,
+                              bool forceOverscroll /* = false */)
 {
   if (mAxisLocked) {
     aOverscrollAmountOut = 0;
+    aDisplacementOut = 0;
+    return false;
+  }
+  if (forceOverscroll) {
+    aOverscrollAmountOut = aDisplacement;
     aDisplacementOut = 0;
     return false;
   }
@@ -427,7 +434,7 @@ ParentLayerCoord Axis::DisplacementWillOverscrollAmount(ParentLayerCoord aDispla
 CSSCoord Axis::ScaleWillOverscrollAmount(float aScale, CSSCoord aFocus) const {
   // Internally, do computations in ParentLayer coordinates *before* the scale
   // is applied.
-  CSSToParentLayerScale zoom = GetFrameMetrics().GetZoom();
+  CSSToParentLayerScale zoom = GetFrameMetrics().GetZoom().ToScaleFactor();
   ParentLayerCoord focus = aFocus * zoom;
   ParentLayerCoord originAfterScale = (GetOrigin() + focus) - (focus / aScale);
 

@@ -4,9 +4,9 @@
 
 import urllib
 
-from by import By
-from errors import JavascriptException, MarionetteException
-from marionette_test import MarionetteTestCase
+from marionette_driver.by import By
+from marionette_driver.errors import JavascriptException
+from marionette import MarionetteTestCase
 
 def inline(doc):
     return "data:text/html;charset=utf-8,%s" % urllib.quote(doc)

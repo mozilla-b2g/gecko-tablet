@@ -207,15 +207,21 @@ MarionetteServerConnection.prototype = {
         this.logRequest(aPacket.name, aPacket);
         this.requestTypes[aPacket.name].bind(this)(aPacket);
       } catch(e) {
-        this.conn.send({ error: ("error occurred while processing '" +
-                                 aPacket.name),
-                        message: e.message });
+        this.conn.send({from:this.actorID, error: {
+                                                    message: ("error occurred while processing '" +
+                                                              aPacket.name),
+                                                    status: 500,
+                                                    stacktrace: e.message }});
       }
     } else {
-      this.conn.send({ error: "unrecognizedPacketType",
-                       message: ('Marionette does not ' +
-                                 'recognize the packet type "' +
-                                 aPacket.name + '"') });
+      this.conn.send({from:this.actorID, error: {
+                                                  message: "unrecognizedPacketType",
+                                                  status: 500,
+                                                  stacktrace: ('Marionette does not ' +
+                                                               'recognize the packet type "' +
+                                                                aPacket.name + '"')
+                                                }
+                      });
     }
   },
 
@@ -282,8 +288,10 @@ MarionetteServerConnection.prototype = {
       }
     }
     else {
-      this.messageManager.broadcastAsyncMessage(
-        "Marionette:" + name + this.curBrowser.curFrameId, values);
+      this.curBrowser.executeWhenReady(() => {
+        this.messageManager.broadcastAsyncMessage(
+          "Marionette:" + name + this.curBrowser.curFrameId, values);
+      });
     }
     return success;
   },
@@ -323,6 +331,11 @@ MarionetteServerConnection.prototype = {
         return;
       }
     }
+
+    if (this.curBrowser !== null) {
+      this.curBrowser.pendingCommands = [];
+    }
+
     this.conn.send(msg);
     if (command_id != -1) {
       // Don't unset this.command_id if this message is to process an
@@ -1272,7 +1285,17 @@ MarionetteServerConnection.prototype = {
    */
   get: function MDA_get(aRequest) {
     let command_id = this.command_id = this.getCommandId();
+
     if (this.context != "chrome") {
+      // If a remoteness update interrupts our page load, this will never return
+      // We need to re-issue this request to correctly poll for readyState and
+      // send errors.
+      this.curBrowser.pendingCommands.push(() => {
+        aRequest.parameters.command_id = command_id;
+        this.messageManager.broadcastAsyncMessage(
+          "Marionette:pollForReadyState" + this.curBrowser.curFrameId,
+          aRequest.parameters);
+      });
       aRequest.command_id = command_id;
       aRequest.parameters.pageTimeout = this.pageTimeout;
       this.sendAsync("get", aRequest.parameters, command_id);
@@ -1331,15 +1354,7 @@ MarionetteServerConnection.prototype = {
       this.sendResponse(this.getCurrentWindow().location.href, this.command_id);
     }
     else {
-      if (isB2G) {
-        this.sendAsync("getCurrentUrl", {}, this.command_id);
-      }
-      else {
-        this.sendResponse(this.curBrowser
-                              .tab
-                              .linkedBrowser
-                              .contentWindowAsCPOW.location.href, this.command_id);
-      }
+      this.sendAsync("getCurrentUrl", {isB2G: isB2G}, this.command_id);
     }
   },
 
@@ -1431,6 +1446,13 @@ MarionetteServerConnection.prototype = {
         return;
       }
     }
+  },
+
+  /**
+   * Forces an update for the given browser's id.
+   */
+  updateIdForBrowser: function (browser, newId) {
+    this._browserIds.set(browser.permanentKey, newId);
   },
 
   /**
@@ -1595,8 +1617,7 @@ MarionetteServerConnection.prototype = {
           this.curBrowser = this.browsers[outerId];
           if (contentWindowId) {
             // The updated id corresponds to switching to a new tab.
-            this.curBrowser.curFrameId = contentWindowId;
-            win.gBrowser.selectTabAtIndex(ind);
+            this.curBrowser.switchToTab(ind);
           }
           this.sendOk(command_id);
         }
@@ -2173,9 +2194,21 @@ MarionetteServerConnection.prototype = {
    */
   getElementValueOfCssProperty: function MDA_getElementValueOfCssProperty(aRequest){
     let command_id = this.command_id = this.getCommandId();
-    this.sendAsync("getElementValueOfCssProperty",
-                   {id: aRequest.parameters.id, propertyName: aRequest.parameters.propertyName},
-                   command_id);
+    let curWin = this.getCurrentWindow();
+    if (this.context == "chrome") {
+      try {
+        let el = this.curBrowser.elementManager.getKnownElement(aRequest.parameters.id, curWin);
+        this.sendResponse(curWin.document.defaultView.getComputedStyle(el, null).getPropertyValue(
+          aRequest.parameters.propertyName), command_id);
+      } catch (e) {
+        this.sendError(e.message, e.code, e.stack, command_id);
+      }
+    }
+    else {
+      this.sendAsync("getElementValueOfCssProperty",
+                     {id: aRequest.parameters.id, propertyName: aRequest.parameters.propertyName},
+                     command_id);
+    }
   },
 
   /**
@@ -2597,6 +2630,26 @@ MarionetteServerConnection.prototype = {
       return;
     }
     this.sendOk(command_id);
+  },
+
+  /**
+   * Quits the application with the provided flags and tears down the
+   * current session.
+   */
+  quitApplication: function MDA_quitApplication (aRequest) {
+    let command_id = this.getCommandId();
+    if (appName != "Firefox") {
+      this.sendError("In app initiated quit only supported on Firefox", 500, null, command_id);
+    }
+
+    let flagsArray = aRequest.parameters.flags;
+    let flags = Ci.nsIAppStartup.eAttemptQuit;
+    for (let k of flagsArray) {
+      flags |= Ci.nsIAppStartup[k];
+    }
+
+    this.sessionTearDown();
+    Services.startup.quit(flags);
   },
 
   /**
@@ -3034,6 +3087,7 @@ MarionetteServerConnection.prototype = {
     }
 
     if (this.command_id) {
+      this.sendAsync("cancelRequest", {});
       // This is a shortcut to get the client to accept our response whether
       // the expected key is 'ok' (in case a click or similar got us here)
       // or 'value' (in case an execute script or similar got us here).
@@ -3176,8 +3230,9 @@ MarionetteServerConnection.prototype = {
         let mainContent = (this.curBrowser.mainContentId == null);
         if (!browserType || browserType != "content") {
           //curBrowser holds all the registered frames in knownFrames
-          let listenerId = this.generateFrameId(message.json.value);
-          reg.id = this.curBrowser.register(listenerId);
+          let uid = this.generateFrameId(message.json.value);
+          reg.id = uid;
+          reg.remotenessChange = this.curBrowser.register(uid, message.target);
         }
         // set to true if we updated mainContentId
         mainContent = ((mainContent == true) && (this.curBrowser.mainContentId != null));
@@ -3214,6 +3269,19 @@ MarionetteServerConnection.prototype = {
                              .getService(Ci.nsIMessageBroadcaster);
         globalMessageManager.broadcastAsyncMessage(
           "MarionetteMainListener:emitTouchEvent", message.json);
+        return;
+      case "Marionette:listenersAttached":
+        if (message.json.listenerId === this.curBrowser.curFrameId) {
+          // If remoteness gets updated we need to call newSession. In the case
+          // of desktop this just sets up a small amount of state that doesn't
+          // change over the course of a session.
+          let newSessionValues = {
+            B2G: (appName == "B2G"),
+            raisesAccessibilityExceptions: this.sessionCapabilities.raisesAccessibilityExceptions
+          };
+          this.sendAsync("newSession", newSessionValues);
+          this.curBrowser.flushPendingCommands();
+        }
         return;
     }
   }
@@ -3281,6 +3349,7 @@ MarionetteServerConnection.prototype.requestTypes = {
   "switchToFrame": MarionetteServerConnection.prototype.switchToFrame,
   "switchToWindow": MarionetteServerConnection.prototype.switchToWindow,
   "deleteSession": MarionetteServerConnection.prototype.deleteSession,
+  "quitApplication": MarionetteServerConnection.prototype.quitApplication,
   "emulatorCmdResult": MarionetteServerConnection.prototype.emulatorCmdResult,
   "importScript": MarionetteServerConnection.prototype.importScript,
   "clearImportedScripts": MarionetteServerConnection.prototype.clearImportedScripts,
@@ -3331,15 +3400,49 @@ function BrowserObj(win, server) {
   this.setBrowser(win);
   this.frameManager = new FrameManager(server); //We should have one FM per BO so that we can handle modals in each Browser
 
+  // A reference to the tab corresponding to the current window handle, if any.
+  this.tab = null;
+  this.pendingCommands = [];
+
   //register all message listeners
   this.frameManager.addMessageManagerListeners(server.messageManager);
   this.getIdForBrowser = server.getIdForBrowser.bind(server);
+  this.updateIdForBrowser = server.updateIdForBrowser.bind(server);
+  this._curFrameId = null;
+  this._browserWasRemote = null;
+  this._hasRemotenessChange = false;
 }
 
 BrowserObj.prototype = {
-  get tab () {
-    // A reference to the currently selected tab, if any
-    return this.browser ? this.browser.selectedTab : null;
+
+  /**
+   * This function intercepts commands interacting with content and queues
+   * or executes them as needed.
+   *
+   * No commands interacting with content are safe to process until
+   * the new listener script is loaded and registers itself.
+   * This occurs when a command whose effect is asynchronous (such
+   * as goBack) results in a remoteness change and new commands
+   * are subsequently posted to the server.
+   */
+  executeWhenReady: function (callback) {
+    if (this.hasRemotenessChange()) {
+      this.pendingCommands.push(callback);
+    } else {
+      callback();
+    }
+  },
+
+  /**
+   * Re-sets this BrowserObject's current tab and updates remoteness tracking.
+   */
+  switchToTab: function (ind) {
+    if (this.browser) {
+      this.browser.selectTabAtIndex(ind);
+      this.tab = this.browser.selectedTab;
+    }
+    this._browserWasRemote = this.browser.getBrowserForTab(this.tab).isRemoteBrowser;
+    this._hasRemotenessChange = false;
   },
 
   /**
@@ -3379,15 +3482,31 @@ BrowserObj.prototype = {
         break;
     }
   },
+
+  // The current frame id is managed per browser element on desktop in case
+  // the id needs to be refreshed. The currently selected window is identified
+  // within BrowserObject by a tab.
+  get curFrameId () {
+    if (appName != "Firefox") {
+      return this._curFrameId;
+    }
+    if (this.tab) {
+      let browser = this.browser.getBrowserForTab(this.tab);
+      return this.getIdForBrowser(browser);
+    }
+    return null;
+  },
+
+  set curFrameId (id) {
+    if (appName != "Firefox") {
+      this._curFrameId = id;
+    }
+  },
+
   /**
    * Called when we start a session with this browser.
    */
   startSession: function BO_startSession(newSession, win, callback) {
-    if (appName == "Firefox" &&
-        win.gMultiProcessBrowser &&
-        !win.gBrowser.selectedBrowser.isRemoteBrowser) {
-      win.XULBrowserWindow.forceInitialBrowserRemote();
-    }
     callback(win, newSession);
   },
 
@@ -3419,28 +3538,69 @@ BrowserObj.prototype = {
    *
    * @param string uid
    *        frame uid for use by marionette
+   * @param the XUL <browser> that was the target of the originating message.
    */
-  register: function BO_register(uid) {
-    if (this.curFrameId == null) {
-      let currWinId = null;
+  register: function BO_register(uid, target) {
+    let remotenessChange = this.hasRemotenessChange();
+    if (this.curFrameId === null || remotenessChange) {
       if (this.browser) {
         // If we're setting up a new session on Firefox, we only process the
-        // registration for this frame if it belongs to the tab we've just
-        // created.
+        // registration for this frame if it belongs to the current tab.
+        if (!this.tab) {
+          this.switchToTab(this.browser.selectedIndex);
+        }
+
         let browser = this.browser.getBrowserForTab(this.tab);
-        currWinId = this.getIdForBrowser(browser);
-      }
-      if ((!this.newSession) ||
-          (this.newSession &&
-            ((appName != "Firefox") ||
-             uid === currWinId))) {
-        this.curFrameId = uid;
+        if (target == browser) {
+          this.updateIdForBrowser(browser, uid);
+          this.mainContentId = uid;
+        }
+      } else {
+        this._curFrameId = uid;
         this.mainContentId = uid;
       }
     }
+
     this.knownFrames.push(uid); //used to delete sessions
-    return uid;
+    return remotenessChange;
   },
+
+  /**
+   * When navigating between pages results in changing a browser's process, we
+   * need to take measures not to lose contact with a listener script. This
+   * function does the necessary bookkeeping.
+   */
+  hasRemotenessChange: function () {
+    // None of these checks are relevant on b2g or if we don't have a tab yet,
+    // and may not apply on Fennec.
+    if (appName != "Firefox" || this.tab === null) {
+      return false;
+    }
+    if (this._hasRemotenessChange) {
+      return true;
+    }
+    let currentIsRemote = this.browser.getBrowserForTab(this.tab).isRemoteBrowser;
+    this._hasRemotenessChange = this._browserWasRemote !== currentIsRemote;
+    this._browserWasRemote = currentIsRemote;
+    return this._hasRemotenessChange;
+  },
+
+  /**
+   * Flushes any pending commands queued when a remoteness change is being
+   * processed and mark this remotenessUpdate as complete.
+   */
+  flushPendingCommands: function () {
+    if (!this._hasRemotenessChange) {
+      return;
+    }
+
+    this._hasRemotenessChange = false;
+    this.pendingCommands.forEach((callback) => {
+      callback();
+    });
+    this.pendingCommands = [];
+  }
+
 }
 
 /**

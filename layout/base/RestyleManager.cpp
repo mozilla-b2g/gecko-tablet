@@ -267,7 +267,7 @@ DoApplyRenderingChangeToTree(nsIFrame* aFrame,
     if (aChange & nsChangeHint_UpdateTextPath) {
       if (aFrame->IsSVGText()) {
         // Invalidate and reflow the entire SVGTextFrame:
-        NS_ASSERTION(aFrame->GetContent()->IsSVG(nsGkAtoms::textPath),
+        NS_ASSERTION(aFrame->GetContent()->IsSVGElement(nsGkAtoms::textPath),
                      "expected frame for a <textPath> element");
         nsIFrame* text = nsLayoutUtils::GetClosestFrameOfType(
                                                       aFrame,
@@ -332,12 +332,12 @@ ApplyRenderingChangeToTree(nsPresContext* aPresContext,
                            nsIFrame* aFrame,
                            nsChangeHint aChange)
 {
-  // We check StyleDisplay()->HasTransformStyle() in addition to checking
+  // We check StylePosition()->HasTransformStyle() in addition to checking
   // IsTransformed() since we can get here for some frames that don't support
   // CSS transforms.
   NS_ASSERTION(!(aChange & nsChangeHint_UpdateTransformLayer) ||
                aFrame->IsTransformed() ||
-               aFrame->StyleDisplay()->HasTransformStyle(),
+               aFrame->StylePosition()->HasTransformStyle(),
                "Unexpected UpdateTransformLayer hint");
 
   nsIPresShell *shell = aPresContext->PresShell();
@@ -742,7 +742,7 @@ RestyleManager::ProcessRestyledFrames(nsStyleChangeList& aChangeList)
           // It's because we need to set this state on each affected frame
           // that we can't coalesce nsChangeHint_AddOrRemoveTransform hints up
           // to ancestors (i.e. it can't be an inherited change hint).
-          if (cont->IsPositioned()) {
+          if (cont->IsAbsPosContaininingBlock()) {
             // If a transform has been added, we'll be taking this path,
             // but we may be taking this path even if a transform has been
             // removed. It's OK to add the bit even if it's not needed.
@@ -2015,7 +2015,7 @@ RestyleManager::DebugVerifyStyleTree(nsIFrame* aFrame)
 
 // aContent must be the content for the frame in question, which may be
 // :before/:after content
-/* static */ void
+/* static */ bool
 RestyleManager::TryStartingTransition(nsPresContext* aPresContext,
                                       nsIContent* aContent,
                                       nsStyleContext* aOldStyleContext,
@@ -2023,13 +2023,15 @@ RestyleManager::TryStartingTransition(nsPresContext* aPresContext,
                                         aNewStyleContext /* inout */)
 {
   if (!aContent || !aContent->IsElement()) {
-    return;
+    return false;
   }
 
   // Notify the transition manager.  If it starts a transition,
   // it might modify the new style context.
+  nsRefPtr<nsStyleContext> sc = *aNewStyleContext;
   aPresContext->TransitionManager()->StyleContextChanged(
     aContent->AsElement(), aOldStyleContext, aNewStyleContext);
+  return *aNewStyleContext != sc;
 }
 
 static dom::Element*
@@ -2603,7 +2605,7 @@ ElementRestyler::AddLayerChangesForAnimation()
       // nsChangeHint_UpdateTransformLayer, ApplyRenderingChangeToTree would
       // complain that we're updating a transform layer without a transform).
       if (layerInfo[i].mLayerType == nsDisplayItem::TYPE_TRANSFORM &&
-          !mFrame->StyleDisplay()->HasTransformStyle()) {
+          !mFrame->StylePosition()->HasTransformStyle()) {
         continue;
       }
       NS_UpdateHint(hint, layerInfo[i].mChangeHint);
@@ -2879,20 +2881,9 @@ ElementRestyler::Restyle(nsRestyleHint aRestyleHint)
     // to the style context (as is done by nsTransformedTextRun objects, which
     // can be referenced by a text frame's mTextRun longer than the frame's
     // mStyleContext).
-    //
-    // We coalesce entries in mContextsToClear when we detect that the last
-    // style context appended has oldContext as its parent, as
-    // ClearCachedInheritedStyleDataOnDescendants handles a whole subtree
-    // of style contexts.
-    if (!mContextsToClear.IsEmpty() &&
-        mContextsToClear.LastElement().mStyleContext->GetParent() == oldContext &&
-        mContextsToClear.LastElement().mStructs == swappedStructs) {
-      mContextsToClear.LastElement().mStyleContext = Move(oldContext);
-    } else {
-      ContextToClear* toClear = mContextsToClear.AppendElement();
-      toClear->mStyleContext = Move(oldContext);
-      toClear->mStructs = swappedStructs;
-    }
+    ContextToClear* toClear = mContextsToClear.AppendElement();
+    toClear->mStyleContext = Move(oldContext);
+    toClear->mStructs = swappedStructs;
   }
 
   mRestyleTracker.AddRestyleRootsIfAwaitingRestyle(descendants);
@@ -3032,9 +3023,9 @@ ElementRestyler::ComputeRestyleResultFromNewContext(nsIFrame* aSelf,
     return eRestyleResult_Continue;
   }
 
-  if (oldContext->IsInlineDescendantOfRuby() !=
-        aNewContext->IsInlineDescendantOfRuby()) {
-    LOG_RESTYLE_CONTINUE("NS_STYLE_IS_INLINE_DESCENDANT_OF_RUBY differes"
+  if (oldContext->ShouldSuppressLineBreak() !=
+        aNewContext->ShouldSuppressLineBreak()) {
+    LOG_RESTYLE_CONTINUE("NS_STYLE_SUPPRESS_LINEBREAK differes"
                          "between old and new style contexts");
     return eRestyleResult_Continue;
   }
@@ -3300,9 +3291,13 @@ ElementRestyler::RestyleSelf(nsIFrame* aSelf,
         }
       }
     } else {
-      RestyleManager::TryStartingTransition(mPresContext, aSelf->GetContent(),
-                                            oldContext, &newContext);
-
+      bool changedStyle =
+        RestyleManager::TryStartingTransition(mPresContext, aSelf->GetContent(),
+                                              oldContext, &newContext);
+      if (changedStyle) {
+        LOG_RESTYLE_CONTINUE("TryStartingTransition changed the new style context");
+        result = eRestyleResult_Continue;
+      }
       CaptureChange(oldContext, newContext, assumeDifferenceHint,
                     &equalStructs);
       if (equalStructs != NS_STYLE_INHERIT_MASK) {
@@ -3594,10 +3589,21 @@ ElementRestyler::ComputeStyleChangeFor(nsIFrame*          aFrame,
                                        nsTArray<nsRefPtr<nsStyleContext>>&
                                          aSwappedStructOwners)
 {
-  PROFILER_LABEL("ElementRestyler", "ComputeStyleChangeFor",
-    js::ProfileEntry::Category::CSS);
-
   nsIContent* content = aFrame->GetContent();
+  nsAutoCString idStr;
+  if (profiler_is_active() && content) {
+    nsIAtom* id = content->GetID();
+    if (id) {
+      id->ToUTF8String(idStr);
+    } else {
+      idStr.AssignLiteral("?");
+    }
+  }
+
+  PROFILER_LABEL_PRINTF("ElementRestyler", "ComputeStyleChangeFor",
+                        js::ProfileEntry::Category::CSS,
+                        content ? "Element: %s" : "%s",
+                        content ? idStr.get() : "");
   if (aMinChange) {
     aChangeList->AppendChange(aFrame, content, aMinChange);
   }

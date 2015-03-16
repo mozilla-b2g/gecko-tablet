@@ -28,6 +28,7 @@
 #include "nsStyleChangeList.h"
 #include "nsStyleSet.h"
 #include "RestyleManager.h"
+#include "nsDOMMutationObserver.h"
 
 using mozilla::TimeStamp;
 using mozilla::TimeDuration;
@@ -162,9 +163,9 @@ nsTransitionManager::StyleContextChanged(dom::Element *aElement,
     }
 
     NS_ASSERTION((pseudoType == nsCSSPseudoElements::ePseudo_before &&
-                  aElement->Tag() == nsGkAtoms::mozgeneratedcontentbefore) ||
+                  aElement->NodeInfo()->NameAtom() == nsGkAtoms::mozgeneratedcontentbefore) ||
                  (pseudoType == nsCSSPseudoElements::ePseudo_after &&
-                  aElement->Tag() == nsGkAtoms::mozgeneratedcontentafter),
+                  aElement->NodeInfo()->NameAtom() == nsGkAtoms::mozgeneratedcontentafter),
                  "Unexpected aElement coming through");
 
     // Else the element we want to use from now on is the element the
@@ -217,6 +218,8 @@ nsTransitionManager::StyleContextChanged(dom::Element *aElement,
   } else {
     afterChangeStyle = newStyleContext;
   }
+
+  nsAutoAnimationMutationBatch mb(aElement);
 
   // Per http://lists.w3.org/Archives/Public/www-style/2009Aug/0109.html
   // I'll consider only the transitions from the number of items in
@@ -675,6 +678,8 @@ nsTransitionManager::FlushTransitions(FlushFlags aFlags)
       AnimationPlayerCollection* collection =
         static_cast<AnimationPlayerCollection*>(next);
       next = PR_NEXT_LINK(next);
+
+      nsAutoAnimationMutationBatch mb(collection->mElement);
 
       collection->Tick();
       bool canThrottleTick = aFlags == Can_Throttle &&

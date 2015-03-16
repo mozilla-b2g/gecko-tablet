@@ -74,8 +74,6 @@ public:
   
   virtual nsresult CharacterDataChanged(CharacterDataChangeInfo* aInfo) MOZ_OVERRIDE;
                                   
-  virtual void DidSetStyleContext(nsStyleContext* aOldStyleContext) MOZ_OVERRIDE;
-  
   virtual nsIFrame* GetNextContinuation() const MOZ_OVERRIDE {
     return mNextContinuation;
   }
@@ -254,8 +252,7 @@ public:
                                    uint32_t aSkippedStartOffset = 0,
                                    uint32_t aSkippedMaxLength = UINT32_MAX) MOZ_OVERRIDE;
 
-  nsOverflowAreas
-    RecomputeOverflow(const nsHTMLReflowState& aBlockReflowState);
+  nsOverflowAreas RecomputeOverflow(nsIFrame* aBlockFrame);
 
   enum TextRunType {
     // Anything in reflow (but not intrinsic width calculation) or
@@ -304,11 +301,10 @@ public:
    *
    * Callbacks are invoked in the following order:
    *
-   *   (NotifySelectionBackgroundNeedsFill)?
+   *   NotifySelectionBackgroundNeedsFill?
    *   PaintDecorationLine*
    *   NotifyBeforeText
-   *   (NotifyGlyphPathEmitted |
-   *    (NotifyBeforeSVGGlyphPainted NotifyAfterSVGGlyphPainted))*
+   *   NotifyGlyphPathEmitted*
    *   NotifyAfterText
    *   PaintDecorationLine*
    *   PaintSelectionDecorationLine*

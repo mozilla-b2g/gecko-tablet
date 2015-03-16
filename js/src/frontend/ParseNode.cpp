@@ -268,9 +268,19 @@ PushNodeChildren(ParseNode *pn, NodeStack *stack)
       case PNK_WHILE:
       case PNK_SWITCH:
       case PNK_LETBLOCK:
+      case PNK_CLASSMETHOD:
       case PNK_FOR: {
         MOZ_ASSERT(pn->isArity(PN_BINARY));
         stack->push(pn->pn_left);
+        stack->push(pn->pn_right);
+        return PushResult::Recyclable;
+      }
+
+      // Named class expressions do not have outer binding nodes
+      case PNK_CLASSNAMES: {
+        MOZ_ASSERT(pn->isArity(PN_BINARY));
+        if (pn->pn_left)
+            stack->push(pn->pn_left);
         stack->push(pn->pn_right);
         return PushResult::Recyclable;
       }
@@ -381,6 +391,17 @@ PushNodeChildren(ParseNode *pn, NodeStack *stack)
         return PushResult::Recyclable;
       }
 
+      // classes might have an optional node for the heritage, as well as the names
+      case PNK_CLASS: {
+        MOZ_ASSERT(pn->isArity(PN_TERNARY));
+        if (pn->pn_kid1)
+            stack->push(pn->pn_kid1);
+        if (pn->pn_kid2)
+            stack->push(pn->pn_kid2);
+        stack->push(pn->pn_kid3);
+        return PushResult::Recyclable;
+      }
+
       // if-statement nodes have condition and consequent children and a
       // possibly-null alternative.
       case PNK_IF: {
@@ -461,6 +482,7 @@ PushNodeChildren(ParseNode *pn, NodeStack *stack)
       case PNK_EXPORT_SPEC_LIST:
       case PNK_SEQ:
       case PNK_ARGSBODY:
+      case PNK_CLASSMETHODLIST:
         return PushListNodeChildren(pn, stack);
 
       // Array comprehension nodes are lists with a single child -- PNK_FOR for
@@ -556,7 +578,7 @@ ParseNodeAllocator::allocNode()
 
     void *p = alloc.alloc(sizeof (ParseNode));
     if (!p)
-        js_ReportOutOfMemory(cx);
+        ReportOutOfMemory(cx);
     return p;
 }
 
@@ -617,6 +639,11 @@ Parser<FullParseHandler>::cloneParseTree(ParseNode *opn)
 {
     JS_CHECK_RECURSION(context, return nullptr);
 
+    if (opn->isKind(PNK_COMPUTED_NAME)) {
+        report(ParseError, false, opn, JSMSG_COMPUTED_NAME_IN_PATTERN);
+        return null();
+    }
+
     ParseNode *pn = handler.new_<ParseNode>(opn->getKind(), opn->getOp(), opn->getArity(),
                                             opn->pn_pos);
     if (!pn)
@@ -630,7 +657,7 @@ Parser<FullParseHandler>::cloneParseTree(ParseNode *opn)
 
       case PN_CODE:
         NULLCHECK(pn->pn_funbox = newFunctionBox(pn, opn->pn_funbox->function(), pc,
-                                                 Directives(/* strict = */ opn->pn_funbox->strict),
+                                                 Directives(/* strict = */ opn->pn_funbox->strict()),
                                                  opn->pn_funbox->generatorKind()));
         NULLCHECK(pn->pn_body = cloneParseTree(opn->pn_body));
         pn->pn_cookie = opn->pn_cookie;
@@ -731,14 +758,8 @@ Parser<FullParseHandler>::cloneDestructuringDefault(ParseNode *opn)
 {
     MOZ_ASSERT(opn->isKind(PNK_ASSIGN));
 
-    ParseNode *target = cloneLeftHandSide(opn->pn_left);
-    if (!target)
-        return nullptr;
-    ParseNode *defaultNode = cloneParseTree(opn->pn_right);
-    if (!defaultNode)
-        return nullptr;
-
-    return handler.new_<BinaryNode>(opn->getKind(), JSOP_NOP, opn->pn_pos, target, defaultNode);
+    report(ParseError, false, opn, JSMSG_DEFAULT_IN_PATTERN);
+    return null();
 }
 
 /*

@@ -37,6 +37,7 @@
 
 #include "frontend/Parser.h"
 #include "jit/IonCode.h"
+#include "js/Class.h"
 #include "js/Conversions.h"
 #include "js/MemoryMetrics.h"
 
@@ -50,9 +51,10 @@ using namespace js;
 using namespace jit;
 using namespace frontend;
 using mozilla::BinarySearch;
+using mozilla::Compression::LZ4;
 using mozilla::PodCopy;
 using mozilla::PodEqual;
-using mozilla::Compression::LZ4;
+using mozilla::PodZero;
 using mozilla::Swap;
 
 static uint8_t *
@@ -65,7 +67,7 @@ AllocateExecutableMemory(ExclusiveContext *cx, size_t bytes)
 #endif
     void *p = AllocateExecutableMemory(nullptr, bytes, permissions, "asm-js-code", AsmJSPageSize);
     if (!p)
-        js_ReportOutOfMemory(cx);
+        ReportOutOfMemory(cx);
     return (uint8_t *)p;
 }
 
@@ -455,7 +457,7 @@ static void
 AsmJSReportOverRecursed()
 {
     JSContext *cx = JSRuntime::innermostAsmJSActivation()->cx();
-    js_ReportOverRecursed(cx);
+    ReportOverRecursed(cx);
 }
 
 static void
@@ -463,14 +465,14 @@ OnDetached()
 {
     // See hasDetachedHeap comment in LinkAsmJS.
     JSContext *cx = JSRuntime::innermostAsmJSActivation()->cx();
-    JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_OUT_OF_MEMORY);
+    JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_OUT_OF_MEMORY);
 }
 
 static void
 OnOutOfBounds()
 {
     JSContext *cx = JSRuntime::innermostAsmJSActivation()->cx();
-    JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_BAD_INDEX);
+    JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_BAD_INDEX);
 }
 
 static bool
@@ -964,7 +966,7 @@ const Class AsmJSModuleObject::class_ = {
 AsmJSModuleObject *
 AsmJSModuleObject::create(ExclusiveContext *cx, ScopedJSDeletePtr<AsmJSModule> *module)
 {
-    JSObject *obj = NewObjectWithGivenProto(cx, &AsmJSModuleObject::class_, NullPtr(), NullPtr());
+    JSObject *obj = NewObjectWithGivenProto(cx, &AsmJSModuleObject::class_, NullPtr());
     if (!obj)
         return nullptr;
     AsmJSModuleObject *nobj = &obj->as<AsmJSModuleObject>();
@@ -1304,6 +1306,7 @@ AsmJSModule::CodeRange::CodeRange(uint32_t nameIndex, uint32_t lineNumber,
     profilingReturn_(l.profilingReturn.offset()),
     end_(l.end.offset())
 {
+    PodZero(&u);  // zero padding for Valgrind
     u.kind_ = Function;
     setDeltas(l.entry.offset(), l.profilingJump.offset(), l.profilingEpilogue.offset());
 
@@ -1328,9 +1331,13 @@ AsmJSModule::CodeRange::setDeltas(uint32_t entry, uint32_t profilingJump, uint32
 }
 
 AsmJSModule::CodeRange::CodeRange(Kind kind, uint32_t begin, uint32_t end)
-  : begin_(begin),
+  : nameIndex_(0),
+    lineNumber_(0),
+    begin_(begin),
+    profilingReturn_(0),
     end_(end)
 {
+    PodZero(&u);  // zero padding for Valgrind
     u.kind_ = kind;
 
     MOZ_ASSERT(begin_ <= end_);
@@ -1338,10 +1345,13 @@ AsmJSModule::CodeRange::CodeRange(Kind kind, uint32_t begin, uint32_t end)
 }
 
 AsmJSModule::CodeRange::CodeRange(Kind kind, uint32_t begin, uint32_t profilingReturn, uint32_t end)
-  : begin_(begin),
+  : nameIndex_(0),
+    lineNumber_(0),
+    begin_(begin),
     profilingReturn_(profilingReturn),
     end_(end)
 {
+    PodZero(&u);  // zero padding for Valgrind
     u.kind_ = kind;
 
     MOZ_ASSERT(begin_ < profilingReturn_);
@@ -1351,10 +1361,13 @@ AsmJSModule::CodeRange::CodeRange(Kind kind, uint32_t begin, uint32_t profilingR
 
 AsmJSModule::CodeRange::CodeRange(AsmJSExit::BuiltinKind builtin, uint32_t begin,
                                   uint32_t profilingReturn, uint32_t end)
-  : begin_(begin),
+  : nameIndex_(0),
+    lineNumber_(0),
+    begin_(begin),
     profilingReturn_(profilingReturn),
     end_(end)
 {
+    PodZero(&u);  // zero padding for Valgrind
     u.kind_ = Thunk;
     u.thunk.target_ = builtin;
 
@@ -2203,7 +2216,7 @@ js::LookupAsmJSModuleInCache(ExclusiveContext *cx,
 
     uint32_t srcStart = parser.pc->maybeFunction->pn_body->pn_pos.begin;
     uint32_t srcBodyStart = parser.tokenStream.currentToken().pos.end;
-    bool strict = parser.pc->sc->strict && !parser.pc->sc->hasExplicitUseStrict();
+    bool strict = parser.pc->sc->strict() && !parser.pc->sc->hasExplicitUseStrict();
 
     // usesSignalHandlers will be clobbered when deserializing
     ScopedJSDeletePtr<AsmJSModule> module(

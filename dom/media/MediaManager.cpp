@@ -391,7 +391,7 @@ MediaDevice::MediaDevice(MediaEngineSource* aSource)
 
 VideoDevice::VideoDevice(MediaEngineVideoSource* aSource)
   : MediaDevice(aSource) {
-#ifdef MOZ_B2G_CAMERA
+#if defined(MOZ_B2G_CAMERA) && defined(MOZ_WIDGET_GONK)
   if (mName.EqualsLiteral("back")) {
     mHasFacingMode = true;
     mFacingMode = dom::VideoFacingModeEnum::Environment;
@@ -567,14 +567,10 @@ public:
                          MediaEngineSource* aAudioSource,
                          MediaEngineSource* aVideoSource)
   {
-    DOMMediaStream::TrackTypeHints hints =
-      (aAudioSource ? DOMMediaStream::HINT_CONTENTS_AUDIO : 0) |
-      (aVideoSource ? DOMMediaStream::HINT_CONTENTS_VIDEO : 0);
-
     nsRefPtr<nsDOMUserMediaStream> stream = new nsDOMUserMediaStream(aListener,
                                                                      aAudioSource,
                                                                      aVideoSource);
-    stream->InitTrackUnionStream(aWindow, hints);
+    stream->InitTrackUnionStream(aWindow);
     return stream.forget();
   }
 
@@ -1102,6 +1098,8 @@ public:
     MOZ_ASSERT(!mOnFailure);
 
     NS_DispatchToMainThread(runnable);
+    // Do after ErrorCallbackRunnable Run()s, as it checks active window list
+    NS_DispatchToMainThread(new GetUserMediaListenerRemove(mWindowID, mListener));
   }
 
   void
@@ -1158,11 +1156,8 @@ public:
       manager->RemoveFromWindowList(mWindowID, mListener);
     } else {
       // This will re-check the window being alive on main-thread
-      // Note: we must remove the listener on MainThread as well
+      // and remove the listener on MainThread as well
       Fail(aName, aMessage);
-
-      // MUST happen after ErrorCallbackRunnable Run()s, as it checks the active window list
-      NS_DispatchToMainThread(new GetUserMediaListenerRemove(mWindowID, mListener));
     }
 
     MOZ_ASSERT(!mOnSuccess);
@@ -1328,14 +1323,15 @@ public:
     already_AddRefed<nsIGetUserMediaDevicesSuccessCallback> aOnSuccess,
     already_AddRefed<nsIDOMGetUserMediaErrorCallback> aOnFailure,
     uint64_t aWindowId, nsACString& aAudioLoopbackDev,
-    nsACString& aVideoLoopbackDev)
+    nsACString& aVideoLoopbackDev, bool aUseFakeDevices)
     : mConstraints(aConstraints)
     , mOnSuccess(aOnSuccess)
     , mOnFailure(aOnFailure)
     , mManager(MediaManager::GetInstance())
     , mWindowId(aWindowId)
     , mLoopbackAudioDevice(aAudioLoopbackDev)
-    , mLoopbackVideoDevice(aVideoLoopbackDev) {}
+    , mLoopbackVideoDevice(aVideoLoopbackDev)
+    , mUseFakeDevices(aUseFakeDevices) {}
 
   void // NS_IMETHOD
   Run()
@@ -1343,7 +1339,7 @@ public:
     NS_ASSERTION(!NS_IsMainThread(), "Don't call on main thread");
 
     nsRefPtr<MediaEngine> backend;
-    if (mConstraints.mFake)
+    if (mConstraints.mFake || mUseFakeDevices)
       backend = new MediaEngineDefault(mConstraints.mFakeTracks);
     else
       backend = mManager->GetBackend(mWindowId);
@@ -1387,6 +1383,7 @@ private:
   // automated media tests only.
   nsCString mLoopbackAudioDevice;
   nsCString mLoopbackVideoDevice;
+  bool mUseFakeDevices;
 };
 
 MediaManager::MediaManager()
@@ -1596,10 +1593,15 @@ MediaManager::GetUserMedia(
   if (!Preferences::GetBool("media.navigator.video.enabled", true)) {
     c.mVideo.SetAsBoolean() = false;
   }
+  bool fake = true;
+  if (!c.mFake &&
+      !Preferences::GetBool("media.navigator.streams.fake", false)) {
+    fake = false;
+  }
 
   // Pass callbacks and MediaStreamListener along to GetUserMediaTask.
   nsAutoPtr<GetUserMediaTask> task;
-  if (c.mFake) {
+  if (fake) {
     // Fake stream from default backend.
     task = new GetUserMediaTask(c, onSuccess.forget(),
       onFailure.forget(), windowID, listener, mPrefs, new MediaEngineDefault(c.mFakeTracks));
@@ -1703,7 +1705,7 @@ MediaManager::GetUserMedia(
     }
   }
 
-#ifdef MOZ_B2G_CAMERA
+#if defined(MOZ_B2G_CAMERA) && defined(MOZ_WIDGET_GONK)
   if (mCameraManager == nullptr) {
     mCameraManager = nsDOMCameraManager::CreateInstance(aWindow);
   }
@@ -1711,7 +1713,7 @@ MediaManager::GetUserMedia(
 
   // XXX No full support for picture in Desktop yet (needs proper UI)
   if (privileged ||
-      (c.mFake && !Preferences::GetBool("media.navigator.permission.fake"))) {
+      (fake && !Preferences::GetBool("media.navigator.permission.fake"))) {
     MediaManager::GetMessageLoop()->PostTask(FROM_HERE, task.forget());
   } else {
     bool isHTTPS = false;
@@ -1805,12 +1807,14 @@ MediaManager::GetUserMediaDevices(nsPIDOMWindow* aWindow,
     Preferences::GetCString("media.audio_loopback_dev");
   nsAdoptingCString loopbackVideoDevice =
     Preferences::GetCString("media.video_loopback_dev");
+  bool useFakeStreams =
+    Preferences::GetBool("media.navigator.streams.fake", false);
 
   MediaManager::GetMessageLoop()->PostTask(FROM_HERE,
     new GetUserMediaDevicesTask(
       aConstraints, onSuccess.forget(), onFailure.forget(),
       (aInnerWindowID ? aInnerWindowID : aWindow->WindowID()),
-      loopbackAudioDevice, loopbackVideoDevice));
+      loopbackAudioDevice, loopbackVideoDevice, useFakeStreams));
 
   return NS_OK;
 }
@@ -2172,6 +2176,7 @@ struct CaptureWindowStateData {
   bool *mScreenShare;
   bool *mWindowShare;
   bool *mAppShare;
+  bool *mBrowserShare;
 };
 
 static void
@@ -2202,6 +2207,9 @@ CaptureWindowStateCallback(MediaManager *aThis,
       if (listener->CapturingApplication()) {
         *data->mAppShare = true;
       }
+      if (listener->CapturingBrowser()) {
+        *data->mBrowserShare = true;
+      }
     }
   }
 }
@@ -2210,7 +2218,8 @@ CaptureWindowStateCallback(MediaManager *aThis,
 NS_IMETHODIMP
 MediaManager::MediaCaptureWindowState(nsIDOMWindow* aWindow, bool* aVideo,
                                       bool* aAudio, bool *aScreenShare,
-                                      bool* aWindowShare, bool *aAppShare)
+                                      bool* aWindowShare, bool *aAppShare,
+                                      bool *aBrowserShare)
 {
   NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
   struct CaptureWindowStateData data;
@@ -2219,22 +2228,24 @@ MediaManager::MediaCaptureWindowState(nsIDOMWindow* aWindow, bool* aVideo,
   data.mScreenShare = aScreenShare;
   data.mWindowShare = aWindowShare;
   data.mAppShare = aAppShare;
+  data.mBrowserShare = aBrowserShare;
 
   *aVideo = false;
   *aAudio = false;
   *aScreenShare = false;
   *aWindowShare = false;
   *aAppShare = false;
+  *aBrowserShare = false;
 
   nsCOMPtr<nsPIDOMWindow> piWin = do_QueryInterface(aWindow);
   if (piWin) {
     IterateWindowListeners(piWin, CaptureWindowStateCallback, &data);
   }
 #ifdef DEBUG
-  LOG(("%s: window %lld capturing %s %s %s %s %s", __FUNCTION__, piWin ? piWin->WindowID() : -1,
+  LOG(("%s: window %lld capturing %s %s %s %s %s %s", __FUNCTION__, piWin ? piWin->WindowID() : -1,
        *aVideo ? "video" : "", *aAudio ? "audio" : "",
        *aScreenShare ? "screenshare" : "",  *aWindowShare ? "windowshare" : "",
-       *aAppShare ? "appshare" : ""));
+       *aAppShare ? "appshare" : "", *aBrowserShare ? "browsershare" : ""));
 #endif
   return NS_OK;
 }

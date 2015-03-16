@@ -79,6 +79,7 @@
 <!ENTITY pref_category_advanced "Advanced">
 <!ENTITY pref_category_customize "Customize">
 <!ENTITY pref_category_customize_summary "Home, search, tabs, import">
+<!ENTITY pref_category_customize_alt_summary "Home, search, tabs, open later, import">
 
 <!-- Localization note (pref_category_language) : This is the preferences
      section in which the user picks the locale in which to display Firefox
@@ -114,6 +115,10 @@
 <!ENTITY overlay_share_no_url "No link found in this share">
 <!ENTITY overlay_share_retry "Try again">
 <!ENTITY overlay_share_select_device "Select device">
+<!-- Localization note (overlay_no_synced_devices) : Used when the menu option
+     to send a tab to a synced device is pressed and no other synced devices
+     are found. -->
+<!ENTITY overlay_no_synced_devices "No Firefox Account connected devices found">
 
 <!ENTITY pref_category_search3 "Search">
 <!ENTITY pref_category_search_summary "Customize your search providers">
@@ -140,7 +145,9 @@
 <!ENTITY pref_category_devtools_summary "Remote debugging, paint flashing">
 <!ENTITY pref_developer_paint_flashing "Paint flashing">
 <!ENTITY pref_developer_remotedebugging "Remote debugging">
+<!ENTITY pref_category_logins "Logins">
 <!ENTITY pref_remember_signons "Remember passwords">
+<!ENTITY pref_manage_logins "Manage logins">
 
 <!ENTITY pref_category_home "Home">
 <!ENTITY pref_category_home_summary "Customize your homepage">
@@ -286,6 +293,7 @@ size. -->
 <!ENTITY quit "Quit">
 
 <!ENTITY addons "Add-ons">
+<!ENTITY logins "Logins">
 <!ENTITY downloads "Downloads">
 <!ENTITY apps "Apps">
 <!ENTITY char_encoding "Character Encoding">
@@ -348,6 +356,9 @@ size. -->
 <!ENTITY pref_scroll_title_bar2 "Full-screen browsing">
 <!ENTITY pref_scroll_title_bar_summary "Hide the &brandShortName; title bar when scrolling down a page">
 
+<!ENTITY pref_tab_queue_title "Open later">
+<!ENTITY pref_tab_queue_summary "Prevent tabs from opening immediately, but open all queued tabs the next time &brandShortName; loads.">
+
 <!-- Localization note (page_removed): This string appears in a toast message when
      any page is removed frome about:home. This includes pages that are in history,
      bookmarks, or reading list. -->
@@ -366,6 +377,10 @@ size. -->
 <!ENTITY site_settings_no_settings  "There are no settings to clear.">
 
 <!ENTITY reading_list_added "Page added to your Reading List">
+<!ENTITY reading_list_removed "Page removed from your Reading List">
+<!-- Localization note (reading_list_remove) : Used to remove the currently open page from
+     the user's reading list. The opposite of overlay_share_reading_list_btn_label. -->
+<!ENTITY reading_list_remove "Remove from Reading List">
 <!ENTITY reading_list_duplicate "Page already in your Reading List">
 
 <!-- Localization note (reading_list_time_minutes2) : This string is used in the "Reading List"

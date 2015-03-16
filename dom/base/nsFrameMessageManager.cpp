@@ -514,7 +514,7 @@ nsFrameMessageManager::GetDelayedScripts(JSContext* aCx, JS::MutableHandle<JS::V
     pair = JS_NewArrayObject(aCx, pairElts);
     NS_ENSURE_TRUE(pair, NS_ERROR_OUT_OF_MEMORY);
 
-    NS_ENSURE_TRUE(JS_SetElement(aCx, array, i, pair),
+    NS_ENSURE_TRUE(JS_DefineElement(aCx, array, i, pair, JSPROP_ENUMERATE),
                    NS_ERROR_OUT_OF_MEMORY);
   }
 
@@ -696,7 +696,7 @@ nsFrameMessageManager::SendMessage(const nsAString& aMessageName,
                       retval[i].Length(), &ret)) {
       return NS_ERROR_UNEXPECTED;
     }
-    NS_ENSURE_TRUE(JS_SetElement(aCx, dataArray, i, ret),
+    NS_ENSURE_TRUE(JS_DefineElement(aCx, dataArray, i, ret, JSPROP_ENUMERATE),
                    NS_ERROR_OUT_OF_MEMORY);
   }
 
@@ -1682,6 +1682,17 @@ nsMessageManagerScriptExecutor::InitChildGlobalInternal(
   return true;
 }
 
+void
+nsMessageManagerScriptExecutor::MarkScopesForCC()
+{
+  for (uint32_t i = 0; i < mAnonymousGlobalScopes.Length(); ++i) {
+    JSObject* obj = mAnonymousGlobalScopes[i];
+    if (obj) {
+      JS::ExposeObjectToActiveJS(obj);
+    }
+  }
+}
+
 NS_IMPL_ISUPPORTS(nsScriptCacheCleaner, nsIObserver)
 
 nsFrameMessageManager* nsFrameMessageManager::sChildProcessManager = nullptr;
@@ -1945,13 +1956,13 @@ NS_NewParentProcessMessageManager(nsIMessageBroadcaster** aResult)
                                                                  nullptr,
                                                                  MM_CHROME | MM_PROCESSMANAGER | MM_BROADCASTER);
   nsFrameMessageManager::sParentProcessManager = mm;
-  nsFrameMessageManager::NewProcessMessageManager(nullptr); // Create same process message manager.
+  nsFrameMessageManager::NewProcessMessageManager(false); // Create same process message manager.
   return CallQueryInterface(mm, aResult);
 }
 
 
 nsFrameMessageManager*
-nsFrameMessageManager::NewProcessMessageManager(mozilla::dom::nsIContentParent* aProcess)
+nsFrameMessageManager::NewProcessMessageManager(bool aIsRemote)
 {
   if (!nsFrameMessageManager::sParentProcessManager) {
      nsCOMPtr<nsIMessageBroadcaster> dummy =
@@ -1961,8 +1972,10 @@ nsFrameMessageManager::NewProcessMessageManager(mozilla::dom::nsIContentParent* 
   MOZ_ASSERT(nsFrameMessageManager::sParentProcessManager,
              "parent process manager not created");
   nsFrameMessageManager* mm;
-  if (aProcess) {
-    mm = new nsFrameMessageManager(aProcess,
+  if (aIsRemote) {
+    // Callback is set in ContentParent::InitInternal so that the process has
+    // already started when we send pending scripts.
+    mm = new nsFrameMessageManager(nullptr,
                                    nsFrameMessageManager::sParentProcessManager,
                                    MM_CHROME | MM_PROCESSMANAGER);
   } else {

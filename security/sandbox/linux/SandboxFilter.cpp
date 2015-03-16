@@ -200,7 +200,6 @@ SandboxFilterImplContent::Build() {
 
   /* Must remove all of the following in the future, when no longer used */
   /* open() is for some legacy APIs such as font loading. */
-  /* See bug 906996 for removing unlink(). */
   Allow(SYSCALL_LARGEFILE(fstat, fstat64));
   Allow(SYSCALL_LARGEFILE(stat, stat64));
   Allow(SYSCALL_LARGEFILE(lstat, lstat64));
@@ -209,10 +208,9 @@ SandboxFilterImplContent::Build() {
   Deny(EACCES, SOCKETCALL(socket, SOCKET));
   Allow(SYSCALL(open));
   Allow(SYSCALL(readlink)); /* Workaround for bug 964455 */
+  Allow(SYSCALL(readlinkat)); /* Workaround for bug 964455 */
   Allow(SYSCALL(prctl));
   Allow(SYSCALL(access));
-  Allow(SYSCALL(unlink));
-  Allow(SYSCALL(unlinkat));
   Allow(SYSCALL(fsync));
   Allow(SYSCALL(msync));
 

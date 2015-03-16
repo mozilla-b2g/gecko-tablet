@@ -1481,7 +1481,7 @@ class MOZ_STACK_CLASS ModuleCompiler
                                            errorString_.get());
         }
         if (errorOverRecursed_)
-            js_ReportOverRecursed(cx_);
+            ReportOverRecursed(cx_);
     }
 
     bool init() {
@@ -1548,7 +1548,7 @@ class MOZ_STACK_CLASS ModuleCompiler
         // "use strict" should be added to the source if we are in an implicit
         // strict context, see also comment above addUseStrict in
         // js::FunctionToString.
-        bool strict = parser_.pc->sc->strict && !parser_.pc->sc->hasExplicitUseStrict();
+        bool strict = parser_.pc->sc->strict() && !parser_.pc->sc->hasExplicitUseStrict();
         module_ = cx_->new_<AsmJSModule>(parser_.ss, srcStart, srcBodyStart, strict,
                                          cx_->canUseSignalHandlers());
         if (!module_)
@@ -1961,7 +1961,7 @@ class MOZ_STACK_CLASS ModuleCompiler
         // Protection works at page granularity, so we need to ensure that no
         // stub code gets into the function code pages.
         MOZ_ASSERT(!finishedFunctionBodies_);
-        masm_.align(AsmJSPageSize);
+        masm_.haltingAlign(AsmJSPageSize);
         module_->finishFunctionBodies(masm_.currentOffset());
         finishedFunctionBodies_ = true;
     }
@@ -2792,7 +2792,7 @@ class FunctionCompiler
             return nullptr;
 
         MOZ_ASSERT(IsSimdType(type));
-        MSimdSplatX4 *ins = MSimdSplatX4::New(alloc(), type, v);
+        MSimdSplatX4 *ins = MSimdSplatX4::NewAsmJS(alloc(), v, type);
         curBlock_->add(ins);
         return ins;
     }
@@ -5143,6 +5143,11 @@ static bool
 CheckInternalCall(FunctionCompiler &f, ParseNode *callNode, PropertyName *calleeName,
                   RetType retType, MDefinition **def, Type *type)
 {
+    if (!f.canCall()) {
+        return f.fail(callNode, "call expressions may not be nested inside heap expressions "
+                                "when the module contains a change-heap function");
+    }
+
     FunctionCompiler::Call call(f, callNode, retType);
 
     if (!CheckCallArgs(f, callNode, CheckIsVarType, &call))
@@ -5188,6 +5193,11 @@ CheckFuncPtrTableAgainstExisting(ModuleCompiler &m, ParseNode *usepn,
 static bool
 CheckFuncPtrCall(FunctionCompiler &f, ParseNode *callNode, RetType retType, MDefinition **def, Type *type)
 {
+    if (!f.canCall()) {
+        return f.fail(callNode, "function-pointer call expressions may not be nested inside heap "
+                                "expressions when the module contains a change-heap function");
+    }
+
     ParseNode *callee = CallCallee(callNode);
     ParseNode *tableNode = ElemBase(callee);
     ParseNode *indexExpr = ElemIndex(callee);
@@ -5247,6 +5257,11 @@ static bool
 CheckFFICall(FunctionCompiler &f, ParseNode *callNode, unsigned ffiIndex, RetType retType,
              MDefinition **def, Type *type)
 {
+    if (!f.canCall()) {
+        return f.fail(callNode, "FFI call expressions may not be nested inside heap "
+                                "expressions when the module contains a change-heap function");
+    }
+
     PropertyName *calleeName = CallCallee(callNode)->name();
 
     if (retType == RetType::Float)
@@ -5863,7 +5878,7 @@ CheckSimdOperationCall(FunctionCompiler &f, ParseNode *call, const ModuleCompile
       case AsmJSSimdOperation_##OP:                                                     \
         return CheckSimdBinary(f, call, opType, MSimdBinaryArith::Op_##OP, def, type);
       ARITH_COMMONX4_SIMD_OP(OP_CHECK_CASE_LIST_)
-      ARITH_FLOAT32X4_SIMD_OP(OP_CHECK_CASE_LIST_)
+      BINARY_ARITH_FLOAT32X4_SIMD_OP(OP_CHECK_CASE_LIST_)
 #undef OP_CHECK_CASE_LIST_
 
       case AsmJSSimdOperation_lessThan:
@@ -6112,11 +6127,6 @@ static bool
 CheckCoercedCall(FunctionCompiler &f, ParseNode *call, RetType retType, MDefinition **def, Type *type)
 {
     JS_CHECK_RECURSION_DONT_REPORT(f.cx(), return f.m().failOverRecursed());
-
-    if (!f.canCall()) {
-        return f.fail(call, "call expressions may not be nested inside heap expressions when "
-                            "the module contains a change-heap function");
-    }
 
     if (IsNumericLiteral(f.m(), call)) {
         AsmJSNumLit literal = ExtractNumericLiteral(f.m(), call);
@@ -7527,8 +7537,9 @@ ParseFunction(ModuleCompiler &m, ParseNode **fnOut)
         return false;
 
     // This flows into FunctionBox, so must be tenured.
-    RootedFunction fun(m.cx(), NewFunction(m.cx(), NullPtr(), nullptr, 0, JSFunction::INTERPRETED,
-                                           m.cx()->global(), name, JSFunction::FinalizeKind,
+    RootedFunction fun(m.cx(),
+                       NewScriptedFunction(m.cx(), 0, JSFunction::INTERPRETED,
+                                           name, JSFunction::FinalizeKind,
                                            TenuredObject));
     if (!fun)
         return false;
@@ -8181,12 +8192,14 @@ StackDecrementForCall(MacroAssembler &masm, uint32_t alignment, const VectorT &a
 }
 
 #if defined(JS_CODEGEN_ARM)
-// The ARM system ABI also includes d15 in the non volatile float registers.
+// The ARM system ABI also includes d15 & s31 in the non volatile float registers.
 // Also exclude lr (a.k.a. r14) as we preserve it manually)
 static const RegisterSet NonVolatileRegs =
     RegisterSet(GeneralRegisterSet(Registers::NonVolatileMask &
                                    ~(uint32_t(1) << Registers::lr)),
-                FloatRegisterSet(FloatRegisters::NonVolatileMask | (1ULL << FloatRegisters::d15)));
+                FloatRegisterSet(FloatRegisters::NonVolatileMask
+                                 | (1ULL << FloatRegisters::d15)
+                                 | (1ULL << FloatRegisters::s31)));
 #else
 static const RegisterSet NonVolatileRegs =
     RegisterSet(GeneralRegisterSet(Registers::NonVolatileMask),
@@ -8201,6 +8214,8 @@ static const FloatRegisterSet NonVolatileSimdRegs = SupportsSimd ? NonVolatileRe
 static const unsigned FramePushedAfterSave = NonVolatileRegs.gprs().size() * sizeof(intptr_t) +
                                              NonVolatileRegs.fpus().getPushSizeInBytes() +
                                              sizeof(double);
+#elif defined(JS_CODEGEN_NONE)
+static const unsigned FramePushedAfterSave = 0;
 #else
 static const unsigned FramePushedAfterSave =
    SupportsSimd ? NonVolatileRegs.gprs().size() * sizeof(intptr_t) +
@@ -8216,7 +8231,7 @@ GenerateEntry(ModuleCompiler &m, unsigned exportIndex)
     MacroAssembler &masm = m.masm();
 
     Label begin;
-    masm.align(CodeAlignment);
+    masm.haltingAlign(CodeAlignment);
     masm.bind(&begin);
 
     // Save the return address if it wasn't already saved by the call insn.
@@ -8369,11 +8384,11 @@ GenerateEntry(ModuleCompiler &m, unsigned exportIndex)
         break;
       case RetType::Int32x4:
         // We don't have control on argv alignment, do an unaligned access.
-        masm.storeUnalignedInt32x4(ReturnSimdReg, Address(argv, 0));
+        masm.storeUnalignedInt32x4(ReturnInt32x4Reg, Address(argv, 0));
         break;
       case RetType::Float32x4:
         // We don't have control on argv alignment, do an unaligned access.
-        masm.storeUnalignedFloat32x4(ReturnSimdReg, Address(argv, 0));
+        masm.storeUnalignedFloat32x4(ReturnFloat32x4Reg, Address(argv, 0));
         break;
     }
 
@@ -8998,7 +9013,7 @@ static bool
 GenerateAsyncInterruptExit(ModuleCompiler &m, Label *throwLabel)
 {
     MacroAssembler &masm = m.masm();
-    masm.align(CodeAlignment);
+    masm.haltingAlign(CodeAlignment);
     masm.bind(&m.asyncInterruptLabel());
 
 #if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
@@ -9164,7 +9179,7 @@ static bool
 GenerateThrowStub(ModuleCompiler &m, Label *throwLabel)
 {
     MacroAssembler &masm = m.masm();
-    masm.align(CodeAlignment);
+    masm.haltingAlign(CodeAlignment);
     masm.bind(throwLabel);
 
     // We are about to pop all frames in this AsmJSActivation. Set fp to null to

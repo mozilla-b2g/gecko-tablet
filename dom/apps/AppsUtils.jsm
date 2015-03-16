@@ -63,7 +63,11 @@ mozIApplication.prototype = {
   },
 
   hasWidgetPage: function(aPageURL) {
-    return this.widgetPages.indexOf(aPageURL) != -1;
+    let uri = Services.io.newURI(aPageURL, null, null);
+    let filepath = AppsUtils.getFilePath(uri.path);
+    let eliminatedUri = Services.io.newURI(uri.prePath + filepath, null, null);
+    let equalCriterion = aUri => aUri.equals(eliminatedUri);
+    return this.widgetPages.find(equalCriterion) !== undefined;
   },
 
   QueryInterface: function(aIID) {
@@ -199,6 +203,16 @@ this.AppsUtils = {
     aRequestChannel.asyncOpen(listener, null);
 
     return deferred.promise;
+  },
+
+  // Eliminate query and hash string.
+  getFilePath: function(aPagePath) {
+    let urlParser = Cc["@mozilla.org/network/url-parser;1?auth=no"]
+                    .getService(Ci.nsIURLParser);
+    let uriData = [aPagePath, aPagePath.length, {}, {}, {}, {}, {}, {}];
+    urlParser.parsePath.apply(urlParser, uriData);
+    let [{value: pathPos}, {value: pathLen}] = uriData.slice(2, 4);
+    return aPagePath.substr(pathPos, pathLen);
   },
 
   getAppByManifestURL: function getAppByManifestURL(aApps, aManifestURL) {
@@ -521,23 +535,28 @@ this.AppsUtils = {
     // Ensure that app name can't be updated
     aNewManifest.name = aApp.name;
 
+    let defaultShortName =
+      new ManifestHelper(aOldManifest, aApp.origin, aApp.manifestURL).short_name;
+    aNewManifest.short_name = defaultShortName;
+
     // Nor through localized names
-    if ('locales' in aNewManifest) {
-      let defaultName =
-        new ManifestHelper(aOldManifest, aApp.origin, aApp.manifestURL).name;
+    if ("locales" in aNewManifest) {
       for (let locale in aNewManifest.locales) {
-        let entry = aNewManifest.locales[locale];
-        if (!entry.name) {
-          continue;
+        let newLocaleEntry = aNewManifest.locales[locale];
+
+        let oldLocaleEntry = aOldManifest && "locales" in aOldManifest &&
+            locale in aOldManifest.locales && aOldManifest.locales[locale];
+
+        if (newLocaleEntry.name) {
+          // In case previous manifest didn't had a name,
+          // we use the default app name
+          newLocaleEntry.name =
+            (oldLocaleEntry && oldLocaleEntry.name) || aApp.name;
         }
-        // In case previous manifest didn't had a name,
-        // we use the default app name
-        let localizedName = defaultName;
-        if (aOldManifest && 'locales' in aOldManifest &&
-            locale in aOldManifest.locales) {
-          localizedName = aOldManifest.locales[locale].name;
+        if (newLocaleEntry.short_name) {
+          newLocaleEntry.short_name =
+            (oldLocaleEntry && oldLocaleEntry.short_name) || defaultShortName;
         }
-        entry.name = localizedName;
       }
     }
   },
@@ -808,6 +827,10 @@ ManifestHelper.prototype = {
 
   get name() {
     return this._localeProp("name");
+  },
+
+  get short_name() {
+    return this._localeProp("short_name");
   },
 
   get description() {

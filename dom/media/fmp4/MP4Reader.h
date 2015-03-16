@@ -11,6 +11,7 @@
 #include "nsAutoPtr.h"
 #include "PlatformDecoderModule.h"
 #include "mp4_demuxer/mp4_demuxer.h"
+#include "demuxer/TrackDemuxer.h"
 #include "MediaTaskQueue.h"
 
 #include <deque>
@@ -22,9 +23,21 @@ namespace dom {
 class TimeRanges;
 }
 
-typedef std::deque<mp4_demuxer::MP4Sample*> MP4SampleQueue;
+typedef std::deque<MediaSample*> MediaSampleQueue;
 
 class MP4Stream;
+
+#if defined(MOZ_GONK_MEDIACODEC) || defined(XP_WIN) || defined(MOZ_APPLEMEDIA) || defined(MOZ_FFMPEG)
+#define MP4_READER_DORMANT
+#else
+#undef MP4_READER_DORMANT
+#endif
+
+#if defined(XP_WIN) || defined(MOZ_APPLEMEDIA) || defined(MOZ_FFMPEG)
+#define MP4_READER_DORMANT_HEURISTIC
+#else
+#undef MP4_READER_DORMANT_HEURISTIC
+#endif
 
 class MP4Reader MOZ_FINAL : public MediaDecoderReader
 {
@@ -81,6 +94,10 @@ public:
 
   virtual bool IsAsync() const MOZ_OVERRIDE { return true; }
 
+  virtual bool VideoIsHardwareAccelerated() const MOZ_OVERRIDE;
+
+  virtual void DisableHardwareAcceleration() MOZ_OVERRIDE;
+
 private:
 
   bool InitDemuxer();
@@ -101,8 +118,8 @@ private:
 
   // Blocks until the demuxer produces an sample of specified type.
   // Returns nullptr on error on EOS. Caller must delete sample.
-  mp4_demuxer::MP4Sample* PopSample(mp4_demuxer::TrackType aTrack);
-  mp4_demuxer::MP4Sample* PopSampleLocked(mp4_demuxer::TrackType aTrack);
+  MediaSample* PopSample(mp4_demuxer::TrackType aTrack);
+  MediaSample* PopSampleLocked(mp4_demuxer::TrackType aTrack);
 
   bool SkipVideoDemuxToNextKeyFrame(int64_t aTimeThreshold, uint32_t& parsed);
 
@@ -127,8 +144,9 @@ private:
   size_t SizeOfQueue(TrackType aTrack);
 
   nsRefPtr<MP4Stream> mStream;
-  nsAutoPtr<mp4_demuxer::MP4Demuxer> mDemuxer;
+  nsRefPtr<mp4_demuxer::MP4Demuxer> mDemuxer;
   nsRefPtr<PlatformDecoderModule> mPlatform;
+  mp4_demuxer::CryptoFile mCrypto;
 
   class DecoderCallback : public MediaDataDecoderCallback {
   public:
@@ -181,6 +199,7 @@ private:
     {
     }
 
+    nsAutoPtr<TrackDemuxer> mTrackDemuxer;
     // The platform decoder.
     nsRefPtr<MediaDataDecoder> mDecoder;
     // TaskQueue on which decoder can choose to decode.
@@ -239,7 +258,7 @@ private:
 
   // Queued samples extracted by the demuxer, but not yet sent to the platform
   // decoder.
-  nsAutoPtr<mp4_demuxer::MP4Sample> mQueuedVideoSample;
+  nsAutoPtr<MediaSample> mQueuedVideoSample;
 
   // Returns true when the decoder for this track needs input.
   // aDecoder.mMonitor must be locked.
@@ -270,7 +289,7 @@ private:
   Monitor mDemuxerMonitor;
   nsRefPtr<SharedDecoderManager> mSharedDecoderManager;
 
-#if defined(XP_WIN)
+#if defined(MP4_READER_DORMANT_HEURISTIC)
   const bool mDormantEnabled;
 #endif
 };

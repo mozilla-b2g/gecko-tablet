@@ -478,6 +478,12 @@ class MochitestOptions(optparse.OptionParser):
           "dest": "debuggerInteractive",
           "help": "prevents the test harness from redirecting stdout and stderr for interactive debuggers",
           }],
+        [["--max-timeouts"],
+         { "type": "int",
+           "dest": "maxTimeouts",
+           "help": "maximum number of timeouts permitted before halting testing",
+           "default": None,
+           }],
     ]
 
     def __init__(self, **kwargs):
@@ -677,7 +683,8 @@ class MochitestOptions(optparse.OptionParser):
             for f in ['/usr/bin/gst-launch-0.10', '/usr/bin/pactl']:
                 if not os.path.isfile(f):
                     self.error(
-                        'Missing binary %s required for --use-test-media-devices')
+                        'Missing binary %s required for '
+                        '--use-test-media-devices' % f)
 
         if options.nested_oop:
             if not options.e10s:

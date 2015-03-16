@@ -46,10 +46,16 @@ ChromeProcessController::InitializeRoot()
   // actually scrollable (if it is, APZC will set proper margins when it's
   // scrolled).
   nsIPresShell* presShell = GetPresShell();
-  MOZ_ASSERT(presShell);
+  if (!presShell) {
+    return;
+  }
+
   MOZ_ASSERT(presShell->GetDocument());
   nsIContent* content = presShell->GetDocument()->GetDocumentElement();
-  MOZ_ASSERT(content);
+  if (!content) {
+    return;
+  }
+
   uint32_t presShellId;
   FrameMetrics::ViewID viewId;
   if (APZCCallbackHelper::GetOrCreateScrollIdentifiers(content, &presShellId, &viewId)) {
@@ -78,6 +84,13 @@ void
 ChromeProcessController::PostDelayedTask(Task* aTask, int aDelayMs)
 {
   MessageLoop::current()->PostDelayedTask(FROM_HERE, aTask, aDelayMs);
+}
+
+void
+ChromeProcessController::RequestFlingSnap(const FrameMetrics::ViewID& aScrollId,
+                                          const mozilla::CSSPoint& aDestination)
+{
+  APZCCallbackHelper::RequestFlingSnap(aScrollId, aDestination);
 }
 
 void
@@ -112,15 +125,25 @@ ChromeProcessController::GetPresShellResolution() const
 nsIPresShell*
 ChromeProcessController::GetPresShell() const
 {
-  nsView* view = nsView::GetViewFor(mWidget);
-  MOZ_ASSERT(view);
-  return view->GetPresShell();
+  if (nsView* view = nsView::GetViewFor(mWidget)) {
+    return view->GetPresShell();
+  }
+  return nullptr;
+}
+
+nsIDocument*
+ChromeProcessController::GetDocument() const
+{
+  if (nsIPresShell* presShell = GetPresShell()) {
+    return presShell->GetDocument();
+  }
+  return nullptr;
 }
 
 already_AddRefed<nsIDOMWindowUtils>
 ChromeProcessController::GetDOMWindowUtils() const
 {
-  if (nsIDocument* doc = GetPresShell()->GetDocument()) {
+  if (nsIDocument* doc = GetDocument()) {
     nsCOMPtr<nsIDOMWindowUtils> result = do_GetInterface(doc->GetWindow());
     return result.forget();
   }
@@ -129,7 +152,7 @@ ChromeProcessController::GetDOMWindowUtils() const
 
 void
 ChromeProcessController::HandleSingleTap(const CSSPoint& aPoint,
-                                         int32_t aModifiers,
+                                         Modifiers aModifiers,
                                          const ScrollableLayerGuid& aGuid)
 {
   if (MessageLoop::current() != mUILoop) {
@@ -140,11 +163,11 @@ ChromeProcessController::HandleSingleTap(const CSSPoint& aPoint,
     return;
   }
 
-  mAPZEventState->ProcessSingleTap(aPoint, aGuid, GetPresShellResolution());
+  mAPZEventState->ProcessSingleTap(aPoint, aModifiers, aGuid, GetPresShellResolution());
 }
 
 void
-ChromeProcessController::HandleLongTap(const mozilla::CSSPoint& aPoint, int32_t aModifiers,
+ChromeProcessController::HandleLongTap(const mozilla::CSSPoint& aPoint, Modifiers aModifiers,
                                        const ScrollableLayerGuid& aGuid,
                                        uint64_t aInputBlockId)
 {
@@ -156,12 +179,12 @@ ChromeProcessController::HandleLongTap(const mozilla::CSSPoint& aPoint, int32_t 
     return;
   }
 
-  mAPZEventState->ProcessLongTap(GetDOMWindowUtils(), aPoint, aGuid,
+  mAPZEventState->ProcessLongTap(GetDOMWindowUtils(), aPoint, aModifiers, aGuid,
       aInputBlockId, GetPresShellResolution());
 }
 
 void
-ChromeProcessController::HandleLongTapUp(const CSSPoint& aPoint, int32_t aModifiers,
+ChromeProcessController::HandleLongTapUp(const CSSPoint& aPoint, Modifiers aModifiers,
                                          const ScrollableLayerGuid& aGuid)
 {
   if (MessageLoop::current() != mUILoop) {
@@ -172,7 +195,7 @@ ChromeProcessController::HandleLongTapUp(const CSSPoint& aPoint, int32_t aModifi
     return;
   }
 
-  mAPZEventState->ProcessLongTapUp(aPoint, aGuid, GetPresShellResolution());
+  mAPZEventState->ProcessLongTapUp(aPoint, aModifiers, aGuid, GetPresShellResolution());
 }
 
 void
@@ -188,7 +211,7 @@ ChromeProcessController::NotifyAPZStateChange(const ScrollableLayerGuid& aGuid,
     return;
   }
 
-  mAPZEventState->ProcessAPZStateChange(GetPresShell()->GetDocument(), aGuid.mScrollId, aChange, aArg);
+  mAPZEventState->ProcessAPZStateChange(GetDocument(), aGuid.mScrollId, aChange, aArg);
 }
 
 

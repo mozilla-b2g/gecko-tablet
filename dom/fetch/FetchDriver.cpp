@@ -5,6 +5,7 @@
 
 #include "mozilla/dom/FetchDriver.h"
 
+#include "nsIDocument.h"
 #include "nsIInputStream.h"
 #include "nsIOutputStream.h"
 #include "nsIHttpChannel.h"
@@ -42,7 +43,6 @@ FetchDriver::FetchDriver(InternalRequest* aRequest, nsIPrincipal* aPrincipal,
   , mLoadGroup(aLoadGroup)
   , mRequest(aRequest)
   , mFetchRecursionCount(0)
-  , mReferrerPolicy(net::RP_Default)
   , mResponseAvailableCalled(false)
 {
 }
@@ -99,10 +99,26 @@ FetchDriver::ContinueFetch(bool aCORSFlag)
     return FailWithNetworkError();
   }
 
+  // CSP/mixed content checks.
+  int16_t shouldLoad;
+  rv = NS_CheckContentLoadPolicy(mRequest->ContentPolicyType(),
+                                 requestURI,
+                                 mPrincipal,
+                                 mDocument,
+                                 // FIXME(nsm): Should MIME be extracted from
+                                 // Content-Type header?
+                                 EmptyCString(), /* mime guess */
+                                 nullptr, /* extra */
+                                 &shouldLoad,
+                                 nsContentUtils::GetContentPolicy(),
+                                 nsContentUtils::GetSecurityManager());
+  if (NS_WARN_IF(NS_FAILED(rv) || NS_CP_REJECTED(shouldLoad))) {
+    // Disallowed by content policy.
+    return FailWithNetworkError();
+  }
+
   // Begin Step 4 of the Fetch algorithm
   // https://fetch.spec.whatwg.org/#fetching
-
-  // FIXME(nsm): Bug 1039846: Add CSP checks
 
   nsAutoCString scheme;
   rv = requestURI->GetScheme(scheme);
@@ -289,7 +305,6 @@ FetchDriver::HttpFetch(bool aCORSFlag, bool aCORSPreflightFlag, bool aAuthentica
 {
   // Step 1. "Let response be null."
   mResponse = nullptr;
-
   nsresult rv;
 
   nsCOMPtr<nsIIOService> ios = do_GetIOService(&rv);
@@ -406,7 +421,12 @@ FetchDriver::HttpFetch(bool aCORSFlag, bool aCORSPreflightFlag, bool aAuthentica
         return FailWithNetworkError();
       }
 
-      rv = httpChan->SetReferrerWithPolicy(refURI, mReferrerPolicy);
+      net::ReferrerPolicy referrerPolicy = net::RP_Default;
+      if (mDocument) {
+        referrerPolicy = mDocument->GetReferrerPolicy();
+      }
+
+      rv = httpChan->SetReferrerWithPolicy(refURI, referrerPolicy);
       if (NS_WARN_IF(NS_FAILED(rv))) {
         return FailWithNetworkError();
       }
@@ -645,6 +665,12 @@ FetchDriver::OnStartRequest(nsIRequest* aRequest,
 
   mResponse = BeginAndGetFilteredResponse(response);
 
+  nsCOMPtr<nsISupports> securityInfo;
+  rv = channel->GetSecurityInfo(getter_AddRefs(securityInfo));
+  if (securityInfo) {
+    mResponse->SetSecurityInfo(securityInfo);
+  }
+
   // We open a pipe so that we can immediately set the pipe's read end as the
   // response's body. Setting the segment size to UINT32_MAX means that the
   // pipe has infinite space. The nsIChannel will continue to buffer data in
@@ -655,7 +681,9 @@ FetchDriver::OnStartRequest(nsIRequest* aRequest,
   rv = NS_NewPipe(getter_AddRefs(pipeInputStream),
                   getter_AddRefs(mPipeOutputStream),
                   0, /* default segment size */
-                  UINT32_MAX /* infinite pipe */);
+                  UINT32_MAX /* infinite pipe */,
+                  true /* non-blocking input, otherwise you deadlock */,
+                  false /* blocking output, since the pipe is 'in'finite */ );
   if (NS_WARN_IF(NS_FAILED(rv))) {
     FailWithNetworkError();
     // Cancel request.
@@ -866,6 +894,14 @@ FetchDriver::OnRedirectVerifyCallback(nsresult aResult)
   mRedirectCallback->OnRedirectVerifyCallback(aResult);
   mRedirectCallback = nullptr;
   return NS_OK;
+}
+
+void
+FetchDriver::SetDocument(nsIDocument* aDocument)
+{
+  // Cannot set document after Fetch() has been called.
+  MOZ_ASSERT(mFetchRecursionCount == 0);
+  mDocument = aDocument;
 }
 } // namespace dom
 } // namespace mozilla

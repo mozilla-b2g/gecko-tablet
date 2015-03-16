@@ -9,6 +9,7 @@
 
 #include "vm/ArrayObject.h"
 
+#include "gc/GCTrace.h"
 #include "vm/String.h"
 
 #include "vm/TypeInference-inl.h"
@@ -43,7 +44,7 @@ ArrayObject::createArrayInternal(ExclusiveContext *cx, gc::AllocKind kind, gc::I
     MOZ_ASSERT(shape->numFixedSlots() == 0);
 
     size_t nDynamicSlots = dynamicSlotsCount(0, shape->slotSpan(), group->clasp());
-    JSObject *obj = NewGCObject<CanGC>(cx, kind, nDynamicSlots, heap, group->clasp());
+    JSObject *obj = Allocate<JSObject>(cx, kind, nDynamicSlots, heap, group->clasp());
     if (!obj)
         return nullptr;
 
@@ -90,7 +91,7 @@ ArrayObject::createArray(ExclusiveContext *cx, gc::InitialHeap heap,
     // Use the smallest allocation kind for the array, as it can't have any
     // fixed slots (see the assert in createArrayInternal) and will not be using
     // its fixed elements.
-    gc::AllocKind kind = gc::FINALIZE_OBJECT0_BACKGROUND;
+    gc::AllocKind kind = gc::AllocKind::OBJECT0_BACKGROUND;
 
     ArrayObject *obj = createArrayInternal(cx, kind, heap, shape, group);
     if (!obj)
@@ -112,7 +113,7 @@ ArrayObject::createCopyOnWriteArray(ExclusiveContext *cx, gc::InitialHeap heap,
     // Use the smallest allocation kind for the array, as it can't have any
     // fixed slots (see the assert in createArrayInternal) and will not be using
     // its fixed elements.
-    gc::AllocKind kind = gc::FINALIZE_OBJECT0_BACKGROUND;
+    gc::AllocKind kind = gc::AllocKind::OBJECT0_BACKGROUND;
 
     RootedObjectGroup group(cx, sharedElementsOwner->group());
     ArrayObject *obj = createArrayInternal(cx, kind, heap, shape, group);

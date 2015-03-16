@@ -52,7 +52,7 @@ using mozilla::PodZero;
 
 typedef Rooted<PropertyIteratorObject*> RootedPropertyIteratorObject;
 
-static const gc::AllocKind ITERATOR_FINALIZE_KIND = gc::FINALIZE_OBJECT2_BACKGROUND;
+static const gc::AllocKind ITERATOR_FINALIZE_KIND = gc::AllocKind::OBJECT2_BACKGROUND;
 
 void
 NativeIterator::mark(JSTracer *trc)
@@ -327,7 +327,7 @@ Snapshot(JSContext *cx, HandleObject pobj_, unsigned flags, AutoIdVector *props)
                     if (!(flags & JSITER_HIDDEN)) {
                         if (!Proxy::getOwnPropertyDescriptor(cx, pobj, proxyProps[n], &desc))
                             return false;
-                        enumerable = desc.isEnumerable();
+                        enumerable = desc.enumerable();
                     }
 
                     if (!Enumerate(cx, pobj, proxyProps[n], enumerable, flags, ht, props))
@@ -450,8 +450,8 @@ GetCustomIterator(JSContext *cx, HandleObject obj, unsigned flags, MutableHandle
         if (!AtomToPrintableString(cx, name, &bytes))
             return false;
         RootedValue val(cx, ObjectValue(*obj));
-        js_ReportValueError2(cx, JSMSG_BAD_TRAP_RETURN_VALUE,
-                             -1, val, js::NullPtr(), bytes.ptr());
+        ReportValueError2(cx, JSMSG_BAD_TRAP_RETURN_VALUE,
+                          -1, val, js::NullPtr(), bytes.ptr());
         return false;
     }
     objp.set(&rval.toObject());
@@ -491,7 +491,7 @@ NewPropertyIteratorObject(JSContext *cx, unsigned flags)
             return nullptr;
 
         const Class *clasp = &PropertyIteratorObject::class_;
-        RootedShape shape(cx, EmptyShape::getInitialShape(cx, clasp, TaggedProto(nullptr), nullptr, metadata,
+        RootedShape shape(cx, EmptyShape::getInitialShape(cx, clasp, TaggedProto(nullptr), metadata,
                                                           ITERATOR_FINALIZE_KIND));
         if (!shape)
             return nullptr;
@@ -600,7 +600,7 @@ VectorToKeyIterator(JSContext *cx, HandleObject obj, unsigned flags, AutoIdVecto
         JSObject *pobj = obj;
         size_t ind = 0;
         do {
-            ni->shapes_array[ind++] = pobj->lastProperty();
+            ni->shapes_array[ind++] = pobj->as<NativeObject>().lastProperty();
             pobj = pobj->getProto();
         } while (pobj);
         MOZ_ASSERT(ind == slength);
@@ -711,12 +711,12 @@ js::GetIterator(JSContext *cx, HandleObject obj, unsigned flags, MutableHandleOb
             if (!(lastni->flags & (JSITER_ACTIVE|JSITER_UNREUSABLE)) &&
                 obj->isNative() &&
                 obj->as<NativeObject>().hasEmptyElements() &&
-                obj->lastProperty() == lastni->shapes_array[0])
+                obj->as<NativeObject>().lastProperty() == lastni->shapes_array[0])
             {
                 JSObject *proto = obj->getProto();
                 if (proto->isNative() &&
                     proto->as<NativeObject>().hasEmptyElements() &&
-                    proto->lastProperty() == lastni->shapes_array[1] &&
+                    proto->as<NativeObject>().lastProperty() == lastni->shapes_array[1] &&
                     !proto->getProto())
                 {
                     objp.set(last);
@@ -747,7 +747,7 @@ js::GetIterator(JSContext *cx, HandleObject obj, unsigned flags, MutableHandleOb
                     shapes.clear();
                     goto miss;
                 }
-                Shape *shape = pobj->lastProperty();
+                Shape *shape = pobj->as<NativeObject>().lastProperty();
                 key = (key + (key << 16)) ^ (uintptr_t(shape) >> 3);
                 if (!shapes.append(shape))
                     return false;
@@ -824,7 +824,7 @@ js::CreateItrResultObject(JSContext *cx, HandleValue value, bool done)
     if (!proto)
         return nullptr;
 
-    RootedPlainObject obj(cx, NewObjectWithGivenProto<PlainObject>(cx, proto, cx->global()));
+    RootedPlainObject obj(cx, NewObjectWithGivenProto<PlainObject>(cx, proto));
     if (!obj)
         return nullptr;
 
@@ -858,7 +858,7 @@ js::IteratorConstructor(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     if (args.length() == 0) {
-        js_ReportMissingArg(cx, args.calleev(), 0);
+        ReportMissingArg(cx, args.calleev(), 0);
         return false;
     }
 
@@ -1175,7 +1175,7 @@ SuppressDeletedPropertyHelper(JSContext *cx, HandleObject obj, StringPredicate p
                             return false;
 
                         if (desc.object()) {
-                            if (desc.isEnumerable())
+                            if (desc.enumerable())
                                 continue;
                         }
                     }
@@ -1447,7 +1447,7 @@ GlobalObject::initStopIterationClass(JSContext *cx, Handle<GlobalObject *> globa
 }
 
 JSObject *
-js_InitIteratorClasses(JSContext *cx, HandleObject obj)
+js::InitIteratorClasses(JSContext *cx, HandleObject obj)
 {
     Rooted<GlobalObject*> global(cx, &obj->as<GlobalObject>());
     if (!GlobalObject::initIteratorClasses(cx, global))

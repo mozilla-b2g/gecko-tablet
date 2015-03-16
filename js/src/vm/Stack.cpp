@@ -171,9 +171,7 @@ AssertDynamicScopeMatchesStaticScope(JSContext *cx, JSScript *script, JSObject *
 
     // The scope chain is always ended by one or more non-syntactic
     // ScopeObjects (viz. GlobalObject or a non-syntactic WithObject).
-    MOZ_ASSERT(!scope->is<ScopeObject>() ||
-               (scope->is<DynamicWithObject>() &&
-                !scope->as<DynamicWithObject>().isSyntactic()));
+    MOZ_ASSERT(IsValidTerminatingScope(scope));
 #endif
 }
 
@@ -240,7 +238,7 @@ InterpreterFrame::epilogue(JSContext *cx)
                 DebugScopes::onPopStrictEvalScope(this);
         } else if (isDirectEvalFrame()) {
             if (isDebuggerEvalFrame())
-                MOZ_ASSERT(!scopeChain()->is<ScopeObject>());
+                MOZ_ASSERT(IsValidTerminatingScope(scopeChain()));
         } else {
             /*
              * Debugger.Object.prototype.evalInGlobal creates indirect eval
@@ -260,9 +258,7 @@ InterpreterFrame::epilogue(JSContext *cx)
     }
 
     if (isGlobalFrame()) {
-        MOZ_ASSERT(!scopeChain()->is<ScopeObject>() ||
-                   (scopeChain()->is<DynamicWithObject>() &&
-                    !scopeChain()->as<DynamicWithObject>().isSyntactic()));
+        MOZ_ASSERT(IsValidTerminatingScope(scopeChain()));
         return;
     }
 
@@ -1112,12 +1108,6 @@ FrameIter::matchCallee(JSContext *cx, HandleFunction fun) const
         return false;
     }
 
-    // Only some lambdas are optimized in a way which cannot be recovered without
-    // invalidating the frame. Thus, if one of the function is not a lambda we can just
-    // compare it against the calleeTemplate.
-    if (!fun->isLambda() || !currentCallee->isLambda())
-        return currentCallee == fun;
-
     // Use the same condition as |js::CloneFunctionObject|, to know if we should
     // expect both functions to have the same JSScript. If so, and if they are
     // different, then they cannot be equal.
@@ -1714,19 +1704,24 @@ ActivationIterator::settle()
         activation_ = activation_->prev();
 }
 
-JS::ProfilingFrameIterator::ProfilingFrameIterator(JSRuntime *rt, const RegisterState &state)
+JS::ProfilingFrameIterator::ProfilingFrameIterator(JSRuntime *rt, const RegisterState &state,
+                                                   uint32_t sampleBufferGen)
   : rt_(rt),
-    activation_(rt->profilingActivation()),
+    sampleBufferGen_(sampleBufferGen),
+    activation_(nullptr),
     savedPrevJitTop_(nullptr)
 {
-    if (!activation_)
+    if (!rt->spsProfiler.enabled())
+        MOZ_CRASH("ProfilingFrameIterator called when spsProfiler not enabled for runtime.");
+
+    if (!rt->profilingActivation())
         return;
 
     // If profiler sampling is not enabled, skip.
-    if (!rt_->isProfilerSamplingEnabled()) {
-        activation_ = nullptr;
+    if (!rt_->isProfilerSamplingEnabled())
         return;
-    }
+
+    activation_ = rt->profilingActivation();
 
     MOZ_ASSERT(activation_->isProfiling());
 
@@ -1877,6 +1872,10 @@ JS::ProfilingFrameIterator::extractStack(Frame *frames, uint32_t offset, uint32_
     jit::JitcodeGlobalTable *table = rt_->jitRuntime()->getJitcodeGlobalTable();
     jit::JitcodeGlobalEntry entry;
     table->lookupInfallible(returnAddr, &entry, rt_);
+    if (hasSampleBufferGen())
+        table->lookupForSampler(returnAddr, &entry, rt_, sampleBufferGen_);
+    else
+        table->lookup(returnAddr, &entry, rt_);
 
     MOZ_ASSERT(entry.isIon() || entry.isIonCache() || entry.isBaseline() || entry.isDummy());
 

@@ -338,7 +338,10 @@ class IDLUnresolvedIdentifier(IDLObject):
 
         assert len(name) > 0
 
-        if name[:2] == "__" and name != "__content" and name != "___noSuchMethod__"  and not allowDoubleUnderscore:
+        if name == "__noSuchMethod__":
+            raise WebIDLError("__noSuchMethod__ is deprecated", [location])
+
+        if name[:2] == "__" and name != "__content" and not allowDoubleUnderscore:
             raise WebIDLError("Identifiers beginning with __ are reserved",
                               [location])
         if name[0] == '_' and not allowDoubleUnderscore:
@@ -3537,7 +3540,9 @@ class IDLArgument(IDLObjectWithIdentifier):
             elif identifier == "TreatNonCallableAsNull":
                 self._allowTreatNonCallableAsNull = True
             else:
-                raise WebIDLError("Unhandled extended attribute on an argument",
+                raise WebIDLError("Unhandled extended attribute on %s" %
+                                  ("a dictionary member" if self.dictionaryMember else
+                                   "an argument"),
                                   [attribute.location])
 
     def isComplete(self):
@@ -3825,7 +3830,7 @@ class IDLMethod(IDLInterfaceMember, IDLScope):
         return self._hasOverloads
 
     def isIdentifierLess(self):
-        return self.identifier.name[:2] == "__" and self.identifier.name != "__noSuchMethod__"
+        return self.identifier.name[:2] == "__"
 
     def resolve(self, parentScope):
         assert isinstance(parentScope, IDLScope)

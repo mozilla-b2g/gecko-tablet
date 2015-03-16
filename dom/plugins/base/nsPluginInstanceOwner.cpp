@@ -231,7 +231,7 @@ nsPluginInstanceOwner::GetImageContainer()
   // NotifySize() causes Flash to do a bunch of stuff like ask for surfaces to render
   // into, set y-flip flags, etc, so we do this at the beginning.
   gfxSize resolution = mPluginFrame->PresContext()->PresShell()->GetCumulativeResolution();
-  ScreenSize screenSize = (r * LayoutDeviceToScreenScale(resolution.width, resolution.height)).Size();
+  ScreenSize screenSize = (r * LayoutDeviceToScreenScale2D(resolution.width, resolution.height)).Size();
   mInstance->NotifySize(nsIntSize(screenSize.width, screenSize.height));
 
   container = LayerManager::CreateImageContainer();
@@ -994,13 +994,11 @@ NS_IMETHODIMP nsPluginInstanceOwner::GetTagType(nsPluginTagType *result)
 
   *result = nsPluginTagType_Unknown;
 
-  nsIAtom *atom = mContent->Tag();
-
-  if (atom == nsGkAtoms::applet)
+  if (mContent->IsHTMLElement(nsGkAtoms::applet))
     *result = nsPluginTagType_Applet;
-  else if (atom == nsGkAtoms::embed)
+  else if (mContent->IsHTMLElement(nsGkAtoms::embed))
     *result = nsPluginTagType_Embed;
-  else if (atom == nsGkAtoms::object)
+  else if (mContent->IsHTMLElement(nsGkAtoms::object))
     *result = nsPluginTagType_Object;
 
   return NS_OK;

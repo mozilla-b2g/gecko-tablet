@@ -23,8 +23,12 @@ const FRAME_SCRIPT_UTILS_URL = "chrome://browser/content/devtools/frame-script-u
 const EXAMPLE_URL = "http://example.com/browser/browser/devtools/performance/test/";
 const SIMPLE_URL = EXAMPLE_URL + "doc_simple-test.html";
 
+const MEMORY_SAMPLE_PROB_PREF = "devtools.performance.memory.sample-probability";
+const MEMORY_MAX_LOG_LEN_PREF = "devtools.performance.memory.max-log-length";
+
 const FRAMERATE_PREF = "devtools.performance.ui.enable-framerate";
 const MEMORY_PREF = "devtools.performance.ui.enable-memory";
+
 const PLATFORM_DATA_PREF = "devtools.performance.ui.show-platform-data";
 const IDLE_PREF = "devtools.performance.ui.show-idle-blocks";
 const INVERT_PREF = "devtools.performance.ui.invert-call-tree";
@@ -44,17 +48,13 @@ let DEFAULT_PREFS = [
   "devtools.performance.ui.show-idle-blocks",
   "devtools.performance.ui.enable-memory",
   "devtools.performance.ui.enable-framerate",
-
-  // remove after bug 1075567 is resolved.
-  "devtools.performance_dev.enabled"
 ].reduce((prefs, pref) => {
   prefs[pref] = Services.prefs.getBoolPref(pref);
   return prefs;
 }, {});
 
-// Enable the new performance panel for all tests. Remove this after
-// bug 1075567 is resolved.
-Services.prefs.setBoolPref("devtools.performance_dev.enabled", true);
+// Enable the new performance panel for all tests.
+Services.prefs.setBoolPref("devtools.performance.enabled", true);
 // Enable logging for all the tests. Both the debugger server and frontend will
 // be affected by this pref.
 Services.prefs.setBoolPref("devtools.debugger.log", false);
@@ -266,7 +266,10 @@ function mousedown (win, button) {
   EventUtils.sendMouseEvent({ type: "mousedown" }, button, win);
 }
 
-function* startRecording(panel, options={}) {
+function* startRecording(panel, options = {
+  waitForOverview: true,
+  waitForStateChanged: true
+}) {
   let win = panel.panelWin;
   let clicked = panel.panelWin.PerformanceView.once(win.EVENTS.UI_START_RECORDING);
   let willStart = panel.panelWin.PerformanceController.once(win.EVENTS.RECORDING_WILL_START);
@@ -287,10 +290,14 @@ function* startRecording(panel, options={}) {
     "The record button should be locked.");
 
   yield willStart;
-  let stateChanged = once(win.PerformanceView, win.EVENTS.UI_STATE_CHANGED);
+  let stateChanged = options.waitForStateChanged
+    ? once(win.PerformanceView, win.EVENTS.UI_STATE_CHANGED)
+    : Promise.resolve();
 
   yield hasStarted;
-  let overviewRendered = options.waitForOverview ? once(win.OverviewView, win.EVENTS.OVERVIEW_RENDERED) : Promise.resolve();
+  let overviewRendered = options.waitForOverview
+    ? once(win.OverviewView, win.EVENTS.OVERVIEW_RENDERED)
+    : Promise.resolve();
 
   yield stateChanged;
   yield overviewRendered;
@@ -304,7 +311,10 @@ function* startRecording(panel, options={}) {
     "The record button should not be locked.");
 }
 
-function* stopRecording(panel, options={}) {
+function* stopRecording(panel, options = {
+  waitForOverview: true,
+  waitForStateChanged: true
+}) {
   let win = panel.panelWin;
   let clicked = panel.panelWin.PerformanceView.once(win.EVENTS.UI_STOP_RECORDING);
   let willStop = panel.panelWin.PerformanceController.once(win.EVENTS.RECORDING_WILL_STOP);
@@ -325,10 +335,14 @@ function* stopRecording(panel, options={}) {
     "The record button should be locked.");
 
   yield willStop;
-  let stateChanged = once(win.PerformanceView, win.EVENTS.UI_STATE_CHANGED);
+  let stateChanged = options.waitForStateChanged
+    ? once(win.PerformanceView, win.EVENTS.UI_STATE_CHANGED)
+    : Promise.resolve();
 
   yield hasStopped;
-  let overviewRendered = options.waitForOverview ? once(win.OverviewView, win.EVENTS.OVERVIEW_RENDERED) : Promise.resolve();
+  let overviewRendered = options.waitForOverview
+    ? once(win.OverviewView, win.EVENTS.OVERVIEW_RENDERED)
+    : Promise.resolve();
 
   yield stateChanged;
   yield overviewRendered;

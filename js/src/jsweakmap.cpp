@@ -14,6 +14,7 @@
 #include "jsobj.h"
 #include "jswrapper.h"
 
+#include "js/GCAPI.h"
 #include "vm/GlobalObject.h"
 #include "vm/WeakMapObject.h"
 
@@ -24,6 +25,8 @@
 
 using namespace js;
 using namespace js::gc;
+
+using mozilla::UniquePtr;
 
 WeakMapBase::WeakMapBase(JSObject *memOf, JSCompartment *c)
   : memberOf(memOf),
@@ -132,8 +135,11 @@ WeakMapBase::traceAllMappings(WeakMapTracer *tracer)
 {
     JSRuntime *rt = tracer->runtime;
     for (CompartmentsIter c(rt, SkipAtoms); !c.done(); c.next()) {
-        for (WeakMapBase *m = c->gcWeakMapList; m; m = m->next)
+        for (WeakMapBase *m = c->gcWeakMapList; m; m = m->next) {
+            // The WeakMapTracer callback is not allowed to GC.
+            JS::AutoSuppressGCAnalysis nogc;
             m->traceMappings(tracer);
+        }
     }
 }
 
@@ -325,7 +331,7 @@ TryPreserveReflector(JSContext *cx, HandleObject obj)
     {
         MOZ_ASSERT(cx->runtime()->preserveWrapperCallback);
         if (!cx->runtime()->preserveWrapperCallback(cx, obj)) {
-            JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_BAD_WEAKMAP_KEY);
+            JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_BAD_WEAKMAP_KEY);
             return false;
         }
     }
@@ -384,10 +390,11 @@ WeakMap_set_impl(JSContext *cx, CallArgs args)
     MOZ_ASSERT(IsWeakMap(args.thisv()));
 
     if (!args.get(0).isObject()) {
-        char *bytes = DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, args.get(0), NullPtr());
+        UniquePtr<char[], JS::FreePolicy> bytes =
+            DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, args.get(0), NullPtr());
         if (!bytes)
             return false;
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_NOT_NONNULL_OBJECT, bytes);
+        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_NOT_NONNULL_OBJECT, bytes.get());
         return false;
     }
 
@@ -548,7 +555,7 @@ WeakMap_construct(JSContext *cx, unsigned argc, Value *vp)
 
             // Step 12f.
             if (!pairVal.isObject()) {
-                JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr,
+                JS_ReportErrorNumber(cx, GetErrorMessage, nullptr,
                                      JSMSG_INVALID_MAP_ITERABLE, "WeakMap");
                 return false;
             }
@@ -568,10 +575,11 @@ WeakMap_construct(JSContext *cx, unsigned argc, Value *vp)
             // Steps 12k-l.
             if (isOriginalAdder) {
                 if (keyVal.isPrimitive()) {
-                    char *bytes = DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, keyVal, NullPtr());
+                    UniquePtr<char[], JS::FreePolicy> bytes =
+                        DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, keyVal, NullPtr());
                     if (!bytes)
                         return false;
-                    JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_NOT_NONNULL_OBJECT, bytes);
+                    JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_NOT_NONNULL_OBJECT, bytes.get());
                     return false;
                 }
 
@@ -654,7 +662,7 @@ InitWeakMapClass(JSContext *cx, HandleObject obj, bool defineMembers)
 }
 
 JSObject *
-js_InitWeakMapClass(JSContext *cx, HandleObject obj)
+js::InitWeakMapClass(JSContext *cx, HandleObject obj)
 {
     return InitWeakMapClass(cx, obj, true);
 }

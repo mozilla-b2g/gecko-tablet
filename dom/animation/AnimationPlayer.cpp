@@ -95,6 +95,43 @@ AnimationPlayer::GetCurrentTime() const
   return result;
 }
 
+// Implements http://w3c.github.io/web-animations/#silently-set-the-current-time
+void
+AnimationPlayer::SilentlySetCurrentTime(const TimeDuration& aSeekTime)
+{
+  if (!mHoldTime.IsNull() ||
+      !mTimeline ||
+      mTimeline->GetCurrentTime().IsNull()
+      /*or, once supported, playback rate is 0, or have pending pause task*/) {
+    mHoldTime.SetValue(aSeekTime);
+    if (!mTimeline || mTimeline->GetCurrentTime().IsNull()) {
+      mStartTime.SetNull();
+    }
+  } else {
+    // once playback rate is supported, need to account for that here
+    mStartTime.SetValue(mTimeline->GetCurrentTime().Value() - aSeekTime);
+  }
+
+  // Once AnimationPlayers store a previous current time, set that to
+  // unresolved.
+}
+
+// Implements http://w3c.github.io/web-animations/#set-the-current-time
+void
+AnimationPlayer::SetCurrentTime(const TimeDuration& aSeekTime)
+{
+  SilentlySetCurrentTime(aSeekTime);
+
+  // Once pending pause tasks are supported, cancel that here.
+
+  UpdateSourceContent();
+  PostUpdate();
+
+  // FIXME: Once bug 1074630 is fixed, run the procedure to update a player's
+  // finished state for player:
+  // http://w3c.github.io/web-animations/#update-a-players-finished-state
+}
+
 AnimationPlayState
 AnimationPlayer::PlayState() const
 {
@@ -171,6 +208,20 @@ AnimationPlayer::GetCurrentTimeAsDouble() const
 }
 
 void
+AnimationPlayer::SetCurrentTimeAsDouble(const Nullable<double>& aCurrentTime,
+                                        ErrorResult& aRv)
+{
+  if (aCurrentTime.IsNull()) {
+    if (!GetCurrentTime().IsNull()) {
+      aRv.Throw(NS_ERROR_DOM_TYPE_ERR);
+    }
+    return;
+  }
+
+  return SetCurrentTime(TimeDuration::FromMilliseconds(aCurrentTime.Value()));
+}
+
+void
 AnimationPlayer::SetSource(Animation* aSource)
 {
   if (mSource) {
@@ -180,6 +231,7 @@ AnimationPlayer::SetSource(Animation* aSource)
   if (mSource) {
     mSource->SetParentTime(GetCurrentTime());
   }
+  UpdateRelevance();
 }
 
 void
@@ -265,6 +317,8 @@ AnimationPlayer::Cancel()
 
   mHoldTime.SetNull();
   mStartTime.SetNull();
+
+  UpdateSourceContent();
 }
 
 bool
@@ -276,6 +330,20 @@ AnimationPlayer::IsRunning() const
 
   ComputedTiming computedTiming = GetSource()->GetComputedTiming();
   return computedTiming.mPhase == ComputedTiming::AnimationPhase_Active;
+}
+
+void
+AnimationPlayer::UpdateRelevance()
+{
+  bool wasRelevant = mIsRelevant;
+  mIsRelevant = HasCurrentSource() || HasInEffectSource();
+
+  // Notify animation observers.
+  if (wasRelevant && !mIsRelevant) {
+    nsNodeUtils::AnimationRemoved(this);
+  } else if (!wasRelevant && mIsRelevant) {
+    nsNodeUtils::AnimationAdded(this);
+  }
 }
 
 bool
@@ -408,6 +476,7 @@ AnimationPlayer::UpdateSourceContent()
 {
   if (mSource) {
     mSource->SetParentTime(GetCurrentTime());
+    UpdateRelevance();
   }
 }
 

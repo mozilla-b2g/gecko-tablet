@@ -74,7 +74,7 @@ js::ToSimdConstant(JSContext *cx, HandleValue v, jit::SimdConstant *out)
 {
     typedef typename V::Elem Elem;
     if (!IsVectorObject<V>(v)) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_SIMD_NOT_A_VECTOR);
+        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_SIMD_NOT_A_VECTOR);
         return false;
     }
 
@@ -101,7 +101,7 @@ static bool GetSimdLane(JSContext *cx, unsigned argc, Value *vp)
 
     CallArgs args = CallArgsFromVp(argc, vp);
     if (!IsVectorObject<SimdType>(args.thisv())) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_INCOMPATIBLE_PROTO,
+        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_INCOMPATIBLE_PROTO,
                              SimdTypeDescr::class_.name, laneNames[lane],
                              InformalValueTypeName(args.thisv()));
         return false;
@@ -138,7 +138,7 @@ static bool SignMask(JSContext *cx, unsigned argc, Value *vp)
 
     CallArgs args = CallArgsFromVp(argc, vp);
     if (!args.thisv().isObject() || !args.thisv().toObject().is<TypedObject>()) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_INCOMPATIBLE_PROTO,
+        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_INCOMPATIBLE_PROTO,
                              SimdTypeDescr::class_.name, "signMask",
                              InformalValueTypeName(args.thisv()));
         return false;
@@ -147,7 +147,7 @@ static bool SignMask(JSContext *cx, unsigned argc, Value *vp)
     TypedObject &typedObj = args.thisv().toObject().as<TypedObject>();
     TypeDescr &descr = typedObj.typeDescr();
     if (descr.kind() != type::Simd || descr.as<SimdTypeDescr>().type() != SimdType::type) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_INCOMPATIBLE_PROTO,
+        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_INCOMPATIBLE_PROTO,
                              SimdTypeDescr::class_.name, "signMask",
                              InformalValueTypeName(args.thisv()));
         return false;
@@ -290,8 +290,7 @@ CreateSimdClass(JSContext *cx, Handle<GlobalObject*> global, HandlePropertyName 
     // Create type constructor itself and initialize its reserved slots.
 
     Rooted<SimdTypeDescr*> typeDescr(cx);
-    typeDescr = NewObjectWithProto<SimdTypeDescr>(cx, funcProto, GlobalObject::upcast(global),
-                                                  SingletonObject);
+    typeDescr = NewObjectWithProto<SimdTypeDescr>(cx, funcProto, SingletonObject);
     if (!typeDescr)
         return nullptr;
 
@@ -312,7 +311,7 @@ CreateSimdClass(JSContext *cx, Handle<GlobalObject*> global, HandlePropertyName 
     if (!objProto)
         return nullptr;
     Rooted<TypedProto*> proto(cx);
-    proto = NewObjectWithProto<TypedProto>(cx, objProto, NullPtr(), SingletonObject);
+    proto = NewObjectWithProto<TypedProto>(cx, objProto, SingletonObject);
     if (!proto)
         return nullptr;
     typeDescr->initReservedSlot(JS_DESCR_SLOT_TYPROTO, ObjectValue(*proto));
@@ -417,7 +416,7 @@ SIMDObject::initClass(JSContext *cx, Handle<GlobalObject *> global)
     if (!objProto)
         return nullptr;
     RootedObject SIMD(cx, NewObjectWithGivenProto(cx, &SIMDObject::class_, objProto,
-                                                  global, SingletonObject));
+                                                  SingletonObject));
     if (!SIMD)
         return nullptr;
 
@@ -486,7 +485,7 @@ SIMDObject::initClass(JSContext *cx, Handle<GlobalObject *> global)
 }
 
 JSObject *
-js_InitSIMDClass(JSContext *cx, HandleObject obj)
+js::InitSIMDClass(JSContext *cx, HandleObject obj)
 {
     MOZ_ASSERT(obj->is<GlobalObject>());
     Rooted<GlobalObject *> global(cx, &obj->as<GlobalObject>());
@@ -495,7 +494,7 @@ js_InitSIMDClass(JSContext *cx, HandleObject obj)
 
 template<typename V>
 JSObject *
-js::CreateSimd(JSContext *cx, typename V::Elem *data)
+js::CreateSimd(JSContext *cx, const typename V::Elem *data)
 {
     typedef typename V::Elem Elem;
     Rooted<TypeDescr*> typeDescr(cx, &V::GetTypeDescr(*cx->global()));
@@ -510,9 +509,9 @@ js::CreateSimd(JSContext *cx, typename V::Elem *data)
     return result;
 }
 
-template JSObject *js::CreateSimd<Float32x4>(JSContext *cx, Float32x4::Elem *data);
-template JSObject *js::CreateSimd<Float64x2>(JSContext *cx, Float64x2::Elem *data);
-template JSObject *js::CreateSimd<Int32x4>(JSContext *cx, Int32x4::Elem *data);
+template JSObject *js::CreateSimd<Float32x4>(JSContext *cx, const Float32x4::Elem *data);
+template JSObject *js::CreateSimd<Float64x2>(JSContext *cx, const Float64x2::Elem *data);
+template JSObject *js::CreateSimd<Int32x4>(JSContext *cx, const Int32x4::Elem *data);
 
 namespace js {
 // Unary SIMD operators
@@ -538,7 +537,7 @@ struct Rec {
 };
 template<typename T>
 struct RecSqrt {
-    static inline T apply(T x) { return 1 / sqrt(x); }
+    static inline T apply(T x) { return sqrt(1 / x); }
 };
 template<typename T>
 struct Sqrt {
@@ -644,7 +643,7 @@ struct ShiftRightLogical {
 static inline bool
 ErrorBadArgs(JSContext *cx)
 {
-    JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_TYPED_ARRAY_BAD_ARGS);
+    JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_TYPED_ARRAY_BAD_ARGS);
     return false;
 }
 
@@ -919,16 +918,10 @@ static bool
 Int32x4Bool(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    if (args.length() != 4 ||
-        !args[0].isBoolean() || !args[1].isBoolean() ||
-        !args[2].isBoolean() || !args[3].isBoolean())
-    {
-        return ErrorBadArgs(cx);
-    }
 
     int32_t result[Int32x4::lanes];
     for (unsigned i = 0; i < Int32x4::lanes; i++)
-        result[i] = args[i].toBoolean() ? 0xFFFFFFFF : 0x0;
+        result[i] = ToBoolean(args.get(i)) ? -1 : 0;
     return StoreResult<Int32x4>(cx, args, result);
 }
 
@@ -1037,7 +1030,7 @@ TypedArrayFromArgs(JSContext *cx, const CallArgs &args,
         (uint32_t(*byteStart) + NumElem * sizeof(VElem)) > AnyTypedArrayByteLength(typedArray))
     {
         // Keep in sync with AsmJS OnOutOfBounds function.
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_BAD_INDEX);
+        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_BAD_INDEX);
         return false;
     }
 

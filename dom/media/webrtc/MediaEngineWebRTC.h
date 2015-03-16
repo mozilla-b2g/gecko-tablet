@@ -219,7 +219,7 @@ private:
   // from kStarted to kStopped (which are combined with EndTrack()).
   // mSources[] is accessed from webrtc threads.
   Monitor mMonitor;
-  nsTArray<SourceMediaStream*> mSources; // When this goes empty, we shut down HW
+  nsTArray<nsRefPtr<SourceMediaStream>> mSources; // When this goes empty, we shut down HW
   nsCOMPtr<nsIThread> mThread;
   int mCapIndex;
   int mChannel;
@@ -255,7 +255,7 @@ public:
 private:
   ~MediaEngineWebRTC() {
     Shutdown();
-#ifdef MOZ_B2G_CAMERA
+#if defined(MOZ_B2G_CAMERA) && defined(MOZ_WIDGET_GONK)
     AsyncLatencyLogger::Get()->Release();
 #endif
     gFarendObserver = nullptr;

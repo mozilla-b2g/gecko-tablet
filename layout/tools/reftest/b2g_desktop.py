@@ -11,9 +11,11 @@ here = os.path.abspath(os.path.dirname(__file__))
 
 from runreftest import RefTest, ReftestOptions
 
-from marionette import Marionette, expected
-from marionette.wait import Wait
-from marionette.by import By
+from marionette_driver import expected
+from marionette_driver.by import By
+from marionette_driver.marionette import Marionette
+from marionette_driver.wait import Wait
+
 from mozprocess import ProcessHandler
 from mozrunner import FirefoxRunner
 import mozinfo
@@ -39,7 +41,7 @@ class B2GDesktopReftest(RefTest):
         assert(self.marionette.wait_for_port())
         self.marionette.start_session()
         if self.build_type == "mulet":
-            self._wait_for_homescreen(timeout=15)
+            self._wait_for_homescreen(timeout=300)
             self._unlockScreen()
         self.marionette.set_context(self.marionette.CONTEXT_CHROME)
 

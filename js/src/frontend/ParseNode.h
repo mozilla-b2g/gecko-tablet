@@ -149,6 +149,10 @@ class UpvarCookie
     F(ARGSBODY) \
     F(SPREAD) \
     F(MUTATEPROTO) \
+    F(CLASS) \
+    F(CLASSMETHOD) \
+    F(CLASSMETHODLIST) \
+    F(CLASSNAMES) \
     \
     /* Unary operators. */ \
     F(TYPEOF) \
@@ -571,6 +575,7 @@ class ParseNode
             union {
                 unsigned iflags;        /* JSITER_* flags for PNK_FOR node */
                 ObjectBox *objbox;      /* Only for PN_BINARY_OBJ */
+                bool isStatic;          /* Only for PNK_CLASSMETHOD */
             };
         } binary;
         struct {                        /* one kid if unary */
@@ -1102,6 +1107,10 @@ struct LexicalScopeNode : public ParseNode
         pn_expr = blockNode;
         pn_blockid = blockNode->pn_blockid;
     }
+
+    static bool test(const ParseNode &node) {
+        return node.isKind(PNK_LEXICALSCOPE);
+    }
 };
 
 class LabeledStatement : public ParseNode
@@ -1318,6 +1327,102 @@ struct CallSiteNode : public ListNode {
         return pn_head->getConstantValue(cx, AllowObjects, vp);
     }
 };
+
+struct ClassMethod : public BinaryNode {
+    /*
+     * Method defintions often keep a name and function body that overlap,
+     * so explicitly define the beginning and end here.
+     */
+    ClassMethod(ParseNode *name, ParseNode *body, JSOp op, bool isStatic)
+      : BinaryNode(PNK_CLASSMETHOD, op, TokenPos(name->pn_pos.begin, body->pn_pos.end), name, body)
+    {
+        pn_u.binary.isStatic = isStatic;
+    }
+
+    static bool test(const ParseNode &node) {
+        bool match = node.isKind(PNK_CLASSMETHOD);
+        MOZ_ASSERT_IF(match, node.isArity(PN_BINARY));
+        return match;
+    }
+
+    ParseNode &name() const {
+        return *pn_u.binary.left;
+    }
+    ParseNode &method() const {
+        return *pn_u.binary.right;
+    }
+    bool isStatic() const {
+        return pn_u.binary.isStatic;
+    }
+};
+
+struct ClassNames : public BinaryNode {
+    ClassNames(ParseNode *outerBinding, ParseNode *innerBinding, const TokenPos &pos)
+      : BinaryNode(PNK_CLASSNAMES, JSOP_NOP, pos, outerBinding, innerBinding)
+    {
+        MOZ_ASSERT_IF(outerBinding, outerBinding->isKind(PNK_NAME));
+        MOZ_ASSERT(innerBinding->isKind(PNK_NAME));
+        MOZ_ASSERT_IF(outerBinding, innerBinding->pn_atom == outerBinding->pn_atom);
+    }
+
+    static bool test(const ParseNode &node) {
+        bool match = node.isKind(PNK_CLASSNAMES);
+        MOZ_ASSERT_IF(match, node.isArity(PN_BINARY));
+        return match;
+    }
+
+    /*
+     * Classes require two definitions: The first "outer" binding binds the
+     * class into the scope in which it was declared. the outer binding is a
+     * mutable lexial binding. The second "inner" binding binds the class by
+     * name inside a block in which the methods are evaulated. It is immutable,
+     * giving the methods access to the static members of the class even if
+     * the outer binding has been overwritten.
+     */
+    ParseNode *outerBinding() const {
+        return pn_u.binary.left;
+    }
+    ParseNode *innerBinding() const {
+        return pn_u.binary.right;
+    }
+};
+
+struct ClassNode : public TernaryNode {
+    ClassNode(ParseNode *names, ParseNode *heritage, ParseNode *methodsOrBlock)
+      : TernaryNode(PNK_CLASS, JSOP_NOP, names, heritage, methodsOrBlock)
+    {
+        MOZ_ASSERT_IF(names, names->is<ClassNames>());
+        MOZ_ASSERT(methodsOrBlock->is<LexicalScopeNode>() ||
+                   methodsOrBlock->isKind(PNK_CLASSMETHODLIST));
+    }
+
+    static bool test(const ParseNode &node) {
+        bool match = node.isKind(PNK_CLASS);
+        MOZ_ASSERT_IF(match, node.isArity(PN_TERNARY));
+        return match;
+    }
+
+    ClassNames *names() const {
+        return pn_kid1 ? &pn_kid1->as<ClassNames>() : nullptr;
+    }
+    ParseNode *heritage() const {
+        return pn_kid2;
+    }
+    ParseNode *methodList() const {
+        if (pn_kid3->isKind(PNK_CLASSMETHODLIST))
+            return pn_kid3;
+
+        MOZ_ASSERT(pn_kid3->is<LexicalScopeNode>());
+        ParseNode *list = pn_kid3->pn_expr;
+        MOZ_ASSERT(list->isKind(PNK_CLASSMETHODLIST));
+        return list;
+    }
+    ObjectBox *scopeObject() const {
+        MOZ_ASSERT(pn_kid3->is<LexicalScopeNode>());
+        return pn_kid3->pn_objbox;
+    }
+};
+
 
 #ifdef DEBUG
 void DumpParseTree(ParseNode *pn, int indent = 0);
@@ -1553,7 +1658,7 @@ enum ParseReportKind
     ParseStrictError
 };
 
-enum FunctionSyntaxKind { Expression, Statement, Arrow, Method };
+enum FunctionSyntaxKind { Expression, Statement, Arrow, Method, Lazy };
 
 static inline ParseNode *
 FunctionArgsList(ParseNode *fn, unsigned *numFormals)

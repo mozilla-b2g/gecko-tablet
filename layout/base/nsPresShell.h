@@ -32,6 +32,7 @@
 #include "nsStyleSet.h"
 #include "nsContentUtils.h" // For AddScriptBlocker().
 #include "nsRefreshDriver.h"
+#include "TouchManager.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/MemoryReporting.h"
@@ -234,8 +235,6 @@ public:
   // touch caret
   virtual already_AddRefed<mozilla::TouchCaret> GetTouchCaret() const MOZ_OVERRIDE;
   virtual mozilla::dom::Element* GetTouchCaretElement() const MOZ_OVERRIDE;
-  virtual void SetMayHaveTouchCaret(bool aSet) MOZ_OVERRIDE;
-  virtual bool MayHaveTouchCaret() MOZ_OVERRIDE;
   // selection caret
   virtual already_AddRefed<mozilla::SelectionCarets> GetSelectionCarets() const MOZ_OVERRIDE;
   virtual mozilla::dom::Element* GetSelectionCaretsStartElement() const MOZ_OVERRIDE;
@@ -740,8 +739,6 @@ protected:
   static void MarkImagesInListVisible(const nsDisplayList& aList);
   void MarkImagesInSubtreeVisible(nsIFrame* aFrame, const nsRect& aRect);
 
-  void EvictTouches();
-
   // Methods for dispatching KeyboardEvent and BeforeAfterKeyboardEvent.
   void HandleKeyboardEvent(nsINode* aTarget,
                            mozilla::WidgetKeyboardEvent& aEvent,
@@ -811,6 +808,9 @@ protected:
   nsRefPtr<nsCaret>         mOriginalCaret;
   nsCallbackEventRequest*   mFirstCallbackEventRequest;
   nsCallbackEventRequest*   mLastCallbackEventRequest;
+
+  // TouchManager
+  TouchManager              mTouchManager;
 
   // TouchCaret
   nsRefPtr<mozilla::TouchCaret> mTouchCaret;

@@ -1121,6 +1121,9 @@ var WalkerActor = protocol.ActorClass({
       type: "pickerNodeHovered",
       node: Arg(0, "disconnectedNode")
     },
+    "picker-node-canceled" : {
+      type: "pickerNodeCanceled"
+    },
     "highlighter-ready" : {
       type: "highlighter-ready"
     },
@@ -1195,19 +1198,23 @@ var WalkerActor = protocol.ActorClass({
   },
 
   destroy: function() {
-    this._destroyed = true;
+    try {
+      this._destroyed = true;
 
-    this.clearPseudoClassLocks();
-    this._activePseudoClassLocks = null;
+      this.clearPseudoClassLocks();
+      this._activePseudoClassLocks = null;
 
-    this._hoveredNode = null;
-    this.rootDoc = null;
+      this._hoveredNode = null;
+      this.rootDoc = null;
 
-    this.reflowObserver.off("reflows", this._onReflows);
-    this.reflowObserver = null;
-    releaseLayoutChangesObserver(this.tabActor);
+      this.reflowObserver.off("reflows", this._onReflows);
+      this.reflowObserver = null;
+      releaseLayoutChangesObserver(this.tabActor);
 
-    events.emit(this, "destroyed");
+      events.emit(this, "destroyed");
+    } catch(e) {
+      console.error(e);
+    }
     protocol.Actor.prototype.destroy.call(this);
   },
 
@@ -2447,7 +2454,9 @@ var WalkerActor = protocol.ActorClass({
       if (mutation.type === "attributes") {
         mutation.attributeName = change.attributeName;
         mutation.attributeNamespace = change.attributeNamespace || undefined;
-        mutation.newValue = targetNode.getAttribute(mutation.attributeName);
+        mutation.newValue = targetNode.hasAttribute(mutation.attributeName) ?
+                            targetNode.getAttribute(mutation.attributeName)
+                            : null;
       } else if (mutation.type === "characterData") {
         if (targetNode.nodeValue.length > gValueSummaryLength) {
           mutation.newValue = targetNode.nodeValue.substring(0, gValueSummaryLength);

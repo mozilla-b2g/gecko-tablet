@@ -1565,7 +1565,7 @@ CodeGeneratorX86Shared::visitOutOfLineTableSwitch(OutOfLineTableSwitch *ool)
 {
     MTableSwitch *mir = ool->mir();
 
-    masm.align(sizeof(void*));
+    masm.haltingAlign(sizeof(void*));
     masm.bind(ool->jumpLabel()->src());
     masm.addCodeLabel(*ool->jumpLabel());
 
@@ -2249,6 +2249,27 @@ CodeGeneratorX86Shared::visitSimdSplatX4(LSimdSplatX4 *ins)
 }
 
 void
+CodeGeneratorX86Shared::visitSimdReinterpretCast(LSimdReinterpretCast *ins)
+{
+    FloatRegister input = ToFloatRegister(ins->input());
+    FloatRegister output = ToFloatRegister(ins->output());
+
+    if (input.aliases(output))
+        return;
+
+    switch (ins->mir()->type()) {
+      case MIRType_Int32x4:
+        masm.vmovdqa(input, output);
+        break;
+      case MIRType_Float32x4:
+        masm.vmovaps(input, output);
+        break;
+      default:
+        MOZ_CRASH("Unknown SIMD kind");
+    }
+}
+
+void
 CodeGeneratorX86Shared::visitSimdExtractElementI(LSimdExtractElementI *ins)
 {
     FloatRegister input = ToFloatRegister(ins->input());
@@ -2359,6 +2380,93 @@ CodeGeneratorX86Shared::visitSimdSignMaskX4(LSimdSignMaskX4 *ins)
 }
 
 void
+CodeGeneratorX86Shared::visitSimdGeneralSwizzleI(LSimdGeneralSwizzleI *ins)
+{
+    FloatRegister input = ToFloatRegister(ins->base());
+    Register temp = ToRegister(ins->temp());
+
+    // This won't generate fast code, but it's fine because we expect users
+    // to have used constant indices (and thus MSimdGeneralSwizzle to be fold
+    // into MSimdSwizzle, which are fast).
+    masm.reserveStack(Simd128DataSize * 2);
+
+    masm.storeAlignedInt32x4(input, Address(StackPointer, Simd128DataSize));
+
+    for (size_t i = 0; i < 4; i++) {
+        Operand lane = ToOperand(ins->lane(i));
+
+        Label go, join;
+        masm.cmp32(lane, Imm32(4));
+        masm.j(Assembler::Below, &go);
+
+        {
+            masm.store32(Imm32(0), Address(StackPointer, i * sizeof(int32_t)));
+            masm.jump(&join);
+        }
+
+        masm.bind(&go);
+        if (lane.kind() == Operand::REG) {
+            masm.load32(Operand(StackPointer, ToRegister(ins->lane(i)), TimesFour, Simd128DataSize),
+                        temp);
+        } else {
+            masm.load32(lane, temp);
+            masm.load32(Operand(StackPointer, temp, TimesFour, Simd128DataSize), temp);
+        }
+
+        masm.store32(temp, Address(StackPointer, i * sizeof(int32_t)));
+        masm.bind(&join);
+    }
+
+    FloatRegister output = ToFloatRegister(ins->output());
+    masm.loadAlignedInt32x4(Address(StackPointer, 0), output);
+
+    masm.freeStack(Simd128DataSize * 2);
+}
+
+void
+CodeGeneratorX86Shared::visitSimdGeneralSwizzleF(LSimdGeneralSwizzleF *ins)
+{
+    FloatRegister input = ToFloatRegister(ins->base());
+    Register temp = ToRegister(ins->temp());
+
+    // See comment in the visitSimdGeneralSwizzleI.
+    masm.reserveStack(Simd128DataSize * 2);
+
+    masm.storeAlignedFloat32x4(input, Address(StackPointer, Simd128DataSize));
+
+    for (size_t i = 0; i < 4; i++) {
+        Operand lane = ToOperand(ins->lane(i));
+
+        Label go, join;
+        masm.cmp32(lane, Imm32(4));
+        masm.j(Assembler::Below, &go);
+
+        {
+            masm.loadConstantFloat32(float(GenericNaN()), ScratchFloat32Reg);
+            masm.storeFloat32(ScratchFloat32Reg, Address(StackPointer, i * sizeof(int32_t)));
+            masm.jump(&join);
+        }
+
+        masm.bind(&go);
+        if (lane.kind() == Operand::REG) {
+            masm.loadFloat32(Operand(StackPointer, ToRegister(ins->lane(i)), TimesFour, Simd128DataSize),
+                             ScratchFloat32Reg);
+        } else {
+            masm.load32(lane, temp);
+            masm.loadFloat32(Operand(StackPointer, temp, TimesFour, Simd128DataSize), ScratchFloat32Reg);
+        }
+
+        masm.storeFloat32(ScratchFloat32Reg, Address(StackPointer, i * sizeof(int32_t)));
+        masm.bind(&join);
+    }
+
+    FloatRegister output = ToFloatRegister(ins->output());
+    masm.loadAlignedFloat32x4(Address(StackPointer, 0), output);
+
+    masm.freeStack(Simd128DataSize * 2);
+}
+
+void
 CodeGeneratorX86Shared::visitSimdSwizzleI(LSimdSwizzleI *ins)
 {
     FloatRegister input = ToFloatRegister(ins->input());
@@ -2404,6 +2512,10 @@ CodeGeneratorX86Shared::visitSimdSwizzleF(LSimdSwizzleF *ins)
     }
 
     if (ins->lanesMatch(0, 1, 0, 1)) {
+        if (AssemblerX86Shared::HasSSE3() && !AssemblerX86Shared::HasAVX()) {
+            masm.vmovddup(input, output);
+            return;
+        }
         FloatRegister inputCopy = masm.reusedInputFloat32x4(input, output);
         masm.vmovlhps(input, inputCopy, output);
         return;

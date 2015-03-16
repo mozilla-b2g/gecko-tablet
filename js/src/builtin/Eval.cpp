@@ -234,7 +234,7 @@ EvalKernel(JSContext *cx, const CallArgs &args, EvalType evalType, AbstractFrame
 
     Rooted<GlobalObject*> scopeObjGlobal(cx, &scopeobj->global());
     if (!GlobalObject::isRuntimeCodeGenEnabled(cx, scopeObjGlobal)) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_CSP_BLOCKED_EVAL);
+        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_CSP_BLOCKED_EVAL);
         return false;
     }
 
@@ -358,7 +358,7 @@ js::DirectEvalStringFromIon(JSContext *cx,
 
     Rooted<GlobalObject*> scopeObjGlobal(cx, &scopeobj->global());
     if (!GlobalObject::isRuntimeCodeGenEnabled(cx, scopeObjGlobal)) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_CSP_BLOCKED_EVAL);
+        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_CSP_BLOCKED_EVAL);
         return false;
     }
 
@@ -528,6 +528,8 @@ js::ExecuteInGlobalAndReturnScope(JSContext *cx, HandleObject global, HandleScri
 
     RootedValue thisv(cx, ObjectValue(*thisobj));
     RootedValue rval(cx);
+    // XXXbz when this is fixed to pass in an actual ScopeObject, fix
+    // up the assert in js::CloneFunctionObject accordingly.
     if (!ExecuteKernel(cx, script, *scope, thisv, EXECUTE_GLOBAL,
                        NullFramePtr() /* evalInFrame */, rval.address()))
     {

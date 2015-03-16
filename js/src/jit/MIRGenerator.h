@@ -20,6 +20,7 @@
 #include "jit/CompileInfo.h"
 #include "jit/JitAllocPolicy.h"
 #include "jit/JitCompartment.h"
+#include "jit/MIR.h"
 #ifdef JS_ION_PERF
 # include "jit/PerfSpewer.h"
 #endif
@@ -157,10 +158,10 @@ class MIRGenerator
 
     typedef Vector<ObjectGroup *, 0, JitAllocPolicy> ObjectGroupVector;
 
-    // When abortReason() == AbortReason_NewScriptProperties, all types which
-    // the new script properties analysis hasn't been performed on yet.
-    const ObjectGroupVector &abortedNewScriptPropertiesGroups() const {
-        return abortedNewScriptPropertiesGroups_;
+    // When abortReason() == AbortReason_PreliminaryObjects, all groups with
+    // preliminary objects which haven't been analyzed yet.
+    const ObjectGroupVector &abortedPreliminaryGroups() const {
+        return abortedPreliminaryGroups_;
     }
 
   public:
@@ -175,7 +176,7 @@ class MIRGenerator
     MIRGraph *graph_;
     AbortReason abortReason_;
     bool shouldForceAbort_; // Force AbortReason_Disable
-    ObjectGroupVector abortedNewScriptPropertiesGroups_;
+    ObjectGroupVector abortedPreliminaryGroups_;
     bool error_;
     mozilla::Atomic<bool, mozilla::Relaxed> *pauseBuild_;
     mozilla::Atomic<bool, mozilla::Relaxed> cancelBuild_;
@@ -200,10 +201,11 @@ class MIRGenerator
     // CodeGenerator::link).
     ObjectVector nurseryObjects_;
 
+    void addAbortedPreliminaryGroup(ObjectGroup *group);
+
     Label *outOfBoundsLabel_;
     bool usesSignalHandlersForAsmJSOOB_;
 
-    void addAbortedNewScriptPropertiesGroup(ObjectGroup *type);
     void setForceAbort() {
         shouldForceAbort_ = true;
     }

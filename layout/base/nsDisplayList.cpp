@@ -63,6 +63,7 @@
 #include "UnitTransforms.h"
 #include "LayersLogging.h"
 #include "FrameLayerBuilder.h"
+#include "mozilla/EventStateManager.h"
 #include "RestyleManager.h"
 #include "nsCaret.h"
 #include "nsISelection.h"
@@ -521,9 +522,9 @@ nsDisplayListBuilder::AddAnimationsAndTransitionsToLayer(Layer* aLayer,
     nscoord perspective = 0.0;
     nsStyleContext* parentStyleContext = aFrame->StyleContext()->GetParent();
     if (parentStyleContext) {
-      const nsStyleDisplay* disp = parentStyleContext->StyleDisplay();
-      if (disp && disp->mChildPerspective.GetUnit() == eStyleUnit_Coord) {
-        perspective = disp->mChildPerspective.GetCoordValue();
+      const nsStylePosition* pos = parentStyleContext->StylePosition();
+      if (pos && pos->mChildPerspective.GetUnit() == eStyleUnit_Coord) {
+        perspective = pos->mChildPerspective.GetCoordValue();
       }
     }
     nsPoint origin;
@@ -784,6 +785,12 @@ nsDisplayScrollLayer::ComputeFrameMetrics(nsIFrame* aForFrame,
     LayoutDeviceIntSize lineScrollAmountInDevPixels =
       LayoutDeviceIntSize::FromAppUnitsRounded(lineScrollAmount, presContext->AppUnitsPerDevPixel());
     metrics.SetLineScrollAmount(lineScrollAmountInDevPixels);
+
+    if (!aScrollFrame->GetParent() ||
+        EventStateManager::CanVerticallyScrollFrameWithWheel(aScrollFrame->GetParent()))
+    {
+      metrics.SetAllowVerticalScrollWithWheel();
+    }
   }
 
   metrics.SetScrollId(scrollId);
@@ -802,12 +809,12 @@ nsDisplayScrollLayer::ComputeFrameMetrics(nsIFrame* aForFrame,
   // all the pres shells from here up to the root, as well as any css-driven
   // resolution. We don't need to compute it as it's already stored in the
   // container parameters.
-  metrics.SetCumulativeResolution(LayoutDeviceToLayerScale(aContainerParameters.mXScale,
-                                                           aContainerParameters.mYScale));
+  metrics.SetCumulativeResolution(LayoutDeviceToLayerScale2D(aContainerParameters.mXScale,
+                                                             aContainerParameters.mYScale));
 
-  LayoutDeviceToScreenScale resolutionToScreen(
-      presShell->GetCumulativeResolution().width
-    * nsLayoutUtils::GetTransformToAncestorScale(aScrollFrame ? aScrollFrame : aForFrame).width);
+  LayoutDeviceToScreenScale2D resolutionToScreen(
+      presShell->GetCumulativeResolution()
+    * nsLayoutUtils::GetTransformToAncestorScale(aScrollFrame ? aScrollFrame : aForFrame));
   metrics.SetExtraResolution(metrics.GetCumulativeResolution() / resolutionToScreen);
 
   metrics.SetDevPixelsPerCSSPixel(CSSToLayoutDeviceScale(
@@ -819,18 +826,6 @@ nsDisplayScrollLayer::ComputeFrameMetrics(nsIFrame* aForFrame,
   metrics.SetZoom(metrics.GetCumulativeResolution() * metrics.GetDevPixelsPerCSSPixel()
                   * layerToParentLayerScale);
 
-  if (presShell) {
-    nsIDocument* document = nullptr;
-    document = presShell->GetDocument();
-    if (document) {
-      nsCOMPtr<nsPIDOMWindow> innerWin(document->GetInnerWindow());
-      if (innerWin) {
-        metrics.SetMayHaveTouchListeners(innerWin->HasApzAwareEventListeners());
-      }
-    }
-    metrics.SetMayHaveTouchCaret(presShell->MayHaveTouchCaret());
-  }
-
   // Calculate the composition bounds as the size of the scroll frame and
   // its origin relative to the reference frame.
   // If aScrollFrame is null, we are in a document without a root scroll frame,
@@ -838,12 +833,20 @@ nsDisplayScrollLayer::ComputeFrameMetrics(nsIFrame* aForFrame,
   nsIFrame* frameForCompositionBoundsCalculation = aScrollFrame ? aScrollFrame : aForFrame;
   nsRect compositionBounds(frameForCompositionBoundsCalculation->GetOffsetToCrossDoc(aReferenceFrame),
                            frameForCompositionBoundsCalculation->GetSize());
+  if (scrollableFrame) {
+    // If we have a scrollable frame, restrict the composition bounds to its
+    // scroll port. The scroll port excludes the frame borders and the scroll
+    // bars, which we don't want to be part of the composition bounds.
+    nsRect scrollPort = scrollableFrame->GetScrollPortRect();
+    compositionBounds = nsRect(compositionBounds.TopLeft() + scrollPort.TopLeft(),
+                               scrollPort.Size());
+  }
   ParentLayerRect frameBounds = LayoutDeviceRect::FromAppUnits(compositionBounds, auPerDevPixel)
                               * metrics.GetCumulativeResolution()
                               * layerToParentLayerScale;
   metrics.mCompositionBounds = frameBounds;
 
-  // For the root scroll frame of the root content document, the above calculation
+  // For the root scroll frame of the root content document (RCD-RSF), the above calculation
   // will yield the size of the viewport frame as the composition bounds, which
   // doesn't actually correspond to what is visible when
   // nsIDOMWindowUtils::setCSSViewport has been called to modify the visible area of
@@ -883,23 +886,25 @@ nsDisplayScrollLayer::ComputeFrameMetrics(nsIFrame* aForFrame,
       } else {
         LayoutDeviceIntSize contentSize;
         if (nsLayoutUtils::GetContentViewerSize(presContext, contentSize)) {
-          LayoutDeviceToParentLayerScale scale(1.0f);
+          LayoutDeviceToParentLayerScale2D scale;
           if (presContext->GetParentPresContext()) {
             gfxSize res = presContext->GetParentPresContext()->PresShell()->GetCumulativeResolution();
-            scale = LayoutDeviceToParentLayerScale(res.width, res.height);
+            scale = LayoutDeviceToParentLayerScale2D(res.width, res.height);
           }
           metrics.mCompositionBounds.SizeTo(contentSize * scale);
         }
       }
-    }
-  }
 
-  // Adjust composition bounds for the size of scroll bars.
-  if (scrollableFrame && !LookAndFeel::GetInt(LookAndFeel::eIntID_UseOverlayScrollbars)) {
-    nsMargin sizes = scrollableFrame->GetActualScrollbarSizes();
-    // Scrollbars are not subject to scaling, so CSS pixels = layer pixels for them.
-    ParentLayerMargin boundMargins = CSSMargin::FromAppUnits(sizes) * CSSToParentLayerScale(1.0f);
-    metrics.mCompositionBounds.Deflate(boundMargins);
+      // Exclude any non-overlay scroll bars from the composition bounds.
+      // This is only done for the RCD-RSF case, because otherwise the scroll
+      // port size is used and that already excludes the scroll bars.
+      if (scrollableFrame && !LookAndFeel::GetInt(LookAndFeel::eIntID_UseOverlayScrollbars)) {
+        nsMargin sizes = scrollableFrame->GetActualScrollbarSizes();
+        // Scrollbars are not subject to scaling, so CSS pixels = layer pixels for them.
+        ParentLayerMargin boundMargins = CSSMargin::FromAppUnits(sizes) * CSSToParentLayerScale(1.0f);
+        metrics.mCompositionBounds.Deflate(boundMargins);
+      }
+    }
   }
 
   metrics.SetRootCompositionSize(
@@ -1621,6 +1626,7 @@ already_AddRefed<LayerManager> nsDisplayList::PaintRoot(nsDisplayListBuilder* aB
   nsIFrame* frame = aBuilder->RootReferenceFrame();
   nsPresContext* presContext = frame->PresContext();
   nsIPresShell* presShell = presContext->GetPresShell();
+  nsRootPresContext* rootPresContext = presContext->GetRootPresContext();
 
   NotifySubDocInvalidationFunc computeInvalidFunc =
     presContext->MayHavePaintEventListenerInSubDocument() ? nsPresContext::NotifySubDocInvalidation : 0;
@@ -1656,6 +1662,8 @@ already_AddRefed<LayerManager> nsDisplayList::PaintRoot(nsDisplayListBuilder* aB
   if (aBuilder->IsBuildingLayerEventRegions() &&
       nsLayoutUtils::HasDocumentLevelListenersForApzAwareEvents(presShell)) {
     root->SetEventRegionsOverride(EventRegionsOverride::ForceDispatchToContent);
+  } else {
+    root->SetEventRegionsOverride(EventRegionsOverride::NoOverride);
   }
 
   // If we're using containerless scrolling, there is still one case where we
@@ -1729,6 +1737,15 @@ already_AddRefed<LayerManager> nsDisplayList::PaintRoot(nsDisplayListBuilder* aB
     if (aBuilder->WillComputePluginGeometry()) {
       flags = LayerManager::END_NO_REMOTE_COMPOSITE;
     }
+  }
+
+  // If this is the content process, we ship plugin geometry updates over with layer
+  // updates, so calculate that now before we call EndTransaction.
+  if (rootPresContext &&
+      aBuilder->WillComputePluginGeometry() &&
+      XRE_GetProcessType() == GeckoProcessType_Content) {
+    rootPresContext->ComputePluginGeometryUpdates(aBuilder->RootReferenceFrame(), aBuilder, this);
+    rootPresContext->CollectPluginGeometryUpdates(layerManager);
   }
 
   MaybeSetupTransactionIdAllocator(layerManager, view);
@@ -2065,7 +2082,7 @@ nsDisplayItem::MaxActiveLayers()
 int32_t
 nsDisplayItem::ZIndex() const
 {
-  if (!mFrame->IsPositioned() && !mFrame->IsFlexOrGridItem())
+  if (!mFrame->IsAbsPosContaininingBlock() && !mFrame->IsFlexOrGridItem())
     return 0;
 
   const nsStylePosition* position = mFrame->StylePosition();
@@ -3811,7 +3828,8 @@ nsDisplayOpacity::BuildLayer(nsDisplayListBuilder* aBuilder,
                              const ContainerLayerParameters& aContainerParameters) {
   nsRefPtr<Layer> container = aManager->GetLayerBuilder()->
     BuildContainerLayerFor(aBuilder, aManager, mFrame, this, &mList,
-                           aContainerParameters, nullptr);
+                           aContainerParameters, nullptr,
+                           FrameLayerBuilder::CONTAINER_ALLOW_PULL_BACKGROUND_COLOR);
   if (!container)
     return nullptr;
 
@@ -4120,7 +4138,8 @@ nsDisplayOwnLayer::BuildLayer(nsDisplayListBuilder* aBuilder,
                               const ContainerLayerParameters& aContainerParameters) {
   nsRefPtr<ContainerLayer> layer = aManager->GetLayerBuilder()->
     BuildContainerLayerFor(aBuilder, aManager, mFrame, this, &mList,
-                           aContainerParameters, nullptr);
+                           aContainerParameters, nullptr,
+                           FrameLayerBuilder::CONTAINER_ALLOW_PULL_BACKGROUND_COLOR);
   if (mFlags & VERTICAL_SCROLLBAR) {
     layer->SetScrollbarData(mScrollTarget, Layer::ScrollDirection::VERTICAL);
   }
@@ -4169,9 +4188,9 @@ nsDisplaySubDocument::BuildLayer(nsDisplayListBuilder* aBuilder,
   }
 
   nsRefPtr<Layer> layer = nsDisplayOwnLayer::BuildLayer(aBuilder, aManager, params);
-  if (mForceDispatchToContentRegion) {
-    layer->AsContainerLayer()->SetEventRegionsOverride(EventRegionsOverride::ForceDispatchToContent);
-  }
+  layer->AsContainerLayer()->SetEventRegionsOverride(mForceDispatchToContentRegion
+    ? EventRegionsOverride::ForceDispatchToContent
+    : EventRegionsOverride::NoOverride);
   return layer.forget();
 }
 
@@ -4187,8 +4206,10 @@ nsDisplaySubDocument::ComputeFrameMetrics(Layer* aLayer,
   nsIFrame* rootScrollFrame = presContext->PresShell()->GetRootScrollFrame();
   bool isRootContentDocument = presContext->IsRootContentDocument();
   nsIPresShell* presShell = presContext->PresShell();
-  ContainerLayerParameters params(presShell->GetXResolution(),
-      presShell->GetYResolution(), nsIntPoint(), aContainerParameters);
+  ContainerLayerParameters params(
+      aContainerParameters.mXScale * presShell->GetXResolution(),
+      aContainerParameters.mYScale * presShell->GetYResolution(),
+      nsIntPoint(), aContainerParameters);
   if ((mFlags & GENERATE_SCROLLABLE_LAYER) &&
       rootScrollFrame->GetContent() &&
       nsLayoutUtils::GetCriticalDisplayPort(rootScrollFrame->GetContent(), nullptr)) {
@@ -4518,7 +4539,8 @@ nsDisplayScrollLayer::BuildLayer(nsDisplayListBuilder* aBuilder,
 
   return aManager->GetLayerBuilder()->
     BuildContainerLayerFor(aBuilder, aManager, mFrame, this, &mList,
-                           params, nullptr);
+                           params, nullptr,
+                           FrameLayerBuilder::CONTAINER_ALLOW_PULL_BACKGROUND_COLOR);
 }
 
 UniquePtr<FrameMetrics>
@@ -4767,17 +4789,14 @@ nsDisplayScrollInfoLayer::BuildLayer(nsDisplayListBuilder* aBuilder,
                                      LayerManager* aManager,
                                      const ContainerLayerParameters& aContainerParameters)
 {
-  // Only build scrollinfo layers if event-regions are disabled, so that the
-  // compositor knows where the inactive scrollframes are. When event-regions
-  // are enabled, the dispatch-to-content regions generally provide this
-  // information to the APZ code. However, in some cases, there might be
-  // content that cannot be layerized, and so needs to scroll synchronously.
-  // To handle those cases (which are indicated by setting mHoisted to true), we
-  // still want to generate scrollinfo layers.
-  if (gfxPrefs::LayoutEventRegionsEnabled() && !mHoisted) {
-    return nullptr;
-  }
-  return nsDisplayScrollLayer::BuildLayer(aBuilder, aManager, aContainerParameters);
+  // In general for APZ with event-regions we no longer have a need for
+  // scrollinfo layers. However, in some cases, there might be content that
+  // cannot be layerized, and so needs to scroll synchronously. To handle those
+  // cases (which are indicated by setting mHoisted to true), we still want to
+  // generate scrollinfo layers.
+  return mHoisted
+    ? nsDisplayScrollLayer::BuildLayer(aBuilder, aManager, aContainerParameters)
+    : nullptr;
 }
 
 LayerState
@@ -4786,10 +4805,9 @@ nsDisplayScrollInfoLayer::GetLayerState(nsDisplayListBuilder* aBuilder,
                                         const ContainerLayerParameters& aParameters)
 {
   // See comment in BuildLayer
-  if (gfxPrefs::LayoutEventRegionsEnabled() && !mHoisted) {
-    return LAYER_NONE;
-  }
-  return LAYER_ACTIVE_EMPTY;
+  return mHoisted
+    ? LAYER_ACTIVE_EMPTY
+    : LAYER_NONE;
 }
 
 bool
@@ -4991,8 +5009,8 @@ nsDisplayTransform::Init(nsDisplayListBuilder* aBuilder)
   mStoredList.SetVisibleRect(mChildrenVisibleRect);
   mMaybePrerender = ShouldPrerenderTransformedContent(aBuilder, mFrame);
 
-  const nsStyleDisplay* disp = mFrame->StyleDisplay();
-  if ((disp->mWillChangeBitField & NS_STYLE_WILL_CHANGE_TRANSFORM)) {
+  const nsStylePosition* pos = mFrame->StylePosition();
+  if ((pos->mWillChangeBitField & NS_STYLE_WILL_CHANGE_TRANSFORM)) {
     // We will only pre-render if this will-change is on budget.
     mMaybePrerender = true;
   }
@@ -5046,7 +5064,8 @@ nsDisplayTransform::GetDeltaToTransformOrigin(const nsIFrame* aFrame,
                                               const nsRect* aBoundsOverride)
 {
   NS_PRECONDITION(aFrame, "Can't get delta for a null frame!");
-  NS_PRECONDITION(aFrame->IsTransformed() || aFrame->StyleDisplay()->BackfaceIsHidden(),
+  NS_PRECONDITION(aFrame->IsTransformed() ||
+                  aFrame->StylePosition()->BackfaceIsHidden(),
                   "Shouldn't get a delta for an untransformed frame!");
 
   if (!aFrame->IsTransformed()) {
@@ -5057,7 +5076,7 @@ nsDisplayTransform::GetDeltaToTransformOrigin(const nsIFrame* aFrame,
    * percentage, it's relative to the size of the frame.  Otherwise, if it's
    * a distance, it's already computed for us!
    */
-  const nsStyleDisplay* display = aFrame->StyleDisplay();
+  const nsStylePosition* pos = aFrame->StylePosition();
   nsRect boundingRect = (aBoundsOverride ? *aBoundsOverride :
                          nsDisplayTransform::GetFrameBoundsForTransform(aFrame));
 
@@ -5070,7 +5089,7 @@ nsDisplayTransform::GetDeltaToTransformOrigin(const nsIFrame* aFrame,
     /* If the -moz-transform-origin specifies a percentage, take the percentage
      * of the size of the box.
      */
-    const nsStyleCoord &coord = display->mTransformOrigin[index];
+    const nsStyleCoord &coord = pos->mTransformOrigin[index];
     if (coord.GetUnit() == eStyleUnit_Calc) {
       const nsStyleCoord::Calc *calc = coord.GetCalcValue();
       coords[index] =
@@ -5096,7 +5115,7 @@ nsDisplayTransform::GetDeltaToTransformOrigin(const nsIFrame* aFrame,
     }
   }
 
-  coords[2] = NSAppUnitsToFloatPixels(display->mTransformOrigin[2].GetCoordValue(),
+  coords[2] = NSAppUnitsToFloatPixels(pos->mTransformOrigin[2].GetCoordValue(),
                                       aAppUnitsPerPixel);
   /* Adjust based on the origin of the rectangle. */
   coords[0] += NSAppUnitsToFloatPixels(boundingRect.x, aAppUnitsPerPixel);
@@ -5115,7 +5134,8 @@ nsDisplayTransform::GetDeltaToPerspectiveOrigin(const nsIFrame* aFrame,
                                                 float aAppUnitsPerPixel)
 {
   NS_PRECONDITION(aFrame, "Can't get delta for a null frame!");
-  NS_PRECONDITION(aFrame->IsTransformed() || aFrame->StyleDisplay()->BackfaceIsHidden(),
+  NS_PRECONDITION(aFrame->IsTransformed() ||
+                  aFrame->StylePosition()->BackfaceIsHidden(),
                   "Shouldn't get a delta for an untransformed frame!");
 
   if (!aFrame->IsTransformed()) {
@@ -5140,7 +5160,7 @@ nsDisplayTransform::GetDeltaToPerspectiveOrigin(const nsIFrame* aFrame,
       return Point3D();
     }
   }
-  const nsStyleDisplay* display = psc->StyleDisplay();
+  const nsStylePosition* pos = psc->StylePosition();
   nsRect boundingRect = nsDisplayTransform::GetFrameBoundsForTransform(parent);
 
   /* Allows us to access named variables by index. */
@@ -5154,7 +5174,7 @@ nsDisplayTransform::GetDeltaToPerspectiveOrigin(const nsIFrame* aFrame,
     /* If the -moz-transform-origin specifies a percentage, take the percentage
      * of the size of the box.
      */
-    const nsStyleCoord &coord = display->mPerspectiveOrigin[index];
+    const nsStyleCoord &coord = pos->mPerspectiveOrigin[index];
     if (coord.GetUnit() == eStyleUnit_Calc) {
       const nsStyleCoord::Calc *calc = coord.GetCalcValue();
       *coords[index] =
@@ -5185,18 +5205,18 @@ nsDisplayTransform::FrameTransformProperties::FrameTransformProperties(const nsI
                                                                        float aAppUnitsPerPixel,
                                                                        const nsRect* aBoundsOverride)
   : mFrame(aFrame)
-  , mTransformList(aFrame->StyleDisplay()->mSpecifiedTransform)
+  , mTransformList(aFrame->StylePosition()->mSpecifiedTransform)
   , mToTransformOrigin(GetDeltaToTransformOrigin(aFrame, aAppUnitsPerPixel, aBoundsOverride))
   , mToPerspectiveOrigin(GetDeltaToPerspectiveOrigin(aFrame, aAppUnitsPerPixel))
   , mChildPerspective(0)
 {
-  const nsStyleDisplay* parentDisp = nullptr;
+  const nsStylePosition* parentPos = nullptr;
   nsStyleContext* parentStyleContext = aFrame->StyleContext()->GetParent();
   if (parentStyleContext) {
-    parentDisp = parentStyleContext->StyleDisplay();
+    parentPos = parentStyleContext->StylePosition();
   }
-  if (parentDisp && parentDisp->mChildPerspective.GetUnit() == eStyleUnit_Coord) {
-    mChildPerspective = parentDisp->mChildPerspective.GetCoordValue();
+  if (parentPos && parentPos->mChildPerspective.GetUnit() == eStyleUnit_Coord) {
+    mChildPerspective = parentPos->mChildPerspective.GetCoordValue();
   }
 }
 
@@ -5376,8 +5396,8 @@ nsDisplayTransform::ShouldPrerender(nsDisplayListBuilder* aBuilder) {
     return true;
   }
 
-  const nsStyleDisplay* disp = mFrame->StyleDisplay();
-  if ((disp->mWillChangeBitField & NS_STYLE_WILL_CHANGE_TRANSFORM) &&
+  const nsStylePosition* pos = mFrame->StylePosition();
+  if ((pos->mWillChangeBitField & NS_STYLE_WILL_CHANGE_TRANSFORM) &&
       aBuilder->IsInWillChangeBudget(mFrame)) {
     return true;
   }
@@ -5466,7 +5486,8 @@ static bool IsFrameVisible(nsIFrame* aFrame, const Matrix4x4& aMatrix)
   if (aMatrix.IsSingular()) {
     return false;
   }
-  if (aFrame->StyleDisplay()->mBackfaceVisibility == NS_STYLE_BACKFACE_VISIBILITY_HIDDEN &&
+  const nsStylePosition* pos = aFrame->StylePosition();
+  if (pos->mBackfaceVisibility == NS_STYLE_BACKFACE_VISIBILITY_HIDDEN &&
       aMatrix.IsBackfaceVisible()) {
     return false;
   }
@@ -5514,13 +5535,15 @@ already_AddRefed<Layer> nsDisplayTransform::BuildLayer(nsDisplayListBuilder *aBu
 {
   const Matrix4x4& newTransformMatrix = GetTransform();
 
-  if (mFrame->StyleDisplay()->mBackfaceVisibility == NS_STYLE_BACKFACE_VISIBILITY_HIDDEN &&
+  const nsStylePosition* pos = mFrame->StylePosition();
+  if (pos->mBackfaceVisibility == NS_STYLE_BACKFACE_VISIBILITY_HIDDEN &&
       newTransformMatrix.IsBackfaceVisible()) {
     return nullptr;
   }
 
   uint32_t flags = ShouldPrerender(aBuilder) ?
     FrameLayerBuilder::CONTAINER_NOT_CLIPPED_BY_ANCESTORS : 0;
+  flags |= FrameLayerBuilder::CONTAINER_ALLOW_PULL_BACKGROUND_COLOR;
   nsRefPtr<ContainerLayer> container = aManager->GetLayerBuilder()->
     BuildContainerLayerFor(aBuilder, aManager, mFrame, this, mStoredList.GetChildren(),
                            aContainerParameters, &newTransformMatrix, flags);
@@ -5572,8 +5595,8 @@ nsDisplayTransform::GetLayerState(nsDisplayListBuilder* aBuilder,
     }
   }
 
-  const nsStyleDisplay* disp = mFrame->StyleDisplay();
-  if ((disp->mWillChangeBitField & NS_STYLE_WILL_CHANGE_TRANSFORM)) {
+  const nsStylePosition* pos = mFrame->StylePosition();
+  if ((pos->mWillChangeBitField & NS_STYLE_WILL_CHANGE_TRANSFORM)) {
     return LAYER_ACTIVE;
   }
 
@@ -5949,6 +5972,30 @@ nsDisplayTransform::WriteDebugInfo(std::stringstream& aStream)
   AppendToString(aStream, GetTransform());
 }
 
+nsDisplayItemGeometry*
+nsCharClipDisplayItem::AllocateGeometry(nsDisplayListBuilder* aBuilder)
+{
+  return new nsCharClipGeometry(this, aBuilder);
+}
+
+void
+nsCharClipDisplayItem::ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
+                                         const nsDisplayItemGeometry* aGeometry,
+                                         nsRegion* aInvalidRegion)
+{
+  const nsCharClipGeometry* geometry = static_cast<const nsCharClipGeometry*>(aGeometry);
+
+  bool snap;
+  nsRect newRect = geometry->mBounds;
+  nsRect oldRect = GetBounds(aBuilder, &snap);
+  if (mLeftEdge != geometry->mLeftEdge ||
+      mRightEdge != geometry->mRightEdge ||
+      !oldRect.IsEqualInterior(newRect) ||
+      !geometry->mBorderRect.IsEqualInterior(GetBorderRect())) {
+    aInvalidRegion->Or(oldRect, newRect);
+  }
+}
+
 nsDisplaySVGEffects::nsDisplaySVGEffects(nsDisplayListBuilder* aBuilder,
                                          nsIFrame* aFrame, nsDisplayList* aList)
     : nsDisplayWrapList(aBuilder, aFrame, aList),
@@ -5977,7 +6024,8 @@ nsDisplayVR::BuildLayer(nsDisplayListBuilder* aBuilder,
                         const ContainerLayerParameters& aContainerParameters)
 {
   ContainerLayerParameters newContainerParameters = aContainerParameters;
-  uint32_t flags = FrameLayerBuilder::CONTAINER_NOT_CLIPPED_BY_ANCESTORS;
+  uint32_t flags = FrameLayerBuilder::CONTAINER_NOT_CLIPPED_BY_ANCESTORS |
+                   FrameLayerBuilder::CONTAINER_ALLOW_PULL_BACKGROUND_COLOR;
   nsRefPtr<ContainerLayer> container = aManager->GetLayerBuilder()->
     BuildContainerLayerFor(aBuilder, aManager, mFrame, this, &mList,
                            newContainerParameters, nullptr, flags);
@@ -6033,7 +6081,7 @@ nsDisplaySVGEffects::BuildLayer(nsDisplayListBuilder* aBuilder,
   bool hasSVGLayout = (mFrame->GetStateBits() & NS_FRAME_SVG_LAYOUT);
   if (hasSVGLayout) {
     nsISVGChildFrame *svgChildFrame = do_QueryFrame(mFrame);
-    if (!svgChildFrame || !mFrame->GetContent()->IsSVG()) {
+    if (!svgChildFrame || !mFrame->GetContent()->IsSVGElement()) {
       NS_ASSERTION(false, "why?");
       return nullptr;
     }

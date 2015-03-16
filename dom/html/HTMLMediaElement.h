@@ -408,6 +408,16 @@ public:
 
   double Duration() const;
 
+  bool HasAudio() const
+  {
+    return mMediaInfo.HasAudio();
+  }
+
+  bool HasVideo() const
+  {
+    return mMediaInfo.HasVideo();
+  }
+
   bool IsEncrypted() const
   {
     return mIsEncrypted;
@@ -1300,11 +1310,8 @@ protected:
   // The CORS mode when loading the media element
   CORSMode mCORSMode;
 
-  // True if the media has an audio track
-  bool mHasAudio;
-
-  // True if the media has a video track
-  bool mHasVideo;
+  // Info about the played media.
+  MediaInfo mMediaInfo;
 
   // True if the media has encryption information.
   bool mIsEncrypted;
@@ -1347,6 +1354,51 @@ protected:
 
   ElementInTreeState mElementInTreeState;
 
+public:
+  // Helper class to measure times for MSE telemetry stats
+  class TimeDurationAccumulator {
+  public:
+    TimeDurationAccumulator()
+      : mCount(0)
+    {
+    }
+    void Start() {
+      if (IsStarted()) {
+        return;
+      }
+      mStartTime = TimeStamp::Now();
+    }
+    void Pause() {
+      if (!IsStarted()) {
+        return;
+      }
+      mSum += (TimeStamp::Now() - mStartTime);
+      mCount++;
+      mStartTime = TimeStamp();
+    }
+    bool IsStarted() const {
+      return !mStartTime.IsNull();
+    }
+    double Total() const {
+      return mSum.ToSeconds();
+    }
+    uint32_t Count() const {
+      return mCount;
+    }
+  private:
+    TimeStamp mStartTime;
+    TimeDuration mSum;
+    uint32_t mCount;
+  };
+private:
+  // Total time an MSE video has spent playing
+  TimeDurationAccumulator mPlayTime;
+
+  // Time spent buffering in an MSE video
+  TimeDurationAccumulator mRebufferTime;
+
+  // Time spent between video load and video playback.
+  TimeDurationAccumulator mJoinLatency;
 };
 
 } // namespace dom

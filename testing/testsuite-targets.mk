@@ -406,9 +406,11 @@ package-tests: \
   stage-marionette \
   stage-cppunittests \
   stage-jittest \
-  stage-steeplechase \
   stage-web-platform-tests \
   $(NULL)
+ifdef MOZ_WEBRTC
+package-tests: stage-steeplechase
+endif
 else
 # This staging area has been built for us by universal/flight.mk
 PKG_STAGE = $(DIST)/universal/test-stage
@@ -536,8 +538,10 @@ MARIONETTE_DIR=$(PKG_STAGE)/marionette
 stage-marionette: make-stage-dir
 	$(NSINSTALL) -D $(MARIONETTE_DIR)/tests
 	$(NSINSTALL) -D $(MARIONETTE_DIR)/transport
+	$(NSINSTALL) -D $(MARIONETTE_DIR)/driver
 	@(cd $(topsrcdir)/testing/marionette/client && tar --exclude marionette/tests $(TAR_CREATE_FLAGS) - *) | (cd $(MARIONETTE_DIR)/ && tar -xf -)
 	@(cd $(topsrcdir)/testing/marionette/transport && tar $(TAR_CREATE_FLAGS) - *) | (cd $(MARIONETTE_DIR)/transport && tar -xf -)
+	@(cd $(topsrcdir)/testing/marionette/driver && tar $(TAR_CREATE_FLAGS) - *) | (cd $(MARIONETTE_DIR)/driver && tar -xf -)
 	$(PYTHON) $(topsrcdir)/testing/marionette/client/marionette/tests/print-manifest-dirs.py \
           $(topsrcdir) \
           $(topsrcdir)/testing/marionette/client/marionette/tests/unit-tests.ini \

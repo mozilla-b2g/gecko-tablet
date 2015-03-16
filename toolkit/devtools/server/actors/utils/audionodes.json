@@ -101,7 +101,7 @@
   },
   "StereoPannerNode": {
     "properties": {
-      "pan": {}
+      "pan": { "param": true }
     }
   }
 }

@@ -319,6 +319,8 @@ private:
   DECL_GFX_PREF(Live, "layout.css.scroll-behavior.damping-ratio", ScrollBehaviorDampingRatio, float, 1.0f);
   DECL_GFX_PREF(Live, "layout.css.scroll-behavior.enabled",    ScrollBehaviorEnabled, bool, false);
   DECL_GFX_PREF(Live, "layout.css.scroll-behavior.spring-constant", ScrollBehaviorSpringConstant, float, 250.0f);
+  DECL_GFX_PREF(Live, "layout.css.scroll-snap.prediction-sensitivity", ScrollSnapPredictionSensitivity, float, 0.750f);
+  DECL_GFX_PREF(Live, "layout.css.scroll-snap.prediction-max-velocity", ScrollSnapPredictionMaxVelocity, int32_t, 2000);
   DECL_GFX_PREF(Once, "layout.css.touch_action.enabled",       TouchActionEnabled, bool, false);
   DECL_GFX_PREF(Once, "layout.frame_rate",                     LayoutFrameRate, int32_t, -1);
   DECL_GFX_PREF(Live, "layout.display-list.dump",              LayoutDumpDisplayList, bool, false);
@@ -340,6 +342,10 @@ private:
 
   // This and code dependent on it should be removed once containerless scrolling looks stable.
   DECL_GFX_PREF(Once, "layout.scroll.root-frame-containers",   LayoutUseContainersForRootFrames, bool, true);
+
+  // This affects whether events will be routed through APZ or not.
+  DECL_GFX_PREF(Once, "mousewheel.system_scroll_override_on_root_content.enabled",
+                                                               MouseWheelHasScrollDeltaOverride, bool, false);
 public:
   // Manage the singleton:
   static gfxPrefs& GetSingleton()

@@ -843,6 +843,8 @@ LayerTransactionParent::RecvClearCachedResources()
     // context, it's just a subtree root.  We need to scope the clear
     // of resources to exactly that subtree, so we specify it here.
     mLayerManager->ClearCachedResources(mRoot);
+
+    mShadowLayersManager->NotifyClearCachedResources(this);
   }
   return true;
 }
@@ -935,20 +937,24 @@ LayerTransactionParent::RecvChildAsyncMessages(InfallibleTArray<AsyncChildMessag
         MOZ_ASSERT(tex.get());
         compositable->RemoveTextureHost(tex);
 
-        // send FenceHandle if present via ImageBridge.
-        ImageBridgeParent::SendFenceHandleToTrackerIfPresent(
-                             GetChildProcessId(),
-                             op.holderId(),
-                             op.transactionId(),
-                             op.textureParent(),
-                             compositable);
-
-        // Send message back via PImageBridge.
-        ImageBridgeParent::ReplyRemoveTexture(
-                             GetChildProcessId(),
-                             OpReplyRemoveTexture(true, // isMain
-                                                  op.holderId(),
-                                                  op.transactionId()));
+        MOZ_ASSERT(ImageBridgeParent::GetInstance(GetChildProcessId()));
+        if (ImageBridgeParent::GetInstance(GetChildProcessId())) {
+          // send FenceHandle if present via ImageBridge.
+          ImageBridgeParent::SendFenceHandleToTrackerIfPresent(
+            GetChildProcessId(),
+            op.holderId(),
+            op.transactionId(),
+            op.textureParent(),
+            compositable);
+          // Send message back via PImageBridge.
+          ImageBridgeParent::ReplyRemoveTexture(
+            GetChildProcessId(),
+            OpReplyRemoveTexture(true, // isMain
+            op.holderId(),
+            op.transactionId()));
+        } else {
+          NS_ERROR("ImageBridgeParent should exist");
+        }
         break;
       }
       default:
@@ -1019,6 +1025,14 @@ void
 LayerTransactionParent::SendAsyncMessage(const InfallibleTArray<AsyncParentMessageData>& aMessage)
 {
   mozilla::unused << SendParentAsyncMessages(aMessage);
+}
+
+void
+LayerTransactionParent::ReplyRemoveTexture(const OpReplyRemoveTexture& aReply)
+{
+  InfallibleTArray<AsyncParentMessageData> messages;
+  messages.AppendElement(aReply);
+  mozilla::unused << SendParentAsyncMessages(messages);
 }
 
 } // namespace layers

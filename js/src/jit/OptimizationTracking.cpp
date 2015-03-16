@@ -6,6 +6,10 @@
 
 #include "jit/OptimizationTracking.h"
 
+#include "mozilla/SizePrintfMacros.h"
+
+#include "jsprf.h"
+
 #include "ds/Sort.h"
 #include "jit/IonBuilder.h"
 #include "jit/JitcodeMap.h"
@@ -210,7 +214,7 @@ HashType(TypeSet::Type ty)
 }
 
 static HashNumber
-HashTypeList(const TypeSet::TypeList &types)
+HashTypeList(const TempTypeList &types)
 {
     HashNumber h = 0;
     for (uint32_t i = 0; i < types.length(); i++)
@@ -842,7 +846,7 @@ SpewConstructor(TypeSet::Type ty, JSFunction *constructor)
         JS_snprintf(buf, mozilla::ArrayLength(buf), "??");
 
     const char *filename;
-    uint32_t lineno;
+    size_t lineno;
     if (constructor->hasScript()) {
         filename = constructor->nonLazyScript()->filename();
         lineno = constructor->nonLazyScript()->lineno();
@@ -851,7 +855,7 @@ SpewConstructor(TypeSet::Type ty, JSFunction *constructor)
         lineno = constructor->lazyScript()->lineno();
     }
 
-    JitSpew(JitSpew_OptimizationTracking, "   Unique type %s has constructor %s (%s:%u)",
+    JitSpew(JitSpew_OptimizationTracking, "   Unique type %s has constructor %s (%s:%" PRIuSIZE ")",
             TypeSet::TypeString(ty), buf, filename, lineno);
 #endif
 }
@@ -1047,7 +1051,7 @@ IonBuilder::trackTypeInfoUnchecked(TrackedTypeSite kind, MIRType mirType,
 {
     BytecodeSite *site = current->trackedSite();
     // OOMs are handled as if optimization tracking were turned off.
-    OptimizationTypeInfo typeInfo(kind, mirType);
+    OptimizationTypeInfo typeInfo(alloc(), kind, mirType);
     if (!typeInfo.trackTypeSet(typeSet)) {
         site->setOptimizations(nullptr);
         return;
@@ -1061,7 +1065,7 @@ IonBuilder::trackTypeInfoUnchecked(TrackedTypeSite kind, JSObject *obj)
 {
     BytecodeSite *site = current->trackedSite();
     // OOMs are handled as if optimization tracking were turned off.
-    OptimizationTypeInfo typeInfo(kind, MIRType_Object);
+    OptimizationTypeInfo typeInfo(alloc(), kind, MIRType_Object);
     if (!typeInfo.trackType(TypeSet::ObjectType(obj)))
         return;
     if (!site->optimizations()->trackTypeInfo(mozilla::Move(typeInfo)))

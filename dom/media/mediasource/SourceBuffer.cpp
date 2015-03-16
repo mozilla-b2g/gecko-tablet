@@ -21,6 +21,7 @@
 #include "nsThreadUtils.h"
 #include "prlog.h"
 #include <time.h>
+#include "TimeUnits.h"
 
 struct JSContext;
 class JSObject;
@@ -252,14 +253,14 @@ SourceBuffer::Remove(double aStart, double aEnd, ErrorResult& aRv)
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
+  if (mUpdating) {
+    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
+    return;
+  }
   if (IsNaN(mMediaSource->Duration()) ||
       aStart < 0 || aStart > mMediaSource->Duration() ||
       aEnd <= aStart || IsNaN(aEnd)) {
     aRv.Throw(NS_ERROR_DOM_INVALID_ACCESS_ERR);
-    return;
-  }
-  if (mUpdating) {
-    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
   if (mMediaSource->ReadyState() == MediaSourceReadyState::Ended) {
@@ -286,9 +287,8 @@ SourceBuffer::DoRangeRemoval(double aStart, double aEnd)
 {
   MSE_DEBUG("DoRangeRemoval(%f, %f)", aStart, aEnd);
   if (mTrackBuffer && !IsInfinite(aStart)) {
-    int64_t start = aStart * USECS_PER_S;
-    int64_t end = IsInfinite(aEnd) ? INT64_MAX : (int64_t)(aEnd * USECS_PER_S);
-    mTrackBuffer->RangeRemoval(start, end);
+    mTrackBuffer->RangeRemoval(media::Microseconds::FromSeconds(aStart),
+                               media::Microseconds::FromSeconds(aEnd));
   }
 }
 

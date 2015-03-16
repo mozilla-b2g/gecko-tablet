@@ -12,7 +12,6 @@
     <style name="GeckoBase" parent="@android:style/Theme.Light">
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowContentOverlay">@null</item>
-        <item name="arrowPopupWidth">match_parent</item>
     </style>
 
     <style name="GeckoDialogBase" parent="@android:style/Theme.Dialog">
@@ -49,7 +48,7 @@
         <item name="android:textColorHintInverse">@color/text_color_hint_inverse</item>
 
         <!-- Highlight colors -->
-        <item name="android:textColorHighlight">@color/text_color_highlight</item>
+        <item name="android:textColorHighlight">@color/fennec_ui_orange</item>
         <item name="android:textColorHighlightInverse">@color/text_color_highlight_inverse</item>
 
         <!-- Link colors -->

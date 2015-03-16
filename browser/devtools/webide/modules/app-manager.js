@@ -217,11 +217,25 @@ let AppManager = exports.AppManager = {
 
   getTarget: function() {
     if (this.selectedProject.type == "mainProcess") {
-      return devtools.TargetFactory.forRemoteTab({
-        form: this._listTabsResponse,
-        client: this.connection.client,
-        chrome: true
-      });
+      // Fx >=37 exposes a ChromeActor to debug the main process
+      if (this.connection.client.mainRoot.traits.allowChromeProcess) {
+        return this.connection.client.attachProcess()
+                   .then(aResponse => {
+                     return devtools.TargetFactory.forRemoteTab({
+                       form: aResponse.form,
+                       client: this.connection.client,
+                       chrome: true
+                     });
+                   });
+      } else {
+        // Fx <37 exposes tab actors on the root actor
+        return devtools.TargetFactory.forRemoteTab({
+          form: this._listTabsResponse,
+          client: this.connection.client,
+          chrome: true,
+          isTabActor: false
+        });
+      }
     }
 
     if (this.selectedProject.type == "tab") {
@@ -278,50 +292,65 @@ let AppManager = exports.AppManager = {
   },
 
   _selectedProject: null,
-  set selectedProject(value) {
+  set selectedProject(project) {
     // A regular comparison still sees a difference when equal in some cases
-    if (JSON.stringify(this._selectedProject) !==
-        JSON.stringify(value)) {
-
-      let cancelled = false;
-      this.update("before-project", { cancel: () => { cancelled = true; } });
-      if (cancelled)  {
-        return;
-      }
-
-      this._selectedProject = value;
-
-      // Clear out tab store's selected state, if any
-      this.tabStore.selectedTab = null;
-
-      if (this.selectedProject) {
-        if (this.selectedProject.type == "packaged" ||
-            this.selectedProject.type == "hosted") {
-          this.validateProject(this.selectedProject);
-        }
-        if (this.selectedProject.type == "tab") {
-          this.tabStore.selectedTab = this.selectedProject.app;
-        }
-      }
-
-      this.update("project");
-
-      this.checkIfProjectIsRunning();
+    if (JSON.stringify(this._selectedProject) ===
+        JSON.stringify(project)) {
+      return;
     }
+
+    let cancelled = false;
+    this.update("before-project", { cancel: () => { cancelled = true; } });
+    if (cancelled)  {
+      return;
+    }
+
+    this._selectedProject = project;
+
+    // Clear out tab store's selected state, if any
+    this.tabStore.selectedTab = null;
+
+    if (project) {
+      if (project.type == "packaged" ||
+          project.type == "hosted") {
+        this.validateAndUpdateProject(project);
+      }
+      if (project.type == "tab") {
+        this.tabStore.selectedTab = project.app;
+      }
+    }
+
+    this.update("project");
+    this.checkIfProjectIsRunning();
   },
   get selectedProject() {
     return this._selectedProject;
   },
 
-  removeSelectedProject: function() {
+  removeSelectedProject: Task.async(function*() {
     let location = this.selectedProject.location;
     AppManager.selectedProject = null;
     // If the user cancels the removeProject operation, don't remove the project
     if (AppManager.selectedProject != null) {
       return;
     }
-    return AppProjects.remove(location);
-  },
+
+    yield AppProjects.remove(location);
+    AppManager.update("project-removed");
+  }),
+
+  packageProject: Task.async(function*(project) {
+    if (!project) {
+      return;
+    }
+    if (project.type == "packaged" ||
+        project.type == "hosted") {
+      yield ProjectBuilding.build({
+        project: project,
+        logger: this.update.bind(this, "pre-package")
+      });
+    }
+  }),
 
   _selectedRuntime: null,
   set selectedRuntime(value) {
@@ -401,8 +430,13 @@ let AppManager = exports.AppManager = {
   },
 
   isMainProcessDebuggable: function() {
-    return this._listTabsResponse &&
-           this._listTabsResponse.consoleActor;
+    // Fx <37 exposes chrome tab actors on RootActor
+    // Fx >=37 exposes a dedicated actor via attachProcess request
+    return this.connection.client &&
+           this.connection.client.mainRoot &&
+           this.connection.client.mainRoot.traits.allowChromeProcess ||
+           (this._listTabsResponse &&
+            this._listTabsResponse.consoleActor);
   },
 
   get deviceFront() {
@@ -481,12 +515,9 @@ let AppManager = exports.AppManager = {
     return Task.spawn(function* () {
       let self = AppManager;
 
-      let packageDir = yield ProjectBuilding.build({
-        project: project,
-        logger: self.update.bind(self, "pre-package")
-      });
-
-      yield self.validateProject(project);
+      // Package and validate project
+      yield self.packageProject(project);
+      yield self.validateAndUpdateProject(project);
 
       if (project.errorsCount > 0) {
         self.reportError("error_cantInstallValidationErrors");
@@ -501,7 +532,7 @@ let AppManager = exports.AppManager = {
 
       let response;
       if (project.type == "packaged") {
-        packageDir = packageDir || project.location;
+        let packageDir = yield ProjectBuilding.getPackageDir(project);
         console.log("Installing app from " + packageDir);
 
         response = yield self._appsFront.installPackaged(packageDir,
@@ -557,14 +588,20 @@ let AppManager = exports.AppManager = {
 
   /* PROJECT VALIDATION */
 
-  validateProject: function(project) {
+  validateAndUpdateProject: function(project) {
     if (!project) {
       return promise.reject();
     }
 
     return Task.spawn(function* () {
 
-      let validation = new AppValidator(project);
+      let packageDir = yield ProjectBuilding.getPackageDir(project);
+      let validation = new AppValidator({
+        type: project.type,
+        // Build process may place the manifest in a non-root directory
+        location: packageDir
+      });
+
       yield validation.validate();
 
       if (validation.manifest) {
@@ -584,7 +621,7 @@ let AppManager = exports.AppManager = {
             let origin = Services.io.newURI(manifestURL.prePath, null, null);
             project.icon = Services.io.newURI(iconPath, null, origin).spec;
           } else if (project.type == "packaged") {
-            let projectFolder = FileUtils.File(project.location);
+            let projectFolder = FileUtils.File(packageDir);
             let folderURI = Services.io.newFileURI(projectFolder).spec;
             project.icon = folderURI + iconPath.replace(/^\/|\\/, "");
           }

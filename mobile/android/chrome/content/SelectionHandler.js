@@ -44,6 +44,8 @@ var SelectionHandler = {
   _focusIsRTL: false,
 
   _activeType: 0, // TYPE_NONE
+  _selectionPrivate: null, // private selection reference
+  _selectionID: 0, // Unique Selection ID
 
   _draggingHandles: false, // True while user drags text selection handles
   _dragStartAnchorOffset: null, // Editables need initial pos during HandleMove events
@@ -117,9 +119,12 @@ var SelectionHandler = {
     }
 
     switch (aTopic) {
-      // Update handle/caret position on page reflow (keyboard open/close,
-      // dynamic DOM changes, orientation updates, etc).
+      // Update selectionListener and handle/caret positions, on page reflow
+      // (keyboard open/close, dynamic DOM changes, orientation updates, etc).
       case "TextSelection:LayerReflow": {
+        if (this._activeType == this.TYPE_SELECTION) {
+          this._updateSelectionListener();
+        }
         if (this._activeType != this.TYPE_NONE) {
           this._positionHandlesOnChange();
         }
@@ -134,10 +139,19 @@ var SelectionHandler = {
         }
         break;
       }
+
       case "Tab:Selected":
-      case "TextSelection:End":
         this._closeSelection();
         break;
+
+      case "TextSelection:End":
+        let data = JSON.parse(aData);
+        // End the requested selection only.
+        if (this._selectionID === data.selectionID) {
+          this._closeSelection();
+        }
+        break;
+
       case "TextSelection:Action":
         for (let type in this.actions) {
           if (this.actions[type].id == aData) {
@@ -281,6 +295,41 @@ var SelectionHandler = {
   },
 
   /**
+   * Add a selection listener to monitor for external selection changes.
+   */
+  _addSelectionListener: function(selection) {
+    this._selectionPrivate = selection.QueryInterface(Ci.nsISelectionPrivate);
+    this._selectionPrivate.addSelectionListener(this);
+  },
+
+  /**
+   * The nsISelection object for an editable can change during DOM mutations,
+   * causing us to stop receiving selectionChange notifications.
+   *
+   * We can detect that after a layer-reflow event, and dynamically update the
+   * listener.
+   */
+  _updateSelectionListener: function() {
+    if (!(this._targetElement instanceof Ci.nsIDOMNSEditableElement)) {
+      return;
+    }
+
+    let selection = this._getSelection();
+    if (this._selectionPrivate != selection.QueryInterface(Ci.nsISelectionPrivate)) {
+      this._removeSelectionListener();
+      this._addSelectionListener(selection);
+    }
+  },
+
+  /**
+   * Remove the selection listener.
+   */
+  _removeSelectionListener: function() {
+    this._selectionPrivate.removeSelectionListener(this);
+    this._selectionPrivate = null;
+  },
+
+  /**
    * Observe and react to programmatic SelectionChange notifications.
    */
   notifySelectionChanged: function sh_notifySelectionChanged(aDocument, aSelection, aReason) {
@@ -349,7 +398,7 @@ var SelectionHandler = {
     }
 
     // Add a listener to end the selection if it's removed programatically
-    selection.QueryInterface(Ci.nsISelectionPrivate).addSelectionListener(this);
+    this._addSelectionListener(selection);
     this._activeType = this.TYPE_SELECTION;
 
     // Figure out the distance between the selection and the click
@@ -365,6 +414,7 @@ var SelectionHandler = {
     // Determine position and show handles, open actionbar
     this._positionHandles(positions);
     Messaging.sendRequest({
+      selectionID: this._selectionID,
       type: "TextSelection:ShowHandles",
       handles: [this.HANDLE_TYPE_ANCHOR, this.HANDLE_TYPE_FOCUS]
     });
@@ -756,6 +806,7 @@ var SelectionHandler = {
     // Determine position and show caret, open actionbar
     this._positionHandles();
     Messaging.sendRequest({
+      selectionID: this._selectionID,
       type: "TextSelection:ShowHandles",
       handles: [this.HANDLE_TYPE_CARET]
     });
@@ -777,6 +828,7 @@ var SelectionHandler = {
       aElement.focus();
     }
 
+    this._selectionID++;
     this._stopDraggingHandles();
     this._contentWindow = aElement.ownerDocument.defaultView;
     this._targetIsRTL = (this._contentWindow.getComputedStyle(aElement, "").direction == "rtl");
@@ -1061,7 +1113,7 @@ var SelectionHandler = {
     let selection = this._getSelection();
     if (selection) {
       // Remove our listener before we clear the selection
-      selection.QueryInterface(Ci.nsISelectionPrivate).removeSelectionListener(this);
+      this._removeSelectionListener();
 
       // Remove the selection. For editables, we clear selection without losing
       // element focus. For non-editables, just clear all.

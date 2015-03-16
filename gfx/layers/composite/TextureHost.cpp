@@ -18,7 +18,7 @@
 #include "mozilla/layers/TextureHostOGL.h"  // for TextureHostOGL
 #include "mozilla/layers/YCbCrImageDataSerializer.h"
 #include "nsAString.h"
-#include "nsAutoPtr.h"                  // for nsRefPtr
+#include "nsRefPtr.h"                   // for nsRefPtr
 #include "nsPrintfCString.h"            // for nsPrintfCString
 #include "mozilla/layers/PTextureParent.h"
 #include "mozilla/unused.h"
@@ -360,7 +360,14 @@ BufferTextureHost::BufferTextureHost(gfx::SurfaceFormat aFormat,
 , mUpdateSerial(1)
 , mLocked(false)
 , mNeedsFullUpdate(false)
-{}
+{
+  if (aFlags & TextureFlags::COMPONENT_ALPHA) {
+    // One texture of a component alpha texture pair will start out all white.
+    // This hack allows us to easily make sure that white will be uploaded.
+    // See bug 1138934
+    mNeedsFullUpdate = true;
+  }
+}
 
 void
 BufferTextureHost::InitSize()
