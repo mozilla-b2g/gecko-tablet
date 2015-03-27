@@ -965,17 +965,26 @@ MSimdSwizzle::foldsTo(TempAllocator &alloc)
 }
 
 MDefinition *
-MSimdGeneralSwizzle::foldsTo(TempAllocator &alloc)
+MSimdGeneralShuffle::foldsTo(TempAllocator &alloc)
 {
-    int32_t lanes[4];
-    for (size_t i = 0; i < 4; i++) {
+    FixedList<uint32_t> lanes;
+    if (!lanes.init(alloc, numLanes()))
+        return this;
+
+    for (size_t i = 0; i < numLanes(); i++) {
         if (!lane(i)->isConstant() || lane(i)->type() != MIRType_Int32)
             return this;
-        lanes[i] = lane(i)->toConstant()->value().toInt32();
-        if (lanes[i] < 0 || lanes[i] >= 4)
+        int32_t temp = lane(i)->toConstant()->value().toInt32();
+        if (temp < 0 || uint32_t(temp) >= numLanes() * numVectors())
             return this;
+        lanes[i] = uint32_t(temp);
     }
-    return MSimdSwizzle::New(alloc, input(), type(), lanes[0], lanes[1], lanes[2], lanes[3]);
+
+    if (numVectors() == 1)
+        return MSimdSwizzle::New(alloc, vector(0), type(), lanes[0], lanes[1], lanes[2], lanes[3]);
+
+    MOZ_ASSERT(numVectors() == 2);
+    return MSimdShuffle::New(alloc, vector(0), vector(1), type(), lanes[0], lanes[1], lanes[2], lanes[3]);
 }
 
 template <typename T>
@@ -1980,6 +1989,26 @@ MUrsh::infer(BaselineInspector *inspector, jsbytecode *pc)
 }
 
 static inline bool
+CanProduceNegativeZero(MDefinition *def) {
+    // Test if this instruction can produce negative zero even when bailing out
+    // and changing types.
+    switch (def->op()) {
+        case MDefinition::Op_Constant:
+            if (def->type() == MIRType_Double && def->constantValue().toDouble() == -0.0)
+                return true;
+        case MDefinition::Op_BitAnd:
+        case MDefinition::Op_BitOr:
+        case MDefinition::Op_BitXor:
+        case MDefinition::Op_BitNot:
+        case MDefinition::Op_Lsh:
+        case MDefinition::Op_Rsh:
+            return false;
+        default:
+            return true;
+    }
+}
+
+static inline bool
 NeedNegativeZeroCheck(MDefinition *def)
 {
     // Test if all uses have the same semantics for -0 and 0
@@ -1999,50 +2028,54 @@ NeedNegativeZeroCheck(MDefinition *def)
             // Figure out the order in which the addition's operands will
             // execute. EdgeCaseAnalysis::analyzeLate has renumbered the MIR
             // definitions for us so that this just requires comparing ids.
-            MDefinition *first = use_def->toAdd()->getOperand(0);
-            MDefinition *second = use_def->toAdd()->getOperand(1);
+            MDefinition *first = use_def->toAdd()->lhs();
+            MDefinition *second = use_def->toAdd()->rhs();
             if (first->id() > second->id()) {
                 MDefinition *temp = first;
                 first = second;
                 second = temp;
             }
-
-            if (def == first) {
-                // Negative zero checks can be removed on the first executed
-                // operand only if it is guaranteed the second executed operand
-                // will produce a value other than -0. While the second is
-                // typed as an int32, a bailout taken between execution of the
-                // operands may change that type and cause a -0 to flow to the
-                // second.
-                //
-                // There is no way to test whether there are any bailouts
-                // between execution of the operands, so remove negative
-                // zero checks from the first only if the second's type is
-                // independent from type changes that may occur after bailing.
-                switch (second->op()) {
-                  case MDefinition::Op_Constant:
-                  case MDefinition::Op_BitAnd:
-                  case MDefinition::Op_BitOr:
-                  case MDefinition::Op_BitXor:
-                  case MDefinition::Op_BitNot:
-                  case MDefinition::Op_Lsh:
-                  case MDefinition::Op_Rsh:
-                    break;
-                  default:
-                    return true;
-                }
-            }
+            // Negative zero checks can be removed on the first executed
+            // operand only if it is guaranteed the second executed operand
+            // will produce a value other than -0. While the second is
+            // typed as an int32, a bailout taken between execution of the
+            // operands may change that type and cause a -0 to flow to the
+            // second.
+            //
+            // There is no way to test whether there are any bailouts
+            // between execution of the operands, so remove negative
+            // zero checks from the first only if the second's type is
+            // independent from type changes that may occur after bailing.
+            if (def == first && CanProduceNegativeZero(second))
+                return true;
 
             // The negative zero check can always be removed on the second
             // executed operand; by the time this executes the first will have
             // been evaluated as int32 and the addition's result cannot be -0.
             break;
           }
-          case MDefinition::Op_Sub:
+          case MDefinition::Op_Sub: {
             // If sub is truncating -0 and 0 are observed as the same
             if (use_def->toSub()->isTruncated())
                 break;
+
+            // x + y gives -0, when x is -0 and y is 0
+
+            // We can remove the negative zero check on the rhs, only if we
+            // are sure the lhs isn't negative zero.
+
+            // The lhs is typed as integer (i.e. not -0.0), but it can bailout
+            // and change type. This should be fine if the lhs is executed
+            // first. However if the rhs is executed first, the lhs can bail,
+            // change type and become -0.0 while the rhs has already been
+            // optimized to not make a difference between zero and negative zero.
+            MDefinition *lhs = use_def->toSub()->lhs();
+            MDefinition *rhs = use_def->toSub()->rhs();
+            if (rhs->id() < lhs->id() && CanProduceNegativeZero(lhs))
+                return true;
+
             /* Fall through...  */
+          }
           case MDefinition::Op_StoreElement:
           case MDefinition::Op_StoreElementHole:
           case MDefinition::Op_LoadElement:
@@ -3915,6 +3948,24 @@ MArrayState::Copy(TempAllocator &alloc, MArrayState *state)
     return res;
 }
 
+MNewArray::MNewArray(CompilerConstraintList *constraints, uint32_t count, MConstant *templateConst,
+                     gc::InitialHeap initialHeap, AllocatingBehaviour allocating)
+  : MUnaryInstruction(templateConst),
+    count_(count),
+    initialHeap_(initialHeap),
+    allocating_(allocating),
+    convertDoubleElements_(false)
+{
+    ArrayObject *obj = templateObject();
+    setResultType(MIRType_Object);
+    if (!obj->isSingleton()) {
+        TemporaryTypeSet *types = MakeSingletonTypeSet(constraints, obj);
+        setResultTypeSet(types);
+        if (types->convertDoubleElements(constraints) == TemporaryTypeSet::AlwaysConvertToDoubles)
+            convertDoubleElements_ = true;
+    }
+}
+
 bool
 MNewArray::shouldUseVM() const
 {
@@ -4122,6 +4173,97 @@ MLoadElement::foldsTo(TempAllocator &alloc)
         return this;
 
     return foldsToStoredValue(alloc, store->value());
+}
+
+// Gets the MDefinition* representing the source/target object's storage.
+// Usually this is just an MElements*, but sometimes there are layers
+// of indirection or inlining, which are handled elsewhere.
+static inline const MElements *
+MaybeUnwrapElements(const MDefinition *elementsOrObj)
+{
+    // Sometimes there is a level of indirection for conversion.
+    if (elementsOrObj->isConvertElementsToDoubles())
+        return MaybeUnwrapElements(elementsOrObj->toConvertElementsToDoubles()->elements());
+
+    // For inline elements, the object may be passed directly, for example as MUnbox.
+    if (elementsOrObj->type() == MIRType_Object)
+        return nullptr;
+
+    return elementsOrObj->toElements();
+}
+
+// Gets the MDefinition of the target Object for the given store operation.
+static inline const MDefinition *
+GetStoreObject(const MDefinition *store)
+{
+    switch (store->op()) {
+      case MDefinition::Op_StoreElement: {
+        const MDefinition *elementsOrObj = store->toStoreElement()->elements();
+        const MDefinition *elements = MaybeUnwrapElements(elementsOrObj);
+        if (elements)
+            return elements->toElements()->input();
+
+        MOZ_ASSERT(elementsOrObj->type() == MIRType_Object);
+        return elementsOrObj;
+      }
+
+      case MDefinition::Op_StoreElementHole:
+        return store->toStoreElementHole()->object();
+
+      default:
+        return nullptr;
+    }
+}
+
+// Implements mightAlias() logic common to all load operations.
+static bool
+GenericLoadMightAlias(const MDefinition *elementsOrObj, const MDefinition *store)
+{
+    const MElements *elements = MaybeUnwrapElements(elementsOrObj);
+    if (elements)
+        return elements->mightAlias(store);
+
+    // If MElements couldn't be extracted, then storage must be inline.
+    // Refer to IsValidElementsType().
+    const MDefinition *object = elementsOrObj;
+    MOZ_ASSERT(object->type() == MIRType_Object);
+    if (!object->resultTypeSet())
+        return true;
+
+    const MDefinition *storeObject = GetStoreObject(store);
+    if (!storeObject)
+        return true;
+    if (!storeObject->resultTypeSet())
+        return true;
+
+    return object->resultTypeSet()->objectsIntersect(storeObject->resultTypeSet());
+}
+
+bool
+MElements::mightAlias(const MDefinition *store) const
+{
+    if (!input()->resultTypeSet())
+        return true;
+
+    const MDefinition *storeObj = GetStoreObject(store);
+    if (!storeObj)
+        return true;
+    if (!storeObj->resultTypeSet())
+        return true;
+
+    return input()->resultTypeSet()->objectsIntersect(storeObj->resultTypeSet());
+}
+
+bool
+MLoadElement::mightAlias(const MDefinition *store) const
+{
+    return GenericLoadMightAlias(elements(), store);
+}
+
+bool
+MInitializedLength::mightAlias(const MDefinition *store) const
+{
+    return GenericLoadMightAlias(elements(), store);
 }
 
 bool
@@ -4909,7 +5051,8 @@ AddGroupGuard(TempAllocator &alloc, MBasicBlock *current, MDefinition *obj,
 
     if (key->isGroup()) {
         guard = MGuardObjectGroup::New(alloc, obj, key->group(), bailOnEquality,
-                                       Bailout_ObjectIdentityOrTypeGuard);
+                                       Bailout_ObjectIdentityOrTypeGuard,
+                                       /* checkUnboxedExpando = */ false);
     } else {
         MConstant *singletonConst = MConstant::NewConstraintlessObject(alloc, key->singleton());
         current->add(singletonConst);

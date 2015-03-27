@@ -338,6 +338,7 @@ StatsCompartmentCallback(JSRuntime *rt, void *data, JSCompartment *compartment)
                                         &cStats.compartmentTables,
                                         &cStats.innerViewsTable,
                                         &cStats.lazyArrayBuffersTable,
+                                        &cStats.objectMetadataTable,
                                         &cStats.crossCompartmentWrappersTable,
                                         &cStats.regexpCompartment,
                                         &cStats.savedStacksSet);
@@ -831,11 +832,11 @@ AddSizeOfTab(JSRuntime *rt, HandleObject obj, MallocSizeOf mallocSizeOf, ObjectP
         {}
 
         virtual void initExtraZoneStats(JS::Zone *zone, JS::ZoneStats *zStats)
-            MOZ_OVERRIDE
+            override
         {}
 
         virtual void initExtraCompartmentStats(
-            JSCompartment *c, JS::CompartmentStats *cStats) MOZ_OVERRIDE
+            JSCompartment *c, JS::CompartmentStats *cStats) override
         {}
     };
 

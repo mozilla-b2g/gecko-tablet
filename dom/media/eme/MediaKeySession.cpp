@@ -66,7 +66,7 @@ MediaKeySession::MediaKeySession(JSContext* aCx,
 void MediaKeySession::SetSessionId(const nsAString& aSessionId)
 {
   EME_LOG("MediaKeySession[%p,'%s'] session Id set",
-          this, NS_ConvertUTF16toUTF8(mSessionId).get());
+          this, NS_ConvertUTF16toUTF8(aSessionId).get());
 
   if (NS_WARN_IF(!mSessionId.IsEmpty())) {
     return;
@@ -104,9 +104,9 @@ MediaKeySession::GetSessionId() const
 }
 
 JSObject*
-MediaKeySession::WrapObject(JSContext* aCx)
+MediaKeySession::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
-  return MediaKeySessionBinding::Wrap(aCx, this);
+  return MediaKeySessionBinding::Wrap(aCx, this, aGivenProto);
 }
 
 double

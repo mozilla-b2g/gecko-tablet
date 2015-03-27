@@ -31,6 +31,7 @@
 #include "nsContentUtils.h"
 #include "nsCCUncollectableMarker.h"
 #include "nsCycleCollectionNoteRootCallback.h"
+#include "nsCycleCollector.h"
 #include "nsScriptLoader.h"
 #include "jsfriendapi.h"
 #include "jsprf.h"
@@ -90,7 +91,8 @@ const char* const XPCJSRuntime::mStrings[] = {
     "lineNumber",           // IDX_LINENUMBER
     "columnNumber",         // IDX_COLUMNNUMBER
     "stack",                // IDX_STACK
-    "message"               // IDX_MESSAGE
+    "message",              // IDX_MESSAGE
+    "lastIndex"             // IDX_LASTINDEX
 };
 
 /***************************************************************************/
@@ -593,6 +595,13 @@ AddonWindowOrNull(JSObject *aObj)
     MOZ_RELEASE_ASSERT(JS_IsGlobalObject(mainGlobal));
 
     return WindowOrNull(mainGlobal);
+}
+
+nsGlobalWindow*
+CurrentWindowOrNull(JSContext *cx)
+{
+    JSObject *glob = JS::CurrentGlobalOrNull(cx);
+    return glob ? WindowOrNull(glob) : nullptr;
 }
 
 }
@@ -1157,7 +1166,7 @@ class WatchdogManager : public nsIObserver
   public:
 
     NS_IMETHOD Observe(nsISupports* aSubject, const char* aTopic,
-                       const char16_t* aData) MOZ_OVERRIDE
+                       const char16_t* aData) override
     {
         RefreshWatchdog();
         return NS_OK;
@@ -1792,7 +1801,7 @@ JSMainRuntimeCompartmentsUserDistinguishedAmount()
     return JS::UserCompartmentCount(rt);
 }
 
-class JSMainRuntimeTemporaryPeakReporter MOZ_FINAL : public nsIMemoryReporter
+class JSMainRuntimeTemporaryPeakReporter final : public nsIMemoryReporter
 {
     ~JSMainRuntimeTemporaryPeakReporter() {}
 
@@ -1800,7 +1809,7 @@ class JSMainRuntimeTemporaryPeakReporter MOZ_FINAL : public nsIMemoryReporter
     NS_DECL_ISUPPORTS
 
     NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,
-                              nsISupports* aData, bool aAnonymize) MOZ_OVERRIDE
+                              nsISupports* aData, bool aAnonymize) override
     {
         return MOZ_COLLECT_REPORT("js-main-runtime-temporary-peak",
             KIND_OTHER, UNITS_BYTES,
@@ -2334,6 +2343,10 @@ ReportCompartmentStats(const JS::CompartmentStats &cStats,
         cStats.lazyArrayBuffersTable,
         "The table for typed object lazy array buffers.");
 
+    ZCREPORT_BYTES(cJSPathPrefix + NS_LITERAL_CSTRING("object-metadata"),
+        cStats.objectMetadataTable,
+        "The table used by debugging tools for tracking object metadata");
+
     ZCREPORT_BYTES(cJSPathPrefix + NS_LITERAL_CSTRING("cross-compartment-wrapper-table"),
         cStats.crossCompartmentWrappersTable,
         "The cross-compartment wrapper table.");
@@ -2625,7 +2638,7 @@ ReportJSRuntimeExplicitTreeStats(const JS::RuntimeStats &rtStats,
 
 } // namespace xpc
 
-class JSMainRuntimeCompartmentsReporter MOZ_FINAL : public nsIMemoryReporter
+class JSMainRuntimeCompartmentsReporter final : public nsIMemoryReporter
 {
 
     ~JSMainRuntimeCompartmentsReporter() {}
@@ -2651,7 +2664,7 @@ class JSMainRuntimeCompartmentsReporter MOZ_FINAL : public nsIMemoryReporter
     }
 
     NS_IMETHOD CollectReports(nsIMemoryReporterCallback *cb,
-                              nsISupports *closure, bool anonymize) MOZ_OVERRIDE
+                              nsISupports *closure, bool anonymize) override
     {
         // First we collect the compartment paths.  Then we report them.  Doing
         // the two steps interleaved is a bad idea, because calling |cb|
@@ -2694,7 +2707,7 @@ class OrphanReporter : public JS::ObjectPrivateVisitor
     {
     }
 
-    virtual size_t sizeOfIncludingThis(nsISupports *aSupports) MOZ_OVERRIDE {
+    virtual size_t sizeOfIncludingThis(nsISupports *aSupports) override {
         size_t n = 0;
         nsCOMPtr<nsINode> node = do_QueryInterface(aSupports);
         // https://bugzilla.mozilla.org/show_bug.cgi?id=773533#c11 explains
@@ -2753,7 +2766,7 @@ class XPCJSRuntimeStats : public JS::RuntimeStats
             delete static_cast<xpc::ZoneStatsExtras*>(zoneStatsVector[i].extra);
     }
 
-    virtual void initExtraZoneStats(JS::Zone *zone, JS::ZoneStats *zStats) MOZ_OVERRIDE {
+    virtual void initExtraZoneStats(JS::Zone *zone, JS::ZoneStats *zStats) override {
         // Get the compartment's global.
         nsXPConnect *xpc = nsXPConnect::XPConnect();
         AutoSafeJSContext cx;
@@ -2783,7 +2796,7 @@ class XPCJSRuntimeStats : public JS::RuntimeStats
     }
 
     virtual void initExtraCompartmentStats(JSCompartment *c,
-                                           JS::CompartmentStats *cstats) MOZ_OVERRIDE
+                                           JS::CompartmentStats *cstats) override
     {
         xpc::CompartmentStatsExtras *extras = new xpc::CompartmentStatsExtras;
         nsCString cName;

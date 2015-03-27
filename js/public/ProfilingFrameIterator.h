@@ -109,7 +109,7 @@ class JS_PUBLIC_API(ProfilingFrameIterator)
         void *returnAddress;
         void *activation;
         const char *label;
-        bool hasTrackedOptimizations;
+        bool mightHaveTrackedOptimizations;
     };
     uint32_t extractStack(Frame *frames, uint32_t offset, uint32_t end) const;
 
@@ -122,6 +122,9 @@ class JS_PUBLIC_API(ProfilingFrameIterator)
     bool isAsmJS() const;
     bool isJit() const;
 };
+
+extern JS_PUBLIC_API(ProfilingFrameIterator::FrameKind)
+GetProfilingFrameKindFromNativeAddr(JSRuntime *runtime, void *pc);
 
 JS_FRIEND_API(bool)
 IsProfilingEnabledForRuntime(JSRuntime *runtime);

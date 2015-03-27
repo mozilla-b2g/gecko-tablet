@@ -66,7 +66,6 @@ public:
   MOCK_METHOD3(HandleDoubleTap, void(const CSSPoint&, Modifiers, const ScrollableLayerGuid&));
   MOCK_METHOD3(HandleSingleTap, void(const CSSPoint&, Modifiers, const ScrollableLayerGuid&));
   MOCK_METHOD4(HandleLongTap, void(const CSSPoint&, Modifiers, const ScrollableLayerGuid&, uint64_t));
-  MOCK_METHOD3(HandleLongTapUp, void(const CSSPoint&, Modifiers, const ScrollableLayerGuid&));
   MOCK_METHOD3(SendAsyncScrollDOMEvent, void(bool aIsRoot, const CSSRect &aContentRect, const CSSSize &aScrollableSize));
   MOCK_METHOD2(PostDelayedTask, void(Task* aTask, int aDelayMs));
   MOCK_METHOD3(NotifyAPZStateChange, void(const ScrollableLayerGuid& aGuid, APZStateChange aChange, int aArg));
@@ -129,7 +128,7 @@ public:
   }
 
 protected:
-  AsyncPanZoomController* MakeAPZCInstance(uint64_t aLayersId, GeckoContentController* aController) MOZ_OVERRIDE;
+  AsyncPanZoomController* MakeAPZCInstance(uint64_t aLayersId, GeckoContentController* aController) override;
 };
 
 class TestAsyncPanZoomController : public AsyncPanZoomController {
@@ -386,7 +385,7 @@ Tap(const nsRefPtr<InputReceiver>& aTarget, int aX, int aY, int& aTime, int aTap
 
   // If touch-action is enabled then simulate the allowed touch behaviour
   // notification that the main thread is supposed to deliver.
-  if (gfxPrefs::TouchActionEnabled()) {
+  if (gfxPrefs::TouchActionEnabled() && status != nsEventStatus_eConsumeNoDefault) {
     SetDefaultAllowedTouchBehavior(aTarget, *aOutInputBlockId);
   }
 
@@ -440,11 +439,13 @@ Pan(const nsRefPtr<InputReceiver>& aTarget,
   aTime += TIME_BETWEEN_TOUCH_EVENT;
 
   // Allowed touch behaviours must be set after sending touch-start.
-  if (aAllowedTouchBehaviors) {
-    EXPECT_EQ(1UL, aAllowedTouchBehaviors->Length());
-    aTarget->SetAllowedTouchBehavior(*aOutInputBlockId, *aAllowedTouchBehaviors);
-  } else if (gfxPrefs::TouchActionEnabled()) {
-    SetDefaultAllowedTouchBehavior(aTarget, *aOutInputBlockId);
+  if (status != nsEventStatus_eConsumeNoDefault) {
+    if (aAllowedTouchBehaviors) {
+      EXPECT_EQ(1UL, aAllowedTouchBehaviors->Length());
+      aTarget->SetAllowedTouchBehavior(*aOutInputBlockId, *aAllowedTouchBehaviors);
+    } else if (gfxPrefs::TouchActionEnabled()) {
+      SetDefaultAllowedTouchBehavior(aTarget, *aOutInputBlockId);
+    }
   }
 
   status = TouchMove(aTarget, 10, aTouchStartY, aTime);
@@ -1228,7 +1229,7 @@ protected:
     // the fling to slow down more, advance to 2000ms. These numbers may need adjusting if our
     // friction and threshold values change, but they should be deterministic at least.
     int timeDelta = aSlow ? 2000 : 10;
-    int tapCallsExpected = aSlow ? 1 : 0;
+    int tapCallsExpected = aSlow ? 2 : 1;
 
     // Advance the fling animation by timeDelta milliseconds.
     ParentLayerPoint pointOut;
@@ -1239,6 +1240,12 @@ protected:
     // call out of it if and only if the fling is slow.
     EXPECT_CALL(*mcc, HandleSingleTap(_, 0, apzc->GetGuid())).Times(tapCallsExpected);
     Tap(apzc, 10, 10, time, 0);
+    while (mcc->RunThroughDelayedTasks());
+
+    // Deliver another tap, to make sure that taps are flowing properly once
+    // the fling is aborted.
+    time += 500;
+    Tap(apzc, 100, 100, time, 0);
     while (mcc->RunThroughDelayedTasks());
 
     // Verify that we didn't advance any further after the fling was aborted, in either case.
@@ -1363,7 +1370,7 @@ protected:
     nsEventStatus status = TouchDown(apzc, 10, 10, time, &blockId);
     EXPECT_EQ(nsEventStatus_eConsumeDoDefault, status);
 
-    if (gfxPrefs::TouchActionEnabled()) {
+    if (gfxPrefs::TouchActionEnabled() && status != nsEventStatus_eConsumeNoDefault) {
       // SetAllowedTouchBehavior() must be called after sending touch-start.
       nsTArray<uint32_t> allowedTouchBehaviors;
       allowedTouchBehaviors.AppendElement(aBehavior);
@@ -1382,9 +1389,9 @@ protected:
       EXPECT_CALL(*mcc, HandleLongTap(CSSPoint(10, 10), 0, apzc->GetGuid(), blockId)).Times(1);
       EXPECT_CALL(check, Call("postHandleLongTap"));
 
-      EXPECT_CALL(check, Call("preHandleLongTapUp"));
-      EXPECT_CALL(*mcc, HandleLongTapUp(CSSPoint(10, 10), 0, apzc->GetGuid())).Times(1);
-      EXPECT_CALL(check, Call("postHandleLongTapUp"));
+      EXPECT_CALL(check, Call("preHandleSingleTap"));
+      EXPECT_CALL(*mcc, HandleSingleTap(CSSPoint(10, 10), 0, apzc->GetGuid())).Times(1);
+      EXPECT_CALL(check, Call("postHandleSingleTap"));
     }
 
     // There is a longpress event scheduled on a timeout
@@ -1411,10 +1418,11 @@ protected:
 
     // Finally, simulate lifting the finger. Since the long-press wasn't
     // prevent-defaulted, we should get a long-tap-up event.
-    check.Call("preHandleLongTapUp");
+    check.Call("preHandleSingleTap");
     status = TouchUp(apzc, 10, 10, time);
+    mcc->RunDelayedTask();
     EXPECT_EQ(nsEventStatus_eConsumeDoDefault, status);
-    check.Call("postHandleLongTapUp");
+    check.Call("postHandleSingleTap");
 
     apzc->AssertStateIsReset();
   }
@@ -1434,7 +1442,7 @@ protected:
     nsEventStatus status = TouchDown(apzc, touchX, touchStartY, time, &blockId);
     EXPECT_EQ(nsEventStatus_eConsumeDoDefault, status);
 
-    if (gfxPrefs::TouchActionEnabled()) {
+    if (gfxPrefs::TouchActionEnabled() && status != nsEventStatus_eConsumeNoDefault) {
       // SetAllowedTouchBehavior() must be called after sending touch-start.
       nsTArray<uint32_t> allowedTouchBehaviors;
       allowedTouchBehaviors.AppendElement(aBehavior);
@@ -1480,7 +1488,7 @@ protected:
     status = apzc->ReceiveInputEvent(mti, nullptr);
     EXPECT_EQ(nsEventStatus_eConsumeDoDefault, status);
 
-    EXPECT_CALL(*mcc, HandleLongTapUp(CSSPoint(touchX, touchEndY), 0, apzc->GetGuid())).Times(0);
+    EXPECT_CALL(*mcc, HandleSingleTap(CSSPoint(touchX, touchEndY), 0, apzc->GetGuid())).Times(0);
     status = TouchUp(apzc, touchX, touchEndY, time);
     EXPECT_EQ(nsEventStatus_eConsumeDoDefault, status);
 
@@ -1536,7 +1544,7 @@ DoubleTap(const nsRefPtr<InputReceiver>& aTarget, int aX, int aY, int& aTime,
 
   // If touch-action is enabled then simulate the allowed touch behaviour
   // notification that the main thread is supposed to deliver.
-  if (gfxPrefs::TouchActionEnabled()) {
+  if (gfxPrefs::TouchActionEnabled() && status != nsEventStatus_eConsumeNoDefault) {
     SetDefaultAllowedTouchBehavior(aTarget, blockId);
   }
 
@@ -1554,7 +1562,7 @@ DoubleTap(const nsRefPtr<InputReceiver>& aTarget, int aX, int aY, int& aTime,
   }
   aTime += 10;
 
-  if (gfxPrefs::TouchActionEnabled()) {
+  if (gfxPrefs::TouchActionEnabled() && status != nsEventStatus_eConsumeNoDefault) {
     SetDefaultAllowedTouchBehavior(aTarget, blockId);
   }
 

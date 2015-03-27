@@ -196,20 +196,19 @@ APZCTreeManager::UpdateHitTestingTree(CompositorParent* aCompositor,
 
 // Compute the clip region to be used for a layer with an APZC. This function
 // is only called for layers which actually have scrollable metrics and an APZC.
-static nsIntRegion
+static ParentLayerIntRegion
 ComputeClipRegion(GeckoContentController* aController,
                   const LayerMetricsWrapper& aLayer)
 {
-  nsIntRegion clipRegion;
+  ParentLayerIntRegion clipRegion;
   if (aLayer.GetClipRect()) {
-    clipRegion = nsIntRegion(*aLayer.GetClipRect());
+    clipRegion = ViewAs<ParentLayerPixel>(*aLayer.GetClipRect());
   } else {
     // if there is no clip on this layer (which should only happen for the
     // root scrollable layer in a process, or for some of the LayerMetrics
     // expansions of a multi-metrics layer), fall back to using the comp
     // bounds which should be equivalent.
-    clipRegion = nsIntRegion(ParentLayerIntRect::ToUntyped(
-        RoundedToInt(aLayer.Metrics().mCompositionBounds)));
+    clipRegion = RoundedToInt(aLayer.Metrics().mCompositionBounds);
   }
 
   // Optionally, the GeckoContentController can provide a touch-sensitive
@@ -229,10 +228,10 @@ ComputeClipRegion(GeckoContentController* aController,
     // Not sure what rounding option is the most correct here, but if we ever
     // figure it out we can change this. For now I'm rounding in to minimize
     // the chances of getting a complex region.
-    nsIntRect extraClip = ParentLayerIntRect::ToUntyped(RoundedIn(
+    ParentLayerIntRegion extraClip = RoundedIn(
         touchSensitiveRegion
         * aLayer.Metrics().GetDevPixelsPerCSSPixel()
-        * parentCumulativeResolution));
+        * parentCumulativeResolution);
     clipRegion.AndWith(extraClip);
   }
 
@@ -335,7 +334,7 @@ APZCTreeManager::PrepareNodeForLayer(const LayerMetricsWrapper& aLayer,
     node = RecycleOrCreateNode(aState, nullptr);
     AttachNodeToTree(node, aParent, aNextSibling);
     node->SetHitTestData(GetEventRegions(aLayer), aLayer.GetTransform(),
-        aLayer.GetClipRect() ? Some(nsIntRegion(*aLayer.GetClipRect())) : Nothing(),
+        aLayer.GetClipRect() ? Some(ParentLayerIntRegion(ViewAs<ParentLayerPixel>(*aLayer.GetClipRect()))) : Nothing(),
         GetEventRegionsOverride(aParent, aLayer));
     return node;
   }
@@ -365,9 +364,12 @@ APZCTreeManager::PrepareNodeForLayer(const LayerMetricsWrapper& aLayer,
 
     // If the content represented by the scrollable layer has changed (which may
     // be possible because of DLBI heuristics) then we don't want to keep using
-    // the same old APZC for the new content. Null it out so we run through the
-    // code to find another one or create one.
-    if (apzc && !apzc->Matches(guid)) {
+    // the same old APZC for the new content. Also, when reparenting a tab into a
+    // new window a layer might get moved to a different layer tree with a
+    // different APZCTreeManager. In these cases we don't want to reuse the same
+    // APZC, so null it out so we run through the code to find another one or
+    // create one.
+    if (apzc && (!apzc->Matches(guid) || !apzc->HasTreeManager(this))) {
       apzc = nullptr;
     }
 
@@ -431,7 +433,7 @@ APZCTreeManager::PrepareNodeForLayer(const LayerMetricsWrapper& aLayer,
     // or not, depending on whether it went through the newApzc branch above.
     MOZ_ASSERT(node->IsPrimaryHolder() && node->GetApzc() && node->GetApzc()->Matches(guid));
 
-    nsIntRegion clipRegion = ComputeClipRegion(state->mController, aLayer);
+    ParentLayerIntRegion clipRegion = ComputeClipRegion(state->mController, aLayer);
     node->SetHitTestData(GetEventRegions(aLayer), aLayer.GetTransform(), Some(clipRegion),
         GetEventRegionsOverride(aParent, aLayer));
     apzc->SetAncestorTransform(aAncestorTransform);
@@ -486,7 +488,7 @@ APZCTreeManager::PrepareNodeForLayer(const LayerMetricsWrapper& aLayer,
     // ancestor be the same.
     MOZ_ASSERT(aAncestorTransform == apzc->GetAncestorTransform());
 
-    nsIntRegion clipRegion = ComputeClipRegion(state->mController, aLayer);
+    ParentLayerIntRegion clipRegion = ComputeClipRegion(state->mController, aLayer);
     node->SetHitTestData(GetEventRegions(aLayer), aLayer.GetTransform(), Some(clipRegion),
         GetEventRegionsOverride(aParent, aLayer));
   }
@@ -804,6 +806,47 @@ APZCTreeManager::TransformCoordinateToGecko(const ScreenIntPoint& aPoint,
   }
 }
 
+void
+APZCTreeManager::UpdateWheelTransaction(WidgetInputEvent& aEvent)
+{
+  WheelBlockState* txn = mInputQueue->GetCurrentWheelTransaction();
+  if (!txn) {
+    return;
+  }
+
+  // If the transaction has simply timed out, we don't need to do anything
+  // else.
+  if (txn->MaybeTimeout(TimeStamp::Now())) {
+    return;
+  }
+
+  switch (aEvent.message) {
+   case NS_MOUSE_MOVE:
+   case NS_DRAGDROP_OVER: {
+     WidgetMouseEvent* mouseEvent = aEvent.AsMouseEvent();
+     if (!mouseEvent->IsReal()) {
+       return;
+     }
+
+     ScreenIntPoint point =
+       ViewAs<ScreenPixel>(aEvent.refPoint, PixelCastJustification::LayoutDeviceToScreenForUntransformedEvent);
+     txn->OnMouseMove(point);
+     return;
+   }
+   case NS_KEY_PRESS:
+   case NS_KEY_UP:
+   case NS_KEY_DOWN:
+   case NS_MOUSE_BUTTON_UP:
+   case NS_MOUSE_BUTTON_DOWN:
+   case NS_MOUSE_DOUBLECLICK:
+   case NS_MOUSE_CLICK:
+   case NS_CONTEXTMENU:
+   case NS_DRAGDROP_DROP:
+     txn->EndTransaction();
+     return;
+  }
+}
+
 nsEventStatus
 APZCTreeManager::ProcessEvent(WidgetInputEvent& aEvent,
                               ScrollableLayerGuid* aOutTargetGuid,
@@ -811,6 +854,9 @@ APZCTreeManager::ProcessEvent(WidgetInputEvent& aEvent,
 {
   MOZ_ASSERT(NS_IsMainThread());
   nsEventStatus result = nsEventStatus_eIgnore;
+
+  // Note, we call this before having transformed the reference point.
+  UpdateWheelTransaction(aEvent);
 
   // Transform the refPoint.
   // If the event hits an overscrolled APZC, instruct the caller to ignore it.
@@ -857,7 +903,7 @@ APZCTreeManager::WillHandleWheelEvent(WidgetWheelEvent* aEvent)
 {
   return EventStateManager::WheelEventIsScrollAction(aEvent) &&
          aEvent->deltaMode == nsIDOMWheelEvent::DOM_DELTA_LINE &&
-         !gfxPrefs::MouseWheelHasScrollDeltaOverride();
+         !EventStateManager::WheelEventNeedsDeltaMultipliers(aEvent);
 }
 
 nsEventStatus
@@ -1014,6 +1060,12 @@ APZCTreeManager::CancelAnimation(const ScrollableLayerGuid &aGuid)
 void
 APZCTreeManager::ClearTree()
 {
+  // Ensure that no references to APZCs are alive in any lingering input
+  // blocks. This breaks cycles from InputBlockState::mTargetApzc back to
+  // the InputQueue.
+  APZThreadUtils::RunOnControllerThread(NewRunnableMethod(
+    mInputQueue.get(), &InputQueue::Clear));
+
   MonitorAutoLock lock(mTreeLock);
 
   // This can be done as part of a tree walk but it's easier to

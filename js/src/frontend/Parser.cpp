@@ -563,9 +563,9 @@ Parser<ParseHandler>::~Parser()
 
 template <typename ParseHandler>
 ObjectBox *
-Parser<ParseHandler>::newObjectBox(NativeObject *obj)
+Parser<ParseHandler>::newObjectBox(JSObject *obj)
 {
-    MOZ_ASSERT(obj && !IsPoisonedPtr(obj));
+    MOZ_ASSERT(obj);
 
     /*
      * We use JSContext.tempLifoAlloc to allocate parsed objects and place them
@@ -624,23 +624,6 @@ FunctionBox::FunctionBox(ExclusiveContext *cx, ObjectBox* traceListHead, JSFunct
         // outerpc->parsingWith is true.
         inWith = true;
 
-    } else if (outerpc->sc->isGlobalSharedContext()) {
-        // This covers the case where a function is nested within an eval()
-        // within a |with| statement.
-        //
-        //   with (o) { eval("(function() { g(); })();"); }
-        //
-        // In this case, |outerpc| corresponds to the eval(),
-        // outerpc->parsingWith is false because the eval() breaks the
-        // ParseContext chain, and |parent| is nullptr (again because of the
-        // eval(), so we have to look at |outerpc|'s scopeChain.
-        //
-        JSObject *scope = outerpc->sc->asGlobalSharedContext()->scopeChain();
-        while (scope) {
-            if (scope->is<DynamicWithObject>())
-                inWith = true;
-            scope = scope->enclosingScope();
-        }
     } else if (outerpc->sc->isFunctionBox()) {
         // This is like the above case, but for more deeply nested functions.
         // For example:
@@ -660,7 +643,7 @@ FunctionBox *
 Parser<ParseHandler>::newFunctionBox(Node fn, JSFunction *fun, ParseContext<ParseHandler> *outerpc,
                                      Directives inheritedDirectives, GeneratorKind generatorKind)
 {
-    MOZ_ASSERT(fun && !IsPoisonedPtr(fun));
+    MOZ_ASSERT(fun);
 
     /*
      * We use JSContext.tempLifoAlloc to allocate parsed objects and place them
@@ -716,7 +699,7 @@ Parser<ParseHandler>::parse(JSObject *chain)
      *   protected from the GC by a root or a stack frame reference.
      */
     Directives directives(options().strictOption);
-    GlobalSharedContext globalsc(context, chain, directives, options().extraWarningsOption);
+    GlobalSharedContext globalsc(context, directives, options().extraWarningsOption);
     ParseContext<ParseHandler> globalpc(this, /* parent = */ nullptr, ParseHandler::null(),
                                         &globalsc, /* newDirectives = */ nullptr,
                                         /* staticLevel = */ 0, /* bodyid = */ 0,
@@ -2556,7 +2539,7 @@ Parser<ParseHandler>::functionArgsAndBodyGeneric(Node pn, HandleFunction fun, Fu
     if (!body)
         return false;
 
-    if (kind != Method && kind != Lazy && 
+    if (kind != Method && kind != Lazy &&
         fun->name() && !checkStrictBinding(fun->name(), pn))
     {
         return false;
@@ -6415,6 +6398,15 @@ Parser<ParseHandler>::assignExpr(InvokedPrediction invoked)
       case TOK_MODASSIGN:    kind = PNK_MODASSIGN;    op = JSOP_MOD;    break;
 
       case TOK_ARROW: {
+        // A line terminator between ArrowParameters and the => should trigger a SyntaxError.
+        tokenStream.ungetToken();
+        TokenKind next;
+        if (!tokenStream.peekTokenSameLine(&next) || next != TOK_ARROW) {
+            report(ParseError, false, null(), JSMSG_UNEXPECTED_TOKEN,
+                   "expression", TokenKindToDesc(TOK_ARROW));
+            return null();
+        }
+
         tokenStream.seek(start);
         if (!abortIfSyntaxParser())
             return null();
@@ -8451,7 +8443,7 @@ Parser<ParseHandler>::primaryExpr(TokenKind tt, InvokedPrediction invoked)
             return null();
         }
 
-        if (!tokenStream.peekToken(&next))
+        if (!tokenStream.peekTokenSameLine(&next))
             return null();
         if (next != TOK_ARROW) {
             report(ParseError, false, null(), JSMSG_UNEXPECTED_TOKEN,

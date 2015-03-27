@@ -107,6 +107,12 @@ class TrackedOptimizations : public TempObject
         currentAttempt_(UINT32_MAX)
     { }
 
+    void clear() {
+        types_.clear();
+        attempts_.clear();
+        currentAttempt_ = UINT32_MAX;
+    }
+
     bool trackTypeInfo(OptimizationTypeInfo &&ty);
 
     bool trackAttempt(JS::TrackedStrategy strategy);
@@ -316,7 +322,7 @@ class IonTrackedOptimizationsRegion
 
     // Find the index of tracked optimization info (e.g., type info and
     // attempts) at a native code offset.
-    mozilla::Maybe<uint8_t> findIndex(uint32_t offset) const;
+    mozilla::Maybe<uint8_t> findIndex(uint32_t offset, uint32_t *entryOffsetOut) const;
 
     // For the variants below, S stands for startDelta, L for length, and I
     // for index. These were automatically generated from training on the
@@ -503,8 +509,8 @@ class IonTrackedOptimizationsTypeInfo
           : op_(op)
         { }
 
-        void readType(const IonTrackedTypeWithAddendum &tracked) MOZ_OVERRIDE;
-        void operator()(JS::TrackedTypeSite site, MIRType mirType) MOZ_OVERRIDE;
+        void readType(const IonTrackedTypeWithAddendum &tracked) override;
+        void operator()(JS::TrackedTypeSite site, MIRType mirType) override;
     };
 
     void forEach(ForEachOp &op, const IonTrackedTypeVector *allTypes);

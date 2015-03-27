@@ -266,10 +266,17 @@ nsAnimationManager::CheckAnimationRule(nsStyleContext* aStyleContext,
   // build the animations list
   dom::AnimationTimeline* timeline = aElement->OwnerDoc()->Timeline();
   AnimationPlayerPtrArray newPlayers;
-  BuildAnimations(aStyleContext, aElement, timeline, newPlayers);
+  if (!aStyleContext->IsInDisplayNoneSubtree()) {
+    BuildAnimations(aStyleContext, aElement, timeline, newPlayers);
+  }
 
   if (newPlayers.IsEmpty()) {
     if (collection) {
+      // There might be transitions that run now that animations don't
+      // override them.
+      mPresContext->TransitionManager()->
+        UpdateCascadeResultsWithAnimationsToBeDestroyed(collection);
+
       collection->Destroy();
     }
     return nullptr;
@@ -341,11 +348,12 @@ nsAnimationManager::CheckAnimationRule(nsStyleContext* aStyleContext,
         // (We should check newPlayer->IsStylePaused() but that requires
         //  downcasting to CSSAnimationPlayer and we happen to know that
         //  newPlayer will only ever be paused by calling PauseFromStyle
-        //  making IsPaused synonymous in this case.)
-        if (!oldPlayer->IsStylePaused() && newPlayer->IsPaused()) {
+        //  making IsPausedOrPausing synonymous in this case.)
+        if (!oldPlayer->IsStylePaused() && newPlayer->IsPausedOrPausing()) {
           oldPlayer->PauseFromStyle();
           animationChanged = true;
-        } else if (oldPlayer->IsStylePaused() && !newPlayer->IsPaused()) {
+        } else if (oldPlayer->IsStylePaused() &&
+                   !newPlayer->IsPausedOrPausing()) {
           oldPlayer->PlayFromStyle();
           animationChanged = true;
         }
@@ -592,6 +600,7 @@ nsAnimationManager::BuildAnimations(nsStyleContext* aStyleContext,
 
       AnimationProperty &propData = *destAnim->Properties().AppendElement();
       propData.mProperty = prop;
+      propData.mWinsInCascade = true;
 
       KeyframeData *fromKeyframe = nullptr;
       nsRefPtr<nsStyleContext> fromContext;

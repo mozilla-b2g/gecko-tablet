@@ -197,9 +197,9 @@ IsValidVideoRegion(const nsIntSize& aFrame, const nsIntRect& aPicture,
     aDisplay.width * aDisplay.height != 0;
 }
 
-TemporaryRef<SharedThreadPool> GetMediaDecodeThreadPool()
+TemporaryRef<SharedThreadPool> GetMediaThreadPool()
 {
-  return SharedThreadPool::Get(NS_LITERAL_CSTRING("Media Decode"),
+  return SharedThreadPool::Get(NS_LITERAL_CSTRING("Media Playback"),
                                Preferences::GetUint("media.num-decode-threads", 25));
 }
 
@@ -232,6 +232,12 @@ ExtractH264CodecDetails(const nsAString& aCodec,
 
   aLevel = PromiseFlatString(Substring(aCodec, 9, 2)).ToInteger(&rv, 16);
   NS_ENSURE_SUCCESS(rv, false);
+
+  if (aLevel == 9) {
+    aLevel = H264_LEVEL_1_b;
+  } else if (aLevel <= 5) {
+    aLevel *= 10;
+  }
 
   // Capture the constraint_set flag value for the purpose of Telemetry.
   // We don't NS_ENSURE_SUCCESS here because ExtractH264CodecDetails doesn't
@@ -295,7 +301,7 @@ class CreateTaskQueueTask : public nsRunnable {
 public:
   NS_IMETHOD Run() {
     MOZ_ASSERT(NS_IsMainThread());
-    mTaskQueue = new MediaTaskQueue(GetMediaDecodeThreadPool());
+    mTaskQueue = new MediaTaskQueue(GetMediaThreadPool());
     return NS_OK;
   }
   nsRefPtr<MediaTaskQueue> mTaskQueue;
@@ -305,7 +311,7 @@ class CreateFlushableTaskQueueTask : public nsRunnable {
 public:
   NS_IMETHOD Run() {
     MOZ_ASSERT(NS_IsMainThread());
-    mTaskQueue = new FlushableMediaTaskQueue(GetMediaDecodeThreadPool());
+    mTaskQueue = new FlushableMediaTaskQueue(GetMediaThreadPool());
     return NS_OK;
   }
   nsRefPtr<FlushableMediaTaskQueue> mTaskQueue;

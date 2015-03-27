@@ -785,7 +785,7 @@ this.AppsUtils = {
 /**
  * Helper object to access manifest information with locale support
  */
-this.ManifestHelper = function(aManifest, aOrigin, aManifestURL) {
+this.ManifestHelper = function(aManifest, aOrigin, aManifestURL, aLang) {
   // If the app is packaged, we resolve uris against the origin.
   // If it's not, against the manifest url.
 
@@ -801,10 +801,15 @@ this.ManifestHelper = function(aManifest, aOrigin, aManifestURL) {
   this._manifestURL = Services.io.newURI(aManifestURL, null, null);
 
   this._manifest = aManifest;
-  let chrome = Cc["@mozilla.org/chrome/chrome-registry;1"]
-                 .getService(Ci.nsIXULChromeRegistry)
-                 .QueryInterface(Ci.nsIToolkitChromeRegistry);
-  let locale = chrome.getSelectedLocale("global").toLowerCase();
+
+  let locale = aLang;
+  if (!locale) {
+    let chrome = Cc["@mozilla.org/chrome/chrome-registry;1"]
+                   .getService(Ci.nsIXULChromeRegistry)
+                   .QueryInterface(Ci.nsIToolkitChromeRegistry);
+    locale = chrome.getSelectedLocale("global").toLowerCase();
+  }
+
   this._localeRoot = this._manifest;
 
   if (this._manifest.locales && this._manifest.locales[locale]) {
@@ -925,6 +930,10 @@ ManifestHelper.prototype = {
     // If no start point is specified, we use the root launch path.
     // In all error cases, we just return null.
     if ((aStartPoint || "") === "") {
+      // W3C start_url takes precedence over mozApps launch_path
+      if (this._localeProp("start_url")) {
+        return this._baseURI.resolve(this._localeProp("start_url") || "/");
+      }
       return this._baseURI.resolve(this._localeProp("launch_path") || "/");
     }
 

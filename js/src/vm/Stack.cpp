@@ -171,7 +171,7 @@ AssertDynamicScopeMatchesStaticScope(JSContext *cx, JSScript *script, JSObject *
 
     // The scope chain is always ended by one or more non-syntactic
     // ScopeObjects (viz. GlobalObject or a non-syntactic WithObject).
-    MOZ_ASSERT(IsValidTerminatingScope(scope));
+    MOZ_ASSERT(!IsSyntacticScope(scope));
 #endif
 }
 
@@ -238,7 +238,7 @@ InterpreterFrame::epilogue(JSContext *cx)
                 DebugScopes::onPopStrictEvalScope(this);
         } else if (isDirectEvalFrame()) {
             if (isDebuggerEvalFrame())
-                MOZ_ASSERT(IsValidTerminatingScope(scopeChain()));
+                MOZ_ASSERT(!IsSyntacticScope(scopeChain()));
         } else {
             /*
              * Debugger.Object.prototype.evalInGlobal creates indirect eval
@@ -258,7 +258,7 @@ InterpreterFrame::epilogue(JSContext *cx)
     }
 
     if (isGlobalFrame()) {
-        MOZ_ASSERT(IsValidTerminatingScope(scopeChain()));
+        MOZ_ASSERT(!IsSyntacticScope(scopeChain()));
         return;
     }
 
@@ -329,7 +329,7 @@ InterpreterFrame::mark(JSTracer *trc)
     } else {
         gc::MarkScriptUnbarriered(trc, &exec.script, "script");
     }
-    if (IS_GC_MARKING_TRACER(trc))
+    if (trc->isMarkingTracer())
         script()->compartment()->zone()->active = true;
     if (hasReturnValue())
         gc::MarkValueUnbarriered(trc, &rval_, "rval");
@@ -1111,7 +1111,8 @@ FrameIter::matchCallee(JSContext *cx, HandleFunction fun) const
     // Use the same condition as |js::CloneFunctionObject|, to know if we should
     // expect both functions to have the same JSScript. If so, and if they are
     // different, then they cannot be equal.
-    bool useSameScript = CloneFunctionObjectUseSameScript(fun->compartment(), currentCallee);
+    RootedObject global(cx, &fun->global());
+    bool useSameScript = CloneFunctionObjectUseSameScript(fun->compartment(), currentCallee, global);
     if (useSameScript &&
         (currentCallee->hasScript() != fun->hasScript() ||
          currentCallee->nonLazyScript() != fun->nonLazyScript()))
@@ -1861,7 +1862,7 @@ JS::ProfilingFrameIterator::extractStack(Frame *frames, uint32_t offset, uint32_
         frames[offset].returnAddress = nullptr;
         frames[offset].activation = activation_;
         frames[offset].label = asmJSIter().label();
-        frames[offset].hasTrackedOptimizations = false;
+        frames[offset].mightHaveTrackedOptimizations = false;
         return 1;
     }
 
@@ -1897,20 +1898,16 @@ JS::ProfilingFrameIterator::extractStack(Frame *frames, uint32_t offset, uint32_
         frames[offset + i].returnAddress = returnAddr;
         frames[offset + i].activation = activation_;
         frames[offset + i].label = labels[i];
-        frames[offset + i].hasTrackedOptimizations = false;
+        frames[offset + i].mightHaveTrackedOptimizations = false;
     }
 
-    // Extract the index into the side table of optimization information and
-    // store it on the youngest frame. All inlined frames will have the same
-    // optimization information by virtue of sharing the JitcodeGlobalEntry,
-    // but such information is only interpretable on the youngest frame.
+    // A particular return address might have tracked optimizations only if
+    // there are any optimizations at all.
     //
-    // FIXMEshu: disabled until we can ensure the optimization info is live
-    // when we write out the JSON stream of the profile.
-    if (false && entry.hasTrackedOptimizations()) {
-        mozilla::Maybe<uint8_t> index = entry.trackedOptimizationIndexAtAddr(returnAddr);
-        frames[offset].hasTrackedOptimizations = index.isSome();
-    }
+    // All inlined Ion frames will have the same optimization information by
+    // virtue of sharing the JitcodeGlobalEntry, but such information is only
+    // interpretable on the youngest frame.
+    frames[offset].mightHaveTrackedOptimizations = entry.hasTrackedOptimizations();
 
     return depth;
 }

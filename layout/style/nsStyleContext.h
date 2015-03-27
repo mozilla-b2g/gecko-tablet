@@ -38,7 +38,7 @@ class nsPresContext;
  * collection.
  */
 
-class nsStyleContext MOZ_FINAL
+class nsStyleContext final
 {
 public:
   /**
@@ -159,6 +159,10 @@ public:
   // currenlty used by ruby to make its content frames unbreakable.
   bool ShouldSuppressLineBreak() const
     { return !!(mBits & NS_STYLE_SUPPRESS_LINEBREAK); }
+
+  // Does this style context or any of its ancestors have display:none set?
+  bool IsInDisplayNoneSubtree() const
+    { return !!(mBits & NS_STYLE_IN_DISPLAY_NONE_SUBTREE); }
 
   // Does this style context represent the style for a pseudo-element or
   // inherit data from such a style context?  Whether this returns true

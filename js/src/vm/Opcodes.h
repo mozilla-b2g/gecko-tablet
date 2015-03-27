@@ -1499,7 +1499,9 @@
     macro(JSOP_RETRVAL,       153,"retrval",    NULL,       1,  0,  0,  JOF_BYTE) \
     \
     /*
-     * Looks up name on global scope and pushes its value onto the stack.
+     * Looks up name on global scope and pushes its value onto the stack, unless
+     * the script has a polluted global, in which case it acts just like
+     * JSOP_NAME.
      *
      * Free variable references that must either be found on the global or a
      * ReferenceError.
@@ -1513,7 +1515,8 @@
      * Pops the top two values on the stack as 'val' and 'scope', sets property
      * of 'scope' as 'val' and pushes 'val' back on the stack.
      *
-     * 'scope' should be the global scope.
+     * 'scope' should be the global scope unless the script has a polluted
+     * global scope, in which case acts like JSOP_SETNAME.
      *   Category: Variables and Scopes
      *   Type: Free Variables
      *   Operands: uint32_t nameIndex
@@ -1526,14 +1529,25 @@
      * of 'scope' as 'val' and pushes 'val' back on the stack. Throws a
      * TypeError if the set fails, per strict mode semantics.
      *
-     * 'scope' should be the global scope.
+     * 'scope' should be the global scope unless the script has a polluted
+     * global scope, in which case acts like JSOP_STRICTSETNAME.
      *   Category: Variables and Scopes
      *   Type: Free Variables
      *   Operands: uint32_t nameIndex
      *   Stack: scope, val => val
      */ \
     macro(JSOP_STRICTSETGNAME, 156, "strict-setgname",  NULL,       5,  2,  1, JOF_ATOM|JOF_NAME|JOF_SET|JOF_DETECTING|JOF_GNAME|JOF_CHECKSTRICT) \
-    macro(JSOP_UNUSED157,  157, "unused157",   NULL,         1,  0,  0,  JOF_BYTE) \
+    /*
+     * Pushes the implicit 'this' value for calls to the associated name onto
+     * the stack; only used when we know this implicit this will be our first
+     * non-syntactic scope.
+     *
+     *   Category: Variables and Scopes
+     *   Type: This
+     *   Operands: uint32_t nameIndex
+     *   Stack: => this
+     */                                                                 \
+    macro(JSOP_GIMPLICITTHIS, 157, "gimplicitthis", "",      5,  0,  1,  JOF_ATOM) \
     macro(JSOP_UNUSED158,  158, "unused158",   NULL,         1,  0,  0,  JOF_BYTE) \
     macro(JSOP_UNUSED159,  159, "unused159",   NULL,         1,  0,  0,  JOF_BYTE) \
     \
@@ -1759,9 +1773,10 @@
     macro(JSOP_UNUSED212,     212, "unused212",    NULL,  1,  0,  0,  JOF_BYTE) \
     macro(JSOP_UNUSED213,     213, "unused213",    NULL,  1,  0,  0,  JOF_BYTE) \
     /*
-     * Pushes the global scope onto the stack.
+     * Pushes the global scope onto the stack if the script doesn't have a
+     * polluted global scope.  Otherwise will act like JSOP_BINDNAME.
      *
-     * 'nameIndex' is not used.
+     * 'nameIndex' is only used when acting like JSOP_BINDNAME.
      *   Category: Variables and Scopes
      *   Type: Free Variables
      *   Operands: uint32_t nameIndex

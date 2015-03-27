@@ -201,6 +201,7 @@ SavedFrame::finishSavedFrameInit(JSContext *cx, HandleObject ctor, HandleObject 
         GenericCreateConstructor<SavedFrame::construct, 0, JSFunction::FinalizeKind>,
         GenericCreatePrototype,
         SavedFrame::staticFunctions,
+        nullptr,
         SavedFrame::protoFunctions,
         SavedFrame::protoAccessors,
         SavedFrame::finishSavedFrameInit,
@@ -632,49 +633,57 @@ GetSavedFrameParent(JSContext *cx, HandleObject savedFrame, MutableHandleObject 
 JS_PUBLIC_API(bool)
 StringifySavedFrameStack(JSContext *cx, HandleObject stack, MutableHandleString stringp)
 {
-    AutoMaybeEnterFrameCompartment ac(cx, stack);
-    bool skippedAsync;
-    js::RootedSavedFrame frame(cx, UnwrapSavedFrame(cx, stack, skippedAsync));
-    if (!frame) {
-        stringp.set(cx->runtime()->emptyString);
-        return true;
-    }
-
     js::StringBuffer sb(cx);
-    DebugOnly<JSSubsumesOp> subsumes = cx->runtime()->securityCallbacks->subsumes;
-    DebugOnly<JSPrincipals *> principals = cx->compartment()->principals;
 
-    js::RootedSavedFrame parent(cx);
-    do {
-        MOZ_ASSERT_IF(subsumes, (*subsumes)(principals, frame->getPrincipals()));
-
-        if (!frame->isSelfHosted()) {
-            RootedString asyncCause(cx, frame->getAsyncCause());
-            if (!asyncCause && skippedAsync) {
-                asyncCause.set(cx->names().Async);
-            }
-            js::RootedAtom name(cx, frame->getFunctionDisplayName());
-            if ((asyncCause && (!sb.append(asyncCause) || !sb.append('*')))
-                || (name && !sb.append(name))
-                || !sb.append('@')
-                || !sb.append(frame->getSource())
-                || !sb.append(':')
-                || !NumberValueToStringBuffer(cx, NumberValue(frame->getLine()), sb)
-                || !sb.append(':')
-                || !NumberValueToStringBuffer(cx, NumberValue(frame->getColumn()), sb)
-                || !sb.append('\n'))
-            {
-                return false;
-            }
+    // Enter a new block to constrain the scope of possibly entering the stack's
+    // compartment. This ensures that when we finish the StringBuffer, we are
+    // back in the cx's original compartment, and fulfill our contract with
+    // callers to place the output string in the cx's current compartment.
+    {
+        AutoMaybeEnterFrameCompartment ac(cx, stack);
+        bool skippedAsync;
+        js::RootedSavedFrame frame(cx, UnwrapSavedFrame(cx, stack, skippedAsync));
+        if (!frame) {
+            stringp.set(cx->runtime()->emptyString);
+            return true;
         }
 
-        parent = frame->getParent();
-        frame = js::GetFirstSubsumedFrame(cx, parent, skippedAsync);
-    } while (frame);
+        DebugOnly<JSSubsumesOp> subsumes = cx->runtime()->securityCallbacks->subsumes;
+        DebugOnly<JSPrincipals *> principals = cx->compartment()->principals;
+
+        js::RootedSavedFrame parent(cx);
+        do {
+            MOZ_ASSERT_IF(subsumes, (*subsumes)(principals, frame->getPrincipals()));
+
+            if (!frame->isSelfHosted()) {
+                RootedString asyncCause(cx, frame->getAsyncCause());
+                if (!asyncCause && skippedAsync)
+                    asyncCause.set(cx->names().Async);
+
+                js::RootedAtom name(cx, frame->getFunctionDisplayName());
+                if ((asyncCause && (!sb.append(asyncCause) || !sb.append('*')))
+                    || (name && !sb.append(name))
+                    || !sb.append('@')
+                    || !sb.append(frame->getSource())
+                    || !sb.append(':')
+                    || !NumberValueToStringBuffer(cx, NumberValue(frame->getLine()), sb)
+                    || !sb.append(':')
+                    || !NumberValueToStringBuffer(cx, NumberValue(frame->getColumn()), sb)
+                    || !sb.append('\n'))
+                {
+                    return false;
+                }
+            }
+
+            parent = frame->getParent();
+            frame = js::GetFirstSubsumedFrame(cx, parent, skippedAsync);
+        } while (frame);
+    }
 
     JSString *str = sb.finishString();
     if (!str)
         return false;
+    assertSameCompartment(cx, str);
     stringp.set(str);
     return true;
 }
@@ -1151,18 +1160,18 @@ SavedStacks::chooseSamplingProbability(JSContext *cx)
     allocationSamplingProbability = allocationTrackingDbg->allocationSamplingProbability;
 }
 
-bool
-SavedStacksMetadataCallback(JSContext *cx, JSObject **pmetadata)
+JSObject *
+SavedStacksMetadataCallback(JSContext *cx)
 {
     SavedStacks &stacks = cx->compartment()->savedStacks();
     if (stacks.allocationSkipCount > 0) {
         stacks.allocationSkipCount--;
-        return true;
+        return nullptr;
     }
 
     stacks.chooseSamplingProbability(cx);
     if (stacks.allocationSamplingProbability == 0.0)
-        return true;
+        return nullptr;
 
     // If the sampling probability is set to 1.0, we are always taking a sample
     // and can therefore leave allocationSkipCount at 0.
@@ -1191,10 +1200,12 @@ SavedStacksMetadataCallback(JSContext *cx, JSObject **pmetadata)
 
     RootedSavedFrame frame(cx);
     if (!stacks.saveCurrentStack(cx, &frame))
-        return false;
-    *pmetadata = frame;
+        CrashAtUnhandlableOOM("SavedStacksMetadataCallback");
 
-    return Debugger::onLogAllocationSite(cx, frame, PRMJ_Now());
+    if (!Debugger::onLogAllocationSite(cx, frame, PRMJ_Now()))
+        CrashAtUnhandlableOOM("SavedStacksMetadataCallback");
+
+    return frame;
 }
 
 JS_FRIEND_API(JSPrincipals *)

@@ -1086,14 +1086,14 @@ public:
 
     RectAccumulator();
 
-    virtual void AddRect(const nsRect& aRect) MOZ_OVERRIDE;
+    virtual void AddRect(const nsRect& aRect) override;
   };
 
   struct RectListBuilder : public RectCallback {
     DOMRectList* mRectList;
 
     explicit RectListBuilder(DOMRectList* aList);
-    virtual void AddRect(const nsRect& aRect) MOZ_OVERRIDE;
+    virtual void AddRect(const nsRect& aRect) override;
   };
 
   static nsIFrame* GetContainingBlockForClientRect(nsIFrame* aFrame);
@@ -2416,6 +2416,25 @@ public:
   static void
   AssertTreeOnlyEmptyNextInFlows(nsIFrame *aSubtreeRoot);
 #endif
+
+  /**
+   * Helper method to get touch action behaviour from the frame
+   */
+  static uint32_t
+  GetTouchActionFromFrame(nsIFrame* aFrame);
+
+  /**
+   * Helper method to transform |aBounds| from aFrame to aAncestorFrame,
+   * and combine it with |aPreciseTargetDest| if it is axis-aligned, or
+   * combine it with |aImpreciseTargetDest| if not.
+   */
+  static void
+  TransformToAncestorAndCombineRegions(
+    const nsRect& aBounds,
+    nsIFrame* aFrame,
+    const nsIFrame* aAncestorFrame,
+    nsRegion* aPreciseTargetDest,
+    nsRegion* aImpreciseTargetDest);
 
   /**
    * Determine if aImageFrame (which is an nsImageFrame, nsImageControlFrame, or

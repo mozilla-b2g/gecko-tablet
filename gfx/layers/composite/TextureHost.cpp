@@ -80,17 +80,17 @@ public:
 
   void CompositorRecycle();
 
-  virtual bool RecvClientRecycle() MOZ_OVERRIDE;
+  virtual bool RecvClientRecycle() override;
 
-  virtual bool RecvClearTextureHostSync() MOZ_OVERRIDE;
+  virtual bool RecvClearTextureHostSync() override;
 
-  virtual bool RecvRemoveTexture() MOZ_OVERRIDE;
+  virtual bool RecvRemoveTexture() override;
 
-  virtual bool RecvRecycleTexture(const TextureFlags& aTextureFlags) MOZ_OVERRIDE;
+  virtual bool RecvRecycleTexture(const TextureFlags& aTextureFlags) override;
 
   TextureHost* GetTextureHost() { return mTextureHost; }
 
-  void ActorDestroy(ActorDestroyReason why) MOZ_OVERRIDE;
+  void ActorDestroy(ActorDestroyReason why) override;
 
   void ClearTextureHost();
 
@@ -145,13 +145,6 @@ PTextureParent*
 TextureHost::GetIPDLActor()
 {
   return mActor;
-}
-
-bool
-TextureHost::BindTextureSource(CompositableTextureSourceRef& texture)
-{
-  texture = GetTextureSources();
-  return !!texture;
 }
 
 FenceHandle
@@ -232,6 +225,7 @@ TextureHost::Create(const SurfaceDescriptor& aDesc,
       return CreateTextureHostD3D9(aDesc, aDeallocator, aFlags);
 
     case SurfaceDescriptor::TSurfaceDescriptorD3D10:
+    case SurfaceDescriptor::TSurfaceDescriptorDXGIYCbCr:
       if (Compositor::GetBackend() == LayersBackend::LAYERS_D3D9) {
         return CreateTextureHostD3D9(aDesc, aDeallocator, aFlags);
       } else {
@@ -408,6 +402,7 @@ BufferTextureHost::Updated(const nsIntRegion* aRegion)
 void
 BufferTextureHost::SetCompositor(Compositor* aCompositor)
 {
+  MOZ_ASSERT(aCompositor);
   if (mCompositor == aCompositor) {
     return;
   }
@@ -448,12 +443,13 @@ BufferTextureHost::Unlock()
   mLocked = false;
 }
 
-TextureSource*
-BufferTextureHost::GetTextureSources()
+bool
+BufferTextureHost::BindTextureSource(CompositableTextureSourceRef& aTexture)
 {
   MOZ_ASSERT(mLocked);
   MOZ_ASSERT(mFirstSource);
-  return mFirstSource;
+  aTexture = mFirstSource;
+  return !!aTexture;
 }
 
 gfx::SurfaceFormat

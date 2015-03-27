@@ -15,17 +15,6 @@ using namespace js;
 using namespace js::jit;
 
 void
-LIRGeneratorX86::useBox(LInstruction *lir, size_t n, MDefinition *mir,
-                        LUse::Policy policy, bool useAtStart)
-{
-    MOZ_ASSERT(mir->type() == MIRType_Value);
-
-    ensureDefined(mir);
-    lir->setOperand(n, LUse(mir->virtualRegister(), policy, useAtStart));
-    lir->setOperand(n + 1, LUse(VirtualRegisterOfPayload(mir), policy, useAtStart));
-}
-
-void
 LIRGeneratorX86::useBoxFixed(LInstruction *lir, size_t n, MDefinition *mir, Register reg1,
                              Register reg2)
 {
@@ -294,13 +283,14 @@ LIRGeneratorX86::visitAsmJSCompareExchangeHeap(MAsmJSCompareExchangeHeap *ins)
 
     // Register allocation:
     //
-    // The output must be eax.
+    // The output may not be used, but eax will be clobbered regardless
+    // so pin the output to eax.
     //
     // oldval must be in a register.
     //
     // newval must be in a register.  If the source is a byte array
-    // then newval must be a register that has a byte size: on x86
-    // this must be ebx, ecx, or edx (eax is taken for the output).
+    // then newval must be a register that has a byte size: this must
+    // be ebx, ecx, or edx (eax is taken).
     //
     // Bug #1077036 describes some optimization opportunities.
 
@@ -324,7 +314,25 @@ LIRGeneratorX86::visitAsmJSAtomicBinopHeap(MAsmJSAtomicBinopHeap *ins)
 
     bool byteArray = byteSize(ins->accessType()) == 1;
 
-    // Register allocation:
+    // Case 1: the result of the operation is not used.
+    //
+    // We'll emit a single instruction: LOCK ADD, LOCK SUB, LOCK AND,
+    // LOCK OR, or LOCK XOR.  These can all take an immediate.
+
+    if (!ins->hasUses()) {
+        LAllocation value;
+        if (byteArray && !ins->value()->isConstant())
+            value = useFixed(ins->value(), ebx);
+        else
+            value = useRegisterOrConstant(ins->value());
+        LAsmJSAtomicBinopHeapForEffect *lir =
+            new(alloc()) LAsmJSAtomicBinopHeapForEffect(useRegister(ptr), value);
+        lir->setAddrTemp(temp());
+        add(lir, ins);
+        return;
+    }
+
+    // Case 2: the result of the operation is used.
     //
     // For ADD and SUB we'll use XADD:
     //
@@ -354,32 +362,34 @@ LIRGeneratorX86::visitAsmJSAtomicBinopHeap(MAsmJSAtomicBinopHeap *ins)
     // For the 8-bit variants the temp must have a byte register.
     //
     // There are optimization opportunities:
-    //  - when the result is unused, Bug #1077014.
-    //  - better register allocation and instruction selection, Bug #1077036.
+    //  - better 8-bit register allocation and instruction selection, Bug #1077036.
 
     bool bitOp = !(ins->operation() == AtomicFetchAddOp || ins->operation() == AtomicFetchSubOp);
     LDefinition tempDef = LDefinition::BogusTemp();
     LAllocation value;
 
-    // Optimization opportunity: "value" need not be pinned to something that
-    // has a byte register unless the back-end insists on using a byte move
-    // for the setup or the payload computation, which really it need not do.
-
     if (byteArray) {
         value = useFixed(ins->value(), ebx);
         if (bitOp)
             tempDef = tempFixed(ecx);
-    } else {
-        value = useRegister(ins->value());
+    } else if (bitOp || ins->value()->isConstant()) {
+        value = useRegisterOrConstant(ins->value());
         if (bitOp)
             tempDef = temp();
+    } else {
+        value = useRegisterAtStart(ins->value());
     }
 
     LAsmJSAtomicBinopHeap *lir =
         new(alloc()) LAsmJSAtomicBinopHeap(useRegister(ptr), value, tempDef);
 
     lir->setAddrTemp(temp());
-    defineFixed(lir, ins, LAllocation(AnyRegister(eax)));
+    if (byteArray || bitOp)
+        defineFixed(lir, ins, LAllocation(AnyRegister(eax)));
+    else if (ins->value()->isConstant())
+        define(lir, ins);
+    else
+        defineReuseInput(lir, ins, LAsmJSAtomicBinopHeap::valueOp);
 }
 
 void

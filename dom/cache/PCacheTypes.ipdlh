@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+include protocol PCachePushStream;
 include protocol PCacheStreamControl;
 include PHeaders;
 include InputStreamParams;
@@ -9,6 +10,7 @@ include InputStreamParams;
 using HeadersGuardEnum from "mozilla/dom/FetchIPCUtils.h";
 using RequestCredentials from "mozilla/dom/FetchIPCUtils.h";
 using RequestMode from "mozilla/dom/FetchIPCUtils.h";
+using RequestCache from "mozilla/dom/FetchIPCUtils.h";
 using mozilla::dom::ResponseType from "mozilla/dom/FetchIPCUtils.h";
 using mozilla::void_t from "ipc/IPCMessageUtils.h";
 using struct nsID from "nsID.h";
@@ -32,6 +34,7 @@ struct PCacheReadStream
   OptionalInputStreamParams params;
   OptionalFileDescriptorSet fds;
   nullable PCacheStreamControl control;
+  nullable PCachePushStream pushStream;
 };
 
 union PCacheReadStreamOrVoid
@@ -52,6 +55,7 @@ struct PCacheRequest
   RequestCredentials credentials;
   PCacheReadStreamOrVoid body;
   uint32_t context;
+  RequestCache requestCache;
 };
 
 union PCacheRequestOrVoid

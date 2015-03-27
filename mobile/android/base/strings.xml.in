@@ -78,6 +78,7 @@
 
   <string name="quit">&quit;</string>
   <string name="bookmark">&bookmark;</string>
+  <string name="bookmark_remove">&bookmark_remove;</string>
   <string name="bookmark_added">&bookmark_added;</string>
   <string name="bookmark_removed">&bookmark_removed;</string>
   <string name="bookmark_updated">&bookmark_updated;</string>
@@ -119,6 +120,7 @@
   <string name="overlay_share_retry">&overlay_share_retry;</string>
   <string name="overlay_share_select_device">&overlay_share_select_device;</string>
   <string name="overlay_no_synced_devices">&overlay_no_synced_devices;</string>
+  <string name="overlay_share_tab_not_sent">&overlay_share_tab_not_sent;</string>
 
   <string name="settings">&settings;</string>
   <string name="settings_title">&settings_title;</string>
@@ -239,6 +241,13 @@
   <string name="pref_tab_queue_title">&pref_tab_queue_title;</string>
   <string name="pref_tab_queue_summary">&pref_tab_queue_summary;</string>
 
+  <string name="tab_queue_toast_message">&tab_queue_toast_message;</string>
+  <string name="tab_queue_toast_action">&tab_queue_toast_action;</string>
+  <string name="tab_queue_notification_text_singular">&tab_queue_notification_text_singular;</string>
+  <string name="tab_queue_notification_text_plural">&tab_queue_notification_text_plural;</string>
+  <string name="tab_queue_notification_title_singular">&tab_queue_notification_title_singular;</string>
+  <string name="tab_queue_notification_title_plural">&tab_queue_notification_title_plural;</string>
+
   <string name="pref_about_firefox">&pref_about_firefox;</string>
   <string name="pref_vendor_faqs">&pref_vendor_faqs;</string>
   <string name="pref_vendor_feedback">&pref_vendor_feedback;</string>
@@ -270,7 +279,7 @@
   <string name="datareporting_crashreporter_title_short">&datareporting_crashreporter_title_short;</string>
   <string name="datareporting_crashreporter_summary">&datareporting_crashreporter_summary;</string>
   <string name="datareporting_wifi_title">&datareporting_wifi_title2;</string>
-  <string name="datareporting_wifi_geolocation_summary">&datareporting_wifi_geolocation_summary3;</string>
+  <string name="datareporting_wifi_geolocation_summary">&datareporting_wifi_geolocation_summary4;</string>
 
   <string name="go">&go;</string>
   <string name="search">&search;</string>
@@ -465,8 +474,9 @@
   <string name="updater_apply_title">&updater_apply_title2;</string>
   <string name="updater_apply_select">&updater_apply_select2;</string>
 
-  <!-- Search suggestions opt-in -->
+  <!-- Awesomescreen screen -->
   <string name="suggestions_prompt">&suggestions_prompt3;</string>
+  <string name="search_bar_item_desc">&search_bar_item_desc;</string>
 
   <string name="suggestion_for_engine">&suggestion_for_engine;</string>
 

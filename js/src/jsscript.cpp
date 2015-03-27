@@ -141,7 +141,7 @@ Bindings::initWithTemporaryStorage(ExclusiveContext *cx, InternalBindingsHandle 
 
     // Start with the empty shape and then append one shape per aliased binding.
     RootedShape shape(cx,
-        EmptyShape::getInitialShape(cx, &CallObject::class_, TaggedProto(nullptr), nullptr,
+        EmptyShape::getInitialShape(cx, &CallObject::class_, TaggedProto(nullptr),
                                     nfixed, BaseShape::QUALIFIED_VAROBJ | BaseShape::DELEGATE));
     if (!shape)
         return false;
@@ -164,7 +164,7 @@ Bindings::initWithTemporaryStorage(ExclusiveContext *cx, InternalBindingsHandle 
             return false;
 #endif
 
-        StackBaseShape stackBase(cx, &CallObject::class_, nullptr,
+        StackBaseShape stackBase(cx, &CallObject::class_,
                                  BaseShape::QUALIFIED_VAROBJ | BaseShape::DELEGATE);
 
         UnownedBaseShape *base = BaseShape::getUnowned(cx, stackBase);
@@ -484,7 +484,7 @@ XDRLazyFreeVariables(XDRState<mode> *xdr, MutableHandle<LazyScript *> lazy)
 template<XDRMode mode>
 static bool
 XDRRelazificationInfo(XDRState<mode> *xdr, HandleFunction fun, HandleScript script,
-                      MutableHandle<LazyScript *> lazy)
+                      HandleObject enclosingScope, MutableHandle<LazyScript *> lazy)
 {
     MOZ_ASSERT_IF(mode == XDR_ENCODE, script->isRelazifiable() && script->maybeLazyScript());
     MOZ_ASSERT_IF(mode == XDR_ENCODE, !lazy->numInnerFunctions());
@@ -516,6 +516,9 @@ XDRRelazificationInfo(XDRState<mode> *xdr, HandleFunction fun, HandleScript scri
             // of the script, as we are trying to match the fact this function
             // has already been parsed and that it would need to be re-lazified.
             lazy->initRuntimeFields(packedFields);
+
+            MOZ_ASSERT(!lazy->sourceObject());
+            lazy->setParent(enclosingScope, &script->scriptSourceUnwrap());
         }
     }
 
@@ -576,7 +579,8 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
         IsCompileAndGo,
         HasSingleton,
         TreatAsRunOnce,
-        HasLazyScript
+        HasLazyScript,
+        HasPollutedGlobalScope,
     };
 
     uint32_t length, lineno, column, nslots, staticLevel;
@@ -694,6 +698,8 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
             scriptBits |= (1 << TreatAsRunOnce);
         if (script->isRelazifiable())
             scriptBits |= (1 << HasLazyScript);
+        if (script->hasPollutedGlobalScope())
+            scriptBits |= (1 << HasPollutedGlobalScope);
     }
 
     if (!xdr->codeUint32(&prologLength))
@@ -811,6 +817,8 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
             script->hasSingletons_ = true;
         if (scriptBits & (1 << TreatAsRunOnce))
             script->treatAsRunOnce_ = true;
+        if (scriptBits & (1 << HasPollutedGlobalScope))
+            script->hasPollutedGlobalScope_ = true;
 
         if (scriptBits & (1 << IsLegacyGenerator)) {
             MOZ_ASSERT(!(scriptBits & (1 << IsStarGenerator)));
@@ -1076,7 +1084,7 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
         if (mode == XDR_ENCODE)
             lazy = script->maybeLazyScript();
 
-        if (!XDRRelazificationInfo(xdr, fun, script, &lazy))
+        if (!XDRRelazificationInfo(xdr, fun, script, enclosingScope, &lazy))
             return false;
 
         if (mode == XDR_DECODE)
@@ -2392,6 +2400,7 @@ JSScript::Create(ExclusiveContext *cx, HandleObject enclosingScope, bool savedCa
     script->initCompartment(cx);
 
     script->compileAndGo_ = options.compileAndGo;
+    script->hasPollutedGlobalScope_ = options.hasPollutedGlobalScope;
     script->selfHosted_ = options.selfHostingMode;
     script->noScriptRval_ = options.noScriptRval;
 
@@ -2560,7 +2569,7 @@ JSScript::fullyInitFromEmitter(ExclusiveContext *cx, HandleScript script, Byteco
     uint32_t mainLength = bce->offset();
     uint32_t prologLength = bce->prologOffset();
     uint32_t nsrcnotes;
-    if (!FinishTakingSrcNotes(cx, bce, &nsrcnotes))
+    if (!bce->finishTakingSrcNotes(&nsrcnotes))
         return false;
     uint32_t natoms = bce->atomIndices->count();
     if (!partiallyInit(cx, script,
@@ -2585,7 +2594,7 @@ JSScript::fullyInitFromEmitter(ExclusiveContext *cx, HandleScript script, Byteco
     jsbytecode *code = ssd->data;
     PodCopy<jsbytecode>(code, bce->prolog.code.begin(), prologLength);
     PodCopy<jsbytecode>(code + prologLength, bce->code().begin(), mainLength);
-    CopySrcNotes(bce, (jssrcnote *)(code + script->length()), nsrcnotes);
+    bce->copySrcNotes((jssrcnote *)(code + script->length()), nsrcnotes);
     InitAtomMap(bce->atomIndices.getMap(), ssd->atoms());
 
     if (!SaveSharedScriptData(cx, script, ssd, nsrcnotes))
@@ -2953,6 +2962,7 @@ Rebase(JSScript *dst, JSScript *src, T *srcp)
 
 JSScript *
 js::CloneScript(JSContext *cx, HandleObject enclosingScope, HandleFunction fun, HandleScript src,
+                PollutedGlobalScopeOption polluted /* = HasCleanGlobalScope */,
                 NewObjectKind newKind /* = GenericObject */)
 {
     /* NB: Keep this in sync with XDRScript. */
@@ -3002,7 +3012,11 @@ js::CloneScript(JSContext *cx, HandleObject enclosingScope, HandleFunction fun, 
             } else if (obj->is<JSFunction>()) {
                 RootedFunction innerFun(cx, &obj->as<JSFunction>());
                 if (innerFun->isNative()) {
-                    assertSameCompartment(cx, innerFun);
+                    if (cx->compartment() != innerFun->compartment()) {
+                        MOZ_ASSERT(innerFun->isAsmJSNative());
+                        JS_ReportError(cx, "AsmJS modules do not yet support cloning.");
+                        return nullptr;
+                    }
                     clone = innerFun;
                 } else {
                     if (innerFun->isInterpretedLazy()) {
@@ -3020,7 +3034,7 @@ js::CloneScript(JSContext *cx, HandleObject enclosingScope, HandleFunction fun, 
                     else
                         enclosingScope = objects[FindScopeObjectIndex(src, ssi.staticWith())];
 
-                    clone = CloneFunctionAndScript(cx, enclosingScope, innerFun);
+                    clone = CloneFunctionAndScript(cx, enclosingScope, innerFun, polluted);
                 }
             } else {
                 /*
@@ -3076,6 +3090,8 @@ js::CloneScript(JSContext *cx, HandleObject enclosingScope, HandleFunction fun, 
     CompileOptions options(cx);
     options.setMutedErrors(src->mutedErrors())
            .setCompileAndGo(src->compileAndGo())
+           .setHasPollutedScope(src->hasPollutedGlobalScope() ||
+                                polluted == HasPollutedGlobalScope)
            .setSelfHostingMode(src->selfHosted())
            .setNoScriptRval(src->noScriptRval())
            .setVersion(src->getVersion());
@@ -3146,15 +3162,30 @@ js::CloneScript(JSContext *cx, HandleObject enclosingScope, HandleFunction fun, 
     if (nblockscopes != 0)
         dst->blockScopes()->vector = Rebase<BlockScopeNote>(dst, src, src->blockScopes()->vector);
 
+    /*
+     * Function delazification assumes that their script does not have a
+     * polluted global scope.  We ensure that as follows:
+     *
+     * 1) Initial parsing only creates lazy functions if
+     *    !hasPollutedGlobalScope.
+     * 2) Cloning a lazy function into a non-global scope will always require
+     *    that its script be cloned.  See comments in
+     *    CloneFunctionObjectUseSameScript.
+     * 3) Cloning a script never sets a lazyScript on the clone, so the function
+     *    cannot be relazified.
+     *
+     * If you decide that lazy functions should be supported with a polluted
+     * global scope, make sure delazification can deal.
+     */
+    MOZ_ASSERT_IF(dst->hasPollutedGlobalScope(), !dst->maybeLazyScript());
+    MOZ_ASSERT_IF(dst->hasPollutedGlobalScope(), !dst->isRelazifiable());
     return dst;
 }
 
 bool
 js::CloneFunctionScript(JSContext *cx, HandleFunction original, HandleFunction clone,
-                        NewObjectKind newKind /* = GenericObject */)
+                        PollutedGlobalScopeOption polluted, NewObjectKind newKind)
 {
-    MOZ_ASSERT(clone->isInterpreted());
-
     RootedScript script(cx, clone->nonLazyScript());
     MOZ_ASSERT(script);
     MOZ_ASSERT(script->compartment() == original->compartment());
@@ -3171,9 +3202,9 @@ js::CloneFunctionScript(JSContext *cx, HandleFunction original, HandleFunction c
             return false;
     }
 
-    clone->mutableScript().init(nullptr);
+    clone->initScript(nullptr);
 
-    JSScript *cscript = CloneScript(cx, scope, clone, script, newKind);
+    JSScript *cscript = CloneScript(cx, scope, clone, script, polluted, newKind);
     if (!cscript)
         return false;
 
@@ -3382,7 +3413,7 @@ JSScript::markChildren(JSTracer *trc)
     // JSScript::Create(), but not yet finished initializing it with
     // fullyInitFromEmitter() or fullyInitTrivial().
 
-    MOZ_ASSERT_IF(IS_GC_MARKING_TRACER(trc) &&
+    MOZ_ASSERT_IF(trc->isMarkingTracer() &&
                   static_cast<GCMarker *>(trc)->shouldCheckCompartments(),
                   zone()->isCollecting());
 
@@ -3420,7 +3451,7 @@ JSScript::markChildren(JSTracer *trc)
     if (maybeLazyScript())
         MarkLazyScriptUnbarriered(trc, &lazyScript, "lazyScript");
 
-    if (IS_GC_MARKING_TRACER(trc)) {
+    if (trc->isMarkingTracer()) {
         compartment()->mark();
 
         if (code())
@@ -3851,7 +3882,7 @@ LazyScript::hasUncompiledEnclosingScript() const
         return false;
 
     JSFunction &fun = enclosingScope()->as<JSFunction>();
-    return fun.isInterpreted() && (!fun.mutableScript() || !fun.nonLazyScript()->code());
+    return fun.isInterpreted() && (!fun.hasScript() || !fun.nonLazyScript()->code());
 }
 
 uint32_t
@@ -3893,7 +3924,7 @@ JSScript::hasLoops()
     JSTryNote *tn = trynotes()->vector;
     JSTryNote *tnlimit = tn + trynotes()->length;
     for (; tn < tnlimit; tn++) {
-        if (tn->kind == JSTRY_ITER || tn->kind == JSTRY_LOOP)
+        if (tn->kind == JSTRY_FOR_IN || tn->kind == JSTRY_LOOP)
             return true;
     }
     return false;

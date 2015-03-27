@@ -21,6 +21,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "LoopStorage",
                                         "resource:///modules/loop/LoopStorage.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "hookWindowCloseForPanelClose",
                                         "resource://gre/modules/MozSocialAPI.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "PageMetadata",
+                                        "resource://gre/modules/PageMetadata.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PluralForm",
                                         "resource://gre/modules/PluralForm.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "UITour",
@@ -283,7 +285,7 @@ function injectLoopAPI(targetWindow) {
       writable: true,
       value: function(listener) {
         let win = Services.wm.getMostRecentWindow("navigator:browser");
-        let browser = win && win.gBrowser.selectedTab.linkedBrowser;
+        let browser = win && win.gBrowser.selectedBrowser;
         if (!win || !browser) {
           // This may happen when an undocked conversation window is the only
           // window left.
@@ -639,6 +641,13 @@ function injectLoopAPI(targetWindow) {
       }
     },
 
+    SHARING_STATE_CHANGE: {
+      enumerable: true,
+      get: function() {
+        return Cu.cloneInto(SHARING_STATE_CHANGE, targetWindow);
+      }
+    },
+
     fxAEnabled: {
       enumerable: true,
       get: function() {
@@ -834,6 +843,24 @@ function injectLoopAPI(targetWindow) {
 
         // Compose the Gravatar URL.
         return "https://www.gravatar.com/avatar/" + md5Email + ".jpg?default=blank&s=" + size;
+      }
+    },
+
+    /**
+     * Gets the metadata related to the currently selected tab in
+     * the most recent window.
+     *
+     * @param {Function} A callback that is passed the metadata.
+     */
+    getSelectedTabMetadata: {
+      value: function(callback) {
+        let win = Services.wm.getMostRecentWindow("navigator:browser");
+        win.messageManager.addMessageListener("PageMetadata:PageDataResult", function onPageDataResult(msg) {
+          win.messageManager.removeMessageListener("PageMetadata:PageDataResult", onPageDataResult);
+          let pageData = msg.json;
+          callback(cloneValueInto(pageData, targetWindow));
+        });
+        win.gBrowser.selectedBrowser.messageManager.sendAsyncMessage("PageMetadata:GetPageData");
       }
     },
 

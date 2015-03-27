@@ -332,7 +332,7 @@ static void AddTransformFunctions(nsCSSValueList* aList,
 }
 
 static TimingFunction
-ToTimingFunction(ComputedTimingFunction& aCTF)
+ToTimingFunction(const ComputedTimingFunction& aCTF)
 {
   if (aCTF.GetType() == nsTimingFunction::Function) {
     const nsSMILKeySpline* spline = aCTF.GetFunction();
@@ -345,7 +345,7 @@ ToTimingFunction(ComputedTimingFunction& aCTF)
 }
 
 static void
-AddAnimationForProperty(nsIFrame* aFrame, nsCSSProperty aProperty,
+AddAnimationForProperty(nsIFrame* aFrame, const AnimationProperty& aProperty,
                         AnimationPlayer* aPlayer, Layer* aLayer,
                         AnimationData& aData, bool aPending)
 {
@@ -373,44 +373,33 @@ AddAnimationForProperty(nsIFrame* aFrame, nsCSSProperty aProperty,
   animation->duration() = timing.mIterationDuration;
   animation->iterationCount() = timing.mIterationCount;
   animation->direction() = timing.mDirection;
-  animation->property() = aProperty;
+  animation->property() = aProperty.mProperty;
   animation->data() = aData;
 
-  dom::Animation* anim = aPlayer->GetSource();
-  for (size_t propIdx = 0;
-       propIdx < anim->Properties().Length();
-       propIdx++) {
-    AnimationProperty& property = anim->Properties()[propIdx];
+  for (uint32_t segIdx = 0; segIdx < aProperty.mSegments.Length(); segIdx++) {
+    const AnimationPropertySegment& segment = aProperty.mSegments[segIdx];
 
-    if (aProperty != property.mProperty) {
-      continue;
+    AnimationSegment* animSegment = animation->segments().AppendElement();
+    if (aProperty.mProperty == eCSSProperty_transform) {
+      animSegment->startState() = InfallibleTArray<TransformFunction>();
+      animSegment->endState() = InfallibleTArray<TransformFunction>();
+
+      nsCSSValueSharedList* list =
+        segment.mFromValue.GetCSSValueSharedListValue();
+      AddTransformFunctions(list->mHead, styleContext, presContext, bounds,
+                            animSegment->startState().get_ArrayOfTransformFunction());
+
+      list = segment.mToValue.GetCSSValueSharedListValue();
+      AddTransformFunctions(list->mHead, styleContext, presContext, bounds,
+                            animSegment->endState().get_ArrayOfTransformFunction());
+    } else if (aProperty.mProperty == eCSSProperty_opacity) {
+      animSegment->startState() = segment.mFromValue.GetFloatValue();
+      animSegment->endState() = segment.mToValue.GetFloatValue();
     }
 
-    for (uint32_t segIdx = 0; segIdx < property.mSegments.Length(); segIdx++) {
-      AnimationPropertySegment& segment = property.mSegments[segIdx];
-
-      AnimationSegment* animSegment = animation->segments().AppendElement();
-      if (aProperty == eCSSProperty_transform) {
-        animSegment->startState() = InfallibleTArray<TransformFunction>();
-        animSegment->endState() = InfallibleTArray<TransformFunction>();
-
-        nsCSSValueSharedList* list =
-          segment.mFromValue.GetCSSValueSharedListValue();
-        AddTransformFunctions(list->mHead, styleContext, presContext, bounds,
-                              animSegment->startState().get_ArrayOfTransformFunction());
-
-        list = segment.mToValue.GetCSSValueSharedListValue();
-        AddTransformFunctions(list->mHead, styleContext, presContext, bounds,
-                              animSegment->endState().get_ArrayOfTransformFunction());
-      } else if (aProperty == eCSSProperty_opacity) {
-        animSegment->startState() = segment.mFromValue.GetFloatValue();
-        animSegment->endState() = segment.mToValue.GetFloatValue();
-      }
-
-      animSegment->startPortion() = segment.mFromKey;
-      animSegment->endPortion() = segment.mToKey;
-      animSegment->sampleFn() = ToTimingFunction(segment.mTimingFunction);
-    }
+    animSegment->startPortion() = segment.mFromKey;
+    animSegment->endPortion() = segment.mToKey;
+    animSegment->sampleFn() = ToTimingFunction(segment.mTimingFunction);
   }
 }
 
@@ -418,12 +407,32 @@ static void
 AddAnimationsForProperty(nsIFrame* aFrame, nsCSSProperty aProperty,
                          AnimationPlayerPtrArray& aPlayers,
                          Layer* aLayer, AnimationData& aData,
-                         bool aPending) {
+                         bool aPending)
+{
   for (size_t playerIdx = 0; playerIdx < aPlayers.Length(); playerIdx++) {
     AnimationPlayer* player = aPlayers[playerIdx];
+    if (!player->IsRunning()) {
+      continue;
+    }
     dom::Animation* anim = player->GetSource();
-    if (!(anim && anim->HasAnimationOfProperty(aProperty) &&
-          player->IsRunning())) {
+    if (!anim) {
+      continue;
+    }
+    const AnimationProperty* property =
+      anim->GetAnimationOfProperty(aProperty);
+    if (!property) {
+      continue;
+    }
+
+    if (!property->mWinsInCascade) {
+      // We have an animation or transition, but it isn't actually
+      // winning in the CSS cascade, so we don't want to send it to the
+      // compositor.
+      // I believe that anything that changes mWinsInCascade should
+      // trigger this code again, either because of a restyle that
+      // changes the properties in question, or because of the
+      // main-thread style update that results when an animation stops
+      // filling.
       continue;
     }
 
@@ -443,7 +452,7 @@ AddAnimationsForProperty(nsIFrame* aFrame, nsCSSProperty aProperty,
       }
     }
 
-    AddAnimationForProperty(aFrame, aProperty, player, aLayer, aData, aPending);
+    AddAnimationForProperty(aFrame, *property, player, aLayer, aData, aPending);
     player->SetIsRunningOnCompositor();
   }
 }
@@ -522,9 +531,9 @@ nsDisplayListBuilder::AddAnimationsAndTransitionsToLayer(Layer* aLayer,
     nscoord perspective = 0.0;
     nsStyleContext* parentStyleContext = aFrame->StyleContext()->GetParent();
     if (parentStyleContext) {
-      const nsStylePosition* pos = parentStyleContext->StylePosition();
-      if (pos && pos->mChildPerspective.GetUnit() == eStyleUnit_Coord) {
-        perspective = pos->mChildPerspective.GetCoordValue();
+      const nsStyleDisplay* disp = parentStyleContext->StyleDisplay();
+      if (disp && disp->mChildPerspective.GetUnit() == eStyleUnit_Coord) {
+        perspective = disp->mChildPerspective.GetCoordValue();
       }
     }
     nsPoint origin;
@@ -786,6 +795,11 @@ nsDisplayScrollLayer::ComputeFrameMetrics(nsIFrame* aForFrame,
       LayoutDeviceIntSize::FromAppUnitsRounded(lineScrollAmount, presContext->AppUnitsPerDevPixel());
     metrics.SetLineScrollAmount(lineScrollAmountInDevPixels);
 
+    nsSize pageScrollAmount = scrollableFrame->GetPageScrollAmount();
+    LayoutDeviceIntSize pageScrollAmountInDevPixels =
+      LayoutDeviceIntSize::FromAppUnitsRounded(pageScrollAmount, presContext->AppUnitsPerDevPixel());
+    metrics.SetPageScrollAmount(pageScrollAmountInDevPixels);
+
     if (!aScrollFrame->GetParent() ||
         EventStateManager::CanVerticallyScrollFrameWithWheel(aScrollFrame->GetParent()))
     {
@@ -800,7 +814,7 @@ nsDisplayScrollLayer::ComputeFrameMetrics(nsIFrame* aForFrame,
   // Only the root scrollable frame for a given presShell should pick up
   // the presShell's resolution. All the other frames are 1.0.
   if (aScrollFrame == presShell->GetRootScrollFrame()) {
-    metrics.SetPresShellResolution(presShell->GetXResolution());
+    metrics.SetPresShellResolution(presShell->GetResolution());
   } else {
     metrics.SetPresShellResolution(1.0f);
   }
@@ -877,6 +891,7 @@ nsDisplayScrollLayer::ComputeFrameMetrics(nsIFrame* aForFrame,
       if (widget) {
         nsIntRect widgetBounds;
         widget->GetBounds(widgetBounds);
+        widgetBounds.MoveTo(0,0);
         metrics.mCompositionBounds = ParentLayerRect(ViewAs<ParentLayerPixel>(widgetBounds));
 #ifdef MOZ_WIDGET_ANDROID
         if (frameBounds.height < metrics.mCompositionBounds.height) {
@@ -886,10 +901,10 @@ nsDisplayScrollLayer::ComputeFrameMetrics(nsIFrame* aForFrame,
       } else {
         LayoutDeviceIntSize contentSize;
         if (nsLayoutUtils::GetContentViewerSize(presContext, contentSize)) {
-          LayoutDeviceToParentLayerScale2D scale;
+          LayoutDeviceToParentLayerScale scale;
           if (presContext->GetParentPresContext()) {
-            gfxSize res = presContext->GetParentPresContext()->PresShell()->GetCumulativeResolution();
-            scale = LayoutDeviceToParentLayerScale2D(res.width, res.height);
+            float res = presContext->GetParentPresContext()->PresShell()->GetCumulativeResolution();
+            scale = LayoutDeviceToParentLayerScale(res);
           }
           metrics.mCompositionBounds.SizeTo(contentSize * scale);
         }
@@ -1533,7 +1548,7 @@ nsDisplayList::ComputeVisibilityForSublist(nsDisplayListBuilder* aBuilder,
 }
 
 static bool
-StartPendingAnimationsOnSubDocuments(nsIDocument* aDocument, void* aReadyTime)
+TriggerPendingAnimationsOnSubDocuments(nsIDocument* aDocument, void* aReadyTime)
 {
   PendingPlayerTracker* tracker = aDocument->GetPendingPlayerTracker();
   if (tracker) {
@@ -1542,22 +1557,22 @@ StartPendingAnimationsOnSubDocuments(nsIDocument* aDocument, void* aReadyTime)
     // this document yet so we shouldn't start animations
     if (!shell || !shell->IsPaintingSuppressed()) {
       const TimeStamp& readyTime = *static_cast<TimeStamp*>(aReadyTime);
-      tracker->StartPendingPlayersOnNextTick(readyTime);
+      tracker->TriggerPendingPlayersOnNextTick(readyTime);
     }
   }
-  aDocument->EnumerateSubDocuments(StartPendingAnimationsOnSubDocuments,
+  aDocument->EnumerateSubDocuments(TriggerPendingAnimationsOnSubDocuments,
                                    aReadyTime);
   return true;
 }
 
 static void
-StartPendingAnimations(nsIDocument* aDocument,
+TriggerPendingAnimations(nsIDocument* aDocument,
                        const TimeStamp& aReadyTime) {
   MOZ_ASSERT(!aReadyTime.IsNull(),
              "Animation ready time is not set. Perhaps we're using a layer"
              " manager that doesn't update it");
-  StartPendingAnimationsOnSubDocuments(aDocument,
-                                       const_cast<TimeStamp*>(&aReadyTime));
+  TriggerPendingAnimationsOnSubDocuments(aDocument,
+                                         const_cast<TimeStamp*>(&aReadyTime));
 }
 
 /**
@@ -1640,7 +1655,7 @@ already_AddRefed<LayerManager> nsDisplayList::PaintRoot(nsDisplayListBuilder* aB
   }
 
   ContainerLayerParameters containerParameters
-    (presShell->GetXResolution(), presShell->GetYResolution());
+    (presShell->GetResolution(), presShell->GetResolution());
   nsRefPtr<ContainerLayer> root = layerBuilder->
     BuildContainerLayerFor(aBuilder, layerManager, frame, nullptr, this,
                            containerParameters, nullptr);
@@ -1756,7 +1771,7 @@ already_AddRefed<LayerManager> nsDisplayList::PaintRoot(nsDisplayListBuilder* aB
   layerBuilder->DidEndTransaction();
 
   if (document && widgetTransaction) {
-    StartPendingAnimations(document, layerManager->GetAnimationReadyTime());
+    TriggerPendingAnimations(document, layerManager->GetAnimationReadyTime());
   }
 
   nsIntRegion invalid;
@@ -2013,6 +2028,14 @@ static bool IsContentLEQ(nsDisplayItem* aItem1, nsDisplayItem* aItem2,
   return nsLayoutUtils::CompareTreePosition(content1, content2, commonAncestor) <= 0;
 }
 
+static bool IsCSSOrderLEQ(nsDisplayItem* aItem1, nsDisplayItem* aItem2, void*) {
+  nsIFrame* frame1 = aItem1->Frame();
+  nsIFrame* frame2 = aItem2->Frame();
+  int32_t order1 = frame1 ? frame1->StylePosition()->mOrder : 0;
+  int32_t order2 = frame2 ? frame2->StylePosition()->mOrder : 0;
+  return order1 <= order2;
+}
+
 static bool IsZOrderLEQ(nsDisplayItem* aItem1, nsDisplayItem* aItem2,
                         void* aClosure) {
   // Note that we can't just take the difference of the two
@@ -2028,6 +2051,10 @@ void nsDisplayList::SortByZOrder(nsDisplayListBuilder* aBuilder,
 void nsDisplayList::SortByContentOrder(nsDisplayListBuilder* aBuilder,
                                        nsIContent* aCommonAncestor) {
   Sort(aBuilder, IsContentLEQ, aCommonAncestor);
+}
+
+void nsDisplayList::SortByCSSOrder(nsDisplayListBuilder* aBuilder) {
+  Sort(aBuilder, IsCSSOrderLEQ, nullptr);
 }
 
 void nsDisplayList::Sort(nsDisplayListBuilder* aBuilder,
@@ -3220,6 +3247,20 @@ nsDisplayLayerEventRegions::AddFrame(nsDisplayListBuilder* aBuilder,
   if (aBuilder->GetAncestorHasApzAwareEventHandler()) {
     mDispatchToContentHitRegion.Or(mDispatchToContentHitRegion, borderBox);
   }
+
+  // Touch action region
+
+  uint32_t touchAction = nsLayoutUtils::GetTouchActionFromFrame(aFrame);
+  if (touchAction & NS_STYLE_TOUCH_ACTION_NONE) {
+    mNoActionRegion.Or(mNoActionRegion, borderBox);
+  } else {
+    if ((touchAction & NS_STYLE_TOUCH_ACTION_PAN_X)) {
+      mHorizontalPanRegion.Or(mHorizontalPanRegion, borderBox);
+    }
+    if ((touchAction & NS_STYLE_TOUCH_ACTION_PAN_Y)) {
+      mVerticalPanRegion.Or(mVerticalPanRegion, borderBox);
+    }
+  }
 }
 
 void
@@ -4207,8 +4248,8 @@ nsDisplaySubDocument::ComputeFrameMetrics(Layer* aLayer,
   bool isRootContentDocument = presContext->IsRootContentDocument();
   nsIPresShell* presShell = presContext->PresShell();
   ContainerLayerParameters params(
-      aContainerParameters.mXScale * presShell->GetXResolution(),
-      aContainerParameters.mYScale * presShell->GetYResolution(),
+      aContainerParameters.mXScale * presShell->GetResolution(),
+      aContainerParameters.mYScale * presShell->GetResolution(),
       nsIntPoint(), aContainerParameters);
   if ((mFlags & GENERATE_SCROLLABLE_LAYER) &&
       rootScrollFrame->GetContent() &&
@@ -4330,15 +4371,15 @@ nsDisplayResolution::BuildLayer(nsDisplayListBuilder* aBuilder,
                                 const ContainerLayerParameters& aContainerParameters) {
   nsIPresShell* presShell = mFrame->PresContext()->PresShell();
   ContainerLayerParameters containerParameters(
-    presShell->GetXResolution(), presShell->GetYResolution(), nsIntPoint(),
+    presShell->GetResolution(), presShell->GetResolution(), nsIntPoint(),
     aContainerParameters);
 
   nsRefPtr<Layer> layer = nsDisplaySubDocument::BuildLayer(
     aBuilder, aManager, containerParameters);
-  layer->SetPostScale(1.0f / presShell->GetXResolution(),
-                      1.0f / presShell->GetYResolution());
+  layer->SetPostScale(1.0f / presShell->GetResolution(),
+                      1.0f / presShell->GetResolution());
   layer->AsContainerLayer()->SetScaleToResolution(
-      presShell->ScaleToResolution(), presShell->GetXResolution());
+      presShell->ScaleToResolution(), presShell->GetResolution());
   return layer.forget();
 }
 
@@ -4846,7 +4887,7 @@ nsRect nsDisplayZoom::GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap)
 {
   nsRect bounds = nsDisplaySubDocument::GetBounds(aBuilder, aSnap);
   *aSnap = false;
-  return bounds.ConvertAppUnitsRoundOut(mAPD, mParentAPD);
+  return bounds.ScaleToOtherAppUnitsRoundOut(mAPD, mParentAPD);
 }
 
 void nsDisplayZoom::HitTest(nsDisplayListBuilder *aBuilder,
@@ -4858,10 +4899,10 @@ void nsDisplayZoom::HitTest(nsDisplayListBuilder *aBuilder,
   // A 1x1 rect indicates we are just hit testing a point, so pass down a 1x1
   // rect as well instead of possibly rounding the width or height to zero.
   if (aRect.width == 1 && aRect.height == 1) {
-    rect.MoveTo(aRect.TopLeft().ConvertAppUnits(mParentAPD, mAPD));
+    rect.MoveTo(aRect.TopLeft().ScaleToOtherAppUnits(mParentAPD, mAPD));
     rect.width = rect.height = 1;
   } else {
-    rect = aRect.ConvertAppUnitsRoundOut(mParentAPD, mAPD);
+    rect = aRect.ScaleToOtherAppUnitsRoundOut(mParentAPD, mAPD);
   }
   mList.HitTest(aBuilder, rect, aState, aOutFrames);
 }
@@ -4873,11 +4914,11 @@ bool nsDisplayZoom::ComputeVisibility(nsDisplayListBuilder *aBuilder,
   nsRegion visibleRegion;
   // mVisibleRect has been clipped to GetClippedBounds
   visibleRegion.And(*aVisibleRegion, mVisibleRect);
-  visibleRegion = visibleRegion.ConvertAppUnitsRoundOut(mParentAPD, mAPD);
+  visibleRegion = visibleRegion.ScaleToOtherAppUnitsRoundOut(mParentAPD, mAPD);
   nsRegion originalVisibleRegion = visibleRegion;
 
   nsRect transformedVisibleRect =
-    mVisibleRect.ConvertAppUnitsRoundOut(mParentAPD, mAPD);
+    mVisibleRect.ScaleToOtherAppUnitsRoundOut(mParentAPD, mAPD);
   bool retval;
   // If we are to generate a scrollable layer we call
   // nsDisplaySubDocument::ComputeVisibility to make the necessary adjustments
@@ -4896,7 +4937,7 @@ bool nsDisplayZoom::ComputeVisibility(nsDisplayListBuilder *aBuilder,
   // removed = originalVisibleRegion - visibleRegion
   removed.Sub(originalVisibleRegion, visibleRegion);
   // Convert removed region to parent appunits.
-  removed = removed.ConvertAppUnitsRoundIn(mAPD, mParentAPD);
+  removed = removed.ScaleToOtherAppUnitsRoundIn(mAPD, mParentAPD);
   // aVisibleRegion = aVisibleRegion - removed (modulo any simplifications
   // SubtractFromVisibleRegion does)
   aBuilder->SubtractFromVisibleRegion(aVisibleRegion, removed);
@@ -5009,8 +5050,8 @@ nsDisplayTransform::Init(nsDisplayListBuilder* aBuilder)
   mStoredList.SetVisibleRect(mChildrenVisibleRect);
   mMaybePrerender = ShouldPrerenderTransformedContent(aBuilder, mFrame);
 
-  const nsStylePosition* pos = mFrame->StylePosition();
-  if ((pos->mWillChangeBitField & NS_STYLE_WILL_CHANGE_TRANSFORM)) {
+  const nsStyleDisplay* disp = mFrame->StyleDisplay();
+  if ((disp->mWillChangeBitField & NS_STYLE_WILL_CHANGE_TRANSFORM)) {
     // We will only pre-render if this will-change is on budget.
     mMaybePrerender = true;
   }
@@ -5064,8 +5105,7 @@ nsDisplayTransform::GetDeltaToTransformOrigin(const nsIFrame* aFrame,
                                               const nsRect* aBoundsOverride)
 {
   NS_PRECONDITION(aFrame, "Can't get delta for a null frame!");
-  NS_PRECONDITION(aFrame->IsTransformed() ||
-                  aFrame->StylePosition()->BackfaceIsHidden(),
+  NS_PRECONDITION(aFrame->IsTransformed() || aFrame->StyleDisplay()->BackfaceIsHidden(),
                   "Shouldn't get a delta for an untransformed frame!");
 
   if (!aFrame->IsTransformed()) {
@@ -5076,7 +5116,7 @@ nsDisplayTransform::GetDeltaToTransformOrigin(const nsIFrame* aFrame,
    * percentage, it's relative to the size of the frame.  Otherwise, if it's
    * a distance, it's already computed for us!
    */
-  const nsStylePosition* pos = aFrame->StylePosition();
+  const nsStyleDisplay* display = aFrame->StyleDisplay();
   nsRect boundingRect = (aBoundsOverride ? *aBoundsOverride :
                          nsDisplayTransform::GetFrameBoundsForTransform(aFrame));
 
@@ -5089,7 +5129,7 @@ nsDisplayTransform::GetDeltaToTransformOrigin(const nsIFrame* aFrame,
     /* If the -moz-transform-origin specifies a percentage, take the percentage
      * of the size of the box.
      */
-    const nsStyleCoord &coord = pos->mTransformOrigin[index];
+    const nsStyleCoord &coord = display->mTransformOrigin[index];
     if (coord.GetUnit() == eStyleUnit_Calc) {
       const nsStyleCoord::Calc *calc = coord.GetCalcValue();
       coords[index] =
@@ -5115,7 +5155,7 @@ nsDisplayTransform::GetDeltaToTransformOrigin(const nsIFrame* aFrame,
     }
   }
 
-  coords[2] = NSAppUnitsToFloatPixels(pos->mTransformOrigin[2].GetCoordValue(),
+  coords[2] = NSAppUnitsToFloatPixels(display->mTransformOrigin[2].GetCoordValue(),
                                       aAppUnitsPerPixel);
   /* Adjust based on the origin of the rectangle. */
   coords[0] += NSAppUnitsToFloatPixels(boundingRect.x, aAppUnitsPerPixel);
@@ -5134,8 +5174,7 @@ nsDisplayTransform::GetDeltaToPerspectiveOrigin(const nsIFrame* aFrame,
                                                 float aAppUnitsPerPixel)
 {
   NS_PRECONDITION(aFrame, "Can't get delta for a null frame!");
-  NS_PRECONDITION(aFrame->IsTransformed() ||
-                  aFrame->StylePosition()->BackfaceIsHidden(),
+  NS_PRECONDITION(aFrame->IsTransformed() || aFrame->StyleDisplay()->BackfaceIsHidden(),
                   "Shouldn't get a delta for an untransformed frame!");
 
   if (!aFrame->IsTransformed()) {
@@ -5160,7 +5199,7 @@ nsDisplayTransform::GetDeltaToPerspectiveOrigin(const nsIFrame* aFrame,
       return Point3D();
     }
   }
-  const nsStylePosition* pos = psc->StylePosition();
+  const nsStyleDisplay* display = psc->StyleDisplay();
   nsRect boundingRect = nsDisplayTransform::GetFrameBoundsForTransform(parent);
 
   /* Allows us to access named variables by index. */
@@ -5174,7 +5213,7 @@ nsDisplayTransform::GetDeltaToPerspectiveOrigin(const nsIFrame* aFrame,
     /* If the -moz-transform-origin specifies a percentage, take the percentage
      * of the size of the box.
      */
-    const nsStyleCoord &coord = pos->mPerspectiveOrigin[index];
+    const nsStyleCoord &coord = display->mPerspectiveOrigin[index];
     if (coord.GetUnit() == eStyleUnit_Calc) {
       const nsStyleCoord::Calc *calc = coord.GetCalcValue();
       *coords[index] =
@@ -5205,18 +5244,18 @@ nsDisplayTransform::FrameTransformProperties::FrameTransformProperties(const nsI
                                                                        float aAppUnitsPerPixel,
                                                                        const nsRect* aBoundsOverride)
   : mFrame(aFrame)
-  , mTransformList(aFrame->StylePosition()->mSpecifiedTransform)
+  , mTransformList(aFrame->StyleDisplay()->mSpecifiedTransform)
   , mToTransformOrigin(GetDeltaToTransformOrigin(aFrame, aAppUnitsPerPixel, aBoundsOverride))
   , mToPerspectiveOrigin(GetDeltaToPerspectiveOrigin(aFrame, aAppUnitsPerPixel))
   , mChildPerspective(0)
 {
-  const nsStylePosition* parentPos = nullptr;
+  const nsStyleDisplay* parentDisp = nullptr;
   nsStyleContext* parentStyleContext = aFrame->StyleContext()->GetParent();
   if (parentStyleContext) {
-    parentPos = parentStyleContext->StylePosition();
+    parentDisp = parentStyleContext->StyleDisplay();
   }
-  if (parentPos && parentPos->mChildPerspective.GetUnit() == eStyleUnit_Coord) {
-    mChildPerspective = parentPos->mChildPerspective.GetCoordValue();
+  if (parentDisp && parentDisp->mChildPerspective.GetUnit() == eStyleUnit_Coord) {
+    mChildPerspective = parentDisp->mChildPerspective.GetCoordValue();
   }
 }
 
@@ -5396,8 +5435,8 @@ nsDisplayTransform::ShouldPrerender(nsDisplayListBuilder* aBuilder) {
     return true;
   }
 
-  const nsStylePosition* pos = mFrame->StylePosition();
-  if ((pos->mWillChangeBitField & NS_STYLE_WILL_CHANGE_TRANSFORM) &&
+  const nsStyleDisplay* disp = mFrame->StyleDisplay();
+  if ((disp->mWillChangeBitField & NS_STYLE_WILL_CHANGE_TRANSFORM) &&
       aBuilder->IsInWillChangeBudget(mFrame)) {
     return true;
   }
@@ -5486,8 +5525,7 @@ static bool IsFrameVisible(nsIFrame* aFrame, const Matrix4x4& aMatrix)
   if (aMatrix.IsSingular()) {
     return false;
   }
-  const nsStylePosition* pos = aFrame->StylePosition();
-  if (pos->mBackfaceVisibility == NS_STYLE_BACKFACE_VISIBILITY_HIDDEN &&
+  if (aFrame->StyleDisplay()->mBackfaceVisibility == NS_STYLE_BACKFACE_VISIBILITY_HIDDEN &&
       aMatrix.IsBackfaceVisible()) {
     return false;
   }
@@ -5535,8 +5573,7 @@ already_AddRefed<Layer> nsDisplayTransform::BuildLayer(nsDisplayListBuilder *aBu
 {
   const Matrix4x4& newTransformMatrix = GetTransform();
 
-  const nsStylePosition* pos = mFrame->StylePosition();
-  if (pos->mBackfaceVisibility == NS_STYLE_BACKFACE_VISIBILITY_HIDDEN &&
+  if (mFrame->StyleDisplay()->mBackfaceVisibility == NS_STYLE_BACKFACE_VISIBILITY_HIDDEN &&
       newTransformMatrix.IsBackfaceVisible()) {
     return nullptr;
   }
@@ -5595,8 +5632,8 @@ nsDisplayTransform::GetLayerState(nsDisplayListBuilder* aBuilder,
     }
   }
 
-  const nsStylePosition* pos = mFrame->StylePosition();
-  if ((pos->mWillChangeBitField & NS_STYLE_WILL_CHANGE_TRANSFORM)) {
+  const nsStyleDisplay* disp = mFrame->StyleDisplay();
+  if ((disp->mWillChangeBitField & NS_STYLE_WILL_CHANGE_TRANSFORM)) {
     return LAYER_ACTIVE;
   }
 
@@ -5682,7 +5719,6 @@ void nsDisplayTransform::HitTest(nsDisplayListBuilder *aBuilder,
                       NSAppUnitsToFloatPixels(aRect.width, factor),
                       NSAppUnitsToFloatPixels(aRect.height, factor));
 
-    Rect rect = matrix.ProjectRectBounds(originalRect);
 
     bool snap;
     nsRect childBounds = mStoredList.GetBounds(aBuilder, &snap);
@@ -5690,7 +5726,8 @@ void nsDisplayTransform::HitTest(nsDisplayListBuilder *aBuilder,
                         NSAppUnitsToFloatPixels(childBounds.y, factor),
                         NSAppUnitsToFloatPixels(childBounds.width, factor),
                         NSAppUnitsToFloatPixels(childBounds.height, factor));
-    rect = rect.Intersect(childGfxBounds);
+
+    Rect rect = matrix.ProjectRectBounds(originalRect, childGfxBounds);
 
     resultingRect = nsRect(NSFloatPixelsToAppUnits(float(rect.X()), factor),
                            NSFloatPixelsToAppUnits(float(rect.Y()), factor),
@@ -5930,8 +5967,7 @@ bool nsDisplayTransform::UntransformRect(const nsRect &aTransformedBounds,
                       NSAppUnitsToFloatPixels(aChildBounds.width, factor),
                       NSAppUnitsToFloatPixels(aChildBounds.height, factor));
 
-  result = ToMatrix4x4(transform.Inverse()).ProjectRectBounds(result);
-  result = result.Intersect(childGfxBounds);
+  result = ToMatrix4x4(transform.Inverse()).ProjectRectBounds(result, childGfxBounds);
   *aOutRect = nsLayoutUtils::RoundGfxRectToAppRect(ThebesRect(result), factor);
   return true;
 }
@@ -5958,8 +5994,7 @@ bool nsDisplayTransform::UntransformVisibleRect(nsDisplayListBuilder* aBuilder,
                       NSAppUnitsToFloatPixels(childBounds.height, factor));
 
   /* We want to untransform the matrix, so invert the transformation first! */
-  result = ToMatrix4x4(matrix.Inverse()).ProjectRectBounds(result);
-  result = result.Intersect(childGfxBounds);
+  result = ToMatrix4x4(matrix.Inverse()).ProjectRectBounds(result, childGfxBounds);
 
   *aOutRect = nsLayoutUtils::RoundGfxRectToAppRect(ThebesRect(result), factor);
 

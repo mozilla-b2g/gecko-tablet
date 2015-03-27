@@ -1415,21 +1415,6 @@ JS_RemoveExtraGCRootsTracer(JSRuntime *rt, JSTraceDataOp traceOp, void *data)
     return rt->gc.removeBlackRootsTracer(traceOp, data);
 }
 
-extern JS_PUBLIC_API(bool)
-JS_IsGCMarkingTracer(JSTracer *trc)
-{
-    return IS_GC_MARKING_TRACER(trc);
-}
-
-#ifdef DEBUG
-extern JS_PUBLIC_API(bool)
-JS_IsMarkingGray(JSTracer *trc)
-{
-    MOZ_ASSERT(JS_IsGCMarkingTracer(trc));
-    return trc->callback == GCMarker::GrayCallback;
-}
-#endif
-
 JS_PUBLIC_API(void)
 JS_GC(JSRuntime *rt)
 {
@@ -2214,10 +2199,12 @@ DefinePropertyById(JSContext *cx, HandleObject obj, HandleId id, HandleValue val
     // it's just a plain old data property. However the JS_Define* APIs use
     // null getter and setter to mean "default to the Class getProperty and
     // setProperty ops".
-    if (!getter)
-        getter = obj->getClass()->getProperty;
-    if (!setter)
-        setter = obj->getClass()->setProperty;
+    if (!(attrs & (JSPROP_GETTER | JSPROP_SETTER))) {
+        if (!getter)
+            getter = obj->getClass()->getProperty;
+        if (!setter)
+            setter = obj->getClass()->setProperty;
+    }
     if (getter == JS_PropertyStub)
         getter = nullptr;
     if (setter == JS_StrictPropertyStub)
@@ -2381,16 +2368,10 @@ DefineProperty(JSContext *cx, HandleObject obj, const char *name, HandleValue va
     AutoRooterGetterSetter gsRoot(cx, attrs, const_cast<JSNative *>(&getter.op),
                                   const_cast<JSNative *>(&setter.op));
 
-    RootedId id(cx);
-    if (attrs & JSPROP_INDEX) {
-        id = INT_TO_JSID(intptr_t(name));
-        attrs &= ~JSPROP_INDEX;
-    } else {
-        JSAtom *atom = Atomize(cx, name, strlen(name));
-        if (!atom)
-            return false;
-        id = AtomToId(atom);
-    }
+    JSAtom *atom = Atomize(cx, name, strlen(name));
+    if (!atom)
+        return false;
+    RootedId id(cx, AtomToId(atom));
 
     return DefinePropertyById(cx, obj, id, value, getter, setter, attrs, flags);
 }
@@ -3759,30 +3740,29 @@ JS::CompileOptions::CompileOptions(JSContext *cx, JSVersion version)
 }
 
 bool
-JS::Compile(JSContext *cx, HandleObject obj, const ReadOnlyCompileOptions &options,
+JS::Compile(JSContext *cx, const ReadOnlyCompileOptions &options,
             SourceBufferHolder &srcBuf, MutableHandleScript script)
 {
     MOZ_ASSERT(!cx->runtime()->isAtomsCompartment(cx->compartment()));
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
-    assertSameCompartment(cx, obj);
     AutoLastFrameCheck lfc(cx);
 
-    script.set(frontend::CompileScript(cx, &cx->tempLifoAlloc(), obj, NullPtr(), NullPtr(),
-                                       options, srcBuf));
+    script.set(frontend::CompileScript(cx, &cx->tempLifoAlloc(), cx->global(),
+                                       NullPtr(), NullPtr(), options, srcBuf));
     return !!script;
 }
 
 bool
-JS::Compile(JSContext *cx, HandleObject obj, const ReadOnlyCompileOptions &options,
+JS::Compile(JSContext *cx, const ReadOnlyCompileOptions &options,
             const char16_t *chars, size_t length, MutableHandleScript script)
 {
     SourceBufferHolder srcBuf(chars, length, SourceBufferHolder::NoOwnership);
-    return Compile(cx, obj, options, srcBuf, script);
+    return Compile(cx, options, srcBuf, script);
 }
 
 bool
-JS::Compile(JSContext *cx, HandleObject obj, const ReadOnlyCompileOptions &options,
+JS::Compile(JSContext *cx, const ReadOnlyCompileOptions &options,
             const char *bytes, size_t length, MutableHandleScript script)
 {
     mozilla::UniquePtr<char16_t, JS::FreePolicy> chars;
@@ -3793,22 +3773,22 @@ JS::Compile(JSContext *cx, HandleObject obj, const ReadOnlyCompileOptions &optio
     if (!chars)
         return false;
 
-    return Compile(cx, obj, options, chars.get(), length, script);
+    return Compile(cx, options, chars.get(), length, script);
 }
 
 bool
-JS::Compile(JSContext *cx, HandleObject obj, const ReadOnlyCompileOptions &options, FILE *fp,
+JS::Compile(JSContext *cx, const ReadOnlyCompileOptions &options, FILE *fp,
             MutableHandleScript script)
 {
     FileContents buffer(cx);
     if (!ReadCompleteFile(cx, fp, buffer))
         return false;
 
-    return Compile(cx, obj, options, buffer.begin(), buffer.length(), script);
+    return Compile(cx, options, buffer.begin(), buffer.length(), script);
 }
 
 bool
-JS::Compile(JSContext *cx, HandleObject obj, const ReadOnlyCompileOptions &optionsArg, const char *filename,
+JS::Compile(JSContext *cx, const ReadOnlyCompileOptions &optionsArg, const char *filename,
             MutableHandleScript script)
 {
     AutoFile file;
@@ -3816,7 +3796,7 @@ JS::Compile(JSContext *cx, HandleObject obj, const ReadOnlyCompileOptions &optio
         return false;
     CompileOptions options(cx, optionsArg);
     options.setFileAndLine(filename, 1);
-    return Compile(cx, obj, options, file.fp(), script);
+    return Compile(cx, options, file.fp(), script);
 }
 
 JS_PUBLIC_API(bool)
@@ -3870,17 +3850,17 @@ JS::FinishOffThreadScript(JSContext *maybecx, JSRuntime *rt, void *token)
 }
 
 JS_PUBLIC_API(bool)
-JS_CompileScript(JSContext *cx, JS::HandleObject obj, const char *ascii,
-                 size_t length, const JS::CompileOptions &options, MutableHandleScript script)
+JS_CompileScript(JSContext *cx, const char *ascii, size_t length,
+                 const JS::CompileOptions &options, MutableHandleScript script)
 {
-    return Compile(cx, obj, options, ascii, length, script);
+    return Compile(cx, options, ascii, length, script);
 }
 
 JS_PUBLIC_API(bool)
-JS_CompileUCScript(JSContext *cx, JS::HandleObject obj, const char16_t *chars,
-                   size_t length, const JS::CompileOptions &options, MutableHandleScript script)
+JS_CompileUCScript(JSContext *cx, const char16_t *chars, size_t length,
+                   const JS::CompileOptions &options, MutableHandleScript script)
 {
-    return Compile(cx, obj, options, chars, length, script);
+    return Compile(cx, options, chars, length, script);
 }
 
 JS_PUBLIC_API(bool)
@@ -3966,7 +3946,7 @@ JS_GetFunctionScript(JSContext *cx, HandleFunction fun)
  * enclosingDynamicScope is a dynamic scope to use, if it's not the global.
  */
 static bool
-CompileFunction(JSContext *cx, const ReadOnlyCompileOptions &options,
+CompileFunction(JSContext *cx, const ReadOnlyCompileOptions &optionsArg,
                 const char *name, unsigned nargs, const char *const *argnames,
                 SourceBufferHolder &srcBuf,
                 HandleObject enclosingDynamicScope,
@@ -3999,6 +3979,13 @@ CompileFunction(JSContext *cx, const ReadOnlyCompileOptions &options,
                                 enclosingDynamicScope));
     if (!fun)
         return false;
+
+    // Make sure to handle cases when we have a polluted scopechain.
+    OwningCompileOptions options(cx);
+    if (!options.copy(cx, optionsArg))
+        return false;
+    if (!enclosingDynamicScope->is<GlobalObject>())
+        options.setHasPollutedScope(true);
 
     if (!frontend::CompileFunctionBody(cx, fun, options, formals, srcBuf,
                                        enclosingStaticScope))
@@ -4097,6 +4084,13 @@ ExecuteScript(JSContext *cx, HandleObject obj, HandleScript scriptArg, jsval *rv
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj, scriptArg);
+
+    if (!script->hasPollutedGlobalScope() && !obj->is<GlobalObject>()) {
+        script = CloneScript(cx, NullPtr(), NullPtr(), script, HasPollutedGlobalScope);
+        if (!script)
+            return false;
+        js::Debugger::onNewScript(cx, script);
+    }
     AutoLastFrameCheck lfc(cx);
     return Execute(cx, script, *obj, rval);
 }
@@ -4137,10 +4131,9 @@ JS_ExecuteScript(JSContext *cx, AutoObjectVector &scopeChain, HandleScript scrip
 }
 
 JS_PUBLIC_API(bool)
-JS::CloneAndExecuteScript(JSContext *cx, HandleObject obj, HandleScript scriptArg)
+JS::CloneAndExecuteScript(JSContext *cx, HandleScript scriptArg)
 {
     CHECK_REQUEST(cx);
-    assertSameCompartment(cx, obj);
     RootedScript script(cx, scriptArg);
     if (script->compartment() != cx->compartment()) {
         script = CloneScript(cx, NullPtr(), NullPtr(), script);
@@ -4149,7 +4142,7 @@ JS::CloneAndExecuteScript(JSContext *cx, HandleObject obj, HandleScript scriptAr
 
         js::Debugger::onNewScript(cx, script);
     }
-    return ExecuteScript(cx, obj, script, nullptr);
+    return ExecuteScript(cx, cx->global(), script, nullptr);
 }
 
 static const unsigned LARGE_SCRIPT_LENGTH = 500*1024;
@@ -4167,6 +4160,7 @@ Evaluate(JSContext *cx, HandleObject scope, const ReadOnlyCompileOptions &option
     AutoLastFrameCheck lfc(cx);
 
     options.setCompileAndGo(scope->is<GlobalObject>());
+    options.setHasPollutedScope(!scope->is<GlobalObject>());
     SourceCompressionTask sct(cx);
     RootedScript script(cx, frontend::CompileScript(cx, &cx->tempLifoAlloc(),
                                                     scope, NullPtr(), NullPtr(), options,

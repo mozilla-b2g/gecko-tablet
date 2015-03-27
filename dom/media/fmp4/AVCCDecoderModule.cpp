@@ -26,16 +26,16 @@ public:
 
   virtual ~AVCCMediaDataDecoder();
 
-  virtual nsresult Init() MOZ_OVERRIDE;
-  virtual nsresult Input(mp4_demuxer::MP4Sample* aSample) MOZ_OVERRIDE;
-  virtual nsresult Flush() MOZ_OVERRIDE;
-  virtual nsresult Drain() MOZ_OVERRIDE;
-  virtual nsresult Shutdown() MOZ_OVERRIDE;
-  virtual bool IsWaitingMediaResources() MOZ_OVERRIDE;
-  virtual bool IsDormantNeeded() MOZ_OVERRIDE;
-  virtual void AllocateMediaResources() MOZ_OVERRIDE;
-  virtual void ReleaseMediaResources() MOZ_OVERRIDE;
-  virtual bool IsHardwareAccelerated() const MOZ_OVERRIDE;
+  virtual nsresult Init() override;
+  virtual nsresult Input(mp4_demuxer::MP4Sample* aSample) override;
+  virtual nsresult Flush() override;
+  virtual nsresult Drain() override;
+  virtual nsresult Shutdown() override;
+  virtual bool IsWaitingMediaResources() override;
+  virtual bool IsDormantNeeded() override;
+  virtual void AllocateMediaResources() override;
+  virtual void ReleaseMediaResources() override;
+  virtual bool IsHardwareAccelerated() const override;
 
 private:
   // Will create the required MediaDataDecoder if we have a AVC SPS.
@@ -136,7 +136,9 @@ nsresult
 AVCCMediaDataDecoder::Shutdown()
 {
   if (mDecoder) {
-    return mDecoder->Shutdown();
+    nsresult rv = mDecoder->Shutdown();
+    mDecoder = nullptr;
+    return rv;
   }
   return NS_OK;
 }
@@ -165,10 +167,7 @@ AVCCMediaDataDecoder::AllocateMediaResources()
 void
 AVCCMediaDataDecoder::ReleaseMediaResources()
 {
-  if (mDecoder) {
-    mDecoder->Shutdown();
-    mDecoder = nullptr;
-  }
+  Shutdown();
 }
 
 nsresult
@@ -239,6 +238,7 @@ AVCCMediaDataDecoder::UpdateConfigFromExtraData(mp4_demuxer::ByteBuffer* aExtraD
   mp4_demuxer::SPSData spsdata;
   if (mp4_demuxer::H264::DecodeSPSFromExtraData(aExtraData, spsdata) &&
       spsdata.pic_width > 0 && spsdata.pic_height > 0) {
+    mp4_demuxer::H264::EnsureSPSIsSane(spsdata);
     mCurrentConfig.image_width = spsdata.pic_width;
     mCurrentConfig.image_height = spsdata.pic_height;
     mCurrentConfig.display_width = spsdata.display_width;
@@ -265,12 +265,6 @@ AVCCDecoderModule::Startup()
   return mPDM->Startup();
 }
 
-nsresult
-AVCCDecoderModule::Shutdown()
-{
-  return mPDM->Shutdown();
-}
-
 already_AddRefed<MediaDataDecoder>
 AVCCDecoderModule::CreateVideoDecoder(const mp4_demuxer::VideoDecoderConfig& aConfig,
                                       layers::LayersBackend aLayersBackend,
@@ -280,7 +274,8 @@ AVCCDecoderModule::CreateVideoDecoder(const mp4_demuxer::VideoDecoderConfig& aCo
 {
   nsRefPtr<MediaDataDecoder> decoder;
 
-  if (strcmp(aConfig.mime_type, "video/avc") ||
+  if ((!aConfig.mime_type.EqualsLiteral("video/avc") &&
+       !aConfig.mime_type.EqualsLiteral("video/mp4")) ||
       !mPDM->DecoderNeedsAVCC(aConfig)) {
     // There is no need for an AVCC wrapper for non-AVC content.
     decoder = mPDM->CreateVideoDecoder(aConfig,
@@ -310,13 +305,13 @@ AVCCDecoderModule::CreateAudioDecoder(const mp4_demuxer::AudioDecoderConfig& aCo
 }
 
 bool
-AVCCDecoderModule::SupportsAudioMimeType(const char* aMimeType)
+AVCCDecoderModule::SupportsAudioMimeType(const nsACString& aMimeType)
 {
   return mPDM->SupportsAudioMimeType(aMimeType);
 }
 
 bool
-AVCCDecoderModule::SupportsVideoMimeType(const char* aMimeType)
+AVCCDecoderModule::SupportsVideoMimeType(const nsACString& aMimeType)
 {
   return mPDM->SupportsVideoMimeType(aMimeType);
 }

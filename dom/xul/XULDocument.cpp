@@ -3581,7 +3581,7 @@ XULDocument::ExecuteScript(nsXULPrototypeScript *aScript)
     // The script is in the compilation scope. Clone it into the target scope
     // and execute it. On failure, ~AutoScriptEntry will handle exceptions, so
     // there is no need to manually check the return value.
-    JS::CloneAndExecuteScript(cx, global, scriptObject);
+    JS::CloneAndExecuteScript(cx, scriptObject);
 
     return NS_OK;
 }
@@ -4664,9 +4664,9 @@ XULDocument::GetBoxObjectFor(nsIDOMElement* aElement, nsIBoxObject** aResult)
 }
 
 JSObject*
-XULDocument::WrapNode(JSContext *aCx)
+XULDocument::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aGivenProto)
 {
-  return XULDocumentBinding::Wrap(aCx, this);
+  return XULDocumentBinding::Wrap(aCx, this, aGivenProto);
 }
 
 } // namespace dom

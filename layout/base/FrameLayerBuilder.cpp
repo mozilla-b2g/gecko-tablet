@@ -94,6 +94,7 @@ FrameLayerBuilder::DisplayItemData::AddFrame(nsIFrame* aFrame)
 void
 FrameLayerBuilder::DisplayItemData::RemoveFrame(nsIFrame* aFrame)
 {
+  MOZ_RELEASE_ASSERT(mLayer);
   DebugOnly<bool> result = mFrameList.RemoveElement(aFrame);
   NS_ASSERTION(result, "Can't remove a frame that wasn't added!");
 
@@ -106,6 +107,7 @@ FrameLayerBuilder::DisplayItemData::RemoveFrame(nsIFrame* aFrame)
 void
 FrameLayerBuilder::DisplayItemData::EndUpdate()
 {
+  MOZ_RELEASE_ASSERT(mLayer);
   MOZ_ASSERT(!mItem);
   mIsInvalid = false;
   mUsed = false;
@@ -114,6 +116,7 @@ FrameLayerBuilder::DisplayItemData::EndUpdate()
 void
 FrameLayerBuilder::DisplayItemData::EndUpdate(nsAutoPtr<nsDisplayItemGeometry> aGeometry)
 {
+  MOZ_RELEASE_ASSERT(mLayer);
   MOZ_ASSERT(mItem);
 
   mGeometry = aGeometry;
@@ -129,6 +132,7 @@ FrameLayerBuilder::DisplayItemData::BeginUpdate(Layer* aLayer, LayerState aState
                                                 uint32_t aContainerLayerGeneration,
                                                 nsDisplayItem* aItem /* = nullptr */)
 {
+  MOZ_RELEASE_ASSERT(aLayer);
   mLayer = aLayer;
   mOptLayer = nullptr;
   mInactiveManager = nullptr;
@@ -381,6 +385,9 @@ public:
     mHitRegion.Or(mHitRegion, aEventRegions->HitRegion());
     mMaybeHitRegion.Or(mMaybeHitRegion, aEventRegions->MaybeHitRegion());
     mDispatchToContentHitRegion.Or(mDispatchToContentHitRegion, aEventRegions->DispatchToContentHitRegion());
+    mNoActionRegion.Or(mNoActionRegion, aEventRegions->NoActionRegion());
+    mHorizontalPanRegion.Or(mHorizontalPanRegion, aEventRegions->HorizontalPanRegion());
+    mVerticalPanRegion.Or(mVerticalPanRegion, aEventRegions->VerticalPanRegion());
   }
 
   /**
@@ -429,6 +436,27 @@ public:
    * The dispatch-to-content hit region for this PaintedLayer.
    */
   nsRegion  mDispatchToContentHitRegion;
+  /**
+   * The region for this PaintedLayer that is sensitive to events
+   * but disallows panning and zooming. This is an approximation
+   * and any deviation from the true region will be part of the
+   * mDispatchToContentHitRegion.
+   */
+  nsRegion mNoActionRegion;
+  /**
+   * The region for this PaintedLayer that is sensitive to events and
+   * allows horizontal panning but not zooming. This is an approximation
+   * and any deviation from the true region will be part of the
+   * mDispatchToContentHitRegion.
+   */
+  nsRegion mHorizontalPanRegion;
+  /**
+   * The region for this PaintedLayer that is sensitive to events and
+   * allows vertical panning but not zooming. This is an approximation
+   * and any deviation from the true region will be part of the
+   * mDispatchToContentHitRegion.
+   */
+  nsRegion mVerticalPanRegion;
   /**
    * The "active scrolled root" for all content in the layer. Must
    * be non-null; all content in a PaintedLayer must have the same
@@ -573,6 +601,7 @@ struct NewLayerEntry {
   // This rect is in the layer's own coordinate space. The computed visible
   // region for the layer cannot extend beyond this rect.
   nsIntRect mLayerContentsVisibleRect;
+  nsTArray<nsDisplayScrollInfoLayer*> mScrollInfoItems;
   bool mHideAllLayersBelow;
   // When mOpaqueForAnimatedGeometryRootParent is true, the opaque region of
   // this layer is opaque in the same position even subject to the animation of
@@ -715,9 +744,14 @@ public:
                                      const nsIntRegion& aOuterVisibleRegion,
                                      const nsIntRect* aLayerContentsVisibleRect = nullptr) const;
 
-  void AddHoistedItem(nsDisplayItem* aItem)
+  void AddHoistedItem(nsDisplayScrollInfoLayer* aItem)
   {
-    mHoistedItems.AppendToTop(aItem);
+    mHoistedItems.AppendElement(aItem);
+  }
+
+  void AddHoistedItems(const nsTArray<nsDisplayScrollInfoLayer*>& aItems)
+  {
+    mHoistedItems.AppendElements(aItems);
   }
 
 protected:
@@ -988,7 +1022,7 @@ protected:
    * In some cases we need to hoist nsDisplayScrollInfoLayer items out from a
    * nested inactive container. This holds the items hoisted up from children.
    */
-  nsDisplayList                    mHoistedItems;
+  nsTArray<nsDisplayScrollInfoLayer*> mHoistedItems;
 };
 
 class PaintedDisplayItemLayerUserData : public LayerUserData
@@ -1187,6 +1221,8 @@ FrameLayerBuilder::GetDisplayItemData(nsIFrame* aFrame, uint32_t aKey)
   if (array) {
     for (uint32_t i = 0; i < array->Length(); i++) {
       DisplayItemData* item = array->ElementAt(i);
+      MOZ_RELEASE_ASSERT(item);
+      MOZ_RELEASE_ASSERT(item->mLayer);
       if (item->mDisplayItemKey == aKey &&
           item->mLayer->Manager() == mRetainingManager) {
         return item;
@@ -1951,7 +1987,9 @@ SetOuterVisibleRegion(Layer* aLayer, nsIntRegion* aOuterVisibleRegion,
     // for the layer, so it doesn't really matter what we do here
     Rect outerVisible(outerRect.x, outerRect.y, outerRect.width, outerRect.height);
     transform.Invert();
-    gfxRect layerVisible = ThebesRect(transform.ProjectRectBounds(outerVisible));
+
+    Rect layerContentsVisible(-float(INT32_MAX) / 2, -float(INT32_MAX) / 2,
+                              float(INT32_MAX), float(INT32_MAX));
     if (aLayerContentsVisibleRect) {
       NS_ASSERTION(aLayerContentsVisibleRect->width >= 0 &&
                    aLayerContentsVisibleRect->height >= 0,
@@ -1959,11 +1997,11 @@ SetOuterVisibleRegion(Layer* aLayer, nsIntRegion* aOuterVisibleRegion,
       // restrict to aLayerContentsVisibleRect before call GfxRectToIntRect,
       // in case layerVisible is extremely large (as it can be when
       // projecting through the inverse of a 3D transform)
-      gfxRect layerContentsVisible(
+      layerContentsVisible = Rect(
           aLayerContentsVisibleRect->x, aLayerContentsVisibleRect->y,
           aLayerContentsVisibleRect->width, aLayerContentsVisibleRect->height);
-      layerVisible.IntersectRect(layerVisible, layerContentsVisible);
     }
+    gfxRect layerVisible = ThebesRect(transform.ProjectRectBounds(outerVisible, layerContentsVisible));
     layerVisible.RoundOut();
     nsIntRect visRect;
     if (gfxUtils::GfxRectToIntRect(layerVisible, &visRect)) {
@@ -2202,6 +2240,8 @@ ContainerState::PopPaintedLayerData()
     mNewChildLayers[data->mNewChildLayersIndex].mLayer = paintedLayer.forget();
   }
 
+  MOZ_ASSERT(mHoistedItems.IsEmpty());
+
   for (auto& item : data->mAssignedDisplayItems) {
     MOZ_ASSERT(item.mItem->GetType() != nsDisplayItem::TYPE_LAYER_EVENT_REGIONS);
 
@@ -2212,6 +2252,9 @@ ContainerState::PopPaintedLayerData()
   }
 
   NewLayerEntry* newLayerEntry = &mNewChildLayers[data->mNewChildLayersIndex];
+  newLayerEntry->mScrollInfoItems.SwapElements(mHoistedItems);
+
+
   nsRefPtr<Layer> layer;
   nsRefPtr<ImageContainer> imageContainer = data->CanOptimizeImageLayer(mBuilder);
 
@@ -2392,24 +2435,38 @@ ContainerState::PopPaintedLayerData()
       containingPaintedLayerData->mMaybeHitRegion.Or(
         containingPaintedLayerData->mMaybeHitRegion, rect);
     }
-    if (!data->mHitRegion.GetBounds().IsEmpty()) {
-      // Our definitely-hit region must go to the maybe-hit-region since
-      // this function is an approximation.
-      Matrix4x4 matrix = nsLayoutUtils::GetTransformToAncestor(
-        mContainerReferenceFrame, containingPaintedLayerData->mReferenceFrame);
-      Matrix matrix2D;
-      bool isPrecise = matrix.Is2D(&matrix2D) && !matrix2D.HasNonAxisAlignedTransform();
-      nsRect rect = nsLayoutUtils::TransformFrameRectToAncestor(
-        mContainerReferenceFrame,
-        data->mHitRegion.GetBounds(),
-        containingPaintedLayerData->mReferenceFrame);
-      nsRegion* dest = isPrecise ? &containingPaintedLayerData->mHitRegion
-                                 : &containingPaintedLayerData->mMaybeHitRegion;
-      dest->Or(*dest, rect);
-    }
+    nsLayoutUtils::TransformToAncestorAndCombineRegions(
+      data->mHitRegion.GetBounds(),
+      mContainerReferenceFrame,
+      containingPaintedLayerData->mReferenceFrame,
+      &containingPaintedLayerData->mHitRegion,
+      &containingPaintedLayerData->mMaybeHitRegion);
+    nsLayoutUtils::TransformToAncestorAndCombineRegions(
+      data->mNoActionRegion.GetBounds(),
+      mContainerReferenceFrame,
+      containingPaintedLayerData->mReferenceFrame,
+      &containingPaintedLayerData->mNoActionRegion,
+      &containingPaintedLayerData->mDispatchToContentHitRegion);
+    nsLayoutUtils::TransformToAncestorAndCombineRegions(
+      data->mHorizontalPanRegion.GetBounds(),
+      mContainerReferenceFrame,
+      containingPaintedLayerData->mReferenceFrame,
+      &containingPaintedLayerData->mHorizontalPanRegion,
+      &containingPaintedLayerData->mDispatchToContentHitRegion);
+    nsLayoutUtils::TransformToAncestorAndCombineRegions(
+      data->mVerticalPanRegion.GetBounds(),
+      mContainerReferenceFrame,
+      containingPaintedLayerData->mReferenceFrame,
+      &containingPaintedLayerData->mVerticalPanRegion,
+      &containingPaintedLayerData->mDispatchToContentHitRegion);
+
   } else {
     EventRegions regions;
     regions.mHitRegion = ScaleRegionToOutsidePixels(data->mHitRegion);
+    regions.mNoActionRegion = ScaleRegionToOutsidePixels(data->mNoActionRegion);
+    regions.mHorizontalPanRegion = ScaleRegionToOutsidePixels(data->mHorizontalPanRegion);
+    regions.mVerticalPanRegion = ScaleRegionToOutsidePixels(data->mVerticalPanRegion);
+
     // Points whose hit-region status we're not sure about need to be dispatched
     // to the content thread. If a point is in both maybeHitRegion and hitRegion
     // then it's not a "maybe" any more, and doesn't go into the dispatch-to-
@@ -2423,6 +2480,9 @@ ContainerState::PopPaintedLayerData()
     nsIntPoint translation = -GetTranslationForPaintedLayer(data->mLayer);
     regions.mHitRegion.MoveBy(translation);
     regions.mDispatchToContentHitRegion.MoveBy(translation);
+    regions.mNoActionRegion.MoveBy(translation);
+    regions.mHorizontalPanRegion.MoveBy(translation);
+    regions.mVerticalPanRegion.MoveBy(translation);
 
     layer->SetEventRegions(regions);
   }
@@ -3003,8 +3063,9 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
       // drive main-thread sync scrolling.
       // Note: |item| is removed from aList and will be attached into the parent
       // list, so we don't delete it here.
-      static_cast<nsDisplayScrollInfoLayer*>(item)->MarkHoisted();
-      mLayerBuilder->GetContainingContainerState()->AddHoistedItem(item);
+      nsDisplayScrollInfoLayer* scrollInfoItem = static_cast<nsDisplayScrollInfoLayer*>(item);
+      scrollInfoItem->MarkHoisted();
+      mLayerBuilder->GetContainingContainerState()->AddHoistedItem(scrollInfoItem);
       continue;
     }
 
@@ -3282,10 +3343,6 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
       }
     }
 
-    // Finish the hoisting process by taking the items from the child and adding
-    // them to the list here.
-    aList->AppendToBottom(&mHoistedItems);
-
     if (itemSameCoordinateSystemChildren &&
         itemSameCoordinateSystemChildren->NeedsTransparentSurface()) {
       aList->SetNeedsTransparentSurface();
@@ -3293,7 +3350,6 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
   }
 
   aList->AppendToTop(&savedItems);
-  MOZ_ASSERT(mHoistedItems.IsEmpty());
 }
 
 void
@@ -3604,8 +3660,7 @@ FrameLayerBuilder::StoreDataForFrame(nsIFrame* aFrame,
 FrameLayerBuilder::ClippedDisplayItem::~ClippedDisplayItem()
 {
   if (mInactiveLayerManager) {
-    BasicLayerManager* basic = static_cast<BasicLayerManager*>(mInactiveLayerManager.get());
-    basic->SetUserData(&gLayerManagerLayerBuilder, nullptr);
+    mInactiveLayerManager->SetUserData(&gLayerManagerLayerBuilder, nullptr);
   }
 }
 
@@ -3905,13 +3960,65 @@ ContainerState::Finish(uint32_t* aTextContentFlags, LayerManagerData* aData,
       // This is not currently a child of the container, so just add it
       // now.
       mContainerLayer->InsertAfter(layer, prevChild);
-      continue;
+    } else {
+      NS_ASSERTION(layer->GetParent() == mContainerLayer,
+                   "Layer shouldn't be the child of some other container");
+      if (layer->GetPrevSibling() != prevChild) {
+        mContainerLayer->RepositionChild(layer, prevChild);
+      }
     }
 
-    NS_ASSERTION(layer->GetParent() == mContainerLayer,
-                 "Layer shouldn't be the child of some other container");
-    if (layer->GetPrevSibling() != prevChild) {
-      mContainerLayer->RepositionChild(layer, prevChild);
+    ContainerState* containingContainerState = mLayerBuilder->GetContainingContainerState();
+    if (containingContainerState) {
+      containingContainerState->AddHoistedItems(mNewChildLayers[i].mScrollInfoItems);
+    } else {
+      // Build layers for all mNewChildLayers[i].mScrollInfoItems and insert
+      // them after layer.
+      for (nsDisplayScrollInfoLayer* item : mNewChildLayers[i].mScrollInfoItems) {
+        LayerState layerState = item->GetLayerState(mBuilder, mManager, mParameters);
+        MOZ_ASSERT(layerState == LAYER_ACTIVE_EMPTY);
+        nsRefPtr<Layer> scrollInfoLayer = item->BuildLayer(mBuilder, mManager, mParameters);
+        if (!scrollInfoLayer) {
+          item->~nsDisplayScrollInfoLayer();
+          continue;
+        }
+
+        mLayerBuilder->AddLayerDisplayItem(scrollInfoLayer, item, layerState,
+                                           nsPoint(), nullptr);
+
+        const nsIFrame* animatedGeometryRoot =
+          nsLayoutUtils::GetAnimatedGeometryRootFor(item, mBuilder, mManager);
+        bool shouldFixToViewport = !animatedGeometryRoot->GetParent() &&
+          item->ShouldFixToViewport(mManager);
+        const nsIFrame* fixedPosFrame =
+          FindFixedPosFrameForLayerData(animatedGeometryRoot, shouldFixToViewport);
+
+        NewLayerEntry scrollInfoLayerEntry;
+        scrollInfoLayerEntry.mLayer = scrollInfoLayer;
+        scrollInfoLayerEntry.mAnimatedGeometryRoot = animatedGeometryRoot;
+        scrollInfoLayerEntry.mFixedPosFrameForLayerData = fixedPosFrame;
+        scrollInfoLayerEntry.mOpaqueForAnimatedGeometryRootParent =
+            item->IsDisplayPortOpaque();
+        scrollInfoLayerEntry.mBaseFrameMetrics =
+            item->ComputeFrameMetrics(scrollInfoLayer, mParameters);
+        SetupScrollingMetadata(&scrollInfoLayerEntry);
+
+        if (!scrollInfoLayer->GetParent()) {
+          // This is not currently a child of the container, so just add it
+          // now.
+          mContainerLayer->InsertAfter(scrollInfoLayer, layer);
+        } else {
+          NS_ASSERTION(scrollInfoLayer->GetParent() == mContainerLayer,
+                       "scrollInfoLayer shouldn't be the child of some other container");
+          if (scrollInfoLayer->GetPrevSibling() != layer) {
+            mContainerLayer->RepositionChild(scrollInfoLayer, layer);
+          }
+        }
+
+        layer = scrollInfoLayer;
+        item->~nsDisplayScrollInfoLayer();
+      }
+      mNewChildLayers[i].mScrollInfoItems.Clear();
     }
   }
 
@@ -4443,8 +4550,9 @@ FrameLayerBuilder::GetPaintedLayerScaleForFrame(nsIFrame* aFrame)
     }
   }
 
+  float presShellResolution = last->PresContext()->PresShell()->GetResolution();
   return PredictScaleForContent(aFrame, last,
-      last->PresContext()->PresShell()->GetResolution());
+      gfxSize(presShellResolution, presShellResolution));
 }
 
 #ifdef MOZ_DUMP_PAINTING
@@ -4657,7 +4765,7 @@ public:
   {
   }
 
-  virtual void AddLayerRectangles(mozilla::dom::Sequence<mozilla::dom::ProfileTimelineLayerRect>& aRectangles) MOZ_OVERRIDE
+  virtual void AddLayerRectangles(mozilla::dom::Sequence<mozilla::dom::ProfileTimelineLayerRect>& aRectangles) override
   {
     nsIntRegionRectIterator it(mRegion);
     while (const nsIntRect* iterRect = it.Next()) {

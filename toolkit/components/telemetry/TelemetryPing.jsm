@@ -14,6 +14,7 @@ Cu.import("resource://gre/modules/Log.jsm");
 Cu.import("resource://gre/modules/debug.js", this);
 Cu.import("resource://gre/modules/Services.jsm", this);
 Cu.import("resource://gre/modules/XPCOMUtils.jsm", this);
+Cu.import("resource://gre/modules/osfile.jsm", this);
 Cu.import("resource://gre/modules/Promise.jsm", this);
 Cu.import("resource://gre/modules/DeferredTask.jsm", this);
 Cu.import("resource://gre/modules/Preferences.jsm");
@@ -146,6 +147,19 @@ this.TelemetryPing = Object.freeze({
   },
 
   /**
+   * Adds a ping to the pending ping list by moving it to the saved pings directory
+   * and adding it to the pending ping list.
+   *
+   * @param {String} aPingPath The path of the ping to add to the pending ping list.
+   * @param {Boolean} [aRemoveOriginal] If true, deletes the ping at aPingPath after adding
+   *                  it to the saved pings directory.
+   * @return {Promise} Resolved when the ping is correctly moved to the saved pings directory.
+   */
+  addPendingPing: function(aPingPath, aRemoveOriginal) {
+    return Impl.addPendingPing(aPingPath, aRemoveOriginal);
+  },
+
+  /**
    * Send payloads to the server.
    *
    * @param {String} aType The type of the ping.
@@ -205,8 +219,11 @@ this.TelemetryPing = Object.freeze({
    *                  environment data.
    * @param {Boolean} [aOptions.overwrite=false] true overwrites a ping with the same name,
    *                  if found.
+   * @param {String} [aOptions.filePath] The path to save the ping to. Will save to default
+   *                 ping location if not provided.
    *
-   * @returns {Promise} A promise that resolves when the ping is saved to disk.
+   * @returns {Promise<Integer>} A promise that resolves with the ping id when the ping is
+   *                             saved to disk.
    */
   savePing: function(aType, aPayload, aOptions = {}) {
     let options = aOptions;
@@ -216,36 +233,6 @@ this.TelemetryPing = Object.freeze({
     options.overwrite = aOptions.overwrite || false;
 
     return Impl.savePing(aType, aPayload, options);
-  },
-
-  /**
-   * Only used for testing. Saves a ping to disk and return the ping id once done.
-   *
-   * @param {String} aType The type of the ping.
-   * @param {Object} aPayload The actual data payload for the ping.
-   * @param {Object} [aOptions] Options object.
-   * @param {Number} [aOptions.retentionDays=14] The number of days to keep the ping on disk
-   *                 if sending fails.
-   * @param {Boolean} [aOptions.addClientId=false] true if the ping should contain the client
-   *                  id, false otherwise.
-   * @param {Boolean} [aOptions.addEnvironment=false] true if the ping should contain the
-   *                  environment data.
-   * @param {Boolean} [aOptions.overwrite=false] true overwrites a ping with the same name,
-   *                  if found.
-   * @param {String} [aOptions.filePath] The path to save the ping to. Will save to default
-   *                 ping location if not provided.
-   *
-   * @returns {Promise<Integer>} A promise that resolves with the ping id when the ping is
-   *                             saved to disk.
-   */
-  testSavePingToFile: function(aType, aPayload, aOptions = {}) {
-    let options = aOptions;
-    options.retentionDays = aOptions.retentionDays || DEFAULT_RETENTION_DAYS;
-    options.addClientId = aOptions.addClientId || false;
-    options.addEnvironment = aOptions.addEnvironment || false;
-    options.overwrite = aOptions.overwrite || false;
-
-    return Impl.testSavePingToFile(aType, aPayload, options);
   },
 
   /**
@@ -378,6 +365,23 @@ let Impl = {
   },
 
   /**
+   * Adds a ping to the pending ping list by moving it to the saved pings directory
+   * and adding it to the pending ping list.
+   *
+   * @param {String} aPingPath The path of the ping to add to the pending ping list.
+   * @param {Boolean} [aRemoveOriginal] If true, deletes the ping at aPingPath after adding
+   *                  it to the saved pings directory.
+   * @return {Promise} Resolved when the ping is correctly moved to the saved pings directory.
+   */
+  addPendingPing: function(aPingPath, aRemoveOriginal) {
+    return TelemetryFile.addPendingPing(aPingPath).then(() => {
+        if (aRemoveOriginal) {
+          return OS.File.remove(aPingPath);
+        }
+      }, error => this._log.error("addPendingPing - Unable to add the pending ping", error));
+  },
+
+  /**
    * Build a complete ping and send data to the server. Record success/send-time in
    * histograms.
    *
@@ -458,50 +462,26 @@ let Impl = {
    * @param {Boolean} aOptions.addEnvironment true if the ping should contain the
    *                  environment data.
    * @param {Boolean} aOptions.overwrite true overwrites a ping with the same name, if found.
-   *
-   * @returns {Promise} A promise that resolves when the ping is saved to disk.
-   */
-  savePing: function savePing(aType, aPayload, aOptions) {
-    this._log.trace("savePing - Type " + aType + ", Server " + this._server +
-                    ", aOptions " + JSON.stringify(aOptions));
-
-    return this.assemblePing(aType, aPayload, aOptions)
-        .then(pingData => TelemetryFile.savePing(pingData, aOptions.overwrite),
-              error => this._log.error("savePing - Rejection", error));
-  },
-
-  /**
-   * Save a ping to disk and return the ping id when done.
-   *
-   * @param {String} aType The type of the ping.
-   * @param {Object} aPayload The actual data payload for the ping.
-   * @param {Object} aOptions Options object.
-   * @param {Number} aOptions.retentionDays The number of days to keep the ping on disk
-   *                 if sending fails.
-   * @param {Boolean} aOptions.addClientId true if the ping should contain the client id,
-   *                  false otherwise.
-   * @param {Boolean} aOptions.addEnvironment true if the ping should contain the
-   *                  environment data.
-   * @param {Boolean} aOptions.overwrite true overwrites a ping with the same name, if found.
    * @param {String} [aOptions.filePath] The path to save the ping to. Will save to default
    *                 ping location if not provided.
    *
    * @returns {Promise} A promise that resolves with the ping id when the ping is saved to
    *                    disk.
    */
-  testSavePingToFile: function testSavePingToFile(aType, aPayload, aOptions) {
-    this._log.trace("testSavePingToFile - Type " + aType + ", Server " + this._server +
+  savePing: function savePing(aType, aPayload, aOptions) {
+    this._log.trace("savePing - Type " + aType + ", Server " + this._server +
                     ", aOptions " + JSON.stringify(aOptions));
+
     return this.assemblePing(aType, aPayload, aOptions)
-        .then(pingData => {
-            if (aOptions.filePath) {
-              return TelemetryFile.savePingToFile(pingData, aOptions.filePath, aOptions.overwrite)
-                                  .then(() => { return pingData.id; });
-            } else {
-              return TelemetryFile.savePing(pingData, aOptions.overwrite)
-                                  .then(() => { return pingData.id; });
-            }
-        }, error => this._log.error("testSavePing - Rejection", error));
+      .then(pingData => {
+        if ("filePath" in aOptions) {
+          return TelemetryFile.savePingToFile(pingData, aOptions.filePath, aOptions.overwrite)
+                              .then(() => { return pingData.id; });
+        } else {
+          return TelemetryFile.savePing(pingData, aOptions.overwrite)
+                              .then(() => { return pingData.id; });
+        }
+      }, error => this._log.error("savePing - Rejection", error));
   },
 
   finishPingRequest: function finishPingRequest(success, startTime, ping, isPersisted) {
@@ -633,13 +613,22 @@ let Impl = {
    * Perform telemetry initialization for either chrome or content process.
    */
   enableTelemetryRecording: function enableTelemetryRecording(testing) {
+    // Enable base Telemetry recording, if needed.
+#if !defined(MOZ_WIDGET_ANDROID)
+    Telemetry.canRecordBase =
+      Preferences.get("datareporting.healthreport.service.enabled", false) ||
+      Preferences.get("browser.selfsupport.enabled", false);
+#else
+    // FHR recording is always "enabled" on Android (data upload is not).
+    Telemetry.canRecordBase = true;
+#endif
 
 #ifdef MOZILLA_OFFICIAL
-    if (!Telemetry.canSend && !testing) {
+    if (!Telemetry.isOfficialTelemetry && !testing) {
       // We can't send data; no point in initializing observers etc.
       // Only do this for official builds so that e.g. developer builds
       // still enable Telemetry based on prefs.
-      Telemetry.canRecord = false;
+      Telemetry.canRecordExtended = false;
       this._log.config("enableTelemetryRecording - Can't send data, disabling Telemetry recording.");
       return false;
     }
@@ -647,10 +636,10 @@ let Impl = {
 
     let enabled = Preferences.get(PREF_ENABLED, false);
     this._server = Preferences.get(PREF_SERVER, undefined);
-    if (!enabled) {
-      // Turn off local telemetry if telemetry is disabled.
-      // This may change once about:telemetry is added.
-      Telemetry.canRecord = false;
+    if (!enabled || !Telemetry.canRecordBase) {
+      // Turn off extended telemetry recording if disabled by preferences or if base/telemetry
+      // telemetry recording is off.
+      Telemetry.canRecordExtended = false;
       this._log.config("enableTelemetryRecording - Telemetry is disabled, turning off Telemetry recording.");
       return false;
     }

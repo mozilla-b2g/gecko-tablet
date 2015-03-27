@@ -113,16 +113,16 @@ Node::exposeToJS() const
 }
 
 
-// A JSTracer subclass that adds a SimpleEdge to a Vector for each edge on
-// which it is invoked.
-class SimpleEdgeVectorTracer : public JSTracer {
+// A JS::CallbackTracer subclass that adds a SimpleEdge to a Vector for each
+// edge on which it is invoked.
+class SimpleEdgeVectorTracer : public JS::CallbackTracer {
     // The vector to which we add SimpleEdges.
     SimpleEdgeVector *vec;
 
     // True if we should populate the edge's names.
     bool wantNames;
 
-    static void staticCallback(JSTracer *trc, void **thingp, JSGCTraceKind kind) {
+    static void staticCallback(JS::CallbackTracer *trc, void **thingp, JSGCTraceKind kind) {
         static_cast<SimpleEdgeVectorTracer *>(trc)->callback(thingp, kind);
     }
 
@@ -164,7 +164,7 @@ class SimpleEdgeVectorTracer : public JSTracer {
     bool okay;
 
     SimpleEdgeVectorTracer(JSContext *cx, SimpleEdgeVector *vec, bool wantNames)
-      : JSTracer(JS_GetRuntime(cx), staticCallback),
+      : JS::CallbackTracer(JS_GetRuntime(cx), staticCallback),
         vec(vec),
         wantNames(wantNames),
         okay(true)
@@ -192,7 +192,7 @@ class SimpleEdgeRange : public EdgeRange {
         return tracer.okay;
     }
 
-    void popFront() MOZ_OVERRIDE { i++; settle(); }
+    void popFront() override { i++; settle(); }
 };
 
 
@@ -378,7 +378,7 @@ class PreComputedEdgeRange : public EdgeRange {
         settle();
     }
 
-    void popFront() MOZ_OVERRIDE { i++; settle(); }
+    void popFront() override { i++; settle(); }
 };
 
 const char16_t Concrete<RootList>::concreteTypeName[] = MOZ_UTF16("RootList");

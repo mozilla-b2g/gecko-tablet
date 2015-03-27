@@ -696,18 +696,34 @@ struct JSRuntime : public JS::shadow::Runtime,
     uint32_t profilerSampleBufferGen() {
         return profilerSampleBufferGen_;
     }
+    void resetProfilerSampleBufferGen() {
+        profilerSampleBufferGen_ = 0;
+    }
     void setProfilerSampleBufferGen(uint32_t gen) {
-        profilerSampleBufferGen_ = gen;
+        // May be called from sampler thread or signal handler; use
+        // compareExchange to make sure we have monotonic increase.
+        for (;;) {
+            uint32_t curGen = profilerSampleBufferGen_;
+            if (curGen >= gen)
+                break;
+
+            if (profilerSampleBufferGen_.compareExchange(curGen, gen))
+                break;
+        }
     }
 
     uint32_t profilerSampleBufferLapCount() {
         MOZ_ASSERT(profilerSampleBufferLapCount_ > 0);
         return profilerSampleBufferLapCount_;
     }
+    void resetProfilerSampleBufferLapCount() {
+        profilerSampleBufferLapCount_ = 1;
+    }
     void updateProfilerSampleBufferLapCount(uint32_t lapCount) {
         MOZ_ASSERT(profilerSampleBufferLapCount_ > 0);
 
-        // Use compareExchange to make sure we have monotonic increase.
+        // May be called from sampler thread or signal handler; use
+        // compareExchange to make sure we have monotonic increase.
         for (;;) {
             uint32_t curLapCount = profilerSampleBufferLapCount_;
             if (curLapCount >= lapCount)
@@ -1074,7 +1090,7 @@ struct JSRuntime : public JS::shadow::Runtime,
     /* Client opaque pointers */
     void                *data;
 
-#ifdef XP_MACOSX
+#if defined(XP_MACOSX) && defined(ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_OOB)
     js::AsmJSMachExceptionHandler asmJSMachExceptionHandler;
 #endif
 
@@ -1603,6 +1619,8 @@ class MOZ_STACK_CLASS AutoKeepAtoms
         if (JSRuntime *rt = pt->runtimeIfOnOwnerThread()) {
             MOZ_ASSERT(rt->keepAtoms_);
             rt->keepAtoms_--;
+            if (rt->gc.fullGCForAtomsRequested() && !rt->keepAtoms())
+                rt->gc.triggerFullGCForAtoms();
         }
     }
 };

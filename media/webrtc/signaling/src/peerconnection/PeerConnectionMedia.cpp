@@ -26,9 +26,11 @@
 #include "nsNetCID.h"
 #include "nsNetUtil.h"
 #include "nsICancelable.h"
+#include "nsIDocument.h"
+#include "nsILoadInfo.h"
+#include "nsIContentPolicy.h"
 #include "nsIProxyInfo.h"
 #include "nsIProtocolProxyService.h"
-#include "nsIIOService.h"
 
 #ifdef MOZILLA_INTERNAL_API
 #include "MediaStreamList.h"
@@ -208,13 +210,18 @@ PeerConnectionMedia::PeerConnectionMedia(PeerConnectionImpl *parent)
       mMainThread(mParent->GetMainThread()),
       mSTSThread(mParent->GetSTSThread()),
       mProxyResolveCompleted(false) {
+}
+
+nsresult PeerConnectionMedia::Init(const std::vector<NrIceStunServer>& stun_servers,
+                                   const std::vector<NrIceTurnServer>& turn_servers)
+{
   nsresult rv;
 
   nsCOMPtr<nsIProtocolProxyService> pps =
     do_GetService(NS_PROTOCOLPROXYSERVICE_CONTRACTID, &rv);
   if (NS_FAILED(rv)) {
     CSFLogError(logTag, "%s: Failed to get proxy service: %d", __FUNCTION__, (int)rv);
-    return;
+    return NS_ERROR_FAILURE;
   }
 
   // We use the following URL to find the "default" proxy address for all HTTPS
@@ -224,22 +231,42 @@ PeerConnectionMedia::PeerConnectionMedia(PeerConnectionImpl *parent)
   rv = NS_NewURI(getter_AddRefs(fakeHttpsLocation), "https://example.com");
   if (NS_FAILED(rv)) {
     CSFLogError(logTag, "%s: Failed to set URI: %d", __FUNCTION__, (int)rv);
-    return;
-  }
-
-  nsCOMPtr<nsIIOService> ios = do_GetIOService(&rv);
-  if (NS_FAILED(rv)) {
-    CSFLogError(logTag, "%s: Failed to get IOService: %d",
-                __FUNCTION__, (int)rv);
-    return;
+    return NS_ERROR_FAILURE;
   }
 
   nsCOMPtr<nsIChannel> channel;
-  rv = ios->NewChannelFromURI(fakeHttpsLocation, getter_AddRefs(channel));
+
+#ifdef MOZILLA_INTERNAL_API
+  nsCOMPtr<nsIDocument> principal = mParent->GetWindow()->GetExtantDoc();
+#else
+  // For unit-tests
+  nsCOMPtr<nsIScriptSecurityManager> secMan(
+      do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv));
+  if (NS_FAILED(rv)) {
+    CSFLogError(logTag, "%s: Failed to get IOService: %d",
+        __FUNCTION__, (int)rv);
+    CSFLogError(logTag, "%s: Failed to get securityManager: %d", __FUNCTION__, (int)rv);
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIPrincipal> principal;
+  rv = secMan->GetSystemPrincipal(getter_AddRefs(principal));
+  if (NS_FAILED(rv)) {
+    CSFLogError(logTag, "%s: Failed to get systemPrincipal: %d", __FUNCTION__, (int)rv);
+    return NS_ERROR_FAILURE;
+  }
+#endif
+
+  rv = NS_NewChannel(getter_AddRefs(channel),
+                     fakeHttpsLocation,
+                     principal,
+                     nsILoadInfo::SEC_NORMAL,
+                     nsIContentPolicy::TYPE_OTHER);
+
   if (NS_FAILED(rv)) {
     CSFLogError(logTag, "%s: Failed to get channel from URI: %d",
                 __FUNCTION__, (int)rv);
-    return;
+    return NS_ERROR_FAILURE;
   }
 
   nsRefPtr<ProtocolProxyQueryHandler> handler = new ProtocolProxyQueryHandler(this);
@@ -249,13 +276,9 @@ PeerConnectionMedia::PeerConnectionMedia(PeerConnectionImpl *parent)
                          handler, getter_AddRefs(mProxyRequest));
   if (NS_FAILED(rv)) {
     CSFLogError(logTag, "%s: Failed to resolve protocol proxy: %d", __FUNCTION__, (int)rv);
-    return;
+    return NS_ERROR_FAILURE;
   }
-}
 
-nsresult PeerConnectionMedia::Init(const std::vector<NrIceStunServer>& stun_servers,
-                                   const std::vector<NrIceTurnServer>& turn_servers)
-{
   // TODO(ekr@rtfm.com): need some way to set not offerer later
   // Looks like a bug in the NrIceCtx API.
   mIceCtx = NrIceCtx::Create("PC:" + mParentName,
@@ -266,7 +289,7 @@ nsresult PeerConnectionMedia::Init(const std::vector<NrIceStunServer>& stun_serv
     CSFLogError(logTag, "%s: Failed to create Ice Context", __FUNCTION__);
     return NS_ERROR_FAILURE;
   }
-  nsresult rv;
+
   if (NS_FAILED(rv = mIceCtx->SetStunServers(stun_servers))) {
     CSFLogError(logTag, "%s: Failed to set stun servers", __FUNCTION__);
     return rv;
@@ -391,7 +414,7 @@ PeerConnectionMedia::StartIceChecks(const JsepSession& session) {
     }
   }
 
-  nsRefPtr<nsIRunnable> runnable(
+  nsCOMPtr<nsIRunnable> runnable(
       WrapRunnable(
         RefPtr<PeerConnectionMedia>(this),
         &PeerConnectionMedia::StartIceChecks_s,
@@ -501,8 +524,7 @@ PeerConnectionMedia::FlushIceCtxOperationQueueIfReady()
 }
 
 void
-PeerConnectionMedia::PerformOrEnqueueIceCtxOperation(
-    const nsRefPtr<nsIRunnable>& runnable)
+PeerConnectionMedia::PerformOrEnqueueIceCtxOperation(nsIRunnable* runnable)
 {
   ASSERT_ON_THREAD(mMainThread);
 
@@ -517,7 +539,7 @@ void
 PeerConnectionMedia::GatherIfReady() {
   ASSERT_ON_THREAD(mMainThread);
 
-  nsRefPtr<nsIRunnable> runnable(WrapRunnable(
+  nsCOMPtr<nsIRunnable> runnable(WrapRunnable(
         RefPtr<PeerConnectionMedia>(this),
         &PeerConnectionMedia::EnsureIceGathering_s));
 

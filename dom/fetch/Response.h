@@ -24,7 +24,7 @@ class Headers;
 class InternalHeaders;
 class Promise;
 
-class Response MOZ_FINAL : public nsISupports
+class Response final : public nsISupports
                          , public FetchBody<Response>
                          , public nsWrapperCache
 {
@@ -37,9 +37,9 @@ public:
   Response(const Response& aOther) = delete;
 
   JSObject*
-  WrapObject(JSContext* aCx) MOZ_OVERRIDE
+  WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto) override
   {
-    return ResponseBinding::Wrap(aCx, this);
+    return ResponseBinding::Wrap(aCx, this, aGivenProto);
   }
 
   ResponseType
@@ -55,15 +55,6 @@ public:
     mInternalResponse->GetUrl(url);
     aUrl.AsAString() = NS_ConvertUTF8toUTF16(url);
   }
-
-  bool
-  GetFinalURL(ErrorResult& aRv) const
-  {
-    return mInternalResponse->FinalURL();
-  }
-
-  void
-  SetFinalURL(bool aFinalURL, ErrorResult& aRv);
 
   uint16_t
   Status() const
@@ -103,7 +94,7 @@ public:
 
   static already_AddRefed<Response>
   Constructor(const GlobalObject& aGlobal,
-              const Optional<ArrayBufferOrArrayBufferViewOrBlobOrUSVStringOrURLSearchParams>& aBody,
+              const Optional<ArrayBufferOrArrayBufferViewOrBlobOrFormDataOrUSVStringOrURLSearchParams>& aBody,
               const ResponseInit& aInit, ErrorResult& rv);
 
   nsIGlobalObject* GetParentObject() const

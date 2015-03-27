@@ -878,9 +878,6 @@ class nsIWidget : public nsISupports {
      */
     NS_IMETHOD SetParent(nsIWidget* aNewParent) = 0;
 
-    NS_IMETHOD RegisterTouchWindow() = 0;
-    NS_IMETHOD UnregisterTouchWindow() = 0;
-
     /**
      * Return the parent Widget of this Widget or nullptr if this is a 
      * top level window
@@ -1706,6 +1703,13 @@ class nsIWidget : public nsISupports {
      * parent process synchronously.
      */
     virtual nsEventStatus DispatchAPZAwareEvent(mozilla::WidgetInputEvent* aEvent) = 0;
+
+    /**
+     * Dispatches an event that must be transformed by APZ first, but is not
+     * actually handled by APZ. If invoked in the child process, it is
+     * forwarded to the parent process synchronously.
+     */
+    virtual nsEventStatus DispatchInputEvent(mozilla::WidgetInputEvent* aEvent) = 0;
 
     /**
      * Enables the dropping of files to a widget (XXX this is temporary)

@@ -80,6 +80,8 @@ HttpBaseChannel::HttpBaseChannel()
   , mReferrerPolicy(REFERRER_POLICY_NO_REFERRER_WHEN_DOWNGRADE)
   , mRedirectCount(0)
   , mForcePending(false)
+  , mCorsIncludeCredentials(false)
+  , mCorsMode(nsIHttpChannelInternal::CORS_MODE_NO_CORS)
 {
   LOG(("Creating HttpBaseChannel @%x\n", this));
 
@@ -1854,6 +1856,34 @@ HttpBaseChannel::ForceNoIntercept()
   return NS_OK;
 }
 
+NS_IMETHODIMP
+HttpBaseChannel::GetCorsIncludeCredentials(bool* aInclude)
+{
+  *aInclude = mCorsIncludeCredentials;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+HttpBaseChannel::SetCorsIncludeCredentials(bool aInclude)
+{
+  mCorsIncludeCredentials = aInclude;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+HttpBaseChannel::GetCorsMode(uint32_t* aMode)
+{
+  *aMode = mCorsMode;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+HttpBaseChannel::SetCorsMode(uint32_t aMode)
+{
+  mCorsMode = aMode;
+  return NS_OK;
+}
+
 //-----------------------------------------------------------------------------
 // HttpBaseChannel::nsISupportsPriority
 //-----------------------------------------------------------------------------
@@ -2023,7 +2053,8 @@ void
 HttpBaseChannel::DoNotifyListener()
 {
   if (mListener) {
-    mListener->OnStartRequest(this, mListenerContext);
+    nsCOMPtr<nsIStreamListener> listener = mListener;
+    listener->OnStartRequest(this, mListenerContext);
   }
 
   // Make sure mIsPending is set to false. At this moment we are done from
@@ -2032,7 +2063,8 @@ HttpBaseChannel::DoNotifyListener()
   mIsPending = false;
 
   if (mListener) {
-    mListener->OnStopRequest(this, mListenerContext, mStatus);
+    nsCOMPtr<nsIStreamListener> listener = mListener;
+    listener->OnStopRequest(this, mListenerContext, mStatus);
   }
 
   // We have to make sure to drop the references to listeners and callbacks

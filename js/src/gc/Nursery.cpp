@@ -42,12 +42,13 @@ struct js::Nursery::FreeHugeSlotsTask : public GCParallelTask
     explicit FreeHugeSlotsTask(FreeOp *fop) : fop_(fop) {}
     bool init() { return slots_.init(); }
     void transferSlotsToFree(HugeSlotsSet &slotsToFree);
+    ~FreeHugeSlotsTask() override { join(); }
 
   private:
     FreeOp *fop_;
     HugeSlotsSet slots_;
 
-    virtual void run() MOZ_OVERRIDE;
+    virtual void run() override;
 };
 
 bool
@@ -349,7 +350,7 @@ js::Nursery::allocateHugeSlots(JS::Zone *zone, size_t nslots)
 namespace js {
 namespace gc {
 
-class MinorCollectionTracer : public JSTracer
+class MinorCollectionTracer : public JS::CallbackTracer
 {
   public:
     Nursery *nursery;
@@ -379,7 +380,7 @@ class MinorCollectionTracer : public JSTracer
     }
 
     MinorCollectionTracer(JSRuntime *rt, Nursery *nursery)
-      : JSTracer(rt, Nursery::MinorGCCallback, TraceWeakMapKeysValues),
+      : JS::CallbackTracer(rt, Nursery::MinorGCCallback, TraceWeakMapKeysValues),
         nursery(nursery),
         session(rt, MinorCollecting),
         tenuredSize(0),
@@ -478,7 +479,8 @@ js::Nursery::allocateFromTenured(Zone *zone, AllocKind thingKind)
     if (t)
         return t;
     zone->arenas.checkEmptyFreeList(thingKind);
-    return zone->arenas.allocateFromArena(zone, thingKind);
+    AutoMaybeStartBackgroundAllocation maybeStartBackgroundAllocation;
+    return zone->arenas.allocateFromArena(zone, thingKind, maybeStartBackgroundAllocation);
 }
 
 void
@@ -774,7 +776,7 @@ ShouldMoveToTenured(MinorCollectionTracer *trc, void **thingp)
 }
 
 /* static */ void
-js::Nursery::MinorGCCallback(JSTracer *jstrc, void **thingp, JSGCTraceKind kind)
+js::Nursery::MinorGCCallback(JS::CallbackTracer *jstrc, void **thingp, JSGCTraceKind kind)
 {
     MinorCollectionTracer *trc = static_cast<MinorCollectionTracer *>(jstrc);
     if (ShouldMoveToTenured(trc, thingp))
@@ -804,6 +806,8 @@ js::Nursery::collect(JSRuntime *rt, JS::gcreason::Reason reason, ObjectGroupList
         sb.clear();
         return;
     }
+
+    rt->gc.incMinorGcNumber();
 
     rt->gc.stats.count(gcstats::STAT_MINOR_GC);
 

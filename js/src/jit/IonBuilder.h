@@ -398,12 +398,13 @@ class IonBuilder
     MDefinition *addMaybeCopyElementsForWrite(MDefinition *object);
     MInstruction *addBoundsCheck(MDefinition *index, MDefinition *length);
     MInstruction *addShapeGuard(MDefinition *obj, Shape *const shape, BailoutKind bailoutKind);
-    MInstruction *addGroupGuard(MDefinition *obj, ObjectGroup *group, BailoutKind bailoutKind);
+    MInstruction *addGroupGuard(MDefinition *obj, ObjectGroup *group, BailoutKind bailoutKind,
+                                bool checkUnboxedExpando = false);
 
     MInstruction *
-    addShapeGuardPolymorphic(MDefinition *obj,
-                             const BaselineInspector::ShapeVector &shapes,
-                             const BaselineInspector::ObjectGroupVector &unboxedGroups);
+    addGuardReceiverPolymorphic(MDefinition *obj,
+                                const BaselineInspector::ShapeVector &shapes,
+                                const BaselineInspector::ObjectGroupVector &unboxedGroups);
 
     MDefinition *convertShiftToMaskForStaticTypedArray(MDefinition *id,
                                                        Scalar::Type viewType);
@@ -831,7 +832,8 @@ class IonBuilder
     InliningStatus inlineSimdWith(CallInfo &callInfo, JSNative native, SimdLane lane,
                                   SimdTypeDescr::Type type);
     InliningStatus inlineSimdSplat(CallInfo &callInfo, JSNative native, SimdTypeDescr::Type type);
-    InliningStatus inlineSimdSwizzle(CallInfo &callInfo, JSNative native, SimdTypeDescr::Type type);
+    InliningStatus inlineSimdShuffle(CallInfo &callInfo, JSNative native, SimdTypeDescr::Type type,
+                                     unsigned numVectors, unsigned numLanes);
     InliningStatus inlineSimdCheck(CallInfo &callInfo, JSNative native, SimdTypeDescr::Type type);
     InliningStatus inlineSimdConvert(CallInfo &callInfo, JSNative native, bool isCast,
                                      SimdTypeDescr::Type from, SimdTypeDescr::Type to);
@@ -840,8 +842,10 @@ class IonBuilder
 
     bool prepareForSimdLoadStore(CallInfo &callInfo, Scalar::Type simdType, MInstruction **elements,
                                  MDefinition **index, Scalar::Type *arrayType);
-    InliningStatus inlineSimdLoad(CallInfo &callInfo, JSNative native, SimdTypeDescr::Type type);
-    InliningStatus inlineSimdStore(CallInfo &callInfo, JSNative native, SimdTypeDescr::Type type);
+    InliningStatus inlineSimdLoad(CallInfo &callInfo, JSNative native, SimdTypeDescr::Type type,
+                                  unsigned numElems);
+    InliningStatus inlineSimdStore(CallInfo &callInfo, JSNative native, SimdTypeDescr::Type type,
+                                   unsigned numElems);
 
     // Utility intrinsics.
     InliningStatus inlineIsCallable(CallInfo &callInfo);
@@ -860,6 +864,8 @@ class IonBuilder
     // Testing functions.
     InliningStatus inlineBailout(CallInfo &callInfo);
     InliningStatus inlineAssertFloat32(CallInfo &callInfo);
+    InliningStatus inlineAssertRecoveredOnBailout(CallInfo &callInfo);
+    InliningStatus inlineTrue(CallInfo &callInfo);
 
     // Bind function.
     InliningStatus inlineBoundFunction(CallInfo &callInfo, JSFunction *target);
@@ -1093,6 +1099,10 @@ class IonBuilder
 
     size_t inliningDepth_;
 
+    // Total bytecode length of all inlined scripts. Only tracked for the
+    // outermost builder.
+    size_t inlinedBytecodeLength_;
+
     // Cutoff to disable compilation if excessive time is spent reanalyzing
     // loop bodies to compute a fixpoint of the types for loop variables.
     static const size_t MAX_LOOP_RESTARTS = 40;
@@ -1105,6 +1115,10 @@ class IonBuilder
     // True if script->failedShapeGuard is set for the current script or
     // an outer script.
     bool failedShapeGuard_;
+
+    // True if script->failedLexicalCheck_ is set for the current script or
+    // an outer script.
+    bool failedLexicalCheck_;
 
     // Has an iterator other than 'for in'.
     bool nonStringIteration_;

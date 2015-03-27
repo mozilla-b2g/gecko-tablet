@@ -223,9 +223,7 @@ function RilObject(aContext) {
   this.context = aContext;
 
   this.telephonyRequestQueue = new TelephonyRequestQueue(this);
-  this.currentCalls = {};
   this.currentConferenceState = CALL_STATE_UNKNOWN;
-  this.currentDataCalls = {};
   this._pendingSentSmsMap = {};
   this.pendingNetworkType = {};
   this._receivedSmsCbPagesMap = {};
@@ -233,8 +231,6 @@ function RilObject(aContext) {
 
   // Init properties that are only initialized once.
   this.v5Legacy = RILQUIRKS_V5_LEGACY;
-
-  this.pendingMO = null;
 }
 RilObject.prototype = {
   context: null,
@@ -246,19 +242,9 @@ RilObject.prototype = {
   v5Legacy: null,
 
   /**
-   * Valid calls.
-   */
-  currentCalls: null,
-
-  /**
    * Call state of current conference group.
    */
   currentConferenceState: null,
-
-  /**
-   * Existing data calls.
-   */
-  currentDataCalls: null,
 
   /**
    * Outgoing messages waiting for SMS-STATUS-REPORT.
@@ -360,16 +346,11 @@ RilObject.prototype = {
      */
     this.basebandVersion = null;
 
-    // Clean up this.currentCalls: rild might have restarted.
-    for each (let currentCall in this.currentCalls) {
-      delete this.currentCalls[currentCall.callIndex];
-      this._handleDisconnectedCall(currentCall);
-    }
-
-    // Deactivate this.currentDataCalls: rild might have restarted.
-    for each (let datacall in this.currentDataCalls) {
-      this.deactivateDataCall(datacall);
-    }
+    // Clean up currentCalls: rild might have restarted.
+    this.sendChromeMessage({
+      rilMessageType: "currentCalls",
+      calls: {}
+    });
 
     // Don't clean up this._pendingSentSmsMap
     // because on rild restart: we may continue with the pending segments.
@@ -411,12 +392,6 @@ RilObject.prototype = {
       MMI: cbmmi || null
     };
     this.mergedCellBroadcastConfig = null;
-
-    /**
-     * A successful dialing request.
-     * { options: options of the corresponding dialing request }
-     */
-    this.pendingMO = null;
 
     /**
      * True when the request to report SMS Memory Status is pending.
@@ -1449,14 +1424,6 @@ RilObject.prototype = {
   },
 
   /**
-   * Cache the request for making an emergency call when radio is off. The
-   * request shall include two types of callback functions. 'callback' is
-   * called when radio is ready, and 'onerror' is called when turning radio
-   * on fails.
-   */
-  cachedDialRequest : null,
-
-  /**
    * Dial a non-emergency number.
    *
    * @param isEmergency
@@ -1469,46 +1436,19 @@ RilObject.prototype = {
    *        Integer doing something XXX TODO
    */
   dial: function(options) {
-    let onerror = (function onerror(options, errorMsg) {
-      options.success = false;
-      options.errorMsg = errorMsg;
-      this.sendChromeMessage(options);
-    }).bind(this, options);
-
-    let isRadioOff = (this.radioState === GECKO_RADIOSTATE_DISABLED);
-
     if (options.isEmergency) {
       options.request = RILQUIRKS_REQUEST_USE_DIAL_EMERGENCY_CALL ?
                         REQUEST_DIAL_EMERGENCY_CALL : REQUEST_DIAL;
 
-      if (isRadioOff) {
-        if (DEBUG) {
-          this.context.debug("Automatically enable radio for an emergency call.");
-        }
-
-        this.cachedDialRequest = {
-          callback: this.dialInternal.bind(this, options),
-          onerror: onerror
-        };
-
-        this.setRadioEnabled({enabled: true});
-        return;
-      }
-
-      this.dialInternal(options);
     } else {
+      options.request = REQUEST_DIAL;
+
       // Exit emergency callback mode when user dial a non-emergency call.
       if (this._isInEmergencyCbMode) {
         this.exitEmergencyCbMode();
       }
-
-      options.request = REQUEST_DIAL;
-
-      this.dialInternal(options);
     }
-  },
 
-  dialInternal: function(options) {
     this.telephonyRequestQueue.push(options.request, () => {
       let Buf = this.context.Buf;
       Buf.newParcel(options.request, options);
@@ -1543,37 +1483,16 @@ RilObject.prototype = {
    *        Call index (1-based) as reported by REQUEST_GET_CURRENT_CALLS.
    */
   hangUpCall: function(options) {
-    let call = this.currentCalls[options.callIndex];
-    if (!call) {
-      // |hangUpCall()| is used to remove a call from the current call list,
-      // so we consider it as an successful case when hanging up a call that
-      // doesn't exist in the current call list.
-      options.success = true;
-      this.sendChromeMessage(options);
-      return;
-    }
-
-    call.hangUpLocal = true;
-    if (call.state === CALL_STATE_HOLDING) {
-      this.hangUpBackground(options);
-    } else {
-      this.telephonyRequestQueue.push(REQUEST_HANGUP, () => {
-        let Buf = this.context.Buf;
-        Buf.newParcel(REQUEST_HANGUP, options);
-        Buf.writeInt32(1);
-        Buf.writeInt32(options.callIndex);
-        Buf.sendParcel();
-      });
-    }
+    this.telephonyRequestQueue.push(REQUEST_HANGUP, () => {
+      let Buf = this.context.Buf;
+      Buf.newParcel(REQUEST_HANGUP, options);
+      Buf.writeInt32(1);
+      Buf.writeInt32(options.callIndex);
+      Buf.sendParcel();
+    });
   },
 
   hangUpForeground: function(options) {
-    for each (let currentCall in this.currentCalls) {
-      if (currentCall.state == CALL_STATE_ACTIVE) {
-        currentCall.hangUpLocal = true;
-      }
-    }
-
     this.telephonyRequestQueue.push(REQUEST_HANGUP_FOREGROUND_RESUME_BACKGROUND, () => {
       this.context.Buf.simpleRequest(REQUEST_HANGUP_FOREGROUND_RESUME_BACKGROUND,
                                      options);
@@ -1581,28 +1500,6 @@ RilObject.prototype = {
   },
 
   hangUpBackground: function(options) {
-    let waitingCalls = [];
-    let heldCalls = [];
-
-    for each (let currentCall in this.currentCalls) {
-      switch (currentCall.state) {
-        case CALL_STATE_WAITING:
-          waitingCalls.push(currentCall);
-          break;
-        case CALL_STATE_HOLDING:
-          heldCalls.push(currentCall);
-          break;
-      }
-    }
-
-    // When both a held and a waiting call exist, the request shall apply to
-    // the waiting call.
-    if (waitingCalls.length) {
-      waitingCalls.forEach(call => call.hangUpLocal = true);
-    } else {
-      heldCalls.forEach(call => call.hangUpLocal = true);
-    }
-
     this.telephonyRequestQueue.push(REQUEST_HANGUP_WAITING_OR_BACKGROUND, () => {
       this.context.Buf.simpleRequest(REQUEST_HANGUP_WAITING_OR_BACKGROUND,
                                      options);
@@ -1622,88 +1519,10 @@ RilObject.prototype = {
     });
   },
 
-  /**
-   * Answer an incoming/waiting call.
-   *
-   * @param callIndex
-   *        Call index of the call to answer.
-   */
   answerCall: function(options) {
-    let call = this.currentCalls[options.callIndex];
-    if (!call) {
-      options.success = false;
-      options.errorMsg = GECKO_ERROR_GENERIC_FAILURE;
-      this.sendChromeMessage(options);
-      return;
-    }
-
-    // Check for races. Since we dispatched the incoming/waiting call
-    // notification the incoming/waiting call may have changed. The main
-    // thread thinks that it is answering the call with the given index,
-    // so only answer if that is still incoming/waiting.
-    switch (call.state) {
-      case CALL_STATE_INCOMING:
-        this.telephonyRequestQueue.push(REQUEST_ANSWER, () => {
-          this.context.Buf.simpleRequest(REQUEST_ANSWER, options);
-        });
-        break;
-      case CALL_STATE_WAITING:
-        // Answer the waiting (second) call, and hold the first call.
-        this.switchActiveCall(options);
-        break;
-      default:
-        if (DEBUG) this.context.debug("AnswerCall: Invalid call state");
-
-        options.success = false;
-        options.errorMsg = GECKO_ERROR_GENERIC_FAILURE;
-        this.sendChromeMessage(options);
-    }
-  },
-
-  /**
-   * Reject an incoming/waiting call.
-   *
-   * @param callIndex
-   *        Call index of the call to reject.
-   */
-  rejectCall: function(options) {
-    let call = this.currentCalls[options.callIndex];
-    if (!call) {
-      // |hangUpCall()| is used to remove an imcoming call from the current
-      // call list, so we consider it as an successful case when rejecting
-      // a call that doesn't exist in the current call list.
-      options.success = true;
-      this.sendChromeMessage(options);
-      return;
-    }
-
-    call.hangUpLocal = true;
-
-    if (this._isCdma) {
-      // AT+CHLD=0 means "release held or UDUB."
-      this.hangUpBackground(options);
-      return;
-    }
-
-    // Check for races. Since we dispatched the incoming/waiting call
-    // notification the incoming/waiting call may have changed. The main
-    // thread thinks that it is rejecting the call with the given index,
-    // so only reject if that is still incoming/waiting.
-    switch (call.state) {
-      case CALL_STATE_INCOMING:
-        this.udub(options);
-        break;
-      case CALL_STATE_WAITING:
-        // Reject the waiting (second) call, and remain the first call.
-        this.hangUpBackground(options);
-        break;
-      default:
-        if (DEBUG) this.context.debug("RejectCall: Invalid call state");
-
-        options.success = false;
-        options.errorMsg = GECKO_ERROR_GENERIC_FAILURE;
-        this.sendChromeMessage(options);
-    }
+    this.telephonyRequestQueue.push(REQUEST_ANSWER, () => {
+      this.context.Buf.simpleRequest(REQUEST_ANSWER, options);
+    });
   },
 
   conferenceCall: function(options) {
@@ -1725,9 +1544,9 @@ RilObject.prototype = {
   /**
    * Get current calls.
    */
-  getCurrentCalls: function() {
+  getCurrentCalls: function(options) {
     this.telephonyRequestQueue.push(REQUEST_GET_CURRENT_CALLS, () => {
-      this.context.Buf.simpleRequest(REQUEST_GET_CURRENT_CALLS);
+      this.context.Buf.simpleRequest(REQUEST_GET_CURRENT_CALLS, options);
     });
   },
 
@@ -2107,11 +1926,6 @@ RilObject.prototype = {
    *        One of DATACALL_DEACTIVATE_* constants.
    */
   deactivateDataCall: function(options) {
-    let datacall = this.currentDataCalls[options.cid];
-    if (!datacall) {
-      return;
-    }
-
     let Buf = this.context.Buf;
     Buf.newParcel(REQUEST_DEACTIVATE_DATA_CALL, options);
     Buf.writeInt32(2);
@@ -2123,8 +1937,8 @@ RilObject.prototype = {
   /**
    * Get a list of data calls.
    */
-  getDataCallList: function() {
-    this.context.Buf.simpleRequest(REQUEST_DATA_CALL_LIST);
+  getDataCallList: function(options) {
+    this.context.Buf.simpleRequest(REQUEST_DATA_CALL_LIST, options);
   },
 
   _attachDataRegistration: false,
@@ -2155,9 +1969,8 @@ RilObject.prototype = {
   /**
    * Get failure casue code for the most recently failed PDP context.
    */
-  getFailCauseCode: function(callback) {
-    this.context.Buf.simpleRequest(REQUEST_LAST_CALL_FAIL_CAUSE,
-                                   {callback: callback});
+  getFailCause: function(options) {
+    this.context.Buf.simpleRequest(REQUEST_LAST_CALL_FAIL_CAUSE, options);
   },
 
   sendMMI: function(options) {
@@ -3510,12 +3323,6 @@ RilObject.prototype = {
 
     info.rilMessageType = "signalstrengthchange";
     this._sendNetworkInfoMessage(NETWORK_INFO_SIGNAL, info);
-
-    if (this.cachedDialRequest && info.voice.signalStrength) {
-      // Radio is ready for making the cached emergency call.
-      this.cachedDialRequest.callback();
-      this.cachedDialRequest = null;
-    }
   },
 
   /**
@@ -3677,396 +3484,6 @@ RilObject.prototype = {
     }
   },
 
-  /**
-   * Classify new calls into three groups: (removed, remained, added).
-   */
-  _classifyCalls: function(newCalls) {
-    newCalls = newCalls || {};
-
-    let removedCalls = [];
-    let remainedCalls = [];
-    let addedCalls = [];
-
-    for each (let currentCall in this.currentCalls) {
-      let newCall = newCalls[currentCall.callIndex];
-      if (!newCall) {
-        removedCalls.push(currentCall);
-      } else {
-        remainedCalls.push(newCall);
-        delete newCalls[currentCall.callIndex];
-      }
-    }
-
-    // Go through any remaining calls that are new to us.
-    for each (let newCall in newCalls) {
-      if (newCall.isVoice) {
-        addedCalls.push(newCall);
-      }
-    }
-
-    return [removedCalls, remainedCalls, addedCalls];
-  },
-
-  /**
-   * Check the calls in addedCalls and assign an appropriate one to pendingMO.
-   * Also update the |isEmergency| on that call.
-   */
-  _assignPendingMO: function(addedCalls) {
-    let options = this.pendingMO.options;
-    this.pendingMO = null;
-
-    for (let call of addedCalls) {
-      if (call.state !== CALL_STATE_INCOMING) {
-        call.isEmergency = options.isEmergency;
-        options.success = true;
-        options.callIndex = call.callIndex;
-        this.sendChromeMessage(options);
-        return;
-      }
-    }
-
-    // The call doesn't exist.
-    options.success = false;
-    options.errorMsg = GECKO_CALL_ERROR_UNSPECIFIED;
-    this.sendChromeMessage(options);
-  },
-
-  /**
-   * Check the currentCalls and identify the conference group.
-   * Return the conference state and the group as a set.
-   */
-  _detectConference: function() {
-    // There are some difficuties to identify the conference by |.isMpty| so we
-    // don't rely on this flag.
-    //  - |.isMpty| becomes false when the conference call is put on hold.
-    //  - |.isMpty| may remain true when other participants left the conference.
-
-    // All the calls in the conference should have the same state and it is
-    // either ACTIVE or HOLDING. That means, if we find a group of call with
-    // the same state and its size is larger than 2, it must be a conference.
-    let activeCalls = new Set();
-    let holdingCalls = new Set();
-
-    for each (let call in this.currentCalls) {
-      if (call.state === CALL_STATE_ACTIVE) {
-        activeCalls.add(call);
-      } else if (call.state === CALL_STATE_HOLDING) {
-        holdingCalls.add(call);
-      }
-    }
-
-    if (activeCalls.size >= 2) {
-      return [CALL_STATE_ACTIVE, activeCalls];
-    } else if (holdingCalls.size >= 2) {
-      return [CALL_STATE_HOLDING, holdingCalls];
-    }
-
-    return [CALL_STATE_UNKNOWN, new Set()];
-  },
-
-  /**
-   * Helpers for processing call state changes.
-   */
-  _processCalls: function(newCalls, failCause) {
-    if (DEBUG) this.context.debug("_processCalls: " + JSON.stringify(newCalls) +
-                                  " failCause: " + failCause);
-
-    // Let's get the failCause first if there are removed calls. Otherwise, we
-    // need to trigger another async request when removing call and it cause
-    // the order of callDisconnected and conferenceCallStateChanged
-    // unpredictable.
-    if (failCause === undefined) {
-      for each (let currentCall in this.currentCalls) {
-        if (!newCalls[currentCall.callIndex] && !currentCall.hangUpLocal) {
-          this.getFailCauseCode((function(newCalls, failCause) {
-            this._processCalls(newCalls, failCause);
-          }).bind(this, newCalls));
-          return;
-        }
-      }
-    }
-
-    let [removedCalls, remainedCalls, addedCalls] =
-      this._classifyCalls(newCalls);
-
-    // Handle removed calls.
-    // Only remove it from the map here. Notify callDisconnected later.
-    for (let call of removedCalls) {
-      delete this.currentCalls[call.callIndex];
-      call.failCause = call.hangUpLocal ? GECKO_CALL_ERROR_NORMAL_CALL_CLEARING
-                                        : failCause;
-    }
-
-    let changedCalls = new Set();
-
-    // Handle remained calls.
-    for (let newCall of remainedCalls) {
-      let oldCall = this.currentCalls[newCall.callIndex];
-      if (oldCall.state == newCall.state) {
-        continue;
-      }
-
-      if (oldCall.state == CALL_STATE_WAITING &&
-          newCall.state == CALL_STATE_INCOMING) {
-        // Update the call internally but we don't notify chrome since these two
-        // states are viewed as the same one there.
-        oldCall.state = newCall.state;
-        continue;
-      }
-
-      if (!oldCall.started && newCall.state == CALL_STATE_ACTIVE) {
-        oldCall.started = new Date().getTime();
-      }
-
-      oldCall.state = newCall.state;
-      oldCall.number =
-        this._formatInternationalNumber(newCall.number, newCall.toa);
-      changedCalls.add(oldCall);
-    }
-
-    // Handle pendingMO.
-    if (this.pendingMO) {
-      this._assignPendingMO(addedCalls);
-    }
-
-    // Handle added calls.
-    for (let call of addedCalls) {
-      this._addVoiceCall(call);
-      changedCalls.add(call);
-    }
-
-    // Detect conference and update isConference flag.
-    let [newConferenceState, conference] = this._detectConference();
-    for each (let call in this.currentCalls) {
-      let isConference = conference.has(call);
-      if (call.isConference != isConference) {
-        call.isConference = isConference;
-        changedCalls.add(call);
-      }
-    }
-
-    // Update audio state. We have to send this message before callStateChange
-    // and callDisconnected to make sure that the audio state is ready first.
-    this.sendChromeMessage({
-      rilMessageType: "audioStateChanged",
-      state: this._detectAudioState()
-    });
-
-    // Notify call disconnected.
-    for (let call of removedCalls) {
-      this._handleDisconnectedCall(call);
-    }
-
-    // Notify call state change.
-    for (let call of changedCalls) {
-      this._handleChangedCallState(call);
-    }
-
-    // Notify conference state change.
-    if (this.currentConferenceState != newConferenceState) {
-      this.currentConferenceState = newConferenceState;
-      let message = {rilMessageType: "conferenceCallStateChanged",
-                     state: newConferenceState};
-      this.sendChromeMessage(message);
-    }
-  },
-
-  _detectAudioState: function() {
-    let callNum = Object.keys(this.currentCalls).length;
-    if (!callNum) {
-      return AUDIO_STATE_NO_CALL;
-    }
-
-    let firstIndex = Object.keys(this.currentCalls)[0];
-    if (callNum == 1 &&
-        this.currentCalls[firstIndex].state == CALL_STATE_INCOMING) {
-      return AUDIO_STATE_INCOMING;
-    }
-
-    return AUDIO_STATE_IN_CALL;
-  },
-
-  // Format international numbers appropriately.
-  _formatInternationalNumber: function(number, toa) {
-    if (number && toa == TOA_INTERNATIONAL && number[0] != "+") {
-      number = "+" + number;
-    }
-
-    return number;
-  },
-
-  _addVoiceCall: function(newCall) {
-    newCall.number = this._formatInternationalNumber(newCall.number, newCall.toa);
-    newCall.isOutgoing = !newCall.isMT;
-    newCall.isConference = false;
-
-    this.currentCalls[newCall.callIndex] = newCall;
-  },
-
-  _handleChangedCallState: function(changedCall) {
-    let message = {rilMessageType: "callStateChange",
-                   call: changedCall};
-    this.sendChromeMessage(message);
-  },
-
-  _handleDisconnectedCall: function(disconnectedCall) {
-    let message = {rilMessageType: "callDisconnected",
-                   call: disconnectedCall};
-    this.sendChromeMessage(message);
-  },
-
-  _sendDataCallError: function(message, errorCode) {
-    // Should not include token for unsolicited response.
-    delete message.rilMessageToken;
-    message.rilMessageType = "datacallerror";
-    if (errorCode !== ERROR_GENERIC_FAILURE) {
-      message.errorMsg = RIL_DATACALL_FAILCAUSE_TO_GECKO_DATACALL_ERROR[errorCode];
-    }
-    this.sendChromeMessage(message);
-  },
-
-  /**
-   * @return "deactivate" if <ifname> changes or one of the currentDataCall
-   *         addresses is missing in updatedDataCall, or "identical" if no
-   *         changes found, or "changed" otherwise.
-   */
-  _compareDataCallLink: function(updatedDataCall, currentDataCall) {
-    // If network interface is changed, report as "deactivate".
-    if (updatedDataCall.ifname != currentDataCall.ifname) {
-      return "deactivate";
-    }
-
-    // If any existing address is missing, report as "deactivate".
-    for (let i = 0; i < currentDataCall.addresses.length; i++) {
-      let address = currentDataCall.addresses[i];
-      if (updatedDataCall.addresses.indexOf(address) < 0) {
-        return "deactivate";
-      }
-    }
-
-    if (currentDataCall.addresses.length != updatedDataCall.addresses.length) {
-      // Since now all |currentDataCall.addresses| are found in
-      // |updatedDataCall.addresses|, this means one or more new addresses are
-      // reported.
-      return "changed";
-    }
-
-    let fields = ["gateways", "dnses"];
-    for (let i = 0; i < fields.length; i++) {
-      // Compare <datacall>.<field>.
-      let field = fields[i];
-      let lhs = updatedDataCall[field], rhs = currentDataCall[field];
-      if (lhs.length != rhs.length) {
-        return "changed";
-      }
-      for (let i = 0; i < lhs.length; i++) {
-        if (lhs[i] != rhs[i]) {
-          return "changed";
-        }
-      }
-    }
-
-    return "identical";
-  },
-
-  _processDataCallList: function(datacalls, newDataCallOptions) {
-    // Check for possible PDP errors: We check earlier because the datacall
-    // can be removed if is the same as the current one.
-    for each (let newDataCall in datacalls) {
-      if (newDataCall.status != DATACALL_FAIL_NONE) {
-        if (newDataCallOptions) {
-          newDataCallOptions.status = newDataCall.status;
-          newDataCallOptions.suggestedRetryTime = newDataCall.suggestedRetryTime;
-        }
-        this._sendDataCallError(newDataCallOptions || newDataCall,
-                                newDataCall.status);
-      }
-    }
-
-    for each (let currentDataCall in this.currentDataCalls) {
-      let updatedDataCall;
-      if (datacalls) {
-        updatedDataCall = datacalls[currentDataCall.cid];
-        delete datacalls[currentDataCall.cid];
-      }
-
-      if (!updatedDataCall) {
-        // If datacalls list is coming from REQUEST_SETUP_DATA_CALL response,
-        // we do not change state for any currentDataCalls not in datacalls list.
-        if (!newDataCallOptions) {
-          delete this.currentDataCalls[currentDataCall.cid];
-          currentDataCall.state = GECKO_NETWORK_STATE_DISCONNECTED;
-          currentDataCall.rilMessageType = "datacallstatechange";
-          this.sendChromeMessage(currentDataCall);
-        }
-        continue;
-      }
-
-      this._setDataCallGeckoState(updatedDataCall);
-      if (updatedDataCall.state != currentDataCall.state) {
-        if (updatedDataCall.state == GECKO_NETWORK_STATE_DISCONNECTED) {
-          delete this.currentDataCalls[currentDataCall.cid];
-        }
-        currentDataCall.status = updatedDataCall.status;
-        currentDataCall.active = updatedDataCall.active;
-        currentDataCall.state = updatedDataCall.state;
-        currentDataCall.rilMessageType = "datacallstatechange";
-        this.sendChromeMessage(currentDataCall);
-        continue;
-      }
-
-      // State not changed, now check links.
-      let result =
-        this._compareDataCallLink(updatedDataCall, currentDataCall);
-      if (result == "identical") {
-        if (DEBUG) this.context.debug("No changes in data call.");
-        continue;
-      }
-      if (result == "deactivate") {
-        if (DEBUG) this.context.debug("Data link changed, cleanup.");
-        this.deactivateDataCall(currentDataCall);
-        continue;
-      }
-      // Minor change, just update and notify.
-      if (DEBUG) {
-        this.context.debug("Data link minor change, just update and notify.");
-      }
-      currentDataCall.addresses = updatedDataCall.addresses.slice();
-      currentDataCall.dnses = updatedDataCall.dnses.slice();
-      currentDataCall.gateways = updatedDataCall.gateways.slice();
-      currentDataCall.rilMessageType = "datacallstatechange";
-      this.sendChromeMessage(currentDataCall);
-    }
-
-    for each (let newDataCall in datacalls) {
-      if (!newDataCall.ifname) {
-        continue;
-      }
-
-      if (!newDataCallOptions) {
-        if (DEBUG) {
-          this.context.debug("Unexpected new data call: " +
-                             JSON.stringify(newDataCall));
-        }
-        continue;
-      }
-
-      this.currentDataCalls[newDataCall.cid] = newDataCall;
-      this._setDataCallGeckoState(newDataCall);
-
-      newDataCall.radioTech = newDataCallOptions.radioTech;
-      newDataCall.apn = newDataCallOptions.apn;
-      newDataCall.user = newDataCallOptions.user;
-      newDataCall.passwd = newDataCallOptions.passwd;
-      newDataCall.chappap = newDataCallOptions.chappap;
-      newDataCall.pdptype = newDataCallOptions.pdptype;
-      newDataCallOptions = null;
-
-      newDataCall.rilMessageType = "datacallstatechange";
-      this.sendChromeMessage(newDataCall);
-    }
-  },
-
   _setDataCallGeckoState: function(datacall) {
     switch (datacall.active) {
       case DATACALL_INACTIVE:
@@ -4093,7 +3510,6 @@ RilObject.prototype = {
     }
 
     let notification = null;
-    let callIndex = -1;
 
     switch (info.code) {
       case SUPP_SVC_NOTIFICATION_CODE2_PUT_ON_HOLD:
@@ -4105,26 +3521,9 @@ RilObject.prototype = {
         return;
     }
 
-    // Get the target call object for this notification.
-    let currentCallIndexes = Object.keys(this.currentCalls);
-    if (currentCallIndexes.length === 1) {
-      // Only one call exists. This should be the target.
-      callIndex = currentCallIndexes[0];
-    } else {
-      // Find the call in |currentCalls| by the given number.
-      if (info.number) {
-        for each (let currentCall in this.currentCalls) {
-          if (currentCall.number == info.number) {
-            callIndex = currentCall.callIndex;
-            break;
-          }
-        }
-      }
-    }
-
     let message = {rilMessageType: "suppSvcNotification",
-                   notification: notification,
-                   callIndex: callIndex};
+                   number: info.number,  // could be empty.
+                   notification: notification};
     this.sendChromeMessage(message);
   },
 
@@ -5056,19 +4455,6 @@ RilObject.prototype = {
   },
 
   /**
-   * Get a list of current voice calls.
-   */
-  enumerateCalls: function(options) {
-    if (DEBUG) this.context.debug("Sending all current calls");
-    let calls = [];
-    for each (let call in this.currentCalls) {
-      calls.push(call);
-    }
-    options.calls = calls;
-    this.sendChromeMessage(options);
-  },
-
-  /**
    * Process STK Proactive Command.
    */
   processStkProactiveCommand: function() {
@@ -5222,10 +4608,13 @@ RilObject.prototype[REQUEST_ENTER_NETWORK_DEPERSONALIZATION_CODE] =
 };
 RilObject.prototype[REQUEST_GET_CURRENT_CALLS] = function REQUEST_GET_CURRENT_CALLS(length, options) {
   // Retry getCurrentCalls several times when error occurs.
-  if (options.rilRequestError &&
-      this._getCurrentCallsRetryCount < GET_CURRENT_CALLS_RETRY_MAX) {
-    this._getCurrentCallsRetryCount++;
-    this.getCurrentCalls();
+  if (options.rilRequestError) {
+    if (this._getCurrentCallsRetryCount < GET_CURRENT_CALLS_RETRY_MAX) {
+      this._getCurrentCallsRetryCount++;
+      this.getCurrentCalls(options);
+    } else {
+      this.sendDefaultResponse(options);
+    }
     return;
   }
 
@@ -5275,20 +4664,17 @@ RilObject.prototype[REQUEST_GET_CURRENT_CALLS] = function REQUEST_GET_CURRENT_CA
       };
     }
 
-    calls[call.callIndex] = call;
+    if (call.isVoice) {
+      calls[call.callIndex] = call;
+    }
   }
-  this._processCalls(calls);
+
+  options.calls = calls;
+  options.rilMessageType = options.rilMessageType || "currentCalls";
+  this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_DIAL] = function REQUEST_DIAL(length, options) {
-  if (options.rilRequestError === 0) {
-    this.pendingMO = {options: options};
-  } else {
-    this.getFailCauseCode((function(options, failCause) {
-      options.success = false;
-      options.errorMsg = failCause;
-      this.sendChromeMessage(options);
-    }).bind(this, options));
-  }
+  this.sendDefaultResponse(options);
 };
 RilObject.prototype[REQUEST_DIAL_EMERGENCY_CALL] = function REQUEST_DIAL_EMERGENCY_CALL(length, options) {
   RilObject.prototype[REQUEST_DIAL].call(this, length, options);
@@ -5326,21 +4712,22 @@ RilObject.prototype[REQUEST_UDUB] = function REQUEST_UDUB(length, options) {
   this.sendDefaultResponse(options);
 };
 RilObject.prototype[REQUEST_LAST_CALL_FAIL_CAUSE] = function REQUEST_LAST_CALL_FAIL_CAUSE(length, options) {
-  let Buf = this.context.Buf;
-  let num = length ? Buf.readInt32() : 0;
-  let failCause = null;
+  // Treat it as CALL_FAIL_ERROR_UNSPECIFIED if the request failed.
+  let failCause = CALL_FAIL_ERROR_UNSPECIFIED;
 
-  if (num) {
-    let causeNum = Buf.readInt32();
-    // To make _processCalls work as design, failCause couldn't be "undefined."
-    // See Bug 1112550 for details.
-    failCause = RIL_CALL_FAILCAUSE_TO_GECKO_CALL_ERROR[causeNum] || null;
-  }
-  if (DEBUG) this.context.debug("Last call fail cause: " + failCause);
+  if (options.rilRequestError === 0) {
+    let Buf = this.context.Buf;
+    let num = length ? Buf.readInt32() : 0;
 
-  if (options.callback) {
-    options.callback(failCause);
+    if (num) {
+      let causeNum = Buf.readInt32();
+      failCause = RIL_CALL_FAILCAUSE_TO_GECKO_CALL_ERROR[causeNum] || failCause;
+    }
+    if (DEBUG) this.context.debug("Last call fail cause: " + failCause);
   }
+
+  options.failCause = failCause;
+  this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_SIGNAL_STRENGTH] = function REQUEST_SIGNAL_STRENGTH(length, options) {
   this._receivedNetworkInfo(NETWORK_INFO_SIGNAL);
@@ -5386,15 +4773,6 @@ RilObject.prototype[REQUEST_VOICE_REGISTRATION_STATE] = function REQUEST_VOICE_R
   if (DEBUG) this.context.debug("voice registration state: " + state);
 
   this._processVoiceRegistrationState(state);
-
-  if (this.cachedDialRequest &&
-       (this.voiceRegistrationState.emergencyCallsOnly ||
-        this.voiceRegistrationState.connected) &&
-      this.voiceRegistrationState.radioTech != NETWORK_CREG_TECH_UNKNOWN) {
-    // Radio is ready for making the cached emergency call.
-    this.cachedDialRequest.callback();
-    this.cachedDialRequest = null;
-  }
 };
 RilObject.prototype[REQUEST_DATA_REGISTRATION_STATE] = function REQUEST_DATA_REGISTRATION_STATE(length, options) {
   this._receivedNetworkInfo(NETWORK_INFO_DATA_REGISTRATION_STATE);
@@ -5418,19 +4796,7 @@ RilObject.prototype[REQUEST_OPERATOR] = function REQUEST_OPERATOR(length, option
   this._processOperator(operatorData);
 };
 RilObject.prototype[REQUEST_RADIO_POWER] = function REQUEST_RADIO_POWER(length, options) {
-  if (options.rilMessageType == null) {
-    // The request was made by ril_worker itself.
-    if (options.rilRequestError) {
-      if (this.cachedDialRequest && options.enabled) {
-        // Turning on radio fails. Notify the error of making an emergency call.
-        this.cachedDialRequest.onerror(GECKO_ERROR_RADIO_NOT_AVAILABLE);
-        this.cachedDialRequest = null;
-      }
-    }
-    return;
-  }
-
-  this.sendChromeMessage(options);
+  this.sendDefaultResponse(options);
 };
 RilObject.prototype[REQUEST_DTMF] = null;
 RilObject.prototype[REQUEST_SEND_SMS] = function REQUEST_SEND_SMS(length, options) {
@@ -5455,8 +4821,8 @@ RilObject.prototype.readSetupDataCall_v5 = function readSetupDataCall_v5(options
 
 RilObject.prototype[REQUEST_SETUP_DATA_CALL] = function REQUEST_SETUP_DATA_CALL(length, options) {
   if (options.rilRequestError) {
-    // On Data Call generic errors, we shall notify caller
-    this._sendDataCallError(options, options.rilRequestError);
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+    this.sendChromeMessage(options);
     return;
   }
 
@@ -5464,17 +4830,21 @@ RilObject.prototype[REQUEST_SETUP_DATA_CALL] = function REQUEST_SETUP_DATA_CALL(
     // Populate the `options` object with the data call information. That way
     // we retain the APN and other info about how the data call was set up.
     this.readSetupDataCall_v5(options);
-    this.currentDataCalls[options.cid] = options;
-    options.rilMessageType = "datacallstatechange";
     this.sendChromeMessage(options);
     // Let's get the list of data calls to ensure we know whether it's active
     // or not.
     this.getDataCallList();
     return;
   }
-  // Pass `options` along. That way we retain the APN and other info about
-  // how the data call was set up.
-  this[REQUEST_DATA_CALL_LIST](length, options);
+
+  let Buf = this.context.Buf;
+  // Skip version of data call.
+  Buf.readInt32();
+  // Skip number of data calls.
+  Buf.readInt32();
+
+  this.readDataCall_v6(options);
+  this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_SIM_IO] = function REQUEST_SIM_IO(length, options) {
   if (options.rilRequestError) {
@@ -5770,14 +5140,10 @@ RilObject.prototype[REQUEST_ANSWER] = function REQUEST_ANSWER(length, options) {
 };
 RilObject.prototype[REQUEST_DEACTIVATE_DATA_CALL] = function REQUEST_DEACTIVATE_DATA_CALL(length, options) {
   if (options.rilRequestError) {
-    return;
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
   }
 
-  let datacall = this.currentDataCalls[options.cid];
-  delete this.currentDataCalls[options.cid];
-  datacall.state = GECKO_NETWORK_STATE_DISCONNECTED;
-  datacall.rilMessageType = "datacallstatechange";
-  this.sendChromeMessage(datacall);
+  this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_QUERY_FACILITY_LOCK] = function REQUEST_QUERY_FACILITY_LOCK(length, options) {
   options.success = (options.rilRequestError === 0);
@@ -5978,6 +5344,7 @@ RilObject.prototype.readDataCall_v5 = function(options) {
   options.addresses = addresses ? addresses.split(" ") : [];
   options.dnses = dnses ? dnses.split(" ") : [];
   options.gateways = [];
+  this._setDataCallGeckoState(options);
   return options;
 };
 
@@ -5998,16 +5365,27 @@ RilObject.prototype.readDataCall_v6 = function(options) {
   options.addresses = addresses ? addresses.split(" ") : [];
   options.dnses = dnses ? dnses.split(" ") : [];
   options.gateways = gateways ? gateways.split(" ") : [];
+  this._setDataCallGeckoState(options);
   return options;
 };
 
 RilObject.prototype[REQUEST_DATA_CALL_LIST] = function REQUEST_DATA_CALL_LIST(length, options) {
   if (options.rilRequestError) {
+    if (options.rilMessageType) {
+      options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+      this.sendChromeMessage(options);
+    }
     return;
   }
 
+  if (!options.rilMessageType) {
+    // This is an unsolicited data call list changed.
+    options.rilMessageType = "datacalllistchanged";
+  }
+
   if (!length) {
-    this._processDataCallList(null);
+    options.datacalls = [];
+    this.sendChromeMessage(options);
     return;
   }
 
@@ -6017,7 +5395,7 @@ RilObject.prototype[REQUEST_DATA_CALL_LIST] = function REQUEST_DATA_CALL_LIST(le
     version = Buf.readInt32();
   }
   let num = Buf.readInt32();
-  let datacalls = {};
+  let datacalls = [];
   for (let i = 0; i < num; i++) {
     let datacall;
     if (version < 6) {
@@ -6025,14 +5403,11 @@ RilObject.prototype[REQUEST_DATA_CALL_LIST] = function REQUEST_DATA_CALL_LIST(le
     } else {
       datacall = this.readDataCall_v6();
     }
-    datacalls[datacall.cid] = datacall;
+    datacalls.push(datacall);
   }
 
-  let newDataCallOptions = null;
-  if (options.rilRequestType == REQUEST_SETUP_DATA_CALL) {
-    newDataCallOptions = options;
-  }
-  this._processDataCallList(datacalls, newDataCallOptions);
+  options.datacalls = datacalls;
+  this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_RESET_RADIO] = null;
 RilObject.prototype[REQUEST_OEM_HOOK_RAW] = null;
@@ -6763,6 +6138,8 @@ RilObject.prototype[UNSOLICITED_RIL_CONNECTED] = function UNSOLICITED_RIL_CONNEC
   }
 
   this.initRILState();
+  // rild might have restarted, ensure data call list.
+  this.getDataCallList();
   // Always ensure that we are not in emergency callback mode when init.
   this.exitEmergencyCbMode();
   // Reset radio in the case that b2g restart (or crash).

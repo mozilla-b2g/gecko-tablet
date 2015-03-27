@@ -16,9 +16,6 @@
 
 namespace js {
 
-bool
-regexp_flags(JSContext *cx, unsigned argc, JS::Value *vp);
-
 JSObject *
 InitRegExpClass(JSContext *cx, HandleObject obj);
 
@@ -95,6 +92,15 @@ regexp_test_no_statics(JSContext *cx, unsigned argc, Value *vp);
  */
 extern bool
 regexp_construct_no_statics(JSContext *cx, unsigned argc, Value *vp);
+
+// RegExp ClassSpec members used in RegExpObject.cpp.
+extern bool
+regexp_construct(JSContext *cx, unsigned argc, Value *vp);
+extern JSObject *
+CreateRegExpPrototype(JSContext *cx, JSProtoKey key);
+extern const JSPropertySpec regexp_static_props[];
+extern const JSPropertySpec regexp_properties[];
+extern const JSFunctionSpec regexp_methods[];
 
 } /* namespace js */
 

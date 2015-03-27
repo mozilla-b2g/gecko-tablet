@@ -20,16 +20,19 @@ builds:
         task: tasks/builds/b2g_flame_kk_eng.yml
 
 tests:
-  gaia-build:
+  gaia-ui-test-sanity:
     allowed_build_tasks:
-      tasks/builds/b2g_flame_kk_opt.yml:
-        task: tasks/tests/b2g_build_test.yml
       tasks/builds/b2g_flame_kk_eng.yml:
-        task: tasks/tests/b2g_build_test.yml
-  gaia-linter:
+        task: tasks/tests/flame_kk_gaia_ui_test_sanity.yml
+  gaia-ui-test-functional:
     allowed_build_tasks:
-      tasks/builds/b2g_flame_kk_opt.yml:
-        task: tasks/tests/b2g_linter.yml
       tasks/builds/b2g_flame_kk_eng.yml:
-        task: tasks/tests/b2g_linter.yml
-
+        task: tasks/tests/flame_kk_gaia_ui_test_functional.yml
+  gaia-ui-test-functional-dsds:
+    allowed_build_tasks:
+      tasks/builds/b2g_flame_kk_eng.yml:
+        task: tasks/tests/flame_kk_gaia_ui_test_functional_dsds.yml
+  gaia-ui-test-unit:
+    allowed_build_tasks:
+      tasks/builds/b2g_flame_kk_eng.yml:
+        task: tasks/tests/flame_kk_gaia_ui_test_unit.yml

@@ -120,7 +120,7 @@ static const int kSupportedFeatureLevels[] =
   { D3D10_FEATURE_LEVEL_10_1, D3D10_FEATURE_LEVEL_10_0,
     D3D10_FEATURE_LEVEL_9_3 };
 
-class GfxD2DSurfaceReporter MOZ_FINAL : public nsIMemoryReporter
+class GfxD2DSurfaceReporter final : public nsIMemoryReporter
 {
     ~GfxD2DSurfaceReporter() {}
 
@@ -154,7 +154,7 @@ NS_IMPL_ISUPPORTS(GfxD2DSurfaceReporter, nsIMemoryReporter)
 
 #endif
 
-class GfxD2DVramReporter MOZ_FINAL : public nsIMemoryReporter
+class GfxD2DVramReporter final : public nsIMemoryReporter
 {
     ~GfxD2DVramReporter() {}
 
@@ -194,7 +194,7 @@ NS_IMPL_ISUPPORTS(GfxD2DVramReporter, nsIMemoryReporter)
 #define GFX_CLEARTYPE_PARAMS_STRUCTURE "gfx.font_rendering.cleartype_params.pixel_structure"
 #define GFX_CLEARTYPE_PARAMS_MODE      "gfx.font_rendering.cleartype_params.rendering_mode"
 
-class GPUAdapterReporter MOZ_FINAL : public nsIMemoryReporter
+class GPUAdapterReporter final : public nsIMemoryReporter
 {
     // Callers must Release the DXGIAdapter after use or risk mem-leak
     static bool GetDXGIAdapter(IDXGIAdapter **DXGIAdapter)
@@ -331,7 +331,7 @@ NS_IMPL_ISUPPORTS(GPUAdapterReporter, nsIMemoryReporter)
 
 Atomic<size_t> gfxWindowsPlatform::sD3D11MemoryUsed;
 
-class D3D11TextureReporter MOZ_FINAL : public nsIMemoryReporter
+class D3D11TextureReporter final : public nsIMemoryReporter
 {
   ~D3D11TextureReporter() {}
 
@@ -339,7 +339,7 @@ public:
   NS_DECL_ISUPPORTS
 
   NS_IMETHOD CollectReports(nsIHandleReportCallback *aHandleReport,
-                            nsISupports* aData, bool aAnonymize) MOZ_OVERRIDE
+                            nsISupports* aData, bool aAnonymize) override
   {
       return MOZ_COLLECT_REPORT("d3d11-shared-textures", KIND_OTHER, UNITS_BYTES,
                                 gfxWindowsPlatform::sD3D11MemoryUsed,
@@ -351,7 +351,7 @@ NS_IMPL_ISUPPORTS(D3D11TextureReporter, nsIMemoryReporter)
 
 Atomic<size_t> gfxWindowsPlatform::sD3D9MemoryUsed;
 
-class D3D9TextureReporter MOZ_FINAL : public nsIMemoryReporter
+class D3D9TextureReporter final : public nsIMemoryReporter
 {
   ~D3D9TextureReporter() {}
 
@@ -359,7 +359,7 @@ public:
   NS_DECL_ISUPPORTS
 
   NS_IMETHOD CollectReports(nsIHandleReportCallback *aHandleReport,
-                            nsISupports* aData, bool aAnonymize) MOZ_OVERRIDE
+                            nsISupports* aData, bool aAnonymize) override
   {
     return MOZ_COLLECT_REPORT("d3d9-shared-textures", KIND_OTHER, UNITS_BYTES,
                               gfxWindowsPlatform::sD3D9MemoryUsed,
@@ -371,7 +371,7 @@ NS_IMPL_ISUPPORTS(D3D9TextureReporter, nsIMemoryReporter)
 
 Atomic<size_t> gfxWindowsPlatform::sD3D9SurfaceImageUsed;
 
-class D3D9SurfaceImageReporter MOZ_FINAL : public nsIMemoryReporter
+class D3D9SurfaceImageReporter final : public nsIMemoryReporter
 {
   ~D3D9SurfaceImageReporter() {}
 
@@ -379,7 +379,7 @@ public:
   NS_DECL_ISUPPORTS
 
   NS_IMETHOD CollectReports(nsIHandleReportCallback *aHandleReport,
-                            nsISupports* aData, bool aAnonymize) MOZ_OVERRIDE
+                            nsISupports* aData, bool aAnonymize) override
   {
     return MOZ_COLLECT_REPORT("d3d9-surface-image", KIND_OTHER, UNITS_BYTES,
                               gfxWindowsPlatform::sD3D9SurfaceImageUsed,
@@ -391,7 +391,7 @@ NS_IMPL_ISUPPORTS(D3D9SurfaceImageReporter, nsIMemoryReporter)
 
 Atomic<size_t> gfxWindowsPlatform::sD3D9SharedTextureUsed;
 
-class D3D9SharedTextureReporter MOZ_FINAL : public nsIMemoryReporter
+class D3D9SharedTextureReporter final : public nsIMemoryReporter
 {
   ~D3D9SharedTextureReporter() {}
 
@@ -399,7 +399,7 @@ public:
   NS_DECL_ISUPPORTS
 
   NS_IMETHOD CollectReports(nsIHandleReportCallback *aHandleReport,
-                            nsISupports* aData, bool aAnonymize) MOZ_OVERRIDE
+                            nsISupports* aData, bool aAnonymize) override
   {
     return MOZ_COLLECT_REPORT("d3d9-shared-texture", KIND_OTHER, UNITS_BYTES,
                               gfxWindowsPlatform::sD3D9SharedTextureUsed,
@@ -412,6 +412,7 @@ NS_IMPL_ISUPPORTS(D3D9SharedTextureReporter, nsIMemoryReporter)
 gfxWindowsPlatform::gfxWindowsPlatform()
   : mD3D11DeviceInitialized(false)
   , mIsWARP(false)
+  , mCanInitMediaDevice(false)
 {
     mUseClearTypeForDownloadableFonts = UNINITIALIZED_VALUE;
     mUseClearTypeAlways = UNINITIALIZED_VALUE;
@@ -1142,6 +1143,27 @@ gfxWindowsPlatform::IsFontFormatSupported(nsIURI *aFontURI, uint32_t aFormatFlag
     return true;
 }
 
+static DeviceResetReason HResultToResetReason(HRESULT hr)
+{
+  switch (hr) {
+  case DXGI_ERROR_DEVICE_HUNG:
+    return DeviceResetReason::HUNG;
+  case DXGI_ERROR_DEVICE_REMOVED:
+    return DeviceResetReason::REMOVED;
+  case DXGI_ERROR_DEVICE_RESET:
+    return DeviceResetReason::RESET;
+  case DXGI_ERROR_DRIVER_INTERNAL_ERROR:
+    return DeviceResetReason::DRIVER_ERROR;
+  case DXGI_ERROR_INVALID_CALL:
+    return DeviceResetReason::INVALID_CALL;
+  case E_OUTOFMEMORY:
+    return DeviceResetReason::OUT_OF_MEMORY;
+  default:
+    MOZ_ASSERT(false);
+  }
+  return DeviceResetReason::UNKNOWN;
+}
+
 bool
 gfxWindowsPlatform::DidRenderingDeviceReset(DeviceResetReason* aResetReason)
 {
@@ -1153,35 +1175,26 @@ gfxWindowsPlatform::DidRenderingDeviceReset(DeviceResetReason* aResetReason)
     HRESULT hr = mD3D11Device->GetDeviceRemovedReason();
     if (hr != S_OK) {
       if (aResetReason) {
-        switch (hr) {
-        case DXGI_ERROR_DEVICE_HUNG:
-          *aResetReason = DeviceResetReason::HUNG;
-          break;
-        case DXGI_ERROR_DEVICE_REMOVED:
-          *aResetReason = DeviceResetReason::REMOVED;
-          break;
-        case DXGI_ERROR_DEVICE_RESET:
-          *aResetReason = DeviceResetReason::RESET;
-          break;
-        case DXGI_ERROR_DRIVER_INTERNAL_ERROR:
-          *aResetReason = DeviceResetReason::DRIVER_ERROR;
-          break;
-        case DXGI_ERROR_INVALID_CALL:
-          *aResetReason = DeviceResetReason::INVALID_CALL;
-        default:
-          MOZ_ASSERT(false);
-        }
+        *aResetReason = HResultToResetReason(hr);
       }
       return true;
     }
   }
   if (mD3D11ContentDevice) {
-    if (mD3D11ContentDevice->GetDeviceRemovedReason() != S_OK) {
+    HRESULT hr = mD3D11ContentDevice->GetDeviceRemovedReason();
+    if (hr != S_OK) {
+      if (aResetReason) {
+        *aResetReason = HResultToResetReason(hr);
+      }
       return true;
     }
   }
   if (GetD3D10Device()) {
-    if (GetD3D10Device()->GetDeviceRemovedReason() != S_OK) {
+    HRESULT hr = GetD3D10Device()->GetDeviceRemovedReason();
+    if (hr != S_OK) {
+      if (aResetReason) {
+        *aResetReason = HResultToResetReason(hr);
+      }
       return true;
     }
   }
@@ -1550,7 +1563,7 @@ gfxWindowsPlatform::GetD3D9DeviceManager()
        CompositorParent::IsInCompositorThread())) {
     mDeviceManager = new DeviceManagerD3D9();
     if (!mDeviceManager->Init()) {
-      NS_WARNING("Could not initialise device manager");
+      gfxCriticalError() << "[D3D9] Could not Initialize the DeviceManagerD3D9";
       mDeviceManager = nullptr;
     }
   }
@@ -1581,6 +1594,59 @@ gfxWindowsPlatform::GetD3D11ContentDevice()
 
   return mD3D11ContentDevice;
 }
+
+ID3D11Device*
+gfxWindowsPlatform::GetD3D11MediaDevice()
+{
+  if (mD3D11MediaDevice) {
+    return mD3D11MediaDevice;
+  }
+
+  if (!mCanInitMediaDevice) {
+    return nullptr;
+  }
+
+  mCanInitMediaDevice = false;
+
+  nsModuleHandle d3d11Module(LoadLibrarySystem32(L"d3d11.dll"));
+  decltype(D3D11CreateDevice)* d3d11CreateDevice = (decltype(D3D11CreateDevice)*)
+    GetProcAddress(d3d11Module, "D3D11CreateDevice");
+  MOZ_ASSERT(d3d11CreateDevice);
+
+  nsTArray<D3D_FEATURE_LEVEL> featureLevels;
+  if (IsWin8OrLater()) {
+    featureLevels.AppendElement(D3D_FEATURE_LEVEL_11_1);
+  }
+  featureLevels.AppendElement(D3D_FEATURE_LEVEL_11_0);
+  featureLevels.AppendElement(D3D_FEATURE_LEVEL_10_1);
+  featureLevels.AppendElement(D3D_FEATURE_LEVEL_10_0);
+  featureLevels.AppendElement(D3D_FEATURE_LEVEL_9_3);
+
+  RefPtr<IDXGIAdapter1> adapter = GetDXGIAdapter();
+  MOZ_ASSERT(adapter);
+
+  HRESULT hr = E_INVALIDARG;
+
+  MOZ_SEH_TRY{
+    hr = d3d11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr,
+                           D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                           featureLevels.Elements(), featureLevels.Length(),
+                           D3D11_SDK_VERSION, byRef(mD3D11MediaDevice), nullptr, nullptr);
+  } MOZ_SEH_EXCEPT(EXCEPTION_EXECUTE_HANDLER) {
+    mD3D11MediaDevice = nullptr;
+  }
+
+  d3d11Module.disown();
+
+  if (FAILED(hr)) {
+    return nullptr;
+  }
+
+  mD3D11MediaDevice->SetExceptionMode(0);
+
+  return mD3D11MediaDevice;
+}
+
 
 ReadbackManagerD3D11*
 gfxWindowsPlatform::GetReadbackManager()
@@ -1942,6 +2008,10 @@ gfxWindowsPlatform::InitD3D11Devices()
     Factory::SetDirect3D11Device(mD3D11ContentDevice);
   }
 
+  if (!useWARP) {
+    mCanInitMediaDevice = true;
+  }
+
   // We leak these everywhere and we need them our entire runtime anyway, let's
   // leak it here as well.
   d3d11Module.disown();
@@ -1956,11 +2026,11 @@ DwmCompositionEnabled()
   return dwmEnabled;
 }
 
-class D3DVsyncSource MOZ_FINAL : public VsyncSource
+class D3DVsyncSource final : public VsyncSource
 {
 public:
 
-  class D3DVsyncDisplay MOZ_FINAL : public VsyncSource::Display
+  class D3DVsyncDisplay final : public VsyncSource::Display
   {
     NS_INLINE_DECL_THREADSAFE_REFCOUNTING(D3DVsyncDisplay)
     public:
@@ -1974,7 +2044,7 @@ public:
         MOZ_RELEASE_ASSERT(mVsyncThread->Start(), "Could not start Windows vsync thread");
       }
 
-      virtual void EnableVsync() MOZ_OVERRIDE
+      virtual void EnableVsync() override
       {
         MOZ_ASSERT(NS_IsMainThread());
         MOZ_ASSERT(mVsyncThread->IsRunning());
@@ -1991,7 +2061,7 @@ public:
         mVsyncThread->message_loop()->PostTask(FROM_HERE, vsyncStart);
       }
 
-      virtual void DisableVsync() MOZ_OVERRIDE
+      virtual void DisableVsync() override
       {
         MOZ_ASSERT(NS_IsMainThread());
         MOZ_ASSERT(mVsyncThread->IsRunning());
@@ -2002,7 +2072,7 @@ public:
         mVsyncEnabled = false;
       }
 
-      virtual bool IsVsyncEnabled() MOZ_OVERRIDE
+      virtual bool IsVsyncEnabled() override
       {
         MOZ_ASSERT(NS_IsMainThread());
         MonitorAutoLock lock(mVsyncEnabledLock);
@@ -2065,7 +2135,7 @@ public:
           if (SUCCEEDED(hr)) {
             QueryPerformanceCounter(&qpcNow);
             QPC_TIME adjust = qpcNow.QuadPart - vblankTime.qpcVBlank;
-            MOZ_ASSERT(adjust > 0);
+            MOZ_ASSERT(adjust >= 0);
             uint64_t usAdjust = (adjust * microseconds) / frequency.QuadPart;
             vsync -= TimeDuration::FromMicroseconds((double) usAdjust);
           }
@@ -2097,7 +2167,7 @@ public:
     mPrimaryDisplay = new D3DVsyncDisplay();
   }
 
-  virtual Display& GetGlobalDisplay() MOZ_OVERRIDE
+  virtual Display& GetGlobalDisplay() override
   {
     return *mPrimaryDisplay;
   }
@@ -2127,4 +2197,11 @@ gfxWindowsPlatform::CreateHardwareVsyncSource()
 
   nsRefPtr<VsyncSource> d3dVsyncSource = new D3DVsyncSource();
   return d3dVsyncSource.forget();
+}
+
+bool
+gfxWindowsPlatform::SupportsApzTouchInput()
+{
+  int value = Preferences::GetInt("dom.w3c_touch_events.enabled", 0);
+  return value == 1 || value == 2;
 }

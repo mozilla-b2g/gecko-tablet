@@ -476,20 +476,20 @@ static const char sPopStatePrefStr[] = "browser.history.allowPopState";
  * An indirect observer object that means we don't have to implement nsIObserver
  * on nsGlobalWindow, where any script could see it.
  */
-class nsGlobalWindowObserver MOZ_FINAL : public nsIObserver,
+class nsGlobalWindowObserver final : public nsIObserver,
                                          public nsIInterfaceRequestor
 {
 public:
   explicit nsGlobalWindowObserver(nsGlobalWindow* aWindow) : mWindow(aWindow) {}
   NS_DECL_ISUPPORTS
-  NS_IMETHOD Observe(nsISupports* aSubject, const char* aTopic, const char16_t* aData) MOZ_OVERRIDE
+  NS_IMETHOD Observe(nsISupports* aSubject, const char* aTopic, const char16_t* aData) override
   {
     if (!mWindow)
       return NS_OK;
     return mWindow->Observe(aSubject, aTopic, aData);
   }
   void Forget() { mWindow = nullptr; }
-  NS_IMETHODIMP GetInterface(const nsIID& aIID, void** aResult) MOZ_OVERRIDE
+  NS_IMETHODIMP GetInterface(const nsIID& aIID, void** aResult) override
   {
     if (mWindow && aIID.Equals(NS_GET_IID(nsIDOMWindow)) && mWindow) {
       return mWindow->QueryInterface(aIID, aResult);
@@ -574,7 +574,7 @@ nsPIDOMWindow::nsPIDOMWindow(nsPIDOMWindow *aOuterWindow)
 : mFrameElement(nullptr), mDocShell(nullptr), mModalStateDepth(0),
   mRunningTimeout(nullptr), mMutationBits(0), mIsDocumentLoaded(false),
   mIsHandlingResizeEvent(false), mIsInnerWindow(aOuterWindow != nullptr),
-  mMayHavePaintEventListener(false), mMayHaveTouchEventListener(false),
+  mMayHavePaintEventListener(false),
   mMayHaveMouseEnterLeaveEventListener(false),
   mMayHavePointerEnterLeaveEventListener(false),
   mIsModalContentWindow(false),
@@ -584,7 +584,7 @@ nsPIDOMWindow::nsPIDOMWindow(nsPIDOMWindow *aOuterWindow)
   mOuterWindow(aOuterWindow),
   // Make sure no actual window ends up with mWindowID == 0
   mWindowID(NextWindowID()), mHasNotifiedGlobalCreated(false),
-  mMarkedCCGeneration(0)
+  mMarkedCCGeneration(0), mServiceWorkersTestingEnabled(false)
  {}
 
 nsPIDOMWindow::~nsPIDOMWindow() {}
@@ -608,7 +608,7 @@ class nsOuterWindowProxy : public js::Wrapper
 public:
   MOZ_CONSTEXPR nsOuterWindowProxy() : js::Wrapper(0) { }
 
-  virtual bool finalizeInBackground(JS::Value priv) const MOZ_OVERRIDE {
+  virtual bool finalizeInBackground(JS::Value priv) const override {
     return false;
   }
 
@@ -617,63 +617,63 @@ public:
                                         JS::Handle<JSObject*> proxy,
                                         JS::Handle<jsid> id,
                                         JS::MutableHandle<JSPropertyDescriptor> desc)
-                                        const MOZ_OVERRIDE;
+                                        const override;
   virtual bool defineProperty(JSContext* cx,
                               JS::Handle<JSObject*> proxy,
                               JS::Handle<jsid> id,
-                              JS::MutableHandle<JSPropertyDescriptor> desc,
-                              JS::ObjectOpResult &result) const MOZ_OVERRIDE;
+                              JS::Handle<JSPropertyDescriptor> desc,
+                              JS::ObjectOpResult &result) const override;
   virtual bool ownPropertyKeys(JSContext *cx,
                                JS::Handle<JSObject*> proxy,
-                               JS::AutoIdVector &props) const MOZ_OVERRIDE;
+                               JS::AutoIdVector &props) const override;
   virtual bool delete_(JSContext *cx, JS::Handle<JSObject*> proxy,
                        JS::Handle<jsid> id,
-                       JS::ObjectOpResult &result) const MOZ_OVERRIDE;
+                       JS::ObjectOpResult &result) const override;
   virtual bool enumerate(JSContext *cx, JS::Handle<JSObject*> proxy,
-                         JS::MutableHandle<JSObject*> vp) const MOZ_OVERRIDE;
+                         JS::MutableHandle<JSObject*> vp) const override;
   virtual bool preventExtensions(JSContext* cx,
                                  JS::Handle<JSObject*> proxy,
-                                 JS::ObjectOpResult& result) const MOZ_OVERRIDE;
+                                 JS::ObjectOpResult& result) const override;
   virtual bool isExtensible(JSContext *cx, JS::Handle<JSObject*> proxy, bool *extensible)
-                            const MOZ_OVERRIDE;
+                            const override;
   virtual bool has(JSContext *cx, JS::Handle<JSObject*> proxy,
-                   JS::Handle<jsid> id, bool *bp) const MOZ_OVERRIDE;
+                   JS::Handle<jsid> id, bool *bp) const override;
   virtual bool get(JSContext *cx, JS::Handle<JSObject*> proxy,
                    JS::Handle<JSObject*> receiver,
                    JS::Handle<jsid> id,
-                   JS::MutableHandle<JS::Value> vp) const MOZ_OVERRIDE;
+                   JS::MutableHandle<JS::Value> vp) const override;
   virtual bool set(JSContext *cx, JS::Handle<JSObject*> proxy,
                    JS::Handle<JSObject*> receiver,
                    JS::Handle<jsid> id,
                    JS::MutableHandle<JS::Value> vp,
-                   JS::ObjectOpResult &result) const MOZ_OVERRIDE;
+                   JS::ObjectOpResult &result) const override;
 
   // SpiderMonkey extensions
   virtual bool getPropertyDescriptor(JSContext* cx,
                                      JS::Handle<JSObject*> proxy,
                                      JS::Handle<jsid> id,
                                      JS::MutableHandle<JSPropertyDescriptor> desc)
-                                     const MOZ_OVERRIDE;
+                                     const override;
   virtual bool hasOwn(JSContext *cx, JS::Handle<JSObject*> proxy,
-                      JS::Handle<jsid> id, bool *bp) const MOZ_OVERRIDE;
+                      JS::Handle<jsid> id, bool *bp) const override;
   virtual bool getOwnEnumerablePropertyKeys(JSContext *cx, JS::Handle<JSObject*> proxy,
-                                            JS::AutoIdVector &props) const MOZ_OVERRIDE;
+                                            JS::AutoIdVector &props) const override;
   virtual const char *className(JSContext *cx,
-                                JS::Handle<JSObject*> wrapper) const MOZ_OVERRIDE;
+                                JS::Handle<JSObject*> wrapper) const override;
 
-  virtual void finalize(JSFreeOp *fop, JSObject *proxy) const MOZ_OVERRIDE;
+  virtual void finalize(JSFreeOp *fop, JSObject *proxy) const override;
 
-  virtual bool isCallable(JSObject *obj) const MOZ_OVERRIDE {
+  virtual bool isCallable(JSObject *obj) const override {
     return false;
   }
-  virtual bool isConstructor(JSObject *obj) const MOZ_OVERRIDE {
+  virtual bool isConstructor(JSObject *obj) const override {
     return false;
   }
 
   virtual bool watch(JSContext *cx, JS::Handle<JSObject*> proxy,
-                     JS::Handle<jsid> id, JS::Handle<JSObject*> callable) const MOZ_OVERRIDE;
+                     JS::Handle<jsid> id, JS::Handle<JSObject*> callable) const override;
   virtual bool unwatch(JSContext *cx, JS::Handle<JSObject*> proxy,
-                       JS::Handle<jsid> id) const MOZ_OVERRIDE;
+                       JS::Handle<jsid> id) const override;
 
   static void ObjectMoved(JSObject *obj, const JSObject *old);
 
@@ -782,7 +782,7 @@ bool
 nsOuterWindowProxy::defineProperty(JSContext* cx,
                                    JS::Handle<JSObject*> proxy,
                                    JS::Handle<jsid> id,
-                                   JS::MutableHandle<JSPropertyDescriptor> desc,
+                                   JS::Handle<JSPropertyDescriptor> desc,
                                    JS::ObjectOpResult &result) const
 {
   int32_t index = GetArrayIndexFromId(cx, id);
@@ -1033,7 +1033,7 @@ class nsChromeOuterWindowProxy : public nsOuterWindowProxy
 public:
   MOZ_CONSTEXPR nsChromeOuterWindowProxy() : nsOuterWindowProxy() { }
 
-  virtual const char *className(JSContext *cx, JS::Handle<JSObject*> wrapper) const MOZ_OVERRIDE;
+  virtual const char *className(JSContext *cx, JS::Handle<JSObject*> wrapper) const override;
 
   static const nsChromeOuterWindowProxy singleton;
 };
@@ -2151,7 +2151,7 @@ nsGlobalWindow::GetPopupControlState() const
 #define WINDOWSTATEHOLDER_IID \
 {0x0b917c3e, 0xbd50, 0x4683, {0xaf, 0xc9, 0xc7, 0x81, 0x07, 0xae, 0x33, 0x26}}
 
-class WindowStateHolder MOZ_FINAL : public nsISupports
+class WindowStateHolder final : public nsISupports
 {
 public:
   NS_DECLARE_STATIC_IID_ACCESSOR(WINDOWSTATEHOLDER_IID)
@@ -8017,7 +8017,7 @@ PostMessageReadTransferStructuredClone(JSContext* aCx,
     port->BindToOwner(scInfo->window);
     scInfo->ports.Put(port, nullptr);
 
-    JS::Rooted<JSObject*> obj(aCx, port->WrapObject(aCx));
+    JS::Rooted<JSObject*> obj(aCx, port->WrapObject(aCx, JS::NullPtr()));
     if (JS_WrapObject(aCx, &obj)) {
       MOZ_ASSERT(port->GetOwner() == scInfo->window);
       returnObject.set(obj);
@@ -8897,7 +8897,7 @@ private:
 void
 nsGlobalWindow::NotifyWindowIDDestroyed(const char* aTopic)
 {
-  nsRefPtr<nsIRunnable> runnable = new WindowDestroyedEvent(this, mWindowID, aTopic);
+  nsCOMPtr<nsIRunnable> runnable = new WindowDestroyedEvent(this, mWindowID, aTopic);
   nsresult rv = NS_DispatchToCurrentThread(runnable);
   if (NS_SUCCEEDED(rv)) {
     mNotifiedIDDestroyed = true;
@@ -9842,47 +9842,6 @@ void nsGlobalWindow::SetIsBackground(bool aIsBackground)
     }
   }
 #endif
-}
-
-void nsGlobalWindow::MaybeUpdateTouchState()
-{
-  FORWARD_TO_INNER_VOID(MaybeUpdateTouchState, ());
-
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
-
-  nsCOMPtr<nsIDOMWindow> focusedWindow;
-  fm->GetFocusedWindow(getter_AddRefs(focusedWindow));
-
-  if(this == focusedWindow) {
-    UpdateTouchState();
-  }
-
-  if (mMayHaveTouchEventListener) {
-    nsCOMPtr<nsIObserverService> observerService =
-      services::GetObserverService();
-
-    if (observerService) {
-      observerService->NotifyObservers(static_cast<nsIDOMWindow*>(this),
-                                       DOM_TOUCH_LISTENER_ADDED,
-                                       nullptr);
-    }
-  }
-}
-
-void nsGlobalWindow::UpdateTouchState()
-{
-  FORWARD_TO_INNER_VOID(UpdateTouchState, ());
-
-  nsCOMPtr<nsIWidget> mainWidget = GetMainWidget();
-  if (!mainWidget) {
-    return;
-  }
-
-  if (mMayHaveTouchEventListener) {
-    mainWidget->RegisterTouchWindow();
-  } else {
-    mainWidget->UnregisterTouchWindow();
-  }
 }
 
 void

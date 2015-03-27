@@ -43,7 +43,7 @@ class ZoneHeapThreshold
 
     double gcHeapGrowthFactor() const { return gcHeapGrowthFactor_; }
     size_t gcTriggerBytes() const { return gcTriggerBytes_; }
-    bool isCloseToAllocTrigger(const js::gc::HeapUsage& usage, bool highFrequencyGC) const;
+    double allocTrigger(bool highFrequencyGC) const;
 
     void updateAfterGC(size_t lastBytes, JSGCInvocationKind gckind,
                        const GCSchedulingTunables &tunables, const GCSchedulingState &state);
@@ -151,6 +151,8 @@ struct Zone : public JS::shadow::Zone,
 
     bool canCollect();
 
+    void notifyObservingDebuggers();
+
     enum GCState {
         NoGC,
         Mark,
@@ -163,6 +165,8 @@ struct Zone : public JS::shadow::Zone,
         MOZ_ASSERT(runtimeFromMainThread()->isHeapBusy());
         MOZ_ASSERT_IF(state != NoGC, canCollect());
         gcState_ = state;
+        if (state == Finished)
+            notifyObservingDebuggers();
     }
 
     bool isCollecting() const {
@@ -324,10 +328,11 @@ enum ZoneSelector {
 
 class ZonesIter
 {
+    gc::AutoEnterIteration iterMarker;
     JS::Zone **it, **end;
 
   public:
-    ZonesIter(JSRuntime *rt, ZoneSelector selector) {
+    ZonesIter(JSRuntime *rt, ZoneSelector selector) : iterMarker(&rt->gc) {
         it = rt->gc.zones.begin();
         end = rt->gc.zones.end();
 
@@ -398,12 +403,13 @@ struct CompartmentsInZoneIter
 template<class ZonesIterT>
 class CompartmentsIterT
 {
+    gc::AutoEnterIteration iterMarker;
     ZonesIterT zone;
     mozilla::Maybe<CompartmentsInZoneIter> comp;
 
   public:
     explicit CompartmentsIterT(JSRuntime *rt)
-      : zone(rt)
+      : iterMarker(&rt->gc), zone(rt)
     {
         if (zone.done())
             comp.emplace();
@@ -412,7 +418,7 @@ class CompartmentsIterT
     }
 
     CompartmentsIterT(JSRuntime *rt, ZoneSelector selector)
-      : zone(rt, selector)
+      : iterMarker(&rt->gc), zone(rt, selector)
     {
         if (zone.done())
             comp.emplace();

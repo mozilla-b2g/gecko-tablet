@@ -64,6 +64,7 @@ public:
     , mExtraResolution()
     , mBackgroundColor(0, 0, 0, 0)
     , mLineScrollAmount(0, 0)
+    , mPageScrollAmount(0, 0)
     , mAllowVerticalScrollWithWheel(false)
   {
   }
@@ -96,6 +97,7 @@ public:
            mBackgroundColor == aOther.mBackgroundColor &&
            mDoSmoothScroll == aOther.mDoSmoothScroll &&
            mLineScrollAmount == aOther.mLineScrollAmount &&
+           mPageScrollAmount == aOther.mPageScrollAmount &&
            mAllowVerticalScrollWithWheel == aOther.mAllowVerticalScrollWithWheel;
   }
   bool operator!=(const FrameMetrics& aOther) const
@@ -496,6 +498,16 @@ public:
     mLineScrollAmount = size;
   }
 
+  const LayoutDeviceIntSize& GetPageScrollAmount() const
+  {
+    return mPageScrollAmount;
+  }
+
+  void SetPageScrollAmount(const LayoutDeviceIntSize& size)
+  {
+    mPageScrollAmount = size;
+  }
+
   const CSSRect& GetScrollableRect() const
   {
     return mScrollableRect;
@@ -664,8 +676,21 @@ private:
   // The value of GetLineScrollAmount(), for scroll frames.
   LayoutDeviceIntSize mLineScrollAmount;
 
+  // The value of GetPageScrollAmount(), for scroll frames.
+  LayoutDeviceIntSize mPageScrollAmount;
+
   // Whether or not the frame can be vertically scrolled with a mouse wheel.
   bool mAllowVerticalScrollWithWheel;
+
+  // WARNING!!!!
+  //
+  // When adding new fields to FrameMetrics, the following places should be
+  // updated to include them (as needed):
+  //    FrameMetrics::operator ==
+  //    AsyncPanZoomController::NotifyLayersUpdated
+  //    The ParamTraits specialization in GfxMessageUtils.h
+  //
+  // Please add new fields above this comment.
 };
 
 /**

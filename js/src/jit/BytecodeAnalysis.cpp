@@ -113,7 +113,7 @@ BytecodeAnalysis::init(TempAllocator &alloc, GSNCache &gsn)
                 if (startOffset == offset + 1) {
                     unsigned catchOffset = startOffset + tn->length;
 
-                    if (tn->kind != JSTRY_ITER) {
+                    if (tn->kind != JSTRY_FOR_IN) {
                         infos_[catchOffset].init(stackDepth);
                         infos_[catchOffset].jumpTarget = true;
                     }
@@ -151,6 +151,7 @@ BytecodeAnalysis::init(TempAllocator &alloc, GSNCache &gsn)
           case JSOP_GETNAME:
           case JSOP_BINDNAME:
           case JSOP_SETNAME:
+          case JSOP_STRICTSETNAME:
           case JSOP_DELNAME:
           case JSOP_GETALIASEDVAR:
           case JSOP_SETALIASEDVAR:
@@ -161,6 +162,13 @@ BytecodeAnalysis::init(TempAllocator &alloc, GSNCache &gsn)
           case JSOP_DEFCONST:
           case JSOP_SETCONST:
             usesScopeChain_ = true;
+            break;
+
+          case JSOP_GETGNAME:
+          case JSOP_SETGNAME:
+          case JSOP_STRICTSETGNAME:
+            if (script_->hasPollutedGlobalScope())
+                usesScopeChain_ = true;
             break;
 
           case JSOP_FINALLY:

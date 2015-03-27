@@ -33,7 +33,7 @@ class nsPACMan;
 { 0x091eedd8, 0x8bae, 0x4fe3, \
         { 0xad, 0x62, 0x0c, 0x87, 0x35, 0x1e, 0x64, 0x0d } }
 
-class nsProtocolProxyService MOZ_FINAL : public nsIProtocolProxyService2
+class nsProtocolProxyService final : public nsIProtocolProxyService2
                                        , public nsIObserver
 {
 public:
@@ -205,6 +205,10 @@ protected:
      *
      * @param channel
      *        The channel to test.
+     * @param appId
+     *        The id of the app making the query.
+     * @param isInBrowser
+     *        True if the iframe has mozbrowser but has no mozapp attribute.
      * @param info
      *        Information about the URI's protocol.
      * @param flags
@@ -216,10 +220,12 @@ protected:
      *        The resulting proxy info or null.
      */
     nsresult Resolve_Internal(nsIChannel *channel,
-                                          const nsProtocolInfo &info,
-                                          uint32_t flags,
-                                          bool *usePAC, 
-                                          nsIProxyInfo **result);
+                              uint32_t appId,
+                              bool isInBrowser,
+                              const nsProtocolInfo &info,
+                              uint32_t flags,
+                              bool *usePAC,
+                              nsIProxyInfo **result);
 
     /**
      * This method applies the registered filters to the given proxy info

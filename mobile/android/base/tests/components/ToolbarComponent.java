@@ -33,8 +33,8 @@ public class ToolbarComponent extends BaseComponent {
 
     private static final String URL_HTTP_PREFIX = "http://";
 
-    // We are waiting up to 30 seconds instead of the default waiting time
-    // because reader mode parsing can take quite some time on slower devices
+    // We are waiting up to 30 seconds instead of the default waiting time because reader mode
+    // parsing can take quite some time on slower devices (Bug 1142699)
     private static final int READER_MODE_WAIT_MS = 30000;
 
     public ToolbarComponent(final UITestContext testContext) {

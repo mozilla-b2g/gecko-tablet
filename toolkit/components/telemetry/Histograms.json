@@ -214,7 +214,7 @@
     "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": 10,
-    "description": "GPU Device Reset Reason (ok, hung, removed, reset, internal error, invalid call)"
+    "description": "GPU Device Reset Reason (ok, hung, removed, reset, internal error, invalid call, out of memory)"
   },
   "FORGET_SKIPPABLE_MAX": {
     "expires_in_version": "never",
@@ -345,7 +345,7 @@
     "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": 10,
-    "description": "Use of SpiderMonkey's deprecated language extensions in web content: ForEach=0, DestructuringForIn=1, LegacyGenerator=2, ExpressionClosure=3, LetBlock=4, LetExpression=5, NoSuchMethod=6"
+    "description": "Use of SpiderMonkey's deprecated language extensions in web content: ForEach=0, DestructuringForIn=1, LegacyGenerator=2, ExpressionClosure=3, LetBlock=4, LetExpression=5, NoSuchMethod=6, FlagsArgument=7"
   },
   "TELEMETRY_PING": {
     "expires_in_version": "default",
@@ -1514,10 +1514,16 @@
     "description": "HTTP Disk Cache Hit, Reval, Failed-Reval, Miss"
   },
   "HTTP_CACHE_MISS_HALFLIFE_EXPERIMENT": {
-    "expires_in_version": "never",
+    "expires_in_version": "40",
     "kind": "enumerated",
     "n_values": 4,
     "description": "HTTP Cache v2 Miss by half-life value (6h, 1d, 7d, 50d)"
+  },
+  "HTTP_CACHE_MISS_HALFLIFE_EXPERIMENT_2": {
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 4,
+    "description": "HTTP Cache v2 Miss by half-life value (5 min, 15 min, 1 hour, 6 hours)"
   },
   "HTTP_CACHE_ENTRY_RELOAD_TIME": {
     "expires_in_version": "never",
@@ -6571,16 +6577,16 @@
     "n_buckets": 100,
     "description": "The peak number of open tabs in all windows for a session for devtools users."
   },
-  "DEVTOOLS_TABS_OPEN_AVERAGE_EXPONENTIAL": {
+  "DEVTOOLS_TABS_OPEN_AVERAGE_LINEAR": {
     "expires_in_version": "never",
-    "kind": "exponential",
+    "kind": "linear",
     "high": "101",
     "n_buckets": "100",
     "description": "The mean number of open tabs in all windows for a session for devtools users."
   },
-  "DEVTOOLS_TABS_PINNED_PEAK_EXPONENTIAL": {
+  "DEVTOOLS_TABS_PINNED_PEAK_LINEAR": {
     "expires_in_version": "never",
-    "kind": "exponential",
+    "kind": "linear",
     "high": "101",
     "n_buckets": "100",
     "description": "The peak number of pinned tabs (app tabs) in all windows for a session for devtools users."
@@ -7287,6 +7293,14 @@
     "releaseChannelCollection": "opt-out",
     "description": "Connection length for bi-directionally connected media"
   },
+  "LOOP_SHARING_STATE_CHANGE": {
+    "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
+    "expires_in_version": "43",
+    "kind": "count",
+    "keyed": true,
+    "releaseChannelCollection": "opt-in",
+    "description": "Number of times the sharing feature has been enabled and disabled"
+  },
   "E10S_AUTOSTART": {
     "expires_in_version": "never",
     "kind": "boolean",
@@ -7618,6 +7632,11 @@
     "n_buckets" : 40,
     "description": "Time in days each saved login was last used"
   },
+  "PWMGR_PASSWORD_INPUT_IN_FORM": {
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "description": "Whether an <input type=password> is associated with a <form> when it is added to a document"
+  },
   "PWMGR_PROMPT_REMEMBER_ACTION" : {
     "expires_in_version": "never",
     "kind": "enumerated",
@@ -7678,5 +7697,20 @@
     "expires_in_version": "never",
     "kind": "count",
     "description": "Count plugin hang notices in e10s"
+  },
+  "SERVICE_WORKER_SPAWN_ATTEMPTS": {
+    "expires_in_version": "50",
+    "kind": "count",
+    "description": "Count attempts to spawn a ServiceWorker for a domain"
+  },
+  "SERVICE_WORKER_WAS_SPAWNED": {
+    "expires_in_version": "50",
+    "kind": "count",
+    "description": "Count ServiceWorkers that really did get a thread created for them"
+  },
+  "SERVICE_WORKER_SPAWN_GETS_QUEUED": {
+    "expires_in_version": "50",
+    "kind": "count",
+    "description": "Tracking whether a ServiceWorker spawn gets queued due to hitting max workers per domain limit"
   }
 }

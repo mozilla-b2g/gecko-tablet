@@ -28,8 +28,8 @@
     _(SimdInsertElementI)           \
     _(SimdInsertElementF)           \
     _(SimdSignMaskX4)               \
-    _(SimdGeneralSwizzleI)          \
-    _(SimdGeneralSwizzleF)          \
+    _(SimdGeneralShuffleI)          \
+    _(SimdGeneralShuffleF)          \
     _(SimdSwizzleI)                 \
     _(SimdSwizzleF)                 \
     _(SimdShuffle)                  \
@@ -75,6 +75,7 @@
     _(ApplyArgsGeneric)             \
     _(Bail)                         \
     _(Unreachable)                  \
+    _(EncodeSnapshot)               \
     _(GetDynamicName)               \
     _(FilterArgumentsOrEvalS)       \
     _(FilterArgumentsOrEvalV)       \
@@ -243,6 +244,7 @@
     _(StoreTypedArrayElementStatic) \
     _(CompareExchangeTypedArrayElement) \
     _(AtomicTypedArrayElementBinop) \
+    _(AtomicTypedArrayElementBinopForEffect) \
     _(EffectiveAddress)             \
     _(ClampIToUint8)                \
     _(ClampDToUint8)                \
@@ -331,12 +333,15 @@
     _(AsmJSCall)                    \
     _(AsmJSCompareExchangeHeap)     \
     _(AsmJSAtomicBinopHeap)         \
+    _(AsmJSAtomicBinopHeapForEffect)\
     _(RecompileCheck)               \
     _(MemoryBarrier)                \
     _(AssertRangeI)                 \
     _(AssertRangeD)                 \
     _(AssertRangeF)                 \
     _(AssertRangeV)                 \
+    _(AssertResultV)                \
+    _(AssertResultT)                \
     _(LexicalCheck)                 \
     _(ThrowUninitializedLexical)    \
     _(NurseryObject)                \

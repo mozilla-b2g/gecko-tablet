@@ -151,6 +151,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "ReaderParent",
 XPCOMUtils.defineLazyModuleGetter(this, "AddonWatcher",
                                   "resource://gre/modules/AddonWatcher.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "LightweightThemeManager",
+                                  "resource://gre/modules/LightweightThemeManager.jsm");
+
 const PREF_PLUGINS_NOTIFYUSER = "plugins.update.notifyUser";
 const PREF_PLUGINS_UPDATEURL  = "plugins.update.url";
 
@@ -713,6 +716,21 @@ BrowserGlue.prototype = {
 #ifdef MOZ_DEBUG_UA
     UserAgentOverrides.init();
     DebugUserAgent.init();
+#endif
+
+#ifndef RELEASE_BUILD
+    let browserBundle = Services.strings.createBundle("chrome://browser/locale/browser.properties");
+    let brandBundle = Services.strings.createBundle("chrome://branding/locale/brand.properties");
+    let themeName = browserBundle.GetStringFromName("deveditionTheme.name");
+    let vendorShortName = brandBundle.GetStringFromName("vendorShortName");
+
+    LightweightThemeManager.addBuiltInTheme({
+      id: "firefox-devedition@mozilla.org",
+      name: themeName,
+      headerURL: "resource:///chrome/browser/content/browser/defaultthemes/devedition.header.png",
+      iconURL: "resource:///chrome/browser/content/browser/defaultthemes/devedition.icon.png",
+      author: vendorShortName,
+    });
 #endif
 
     Services.obs.notifyObservers(null, "browser-ui-startup-complete", "");
@@ -1429,7 +1447,7 @@ BrowserGlue.prototype = {
         () => BookmarkHTMLUtils.exportToFile(BookmarkHTMLUtils.defaultPath));
     }
 
-    Task.spawn(function() {
+    Task.spawn(function* () {
       // Check if Safe Mode or the user has required to restore bookmarks from
       // default profile's bookmarks.html
       let restoreDefaultBookmarks = false;
@@ -1505,23 +1523,21 @@ BrowserGlue.prototype = {
         if (bookmarksUrl) {
           // Import from bookmarks.html file.
           try {
-            BookmarkHTMLUtils.importFromURL(bookmarksUrl, true).then(null,
-              function onFailure() {
-                Cu.reportError("Bookmarks.html file could be corrupt.");
-              }
-            ).then(
-              function onComplete() {
-                // Now apply distribution customized bookmarks.
-                // This should always run after Places initialization.
-                this._distributionCustomizer.applyBookmarks();
-                // Ensure that smart bookmarks are created once the operation is
-                // complete.
-                this.ensurePlacesDefaultQueriesInitialized();
-              }.bind(this)
-            );
-          } catch (err) {
-            Cu.reportError("Bookmarks.html file could be corrupt. " + err);
+            yield BookmarkHTMLUtils.importFromURL(bookmarksUrl, true);
+          } catch (e) {
+            Cu.reportError("Bookmarks.html file could be corrupt. " + e);
           }
+          try {
+            // Now apply distribution customized bookmarks.
+            // This should always run after Places initialization.
+            this._distributionCustomizer.applyBookmarks();
+            // Ensure that smart bookmarks are created once the operation is
+            // complete.
+            this.ensurePlacesDefaultQueriesInitialized();
+          } catch (e) {
+            Cu.reportError(e);
+          }
+
         }
         else {
           Cu.reportError("Unable to find bookmarks.html file.");
@@ -1645,7 +1661,7 @@ BrowserGlue.prototype = {
   },
 
   _migrateUI: function BG__migrateUI() {
-    const UI_VERSION = 27;
+    const UI_VERSION = 29;
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul";
     let currentUIVersion = 0;
     try {
@@ -1961,6 +1977,57 @@ BrowserGlue.prototype = {
       if (Services.prefs.prefHasUserValue(kOldColorPref) &&
           !Services.prefs.getBoolPref(kOldColorPref)) {
         Services.prefs.setIntPref("browser.display.document_color_use", 2);
+      }
+    }
+
+    if (currentUIVersion < 28) {
+      // Convert old devedition theme pref to lightweight theme storage
+      let lightweightThemeSelected = false;
+      let selectedThemeID = null;
+      try {
+        lightweightThemeSelected = Services.prefs.prefHasUserValue("lightweightThemes.selectedThemeID");
+        selectedThemeID = Services.prefs.getCharPref("lightweightThemes.selectedThemeID");
+      } catch(e) {}
+
+      let defaultThemeSelected = false;
+      try {
+         defaultThemeSelected = Services.prefs.getCharPref("general.skins.selectedSkin") == "classic/1.0";
+      } catch(e) {}
+
+      let deveditionThemeEnabled = false;
+      try {
+         deveditionThemeEnabled = Services.prefs.getBoolPref("browser.devedition.theme.enabled");
+      } catch(e) {}
+
+      // If we are on the devedition channel, the devedition theme is on by
+      // default.  But we need to handle the case where they didn't want it
+      // applied, and unapply the theme.
+      let userChoseToNotUseDeveditionTheme =
+        !deveditionThemeEnabled ||
+        !defaultThemeSelected ||
+        (lightweightThemeSelected && selectedThemeID != "firefox-devedition@mozilla.org");
+
+      if (userChoseToNotUseDeveditionTheme && selectedThemeID == "firefox-devedition@mozilla.org") {
+        Services.prefs.setCharPref("lightweightThemes.selectedThemeID", "");
+      }
+
+      // Not clearing browser.devedition.theme.enabled, to preserve user's pref
+      // if for some reason this function runs again (even though it shouldn't)
+      Services.prefs.clearUserPref("browser.devedition.showCustomizeButton");
+    }
+
+    if (currentUIVersion < 29) {
+      let group = null;
+      try {
+        group = Services.prefs.getComplexValue("font.language.group",
+                                               Ci.nsIPrefLocalizedString);
+      } catch (ex) {}
+      if (group &&
+          ["tr", "x-baltic", "x-central-euro"].some(g => g == group.data)) {
+        // Latin groups were consolidated.
+        group.data = "x-western";
+        Services.prefs.setComplexValue("font.language.group",
+                                       Ci.nsIPrefLocalizedString, group);
       }
     }
 

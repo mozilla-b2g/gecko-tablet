@@ -7,6 +7,7 @@
 #include "ServiceWorkerEvents.h"
 #include "ServiceWorkerClient.h"
 
+#include "nsIHttpChannelInternal.h"
 #include "nsINetworkInterceptController.h"
 #include "nsIOutputStream.h"
 #include "nsContentUtils.h"
@@ -22,6 +23,8 @@
 #include "mozilla/dom/Response.h"
 #include "mozilla/dom/WorkerScope.h"
 #include "mozilla/dom/workers/bindings/ServiceWorker.h"
+
+#include "WorkerPrivate.h"
 
 using namespace mozilla::dom;
 
@@ -71,7 +74,7 @@ FetchEvent::Constructor(const GlobalObject& aGlobal,
 
 namespace {
 
-class CancelChannelRunnable MOZ_FINAL : public nsRunnable
+class CancelChannelRunnable final : public nsRunnable
 {
   nsMainThreadPtrHandle<nsIInterceptedChannel> mChannel;
 public:
@@ -89,7 +92,7 @@ public:
   }
 };
 
-class FinishResponse MOZ_FINAL : public nsRunnable
+class FinishResponse final : public nsRunnable
 {
   nsMainThreadPtrHandle<nsIInterceptedChannel> mChannel;
   nsRefPtr<InternalResponse> mInternalResponse;
@@ -102,7 +105,7 @@ public:
   }
 
   NS_IMETHOD
-      Run()
+  Run()
   {
     AssertIsOnMainThread();
 
@@ -115,27 +118,38 @@ public:
       }
     }
 
+    mChannel->SynthesizeStatus(mInternalResponse->GetStatus(), mInternalResponse->GetStatusText());
+
+    nsAutoTArray<InternalHeaders::Entry, 5> entries;
+    mInternalResponse->UnfilteredHeaders()->GetEntries(entries);
+    for (uint32_t i = 0; i < entries.Length(); ++i) {
+       mChannel->SynthesizeHeader(entries[i].mName, entries[i].mValue);
+    }
+
     rv = mChannel->FinishSynthesizedResponse();
     NS_WARN_IF_FALSE(NS_SUCCEEDED(rv), "Failed to finish synthesized response");
     return rv;
   }
 };
 
-class RespondWithHandler MOZ_FINAL : public PromiseNativeHandler
+class RespondWithHandler final : public PromiseNativeHandler
 {
   nsMainThreadPtrHandle<nsIInterceptedChannel> mInterceptedChannel;
   nsMainThreadPtrHandle<ServiceWorker> mServiceWorker;
+  RequestMode mRequestMode;
 public:
   RespondWithHandler(nsMainThreadPtrHandle<nsIInterceptedChannel>& aChannel,
-                     nsMainThreadPtrHandle<ServiceWorker>& aServiceWorker)
+                     nsMainThreadPtrHandle<ServiceWorker>& aServiceWorker,
+                     RequestMode aRequestMode)
     : mInterceptedChannel(aChannel)
     , mServiceWorker(aServiceWorker)
+    , mRequestMode(aRequestMode)
   {
   }
 
-  void ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue) MOZ_OVERRIDE;
+  void ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue) override;
 
-  void RejectedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue) MOZ_OVERRIDE;
+  void RejectedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue) override;
 
   void CancelRequest();
 };
@@ -203,36 +217,52 @@ RespondWithHandler::ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValu
     return;
   }
 
+  // Section 4.2, step 2.2 "If either response's type is "opaque" and request's
+  // mode is not "no-cors" or response's type is error, return a network error."
+  if (((response->Type() == ResponseType::Opaque) && (mRequestMode != RequestMode::No_cors)) ||
+      response->Type() == ResponseType::Error) {
+    return;
+  }
+
+  if (NS_WARN_IF(response->BodyUsed())) {
+    return;
+  }
+
   nsRefPtr<InternalResponse> ir = response->GetInternalResponse();
   if (NS_WARN_IF(!ir)) {
     return;
   }
 
+  nsAutoPtr<RespondWithClosure> closure(new RespondWithClosure(mInterceptedChannel, ir));
   nsCOMPtr<nsIInputStream> body;
   response->GetBody(getter_AddRefs(body));
-  if (NS_WARN_IF(!body) || NS_WARN_IF(response->BodyUsed())) {
-    return;
-  }
-  response->SetBodyUsed();
+  // Errors and redirects may not have a body.
+  if (body) {
+    response->SetBodyUsed();
 
-  nsCOMPtr<nsIOutputStream> responseBody;
-  rv = mInterceptedChannel->GetResponseBody(getter_AddRefs(responseBody));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return;
+    nsCOMPtr<nsIOutputStream> responseBody;
+    rv = mInterceptedChannel->GetResponseBody(getter_AddRefs(responseBody));
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return;
+    }
+
+    nsCOMPtr<nsIEventTarget> stsThread = do_GetService(NS_SOCKETTRANSPORTSERVICE_CONTRACTID, &rv);
+    if (NS_WARN_IF(!stsThread)) {
+      return;
+    }
+
+    // XXXnsm, Fix for Bug 1141332 means that if we decide to make this
+    // streaming at some point, we'll need a different solution to that bug.
+    rv = NS_AsyncCopy(body, responseBody, stsThread, NS_ASYNCCOPY_VIA_READSEGMENTS, 4096,
+                      RespondWithCopyComplete, closure.forget());
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return;
+    }
+  } else {
+    RespondWithCopyComplete(closure.forget(), NS_OK);
   }
 
-  nsAutoPtr<RespondWithClosure> closure(new RespondWithClosure(mInterceptedChannel, ir));
-
-  nsCOMPtr<nsIEventTarget> stsThread = do_GetService(NS_SOCKETTRANSPORTSERVICE_CONTRACTID, &rv);
-  if (NS_WARN_IF(!stsThread)) {
-    return;
-  }
-  rv = NS_AsyncCopy(body, responseBody, stsThread, NS_ASYNCCOPY_VIA_READSEGMENTS, 4096,
-                    RespondWithCopyComplete, closure.forget());
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return;
-  }
-
+  MOZ_ASSERT(!closure);
   autoCancel.Reset();
 }
 
@@ -260,8 +290,29 @@ FetchEvent::RespondWith(Promise& aPromise, ErrorResult& aRv)
   }
 
   mWaitToRespond = true;
-  nsRefPtr<RespondWithHandler> handler = new RespondWithHandler(mChannel, mServiceWorker);
+  nsRefPtr<RespondWithHandler> handler =
+    new RespondWithHandler(mChannel, mServiceWorker, mRequest->Mode());
   aPromise.AppendNativeHandler(handler);
+}
+
+void
+FetchEvent::RespondWith(Response& aResponse, ErrorResult& aRv)
+{
+  if (mWaitToRespond) {
+    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
+    return;
+  }
+
+  WorkerPrivate* worker = GetCurrentThreadWorkerPrivate();
+  MOZ_ASSERT(worker);
+  worker->AssertIsOnWorkerThread();
+  nsRefPtr<Promise> promise = Promise::Create(worker->GlobalScope(), aRv);
+  if (NS_WARN_IF(aRv.Failed())) {
+    return;
+  }
+  promise->MaybeResolve(&aResponse);
+
+  RespondWith(*promise, aRv);
 }
 
 already_AddRefed<ServiceWorkerClient>

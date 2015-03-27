@@ -24,6 +24,7 @@
 #include "js/Proxy.h"
 #include "proxy/DeadObjectProxy.h"
 #include "vm/ArgumentsObject.h"
+#include "vm/WeakMapObject.h"
 #include "vm/WrapperObject.h"
 
 #include "jsobjinlines.h"
@@ -549,9 +550,9 @@ JS_GetCustomIteratorCount(JSContext *cx)
 }
 
 JS_FRIEND_API(unsigned)
-JS_PCToLineNumber(JSScript *script, jsbytecode *pc)
+JS_PCToLineNumber(JSScript *script, jsbytecode *pc, unsigned *columnp)
 {
-    return PCToLineNumber(script, pc);
+    return PCToLineNumber(script, pc, columnp);
 }
 
 JS_FRIEND_API(bool)
@@ -878,13 +879,13 @@ JS::FormatStackDump(JSContext *cx, char *buf, bool showArgs, bool showLocals, bo
     return buf;
 }
 
-struct DumpHeapTracer : public JSTracer
+struct DumpHeapTracer : public JS::CallbackTracer
 {
     FILE   *output;
 
     DumpHeapTracer(FILE *fp, JSRuntime *rt, JSTraceCallback callback,
                    WeakMapTraceKind weakTraceKind)
-      : JSTracer(rt, callback, weakTraceKind), output(fp)
+      : JS::CallbackTracer(rt, callback, weakTraceKind), output(fp)
     {}
 };
 
@@ -939,7 +940,7 @@ DumpHeapVisitCell(JSRuntime *rt, void *data, void *thing,
 }
 
 static void
-DumpHeapVisitChild(JSTracer *trc, void **thingp, JSGCTraceKind kind)
+DumpHeapVisitChild(JS::CallbackTracer *trc, void **thingp, JSGCTraceKind kind)
 {
     if (gc::IsInsideNursery((js::gc::Cell *)*thingp))
         return;
@@ -951,7 +952,7 @@ DumpHeapVisitChild(JSTracer *trc, void **thingp, JSGCTraceKind kind)
 }
 
 static void
-DumpHeapVisitRoot(JSTracer *trc, void **thingp, JSGCTraceKind kind)
+DumpHeapVisitRoot(JS::CallbackTracer *trc, void **thingp, JSGCTraceKind kind)
 {
     if (gc::IsInsideNursery((js::gc::Cell *)*thingp))
         return;
@@ -1173,16 +1174,13 @@ js::SetObjectMetadataCallback(JSContext *cx, ObjectMetadataCallback callback)
     cx->compartment()->setObjectMetadataCallback(callback);
 }
 
-JS_FRIEND_API(bool)
-js::SetObjectMetadata(JSContext *cx, HandleObject obj, HandleObject metadata)
-{
-    return JSObject::setMetadata(cx, obj, metadata);
-}
-
 JS_FRIEND_API(JSObject *)
 js::GetObjectMetadata(JSObject *obj)
 {
-    return obj->getMetadata();
+    ObjectWeakMap *map = obj->compartment()->objectMetadataTable;
+    if (map)
+        return map->lookup(obj);
+    return nullptr;
 }
 
 JS_FRIEND_API(bool)

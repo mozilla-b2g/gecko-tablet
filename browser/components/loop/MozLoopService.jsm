@@ -29,6 +29,19 @@ const TWO_WAY_MEDIA_CONN_LENGTH = {
   MORE_THAN_5M: "MORE_THAN_5M",
 };
 
+/**
+ * Buckets that we segment sharing state change telemetry probes into.
+ *
+ * @type {{WINDOW_ENABLED: String, WINDOW_DISABLED: String,
+ *   BROWSER_ENABLED: String, BROWSER_DISABLED: String}}
+ */
+const SHARING_STATE_CHANGE = {
+  WINDOW_ENABLED: "WINDOW_ENABLED",
+  WINDOW_DISABLED: "WINDOW_DISABLED",
+  BROWSER_ENABLED: "BROWSER_ENABLED",
+  BROWSER_DISABLED: "BROWSER_DISABLED"
+};
+
 // See LOG_LEVELS in Console.jsm. Common examples: "All", "Info", "Warn", & "Error".
 const PREF_LOG_LEVEL = "loop.debug.loglevel";
 
@@ -42,7 +55,8 @@ Cu.import("resource://gre/modules/FxAccountsOAuthClient.jsm");
 
 Cu.importGlobalProperties(["URL"]);
 
-this.EXPORTED_SYMBOLS = ["MozLoopService", "LOOP_SESSION_TYPE", "TWO_WAY_MEDIA_CONN_LENGTH"];
+this.EXPORTED_SYMBOLS = ["MozLoopService", "LOOP_SESSION_TYPE",
+  "TWO_WAY_MEDIA_CONN_LENGTH", "SHARING_STATE_CHANGE"];
 
 XPCOMUtils.defineLazyModuleGetter(this, "injectLoopAPI",
   "resource:///modules/loop/MozLoopAPI.jsm");
@@ -880,8 +894,7 @@ let MozLoopServiceInternal = {
             switch(pc.iceConnectionState) {
               case "failed":
               case "disconnected":
-                if (Services.telemetry.canSend ||
-                    Services.prefs.getBoolPref("toolkit.telemetry.test")) {
+                if (Services.telemetry.canRecordExtended) {
                   this.stageForTelemetryUpload(window, pc);
                 }
                 break;
@@ -1104,7 +1117,8 @@ this.MozLoopService = {
       if (window) {
         window.LoopUI.showNotification({
           sound: "room-joined",
-          title: room.roomName,
+          // Fallback to the brand short name if the roomName isn't available.
+          title: room.roomName || MozLoopServiceInternal.localizedStrings.get("clientShortname2"),
           message: MozLoopServiceInternal.localizedStrings.get("rooms_room_joined_label"),
           selectTab: "rooms"
         });

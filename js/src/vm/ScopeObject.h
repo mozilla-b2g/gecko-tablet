@@ -14,6 +14,7 @@
 #include "gc/Barrier.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/ProxyObject.h"
+#include "vm/WeakMapObject.h"
 
 namespace js {
 
@@ -778,7 +779,7 @@ class ScopeIter
 // static scope objects are read-only, and we never use their parent links, so
 // they don't need to be distinct.
 //
-// That is, completely optimized out scopes have can't be distinguished by
+// That is, completely optimized out scopes can't be distinguished by
 // frame. Note that even if the frame corresponding to the static scope is
 // live on the stack, it is unsound to synthesize a scope from that live
 // frame. In other words, the provenance of the scope chain is from allocated
@@ -913,10 +914,7 @@ class DebugScopeObject : public ProxyObject
 class DebugScopes
 {
     /* The map from (non-debug) scopes to debug scopes. */
-    typedef WeakMap<PreBarrieredObject, RelocatablePtrObject> ObjectWeakMap;
     ObjectWeakMap proxiedScopes;
-    static MOZ_ALWAYS_INLINE void proxiedScopesPostWriteBarrier(JSRuntime *rt, ObjectWeakMap *map,
-                                                               const PreBarrieredObject &key);
 
     /*
      * The map from live frames which have optimized-away scopes to the
@@ -1034,11 +1032,11 @@ JSObject::is<js::StaticBlockObject>() const
 namespace js {
 
 inline bool
-IsValidTerminatingScope(JSObject* scope)
+IsSyntacticScope(JSObject* scope)
 {
-    return !scope->is<ScopeObject>() ||
-           (scope->is<DynamicWithObject>() &&
-            !scope->as<DynamicWithObject>().isSyntactic());
+    return scope->is<ScopeObject>() &&
+           (!scope->is<DynamicWithObject>() ||
+            scope->as<DynamicWithObject>().isSyntactic());
 }
 
 inline const Value &
@@ -1082,7 +1080,7 @@ ScopeIter::enclosingScope() const
     // chain; every scope chain must start with zero or more ScopeObjects and
     // terminate with one or more non-ScopeObjects (viz., GlobalObject).
     MOZ_ASSERT(done());
-    MOZ_ASSERT(IsValidTerminatingScope(scope_));
+    MOZ_ASSERT(!IsSyntacticScope(scope_));
     return *scope_;
 }
 

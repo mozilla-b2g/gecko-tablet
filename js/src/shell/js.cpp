@@ -454,7 +454,7 @@ RunFile(JSContext *cx, const char *filename, FILE *file, bool compileOnly)
                .setNoScriptRval(true);
 
         gGotError = false;
-        (void) JS::Compile(cx, cx->global(), options, file, &script);
+        (void) JS::Compile(cx, options, file, &script);
         MOZ_ASSERT_IF(!script, gGotError);
     }
 
@@ -484,7 +484,7 @@ EvalAndPrint(JSContext *cx, const char *bytes, size_t length,
            .setCompileAndGo(true)
            .setFileAndLine("typein", lineno);
     RootedScript script(cx);
-    if (!JS::Compile(cx, cx->global(), options, bytes, length, &script))
+    if (!JS::Compile(cx, options, bytes, length, &script))
         return false;
     if (compileOnly)
         return true;
@@ -869,7 +869,7 @@ LoadScript(JSContext *cx, unsigned argc, jsval *vp, bool scriptRelative)
             .setNoScriptRval(true);
         RootedScript script(cx);
         RootedValue unused(cx);
-        if ((compileOnly && !Compile(cx, cx->global(), opts, filename.ptr(), &script)) ||
+        if ((compileOnly && !Compile(cx, opts, filename.ptr(), &script)) ||
             !Evaluate(cx, opts, filename.ptr(), &unused))
         {
             return false;
@@ -1291,7 +1291,7 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
                 script = JS_DecodeScript(cx, loadBuffer, loadLength);
             } else {
                 mozilla::Range<const char16_t> chars = codeChars.twoByteRange();
-                (void) JS::Compile(cx, global, options, chars.start().get(), chars.length(), &script);
+                (void) JS::Compile(cx, options, chars.start().get(), chars.length(), &script);
             }
 
             if (!script)
@@ -1486,7 +1486,7 @@ Run(JSContext *cx, unsigned argc, jsval *vp)
                .setFileAndLine(filename.ptr(), 1)
                .setCompileAndGo(true)
                .setNoScriptRval(true);
-        if (!JS_CompileUCScript(cx, cx->global(), ucbuf, buflen, options, &script))
+        if (!JS_CompileUCScript(cx, ucbuf, buflen, options, &script))
             return false;
     }
 
@@ -2182,9 +2182,9 @@ Notes(JSContext *cx, unsigned argc, jsval *vp)
 
 JS_STATIC_ASSERT(JSTRY_CATCH == 0);
 JS_STATIC_ASSERT(JSTRY_FINALLY == 1);
-JS_STATIC_ASSERT(JSTRY_ITER == 2);
+JS_STATIC_ASSERT(JSTRY_FOR_IN == 2);
 
-static const char* const TryNoteNames[] = { "catch", "finally", "iter", "loop" };
+static const char* const TryNoteNames[] = { "catch", "finally", "for-in", "for-of", "loop" };
 
 static bool
 TryNotes(JSContext *cx, HandleScript script, Sprinter *sp)
@@ -2364,10 +2364,6 @@ DisassFile(JSContext *cx, unsigned argc, jsval *vp)
         return true;
     }
 
-    RootedObject thisobj(cx, JS_THIS_OBJECT(cx, vp));
-    if (!thisobj)
-        return false;
-
     // We should change DisassembleOptionParser to store CallArgs.
     JSString *str = JS::ToString(cx, HandleValue::fromMarkedLocation(&p.argv[0]));
     if (!str)
@@ -2385,7 +2381,7 @@ DisassFile(JSContext *cx, unsigned argc, jsval *vp)
                .setCompileAndGo(true)
                .setNoScriptRval(true);
 
-        if (!JS::Compile(cx, thisobj, options, filename.ptr(), &script))
+        if (!JS::Compile(cx, options, filename.ptr(), &script))
             return false;
     }
 
@@ -2813,7 +2809,7 @@ WorkerMain(void *arg)
                .setCompileAndGo(true);
 
         RootedScript script(cx);
-        if (!JS::Compile(cx, global, options, input->chars, input->length, &script))
+        if (!JS::Compile(cx, options, input->chars, input->length, &script))
             break;
         RootedValue result(cx);
         JS_ExecuteScript(cx, script, &result);
@@ -3258,8 +3254,7 @@ Compile(JSContext *cx, unsigned argc, jsval *vp)
            .setNoScriptRval(true);
     RootedScript script(cx);
     const char16_t *chars = stableChars.twoByteRange().start().get();
-    bool ok = JS_CompileUCScript(cx, global, chars,
-                                 scriptContents->length(), options, &script);
+    bool ok = JS_CompileUCScript(cx, chars, scriptContents->length(), options, &script);
     args.rval().setUndefined();
     return ok;
 }
@@ -4346,7 +4341,7 @@ class SprintOptimizationTypeInfoOp : public ForEachTrackedOptimizationTypeInfoOp
     { }
 
     void readType(const char *keyedBy, const char *name,
-                  const char *location, unsigned lineno) MOZ_OVERRIDE
+                  const char *location, unsigned lineno) override
     {
         if (!startedTypes_) {
             startedTypes_ = true;
@@ -4365,7 +4360,7 @@ class SprintOptimizationTypeInfoOp : public ForEachTrackedOptimizationTypeInfoOp
         Sprint(sp, "},");
     }
 
-    void operator()(TrackedTypeSite site, const char *mirType) MOZ_OVERRIDE {
+    void operator()(TrackedTypeSite site, const char *mirType) override {
         if (startedTypes_) {
             // Clear trailing ,
             if ((*sp)[sp->getOffset() - 1] == ',')
@@ -4390,7 +4385,7 @@ class SprintOptimizationAttemptsOp : public ForEachTrackedOptimizationAttemptOp
       : sp(sp)
     { }
 
-    void operator()(TrackedStrategy strategy, TrackedOutcome outcome) MOZ_OVERRIDE {
+    void operator()(TrackedStrategy strategy, TrackedOutcome outcome) override {
         Sprint(sp, "{\"strategy\":\"%s\",\"outcome\":\"%s\"},",
                TrackedStrategyString(strategy), TrackedOutcomeString(outcome));
     }
@@ -4893,6 +4888,10 @@ static const JSFunctionSpecWithHelp fuzzing_unsafe_functions[] = {
     JS_FN_HELP("assertFloat32", testingFunc_assertFloat32, 2, 0,
 "assertFloat32(value, isFloat32)",
 "  In IonMonkey only, asserts that value has (resp. hasn't) the MIRType_Float32 if isFloat32 is true (resp. false)."),
+
+    JS_FN_HELP("assertRecoveredOnBailout", testingFunc_assertRecoveredOnBailout, 2, 0,
+"assertRecoveredOnBailout(var)",
+"  In IonMonkey only, asserts that variable has RecoveredOnBailout flag."),
 
     JS_FN_HELP("withSourceHook", WithSourceHook, 1, 0,
 "withSourceHook(hook, fun)",
@@ -5648,6 +5647,22 @@ NewGlobalObject(JSContext *cx, JS::CompartmentOptions &options,
                 return nullptr;
         }
 
+        RootedObject performanceObj(cx, JS_NewObject(cx, nullptr));
+        if (!performanceObj)
+            return nullptr;
+        RootedObject mozMemoryObj(cx, JS_NewObject(cx, nullptr));
+        if (!mozMemoryObj)
+            return nullptr;
+        RootedObject gcObj(cx, gc::NewMemoryInfoObject(cx));
+        if (!gcObj)
+            return nullptr;
+        if (!JS_DefineProperty(cx, glob, "performance", performanceObj, JSPROP_ENUMERATE))
+            return nullptr;
+        if (!JS_DefineProperty(cx, performanceObj, "mozMemory", mozMemoryObj, JSPROP_ENUMERATE))
+            return nullptr;
+        if (!JS_DefineProperty(cx, mozMemoryObj, "gc", gcObj, JSPROP_ENUMERATE))
+            return nullptr;
+
         /* Initialize FakeDOMObject. */
         static const js::DOMCallbacks DOMcallbacks = {
             InstanceClassHasProtoAtDepth
@@ -5835,6 +5850,9 @@ SetRuntimeOptions(JSRuntime *rt, const OptionParser &op)
 
     if (op.getBoolOption("ion-check-range-analysis"))
         jit::js_JitOptions.checkRangeAnalysis = true;
+
+    if (op.getBoolOption("ion-extra-checks"))
+        jit::js_JitOptions.runExtraChecks = true;
 
     if (const char *str = op.getStringOption("ion-inlining")) {
         if (strcmp(str, "on") == 0)
@@ -6147,6 +6165,8 @@ main(int argc, char **argv, char **envp)
                                "Loop unrolling (default: off, on to enable)")
         || !op.addBoolOption('\0', "ion-check-range-analysis",
                                "Range analysis checking")
+        || !op.addBoolOption('\0', "ion-extra-checks",
+                               "Perform extra dynamic validation checks")
         || !op.addStringOption('\0', "ion-inlining", "on/off",
                                "Inline methods where possible (default: on, off to disable)")
         || !op.addStringOption('\0', "ion-osr", "on/off",
@@ -6225,7 +6245,7 @@ main(int argc, char **argv, char **envp)
     op.setArgCapturesRest("scriptArgs");
 
     switch (op.parseArgs(argc, argv)) {
-      case OptionParser::ParseHelp:
+      case OptionParser::EarlyExit:
         return EXIT_SUCCESS;
       case OptionParser::ParseError:
         op.printHelp(argv[0]);

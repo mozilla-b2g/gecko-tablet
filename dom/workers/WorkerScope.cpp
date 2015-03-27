@@ -101,7 +101,7 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(WorkerGlobalScope)
 NS_INTERFACE_MAP_END_INHERITING(DOMEventTargetHelper)
 
 JSObject*
-WorkerGlobalScope::WrapObject(JSContext* aCx)
+WorkerGlobalScope::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
   MOZ_CRASH("We should never get here!");
 }
@@ -514,6 +514,35 @@ WorkerDebuggerGlobalScope::GetGlobal(JSContext* aCx,
 }
 
 void
+WorkerDebuggerGlobalScope::EnterEventLoop()
+{
+  mWorkerPrivate->EnterDebuggerEventLoop();
+}
+
+void
+WorkerDebuggerGlobalScope::LeaveEventLoop()
+{
+  mWorkerPrivate->LeaveDebuggerEventLoop();
+}
+
+void
+WorkerDebuggerGlobalScope::PostMessage(const nsAString& aMessage)
+{
+  mWorkerPrivate->PostMessageToDebugger(aMessage);
+}
+
+void
+WorkerDebuggerGlobalScope::ReportError(JSContext* aCx,
+                                       const nsAString& aMessage)
+{
+  JS::AutoFilename afn;
+  uint32_t lineno = 0;
+  JS::DescribeScriptedCaller(aCx, &afn, &lineno);
+  nsString filename(NS_ConvertUTF8toUTF16(afn.get()));
+  mWorkerPrivate->ReportErrorToDebugger(filename, lineno, aMessage);
+}
+
+void
 WorkerDebuggerGlobalScope::Dump(JSContext* aCx,
                                 const Optional<nsAString>& aString) const
 {
@@ -558,7 +587,7 @@ GetterOnlyJSNative(JSContext* aCx, unsigned aArgc, JS::Value* aVp)
 namespace {
 
 class WorkerScopeUnregisterRunnable;
-class UnregisterResultRunnable MOZ_FINAL : public WorkerRunnable
+class UnregisterResultRunnable final : public WorkerRunnable
 {
 public:
   enum State { Succeeded, Failed };
@@ -575,7 +604,7 @@ public:
   }
 
   virtual bool
-  WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) MOZ_OVERRIDE;
+  WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override;
 
 private:
   nsRefPtr<WorkerScopeUnregisterRunnable> mRunnable;
@@ -583,7 +612,7 @@ private:
   bool mValue;
 };
 
-class WorkerScopeUnregisterRunnable MOZ_FINAL : public nsRunnable
+class WorkerScopeUnregisterRunnable final : public nsRunnable
                                               , public nsIServiceWorkerUnregisterCallback
                                               , public WorkerFeature
 {
@@ -631,7 +660,7 @@ public:
   }
 
   NS_IMETHODIMP
-  UnregisterSucceeded(bool aState) MOZ_OVERRIDE
+  UnregisterSucceeded(bool aState) override
   {
     AssertIsOnMainThread();
 
@@ -643,7 +672,7 @@ public:
   }
 
   NS_IMETHODIMP
-  UnregisterFailed() MOZ_OVERRIDE
+  UnregisterFailed() override
   {
     AssertIsOnMainThread();
 
@@ -669,7 +698,7 @@ public:
   }
 
   NS_IMETHODIMP
-  Run() MOZ_OVERRIDE
+  Run() override
   {
     AssertIsOnMainThread();
 
@@ -693,7 +722,7 @@ public:
     return NS_OK;
   }
 
-  virtual bool Notify(JSContext* aCx, workers::Status aStatus) MOZ_OVERRIDE
+  virtual bool Notify(JSContext* aCx, workers::Status aStatus) override
   {
     mWorkerPrivate->AssertIsOnWorkerThread();
     MOZ_ASSERT(aStatus > workers::Running);
@@ -747,7 +776,7 @@ ServiceWorkerGlobalScope::Unregister(ErrorResult& aRv)
 
 namespace {
 
-class UpdateRunnable MOZ_FINAL : public nsRunnable
+class UpdateRunnable final : public nsRunnable
 {
   nsString mScope;
 

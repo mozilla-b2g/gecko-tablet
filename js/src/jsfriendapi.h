@@ -80,7 +80,7 @@ JS_NondeterministicGetWeakMapKeys(JSContext *cx, JS::HandleObject obj, JS::Mutab
 
 // Raw JSScript* because this needs to be callable from a signal handler.
 extern JS_FRIEND_API(unsigned)
-JS_PCToLineNumber(JSScript *script, jsbytecode *pc);
+JS_PCToLineNumber(JSScript *script, jsbytecode *pc, unsigned *columnp = nullptr);
 
 /*
  * Determine whether the given object is backed by a DeadObjectProxy.
@@ -359,8 +359,8 @@ extern JS_FRIEND_API(bool)
 proxy_LookupProperty(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandleObject objp,
                     JS::MutableHandle<Shape*> propp);
 extern JS_FRIEND_API(bool)
-proxy_DefineProperty(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::HandleValue value,
-                     JSGetterOp getter, JSSetterOp setter, unsigned attrs,
+proxy_DefineProperty(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
+                     JS::Handle<JSPropertyDescriptor> desc,
                      JS::ObjectOpResult &result);
 extern JS_FRIEND_API(bool)
 proxy_HasProperty(JSContext *cx, JS::HandleObject obj, JS::HandleId id, bool *foundp);
@@ -1139,17 +1139,17 @@ struct CompartmentFilter {
 };
 
 struct AllCompartments : public CompartmentFilter {
-    virtual bool match(JSCompartment *c) const MOZ_OVERRIDE { return true; }
+    virtual bool match(JSCompartment *c) const override { return true; }
 };
 
 struct ContentCompartmentsOnly : public CompartmentFilter {
-    virtual bool match(JSCompartment *c) const MOZ_OVERRIDE {
+    virtual bool match(JSCompartment *c) const override {
         return !IsSystemCompartment(c);
     }
 };
 
 struct ChromeCompartmentsOnly : public CompartmentFilter {
-    virtual bool match(JSCompartment *c) const MOZ_OVERRIDE {
+    virtual bool match(JSCompartment *c) const override {
         return IsSystemCompartment(c);
     }
 };
@@ -1157,13 +1157,13 @@ struct ChromeCompartmentsOnly : public CompartmentFilter {
 struct SingleCompartment : public CompartmentFilter {
     JSCompartment *ours;
     explicit SingleCompartment(JSCompartment *c) : ours(c) {}
-    virtual bool match(JSCompartment *c) const MOZ_OVERRIDE { return c == ours; }
+    virtual bool match(JSCompartment *c) const override { return c == ours; }
 };
 
 struct CompartmentsWithPrincipals : public CompartmentFilter {
     JSPrincipals *principals;
     explicit CompartmentsWithPrincipals(JSPrincipals *p) : principals(p) {}
-    virtual bool match(JSCompartment *c) const MOZ_OVERRIDE {
+    virtual bool match(JSCompartment *c) const override {
         return JS_GetCompartmentPrincipals(c) == principals;
     }
 };
@@ -2583,23 +2583,18 @@ class JS_FRIEND_API(AutoCTypesActivityCallback) {
     }
 };
 
-typedef bool
-(* ObjectMetadataCallback)(JSContext *cx, JSObject **pmetadata);
+typedef JSObject *
+(* ObjectMetadataCallback)(JSContext *cx);
 
 /*
  * Specify a callback to invoke when creating each JS object in the current
  * compartment, which may return a metadata object to associate with the
- * object. Objects with different metadata have different shape hierarchies,
- * so for efficiency, objects should generally try to share metadata objects.
+ * object.
  */
 JS_FRIEND_API(void)
 SetObjectMetadataCallback(JSContext *cx, ObjectMetadataCallback callback);
 
-/* Manipulate the metadata associated with an object. */
-
-JS_FRIEND_API(bool)
-SetObjectMetadata(JSContext *cx, JS::HandleObject obj, JS::HandleObject metadata);
-
+/* Get the metadata associated with an object. */
 JS_FRIEND_API(JSObject *)
 GetObjectMetadata(JSObject *obj);
 
@@ -2633,7 +2628,7 @@ ForwardToNative(JSContext *cx, JSNative native, const JS::CallArgs &args);
 JS_FRIEND_API(bool)
 SetPropertyIgnoringNamedGetter(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
                                JS::MutableHandleValue vp, JS::HandleObject receiver,
-                               JS::MutableHandle<JSPropertyDescriptor> ownDesc,
+                               JS::Handle<JSPropertyDescriptor> ownDesc,
                                JS::ObjectOpResult &result);
 
 JS_FRIEND_API(void)

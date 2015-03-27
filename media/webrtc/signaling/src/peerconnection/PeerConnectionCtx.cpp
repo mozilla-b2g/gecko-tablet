@@ -60,7 +60,7 @@ public:
     }
 
   NS_IMETHODIMP Observe(nsISupports* aSubject, const char* aTopic,
-                        const char16_t* aData) MOZ_OVERRIDE {
+                        const char16_t* aData) override {
     if (strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID) == 0) {
       CSFLogDebug(logTag, "Shutting down PeerConnectionCtx");
       PeerConnectionCtx::Destroy();
@@ -373,7 +373,7 @@ PeerConnectionCtx::~PeerConnectionCtx() {
 #endif
 };
 
-void PeerConnectionCtx::queueJSEPOperation(nsRefPtr<nsIRunnable> aOperation) {
+void PeerConnectionCtx::queueJSEPOperation(nsIRunnable* aOperation) {
   mQueuedJSEPOperations.AppendElement(aOperation);
 }
 

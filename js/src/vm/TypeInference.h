@@ -399,7 +399,7 @@ class TypeSet
       : flags(0), objectSet(nullptr)
     {}
 
-    void print();
+    void print(FILE *fp = stderr);
 
     /* Whether this set contains a specific type. */
     inline bool hasType(Type type) const;
@@ -492,6 +492,8 @@ class TypeSet
         return this->isSubset(other) && other->isSubset(this);
     }
 
+    bool objectsIntersect(const TypeSet *other) const;
+
     /* Forward all types in this set to the specified constraint. */
     bool addTypesToConstraint(JSContext *cx, TypeConstraint *constraint);
 
@@ -529,6 +531,7 @@ class TypeSet
     static void MarkTypeRoot(JSTracer *trc, Type *v, const char *name);
     static void MarkTypeUnbarriered(JSTracer *trc, Type *v, const char *name);
     static bool IsTypeMarkedFromAnyThread(Type *v);
+    static bool IsTypeAllocatedDuringIncremental(Type v);
     static bool IsTypeAboutToBeFinalized(Type *v);
 };
 

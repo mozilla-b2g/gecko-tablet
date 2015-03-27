@@ -892,13 +892,13 @@ str_normalize(JSContext *cx, unsigned argc, Value *vp)
             return false;
 
         // Step 7.
-        if (formStr == cx->names().NFC) {
+        if (EqualStrings(formStr, cx->names().NFC)) {
             form = UNORM_NFC;
-        } else if (formStr == cx->names().NFD) {
+        } else if (EqualStrings(formStr, cx->names().NFD)) {
             form = UNORM_NFD;
-        } else if (formStr == cx->names().NFKC) {
+        } else if (EqualStrings(formStr, cx->names().NFKC)) {
             form = UNORM_NFKC;
-        } else if (formStr == cx->names().NFKD) {
+        } else if (EqualStrings(formStr, cx->names().NFKD)) {
             form = UNORM_NFKD;
         } else {
             JS_ReportErrorNumber(cx, GetErrorMessage, nullptr,
@@ -2132,6 +2132,18 @@ class MOZ_STACK_CLASS StringRegExpGuard
         /* Build RegExp from pattern string. */
         RootedString opt(cx);
         if (optarg < args.length()) {
+            if (JSScript *script = cx->currentScript()) {
+                const char *filename = script->filename();
+                cx->compartment()->addTelemetry(filename, JSCompartment::DeprecatedFlagsArgument);
+            }
+
+            if (!cx->compartment()->warnedAboutFlagsArgument) {
+                if (!JS_ReportErrorFlagsAndNumber(cx, JSREPORT_WARNING, GetErrorMessage, nullptr,
+                                                  JSMSG_DEPRECATED_FLAGS_ARG))
+                    return false;
+                cx->compartment()->warnedAboutFlagsArgument = true;
+            }
+
             opt = ToString<CanGC>(cx, args[optarg]);
             if (!opt)
                 return false;
@@ -4022,14 +4034,43 @@ js::StringConstructor(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+static bool
+str_fromCharCode_few_args(JSContext *cx, const CallArgs &args)
+{
+    MOZ_ASSERT(args.length() <= JSFatInlineString::MAX_LENGTH_TWO_BYTE);
+
+    char16_t chars[JSFatInlineString::MAX_LENGTH_TWO_BYTE];
+    for (unsigned i = 0; i < args.length(); i++) {
+        uint16_t code;
+        if (!ToUint16(cx, args[i], &code))
+            return false;
+        chars[i] = char16_t(code);
+    }
+    JSString *str = NewStringCopyN<CanGC>(cx, chars, args.length());
+    if (!str)
+        return false;
+    args.rval().setString(str);
+    return true;
+}
+
 bool
 js::str_fromCharCode(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
     MOZ_ASSERT(args.length() <= ARGS_LENGTH_MAX);
+
+    // Optimize the single-char case.
     if (args.length() == 1)
         return str_fromCharCode_one_arg(cx, args[0], args.rval());
+
+    // Optimize the case where the result will definitely fit in an inline
+    // string (thin or fat) and so we don't need to malloc the chars. (We could
+    // cover some cases where args.length() goes up to
+    // JSFatInlineString::MAX_LENGTH_LATIN1 if we also checked if the chars are
+    // all Latin1, but it doesn't seem worth the effort.)
+    if (args.length() <= JSFatInlineString::MAX_LENGTH_TWO_BYTE)
+        return str_fromCharCode_few_args(cx, args);
 
     char16_t *chars = cx->pod_malloc<char16_t>(args.length() + 1);
     if (!chars)

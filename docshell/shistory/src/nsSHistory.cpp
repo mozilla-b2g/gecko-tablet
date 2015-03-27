@@ -165,7 +165,7 @@ enum HistCmd{
 //***      nsSHistoryObserver
 //*****************************************************************************
 
-class nsSHistoryObserver MOZ_FINAL : public nsIObserver
+class nsSHistoryObserver final : public nsIObserver
 {
 
 public:
@@ -1406,7 +1406,7 @@ nsSHistory::RemoveEntries(nsTArray<uint64_t>& aIDs, int32_t aStartIndex)
     --index;
   }
   if (didRemove && mRootDocShell) {
-    nsRefPtr<nsIRunnable> ev =
+    nsCOMPtr<nsIRunnable> ev =
       NS_NewRunnableMethod(static_cast<nsDocShell*>(mRootDocShell),
                            &nsDocShell::FireDummyOnLocationChange);
     NS_DispatchToCurrentThread(ev);
@@ -1513,12 +1513,13 @@ nsSHistory::GetSessionHistory(nsISHistory** aSessionHistory)
 }
 
 NS_IMETHODIMP
-nsSHistory::LoadURIWithBase(const char16_t* aURI,
-                            uint32_t aLoadFlags,
-                            nsIURI* aReferringURI,
-                            nsIInputStream* aPostStream,
-                            nsIInputStream* aExtraHeaderStream,
-                            nsIURI* aBaseURI)
+nsSHistory::LoadURIWithOptions(const char16_t* aURI,
+                               uint32_t aLoadFlags,
+                               nsIURI* aReferringURI,
+                               uint32_t aReferrerPolicy,
+                               nsIInputStream* aPostStream,
+                               nsIInputStream* aExtraHeaderStream,
+                               nsIURI* aBaseURI)
 {
   return NS_OK;
 }

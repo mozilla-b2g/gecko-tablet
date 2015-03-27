@@ -177,7 +177,7 @@ class nsGenericHTMLElementTearoff : public nsIDOMElementCSSInlineStyle
   {
   }
 
-  NS_IMETHOD GetStyle(nsIDOMCSSStyleDeclaration** aStyle) MOZ_OVERRIDE
+  NS_IMETHOD GetStyle(nsIDOMCSSStyleDeclaration** aStyle) override
   {
     NS_ADDREF(*aStyle = mElement->Style());
     return NS_OK;
@@ -1794,11 +1794,11 @@ nsGenericHTMLElement::IsLabelable() const
 }
 
 bool
-nsGenericHTMLElement::IsInteractiveHTMLContent() const
+nsGenericHTMLElement::IsInteractiveHTMLContent(bool aIgnoreTabindex) const
 {
   return IsAnyOfHTMLElements(nsGkAtoms::details, nsGkAtoms::embed,
                              nsGkAtoms::keygen) ||
-         HasAttr(kNameSpaceID_None, nsGkAtoms::tabindex);
+         (!aIgnoreTabindex && HasAttr(kNameSpaceID_None, nsGkAtoms::tabindex));
 }
 
 already_AddRefed<UndoManager>

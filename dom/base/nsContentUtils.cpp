@@ -333,7 +333,7 @@ static NS_DEFINE_CID(kCParserCID, NS_PARSER_CID);
 
 static PLDHashTable sEventListenerManagersHash;
 
-class DOMEventListenerManagersHashReporter MOZ_FINAL : public nsIMemoryReporter
+class DOMEventListenerManagersHashReporter final : public nsIMemoryReporter
 {
   MOZ_DEFINE_MALLOC_SIZE_OF(MallocSizeOf)
 
@@ -343,7 +343,7 @@ public:
   NS_DECL_ISUPPORTS
 
   NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,
-                            nsISupports* aData, bool aAnonymize) MOZ_OVERRIDE
+                            nsISupports* aData, bool aAnonymize) override
   {
     // We don't measure the |EventListenerManager| objects pointed to by the
     // entries because those references are non-owning.
@@ -398,7 +398,7 @@ EventListenerManagerHashClearEntry(PLDHashTable *table, PLDHashEntryHdr *entry)
   lm->~EventListenerManagerMapEntry();
 }
 
-class SameOriginCheckerImpl MOZ_FINAL : public nsIChannelEventSink,
+class SameOriginCheckerImpl final : public nsIChannelEventSink,
                                         public nsIInterfaceRequestor
 {
   ~SameOriginCheckerImpl() {}
@@ -408,12 +408,12 @@ class SameOriginCheckerImpl MOZ_FINAL : public nsIChannelEventSink,
   NS_DECL_NSIINTERFACEREQUESTOR
 };
 
-class CharsetDetectionObserver MOZ_FINAL : public nsICharsetDetectionObserver
+class CharsetDetectionObserver final : public nsICharsetDetectionObserver
 {
 public:
   NS_DECL_ISUPPORTS
 
-  NS_IMETHOD Notify(const char *aCharset, nsDetectionConfident aConf) MOZ_OVERRIDE
+  NS_IMETHOD Notify(const char *aCharset, nsDetectionConfident aConf) override
   {
     mCharset = aCharset;
     return NS_OK;
@@ -6491,6 +6491,11 @@ nsContentUtils::IsPatternMatching(nsAString& aValue, nsAString& aPattern,
   AutoJSAPI jsapi;
   jsapi.Init();
   JSContext* cx = jsapi.cx();
+
+  // Failure to create or run the regexp results in the invalid pattern
+  // matching, but we can still report the error to the console.
+  jsapi.TakeOwnershipOfErrorReporting();
+
   // We can use the junk scope here, because we're just using it for
   // regexp evaluation, not actual script execution.
   JSAutoCompartment ac(cx, xpc::UnprivilegedJunkScope());
@@ -6504,7 +6509,6 @@ nsContentUtils::IsPatternMatching(nsAString& aValue, nsAString& aPattern,
                                   static_cast<char16_t*>(aPattern.BeginWriting()),
                                   aPattern.Length(), 0));
   if (!re) {
-    JS_ClearPendingException(cx);
     return true;
   }
 
@@ -6513,7 +6517,6 @@ nsContentUtils::IsPatternMatching(nsAString& aValue, nsAString& aPattern,
   if (!JS_ExecuteRegExpNoStatics(cx, re,
                                  static_cast<char16_t*>(aValue.BeginWriting()),
                                  aValue.Length(), &idx, true, &rval)) {
-    JS_ClearPendingException(cx);
     return true;
   }
 

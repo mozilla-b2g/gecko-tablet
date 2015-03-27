@@ -298,7 +298,7 @@ js::DumpCompartmentPCCounts(JSContext *cx)
         }
     }
 
-    for (OBJECT_ALLOC_KINDS(thingKind)) {
+    for (auto thingKind : ObjectAllocKinds()) {
         for (ZoneCellIter i(cx->zone(), thingKind); !i.done(); i.next()) {
             JSObject *obj = i.get<JSObject>();
             if (obj->compartment() != cx->compartment())
@@ -647,7 +647,7 @@ BytecodeParser::parse()
                 uint32_t startOffset = script_->mainOffset() + tn->start;
                 if (startOffset == offset + 1) {
                     uint32_t catchOffset = startOffset + tn->length;
-                    if (tn->kind != JSTRY_ITER && tn->kind != JSTRY_LOOP) {
+                    if (tn->kind == JSTRY_CATCH || tn->kind == JSTRY_FINALLY) {
                         if (!addJump(catchOffset, &nextOffset, stackDepth, offsetStack))
                             return false;
                     }

@@ -301,7 +301,8 @@ SameProcessCpowHolder::ToObject(JSContext* aCx,
 
 NS_IMETHODIMP
 nsFrameMessageManager::AddMessageListener(const nsAString& aMessage,
-                                          nsIMessageListener* aListener)
+                                          nsIMessageListener* aListener,
+                                          bool aListenWhenClosed)
 {
   nsAutoTObserverArray<nsMessageListenerInfo, 1>* listeners =
     mListeners.Get(aMessage);
@@ -320,6 +321,7 @@ nsFrameMessageManager::AddMessageListener(const nsAString& aMessage,
   nsMessageListenerInfo* entry = listeners->AppendElement();
   NS_ENSURE_TRUE(entry, NS_ERROR_OUT_OF_MEMORY);
   entry->mStrongListener = aListener;
+  entry->mListenWhenClosed = aListenWhenClosed;
   return NS_OK;
 }
 
@@ -407,6 +409,7 @@ nsFrameMessageManager::AddWeakMessageListener(const nsAString& aMessage,
 
   nsMessageListenerInfo* entry = listeners->AppendElement();
   entry->mWeakListener = weak;
+  entry->mListenWhenClosed = false;
   return NS_OK;
 }
 
@@ -984,6 +987,20 @@ nsFrameMessageManager::ReceiveMessage(nsISupports* aTarget,
                                       nsIPrincipal* aPrincipal,
                                       InfallibleTArray<nsString>* aJSONRetVal)
 {
+  return ReceiveMessage(aTarget, mClosed, aMessage, aIsSync,
+                        aCloneData, aCpows, aPrincipal, aJSONRetVal);
+}
+
+nsresult
+nsFrameMessageManager::ReceiveMessage(nsISupports* aTarget,
+                                      bool aTargetClosed,
+                                      const nsAString& aMessage,
+                                      bool aIsSync,
+                                      const StructuredCloneData* aCloneData,
+                                      mozilla::jsipc::CpowHolder* aCpows,
+                                      nsIPrincipal* aPrincipal,
+                                      InfallibleTArray<nsString>* aJSONRetVal)
+{
   nsAutoTObserverArray<nsMessageListenerInfo, 1>* listeners =
     mListeners.Get(aMessage);
   if (listeners) {
@@ -1002,6 +1019,10 @@ nsFrameMessageManager::ReceiveMessage(nsISupports* aTarget,
           listeners->RemoveElement(listener);
           continue;
         }
+      }
+
+      if (!listener.mListenWhenClosed && aTargetClosed) {
+        continue;
       }
 
       nsCOMPtr<nsIXPConnectWrappedJS> wrappedJS;
@@ -1154,7 +1175,7 @@ nsFrameMessageManager::ReceiveMessage(nsISupports* aTarget,
     }
   }
   nsRefPtr<nsFrameMessageManager> kungfuDeathGrip = mParentManager;
-  return mParentManager ? mParentManager->ReceiveMessage(aTarget, aMessage,
+  return mParentManager ? mParentManager->ReceiveMessage(aTarget, aTargetClosed, aMessage,
                                                          aIsSync, aCloneData,
                                                          aCpows, aPrincipal,
                                                          aJSONRetVal) : NS_OK;
@@ -1235,8 +1256,26 @@ nsFrameMessageManager::RemoveFromParent()
 }
 
 void
+nsFrameMessageManager::Close()
+{
+  if (!mClosed) {
+    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+    if (obs) {
+      obs->NotifyObservers(NS_ISUPPORTS_CAST(nsIContentFrameMessageManager*, this),
+                            "message-manager-close", nullptr);
+    }
+  }
+  mClosed = true;
+  mCallback = nullptr;
+  mOwnedCallback = nullptr;
+}
+
+void
 nsFrameMessageManager::Disconnect(bool aRemoveFromParent)
 {
+  // Notify message-manager-close if we haven't already.
+  Close();
+
   if (!mDisconnected) {
     nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
     if (obs) {
@@ -1249,8 +1288,6 @@ nsFrameMessageManager::Disconnect(bool aRemoveFromParent)
   }
   mDisconnected = true;
   mParentManager = nullptr;
-  mCallback = nullptr;
-  mOwnedCallback = nullptr;
   if (!mHandlingMessage) {
     mListeners.Clear();
   }
@@ -1273,7 +1310,7 @@ struct MessageManagerReferentCount
 namespace mozilla {
 namespace dom {
 
-class MessageManagerReporter MOZ_FINAL : public nsIMemoryReporter
+class MessageManagerReporter final : public nsIMemoryReporter
 {
   ~MessageManagerReporter() {}
 
@@ -1520,7 +1557,7 @@ nsMessageManagerScriptExecutor::LoadScriptInternal(const nsAString& aURL,
     JSContext* cx = aes.cx();
     if (script) {
       if (aRunInGlobalScope) {
-        JS::CloneAndExecuteScript(cx, global, script);
+        JS::CloneAndExecuteScript(cx, script);
       } else {
         JS::Rooted<JSObject*> scope(cx);
         bool ok = js::ExecuteInGlobalAndReturnScope(cx, global, script, &scope);
@@ -1603,13 +1640,14 @@ nsMessageManagerScriptExecutor::TryCacheLoadAndCompileScript(
     JS::Rooted<JSScript*> script(cx);
 
     if (aRunInGlobalScope) {
-      if (!JS::Compile(cx, JS::NullPtr(), options, srcBuf, &script)) {
+      if (!JS::Compile(cx, options, srcBuf, &script)) {
         return;
       }
     } else {
-      // We can't clone compile-and-go scripts.
-      options.setCompileAndGo(false);
-      if (!JS::Compile(cx, JS::NullPtr(), options, srcBuf, &script)) {
+      // We're going to run these against some non-global scope.
+      options.setCompileAndGo(false)
+             .setHasPollutedScope(true);
+      if (!JS::Compile(cx, options, srcBuf, &script)) {
         return;
       }
     }
@@ -1738,7 +1776,7 @@ public:
   }
 
   virtual bool DoLoadMessageManagerScript(const nsAString& aURL,
-                                          bool aRunInGlobalScope) MOZ_OVERRIDE
+                                          bool aRunInGlobalScope) override
   {
     ProcessGlobal* global = ProcessGlobal::Get();
     MOZ_ASSERT(!aRunInGlobalScope);
@@ -1750,34 +1788,34 @@ public:
                                   const nsAString& aMessage,
                                   const StructuredCloneData& aData,
                                   JS::Handle<JSObject *> aCpows,
-                                  nsIPrincipal* aPrincipal) MOZ_OVERRIDE
+                                  nsIPrincipal* aPrincipal) override
   {
-    nsRefPtr<nsIRunnable> ev =
+    nsCOMPtr<nsIRunnable> ev =
       new nsAsyncMessageToSameProcessChild(aCx, aMessage, aData, aCpows,
                                            aPrincipal);
     NS_DispatchToCurrentThread(ev);
     return true;
   }
 
-  bool CheckPermission(const nsAString& aPermission) MOZ_OVERRIDE
+  bool CheckPermission(const nsAString& aPermission) override
   {
     // In a single-process scenario, the child always has all capabilities.
     return true;
   }
 
-  bool CheckManifestURL(const nsAString& aManifestURL) MOZ_OVERRIDE
+  bool CheckManifestURL(const nsAString& aManifestURL) override
   {
     // In a single-process scenario, the child always has all capabilities.
     return true;
   }
 
-  bool CheckAppHasPermission(const nsAString& aPermission) MOZ_OVERRIDE
+  bool CheckAppHasPermission(const nsAString& aPermission) override
   {
     // In a single-process scenario, the child always has all capabilities.
     return true;
   }
 
-  virtual bool CheckAppHasStatus(unsigned short aStatus) MOZ_OVERRIDE
+  virtual bool CheckAppHasStatus(unsigned short aStatus) override
   {
     // In a single-process scenario, the child always has all capabilities.
     return true;
@@ -1806,7 +1844,7 @@ public:
                                      JS::Handle<JSObject *> aCpows,
                                      nsIPrincipal* aPrincipal,
                                      InfallibleTArray<nsString>* aJSONRetVal,
-                                     bool aIsSync) MOZ_OVERRIDE
+                                     bool aIsSync) override
   {
     mozilla::dom::ContentChild* cc =
       mozilla::dom::ContentChild::GetSingleton();
@@ -1833,7 +1871,7 @@ public:
                                   const nsAString& aMessage,
                                   const mozilla::dom::StructuredCloneData& aData,
                                   JS::Handle<JSObject *> aCpows,
-                                  nsIPrincipal* aPrincipal) MOZ_OVERRIDE
+                                  nsIPrincipal* aPrincipal) override
   {
     mozilla::dom::ContentChild* cc =
       mozilla::dom::ContentChild::GetSingleton();
@@ -1907,7 +1945,7 @@ public:
                                      JS::Handle<JSObject *> aCpows,
                                      nsIPrincipal* aPrincipal,
                                      InfallibleTArray<nsString>* aJSONRetVal,
-                                     bool aIsSync) MOZ_OVERRIDE
+                                     bool aIsSync) override
   {
     nsTArray<nsCOMPtr<nsIRunnable> > asyncMessages;
     if (nsFrameMessageManager::sPendingSameProcessAsyncMessages) {
@@ -1931,7 +1969,7 @@ public:
                                   const nsAString& aMessage,
                                   const mozilla::dom::StructuredCloneData& aData,
                                   JS::Handle<JSObject *> aCpows,
-                                  nsIPrincipal* aPrincipal) MOZ_OVERRIDE
+                                  nsIPrincipal* aPrincipal) override
   {
     if (!nsFrameMessageManager::sPendingSameProcessAsyncMessages) {
       nsFrameMessageManager::sPendingSameProcessAsyncMessages = new nsTArray<nsCOMPtr<nsIRunnable> >;

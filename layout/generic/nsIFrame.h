@@ -20,21 +20,22 @@
    we're midway through this process, so you will see inlined functions and member
    variables in this file.  -dwh */
 
+#include <algorithm>
 #include <stdio.h>
+
+#include "CaretAssociationHint.h"
+#include "FramePropertyTable.h"
+#include "mozilla/layout/FrameChildList.h"
+#include "mozilla/WritingModes.h"
+#include "nsDirection.h"
+#include "nsFrameList.h"
+#include "nsFrameState.h"
+#include "nsHTMLReflowMetrics.h"
+#include "nsITheme.h"
+#include "nsLayoutUtils.h"
 #include "nsQueryFrame.h"
 #include "nsStyleContext.h"
 #include "nsStyleStruct.h"
-#include "nsHTMLReflowMetrics.h"
-#include "nsFrameList.h"
-#include "mozilla/layout/FrameChildList.h"
-#include "FramePropertyTable.h"
-#include "nsDirection.h"
-#include "WritingModes.h"
-#include <algorithm>
-#include "nsITheme.h"
-#include "nsLayoutUtils.h"
-#include "nsFrameState.h"
-#include "CaretAssociationHint.h"
 
 #ifdef ACCESSIBILITY
 #include "mozilla/a11y/AccTypes.h"
@@ -2631,7 +2632,8 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
    * rect, with coordinates relative to this frame's origin. aRect must not be
    * null!
    */
-  bool GetClipPropClipRect(nsRect* aRect, const nsSize& aSize) const;
+  bool GetClipPropClipRect(const nsStyleDisplay* aDisp, nsRect* aRect,
+                           const nsSize& aSize) const;
 
   /**
    * Check if this frame is focusable and in the current tab order.

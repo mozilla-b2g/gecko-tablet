@@ -210,6 +210,9 @@ class Graph(object):
     @CommandArgument('--mozharness-rev',
         default='default',
         help='Commit revision to use from mozharness repository')
+    @CommandArgument('--mozharness-ref',
+        default='master',
+        help='Commit ref to use from mozharness repository')
     @CommandArgument('--message',
         help='Commit message to be parsed. Example: "try: -b do -p all -u all"')
     @CommandArgument('--revision-hash',
@@ -255,6 +258,7 @@ class Graph(object):
             'now': datetime.datetime.now().isoformat(),
             'mozharness_repository': params['mozharness_repository'],
             'mozharness_rev': params['mozharness_rev'],
+            'mozharness_ref': params['mozharness_ref'],
             'revision_hash': params['revision_hash']
         }.items())
 
@@ -307,6 +311,12 @@ class Graph(object):
                 build_task['task']['extra']['locations']['build']
             )
 
+            # img_url is only necessary for device builds
+            img_url = ARTIFACT_URL.format(
+                build_parameters['build_slugid'],
+                build_task['task']['extra']['locations'].get('img', '')
+            )
+
             define_task = DEFINE_TASK.format(build_task['task']['workerType'])
 
             graph['scopes'].append(define_task)
@@ -335,6 +345,7 @@ class Graph(object):
                 test = test['allowed_build_tasks'][build['task']]
                 test_parameters = copy.copy(build_parameters)
                 test_parameters['build_url'] = build_url
+                test_parameters['img_url'] = img_url
                 test_parameters['tests_url'] = tests_url
 
                 test_definition = templates.load(test['task'], {})['task']
@@ -424,6 +435,9 @@ class CIBuild(object):
     @CommandArgument('--mozharness-rev',
         default='tip',
         help='Commit revision to use from mozharness repository')
+    @CommandArgument('--mozharness-ref',
+        default='master',
+        help='Commit ref to use from mozharness repository')
     @CommandArgument('--owner',
         required=True,
         help='email address of who owns this graph')
@@ -442,7 +456,7 @@ class CIBuild(object):
 
         head_ref = params['head_ref'] or head_rev
 
-        build_parameters = {
+        build_parameters = dict(gaia_info().items() + {
             'docker_image': docker_image,
             'owner': params['owner'],
             'from_now': json_time_from_now,
@@ -452,8 +466,9 @@ class CIBuild(object):
             'head_rev': head_rev,
             'head_ref': head_ref,
             'mozharness_repository': params['mozharness_repository'],
+            'mozharness_ref': params['mozharness_ref'],
             'mozharness_rev': params['mozharness_rev']
-        }
+        }.items())
 
         try:
             build_task = templates.load(params['build_task'], build_parameters)
@@ -493,21 +508,23 @@ class CITest(object):
             raise ValueError(
                 '"chunk" must be a value between 1 and "total_chunks (default 1)"')
 
-        build_url, tests_url = self._get_build_and_tests_url(task_id)
+        build_url, img_url, tests_url = self._get_build_and_tests_url(task_id)
 
-        test_parameters = {
+        test_parameters = dict(gaia_info().items() + {
             'docker_image': docker_image,
             'build_url': ARTIFACT_URL.format(task_id, build_url),
+            'img_url': ARTIFACT_URL.format(task_id, img_url),
             'tests_url': ARTIFACT_URL.format(task_id, tests_url),
             'total_chunks': total_chunks,
             'chunk': chunk,
             'owner': owner,
             'from_now': json_time_from_now,
             'now': current_json_time()
-        }
+        }.items())
 
         try:
-            test_task = import_yaml(test_task, test_parameters)
+            templates = Templates(ROOT)
+            test_task = templates.load(test_task, test_parameters)
         except IOError:
             sys.stderr.write(
                 "Could not load test task file.  Ensure path is a relative " \
@@ -520,7 +537,7 @@ class CITest(object):
     def _get_build_and_tests_url(self, task_id):
         task = get_task(task_id)
         locations = task['extra']['locations']
-        return locations['build'], locations['tests']
+        return locations['build'], locations.get('img', ''), locations['tests']
 
 @CommandProvider
 class CIDockerRun(object):

@@ -11,6 +11,7 @@
 #include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/EnumeratedArray.h"
+#include "mozilla/EnumeratedRange.h"
 #include "mozilla/PodOperations.h"
 
 #include <stddef.h>
@@ -76,7 +77,9 @@ enum InitialHeap {
 };
 
 /* The GC allocation kinds. */
-enum class AllocKind : uint8_t {
+// FIXME: uint8_t would make more sense for the underlying type, but causes
+// miscompilations in GCC (fixed in 4.8.5 and 4.9.3). See also bug 1143966.
+enum class AllocKind {
     FIRST,
     OBJECT0 = FIRST,
     OBJECT0_BACKGROUND,
@@ -110,11 +113,17 @@ enum class AllocKind : uint8_t {
 static_assert(uint8_t(AllocKind::OBJECT0) == 0, "Please check AllocKind iterations and comparisons"
     " of the form |kind <= AllocKind::OBJECT_LAST| to ensure their range is still valid!");
 
-#define ALL_ALLOC_KINDS(i) AllocKind i = AllocKind::FIRST;\
-    i < AllocKind::LIMIT; i = AllocKind(uint8_t(i) + 1)
+inline decltype(mozilla::MakeEnumeratedRange<int>(AllocKind::FIRST, AllocKind::LIMIT))
+AllAllocKinds()
+{
+    return mozilla::MakeEnumeratedRange<int>(AllocKind::FIRST, AllocKind::LIMIT);
+}
 
-#define OBJECT_ALLOC_KINDS(i) AllocKind i = AllocKind::OBJECT0;\
-    i < AllocKind::OBJECT_LIMIT; i = AllocKind(uint8_t(i) + 1)
+inline decltype(mozilla::MakeEnumeratedRange<int>(AllocKind::OBJECT0, AllocKind::OBJECT_LIMIT))
+ObjectAllocKinds()
+{
+    return mozilla::MakeEnumeratedRange<int>(AllocKind::OBJECT0, AllocKind::OBJECT_LIMIT);
+}
 
 template<typename ValueType> using AllAllocKindArray =
     mozilla::EnumeratedArray<AllocKind, AllocKind::LIMIT, ValueType>;

@@ -187,7 +187,7 @@ public:
   , mPcHandle(pcHandle)
   {}
 
-  virtual void NotifyTracksAvailable(DOMMediaStream* aStream) MOZ_OVERRIDE
+  virtual void NotifyTracksAvailable(DOMMediaStream* aStream) override
   {
     MOZ_ASSERT(NS_IsMainThread());
 
@@ -337,9 +337,10 @@ NS_IMPL_ISUPPORTS0(PeerConnectionImpl)
 #ifdef MOZILLA_INTERNAL_API
 bool
 PeerConnectionImpl::WrapObject(JSContext* aCx,
+                               JS::Handle<JSObject*> aGivenProto,
                                JS::MutableHandle<JSObject*> aReflector)
 {
-  return PeerConnectionImplBinding::Wrap(aCx, this, aReflector);
+  return PeerConnectionImplBinding::Wrap(aCx, this, aGivenProto, aReflector);
 }
 #endif
 

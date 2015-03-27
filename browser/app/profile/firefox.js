@@ -37,6 +37,8 @@ pref("extensions.minCompatibleAppVersion", "4.0");
 // extensions.checkCompatibility=false has been set.
 pref("extensions.checkCompatibility.temporaryThemeOverride_minAppVersion", "29.0a1");
 
+pref("xpinstall.customConfirmationUI", true);
+
 // Preferences for AMO integration
 pref("extensions.getAddons.cache.enabled", true);
 pref("extensions.getAddons.maxResults", 15);
@@ -285,7 +287,7 @@ pref("browser.slowStartup.maxSamples", 5);
 pref("browser.aboutHomeSnippets.updateUrl", "https://snippets.cdn.mozilla.net/%STARTPAGE_VERSION%/%NAME%/%VERSION%/%APPBUILDID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/");
 
 pref("browser.enable_automatic_image_resizing", true);
-pref("browser.casting.enabled", true);
+pref("browser.casting.enabled", false);
 pref("browser.chrome.site_icons", true);
 pref("browser.chrome.favicons", true);
 // browser.warnOnQuit == false will override all other possible prompts when quitting or restarting
@@ -967,12 +969,7 @@ pref("gecko.handlerService.allowRegisterFromDifferentHost", false);
 pref("browser.safebrowsing.enabled", true);
 pref("browser.safebrowsing.malware.enabled", true);
 pref("browser.safebrowsing.downloads.enabled", true);
-// Remote lookups are only enabled for Windows in Nightly and Aurora
-#if defined(XP_WIN)
 pref("browser.safebrowsing.downloads.remote.enabled", true);
-#else
-pref("browser.safebrowsing.downloads.remote.enabled", false);
-#endif
 pref("browser.safebrowsing.debug", false);
 
 pref("browser.safebrowsing.updateURL", "https://safebrowsing.google.com/safebrowsing/downloads?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2&key=%GOOGLE_API_KEY%");
@@ -1013,7 +1010,7 @@ pref("urlclassifier.downloadBlockTable", "goog-badbinurl-shavar");
 #ifdef XP_WIN
 // Only download the whitelist on Windows, since the whitelist is
 // only useful for suppressing remote lookups for signed binaries which we can
-// only verify on Windows (Bug 974579).
+// only verify on Windows (Bug 974579). Other platforms always do remote lookups.
 pref("urlclassifier.downloadAllowTable", "goog-downloadwhite-digest256");
 #endif
 #endif
@@ -1231,7 +1228,7 @@ pref("security.sandbox.windows.log.stackTraceDepth", 0);
 // This setting is read when the content process is started. On Mac the content
 // process is killed when all windows are closed, so a change will take effect
 // when the 1st window is opened.
-pref("security.sandbox.content.level", 0);
+pref("security.sandbox.content.level", 1);
 #endif
 
 // This pref governs whether we attempt to work around problems caused by
@@ -1298,7 +1295,7 @@ pref("services.sync.prefs.sync.extensions.update.enabled", true);
 pref("services.sync.prefs.sync.intl.accept_languages", true);
 pref("services.sync.prefs.sync.javascript.enabled", true);
 pref("services.sync.prefs.sync.layout.spellcheckDefault", true);
-pref("services.sync.prefs.sync.lightweightThemes.isThemeSelected", true);
+pref("services.sync.prefs.sync.lightweightThemes.selectedThemeID", true);
 pref("services.sync.prefs.sync.lightweightThemes.usedThemes", true);
 pref("services.sync.prefs.sync.network.cookie.cookieBehavior", true);
 pref("services.sync.prefs.sync.network.cookie.lifetimePolicy", true);
@@ -1331,11 +1328,8 @@ pref("services.sync.prefs.sync.xpinstall.whitelist.required", true);
 
 // Developer edition preferences
 #ifdef MOZ_DEV_EDITION
+pref("lightweightThemes.selectedThemeID", "firefox-devedition@mozilla.org");
 pref("browser.devedition.theme.enabled", true);
-pref("browser.devedition.theme.showCustomizeButton", true);
-#else
-pref("browser.devedition.theme.enabled", false);
-pref("browser.devedition.theme.showCustomizeButton", false);
 #endif
 
 // Developer edition promo preferences
@@ -1450,6 +1444,9 @@ pref("devtools.performance.ui.enable-framerate", true);
 
 // The default cache UI setting
 pref("devtools.cache.disabled", false);
+
+// The default service workers UI setting
+pref("devtools.serviceWorkers.testing.enabled", false);
 
 // Enable the Network Monitor
 pref("devtools.netmonitor.enabled", true);
@@ -1698,10 +1695,11 @@ pref("loop.debug.loglevel", "Error");
 pref("loop.debug.dispatcher", false);
 pref("loop.debug.websocket", false);
 pref("loop.debug.sdk", false);
+pref("loop.debug.twoWayMediaTelemetry", false);
 #ifdef DEBUG
-pref("loop.CSP", "default-src 'self' about: file: chrome: http://localhost:*; img-src 'self' data: https://www.gravatar.com/ about: file: chrome:; font-src 'none'; connect-src wss://*.tokbox.com https://*.opentok.com https://*.tokbox.com wss://*.mozilla.com https://*.mozilla.org wss://*.mozaws.net http://localhost:* ws://localhost:*; media-src blob:");
+pref("loop.CSP", "default-src 'self' about: file: chrome: http://localhost:*; img-src *; font-src 'none'; connect-src wss://*.tokbox.com https://*.opentok.com https://*.tokbox.com wss://*.mozilla.com https://*.mozilla.org wss://*.mozaws.net http://localhost:* ws://localhost:*; media-src blob:");
 #else
-pref("loop.CSP", "default-src 'self' about: file: chrome:; img-src 'self' data: https://www.gravatar.com/ about: file: chrome:; font-src 'none'; connect-src wss://*.tokbox.com https://*.opentok.com https://*.tokbox.com wss://*.mozilla.com https://*.mozilla.org wss://*.mozaws.net; media-src blob:");
+pref("loop.CSP", "default-src 'self' about: file: chrome:; img-src *; font-src 'none'; connect-src wss://*.tokbox.com https://*.opentok.com https://*.tokbox.com wss://*.mozilla.com https://*.mozilla.org wss://*.mozaws.net; media-src blob:");
 #endif
 pref("loop.oauth.google.redirect_uri", "urn:ietf:wg:oauth:2.0:oob:auto");
 pref("loop.oauth.google.scope", "https://www.google.com/m8/feeds");
@@ -1711,6 +1709,7 @@ pref("loop.support_url", "https://support.mozilla.org/kb/group-conversations-fir
 pref("loop.contacts.gravatars.show", false);
 pref("loop.contacts.gravatars.promo", true);
 pref("loop.browserSharing.showInfoBar", true);
+pref("loop.contextInConverations.enabled", false);
 
 // serverURL to be assigned by services team
 pref("services.push.serverURL", "wss://push.services.mozilla.com/");
@@ -1872,10 +1871,9 @@ pref("dom.ipc.reportProcessHangs", false);
 pref("dom.ipc.reportProcessHangs", true);
 #endif
 
-#ifndef NIGHTLY_BUILD
-// Disable reader mode by default.
-pref("reader.parse-on-load.enabled", false);
-#endif
-
-// Disable ReadingList by default.
-pref("browser.readinglist.enabled", false);
+// Enable ReadingList browser UI by default.
+pref("browser.readinglist.enabled", true);
+pref("browser.readinglist.sidebarEverOpened", false);
+// Enable the readinglist engine by default.
+pref("readinglist.scheduler.enabled", true);
+pref("readinglist.server", "https://readinglist.services.mozilla.com/v1");

@@ -65,13 +65,18 @@ add_task(function* () {
   ok(ReadingListUI.isSidebarOpen,
     "The ReadingListUI should now indicate SideBar-ReadingList open.");
 
+  // Now close the sidebar.
+  listButton.click();
+  yield promiseWaitForCondition(() => !listButton.classList.contains("on"));
+  ok(!ReadingListUI.isSidebarOpen, "The sidebar should be closed.");
+
   readerButton.click();
   yield promiseTabLoadEvent(tab);
   is(gBrowser.selectedBrowser.currentURI.spec, url, "Original page loaded after clicking active reader mode button");
 
   // Load a new tab that is NOT reader-able.
   let newTab = gBrowser.selectedTab = gBrowser.addTab();
-  yield promiseTabLoadEvent(newTab, TEST_PATH + "download_page.html");
+  yield promiseTabLoadEvent(newTab, "about:robots");
   yield promiseWaitForCondition(() => readerButton.hidden);
   is_element_hidden(readerButton, "Reader mode button is not present on a non-reader-able page");
 

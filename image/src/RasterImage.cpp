@@ -167,7 +167,7 @@ public:
     return true;
   }
 
-  NS_IMETHOD Run() MOZ_OVERRIDE
+  NS_IMETHOD Run() override
   {
     if (mState == eReady) {
       // Collect information from the frames that we need to scale.
@@ -256,13 +256,14 @@ RasterImage::RasterImage(ProgressTracker* aProgressTracker,
   mLockCount(0),
   mDecodeCount(0),
   mRequestedSampleSize(0),
+  mLastImageContainerDrawResult(DrawResult::NOT_READY),
 #ifdef DEBUG
   mFramesNotified(0),
 #endif
   mSourceBuffer(new SourceBuffer()),
   mFrameCount(0),
   mHasSize(false),
-  mDecodeOnDraw(false),
+  mDecodeOnlyOnDraw(false),
   mTransient(false),
   mDiscardable(false),
   mHasSourceData(false),
@@ -303,18 +304,18 @@ RasterImage::Init(const char* aMimeType,
 
   NS_ENSURE_ARG_POINTER(aMimeType);
 
-  // We must be non-discardable and non-decode-on-draw for
+  // We must be non-discardable and non-decode-only-on-draw for
   // transient images.
   MOZ_ASSERT(!(aFlags & INIT_FLAG_TRANSIENT) ||
                (!(aFlags & INIT_FLAG_DISCARDABLE) &&
-                !(aFlags & INIT_FLAG_DECODE_ON_DRAW) &&
+                !(aFlags & INIT_FLAG_DECODE_ONLY_ON_DRAW) &&
                 !(aFlags & INIT_FLAG_DOWNSCALE_DURING_DECODE)),
              "Illegal init flags for transient image");
 
   // Store initialization data
   mSourceDataMimeType.Assign(aMimeType);
   mDiscardable = !!(aFlags & INIT_FLAG_DISCARDABLE);
-  mDecodeOnDraw = !!(aFlags & INIT_FLAG_DECODE_ON_DRAW);
+  mDecodeOnlyOnDraw = !!(aFlags & INIT_FLAG_DECODE_ONLY_ON_DRAW);
   mTransient = !!(aFlags & INIT_FLAG_TRANSIENT);
   mDownscaleDuringDecode = !!(aFlags & INIT_FLAG_DOWNSCALE_DURING_DECODE);
 
@@ -325,6 +326,7 @@ RasterImage::Init(const char* aMimeType,
 
   // Lock this image's surfaces in the SurfaceCache if we're not discardable.
   if (!mDiscardable) {
+    mLockCount++;
     SurfaceCache::LockImage(ImageKey(this));
   }
 
@@ -447,16 +449,8 @@ RasterImage::GetType(uint16_t *aType)
 {
   NS_ENSURE_ARG_POINTER(aType);
 
-  *aType = GetType();
+  *aType = imgIContainer::TYPE_RASTER;
   return NS_OK;
-}
-
-//******************************************************************************
-/* [noscript, notxpcom] uint16_t GetType(); */
-NS_IMETHODIMP_(uint16_t)
-RasterImage::GetType()
-{
-  return imgIContainer::TYPE_RASTER;
 }
 
 DrawableFrameRef
@@ -727,19 +721,21 @@ NS_IMETHODIMP_(TemporaryRef<SourceSurface>)
 RasterImage::GetFrame(uint32_t aWhichFrame,
                       uint32_t aFlags)
 {
-  return GetFrameInternal(aWhichFrame, aFlags);
+  return GetFrameInternal(aWhichFrame, aFlags).second().forget();
 }
 
-TemporaryRef<SourceSurface>
+Pair<DrawResult, RefPtr<SourceSurface>>
 RasterImage::GetFrameInternal(uint32_t aWhichFrame, uint32_t aFlags)
 {
   MOZ_ASSERT(aWhichFrame <= FRAME_MAX_VALUE);
 
-  if (aWhichFrame > FRAME_MAX_VALUE)
-    return nullptr;
+  if (aWhichFrame > FRAME_MAX_VALUE) {
+    return MakePair(DrawResult::BAD_ARGS, RefPtr<SourceSurface>());
+  }
 
-  if (mError)
-    return nullptr;
+  if (mError) {
+    return MakePair(DrawResult::BAD_IMAGE, RefPtr<SourceSurface>());
+  }
 
   // Get the frame. If it's not there, it's probably the caller's fault for
   // not waiting for the data to be loaded from the network or not passing
@@ -748,7 +744,7 @@ RasterImage::GetFrameInternal(uint32_t aWhichFrame, uint32_t aFlags)
     LookupFrame(GetRequestedFrameIndex(aWhichFrame), mSize, aFlags);
   if (!frameRef) {
     // The OS threw this frame away and we couldn't redecode it.
-    return nullptr;
+    return MakePair(DrawResult::TEMPORARY_ERROR, RefPtr<SourceSurface>());
   }
 
   // If this frame covers the entire image, we can just reuse its existing
@@ -767,50 +763,57 @@ RasterImage::GetFrameInternal(uint32_t aWhichFrame, uint32_t aFlags)
     frameSurf = CopyFrame(aWhichFrame, aFlags);
   }
 
-  return frameSurf;
+  if (!frameRef->IsImageComplete()) {
+    return MakePair(DrawResult::INCOMPLETE, Move(frameSurf));
+  }
+
+  return MakePair(DrawResult::SUCCESS, Move(frameSurf));
 }
 
-already_AddRefed<layers::Image>
-RasterImage::GetCurrentImage(ImageContainer* aContainer)
+Pair<DrawResult, nsRefPtr<layers::Image>>
+RasterImage::GetCurrentImage(ImageContainer* aContainer, uint32_t aFlags)
 {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(aContainer);
 
-  RefPtr<SourceSurface> surface =
-    GetFrameInternal(FRAME_CURRENT, FLAG_ASYNC_NOTIFY);
-  if (!surface) {
+  auto result = GetFrameInternal(FRAME_CURRENT, aFlags | FLAG_ASYNC_NOTIFY);
+  if (!result.second()) {
     // The OS threw out some or all of our buffer. We'll need to wait for the
     // redecode (which was automatically triggered by GetFrame) to complete.
-    return nullptr;
+    return MakePair(result.first(), nsRefPtr<layers::Image>());
   }
 
   CairoImage::Data cairoData;
   GetWidth(&cairoData.mSize.width);
   GetHeight(&cairoData.mSize.height);
-  cairoData.mSourceSurface = surface;
+  cairoData.mSourceSurface = result.second();
 
   nsRefPtr<layers::Image> image =
     aContainer->CreateImage(ImageFormat::CAIRO_SURFACE);
-  NS_ASSERTION(image, "Failed to create Image");
+  MOZ_ASSERT(image);
 
   static_cast<CairoImage*>(image.get())->SetData(cairoData);
 
-  return image.forget();
+  return MakePair(result.first(), Move(image));
 }
 
 
-NS_IMETHODIMP
-RasterImage::GetImageContainer(LayerManager* aManager, ImageContainer **_retval)
+NS_IMETHODIMP_(already_AddRefed<ImageContainer>)
+RasterImage::GetImageContainer(LayerManager* aManager, uint32_t aFlags)
 {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(aManager);
+  MOZ_ASSERT((aFlags & ~(FLAG_SYNC_DECODE |
+                         FLAG_SYNC_DECODE_IF_FAST |
+                         FLAG_ASYNC_NOTIFY))
+               == FLAG_NONE,
+             "Unsupported flag passed to GetImageContainer");
 
   int32_t maxTextureSize = aManager->GetMaxTextureSize();
   if (!mHasSize ||
       mSize.width > maxTextureSize ||
       mSize.height > maxTextureSize) {
-    *_retval = nullptr;
-    return NS_OK;
+    return nullptr;
   }
 
   if (IsUnlocked() && mProgressTracker) {
@@ -818,28 +821,34 @@ RasterImage::GetImageContainer(LayerManager* aManager, ImageContainer **_retval)
   }
 
   nsRefPtr<layers::ImageContainer> container = mImageContainer.get();
-  if (container) {
-    container.forget(_retval);
-    return NS_OK;
+
+  bool mustRedecode =
+    (aFlags & (FLAG_SYNC_DECODE | FLAG_SYNC_DECODE_IF_FAST)) &&
+    mLastImageContainerDrawResult != DrawResult::SUCCESS &&
+    mLastImageContainerDrawResult != DrawResult::BAD_IMAGE;
+
+  if (container && !mustRedecode) {
+    return container.forget();
   }
 
   // We need a new ImageContainer, so create one.
   container = LayerManager::CreateImageContainer();
 
-  nsRefPtr<layers::Image> image = GetCurrentImage(container);
-  if (!image) {
-    return NS_ERROR_NOT_AVAILABLE;
+  auto result = GetCurrentImage(container, aFlags);
+  if (!result.second()) {
+    // We couldn't get an Image.
+    return nullptr;
   }
 
-  // |image| holds a reference to a SourceSurface which in turn holds a lock on
-  // the current frame's VolatileBuffer, ensuring that it doesn't get freed as
-  // long as the layer system keeps this ImageContainer alive.
-  container->SetCurrentImageInTransaction(image);
+  // |result.second()| holds a reference to a SourceSurface which in turn holds
+  // a lock on the current frame's VolatileBuffer, ensuring that it doesn't get
+  // freed as long as the layer system keeps this ImageContainer alive.
+  container->SetCurrentImageInTransaction(result.second());
 
+  mLastImageContainerDrawResult = result.first();
   mImageContainer = container;
-  container.forget(_retval);
 
-  return NS_OK;
+  return container.forget();
 }
 
 void
@@ -852,12 +861,14 @@ RasterImage::UpdateImageContainer()
     return;
   }
 
-  nsRefPtr<layers::Image> image = GetCurrentImage(container);
-  if (!image) {
+  auto result = GetCurrentImage(container, FLAG_NONE);
+  if (!result.second()) {
+    // We couldn't get an Image.
     return;
   }
 
-  container->SetCurrentImage(image);
+  mLastImageContainerDrawResult = result.first();
+  container->SetCurrentImage(result.second());
 }
 
 size_t
@@ -1161,11 +1172,11 @@ RasterImage::OnImageDataComplete(nsIRequest*, nsISupports*, nsresult aStatus,
 
   Progress loadProgress = LoadCompleteProgress(aLastPart, mError, finalStatus);
 
-  if (mDecodeOnDraw) {
-    // For decode-on-draw images, we want to send notifications as if we've
+  if (mDecodeOnlyOnDraw) {
+    // For decode-only-on-draw images, we want to send notifications as if we've
     // already finished decoding. Otherwise some observers will never even try
     // to draw. (We may have already sent some of these notifications from
-    // NotifyForDecodeOnDrawOnly(), but ProgressTracker will ensure no duplicate
+    // NotifyForDecodeOnlyOnDraw(), but ProgressTracker will ensure no duplicate
     // notifications get sent.)
     loadProgress |= FLAG_ONLOAD_BLOCKED |
                     FLAG_DECODE_STARTED |
@@ -1181,11 +1192,11 @@ RasterImage::OnImageDataComplete(nsIRequest*, nsISupports*, nsresult aStatus,
 }
 
 void
-RasterImage::NotifyForDecodeOnDrawOnly()
+RasterImage::NotifyForDecodeOnlyOnDraw()
 {
   if (!NS_IsMainThread()) {
     nsCOMPtr<nsIRunnable> runnable =
-      NS_NewRunnableMethod(this, &RasterImage::NotifyForDecodeOnDrawOnly);
+      NS_NewRunnableMethod(this, &RasterImage::NotifyForDecodeOnlyOnDraw);
     NS_DispatchToMainThread(runnable);
     return;
   }
@@ -1202,10 +1213,10 @@ RasterImage::OnImageDataAvailable(nsIRequest*,
 {
   nsresult rv;
 
-  if (MOZ_UNLIKELY(mDecodeOnDraw && aOffset == 0)) {
-    // If we're a decode-on-draw image, send notifications as if we've just
+  if (MOZ_UNLIKELY(mDecodeOnlyOnDraw && aOffset == 0)) {
+    // If we're a decode-only-on-draw image, send notifications as if we've just
     // started decoding.
-    NotifyForDecodeOnDrawOnly();
+    NotifyForDecodeOnlyOnDraw();
   }
 
   // WriteToSourceBuffer always consumes everything it gets if it doesn't run
@@ -1413,8 +1424,8 @@ RasterImage::CreateDecoder(const Maybe<nsIntSize>& aSize, uint32_t aFlags)
 NS_IMETHODIMP
 RasterImage::RequestDecode()
 {
-  // For decode-on-draw images, we only act on RequestDecodeForSize.
-  if (mDecodeOnDraw) {
+  // For decode-only-on-draw images, we only act on RequestDecodeForSize.
+  if (mDecodeOnlyOnDraw) {
     return NS_OK;
   }
 
@@ -1425,13 +1436,8 @@ RasterImage::RequestDecode()
 NS_IMETHODIMP
 RasterImage::StartDecoding()
 {
-  if (!NS_IsMainThread()) {
-    return NS_DispatchToMainThread(
-      NS_NewRunnableMethod(this, &RasterImage::StartDecoding));
-  }
-
-  // For decode-on-draw images, we only act on RequestDecodeForSize.
-  if (mDecodeOnDraw) {
+  // For decode-only-on-draw images, we only act on RequestDecodeForSize.
+  if (mDecodeOnlyOnDraw) {
     return NS_OK;
   }
 
@@ -1488,12 +1494,6 @@ RasterImage::Decode(const Maybe<nsIntSize>& aSize, uint32_t aFlags)
     return NS_OK;
   }
 
-  // Create a decoder.
-  nsRefPtr<Decoder> decoder = CreateDecoder(aSize, aFlags);
-  if (!decoder) {
-    return NS_ERROR_FAILURE;
-  }
-
   if (mDownscaleDuringDecode && aSize) {
     // We're about to decode again, which may mean that some of the previous
     // sizes we've decoded at aren't useful anymore. We can allow them to
@@ -1503,6 +1503,12 @@ RasterImage::Decode(const Maybe<nsIntSize>& aSize, uint32_t aFlags)
     // will become locked again when LookupFrame touches them, and the remainder
     // will eventually expire.
     SurfaceCache::UnlockSurfaces(ImageKey(this));
+  }
+
+  // Create a decoder.
+  nsRefPtr<Decoder> decoder = CreateDecoder(aSize, aFlags);
+  if (!decoder) {
+    return NS_ERROR_FAILURE;
   }
 
   if (aSize) {

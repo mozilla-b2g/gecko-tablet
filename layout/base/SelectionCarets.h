@@ -7,6 +7,7 @@
 #ifndef SelectionCarets_h__
 #define SelectionCarets_h__
 
+#include "nsDirection.h"
 #include "nsIReflowObserver.h"
 #include "nsIScrollObserver.h"
 #include "nsISelectionListener.h"
@@ -55,7 +56,7 @@ class Selection;
  *          UX spec, when selection carets are overlapping, the image of
  *          caret becomes tilt.
  */
-class SelectionCarets MOZ_FINAL : public nsIReflowObserver,
+class SelectionCarets final : public nsIReflowObserver,
                                   public nsISelectionListener,
                                   public nsIScrollObserver,
                                   public nsSupportsWeakReference
@@ -80,11 +81,11 @@ public:
   void NotifyBlur(bool aIsLeavingDocument);
 
   // nsIScrollObserver
-  virtual void ScrollPositionChanged() MOZ_OVERRIDE;
+  virtual void ScrollPositionChanged() override;
 
   // AsyncPanZoom started/stopped callbacks from nsIScrollObserver
-  virtual void AsyncPanZoomStarted(const mozilla::CSSIntPoint aScrollPos) MOZ_OVERRIDE;
-  virtual void AsyncPanZoomStopped(const mozilla::CSSIntPoint aScrollPos) MOZ_OVERRIDE;
+  virtual void AsyncPanZoomStarted() override;
+  virtual void AsyncPanZoomStopped() override;
 
   void Init();
   void Terminate();
@@ -143,7 +144,7 @@ private:
    */
   void SetSelectionDragState(bool aState);
 
-  void SetSelectionDirection(bool aForward);
+  void SetSelectionDirection(nsDirection aDir);
 
   /**
    * Move start frame of selection caret to given position.

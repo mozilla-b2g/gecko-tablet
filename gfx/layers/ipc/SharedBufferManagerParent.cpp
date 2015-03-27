@@ -38,7 +38,7 @@ StaticAutoPtr<Monitor> SharedBufferManagerParent::sManagerMonitor;
 uint64_t SharedBufferManagerParent::sBufferKey(0);
 
 #ifdef MOZ_WIDGET_GONK
-class GrallocReporter MOZ_FINAL : public nsIMemoryReporter
+class GrallocReporter final : public nsIMemoryReporter
 {
 public:
   NS_DECL_ISUPPORTS
@@ -122,7 +122,7 @@ public:
     explicit DeleteSharedBufferManagerParentTask(UniquePtr<SharedBufferManagerParent> aSharedBufferManager)
         : mSharedBufferManager(Move(aSharedBufferManager)) {
     }
-    virtual void Run() MOZ_OVERRIDE {}
+    virtual void Run() override {}
 private:
     UniquePtr<SharedBufferManagerParent> mSharedBufferManager;
 };
@@ -213,7 +213,12 @@ bool SharedBufferManagerParent::RecvAllocateGrallocBuffer(const IntSize& aSize, 
 
   if (aFormat == 0 || aUsage == 0) {
     printf_stderr("SharedBufferManagerParent::RecvAllocateGrallocBuffer -- format and usage must be non-zero");
-    return true;
+    return false;
+  }
+
+  if (aSize.width <= 0 || aSize.height <= 0) {
+    printf_stderr("SharedBufferManagerParent::RecvAllocateGrallocBuffer -- requested gralloc buffer size is invalid");
+    return false;
   }
 
   // If the requested size is too big (i.e. exceeds the commonly used max GL texture size)

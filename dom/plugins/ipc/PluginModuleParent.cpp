@@ -154,7 +154,7 @@ public:
         }
     }
 
-    void Run() MOZ_OVERRIDE
+    void Run() override
     {
         mParent->DoInjection(mSnapshot);
         // We don't need to hold this lock during DoInjection, but we do need
@@ -163,7 +163,7 @@ public:
         mozilla::MutexAutoLock lock(mMutex);
     }
 
-    void Cancel() MOZ_OVERRIDE
+    void Cancel() override
     {
         mozilla::MutexAutoLock lock(mMutex);
         mMainThreadMsgLoop = nullptr;
@@ -537,6 +537,13 @@ PluginModuleChromeParent::OnProcessLaunched(const bool aSucceeded)
         OnInitFailure();
         return;
     }
+    CrashReporterParent* crashReporter = CrashReporter();
+    if (crashReporter) {
+        crashReporter->AnnotateCrashReport(NS_LITERAL_CSTRING("AsyncPluginInit"),
+                                           mIsStartingAsync ?
+                                               NS_LITERAL_CSTRING("1") :
+                                               NS_LITERAL_CSTRING("0"));
+    }
 #ifdef XP_WIN
     { // Scope for lock
         mozilla::MutexAutoLock lock(mCrashReporterMutex);
@@ -607,6 +614,12 @@ PluginModuleParent::PluginModuleParent(bool aIsChrome)
 {
 #if defined(XP_WIN) || defined(XP_MACOSX) || defined(MOZ_WIDGET_GTK)
     mIsStartingAsync = Preferences::GetBool(kAsyncInitPref, false);
+#if defined(MOZ_CRASHREPORTER)
+    CrashReporter::AnnotateCrashReport(NS_LITERAL_CSTRING("AsyncPluginInit"),
+                                       mIsStartingAsync ?
+                                           NS_LITERAL_CSTRING("1") :
+                                           NS_LITERAL_CSTRING("0"));
+#endif
 #endif
 }
 
@@ -1870,7 +1883,7 @@ PluginModuleParent::OnInitFailure()
     }
 }
 
-class OfflineObserver MOZ_FINAL : public nsIObserver
+class OfflineObserver final : public nsIObserver
 {
 public:
     NS_DECL_ISUPPORTS
@@ -2887,7 +2900,7 @@ PluginModuleChromeParent::OnCrash(DWORD processID)
 #endif // MOZ_CRASHREPORTER_INJECTOR
 
 #ifdef MOZ_ENABLE_PROFILER_SPS
-class PluginProfilerObserver MOZ_FINAL : public nsIObserver,
+class PluginProfilerObserver final : public nsIObserver,
                                          public nsSupportsWeakReference
 {
 public:

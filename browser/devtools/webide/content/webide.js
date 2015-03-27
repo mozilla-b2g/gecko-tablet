@@ -19,7 +19,7 @@ const {Promise: promise} = Cu.import("resource://gre/modules/Promise.jsm", {});
 const ProjectEditor = require("projecteditor/projecteditor");
 const {Devices} = Cu.import("resource://gre/modules/devtools/Devices.jsm");
 const {GetAvailableAddons} = require("devtools/webide/addons");
-const {GetTemplatesJSON, GetAddonsJSON} = require("devtools/webide/remote-resources");
+const {getJSON} = require("devtools/shared/getjson");
 const utils = require("devtools/webide/utils");
 const Telemetry = require("devtools/shared/telemetry");
 const {RuntimeScanners, WiFiScanner} = require("devtools/webide/runtimes");
@@ -34,8 +34,9 @@ const HELP_URL = "https://developer.mozilla.org/docs/Tools/WebIDE/Troubleshootin
 const MAX_ZOOM = 1.4;
 const MIN_ZOOM = 0.6;
 
-// download template index early
-GetTemplatesJSON(true);
+// Download remote resources early
+getJSON("devtools.webide.addonsURL", true);
+getJSON("devtools.webide.templatesURL", true);
 
 // See bug 989619
 console.log = console.log.bind(console);
@@ -49,7 +50,7 @@ window.addEventListener("load", function onLoad() {
 
 window.addEventListener("unload", function onUnload() {
   window.removeEventListener("unload", onUnload);
-  UI.uninit();
+  UI.destroy();
 });
 
 let projectList;
@@ -118,10 +119,10 @@ let UI = {
     gDevToolsBrowser.isWebIDEInitialized.resolve();
   },
 
-  uninit: function() {
+  destroy: function() {
     window.removeEventListener("focus", this.onfocus, true);
     AppManager.off("app-manager-update", this.appManagerUpdate);
-    AppManager.uninit();
+    AppManager.destroy();
     projectList = null;
     window.removeEventListener("message", this.onMessage);
     this.updateConnectionTelemetry();
@@ -186,6 +187,7 @@ let UI = {
       case "project-is-running":
       case "list-tabs-response":
         this.updateCommands();
+        projectList.update();
         break;
       case "runtime-details":
         this.updateRuntimeButton();
@@ -300,9 +302,8 @@ let UI = {
   },
 
   busyUntil: function(promise, operationDescription) {
-    // Freeze the UI until the promise is resolved. A 30s timeout
-    // will unfreeze the UI, just in case the promise never gets
-    // resolved.
+    // Freeze the UI until the promise is resolved. A timeout will unfreeze the
+    // UI, just in case the promise never gets resolved.
     this._busyPromise = promise;
     this._busyOperationDescription = operationDescription;
     this.setupBusyTimeout();
@@ -467,7 +468,13 @@ let UI = {
              // |busyUntil| will listen for rejections.
              // Bug 1121100 may find a better way to silence these.
            });
-    return this.busyUntil(promise, "Connecting to " + name);
+    promise = this.busyUntil(promise, "Connecting to " + name);
+    // Stop busy timeout for runtimes that take unknown or long amounts of time
+    // to connect.
+    if (runtime.prolongedConnection) {
+      this.cancelBusyTimeout();
+    }
+    return promise;
   },
 
   updateRuntimeButton: function() {

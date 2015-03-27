@@ -25,7 +25,7 @@ USING_WORKERS_NAMESPACE
 
 namespace {
 
-class DelayedEventRunnable MOZ_FINAL : public WorkerRunnable
+class DelayedEventRunnable final : public WorkerRunnable
 {
   nsRefPtr<mozilla::dom::workers::MessagePort> mMessagePort;
   nsTArray<nsCOMPtr<nsIDOMEvent>> mEvents;
@@ -261,11 +261,11 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(MessagePort,
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 JSObject*
-MessagePort::WrapObject(JSContext* aCx)
+MessagePort::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
   AssertCorrectThread();
 
-  return MessagePortBinding::Wrap(aCx, this);
+  return MessagePortBinding::Wrap(aCx, this, aGivenProto);
 }
 
 nsresult

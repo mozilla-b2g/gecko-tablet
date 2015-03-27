@@ -1773,19 +1773,6 @@ MarkOffThreadNurseryObjects::mark(JSTracer *trc)
     }
 }
 
-static inline bool
-OffThreadCompilationAvailable(JSContext *cx)
-{
-    // Even if off thread compilation is enabled, compilation must still occur
-    // on the main thread in some cases.
-    //
-    // Require cpuCount > 1 so that Ion compilation jobs and main-thread
-    // execution are not competing for the same resources.
-    return cx->runtime()->canUseOffthreadIonCompilation()
-        && HelperThreadState().cpuCount > 1
-        && CanUseExtraThreads();
-}
-
 static void
 TrackAllProperties(JSContext *cx, JSObject *obj)
 {
@@ -1967,7 +1954,7 @@ IonCompile(JSContext *cx, JSScript *script,
     }
 
     // If possible, compile the script off thread.
-    if (OffThreadCompilationAvailable(cx)) {
+    if (options.offThreadCompilationAvailable()) {
         if (!recompile)
             builderScript->setIonScript(cx, ION_COMPILING_SCRIPT);
 
@@ -2048,11 +2035,12 @@ CheckScript(JSContext *cx, JSScript *script, bool osr)
         return false;
     }
 
-    if (!script->compileAndGo() && !script->functionNonDelazifying()) {
-        // Support non-CNG functions but not other scripts. For global scripts,
-        // IonBuilder currently uses the global object as scope chain, this is
-        // not valid for non-CNG code.
-        TrackAndSpewIonAbort(cx, script, "not compile-and-go");
+    if (script->hasPollutedGlobalScope() && !script->functionNonDelazifying()) {
+        // Support functions with a polluted global scope but not other
+        // scripts. For global scripts, IonBuilder currently uses the global
+        // object as scope chain, this is not valid when the script has a
+        // polluted global scope.
+        TrackAndSpewIonAbort(cx, script, "has polluted global scope");
         return false;
     }
 
@@ -2169,6 +2157,19 @@ Compile(JSContext *cx, HandleScript script, BaselineFrame *osrFrame, jsbytecode 
 
 } // namespace jit
 } // namespace js
+
+bool
+jit::OffThreadCompilationAvailable(JSContext *cx)
+{
+    // Even if off thread compilation is enabled, compilation must still occur
+    // on the main thread in some cases.
+    //
+    // Require cpuCount > 1 so that Ion compilation jobs and main-thread
+    // execution are not competing for the same resources.
+    return cx->runtime()->canUseOffthreadIonCompilation()
+        && HelperThreadState().cpuCount > 1
+        && CanUseExtraThreads();
+}
 
 // Decide if a transition from interpreter execution to Ion code should occur.
 // May compile or recompile the target JSScript.
@@ -3056,6 +3057,20 @@ bool
 jit::JitSupportsSimd()
 {
     return js::jit::MacroAssembler::SupportsSimd();
+}
+
+bool
+jit::JitSupportsAtomics()
+{
+#if defined(JS_CODEGEN_ARM)
+    // Bug 1146902, bug 1077318: Enable Ion inlining of Atomics
+    // operations on ARM only when the CPU has byte, halfword, and
+    // doubleword load-exclusive and store-exclusive instructions,
+    // until we can add support for systems that don't have those.
+    return js::jit::HasLDSTREXBHD();
+#else
+    return true;
+#endif
 }
 
 // If you change these, please also change the comment in TempAllocator.

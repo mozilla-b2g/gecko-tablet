@@ -14,6 +14,8 @@
 #include "mozilla/Alignment.h"
 #include "mozilla/Array.h"
 #include "mozilla/Assertions.h"
+#include "mozilla/CycleCollectedJSRuntime.h"
+#include "mozilla/DeferredFinalize.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/CallbackObject.h"
 #include "mozilla/dom/DOMJSClass.h"
@@ -26,8 +28,6 @@
 #include "mozilla/ErrorResult.h"
 #include "mozilla/Likely.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/CycleCollectedJSRuntime.h"
-#include "nsCycleCollector.h"
 #include "nsIGlobalObject.h"
 #include "nsIXPConnect.h"
 #include "nsJSUtils.h"
@@ -526,15 +526,15 @@ AllocateProtoAndIfaceCache(JSObject* obj, ProtoAndIfaceCache::Kind aKind)
 
 #ifdef DEBUG
 void
-VerifyTraceProtoAndIfaceCacheCalled(JSTracer *trc, void **thingp,
+VerifyTraceProtoAndIfaceCacheCalled(JS::CallbackTracer *trc, void **thingp,
                                     JSGCTraceKind kind);
 
-struct VerifyTraceProtoAndIfaceCacheCalledTracer : public JSTracer
+struct VerifyTraceProtoAndIfaceCacheCalledTracer : public JS::CallbackTracer
 {
     bool ok;
 
     explicit VerifyTraceProtoAndIfaceCacheCalledTracer(JSRuntime *rt)
-      : JSTracer(rt, VerifyTraceProtoAndIfaceCacheCalled), ok(false)
+      : JS::CallbackTracer(rt, VerifyTraceProtoAndIfaceCacheCalled), ok(false)
     {}
 };
 #endif
@@ -545,7 +545,9 @@ TraceProtoAndIfaceCache(JSTracer* trc, JSObject* obj)
   MOZ_ASSERT(js::GetObjectClass(obj)->flags & JSCLASS_DOM_GLOBAL);
 
 #ifdef DEBUG
-  if (trc->callback == VerifyTraceProtoAndIfaceCacheCalled) {
+  if (trc->isCallbackTracer() &&
+      trc->asCallbackTracer()->hasCallback(
+        VerifyTraceProtoAndIfaceCacheCalled)) {
     // We don't do anything here, we only want to verify that
     // TraceProtoAndIfaceCache was called.
     static_cast<VerifyTraceProtoAndIfaceCacheCalledTracer*>(trc)->ok = true;
@@ -930,7 +932,7 @@ DoGetOrCreateDOMReflector(JSContext* cx, T* value,
       return false;
     }
 
-    obj = value->WrapObject(cx);
+    obj = value->WrapObject(cx, JS::NullPtr());
     if (!obj) {
       // At this point, obj is null, so just return false.
       // Callers seem to be testing JS_IsExceptionPending(cx) to
@@ -1038,7 +1040,7 @@ WrapNewBindingNonWrapperCachedObject(JSContext* cx,
     }
 
     MOZ_ASSERT(js::IsObjectInContextCompartment(scope, cx));
-    if (!value->WrapObject(cx, &obj)) {
+    if (!value->WrapObject(cx, JS::NullPtr(), &obj)) {
       return false;
     }
   }
@@ -1084,7 +1086,7 @@ WrapNewBindingNonWrapperCachedObject(JSContext* cx,
     }
 
     MOZ_ASSERT(js::IsObjectInContextCompartment(scope, cx));
-    if (!value->WrapObject(cx, &obj)) {
+    if (!value->WrapObject(cx, JS::NullPtr(), &obj)) {
       return false;
     }
 
@@ -1520,7 +1522,7 @@ struct WrapNativeParentHelper
     if (!CouldBeDOMBinding(parent)) {
       obj = WrapNativeParentFallback<T>::Wrap(cx, parent, cache);
     } else {
-      obj = parent->WrapObject(cx);
+      obj = parent->WrapObject(cx, JS::NullPtr());
     }
 
     return obj;
@@ -2314,7 +2316,7 @@ public:
     eNullableArray
   };
 
-  virtual void trace(JSTracer *trc) MOZ_OVERRIDE
+  virtual void trace(JSTracer *trc) override
   {
     if (mSequenceType == eFallibleArray) {
       DoTraceSequence(trc, *mFallibleArray);
@@ -2364,7 +2366,7 @@ private:
     eNullableMozMap
   };
 
-  virtual void trace(JSTracer *trc) MOZ_OVERRIDE
+  virtual void trace(JSTracer *trc) override
   {
     if (mMozMapType == eMozMap) {
       TraceMozMap(trc, *mMozMap);
@@ -2395,7 +2397,7 @@ public:
   {
   }
 
-  virtual void trace(JSTracer *trc) MOZ_OVERRIDE
+  virtual void trace(JSTracer *trc) override
   {
     this->TraceUnion(trc);
   }
@@ -2412,7 +2414,7 @@ public:
   {
   }
 
-  virtual void trace(JSTracer *trc) MOZ_OVERRIDE
+  virtual void trace(JSTracer *trc) override
   {
     if (!this->IsNull()) {
       this->Value().TraceUnion(trc);
@@ -2464,7 +2466,7 @@ XrayResolveOwnProperty(JSContext* cx, JS::Handle<JSObject*> wrapper,
 bool
 XrayDefineProperty(JSContext* cx, JS::Handle<JSObject*> wrapper,
                    JS::Handle<JSObject*> obj, JS::Handle<jsid> id,
-                   JS::MutableHandle<JSPropertyDescriptor> desc,
+                   JS::Handle<JSPropertyDescriptor> desc,
                    JS::ObjectOpResult &result,
                    bool *defined);
 
@@ -2933,8 +2935,8 @@ struct DeferredFinalizer
   AddForDeferredFinalization(T* aObject)
   {
     typedef DeferredFinalizerImpl<T> Impl;
-    cyclecollector::DeferredFinalize(Impl::AppendDeferredFinalizePointer,
-                                     Impl::DeferredFinalize, aObject);
+    DeferredFinalize(Impl::AppendDeferredFinalizePointer,
+                     Impl::DeferredFinalize, aObject);
   }
 };
 
@@ -2944,7 +2946,7 @@ struct DeferredFinalizer<T, true>
   static void
   AddForDeferredFinalization(T* aObject)
   {
-    cyclecollector::DeferredFinalize(reinterpret_cast<nsISupports*>(aObject));
+    DeferredFinalize(reinterpret_cast<nsISupports*>(aObject));
   }
 };
 

@@ -924,7 +924,7 @@ public:
     : mTreeManager(aTreeManager)
   {}
 
-  void Run(uint64_t aInputBlockId, const nsTArray<ScrollableLayerGuid>& aTargets) const MOZ_OVERRIDE {
+  void Run(uint64_t aInputBlockId, const nsTArray<ScrollableLayerGuid>& aTargets) const override {
     MOZ_ASSERT(NS_IsMainThread());
     // need a local var to disambiguate between the SetTargetAPZC overloads.
     void (APZCTreeManager::*setTargetApzcFunc)(uint64_t, const nsTArray<ScrollableLayerGuid>&)
@@ -937,13 +937,30 @@ private:
   nsRefPtr<APZCTreeManager> mTreeManager;
 };
 
+class ChromeProcessSetAllowedTouchBehaviorCallback : public SetAllowedTouchBehaviorCallback {
+public:
+  explicit ChromeProcessSetAllowedTouchBehaviorCallback(APZCTreeManager* aTreeManager)
+    : mTreeManager(aTreeManager)
+  {}
+
+  void Run(uint64_t aInputBlockId, const nsTArray<TouchBehaviorFlags>& aFlags) const override {
+    MOZ_ASSERT(NS_IsMainThread());
+    APZThreadUtils::RunOnControllerThread(NewRunnableMethod(
+        mTreeManager.get(), &APZCTreeManager::SetAllowedTouchBehavior,
+        aInputBlockId, aFlags));
+  }
+
+private:
+  nsRefPtr<APZCTreeManager> mTreeManager;
+};
+
 class ChromeProcessContentReceivedInputBlockCallback : public ContentReceivedInputBlockCallback {
 public:
   explicit ChromeProcessContentReceivedInputBlockCallback(APZCTreeManager* aTreeManager)
     : mTreeManager(aTreeManager)
   {}
 
-  void Run(const ScrollableLayerGuid& aGuid, uint64_t aInputBlockId, bool aPreventDefault) const MOZ_OVERRIDE {
+  void Run(const ScrollableLayerGuid& aGuid, uint64_t aInputBlockId, bool aPreventDefault) const override {
     MOZ_ASSERT(NS_IsMainThread());
     APZThreadUtils::RunOnControllerThread(NewRunnableMethod(
         mTreeManager.get(), &APZCTreeManager::ContentReceivedInputBlock,
@@ -961,10 +978,13 @@ void nsBaseWidget::ConfigureAPZCTreeManager()
   mAPZC = CompositorParent::GetAPZCTreeManager(rootLayerTreeId);
   MOZ_ASSERT(mAPZC);
 
+  ConfigureAPZControllerThread();
+
   mAPZC->SetDPI(GetDPI());
   mAPZEventState = new APZEventState(this,
       new ChromeProcessContentReceivedInputBlockCallback(mAPZC));
   mSetTargetAPZCCallback = new ChromeProcessSetTargetAPZCCallback(mAPZC);
+  mSetAllowedTouchBehaviorCallback = new ChromeProcessSetAllowedTouchBehaviorCallback(mAPZC);
 
   nsRefPtr<GeckoContentController> controller = CreateRootContentController();
   if (controller) {
@@ -972,10 +992,17 @@ void nsBaseWidget::ConfigureAPZCTreeManager()
   }
 }
 
+void nsBaseWidget::ConfigureAPZControllerThread()
+{
+  // By default the controller thread is the main thread.
+  APZThreadUtils::SetControllerThread(MessageLoop::current());
+}
+
 nsEventStatus
 nsBaseWidget::ProcessUntransformedAPZEvent(WidgetInputEvent* aEvent,
                                            const ScrollableLayerGuid& aGuid,
-                                           uint64_t aInputBlockId)
+                                           uint64_t aInputBlockId,
+                                           nsEventStatus aApzResponse)
 {
   MOZ_ASSERT(NS_IsMainThread());
   InputAPZContext context(aGuid, aInputBlockId);
@@ -1001,10 +1028,14 @@ nsBaseWidget::ProcessUntransformedAPZEvent(WidgetInputEvent* aEvent,
     // call into APZEventState::Process*Event() as well.
     if (WidgetTouchEvent* touchEvent = aEvent->AsTouchEvent()) {
       if (touchEvent->message == NS_TOUCH_START) {
+        if (gfxPrefs::TouchActionEnabled()) {
+          APZCCallbackHelper::SendSetAllowedTouchBehaviorNotification(this, *touchEvent,
+              aInputBlockId, mSetAllowedTouchBehaviorCallback);
+        }
         APZCCallbackHelper::SendSetTargetAPZCNotification(this, GetDocument(), *aEvent,
             aGuid, aInputBlockId, mSetTargetAPZCCallback);
       }
-      mAPZEventState->ProcessTouchEvent(*touchEvent, aGuid, aInputBlockId);
+      mAPZEventState->ProcessTouchEvent(*touchEvent, aGuid, aInputBlockId, aApzResponse);
     } else if (WidgetWheelEvent* wheelEvent = aEvent->AsWheelEvent()) {
       APZCCallbackHelper::SendSetTargetAPZCNotification(this, GetDocument(), *aEvent,
                 aGuid, aInputBlockId, mSetTargetAPZCCallback);
@@ -1012,6 +1043,21 @@ nsBaseWidget::ProcessUntransformedAPZEvent(WidgetInputEvent* aEvent,
     }
   }
 
+  return status;
+}
+
+nsEventStatus
+nsBaseWidget::DispatchInputEvent(WidgetInputEvent* aEvent)
+{
+  if (mAPZC) {
+    nsEventStatus result = mAPZC->ReceiveInputEvent(*aEvent, nullptr, nullptr);
+    if (result == nsEventStatus_eConsumeNoDefault) {
+      return result;
+    }
+  }
+
+  nsEventStatus status;
+  DispatchEvent(aEvent, status);
   return status;
 }
 
@@ -1026,7 +1072,7 @@ nsBaseWidget::DispatchAPZAwareEvent(WidgetInputEvent* aEvent)
     if (result == nsEventStatus_eConsumeNoDefault) {
         return result;
     }
-    return ProcessUntransformedAPZEvent(aEvent, guid, inputBlockId);
+    return ProcessUntransformedAPZEvent(aEvent, guid, inputBlockId, result);
   }
 
   nsEventStatus status;
@@ -1383,16 +1429,6 @@ bool
 nsBaseWidget::ShowsResizeIndicator(nsIntRect* aResizerRect)
 {
   return false;
-}
-
-NS_METHOD nsBaseWidget::RegisterTouchWindow()
-{
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_METHOD nsBaseWidget::UnregisterTouchWindow()
-{
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -1996,7 +2032,7 @@ static void debug_SetCachedBoolPref(const char * aPrefName,bool aValue)
 }
 
 //////////////////////////////////////////////////////////////
-class Debug_PrefObserver MOZ_FINAL : public nsIObserver {
+class Debug_PrefObserver final : public nsIObserver {
     ~Debug_PrefObserver() {}
 
   public:

@@ -322,7 +322,7 @@ pref("media.fragmented-mp4.gonk.enabled", true);
 pref("media.video-queue.default-size", 3);
 
 // optimize images' memory usage
-pref("image.mem.decodeondraw", true);
+pref("image.decode-only-on-draw.enabled", true);
 pref("image.mem.allow_locking_in_content_processes", false); /* don't allow image locking */
 // Limit the surface cache to 1/8 of main memory or 128MB, whichever is smaller.
 // Almost everything that was factored into 'max_decoded_image_kb' is now stored
@@ -694,6 +694,9 @@ pref("ui.scrollbarFadeDuration", 200);
 // Scrollbar position follows the document `dir` attribute
 pref("layout.scrollbar.side", 1);
 
+// CSS Scroll Snapping
+pref("layout.css.scroll-snap.enabled", true);
+
 // Enable the ProcessPriorityManager, and give processes with no visible
 // documents a 1s grace period before they're eligible to be marked as
 // background. Background processes that are perceivable due to playing
@@ -993,6 +996,13 @@ pref("b2g.theme.origin", "app://theme.gaiamobile.org");
 pref("dom.mozApps.themable", true);
 pref("dom.mozApps.selected_theme", "default_theme.gaiamobile.org");
 
+// Enable PAC generator for B2G.
+pref("network.proxy.pac_generator", true);
+
+// List of app origins to apply browsing traffic proxy setting, separated by
+// comma.  Specify '*' in the list to apply to all apps.
+pref("network.proxy.browsing.app_origins", "app://system.gaiamobile.org");
+
 // Enable Web Speech synthesis API
 pref("media.webspeech.synth.enabled", true);
 
@@ -1125,4 +1135,12 @@ pref("gfx.touch.resample", true);
 pref("gfx.vsync.hw-vsync.enabled", false);
 pref("gfx.vsync.compositor", false);
 pref("gfx.touch.resample", false);
+#endif
+
+// Bug 1147753 - Weird issues with vsync refresh driver on L devices
+// so disable them on L, but enable on KK and ICS
+#if ANDROID_VERSION == 19 || ANDROID_VERSION == 15
+pref("gfx.vsync.refreshdriver", true);
+#else
+pref("gfx.vsync.refreshdriver", false);
 #endif

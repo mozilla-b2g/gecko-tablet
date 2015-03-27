@@ -418,7 +418,7 @@ class OutOfLineTestObject : public OutOfLineCodeBase<CodeGenerator>
 #endif
     { }
 
-    void accept(CodeGenerator *codegen) MOZ_FINAL MOZ_OVERRIDE {
+    void accept(CodeGenerator *codegen) final override {
         MOZ_ASSERT(initialized());
         codegen->emitOOLTestObject(objreg_, ifEmulatesUndefined_, ifDoesntEmulateUndefined_,
                                    scratch_);
@@ -1767,7 +1767,7 @@ CodeGenerator::emitLambdaInit(Register output, Register scopeChain,
         } s;
         uint32_t word;
     } u;
-    u.s.nargs = info.fun->nargs();
+    u.s.nargs = info.nargs;
     u.s.flags = info.flags;
 
     MOZ_ASSERT(JSFunction::offsetOfFlags() == JSFunction::offsetOfNargs() + 2);
@@ -2564,6 +2564,10 @@ CodeGenerator::visitGuardReceiverPolymorphic(LGuardReceiverPolymorphic *lir)
     }
 
     if (mir->numUnboxedGroups()) {
+        // The guard requires that unboxed objects not have expandos.
+        bailoutCmpPtr(Assembler::NotEqual, Address(obj, JSObject::offsetOfShape()),
+                      ImmWord(0), lir->snapshot());
+
         masm.loadObjGroup(obj, temp);
 
         for (size_t i = 0; i < mir->numUnboxedGroups(); i++) {
@@ -3136,11 +3140,10 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSp
     masm.movePtr(argcreg, extraStackSpace);
 
     // Align the JitFrameLayout on the JitStackAlignment.
-    const uint32_t alignment = JitStackAlignment / sizeof(Value);
-    if (alignment > 1) {
+    if (JitStackValueAlignment > 1) {
         MOZ_ASSERT(frameSize() % JitStackAlignment == 0,
             "Stack padding assumes that the frameSize is correct");
-        MOZ_ASSERT(alignment == 2);
+        MOZ_ASSERT(JitStackValueAlignment == 2);
         Label noPaddingNeeded;
         // if the number of arguments is odd, then we do not need any padding.
         masm.branchTestPtr(Assembler::NonZero, argcreg, Imm32(1), &noPaddingNeeded);
@@ -3157,8 +3160,8 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSp
     // Put a magic value in the space reserved for padding. Note, this code
     // cannot be merged with the previous test, as not all architectures can
     // write below their stack pointers.
-    if (alignment > 1) {
-        MOZ_ASSERT(alignment == 2);
+    if (JitStackValueAlignment > 1) {
+        MOZ_ASSERT(JitStackValueAlignment == 2);
         Label noPaddingNeeded;
         // if the number of arguments is odd, then we do not need any padding.
         masm.branchTestPtr(Assembler::NonZero, argcreg, Imm32(1), &noPaddingNeeded);
@@ -3379,6 +3382,12 @@ CodeGenerator::visitUnreachable(LUnreachable *lir)
 }
 
 void
+CodeGenerator::visitEncodeSnapshot(LEncodeSnapshot *lir)
+{
+    encode(lir->snapshot());
+}
+
+void
 CodeGenerator::visitGetDynamicName(LGetDynamicName *lir)
 {
     Register scopeChain = ToRegister(lir->getScopeChain());
@@ -3486,12 +3495,12 @@ CodeGenerator::visitCallDirectEvalV(LCallDirectEvalV *lir)
     callVM(DirectEvalValueInfo, lir);
 }
 
-// Registers safe for use before generatePrologue().
-static const uint32_t EntryTempMask = Registers::TempMask & ~(1 << OsrFrameReg.code());
-
 void
 CodeGenerator::generateArgumentsChecks(bool bailout)
 {
+    // Registers safe for use before generatePrologue().
+    static const uint32_t EntryTempMask = Registers::TempMask & ~(1 << OsrFrameReg.code());
+
     // This function can be used the normal way to check the argument types,
     // before entering the function and bailout when arguments don't match.
     // For debug purpose, this is can also be used to force/check that the
@@ -3740,7 +3749,6 @@ struct ScriptCountBlockState
     }
 };
 
-#ifdef DEBUG
 void
 CodeGenerator::branchIfInvalidated(Register temp, Label *invalidated)
 {
@@ -3755,16 +3763,13 @@ CodeGenerator::branchIfInvalidated(Register temp, Label *invalidated)
 }
 
 void
-CodeGenerator::emitObjectOrStringResultChecks(LInstruction *lir, MDefinition *mir)
+CodeGenerator::emitAssertObjectOrStringResult(Register input, MIRType type, TemporaryTypeSet *typeset)
 {
-    if (lir->numDefs() == 0)
-        return;
-
-    MOZ_ASSERT(lir->numDefs() == 1);
-    Register output = ToRegister(lir->getDef(0));
+    MOZ_ASSERT(type == MIRType_Object || type == MIRType_ObjectOrNull ||
+               type == MIRType_String || type == MIRType_Symbol);
 
     GeneralRegisterSet regs(GeneralRegisterSet::All());
-    regs.take(output);
+    regs.take(input);
 
     Register temp = regs.takeAny();
     masm.push(temp);
@@ -3774,22 +3779,21 @@ CodeGenerator::emitObjectOrStringResultChecks(LInstruction *lir, MDefinition *mi
     Label done;
     branchIfInvalidated(temp, &done);
 
-    if ((mir->type() == MIRType_Object || mir->type() == MIRType_ObjectOrNull) &&
-        mir->resultTypeSet() &&
-        !mir->resultTypeSet()->unknownObject())
+    if ((type == MIRType_Object || type == MIRType_ObjectOrNull) &&
+        typeset && !typeset->unknownObject())
     {
         // We have a result TypeSet, assert this object is in it.
         Label miss, ok;
-        if (mir->type() == MIRType_ObjectOrNull)
-            masm.branchPtr(Assembler::Equal, output, ImmWord(0), &ok);
-        if (mir->resultTypeSet()->getObjectCount() > 0)
-            masm.guardObjectType(output, mir->resultTypeSet(), temp, &miss);
+        if (type == MIRType_ObjectOrNull)
+            masm.branchPtr(Assembler::Equal, input, ImmWord(0), &ok);
+        if (typeset->getObjectCount() > 0)
+            masm.guardObjectType(input, typeset, temp, &miss);
         else
             masm.jump(&miss);
         masm.jump(&ok);
 
         masm.bind(&miss);
-        masm.guardTypeSetMightBeIncomplete(output, temp, &ok);
+        masm.guardTypeSetMightBeIncomplete(input, temp, &ok);
 
         masm.assumeUnreachable("MIR instruction returned object with unexpected type");
 
@@ -3801,10 +3805,10 @@ CodeGenerator::emitObjectOrStringResultChecks(LInstruction *lir, MDefinition *mi
     masm.setupUnalignedABICall(2, temp);
     masm.loadJSContext(temp);
     masm.passABIArg(temp);
-    masm.passABIArg(output);
+    masm.passABIArg(input);
 
     void *callee;
-    switch (mir->type()) {
+    switch (type) {
       case MIRType_Object:
         callee = JS_FUNC_TO_DATA_PTR(void *, AssertValidObjectPtr);
         break;
@@ -3829,19 +3833,10 @@ CodeGenerator::emitObjectOrStringResultChecks(LInstruction *lir, MDefinition *mi
 }
 
 void
-CodeGenerator::emitValueResultChecks(LInstruction *lir, MDefinition *mir)
+CodeGenerator::emitAssertResultV(const ValueOperand input, TemporaryTypeSet *typeset)
 {
-    if (lir->numDefs() == 0)
-        return;
-
-    MOZ_ASSERT(lir->numDefs() == BOX_PIECES);
-    if (!lir->getDef(0)->output()->isRegister())
-        return;
-
-    ValueOperand output = ToOutValue(lir);
-
     GeneralRegisterSet regs(GeneralRegisterSet::All());
-    regs.take(output);
+    regs.take(input);
 
     Register temp1 = regs.takeAny();
     Register temp2 = regs.takeAny();
@@ -3853,10 +3848,10 @@ CodeGenerator::emitValueResultChecks(LInstruction *lir, MDefinition *mir)
     Label done;
     branchIfInvalidated(temp1, &done);
 
-    if (mir->resultTypeSet() && !mir->resultTypeSet()->unknown()) {
+    if (typeset && !typeset->unknown()) {
         // We have a result TypeSet, assert this value is in it.
         Label miss, ok;
-        masm.guardTypeSet(output, mir->resultTypeSet(), BarrierKind::TypeSet, temp1, &miss);
+        masm.guardTypeSet(input, typeset, BarrierKind::TypeSet, temp1, &miss);
         masm.jump(&ok);
 
         masm.bind(&miss);
@@ -3864,8 +3859,8 @@ CodeGenerator::emitValueResultChecks(LInstruction *lir, MDefinition *mir)
         // Check for cases where the type set guard might have missed due to
         // changing object groups.
         Label realMiss;
-        masm.branchTestObject(Assembler::NotEqual, output, &realMiss);
-        Register payload = masm.extractObject(output, temp1);
+        masm.branchTestObject(Assembler::NotEqual, input, &realMiss);
+        Register payload = masm.extractObject(input, temp1);
         masm.guardTypeSetMightBeIncomplete(payload, temp1, &ok);
         masm.bind(&realMiss);
 
@@ -3877,7 +3872,7 @@ CodeGenerator::emitValueResultChecks(LInstruction *lir, MDefinition *mir)
     // Check that we have a valid GC pointer.
     saveVolatile();
 
-    masm.pushValue(output);
+    masm.pushValue(input);
     masm.movePtr(StackPointer, temp1);
 
     masm.setupUnalignedABICall(2, temp2);
@@ -3885,12 +3880,40 @@ CodeGenerator::emitValueResultChecks(LInstruction *lir, MDefinition *mir)
     masm.passABIArg(temp2);
     masm.passABIArg(temp1);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, AssertValidValue));
-    masm.popValue(output);
+    masm.popValue(input);
     restoreVolatile();
 
     masm.bind(&done);
     masm.pop(temp2);
     masm.pop(temp1);
+}
+
+#ifdef DEBUG
+void
+CodeGenerator::emitObjectOrStringResultChecks(LInstruction *lir, MDefinition *mir)
+{
+    if (lir->numDefs() == 0)
+        return;
+
+    MOZ_ASSERT(lir->numDefs() == 1);
+    Register output = ToRegister(lir->getDef(0));
+
+    emitAssertObjectOrStringResult(output, mir->type(), mir->resultTypeSet());
+}
+
+void
+CodeGenerator::emitValueResultChecks(LInstruction *lir, MDefinition *mir)
+{
+    if (lir->numDefs() == 0)
+        return;
+
+    MOZ_ASSERT(lir->numDefs() == BOX_PIECES);
+    if (!lir->getDef(0)->output()->isRegister())
+        return;
+
+    ValueOperand output = ToOutValue(lir);
+
+    emitAssertResultV(output, mir->resultTypeSet());
 }
 
 void
@@ -4041,7 +4064,7 @@ class OutOfLineNewArray : public OutOfLineCodeBase<CodeGenerator>
 };
 
 typedef ArrayObject *(*NewDenseArrayFn)(ExclusiveContext *, uint32_t, HandleObjectGroup,
-                                        AllocatingBehaviour);
+                                        AllocatingBehaviour, bool);
 static const VMFunction NewDenseArrayInfo = FunctionInfo<NewDenseArrayFn>(NewDenseArray);
 
 void
@@ -4056,6 +4079,7 @@ CodeGenerator::visitNewArrayCallVM(LNewArray *lir)
     ObjectGroup *group =
         templateObject->isSingleton() ? nullptr : templateObject->group();
 
+    pushArg(Imm32(lir->mir()->convertDoubleElements()));
     pushArg(Imm32(lir->mir()->allocatingBehaviour()));
     pushArg(ImmGCPtr(group));
     pushArg(Imm32(lir->mir()->count()));
@@ -4143,7 +4167,9 @@ CodeGenerator::visitNewArray(LNewArray *lir)
     OutOfLineNewArray *ool = new(alloc()) OutOfLineNewArray(lir);
     addOutOfLineCode(ool, lir->mir());
 
-    masm.createGCObject(objReg, tempReg, templateObject, lir->mir()->initialHeap(), ool->entry());
+    masm.createGCObject(objReg, tempReg, templateObject, lir->mir()->initialHeap(),
+                        ool->entry(), /* initContents = */ true,
+                        lir->mir()->convertDoubleElements());
 
     masm.bind(ool->rejoin());
 }
@@ -8673,19 +8699,22 @@ CodeGenerator::visitLoadUnboxedScalar(LLoadUnboxedScalar *lir)
     Register temp = lir->temp()->isBogusTemp() ? InvalidReg : ToRegister(lir->temp());
     AnyRegister out = ToAnyRegister(lir->output());
 
-    Scalar::Type readType  = lir->mir()->readType();
-    int width = Scalar::byteSize(lir->mir()->indexType());
+    const MLoadUnboxedScalar *mir = lir->mir();
+
+    Scalar::Type readType = mir->readType();
+    unsigned numElems = mir->numElems();
+
+    int width = Scalar::byteSize(mir->indexType());
+    bool canonicalizeDouble = mir->canonicalizeDoubles();
 
     Label fail;
     if (lir->index()->isConstant()) {
-        Address source(elements, ToInt32(lir->index()) * width + lir->mir()->offsetAdjustment());
-        masm.loadFromTypedArray(readType, source, out, temp, &fail,
-                                lir->mir()->canonicalizeDoubles());
+        Address source(elements, ToInt32(lir->index()) * width + mir->offsetAdjustment());
+        masm.loadFromTypedArray(readType, source, out, temp, &fail, canonicalizeDouble, numElems);
     } else {
         BaseIndex source(elements, ToRegister(lir->index()), ScaleFromElemWidth(width),
-                         lir->mir()->offsetAdjustment());
-        masm.loadFromTypedArray(readType, source, out, temp, &fail,
-                                lir->mir()->canonicalizeDoubles());
+                         mir->offsetAdjustment());
+        masm.loadFromTypedArray(readType, source, out, temp, &fail, canonicalizeDouble, numElems);
     }
 
     if (fail.used())
@@ -8735,13 +8764,14 @@ CodeGenerator::visitLoadTypedArrayElementHole(LLoadTypedArrayElementHole *lir)
 
 template <typename T>
 static inline void
-StoreToTypedArray(MacroAssembler &masm, Scalar::Type writeType, const LAllocation *value, const T &dest)
+StoreToTypedArray(MacroAssembler &masm, Scalar::Type writeType, const LAllocation *value,
+                  const T &dest, unsigned numElems = 0)
 {
     if (Scalar::isSimdType(writeType) ||
         writeType == Scalar::Float32 ||
         writeType == Scalar::Float64)
     {
-        masm.storeToTypedFloatArray(writeType, ToFloatRegister(value), dest);
+        masm.storeToTypedFloatArray(writeType, ToFloatRegister(value), dest, numElems);
     } else {
         if (value->isConstant())
             masm.storeToTypedIntArray(writeType, Imm32(ToInt32(value)), dest);
@@ -8756,16 +8786,20 @@ CodeGenerator::visitStoreUnboxedScalar(LStoreUnboxedScalar *lir)
     Register elements = ToRegister(lir->elements());
     const LAllocation *value = lir->value();
 
-    Scalar::Type writeType = lir->mir()->writeType();
-    int width = Scalar::byteSize(lir->mir()->indexType());
+    const MStoreUnboxedScalar *mir = lir->mir();
+
+    Scalar::Type writeType = mir->writeType();
+    unsigned numElems = mir->numElems();
+
+    int width = Scalar::byteSize(mir->indexType());
 
     if (lir->index()->isConstant()) {
-        Address dest(elements, ToInt32(lir->index()) * width + lir->mir()->offsetAdjustment());
-        StoreToTypedArray(masm, writeType, value, dest);
+        Address dest(elements, ToInt32(lir->index()) * width + mir->offsetAdjustment());
+        StoreToTypedArray(masm, writeType, value, dest, numElems);
     } else {
         BaseIndex dest(elements, ToRegister(lir->index()), ScaleFromElemWidth(width),
-                       lir->mir()->offsetAdjustment());
-        StoreToTypedArray(masm, writeType, value, dest);
+                       mir->offsetAdjustment());
+        StoreToTypedArray(masm, writeType, value, dest, numElems);
     }
 }
 
@@ -8847,6 +8881,8 @@ AtomicBinopToTypedArray(MacroAssembler &masm, AtomicOp op,
 void
 CodeGenerator::visitAtomicTypedArrayElementBinop(LAtomicTypedArrayElementBinop *lir)
 {
+    MOZ_ASSERT(lir->mir()->hasUses());
+
     AnyRegister output = ToAnyRegister(lir->output());
     Register elements = ToRegister(lir->elements());
     Register temp1 = lir->temp1()->isBogusTemp() ? InvalidReg : ToRegister(lir->temp1());
@@ -8862,6 +8898,36 @@ CodeGenerator::visitAtomicTypedArrayElementBinop(LAtomicTypedArrayElementBinop *
     } else {
         BaseIndex mem(elements, ToRegister(lir->index()), ScaleFromElemWidth(width));
         AtomicBinopToTypedArray(masm, lir->mir()->operation(), arrayType, value, mem, temp1, temp2, output);
+    }
+}
+
+template <typename T>
+static inline void
+AtomicBinopToTypedArray(MacroAssembler &masm, AtomicOp op,
+                        Scalar::Type arrayType, const LAllocation *value, const T &mem)
+{
+    if (value->isConstant())
+        masm.atomicBinopToTypedIntArray(op, arrayType, Imm32(ToInt32(value)), mem);
+    else
+        masm.atomicBinopToTypedIntArray(op, arrayType, ToRegister(value), mem);
+}
+
+void
+CodeGenerator::visitAtomicTypedArrayElementBinopForEffect(LAtomicTypedArrayElementBinopForEffect *lir)
+{
+    MOZ_ASSERT(!lir->mir()->hasUses());
+
+    Register elements = ToRegister(lir->elements());
+    const LAllocation* value = lir->value();
+    Scalar::Type arrayType = lir->mir()->arrayType();
+    int width = Scalar::byteSize(arrayType);
+
+    if (lir->index()->isConstant()) {
+        Address mem(elements, ToInt32(lir->index()) * width);
+        AtomicBinopToTypedArray(masm, lir->mir()->operation(), arrayType, value, mem);
+    } else {
+        BaseIndex mem(elements, ToRegister(lir->index()), ScaleFromElemWidth(width));
+        AtomicBinopToTypedArray(masm, lir->mir()->operation(), arrayType, value, mem);
     }
 }
 
@@ -9518,6 +9584,22 @@ CodeGenerator::emitAssertRangeD(const Range *r, FloatRegister input, FloatRegist
 }
 
 void
+CodeGenerator::visitAssertResultV(LAssertResultV *ins)
+{
+    const ValueOperand value = ToValue(ins, LAssertResultV::Input);
+    emitAssertResultV(value, ins->mirRaw()->resultTypeSet());
+}
+
+void
+CodeGenerator::visitAssertResultT(LAssertResultT *ins)
+{
+    Register input = ToRegister(ins->input());
+    MDefinition *mir = ins->mirRaw();
+
+    emitAssertObjectOrStringResult(input, mir->type(), mir->resultTypeSet());
+}
+
+void
 CodeGenerator::visitAssertRangeI(LAssertRangeI *ins)
 {
     Register input = ToRegister(ins->input());
@@ -9652,20 +9734,18 @@ CodeGenerator::visitRecompileCheck(LRecompileCheck *ins)
     masm.bind(&done);
 }
 
-typedef bool (*ThrowUninitializedLexicalFn)(JSContext *);
-static const VMFunction ThrowUninitializedLexicalInfo =
-    FunctionInfo<ThrowUninitializedLexicalFn>(ThrowUninitializedLexical);
-
 void
 CodeGenerator::visitLexicalCheck(LLexicalCheck *ins)
 {
-    OutOfLineCode *ool = oolCallVM(ThrowUninitializedLexicalInfo, ins, (ArgList()),
-                                   StoreNothing());
     ValueOperand inputValue = ToValue(ins, LLexicalCheck::Input);
-    masm.branchTestMagicValue(Assembler::Equal, inputValue, JS_UNINITIALIZED_LEXICAL,
-                              ool->entry());
-    masm.bind(ool->rejoin());
+    Label bail;
+    masm.branchTestMagicValue(Assembler::Equal, inputValue, JS_UNINITIALIZED_LEXICAL, &bail);
+    bailoutFrom(&bail, ins->snapshot());
 }
+
+typedef bool (*ThrowUninitializedLexicalFn)(JSContext *);
+static const VMFunction ThrowUninitializedLexicalInfo =
+    FunctionInfo<ThrowUninitializedLexicalFn>(ThrowUninitializedLexical);
 
 void
 CodeGenerator::visitThrowUninitializedLexical(LThrowUninitializedLexical *ins)

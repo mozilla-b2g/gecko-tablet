@@ -626,6 +626,12 @@ class NativeObject : public JSObject
         return lookup(cx, shape->propid()) == shape;
     }
 
+    bool containsShapeOrElement(ExclusiveContext *cx, jsid id) {
+        if (JSID_IS_INT(id) && containsDenseElement(JSID_TO_INT(id)))
+            return true;
+        return contains(cx, id);
+    }
+
     /* Contextless; can be called from other pure code. */
     Shape *lookupPure(jsid id);
     Shape *lookupPure(PropertyName *name) {
@@ -874,6 +880,9 @@ class NativeObject : public JSObject
      * array is kept in sync with this count.
      */
     static uint32_t dynamicSlotsCount(uint32_t nfixed, uint32_t span, const Class *clasp);
+    static uint32_t dynamicSlotsCount(Shape *shape) {
+        return dynamicSlotsCount(shape->numFixedSlots(), shape->slotSpan(), shape->getObjectClass());
+    }
 
     /* Elements accessors. */
 
@@ -1245,6 +1254,11 @@ IsObjectValueInCompartment(Value v, JSCompartment *comp)
  * to serve some of the special needs of Functions (9.2, 9.3, 9.4.1), Arrays
  * (9.4.2), Strings (9.4.3), and so on.
  */
+
+extern bool
+NativeDefineProperty(ExclusiveContext *cx, HandleNativeObject obj, HandleId id,
+                     Handle<PropertyDescriptor> desc,
+                     ObjectOpResult &result);
 
 extern bool
 NativeDefineProperty(ExclusiveContext *cx, HandleNativeObject obj, HandleId id, HandleValue value,

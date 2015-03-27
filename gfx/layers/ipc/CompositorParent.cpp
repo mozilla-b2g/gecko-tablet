@@ -1135,22 +1135,8 @@ CompositorParent::ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
     // When testing we synchronously update the shadow tree with the animated
     // values to avoid race conditions when calling GetAnimationTransform etc.
     // (since the above SetShadowProperties will remove animation effects).
-    // However, we only do this update when a composite operation is already
-    // scheduled in order to better match the behavior under regular sampling
-    // conditions.
-    bool needTestComposite = mIsTesting && root &&
-                             (mCurrentCompositeTask ||
-                             (mCompositorVsyncObserver &&
-                              mCompositorVsyncObserver->NeedsComposite()));
-    if (needTestComposite) {
-      AutoResolveRefLayers resolve(mCompositionManager);
-      bool requestNextFrame =
-        mCompositionManager->TransformShadowTree(mTestTime);
-      if (!requestNextFrame) {
-        CancelCurrentCompositeTask();
-        // Pretend we composited in case someone is waiting for this event.
-        DidComposite();
-      }
+    if (mIsTesting) {
+      ApplyAsyncProperties(aLayerTree);
     }
   }
   mLayerManager->NotifyShadowTreeTransaction();
@@ -1195,6 +1181,31 @@ void
 CompositorParent::LeaveTestMode(LayerTransactionParent* aLayerTree)
 {
   mIsTesting = false;
+}
+
+void
+CompositorParent::ApplyAsyncProperties(LayerTransactionParent* aLayerTree)
+{
+  // NOTE: This should only be used for testing. For example, when mIsTesting is
+  // true or when called from test-only methods like
+  // LayerTransactionParent::RecvGetAnimationTransform.
+
+  // Synchronously update the layer tree, but only if a composite was already
+  // scehduled.
+  if (aLayerTree->GetRoot() &&
+      (mCurrentCompositeTask ||
+       (mCompositorVsyncObserver &&
+        mCompositorVsyncObserver->NeedsComposite()))) {
+    AutoResolveRefLayers resolve(mCompositionManager);
+    TimeStamp time = mIsTesting ? mTestTime : mLastCompose;
+    bool requestNextFrame =
+      mCompositionManager->TransformShadowTree(time);
+    if (!requestNextFrame) {
+      CancelCurrentCompositeTask();
+      // Pretend we composited in case someone is waiting for this event.
+      DidComposite();
+    }
+  }
 }
 
 bool
@@ -1494,7 +1505,7 @@ CompositorParent::RequestNotifyLayerTreeCleared(uint64_t aLayersId, CompositorUp
  * drive compositing itself.  For that it hands off work to the
  * CompositorParent it's associated with.
  */
-class CrossProcessCompositorParent MOZ_FINAL : public PCompositorParent,
+class CrossProcessCompositorParent final : public PCompositorParent,
                                                public ShadowLayersManager
 {
   friend class CompositorParent;
@@ -1515,26 +1526,26 @@ public:
   virtual IToplevelProtocol*
   CloneToplevel(const InfallibleTArray<mozilla::ipc::ProtocolFdMapping>& aFds,
                 base::ProcessHandle aPeerProcess,
-                mozilla::ipc::ProtocolCloneContext* aCtx) MOZ_OVERRIDE;
+                mozilla::ipc::ProtocolCloneContext* aCtx) override;
 
-  virtual void ActorDestroy(ActorDestroyReason aWhy) MOZ_OVERRIDE;
+  virtual void ActorDestroy(ActorDestroyReason aWhy) override;
 
   // FIXME/bug 774388: work out what shutdown protocol we need.
-  virtual bool RecvRequestOverfill() MOZ_OVERRIDE { return true; }
-  virtual bool RecvWillStop() MOZ_OVERRIDE { return true; }
-  virtual bool RecvStop() MOZ_OVERRIDE { return true; }
-  virtual bool RecvPause() MOZ_OVERRIDE { return true; }
-  virtual bool RecvResume() MOZ_OVERRIDE { return true; }
-  virtual bool RecvNotifyChildCreated(const uint64_t& child) MOZ_OVERRIDE;
-  virtual bool RecvAdoptChild(const uint64_t& child) MOZ_OVERRIDE { return false; }
+  virtual bool RecvRequestOverfill() override { return true; }
+  virtual bool RecvWillStop() override { return true; }
+  virtual bool RecvStop() override { return true; }
+  virtual bool RecvPause() override { return true; }
+  virtual bool RecvResume() override { return true; }
+  virtual bool RecvNotifyChildCreated(const uint64_t& child) override;
+  virtual bool RecvAdoptChild(const uint64_t& child) override { return false; }
   virtual bool RecvMakeSnapshot(const SurfaceDescriptor& aInSnapshot,
-                                const nsIntRect& aRect) MOZ_OVERRIDE
+                                const nsIntRect& aRect) override
   { return true; }
-  virtual bool RecvFlushRendering() MOZ_OVERRIDE { return true; }
-  virtual bool RecvNotifyRegionInvalidated(const nsIntRegion& aRegion) MOZ_OVERRIDE { return true; }
-  virtual bool RecvStartFrameTimeRecording(const int32_t& aBufferSize, uint32_t* aOutStartIndex) MOZ_OVERRIDE { return true; }
-  virtual bool RecvStopFrameTimeRecording(const uint32_t& aStartIndex, InfallibleTArray<float>* intervals) MOZ_OVERRIDE  { return true; }
-  virtual bool RecvGetTileSize(int32_t* aWidth, int32_t* aHeight) MOZ_OVERRIDE
+  virtual bool RecvFlushRendering() override { return true; }
+  virtual bool RecvNotifyRegionInvalidated(const nsIntRegion& aRegion) override { return true; }
+  virtual bool RecvStartFrameTimeRecording(const int32_t& aBufferSize, uint32_t* aOutStartIndex) override { return true; }
+  virtual bool RecvStopFrameTimeRecording(const uint32_t& aStartIndex, InfallibleTArray<float>* intervals) override  { return true; }
+  virtual bool RecvGetTileSize(int32_t* aWidth, int32_t* aHeight) override
   {
     *aWidth = gfxPlatform::GetPlatform()->GetTileWidth();
     *aHeight = gfxPlatform::GetPlatform()->GetTileHeight();
@@ -1545,15 +1556,15 @@ public:
   /**
    * Tells this CompositorParent to send a message when the compositor has received the transaction.
    */
-  virtual bool RecvRequestNotifyAfterRemotePaint() MOZ_OVERRIDE;
+  virtual bool RecvRequestNotifyAfterRemotePaint() override;
 
   virtual PLayerTransactionParent*
     AllocPLayerTransactionParent(const nsTArray<LayersBackend>& aBackendHints,
                                  const uint64_t& aId,
                                  TextureFactoryIdentifier* aTextureFactoryIdentifier,
-                                 bool *aSuccess) MOZ_OVERRIDE;
+                                 bool *aSuccess) override;
 
-  virtual bool DeallocPLayerTransactionParent(PLayerTransactionParent* aLayers) MOZ_OVERRIDE;
+  virtual bool DeallocPLayerTransactionParent(PLayerTransactionParent* aLayers) override;
 
   virtual void ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
                                    const uint64_t& aTransactionId,
@@ -1562,16 +1573,16 @@ public:
                                    bool aIsFirstPaint,
                                    bool aScheduleComposite,
                                    uint32_t aPaintSequenceNumber,
-                                   bool aIsRepeatTransaction) MOZ_OVERRIDE;
-  virtual void ForceComposite(LayerTransactionParent* aLayerTree) MOZ_OVERRIDE;
-  virtual void NotifyClearCachedResources(LayerTransactionParent* aLayerTree) MOZ_OVERRIDE;
+                                   bool aIsRepeatTransaction) override;
+  virtual void ForceComposite(LayerTransactionParent* aLayerTree) override;
+  virtual void NotifyClearCachedResources(LayerTransactionParent* aLayerTree) override;
   virtual bool SetTestSampleTime(LayerTransactionParent* aLayerTree,
-                                 const TimeStamp& aTime) MOZ_OVERRIDE;
-  virtual void LeaveTestMode(LayerTransactionParent* aLayerTree) MOZ_OVERRIDE;
+                                 const TimeStamp& aTime) override;
+  virtual void LeaveTestMode(LayerTransactionParent* aLayerTree) override;
   virtual void GetAPZTestData(const LayerTransactionParent* aLayerTree,
-                              APZTestData* aOutData) MOZ_OVERRIDE;
+                              APZTestData* aOutData) override;
 
-  virtual AsyncCompositionManager* GetCompositionManager(LayerTransactionParent* aParent) MOZ_OVERRIDE;
+  virtual AsyncCompositionManager* GetCompositionManager(LayerTransactionParent* aParent) override;
 
   void DidComposite(uint64_t aId);
 

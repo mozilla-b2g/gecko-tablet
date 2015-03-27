@@ -10,6 +10,7 @@
 #include "jsapi.h"
 #include "jscntxt.h"
 
+#include "jscntxtinlines.h"
 #include "jsobjinlines.h"
 
 using namespace js;
@@ -196,7 +197,7 @@ ScriptedIndirectProxyHandler::getOwnPropertyDescriptor(JSContext *cx, HandleObje
 
 bool
 ScriptedIndirectProxyHandler::defineProperty(JSContext *cx, HandleObject proxy, HandleId id,
-                                             MutableHandle<PropertyDescriptor> desc,
+                                             Handle<PropertyDescriptor> desc,
                                              ObjectOpResult &result) const
 {
     RootedObject handler(cx, GetIndirectProxyHandlerObject(proxy));
@@ -324,6 +325,26 @@ ScriptedIndirectProxyHandler::set(JSContext *cx, HandleObject proxy, HandleObjec
     return result.succeed();
 }
 
+static bool
+CallSetter(JSContext *cx, HandleObject obj, HandleId id, SetterOp op, unsigned attrs,
+           MutableHandleValue vp, ObjectOpResult &result)
+{
+    if (attrs & JSPROP_SETTER) {
+        RootedValue opv(cx, CastAsObjectJsval(op));
+        if (!InvokeGetterOrSetter(cx, obj, opv, 1, vp.address(), vp))
+            return false;
+        return result.succeed();
+    }
+
+    if (attrs & JSPROP_GETTER)
+        return result.fail(JSMSG_GETTER_ONLY);
+
+    if (!op)
+        return result.succeed();
+
+    return CallJSSetterOp(cx, op, obj, id, vp, result);
+}
+
 bool
 ScriptedIndirectProxyHandler::derivedSet(JSContext *cx, HandleObject proxy, HandleObject receiver,
                                          HandleId id, MutableHandleValue vp,
@@ -372,7 +393,7 @@ ScriptedIndirectProxyHandler::derivedSet(JSContext *cx, HandleObject proxy, Hand
 
         if (descIsOwn) {
             MOZ_ASSERT(desc.object() == proxy);
-            return this->defineProperty(cx, proxy, id, &desc, result);
+            return this->defineProperty(cx, proxy, id, desc, result);
         }
         return DefineProperty(cx, receiver, id, desc.value(), desc.getter(), desc.setter(),
                               desc.attributes(), result);

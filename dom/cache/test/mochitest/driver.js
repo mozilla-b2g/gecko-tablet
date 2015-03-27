@@ -30,6 +30,22 @@ function runTests(testFile, order) {
     });
   }
 
+  // adapted from dom/indexedDB/test/helpers.js
+  function clearStorage() {
+    return new Promise(function(resolve, reject) {
+      var principal = SpecialPowers.wrap(document).nodePrincipal;
+      var appId, inBrowser;
+      var nsIPrincipal = SpecialPowers.Components.interfaces.nsIPrincipal;
+      if (principal.appId != nsIPrincipal.UNKNOWN_APP_ID &&
+          principal.appId != nsIPrincipal.NO_APP_ID) {
+        appId = principal.appId;
+        inBrowser = principal.isInBrowserElement;
+      }
+      SpecialPowers.clearStorageForURI(document.documentURI, resolve, appId,
+                                       inBrowser);
+    });
+  }
+
   function loadScript(script) {
     return new Promise(function(resolve, reject) {
       var s = document.createElement("script");
@@ -81,7 +97,8 @@ function runTests(testFile, order) {
   SimpleTest.waitForExplicitFinish();
 
   if (typeof order == "undefined") {
-    order = "both"; // both by default
+    order = "sequential"; // sequential by default, see bug 1143222.
+    // TODO: Make this "both" again.
   }
 
   ok(order == "parallel" || order == "sequential" || order == "both",
@@ -99,8 +116,11 @@ function runTests(testFile, order) {
     return setupPrefs()
         .then(importDrivers)
         .then(runWorkerTest)
+        .then(clearStorage)
         .then(runServiceWorkerTest)
+        .then(clearStorage)
         .then(runFrameTest)
+        .then(clearStorage)
         .catch(function(e) {
           ok(false, "A promise was rejected during test execution: " + e);
         });
@@ -108,6 +128,7 @@ function runTests(testFile, order) {
   return setupPrefs()
       .then(importDrivers)
       .then(() => Promise.all([runWorkerTest(), runServiceWorkerTest(), runFrameTest()]))
+      .then(clearStorage)
       .catch(function(e) {
         ok(false, "A promise was rejected during test execution: " + e);
       });

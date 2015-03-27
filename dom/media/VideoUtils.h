@@ -84,7 +84,7 @@ class ShutdownThreadEvent : public nsRunnable
 public:
   explicit ShutdownThreadEvent(nsIThread* aThread) : mThread(aThread) {}
   ~ShutdownThreadEvent() {}
-  NS_IMETHOD Run() MOZ_OVERRIDE {
+  NS_IMETHOD Run() override {
     mThread->Shutdown();
     mThread = nullptr;
     return NS_OK;
@@ -219,7 +219,7 @@ class SharedThreadPool;
 
 // Returns the thread pool that is shared amongst all decoder state machines
 // for decoding streams.
-TemporaryRef<SharedThreadPool> GetMediaDecodeThreadPool();
+TemporaryRef<SharedThreadPool> GetMediaThreadPool();
 
 enum H264_PROFILE {
   H264_PROFILE_UNKNOWN                     = 0,

@@ -565,6 +565,17 @@ void mergeStacksIntoProfile(ThreadProfile& aProfile, TickSample* aSample, Native
     if (nativeIndex >= 0)
       nativeStackAddr = (uint8_t *) aNativeStack.sp_array[nativeIndex];
 
+    // If there's a native stack entry which has the same SP as a
+    // pseudo stack entry, pretend we didn't see the native stack
+    // entry.  Ditto for a native stack entry which has the same SP as
+    // a JS stack entry.  In effect this means pseudo or JS entries
+    // trump conflicting native entries.
+    if (nativeStackAddr && (pseudoStackAddr == nativeStackAddr || jsStackAddr == nativeStackAddr)) {
+      nativeStackAddr = nullptr;
+      nativeIndex--;
+      MOZ_ASSERT(pseudoStackAddr || jsStackAddr);
+    }
+
     // Sanity checks.
     MOZ_ASSERT_IF(pseudoStackAddr, pseudoStackAddr != jsStackAddr &&
                                    pseudoStackAddr != nativeStackAddr);
@@ -585,13 +596,31 @@ void mergeStacksIntoProfile(ThreadProfile& aProfile, TickSample* aSample, Native
     // Check to see if JS jit stack frame is top-most
     if (jsStackAddr > nativeStackAddr) {
       MOZ_ASSERT(jsIndex >= 0);
-      addDynamicTag(aProfile, 'c', jsFrames[jsIndex].label);
+      const JS::ProfilingFrameIterator::Frame& jsFrame = jsFrames[jsIndex];
+      addDynamicTag(aProfile, 'c', jsFrame.label);
 
-      // Stringifying optimization information is delayed until streaming
-      // time. To re-lookup the entry in the JitcodeGlobalTable, we need to
-      // store the JIT code address ('J') in the circular buffer.
-      if (jsFrames[jsIndex].hasTrackedOptimizations) {
-        aProfile.addTag(ProfileEntry('J', jsFrames[jsIndex].returnAddress));
+      // Stringifying optimization information and the JIT tier is delayed
+      // until streaming time. To re-lookup the entry in the
+      // JitcodeGlobalTable, we need to store the JIT code address in the
+      // circular buffer.
+      //
+      // Frames which may have optimization information are tagged by an 'O'
+      // entry. Otherwise they are tagged by a 'J' entry.
+      //
+      // Note that we cannot do this when we are sychronously sampling the
+      // current thread; that is, when called from profiler_get_backtrace. The
+      // captured backtrace is usually externally stored for an indeterminate
+      // amount of time, such as in nsRefreshDriver. Problematically, the
+      // stored backtrace may be alive across a GC during which the profiler
+      // itself is disabled. In that case, the JS engine is free to discard
+      // its JIT code. This means that if we inserted such 'J' entries into
+      // the buffer, nsRefreshDriver would now be holding on to a backtrace
+      // with stale JIT code return addresses.
+      if (!aSample->isSamplingCurrentThread &&
+          (jsFrame.kind == JS::ProfilingFrameIterator::Frame_Ion ||
+           jsFrame.kind == JS::ProfilingFrameIterator::Frame_Baseline)) {
+        char entryTag = jsFrame.mightHaveTrackedOptimizations ? 'O' : 'J';
+        aProfile.addTag(ProfileEntry(entryTag, jsFrames[jsIndex].returnAddress));
       }
 
       jsIndex--;
@@ -610,7 +639,10 @@ void mergeStacksIntoProfile(ThreadProfile& aProfile, TickSample* aSample, Native
   uint32_t lapCount = aProfile.bufferGeneration() - startBufferGen;
 
   // Update the JS runtime with the current profile sample buffer generation.
-  if (pseudoStack->mRuntime) {
+  //
+  // Do not do this for synchronous sampling, which create their own
+  // ProfileBuffers.
+  if (!aSample->isSamplingCurrentThread && pseudoStack->mRuntime) {
     JS::UpdateJSRuntimeProfilerSampleBufferGen(pseudoStack->mRuntime,
                                                aProfile.bufferGeneration(),
                                                lapCount);
@@ -885,33 +917,3 @@ SyncProfile* TableTicker::GetBacktrace()
 
   return profile;
 }
-
-static void print_callback(const ProfileEntry& entry, const char* tagStringData)
-{
-  switch (entry.getTagName()) {
-    case 's':
-    case 'c':
-      printf_stderr("  %s\n", tagStringData);
-  }
-}
-
-void mozilla_sampler_print_location1()
-{
-  if (!stack_key_initialized)
-    profiler_init(nullptr);
-
-  SyncProfile* syncProfile = NewSyncProfile();
-  if (!syncProfile) {
-    return;
-  }
-
-  syncProfile->BeginUnwind();
-  doSampleStackTrace(*syncProfile, nullptr, false);
-  syncProfile->EndUnwind();
-
-  printf_stderr("Backtrace:\n");
-  syncProfile->IterateTags(print_callback);
-  delete syncProfile;
-}
-
-

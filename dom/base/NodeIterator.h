@@ -22,7 +22,7 @@ class nsIDOMNode;
 namespace mozilla {
 namespace dom {
 
-class NodeIterator MOZ_FINAL : public nsIDOMNodeIterator,
+class NodeIterator final : public nsIDOMNodeIterator,
                                public nsTraversal,
                                public nsStubMutationObserver
 {
@@ -69,7 +69,7 @@ public:
     }
     // The XPCOM Detach() is fine for our purposes
 
-    bool WrapObject(JSContext *cx, JS::MutableHandle<JSObject*> aReflector);
+    bool WrapObject(JSContext *cx, JS::Handle<JSObject*> aGivenProto, JS::MutableHandle<JSObject*> aReflector);
 
 private:
     virtual ~NodeIterator();

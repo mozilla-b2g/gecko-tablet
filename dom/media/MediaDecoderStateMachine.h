@@ -89,8 +89,8 @@ hardware (via AudioStream).
 #include "MediaDecoderReader.h"
 #include "MediaDecoderOwner.h"
 #include "MediaMetadataManager.h"
-#include "MediaDecoderStateMachineScheduler.h"
 #include "mozilla/RollingMean.h"
+#include "MediaTimer.h"
 
 class nsITimer;
 
@@ -139,13 +139,15 @@ public:
     DECODER_STATE_DECODING_NONE,
     DECODER_STATE_DECODING_METADATA,
     DECODER_STATE_WAIT_FOR_RESOURCES,
+    DECODER_STATE_WAIT_FOR_CDM,
     DECODER_STATE_DECODING_FIRSTFRAME,
     DECODER_STATE_DORMANT,
     DECODER_STATE_DECODING,
     DECODER_STATE_SEEKING,
     DECODER_STATE_BUFFERING,
     DECODER_STATE_COMPLETED,
-    DECODER_STATE_SHUTDOWN
+    DECODER_STATE_SHUTDOWN,
+    DECODER_STATE_ERROR
   };
 
   State GetState() {
@@ -211,8 +213,8 @@ public:
   void Play()
   {
     MOZ_ASSERT(NS_IsMainThread());
-    nsRefPtr<nsRunnable> r = NS_NewRunnableMethod(this, &MediaDecoderStateMachine::PlayInternal);
-    GetStateMachineThread()->Dispatch(r, NS_DISPATCH_NORMAL);
+    RefPtr<nsRunnable> r = NS_NewRunnableMethod(this, &MediaDecoderStateMachine::PlayInternal);
+    TaskQueue()->Dispatch(r);
   }
 
 private:
@@ -311,21 +313,30 @@ public:
 
   void NotifyDataArrived(const char* aBuffer, uint32_t aLength, int64_t aOffset);
 
-  // Returns the shared state machine thread.
-  nsIEventTarget* GetStateMachineThread() const;
+  // Returns the state machine task queue.
+  MediaTaskQueue* TaskQueue() const { return mTaskQueue; }
 
   // Calls ScheduleStateMachine() after taking the decoder lock. Also
   // notifies the decoder thread in case it's waiting on the decoder lock.
   void ScheduleStateMachineWithLockAndWakeDecoder();
 
-  // Schedules the shared state machine thread to run the state machine
-  // in aUsecs microseconds from now, if it's not already scheduled to run
-  // earlier, in which case the request is discarded.
-  nsresult ScheduleStateMachine(int64_t aUsecs = 0);
+  // Schedules the shared state machine thread to run the state machine.
+  void ScheduleStateMachine();
 
-  // Callback function registered with MediaDecoderStateMachineScheduler
-  // to run state machine cycles.
-  static nsresult TimeoutExpired(void* aClosure);
+  // Invokes ScheduleStateMachine to run in |aMicroseconds| microseconds,
+  // unless it's already scheduled to run earlier, in which case the
+  // request is discarded.
+  void ScheduleStateMachineIn(int64_t aMicroseconds);
+
+  void OnDelayedSchedule()
+  {
+    MOZ_ASSERT(OnStateMachineThread());
+    ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
+    mDelayedScheduler.CompleteRequest();
+    ScheduleStateMachine();
+  }
+
+  void NotReached() { MOZ_DIAGNOSTIC_ASSERT(false); }
 
   // Set the media fragment end time. aEndTime is in microseconds.
   void SetFragmentEndTime(int64_t aEndTime);
@@ -357,9 +368,8 @@ public:
   // be held.
   bool IsPlaying() const;
 
-  // Dispatch DoNotifyWaitingForResourcesStatusChanged task to the task queue.
   // Called when the reader may have acquired the hardware resources required
-  // to begin decoding. The decoder monitor must be held while calling this.
+  // to begin decoding.
   void NotifyWaitingForResourcesStatusChanged();
 
   // Notifies the state machine that should minimize the number of samples
@@ -397,11 +407,9 @@ public:
     WaitRequestRef(aRejection.mType).Complete();
   }
 
-  // Resets all state related to decoding, emptying all buffers etc.
-  void ResetDecode();
-
-private:
-  void AcquireMonitorAndInvokeDecodeError();
+  // Resets all state related to decoding and playback, emptying all buffers
+  // and aborting all pending operations on the decode task queue.
+  void Reset();
 
 protected:
   virtual ~MediaDecoderStateMachine();
@@ -419,7 +427,7 @@ protected:
   public:
     explicit WakeDecoderRunnable(MediaDecoderStateMachine* aSM)
       : mMutex("WakeDecoderRunnable"), mStateMachine(aSM) {}
-    NS_IMETHOD Run() MOZ_OVERRIDE
+    NS_IMETHOD Run() override
     {
       nsRefPtr<MediaDecoderStateMachine> stateMachine;
       {
@@ -454,8 +462,6 @@ protected:
   MediaQueue<VideoData>& VideoQueue() { return mVideoQueue; }
 
   nsresult FinishDecodeFirstFrame();
-
-  nsAutoPtr<MetadataTags> mMetadataTags;
 
   // True if our buffers of decoded audio are not full, and we should
   // decode more.
@@ -503,14 +509,6 @@ protected:
 
   // Dispatches an asynchronous event to update the media element's ready state.
   void UpdateReadyState();
-
-  // Resets playback timing data. Called when we seek, on the decode thread.
-  void ResetPlayback();
-
-  // Orders the Reader to stop decoding, and blocks until the Reader
-  // has stopped decoding and finished delivering samples, then calls
-  // ResetPlayback() to discard all enqueued data.
-  void FlushDecoding();
 
   // Called when AudioSink reaches the end. |mPlayStartTime| and
   // |mPlayDuration| are updated to provide a good base for calculating video
@@ -580,8 +578,6 @@ protected:
   // decode thread.
   void DecodeError();
 
-  void StartWaitForResources();
-
   // Dispatches a task to the decode task queue to begin decoding metadata.
   // This is threadsafe and can be called on any thread.
   // The decoder monitor must be held.
@@ -649,12 +645,9 @@ protected:
   // must be held when calling this. Called on the decode thread.
   int64_t GetDecodedAudioDuration();
 
-  // Load metadata. Called on the decode thread. The decoder monitor
-  // must be held with exactly one lock count.
-  nsresult DecodeMetadata();
-
-  // Wraps the call to DecodeMetadata(), signals a DecodeError() on failure.
-  void CallDecodeMetadata();
+  // Promise callbacks for metadata reading.
+  void OnMetadataRead(MetadataHolder* aMetadata);
+  void OnMetadataNotRead(ReadMetadataFailureReason aReason);
 
   // Initiate first content decoding. Called on the state machine thread.
   // The decoder monitor must be held with exactly one lock count.
@@ -688,9 +681,6 @@ protected:
   // inserting silence depending on the timing of the audio packet.
   void SendStreamAudio(AudioData* aAudio, DecodedStreamData* aStream,
                        AudioSegment* aOutput);
-
-  // State machine thread run function. Defers to RunStateMachine().
-  nsresult CallRunStateMachine();
 
   // Performs one "cycle" of the state machine. Polls the state, and may send
   // a video frame to be displayed, and generally manages the decode. Called
@@ -726,9 +716,10 @@ protected:
   // Called by the AudioSink to signal errors.
   void OnAudioSinkError();
 
-  // The state machine may move into DECODING_METADATA if we are in
-  // DECODER_STATE_WAIT_FOR_RESOURCES.
-  void DoNotifyWaitingForResourcesStatusChanged();
+  void DispatchOnAudioSinkError()
+  {
+    TaskQueue()->Dispatch(NS_NewRunnableMethod(this, &MediaDecoderStateMachine::OnAudioSinkError));
+  }
 
   // Return true if the video decoder's decode speed can not catch up the
   // play time.
@@ -745,9 +736,60 @@ protected:
   // state machine, audio and main threads.
   nsRefPtr<MediaDecoder> mDecoder;
 
-  // Used to schedule state machine cycles. This should never outlive
-  // the life cycle of the state machine.
-  const nsRefPtr<MediaDecoderStateMachineScheduler> mScheduler;
+  // Task queue for running the state machine.
+  nsRefPtr<MediaTaskQueue> mTaskQueue;
+
+  // True is we are decoding a realtime stream, like a camera stream.
+  bool mRealTime;
+
+  // True if we've dispatched a task to run the state machine but the task has
+  // yet to run.
+  bool mDispatchedStateMachine;
+
+  // Class for managing delayed dispatches of the state machine.
+  class DelayedScheduler {
+  public:
+    explicit DelayedScheduler(MediaDecoderStateMachine* aSelf)
+      : mSelf(aSelf), mMediaTimer(new MediaTimer()) {}
+
+    bool IsScheduled() const { return !mTarget.IsNull(); }
+
+    void Reset()
+    {
+      MOZ_ASSERT(mSelf->OnStateMachineThread(),
+                 "Must be on state machine queue to disconnect");
+      if (IsScheduled()) {
+        mRequest.Disconnect();
+        mTarget = TimeStamp();
+      }
+    }
+
+    void Ensure(mozilla::TimeStamp& aTarget)
+    {
+      if (IsScheduled() && mTarget <= aTarget) {
+        return;
+      }
+      Reset();
+      mTarget = aTarget;
+      mRequest.Begin(mMediaTimer->WaitUntil(mTarget, __func__)->RefableThen(
+        mSelf->TaskQueue(), __func__, mSelf,
+        &MediaDecoderStateMachine::OnDelayedSchedule,
+        &MediaDecoderStateMachine::NotReached));
+    }
+
+    void CompleteRequest()
+    {
+      mRequest.Complete();
+      mTarget = TimeStamp();
+    }
+
+  private:
+    MediaDecoderStateMachine* mSelf;
+    nsRefPtr<MediaTimer> mMediaTimer;
+    MediaPromiseConsumerHolder<mozilla::MediaTimerPromise> mRequest;
+    TimeStamp mTarget;
+
+  } mDelayedScheduler;
 
   // Time at which the last video sample was requested. If it takes too long
   // before the sample arrives, we will increase the amount of audio we buffer.
@@ -955,7 +997,7 @@ protected:
   // samples we must consume before are considered to be finished prerolling.
   uint32_t AudioPrerollUsecs() const
   {
-    if (mScheduler->IsRealTime()) {
+    if (IsRealTime()) {
       return 0;
     }
 
@@ -966,7 +1008,7 @@ protected:
 
   uint32_t VideoPrerollFrames() const
   {
-    return mScheduler->IsRealTime() ? 0 : GetAmpleVideoFrames() / 2;
+    return IsRealTime() ? 0 : GetAmpleVideoFrames() / 2;
   }
 
   bool DonePrerollingAudio()
@@ -1128,9 +1170,14 @@ protected:
   // we were at before the seek.
   int64_t mCurrentTimeBeforeSeek;
 
+  // Track our request for metadata from the reader.
+  MediaPromiseConsumerHolder<MediaDecoderReader::MetadataPromise> mMetadataRequest;
+
   // Stores presentation info required for playback. The decoder monitor
   // must be held when accessing this.
   MediaInfo mInfo;
+
+  nsAutoPtr<MetadataTags> mMetadataTags;
 
   mozilla::MediaMetadataManager mMetadataManager;
 

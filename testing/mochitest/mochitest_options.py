@@ -292,20 +292,6 @@ class MochitestOptions(optparse.OptionParser):
           "Default cap is 30 runs, which can be overwritten with the --repeat parameter.",
           "default": False,
           }],
-        [["--run-only-tests"],
-         {"action": "store",
-          "type": "string",
-          "dest": "runOnlyTests",
-          "help": "JSON list of tests that we only want to run. [DEPRECATED- please use --test-manifest]",
-          "default": None,
-          }],
-        [["--test-manifest"],
-         {"action": "store",
-          "type": "string",
-          "dest": "testManifest",
-          "help": "JSON list of tests to specify 'runtests'. Old format for mobile specific tests",
-          "default": None,
-          }],
         [["--manifest"],
          {"action": "store",
           "type": "string",
@@ -585,27 +571,6 @@ class MochitestOptions(optparse.OptionParser):
                 self.error("%s not found, cannot automate VMware recording." %
                            mochitest.vmwareHelperPath)
 
-        if options.testManifest and options.runOnlyTests:
-            self.error(
-                "Please use --test-manifest only and not --run-only-tests")
-
-        if options.runOnlyTests:
-            if not os.path.exists(
-                os.path.abspath(
-                    os.path.join(
-                        here,
-                        options.runOnlyTests))):
-                self.error(
-                    "unable to find --run-only-tests file '%s'" %
-                    options.runOnlyTests)
-            options.runOnly = True
-            options.testManifest = options.runOnlyTests
-            options.runOnlyTests = None
-
-        if options.manifestFile and options.testManifest:
-            self.error(
-                "Unable to support both --manifest and --test-manifest/--run-only-tests at the same time")
-
         if options.webapprtContent and options.webapprtChrome:
             self.error(
                 "Only one of --webapprt-content and --webapprt-chrome may be given.")
@@ -867,7 +832,7 @@ class B2GOptions(MochitestOptions):
         defaults["testPath"] = ""
         defaults["extensionsToExclude"] = ["specialpowers"]
         # See dependencies of bug 1038943.
-        defaults["defaultLeakThreshold"] = 5404
+        defaults["defaultLeakThreshold"] = 5536
         self.set_defaults(**defaults)
 
     def verifyRemoteOptions(self, options):

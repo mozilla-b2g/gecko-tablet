@@ -28,11 +28,11 @@ body {
 }
 
 .sans-serif {
-  font-family: sans-serif;
+  font-family: "Fira Sans", Helvetica, Arial, sans-serif;
 }
 
 .serif {
-  font-family: serif;
+  font-family: "Charis SIL", Georgia, "Times New Roman", serif;
 }
 
 .font-size1 {
@@ -93,7 +93,7 @@ body {
   font-size: 0.9rem;
   line-height: 1.33rem;
   padding-bottom: 4px;
-  font-family: sans-serif;
+  font-family: "Fira Sans", Helvetica, Arial, sans-serif;
   text-decoration: none;
   border-bottom: 1px solid;
   color: #0095dd;
@@ -171,19 +171,27 @@ body {
 }
 
 .content p,
-.content img,
 .content code,
 .content pre,
 .content blockquote,
 .content ul,
 .content ol,
-.content li {
+.content li,
+.content figure,
+.content .wp-caption {
   margin: 0 0 30px 0;
 }
 
-.content .wp-caption,
-.content figure {
-  margin: 0 30px 30px 30px;
+.content p > img:only-child,
+.content p > a:only-child > img:only-child,
+.content .wp-caption img,
+.content figure img {
+  display: block;
+}
+
+.content img[moz-reader-center] {
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .content .caption,
@@ -231,7 +239,7 @@ body {
 /*======= Controls toolbar =======*/
 
 .toolbar {
-  font-family: sans-serif;
+  font-family: "Fira Sans", Helvetica, Arial, sans-serif;
   position: fixed;
   height: 100%;
   top: 0px;
@@ -257,6 +265,7 @@ body {
   border-left: 0;
   border-right: 0;
   border-bottom: 1px solid #c1c1c1;
+  padding: 0;
 }
 
 .button[hidden] {
@@ -286,7 +295,7 @@ body {
   background-color: #FBFBFB;
   visibility: hidden;
   border-radius: 4px;
-  border: 1px solid #B5B5B5;
+  border: 1px 1px 0 1px solid #B5B5B5;
   box-shadow: 0px 1px 12px #666;
 }
 
@@ -319,6 +328,19 @@ body {
   flex-direction: row;
 }
 
+#font-type-buttons > button:first-child {
+  border-top-left-radius: 3px;
+}
+#font-type-buttons > button:last-child {
+  border-top-right-radius: 3px;
+}
+#color-scheme-buttons > button:first-child {
+  border-bottom-left-radius: 3px;
+}
+#color-scheme-buttons > button:last-child {
+  border-bottom-right-radius: 3px;
+}
+
 #font-type-buttons > button,
 #font-size-buttons > button,
 #color-scheme-buttons > button {
@@ -337,7 +359,7 @@ body {
 }
 
 #color-scheme-buttons > button {
-  width: 33%;
+  width: 33.33%;
   font-size: 14px;
 }
 
@@ -350,12 +372,13 @@ body {
 #font-type-buttons > button {
   display: inline-block;
   font-size: 48px;
-  border-bottom: 3px solid transparent;
 }
 
 #font-type-buttons > button:active:hover,
-#font-type-buttons > button.selected {
-  border-bottom: 3px solid #FC6420;
+#font-type-buttons > button.selected,
+#color-scheme-buttons > button:active:hover,
+#color-scheme-buttons > button.selected {
+  box-shadow: inset 0 -3px 0 0 #FC6420;
 }
 
 #font-type-buttons > button > div {
@@ -364,7 +387,8 @@ body {
 }
 
 .button:hover,
-#font-size-buttons > button:hover {
+#font-size-buttons > button:hover,
+#font-type-buttons > button:hover {
   background-color: #EBEBEB;
 }
 
@@ -381,7 +405,7 @@ body {
 }
 
 .serif-button {
-  font-family: serif;
+  font-family: "Charis SIL", Georgia, "Times New Roman", serif;
 }
 
 .minus-button,
@@ -438,4 +462,10 @@ body {
 
 .plus-button {
   background-image: url("chrome://global/skin/reader/RM-Plus-24x24.svg");
+}
+
+@media print {
+  .toolbar {
+    display: none;
+  }
 }

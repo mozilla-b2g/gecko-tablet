@@ -177,7 +177,8 @@ mozJSSubScriptLoader::ReadScript(nsIURI *uri, JSContext *cx, JSObject *targetObj
         }
 
         if (!reuseGlobal) {
-            JS::Compile(cx, target_obj, options, srcBuf, script);
+            options.setHasPollutedScope(!JS_IsGlobalObject(target_obj));
+            JS::Compile(cx, options, srcBuf, script);
         } else {
             AutoObjectVector scopeChain(cx);
             if (!JS_IsGlobalObject(target_obj) &&
@@ -192,8 +193,9 @@ mozJSSubScriptLoader::ReadScript(nsIURI *uri, JSContext *cx, JSObject *targetObj
         // We only use lazy source when no special encoding is specified because
         // the lazy source loader doesn't know the encoding.
         if (!reuseGlobal) {
-            options.setSourceIsLazy(true);
-            JS::Compile(cx, target_obj, options, buf.get(), len, script);
+            options.setSourceIsLazy(true)
+                   .setHasPollutedScope(!JS_IsGlobalObject(target_obj));
+            JS::Compile(cx, options, buf.get(), len, script);
         } else {
             AutoObjectVector scopeChain(cx);
             if (!JS_IsGlobalObject(target_obj) &&

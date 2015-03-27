@@ -37,6 +37,7 @@ SimpleTest.registerCleanupFunction(() => {
   Services.prefs.clearUserPref("devtools.webide.autoinstallADBHelper");
   Services.prefs.clearUserPref("devtools.webide.autoinstallFxdtAdapters");
   Services.prefs.clearUserPref("devtools.webide.sidebars");
+  Services.prefs.clearUserPref("devtools.webide.busyTimeout");
 });
 
 function openWebIDE(autoInstallAddons) {
@@ -144,7 +145,7 @@ function lazyIframeIsLoaded(iframe) {
   let deferred = promise.defer();
   iframe.addEventListener("load", function onLoad() {
     iframe.removeEventListener("load", onLoad, true);
-    deferred.resolve();
+    deferred.resolve(nextTick());
   }, true);
   return deferred.promise;
 }

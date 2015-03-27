@@ -146,9 +146,11 @@ IonBuilder::IonBuilder(JSContext *analysisContext, CompileCompartment *comp,
     loopHeaders_(*temp),
     inspector(inspector),
     inliningDepth_(inliningDepth),
+    inlinedBytecodeLength_(0),
     numLoopRestarts_(0),
     failedBoundsCheck_(info->script()->failedBoundsCheck()),
     failedShapeGuard_(info->script()->failedShapeGuard()),
+    failedLexicalCheck_(info->script()->failedLexicalCheck()),
     nonStringIteration_(false),
     lazyArguments_(nullptr),
     inlineCallInfo_(nullptr),
@@ -639,6 +641,10 @@ IonBuilder::analyzeNewLoopTypes(MBasicBlock *entry, jsbytecode *start, jsbytecod
               case JSOP_UNDEFINED:
                 type = MIRType_Undefined;
                 break;
+              case JSOP_GIMPLICITTHIS:
+                if (!script()->hasPollutedGlobalScope())
+                    type = MIRType_Undefined;
+                break;
               case JSOP_NULL:
                 type = MIRType_Null;
                 break;
@@ -771,6 +777,9 @@ IonBuilder::build()
     if (!init())
         return false;
 
+    if (script()->hasBaselineScript())
+        script()->baselineScript()->resetMaxInliningDepth();
+
     if (!setCurrentAndSpecializePhis(newBlock(pc)))
         return false;
     if (!current)
@@ -877,6 +886,12 @@ IonBuilder::build()
     // Discard unreferenced & pre-allocated resume points.
     replaceMaybeFallbackFunctionGetter(nullptr);
 
+    if (script_->hasBaselineScript() &&
+        inlinedBytecodeLength_ > script_->baselineScript()->inlinedBytecodeLength())
+    {
+        script_->baselineScript()->setInlinedBytecodeLength(inlinedBytecodeLength_);
+    }
+
     if (!maybeAddOsrTypeBarriers())
         return false;
 
@@ -953,6 +968,9 @@ IonBuilder::buildInline(IonBuilder *callerBuilder, MResumePoint *callerResumePoi
 
     if (callerBuilder->failedShapeGuard_)
         failedShapeGuard_ = true;
+
+    if (callerBuilder->failedLexicalCheck_)
+        failedLexicalCheck_ = true;
 
     // Generate single entrance block.
     if (!setCurrentAndSpecializePhis(newBlock(pc)))
@@ -1188,8 +1206,10 @@ IonBuilder::initScopeChain(MDefinition *callee)
                 return false;
         }
     } else {
-        // For CNG global scripts, the scope chain is the global object.
-        MOZ_ASSERT(script()->compileAndGo());
+        // For global scripts without a polluted global scope, the scope chain
+        // is the global object.
+        MOZ_ASSERT(!script()->isForEval());
+        MOZ_ASSERT(!script()->hasPollutedGlobalScope());
         scope = constant(ObjectValue(script()->global()));
     }
 
@@ -1579,6 +1599,7 @@ IonBuilder::inspectOpcode(JSOp op)
         return jsop_label();
 
       case JSOP_UNDEFINED:
+        // If this ever changes, change what JSOP_GIMPLICITTHIS does too.
         return pushConstant(UndefinedValue());
 
       case JSOP_IFEQ:
@@ -1803,16 +1824,17 @@ IonBuilder::inspectOpcode(JSOp op)
       case JSOP_GETGNAME:
       {
         PropertyName *name = info().getAtom(pc)->asPropertyName();
-        return jsop_getgname(name);
+        if (!script()->hasPollutedGlobalScope())
+            return jsop_getgname(name);
+        return jsop_getname(name);
       }
-
-      case JSOP_BINDGNAME:
-        return pushConstant(ObjectValue(script()->global()));
 
       case JSOP_SETGNAME:
       case JSOP_STRICTSETGNAME:
       {
         PropertyName *name = info().getAtom(pc)->asPropertyName();
+        if (script()->hasPollutedGlobalScope())
+            return jsop_setprop(name);
         JSObject *obj = &script()->global();
         return setStaticName(obj, name);
       }
@@ -1829,6 +1851,10 @@ IonBuilder::inspectOpcode(JSOp op)
         return jsop_intrinsic(name);
       }
 
+      case JSOP_BINDGNAME:
+        if (!script()->hasPollutedGlobalScope())
+            return pushConstant(ObjectValue(script()->global()));
+        // Fall through to JSOP_BINDNAME
       case JSOP_BINDNAME:
         return jsop_bindname(info().getName(pc));
 
@@ -1972,17 +1998,26 @@ IonBuilder::inspectOpcode(JSOp op)
       case JSOP_DEBUGGER:
         return jsop_debugger();
 
+      case JSOP_GIMPLICITTHIS:
+        if (!script()->hasPollutedGlobalScope())
+            return pushConstant(UndefinedValue());
+
+        // Just fall through to the unsupported bytecode case.
+        break;
+
       default:
-        // Track a simpler message, since the actionable abort message is a
-        // static string, and the internal opcode name isn't an actionable
-        // thing anyways.
-        trackActionableAbort("Unsupported bytecode");
-#ifdef DEBUG
-        return abort("Unsupported opcode: %s", js_CodeName[op]);
-#else
-        return abort("Unsupported opcode: %d", op);
-#endif
+        break;
     }
+
+    // Track a simpler message, since the actionable abort message is a
+    // static string, and the internal opcode name isn't an actionable
+    // thing anyways.
+    trackActionableAbort("Unsupported bytecode");
+#ifdef DEBUG
+    return abort("Unsupported opcode: %s", js_CodeName[op]);
+#else
+    return abort("Unsupported opcode: %d", op);
+#endif
 }
 
 // Given that the current control flow structure has ended forcefully,
@@ -3624,15 +3659,16 @@ IonBuilder::improveTypesAtTest(MDefinition *ins, bool trueBranch, MTest *test)
       case MDefinition::Op_Not:
         return improveTypesAtTest(ins->toNot()->getOperand(0), !trueBranch, test);
       case MDefinition::Op_IsObject: {
-        TemporaryTypeSet *oldType = ins->getOperand(0)->resultTypeSet();
+        MDefinition *subject = ins->getOperand(0);
+        TemporaryTypeSet *oldType = subject->resultTypeSet();
 
         // Create temporary typeset equal to the type if there is no resultTypeSet.
         TemporaryTypeSet tmp;
         if (!oldType) {
-            if (ins->type() == MIRType_Value)
+            if (subject->type() == MIRType_Value)
                 return true;
             oldType = &tmp;
-            tmp.addType(TypeSet::PrimitiveType(ValueTypeFromMIRType(ins->type())), alloc_->lifoAlloc());
+            tmp.addType(TypeSet::PrimitiveType(ValueTypeFromMIRType(subject->type())), alloc_->lifoAlloc());
         }
 
         if (oldType->unknown())
@@ -3647,7 +3683,7 @@ IonBuilder::improveTypesAtTest(MDefinition *ins, bool trueBranch, MTest *test)
         if (!type)
             return false;
 
-        return replaceTypeSet(ins->getOperand(0), type, test);
+        return replaceTypeSet(subject, type, test);
       }
       case MDefinition::Op_Phi: {
         bool branchIsAnd = true;
@@ -4826,59 +4862,10 @@ IonBuilder::makeInliningDecision(JSObject *targetArg, CallInfo &callInfo)
     // Heuristics!
     JSScript *targetScript = target->nonLazyScript();
 
-    // Cap the inlining depth.
-    if (js_JitOptions.isSmallFunction(targetScript)) {
-        if (inliningDepth_ >= optimizationInfo().smallFunctionMaxInlineDepth()) {
-            trackOptimizationOutcome(TrackedOutcome::CantInlineExceededDepth);
-            return DontInline(targetScript, "Vetoed: exceeding allowed inline depth");
-        }
-    } else {
-        if (inliningDepth_ >= optimizationInfo().maxInlineDepth()) {
-            trackOptimizationOutcome(TrackedOutcome::CantInlineExceededDepth);
-            return DontInline(targetScript, "Vetoed: exceeding allowed inline depth");
-        }
-
-        if (targetScript->hasLoops()) {
-            // Currently, we are not inlining function which have loops because
-            // the cost inherent to inlining the function overcome the cost
-            // calling it. The reason is not yet clear to everybody, and we
-            // hope that we might be able to remove this restriction in the
-            // future.
-            //
-            // In the mean time, if we have opportunities to optimize the
-            // loop better, then we should try it. Such opportunity might be
-            // suggested by:
-            //
-            //  - Constant as argument. Inlining a function called with a
-            //    constant, might help GVN, as well as UCE, and potentially
-            //    improve bound check removal.
-            //
-            //  - Inner function as argument. Inlining a function called
-            //    with an inner function might help scalar replacement at
-            //    removing the scope chain, and thus using registers within
-            //    the loop instead of writting everything back to memory.
-            bool hasOpportunities = false;
-            for (size_t i = 0, e = callInfo.argv().length(); !hasOpportunities && i < e; i++) {
-                MDefinition *arg = callInfo.argv()[i];
-                hasOpportunities = arg->isLambda() || arg->isConstantValue();
-            }
-
-            if (!hasOpportunities) {
-                trackOptimizationOutcome(TrackedOutcome::CantInlineBigLoop);
-                return DontInline(targetScript, "Vetoed: big function that contains a loop");
-            }
-        }
-
-        // Caller must not be excessively large.
-        if (script()->length() >= optimizationInfo().inliningMaxCallerBytecodeLength()) {
-            trackOptimizationOutcome(TrackedOutcome::CantInlineBigCaller);
-            return DontInline(targetScript, "Vetoed: caller excessively large");
-        }
-    }
-
     // Callee must not be excessively large.
     // This heuristic also applies to the callsite as a whole.
-    if (targetScript->length() > optimizationInfo().inlineMaxTotalBytecodeLength()) {
+    bool offThread = options.offThreadCompilationAvailable();
+    if (targetScript->length() > optimizationInfo().inlineMaxBytecodePerCallSite(offThread)) {
         trackOptimizationOutcome(TrackedOutcome::CantInlineBigCallee);
         return DontInline(targetScript, "Vetoed: callee excessively large");
     }
@@ -4896,9 +4883,88 @@ IonBuilder::makeInliningDecision(JSObject *targetArg, CallInfo &callInfo)
         return InliningDecision_WarmUpCountTooLow;
     }
 
+    // Don't inline if the callee is known to inline a lot of code, to avoid
+    // huge MIR graphs.
+    uint32_t inlinedBytecodeLength = targetScript->baselineScript()->inlinedBytecodeLength();
+    if (inlinedBytecodeLength > optimizationInfo().inlineMaxCalleeInlinedBytecodeLength()) {
+        trackOptimizationOutcome(TrackedOutcome::CantInlineBigCalleeInlinedBytecodeLength);
+        return DontInline(targetScript, "Vetoed: callee inlinedBytecodeLength is too big");
+    }
+
+    IonBuilder *outerBuilder = outermostBuilder();
+
+    // Cap the total bytecode length we inline under a single script, to avoid
+    // excessive inlining in pathological cases.
+    size_t totalBytecodeLength = outerBuilder->inlinedBytecodeLength_ + targetScript->length();
+    if (totalBytecodeLength > optimizationInfo().inlineMaxTotalBytecodeLength()) {
+        trackOptimizationOutcome(TrackedOutcome::CantInlineExceededTotalBytecodeLength);
+        return DontInline(targetScript, "Vetoed: exceeding max total bytecode length");
+    }
+
+    // Cap the inlining depth.
+
+    uint32_t maxInlineDepth;
+    if (js_JitOptions.isSmallFunction(targetScript)) {
+        maxInlineDepth = optimizationInfo().smallFunctionMaxInlineDepth();
+    } else {
+        maxInlineDepth = optimizationInfo().maxInlineDepth();
+
+        // Caller must not be excessively large.
+        if (script()->length() >= optimizationInfo().inliningMaxCallerBytecodeLength()) {
+            trackOptimizationOutcome(TrackedOutcome::CantInlineBigCaller);
+            return DontInline(targetScript, "Vetoed: caller excessively large");
+        }
+    }
+
+    BaselineScript *outerBaseline = outermostBuilder()->script()->baselineScript();
+    if (inliningDepth_ >= maxInlineDepth) {
+        // We hit the depth limit and won't inline this function. Give the
+        // outermost script a max inlining depth of 0, so that it won't be
+        // inlined in other scripts. This heuristic is currently only used
+        // when we're inlining scripts with loops, see the comment below.
+        outerBaseline->setMaxInliningDepth(0);
+
+        trackOptimizationOutcome(TrackedOutcome::CantInlineExceededDepth);
+        return DontInline(targetScript, "Vetoed: exceeding allowed inline depth");
+    }
+
+    // Inlining functions with loops can be complicated. For instance, if we're
+    // close to the inlining depth limit and we inline the function f below, we
+    // can no longer inline the call to g:
+    //
+    //   function f() {
+    //      while (cond) {
+    //          g();
+    //      }
+    //   }
+    //
+    // If the loop has many iterations, it's more efficient to call f and inline
+    // g in f.
+    //
+    // To avoid this problem, we record a separate max inlining depth for each
+    // script, indicating at which depth we won't be able to inline all functions
+    // we inlined this time. This solves the issue above, because we will only
+    // inline f if it means we can also inline g.
+    if (targetScript->hasLoops() &&
+        inliningDepth_ >= targetScript->baselineScript()->maxInliningDepth())
+    {
+        trackOptimizationOutcome(TrackedOutcome::CantInlineExceededDepth);
+        return DontInline(targetScript, "Vetoed: exceeding allowed script inline depth");
+    }
+
+    // Update the max depth at which we can inline the outer script.
+    MOZ_ASSERT(maxInlineDepth > inliningDepth_);
+    uint32_t scriptInlineDepth = maxInlineDepth - inliningDepth_ - 1;
+    if (scriptInlineDepth < outerBaseline->maxInliningDepth())
+        outerBaseline->setMaxInliningDepth(scriptInlineDepth);
+
+    // End of heuristics, we will inline this function.
+
     // TI calls ObjectStateChange to trigger invalidation of the caller.
     TypeSet::ObjectKey *targetKey = TypeSet::ObjectKey::get(target);
     targetKey->watchStateChangeForInlinedCall(constraints());
+
+    outerBuilder->inlinedBytecodeLength_ += targetScript->length();
 
     return InliningDecision_Inline;
 }
@@ -4945,7 +5011,8 @@ IonBuilder::selectInliningTargets(const ObjectVector &targets, CallInfo &callInf
             // Enforce a maximum inlined bytecode limit at the callsite.
             if (inlineable && target->as<JSFunction>().isInterpreted()) {
                 totalSize += target->as<JSFunction>().nonLazyScript()->length();
-                if (totalSize > optimizationInfo().inlineMaxTotalBytecodeLength())
+                bool offThread = options.offThreadCompilationAvailable();
+                if (totalSize > optimizationInfo().inlineMaxBytecodePerCallSite(offThread))
                     inlineable = false;
             }
         } else {
@@ -6402,14 +6469,6 @@ IonBuilder::jsop_newarray(uint32_t count)
                                     NewArray_FullyAllocating);
     current->add(ins);
     current->push(ins);
-
-    TemporaryTypeSet::DoubleConversion conversion =
-        ins->resultTypeSet()->convertDoubleElements(constraints());
-
-    if (conversion == TemporaryTypeSet::AlwaysConvertToDoubles)
-        templateObject->as<ArrayObject>().setShouldConvertDoubleElements();
-    else
-        templateObject->as<ArrayObject>().clearShouldConvertDoubleElements();
     return true;
 }
 
@@ -6515,9 +6574,7 @@ IonBuilder::jsop_initelem_array()
     MElements *elements = MElements::New(alloc(), obj);
     current->add(elements);
 
-    NativeObject *templateObject = obj->toNewArray()->templateObject();
-
-    if (templateObject->shouldConvertDoubleElements()) {
+    if (obj->toNewArray()->convertDoubleElements()) {
         MInstruction *valueDouble = MToDouble::New(alloc(), value);
         current->add(valueDouble);
         value = valueDouble;
@@ -7533,7 +7590,7 @@ bool
 IonBuilder::jsop_getname(PropertyName *name)
 {
     MDefinition *object;
-    if (js_CodeSpec[*pc].format & JOF_GNAME) {
+    if (IsGlobalOp(JSOp(*pc)) && !script()->hasPollutedGlobalScope()) {
         MInstruction *global = constant(ObjectValue(script()->global()));
         object = global;
     } else {
@@ -10521,7 +10578,7 @@ IonBuilder::addShapeGuardsForGetterSetter(MDefinition *obj, JSObject *holder, Sh
     MDefinition *holderDef = constantMaybeNursery(holder);
     addShapeGuard(holderDef, holderShape, Bailout_ShapeGuard);
 
-    return addShapeGuardPolymorphic(obj, receiverShapes, receiverUnboxedGroups);
+    return addGuardReceiverPolymorphic(obj, receiverShapes, receiverUnboxedGroups);
 }
 
 bool
@@ -10787,7 +10844,7 @@ IonBuilder::getPropTryInlineAccess(bool *emitted, MDefinition *obj, PropertyName
         return false;
 
     if (sameSlot && unboxedGroups.empty()) {
-        obj = addShapeGuardPolymorphic(obj, nativeShapes, unboxedGroups);
+        obj = addGuardReceiverPolymorphic(obj, nativeShapes, unboxedGroups);
         if (!obj)
             return false;
 
@@ -11467,7 +11524,7 @@ IonBuilder::setPropTryInlineAccess(bool *emitted, MDefinition *obj,
         return false;
 
     if (sameSlot && unboxedGroups.empty()) {
-        obj = addShapeGuardPolymorphic(obj, nativeShapes, unboxedGroups);
+        obj = addGuardReceiverPolymorphic(obj, nativeShapes, unboxedGroups);
         if (!obj)
             return false;
 
@@ -12379,11 +12436,12 @@ IonBuilder::addShapeGuard(MDefinition *obj, Shape *const shape, BailoutKind bail
 }
 
 MInstruction *
-IonBuilder::addGroupGuard(MDefinition *obj, ObjectGroup *group, BailoutKind bailoutKind)
+IonBuilder::addGroupGuard(MDefinition *obj, ObjectGroup *group, BailoutKind bailoutKind,
+                          bool checkUnboxedExpando)
 {
     MGuardObjectGroup *guard = MGuardObjectGroup::New(alloc(), obj, group,
                                                       /* bailOnEquality = */ false,
-                                                      bailoutKind);
+                                                      bailoutKind, checkUnboxedExpando);
     current->add(guard);
 
     // If a shape guard failed in the past, don't optimize group guards.
@@ -12398,15 +12456,19 @@ IonBuilder::addGroupGuard(MDefinition *obj, ObjectGroup *group, BailoutKind bail
 }
 
 MInstruction *
-IonBuilder::addShapeGuardPolymorphic(MDefinition *obj,
-                                     const BaselineInspector::ShapeVector &shapes,
-                                     const BaselineInspector::ObjectGroupVector &unboxedGroups)
+IonBuilder::addGuardReceiverPolymorphic(MDefinition *obj,
+                                        const BaselineInspector::ShapeVector &shapes,
+                                        const BaselineInspector::ObjectGroupVector &unboxedGroups)
 {
     if (shapes.length() == 1 && unboxedGroups.empty())
         return addShapeGuard(obj, shapes[0], Bailout_ShapeGuard);
 
-    if (shapes.empty() && unboxedGroups.length() == 1)
-        return addGroupGuard(obj, unboxedGroups[0], Bailout_ShapeGuard);
+    if (shapes.empty() && unboxedGroups.length() == 1) {
+        // The guard requires that unboxed objects not have expando objects.
+        // An inline cache will be used in these cases.
+        return addGroupGuard(obj, unboxedGroups[0], Bailout_ShapeGuard,
+                             /* checkUnboxedExpando = */ true);
+    }
 
     MOZ_ASSERT(shapes.length() + unboxedGroups.length() > 1);
 
@@ -12766,17 +12828,24 @@ IonBuilder::addLexicalCheck(MDefinition *input)
 {
     MOZ_ASSERT(JSOp(*pc) == JSOP_CHECKLEXICAL || JSOp(*pc) == JSOP_CHECKALIASEDLEXICAL);
 
-    // If we're guaranteed to not be JS_UNINITIALIZED_LEXICAL, no need to check.
     MInstruction *lexicalCheck;
-    if (input->type() == MIRType_MagicUninitializedLexical)
-        lexicalCheck = MThrowUninitializedLexical::New(alloc());
-    else if (input->type() == MIRType_Value)
-        lexicalCheck = MLexicalCheck::New(alloc(), input);
-    else
-        return input;
 
-    current->add(lexicalCheck);
-    if (!resumeAfter(lexicalCheck))
-        return nullptr;
-    return lexicalCheck->isLexicalCheck() ? lexicalCheck : constant(UndefinedValue());
+    // If we're guaranteed to not be JS_UNINITIALIZED_LEXICAL, no need to check.
+    if (input->type() == MIRType_MagicUninitializedLexical) {
+        lexicalCheck = MThrowUninitializedLexical::New(alloc());
+        current->add(lexicalCheck);
+        if (!resumeAfter(lexicalCheck))
+            return nullptr;
+        return constant(UndefinedValue());
+    }
+
+    if (input->type() == MIRType_Value) {
+        lexicalCheck = MLexicalCheck::New(alloc(), input);
+        current->add(lexicalCheck);
+        if (failedLexicalCheck_)
+            lexicalCheck->setNotMovableUnchecked();
+        return lexicalCheck;
+    }
+
+    return input;
 }

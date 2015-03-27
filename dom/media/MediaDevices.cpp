@@ -22,7 +22,7 @@ public:
   explicit GumResolver(Promise* aPromise) : mPromise(aPromise) {}
 
   NS_IMETHOD
-  OnSuccess(nsISupports* aStream) MOZ_OVERRIDE
+  OnSuccess(nsISupports* aStream) override
   {
     nsRefPtr<DOMLocalMediaStream> stream = do_QueryObject(aStream);
     if (!stream) {
@@ -45,7 +45,7 @@ public:
   explicit GumRejecter(Promise* aPromise) : mPromise(aPromise) {}
 
   NS_IMETHOD
-  OnError(nsISupports* aError) MOZ_OVERRIDE
+  OnError(nsISupports* aError) override
   {
     nsRefPtr<MediaStreamError> error = do_QueryObject(aError);
     if (!error) {
@@ -88,9 +88,9 @@ NS_INTERFACE_MAP_BEGIN(MediaDevices)
 NS_INTERFACE_MAP_END_INHERITING(DOMEventTargetHelper)
 
 JSObject*
-MediaDevices::WrapObject(JSContext* aCx)
+MediaDevices::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
-  return MediaDevicesBinding::Wrap(aCx, this);
+  return MediaDevicesBinding::Wrap(aCx, this, aGivenProto);
 }
 
 } // namespace dom

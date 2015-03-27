@@ -190,6 +190,8 @@ NumLocalsAndArgs(JSScript *script)
     return num;
 }
 
+bool OffThreadCompilationAvailable(JSContext *cx);
+
 void ForbidCompilation(JSContext *cx, JSScript *script);
 
 void PurgeCaches(JSScript *script);
@@ -199,6 +201,7 @@ void TraceJitScripts(JSTracer* trc, JSScript *script);
 
 bool JitSupportsFloatingPoint();
 bool JitSupportsSimd();
+bool JitSupportsAtomics();
 
 } // namespace jit
 } // namespace js

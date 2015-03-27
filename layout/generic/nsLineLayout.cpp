@@ -942,8 +942,9 @@ nsLineLayout::ReflowFrame(nsIFrame* aFrame,
   metrics.ISize(lineWM) = nscoord(0xdeadbeef);
   metrics.BSize(lineWM) = nscoord(0xdeadbeef);
 #endif
-  LogicalPoint tPt = pfd->mBounds.Origin(lineWM);
-  WritingMode oldWM = mFloatManager->Translate(lineWM, tPt);
+  nscoord tI = pfd->mBounds.LineLeft(lineWM, ContainerWidth());
+  nscoord tB = pfd->mBounds.BStart(lineWM);
+  mFloatManager->Translate(tI, tB);
 
   int32_t savedOptionalBreakOffset;
   gfxBreakPriority savedOptionalBreakPriority;
@@ -1029,7 +1030,7 @@ nsLineLayout::ReflowFrame(nsIFrame* aFrame,
   }
   pfd->mIsEmpty = isEmpty;
 
-  mFloatManager->Untranslate(oldWM, tPt);
+  mFloatManager->Translate(-tI, -tB);
 
   NS_ASSERTION(metrics.ISize(lineWM) >= 0, "bad inline size");
   NS_ASSERTION(metrics.BSize(lineWM) >= 0,"bad block size");
@@ -2172,7 +2173,14 @@ nsLineLayout::VerticalAlignFrames(PerSpanData* psd)
       // inverted relative to block direction.
       nscoord revisedBaselineBCoord = baselineBCoord - offset *
         lineWM.FlowRelativeToLineRelativeFactor();
-      pfd->mBounds.BStart(lineWM) = revisedBaselineBCoord - pfd->mAscent;
+      if (lineWM.IsVertical() && !lineWM.IsSideways()) {
+        // If we're using a dominant center baseline, we align with the center
+        // of the frame being placed (bug 1133945).
+        pfd->mBounds.BStart(lineWM) =
+          revisedBaselineBCoord - pfd->mBounds.BSize(lineWM)/2;
+      } else {
+        pfd->mBounds.BStart(lineWM) = revisedBaselineBCoord - pfd->mAscent;
+      }
       pfd->mBlockDirAlign = VALIGN_OTHER;
     }
 

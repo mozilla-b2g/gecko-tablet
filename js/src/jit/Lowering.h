@@ -47,9 +47,7 @@ class LIRGenerator : public LIRGeneratorSpecific
   private:
 
     void useBoxAtStart(LInstruction *lir, size_t n, MDefinition *mir,
-                       LUse::Policy policy = LUse::REGISTER) {
-        return useBox(lir, n, mir, policy, true);
-    }
+                       LUse::Policy policy = LUse::REGISTER);
 
     void lowerBitOp(JSOp op, MInstruction *ins);
     void lowerShiftOp(JSOp op, MShiftInstruction *ins);
@@ -102,7 +100,9 @@ class LIRGenerator : public LIRGeneratorSpecific
     void visitArraySplice(MArraySplice *splice);
     void visitBail(MBail *bail);
     void visitUnreachable(MUnreachable *unreachable);
+    void visitEncodeSnapshot(MEncodeSnapshot *ins);
     void visitAssertFloat32(MAssertFloat32 *ins);
+    void visitAssertRecoveredOnBailout(MAssertRecoveredOnBailout *ins);
     void visitGetDynamicName(MGetDynamicName *ins);
     void visitFilterArgumentsOrEval(MFilterArgumentsOrEval *ins);
     void visitCallDirectEval(MCallDirectEval *ins);
@@ -271,7 +271,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     void visitSimdInsertElement(MSimdInsertElement *ins);
     void visitSimdSignMask(MSimdSignMask *ins);
     void visitSimdSwizzle(MSimdSwizzle *ins);
-    void visitSimdGeneralSwizzle(MSimdGeneralSwizzle *ins);
+    void visitSimdGeneralShuffle(MSimdGeneralShuffle *ins);
     void visitSimdShuffle(MSimdShuffle *ins);
     void visitSimdUnaryArith(MSimdUnaryArith *ins);
     void visitSimdBinaryComp(MSimdBinaryComp *ins);

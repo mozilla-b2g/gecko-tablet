@@ -411,7 +411,7 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     // get the dirty rect relative to the root frame of the subdoc
     dirty = aDirtyRect + GetOffsetToCrossDoc(subdocRootFrame);
     // and convert into the appunits of the subdoc
-    dirty = dirty.ConvertAppUnitsRoundOut(parentAPD, subdocAPD);
+    dirty = dirty.ScaleToOtherAppUnitsRoundOut(parentAPD, subdocAPD);
 
     if (nsIFrame* rootScrollFrame = presShell->GetRootScrollFrame()) {
       if (gfxPrefs::LayoutUseContainersForRootFrames()) {
@@ -455,7 +455,7 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 
   nsIScrollableFrame *sf = presShell->GetRootScrollFrameAsScrollable();
   bool constructResolutionItem = subdocRootFrame &&
-    (presShell->GetXResolution() != 1.0 || presShell->GetYResolution() != 1.0);
+    (presShell->GetResolution() != 1.0);
   bool constructZoomItem = subdocRootFrame && parentAPD != subdocAPD;
   bool needsOwnLayer = false;
   if (constructResolutionItem ||
@@ -500,7 +500,7 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       nsRect bounds = GetContentRectRelativeToSelf() +
         aBuilder->ToReferenceFrame(this);
       if (subdocRootFrame) {
-        bounds = bounds.ConvertAppUnitsRoundOut(parentAPD, subdocAPD);
+        bounds = bounds.ScaleToOtherAppUnitsRoundOut(parentAPD, subdocAPD);
       }
 
       // If we are in print preview/page layout we want to paint the grey
@@ -1273,25 +1273,4 @@ nsSubDocumentFrame::ObtainIntrinsicSizeFrame()
     }
   }
   return nullptr;
-}
-
-nsIntPoint
-nsSubDocumentFrame::GetChromeDisplacement()
-{
-  nsIFrame* nextFrame = nsLayoutUtils::GetCrossDocParentFrame(this);
-  if (!nextFrame) {
-    NS_WARNING("Couldn't find window chrome to calculate displacement to.");
-    return nsIntPoint();
-  }
-
-  nsIFrame* rootFrame = nextFrame;
-  while (nextFrame) {
-    rootFrame = nextFrame;
-    nextFrame = nsLayoutUtils::GetCrossDocParentFrame(rootFrame);
-  }
-
-  nsPoint offset = GetOffsetToCrossDoc(rootFrame);
-  int32_t appUnitsPerDevPixel = rootFrame->PresContext()->AppUnitsPerDevPixel();
-  return nsIntPoint((int)(offset.x/appUnitsPerDevPixel),
-                    (int)(offset.y/appUnitsPerDevPixel));
 }

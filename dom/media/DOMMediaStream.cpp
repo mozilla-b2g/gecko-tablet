@@ -88,7 +88,7 @@ public:
   virtual void NotifyQueuedTrackChanges(MediaStreamGraph* aGraph, TrackID aID,
                                         StreamTime aTrackOffset,
                                         uint32_t aTrackEvents,
-                                        const MediaSegment& aQueuedMedia) MOZ_OVERRIDE
+                                        const MediaSegment& aQueuedMedia) override
   {
     if (aTrackEvents & (TRACK_EVENT_CREATED | TRACK_EVENT_ENDED)) {
       nsRefPtr<TrackChange> runnable =
@@ -121,7 +121,7 @@ public:
     nsRefPtr<StreamListener> mListener;
   };
 
-  virtual void NotifyFinishedTrackCreation(MediaStreamGraph* aGraph) MOZ_OVERRIDE
+  virtual void NotifyFinishedTrackCreation(MediaStreamGraph* aGraph) override
   {
     nsRefPtr<TracksCreatedRunnable> runnable = new TracksCreatedRunnable(this);
     aGraph->DispatchToMainThreadAfterStreamStateUpdate(runnable.forget());
@@ -212,9 +212,9 @@ DOMMediaStream::Destroy()
 }
 
 JSObject*
-DOMMediaStream::WrapObject(JSContext* aCx)
+DOMMediaStream::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
-  return dom::MediaStreamBinding::Wrap(aCx, this);
+  return dom::MediaStreamBinding::Wrap(aCx, this, aGivenProto);
 }
 
 double
@@ -609,9 +609,9 @@ DOMLocalMediaStream::~DOMLocalMediaStream()
 }
 
 JSObject*
-DOMLocalMediaStream::WrapObject(JSContext* aCx)
+DOMLocalMediaStream::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
-  return dom::LocalMediaStreamBinding::Wrap(aCx, this);
+  return dom::LocalMediaStreamBinding::Wrap(aCx, this, aGivenProto);
 }
 
 void

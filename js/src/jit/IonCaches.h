@@ -385,19 +385,19 @@ class RepatchIonCache : public IonCache
     {
     }
 
-    virtual void reset() MOZ_OVERRIDE;
+    virtual void reset() override;
 
     // Set the initial jump state of the cache. The initialJump is the inline
     // jump that will point to out-of-line code (such as the slow path, or
     // stubs), and the rejoinLabel is the position that all out-of-line paths
     // will rejoin to.
-    void emitInitialJump(MacroAssembler &masm, AddCacheState &addState) MOZ_OVERRIDE;
-    void bindInitialJump(MacroAssembler &masm, AddCacheState &addState) MOZ_OVERRIDE;
+    void emitInitialJump(MacroAssembler &masm, AddCacheState &addState) override;
+    void bindInitialJump(MacroAssembler &masm, AddCacheState &addState) override;
 
     // Update the labels once the code is finalized.
-    void updateBaseAddress(JitCode *code, MacroAssembler &masm) MOZ_OVERRIDE;
+    void updateBaseAddress(JitCode *code, MacroAssembler &masm) override;
 
-    virtual void *rejoinAddress() MOZ_OVERRIDE {
+    virtual void *rejoinAddress() override {
         return rejoinLabel().raw();
     }
 };
@@ -491,16 +491,16 @@ class DispatchIonCache : public IonCache
     {
     }
 
-    virtual void reset() MOZ_OVERRIDE;
-    virtual void initializeAddCacheState(LInstruction *ins, AddCacheState *addState) MOZ_OVERRIDE;
+    virtual void reset() override;
+    virtual void initializeAddCacheState(LInstruction *ins, AddCacheState *addState) override;
 
-    void emitInitialJump(MacroAssembler &masm, AddCacheState &addState) MOZ_OVERRIDE;
-    void bindInitialJump(MacroAssembler &masm, AddCacheState &addState) MOZ_OVERRIDE;
+    void emitInitialJump(MacroAssembler &masm, AddCacheState &addState) override;
+    void bindInitialJump(MacroAssembler &masm, AddCacheState &addState) override;
 
     // Fix up the first stub pointer once the code is finalized.
-    void updateBaseAddress(JitCode *code, MacroAssembler &masm) MOZ_OVERRIDE;
+    void updateBaseAddress(JitCode *code, MacroAssembler &masm) override;
 
-    virtual void *rejoinAddress() MOZ_OVERRIDE {
+    virtual void *rejoinAddress() override {
         return rejoinLabel_.raw();
     }
 };
@@ -670,6 +670,10 @@ class GetPropertyIC : public RepatchIonCache
                           HandleObject obj, HandlePropertyName name,
                           void *returnAddr, bool *emitted);
 
+    bool tryAttachUnboxedExpando(JSContext *cx, HandleScript outerScript, IonScript *ion,
+                                 HandleObject obj, HandlePropertyName name,
+                                 void *returnAddr, bool *emitted);
+
     bool tryAttachTypedArrayLength(JSContext *cx, HandleScript outerScript, IonScript *ion,
                                    HandleObject obj, HandlePropertyName name, bool *emitted);
 
@@ -739,14 +743,14 @@ class SetPropertyIC : public RepatchIonCache
     };
 
     bool attachSetSlot(JSContext *cx, HandleScript outerScript, IonScript *ion,
-                       HandleNativeObject obj, HandleShape shape, bool checkTypeset);
+                       HandleObject obj, HandleShape shape, bool checkTypeset);
 
     bool attachCallSetter(JSContext *cx, HandleScript outerScript, IonScript *ion,
                           HandleObject obj, HandleObject holder, HandleShape shape,
                           void *returnAddr);
 
     bool attachAddSlot(JSContext *cx, HandleScript outerScript, IonScript *ion,
-                       HandleNativeObject obj, HandleShape oldShape, HandleObjectGroup oldGroup,
+                       HandleObject obj, HandleShape oldShape, HandleObjectGroup oldGroup,
                        bool checkTypeset);
 
     bool attachSetUnboxed(JSContext *cx, HandleScript outerScript, IonScript *ion,

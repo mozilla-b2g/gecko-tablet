@@ -14,6 +14,7 @@
 #include "nsIObserverService.h"
 #include "nsIPrincipal.h"
 #include "nsIScriptContext.h"
+#include "nsIScriptError.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsISupportsPriority.h"
 #include "nsITimer.h"
@@ -26,6 +27,7 @@
 #include "jsfriendapi.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/CycleCollectedJSRuntime.h"
+#include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/dom/asmjscache/AsmJSCache.h"
 #include "mozilla/dom/AtomList.h"
@@ -60,6 +62,7 @@
 
 #include "Principal.h"
 #include "SharedWorker.h"
+#include "WorkerDebuggerManager.h"
 #include "WorkerPrivate.h"
 #include "WorkerRunnable.h"
 #include "WorkerThread.h"
@@ -621,7 +624,7 @@ InterruptCallback(JSContext* aCx)
   return worker->InterruptCallback(aCx);
 }
 
-class LogViolationDetailsRunnable MOZ_FINAL : public nsRunnable
+class LogViolationDetailsRunnable final : public nsRunnable
 {
   WorkerPrivate* mWorkerPrivate;
   nsCOMPtr<nsIEventTarget> mSyncLoopTarget;
@@ -932,22 +935,22 @@ public:
   }
 
   virtual void
-  PrepareForForgetSkippable() MOZ_OVERRIDE
+  PrepareForForgetSkippable() override
   {
   }
 
   virtual void
-  BeginCycleCollectionCallback() MOZ_OVERRIDE
+  BeginCycleCollectionCallback() override
   {
   }
 
   virtual void
-  EndCycleCollectionCallback(CycleCollectorResults &aResults) MOZ_OVERRIDE
+  EndCycleCollectionCallback(CycleCollectorResults &aResults) override
   {
   }
 
   void
-  DispatchDeferredDeletion(bool aContinuation) MOZ_OVERRIDE
+  DispatchDeferredDeletion(bool aContinuation) override
   {
     MOZ_ASSERT(!aContinuation);
 
@@ -955,7 +958,7 @@ public:
     nsCycleCollector_doDeferredDeletion();
   }
 
-  virtual void CustomGCCallback(JSGCStatus aStatus) MOZ_OVERRIDE
+  virtual void CustomGCCallback(JSGCStatus aStatus) override
   {
     if (!mWorkerPrivate) {
       // We're shutting down, no need to do anything.
@@ -975,20 +978,20 @@ private:
 
 #ifdef ENABLE_TESTS
 
-class TestPBackgroundCreateCallback MOZ_FINAL :
+class TestPBackgroundCreateCallback final :
   public nsIIPCBackgroundChildCreateCallback
 {
 public:
   NS_DECL_ISUPPORTS
 
   virtual void
-  ActorCreated(PBackgroundChild* aActor) MOZ_OVERRIDE
+  ActorCreated(PBackgroundChild* aActor) override
   {
     MOZ_RELEASE_ASSERT(aActor);
   }
 
   virtual void
-  ActorFailed() MOZ_OVERRIDE
+  ActorFailed() override
   {
     MOZ_CRASH("TestPBackground() should not fail "
               "GetOrCreateForCurrentThread()");
@@ -1025,7 +1028,7 @@ TestPBackground()
 
 #endif // ENABLE_TESTS
 
-class WorkerBackgroundChildCallback MOZ_FINAL :
+class WorkerBackgroundChildCallback final :
   public nsIIPCBackgroundChildCreateCallback
 {
   bool* mDone;
@@ -1045,25 +1048,25 @@ private:
   { }
 
   virtual void
-  ActorCreated(PBackgroundChild* aActor) MOZ_OVERRIDE
+  ActorCreated(PBackgroundChild* aActor) override
   {
     *mDone = true;
   }
 
   virtual void
-  ActorFailed() MOZ_OVERRIDE
+  ActorFailed() override
   {
     *mDone = true;
   }
 };
 
-class WorkerThreadPrimaryRunnable MOZ_FINAL : public nsRunnable
+class WorkerThreadPrimaryRunnable final : public nsRunnable
 {
   WorkerPrivate* mWorkerPrivate;
   nsRefPtr<WorkerThread> mThread;
   JSRuntime* mParentRuntime;
 
-  class FinishedRunnable MOZ_FINAL : public nsRunnable
+  class FinishedRunnable final : public nsRunnable
   {
     nsRefPtr<WorkerThread> mThread;
 
@@ -1105,7 +1108,7 @@ private:
   NS_DECL_NSIRUNNABLE
 };
 
-class WorkerTaskRunnable MOZ_FINAL : public WorkerRunnable
+class WorkerTaskRunnable final : public WorkerRunnable
 {
   nsRefPtr<WorkerTask> mTask;
 
@@ -1118,7 +1121,7 @@ public:
 
 private:
   virtual bool
-  PreDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate) MOZ_OVERRIDE
+  PreDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override
   {
     // May be called on any thread!
     return true;
@@ -1126,13 +1129,13 @@ private:
 
   virtual void
   PostDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
-               bool aDispatchResult) MOZ_OVERRIDE
+               bool aDispatchResult) override
   {
     // May be called on any thread!
   }
 
   virtual bool
-  WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) MOZ_OVERRIDE
+  WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override
   {
     return mTask->RunTask(aCx);
   }
@@ -1194,7 +1197,7 @@ PlatformOverrideChanged(const char* /* aPrefName */, void* /* aClosure */)
   }
 }
 
-class BackgroundChildCallback MOZ_FINAL
+class BackgroundChildCallback final
   : public nsIIPCBackgroundChildCreateCallback
 {
 public:
@@ -1212,14 +1215,14 @@ private:
   }
 
   virtual void
-  ActorCreated(PBackgroundChild* aActor) MOZ_OVERRIDE
+  ActorCreated(PBackgroundChild* aActor) override
   {
     AssertIsOnMainThread();
     MOZ_ASSERT(aActor);
   }
 
   virtual void
-  ActorFailed() MOZ_OVERRIDE
+  ActorFailed() override
   {
     AssertIsOnMainThread();
     MOZ_CRASH("Unable to connect PBackground actor for the main thread!");
@@ -1413,6 +1416,12 @@ RuntimeService::RegisterWorker(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
 
   nsCString sharedWorkerScriptSpec;
 
+  const bool isServiceWorker = aWorkerPrivate->IsServiceWorker();
+  if (isServiceWorker) {
+    AssertIsOnMainThread();
+    Telemetry::Accumulate(Telemetry::SERVICE_WORKER_SPAWN_ATTEMPTS, 1);
+  }
+
   bool isSharedOrServiceWorker = aWorkerPrivate->IsSharedWorker() ||
                                  aWorkerPrivate->IsServiceWorker();
   if (isSharedOrServiceWorker) {
@@ -1460,6 +1469,19 @@ RuntimeService::RegisterWorker(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
 
     if (queued) {
       domainInfo->mQueuedWorkers.AppendElement(aWorkerPrivate);
+      if (isServiceWorker) {
+        AssertIsOnMainThread();
+        // ServiceWorker spawn gets queued due to hitting max workers per domain
+        // limit so let's log a warning.
+        // Note: aWorkerPrivate->GetDocument() call might result nullptr due to
+        // no window so the message warning will show up in the browser console.
+        nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
+                                        NS_LITERAL_CSTRING("DOM"),
+                                        aWorkerPrivate->GetDocument(),
+                                        nsContentUtils::eDOM_PROPERTIES,
+                                        "HittingMaxWorkersPerDomain");
+        Telemetry::Accumulate(Telemetry::SERVICE_WORKER_SPAWN_GETS_QUEUED, 1);
+      }
     }
     else if (parent) {
       domainInfo->mChildWorkerCount++;
@@ -1528,6 +1550,10 @@ RuntimeService::RegisterWorker(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
     return false;
   }
 
+  if (isServiceWorker) {
+    AssertIsOnMainThread();
+    Telemetry::Accumulate(Telemetry::SERVICE_WORKER_WAS_SPAWNED, 1);
+  }
   return true;
 }
 
@@ -1917,6 +1943,12 @@ RuntimeService::Shutdown()
   MOZ_ASSERT(!mShuttingDown);
   // That's it, no more workers.
   mShuttingDown = true;
+
+  // Remove all listeners from the worker debugger manager to ensure that it
+  // gets properly destroyed.
+  if (NS_FAILED(ClearWorkerDebuggerManagerListeners())) {
+    NS_WARNING("Failed to clear worker debugger manager listeners!");
+  }
 
   nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
   NS_WARN_IF_FALSE(obs, "Failed to get observer service?!");

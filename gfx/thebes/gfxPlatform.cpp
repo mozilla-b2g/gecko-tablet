@@ -143,7 +143,7 @@ using namespace mozilla::gfx;
 
 /* Class to listen for pref changes so that chrome code can dynamically
    force sRGB as an output profile. See Bug #452125. */
-class SRGBOverrideObserver MOZ_FINAL : public nsIObserver,
+class SRGBOverrideObserver final : public nsIObserver,
                                        public nsSupportsWeakReference
 {
     ~SRGBOverrideObserver() {}
@@ -163,9 +163,9 @@ class CrashStatsLogForwarder: public mozilla::gfx::LogForwarder
 {
 public:
   explicit CrashStatsLogForwarder(const char* aKey);
-  virtual void Log(const std::string& aString) MOZ_OVERRIDE;
+  virtual void Log(const std::string& aString) override;
 
-  virtual std::vector<std::pair<int32_t,std::string> > StringsVectorCopy() MOZ_OVERRIDE;
+  virtual std::vector<std::pair<int32_t,std::string> > StringsVectorCopy() override;
 
   void SetCircularBufferSize(uint32_t aCapacity);
 
@@ -299,7 +299,7 @@ static const char* kObservedPrefs[] = {
     nullptr
 };
 
-class FontPrefsObserver MOZ_FINAL : public nsIObserver
+class FontPrefsObserver final : public nsIObserver
 {
     ~FontPrefsObserver() {}
 public:
@@ -324,7 +324,7 @@ FontPrefsObserver::Observe(nsISupports *aSubject,
     return NS_OK;
 }
 
-class MemoryPressureObserver MOZ_FINAL : public nsIObserver
+class MemoryPressureObserver final : public nsIObserver
 {
     ~MemoryPressureObserver() {}
 public:
@@ -384,6 +384,7 @@ gfxPlatform::gfxPlatform()
   : mTileWidth(-1)
   , mTileHeight(-1)
   , mAzureCanvasBackendCollector(this, &gfxPlatform::GetAzureBackendInfo)
+  , mApzSupportCollector(this, &gfxPlatform::GetApzSupportInfo)
 {
     mAllowDownloadableFonts = UNINITIALIZED_VALUE;
     mFallbackUsesCmaps = UNINITIALIZED_VALUE;
@@ -2327,5 +2328,54 @@ gfxPlatform::IsInLayoutAsapMode()
   // goes at whatever the configurated rate is. This only checks the version
   // talos uses, which is the refresh driver and compositor are in lockstep.
   return Preferences::GetInt("layout.frame_rate", -1) == 0;
+}
+
+static nsString
+DetectBadApzWheelInputPrefs()
+{
+  static const char *sBadMultiplierPrefs[] = {
+    "mousewheel.default.delta_multiplier_x",
+    "mousewheel.with_alt.delta_multiplier_x",
+    "mousewheel.with_control.delta_multiplier_x",
+    "mousewheel.with_meta.delta_multiplier_x",
+    "mousewheel.with_shift.delta_multiplier_x",
+    "mousewheel.with_win.delta_multiplier_x",
+    "mousewheel.with_alt.delta_multiplier_y",
+    "mousewheel.with_control.delta_multiplier_y",
+    "mousewheel.with_meta.delta_multiplier_y",
+    "mousewheel.with_shift.delta_multiplier_y",
+    "mousewheel.with_win.delta_multiplier_y",
+  };
+
+  nsString badPref;
+  for (size_t i = 0; i < MOZ_ARRAY_LENGTH(sBadMultiplierPrefs); i++) {
+    if (Preferences::GetInt(sBadMultiplierPrefs[i], 100) != 100) {
+      badPref.AssignASCII(sBadMultiplierPrefs[i]);
+      break;
+    }
+  }
+
+  return badPref;
+}
+
+void
+gfxPlatform::GetApzSupportInfo(mozilla::widget::InfoObject& aObj)
+{
+  if (!gfxPrefs::AsyncPanZoomEnabled()) {
+    return;
+  }
+
+  if (SupportsApzWheelInput()) {
+    nsString badPref = DetectBadApzWheelInputPrefs();
+
+    aObj.DefineProperty("ApzWheelInput", 1);
+    if (badPref.Length()) {
+      aObj.DefineProperty("ApzWheelInputWarning", badPref);
+    }
+  }
+
+  if (SupportsApzTouchInput()) {
+    aObj.DefineProperty("ApzTouchInput", 1);
+  }
 }
 

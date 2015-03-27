@@ -183,7 +183,7 @@
           <toolbarbutton class="panel-item" id="runtime-details" command="cmd_showRuntimeDetails"/>
           <toolbarbutton class="panel-item" id="runtime-permissions" command="cmd_showPermissionsTable"/>
           <toolbarbutton class="panel-item" id="runtime-preferences" command="cmd_showDevicePrefs"/>
-          <toolbarbutton class="panel-item" id="runtime-preferences" command="cmd_showSettings"/>
+          <toolbarbutton class="panel-item" id="runtime-settings" command="cmd_showSettings"/>
           <toolbarbutton class="panel-item" id="runtime-screenshot"  command="cmd_takeScreenshot"/>
           <toolbarbutton class="panel-item" id="runtime-disconnect"  command="cmd_disconnectRuntime"/>
         </vbox>
@@ -193,7 +193,7 @@
   </popupset>
 
   <notificationbox flex="1" id="notificationbox">
-    <hbox flex="1">
+    <hbox flex="1" id="deck-panels">
       <vbox id="project-listing-panel" class="project-listing" flex="1">
         <div id="project-listing-wrapper">
           <iframe id="project-listing-panel-details" flex="1" src="project-listing.xhtml"/>
