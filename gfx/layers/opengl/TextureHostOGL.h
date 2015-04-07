@@ -41,7 +41,6 @@ class gfxReusableSurfaceWrapper;
 class nsIntRegion;
 struct nsIntPoint;
 struct nsIntRect;
-struct nsIntSize;
 
 namespace mozilla {
 namespace gfx {
@@ -185,8 +184,8 @@ protected:
  * GL texture(s).
  */
 class TextureImageTextureSourceOGL final : public DataTextureSource
-                                             , public TextureSourceOGL
-                                             , public BigImageIterator
+                                         , public TextureSourceOGL
+                                         , public BigImageIterator
 {
 public:
   explicit TextureImageTextureSourceOGL(CompositorOGL *aCompositor,
@@ -202,8 +201,8 @@ public:
                       nsIntRegion* aDestRegion = nullptr,
                       gfx::IntPoint* aSrcOffset = nullptr) override;
 
-  void EnsureBuffer(const nsIntSize& aSize,
-                            gfxContentType aContentType);
+  void EnsureBuffer(const gfx::IntSize& aSize,
+                    gfxContentType aContentType);
 
   void CopyTo(const nsIntRect& aSourceRect,
                       DataTextureSource* aDest,

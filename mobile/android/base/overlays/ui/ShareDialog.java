@@ -30,7 +30,6 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Parcelable;
@@ -41,8 +40,6 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
-import android.widget.ImageView;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -170,7 +167,6 @@ public class ShareDialog extends Locales.LocaleAwareActivity implements SendTabT
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        getWindow().setWindowAnimations(0);
         setContentView(R.layout.overlay_share_dialog);
 
         LocalBroadcastManager.getInstance(this).registerReceiver(uiEventListener,
@@ -189,15 +185,8 @@ public class ShareDialog extends Locales.LocaleAwareActivity implements SendTabT
 
         readingListButtonDrawable = readingListButton.getBackground();
 
-        final Resources resources = getResources();
-        final String bookmarkEnabledLabel = resources.getString(R.string.overlay_share_bookmark_btn_label);
-        final Drawable bookmarkEnabledIcon = resources.getDrawable(R.drawable.overlay_bookmark_icon);
-        bookmarkButton.setEnabledLabelAndIcon(bookmarkEnabledLabel, bookmarkEnabledIcon);
-
-        final String bookmarkDisabledLabel = resources.getString(R.string.overlay_share_bookmark_btn_label_already);
-        final Drawable bookmarkDisabledIcon = resources.getDrawable(R.drawable.overlay_bookmarked_already_icon);
-        bookmarkButton.setDisabledLabelAndIcon(bookmarkDisabledLabel, bookmarkDisabledIcon);
-
+        // Bookmark button
+        bookmarkButton = (OverlayDialogButton) findViewById(R.id.overlay_share_bookmark_btn);
         bookmarkButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -205,14 +194,8 @@ public class ShareDialog extends Locales.LocaleAwareActivity implements SendTabT
             }
         });
 
-        final String readingListEnabledLabel = resources.getString(R.string.overlay_share_reading_list_btn_label);
-        final Drawable readingListEnabledIcon = resources.getDrawable(R.drawable.overlay_readinglist_icon);
-        readingListButton.setEnabledLabelAndIcon(readingListEnabledLabel, readingListEnabledIcon);
-
-        final String readingListDisabledLabel = resources.getString(R.string.overlay_share_reading_list_btn_label_already);
-        final Drawable readingListDisabledIcon = resources.getDrawable(R.drawable.overlay_readinglist_already_icon);
-        readingListButton.setDisabledLabelAndIcon(readingListDisabledLabel, readingListDisabledIcon);
-
+        // Reading List button
+        readingListButton = (OverlayDialogButton) findViewById(R.id.overlay_share_reading_list_btn);
         readingListButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -253,6 +236,11 @@ public class ShareDialog extends Locales.LocaleAwareActivity implements SendTabT
         Intent serviceStartupIntent = new Intent(this, OverlayActionService.class);
         serviceStartupIntent.setAction(OverlayConstants.ACTION_PREPARE_SHARE);
         startService(serviceStartupIntent);
+
+        // Start the slide-up animation.
+        getWindow().setWindowAnimations(0);
+        final Animation anim = AnimationUtils.loadAnimation(this, R.anim.overlay_slide_up);
+        findViewById(R.id.sharedialog).startAnimation(anim);
 
         // If provided, we use the subject text to give us something nice to display.
         // If not, we wing it with the URL.
@@ -306,10 +294,6 @@ public class ShareDialog extends Locales.LocaleAwareActivity implements SendTabT
 
         final LocalBrowserDB browserDB = new LocalBrowserDB(getCurrentProfile());
         setButtonState(url, browserDB);
-
-        // Start the slide-up animation.
-        final Animation anim = AnimationUtils.loadAnimation(this, R.anim.overlay_slide_up);
-        findViewById(R.id.sharedialog).startAnimation(anim);
     }
 
     @Override

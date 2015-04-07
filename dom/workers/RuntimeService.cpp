@@ -269,11 +269,12 @@ GetWorkerPref(const nsACString& aPref,
 }
 
 // This function creates a key for a SharedWorker composed by "shared|name|scriptSpec"
-// and a key for a ServiceWorker composed by "service|scope|scriptSpec".
+// and a key for a ServiceWorker composed by "service|scope|cache|scriptSpec".
 // If the name contains a '|', this will be replaced by '||'.
 void
 GenerateSharedWorkerKey(const nsACString& aScriptSpec, const nsACString& aName,
-                        WorkerType aWorkerType, nsCString& aKey)
+                        const nsACString& aCacheName, WorkerType aWorkerType,
+                        nsCString& aKey)
 {
   aKey.Truncate();
   NS_NAMED_LITERAL_CSTRING(sharedPrefix, "shared|");
@@ -281,8 +282,10 @@ GenerateSharedWorkerKey(const nsACString& aScriptSpec, const nsACString& aName,
   MOZ_ASSERT(servicePrefix.Length() > sharedPrefix.Length());
   MOZ_ASSERT(aWorkerType == WorkerTypeShared ||
              aWorkerType == WorkerTypeService);
+  MOZ_ASSERT_IF(aWorkerType == WorkerTypeShared, aCacheName.IsEmpty());
+  MOZ_ASSERT_IF(aWorkerType == WorkerTypeService, !aCacheName.IsEmpty());
   aKey.SetCapacity(servicePrefix.Length() + aScriptSpec.Length() +
-                   aName.Length() + 1);
+                   aName.Length() + aCacheName.Length() + 1);
 
   aKey.Append(aWorkerType == WorkerTypeService ? servicePrefix : sharedPrefix);
 
@@ -295,6 +298,11 @@ GenerateSharedWorkerKey(const nsACString& aScriptSpec, const nsACString& aName,
     } else {
       aKey.Append(*start);
     }
+  }
+
+  if (aWorkerType == WorkerTypeService) {
+    aKey.Append('|');
+    aKey.Append(aCacheName);
   }
 
   aKey.Append('|');
@@ -873,14 +881,14 @@ JSObject*
 Wrap(JSContext *cx, JS::HandleObject existing, JS::HandleObject obj)
 {
   JSObject* targetGlobal = JS::CurrentGlobalOrNull(cx);
-  if (!IsDebuggerGlobal(targetGlobal)) {
+  if (!IsDebuggerGlobal(targetGlobal) && !IsDebuggerSandbox(targetGlobal)) {
     MOZ_CRASH("There should be no edges from the debuggee to the debugger.");
   }
 
   JSObject* originGlobal = js::GetGlobalForObjectCrossCompartment(obj);
 
   const js::Wrapper* wrapper = nullptr;
-  if (IsDebuggerGlobal(originGlobal)) {
+  if (IsDebuggerGlobal(originGlobal) || IsDebuggerSandbox(originGlobal)) {
     wrapper = &js::CrossCompartmentWrapper::singleton;
   } else {
     if (obj != originGlobal) {
@@ -1246,22 +1254,22 @@ CancelWorkersForWindow(nsPIDOMWindow* aWindow)
 }
 
 void
-SuspendWorkersForWindow(nsPIDOMWindow* aWindow)
+FreezeWorkersForWindow(nsPIDOMWindow* aWindow)
 {
   AssertIsOnMainThread();
   RuntimeService* runtime = RuntimeService::GetService();
   if (runtime) {
-    runtime->SuspendWorkersForWindow(aWindow);
+    runtime->FreezeWorkersForWindow(aWindow);
   }
 }
 
 void
-ResumeWorkersForWindow(nsPIDOMWindow* aWindow)
+ThawWorkersForWindow(nsPIDOMWindow* aWindow)
 {
   AssertIsOnMainThread();
   RuntimeService* runtime = RuntimeService::GetService();
   if (runtime) {
-    runtime->ResumeWorkersForWindow(aWindow);
+    runtime->ThawWorkersForWindow(aWindow);
   }
 }
 
@@ -1492,10 +1500,14 @@ RuntimeService::RegisterWorker(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
 
     if (isSharedOrServiceWorker) {
       const nsCString& sharedWorkerName = aWorkerPrivate->SharedWorkerName();
+      const nsCString& cacheName =
+        aWorkerPrivate->IsServiceWorker() ?
+          NS_ConvertUTF16toUTF8(aWorkerPrivate->ServiceWorkerCacheName()) :
+          EmptyCString();
 
       nsAutoCString key;
       GenerateSharedWorkerKey(sharedWorkerScriptSpec, sharedWorkerName,
-                              aWorkerPrivate->Type(), key);
+                              cacheName, aWorkerPrivate->Type(), key);
       MOZ_ASSERT(!domainInfo->mSharedWorkerInfos.Get(key));
 
       SharedWorkerInfo* sharedWorkerInfo =
@@ -1603,9 +1615,13 @@ RuntimeService::UnregisterWorker(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
 
       if (match.mSharedWorkerInfo) {
         nsAutoCString key;
+        const nsCString& cacheName =
+          aWorkerPrivate->IsServiceWorker() ?
+            NS_ConvertUTF16toUTF8(aWorkerPrivate->ServiceWorkerCacheName()) :
+            EmptyCString();
         GenerateSharedWorkerKey(match.mSharedWorkerInfo->mScriptSpec,
                                 match.mSharedWorkerInfo->mName,
-                                aWorkerPrivate->Type(), key);
+                                cacheName, aWorkerPrivate->Type(), key);
         domainInfo->mSharedWorkerInfos.Remove(key);
       }
     }
@@ -2243,7 +2259,7 @@ RuntimeService::CancelWorkersForWindow(nsPIDOMWindow* aWindow)
 }
 
 void
-RuntimeService::SuspendWorkersForWindow(nsPIDOMWindow* aWindow)
+RuntimeService::FreezeWorkersForWindow(nsPIDOMWindow* aWindow)
 {
   AssertIsOnMainThread();
   MOZ_ASSERT(aWindow);
@@ -2259,7 +2275,7 @@ RuntimeService::SuspendWorkersForWindow(nsPIDOMWindow* aWindow)
     JSContext* cx = jsapi.cx();
 
     for (uint32_t index = 0; index < workers.Length(); index++) {
-      if (!workers[index]->Suspend(cx, aWindow)) {
+      if (!workers[index]->Freeze(cx, aWindow)) {
         JS_ReportPendingException(cx);
       }
     }
@@ -2267,7 +2283,7 @@ RuntimeService::SuspendWorkersForWindow(nsPIDOMWindow* aWindow)
 }
 
 void
-RuntimeService::ResumeWorkersForWindow(nsPIDOMWindow* aWindow)
+RuntimeService::ThawWorkersForWindow(nsPIDOMWindow* aWindow)
 {
   AssertIsOnMainThread();
   MOZ_ASSERT(aWindow);
@@ -2283,7 +2299,7 @@ RuntimeService::ResumeWorkersForWindow(nsPIDOMWindow* aWindow)
     JSContext* cx = jsapi.cx();
 
     for (uint32_t index = 0; index < workers.Length(); index++) {
-      if (!workers[index]->SynchronizeAndResume(cx, aWindow)) {
+      if (!workers[index]->Thaw(cx, aWindow)) {
         JS_ReportPendingException(cx);
       }
     }
@@ -2340,7 +2356,9 @@ RuntimeService::CreateSharedWorkerFromLoadInfo(JSContext* aCx,
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsAutoCString key;
-    GenerateSharedWorkerKey(scriptSpec, aName, aType, key);
+    GenerateSharedWorkerKey(scriptSpec, aName,
+                            NS_ConvertUTF16toUTF8(aLoadInfo->mServiceWorkerCacheName),
+                            aType, key);
 
     if (mDomainMap.Get(aLoadInfo->mDomain, &domainInfo) &&
         domainInfo->mSharedWorkerInfos.Get(key, &sharedWorkerInfo)) {
@@ -2414,9 +2432,13 @@ RuntimeService::ForgetSharedWorker(WorkerPrivate* aWorkerPrivate)
 
     if (match.mSharedWorkerInfo) {
       nsAutoCString key;
+      const nsCString& cacheName =
+        aWorkerPrivate->IsServiceWorker() ?
+          NS_ConvertUTF16toUTF8(aWorkerPrivate->ServiceWorkerCacheName()) :
+          EmptyCString();
       GenerateSharedWorkerKey(match.mSharedWorkerInfo->mScriptSpec,
                               match.mSharedWorkerInfo->mName,
-                              aWorkerPrivate->Type(), key);
+                              cacheName, aWorkerPrivate->Type(), key);
       domainInfo->mSharedWorkerInfos.Remove(key);
     }
   }

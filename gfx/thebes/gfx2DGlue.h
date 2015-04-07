@@ -81,11 +81,6 @@ inline Size ToSize(const gfxSize &aSize)
   return Size(Float(aSize.width), Float(aSize.height));
 }
 
-inline IntSize ToIntSize(const gfxIntSize &aSize)
-{
-  return IntSize(aSize.width, aSize.height);
-}
-
 inline Filter ToFilter(GraphicsFilter aFilter)
 {
   switch (aFilter) {
@@ -155,11 +150,6 @@ inline gfxPoint ThebesPoint(const Point &aPoint)
 inline gfxSize ThebesSize(const Size &aSize)
 {
   return gfxSize(aSize.width, aSize.height);
-}
-
-inline gfxIntSize ThebesIntSize(const IntSize &aSize)
-{
-  return gfxIntSize(aSize.width, aSize.height);
 }
 
 inline gfxRect ThebesRect(const Rect &aRect)

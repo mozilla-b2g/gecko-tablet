@@ -13,6 +13,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 
 import org.mozilla.gecko.AppConstants;
 import org.mozilla.gecko.background.common.GlobalConstants;
@@ -35,6 +36,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.util.Log;
 
 /**
  * A Firefox Account that stores its details and state as user data attached to
@@ -56,10 +58,15 @@ public class AndroidFxAccount {
   public static final String ACCOUNT_KEY_PROFILE = "profile";
   public static final String ACCOUNT_KEY_IDP_SERVER = "idpServerURI";
 
-  // The audience should always be a prefix of the token server URI.
-  public static final String ACCOUNT_KEY_AUDIENCE = "audience";                 // Sync-specific.
   public static final String ACCOUNT_KEY_TOKEN_SERVER = "tokenServerURI";       // Sync-specific.
   public static final String ACCOUNT_KEY_DESCRIPTOR = "descriptor";
+
+  // The set of authorities to sync automatically changes over time. The first
+  // new authority is the Reading List. This tracks if we've enabled syncing,
+  // and opted in (or out) of syncing automatically, for the new Reading List
+  // authority. This happens either on when the account is created or when
+  // upgrading.
+  public static final String ACCOUNT_KEY_READING_LIST_AUTHORITY_INITIALIZED = "readingListAuthorityInitialized";
 
   public static final int CURRENT_BUNDLE_VERSION = 2;
   public static final String BUNDLE_KEY_BUNDLE_VERSION = "version";
@@ -399,6 +406,10 @@ public class AndroidFxAccount {
     userdata.putString(ACCOUNT_KEY_IDP_SERVER, idpServerURI);
     userdata.putString(ACCOUNT_KEY_TOKEN_SERVER, tokenServerURI);
     userdata.putString(ACCOUNT_KEY_PROFILE, profile);
+    if (DEFAULT_AUTHORITIES_TO_SYNC_AUTOMATICALLY_MAP.containsKey(BrowserContract.READING_LIST_AUTHORITY)) {
+      // Have we initialized the Reading List authority?
+      userdata.putString(ACCOUNT_KEY_READING_LIST_AUTHORITY_INITIALIZED, "1");
+    }
 
     if (bundle == null) {
       bundle = new ExtendedJSONObject();
@@ -618,6 +629,90 @@ public class AndroidFxAccount {
     } catch (Exception e) {
       Logger.warn(LOG_TAG, "Got exception getting last synced time; ignoring.", e);
       return neverSynced;
+    }
+  }
+
+  // Debug only!  This is dangerous!
+  public void unsafeTransitionToDefaultEndpoints() {
+    unsafeTransitionToStageEndpoints(
+        FxAccountConstants.DEFAULT_AUTH_SERVER_ENDPOINT,
+        FxAccountConstants.DEFAULT_TOKEN_SERVER_ENDPOINT);
+    }
+
+  // Debug only!  This is dangerous!
+  public void unsafeTransitionToStageEndpoints() {
+    unsafeTransitionToStageEndpoints(
+        FxAccountConstants.STAGE_AUTH_SERVER_ENDPOINT,
+        FxAccountConstants.STAGE_TOKEN_SERVER_ENDPOINT);
+  }
+
+  protected void unsafeTransitionToStageEndpoints(String authServerEndpoint, String tokenServerEndpoint) {
+    try {
+      getReadingListPrefs().edit().clear().commit();
+    } catch (UnsupportedEncodingException | GeneralSecurityException e) {
+      // Ignore.
+    }
+    try {
+      getSyncPrefs().edit().clear().commit();
+    } catch (UnsupportedEncodingException | GeneralSecurityException e) {
+      // Ignore.
+    }
+    State state = getState();
+    setState(state.makeSeparatedState());
+    accountManager.setUserData(account, ACCOUNT_KEY_IDP_SERVER, authServerEndpoint);
+    accountManager.setUserData(account, ACCOUNT_KEY_TOKEN_SERVER, tokenServerEndpoint);
+    ContentResolver.setIsSyncable(account, BrowserContract.READING_LIST_AUTHORITY, 1);
+  }
+
+  /**
+   * Take the lock to own updating any Firefox Account's internal state.
+   *
+   * We use a <code>Semaphore</code> rather than a <code>ReentrantLock</code>
+   * because the callback that needs to release the lock may not be invoked on
+   * the thread that initially acquired the lock. Be aware!
+   */
+  protected static final Semaphore sLock = new Semaphore(1, true /* fair */);
+
+  // Which consumer took the lock?
+  // Synchronized by this.
+  protected String lockTag = null;
+
+  // Are we locked?  (It's not easy to determine who took the lock dynamically,
+  // so we maintain this flag internally.)
+  // Synchronized by this.
+  protected boolean locked = false;
+
+  // Block until we can take the shared state lock.
+  public synchronized void acquireSharedAccountStateLock(final String tag) throws InterruptedException {
+    final long id = Thread.currentThread().getId();
+    this.lockTag = tag;
+    Log.d(Logger.DEFAULT_LOG_TAG, "Thread with tag and thread id acquiring lock: " + lockTag + ", " + id + " ...");
+    sLock.acquire();
+    locked = true;
+    Log.d(Logger.DEFAULT_LOG_TAG, "Thread with tag and thread id acquiring lock: " + lockTag + ", " + id + " ... ACQUIRED");
+  }
+
+  // If we hold the shared state lock, release it.  Otherwise, ignore the request.
+  public synchronized void releaseSharedAccountStateLock() {
+    final long id = Thread.currentThread().getId();
+    Log.d(Logger.DEFAULT_LOG_TAG, "Thread with tag and thread id releasing lock: " + lockTag + ", " + id + " ...");
+    if (locked) {
+      sLock.release();
+      locked = false;
+      Log.d(Logger.DEFAULT_LOG_TAG, "Thread with tag and thread id releasing lock: " + lockTag + ", " + id + " ... RELEASED");
+    } else {
+      Log.d(Logger.DEFAULT_LOG_TAG, "Thread with tag and thread id releasing lock: " + lockTag + ", " + id + " ... NOT LOCKED");
+    }
+  }
+
+  @Override
+  protected synchronized void finalize() {
+    if (locked) {
+      // Should never happen, but...
+      sLock.release();
+      locked = false;
+      final long id = Thread.currentThread().getId();
+      Log.e(Logger.DEFAULT_LOG_TAG, "Thread with tag and thread id releasing lock: " + lockTag + ", " + id + " ... RELEASED DURING FINALIZE");
     }
   }
 }

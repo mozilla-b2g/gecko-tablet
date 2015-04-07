@@ -71,6 +71,12 @@ protected:
   virtual bool
   DeallocPFileDescriptorSetChild(PFileDescriptorSetChild* aActor) override;
 
+  virtual PMediaChild*
+  AllocPMediaChild() override;
+
+  virtual bool
+  DeallocPMediaChild(PMediaChild* aActor) override;
+
   virtual PVsyncChild*
   AllocPVsyncChild() override;
 
@@ -80,7 +86,8 @@ protected:
   virtual PBroadcastChannelChild*
   AllocPBroadcastChannelChild(const PrincipalInfo& aPrincipalInfo,
                               const nsString& aOrigin,
-                              const nsString& aChannel) override;
+                              const nsString& aChannel,
+                              const bool& aPrivateBrowsing) override;
 
   virtual bool
   DeallocPBroadcastChannelChild(PBroadcastChannelChild* aActor) override;

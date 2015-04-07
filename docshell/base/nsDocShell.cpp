@@ -446,6 +446,11 @@ public:
 
   nsresult StartTimeout();
 
+  void SetInterceptController(nsINetworkInterceptController* aInterceptController)
+  {
+    mInterceptController = aInterceptController;
+  }
+
 private:
   ~nsPingListener();
 
@@ -453,6 +458,7 @@ private:
   nsCOMPtr<nsIContent> mContent;
   nsCOMPtr<nsILoadGroup> mLoadGroup;
   nsCOMPtr<nsITimer> mTimer;
+  nsCOMPtr<nsINetworkInterceptController> mInterceptController;
 };
 
 NS_IMPL_ISUPPORTS(nsPingListener, nsIStreamListener, nsIRequestObserver,
@@ -517,8 +523,15 @@ NS_IMETHODIMP
 nsPingListener::GetInterface(const nsIID& aIID, void** aResult)
 {
   if (aIID.Equals(NS_GET_IID(nsIChannelEventSink))) {
-    NS_ADDREF_THIS();
-    *aResult = (nsIChannelEventSink*)this;
+    nsCOMPtr<nsIChannelEventSink> copy(this);
+    *aResult = copy.forget().take();
+    return NS_OK;
+  }
+
+  if (aIID.Equals(NS_GET_IID(nsINetworkInterceptController)) &&
+      mInterceptController) {
+    nsCOMPtr<nsINetworkInterceptController> copy(mInterceptController);
+    *aResult = copy.forget().take();
     return NS_OK;
   }
 
@@ -557,13 +570,14 @@ nsPingListener::AsyncOnChannelRedirect(nsIChannel* aOldChan,
   return NS_OK;
 }
 
-struct SendPingInfo
+struct MOZ_STACK_CLASS SendPingInfo
 {
   int32_t numPings;
   int32_t maxPings;
   bool requireSameHost;
   nsIURI* target;
   nsIURI* referrer;
+  nsIDocShell* docShell;
   uint32_t referrerPolicy;
 };
 
@@ -697,6 +711,8 @@ SendPing(void* aClosure, nsIContent* aContent, nsIURI* aURI,
   nsPingListener* pingListener =
     new nsPingListener(info->requireSameHost, aContent, loadGroup);
 
+  nsCOMPtr<nsINetworkInterceptController> interceptController = do_QueryInterface(info->docShell);
+  pingListener->SetInterceptController(interceptController);
   nsCOMPtr<nsIStreamListener> listener(pingListener);
 
   // Observe redirects as well:
@@ -721,7 +737,8 @@ SendPing(void* aClosure, nsIContent* aContent, nsIURI* aURI,
 
 // Spec: http://whatwg.org/specs/web-apps/current-work/#ping
 static void
-DispatchPings(nsIContent* aContent,
+DispatchPings(nsIDocShell* aDocShell,
+              nsIContent* aContent,
               nsIURI* aTarget,
               nsIURI* aReferrer,
               uint32_t aReferrerPolicy)
@@ -739,6 +756,7 @@ DispatchPings(nsIContent* aContent,
   info.target = aTarget;
   info.referrer = aReferrer;
   info.referrerPolicy = aReferrerPolicy;
+  info.docShell = aDocShell;
 
   ForEachPing(aContent, SendPing, &info);
 }
@@ -2977,10 +2995,10 @@ nsDocShell::PopProfileTimelineMarkers(
   // If we see an unpaired START, we keep it around for the next call
   // to PopProfileTimelineMarkers.  We store the kept START objects in
   // this array.
-  nsTArray<TimelineMarker*> keptMarkers;
+  nsTArray<UniquePtr<TimelineMarker>> keptMarkers;
 
   for (uint32_t i = 0; i < mProfileTimelineMarkers.Length(); ++i) {
-    TimelineMarker* startPayload = mProfileTimelineMarkers[i];
+    UniquePtr<TimelineMarker>& startPayload = mProfileTimelineMarkers[i];
     const char* startMarkerName = startPayload->GetName();
 
     bool hasSeenPaintedLayer = false;
@@ -3002,7 +3020,7 @@ nsDocShell::PopProfileTimelineMarkers(
       // enough for the amount of markers to always be small enough that the
       // nested for loop isn't going to be a performance problem.
       for (uint32_t j = i + 1; j < mProfileTimelineMarkers.Length(); ++j) {
-        TimelineMarker* endPayload = mProfileTimelineMarkers[j];
+        UniquePtr<TimelineMarker>& endPayload = mProfileTimelineMarkers[j];
         const char* endMarkerName = endPayload->GetName();
 
         // Look for Layer markers to stream out paint markers.
@@ -3011,7 +3029,7 @@ nsDocShell::PopProfileTimelineMarkers(
           endPayload->AddLayerRectangles(layerRectangles);
         }
 
-        if (!startPayload->Equals(endPayload)) {
+        if (!startPayload->Equals(*endPayload)) {
           continue;
         }
 
@@ -3048,14 +3066,13 @@ nsDocShell::PopProfileTimelineMarkers(
 
       // If we did not see the corresponding END, keep the START.
       if (!hasSeenEnd) {
-        keptMarkers.AppendElement(mProfileTimelineMarkers[i]);
+        keptMarkers.AppendElement(Move(mProfileTimelineMarkers[i]));
         mProfileTimelineMarkers.RemoveElementAt(i);
         --i;
       }
     }
   }
 
-  ClearProfileTimelineMarkers();
   mProfileTimelineMarkers.SwapElements(keptMarkers);
 
   if (!ToJSValue(aCx, profileTimelineMarkers, aProfileTimelineMarkers)) {
@@ -3086,10 +3103,10 @@ nsDocShell::AddProfileTimelineMarker(const char* aName,
 }
 
 void
-nsDocShell::AddProfileTimelineMarker(UniquePtr<TimelineMarker>& aMarker)
+nsDocShell::AddProfileTimelineMarker(UniquePtr<TimelineMarker>&& aMarker)
 {
   if (mProfileTimelineRecording) {
-    mProfileTimelineMarkers.AppendElement(aMarker.release());
+    mProfileTimelineMarkers.AppendElement(Move(aMarker));
   }
 }
 
@@ -3125,9 +3142,6 @@ nsDocShell::GetWindowDraggingAllowed(bool* aValue)
 void
 nsDocShell::ClearProfileTimelineMarkers()
 {
-  for (uint32_t i = 0; i < mProfileTimelineMarkers.Length(); ++i) {
-    delete mProfileTimelineMarkers[i];
-  }
   mProfileTimelineMarkers.Clear();
 }
 
@@ -11033,7 +11047,7 @@ nsDocShell::ScrollToAnchor(nsACString& aCurHash, nsACString& aNewHash,
       rv = shell->GoToAnchor(NS_ConvertUTF8toUTF16(str), scroll,
                              nsIPresShell::SCROLL_SMOOTH_AUTO);
     }
-    nsMemory::Free(str);
+    free(str);
 
     // Above will fail if the anchor name is not UTF-8.  Need to
     // convert from document charset to unicode.
@@ -13526,7 +13540,7 @@ nsDocShell::OnLinkClickSync(nsIContent* aContent,
                              aDocShell,                 // DocShell out-param
                              aRequest);                 // Request out-param
   if (NS_SUCCEEDED(rv)) {
-    DispatchPings(aContent, aURI, referer, refererPolicy);
+    DispatchPings(this, aContent, aURI, referer, refererPolicy);
   }
   return rv;
 }

@@ -14,6 +14,7 @@
 
 #include "signaling/src/jsep/JsepTrack.h"
 #include "signaling/src/jsep/JsepTransport.h"
+#include "signaling/src/common/PtrVector.h"
 
 #ifdef MOZILLA_INTERNAL_API
 #include "MediaStreamTrack.h"
@@ -34,20 +35,6 @@
 namespace mozilla {
 
 MOZ_MTLOG_MODULE("MediaPipelineFactory")
-
-// Trivial wrapper class around a vector of ptrs.
-template <class T> class PtrVector
-{
-public:
-  ~PtrVector()
-  {
-    for (auto it = values.begin(); it != values.end(); ++it) {
-      delete *it;
-    }
-  }
-
-  std::vector<T*> values;
-};
 
 static nsresult
 JsepCodecDescToCodecConfig(const JsepCodecDescription& aCodec,
@@ -209,6 +196,22 @@ MediaPipelineFactory::CreateOrGetTransportFlow(
   rv = dtls->SetSrtpCiphers(srtpCiphers);
   if (NS_FAILED(rv)) {
     MOZ_MTLOG(ML_ERROR, "Couldn't set SRTP ciphers");
+    return rv;
+  }
+
+  // Always permits negotiation of the confidential mode.
+  // Only allow non-confidential (which is an allowed default),
+  // if we aren't confidential.
+  std::set<std::string> alpn;
+  std::string alpnDefault = "";
+  alpn.insert("c-webrtc");
+  if (!mPC->PrivacyRequested()) {
+    alpnDefault = "webrtc";
+    alpn.insert(alpnDefault);
+  }
+  rv = dtls->SetAlpn(alpn, alpnDefault);
+  if (NS_FAILED(rv)) {
+    MOZ_MTLOG(ML_ERROR, "Couldn't set ALPN");
     return rv;
   }
 
@@ -846,6 +849,9 @@ MediaPipelineFactory::EnsureExternalCodec(VideoSessionConduit& aConduit,
   if (aConfig->mName == "VP8" || aConfig->mName == "VP9") {
     return kMediaConduitNoError;
   } else if (aConfig->mName == "H264") {
+    if (aConduit.CodecPluginID() != 0) {
+      return kMediaConduitNoError;
+    }
     // Register H.264 codec.
     if (aIsSend) {
       VideoEncoder* encoder = nullptr;

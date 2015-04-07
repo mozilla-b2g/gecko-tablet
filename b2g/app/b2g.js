@@ -29,6 +29,7 @@ pref("browser.sessionstore.restore_on_demand", false);
 pref("browser.sessionstore.resume_from_crash", false);
 // No e10s on mulet
 pref("browser.tabs.remote.autostart.1", false);
+pref("browser.tabs.remote.autostart.2", false);
 #endif
 
 // Bug 945235: Prevent all bars to be considered visible:
@@ -323,7 +324,7 @@ pref("media.video-queue.default-size", 3);
 
 // optimize images' memory usage
 pref("image.decode-only-on-draw.enabled", true);
-pref("image.mem.allow_locking_in_content_processes", false); /* don't allow image locking */
+pref("image.mem.allow_locking_in_content_processes", true);
 // Limit the surface cache to 1/8 of main memory or 128MB, whichever is smaller.
 // Almost everything that was factored into 'max_decoded_image_kb' is now stored
 // in the surface cache.  1/8 of main memory is 32MB on a 256MB device, which is
@@ -417,9 +418,9 @@ pref("browser.dom.window.dump.enabled", false);
 
 // Default Content Security Policy to apply to certified apps.
 // If you change this CSP, make sure to update the fast path in nsCSPService.cpp
-pref("security.apps.certified.CSP.default", "default-src *; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline' app://theme.gaiamobile.org");
+pref("security.apps.certified.CSP.default", "default-src * data: blob:; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline' app://theme.gaiamobile.org");
 // Default Content Security Policy to apply to trusted apps.
-pref("security.apps.trusted.CSP.default", "default-src *; object-src 'none'; frame-src 'none'");
+pref("security.apps.trusted.CSP.default", "default-src * data: blob:; object-src 'none'; frame-src 'none'");
 
 // Temporarily force-enable GL compositing.  This is default-disabled
 // deep within the bowels of the widgetry system.  Remove me when GL
@@ -1037,6 +1038,7 @@ pref("apz.fling_curve_function_y2", "1.0");
 pref("apz.fling_curve_threshold_inches_per_ms", "0.01");
 pref("apz.fling_friction", "0.0019");
 pref("apz.max_velocity_inches_per_ms", "0.07");
+pref("apz.touch_start_tolerance", "0.1");
 
 // Tweak default displayport values to reduce the risk of running out of
 // memory when zooming in

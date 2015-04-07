@@ -271,6 +271,8 @@ pref("media.wakelock_timeout", 2000);
 // opened as top-level documents, as opposed to inside a media element.
 pref("media.play-stand-alone", true);
 
+pref("media.hardware-video-decoding.enabled", true);
+
 #if defined(XP_WIN)
 pref("media.decoder.heuristic.dormant.enabled", true);
 pref("media.decoder.heuristic.dormant.timeout", 60000);
@@ -278,7 +280,6 @@ pref("media.decoder.heuristic.dormant.timeout", 60000);
 
 #ifdef MOZ_WMF
 pref("media.windows-media-foundation.enabled", true);
-pref("media.windows-media-foundation.use-dxva", true);
 #endif
 #ifdef MOZ_DIRECTSHOW
 pref("media.directshow.enabled", true);
@@ -1331,8 +1332,10 @@ pref("network.http.spdy.default-concurrent", 100);
 
 // alt-svc allows separation of transport routing from
 // the origin host without using a proxy.
-pref("network.http.altsvc.enabled", true);
-pref("network.http.altsvc.oe", true);
+pref("network.http.atsvc.enabled", false);
+pref("network.http.atsvc.oe", false);
+pref("network.http.altsvc.enabled", false);
+pref("network.http.altsvc.oe", false);
 
 pref("network.http.diagnostics", false);
 
@@ -1681,6 +1684,14 @@ pref("network.automatic-ntlm-auth.allow-proxies", true);
 pref("network.automatic-ntlm-auth.allow-non-fqdn", false);
 pref("network.automatic-ntlm-auth.trusted-uris", "");
 
+// Sub-resources HTTP-authentication:
+//   0 - don't allow sub-resources to open HTTP authentication credentials
+//       dialogs
+//   1 - allow sub-resources to open HTTP authentication credentials dialogs,
+//       but don't allow it for cross-origin sub-resources
+//   2 - allow the cross-origin authentication as well.
+pref("network.auth.allow-subresource-auth", 1);
+
 pref("permissions.default.image",           1); // 1-Accept, 2-Deny, 3-dontAcceptForeign
 
 pref("network.proxy.type",                  5);
@@ -1836,7 +1847,7 @@ pref("security.csp.debug", false);
 pref("security.csp.experimentalEnabled", false);
 
 // Default Content Security Policy to apply to privileged apps.
-pref("security.apps.privileged.CSP.default", "default-src *; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'");
+pref("security.apps.privileged.CSP.default", "default-src * data: blob:; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'");
 
 // Mixed content blocking
 pref("security.mixed_content.block_active_content", false);
@@ -2256,10 +2267,11 @@ pref("layout.css.scroll-behavior.damping-ratio", "1.0");
 pref("layout.css.scroll-snap.enabled", true);
 
 // Is support for document.fonts enabled?
-//
-// Don't enable the pref for the CSS Font Loading API until bug 1072101 is
-// fixed, as we don't want to expose more indexed properties on the Web.
+#ifdef RELEASE_BUILD
 pref("layout.css.font-loading-api.enabled", false);
+#else
+pref("layout.css.font-loading-api.enabled", true);
+#endif
 
 // pref for which side vertical scrollbars should be on
 // 0 = end-side in UI direction
@@ -2300,11 +2312,7 @@ pref("layout.frame_rate.precise", false);
 pref("layout.spammy_warnings.enabled", true);
 
 // Should we fragment floats inside CSS column layout?
-#ifdef RELEASE_BUILD
-pref("layout.float-fragments-inside-column.enabled", false);
-#else
 pref("layout.float-fragments-inside-column.enabled", true);
-#endif
 
 // Is support for the Web Animations API enabled?
 #ifdef RELEASE_BUILD
@@ -4043,7 +4051,15 @@ pref("layers.offmainthreadcomposition.testing.enabled", false);
 pref("layers.offmainthreadcomposition.force-basic", false);
 
 // Whether to animate simple opacity and transforms on the compositor
+#ifdef RELEASE_BUILD
 pref("layers.offmainthreadcomposition.async-animations", false);
+#else
+#if defined(MOZ_X11)
+pref("layers.offmainthreadcomposition.async-animations", false);
+#else
+pref("layers.offmainthreadcomposition.async-animations", true);
+#endif
+#endif
 
 // Whether to log information about off main thread animations to stderr
 pref("layers.offmainthreadcomposition.log-animations", false);
@@ -4641,17 +4657,13 @@ pref("reader.toolbar.vertical", true);
 pref("media.gmp.insecure.allow", false);
 #endif
 
-// Use vsync aligned rendering. b2g prefs are in b2g.js
-// Only supported on windows, os x, and b2g
-#if defined(XP_MACOSX) || defined(XP_WIN)
+// Use vsync aligned rendering. b2g prefs are in b2g.js.
+// Hardware vsync supported on windows, os x, and b2g.
+// Linux and fennec will use software vsync.
+#if defined(XP_MACOSX) || defined(XP_WIN) || defined(XP_LINUX)
 pref("gfx.vsync.hw-vsync.enabled", true);
 pref("gfx.vsync.compositor", true);
-#endif
-
-#if defined(XP_MACOSX)
 pref("gfx.vsync.refreshdriver", true);
-#else
-pref("gfx.vsync.refreshdriver", false);
 #endif
 
 // Secure Element API

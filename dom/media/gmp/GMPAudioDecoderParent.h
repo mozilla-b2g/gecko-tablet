@@ -16,15 +16,15 @@
 namespace mozilla {
 namespace gmp {
 
-class GMPParent;
+class GMPContentParent;
 
 class GMPAudioDecoderParent final : public GMPAudioDecoderProxy
-                                      , public PGMPAudioDecoderParent
+                                  , public PGMPAudioDecoderParent
 {
 public:
   NS_INLINE_DECL_REFCOUNTING(GMPAudioDecoderParent)
 
-  explicit GMPAudioDecoderParent(GMPParent *aPlugin);
+  explicit GMPAudioDecoderParent(GMPContentParent *aPlugin);
 
   nsresult Shutdown();
 
@@ -50,11 +50,12 @@ private:
   virtual bool RecvDrainComplete() override;
   virtual bool RecvResetComplete() override;
   virtual bool RecvError(const GMPErr& aError) override;
+  virtual bool RecvShutdown() override;
   virtual bool Recv__delete__() override;
 
   bool mIsOpen;
   bool mShuttingDown;
-  nsRefPtr<GMPParent> mPlugin;
+  nsRefPtr<GMPContentParent> mPlugin;
   GMPAudioDecoderCallbackProxy* mCallback;
 };
 

@@ -612,6 +612,8 @@ nsBaseDragService::DrawDragForImage(nsPresContext* aPresContext,
 
     destSize.width = NSToIntFloor(float(destSize.width) * scale);
     destSize.height = NSToIntFloor(float(destSize.height) * scale);
+    if (destSize.width == 0 || destSize.height == 0)
+      return NS_ERROR_FAILURE;
 
     aScreenDragRect->x = NSToIntFloor(aScreenX - float(mImageX) * scale);
     aScreenDragRect->y = NSToIntFloor(aScreenY - float(mImageY) * scale);
@@ -623,7 +625,7 @@ nsBaseDragService::DrawDragForImage(nsPresContext* aPresContext,
   if (aImageLoader) {
     RefPtr<DrawTarget> dt =
       gfxPlatform::GetPlatform()->
-        CreateOffscreenContentDrawTarget(destSize.ToIntSize(),
+        CreateOffscreenContentDrawTarget(destSize,
                                          SurfaceFormat::B8G8R8A8);
     if (!dt)
       return NS_ERROR_FAILURE;

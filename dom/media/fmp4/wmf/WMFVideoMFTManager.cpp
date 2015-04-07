@@ -154,11 +154,6 @@ WMFVideoMFTManager::InitializeDXVA()
     return false;
   }
 
-  if (gfxWindowsPlatform::GetPlatform()->IsWARP() ||
-      !gfxPlatform::CanUseDXVA()) {
-    return false;
-  }
-
   // The DXVA manager must be created on the main thread.
   nsRefPtr<CreateDXVAManagerEvent> event(new CreateDXVAManagerEvent());
   NS_DispatchToMainThread(event, NS_DISPATCH_SYNC);
@@ -245,12 +240,6 @@ WMFVideoMFTManager::Input(mp4_demuxer::MP4Sample* aSample)
   if (!mDecoder) {
     // This can happen during shutdown.
     return E_FAIL;
-  }
-  if (mStreamType != VP8 && mStreamType != VP9) {
-    // We must prepare samples in AVC Annex B.
-    if (!mp4_demuxer::AnnexB::ConvertSampleToAnnexB(aSample)) {
-      return E_FAIL;
-    }
   }
   // Forward sample data to the decoder.
   const uint8_t* data = reinterpret_cast<const uint8_t*>(aSample->data);

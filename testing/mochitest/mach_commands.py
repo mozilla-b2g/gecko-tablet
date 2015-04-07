@@ -161,7 +161,7 @@ class MochitestRunner(MozbuildObject):
             from mochitest_options import B2GOptions
 
         parser = B2GOptions()
-        options = parser.parse_args([])[0]
+        options = parser.parse_args([])
 
         if test_path:
             if chrome:
@@ -235,6 +235,7 @@ class MochitestRunner(MozbuildObject):
             run_until_failure=False,
             slow=False,
             chunk_by_dir=0,
+            chunk_by_runtime=False,
             total_chunks=None,
             this_chunk=None,
             extraPrefs=[],
@@ -321,7 +322,7 @@ class MochitestRunner(MozbuildObject):
             logging.getLogger().removeHandler(handler)
 
         opts = mochitest.MochitestOptions()
-        options, args = opts.parse_args([])
+        options = opts.parse_args([])
 
         options.subsuite = ''
         flavor = suite
@@ -375,6 +376,7 @@ class MochitestRunner(MozbuildObject):
             self.distdir,
             'crashreporter-symbols')
         options.chunkByDir = chunk_by_dir
+        options.chunkByRuntime = chunk_by_runtime
         options.totalChunks = total_chunks
         options.thisChunk = this_chunk
         options.jsdebugger = jsdebugger
@@ -594,6 +596,12 @@ def MochitestCommand(func):
         help='Group tests together in chunks by this many top directories.')
     func = chunk_dir(func)
 
+    chunk_runtime = CommandArgument(
+        '--chunk-by-runtime',
+        action='store_true',
+        help="Group tests such that each chunk has roughly the same runtime.")
+    func = chunk_runtime(func)
+
     chunk_total = CommandArgument(
         '--total-chunks',
         type=int,
@@ -737,6 +745,14 @@ def MochitestCommand(func):
         help='The maximum number of timeouts permitted before halting testing')
     func = max_timeouts(func)
 
+    tags = CommandArgument(
+        "--tag",
+        dest='test_tags', action='append',
+        help="Filter out tests that don't have the given tag. Can be used "
+             "multiple times in which case the test must contain at least one "
+             "of the given tags.")
+    func = tags(func)
+
     return func
 
 
@@ -813,6 +829,14 @@ def B2GCommand(func):
         'Default cap is 30 runs, which can be overwritten '
         'with the --repeat parameter.')
     func = runUntilFailure(func)
+
+    tags = CommandArgument(
+        "--tag",
+        dest='test_tags', action='append',
+        help="Filter out tests that don't have the given tag. Can be used "
+             "multiple times in which case the test must contain at least one "
+             "of the given tags.")
+    func = tags(func)
 
     return func
 
@@ -1020,7 +1044,9 @@ class B2GCommands(MachCommandBase):
     def __init__(self, context):
         MachCommandBase.__init__(self, context)
 
-        for attr in ('b2g_home', 'xre_path', 'device_name', 'get_build_var'):
+        # These attributes are defined in:
+        # https://github.com/mozilla-b2g/B2G/blob/master/tools/mach_b2g_bootstrap.py
+        for attr in ('b2g_home', 'xre_path', 'device_name', 'target_out'):
             setattr(self, attr, getattr(context, attr, None))
 
     @Command(
@@ -1032,9 +1058,10 @@ class B2GCommands(MachCommandBase):
             is_emulator])
     @B2GCommand
     def run_mochitest_remote(self, test_paths, **kwargs):
-        if self.get_build_var:
+        if self.target_out:
             host_webapps_dir = os.path.join(
-                self.get_build_var('TARGET_OUT_DATA'),
+                self.target_out,
+                'data',
                 'local',
                 'webapps')
             if not os.path.isdir(

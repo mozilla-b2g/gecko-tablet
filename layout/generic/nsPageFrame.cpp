@@ -55,6 +55,7 @@ nsPageFrame::Reflow(nsPresContext*           aPresContext,
                                   const nsHTMLReflowState& aReflowState,
                                   nsReflowStatus&          aStatus)
 {
+  MarkInReflow();
   DO_GLOBAL_REFLOW_COUNT("nsPageFrame");
   DISPLAY_REFLOW(aPresContext, this, aReflowState, aDesiredSize, aStatus);
   aStatus = NS_FRAME_COMPLETE;  // initialize out parameter
@@ -205,7 +206,7 @@ nsPageFrame::ProcessSpecialCodes(const nsString& aStr, nsString& aNewStr)
   if (aStr.Find(kPageAndTotal) != kNotFound) {
     char16_t * uStr = nsTextFormatter::smprintf(mPD->mPageNumAndTotalsFormat.get(), mPageNum, mTotNumPages);
     aNewStr.ReplaceSubstring(kPageAndTotal.get(), uStr);
-    nsMemory::Free(uStr);
+    free(uStr);
   }
 
   // Search to see if the page number code is in the string
@@ -214,7 +215,7 @@ nsPageFrame::ProcessSpecialCodes(const nsString& aStr, nsString& aNewStr)
   if (aStr.Find(kPage) != kNotFound) {
     char16_t * uStr = nsTextFormatter::smprintf(mPD->mPageNumFormat.get(), mPageNum);
     aNewStr.ReplaceSubstring(kPage.get(), uStr);
-    nsMemory::Free(uStr);
+    free(uStr);
   }
 
   NS_NAMED_LITERAL_STRING(kTitle, "&T");
@@ -231,7 +232,7 @@ nsPageFrame::ProcessSpecialCodes(const nsString& aStr, nsString& aNewStr)
   if (aStr.Find(kPageTotal) != kNotFound) {
     char16_t * uStr = nsTextFormatter::smprintf(mPD->mPageNumFormat.get(), mTotNumPages);
     aNewStr.ReplaceSubstring(kPageTotal.get(), uStr);
-    nsMemory::Free(uStr);
+    free(uStr);
   }
 }
 

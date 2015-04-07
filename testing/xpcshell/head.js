@@ -501,7 +501,14 @@ function _execute_test() {
 
   try {
     do_test_pending("MAIN run_test");
-    run_test();
+    // Check if run_test() is defined. If defined, run it.
+    // Else, call run_next_test() directly to invoke tests
+    // added by add_test() and add_task().  
+    if (typeof run_test === "function") {
+      run_test();
+    } else {
+      run_next_test();
+    }
     do_test_finished("MAIN run_test");
     _do_main();
   } catch (e) {
@@ -1420,5 +1427,17 @@ try {
 
     prefs.setCharPref("media.gmp-manager.url.override", "http://%(server)s/dummy-gmp-manager.xml");
     prefs.setCharPref("browser.selfsupport.url", "https://%(server)s/selfsupport-dummy/");
+  }
+} catch (e) { }
+
+// Make tests run consistently on DevEdition (which has a lightweight theme
+// selected by default).
+try {
+  if (runningInParent) {
+    let prefs = Components.classes["@mozilla.org/preferences-service;1"]
+      .getService(Components.interfaces.nsIPrefBranch);
+
+    prefs.deleteBranch("lightweightThemes.selectedThemeID");
+    prefs.deleteBranch("browser.devedition.theme.enabled");
   }
 } catch (e) { }

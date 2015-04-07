@@ -108,7 +108,10 @@ public:
   void DuplicateLastSample(int aThreadId);
 
   void addStoredMarker(ProfilerMarker* aStoredMarker);
+
+  // The following two methods are not signal safe! They delete markers.
   void deleteExpiredStoredMarkers();
+  void reset();
 
 protected:
   char* processDynamicTag(int readPos, int* tagsConsumed, char* tagBuff);
@@ -131,7 +134,7 @@ public:
   int mEntrySize;
 
   // How many times mWritePos has wrapped around.
-  int mGeneration;
+  uint32_t mGeneration;
 
   // Markers that marker entries in the buffer might refer to.
   ProfilerMarkerLinkedList mStoredMarkers;
@@ -157,6 +160,13 @@ public:
   PseudoStack* GetPseudoStack();
   mozilla::Mutex* GetMutex();
   void StreamJSObject(JSStreamWriter& b);
+
+  /**
+   * Call this method when the JS entries inside the buffer are about to
+   * become invalid, i.e., just before JS shutdown.
+   */
+  void FlushSamplesAndMarkers();
+
   void BeginUnwind();
   virtual void EndUnwind();
   virtual SyncProfile* AsSyncProfile() { return nullptr; }
@@ -178,7 +188,6 @@ public:
   }
 
   uint32_t bufferGeneration() const {
-    MOZ_ASSERT(mBuffer->mGeneration >= 0);
     return mBuffer->mGeneration;
   }
 
@@ -191,6 +200,14 @@ private:
   ThreadInfo* mThreadInfo;
 
   const nsRefPtr<ProfileBuffer> mBuffer;
+
+  // JS frames in the buffer may require a live JSRuntime to stream (e.g.,
+  // stringifying JIT frames). In the case of JSRuntime destruction,
+  // FlushSamplesAndMarkers should be called to save them. These are spliced
+  // into the final stream.
+  std::string mSavedStreamedSamples;
+  std::string mSavedStreamedMarkers;
+  std::string mSavedStreamedOptimizations;
 
   PseudoStack*   mPseudoStack;
   mozilla::Mutex mMutex;

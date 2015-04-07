@@ -1065,7 +1065,8 @@ nsNativeThemeGTK::GetWidgetOverflow(nsDeviceContext* aContext,
 NS_IMETHODIMP
 nsNativeThemeGTK::GetMinimumWidgetSize(nsPresContext* aPresContext,
                                        nsIFrame* aFrame, uint8_t aWidgetType,
-                                       nsIntSize* aResult, bool* aIsOverridable)
+                                       LayoutDeviceIntSize* aResult,
+                                       bool* aIsOverridable)
 {
   aResult->width = aResult->height = 0;
   *aIsOverridable = true;
@@ -1354,6 +1355,7 @@ nsNativeThemeGTK::WidgetStateChanged(nsIFrame* aFrame, uint8_t aWidgetType,
     if (aAttribute == nsGkAtoms::disabled ||
         aAttribute == nsGkAtoms::checked ||
         aAttribute == nsGkAtoms::selected ||
+        aAttribute == nsGkAtoms::visuallyselected ||
         aAttribute == nsGkAtoms::focused ||
         aAttribute == nsGkAtoms::readonly ||
         aAttribute == nsGkAtoms::_default ||

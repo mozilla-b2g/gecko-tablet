@@ -470,8 +470,9 @@ MediaEngineGonkVideoSource::StartImpl(webrtc::CaptureCapability aCapability) {
   config.mMode = ICameraControl::kPictureMode;
   config.mPreviewSize.width = aCapability.width;
   config.mPreviewSize.height = aCapability.height;
+  config.mPictureSize.width = aCapability.width;
+  config.mPictureSize.height = aCapability.height;
   mCameraControl->Start(&config);
-  mCameraControl->Set(CAMERA_PARAM_PICTURE_SIZE, config.mPreviewSize);
 
   hal::RegisterScreenConfigurationObserver(this);
 }
@@ -603,7 +604,7 @@ MediaEngineGonkVideoSource::OnTakePictureComplete(uint8_t* aData, uint32_t aLeng
       : mPhotoDataLength(aLength)
     {
       mCallbacks.SwapElements(aCallbacks);
-      mPhotoData = (uint8_t*) moz_malloc(aLength);
+      mPhotoData = (uint8_t*) malloc(aLength);
       memcpy(mPhotoData, aData, mPhotoDataLength);
       mMimeType = aMimeType;
     }
@@ -774,7 +775,7 @@ MediaEngineGonkVideoSource::RotateImage(layers::Image* aImage, uint32_t aWidth, 
                           dstPtr + (yStride * dstHeight + (uvStride * dstHeight / 2)), uvStride,
                           dstPtr + (yStride * dstHeight), uvStride,
                           0, 0,
-                          aWidth, aHeight,
+                          graphicBuffer->getStride(), aHeight,
                           aWidth, aHeight,
                           static_cast<libyuv::RotationMode>(mRotation),
                           libyuv::FOURCC_NV21);
@@ -796,7 +797,7 @@ MediaEngineGonkVideoSource::RotateImage(layers::Image* aImage, uint32_t aWidth, 
                           dstPtr + (dstWidth * dstHeight), half_width,
                           dstPtr + (dstWidth * dstHeight * 5 / 4), half_width,
                           0, 0,
-                          aWidth, aHeight,
+                          graphicBuffer->getStride(), aHeight,
                           aWidth, aHeight,
                           static_cast<libyuv::RotationMode>(mRotation),
                           ConvertPixelFormatToFOURCC(graphicBuffer->getPixelFormat()));

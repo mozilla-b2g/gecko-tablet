@@ -3,7 +3,6 @@
 % file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 :root, body {
-  height: 100%;
   overflow-x: hidden;
 }
 
@@ -21,16 +20,14 @@ body {
   text-align: center;
 }
 
-#list {
-  height: 100%;
-  overflow-x: auto;
-}
-
 .item {
   display: flex;
   flex-flow: row;
   cursor: pointer;
   padding: 6px;
+  opacity: 0;
+  max-height: 0;
+  transition: opacity 150ms ease-in-out, max-height 150ms ease-in-out 150ms;
 }
 
 .item.active {
@@ -105,3 +102,8 @@ body {
   border-width: 0;
 }
 
+.item.visible {
+  opacity: 1;
+  max-height: 80px;
+  transition: max-height 250ms ease-in-out, opacity 250ms ease-in-out 250ms;
+}

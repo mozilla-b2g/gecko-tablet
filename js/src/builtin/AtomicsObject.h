@@ -16,8 +16,8 @@ class AtomicsObject : public JSObject
 {
   public:
     static const Class class_;
-    static JSObject* initClass(JSContext *cx, Handle<GlobalObject *> global);
-    static bool toString(JSContext *cx, unsigned int argc, jsval *vp);
+    static JSObject* initClass(JSContext* cx, Handle<GlobalObject*> global);
+    static bool toString(JSContext* cx, unsigned int argc, jsval* vp);
 
     // Defined return values for futexWait.
     // The error values must be negative because APIs such as futexWaitOrRequeue
@@ -31,18 +31,26 @@ class AtomicsObject : public JSObject
 
 void atomics_fullMemoryBarrier();
 
-bool atomics_compareExchange(JSContext *cx, unsigned argc, Value *vp);
-bool atomics_load(JSContext *cx, unsigned argc, Value *vp);
-bool atomics_store(JSContext *cx, unsigned argc, Value *vp);
-bool atomics_fence(JSContext *cx, unsigned argc, Value *vp);
-bool atomics_add(JSContext *cx, unsigned argc, Value *vp);
-bool atomics_sub(JSContext *cx, unsigned argc, Value *vp);
-bool atomics_and(JSContext *cx, unsigned argc, Value *vp);
-bool atomics_or(JSContext *cx, unsigned argc, Value *vp);
-bool atomics_xor(JSContext *cx, unsigned argc, Value *vp);
-bool atomics_futexWait(JSContext *cx, unsigned argc, Value *vp);
-bool atomics_futexWake(JSContext *cx, unsigned argc, Value *vp);
-bool atomics_futexWakeOrRequeue(JSContext *cx, unsigned argc, Value *vp);
+bool atomics_compareExchange(JSContext* cx, unsigned argc, Value* vp);
+bool atomics_load(JSContext* cx, unsigned argc, Value* vp);
+bool atomics_store(JSContext* cx, unsigned argc, Value* vp);
+bool atomics_fence(JSContext* cx, unsigned argc, Value* vp);
+bool atomics_add(JSContext* cx, unsigned argc, Value* vp);
+bool atomics_sub(JSContext* cx, unsigned argc, Value* vp);
+bool atomics_and(JSContext* cx, unsigned argc, Value* vp);
+bool atomics_or(JSContext* cx, unsigned argc, Value* vp);
+bool atomics_xor(JSContext* cx, unsigned argc, Value* vp);
+bool atomics_futexWait(JSContext* cx, unsigned argc, Value* vp);
+bool atomics_futexWake(JSContext* cx, unsigned argc, Value* vp);
+bool atomics_futexWakeOrRequeue(JSContext* cx, unsigned argc, Value* vp);
+
+/* asm.js callouts */
+int32_t atomics_add_asm_callout(int32_t vt, int32_t offset, int32_t value);
+int32_t atomics_sub_asm_callout(int32_t vt, int32_t offset, int32_t value);
+int32_t atomics_and_asm_callout(int32_t vt, int32_t offset, int32_t value);
+int32_t atomics_or_asm_callout(int32_t vt, int32_t offset, int32_t value);
+int32_t atomics_xor_asm_callout(int32_t vt, int32_t offset, int32_t value);
+int32_t atomics_cmpxchg_asm_callout(int32_t vt, int32_t offset, int32_t oldval, int32_t newval);
 
 class FutexRuntime
 {
@@ -73,7 +81,7 @@ public:
     // wait() will not wake up spuriously.  It will return true and
     // set *result to a return code appropriate for
     // Atomics.futexWait() on success, and return false on error.
-    bool wait(JSContext *cx, double timeout, AtomicsObject::FutexWaitResult *result);
+    bool wait(JSContext* cx, double timeout, AtomicsObject::FutexWaitResult* result);
 
     // Wake the thread represented by this Runtime.
     //
@@ -105,7 +113,7 @@ public:
     };
 
     // Condition variable that this runtime will wait on.
-    PRCondVar *cond_;
+    PRCondVar* cond_;
 
     // Current futex state for this runtime.  When not in a wait this
     // is Idle; when in a wait it is Waiting or the reason the futex
@@ -123,8 +131,8 @@ public:
 #endif
 };
 
-JSObject *
-InitAtomicsClass(JSContext *cx, HandleObject obj);
+JSObject*
+InitAtomicsClass(JSContext* cx, HandleObject obj);
 
 }  /* namespace js */
 

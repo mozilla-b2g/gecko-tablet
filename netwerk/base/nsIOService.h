@@ -28,7 +28,7 @@
 #define NS_IPC_IOSERVICE_SET_OFFLINE_TOPIC "ipc:network:set-offline"
 
 static const char gScheme[][sizeof("resource")] =
-    {"chrome", "file", "http", "jar", "resource"};
+    {"chrome", "file", "http", "https", "jar", "data", "resource"};
 
 class nsAsyncRedirectVerifyHelper;
 class nsINetworkLinkService;
@@ -45,10 +45,10 @@ namespace net {
 } // namespace mozilla
 
 class nsIOService final : public nsIIOService2
-                            , public nsIObserver
-                            , public nsINetUtil
-                            , public nsISpeculativeConnect
-                            , public nsSupportsWeakReference
+                        , public nsIObserver
+                        , public nsINetUtil
+                        , public nsISpeculativeConnect
+                        , public nsSupportsWeakReference
 {
 public:
     NS_DECL_THREADSAFE_ISUPPORTS

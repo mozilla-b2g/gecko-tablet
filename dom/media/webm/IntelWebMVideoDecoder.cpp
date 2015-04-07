@@ -116,7 +116,7 @@ IntelWebMVideoDecoder::IsSupportedVideoMimeType(const nsACString& aMimeType)
 {
   return (aMimeType.EqualsLiteral("video/webm; codecs=vp8") ||
           aMimeType.EqualsLiteral("video/webm; codecs=vp9")) &&
-         mPlatform->SupportsVideoMimeType(aMimeType);
+         mPlatform->SupportsMimeType(aMimeType);
 }
 
 nsresult
@@ -147,11 +147,12 @@ IntelWebMVideoDecoder::Init(unsigned int aWidth, unsigned int aHeight)
   if (!IsSupportedVideoMimeType(video.mime_type)) {
     return NS_ERROR_FAILURE;
   }
-  mMediaDataDecoder = mPlatform->CreateVideoDecoder(video,
-                                                    mReader->GetLayersBackendType(),
-                                                    mReader->GetDecoder()->GetImageContainer(),
-                                                    mTaskQueue,
-                                                    this);
+  mMediaDataDecoder =
+    mPlatform->CreateDecoder(video,
+                             mTaskQueue,
+                             this,
+                             mReader->GetLayersBackendType(),
+                             mReader->GetDecoder()->GetImageContainer());
   if (!mMediaDataDecoder) {
     return NS_ERROR_FAILURE;
   }
@@ -353,7 +354,7 @@ IntelWebMVideoDecoder::DecodeVideoFrame(bool& aKeyframeSkip,
     NS_ENSURE_SUCCESS(rv, false);
   }
 
-  NS_ASSERTION(mReader->GetDecoder()->OnDecodeThread(), "Should be on decode thread.");
+  MOZ_ASSERT(mReader->OnTaskQueue());
   bool rv = Decode();
   {
     // Report the number of "decoded" frames as the difference in the

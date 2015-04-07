@@ -447,7 +447,7 @@ DataTextureSourceD3D9::Update(gfxWindowsSurface* aSurface)
     NS_WARNING("No D3D device to update the texture.");
     return false;
   }
-  mSize = ToIntSize(aSurface->GetSize());
+  mSize = aSurface->GetSize();
 
   uint32_t bpp = 0;
 
@@ -708,7 +708,7 @@ CairoTextureClientD3D9::BorrowDrawTarget()
     // Instead we have to use a gfxImageSurface and fallback for font drawing.
     D3DLOCKED_RECT rect;
     mD3D9Surface->LockRect(&rect, nullptr, 0);
-    mSurface = new gfxImageSurface((uint8_t*)rect.pBits, ThebesIntSize(mSize),
+    mSurface = new gfxImageSurface((uint8_t*)rect.pBits, mSize,
                                    rect.Pitch, SurfaceFormatToImageFormat(mFormat));
     mLockRect = true;
   }

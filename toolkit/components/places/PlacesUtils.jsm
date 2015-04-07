@@ -30,6 +30,7 @@ const { classes: Cc, interfaces: Ci, results: Cr, utils: Cu } = Components;
 Cu.importGlobalProperties(["URL"]);
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+Cu.import("resource://gre/modules/AppConstants.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Services",
                                   "resource://gre/modules/Services.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
@@ -54,14 +55,10 @@ XPCOMUtils.defineLazyModuleGetter(this, "History",
 // refresh instead.
 const MIN_TRANSACTIONS_FOR_BATCH = 5;
 
-#ifdef XP_MACOSX
-// On Mac OSX, the transferable system converts "\r\n" to "\n\n", where we
-// really just want "\n".
-const NEWLINE= "\n";
-#else
-// On other platforms, the transferable system converts "\r\n" to "\n".
-const NEWLINE = "\r\n";
-#endif
+// On Mac OSX, the transferable system converts "\r\n" to "\n\n", where
+// we really just want "\n". On other platforms, the transferable system
+// converts "\r\n" to "\n".
+const NEWLINE = AppConstants.platform == "macosx" ? "\n" : "\r\n";
 
 function QI_node(aNode, aIID) {
   var result = null;
@@ -945,7 +942,7 @@ this.PlacesUtils = {
        FROM moz_keywords k
        JOIN moz_places h ON h.id = k.place_id
        WHERE k.keyword = :keyword`);
-    stmt.params.keyword = aKeyword;
+    stmt.params.keyword = aKeyword.toLowerCase();
     try {
       if (!stmt.executeStep())
         return [ null, null ];
@@ -2016,19 +2013,71 @@ XPCOMUtils.defineLazyGetter(this, "gAsyncDBWrapperPromised",
  */
 let Keywords = {
   /**
-   * Fetches URL and postData for a given keyword.
+   * Fetches a keyword entry based on keyword or URL.
    *
-   * @param keyword
-   *        The keyword to fetch.
+   * @param keywordOrEntry
+   *        Either the keyword to fetch or an entry providing keyword
+   *        or url property to find keywords for.  If both properties are set,
+   *        this returns their intersection.
+   * @param onResult [optional]
+   *        Callback invoked for each found entry.
    * @return {Promise}
    * @resolves to an object in the form: { keyword, url, postData },
-   *           or null if a keyword was not found.
+   *           or null if a keyword entry was not found.
    */
-  fetch(keyword) {
-    if (typeof(keyword) != "string")
+  fetch(keywordOrEntry, onResult=null) {
+    if (typeof(keywordOrEntry) == "string")
+      keywordOrEntry = { keyword: keywordOrEntry };
+
+    if (keywordOrEntry === null || typeof(keywordOrEntry) != "object" ||
+        (("keyword" in keywordOrEntry) && typeof(keywordOrEntry.keyword) != "string"))
       throw new Error("Invalid keyword");
-    keyword = keyword.trim().toLowerCase();
-    return gKeywordsCachePromise.then(cache => cache.get(keyword) || null);
+
+    let hasKeyword = "keyword" in keywordOrEntry;
+    let hasUrl = "url" in keywordOrEntry;
+
+    if (!hasKeyword && !hasUrl)
+      throw new Error("At least keyword or url must be provided");
+    if (onResult && typeof onResult != "function")
+      throw new Error("onResult callback must be a valid function");
+
+    if (hasUrl)
+      keywordOrEntry.url = new URL(keywordOrEntry.url);
+    if (hasKeyword)
+      keywordOrEntry.keyword = keywordOrEntry.keyword.trim().toLowerCase();
+
+    let safeOnResult = entry => {
+      if (onResult) {
+        try {
+          onResult(entry);
+        } catch (ex) {
+          Cu.reportError(ex);
+        }
+      }
+    };
+
+    return gKeywordsCachePromise.then(cache => {
+      let entries = [];
+      if (hasKeyword) {
+        let entry = cache.get(keywordOrEntry.keyword);
+        if (entry)
+          entries.push(entry);
+      }
+      if (hasUrl) {
+        for (let entry of cache.values()) {
+          if (entry.url.href == keywordOrEntry.url.href)
+            entries.push(entry);
+        }
+      }
+
+      entries = entries.filter(e => {
+        return (!hasUrl || e.url.href == keywordOrEntry.url.href) &&
+               (!hasKeyword || e.keyword == keywordOrEntry.keyword);
+      });
+
+      entries.forEach(safeOnResult);
+      return entries.length ? entries[0] : null;
+    });
   },
 
   /**

@@ -429,8 +429,8 @@ protected:
     ScreenOrientation mOrientation;
     float mDPI;
     CSSToLayoutDeviceScale mDefaultScale;
-    bool mShown;
     bool mUpdatedDimensions;
+    nsIntPoint mChromeOffset;
 
 private:
     already_AddRefed<nsFrameLoader> GetFrameLoader(bool aUseCachedFrameLoaderAfterDestroy = false) const;
@@ -519,6 +519,11 @@ private:
     // frame scripts that we intend to load and send them as part of the
     // CreateWindow response. Then TabChild loads them immediately.
     nsTArray<FrameScriptInfo> mDelayedFrameScripts;
+
+    // If the user called RequestNotifyLayerTreeReady and the RenderFrameParent
+    // wasn't ready yet, we set this flag and call RequestNotifyLayerTreeReady
+    // again once the RenderFrameParent arrives.
+    bool mNeedLayerTreeReadyNotification;
 
 private:
     // This is used when APZ needs to find the TabParent associated with a layer

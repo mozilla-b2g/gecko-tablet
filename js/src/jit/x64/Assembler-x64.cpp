@@ -161,12 +161,12 @@ Assembler::addPatchableJump(JmpSrc src, Relocation::Kind reloc)
 }
 
 /* static */
-uint8_t *
-Assembler::PatchableJumpAddress(JitCode *code, size_t index)
+uint8_t*
+Assembler::PatchableJumpAddress(JitCode* code, size_t index)
 {
     // The assembler stashed the offset into the code of the fragments used
     // for far jumps at the start of the relocation table.
-    uint32_t jumpOffset = * (uint32_t *) code->jumpRelocTable();
+    uint32_t jumpOffset = * (uint32_t*) code->jumpRelocTable();
     jumpOffset += index * SizeOfJumpTableEntry;
 
     MOZ_ASSERT(jumpOffset + SizeOfExtendedJump <= code->instructionsSize());
@@ -175,9 +175,9 @@ Assembler::PatchableJumpAddress(JitCode *code, size_t index)
 
 /* static */
 void
-Assembler::PatchJumpEntry(uint8_t *entry, uint8_t *target)
+Assembler::PatchJumpEntry(uint8_t* entry, uint8_t* target)
 {
-    uint8_t **index = (uint8_t **) (entry + SizeOfExtendedJump - sizeof(void*));
+    uint8_t** index = (uint8_t**) (entry + SizeOfExtendedJump - sizeof(void*));
     *index = target;
 }
 
@@ -196,7 +196,7 @@ Assembler::finish()
     // tracked for GC.
     MOZ_ASSERT_IF(jumpRelocations_.length(), jumpRelocations_.length() >= sizeof(uint32_t));
     if (jumpRelocations_.length())
-        *(uint32_t *)jumpRelocations_.buffer() = extendedJumpTable_;
+        *(uint32_t*)jumpRelocations_.buffer() = extendedJumpTable_;
 
     // Zero the extended jumps table.
     for (size_t i = 0; i < jumps_.length(); i++) {
@@ -216,13 +216,13 @@ Assembler::finish()
 }
 
 void
-Assembler::executableCopy(uint8_t *buffer)
+Assembler::executableCopy(uint8_t* buffer)
 {
     AssemblerX86Shared::executableCopy(buffer);
 
     for (size_t i = 0; i < jumps_.length(); i++) {
-        RelativePatch &rp = jumps_[i];
-        uint8_t *src = buffer + rp.offset;
+        RelativePatch& rp = jumps_[i];
+        uint8_t* src = buffer + rp.offset;
         if (!rp.target) {
             // The patch target is nullptr for jumps that have been linked to
             // a label within the same code block, but may be repatched later
@@ -238,7 +238,7 @@ Assembler::executableCopy(uint8_t *buffer)
             MOZ_ASSERT((extendedJumpTable_ + i * SizeOfJumpTableEntry) <= size() - SizeOfJumpTableEntry);
 
             // Patch the jump to go to the extended jump entry.
-            uint8_t *entry = buffer + extendedJumpTable_ + i * SizeOfJumpTableEntry;
+            uint8_t* entry = buffer + extendedJumpTable_ + i * SizeOfJumpTableEntry;
             X86Encoding::SetRel32(src, entry);
 
             // Now patch the pointer, note that we need to align it to
@@ -256,7 +256,7 @@ class RelocationIterator
     uint32_t extOffset_;
 
   public:
-    explicit RelocationIterator(CompactBufferReader &reader)
+    explicit RelocationIterator(CompactBufferReader& reader)
       : reader_(reader)
     {
         tableStart_ = reader_.readFixedUint32_t();
@@ -278,75 +278,28 @@ class RelocationIterator
     }
 };
 
-JitCode *
-Assembler::CodeFromJump(JitCode *code, uint8_t *jump)
+JitCode*
+Assembler::CodeFromJump(JitCode* code, uint8_t* jump)
 {
-    uint8_t *target = (uint8_t *)X86Encoding::GetRel32Target(jump);
+    uint8_t* target = (uint8_t*)X86Encoding::GetRel32Target(jump);
     if (target >= code->raw() && target < code->raw() + code->instructionsSize()) {
         // This jump is within the code buffer, so it has been redirected to
         // the extended jump table.
         MOZ_ASSERT(target + SizeOfJumpTableEntry <= code->raw() + code->instructionsSize());
 
-        target = (uint8_t *)X86Encoding::GetPointer(target + SizeOfExtendedJump);
+        target = (uint8_t*)X86Encoding::GetPointer(target + SizeOfExtendedJump);
     }
 
     return JitCode::FromExecutable(target);
 }
 
 void
-Assembler::TraceJumpRelocations(JSTracer *trc, JitCode *code, CompactBufferReader &reader)
+Assembler::TraceJumpRelocations(JSTracer* trc, JitCode* code, CompactBufferReader& reader)
 {
     RelocationIterator iter(reader);
     while (iter.read()) {
-        JitCode *child = CodeFromJump(code, code->raw() + iter.offset());
-        MarkJitCodeUnbarriered(trc, &child, "rel32");
+        JitCode* child = CodeFromJump(code, code->raw() + iter.offset());
+        TraceManuallyBarrieredEdge(trc, &child, "rel32");
         MOZ_ASSERT(child == CodeFromJump(code, code->raw() + iter.offset()));
     }
-}
-
-FloatRegisterSet
-FloatRegister::ReduceSetForPush(const FloatRegisterSet &s)
-{
-    if (JitSupportsSimd())
-        return s;
-
-    // Ignore all SIMD register.
-    return FloatRegisterSet(s.bits() & (Codes::AllPhysMask * Codes::SpreadScalar));
-}
-uint32_t
-FloatRegister::GetPushSizeInBytes(const FloatRegisterSet &s)
-{
-    SetType all = s.bits();
-    SetType float32x4Set =
-        (all >> (uint32_t(Codes::Float32x4) * Codes::TotalPhys)) & Codes::AllPhysMask;
-    SetType int32x4Set =
-        (all >> (uint32_t(Codes::Int32x4) * Codes::TotalPhys)) & Codes::AllPhysMask;
-    SetType doubleSet =
-        (all >> (uint32_t(Codes::Double) * Codes::TotalPhys)) & Codes::AllPhysMask;
-    SetType singleSet =
-        (all >> (uint32_t(Codes::Single) * Codes::TotalPhys)) & Codes::AllPhysMask;
-
-    // PushRegsInMask pushes the largest register first, and thus avoids pushing
-    // aliased registers. So we have to filter out the physical registers which
-    // are already pushed as part of larger registers.
-    SetType set128b = int32x4Set | float32x4Set;
-    SetType set64b = doubleSet & ~set128b;
-    SetType set32b = singleSet & ~set64b  & ~set128b;
-
-    static_assert(Codes::AllPhysMask <= 0xffff, "We can safely use CountPopulation32");
-    uint32_t count32b = mozilla::CountPopulation32(set32b);
-
-    // If we have an odd number of 32 bits values, then we increase the size to
-    // keep the stack aligned on 8 bytes. Note: Keep in sync with
-    // PushRegsInMask, and PopRegsInMaskIgnore.
-    count32b += count32b & 1;
-
-    return mozilla::CountPopulation32(set128b) * (4 * sizeof(int32_t))
-        + mozilla::CountPopulation32(set64b) * sizeof(double)
-        + count32b * sizeof(float);
-}
-uint32_t
-FloatRegister::getRegisterDumpOffsetInBytes()
-{
-    return uint32_t(encoding()) * sizeof(FloatRegisters::RegisterContent);
 }

@@ -519,7 +519,8 @@ public:
    * aStartTimeUSecs is relative to the state machine's mStartTime.
    * Decoder monitor must be held.
    */
-  void RecreateDecodedStream(int64_t aStartTimeUSecs);
+  void RecreateDecodedStream(int64_t aStartTimeUSecs,
+                             MediaStreamGraph* aGraph = nullptr);
   /**
    * Call this when mDecoderStateMachine or mDecoderStateMachine->IsPlaying() changes.
    * Decoder monitor must be held.
@@ -668,9 +669,9 @@ public:
   // has changed.
   void DurationChanged();
 
-  bool OnStateMachineThread() const override;
+  bool OnStateMachineTaskQueue() const override;
 
-  bool OnDecodeThread() const override;
+  bool OnDecodeTaskQueue() const override;
 
   // Returns the monitor for other threads to synchronise access to
   // state.

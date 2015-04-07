@@ -113,7 +113,7 @@ CreateDrawTargetForSurface(gfxASurface *aSurface)
   }
   RefPtr<DrawTarget> drawTarget =
     Factory::CreateDrawTargetForCairoSurface(aSurface->CairoSurface(),
-                                             ToIntSize(gfxIntSize(aSurface->GetSize())),
+                                             aSurface->GetSize(),
                                              &format);
   aSurface->SetData(&kDrawTarget, drawTarget, nullptr);
   return drawTarget;
@@ -3393,7 +3393,7 @@ PluginInstanceChild::ShowPluginFrame()
         SharedDIBSurface* s = static_cast<SharedDIBSurface*>(mCurrentSurface.get());
         if (!mCurrentSurfaceActor) {
             base::SharedMemoryHandle handle = nullptr;
-            s->ShareToProcess(OtherProcess(), &handle);
+            s->ShareToProcess(OtherPid(), &handle);
 
             mCurrentSurfaceActor =
                 SendPPluginSurfaceConstructor(handle,

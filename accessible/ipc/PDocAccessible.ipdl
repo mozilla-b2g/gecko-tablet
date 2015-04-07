@@ -9,8 +9,8 @@ include protocol PContent;
 include "mozilla/GfxMessageUtils.h";
 
 using struct nsIntPoint from "nsRect.h";
-using struct nsIntSize from "nsRect.h";
 using struct nsIntRect from "nsRect.h";
+using mozilla::gfx::IntSize from "mozilla/gfx/Point.h";
 
 namespace mozilla {
 namespace a11y {
@@ -131,7 +131,7 @@ child:
   prio(high) sync PasteText(uint64_t aID, int32_t aPosition);
 
   prio(high) sync ImagePosition(uint64_t aID, uint32_t aCoordType) returns(nsIntPoint aRetVal);
-  prio(high) sync ImageSize(uint64_t aID) returns(nsIntSize aRetVal);
+  prio(high) sync ImageSize(uint64_t aID) returns(IntSize aRetVal);
 
   prio(high) sync StartOffset(uint64_t aID) returns(uint32_t aRetVal, bool aOk);
   prio(high) sync EndOffset(uint64_t aID) returns(uint32_t aRetVal, bool aOk);
@@ -209,6 +209,12 @@ child:
   prio(high) sync ChildAtPoint(uint64_t aID, int32_t aX, int32_t aY, uint32_t aWhich)
     returns(uint64_t aChild, bool aOk);
   prio(high) sync Bounds(uint64_t aID) returns(nsIntRect aRect);
+
+  prio(high) sync Language(uint64_t aID) returns(nsString aLocale);
+  prio(high) sync DocType(uint64_t aID) returns(nsString aType);
+  prio(high) sync URL(uint64_t aID) returns(nsString aURL);
+  prio(high) sync MimeType(uint64_t aID) returns(nsString aMime);
+  prio(high) sync URLDocTypeMimeType(uint64_t aID) returns(nsString aURL, nsString aDocType, nsString aMimeType);
 };
 
 }

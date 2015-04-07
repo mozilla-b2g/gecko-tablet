@@ -13,6 +13,7 @@
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/DOMException.h"
 #include "mozilla/dom/ScriptSettings.h"
+#include "nsIProgrammingLanguage.h"
 #include "nsPIDOMWindow.h"
 #include "nsServiceManagerUtils.h"
 #include "nsThreadUtils.h"
@@ -216,12 +217,6 @@ public:
   NS_DECL_CYCLE_COLLECTION_CLASS(StackFrame)
   NS_DECL_NSISTACKFRAME
 
-  StackFrame(uint32_t aLanguage,
-             const char* aFilename,
-             const char* aFunctionName,
-             int32_t aLineNumber,
-             nsIStackFrame* aCaller);
-
   StackFrame()
     : mLineno(0)
     , mColNo(0)
@@ -229,12 +224,6 @@ public:
   {
   }
 
-  static already_AddRefed<nsIStackFrame>
-  CreateStackFrameLocation(uint32_t aLanguage,
-                           const char* aFilename,
-                           const char* aFunctionName,
-                           int32_t aLineNumber,
-                           nsIStackFrame* aCaller);
 protected:
   virtual ~StackFrame();
 
@@ -262,19 +251,6 @@ protected:
   int32_t mColNo;
   uint32_t mLanguage;
 };
-
-StackFrame::StackFrame(uint32_t aLanguage,
-                       const char* aFilename,
-                       const char* aFunctionName,
-                       int32_t aLineNumber,
-                       nsIStackFrame* aCaller)
-  : mCaller(aCaller)
-  , mLineno(aLineNumber)
-  , mLanguage(aLanguage)
-{
-  CopyUTF8toUTF16(aFilename, mFilename);
-  CopyUTF8toUTF16(aFunctionName, mFunname);
-}
 
 StackFrame::~StackFrame()
 {
@@ -758,7 +734,7 @@ NS_IMETHODIMP JSStackFrame::GetFormattedStack(nsAString& aStack)
   JS::Rooted<JSObject*> stack(cx, mStack);
 
   JS::Rooted<JSString*> formattedStack(cx);
-  if (!JS::StringifySavedFrameStack(cx, stack, &formattedStack)) {
+  if (!JS::BuildStackString(cx, stack, &formattedStack)) {
     JS_ClearPendingException(cx);
     aStack.Truncate();
     return NS_OK;
@@ -855,34 +831,10 @@ JSStackFrame::CreateStack(JSContext* aCx, int32_t aMaxDepth)
   return first.forget();
 }
 
-/* static */ already_AddRefed<nsIStackFrame>
-StackFrame::CreateStackFrameLocation(uint32_t aLanguage,
-                                     const char* aFilename,
-                                     const char* aFunctionName,
-                                     int32_t aLineNumber,
-                                     nsIStackFrame* aCaller)
-{
-  nsRefPtr<StackFrame> self =
-    new StackFrame(aLanguage, aFilename, aFunctionName, aLineNumber, aCaller);
-  return self.forget();
-}
-
 already_AddRefed<nsIStackFrame>
 CreateStack(JSContext* aCx, int32_t aMaxDepth)
 {
   return JSStackFrame::CreateStack(aCx, aMaxDepth);
-}
-
-already_AddRefed<nsIStackFrame>
-CreateStackFrameLocation(uint32_t aLanguage,
-                         const char* aFilename,
-                         const char* aFunctionName,
-                         int32_t aLineNumber,
-                         nsIStackFrame* aCaller)
-{
-  return StackFrame::CreateStackFrameLocation(aLanguage, aFilename,
-                                              aFunctionName, aLineNumber,
-                                              aCaller);
 }
 
 } // namespace exceptions

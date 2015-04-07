@@ -17,6 +17,8 @@ devtools.lazyRequireGetter(this, "EventEmitter",
 devtools.lazyRequireGetter(this, "DevToolsUtils",
   "devtools/toolkit/DevToolsUtils");
 
+devtools.lazyRequireGetter(this, "TreeWidget",
+  "devtools/shared/widgets/TreeWidget", true);
 devtools.lazyRequireGetter(this, "TIMELINE_BLUEPRINT",
   "devtools/shared/timeline/global", true);
 devtools.lazyRequireGetter(this, "L10N",
@@ -25,10 +27,12 @@ devtools.lazyRequireGetter(this, "RecordingUtils",
   "devtools/performance/recording-utils", true);
 devtools.lazyRequireGetter(this, "RecordingModel",
   "devtools/performance/recording-model", true);
+devtools.lazyRequireGetter(this, "FramerateGraph",
+  "devtools/performance/performance-graphs", true);
+devtools.lazyRequireGetter(this, "MemoryGraph",
+  "devtools/performance/performance-graphs", true);
 devtools.lazyRequireGetter(this, "MarkersOverview",
   "devtools/shared/timeline/markers-overview", true);
-devtools.lazyRequireGetter(this, "MemoryOverview",
-  "devtools/shared/timeline/memory-overview", true);
 devtools.lazyRequireGetter(this, "Waterfall",
   "devtools/shared/timeline/waterfall", true);
 devtools.lazyRequireGetter(this, "MarkerDetails",
@@ -39,19 +43,21 @@ devtools.lazyRequireGetter(this, "ThreadNode",
   "devtools/shared/profiler/tree-model", true);
 devtools.lazyRequireGetter(this, "FrameNode",
   "devtools/shared/profiler/tree-model", true);
+devtools.lazyRequireGetter(this, "JITOptimizations",
+  "devtools/shared/profiler/jit", true);
 devtools.lazyRequireGetter(this, "OptionsView",
   "devtools/shared/options-view", true);
+devtools.lazyRequireGetter(this, "FlameGraphUtils",
+  "devtools/shared/widgets/FlameGraph", true);
+devtools.lazyRequireGetter(this, "FlameGraph",
+  "devtools/shared/widgets/FlameGraph", true);
 
 devtools.lazyImporter(this, "CanvasGraphUtils",
   "resource:///modules/devtools/Graphs.jsm");
-devtools.lazyImporter(this, "LineGraphWidget",
-  "resource:///modules/devtools/Graphs.jsm");
-devtools.lazyImporter(this, "FlameGraphUtils",
-  "resource:///modules/devtools/FlameGraph.jsm");
-devtools.lazyImporter(this, "FlameGraph",
-  "resource:///modules/devtools/FlameGraph.jsm");
 devtools.lazyImporter(this, "SideMenuWidget",
   "resource:///modules/devtools/SideMenuWidget.jsm");
+devtools.lazyImporter(this, "PluralForm",
+  "resource://gre/modules/PluralForm.jsm");
 
 const BRANCH_NAME = "devtools.performance.ui.";
 
@@ -59,6 +65,9 @@ const BRANCH_NAME = "devtools.performance.ui.";
 const EVENTS = {
   // Fired by the PerformanceController and OptionsView when a pref changes.
   PREF_CHANGED: "Performance:PrefChanged",
+
+  // Fired by the PerformanceController when the devtools theme changes.
+  THEME_CHANGED: "Performance:ThemeChanged",
 
   // Emitted by the PerformanceView when the state (display mode) changes,
   // for example when switching between "empty", "recording" or "recorded".
@@ -96,6 +105,11 @@ const EVENTS = {
 
   // When the PerformanceController has new recording data
   TIMELINE_DATA: "Performance:TimelineData",
+
+  // Emitted by the JITOptimizationsView when it renders new optimization
+  // data and clears the optimization data
+  OPTIMIZATIONS_RESET: "Performance:UI:OptimizationsReset",
+  OPTIMIZATIONS_RENDERED: "Performance:UI:OptimizationsRendered",
 
   // Emitted by the OverviewView when more data has been rendered
   OVERVIEW_RENDERED: "Performance:UI:OverviewRendered",
@@ -177,6 +191,7 @@ let PerformanceController = {
     this._onTimelineData = this._onTimelineData.bind(this);
     this._onRecordingSelectFromView = this._onRecordingSelectFromView.bind(this);
     this._onPrefChanged = this._onPrefChanged.bind(this);
+    this._onThemeChanged = this._onThemeChanged.bind(this);
 
     // All boolean prefs should be handled via the OptionsView in the
     // ToolbarView, so that they may be accessible via the "gear" menu.
@@ -198,6 +213,7 @@ let PerformanceController = {
     RecordingsView.on(EVENTS.UI_EXPORT_RECORDING, this.exportRecording);
     RecordingsView.on(EVENTS.RECORDING_SELECTED, this._onRecordingSelectFromView);
 
+    gDevTools.on("pref-changed", this._onThemeChanged);
     gFront.on("markers", this._onTimelineData); // timeline markers
     gFront.on("frames", this._onTimelineData); // stack frames
     gFront.on("memory", this._onTimelineData); // memory measurements
@@ -220,11 +236,19 @@ let PerformanceController = {
     RecordingsView.off(EVENTS.UI_EXPORT_RECORDING, this.exportRecording);
     RecordingsView.off(EVENTS.RECORDING_SELECTED, this._onRecordingSelectFromView);
 
+    gDevTools.off("pref-changed", this._onThemeChanged);
     gFront.off("markers", this._onTimelineData);
     gFront.off("frames", this._onTimelineData);
     gFront.off("memory", this._onTimelineData);
     gFront.off("ticks", this._onTimelineData);
     gFront.off("allocations", this._onTimelineData);
+  },
+
+  /**
+   * Returns the current devtools theme.
+   */
+  getTheme: function () {
+    return Services.prefs.getCharPref("devtools.theme");
   },
 
   /**
@@ -412,6 +436,19 @@ let PerformanceController = {
    */
   _onPrefChanged: function (_, prefName, prefValue) {
     this.emit(EVENTS.PREF_CHANGED, prefName, prefValue);
+  },
+
+  /*
+   * Called when the developer tools theme changes.
+   */
+  _onThemeChanged: function (_, data) {
+    // Right now, gDevTools only emits `pref-changed` for the theme,
+    // but this could change in the future.
+    if (data.pref !== "devtools.theme") {
+      return;
+    }
+
+    this.emit(EVENTS.THEME_CHANGED, data.newValue);
   },
 
   toString: () => "[object PerformanceController]"

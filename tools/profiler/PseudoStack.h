@@ -93,9 +93,9 @@ public:
   void
   StreamJSObject(JSStreamWriter& b) const;
 
-  void SetGeneration(int aGenID);
+  void SetGeneration(uint32_t aGenID);
 
-  bool HasExpired(int aGenID) const {
+  bool HasExpired(uint32_t aGenID) const {
     return mGenID + 2 <= aGenID;
   }
 
@@ -106,7 +106,7 @@ private:
   ProfilerMarkerPayload* mPayload;
   ProfilerMarker* mNext;
   float mTime;
-  int mGenID;
+  uint32_t mGenID;
 };
 
 // Foward declaration
@@ -349,10 +349,16 @@ public:
     return sMin(mStackPointer, mozilla::sig_safe_t(mozilla::ArrayLength(mStack)));
   }
 
-  void sampleRuntime(JSRuntime *runtime) {
+  void sampleRuntime(JSRuntime* runtime) {
+    if (mRuntime && !runtime) {
+      // On JS shut down, flush the current buffer as stringifying JIT samples
+      // requires a live JSRuntime.
+      flushSamplerOnJSShutdown();
+    }
+
     mRuntime = runtime;
+
     if (!runtime) {
-      // JS shut down
       return;
     }
 
@@ -361,7 +367,7 @@ public:
     js::SetRuntimeProfilingStack(runtime,
                                  (js::ProfileEntry*) mStack,
                                  (uint32_t*) &mStackPointer,
-                                 uint32_t(mozilla::ArrayLength(mStack)));
+                                 (uint32_t) mozilla::ArrayLength(mStack));
     if (mStartJSSampling)
       enableJSSampling();
   }
@@ -414,6 +420,8 @@ public:
   // No copying.
   PseudoStack(const PseudoStack&) = delete;
   void operator=(const PseudoStack&) = delete;
+
+  void flushSamplerOnJSShutdown();
 
   // Keep a list of pending markers that must be moved
   // to the circular buffer

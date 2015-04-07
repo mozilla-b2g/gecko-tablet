@@ -15,6 +15,7 @@
 #include "signaling/src/jsep/JsepTrack.h"
 #include "signaling/src/jsep/JsepTrackImpl.h"
 #include "signaling/src/sdp/SipccSdpParser.h"
+#include "signaling/src/common/PtrVector.h"
 
 namespace mozilla {
 
@@ -38,8 +39,6 @@ public:
         mUuidGen(Move(uuidgen))
   {
   }
-
-  virtual ~JsepSessionImpl();
 
   // Implement JsepSession methods.
   virtual nsresult Init() override;
@@ -76,7 +75,7 @@ public:
   virtual std::vector<JsepCodecDescription*>&
   Codecs() override
   {
-    return mCodecs;
+    return mCodecs.values;
   }
 
   virtual nsresult ReplaceTrack(const std::string& oldStreamId,
@@ -183,8 +182,9 @@ private:
       const SdpMediaSection& msection) const;
   const std::vector<SdpExtmapAttributeList::Extmap>* GetRtpExtensions(
       SdpMediaSection::MediaType type) const;
-  void AddCommonCodecs(const SdpMediaSection& remoteMsection,
-                       SdpMediaSection* msection);
+
+  PtrVector<JsepCodecDescription> GetCommonCodecs(
+      const SdpMediaSection& remoteMsection);
   void AddCommonExtmaps(const SdpMediaSection& remoteMsection,
                         SdpMediaSection* msection);
   nsresult SetupIds();
@@ -236,6 +236,7 @@ private:
                          const Sdp& oldAnswer,
                          Sdp* newSdp);
   void SetupBundle(Sdp* sdp) const;
+  nsresult SetupTransportAttributes(Sdp* sdp);
   void SetupMsidSemantic(const std::vector<std::string>& msids, Sdp* sdp) const;
   nsresult GetIdsFromMsid(const Sdp& sdp,
                           const SdpMediaSection& msection,
@@ -312,6 +313,7 @@ private:
                               std::vector<uint8_t>* payloadTypesOut);
   std::string GetCNAME(const SdpMediaSection& msection) const;
   bool MsectionIsDisabled(const SdpMediaSection& msection) const;
+  const Sdp* GetAnswer() const;
 
   std::vector<JsepSendingTrack> mLocalTracks;
   std::vector<JsepReceivingTrack> mRemoteTracks;
@@ -344,7 +346,7 @@ private:
   UniquePtr<Sdp> mCurrentRemoteDescription;
   UniquePtr<Sdp> mPendingLocalDescription;
   UniquePtr<Sdp> mPendingRemoteDescription;
-  std::vector<JsepCodecDescription*> mCodecs;
+  PtrVector<JsepCodecDescription> mCodecs;
   std::string mLastError;
   SipccSdpParser mParser;
 };

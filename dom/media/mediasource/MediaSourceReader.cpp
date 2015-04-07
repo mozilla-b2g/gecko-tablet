@@ -141,7 +141,7 @@ MediaSourceReader::SizeOfAudioQueueInFrames()
 nsRefPtr<MediaDecoderReader::AudioDataPromise>
 MediaSourceReader::RequestAudioData()
 {
-  MOZ_ASSERT(OnDecodeThread());
+  MOZ_ASSERT(OnTaskQueue());
   MOZ_DIAGNOSTIC_ASSERT(mSeekPromise.IsEmpty(), "No sample requests allowed while seeking");
   MOZ_DIAGNOSTIC_ASSERT(mAudioPromise.IsEmpty(), "No duplicate sample requests");
   nsRefPtr<AudioDataPromise> p = mAudioPromise.Ensure(__func__);
@@ -168,12 +168,16 @@ MediaSourceReader::RequestAudioData()
                                             &MediaSourceReader::CompleteAudioSeekAndRejectPromise));
       break;
     case SOURCE_NONE:
-      if (mLastAudioTime) {
+      if (!mLastAudioTime) {
+        // This is the first call to RequestAudioData.
+        // Fallback to using decoder with earliest data.
+        mAudioSourceDecoder = FirstDecoder(MediaData::AUDIO_DATA);
+      }
+      if (mLastAudioTime || !mAudioSourceDecoder) {
         CheckForWaitOrEndOfStream(MediaData::AUDIO_DATA, mLastAudioTime);
         break;
       }
-      // Fallback to using first reader
-      mAudioSourceDecoder = mAudioTrack->Decoders()[0];
+      // Fallback to getting first frame from first decoder.
     default:
       DoAudioRequest();
       break;
@@ -305,7 +309,7 @@ MediaSourceReader::OnAudioNotDecoded(NotDecodedReason aReason)
 nsRefPtr<MediaDecoderReader::VideoDataPromise>
 MediaSourceReader::RequestVideoData(bool aSkipToNextKeyframe, int64_t aTimeThreshold)
 {
-  MOZ_ASSERT(OnDecodeThread());
+  MOZ_ASSERT(OnTaskQueue());
   MOZ_DIAGNOSTIC_ASSERT(mSeekPromise.IsEmpty(), "No sample requests allowed while seeking");
   MOZ_DIAGNOSTIC_ASSERT(mVideoPromise.IsEmpty(), "No duplicate sample requests");
   nsRefPtr<VideoDataPromise> p = mVideoPromise.Ensure(__func__);
@@ -338,12 +342,16 @@ MediaSourceReader::RequestVideoData(bool aSkipToNextKeyframe, int64_t aTimeThres
                                            &MediaSourceReader::CompleteVideoSeekAndRejectPromise));
       break;
     case SOURCE_NONE:
-      if (mLastVideoTime) {
+      if (!mLastVideoTime) {
+        // This is the first call to RequestVideoData.
+        // Fallback to using decoder with earliest data.
+        mVideoSourceDecoder = FirstDecoder(MediaData::VIDEO_DATA);
+      }
+      if (mLastVideoTime || !mVideoSourceDecoder) {
         CheckForWaitOrEndOfStream(MediaData::VIDEO_DATA, mLastVideoTime);
         break;
       }
-      // Fallback to using first reader.
-      mVideoSourceDecoder = mVideoTrack->Decoders()[0];
+      // Fallback to getting first frame from first decoder.
     default:
       DoVideoRequest();
       break;
@@ -840,7 +848,7 @@ MediaSourceReader::Seek(int64_t aTime, int64_t aIgnored /* Used only for ogg whi
 nsresult
 MediaSourceReader::ResetDecode()
 {
-  MOZ_ASSERT(OnDecodeThread());
+  MOZ_ASSERT(OnTaskQueue());
   ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
   MSE_DEBUG("");
 
@@ -1033,10 +1041,40 @@ MediaSourceReader::GetBuffered(dom::TimeRanges* aBuffered)
   return NS_OK;
 }
 
+already_AddRefed<SourceBufferDecoder>
+MediaSourceReader::FirstDecoder(MediaData::Type aType)
+{
+  ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
+  TrackBuffer* trackBuffer =
+    aType == MediaData::AUDIO_DATA ? mAudioTrack : mVideoTrack;
+  MOZ_ASSERT(trackBuffer);
+  const nsTArray<nsRefPtr<SourceBufferDecoder>>& decoders = trackBuffer->Decoders();
+  if (decoders.IsEmpty()) {
+    return nullptr;
+  }
+
+  nsRefPtr<SourceBufferDecoder> firstDecoder;
+  double lowestStartTime = PositiveInfinity<double>();
+
+  for (uint32_t i = 0; i < decoders.Length(); ++i) {
+    nsRefPtr<TimeRanges> r = new TimeRanges();
+    decoders[i]->GetBuffered(r);
+    double start = r->GetStartTime();
+    if (start < 0) {
+      continue;
+    }
+    if (start < lowestStartTime) {
+      firstDecoder = decoders[i];
+      lowestStartTime = start;
+    }
+  }
+  return firstDecoder.forget();
+}
+
 nsRefPtr<MediaDecoderReader::WaitForDataPromise>
 MediaSourceReader::WaitForData(MediaData::Type aType)
 {
-  MOZ_ASSERT(OnDecodeThread());
+  MOZ_ASSERT(OnTaskQueue());
   ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
   nsRefPtr<WaitForDataPromise> p = WaitPromise(aType).Ensure(__func__);
   MaybeNotifyHaveData();
@@ -1053,35 +1091,29 @@ MediaSourceReader::MaybeNotifyHaveData()
   // The next Request*Data will handle END_OF_STREAM or going back into waiting
   // mode.
   if (!IsSeeking() && mAudioTrack) {
-    haveAudio = HaveData(mLastAudioTime, MediaData::AUDIO_DATA);
+    if (!mLastAudioTime) {
+      nsRefPtr<SourceBufferDecoder> d = FirstDecoder(MediaData::AUDIO_DATA);
+      haveAudio = !!d;
+    } else {
+      haveAudio = HaveData(mLastAudioTime, MediaData::AUDIO_DATA);
+    }
     if (ended || haveAudio) {
       WaitPromise(MediaData::AUDIO_DATA).ResolveIfExists(MediaData::AUDIO_DATA, __func__);
     }
   }
   if (!IsSeeking() && mVideoTrack) {
-    haveVideo = HaveData(mLastVideoTime, MediaData::VIDEO_DATA);
+    if (!mLastVideoTime) {
+      nsRefPtr<SourceBufferDecoder> d = FirstDecoder(MediaData::VIDEO_DATA);
+      haveVideo = !!d;
+    } else {
+      haveVideo = HaveData(mLastVideoTime, MediaData::VIDEO_DATA);
+    }
     if (ended || haveVideo) {
       WaitPromise(MediaData::VIDEO_DATA).ResolveIfExists(MediaData::VIDEO_DATA, __func__);
     }
   }
   MSE_DEBUG("isSeeking=%d haveAudio=%d, haveVideo=%d ended=%d",
             IsSeeking(), haveAudio, haveVideo, ended);
-}
-
-static void
-CombineEncryptionData(EncryptionInfo& aTo, const EncryptionInfo& aFrom)
-{
-  if (!aFrom.mIsEncrypted) {
-    return;
-  }
-  aTo.mIsEncrypted = true;
-
-  if (!aTo.mType.IsEmpty() && !aTo.mType.Equals(aFrom.mType)) {
-    NS_WARNING("mismatched encryption types");
-  }
-
-  aTo.mType = aFrom.mType;
-  aTo.mInitData.AppendElements(aFrom.mInitData);
 }
 
 nsresult
@@ -1107,7 +1139,7 @@ MediaSourceReader::ReadMetadata(MediaInfo* aInfo, MetadataTags** aTags)
     const MediaInfo& info = GetAudioReader()->GetMediaInfo();
     MOZ_ASSERT(info.HasAudio());
     mInfo.mAudio = info.mAudio;
-    CombineEncryptionData(mInfo.mCrypto, info.mCrypto);
+    mInfo.mCrypto.AddInitData(info.mCrypto);
     MSE_DEBUG("audio reader=%p duration=%lld",
               mAudioSourceDecoder.get(),
               mAudioSourceDecoder->GetReader()->GetDecoder()->GetMediaDuration());
@@ -1120,7 +1152,7 @@ MediaSourceReader::ReadMetadata(MediaInfo* aInfo, MetadataTags** aTags)
     const MediaInfo& info = GetVideoReader()->GetMediaInfo();
     MOZ_ASSERT(info.HasVideo());
     mInfo.mVideo = info.mVideo;
-    CombineEncryptionData(mInfo.mCrypto, info.mCrypto);
+    mInfo.mCrypto.AddInitData(info.mCrypto);
     MSE_DEBUG("video reader=%p duration=%lld",
               GetVideoReader(),
               GetVideoReader()->GetDecoder()->GetMediaDuration());

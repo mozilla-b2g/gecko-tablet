@@ -833,13 +833,15 @@ MainProcessRunnable::OpenCacheFileForWrite()
     mQuotaObject = qm->GetQuotaObject(mPersistence, mGroup, mOrigin, file);
     NS_ENSURE_STATE(mQuotaObject);
 
-    if (!mQuotaObject->MaybeAllocateMoreSpace(0, mWriteParams.mSize)) {
+    if (!mQuotaObject->MaybeUpdateSize(mWriteParams.mSize,
+                                       /* aTruncate */ false)) {
       // If the request fails, it might be because mOrigin is using too much
-      // space (MaybeAllocateMoreSpace will not evict our own origin since it is
+      // space (MaybeUpdateSize will not evict our own origin since it is
       // active). Try to make some space by evicting LRU entries until there is
       // enough space.
       EvictEntries(mDirectory, mGroup, mOrigin, mWriteParams.mSize, mMetadata);
-      if (!mQuotaObject->MaybeAllocateMoreSpace(0, mWriteParams.mSize)) {
+      if (!mQuotaObject->MaybeUpdateSize(mWriteParams.mSize,
+                                         /* aTruncate */ false)) {
         mResult = JS::AsmJSCache_QuotaExceeded;
         return NS_ERROR_FAILURE;
       }
@@ -1108,7 +1110,7 @@ FindHashMatch(const Metadata& aMetadata, const ReadParams& aReadParams,
 
 // A runnable that executes for a cache access originating in the main process.
 class SingleProcessRunnable final : public File,
-                                        private MainProcessRunnable
+                                    private MainProcessRunnable
 {
 public:
   // In the single-process case, the calling JS compilation thread holds the
@@ -1186,7 +1188,7 @@ private:
 // in the content process. This runnable gets registered as an IPDL subprotocol
 // actor so that it can communicate with the corresponding ChildProcessRunnable.
 class ParentProcessRunnable final : public PAsmJSCacheEntryParent,
-                                        public MainProcessRunnable
+                                    public MainProcessRunnable
 {
 public:
   // The given principal comes from an IPC::Principal which will be dec-refed
@@ -1357,7 +1359,7 @@ DeallocEntryParent(PAsmJSCacheEntryParent* aActor)
 namespace {
 
 class ChildProcessRunnable final : public File,
-                                       public PAsmJSCacheEntryChild
+                                   public PAsmJSCacheEntryChild
 {
 public:
   NS_DECL_NSIRUNNABLE

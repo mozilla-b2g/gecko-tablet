@@ -44,7 +44,19 @@ let ReaderParent = {
   receiveMessage: function(message) {
     switch (message.name) {
       case "Reader:AddToList":
-        ReadingList.addItem(message.data.article);
+        let article = message.data.article;
+        ReadingList.getMetadataFromBrowser(message.target).then(function(metadata) {
+          if (metadata.previews.length > 0) {
+            article.preview = metadata.previews[0];
+          }
+
+          ReadingList.addItem({
+            url: article.url,
+            title: article.title,
+            excerpt: article.excerpt,
+            preview: article.preview
+          });
+        });
         break;
 
       case "Reader:ArticleGet":
@@ -135,6 +147,7 @@ let ReaderParent = {
       button.setAttribute("tooltiptext", closeText);
       command.setAttribute("label", closeText);
       command.setAttribute("hidden", false);
+      command.setAttribute("accesskey", gStringBundle.GetStringFromName("readerView.close.accesskey"));
     } else {
       button.removeAttribute("readeractive");
       button.hidden = !browser.isArticle;
@@ -142,8 +155,15 @@ let ReaderParent = {
       button.setAttribute("tooltiptext", enterText);
       command.setAttribute("label", enterText);
       command.setAttribute("hidden", !browser.isArticle);
+      command.setAttribute("accesskey", gStringBundle.GetStringFromName("readerView.enter.accesskey"));
     }
-    command.setAttribute("accesskey", gStringBundle.GetStringFromName("readerView.accesskey"));
+  },
+
+  buttonClick: function(event) {
+    if (event.button != 0) {
+      return;
+    }
+    this.toggleReaderMode(event);
   },
 
   toggleReaderMode: function(event) {

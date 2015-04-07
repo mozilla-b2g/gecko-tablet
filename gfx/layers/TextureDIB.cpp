@@ -126,7 +126,7 @@ DIBTextureHost::DIBTextureHost(TextureFlags aFlags,
     dont_AddRef(reinterpret_cast<gfxWindowsSurface*>(aDescriptor.surface()));
   MOZ_ASSERT(mSurface);
 
-  mSize = ToIntSize(mSurface->GetSize());
+  mSize = mSurface->GetSize();
   mFormat = ImageFormatToSurfaceFormat(
     gfxPlatform::GetPlatform()->OptimalFormatForContent(mSurface->GetContentType()));
 }
@@ -145,6 +145,12 @@ DIBTextureHost::BindTextureSource(CompositableTextureSourceRef& aTexture)
 void
 DIBTextureHost::Updated(const nsIntRegion* aRegion)
 {
+  if (!mCompositor) {
+    // This can happen if we send textures to a compositable that isn't yet
+    // attached to a layer.
+    return;
+  }
+
   if (!mTextureSource) {
     mTextureSource = mCompositor->CreateDataTextureSource(mFlags);
   }

@@ -81,7 +81,7 @@ public:
 
   // A variant of Play() that avoids posting style updates since this method
   // is expected to be called whilst already updating style.
-  void PlayFromStyle() { DoPlay(); }
+  void PlayFromStyle() { DoPlay(AnimationPlayer::LimitBehavior::Continue); }
 
 protected:
   virtual ~CSSTransitionPlayer() { }
@@ -131,11 +131,11 @@ public:
   void UpdateCascadeResultsWithTransitions(
          AnimationPlayerCollection* aTransitions);
   void UpdateCascadeResultsWithAnimations(
-         const AnimationPlayerCollection* aAnimations);
+         AnimationPlayerCollection* aAnimations);
   void UpdateCascadeResultsWithAnimationsToBeDestroyed(
          const AnimationPlayerCollection* aAnimations);
   void UpdateCascadeResults(AnimationPlayerCollection* aTransitions,
-                            const AnimationPlayerCollection* aAnimations);
+                            AnimationPlayerCollection* aAnimations);
 
   void SetInAnimationOnlyStyleUpdate(bool aInAnimationOnlyUpdate) {
     mInAnimationOnlyStyleUpdate = aInAnimationOnlyUpdate;

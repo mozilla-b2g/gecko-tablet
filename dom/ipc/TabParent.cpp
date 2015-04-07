@@ -266,8 +266,8 @@ TabParent::TabParent(nsIContentParent* aManager,
   , mOrientation(0)
   , mDPI(0)
   , mDefaultScale(0)
-  , mShown(false)
   , mUpdatedDimensions(false)
+  , mChromeOffset(0, 0)
   , mManager(aManager)
   , mMarkedDestroying(false)
   , mIsDestroyed(false)
@@ -277,6 +277,7 @@ TabParent::TabParent(nsIContentParent* aManager,
   , mInitedByParent(false)
   , mTabId(aTabId)
   , mCreatingWindow(false)
+  , mNeedLayerTreeReadyNotification(false)
 {
   MOZ_ASSERT(aManager);
 }
@@ -752,13 +753,6 @@ TabParent::LoadURL(nsIURI* aURI)
         return;
     }
 
-    if (!mShown) {
-        NS_WARNING(nsPrintfCString("TabParent::LoadURL(%s) called before "
-                                   "Show(). Ignoring LoadURL.\n",
-                                   spec.get()).get());
-        return;
-    }
-
     uint32_t appId = OwnOrContainingAppId();
     if (mSendOfflineStatus && NS_IsAppOffline(appId)) {
       // If the app is offline in the parent process
@@ -822,8 +816,6 @@ TabParent::LoadURL(nsIURI* aURI)
 void
 TabParent::Show(const ScreenIntSize& size, bool aParentIsActive)
 {
-    // sigh
-    mShown = true;
     mDimensions = size;
     if (mIsDestroyed) {
         return;
@@ -914,9 +906,11 @@ TabParent::UpdateDimensions(const nsIntRect& rect, const ScreenIntSize& size)
   hal::ScreenConfiguration config;
   hal::GetCurrentScreenConfiguration(&config);
   ScreenOrientation orientation = config.orientation();
+  nsIntPoint chromeOffset = -LayoutDevicePixel::ToUntyped(GetChildProcessOffset());
 
   if (!mUpdatedDimensions || mOrientation != orientation ||
-      mDimensions != size || !mRect.IsEqualEdges(rect)) {
+      mDimensions != size || !mRect.IsEqualEdges(rect) ||
+      chromeOffset != mChromeOffset) {
     nsCOMPtr<nsIWidget> widget = GetWidget();
     nsIntRect contentRect = rect;
     if (widget) {
@@ -928,9 +922,9 @@ TabParent::UpdateDimensions(const nsIntRect& rect, const ScreenIntSize& size)
     mRect = contentRect;
     mDimensions = size;
     mOrientation = orientation;
+    mChromeOffset = chromeOffset;
 
-    nsIntPoint chromeOffset = -LayoutDevicePixel::ToUntyped(GetChildProcessOffset());
-    unused << SendUpdateDimensions(mRect, mDimensions, mOrientation, chromeOffset);
+    unused << SendUpdateDimensions(mRect, mDimensions, mOrientation, mChromeOffset);
   }
 }
 
@@ -1575,13 +1569,14 @@ TabParent::RecvNotifyIMEFocus(const bool& aFocus,
                               nsIMEUpdatePreference* aPreference,
                               uint32_t* aSeqno)
 {
+  *aSeqno = mIMESeqno;
+
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (!widget) {
     *aPreference = nsIMEUpdatePreference();
     return true;
   }
 
-  *aSeqno = mIMESeqno;
   mIMETabParent = aFocus ? this : nullptr;
   mIMESelectionAnchor = 0;
   mIMESelectionFocus = 0;
@@ -2389,6 +2384,12 @@ TabParent::RecvGetRenderFrameInfo(PRenderFrameParent* aRenderFrame,
   RenderFrameParent* renderFrame = static_cast<RenderFrameParent*>(aRenderFrame);
   renderFrame->GetTextureFactoryIdentifier(aTextureFactoryIdentifier);
   *aLayersId = renderFrame->GetLayersId();
+
+  if (mNeedLayerTreeReadyNotification) {
+    RequestNotifyLayerTreeReady();
+    mNeedLayerTreeReadyNotification = false;
+  }
+
   return true;
 }
 
@@ -2495,7 +2496,7 @@ TabParent::RecvBrowserFrameOpenWindow(PBrowserParent* aOpener,
   BrowserElementParent::OpenWindowResult opened =
     BrowserElementParent::OpenWindowOOP(TabParent::GetFrom(aOpener),
                                         this, aURL, aName, aFeatures);
-  *aOutWindowOpened = (opened != BrowserElementParent::OPEN_WINDOW_CANCELLED);
+  *aOutWindowOpened = (opened == BrowserElementParent::OPEN_WINDOW_ADDED);
   return true;
 }
 
@@ -2691,11 +2692,11 @@ TabParent::RequestNotifyLayerTreeReady()
 {
   RenderFrameParent* frame = GetRenderFrame();
   if (!frame) {
-    return false;
+    mNeedLayerTreeReadyNotification = true;
+  } else {
+    CompositorParent::RequestNotifyLayerTreeReady(frame->GetLayersId(),
+                                                  new LayerTreeUpdateObserver());
   }
-
-  CompositorParent::RequestNotifyLayerTreeReady(frame->GetLayersId(),
-                                                new LayerTreeUpdateObserver());
   return true;
 }
 
@@ -2789,9 +2790,9 @@ TabParent::HandleEvent(nsIDOMEvent* aEvent)
 }
 
 class FakeChannel final : public nsIChannel,
-                              public nsIAuthPromptCallback,
-                              public nsIInterfaceRequestor,
-                              public nsILoadContext
+                          public nsIAuthPromptCallback,
+                          public nsIInterfaceRequestor,
+                          public nsILoadContext
 {
 public:
   FakeChannel(const nsCString& aUri, uint64_t aCallbackId, Element* aElement)

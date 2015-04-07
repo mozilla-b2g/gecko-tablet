@@ -1880,6 +1880,14 @@ TEST_P(JsepSessionTest, RenegotiationOffererDisablesBundleTransport)
             offererPairs[0].mRtpTransport.get());
   ASSERT_NE(newAnswererPairs[0].mRtpTransport.get(),
             answererPairs[0].mRtpTransport.get());
+
+  ASSERT_LE(1U, mSessionOff.GetTransports().size());
+  ASSERT_LE(1U, mSessionAns.GetTransports().size());
+
+  ASSERT_EQ(JsepTransport::kJsepTransportClosed,
+            mSessionOff.GetTransports()[0]->mState);
+  ASSERT_EQ(JsepTransport::kJsepTransportClosed,
+            mSessionAns.GetTransports()[0]->mState);
 }
 
 TEST_P(JsepSessionTest, RenegotiationAnswererDisablesBundleTransport)
@@ -2450,6 +2458,15 @@ Replace(const std::string& toReplace,
   size_t pos = in->find(toReplace);
   ASSERT_NE(std::string::npos, pos);
   in->replace(pos, toReplace.size(), with);
+}
+
+static void ReplaceAll(const std::string& toReplace,
+                       const std::string& with,
+                       std::string* in)
+{
+  while (in->find(toReplace) != std::string::npos) {
+    Replace(toReplace, with, in);
+  }
 }
 
 static void
@@ -3026,6 +3043,20 @@ TEST_F(JsepSessionTest, TestUniquePayloadTypes)
       GetUniquePayloadTypes().size());
 }
 
+TEST_F(JsepSessionTest, UnknownFingerprintAlgorithm)
+{
+  types.push_back(SdpMediaSection::kAudio);
+  AddTracks(mSessionOff, "audio");
+  AddTracks(mSessionAns, "audio");
+
+  std::string offer(CreateOffer());
+  SetLocalOffer(offer);
+  ReplaceAll("fingerprint:sha", "fingerprint:foo", &offer);
+  nsresult rv = mSessionAns.SetRemoteDescription(kJsepSdpOffer, offer);
+  ASSERT_NE(NS_OK, rv);
+  ASSERT_NE("", mSessionAns.GetLastError());
+}
+
 TEST(H264ProfileLevelIdTest, TestLevelComparisons)
 {
   ASSERT_LT(JsepVideoCodecDescription::GetSaneH264Level(0x421D0B), // 1b
@@ -3066,6 +3097,29 @@ TEST(H264ProfileLevelIdTest, TestLevelSetting)
       JsepVideoCodecDescription::GetSaneH264Level(0x64000B),
       &profileLevelId);
   ASSERT_EQ((uint32_t)0x6E100B, profileLevelId);
+}
+
+TEST_F(JsepSessionTest, StronglyPreferredCodec)
+{
+  for (JsepCodecDescription* codec : mSessionAns.Codecs()) {
+    if (codec->mName == "H264") {
+      codec->mStronglyPreferred = true;
+    }
+  }
+
+  types.push_back(SdpMediaSection::kVideo);
+  AddTracks(mSessionOff, "video");
+  AddTracks(mSessionAns, "video");
+
+  OfferAnswer();
+
+  const JsepCodecDescription* codec;
+  GetCodec(mSessionAns, 0, true, 0, &codec); // sending
+  ASSERT_TRUE(codec);
+  ASSERT_EQ("H264", codec->mName);
+  GetCodec(mSessionAns, 0, false, 0, &codec); // receiving
+  ASSERT_TRUE(codec);
+  ASSERT_EQ("H264", codec->mName);
 }
 
 } // namespace mozilla

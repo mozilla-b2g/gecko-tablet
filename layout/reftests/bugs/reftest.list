@@ -557,9 +557,9 @@ skip-if(B2G||Mulet) == 363858-1.html 363858-1-ref.html # Initial mulet triage: p
 skip-if(B2G||Mulet) == 363858-2.html 363858-2-ref.html # Initial mulet triage: parity with B2G/B2G Desktop
 skip-if(B2G||Mulet) == 363858-3.html 363858-3-ref.html # Initial mulet triage: parity with B2G/B2G Desktop
 skip-if(B2G||Mulet) == 363858-4.html 363858-4-ref.html # Initial mulet triage: parity with B2G/B2G Desktop
-fuzzy-if(OSX>=1008,45,2) == 363858-5a.html 363858-5-ref.html
+fuzzy-if(OSX>=1008,45,2) fuzzy-if(winWidget,37,1) == 363858-5a.html 363858-5-ref.html
 == 363858-5b.html 363858-5-ref.html
-fuzzy-if(OSX>=1008,45,2) == 363858-6a.html 363858-6-ref.html
+fuzzy-if(OSX>=1008,45,2) fuzzy-if(winWidget,37,1) == 363858-6a.html 363858-6-ref.html
 == 363858-6b.html 363858-6-ref.html
 == 363874.html 363874-ref.html
 == 363874-max-width.html 363874-max-width-ref.html
@@ -1824,6 +1824,7 @@ pref(layout.css.overflow-clip-box.enabled,true) == 992447.html 992447-ref.html
 == 1003425-1.html 1003425-1-ref.html
 == 1003425-2.html 1003425-2-ref.html
 pref(layout.css.sticky.enabled,true) == 1005405-1.html 1005405-1-ref.html
+== 1012640-1.html 1012640-1-ref.html
 fuzzy-if(/^Windows\x20NT\x205\.1/.test(http.oscpu),255,1) == 1013054-1.html 1013054-1-ref.html
 pref(layout.css.will-change.enabled,true) == 1018522-1.html 1018522-1-ref.html
 == 1021564-1.html 1021564-ref.html
@@ -1871,3 +1872,5 @@ skip-if(Mulet) == 1120431-2.html 1120431-2-ref.html # TC: Bug 1144079 - Re-enabl
 == 1128354-1.html 1128354-1-ref.html
 == 1130231-1-button-padding-rtl.html 1130231-1-button-padding-rtl-ref.html
 == 1130231-2-button-padding-rtl.html 1130231-2-button-padding-rtl-ref.html
+== 1151145-1.html 1151145-1-ref.html
+== 1151306-1.html 1151306-1-ref.html

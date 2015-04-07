@@ -304,9 +304,6 @@ nsTimerImpl::Startup()
   nsTimerEvent::Init();
 
   gThread = new TimerThread();
-  if (!gThread) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
 
   NS_ADDREF(gThread);
   rv = gThread->InitLocks();
@@ -566,8 +563,10 @@ nsTimerImpl::Fire()
   }
 #endif
 
+#if !defined(MOZILLA_XPCOMRT_API)
   PROFILER_LABEL("Timer", "Fire",
                  js::ProfileEntry::Category::OTHER);
+#endif
 
 #ifdef MOZ_TASK_TRACER
   // mTracedTask is an instance of FakeTracedTask created by
@@ -827,9 +826,6 @@ NS_NewTimer(nsITimer** aResult, nsTimerCallbackFunc aCallback, void* aClosure,
             uint32_t aDelay, uint32_t aType)
 {
   nsTimerImpl* timer = new nsTimerImpl();
-  if (!timer) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
   NS_ADDREF(timer);
 
   nsresult rv = timer->InitWithFuncCallback(aCallback, aClosure,

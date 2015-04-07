@@ -227,6 +227,7 @@ struct WorkerLoadInfo
     already_AddRefed<nsITabChild> GetAnyLiveTabChild();
 
     nsCOMPtr<nsILoadContext> mLoadContext;
+    nsCOMPtr<nsIInterfaceRequestor> mOuterRequestor;
 
     // Array of weak references to nsITabChild.  We do not want to keep TabChild
     // actors alive for long after their ActorDestroy() methods are called.
@@ -238,6 +239,8 @@ struct WorkerLoadInfo
 
   nsAutoPtr<mozilla::ipc::PrincipalInfo> mPrincipalInfo;
   nsCString mDomain;
+
+  nsString mServiceWorkerCacheName;
 
   uint64_t mWindowID;
 
@@ -262,10 +265,10 @@ void
 CancelWorkersForWindow(nsPIDOMWindow* aWindow);
 
 void
-SuspendWorkersForWindow(nsPIDOMWindow* aWindow);
+FreezeWorkersForWindow(nsPIDOMWindow* aWindow);
 
 void
-ResumeWorkersForWindow(nsPIDOMWindow* aWindow);
+ThawWorkersForWindow(nsPIDOMWindow* aWindow);
 
 class WorkerTask
 {
@@ -337,6 +340,9 @@ IsWorkerGlobal(JSObject* global);
 
 bool
 IsDebuggerGlobal(JSObject* global);
+
+bool
+IsDebuggerSandbox(JSObject* object);
 
 // Throws the JSMSG_GETTER_ONLY exception.  This shouldn't be used going
 // forward -- getter-only properties should just use JS_PSG for the setter

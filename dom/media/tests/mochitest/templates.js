@@ -205,21 +205,6 @@ var commandsGetUserMedia = [
   },
 ];
 
-var commandsBeforeRenegotiation = [
-  function PC_LOCAL_SETUP_NEGOTIATION_CALLBACK(test) {
-    test.pcLocal.onnegotiationneeded = event => {
-      test.pcLocal.negotiationNeededFired = true;
-    };
-  },
-];
-
-var commandsAfterRenegotiation = [
-  function PC_LOCAL_CHECK_NEGOTIATION_CALLBACK(test) {
-    ok(test.pcLocal.negotiationNeededFired, "Expected negotiationneeded event");
-    test.pcLocal.negotiationNeededFired = false;
-  },
-];
-
 var commandsPeerConnectionOfferAnswer = [
   function PC_LOCAL_SETUP_ICE_HANDLER(test) {
     test.pcLocal.setupIceCandidateHandler(test);
@@ -522,6 +507,12 @@ var commandsPeerConnectionOfferAnswer = [
   },
   function PC_REMOTE_CHECK_STATS(test) {
     return checkAllTrackStats(test.pcRemote);
+  },
+  function PC_LOCAL_WAIT_FOR_END_OF_TRICKLE(test) {
+    return test.pcLocal.endOfTrickleIce;
+  },
+  function PC_REMOTE_WAIT_FOR_END_OF_TRICKLE(test) {
+    return test.pcRemote.endOfTrickleIce;
   }
 ];
 
@@ -534,9 +525,7 @@ function PC_LOCAL_REMOVE_BUNDLE_FROM_OFFER(test) {
 };
 
 var addRenegotiation = (chain, commands, checks) => {
-  chain.append(commandsBeforeRenegotiation);
   chain.append(commands);
-  chain.append(commandsAfterRenegotiation);
   chain.append(commandsPeerConnectionOfferAnswer);
   if (checks) {
     chain.append(checks);
@@ -551,5 +540,3 @@ var addRenegotiationAnswerer = (chain, commands, checks) => {
   });
   addRenegotiation(chain, commands, checks);
 };
-
-

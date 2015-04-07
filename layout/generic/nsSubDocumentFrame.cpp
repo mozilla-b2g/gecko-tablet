@@ -162,7 +162,7 @@ nsSubDocumentFrame::ShowViewer()
   } else {
     nsRefPtr<nsFrameLoader> frameloader = FrameLoader();
     if (frameloader) {
-      nsIntSize margin = GetMarginAttributes();
+      CSSIntSize margin = GetMarginAttributes();
       nsWeakFrame weakThis(this);
       mCallingShow = true;
       const nsAttrValue* attrValue =
@@ -758,6 +758,7 @@ nsSubDocumentFrame::Reflow(nsPresContext*           aPresContext,
                            const nsHTMLReflowState& aReflowState,
                            nsReflowStatus&          aStatus)
 {
+  MarkInReflow();
   DO_GLOBAL_REFLOW_COUNT("nsSubDocumentFrame");
   DISPLAY_REFLOW(aPresContext, this, aReflowState, aDesiredSize, aStatus);
   NS_FRAME_TRACE(NS_FRAME_TRACE_CALLS,
@@ -883,7 +884,7 @@ nsSubDocumentFrame::AttributeChanged(int32_t aNameSpaceID,
            aAttribute == nsGkAtoms::marginheight) {
 
     // Retrieve the attributes
-    nsIntSize margins = GetMarginAttributes();
+    CSSIntSize margins = GetMarginAttributes();
 
     // Notify the frameloader
     nsRefPtr<nsFrameLoader> frameloader = FrameLoader();
@@ -985,10 +986,10 @@ nsSubDocumentFrame::DestroyFrom(nsIFrame* aDestructRoot)
   nsLeafFrame::DestroyFrom(aDestructRoot);
 }
 
-nsIntSize
+CSSIntSize
 nsSubDocumentFrame::GetMarginAttributes()
 {
-  nsIntSize result(-1, -1);
+  CSSIntSize result(-1, -1);
   nsGenericHTMLElement *content = nsGenericHTMLElement::FromContent(mContent);
   if (content) {
     const nsAttrValue* attr = content->GetParsedAttr(nsGkAtoms::marginwidth);

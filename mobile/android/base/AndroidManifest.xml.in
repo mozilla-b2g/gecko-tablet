@@ -86,6 +86,7 @@
 
     <application android:label="@string/moz_app_displayname"
                  android:icon="@drawable/icon"
+                 android:logo="@drawable/logo"
                  android:name="org.mozilla.gecko.GeckoApplication"
                  android:hardwareAccelerated="true"
 # The preprocessor does not yet support arbitrary parentheses, so this cannot
@@ -257,8 +258,6 @@
 
         <activity android:name="org.mozilla.gecko.tabqueue.TabQueueDispatcher"
                   android:label="@MOZ_APP_DISPLAYNAME@"
-                  android:noHistory="true"
-                  android:excludeFromRecents="true"
                   android:launchMode="singleTask"
                   android:theme="@style/TabQueueActivity">
             <intent-filter>

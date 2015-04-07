@@ -89,6 +89,9 @@ public:
       return NS_OK;
     }
 
+    mProxy->GetSessionIdsForKeyId(aSample->crypto.key,
+                                  aSample->crypto.session_ids);
+
     mProxy->Decrypt(aSample, new DeliverDecrypted(this, mTaskQueue));
     return NS_OK;
   }
@@ -162,6 +165,7 @@ public:
   EMEMediaDataDecoderProxy(nsIThread* aProxyThread, MediaDataDecoderCallback* aCallback, CDMProxy* aProxy, FlushableMediaTaskQueue* aTaskQueue)
    : MediaDataDecoderProxy(aProxyThread, aCallback)
    , mSamplesWaitingForKey(new SamplesWaitingForKey(this, aTaskQueue, aProxy))
+   , mProxy(aProxy)
   {
   }
 
@@ -170,6 +174,7 @@ public:
 
 private:
   nsRefPtr<SamplesWaitingForKey> mSamplesWaitingForKey;
+  nsRefPtr<CDMProxy> mProxy;
 };
 
 nsresult
@@ -178,6 +183,9 @@ EMEMediaDataDecoderProxy::Input(mp4_demuxer::MP4Sample* aSample)
   if (mSamplesWaitingForKey->WaitIfKeyNotUsable(aSample)) {
     return NS_OK;
   }
+
+  mProxy->GetSessionIdsForKeyId(aSample->crypto.key,
+                                aSample->crypto.session_ids);
 
   return MediaDataDecoderProxy::Input(aSample);
 }
@@ -189,6 +197,7 @@ EMEMediaDataDecoderProxy::Shutdown()
 
   mSamplesWaitingForKey->BreakCycles();
   mSamplesWaitingForKey = nullptr;
+  mProxy = nullptr;
 
   return rv;
 }
@@ -244,11 +253,12 @@ EMEDecoderModule::CreateVideoDecoder(const VideoDecoderConfig& aConfig,
     return wrapper.forget();
   }
 
-  nsRefPtr<MediaDataDecoder> decoder(mPDM->CreateVideoDecoder(aConfig,
-                                                              aLayersBackend,
-                                                              aImageContainer,
-                                                              aVideoTaskQueue,
-                                                              aCallback));
+  nsRefPtr<MediaDataDecoder> decoder(
+    mPDM->CreateDecoder(aConfig,
+                        aVideoTaskQueue,
+                        aCallback,
+                        aLayersBackend,
+                        aImageContainer));
   if (!decoder) {
     return nullptr;
   }
@@ -277,9 +287,8 @@ EMEDecoderModule::CreateAudioDecoder(const AudioDecoderConfig& aConfig,
     return wrapper.forget();
   }
 
-  nsRefPtr<MediaDataDecoder> decoder(mPDM->CreateAudioDecoder(aConfig,
-                                                              aAudioTaskQueue,
-                                                              aCallback));
+  nsRefPtr<MediaDataDecoder> decoder(
+    mPDM->CreateDecoder(aConfig, aAudioTaskQueue, aCallback));
   if (!decoder) {
     return nullptr;
   }
@@ -294,10 +303,14 @@ EMEDecoderModule::CreateAudioDecoder(const AudioDecoderConfig& aConfig,
   return emeDecoder.forget();
 }
 
-bool
-EMEDecoderModule::DecoderNeedsAVCC(const mp4_demuxer::VideoDecoderConfig& aConfig)
+PlatformDecoderModule::ConversionRequired
+EMEDecoderModule::DecoderNeedsConversion(const mp4_demuxer::TrackConfig& aConfig) const
 {
-  return mCDMDecodesVideo && aConfig.crypto.valid;
+  if (aConfig.IsVideoConfig()) {
+    return kNeedAVCC;
+  } else {
+    return kNeedNone;
+  }
 }
 
 } // namespace mozilla

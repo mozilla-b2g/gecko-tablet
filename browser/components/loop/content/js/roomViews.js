@@ -145,7 +145,7 @@ loop.roomViews = (function(mozL10n) {
           React.createElement("div", {className: "btn-group call-action-group"}, 
             React.createElement("button", {className: "btn btn-info btn-email", 
                     onClick: this.handleEmailButtonClick}, 
-              mozL10n.get("share_button2")
+              mozL10n.get("email_link_button")
             ), 
             React.createElement("button", {className: "btn btn-info btn-copy", 
                     onClick: this.handleCopyButtonClick}, 
@@ -176,9 +176,10 @@ loop.roomViews = (function(mozL10n) {
 
     _renderInvitationOverlay: function() {
       if (this.state.roomState !== ROOM_STATES.HAS_PARTICIPANTS) {
-        return React.createElement(DesktopRoomInvitationView, {
-          roomStore: this.props.roomStore, 
-          dispatcher: this.props.dispatcher}
+        return (
+          React.createElement(DesktopRoomInvitationView, {
+            roomStore: this.props.roomStore, 
+            dispatcher: this.props.dispatcher})
         );
       }
       return null;
@@ -248,13 +249,15 @@ loop.roomViews = (function(mozL10n) {
         case ROOM_STATES.FULL: {
           // Note: While rooms are set to hold a maximum of 2 participants, the
           //       FULL case should never happen on desktop.
-          return React.createElement(loop.conversationViews.GenericFailureView, {
-            cancelCall: this.closeWindow}
+          return (
+            React.createElement(loop.conversationViews.GenericFailureView, {
+              cancelCall: this.closeWindow})
           );
         }
         case ROOM_STATES.ENDED: {
-          return React.createElement(sharedViews.FeedbackView, {
-            onAfterFeedbackReceived: this.closeWindow}
+          return (
+            React.createElement(sharedViews.FeedbackView, {
+              onAfterFeedbackReceived: this.closeWindow})
           );
         }
         default: {

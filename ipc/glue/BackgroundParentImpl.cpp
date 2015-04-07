@@ -6,6 +6,7 @@
 
 #include "BroadcastChannelParent.h"
 #include "FileDescriptorSetParent.h"
+#include "mozilla/media/MediaParent.h"
 #include "mozilla/AppProcessChecker.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/dom/ContentParent.h"
@@ -254,12 +255,13 @@ mozilla::dom::PBroadcastChannelParent*
 BackgroundParentImpl::AllocPBroadcastChannelParent(
                                             const PrincipalInfo& aPrincipalInfo,
                                             const nsString& aOrigin,
-                                            const nsString& aChannel)
+                                            const nsString& aChannel,
+                                            const bool& aPrivateBrowsing)
 {
   AssertIsInMainProcess();
   AssertIsOnBackgroundThread();
 
-  return new BroadcastChannelParent(aOrigin, aChannel);
+  return new BroadcastChannelParent(aOrigin, aChannel, aPrivateBrowsing);
 }
 
 namespace {
@@ -327,7 +329,8 @@ BackgroundParentImpl::RecvPBroadcastChannelConstructor(
                                             PBroadcastChannelParent* actor,
                                             const PrincipalInfo& aPrincipalInfo,
                                             const nsString& aOrigin,
-                                            const nsString& aChannel)
+                                            const nsString& aChannel,
+                                            const bool& aPrivateBrowsing)
 {
   AssertIsInMainProcess();
   AssertIsOnBackgroundThread();
@@ -358,6 +361,18 @@ BackgroundParentImpl::DeallocPBroadcastChannelParent(
 
   delete static_cast<BroadcastChannelParent*>(aActor);
   return true;
+}
+
+media::PMediaParent*
+BackgroundParentImpl::AllocPMediaParent()
+{
+  return media::AllocPMediaParent();
+}
+
+bool
+BackgroundParentImpl::DeallocPMediaParent(media::PMediaParent *aActor)
+{
+  return media::DeallocPMediaParent(aActor);
 }
 
 namespace {

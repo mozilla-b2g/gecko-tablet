@@ -11,11 +11,9 @@ const OVERVIEW_UPDATE_INTERVAL = 200; // ms
 const FRAMERATE_GRAPH_LOW_RES_INTERVAL = 100; // ms
 const FRAMERATE_GRAPH_HIGH_RES_INTERVAL = 16; // ms
 
-const FRAMERATE_GRAPH_HEIGHT = 40; // px
 const MARKERS_GRAPH_HEADER_HEIGHT = 14; // px
 const MARKERS_GRAPH_ROW_HEIGHT = 10; // px
 const MARKERS_GROUP_VERTICAL_PADDING = 4; // px
-const MEMORY_GRAPH_HEIGHT = 30; // px
 
 /**
  * View handler for the overview panel's time view, displaying
@@ -37,6 +35,7 @@ let OverviewView = {
     this._onRecordingTick = this._onRecordingTick.bind(this);
     this._onGraphSelecting = this._onGraphSelecting.bind(this);
     this._onPrefChanged = this._onPrefChanged.bind(this);
+    this._onThemeChanged = this._onThemeChanged.bind(this);
 
     // Toggle the initial visibility of memory and framerate graph containers
     // based off of prefs.
@@ -44,6 +43,7 @@ let OverviewView = {
     $("#time-framerate").hidden = !PerformanceController.getOption("enable-framerate");
 
     PerformanceController.on(EVENTS.PREF_CHANGED, this._onPrefChanged);
+    PerformanceController.on(EVENTS.THEME_CHANGED, this._onThemeChanged);
     PerformanceController.on(EVENTS.RECORDING_WILL_START, this._onRecordingWillStart);
     PerformanceController.on(EVENTS.RECORDING_STARTED, this._onRecordingStarted);
     PerformanceController.on(EVENTS.RECORDING_WILL_STOP, this._onRecordingWillStop);
@@ -66,6 +66,7 @@ let OverviewView = {
     }
 
     PerformanceController.off(EVENTS.PREF_CHANGED, this._onPrefChanged);
+    PerformanceController.off(EVENTS.THEME_CHANGED, this._onThemeChanged);
     PerformanceController.off(EVENTS.RECORDING_WILL_START, this._onRecordingWillStart);
     PerformanceController.off(EVENTS.RECORDING_STARTED, this._onRecordingStarted);
     PerformanceController.off(EVENTS.RECORDING_WILL_STOP, this._onRecordingWillStop);
@@ -90,6 +91,28 @@ let OverviewView = {
    */
   isDisabled: function () {
     return this._disabled;
+  },
+
+  /**
+   * Sets the theme for the markers overview and memory overview.
+   */
+  setTheme: function (options={}) {
+    let theme = options.theme || PerformanceController.getTheme();
+
+    if (this.framerateGraph) {
+      this.framerateGraph.setTheme(theme);
+      this.framerateGraph.refresh({ force: options.redraw });
+    }
+
+    if (this.markersOverview) {
+      this.markersOverview.setTheme(theme);
+      this.markersOverview.refresh({ force: options.redraw });
+    }
+
+    if (this.memoryOverview) {
+      this.memoryOverview.setTheme(theme);
+      this.memoryOverview.refresh({ force: options.redraw });
+    }
   },
 
   /**
@@ -152,6 +175,7 @@ let OverviewView = {
     this.markersOverview.groupPadding = MARKERS_GROUP_VERTICAL_PADDING;
     this.markersOverview.on("selecting", this._onGraphSelecting);
     yield this.markersOverview.ready();
+    this.setTheme();
     return true;
   }),
 
@@ -170,9 +194,9 @@ let OverviewView = {
       yield this.memoryOverview.ready();
       return true;
     }
-    this.memoryOverview = new MemoryOverview($("#memory-overview"));
-    this.memoryOverview.fixedHeight = MEMORY_GRAPH_HEIGHT;
+    this.memoryOverview = new MemoryGraph($("#memory-overview"));
     yield this.memoryOverview.ready();
+    this.setTheme();
 
     CanvasGraphUtils.linkAnimation(this.markersOverview, this.memoryOverview);
     CanvasGraphUtils.linkSelection(this.markersOverview, this.memoryOverview);
@@ -194,10 +218,9 @@ let OverviewView = {
       yield this.framerateGraph.ready();
       return true;
     }
-    let metric = L10N.getStr("graphs.fps");
-    this.framerateGraph = new LineGraphWidget($("#time-framerate"), { metric });
-    this.framerateGraph.fixedHeight = FRAMERATE_GRAPH_HEIGHT;
+    this.framerateGraph = new FramerateGraph($("#time-framerate"));
     yield this.framerateGraph.ready();
+    this.setTheme();
 
     CanvasGraphUtils.linkAnimation(this.markersOverview, this.framerateGraph);
     CanvasGraphUtils.linkSelection(this.markersOverview, this.framerateGraph);
@@ -368,6 +391,13 @@ let OverviewView = {
       }
     }
   }),
+
+  /**
+   * Called when `devtools.theme` changes.
+   */
+  _onThemeChanged: function (_, theme) {
+    this.setTheme({ theme, redraw: true });
+  },
 
   toString: () => "[object OverviewView]"
 };

@@ -122,6 +122,7 @@ nsRubyTextContainerFrame::Reflow(nsPresContext* aPresContext,
                                  const nsHTMLReflowState& aReflowState,
                                  nsReflowStatus& aStatus)
 {
+  MarkInReflow();
   DO_GLOBAL_REFLOW_COUNT("nsRubyTextContainerFrame");
   DISPLAY_REFLOW(aPresContext, this, aReflowState, aDesiredSize, aStatus);
 
@@ -146,9 +147,13 @@ nsRubyTextContainerFrame::Reflow(nsPresContext* aPresContext,
     maxBCoord = std::max(maxBCoord, blockEnd);
   }
 
-  MOZ_ASSERT(minBCoord <= maxBCoord || mFrames.IsEmpty());
   LogicalSize size(lineWM, mISize, 0);
   if (!mFrames.IsEmpty()) {
+    if (MOZ_UNLIKELY(minBCoord > maxBCoord)) {
+      // XXX When bug 765861 gets fixed, this warning should be upgraded.
+      NS_WARNING("bad block coord");
+      minBCoord = maxBCoord = 0;
+    }
     size.BSize(lineWM) = maxBCoord - minBCoord;
     nscoord containerWidth = size.Width(lineWM);
     for (nsFrameList::Enumerator e(mFrames); !e.AtEnd(); e.Next()) {

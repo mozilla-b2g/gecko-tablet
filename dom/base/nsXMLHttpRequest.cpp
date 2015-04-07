@@ -1795,6 +1795,19 @@ nsXMLHttpRequest::Open(const nsACString& inMethod, const nsACString& url,
   return rv;
 }
 
+void
+nsXMLHttpRequest::PopulateNetworkInterfaceId()
+{
+  if (mNetworkInterfaceId.IsEmpty()) {
+    return;
+  }
+  nsCOMPtr<nsIHttpChannelInternal> channel(do_QueryInterface(mChannel));
+  if (!channel) {
+    return;
+  }
+  channel->SetNetworkInterfaceId(mNetworkInterfaceId);
+}
+
 /*
  * "Copy" from a stream.
  */
@@ -2466,7 +2479,7 @@ GetRequestBody(nsIVariant* aBody, nsIInputStream** aResult, uint64_t* aContentLe
     rv = aBody->GetAsInterface(&iid, getter_AddRefs(supports));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsMemory::Free(iid);
+    free(iid);
 
     // document?
     nsCOMPtr<nsIDOMDocument> doc = do_QueryInterface(supports);
@@ -2611,6 +2624,8 @@ nsresult
 nsXMLHttpRequest::Send(nsIVariant* aVariant, const Nullable<RequestBody>& aBody)
 {
   NS_ENSURE_TRUE(mPrincipal, NS_ERROR_NOT_INITIALIZED);
+
+  PopulateNetworkInterfaceId();
 
   nsresult rv = CheckInnerWindowCorrectness();
   NS_ENSURE_SUCCESS(rv, rv);

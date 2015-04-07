@@ -376,20 +376,20 @@ public:
                                     uint32_t* aModifierMask) override;
 
   virtual bool RecvCurValue(const uint64_t& aID,
-                            double* aValue);
+                            double* aValue) override;
 
   virtual bool RecvSetCurValue(const uint64_t& aID,
                                const double& aValue,
-                               bool* aRetVal);
+                               bool* aRetVal) override;
 
   virtual bool RecvMinValue(const uint64_t& aID,
-                            double* aValue);
+                            double* aValue) override;
 
   virtual bool RecvMaxValue(const uint64_t& aID,
-                            double* aValue);
+                            double* aValue) override;
 
   virtual bool RecvStep(const uint64_t& aID,
-                        double* aStep);
+                        double* aStep) override;
 
   virtual bool RecvTakeFocus(const uint64_t& aID) override;
 
@@ -401,6 +401,15 @@ public:
                                 bool* aOk) override;
 
   virtual bool RecvBounds(const uint64_t& aID, nsIntRect* aRect) override;
+
+  virtual bool RecvLanguage(const uint64_t& aID, nsString* aLocale) override;
+  virtual bool RecvDocType(const uint64_t& aID, nsString* aType) override;
+  virtual bool RecvURL(const uint64_t& aID, nsString* aURL) override;
+  virtual bool RecvMimeType(const uint64_t& aID, nsString* aMime) override;
+  virtual bool RecvURLDocTypeMimeType(const uint64_t& aID,
+                                      nsString* aURL,
+                                      nsString* aDocType,
+                                      nsString* aMimeType) override;
 private:
 
   Accessible* IdToAccessible(const uint64_t& aID) const;

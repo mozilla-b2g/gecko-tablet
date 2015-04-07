@@ -409,32 +409,35 @@ AddAnimationsForProperty(nsIFrame* aFrame, nsCSSProperty aProperty,
                          Layer* aLayer, AnimationData& aData,
                          bool aPending)
 {
+  MOZ_ASSERT(nsCSSProps::PropHasFlags(aProperty,
+                                      CSS_PROPERTY_CAN_ANIMATE_ON_COMPOSITOR),
+             "inconsistent property flags");
+
+  // Add from first to last (since last overrides)
   for (size_t playerIdx = 0; playerIdx < aPlayers.Length(); playerIdx++) {
     AnimationPlayer* player = aPlayers[playerIdx];
-    if (!player->IsRunning()) {
+    if (!player->IsPlaying()) {
       continue;
     }
     dom::Animation* anim = player->GetSource();
-    if (!anim) {
-      continue;
-    }
+    MOZ_ASSERT(anim, "A playing player should have a source animation");
     const AnimationProperty* property =
       anim->GetAnimationOfProperty(aProperty);
     if (!property) {
       continue;
     }
 
-    if (!property->mWinsInCascade) {
-      // We have an animation or transition, but it isn't actually
-      // winning in the CSS cascade, so we don't want to send it to the
-      // compositor.
-      // I believe that anything that changes mWinsInCascade should
-      // trigger this code again, either because of a restyle that
-      // changes the properties in question, or because of the
-      // main-thread style update that results when an animation stops
-      // filling.
-      continue;
-    }
+    // Note that if mWinsInCascade on property was  false,
+    // GetAnimationOfProperty returns null instead.
+    // This is what we want, since if we have an animation or transition
+    // that isn't actually winning in the CSS cascade, we don't want to
+    // send it to the compositor.
+    // I believe that anything that changes mWinsInCascade should
+    // trigger this code again, either because of a restyle that changes
+    // the properties in question, or because of the main-thread style
+    // update that results when an animation stops being in effect.
+    MOZ_ASSERT(property->mWinsInCascade,
+               "GetAnimationOfProperty already tested mWinsInCascade");
 
     // Don't add animations that are pending when their corresponding
     // refresh driver is under test control. This is because any pending
@@ -464,6 +467,10 @@ nsDisplayListBuilder::AddAnimationsAndTransitionsToLayer(Layer* aLayer,
                                                          nsIFrame* aFrame,
                                                          nsCSSProperty aProperty)
 {
+  MOZ_ASSERT(nsCSSProps::PropHasFlags(aProperty,
+                                      CSS_PROPERTY_CAN_ANIMATE_ON_COMPOSITOR),
+             "inconsistent property flags");
+
   // This function can be called in two ways:  from
   // nsDisplay*::BuildLayer while constructing a layer (with all
   // pointers non-null), or from RestyleManager's handling of
@@ -554,6 +561,8 @@ nsDisplayListBuilder::AddAnimationsAndTransitionsToLayer(Layer* aLayer,
     data = null_t();
   }
 
+  // When both are running, animations override transitions.  We want
+  // to add the ones that override last.
   if (transitions) {
     AddAnimationsForProperty(aFrame, aProperty, transitions->mPlayers,
                              aLayer, data, pending);
@@ -2043,9 +2052,8 @@ static bool IsZOrderLEQ(nsDisplayItem* aItem1, nsDisplayItem* aItem2,
   return aItem1->ZIndex() <= aItem2->ZIndex();
 }
 
-void nsDisplayList::SortByZOrder(nsDisplayListBuilder* aBuilder,
-                                 nsIContent* aCommonAncestor) {
-  Sort(aBuilder, IsZOrderLEQ, aCommonAncestor);
+void nsDisplayList::SortByZOrder(nsDisplayListBuilder* aBuilder) {
+  Sort(aBuilder, IsZOrderLEQ, nullptr);
 }
 
 void nsDisplayList::SortByContentOrder(nsDisplayListBuilder* aBuilder,
@@ -3020,11 +3028,6 @@ nsDisplayThemedBackground::GetBoundsInternal() {
   presContext->GetTheme()->
       GetWidgetOverflow(presContext->DeviceContext(), mFrame,
                         mFrame->StyleDisplay()->mAppearance, &r);
-#ifdef XP_MACOSX
-  // Bug 748219
-  r.Inflate(mFrame->PresContext()->AppUnitsPerDevPixel());
-#endif
-
   return r + ToReferenceFrame();
 }
 

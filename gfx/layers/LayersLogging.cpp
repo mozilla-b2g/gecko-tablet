@@ -165,15 +165,6 @@ AppendToString(std::stringstream& aStream, const EventRegions& e,
 }
 
 void
-AppendToString(std::stringstream& aStream, const nsIntSize& sz,
-               const char* pfx, const char* sfx)
-{
-  aStream << pfx;
-  aStream << nsPrintfCString("(w=%d, h=%d)", sz.width, sz.height).get();
-  aStream << sfx;
-}
-
-void
 AppendToString(std::stringstream& aStream, const FrameMetrics& m,
                const char* pfx, const char* sfx, bool detailed)
 {
@@ -198,7 +189,9 @@ AppendToString(std::stringstream& aStream, const FrameMetrics& m,
     aStream << nsPrintfCString("] um=%d", m.GetUseDisplayPortMargins()).get();
     AppendToString(aStream, m.GetRootCompositionSize(), "] [rcs=");
     AppendToString(aStream, m.GetViewport(), "] [v=");
-    aStream << nsPrintfCString("] [z=(ld=%.3f r=%.3f").get();
+    aStream << nsPrintfCString("] [z=(ld=%.3f r=%.3f",
+            m.GetDevPixelsPerCSSPixel().scale,
+            m.GetPresShellResolution()).get();
     AppendToString(aStream, m.GetCumulativeResolution(), " cr=");
     AppendToString(aStream, m.GetZoom(), " z=");
     AppendToString(aStream, m.GetExtraResolution(), " er=");

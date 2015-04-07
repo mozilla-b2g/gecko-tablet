@@ -52,10 +52,10 @@ class FileImpl;
 class OwningArrayBufferOrArrayBufferViewOrBlobOrString;
 
 class File final : public nsIDOMFile
-                     , public nsIXHRSendable
-                     , public nsIMutable
-                     , public nsSupportsWeakReference
-                     , public nsWrapperCache
+                 , public nsIXHRSendable
+                 , public nsIMutable
+                 , public nsSupportsWeakReference
+                 , public nsWrapperCache
 {
 public:
   NS_DECL_NSIDOMBLOB
@@ -84,7 +84,7 @@ public:
          uint64_t aLength);
 
   // The returned File takes ownership of aMemoryBuffer. aMemoryBuffer will be
-  // freed by moz_free so it must be allocated by moz_malloc or something
+  // freed by free so it must be allocated by malloc or something
   // compatible with it.
   static already_AddRefed<File>
   CreateMemoryFile(nsISupports* aParent, void* aMemoryBuffer, uint64_t aLength,
@@ -92,7 +92,7 @@ public:
                    uint64_t aLastModifiedDate);
 
   // The returned File takes ownership of aMemoryBuffer. aMemoryBuffer will be
-  // freed by moz_free so it must be allocated by moz_malloc or something
+  // freed by free so it must be allocated by malloc or something
   // compatible with it.
   static already_AddRefed<File>
   CreateMemoryFile(nsISupports* aParent, void* aMemoryBuffer, uint64_t aLength,
@@ -524,7 +524,8 @@ public:
     return true;
   }
 
-  class DataOwner final : public mozilla::LinkedListElement<DataOwner> {
+  class DataOwner final : public mozilla::LinkedListElement<DataOwner>
+  {
   public:
     NS_INLINE_DECL_THREADSAFE_REFCOUNTING(DataOwner)
     DataOwner(void* aMemoryBuffer, uint64_t aLength)
@@ -551,7 +552,7 @@ public:
         sDataOwners = nullptr;
       }
 
-      moz_free(mData);
+      free(mData);
     }
 
   public:
@@ -814,7 +815,7 @@ private:
 };
 
 class FileList final : public nsIDOMFileList,
-                           public nsWrapperCache
+                       public nsWrapperCache
 {
   ~FileList() {}
 

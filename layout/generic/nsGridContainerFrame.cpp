@@ -937,7 +937,7 @@ InitializeTrackSize(nscoord aPercentageBasis,
 {
   // http://dev.w3.org/csswg/css-grid/#algo-init
   nscoord& base = aTrackSize->mBase;
-  switch (aMaxCoord.GetUnit()) {
+  switch (aMinCoord.GetUnit()) {
     case eStyleUnit_Enumerated:
     case eStyleUnit_FlexFraction:
       base = 0;
@@ -975,7 +975,7 @@ InitializeTrackSizes(nscoord aPercentageBasis,
   size_t i = 0;
   for (; i < len; ++i) {
     InitializeTrackSize(aPercentageBasis,
-                        aMinSizingFunctions[i], aMinSizingFunctions[i],
+                        aMinSizingFunctions[i], aMaxSizingFunctions[i],
                         &aResults[i]);
   }
   for (; i < aResults.Length(); ++i) {
@@ -1180,6 +1180,7 @@ nsGridContainerFrame::Reflow(nsPresContext*           aPresContext,
                              const nsHTMLReflowState& aReflowState,
                              nsReflowStatus&          aStatus)
 {
+  MarkInReflow();
   DO_GLOBAL_REFLOW_COUNT("nsGridContainerFrame");
   DISPLAY_REFLOW(aPresContext, this, aReflowState, aDesiredSize, aStatus);
 

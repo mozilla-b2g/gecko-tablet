@@ -1012,6 +1012,7 @@ nsBlockFrame::Reflow(nsPresContext*           aPresContext,
                      const nsHTMLReflowState& aReflowState,
                      nsReflowStatus&          aStatus)
 {
+  MarkInReflow();
   DO_GLOBAL_REFLOW_COUNT("nsBlockFrame");
   DISPLAY_REFLOW(aPresContext, this, aReflowState, aMetrics, aStatus);
 #ifdef DEBUG
@@ -6644,8 +6645,19 @@ nsBlockFrame::Init(nsIContent*       aContent,
   nsBlockFrameSuper::Init(aContent, aParent, aPrevInFlow);
 
   if (!aPrevInFlow ||
-      aPrevInFlow->GetStateBits() & NS_BLOCK_NEEDS_BIDI_RESOLUTION)
+      aPrevInFlow->GetStateBits() & NS_BLOCK_NEEDS_BIDI_RESOLUTION) {
     AddStateBits(NS_BLOCK_NEEDS_BIDI_RESOLUTION);
+  }
+
+  // If a box has a different block flow direction than its containing block:
+  // ...
+  //   If the box is a block container, then it establishes a new block
+  //   formatting context.
+  // (http://dev.w3.org/csswg/css-writing-modes/#block-flow)
+  if (GetParent() && StyleVisibility()->mWritingMode !=
+                     GetParent()->StyleVisibility()->mWritingMode) {
+    AddStateBits(NS_BLOCK_FLOAT_MGR | NS_BLOCK_MARGIN_ROOT);
+  }
 
   if ((GetStateBits() &
        (NS_FRAME_FONT_INFLATION_CONTAINER | NS_BLOCK_FLOAT_MGR)) ==
@@ -7003,7 +7015,6 @@ nsBlockFrame::ReflowBullet(nsIFrame* aBulletFrame,
   nsHTMLReflowState reflowState(aState.mPresContext, rs,
                                 aBulletFrame, availSize);
   nsReflowStatus  status;
-  aBulletFrame->WillReflow(aState.mPresContext);
   aBulletFrame->Reflow(aState.mPresContext, aMetrics, reflowState, status);
 
   // Get the float available space using our saved state from before we

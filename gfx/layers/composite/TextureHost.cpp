@@ -7,7 +7,6 @@
 
 #include "CompositableHost.h"           // for CompositableHost
 #include "LayersLogging.h"              // for AppendToString
-#include "gfx2DGlue.h"                  // for ToIntSize
 #include "mozilla/gfx/2D.h"             // for DataSourceSurface, Factory
 #include "mozilla/ipc/Shmem.h"          // for Shmem
 #include "mozilla/layers/CompositableTransactionParent.h" // for CompositableParentManager
@@ -497,10 +496,8 @@ BufferTextureHost::Upload(nsIntRegion *aRegion)
     return false;
   }
   if (!mCompositor) {
-    NS_WARNING("Tried to upload without a compositor. Skipping texture upload...");
-    // If we are in this situation it means we should have called SetCompositor
-    // earlier. It is conceivable that on certain rare conditions with async-video
-    // we may end up here for the first frame, but this should not happen repeatedly.
+    // This can happen if we send textures to a compositable that isn't yet
+    // attached to a layer.
     return false;
   }
   if (mFormat == gfx::SurfaceFormat::UNKNOWN) {

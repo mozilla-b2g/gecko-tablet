@@ -158,6 +158,7 @@ MP4Reader::MP4Reader(AbstractMediaDecoder* aDecoder)
   , mIsEncrypted(false)
   , mAreDecodersSetup(false)
   , mIndexReady(false)
+  , mLastSeenEnd(-1)
   , mDemuxerMonitor("MP4 Demuxer")
 #if defined(MP4_READER_DORMANT_HEURISTIC)
   , mDormantEnabled(Preferences::GetBool("media.decoder.heuristic.dormant.enabled", false))
@@ -264,6 +265,34 @@ MP4Reader::Init(MediaDecoderReader* aCloneDonor)
   return NS_OK;
 }
 
+#ifdef MOZ_EME
+class DispatchKeyNeededEvent : public nsRunnable {
+public:
+  DispatchKeyNeededEvent(AbstractMediaDecoder* aDecoder,
+                         nsTArray<uint8_t>& aInitData,
+                         const nsString& aInitDataType)
+    : mDecoder(aDecoder)
+    , mInitData(aInitData)
+    , mInitDataType(aInitDataType)
+  {
+  }
+  NS_IMETHOD Run() {
+    // Note: Null check the owner, as the decoder could have been shutdown
+    // since this event was dispatched.
+    MediaDecoderOwner* owner = mDecoder->GetOwner();
+    if (owner) {
+      owner->DispatchEncrypted(mInitData, mInitDataType);
+    }
+    mDecoder = nullptr;
+    return NS_OK;
+  }
+private:
+  nsRefPtr<AbstractMediaDecoder> mDecoder;
+  nsTArray<uint8_t> mInitData;
+  nsString mInitDataType;
+};
+#endif // MOZ_EME
+
 void MP4Reader::RequestCodecResource() {
   if (mVideo.mDecoder) {
     mVideo.mDecoder->AllocateMediaResources();
@@ -315,7 +344,7 @@ MP4Reader::IsSupportedAudioMimeType(const nsACString& aMimeType)
 {
   return (aMimeType.EqualsLiteral("audio/mpeg") ||
           aMimeType.EqualsLiteral("audio/mp4a-latm")) &&
-         mPlatform->SupportsAudioMimeType(aMimeType);
+         mPlatform->SupportsMimeType(aMimeType);
 }
 
 bool
@@ -324,7 +353,7 @@ MP4Reader::IsSupportedVideoMimeType(const nsACString& aMimeType)
   return (aMimeType.EqualsLiteral("video/mp4") ||
           aMimeType.EqualsLiteral("video/avc") ||
           aMimeType.EqualsLiteral("video/x-vnd.on2.vp6")) &&
-         mPlatform->SupportsVideoMimeType(aMimeType);
+         mPlatform->SupportsMimeType(aMimeType);
 }
 
 void
@@ -368,7 +397,7 @@ MP4Reader::ReadMetadata(MediaInfo* aInfo,
     {
       MonitorAutoUnlock unlock(mDemuxerMonitor);
       ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
-      mInfo.mCrypto.mIsEncrypted = mIsEncrypted = mCrypto.valid;
+      mIsEncrypted = mCrypto.valid;
     }
 
     // Remember that we've initialized the demuxer, so that if we're decoding
@@ -400,15 +429,21 @@ MP4Reader::ReadMetadata(MediaInfo* aInfo,
     }
   }
 
-  if (mIsEncrypted) {
+  if (mCrypto.valid) {
     nsTArray<uint8_t> initData;
     ExtractCryptoInitData(initData);
     if (initData.Length() == 0) {
       return NS_ERROR_FAILURE;
     }
 
-    mInfo.mCrypto.mInitData = initData;
-    mInfo.mCrypto.mType = NS_LITERAL_STRING("cenc");
+#ifdef MOZ_EME
+    // Try and dispatch 'encrypted'. Won't go if ready state still HAVE_NOTHING.
+    NS_DispatchToMainThread(
+      new DispatchKeyNeededEvent(mDecoder, initData, NS_LITERAL_STRING("cenc")));
+#endif // MOZ_EME
+    // Add init data to info, will get sent from HTMLMediaElement::MetadataLoaded
+    // (i.e., when transitioning from HAVE_NOTHING to HAVE_METADATA).
+    mInfo.mCrypto.AddInitData(NS_LITERAL_STRING("cenc"), Move(initData));
   }
 
   // Get the duration, and report it to the decoder if we have it.
@@ -479,9 +514,10 @@ MP4Reader::EnsureDecodersSetup()
     NS_ENSURE_TRUE(IsSupportedAudioMimeType(mDemuxer->AudioConfig().mime_type),
                    false);
 
-    mAudio.mDecoder = mPlatform->CreateAudioDecoder(mDemuxer->AudioConfig(),
-                                                    mAudio.mTaskQueue,
-                                                    mAudio.mCallback);
+    mAudio.mDecoder =
+      mPlatform->CreateDecoder(mDemuxer->AudioConfig(),
+                               mAudio.mTaskQueue,
+                               mAudio.mCallback);
     NS_ENSURE_TRUE(mAudio.mDecoder != nullptr, false);
     nsresult rv = mAudio.mDecoder->Init();
     NS_ENSURE_SUCCESS(rv, false);
@@ -500,11 +536,12 @@ MP4Reader::EnsureDecodersSetup()
                                                   mVideo.mTaskQueue,
                                                   mVideo.mCallback);
     } else {
-      mVideo.mDecoder = mPlatform->CreateVideoDecoder(mDemuxer->VideoConfig(),
-                                                      mLayersBackendType,
-                                                      mDecoder->GetImageContainer(),
-                                                      mVideo.mTaskQueue,
-                                                      mVideo.mCallback);
+      mVideo.mDecoder =
+        mPlatform->CreateDecoder(mDemuxer->VideoConfig(),
+                                 mVideo.mTaskQueue,
+                                 mVideo.mCallback,
+                                 mLayersBackendType,
+                                 mDecoder->GetImageContainer());
     }
     NS_ENSURE_TRUE(mVideo.mDecoder != nullptr, false);
     nsresult rv = mVideo.mDecoder->Init();
@@ -566,7 +603,7 @@ MP4Reader::DisableHardwareAcceleration()
     mSharedDecoderManager->DisableHardwareAcceleration();
 
     const VideoDecoderConfig& video = mDemuxer->VideoConfig();
-    if (!mSharedDecoderManager->Recreate(video, mLayersBackendType, mDecoder->GetImageContainer())) {
+    if (!mSharedDecoderManager->Recreate(video)) {
       MonitorAutoLock mon(mVideo.mMonitor);
       mVideo.mError = true;
       if (mVideo.HasPromise()) {
@@ -747,18 +784,6 @@ MP4Reader::Update(TrackType aTrack)
     if (!mFoundSPSForTelemetry && sample && AnnexB::HasSPS(sample->mMp4Sample)) {
       nsRefPtr<ByteBuffer> extradata = AnnexB::ExtractExtraData(sample->mMp4Sample);
       mFoundSPSForTelemetry = AccumulateSPSTelemetry(extradata);
-    }
-
-    if (sample && sample->mMp4Sample && sample->mMp4Sample->crypto.valid) {
-      CryptoSample& crypto = sample->mMp4Sample->crypto;
-      MOZ_ASSERT(crypto.session_ids.IsEmpty());
-
-      ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
-
-      nsRefPtr<CDMProxy> proxy = mDecoder->GetCDMProxy();
-      MOZ_ASSERT(proxy);
-
-      proxy->GetSessionIdsForKeyId(crypto.key, crypto.session_ids);
     }
 
     if (sample) {
@@ -1134,6 +1159,41 @@ bool
 MP4Reader::VideoIsHardwareAccelerated() const
 {
   return mVideo.mDecoder && mVideo.mDecoder->IsHardwareAccelerated();
+}
+
+void
+MP4Reader::NotifyDataArrived(const char* aBuffer, uint32_t aLength, int64_t aOffset)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  if (mShutdown) {
+    return;
+  }
+
+  if (mLastSeenEnd < 0) {
+    MonitorAutoLock mon(mDemuxerMonitor);
+    mLastSeenEnd = mDecoder->GetResource()->GetLength();
+    if (mLastSeenEnd < 0) {
+      // We dont have a length. Demuxer would have been blocking already.
+      return;
+    }
+  }
+  int64_t end = aOffset + aLength;
+  if (end <= mLastSeenEnd) {
+    return;
+  }
+  mLastSeenEnd = end;
+
+  if (HasVideo()) {
+    auto& decoder = GetDecoderData(kVideo);
+    MonitorAutoLock lock(decoder.mMonitor);
+    decoder.mDemuxEOS = false;
+  }
+  if (HasAudio()) {
+    auto& decoder = GetDecoderData(kAudio);
+    MonitorAutoLock lock(decoder.mMonitor);
+    decoder.mDemuxEOS = false;
+  }
 }
 
 } // namespace mozilla

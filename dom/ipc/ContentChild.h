@@ -78,7 +78,7 @@ public:
     };
 
     bool Init(MessageLoop* aIOLoop,
-              base::ProcessHandle aParentHandle,
+              base::ProcessId aParentPid,
               IPC::Channel* aChannel);
     void InitProcessAttributes();
     void InitXPCOM();
@@ -115,6 +115,10 @@ public:
     AllocPContentBridgeChild(mozilla::ipc::Transport* transport,
                              base::ProcessId otherProcess) override;
 
+    PGMPServiceChild*
+    AllocPGMPServiceChild(mozilla::ipc::Transport* transport,
+                          base::ProcessId otherProcess) override;
+
     PCompositorChild*
     AllocPCompositorChild(mozilla::ipc::Transport* aTransport,
                           base::ProcessId aOtherProcess) override;
@@ -130,11 +134,6 @@ public:
     PProcessHangMonitorChild*
     AllocPProcessHangMonitorChild(Transport* aTransport,
                                   ProcessId aOtherProcess) override;
-
-#if defined(XP_WIN) && defined(MOZ_CONTENT_SANDBOX)
-    // Cleans up any resources used by the process when sandboxed.
-    void CleanUpSandboxEnvironment();
-#endif
 
     virtual bool RecvSetProcessSandbox() override;
 
@@ -172,6 +171,13 @@ public:
 
     virtual PHalChild* AllocPHalChild() override;
     virtual bool DeallocPHalChild(PHalChild*) override;
+
+    PIccChild*
+    SendPIccConstructor(PIccChild* aActor, const uint32_t& aServiceId);
+    virtual PIccChild*
+    AllocPIccChild(const uint32_t& aClientId) override;
+    virtual bool
+    DeallocPIccChild(PIccChild* aActor) override;
 
     virtual PMemoryReportRequestChild*
     AllocPMemoryReportRequestChild(const uint32_t& aGeneration,

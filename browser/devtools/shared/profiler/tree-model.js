@@ -4,13 +4,20 @@
 "use strict";
 
 const {Cc, Ci, Cu, Cr} = require("chrome");
+const {extend} = require("sdk/util/object");
 
 loader.lazyRequireGetter(this, "Services");
 loader.lazyRequireGetter(this, "L10N",
   "devtools/shared/profiler/global", true);
 loader.lazyRequireGetter(this, "CATEGORY_MAPPINGS",
   "devtools/shared/profiler/global", true);
+loader.lazyRequireGetter(this, "CATEGORIES",
+  "devtools/shared/profiler/global", true);
 loader.lazyRequireGetter(this, "CATEGORY_JIT",
+  "devtools/shared/profiler/global", true);
+loader.lazyRequireGetter(this, "JITOptimizations",
+  "devtools/shared/profiler/jit", true);
+loader.lazyRequireGetter(this, "CATEGORY_OTHER",
   "devtools/shared/profiler/global", true);
 
 const CHROME_SCHEMES = ["chrome://", "resource://", "jar:file://"];
@@ -50,6 +57,8 @@ exports.FrameNode.isContent = isContent;
  *          - number endTime [optional]
  *          - boolean contentOnly [optional]
  *          - boolean invertTree [optional]
+ *          - object optimizations [optional]
+ *            The raw tracked optimizations array received from the backend.
  */
 function ThreadNode(threadSamples, options = {}) {
   this.samples = 0;
@@ -76,10 +85,12 @@ ThreadNode.prototype = {
    *          - number endTime: the latest sample to end at (in milliseconds)
    *          - boolean contentOnly: if platform frames shouldn't be used
    *          - boolean invertTree: if the call tree should be inverted
+   *          - object optimizations: The array of all indexable optimizations from the backend.
    */
   insert: function(sample, options = {}) {
     let startTime = options.startTime || 0;
     let endTime = options.endTime || Infinity;
+    let optimizations = options.optimizations;
     let sampleTime = sample.time;
     if (!sampleTime || sampleTime < startTime || sampleTime > endTime) {
       return;
@@ -91,7 +102,7 @@ ThreadNode.prototype = {
     // should be taken into consideration.
     if (options.contentOnly) {
       // The (root) node is not considered a content function, it'll be removed.
-      sampleFrames = sampleFrames.filter(isContent);
+      sampleFrames = filterPlatformData(sampleFrames);
     } else {
       // Remove the (root) node manually.
       sampleFrames = sampleFrames.slice(1);
@@ -112,7 +123,7 @@ ThreadNode.prototype = {
     this.duration += sampleDuration;
 
     FrameNode.prototype.insert(
-      sampleFrames, 0, sampleTime, sampleDuration, this.calls);
+      sampleFrames, optimizations, 0, sampleTime, sampleDuration, this.calls);
   },
 
   /**
@@ -125,6 +136,19 @@ ThreadNode.prototype = {
       functionName: L10N.getStr("table.root"),
       categoryData: {}
     };
+  },
+
+  /**
+   * Mimicks the interface of FrameNode, and a ThreadNode can never have
+   * optimization data (at the moment, anyway), so provide a function
+   * to return null so we don't need to check if a frame node is a thread
+   * or not everytime we fetch optimization data.
+   *
+   * @return {null}
+   */
+
+  hasOptimizations: function () {
+    return null;
   }
 };
 
@@ -142,8 +166,11 @@ ThreadNode.prototype = {
  *        The category type of this function call ("js", "graphics" etc.).
  * @param number allocations
  *        The number of memory allocations performed in this frame.
+ * @param boolean isMetaCategory
+ *        Whether or not this is a platform node that should appear as a
+ *        generalized meta category or not.
  */
-function FrameNode({ location, line, column, category, allocations }) {
+function FrameNode({ location, line, column, category, allocations, isMetaCategory }) {
   this.location = location;
   this.line = line;
   this.column = column;
@@ -153,6 +180,8 @@ function FrameNode({ location, line, column, category, allocations }) {
   this.samples = 0;
   this.duration = 0;
   this.calls = {};
+  this._optimizations = null;
+  this.isMetaCategory = isMetaCategory;
 }
 
 FrameNode.prototype = {
@@ -168,6 +197,8 @@ FrameNode.prototype = {
    *                      C   D   F
    * @param frames
    *        The sample call stack.
+   * @param optimizations
+   *        The array of indexable optimizations.
    * @param index
    *        The index of the call in the stack representing this node.
    * @param number time
@@ -175,28 +206,44 @@ FrameNode.prototype = {
    * @param number duration
    *        The amount of time spent executing all functions on the stack.
    */
-  insert: function(frames, index, time, duration, _store = this.calls) {
+  insert: function(frames, optimizations, index, time, duration, _store = this.calls) {
     let frame = frames[index];
     if (!frame) {
       return;
     }
-    let location = frame.location;
-    let child = _store[location] || (_store[location] = new FrameNode(frame));
+    // If we are only displaying content, then platform data will have
+    // a `isMetaCategory` property. Group by category (GC, Graphics, etc.)
+    // to group together frames so they're displayed only once, since we don't
+    // need the location anyway.
+    let key = frame.isMetaCategory ? frame.category : frame.location;
+    let child = _store[key] || (_store[key] = new FrameNode(frame));
     child.sampleTimes.push({ start: time, end: time + duration });
     child.samples++;
     child.duration += duration;
-    child.insert(frames, ++index, time, duration);
+    if (optimizations && frame.optsIndex != null) {
+      let opts = child._optimizations || (child._optimizations = new JITOptimizations(optimizations));
+      opts.addOptimizationSite(frame.optsIndex);
+    }
+    child.insert(frames, optimizations, index + 1, time, duration);
   },
 
   /**
-   * Parses the raw location of this function call to retrieve the actual
-   * function name and source url.
+   * Returns the parsed location and additional data describing
+   * this frame. Uses cached data if possible.
    *
    * @return object
    *         The computed { name, file, url, line } properties for this
    *         function call.
    */
   getInfo: function() {
+    return this._data || this._computeInfo();
+  },
+
+  /**
+   * Parses the raw location of this function call to retrieve the actual
+   * function name and source url.
+   */
+  _computeInfo: function() {
     // "EnterJIT" pseudoframes are special, not actually on the stack.
     if (this.location == "EnterJIT") {
       this.category = CATEGORY_JIT;
@@ -230,7 +277,7 @@ FrameNode.prototype = {
       url = null;
     }
 
-    return {
+    return this._data = {
       nodeType: "Frame",
       functionName: functionName,
       fileName: fileName,
@@ -239,8 +286,28 @@ FrameNode.prototype = {
       line: line,
       column: column,
       categoryData: categoryData,
-      isContent: !!isContent(this)
+      isContent: !!isContent(this),
+      isMetaCategory: this.isMetaCategory
     };
+  },
+
+  /**
+   * Returns whether or not the frame node has an JITOptimizations model.
+   *
+   * @return {Boolean}
+   */
+  hasOptimizations: function () {
+    return !!this._optimizations;
+  },
+
+  /**
+   * Returns the underlying JITOptimizations model representing
+   * the optimization attempts occuring in this frame.
+   *
+   * @return {JITOptimizations|null}
+   */
+  getOptimizations: function () {
+    return this._optimizations;
   }
 };
 
@@ -279,3 +346,47 @@ function nsIURL(url) {
 
 // The cache used in the `nsIURL` function.
 let gNSURLStore = new Map();
+
+/**
+ * This filters out platform data frames in a sample. With latest performance
+ * tool in Fx40, when displaying only content, we still filter out all platform data,
+ * except we generalize platform data that are leaves. We do this because of two
+ * observations:
+ *
+ * 1. The leaf is where time is _actually_ being spent, so we _need_ to show it
+ * to developers in some way to give them accurate profiling data. We decide to
+ * split the platform into various category buckets and just show time spent in
+ * each bucket.
+ *
+ * 2. The calls leading to the leaf _aren't_ where we are spending time, but
+ * _do_ give the developer context for how they got to the leaf where they _are_
+ * spending time. For non-platform hackers, the non-leaf platform frames don't
+ * give any meaningful context, and so we can safely filter them out.
+ *
+ * Example transformations:
+ * Before: PlatformA -> PlatformB -> ContentA -> ContentB
+ * After:  ContentA -> ContentB
+ *
+ * Before: PlatformA -> ContentA -> PlatformB -> PlatformC
+ * After:  ContentA -> Category(PlatformC)
+ */
+function filterPlatformData (frames) {
+  let result = [];
+  let last = frames.length - 1;
+  let frame;
+
+  for (let i = 0; i < frames.length; i++) {
+    frame = frames[i];
+    if (isContent(frame)) {
+      result.push(frame);
+    } else if (last === i) {
+      // Extend here so we're not destructively editing
+      // the original profiler data. Set isMetaCategory `true`,
+      // and ensure we have a category set by default, because that's how
+      // the generalized frame nodes are organized.
+      result.push(extend({ isMetaCategory: true, category: CATEGORY_OTHER }, frame));
+    }
+  }
+
+  return result;
+}

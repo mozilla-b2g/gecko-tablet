@@ -401,13 +401,6 @@ OnSharedPreferenceChangeListener
             }
         });
 
-        if (Versions.feature14Plus) {
-            final ActionBar actionBar = getActionBar();
-            if (actionBar != null) {
-                actionBar.setHomeButtonEnabled(true);
-            }
-        }
-
         // N.B., if we ever need to redisplay the locale selection UI without
         // just finishing and recreating the activity, right here we'll need to
         // capture EXTRA_SHOW_FRAGMENT_TITLE from the intent and store the title ID.
@@ -1095,7 +1088,7 @@ OnSharedPreferenceChangeListener
 
         // Send Gecko-side pref changes to Gecko
         if (isGeckoPref(prefName)) {
-            PrefsHelper.setPref(prefName, newValue);
+            PrefsHelper.setPref(prefName, newValue, true /* flush */);
         }
 
         if (preference instanceof ListPreference) {
@@ -1198,6 +1191,7 @@ OnSharedPreferenceChangeListener
                                 JSONObject jsonPref = new JSONObject();
                                 try {
                                     jsonPref.put("name", PREFS_MP_ENABLED);
+                                    jsonPref.put("flush", true);
                                     jsonPref.put("type", "string");
                                     jsonPref.put("value", input1.getText().toString());
 

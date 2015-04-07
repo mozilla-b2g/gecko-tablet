@@ -4,16 +4,17 @@
 
 package org.mozilla.gecko.reading;
 
-
 /**
  * Grab one of these, then you can add records to it by parsing
  * server responses. Finishing it will flush those changes (e.g.,
  * via UPDATE) to the DB.
  */
 public interface ReadingListChangeAccumulator {
+  void addDeletion(String guid);
   void addDeletion(ClientReadingListRecord record);
+
+  // addChangedRecord is also used to apply the server's reconciliation results after upload.
   void addChangedRecord(ClientReadingListRecord record);
-  void addUploadedRecord(ClientReadingListRecord up, ServerReadingListRecord down);
   void addDownloadedRecord(ServerReadingListRecord down);
   void finish() throws Exception;
 }

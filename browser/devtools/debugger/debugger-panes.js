@@ -40,6 +40,8 @@ function SourcesView() {
   this._onConditionalPopupShown = this._onConditionalPopupShown.bind(this);
   this._onConditionalPopupHiding = this._onConditionalPopupHiding.bind(this);
   this._onConditionalTextboxKeyPress = this._onConditionalTextboxKeyPress.bind(this);
+  this._onCopyUrlCommand = this._onCopyUrlCommand.bind(this);
+  this._onNewTabCommand = this._onNewTabCommand.bind(this);
 }
 
 SourcesView.prototype = Heritage.extend(WidgetMethods, {
@@ -50,6 +52,7 @@ SourcesView.prototype = Heritage.extend(WidgetMethods, {
     dumpn("Initializing the SourcesView");
 
     this.widget = new SideMenuWidget(document.getElementById("sources"), {
+      contextMenu: document.getElementById("debuggerSourcesContextMenu"),
       showArrows: true
     });
 
@@ -65,6 +68,8 @@ SourcesView.prototype = Heritage.extend(WidgetMethods, {
     this._stopBlackBoxButton = document.getElementById("black-boxed-message-button");
     this._prettyPrintButton = document.getElementById("pretty-print");
     this._toggleBreakpointsButton = document.getElementById("toggle-breakpoints");
+    this._newTabMenuItem = document.getElementById("debugger-sources-context-newtab");
+    this._copyUrlMenuItem = document.getElementById("debugger-sources-context-copyurl");
 
     if (Prefs.prettyPrintEnabled) {
       this._prettyPrintButton.removeAttribute("hidden");
@@ -78,7 +83,10 @@ SourcesView.prototype = Heritage.extend(WidgetMethods, {
     this._cbPanel.addEventListener("popupshown", this._onConditionalPopupShown, false);
     this._cbPanel.addEventListener("popuphiding", this._onConditionalPopupHiding, false);
     this._cbTextbox.addEventListener("keypress", this._onConditionalTextboxKeyPress, false);
+    this._copyUrlMenuItem.addEventListener("command", this._onCopyUrlCommand, false);
+    this._newTabMenuItem.addEventListener("command", this._onNewTabCommand, false);
 
+    this.allowFocusOnRightClick = true;
     this.autoFocusOnSelection = false;
 
     // Sort the contents by the displayed label.
@@ -94,6 +102,8 @@ SourcesView.prototype = Heritage.extend(WidgetMethods, {
       }
       return (a in KNOWN_SOURCE_GROUPS) ? 1 : -1;
     };
+
+    this._addCommands();
   },
 
   /**
@@ -110,6 +120,24 @@ SourcesView.prototype = Heritage.extend(WidgetMethods, {
     this._cbPanel.removeEventListener("popupshowing", this._onConditionalPopupShown, false);
     this._cbPanel.removeEventListener("popuphiding", this._onConditionalPopupHiding, false);
     this._cbTextbox.removeEventListener("keypress", this._onConditionalTextboxKeyPress, false);
+    this._copyUrlMenuItem.removeEventListener("command", this._onCopyUrlCommand, false);
+    this._newTabMenuItem.removeEventListener("command", this._onNewTabCommand, false);
+  },
+
+  /**
+   * Add commands that XUL can fire.
+   */
+  _addCommands: function() {
+    utils.addCommands(this._commandset, {
+      addBreakpointCommand: e => this._onCmdAddBreakpoint(e),
+      addConditionalBreakpointCommand: e => this._onCmdAddConditionalBreakpoint(e),
+      blackBoxCommand: () => this.toggleBlackBoxing(),
+      unBlackBoxButton: () => this._onStopBlackBoxing(),
+      prettyPrintCommand: () => this.togglePrettyPrint(),
+      toggleBreakpointsCommand: () =>this.toggleBreakpoints(),
+      nextSourceCommand: () => this.selectNextItem(),
+      prevSourceCommand: () => this.selectPrevItem()
+    });
   },
 
   /**
@@ -855,6 +883,26 @@ SourcesView.prototype = Heritage.extend(WidgetMethods, {
   },
 
   /**
+   * Copy the source url from the currently selected item.
+   */
+  _onCopyUrlCommand: function() {
+    let selected = this.selectedItem && this.selectedItem.attachment;
+    if (!selected) {
+      return;
+    }
+    clipboardHelper.copyString(selected.source.url, document);
+  },
+
+  /**
+   * Opens selected item source in a new tab.
+   */
+  _onNewTabCommand: function() {
+    let win = Services.wm.getMostRecentWindow("navigator:browser");
+    let selected = this.selectedItem.attachment;
+    win.openUILinkIn(selected.source.url, "tab", { relatedToCurrent: true });
+  },
+
+  /**
    * Function called each time a breakpoint item is removed.
    *
    * @param object aItem
@@ -1279,6 +1327,8 @@ TracerView.prototype = Heritage.extend(WidgetMethods, {
 
     this._traceButton.setAttribute("tooltiptext", this._startTooltip);
     this.emptyText = this._tracingNotStartedString;
+
+    this._addCommands();
   },
 
   /**
@@ -1295,6 +1345,17 @@ TracerView.prototype = Heritage.extend(WidgetMethods, {
     this.widget.removeEventListener("mouseover", this._onMouseOver, false);
     this.widget.removeEventListener("mouseout", this._unhighlightMatchingItems, false);
     this._search.removeEventListener("input", this._onSearch, false);
+  },
+
+  /**
+   * Add commands that XUL can fire.
+   */
+  _addCommands: function() {
+    utils.addCommands(document.getElementById('debuggerCommands'), {
+      toggleTracing: () => this._onToggleTracing(),
+      startTracing: () => this._onStartTracing(),
+      clearTraces: () => this._onClear()
+    });
   },
 
   /**
@@ -2205,6 +2266,7 @@ WatchExpressionsView.prototype = Heritage.extend(WidgetMethods, {
     this.widget.addEventListener("click", this._onClick, false);
 
     this.headerText = L10N.getStr("addWatchExpressionText");
+    this._addCommands();
   },
 
   /**
@@ -2214,6 +2276,16 @@ WatchExpressionsView.prototype = Heritage.extend(WidgetMethods, {
     dumpn("Destroying the WatchExpressionsView");
 
     this.widget.removeEventListener("click", this._onClick, false);
+  },
+
+  /**
+   * Add commands that XUL can fire.
+   */
+  _addCommands: function() {
+    utils.addCommands(document.getElementById('debuggerCommands'), {
+      addWatchExpressionCommand: () => this._onCmdAddExpression(),
+      removeAllWatchExpressionsCommand: () => this._onCmdRemoveAllExpressions()
+    });
   },
 
   /**

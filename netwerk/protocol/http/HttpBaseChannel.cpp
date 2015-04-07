@@ -82,6 +82,7 @@ HttpBaseChannel::HttpBaseChannel()
   , mForcePending(false)
   , mCorsIncludeCredentials(false)
   , mCorsMode(nsIHttpChannelInternal::CORS_MODE_NO_CORS)
+  , mOnStartRequestCalled(false)
 {
   LOG(("Creating HttpBaseChannel @%x\n", this));
 
@@ -894,6 +895,21 @@ HttpBaseChannel::SetRequestMethod(const nsACString& aMethod)
     return NS_ERROR_INVALID_ARG;
 
   mRequestHead.SetMethod(flatMethod);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+HttpBaseChannel::GetNetworkInterfaceId(nsACString& aNetworkInterfaceId)
+{
+  aNetworkInterfaceId = mNetworkInterfaceId;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+HttpBaseChannel::SetNetworkInterfaceId(const nsACString& aNetworkInterfaceId)
+{
+  ENSURE_CALLED_BEFORE_CONNECT();
+  mNetworkInterfaceId = aNetworkInterfaceId;
   return NS_OK;
 }
 
@@ -2053,8 +2069,13 @@ void
 HttpBaseChannel::DoNotifyListener()
 {
   if (mListener) {
+    MOZ_ASSERT(!mOnStartRequestCalled,
+               "We should not call OnStartRequest twice");
+
     nsCOMPtr<nsIStreamListener> listener = mListener;
     listener->OnStartRequest(this, mListenerContext);
+
+    mOnStartRequestCalled = true;
   }
 
   // Make sure mIsPending is set to false. At this moment we are done from
