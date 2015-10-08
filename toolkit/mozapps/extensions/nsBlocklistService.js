@@ -23,8 +23,8 @@ try {
 
 XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
                                   "resource://gre/modules/FileUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "UpdateChannel",
-                                  "resource://gre/modules/UpdateChannel.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "UpdateUtils",
+                                  "resource://gre/modules/UpdateUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "OS",
                                   "resource://gre/modules/osfile.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Task",
@@ -298,7 +298,8 @@ function Blocklist() {
   gPref.addObserver(PREF_EM_LOGGING_ENABLED, this, false);
   this.wrappedJSObject = this;
   // requests from child processes come in here, see receiveMessage.
-  Services.ppmm.addMessageListener("Blocklist::getPluginBlocklistState", this);
+  Services.ppmm.addMessageListener("Blocklist:getPluginBlocklistState", this);
+  Services.ppmm.addMessageListener("Blocklist:content-blocklist-updated", this);
 }
 
 Blocklist.prototype = {
@@ -322,7 +323,8 @@ Blocklist.prototype = {
 
   shutdown: function () {
     Services.obs.removeObserver(this, "xpcom-shutdown");
-    Services.ppmm.removeMessageListener("Blocklist::getPluginBlocklistState", this);
+    Services.ppmm.removeMessageListener("Blocklist:getPluginBlocklistState", this);
+    Services.ppmm.removeMessageListener("Blocklist:content-blocklist-updated", this);
     gPref.removeObserver("extensions.blocklist.", this);
     gPref.removeObserver(PREF_EM_LOGGING_ENABLED, this);
   },
@@ -359,10 +361,13 @@ Blocklist.prototype = {
   // Message manager message handlers
   receiveMessage: function (aMsg) {
     switch (aMsg.name) {
-      case "Blocklist::getPluginBlocklistState":
+      case "Blocklist:getPluginBlocklistState":
         return this.getPluginBlocklistState(aMsg.data.addonData,
                                             aMsg.data.appVersion,
                                             aMsg.data.toolkitVersion);
+      case "Blocklist:content-blocklist-updated":
+        Services.obs.notifyObservers(null, "content-blocklist-updated", null);
+        break;
       default:
         throw new Error("Unknown blocklist message received from content: " + aMsg.name);
     }
@@ -554,7 +559,7 @@ Blocklist.prototype = {
     dsURI = dsURI.replace(/%BUILD_TARGET%/g, gApp.OS + "_" + gABI);
     dsURI = dsURI.replace(/%OS_VERSION%/g, gOSVersion);
     dsURI = dsURI.replace(/%LOCALE%/g, getLocale());
-    dsURI = dsURI.replace(/%CHANNEL%/g, UpdateChannel.get());
+    dsURI = dsURI.replace(/%CHANNEL%/g, UpdateUtils.UpdateChannel);
     dsURI = dsURI.replace(/%PLATFORM_VERSION%/g, gApp.platformVersion);
     dsURI = dsURI.replace(/%DISTRIBUTION%/g,
                       getDistributionPrefValue(PREF_APP_DISTRIBUTION));
@@ -1055,10 +1060,14 @@ Blocklist.prototype = {
   /* See nsIBlocklistService */
   getPluginBlocklistState: function Blocklist_getPluginBlocklistState(plugin,
                            appVersion, toolkitVersion) {
+#ifdef ANDROID
+    return Ci.nsIBlocklistService.STATE_NOT_BLOCKED;
+#else
     if (!this._isBlocklistLoaded())
       this._loadBlocklist();
     return this._getPluginBlocklistState(plugin, this._pluginEntries,
                                          appVersion, toolkitVersion);
+#endif // ifdef ANDROID
   },
 
   /**
@@ -1192,6 +1201,11 @@ Blocklist.prototype = {
     return blockEntry.infoURL;
   },
 
+  _notifyObserversBlocklistUpdated: function () {
+    Services.obs.notifyObservers(this, "blocklist-updated", "");
+    Services.ppmm.broadcastAsyncMessage("Blocklist:blocklistInvalidated", {});
+  },
+
   _blocklistUpdated: function Blocklist_blocklistUpdated(oldAddonEntries, oldPluginEntries) {
     var addonList = [];
 
@@ -1296,7 +1310,7 @@ Blocklist.prototype = {
       }
 
       if (addonList.length == 0) {
-        Services.obs.notifyObservers(self, "blocklist-updated", "");
+        self._notifyObserversBlocklistUpdated();
         return;
       }
 
@@ -1308,7 +1322,7 @@ Blocklist.prototype = {
         } catch (e) {
           LOG(e);
         }
-        Services.obs.notifyObservers(self, "blocklist-updated", "");
+        self._notifyObserversBlocklistUpdated();
         return;
       }
 
@@ -1342,7 +1356,7 @@ Blocklist.prototype = {
         if (args.restart)
           restartApp();
 
-        Services.obs.notifyObservers(self, "blocklist-updated", "");
+        self._notifyObserversBlocklistUpdated();
         Services.obs.removeObserver(applyBlocklistChanges, "addon-blocklist-closed");
       }
 

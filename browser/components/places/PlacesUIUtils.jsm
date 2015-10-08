@@ -31,17 +31,11 @@ Cu.import("resource://gre/modules/PlacesUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PlacesTransactions",
                                   "resource://gre/modules/PlacesTransactions.jsm");
 
-#ifdef MOZ_SERVICES_CLOUDSYNC
 XPCOMUtils.defineLazyModuleGetter(this, "CloudSync",
                                   "resource://gre/modules/CloudSync.jsm");
-#else
-let CloudSync = null;
-#endif
 
-#ifdef MOZ_SERVICES_SYNC
 XPCOMUtils.defineLazyModuleGetter(this, "Weave",
                                   "resource://services-sync/main.js");
-#endif
 
 // copied from utilityOverlay.js
 const TAB_DROP_TYPE = "application/x-moz-tabbrowser-tab";
@@ -134,12 +128,13 @@ this.PlacesUIUtils = {
     return bundle.GetStringFromName(key);
   },
 
-  get _copyableAnnotations() [
-    this.DESCRIPTION_ANNO,
-    this.LOAD_IN_SIDEBAR_ANNO,
-    PlacesUtils.POST_DATA_ANNO,
-    PlacesUtils.READ_ONLY_ANNO,
-  ],
+  get _copyableAnnotations() {
+    return [
+      this.DESCRIPTION_ANNO,
+      this.LOAD_IN_SIDEBAR_ANNO,
+      PlacesUtils.READ_ONLY_ANNO,
+    ];
+  },
 
   /**
    * Get a transaction for copying a uri item (either a bookmark or a history
@@ -172,7 +167,6 @@ this.PlacesUIUtils = {
       );
     }
 
-    let keyword = aData.keyword || null;
     let annos = [];
     if (aData.annos) {
       annos = aData.annos.filter(function (aAnno) {
@@ -180,9 +174,10 @@ this.PlacesUIUtils = {
       }, this);
     }
 
+    // There's no need to copy the keyword since it's bound to the bookmark url.
     return new PlacesCreateBookmarkTransaction(PlacesUtils._uri(aData.uri),
                                                aContainer, aIndex, aData.title,
-                                               keyword, annos, transactions);
+                                               null, annos, transactions);
   },
 
   /**
@@ -201,14 +196,21 @@ this.PlacesUIUtils = {
    *       annotations are synced from the old one.
    * @see this._copyableAnnotations for the list of copyable annotations.
    */
-  _getFolderCopyTransaction:
-  function PUIU__getFolderCopyTransaction(aData, aContainer, aIndex)
-  {
-    function getChildItemsTransactions(aChildren)
-    {
+  _getFolderCopyTransaction(aData, aContainer, aIndex) {
+    function getChildItemsTransactions(aRoot) {
       let transactions = [];
       let index = aIndex;
-      aChildren.forEach(function (node, i) {
+      for (let i = 0; i < aRoot.childCount; ++i) {
+        let child = aRoot.getChild(i);
+        // Temporary hacks until we switch to PlacesTransactions.jsm.
+        let isLivemark =
+          PlacesUtils.annotations.itemHasAnnotation(child.itemId,
+                                                    PlacesUtils.LMANNO_FEEDURI);
+        let [node] = PlacesUtils.unwrapNodes(
+          PlacesUtils.wrapNode(child, PlacesUtils.TYPE_X_MOZ_PLACE, isLivemark),
+          PlacesUtils.TYPE_X_MOZ_PLACE
+        );
+
         // Make sure that items are given the correct index, this will be
         // passed by the transaction manager to the backend for the insertion.
         // Insertion behaves differently for DEFAULT_INDEX (append).
@@ -239,19 +241,21 @@ this.PlacesUIUtils = {
         else {
           throw new Error("Unexpected item under a bookmarks folder");
         }
-      });
+      }
       return transactions;
     }
 
-    if (aContainer == PlacesUtils.tagsFolderId) { // Copying a tag folder.
+    if (aContainer == PlacesUtils.tagsFolderId) { // Copying into a tag folder.
       let transactions = [];
-      if (aData.children) {
-        aData.children.forEach(function(aChild) {
+      if (!aData.livemark && aData.type == PlacesUtils.TYPE_X_MOZ_PLACE_CONTAINER) {
+        let {root} = PlacesUtils.getFolderContents(aData.id, false, false);
+        let urls = PlacesUtils.getURLsForContainerNode(root);
+        root.containerOpen = false;
+        for (let { uri } of urls) {
           transactions.push(
-            new PlacesTagURITransaction(PlacesUtils._uri(aChild.uri),
-                                        [aData.title])
+            new PlacesTagURITransaction(NetUtil.newURI(uri), [aData.title])
           );
-        });
+        }
       }
       return new PlacesAggregatedTransaction("addTags", transactions);
     }
@@ -260,7 +264,10 @@ this.PlacesUIUtils = {
       return this._getLivemarkCopyTransaction(aData, aContainer, aIndex);
     }
 
-    let transactions = getChildItemsTransactions(aData.children);
+    let {root} = PlacesUtils.getFolderContents(aData.id, false, false);
+    let transactions = getChildItemsTransactions(root);
+    root.containerOpen = false;
+
     if (aData.dateAdded) {
       transactions.push(
         new PlacesEditItemDateAddedTransaction(null, aData.dateAdded)
@@ -456,21 +463,17 @@ this.PlacesUIUtils = {
   showBookmarkDialog:
   function PUIU_showBookmarkDialog(aInfo, aParentWindow) {
     // Preserve size attributes differently based on the fact the dialog has
-    // a folder picker or not.  If the picker is visible, the dialog should
-    // be resizable since it may not show enough content for the folders
-    // hierarchy.
+    // a folder picker or not, since it needs more horizontal space than the
+    // other controls.
     let hasFolderPicker = !("hiddenRows" in aInfo) ||
                           aInfo.hiddenRows.indexOf("folderPicker") == -1;
-    // Use a different chrome url, since this allows to persist different sizes,
-    // based on resizability of the dialog.
+    // Use a different chrome url to persist different sizes.
     let dialogURL = hasFolderPicker ?
                     "chrome://browser/content/places/bookmarkProperties2.xul" :
                     "chrome://browser/content/places/bookmarkProperties.xul";
 
-    let features =
-      "centerscreen,chrome,modal,resizable=" + (hasFolderPicker ? "yes" : "no");
-
-    aParentWindow.openDialog(dialogURL, "",  features, aInfo);
+    let features = "centerscreen,chrome,modal,resizable=yes";
+    aParentWindow.openDialog(dialogURL, "", features, aInfo);
     return ("performed" in aInfo && aInfo.performed);
   },
 
@@ -780,15 +783,33 @@ this.PlacesUIUtils = {
     browserWindow.gBrowser.loadTabs(urls, loadInBackground, false);
   },
 
+  openLiveMarkNodesInTabs:
+  function PUIU_openLiveMarkNodesInTabs(aNode, aEvent, aView) {
+    let window = aView.ownerWindow;
+
+    PlacesUtils.livemarks.getLivemark({id: aNode.itemId})
+      .then(aLivemark => {
+        urlsToOpen = [];
+
+        let nodes = aLivemark.getNodesForContainer(aNode);
+        for (let node of nodes) {
+          urlsToOpen.push({uri: node.uri, isBookmark: false});
+        }
+
+        if (this._confirmOpenInTabs(urlsToOpen.length, window)) {
+          this._openTabset(urlsToOpen, aEvent, window);
+        }
+      }, Cu.reportError);
+  },
+
   openContainerNodeInTabs:
   function PUIU_openContainerInTabs(aNode, aEvent, aView) {
     let window = aView.ownerWindow;
 
     let urlsToOpen = PlacesUtils.getURLsForContainerNode(aNode);
-    if (!this._confirmOpenInTabs(urlsToOpen.length, window))
-      return;
-
-    this._openTabset(urlsToOpen, aEvent, window);
+    if (this._confirmOpenInTabs(urlsToOpen.length, window)) {
+      this._openTabset(urlsToOpen, aEvent, window);
+    }
   },
 
   openURINodesInTabs: function PUIU_openURINodesInTabs(aNodes, aEvent, aView) {
@@ -857,6 +878,7 @@ this.PlacesUIUtils = {
       }
 
       aWindow.openUILinkIn(aNode.uri, aWhere, {
+        allowPopups: aNode.uri.startsWith("javascript:"),
         inBackground: Services.prefs.getBoolPref("browser.tabs.loadBookmarksInBackground"),
         private: aPrivate,
       });
@@ -1212,6 +1234,155 @@ this.PlacesUIUtils = {
     let cloudSyncEnabled = CloudSync && CloudSync.ready && CloudSync().tabsReady && CloudSync().tabs.hasRemoteTabs();
     return weaveEnabled || cloudSyncEnabled;
   },
+
+  /**
+   * WARNING TO ADDON AUTHORS: DO NOT USE THIS METHOD. IT'S LIKELY TO BE REMOVED IN A
+   * FUTURE RELEASE.
+   *
+   * Checks if a place: href represents a folder shortcut.
+   *
+   * @param queryString
+   *        the query string to check (a place: href)
+   * @return whether or not queryString represents a folder shortcut.
+   * @throws if queryString is malformed.
+   */
+  isFolderShortcutQueryString(queryString) {
+    // Based on GetSimpleBookmarksQueryFolder in nsNavHistory.cpp.
+
+    let queriesParam = { }, optionsParam = { };
+    PlacesUtils.history.queryStringToQueries(queryString,
+                                             queriesParam,
+                                             { },
+                                             optionsParam);
+    let queries = queries.value;
+    if (queries.length == 0)
+      throw new Error(`Invalid place: uri: ${queryString}`);
+    return queries.length == 1 &&
+           queries[0].folderCount == 1 &&
+           !queries[0].hasBeginTime &&
+           !queries[0].hasEndTime &&
+           !queries[0].hasDomain &&
+           !queries[0].hasURI &&
+           !queries[0].hasSearchTerms &&
+           !queries[0].tags.length == 0 &&
+           optionsParam.value.maxResults == 0;
+  },
+
+  /**
+   * WARNING TO ADDON AUTHORS: DO NOT USE THIS METHOD. IT"S LIKELY TO BE REMOVED IN A
+   * FUTURE RELEASE.
+   *
+   * Helpers for consumers of editBookmarkOverlay which don't have a node as their input.
+   * Given a partial node-like object, having at least the itemId property set, this
+   * method completes the rest of the properties necessary for initialising the edit
+   * overlay with it.
+   *
+   * @param aNodeLike
+   *        an object having at least the itemId nsINavHistoryResultNode property set,
+   *        along with any other properties available.
+   */
+  completeNodeLikeObjectForItemId(aNodeLike) {
+    if (this.useAsyncTransactions) {
+      // When async-transactions are enabled, node-likes must have
+      // bookmarkGuid set, and we cannot set it synchronously.
+      throw new Error("completeNodeLikeObjectForItemId cannot be used when " +
+                      "async transactions are enabled");
+    }
+    if (!("itemId" in aNodeLike))
+      throw new Error("itemId missing in aNodeLike");
+
+    let itemId = aNodeLike.itemId;
+    let defGetter = XPCOMUtils.defineLazyGetter.bind(XPCOMUtils, aNodeLike);
+
+    if (!("title" in aNodeLike))
+      defGetter("title", () => PlacesUtils.bookmarks.getItemTitle(itemId));
+
+    if (!("uri" in aNodeLike)) {
+      defGetter("uri", () => {
+        let uri = null;
+        try {
+          uri = PlacesUtils.bookmarks.getBookmarkURI(itemId);
+        }
+        catch(ex) { }
+        return uri ? uri.spec : "";
+      });
+    }
+
+    if (!("type" in aNodeLike)) {
+      defGetter("type", () => {
+        if (aNodeLike.uri.length > 0) {
+          if (/^place:/.test(aNodeLike.uri)) {
+            if (this.isFolderShortcutQueryString(aNodeLike.uri))
+              return Ci.nsINavHistoryResultNode.RESULT_TYPE_FOLDER_SHORTCUT;
+
+            return Ci.nsINavHistoryResultNode.RESULT_TYPE_QUERY;
+          }
+
+          return Ci.nsINavHistoryResultNode.RESULT_TYPE_URI;
+        }
+
+        let itemType = PlacesUtils.bookmarks.getItemType(itemId);
+        if (itemType == PlacesUtils.bookmarks.TYPE_FOLDER)
+          return Ci.nsINavHistoryResultNode.RESULT_TYPE_FOLDER;
+
+        throw new Error("Unexpected item type");
+      });
+    }
+  },
+
+  /**
+   * Helpers for consumers of editBookmarkOverlay which don't have a node as their input.
+   *
+   * Given a bookmark object for either a url bookmark or a folder, returned by
+   * Bookmarks.fetch (see Bookmark.jsm), this creates a node-like object suitable for
+   * initialising the edit overlay with it.
+   *
+   * @param aFetchInfo
+   *        a bookmark object returned by Bookmarks.fetch.
+   * @return a node-like object suitable for initialising editBookmarkOverlay.
+   * @throws if aFetchInfo is representing a separator.
+   */
+  promiseNodeLikeFromFetchInfo: Task.async(function* (aFetchInfo) {
+    if (aFetchInfo.itemType == PlacesUtils.bookmarks.TYPE_SEPARATOR)
+      throw new Error("promiseNodeLike doesn't support separators");
+
+    return Object.freeze({
+      itemId: yield PlacesUtils.promiseItemId(aFetchInfo.guid),
+      bookmarkGuid: aFetchInfo.guid,
+      title: aFetchInfo.title,
+      uri: aFetchInfo.url !== undefined ? aFetchInfo.url.href : "",
+
+      get type() {
+        if (aFetchInfo.itemType == PlacesUtils.bookmarks.TYPE_FOLDER)
+          return Ci.nsINavHistoryResultNode.RESULT_TYPE_FOLDER;
+
+        if (this.uri.length == 0)
+          throw new Error("Unexpected item type");
+
+        if (/^place:/.test(this.uri)) {
+          if (this.isFolderShortcutQueryString(this.uri))
+            return Ci.nsINavHistoryResultNode.RESULT_TYPE_FOLDER_SHORTCUT;
+
+          return Ci.nsINavHistoryResultNode.RESULT_TYPE_QUERY;
+        }
+
+        return Ci.nsINavHistoryResultNode.RESULT_TYPE_URI;
+      }
+    });
+  }),
+
+  /**
+   * Shortcut for calling promiseNodeLikeFromFetchInfo on the result of
+   * Bookmarks.fetch for the given guid/info object.
+   *
+   * @see promiseNodeLikeFromFetchInfo above and Bookmarks.fetch in Bookmarks.jsm.
+   */
+  fetchNodeLike: Task.async(function* (aGuidOrInfo) {
+    let info = yield PlacesUtils.bookmarks.fetch(aGuidOrInfo);
+    if (!info)
+      return null;
+    return (yield this.promiseNodeLikeFromFetchInfo(info));
+  })
 };
 
 
@@ -1268,71 +1439,68 @@ XPCOMUtils.defineLazyGetter(PlacesUIUtils, "ptm", function() {
   PlacesUtils;
 
   return {
-    aggregateTransactions: function(aName, aTransactions)
+    aggregateTransactions: (aName, aTransactions) =>
       new PlacesAggregatedTransaction(aName, aTransactions),
 
-    createFolder: function(aName, aContainer, aIndex, aAnnotations,
-                           aChildItemsTransactions)
+    createFolder: (aName, aContainer, aIndex, aAnnotations,
+                   aChildItemsTransactions) =>
       new PlacesCreateFolderTransaction(aName, aContainer, aIndex, aAnnotations,
                                         aChildItemsTransactions),
 
-    createItem: function(aURI, aContainer, aIndex, aTitle, aKeyword,
-                         aAnnotations, aChildTransactions)
+    createItem: (aURI, aContainer, aIndex, aTitle, aKeyword,
+                 aAnnotations, aChildTransactions) =>
       new PlacesCreateBookmarkTransaction(aURI, aContainer, aIndex, aTitle,
                                           aKeyword, aAnnotations,
                                           aChildTransactions),
 
-    createSeparator: function(aContainer, aIndex)
+    createSeparator: (aContainer, aIndex) =>
       new PlacesCreateSeparatorTransaction(aContainer, aIndex),
 
-    createLivemark: function(aFeedURI, aSiteURI, aName, aContainer, aIndex,
-                             aAnnotations)
+    createLivemark: (aFeedURI, aSiteURI, aName, aContainer, aIndex,
+                     aAnnotations) =>
       new PlacesCreateLivemarkTransaction(aFeedURI, aSiteURI, aName, aContainer,
                                           aIndex, aAnnotations),
 
-    moveItem: function(aItemId, aNewContainer, aNewIndex)
+    moveItem: (aItemId, aNewContainer, aNewIndex) =>
       new PlacesMoveItemTransaction(aItemId, aNewContainer, aNewIndex),
 
-    removeItem: function(aItemId)
+    removeItem: (aItemId) =>
       new PlacesRemoveItemTransaction(aItemId),
 
-    editItemTitle: function(aItemId, aNewTitle)
+    editItemTitle: (aItemId, aNewTitle) =>
       new PlacesEditItemTitleTransaction(aItemId, aNewTitle),
 
-    editBookmarkURI: function(aItemId, aNewURI)
+    editBookmarkURI: (aItemId, aNewURI) =>
       new PlacesEditBookmarkURITransaction(aItemId, aNewURI),
 
-    setItemAnnotation: function(aItemId, aAnnotationObject)
+    setItemAnnotation: (aItemId, aAnnotationObject) =>
       new PlacesSetItemAnnotationTransaction(aItemId, aAnnotationObject),
 
-    setPageAnnotation: function(aURI, aAnnotationObject)
+    setPageAnnotation: (aURI, aAnnotationObject) =>
       new PlacesSetPageAnnotationTransaction(aURI, aAnnotationObject),
 
-    editBookmarkKeyword: function(aItemId, aNewKeyword)
+    editBookmarkKeyword: (aItemId, aNewKeyword) =>
       new PlacesEditBookmarkKeywordTransaction(aItemId, aNewKeyword),
 
-    editBookmarkPostData: function(aItemId, aPostData)
-      new PlacesEditBookmarkPostDataTransaction(aItemId, aPostData),
-
-    editLivemarkSiteURI: function(aLivemarkId, aSiteURI)
+    editLivemarkSiteURI: (aLivemarkId, aSiteURI) =>
       new PlacesEditLivemarkSiteURITransaction(aLivemarkId, aSiteURI),
 
-    editLivemarkFeedURI: function(aLivemarkId, aFeedURI)
+    editLivemarkFeedURI: (aLivemarkId, aFeedURI) =>
       new PlacesEditLivemarkFeedURITransaction(aLivemarkId, aFeedURI),
 
-    editItemDateAdded: function(aItemId, aNewDateAdded)
+    editItemDateAdded: (aItemId, aNewDateAdded) =>
       new PlacesEditItemDateAddedTransaction(aItemId, aNewDateAdded),
 
-    editItemLastModified: function(aItemId, aNewLastModified)
+    editItemLastModified: (aItemId, aNewLastModified) =>
       new PlacesEditItemLastModifiedTransaction(aItemId, aNewLastModified),
 
-    sortFolderByName: function(aFolderId)
+    sortFolderByName: (aFolderId) =>
       new PlacesSortFolderByNameTransaction(aFolderId),
 
-    tagURI: function(aURI, aTags)
+    tagURI: (aURI, aTags) =>
       new PlacesTagURITransaction(aURI, aTags),
 
-    untagURI: function(aURI, aTags)
+    untagURI: (aURI, aTags) =>
       new PlacesUntagURITransaction(aURI, aTags),
 
     /**
@@ -1376,49 +1544,53 @@ XPCOMUtils.defineLazyGetter(PlacesUIUtils, "ptm", function() {
     ////////////////////////////////////////////////////////////////////////////
     //// nsITransactionManager forwarders.
 
-    beginBatch: function()
+    beginBatch: () =>
       PlacesUtils.transactionManager.beginBatch(null),
 
-    endBatch: function()
+    endBatch: () =>
       PlacesUtils.transactionManager.endBatch(false),
 
-    doTransaction: function(txn)
+    doTransaction: (txn) =>
       PlacesUtils.transactionManager.doTransaction(txn),
 
-    undoTransaction: function()
+    undoTransaction: () =>
       PlacesUtils.transactionManager.undoTransaction(),
 
-    redoTransaction: function()
+    redoTransaction: () =>
       PlacesUtils.transactionManager.redoTransaction(),
 
-    get numberOfUndoItems()
-      PlacesUtils.transactionManager.numberOfUndoItems,
-    get numberOfRedoItems()
-      PlacesUtils.transactionManager.numberOfRedoItems,
-    get maxTransactionCount()
-      PlacesUtils.transactionManager.maxTransactionCount,
-    set maxTransactionCount(val)
-      PlacesUtils.transactionManager.maxTransactionCount = val,
+    get numberOfUndoItems() {
+      return PlacesUtils.transactionManager.numberOfUndoItems;
+    },
+    get numberOfRedoItems() {
+      return PlacesUtils.transactionManager.numberOfRedoItems;
+    },
+    get maxTransactionCount() {
+      return PlacesUtils.transactionManager.maxTransactionCount;
+    },
+    set maxTransactionCount(val) {
+      PlacesUtils.transactionManager.maxTransactionCount = val;
+    },
 
-    clear: function()
+    clear: () =>
       PlacesUtils.transactionManager.clear(),
 
-    peekUndoStack: function()
+    peekUndoStack: () =>
       PlacesUtils.transactionManager.peekUndoStack(),
 
-    peekRedoStack: function()
+    peekRedoStack: () =>
       PlacesUtils.transactionManager.peekRedoStack(),
 
-    getUndoStack: function()
+    getUndoStack: () =>
       PlacesUtils.transactionManager.getUndoStack(),
 
-    getRedoStack: function()
+    getRedoStack: () =>
       PlacesUtils.transactionManager.getRedoStack(),
 
-    AddListener: function(aListener)
+    AddListener: (aListener) =>
       PlacesUtils.transactionManager.AddListener(aListener),
 
-    RemoveListener: function(aListener)
+    RemoveListener: (aListener) =>
       PlacesUtils.transactionManager.RemoveListener(aListener)
   }
 });

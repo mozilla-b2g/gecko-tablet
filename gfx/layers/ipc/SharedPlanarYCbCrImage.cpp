@@ -37,7 +37,12 @@ SharedPlanarYCbCrImage::~SharedPlanarYCbCrImage() {
 
   if (mCompositable->GetAsyncID() != 0 &&
       !InImageBridgeChildThread()) {
-    ImageBridgeChild::DispatchReleaseTextureClient(mTextureClient.forget().take());
+    if (mTextureClient) {
+      ADDREF_MANUALLY(mTextureClient);
+      ImageBridgeChild::DispatchReleaseTextureClient(mTextureClient);
+      mTextureClient = nullptr;
+    }
+
     ImageBridgeChild::DispatchReleaseImageClient(mCompositable.forget().take());
   }
 }
@@ -65,7 +70,7 @@ SharedPlanarYCbCrImage::GetBuffer()
   return mTextureClient->GetBuffer();
 }
 
-TemporaryRef<gfx::SourceSurface>
+already_AddRefed<gfx::SourceSurface>
 SharedPlanarYCbCrImage::GetAsSourceSurface()
 {
   if (!mTextureClient) {
@@ -225,5 +230,5 @@ SharedPlanarYCbCrImage::Allocate(PlanarYCbCrData& aData)
   return mBufferSize > 0;
 }
 
-} // namespace
-} // namespace
+} // namespace layers
+} // namespace mozilla

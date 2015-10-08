@@ -466,10 +466,7 @@ class JSString : public js::gc::TenuredCell
 
     inline JSLinearString* base() const;
 
-    void markBase(JSTracer* trc) {
-        MOZ_ASSERT(hasBase());
-        js::TraceManuallyBarrieredEdge(trc, &d.s.u3.base, "base");
-    }
+    void traceBase(JSTracer* trc);
 
     /* Only called by the GC for strings with the AllocKind::STRING kind. */
 
@@ -509,7 +506,7 @@ class JSString : public js::gc::TenuredCell
     bool equals(const char* s);
 #endif
 
-    inline void markChildren(JSTracer* trc);
+    void traceChildren(JSTracer* trc);
 
     static MOZ_ALWAYS_INLINE void readBarrier(JSString* thing) {
         if (thing->isPermanentAtom())
@@ -578,10 +575,7 @@ class JSRope : public JSString
         return d.s.u3.right;
     }
 
-    void markChildren(JSTracer* trc) {
-        js::TraceManuallyBarrieredEdge(trc, &d.s.u2.left, "left child");
-        js::TraceManuallyBarrieredEdge(trc, &d.s.u3.right, "right child");
-    }
+    void traceChildren(JSTracer* trc);
 
     static size_t offsetOfLeft() {
         return offsetof(JSRope, d.s.u2.left);
@@ -1127,7 +1121,11 @@ class StaticStrings
  *     private names).
  */
 class PropertyName : public JSAtom
-{};
+{
+  private:
+    /* Vacuous and therefore unimplemented. */
+    PropertyName* asPropertyName() = delete;
+};
 
 static_assert(sizeof(PropertyName) == sizeof(JSString),
               "string subclasses must be binary-compatible with JSString");
@@ -1138,23 +1136,7 @@ NameToId(PropertyName* name)
     return NON_INTEGER_ATOM_TO_JSID(name);
 }
 
-class AutoNameVector : public AutoVectorRooter<PropertyName*>
-{
-    typedef AutoVectorRooter<PropertyName*> BaseType;
-  public:
-    explicit AutoNameVector(JSContext* cx
-                            MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-        : AutoVectorRooter<PropertyName*>(cx, NAMEVECTOR)
-    {
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-
-    HandlePropertyName operator[](size_t i) const {
-        return HandlePropertyName::fromMarkedLocation(&begin()[i]);
-    }
-
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-};
+using PropertyNameVector = js::TraceableVector<PropertyName*>;
 
 template <typename CharT>
 void
@@ -1270,15 +1252,6 @@ JSString::base() const
     MOZ_ASSERT(hasBase());
     MOZ_ASSERT(!d.s.u3.base->isInline());
     return d.s.u3.base;
-}
-
-inline void
-JSString::markChildren(JSTracer* trc)
-{
-    if (hasBase())
-        markBase(trc);
-    else if (isRope())
-        asRope().markChildren(trc);
 }
 
 template<>

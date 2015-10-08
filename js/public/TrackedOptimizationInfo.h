@@ -16,6 +16,7 @@ namespace JS {
     _(GetProp_ArgumentsCallee)                          \
     _(GetProp_InferredConstant)                         \
     _(GetProp_Constant)                                 \
+    _(GetProp_StaticName)                               \
     _(GetProp_SimdGetter)                               \
     _(GetProp_TypedObject)                              \
     _(GetProp_DefiniteSlot)                             \
@@ -30,6 +31,7 @@ namespace JS {
     _(SetProp_DefiniteSlot)                             \
     _(SetProp_Unboxed)                                  \
     _(SetProp_InlineAccess)                             \
+    _(SetProp_InlineCache)                              \
                                                         \
     _(GetElem_TypedObject)                              \
     _(GetElem_Dense)                                    \
@@ -46,6 +48,8 @@ namespace JS {
     _(SetElem_Dense)                                    \
     _(SetElem_Arguments)                                \
     _(SetElem_InlineCache)                              \
+                                                        \
+    _(InlineCache_OptimizedStub)                        \
                                                         \
     _(Call_Inline)
 
@@ -100,16 +104,52 @@ namespace JS {
     _(SimdTypeNotOptimized)                                             \
     _(UnknownSimdProperty)                                              \
                                                                         \
+    _(ICOptStub_GenericSuccess)                                         \
+                                                                        \
+    _(ICGetPropStub_ReadSlot)                                           \
+    _(ICGetPropStub_CallGetter)                                         \
+    _(ICGetPropStub_ArrayLength)                                        \
+    _(ICGetPropStub_UnboxedRead)                                        \
+    _(ICGetPropStub_UnboxedReadExpando)                                 \
+    _(ICGetPropStub_UnboxedArrayLength)                                 \
+    _(ICGetPropStub_TypedArrayLength)                                   \
+    _(ICGetPropStub_DOMProxyShadowed)                                   \
+    _(ICGetPropStub_DOMProxyUnshadowed)                                 \
+    _(ICGetPropStub_GenericProxy)                                       \
+    _(ICGetPropStub_ArgumentsLength)                                    \
+                                                                        \
+    _(ICSetPropStub_Slot)                                               \
+    _(ICSetPropStub_GenericProxy)                                       \
+    _(ICSetPropStub_DOMProxyShadowed)                                   \
+    _(ICSetPropStub_DOMProxyUnshadowed)                                 \
+    _(ICSetPropStub_CallSetter)                                         \
+    _(ICSetPropStub_AddSlot)                                            \
+    _(ICSetPropStub_SetUnboxed)                                         \
+                                                                        \
+    _(ICGetElemStub_ReadSlot)                                           \
+    _(ICGetElemStub_CallGetter)                                         \
+    _(ICGetElemStub_ReadUnboxed)                                        \
+    _(ICGetElemStub_Dense)                                              \
+    _(ICGetElemStub_DenseHole)                                          \
+    _(ICGetElemStub_TypedArray)                                         \
+    _(ICGetElemStub_ArgsElementMapped)                                  \
+    _(ICGetElemStub_ArgsElementUnmapped)                                \
+                                                                        \
+    _(ICSetElemStub_Dense)                                              \
+    _(ICSetElemStub_TypedArray)                                         \
+                                                                        \
+    _(ICNameStub_ReadSlot)                                              \
+    _(ICNameStub_CallGetter)                                            \
+                                                                        \
     _(CantInlineGeneric)                                                \
     _(CantInlineNoTarget)                                               \
     _(CantInlineNotInterpreted)                                         \
     _(CantInlineNoBaseline)                                             \
     _(CantInlineLazy)                                                   \
     _(CantInlineNotConstructor)                                         \
+    _(CantInlineClassConstructor)                                       \
     _(CantInlineDisabledIon)                                            \
     _(CantInlineTooManyArgs)                                            \
-    _(CantInlineRecursive)                                              \
-    _(CantInlineHeavyweight)                                            \
     _(CantInlineNeedsArgsObj)                                           \
     _(CantInlineDebuggee)                                               \
     _(CantInlineUnknownProps)                                           \
@@ -125,6 +165,8 @@ namespace JS {
     _(CantInlineNativeBadType)                                          \
     _(CantInlineNativeNoTemplateObj)                                    \
     _(CantInlineBound)                                                  \
+    _(CantInlineNativeNoSpecialization)                                 \
+    _(HasCommonInliningPath)                                            \
                                                                         \
     _(GenericSuccess)                                                   \
     _(Inlined)                                                          \
@@ -179,11 +221,6 @@ struct ForEachTrackedOptimizationAttemptOp
     virtual void operator()(TrackedStrategy strategy, TrackedOutcome outcome) = 0;
 };
 
-JS_PUBLIC_API(void)
-ForEachTrackedOptimizationAttempt(JSRuntime* rt, void* addr, uint8_t index,
-                                  ForEachTrackedOptimizationAttemptOp& op,
-                                  JSScript** scriptOut, jsbytecode** pcOut);
-
 struct ForEachTrackedOptimizationTypeInfoOp
 {
     // Called 0+ times per entry, once for each type in the type set that Ion
@@ -214,23 +251,16 @@ struct ForEachTrackedOptimizationTypeInfoOp
     //
     // The lineno parameter is the line number if the type is keyed by
     // "constructor", "alloc site", or if the type itself refers to a scripted
-    // function. Otherwise it is UINT32_MAX.
+    // function. Otherwise it is Nothing().
     //
     // The location parameter is the only one that may need escaping if being
     // quoted.
     virtual void readType(const char* keyedBy, const char* name,
-                          const char* location, unsigned lineno) = 0;
+                          const char* location, mozilla::Maybe<unsigned> lineno) = 0;
 
     // Called once per entry.
     virtual void operator()(TrackedTypeSite site, const char* mirType) = 0;
 };
-
-JS_PUBLIC_API(void)
-ForEachTrackedOptimizationTypeInfo(JSRuntime* rt, void* addr, uint8_t index,
-                                   ForEachTrackedOptimizationTypeInfoOp& op);
-
-JS_PUBLIC_API(mozilla::Maybe<uint8_t>)
-TrackedOptimizationIndexAtAddr(JSRuntime* rt, void* addr, void** entryAddr);
 
 } // namespace JS
 

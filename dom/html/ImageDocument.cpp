@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -98,7 +99,7 @@ ImageListener::OnStartRequest(nsIRequest* request, nsISupports *ctxt)
   }
 
   int16_t decision = nsIContentPolicy::ACCEPT;
-  nsresult rv = NS_CheckContentProcessPolicy(nsIContentPolicy::TYPE_IMAGE,
+  nsresult rv = NS_CheckContentProcessPolicy(nsIContentPolicy::TYPE_INTERNAL_IMAGE,
                                              channelURI,
                                              channelPrincipal,
                                              domWindow->GetFrameElementInternal(),
@@ -325,7 +326,7 @@ ImageDocument::GetImageRequest(imgIRequest** aImageRequest)
 {
   ErrorResult rv;
   *aImageRequest = GetImageRequest(rv).take();
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 void

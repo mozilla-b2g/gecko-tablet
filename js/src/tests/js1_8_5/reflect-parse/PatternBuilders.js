@@ -123,16 +123,23 @@ function letStmt(head, body) {
     return Pattern({ type: "LetStatement", head: head, body: body });
 }
 
+function superProp(id) {
+    return dotExpr(Pattern({ type: "Super" }), id);
+}
+function superElem(id) {
+    return memExpr(Pattern({ type: "Super" }), id);
+}
+
 function classStmt(id, heritage, body) {
     return Pattern({ type: "ClassStatement",
-                     name: id,
-                     heritage: heritage,
+                     id: id,
+                     superClass: heritage,
                      body: body});
 }
 function classExpr(id, heritage, body) {
     return Pattern({ type: "ClassExpression",
-                     name: id,
-                     heritage: heritage,
+                     id: id,
+                     superClass: heritage,
                      body: body});
 }
 function classMethod(id, body, kind, static) {
@@ -161,6 +168,15 @@ function arrowExpr(args, body) {
     return Pattern({ type: "ArrowFunctionExpression",
                      params: args,
                      body: body });
+}
+
+function metaProperty(meta, property) {
+    return Pattern({ type: "MetaProperty",
+                     meta: meta,
+                     property: property });
+}
+function newTarget() {
+    return metaProperty(ident("new"), ident("target"));
 }
 
 function unExpr(op, arg) {
@@ -224,9 +240,6 @@ function genExpr(body, blocks, filter, style) {
 }
 function graphExpr(idx, body) {
     return Pattern({ type: "GraphExpression", index: idx, expression: body });
-}
-function letExpr(head, body) {
-    return Pattern({ type: "LetExpression", head: head, body: body });
 }
 function idxExpr(idx) {
     return Pattern({ type: "GraphIndexExpression", index: idx });

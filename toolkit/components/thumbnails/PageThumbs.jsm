@@ -115,17 +115,23 @@ this.PageThumbs = {
   /**
    * The scheme to use for thumbnail urls.
    */
-  get scheme() "moz-page-thumb",
+  get scheme() {
+    return "moz-page-thumb";
+  },
 
   /**
    * The static host to use for thumbnail urls.
    */
-  get staticHost() "thumbnail",
+  get staticHost() {
+    return "thumbnail";
+  },
 
   /**
    * The thumbnails' image type.
    */
-  get contentType() "image/png",
+  get contentType() {
+    return "image/png";
+  },
 
   init: function PageThumbs_init() {
     if (!this._initialized) {
@@ -182,7 +188,7 @@ this.PageThumbs = {
 
     let deferred = Promise.defer();
 
-    let canvas = this.createCanvas();
+    let canvas = this.createCanvas(aBrowser.contentWindow);
     this.captureToCanvas(aBrowser, canvas, () => {
       canvas.toBlob(blob => {
         deferred.resolve(blob, this.contentType);
@@ -221,7 +227,7 @@ this.PageThumbs = {
    * transitory as it is based on current navigation state and the type of
    * content being displayed.
    *
-   * @param aBrowser The target browser 
+   * @param aBrowser The target browser
    * @param aCallback(aResult) A callback invoked once security checks have
    *   completed. aResult is a boolean indicating the combined result of the
    *   security checks performed.
@@ -264,24 +270,7 @@ this.PageThumbs = {
       return;
     }
 
-    // Generate in-process content thumbnail
-    let [width, height, scale] =
-      PageThumbUtils.determineCropSize(aBrowser.contentWindow, aCanvas);
-    let ctx = aCanvas.getContext("2d");
-
-    // Scale the canvas accordingly.
-    ctx.save();
-    ctx.scale(scale, scale);
-
-    try {
-      // Draw the window contents to the canvas.
-      ctx.drawWindow(aBrowser.contentWindow, 0, 0, width, height,
-                     PageThumbUtils.THUMBNAIL_BG_COLOR,
-                     ctx.DRAWWINDOW_DO_NOT_FLUSH);
-    } catch (e) {
-      // We couldn't draw to the canvas for some reason.
-    }
-    ctx.restore();
+    aCanvas = PageThumbUtils.createSnapshotThumbnail(aBrowser.contentWindow, aCanvas);
 
     if (aCallback) {
       aCallback(aCanvas);
@@ -712,7 +701,7 @@ this.PageThumbsStorage = {
   }
 };
 
-let PageThumbsStorageMigrator = {
+var PageThumbsStorageMigrator = {
   get currentVersion() {
     try {
       return Services.prefs.getIntPref(PREF_STORAGE_VERSION);
@@ -770,7 +759,7 @@ let PageThumbsStorageMigrator = {
   }
 };
 
-let PageThumbsExpiration = {
+var PageThumbsExpiration = {
   _filters: [],
 
   init: function Expiration_init() {
@@ -835,12 +824,12 @@ let PageThumbsExpiration = {
 /**
  * Interface to a dedicated thread handling I/O
  */
-let PageThumbsWorker = new BasePromiseWorker("resource://gre/modules/PageThumbsWorker.js");
+var PageThumbsWorker = new BasePromiseWorker("resource://gre/modules/PageThumbsWorker.js");
 // As the PageThumbsWorker performs I/O, we can receive instances of
 // OS.File.Error, so we need to install a decoder.
 PageThumbsWorker.ExceptionHandlers["OS.File.Error"] = OS.File.Error.fromMsg;
 
-let PageThumbsHistoryObserver = {
+var PageThumbsHistoryObserver = {
   onDeleteURI: function Thumbnails_onDeleteURI(aURI, aGUID) {
     PageThumbsStorage.remove(aURI.spec);
   },

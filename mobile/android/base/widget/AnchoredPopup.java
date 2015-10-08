@@ -17,14 +17,21 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
+import org.mozilla.gecko.util.HardwareUtils;
 
 /**
  * AnchoredPopup is the base class for doorhanger notifications, and is anchored to the urlbar.
  */
 public abstract class AnchoredPopup extends PopupWindow {
-    private View mAnchor;
+    public interface OnVisibilityChangeListener {
+        public void onDoorHangerShow();
+        public void onDoorHangerHide();
+    }
 
-    protected LinearLayout mContent;
+    private View mAnchor;
+    private OnVisibilityChangeListener onVisibilityChangeListener;
+
+    protected RoundedCornerLayout mContent;
     protected boolean mInflated;
 
     protected final Context mContext;
@@ -54,7 +61,7 @@ public abstract class AnchoredPopup extends PopupWindow {
         final View layout = inflater.inflate(R.layout.anchored_popup, null);
         setContentView(layout);
 
-        mContent = (LinearLayout) layout.findViewById(R.id.content);
+        mContent = (RoundedCornerLayout) layout.findViewById(R.id.content);
 
         mInflated = true;
     }
@@ -68,6 +75,10 @@ public abstract class AnchoredPopup extends PopupWindow {
         mAnchor = anchor;
     }
 
+    public void setOnVisibilityChangeListener(OnVisibilityChangeListener listener) {
+        onVisibilityChangeListener = listener;
+    }
+
     /**
      * Shows the popup with the arrow pointing to the center of the anchor view. If the anchor
      * isn't visible, the popup will just be shown at the top of the root view.
@@ -77,34 +88,56 @@ public abstract class AnchoredPopup extends PopupWindow {
             throw new IllegalStateException("ArrowPopup#init() must be called before ArrowPopup#show()");
         }
 
+        if (onVisibilityChangeListener != null) {
+            onVisibilityChangeListener.onDoorHangerShow();
+        }
+
         final int[] anchorLocation = new int[2];
         if (mAnchor != null) {
             mAnchor.getLocationInWindow(anchorLocation);
         }
 
-        // If the anchor is null or out of the window bounds, just show the popup at the top of the
-        // root view, keeping the correct X coordinate.
-        if (mAnchor == null || anchorLocation[1] < 0) {
-            final View decorView = ((Activity) mContext).getWindow().getDecorView();
+        // The doorhanger should overlap the bottom of the urlbar.
+        int offsetY = mContext.getResources().getDimensionPixelOffset(R.dimen.doorhanger_offsetY);
+        final View decorView = ((Activity) mContext).getWindow().getDecorView();
 
-            // Bug in Android code causes the window layout parameters to be ignored
-            // when using showAtLocation() in Gingerbread phones.
-            if (Versions.preHC) {
-                setWidth(decorView.getWidth());
-                setHeight(decorView.getHeight());
+        // Hack for Gingerbread: showAtLocation ignores window layout parameters so we have to use
+        // showAsDropDown() instead.
+        // Height and width are always set to 0 dp.
+        if (Versions.preHC) {
+            setWidth(decorView.getWidth());
+            offsetY = mContext.getResources().getDimensionPixelOffset(R.dimen.doorhanger_GB_offsetY);
+            if (mAnchor == null) {
+              mAnchor = decorView;
             }
-
-            showAtLocation(decorView, Gravity.NO_GRAVITY, anchorLocation[0], 0);
+            showAsDropDown(mAnchor, 0, -offsetY);
             return;
         }
 
-        // We want the doorhanger to be offset from the base of the urlbar which is the anchor.
-        int offsetX = mContext.getResources().getDimensionPixelOffset(R.dimen.doorhanger_offsetX);
-        int offsetY = mContext.getResources().getDimensionPixelOffset(R.dimen.doorhanger_offsetY);
-        if (isShowing()) {
-            update(mAnchor, offsetX, -offsetY, -1, -1);
+        final boolean validAnchor = (mAnchor != null) && (anchorLocation[1] > 0);
+        if (HardwareUtils.isTablet()) {
+            if (validAnchor) {
+                showAsDropDown(mAnchor, 0, 0);
+            } else {
+                // The anchor will be offscreen if the dynamic toolbar is hidden, so anticipate the re-shown position
+                // of the toolbar.
+                final int offsetX = mContext.getResources().getDimensionPixelOffset(R.dimen.doorhanger_offsetX);
+                showAtLocation(decorView, Gravity.TOP | Gravity.LEFT, offsetX, offsetY);
+            }
         } else {
-            showAsDropDown(mAnchor, offsetX, -offsetY);
+            // If the anchor is null or out of the window bounds, just show the popup at the top of the
+            // root view.
+            final View anchor = validAnchor ? mAnchor : decorView;
+
+            showAtLocation(anchor, Gravity.TOP | Gravity.CENTER_HORIZONTAL, 0, offsetY);
+        }
+    }
+
+    @Override
+    public void dismiss() {
+        super.dismiss();
+        if (onVisibilityChangeListener != null) {
+            onVisibilityChangeListener.onDoorHangerHide();
         }
     }
 }

@@ -1,7 +1,7 @@
 /* Any: copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+var {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 Cu.import("resource://gre/modules/NetworkStatsDB.jsm");
 
@@ -936,7 +936,7 @@ add_test(function test_addAlarm() {
   netStatsDb.addAlarm(alarms[0], function(error, result) {
     do_check_eq(error, null);
     alarmsDbId = result;
-    netStatsDb.getAlarms(Ci.nsINetworkInterface.NETWORK_TYPE_WIFI, exampleManifestURL, function(error, result) {
+    netStatsDb.getAlarms(Ci.nsINetworkInfo.NETWORK_TYPE_WIFI, exampleManifestURL, function(error, result) {
       do_check_eq(error, null);
       do_check_eq(result.length, 1);
       do_check_eq(result[0].id, alarmsDbId);

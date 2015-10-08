@@ -25,16 +25,7 @@
 
 namespace js {
 
-class AutoLockGC;
-
 unsigned GetCPUCount();
-
-enum HeapState {
-    Idle,             // doing nothing with the GC heap
-    Tracing,          // tracing the GC heap without collecting, e.g. IterateCompartments()
-    MajorCollecting,  // doing a GC of the major heap
-    MinorCollecting   // doing a GC of the minor heap (nursery)
-};
 
 enum ThreadType
 {
@@ -42,13 +33,9 @@ enum ThreadType
     BackgroundThread
 };
 
-namespace jit {
-    class JitCode;
-}
-
 namespace gcstats {
 struct Statistics;
-}
+} // namespace gcstats
 
 class Nursery;
 
@@ -64,6 +51,47 @@ enum State {
     COMPACT
 };
 
+// Expand the given macro D for each valid GC reference type.
+#define FOR_EACH_GC_POINTER_TYPE(D) \
+    D(AccessorShape*) \
+    D(BaseShape*) \
+    D(UnownedBaseShape*) \
+    D(jit::JitCode*) \
+    D(NativeObject*) \
+    D(ArrayObject*) \
+    D(ArgumentsObject*) \
+    D(ArrayBufferObject*) \
+    D(ArrayBufferObjectMaybeShared*) \
+    D(ArrayBufferViewObject*) \
+    D(DebugScopeObject*) \
+    D(GlobalObject*) \
+    D(JSObject*) \
+    D(JSFunction*) \
+    D(ModuleObject*) \
+    D(ModuleEnvironmentObject*) \
+    D(NestedScopeObject*) \
+    D(PlainObject*) \
+    D(SavedFrame*) \
+    D(ScopeObject*) \
+    D(ScriptSourceObject*) \
+    D(SharedArrayBufferObject*) \
+    D(SharedTypedArrayObject*) \
+    D(ImportEntryObject*) \
+    D(ExportEntryObject*) \
+    D(JSScript*) \
+    D(LazyScript*) \
+    D(Shape*) \
+    D(JSAtom*) \
+    D(JSString*) \
+    D(JSFlatString*) \
+    D(JSLinearString*) \
+    D(PropertyName*) \
+    D(JS::Symbol*) \
+    D(js::ObjectGroup*) \
+    D(Value) \
+    D(jsid) \
+    D(TaggedProto)
+
 /* Map from C++ type to alloc kind. JSObject does not have a 1:1 mapping, so must use Arena::thingSize. */
 template <typename T> struct MapTypeToFinalizeKind {};
 template <> struct MapTypeToFinalizeKind<JSScript>          { static const AllocKind kind = AllocKind::SCRIPT; };
@@ -78,11 +106,19 @@ template <> struct MapTypeToFinalizeKind<JSExternalString>  { static const Alloc
 template <> struct MapTypeToFinalizeKind<JS::Symbol>        { static const AllocKind kind = AllocKind::SYMBOL; };
 template <> struct MapTypeToFinalizeKind<jit::JitCode>      { static const AllocKind kind = AllocKind::JITCODE; };
 
+template <typename T> struct ParticipatesInCC {};
+#define EXPAND_PARTICIPATES_IN_CC(_, type, addToCCKind) \
+    template <> struct ParticipatesInCC<type> { static const bool value = addToCCKind; };
+JS_FOR_EACH_TRACEKIND(EXPAND_PARTICIPATES_IN_CC)
+#undef EXPAND_PARTICIPATES_IN_CC
+
 static inline bool
 IsNurseryAllocable(AllocKind kind)
 {
     MOZ_ASSERT(IsValidAllocKind(kind));
     static const bool map[] = {
+        true,      /* AllocKind::FUNCTION */
+        true,      /* AllocKind::FUNCTION_EXTENDED */
         false,     /* AllocKind::OBJECT0 */
         true,      /* AllocKind::OBJECT0_BACKGROUND */
         false,     /* AllocKind::OBJECT2 */
@@ -116,6 +152,8 @@ IsBackgroundFinalized(AllocKind kind)
 {
     MOZ_ASSERT(IsValidAllocKind(kind));
     static const bool map[] = {
+        true,      /* AllocKind::FUNCTION */
+        true,      /* AllocKind::FUNCTION_EXTENDED */
         false,     /* AllocKind::OBJECT0 */
         true,      /* AllocKind::OBJECT0_BACKGROUND */
         false,     /* AllocKind::OBJECT2 */
@@ -159,9 +197,6 @@ CanBeFinalizedInBackground(AllocKind kind, const Class* clasp)
             (!clasp->finalize || (clasp->flags & JSCLASS_BACKGROUND_FINALIZE)));
 }
 
-inline JSGCTraceKind
-GetGCThingTraceKind(const void* thing);
-
 /* Capacity for slotsToThingKind */
 const size_t SLOTS_TO_THING_KIND_LIMIT = 17;
 
@@ -178,7 +213,7 @@ GetGCObjectKind(size_t numSlots)
 
 /* As for GetGCObjectKind, but for dense array allocation. */
 static inline AllocKind
-GetGCArrayKind(size_t numSlots)
+GetGCArrayKind(size_t numElements)
 {
     /*
      * Dense arrays can use their fixed slots to hold their elements array
@@ -187,9 +222,12 @@ GetGCArrayKind(size_t numSlots)
      * unused.
      */
     JS_STATIC_ASSERT(ObjectElements::VALUES_PER_HEADER == 2);
-    if (numSlots > NativeObject::NELEMENTS_LIMIT || numSlots + 2 >= SLOTS_TO_THING_KIND_LIMIT)
+    if (numElements > NativeObject::MAX_DENSE_ELEMENTS_COUNT ||
+        numElements + ObjectElements::VALUES_PER_HEADER >= SLOTS_TO_THING_KIND_LIMIT)
+    {
         return AllocKind::OBJECT2;
-    return slotsToThingKind[numSlots + 2];
+    }
+    return slotsToThingKind[numElements + ObjectElements::VALUES_PER_HEADER];
 }
 
 static inline AllocKind
@@ -229,9 +267,11 @@ GetGCKindSlots(AllocKind thingKind)
 {
     /* Using a switch in hopes that thingKind will usually be a compile-time constant. */
     switch (thingKind) {
+      case AllocKind::FUNCTION:
       case AllocKind::OBJECT0:
       case AllocKind::OBJECT0_BACKGROUND:
         return 0;
+      case AllocKind::FUNCTION_EXTENDED:
       case AllocKind::OBJECT2:
       case AllocKind::OBJECT2_BACKGROUND:
         return 2;
@@ -271,6 +311,12 @@ GetGCKindSlots(AllocKind thingKind, const Class* clasp)
         nslots = 0;
 
     return nslots;
+}
+
+static inline size_t
+GetGCKindBytes(AllocKind thingKind)
+{
+    return sizeof(JSObject_Slots0) + GetGCKindSlots(thingKind) * sizeof(Value);
 }
 
 // Class to assist in triggering background chunk allocation. This cannot be done
@@ -801,7 +847,7 @@ class ArenaLists
         MOZ_ASSERT(freeLists[kind].isEmpty());
     }
 
-    bool relocateArenas(ArenaHeader*& relocatedListOut, JS::gcreason::Reason reason,
+    bool relocateArenas(Zone* zone, ArenaHeader*& relocatedListOut, JS::gcreason::Reason reason,
                         SliceBudget& sliceBudget, gcstats::Statistics& stats);
 
     void queueForegroundObjectsForSweep(FreeOp* fop);
@@ -844,6 +890,7 @@ class ArenaLists
 
     friend class GCRuntime;
     friend class js::Nursery;
+    friend class js::TenuringTracer;
 };
 
 /* The number of GC cycles an empty chunk can survive before been released. */
@@ -1026,49 +1073,15 @@ class GCParallelTask
     // This should be friended to HelperThread, but cannot be because it
     // would introduce several circular dependencies.
   public:
-    void runFromHelperThread();
-};
-
-struct GCChunkHasher {
-    typedef gc::Chunk* Lookup;
-
-    /*
-     * Strip zeros for better distribution after multiplying by the golden
-     * ratio.
-     */
-    static HashNumber hash(gc::Chunk* chunk) {
-        MOZ_ASSERT(!(uintptr_t(chunk) & gc::ChunkMask));
-        return HashNumber(uintptr_t(chunk) >> gc::ChunkShift);
-    }
-
-    static bool match(gc::Chunk* k, gc::Chunk* l) {
-        MOZ_ASSERT(!(uintptr_t(k) & gc::ChunkMask));
-        MOZ_ASSERT(!(uintptr_t(l) & gc::ChunkMask));
-        return k == l;
-    }
-};
-
-typedef HashSet<js::gc::Chunk*, GCChunkHasher, SystemAllocPolicy> GCChunkSet;
-
-struct GrayRoot {
-    void* thing;
-    JSGCTraceKind kind;
-#ifdef DEBUG
-    JSTraceNamePrinter debugPrinter;
-    const void* debugPrintArg;
-    size_t debugPrintIndex;
-#endif
-
-    GrayRoot(void* thing, JSGCTraceKind kind)
-        : thing(thing), kind(kind) {}
+    virtual void runFromHelperThread();
 };
 
 typedef void (*IterateChunkCallback)(JSRuntime* rt, void* data, gc::Chunk* chunk);
 typedef void (*IterateZoneCallback)(JSRuntime* rt, void* data, JS::Zone* zone);
 typedef void (*IterateArenaCallback)(JSRuntime* rt, void* data, gc::Arena* arena,
-                                     JSGCTraceKind traceKind, size_t thingSize);
+                                     JS::TraceKind traceKind, size_t thingSize);
 typedef void (*IterateCellCallback)(JSRuntime* rt, void* data, void* thing,
-                                    JSGCTraceKind traceKind, size_t thingSize);
+                                    JS::TraceKind traceKind, size_t thingSize);
 
 /*
  * This function calls |zoneCallback| on every zone, |compartmentCallback| on
@@ -1131,22 +1144,20 @@ MergeCompartments(JSCompartment* source, JSCompartment* target);
  */
 class RelocationOverlay
 {
-    friend class MinorCollectionTracer;
-
     /* The low bit is set so this should never equal a normal pointer. */
     static const uintptr_t Relocated = uintptr_t(0xbad0bad1);
 
-    // Putting the magic value after the forwarding pointer is a terrible hack
-    // to make JSObject::zone() work on forwarded objects.
+    // Arrange the fields of the RelocationOverlay so that JSObject's group
+    // pointer is not overwritten during compacting.
 
-    /* The location |this| was moved to. */
-    Cell* newLocation_;
+    /* A list entry to track all relocated things. */
+    RelocationOverlay* next_;
 
     /* Set to Relocated when moved. */
     uintptr_t magic_;
 
-    /* A list entry to track all relocated things. */
-    RelocationOverlay* next_;
+    /* The location |this| was moved to. */
+    Cell* newLocation_;
 
   public:
     static RelocationOverlay* fromCell(Cell* cell) {
@@ -1164,15 +1175,20 @@ class RelocationOverlay
 
     void forwardTo(Cell* cell) {
         MOZ_ASSERT(!isForwarded());
-        static_assert(offsetof(JSObject, group_) == offsetof(RelocationOverlay, newLocation_),
-                      "forwarding pointer and group should be at same location, "
-                      "so that obj->zone() works on forwarded objects");
+        static_assert(offsetof(JSObject, group_) == offsetof(RelocationOverlay, next_),
+                      "next pointer and group should be at same location, "
+                      "so that group is not overwritten during compacting");
         newLocation_ = cell;
         magic_ = Relocated;
-        next_ = nullptr;
+    }
+
+    RelocationOverlay*& nextRef() {
+        MOZ_ASSERT(isForwarded());
+        return next_;
     }
 
     RelocationOverlay* next() const {
+        MOZ_ASSERT(isForwarded());
         return next_;
     }
 
@@ -1207,20 +1223,14 @@ IsForwarded(T* t)
     return overlay->isForwarded();
 }
 
+struct IsForwardedFunctor : public BoolDefaultAdaptor<Value, false> {
+    template <typename T> bool operator()(T* t) { return IsForwarded(t); }
+};
+
 inline bool
 IsForwarded(const JS::Value& value)
 {
-    if (value.isObject())
-        return IsForwarded(&value.toObject());
-
-    if (value.isString())
-        return IsForwarded(value.toString());
-
-    if (value.isSymbol())
-        return IsForwarded(value.toSymbol());
-
-    MOZ_ASSERT(!value.isGCThing());
-    return false;
+    return DispatchTyped(IsForwardedFunctor(), value);
 }
 
 template <typename T>
@@ -1232,18 +1242,16 @@ Forwarded(T* t)
     return reinterpret_cast<T*>(overlay->forwardingAddress());
 }
 
+struct ForwardedFunctor : public IdentityDefaultAdaptor<Value> {
+    template <typename T> inline Value operator()(T* t) {
+        return js::gc::RewrapTaggedPointer<Value, T*>::wrap(Forwarded(t));
+    }
+};
+
 inline Value
 Forwarded(const JS::Value& value)
 {
-    if (value.isObject())
-        return ObjectValue(*Forwarded(&value.toObject()));
-    else if (value.isString())
-        return StringValue(Forwarded(value.toString()));
-    else if (value.isSymbol())
-        return SymbolValue(Forwarded(value.toSymbol()));
-
-    MOZ_ASSERT(!value.isGCThing());
-    return value;
+    return DispatchTyped(ForwardedFunctor(), value);
 }
 
 template <typename T>
@@ -1265,15 +1273,21 @@ CheckGCThingAfterMovingGC(T* t)
     }
 }
 
+template <typename T>
+inline void
+CheckGCThingAfterMovingGC(const ReadBarriered<T*>& t)
+{
+    CheckGCThingAfterMovingGC(t.get());
+}
+
+struct CheckValueAfterMovingGCFunctor : public VoidDefaultAdaptor<Value> {
+    template <typename T> void operator()(T* t) { CheckGCThingAfterMovingGC(t); }
+};
+
 inline void
 CheckValueAfterMovingGC(const JS::Value& value)
 {
-    if (value.isObject())
-        return CheckGCThingAfterMovingGC(&value.toObject());
-    else if (value.isString())
-        return CheckGCThingAfterMovingGC(value.toString());
-    else if (value.isSymbol())
-        return CheckGCThingAfterMovingGC(value.toSymbol());
+    DispatchTyped(CheckValueAfterMovingGCFunctor(), value);
 }
 
 #endif // JSGC_HASH_TABLE_CHECKS
@@ -1288,15 +1302,12 @@ const int ZealGenerationalGCValue = 7;
 const int ZealIncrementalRootsThenFinish = 8;
 const int ZealIncrementalMarkAllThenFinish = 9;
 const int ZealIncrementalMultipleSlices = 10;
-const int ZealVerifierPostValue = 11;
-const int ZealFrameVerifierPostValue = 12;
 const int ZealCheckHashTablesOnMinorGC = 13;
 const int ZealCompactValue = 14;
 const int ZealLimit = 14;
 
 enum VerifierType {
-    PreBarrierVerifier,
-    PostBarrierVerifier
+    PreBarrierVerifier
 };
 
 #ifdef JS_GC_ZEAL
@@ -1330,7 +1341,7 @@ MaybeVerifyBarriers(JSContext* cx, bool always = false)
  * read the comment in vm/Runtime.h above |suppressGC| and take all appropriate
  * precautions before instantiating this class.
  */
-class AutoSuppressGC
+class MOZ_RAII AutoSuppressGC
 {
     int32_t& suppressGC_;
 
@@ -1344,30 +1355,6 @@ class AutoSuppressGC
         suppressGC_--;
     }
 };
-
-#ifdef DEBUG
-/* Disable OOM testing in sections which are not OOM safe. */
-class AutoEnterOOMUnsafeRegion
-{
-    uint32_t saved_;
-
-  public:
-    AutoEnterOOMUnsafeRegion() : saved_(OOM_maxAllocations) {
-        OOM_maxAllocations = UINT32_MAX;
-    }
-    ~AutoEnterOOMUnsafeRegion() {
-        OOM_maxAllocations = saved_;
-    }
-};
-#else
-class AutoEnterOOMUnsafeRegion {};
-#endif /* DEBUG */
-
-// This tests whether something is inside the GGC's nursery only;
-// use sparingly, mostly testing for any nursery, using IsInsideNursery,
-// is appropriate.
-bool
-IsInsideGGCNursery(const gc::Cell* cell);
 
 // A singly linked list of zones.
 class ZoneList
@@ -1404,24 +1391,22 @@ NewMemoryStatisticsObject(JSContext* cx);
 
 #ifdef DEBUG
 /* Use this to avoid assertions when manipulating the wrapper map. */
-class AutoDisableProxyCheck
+class MOZ_RAII AutoDisableProxyCheck
 {
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER;
     gc::GCRuntime& gc;
 
   public:
-    explicit AutoDisableProxyCheck(JSRuntime* rt
-                                   MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
+    explicit AutoDisableProxyCheck(JSRuntime* rt);
     ~AutoDisableProxyCheck();
 };
 #else
-struct AutoDisableProxyCheck
+struct MOZ_RAII AutoDisableProxyCheck
 {
     explicit AutoDisableProxyCheck(JSRuntime* rt) {}
 };
 #endif
 
-struct AutoDisableCompactingGC
+struct MOZ_RAII AutoDisableCompactingGC
 {
     explicit AutoDisableCompactingGC(JSRuntime* rt);
     ~AutoDisableCompactingGC();

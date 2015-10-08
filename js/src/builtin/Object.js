@@ -41,6 +41,25 @@ function ObjectStaticAssign(target, firstSource) {
     return to;
 }
 
+/* ES6 draft rev 32 (2015 Feb 2) 19.1.2.9. */
+function ObjectGetPrototypeOf(obj) {
+    return std_Reflect_getPrototypeOf(ToObject(obj));
+}
+
+/* ES6 draft rev 32 (2015 Feb 2) 19.1.2.11. */
+function ObjectIsExtensible(obj) {
+    return IsObject(obj) && std_Reflect_isExtensible(obj);
+}
+
+/* ES2015 19.1.3.5 Object.prototype.toLocaleString */
+function Object_toLocaleString() {
+    // Step 1.
+    var O = this;
+
+    // Step 2.
+    return O.toString();
+}
+
 function ObjectDefineSetter(name, setter) {
     var object;
     if (this === null || this === undefined)
@@ -49,7 +68,7 @@ function ObjectDefineSetter(name, setter) {
         object = ToObject(this);
 
     if (!IsCallable(setter))
-        ThrowError(JSMSG_BAD_GETTER_OR_SETTER, "setter");
+        ThrowTypeError(JSMSG_BAD_GETTER_OR_SETTER, "setter");
 
     var key = ToPropertyKey(name);
 
@@ -71,7 +90,7 @@ function ObjectDefineGetter(name, getter) {
         object = ToObject(this);
 
     if (!IsCallable(getter))
-        ThrowError(JSMSG_BAD_GETTER_OR_SETTER, "getter");
+        ThrowTypeError(JSMSG_BAD_GETTER_OR_SETTER, "getter");
 
     var key = ToPropertyKey(name);
 
@@ -96,7 +115,7 @@ function ObjectLookupSetter(name) {
                 return desc.set;
             return undefined;
         }
-        object = std_Object_getPrototypeOf(object);
+        object = std_Reflect_getPrototypeOf(object);
     } while (object !== null);
 }
 
@@ -111,6 +130,7 @@ function ObjectLookupGetter(name) {
                 return desc.get;
             return undefined;
         }
-        object = std_Object_getPrototypeOf(object);
+        object = std_Reflect_getPrototypeOf(object);
     } while (object !== null);
 }
+

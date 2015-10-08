@@ -425,9 +425,9 @@ function testAccessibleTree(aAccOrElmOrID, aAccTree, aFlags)
       for (var offset in accTree[prop]) {
         if (prevOffset !=- 1) {
           var attrs = accTree[prop][prevOffset];
-          testTextAttrs(acc, prevOffset, attrs, { }, prevOffset, offset, true);
+          testTextAttrs(acc, prevOffset, attrs, { }, prevOffset, +offset, true);
         }
-        prevOffset = offset;
+        prevOffset = +offset;
       }
 
       if (prevOffset != -1) {
@@ -452,26 +452,39 @@ function testAccessibleTree(aAccOrElmOrID, aAccTree, aFlags)
     var children = acc.children;
     var childCount = children.length;
 
-
     if (accTree.children.length != childCount) {
       for (var i = 0; i < Math.max(accTree.children.length, childCount); i++) {
-        var accChild;
+        var accChild = null, testChild = null;
         try {
+          testChild = accTree.children[i];
           accChild = children.queryElementAt(i, nsIAccessible);
-          if (!accTree.children[i]) {
+
+          if (!testChild) {
             ok(false, prettyName(acc) + " has an extra child at index " + i +
               " : " + prettyName(accChild));
+            continue;
           }
-          if (accChild.role !== accTree.children[i].role) {
+
+          var key = Object.keys(testChild)[0];
+          var roleName = "ROLE_" + key;
+          if (roleName in nsIAccessibleRole) {
+            testChild = {
+              role: nsIAccessibleRole[roleName],
+              children: testChild[key]
+            };
+          }
+
+          if (accChild.role !== testChild.role) {
             ok(false, prettyName(accTree) + " and " + prettyName(acc) +
               " have different children at index " + i + " : " +
-              prettyName(accTree.children[i]) + ", " + prettyName(accChild));
+              prettyName(testChild) + ", " + prettyName(accChild));
           }
           info("Matching " + prettyName(accTree) + " and " + prettyName(acc) +
                " child at index " + i + " : " + prettyName(accChild));
+
         } catch (e) {
-          ok(false, prettyName(accTree) + " has an extra child at index " + i +
-             " : " + prettyName(accTree.children[i]));
+          ok(false, prettyName(accTree) + " is expected to have a child at index " + i +
+             " : " + prettyName(testChild) + ", " + e);
         }
       }
     } else {

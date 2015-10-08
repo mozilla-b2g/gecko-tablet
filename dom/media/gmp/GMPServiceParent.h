@@ -13,6 +13,7 @@
 #include "nsDataHashtable.h"
 #include "mozilla/Atomics.h"
 #include "nsThreadUtils.h"
+#include "GMPUtils.h"
 
 template <class> struct already_AddRefed;
 
@@ -43,15 +44,21 @@ public:
                        const nsAString& aTopLevelOrigin,
                        bool aInPrivateBrowsingMode,
                        UniquePtr<GetNodeIdCallback>&& aCallback) override;
+  NS_IMETHOD UpdateTrialCreateState(const nsAString& aKeySystem,
+                                    uint32_t aState) override;
 
   NS_DECL_MOZIGECKOMEDIAPLUGINCHROMESERVICE
   NS_DECL_NSIOBSERVER
 
   void AsyncShutdownNeeded(GMPParent* aParent);
   void AsyncShutdownComplete(GMPParent* aParent);
-  void AbortAsyncShutdown();
 
   int32_t AsyncShutdownTimeoutMs();
+#ifdef MOZ_CRASHREPORTER
+  void SetAsyncShutdownPluginState(GMPParent* aGMPParent, char aId, const nsCString& aState);
+#endif // MOZ_CRASHREPORTER
+
+  void CrashPluginNow(uint32_t aPluginId, GMPCrashReason aReason);
 
 private:
   friend class GMPServiceParent;
@@ -73,14 +80,16 @@ private:
 
   void UnloadPlugins();
   void CrashPlugins();
-  void SetAsyncShutdownComplete();
+  void NotifySyncShutdownComplete();
+  void NotifyAsyncShutdownComplete();
 
   void LoadFromEnvironment();
   void ProcessPossiblePlugin(nsIFile* aDir);
 
   void AddOnGMPThread(const nsAString& aDirectory);
   void RemoveOnGMPThread(const nsAString& aDirectory,
-                         const bool aDeleteFromDisk);
+                         const bool aDeleteFromDisk,
+                         const bool aCanDefer);
 
   nsresult SetAsyncShutdownTimeout();
 
@@ -95,7 +104,8 @@ private:
 
 protected:
   friend class GMPParent;
-  void ReAddOnGMPThread(nsRefPtr<GMPParent>& aOld);
+  void ReAddOnGMPThread(const nsRefPtr<GMPParent>& aOld);
+  void PluginTerminated(const nsRefPtr<GMPParent>& aOld);
   virtual void InitializePlugins() override;
   virtual bool GetContentParentFrom(const nsACString& aNodeId,
                                     const nsCString& aAPI,
@@ -117,10 +127,11 @@ private:
     };
 
     PathRunnable(GeckoMediaPluginServiceParent* aService, const nsAString& aPath,
-                 EOperation aOperation)
+                 EOperation aOperation, bool aDefer = false)
       : mService(aService)
       , mPath(aPath)
       , mOperation(aOperation)
+      , mDefer(aDefer)
     { }
 
     NS_DECL_NSIRUNNABLE
@@ -129,11 +140,28 @@ private:
     nsRefPtr<GeckoMediaPluginServiceParent> mService;
     nsString mPath;
     EOperation mOperation;
+    bool mDefer;
   };
 
   // Protected by mMutex from the base class.
   nsTArray<nsRefPtr<GMPParent>> mPlugins;
   bool mShuttingDown;
+  nsTArray<nsRefPtr<GMPParent>> mAsyncShutdownPlugins;
+
+#ifdef MOZ_CRASHREPORTER
+  Mutex mAsyncShutdownPluginStatesMutex; // Protects mAsyncShutdownPluginStates.
+  class AsyncShutdownPluginStates
+  {
+  public:
+    void Update(const nsCString& aPlugin, const nsCString& aInstance,
+                char aId, const nsCString& aState);
+  private:
+    struct State { nsAutoCString mStateSequence; nsCString mLastStateDescription; };
+    typedef nsClassHashtable<nsCStringHashKey, State> StatesByInstance;
+    typedef nsClassHashtable<nsCStringHashKey, StatesByInstance> StateInstancesByPlugin;
+    StateInstancesByPlugin mStates;
+  } mAsyncShutdownPluginStates;
+#endif // MOZ_CRASHREPORTER
 
   // True if we've inspected MOZ_GMP_PATH on the GMP thread and loaded any
   // plugins found there into mPlugins.
@@ -154,9 +182,9 @@ private:
     T mValue;
   };
 
-  MainThreadOnly<bool> mWaitingForPluginsAsyncShutdown;
+  MainThreadOnly<bool> mWaitingForPluginsSyncShutdown;
 
-  nsTArray<nsRefPtr<GMPParent>> mAsyncShutdownPlugins; // GMP Thread only.
+  nsTArray<nsString> mPluginsWaitingForDeletion;
 
   nsCOMPtr<nsIFile> mStorageBaseDir;
 
@@ -187,7 +215,7 @@ public:
                            nsTArray<ProcessId>&& aAlreadyBridgedTo,
                            base::ProcessId* aID,
                            nsCString* aDisplayName,
-                           nsCString* aPluginId) override;
+                           uint32_t* aPluginId) override;
   virtual bool RecvGetGMPNodeId(const nsString& aOrigin,
                                 const nsString& aTopLevelOrigin,
                                 const bool& aInPrivateBrowsing,
@@ -196,6 +224,10 @@ public:
                                             nsTArray<nsCString>&& aTags,
                                             bool* aHasPlugin,
                                             nsCString* aVersion);
+  virtual bool RecvUpdateGMPTrialCreateState(const nsString& aKeySystem,
+                                             const uint32_t& aState) override;
+  virtual bool RecvCrashPluginNow(const uint32_t& aPluginId,
+                                  const GMPCrashReason& aReason) override;
 
   virtual void ActorDestroy(ActorDestroyReason aWhy) override;
 

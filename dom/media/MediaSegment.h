@@ -49,6 +49,12 @@ typedef MediaTime StreamTime;
 const StreamTime STREAM_TIME_MAX = MEDIA_TIME_MAX;
 
 /**
+ * Media time relative to the start of the graph timeline.
+ */
+typedef MediaTime GraphTime;
+const GraphTime GRAPH_TIME_MAX = MEDIA_TIME_MAX;
+
+/**
  * A MediaSegment is a chunk of media data sequential in time. Different
  * types of data have different subclasses of MediaSegment, all inheriting
  * from MediaSegmentBase.
@@ -265,6 +271,38 @@ public:
     MediaSegmentBase<C, Chunk>& mSegment;
     uint32_t mIndex;
   };
+  class ConstChunkIterator {
+  public:
+    explicit ConstChunkIterator(const MediaSegmentBase<C, Chunk>& aSegment)
+      : mSegment(aSegment), mIndex(0) {}
+    bool IsEnded() { return mIndex >= mSegment.mChunks.Length(); }
+    void Next() { ++mIndex; }
+    const Chunk& operator*() { return mSegment.mChunks[mIndex]; }
+    const Chunk* operator->() { return &mSegment.mChunks[mIndex]; }
+  private:
+    const MediaSegmentBase<C, Chunk>& mSegment;
+    uint32_t mIndex;
+  };
+
+  Chunk* FindChunkContaining(StreamTime aOffset, StreamTime* aStart = nullptr)
+  {
+    if (aOffset < 0) {
+      return nullptr;
+    }
+    StreamTime offset = 0;
+    for (uint32_t i = 0; i < mChunks.Length(); ++i) {
+      Chunk& c = mChunks[i];
+      StreamTime nextOffset = offset + c.GetDuration();
+      if (aOffset < nextOffset) {
+        if (aStart) {
+          *aStart = offset;
+        }
+        return &c;
+      }
+      offset = nextOffset;
+    }
+    return nullptr;
+  }
 
   void RemoveLeading(StreamTime aDuration)
   {
@@ -279,7 +317,7 @@ public:
 
   virtual size_t SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const override
   {
-    size_t amount = mChunks.SizeOfExcludingThis(aMallocSizeOf);
+    size_t amount = mChunks.ShallowSizeOfExcludingThis(aMallocSizeOf);
     for (size_t i = 0; i < mChunks.Length(); i++) {
       amount += mChunks[i].SizeOfExcludingThisIfUnshared(aMallocSizeOf);
     }
@@ -307,7 +345,7 @@ protected:
       mChunks[mChunks.Length() - 1].mDuration += aSource->mChunks[0].mDuration;
       aSource->mChunks.RemoveElementAt(0);
     }
-    mChunks.MoveElementsFrom(aSource->mChunks);
+    mChunks.AppendElements(Move(aSource->mChunks));
   }
 
   void AppendSliceInternal(const MediaSegmentBase<C, Chunk>& aSource,
@@ -336,26 +374,6 @@ protected:
     c->mDuration = aDuration;
     mDuration += aDuration;
     return c;
-  }
-
-  Chunk* FindChunkContaining(StreamTime aOffset, StreamTime* aStart = nullptr)
-  {
-    if (aOffset < 0) {
-      return nullptr;
-    }
-    StreamTime offset = 0;
-    for (uint32_t i = 0; i < mChunks.Length(); ++i) {
-      Chunk& c = mChunks[i];
-      StreamTime nextOffset = offset + c.GetDuration();
-      if (aOffset < nextOffset) {
-        if (aStart) {
-          *aStart = offset;
-        }
-        return &c;
-      }
-      offset = nextOffset;
-    }
-    return nullptr;
   }
 
   Chunk* GetLastChunk()
@@ -413,6 +431,6 @@ protected:
 #endif
 };
 
-}
+} // namespace mozilla
 
 #endif /* MOZILLA_MEDIASEGMENT_H_ */

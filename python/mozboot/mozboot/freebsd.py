@@ -6,8 +6,8 @@ from mozboot.base import BaseBootstrapper
 
 
 class FreeBSDBootstrapper(BaseBootstrapper):
-    def __init__(self, version, flavor):
-        BaseBootstrapper.__init__(self)
+    def __init__(self, version, flavor, **kwargs):
+        BaseBootstrapper.__init__(self, **kwargs)
         self.version = int(version.split('.')[0])
         self.flavor = flavor.lower()
 
@@ -23,6 +23,7 @@ class FreeBSDBootstrapper(BaseBootstrapper):
             'dbus-glib',
             'gstreamer-plugins',
             'gtk2',
+            'gtk3',
             'libGL',
             'pulseaudio',
             'v4l_compat',

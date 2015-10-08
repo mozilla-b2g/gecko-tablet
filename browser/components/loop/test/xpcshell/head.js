@@ -1,7 +1,12 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+"use strict";
+
+var {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+
+// Initialize this before the imports, as some of them need it.
+do_get_profile();
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
@@ -11,7 +16,9 @@ Cu.import("resource:///modules/loop/MozLoopService.jsm");
 Cu.import("resource://gre/modules/Promise.jsm");
 Cu.import("resource:///modules/loop/LoopCalls.jsm");
 Cu.import("resource:///modules/loop/LoopRooms.jsm");
+Cu.import("resource://gre/modules/osfile.jsm");
 const { MozLoopServiceInternal } = Cu.import("resource:///modules/loop/MozLoopService.jsm", {});
+const { LoopRoomsInternal, timerHandlers } = Cu.import("resource:///modules/loop/LoopRooms.jsm", {});
 
 XPCOMUtils.defineLazyModuleGetter(this, "MozLoopPushHandler",
                                   "resource:///modules/loop/MozLoopPushHandler.jsm");
@@ -64,7 +71,7 @@ function setupFakeFxAUserProfile() {
   });
 }
 
-function waitForCondition(aConditionFn, aMaxTries=50, aCheckInterval=100) {
+function waitForCondition(aConditionFn, aMaxTries = 50, aCheckInterval = 100) {
   function tryAgain() {
     function tryNow() {
       tries++;
@@ -93,7 +100,7 @@ function getLoopString(stringID) {
  * MozLoopService tests. There is only one object created per test instance, as
  * once registration has taken place, the object cannot currently be changed.
  */
-let mockPushHandler = {
+var mockPushHandler = {
   // This sets the registration result to be returned when initialize
   // is called. By default, it is equivalent to success.
   registrationResult: null,
@@ -133,7 +140,7 @@ let mockPushHandler = {
  * enables us to check parameters and return messages similar to the push
  * server.
  */
-function MockWebSocketChannel() {};
+function MockWebSocketChannel() {}
 
 MockWebSocketChannel.prototype = {
   QueryInterface: XPCOMUtils.generateQI(Ci.nsIWebSocketChannel),
@@ -207,5 +214,12 @@ MockWebSocketChannel.prototype = {
 
   serverClose: function (err) {
     this.listener.onServerClose(this.context, err || -1);
-  },
+  }
+};
+
+const extend = function(target, source) {
+  for (let key of Object.getOwnPropertyNames(source)) {
+    target[key] = source[key];
+  }
+  return target;
 };

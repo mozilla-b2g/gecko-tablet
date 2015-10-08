@@ -1,13 +1,15 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-let startTimerCalled = false;
+"use strict";
+
+var startTimerCalled = false;
 
 /**
  * Tests that registration doesn't happen when the expiry time is
  * not set.
  */
-add_task(function test_initialize_no_expiry() {
+add_task(function* test_initialize_no_expiry() {
   startTimerCalled = false;
 
   let initializedPromise = yield MozLoopService.initialize();
@@ -38,11 +40,19 @@ add_task(function test_initialize_no_guest_rooms() {
 add_task(function test_initialize_with_guest_rooms() {
   Services.prefs.setBoolPref("loop.createdRoom", true);
   startTimerCalled = false;
+  MozLoopService.resetServiceInitialized();
 
   MozLoopService.initialize();
 
   Assert.equal(startTimerCalled, true,
     "should start the timer when guest rooms have been created");
+
+  startTimerCalled = false;
+
+  MozLoopService.initialize();
+
+  Assert.equal(startTimerCalled, false,
+    "should not have initialized a second time");
 });
 
 function run_test() {

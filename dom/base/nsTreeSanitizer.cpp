@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set sw=2 ts=2 et tw=80: */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -23,6 +23,7 @@
 #include "nsContentUtils.h"
 #include "nsIParserUtils.h"
 #include "nsIDocument.h"
+#include "nsQueryObject.h"
 
 using namespace mozilla;
 
@@ -283,10 +284,6 @@ nsIAtom** const kElementsSVG[] = {
   &nsGkAtoms::altGlyph, // altGlyph
   &nsGkAtoms::altGlyphDef, // altGlyphDef
   &nsGkAtoms::altGlyphItem, // altGlyphItem
-  &nsGkAtoms::animate, // animate
-  &nsGkAtoms::animateColor, // animateColor
-  &nsGkAtoms::animateMotion, // animateMotion
-  &nsGkAtoms::animateTransform, // animateTransform
   &nsGkAtoms::circle, // circle
   &nsGkAtoms::clipPath, // clipPath
   &nsGkAtoms::colorProfile, // color-profile
@@ -350,7 +347,6 @@ nsIAtom** const kElementsSVG[] = {
   &nsGkAtoms::polyline, // polyline
   &nsGkAtoms::radialGradient, // radialGradient
   &nsGkAtoms::rect, // rect
-  &nsGkAtoms::set, // set
   &nsGkAtoms::stop, // stop
   &nsGkAtoms::svg, // svg
   &nsGkAtoms::svgSwitch, // switch
@@ -1395,9 +1391,8 @@ nsTreeSanitizer::SanitizeChildren(nsINode* aRoot)
         NS_ASSERTION(ns == kNameSpaceID_XHTML || ns == kNameSpaceID_SVG,
             "Should have only HTML or SVG here!");
         nsAutoString styleText;
-        if (!nsContentUtils::GetNodeTextContent(node, false, styleText)) {
-          NS_RUNTIMEABORT("OOM");
-        }
+        nsContentUtils::GetNodeTextContent(node, false, styleText);
+
         nsAutoString sanitizedStyle;
         nsCOMPtr<nsIURI> baseURI = node->GetBaseURI();
         if (SanitizeStyleSheet(styleText,

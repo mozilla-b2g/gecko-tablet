@@ -27,7 +27,6 @@ if CONFIG['OS_ARCH'] == 'WINNT':
     RCINCLUDE = '%supdater.rc' % updater_rel_path
     DEFINES['UNICODE'] = True
     DEFINES['_UNICODE'] = True
-    DEFINES['NOMINMAX'] = True
     USE_STATIC_LIBS = True
 
     # Pick up nsWindowsRestart.cpp
@@ -51,7 +50,7 @@ elif CONFIG['OS_ARCH'] == 'Linux' and CONFIG['MOZ_VERIFY_MAR_SIGNATURE']:
         'signmar',
         'updatecommon',
     ]
-    OS_LIBS += CONFIG['nspr']
+    OS_LIBS += CONFIG['NSPR_LIBS']
 else:
     USE_LIBS += [
         'updatecommon',
@@ -101,7 +100,7 @@ if have_progressui == 0:
         'progressui_null.cpp',
     ]
 
-SOURCES += ['%s%s' % (updater_rel_path, f) for f in sorted(srcs)]
+SOURCES += sorted(srcs)
 
 DEFINES['NS_NO_XPCOM'] = True
 DISABLE_STL_WRAPPING = True

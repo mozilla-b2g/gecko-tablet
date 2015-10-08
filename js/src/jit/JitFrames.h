@@ -18,8 +18,6 @@
 namespace js {
 namespace jit {
 
-typedef void * CalleeToken;
-
 enum CalleeTokenTag
 {
     CalleeToken_Function = 0x0, // untagged
@@ -183,9 +181,10 @@ class OsiIndex
 //   .. locals ..
 
 // The descriptor is organized into three sections:
-// [ frame size | constructing bit | frame type ]
+// [ frame size | has cached saved frame bit | frame type ]
 // < highest - - - - - - - - - - - - - - lowest >
-static const uintptr_t FRAMESIZE_SHIFT = 4;
+static const uintptr_t FRAMESIZE_SHIFT = 5;
+static const uintptr_t HASCACHEDSAVEDFRAME_BIT = 1 << 4;
 static const uintptr_t FRAMETYPE_BITS = 4;
 
 // Ion frames have a few important numbers associated with them:
@@ -284,7 +283,7 @@ void UpdateJitActivationsForMinorGC(JSRuntime* rt, JSTracer* trc);
 static inline uint32_t
 MakeFrameDescriptor(uint32_t frameSize, FrameType type)
 {
-    return (frameSize << FRAMESIZE_SHIFT) | type;
+    return 0 | (frameSize << FRAMESIZE_SHIFT) | type;
 }
 
 // Returns the JSScript associated with the topmost JIT frame.
@@ -304,7 +303,7 @@ GetTopJitJSScript(JSContext* cx)
     return iter.script();
 }
 
-#ifdef JS_CODEGEN_MIPS
+#ifdef JS_CODEGEN_MIPS32
 uint8_t* alignDoubleSpillWithOffset(uint8_t* pointer, int32_t offset);
 #else
 inline uint8_t*
@@ -345,7 +344,13 @@ class CommonFrameLayout
         return descriptor_ >> FRAMESIZE_SHIFT;
     }
     void setFrameDescriptor(size_t size, FrameType type) {
-        descriptor_ = (size << FRAMESIZE_SHIFT) | type;
+        descriptor_ = 0 | (size << FRAMESIZE_SHIFT) | type;
+    }
+    bool hasCachedSavedFrame() const {
+        return descriptor_ & HASCACHEDSAVEDFRAME_BIT;
+    }
+    void setHasCachedSavedFrame() {
+        descriptor_ |= HASCACHEDSAVEDFRAME_BIT;
     }
     uint8_t* returnAddress() const {
         return returnAddress_;
@@ -375,13 +380,10 @@ class JitFrameLayout : public CommonFrameLayout
         return offsetof(JitFrameLayout, numActualArgs_);
     }
     static size_t offsetOfThis() {
-        JitFrameLayout* base = nullptr;
-        return reinterpret_cast<size_t>(&base->argv()[0]);
+        return sizeof(JitFrameLayout);
     }
     static size_t offsetOfActualArgs() {
-        JitFrameLayout* base = nullptr;
-        // +1 to skip |this|.
-        return reinterpret_cast<size_t>(&base->argv()[1]);
+        return offsetOfThis() + sizeof(Value);
     }
     static size_t offsetOfActualArg(size_t arg) {
         return offsetOfActualArgs() + arg * sizeof(Value);
@@ -697,8 +699,8 @@ class IonOOLSetterOpExitFrameLayout : public IonOOLPropertyOpExitFrameLayout
     }
 };
 
-// Proxy::get(JSContext* cx, HandleObject proxy, HandleObject receiver, HandleId id,
-//            MutableHandleValue vp)
+// ProxyGetProperty(JSContext* cx, HandleObject proxy, HandleId id, MutableHandleValue vp)
+// ProxyCallProperty(JSContext* cx, HandleObject proxy, HandleId id, MutableHandleValue vp)
 // ProxySetProperty(JSContext* cx, HandleObject proxy, HandleId id, MutableHandleValue vp,
 //                  bool strict)
 class IonOOLProxyExitFrameLayout
@@ -709,9 +711,6 @@ class IonOOLProxyExitFrameLayout
 
     // The proxy object.
     JSObject* proxy_;
-
-    // Object for HandleObject
-    JSObject* receiver_;
 
     // id for HandleId
     jsid id_;
@@ -743,9 +742,6 @@ class IonOOLProxyExitFrameLayout
     }
     inline jsid* id() {
         return &id_;
-    }
-    inline JSObject** receiver() {
-        return &receiver_;
     }
     inline JSObject** proxy() {
         return &proxy_;
@@ -899,16 +895,57 @@ ExitFrameLayout::as<LazyLinkExitFrameLayout>()
 
 class ICStub;
 
-class BaselineStubFrameLayout : public CommonFrameLayout
+class JitStubFrameLayout : public CommonFrameLayout
 {
+    // Info on the stack
+    //
+    // --------------------
+    // |JitStubFrameLayout|
+    // +------------------+
+    // | - Descriptor     | => Marks end of JitFrame_IonJS
+    // | - returnaddres   |
+    // +------------------+
+    // | - StubPtr        | => First thing pushed in a stub only when the stub will do
+    // --------------------    a vmcall. Else we cannot have JitStubFrame. But technically
+    //                         not a member of the layout.
+
   public:
-    static inline size_t Size() {
-        return sizeof(BaselineStubFrameLayout);
+    static size_t Size() {
+        return sizeof(JitStubFrameLayout);
     }
 
     static inline int reverseOffsetOfStubPtr() {
         return -int(sizeof(void*));
     }
+
+    inline ICStub* maybeStubPtr() {
+        uint8_t* fp = reinterpret_cast<uint8_t*>(this);
+        return *reinterpret_cast<ICStub**>(fp + reverseOffsetOfStubPtr());
+    }
+};
+
+class BaselineStubFrameLayout : public JitStubFrameLayout
+{
+    // Info on the stack
+    //
+    // -------------------------
+    // |BaselineStubFrameLayout|
+    // +-----------------------+
+    // | - Descriptor          | => Marks end of JitFrame_BaselineJS
+    // | - returnaddres        |
+    // +-----------------------+
+    // | - StubPtr             | => First thing pushed in a stub only when the stub will do
+    // +-----------------------+    a vmcall. Else we cannot have BaselineStubFrame.
+    // | - FramePtr            | => Baseline stubs also need to push the frame ptr when doing
+    // -------------------------    a vmcall.
+    //                              Technically these last two variables are not part of the
+    //                              layout.
+
+  public:
+    static inline size_t Size() {
+        return sizeof(BaselineStubFrameLayout);
+    }
+
     static inline int reverseOffsetOfSavedFramePtr() {
         return -int(2 * sizeof(void*));
     }
@@ -918,10 +955,6 @@ class BaselineStubFrameLayout : public CommonFrameLayout
         return *(void**)addr;
     }
 
-    inline ICStub* maybeStubPtr() {
-        uint8_t* fp = reinterpret_cast<uint8_t*>(this);
-        return *reinterpret_cast<ICStub**>(fp + reverseOffsetOfStubPtr());
-    }
     inline void setStubPtr(ICStub* stub) {
         uint8_t* fp = reinterpret_cast<uint8_t*>(this);
         *reinterpret_cast<ICStub**>(fp + reverseOffsetOfStubPtr()) = stub;
@@ -966,6 +999,12 @@ GetPcScript(JSContext* cx, JSScript** scriptRes, jsbytecode** pcRes);
 
 CalleeToken
 MarkCalleeToken(JSTracer* trc, CalleeToken token);
+
+// The minimum stack size is two. Two slots are needed because INITGLEXICAL
+// (stack depth 1) is compiled as a SETPROP (stack depth 2) on the global
+// lexical scope. Baseline also requires one slot for this/argument type
+// checks.
+static const uint32_t MinJITStackSize = 2;
 
 } /* namespace jit */
 } /* namespace js */

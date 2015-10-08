@@ -21,11 +21,17 @@ class nsIThread;
 
 namespace mozilla {
 namespace dom {
+
+namespace quota {
+
+class DirectoryLock;
+
+} // namespace quota
+
 namespace cache {
 
 class Action;
 class Manager;
-class OfflineStorage;
 
 // The Context class is RAII-style class for managing IO operations within the
 // Cache.
@@ -41,8 +47,8 @@ class OfflineStorage;
 //  1) The Manager will call Context::AllowToClose() when all of the actors
 //     have removed themselves as listener.  This means an idle context with
 //     no active DOM objects will close gracefully.
-//  2) The QuotaManager invalidates the storage area so it can delete the
-//     files.  In this case the OfflineStorage calls Cache::Invalidate() which
+//  2) The QuotaManager aborts all operations so it can delete the files.
+//     In this case the QuotaManager calls Client::AbortOperations() which
 //     in turn cancels all existing Action objects and then marks the Manager
 //     as invalid.
 //  3) Browser shutdown occurs and the Manager calls Context::CancelAll().
@@ -59,6 +65,8 @@ class OfflineStorage;
 // via the code in ShutdownObserver.cpp.
 class Context final
 {
+  typedef mozilla::dom::quota::DirectoryLock DirectoryLock;
+
 public:
   // Define a class allowing other threads to hold the Context alive.  This also
   // allows these other threads to safely close or cancel the Context.
@@ -111,13 +119,14 @@ public:
   // will run on the QuotaManager IO thread.  Note, this Action must
   // be execute synchronously.
   static already_AddRefed<Context>
-  Create(Manager* aManager, Action* aQuotaIOThreadAction);
+  Create(Manager* aManager, nsIThread* aTarget,
+         Action* aInitAction, Context* aOldContext);
 
   // Execute given action on the target once the quota manager has been
   // initialized.
   //
   // Only callable from the thread that created the Context.
-  void Dispatch(nsIEventTarget* aTarget, Action* aAction);
+  void Dispatch(Action* aAction);
 
   // Cancel any Actions running or waiting to run.  This should allow the
   // Context to be released and Listener::RemoveContext() will be called
@@ -125,6 +134,9 @@ public:
   //
   // Only callable from the thread that created the Context.
   void CancelAll();
+
+  // True if CancelAll() has been called.
+  bool IsCanceled() const;
 
   // Like CancelAll(), but also marks the Manager as "invalid".
   void Invalidate();
@@ -148,12 +160,19 @@ public:
     return mQuotaInfo;
   }
 
+  // Tell the Context that some state information has been orphaned in the
+  // data store and won't be cleaned up.  The Context will leave the marker
+  // in place to trigger cleanup the next times its opened.
+  void NoteOrphanedData();
+
 private:
+  class Data;
   class QuotaInitRunnable;
   class ActionRunnable;
 
   enum State
   {
+    STATE_CONTEXT_PREINIT,
     STATE_CONTEXT_INIT,
     STATE_CONTEXT_READY,
     STATE_CONTEXT_CANCELED
@@ -165,19 +184,31 @@ private:
     nsRefPtr<Action> mAction;
   };
 
-  explicit Context(Manager* aManager);
+  Context(Manager* aManager, nsIThread* aTarget, Action* aInitAction);
   ~Context();
-  void DispatchAction(nsIEventTarget* aTarget, Action* aAction);
+  void Init(Context* aOldContext);
+  void Start();
+  void DispatchAction(Action* aAction, bool aDoomData = false);
   void OnQuotaInit(nsresult aRv, const QuotaInfo& aQuotaInfo,
-                   nsMainThreadPtrHandle<OfflineStorage>& aOfflineStorage);
+                   nsMainThreadPtrHandle<DirectoryLock>& aDirectoryLock);
 
   already_AddRefed<ThreadsafeHandle>
   CreateThreadsafeHandle();
 
+  void
+  SetNextContext(Context* aNextContext);
+
+  void
+  DoomTargetData();
+
   nsRefPtr<Manager> mManager;
+  nsCOMPtr<nsIThread> mTarget;
+  nsRefPtr<Data> mData;
   State mState;
+  bool mOrphanedData;
   QuotaInfo mQuotaInfo;
   nsRefPtr<QuotaInitRunnable> mInitRunnable;
+  nsRefPtr<Action> mInitAction;
   nsTArray<PendingAction> mPendingActions;
 
   // Weak refs since activites must remove themselves from this list before
@@ -190,7 +221,8 @@ private:
   // when ThreadsafeHandle::AllowToClose() is called.
   nsRefPtr<ThreadsafeHandle> mThreadsafeHandle;
 
-  nsMainThreadPtrHandle<OfflineStorage> mOfflineStorage;
+  nsMainThreadPtrHandle<DirectoryLock> mDirectoryLock;
+  nsRefPtr<Context> mNextContext;
 
 public:
   NS_INLINE_DECL_REFCOUNTING(cache::Context)

@@ -1,5 +1,5 @@
-/* -*- Mode: c++; c-basic-offset: 2; indent-tabs-mode: nil; tab-width: 40 -*- */
-/* vim: set ts=2 et sw=2 tw=80: */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * url, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -12,21 +12,22 @@
 #include "mozilla/ErrorResult.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/URLSearchParams.h"
-
-class nsIPrincipal;
+#include "nsWrapperCache.h"
 
 namespace mozilla {
 namespace dom {
-class File;
+class Blob;
 struct objectURLOptions;
-}
-}
+} // namespace dom
+} // namespace mozilla
 
 BEGIN_WORKERS_NAMESPACE
 
 class URLProxy;
+class ConstructorRunnable;
 
 class URL final : public mozilla::dom::URLSearchParamsObserver
+                , public nsWrapperCache
 {
   typedef mozilla::dom::URLSearchParams URLSearchParams;
 
@@ -34,7 +35,7 @@ class URL final : public mozilla::dom::URLSearchParamsObserver
 
 public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_CLASS(URL)
+  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(URL)
 
   URL(WorkerPrivate* aWorkerPrivate, URLProxy* aURLProxy);
 
@@ -45,8 +46,8 @@ public:
     return nullptr;
   }
 
-  bool
-  WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto, JS::MutableHandle<JSObject*> aReflector);
+  virtual JSObject*
+  WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto) override;
 
   // Methods for WebIDL
 
@@ -55,15 +56,19 @@ public:
               URL& aBase, ErrorResult& aRv);
   static already_AddRefed<URL>
   Constructor(const GlobalObject& aGlobal, const nsAString& aUrl,
+              const Optional<nsAString>& aBase, ErrorResult& aRv);
+  static already_AddRefed<URL>
+  Constructor(const GlobalObject& aGlobal, const nsAString& aUrl,
               const nsAString& aBase, ErrorResult& aRv);
 
   static void
   CreateObjectURL(const GlobalObject& aGlobal,
-                  File& aArg, const objectURLOptions& aOptions,
+                  Blob& aArg, const objectURLOptions& aOptions,
                   nsAString& aResult, ErrorResult& aRv);
 
   static void
-  RevokeObjectURL(const GlobalObject& aGlobal, const nsAString& aUrl);
+  RevokeObjectURL(const GlobalObject& aGlobal, const nsAString& aUrl,
+                  ErrorResult& aRv);
 
   void GetHref(nsAString& aHref, ErrorResult& aRv) const;
 
@@ -105,8 +110,6 @@ public:
 
   URLSearchParams* SearchParams();
 
-  void SetSearchParams(URLSearchParams& aSearchParams);
-
   void GetHash(nsAString& aHost, ErrorResult& aRv) const;
 
   void SetHash(const nsAString& aHash, ErrorResult& aRv);
@@ -124,6 +127,10 @@ private:
   {
     return mURLProxy;
   }
+
+  static already_AddRefed<URL>
+  FinishConstructor(JSContext* aCx, WorkerPrivate* aPrivate,
+                    ConstructorRunnable* aRunnable, ErrorResult& aRv);
 
   void CreateSearchParamsIfNeeded();
 

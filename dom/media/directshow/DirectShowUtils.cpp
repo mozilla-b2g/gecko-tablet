@@ -16,8 +16,6 @@
 
 namespace mozilla {
 
-#if defined(PR_LOGGING)
-
 // Create a table which maps GUIDs to a string representation of the GUID.
 // This is useful for debugging purposes, for logging the GUIDs of media types.
 // This is only available when logging is enabled, i.e. not in release builds.
@@ -48,7 +46,6 @@ GetDirectShowGuidName(const GUID& aGuid)
   }
   return "Unknown";
 }
-#endif // PR_LOGGING
 
 void
 RemoveGraphFromRunningObjectTable(DWORD aRotRegister)
@@ -211,10 +208,8 @@ CreateAndAddFilter(IGraphBuilder* aGraph,
 }
 
 HRESULT
-AddMP3DMOWrapperFilter(IGraphBuilder* aGraph,
-                       IBaseFilter **aOutFilter)
+CreateMP3DMOWrapperFilter(IBaseFilter **aOutFilter)
 {
-  NS_ENSURE_TRUE(aGraph, E_POINTER);
   NS_ENSURE_TRUE(aOutFilter, E_POINTER);
   HRESULT hr;
 
@@ -248,6 +243,24 @@ AddMP3DMOWrapperFilter(IGraphBuilder* aGraph,
     return hr;
   }
 
+  filter.forget(aOutFilter);
+
+  return S_OK;
+}
+
+HRESULT
+AddMP3DMOWrapperFilter(IGraphBuilder* aGraph,
+                       IBaseFilter **aOutFilter)
+{
+  NS_ENSURE_TRUE(aGraph, E_POINTER);
+  NS_ENSURE_TRUE(aOutFilter, E_POINTER);
+  HRESULT hr;
+
+  // Create the wrapper filter.
+  nsRefPtr<IBaseFilter> filter;
+  hr = CreateMP3DMOWrapperFilter(getter_AddRefs(filter));
+  NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
+
   // Add the wrapper filter to graph.
   hr = aGraph->AddFilter(filter, L"MP3 Decoder DMO");
   if (FAILED(hr)) {
@@ -258,6 +271,35 @@ AddMP3DMOWrapperFilter(IGraphBuilder* aGraph,
   filter.forget(aOutFilter);
 
   return S_OK;
+}
+
+bool
+CanDecodeMP3UsingDirectShow()
+{
+  nsRefPtr<IBaseFilter> filter;
+
+  // Can we create the MP3 demuxer filter?
+  if (FAILED(CoCreateInstance(CLSID_MPEG1Splitter,
+                              nullptr,
+                              CLSCTX_INPROC_SERVER,
+                              IID_IBaseFilter,
+                              getter_AddRefs(filter)))) {
+    return false;
+  }
+
+  // Can we create either the WinXP MP3 decoder filter or the MP3 DMO decoder?
+  if (FAILED(CoCreateInstance(CLSID_MPEG_LAYER_3_DECODER_FILTER,
+                              nullptr,
+                              CLSCTX_INPROC_SERVER,
+                              IID_IBaseFilter,
+                              getter_AddRefs(filter))) &&
+      FAILED(CreateMP3DMOWrapperFilter(getter_AddRefs(filter)))) {
+    return false;
+  }
+
+  // Else, we can create all of the components we need. Assume
+  // DirectShow is going to work...
+  return true;
 }
 
 // Match a pin by pin direction and connection state.
@@ -287,7 +329,7 @@ MatchUnconnectedPin(IPin* aPin,
 }
 
 // Return the first unconnected input pin or output pin.
-TemporaryRef<IPin>
+already_AddRefed<IPin>
 GetUnconnectedPin(IBaseFilter* aFilter, PIN_DIRECTION aPinDir)
 {
   RefPtr<IEnumPins> enumPins;
@@ -301,7 +343,7 @@ GetUnconnectedPin(IBaseFilter* aFilter, PIN_DIRECTION aPinDir)
     bool matches = FALSE;
     if (SUCCEEDED(MatchUnconnectedPin(pin, aPinDir, &matches)) &&
         matches) {
-      return pin;
+      return pin.forget();
     }
   }
 

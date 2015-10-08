@@ -15,7 +15,7 @@ namespace dom {
 
 class AudioContext;
 
-class DynamicsCompressorNode : public AudioNode
+class DynamicsCompressorNode final : public AudioNode
 {
 public:
   explicit DynamicsCompressorNode(AudioContext* aContext);
@@ -74,13 +74,6 @@ protected:
   virtual ~DynamicsCompressorNode();
 
 private:
-  static void SendThresholdToStream(AudioNode* aNode);
-  static void SendKneeToStream(AudioNode* aNode);
-  static void SendRatioToStream(AudioNode* aNode);
-  static void SendAttackToStream(AudioNode* aNode);
-  static void SendReleaseToStream(AudioNode* aNode);
-
-private:
   nsRefPtr<AudioParam> mThreshold;
   nsRefPtr<AudioParam> mKnee;
   nsRefPtr<AudioParam> mRatio;
@@ -89,8 +82,8 @@ private:
   nsRefPtr<AudioParam> mRelease;
 };
 
-}
-}
+} // namespace dom
+} // namespace mozilla
 
 #endif
 

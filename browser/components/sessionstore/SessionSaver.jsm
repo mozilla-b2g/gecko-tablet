@@ -18,7 +18,7 @@ Cu.import("resource://gre/modules/TelemetryStopwatch.jsm", this);
 XPCOMUtils.defineLazyModuleGetter(this, "AppConstants",
   "resource://gre/modules/AppConstants.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "console",
-  "resource://gre/modules/devtools/Console.jsm");
+  "resource://gre/modules/devtools/shared/Console.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PrivacyFilter",
   "resource:///modules/sessionstore/PrivacyFilter.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "SessionStore",
@@ -59,9 +59,9 @@ function stopWatch(method) {
   };
 }
 
-let stopWatchStart = stopWatch("start");
-let stopWatchCancel = stopWatch("cancel");
-let stopWatchFinish = stopWatch("finish");
+var stopWatchStart = stopWatch("start");
+var stopWatchCancel = stopWatch("cancel");
+var stopWatchFinish = stopWatch("finish");
 
 /**
  * The external API implemented by the SessionSaver module.
@@ -92,14 +92,6 @@ this.SessionSaver = Object.freeze({
   },
 
   /**
-   * Sets the last save time to zero. This will cause us to
-   * immediately save the next time runDelayed() is called.
-   */
-  clearLastSaveTime: function () {
-    SessionSaverInternal.clearLastSaveTime();
-  },
-
-  /**
    * Cancels all pending session saves.
    */
   cancel: function () {
@@ -110,7 +102,7 @@ this.SessionSaver = Object.freeze({
 /**
  * The internal API.
  */
-let SessionSaverInternal = {
+var SessionSaverInternal = {
   /**
    * The timeout ID referencing an active timer for a delayed save. When no
    * save is pending, this is null.
@@ -159,14 +151,6 @@ let SessionSaverInternal = {
    */
   updateLastSaveTime: function () {
     this._lastSaveTime = Date.now();
-  },
-
-  /**
-   * Sets the last save time to zero. This will cause us to
-   * immediately save the next time runDelayed() is called.
-   */
-  clearLastSaveTime: function () {
-    this._lastSaveTime = 0;
   },
 
   /**
@@ -246,13 +230,6 @@ let SessionSaverInternal = {
    * Write the given state object to disk.
    */
   _writeState: function (state) {
-    // Inform observers
-    notify(null, "sessionstore-state-write");
-
-    stopWatchStart("SERIALIZE_DATA_MS", "SERIALIZE_DATA_LONGEST_OP_MS", "WRITE_STATE_LONGEST_OP_MS");
-    let data = JSON.stringify(state);
-    stopWatchFinish("SERIALIZE_DATA_MS", "SERIALIZE_DATA_LONGEST_OP_MS");
-
     // We update the time stamp before writing so that we don't write again
     // too soon, if saving is requested before the write completes. Without
     // this update we may save repeatedly if actions cause a runDelayed
@@ -262,15 +239,9 @@ let SessionSaverInternal = {
     // Write (atomically) to a session file, using a tmp file. Once the session
     // file is successfully updated, save the time stamp of the last save and
     // notify the observers.
-    stopWatchStart("SEND_SERIALIZED_STATE_LONGEST_OP_MS");
-    let promise = SessionFile.write(data);
-    stopWatchFinish("WRITE_STATE_LONGEST_OP_MS",
-                    "SEND_SERIALIZED_STATE_LONGEST_OP_MS");
-    promise = promise.then(() => {
+    return SessionFile.write(state).then(() => {
       this.updateLastSaveTime();
       notify(null, "sessionstore-state-write-complete");
     }, console.error);
-
-    return promise;
   },
 };

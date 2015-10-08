@@ -1,6 +1,9 @@
 #!/bin/bash
-set -e
+
+# Note that the -x will be temporarily cancelled and reinstated below, so if
+# you want to eliminate this, you'll need to eliminate it there too.
 set -x
+set -e
 
 DIR="$(dirname $0)"
 ABSDIR="$(cd $DIR; pwd)"
@@ -12,7 +15,8 @@ function usage() {
 
 clean=1
 platform=""
-TIMEOUT=7200
+# 3 hours. OS X doesn't support the "sleep 3h" syntax.
+TIMEOUT=10800
 while [ $# -gt 1 ]; do
     case "$1" in
         --dep)
@@ -88,8 +92,28 @@ elif [ "$OSTYPE" = "linux-gnu" ]; then
   MAKEFLAGS=-j4
   if [ "$VARIANT" = "arm-sim" ]; then
     USE_64BIT=false
-  elif [ "$UNAME_M" = "x86_64" ]; then
+  elif [ "$VARIANT" = "arm64-sim" ]; then
     USE_64BIT=true
+  else
+    case "$platform" in
+    linux64)
+      USE_64BIT=true
+      ;;
+    linux64-debug)
+      USE_64BIT=true
+      ;;
+    linux)
+      USE_64BIT=false
+      ;;
+    linux-debug)
+      USE_64BIT=false
+      ;;
+    *)
+      if [ "$UNAME_M" = "x86_64" ]; then
+        USE_64BIT=true
+      fi
+      ;;
+    esac
   fi
 
   if [ "$UNAME_M" != "arm" ] && [ -n "$AUTOMATION" ]; then
@@ -102,10 +126,14 @@ elif [ "$OSTYPE" = "linux-gnu" ]; then
     fi
   fi
 elif [ "$OSTYPE" = "msys" ]; then
-  USE_64BIT=false
-  if [ "$platform" = "win64" ]; then
-      USE_64BIT=true
-  fi
+  case "$platform" in
+  win64*)
+    USE_64BIT=true
+    ;;
+  *)
+    USE_64BIT=false
+    ;;
+  esac
   MAKE=${MAKE:-mozmake}
   source "$ABSDIR/winbuildenv.sh"
 fi
@@ -114,12 +142,20 @@ MAKE=${MAKE:-make}
 
 if $USE_64BIT; then
   NSPR64="--enable-64bit"
+  if [ "$OSTYPE" = "msys" ]; then
+    CONFIGURE_ARGS="$CONFIGURE_ARGS --target=x86_64-pc-mingw32 --host=x86_64-pc-mingw32"
+  fi
 else
   NSPR64=""
   if [ "$OSTYPE" != "msys" ]; then
     export CC="${CC:-/usr/bin/gcc} -m32"
     export CXX="${CXX:-/usr/bin/g++} -m32"
     export AR=ar
+  fi
+  if [ "$OSTYPE" = "linux-gnu" ]; then
+    if [ "$UNAME_M" != "arm" ] && [ -n "$AUTOMATION" ]; then
+      CONFIGURE_ARGS="$CONFIGURE_ARGS --target=i686-pc-linux --host=i686-pc-linux"
+    fi
   fi
 fi
 
@@ -135,36 +171,61 @@ if type setarch >/dev/null 2>&1; then
 fi
 
 RUN_JSTESTS=true
+RUN_JITTEST=true
+RUN_JSAPITESTS=true
 
 PARENT=$$
-sh -c "sleep $TIMEOUT; kill $PARENT" <&- >&- 2>&- &
+
+# Spawn off a child process, detached from any of our fds, that will kill us after a timeout.
+# To report the timeout, catch the signal in the parent before exiting.
+sh -c "sleep $TIMEOUT; kill -INT $PARENT" <&- >&- 2>&- &
 KILLER=$!
 disown %1
+set +x
+trap "echo 'TEST-UNEXPECTED-FAIL | autospider.sh $TIMEOUT timeout | ignore later failures' >&2; exit 1" INT
+set -x
+
+# If we do *not* hit that timeout, kill off the spawned process on a regular exit.
 trap "kill $KILLER" EXIT
 
 if [[ "$VARIANT" = "rootanalysis" ]]; then
     export JS_GC_ZEAL=7
-
+    export JSTESTS_EXTRA_ARGS=--jitflags=debug
 elif [[ "$VARIANT" = "compacting" ]]; then
     export JS_GC_ZEAL=14
 
-    # Ignore timeouts from tests that are known to take too long with this zeal mode
-    export JITTEST_EXTRA_ARGS=--ignore-timeouts=$ABSDIR/cgc-jittest-timeouts.txt
-    export JSTESTS_EXTRA_ARGS=--exclude-file=$ABSDIR/cgc-jstests-slow.txt
+    # Ignore timeouts from tests that are known to take too long with this zeal mode.
+    # Run jittests with reduced jitflags option (3 configurations).
+    # Run jstests with default jitflags option (1 configuration).
+    export JITTEST_EXTRA_ARGS="--jitflags=debug --ignore-timeouts=$ABSDIR/cgc-jittest-timeouts.txt"
+    export JSTESTS_EXTRA_ARGS="--exclude-file=$ABSDIR/cgc-jstests-slow.txt"
 
     case "$platform" in
     win*)
         RUN_JSTESTS=false
     esac
-fi
-
-if [[ "$VARIANT" = "warnaserr" ]]; then
-    export JSTESTS_EXTRA_ARGS=--tbpl
+elif [[ "$VARIANT" = "warnaserr" ||
+        "$VARIANT" = "warnaserrdebug" ||
+        "$VARIANT" = "plain" ]]; then
+    export JSTESTS_EXTRA_ARGS=--jitflags=all
+elif [[ "$VARIANT" = "arm-sim" ||
+        "$VARIANT" = "plaindebug" ]]; then
+    export JSTESTS_EXTRA_ARGS=--jitflags=debug
+elif [[ "$VARIANT" = arm64* ]]; then
+    # The ARM64 JIT is not yet fully functional, and asm.js does not work.
+    # Just run "make check". We mostly care about not breaking the build at this point.
+    RUN_JITTEST=false
+    RUN_JSAPITESTS=false
+    RUN_JSTESTS=false
 fi
 
 $COMMAND_PREFIX $MAKE check || exit 1
-$COMMAND_PREFIX $MAKE check-jit-test || exit 1
-$COMMAND_PREFIX $OBJDIR/dist/bin/jsapi-tests || exit 1
+if $RUN_JITTEST; then
+    $COMMAND_PREFIX $MAKE check-jit-test || exit 1
+fi
+if $RUN_JSAPITESTS; then
+    $COMMAND_PREFIX $OBJDIR/dist/bin/jsapi-tests || exit 1
+fi
 if $RUN_JSTESTS; then
     $COMMAND_PREFIX $MAKE check-jstests || exit 1
 fi

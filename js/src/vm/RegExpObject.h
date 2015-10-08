@@ -41,6 +41,7 @@ namespace js {
 struct MatchPair;
 class MatchPairs;
 class RegExpShared;
+class RegExpStatics;
 
 namespace frontend { class TokenStream; }
 
@@ -119,7 +120,7 @@ class RegExpShared
 
     struct RegExpCompilation
     {
-        HeapPtrJitCode jitCode;
+        RelocatablePtrJitCode jitCode;
         uint8_t* byteCode;
 
         RegExpCompilation() : byteCode(nullptr) {}
@@ -131,7 +132,7 @@ class RegExpShared
     };
 
     /* Source to the RegExp, for lazy compilation. */
-    HeapPtrAtom        source;
+    RelocatablePtrAtom source;
 
     RegExpFlag         flags;
     size_t             parenCount;
@@ -359,6 +360,10 @@ class RegExpObject : public NativeObject
 
     static const Class class_;
 
+    // The maximum number of pairs a MatchResult can have, without having to
+    // allocate a bigger MatchResult.
+    static const size_t MaxPairCount = 14;
+
     /*
      * Note: The regexp statics flags are OR'd into the provided flags,
      * so this function is really meant for object creation during code
@@ -469,6 +474,10 @@ class RegExpObject : public NativeObject
     void setPrivate(void* priv) = delete;
 };
 
+JSString*
+str_replace_regexp_raw(JSContext* cx, HandleString string, Handle<RegExpObject*> regexp,
+                       HandleString replacement);
+
 /*
  * Parse regexp flags. Report an error and return false if an invalid
  * sequence of flags is encountered (repeat/invalid flag).
@@ -478,13 +487,13 @@ class RegExpObject : public NativeObject
 bool
 ParseRegExpFlags(JSContext* cx, JSString* flagStr, RegExpFlag* flagsOut);
 
-/* Assuming ObjectClassIs(obj, ESClass_RegExp), return a RegExpShared for obj. */
+/* Assuming GetBuiltinClass(obj) is ESClass_RegExp, return a RegExpShared for obj. */
 inline bool
 RegExpToShared(JSContext* cx, HandleObject obj, RegExpGuard* g)
 {
     if (obj->is<RegExpObject>())
         return obj->as<RegExpObject>().getShared(cx, g);
-    MOZ_ASSERT(Proxy::objectClassIs(obj, ESClass_RegExp, cx));
+
     return Proxy::regexp_toShared(cx, obj, g);
 }
 

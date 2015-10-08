@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 et sw=2 tw=80: */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -19,7 +19,6 @@
 #include "nsTHashtable.h"
 
 class nsIDocument;
-class nsIWeakReference;
 class nsPIDOMWindow;
 
 namespace mozilla {
@@ -29,7 +28,7 @@ class EventChainPostVisitor;
 
 namespace dom {
 
-class File;
+class Blob;
 class DOMStringList;
 struct IDBObjectStoreParameters;
 template <class> class Optional;
@@ -39,10 +38,10 @@ namespace indexedDB {
 
 class BackgroundDatabaseChild;
 class DatabaseSpec;
-class FileManager;
 class IDBFactory;
 class IDBMutableFile;
 class IDBObjectStore;
+class IDBOpenDBRequest;
 class IDBRequest;
 class IDBTransaction;
 class PBackgroundIDBDatabaseFileChild;
@@ -69,8 +68,6 @@ class IDBDatabase final
   // Normally null except during a versionchange transaction.
   nsAutoPtr<DatabaseSpec> mPreviousSpec;
 
-  nsRefPtr<FileManager> mFileManager;
-
   BackgroundDatabaseChild* mBackgroundActor;
 
   nsTHashtable<nsPtrHashKey<IDBTransaction>> mTransactions;
@@ -85,21 +82,26 @@ class IDBDatabase final
   // Weak refs, IDBMutableFile strongly owns this IDBDatabase object.
   nsTArray<IDBMutableFile*> mLiveMutableFiles;
 
+  const bool mFileHandleDisabled;
   bool mClosed;
   bool mInvalidated;
 
 public:
   static already_AddRefed<IDBDatabase>
-  Create(IDBWrapperCache* aOwnerCache,
+  Create(IDBOpenDBRequest* aRequest,
          IDBFactory* aFactory,
          BackgroundDatabaseChild* aActor,
          DatabaseSpec* aSpec);
 
+#ifdef DEBUG
+  void
+  AssertIsOnOwningThread() const;
+
+  PRThread*
+  OwningThread() const;
+#else
   void
   AssertIsOnOwningThread() const
-#ifdef DEBUG
-  ;
-#else
   { }
 #endif
 
@@ -178,21 +180,27 @@ public:
   AbortTransactions(bool aShouldWarn);
 
   PBackgroundIDBDatabaseFileChild*
-  GetOrCreateFileActorForBlob(File* aBlob);
+  GetOrCreateFileActorForBlob(Blob* aBlob);
 
   void
   NoteFinishedFileActor(PBackgroundIDBDatabaseFileChild* aFileActor);
 
   void
-  NoteReceivedBlob(File* aBlob);
+  NoteReceivedBlob(Blob* aBlob);
 
   void
   DelayedMaybeExpireFileActors();
 
   // XXX This doesn't really belong here... It's only needed for IDBMutableFile
-  //     serialization and should be removed someday.
+  //     serialization and should be removed or fixed someday.
   nsresult
   GetQuotaInfo(nsACString& aOrigin, PersistenceType* aPersistenceType);
+
+  bool
+  IsFileHandleDisabled() const
+  {
+    return mFileHandleDisabled;
+  }
 
   void
   NoteLiveMutableFile(IDBMutableFile* aMutableFile);
@@ -275,7 +283,7 @@ public:
   WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto) override;
 
 private:
-  IDBDatabase(IDBWrapperCache* aOwnerCache,
+  IDBDatabase(IDBOpenDBRequest* aRequest,
               IDBFactory* aFactory,
               BackgroundDatabaseChild* aActor,
               DatabaseSpec* aSpec);
@@ -308,7 +316,8 @@ private:
   void
   LogWarning(const char* aMessageName,
              const nsAString& aFilename,
-             uint32_t aLineNumber);
+             uint32_t aLineNumber,
+             uint32_t aColumnNumber);
 };
 
 } // namespace indexedDB

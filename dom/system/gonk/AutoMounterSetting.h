@@ -10,8 +10,6 @@
 namespace mozilla {
 namespace system {
 
-class ResultListener;
-
 class AutoMounterSetting : public nsIObserver
 {
 public:
@@ -33,8 +31,8 @@ private:
   int32_t mStatus;
 };
 
-}   // namespace system
-}   // namespace mozilla
+} // namespace system
+} // namespace mozilla
 
 #endif  // mozilla_system_automountersetting_h__
 

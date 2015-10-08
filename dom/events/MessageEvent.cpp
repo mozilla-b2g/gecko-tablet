@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -70,7 +71,7 @@ MessageEvent::GetData(JSContext* aCx, JS::MutableHandle<JS::Value> aData)
 {
   ErrorResult rv;
   GetData(aCx, aData, rv);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 void
@@ -166,12 +167,12 @@ MessageEvent::Constructor(EventTarget* aEventTarget,
   }
 
   if (aParam.mPorts.WasPassed() && !aParam.mPorts.Value().IsNull()) {
-    nsTArray<nsRefPtr<MessagePortBase>> ports;
+    nsTArray<nsRefPtr<MessagePort>> ports;
     for (uint32_t i = 0, len = aParam.mPorts.Value().Value().Length(); i < len; ++i) {
       ports.AppendElement(aParam.mPorts.Value().Value()[i].get());
     }
 
-    event->mPorts = new MessagePortList(static_cast<EventBase*>(event), ports);
+    event->mPorts = new MessagePortList(static_cast<Event*>(event), ports);
   }
 
   return event.forget();
@@ -223,14 +224,11 @@ MessageEvent::SetSource(mozilla::dom::workers::ServiceWorkerClient* aClient)
 using namespace mozilla;
 using namespace mozilla::dom;
 
-nsresult
-NS_NewDOMMessageEvent(nsIDOMEvent** aInstancePtrResult,
-                      EventTarget* aOwner,
+already_AddRefed<MessageEvent>
+NS_NewDOMMessageEvent(EventTarget* aOwner,
                       nsPresContext* aPresContext,
                       WidgetEvent* aEvent) 
 {
-  MessageEvent* it = new MessageEvent(aOwner, aPresContext, aEvent);
-  NS_ADDREF(it);
-  *aInstancePtrResult = static_cast<Event*>(it);
-  return NS_OK;
+  nsRefPtr<MessageEvent> it = new MessageEvent(aOwner, aPresContext, aEvent);
+  return it.forget();
 }

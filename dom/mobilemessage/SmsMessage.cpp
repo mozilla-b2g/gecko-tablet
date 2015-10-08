@@ -1,12 +1,11 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "SmsMessage.h"
 #include "nsIDOMClassInfo.h"
-#include "jsapi.h" // For OBJECT_TO_JSVAL and JS_NewDateObjectMsec
-#include "jsfriendapi.h" // For js_DateGetMsecSinceEpoch
 #include "mozilla/dom/mobilemessage/Constants.h" // For MessageType
 
 using namespace mozilla::dom::mobilemessage;

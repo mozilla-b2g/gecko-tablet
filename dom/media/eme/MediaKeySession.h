@@ -16,6 +16,7 @@
 #include "mozilla/Mutex.h"
 #include "mozilla/dom/Date.h"
 #include "mozilla/dom/Promise.h"
+#include "mozilla/DetailedPromise.h"
 #include "mozilla/dom/MediaKeySessionBinding.h"
 #include "mozilla/dom/MediaKeysBinding.h"
 #include "mozilla/dom/MediaKeyMessageEventBinding.h"
@@ -23,9 +24,6 @@
 struct JSContext;
 
 namespace mozilla {
-
-class CDMProxy;
-
 namespace dom {
 
 class ArrayBufferViewOrArrayBuffer;
@@ -43,6 +41,7 @@ public:
                   nsPIDOMWindow* aParent,
                   MediaKeys* aKeys,
                   const nsAString& aKeySystem,
+                  const nsAString& aCDMVersion,
                   SessionType aSessionType,
                   ErrorResult& aRv);
 
@@ -100,12 +99,15 @@ private:
   ~MediaKeySession();
 
   void UpdateKeyStatusMap();
+  already_AddRefed<DetailedPromise> MakePromise(ErrorResult& aRv,
+                                                const nsACString& aName);
 
-  nsRefPtr<Promise> mClosed;
+  nsRefPtr<DetailedPromise> mClosed;
 
   nsRefPtr<MediaKeyError> mMediaKeyError;
   nsRefPtr<MediaKeys> mKeys;
   const nsString mKeySystem;
+  const nsString mCDMVersion;
   nsString mSessionId;
   const SessionType mSessionType;
   const uint32_t mToken;

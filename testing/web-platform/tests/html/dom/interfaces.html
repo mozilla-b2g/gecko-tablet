@@ -235,6 +235,7 @@ interface Document : Node {
   readonly attribute DOMString origin;
   readonly attribute DOMString compatMode;
   readonly attribute DOMString characterSet;
+  readonly attribute DOMString charset; // legacy alias of .characterSet
   readonly attribute DOMString inputEncoding; // legacy alias of .characterSet
   readonly attribute DOMString contentType;
 
@@ -2247,6 +2248,10 @@ dictionary DragEventInit : MouseEventInit {
   DataTransfer? dataTransfer;
 };
 
+// For purposes of this test, just treat WindowProxy as the same thing as
+// Window.
+typedef Window WindowProxy;
+
 [PrimaryGlobal]
 /*sealed*/ interface Window : EventTarget {
   // the current browsing context
@@ -2274,7 +2279,7 @@ dictionary DragEventInit : MouseEventInit {
   [Replaceable] readonly attribute unsigned long length;
   [Unforgeable] readonly attribute WindowProxy top;
            attribute any opener;
-  readonly attribute WindowProxy parent;
+  [Replaceable] readonly attribute WindowProxy parent;
   readonly attribute Element? frameElement;
   WindowProxy open(optional DOMString url = "about:blank", optional DOMString target = "_blank", [TreatNullAs=EmptyString] optional DOMString features = "", optional boolean replace = false);
   getter WindowProxy (unsigned long index);
@@ -3218,6 +3223,7 @@ window.onload = function() {
       'document.createElement("acronym")',
     ],
     HTMLUnknownElement: [
+      'document.createElement("blink")',
       'document.createElement("quasit")',
       'document.createElement("bgsound")',
       'document.createElement("isindex")',
@@ -3328,7 +3334,7 @@ window.onload = function() {
     HTMLSelectElement: ['document.createElement("select")'],
     HTMLDataListElement: ['document.createElement("datalist")'],
     HTMLOptGroupElement: ['document.createElement("optgroup")'],
-    HTMLOptionElement: ['document.createElement("option")'],
+    HTMLOptionElement: ['document.createElement("option")', 'new Option()'],
     HTMLTextAreaElement: ['document.createElement("textarea")'],
     HTMLKeygenElement: ['document.createElement("keygen")'],
     HTMLOutputElement: ['document.createElement("output")'],

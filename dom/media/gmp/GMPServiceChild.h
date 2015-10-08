@@ -10,6 +10,8 @@
 #include "base/process.h"
 #include "mozilla/ipc/Transport.h"
 #include "mozilla/gmp/PGMPServiceChild.h"
+#include "nsRefPtrHashtable.h"
+#include "GMPUtils.h"
 
 namespace mozilla {
 namespace gmp {
@@ -18,7 +20,20 @@ namespace gmp {
 
 class GMPContentParent;
 class GMPServiceChild;
-class GetServiceChildCallback;
+
+class GetServiceChildCallback
+{
+public:
+  GetServiceChildCallback()
+  {
+    MOZ_COUNT_CTOR(GetServiceChildCallback);
+  }
+  virtual ~GetServiceChildCallback()
+  {
+    MOZ_COUNT_DTOR(GetServiceChildCallback);
+  }
+  virtual void Done(GMPServiceChild* aGMPServiceChild) = 0;
+};
 
 class GeckoMediaPluginServiceChild : public GeckoMediaPluginService
 {
@@ -35,6 +50,10 @@ public:
                        const nsAString& aTopLevelOrigin,
                        bool aInPrivateBrowsingMode,
                        UniquePtr<GetNodeIdCallback>&& aCallback) override;
+  NS_IMETHOD UpdateTrialCreateState(const nsAString& aKeySystem,
+                                    uint32_t aState) override;
+
+  void CrashPluginNow(uint32_t aPluginId, GMPCrashReason aReason);
 
   NS_DECL_NSIOBSERVER
 

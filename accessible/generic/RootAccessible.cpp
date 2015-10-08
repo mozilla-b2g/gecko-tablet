@@ -39,6 +39,7 @@
 #include "nsIWebBrowserChrome.h"
 #include "nsReadableUtils.h"
 #include "nsFocusManager.h"
+#include "nsGlobalWindow.h"
 
 #ifdef MOZ_XUL
 #include "nsIXULDocument.h"
@@ -482,10 +483,9 @@ RootAccessible::RelationByType(RelationType aType)
   if (!mDocumentNode || aType != RelationType::EMBEDS)
     return DocAccessibleWrap::RelationByType(aType);
 
-  nsIDOMWindow* rootWindow = mDocumentNode->GetWindow();
+  nsPIDOMWindow* rootWindow = mDocumentNode->GetWindow();
   if (rootWindow) {
-    nsCOMPtr<nsIDOMWindow> contentWindow;
-    rootWindow->GetContent(getter_AddRefs(contentWindow));
+    nsCOMPtr<nsIDOMWindow> contentWindow = nsGlobalWindow::Cast(rootWindow)->GetContent();
     if (contentWindow) {
       nsCOMPtr<nsIDOMDocument> contentDOMDocument;
       contentWindow->GetDocument(getter_AddRefs(contentDOMDocument));
@@ -716,3 +716,20 @@ RootAccessible::HandleTreeInvalidatedEvent(nsIDOMEvent* aEvent,
   aAccessible->TreeViewInvalidated(startRow, endRow, startCol, endCol);
 }
 #endif
+
+ProxyAccessible*
+RootAccessible::GetPrimaryRemoteTopLevelContentDoc() const
+{
+  nsCOMPtr<nsIDocShellTreeOwner> owner;
+  mDocumentNode->GetDocShell()->GetTreeOwner(getter_AddRefs(owner));
+  NS_ENSURE_TRUE(owner, nullptr);
+
+  nsCOMPtr<nsITabParent> tabParent;
+  owner->GetPrimaryTabParent(getter_AddRefs(tabParent));
+  if (!tabParent) {
+    return nullptr;
+  }
+
+  auto tab = static_cast<dom::TabParent*>(tabParent.get());
+  return tab->GetTopLevelDocAccessible();
+}

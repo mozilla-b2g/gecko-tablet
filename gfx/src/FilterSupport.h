@@ -158,7 +158,6 @@ enum AttributeName {
 
 class DrawTarget;
 class SourceSurface;
-class FilterNode;
 struct FilterAttribute;
 
 enum class AttributeType {
@@ -222,9 +221,11 @@ public:
   AttributeMap GetAttributeMap(AttributeName aName) const;
   const nsTArray<float>& GetFloats(AttributeName aName) const;
 
-  typedef bool (*AttributeHandleCallback)(AttributeName aName, AttributeType aType, void* aUserData);
-  void EnumerateRead(AttributeHandleCallback aCallback, void* aUserData) const;
   uint32_t Count() const;
+
+  nsClassHashtable<nsUint32HashKey, FilterAttribute>::Iterator ConstIter() const;
+
+  static AttributeType GetType(FilterAttribute* aAttribute);
 
 private:
   mutable nsClassHashtable<nsUint32HashKey, FilterAttribute>  mMap;
@@ -471,7 +472,7 @@ public:
                                 const nsTArray<nsIntRegion>& aInputExtents);
 };
 
-}
-}
+} // namespace gfx
+} // namespace mozilla
 
 #endif // __FilterSupport_h

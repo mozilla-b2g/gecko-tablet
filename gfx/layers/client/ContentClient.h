@@ -12,32 +12,30 @@
 #include "gfxPlatform.h"                // for gfxPlatform
 #include "mozilla/Assertions.h"         // for MOZ_CRASH
 #include "mozilla/Attributes.h"         // for override
-#include "mozilla/RefPtr.h"             // for RefPtr, TemporaryRef
+#include "mozilla/RefPtr.h"             // for RefPtr, already_AddRefed
 #include "mozilla/gfx/Point.h"          // for IntSize
 #include "mozilla/layers/CompositableClient.h"  // for CompositableClient
 #include "mozilla/layers/CompositableForwarder.h"
 #include "mozilla/layers/CompositorTypes.h"  // for TextureInfo, etc
 #include "mozilla/layers/ISurfaceAllocator.h"
 #include "mozilla/layers/LayersSurfaces.h"  // for SurfaceDescriptor
+#include "mozilla/layers/LayersTypes.h"  // for TextureDumpMode
 #include "mozilla/layers/TextureClient.h"  // for TextureClient
 #include "mozilla/mozalloc.h"           // for operator delete
 #include "ReadbackProcessor.h"          // For ReadbackProcessor::Update
 #include "nsCOMPtr.h"                   // for already_AddRefed
 #include "nsPoint.h"                    // for nsIntPoint
-#include "nsRect.h"                     // for nsIntRect
+#include "nsRect.h"                     // for mozilla::gfx::IntRect
 #include "nsRegion.h"                   // for nsIntRegion
 #include "nsTArray.h"                   // for nsTArray
-
-class gfxContext;
 
 namespace mozilla {
 namespace gfx {
 class DrawTarget;
-}
+} // namespace gfx
 
 namespace layers {
 
-class BasicLayerManager;
 class PaintedLayer;
 
 /**
@@ -81,7 +79,7 @@ public:
    * message will be sent to the compositor to create a corresponding content
    * host.
    */
-  static TemporaryRef<ContentClient> CreateContentClient(CompositableForwarder* aFwd);
+  static already_AddRefed<ContentClient> CreateContentClient(CompositableForwarder* aFwd);
 
   explicit ContentClient(CompositableForwarder* aForwarder)
   : CompositableClient(aForwarder)
@@ -90,10 +88,6 @@ public:
   {}
 
   virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix);
-
-  virtual void Dump(std::stringstream& aStream,
-                    const char* aPrefix="",
-                    bool aDumpHtml=false) {};
 
   virtual void Clear() = 0;
   virtual RotatedContentBuffer::PaintState BeginPaintBuffer(PaintedLayer* aLayer,
@@ -164,7 +158,7 @@ public:
                                  aMask, aMaskTransform);
   }
 
-  virtual void CreateBuffer(ContentType aType, const nsIntRect& aRect, uint32_t aFlags,
+  virtual void CreateBuffer(ContentType aType, const gfx::IntRect& aRect, uint32_t aFlags,
                             RefPtr<gfx::DrawTarget>* aBlackDT, RefPtr<gfx::DrawTarget>* aWhiteDT) override;
 
   virtual TextureInfo GetTextureInfo() const override
@@ -215,7 +209,8 @@ public:
 
   virtual void Dump(std::stringstream& aStream,
                     const char* aPrefix="",
-                    bool aDumpHtml=false) override;
+                    bool aDumpHtml=false,
+                    TextureDumpMode aCompress=TextureDumpMode::Compress) override;
 
   virtual PaintState BeginPaintBuffer(PaintedLayer* aLayer,
                                       uint32_t aFlags) override
@@ -250,7 +245,7 @@ public:
   virtual void SwapBuffers(const nsIntRegion& aFrontUpdatedRegion) override;
 
   // Expose these protected methods from the superclass.
-  virtual const nsIntRect& BufferRect() const
+  virtual const gfx::IntRect& BufferRect() const
   {
     return RotatedContentBuffer::BufferRect();
   }
@@ -259,8 +254,13 @@ public:
     return RotatedContentBuffer::BufferRotation();
   }
 
-  virtual void CreateBuffer(ContentType aType, const nsIntRect& aRect, uint32_t aFlags,
+  virtual void CreateBuffer(ContentType aType, const gfx::IntRect& aRect, uint32_t aFlags,
                             RefPtr<gfx::DrawTarget>* aBlackDT, RefPtr<gfx::DrawTarget>* aWhiteDT) override;
+
+  virtual TextureFlags ExtraTextureFlags() const
+  {
+    return TextureFlags::NO_FLAGS;
+  }
 
 protected:
   void DestroyBuffers();
@@ -270,10 +270,10 @@ protected:
                                        bool aDidSelfCopy);
 
   void BuildTextureClients(gfx::SurfaceFormat aFormat,
-                           const nsIntRect& aRect,
+                           const gfx::IntRect& aRect,
                            uint32_t aFlags);
 
-  void CreateBackBuffer(const nsIntRect& aBufferRect);
+  void CreateBackBuffer(const gfx::IntRect& aBufferRect);
 
   // Ensure we have a valid back buffer if we have a valid front buffer (i.e.
   // if a backbuffer has been created.)
@@ -349,7 +349,8 @@ public:
 
   virtual void Dump(std::stringstream& aStream,
                     const char* aPrefix="",
-                    bool aDumpHtml=false) override;
+                    bool aDumpHtml=false,
+                    TextureDumpMode aCompress=TextureDumpMode::Compress) override;
 protected:
   virtual void DestroyFrontBuffer() override;
 
@@ -368,7 +369,7 @@ private:
   RefPtr<TextureClient> mFrontClient;
   RefPtr<TextureClient> mFrontClientOnWhite;
   nsIntRegion mFrontUpdatedRegion;
-  nsIntRect mFrontBufferRect;
+  gfx::IntRect mFrontBufferRect;
   nsIntPoint mFrontBufferRotation;
 };
 
@@ -393,11 +394,16 @@ public:
 
   virtual TextureInfo GetTextureInfo() const override
   {
-    return TextureInfo(CompositableType::CONTENT_SINGLE, mTextureFlags);
+    return TextureInfo(CompositableType::CONTENT_SINGLE, mTextureFlags | ExtraTextureFlags());
+  }
+
+  virtual TextureFlags ExtraTextureFlags() const override
+  {
+    return TextureFlags::IMMEDIATE_UPLOAD;
   }
 };
 
-}
-}
+} // namespace layers
+} // namespace mozilla
 
 #endif

@@ -14,6 +14,7 @@
 #include "nsIFrame.h"
 #include "nsStyleStruct.h"
 #include "nsIContent.h" // for GetParent()
+#include "nsTextFrame.h" // for nsTextFrame::ShouldSuppressLineBreak
 
 inline void
 nsStyleImage::SetSubImage(uint8_t aIndex, imgIContainer* aSubImage) const
@@ -43,11 +44,11 @@ nsStyleText::GetTextShadow() const
 }
 
 bool
-nsStyleText::NewlineIsSignificant(const nsIFrame* aContextFrame) const
+nsStyleText::NewlineIsSignificant(const nsTextFrame* aContextFrame) const
 {
   NS_ASSERTION(aContextFrame->StyleText() == this, "unexpected aContextFrame");
   return NewlineIsSignificantStyle() &&
-    !aContextFrame->StyleContext()->ShouldSuppressLineBreak();
+    !aContextFrame->ShouldSuppressLineBreak();
 }
 
 bool
@@ -137,8 +138,10 @@ nsStyleDisplay::HasTransform(const nsIFrame* aContextFrame) const
 bool
 nsStyleDisplay::IsFixedPosContainingBlock(const nsIFrame* aContextFrame) const
 {
+  NS_ASSERTION(aContextFrame->StyleDisplay() == this,
+               "unexpected aContextFrame");
   return (HasTransform(aContextFrame) || HasPerspectiveStyle() ||
-          !aContextFrame->StyleSVGReset()->mFilters.IsEmpty()) &&
+          aContextFrame->StyleSVGReset()->HasFilters()) &&
       !aContextFrame->IsSVGText();
 }
 

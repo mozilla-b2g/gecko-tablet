@@ -364,10 +364,8 @@ public:
     IDWriteGdiInterop *GetGDIInterop() { return mGDIInterop; }
     bool UseGDIFontTableAccess() { return mGDIFontTableAccess; }
 
-    virtual gfxFontFamily* FindFamily(const nsAString& aFamily,
-                                      bool aUseSystemFonts = false);
-
-    virtual void GetFontFamilyList(nsTArray<nsRefPtr<gfxFontFamily> >& aFamilyArray);
+    gfxFontFamily* FindFamily(const nsAString& aFamily,
+                              gfxFontStyle* aStyle = nullptr) override;
 
     gfxFloat GetForceGDIClassicMaxFontSize() { return mForceGDIClassicMaxFontSize; }
 
@@ -405,16 +403,11 @@ private:
      */
     nsTArray<nsString> mNonExistingFonts;
 
-    typedef nsRefPtrHashtable<nsStringHashKey, gfxFontFamily> FontTable;
-
     /**
      * Table of font substitutes, we grab this from the registry to get
      * alternative font names.
      */
-    FontTable mFontSubstitutes;
-
-    bool mInitialized;
-    virtual nsresult DelayedInitFontList();
+    FontFamilyTable mFontSubstitutes;
 
     virtual already_AddRefed<FontInfoData> CreateFontInfoData();
 

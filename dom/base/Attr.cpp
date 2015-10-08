@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -161,23 +162,6 @@ Attr::GetName(nsAString& aName)
   return NS_OK;
 }
 
-already_AddRefed<nsIAtom>
-Attr::GetNameAtom(nsIContent* aContent)
-{
-  if (!mNsAware &&
-      mNodeInfo->NamespaceID() == kNameSpaceID_None &&
-      aContent->IsInHTMLDocument() &&
-      aContent->IsHTMLElement()) {
-    nsString name;
-    mNodeInfo->GetName(name);
-    nsAutoString lowercaseName;
-    nsContentUtils::ASCIIToLower(name, lowercaseName);
-    return do_GetAtom(lowercaseName);
-  }
-  nsCOMPtr<nsIAtom> nameAtom = mNodeInfo->NameAtom();
-  return nameAtom.forget();
-}
-
 NS_IMETHODIMP
 Attr::GetValue(nsAString& aValue)
 {
@@ -215,7 +199,7 @@ Attr::SetValue(const nsAString& aValue)
 {
   ErrorResult rv;
   SetValue(aValue, rv);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 bool

@@ -14,7 +14,6 @@
 
 #include "gfxContext.h"
 
-#include "gfxColor.h"
 #include "gfxMatrix.h"
 #include "gfxUtils.h"
 #include "gfxASurface.h"
@@ -201,10 +200,11 @@ gfxContext::ClosePath()
   mPathBuilder->Close();
 }
 
-TemporaryRef<Path> gfxContext::GetPath()
+already_AddRefed<Path> gfxContext::GetPath()
 {
   EnsurePath();
-  return mPath;
+  RefPtr<Path> path(mPath);
+  return path.forget();
 }
 
 void gfxContext::SetPath(Path* path)
@@ -461,7 +461,7 @@ gfxContext::CurrentDash(FallibleTArray<gfxFloat>& dashes, gfxFloat* offset) cons
   const AzureState &state = CurrentState();
   int count = state.strokeOptions.mDashLength;
 
-  if (count <= 0 || !dashes.SetLength(count)) {
+  if (count <= 0 || !dashes.SetLength(count, fallible)) {
     return false;
   }
 
@@ -493,15 +493,15 @@ gfxContext::CurrentLineWidth() const
 }
 
 void
-gfxContext::SetOperator(GraphicsOperator op)
+gfxContext::SetOp(CompositionOp aOp)
 {
-  CurrentState().op = CompositionOpForOp(op);
+  CurrentState().op = aOp;
 }
 
-gfxContext::GraphicsOperator
-gfxContext::CurrentOperator() const
+CompositionOp
+gfxContext::CurrentOp() const
 {
-  return ThebesOp(CurrentState().op);
+  return CurrentState().op;
 }
 
 void
@@ -619,6 +619,57 @@ gfxContext::GetClipExtents()
 }
 
 bool
+gfxContext::HasComplexClip() const
+{
+  for (int i = mStateStack.Length() - 1; i >= 0; i--) {
+    for (unsigned int c = 0; c < mStateStack[i].pushedClips.Length(); c++) {
+      const AzureState::PushedClip &clip = mStateStack[i].pushedClips[c];
+      if (clip.path || !clip.transform.IsRectilinear()) {
+        return true;
+      }
+    }
+    if (mStateStack[i].clipWasReset) {
+      break;
+    }
+  }
+  return false;
+}
+
+bool
+gfxContext::ExportClip(ClipExporter& aExporter)
+{
+  unsigned int lastReset = 0;
+  for (int i = mStateStack.Length() - 1; i > 0; i--) {
+    if (mStateStack[i].clipWasReset) {
+      lastReset = i;
+      break;
+    }
+  }
+
+  for (unsigned int i = lastReset; i < mStateStack.Length(); i++) {
+    for (unsigned int c = 0; c < mStateStack[i].pushedClips.Length(); c++) {
+      AzureState::PushedClip &clip = mStateStack[i].pushedClips[c];
+      gfx::Matrix transform = clip.transform;
+      transform.PostTranslate(-GetDeviceOffset());
+
+      aExporter.BeginClip(transform);
+      if (clip.path) {
+        clip.path->StreamToSink(&aExporter);
+      } else {
+        aExporter.MoveTo(clip.rect.TopLeft());
+        aExporter.LineTo(clip.rect.TopRight());
+        aExporter.LineTo(clip.rect.BottomRight());
+        aExporter.LineTo(clip.rect.BottomLeft());
+        aExporter.Close();
+      }
+      aExporter.EndClip();
+    }
+  }
+
+  return true;
+}
+
+bool
 gfxContext::ClipContainsRect(const gfxRect& aRect)
 {
   unsigned int lastReset = 0;
@@ -655,35 +706,34 @@ gfxContext::ClipContainsRect(const gfxRect& aRect)
 // rendering sources
 
 void
-gfxContext::SetColor(const gfxRGBA& c)
+gfxContext::SetColor(const Color& aColor)
 {
   CurrentState().pattern = nullptr;
   CurrentState().sourceSurfCairo = nullptr;
   CurrentState().sourceSurface = nullptr;
-  CurrentState().color = ToDeviceColor(c);
+  CurrentState().color = ToDeviceColor(aColor);
 }
 
 void
-gfxContext::SetDeviceColor(const gfxRGBA& c)
+gfxContext::SetDeviceColor(const Color& aColor)
 {
   CurrentState().pattern = nullptr;
   CurrentState().sourceSurfCairo = nullptr;
   CurrentState().sourceSurface = nullptr;
-  CurrentState().color = ToColor(c);
+  CurrentState().color = aColor;
 }
 
 bool
-gfxContext::GetDeviceColor(gfxRGBA& c)
+gfxContext::GetDeviceColor(Color& aColorOut)
 {
   if (CurrentState().sourceSurface) {
     return false;
   }
   if (CurrentState().pattern) {
-    gfxRGBA color;
-    return CurrentState().pattern->GetSolidColor(c);
+    return CurrentState().pattern->GetSolidColor(aColorOut);
   }
 
-  c = ThebesRGBA(CurrentState().color);
+  aColorOut = CurrentState().color;
   return true;
 }
 
@@ -721,7 +771,7 @@ gfxContext::GetPattern()
   } else if (state.sourceSurface) {
     NS_ASSERTION(false, "Ugh, this isn't good.");
   } else {
-    pat = new gfxPattern(ThebesRGBA(state.color));
+    pat = new gfxPattern(state.color);
   }
   return pat.forget();
 }
@@ -767,17 +817,17 @@ gfxContext::Mask(gfxASurface *surface, const gfxPoint& offset)
 
   gfxPoint pt = surface->GetDeviceOffset();
 
-  Mask(sourceSurf, Point(offset.x - pt.x, offset.y - pt.y));
+  Mask(sourceSurf, 1.0f, Point(offset.x - pt.x, offset.y - pt.y));
 }
 
 void
-gfxContext::Mask(SourceSurface *surface, const Point& offset)
+gfxContext::Mask(SourceSurface *surface, float alpha, const Point& offset)
 {
   // We clip here to bind to the mask surface bounds, see above.
   mDT->MaskSurface(PatternFromState(this),
             surface,
             offset,
-            DrawOptions(1.0f, CurrentState().op, CurrentState().aaMode));
+            DrawOptions(alpha, CurrentState().op, CurrentState().aaMode));
 }
 
 void
@@ -917,7 +967,7 @@ gfxContext::PopGroup()
   return pat.forget();
 }
 
-TemporaryRef<SourceSurface>
+already_AddRefed<SourceSurface>
 gfxContext::PopGroupToSurface(Matrix* aTransform)
 {
   RefPtr<SourceSurface> src = mDT->Snapshot();
@@ -932,7 +982,7 @@ gfxContext::PopGroupToSurface(Matrix* aTransform)
   deviceOffsetTranslation.PreTranslate(deviceOffset.x, deviceOffset.y);
 
   *aTransform = deviceOffsetTranslation * mat;
-  return src;
+  return src.forget();
 }
 
 void
@@ -1318,6 +1368,15 @@ gfxContext::GetRoundOffsetsToPixels(bool *aRoundX, bool *aRoundY)
 
     cairo_t *cr = GetCairo();
     cairo_scaled_font_t *scaled_font = cairo_get_scaled_font(cr);
+
+    // bug 1198921 - this sometimes fails under Windows for whatver reason
+    NS_ASSERTION(scaled_font, "null cairo scaled font should never be returned "
+                 "by cairo_get_scaled_font");
+    if (!scaled_font) {
+        *aRoundX = true; // default to the same as the fallback path below
+        return;
+    }
+
     // Sometimes hint metrics gets set for us, most notably for printing.
     cairo_font_options_t *font_options = cairo_font_options_create();
     cairo_scaled_font_get_font_options(scaled_font, font_options);

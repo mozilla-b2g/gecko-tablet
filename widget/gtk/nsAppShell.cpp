@@ -12,7 +12,7 @@
 #include <gdk/gdk.h>
 #include "nsAppShell.h"
 #include "nsWindow.h"
-#include "prlog.h"
+#include "mozilla/Logging.h"
 #include "prenv.h"
 #include "mozilla/HangMonitor.h"
 #include "mozilla/unused.h"
@@ -26,12 +26,10 @@ using mozilla::unused;
 
 #define NOTIFY_TOKEN 0xFA
 
-#ifdef PR_LOGGING
 PRLogModuleInfo *gWidgetLog = nullptr;
 PRLogModuleInfo *gWidgetFocusLog = nullptr;
 PRLogModuleInfo *gWidgetDragLog = nullptr;
 PRLogModuleInfo *gWidgetDrawLog = nullptr;
-#endif
 
 static GPollFunc sPollFunc;
 
@@ -75,7 +73,12 @@ nsAppShell::~nsAppShell()
 nsresult
 nsAppShell::Init()
 {
-#ifdef PR_LOGGING
+    // For any versions of Glib before 2.36, g_type_init must be explicitly called
+    // to safely use the library. Failure to do so may cause various failures/crashes
+    // in any code that uses Glib, Gdk, or Gtk. In later versions of Glib, this call
+    // is a no-op.
+    g_type_init();
+
     if (!gWidgetLog)
         gWidgetLog = PR_NewLogModule("Widget");
     if (!gWidgetFocusLog)
@@ -84,7 +87,6 @@ nsAppShell::Init()
         gWidgetDragLog = PR_NewLogModule("WidgetDrag");
     if (!gWidgetDrawLog)
         gWidgetDrawLog = PR_NewLogModule("WidgetDraw");
-#endif
 
 #ifdef MOZ_ENABLE_DBUS
     nsCOMPtr<nsIPowerManagerService> powerManagerService =
@@ -104,6 +106,24 @@ nsAppShell::Init()
 
     if (PR_GetEnv("MOZ_DEBUG_PAINTS"))
         gdk_window_set_debug_updates(TRUE);
+
+    // Whitelist of only common, stable formats - see bugs 1197059 and 1203078
+    GSList* pixbufFormats = gdk_pixbuf_get_formats();
+    for (GSList* iter = pixbufFormats; iter; iter = iter->next) {
+        GdkPixbufFormat* format = static_cast<GdkPixbufFormat*>(iter->data);
+        gchar* name = gdk_pixbuf_format_get_name(format);
+        if (strcmp(name, "jpeg") &&
+            strcmp(name, "png") &&
+            strcmp(name, "gif") &&
+            strcmp(name, "bmp") &&
+            strcmp(name, "ico") &&
+            strcmp(name, "xpm") &&
+            strcmp(name, "svg")) {
+          gdk_pixbuf_format_set_disabled(format, TRUE);
+        }
+        g_free(name);
+    }
+    g_slist_free(pixbufFormats);
 
     int err = pipe(mPipeFDs);
     if (err)

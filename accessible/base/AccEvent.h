@@ -194,6 +194,7 @@ public:
   bool IsTextInserted() const { return mIsInserted; }
   void GetModifiedText(nsAString& aModifiedText)
     { aModifiedText = mModifiedText; }
+  const nsString& ModifiedText() const { return mModifiedText; }
 
 private:
   int32_t mStart;
@@ -249,7 +250,8 @@ protected:
 class AccHideEvent: public AccMutationEvent
 {
 public:
-  AccHideEvent(Accessible* aTarget, nsINode* aTargetNode);
+  AccHideEvent(Accessible* aTarget, nsINode* aTargetNode,
+               bool aNeedsShutdown = true);
 
   // Event
   static const EventGroup kEventGroup = eHideEvent;
@@ -262,8 +264,10 @@ public:
   Accessible* TargetParent() const { return mParent; }
   Accessible* TargetNextSibling() const { return mNextSibling; }
   Accessible* TargetPrevSibling() const { return mPrevSibling; }
+  bool NeedsShutdown() const { return mNeedsShutdown; }
 
 protected:
+  bool mNeedsShutdown;
   nsRefPtr<Accessible> mNextSibling;
   nsRefPtr<Accessible> mPrevSibling;
 

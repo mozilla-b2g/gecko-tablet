@@ -21,19 +21,19 @@ class RegExpStatics
 {
     /* The latest RegExp output, set after execution. */
     VectorMatchPairs        matches;
-    HeapPtrLinearString     matchesInput;
+    RelocatablePtrLinearString matchesInput;
 
     /*
      * The previous RegExp input, used to resolve lazy state.
      * A raw RegExpShared cannot be stored because it may be in
      * a different compartment via evalcx().
      */
-    HeapPtrAtom             lazySource;
+    RelocatablePtrAtom      lazySource;
     RegExpFlag              lazyFlags;
     size_t                  lazyIndex;
 
     /* The latest RegExp input, set before execution. */
-    HeapPtrString           pendingInput;
+    RelocatablePtrString    pendingInput;
     RegExpFlag              flags;
 
     /*
@@ -186,7 +186,7 @@ class RegExpStatics
     }
 };
 
-class AutoRegExpStaticsBuffer : private JS::CustomAutoRooter
+class MOZ_RAII AutoRegExpStaticsBuffer : private JS::CustomAutoRooter
 {
   public:
     explicit AutoRegExpStaticsBuffer(JSContext* cx

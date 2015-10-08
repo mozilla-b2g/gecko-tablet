@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -39,8 +40,8 @@ enum nsLinkState {
 
 // IID for the nsIContent interface
 #define NS_ICONTENT_IID \
-{ 0x70f7e9ea, 0xa9bf, 0x48cc, \
-  { 0xad, 0x9d, 0x8a, 0xca, 0xee, 0xd2, 0x9b, 0x68 } }
+{ 0x8e1bab9d, 0x8815, 0x4d2c, \
+  { 0xa2, 0x4d, 0x7a, 0xba, 0x52, 0x39, 0xdc, 0x22 } }
 
 /**
  * A node of content in a document's content model. This interface
@@ -545,8 +546,8 @@ public:
    * Append the text content to aResult.
    * NOTE: This asserts and returns for elements
    */
-  virtual bool AppendTextTo(nsAString& aResult,
-                            const mozilla::fallible_t&) NS_WARN_UNUSED_RESULT = 0;
+  MOZ_WARN_UNUSED_RESULT
+  virtual bool AppendTextTo(nsAString& aResult, const mozilla::fallible_t&) = 0;
 
   /**
    * Check if this content is focusable and in the current tab order.
@@ -580,10 +581,12 @@ public:
    * @param aKeyCausesActivation - if true then element should be activated
    * @param aIsTrustedEvent - if true then event that is cause of accesskey
    *                          execution is trusted.
+   * @return true if the focus was changed.
    */
-  virtual void PerformAccesskey(bool aKeyCausesActivation,
+  virtual bool PerformAccesskey(bool aKeyCausesActivation,
                                 bool aIsTrustedEvent)
   {
+    return false;
   }
 
   /*
@@ -919,7 +922,8 @@ public:
         // XHTML1 section C.7).
         bool hasAttr = content->GetAttr(kNameSpaceID_XML, nsGkAtoms::lang,
                                           aResult);
-        if (!hasAttr && (content->IsHTMLElement() || content->IsSVGElement())) {
+        if (!hasAttr && (content->IsHTMLElement() || content->IsSVGElement() ||
+            content->IsXULElement())) {
           hasAttr = content->GetAttr(kNameSpaceID_None, nsGkAtoms::lang,
                                      aResult);
         }

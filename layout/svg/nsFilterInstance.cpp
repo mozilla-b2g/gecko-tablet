@@ -202,6 +202,16 @@ nsFilterInstance::nsFilterInstance(nsIFrame *aTargetFrame,
     mFilterSpaceToFrameSpaceInCSSPxTransform;
   mFrameSpaceInCSSPxToFilterSpaceTransform.Invert();
 
+  nsIntRect targetBounds;
+  if (aPreFilterVisualOverflowRectOverride) {
+    targetBounds =
+      FrameSpaceToFilterSpace(aPreFilterVisualOverflowRectOverride);
+  } else if (mTargetFrame) {
+    nsRect preFilterVOR = mTargetFrame->GetPreEffectsVisualOverflowRect();
+    targetBounds = FrameSpaceToFilterSpace(&preFilterVOR);
+  }
+  mTargetBounds.UnionRect(mTargetBBoxInFilterSpace, targetBounds);
+
   // Build the filter graph.
   rv = BuildPrimitives(aFilterChain);
   if (NS_FAILED(rv)) {
@@ -216,16 +226,6 @@ nsFilterInstance::nsFilterInstance(nsIFrame *aTargetFrame,
   // Convert the passed in rects from frame space to filter space:
   mPostFilterDirtyRegion = FrameSpaceToFilterSpace(aPostFilterDirtyRegion);
   mPreFilterDirtyRegion = FrameSpaceToFilterSpace(aPreFilterDirtyRegion);
-
-  nsIntRect targetBounds;
-  if (aPreFilterVisualOverflowRectOverride) {
-    targetBounds =
-      FrameSpaceToFilterSpace(aPreFilterVisualOverflowRectOverride);
-  } else if (mTargetFrame) {
-    nsRect preFilterVOR = mTargetFrame->GetPreEffectsVisualOverflowRect();
-    targetBounds = FrameSpaceToFilterSpace(&preFilterVOR);
-  }
-  mTargetBounds.UnionRect(mTargetBBoxInFilterSpace, targetBounds);
 
   mInitialized = true;
 }
@@ -318,7 +318,7 @@ nsFilterInstance::BuildPrimitivesForFilter(const nsStyleFilter& aFilter)
     mTargetFrame ? mTargetFrame->StyleColor()->mColor : NS_RGB(0,0,0);
 
   nsCSSFilterInstance cssFilterInstance(aFilter, shadowFallbackColor,
-                                        mTargetBBoxInFilterSpace,
+                                        mTargetBounds,
                                         mFrameSpaceInCSSPxToFilterSpaceTransform);
   return cssFilterInstance.BuildPrimitives(mPrimitiveDescriptions);
 }
@@ -383,7 +383,7 @@ nsFilterInstance::BuildSourcePaint(SourceInfo *aSource,
   }
 
   aSource->mSourceSurface = offscreenDT->Snapshot();
-  aSource->mSurfaceRect = ToIntRect(neededRect);
+  aSource->mSurfaceRect = neededRect;
 
   return NS_OK;
 }
@@ -451,7 +451,7 @@ nsFilterInstance::BuildSourceImage(DrawTarget* aTargetDT)
   mPaintCallback->Paint(*ctx, mTargetFrame, mPaintTransform, &dirty);
 
   mSourceGraphic.mSourceSurface = offscreenDT->Snapshot();
-  mSourceGraphic.mSurfaceRect = ToIntRect(neededRect);
+  mSourceGraphic.mSurfaceRect = neededRect;
 
   return NS_OK;
 }
@@ -529,9 +529,9 @@ nsFilterInstance::OutputFilterSpaceBounds() const
     return nsIntRect();
 
   nsIntRect bounds =
-    ThebesIntRect(mPrimitiveDescriptions[numPrimitives - 1].PrimitiveSubregion());
+    mPrimitiveDescriptions[numPrimitives - 1].PrimitiveSubregion();
   bool overflow;
-  gfxIntSize surfaceSize =
+  IntSize surfaceSize =
     nsSVGUtils::ConvertToSurfaceSize(bounds.Size(), &overflow);
   bounds.SizeTo(surfaceSize);
   return bounds;

@@ -14,6 +14,7 @@
 #include "vm/Debugger.h"
 #include "vm/Runtime.h"
 
+#include "jscompartmentinlines.h"
 #include "jsgcinlines.h"
 
 using namespace js;
@@ -23,8 +24,10 @@ Zone * const Zone::NotOnList = reinterpret_cast<Zone*>(1);
 
 JS::Zone::Zone(JSRuntime* rt)
   : JS::shadow::Zone(rt, &rt->gc.marker),
+    debuggers(nullptr),
     arenas(rt),
     types(this),
+    gcWeakMapList(nullptr),
     compartments(),
     gcGrayRoots(),
     gcMallocBytes(0),
@@ -56,13 +59,14 @@ Zone::~Zone()
     if (this == rt->gc.systemZone)
         rt->gc.systemZone = nullptr;
 
+    js_delete(debuggers);
     js_delete(jitZone_);
 }
 
 bool Zone::init(bool isSystemArg)
 {
     isSystem = isSystemArg;
-    return gcZoneGroupEdges.init();
+    return uniqueIds_.init() && gcZoneGroupEdges.init();
 }
 
 void
@@ -73,9 +77,7 @@ Zone::setNeedsIncrementalBarrier(bool needs, ShouldUpdateJit updateJit)
         jitUsingBarriers_ = needs;
     }
 
-    if (needs && runtimeFromMainThread()->isAtomsZone(this))
-        MOZ_ASSERT(!runtimeFromMainThread()->exclusiveThreadsPresent());
-
+    MOZ_ASSERT_IF(needs && isAtomsZone(), !runtimeFromMainThread()->exclusiveThreadsPresent());
     MOZ_ASSERT_IF(needs, canCollect());
     needsIncrementalBarrier_ = needs;
 }
@@ -119,6 +121,41 @@ Zone::beginSweepTypes(FreeOp* fop, bool releaseTypes)
     types.beginSweep(fop, releaseTypes, oom);
 }
 
+Zone::DebuggerVector*
+Zone::getOrCreateDebuggers(JSContext* cx)
+{
+    if (debuggers)
+        return debuggers;
+
+    debuggers = js_new<DebuggerVector>();
+    if (!debuggers)
+        ReportOutOfMemory(cx);
+    return debuggers;
+}
+
+void
+Zone::logPromotionsToTenured()
+{
+    auto* dbgs = getDebuggers();
+    if (MOZ_LIKELY(!dbgs))
+        return;
+
+    auto now = JS_GetCurrentEmbedderTime();
+    JSRuntime* rt = runtimeFromAnyThread();
+
+    for (auto** dbgp = dbgs->begin(); dbgp != dbgs->end(); dbgp++) {
+        if (!(*dbgp)->isEnabled() || !(*dbgp)->isTrackingTenurePromotions())
+            continue;
+
+        for (auto range = awaitingTenureLogging.all(); !range.empty(); range.popFront()) {
+            if ((*dbgp)->isDebuggee(range.front()->compartment()))
+                (*dbgp)->logTenurePromotion(rt, *range.front(), now);
+        }
+    }
+
+    awaitingTenureLogging.clear();
+}
+
 void
 Zone::sweepBreakpoints(FreeOp* fop)
 {
@@ -133,7 +170,6 @@ Zone::sweepBreakpoints(FreeOp* fop)
     MOZ_ASSERT(isGCSweepingOrCompacting());
     for (ZoneCellIterUnderGC i(this, AllocKind::SCRIPT); !i.done(); i.next()) {
         JSScript* script = i.get<JSScript>();
-        MOZ_ASSERT_IF(isGCSweeping(), script->zone()->isGCSweeping());
         if (!script->hasAnyBreakpointsOrStepMode())
             continue;
 
@@ -148,8 +184,16 @@ Zone::sweepBreakpoints(FreeOp* fop)
             for (Breakpoint* bp = site->firstBreakpoint(); bp; bp = nextbp) {
                 nextbp = bp->nextInSite();
                 HeapPtrNativeObject& dbgobj = bp->debugger->toJSObjectRef();
+
+                // If we are sweeping, then we expect the script and the
+                // debugger object to be swept in the same zone group, except if
+                // the breakpoint was added after we computed the zone
+                // groups. In this case both script and debugger object must be
+                // live.
                 MOZ_ASSERT_IF(isGCSweeping() && dbgobj->zone()->isCollecting(),
-                              dbgobj->zone()->isGCSweeping());
+                              dbgobj->zone()->isGCSweeping() ||
+                              (!scriptGone && dbgobj->asTenured().isMarked()));
+
                 bool dying = scriptGone || IsAboutToBeFinalized(&dbgobj);
                 MOZ_ASSERT_IF(!dying, !IsAboutToBeFinalized(&bp->getHandlerRef()));
                 if (dying)
@@ -157,6 +201,13 @@ Zone::sweepBreakpoints(FreeOp* fop)
             }
         }
     }
+}
+
+void
+Zone::sweepWeakMaps()
+{
+    /* Finalize unreachable (key,value) pairs in all weak maps. */
+    WeakMapBase::sweepZone(this);
 }
 
 void
@@ -205,6 +256,15 @@ Zone::discardJitCode(FreeOp* fop)
     }
 }
 
+#ifdef JSGC_HASH_TABLE_CHECKS
+void
+JS::Zone::checkUniqueIdTableAfterMovingGC()
+{
+    for (UniqueIdMap::Enum e(uniqueIds_); !e.empty(); e.popFront())
+        js::gc::CheckGCThingAfterMovingGC(e.front().key());
+}
+#endif
+
 uint64_t
 Zone::gcNumber()
 {
@@ -225,12 +285,6 @@ Zone::createJitZone(JSContext* cx)
     return jitZone_;
 }
 
-JS::Zone*
-js::ZoneOfObjectFromAnyThread(const JSObject& obj)
-{
-    return obj.zoneFromAnyThread();
-}
-
 bool
 Zone::hasMarkedCompartments()
 {
@@ -248,7 +302,7 @@ Zone::canCollect()
     if (usedByExclusiveThread)
         return false;
     JSRuntime* rt = runtimeFromAnyThread();
-    if (rt->isAtomsZone(this) && rt->exclusiveThreadsPresent())
+    if (isAtomsZone() && rt->exclusiveThreadsPresent())
         return false;
     return true;
 }
@@ -257,7 +311,8 @@ void
 Zone::notifyObservingDebuggers()
 {
     for (CompartmentsInZoneIter comps(this); !comps.done(); comps.next()) {
-        RootedGlobalObject global(runtimeFromAnyThread(), comps->maybeGlobal());
+        JSRuntime* rt = runtimeFromAnyThread();
+        RootedGlobalObject global(rt, comps->maybeGlobal());
         if (!global)
             continue;
 
@@ -265,18 +320,17 @@ Zone::notifyObservingDebuggers()
         if (!dbgs)
             continue;
 
-        for (GlobalObject::DebuggerVector::Range r = dbgs->all(); !r.empty(); r.popFront())
-            r.front()->debuggeeIsBeingCollected();
+        for (GlobalObject::DebuggerVector::Range r = dbgs->all(); !r.empty(); r.popFront()) {
+            if (!r.front()->debuggeeIsBeingCollected(rt->gc.majorGCCount())) {
+#ifdef DEBUG
+                fprintf(stderr,
+                        "OOM while notifying observing Debuggers of a GC: The onGarbageCollection\n"
+                        "hook will not be fired for this GC for some Debuggers!\n");
+#endif
+                return;
+            }
+        }
     }
-}
-
-JS::Zone*
-js::ZoneOfValue(const JS::Value& value)
-{
-    MOZ_ASSERT(value.isMarkable());
-    if (value.isObject())
-        return value.toObject().zone();
-    return js::gc::TenuredCell::fromPointer(value.toGCThing())->zone();
 }
 
 bool

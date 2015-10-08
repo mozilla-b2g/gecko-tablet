@@ -669,8 +669,8 @@ const JSClass JSRuntimeWrapper::sGlobalClass = {
   "PACResolutionThreadGlobal",
   JSCLASS_GLOBAL_FLAGS,
   nullptr, nullptr, nullptr, nullptr,
-  nullptr, nullptr, nullptr,
   nullptr, nullptr, nullptr, nullptr,
+  nullptr, nullptr, nullptr,
   JS_GlobalObjectTraceHook
 };
 
@@ -1021,5 +1021,5 @@ ProxyAutoConfig::IsInBrowser(const JS::CallArgs &aArgs)
   return true;
 }
 
+} // namespace net
 } // namespace mozilla
-} // namespace mozilla::net

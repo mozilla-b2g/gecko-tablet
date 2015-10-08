@@ -25,11 +25,13 @@
 #include "nsIURL.h"
 #include "nsIFileURL.h"
 #include "nsNetUtil.h"
+#include "nsIInputStream.h"
 #include "nsIChannel.h"
 #include "nsIFile.h"
 #include "nsEscape.h"
 #include "nsCRTGlue.h"
 #include "nsAutoPtr.h"
+#include "prtime.h"
 
 #ifdef XP_WIN
 #include "windef.h"
@@ -849,7 +851,7 @@ FileSystemDataSource::GetVolumeList(nsISimpleEnumerator** aResult)
 
     for (volNum = 0; volNum < 26; volNum++)
     {
-        swprintf( drive, L"%c:\\", volNum + (char16_t)'A');
+        swprintf_s(drive, 32, L"%c:\\", volNum + (char16_t)'A');
 
         driveType = GetDriveTypeW(drive);
         if (driveType != DRIVE_UNKNOWN && driveType != DRIVE_NO_ROOT_DIR)
@@ -1012,7 +1014,7 @@ FileSystemDataSource::GetFolderList(nsIRDFResource *source, bool allowHidden,
             continue;
   
         nsAutoCString           leaf(escLeafStr);
-        NS_Free(escLeafStr);
+        free(escLeafStr);
         escLeafStr = nullptr;
 
         // using nsEscape() [above] doesn't escape slashes, so do that by hand

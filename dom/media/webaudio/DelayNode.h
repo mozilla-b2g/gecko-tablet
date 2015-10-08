@@ -15,7 +15,7 @@ namespace dom {
 
 class AudioContext;
 
-class DelayNode : public AudioNode
+class DelayNode final : public AudioNode
 {
 public:
   DelayNode(AudioContext* aContext, double aMaxDelay);
@@ -42,15 +42,14 @@ protected:
   virtual ~DelayNode();
 
 private:
-  static void SendDelayToStream(AudioNode* aNode);
   friend class DelayNodeEngine;
 
 private:
   nsRefPtr<AudioParam> mDelay;
 };
 
-}
-}
+} // namespace dom
+} // namespace mozilla
 
 #endif
 

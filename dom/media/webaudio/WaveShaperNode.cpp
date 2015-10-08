@@ -48,7 +48,7 @@ static uint32_t ValueOf(OverSampleType aType)
   }
 }
 
-class Resampler
+class Resampler final
 {
 public:
   Resampler()
@@ -87,12 +87,12 @@ public:
     mUpSampler = speex_resampler_init(aChannels,
                                       aSampleRate,
                                       aSampleRate * ValueOf(aType),
-                                      SPEEX_RESAMPLER_QUALITY_DEFAULT,
+                                      SPEEX_RESAMPLER_QUALITY_MIN,
                                       nullptr);
     mDownSampler = speex_resampler_init(aChannels,
                                         aSampleRate * ValueOf(aType),
                                         aSampleRate,
-                                        SPEEX_RESAMPLER_QUALITY_DEFAULT,
+                                        SPEEX_RESAMPLER_QUALITY_MIN,
                                         nullptr);
     mBuffer.SetLength(WEBAUDIO_BLOCK_SIZE*ValueOf(aType));
   }
@@ -135,7 +135,7 @@ public:
     // Future: properly measure speex memory
     amount += aMallocSizeOf(mUpSampler);
     amount += aMallocSizeOf(mDownSampler);
-    amount += mBuffer.SizeOfExcludingThis(aMallocSizeOf);
+    amount += mBuffer.ShallowSizeOfExcludingThis(aMallocSizeOf);
     return amount;
   }
 
@@ -161,7 +161,7 @@ private:
   nsTArray<float> mBuffer;
 };
 
-class WaveShaperNodeEngine : public AudioNodeEngine
+class WaveShaperNodeEngine final : public AudioNodeEngine
 {
 public:
   explicit WaveShaperNodeEngine(AudioNode* aNode)
@@ -215,11 +215,12 @@ public:
   }
 
   virtual void ProcessBlock(AudioNodeStream* aStream,
-                            const AudioChunk& aInput,
-                            AudioChunk* aOutput,
+                            GraphTime aFrom,
+                            const AudioBlock& aInput,
+                            AudioBlock* aOutput,
                             bool* aFinished) override
   {
-    uint32_t channelCount = aInput.mChannelData.Length();
+    uint32_t channelCount = aInput.ChannelCount();
     if (!mCurve.Length() || !channelCount) {
       // Optimize the case where we don't have a curve buffer,
       // or the input is null.
@@ -227,10 +228,12 @@ public:
       return;
     }
 
-    AllocateAudioBlock(channelCount, aOutput);
+    aOutput->AllocateChannels(channelCount);
     for (uint32_t i = 0; i < channelCount; ++i) {
-      const float* inputBuffer = static_cast<const float*>(aInput.mChannelData[i]);
-      float* outputBuffer = const_cast<float*> (static_cast<const float*>(aOutput->mChannelData[i]));
+      float* scaledSample = (float *)(aInput.mChannelData[i]);
+      AudioBlockInPlaceScale(scaledSample, aInput.mVolume);
+      const float* inputBuffer = static_cast<const float*>(scaledSample);
+      float* outputBuffer = aOutput->ChannelFloatsForWrite(i);
       float* sampleBuffer;
 
       switch (mType) {
@@ -259,7 +262,7 @@ public:
   virtual size_t SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const override
   {
     size_t amount = AudioNodeEngine::SizeOfExcludingThis(aMallocSizeOf);
-    amount += mCurve.SizeOfExcludingThis(aMallocSizeOf);
+    amount += mCurve.ShallowSizeOfExcludingThis(aMallocSizeOf);
     amount += mResampler.SizeOfExcludingThis(aMallocSizeOf);
     return amount;
   }
@@ -286,7 +289,8 @@ WaveShaperNode::WaveShaperNode(AudioContext* aContext)
   mozilla::HoldJSObjects(this);
 
   WaveShaperNodeEngine* engine = new WaveShaperNodeEngine(this);
-  mStream = aContext->Graph()->CreateAudioNodeStream(engine, MediaStreamGraph::INTERNAL_STREAM);
+  mStream = AudioNodeStream::Create(aContext, engine,
+                                    AudioNodeStream::NO_STREAM_FLAGS);
 }
 
 WaveShaperNode::~WaveShaperNode()
@@ -308,23 +312,33 @@ WaveShaperNode::WrapObject(JSContext *aCx, JS::Handle<JSObject*> aGivenProto)
 }
 
 void
-WaveShaperNode::SetCurve(const Nullable<Float32Array>& aCurve)
+WaveShaperNode::SetCurve(const Nullable<Float32Array>& aCurve, ErrorResult& aRv)
 {
   nsTArray<float> curve;
   if (!aCurve.IsNull()) {
     const Float32Array& floats = aCurve.Value();
 
-    mCurve = floats.Obj();
-
     floats.ComputeLengthAndData();
 
-    curve.SetLength(floats.Length());
+    uint32_t argLength = floats.Length();
+    if (argLength < 2) {
+      aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
+      return;
+    }
+
+    if (!curve.SetLength(argLength, fallible)) {
+      aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
+      return;
+    }
+
     PodCopy(curve.Elements(), floats.Data(), floats.Length());
+
+    mCurve = floats.Obj();
   } else {
     mCurve = nullptr;
   }
 
-  AudioNodeStream* ns = static_cast<AudioNodeStream*>(mStream.get());
+  AudioNodeStream* ns = mStream;
   MOZ_ASSERT(ns, "Why don't we have a stream here?");
   ns->SetRawArrayData(curve);
 }
@@ -336,5 +350,5 @@ WaveShaperNode::SetOversample(OverSampleType aType)
   SendInt32ParameterToStream(WaveShaperNodeEngine::TYPE, static_cast<int32_t>(aType));
 }
 
-}
-}
+} // namespace dom
+} // namespace mozilla

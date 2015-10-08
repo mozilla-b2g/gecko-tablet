@@ -76,7 +76,7 @@ GetAddressFromDescriptor(const SurfaceDescriptor& aDescriptor, size_t& aSize)
   }
 }
 
-TemporaryRef<gfx::DrawTarget>
+already_AddRefed<gfx::DrawTarget>
 GetDrawTargetForDescriptor(const SurfaceDescriptor& aDescriptor, gfx::BackendType aBackend)
 {
   size_t size;
@@ -85,7 +85,7 @@ GetDrawTargetForDescriptor(const SurfaceDescriptor& aDescriptor, gfx::BackendTyp
   return image.GetAsDrawTarget(aBackend);
 }
 
-TemporaryRef<gfx::DataSourceSurface>
+already_AddRefed<gfx::DataSourceSurface>
 GetSurfaceForDescriptor(const SurfaceDescriptor& aDescriptor)
 {
   size_t size;
@@ -122,7 +122,7 @@ ISurfaceAllocator::AllocSurfaceDescriptorWithCaps(const gfx::IntSize& aSize,
     GfxMemoryImageReporter::DidAlloc(data);
 #ifdef XP_MACOSX
     // Workaround a bug in Quartz where drawing an a8 surface to another a8
-    // surface with OPERATOR_SOURCE still requires the destination to be clear.
+    // surface with OP_SOURCE still requires the destination to be clear.
     if (format == gfx::SurfaceFormat::A8) {
       memset(data, 0, size);
     }

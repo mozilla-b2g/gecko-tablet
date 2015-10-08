@@ -13,8 +13,6 @@
 #include "vm/SavedStacks.h"
 #include "vm/Shape.h"
 
-struct JSExnPrivate;
-
 namespace js {
 
 /*
@@ -110,7 +108,7 @@ class ErrorObject : public NativeObject
     // Getter and setter for the Error.prototype.stack accessor.
     static bool getStack(JSContext* cx, unsigned argc, Value* vp);
     static bool setStack(JSContext* cx, unsigned argc, Value* vp);
-    static bool setStack_impl(JSContext* cx, CallArgs args);
+    static bool setStack_impl(JSContext* cx, const CallArgs& args);
 };
 
 } // namespace js

@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* global loop:true */
-
 var loop = loop || {};
 loop.shared = loop.shared || {};
 loop.shared.actions = (function() {
@@ -82,7 +80,6 @@ loop.shared.actions = (function() {
      * a contact can't be reached.
      */
     FetchRoomEmailLink: Action.define("fetchRoomEmailLink", {
-      roomOwner: String,
       roomName: String
     }),
 
@@ -168,19 +165,44 @@ loop.shared.actions = (function() {
     }),
 
     /**
+     * Used to notify that the session has a data channel available.
+     */
+    DataChannelsAvailable: Action.define("dataChannelsAvailable", {
+      available: Boolean
+    }),
+
+    /**
+     * Used to send a message to the other peer.
+     */
+    SendTextChatMessage: Action.define("sendTextChatMessage", {
+      contentType: String,
+      message: String,
+      sentTimestamp: String
+    }),
+
+    /**
+     * Notifies that a message has been received from the other peer.
+     */
+    ReceivedTextChatMessage: Action.define("receivedTextChatMessage", {
+      contentType: String,
+      message: String,
+      receivedTimestamp: String
+      // sentTimestamp: String (optional)
+    }),
+
+    /**
      * Used by the ongoing views to notify stores about the elements
      * required for the sdk.
      */
     SetupStreamElements: Action.define("setupStreamElements", {
       // The configuration for the publisher/subscribe options
-      publisherConfig: Object,
-      // The local stream element
-      getLocalElementFunc: Function,
-      // The screen share element; optional until all conversation
-      // types support it.
-      // getScreenShareElementFunc: Function,
-      // The remote stream element
-      getRemoteElementFunc: Function
+      publisherConfig: Object
+    }),
+
+    /**
+     * Used for notifying that a waiting tile was shown.
+     */
+    TileShown: Action.define("tileShown", {
     }),
 
     /**
@@ -200,8 +222,37 @@ loop.shared.actions = (function() {
      * dispatched when a stream connects for the first time.
      */
     VideoDimensionsChanged: Action.define("videoDimensionsChanged", {
+      isLocal: Boolean,
       videoType: String,
       dimensions: Object
+    }),
+
+    /**
+     * A stream from local or remote media has been created.
+     */
+    MediaStreamCreated: Action.define("mediaStreamCreated", {
+      hasVideo: Boolean,
+      isLocal: Boolean,
+      srcMediaElement: Object
+    }),
+
+    /**
+     * A stream from local or remote media has been destroyed.
+     */
+    MediaStreamDestroyed: Action.define("mediaStreamDestroyed", {
+      isLocal: Boolean
+    }),
+
+    /**
+     * Used to inform that the remote stream has enabled or disabled the video
+     * part of the stream.
+     *
+     * @note We'll may want to include the future the reason provided by the SDK
+     *       and documented here:
+     *       https://tokbox.com/opentok/libraries/client/js/reference/VideoEnabledChangedEvent.html
+     */
+    RemoteVideoStatus: Action.define("remoteVideoStatus", {
+      videoEnabled: Boolean
     }),
 
     /**
@@ -229,7 +280,7 @@ loop.shared.actions = (function() {
     }),
 
     /**
-     * Used to notifiy that screen sharing is active or not.
+     * Used to notify that screen sharing is active or not.
      */
     ScreenSharingState: Action.define("screenSharingState", {
       // One of loop.shared.utils.SCREEN_SHARE_STATES.
@@ -238,9 +289,12 @@ loop.shared.actions = (function() {
 
     /**
      * Used to notify that a shared screen is being received (or not).
+     *
+     * XXX this should be split into multiple actions to make the code clearer.
      */
     ReceivingScreenShare: Action.define("receivingScreenShare", {
       receiving: Boolean
+      // srcMediaElement: Object (only present if receiving is true)
     }),
 
     /**
@@ -250,8 +304,9 @@ loop.shared.actions = (function() {
     CreateRoom: Action.define("createRoom", {
       // The localized template to use to name the new room
       // (eg. "Conversation {{conversationLabel}}").
-      nameTemplate: String,
-      roomOwner: String
+      nameTemplate: String
+      // See https://wiki.mozilla.org/Loop/Architecture/Context#Format_of_context.value
+      // urls: Object - Optional
     }),
 
     /**
@@ -327,20 +382,28 @@ loop.shared.actions = (function() {
     }),
 
     /**
-     * Renames a room.
+     * Updates the context data attached to a room.
      * XXX: should move to some roomActions module - refs bug 1079284
      */
-    RenameRoom: Action.define("renameRoom", {
+    UpdateRoomContext: Action.define("updateRoomContext", {
       roomToken: String,
       newRoomName: String
+      // newRoomDescription: String, Optional.
+      // newRoomThumbnail: String, Optional.
+      // newRoomURL: String Optional.
     }),
 
     /**
-     * Renaming a room error.
-     * XXX: should move to some roomActions module - refs bug 1079284
+     * Updating the context data attached to a room error.
      */
-    RenameRoomError: Action.define("renameRoomError", {
+    UpdateRoomContextError: Action.define("updateRoomContextError", {
       error: [Error, Object]
+    }),
+
+    /**
+     * Updating the context data attached to a room finished successfully.
+     */
+    UpdateRoomContextDone: Action.define("updateRoomContextDone", {
     }),
 
     /**
@@ -348,6 +411,7 @@ loop.shared.actions = (function() {
      * XXX: should move to some roomActions module - refs bug 1079284
      */
     CopyRoomUrl: Action.define("copyRoomUrl", {
+      from: String,
       roomUrl: String
     }),
 
@@ -356,7 +420,25 @@ loop.shared.actions = (function() {
      * XXX: should move to some roomActions module - refs bug 1079284
      */
     EmailRoomUrl: Action.define("emailRoomUrl", {
+      from: String,
       roomUrl: String
+      // roomDescription: String, Optional.
+    }),
+
+    /**
+     * Share a room url via the Social API.
+     * XXX: should move to some roomActions module - refs bug 1079284
+     */
+    ShareRoomUrl: Action.define("shareRoomUrl", {
+      provider: Object,
+      roomUrl: String
+    }),
+
+    /**
+     * Open the share panel to add a Social share provider.
+     * XXX: should move to some roomActions module - refs bug 1079284
+     */
+    AddSocialShareProvider: Action.define("addSocialShareProvider", {
     }),
 
     /**
@@ -369,29 +451,36 @@ loop.shared.actions = (function() {
     }),
 
     /**
-     * Sets up the room information when it is received.
-     * XXX: should move to some roomActions module - refs bug 1079284
-     *
-     * @see https://wiki.mozilla.org/Loop/Architecture/Rooms#GET_.2Frooms.2F.7Btoken.7D
-     */
-    SetupRoomInfo: Action.define("setupRoomInfo", {
-      // roomName: String - Optional.
-      roomOwner: String,
-      roomToken: String,
-      roomUrl: String
-    }),
-
-    /**
      * Updates the room information when it is received.
      * XXX: should move to some roomActions module - refs bug 1079284
      *
      * @see https://wiki.mozilla.org/Loop/Architecture/Rooms#GET_.2Frooms.2F.7Btoken.7D
      */
     UpdateRoomInfo: Action.define("updateRoomInfo", {
-      // context: Object - Optional.
+      // participants: Array - Optional.
+      // roomContextUrls: Array - Optional.
+      // See https://wiki.mozilla.org/Loop/Architecture/Context#Format_of_context.value
+      // roomDescription: String - Optional.
+      // roomInfoFailure: String - Optional.
       // roomName: String - Optional.
-      roomOwner: String,
+      // roomState: String - Optional.
       roomUrl: String
+      // socialShareProviders: Array - Optional.
+    }),
+
+    /**
+     * Notifies if the user agent will handle the room or not.
+     */
+    UserAgentHandlesRoom: Action.define("userAgentHandlesRoom", {
+      handlesRoom: Boolean
+    }),
+
+    /**
+     * Updates the Social API information when it is received.
+     * XXX: should move to some roomActions module - refs bug 1079284
+     */
+    UpdateSocialShareInfo: Action.define("updateSocialShareInfo", {
+      socialShareProviders: Array
     }),
 
     /**
@@ -399,6 +488,23 @@ loop.shared.actions = (function() {
      * XXX: should move to some roomActions module - refs bug 1079284
      */
     JoinRoom: Action.define("joinRoom", {
+    }),
+
+    /**
+     * A special action for metrics logging to define what type of join
+     * occurred when JoinRoom was activated.
+     * XXX: should move to some roomActions module - refs bug 1079284
+     */
+    MetricsLogJoinRoom: Action.define("metricsLogJoinRoom", {
+      userAgentHandledRoom: Boolean
+      // ownRoom: Boolean - Optional. Expected if firefoxHandledRoom is true.
+    }),
+
+    /**
+     * Starts the process for the user to join the room.
+     * XXX: should move to some roomActions module - refs bug 1079284
+     */
+    RetryAfterRoomFailure: Action.define("retryAfterRoomFailure", {
     }),
 
     /**
@@ -415,38 +521,38 @@ loop.shared.actions = (function() {
     }),
 
     /**
-     * Used to indicate that the feedback cycle is completed and the countdown
-     * finished.
-     */
-    FeedbackComplete: Action.define("feedbackComplete", {
-    }),
-
-    /**
      * Used to indicate the user wishes to leave the room.
      */
     LeaveRoom: Action.define("leaveRoom", {
     }),
 
     /**
-     * Requires detailed information on sad feedback.
+     * Signals that the feedback view should be rendered.
      */
-    RequireFeedbackDetails: Action.define("requireFeedbackDetails", {
+    ShowFeedbackForm: Action.define("showFeedbackForm", {
     }),
 
     /**
-     * Send feedback data.
+     * Used to record a link click for metrics purposes.
      */
-    SendFeedback: Action.define("sendFeedback", {
-      happy: Boolean,
-      category: String,
-      description: String
+    RecordClick: Action.define("recordClick", {
+      // Note: for ToS and Privacy links, this should be the link, for
+      // other links this should be a generic description so that we don't
+      // record what users are clicking, just the information about the fact
+      // they clicked the link in that spot (e.g. "Shared URL").
+      linkInfo: String
     }),
 
     /**
-     * Reacts on feedback submission error.
+     * Used to inform of the current session, publisher and connection
+     * status.
      */
-    SendFeedbackError: Action.define("sendFeedbackError", {
-      error: Error
+    ConnectionStatus: Action.define("connectionStatus", {
+      event: String,
+      state: String,
+      connections: Number,
+      sendStreams: Number,
+      recvStreams: Number
     })
   };
 })();

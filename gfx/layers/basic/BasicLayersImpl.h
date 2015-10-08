@@ -20,25 +20,25 @@
 namespace mozilla {
 namespace gfx {
 class DrawTarget;
-}
+} // namespace gfx
 
 namespace layers {
 
 class AutoMoz2DMaskData;
-class BasicContainerLayer;
 class Layer;
 
 class AutoSetOperator {
+  typedef mozilla::gfx::CompositionOp CompositionOp;
 public:
-  AutoSetOperator(gfxContext* aContext, gfxContext::GraphicsOperator aOperator) {
-    if (aOperator != gfxContext::OPERATOR_OVER) {
-      aContext->SetOperator(aOperator);
+  AutoSetOperator(gfxContext* aContext, CompositionOp aOperator) {
+    if (aOperator != CompositionOp::OP_OVER) {
+      aContext->SetOp(aOperator);
       mContext = aContext;
     }
   }
   ~AutoSetOperator() {
     if (mContext) {
-      mContext->SetOperator(gfxContext::OPERATOR_OVER);
+      mContext->SetOp(CompositionOp::OP_OVER);
     }
   }
 private:
@@ -144,7 +144,7 @@ ToData(Layer* aLayer);
 gfx::CompositionOp
 GetEffectiveOperator(Layer* aLayer);
 
-}
-}
+} // namespace layers
+} // namespace mozilla
 
 #endif

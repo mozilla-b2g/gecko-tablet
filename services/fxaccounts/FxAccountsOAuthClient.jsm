@@ -36,7 +36,9 @@ Cu.importGlobalProperties(["URL"]);
  *     @param {String} [options.parameters.scope]
  *     Optional. A colon-separated list of scopes that the user has authorized
  *     @param {String} [options.parameters.action]
- *     Optional. If provided, should be either signup or signin.
+ *     Optional. If provided, should be either signup, signin or force_auth.
+ *     @param {String} [options.parameters.email]
+ *     Optional. Required if options.paramters.action is 'force_auth'.
  *     @param {Boolean} [options.parameters.keys]
  *     Optional. If true then relier-specific encryption keys will be
  *     available in the second argument to onComplete.
@@ -66,7 +68,10 @@ this.FxAccountsOAuthClient = function(options) {
   if (this.parameters.keys) {
     params.append("keys", "true");
   }
-
+  // Only append if we actually have a value.
+  if (this.parameters.email) {
+    params.append("email", this.parameters.email);
+  }
 };
 
 this.FxAccountsOAuthClient.prototype = {
@@ -163,14 +168,15 @@ this.FxAccountsOAuthClient.prototype = {
      *        Command webChannelId
      * @param message {Object}
      *        Command message
-     * @param target {EventTarget}
-     *        Channel message event target
+     * @param sendingContext {Object}
+     *        Channel message event sendingContext
      * @private
      */
-    let listener = function (webChannelId, message, target) {
+    let listener = function (webChannelId, message, sendingContext) {
       if (message) {
         let command = message.command;
         let data = message.data;
+        let target = sendingContext && sendingContext.browser;
 
         switch (command) {
           case "oauth_complete":
@@ -255,5 +261,9 @@ this.FxAccountsOAuthClient.prototype = {
         throw new Error("Missing 'parameters." + option + "' parameter");
       }
     });
+
+    if (options.parameters.action == "force_auth" && !options.parameters.email) {
+      throw new Error("parameters.email is required for action 'force_auth'");
+    }
   },
 };

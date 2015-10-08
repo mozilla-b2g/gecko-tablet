@@ -16,6 +16,7 @@
 #include "nsPrintfCString.h"
 #include "nsNavHistory.h"
 #include "mozilla/Likely.h"
+#include "nsVariant.h"
 
 using namespace mozilla::storage;
 
@@ -703,9 +704,7 @@ namespace places {
     nsAutoString src;
     aArguments->GetString(0, src);
 
-    nsCOMPtr<nsIWritableVariant> result =
-      do_CreateInstance("@mozilla.org/variant;1");
-    NS_ENSURE_STATE(result);
+    nsRefPtr<nsVariant> result = new nsVariant();
 
     if (src.Length()>1) {
       src.Truncate(src.Length() - 1);
@@ -716,7 +715,7 @@ namespace places {
     else {
       result->SetAsAString(EmptyString());
     }
-    NS_ADDREF(*_result = result);
+    result.forget(_result);
     return NS_OK;
   }
 
@@ -761,9 +760,14 @@ namespace places {
     nsAutoString src;
     aArguments->GetString(0, src);
 
-    nsCOMPtr<nsIWritableVariant> result =
-      do_CreateInstance("@mozilla.org/variant;1");
-    NS_ENSURE_STATE(result);
+    nsRefPtr<nsVariant> result = new nsVariant();
+
+    if (StringBeginsWith(src, NS_LITERAL_STRING("http://")))
+      src.Cut(0, 7);
+    else if (StringBeginsWith(src, NS_LITERAL_STRING("https://")))
+      src.Cut(0, 8);
+    else if (StringBeginsWith(src, NS_LITERAL_STRING("ftp://")))
+      src.Cut(0, 6);
 
     // Remove common URL hostname prefixes
     if (StringBeginsWith(src, NS_LITERAL_STRING("www."))) {
@@ -771,7 +775,7 @@ namespace places {
     }
 
     result->SetAsAString(src);
-    NS_ADDREF(*_result = result);
+    result.forget(_result);
     return NS_OK;
   }
 
@@ -828,12 +832,10 @@ namespace places {
     navHistory->DispatchFrecencyChangedNotification(spec, newFrecency, guid,
                                                     hidden, lastVisitDate);
 
-    nsCOMPtr<nsIWritableVariant> result =
-      do_CreateInstance("@mozilla.org/variant;1");
-    NS_ENSURE_STATE(result);
+    nsRefPtr<nsVariant> result = new nsVariant();
     rv = result->SetAsInt32(newFrecency);
     NS_ENSURE_SUCCESS(rv, rv);
-    NS_ADDREF(*_result = result);
+    result.forget(_result);
     return NS_OK;
   }
 

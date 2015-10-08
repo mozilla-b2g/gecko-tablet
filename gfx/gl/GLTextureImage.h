@@ -11,7 +11,6 @@
 #include "nsTArray.h"
 #include "gfxTypes.h"
 #include "GLContextTypes.h"
-#include "GraphicsFilter.h"
 #include "mozilla/gfx/Rect.h"
 #include "mozilla/RefPtr.h"
 
@@ -21,8 +20,8 @@ namespace mozilla {
 namespace gfx {
 class DataSourceSurface;
 class DrawTarget;
-}
-}
+} // namespace gfx
+} // namespace mozilla
 
 namespace mozilla {
 namespace gl {
@@ -153,7 +152,7 @@ public:
      */
     virtual void Resize(const gfx::IntSize& aSize) {
         mSize = aSize;
-        nsIntRegion r(nsIntRect(0, 0, aSize.width, aSize.height));
+        nsIntRegion r(gfx::IntRect(0, 0, aSize.width, aSize.height));
         BeginUpdate(r);
         EndUpdate();
     }
@@ -196,11 +195,10 @@ public:
 
     gfx::IntSize GetSize() const;
     ContentType GetContentType() const { return mContentType; }
-    ImageFormat GetImageFormat() const { return mImageFormat; }
     virtual bool InUpdate() const = 0;
     GLenum GetWrapMode() const { return mWrapMode; }
 
-    void SetFilter(GraphicsFilter aFilter) { mFilter = aFilter; }
+    void SetFilter(gfx::Filter aFilter) { mFilter = aFilter; }
 
 protected:
     friend class GLContext;
@@ -224,9 +222,8 @@ protected:
     gfx::IntSize mSize;
     GLenum mWrapMode;
     ContentType mContentType;
-    ImageFormat mImageFormat;
     gfx::SurfaceFormat mTextureFormat;
-    GraphicsFilter mFilter;
+    gfx::Filter mFilter;
     Flags mFlags;
 };
 
@@ -260,7 +257,7 @@ public:
     virtual void EndUpdate();
     virtual bool DirectUpdate(gfx::DataSourceSurface* aSurf, const nsIntRegion& aRegion, const gfx::IntPoint& aFrom = gfx::IntPoint(0,0));
     virtual GLuint GetTextureID() { return mTexture; }
-    virtual TemporaryRef<gfx::DrawTarget>
+    virtual already_AddRefed<gfx::DrawTarget>
       GetDrawTargetForUpdate(const gfx::IntSize& aSize, gfx::SurfaceFormat aFmt);
 
     virtual void MarkValid() { mTextureState = Valid; }
@@ -329,7 +326,6 @@ protected:
     void* mIterationCallbackData;
     nsTArray< nsRefPtr<TextureImage> > mImages;
     bool mInUpdate;
-    gfx::IntSize mSize;
     unsigned int mTileSize;
     unsigned int mRows, mColumns;
     GLContext* mGL;

@@ -79,14 +79,14 @@ function _imageFromURI(doc, uri, privateMode, callback) {
                                          null,  // aLoadingPrincipal
                                          null,  // aTriggeringPrincipal
                                          Ci.nsILoadInfo.SEC_NORMAL,
-                                         Ci.nsIContentPolicy.TYPE_IMAGE);
+                                         Ci.nsIContentPolicy.TYPE_INTERNAL_IMAGE);
   try {
     channel.QueryInterface(Ci.nsIPrivateBrowsingChannel);
     channel.setPrivate(privateMode);
   } catch (e) {
     // Ignore channels which do not support nsIPrivateBrowsingChannel
   }
-  NetUtil.asyncFetch2(channel, function(inputStream, resultCode) {
+  NetUtil.asyncFetch(channel, function(inputStream, resultCode) {
     if (!Components.isSuccessCode(resultCode))
       return;
     try {
@@ -315,8 +315,7 @@ PreviewController.prototype = {
   },
 
   drawPreview: function (ctx) {
-    let self = this;
-    this.win.tabbrowser.previewTab(this.tab, function () self.previewTabCallback(ctx));
+    this.win.tabbrowser.previewTab(this.tab, () => this.previewTabCallback(ctx));
 
     // We must avoid having the frame drawn around the window. See bug 520807
     return false;
@@ -749,7 +748,7 @@ this.AeroPeek = {
   }
 };
 
-XPCOMUtils.defineLazyGetter(AeroPeek, "cacheTimer", function ()
+XPCOMUtils.defineLazyGetter(AeroPeek, "cacheTimer", () =>
   Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer)
 );
 

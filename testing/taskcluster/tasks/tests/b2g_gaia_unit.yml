@@ -1,7 +1,6 @@
 ---
 $inherits:
   from: 'tasks/test.yml'
-reruns: 2
 task:
   metadata:
     name: '[TC] Gaia Unit Test'
@@ -20,10 +19,10 @@ task:
         --download-symbols ondemand
         --no-pull
         --installer-url {{build_url}}
-        --test-url {{tests_url}}
+        --test-packages-url {{test_packages_url}}
         --gaia-repo https://hg.mozilla.org/integration/gaia-central
         --gaia-dir /home/worker
-        --xre-url https://s3-us-west-2.amazonaws.com/test-caching/xulrunner-sdk-40.zip
+        --xre-url https://queue.taskcluster.net/v1/task/wXAHAaxDQpqxoWF1iljJjg/runs/0/artifacts/public/cache/xulrunner-sdk-40.zip
     artifacts:
       'public/build':
         type: directory

@@ -10,6 +10,7 @@ module.metadata = {
 const { Class } = require('../core/heritage');
 const { EventTarget } = require('../event/target');
 const { on, off, emit } = require('../event/core');
+const { events } = require('./sandbox/events');
 const { requiresAddonGlobal } = require('./utils');
 const { delay: async } = require('../lang/functional');
 const { Ci, Cu, Cc } = require('chrome');
@@ -20,8 +21,7 @@ const { merge } = require('../util/object');
 const { getTabForContentWindow } = require('../tabs/utils');
 const { getInnerId } = require('../window/utils');
 const { PlainTextConsole } = require('../console/plain-text');
-const { data } = require('../self');
-const { isChildLoader } = require('../remote/core');
+const { data } = require('../self');const { isChildLoader } = require('../remote/core');
 // WeakMap of sandboxes so we can access private values
 const sandboxes = new WeakMap();
 
@@ -29,7 +29,7 @@ const sandboxes = new WeakMap();
   require('./content-worker.js');
   Then, retrieve URL of these files in the XPI:
 */
-let prefix = module.uri.split('sandbox.js')[0];
+var prefix = module.uri.split('sandbox.js')[0];
 const CONTENT_WORKER_URL = prefix + 'content-worker.js';
 const metadata = require('@loader/options').metadata;
 
@@ -116,7 +116,7 @@ const WorkerSandbox = Class({
     // (This behavior can be turned off for now with the unsafe-content-script
     // flag to give addon developers time for making the necessary changes)
     // But prevent it when the Worker isn't used for a content script but for
-    // injecting `addon` object into a Panel, Widget, ... scope.
+    // injecting `addon` object into a Panel scope, for example.
     // That's because:
     // 1/ It is useless to use multiple domains as the worker is only used
     // to communicate with the addon,
@@ -166,6 +166,7 @@ const WorkerSandbox = Class({
       get top() top,
       get parent() parent
     });
+
     // Use the Greasemonkey naming convention to provide access to the
     // unwrapped window object so the content script can access document
     // JavaScript values.
@@ -214,7 +215,7 @@ const WorkerSandbox = Class({
     }
 
     // Inject our `console` into target document if worker doesn't have a tab
-    // (e.g Panel, PageWorker, Widget).
+    // (e.g Panel, PageWorker).
     // `worker.tab` can't be used because bug 804935.
     if (!isWindowInTab(window)) {
       let win = getUnsafeWindow(window);
@@ -261,6 +262,11 @@ const WorkerSandbox = Class({
       win.console = con;
     };
 
+    emit(events, "content-script-before-inserted", {
+      window: window,
+      worker: worker
+    });
+
     // The order of `contentScriptFile` and `contentScript` evaluation is
     // intentional, so programs can load libraries like jQuery from script URLs
     // and use them in scripts.
@@ -273,6 +279,7 @@ const WorkerSandbox = Class({
 
     if (contentScriptFile)
       importScripts.apply(null, [this].concat(contentScriptFile));
+
     if (contentScript) {
       evaluateIn(
         this,

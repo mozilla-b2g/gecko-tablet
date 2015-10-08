@@ -6,7 +6,6 @@
 #define MEDIAENGINE_H_
 
 #include "mozilla/RefPtr.h"
-#include "nsIDOMFile.h"
 #include "DOMMediaStream.h"
 #include "MediaStreamGraph.h"
 #include "mozilla/dom/MediaStreamTrackBinding.h"
@@ -15,8 +14,8 @@
 namespace mozilla {
 
 namespace dom {
-class File;
-}
+class Blob;
+} // namespace dom
 
 enum {
   kVideoTrack = 1,
@@ -55,6 +54,12 @@ public:
   static const int DEFAULT_169_VIDEO_HEIGHT = 720;
   static const int DEFAULT_AUDIO_TIMER_MS = 10;
 
+#ifndef MOZ_B2G
+  static const int DEFAULT_SAMPLE_RATE = 32000;
+#else
+  static const int DEFAULT_SAMPLE_RATE = 16000;
+#endif
+
   /* Populate an array of video sources in the nsTArray. Also include devices
    * that are currently unavailable. */
   virtual void EnumerateVideoDevices(dom::MediaSourceEnum,
@@ -64,6 +69,8 @@ public:
    * that are currently unavailable. */
   virtual void EnumerateAudioDevices(dom::MediaSourceEnum,
                                      nsTArray<nsRefPtr<MediaEngineAudioSource> >*) = 0;
+
+  virtual void Shutdown() = 0;
 
 protected:
   virtual ~MediaEngine() {}
@@ -82,11 +89,13 @@ public:
 
   virtual ~MediaEngineSource() {}
 
+  virtual void Shutdown() = 0;
+
   /* Populate the human readable name of this device in the nsAString */
   virtual void GetName(nsAString&) = 0;
 
-  /* Populate the UUID of this device in the nsAString */
-  virtual void GetUUID(nsAString&) = 0;
+  /* Populate the UUID of this device in the nsACString */
+  virtual void GetUUID(nsACString&) = 0;
 
   /* Release the device back to the system. */
   virtual nsresult Deallocate() = 0;
@@ -107,6 +116,11 @@ public:
 
   /* Stop the device and release the corresponding MediaStream */
   virtual nsresult Stop(SourceMediaStream *aSource, TrackID aID) = 0;
+
+  /* Restart with new capability */
+  virtual nsresult Restart(const dom::MediaTrackConstraints& aConstraints,
+                           const MediaEnginePrefs &aPrefs,
+                           const nsString& aDeviceId) = 0;
 
   /* Change device configuration.  */
   virtual nsresult Config(bool aEchoOn, uint32_t aEcho,
@@ -130,7 +144,7 @@ public:
 
     // aBlob is the image captured by MediaEngineSource. It is
     // called on main thread.
-    virtual nsresult PhotoComplete(already_AddRefed<dom::File> aBlob) = 0;
+    virtual nsresult PhotoComplete(already_AddRefed<dom::Blob> aBlob) = 0;
 
     // It is called on main thread. aRv is the error code.
     virtual nsresult PhotoError(nsresult aRv) = 0;
@@ -161,6 +175,15 @@ public:
     mHasFakeTracks = aHasFakeTracks;
   }
 
+  /* This call reserves but does not start the device. */
+  virtual nsresult Allocate(const dom::MediaTrackConstraints &aConstraints,
+                            const MediaEnginePrefs &aPrefs,
+                            const nsString& aDeviceId) = 0;
+
+  virtual uint32_t GetBestFitnessDistance(
+      const nsTArray<const dom::MediaTrackConstraintSet*>& aConstraintSets,
+      const nsString& aDeviceId) = 0;
+
 protected:
   // Only class' own members can be initialized in constructor initializer list.
   explicit MediaEngineSource(MediaEngineState aState)
@@ -180,6 +203,7 @@ public:
   int32_t mHeight;
   int32_t mFPS;
   int32_t mMinFPS;
+  int32_t mFreq; // for test tones (fake:true)
 
   // mWidth and/or mHeight may be zero (=adaptive default), so use functions.
 
@@ -221,13 +245,6 @@ class MediaEngineVideoSource : public MediaEngineSource
 public:
   virtual ~MediaEngineVideoSource() {}
 
-  /* This call reserves but does not start the device. */
-  virtual nsresult Allocate(const dom::MediaTrackConstraints &aConstraints,
-                            const MediaEnginePrefs &aPrefs) = 0;
-
-  virtual uint32_t GetBestFitnessDistance(
-      const nsTArray<const dom::MediaTrackConstraintSet*>& aConstraintSets) = 0;
-
 protected:
   explicit MediaEngineVideoSource(MediaEngineState aState)
     : MediaEngineSource(aState) {}
@@ -243,9 +260,6 @@ class MediaEngineAudioSource : public MediaEngineSource
 public:
   virtual ~MediaEngineAudioSource() {}
 
-  /* This call reserves but does not start the device. */
-  virtual nsresult Allocate(const dom::MediaTrackConstraints &aConstraints,
-                            const MediaEnginePrefs &aPrefs) = 0;
 protected:
   explicit MediaEngineAudioSource(MediaEngineState aState)
     : MediaEngineSource(aState) {}
@@ -254,6 +268,6 @@ protected:
 
 };
 
-}
+} // namespace mozilla
 
 #endif /* MEDIAENGINE_H_ */

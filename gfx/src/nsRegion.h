@@ -9,19 +9,22 @@
 #include <stddef.h>                     // for size_t
 #include <stdint.h>                     // for uint32_t, uint64_t
 #include <sys/types.h>                  // for int32_t
-#include "gfxCore.h"                    // for NS_GFX
 #include "mozilla/ToString.h"           // for mozilla::ToString
 #include "nsCoord.h"                    // for nscoord
 #include "nsError.h"                    // for nsresult
 #include "nsPoint.h"                    // for nsIntPoint, nsPoint
-#include "nsRect.h"                     // for nsIntRect, nsRect
+#include "nsRect.h"                     // for mozilla::gfx::IntRect, nsRect
 #include "nsMargin.h"                   // for nsIntMargin
 #include "nsStringGlue.h"               // for nsCString
 #include "xpcom-config.h"               // for CPP_THROW_NEW
 #include "mozilla/Move.h"               // for mozilla::Move
 
 class nsIntRegion;
-class gfx3DMatrix;
+namespace mozilla {
+namespace gfx {
+class Matrix4x4;
+} // namespace gfx
+} // namespace mozilla
 
 #include "pixman.h"
 
@@ -299,7 +302,7 @@ public:
     ScaleToOtherAppUnitsRoundIn (int32_t aFromAPP, int32_t aToAPP) const;
   nsRegion& ScaleRoundOut(float aXScale, float aYScale);
   nsRegion& ScaleInverseRoundOut(float aXScale, float aYScale);
-  nsRegion& Transform (const gfx3DMatrix &aTransform);
+  nsRegion& Transform (const mozilla::gfx::Matrix4x4 &aTransform);
   nsIntRegion ScaleToOutsidePixels (float aXScale, float aYScale, nscoord aAppUnitsPerPixel) const;
   nsIntRegion ScaleToInsidePixels (float aXScale, float aYScale, nscoord aAppUnitsPerPixel) const;
   nsIntRegion ScaleToNearestPixels (float aXScale, float aYScale, nscoord aAppUnitsPerPixel) const;
@@ -394,7 +397,7 @@ private:
     return box;
   }
 
-  static inline pixman_box32_t RectToBox(const nsIntRect &aRect)
+  static inline pixman_box32_t RectToBox(const mozilla::gfx::IntRect &aRect)
   {
     pixman_box32_t box = { aRect.x, aRect.y, aRect.XMost(), aRect.YMost() };
     return box;
@@ -416,7 +419,7 @@ private:
 };
 
 
-class NS_GFX nsRegionRectIterator
+class nsRegionRectIterator
 {
   const nsRegion*  mRegion;
   int i;
@@ -470,7 +473,7 @@ namespace gfx {
  * BaseIntRegions use int32_t coordinates.
  */
 template <typename Derived, typename Rect, typename Point, typename Margin>
-class NS_GFX BaseIntRegion
+class BaseIntRegion
 {
   friend class ::nsRegion;
 
@@ -699,7 +702,7 @@ public:
     RectIterator rgnIter(*this);
     const Rect* currentRect;
     while ((currentRect = rgnIter.Next())) {
-      nsRect appRect = currentRect->ToAppUnits(aAppUnitsPerPixel);
+      nsRect appRect = ::ToAppUnits(*currentRect, aAppUnitsPerPixel);
       result.Or(result, appRect);
     }
     return result;
@@ -715,7 +718,13 @@ public:
     return This();
   }
 
-  Derived& Transform (const gfx3DMatrix &aTransform)
+  Derived& ScaleInverseRoundOut (float aXScale, float aYScale)
+  {
+    mImpl.ScaleInverseRoundOut(aXScale, aYScale);
+    return This();
+  }
+
+  Derived& Transform (const mozilla::gfx::Matrix4x4 &aTransform)
   {
     mImpl.Transform(aTransform);
     return This();
@@ -753,7 +762,7 @@ public:
 
   nsCString ToString() const { return mImpl.ToString(); }
 
-  class NS_GFX RectIterator
+  class RectIterator
   {
     nsRegionRectIterator mImpl;
     Rect mTmp;
@@ -812,15 +821,15 @@ private:
   }
 };
 
-}  // namespace mozilla::gfx
-}  // namespace mozilla
+} // namespace gfx
+} // namespace mozilla
 
-class NS_GFX nsIntRegion : public mozilla::gfx::BaseIntRegion<nsIntRegion, nsIntRect, nsIntPoint, nsIntMargin>
+class nsIntRegion : public mozilla::gfx::BaseIntRegion<nsIntRegion, mozilla::gfx::IntRect, nsIntPoint, nsIntMargin>
 {
 public:
   // Forward constructors.
   nsIntRegion() {}
-  MOZ_IMPLICIT nsIntRegion(const nsIntRect& aRect) : BaseIntRegion(aRect) {}
+  MOZ_IMPLICIT nsIntRegion(const mozilla::gfx::IntRect& aRect) : BaseIntRegion(aRect) {}
   nsIntRegion(const nsIntRegion& aRegion) : BaseIntRegion(aRegion) {}
   nsIntRegion(nsIntRegion&& aRegion) : BaseIntRegion(mozilla::Move(aRegion)) {}
 

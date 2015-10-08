@@ -1,4 +1,5 @@
-/* -*- Mode: c++; c-basic-offset: 2; indent-tabs-mode: nil; tab-width: 40 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,12 +10,12 @@
 
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/dom/MessagePort.h"
 #include "mozilla/dom/SharedWorkerBinding.h"
 #include "nsContentUtils.h"
 #include "nsIClassInfoImpl.h"
 #include "nsIDOMEvent.h"
 
-#include "MessagePort.h"
 #include "RuntimeService.h"
 #include "WorkerPrivate.h"
 
@@ -25,23 +26,21 @@ using namespace mozilla;
 USING_WORKERS_NAMESPACE
 
 SharedWorker::SharedWorker(nsPIDOMWindow* aWindow,
-                           WorkerPrivate* aWorkerPrivate)
-: DOMEventTargetHelper(aWindow), mWorkerPrivate(aWorkerPrivate),
-  mFrozen(false)
+                           WorkerPrivate* aWorkerPrivate,
+                           MessagePort* aMessagePort)
+  : DOMEventTargetHelper(aWindow)
+  , mWorkerPrivate(aWorkerPrivate)
+  , mMessagePort(aMessagePort)
+  , mFrozen(false)
 {
   AssertIsOnMainThread();
   MOZ_ASSERT(aWorkerPrivate);
-
-  mSerial = aWorkerPrivate->NextMessagePortSerial();
-
-  mMessagePort = new MessagePort(aWindow, this, mSerial);
+  MOZ_ASSERT(aMessagePort);
 }
 
 SharedWorker::~SharedWorker()
 {
   AssertIsOnMainThread();
-  Close();
-  MOZ_ASSERT(!mWorkerPrivate);
 }
 
 // static
@@ -75,13 +74,11 @@ SharedWorker::Constructor(const GlobalObject& aGlobal, JSContext* aCx,
   return sharedWorker.forget();
 }
 
-already_AddRefed<mozilla::dom::workers::MessagePort>
+MessagePort*
 SharedWorker::Port()
 {
   AssertIsOnMainThread();
-
-  nsRefPtr<MessagePort> messagePort = mMessagePort;
-  return messagePort.forget();
+  return mMessagePort;
 }
 
 void
@@ -139,11 +136,7 @@ SharedWorker::Close()
 
   if (mMessagePort) {
     mMessagePort->Close();
-  }
-
-  if (mWorkerPrivate) {
-    AutoSafeJSContext cx;
-    NoteDeadWorker(cx);
+    mMessagePort = nullptr;
   }
 }
 
@@ -156,18 +149,7 @@ SharedWorker::PostMessage(JSContext* aCx, JS::Handle<JS::Value> aMessage,
   MOZ_ASSERT(mWorkerPrivate);
   MOZ_ASSERT(mMessagePort);
 
-  mWorkerPrivate->PostMessageToMessagePort(aCx, mMessagePort->Serial(),
-                                           aMessage, aTransferable, aRv);
-}
-
-void
-SharedWorker::NoteDeadWorker(JSContext* aCx)
-{
-  AssertIsOnMainThread();
-  MOZ_ASSERT(mWorkerPrivate);
-
-  mWorkerPrivate->UnregisterSharedWorker(aCx, this);
-  mWorkerPrivate = nullptr;
+  mMessagePort->PostMessage(aCx, aMessage, aTransferable, aRv);
 }
 
 NS_IMPL_ADDREF_INHERITED(SharedWorker, DOMEventTargetHelper)
@@ -186,7 +168,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(SharedWorker,
                                                 DOMEventTargetHelper)
-  tmp->Close();
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mMessagePort)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mFrozenEvents)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END

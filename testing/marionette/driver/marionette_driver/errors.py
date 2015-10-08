@@ -3,6 +3,11 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import traceback
+import types
+
+
+class InstallGeckoError(Exception):
+    pass
 
 
 class MarionetteException(Exception):
@@ -48,18 +53,20 @@ class MarionetteException(Exception):
         return "".join(traceback.format_exception(self.__class__, msg, tb))
 
 
-class InstallGeckoError(MarionetteException):
-    pass
+class ElementNotSelectableException(MarionetteException):
+    status = "element not selectable"
 
+
+class InvalidArgumentException(MarionetteException):
+    status = "invalid argument"
+
+
+class InvalidSessionIdException(MarionetteException):
+    status = "invalid session id"
 
 class TimeoutException(MarionetteException):
     code = (21,)
     status = "timeout"
-
-
-class InvalidResponseException(MarionetteException):
-    code = (53,)
-    status = "invalid response"
 
 
 class JavascriptException(MarionetteException):
@@ -70,11 +77,6 @@ class JavascriptException(MarionetteException):
 class NoSuchElementException(MarionetteException):
     code = (7,)
     status = "no such element"
-
-
-class XPathLookupException(MarionetteException):
-    code = (19,)
-    status = "invalid xpath selector"
 
 
 class NoSuchWindowException(MarionetteException):
@@ -148,21 +150,6 @@ class MoveTargetOutOfBoundsException(MarionetteException):
     status = "move target out of bounds"
 
 
-class FrameSendNotInitializedError(MarionetteException):
-    code = (54,)
-    status = "frame send not initialized"
-
-
-class FrameSendFailureError(MarionetteException):
-    code = (55,)
-    status = "frame send failure"
-
-
-class UnsupportedOperationException(MarionetteException):
-    code = (405,)
-    status = "unsupported operation"
-
-
 class SessionNotCreatedException(MarionetteException):
     code = (33, 71)
     status = "session not created"
@@ -172,50 +159,31 @@ class UnexpectedAlertOpen(MarionetteException):
     code = (26,)
     status = "unexpected alert open"
 
-excs = [
-    MarionetteException,
-  TimeoutException,
-  InvalidResponseException,
-  JavascriptException,
-  NoSuchElementException,
-  XPathLookupException,
-  NoSuchWindowException,
-  StaleElementException,
-  ScriptTimeoutException,
-  ElementNotVisibleException,
-  ElementNotAccessibleException,
-  NoSuchFrameException,
-  InvalidElementStateException,
-  NoAlertPresentException,
-  InvalidCookieDomainException,
-  UnableToSetCookieException,
-  InvalidElementCoordinates,
-  InvalidSelectorException,
-  MoveTargetOutOfBoundsException,
-  FrameSendNotInitializedError,
-  FrameSendFailureError,
-  UnsupportedOperationException,
-  SessionNotCreatedException,
-  UnexpectedAlertOpen,
-]
+
+class UnknownCommandException(MarionetteException):
+    code = (9,)
+    status = "unknown command"
+
+
+class UnknownException(MarionetteException):
+    code = (13,)
+    status = "unknown error"
+
+
+class UnsupportedOperationException(MarionetteException):
+    code = (405,)
+    status = "unsupported operation"
+
+
+es_ = [e for e in locals().values() if type(e) == type and issubclass(e, MarionetteException)]
+by_string = {e.status: e for e in es_}
+by_number = {c: e for e in es_ for c in e.code}
 
 
 def lookup(identifier):
     """Finds error exception class by associated Selenium JSON wire
     protocol number code, or W3C WebDriver protocol string."""
-
-    by_code = lambda exc: identifier in exc.code
-    by_status = lambda exc: exc.status == identifier
-
-    rv = None
+    lookup = by_string
     if isinstance(identifier, int):
-        rv = filter(by_code, excs)
-    elif isinstance(identifier, str):
-        rv = filter(by_status, excs)
-
-    if not rv:
-        return MarionetteException
-    return rv[0]
-
-
-__all__ = excs + ["lookup"]
+        lookup = by_number
+    return lookup.get(identifier, MarionetteException)

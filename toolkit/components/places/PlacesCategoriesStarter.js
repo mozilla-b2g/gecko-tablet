@@ -11,7 +11,7 @@ const Cc = Components.classes;
 const Ci = Components.interfaces;
 const Cu = Components.utils;
 
-// Fired by TelemetryPing when async telemetry data should be collected.
+// Fired by TelemetryController when async telemetry data should be collected.
 const TOPIC_GATHER_TELEMETRY = "gather-telemetry";
 
 // Seconds between maintenance runs.
@@ -111,5 +111,5 @@ PlacesCategoriesStarter.prototype = {
 ////////////////////////////////////////////////////////////////////////////////
 //// Module Registration
 
-let components = [PlacesCategoriesStarter];
+var components = [PlacesCategoriesStarter];
 this.NSGetFactory = XPCOMUtils.generateNSGetFactory(components);

@@ -291,18 +291,7 @@ void
 nsXPCWrappedJS::TraceJS(JSTracer* trc)
 {
     MOZ_ASSERT(mRefCnt >= 2 && IsValid(), "must be strongly referenced");
-    trc->setTracingDetails(GetTraceName, this, 0);
     JS_CallObjectTracer(trc, &mJSObj, "nsXPCWrappedJS::mJSObj");
-}
-
-// static
-void
-nsXPCWrappedJS::GetTraceName(JSTracer* trc, char* buf, size_t bufsize)
-{
-    const nsXPCWrappedJS* self = static_cast<const nsXPCWrappedJS*>
-                                            (trc->debugPrintArg());
-    JS_snprintf(buf, bufsize, "nsXPCWrappedJS[%s,0x%p:0x%p].mJSObj",
-                self->GetClass()->GetInterfaceName(), self, self->mXPTCStub);
 }
 
 NS_IMETHODIMP
@@ -590,7 +579,6 @@ nsXPCWrappedJS::SizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const
 
 /***************************************************************************/
 
-/* readonly attribute nsISimpleEnumerator enumerator; */
 NS_IMETHODIMP
 nsXPCWrappedJS::GetEnumerator(nsISimpleEnumerator * *aEnumerate)
 {
@@ -603,7 +591,6 @@ nsXPCWrappedJS::GetEnumerator(nsISimpleEnumerator * *aEnumerate)
                                                         aEnumerate);
 }
 
-/* nsIVariant getProperty (in AString name); */
 NS_IMETHODIMP
 nsXPCWrappedJS::GetProperty(const nsAString & name, nsIVariant** _retval)
 {
@@ -635,7 +622,7 @@ nsXPCWrappedJS::DebugDump(int16_t depth)
         char * iid = GetClass()->GetIID().ToString();
         XPC_LOG_ALWAYS(("IID number is %s", iid ? iid : "invalid"));
         if (iid)
-            NS_Free(iid);
+            free(iid);
         XPC_LOG_ALWAYS(("nsXPCWrappedJSClass @ %x", mClass.get()));
 
         if (!IsRootWrapper())

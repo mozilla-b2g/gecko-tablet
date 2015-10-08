@@ -9,14 +9,18 @@
 #include "mozilla/Attributes.h"
 #include "gmp-entrypoints.h"
 #include "prlink.h"
+#include "prenv.h"
+#include "nsAutoPtr.h"
 
 #include <string>
 
-#if defined(XP_WIN) && defined(MOZ_SANDBOX)
-#include "mozilla/Scoped.h"
+#ifdef XP_WIN
 #include "windows.h"
+#ifdef MOZ_SANDBOX
+#include "mozilla/Scoped.h"
 #include <intrin.h>
 #include <assert.h>
+#endif
 #endif
 
 #if defined(HASH_NODE_ID_WITH_DEVICE_ID)
@@ -55,7 +59,7 @@ struct ScopedActCtxHandleTraits
 };
 typedef mozilla::Scoped<ScopedActCtxHandleTraits> ScopedActCtxHandle;
 
-} // anonymous namespace
+} // namespace
 #endif
 
 namespace mozilla {
@@ -68,8 +72,8 @@ public:
   {}
   virtual ~GMPLoaderImpl() {}
 
-  virtual bool Load(const char* aLibPath,
-                    uint32_t aLibPathLen,
+  virtual bool Load(const char* aUTF8LibPath,
+                    uint32_t aUTF8LibPathLen,
                     char* aOriginSalt,
                     uint32_t aOriginSaltLen,
                     const GMPPlatformAPI* aPlatformAPI) override;
@@ -80,7 +84,7 @@ public:
 
   virtual void Shutdown() override;
 
-#if defined(XP_MACOSX)
+#if defined(XP_MACOSX) && defined(MOZ_GMP_SANDBOX)
   virtual void SetSandboxInfo(MacSandboxInfo* aSandboxInfo) override;
 #endif
 
@@ -131,9 +135,25 @@ GetStackAfterCurrentFrame(uint8_t** aOutTop, uint8_t** aOutBottom)
 }
 #endif
 
+#ifdef HASH_NODE_ID_WITH_DEVICE_ID
+static void SecureMemset(void* start, uint8_t value, size_t size)
+{
+  // Inline instructions equivalent to RtlSecureZeroMemory().
+  for (size_t i = 0; i < size; ++i) {
+    volatile uint8_t* p = static_cast<volatile uint8_t*>(start) + i;
+    *p = value;
+  }
+}
+#endif
+
+// The RAII variable holding the activation context that we create before
+// lowering the sandbox is getting optimized out.
+#if defined(_MSC_VER)
+#pragma optimize("g", off)
+#endif
 bool
-GMPLoaderImpl::Load(const char* aLibPath,
-                    uint32_t aLibPathLen,
+GMPLoaderImpl::Load(const char* aUTF8LibPath,
+                    uint32_t aUTF8LibPathLen,
                     char* aOriginSalt,
                     uint32_t aOriginSaltLen,
                     const GMPPlatformAPI* aPlatformAPI)
@@ -159,31 +179,34 @@ GMPLoaderImpl::Load(const char* aLibPath,
     // Overwrite all data involved in calculation as it could potentially
     // identify the user, so there's no chance a GMP can read it and use
     // it for identity tracking.
-    memset(&ctx, 0, sizeof(ctx));
-    memset(aOriginSalt, 0, aOriginSaltLen);
-    volumeId = 0;
-    memset(&deviceId[0], '*', sizeof(string16::value_type) * deviceId.size());
+    SecureMemset(&ctx, 0, sizeof(ctx));
+    SecureMemset(aOriginSalt, 0, aOriginSaltLen);
+    SecureMemset(&volumeId, 0, sizeof(volumeId));
+    SecureMemset(&deviceId[0], '*', sizeof(string16::value_type) * deviceId.size());
     deviceId = L"";
 
     if (!rlz_lib::BytesToString(digest, SHA256_LENGTH, &nodeId)) {
       return false;
     }
-    // We've successfully bound the origin salt to node id.
-    // rlz_lib::GetRawMachineId and/or the system functions it
-    // called could have left user identifiable data on the stack,
-    // so carefully zero the stack down to the guard page.
-    uint8_t* top;
-    uint8_t* bottom;
-    if (!GetStackAfterCurrentFrame(&top, &bottom)) {
-      return false;
-    }
-    assert(top >= bottom);
-    // Inline instructions equivalent to RtlSecureZeroMemory().
-    // We can't just use RtlSecureZeroMemory here directly, as in debug
-    // builds, RtlSecureZeroMemory() can't be inlined, and the stack
-    // memory it uses would get wiped by itself running, causing crashes.
-    for (volatile uint8_t* p = (volatile uint8_t*)bottom; p < top; p++) {
-      *p = 0;
+
+    if (!PR_GetEnv("MOZ_GMP_DISABLE_NODE_ID_CLEANUP")) {
+      // We've successfully bound the origin salt to node id.
+      // rlz_lib::GetRawMachineId and/or the system functions it
+      // called could have left user identifiable data on the stack,
+      // so carefully zero the stack down to the guard page.
+      uint8_t* top;
+      uint8_t* bottom;
+      if (!GetStackAfterCurrentFrame(&top, &bottom)) {
+        return false;
+      }
+      assert(top >= bottom);
+      // Inline instructions equivalent to RtlSecureZeroMemory().
+      // We can't just use RtlSecureZeroMemory here directly, as in debug
+      // builds, RtlSecureZeroMemory() can't be inlined, and the stack
+      // memory it uses would get wiped by itself running, causing crashes.
+      for (volatile uint8_t* p = (volatile uint8_t*)bottom; p < top; p++) {
+        *p = 0;
+      }
     }
   } else
 #endif
@@ -191,41 +214,46 @@ GMPLoaderImpl::Load(const char* aLibPath,
     nodeId = std::string(aOriginSalt, aOriginSalt + aOriginSaltLen);
   }
 
-#if defined(XP_WIN) && defined(MOZ_SANDBOX)
-  // If the GMP DLL is a side-by-side assembly with static imports then the DLL
-  // loader will attempt to create an activation context which will fail because
-  // of the sandbox. If we create an activation context before we start the
-  // sandbox then this one will get picked up by the DLL loader.
-  int pathLen = MultiByteToWideChar(CP_ACP, 0, aLibPath, -1, nullptr, 0);
+#ifdef XP_WIN
+  int pathLen = MultiByteToWideChar(CP_UTF8, 0, aUTF8LibPath, -1, nullptr, 0);
   if (pathLen == 0) {
     return false;
   }
 
-  wchar_t* widePath = new wchar_t[pathLen];
-  if (MultiByteToWideChar(CP_ACP, 0, aLibPath, -1, widePath, pathLen) == 0) {
-    delete[] widePath;
+  nsAutoArrayPtr<wchar_t> widePath(new wchar_t[pathLen]);
+  if (MultiByteToWideChar(CP_UTF8, 0, aUTF8LibPath, -1, widePath, pathLen) == 0) {
     return false;
   }
 
+#ifdef MOZ_SANDBOX
+  // If the GMP DLL is a side-by-side assembly with static imports then the DLL
+  // loader will attempt to create an activation context which will fail because
+  // of the sandbox. If we create an activation context before we start the
+  // sandbox then this one will get picked up by the DLL loader.
   ACTCTX actCtx = { sizeof(actCtx) };
   actCtx.dwFlags = ACTCTX_FLAG_RESOURCE_NAME_VALID;
   actCtx.lpSource = widePath;
   actCtx.lpResourceName = ISOLATIONAWARE_MANIFEST_RESOURCE_ID;
   ScopedActCtxHandle actCtxHandle(CreateActCtx(&actCtx));
-  delete[] widePath;
+#endif
 #endif
 
   // Start the sandbox now that we've generated the device bound node id.
   // This must happen after the node id is bound to the device id, as
   // generating the device id requires privileges.
-  if (mSandboxStarter && !mSandboxStarter->Start(aLibPath)) {
+  if (mSandboxStarter && !mSandboxStarter->Start(aUTF8LibPath)) {
     return false;
   }
 
   // Load the GMP.
   PRLibSpec libSpec;
-  libSpec.value.pathname = aLibPath;
+#ifdef XP_WIN
+  libSpec.value.pathname_u = widePath;
+  libSpec.type = PR_LibSpec_PathnameU;
+#else
+  libSpec.value.pathname = aUTF8LibPath;
   libSpec.type = PR_LibSpec_Pathname;
+#endif
   mLib = PR_LoadLibraryWithFlags(libSpec, 0);
   if (!mLib) {
     return false;
@@ -252,6 +280,9 @@ GMPLoaderImpl::Load(const char* aLibPath,
 
   return true;
 }
+#if defined(_MSC_VER)
+#pragma optimize("", on)
+#endif
 
 GMPErr
 GMPLoaderImpl::GetAPI(const char* aAPIName,
@@ -275,7 +306,7 @@ GMPLoaderImpl::Shutdown()
   }
 }
 
-#if defined(XP_MACOSX)
+#if defined(XP_MACOSX) && defined(MOZ_GMP_SANDBOX)
 void
 GMPLoaderImpl::SetSandboxInfo(MacSandboxInfo* aSandboxInfo)
 {

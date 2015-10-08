@@ -14,7 +14,6 @@
 #include "nsITimer.h"
 #include "nsIDOMEventListener.h"
 
-class nsString;
 class nsITimer;
 class nsSliderFrame;
 
@@ -101,6 +100,8 @@ public:
   nsresult StartDrag(nsIDOMEvent* aEvent);
   nsresult StopDrag();
 
+  bool StartAPZDrag(mozilla::WidgetGUIEvent* aEvent);
+
   static int32_t GetCurrentPosition(nsIContent* content);
   static int32_t GetMinPosition(nsIContent* content);
   static int32_t GetMaxPosition(nsIContent* content);
@@ -131,6 +132,10 @@ public:
   NS_IMETHOD HandleRelease(nsPresContext* aPresContext,
                            mozilla::WidgetGUIEvent* aEvent,
                            nsEventStatus* aEventStatus) override;
+
+  // Return the ratio the scrollbar thumb should move in proportion to the
+  // scrolled frame.
+  float GetThumbRatio() const;
 
 private:
 

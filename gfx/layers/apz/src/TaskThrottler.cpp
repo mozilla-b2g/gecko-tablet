@@ -6,30 +6,64 @@
 
 #include "TaskThrottler.h"
 
+#include "mozilla/layers/APZThreadUtils.h"  // for NewTimerCallback
+#include "nsComponentManagerUtils.h"        // for do_CreateInstance
+#include "nsITimer.h"
+
+#define TASK_LOG(...)
+// #define TASK_LOG(...) printf_stderr("TASK: " __VA_ARGS__)
+
 namespace mozilla {
 namespace layers {
 
 TaskThrottler::TaskThrottler(const TimeStamp& aTimeStamp, const TimeDuration& aMaxWait)
-  : mOutstanding(false)
+  : mMonitor("TaskThrottler")
+  , mOutstanding(false)
   , mQueuedTask(nullptr)
   , mStartTime(aTimeStamp)
   , mMaxWait(aMaxWait)
   , mMean(1)
-{ }
+  , mTimer(do_CreateInstance(NS_TIMER_CONTRACTID))
+{
+  // The TaskThrottler must be created on the main thread (or some nsITimer-
+  // compatible thread) for the nsITimer to work properly. In particular,
+  // creating it on the Compositor thread doesn't work.
+  MOZ_ASSERT(NS_IsMainThread());
+}
+
+TaskThrottler::~TaskThrottler()
+{
+  mTimer->Cancel();
+}
 
 void
 TaskThrottler::PostTask(const tracked_objects::Location& aLocation,
                         UniquePtr<CancelableTask> aTask, const TimeStamp& aTimeStamp)
 {
+  MonitorAutoLock lock(mMonitor);
+
+  TASK_LOG("%p got a task posted; mOutstanding=%d\n", this, mOutstanding);
   aTask->SetBirthPlace(aLocation);
 
   if (mOutstanding) {
-    if (mQueuedTask) {
-      mQueuedTask->Cancel();
-      mQueuedTask = nullptr;
-    }
-    if (TimeSinceLastRequest(aTimeStamp) < mMaxWait) {
+    CancelPendingTask(lock);
+    if (TimeSinceLastRequest(aTimeStamp, lock) < mMaxWait) {
       mQueuedTask = Move(aTask);
+      TASK_LOG("%p queued task %p\n", this, mQueuedTask.get());
+      // Make sure the queued task is sent after mMaxWait time elapses,
+      // even if we don't get a TaskComplete() until then.
+      TimeDuration timeout = mMaxWait - TimeSinceLastRequest(aTimeStamp, lock);
+      TimeStamp timeoutTime = mStartTime + mMaxWait;
+      nsRefPtr<TaskThrottler> refPtrThis = this;
+      mTimer->InitWithCallback(NewTimerCallback(
+          [refPtrThis, timeoutTime]()
+          {
+            MonitorAutoLock lock(refPtrThis->mMonitor);
+            if (refPtrThis->mQueuedTask) {
+              refPtrThis->RunQueuedTask(timeoutTime, lock);
+            }
+          }),
+          timeout.ToMilliseconds(), nsITimer::TYPE_ONE_SHOT);
       return;
     }
     // we've been waiting for more than the max-wait limit, so just fall through
@@ -44,6 +78,8 @@ TaskThrottler::PostTask(const tracked_objects::Location& aLocation,
 void
 TaskThrottler::TaskComplete(const TimeStamp& aTimeStamp)
 {
+  MonitorAutoLock lock(mMonitor);
+
   if (!mOutstanding) {
     return;
   }
@@ -51,28 +87,80 @@ TaskThrottler::TaskComplete(const TimeStamp& aTimeStamp)
   mMean.insert(aTimeStamp - mStartTime);
 
   if (mQueuedTask) {
-    mStartTime = aTimeStamp;
-    mQueuedTask->Run();
-    mQueuedTask = nullptr;
+    RunQueuedTask(aTimeStamp, lock);
+    mTimer->Cancel();
   } else {
     mOutstanding = false;
   }
 }
 
+TimeDuration
+TaskThrottler::AverageDuration()
+{
+  MonitorAutoLock lock(mMonitor);
+
+  return mMean.empty() ? TimeDuration() : mMean.mean();
+}
+
+void
+TaskThrottler::RunQueuedTask(const TimeStamp& aTimeStamp,
+                             const MonitorAutoLock& aProofOfLock)
+{
+  TASK_LOG("%p running task %p\n", this, mQueuedTask.get());
+  mStartTime = aTimeStamp;
+  mQueuedTask->Run();
+  mQueuedTask = nullptr;
+}
+
 void
 TaskThrottler::CancelPendingTask()
 {
+  MonitorAutoLock lock(mMonitor);
+  CancelPendingTask(lock);
+}
+
+void
+TaskThrottler::CancelPendingTask(const MonitorAutoLock& aProofOfLock)
+{
   if (mQueuedTask) {
+    TASK_LOG("%p cancelling task %p\n", this, mQueuedTask.get());
     mQueuedTask->Cancel();
     mQueuedTask = nullptr;
+    mTimer->Cancel();
   }
 }
 
 TimeDuration
 TaskThrottler::TimeSinceLastRequest(const TimeStamp& aTimeStamp)
 {
+  MonitorAutoLock lock(mMonitor);
+  return TimeSinceLastRequest(aTimeStamp, lock);
+}
+
+TimeDuration
+TaskThrottler::TimeSinceLastRequest(const TimeStamp& aTimeStamp,
+                                    const MonitorAutoLock& aProofOfLock)
+{
   return aTimeStamp - mStartTime;
 }
 
+void
+TaskThrottler::ClearHistory()
+{
+  MonitorAutoLock lock(mMonitor);
+
+  mMean.clear();
 }
+
+void
+TaskThrottler::SetMaxDurations(uint32_t aMaxDurations)
+{
+  MonitorAutoLock lock(mMonitor);
+
+  if (aMaxDurations != mMean.maxValues()) {
+    mMean = RollingMean<TimeDuration, TimeDuration>(aMaxDurations);
+  }
 }
+
+} // namespace layers
+} // namespace mozilla

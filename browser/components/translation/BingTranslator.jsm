@@ -135,8 +135,8 @@ this.BingTranslator.prototype = {
     if (aError instanceof Ci.nsIXMLHttpRequest &&
         [400, 401].indexOf(aError.status) != -1) {
       let body = aError.responseText;
-      if (body && body.contains("TranslateApiException") &&
-          (body.contains("balance") || body.contains("active state")))
+      if (body && body.includes("TranslateApiException") &&
+          (body.includes("balance") || body.includes("active state")))
         this._serviceUnavailable = true;
     }
 
@@ -345,7 +345,7 @@ BingRequest.prototype = {
 /**
  * Authentication Token manager for the API
  */
-let BingTokenManager = {
+var BingTokenManager = {
   _currentToken: null,
   _currentExpiryTime: 0,
   _pendingRequest: null,

@@ -316,10 +316,10 @@ SpdyStream31::ParseHttpRequestHeaders(const char *buf,
   // check the push cache for GET
   if (mTransaction->RequestHead()->IsGet()) {
     // from :scheme, :host, :path
-    nsILoadGroupConnectionInfo *loadGroupCI = mTransaction->LoadGroupConnectionInfo();
+    nsISchedulingContext *schedulingContext = mTransaction->SchedulingContext();
     SpdyPushCache *cache = nullptr;
-    if (loadGroupCI)
-      loadGroupCI->GetSpdyPushCache(&cache);
+    if (schedulingContext)
+      schedulingContext->GetSpdyPushCache(&cache);
 
     SpdyPushedStream31 *pushedStream = nullptr;
     // we remove the pushedstream from the push cache so that
@@ -521,9 +521,9 @@ SpdyStream31::GenerateSynFrame()
       return NS_ERROR_UNEXPECTED;
     }
     nsAutoCString route;
-    route = ci->GetHost();
+    route = ci->GetOrigin();
     route.Append(':');
-    route.AppendInt(ci->Port());
+    route.AppendInt(ci->OriginPort());
     CompressToFrame(route);
   }
 
@@ -1647,5 +1647,5 @@ SpdyStream31::MapStreamToHttpConnection()
                                      mTransaction->ConnectionInfo());
 }
 
-} // namespace mozilla::net
+} // namespace net
 } // namespace mozilla

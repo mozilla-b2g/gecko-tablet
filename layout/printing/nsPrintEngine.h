@@ -25,13 +25,11 @@
 // Classes
 class nsPagePrintTimer;
 class nsIDocShell;
-class nsDeviceContext;
 class nsIDocument;
 class nsIDocumentViewerPrint;
 class nsPrintObject;
 class nsIDocShell;
 class nsIPageSequenceFrame;
-class nsIWeakReference;
 
 //------------------------------------------------------------------------
 // nsPrintEngine Class
@@ -139,6 +137,7 @@ public:
 
   bool IsThereARangeSelection(nsIDOMWindow * aDOMWin);
 
+  void FirePrintingErrorEvent(nsresult aPrintError);
   //---------------------------------------------------------------------
 
 
@@ -167,8 +166,6 @@ public:
                              nsAString&       aTitle,
                              nsAString&       aURLStr,
                              eDocTitleDefault aDefType);
-  static void ShowPrintErrorDialog(nsresult printerror,
-                                   bool aIsPrinting = true);
 
   static bool HasFramesetChild(nsIContent* aContent);
 

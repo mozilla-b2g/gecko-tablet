@@ -10,6 +10,7 @@
 #include "mozilla/ipc/MessageChannel.h"
 #include "mozilla/ipc/ProtocolUtils.h"
 #include "mozilla/ipc/Transport.h"
+#include "mozilla/StaticMutex.h"
 
 #if defined(MOZ_SANDBOX) && defined(XP_WIN)
 #define TARGET_SANDBOX_EXPORTS
@@ -25,56 +26,48 @@ using base::ProcessId;
 namespace mozilla {
 namespace ipc {
 
-static Atomic<size_t> gNumProtocols;
-static StaticAutoPtr<Mutex> gProtocolMutex;
+ProtocolCloneContext::ProtocolCloneContext()
+  : mNeckoParent(nullptr)
+{}
+
+ProtocolCloneContext::~ProtocolCloneContext()
+{}
+
+void ProtocolCloneContext::SetContentParent(ContentParent* aContentParent)
+{
+  mContentParent = aContentParent;
+}
+
+static StaticMutex gProtocolMutex;
 
 IToplevelProtocol::IToplevelProtocol(ProtocolId aProtoId)
  : mOpener(nullptr)
  , mProtocolId(aProtoId)
  , mTrans(nullptr)
 {
-  size_t old = gNumProtocols++;
-
-  if (!old) {
-    // We assume that two threads never race to create the first protocol. This
-    // assertion is sufficient to ensure that.
-    MOZ_ASSERT(NS_IsMainThread());
-    gProtocolMutex = new Mutex("ITopLevelProtocol::ProtocolMutex");
-  }
 }
 
 IToplevelProtocol::~IToplevelProtocol()
 {
-  bool last = false;
+  StaticMutexAutoLock al(gProtocolMutex);
 
-  {
-    MutexAutoLock al(*gProtocolMutex);
-
-    for (IToplevelProtocol* actor = mOpenActors.getFirst();
-         actor;
-         actor = actor->getNext()) {
-      actor->mOpener = nullptr;
-    }
-
-    mOpenActors.clear();
-
-    if (mOpener) {
-      removeFrom(mOpener->mOpenActors);
-    }
-
-    gNumProtocols--;
-    last = gNumProtocols == 0;
+  for (IToplevelProtocol* actor = mOpenActors.getFirst();
+       actor;
+       actor = actor->getNext()) {
+    actor->mOpener = nullptr;
   }
 
-  if (last) {
-    gProtocolMutex = nullptr;
+  mOpenActors.clear();
+
+  if (mOpener) {
+      removeFrom(mOpener->mOpenActors);
   }
 }
 
 void
 IToplevelProtocol::AddOpenedActorLocked(IToplevelProtocol* aActor)
 {
-  gProtocolMutex->AssertCurrentThreadOwns();
+  gProtocolMutex.AssertCurrentThreadOwns();
 
 #ifdef DEBUG
   for (const IToplevelProtocol* actor = mOpenActors.getFirst();
@@ -92,14 +85,14 @@ IToplevelProtocol::AddOpenedActorLocked(IToplevelProtocol* aActor)
 void
 IToplevelProtocol::AddOpenedActor(IToplevelProtocol* aActor)
 {
-  MutexAutoLock al(*gProtocolMutex);
+  StaticMutexAutoLock al(gProtocolMutex);
   AddOpenedActorLocked(aActor);
 }
 
 void
 IToplevelProtocol::GetOpenedActorsLocked(nsTArray<IToplevelProtocol*>& aActors)
 {
-  gProtocolMutex->AssertCurrentThreadOwns();
+  gProtocolMutex.AssertCurrentThreadOwns();
 
   for (IToplevelProtocol* actor = mOpenActors.getFirst();
        actor;
@@ -111,7 +104,7 @@ IToplevelProtocol::GetOpenedActorsLocked(nsTArray<IToplevelProtocol*>& aActors)
 void
 IToplevelProtocol::GetOpenedActors(nsTArray<IToplevelProtocol*>& aActors)
 {
-  MutexAutoLock al(*gProtocolMutex);
+  StaticMutexAutoLock al(gProtocolMutex);
   GetOpenedActorsLocked(aActors);
 }
 
@@ -143,7 +136,7 @@ IToplevelProtocol::CloneOpenedToplevels(IToplevelProtocol* aTemplate,
                                         base::ProcessHandle aPeerProcess,
                                         ProtocolCloneContext* aCtx)
 {
-  MutexAutoLock al(*gProtocolMutex);
+  StaticMutexAutoLock al(gProtocolMutex);
 
   nsTArray<IToplevelProtocol*> actors;
   aTemplate->GetOpenedActorsLocked(actors);
@@ -186,34 +179,41 @@ public:
   }
 };
 
-bool
+nsresult
 Bridge(const PrivateIPDLInterface&,
        MessageChannel* aParentChannel, ProcessId aParentPid,
        MessageChannel* aChildChannel, ProcessId aChildPid,
        ProtocolId aProtocol, ProtocolId aChildProtocol)
 {
   if (!aParentPid || !aChildPid) {
-    return false;
+    return NS_ERROR_INVALID_ARG;
   }
 
   TransportDescriptor parentSide, childSide;
-  if (!CreateTransport(aParentPid, &parentSide, &childSide)) {
-    return false;
+  nsresult rv;
+  if (NS_FAILED(rv = CreateTransport(aParentPid, &parentSide, &childSide))) {
+    return rv;
   }
 
   if (!aParentChannel->Send(new ChannelOpened(parentSide,
                                               aChildPid,
                                               aProtocol,
-                                              IPC::Message::PRIORITY_URGENT)) ||
-      !aChildChannel->Send(new ChannelOpened(childSide,
-                                             aParentPid,
-                                             aChildProtocol,
-                                             IPC::Message::PRIORITY_URGENT))) {
+                                              IPC::Message::PRIORITY_URGENT))) {
     CloseDescriptor(parentSide);
     CloseDescriptor(childSide);
-    return false;
+    return NS_ERROR_BRIDGE_OPEN_PARENT;
   }
-  return true;
+
+  if (!aChildChannel->Send(new ChannelOpened(childSide,
+                                            aParentPid,
+                                            aChildProtocol,
+                                            IPC::Message::PRIORITY_URGENT))) {
+    CloseDescriptor(parentSide);
+    CloseDescriptor(childSide);
+    return NS_ERROR_BRIDGE_OPEN_CHILD;
+  }
+
+  return NS_OK;
 }
 
 bool
@@ -231,7 +231,7 @@ Open(const PrivateIPDLInterface&,
   }
 
   TransportDescriptor parentSide, childSide;
-  if (!CreateTransport(parentId, &parentSide, &childSide)) {
+  if (NS_FAILED(CreateTransport(parentId, &parentSide, &childSide))) {
     return false;
   }
 
@@ -315,20 +315,18 @@ FatalError(const char* aProtocolName, const char* aMsg,
   formattedMessage.AppendLiteral("]: \"");
   formattedMessage.AppendASCII(aMsg);
   if (aIsParent) {
-    formattedMessage.AppendLiteral("\". Killing child side as a result.");
+#ifdef MOZ_CRASHREPORTER
+    // We're going to crash the parent process because at this time
+    // there's no other really nice way of getting a minidump out of
+    // this process if we're off the main thread.
+    formattedMessage.AppendLiteral("\". Intentionally crashing.");
     NS_ERROR(formattedMessage.get());
-
-    if (aOtherPid != kInvalidProcessId && aOtherPid != base::GetCurrentProcId()) {
-      ScopedProcessHandle otherProcessHandle;
-      if (base::OpenProcessHandle(aOtherPid, &otherProcessHandle.rwget())) {
-        if (!base::KillProcess(otherProcessHandle,
-                               base::PROCESS_END_KILLED_BY_USER, false)) {
-          NS_ERROR("May have failed to kill child!");
-        }
-      } else {
-        NS_ERROR("Failed to open child process when attempting kill.");
-      }
-    }
+    CrashReporter::AnnotateCrashReport(NS_LITERAL_CSTRING("IPCFatalErrorProtocol"),
+                                       nsDependentCString(aProtocolName));
+    CrashReporter::AnnotateCrashReport(NS_LITERAL_CSTRING("IPCFatalErrorMsg"),
+                                       nsDependentCString(aMsg));
+#endif
+    MOZ_CRASH("IPC FatalError in the parent process!");
   } else {
     formattedMessage.AppendLiteral("\". abort()ing as a result.");
     NS_RUNTIMEABORT(formattedMessage.get());

@@ -15,15 +15,14 @@
 #include "nsString.h"
 #include "nsTArray.h"
 #include "nsRefPtrHashtable.h"
+#include "nsRect.h"
 
 struct nsRoleMapEntry;
 
 struct nsRect;
 class nsIFrame;
 class nsIAtom;
-struct nsIntRect;
 class nsIPersistentProperties;
-class nsView;
 
 namespace mozilla {
 namespace a11y {
@@ -39,7 +38,7 @@ class HTMLLIAccessible;
 class HyperTextAccessible;
 class ImageAccessible;
 class KeyBinding;
-class MathMLAccessible;
+class OuterDocAccessible;
 class ProxyAccessible;
 class Relation;
 class RootAccessible;
@@ -83,6 +82,8 @@ enum ENameValueFlag {
 struct GroupPos
 {
   GroupPos() : level(0), posInSet(0), setSize(0) { }
+  GroupPos(int32_t aLevel, int32_t aPosInSet, int32_t aSetSize) :
+    level(aLevel), posInSet(aPosInSet), setSize(aSetSize) { }
 
   int32_t level;
   int32_t posInSet;
@@ -159,6 +160,8 @@ public:
     return DOMNode.forget();
   }
   nsIContent* GetContent() const { return mContent; }
+  mozilla::dom::Element* Elm() const
+    { return mContent && mContent->IsElement() ? mContent->AsElement() : nullptr; }
 
   /**
    * Return node type information of DOM node associated with the accessible.
@@ -621,6 +624,9 @@ public:
     return mBits.proxy;
   }
 
+  bool IsOuterDoc() const { return mType == eOuterDocType; }
+  OuterDocAccessible* AsOuterDoc();
+
   bool IsProgress() const { return mType == eProgressType; }
 
   bool IsRoot() const { return mType == eRootType; }
@@ -896,6 +902,19 @@ public:
   }
 
   /**
+   * Get/set repositioned bit indicating that the accessible was moved in
+   * the accessible tree, i.e. the accessible tree structure differs from DOM.
+   */
+  bool IsRepositioned() const { return mStateFlags & eRepositioned; }
+  void SetRepositioned(bool aRepositioned)
+  {
+    if (aRepositioned)
+      mStateFlags |= eRepositioned;
+    else
+      mStateFlags &= ~eRepositioned;
+  }
+
+  /**
    * Return true if this accessible has a parent whose name depends on this
    * accessible.
    */
@@ -910,7 +929,6 @@ public:
   void SetARIAHidden(bool aIsDefined);
 
 protected:
-
   virtual ~Accessible();
 
   /**
@@ -941,8 +959,8 @@ protected:
   /**
    * Set accessible parent and index in parent.
    */
-  virtual void BindToParent(Accessible* aParent, uint32_t aIndexInParent);
-  virtual void UnbindFromParent();
+  void BindToParent(Accessible* aParent, uint32_t aIndexInParent);
+  void UnbindFromParent();
 
   /**
    * Return sibling accessible at the given offset.
@@ -986,8 +1004,9 @@ protected:
     eSubtreeMutating = 1 << 6, // subtree is being mutated
     eIgnoreDOMUIEvent = 1 << 7, // don't process DOM UI events for a11y events
     eSurvivingInUpdate = 1 << 8, // parent drops children to recollect them
+    eRepositioned = 1 << 9, // accessible was moved in tree
 
-    eLastStateFlag = eSurvivingInUpdate
+    eLastStateFlag = eRepositioned
   };
 
   /**
@@ -1102,7 +1121,7 @@ protected:
   int32_t mIndexInParent;
 
   static const uint8_t kChildrenFlagsBits = 2;
-  static const uint8_t kStateFlagsBits = 9;
+  static const uint8_t kStateFlagsBits = 10;
   static const uint8_t kContextFlagsBits = 2;
   static const uint8_t kTypeBits = 6;
   static const uint8_t kGenericTypesBits = 14;

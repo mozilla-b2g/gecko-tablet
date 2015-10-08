@@ -148,7 +148,7 @@ function activateSecondaryAction(aAction) {
 
   // One down event to open the popup
   EventUtils.synthesizeKey("VK_DOWN",
-                           { altKey: !navigator.platform.contains("Mac") });
+                           { altKey: !navigator.platform.includes("Mac") });
 }
 
 registerCleanupFunction(function() {
@@ -221,9 +221,7 @@ function getFrameGlobal(aFrameId) {
   return content.wrappedJSObject.document.getElementById(aFrameId).contentWindow;
 }
 
-const permissionError = "error: PermissionDeniedError: The user did not grant permission for the operation.";
-
-let gTests = [
+var gTests = [
 
 {
   desc: "getUserMedia audio+video",
@@ -241,6 +239,7 @@ let gTests = [
     is(PopupNotifications.panel.firstChild.getAttribute("popupid"),
        "webRTC-shareDevices", "panel using devices icon");
 
+    let indicator = promiseIndicatorWindow();
     yield promiseMessage("ok", () => {
       PopupNotifications.panel.firstChild.button.click();
     });
@@ -249,6 +248,7 @@ let gTests = [
     is(getMediaCaptureState(), "CameraAndMicrophone",
        "expected camera and microphone to be shared");
 
+    yield indicator;
     yield checkSharingUI({audio: true, video: true});
     yield closeStream(global);
   }
@@ -265,15 +265,24 @@ let gTests = [
     expectObserverCalled("getUserMedia:request");
     checkDeviceSelectors(true, true);
 
+    let indicator = promiseIndicatorWindow();
     yield promiseMessage("ok", () => {
-      PopupNotifications.panel.firstChild.button.click();
+      activateSecondaryAction(kActionAlways);
     });
     expectObserverCalled("getUserMedia:response:allow");
     expectObserverCalled("recording-device-events");
     is(getMediaCaptureState(), "CameraAndMicrophone",
        "expected camera and microphone to be shared");
 
+    yield indicator;
     yield checkSharingUI({video: true, audio: true});
+
+    let Perms = Services.perms;
+    let uri = Services.io.newURI("https://example.com/", null, null);
+    is(Perms.testExactPermission(uri, "microphone"), Perms.ALLOW_ACTION,
+                                 "microphone persistently allowed");
+    is(Perms.testExactPermission(uri, "camera"), Perms.ALLOW_ACTION,
+                                 "camera persistently allowed");
 
     yield promiseNotificationShown(PopupNotifications.getNotification("webRTC-sharingDevices"));
     activateSecondaryAction(kActionDeny);
@@ -292,6 +301,12 @@ let gTests = [
     expectNoObserverCalled();
     yield checkNotSharing();
 
+    // The persistent permissions for the frame should have been removed.
+    is(Perms.testExactPermission(uri, "microphone"), Perms.UNKNOWN_ACTION,
+                                 "microphone not persistently allowed");
+    is(Perms.testExactPermission(uri, "camera"), Perms.UNKNOWN_ACTION,
+                                 "camera not persistently allowed");
+
     // the stream is already closed, but this will do some cleanup anyway
     yield closeStream(global, true);
   }
@@ -308,6 +323,7 @@ let gTests = [
     expectObserverCalled("getUserMedia:request");
     checkDeviceSelectors(true, true);
 
+    let indicator = promiseIndicatorWindow();
     yield promiseMessage("ok", () => {
       PopupNotifications.panel.firstChild.button.click();
     });
@@ -316,6 +332,7 @@ let gTests = [
     is(getMediaCaptureState(), "CameraAndMicrophone",
        "expected camera and microphone to be shared");
 
+    yield indicator;
     yield checkSharingUI({video: true, audio: true});
 
     info("reloading the frame");
@@ -370,6 +387,7 @@ let gTests = [
     expectObserverCalled("getUserMedia:request");
     checkDeviceSelectors(true, false);
 
+    let indicator = promiseIndicatorWindow();
     yield promiseMessage("ok", () => {
       PopupNotifications.panel.firstChild.button.click();
     });
@@ -377,6 +395,7 @@ let gTests = [
     expectObserverCalled("recording-device-events");
     is(getMediaCaptureState(), "Microphone", "microphone to be shared");
 
+    yield indicator;
     yield checkSharingUI({video: false, audio: true});
     expectNoObserverCalled();
 

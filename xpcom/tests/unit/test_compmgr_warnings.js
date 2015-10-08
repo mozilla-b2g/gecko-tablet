@@ -1,7 +1,7 @@
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
+var Cc = Components.classes;
+var Ci = Components.interfaces;
 
 function info(s) {
   dump("TEST-INFO | test_compmgr_warnings.js | " + s + "\n");
@@ -56,10 +56,9 @@ function run_test()
   cs.registerListener(kConsoleListener);
 
   var manifest = do_get_file('compmgr_warnings.manifest');
-  Components.manager.QueryInterface(Ci.nsIComponentRegistrar).
-    autoRegister(manifest);
+  registerAppManifest(manifest);
   manifest = do_get_file('testcomponent.manifest');
-  Components.manager.autoRegister(manifest);
+  registerAppManifest(manifest);
 
   run_deferred_event(function() {
     cs.unregisterListener(kConsoleListener);

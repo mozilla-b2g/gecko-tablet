@@ -65,7 +65,7 @@
 #ifdef MOZ_LOGGING
 #define FORCE_PR_LOG 1 /* Allow logging in the release build */
 #endif /* MOZ_LOGGING */
-#include "prlog.h"
+#include "mozilla/Logging.h"
 
 #ifdef XP_MACOSX
 #include "gfxQuartzNativeDrawing.h"
@@ -93,7 +93,6 @@ using mozilla::DefaultXDisplay;
 #undef CreateEvent
 #endif
 
-#ifdef PR_LOGGING 
 static PRLogModuleInfo *
 GetObjectFrameLog()
 {
@@ -102,7 +101,6 @@ GetObjectFrameLog()
     sLog = PR_NewLogModule("nsPluginFrame");
   return sLog;
 }
-#endif /* PR_LOGGING */
 
 using namespace mozilla;
 using namespace mozilla::gfx;
@@ -157,15 +155,17 @@ protected:
 
 nsPluginFrame::nsPluginFrame(nsStyleContext* aContext)
   : nsPluginFrameSuper(aContext)
+  , mInstanceOwner(nullptr)
   , mReflowCallbackPosted(false)
+  , mIsHiddenDueToScroll(false)
 {
-  PR_LOG(GetObjectFrameLog(), PR_LOG_DEBUG,
+  MOZ_LOG(GetObjectFrameLog(), LogLevel::Debug,
          ("Created new nsPluginFrame %p\n", this));
 }
 
 nsPluginFrame::~nsPluginFrame()
 {
-  PR_LOG(GetObjectFrameLog(), PR_LOG_DEBUG,
+  MOZ_LOG(GetObjectFrameLog(), LogLevel::Debug,
          ("nsPluginFrame %p deleted\n", this));
 }
 
@@ -195,7 +195,7 @@ nsPluginFrame::Init(nsIContent*       aContent,
                     nsContainerFrame* aParent,
                     nsIFrame*         aPrevInFlow)
 {
-  PR_LOG(GetObjectFrameLog(), PR_LOG_DEBUG,
+  MOZ_LOG(GetObjectFrameLog(), LogLevel::Debug,
          ("Initializing nsPluginFrame %p for content %p\n", this, aContent));
 
   nsPluginFrameSuper::Init(aContent, aParent, aPrevInFlow);
@@ -307,8 +307,8 @@ nsPluginFrame::PrepForDrawing(nsIWidget *aWidget)
     viewMan->InsertChild(view, mInnerView, nullptr, true);
 
     mWidget->SetParent(parentWidget);
-    mWidget->Show(true);
     mWidget->Enable(true);
+    mWidget->Show(true);
 
     // Set the plugin window to have an empty clip region until we know
     // what our true position, size and clip region are. These
@@ -417,7 +417,7 @@ nsPluginFrame::GetWidgetConfiguration(nsTArray<nsIWidget::Configuration>* aConfi
   configuration->mBounds = mNextConfigurationBounds;
   configuration->mClipRegion = mNextConfigurationClipRegion;
 #if defined(XP_WIN) || defined(MOZ_WIDGET_GTK)
-  if (XRE_GetProcessType() == GeckoProcessType_Content) {
+  if (XRE_IsContentProcess()) {
     configuration->mWindowID = (uintptr_t)mWidget->GetNativeData(NS_NATIVE_PLUGIN_PORT);
     configuration->mVisible = mWidget->IsVisible();
   }
@@ -608,9 +608,19 @@ nsPluginFrame::CallSetWindow(bool aCheckIsHidden)
   if (aCheckIsHidden && IsHidden())
     return NS_ERROR_FAILURE;
 
+  // Calling either nsPluginInstanceOwner::FixUpPluginWindow() (here,
+  // on OS X) or SetWindow() (below, on all platforms) can destroy this
+  // frame.  (FixUpPluginWindow() calls SetWindow()).  So grab a safe
+  // reference to mInstanceOwner which we can use below, if needed.
+  nsRefPtr<nsPluginInstanceOwner> instanceOwnerRef(mInstanceOwner);
+
   // refresh the plugin port as well
 #ifdef XP_MACOSX
   mInstanceOwner->FixUpPluginWindow(nsPluginInstanceOwner::ePluginPaintEnable);
+  // Bail now if our frame has been destroyed.
+  if (!instanceOwnerRef->GetFrame()) {
+    return NS_ERROR_FAILURE;
+  }
 #endif
   window->window = mInstanceOwner->GetPluginPort();
 
@@ -625,6 +635,12 @@ nsPluginFrame::CallSetWindow(bool aCheckIsHidden)
   nsRect bounds = GetContentRectRelativeToSelf() + GetOffsetToCrossDoc(rootFrame);
   nsIntRect intBounds = bounds.ToNearestPixels(appUnitsPerDevPixel);
 
+  // In e10s, this returns the offset to the top level window, in non-e10s
+  // it return 0,0.
+  LayoutDeviceIntPoint intOffset = GetRemoteTabChromeOffset();
+  intBounds.x += intOffset.x;
+  intBounds.y += intOffset.y;
+
   // window must be in "display pixels"
   double scaleFactor = 1.0;
   if (NS_FAILED(mInstanceOwner->GetContentsScaleFactor(&scaleFactor))) {
@@ -635,10 +651,6 @@ nsPluginFrame::CallSetWindow(bool aCheckIsHidden)
   window->y = intBounds.y / intScaleFactor;
   window->width = intBounds.width / intScaleFactor;
   window->height = intBounds.height / intScaleFactor;
-
-  // Calling SetWindow might destroy this frame. We need to use the instance
-  // owner to clean up so hold a ref.
-  nsRefPtr<nsPluginInstanceOwner> instanceOwnerRef(mInstanceOwner);
 
   // This will call pi->SetWindow and take care of window subclassing
   // if needed, see bug 132759. Calling SetWindow can destroy this frame
@@ -753,7 +765,45 @@ nsPluginFrame::IsHidden(bool aCheckVisibilityStyle) const
   return false;
 }
 
-nsIntPoint nsPluginFrame::GetWindowOriginInPixels(bool aWindowless)
+// Clips windowed plugin frames during remote content scroll operations managed
+// by nsGfxScrollFrame.
+void
+nsPluginFrame::SetScrollVisibility(bool aState)
+{
+  // Limit this setting to windowed plugins by checking if we have a widget
+  if (mWidget) {
+    bool changed = mIsHiddenDueToScroll != aState;
+    mIsHiddenDueToScroll = aState;
+    // Force a paint so plugin window visibility gets flushed via
+    // the compositor.
+    if (changed) {
+      SchedulePaint();
+    }
+  }
+}
+
+mozilla::LayoutDeviceIntPoint
+nsPluginFrame::GetRemoteTabChromeOffset()
+{
+  LayoutDeviceIntPoint offset;
+  if (XRE_IsContentProcess()) {
+    nsCOMPtr<nsIDOMWindow> window = do_QueryInterface(GetContent()->OwnerDoc()->GetWindow());
+    if (window) {
+      nsCOMPtr<nsIDOMWindow> topWindow;
+      window->GetTop(getter_AddRefs(topWindow));
+      if (topWindow) {
+        dom::TabChild* tc = dom::TabChild::GetFrom(topWindow);
+        if (tc) {
+          offset += tc->GetChromeDisplacement();
+        }
+      }
+    }
+  }
+  return offset;
+}
+
+nsIntPoint
+nsPluginFrame::GetWindowOriginInPixels(bool aWindowless)
 {
   nsView * parentWithView;
   nsPoint origin(0,0);
@@ -769,8 +819,19 @@ nsIntPoint nsPluginFrame::GetWindowOriginInPixels(bool aWindowless)
   }
   origin += GetContentRectRelativeToSelf().TopLeft();
 
-  return nsIntPoint(PresContext()->AppUnitsToDevPixels(origin.x),
-                    PresContext()->AppUnitsToDevPixels(origin.y));
+  nsIntPoint pt(PresContext()->AppUnitsToDevPixels(origin.x),
+                PresContext()->AppUnitsToDevPixels(origin.y));
+
+  // If we're in the content process offsetToWidget is tied to the top level
+  // widget we can access in the child process, which is the tab. We need the
+  // offset all the way up to the top level native window here. (If this is
+  // non-e10s this routine will return 0,0.)
+  if (aWindowless) {
+    mozilla::LayoutDeviceIntPoint lpt = GetRemoteTabChromeOffset();
+    pt += nsIntPoint(lpt.x, lpt.y);
+  }
+
+  return pt;
 }
 
 void
@@ -1035,7 +1096,7 @@ void
 nsPluginFrame::DidSetWidgetGeometry()
 {
 #if defined(XP_MACOSX)
-  if (mInstanceOwner) {
+  if (mInstanceOwner && !IsHidden()) {
     mInstanceOwner->FixUpPluginWindow(nsPluginInstanceOwner::ePluginPaintEnable);
   }
 #else
@@ -1055,6 +1116,11 @@ nsPluginFrame::DidSetWidgetGeometry()
 bool
 nsPluginFrame::IsOpaque() const
 {
+  // Insure underlying content gets painted when we clip windowed plugins
+  // during remote content scroll operations managed by nsGfxScrollFrame.
+  if (mIsHiddenDueToScroll) {
+    return false;
+  }
 #if defined(XP_MACOSX)
   return false;
 #elif defined(MOZ_WIDGET_ANDROID)
@@ -1100,6 +1166,12 @@ nsPluginFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                 const nsRect&           aDirtyRect,
                                 const nsDisplayListSet& aLists)
 {
+  // Clip windowed plugin frames from the list during remote content scroll
+  // operations managed by nsGfxScrollFrame.
+  if (mIsHiddenDueToScroll) {
+    return;
+  }
+
   // XXX why are we painting collapsed object frames?
   if (!IsVisibleOrCollapsedForPainting(aBuilder))
     return;
@@ -1385,12 +1457,11 @@ nsPluginFrame::BuildLayer(nsDisplayListBuilder* aBuilder,
 
     imglayer->SetScaleToSize(size, ScaleMode::STRETCH);
     imglayer->SetContainer(container);
-    GraphicsFilter filter =
-      nsLayoutUtils::GetGraphicsFilterForFrame(this);
+    Filter filter = nsLayoutUtils::GetGraphicsFilterForFrame(this);
 #ifdef MOZ_GFX_OPTIMIZE_MOBILE
     if (!aManager->IsCompositingCheap()) {
       // Pixman just horrible with bilinear filter scaling
-      filter = GraphicsFilter::FILTER_NEAREST;
+      filter = Filter::POINT;
     }
 #endif
     imglayer->SetFilter(filter);
@@ -1716,13 +1787,13 @@ nsPluginFrame::HandleEvent(nsPresContext* aPresContext,
 
   mInstanceOwner->ConsiderNewEventloopNestingLevel();
 
-  if (anEvent->message == NS_PLUGIN_ACTIVATE) {
+  if (anEvent->mMessage == ePluginActivate) {
     nsIFocusManager* fm = nsFocusManager::GetFocusManager();
     nsCOMPtr<nsIDOMElement> elem = do_QueryInterface(GetContent());
     if (fm && elem)
       return fm->SetFocus(elem, 0);
   }
-  else if (anEvent->message == NS_PLUGIN_FOCUS) {
+  else if (anEvent->mMessage == ePluginFocus) {
     nsIFocusManager* fm = nsFocusManager::GetFocusManager();
     if (fm)
       return fm->FocusPlugin(GetContent());
@@ -1743,8 +1814,8 @@ nsPluginFrame::HandleEvent(nsPresContext* aPresContext,
 
 #ifdef XP_MACOSX
   // we want to process some native mouse events in the cocoa event model
-  if ((anEvent->message == NS_MOUSE_ENTER ||
-       anEvent->message == NS_WHEEL_WHEEL) &&
+  if ((anEvent->mMessage == eMouseEnterIntoWidget ||
+       anEvent->mMessage == eWheel) &&
       mInstanceOwner->GetEventModel() == NPEventModelCocoa) {
     *anEventStatus = mInstanceOwner->ProcessEvent(*anEvent);
     // Due to plugin code reentering Gecko, this frame may be dead at this
@@ -1756,7 +1827,7 @@ nsPluginFrame::HandleEvent(nsPresContext* aPresContext,
   // and mouse-up) are needed to make the routing of mouse events while
   // dragging conform to standard OS X practice, and to the Cocoa NPAPI spec.
   // See bug 525078 and bug 909678.
-  if (anEvent->message == NS_MOUSE_BUTTON_DOWN) {
+  if (anEvent->mMessage == eMouseDown) {
     nsIPresShell::SetCapturingContent(GetContent(), CAPTURE_IGNOREALLOWED);
   }
 #endif
@@ -1767,7 +1838,7 @@ nsPluginFrame::HandleEvent(nsPresContext* aPresContext,
   // nsPluginFrameSuper::HandleEvent() might have killed us.
 
 #ifdef XP_MACOSX
-  if (anEvent->message == NS_MOUSE_BUTTON_UP) {
+  if (anEvent->mMessage == eMouseUp) {
     nsIPresShell::SetCapturingContent(nullptr, 0);
   }
 #endif

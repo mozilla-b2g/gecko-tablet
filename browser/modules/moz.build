@@ -12,10 +12,12 @@ XPCSHELL_TESTS_MANIFESTS += [
 
 EXTRA_JS_MODULES += [
     'AboutHome.jsm',
+    'AboutNewTab.jsm',
     'BrowserUITelemetry.jsm',
     'CastingApps.jsm',
     'Chat.jsm',
     'ContentClick.jsm',
+    'ContentCrashReporters.jsm',
     'ContentLinkHandler.jsm',
     'ContentObservers.jsm',
     'ContentSearch.jsm',
@@ -28,6 +30,7 @@ EXTRA_JS_MODULES += [
     'FormValidationHandler.jsm',
     'HiddenFrame.jsm',
     'NetworkPrioritizer.jsm',
+    'NewTabURL.jsm',
     'offlineAppCache.jsm',
     'PanelFrame.jsm',
     'PluginContent.jsm',
@@ -35,10 +38,11 @@ EXTRA_JS_MODULES += [
     'ReaderParent.jsm',
     'RecentWindow.jsm',
     'RemotePrompt.jsm',
+    'Sanitizer.jsm',
     'SelfSupportBackend.jsm',
     'SitePermissions.jsm',
     'Social.jsm',
-    'TabCrashReporter.jsm',
+    'TransientPrefs.jsm',
     'WebappManager.jsm',
     'webrtcUI.jsm',
 ]
@@ -58,6 +62,3 @@ if CONFIG['NIGHTLY_BUILD']:
 EXTRA_PP_COMPONENTS += [
     'browsermodules.manifest',
 ]
-
-if CONFIG['MOZILLA_OFFICIAL']:
-    DEFINES['MOZILLA_OFFICIAL'] = 1

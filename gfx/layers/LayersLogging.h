@@ -7,7 +7,6 @@
 #define GFX_LAYERSLOGGING_H
 
 #include "FrameMetrics.h"               // for FrameMetrics, etc
-#include "GraphicsFilter.h"             // for GraphicsFilter
 #include "mozilla/gfx/Point.h"          // for IntSize, etc
 #include "mozilla/gfx/Types.h"          // for Filter, SurfaceFormat
 #include "mozilla/layers/CompositorTypes.h"  // for TextureFlags
@@ -16,15 +15,13 @@
 #include "nsRegion.h"                   // for nsRegion, nsIntRegion
 #include "nscore.h"                     // for nsACString, etc
 
-struct gfxRGBA;
-struct nsIntPoint;
-struct nsIntRect;
-
 namespace mozilla {
 namespace gfx {
 class Matrix4x4;
-template <class units> struct RectTyped;
-}
+template <class units, class F> struct RectTyped;
+} // namespace gfx
+
+enum class ImageFormat;
 
 namespace layers {
 
@@ -33,15 +30,11 @@ AppendToString(std::stringstream& aStream, const void* p,
                const char* pfx="", const char* sfx="");
 
 void
-AppendToString(std::stringstream& aStream, const GraphicsFilter& f,
-               const char* pfx="", const char* sfx="");
-
-void
 AppendToString(std::stringstream& aStream, FrameMetrics::ViewID n,
                const char* pfx="", const char* sfx="");
 
 void
-AppendToString(std::stringstream& aStream, const gfxRGBA& c,
+AppendToString(std::stringstream& aStream, const gfx::Color& c,
                const char* pfx="", const char* sfx="");
 
 void
@@ -50,10 +43,6 @@ AppendToString(std::stringstream& aStream, const nsPoint& p,
 
 void
 AppendToString(std::stringstream& aStream, const nsRect& r,
-               const char* pfx="", const char* sfx="");
-
-void
-AppendToString(std::stringstream& aStream, const nsIntPoint& p,
                const char* pfx="", const char* sfx="");
 
 template<class T>
@@ -71,10 +60,6 @@ AppendToString(std::stringstream& aStream, const mozilla::gfx::IntPointTyped<T>&
 {
   aStream << pfx << p << sfx;
 }
-
-void
-AppendToString(std::stringstream& aStream, const nsIntRect& r,
-               const char* pfx="", const char* sfx="");
 
 template<class T>
 void
@@ -140,6 +125,10 @@ void
 AppendToString(std::stringstream& aStream, const ScrollableLayerGuid& s,
                const char* pfx="", const char* sfx="");
 
+void
+AppendToString(std::stringstream& aStream, const ZoomConstraints& z,
+               const char* pfx="", const char* sfx="");
+
 template<class T>
 void
 AppendToString(std::stringstream& aStream, const mozilla::gfx::MarginTyped<T>& m,
@@ -193,6 +182,10 @@ AppendToString(std::stringstream& aStream, const mozilla::gfx::ScaleFactors2D<sr
 }
 
 void
+AppendToString(std::stringstream& aStream, const mozilla::gfx::Matrix& m,
+               const char* pfx="", const char* sfx="");
+
+void
 AppendToString(std::stringstream& aStream, const mozilla::gfx::Matrix4x4& m,
                const char* pfx="", const char* sfx="");
 
@@ -212,6 +205,14 @@ void
 AppendToString(std::stringstream& aStream, mozilla::gfx::SurfaceFormat format,
                const char* pfx="", const char* sfx="");
 
+void
+AppendToString(std::stringstream& aStream, gfx::SurfaceType format,
+               const char* pfx="", const char* sfx="");
+
+void
+AppendToString(std::stringstream& aStream, ImageFormat format,
+               const char* pfx="", const char* sfx="");
+
 // Sometimes, you just want a string from a single value.
 template <typename T>
 std::string
@@ -222,8 +223,8 @@ Stringify(const T& obj)
   return ss.str();
 }
 
-} // namespace
-} // namespace
+} // namespace layers
+} // namespace mozilla
 
 // versions of printf_stderr and fprintf_stderr that deal with line
 // truncation on android by printing individual lines out of the

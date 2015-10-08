@@ -15,7 +15,7 @@
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
         windowtype="alert:alert"
         xmlns:xhtml="http://www.w3.org/1999/xhtml"
-        xhtml:role="alert"
+        role="alert"
         pack="start"
         onload="onAlertLoad();"
         onclick="onAlertClick();"
@@ -32,6 +32,8 @@
       <vbox id="alertTextBox" class="alertTextBox">
         <label id="alertTitleLabel" class="alertTitle plain"/>
         <label id="alertTextLabel" class="alertText plain"/>
+        <spacer flex="1"/>
+        <label id="alertSourceLabel" class="alertSource plain"/>
       </vbox>
     </box>
 

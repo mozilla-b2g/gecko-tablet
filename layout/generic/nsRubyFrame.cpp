@@ -65,51 +65,12 @@ nsRubyFrame::GetFrameName(nsAString& aResult) const
 }
 #endif
 
-/**
- * This enumerator enumerates each segment.
- */
-class MOZ_STACK_CLASS SegmentEnumerator
-{
-public:
-  explicit SegmentEnumerator(nsRubyFrame* aRubyFrame);
-
-  void Next();
-  bool AtEnd() const { return !mBaseContainer; }
-
-  nsRubyBaseContainerFrame* GetBaseContainer() const
-  {
-    return mBaseContainer;
-  }
-
-private:
-  nsRubyBaseContainerFrame* mBaseContainer;
-};
-
-SegmentEnumerator::SegmentEnumerator(nsRubyFrame* aRubyFrame)
-{
-  nsIFrame* frame = aRubyFrame->GetFirstPrincipalChild();
-  MOZ_ASSERT(!frame ||
-             frame->GetType() == nsGkAtoms::rubyBaseContainerFrame);
-  mBaseContainer = static_cast<nsRubyBaseContainerFrame*>(frame);
-}
-
-void
-SegmentEnumerator::Next()
-{
-  MOZ_ASSERT(mBaseContainer);
-  nsIFrame* frame = mBaseContainer->GetNextSibling();
-  while (frame && frame->GetType() != nsGkAtoms::rubyBaseContainerFrame) {
-    frame = frame->GetNextSibling();
-  }
-  mBaseContainer = static_cast<nsRubyBaseContainerFrame*>(frame);
-}
-
 /* virtual */ void
 nsRubyFrame::AddInlineMinISize(nsRenderingContext *aRenderingContext,
                                nsIFrame::InlineMinISizeData *aData)
 {
   for (nsIFrame* frame = this; frame; frame = frame->GetNextInFlow()) {
-    for (SegmentEnumerator e(static_cast<nsRubyFrame*>(frame));
+    for (RubySegmentEnumerator e(static_cast<nsRubyFrame*>(frame));
          !e.AtEnd(); e.Next()) {
       e.GetBaseContainer()->AddInlineMinISize(aRenderingContext, aData);
     }
@@ -121,7 +82,7 @@ nsRubyFrame::AddInlinePrefISize(nsRenderingContext *aRenderingContext,
                                 nsIFrame::InlinePrefISizeData *aData)
 {
   for (nsIFrame* frame = this; frame; frame = frame->GetNextInFlow()) {
-    for (SegmentEnumerator e(static_cast<nsRubyFrame*>(frame));
+    for (RubySegmentEnumerator e(static_cast<nsRubyFrame*>(frame));
          !e.AtEnd(); e.Next()) {
       e.GetBaseContainer()->AddInlinePrefISize(aRenderingContext, aData);
     }
@@ -169,7 +130,7 @@ nsRubyFrame::Reflow(nsPresContext* aPresContext,
                                       startEdge, availableISize, &mBaseline);
 
   aStatus = NS_FRAME_COMPLETE;
-  for (SegmentEnumerator e(this); !e.AtEnd(); e.Next()) {
+  for (RubySegmentEnumerator e(this); !e.AtEnd(); e.Next()) {
     ReflowSegment(aPresContext, aReflowState, e.GetBaseContainer(), aStatus);
 
     if (NS_INLINE_IS_BREAK(aStatus)) {
@@ -212,11 +173,11 @@ nsRubyFrame::ReflowSegment(nsPresContext* aPresContext,
   WritingMode lineWM = aReflowState.mLineLayout->GetWritingMode();
   LogicalSize availSize(lineWM, aReflowState.AvailableISize(),
                         aReflowState.AvailableBSize());
+  WritingMode rubyWM = GetWritingMode();
+  NS_ASSERTION(!rubyWM.IsOrthogonalTo(lineWM),
+               "Ruby frame writing-mode shouldn't be orthogonal to its line");
 
-  nsAutoTArray<nsRubyTextContainerFrame*, RTC_ARRAY_SIZE> textContainers;
-  for (RubyTextContainerIterator iter(aBaseContainer); !iter.AtEnd(); iter.Next()) {
-    textContainers.AppendElement(iter.GetTextContainer());
-  }
+  AutoRubyTextContainerArray textContainers(aBaseContainer);
   const uint32_t rtcCount = textContainers.Length();
 
   nsHTMLReflowMetrics baseMetrics(aReflowState);
@@ -292,7 +253,9 @@ nsRubyFrame::ReflowSegment(nsPresContext* aPresContext,
   }
 
   nscoord segmentISize = baseMetrics.ISize(lineWM);
-  LogicalRect baseRect = aBaseContainer->GetLogicalRect(lineWM, 0);
+  const nsSize dummyContainerSize;
+  LogicalRect baseRect =
+    aBaseContainer->GetLogicalRect(lineWM, dummyContainerSize);
   // We need to position our rtc frames on one side or the other of the
   // base container's rect, using a coordinate space that's relative to
   // the ruby frame. Right now, the base container's rect's block-axis
@@ -305,10 +268,11 @@ nsRubyFrame::ReflowSegment(nsPresContext* aPresContext,
   LogicalRect offsetRect = baseRect;
   for (uint32_t i = 0; i < rtcCount; i++) {
     nsRubyTextContainerFrame* textContainer = textContainers[i];
+    WritingMode rtcWM = textContainer->GetWritingMode();
     nsReflowStatus textReflowStatus;
     nsHTMLReflowMetrics textMetrics(aReflowState);
-    nsHTMLReflowState textReflowState(aPresContext, aReflowState,
-                                      textContainer, availSize);
+    nsHTMLReflowState textReflowState(aPresContext, aReflowState, textContainer,
+                                      availSize.ConvertTo(rtcWM, lineWM));
     // FIXME We probably shouldn't be using the same nsLineLayout for
     //       the text containers. But it should be fine now as we are
     //       not actually using this line layout to reflow something,
@@ -321,12 +285,13 @@ nsRubyFrame::ReflowSegment(nsPresContext* aPresContext,
     // handled when reflowing the base containers.
     NS_ASSERTION(textReflowStatus == NS_FRAME_COMPLETE,
                  "Ruby text container must not break itself inside");
-    nscoord isize = textMetrics.ISize(lineWM);
-    nscoord bsize = textMetrics.BSize(lineWM);
-    textContainer->SetSize(LogicalSize(lineWM, isize, bsize));
+    // The metrics is initialized with reflow state of this ruby frame,
+    // hence the writing-mode is tied to rubyWM instead of rtcWM.
+    LogicalSize size = textMetrics.Size(rubyWM).ConvertTo(lineWM, rubyWM);
+    textContainer->SetSize(lineWM, size);
 
     nscoord reservedISize = RubyUtils::GetReservedISize(textContainer);
-    segmentISize = std::max(segmentISize, isize + reservedISize);
+    segmentISize = std::max(segmentISize, size.ISize(lineWM) + reservedISize);
 
     uint8_t rubyPosition = textContainer->StyleText()->mRubyPosition;
     MOZ_ASSERT(rubyPosition == NS_STYLE_RUBY_POSITION_OVER ||
@@ -344,21 +309,22 @@ nsRubyFrame::ReflowSegment(nsPresContext* aPresContext,
     LogicalPoint position(lineWM);
     if (side.isSome()) {
       if (side.value() == eLogicalSideBStart) {
-        offsetRect.BStart(lineWM) -= bsize;
-        offsetRect.BSize(lineWM) += bsize;
+        offsetRect.BStart(lineWM) -= size.BSize(lineWM);
+        offsetRect.BSize(lineWM) += size.BSize(lineWM);
         position = offsetRect.Origin(lineWM);
       } else if (side.value() == eLogicalSideBEnd) {
         position = offsetRect.Origin(lineWM) +
           LogicalPoint(lineWM, 0, offsetRect.BSize(lineWM));
-        offsetRect.BSize(lineWM) += bsize;
+        offsetRect.BSize(lineWM) += size.BSize(lineWM);
       } else {
         MOZ_ASSERT_UNREACHABLE("???");
       }
     }
-    // Container width is set to zero here. We will fix it in
-    // nsLineLayout after the whole line get reflowed.
+    // Using a dummy container-size here, so child positioning may not be
+    // correct. We will fix it in nsLineLayout after the whole line is
+    // reflowed.
     FinishReflowChild(textContainer, aPresContext, textMetrics,
-                      &textReflowState, lineWM, position, 0, 0);
+                      &textReflowState, lineWM, position, dummyContainerSize, 0);
   }
   MOZ_ASSERT(baseRect.ISize(lineWM) == offsetRect.ISize(lineWM),
              "Annotations should only be placed on the block directions");

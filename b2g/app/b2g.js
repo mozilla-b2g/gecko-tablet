@@ -4,6 +4,8 @@
 
 #filter substitution
 
+// For the all MOZ_MULET ifdef conditions in this file: see bug 1174234
+
 #ifndef MOZ_MULET
 pref("toolkit.defaultChromeURI", "chrome://b2g/content/shell.html");
 pref("browser.chromeURL", "chrome://b2g/content/");
@@ -60,7 +62,6 @@ pref("browser.cache.memory_limit", 2048); // 2 MB
 
 /* image cache prefs */
 pref("image.cache.size", 1048576); // bytes
-pref("image.high_quality_downscaling.enabled", false);
 pref("canvas.image.cache.limit", 20971520); // 20 MB
 
 /* offline cache prefs */
@@ -88,7 +89,6 @@ pref("network.http.max-persistent-connections-per-proxy", 20);
 pref("network.cookie.cookieBehavior", 0);
 
 // spdy
-pref("network.http.spdy.enabled.http2draft", true);
 pref("network.http.spdy.push-allowance", 32768);
 
 // See bug 545869 for details on why these are set the way they are
@@ -101,7 +101,6 @@ pref("network.predictor.max-db-size", 2097152); // bytes
 pref("network.predictor.preserve", 50); // percentage of predictor data to keep when cleaning up
 
 /* session history */
-pref("browser.sessionhistory.max_total_viewers", 1);
 pref("browser.sessionhistory.max_entries", 50);
 pref("browser.sessionhistory.contentViewerTimeout", 360);
 
@@ -117,7 +116,9 @@ pref("mozilla.widget.force-24bpp", true);
 pref("mozilla.widget.use-buffer-pixmap", true);
 pref("mozilla.widget.disable-native-theme", true);
 pref("layout.reflow.synthMouseMove", false);
+#ifndef MOZ_X11
 pref("layers.enable-tiles", true);
+#endif
 pref("layers.low-precision-buffer", true);
 pref("layers.low-precision-opacity", "0.5");
 pref("layers.progressive-paint", true);
@@ -200,6 +201,9 @@ pref("privacy.item.syncAccount", true);
 pref("geo.provider.use_mls", false);
 pref("geo.cell.scan", true);
 pref("geo.wifi.uri", "https://location.services.mozilla.com/v1/geolocate?key=%MOZILLA_API_KEY%");
+
+// base url for the stumbler
+pref("geo.stumbler.url", "https://location.services.mozilla.com/v1/geosubmit?key=%MOZILLA_API_KEY%");
 
 // enable geo
 pref("geo.enabled", true);
@@ -292,7 +296,6 @@ pref("ui.dragThresholdY", 25);
 // Layers Acceleration.  We can only have nice things on gonk, because
 // they're not maintained anywhere else.
 pref("layers.offmainthreadcomposition.enabled", true);
-pref("layers.offmainthreadcomposition.async-animations", true);
 #ifndef MOZ_WIDGET_GONK
 pref("dom.ipc.tabs.disabled", true);
 #else
@@ -318,12 +321,16 @@ pref("media.cache_readahead_limit", 30);
 // Enable/Disable Gonk Decoder Module
 pref("media.fragmented-mp4.gonk.enabled", true);
 #endif
+
+//Encrypted media extensions.
+pref("media.eme.enabled", true);
+pref("media.eme.apiVisible", true);
 // The default number of decoded video frames that are enqueued in
 // MediaDecoderReader's mVideoQueue.
 pref("media.video-queue.default-size", 3);
 
 // optimize images' memory usage
-pref("image.decode-only-on-draw.enabled", true);
+pref("image.downscale-during-decode.enabled", true);
 pref("image.mem.allow_locking_in_content_processes", true);
 // Limit the surface cache to 1/8 of main memory or 128MB, whichever is smaller.
 // Almost everything that was factored into 'max_decoded_image_kb' is now stored
@@ -343,46 +350,28 @@ pref("dom.w3c_touch_events.safetyX", 0); // escape borders in units of 1/240"
 pref("dom.w3c_touch_events.safetyY", 120); // escape borders in units of 1/240"
 
 #ifdef MOZ_SAFE_BROWSING
-// Safe browsing does nothing unless this pref is set
 pref("browser.safebrowsing.enabled", false);
-
 // Prevent loading of pages identified as malware
 pref("browser.safebrowsing.malware.enabled", false);
-
+pref("browser.safebrowsing.downloads.enabled", false);
+pref("browser.safebrowsing.downloads.remote.enabled", false);
+pref("browser.safebrowsing.downloads.remote.timeout_ms", 10000);
 pref("browser.safebrowsing.debug", false);
-pref("browser.safebrowsing.updateURL", "https://safebrowsing.google.com/safebrowsing/downloads?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2&key=%GOOGLE_API_KEY%");
-pref("browser.safebrowsing.gethashURL", "https://safebrowsing.google.com/safebrowsing/gethash?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
-pref("browser.safebrowsing.reportURL", "https://safebrowsing.google.com/safebrowsing/report?");
-pref("browser.safebrowsing.reportGenericURL", "http://%LOCALE%.phish-generic.mozilla.com/?hl=%LOCALE%");
-pref("browser.safebrowsing.reportErrorURL", "http://%LOCALE%.phish-error.mozilla.com/?hl=%LOCALE%");
-pref("browser.safebrowsing.reportPhishURL", "http://%LOCALE%.phish-report.mozilla.com/?hl=%LOCALE%");
-pref("browser.safebrowsing.reportMalwareURL", "http://%LOCALE%.malware-report.mozilla.com/?hl=%LOCALE%");
-pref("browser.safebrowsing.reportMalwareErrorURL", "http://%LOCALE%.malware-error.mozilla.com/?hl=%LOCALE%");
-pref("browser.safebrowsing.appRepURL", "https://sb-ssl.google.com/safebrowsing/clientreport/download?key=%GOOGLE_API_KEY%");
+
+pref("browser.safebrowsing.provider.google.lists", "goog-badbinurl-shavar,goog-downloadwhite-digest256,goog-phish-shavar,goog-malware-shavar,goog-unwanted-shavar");
+pref("browser.safebrowsing.provider.google.updateURL", "https://safebrowsing.google.com/safebrowsing/downloads?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2&key=%GOOGLE_API_KEY%");
+pref("browser.safebrowsing.provider.google.gethashURL", "https://safebrowsing.google.com/safebrowsing/gethash?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
+pref("browser.safebrowsing.provider.google.reportURL", "https://safebrowsing.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
+pref("browser.safebrowsing.provider.google.appRepURL", "https://sb-ssl.google.com/safebrowsing/clientreport/download?key=%GOOGLE_API_KEY%");
+
+pref("browser.safebrowsing.reportPhishMistakeURL", "https://%LOCALE%.phish-error.mozilla.com/?hl=%LOCALE%&url=");
+pref("browser.safebrowsing.reportPhishURL", "https://%LOCALE%.phish-report.mozilla.com/?hl=%LOCALE%&url=");
+pref("browser.safebrowsing.reportMalwareMistakeURL", "https://%LOCALE%.malware-error.mozilla.com/?hl=%LOCALE%&url=");
 
 pref("browser.safebrowsing.id", "Firefox");
 
 // Tables for application reputation.
 pref("urlclassifier.downloadBlockTable", "goog-badbinurl-shavar");
-
-// Non-enhanced mode (local url lists) URL list to check for updates
-pref("browser.safebrowsing.provider.0.updateURL", "https://safebrowsing.google.com/safebrowsing/downloads?client={moz:client}&appver={moz:version}&pver=2.2&key=%GOOGLE_API_KEY%");
-
-pref("browser.safebrowsing.dataProvider", 0);
-
-// Does the provider name need to be localizable?
-pref("browser.safebrowsing.provider.0.name", "Google");
-pref("browser.safebrowsing.provider.0.reportURL", "https://safebrowsing.google.com/safebrowsing/report?");
-pref("browser.safebrowsing.provider.0.gethashURL", "https://safebrowsing.google.com/safebrowsing/gethash?client={moz:client}&appver={moz:version}&pver=2.2");
-
-// HTML report pages
-pref("browser.safebrowsing.provider.0.reportGenericURL", "http://{moz:locale}.phish-generic.mozilla.com/?hl={moz:locale}");
-pref("browser.safebrowsing.provider.0.reportErrorURL", "http://{moz:locale}.phish-error.mozilla.com/?hl={moz:locale}");
-pref("browser.safebrowsing.provider.0.reportPhishURL", "http://{moz:locale}.phish-report.mozilla.com/?hl={moz:locale}");
-pref("browser.safebrowsing.provider.0.reportMalwareURL", "http://{moz:locale}.malware-report.mozilla.com/?hl={moz:locale}");
-pref("browser.safebrowsing.provider.0.reportMalwareErrorURL", "http://{moz:locale}.malware-error.mozilla.com/?hl={moz:locale}");
-
-// FAQ URLs
 
 // The number of random entries to send with a gethash request.
 pref("urlclassifier.gethashnoise", 4);
@@ -395,8 +384,10 @@ pref("urlclassifier.gethash.timeout_ms", 5000);
 // the database.
 pref("urlclassifier.max-complete-age", 2700);
 
-// URL for checking the reason for a malware warning.
-pref("browser.safebrowsing.malware.reportURL", "https://safebrowsing.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
+// Tracking protection
+pref("privacy.trackingprotection.enabled", false);
+pref("privacy.trackingprotection.pbmode.enabled", false);
+
 #endif
 
 // True if this is the first time we are showing about:firstrun
@@ -419,13 +410,6 @@ pref("browser.dom.window.dump.enabled", false);
 // Default Content Security Policy to apply to certified apps.
 // If you change this CSP, make sure to update the fast path in nsCSPService.cpp
 pref("security.apps.certified.CSP.default", "default-src * data: blob:; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline' app://theme.gaiamobile.org");
-// Default Content Security Policy to apply to trusted apps.
-pref("security.apps.trusted.CSP.default", "default-src * data: blob:; object-src 'none'; frame-src 'none'");
-
-// Temporarily force-enable GL compositing.  This is default-disabled
-// deep within the bowels of the widgetry system.  Remove me when GL
-// compositing isn't default disabled in widget/android.
-pref("layers.acceleration.force-enabled", true);
 
 // handle links targeting new windows
 // 1=current window/tab, 2=new window, 3=new tab in most recent window
@@ -446,7 +430,9 @@ pref("dom.ipc.processCount", 100000);
 
 pref("dom.ipc.browser_frames.oop_by_default", false);
 
+#if !defined(MOZ_MULET) && !defined(MOZ_GRAPHENE)
 pref("dom.meta-viewport.enabled", true);
+#endif
 
 // SMS/MMS
 pref("dom.sms.enabled", true);
@@ -591,7 +577,7 @@ pref("app.update.incompatible.mode", 0);
 pref("app.update.staging.enabled", true);
 pref("app.update.service.enabled", true);
 
-pref("app.update.url", "https://aus4.mozilla.org/update/3/%PRODUCT%/%VERSION%/%BUILD_ID%/%PRODUCT_DEVICE%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/update.xml");
+pref("app.update.url", "https://aus5.mozilla.org/update/3/%PRODUCT%/%VERSION%/%BUILD_ID%/%PRODUCT_DEVICE%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/update.xml");
 pref("app.update.channel", "@MOZ_UPDATE_CHANNEL@");
 
 // Interval at which update manifest is fetched.  In units of seconds.
@@ -610,6 +596,9 @@ pref("app.update.socket.maxErrors", 20);
 // Enable update logging for now, to diagnose growing pains in the
 // field.
 pref("app.update.log", true);
+
+// SystemUpdate API
+pref("dom.system_update.active", "@mozilla.org/updates/update-prompt;1");
 #else
 // Explicitly disable the shutdown watchdog.  It's enabled by default.
 // When the updater is disabled, we want to know about shutdown hangs.
@@ -656,9 +645,6 @@ pref("dom.forms.number", true);
 // Don't enable <input type=color> yet as we don't have a color picker
 // implemented for b2g (bug 875751)
 pref("dom.forms.color", false);
-
-// Turns on gralloc-based direct texturing for Gonk
-pref("gfx.gralloc.enabled", false);
 
 // This preference instructs the JS engine to discard the
 // source of any privileged JS after compilation. This saves
@@ -711,7 +697,7 @@ pref("dom.ipc.processPriorityManager.temporaryPriorityLockMS", 5000);
 // processes.  We use these different levels to force the low-memory killer to
 // kill processes in a LRU order.
 pref("dom.ipc.processPriorityManager.BACKGROUND.LRUPoolLevels", 5);
-pref("dom.ipc.processPriorityManager.FOREGROUND.LRUPoolLevels", 3);
+pref("dom.ipc.processPriorityManager.BACKGROUND_PERCEIVABLE.LRUPoolLevels", 4);
 
 // Kernel parameters for process priorities.  These affect how processes are
 // killed on low-memory and their relative CPU priorities.
@@ -739,12 +725,8 @@ pref("hal.processPriorityManager.gonk.FOREGROUND_KEYBOARD.OomScoreAdjust", 200);
 pref("hal.processPriorityManager.gonk.FOREGROUND_KEYBOARD.cgroup", "apps");
 
 pref("hal.processPriorityManager.gonk.BACKGROUND_PERCEIVABLE.OomScoreAdjust", 400);
-pref("hal.processPriorityManager.gonk.BACKGROUND_PERCEIVABLE.KillUnderKB", 7168);
+pref("hal.processPriorityManager.gonk.BACKGROUND_PERCEIVABLE.KillUnderKB", 8192);
 pref("hal.processPriorityManager.gonk.BACKGROUND_PERCEIVABLE.cgroup", "apps/bg_perceivable");
-
-pref("hal.processPriorityManager.gonk.BACKGROUND_HOMESCREEN.OomScoreAdjust", 534);
-pref("hal.processPriorityManager.gonk.BACKGROUND_HOMESCREEN.KillUnderKB", 8192);
-pref("hal.processPriorityManager.gonk.BACKGROUND_HOMESCREEN.cgroup", "apps/bg_non_interactive");
 
 pref("hal.processPriorityManager.gonk.BACKGROUND.OomScoreAdjust", 667);
 pref("hal.processPriorityManager.gonk.BACKGROUND.KillUnderKB", 20480);
@@ -803,13 +785,11 @@ pref("hal.processPriorityManager.gonk.notifyLowMemUnderKB", 14336);
 // blocked on a poll(), and this pref has no effect.)
 pref("gonk.systemMemoryPressureRecoveryPollMS", 5000);
 
-#ifndef DEBUG
 // Enable pre-launching content processes for improved startup time
 // (hiding latency).
 pref("dom.ipc.processPrelaunch.enabled", true);
 // Wait this long before pre-launching a new subprocess.
 pref("dom.ipc.processPrelaunch.delayMs", 5000);
-#endif
 
 pref("dom.ipc.reuse_parent_app", false);
 
@@ -919,8 +899,8 @@ pref("general.useragent.updates.retry", 86400); // 1 day
 // Device ID can be composed of letter, numbers, hyphen ("-") and dot (".")
 pref("general.useragent.device_id", "");
 
-// Make <audio> and <video> talk to the AudioChannelService.
-pref("media.useAudioChannelService", true);
+// Add Mozilla AudioChannel APIs.
+pref("media.useAudioChannelAPI", true);
 
 pref("b2g.version", @MOZ_B2G_VERSION@);
 pref("b2g.osName", @MOZ_B2G_OS_NAME@);
@@ -932,10 +912,6 @@ pref("consoleservice.buffered", false);
 // Performance testing suggests 2k is a better page size for SQLite.
 pref("toolkit.storage.pageSize", 2048);
 #endif
-
-// Enable captive portal detection.
-pref("captivedetect.canonicalURL", "http://detectportal.firefox.com/success.txt");
-pref("captivedetect.canonicalContent", "success\n");
 
 // The url of the manifest we use for ADU pings.
 pref("ping.manifestURL", "https://marketplace.firefox.com/packaged.webapp");
@@ -977,7 +953,7 @@ pref("devtools.debugger.unix-domain-socket", "/data/local/debugger-socket");
 // falling back to Skia/software for smaller canvases
 #ifdef MOZ_WIDGET_GONK
 pref("gfx.canvas.azure.backends", "skia");
-pref("gfx.canvas.azure.accelerated", true);
+pref("gfx.canvas.azure.accelerated", false);
 #endif
 
 // Turn on dynamic cache size for Skia
@@ -989,8 +965,11 @@ pref("gfx.canvas.max-size-for-skia-gl", -1);
 // enable fence with readpixels for SurfaceStream
 pref("gfx.gralloc.fence-with-readpixels", true);
 
+// enable screen mirroring to external display
+pref("gfx.screen-mirroring.enabled", true);
+
 // The url of the page used to display network error details.
-pref("b2g.neterror.url", "app://system.gaiamobile.org/net_error.html");
+pref("b2g.neterror.url", "net_error.html");
 
 // The origin used for the shared themes uri space.
 pref("b2g.theme.origin", "app://theme.gaiamobile.org");
@@ -1006,6 +985,9 @@ pref("network.proxy.browsing.app_origins", "app://system.gaiamobile.org");
 
 // Enable Web Speech synthesis API
 pref("media.webspeech.synth.enabled", true);
+
+// Enable Web Speech recognition API
+pref("media.webspeech.recognition.enable", true);
 
 // Downloads API
 pref("dom.mozDownloads.enabled", true);
@@ -1024,7 +1006,10 @@ pref("security.exthelperapp.disable_background_handling", true);
 pref("osfile.reset_worker_delay", 5000);
 
 // APZC preferences.
-//
+#ifdef MOZ_WIDGET_GONK
+pref("apz.allow_zooming", true);
+#endif
+
 // Gaia relies heavily on scroll events for now, so lets fire them
 // more often than the default value (100).
 pref("apz.asyncscroll.throttle", 40);
@@ -1081,11 +1066,13 @@ pref("dom.wakelock.enabled", true);
 // Enable webapps add-ons
 pref("dom.apps.customization.enabled", true);
 
-// Enable touch caret by default
-pref("touchcaret.enabled", true);
+// New implementation to unify touch-caret and selection-carets.
+pref("layout.accessiblecaret.enabled", true);
 
-// Enable selection caret by default
-pref("selectioncaret.enabled", true);
+// APZ on real devices supports long tap events.
+#ifdef MOZ_WIDGET_GONK
+pref("layout.accessiblecaret.use_long_tap_injector", false);
+#endif
 
 // Enable sync and mozId with Firefox Accounts.
 pref("services.sync.fxaccounts.enabled", true);
@@ -1099,14 +1086,17 @@ pref("services.mobileid.server.uri", "https://msisdn.services.mozilla.com");
 pref("dom.mapped_arraybuffer.enabled", true);
 #endif
 
-// BroadcastChannel API
-pref("dom.broadcastChannel.enabled", true);
+// SystemUpdate API
+pref("dom.system_update.enabled", true);
 
 // UDPSocket API
 pref("dom.udpsocket.enabled", true);
 
 // Enable TV Manager API
 pref("dom.tv.enabled", true);
+
+// Enable Inputport Manager API
+pref("dom.inputport.enabled", true);
 
 pref("dom.mozSettings.SettingsDB.debug.enabled", true);
 pref("dom.mozSettings.SettingsManager.debug.enabled", true);
@@ -1126,23 +1116,39 @@ pref("dom.mozSettings.allowForceReadOnly", false);
 // RequestSync API is enabled by default on B2G.
 pref("dom.requestSync.enabled", true);
 
-// Only enable for kit kat and above devices
-// kit kat == 19, L = 21, 20 is kit-kat for wearables
-// 15 is for the ICS emulators which will fallback to software vsync
-#if ANDROID_VERSION == 19 || ANDROID_VERSION == 21 || ANDROID_VERSION == 15
-pref("gfx.vsync.hw-vsync.enabled", true);
-pref("gfx.vsync.compositor", true);
-pref("gfx.touch.resample", true);
-#else
-pref("gfx.vsync.hw-vsync.enabled", false);
-pref("gfx.vsync.compositor", false);
-pref("gfx.touch.resample", false);
-#endif
+// Comma separated list of activity names that can only be provided by
+// the system app in dev mode.
+pref("dom.activities.developer_mode_only", "import-app");
 
-// Bug 1147753 - Weird issues with vsync refresh driver on L devices
-// so disable them on L, but enable on KK and ICS
-#if ANDROID_VERSION == 19 || ANDROID_VERSION == 15
-pref("gfx.vsync.refreshdriver", true);
-#else
-pref("gfx.vsync.refreshdriver", false);
+// mulet apparently loads firefox.js as well as b2g.js, so we have to explicitly
+// disable serviceworkers and push here to get them disabled in mulet.
+pref("dom.serviceWorkers.enabled", false);
+pref("dom.push.enabled", false);
+
+// Retain at most 10 processes' layers buffers
+pref("layers.compositor-lru-size", 10);
+
+// Enable Cardboard VR on mobile, assuming VR at all is enabled
+pref("dom.vr.cardboard.enabled", true);
+
+// In B2G by deafult any AudioChannelAgent is muted when created.
+pref("dom.audiochannel.mutedByDefault", true);
+
+// The app origin of bluetooth app, which is responsible for listening pairing
+// requests.
+pref("dom.bluetooth.app-origin", "app://bluetooth.gaiamobile.org");
+
+// Default device name for Presentation API
+pref("dom.presentation.device.name", "Firefox OS");
+
+// Enable notification of performance timing
+pref("dom.performance.enable_notify_performance_timing", true);
+
+// Multi-screen
+pref("b2g.multiscreen.chrome_remote_url", "chrome://b2g/content/shell_remote.html");
+pref("b2g.multiscreen.system_remote_url", "index_remote.html");
+
+// Because we can't have nice things.
+#ifdef MOZ_GRAPHENE
+#include ../graphene/graphene.js
 #endif

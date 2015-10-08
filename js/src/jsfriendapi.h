@@ -7,6 +7,7 @@
 #ifndef jsfriendapi_h
 #define jsfriendapi_h
 
+#include "mozilla/Atomics.h"
 #include "mozilla/Casting.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/UniquePtr.h"
@@ -20,7 +21,7 @@
 #include "js/Class.h"
 
 #if JS_STACK_GROWTH_DIRECTION > 0
-# define JS_CHECK_STACK_SIZE(limit, sp) (MOZ_LIKELY(((uintptr_t)(sp) < (limit)))
+# define JS_CHECK_STACK_SIZE(limit, sp) (MOZ_LIKELY((uintptr_t)(sp) < (limit)))
 #else
 # define JS_CHECK_STACK_SIZE(limit, sp) (MOZ_LIKELY((uintptr_t)(sp) > (limit)))
 #endif
@@ -43,9 +44,6 @@ class InterpreterFrame;
 
 extern JS_FRIEND_API(void)
 JS_SetGrayGCRootsTracer(JSRuntime* rt, JSTraceDataOp traceOp, void* data);
-
-extern JS_FRIEND_API(JSString*)
-JS_GetAnonymousString(JSRuntime* rt);
 
 extern JS_FRIEND_API(JSObject*)
 JS_FindCompilationScope(JSContext* cx, JS::HandleObject obj);
@@ -72,6 +70,9 @@ JS_ObjectCountDynamicSlots(JS::HandleObject obj);
 extern JS_FRIEND_API(size_t)
 JS_SetProtoCalled(JSContext* cx);
 
+extern JS_FRIEND_API(bool)
+JS_ImmutablePrototypesEnabled();
+
 extern JS_FRIEND_API(size_t)
 JS_GetCustomIteratorCount(JSContext* cx);
 
@@ -92,29 +93,36 @@ extern JS_FRIEND_API(bool)
 JS_IsDeadWrapper(JSObject* obj);
 
 /*
- * Used by the cycle collector to trace through the shape and all
- * shapes it reaches, marking all non-shape children found in the
- * process. Uses bounded stack space.
+ * Used by the cycle collector to trace through a shape or object group and
+ * all cycle-participating data it reaches, using bounded stack space.
  */
 extern JS_FRIEND_API(void)
-JS_TraceShapeCycleCollectorChildren(JSTracer* trc, JS::GCCellPtr shape);
+JS_TraceShapeCycleCollectorChildren(JS::CallbackTracer* trc, JS::GCCellPtr shape);
+extern JS_FRIEND_API(void)
+JS_TraceObjectGroupCycleCollectorChildren(JS::CallbackTracer* trc, JS::GCCellPtr group);
 
 enum {
     JS_TELEMETRY_GC_REASON,
     JS_TELEMETRY_GC_IS_COMPARTMENTAL,
     JS_TELEMETRY_GC_MS,
+    JS_TELEMETRY_GC_BUDGET_MS,
+    JS_TELEMETRY_GC_ANIMATION_MS,
     JS_TELEMETRY_GC_MAX_PAUSE_MS,
     JS_TELEMETRY_GC_MARK_MS,
     JS_TELEMETRY_GC_SWEEP_MS,
     JS_TELEMETRY_GC_MARK_ROOTS_MS,
     JS_TELEMETRY_GC_MARK_GRAY_MS,
     JS_TELEMETRY_GC_SLICE_MS,
+    JS_TELEMETRY_GC_SLOW_PHASE,
     JS_TELEMETRY_GC_MMU_50,
     JS_TELEMETRY_GC_RESET,
     JS_TELEMETRY_GC_INCREMENTAL_DISABLED,
     JS_TELEMETRY_GC_NON_INCREMENTAL,
     JS_TELEMETRY_GC_SCC_SWEEP_TOTAL_MS,
     JS_TELEMETRY_GC_SCC_SWEEP_MAX_PAUSE_MS,
+    JS_TELEMETRY_GC_MINOR_REASON,
+    JS_TELEMETRY_GC_MINOR_REASON_LONG,
+    JS_TELEMETRY_GC_MINOR_US,
     JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT,
     JS_TELEMETRY_ADDON_EXCEPTIONS
 };
@@ -172,7 +180,7 @@ JS_BasicObjectToString(JSContext* cx, JS::HandleObject obj);
 namespace js {
 
 JS_FRIEND_API(bool)
-ObjectClassIs(JSContext* cx, JS::HandleObject obj, ESClassValue classValue);
+GetBuiltinClass(JSContext* cx, JS::HandleObject obj, ESClassValue* classValue);
 
 JS_FRIEND_API(const char*)
 ObjectClassName(JSContext* cx, JS::HandleObject obj);
@@ -185,6 +193,9 @@ AddRawValueRoot(JSContext* cx, JS::Value* vp, const char* name);
 
 JS_FRIEND_API(void)
 RemoveRawValueRoot(JSContext* cx, JS::Value* vp);
+
+JS_FRIEND_API(JSAtom*)
+GetPropertyNameFromPC(JSScript* script, jsbytecode* pc);
 
 #ifdef JS_DEBUG
 
@@ -273,12 +284,16 @@ struct JSFunctionSpecWithHelp {
     JSNative        call;
     uint16_t        nargs;
     uint16_t        flags;
+    const JSJitInfo* jitInfo;
     const char*     usage;
     const char*     help;
 };
 
 #define JS_FN_HELP(name,call,nargs,flags,usage,help)                          \
-    {name, call, nargs, (flags) | JSPROP_ENUMERATE | JSFUN_STUB_GSOPS, usage, help}
+    {name, call, nargs, (flags) | JSPROP_ENUMERATE | JSFUN_STUB_GSOPS, nullptr, usage, help}
+#define JS_INLINABLE_FN_HELP(name,call,nargs,flags,native,usage,help)         \
+    {name, call, nargs, (flags) | JSPROP_ENUMERATE | JSFUN_STUB_GSOPS, &js::jit::JitInfo_##native,\
+     usage, help}
 #define JS_FS_HELP_END                                                        \
     {nullptr, nullptr, 0, 0, nullptr, nullptr}
 
@@ -308,7 +323,7 @@ namespace js {
         name,                                                                           \
         js::Class::NON_NATIVE |                                                         \
             JSCLASS_IS_PROXY |                                                          \
-            JSCLASS_IMPLEMENTS_BARRIERS |                                               \
+            JSCLASS_DELAY_METADATA_CALLBACK |                                           \
             flags,                                                                      \
         nullptr,                 /* addProperty */                                      \
         nullptr,                 /* delProperty */                                      \
@@ -316,7 +331,7 @@ namespace js {
         nullptr,                 /* setProperty */                                      \
         nullptr,                 /* enumerate */                                        \
         nullptr,                 /* resolve */                                          \
-        js::proxy_Convert,                                                              \
+        nullptr,                 /* mayResolve */                                       \
         js::proxy_Finalize,      /* finalize    */                                      \
         nullptr,                 /* call        */                                      \
         js::proxy_HasInstance,   /* hasInstance */                                      \
@@ -364,7 +379,7 @@ proxy_DefineProperty(JSContext* cx, JS::HandleObject obj, JS::HandleId id,
 extern JS_FRIEND_API(bool)
 proxy_HasProperty(JSContext* cx, JS::HandleObject obj, JS::HandleId id, bool* foundp);
 extern JS_FRIEND_API(bool)
-proxy_GetProperty(JSContext* cx, JS::HandleObject obj, JS::HandleObject receiver, JS::HandleId id,
+proxy_GetProperty(JSContext* cx, JS::HandleObject obj, JS::HandleValue receiver, JS::HandleId id,
                   JS::MutableHandleValue vp);
 extern JS_FRIEND_API(bool)
 proxy_SetProperty(JSContext* cx, JS::HandleObject obj, JS::HandleId id, JS::HandleValue bp,
@@ -454,7 +469,7 @@ typedef enum  {
   * fp is the file for the dump output.
   */
 extern JS_FRIEND_API(void)
-DumpHeapComplete(JSRuntime* rt, FILE* fp, DumpHeapNurseryBehaviour nurseryBehaviour);
+DumpHeap(JSRuntime* rt, FILE* fp, DumpHeapNurseryBehaviour nurseryBehaviour);
 
 #ifdef JS_OLD_GETTER_SETTER_METHODS
 JS_FRIEND_API(bool) obj_defineGetter(JSContext* cx, unsigned argc, JS::Value* vp);
@@ -470,34 +485,22 @@ IsSystemZone(JS::Zone* zone);
 extern JS_FRIEND_API(bool)
 IsAtomsCompartment(JSCompartment* comp);
 
-/*
- * Returns whether we're in a non-strict property set (in that we're in a
- * non-strict script and the bytecode we're on is a property set).  The return
- * value does NOT indicate any sort of exception was thrown: it's just a
- * boolean.
- */
 extern JS_FRIEND_API(bool)
-IsInNonStrictPropertySet(JSContext* cx);
+IsAtomsZone(JS::Zone* zone);
 
-struct WeakMapTracer;
+struct WeakMapTracer
+{
+    JSRuntime* runtime;
 
-/*
- * Weak map tracer callback, called once for every binding of every
- * weak map that was live at the time of the last garbage collection.
- *
- * m will be nullptr if the weak map is not contained in a JS Object.
- *
- * The callback should not GC (and will assert in a debug build if it does so.)
- */
-typedef void
-(* WeakMapTraceCallback)(WeakMapTracer* trc, JSObject* m, JS::GCCellPtr key, JS::GCCellPtr value);
+    explicit WeakMapTracer(JSRuntime* rt) : runtime(rt) {}
 
-struct WeakMapTracer {
-    JSRuntime*           runtime;
-    WeakMapTraceCallback callback;
-
-    WeakMapTracer(JSRuntime* rt, WeakMapTraceCallback cb)
-        : runtime(rt), callback(cb) {}
+    // Weak map tracer callback, called once for every binding of every
+    // weak map that was live at the time of the last garbage collection.
+    //
+    // m will be nullptr if the weak map is not contained in a JS Object.
+    //
+    // The callback should not GC (and will assert in a debug build if it does so.)
+    virtual void trace(JSObject* m, JS::GCCellPtr key, JS::GCCellPtr value) = 0;
 };
 
 extern JS_FRIEND_API(void)
@@ -518,7 +521,7 @@ VisitGrayWrapperTargets(JS::Zone* zone, GCThingCallback callback, void* closure)
 extern JS_FRIEND_API(JSObject*)
 GetWeakmapKeyDelegate(JSObject* key);
 
-JS_FRIEND_API(JSGCTraceKind)
+JS_FRIEND_API(JS::TraceKind)
 GCThingTraceKind(void* thing);
 
 /*
@@ -618,7 +621,7 @@ struct String
 extern JS_FRIEND_DATA(const js::Class* const) ObjectClassPtr;
 
 inline const js::Class*
-GetObjectClass(JSObject* obj)
+GetObjectClass(const JSObject* obj)
 {
     return reinterpret_cast<const shadow::Object*>(obj)->group->clasp;
 }
@@ -640,7 +643,7 @@ inline bool
 StandardClassIsDependent(JSProtoKey key)
 {
     const Class* clasp = ProtoKeyToClass(key);
-    return clasp->spec.defined() && clasp->spec.dependent();
+    return clasp && clasp->spec.defined() && clasp->spec.dependent();
 }
 
 // Returns the key for the class inherited by a given standard class (that
@@ -678,15 +681,6 @@ IsOuterObject(JSObject* obj) {
 JS_FRIEND_API(bool)
 IsFunctionObject(JSObject* obj);
 
-JS_FRIEND_API(bool)
-IsScopeObject(JSObject* obj);
-
-JS_FRIEND_API(bool)
-IsCallObject(JSObject* obj);
-
-JS_FRIEND_API(bool)
-CanAccessObjectShape(JSObject* obj);
-
 static MOZ_ALWAYS_INLINE JSCompartment*
 GetObjectCompartment(JSObject* obj)
 {
@@ -698,11 +692,6 @@ GetGlobalForObjectCrossCompartment(JSObject* obj);
 
 JS_FRIEND_API(JSObject*)
 GetPrototypeNoProxy(JSObject* obj);
-
-// Sidestep the activeContext checking implicitly performed in
-// JS_SetPendingException.
-JS_FRIEND_API(void)
-SetPendingExceptionCrossContext(JSContext* cx, JS::HandleValue v);
 
 JS_FRIEND_API(void)
 AssertSameCompartment(JSContext* cx, JSObject* obj);
@@ -871,6 +860,12 @@ AtomToLinearString(JSAtom* atom)
     return reinterpret_cast<JSLinearString*>(atom);
 }
 
+MOZ_ALWAYS_INLINE JSFlatString*
+AtomToFlatString(JSAtom* atom)
+{
+    return reinterpret_cast<JSFlatString*>(atom);
+}
+
 MOZ_ALWAYS_INLINE JSLinearString*
 FlatStringToLinearString(JSFlatString* s)
 {
@@ -940,9 +935,6 @@ JS_FRIEND_API(bool)
 AppendUnique(JSContext* cx, JS::AutoIdVector& base, JS::AutoIdVector& others);
 
 JS_FRIEND_API(bool)
-GetGeneric(JSContext* cx, JSObject* obj, JSObject* receiver, jsid id, JS::Value* vp);
-
-JS_FRIEND_API(bool)
 StringIsArrayIndex(JSLinearString* str, uint32_t* indexp);
 
 JS_FRIEND_API(void)
@@ -1010,13 +1002,16 @@ GetNativeStackLimit(JSContext* cx, int extraAllowance = 0)
 #define JS_CHECK_RECURSION(cx, onerror)                                         \
     JS_CHECK_RECURSION_LIMIT(cx, js::GetNativeStackLimit(cx), onerror)
 
-#define JS_CHECK_RECURSION_DONT_REPORT(cx, onerror)                             \
+#define JS_CHECK_RECURSION_LIMIT_DONT_REPORT(cx, limit, onerror)                \
     JS_BEGIN_MACRO                                                              \
         int stackDummy_;                                                        \
-        if (!JS_CHECK_STACK_SIZE(js::GetNativeStackLimit(cx), &stackDummy_)) {  \
+        if (!JS_CHECK_STACK_SIZE(limit, &stackDummy_)) {                        \
             onerror;                                                            \
         }                                                                       \
     JS_END_MACRO
+
+#define JS_CHECK_RECURSION_DONT_REPORT(cx, onerror)                             \
+    JS_CHECK_RECURSION_LIMIT_DONT_REPORT(cx, js::GetNativeStackLimit(cx), onerror)
 
 #define JS_CHECK_RECURSION_WITH_SP_DONT_REPORT(cx, sp, onerror)                 \
     JS_BEGIN_MACRO                                                              \
@@ -1037,7 +1032,14 @@ GetNativeStackLimit(JSContext* cx, int extraAllowance = 0)
     JS_CHECK_RECURSION_LIMIT(cx, js::GetNativeStackLimit(cx, js::StackForSystemCode), onerror)
 
 #define JS_CHECK_RECURSION_CONSERVATIVE(cx, onerror)                            \
-    JS_CHECK_RECURSION_LIMIT(cx, js::GetNativeStackLimit(cx, js::StackForUntrustedScript, -1024 * int(sizeof(size_t))), onerror)
+    JS_CHECK_RECURSION_LIMIT(cx,                                                \
+                             js::GetNativeStackLimit(cx, js::StackForUntrustedScript, -1024 * int(sizeof(size_t))), \
+                             onerror)
+
+#define JS_CHECK_RECURSION_CONSERVATIVE_DONT_REPORT(cx, onerror)                \
+    JS_CHECK_RECURSION_LIMIT_DONT_REPORT(cx,                                    \
+                                         js::GetNativeStackLimit(cx, js::StackForUntrustedScript, -1024 * int(sizeof(size_t))), \
+                                         onerror)
 
 JS_FRIEND_API(void)
 StartPCCountProfiling(JSContext* cx);
@@ -1057,6 +1059,15 @@ GetPCCountScriptSummary(JSContext* cx, size_t script);
 JS_FRIEND_API(JSString*)
 GetPCCountScriptContents(JSContext* cx, size_t script);
 
+// Generate lcov trace file content for the current compartment, and allocate a
+// new buffer and return the content in it, the size of the newly allocated
+// content within the buffer would be set to the length out-param.
+//
+// In case of out-of-memory, this function returns nullptr and does not set any
+// value to the length out-param.
+JS_FRIEND_API(char*)
+GetCodeCoverageSummary(JSContext* cx, size_t* length);
+
 JS_FRIEND_API(bool)
 ContextHasOutstandingRequests(const JSContext* cx);
 
@@ -1070,12 +1081,6 @@ typedef void
  */
 JS_FRIEND_API(void)
 SetActivityCallback(JSRuntime* rt, ActivityCallback cb, void* arg);
-
-extern JS_FRIEND_API(const JSStructuredCloneCallbacks*)
-GetContextStructuredCloneCallbacks(JSContext* cx);
-
-extern JS_FRIEND_API(bool)
-IsContextRunningJS(JSContext* cx);
 
 typedef bool
 (* DOMInstanceClassHasProtoAtDepth)(const Class* instanceClass,
@@ -1249,15 +1254,12 @@ inline bool DOMProxyIsShadowing(DOMProxyShadowsResult result) {
 
 /* Implemented in jsdate.cpp. */
 
-/*
- * Detect whether the internal date value is NaN.  (Because failure is
- * out-of-band for js_DateGet*)
- */
+/* Detect whether the internal date value is NaN. */
 extern JS_FRIEND_API(bool)
-DateIsValid(JSContext* cx, JSObject* obj);
+DateIsValid(JSContext* cx, JS::HandleObject obj, bool* isValid);
 
-extern JS_FRIEND_API(double)
-DateGetMsecSinceEpoch(JSContext* cx, JSObject* obj);
+extern JS_FRIEND_API(bool)
+DateGetMsecSinceEpoch(JSContext* cx, JS::HandleObject obj, double* msecSinceEpoch);
 
 } /* namespace js */
 
@@ -1310,9 +1312,11 @@ class MOZ_STACK_CLASS AutoStableStringChars
     {}
     ~AutoStableStringChars();
 
+    MOZ_WARN_UNUSED_RESULT
     bool init(JSContext* cx, JSString* s);
 
     /* Like init(), but Latin1 chars are inflated to TwoByte. */
+    MOZ_WARN_UNUSED_RESULT
     bool initTwoByte(JSContext* cx, JSString* s);
 
     bool isLatin1() const { return state_ == Latin1; }
@@ -1382,6 +1386,9 @@ struct MOZ_STACK_CLASS JS_FRIEND_API(ErrorReport)
     bool populateUncaughtExceptionReport(JSContext* cx, ...);
     bool populateUncaughtExceptionReportVA(JSContext* cx, va_list ap);
 
+    // Reports exceptions from add-on scopes to telementry.
+    void ReportAddonExceptionToTelementry(JSContext* cx);
+
     // We may have a provided JSErrorReport, so need a way to represent that.
     JSErrorReport* reportp;
 
@@ -1421,8 +1428,9 @@ GetSCOffset(JSStructuredCloneWriter* writer);
 
 namespace Scalar {
 
-/* Scalar types which can appear in typed arrays and typed objects.  The enum
- * values need to be kept in sync with the JS_SCALARTYPEREPR_ constants, as
+/*
+ * Scalar types that can appear in typed arrays and typed objects.  The enum
+ * values must to be kept in sync with the JS_SCALARTYPEREPR_ constants, as
  * well as the TypedArrayObject::classes and TypedArrayObject::protoClasses
  * definitions.
  */
@@ -1680,6 +1688,12 @@ JS_NewSharedFloat64ArrayWithBuffer(JSContext* cx, JS::HandleObject arrayBuffer,
                                    uint32_t byteOffset, uint32_t length);
 
 /*
+ * Create a new SharedArrayBuffer with the given byte length.
+ */
+extern JS_FRIEND_API(JSObject*)
+JS_NewSharedArrayBuffer(JSContext* cx, uint32_t nbytes);
+
+/*
  * Create a new ArrayBuffer with the given byte length.
  */
 extern JS_FRIEND_API(JSObject*)
@@ -1803,6 +1817,13 @@ UnwrapSharedFloat32Array(JSObject* obj);
 extern JS_FRIEND_API(JSObject*)
 UnwrapSharedFloat64Array(JSObject* obj);
 
+extern JS_FRIEND_API(JSObject*)
+UnwrapSharedArrayBuffer(JSObject* obj);
+
+extern JS_FRIEND_API(JSObject*)
+UnwrapSharedArrayBufferView(JSObject* obj);
+
+
 namespace detail {
 
 extern JS_FRIEND_DATA(const Class* const) Int8ArrayClassPtr;
@@ -1854,6 +1875,16 @@ JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Uint32, uint32_t)
 JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Float32, float)
 JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Float64, double)
 
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(SharedInt8, int8_t)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(SharedUint8, uint8_t)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(SharedUint8Clamped, uint8_t)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(SharedInt16, int16_t)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(SharedUint16, uint16_t)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(SharedInt32, int32_t)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(SharedUint32, uint32_t)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(SharedFloat32, float)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(SharedFloat64, double)
+
 #undef JS_DEFINE_DATA_AND_LENGTH_ACCESSOR
 
 // This one isn't inlined because it's rather tricky (by dint of having to deal
@@ -1861,10 +1892,16 @@ JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Float64, double)
 extern JS_FRIEND_API(void)
 GetArrayBufferViewLengthAndData(JSObject* obj, uint32_t* length, uint8_t** data);
 
+extern JS_FRIEND_API(void)
+GetSharedArrayBufferViewLengthAndData(JSObject* obj, uint32_t* length, uint8_t** data);
+
 // This one isn't inlined because there are a bunch of different ArrayBuffer
 // classes that would have to be individually handled here.
 extern JS_FRIEND_API(void)
 GetArrayBufferLengthAndData(JSObject* obj, uint32_t* length, uint8_t** data);
+
+extern JS_FRIEND_API(void)
+GetSharedArrayBufferLengthAndData(JSObject* obj, uint32_t* length, uint8_t** data);
 
 } // namespace js
 
@@ -1905,6 +1942,9 @@ JS_GetObjectAsArrayBuffer(JSObject* obj, uint32_t* length, uint8_t** data);
  */
 extern JS_FRIEND_API(js::Scalar::Type)
 JS_GetArrayBufferViewType(JSObject* obj);
+
+extern JS_FRIEND_API(js::Scalar::Type)
+JS_GetSharedArrayBufferViewType(JSObject* obj);
 
 /*
  * Check whether obj supports the JS_GetArrayBuffer* APIs. Note that this may
@@ -2025,6 +2065,27 @@ JS_GetFloat32ArrayData(JSObject* obj, const JS::AutoCheckCannotGC&);
 extern JS_FRIEND_API(double*)
 JS_GetFloat64ArrayData(JSObject* obj, const JS::AutoCheckCannotGC&);
 
+extern JS_FRIEND_API(uint8_t*)
+JS_GetSharedArrayBufferData(JSObject* obj, const JS::AutoCheckCannotGC&);
+extern JS_FRIEND_API(int8_t*)
+JS_GetSharedInt8ArrayData(JSObject* obj, const JS::AutoCheckCannotGC&);
+extern JS_FRIEND_API(uint8_t*)
+JS_GetSharedUint8ArrayData(JSObject* obj, const JS::AutoCheckCannotGC&);
+extern JS_FRIEND_API(uint8_t*)
+JS_GetSharedUint8ClampedArrayData(JSObject* obj, const JS::AutoCheckCannotGC&);
+extern JS_FRIEND_API(int16_t*)
+JS_GetSharedInt16ArrayData(JSObject* obj, const JS::AutoCheckCannotGC&);
+extern JS_FRIEND_API(uint16_t*)
+JS_GetSharedUint16ArrayData(JSObject* obj, const JS::AutoCheckCannotGC&);
+extern JS_FRIEND_API(int32_t*)
+JS_GetSharedInt32ArrayData(JSObject* obj, const JS::AutoCheckCannotGC&);
+extern JS_FRIEND_API(uint32_t*)
+JS_GetSharedUint32ArrayData(JSObject* obj, const JS::AutoCheckCannotGC&);
+extern JS_FRIEND_API(float*)
+JS_GetSharedFloat32ArrayData(JSObject* obj, const JS::AutoCheckCannotGC&);
+extern JS_FRIEND_API(double*)
+JS_GetSharedFloat64ArrayData(JSObject* obj, const JS::AutoCheckCannotGC&);
+
 /*
  * Same as above, but for any kind of ArrayBufferView. Prefer the type-specific
  * versions when possible.
@@ -2071,6 +2132,16 @@ JS_IsNeuteredArrayBufferObject(JSObject* obj);
  */
 JS_FRIEND_API(bool)
 JS_IsDataViewObject(JSObject* obj);
+
+/*
+ * Create a new DataView using the given ArrayBuffer for storage. The given
+ * buffer must be an ArrayBuffer (or a cross-compartment wrapper of an
+ * ArrayBuffer), and the offset and length must fit within the bounds of the
+ * arrayBuffer. Currently, nullptr will be returned and an exception will be
+ * thrown if these conditions do not hold, but do not depend on that behavior.
+ */
+JS_FRIEND_API(JSObject*)
+JS_NewDataView(JSContext* cx, JS::HandleObject arrayBuffer, uint32_t byteOffset, int32_t byteLength);
 
 /*
  * Return the byte offset of a data view into its array buffer. |obj| must be a
@@ -2129,6 +2200,12 @@ WatchGuts(JSContext* cx, JS::HandleObject obj, JS::HandleId id, JS::HandleObject
  */
 extern JS_FRIEND_API(bool)
 UnwatchGuts(JSContext* cx, JS::HandleObject obj, JS::HandleId id);
+
+namespace jit {
+
+enum class InlinableNative : uint16_t;
+
+} // namespace jit
 
 } // namespace js
 
@@ -2211,7 +2288,9 @@ class JSJitMethodCallArgs : protected JS::detail::CallArgsBase<JS::detail::NoUse
         return argv_[-2].toObject();
     }
 
-    // Add get() as needed
+    JS::HandleValue get(unsigned i) const {
+        return Base::get(i);
+    }
 };
 
 struct JSJitMethodCallArgsTraits
@@ -2241,6 +2320,7 @@ struct JSJitInfo {
         Setter,
         Method,
         StaticMethod,
+        InlinableNative,
         // Must be last
         OpTypeCount
     };
@@ -2327,7 +2407,11 @@ struct JSJitInfo {
         JSNative staticMethod;
     };
 
-    uint16_t protoID;
+    union {
+        uint16_t protoID;
+        js::jit::InlinableNative inlinableNative;
+    };
+
     uint16_t depth;
 
     // These fields are carefully packed to take up 4 bytes.  If you need more
@@ -2337,6 +2421,7 @@ struct JSJitInfo {
 #define JITINFO_OP_TYPE_BITS 4
 #define JITINFO_ALIAS_SET_BITS 4
 #define JITINFO_RETURN_TYPE_BITS 8
+#define JITINFO_SLOT_INDEX_BITS 10
 
     // The OpType that says what sort of function we are.
     uint32_t type_ : JITINFO_OP_TYPE_BITS;
@@ -2365,7 +2450,10 @@ struct JSJitInfo {
     uint32_t isMovable : 1;    /* Is op movable?  To be movable the op must
                                   not AliasEverything, but even that might
                                   not be enough (e.g. in cases when it can
-                                  throw). */
+                                  throw or is explicitly not movable). */
+    uint32_t isEliminatable : 1; /* Can op be dead-code eliminated? Again, this
+                                    depends on whether the op can throw, in
+                                    addition to the alias set. */
     // XXXbz should we have a JSValueType for the type of the member?
     uint32_t isAlwaysInSlot : 1; /* True if this is a getter that can always
                                     get the value from a slot of the "this"
@@ -2376,9 +2464,15 @@ struct JSJitInfo {
                                           slot of the "this" object. */
     uint32_t isTypedMethod : 1; /* True if this is an instance of
                                    JSTypedMethodJitInfo. */
-    uint32_t slotIndex : 11;   /* If isAlwaysInSlot or isSometimesInSlot is
-                                  true, the index of the slot to get the value
-                                  from.  Otherwise 0. */
+    uint32_t slotIndex : JITINFO_SLOT_INDEX_BITS; /* If isAlwaysInSlot or
+                                                     isSometimesInSlot is true,
+                                                     the index of the slot to
+                                                     get the value from.
+                                                     Otherwise 0. */
+
+    static const size_t maxSlotIndex = (1 << JITINFO_SLOT_INDEX_BITS) - 1;
+
+#undef JITINFO_SLOT_INDEX_BITS
 };
 
 static_assert(sizeof(JSJitInfo) == (sizeof(void*) + 2 * sizeof(uint32_t)),
@@ -2417,7 +2511,7 @@ FunctionObjectToShadowFunction(JSObject* fun)
 }
 
 /* Statically asserted in jsfun.h. */
-static const unsigned JS_FUNCTION_INTERPRETED_BITS = 0x401;
+static const unsigned JS_FUNCTION_INTERPRETED_BITS = 0x0201;
 
 // Return whether the given function object is native.
 static MOZ_ALWAYS_INLINE bool
@@ -2466,8 +2560,8 @@ JSID_FROM_BITS(size_t bits)
 namespace js {
 namespace detail {
 bool IdMatchesAtom(jsid id, JSAtom* atom);
-}
-}
+} // namespace detail
+} // namespace js
 
 /*
  * Must not be used on atoms that are representable as integer jsids.
@@ -2536,18 +2630,32 @@ IdToValue(jsid id)
 }
 
 /*
- * If the embedder has registered a default JSContext callback, returns the
- * result of the callback. Otherwise, asserts that |rt| has exactly one
- * JSContext associated with it, and returns that context.
+ * If the embedder has registered a ScriptEnvironmentPreparer,
+ * PrepareScriptEnvironmentAndInvoke will call the preparer's 'invoke' method
+ * with the given |closure|, with the assumption that the preparer will set up
+ * any state necessary to run script in |scope|, invoke |closure| with a valid
+ * JSContext*, and return.
+ *
+ * If no preparer is registered, PrepareScriptEnvironmentAndInvoke will assert
+ * that |rt| has exactly one JSContext associated with it, enter the compartment
+ * of |scope| on that context, and invoke |closure|.
  */
-extern JS_FRIEND_API(JSContext*)
-DefaultJSContext(JSRuntime* rt);
 
-typedef JSContext*
-(* DefaultJSContextCallback)(JSRuntime* rt);
+struct ScriptEnvironmentPreparer {
+    struct Closure {
+        virtual bool operator()(JSContext* cx) = 0;
+    };
+
+    virtual bool invoke(JS::HandleObject scope, Closure& closure) = 0;
+};
+
+extern JS_FRIEND_API(bool)
+PrepareScriptEnvironmentAndInvoke(JSRuntime* rt, JS::HandleObject scope,
+                                  ScriptEnvironmentPreparer::Closure& closure);
 
 JS_FRIEND_API(void)
-SetDefaultJSContextCallback(JSRuntime* rt, DefaultJSContextCallback cb);
+SetScriptEnvironmentPreparer(JSRuntime* rt, ScriptEnvironmentPreparer*
+preparer);
 
 /*
  * To help embedders enforce their invariants, we allow them to specify in
@@ -2580,7 +2688,7 @@ typedef void
 JS_FRIEND_API(void)
 SetCTypesActivityCallback(JSRuntime* rt, CTypesActivityCallback cb);
 
-class JS_FRIEND_API(AutoCTypesActivityCallback) {
+class MOZ_RAII JS_FRIEND_API(AutoCTypesActivityCallback) {
   private:
     JSContext* cx;
     CTypesActivityCallback callback;
@@ -2603,7 +2711,7 @@ class JS_FRIEND_API(AutoCTypesActivityCallback) {
 };
 
 typedef JSObject*
-(* ObjectMetadataCallback)(JSContext* cx);
+(* ObjectMetadataCallback)(JSContext* cx, JSObject* obj);
 
 /*
  * Specify a callback to invoke when creating each JS object in the current
@@ -2687,21 +2795,12 @@ SetJitExceptionHandler(JitExceptionHandler handler);
 #endif
 
 /*
- * Get the object underlying the object environment (in the ES
- * NewObjectEnvironment) sense for a given function.  If the function is not
- * scripted or does not have an object environment, just returns the function's
- * parent.
+ * Get the nearest enclosing with scope object for a given function. If the
+ * function is not scripted or is not enclosed by a with scope, returns the
+ * global.
  */
 extern JS_FRIEND_API(JSObject*)
-GetObjectEnvironmentObjectForFunction(JSFunction* fun);
-
-/*
- * Get the stored principal of the stack frame this SavedFrame object
- * represents.  note that this is not the same thing as the object principal of
- * the object itself.  Do NOT pass a non-SavedFrame object here.
- */
-extern JS_FRIEND_API(JSPrincipals*)
-GetSavedFramePrincipals(JS::HandleObject savedFrame);
+GetNearestEnclosingWithScopeObjectForFunction(JSFunction* fun);
 
 /*
  * Get the first SavedFrame object in this SavedFrame stack whose principals are
@@ -2717,9 +2816,8 @@ GetFirstSubsumedSavedFrame(JSContext* cx, JS::HandleObject savedFrame);
 extern JS_FRIEND_API(bool)
 ReportIsNotFunction(JSContext* cx, JS::HandleValue v);
 
-extern JS_FRIEND_API(bool)
-DefineOwnProperty(JSContext* cx, JSObject* objArg, jsid idArg,
-                  JS::Handle<JSPropertyDescriptor> descriptor, JS::ObjectOpResult& result);
+extern JS_FRIEND_API(JSObject*)
+ConvertArgsToArray(JSContext* cx, const JS::CallArgs& args);
 
 } /* namespace js */
 
@@ -2732,5 +2830,173 @@ extern JS_FRIEND_API(void)
 JS_StoreStringPostBarrierCallback(JSContext* cx,
                                   void (*callback)(JSTracer* trc, JSString* key, void* data),
                                   JSString* key, void* data);
+
+/*
+ * Forcibly clear postbarrier callbacks queued by the previous two methods.
+ * This should be used when the object owning the postbarriered pointers is
+ * being destroyed outside of a garbage collection.
+ *
+ * This currently works by performing a minor GC.
+ */
+extern JS_FRIEND_API(void)
+JS_ClearAllPostBarrierCallbacks(JSRuntime *rt);
+
+class NativeProfiler
+{
+  public:
+    virtual ~NativeProfiler() {};
+    virtual void sampleNative(void* addr, uint32_t size) = 0;
+    virtual void removeNative(void* addr) = 0;
+    virtual void reset() = 0;
+};
+
+class GCHeapProfiler
+{
+  public:
+    virtual ~GCHeapProfiler() {};
+    virtual void sampleTenured(void* addr, uint32_t size) = 0;
+    virtual void sampleNursery(void* addr, uint32_t size) = 0;
+    virtual void markTenuredStart() = 0;
+    virtual void markTenured(void* addr) = 0;
+    virtual void sweepTenured() = 0;
+    virtual void sweepNursery() = 0;
+    virtual void moveNurseryToTenured(void* addrOld, void* addrNew) = 0;
+    virtual void reset() = 0;
+};
+
+class MemProfiler
+{
+    static mozilla::Atomic<uint32_t, mozilla::Relaxed> sActiveProfilerCount;
+    static NativeProfiler* sNativeProfiler;
+
+    static GCHeapProfiler* GetGCHeapProfiler(void* addr);
+    static GCHeapProfiler* GetGCHeapProfiler(JSRuntime* runtime);
+
+    static NativeProfiler* GetNativeProfiler() {
+        return sNativeProfiler;
+    }
+
+    GCHeapProfiler* mGCHeapProfiler;
+    JSRuntime* mRuntime;
+
+  public:
+    explicit MemProfiler(JSRuntime* aRuntime) : mGCHeapProfiler(nullptr), mRuntime(aRuntime) {}
+
+    void start(GCHeapProfiler* aGCHeapProfiler);
+    void stop();
+
+    GCHeapProfiler* getGCHeapProfiler() const {
+        return mGCHeapProfiler;
+    }
+
+    static MOZ_ALWAYS_INLINE bool enabled() {
+        return sActiveProfilerCount > 0;
+    }
+
+    static MemProfiler* GetMemProfiler(JSRuntime* runtime);
+
+    static void SetNativeProfiler(NativeProfiler* aProfiler) {
+        sNativeProfiler = aProfiler;
+    }
+
+    static MOZ_ALWAYS_INLINE void SampleNative(void* addr, uint32_t size) {
+        JS::AutoSuppressGCAnalysis nogc;
+
+        if (MOZ_LIKELY(!enabled()))
+            return;
+
+        NativeProfiler* profiler = GetNativeProfiler();
+        if (profiler)
+            profiler->sampleNative(addr, size);
+    }
+
+    static MOZ_ALWAYS_INLINE void SampleTenured(void* addr, uint32_t size) {
+        JS::AutoSuppressGCAnalysis nogc;
+
+        if (MOZ_LIKELY(!enabled()))
+            return;
+
+        GCHeapProfiler* profiler = GetGCHeapProfiler(addr);
+        if (profiler)
+            profiler->sampleTenured(addr, size);
+    }
+
+    static MOZ_ALWAYS_INLINE void SampleNursery(void* addr, uint32_t size) {
+        JS::AutoSuppressGCAnalysis nogc;
+
+        if (MOZ_LIKELY(!enabled()))
+            return;
+
+        GCHeapProfiler* profiler = GetGCHeapProfiler(addr);
+        if (profiler)
+            profiler->sampleNursery(addr, size);
+    }
+
+    static MOZ_ALWAYS_INLINE void RemoveNative(void* addr) {
+        JS::AutoSuppressGCAnalysis nogc;
+
+        if (MOZ_LIKELY(!enabled()))
+            return;
+
+        NativeProfiler* profiler = GetNativeProfiler();
+        if (profiler)
+            profiler->removeNative(addr);
+    }
+
+    static MOZ_ALWAYS_INLINE void MarkTenuredStart(JSRuntime* runtime) {
+        JS::AutoSuppressGCAnalysis nogc;
+
+        if (MOZ_LIKELY(!enabled()))
+            return;
+
+        GCHeapProfiler* profiler = GetGCHeapProfiler(runtime);
+        if (profiler)
+            profiler->markTenuredStart();
+    }
+
+    static MOZ_ALWAYS_INLINE void MarkTenured(void* addr) {
+        JS::AutoSuppressGCAnalysis nogc;
+
+        if (MOZ_LIKELY(!enabled()))
+            return;
+
+        GCHeapProfiler* profiler = GetGCHeapProfiler(addr);
+        if (profiler)
+            profiler->markTenured(addr);
+    }
+
+    static MOZ_ALWAYS_INLINE void SweepTenured(JSRuntime* runtime) {
+        JS::AutoSuppressGCAnalysis nogc;
+
+        if (MOZ_LIKELY(!enabled()))
+            return;
+
+        GCHeapProfiler* profiler = GetGCHeapProfiler(runtime);
+        if (profiler)
+            profiler->sweepTenured();
+    }
+
+    static MOZ_ALWAYS_INLINE void SweepNursery(JSRuntime* runtime) {
+        JS::AutoSuppressGCAnalysis nogc;
+
+        if (MOZ_LIKELY(!enabled()))
+            return;
+
+        GCHeapProfiler* profiler = GetGCHeapProfiler(runtime);
+        if (profiler)
+            profiler->sweepNursery();
+    }
+
+    static MOZ_ALWAYS_INLINE void MoveNurseryToTenured(void* addrOld, void* addrNew) {
+        JS::AutoSuppressGCAnalysis nogc;
+
+        if (MOZ_LIKELY(!enabled()))
+            return;
+
+        GCHeapProfiler* profiler = GetGCHeapProfiler(addrOld);
+        if (profiler)
+            profiler->moveNurseryToTenured(addrOld, addrNew);
+    }
+};
 
 #endif /* jsfriendapi_h */

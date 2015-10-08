@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const {classes: Cc, interfaces: Ci, results: Cr, utils: Cu} = Components;
+var {classes: Cc, interfaces: Ci, results: Cr, utils: Cu} = Components;
 
 this.EXPORTED_SYMBOLS = ["CryptoUtils"];
 
@@ -552,7 +552,7 @@ XPCOMUtils.defineLazyGetter(CryptoUtils, "_utf8Converter", function() {
   return converter;
 });
 
-let Svc = {};
+var Svc = {};
 
 XPCOMUtils.defineLazyServiceGetter(Svc,
                                    "KeyFactory",

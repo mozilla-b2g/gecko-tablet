@@ -117,7 +117,7 @@ gfxWindowsNativeDrawing::BeginNativeDrawing()
                 // There's probably a better fix, but I haven't figured out
                 // the root cause of the problem.
                 mTempSurfaceSize =
-                    gfxIntSize((int32_t) ceil(mNativeRect.Width() + 1),
+                    IntSize((int32_t) ceil(mNativeRect.Width() + 1),
                                (int32_t) ceil(mNativeRect.Height() + 1));
             } else {
                 // figure out the scale factors
@@ -132,7 +132,7 @@ gfxWindowsNativeDrawing::BeginNativeDrawing()
 
                 // See comment above about "+1"
                 mTempSurfaceSize =
-                    gfxIntSize((int32_t) ceil(mNativeRect.Width() * mScale.width + 1),
+                    IntSize((int32_t) ceil(mNativeRect.Width() * mScale.width + 1),
                                (int32_t) ceil(mNativeRect.Height() * mScale.height + 1));
             }
         }
@@ -288,9 +288,9 @@ gfxWindowsNativeDrawing::PaintToContext()
         pat->SetMatrix(m);
 
         if (mNativeDrawFlags & DO_NEAREST_NEIGHBOR_FILTERING)
-            pat->SetFilter(GraphicsFilter::FILTER_FAST);
+            pat->SetFilter(Filter::LINEAR);
 
-        pat->SetExtend(gfxPattern::EXTEND_PAD);
+        pat->SetExtend(ExtendMode::CLAMP);
         mContext->SetPattern(pat);
         mContext->Fill();
         mContext->Restore();

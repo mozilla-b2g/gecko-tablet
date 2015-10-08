@@ -115,8 +115,7 @@ typedef Vector<BufferOffset, 512, OldJitAllocPolicy> LoadOffsets;
 // The allocation unit size for pools.
 typedef int32_t PoolAllocUnit;
 
-struct Pool
-  : public OldJitAllocPolicy
+struct Pool : public OldJitAllocPolicy
 {
   private:
     // The maximum program-counter relative offset below which the instruction
@@ -132,8 +131,11 @@ struct Pool
     unsigned numEntries_;
     // The available size of the poolData vector, in PoolAllocUnits.
     unsigned buffSize;
-    // The content of the pool entries.
+    // The content of the pool entries.  Invariant: If poolData_ is nullptr then
+    // buffSize will be zero and oom_ will return true.
     PoolAllocUnit* poolData_;
+    // Flag that tracks OOM conditions.
+    bool oom_;
 
     // The limiting instruction and pool-entry pair. The instruction program
     // counter relative offset of this limiting instruction will go out of range
@@ -155,16 +157,28 @@ struct Pool
     LoadOffsets loadOffsets;
 
     explicit Pool(size_t maxOffset, unsigned bias, LifoAlloc& lifoAlloc)
-        : maxOffset_(maxOffset), bias_(bias), numEntries_(0), buffSize(8),
-          poolData_(lifoAlloc.newArrayUninitialized<PoolAllocUnit>(buffSize)),
-          limitingUser(), limitingUsee(INT_MIN), loadOffsets()
+      : maxOffset_(maxOffset),
+        bias_(bias),
+        numEntries_(0),
+        buffSize(8),
+        poolData_(lifoAlloc.newArrayUninitialized<PoolAllocUnit>(buffSize)),
+        oom_(false),
+        limitingUser(),
+        limitingUsee(INT_MIN),
+        loadOffsets()
     {
-    }
-    static const unsigned Garbage = 0xa5a5a5a5;
-    Pool() : maxOffset_(Garbage), bias_(Garbage)
-    {
+        if (poolData_ == nullptr) {
+            buffSize = 0;
+            oom_ = true;
+        }
     }
 
+    static const unsigned Garbage = 0xa5a5a5a5;
+    Pool()
+      : maxOffset_(Garbage), bias_(Garbage)
+    { }
+
+    // If poolData() returns nullptr then oom_ will also be true.
     PoolAllocUnit* poolData() const {
         return poolData_;
     }
@@ -175,6 +189,10 @@ struct Pool
 
     size_t getPoolSize() const {
         return numEntries_ * sizeof(PoolAllocUnit);
+    }
+
+    bool oom() const {
+        return oom_;
     }
 
     // Update the instruction/pool-entry pair that limits the position of the
@@ -209,17 +227,22 @@ struct Pool
         return offset >= maxOffset_;
     }
 
+    static const unsigned OOM_FAIL = unsigned(-1);
+
     unsigned insertEntry(unsigned num, uint8_t* data, BufferOffset off, LifoAlloc& lifoAlloc) {
+        if (oom_)
+            return OOM_FAIL;
         if (numEntries_ + num >= buffSize) {
             // Grow the poolData_ vector.
-            buffSize *= 2;
-            PoolAllocUnit* tmp = lifoAlloc.newArrayUninitialized<PoolAllocUnit>(buffSize);
-            if (poolData_ == nullptr) {
-                buffSize = 0;
-                return -1;
+            unsigned newSize = buffSize*2;
+            PoolAllocUnit* tmp = lifoAlloc.newArrayUninitialized<PoolAllocUnit>(newSize);
+            if (tmp == nullptr) {
+                oom_ = true;
+                return OOM_FAIL;
             }
             mozilla::PodCopy(tmp, poolData_, numEntries_);
             poolData_ = tmp;
+            buffSize = newSize;
         }
         mozilla::PodCopy(&poolData_[numEntries_], (PoolAllocUnit*)data, num);
         loadOffsets.append(off.getOffset());
@@ -232,8 +255,11 @@ struct Pool
         numEntries_ = 0;
         buffSize = 8;
         poolData_ = static_cast<PoolAllocUnit*>(a.alloc(buffSize * sizeof(PoolAllocUnit)));
-        if (poolData_ == nullptr)
+        if (poolData_ == nullptr) {
+            oom_ = true;
+            buffSize = 0;
             return false;
+        }
 
         new (&loadOffsets) LoadOffsets;
 
@@ -241,47 +267,58 @@ struct Pool
         limitingUsee = -1;
         return true;
     }
-
 };
 
 
 template <size_t SliceSize, size_t InstSize>
-struct BufferSliceTail : public BufferSlice<SliceSize> {
+struct BufferSliceTail : public BufferSlice<SliceSize>
+{
   private:
     // Bit vector to record which instructions in the slice have a branch, so
     // that they can be patched when the final positions are known.
     mozilla::Array<uint8_t, (SliceSize / InstSize) / 8> isBranch_;
+
   public:
     Pool* pool;
+
     // Flag when the last instruction in the slice is a 'natural' pool guard. A
     // natural pool guard is a branch in the code that was not explicitly added
     // to branch around the pool. For now an explict guard branch is always
     // emitted, so this will always be false.
     bool isNatural : 1;
-    BufferSliceTail* getNext() const {
-        return (BufferSliceTail*)this->next_;
-    }
-    explicit BufferSliceTail() : pool(nullptr), isNatural(true) {
+
+  public:
+    explicit BufferSliceTail()
+      : pool(nullptr), isNatural(true)
+    {
         static_assert(SliceSize % (8 * InstSize) == 0, "SliceSize must be a multple of 8 * InstSize.");
         mozilla::PodArrayZero(isBranch_);
     }
-    void markNextAsBranch() {
-        // The caller is expected to ensure that the nodeSize_ < SliceSize. See
-        // the assembler's markNextAsBranch() method which firstly creates a new
-        // slice if necessary.
-        MOZ_ASSERT(this->nodeSize_ % InstSize == 0);
-        MOZ_ASSERT(this->nodeSize_ < SliceSize);
-        size_t idx = this->nodeSize_ / InstSize;
-        isBranch_[idx >> 3] |= 1 << (idx & 0x7);
-    }
+
+  public:
     bool isBranch(unsigned idx) const {
-        MOZ_ASSERT(idx < this->nodeSize_ / InstSize);
+        MOZ_ASSERT(idx < this->bytelength_ / InstSize);
         return (isBranch_[idx >> 3] >> (idx & 0x7)) & 1;
     }
+
     bool isNextBranch() const {
-        size_t size = this->nodeSize_;
+        size_t size = this->bytelength_;
         MOZ_ASSERT(size < SliceSize);
         return isBranch(size / InstSize);
+    }
+
+    void markNextAsBranch() {
+        // The caller is expected to ensure that the bytelength_ < SliceSize. See
+        // the assembler's markNextAsBranch() method which firstly creates a new
+        // slice if necessary.
+        MOZ_ASSERT(this->bytelength_ % InstSize == 0);
+        MOZ_ASSERT(this->bytelength_ < SliceSize);
+        size_t idx = this->bytelength_ / InstSize;
+        isBranch_[idx >> 3] |= 1 << (idx & 0x7);
+    }
+
+    BufferSliceTail* getNext() const {
+        return (BufferSliceTail*)this->next_;
     }
 };
 
@@ -289,20 +326,28 @@ struct BufferSliceTail : public BufferSlice<SliceSize> {
 // The InstSize is the sizeof(Inst) but is needed here because the buffer is
 // defined before the Instruction.
 template <size_t SliceSize, size_t InstSize, class Inst, class Asm>
-struct AssemblerBufferWithConstantPools : public AssemblerBuffer<SliceSize, Inst> {
+struct AssemblerBufferWithConstantPools : public AssemblerBuffer<SliceSize, Inst>
+{
   private:
     // The PoolEntry index counter. Each PoolEntry is given a unique index,
     // counting up from zero, and these can be mapped back to the actual pool
     // entry offset after finishing the buffer, see poolEntryOffset().
     size_t poolEntryCount;
+
   public:
-    class PoolEntry {
+    class PoolEntry
+    {
         size_t index_;
+
       public:
-        explicit PoolEntry(size_t index) : index_(index) {
-        }
-        PoolEntry() : index_(-1) {
-        }
+        explicit PoolEntry(size_t index)
+          : index_(index)
+        { }
+
+        PoolEntry()
+          : index_(-1)
+        { }
+
         size_t index() const {
             return index_;
         }
@@ -384,14 +429,12 @@ struct AssemblerBufferWithConstantPools : public AssemblerBuffer<SliceSize, Inst
     bool inhibitNops_;
 
   public:
-
     // A unique id within each JitContext, to identify pools in the debug
     // spew. Set by the MacroAssembler, see getNextAssemblerId().
     int id;
 
   private:
-    // The buffer slices are in a double linked list. Pointers to the head and
-    // tail of this list:
+    // The buffer slices are in a double linked list.
     BufferSlice* getHead() const {
         return (BufferSlice*)this->head;
     }
@@ -413,20 +456,36 @@ struct AssemblerBufferWithConstantPools : public AssemblerBuffer<SliceSize, Inst
                                      size_t instBufferAlign, size_t poolMaxOffset,
                                      unsigned pcBias, uint32_t alignFillInst, uint32_t nopFillInst,
                                      unsigned nopFill = 0)
-        : poolEntryCount(0), guardSize_(guardSize), headerSize_(headerSize),
-          poolMaxOffset_(poolMaxOffset), pcBias_(pcBias),
-          instBufferAlign_(instBufferAlign),
-          numDumps_(0), poolInfoSize_(8), poolInfo_(nullptr),
-          canNotPlacePool_(false), alignFillInst_(alignFillInst),
-          nopFillInst_(nopFillInst), nopFill_(nopFill), inhibitNops_(false),
-          id(-1)
-    {
-    }
+      : poolEntryCount(0),
+        guardSize_(guardSize),
+        headerSize_(headerSize),
+        poolMaxOffset_(poolMaxOffset),
+        pcBias_(pcBias),
+        pool_(),
+        instBufferAlign_(instBufferAlign),
+        numDumps_(0),
+        poolInfoSize_(8),
+        poolInfo_(nullptr),
+        canNotPlacePool_(false),
+#ifdef DEBUG
+        canNotPlacePoolStartOffset_(0),
+        canNotPlacePoolMaxInst_(0),
+#endif
+        alignFillInst_(alignFillInst),
+        nopFillInst_(nopFillInst),
+        nopFill_(nopFill),
+        inhibitNops_(false),
+        id(-1)
+    { }
 
     // We need to wait until an AutoJitContextAlloc is created by the
     // MacroAssembler before allocating any space.
     void initWithAllocator() {
         poolInfo_ = this->lifoAlloc_.template newArrayUninitialized<PoolInfo>(poolInfoSize_);
+        if (!poolInfo_) {
+            this->fail_oom();
+            return;
+        }
 
         new (&pool_) Pool (poolMaxOffset_, pcBias_, this->lifoAlloc_);
         if (pool_.poolData() == nullptr)
@@ -481,7 +540,9 @@ struct AssemblerBufferWithConstantPools : public AssemblerBuffer<SliceSize, Inst
     void markNextAsBranch() {
         // If the previous thing inserted was the last instruction of the node,
         // then whoops, we want to mark the first instruction of the next node.
-        this->ensureSpace(InstSize);
+        if (!this->ensureSpace(InstSize))
+            return;
+
         MOZ_ASSERT(this->getTail() != nullptr);
         this->getTail()->markNextAsBranch();
     }
@@ -491,7 +552,10 @@ struct AssemblerBufferWithConstantPools : public AssemblerBuffer<SliceSize, Inst
         return this->getTail()->isNextBranch();
     }
 
-    int insertEntryForwards(unsigned numInst, unsigned numPoolEntries, uint8_t* inst, uint8_t* data) {
+    static const unsigned OOM_FAIL = unsigned(-1);
+    static const unsigned NO_DATA = unsigned(-2);
+
+    unsigned insertEntryForwards(unsigned numInst, unsigned numPoolEntries, uint8_t* inst, uint8_t* data) {
         size_t nextOffset = sizeExcludingCurrentPool();
         size_t poolOffset = nextOffset + (numInst + guardSize_ + headerSize_) * InstSize;
 
@@ -511,22 +575,46 @@ struct AssemblerBufferWithConstantPools : public AssemblerBuffer<SliceSize, Inst
 
             finishPool();
             if (this->oom())
-                return uint32_t(-1);
+                return OOM_FAIL;
             return insertEntryForwards(numInst, numPoolEntries, inst, data);
         }
-        if (numPoolEntries)
-            return pool_.insertEntry(numPoolEntries, data, this->nextOffset(), this->lifoAlloc_);
+        if (numPoolEntries) {
+            unsigned result = pool_.insertEntry(numPoolEntries, data, this->nextOffset(), this->lifoAlloc_);
+            if (result == Pool::OOM_FAIL) {
+                this->fail_oom();
+                return OOM_FAIL;
+            }
+            return result;
+        }
 
         // The pool entry index is returned above when allocating an entry, but
         // when not allocating an entry a dummy value is returned - it is not
         // expected to be used by the caller.
-        return UINT_MAX;
+        return NO_DATA;
     }
 
   public:
+    // Get the next buffer offset where an instruction would be inserted.
+    // This may flush the current constant pool before returning nextOffset().
+    BufferOffset nextInstrOffset()
+    {
+        size_t nextOffset = sizeExcludingCurrentPool();
+        // Is there room for a single instruction more?
+        size_t poolOffset =
+          nextOffset + (1 + guardSize_ + headerSize_) * InstSize;
+        if (pool_.checkFull(poolOffset)) {
+            JitSpew(JitSpew_Pools,
+                    "[%d] nextInstrOffset @ %d caused a constant pool spill",
+                    id, nextOffset);
+            finishPool();
+        }
+        return this->nextOffset();
+    }
+
     BufferOffset allocEntry(size_t numInst, unsigned numPoolEntries,
                             uint8_t* inst, uint8_t* data, PoolEntry* pe = nullptr,
-                            bool markAsBranch = false) {
+                            bool markAsBranch = false)
+    {
         // The alloction of pool entries is not supported in a no-pool region,
         // check.
         MOZ_ASSERT_IF(numPoolEntries, !canNotPlacePool_);
@@ -552,11 +640,12 @@ struct AssemblerBufferWithConstantPools : public AssemblerBuffer<SliceSize, Inst
 
         // Insert the pool value.
         unsigned index = insertEntryForwards(numInst, numPoolEntries, inst, data);
+        if (this->oom())
+            return BufferOffset();
+
         // Now to get an instruction to write.
         PoolEntry retPE;
         if (numPoolEntries) {
-            if (this->oom())
-                return BufferOffset();
             JitSpew(JitSpew_Pools, "[%d] Entry has index %u, offset %u", id, index,
                     sizeExcludingCurrentPool());
             Asm::InsertIndexIntoTag(inst, index);
@@ -569,7 +658,7 @@ struct AssemblerBufferWithConstantPools : public AssemblerBuffer<SliceSize, Inst
             *pe = retPE;
         if (markAsBranch)
             markNextAsBranch();
-        return this->putBlob(numInst * InstSize, inst);
+        return this->putBytes(numInst * InstSize, inst);
     }
 
     BufferOffset putInt(uint32_t value, bool markAsBranch = false) {
@@ -614,7 +703,7 @@ struct AssemblerBufferWithConstantPools : public AssemblerBuffer<SliceSize, Inst
         BufferOffset branch = this->nextOffset();
         // Mark and emit the guard branch.
         markNextAsBranch();
-        this->putBlob(guardSize_ * InstSize, nullptr);
+        this->putBytes(guardSize_ * InstSize, nullptr);
         BufferOffset afterPool = this->nextOffset();
         Asm::WritePoolGuard(branch, this->getInst(branch), afterPool);
 
@@ -751,9 +840,7 @@ struct AssemblerBufferWithConstantPools : public AssemblerBuffer<SliceSize, Inst
         return poolInfo_[cur - 1].finalPos - poolInfo_[cur - 1].offset;
     }
 
-    void align(unsigned alignment)
-    {
-        // Restrict the alignment to a power of two for now.
+    void align(unsigned alignment) {
         MOZ_ASSERT(IsPowerOfTwo(alignment));
 
         // A pool many need to be dumped at this point, so insert NOP fill here.
@@ -791,7 +878,7 @@ struct AssemblerBufferWithConstantPools : public AssemblerBuffer<SliceSize, Inst
             return;
         unsigned destOffset = branch.getOffset() + offset;
         if (offset > 0) {
-            while (curpool < numDumps_ && poolInfo_[curpool].offset <= destOffset) {
+            while (curpool < numDumps_ && poolInfo_[curpool].offset <= (size_t)destOffset) {
                 offset += poolInfo_[curpool].size;
                 curpool++;
             }
@@ -819,7 +906,7 @@ struct AssemblerBufferWithConstantPools : public AssemblerBuffer<SliceSize, Inst
         size_t curInstOffset = 0;
         for (BufferSlice* cur = getHead(); cur != nullptr; cur = cur->getNext()) {
             uint32_t* src = (uint32_t*)&cur->instructions;
-            unsigned numInsts = cur->size() / InstSize;
+            unsigned numInsts = cur->length() / InstSize;
             for (unsigned idx = 0; idx < numInsts; idx++, curInstOffset += InstSize) {
                 // Is the current instruction a branch?
                 if (cur->isBranch(idx)) {
@@ -831,6 +918,11 @@ struct AssemblerBufferWithConstantPools : public AssemblerBuffer<SliceSize, Inst
             dest += numInsts;
             Pool* curPool = cur->pool;
             if (curPool != nullptr) {
+                if (curPool->oom()) {
+                    this->fail_oom();
+                    return;
+                }
+
                 // Have the repatcher move on to the next pool.
                 curIndex++;
                 // Copying the pool into place.
@@ -863,6 +955,7 @@ struct AssemblerBufferWithConstantPools : public AssemblerBuffer<SliceSize, Inst
     }
 };
 
-} // ion
-} // js
-#endif /* jit_shared_IonAssemblerBufferWithConstantPools_h */
+} // namespace ion
+} // namespace js
+
+#endif // jit_shared_IonAssemblerBufferWithConstantPools_h

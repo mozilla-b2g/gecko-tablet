@@ -15,23 +15,24 @@
 #include "nsRect.h"
 #include "nsPoint.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/HTMLCanvasElement.h"
+#include "nsTArray.h"
+#include "Units.h"
 
 // translucency level for drag images
 #define DRAG_TRANSLUCENCY 0.65
 
 class nsIContent;
 class nsIDOMNode;
-class nsIFrame;
 class nsPresContext;
 class nsIImageLoadingContent;
-class nsICanvasElementExternal;
 
 namespace mozilla {
 namespace gfx {
 class SourceSurface;
-}
-}
+} // namespace gfx
+} // namespace mozilla
 
 /**
  * XP DragService wrapper base class
@@ -56,6 +57,8 @@ public:
   void SetDragEndPoint(nsIntPoint aEndDragPoint) { mEndDragPoint = aEndDragPoint; }
 
   uint16_t GetInputSource() { return mInputSource; }
+
+  int32_t TakeChildProcessDragAction();
 
 protected:
   virtual ~nsBaseDragService();
@@ -112,6 +115,15 @@ protected:
    */
   void OpenDragPopup();
 
+  // Returns true if a drag event was dispatched to a child process after
+  // the previous TakeDragEventDispatchedToChildProcess() call.
+  bool TakeDragEventDispatchedToChildProcess()
+  {
+    bool retval = mDragEventDispatchedToChildProcess;
+    mDragEventDispatchedToChildProcess = false;
+    return retval;
+  }
+
   bool mCanDrop;
   bool mOnlyChromeDrop;
   bool mDoingDrag;
@@ -120,7 +132,11 @@ protected:
   // true if the user cancelled the drag operation
   bool mUserCancelled;
 
+  bool mDragEventDispatchedToChildProcess;
+
   uint32_t mDragAction;
+  uint32_t mDragActionFromChildProcess;
+
   nsSize mTargetSize;
   nsCOMPtr<nsIDOMNode> mSourceNode;
   nsCOMPtr<nsIDOMDocument> mSourceDocument;       // the document at the drag source. will be null
@@ -129,9 +145,8 @@ protected:
 
   // used to determine the image to appear on the cursor while dragging
   nsCOMPtr<nsIDOMNode> mImage;
-  // offset of cursor within the image 
-  int32_t mImageX;
-  int32_t mImageY;
+  // offset of cursor within the image
+  mozilla::CSSIntPoint mImageOffset;
 
   // set if a selection is being dragged
   nsCOMPtr<nsISelection> mSelection;
@@ -153,6 +168,8 @@ protected:
 
   // The input source of the drag event. Possible values are from nsIDOMMouseEvent.
   uint16_t mInputSource;
+
+  nsTArray<nsRefPtr<mozilla::dom::ContentParent>> mChildProcesses;
 };
 
 #endif // nsBaseDragService_h__

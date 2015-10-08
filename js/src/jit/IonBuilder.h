@@ -28,6 +28,8 @@ class CodeGenerator;
 class CallInfo;
 class BaselineFrameInspector;
 
+enum class InlinableNative : uint16_t;
+
 // Records information about a baseline frame for compilation that is stable
 // when later used off thread.
 BaselineFrameInspector*
@@ -44,16 +46,6 @@ class IonBuilder
         ControlStatus_Joined,       // Created a join node.
         ControlStatus_Jumped,       // Parsing another branch at the same level.
         ControlStatus_None          // No control flow.
-    };
-
-    enum SetElemSafety {
-        // Normal write like a[b] = c.
-        SetElem_Normal,
-
-        // Write due to UnsafePutElements:
-        // - assumed to be in bounds,
-        // - not checked for data races
-        SetElem_Unsafe,
     };
 
     struct DeferredEdge : public TempObject
@@ -238,8 +230,6 @@ class IonBuilder
     void trackActionableAbort(const char* message);
     void spew(const char* message);
 
-    MInstruction* constantMaybeNursery(JSObject* obj);
-
     JSFunction* getSingleCallTarget(TemporaryTypeSet* calleeTypes);
     bool getPolyCallTargets(TemporaryTypeSet* calleeTypes, bool constructing,
                             ObjectVector& targets, uint32_t maxTargets);
@@ -352,9 +342,9 @@ class IonBuilder
 
     MConstant* constant(const Value& v);
     MConstant* constantInt(int32_t i);
-
-    // Note: This function might return nullptr in case of failure.
-    MConstant* constantMaybeAtomize(const Value& v);
+    MInstruction* initializedLength(MDefinition* obj, MDefinition* elements,
+                                    JSValueType unboxedType);
+    MInstruction* setInitializedLength(MDefinition* obj, JSValueType unboxedType, size_t count);
 
     // Improve the type information at tests
     bool improveTypesAtTest(MDefinition* ins, bool trueBranch, MTest* test);
@@ -386,6 +376,8 @@ class IonBuilder
     // Creates a MDefinition based on the given def improved with type as TypeSet.
     MDefinition* ensureDefiniteTypeSet(MDefinition* def, TemporaryTypeSet* types);
 
+    void maybeMarkEmpty(MDefinition* ins);
+
     JSObject* getSingletonPrototype(JSFunction* target);
 
     MDefinition* createThisScripted(MDefinition* callee);
@@ -398,7 +390,7 @@ class IonBuilder
     MDefinition* walkScopeChain(unsigned hops);
 
     MInstruction* addConvertElementsToDoubles(MDefinition* elements);
-    MDefinition* addMaybeCopyElementsForWrite(MDefinition* object);
+    MDefinition* addMaybeCopyElementsForWrite(MDefinition* object, bool checkNative);
     MInstruction* addBoundsCheck(MDefinition* index, MDefinition* length);
     MInstruction* addShapeGuard(MDefinition* obj, Shape* const shape, BailoutKind bailoutKind);
     MInstruction* addGroupGuard(MDefinition* obj, ObjectGroup* group, BailoutKind bailoutKind);
@@ -422,8 +414,10 @@ class IonBuilder
                    MIRType slotType = MIRType_None);
     bool storeSlot(MDefinition* obj, Shape* shape, MDefinition* value, bool needsBarrier,
                    MIRType slotType = MIRType_None);
+    bool shouldAbortOnPreliminaryGroups(MDefinition *obj);
 
     MDefinition* tryInnerizeWindow(MDefinition* obj);
+    MDefinition* maybeUnboxForPropertyAccess(MDefinition* def);
 
     // jsop_getprop() helpers.
     bool checkIsDefinitelyOptimizedArguments(MDefinition* obj, bool* isOptimizedArgs);
@@ -431,8 +425,7 @@ class IonBuilder
                                     TemporaryTypeSet* types);
     bool getPropTryArgumentsLength(bool* emitted, MDefinition* obj);
     bool getPropTryArgumentsCallee(bool* emitted, MDefinition* obj, PropertyName* name);
-    bool getPropTryConstant(bool* emitted, MDefinition* obj, PropertyName* name,
-                            TemporaryTypeSet* types);
+    bool getPropTryConstant(bool* emitted, MDefinition* obj, jsid id, TemporaryTypeSet* types);
     bool getPropTryDefiniteSlot(bool* emitted, MDefinition* obj, PropertyName* name,
                                 BarrierKind barrier, TemporaryTypeSet* types);
     bool getPropTryUnboxed(bool* emitted, MDefinition* obj, PropertyName* name,
@@ -490,6 +483,24 @@ class IonBuilder
     bool setPropTryCache(bool* emitted, MDefinition* obj,
                          PropertyName* name, MDefinition* value,
                          bool barrier, TemporaryTypeSet* objTypes);
+
+    // jsop_binary_arith helpers.
+    MBinaryArithInstruction* binaryArithInstruction(JSOp op, MDefinition* left, MDefinition* right);
+    bool binaryArithTryConcat(bool* emitted, JSOp op, MDefinition* left, MDefinition* right);
+    bool binaryArithTrySpecialized(bool* emitted, JSOp op, MDefinition* left, MDefinition* right);
+    bool binaryArithTrySpecializedOnBaselineInspector(bool* emitted, JSOp op, MDefinition* left,
+                                                      MDefinition* right);
+    bool arithTrySharedStub(bool* emitted, JSOp op, MDefinition* left, MDefinition* right);
+
+    // jsop_bitnot helpers.
+    bool bitnotTrySpecialized(bool* emitted, MDefinition* input);
+
+    // jsop_compare helpes.
+    bool compareTrySpecialized(bool* emitted, JSOp op, MDefinition* left, MDefinition* right);
+    bool compareTryBitwise(bool* emitted, JSOp op, MDefinition* left, MDefinition* right);
+    bool compareTrySpecializedOnBaselineInspector(bool* emitted, JSOp op, MDefinition* left,
+                                                  MDefinition* right);
+    bool compareTrySharedStub(bool* emitted, JSOp op, MDefinition* left, MDefinition* right);
 
     // binary data lookup helpers.
     TypedObjectPrediction typedObjectPrediction(MDefinition* typedObj);
@@ -549,7 +560,7 @@ class IonBuilder
     bool setElemTryTypedStatic(bool* emitted, MDefinition* object,
                                MDefinition* index, MDefinition* value);
     bool setElemTryDense(bool* emitted, MDefinition* object,
-                         MDefinition* index, MDefinition* value);
+                         MDefinition* index, MDefinition* value, bool writeHole);
     bool setElemTryArguments(bool* emitted, MDefinition* object,
                              MDefinition* index, MDefinition* value);
     bool setElemTryCache(bool* emitted, MDefinition* object,
@@ -567,9 +578,13 @@ class IonBuilder
                                            MDefinition* value,
                                            TypedObjectPrediction elemTypeReprs,
                                            int32_t elemSize);
+    bool initializeArrayElement(MDefinition* obj, size_t index, MDefinition* value,
+                                JSValueType unboxedType,
+                                bool addResumePointAndIncrementInitializedLength);
 
     // jsop_getelem() helpers.
     bool getElemTryDense(bool* emitted, MDefinition* obj, MDefinition* index);
+    bool getElemTryGetProp(bool* emitted, MDefinition* obj, MDefinition* index);
     bool getElemTryTypedStatic(bool* emitted, MDefinition* obj, MDefinition* index);
     bool getElemTryTypedArray(bool* emitted, MDefinition* obj, MDefinition* index);
     bool getElemTryTypedObject(bool* emitted, MDefinition* obj, MDefinition* index);
@@ -594,6 +609,7 @@ class IonBuilder
                                             TypedObjectPrediction objTypeReprs,
                                             TypedObjectPrediction elemTypeReprs,
                                             int32_t elemSize);
+    TemporaryTypeSet* computeHeapType(const TemporaryTypeSet* objTypes, const jsid id);
 
     enum BoundsChecking { DoBoundsCheck, SkipBoundsCheck };
 
@@ -623,16 +639,20 @@ class IonBuilder
     MDefinition* addLexicalCheck(MDefinition* input);
 
     bool tryFoldInstanceOf(MDefinition* lhs, JSObject* protoObject);
+    bool hasOnProtoChain(TypeSet::ObjectKey* key, JSObject* protoObject, bool* hasOnProto);
 
     bool jsop_add(MDefinition* left, MDefinition* right);
     bool jsop_bitnot();
     bool jsop_bitop(JSOp op);
-    bool jsop_binary(JSOp op);
-    bool jsop_binary(JSOp op, MDefinition* left, MDefinition* right);
+    bool jsop_binary_arith(JSOp op);
+    bool jsop_binary_arith(JSOp op, MDefinition* left, MDefinition* right);
+    bool jsop_pow();
     bool jsop_pos();
     bool jsop_neg();
+    bool jsop_tostring();
     bool jsop_setarg(uint32_t arg);
     bool jsop_defvar(uint32_t index);
+    bool jsop_deflexical(uint32_t index);
     bool jsop_deffun(uint32_t index);
     bool jsop_notearg();
     bool jsop_checklexical();
@@ -650,6 +670,7 @@ class IonBuilder
     bool jsop_dup2();
     bool jsop_loophead(jsbytecode* pc);
     bool jsop_compare(JSOp op);
+    bool jsop_compare(JSOp op, MDefinition* left, MDefinition* right);
     bool getStaticName(JSObject* staticObject, PropertyName* name, bool* psucceeded,
                        MDefinition* lexicalCheck = nullptr);
     bool setStaticName(JSObject* staticObject, PropertyName* name);
@@ -658,18 +679,14 @@ class IonBuilder
     bool jsop_intrinsic(PropertyName* name);
     bool jsop_bindname(PropertyName* name);
     bool jsop_getelem();
-    bool jsop_getelem_dense(MDefinition* obj, MDefinition* index);
+    bool jsop_getelem_dense(MDefinition* obj, MDefinition* index, JSValueType unboxedType);
     bool jsop_getelem_typed(MDefinition* obj, MDefinition* index, ScalarTypeDescr::Type arrayType);
     bool jsop_setelem();
     bool jsop_setelem_dense(TemporaryTypeSet::DoubleConversion conversion,
-                            SetElemSafety safety,
-                            MDefinition* object, MDefinition* index, MDefinition* value);
+                            MDefinition* object, MDefinition* index, MDefinition* value,
+                            JSValueType unboxedType, bool writeHole);
     bool jsop_setelem_typed(ScalarTypeDescr::Type arrayType,
-                            SetElemSafety safety,
                             MDefinition* object, MDefinition* index, MDefinition* value);
-    bool jsop_setelem_typed_object(ScalarTypeDescr::Type arrayType,
-                                   SetElemSafety safety,
-                                   MDefinition* object, MDefinition* index, MDefinition* value);
     bool jsop_length();
     bool jsop_length_fastPath();
     bool jsop_arguments();
@@ -681,7 +698,7 @@ class IonBuilder
     bool jsop_setprop(PropertyName* name);
     bool jsop_delprop(PropertyName* name);
     bool jsop_delelem();
-    bool jsop_newarray(uint32_t count);
+    bool jsop_newarray(uint32_t length);
     bool jsop_newarray_copyonwrite();
     bool jsop_newobject();
     bool jsop_initelem();
@@ -702,11 +719,12 @@ class IonBuilder
     bool jsop_isnoiter();
     bool jsop_iterend();
     bool jsop_in();
-    bool jsop_in_dense();
+    bool jsop_in_dense(MDefinition* obj, MDefinition* id, JSValueType unboxedType);
     bool jsop_instanceof();
     bool jsop_getaliasedvar(ScopeCoordinate sc);
     bool jsop_setaliasedvar(ScopeCoordinate sc);
     bool jsop_debugger();
+    bool jsop_newtarget();
 
     /* Inlining. */
 
@@ -728,6 +746,9 @@ class IonBuilder
 
     static InliningDecision DontInline(JSScript* targetScript, const char* reason);
 
+    // Helper function for canInlineTarget
+    bool hasCommonInliningPath(const JSScript* scriptToInline);
+
     // Oracles.
     InliningDecision canInlineTarget(JSFunction* target, CallInfo& callInfo);
     InliningDecision makeInliningDecision(JSObject* target, CallInfo& callInfo);
@@ -743,9 +764,11 @@ class IonBuilder
 
     // Array natives.
     InliningStatus inlineArray(CallInfo& callInfo);
+    InliningStatus inlineArrayIsArray(CallInfo& callInfo);
     InliningStatus inlineArrayPopShift(CallInfo& callInfo, MArrayPopShift::Mode mode);
     InliningStatus inlineArrayPush(CallInfo& callInfo);
     InliningStatus inlineArrayConcat(CallInfo& callInfo);
+    InliningStatus inlineArraySlice(CallInfo& callInfo);
     InliningStatus inlineArrayJoin(CallInfo& callInfo);
     InliningStatus inlineArraySplice(CallInfo& callInfo);
 
@@ -760,6 +783,7 @@ class IonBuilder
     InliningStatus inlineMathHypot(CallInfo& callInfo);
     InliningStatus inlineMathMinMax(CallInfo& callInfo, bool max);
     InliningStatus inlineMathPow(CallInfo& callInfo);
+    InliningStatus inlineMathPowHelper(MDefinition* lhs, MDefinition* rhs, MIRType outputType);
     InliningStatus inlineMathRandom(CallInfo& callInfo);
     InliningStatus inlineMathImul(CallInfo& callInfo);
     InliningStatus inlineMathFRound(CallInfo& callInfo);
@@ -779,23 +803,18 @@ class IonBuilder
     InliningStatus inlineRegExpExec(CallInfo& callInfo);
     InliningStatus inlineRegExpTest(CallInfo& callInfo);
 
-    // Object natives.
+    // Object natives and intrinsics.
     InliningStatus inlineObjectCreate(CallInfo& callInfo);
+    InliningStatus inlineDefineDataProperty(CallInfo& callInfo);
 
     // Atomics natives.
     InliningStatus inlineAtomicsCompareExchange(CallInfo& callInfo);
+    InliningStatus inlineAtomicsExchange(CallInfo& callInfo);
     InliningStatus inlineAtomicsLoad(CallInfo& callInfo);
     InliningStatus inlineAtomicsStore(CallInfo& callInfo);
     InliningStatus inlineAtomicsFence(CallInfo& callInfo);
-    InliningStatus inlineAtomicsBinop(CallInfo& callInfo, JSFunction* target);
-
-    // Array intrinsics.
-    InliningStatus inlineUnsafePutElements(CallInfo& callInfo);
-    bool inlineUnsafeSetDenseArrayElement(CallInfo& callInfo, uint32_t base);
-    bool inlineUnsafeSetTypedArrayElement(CallInfo& callInfo, uint32_t base,
-                                          ScalarTypeDescr::Type arrayType);
-    bool inlineUnsafeSetTypedObjectArrayElement(CallInfo& callInfo, uint32_t base,
-                                                ScalarTypeDescr::Type arrayType);
+    InliningStatus inlineAtomicsBinop(CallInfo& callInfo, InlinableNative target);
+    InliningStatus inlineAtomicsIsLockFree(CallInfo& callInfo);
 
     // Slot intrinsics.
     InliningStatus inlineUnsafeSetReservedSlot(CallInfo& callInfo);
@@ -803,14 +822,16 @@ class IonBuilder
                                                MIRType knownValueType);
 
     // TypedArray intrinsics.
+    enum WrappingBehavior { AllowWrappedTypedArrays, RejectWrappedTypedArrays };
+    InliningStatus inlineIsTypedArrayHelper(CallInfo& callInfo, WrappingBehavior wrappingBehavior);
     InliningStatus inlineIsTypedArray(CallInfo& callInfo);
+    InliningStatus inlineIsPossiblyWrappedTypedArray(CallInfo& callInfo);
     InliningStatus inlineTypedArrayLength(CallInfo& callInfo);
+    InliningStatus inlineSetDisjointTypedElements(CallInfo& callInfo);
 
     // TypedObject intrinsics and natives.
     InliningStatus inlineObjectIsTypeDescr(CallInfo& callInfo);
     InliningStatus inlineSetTypedObjectOffset(CallInfo& callInfo);
-    bool elementAccessIsTypedObjectArrayOfScalarType(MDefinition* obj, MDefinition* id,
-                                                     ScalarTypeDescr::Type* arrayType);
     InliningStatus inlineConstructTypedObject(CallInfo& callInfo, TypeDescr* target);
 
     // SIMD intrinsics and natives.
@@ -823,6 +844,9 @@ class IonBuilder
     IonBuilder::InliningStatus boxSimd(CallInfo& callInfo, MInstruction* ins,
                                        InlineTypedObject* templateObj);
 
+    InliningStatus inlineSimdInt32x4(CallInfo& callInfo, JSNative native);
+    InliningStatus inlineSimdFloat32x4(CallInfo& callInfo, JSNative native);
+
     template <typename T>
     InliningStatus inlineBinarySimd(CallInfo& callInfo, JSNative native,
                                     typename T::Operation op, SimdTypeDescr::Type type);
@@ -830,8 +854,10 @@ class IonBuilder
                                   MSimdBinaryComp::Operation op, SimdTypeDescr::Type compType);
     InliningStatus inlineUnarySimd(CallInfo& callInfo, JSNative native,
                                    MSimdUnaryArith::Operation op, SimdTypeDescr::Type type);
-    InliningStatus inlineSimdWith(CallInfo& callInfo, JSNative native, SimdLane lane,
-                                  SimdTypeDescr::Type type);
+    InliningStatus inlineSimdExtractLane(CallInfo& callInfo, JSNative native,
+                                         SimdTypeDescr::Type type);
+    InliningStatus inlineSimdReplaceLane(CallInfo& callInfo, JSNative native,
+                                         SimdTypeDescr::Type type);
     InliningStatus inlineSimdSplat(CallInfo& callInfo, JSNative native, SimdTypeDescr::Type type);
     InliningStatus inlineSimdShuffle(CallInfo& callInfo, JSNative native, SimdTypeDescr::Type type,
                                      unsigned numVectors, unsigned numLanes);
@@ -847,6 +873,8 @@ class IonBuilder
                                   unsigned numElems);
     InliningStatus inlineSimdStore(CallInfo& callInfo, JSNative native, SimdTypeDescr::Type type,
                                    unsigned numElems);
+
+    InliningStatus inlineSimdBool(CallInfo& callInfo, JSNative native, SimdTypeDescr::Type type);
 
     // Utility intrinsics.
     InliningStatus inlineIsCallable(CallInfo& callInfo);
@@ -866,7 +894,6 @@ class IonBuilder
     InliningStatus inlineBailout(CallInfo& callInfo);
     InliningStatus inlineAssertFloat32(CallInfo& callInfo);
     InliningStatus inlineAssertRecoveredOnBailout(CallInfo& callInfo);
-    InliningStatus inlineTrue(CallInfo& callInfo);
 
     // Bind function.
     InliningStatus inlineBoundFunction(CallInfo& callInfo, JSFunction* target);
@@ -889,7 +916,13 @@ class IonBuilder
                                    MObjectGroupDispatch* dispatch, MGetPropertyCache* cache,
                                    MBasicBlock** fallbackTarget);
 
-    bool atomicsMeetsPreconditions(CallInfo& callInfo, Scalar::Type* arrayElementType);
+    enum AtomicCheckResult {
+        DontCheckAtomicResult,
+        DoCheckAtomicResult
+    };
+
+    bool atomicsMeetsPreconditions(CallInfo& callInfo, Scalar::Type* arrayElementType,
+                                   AtomicCheckResult checkResult=DoCheckAtomicResult);
     void atomicsCheckBounds(CallInfo& callInfo, MInstruction** elements, MDefinition** index);
 
     bool testNeedsArgumentCheck(JSFunction* target, CallInfo& callInfo);
@@ -929,19 +962,29 @@ class IonBuilder
 
     MGetPropertyCache* getInlineableGetPropertyCache(CallInfo& callInfo);
 
-    JSObject* testSingletonProperty(JSObject* obj, PropertyName* name);
-    bool testSingletonPropertyTypes(MDefinition* obj, JSObject* singleton, PropertyName* name,
-                                    bool* testObject, bool* testString);
-    uint32_t getDefiniteSlot(TemporaryTypeSet* types, PropertyName* name, uint32_t* pnfixed,
-                             BaselineInspector::ObjectGroupVector& convertUnboxedGroups);
+    JSObject* testGlobalLexicalBinding(PropertyName* name);
+
+    JSObject* testSingletonProperty(JSObject* obj, jsid id);
+    JSObject* testSingletonPropertyTypes(MDefinition* obj, jsid id);
+
+    uint32_t getDefiniteSlot(TemporaryTypeSet* types, PropertyName* name, uint32_t* pnfixed);
+    MDefinition* convertUnboxedObjects(MDefinition* obj);
     MDefinition* convertUnboxedObjects(MDefinition* obj,
                                        const BaselineInspector::ObjectGroupVector& list);
     uint32_t getUnboxedOffset(TemporaryTypeSet* types, PropertyName* name,
                               JSValueType* punboxedType);
     MInstruction* loadUnboxedProperty(MDefinition* obj, size_t offset, JSValueType unboxedType,
                                       BarrierKind barrier, TemporaryTypeSet* types);
+    MInstruction* loadUnboxedValue(MDefinition* elements, size_t elementsOffset,
+                                   MDefinition* scaledOffset, JSValueType unboxedType,
+                                   BarrierKind barrier, TemporaryTypeSet* types);
     MInstruction* storeUnboxedProperty(MDefinition* obj, size_t offset, JSValueType unboxedType,
                                        MDefinition* value);
+    MInstruction* storeUnboxedValue(MDefinition* obj,
+                                    MDefinition* elements, int32_t elementsOffset,
+                                    MDefinition* scaledOffset, JSValueType unboxedType,
+                                    MDefinition* value, bool preBarrier = true);
+    bool checkPreliminaryGroups(MDefinition *obj);
     bool freezePropTypeSets(TemporaryTypeSet* types,
                             JSObject* foundProto, PropertyName* name);
     bool canInlinePropertyOpShapes(const BaselineInspector::ReceiverVector& receivers);
@@ -984,6 +1027,7 @@ class IonBuilder
 
   public:
     void clearForBackEnd();
+    JSObject* checkNurseryObject(JSObject* obj);
 
     JSScript* script() const { return script_; }
 
@@ -1207,6 +1251,10 @@ class IonBuilder
             trackInlineSuccessUnchecked(status);
     }
 
+    bool forceInlineCaches() {
+        return MOZ_UNLIKELY(js_JitOptions.forceInlineCaches);
+    }
+
     // Out-of-line variants that don't check if optimization tracking is
     // enabled.
     void trackTypeInfoUnchecked(JS::TrackedTypeSite site, MIRType mirType,
@@ -1224,6 +1272,7 @@ class CallInfo
 {
     MDefinition* fun_;
     MDefinition* thisArg_;
+    MDefinition* newTargetArg_;
     MDefinitionVector args_;
 
     bool constructing_;
@@ -1233,6 +1282,7 @@ class CallInfo
     CallInfo(TempAllocator& alloc, bool constructing)
       : fun_(nullptr),
         thisArg_(nullptr),
+        newTargetArg_(nullptr),
         args_(alloc),
         constructing_(constructing),
         setter_(false)
@@ -1243,6 +1293,9 @@ class CallInfo
 
         fun_ = callInfo.fun();
         thisArg_ = callInfo.thisArg();
+
+        if (constructing())
+            newTargetArg_ = callInfo.getNewTarget();
 
         if (!args_.appendAll(callInfo.argv()))
             return false;
@@ -1256,6 +1309,10 @@ class CallInfo
         // Get the arguments in the right order
         if (!args_.reserve(argc))
             return false;
+
+        if (constructing())
+            setNewTarget(current->pop());
+
         for (int32_t i = argc; i > 0; i--)
             args_.infallibleAppend(current->peek(-i));
         current->popn(argc);
@@ -1277,13 +1334,16 @@ class CallInfo
 
         for (uint32_t i = 0; i < argc(); i++)
             current->push(getArg(i));
+
+        if (constructing())
+            current->push(getNewTarget());
     }
 
     uint32_t argc() const {
         return args_.length();
     }
     uint32_t numFormals() const {
-        return argc() + 2;
+        return argc() + 2 + constructing();
     }
 
     bool setArgs(const MDefinitionVector& args) {
@@ -1329,6 +1389,15 @@ class CallInfo
         return constructing_;
     }
 
+    void setNewTarget(MDefinition* newTarget) {
+        MOZ_ASSERT(constructing());
+        newTargetArg_ = newTarget;
+    }
+    MDefinition* getNewTarget() const {
+        MOZ_ASSERT(newTargetArg_);
+        return newTargetArg_;
+    }
+
     bool isSetter() const {
         return setter_;
     }
@@ -1348,6 +1417,8 @@ class CallInfo
     void setImplicitlyUsedUnchecked() {
         fun_->setImplicitlyUsedUnchecked();
         thisArg_->setImplicitlyUsedUnchecked();
+        if (newTargetArg_)
+            newTargetArg_->setImplicitlyUsedUnchecked();
         for (uint32_t i = 0; i < argc(); i++)
             getArg(i)->setImplicitlyUsedUnchecked();
     }

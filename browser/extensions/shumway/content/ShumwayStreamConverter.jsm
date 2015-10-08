@@ -1,5 +1,5 @@
 /*
- * Copyright 2013 Mozilla Foundation
+ * Copyright 2015 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,6 +39,8 @@ XPCOMUtils.defineLazyModuleGetter(this, 'PrivateBrowsingUtils',
 XPCOMUtils.defineLazyModuleGetter(this, 'ShumwayTelemetry',
   'resource://shumway/ShumwayTelemetry.jsm');
 
+Components.utils.import('chrome://shumway/content/StartupInfo.jsm');
+
 function getBoolPref(pref, def) {
   try {
     return Services.prefs.getBoolPref(pref);
@@ -58,31 +60,6 @@ function getDOMWindow(aChannel) {
                   aChannel.loadGroup.notificationCallbacks;
   var win = requestor.getInterface(Components.interfaces.nsIDOMWindow);
   return win;
-}
-
-function parseQueryString(qs) {
-  if (!qs)
-    return {};
-
-  if (qs.charAt(0) == '?')
-    qs = qs.slice(1);
-
-  var values = qs.split('&');
-  var obj = {};
-  for (var i = 0; i < values.length; i++) {
-    var kv = values[i].split('=');
-    var key = kv[0], value = kv[1];
-    obj[decodeURIComponent(key)] = decodeURIComponent(value);
-  }
-
-  return obj;
-}
-
-function isContentWindowPrivate(win) {
-  if (!('isContentWindowPrivate' in PrivateBrowsingUtils)) {
-    return PrivateBrowsingUtils.isWindowPrivate(win);
-  }
-  return PrivateBrowsingUtils.isContentWindowPrivate(win);
 }
 
 function isShumwayEnabledFor(startupInfo) {
@@ -110,105 +87,6 @@ function isShumwayEnabledFor(startupInfo) {
 
   return true;
 }
-
-var ActivationQueue = {
-  nonActive: [],
-  initializing: -1,
-  activationTimeout: null,
-  get currentNonActive() {
-    return this.nonActive[this.initializing].startupInfo;
-  },
-  enqueue: function ActivationQueue_enqueue(startupInfo, callback) {
-    this.nonActive.push({startupInfo: startupInfo, callback: callback});
-    if (this.nonActive.length === 1) {
-      this.activateNext();
-    }
-  },
-  findLastOnPage: function ActivationQueue_findLastOnPage(baseUrl) {
-    for (var i = this.nonActive.length - 1; i >= 0; i--) {
-      if (this.nonActive[i].startupInfo.baseUrl === baseUrl) {
-        return this.nonActive[i].startupInfo;
-      }
-    }
-    return null;
-  },
-  activateNext: function ActivationQueue_activateNext() {
-    function weightInstance(startupInfo) {
-      // set of heuristics for find the most important instance to load
-      var weight = 0;
-      // using linear distance to the top-left of the view area
-      if (startupInfo.embedTag) {
-        var window = startupInfo.window;
-        var clientRect = startupInfo.embedTag.getBoundingClientRect();
-        weight -= Math.abs(clientRect.left - window.scrollX) +
-                  Math.abs(clientRect.top - window.scrollY);
-      }
-      var doc = startupInfo.window.document;
-      if (!doc.hidden) {
-        weight += 100000; // might not be that important if hidden
-      }
-      if (startupInfo.embedTag &&
-          startupInfo.embedTag.ownerDocument.hasFocus()) {
-        weight += 10000; // parent document is focused
-      }
-      return weight;
-    }
-
-    if (this.activationTimeout) {
-      this.activationTimeout.cancel();
-      this.activationTimeout = null;
-    }
-
-    if (this.initializing >= 0) {
-      this.nonActive.splice(this.initializing, 1);
-    }
-    var weights = [];
-    for (var i = 0; i < this.nonActive.length; i++) {
-      try {
-        var weight = weightInstance(this.nonActive[i].startupInfo);
-        weights.push(weight);
-      } catch (ex) {
-        // unable to calc weight the instance, removing
-        log('Shumway instance weight calculation failed: ' + ex);
-        this.nonActive.splice(i, 1);
-        i--;
-      }
-    }
-
-    do {
-      if (this.nonActive.length === 0) {
-        this.initializing = -1;
-        return;
-      }
-
-      var maxWeightIndex = 0;
-      var maxWeight = weights[0];
-      for (var i = 1; i < weights.length; i++) {
-        if (maxWeight < weights[i]) {
-          maxWeight = weights[i];
-          maxWeightIndex = i;
-        }
-      }
-      try {
-        this.initializing = maxWeightIndex;
-        this.nonActive[maxWeightIndex].callback();
-        break;
-      } catch (ex) {
-        // unable to initialize the instance, trying another one
-        log('Shumway instance initialization failed: ' + ex);
-        this.nonActive.splice(maxWeightIndex, 1);
-        weights.splice(maxWeightIndex, 1);
-      }
-    } while (true);
-
-    var ACTIVATION_TIMEOUT = 3000;
-    this.activationTimeout = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-    this.activationTimeout.initWithCallback(function () {
-      log('Timeout during shumway instance initialization');
-      this.activateNext();
-    }.bind(this), ACTIVATION_TIMEOUT, Ci.nsITimer.TYPE_ONE_SHOT);
-  }
-};
 
 function activateShumwayScripts(window) {
   function initScripts() {
@@ -273,13 +151,6 @@ function activateShumwayScripts(window) {
       var automatic = !!e.detail.automatic;
       fallbackToNativePlugin(window, !automatic, automatic);
     });
-
-    window.addEventListener('shumwayActivated', function (e) {
-      if (ActivationQueue.currentNonActive &&
-          ActivationQueue.currentNonActive.window === window) {
-        ActivationQueue.activateNext();
-      }
-    });
   }
 
   if (window.document.readyState === "interactive" ||
@@ -330,13 +201,10 @@ ShumwayStreamConverterBase.prototype = {
     return requestUrl.spec;
   },
 
-  getStartupInfo: function(window, urlHint) {
-    var url = urlHint;
-    var baseUrl;
-    var pageUrl;
+  getStartupInfo: function(window, url) {
+    var initStartTime = Date.now();
     var element = window.frameElement;
     var isOverlay = false;
-    var objectParams = {};
     if (element) {
       // PlayPreview overlay "belongs" to the embed/object tag and consists of
       // DIV and IFRAME. Starting from IFRAME and looking for first object tag.
@@ -369,41 +237,14 @@ ShumwayStreamConverterBase.prototype = {
     }
 
     if (element) {
-      // Getting absolute URL from the EMBED tag
-      url = element.srcURI && element.srcURI.spec;
-
-      pageUrl = element.ownerDocument.location.href; // proper page url?
-
-      if (tagName == 'EMBED') {
-        for (var i = 0; i < element.attributes.length; ++i) {
-          var paramName = element.attributes[i].localName.toLowerCase();
-          objectParams[paramName] = element.attributes[i].value;
-        }
-      } else {
-        for (var i = 0; i < element.childNodes.length; ++i) {
-          var paramElement = element.childNodes[i];
-          if (paramElement.nodeType != 1 ||
-              paramElement.nodeName != 'PARAM') {
-            continue;
-          }
-          var paramName = paramElement.getAttribute('name').toLowerCase();
-          objectParams[paramName] = paramElement.getAttribute('value');
-        }
-      }
+      return getStartupInfo(element);
     }
 
-    baseUrl = pageUrl;
-    if (objectParams.base) {
-      try {
-        var parsedPageUrl = Services.io.newURI(pageUrl);
-        baseUrl = Services.io.newURI(objectParams.base, null, parsedPageUrl).spec;
-      } catch (e) { /* ignore */ }
-    }
+    // Stream converter is used in top level window, just providing basic
+    // information about SWF.
 
+    var objectParams = {};
     var movieParams = {};
-    if (objectParams.flashvars) {
-      movieParams = parseQueryString(objectParams.flashvars);
-    }
     var queryStringMatch = url && /\?([^#]+)/.exec(url);
     if (queryStringMatch) {
       var queryStringParams = parseQueryString(queryStringMatch[1]);
@@ -414,21 +255,22 @@ ShumwayStreamConverterBase.prototype = {
       }
     }
 
-    var allowScriptAccess = !!url &&
-      isScriptAllowed(objectParams.allowscriptaccess, url, pageUrl);
-
+    // Using the same data structure as we return in StartupInfo.jsm and
+    // assigning constant values for fields that is not applicable for
+    // the stream converter when it is used in a top level window.
     var startupInfo = {};
     startupInfo.window = window;
     startupInfo.url = url;
     startupInfo.privateBrowsing = isContentWindowPrivate(window);
     startupInfo.objectParams = objectParams;
     startupInfo.movieParams = movieParams;
-    startupInfo.baseUrl = baseUrl || url;
-    startupInfo.isOverlay = isOverlay;
-    startupInfo.embedTag = element;
-    startupInfo.isPausedAtStart = /\bpaused=true$/.test(urlHint);
-    startupInfo.allowScriptAccess = allowScriptAccess;
-    startupInfo.pageIndex = 0;
+    startupInfo.baseUrl = url;
+    startupInfo.isOverlay = false;
+    startupInfo.refererUrl = null;
+    startupInfo.embedTag = null;
+    startupInfo.isPausedAtStart = /\bpaused=true$/.test(url);
+    startupInfo.initStartTime = initStartTime;
+    startupInfo.allowScriptAccess = false;
     return startupInfo;
   },
 
@@ -491,8 +333,7 @@ ShumwayStreamConverterBase.prototype = {
         aRequest.cancel(Cr.NS_BINDING_ABORTED);
 
         var domWindow = getDOMWindow(channel);
-        let startupInfo = converter.getStartupInfo(domWindow,
-                                                   converter.getUrlHint(originalURI));
+        let startupInfo = converter.getStartupInfo(domWindow, converter.getUrlHint(originalURI));
 
         listener.onStopRequest(aRequest, context, statusCode);
 
@@ -512,20 +353,10 @@ ShumwayStreamConverterBase.prototype = {
 
         domWindow.shumwayStartupInfo = startupInfo;
 
-        // Report telemetry on amount of swfs on the page
-        if (startupInfo.isOverlay) {
-          // Looking for last actions with same baseUrl
-          var prevPageStartupInfo = ActivationQueue.findLastOnPage(startupInfo.baseUrl);
-          var pageIndex = !prevPageStartupInfo ? 1 : (prevPageStartupInfo.pageIndex + 1);
-          startupInfo.pageIndex = pageIndex;
-          ShumwayTelemetry.onPageIndex(pageIndex);
-        } else {
-          ShumwayTelemetry.onPageIndex(0);
-        }
+        // TODO Report telemetry on amount of swfs on the page
+        // ShumwayTelemetry.onPageIndex(pageIndex);
 
-        ActivationQueue.enqueue(startupInfo, function(domWindow) {
-          activateShumwayScripts(domWindow);
-        }.bind(null, domWindow));
+        activateShumwayScripts(domWindow);
       }
     };
 
@@ -554,36 +385,10 @@ function setupSimpleExternalInterface(embedTag) {
       case '$version':
         return 'SHUMWAY 10,0,0';
       default:
-        log('GetVariable: ' + variable);
+        log('Unsupported GetVariable() call: ' + variable);
         return undefined;
     }
   }, embedTag.wrappedJSObject, {defineAs: 'GetVariable'});
-}
-
-function isScriptAllowed(allowScriptAccessParameter, url, pageUrl) {
-  if (!allowScriptAccessParameter) {
-    allowScriptAccessParameter = 'sameDomain';
-  }
-  var allowScriptAccess = false;
-  switch (allowScriptAccessParameter.toLowerCase()) { // ignoring case here
-    case 'always':
-      allowScriptAccess = true;
-      break;
-    case 'never':
-      allowScriptAccess = false;
-      break;
-    default: // 'samedomain'
-      if (!pageUrl)
-        break;
-      try {
-        // checking if page is in same domain (? same protocol and port)
-        allowScriptAccess =
-          Services.io.newURI('/', null, Services.io.newURI(pageUrl, null, null)).spec ==
-          Services.io.newURI('/', null, Services.io.newURI(url, null, null)).spec;
-      } catch (ex) {}
-      break;
-  }
-  return allowScriptAccess;
 }
 
 // properties required for XPCOM registration:
@@ -598,7 +403,10 @@ ShumwayStreamConverter.prototype = new ShumwayStreamConverterBase();
 copyProperties(ShumwayStreamConverter.prototype, {
   classID: Components.ID('{4c6030f7-e20a-264f-5b0e-ada3a9e97384}'),
   classDescription: 'Shumway Content Converter Component',
-  contractID: '@mozilla.org/streamconv;1?from=application/x-shockwave-flash&to=*/*'
+  contractID: '@mozilla.org/streamconv;1?from=application/x-shockwave-flash&to=*/*',
+
+  classID2: Components.ID('{4c6030f8-e20a-264f-5b0e-ada3a9e97384}'),
+  contractID2: '@mozilla.org/streamconv;1?from=application/x-shockwave-flash&to=text/html'
 });
 
 function ShumwayStreamOverlayConverter() {}

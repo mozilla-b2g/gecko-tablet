@@ -15,8 +15,7 @@ var gContentPane = {
     this._rebuildFonts();
     var menulist = document.getElementById("defaultFont");
     if (menulist.selectedIndex == -1) {
-      menulist.insertItemAt(0, "", "", "");
-      menulist.selectedIndex = 0;
+      menulist.value = FontBuilder.readFontSelection(menulist);
     }
 
     // Show translation preferences if we may:
@@ -24,10 +23,17 @@ var gContentPane = {
     if (Services.prefs.getBoolPref(prefName)) {
       let row = document.getElementById("translationBox");
       row.removeAttribute("hidden");
+      // Showing attribution only for Bing Translator.
+      Components.utils.import("resource:///modules/translation/Translation.jsm");
+      if (Translation.translationEngine == "bing") {
+        document.getElementById("bingAttribution").removeAttribute("hidden");
+      }
     }
 
     setEventListener("font.language.group", "change",
       gContentPane._rebuildFonts);
+    setEventListener("notificationsPolicyButton", "command",
+      gContentPane.showNotificationExceptions);
     setEventListener("popupPolicyButton", "command",
       gContentPane.showPopupExceptions);
     setEventListener("advancedFonts", "command",
@@ -44,7 +50,12 @@ var gContentPane = {
     let drmInfoURL =
       Services.urlFormatter.formatURLPref("app.support.baseURL") + "drm-content";
     document.getElementById("playDRMContentLink").setAttribute("href", drmInfoURL);
-    if (!Services.prefs.getBoolPref("browser.eme.ui.enabled")) {
+    let emeUIEnabled = Services.prefs.getBoolPref("browser.eme.ui.enabled");
+    // Force-disable/hide on WinXP:
+    if (navigator.platform.toLowerCase().startsWith("win")) {
+      emeUIEnabled = emeUIEnabled && parseFloat(Services.sysinfo.get("version")) >= 6;
+    }
+    if (!emeUIEnabled) {
       // Don't want to rely on .hidden for the toplevel groupbox because
       // of the pane hiding/showing code potentially interfering:
       document.getElementById("drmGroup").setAttribute("style", "display: none !important");
@@ -73,6 +84,28 @@ var gContentPane = {
    * dom.disable_open_during_load
    * - true if popups are blocked by default, false otherwise
    */
+
+  // NOTIFICATIONS
+
+  /**
+   * Displays the notifications exceptions dialog where specific site notification
+   * preferences can be set.
+   */
+  showNotificationExceptions()
+  {
+    let bundlePreferences = document.getElementById("bundlePreferences");
+    let params = { blockVisible: true,
+                   sessionVisible: false,
+                   allowVisible: true,
+                   prefilledHost: "",
+                   permissionType: "desktop-notification" };
+    params.windowTitle = bundlePreferences.getString("notificationspermissionstitle");
+    params.introText = bundlePreferences.getString("notificationspermissionstext");
+
+    gSubDialog.open("chrome://browser/content/preferences/permissions.xul",
+                    "resizable=yes", params);
+  },
+
 
   // POP-UPS
 
@@ -185,7 +218,7 @@ var gContentPane = {
    */  
   configureFonts: function ()
   {
-    gSubDialog.open("chrome://browser/content/preferences/fonts.xul");
+    gSubDialog.open("chrome://browser/content/preferences/fonts.xul", "resizable=no");
   },
 
   /**
@@ -194,7 +227,7 @@ var gContentPane = {
    */
   configureColors: function ()
   {
-    gSubDialog.open("chrome://browser/content/preferences/colors.xul");
+    gSubDialog.open("chrome://browser/content/preferences/colors.xul", "resizable=no");
   },
 
   // LANGUAGES

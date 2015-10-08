@@ -12,7 +12,7 @@
 namespace mozilla {
 namespace dom {
 
-class MediaStreamAudioDestinationNode : public AudioNode
+class MediaStreamAudioDestinationNode final : public AudioNode
 {
 public:
   explicit MediaStreamAudioDestinationNode(AudioContext* aContext);
@@ -50,7 +50,7 @@ private:
   nsRefPtr<MediaInputPort> mPort;
 };
 
-}
-}
+} // namespace dom
+} // namespace mozilla
 
 #endif

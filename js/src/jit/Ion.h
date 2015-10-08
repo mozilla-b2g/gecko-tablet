@@ -82,7 +82,7 @@ void SetJitContext(JitContext* ctx);
 
 bool CanIonCompileScript(JSContext* cx, JSScript* script, bool osr);
 
-MethodStatus CanEnterAtBranch(JSContext* cx, JSScript* script,
+MethodStatus CanEnterAtBranch(JSContext* cx, HandleScript script,
                               BaselineFrame* frame, jsbytecode* pc);
 MethodStatus CanEnter(JSContext* cx, RunState& state);
 MethodStatus CompileFunctionForBaseline(JSContext* cx, HandleScript script, BaselineFrame* frame);
@@ -147,12 +147,14 @@ void FinishOffThreadBuilder(JSContext* cx, IonBuilder* builder);
 void StopAllOffThreadCompilations(Zone* zone);
 void StopAllOffThreadCompilations(JSCompartment* comp);
 
+void LazyLink(JSContext* cx, HandleScript calleescript);
 uint8_t* LazyLinkTopActivation(JSContext* cx);
 
 static inline bool
 IsIonEnabled(JSContext* cx)
 {
-#ifdef JS_CODEGEN_NONE
+    // The ARM64 Ion engine is not yet implemented.
+#if defined(JS_CODEGEN_NONE) || defined(JS_CODEGEN_ARM64)
     return false;
 #else
     return cx->runtime()->options().ion() &&

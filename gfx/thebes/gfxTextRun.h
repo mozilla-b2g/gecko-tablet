@@ -10,6 +10,7 @@
 #include "nsString.h"
 #include "gfxPoint.h"
 #include "gfxFont.h"
+#include "gfxFontConstants.h"
 #include "nsTArray.h"
 #include "gfxSkipChars.h"
 #include "gfxPlatform.h"
@@ -732,8 +733,9 @@ public:
     static void Shutdown(); // platform must call this to release the languageAtomService
 
     gfxFontGroup(const mozilla::FontFamilyList& aFontFamilyList,
-                 const gfxFontStyle *aStyle,
-                 gfxUserFontSet *aUserFontSet = nullptr);
+                 const gfxFontStyle* aStyle,
+                 gfxTextPerfMetrics* aTextPerf,
+                 gfxUserFontSet* aUserFontSet = nullptr);
 
     virtual ~gfxFontGroup();
 
@@ -831,18 +833,6 @@ public:
                         int32_t aRunScript, gfxFont *aPrevMatchedFont,
                         uint8_t *aMatchType);
 
-    // search through pref fonts for a character, return nullptr if no matching pref font
-    virtual already_AddRefed<gfxFont> WhichPrefFontSupportsChar(uint32_t aCh);
-
-    already_AddRefed<gfxFont>
-        WhichSystemFontSupportsChar(uint32_t aCh, uint32_t aNextCh,
-                                    int32_t aRunScript);
-
-    template<typename T>
-    void ComputeRanges(nsTArray<gfxTextRange>& mRanges,
-                       const T *aString, uint32_t aLength,
-                       int32_t aRunScript, uint16_t aOrientation);
-
     gfxUserFontSet* GetUserFontSet();
 
     // With downloadable fonts, the composition of the font group can change as fonts are downloaded
@@ -856,7 +846,6 @@ public:
 
     // used when logging text performance
     gfxTextPerfMetrics *GetTextPerfMetrics() { return mTextPerf; }
-    void SetTextPerfMetrics(gfxTextPerfMetrics *aTextPerf) { mTextPerf = aTextPerf; }
 
     // This will call UpdateUserFonts() if the user font set is changed.
     void SetUserFontSet(gfxUserFontSet *aUserFontSet);
@@ -878,19 +867,25 @@ public:
     };
     // The gfxFontGroup keeps ownership of this textrun.
     // It is only guaranteed to exist until the next call to GetEllipsisTextRun
-    // (which might use a different appUnitsPerDev value) for the font group,
-    // or until UpdateUserFonts is called, or the fontgroup is destroyed.
+    // (which might use a different appUnitsPerDev value or flags) for the font
+    // group, or until UpdateUserFonts is called, or the fontgroup is destroyed.
     // Get it/use it/forget it :) - don't keep a reference that might go stale.
-    gfxTextRun* GetEllipsisTextRun(int32_t aAppUnitsPerDevPixel,
+    gfxTextRun* GetEllipsisTextRun(int32_t aAppUnitsPerDevPixel, uint32_t aFlags,
                                    LazyReferenceContextGetter& aRefContextGetter);
 
-    // helper method for resolving generic font families
-    static void
-    ResolveGenericFontNames(mozilla::FontFamilyType aGenericType,
-                            nsIAtom *aLanguage,
-                            nsTArray<nsString>& aGenericFamilies);
-
 protected:
+    // search through pref fonts for a character, return nullptr if no matching pref font
+    already_AddRefed<gfxFont> WhichPrefFontSupportsChar(uint32_t aCh);
+
+    already_AddRefed<gfxFont>
+        WhichSystemFontSupportsChar(uint32_t aCh, uint32_t aNextCh,
+                                    int32_t aRunScript);
+
+    template<typename T>
+    void ComputeRanges(nsTArray<gfxTextRange>& mRanges,
+                       const T *aString, uint32_t aLength,
+                       int32_t aRunScript, uint16_t aOrientation);
+
     class FamilyFace {
     public:
         FamilyFace() : mFamily(nullptr), mFontEntry(nullptr),
@@ -1042,7 +1037,7 @@ protected:
     gfxTextPerfMetrics *mTextPerf;
 
     // Cache a textrun representing an ellipsis (useful for CSS text-overflow)
-    // at a specific appUnitsPerDevPixel size
+    // at a specific appUnitsPerDevPixel size and orientation
     nsAutoPtr<gfxTextRun>   mCachedEllipsisTextRun;
 
     // cache the most recent pref font to avoid general pref font lookup
@@ -1055,6 +1050,9 @@ protected:
     bool                    mSkipDrawing; // hide text while waiting for a font
                                           // download to complete (or fallback
                                           // timer to fire)
+
+    // xxx - gfxPangoFontGroup skips UpdateUserFonts
+    bool                    mSkipUpdateUserFonts;
 
     /**
      * Textrun creation short-cuts for special cases where we don't need to
@@ -1114,18 +1112,12 @@ protected:
 
     // helper methods for looking up fonts
 
-    // iterate over the fontlist, lookup names and expand generics
-    void EnumerateFontList(nsIAtom *aLanguage, void *aClosure = nullptr);
-
-    // expand a generic to a list of specific names based on prefs
-    void FindGenericFonts(mozilla::FontFamilyType aGenericType,
-                          nsIAtom *aLanguage,
-                          void *aClosure);
-
     // lookup and add a font with a given name (i.e. *not* a generic!)
-    virtual void FindPlatformFont(const nsAString& aName,
-                                  bool aUseFontSet,
-                                  void *aClosure);
+    void AddPlatformFont(const nsAString& aName,
+                         nsTArray<gfxFontFamily*>& aFamilyList);
+
+    // do style selection and add entries to list
+    void AddFamilyToFontList(gfxFontFamily* aFamily);
 
     static nsILanguageAtomService* gLangService;
 };

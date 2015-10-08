@@ -61,9 +61,9 @@ nsResizerFrame::HandleEvent(nsPresContext* aPresContext,
   nsWeakFrame weakFrame(this);
   bool doDefault = true;
 
-  switch (aEvent->message) {
-    case NS_TOUCH_START:
-    case NS_MOUSE_BUTTON_DOWN: {
+  switch (aEvent->mMessage) {
+    case eTouchStart:
+    case eMouseDown: {
       if (aEvent->mClass == eTouchEventClass ||
           (aEvent->mClass == eMouseEventClass &&
            aEvent->AsMouseEvent()->button == WidgetMouseEvent::eLeftButton)) {
@@ -128,8 +128,8 @@ nsResizerFrame::HandleEvent(nsPresContext* aPresContext,
     }
     break;
 
-  case NS_TOUCH_END:
-  case NS_MOUSE_BUTTON_UP: {
+  case eTouchEnd:
+  case eMouseUp: {
     if (aEvent->mClass == eTouchEventClass ||
         (aEvent->mClass == eMouseEventClass &&
          aEvent->AsMouseEvent()->button == WidgetMouseEvent::eLeftButton)) {
@@ -143,8 +143,8 @@ nsResizerFrame::HandleEvent(nsPresContext* aPresContext,
   }
   break;
 
-  case NS_TOUCH_MOVE:
-  case NS_MOUSE_MOVE: {
+  case eTouchMove:
+  case eMouseMove: {
     if (mTrackingMouseMove)
     {
       nsCOMPtr<nsIBaseWindow> window;
@@ -238,7 +238,7 @@ nsResizerFrame::HandleEvent(nsPresContext* aPresContext,
         // direction, don't allow the new size to be less that the resizer's
         // size. This ensures that content isn't resized too small as to make
         // the resizer invisible.
-        nsRect appUnitsRect = LayoutDevicePixel::ToUntyped(rect).ToAppUnits(aPresContext->AppUnitsPerDevPixel());
+        nsRect appUnitsRect = ToAppUnits(LayoutDevicePixel::ToUntyped(rect), aPresContext->AppUnitsPerDevPixel());
         if (appUnitsRect.width < mRect.width && mouseMove.x)
           appUnitsRect.width = mRect.width;
         if (appUnitsRect.height < mRect.height && mouseMove.y)
@@ -273,9 +273,8 @@ nsResizerFrame::HandleEvent(nsPresContext* aPresContext,
             (!menuPopupFrame->IsAnchored() ||
              menuPopupFrame->PopupLevel() != ePopupLevelParent)) {
 
-          rect.x = aPresContext->DevPixelsToIntCSSPixels(rect.x);
-          rect.y = aPresContext->DevPixelsToIntCSSPixels(rect.y);
-          menuPopupFrame->MoveTo(rect.x, rect.y, true);
+          CSSPoint cssPos = rect.TopLeft() / aPresContext->CSSToDevPixelScale();
+          menuPopupFrame->MoveTo(RoundedToInt(cssPos), true);
         }
       }
       else {
@@ -287,14 +286,14 @@ nsResizerFrame::HandleEvent(nsPresContext* aPresContext,
   }
   break;
 
-  case NS_MOUSE_CLICK: {
+  case eMouseClick: {
     WidgetMouseEvent* mouseEvent = aEvent->AsMouseEvent();
     if (mouseEvent->IsLeftClickEvent()) {
       MouseClicked(aPresContext, mouseEvent);
     }
     break;
   }
-  case NS_MOUSE_DOUBLECLICK:
+  case eMouseDoubleClick:
     if (aEvent->AsMouseEvent()->button == WidgetMouseEvent::eLeftButton) {
       nsCOMPtr<nsIBaseWindow> window;
       nsIPresShell* presShell = aPresContext->GetPresShell();
@@ -309,6 +308,9 @@ nsResizerFrame::HandleEvent(nsPresContext* aPresContext,
         RestoreOriginalSize(contentToResize);
       }
     }
+    break;
+
+  default:
     break;
   }
 

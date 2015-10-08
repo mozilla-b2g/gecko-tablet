@@ -5,11 +5,12 @@
 import json
 import os
 import multiprocessing
+import signal
 import socket
 import sys
 import time
 
-from mozlog.structured import get_default_logger, handlers
+from mozlog import get_default_logger, handlers
 
 from wptlogging import LogLevelRewriter
 
@@ -17,6 +18,15 @@ here = os.path.split(__file__)[0]
 
 serve = None
 sslutils = None
+
+
+hostnames = ["web-platform.test",
+             "www.web-platform.test",
+             "www1.web-platform.test",
+             "www2.web-platform.test",
+             "xn--n8j6ds53lwwkrqhv28a.web-platform.test",
+             "xn--lve-6lad.web-platform.test"]
+
 
 def do_delayed_imports(logger, test_paths):
     global serve, sslutils
@@ -70,27 +80,8 @@ class TestEnvironmentError(Exception):
     pass
 
 
-class StaticHandler(object):
-    def __init__(self, path, format_args, content_type, **headers):
-        with open(path) as f:
-            self.data = f.read() % format_args
-
-        self.resp_headers = [("Content-Type", content_type)]
-        for k, v in headers.iteritems():
-            resp_headers.append((k.replace("_", "-"), v))
-
-        self.handler = serve.handlers.handler(self.handle_request)
-
-    def handle_request(self, request, response):
-        return self.resp_headers, self.data
-
-    def __call__(self, request, response):
-        rv = self.handler(request, response)
-        return rv
-
-
 class TestEnvironment(object):
-    def __init__(self, test_paths, ssl_env, pause_after_test, options):
+    def __init__(self, test_paths, ssl_env, pause_after_test, debug_info, options):
         """Context manager that owns the test environment i.e. the http and
         websockets servers"""
         self.test_paths = test_paths
@@ -100,28 +91,40 @@ class TestEnvironment(object):
         self.external_config = None
         self.pause_after_test = pause_after_test
         self.test_server_port = options.pop("test_server_port", True)
+        self.debug_info = debug_info
         self.options = options if options is not None else {}
 
         self.cache_manager = multiprocessing.Manager()
-        self.routes = self.get_routes()
+        self.stash = serve.stash.StashServer()
+
 
     def __enter__(self):
+        self.stash.__enter__()
         self.ssl_env.__enter__()
         self.cache_manager.__enter__()
         self.setup_server_logging()
         self.config = self.load_config()
         serve.set_computed_defaults(self.config)
         self.external_config, self.servers = serve.start(self.config, self.ssl_env,
-                                                         self.routes)
+                                                         self.get_routes())
+        if self.options.get("supports_debugger") and self.debug_info and self.debug_info.interactive:
+            self.ignore_interrupts()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.cache_manager.__exit__(exc_type, exc_val, exc_tb)
-        self.ssl_env.__exit__(exc_type, exc_val, exc_tb)
-
+        self.process_interrupts()
         for scheme, servers in self.servers.iteritems():
             for port, server in servers:
                 server.kill()
+        self.cache_manager.__exit__(exc_type, exc_val, exc_tb)
+        self.ssl_env.__exit__(exc_type, exc_val, exc_tb)
+        self.stash.__exit__()
+
+    def ignore_interrupts(self):
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+    def process_interrupts(self):
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     def load_config(self):
         default_config_path = os.path.join(serve_path(self.test_paths), "config.default.json")
@@ -172,40 +175,25 @@ class TestEnvironment(object):
             pass
 
     def get_routes(self):
-        routes = serve.default_routes()
+        route_builder = serve.RoutesBuilder()
+
         for path, format_args, content_type, route in [
                 ("testharness_runner.html", {}, "text/html", "/testharness_runner.html"),
                 (self.options.get("testharnessreport", "testharnessreport.js"),
                  {"output": self.pause_after_test}, "text/javascript",
                  "/resources/testharnessreport.js")]:
-            handler = StaticHandler(os.path.join(here, path), format_args, content_type)
-            routes.insert(0, (b"GET", str(route), handler))
+            path = os.path.normpath(os.path.join(here, path))
+            route_builder.add_static(path, format_args, content_type, route)
 
-        for url, paths in self.test_paths.iteritems():
-            if url == "/":
+        for url_base, paths in self.test_paths.iteritems():
+            if url_base == "/":
                 continue
-
-            path = paths["tests_path"]
-            url = "/%s/" % url.strip("/")
-
-            for (method,
-                 suffix,
-                 handler_cls) in [(b"*",
-                                   b"*.py",
-                                   serve.handlers.PythonScriptHandler),
-                                  (b"GET",
-                                   "*.asis",
-                                   serve.handlers.AsIsHandler),
-                                  (b"GET",
-                                   "*",
-                                   serve.handlers.FileHandler)]:
-                route = (method, b"%s%s" % (str(url), str(suffix)), handler_cls(path, url_base=url))
-                routes.insert(-3, route)
+            route_builder.add_mount_point(url_base, paths["tests_path"])
 
         if "/" not in self.test_paths:
-            routes = routes[:-3]
+            del route_builder.mountpoint_routes["/"]
 
-        return routes
+        return route_builder.get_routes()
 
     def ensure_started(self):
         # Pause for a while to ensure that the server has a chance to start

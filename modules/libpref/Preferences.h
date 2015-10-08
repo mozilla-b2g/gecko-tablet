@@ -20,8 +20,6 @@
 #include "mozilla/MemoryReporting.h"
 
 class nsIFile;
-class nsCString;
-class nsString;
 class nsAdoptingString;
 class nsAdoptingCString;
 
@@ -34,7 +32,7 @@ namespace mozilla {
 
 namespace dom {
 class PrefSetting;
-}
+} // namespace dom
 
 class Preferences final : public nsIPrefService,
                           public nsIObserver,

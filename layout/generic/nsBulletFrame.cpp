@@ -410,7 +410,7 @@ nsBulletFrame::PaintBullet(nsRenderingContext& aRenderingContext, nsPoint aPt,
   default:
     {
       aRenderingContext.ThebesContext()->SetColor(
-                          nsLayoutUtils::GetColor(this, eCSSProperty_color));
+        Color::FromABGR(nsLayoutUtils::GetColor(this, eCSSProperty_color)));
 
       nsLayoutUtils::GetFontMetricsForFrame(this, getter_AddRefs(fm),
                                             GetFontSizeInflation());
@@ -716,6 +716,16 @@ nsBulletFrame::Notify(imgIRequest *aRequest, int32_t aType, const nsIntRect* aDa
       mImageRequest->RequestDecode();
     }
     InvalidateFrame();
+  }
+
+  if (aType == imgINotificationObserver::DECODE_COMPLETE) {
+    if (nsIDocument* parent = GetOurCurrentDoc()) {
+      nsCOMPtr<imgIContainer> container;
+      aRequest->GetImage(getter_AddRefs(container));
+      if (container) {
+        container->PropagateUseCounters(parent);
+      }
+    }
   }
 
   return NS_OK;

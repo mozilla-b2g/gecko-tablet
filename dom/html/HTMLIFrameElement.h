@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -158,6 +159,15 @@ public:
   {
     SetHTMLAttr(nsGkAtoms::marginheight, aMarginHeight, aError);
   }
+  void SetReferrer(const nsAString& aReferrer, ErrorResult& aError)
+  {
+    SetHTMLAttr(nsGkAtoms::referrer, aReferrer, aError);
+  }
+  void GetReferrer(nsAString& aReferrer)
+  {
+    GetHTMLAttr(nsGkAtoms::referrer, aReferrer);
+  }
+
   nsIDocument* GetSVGDocument()
   {
     return GetContentDocument();
@@ -173,6 +183,13 @@ public:
   using nsGenericHTMLFrameElement::SetMozbrowser;
   // nsGenericHTMLFrameElement::GetFrameLoader is fine
   // nsGenericHTMLFrameElement::GetAppManifestURL is fine
+
+  // The fullscreen flag is set to true only when requestFullscreen is
+  // explicitly called on this <iframe> element. In case this flag is
+  // set, the fullscreen state of this element will not be reverted
+  // automatically when its subdocument exits fullscreen.
+  bool FullscreenFlag() const { return mFullscreenFlag; }
+  void SetFullscreenFlag(bool aValue) { mFullscreenFlag = aValue; }
 
 protected:
   virtual ~HTMLIFrameElement();

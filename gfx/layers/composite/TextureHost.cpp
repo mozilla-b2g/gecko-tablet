@@ -6,6 +6,7 @@
 #include "TextureHost.h"
 
 #include "CompositableHost.h"           // for CompositableHost
+#include "LayerScope.h"
 #include "LayersLogging.h"              // for AppendToString
 #include "mozilla/gfx/2D.h"             // for DataSourceSurface, Factory
 #include "mozilla/ipc/Shmem.h"          // for Shmem
@@ -17,15 +18,13 @@
 #include "mozilla/layers/TextureHostOGL.h"  // for TextureHostOGL
 #include "mozilla/layers/YCbCrImageDataSerializer.h"
 #include "nsAString.h"
-#include "nsRefPtr.h"                   // for nsRefPtr
+#include "mozilla/nsRefPtr.h"                   // for nsRefPtr
 #include "nsPrintfCString.h"            // for nsPrintfCString
 #include "mozilla/layers/PTextureParent.h"
 #include "mozilla/unused.h"
 #include <limits>
-#include "SharedSurface.h"
-#include "SharedSurfaceEGL.h"
-#include "SharedSurfaceGL.h"
 #include "../opengl/CompositorOGL.h"
+#include "gfxPrefs.h"
 #include "gfxUtils.h"
 
 #ifdef MOZ_ENABLE_D3D10_LAYER
@@ -35,7 +34,6 @@
 #ifdef MOZ_WIDGET_GONK
 #include "../opengl/GrallocTextureClient.h"
 #include "../opengl/GrallocTextureHost.h"
-#include "SharedSurfaceGralloc.h"
 #endif
 
 #ifdef MOZ_X11
@@ -43,12 +41,10 @@
 #endif
 
 #ifdef XP_MACOSX
-#include "SharedSurfaceIO.h"
 #include "../opengl/MacIOSurfaceTextureHostOGL.h"
 #endif
 
 #ifdef XP_WIN
-#include "SharedSurfaceANGLE.h"
 #include "mozilla/layers/TextureDIB.h"
 #endif
 
@@ -57,8 +53,6 @@
 #else
 #define RECYCLE_LOG(...) do { } while (0)
 #endif
-
-struct nsIntPoint;
 
 namespace mozilla {
 namespace layers {
@@ -75,6 +69,7 @@ public:
   ~TextureParent();
 
   bool Init(const SurfaceDescriptor& aSharedData,
+            const LayersBackend& aLayersBackend,
             const TextureFlags& aFlags);
 
   void CompositorRecycle();
@@ -98,10 +93,11 @@ public:
   RefPtr<TextureHost> mTextureHost;
 };
 
-// static
+////////////////////////////////////////////////////////////////////////////////
 PTextureParent*
 TextureHost::CreateIPDLActor(CompositableParentManager* aManager,
                              const SurfaceDescriptor& aSharedData,
+                             LayersBackend aLayersBackend,
                              TextureFlags aFlags)
 {
   if (aSharedData.type() == SurfaceDescriptor::TSurfaceDescriptorMemory &&
@@ -111,7 +107,7 @@ TextureHost::CreateIPDLActor(CompositableParentManager* aManager,
     return nullptr;
   }
   TextureParent* actor = new TextureParent(aManager);
-  if (!actor->Init(aSharedData, aFlags)) {
+  if (!actor->Init(aSharedData, aLayersBackend, aFlags)) {
     delete actor;
     return nullptr;
   }
@@ -137,7 +133,10 @@ TextureHost::SendDeleteIPDLActor(PTextureParent* actor)
 TextureHost*
 TextureHost::AsTextureHost(PTextureParent* actor)
 {
-  return actor? static_cast<TextureParent*>(actor)->mTextureHost : nullptr;
+  if (!actor) {
+    return nullptr;
+  }
+  return static_cast<TextureParent*>(actor)->mTextureHost;
 }
 
 PTextureParent*
@@ -146,54 +145,72 @@ TextureHost::GetIPDLActor()
   return mActor;
 }
 
+bool
+TextureHost::SetReleaseFenceHandle(const FenceHandle& aReleaseFenceHandle)
+{
+  if (!aReleaseFenceHandle.IsValid()) {
+    // HWC might not provide Fence.
+    // In this case, HWC implicitly handles buffer's fence.
+    return false;
+  }
+
+  mReleaseFenceHandle.Merge(aReleaseFenceHandle);
+
+  return true;
+}
+
 FenceHandle
 TextureHost::GetAndResetReleaseFenceHandle()
 {
-#if defined(MOZ_WIDGET_GONK) && ANDROID_VERSION >= 17
-  TextureHostOGL* hostOGL = this->AsHostOGL();
-  if (!hostOGL) {
-    return FenceHandle();
-  }
+  FenceHandle fence;
+  mReleaseFenceHandle.TransferToAnotherFenceHandle(fence);
+  return fence;
+}
 
-  android::sp<android::Fence> fence = hostOGL->GetAndResetReleaseFence();
-  if (fence.get() && fence->isValid()) {
-    FenceHandle handle = FenceHandle(fence);
-    return handle;
-  }
-#endif
-  return FenceHandle();
+void
+TextureHost::SetAcquireFenceHandle(const FenceHandle& aAcquireFenceHandle)
+{
+  mAcquireFenceHandle = aAcquireFenceHandle;
+}
+
+FenceHandle
+TextureHost::GetAndResetAcquireFenceHandle()
+{
+  nsRefPtr<FenceHandle::FdObj> fdObj = mAcquireFenceHandle.GetAndResetFdObj();
+  return FenceHandle(fdObj);
 }
 
 // implemented in TextureHostOGL.cpp
-TemporaryRef<TextureHost> CreateTextureHostOGL(const SurfaceDescriptor& aDesc,
+already_AddRefed<TextureHost> CreateTextureHostOGL(const SurfaceDescriptor& aDesc,
                                                ISurfaceAllocator* aDeallocator,
                                                TextureFlags aFlags);
 
 // implemented in TextureHostBasic.cpp
-TemporaryRef<TextureHost> CreateTextureHostBasic(const SurfaceDescriptor& aDesc,
+already_AddRefed<TextureHost> CreateTextureHostBasic(const SurfaceDescriptor& aDesc,
                                                  ISurfaceAllocator* aDeallocator,
                                                  TextureFlags aFlags);
 
 // implemented in TextureD3D11.cpp
-TemporaryRef<TextureHost> CreateTextureHostD3D11(const SurfaceDescriptor& aDesc,
+already_AddRefed<TextureHost> CreateTextureHostD3D11(const SurfaceDescriptor& aDesc,
                                                  ISurfaceAllocator* aDeallocator,
                                                  TextureFlags aFlags);
 
 // implemented in TextureD3D9.cpp
-TemporaryRef<TextureHost> CreateTextureHostD3D9(const SurfaceDescriptor& aDesc,
+already_AddRefed<TextureHost> CreateTextureHostD3D9(const SurfaceDescriptor& aDesc,
                                                 ISurfaceAllocator* aDeallocator,
                                                 TextureFlags aFlags);
 
-// static
-TemporaryRef<TextureHost>
+already_AddRefed<TextureHost>
 TextureHost::Create(const SurfaceDescriptor& aDesc,
                     ISurfaceAllocator* aDeallocator,
+                    LayersBackend aBackend,
                     TextureFlags aFlags)
 {
   switch (aDesc.type()) {
     case SurfaceDescriptor::TSurfaceDescriptorShmem:
     case SurfaceDescriptor::TSurfaceDescriptorMemory:
     case SurfaceDescriptor::TSurfaceDescriptorDIB:
+    case SurfaceDescriptor::TSurfaceDescriptorFileMapping:
       return CreateBackendIndependentTextureHost(aDesc, aDeallocator, aFlags);
 
     case SurfaceDescriptor::TEGLImageDescriptor:
@@ -201,11 +218,8 @@ TextureHost::Create(const SurfaceDescriptor& aDesc,
     case SurfaceDescriptor::TSurfaceTextureDescriptor:
       return CreateTextureHostOGL(aDesc, aDeallocator, aFlags);
 
-    case SurfaceDescriptor::TSharedSurfaceDescriptor:
-      return new SharedSurfaceTextureHost(aFlags, aDesc.get_SharedSurfaceDescriptor());
-
     case SurfaceDescriptor::TSurfaceDescriptorMacIOSurface:
-      if (Compositor::GetBackend() == LayersBackend::LAYERS_OPENGL) {
+      if (aBackend == LayersBackend::LAYERS_OPENGL) {
         return CreateTextureHostOGL(aDesc, aDeallocator, aFlags);
       } else {
         return CreateTextureHostBasic(aDesc, aDeallocator, aFlags);
@@ -214,8 +228,7 @@ TextureHost::Create(const SurfaceDescriptor& aDesc,
 #ifdef MOZ_X11
     case SurfaceDescriptor::TSurfaceDescriptorX11: {
       const SurfaceDescriptorX11& desc = aDesc.get_SurfaceDescriptorX11();
-      RefPtr<TextureHost> result = new X11TextureHost(aFlags, desc);
-      return result;
+      return MakeAndAddRef<X11TextureHost>(aFlags, desc);
     }
 #endif
 
@@ -225,7 +238,7 @@ TextureHost::Create(const SurfaceDescriptor& aDesc,
 
     case SurfaceDescriptor::TSurfaceDescriptorD3D10:
     case SurfaceDescriptor::TSurfaceDescriptorDXGIYCbCr:
-      if (Compositor::GetBackend() == LayersBackend::LAYERS_D3D9) {
+      if (aBackend == LayersBackend::LAYERS_D3D9) {
         return CreateTextureHostD3D9(aDesc, aDeallocator, aFlags);
       } else {
         return CreateTextureHostD3D11(aDesc, aDeallocator, aFlags);
@@ -236,7 +249,7 @@ TextureHost::Create(const SurfaceDescriptor& aDesc,
   }
 }
 
-TemporaryRef<TextureHost>
+already_AddRefed<TextureHost>
 CreateBackendIndependentTextureHost(const SurfaceDescriptor& aDesc,
                                     ISurfaceAllocator* aDeallocator,
                                     TextureFlags aFlags)
@@ -263,12 +276,16 @@ CreateBackendIndependentTextureHost(const SurfaceDescriptor& aDesc,
       result = new DIBTextureHost(aFlags, aDesc);
       break;
     }
+    case SurfaceDescriptor::TSurfaceDescriptorFileMapping: {
+      result = new TextureHostFileMapping(aFlags, aDesc);
+      break;
+    }
 #endif
     default: {
       NS_WARNING("No backend independent TextureHost for this descriptor type");
     }
   }
-  return result;
+  return result.forget();
 }
 
 void
@@ -284,10 +301,13 @@ TextureHost::TextureHost(TextureFlags aFlags)
     : mActor(nullptr)
     , mFlags(aFlags)
     , mCompositableCount(0)
-{}
+{
+  MOZ_COUNT_CTOR(TextureHost);
+}
 
 TextureHost::~TextureHost()
 {
+  MOZ_COUNT_DTOR(TextureHost);
 }
 
 void TextureHost::Finalize()
@@ -332,6 +352,13 @@ TextureHost::PrintInfo(std::stringstream& aStream, const char* aPrefix)
     }
   }
 #endif
+}
+
+void
+TextureHost::Updated(const nsIntRegion* aRegion)
+{
+    LayerScope::ContentChanged(this);
+    UpdatedInternal(aRegion);
 }
 
 TextureSource::TextureSource()
@@ -382,13 +409,13 @@ BufferTextureHost::~BufferTextureHost()
 {}
 
 void
-BufferTextureHost::Updated(const nsIntRegion* aRegion)
+BufferTextureHost::UpdatedInternal(const nsIntRegion* aRegion)
 {
   ++mUpdateSerial;
   // If the last frame wasn't uploaded yet, and we -don't- have a partial update,
   // we still need to update the full surface.
   if (aRegion && !mNeedsFullUpdate) {
-    mMaybeUpdatedRegion = mMaybeUpdatedRegion.Or(mMaybeUpdatedRegion, *aRegion);
+    mMaybeUpdatedRegion.OrWith(*aRegion);
   } else {
     mNeedsFullUpdate = true;
   }
@@ -594,7 +621,7 @@ BufferTextureHost::Upload(nsIntRegion *aRegion)
   return true;
 }
 
-TemporaryRef<gfx::DataSourceSurface>
+already_AddRefed<gfx::DataSourceSurface>
 BufferTextureHost::GetAsSurface()
 {
   RefPtr<gfx::DataSourceSurface> result;
@@ -738,7 +765,7 @@ TextureParent::~TextureParent()
   }
 }
 
-static void RecycleCallback(TextureHost* textureHost, void* aClosure) {
+static void RecycleCallback(TextureHost*, void* aClosure) {
   TextureParent* tp = reinterpret_cast<TextureParent*>(aClosure);
   tp->CompositorRecycle();
 }
@@ -771,10 +798,12 @@ TextureParent::RecvClientRecycle()
 
 bool
 TextureParent::Init(const SurfaceDescriptor& aSharedData,
+                    const LayersBackend& aBackend,
                     const TextureFlags& aFlags)
 {
   mTextureHost = TextureHost::Create(aSharedData,
                                      mCompositableManager,
+                                     aBackend,
                                      aFlags);
   if (mTextureHost) {
     mTextureHost->mActor = this;
@@ -851,152 +880,5 @@ TextureParent::RecvRecycleTexture(const TextureFlags& aTextureFlags)
 
 ////////////////////////////////////////////////////////////////////////////////
 
-static RefPtr<TextureSource>
-SharedSurfaceToTexSource(gl::SharedSurface* abstractSurf, Compositor* compositor)
-{
-  MOZ_ASSERT(abstractSurf);
-  MOZ_ASSERT(abstractSurf->mType != gl::SharedSurfaceType::Basic);
-  MOZ_ASSERT(abstractSurf->mType != gl::SharedSurfaceType::Gralloc);
-
-  if (!compositor) {
-    return nullptr;
-  }
-
-  gfx::SurfaceFormat format = abstractSurf->mHasAlpha ? gfx::SurfaceFormat::R8G8B8A8
-                                                      : gfx::SurfaceFormat::R8G8B8X8;
-
-  RefPtr<TextureSource> texSource;
-  switch (abstractSurf->mType) {
-#ifdef XP_WIN
-    case gl::SharedSurfaceType::EGLSurfaceANGLE: {
-      auto surf = gl::SharedSurface_ANGLEShareHandle::Cast(abstractSurf);
-
-      MOZ_ASSERT(compositor->GetBackendType() == LayersBackend::LAYERS_D3D11);
-      CompositorD3D11* compositorD3D11 = static_cast<CompositorD3D11*>(compositor);
-      RefPtr<ID3D11Texture2D> tex = surf->GetConsumerTexture();
-
-      if (!tex) {
-        NS_WARNING("Failed to open shared resource.");
-        break;
-      }
-      texSource = new DataTextureSourceD3D11(format, compositorD3D11, tex);
-      break;
-    }
-#endif
-    case gl::SharedSurfaceType::GLTextureShare: {
-      auto surf = gl::SharedSurface_GLTexture::Cast(abstractSurf);
-
-      MOZ_ASSERT(compositor->GetBackendType() == LayersBackend::LAYERS_OPENGL);
-      CompositorOGL* compositorOGL = static_cast<CompositorOGL*>(compositor);
-      gl::GLContext* gl = compositorOGL->gl();
-
-      GLenum target = surf->ConsTextureTarget();
-      GLuint tex = surf->ConsTexture(gl);
-      texSource = new GLTextureSource(compositorOGL, tex, target,
-                                      surf->mSize, format,
-                                      true/*externally owned*/);
-      break;
-    }
-    case gl::SharedSurfaceType::EGLImageShare: {
-      auto surf = gl::SharedSurface_EGLImage::Cast(abstractSurf);
-
-      MOZ_ASSERT(compositor->GetBackendType() == LayersBackend::LAYERS_OPENGL);
-      CompositorOGL* compositorOGL = static_cast<CompositorOGL*>(compositor);
-      gl::GLContext* gl = compositorOGL->gl();
-      MOZ_ASSERT(gl->IsCurrent());
-
-      GLenum target = 0;
-      GLuint tex = 0;
-      surf->AcquireConsumerTexture(gl, &tex, &target);
-
-      texSource = new GLTextureSource(compositorOGL, tex, target,
-                                      surf->mSize, format,
-                                      true/*externally owned*/);
-      break;
-    }
-#ifdef XP_MACOSX
-    case gl::SharedSurfaceType::IOSurface: {
-      auto surf = gl::SharedSurface_IOSurface::Cast(abstractSurf);
-      MacIOSurface* ioSurf = surf->GetIOSurface();
-
-      MOZ_ASSERT(compositor->GetBackendType() == LayersBackend::LAYERS_OPENGL);
-      CompositorOGL* compositorOGL = static_cast<CompositorOGL*>(compositor);
-
-      texSource = new MacIOSurfaceTextureSourceOGL(compositorOGL, ioSurf);
-      break;
-    }
-#endif
-    default:
-      break;
-  }
-
-  MOZ_ASSERT(texSource.get(), "TextureSource creation failed.");
-  return texSource;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// SharedSurfaceTextureHost
-
-SharedSurfaceTextureHost::SharedSurfaceTextureHost(TextureFlags aFlags,
-                                                   const SharedSurfaceDescriptor& aDesc)
-  : TextureHost(aFlags)
-  , mIsLocked(false)
-  , mSurf((gl::SharedSurface*)aDesc.surf())
-  , mCompositor(nullptr)
-{
-  MOZ_ASSERT(mSurf);
-}
-
-gfx::SurfaceFormat
-SharedSurfaceTextureHost::GetFormat() const
-{
-  MOZ_ASSERT(mTexSource);
-  return mTexSource->GetFormat();
-}
-
-gfx::IntSize
-SharedSurfaceTextureHost::GetSize() const
-{
-  MOZ_ASSERT(mTexSource);
-  return mTexSource->GetSize();
-}
-
-void
-SharedSurfaceTextureHost::EnsureTexSource()
-{
-  MOZ_ASSERT(mIsLocked);
-
-  if (mTexSource)
-    return;
-
-  mTexSource = SharedSurfaceToTexSource(mSurf, mCompositor);
-  MOZ_ASSERT(mTexSource);
-}
-
-bool
-SharedSurfaceTextureHost::Lock()
-{
-  MOZ_ASSERT(!mIsLocked);
-
-  mSurf->ConsumerAcquire();
-
-  mIsLocked = true;
-
-  EnsureTexSource();
-
-  return true;
-}
-
-void
-SharedSurfaceTextureHost::Unlock()
-{
-  MOZ_ASSERT(mIsLocked);
-  mSurf->ConsumerRelease();
-  mIsLocked = false;
-}
-
-
-////////////////////////////////////////////////////////////////////////////////
-
-} // namespace
-} // namespace
+} // namespace layers
+} // namespace mozilla

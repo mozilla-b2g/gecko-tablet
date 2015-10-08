@@ -20,7 +20,7 @@
 namespace mozilla {
 namespace gfx {
 class Matrix4x4;
-}
+} // namespace gfx
 using namespace gfx;
 
 namespace layers {
@@ -35,7 +35,8 @@ ContentHostBase::~ContentHostBase()
 }
 
 void
-ContentHostTexture::Composite(EffectChain& aEffectChain,
+ContentHostTexture::Composite(LayerComposite* aLayer,
+                              EffectChain& aEffectChain,
                               float aOpacity,
                               const gfx::Matrix4x4& aTransform,
                               const Filter& aFilter,
@@ -63,7 +64,8 @@ ContentHostTexture::Composite(EffectChain& aEffectChain,
 
   RefPtr<TexturedEffect> effect = CreateTexturedEffect(mTextureSource.get(),
                                                        mTextureSourceOnWhite.get(),
-                                                       aFilter, true);
+                                                       aFilter, true,
+                                                       GetRenderState());
   if (!effect) {
     return;
   }
@@ -93,7 +95,7 @@ ContentHostTexture::Composite(EffectChain& aEffectChain,
 
   // Figure out the intersecting draw region
   gfx::IntSize texSize = mTextureSource->GetSize();
-  nsIntRect textureRect = nsIntRect(0, 0, texSize.width, texSize.height);
+  IntRect textureRect = IntRect(0, 0, texSize.width, texSize.height);
   textureRect.MoveBy(region.GetBounds().TopLeft());
   nsIntRegion subregion;
   subregion.And(region, textureRect);
@@ -107,9 +109,9 @@ ContentHostTexture::Composite(EffectChain& aEffectChain,
 
   // Collect texture/screen coordinates for drawing
   nsIntRegionRectIterator iter(subregion);
-  while (const nsIntRect* iterRect = iter.Next()) {
-    nsIntRect regionRect = *iterRect;
-    nsIntRect screenRect = regionRect;
+  while (const IntRect* iterRect = iter.Next()) {
+    IntRect regionRect = *iterRect;
+    IntRect screenRect = regionRect;
     screenRect.MoveBy(origin);
 
     screenRects.Or(screenRects, screenRect);
@@ -138,8 +140,8 @@ ContentHostTexture::Composite(EffectChain& aEffectChain,
                  "component alpha textures should be the same size.");
     }
 
-    nsIntRect texRect = bigImgIter ? bigImgIter->GetTileRect()
-                                 : nsIntRect(0, 0,
+    IntRect texRect = bigImgIter ? bigImgIter->GetTileRect()
+                                 : IntRect(0, 0,
                                              texSize.width,
                                              texSize.height);
 
@@ -149,18 +151,18 @@ ContentHostTexture::Composite(EffectChain& aEffectChain,
     // 2 for each axis that has texture repeat.
     for (int y = 0; y < (usingTiles ? 2 : 1); y++) {
       for (int x = 0; x < (usingTiles ? 2 : 1); x++) {
-        nsIntRect currentTileRect(texRect);
+        IntRect currentTileRect(texRect);
         currentTileRect.MoveBy(x * texSize.width, y * texSize.height);
 
         nsIntRegionRectIterator screenIter(screenRects);
         nsIntRegionRectIterator regionIter(regionRects);
 
-        const nsIntRect* screenRect;
-        const nsIntRect* regionRect;
+        const IntRect* screenRect;
+        const IntRect* regionRect;
         while ((screenRect = screenIter.Next()) &&
                (regionRect = regionIter.Next())) {
-          nsIntRect tileScreenRect(*screenRect);
-          nsIntRect tileRegionRect(*regionRect);
+          IntRect tileScreenRect(*screenRect);
+          IntRect tileRegionRect(*regionRect);
 
           // When we're using tiles, find the intersection between the tile
           // rect and this region rect. Tiling is then handled by the
@@ -217,10 +219,15 @@ ContentHostTexture::Composite(EffectChain& aEffectChain,
 }
 
 void
-ContentHostTexture::UseTextureHost(TextureHost* aTexture)
+ContentHostTexture::UseTextureHost(const nsTArray<TimedTexture>& aTextures)
 {
-  ContentHostBase::UseTextureHost(aTexture);
-  mTextureHost = aTexture;
+  ContentHostBase::UseTextureHost(aTextures);
+  MOZ_ASSERT(aTextures.Length() == 1);
+  const TimedTexture& t = aTextures[0];
+  MOZ_ASSERT(t.mPictureRect.IsEqualInterior(
+      nsIntRect(nsIntPoint(0, 0), nsIntSize(t.mTexture->GetSize()))),
+      "Only default picture rect supported");
+  mTextureHost = t.mTexture;
   mTextureHostOnWhite = nullptr;
   mTextureSourceOnWhite = nullptr;
   if (mTextureHost) {
@@ -261,32 +268,49 @@ ContentHostTexture::Dump(std::stringstream& aStream,
                          bool aDumpHtml)
 {
 #ifdef MOZ_DUMP_PAINTING
-  if (!aDumpHtml) {
-    return;
+  if (aDumpHtml) {
+    aStream << "<ul>";
   }
-  aStream << "<ul>";
   if (mTextureHost) {
     aStream << aPrefix;
-    aStream << "<li> <a href=";
+    if (aDumpHtml) {
+      aStream << "<li> <a href=";
+    } else {
+      aStream << "Front buffer: ";
+    }
     DumpTextureHost(aStream, mTextureHost);
-    aStream << "> Front buffer </a></li> ";
+    if (aDumpHtml) {
+      aStream << "> Front buffer </a></li> ";
+    } else {
+      aStream << "\n";
+    }
   }
   if (mTextureHostOnWhite) {
-    aStream <<  aPrefix;
-    aStream << "<li> <a href=";
+    aStream << aPrefix;
+    if (aDumpHtml) {
+      aStream << "<li> <a href=";
+    } else {
+      aStream << "Front buffer on white: ";
+    }
     DumpTextureHost(aStream, mTextureHostOnWhite);
-    aStream << "> Front buffer on white </a> </li> ";
+    if (aDumpHtml) {
+      aStream << "> Front buffer on white </a> </li> ";
+    } else {
+      aStream << "\n";
+    }
   }
-  aStream << "</ul>";
+  if (aDumpHtml) {
+    aStream << "</ul>";
+  }
 #endif
 }
 
 static inline void
 AddWrappedRegion(const nsIntRegion& aInput, nsIntRegion& aOutput,
-                 const nsIntSize& aSize, const nsIntPoint& aShift)
+                 const IntSize& aSize, const nsIntPoint& aShift)
 {
   nsIntRegion tempRegion;
-  tempRegion.And(nsIntRect(aShift, aSize), aInput);
+  tempRegion.And(IntRect(aShift, aSize), aInput);
   tempRegion.MoveBy(-aShift);
   aOutput.Or(aOutput, tempRegion);
 }
@@ -323,11 +347,11 @@ ContentHostSingleBuffered::UpdateThebes(const ThebesBufferData& aData,
   // Shift to the rotation point
   destRegion.MoveBy(aData.rotation());
 
-  nsIntSize bufferSize = aData.rect().Size();
+  IntSize bufferSize = aData.rect().Size();
 
   // Select only the pixels that are still within the buffer.
   nsIntRegion finalRegion;
-  finalRegion.And(nsIntRect(nsIntPoint(), bufferSize), destRegion);
+  finalRegion.And(IntRect(IntPoint(), bufferSize), destRegion);
 
   // For each of the overlap areas (right, bottom-right, bottom), select those
   // pixels and wrap them around to the opposite edge of the buffer rect.
@@ -335,7 +359,7 @@ ContentHostSingleBuffered::UpdateThebes(const ThebesBufferData& aData,
   AddWrappedRegion(destRegion, finalRegion, bufferSize, nsIntPoint(aData.rect().width, aData.rect().height));
   AddWrappedRegion(destRegion, finalRegion, bufferSize, nsIntPoint(0, aData.rect().height));
 
-  MOZ_ASSERT(nsIntRect(0, 0, aData.rect().width, aData.rect().height).Contains(finalRegion.GetBounds()));
+  MOZ_ASSERT(IntRect(0, 0, aData.rect().width, aData.rect().height).Contains(finalRegion.GetBounds()));
 
   mTextureHost->Updated(&finalRegion);
   if (mTextureHostOnWhite) {
@@ -426,7 +450,7 @@ ContentHostTexture::GetRenderState()
   return result;
 }
 
-TemporaryRef<TexturedEffect>
+already_AddRefed<TexturedEffect>
 ContentHostTexture::GenEffect(const gfx::Filter& aFilter)
 {
   if (!mTextureHost) {
@@ -443,10 +467,11 @@ ContentHostTexture::GenEffect(const gfx::Filter& aFilter)
   }
   return CreateTexturedEffect(mTextureSource.get(),
                               mTextureSourceOnWhite.get(),
-                              aFilter, true);
+                              aFilter, true,
+                              GetRenderState());
 }
 
-TemporaryRef<gfx::DataSourceSurface>
+already_AddRefed<gfx::DataSourceSurface>
 ContentHostTexture::GetAsSurface()
 {
   if (!mTextureHost) {
@@ -457,5 +482,5 @@ ContentHostTexture::GetAsSurface()
 }
 
 
-} // namespace
-} // namespace
+} // namespace layers
+} // namespace mozilla

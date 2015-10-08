@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -17,6 +18,7 @@ class nsIDOMMozMmsMessage;
 namespace mozilla {
 namespace dom {
 
+class Promise;
 class DOMRequest;
 class DOMCursor;
 struct MmsParameters;
@@ -24,6 +26,7 @@ struct MmsSendParameters;
 struct MobileMessageFilter;
 class OwningLongOrMozSmsMessageOrMozMmsMessage;
 struct SmsSendParameters;
+struct SmscAddress;
 
 class MobileMessageManager final : public DOMEventTargetHelper
                                  , public nsIObserver
@@ -111,8 +114,13 @@ public:
   RetrieveMMS(nsIDOMMozMmsMessage* aMessage,
               ErrorResult& aRv);
 
-  already_AddRefed<DOMRequest>
+  already_AddRefed<Promise>
   GetSmscAddress(const Optional<uint32_t>& aServiceId,
+                 ErrorResult& aRv);
+
+  already_AddRefed<Promise>
+  SetSmscAddress(const SmscAddress& aSmscAddress,
+                 const Optional<uint32_t>& aServiceId,
                  ErrorResult& aRv);
 
   IMPL_EVENT_HANDLER(received)

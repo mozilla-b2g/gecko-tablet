@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 sw=2 et tw=80: */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -25,7 +25,6 @@ class nsIContent;
 class nsIDocShell;
 class nsIDocument;
 class nsIIdleObserver;
-class nsIPrincipal;
 class nsIScriptTimeoutHandler;
 class nsIURI;
 class nsPerformance;
@@ -37,11 +36,11 @@ namespace mozilla {
 namespace dom {
 class AudioContext;
 class Element;
-}
+} // namespace dom
 namespace gfx {
 class VRHMDInfo;
-}
-}
+} // namespace gfx
+} // namespace mozilla
 
 // Popup control state enum. The values in this enum must go from most
 // permissive to least permissive so that it's safe to push state in
@@ -63,8 +62,8 @@ enum UIStateChangeType
 };
 
 #define NS_PIDOMWINDOW_IID \
-{ 0x2485d4d7, 0xf7cb, 0x481e, \
-  { 0x9c, 0x89, 0xb2, 0xa8, 0x12, 0x67, 0x7f, 0x97 } }
+{ 0x052e675a, 0xacd3, 0x48d1, \
+  { 0x8a, 0xcd, 0xbf, 0xff, 0xbd, 0x24, 0x4c, 0xed } }
 
 class nsPIDOMWindow : public nsIDOMWindowInternal
 {
@@ -186,7 +185,8 @@ public:
   float GetAudioVolume() const;
   nsresult SetAudioVolume(float aVolume);
 
-  float GetAudioGlobalVolume();
+  bool GetAudioCaptured() const;
+  nsresult SetAudioCapture(bool aCapture);
 
   virtual void SetServiceWorkersTestingEnabled(bool aEnabled)
   {
@@ -291,10 +291,12 @@ public:
 
   // Suspend timeouts in this window and in child windows.
   virtual void SuspendTimeouts(uint32_t aIncrease = 1,
-                               bool aFreezeChildren = true) = 0;
+                               bool aFreezeChildren = true,
+                               bool aFreezeWorkers = true) = 0;
 
   // Resume suspended timeouts in this window and in child windows.
-  virtual nsresult ResumeTimeouts(bool aThawChildren = true) = 0;
+  virtual nsresult ResumeTimeouts(bool aThawChildren = true,
+                                  bool aThawWorkers = true) = 0;
 
   virtual uint32_t TimeoutSuspendCount() = 0;
 
@@ -368,7 +370,7 @@ public:
   /**
    * Get the docshell in this window.
    */
-  nsIDocShell *GetDocShell()
+  nsIDocShell *GetDocShell() const
   {
     if (mOuterWindow) {
       return mOuterWindow->mDocShell;
@@ -462,18 +464,42 @@ public:
     }
   }
 
+  enum FullscreenReason
+  {
+    // Toggling the fullscreen mode requires trusted context.
+    eForFullscreenMode,
+    // Fullscreen API is the API provided to untrusted content.
+    eForFullscreenAPI,
+    // This reason can only be used with exiting fullscreen.
+    // It is otherwise identical to eForFullscreenAPI except it would
+    // suppress the fullscreen transition.
+    eForForceExitFullscreen
+  };
+
   /**
    * Moves the top-level window into fullscreen mode if aIsFullScreen is true,
-   * otherwise exits fullscreen. If aRequireTrust is true, this method only
-   * changes window state in a context trusted for write.
+   * otherwise exits fullscreen.
    *
    * If aHMD is not null, the window is made full screen on the given VR HMD
    * device instead of its currrent display.
    *
    * Outer windows only.
    */
-  virtual nsresult SetFullScreenInternal(bool aIsFullScreen, bool aRequireTrust,
-                                         mozilla::gfx::VRHMDInfo *aHMD = nullptr) = 0;
+  virtual nsresult SetFullscreenInternal(
+    FullscreenReason aReason, bool aIsFullscreen,
+    mozilla::gfx::VRHMDInfo *aHMD = nullptr) = 0;
+
+  /**
+   * This function should be called when the fullscreen state is flipped.
+   * If no widget is involved the fullscreen change, this method is called
+   * by SetFullscreenInternal, otherwise, it is called when the widget
+   * finishes its change to or from fullscreen.
+   *
+   * @param aIsFullscreen indicates whether the widget is in fullscreen.
+   *
+   * Outer windows only.
+   */
+  virtual void FinishFullscreenChange(bool aIsFullscreen) = 0;
 
   /**
    * Call this to check whether some node (this window, its document,
@@ -619,7 +645,7 @@ public:
    *
    * Inner windows only.
    */
-  virtual void EnableNetworkEvent(uint32_t aType) = 0;
+  virtual void EnableNetworkEvent(mozilla::EventMessage aEventMessage) = 0;
 
   /**
    * Tell the window that it should stop to listen to the network event of the
@@ -627,7 +653,7 @@ public:
    *
    * Inner windows only.
    */
-  virtual void DisableNetworkEvent(uint32_t aType) = 0;
+  virtual void DisableNetworkEvent(mozilla::EventMessage aEventMessage) = 0;
 #endif // MOZ_B2G
 
   /**
@@ -698,7 +724,7 @@ public:
                         const nsAString& aPopupWindowFeatures) = 0;
 
   // Inner windows only.
-  void AddAudioContext(mozilla::dom::AudioContext* aAudioContext);
+  bool AddAudioContext(mozilla::dom::AudioContext* aAudioContext);
   void RemoveAudioContext(mozilla::dom::AudioContext* aAudioContext);
   void MuteAudioContexts();
   void UnmuteAudioContexts();
@@ -766,7 +792,10 @@ protected:
 
   // These members are only used on outer windows.
   nsCOMPtr<mozilla::dom::Element> mFrameElement;
-  nsIDocShell           *mDocShell;  // Weak Reference
+  // This reference is used by the subclass nsGlobalWindow, and cleared in it's
+  // DetachFromDocShell() method. This method is called by nsDocShell::Destroy(),
+  // which is called before the nsDocShell is destroyed.
+  nsIDocShell* MOZ_NON_OWNING_REF mDocShell;  // Weak Reference
 
   // mPerformance is only used on inner windows.
   nsRefPtr<nsPerformance>       mPerformance;
@@ -801,6 +830,8 @@ protected:
 
   bool                   mAudioMuted;
   float                  mAudioVolume;
+
+  bool                   mAudioCaptured;
 
   // current desktop mode flag.
   bool                   mDesktopModeViewport;

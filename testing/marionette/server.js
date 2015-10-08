@@ -4,9 +4,9 @@
 
 "use strict";
 
-const {Constructor: CC, classes: Cc, interfaces: Ci, utils: Cu} = Components;
+var {Constructor: CC, classes: Cc, interfaces: Ci, utils: Cu} = Components;
 
-const loader = Cc["@mozilla.org/moz/jssubscript-loader;1"].getService(Ci.mozIJSSubScriptLoader);
+var loader = Cc["@mozilla.org/moz/jssubscript-loader;1"].getService(Ci.mozIJSSubScriptLoader);
 const ServerSocket = CC("@mozilla.org/network/server-socket;1", "nsIServerSocket", "initSpecialConnection");
 
 Cu.import("resource://gre/modules/Log.jsm");
@@ -18,10 +18,10 @@ Cu.import("chrome://marionette/content/elements.js");
 Cu.import("chrome://marionette/content/simpletest.js");
 
 // Bug 1083711: Load transport.js as an SDK module instead of subscript
-loader.loadSubScript("resource://gre/modules/devtools/transport/transport.js");
+loader.loadSubScript("resource://gre/modules/devtools/shared/transport/transport.js");
 
 // Preserve this import order:
-let events = {};
+var events = {};
 loader.loadSubScript("chrome://marionette/content/EventUtils.js", events);
 loader.loadSubScript("chrome://marionette/content/ChromeUtils.js", events);
 loader.loadSubScript("chrome://marionette/content/frame-manager.js");
@@ -29,7 +29,6 @@ loader.loadSubScript("chrome://marionette/content/frame-manager.js");
 const logger = Log.repository.getLogger("Marionette");
 
 this.EXPORTED_SYMBOLS = ["MarionetteServer"];
-const SPECIAL_POWERS_PREF = "security.turn_off_all_security_so_that_viruses_can_take_over_this_computer";
 const CONTENT_LISTENER_PREF = "marionette.contentListener";
 
 /**

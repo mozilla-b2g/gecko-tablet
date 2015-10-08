@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 sw=2 et tw=79: */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -14,7 +14,6 @@
 #include "nsIChannel.h"
 #include "nsXPIDLString.h"
 #include "nsReadableUtils.h"
-#include "nsNetUtil.h"
 #include "plstr.h"
 #include "nsIContent.h"
 #include "nsIDocument.h"
@@ -941,7 +940,7 @@ GetOrCreateMapEntryForPrototype(JSContext *cx, JS::Handle<JSObject*> proto)
 
   // We don't have an entry. Create one and stick it in the map.
   JS::Rooted<JSObject*> entry(cx);
-  entry = JS_NewObjectWithGivenProto(cx, nullptr, JS::NullPtr());
+  entry = JS_NewObjectWithGivenProto(cx, nullptr, nullptr);
   if (!entry) {
     return nullptr;
   }
@@ -1029,7 +1028,7 @@ nsXBLBinding::DoInitJSClass(JSContext *cx,
     nsXBLDocumentInfo* docInfo = aProtoBinding->XBLDocumentInfo();
     ::JS_SetPrivate(proto, docInfo);
     NS_ADDREF(docInfo);
-    JS_SetReservedSlot(proto, 0, PRIVATE_TO_JSVAL(aProtoBinding));
+    JS_SetReservedSlot(proto, 0, JS::PrivateValue(aProtoBinding));
 
     // Next, enter the compartment of the property holder, wrap the proto, and
     // stick it on.

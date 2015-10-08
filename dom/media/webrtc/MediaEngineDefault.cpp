@@ -26,7 +26,7 @@
 #include "YuvStamper.h"
 #endif
 
-#define AUDIO_RATE 16000
+#define AUDIO_RATE mozilla::MediaEngine::DEFAULT_SAMPLE_RATE
 #define AUDIO_FRAME_LENGTH ((AUDIO_RATE * MediaEngine::DEFAULT_AUDIO_TIMER_MS) / 1000)
 namespace mozilla {
 
@@ -62,15 +62,31 @@ MediaEngineDefaultVideoSource::GetName(nsAString& aName)
 }
 
 void
-MediaEngineDefaultVideoSource::GetUUID(nsAString& aUUID)
+MediaEngineDefaultVideoSource::GetUUID(nsACString& aUUID)
 {
-  aUUID.AssignLiteral(MOZ_UTF16("1041FCBD-3F12-4F7B-9E9B-1EC556DD5676"));
+  aUUID.AssignLiteral("1041FCBD-3F12-4F7B-9E9B-1EC556DD5676");
   return;
+}
+
+uint32_t
+MediaEngineDefaultVideoSource::GetBestFitnessDistance(
+    const nsTArray<const dom::MediaTrackConstraintSet*>& aConstraintSets,
+    const nsString& aDeviceId)
+{
+  uint32_t distance = 0;
+#ifdef MOZ_WEBRTC
+  for (const dom::MediaTrackConstraintSet* cs : aConstraintSets) {
+    distance = GetMinimumFitnessDistance(*cs, false, aDeviceId);
+    break; // distance is read from first entry only
+  }
+#endif
+  return distance;
 }
 
 nsresult
 MediaEngineDefaultVideoSource::Allocate(const dom::MediaTrackConstraints &aConstraints,
-                                        const MediaEnginePrefs &aPrefs)
+                                        const MediaEnginePrefs &aPrefs,
+                                        const nsString& aDeviceId)
 {
   if (mState != kReleased) {
     return NS_ERROR_FAILURE;
@@ -185,6 +201,14 @@ MediaEngineDefaultVideoSource::Stop(SourceMediaStream *aSource, TrackID aID)
   return NS_OK;
 }
 
+nsresult
+MediaEngineDefaultVideoSource::Restart(const dom::MediaTrackConstraints& aConstraints,
+                                       const MediaEnginePrefs &aPrefs,
+                                       const nsString& aDeviceId)
+{
+  return NS_OK;
+}
+
 NS_IMETHODIMP
 MediaEngineDefaultVideoSource::Notify(nsITimer* aTimer)
 {
@@ -278,15 +302,16 @@ class SineWaveGenerator
 {
 public:
   static const int bytesPerSample = 2;
-  static const int millisecondsPerSecond = 1000;
-  static const int frequency = 1000;
+  static const int millisecondsPerSecond = PR_MSEC_PER_SEC;
 
-  explicit SineWaveGenerator(int aSampleRate) :
-    mTotalLength(aSampleRate / frequency),
+  explicit SineWaveGenerator(uint32_t aSampleRate, uint32_t aFrequency) :
+    mTotalLength(aSampleRate / aFrequency),
     mReadLength(0) {
-    MOZ_ASSERT(mTotalLength * frequency == aSampleRate);
+    // If we allow arbitrary frequencies, there's no guarantee we won't get rounded here
+    // We could include an error term and adjust for it in generation; not worth the trouble
+    //MOZ_ASSERT(mTotalLength * aFrequency == aSampleRate);
     mAudioBuffer = new int16_t[mTotalLength];
-    for(int i = 0; i < mTotalLength; i++) {
+    for (int i = 0; i < mTotalLength; i++) {
       // Set volume to -20db. It's from 32768.0 * 10^(-20/20) = 3276.8
       mAudioBuffer[i] = (3276.8f * sin(2 * M_PI * i / mTotalLength));
     }
@@ -342,23 +367,40 @@ MediaEngineDefaultAudioSource::GetName(nsAString& aName)
 }
 
 void
-MediaEngineDefaultAudioSource::GetUUID(nsAString& aUUID)
+MediaEngineDefaultAudioSource::GetUUID(nsACString& aUUID)
 {
-  aUUID.AssignLiteral(MOZ_UTF16("B7CBD7C1-53EF-42F9-8353-73F61C70C092"));
+  aUUID.AssignLiteral("B7CBD7C1-53EF-42F9-8353-73F61C70C092");
   return;
+}
+
+uint32_t
+MediaEngineDefaultAudioSource::GetBestFitnessDistance(
+    const nsTArray<const dom::MediaTrackConstraintSet*>& aConstraintSets,
+    const nsString& aDeviceId)
+{
+  uint32_t distance = 0;
+#ifdef MOZ_WEBRTC
+  for (const dom::MediaTrackConstraintSet* cs : aConstraintSets) {
+    distance = GetMinimumFitnessDistance(*cs, false, aDeviceId);
+    break; // distance is read from first entry only
+  }
+#endif
+  return distance;
 }
 
 nsresult
 MediaEngineDefaultAudioSource::Allocate(const dom::MediaTrackConstraints &aConstraints,
-                                        const MediaEnginePrefs &aPrefs)
+                                        const MediaEnginePrefs &aPrefs,
+                                        const nsString& aDeviceId)
 {
   if (mState != kReleased) {
     return NS_ERROR_FAILURE;
   }
 
   mState = kAllocated;
-  // generate 1Khz sine wave
-  mSineGenerator = new SineWaveGenerator(AUDIO_RATE);
+  // generate sine wave (default 1KHz)
+  mSineGenerator = new SineWaveGenerator(AUDIO_RATE,
+                                         static_cast<uint32_t>(aPrefs.mFreq ? aPrefs.mFreq : 1000));
   return NS_OK;
 }
 
@@ -435,6 +477,14 @@ MediaEngineDefaultAudioSource::Stop(SourceMediaStream *aSource, TrackID aID)
   }
 
   mState = kStopped;
+  return NS_OK;
+}
+
+nsresult
+MediaEngineDefaultAudioSource::Restart(const dom::MediaTrackConstraints& aConstraints,
+                                       const MediaEnginePrefs &aPrefs,
+                                       const nsString& aDeviceId)
+{
   return NS_OK;
 }
 

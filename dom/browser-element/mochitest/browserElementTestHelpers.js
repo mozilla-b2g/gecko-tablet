@@ -51,10 +51,14 @@ const browserElementTestHelpers = {
   enableProcessPriorityManager: function() {
     this._setPrefs(
       ['dom.ipc.processPriorityManager.BACKGROUND.LRUPoolLevels', 2],
-      ['dom.ipc.processPriorityManager.FOREGROUND.LRUPoolLevels', 2],
+      ['dom.ipc.processPriorityManager.BACKGROUND_PERCEIVABLE.LRUPoolLevels', 2],
       ['dom.ipc.processPriorityManager.testMode', true],
       ['dom.ipc.processPriorityManager.enabled', true]
     );
+  },
+
+  setClipboardPlainTextOnlyPref: function(value) {
+    this._setPref('clipboard.plainTextOnly', value);
   },
 
   setEnabledPref: function(value) {
@@ -63,6 +67,10 @@ const browserElementTestHelpers = {
 
   setSelectionChangeEnabledPref: function(value) {
     this._setPref('selectioncaret.enabled', value);
+  },
+
+  setAccessibleCaretEnabledPref: function(value) {
+    this._setPref('layout.accessiblecaret.enabled', value);
   },
 
   getOOPByDefaultPref: function() {

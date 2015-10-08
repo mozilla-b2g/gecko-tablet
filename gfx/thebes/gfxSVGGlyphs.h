@@ -26,8 +26,8 @@ class gfxTextContextPaint;
 namespace mozilla {
 namespace dom {
 class Element;
-}
-}
+} // namespace dom
+} // namespace mozilla
 
 /**
  * Wraps an SVG document contained in the SVG table of an OpenType font.
@@ -229,7 +229,7 @@ private:
 class SimpleTextContextPaint : public gfxTextContextPaint
 {
 private:
-    static const gfxRGBA sZero;
+    static const mozilla::gfx::Color sZero;
 
 public:
     static gfxMatrix SetupDeviceToPatternMatrix(gfxPattern *aPattern,

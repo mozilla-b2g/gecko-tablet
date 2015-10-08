@@ -15,19 +15,14 @@ namespace dom {
 
 class AudioParam;
 
-class AudioBufferSourceNode : public AudioNode,
-                              public MainThreadMediaStreamListener
+class AudioBufferSourceNode final : public AudioNode,
+                                    public MainThreadMediaStreamListener
 {
 public:
   explicit AudioBufferSourceNode(AudioContext* aContext);
 
-  virtual void DestroyMediaStream() override
-  {
-    if (mStream) {
-      mStream->RemoveMainThreadListener(this);
-    }
-    AudioNode::DestroyMediaStream();
-  }
+  virtual void DestroyMediaStream() override;
+
   virtual uint16_t NumberOfInputs() const final override
   {
     return 0;
@@ -58,6 +53,10 @@ public:
   AudioParam* PlaybackRate() const
   {
     return mPlaybackRate;
+  }
+  AudioParam* Detune() const
+  {
+    return mDetune;
   }
   bool Loop() const
   {
@@ -90,7 +89,7 @@ public:
 
   IMPL_EVENT_HANDLER(ended)
 
-  virtual void NotifyMainThreadStateChanged() override;
+  virtual void NotifyMainThreadStreamFinished() override;
 
   virtual const char* NodeType() const override
   {
@@ -123,13 +122,13 @@ private:
     LOOPSTART,
     LOOPEND,
     PLAYBACKRATE,
+    DETUNE,
     DOPPLERSHIFT
   };
 
   void SendLoopParametersToStream();
   void SendBufferParameterToStream(JSContext* aCx);
   void SendOffsetAndDurationParametersToStream(AudioNodeStream* aStream);
-  static void SendPlaybackRateToStream(AudioNode* aNode);
 
 private:
   double mLoopStart;
@@ -138,13 +137,13 @@ private:
   double mDuration;
   nsRefPtr<AudioBuffer> mBuffer;
   nsRefPtr<AudioParam> mPlaybackRate;
+  nsRefPtr<AudioParam> mDetune;
   bool mLoop;
   bool mStartCalled;
-  bool mStopped;
 };
 
-}
-}
+} // namespace dom
+} // namespace mozilla
 
 #endif
 

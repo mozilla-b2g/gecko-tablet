@@ -15,8 +15,6 @@
 #include "nsCOMPtr.h"
 #include "nsString.h"
 
-class nsIAuthPromptProvider;
-
 namespace mozilla {
 namespace net {
 
@@ -55,4 +53,5 @@ class RtspControllerParent : public PRtspControllerParent
 
 } // namespace net
 } // namespace mozilla
+
 #endif // RtspControllerParent_h

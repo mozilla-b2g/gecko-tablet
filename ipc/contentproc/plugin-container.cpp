@@ -52,7 +52,11 @@
        "Gecko:MozillaRntimeMain", __VA_ARGS__)) \
      : (void)0 )
 
-#endif
+# ifdef MOZ_CONTENT_SANDBOX
+# include "mozilla/Sandbox.h"
+# endif
+
+#endif // MOZ_WIDGET_GONK
 
 #ifdef MOZ_NUWA_PROCESS
 #include <binder/ProcessState.h>
@@ -150,7 +154,6 @@ content_process_main(int argc, char* argv[])
     if (argc < 1) {
       return 3;
     }
-    XRE_SetProcessType(argv[--argc]);
 
     bool isNuwa = false;
     for (int i = 1; i < argc; i++) {
@@ -160,10 +163,40 @@ content_process_main(int argc, char* argv[])
 #endif
     }
 
+#if defined(XP_WIN) && defined(MOZ_SANDBOX)
+    if (gIsSandboxEnabled) {
+        sandbox::TargetServices* target_service =
+            sandbox::SandboxFactory::GetTargetServices();
+        if (!target_service) {
+            return 1;
+        }
+
+        sandbox::ResultCode result = target_service->Init();
+        if (result != sandbox::SBOX_ALL_OK) {
+           return 2;
+        }
+
+        mozilla::SandboxTarget::Instance()->SetTargetServices(target_service);
+        mozilla::sandboxing::PrepareForLogging();
+    }
+#endif
+
+    XRE_SetProcessType(argv[--argc]);
+
 #ifdef MOZ_NUWA_PROCESS
     if (isNuwa) {
         PrepareNuwaProcess();
     }
+#endif
+
+#if defined(XP_LINUX) && defined(MOZ_SANDBOX)
+    // This has to happen while we're still single-threaded, and on
+    // B2G that means before the Android Binder library is
+    // initialized.  Additional special handling is needed for Nuwa:
+    // the Nuwa process itself needs to be unsandboxed, and the same
+    // single-threadedness condition applies to its children; see also
+    // AfterNuwaFork().
+    mozilla::SandboxEarlyInit(XRE_GetProcessType(), isNuwa);
 #endif
 
 #ifdef MOZ_WIDGET_GONK
@@ -191,24 +224,6 @@ content_process_main(int argc, char* argv[])
         mozilla::SanitizeEnvironmentVariables();
         SetDllDirectory(L"");
     }
-
-#ifdef MOZ_SANDBOX
-    if (gIsSandboxEnabled) {
-        sandbox::TargetServices* target_service =
-            sandbox::SandboxFactory::GetTargetServices();
-        if (!target_service) {
-            return 1;
-        }
-
-        sandbox::ResultCode result =
-            mozilla::SandboxTarget::Instance()->InitTargetServices(target_service);
-        if (result != sandbox::SBOX_ALL_OK) {
-           return 2;
-        }
-
-        mozilla::sandboxing::PrepareForLogging();
-    }
-#endif
 #endif
     nsAutoPtr<mozilla::gmp::GMPLoader> loader;
 #if !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK)

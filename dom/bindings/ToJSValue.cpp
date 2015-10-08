@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-*/
-/* vim: set ts=2 sw=2 et tw=79: */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -56,7 +56,7 @@ ToJSValue(JSContext* aCx,
   MOZ_ASSERT(!aArgument.IsUncatchableException(),
              "Doesn't make sense to convert uncatchable exception to a JS value!");
   AutoForceSetExceptionOnContext forceExn(aCx);
-  DebugOnly<bool> throwResult = ThrowMethodFailedWithDetails(aCx, aArgument, "", "");
+  DebugOnly<bool> throwResult = ThrowMethodFailed(aCx, aArgument);
   MOZ_ASSERT(!throwResult);
   DebugOnly<bool> getPendingResult = JS_GetPendingException(aCx, aValue);
   MOZ_ASSERT(getPendingResult);

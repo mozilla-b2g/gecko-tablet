@@ -11,6 +11,7 @@
         width="1024">
   <script type="application/javascript" src="chrome://mochikit/content/tests/SimpleTest/MozillaLogger.js"/>
   <script type="application/javascript" src="chrome://mochikit/content/tests/SimpleTest/LogController.js"/>
+  <script type="application/javascript" src="chrome://mochikit/content/tests/SimpleTest/StructuredLog.jsm"/>
   <script type="application/javascript" src="chrome://mochikit/content/tests/SimpleTest/TestRunner.js"/>
   <script type="application/javascript" src="chrome://mochikit/content/chrome-harness.js"/>
   <script type="application/javascript" src="chrome://mochikit/content/manifestLibrary.js" />
@@ -83,7 +84,7 @@
         delete this.fileLogger;
         return this.fileLogger = logger;
       },
-      structuredLogger: new StructuredLogger(),
+      structuredLogger: TestRunner.structuredLogger,
       dump: function (str) {
         this.structuredLogger.info(str);
 
@@ -100,14 +101,7 @@
     function TestStart() {
       gConfig = readConfig();
 
-      // If MochiTest was started with the --test-path flag specifying a subset
-      // of tests to run, put that path in the label of the "Run Tests" button
-      // so the tester knows which tests will run when they press that button.
-      if (gConfig.testPath)
-        document.getElementById("runTestsButton").label =
-          "Run " + gConfig.testPath + " tests";
-
-      // Similarly, update the title for --start-at and --end-at.
+      // Update the title for --start-at and --end-at.
       if (gConfig.startAt || gConfig.endAt)
         document.getElementById("runTestsButton").label =
           "Run subset of tests";
@@ -130,13 +124,13 @@
     }
     browserTest.prototype = {
       get passCount() {
-        return this.results.filter(function (t) !t.info && !t.todo && t.pass).length;
+        return this.results.filter(t => !t.info && !t.todo && t.pass).length;
       },
       get todoCount() {
-        return this.results.filter(function (t) !t.info && t.todo && t.pass).length;
+        return this.results.filter(t => !t.info && t.todo && t.pass).length;
       },
       get failCount() {
-        return this.results.filter(function (t) !t.info && !t.pass).length;
+        return this.results.filter(t => !t.info && !t.pass).length;
       },
 
       addResult: function addResult(result) {
@@ -240,7 +234,6 @@
       var windowMediator = Cc['@mozilla.org/appshell/window-mediator;1'].
                              getService(Ci.nsIWindowMediator);
       var winType = gConfig.testRoot == "browser" ? "navigator:browser" :
-                    gConfig.testRoot == "metro" ? "navigator:browser" :
                     gConfig.testRoot == "webapprtChrome" ? "webapprt:webapp" :
                     null;
       if (!winType) {
@@ -249,9 +242,40 @@
       var testWin = windowMediator.getMostRecentWindow(winType);
 
       setStatus("Running...");
-      testWin.focus();
-      var Tester = new testWin.Tester(links, gDumper, testsFinished);
-      Tester.start();
+
+      // It's possible that the test harness window is not yet focused when this
+      // function runs (in which case testWin is already focused, and focusing it
+      // will be a no-op, and then the test harness window will steal focus later,
+      // which will mess up tests). So wait for the test harness window to be
+      // focused before trying to focus testWin.
+      waitForFocus(() => {
+        // Focus the test window and start tests.
+        waitForFocus(() => {
+          var Tester = new testWin.Tester(links, gDumper, testsFinished);
+          Tester.start();
+        }, testWin);
+      }, window);
+    }
+
+    function executeSoon(callback) {
+      let tm = Cc["@mozilla.org/thread-manager;1"].getService(Ci.nsIThreadManager);
+      tm.mainThread.dispatch(callback, Ci.nsIThread.DISPATCH_NORMAL);
+    }
+
+    function waitForFocus(callback, win) {
+      // If "win" is already focused, just call the callback.
+      let fm = Cc["@mozilla.org/focus-manager;1"].getService(Ci.nsIFocusManager);
+      if (fm.focusedWindow == win) {
+        executeSoon(callback);
+        return;
+      }
+
+      // Otherwise focus it, and wait for the focus event.
+      win.addEventListener("focus", function listener() {
+        win.removeEventListener("focus", listener, true);
+        executeSoon(callback);
+      }, true);
+      win.focus();
     }
 
     function sum(a, b) {
@@ -265,9 +289,9 @@
 
       var log = "";
 
-      var passCount = aTests.map(function (f) f.passCount).reduce(sum);
-      var failCount = aTests.map(function (f) f.failCount).reduce(sum);
-      var todoCount = aTests.map(function (f) f.todoCount).reduce(sum);
+      var passCount = aTests.map(f => f.passCount).reduce(sum);
+      var failCount = aTests.map(f => f.failCount).reduce(sum);
+      var todoCount = aTests.map(f => f.todoCount).reduce(sum);
       log += "<div id=\"summary\" class=\"";
       log += failCount != 0 ? "failure" :
                passCount == 0 ? "todo" : "success";

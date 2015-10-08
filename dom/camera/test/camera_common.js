@@ -80,12 +80,14 @@ function CameraTestSuite() {
   this.rejectTakePicture = this._rejectTakePicture.bind(this);
   this.rejectStartRecording = this._rejectStartRecording.bind(this);
   this.rejectStopRecording = this._rejectStopRecording.bind(this);
+  this.rejectPauseRecording = this._rejectPauseRecording.bind(this);
+  this.rejectResumeRecording = this._rejectResumeRecording.bind(this);
   this.rejectPreviewStarted = this._rejectPreviewStarted.bind(this);
 
   var self = this;
   this._window.addEventListener('beforeunload', function() {
     if (isDefinedObj(self.viewfinder)) {
-      self.viewfinder.mozSrcObject = null;
+      self.viewfinder.srcObject = null;
     }
 
     self.hw = null;
@@ -103,6 +105,14 @@ CameraTestSuite.prototype = {
   _lowMemSet: false,
   _reloading: false,
 
+  _setupPermission: function(permission) {
+    if (!SpecialPowers.hasPermission(permission, document)) {
+      info("requesting " + permission + " permission");
+      SpecialPowers.addPermission(permission, true, document);
+      this._reloading = true;
+    }
+  },
+
   /* Returns a promise which is resolved when the test suite is ready
      to be executing individual test cases. One may provide the expected
      hardware type here if desired; the default is to use the JS test
@@ -111,24 +121,28 @@ CameraTestSuite.prototype = {
     /* Depending on how we run the mochitest, we may not have the necessary
        permissions yet. If we do need to request them, then we have to reload
        the window to ensure the reconfiguration propogated properly. */
-    if (!SpecialPowers.hasPermission("camera", document)) {
-      info("requesting camera permission");
-      this._reloading = true;
-      SpecialPowers.addPermission("camera", true, document);
+    this._setupPermission("camera");
+    this._setupPermission("device-storage:videos");
+    this._setupPermission("device-storage:videos-create");
+    this._setupPermission("device-storage:videos-write");
+
+    if (this._reloading) {
       window.location.reload();
       return Promise.reject();
     }
 
-    info("has camera permission");
+    info("has necessary permissions");
     if (!isDefined(hwType)) {
       hwType = 'hardware';
     }
 
     this._hwType = hwType;
     return new Promise(function(resolve, reject) {
-      SpecialPowers.pushPrefEnv({'set': [['camera.control.test.permission', true]]}, function() {
-        SpecialPowers.pushPrefEnv({'set': [['camera.control.test.enabled', hwType]]}, function() {
-          resolve();
+      SpecialPowers.pushPrefEnv({'set': [['device.storage.prompt.testing', true]]}, function() {
+        SpecialPowers.pushPrefEnv({'set': [['camera.control.test.permission', true]]}, function() {
+          SpecialPowers.pushPrefEnv({'set': [['camera.control.test.enabled', hwType]]}, function() {
+            resolve();
+          });
         });
       });
     });
@@ -199,7 +213,7 @@ CameraTestSuite.prototype = {
       function postTest(pass) {
         ok(pass, test.name + ' finished');
         var camera = self.camera;
-        self.viewfinder.mozSrcObject = null;
+        self.viewfinder.srcObject = null;
         self.camera = null;
 
         if (!isDefinedObj(camera)) {
@@ -313,7 +327,7 @@ CameraTestSuite.prototype = {
         return;
       }
 
-      self.viewfinder.mozSrcObject = self.camera;
+      self.viewfinder.srcObject = self.camera;
       self.viewfinder.play();
       self.camera.addEventListener('previewstatechange', onPreviewStateChange);
     });
@@ -397,6 +411,14 @@ CameraTestSuite.prototype = {
     return this.logError('stop recording failed', e);
   },
 
+  _rejectPauseRecording: function(e) {
+    return this.logError('pause recording failed', e);
+  },
+
+  _rejectResumeRecording: function(e) {
+    return this.logError('resume recording failed', e);
+  },
+
   _rejectPreviewStarted: function(e) {
     return this.logError('preview start failed', e);
   },
@@ -442,4 +464,4 @@ CameraTestSuite.prototype = {
   },
 };
 
-ise(SpecialPowers.sanityCheck(), "foo", "SpecialPowers passed sanity check");
+is(SpecialPowers.sanityCheck(), "foo", "SpecialPowers passed sanity check");

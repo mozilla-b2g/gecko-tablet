@@ -17,18 +17,35 @@ namespace mozilla {
 namespace layers {
 
 class ISurfaceAllocator;
+class CompositableForwarder;
 
-class TextureClientPool final
+class TextureClientAllocator
+{
+protected:
+  virtual ~TextureClientAllocator() {}
+public:
+  NS_INLINE_DECL_REFCOUNTING(TextureClientAllocator)
+
+  virtual already_AddRefed<TextureClient> GetTextureClient() = 0;
+
+  /**
+   * Return a TextureClient that is not yet ready to be reused, but will be
+   * imminently.
+   */
+  virtual void ReturnTextureClientDeferred(TextureClient *aClient) = 0;
+
+  virtual void ReportClientLost() = 0;
+};
+
+class TextureClientPool final : public TextureClientAllocator
 {
   ~TextureClientPool();
 
 public:
-  NS_INLINE_DECL_REFCOUNTING(TextureClientPool)
-
   TextureClientPool(gfx::SurfaceFormat aFormat, gfx::IntSize aSize,
                     uint32_t aMaxTextureClients,
                     uint32_t aShrinkTimeoutMsec,
-                    ISurfaceAllocator *aAllocator);
+                    CompositableForwarder* aAllocator);
 
   /**
    * Gets an allocated TextureClient of size and format that are determined
@@ -39,7 +56,7 @@ public:
    * All clients retrieved by this method should be returned using the return
    * functions, or reported lost so that the pool can manage its size correctly.
    */
-  TemporaryRef<TextureClient> GetTextureClient();
+  already_AddRefed<TextureClient> GetTextureClient() override;
 
   /**
    * Return a TextureClient that is no longer being used and is ready for
@@ -51,7 +68,7 @@ public:
    * Return a TextureClient that is not yet ready to be reused, but will be
    * imminently.
    */
-  void ReturnTextureClientDeferred(TextureClient *aClient);
+  void ReturnTextureClientDeferred(TextureClient *aClient) override;
 
   /**
    * Attempt to shrink the pool so that there are no more than
@@ -75,7 +92,7 @@ public:
    * Report that a client retrieved via GetTextureClient() has become
    * unusable, so that it will no longer be tracked.
    */
-  void ReportClientLost();
+  virtual void ReportClientLost() override;
 
   /**
    * Calling this will cause the pool to attempt to relinquish any unused
@@ -115,9 +132,10 @@ private:
   std::stack<RefPtr<TextureClient> > mTextureClients;
   std::stack<RefPtr<TextureClient> > mTextureClientsDeferred;
   nsRefPtr<nsITimer> mTimer;
-  RefPtr<ISurfaceAllocator> mSurfaceAllocator;
+  RefPtr<CompositableForwarder> mSurfaceAllocator;
 };
 
-}
-}
+} // namespace layers
+} // namespace mozilla
+
 #endif /* MOZILLA_GFX_TEXTURECLIENTPOOL_H */

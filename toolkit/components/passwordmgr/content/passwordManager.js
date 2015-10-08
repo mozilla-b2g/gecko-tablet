@@ -5,7 +5,6 @@
 /*** =================== SAVED SIGNONS CODE =================== ***/
 
 var kSignonBundle;
-var showingPasswords = false;
 var dateFormatter = new Intl.DateTimeFormat(undefined,
                       { day: "numeric", month: "short", year: "numeric" });
 var dateAndTimeFormatter = new Intl.DateTimeFormat(undefined,
@@ -14,9 +13,7 @@ var dateAndTimeFormatter = new Intl.DateTimeFormat(undefined,
 
 function SignonsStartup() {
   kSignonBundle = document.getElementById("signonBundle");
-  document.getElementById("togglePasswords").label = kSignonBundle.getString("showPasswords");
-  document.getElementById("togglePasswords").accessKey = kSignonBundle.getString("showPasswordsAccessKey");
-  document.getElementById("signonsIntro").textContent = kSignonBundle.getString("loginsSpielAll");
+  document.getElementById("signonsIntro").textContent = kSignonBundle.getString("loginsDescriptionAll");
 
   let treecols = document.getElementsByTagName("treecols")[0];
   treecols.addEventListener("click", HandleTreeColumnClick.bind(null, SignonColumnSort));
@@ -78,6 +75,17 @@ var signonsTreeView = {
         return "";
     }
   },
+  isEditable : function(row, col) {
+    if (col.id == "userCol") {
+      return true;
+    }
+
+    if (col.id == "passwordCol") {
+      return masterPasswordLogin();
+    }
+
+    return false;
+  },
   isSeparator : function(index) { return false; },
   isSorted : function() { return false; },
   isContainer : function(index) { return false; },
@@ -89,7 +97,31 @@ var signonsTreeView = {
       return "ltr";
 
     return "";
-  }
+  },
+  setCellText : function(row, col, value) {
+    // If there is a filter, _filterSet needs to be used, otherwise signons is used.
+    let table = signonsTreeView._filterSet.length ? signonsTreeView._filterSet : signons;
+    function _editLogin(field) {
+      if (value == table[row][field]) {
+        return;
+      }
+      let existingLogin = table[row].clone();
+      table[row][field] = value;
+      table[row].timePasswordChanged = Date.now();
+      passwordmanager.modifyLogin(existingLogin, table[row]);
+      signonsTree.treeBoxObject.invalidateRow(row);
+    }
+
+    if (col.id == "userCol") {
+     _editLogin("username");
+
+    } else if (col.id == "passwordCol") {
+      if (!value) {
+        return;
+      }
+      _editLogin("password");
+    }
+  },
 };
 
 
@@ -98,7 +130,8 @@ function LoadSignons() {
   try {
     signons = passwordmanager.getAllLogins();
   } catch (e) {
-    signons = [];
+    window.close();
+    return;
   }
   signons.forEach(login => login.QueryInterface(Components.interfaces.nsILoginMetaInfo));
   signonsTreeView.rowCount = signons.length;
@@ -113,13 +146,10 @@ function LoadSignons() {
 
   // disable "remove all signons" button if there are no signons
   var element = document.getElementById("removeAllSignons");
-  var toggle = document.getElementById("togglePasswords");
   if (signons.length == 0) {
     element.setAttribute("disabled","true");
-    toggle.setAttribute("disabled","true");
   } else {
     element.removeAttribute("disabled");
-    toggle.removeAttribute("disabled");
   }
 
   return true;
@@ -161,34 +191,6 @@ function DeleteAllSignons() {
   Services.telemetry.getHistogramById("PWMGR_MANAGE_DELETED_ALL").add(1);
 }
 
-function TogglePasswordVisible() {
-  if (showingPasswords || masterPasswordLogin(AskUserShowPasswords)) {
-    showingPasswords = !showingPasswords;
-    document.getElementById("togglePasswords").label = kSignonBundle.getString(showingPasswords ? "hidePasswords" : "showPasswords");
-    document.getElementById("togglePasswords").accessKey = kSignonBundle.getString(showingPasswords ? "hidePasswordsAccessKey" : "showPasswordsAccessKey");
-    document.getElementById("passwordCol").hidden = !showingPasswords;
-    _filterPasswords();
-  }
-
-  // Notify observers that the password visibility toggling is
-  // completed.  (Mostly useful for tests)
-  Components.classes["@mozilla.org/observer-service;1"]
-            .getService(Components.interfaces.nsIObserverService)
-            .notifyObservers(null, "passwordmgr-password-toggle-complete", null);
-  Services.telemetry.getHistogramById("PWMGR_MANAGE_VISIBILITY_TOGGLED").add(showingPasswords);
-}
-
-function AskUserShowPasswords() {
-  var prompter = Components.classes["@mozilla.org/embedcomp/prompt-service;1"].getService(Components.interfaces.nsIPromptService);
-  var dummy = { value: false };
-
-  // Confirm the user wants to display passwords
-  return prompter.confirmEx(window,
-          null,
-          kSignonBundle.getString("noMasterPasswordPrompt"), prompter.STD_YES_NO_BUTTONS,
-          null, null, null, null, dummy) == 0;    // 0=="Yes" button
-}
-
 function FinalizeSignonDeletions(syncNeeded) {
   for (var s=0; s<deletedSignons.length; s++) {
     passwordmanager.removeLogin(deletedSignons[s]);
@@ -207,11 +209,15 @@ function FinalizeSignonDeletions(syncNeeded) {
 }
 
 function HandleSignonKeyPress(e) {
+  // If editing is currently performed, don't do anything.
+  if (signonsTree.getAttribute("editing")) {
+    return;
+  }
   if (e.keyCode == KeyEvent.DOM_VK_DELETE
 #ifdef XP_MACOSX
       || e.keyCode == KeyEvent.DOM_VK_BACK_SPACE
 #endif
-     ) {
+   ) {
     DeleteSignon();
   }
 }
@@ -280,7 +286,7 @@ function SignonClearFilter() {
   }
   signonsTreeView._lastSelectedRanges = [];
 
-  document.getElementById("signonsIntro").textContent = kSignonBundle.getString("loginsSpielAll");
+  document.getElementById("signonsIntro").textContent = kSignonBundle.getString("loginsDescriptionAll");
 }
 
 function FocusFilterBox() {
@@ -298,7 +304,7 @@ function SignonMatchesFilter(aSignon, aFilterValue) {
   if (aSignon.httpRealm &&
       aSignon.httpRealm.toLowerCase().indexOf(aFilterValue) != -1)
     return true;
-  if (showingPasswords && aSignon.password &&
+  if (Services.logins.isLoggedIn && aSignon.password &&
       aSignon.password.toLowerCase().indexOf(aFilterValue) != -1)
     return true;
 
@@ -307,7 +313,7 @@ function SignonMatchesFilter(aSignon, aFilterValue) {
 
 function FilterPasswords(aFilterValue, view) {
   aFilterValue = aFilterValue.toLowerCase();
-  return signons.filter(function (s) SignonMatchesFilter(s, aFilterValue));
+  return signons.filter(s => SignonMatchesFilter(s, aFilterValue));
 }
 
 function SignonSaveState() {
@@ -350,20 +356,19 @@ function _filterPasswords()
   if (signonsTreeView.rowCount > 0)
     signonsTreeView.selection.select(0);
 
-  document.getElementById("signonsIntro").textContent = kSignonBundle.getString("loginsSpielFiltered");
+  document.getElementById("signonsIntro").textContent = kSignonBundle.getString("loginsDescriptionFiltered");
 }
 
 function CopyPassword() {
-  // Don't copy passwords if we aren't already showing the passwords & a master
-  // password hasn't been entered.
-  if (!showingPasswords && !masterPasswordLogin())
+  // Don't copy passwords if a master password hasn't been entered.
+  if (!masterPasswordLogin())
     return;
   // Copy selected signon's password to clipboard
   var clipboard = Components.classes["@mozilla.org/widget/clipboardhelper;1"].
                   getService(Components.interfaces.nsIClipboardHelper);
   var row = document.getElementById("signonsTree").currentIndex;
   var password = signonsTreeView.getCellText(row, {id : "passwordCol" });
-  clipboard.copyString(password, document);
+  clipboard.copyString(password);
   Services.telemetry.getHistogramById("PWMGR_MANAGE_COPIED_PASSWORD").add(1);
 }
 
@@ -377,17 +382,39 @@ function CopyUsername() {
   Services.telemetry.getHistogramById("PWMGR_MANAGE_COPIED_USERNAME").add(1);
 }
 
-function UpdateCopyPassword() {
-  var singleSelection = (signonsTreeView.selection.count == 1);
-  var passwordMenuitem = document.getElementById("context-copypassword");
-  var usernameMenuitem = document.getElementById("context-copyusername");
-  if (singleSelection) {
-    usernameMenuitem.removeAttribute("disabled");
-    passwordMenuitem.removeAttribute("disabled");
-  } else {
-    usernameMenuitem.setAttribute("disabled", "true");
-    passwordMenuitem.setAttribute("disabled", "true");
+function EditCellInSelectedRow(columnName) {
+  let row = signonsTree.currentIndex;
+  let columnElement = getColumnByName(columnName);
+  signonsTree.startEditing(row, signonsTree.columns.getColumnFor(columnElement));
+}
+
+function UpdateContextMenu() {
+  let singleSelection = (signonsTreeView.selection.count == 1);
+  let menuItems = new Map();
+  let menupopup = document.getElementById("signonsTreeContextMenu");
+  for (let menuItem of menupopup.querySelectorAll("menuitem")) {
+    menuItems.set(menuItem.id, menuItem);
   }
+
+  if (!singleSelection) {
+    for (let menuItem of menuItems.values()) {
+      menuItem.setAttribute("disabled", "true");
+    }
+    return;
+  }
+
+  let selectedRow = signonsTree.currentIndex;
+
+  // Disable "Copy Username" if the username is empty.
+  if (signonsTreeView.getCellText(selectedRow, { id: "userCol" }) != "") {
+    menuItems.get("context-copyusername").removeAttribute("disabled");
+  } else {
+    menuItems.get("context-copyusername").setAttribute("disabled", "true");
+  }
+
+  menuItems.get("context-editusername").removeAttribute("disabled");
+  menuItems.get("context-copypassword").removeAttribute("disabled");
+  menuItems.get("context-editpassword").removeAttribute("disabled");
 }
 
 function masterPasswordLogin(noPasswordCallback) {
@@ -411,4 +438,17 @@ function masterPasswordLogin(noPasswordCallback) {
   }
 
   return token.isLoggedIn();
+}
+
+function escapeKeyHandler() {
+  // If editing is currently performed, don't do anything.
+  if (signonsTree.getAttribute("editing")) {
+    return;
+  }
+  window.close();
+}
+
+function OpenMigrator() {
+  const { MigrationUtils } = Cu.import("resource:///modules/MigrationUtils.jsm", {});
+  MigrationUtils.showMigrationWizard(window);
 }

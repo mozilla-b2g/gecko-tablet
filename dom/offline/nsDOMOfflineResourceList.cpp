@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -12,12 +13,15 @@
 #include "nsCPrefetchService.h"
 #include "nsNetUtil.h"
 #include "nsNetCID.h"
+#include "nsServiceManagerUtils.h"
+#include "nsIInterfaceRequestorUtils.h"
 #include "nsIOfflineCacheUpdate.h"
 #include "nsAutoPtr.h"
 #include "nsContentUtils.h"
 #include "nsIObserverService.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIWebNavigation.h"
+#include "mozilla/dom/Event.h"
 #include "mozilla/dom/OfflineResourceListBinding.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/Preferences.h"
@@ -77,11 +81,13 @@ NS_IMPL_EVENT_HANDLER(nsDOMOfflineResourceList, obsolete)
 
 nsDOMOfflineResourceList::nsDOMOfflineResourceList(nsIURI *aManifestURI,
                                                    nsIURI *aDocumentURI,
+                                                   nsIPrincipal *aLoadingPrincipal,
                                                    nsPIDOMWindow *aWindow)
   : DOMEventTargetHelper(aWindow)
   , mInitialized(false)
   , mManifestURI(aManifestURI)
   , mDocumentURI(aDocumentURI)
+  , mLoadingPrincipal(aLoadingPrincipal)
   , mExposeCacheUpdateStatus(true)
   , mStatus(nsIDOMOfflineResourceList::IDLE)
   , mCachedKeys(nullptr)
@@ -224,7 +230,7 @@ nsDOMOfflineResourceList::GetMozItems(nsISupports** aItems)
   ErrorResult rv;
   nsRefPtr<DOMStringList> items = GetMozItems(rv);
   items.forget(aItems);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 NS_IMETHODIMP
@@ -355,7 +361,8 @@ nsDOMOfflineResourceList::MozAdd(const nsAString& aURI)
   rv = appCache->GetClientID(clientID);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = update->InitPartial(mManifestURI, clientID, mDocumentURI);
+  rv = update->InitPartial(mManifestURI, clientID,
+                           mDocumentURI, mLoadingPrincipal);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = update->AddDynamicURI(requestedURI);
@@ -462,7 +469,7 @@ nsDOMOfflineResourceList::Update()
     do_QueryInterface(GetOwner());
 
   nsCOMPtr<nsIOfflineCacheUpdate> update;
-  rv = updateService->ScheduleUpdate(mManifestURI, mDocumentURI,
+  rv = updateService->ScheduleUpdate(mManifestURI, mDocumentURI, mLoadingPrincipal,
                                      window, getter_AddRefs(update));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -544,11 +551,7 @@ nsDOMOfflineResourceList::SendEvent(const nsAString &aEventName)
     return NS_OK;
   }
 
-  nsCOMPtr<nsIDOMEvent> event;
-  nsresult rv = EventDispatcher::CreateEvent(this, nullptr, nullptr,
-                                             NS_LITERAL_STRING("Events"),
-                                             getter_AddRefs(event));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsRefPtr<Event> event = NS_NewDOMEvent(this, nullptr, nullptr);
   event->InitEvent(aEventName, false, true);
 
   // We assume anyone that managed to call SendEvent is trusted

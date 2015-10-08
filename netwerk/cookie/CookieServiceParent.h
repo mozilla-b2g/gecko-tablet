@@ -10,7 +10,7 @@
 #include "SerializedLoadContext.h"
 
 class nsCookieService;
-class nsIIOService;
+namespace mozilla { class OriginAttributes; }
 
 namespace mozilla {
 namespace net {
@@ -23,10 +23,9 @@ public:
 
 protected:
   MOZ_WARN_UNUSED_RESULT bool
-  GetAppInfoFromParams(const IPC::SerializedLoadContext &aLoadContext,
-                       uint32_t& aAppId,
-                       bool& aIsInBrowserElement,
-                       bool& aIsPrivate);
+  GetOriginAttributesFromParams(const IPC::SerializedLoadContext &aLoadContext,
+                                OriginAttributes& aAttrs,
+                                bool& aIsPrivate);
 
   virtual void ActorDestroy(ActorDestroyReason aWhy) override;
 
@@ -52,8 +51,8 @@ protected:
   nsRefPtr<nsCookieService> mCookieService;
 };
 
-}
-}
+} // namespace net
+} // namespace mozilla
 
 #endif // mozilla_net_CookieServiceParent_h
 

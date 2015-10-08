@@ -4,7 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let tests = [
+var tests = [
   {
     desc: "nsNavHistoryFolderResultNode: Basic test, asynchronously open and " +
           "close container with a single child",
@@ -264,21 +264,24 @@ Test.prototype = {
 /**
  * This makes it a little bit easier to use the functions of head_queries.js.
  */
-let DataHelper = {
+var DataHelper = {
   defaults: {
     bookmark: {
       parent: PlacesUtils.bookmarks.unfiledBookmarksFolder,
+      parentGuid: PlacesUtils.bookmarks.unfiledGuid,
       uri: "http://example.com/",
       title: "test bookmark"
     },
 
     folder: {
       parent: PlacesUtils.bookmarks.unfiledBookmarksFolder,
+      parentGuid: PlacesUtils.bookmarks.unfiledGuid,
       title: "test folder"
     },
 
     separator: {
-      parent: PlacesUtils.bookmarks.unfiledBookmarksFolder
+      parent: PlacesUtils.bookmarks.unfiledBookmarksFolder,
+      parentGuid: PlacesUtils.bookmarks.unfiledGuid
     }
   },
 
@@ -300,7 +303,7 @@ let DataHelper = {
         return {
           isBookmark: true,
           uri: dat.uri,
-          parentFolder: dat.parent,
+          parentGuid: dat.parentGuid,
           index: PlacesUtils.bookmarks.DEFAULT_INDEX,
           title: dat.title,
           isInQuery: true
@@ -308,14 +311,14 @@ let DataHelper = {
       case "separator":
         return {
           isSeparator: true,
-          parentFolder: dat.parent,
+          parentGuid: dat.parentGuid,
           index: PlacesUtils.bookmarks.DEFAULT_INDEX,
           isInQuery: true
         };
       case "folder":
         return {
           isFolder: true,
-          parentFolder: dat.parent,
+          parentGuid: dat.parentGuid,
           index: PlacesUtils.bookmarks.DEFAULT_INDEX,
           title: dat.title,
           isInQuery: true
@@ -353,7 +356,7 @@ function run_test()
 add_task(function* test_async()
 {
   for (let [, test] in Iterator(tests)) {
-    remove_all_bookmarks();
+    yield PlacesUtils.bookmarks.eraseEverything();
 
     test.__proto__ = new Test();
     yield test.setup();
@@ -362,6 +365,6 @@ add_task(function* test_async()
     yield test.run();
   }
 
-  remove_all_bookmarks();
+  yield PlacesUtils.bookmarks.eraseEverything();
   print("All tests done, exiting");
 });

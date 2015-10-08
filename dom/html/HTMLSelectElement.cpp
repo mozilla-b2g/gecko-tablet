@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -662,7 +663,7 @@ HTMLSelectElement::Add(nsIDOMHTMLElement* aElement,
       dataType == nsIDataType::VTYPE_VOID) {
     ErrorResult error;
     Add(*htmlElement, (nsGenericHTMLElement*)nullptr, error);
-    return error.ErrorCode();
+    return error.StealNSResult();
   }
 
   nsCOMPtr<nsISupports> supports;
@@ -678,7 +679,7 @@ HTMLSelectElement::Add(nsIDOMHTMLElement* aElement,
 
     ErrorResult error;
     Add(*htmlElement, beforeHTMLElement, error);
-    return error.ErrorCode();
+    return error.StealNSResult();
   }
 
   // otherwise, whether aBefore is long
@@ -687,7 +688,7 @@ HTMLSelectElement::Add(nsIDOMHTMLElement* aElement,
 
   ErrorResult error;
   Add(*htmlElement, index, error);
-  return error.ErrorCode();
+  return error.StealNSResult();
 }
 
 NS_IMETHODIMP
@@ -736,7 +737,7 @@ HTMLSelectElement::SetLength(uint32_t aLength)
 {
   ErrorResult rv;
   SetLength(aLength, rv);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 void
@@ -1324,7 +1325,7 @@ HTMLSelectElement::UnbindFromTree(bool aDeep, bool aNullParent)
 
 nsresult
 HTMLSelectElement::BeforeSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
-                                 const nsAttrValueOrString* aValue,
+                                 nsAttrValueOrString* aValue,
                                  bool aNotify)
 {
   if (aNotify && aName == nsGkAtoms::disabled &&
@@ -1486,7 +1487,7 @@ HTMLSelectElement::GetAttributeMappingFunction() const
 }
 
 bool
-HTMLSelectElement::IsDisabledForEvents(uint32_t aMessage)
+HTMLSelectElement::IsDisabledForEvents(EventMessage aMessage)
 {
   nsIFormControlFrame* formControlFrame = GetFormControlFrame(false);
   nsIFrame* formFrame = nullptr;
@@ -1500,7 +1501,7 @@ nsresult
 HTMLSelectElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
 {
   aVisitor.mCanHandle = false;
-  if (IsDisabledForEvents(aVisitor.mEvent->message)) {
+  if (IsDisabledForEvents(aVisitor.mEvent->mMessage)) {
     return NS_OK;
   }
 
@@ -1510,7 +1511,7 @@ HTMLSelectElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
 nsresult
 HTMLSelectElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
 {
-  if (aVisitor.mEvent->message == NS_FOCUS_CONTENT) {
+  if (aVisitor.mEvent->mMessage == eFocus) {
     // If the invalid UI is shown, we should show it while focused and
     // update the invalid/valid UI.
     mCanShowInvalidUI = !IsValid() && ShouldShowValidityUI();
@@ -1521,7 +1522,7 @@ HTMLSelectElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
 
     // We don't have to update NS_EVENT_STATE_MOZ_UI_INVALID nor
     // NS_EVENT_STATE_MOZ_UI_VALID given that the states should not change.
-  } else if (aVisitor.mEvent->message == NS_BLUR_CONTENT) {
+  } else if (aVisitor.mEvent->mMessage == eBlur) {
     mCanShowInvalidUI = true;
     mCanShowValidUI = true;
 

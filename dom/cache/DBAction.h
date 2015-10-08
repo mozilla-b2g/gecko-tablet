@@ -8,8 +8,7 @@
 #define mozilla_dom_cache_DBAction_h
 
 #include "mozilla/dom/cache/Action.h"
-#include "mozilla/dom/cache/CacheInitData.h"
-#include "nsRefPtr.h"
+#include "mozilla/nsRefPtr.h"
 #include "nsString.h"
 
 class mozIStorageConnection;
@@ -44,7 +43,8 @@ protected:
 
 private:
   virtual void
-  RunOnTarget(Resolver* aResolver, const QuotaInfo& aQuotaInfo) override;
+  RunOnTarget(Resolver* aResolver, const QuotaInfo& aQuotaInfo,
+              Data* aOptionalData) override;
 
   nsresult OpenConnection(const QuotaInfo& aQuotaInfo, nsIFile* aQuotaDir,
                           mozIStorageConnection** aConnOut);

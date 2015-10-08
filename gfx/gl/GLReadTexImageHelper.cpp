@@ -7,6 +7,7 @@
 #include "GLReadTexImageHelper.h"
 
 #include "gfx2DGlue.h"
+#include "gfxColor.h"
 #include "gfxTypes.h"
 #include "GLContext.h"
 #include "OGLShaderProgram.h"
@@ -217,7 +218,10 @@ static void
 SwapRAndBComponents(DataSourceSurface* surf)
 {
     DataSourceSurface::MappedSurface map;
-    MOZ_ALWAYS_TRUE( surf->Map(DataSourceSurface::MapType::READ_WRITE, &map) );
+    if (!surf->Map(DataSourceSurface::MapType::READ_WRITE, &map)) {
+        MOZ_ASSERT(false, "SwapRAndBComponents: Failed to map surface.");
+        return;
+    }
     MOZ_ASSERT(map.mStride >= 0);
 
     const size_t rowBytes = surf->GetSize().width*4;
@@ -288,8 +292,11 @@ CopyDataSourceSurface(DataSourceSurface* aSource,
 
     DataSourceSurface::MappedSurface srcMap;
     DataSourceSurface::MappedSurface destMap;
-    MOZ_ALWAYS_TRUE( aSource->Map(DataSourceSurface::MapType::READ, &srcMap) );
-    MOZ_ALWAYS_TRUE( aDest->Map(DataSourceSurface::MapType::WRITE, &destMap) );
+    if (!aSource->Map(DataSourceSurface::MapType::READ, &srcMap) ||
+        !aDest->Map(DataSourceSurface::MapType::WRITE, &destMap)) {
+        MOZ_ASSERT(false, "CopyDataSourceSurface: Failed to map surface.");
+        return;
+    }
     MOZ_ASSERT(srcMap.mStride >= 0);
     MOZ_ASSERT(destMap.mStride >= 0);
 
@@ -526,7 +533,7 @@ ReadPixelsIntoDataSurface(GLContext* gl, DataSourceSurface* dest)
 #endif
 }
 
-static TemporaryRef<DataSourceSurface>
+static already_AddRefed<DataSourceSurface>
 YInvertImageSurface(DataSourceSurface* aSurf)
 {
     RefPtr<DataSourceSurface> temp =
@@ -553,8 +560,8 @@ YInvertImageSurface(DataSourceSurface* aSurf)
         return nullptr;
     }
 
-    dt->SetTransform(Matrix::Translation(0.0, aSurf->GetSize().height) *
-                     Matrix::Scaling(1.0, -1.0));
+    dt->SetTransform(Matrix::Scaling(1.0, -1.0) *
+                     Matrix::Translation(0.0, aSurf->GetSize().height));
     Rect rect(0, 0, aSurf->GetSize().width, aSurf->GetSize().height);
     dt->DrawSurface(aSurf, rect, rect, DrawSurfaceOptions(),
                     DrawOptions(1.0, CompositionOp::OP_SOURCE, AntialiasMode::NONE));
@@ -562,7 +569,7 @@ YInvertImageSurface(DataSourceSurface* aSurf)
     return temp.forget();
 }
 
-TemporaryRef<DataSourceSurface>
+already_AddRefed<DataSourceSurface>
 ReadBackSurface(GLContext* gl, GLuint aTexture, bool aYInvert, SurfaceFormat aFormat)
 {
     gl->MakeCurrent();
@@ -611,7 +618,7 @@ ReadBackSurface(GLContext* gl, GLuint aTexture, bool aYInvert, SurfaceFormat aFo
         break;                                                              \
     }
 
-TemporaryRef<DataSourceSurface>
+already_AddRefed<DataSourceSurface>
 GLReadTexImageHelper::ReadTexImage(GLuint aTextureId,
                                    GLenum aTextureTarget,
                                    const gfx::IntSize& aSize,
@@ -754,5 +761,5 @@ GLReadTexImageHelper::ReadTexImage(GLuint aTextureId,
 
 #undef CLEANUP_IF_GLERROR_OCCURRED
 
-}
-}
+} // namespace gl
+} // namespace mozilla

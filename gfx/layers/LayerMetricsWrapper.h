@@ -337,19 +337,21 @@ public:
       return mLayer->GetVisibleRegion();
     }
     nsIntRegion region = mLayer->GetVisibleRegion();
-    region.Transform(gfx::To3DMatrix(mLayer->GetTransform()));
+    region.Transform(mLayer->GetTransform());
     return region;
   }
 
-  const nsIntRect* GetClipRect() const
+  const Maybe<ParentLayerIntRect>& GetClipRect() const
   {
     MOZ_ASSERT(IsValid());
+
+    static const Maybe<ParentLayerIntRect> sNoClipRect = Nothing();
 
     if (AtBottomLayer()) {
       return mLayer->GetClipRect();
     }
 
-    return nullptr;
+    return sNoClipRect;
   }
 
   EventRegionsOverride GetEventRegionsOverride() const
@@ -360,6 +362,29 @@ public:
       return mLayer->AsContainerLayer()->GetEventRegionsOverride();
     }
     return EventRegionsOverride::NoOverride;
+  }
+
+  Layer::ScrollDirection GetScrollbarDirection() const
+  {
+    MOZ_ASSERT(IsValid());
+
+    return mLayer->GetScrollbarDirection();
+  }
+
+  FrameMetrics::ViewID GetScrollbarTargetContainerId() const
+  {
+    MOZ_ASSERT(IsValid());
+
+    return mLayer->GetScrollbarTargetContainerId();
+  }
+
+  int32_t GetScrollbarSize() const
+  {
+    if (GetScrollbarDirection() == Layer::VERTICAL) {
+      return mLayer->GetVisibleRegion().GetBounds().height;
+    } else {
+      return mLayer->GetVisibleRegion().GetBounds().width;
+    }
   }
 
   // Expose an opaque pointer to the layer. Mostly used for printf
@@ -427,7 +452,7 @@ private:
   uint32_t mIndex;
 };
 
-}
-}
+} // namespace layers
+} // namespace mozilla
 
 #endif /* GFX_LAYERMETRICSWRAPPER_H */

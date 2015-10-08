@@ -36,9 +36,6 @@
 
 class nsOfflineCacheUpdate;
 
-class nsIUTF8StringEnumerator;
-class nsILoadContext;
-
 class nsOfflineCacheUpdateItem : public nsIStreamListener
                                , public nsIRunnable
                                , public nsIInterfaceRequestor
@@ -54,16 +51,18 @@ public:
 
     nsOfflineCacheUpdateItem(nsIURI *aURI,
                              nsIURI *aReferrerURI,
+                             nsIPrincipal* aLoadingPrincipal,
                              nsIApplicationCache *aApplicationCache,
                              nsIApplicationCache *aPreviousApplicationCache,
                              uint32_t aType);
 
-    nsCOMPtr<nsIURI>           mURI;
-    nsCOMPtr<nsIURI>           mReferrerURI;
+    nsCOMPtr<nsIURI>              mURI;
+    nsCOMPtr<nsIURI>              mReferrerURI;
+    nsCOMPtr<nsIPrincipal>        mLoadingPrincipal;
     nsCOMPtr<nsIApplicationCache> mApplicationCache;
     nsCOMPtr<nsIApplicationCache> mPreviousApplicationCache;
-    nsCString                  mCacheKey;
-    uint32_t                   mItemType;
+    nsCString                     mCacheKey;
+    uint32_t                      mItemType;
 
     nsresult OpenChannel(nsOfflineCacheUpdate *aUpdate);
     nsresult Cancel();
@@ -102,6 +101,7 @@ public:
 
     nsOfflineManifestItem(nsIURI *aURI,
                           nsIURI *aReferrerURI,
+                          nsIPrincipal* aLoadingPrincipal,
                           nsIApplicationCache *aApplicationCache,
                           nsIApplicationCache *aPreviousApplicationCache);
     virtual ~nsOfflineManifestItem();
@@ -188,7 +188,7 @@ class nsOfflineCacheUpdateOwner
   : public mozilla::SupportsWeakPtr<nsOfflineCacheUpdateOwner>
 {
 public:
-    MOZ_DECLARE_REFCOUNTED_TYPENAME(nsOfflineCacheUpdateOwner)
+    MOZ_DECLARE_WEAKREFERENCE_TYPENAME(nsOfflineCacheUpdateOwner)
     virtual ~nsOfflineCacheUpdateOwner() {}
     virtual nsresult UpdateFinished(nsOfflineCacheUpdate *aUpdate) = 0;
 };
@@ -199,7 +199,6 @@ class nsOfflineCacheUpdate final : public nsIOfflineCacheUpdate
                                  , public nsOfflineCacheUpdateOwner
 {
 public:
-    MOZ_DECLARE_REFCOUNTED_TYPENAME(nsOfflineCacheUpdate)
     NS_DECL_ISUPPORTS
     NS_DECL_NSIOFFLINECACHEUPDATE
     NS_DECL_NSIOFFLINECACHEUPDATEOBSERVER
@@ -232,7 +231,7 @@ protected:
     void OnByteProgress(uint64_t byteIncrement);
 
 private:
-    nsresult InitInternal(nsIURI *aManifestURI);
+    nsresult InitInternal(nsIURI *aManifestURI, nsIPrincipal* aPrincipal);
     nsresult HandleManifest(bool *aDoUpdate);
     nsresult AddURI(nsIURI *aURI, uint32_t aItemType);
 
@@ -279,6 +278,7 @@ private:
     nsCString mGroupID;
     nsCOMPtr<nsIURI> mManifestURI;
     nsCOMPtr<nsIURI> mDocumentURI;
+    nsCOMPtr<nsIPrincipal> mLoadingPrincipal;
     nsCOMPtr<nsIFile> mCustomProfileDir;
 
     uint32_t mAppID;
@@ -342,6 +342,7 @@ public:
 
     nsresult Schedule(nsIURI *aManifestURI,
                       nsIURI *aDocumentURI,
+                      nsIPrincipal* aLoadingPrincipal,
                       nsIDOMDocument *aDocument,
                       nsIDOMWindow* aWindow,
                       nsIFile* aCustomProfileDir,

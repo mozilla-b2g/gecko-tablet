@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -155,7 +156,8 @@ SVGUseElement::AttributeChanged(nsIDocument* aDocument,
                                 Element* aElement,
                                 int32_t aNameSpaceID,
                                 nsIAtom* aAttribute,
-                                int32_t aModType)
+                                int32_t aModType,
+                                const nsAttrValue* aOldValue)
 {
   if (nsContentUtils::IsInSameAnonymousTree(this, aElement)) {
     TriggerReclone();
@@ -266,6 +268,16 @@ SVGUseElement::CreateAnonymousContent()
 
   if (!newcontent)
     return nullptr;
+
+#ifdef DEBUG
+  // Our anonymous clone can get restyled by various things
+  // (e.g. SMIL).  Reconstructing its frame is OK, though, because
+  // it's going to be our _only_ child in the frame tree, so can't get
+  // mis-ordered with anything.
+  newcontent->SetProperty(nsGkAtoms::restylableAnonymousNode,
+                          reinterpret_cast<void*>(true));
+#endif // DEBUG
+
 
   if (newcontent->IsSVGElement(nsGkAtoms::symbol)) {
     nsIDocument *document = GetComposedDoc();

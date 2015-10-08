@@ -64,7 +64,7 @@ nsWinUtils::MaybeStartWindowEmulation()
 
   if (Compatibility::IsJAWS() || Compatibility::IsWE() ||
       Compatibility::IsDolphin() ||
-      XRE_GetProcessType() == GeckoProcessType_Content) {
+      XRE_IsContentProcess()) {
     RegisterNativeWindow(kClassNameTabContent);
     sHWNDCache = new nsRefPtrHashtable<nsPtrHashKey<void>, DocAccessible>(2);
     return true;
@@ -149,7 +149,10 @@ WindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
   switch (msg) {
     case WM_GETOBJECT:
     {
-      if (lParam == OBJID_CLIENT) {
+      // Do explicit casting to make it working on 64bit systems (see bug 649236
+      // for details).
+      int32_t objId = static_cast<DWORD>(lParam);
+      if (objId == OBJID_CLIENT) {
         DocAccessible* document =
           nsWinUtils::sHWNDCache->GetWeak(static_cast<void*>(hWnd));
         if (document) {

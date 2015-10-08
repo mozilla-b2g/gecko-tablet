@@ -197,7 +197,8 @@ void
 nsViewManager::SetWindowDimensions(nscoord aWidth, nscoord aHeight)
 {
   if (mRootView) {
-    if (mRootView->IsEffectivelyVisible() && mPresShell && mPresShell->IsVisible()) {
+    if (mRootView->IsEffectivelyVisible() && mPresShell &&
+        mPresShell->IsVisible() && !mPresShell->IsInFullscreenChange()) {
       if (mDelayedResize != nsSize(NSCOORD_NONE, NSCOORD_NONE) &&
           mDelayedResize != nsSize(aWidth, aHeight)) {
         // We have a delayed resize; that now obsolete size may already have
@@ -368,6 +369,17 @@ nsViewManager::ProcessPendingUpdatesForView(nsView* aView,
   for (uint32_t i = 0; i < widgets.Length(); ++i) {
     nsView* view = nsView::GetViewFor(widgets[i]);
     if (view) {
+      if (view->mNeedsWindowPropertiesSync) {
+        view->mNeedsWindowPropertiesSync = false;
+        if (nsViewManager* vm = view->GetViewManager()) {
+          if (nsIPresShell* ps = vm->GetPresShell()) {
+            ps->SyncWindowProperties(view);
+          }
+        }
+      }
+    }
+    view = nsView::GetViewFor(widgets[i]);
+    if (view) {
       view->ResetWidgetBounds(false, true);
     }
   }
@@ -429,8 +441,17 @@ nsViewManager::ProcessPendingUpdatesPaint(nsIWidget* aWidget)
       }
     }
     nsView* view = nsView::GetViewFor(aWidget);
+
     if (!view) {
       NS_ERROR("FlushDelayedResize destroyed the nsView?");
+      return;
+    }
+
+    nsIWidgetListener* previousListener = aWidget->GetPreviouslyAttachedWidgetListener();
+
+    if (previousListener &&
+        previousListener != view &&
+        view->IsPrimaryFramePaintSuppressed()) {
       return;
     }
 
@@ -475,8 +496,8 @@ void nsViewManager::FlushDirtyRegionToWidget(nsView* aView)
   // If we draw the frame counter we need to make sure we invalidate the area
   // for it to make it on screen
   if (gfxPrefs::DrawFrameCounter()) {
-    nsRect counterBounds = gfxPlatform::FrameCounterBounds().ToAppUnits(AppUnitsPerDevPixel());
-    r = r.Or(r, counterBounds);
+    nsRect counterBounds = ToAppUnits(gfxPlatform::FrameCounterBounds(), AppUnitsPerDevPixel());
+    r.OrWith(counterBounds);
   }
 
   nsViewManager* widgetVM = nearestViewWithWidget->GetViewManager();
@@ -570,9 +591,8 @@ nsViewManager::InvalidateWidgetArea(nsView *aWidgetView,
         nsTArray<nsIntRect> clipRects;
         childWidget->GetWindowClipRegion(&clipRects);
         for (uint32_t i = 0; i < clipRects.Length(); ++i) {
-          nsRect rr = (clipRects[i] + bounds.TopLeft()).
-            ToAppUnits(AppUnitsPerDevPixel());
-          children.Or(children, rr - aWidgetView->ViewToWidgetOffset()); 
+          nsRect rr = ToAppUnits(clipRects[i] + bounds.TopLeft(), AppUnitsPerDevPixel());
+          children.Or(children, rr - aWidgetView->ViewToWidgetOffset());
           children.SimplifyInward(20);
         }
 #endif
@@ -734,11 +754,11 @@ nsViewManager::DispatchEvent(WidgetGUIEvent *aEvent,
        // Ignore mouse exit and enter (we'll get moves if the user
        // is really moving the mouse) since we get them when we
        // create and destroy widgets.
-       mouseEvent->message != NS_MOUSE_EXIT &&
-       mouseEvent->message != NS_MOUSE_ENTER) ||
+       mouseEvent->mMessage != eMouseExitFromWidget &&
+       mouseEvent->mMessage != eMouseEnterIntoWidget) ||
       aEvent->HasKeyEventMessage() ||
       aEvent->HasIMEEventMessage() ||
-      aEvent->message == NS_PLUGIN_INPUT_EVENT) {
+      aEvent->mMessage == ePluginInputEvent) {
     gLastUserEventTime = PR_IntervalToMicroseconds(PR_IntervalNow());
   }
 
@@ -1139,3 +1159,4 @@ nsViewManager::InvalidateHierarchy()
     }
   }
 }
+

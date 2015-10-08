@@ -20,18 +20,15 @@
 #include "nsRegion.h"                   // for nsIntRegion
 #include "nscore.h"                     // for nsAString, etc
 
-class gfxPattern;
 class nsIWidget;
 
 namespace mozilla {
 namespace layers {
 
-class BasicShadowableLayer;
 class ImageFactory;
 class ImageLayer;
 class PaintLayerContext;
 class ReadbackLayer;
-class ReadbackProcessor;
 
 /**
  * This is a cairo/Thebes-only, main-thread-only implementation of layers.
@@ -87,7 +84,7 @@ public:
    * temporary results to aContext and then overpainting them with final
    * results, by using a temporary buffer when necessary. In BUFFERED
    * mode we always completely overwrite the contents of aContext's
-   * destination surface (within the clip region) using OPERATOR_SOURCE.
+   * destination surface (within the clip region) using OP_SOURCE.
    */
   void SetDefaultTarget(gfxContext* aContext);
   virtual void SetDefaultTargetConfiguration(BufferMode aDoubleBuffering, ScreenRotation aRotation);
@@ -198,7 +195,7 @@ protected:
   bool mCompositorMightResample;
 };
 
-}
-}
+} // namespace layers
+} // namespace mozilla
 
 #endif /* GFX_BASICLAYERS_H */

@@ -51,9 +51,15 @@ const MODE_TRUNCATE = 0x20;
 
 // Directory service keys
 const NS_APP_SEARCH_DIR_LIST  = "SrchPluginsDL";
+const NS_APP_DISTRIBUTION_SEARCH_DIR_LIST = "SrchPluginsDistDL";
 const NS_APP_USER_SEARCH_DIR  = "UsrSrchPlugns";
 const NS_APP_SEARCH_DIR       = "SrchPlugns";
 const NS_APP_USER_PROFILE_50_DIR = "ProfD";
+
+// Loading plugins from NS_APP_SEARCH_DIR is no longer supported.
+// Instead, we now load plugins from APP_SEARCH_PREFIX, where a
+// list.txt file needs to exist to list available engines.
+const APP_SEARCH_PREFIX = "resource://search-plugins/";
 
 // Search engine "locations". If this list is changed, be sure to update
 // the engine's _isDefault function accordingly.
@@ -90,13 +96,6 @@ const SEARCH_SERVICE_METADATA_WRITTEN  = "write-metadata-to-disk-complete";
  * Sent whenever the cache is fully written to disk.
  */
 const SEARCH_SERVICE_CACHE_WRITTEN  = "write-cache-to-disk-complete";
-
-const SEARCH_TYPE_MOZSEARCH      = Ci.nsISearchEngine.TYPE_MOZSEARCH;
-const SEARCH_TYPE_OPENSEARCH     = Ci.nsISearchEngine.TYPE_OPENSEARCH;
-const SEARCH_TYPE_SHERLOCK       = Ci.nsISearchEngine.TYPE_SHERLOCK;
-
-const SEARCH_DATA_XML            = Ci.nsISearchEngine.DATA_XML;
-const SEARCH_DATA_TEXT           = Ci.nsISearchEngine.DATA_TEXT;
 
 // Delay for lazy serialization (ms)
 const LAZY_SERIALIZE_DELAY = 100;
@@ -209,11 +208,10 @@ var OS_UNSUPPORTED_PARAMS = [
 // specifies an updateURL, but not an updateInterval.
 const SEARCH_DEFAULT_UPDATE_INTERVAL = 7;
 
-// Returns false for whitespace-only or commented out lines in a
-// Sherlock file, true otherwise.
-function isUsefulLine(aLine) {
-  return !(/^\s*($|#)/i.test(aLine));
-}
+// The default interval before checking again for the name of the
+// default engine for the region, in seconds. Only used if the response
+// from the server doesn't specify an interval.
+const SEARCH_GEO_DEFAULT_UPDATE_INTERVAL = 2592000; // 30 days.
 
 this.__defineGetter__("FileUtils", function() {
   delete this.FileUtils;
@@ -407,6 +405,19 @@ loadListener.prototype = {
   onStatus: function (aRequest, aContext, aStatus, aStatusArg) {}
 }
 
+function isPartnerBuild() {
+  try {
+    let distroID = Services.prefs.getCharPref("distribution.id");
+
+    // Mozilla-provided builds (i.e. funnelcake) are not partner builds
+    if (distroID && !distroID.startsWith("mozilla")) {
+      return true;
+    }
+  } catch (e) {}
+
+  return false;
+}
+
 // Method to determine if we should be using geo-specific defaults
 function geoSpecificDefaultsEnabled() {
   let geoSpecificDefaults = false;
@@ -414,12 +425,7 @@ function geoSpecificDefaultsEnabled() {
     geoSpecificDefaults = Services.prefs.getBoolPref("browser.search.geoSpecificDefaults");
   } catch(e) {}
 
-  let distroID;
-  try {
-    distroID = Services.prefs.getCharPref("distribution.id");
-  } catch (e) {}
-
-  return (geoSpecificDefaults && !distroID);
+  return geoSpecificDefaults;
 }
 
 // Some notes on countryCode and region prefs:
@@ -492,7 +498,7 @@ function getIsUS() {
 
 // Helper method to modify preference keys with geo-specific modifiers, if needed.
 function getGeoSpecificPrefName(basepref) {
-  if (!geoSpecificDefaultsEnabled())
+  if (!geoSpecificDefaultsEnabled() || isPartnerBuild())
     return basepref;
   if (getIsUS())
     return basepref + ".US";
@@ -522,18 +528,60 @@ function isUSTimezone() {
 // If this succeeds and we are using an en-US locale, we set the pref used by
 // the hacky method above, so isUS() can avoid the hacky timezone method.
 // If it fails we don't touch that pref so isUS() does its normal thing.
-let ensureKnownCountryCode = Task.async(function* () {
+var ensureKnownCountryCode = Task.async(function* () {
   // If we have a country-code already stored in our prefs we trust it.
+  let countryCode;
   try {
-    Services.prefs.getCharPref("browser.search.countryCode");
-    return; // pref exists, so we've done this before.
+    countryCode = Services.prefs.getCharPref("browser.search.countryCode");
   } catch(e) {}
-  // We don't have it cached, so fetch it. fetchCountryCode() will call
-  // storeCountryCode if it gets a result (even if that happens after the
-  // promise resolves)
-  yield fetchCountryCode();
+
+  if (!countryCode) {
+    // We don't have it cached, so fetch it. fetchCountryCode() will call
+    // storeCountryCode if it gets a result (even if that happens after the
+    // promise resolves) and fetchRegionDefault.
+    yield fetchCountryCode();
+  } else {
+    // if nothing to do, return early.
+    if (!geoSpecificDefaultsEnabled())
+      return;
+
+    let expir = engineMetadataService.getGlobalAttr("searchDefaultExpir") || 0;
+    if (expir > Date.now()) {
+      // The territory default we have already fetched hasn't expired yet.
+      // If we have a default engine or a list of visible default engines
+      // saved, the hashes should be valid, verify them now so that we can
+      // refetch if they have been tampered with.
+      let defaultEngine = engineMetadataService.getGlobalAttr("searchDefault");
+      let visibleDefaultEngines =
+        engineMetadataService.getGlobalAttr("visibleDefaultEngines");
+      if ((!defaultEngine || engineMetadataService.getGlobalAttr("searchDefaultHash") == getVerificationHash(defaultEngine)) &&
+          (!visibleDefaultEngines ||
+           engineMetadataService.getGlobalAttr("visibleDefaultEnginesHash") == getVerificationHash(visibleDefaultEngines))) {
+        // No geo defaults, or valid hashes; nothing to do.
+        return;
+      }
+    }
+
+    yield new Promise(resolve => {
+      let timeoutMS = Services.prefs.getIntPref("browser.search.geoip.timeout");
+      let timerId = setTimeout(() => {
+        timerId = null;
+        resolve();
+      }, timeoutMS);
+
+      let callback = () => {
+        clearTimeout(timerId);
+        resolve();
+      };
+      fetchRegionDefault().then(callback).catch(err => {
+        Components.utils.reportError(err);
+        callback();
+      });
+    });
+  }
+
   // If gInitialized is true then the search service was forced to perform
-  // a sync initialization during our XHR - capture this via telemetry.
+  // a sync initialization during our XHRs - capture this via telemetry.
   Services.telemetry.getHistogramById("SEARCH_SERVICE_COUNTRY_FETCH_CAUSED_SYNC_INIT").add(gInitialized);
 });
 
@@ -555,14 +603,9 @@ function storeCountryCode(cc) {
     Services.telemetry.getHistogramById("SEARCH_SERVICE_US_TIMEZONE_MISMATCHED_COUNTRY").add(1);
   }
   // telemetry to compare our geoip response with platform-specific country data.
-  // On Mac and Windows, we can get a country code via nsIGfxInfo2
-  let gfxInfo2;
-  try {
-    gfxInfo2 = Cc["@mozilla.org/gfx/info;1"].getService(Ci.nsIGfxInfo2);
-  } catch (ex) {
-    // not available on this platform.
-  }
-  if (gfxInfo2) {
+  // On Mac and Windows, we can get a country code via sysinfo
+  let platformCC = Services.sysinfo.get("countryCode");
+  if (platformCC) {
     let probeUSMismatched, probeNonUSMismatched;
     switch (Services.appinfo.OS) {
       case "Darwin":
@@ -574,11 +617,10 @@ function storeCountryCode(cc) {
         probeNonUSMismatched = "SEARCH_SERVICE_NONUS_COUNTRY_MISMATCHED_PLATFORM_WIN";
         break;
       default:
-        Cu.reportError("Platform " + Services.appinfo.OS + " has nsIGfxInfo2 but no search service telemetry probes");
+        Cu.reportError("Platform " + Services.appinfo.OS + " has system country code but no search service telemetry probes");
         break;
     }
     if (probeUSMismatched && probeNonUSMismatched) {
-      let platformCC = gfxInfo2.countryCode;
       if (cc == "US" || platformCC == "US") {
         // one of the 2 said US, so record if they are the same.
         Services.telemetry.getHistogramById(probeUSMismatched).add(cc != platformCC);
@@ -620,9 +662,11 @@ function fetchCountryCode() {
     // large value just incase the request never completes - we don't want the
     // XHR object to live forever)
     let timeoutMS = Services.prefs.getIntPref("browser.search.geoip.timeout");
+    let geoipTimeoutPossible = true;
     let timerId = setTimeout(() => {
       LOG("_fetchCountryCode: timeout fetching country information");
-      Services.telemetry.getHistogramById("SEARCH_SERVICE_COUNTRY_TIMEOUT").add(1);
+      if (geoipTimeoutPossible)
+        Services.telemetry.getHistogramById("SEARCH_SERVICE_COUNTRY_TIMEOUT").add(1);
       timerId = null;
       resolve();
     }, timeoutMS);
@@ -638,14 +682,29 @@ function fetchCountryCode() {
       // This notification is just for tests...
       Services.obs.notifyObservers(null, SEARCH_SERVICE_TOPIC, "geoip-lookup-xhr-complete");
 
-      // If we've already timed out then we've already resolved the promise,
-      // so there's nothing else to do.
-      if (timerId == null) {
-        return;
+      if (timerId) {
+        Services.telemetry.getHistogramById("SEARCH_SERVICE_COUNTRY_TIMEOUT").add(0);
+        geoipTimeoutPossible = false;
       }
-      Services.telemetry.getHistogramById("SEARCH_SERVICE_COUNTRY_TIMEOUT").add(0);
-      clearTimeout(timerId);
-      resolve();
+
+      let callback = () => {
+        // If we've already timed out then we've already resolved the promise,
+        // so there's nothing else to do.
+        if (timerId == null) {
+          return;
+        }
+        clearTimeout(timerId);
+        resolve();
+      };
+
+      if (result && geoSpecificDefaultsEnabled()) {
+        fetchRegionDefault().then(callback).catch(err => {
+          Components.utils.reportError(err);
+          callback();
+        });
+      } else {
+        callback();
+      }
     };
 
     let request = new XMLHttpRequest();
@@ -675,26 +734,130 @@ function fetchCountryCode() {
   });
 }
 
-/**
- * Used to verify a given DOM node's localName and namespaceURI.
- * @param aElement
- *        The element to verify.
- * @param aLocalNameArray
- *        An array of strings to compare against aElement's localName.
- * @param aNameSpaceArray
- *        An array of strings to compare against aElement's namespaceURI.
- *
- * @returns false if aElement is null, or if its localName or namespaceURI
- *          does not match one of the elements in the aLocalNameArray or
- *          aNameSpaceArray arrays, respectively.
- * @throws NS_ERROR_INVALID_ARG if aLocalNameArray or aNameSpaceArray are null.
- */
-function checkNameSpace(aElement, aLocalNameArray, aNameSpaceArray) {
-  if (!aLocalNameArray || !aNameSpaceArray)
-    FAIL("missing aLocalNameArray or aNameSpaceArray for checkNameSpace");
-  return (aElement                                                &&
-          (aLocalNameArray.indexOf(aElement.localName)    != -1)  &&
-          (aNameSpaceArray.indexOf(aElement.namespaceURI) != -1));
+// This will make an HTTP request to a Mozilla server that will return
+// JSON data telling us what engine should be set as the default for
+// the current region, and how soon we should check again.
+//
+// The optional cohort value returned by the server is to be kept locally
+// and sent to the server the next time we ping it. It lets the server
+// identify profiles that have been part of a specific experiment.
+//
+// This promise may take up to 100s to resolve, it's the caller's
+// responsibility to ensure with a timer that we are not going to
+// block the async init for too long.
+var fetchRegionDefault = () => new Promise(resolve => {
+  let urlTemplate = Services.prefs.getDefaultBranch(BROWSER_SEARCH_PREF)
+                            .getCharPref("geoSpecificDefaults.url");
+  let endpoint = Services.urlFormatter.formatURL(urlTemplate);
+
+  // As an escape hatch, no endpoint means no region specific defaults.
+  if (!endpoint) {
+    resolve();
+    return;
+  }
+
+  // Append the optional cohort value.
+  const cohortPref = "browser.search.cohort";
+  let cohort;
+  try {
+    cohort = Services.prefs.getCharPref(cohortPref);
+  } catch(e) {}
+  if (cohort)
+    endpoint += "/" + cohort;
+
+  LOG("fetchRegionDefault starting with endpoint " + endpoint);
+
+  let startTime = Date.now();
+  let request = new XMLHttpRequest();
+  request.timeout = 100000; // 100 seconds as the last-chance fallback
+  request.onload = function(event) {
+    let took = Date.now() - startTime;
+
+    let status = event.target.status;
+    if (status != 200) {
+      LOG("fetchRegionDefault failed with HTTP code " + status);
+      let retryAfter = request.getResponseHeader("retry-after");
+      if (retryAfter) {
+        engineMetadataService.setGlobalAttr("searchDefaultExpir",
+                                            Date.now() + retryAfter * 1000);
+      }
+      resolve();
+      return;
+    }
+
+    let response = event.target.response || {};
+    LOG("received " + response.toSource());
+
+    if (response.cohort) {
+      Services.prefs.setCharPref(cohortPref, response.cohort);
+    } else {
+      Services.prefs.clearUserPref(cohortPref);
+    }
+
+    if (response.settings && response.settings.searchDefault) {
+      let defaultEngine = response.settings.searchDefault;
+      engineMetadataService.setGlobalAttr("searchDefault", defaultEngine);
+      let hash = getVerificationHash(defaultEngine);
+      LOG("fetchRegionDefault saved searchDefault: " + defaultEngine +
+          " with verification hash: " + hash);
+      engineMetadataService.setGlobalAttr("searchDefaultHash", hash);
+    }
+
+    if (response.settings && response.settings.visibleDefaultEngines) {
+      let visibleDefaultEngines = response.settings.visibleDefaultEngines;
+      let string = visibleDefaultEngines.join(",");
+      engineMetadataService.setGlobalAttr("visibleDefaultEngines", string);
+      let hash = getVerificationHash(string);
+      LOG("fetchRegionDefault saved visibleDefaultEngines: " + string +
+          " with verification hash: " + hash);
+      engineMetadataService.setGlobalAttr("visibleDefaultEnginesHash", hash);
+    }
+
+    let interval = response.interval || SEARCH_GEO_DEFAULT_UPDATE_INTERVAL;
+    let milliseconds = interval * 1000; // |interval| is in seconds.
+    engineMetadataService.setGlobalAttr("searchDefaultExpir",
+                                        Date.now() + milliseconds);
+
+    LOG("fetchRegionDefault got success response in " + took + "ms");
+    resolve();
+  };
+  request.ontimeout = function(event) {
+    LOG("fetchRegionDefault: XHR finally timed-out");
+    resolve();
+  };
+  request.onerror = function(event) {
+    LOG("fetchRegionDefault: failed to retrieve territory default information");
+    resolve();
+  };
+  request.open("GET", endpoint, true);
+  request.setRequestHeader("Content-Type", "application/json");
+  request.responseType = "json";
+  request.send();
+});
+
+function getVerificationHash(aName) {
+  let disclaimer = "By modifying this file, I agree that I am doing so " +
+    "only within $appName itself, using official, user-driven search " +
+    "engine selection processes, and in a way which does not circumvent " +
+    "user consent. I acknowledge that any attempt to change this file " +
+    "from outside of $appName is a malicious act, and will be responded " +
+    "to accordingly."
+
+  let salt = OS.Path.basename(OS.Constants.Path.profileDir) + aName +
+             disclaimer.replace(/\$appName/g, Services.appinfo.name);
+
+  let converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"]
+                    .createInstance(Ci.nsIScriptableUnicodeConverter);
+  converter.charset = "UTF-8";
+
+  // Data is an array of bytes.
+  let data = converter.convertToByteArray(salt, {});
+  let hasher = Cc["@mozilla.org/security/hash;1"]
+                 .createInstance(Ci.nsICryptoHash);
+  hasher.init(hasher.SHA256);
+  hasher.update(data, data.length);
+
+  return hasher.finish(true);
 }
 
 /**
@@ -727,6 +890,20 @@ function makeURI(aURLSpec, aCharset) {
 }
 
 /**
+ * Wrapper function for nsIIOService::newChannel2.
+ * @param url
+ *        The URL string from which to create an nsIChannel.
+ * @returns an nsIChannel object, or null if the url is invalid.
+ */
+function makeChannel(url) {
+  try {
+    return NetUtil.newChannel({uri: url, loadUsingSystemPrincipal: true});
+  } catch (ex) { }
+
+  return null;
+}
+
+/**
  * Gets a directory from the directory service.
  * @param aKey
  *        The directory service key indicating the directory to get.
@@ -736,128 +913,6 @@ function getDir(aKey, aIFace) {
     FAIL("getDir requires a directory key!");
 
   return Services.dirsvc.get(aKey, aIFace || Ci.nsIFile);
-}
-
-/**
- * The following two functions are essentially copied from
- * nsInternetSearchService. They are required for backwards compatibility.
- */
-function queryCharsetFromCode(aCode) {
-  const codes = [];
-  codes[0] = "macintosh";
-  codes[6] = "x-mac-greek";
-  codes[35] = "x-mac-turkish";
-  codes[513] = "ISO-8859-1";
-  codes[514] = "ISO-8859-2";
-  codes[517] = "ISO-8859-5";
-  codes[518] = "ISO-8859-6";
-  codes[519] = "ISO-8859-7";
-  codes[520] = "ISO-8859-8";
-  codes[521] = "ISO-8859-9";
-  codes[1280] = "windows-1252";
-  codes[1281] = "windows-1250";
-  codes[1282] = "windows-1251";
-  codes[1283] = "windows-1253";
-  codes[1284] = "windows-1254";
-  codes[1285] = "windows-1255";
-  codes[1286] = "windows-1256";
-  codes[1584] = "GB2312";
-  codes[1585] = "gbk";
-  codes[1600] = "EUC-KR";
-  codes[2080] = "ISO-2022-JP";
-  codes[2096] = "ISO-2022-CN";
-  codes[2112] = "ISO-2022-KR";
-  codes[2336] = "EUC-JP";
-  codes[2352] = "GB2312";
-  codes[2353] = "x-euc-tw";
-  codes[2368] = "EUC-KR";
-  codes[2561] = "Shift_JIS";
-  codes[2562] = "KOI8-R";
-  codes[2563] = "Big5";
-  codes[2565] = "HZ-GB-2312";
-
-  if (codes[aCode])
-    return codes[aCode];
-
-  // Don't bother being fancy about what to return in the failure case.
-  return "windows-1252";
-}
-function fileCharsetFromCode(aCode) {
-  const codes = [
-    "macintosh",             // 0
-    "Shift_JIS",             // 1
-    "Big5",                  // 2
-    "EUC-KR",                // 3
-    "X-MAC-ARABIC",          // 4
-    "X-MAC-HEBREW",          // 5
-    "X-MAC-GREEK",           // 6
-    "X-MAC-CYRILLIC",        // 7
-    "X-MAC-DEVANAGARI" ,     // 9
-    "X-MAC-GURMUKHI",        // 10
-    "X-MAC-GUJARATI",        // 11
-    "X-MAC-ORIYA",           // 12
-    "X-MAC-BENGALI",         // 13
-    "X-MAC-TAMIL",           // 14
-    "X-MAC-TELUGU",          // 15
-    "X-MAC-KANNADA",         // 16
-    "X-MAC-MALAYALAM",       // 17
-    "X-MAC-SINHALESE",       // 18
-    "X-MAC-BURMESE",         // 19
-    "X-MAC-KHMER",           // 20
-    "X-MAC-THAI",            // 21
-    "X-MAC-LAOTIAN",         // 22
-    "X-MAC-GEORGIAN",        // 23
-    "X-MAC-ARMENIAN",        // 24
-    "GB2312",                // 25
-    "X-MAC-TIBETAN",         // 26
-    "X-MAC-MONGOLIAN",       // 27
-    "X-MAC-ETHIOPIC",        // 28
-    "X-MAC-CENTRALEURROMAN", // 29
-    "X-MAC-VIETNAMESE",      // 30
-    "X-MAC-EXTARABIC"        // 31
-  ];
-  // Sherlock files have always defaulted to macintosh, so do that here too
-  return codes[aCode] || codes[0];
-}
-
-/**
- * Returns a string interpretation of aBytes using aCharset, or null on
- * failure.
- */
-function bytesToString(aBytes, aCharset) {
-  var converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"].
-                  createInstance(Ci.nsIScriptableUnicodeConverter);
-  LOG("bytesToString: converting using charset: " + aCharset);
-
-  try {
-    converter.charset = aCharset;
-    return converter.convertFromByteArray(aBytes, aBytes.length);
-  } catch (ex) {}
-
-  return null;
-}
-
-/**
- * Converts an array of bytes representing a Sherlock file into an array of
- * lines representing the useful data from the file.
- *
- * @param aBytes
- *        The array of bytes representing the Sherlock file.
- * @param aCharsetCode
- *        An integer value representing a character set code to be passed to
- *        fileCharsetFromCode, or null for the default Sherlock encoding.
- */
-function sherlockBytesToLines(aBytes, aCharsetCode) {
-  // fileCharsetFromCode returns the default encoding if aCharsetCode is null
-  var charset = fileCharsetFromCode(aCharsetCode);
-
-  var dataString = bytesToString(aBytes, charset);
-  if (!dataString)
-    FAIL("sherlockBytesToLines: Couldn't convert byte array!", Cr.NS_ERROR_FAILURE);
-
-  // Split the string into lines, and filter out comments and
-  // whitespace-only lines
-  return dataString.split(NEW_LINES).filter(isUsefulLine);
 }
 
 /**
@@ -958,8 +1013,9 @@ function sanitizeName(aName) {
  * @param prefName
  *        The name of the pref.
  **/
-function getMozParamPref(prefName)
-  Services.prefs.getCharPref(BROWSER_SEARCH_PREF + "param." + prefName);
+function getMozParamPref(prefName) {
+  return Services.prefs.getCharPref(BROWSER_SEARCH_PREF + "param." + prefName);
+}
 
 /**
  * Notifies watchers of SEARCH_ENGINE_TOPIC about changes to an engine or to
@@ -972,7 +1028,7 @@ function getMozParamPref(prefName)
  *
  * @see nsIBrowserSearchService.idl
  */
-let gInitialized = false;
+var gInitialized = false;
 function notifyAction(aEngine, aVerb) {
   if (gInitialized) {
     LOG("NOTIFY: Engine: \"" + aEngine.name + "\"; Verb: \"" + aVerb + "\"");
@@ -1138,6 +1194,10 @@ EngineURL.prototype = {
     // (purpose="") work consistently rather than having to define "null" and "" purposes.
     var purpose = aPurpose || "";
 
+    // If the 'system' purpose isn't defined in the plugin, fallback to 'searchbar'.
+    if (purpose == "system" && !this.params.some(p => p.purpose == "system"))
+      purpose = "searchbar";
+
     // Create an application/x-www-form-urlencoded representation of our params
     // (name=value&name=value&name=value)
     var dataString = "";
@@ -1182,8 +1242,9 @@ EngineURL.prototype = {
     return queryParam ? queryParam.name : "";
   },
 
-  _hasRelation: function SRC_EURL__hasRelation(aRel)
-    this.rels.some(function(e) e == aRel.toLowerCase()),
+  _hasRelation: function SRC_EURL__hasRelation(aRel) {
+    return this.rels.some(e => e == aRel.toLowerCase());
+  },
 
   _initWithJSON: function SRC_EURL__initWithJSON(aJson, aEngine) {
     if (!aJson.params)
@@ -1194,12 +1255,7 @@ EngineURL.prototype = {
     for (let i = 0; i < aJson.params.length; ++i) {
       let param = aJson.params[i];
       if (param.mozparam) {
-        if (param.condition == "defaultEngine") {
-          if (aEngine._isDefaultEngine())
-            this.addParam(param.name, param.trueValue);
-          else
-            this.addParam(param.name, param.falseValue);
-        } else if (param.condition == "pref") {
+        if (param.condition == "pref") {
           let value = getMozParamPref(param.pref);
           this.addParam(param.name, value);
         }
@@ -1214,7 +1270,7 @@ EngineURL.prototype = {
    * Creates a JavaScript object that represents this URL.
    * @returns An object suitable for serialization as JSON.
    **/
-  _serializeToJSON: function SRCH_EURL__serializeToJSON() {
+  toJSON: function SRCH_EURL_toJSON() {
     var json = {
       template: this.template,
       rels: this.rels,
@@ -1226,8 +1282,9 @@ EngineURL.prototype = {
     if (this.method != "GET")
       json.method = this.method;
 
-    function collapseMozParams(aParam)
-      this.mozparams[aParam.name] || aParam;
+    function collapseMozParams(aParam) {
+      return this.mozparams[aParam.name] || aParam;
+    }
     json.params = this.params.map(collapseMozParams, this);
 
     return json;
@@ -1269,15 +1326,11 @@ EngineURL.prototype = {
  * @param aLocation
  *        A nsILocalFile or nsIURI object representing the location of the
  *        search engine data file.
- * @param aSourceDataType
- *        The data type of the file used to describe the engine. Must be either
- *        DATA_XML or DATA_TEXT.
  * @param aIsReadOnly
  *        Boolean indicating whether the engine should be treated as read-only.
  *        Read only engines cannot be serialized to file.
  */
-function Engine(aLocation, aSourceDataType, aIsReadOnly) {
-  this._dataType = aSourceDataType;
+function Engine(aLocation, aIsReadOnly) {
   this._readOnly = aIsReadOnly;
   this._urls = [];
 
@@ -1316,11 +1369,8 @@ Engine.prototype = {
   // A distribution-unique identifier for the engine. Either null or set
   // when loaded. See getter.
   _identifier: undefined,
-  // The data describing the engine. Is either an array of bytes, for Sherlock
-  // files, or an XML document element, for XML plugins.
+  // The data describing the engine, in the form of an XML document element.
   _data: null,
-  // The engine's data type. See data types (DATA_) defined above.
-  _dataType: null,
   // Whether or not the engine is readonly.
   _readOnly: true,
   // The engine's description
@@ -1344,12 +1394,8 @@ Engine.prototype = {
   // Set to true if the engine has a preferred icon (an icon that should not be
   // overridden by a non-preferred icon).
   _hasPreferredIcon: null,
-  // Whether the engine is hidden from the user.
-  _hidden: null,
   // The engine's name.
   _name: null,
-  // The engine type. See engine types (TYPE_) defined above.
-  _type: null,
   // The name of the charset used to submit the search terms.
   _queryCharset: null,
   // The engine's raw SearchForm value (URL string pointing to a search form).
@@ -1401,10 +1447,8 @@ Engine.prototype = {
   _extensionID: null,
 
   /**
-   * Retrieves the data from the engine's file. If the engine's dataType is
-   * XML, the document element is placed in the engine's data field. For text
-   * engines, the data is just read directly from file and placed as an array
-   * of lines in the engine's data field.
+   * Retrieves the data from the engine's file.
+   * The document element is placed in the engine's data field.
    */
   _initFromFile: function SRCH_ENG_initFromFile() {
     if (!this._file || !this._file.exists())
@@ -1415,19 +1459,13 @@ Engine.prototype = {
 
     fileInStream.init(this._file, MODE_RDONLY, FileUtils.PERMS_FILE, false);
 
-    if (this._dataType == SEARCH_DATA_XML) {
-      var domParser = Cc["@mozilla.org/xmlextras/domparser;1"].
-                      createInstance(Ci.nsIDOMParser);
-      var doc = domParser.parseFromStream(fileInStream, "UTF-8",
-                                          this._file.fileSize,
-                                          "text/xml");
+    var domParser = Cc["@mozilla.org/xmlextras/domparser;1"].
+                    createInstance(Ci.nsIDOMParser);
+    var doc = domParser.parseFromStream(fileInStream, "UTF-8",
+                                        this._file.fileSize,
+                                        "text/xml");
 
-      this._data = doc.documentElement;
-    } else {
-      ERROR("Unsuppored engine _dataType in _initFromFile: \"" +
-            this._dataType + "\"",
-            Cr.NS_ERROR_UNEXPECTED);
-    }
+    this._data = doc.documentElement;
     fileInStream.close();
 
     // Now that the data is loaded, initialize the engine object
@@ -1435,8 +1473,8 @@ Engine.prototype = {
   },
 
   /**
-   * Retrieves the data from the engine's file asynchronously. If the engine's
-   * dataType is XML, the document element is placed in the engine's data field.
+   * Retrieves the data from the engine's file asynchronously.
+   * The document element is placed in the engine's data field.
    *
    * @returns {Promise} A promise, resolved successfully if initializing from
    * data succeeds, rejected if it fails.
@@ -1446,14 +1484,8 @@ Engine.prototype = {
       if (!this._file || !(yield OS.File.exists(this._file.path)))
         FAIL("File must exist before calling initFromFile!", Cr.NS_ERROR_UNEXPECTED);
 
-      if (this._dataType == SEARCH_DATA_XML) {
-        let fileURI = NetUtil.ioService.newFileURI(this._file);
-        yield this._retrieveSearchXMLData(fileURI.spec);
-      } else {
-        ERROR("Unsuppored engine _dataType in _initFromFile: \"" +
-              this._dataType + "\"",
-              Cr.NS_ERROR_UNEXPECTED);
-      }
+      let fileURI = NetUtil.ioService.newFileURI(this._file);
+      yield this._retrieveSearchXMLData(fileURI.spec);
 
       // Now that the data is loaded, initialize the engine object
       this._initFromData();
@@ -1534,7 +1566,7 @@ Engine.prototype = {
                 "Must have URI when calling _initFromURISync!",
                 Cr.NS_ERROR_UNEXPECTED);
 
-    ENSURE_WARN(this._uri.schemeIs("chrome"), "_initFromURISync called for non-chrome URI",
+    ENSURE_WARN(this._uri.schemeIs("resource"), "_initFromURISync called for non-resource URI",
                 Cr.NS_ERROR_FAILURE);
 
     LOG("_initFromURISync: Loading engine from: \"" + this._uri.spec + "\".");
@@ -1663,21 +1695,10 @@ Engine.prototype = {
       aEngine._file = engineToUpdate._file;
     }
 
-    switch (aEngine._dataType) {
-      case SEARCH_DATA_XML:
-        var parser = Cc["@mozilla.org/xmlextras/domparser;1"].
-                     createInstance(Ci.nsIDOMParser);
-        var doc = parser.parseFromBuffer(aBytes, aBytes.length, "text/xml");
-        aEngine._data = doc.documentElement;
-        break;
-      case SEARCH_DATA_TEXT:
-        aEngine._data = aBytes;
-        break;
-      default:
-        promptError();
-        LOG("_onLoad: Bogus engine _dataType: \"" + this._dataType + "\"");
-        return;
-    }
+    var parser = Cc["@mozilla.org/xmlextras/domparser;1"].
+                 createInstance(Ci.nsIDOMParser);
+    var doc = parser.parseFromBuffer(aBytes, aBytes.length, "text/xml");
+    aEngine._data = doc.documentElement;
 
     try {
       // Initialize the engine from the obtained data
@@ -1857,57 +1878,54 @@ Engine.prototype = {
       case "https":
       case "ftp":
         // No use downloading the icon if the engine file is read-only
-        if (!this._readOnly ||
-            getBoolPref(BROWSER_SEARCH_PREF + "cache.enabled", true)) {
-          LOG("_setIcon: Downloading icon: \"" + uri.spec +
-              "\" for engine: \"" + this.name + "\"");
-          var chan = NetUtil.ioService.newChannelFromURI2(uri,
-                                                          null,      // aLoadingNode
-                                                          Services.scriptSecurityManager.getSystemPrincipal(),
-                                                          null,      // aTriggeringPrincipal
-                                                          Ci.nsILoadInfo.SEC_NORMAL,
-                                                          Ci.nsIContentPolicy.TYPE_IMAGE);
+        LOG("_setIcon: Downloading icon: \"" + uri.spec +
+            "\" for engine: \"" + this.name + "\"");
+        var chan = NetUtil.ioService.newChannelFromURI2(uri,
+                                                        null,      // aLoadingNode
+                                                        Services.scriptSecurityManager.getSystemPrincipal(),
+                                                        null,      // aTriggeringPrincipal
+                                                        Ci.nsILoadInfo.SEC_NORMAL,
+                                                        Ci.nsIContentPolicy.TYPE_INTERNAL_IMAGE);
 
-          let iconLoadCallback = function (aByteArray, aEngine) {
-            // This callback may run after we've already set a preferred icon,
-            // so check again.
-            if (aEngine._hasPreferredIcon && !aIsPreferred)
-              return;
+        let iconLoadCallback = function (aByteArray, aEngine) {
+          // This callback may run after we've already set a preferred icon,
+          // so check again.
+          if (aEngine._hasPreferredIcon && !aIsPreferred)
+            return;
 
-            if (!aByteArray || aByteArray.length > MAX_ICON_SIZE) {
-              LOG("iconLoadCallback: load failed, or the icon was too large!");
-              return;
-            }
-
-            var str = btoa(String.fromCharCode.apply(null, aByteArray));
-            let dataURL = ICON_DATAURL_PREFIX + str;
-            aEngine._iconURI = makeURI(dataURL);
-
-            if (aWidth && aHeight) {
-              aEngine._addIconToMap(aWidth, aHeight, dataURL)
-            }
-
-            // The engine might not have a file yet, if it's being downloaded,
-            // because the request for the engine file itself (_onLoad) may not
-            // yet be complete. In that case, this change will be written to
-            // file when _onLoad is called. For readonly engines, we'll store
-            // the changes in the cache once notified below.
-            if (aEngine._file && !aEngine._readOnly)
-              aEngine._serializeToFile();
-
-            notifyAction(aEngine, SEARCH_ENGINE_CHANGED);
-            aEngine._hasPreferredIcon = aIsPreferred;
+          if (!aByteArray || aByteArray.length > MAX_ICON_SIZE) {
+            LOG("iconLoadCallback: load failed, or the icon was too large!");
+            return;
           }
 
-          // If we're currently acting as an "update engine", then the callback
-          // should set the icon on the engine we're updating and not us, since
-          // |this| might be gone by the time the callback runs.
-          var engineToSet = this._engineToUpdate || this;
+          var str = btoa(String.fromCharCode.apply(null, aByteArray));
+          let dataURL = ICON_DATAURL_PREFIX + str;
+          aEngine._iconURI = makeURI(dataURL);
 
-          var listener = new loadListener(chan, engineToSet, iconLoadCallback);
-          chan.notificationCallbacks = listener;
-          chan.asyncOpen(listener, null);
+          if (aWidth && aHeight) {
+            aEngine._addIconToMap(aWidth, aHeight, dataURL)
+          }
+
+          // The engine might not have a file yet, if it's being downloaded,
+          // because the request for the engine file itself (_onLoad) may not
+          // yet be complete. In that case, this change will be written to
+          // file when _onLoad is called. For readonly engines, we'll store
+          // the changes in the cache once notified below.
+          if (aEngine._file && !aEngine._readOnly)
+            aEngine._serializeToFile();
+
+          notifyAction(aEngine, SEARCH_ENGINE_CHANGED);
+          aEngine._hasPreferredIcon = aIsPreferred;
         }
+
+        // If we're currently acting as an "update engine", then the callback
+        // should set the icon on the engine we're updating and not us, since
+        // |this| might be gone by the time the callback runs.
+        var engineToSet = this._engineToUpdate || this;
+
+        var listener = new loadListener(chan, engineToSet, iconLoadCallback);
+        chan.notificationCallbacks = listener;
+        chan.asyncOpen(listener, null);
         break;
     }
   },
@@ -1919,36 +1937,18 @@ Engine.prototype = {
     ENSURE_WARN(this._data, "Can't init an engine with no data!",
                 Cr.NS_ERROR_UNEXPECTED);
 
-    // Find out what type of engine we are
-    switch (this._dataType) {
-      case SEARCH_DATA_XML:
-        if (checkNameSpace(this._data, [MOZSEARCH_LOCALNAME],
-            [MOZSEARCH_NS_10])) {
+    // Ensure we have a supported engine type before attempting to parse it.
+    let element = this._data;
+    if ((element.localName == MOZSEARCH_LOCALNAME &&
+         element.namespaceURI == MOZSEARCH_NS_10) ||
+        (element.localName == OPENSEARCH_LOCALNAME &&
+         OPENSEARCH_NAMESPACES.indexOf(element.namespaceURI) != -1)) {
+      LOG("_init: Initing search plugin from " + this._location);
 
-          LOG("_init: Initing MozSearch plugin from " + this._location);
+      this._parse();
 
-          this._type = SEARCH_TYPE_MOZSEARCH;
-          this._parseAsMozSearch();
-
-        } else if (checkNameSpace(this._data, [OPENSEARCH_LOCALNAME],
-                                  OPENSEARCH_NAMESPACES)) {
-
-          LOG("_init: Initing OpenSearch plugin from " + this._location);
-
-          this._type = SEARCH_TYPE_OPENSEARCH;
-          this._parseAsOpenSearch();
-
-        } else
-          FAIL(this._location + " is not a valid search plugin.", Cr.NS_ERROR_FAILURE);
-
-        break;
-      case SEARCH_DATA_TEXT:
-        LOG("_init: Initing Sherlock plugin from " + this._location);
-
-        // the only text-based format we support is Sherlock
-        this._type = SEARCH_TYPE_SHERLOCK;
-        this._parseAsSherlock();
-    }
+    } else
+      FAIL(this._location + " is not a valid search plugin.", Cr.NS_ERROR_FAILURE);
 
     // No need to keep a ref to our data (which in some cases can be a document
     // element) past this point
@@ -2034,19 +2034,6 @@ Engine.prototype = {
             // _addMozParam is not needed here since it can be serialized fine without. _addMozParam
             // also requires a unique "name" which is not normally the case when @purpose is used.
             break;
-          case "defaultEngine":
-            // If this engine was the default search engine, use the true value
-            if (this._isDefaultEngine())
-              value = param.getAttribute("trueValue");
-            else
-              value = param.getAttribute("falseValue");
-            url.addParam(param.getAttribute("name"), value);
-            url._addMozParam({"name": param.getAttribute("name"),
-                              "falseValue": param.getAttribute("falseValue"),
-                              "trueValue": param.getAttribute("trueValue"),
-                              "condition": "defaultEngine"});
-            break;
-
           case "pref":
             try {
               value = getMozParamPref(param.getAttribute("pref"), value);
@@ -2068,17 +2055,6 @@ Engine.prototype = {
     this._urls.push(url);
   },
 
-  _isDefaultEngine: function SRCH_ENG__isDefaultEngine() {
-    let defaultPrefB = Services.prefs.getDefaultBranch(BROWSER_SEARCH_PREF);
-    let nsIPLS = Ci.nsIPrefLocalizedString;
-    let defaultEngine;
-    let pref = getGeoSpecificPrefName("defaultenginename");
-    try {
-      defaultEngine = defaultPrefB.getComplexValue(pref, nsIPLS).data;
-    } catch (ex) {}
-    return this.name == defaultEngine;
-  },
-
   /**
    * Get the icon from an OpenSearch Image element.
    * @see http://opensearch.a9.com/spec/1.1/description/#image
@@ -2098,16 +2074,11 @@ Engine.prototype = {
     this._setIcon(aElement.textContent, isPrefered, width, height);
   },
 
-  _parseAsMozSearch: function SRCH_ENG_parseAsMoz() {
-    //forward to the OpenSearch parser
-    this._parseAsOpenSearch();
-  },
-
   /**
    * Extract search engine information from the collected data to initialize
    * the engine object.
    */
-  _parseAsOpenSearch: function SRCH_ENG_parseAsOS() {
+  _parse: function SRCH_ENG_parse() {
     var doc = this._data;
 
     // The OpenSearch spec sets a default value for the input encoding.
@@ -2127,7 +2098,7 @@ Engine.prototype = {
             this._parseURL(child);
           } catch (ex) {
             // Parsing of the element failed, just skip it.
-            LOG("_parseAsOpenSearch: failed to parse URL child: " + ex);
+            LOG("_parse: failed to parse URL child: " + ex);
           }
           break;
         case "Image":
@@ -2152,324 +2123,13 @@ Engine.prototype = {
           break;
         case "ExtensionID":
           this._extensionID = child.textContent;
-          breakk;
+          break;
       }
     }
     if (!this.name || (this._urls.length == 0))
-      FAIL("_parseAsOpenSearch: No name, or missing URL!", Cr.NS_ERROR_FAILURE);
+      FAIL("_parse: No name, or missing URL!", Cr.NS_ERROR_FAILURE);
     if (!this.supportsResponseType(URLTYPE_SEARCH_HTML))
-      FAIL("_parseAsOpenSearch: No text/html result type!", Cr.NS_ERROR_FAILURE);
-  },
-
-  /**
-   * Extract search engine information from the collected data to initialize
-   * the engine object.
-   */
-  _parseAsSherlock: function SRCH_ENG_parseAsSherlock() {
-    /**
-     * Extracts one Sherlock "section" from aSource. A section is essentially
-     * an HTML element with attributes, but each attribute must be on a new
-     * line, by definition.
-     *
-     * @param aLines
-     *        An array of lines from the sherlock file.
-     * @param aSection
-     *        The name of the section (e.g. "search" or "browser"). This value
-     *        is not case sensitive.
-     * @returns an object whose properties correspond to the section's
-     *          attributes.
-     */
-    function getSection(aLines, aSection) {
-      LOG("_parseAsSherlock::getSection: Sherlock lines:\n" +
-          aLines.join("\n"));
-      var lines = aLines;
-      var startMark = new RegExp("^\\s*<" + aSection.toLowerCase() + "\\s*",
-                                 "gi");
-      var endMark   = /\s*>\s*$/gi;
-
-      var foundStart = false;
-      var startLine, numberOfLines;
-      // Find the beginning and end of the section
-      for (var i = 0; i < lines.length; i++) {
-        if (foundStart) {
-          if (endMark.test(lines[i])) {
-            numberOfLines = i - startLine;
-            // Remove the end marker
-            lines[i] = lines[i].replace(endMark, "");
-            // If the endmarker was not the only thing on the line, include
-            // this line in the results
-            if (lines[i])
-              numberOfLines++;
-            break;
-          }
-        } else {
-          if (startMark.test(lines[i])) {
-            foundStart = true;
-            // Remove the start marker
-            lines[i] = lines[i].replace(startMark, "");
-            startLine = i;
-            // If the line is empty, don't include it in the result
-            if (!lines[i])
-              startLine++;
-          }
-        }
-      }
-      LOG("_parseAsSherlock::getSection: Start index: " + startLine +
-          "\nNumber of lines: " + numberOfLines);
-      lines = lines.splice(startLine, numberOfLines);
-      LOG("_parseAsSherlock::getSection: Section lines:\n" +
-          lines.join("\n"));
-
-      var section = {};
-      for (var i = 0; i < lines.length; i++) {
-        var line = lines[i].trim();
-
-        var els = line.split("=");
-        var name = els.shift().trim().toLowerCase();
-        var value = els.join("=").trim();
-
-        if (!name || !value)
-          continue;
-
-        // Strip leading and trailing whitespace, remove quotes from the
-        // value, and remove any trailing slashes or ">" characters
-        value = value.replace(/^["']/, "")
-                     .replace(/["']\s*[\\\/]?>?\s*$/, "") || "";
-        value = value.trim();
-
-        // Don't clobber existing attributes
-        if (!(name in section))
-          section[name] = value;
-      }
-      return section;
-    }
-
-    /**
-     * Returns an array of name-value pair arrays representing the Sherlock
-     * file's input elements. User defined inputs return USER_DEFINED
-     * as the value. Elements are returned in the order they appear in the
-     * source file.
-     *
-     *   Example:
-     *      <input name="foo" value="bar">
-     *      <input name="foopy" user>
-     *   Returns:
-     *      [["foo", "bar"], ["foopy", "{searchTerms}"]]
-     *
-     * @param aLines
-     *        An array of lines from the source file.
-     */
-    function getInputs(aLines) {
-
-      /**
-       * Extracts an attribute value from a given a line of text.
-       *    Example: <input value="foo" name="bar">
-       *      Extracts the string |foo| or |bar| given an input aAttr of
-       *      |value| or |name|.
-       * Attributes may be quoted or unquoted. If unquoted, any whitespace
-       * indicates the end of the attribute value.
-       *    Example: < value=22 33 name=44\334 >
-       *      Returns |22| for "value" and |44\334| for "name".
-       *
-       * @param aAttr
-       *        The name of the attribute for which to obtain the value. This
-       *        value is not case sensitive.
-       * @param aLine
-       *        The line containing the attribute.
-       *
-       * @returns the attribute value, or an empty string if the attribute
-       *          doesn't exist.
-       */
-      function getAttr(aAttr, aLine) {
-        // Used to determine whether an "input" line from a Sherlock file is a
-        // "user defined" input.
-        const userInput = /(\s|["'=])user(\s|[>="'\/\\+]|$)/i;
-
-        LOG("_parseAsSherlock::getAttr: Getting attr: \"" +
-            aAttr + "\" for line: \"" + aLine + "\"");
-        // We're not case sensitive, but we want to return the attribute value
-        // in its original case, so create a copy of the source
-        var lLine = aLine.toLowerCase();
-        var attr = aAttr.toLowerCase();
-
-        var attrStart = lLine.search(new RegExp("\\s" + attr, "i"));
-        if (attrStart == -1) {
-
-          // If this is the "user defined input" (i.e. contains the empty
-          // "user" attribute), return our special keyword
-          if (userInput.test(lLine) && attr == "value") {
-            LOG("_parseAsSherlock::getAttr: Found user input!\nLine:\"" + lLine
-                + "\"");
-            return USER_DEFINED;
-          }
-          // The attribute doesn't exist - ignore
-          LOG("_parseAsSherlock::getAttr: Failed to find attribute:\nLine:\""
-              + lLine + "\"\nAttr:\"" + attr + "\"");
-          return "";
-        }
-
-        var valueStart = lLine.indexOf("=", attrStart) + "=".length;
-        if (valueStart == -1)
-          return "";
-
-        var quoteStart = lLine.indexOf("\"", valueStart);
-        if (quoteStart == -1) {
-
-          // Unquoted attribute, get the rest of the line, trimmed at the first
-          // sign of whitespace. If the rest of the line is only whitespace,
-          // returns a blank string.
-          return lLine.substr(valueStart).replace(/\s.*$/, "");
-
-        } else {
-          // Make sure that there's only whitespace between the start of the
-          // value and the first quote. If there is, end the attribute value at
-          // the first sign of whitespace. This prevents us from falling into
-          // the next attribute if this is an unquoted attribute followed by a
-          // quoted attribute.
-          var betweenEqualAndQuote = lLine.substring(valueStart, quoteStart);
-          if (/\S/.test(betweenEqualAndQuote))
-            return lLine.substr(valueStart).replace(/\s.*$/, "");
-
-          // Adjust the start index to account for the opening quote
-          valueStart = quoteStart + "\"".length;
-          // Find the closing quote
-          var valueEnd = lLine.indexOf("\"", valueStart);
-          // If there is no closing quote, just go to the end of the line
-          if (valueEnd == -1)
-            valueEnd = aLine.length;
-        }
-        return aLine.substring(valueStart, valueEnd);
-      }
-
-      var inputs = [];
-
-      LOG("_parseAsSherlock::getInputs: Lines:\n" + aLines);
-      // Filter out everything but non-inputs
-      let lines = aLines.filter(function (line) {
-        return /^\s*<input/i.test(line);
-      });
-      LOG("_parseAsSherlock::getInputs: Filtered lines:\n" + lines);
-
-      lines.forEach(function (line) {
-        // Strip leading/trailing whitespace and remove the surrounding markup
-        // ("<input" and ">")
-        line = line.trim().replace(/^<input/i, "").replace(/>$/, "");
-
-        // If this is one of the "directional" inputs (<inputnext>/<inputprev>)
-        const directionalInput = /^(prev|next)/i;
-        if (directionalInput.test(line)) {
-
-          // Make it look like a normal input by removing "prev" or "next"
-          line = line.replace(directionalInput, "");
-
-          // If it has a name, give it a dummy value to match previous
-          // nsInternetSearchService behavior
-          if (/name\s*=/i.test(line)) {
-            line += " value=\"0\"";
-          } else
-            return; // Line has no name, skip it
-        }
-
-        var attrName = getAttr("name", line);
-        var attrValue = getAttr("value", line);
-        LOG("_parseAsSherlock::getInputs: Got input:\nName:\"" + attrName +
-            "\"\nValue:\"" + attrValue + "\"");
-        if (attrValue)
-          inputs.push([attrName, attrValue]);
-      });
-      return inputs;
-    }
-
-    function err(aErr) {
-      FAIL("_parseAsSherlock::err: Sherlock param error:\n" + aErr,
-           Cr.NS_ERROR_FAILURE);
-    }
-
-    // First try converting our byte array using the default Sherlock encoding.
-    // If this fails, or if we find a sourceTextEncoding attribute, we need to
-    // reconvert the byte array using the specified encoding.
-    var sherlockLines, searchSection, sourceTextEncoding, browserSection;
-    try {
-      sherlockLines = sherlockBytesToLines(this._data);
-      searchSection = getSection(sherlockLines, "search");
-      browserSection = getSection(sherlockLines, "browser");
-      sourceTextEncoding = parseInt(searchSection["sourcetextencoding"]);
-      if (sourceTextEncoding) {
-        // Re-convert the bytes using the found sourceTextEncoding
-        sherlockLines = sherlockBytesToLines(this._data, sourceTextEncoding);
-        searchSection = getSection(sherlockLines, "search");
-        browserSection = getSection(sherlockLines, "browser");
-      }
-    } catch (ex) {
-      // The conversion using the default charset failed. Remove any non-ascii
-      // bytes and try to find a sourceTextEncoding.
-      var asciiBytes = this._data.filter(function (n) {return !(0x80 & n);});
-      var asciiString = String.fromCharCode.apply(null, asciiBytes);
-      sherlockLines = asciiString.split(NEW_LINES).filter(isUsefulLine);
-      searchSection = getSection(sherlockLines, "search");
-      sourceTextEncoding = parseInt(searchSection["sourcetextencoding"]);
-      if (sourceTextEncoding) {
-        sherlockLines = sherlockBytesToLines(this._data, sourceTextEncoding);
-        searchSection = getSection(sherlockLines, "search");
-        browserSection = getSection(sherlockLines, "browser");
-      } else
-        ERROR("Couldn't find a working charset", Cr.NS_ERROR_FAILURE);
-    }
-
-    LOG("_parseAsSherlock: Search section:\n" + searchSection.toSource());
-
-    this._name = searchSection["name"] || err("Missing name!");
-    this._description = searchSection["description"] || "";
-    this._queryCharset = searchSection["querycharset"] ||
-                         queryCharsetFromCode(searchSection["queryencoding"]);
-    this._searchForm = searchSection["searchform"];
-
-    this._updateInterval = parseInt(browserSection["updatecheckdays"]);
-
-    this._updateURL = browserSection["update"];
-    this._iconUpdateURL = browserSection["updateicon"];
-
-    var method = (searchSection["method"] || "GET").toUpperCase();
-    var template = searchSection["action"] || err("Missing action!");
-
-    var inputs = getInputs(sherlockLines);
-    LOG("_parseAsSherlock: Inputs:\n" + inputs.toSource());
-
-    var url = null;
-
-    if (method == "GET") {
-      // Here's how we construct the input string:
-      // <input> is first:  Name Attr:  Prefix      Data           Example:
-      // YES                EMPTY       None        <value>        TEMPLATE<value>
-      // YES                NON-EMPTY   ?           <name>=<value> TEMPLATE?<name>=<value>
-      // NO                 EMPTY       ------------- <ignored> --------------
-      // NO                 NON-EMPTY   &           <name>=<value> TEMPLATE?<n1>=<v1>&<n2>=<v2>
-      for (var i = 0; i < inputs.length; i++) {
-        var name  = inputs[i][0];
-        var value = inputs[i][1];
-        if (i==0) {
-          if (name == "")
-            template += USER_DEFINED;
-          else
-            template += "?" + name + "=" + value;
-        } else if (name != "")
-          template += "&" + name + "=" + value;
-      }
-      url = new EngineURL(URLTYPE_SEARCH_HTML, method, template);
-
-    } else if (method == "POST") {
-      // Create the URL object and just add the parameters directly
-      url = new EngineURL(URLTYPE_SEARCH_HTML, method, template);
-      for (var i = 0; i < inputs.length; i++) {
-        var name  = inputs[i][0];
-        var value = inputs[i][1];
-        if (name)
-          url.addParam(name, value);
-      }
-    } else
-      err("Invalid method!");
-
-    this._urls.push(url);
+      FAIL("_parse: No text/html result type!", Cr.NS_ERROR_FAILURE);
   },
 
   /**
@@ -2483,8 +2143,6 @@ Engine.prototype = {
       this._hasPreferredIcon = true;
     else
       this._hasPreferredIcon = false;
-    this._hidden = aJson._hidden;
-    this._type = aJson.type || SEARCH_TYPE_MOZSEARCH;
     this._queryCharset = aJson.queryCharset || DEFAULT_QUERY_CHARSET;
     this.__searchForm = aJson.__searchForm;
     this.__installLocation = aJson._installLocation || SEARCH_APP_DIR;
@@ -2512,44 +2170,36 @@ Engine.prototype = {
 
   /**
    * Creates a JavaScript object that represents this engine.
-   * @param aFilter
-   *        Whether or not to filter out common default values. Recommended for
-   *        use with _initWithJSON().
    * @returns An object suitable for serialization as JSON.
    **/
-  _serializeToJSON: function SRCH_ENG__serializeToJSON(aFilter) {
+  toJSON: function SRCH_ENG_toJSON() {
     var json = {
       _id: this._id,
       _name: this._name,
-      _hidden: this.hidden,
       description: this.description,
       __searchForm: this.__searchForm,
       _iconURL: this._iconURL,
       _iconMapObj: this._iconMapObj,
-      _urls: [url._serializeToJSON() for each(url in this._urls)]
+      _urls: this._urls
     };
 
     if (this._file instanceof Ci.nsILocalFile)
       json.filePath = this._file.persistentDescriptor;
     if (this._uri)
       json._url = this._uri.spec;
-    if (this._installLocation != SEARCH_APP_DIR || !aFilter)
+    if (this._installLocation != SEARCH_APP_DIR)
       json._installLocation = this._installLocation;
-    if (this._updateInterval || !aFilter)
+    if (this._updateInterval)
       json._updateInterval = this._updateInterval;
-    if (this._updateURL || !aFilter)
+    if (this._updateURL)
       json._updateURL = this._updateURL;
-    if (this._iconUpdateURL || !aFilter)
+    if (this._iconUpdateURL)
       json._iconUpdateURL = this._iconUpdateURL;
-    if (!this._hasPreferredIcon || !aFilter)
+    if (!this._hasPreferredIcon)
       json._hasPreferredIcon = this._hasPreferredIcon;
-    if (this.type != SEARCH_TYPE_MOZSEARCH || !aFilter)
-      json.type = this.type;
-    if (this.queryCharset != DEFAULT_QUERY_CHARSET || !aFilter)
+    if (this.queryCharset != DEFAULT_QUERY_CHARSET)
       json.queryCharset = this.queryCharset;
-    if (this._dataType != SEARCH_DATA_XML || !aFilter)
-      json._dataType = this._dataType;
-    if (!this._readOnly || !aFilter)
+    if (!this._readOnly)
       json._readOnly = this._readOnly;
     if (this._extensionID) {
       json.extensionID = this._extensionID;
@@ -2718,14 +2368,11 @@ Engine.prototype = {
   },
 
   get hidden() {
-    if (this._hidden === null)
-      this._hidden = engineMetadataService.getAttr(this, "hidden") || false;
-    return this._hidden;
+    return engineMetadataService.getAttr(this, "hidden") || false;
   },
   set hidden(val) {
     var value = !!val;
-    if (value != this._hidden) {
-      this._hidden = value;
+    if (value != this.hidden) {
       engineMetadataService.setAttr(this, "hidden", value);
       notifyAction(this, SEARCH_ENGINE_CHANGED);
     }
@@ -2811,6 +2458,80 @@ Engine.prototype = {
     return this.__id = this._file.path;
   },
 
+  // This indicates where we found the .xml file to load the engine,
+  // and attempts to hide user-identifiable data (such as username).
+  get _anonymizedLoadPath() {
+    /* Examples of expected output:
+     *   jar:[app]/omni.ja!browser/engine.xml
+     *     'browser' here is the name of the chrome package, not a folder.
+     *   [profile]/searchplugins/engine.xml
+     *   [distribution]/searchplugins/common/engine.xml
+     *   [other]/engine.xml
+     */
+
+    let leafName = this._getLeafName();
+    if (!leafName)
+      return "null";
+
+    let prefix = "", suffix = "";
+    let file = this._file;
+    if (!file) {
+      let uri = this._uri;
+      if (uri.schemeIs("resource")) {
+        uri = makeURI(Services.io.getProtocolHandler("resource")
+                              .QueryInterface(Ci.nsISubstitutingProtocolHandler)
+                              .resolveURI(uri));
+      }
+      if (uri.schemeIs("chrome")) {
+        let packageName = uri.hostPort;
+        uri = gChromeReg.convertChromeURL(uri);
+        if (uri instanceof Ci.nsINestedURI) {
+          prefix = "jar:";
+          suffix = "!" + packageName + "/" + leafName;
+          uri = uri.innermostURI;
+        }
+        uri.QueryInterface(Ci.nsIFileURL)
+        file = uri.file;
+      } else {
+        return "[" + uri.scheme + "]/" + leafName;
+      }
+    }
+
+    let id;
+    let enginePath = file.path;
+
+    const NS_XPCOM_CURRENT_PROCESS_DIR = "XCurProcD";
+    const NS_APP_USER_PROFILE_50_DIR = "ProfD";
+    const XRE_APP_DISTRIBUTION_DIR = "XREAppDist";
+
+    const knownDirs = {
+      app: NS_XPCOM_CURRENT_PROCESS_DIR,
+      profile: NS_APP_USER_PROFILE_50_DIR,
+      distribution: XRE_APP_DISTRIBUTION_DIR
+    };
+
+    for (let key in knownDirs) {
+      let path;
+      try {
+        path = getDir(knownDirs[key]).path;
+      } catch(e) {
+        // Getting XRE_APP_DISTRIBUTION_DIR throws during unit tests.
+        continue;
+      }
+      if (enginePath.startsWith(path)) {
+        id = "[" + key + "]" + enginePath.slice(path.length).replace(/\\/g, "/");
+        break;
+      }
+    }
+
+    // If the folder doesn't have a known ancestor, don't record its path to
+    // avoid leaking user identifiable data.
+    if (!id)
+      id = "[other]/" + file.leafName;
+
+    return prefix + id + suffix;
+  },
+
   get _installLocation() {
     if (this.__installLocation === null) {
       if (!this._file) {
@@ -2856,15 +2577,15 @@ Engine.prototype = {
     return this._name;
   },
 
-  get type() {
-    return this._type;
+  get searchForm() {
+    return this._getSearchFormWithPurpose();
   },
 
-  get searchForm() {
+  _getSearchFormWithPurpose(aPurpose = "") {
     // First look for a <Url rel="searchform">
     var searchFormURL = this._getURLOfType(URLTYPE_SEARCH_HTML, "searchform");
     if (searchFormURL) {
-      let submission = searchFormURL.getSubmission("", this);
+      let submission = searchFormURL.getSubmission("", this, aPurpose);
 
       // If the rel=searchform URL is not type="get" (i.e. has postData),
       // ignore it, since we can only return a URL.
@@ -2886,7 +2607,7 @@ Engine.prototype = {
   get queryCharset() {
     if (this._queryCharset)
       return this._queryCharset;
-    return this._queryCharset = queryCharsetFromCode(/* get the default */);
+    return this._queryCharset = "windows-1252"; // the default
   },
 
   // from nsISearchEngine
@@ -2947,7 +2668,7 @@ Engine.prototype = {
 
     if (!aData) {
       // Return a dummy submission object with our searchForm attribute
-      return new Submission(makeURI(this.searchForm), null);
+      return new Submission(makeURI(this._getSearchFormWithPurpose(aPurpose)), null);
     }
 
     LOG("getSubmission: In data: \"" + aData + "\"; Purpose: \"" + aPurpose + "\"");
@@ -3281,33 +3002,44 @@ SearchService.prototype = {
 
   _engines: { },
   __sortedEngines: null,
+  _visibleDefaultEngines: [],
   get _sortedEngines() {
     if (!this.__sortedEngines)
       return this._buildSortedEngineList();
     return this.__sortedEngines;
   },
 
-  // Get the original Engine object that belongs to the defaultenginename pref
-  // of the default branch.
+  // Get the original Engine object that is the default for this region,
+  // ignoring changes the user may have subsequently made.
   get _originalDefaultEngine() {
-    let defaultPrefB = Services.prefs.getDefaultBranch(BROWSER_SEARCH_PREF);
-    let nsIPLS = Ci.nsIPrefLocalizedString;
-    let defaultEngine;
-
-    let defPref = getGeoSpecificPrefName("defaultenginename");
-    try {
-      defaultEngine = defaultPrefB.getComplexValue(defPref, nsIPLS).data;
-    } catch (ex) {
-      // If the default pref is invalid (e.g. an add-on set it to a bogus value)
-      // getEngineByName will just return null, which is the best we can do.
+    let defaultEngine = engineMetadataService.getGlobalAttr("searchDefault");
+    if (defaultEngine &&
+        engineMetadataService.getGlobalAttr("searchDefaultHash") != getVerificationHash(defaultEngine)) {
+      LOG("get _originalDefaultEngine, invalid searchDefaultHash for: " + defaultEngine);
+      defaultEngine = "";
     }
+
+    if (!defaultEngine) {
+      let defaultPrefB = Services.prefs.getDefaultBranch(BROWSER_SEARCH_PREF);
+      let nsIPLS = Ci.nsIPrefLocalizedString;
+
+      let defPref = getGeoSpecificPrefName("defaultenginename");
+      try {
+        defaultEngine = defaultPrefB.getComplexValue(defPref, nsIPLS).data;
+      } catch (ex) {
+        // If the default pref is invalid (e.g. an add-on set it to a bogus value)
+        // getEngineByName will just return null, which is the best we can do.
+      }
+    }
+
     return this.getEngineByName(defaultEngine);
   },
 
-  _buildCache: function SRCH_SVC__buildCache() {
-    if (!getBoolPref(BROWSER_SEARCH_PREF + "cache.enabled", true))
-      return;
+  resetToOriginalDefaultEngine: function SRCH_SVC__resetToOriginalDefaultEngine() {
+    this.currentEngine = this._originalDefaultEngine;
+  },
 
+  _buildCache: function SRCH_SVC__buildCache() {
     TelemetryStopwatch.start("SEARCH_SERVICE_BUILD_CACHE_MS");
     let cache = {};
     let locale = getLocale();
@@ -3325,31 +3057,26 @@ SearchService.prototype = {
     cache.locale = locale;
 
     cache.directories = {};
+    cache.visibleDefaultEngines = this._visibleDefaultEngines;
 
-    function getParent(engine) {
+    let getParent = engine => {
       if (engine._file)
         return engine._file.parent;
 
       let uri = engine._uri;
-      if (!uri.schemeIs("chrome")) {
-        LOG("getParent: engine URI must be a chrome URI if it has no file");
+      if (!uri.schemeIs("resource")) {
+        LOG("getParent: engine URI must be a resource URI if it has no file");
         return null;
       }
 
-      // use the underlying JAR file, for chrome URIs
-      try {
-        uri = gChromeReg.convertChromeURL(uri);
-        if (uri instanceof Ci.nsINestedURI)
-          uri = uri.innermostURI;
-        uri.QueryInterface(Ci.nsIFileURL)
+      // use the underlying JAR file, for resource URIs
+      let chan = makeChannel(uri.spec);
+      if (chan)
+        return this._convertChannelToFile(chan);
 
-        return uri.file;
-      } catch (ex) {
-        LOG("getParent: couldn't map chrome:// URI to a file: " + ex)
-      }
-
+      LOG("getParent: couldn't map resource:// URI to a file");
       return null;
-    }
+    };
 
     for each (let engine in this._engines) {
       let parent = getParent(engine);
@@ -3366,7 +3093,7 @@ SearchService.prototype = {
         cacheEntry.engines = [];
         cache.directories[cacheKey] = cacheEntry;
       }
-      cache.directories[cacheKey].engines.push(engine._serializeToJSON(true));
+      cache.directories[cacheKey].engines.push(engine);
     }
 
     try {
@@ -3393,37 +3120,50 @@ SearchService.prototype = {
     LOG("_syncLoadEngines: start");
     // See if we have a cache file so we don't have to parse a bunch of XML.
     let cache = {};
-    let cacheEnabled = getBoolPref(BROWSER_SEARCH_PREF + "cache.enabled", true);
-    if (cacheEnabled) {
-      let cacheFile = getDir(NS_APP_USER_PROFILE_50_DIR);
-      cacheFile.append("search.json");
-      if (cacheFile.exists())
-        cache = this._readCacheFile(cacheFile);
-    }
+    let cacheFile = getDir(NS_APP_USER_PROFILE_50_DIR);
+    cacheFile.append("search.json");
+    if (cacheFile.exists())
+      cache = this._readCacheFile(cacheFile);
 
-    let loadDirs = [];
-    let locations = getDir(NS_APP_SEARCH_DIR_LIST, Ci.nsISimpleEnumerator);
+    let [chromeFiles, chromeURIs] = this._findJAREngines();
+
+    let distDirs = [];
+    let locations;
+    try {
+      locations = getDir(NS_APP_DISTRIBUTION_SEARCH_DIR_LIST,
+                         Ci.nsISimpleEnumerator);
+    } catch (e) {
+      // NS_APP_DISTRIBUTION_SEARCH_DIR_LIST is defined by each app
+      // so this throws during unit tests (but not xpcshell tests).
+      locations = {hasMoreElements: () => false};
+    }
     while (locations.hasMoreElements()) {
       let dir = locations.getNext().QueryInterface(Ci.nsIFile);
       if (dir.directoryEntries.hasMoreElements())
-        loadDirs.push(dir);
+        distDirs.push(dir);
     }
 
-    let loadFromJARs = getBoolPref(BROWSER_SEARCH_PREF + "loadFromJars", false);
-    let chromeURIs = [];
-    let chromeFiles = [];
-    if (loadFromJARs)
-      [chromeFiles, chromeURIs] = this._findJAREngines();
+    let otherDirs = [];
+    locations = getDir(NS_APP_SEARCH_DIR_LIST, Ci.nsISimpleEnumerator);
+    while (locations.hasMoreElements()) {
+      let dir = locations.getNext().QueryInterface(Ci.nsIFile);
+      if (dir.directoryEntries.hasMoreElements())
+        otherDirs.push(dir);
+    }
 
-    let toLoad = chromeFiles.concat(loadDirs);
+    let toLoad = chromeFiles.concat(distDirs, otherDirs);
 
     function modifiedDir(aDir) {
       return (!cache.directories || !cache.directories[aDir.path] ||
               cache.directories[aDir.path].lastModifiedTime != aDir.lastModifiedTime);
     }
 
-    function notInCachePath(aPathToLoad)
-      cachePaths.indexOf(aPathToLoad.path) == -1;
+    function notInCachePath(aPathToLoad) {
+      return cachePaths.indexOf(aPathToLoad.path) == -1;
+    }
+    function notInCacheVisibleEngines(aEngineName) {
+      return cache.visibleDefaultEngines.indexOf(aEngineName) == -1;
+    }
 
     let buildID = Services.appinfo.platformBuildID;
     let cachePaths = [path for (path in cache.directories)];
@@ -3434,16 +3174,19 @@ SearchService.prototype = {
                        cache.buildID != buildID ||
                        cachePaths.length != toLoad.length ||
                        toLoad.some(notInCachePath) ||
+                       cache.visibleDefaultEngines.length != this._visibleDefaultEngines.length ||
+                       this._visibleDefaultEngines.some(notInCacheVisibleEngines) ||
                        toLoad.some(modifiedDir);
 
-    if (!cacheEnabled || rebuildCache) {
+    if (rebuildCache) {
       LOG("_loadEngines: Absent or outdated cache. Loading engines from disk.");
-      loadDirs.forEach(this._loadEnginesFromDir, this);
+      distDirs.forEach(this._loadEnginesFromDir, this);
 
       this._loadFromChromeURLs(chromeURIs);
 
-      if (cacheEnabled)
-        this._buildCache();
+      otherDirs.forEach(this._loadEnginesFromDir, this);
+
+      this._buildCache();
       return;
     }
 
@@ -3465,24 +3208,32 @@ SearchService.prototype = {
       LOG("_asyncLoadEngines: start");
       // See if we have a cache file so we don't have to parse a bunch of XML.
       let cache = {};
-      let cacheEnabled = getBoolPref(BROWSER_SEARCH_PREF + "cache.enabled", true);
-      if (cacheEnabled) {
-        let cacheFilePath = OS.Path.join(OS.Constants.Path.profileDir, "search.json");
-        cache = yield checkForSyncCompletion(this._asyncReadCacheFile(cacheFilePath));
-      }
+      let cacheFilePath = OS.Path.join(OS.Constants.Path.profileDir, "search.json");
+      cache = yield checkForSyncCompletion(this._asyncReadCacheFile(cacheFilePath));
 
-      // Add all the non-empty directories of NS_APP_SEARCH_DIR_LIST to
-      // loadDirs.
-      let loadDirs = [];
-      let locations = getDir(NS_APP_SEARCH_DIR_LIST, Ci.nsISimpleEnumerator);
+      Services.obs.notifyObservers(null, SEARCH_SERVICE_TOPIC, "find-jar-engines");
+      let [chromeFiles, chromeURIs] =
+        yield checkForSyncCompletion(this._asyncFindJAREngines());
+
+      // Get the non-empty distribution directories into distDirs...
+      let distDirs = [];
+      let locations;
+      try {
+        locations = getDir(NS_APP_DISTRIBUTION_SEARCH_DIR_LIST,
+                           Ci.nsISimpleEnumerator);
+      } catch (e) {
+        // NS_APP_DISTRIBUTION_SEARCH_DIR_LIST is defined by each app
+        // so this throws during unit tests (but not xpcshell tests).
+        locations = {hasMoreElements: () => false};
+      }
       while (locations.hasMoreElements()) {
         let dir = locations.getNext().QueryInterface(Ci.nsIFile);
         let iterator = new OS.File.DirectoryIterator(dir.path,
                                                      { winPattern: "*.xml" });
         try {
-          // Add dir to loadDirs if it contains any files.
+          // Add dir to distDirs if it contains any files.
           yield checkForSyncCompletion(iterator.next());
-          loadDirs.push(dir);
+          distDirs.push(dir);
         } catch (ex if ex.result != Cr.NS_ERROR_ALREADY_INITIALIZED) {
           // Catch for StopIteration exception.
         } finally {
@@ -3490,16 +3241,26 @@ SearchService.prototype = {
         }
       }
 
-      let loadFromJARs = getBoolPref(BROWSER_SEARCH_PREF + "loadFromJars", false);
-      let chromeURIs = [];
-      let chromeFiles = [];
-      if (loadFromJARs) {
-        Services.obs.notifyObservers(null, SEARCH_SERVICE_TOPIC, "find-jar-engines");
-        [chromeFiles, chromeURIs] =
-          yield checkForSyncCompletion(this._asyncFindJAREngines());
+      // Add the non-empty directories of NS_APP_SEARCH_DIR_LIST to
+      // otherDirs...
+      let otherDirs = [];
+      locations = getDir(NS_APP_SEARCH_DIR_LIST, Ci.nsISimpleEnumerator);
+      while (locations.hasMoreElements()) {
+        let dir = locations.getNext().QueryInterface(Ci.nsIFile);
+        let iterator = new OS.File.DirectoryIterator(dir.path,
+                                                     { winPattern: "*.xml" });
+        try {
+          // Add dir to otherDirs if it contains any files.
+          yield checkForSyncCompletion(iterator.next());
+          otherDirs.push(dir);
+        } catch (ex if ex.result != Cr.NS_ERROR_ALREADY_INITIALIZED) {
+          // Catch for StopIteration exception.
+        } finally {
+          iterator.close();
+        }
       }
 
-      let toLoad = chromeFiles.concat(loadDirs);
+      let toLoad = chromeFiles.concat(distDirs, otherDirs);
       function hasModifiedDir(aList) {
         return Task.spawn(function() {
           let modifiedDir = false;
@@ -3521,8 +3282,12 @@ SearchService.prototype = {
         });
       }
 
-      function notInCachePath(aPathToLoad)
-        cachePaths.indexOf(aPathToLoad.path) == -1;
+      function notInCachePath(aPathToLoad) {
+        return cachePaths.indexOf(aPathToLoad.path) == -1;
+      }
+      function notInCacheVisibleEngines(aEngineName) {
+        return cache.visibleDefaultEngines.indexOf(aEngineName) == -1;
+      }
 
       let buildID = Services.appinfo.platformBuildID;
       let cachePaths = [path for (path in cache.directories)];
@@ -3533,12 +3298,14 @@ SearchService.prototype = {
                          cache.buildID != buildID ||
                          cachePaths.length != toLoad.length ||
                          toLoad.some(notInCachePath) ||
+                         cache.visibleDefaultEngines.length != this._visibleDefaultEngines.length ||
+                         this._visibleDefaultEngines.some(notInCacheVisibleEngines) ||
                          (yield checkForSyncCompletion(hasModifiedDir(toLoad)));
 
-      if (!cacheEnabled || rebuildCache) {
+      if (rebuildCache) {
         LOG("_asyncLoadEngines: Absent or outdated cache. Loading engines from disk.");
         let engines = [];
-        for (let loadDir of loadDirs) {
+        for (let loadDir of distDirs) {
           let enginesFromDir =
             yield checkForSyncCompletion(this._asyncLoadEnginesFromDir(loadDir));
           engines = engines.concat(enginesFromDir);
@@ -3546,12 +3313,16 @@ SearchService.prototype = {
         let enginesFromURLs =
            yield checkForSyncCompletion(this._asyncLoadFromChromeURLs(chromeURIs));
         engines = engines.concat(enginesFromURLs);
+        for (let loadDir of otherDirs) {
+          let enginesFromDir =
+            yield checkForSyncCompletion(this._asyncLoadEnginesFromDir(loadDir));
+          engines = engines.concat(enginesFromDir);
+        }
 
         for (let engine of engines) {
           this._addEngineToStore(engine);
         }
-        if (cacheEnabled)
-          this._buildCache();
+        this._buildCache();
         return;
       }
 
@@ -3564,6 +3335,7 @@ SearchService.prototype = {
   },
 
   _asyncReInit: function () {
+    LOG("_asyncReInit");
     // Start by clearing the initialized state, so we don't abort early.
     gInitialized = false;
 
@@ -3572,6 +3344,7 @@ SearchService.prototype = {
     this.__sortedEngines = null;
     this._currentEngine = null;
     this._defaultEngine = null;
+    this._visibleDefaultEngines = [];
 
     // Clear the metadata service.
     engineMetadataService._initialized = false;
@@ -3579,8 +3352,14 @@ SearchService.prototype = {
 
     Task.spawn(function* () {
       try {
+        LOG("Restarting engineMetadataService");
         yield engineMetadataService.init();
-        yield this._asyncLoadEngines();
+        yield ensureKnownCountryCode();
+
+        // Due to the HTTP requests done by ensureKnownCountryCode, it's possible that
+        // at this point a synchronous init has been forced by other code.
+        if (!gInitialized)
+          yield this._asyncLoadEngines();
 
         // Typically we'll re-init as a result of a pref observer,
         // so signal to 'callers' that we're done.
@@ -3695,15 +3474,6 @@ SearchService.prototype = {
       // Schedule the engine's next update, if it isn't already.
       if (!engineMetadataService.getAttr(aEngine, "updateexpir"))
         engineUpdateService.scheduleNextUpdate(aEngine);
-
-      // We need to save the engine's _dataType, if this is the first time the
-      // engine is added to the dataStore, since ._dataType isn't persisted
-      // and will change on the next startup (since the engine will then be
-      // XML). We need this so that we know how to load any future updates from
-      // this engine.
-      if (!engineMetadataService.getAttr(aEngine, "updatedatatype"))
-        engineMetadataService.setAttr(aEngine, "updatedatatype",
-                                      aEngine._dataType);
     }
   },
 
@@ -3716,10 +3486,10 @@ SearchService.prototype = {
       try {
         let engine;
         if (json.filePath)
-          engine = new Engine({type: "filePath", value: json.filePath}, json._dataType,
+          engine = new Engine({type: "filePath", value: json.filePath},
                                json._readOnly);
         else if (json._url)
-          engine = new Engine({type: "uri", value: json._url}, json._dataType, json._readOnly);
+          engine = new Engine({type: "uri", value: json._url}, json._readOnly);
 
         engine._initWithJSON(json);
         this._addEngineToStore(engine);
@@ -3757,7 +3527,7 @@ SearchService.prototype = {
 
       var addedEngine = null;
       try {
-        addedEngine = new Engine(file, SEARCH_DATA_XML, !isWritable);
+        addedEngine = new Engine(file, !isWritable);
         addedEngine._initFromFile();
       } catch (ex) {
         LOG("_loadEnginesFromDir: Failed to load " + file.path + "!\n" + ex);
@@ -3805,7 +3575,7 @@ SearchService.prototype = {
         try {
           let file = new FileUtils.File(osfile.path);
           let isWritable = isInProfile;
-          addedEngine = new Engine(file, SEARCH_DATA_XML, !isWritable);
+          addedEngine = new Engine(file, !isWritable);
           yield checkForSyncCompletion(addedEngine._asyncInitFromFile());
         } catch (ex if ex.result != Cr.NS_ERROR_ALREADY_INITIALIZED) {
           LOG("_asyncLoadEnginesFromDir: Failed to load " + osfile.path + "!\n" + ex);
@@ -3822,7 +3592,7 @@ SearchService.prototype = {
       try {
         LOG("_loadFromChromeURLs: loading engine from chrome url: " + url);
 
-        let engine = new Engine(makeURI(url), SEARCH_DATA_XML, true);
+        let engine = new Engine(makeURI(url), true);
 
         engine._initFromURISync();
 
@@ -3847,7 +3617,7 @@ SearchService.prototype = {
       for (let url of aURLs) {
         try {
           LOG("_asyncLoadFromChromeURLs: loading engine from chrome url: " + url);
-          let engine = new Engine(NetUtil.newURI(url), SEARCH_DATA_XML, true);
+          let engine = new Engine(NetUtil.newURI(url), true);
           yield checkForSyncCompletion(engine._asyncInitFromURI());
           engines.push(engine);
         } catch (ex if ex.result != Cr.NS_ERROR_ALREADY_INITIALIZED) {
@@ -3858,69 +3628,40 @@ SearchService.prototype = {
     }.bind(this));
   },
 
+  _convertChannelToFile: function(chan) {
+    let fileURI = chan.URI;
+    while (fileURI instanceof Ci.nsIJARURI)
+      fileURI = fileURI.JARFile;
+    fileURI.QueryInterface(Ci.nsIFileURL);
+
+    return fileURI.file;
+  },
+
   _findJAREngines: function SRCH_SVC_findJAREngines() {
     LOG("_findJAREngines: looking for engines in JARs")
 
-    let rootURIPref = ""
-    try {
-      rootURIPref = Services.prefs.getCharPref(BROWSER_SEARCH_PREF + "jarURIs");
-    } catch (ex) {}
-
-    if (!rootURIPref) {
-      LOG("_findJAREngines: no JAR URIs were specified");
-
+    let chan = makeChannel(APP_SEARCH_PREFIX + "list.txt");
+    if (!chan) {
+      LOG("_findJAREngines: " + APP_SEARCH_PREFIX + " isn't registered");
       return [[], []];
     }
 
-    let rootURIs = rootURIPref.split(",");
     let uris = [];
     let chromeFiles = [];
 
-    rootURIs.forEach(function (root) {
-      // Find the underlying JAR file for this chrome package (_loadEngines uses
-      // it to determine whether it needs to invalidate the cache)
-      let chromeFile;
-      try {
-        let chromeURI = gChromeReg.convertChromeURL(makeURI(root));
-        let fileURI = chromeURI; // flat packaging
-        while (fileURI instanceof Ci.nsIJARURI)
-          fileURI = fileURI.JARFile; // JAR packaging
-        fileURI.QueryInterface(Ci.nsIFileURL);
-        chromeFile = fileURI.file;
-      } catch (ex) {
-        LOG("_findJAREngines: failed to get chromeFile for " + root + ": " + ex);
-      }
+    // Find the underlying JAR file (_loadEngines uses it to determine
+    // whether it needs to invalidate the cache)
+    let jarPackaging = false;
+    if (chan.URI instanceof Ci.nsIJARURI) {
+      chromeFiles.push(this._convertChannelToFile(chan));
+      jarPackaging = true;
+    }
 
-      if (!chromeFile)
-        return;
-
-      chromeFiles.push(chromeFile);
-
-      // Read list.txt from the chrome package to find the engines we need to
-      // load
-      let listURL = root + "list.txt";
-      let names = [];
-      try {
-        let chan = NetUtil.ioService.newChannelFromURI2(makeURI(listURL),
-                                                        null,      // aLoadingNode
-                                                        Services.scriptSecurityManager.getSystemPrincipal(),
-                                                        null,      // aTriggeringPrincipal
-                                                        Ci.nsILoadInfo.SEC_NORMAL,
-                                                        Ci.nsIContentPolicy.TYPE_OTHER);
-        let sis = Cc["@mozilla.org/scriptableinputstream;1"].
-                  createInstance(Ci.nsIScriptableInputStream);
-        sis.init(chan.open());
-        let list = sis.read(sis.available());
-        names = list.split("\n").filter(function (n) !!n);
-      } catch (ex) {
-        LOG("_findJAREngines: failed to retrieve list.txt from " + listURL + ": " + ex);
-
-        return;
-      }
-
-      names.forEach(function (n) uris.push(root + n + ".xml"));
-    });
-
+    let sis = Cc["@mozilla.org/scriptableinputstream;1"].
+                createInstance(Ci.nsIScriptableInputStream);
+    sis.init(chan.open());
+    this._parseListTxt(sis.read(sis.available()), jarPackaging,
+                       chromeFiles, uris);
     return [chromeFiles, uris];
   },
 
@@ -3934,65 +3675,109 @@ SearchService.prototype = {
     return Task.spawn(function() {
       LOG("_asyncFindJAREngines: looking for engines in JARs")
 
-      let rootURIPref = "";
-      try {
-        rootURIPref = Services.prefs.getCharPref(BROWSER_SEARCH_PREF + "jarURIs");
-      } catch (ex) {}
-
-      if (!rootURIPref) {
-        LOG("_asyncFindJAREngines: no JAR URIs were specified");
+      let listURL = APP_SEARCH_PREFIX + "list.txt";
+      let chan = makeChannel(listURL);
+      if (!chan) {
+        LOG("_asyncFindJAREngines: " + APP_SEARCH_PREFIX + " isn't registered");
         throw new Task.Result([[], []]);
       }
 
-      let rootURIs = rootURIPref.split(",");
       let uris = [];
       let chromeFiles = [];
 
-      for (let root of rootURIs) {
-        // Find the underlying JAR file for this chrome package (_loadEngines uses
-        // it to determine whether it needs to invalidate the cache)
-        let chromeFile;
-        try {
-          let chromeURI = gChromeReg.convertChromeURL(makeURI(root));
-          let fileURI = chromeURI; // flat packaging
-          while (fileURI instanceof Ci.nsIJARURI)
-            fileURI = fileURI.JARFile; // JAR packaging
-          fileURI.QueryInterface(Ci.nsIFileURL);
-          chromeFile = fileURI.file;
-        } catch (ex) {
-          LOG("_asyncFindJAREngines: failed to get chromeFile for " + root + ": " + ex);
-        }
-
-        if (!chromeFile) {
-          return;
-        }
-
-        chromeFiles.push(chromeFile);
-
-        // Read list.txt from the chrome package to find the engines we need to
-        // load
-        let listURL = root + "list.txt";
-        let deferred = Promise.defer();
-        let request = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"].
-                        createInstance(Ci.nsIXMLHttpRequest);
-        request.overrideMimeType("text/plain");
-        request.onload = function(aEvent) {
-          deferred.resolve(aEvent.target.responseText);
-        };
-        request.onerror = function(aEvent) {
-          LOG("_asyncFindJAREngines: failed to retrieve list.txt from " + listURL);
-          deferred.resolve("");
-        };
-        request.open("GET", NetUtil.newURI(listURL).spec, true);
-        request.send();
-        let list = yield deferred.promise;
-
-        let names = [];
-        names = list.split("\n").filter(function (n) !!n);
-        names.forEach(function (n) uris.push(root + n + ".xml"));
+      // Find the underlying JAR file (_loadEngines uses it to determine
+      // whether it needs to invalidate the cache)
+      let jarPackaging = false;
+      if (chan.URI instanceof Ci.nsIJARURI) {
+        chromeFiles.push(this._convertChannelToFile(chan));
+        jarPackaging = true;
       }
+
+      // Read list.txt to find the engines we need to load.
+      let deferred = Promise.defer();
+      let request = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"].
+                      createInstance(Ci.nsIXMLHttpRequest);
+      request.overrideMimeType("text/plain");
+      request.onload = function(aEvent) {
+        deferred.resolve(aEvent.target.responseText);
+      };
+      request.onerror = function(aEvent) {
+        LOG("_asyncFindJAREngines: failed to read " + listURL);
+        deferred.resolve("");
+      };
+      request.open("GET", NetUtil.newURI(listURL).spec, true);
+      request.send();
+      let list = yield deferred.promise;
+
+      this._parseListTxt(list, jarPackaging, chromeFiles, uris);
       throw new Task.Result([chromeFiles, uris]);
-    });
+    }.bind(this));
+  },
+
+  _parseListTxt: function SRCH_SVC_parseListTxt(list, jarPackaging,
+                                                chromeFiles, uris) {
+    let names = list.split("\n").filter(n => !!n);
+    // This maps the names of our built-in engines to a boolean
+    // indicating whether it should be hidden by default.
+    let jarNames = new Map();
+    for (let name of names) {
+      if (name.endsWith(":hidden")) {
+        name = name.split(":")[0];
+        jarNames.set(name, true);
+      } else {
+        jarNames.set(name, false);
+      }
+    }
+
+    // Check if we have a useable country specific list of visible default engines.
+    let engineNames;
+    let visibleDefaultEngines =
+      engineMetadataService.getGlobalAttr("visibleDefaultEngines");
+    if (visibleDefaultEngines &&
+        engineMetadataService.getGlobalAttr("visibleDefaultEnginesHash") == getVerificationHash(visibleDefaultEngines)) {
+      engineNames = visibleDefaultEngines.split(",");
+
+      for (let engineName of engineNames) {
+        // If all engineName values are part of jarNames,
+        // then we can use the country specific list, otherwise ignore it.
+        // The visibleDefaultEngines string containing the name of an engine we
+        // don't ship indicates the server is misconfigured to answer requests
+        // from the specific Firefox version we are running, so ignoring the
+        // value altogether is safer.
+        if (!jarNames.has(engineName)) {
+          LOG("_parseListTxt: ignoring visibleDefaultEngines value because " +
+              engineName + " is not in the jar engines we have found");
+          engineNames = null;
+          break;
+        }
+      }
+    }
+
+    // Fallback to building a list based on the :hidden suffixes found in list.txt.
+    if (!engineNames) {
+      engineNames = [];
+      for (let [name, hidden] of jarNames) {
+        if (!hidden)
+          engineNames.push(name);
+      }
+    }
+
+    for (let name of engineNames) {
+      let uri = APP_SEARCH_PREFIX + name + ".xml";
+      uris.push(uri);
+      if (!jarPackaging) {
+        // Flat packaging requires that _loadEngines checks the modification
+        // time of each engine file.
+        let chan = makeChannel(uri);
+        if (chan)
+          chromeFiles.push(this._convertChannelToFile(chan));
+        else
+          LOG("_findJAREngines: couldn't resolve " + uri);
+      }
+    }
+
+    // Store this so that it can be used while writing the cache file.
+    this._visibleDefaultEngines = engineNames;
   },
 
 
@@ -4128,31 +3913,6 @@ SearchService.prototype = {
     return this._sortedEngines.filter(function (engine) {
                                         return !engine.hidden;
                                       });
-  },
-
-  _getVerificationHash: function SRCH_SVC__getVerificationHash(aName) {
-    let disclaimer = "By modifying this file, I agree that I am doing so " +
-      "only within $appName itself, using official, user-driven search " +
-      "engine selection processes, and in a way which does not circumvent " +
-      "user consent. I acknowledge that any attempt to change this file " +
-      "from outside of $appName is a malicious act, and will be responded " +
-      "to accordingly."
-
-    let salt = OS.Path.basename(OS.Constants.Path.profileDir) + aName +
-               disclaimer.replace(/\$appName/g, Services.appinfo.name);
-
-    let converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"]
-                      .createInstance(Ci.nsIScriptableUnicodeConverter);
-    converter.charset = "UTF-8";
-
-    // Data is an array of bytes.
-    let data = converter.convertToByteArray(salt, {});
-    let hasher = Cc["@mozilla.org/security/hash;1"]
-                   .createInstance(Ci.nsICryptoHash);
-    hasher.init(hasher.SHA256);
-    hasher.update(data, data.length);
-
-    return hasher.finish(true);
   },
 
   // nsIBrowserSearchService
@@ -4304,7 +4064,7 @@ SearchService.prototype = {
     if (this._engines[aName])
       FAIL("An engine with that name already exists!", Cr.NS_ERROR_FILE_ALREADY_EXISTS);
 
-    var engine = new Engine(getSanitizedFile(aName), SEARCH_DATA_XML, false);
+    var engine = new Engine(getSanitizedFile(aName), false);
     engine._initFromMetadata(aName, aIconURL, aAlias, aDescription,
                              aMethod, aTemplate, aExtensionID);
     this._addEngineToStore(engine);
@@ -4316,7 +4076,7 @@ SearchService.prototype = {
     this._ensureInitialized();
     try {
       var uri = makeURI(aEngineURL);
-      var engine = new Engine(uri, aDataType, false);
+      var engine = new Engine(uri, false);
       if (aCallback) {
         engine._installCallback = function (errorCode) {
           try {
@@ -4508,7 +4268,7 @@ SearchService.prototype = {
     this._ensureInitialized();
     if (!this._currentEngine) {
       let name = engineMetadataService.getGlobalAttr("current");
-      if (engineMetadataService.getGlobalAttr("hash") == this._getVerificationHash(name)) {
+      if (engineMetadataService.getGlobalAttr("hash") == getVerificationHash(name)) {
         this._currentEngine = this.getEngineByName(name);
       }
     }
@@ -4517,6 +4277,14 @@ SearchService.prototype = {
       this._currentEngine = this._originalDefaultEngine;
     if (!this._currentEngine || this._currentEngine.hidden)
       this._currentEngine = this._getSortedEngines(false)[0];
+
+    if (!this._currentEngine) {
+      // Last resort fallback: unhide the original default engine.
+      this._currentEngine = this._originalDefaultEngine;
+      if (this._currentEngine)
+        this._currentEngine.hidden = false;
+    }
+
     return this._currentEngine;
   },
 
@@ -4548,9 +4316,74 @@ SearchService.prototype = {
     }
 
     engineMetadataService.setGlobalAttr("current", newName);
-    engineMetadataService.setGlobalAttr("hash", this._getVerificationHash(newName));
+    engineMetadataService.setGlobalAttr("hash", getVerificationHash(newName));
 
     notifyAction(this._currentEngine, SEARCH_ENGINE_CURRENT);
+  },
+
+  getDefaultEngineInfo() {
+    let result = {};
+
+    let engine;
+    try {
+      engine = this.defaultEngine;
+    } catch(e) {
+      // The defaultEngine getter will throw if there's no engine at all,
+      // which shouldn't happen unless an add-on or a test deleted all of them.
+      // Our preferences UI doesn't let users do that.
+      Cu.reportError("getDefaultEngineInfo: No default engine");
+    }
+
+    if (!engine) {
+      result.name = "NONE";
+    } else {
+      if (engine.name)
+        result.name = engine.name;
+
+      result.loadPath = engine._anonymizedLoadPath;
+
+      // For privacy, we only collect the submission URL for engines
+      // from the application or distribution folder...
+      let sendSubmissionURL =
+        /^(?:jar:)?(?:\[app\]|\[distribution\])/.test(result.loadPath);
+
+      // ... or engines sorted by default near the top of the list.
+      if (!sendSubmissionURL) {
+        let extras =
+          Services.prefs.getChildList(BROWSER_SEARCH_PREF + "order.extra.");
+
+        for (let prefName of extras) {
+          try {
+            if (result.name == Services.prefs.getCharPref(prefName)) {
+              sendSubmissionURL = true;
+              break;
+            }
+          } catch(e) {}
+        }
+
+        let prefNameBase = getGeoSpecificPrefName(BROWSER_SEARCH_PREF + "order");
+        let i = 0;
+        while (!sendSubmissionURL) {
+          let prefName = prefNameBase + "." + (++i);
+          let engineName = getLocalizedPref(prefName);
+          if (!engineName)
+            break;
+          if (result.name == engineName) {
+            sendSubmissionURL = true;
+            break;
+          }
+        }
+      }
+
+      if (sendSubmissionURL) {
+        let uri = engine._getURLOfType("text/html")
+                        .getSubmission("", engine, "searchbar").uri;
+        uri.userPass = ""; // Avoid reporting a username or password.
+        result.submissionURL = uri.spec;
+      }
+    }
+
+    return result;
   },
 
   /**
@@ -5048,8 +4881,10 @@ var engineMetadataService = {
   /**
    * Flush any waiting write.
    */
-  finalize: function () this._lazyWriter ? this._lazyWriter.finalize()
-                                         : Promise.resolve(),
+  finalize: function () {
+    return this._lazyWriter ? this._lazyWriter.finalize()
+                            : Promise.resolve();
+  },
 
   /**
    * Commit changes to disk, asynchronously.
@@ -5122,12 +4957,6 @@ var engineUpdateService = {
     if (!getBoolPref(BROWSER_SEARCH_PREF + "update", true) || !engine._hasUpdates)
       return;
 
-    // We use the cache to store updated app engines, so refuse to update if the
-    // cache is disabled.
-    if (engine._readOnly &&
-        !getBoolPref(BROWSER_SEARCH_PREF + "cache.enabled", true))
-      return;
-
     let testEngine = null;
     let updateURL = engine._getURLOfType(URLTYPE_OPENSEARCH);
     let updateURI = (updateURL && updateURL._hasRelation("self")) ?
@@ -5139,14 +4968,8 @@ var engineUpdateService = {
         return;
       }
 
-      let dataType = engineMetadataService.getAttr(engine, "updatedatatype");
-      if (!dataType) {
-        ULOG("No loadtype to update engine!");
-        return;
-      }
-
       ULOG("updating " + engine.name + " from " + updateURI.spec);
-      testEngine = new Engine(updateURI, dataType, false);
+      testEngine = new Engine(updateURI, false);
       testEngine._engineToUpdate = engine;
       testEngine._initFromURIAndLoad();
     } else

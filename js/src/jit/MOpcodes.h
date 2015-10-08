@@ -12,7 +12,6 @@ namespace jit {
 
 #define MIR_OPCODE_LIST(_)                                                  \
     _(Constant)                                                             \
-    _(NurseryObject)                                                        \
     _(SimdBox)                                                              \
     _(SimdUnbox)                                                            \
     _(SimdValueX4)                                                          \
@@ -50,8 +49,11 @@ namespace jit {
     _(OsrReturnValue)                                                       \
     _(OsrArgumentsObject)                                                   \
     _(ReturnFromCtor)                                                       \
+    _(BinarySharedStub)                                                     \
+    _(UnarySharedStub)                                                      \
     _(CheckOverRecursed)                                                    \
     _(DefVar)                                                               \
+    _(DefLexical)                                                           \
     _(DefFun)                                                               \
     _(CreateThis)                                                           \
     _(CreateThisWithProto)                                                  \
@@ -70,7 +72,6 @@ namespace jit {
     _(AssertFloat32)                                                        \
     _(AssertRecoveredOnBailout)                                             \
     _(GetDynamicName)                                                       \
-    _(FilterArgumentsOrEval)                                                \
     _(CallDirectEval)                                                       \
     _(BitNot)                                                               \
     _(TypeOf)                                                               \
@@ -99,6 +100,7 @@ namespace jit {
     _(Concat)                                                               \
     _(CharCodeAt)                                                           \
     _(FromCharCode)                                                         \
+    _(SinCos)                                                               \
     _(StringSplit)                                                          \
     _(Substr)                                                               \
     _(Return)                                                               \
@@ -142,6 +144,7 @@ namespace jit {
     _(StringReplace)                                                        \
     _(Lambda)                                                               \
     _(LambdaArrow)                                                          \
+    _(KeepAliveObject)                                                      \
     _(Slots)                                                                \
     _(Elements)                                                             \
     _(ConstantElements)                                                     \
@@ -172,11 +175,16 @@ namespace jit {
     _(SetArrayLength)                                                       \
     _(TypedArrayLength)                                                     \
     _(TypedArrayElements)                                                   \
+    _(SetDisjointTypedElements)                                             \
     _(TypedObjectDescr)                                                     \
     _(TypedObjectElements)                                                  \
     _(SetTypedObjectOffset)                                                 \
     _(InitializedLength)                                                    \
     _(SetInitializedLength)                                                 \
+    _(UnboxedArrayLength)                                                   \
+    _(UnboxedArrayInitializedLength)                                        \
+    _(IncrementUnboxedArrayInitializedLength)                               \
+    _(SetUnboxedArrayInitializedLength)                                     \
     _(Not)                                                                  \
     _(BoundsCheck)                                                          \
     _(BoundsCheckLower)                                                     \
@@ -195,12 +203,15 @@ namespace jit {
     _(ArrayPopShift)                                                        \
     _(ArrayPush)                                                            \
     _(ArrayConcat)                                                          \
+    _(ArraySlice)                                                           \
     _(ArrayJoin)                                                            \
     _(LoadTypedArrayElementHole)                                            \
     _(LoadTypedArrayElementStatic)                                          \
     _(StoreTypedArrayElementHole)                                           \
     _(StoreTypedArrayElementStatic)                                         \
+    _(AtomicIsLockFree)                                                     \
     _(CompareExchangeTypedArrayElement)                                     \
+    _(AtomicExchangeTypedArrayElement)                                      \
     _(AtomicTypedArrayElementBinop)                                         \
     _(EffectiveAddress)                                                     \
     _(ClampToUint8)                                                         \
@@ -258,11 +269,15 @@ namespace jit {
     _(RecompileCheck)                                                       \
     _(MemoryBarrier)                                                        \
     _(AsmJSCompareExchangeHeap)                                             \
+    _(AsmJSAtomicExchangeHeap)                                              \
     _(AsmJSAtomicBinopHeap)                                                 \
     _(UnknownValue)                                                         \
     _(LexicalCheck)                                                         \
     _(ThrowUninitializedLexical)                                            \
-    _(Debugger)
+    _(GlobalNameConflictsCheck)                                             \
+    _(Debugger)                                                             \
+    _(NewTarget)                                                            \
+    _(ArrowNewTarget)
 
 // Forward declarations of MIR types.
 #define FORWARD_DECLARE(op) class M##op;

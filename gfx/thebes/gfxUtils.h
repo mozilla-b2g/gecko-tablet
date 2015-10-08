@@ -6,30 +6,27 @@
 #ifndef GFX_UTILS_H
 #define GFX_UTILS_H
 
-#include "gfxColor.h"
 #include "gfxTypes.h"
-#include "GraphicsFilter.h"
 #include "imgIContainer.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/RefPtr.h"
 #include "nsColor.h"
 #include "nsPrintfCString.h"
+#include "mozilla/gfx/Rect.h"
 
 class gfxASurface;
 class gfxDrawable;
 class nsIntRegion;
 class nsIPresShell;
 
-struct nsIntRect;
-
 namespace mozilla {
 namespace layers {
 struct PlanarYCbCrData;
-}
+} // namespace layers
 namespace image {
 class ImageRegion;
-}
-}
+} // namespace image
+} // namespace mozilla
 
 class gfxUtils {
 public:
@@ -56,9 +53,9 @@ public:
     static bool UnpremultiplyDataSurface(DataSourceSurface* srcSurf,
                                          DataSourceSurface* destSurf);
 
-    static mozilla::TemporaryRef<DataSourceSurface>
+    static already_AddRefed<DataSourceSurface>
       CreatePremultipliedDataSurface(DataSourceSurface* srcSurf);
-    static mozilla::TemporaryRef<DataSourceSurface>
+    static already_AddRefed<DataSourceSurface>
       CreateUnpremultipliedDataSurface(DataSourceSurface* srcSurf);
 
     static void ConvertBGRAtoRGBA(uint8_t* aData, uint32_t aLength);
@@ -81,7 +78,7 @@ public:
                                  const gfxSize&     aImageSize,
                                  const ImageRegion& aRegion,
                                  const mozilla::gfx::SurfaceFormat aFormat,
-                                 GraphicsFilter     aFilter,
+                                 mozilla::gfx::Filter aFilter,
                                  uint32_t           aImageFlags = imgIContainer::FLAG_NONE,
                                  gfxFloat           aOpacity = 1.0);
 
@@ -121,11 +118,11 @@ public:
                                       const IntPoint& aToBottomRight);
 
     /**
-     * If aIn can be represented exactly using an nsIntRect (i.e.
+     * If aIn can be represented exactly using an gfx::IntRect (i.e.
      * integer-aligned edges and coordinates in the int32_t range) then we
      * set aOut to that rectangle, otherwise return failure.
     */
-    static bool GfxRectToIntRect(const gfxRect& aIn, nsIntRect* aOut);
+    static bool GfxRectToIntRect(const gfxRect& aIn, mozilla::gfx::IntRect* aOut);
 
     /**
      * Return the smallest power of kScaleResolution (2) greater than or equal to
@@ -145,7 +142,7 @@ public:
     static void
     GetYCbCrToRGBDestFormatAndSize(const mozilla::layers::PlanarYCbCrData& aData,
                                    gfxImageFormat& aSuggestedFormat,
-                                   gfxIntSize& aSuggestedSize);
+                                   mozilla::gfx::IntSize& aSuggestedSize);
 
     /**
      * Convert YCbCrImage into RGB aDestBuffer
@@ -155,16 +152,14 @@ public:
     static void
     ConvertYCbCrToRGB(const mozilla::layers::PlanarYCbCrData& aData,
                       const gfxImageFormat& aDestFormat,
-                      const gfxIntSize& aDestSize,
+                      const mozilla::gfx::IntSize& aDestSize,
                       unsigned char* aDestBuffer,
                       int32_t aStride);
 
     /**
      * Clears surface to aColor (which defaults to transparent black).
      */
-    static void ClearThebesSurface(gfxASurface* aSurface,
-                                   nsIntRect* aRect = nullptr,
-                                   const gfxRGBA& aColor = gfxRGBA(0.0, 0.0, 0.0, 0.0));
+    static void ClearThebesSurface(gfxASurface* aSurface);
 
     /**
      * Creates a copy of aSurface, but having the SurfaceFormat aFormat.
@@ -207,7 +202,7 @@ public:
      * realize format conversion may involve expensive copying/uploading/
      * readback.)
      */
-    static mozilla::TemporaryRef<DataSourceSurface>
+    static already_AddRefed<DataSourceSurface>
     CopySurfaceToDataSourceSurfaceWithFormat(SourceSurface* aSurface,
                                              SurfaceFormat aFormat);
 
@@ -294,7 +289,15 @@ public:
     static bool DumpDisplayList();
 
     static bool sDumpPainting;
+    static bool sDumpPaintingIntermediate;
     static bool sDumpPaintingToFile;
+    static bool sDumpPaintItems;
+    // TODO: Dumping compositor textures is broken pretty badly. For example,
+    //       on Linux it crashes because TextureHost::GetAsSurface() returns
+    //       null. Expect to have to fix things like this if you turn it on.
+    //       Meanwhile, content-side texture dumping (conditioned on
+    //       sDumpPainting) is a good replacement.
+    static bool sDumpCompositorTextures;
     static FILE* sDumpPaintFile;
 };
 
@@ -310,7 +313,6 @@ namespace gfx {
  */
 Color ToDeviceColor(Color aColor);
 Color ToDeviceColor(nscolor aColor);
-Color ToDeviceColor(const gfxRGBA& aColor);
 
 /* These techniques are suggested by "Bit Twiddling Hacks"
  */

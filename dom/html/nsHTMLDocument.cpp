@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set sw=2 ts=2 et tw=80: */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -31,6 +31,7 @@
 #include "nsIURI.h"
 #include "nsIIOService.h"
 #include "nsNetUtil.h"
+#include "nsIPrivateBrowsingChannel.h"
 #include "nsIContentViewerContainer.h"
 #include "nsIContentViewer.h"
 #include "nsDocShell.h"
@@ -102,7 +103,6 @@
 #include "nsIRequest.h"
 #include "nsHtml5TreeOpExecutor.h"
 #include "nsHtml5Parser.h"
-#include "nsIDOMJSWindow.h"
 #include "nsSandboxFlags.h"
 #include "nsIImageDocument.h"
 #include "mozilla/dom/HTMLBodyElement.h"
@@ -110,6 +110,10 @@
 #include "nsCharsetSource.h"
 #include "nsIStringBundle.h"
 #include "nsDOMClassInfo.h"
+#include "nsFocusManager.h"
+#include "nsIFrame.h"
+#include "nsIContent.h"
+#include "nsLayoutStylesheetCache.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -143,26 +147,6 @@ static bool ConvertToMidasInternalCommand(const nsAString & inCommandID,
 // ==================================================================
 // =
 // ==================================================================
-static nsresult
-RemoveFromAgentSheets(nsCOMArray<nsIStyleSheet> &aAgentSheets, const nsAString& url)
-{
-  nsCOMPtr<nsIURI> uri;
-  nsresult rv = NS_NewURI(getter_AddRefs(uri), url);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  for (int32_t i = aAgentSheets.Count() - 1; i >= 0; --i) {
-    nsIStyleSheet* sheet = aAgentSheets[i];
-    nsIURI* sheetURI = sheet->GetSheetURI();
-
-    bool equals = false;
-    uri->Equals(sheetURI, &equals);
-    if (equals) {
-      aAgentSheets.RemoveObjectAt(i);
-    }
-  }
-
-  return NS_OK;
-}
 
 nsresult
 NS_NewHTMLDocument(nsIDocument** aInstancePtrResult, bool aLoadedAsData)
@@ -923,7 +907,7 @@ nsHTMLDocument::SetDomain(const nsAString& aDomain)
 {
   ErrorResult rv;
   SetDomain(aDomain, rv);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 void
@@ -1044,7 +1028,7 @@ nsHTMLDocument::SetBody(nsIDOMHTMLElement* aBody)
              "How could we be an nsIContent but not actually HTML here?");
   ErrorResult rv;
   SetBody(static_cast<nsGenericHTMLElement*>(newBody.get()), rv);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 void
@@ -1223,7 +1207,7 @@ nsHTMLDocument::GetCookie(nsAString& aCookie)
 {
   ErrorResult rv;
   GetCookie(aCookie, rv);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 already_AddRefed<nsIChannel>
@@ -1306,7 +1290,7 @@ nsHTMLDocument::SetCookie(const nsAString& aCookie)
 {
   ErrorResult rv;
   SetCookie(aCookie, rv);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 void
@@ -1362,7 +1346,7 @@ nsHTMLDocument::Open(const nsAString& aContentTypeOrUrl,
     ErrorResult rv;
     *aReturn = Open(cx, aContentTypeOrUrl, aReplaceOrName, aFeatures,
                     false, rv).take();
-    return rv.ErrorCode();
+    return rv.StealNSResult();
   }
 
   nsString type;
@@ -1377,7 +1361,7 @@ nsHTMLDocument::Open(const nsAString& aContentTypeOrUrl,
   }
   ErrorResult rv;
   *aReturn = Open(cx, type, replace, rv).take();
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 already_AddRefed<nsIDOMWindow>
@@ -1391,12 +1375,17 @@ nsHTMLDocument::Open(JSContext* /* unused */,
   NS_ASSERTION(nsContentUtils::CanCallerAccess(static_cast<nsIDOMHTMLDocument*>(this)),
                "XOW should have caught this!");
 
-  nsCOMPtr<nsIDOMWindow> window = GetInnerWindow();
+  nsCOMPtr<nsPIDOMWindow> window = GetInnerWindow();
   if (!window) {
     rv.Throw(NS_ERROR_DOM_INVALID_ACCESS_ERR);
     return nullptr;
   }
-  nsCOMPtr<nsIDOMJSWindow> win = do_QueryInterface(window);
+  window = nsPIDOMWindow::GetOuterFromCurrentInner(window);
+  if (!window) {
+    rv.Throw(NS_ERROR_NOT_INITIALIZED);
+    return nullptr;
+  }
+  nsRefPtr<nsGlobalWindow> win = static_cast<nsGlobalWindow*>(window.get());
   nsCOMPtr<nsIDOMWindow> newWindow;
   // XXXbz We ignore aReplace for now.
   rv = win->OpenJS(aURL, aName, aFeatures, getter_AddRefs(newWindow));
@@ -1423,7 +1412,7 @@ nsHTMLDocument::Open(JSContext* cx,
   nsAutoString type;
   nsContentUtils::ASCIIToLower(aType, type);
   nsAutoCString actualType, dummy;
-  NS_ParseContentType(NS_ConvertUTF16toUTF8(type), actualType, dummy);
+  NS_ParseRequestContentType(NS_ConvertUTF16toUTF8(type), actualType, dummy);
   if (!actualType.EqualsLiteral("text/html") &&
       !type.EqualsLiteral("replace")) {
     contentType.AssignLiteral("text/plain");
@@ -1558,13 +1547,6 @@ nsHTMLDocument::Open(JSContext* cx,
                      nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL,
                      nsIContentPolicy::TYPE_OTHER,
                      group);
-
-  if (rv.Failed()) {
-    return nullptr;
-  }
-
-  // We can't depend on channels implementing property bags, so do our
-  // base URI manually after reset.
 
   if (rv.Failed()) {
     return nullptr;
@@ -1751,7 +1733,7 @@ nsHTMLDocument::Close()
 {
   ErrorResult rv;
   Close(rv);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 void
@@ -2225,7 +2207,7 @@ nsHTMLDocument::GetSelection(nsISelection** aReturn)
 {
   ErrorResult rv;
   NS_IF_ADDREF(*aReturn = GetSelection(rv));
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 Selection*
@@ -2341,21 +2323,16 @@ nsHTMLDocument::NameIsEnumerable(const nsAString& aName)
   return true;
 }
 
-static PLDHashOperator
-IdentifierMapEntryAddNames(nsIdentifierMapEntry* aEntry, void* aArg)
-{
-  nsTArray<nsString>* aNames = static_cast<nsTArray<nsString>*>(aArg);
-  if (aEntry->HasNameElement() ||
-      aEntry->HasIdElementExposedAsHTMLDocumentProperty()) {
-    aNames->AppendElement(aEntry->GetKey());
-  }
-  return PL_DHASH_NEXT;
-}
-
 void
 nsHTMLDocument::GetSupportedNames(unsigned, nsTArray<nsString>& aNames)
 {
-  mIdentifierMap.EnumerateEntries(IdentifierMapEntryAddNames, &aNames);
+  for (auto iter = mIdentifierMap.Iter(); !iter.Done(); iter.Next()) {
+    nsIdentifierMapEntry* entry = iter.Get();
+    if (entry->HasNameElement() ||
+        entry->HasIdElementExposedAsHTMLDocumentProperty()) {
+      aNames.AppendElement(entry->GetKey());
+    }
+  }
 }
 
 //----------------------------
@@ -2499,7 +2476,6 @@ nsHTMLDocument::GenerateParserKey(void)
   return script;
 }
 
-/* attribute DOMString designMode; */
 NS_IMETHODIMP
 nsHTMLDocument::GetDesignMode(nsAString & aDesignMode)
 {
@@ -2664,9 +2640,9 @@ nsHTMLDocument::TearingDownEditor(nsIEditor *aEditor)
     nsCOMArray<nsIStyleSheet> agentSheets;
     presShell->GetAgentStyleSheets(agentSheets);
 
-    RemoveFromAgentSheets(agentSheets, NS_LITERAL_STRING("resource://gre/res/contenteditable.css"));
+    agentSheets.RemoveObject(nsLayoutStylesheetCache::ContentEditableSheet());
     if (oldState == eDesignMode)
-      RemoveFromAgentSheets(agentSheets, NS_LITERAL_STRING("resource://gre/res/designmode.css"));
+      agentSheets.RemoveObject(nsLayoutStylesheetCache::DesignModeSheet());
 
     presShell->SetAgentStyleSheets(agentSheets);
 
@@ -2723,7 +2699,7 @@ nsHTMLDocument::EditingStateChanged()
   }
 
   if (mEditingState == eSettingUp || mEditingState == eTearingDown) {
-    // XXX We shouldn't recurse.
+    // XXX We shouldn't recurse
     return NS_OK;
   }
 
@@ -2787,11 +2763,83 @@ nsHTMLDocument::EditingStateChanged()
   bool makeWindowEditable = mEditingState == eOff;
   bool updateState = false;
   bool spellRecheckAll = false;
+  bool putOffToRemoveScriptBlockerUntilModifyingEditingState = false;
   nsCOMPtr<nsIEditor> editor;
 
   {
     EditingState oldState = mEditingState;
     nsAutoEditingState push(this, eSettingUp);
+
+    nsCOMPtr<nsIPresShell> presShell = GetShell();
+    NS_ENSURE_TRUE(presShell, NS_ERROR_FAILURE);
+
+    // Before making this window editable, we need to modify UA style sheet
+    // because new style may change whether focused element will be focusable
+    // or not.
+    nsCOMArray<nsIStyleSheet> agentSheets;
+    rv = presShell->GetAgentStyleSheets(agentSheets);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    CSSStyleSheet* contentEditableSheet =
+      nsLayoutStylesheetCache::ContentEditableSheet();
+
+    bool result;
+
+    if (!agentSheets.Contains(contentEditableSheet)) {
+      bool result = agentSheets.AppendObject(contentEditableSheet);
+      NS_ENSURE_TRUE(result, NS_ERROR_OUT_OF_MEMORY);
+    }
+
+    // Should we update the editable state of all the nodes in the document? We
+    // need to do this when the designMode value changes, as that overrides
+    // specific states on the elements.
+    if (designMode) {
+      // designMode is being turned on (overrides contentEditable).
+      CSSStyleSheet* designModeSheet =
+        nsLayoutStylesheetCache::DesignModeSheet();
+      if (!agentSheets.Contains(designModeSheet)) {
+        result = agentSheets.AppendObject(designModeSheet);
+        NS_ENSURE_TRUE(result, NS_ERROR_OUT_OF_MEMORY);
+      }
+
+      updateState = true;
+      spellRecheckAll = oldState == eContentEditable;
+    }
+    else if (oldState == eDesignMode) {
+      // designMode is being turned off (contentEditable is still on).
+      agentSheets.RemoveObject(nsLayoutStylesheetCache::DesignModeSheet());
+      updateState = true;
+    }
+
+    rv = presShell->SetAgentStyleSheets(agentSheets);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    presShell->ReconstructStyleData();
+
+    // Adjust focused element with new style but blur event shouldn't be fired
+    // until mEditingState is modified with newState.
+    nsAutoScriptBlocker scriptBlocker;
+    if (designMode) {
+      nsCOMPtr<nsPIDOMWindow> focusedWindow;
+      nsIContent* focusedContent =
+        nsFocusManager::GetFocusedDescendant(window, false,
+                                             getter_AddRefs(focusedWindow));
+      if (focusedContent) {
+        nsIFrame* focusedFrame = focusedContent->GetPrimaryFrame();
+        bool clearFocus = focusedFrame ? !focusedFrame->IsFocusable() :
+                                         !focusedContent->IsFocusable();
+        if (clearFocus) {
+          nsFocusManager* fm = nsFocusManager::GetFocusManager();
+          if (fm) {
+            fm->ClearFocus(window);
+            // If we need to dispatch blur event, we should put off after
+            // modifying mEditingState since blur event handler may change
+            // designMode state again.
+            putOffToRemoveScriptBlockerUntilModifyingEditingState = true;
+          }
+        }
+      }
+    }
 
     if (makeWindowEditable) {
       // Editing is being turned on (through designMode or contentEditable)
@@ -2808,61 +2856,26 @@ nsHTMLDocument::EditingStateChanged()
     if (!editor)
       return NS_ERROR_FAILURE;
 
-    nsCOMPtr<nsIPresShell> presShell = GetShell();
-    NS_ENSURE_TRUE(presShell, NS_ERROR_FAILURE);
-
     // If we're entering the design mode, put the selection at the beginning of
     // the document for compatibility reasons.
     if (designMode && oldState == eOff) {
       editor->BeginningOfDocument();
     }
 
-    nsCOMArray<nsIStyleSheet> agentSheets;
-    rv = presShell->GetAgentStyleSheets(agentSheets);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsCOMPtr<nsIURI> uri;
-    rv = NS_NewURI(getter_AddRefs(uri), NS_LITERAL_STRING("resource://gre/res/contenteditable.css"));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsRefPtr<CSSStyleSheet> sheet;
-    rv = LoadChromeSheetSync(uri, true, getter_AddRefs(sheet));
-    NS_ENSURE_TRUE(sheet, rv);
-
-    bool result = agentSheets.AppendObject(sheet);
-    NS_ENSURE_TRUE(result, NS_ERROR_OUT_OF_MEMORY);
-
-    // Should we update the editable state of all the nodes in the document? We
-    // need to do this when the designMode value changes, as that overrides
-    // specific states on the elements.
-    if (designMode) {
-      // designMode is being turned on (overrides contentEditable).
-      rv = NS_NewURI(getter_AddRefs(uri), NS_LITERAL_STRING("resource://gre/res/designmode.css"));
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      rv = LoadChromeSheetSync(uri, true, getter_AddRefs(sheet));
-      NS_ENSURE_TRUE(sheet, rv);
-
-      result = agentSheets.AppendObject(sheet);
-      NS_ENSURE_TRUE(result, NS_ERROR_OUT_OF_MEMORY);
-
-      updateState = true;
-      spellRecheckAll = oldState == eContentEditable;
+    if (putOffToRemoveScriptBlockerUntilModifyingEditingState) {
+      nsContentUtils::AddScriptBlocker();
     }
-    else if (oldState == eDesignMode) {
-      // designMode is being turned off (contentEditable is still on).
-      RemoveFromAgentSheets(agentSheets, NS_LITERAL_STRING("resource://gre/res/designmode.css"));
-
-      updateState = true;
-    }
-
-    rv = presShell->SetAgentStyleSheets(agentSheets);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    presShell->ReconstructStyleData();
   }
 
   mEditingState = newState;
+  if (putOffToRemoveScriptBlockerUntilModifyingEditingState) {
+    nsContentUtils::RemoveScriptBlocker();
+    // If mEditingState is overwritten by another call and already disabled
+    // the editing, we shouldn't keep making window editable.
+    if (mEditingState == eOff) {
+      return NS_OK;
+    }
+  }
 
   if (makeWindowEditable) {
     // Set the editor to not insert br's on return when in p
@@ -2910,13 +2923,13 @@ nsHTMLDocument::SetDesignMode(const nsAString & aDesignMode)
 {
   ErrorResult rv;
   SetDesignMode(aDesignMode, rv);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 void
 nsHTMLDocument::SetDesignMode(const nsAString& aDesignMode, ErrorResult& rv)
 {
-  if (!nsContentUtils::SubjectPrincipal()->Subsumes(NodePrincipal())) {
+  if (!nsContentUtils::LegacyIsCallerNativeCode() && !nsContentUtils::SubjectPrincipal()->Subsumes(NodePrincipal())) {
     rv.Throw(NS_ERROR_DOM_PROP_ACCESS_DENIED);
     return;
   }
@@ -3191,7 +3204,7 @@ nsHTMLDocument::ExecCommand(const nsAString& commandID,
 {
   ErrorResult rv;
   *_retval = ExecCommand(commandID, doShowUI, value, rv);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 bool
@@ -3211,9 +3224,11 @@ nsHTMLDocument::ExecCommand(const nsAString& commandID,
     return false;
   }
 
+  bool isCutCopy = (commandID.LowerCaseEqualsLiteral("cut") ||
+                    commandID.LowerCaseEqualsLiteral("copy"));
+
   // if editing is not on, bail
-  if (!IsEditingOnAfterFlush()) {
-    rv.Throw(NS_ERROR_FAILURE);
+  if (!isCutCopy && !IsEditingOnAfterFlush()) {
     return false;
   }
 
@@ -3222,16 +3237,34 @@ nsHTMLDocument::ExecCommand(const nsAString& commandID,
     return false;
   }
 
+  // special case for cut & copy
+  // cut & copy are allowed in non editable documents
+  if (isCutCopy) {
+    if (!nsContentUtils::IsCutCopyAllowed()) {
+      return false;
+    }
+
+    // For cut & copy commands, we need the behaviour from nsWindowRoot::GetControllers
+    // which is to look at the focused element, and defer to a focused textbox's controller
+    // The code past taken by other commands in ExecCommand always uses the window directly,
+    // rather than deferring to the textbox, which is desireable for most editor commands,
+    // but not 'cut' and 'copy' (as those should allow copying out of embedded editors).
+    // This behaviour is invoked if we call DoCommand directly on the docShell.
+    nsCOMPtr<nsIDocShell> docShell(mDocumentContainer);
+    if (docShell) {
+      nsresult res = docShell->DoCommand(cmdToDispatch.get());
+      return NS_SUCCEEDED(res);
+    }
+    return false;
+  }
+
   if (commandID.LowerCaseEqualsLiteral("gethtml")) {
     rv.Throw(NS_ERROR_FAILURE);
     return false;
   }
 
-  bool restricted = commandID.LowerCaseEqualsLiteral("cut") ||
-                    commandID.LowerCaseEqualsLiteral("copy")||
-                    commandID.LowerCaseEqualsLiteral("paste");
+  bool restricted = commandID.LowerCaseEqualsLiteral("paste");
   if (restricted && !nsContentUtils::IsCallerChrome()) {
-    rv = NS_ERROR_DOM_SECURITY_ERR;
     return false;
   }
 
@@ -3295,14 +3328,13 @@ nsHTMLDocument::ExecCommand(const nsAString& commandID,
   return !rv.Failed();
 }
 
-/* boolean queryCommandEnabled(in DOMString commandID); */
 NS_IMETHODIMP
 nsHTMLDocument::QueryCommandEnabled(const nsAString& commandID,
                                     bool* _retval)
 {
   ErrorResult rv;
   *_retval = QueryCommandEnabled(commandID, rv);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 bool
@@ -3313,9 +3345,21 @@ nsHTMLDocument::QueryCommandEnabled(const nsAString& commandID, ErrorResult& rv)
     return false;
   }
 
+  // cut & copy are always allowed
+  bool isCutCopy = commandID.LowerCaseEqualsLiteral("cut") ||
+                   commandID.LowerCaseEqualsLiteral("copy");
+  if (isCutCopy) {
+    return nsContentUtils::IsCutCopyAllowed();
+  }
+
+  // Report false for restricted commands
+  bool restricted = commandID.LowerCaseEqualsLiteral("paste");
+  if (restricted && !nsContentUtils::IsCallerChrome()) {
+    return false;
+  }
+
   // if editing is not on, bail
   if (!IsEditingOnAfterFlush()) {
-    rv.Throw(NS_ERROR_FAILURE);
     return false;
   }
 
@@ -3338,14 +3382,13 @@ nsHTMLDocument::QueryCommandEnabled(const nsAString& commandID, ErrorResult& rv)
   return retval;
 }
 
-/* boolean queryCommandIndeterm (in DOMString commandID); */
 NS_IMETHODIMP
 nsHTMLDocument::QueryCommandIndeterm(const nsAString & commandID,
                                      bool *_retval)
 {
   ErrorResult rv;
   *_retval = QueryCommandIndeterm(commandID, rv);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 bool
@@ -3358,7 +3401,6 @@ nsHTMLDocument::QueryCommandIndeterm(const nsAString& commandID, ErrorResult& rv
 
   // if editing is not on, bail
   if (!IsEditingOnAfterFlush()) {
-    rv.Throw(NS_ERROR_FAILURE);
     return false;
   }
 
@@ -3397,13 +3439,12 @@ nsHTMLDocument::QueryCommandIndeterm(const nsAString& commandID, ErrorResult& rv
   return retval;
 }
 
-/* boolean queryCommandState(in DOMString commandID); */
 NS_IMETHODIMP
 nsHTMLDocument::QueryCommandState(const nsAString & commandID, bool *_retval)
 {
   ErrorResult rv;
   *_retval = QueryCommandState(commandID, rv);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 bool
@@ -3419,7 +3460,6 @@ nsHTMLDocument::QueryCommandState(const nsAString& commandID, ErrorResult& rv)
 
   // if editing is not on, bail
   if (!IsEditingOnAfterFlush()) {
-    rv.Throw(NS_ERROR_FAILURE);
     return false;
   }
 
@@ -3482,7 +3522,6 @@ nsHTMLDocument::QueryCommandState(const nsAString& commandID, ErrorResult& rv)
   return retval;
 }
 
-/* boolean queryCommandSupported(in DOMString commandID); */
 NS_IMETHODIMP
 nsHTMLDocument::QueryCommandSupported(const nsAString & commandID,
                                       bool *_retval)
@@ -3494,19 +3533,36 @@ nsHTMLDocument::QueryCommandSupported(const nsAString & commandID,
 bool
 nsHTMLDocument::QueryCommandSupported(const nsAString& commandID)
 {
+  // Gecko technically supports all the clipboard commands including
+  // cut/copy/paste, but non-privileged content will be unable to call
+  // paste, and depending on the pref "dom.allow_cut_copy", cut and copy
+  // may also be disallowed to be called from non-privileged content.
+  // For that reason, we report the support status of corresponding
+  // command accordingly.
+  if (!nsContentUtils::IsCallerChrome()) {
+    if (commandID.LowerCaseEqualsLiteral("paste")) {
+      return false;
+    }
+    if (nsContentUtils::IsCutCopyRestricted()) {
+      if (commandID.LowerCaseEqualsLiteral("cut") ||
+          commandID.LowerCaseEqualsLiteral("copy")) {
+        return false;
+      }
+    }
+  }
+
   // commandID is supported if it can be converted to a Midas command
   nsAutoCString cmdToDispatch;
   return ConvertToMidasInternalCommand(commandID, cmdToDispatch);
 }
 
-/* DOMString queryCommandValue(in DOMString commandID); */
 NS_IMETHODIMP
 nsHTMLDocument::QueryCommandValue(const nsAString & commandID,
                                   nsAString &_retval)
 {
   ErrorResult rv;
   QueryCommandValue(commandID, _retval, rv);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 void
@@ -3524,7 +3580,6 @@ nsHTMLDocument::QueryCommandValue(const nsAString& commandID,
 
   // if editing is not on, bail
   if (!IsEditingOnAfterFlush()) {
-    rv.Throw(NS_ERROR_FAILURE);
     return;
   }
 

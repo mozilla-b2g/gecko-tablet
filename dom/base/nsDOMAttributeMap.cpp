@@ -250,7 +250,7 @@ nsDOMAttributeMap::SetNamedItem(nsIDOMAttr* aAttr, nsIDOMAttr** aReturn)
 
   ErrorResult rv;
   *aReturn = SetNamedItem(*attribute, rv).take();
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 NS_IMETHODIMP
@@ -261,7 +261,7 @@ nsDOMAttributeMap::SetNamedItemNS(nsIDOMAttr* aAttr, nsIDOMAttr** aReturn)
 
   ErrorResult rv;
   *aReturn = SetNamedItemNS(*attribute, rv).take();
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 already_AddRefed<Attr>
@@ -306,8 +306,7 @@ nsDOMAttributeMap::SetNamedItemInternal(Attr& aAttr,
     nsAutoString name;
     aAttr.GetName(name);
     oldNi = mContent->GetExistingAttrNameFromQName(name);
-  }
-  else {
+  } else {
     uint32_t i, count = mContent->GetAttrCount();
     for (i = 0; i < count; ++i) {
       const nsAttrName* name = mContent->GetAttrNameAt(i);
@@ -337,6 +336,25 @@ nsDOMAttributeMap::SetNamedItemInternal(Attr& aAttr,
       attr = RemoveNamedItem(oldNi, aError);
       NS_ASSERTION(attr->NodeInfo()->NameAndNamespaceEquals(oldNi),
         "RemoveNamedItem() called, attr->NodeInfo() should be equal to oldNi!");
+
+      // That might have run mutation event listeners, so re-verify
+      // our assumptions.
+      nsDOMAttributeMap* newOwner = aAttr.GetMap();
+      if (newOwner) {
+        if (newOwner == this) {
+          // OK, we're just done here.
+          return attr.forget();
+        }
+
+        // The attr we're trying to set got stuck on some other
+        // element.  Just throw, for lack of anything better to do.
+        aError.Throw(NS_ERROR_DOM_INUSE_ATTRIBUTE_ERR);
+        return nullptr;
+      } else if (mContent->OwnerDoc() != aAttr.OwnerDoc()) {
+        // Got moved into a different document, boo.
+        aError.Throw(NS_ERROR_DOM_HIERARCHY_REQUEST_ERR);
+        return nullptr;
+      }
     }
   }
 
@@ -378,7 +396,7 @@ nsDOMAttributeMap::RemoveNamedItem(const nsAString& aName,
 
   ErrorResult rv;
   *aReturn = RemoveNamedItem(aName, rv).take();
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 already_AddRefed<Attr>
@@ -516,7 +534,7 @@ nsDOMAttributeMap::RemoveNamedItemNS(const nsAString& aNamespaceURI,
   NS_ENSURE_ARG_POINTER(aReturn);
   ErrorResult rv;
   *aReturn = RemoveNamedItemNS(aNamespaceURI, aLocalName, rv).take();
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 already_AddRefed<Attr>
@@ -547,20 +565,14 @@ nsDOMAttributeMap::Enumerate(AttrCache::EnumReadFunction aFunc,
 }
 
 size_t
-AttrCacheSizeEnumerator(const nsAttrKey& aKey,
-                        const nsRefPtr<Attr>& aValue,
-                        MallocSizeOf aMallocSizeOf,
-                        void* aUserArg)
-{
-  return aMallocSizeOf(aValue.get());
-}
-
-size_t
 nsDOMAttributeMap::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
 {
   size_t n = aMallocSizeOf(this);
-  n += mAttributeCache.SizeOfExcludingThis(AttrCacheSizeEnumerator,
-                                           aMallocSizeOf);
+
+  n += mAttributeCache.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  for (auto iter = mAttributeCache.ConstIter(); !iter.Done(); iter.Next()) {
+    n += aMallocSizeOf(iter.Data().get());
+  }
 
   // NB: mContent is non-owning and thus not counted.
   return n;

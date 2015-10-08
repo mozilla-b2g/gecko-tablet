@@ -78,6 +78,11 @@ public class ReadingListPanel extends HomeFragment {
         mList.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @Override
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                final Context context = getActivity();
+                if (context == null) {
+                    return;
+                }
+
                 final Cursor c = mAdapter.getCursor();
                 if (c == null || !c.moveToPosition(position)) {
                     return;
@@ -90,6 +95,8 @@ public class ReadingListPanel extends HomeFragment {
 
                 // This item is a TwoLinePageRow, so we allow switch-to-tab.
                 mUrlOpenListener.onUrlOpen(url, EnumSet.of(OnUrlOpenListener.Flags.ALLOW_SWITCH_TO_TAB));
+
+                markAsRead(context, id);
             }
         });
 
@@ -100,6 +107,7 @@ public class ReadingListPanel extends HomeFragment {
                 info.url = cursor.getString(cursor.getColumnIndexOrThrow(ReadingListItems.URL));
                 info.title = cursor.getString(cursor.getColumnIndexOrThrow(ReadingListItems.TITLE));
                 info.readingListItemId = cursor.getInt(cursor.getColumnIndexOrThrow(ReadingListItems._ID));
+                info.isUnread = cursor.getInt(cursor.getColumnIndexOrThrow(ReadingListItems.IS_UNREAD)) == 1;
                 info.itemType = RemoveItemType.READING_LIST;
                 return info;
             }
@@ -107,9 +115,21 @@ public class ReadingListPanel extends HomeFragment {
         registerForContextMenu(mList);
     }
 
+    private void markAsRead(final Context context, final long id) {
+        GeckoProfile.get(context).getDB().getReadingListAccessor().markAsRead(
+            context.getContentResolver(),
+            id
+        );
+    }
+
     @Override
     public void onDestroyView() {
         super.onDestroyView();
+
+        // Discard any additional item clicks on the list as the
+        // panel is getting destroyed (bug 1210243).
+        mList.setOnItemClickListener(null);
+
         mList = null;
         mTopView = null;
         mEmptyView = null;

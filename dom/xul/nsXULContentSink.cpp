@@ -41,7 +41,7 @@
 #include "nsXPIDLString.h"
 #include "nsReadableUtils.h"
 #include "nsXULElement.h"
-#include "prlog.h"
+#include "mozilla/Logging.h"
 #include "prmem.h"
 #include "nsCRT.h"
 
@@ -57,9 +57,7 @@
 #include "nsIScriptError.h"
 #include "nsContentTypeParser.h"
 
-#ifdef PR_LOGGING
 static PRLogModuleInfo* gContentSinkLog;
-#endif
 
 //----------------------------------------------------------------------
 
@@ -162,21 +160,16 @@ XULContentSinkImpl::XULContentSinkImpl()
       mTextLength(0),
       mTextSize(0),
       mConstrainSize(true),
-      mState(eInProlog),
-      mParser(nullptr)
+      mState(eInProlog)
 {
 
-#ifdef PR_LOGGING
     if (! gContentSinkLog)
         gContentSinkLog = PR_NewLogModule("nsXULContentSink");
-#endif
 }
 
 
 XULContentSinkImpl::~XULContentSinkImpl()
 {
-    NS_IF_RELEASE(mParser); // XXX should've been released by now, unless error.
-
     // The context stack _should_ be empty, unless something has gone wrong.
     NS_ASSERTION(mContextStack.Depth() == 0, "Context stack not empty?");
     mContextStack.Clear();
@@ -193,14 +186,14 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(XULContentSinkImpl)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mNodeInfoManager)
   tmp->mContextStack.Clear();
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mPrototype)
-  NS_IF_RELEASE(tmp->mParser);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mParser)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(XULContentSinkImpl)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mNodeInfoManager)
   tmp->mContextStack.Traverse(cb);
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPrototype)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_RAWPTR(mParser)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mParser)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(XULContentSinkImpl)
@@ -241,7 +234,7 @@ XULContentSinkImpl::DidBuildModel(bool aTerminated)
 
     // Drop our reference to the parser to get rid of a circular
     // reference.
-    NS_IF_RELEASE(mParser);
+    mParser = nullptr;
     return NS_OK;
 }
 
@@ -262,9 +255,7 @@ XULContentSinkImpl::WillResume(void)
 NS_IMETHODIMP
 XULContentSinkImpl::SetParser(nsParserBase* aParser)
 {
-    NS_IF_RELEASE(mParser);
     mParser = aParser;
-    NS_IF_ADDREF(mParser);
     return NS_OK;
 }
 
@@ -486,7 +477,7 @@ XULContentSinkImpl::HandleStartElement(const char16_t *aName,
 
   case eInEpilog:
   case eInScript:
-      PR_LOG(gContentSinkLog, PR_LOG_WARNING,
+      MOZ_LOG(gContentSinkLog, LogLevel::Warning,
              ("xul: warning: unexpected tags in epilog at line %d",
              aLineNumber));
       rv = NS_ERROR_UNEXPECTED; // XXX
@@ -737,7 +728,7 @@ XULContentSinkImpl::OpenRoot(const char16_t** aAttributes,
 
     if (aNodeInfo->Equals(nsGkAtoms::script, kNameSpaceID_XHTML) ||
         aNodeInfo->Equals(nsGkAtoms::script, kNameSpaceID_XUL)) {
-        PR_LOG(gContentSinkLog, PR_LOG_ERROR,
+        MOZ_LOG(gContentSinkLog, LogLevel::Error,
                ("xul: script tag not allowed as root content element"));
 
         return NS_ERROR_UNEXPECTED;
@@ -748,16 +739,14 @@ XULContentSinkImpl::OpenRoot(const char16_t** aAttributes,
     rv = CreateElement(aNodeInfo, &element);
 
     if (NS_FAILED(rv)) {
-#ifdef PR_LOGGING
-        if (PR_LOG_TEST(gContentSinkLog, PR_LOG_ERROR)) {
+        if (MOZ_LOG_TEST(gContentSinkLog, LogLevel::Error)) {
             nsAutoString anodeC;
             aNodeInfo->GetName(anodeC);
-            PR_LOG(gContentSinkLog, PR_LOG_ERROR,
+            MOZ_LOG(gContentSinkLog, LogLevel::Error,
                    ("xul: unable to create element '%s' at line %d",
                     NS_ConvertUTF16toUTF8(anodeC).get(),
                     -1)); // XXX pass in line number
         }
-#endif
 
         return rv;
     }
@@ -791,16 +780,14 @@ XULContentSinkImpl::OpenTag(const char16_t** aAttributes,
     rv = CreateElement(aNodeInfo, &element);
 
     if (NS_FAILED(rv)) {
-#ifdef PR_LOGGING
-        if (PR_LOG_TEST(gContentSinkLog, PR_LOG_ERROR)) {
+        if (MOZ_LOG_TEST(gContentSinkLog, LogLevel::Error)) {
             nsAutoString anodeC;
             aNodeInfo->GetName(anodeC);
-            PR_LOG(gContentSinkLog, PR_LOG_ERROR,
+            MOZ_LOG(gContentSinkLog, LogLevel::Error,
                    ("xul: unable to create element '%s' at line %d",
                     NS_ConvertUTF16toUTF8(anodeC).get(),
                     aLineNumber));
         }
-#endif
 
         return rv;
     }
@@ -990,8 +977,7 @@ XULContentSinkImpl::AddAttributes(const char16_t** aAttributes,
                                mDocumentURL);
       NS_ENSURE_SUCCESS(rv, rv);
 
-#ifdef PR_LOGGING
-      if (PR_LOG_TEST(gContentSinkLog, PR_LOG_DEBUG)) {
+      if (MOZ_LOG_TEST(gContentSinkLog, LogLevel::Debug)) {
           nsAutoString extraWhiteSpace;
           int32_t cnt = mContextStack.Depth();
           while (--cnt >= 0)
@@ -999,14 +985,13 @@ XULContentSinkImpl::AddAttributes(const char16_t** aAttributes,
           nsAutoString qnameC,valueC;
           qnameC.Assign(aAttributes[0]);
           valueC.Assign(aAttributes[1]);
-          PR_LOG(gContentSinkLog, PR_LOG_DEBUG,
+          MOZ_LOG(gContentSinkLog, LogLevel::Debug,
                  ("xul: %.5d. %s    %s=%s",
                   -1, // XXX pass in line number
                   NS_ConvertUTF16toUTF8(extraWhiteSpace).get(),
                   NS_ConvertUTF16toUTF8(qnameC).get(),
                   NS_ConvertUTF16toUTF8(valueC).get()));
       }
-#endif
   }
 
   return NS_OK;
@@ -1039,7 +1024,13 @@ XULContentSinkImpl::AddText(const char16_t* aText,
             return rv;
         }
       } else {
-        mTextSize += aLength;
+        CheckedInt32 size = mTextSize;
+        size += aLength;
+        if (!size.isValid()) {
+          return NS_ERROR_OUT_OF_MEMORY;
+        }
+        mTextSize = size.value();
+
         mText = (char16_t *) realloc(mText, sizeof(char16_t) * mTextSize);
         if (nullptr == mText) {
             return NS_ERROR_OUT_OF_MEMORY;

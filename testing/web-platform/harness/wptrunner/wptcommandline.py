@@ -25,12 +25,6 @@ def url_or_path(path):
     else:
         return abs_path(path)
 
-def slash_prefixed(url):
-    if not url.startswith("/"):
-        url = "/" + url
-    return url
-
-
 def require_arg(kwargs, name, value_func=None):
     if value_func is None:
         value_func = lambda x: x is not None
@@ -41,7 +35,7 @@ def require_arg(kwargs, name, value_func=None):
 
 
 def create_parser(product_choices=None):
-    from mozlog.structured import commandline
+    from mozlog import commandline
 
     import products
 
@@ -92,20 +86,30 @@ def create_parser(product_choices=None):
                         default=False,
                         help="List the tests that are disabled on the current platform")
 
+    build_type = parser.add_mutually_exclusive_group()
+    build_type.add_argument("--debug-build", dest="debug", action="store_true",
+                            default=None,
+                            help="Build is a debug build (overrides any mozinfo file)")
+    build_type.add_argument("--release-build", dest="debug", action="store_false",
+                            default=None,
+                            help="Build is a release (overrides any mozinfo file)")
+
     test_selection_group = parser.add_argument_group("Test Selection")
     test_selection_group.add_argument("--test-types", action="store",
                                       nargs="*", default=["testharness", "reftest"],
                                       choices=["testharness", "reftest"],
                                       help="Test types to run")
-    test_selection_group.add_argument("--include", action="append", type=slash_prefixed,
+    test_selection_group.add_argument("--include", action="append",
                                       help="URL prefix to include")
-    test_selection_group.add_argument("--exclude", action="append", type=slash_prefixed,
+    test_selection_group.add_argument("--exclude", action="append",
                                       help="URL prefix to exclude")
     test_selection_group.add_argument("--include-manifest", type=abs_path,
                                       help="Path to manifest listing tests to include")
+    test_selection_group.add_argument("--tag", action="append", dest="tags",
+                                      help="Labels applied to tests to include in the run. Labels starting dir: are equivalent to top-level directories.")
 
     debugging_group = parser.add_argument_group("Debugging")
-    debugging_group.add_argument('--debugger',
+    debugging_group.add_argument('--debugger', const="__default__", nargs="?",
                                  help="run under a debugger, e.g. gdb or valgrind")
     debugging_group.add_argument('--debugger-args', help="arguments to the debugger")
 
@@ -150,10 +154,17 @@ def create_parser(product_choices=None):
     gecko_group = parser.add_argument_group("Gecko-specific")
     gecko_group.add_argument("--prefs-root", dest="prefs_root", action="store", type=abs_path,
                              help="Path to the folder containing browser prefs")
+    gecko_group.add_argument("--e10s", dest="gecko_e10s", action="store_true",
+                             help="Path to the folder containing browser prefs")
 
     b2g_group = parser.add_argument_group("B2G-specific")
     b2g_group.add_argument("--b2g-no-backup", action="store_true", default=False,
                            help="Don't backup device before testrun with --product=b2g")
+
+    servo_group = parser.add_argument_group("Servo-specific")
+    servo_group.add_argument("--user-stylesheet",
+                             default=[], action="append", dest="user_stylesheets",
+                             help="Inject a user CSS stylesheet into every test.")
 
     parser.add_argument("test_list", nargs="*",
                         help="List of URLs for tests to run, or paths including tests to run. "
@@ -233,8 +244,6 @@ def exe_path(name):
 
 
 def check_args(kwargs):
-    from mozrunner import debugger_arguments
-
     set_from_config(kwargs)
 
     for test_paths in kwargs["test_paths"].itervalues():
@@ -278,16 +287,18 @@ def check_args(kwargs):
         kwargs["processes"] = 1
 
     if kwargs["debugger"] is not None:
-        debug_args, interactive = debugger_arguments(kwargs["debugger"],
-                                                     kwargs["debugger_args"])
-        if interactive:
-            require_arg(kwargs, "processes", lambda x: x == 1)
+        import mozdebug
+        if kwargs["debugger"] == "__default__":
+            kwargs["debugger"] = mozdebug.get_default_debugger_name()
+        debug_info = mozdebug.get_debugger_info(kwargs["debugger"],
+                                                kwargs["debugger_args"])
+        if debug_info and debug_info.interactive:
+            if kwargs["processes"] != 1:
+                kwargs["processes"] = 1
             kwargs["no_capture_stdio"] = True
-        kwargs["interactive"] = interactive
-        kwargs["debug_args"] = debug_args
+        kwargs["debug_info"] = debug_info
     else:
-        kwargs["interactive"] = False
-        kwargs["debug_args"] = None
+        kwargs["debug_info"] = None
 
     if kwargs["binary"] is not None:
         if not os.path.exists(kwargs["binary"]):

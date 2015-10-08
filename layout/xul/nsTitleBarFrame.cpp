@@ -66,9 +66,9 @@ nsTitleBarFrame::HandleEvent(nsPresContext* aPresContext,
 
   bool doDefault = true;
 
-  switch (aEvent->message) {
+  switch (aEvent->mMessage) {
 
-   case NS_MOUSE_BUTTON_DOWN:  {
+   case eMouseDown: {
        if (aEvent->AsMouseEvent()->button == WidgetMouseEvent::eLeftButton) {
          // titlebar has no effect in non-chrome shells
          nsCOMPtr<nsIDocShellTreeItem> dsti = aPresContext->GetDocShell();
@@ -92,7 +92,7 @@ nsTitleBarFrame::HandleEvent(nsPresContext* aPresContext,
      break;
 
 
-   case NS_MOUSE_BUTTON_UP: {
+   case eMouseUp: {
        if (mTrackingMouseMove &&
            aEvent->AsMouseEvent()->button == WidgetMouseEvent::eLeftButton) {
          // we're done tracking.
@@ -107,7 +107,7 @@ nsTitleBarFrame::HandleEvent(nsPresContext* aPresContext,
      }
      break;
 
-   case NS_MOUSE_MOVE: {
+   case eMouseMove: {
        if(mTrackingMouseMove)
        {
          LayoutDeviceIntPoint nsMoveBy = aEvent->refPoint - mLastPoint;
@@ -128,9 +128,9 @@ nsTitleBarFrame::HandleEvent(nsPresContext* aPresContext,
            nsIntRect bounds;
            widget->GetScreenBounds(bounds);
 
-           int32_t newx = aPresContext->DevPixelsToIntCSSPixels(bounds.x + nsMoveBy.x);
-           int32_t newy = aPresContext->DevPixelsToIntCSSPixels(bounds.y + nsMoveBy.y);
-           menuPopupFrame->MoveTo(newx, newy, false);
+           CSSPoint cssPos = (LayoutDeviceIntPoint::FromUntyped(bounds.TopLeft()) + nsMoveBy)
+                           / aPresContext->CSSToDevPixelScale();
+           menuPopupFrame->MoveTo(RoundedToInt(cssPos), false);
          }
          else {
            nsIPresShell* presShell = aPresContext->PresShell();
@@ -147,13 +147,16 @@ nsTitleBarFrame::HandleEvent(nsPresContext* aPresContext,
      }
      break;
 
-    case NS_MOUSE_CLICK: {
+    case eMouseClick: {
       WidgetMouseEvent* mouseEvent = aEvent->AsMouseEvent();
       if (mouseEvent->IsLeftClickEvent()) {
         MouseClicked(aPresContext, mouseEvent);
       }
       break;
     }
+
+    default:
+      break;
   }
 
   if ( doDefault )

@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 et sw=2 tw=80: */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -76,7 +76,7 @@ ContentBridgeParent::RecvSyncMessage(const nsString& aMsg,
                                      const ClonedMessageData& aData,
                                      InfallibleTArray<jsipc::CpowEntry>&& aCpows,
                                      const IPC::Principal& aPrincipal,
-                                     InfallibleTArray<nsString>* aRetvals)
+                                     nsTArray<StructuredCloneData>* aRetvals)
 {
   return nsIContentParent::RecvSyncMessage(aMsg, aData, Move(aCpows),
                                            aPrincipal, aRetvals);
@@ -161,6 +161,17 @@ bool
 ContentBridgeParent::DeallocPBrowserParent(PBrowserParent* aParent)
 {
   return nsIContentParent::DeallocPBrowserParent(aParent);
+}
+
+void
+ContentBridgeParent::NotifyTabDestroyed()
+{
+  int32_t numLiveTabs = ManagedPBrowserParent().Length();
+  if (numLiveTabs == 1) {
+    MessageLoop::current()->PostTask(
+      FROM_HERE,
+      NewRunnableMethod(this, &ContentBridgeParent::Close));
+  }
 }
 
 // This implementation is identical to ContentParent::GetCPOWManager but we can't

@@ -110,9 +110,8 @@
 namespace js {
 
 class Bindings;
-class Debugger;
-class Nursery;
 class StaticBlockObject;
+class TenuringTracer;
 
 typedef JSGetterOp GetterOp;
 typedef JSSetterOp SetterOp;
@@ -319,39 +318,6 @@ class Shape;
 class UnownedBaseShape;
 struct StackBaseShape;
 
-// This class is used to add a post barrier on the AccessorShape's getter/setter
-// objects. It updates the shape's entry in the parent's KidsHash table.
-class ShapeGetterSetterRef : public gc::BufferableRef
-{
-    AccessorShape* shape;
-    JSObject** objp;
-
-  public:
-    ShapeGetterSetterRef(AccessorShape* shape, JSObject** objp)
-      : shape(shape), objp(objp)
-    {}
-
-    void mark(JSTracer* trc);
-};
-
-static inline void
-GetterSetterWriteBarrierPost(AccessorShape* shape, JSObject** objp)
-{
-    MOZ_ASSERT(shape);
-    MOZ_ASSERT(objp);
-    MOZ_ASSERT(*objp);
-    gc::Cell** cellp = reinterpret_cast<gc::Cell**>(objp);
-    if (gc::StoreBuffer* sb = (*cellp)->storeBuffer())
-        sb->putGeneric(ShapeGetterSetterRef(shape, objp));
-}
-
-static inline void
-GetterSetterWriteBarrierPostRemove(JSRuntime* rt, JSObject** objp)
-{
-    JS::shadow::Runtime* shadowRuntime = JS::shadow::Runtime::asShadowRuntime(rt);
-    shadowRuntime->gcStoreBufferPtr()->removeRelocatableCellFromAnyThread(reinterpret_cast<gc::Cell**>(objp));
-}
-
 class BaseShape : public gc::TenuredCell
 {
   public:
@@ -387,16 +353,10 @@ class BaseShape : public gc::TenuredCell
         UNCACHEABLE_PROTO   =  0x800,
         IMMUTABLE_PROTOTYPE = 0x1000,
 
-        // These two flags control which scope a new variables ends up on in the
-        // scope chain. If the variable is "qualified" (i.e., if it was defined
-        // using var, let, or const) then it ends up on the lowest scope in the
-        // chain that has the QUALIFIED_VAROBJ flag set. If it's "unqualified"
-        // (i.e., if it was introduced without any var, let, or const, which
-        // incidentally is an error in strict mode) then it goes on the lowest
-        // scope in the chain with the UNQUALIFIED_VAROBJ flag set (which is
-        // typically the global).
+        // See JSObject::isQualifiedVarObj().
         QUALIFIED_VAROBJ    = 0x2000,
-        UNQUALIFIED_VAROBJ  = 0x4000,
+
+        // 0x4000 is unused.
 
         // For a function used as an interpreted constructor, whether a 'new'
         // type had constructor information cleared.
@@ -419,6 +379,7 @@ class BaseShape : public gc::TenuredCell
     ShapeTable*      table_;
 
     BaseShape(const BaseShape& base) = delete;
+    BaseShape& operator=(const BaseShape& other) = delete;
 
   public:
     void finalize(FreeOp* fop);
@@ -437,23 +398,16 @@ class BaseShape : public gc::TenuredCell
     /* Not defined: BaseShapes must not be stack allocated. */
     ~BaseShape();
 
-    BaseShape& operator=(const BaseShape& other) {
-        clasp_ = other.clasp_;
-        flags = other.flags;
-        slotSpan_ = other.slotSpan_;
-        compartment_ = other.compartment_;
-        return *this;
-    }
-
     const Class* clasp() const { return clasp_; }
 
     bool isOwned() const { return !!(flags & OWNED_SHAPE); }
 
+    static void copyFromUnowned(BaseShape& dest, UnownedBaseShape& src);
     inline void adoptUnowned(UnownedBaseShape* other);
 
     void setOwned(UnownedBaseShape* unowned) {
         flags |= OWNED_SHAPE;
-        this->unowned_ = unowned;
+        unowned_ = unowned;
     }
 
     uint32_t getObjectFlags() const { return flags & OBJECT_FLAG_MASK; }
@@ -466,6 +420,7 @@ class BaseShape : public gc::TenuredCell
     void setSlotSpan(uint32_t slotSpan) { MOZ_ASSERT(isOwned()); slotSpan_ = slotSpan; }
 
     JSCompartment* compartment() const { return compartment_; }
+    JSCompartment* maybeCompartment() const { return compartment(); }
 
     /*
      * Lookup base shapes from the compartment's baseShapes table, adding if
@@ -490,7 +445,7 @@ class BaseShape : public gc::TenuredCell
 
     static inline ThingRootKind rootKind() { return THING_ROOT_BASE_SHAPE; }
 
-    void markChildren(JSTracer* trc);
+    void traceChildren(JSTracer* trc);
 
     void fixupAfterMovingGC() {}
 
@@ -505,24 +460,6 @@ class BaseShape : public gc::TenuredCell
 
 class UnownedBaseShape : public BaseShape {};
 
-inline void
-BaseShape::adoptUnowned(UnownedBaseShape* other)
-{
-    // This is a base shape owned by a dictionary object, update it to reflect the
-    // unowned base shape of a new last property.
-    MOZ_ASSERT(isOwned());
-
-    uint32_t span = slotSpan();
-    ShapeTable* table = &this->table();
-
-    *this = *other;
-    setOwned(other);
-    setTable(table);
-    setSlotSpan(span);
-
-    assertConsistency();
-}
-
 UnownedBaseShape*
 BaseShape::unowned()
 {
@@ -532,13 +469,15 @@ BaseShape::unowned()
 UnownedBaseShape*
 BaseShape::toUnowned()
 {
-    MOZ_ASSERT(!isOwned() && !unowned_); return static_cast<UnownedBaseShape*>(this);
+    MOZ_ASSERT(!isOwned() && !unowned_);
+    return static_cast<UnownedBaseShape*>(this);
 }
 
 UnownedBaseShape*
 BaseShape::baseUnowned()
 {
-    MOZ_ASSERT(isOwned() && unowned_); return unowned_;
+    MOZ_ASSERT(isOwned() && unowned_);
+    return unowned_;
 }
 
 /* Entries for the per-compartment baseShapes set of unowned base shapes. */
@@ -577,15 +516,6 @@ struct StackBaseShape : public DefaultHasher<ReadBarrieredUnownedBaseShape>
     static inline bool match(UnownedBaseShape* key, const Lookup& lookup);
 };
 
-inline
-BaseShape::BaseShape(const StackBaseShape& base)
-{
-    mozilla::PodZero(this);
-    this->clasp_ = base.clasp;
-    this->flags = base.flags;
-    this->compartment_ = base.compartment;
-}
-
 typedef HashSet<ReadBarrieredUnownedBaseShape,
                 StackBaseShape,
                 SystemAllocPolicy> BaseShapeSet;
@@ -596,13 +526,13 @@ class Shape : public gc::TenuredCell
     friend class ::JSObject;
     friend class ::JSFunction;
     friend class Bindings;
-    friend class Nursery;
     friend class NativeObject;
     friend class PropertyTree;
     friend class StaticBlockObject;
-    friend class ShapeGetterSetterRef;
-    friend struct StackShape;
+    friend class TenuringTracer;
     friend struct StackBaseShape;
+    friend struct StackShape;
+    friend struct JS::ubi::Concrete<Shape>;
 
   protected:
     HeapPtrBaseShape    base_;
@@ -721,6 +651,7 @@ class Shape : public gc::TenuredCell
 
     const HeapPtrShape& previous() const { return parent; }
     JSCompartment* compartment() const { return base()->compartment(); }
+    JSCompartment* maybeCompartment() const { return compartment(); }
 
     template <AllowGC allowGC>
     class Range {
@@ -805,7 +736,7 @@ class Shape : public gc::TenuredCell
     Shape(const Shape& other) = delete;
 
     /* Allocate a new shape based on the given StackShape. */
-    static inline Shape* new_(ExclusiveContext* cx, StackShape& unrootedOther, uint32_t nfixed);
+    static inline Shape* new_(ExclusiveContext* cx, Handle<StackShape> other, uint32_t nfixed);
 
     /*
      * Whether this shape has a valid slot value. This may be true even if
@@ -999,12 +930,13 @@ class Shape : public gc::TenuredCell
 
     static inline ThingRootKind rootKind() { return THING_ROOT_SHAPE; }
 
-    inline void markChildren(JSTracer* trc);
+    void traceChildren(JSTracer* trc);
 
     inline Shape* search(ExclusiveContext* cx, jsid id);
     inline Shape* searchLinear(jsid id);
 
     void fixupAfterMovingGC();
+    void fixupGetterSetterForBarrier(JSTracer* trc);
 
     /* For JIT usage */
     static inline size_t offsetOfBase() { return offsetof(Shape, base_); }
@@ -1026,7 +958,6 @@ class Shape : public gc::TenuredCell
 class AccessorShape : public Shape
 {
     friend class Shape;
-    friend class ShapeGetterSetterRef;
     friend class NativeObject;
 
     union {
@@ -1052,7 +983,7 @@ StackBaseShape::StackBaseShape(Shape* shape)
     compartment(shape->compartment())
 {}
 
-class AutoRooterGetterSetter
+class MOZ_RAII AutoRooterGetterSetter
 {
     class Inner : private JS::CustomAutoRooter
     {
@@ -1168,7 +1099,7 @@ struct InitialShapeEntry
 
 typedef HashSet<InitialShapeEntry, InitialShapeEntry, SystemAllocPolicy> InitialShapeSet;
 
-struct StackShape
+struct StackShape : public JS::Traceable
 {
     /* For performance, StackShape only roots when absolutely necessary. */
     UnownedBaseShape* base;
@@ -1247,9 +1178,50 @@ struct StackShape
         return hash;
     }
 
-    // For RootedGeneric<StackShape*>
+    // Traceable implementation.
+    static void trace(StackShape* stackShape, JSTracer* trc) { stackShape->trace(trc); }
     void trace(JSTracer* trc);
 };
+
+template <typename Outer>
+class StackShapeOperations {
+    const StackShape& ss() const { return static_cast<const Outer*>(this)->get(); }
+
+  public:
+    bool hasSlot() const { return ss().hasSlot(); }
+    bool hasMissingSlot() const { return ss().hasMissingSlot(); }
+    uint32_t slot() const { return ss().slot(); }
+    uint32_t maybeSlot() const { return ss().maybeSlot(); }
+    uint32_t slotSpan() const { return ss().slotSpan(); }
+    bool isAccessorShape() const { return ss().isAccessorShape(); }
+    uint8_t attrs() const { return ss().attrs; }
+};
+
+template <typename Outer>
+class MutableStackShapeOperations : public StackShapeOperations<Outer> {
+    StackShape& ss() { return static_cast<Outer*>(this)->get(); }
+
+  public:
+    void updateGetterSetter(GetterOp rawGetter, SetterOp rawSetter) {
+        ss().updateGetterSetter(rawGetter, rawSetter);
+    }
+    void setSlot(uint32_t slot) { ss().setSlot(slot); }
+    void setBase(UnownedBaseShape* base) { ss().base = base; }
+    void setAttrs(uint8_t attrs) { ss().attrs = attrs; }
+};
+
+template <>
+class RootedBase<StackShape> : public MutableStackShapeOperations<JS::Rooted<StackShape>>
+{};
+
+template <>
+class HandleBase<StackShape> : public StackShapeOperations<JS::Handle<StackShape>>
+{};
+
+template <>
+class MutableHandleBase<StackShape>
+  : public MutableStackShapeOperations<JS::MutableHandle<StackShape>>
+{};
 
 inline
 Shape::Shape(const StackShape& other, uint32_t nfixed)
@@ -1270,6 +1242,38 @@ Shape::Shape(const StackShape& other, uint32_t nfixed)
     kids.setNull();
 }
 
+// This class is used to add a post barrier on the AccessorShape's getter/setter
+// objects. It updates the pointers and the shape's entry in the parent's
+// KidsHash table.
+class ShapeGetterSetterRef : public gc::BufferableRef
+{
+    AccessorShape* shape_;
+
+  public:
+    explicit ShapeGetterSetterRef(AccessorShape* shape) : shape_(shape) {}
+    void trace(JSTracer* trc) override { shape_->fixupGetterSetterForBarrier(trc); }
+};
+
+static inline void
+GetterSetterWriteBarrierPost(AccessorShape* shape)
+{
+    MOZ_ASSERT(shape);
+    if (shape->hasGetterObject()) {
+        gc::StoreBuffer* sb = reinterpret_cast<gc::Cell*>(shape->getterObject())->storeBuffer();
+        if (sb) {
+            sb->putGeneric(ShapeGetterSetterRef(shape));
+            return;
+        }
+    }
+    if (shape->hasSetterObject()) {
+        gc::StoreBuffer* sb = reinterpret_cast<gc::Cell*>(shape->setterObject())->storeBuffer();
+        if (sb) {
+            sb->putGeneric(ShapeGetterSetterRef(shape));
+            return;
+        }
+    }
+}
+
 inline
 AccessorShape::AccessorShape(const StackShape& other, uint32_t nfixed)
   : Shape(other, nfixed),
@@ -1277,11 +1281,7 @@ AccessorShape::AccessorShape(const StackShape& other, uint32_t nfixed)
     rawSetter(other.rawSetter)
 {
     MOZ_ASSERT(getAllocKind() == gc::AllocKind::ACCESSOR_SHAPE);
-
-    if ((attrs & JSPROP_GETTER) && rawGetter)
-        GetterSetterWriteBarrierPost(this, &this->getterObj);
-    if ((attrs & JSPROP_SETTER) && rawSetter)
-        GetterSetterWriteBarrierPost(this, &this->setterObj);
+    GetterSetterWriteBarrierPost(this);
 }
 
 inline
@@ -1355,21 +1355,6 @@ Shape::searchLinear(jsid id)
     }
 
     return nullptr;
-}
-
-inline void
-Shape::markChildren(JSTracer* trc)
-{
-    TraceEdge(trc, &base_, "base");
-    TraceEdge(trc, &propidRef(), "propid");
-    if (parent)
-        TraceEdge(trc, &parent, "parent");
-
-    if (hasGetterObject())
-        TraceManuallyBarrieredEdge(trc, &asAccessorShape().getterObj, "getter");
-
-    if (hasSetterObject())
-        TraceManuallyBarrieredEdge(trc, &asAccessorShape().setterObj, "setter");
 }
 
 /*
@@ -1449,9 +1434,28 @@ ReshapeForAllocKind(JSContext* cx, Shape* shape, TaggedProto proto,
 // instances that occupy a compartment.
 namespace JS {
 namespace ubi {
-template<> struct Concrete<js::Shape> : TracerConcreteWithCompartment<js::Shape> { };
-template<> struct Concrete<js::BaseShape> : TracerConcreteWithCompartment<js::BaseShape> { };
-}
-}
+
+template<> struct Concrete<js::Shape> : TracerConcreteWithCompartment<js::Shape> {
+    Size size(mozilla::MallocSizeOf mallocSizeOf) const override;
+
+  protected:
+    explicit Concrete(js::Shape *ptr) : TracerConcreteWithCompartment<js::Shape>(ptr) { }
+
+  public:
+    static void construct(void *storage, js::Shape *ptr) { new (storage) Concrete(ptr); }
+};
+
+template<> struct Concrete<js::BaseShape> : TracerConcreteWithCompartment<js::BaseShape> {
+    Size size(mozilla::MallocSizeOf mallocSizeOf) const override;
+
+  protected:
+    explicit Concrete(js::BaseShape *ptr) : TracerConcreteWithCompartment<js::BaseShape>(ptr) { }
+
+  public:
+    static void construct(void *storage, js::BaseShape *ptr) { new (storage) Concrete(ptr); }
+};
+
+} // namespace ubi
+} // namespace JS
 
 #endif /* vm_Shape_h */

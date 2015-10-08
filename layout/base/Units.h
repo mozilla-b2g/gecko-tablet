@@ -164,6 +164,11 @@ struct CSSPixel {
                     NSAppUnitsToFloatPixels(aPoint.y, float(AppUnitsPerCSSPixel())));
   }
 
+  static CSSSize FromAppUnits(const nsSize& aSize) {
+    return CSSSize(NSAppUnitsToFloatPixels(aSize.width, float(AppUnitsPerCSSPixel())),
+                   NSAppUnitsToFloatPixels(aSize.height, float(AppUnitsPerCSSPixel())));
+  }
+
   static CSSRect FromAppUnits(const nsRect& aRect) {
     return CSSRect(NSAppUnitsToFloatPixels(aRect.x, float(AppUnitsPerCSSPixel())),
                    NSAppUnitsToFloatPixels(aRect.y, float(AppUnitsPerCSSPixel())),
@@ -258,6 +263,13 @@ struct LayoutDevicePixel {
                              NSAppUnitsToFloatPixels(aPoint.y, aAppUnitsPerDevPixel));
   }
 
+  static LayoutDeviceMargin FromAppUnits(const nsMargin& aMargin, nscoord aAppUnitsPerDevPixel) {
+    return LayoutDeviceMargin(NSAppUnitsToFloatPixels(aMargin.top, aAppUnitsPerDevPixel),
+                              NSAppUnitsToFloatPixels(aMargin.right, aAppUnitsPerDevPixel),
+                              NSAppUnitsToFloatPixels(aMargin.bottom, aAppUnitsPerDevPixel),
+                              NSAppUnitsToFloatPixels(aMargin.left, aAppUnitsPerDevPixel));
+  }
+
   static LayoutDeviceIntPoint FromAppUnitsRounded(const nsPoint& aPoint, nscoord aAppUnitsPerDevPixel) {
     return LayoutDeviceIntPoint(NSAppUnitsToIntPixels(aPoint.x, aAppUnitsPerDevPixel),
                                 NSAppUnitsToIntPixels(aPoint.y, aAppUnitsPerDevPixel));
@@ -307,6 +319,10 @@ struct LayoutDevicePixel {
 struct LayerPixel {
   static nsIntRect ToUntyped(const LayerIntRect& aRect) {
     return nsIntRect(aRect.x, aRect.y, aRect.width, aRect.height);
+  }
+
+  static nsIntPoint ToUntyped(const LayerIntPoint& aPoint) {
+    return nsIntPoint(aPoint.x, aPoint.y);
   }
 
   static gfx::IntRect ToUnknown(const LayerIntRect& aRect) {
@@ -369,6 +385,10 @@ struct RenderTargetPixel {
  * generally be represented in ScreenPixel units.
  */
 struct ScreenPixel {
+  static nsIntSize ToUntyped(const ScreenIntSize& aSize) {
+    return nsIntSize(aSize.width, aSize.height);
+  }
+
   static ScreenIntPoint FromUntyped(const nsIntPoint& aPoint) {
     return ScreenIntPoint(aPoint.x, aPoint.y);
   }
@@ -426,6 +446,30 @@ template<class src, class dst>
 gfx::PointTyped<dst> operator/(const gfx::PointTyped<src>& aPoint, const gfx::ScaleFactors2D<dst, src>& aScale) {
   return gfx::PointTyped<dst>(aPoint.x / aScale.xScale,
                               aPoint.y / aScale.yScale);
+}
+
+template<class src, class dst>
+gfx::PointTyped<dst> operator*(const gfx::IntPointTyped<src>& aPoint, const gfx::ScaleFactor<src, dst>& aScale) {
+  return gfx::PointTyped<dst>(float(aPoint.x) * aScale.scale,
+                              float(aPoint.y) * aScale.scale);
+}
+
+template<class src, class dst>
+gfx::PointTyped<dst> operator/(const gfx::IntPointTyped<src>& aPoint, const gfx::ScaleFactor<dst, src>& aScale) {
+  return gfx::PointTyped<dst>(float(aPoint.x) / aScale.scale,
+                              float(aPoint.y) / aScale.scale);
+}
+
+template<class src, class dst>
+gfx::PointTyped<dst> operator*(const gfx::IntPointTyped<src>& aPoint, const gfx::ScaleFactors2D<src, dst>& aScale) {
+  return gfx::PointTyped<dst>(float(aPoint.x) * aScale.xScale,
+                              float(aPoint.y) * aScale.yScale);
+}
+
+template<class src, class dst>
+gfx::PointTyped<dst> operator/(const gfx::IntPointTyped<src>& aPoint, const gfx::ScaleFactors2D<dst, src>& aScale) {
+  return gfx::PointTyped<dst>(float(aPoint.x) / aScale.xScale,
+                              float(aPoint.y) / aScale.yScale);
 }
 
 template<class src, class dst>
@@ -572,6 +616,21 @@ gfx::MarginTyped<dst> operator/(const gfx::MarginTyped<src>& aMargin, const gfx:
                                aMargin.left / aScale.xScale);
 }
 
+// Calculate the max or min or the ratios of the widths and heights of two
+// sizes, returning a scale factor in the correct units.
+
+template<class src, class dst>
+gfx::ScaleFactor<src, dst> MaxScaleRatio(const gfx::SizeTyped<dst>& aDestSize, const gfx::SizeTyped<src>& aSrcSize) {
+  return gfx::ScaleFactor<src, dst>(std::max(aDestSize.width / aSrcSize.width,
+                                             aDestSize.height / aSrcSize.height));
 }
+
+template<class src, class dst>
+gfx::ScaleFactor<src, dst> MinScaleRatio(const gfx::SizeTyped<dst>& aDestSize, const gfx::SizeTyped<src>& aSrcSize) {
+  return gfx::ScaleFactor<src, dst>(std::min(aDestSize.width / aSrcSize.width,
+                                             aDestSize.height / aSrcSize.height));
+}
+
+} // namespace mozilla
 
 #endif

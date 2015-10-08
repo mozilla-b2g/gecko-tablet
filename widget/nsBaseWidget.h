@@ -7,6 +7,7 @@
 
 #include "mozilla/EventForwards.h"
 #include "mozilla/WidgetUtils.h"
+#include "mozilla/layers/APZCCallbackHelper.h"
 #include "nsRect.h"
 #include "nsIWidget.h"
 #include "nsWidgetsCID.h"
@@ -39,16 +40,14 @@ class APZCTreeManager;
 class GeckoContentController;
 class APZEventState;
 struct ScrollableLayerGuid;
-struct SetTargetAPZCCallback;
-struct SetAllowedTouchBehaviorCallback;
-}
+} // namespace layers
 
 class CompositorVsyncDispatcher;
-}
+} // namespace mozilla
 
 namespace base {
 class Thread;
-}
+} // namespace base
 
 // Windows specific constant indicating the maximum number of touch points the
 // inject api will allow. This also sets the maximum numerical value for touch
@@ -57,19 +56,22 @@ class Thread;
 
 class nsBaseWidget;
 
+// Helper class used in shutting down gfx related code.
 class WidgetShutdownObserver final : public nsIObserver
 {
-  ~WidgetShutdownObserver() {}
+  ~WidgetShutdownObserver();
 
 public:
-  explicit WidgetShutdownObserver(nsBaseWidget* aWidget)
-    : mWidget(aWidget)
-  { }
+  explicit WidgetShutdownObserver(nsBaseWidget* aWidget);
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIOBSERVER
 
+  void Register();
+  void Unregister();
+
   nsBaseWidget *mWidget;
+  bool mRegistered;
 };
 
 /**
@@ -95,7 +97,6 @@ protected:
   typedef mozilla::layers::GeckoContentController GeckoContentController;
   typedef mozilla::layers::ScrollableLayerGuid ScrollableLayerGuid;
   typedef mozilla::layers::APZEventState APZEventState;
-  typedef mozilla::layers::SetTargetAPZCCallback SetTargetAPZCCallback;
   typedef mozilla::layers::SetAllowedTouchBehaviorCallback SetAllowedTouchBehaviorCallback;
   typedef mozilla::ScreenRotation ScreenRotation;
 
@@ -123,8 +124,8 @@ public:
   NS_IMETHOD              PlaceBehind(nsTopLevelWidgetZPlacement aPlacement,
                                       nsIWidget *aWidget, bool aActivate) override;
 
-  NS_IMETHOD              SetSizeMode(int32_t aMode) override;
-  virtual int32_t         SizeMode() override
+  NS_IMETHOD              SetSizeMode(nsSizeMode aMode) override;
+  virtual nsSizeMode      SizeMode() override
   {
     return mSizeMode;
   }
@@ -142,7 +143,13 @@ public:
   virtual void            SetShowsFullScreenButton(bool aShow) override {}
   virtual void            SetWindowAnimationType(WindowAnimationType aType) override {}
   NS_IMETHOD              HideWindowChrome(bool aShouldHide) override;
+  virtual bool PrepareForFullscreenTransition(nsISupports** aData) override { return false; }
+  virtual void PerformFullscreenTransition(FullscreenTransitionStage aStage,
+                                           uint16_t aDuration,
+                                           nsISupports* aData,
+                                           nsIRunnable* aCallback) override;
   NS_IMETHOD              MakeFullScreen(bool aFullScreen, nsIScreen* aScreen = nullptr) override;
+
   virtual LayerManager*   GetLayerManager(PLayerTransactionChild* aShadowManager = nullptr,
                                           LayersBackend aBackendHint = mozilla::layers::LayersBackend::LAYERS_NONE,
                                           LayerManagerPersistence aPersistence = LAYER_MANAGER_CURRENT,
@@ -159,7 +166,7 @@ public:
   virtual void            PostRender(LayerManagerComposite* aManager) override {}
   virtual void            DrawWindowUnderlay(LayerManagerComposite* aManager, nsIntRect aRect) override {}
   virtual void            DrawWindowOverlay(LayerManagerComposite* aManager, nsIntRect aRect) override {}
-  virtual mozilla::TemporaryRef<mozilla::gfx::DrawTarget> StartRemoteDrawing() override;
+  virtual already_AddRefed<mozilla::gfx::DrawTarget> StartRemoteDrawing() override;
   virtual void            EndRemoteDrawing() override { };
   virtual void            CleanupRemoteDrawing() override { };
   virtual void            UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeometries) override {}
@@ -214,7 +221,7 @@ public:
                             const mozilla::WidgetKeyboardEvent& aEvent,
                             DoCommandCallback aCallback,
                             void* aCallbackData) override { return false; }
-  virtual bool            ComputeShouldAccelerate(bool aDefault);
+  virtual bool            ComputeShouldAccelerate();
   NS_IMETHOD              GetToggledKeyState(uint32_t aKeyCode, bool* aLEDState) override { return NS_ERROR_NOT_IMPLEMENTED; }
   virtual nsIMEUpdatePreference GetIMEUpdatePreference() override { return nsIMEUpdatePreference(); }
   NS_IMETHOD              OnDefaultButtonLoaded(const nsIntRect &aButtonRect) override { return NS_ERROR_NOT_IMPLEMENTED; }
@@ -229,6 +236,8 @@ public:
   NS_IMETHOD              AttachViewToTopLevel(bool aUseAttachedEvents) override;
   virtual nsIWidgetListener* GetAttachedWidgetListener() override;
   virtual void               SetAttachedWidgetListener(nsIWidgetListener* aListener) override;
+  virtual nsIWidgetListener* GetPreviouslyAttachedWidgetListener() override;
+  virtual void               SetPreviouslyAttachedWidgetListener(nsIWidgetListener* aListener) override;
   NS_IMETHOD_(TextEventDispatcher*) GetTextEventDispatcher() override final;
 
   // Helper function for dispatching events which are not processed by APZ,
@@ -237,6 +246,15 @@ public:
 
   // Dispatch an event that must be first be routed through APZ.
   nsEventStatus DispatchAPZAwareEvent(mozilla::WidgetInputEvent* aEvent) override;
+
+  void SetConfirmedTargetAPZC(uint64_t aInputBlockId,
+                              const nsTArray<ScrollableLayerGuid>& aTargets) const override;
+
+  void UpdateZoomConstraints(const uint32_t& aPresShellId,
+                             const FrameMetrics::ViewID& aViewId,
+                             const mozilla::Maybe<ZoomConstraints>& aConstraints) override;
+
+  bool AsyncPanZoomEnabled() const override;
 
   void NotifyWindowDestroyed();
   void NotifySizeMoveDone();
@@ -268,6 +286,13 @@ public:
     return aClientSize;
   }
 
+  // return the widget's outside dimensions
+  // in global coordinates in display pixel.
+  nsIntRect GetScaledScreenBounds();
+
+  // return the screen the widget is in.
+  already_AddRefed<nsIScreen> GetWidgetScreen();
+
   // return true if this is a popup widget with a native titlebar
   bool IsPopupWithTitleBar() const
   {
@@ -282,6 +307,12 @@ public:
 
   virtual const SizeConstraints& GetSizeConstraints() const override;
   virtual void SetSizeConstraints(const SizeConstraints& aConstraints) override;
+
+  virtual bool CaptureWidgetOnScreen(mozilla::RefPtr<mozilla::gfx::DrawTarget> aDT) override {
+    return false;
+  }
+
+  virtual void StartAsyncScrollbarDrag(const AsyncDragMetrics& aDragMetrics) override;
 
   /**
    * Use this when GetLayerManager() returns a BasicLayerManager
@@ -304,16 +335,6 @@ public:
     nsRefPtr<BasicLayerManager> mLayerManager;
   };
   friend class AutoLayerManagerSetup;
-
-  class AutoUseBasicLayerManager {
-  public:
-    explicit AutoUseBasicLayerManager(nsBaseWidget* aWidget);
-    ~AutoUseBasicLayerManager();
-  private:
-    nsBaseWidget* mWidget;
-    bool mPreviousTemporarilyUseBasicLayerManager;
-  };
-  friend class AutoUseBasicLayerManager;
 
   virtual bool            ShouldUseOffMainThreadCompositing();
 
@@ -353,16 +374,28 @@ protected:
                                             int32_t aNativeKeyCode,
                                             uint32_t aModifierFlags,
                                             const nsAString& aCharacters,
-                                            const nsAString& aUnmodifiedCharacters) override
-  { return NS_ERROR_UNEXPECTED; }
+                                            const nsAString& aUnmodifiedCharacters,
+                                            nsIObserver* aObserver) override
+  {
+    mozilla::widget::AutoObserverNotifier notifier(aObserver, "keyevent");
+    return NS_ERROR_UNEXPECTED;
+  }
 
   virtual nsresult SynthesizeNativeMouseEvent(mozilla::LayoutDeviceIntPoint aPoint,
                                               uint32_t aNativeMessage,
-                                              uint32_t aModifierFlags) override
-  { return NS_ERROR_UNEXPECTED; }
+                                              uint32_t aModifierFlags,
+                                              nsIObserver* aObserver) override
+  {
+    mozilla::widget::AutoObserverNotifier notifier(aObserver, "mouseevent");
+    return NS_ERROR_UNEXPECTED;
+  }
 
-  virtual nsresult SynthesizeNativeMouseMove(mozilla::LayoutDeviceIntPoint aPoint) override
-  { return NS_ERROR_UNEXPECTED; }
+  virtual nsresult SynthesizeNativeMouseMove(mozilla::LayoutDeviceIntPoint aPoint,
+                                             nsIObserver* aObserver) override
+  {
+    mozilla::widget::AutoObserverNotifier notifier(aObserver, "mouseevent");
+    return NS_ERROR_UNEXPECTED;
+  }
 
   virtual nsresult SynthesizeNativeMouseScrollEvent(mozilla::LayoutDeviceIntPoint aPoint,
                                                     uint32_t aNativeMessage,
@@ -370,15 +403,23 @@ protected:
                                                     double aDeltaY,
                                                     double aDeltaZ,
                                                     uint32_t aModifierFlags,
-                                                    uint32_t aAdditionalFlags) override
-  { return NS_ERROR_UNEXPECTED; }
+                                                    uint32_t aAdditionalFlags,
+                                                    nsIObserver* aObserver) override
+  {
+    mozilla::widget::AutoObserverNotifier notifier(aObserver, "mousescrollevent");
+    return NS_ERROR_UNEXPECTED;
+  }
 
   virtual nsresult SynthesizeNativeTouchPoint(uint32_t aPointerId,
                                               TouchPointerState aPointerState,
                                               nsIntPoint aPointerScreenPoint,
                                               double aPointerPressure,
-                                              uint32_t aPointerOrientation) override
-  { return NS_ERROR_UNEXPECTED; }
+                                              uint32_t aPointerOrientation,
+                                              nsIObserver* aObserver) override
+  {
+    mozilla::widget::AutoObserverNotifier notifier(aObserver, "touchpoint");
+    return NS_ERROR_UNEXPECTED;
+  }
 
   virtual nsresult NotifyIMEInternal(const IMENotification& aIMENotification)
   { return NS_ERROR_NOT_IMPLEMENTED; }
@@ -428,8 +469,6 @@ protected:
 
   virtual CompositorChild* GetRemoteRenderer() override;
 
-  virtual void GetPreferredCompositorBackends(nsTArray<mozilla::layers::LayersBackend>& aHints);
-
   /**
    * Notify the widget that this window is being used with OMTC.
    */
@@ -447,32 +486,25 @@ protected:
    * require the compositor to be destroyed before ~nsBaseWidget is
    * reached (This is the case with gtk2 for instance).
    */
-  void DestroyCompositor();
+  virtual void DestroyCompositor();
   void DestroyLayerManager();
+
+  void FreeShutdownObserver();
 
   nsIWidgetListener* mWidgetListener;
   nsIWidgetListener* mAttachedWidgetListener;
+  nsIWidgetListener* mPreviouslyAttachedWidgetListener;
   nsRefPtr<LayerManager> mLayerManager;
-  nsRefPtr<LayerManager> mBasicLayerManager;
   nsRefPtr<CompositorChild> mCompositorChild;
   nsRefPtr<CompositorParent> mCompositorParent;
   nsRefPtr<mozilla::CompositorVsyncDispatcher> mCompositorVsyncDispatcher;
   nsRefPtr<APZCTreeManager> mAPZC;
   nsRefPtr<APZEventState> mAPZEventState;
-  nsRefPtr<SetTargetAPZCCallback> mSetTargetAPZCCallback;
-  nsRefPtr<SetAllowedTouchBehaviorCallback> mSetAllowedTouchBehaviorCallback;
+  SetAllowedTouchBehaviorCallback mSetAllowedTouchBehaviorCallback;
   nsRefPtr<WidgetShutdownObserver> mShutdownObserver;
   nsRefPtr<TextEventDispatcher> mTextEventDispatcher;
   nsCursor          mCursor;
-  bool              mUpdateCursor;
   nsBorderStyle     mBorderStyle;
-  bool              mUseLayersAcceleration;
-  bool              mForceLayersAcceleration;
-  bool              mTemporarilyUseBasicLayerManager;
-  // Windows with out-of-process tabs always require OMTC. This flag designates
-  // such windows.
-  bool              mRequireOffMainThreadCompositing;
-  bool              mUseAttachedEvents;
   nsIntRect         mBounds;
   nsIntRect*        mOriginalBounds;
   // When this pointer is null, the widget is not clipped
@@ -482,6 +514,10 @@ protected:
   nsPopupLevel      mPopupLevel;
   nsPopupType       mPopupType;
   SizeConstraints   mSizeConstraints;
+
+  bool              mUpdateCursor;
+  bool              mUseAttachedEvents;
+  bool              mIMEHasFocus;
 
   static nsIRollupListener* gRollupListener;
 

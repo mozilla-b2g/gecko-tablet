@@ -168,6 +168,12 @@ gfxCoreTextShaper::ShapeText(gfxContext      *aContext,
     for (uint32_t runIndex = 0; runIndex < numRuns; runIndex++) {
         CTRunRef aCTRun =
             (CTRunRef)::CFArrayGetValueAtIndex(glyphRuns, runIndex);
+        // If the range is purely within bidi-wrapping text, ignore it.
+        CFRange range = ::CTRunGetStringRange(aCTRun);
+        if (uint32_t(range.location + range.length) <= startOffset ||
+            range.location - startOffset >= aLength) {
+            continue;
+        }
         CFDictionaryRef runAttr = ::CTRunGetAttributes(aCTRun);
         if (runAttr != attrObj) {
             // If Core Text manufactured a new dictionary, this may indicate
@@ -178,7 +184,6 @@ gfxCoreTextShaper::ShapeText(gfxContext      *aContext,
             if (font1 != font2) {
                 // ...except that if the fallback was only for a variation
                 // selector that is otherwise unsupported, we just ignore it.
-                CFRange range = ::CTRunGetStringRange(aCTRun);
                 if (range.length == 1 &&
                     gfxFontUtils::IsVarSelector(aText[range.location -
                                                       startOffset])) {
@@ -294,7 +299,6 @@ gfxCoreTextShaper::SetGlyphsFromRun(gfxShapedText *aShapedText,
                                                   nullptr, nullptr, nullptr);
 
     nsAutoTArray<gfxShapedText::DetailedGlyph,1> detailedGlyphs;
-    gfxShapedText::CompressedGlyph g;
     gfxShapedText::CompressedGlyph *charGlyphs =
         aShapedText->GetCharacterGlyphs() + aOffset;
 
@@ -310,7 +314,7 @@ gfxCoreTextShaper::SetGlyphsFromRun(gfxShapedText *aShapedText,
 
     static const int32_t NO_GLYPH = -1;
     AutoFallibleTArray<int32_t,SMALL_GLYPH_RUN> charToGlyphArray;
-    if (!charToGlyphArray.SetLength(stringRange.length)) {
+    if (!charToGlyphArray.SetLength(stringRange.length, fallible)) {
         return NS_ERROR_OUT_OF_MEMORY;
     }
     int32_t *charToGlyph = charToGlyphArray.Elements();
@@ -516,19 +520,20 @@ gfxCoreTextShaper::SetGlyphsFromRun(gfxShapedText *aShapedText,
                 advance = int32_t(toNextGlyph * appUnitsPerDevUnit);
             }
 
-            gfxTextRun::CompressedGlyph g;
-            g.SetComplex(charGlyphs[baseCharIndex].IsClusterStart(),
-                         true, detailedGlyphs.Length());
-            aShapedText->SetGlyphs(aOffset + baseCharIndex, g, detailedGlyphs.Elements());
+            gfxTextRun::CompressedGlyph textRunGlyph;
+            textRunGlyph.SetComplex(charGlyphs[baseCharIndex].IsClusterStart(),
+                                    true, detailedGlyphs.Length());
+            aShapedText->SetGlyphs(aOffset + baseCharIndex, textRunGlyph,
+                                   detailedGlyphs.Elements());
 
             detailedGlyphs.Clear();
         }
 
         // the rest of the chars in the group are ligature continuations, no associated glyphs
         while (++baseCharIndex != endCharIndex && baseCharIndex < wordLength) {
-            gfxShapedText::CompressedGlyph &g = charGlyphs[baseCharIndex];
-            NS_ASSERTION(!g.IsSimpleGlyph(), "overwriting a simple glyph");
-            g.SetComplex(inOrder && g.IsClusterStart(), false, 0);
+            gfxShapedText::CompressedGlyph &shapedTextGlyph = charGlyphs[baseCharIndex];
+            NS_ASSERTION(!shapedTextGlyph.IsSimpleGlyph(), "overwriting a simple glyph");
+            shapedTextGlyph.SetComplex(inOrder && shapedTextGlyph.IsClusterStart(), false, 0);
         }
 
         glyphStart = glyphEnd;

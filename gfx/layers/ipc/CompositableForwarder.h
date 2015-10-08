@@ -15,20 +15,18 @@
 #include "mozilla/layers/LayersTypes.h"  // for LayersBackend
 #include "mozilla/layers/TextureClient.h"  // for TextureClient
 #include "nsRegion.h"                   // for nsIntRegion
-
-struct nsIntPoint;
-struct nsIntRect;
+#include "mozilla/gfx/Rect.h"
 
 namespace mozilla {
 namespace layers {
 
 class CompositableClient;
 class AsyncTransactionTracker;
+class ImageContainer;
 struct TextureFactoryIdentifier;
 class SurfaceDescriptor;
 class SurfaceDescriptorTiles;
 class ThebesBufferData;
-class ClientTiledLayerBuffer;
 class PTextureChild;
 
 /**
@@ -53,7 +51,8 @@ public:
    * Setup the IPDL actor for aCompositable to be part of layers
    * transactions.
    */
-  virtual void Connect(CompositableClient* aCompositable) = 0;
+  virtual void Connect(CompositableClient* aCompositable,
+                       ImageContainer* aImageContainer = nullptr) = 0;
 
   /**
    * Tell the CompositableHost on the compositor side what TiledLayerBuffer to
@@ -65,7 +64,10 @@ public:
   /**
    * Create a TextureChild/Parent pair as as well as the TextureHost on the parent side.
    */
-  virtual PTextureChild* CreateTexture(const SurfaceDescriptor& aSharedData, TextureFlags aFlags) = 0;
+  virtual PTextureChild* CreateTexture(
+    const SurfaceDescriptor& aSharedData,
+    LayersBackend aLayersBackend,
+    TextureFlags aFlags) = 0;
 
   /**
    * Communicate to the compositor that aRegion in the texture identified by
@@ -75,15 +77,10 @@ public:
                                    const ThebesBufferData& aThebesBufferData,
                                    const nsIntRegion& aUpdatedRegion) = 0;
 
-  /**
-   * Communicate the picture rect of a YUV image in aLayer to the compositor
-   */
-  virtual void UpdatePictureRect(CompositableClient* aCompositable,
-                                 const nsIntRect& aRect) = 0;
-
 #ifdef MOZ_WIDGET_GONK
   virtual void UseOverlaySource(CompositableClient* aCompositabl,
-                                const OverlaySource& aOverlay) = 0;
+                                const OverlaySource& aOverlay,
+                                const gfx::IntRect& aPictureRect) = 0;
 #endif
 
   /**
@@ -136,29 +133,25 @@ public:
     mTexturesToRemove.Clear();
   }
 
-  virtual void HoldTransactionsToRespond(uint64_t aTransactionId)
-  {
-    mTransactionsToRespond.push_back(aTransactionId);
-  }
+  struct TimedTextureClient {
+    TimedTextureClient()
+        : mTextureClient(nullptr), mFrameID(0), mProducerID(0) {}
 
-  virtual void ClearTransactionsToRespond()
-  {
-    mTransactionsToRespond.clear();
-  }
-
+    TextureClient* mTextureClient;
+    TimeStamp mTimeStamp;
+    nsIntRect mPictureRect;
+    int32_t mFrameID;
+    int32_t mProducerID;
+  };
   /**
-   * Tell the CompositableHost on the compositor side what texture to use for
+   * Tell the CompositableHost on the compositor side what textures to use for
    * the next composition.
    */
-  virtual void UseTexture(CompositableClient* aCompositable,
-                          TextureClient* aClient) = 0;
+  virtual void UseTextures(CompositableClient* aCompositable,
+                           const nsTArray<TimedTextureClient>& aTextures) = 0;
   virtual void UseComponentAlphaTextures(CompositableClient* aCompositable,
                                          TextureClient* aClientOnBlack,
                                          TextureClient* aClientOnWhite) = 0;
-
-  virtual void SendFenceHandle(AsyncTransactionTracker* aTracker,
-                               PTextureChild* aTexture,
-                               const FenceHandle& aFence) = 0;
 
   virtual void SendPendingAsyncMessges() = 0;
 
@@ -176,7 +169,7 @@ public:
    * We only don't allow changing the backend type at runtime so this value can
    * be queried once and will not change until Gecko is restarted.
    */
-  virtual LayersBackend GetCompositorBackendType() const override
+  LayersBackend GetCompositorBackendType() const
   {
     return mTextureFactoryIdentifier.mParentBackend;
   }
@@ -203,13 +196,12 @@ public:
 protected:
   TextureFactoryIdentifier mTextureFactoryIdentifier;
   nsTArray<RefPtr<TextureClient> > mTexturesToRemove;
-  std::vector<uint64_t> mTransactionsToRespond;
   RefPtr<SyncObject> mSyncObject;
   const int32_t mSerial;
   static mozilla::Atomic<int32_t> sSerialCounter;
 };
 
-} // namespace
-} // namespace
+} // namespace layers
+} // namespace mozilla
 
 #endif

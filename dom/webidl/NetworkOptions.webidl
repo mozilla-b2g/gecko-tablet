@@ -17,7 +17,6 @@ dictionary NetworkCommandOptions
   unsigned long prefixLength;         // for "removeNetworkRoute".
   DOMString domain;                   // for "setDNS"
   sequence<DOMString> dnses;          // for "setDNS", "setDefaultRouteAndDNS".
-  DOMString oldIfname;                // for "setDefaultRouteAndDNS".
   DOMString gateway;                  // for "addSecondaryRoute", "removeSecondaryRoute".
   sequence<DOMString> gateways;       // for "setDefaultRouteAndDNS", "removeDefaultRoute".
   DOMString mode;                     // for "setWifiOperationMode".
@@ -55,6 +54,8 @@ dictionary NetworkCommandOptions
   long gateway_long;                  // for "ifc_configure".
   long dns1_long;                     // for "ifc_configure".
   long dns2_long;                     // for "ifc_configure".
+
+  long mtu;                           // for "setMtu".
 };
 
 /**
@@ -96,4 +97,6 @@ dictionary NetworkResultOptions
   long      dns1 = 0;
   long      dns2 = 0;
   long      server = 0;
+
+  DOMString netId = "";                // for "getNetId".
 };

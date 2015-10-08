@@ -18,6 +18,7 @@
 #include "nsIAccessibleTypes.h"
 #include "mozilla/a11y/PDocAccessible.h"
 #include "Relation.h"
+#include "nsAccessibilityService.h"
 
 #include "nsIPersistentProperties2.h"
 #include "nsISimpleEnumerator.h"
@@ -354,7 +355,7 @@ ia2Accessible::get_states(AccessibleStates* aStates)
   AccessibleWrap* acc = static_cast<AccessibleWrap*>(this);
   if (acc->IsDefunct()) {
     *aStates = IA2_STATE_DEFUNCT;
-    return CO_E_OBJNOTCONNECTED;
+    return S_OK;
   }
 
   uint64_t state;
@@ -495,7 +496,7 @@ ia2Accessible::get_uniqueID(long* aUniqueID)
     return E_INVALIDARG;
 
   AccessibleWrap* acc = static_cast<AccessibleWrap*>(this);
-  *aUniqueID = - reinterpret_cast<intptr_t>(acc->UniqueID());
+  *aUniqueID = AccessibleWrap::GetChildIDFor(acc);
   return S_OK;
 
   A11Y_TRYBLOCK_END
@@ -619,22 +620,7 @@ ia2Accessible::get_attributes(BSTR* aAttributes)
 
   nsTArray<Attribute> attrs;
   acc->Proxy()->Attributes(&attrs);
-  nsString attrStr;
-  size_t attrCount = attrs.Length();
-  for (size_t i = 0; i < attrCount; i++) {
-    EscapeAttributeChars(attrs[i].Name());
-    EscapeAttributeChars(attrs[i].Value());
-    AppendUTF8toUTF16(attrs[i].Name(), attrStr);
-    attrStr.Append(':');
-    attrStr.Append(attrs[i].Value());
-    attrStr.Append(';');
-  }
-
-  if (attrStr.IsEmpty())
-    return S_FALSE;
-
-  *aAttributes = ::SysAllocStringLen(attrStr.get(), attrStr.Length());
-  return *aAttributes ? S_OK : E_OUTOFMEMORY;
+  return ConvertToIA2Attributes(&attrs, aAttributes);
 
   A11Y_TRYBLOCK_END
 }
@@ -666,7 +652,27 @@ ia2Accessible::get_accessibleWithCaret(IUnknown** aAccessible,
 
   *aAccessible = nullptr;
   *aCaretOffset = -1;
-  return E_NOTIMPL;
+
+  AccessibleWrap* acc = static_cast<AccessibleWrap*>(this);
+  if (acc->IsDefunct())
+    return CO_E_OBJNOTCONNECTED;
+
+  int32_t caretOffset = -1;
+  Accessible* accWithCaret = SelectionMgr()->AccessibleWithCaret(&caretOffset);
+  if (acc->Document() != accWithCaret->Document())
+    return S_FALSE;
+
+  Accessible* child = accWithCaret;
+  while (child != acc)
+    child = child->Parent();
+
+  if (!child)
+    return S_FALSE;
+
+  *aAccessible =  static_cast<IAccessible2*>(
+    static_cast<AccessibleWrap*>(accWithCaret));
+  *aCaretOffset = caretOffset;
+  return S_OK;
 
   A11Y_TRYBLOCK_END
 }
@@ -745,6 +751,28 @@ EscapeAttributeChars(String& aStr)
     aStr.Insert('\\', offset);
     offset += 2;
   }
+}
+
+HRESULT
+ia2Accessible::ConvertToIA2Attributes(nsTArray<Attribute>* aAttributes,
+                                      BSTR* aIA2Attributes)
+{
+  nsString attrStr;
+  size_t attrCount = aAttributes->Length();
+  for (size_t i = 0; i < attrCount; i++) {
+    EscapeAttributeChars(aAttributes->ElementAt(i).Name());
+    EscapeAttributeChars(aAttributes->ElementAt(i).Value());
+    AppendUTF8toUTF16(aAttributes->ElementAt(i).Name(), attrStr);
+    attrStr.Append(':');
+    attrStr.Append(aAttributes->ElementAt(i).Value());
+    attrStr.Append(';');
+  }
+
+  if (attrStr.IsEmpty())
+    return S_FALSE;
+
+  *aIA2Attributes = ::SysAllocStringLen(attrStr.get(), attrStr.Length());
+  return *aIA2Attributes ? S_OK : E_OUTOFMEMORY;
 }
 
 HRESULT

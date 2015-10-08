@@ -33,9 +33,10 @@ namespace css {
 class Rule;
 class Declaration;
 class Loader;
+class LoaderReusableStyleSheets;
 class StyleRule;
-}
-}
+} // namespace css
+} // namespace mozilla
 
 // Interface to the css parser.
 
@@ -79,13 +80,17 @@ public:
    * @param aLineNumber the line number of the first line of the sheet.
    * @param aAllowUnsafeRules see aEnableUnsafeRules in
    *                          mozilla::css::Loader::LoadSheetSync
+   * @param aReusableSheets style sheets that can be reused by an @import.
+   *                        This can be nullptr.
    */
   nsresult ParseSheet(const nsAString& aInput,
                       nsIURI*          aSheetURL,
                       nsIURI*          aBaseURI,
                       nsIPrincipal*    aSheetPrincipal,
                       uint32_t         aLineNumber,
-                      bool             aAllowUnsafeRules);
+                      bool             aAllowUnsafeRules,
+                      mozilla::css::LoaderReusableStyleSheets* aReusableSheets =
+                        nullptr);
 
   // Parse HTML style attribute or its equivalent in other markup
   // languages.  aBaseURL is the base url to use for relative links in
@@ -308,6 +313,11 @@ public:
   // Check whether a given value can be applied to a property.
   bool IsValueValidForProperty(const nsCSSProperty aPropID,
                                const nsAString&    aPropValue);
+
+  // Return the default value to be used for -moz-control-character-visibility,
+  // from preferences (cached by our Startup(), so that both nsStyleText and
+  // nsRuleNode can have fast access to it).
+  static uint8_t ControlCharVisibilityDefault();
 
 protected:
   // This is a CSSParserImpl*, but if we expose that type name in this

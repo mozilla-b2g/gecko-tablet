@@ -60,8 +60,6 @@ CloneModule(JSContext* cx, MutableHandle<AsmJSModuleObject*> moduleObj)
     if (!moduleObj->module().clone(cx, &module))
         return false;
 
-    module->staticallyLink(cx);
-
     AsmJSModuleObject* newModuleObj = AsmJSModuleObject::create(cx, &module);
     if (!newModuleObj)
         return false;
@@ -419,6 +417,7 @@ ValidateAtomicsBuiltinFunction(JSContext* cx, AsmJSModule::Global& global, Handl
     Native native = nullptr;
     switch (global.atomicsBuiltinFunction()) {
       case AsmJSAtomicsBuiltin_compareExchange: native = atomics_compareExchange; break;
+      case AsmJSAtomicsBuiltin_exchange: native = atomics_exchange; break;
       case AsmJSAtomicsBuiltin_load: native = atomics_load; break;
       case AsmJSAtomicsBuiltin_store: native = atomics_store; break;
       case AsmJSAtomicsBuiltin_fence: native = atomics_fence; break;
@@ -427,6 +426,7 @@ ValidateAtomicsBuiltinFunction(JSContext* cx, AsmJSModule::Global& global, Handl
       case AsmJSAtomicsBuiltin_and: native = atomics_and; break;
       case AsmJSAtomicsBuiltin_or: native = atomics_or; break;
       case AsmJSAtomicsBuiltin_xor: native = atomics_xor; break;
+      case AsmJSAtomicsBuiltin_isLockFree: native = atomics_isLockFree; break;
     }
 
     if (!IsNativeFunction(v, native))
@@ -528,7 +528,7 @@ LinkModuleToHeap(JSContext* cx, AsmJSModule& module, Handle<ArrayBufferObjectMay
 }
 
 static bool
-DynamicallyLinkModule(JSContext* cx, CallArgs args, AsmJSModule& module)
+DynamicallyLinkModule(JSContext* cx, const CallArgs& args, AsmJSModule& module)
 {
     module.setIsDynamicallyLinked(cx->runtime());
 
@@ -600,11 +600,14 @@ DynamicallyLinkModule(JSContext* cx, CallArgs args, AsmJSModule& module)
 
     module.initGlobalNaN();
 
+    // See the comment in AllocateExecutableMemory.
+    ExecutableAllocator::makeExecutable(module.codeBase(), module.codeBytes());
+
     return true;
 }
 
 static bool
-ChangeHeap(JSContext* cx, AsmJSModule& module, CallArgs args)
+ChangeHeap(JSContext* cx, AsmJSModule& module, const CallArgs& args)
 {
     HandleValue bufferArg = args.get(0);
     if (!IsArrayBuffer(bufferArg)) {
@@ -746,8 +749,12 @@ CallAsmJS(JSContext* cx, unsigned argc, Value* vp)
         // that the optimized asm.js-to-Ion FFI call path (which we want to be
         // very fast) can avoid doing so. The JitActivation is marked as
         // inactive so stack iteration will skip over it.
+        //
+        // We needn't provide an entry script pointer; that's only used for
+        // reporting entry points to performance-monitoring tools, and asm.js ->
+        // Ion calls will never be entry points.
         AsmJSActivation activation(cx, module);
-        JitActivation jitActivation(cx, /* active */ false);
+        JitActivation jitActivation(cx, /* entryScript */ nullptr, /* active */ false);
 
         // Call the per-exported-function trampoline created by GenerateEntry.
         AsmJSModule::CodePtr enter = module.entryTrampoline(func);
@@ -761,6 +768,8 @@ CallAsmJS(JSContext* cx, unsigned argc, Value* vp)
         // functions, the returned value is discarded and an empty object is
         // returned instead.
         PlainObject* obj = NewBuiltinClassInstance<PlainObject>(cx);
+        if (!obj)
+            return false;
         callArgs.rval().set(ObjectValue(*obj));
         return true;
     }
@@ -801,7 +810,7 @@ NewExportedFunction(JSContext* cx, const AsmJSModule::ExportedFunction& func,
     unsigned numArgs = func.isChangeHeap() ? 1 : func.numArgs();
     JSFunction* fun =
         NewNativeConstructor(cx, CallAsmJS, numArgs, name,
-                             JSFunction::ExtendedFinalizeKind, GenericObject,
+                             gc::AllocKind::FUNCTION_EXTENDED, GenericObject,
                              JSFunction::ASMJS_CTOR);
     if (!fun)
         return nullptr;
@@ -812,7 +821,8 @@ NewExportedFunction(JSContext* cx, const AsmJSModule::ExportedFunction& func,
 }
 
 static bool
-HandleDynamicLinkFailure(JSContext* cx, CallArgs args, AsmJSModule& module, HandlePropertyName name)
+HandleDynamicLinkFailure(JSContext* cx, const CallArgs& args, AsmJSModule& module,
+                         HandlePropertyName name)
 {
     if (cx->isExceptionPending())
         return false;
@@ -833,13 +843,13 @@ HandleDynamicLinkFailure(JSContext* cx, CallArgs args, AsmJSModule& module, Hand
     if (!src)
         return false;
 
-    RootedFunction fun(cx, NewScriptedFunction(cx, 0, JSFunction::INTERPRETED,
-                                               name, JSFunction::FinalizeKind,
+    RootedFunction fun(cx, NewScriptedFunction(cx, 0, JSFunction::INTERPRETED_NORMAL,
+                                               name, gc::AllocKind::FUNCTION,
                                                TenuredObject));
     if (!fun)
         return false;
 
-    AutoNameVector formals(cx);
+    Rooted<PropertyNameVector> formals(cx, PropertyNameVector(cx));
     if (!formals.reserve(3))
         return false;
 
@@ -869,8 +879,7 @@ HandleDynamicLinkFailure(JSContext* cx, CallArgs args, AsmJSModule& module, Hand
                                               ? SourceBufferHolder::GiveOwnership
                                               : SourceBufferHolder::NoOwnership;
     SourceBufferHolder srcBuf(chars, end - begin, ownership);
-    if (!frontend::CompileFunctionBody(cx, &fun, options, formals, srcBuf,
-                                       /* enclosingScope = */ NullPtr()))
+    if (!frontend::CompileFunctionBody(cx, &fun, options, formals, srcBuf))
         return false;
 
     // Call the function we just recompiled.
@@ -946,32 +955,6 @@ SendFunctionsToPerf(JSContext* cx, AsmJSModule& module)
 
     return true;
 }
-
-static bool
-SendBlocksToPerf(JSContext* cx, AsmJSModule& module)
-{
-    if (!PerfBlockEnabled())
-        return true;
-
-    unsigned long funcBaseAddress = (unsigned long) module.codeBase();
-    const char* filename = module.scriptSource()->filename();
-
-    for (unsigned i = 0; i < module.numPerfBlocksFunctions(); i++) {
-        const AsmJSModule::ProfiledBlocksFunction& func = module.perfProfiledBlocksFunction(i);
-
-        size_t size = func.pod.endCodeOffset - func.pod.startCodeOffset;
-
-        JSAutoByteString bytes;
-        const char* name = AtomToPrintableString(cx, func.name, &bytes);
-        if (!name)
-            return false;
-
-        writePerfSpewerAsmJSBlocksMap(funcBaseAddress, func.pod.startCodeOffset,
-                                      func.endInlineCodeOffset, size, filename, name, func.blocks);
-    }
-
-    return true;
-}
 #endif
 
 static bool
@@ -987,8 +970,6 @@ SendModuleToAttachedProfiler(JSContext* cx, AsmJSModule& module)
         size_t firstEntryCode = size_t(module.codeBase() + module.functionBytes());
         writePerfSpewerAsmJSEntriesAndExits(firstEntryCode, module.codeBytes() - module.functionBytes());
     }
-    if (!SendBlocksToPerf(cx, module))
-        return false;
     if (!SendFunctionsToPerf(cx, module))
         return false;
 #endif
@@ -1049,26 +1030,18 @@ LinkAsmJS(JSContext* cx, unsigned argc, JS::Value* vp)
     RootedFunction fun(cx, &args.callee().as<JSFunction>());
     Rooted<AsmJSModuleObject*> moduleObj(cx, &ModuleFunctionToModuleObject(fun));
 
-    // All ICache flushing of the module being linked has been inhibited under the
-    // assumption that the module is flushed after dynamic linking (when the last code
-    // mutation occurs).  Thus, enter an AutoFlushICache context for the entire module
-    // now.  The module range is set below.
-    AutoFlushICache afc("LinkAsmJS");
 
     // When a module is linked, it is dynamically specialized to the given
     // arguments (buffer, ffis). Thus, if the module is linked again (it is just
     // a function so it can be called multiple times), we need to clone a new
     // module.
-    if (moduleObj->module().isDynamicallyLinked()) {
-        if (!CloneModule(cx, &moduleObj))
-            return false;
-    } else {
-        // CloneModule already calls setAutoFlushICacheRange internally before patching
-        // the cloned module, so avoid calling twice.
-        moduleObj->module().setAutoFlushICacheRange();
-    }
+    if (moduleObj->module().isDynamicallyLinked() && !CloneModule(cx, &moduleObj))
+        return false;
 
     AsmJSModule& module = moduleObj->module();
+
+    AutoFlushICache afc("LinkAsmJS");
+    module.setAutoFlushICacheRange();
 
     // Link the module by performing the link-time validation checks in the
     // asm.js spec and then patching the generated module to associate it with
@@ -1105,7 +1078,7 @@ js::NewAsmJSModuleFunction(ExclusiveContext* cx, JSFunction* origFun, HandleObje
                                                   : JSFunction::ASMJS_CTOR;
     JSFunction* moduleFun =
         NewNativeConstructor(cx, LinkAsmJS, origFun->nargs(), name,
-                             JSFunction::ExtendedFinalizeKind, TenuredObject,
+                             gc::AllocKind::FUNCTION_EXTENDED, TenuredObject,
                              flags);
     if (!moduleFun)
         return nullptr;

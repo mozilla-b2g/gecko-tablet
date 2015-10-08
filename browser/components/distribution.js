@@ -4,10 +4,10 @@
 
 this.EXPORTED_SYMBOLS = [ "DistributionCustomizer" ];
 
-const Ci = Components.interfaces;
-const Cc = Components.classes;
-const Cr = Components.results;
-const Cu = Components.utils;
+var Ci = Components.interfaces;
+var Cc = Components.classes;
+var Cr = Components.results;
+var Cu = Components.utils;
 
 const DISTRIBUTION_CUSTOMIZATION_COMPLETE_TOPIC =
   "distribution-customization-complete";
@@ -43,10 +43,18 @@ DistributionCustomizer.prototype = {
   _iniFile: null,
 
   get _ini() {
-    let ini = Cc["@mozilla.org/xpcom/ini-parser-factory;1"].
+    let ini = null;
+    try {
+      if (this._iniFile) {
+        ini = Cc["@mozilla.org/xpcom/ini-parser-factory;1"].
               getService(Ci.nsIINIParserFactory).
               createINIParser(this._iniFile);
-    this.__defineGetter__("_ini", function() ini);
+      }
+    } catch (e) {
+      // Unable to parse INI.
+      Cu.reportError("Unable to parse distribution.ini");
+    }
+    this.__defineGetter__("_ini", () => ini);
     return this._ini;
   },
 
@@ -58,27 +66,27 @@ DistributionCustomizer.prototype = {
     catch (e) {
       locale = "en-US";
     }
-    this.__defineGetter__("_locale", function() locale);
+    this.__defineGetter__("_locale", () => locale);
     return this._locale;
   },
 
   get _prefSvc() {
     let svc = Cc["@mozilla.org/preferences-service;1"].
               getService(Ci.nsIPrefService);
-    this.__defineGetter__("_prefSvc", function() svc);
+    this.__defineGetter__("_prefSvc", () => svc);
     return this._prefSvc;
   },
 
   get _prefs() {
     let branch = this._prefSvc.getBranch(null);
-    this.__defineGetter__("_prefs", function() branch);
+    this.__defineGetter__("_prefs", () => branch);
     return this._prefs;
   },
 
   get _ioSvc() {
     let svc = Cc["@mozilla.org/network/io-service;1"].
               getService(Ci.nsIIOService);
-    this.__defineGetter__("_ioSvc", function() svc);
+    this.__defineGetter__("_ioSvc", () => svc);
     return this._ioSvc;
   },
 
@@ -202,7 +210,7 @@ DistributionCustomizer.prototype = {
   _customizationsApplied: false,
   applyCustomizations: function DIST_applyCustomizations() {
     this._customizationsApplied = true;
-    if (!this._iniFile)
+    if (!this._ini)
       return this._checkCustomizationComplete();
 
     // nsPrefService loads very early.  Reload prefs so we can set
@@ -220,7 +228,7 @@ DistributionCustomizer.prototype = {
   }),
 
   _doApplyBookmarks: Task.async(function* () {
-    if (!this._iniFile)
+    if (!this._ini)
       return;
 
     let sections = enumToObject(this._ini.getSections());
@@ -264,7 +272,7 @@ DistributionCustomizer.prototype = {
   _prefDefaultsApplied: false,
   applyPrefDefaults: function DIST_applyPrefDefaults() {
     this._prefDefaultsApplied = true;
-    if (!this._iniFile)
+    if (!this._ini)
       return this._checkCustomizationComplete();
 
     let sections = enumToObject(this._ini.getSections());
@@ -354,7 +362,7 @@ DistributionCustomizer.prototype = {
   },
 
   _checkCustomizationComplete: function DIST__checkCustomizationComplete() {
-    let prefDefaultsApplied = this._prefDefaultsApplied || !this._iniFile;
+    let prefDefaultsApplied = this._prefDefaultsApplied || !this._ini;
     if (this._customizationsApplied && this._bookmarksApplied &&
         prefDefaultsApplied) {
       let os = Cc["@mozilla.org/observer-service;1"].

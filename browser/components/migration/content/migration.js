@@ -2,9 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
-const Cu = Components.utils;
+var Cc = Components.classes;
+var Ci = Components.interfaces;
+var Cu = Components.utils;
 
 const kIMig = Ci.nsIBrowserProfileMigrator;
 const kIPStartup = Ci.nsIProfileStartup;
@@ -64,6 +64,15 @@ var MigrationWizard = {
   // 1 - Import Source
   onImportSourcePageShow: function ()
   {
+    // Show warning message to close the selected browser when needed
+    function toggleCloseBrowserWarning() {
+      let visibility = "hidden";
+      if (group.selectedItem.id != "nothing") {
+        let migrator = MigrationUtils.getMigrator(group.selectedItem.id);
+        visibility = migrator.sourceLocked ? "visible" : "hidden";
+      }
+      document.getElementById("closeSourceBrowser").style.visibility = visibility;
+    }
     this._wiz.canRewind = false;
 
     var selectedMigrator = null;
@@ -86,9 +95,12 @@ var MigrationWizard = {
       }
     }
 
-    if (selectedMigrator)
+    group.addEventListener("command", toggleCloseBrowserWarning);
+
+    if (selectedMigrator) {
       group.selectedItem = selectedMigrator;
-    else {
+      toggleCloseBrowserWarning();
+    } else {
       // We didn't find a migrator, notify the user
       document.getElementById("noSources").hidden = false;
 
@@ -286,11 +298,20 @@ var MigrationWizard = {
       case "safari":
         source = "sourceNameSafari";
         break;
+      case "canary":
+        source = "sourceNameCanary";
+        break;
       case "chrome":
         source = "sourceNameChrome";
         break;
+      case "chromium":
+        source = "sourceNameChromium";
+        break;
       case "firefox":
         source = "sourceNameFirefox";
+        break;
+      case "360se":
+        source = "sourceName360se";
         break;
     }
 

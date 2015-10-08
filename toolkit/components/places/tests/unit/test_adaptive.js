@@ -24,22 +24,40 @@ function AutoCompleteInput(aSearches) {
 AutoCompleteInput.prototype = {
   constructor: AutoCompleteInput,
 
-  get minResultsForPopup() 0,
-  get timeout() 10,
-  get searchParam() "",
-  get textValue() "",
-  get disableAutoComplete() false,
-  get completeDefaultIndex() false,
+  get minResultsForPopup() {
+    return 0;
+  },
+  get timeout() {
+    return 10;
+  },
+  get searchParam() {
+    return "";
+  },
+  get textValue() {
+    return "";
+  },
+  get disableAutoComplete() {
+    return false;
+  },
+  get completeDefaultIndex() {
+    return false;
+  },
 
-  get searchCount() this.searches.length,
-  getSearchAt: function (aIndex) this.searches[aIndex],
+  get searchCount() {
+    return this.searches.length;
+  },
+  getSearchAt: function (aIndex) {
+    return this.searches[aIndex];
+  },
 
   onSearchBegin: function () {},
   onSearchComplete: function() {},
 
-  get popupOpen() false,
+  get popupOpen() {
+    return false;
+  },
   popup: {
-    set selectedIndex(aIndex) aIndex,
+    set selectedIndex(aIndex) {},
     invalidate: function () {},
     QueryInterface: XPCOMUtils.generateQI([Ci.nsIAutoCompletePopup])
   },
@@ -94,11 +112,17 @@ function task_setCountRank(aURI, aCount, aRank, aSearch, aBookmark)
     QueryInterface: XPCOMUtils.generateQI([Ci.nsIAutoCompleteInput,
                                            Ci.nsIAutoCompletePopup,
                                            Ci.nsIAutoCompleteController]),
-    get popup() thing,
-    get controller() thing,
+    get popup() {
+      return thing;
+    },
+    get controller() {
+      return thing;
+    },
     popupOpen: true,
     selectedIndex: 0,
-    getValueAt: function() aURI.spec,
+    getValueAt: function() {
+      return aURI.spec;
+    },
     searchString: aSearch
   };
 
@@ -136,20 +160,20 @@ function doAdaptiveDecay()
   }, this);
 }
 
-let uri1 = uri("http://site.tld/1");
-let uri2 = uri("http://site.tld/2");
+var uri1 = uri("http://site.tld/1");
+var uri2 = uri("http://site.tld/2");
 
 // d1 is some date for the page visit
-let d1 = new Date(Date.now() - 1000 * 60 * 60) * 1000;
+var d1 = new Date(Date.now() - 1000 * 60 * 60) * 1000;
 // c1 is larger (should show up higher) than c2
-let c1 = 10;
-let c2 = 1;
+var c1 = 10;
+var c2 = 1;
 // s1 is a partial match of s2
-let s0 = "";
-let s1 = "si";
-let s2 = "site";
+var s0 = "";
+var s1 = "si";
+var s2 = "site";
 
-let observer = {
+var observer = {
   results: null,
   search: null,
   runCount: -1,
@@ -172,7 +196,7 @@ function makeResult(aURI, aStyle = "favicon") {
   };
 }
 
-let tests = [
+var tests = [
   // Test things without a search term.
   function() {
     print("Test 0 same count, diff rank, same term; no search");
@@ -350,7 +374,7 @@ let tests = [
  * This deferred object contains a promise that is resolved when the
  * ensure_results function has finished its execution.
  */
-let deferEnsureResults;
+var deferEnsureResults;
 
 /**
  * Test adaptive autocomplete.

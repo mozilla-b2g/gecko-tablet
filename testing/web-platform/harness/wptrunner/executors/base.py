@@ -21,7 +21,7 @@ def executor_kwargs(test_type, server_config, cache_manager, **kwargs):
 
     executor_kwargs = {"server_config": server_config,
                        "timeout_multiplier": timeout_multiplier,
-                       "debug_args": kwargs["debug_args"]}
+                       "debug_info": kwargs["debug_info"]}
 
     if test_type == "reftest":
         executor_kwargs["screenshot_cache"] = cache_manager.dict()
@@ -55,12 +55,14 @@ class TestharnessResultConverter(object):
 
     def __call__(self, test, result):
         """Convert a JSON result into a (TestResult, [SubtestResult]) tuple"""
-        assert result["test"] == test.url, ("Got results from %s, expected %s" %
-                                            (result["test"], test.url))
-        harness_result = test.result_cls(self.harness_codes[result["status"]], result["message"])
+        result_url, status, message, stack, subtest_results = result
+        assert result_url == test.url, ("Got results from %s, expected %s" %
+                                      (result_url, test.url))
+        harness_result = test.result_cls(self.harness_codes[status], message)
         return (harness_result,
-                [test.subtest_result_cls(subtest["name"], self.test_codes[subtest["status"]],
-                                         subtest["message"], subtest.get("stack", None)) for subtest in result["tests"]])
+                [test.subtest_result_cls(name, self.test_codes[status], message, stack)
+                 for name, status, message, stack in subtest_results])
+
 testharness_result_converter = TestharnessResultConverter()
 
 
@@ -81,7 +83,7 @@ class TestExecutor(object):
     convert_result = None
 
     def __init__(self, browser, server_config, timeout_multiplier=1,
-                 debug_args=None):
+                 debug_info=None):
         """Abstract Base class for object that actually executes the tests in a
         specific browser. Typically there will be a different TestExecutor
         subclass for each test type and method of executing tests.
@@ -97,9 +99,9 @@ class TestExecutor(object):
         self.browser = browser
         self.server_config = server_config
         self.timeout_multiplier = timeout_multiplier
-        self.debug_args = debug_args
+        self.debug_info = debug_info
         self.last_environment = {"protocol": "http",
-                                 "prefs": []}
+                                 "prefs": {}}
         self.protocol = None # This must be set in subclasses
 
     @property
@@ -153,7 +155,7 @@ class TestExecutor(object):
 
     @abstractmethod
     def do_test(self, test):
-        """Test-type and protocol specific implmentation of running a
+        """Test-type and protocol specific implementation of running a
         specific test.
 
         :param test: The test to run."""
@@ -182,10 +184,10 @@ class RefTestExecutor(TestExecutor):
     convert_result = reftest_result_converter
 
     def __init__(self, browser, server_config, timeout_multiplier=1, screenshot_cache=None,
-                 debug_args=None):
+                 debug_info=None):
         TestExecutor.__init__(self, browser, server_config,
                               timeout_multiplier=timeout_multiplier,
-                              debug_args=debug_args)
+                              debug_info=debug_info)
 
         self.screenshot_cache = screenshot_cache
 

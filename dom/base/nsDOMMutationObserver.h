@@ -1,5 +1,5 @@
-/* -*- Mode: C++; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 8; -*- */
-/* vim: set sw=4 ts=8 et tw=80 : */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -24,7 +24,7 @@
 #include "nsWrapperCache.h"
 #include "mozilla/dom/MutationObserverBinding.h"
 #include "nsIDocument.h"
-#include "mozilla/dom/AnimationPlayer.h"
+#include "mozilla/dom/Animation.h"
 #include "nsIAnimationObserver.h"
 
 class nsDOMMutationObserver;
@@ -36,7 +36,7 @@ class nsDOMMutationRecord final : public nsISupports,
   virtual ~nsDOMMutationRecord() {}
 
 public:
-  typedef nsTArray<nsRefPtr<mozilla::dom::AnimationPlayer>> AnimationPlayerArray;
+  typedef nsTArray<nsRefPtr<mozilla::dom::Animation>> AnimationArray;
 
   nsDOMMutationRecord(nsIAtom* aType, nsISupports* aOwner)
   : mType(aType), mAttrNamespace(NullString()), mPrevValue(NullString()), mOwner(aOwner)
@@ -95,17 +95,17 @@ public:
     aRetVal.SetOwnedString(mPrevValue);
   }
 
-  void GetAddedAnimations(AnimationPlayerArray& aRetVal) const
+  void GetAddedAnimations(AnimationArray& aRetVal) const
   {
     aRetVal = mAddedAnimations;
   }
 
-  void GetRemovedAnimations(AnimationPlayerArray& aRetVal) const
+  void GetRemovedAnimations(AnimationArray& aRetVal) const
   {
     aRetVal = mRemovedAnimations;
   }
 
-  void GetChangedAnimations(AnimationPlayerArray& aRetVal) const
+  void GetChangedAnimations(AnimationArray& aRetVal) const
   {
     aRetVal = mChangedAnimations;
   }
@@ -119,9 +119,9 @@ public:
   nsRefPtr<nsSimpleContentList> mRemovedNodes;
   nsCOMPtr<nsINode>             mPreviousSibling;
   nsCOMPtr<nsINode>             mNextSibling;
-  AnimationPlayerArray          mAddedAnimations;
-  AnimationPlayerArray          mRemovedAnimations;
-  AnimationPlayerArray          mChangedAnimations;
+  AnimationArray                mAddedAnimations;
+  AnimationArray                mRemovedAnimations;
+  AnimationArray                mChangedAnimations;
 
   nsRefPtr<nsDOMMutationRecord> mNext;
   nsCOMPtr<nsISupports>         mOwner;
@@ -170,6 +170,16 @@ public:
   {
     NS_ASSERTION(!mParent, "Shouldn't have parent");
     mCharacterDataOldValue = aOldValue;
+  }
+
+  bool NativeAnonymousChildList()
+  {
+    return mParent ? mParent->NativeAnonymousChildList() : mNativeAnonymousChildList;
+  }
+  void SetNativeAnonymousChildList(bool aOldValue)
+  {
+    NS_ASSERTION(!mParent, "Shouldn't have parent");
+    mNativeAnonymousChildList = aOldValue;
   }
 
   bool Attributes() { return mParent ? mParent->Attributes() : mAttributes; }
@@ -248,14 +258,20 @@ protected:
     mRegisterTarget->OwnerDoc()->SetMayHaveDOMMutationObservers();
   }
 
-  bool ObservesAttr(mozilla::dom::Element* aElement,
+  bool IsObservable(nsIContent* aContent);
+
+  bool ObservesAttr(nsINode* aRegisterTarget,
+                    mozilla::dom::Element* aElement,
                     int32_t aNameSpaceID,
                     nsIAtom* aAttr)
   {
     if (mParent) {
-      return mParent->ObservesAttr(aElement, aNameSpaceID, aAttr);
+      return mParent->ObservesAttr(aRegisterTarget, aElement, aNameSpaceID, aAttr);
     }
-    if (!Attributes() || (!Subtree() && aElement != Target())) {
+    if (!Attributes() ||
+        (!Subtree() && aElement != Target()) ||
+        (Subtree() && aRegisterTarget->SubtreeRoot() != aElement->SubtreeRoot()) ||
+        !IsObservable(aElement)) {
       return false;
     }
     if (AllAttributes()) {
@@ -292,6 +308,7 @@ private:
   bool                               mChildList;
   bool                               mCharacterData;
   bool                               mCharacterDataOldValue;
+  bool                               mNativeAnonymousChildList;
   bool                               mAttributes;
   bool                               mAllAttributes;
   bool                               mAttributeOldValue;
@@ -318,6 +335,7 @@ public:
                                     nsMutationReceiverBase* aParent)
   {
     nsMutationReceiver* r = new nsMutationReceiver(aRegisterTarget, aParent);
+    aParent->AddClone(r);
     r->AddObserver();
     return r;
   }
@@ -355,6 +373,7 @@ public:
   NS_DECL_ISUPPORTS
 
   NS_DECL_NSIMUTATIONOBSERVER_ATTRIBUTEWILLCHANGE
+  NS_DECL_NSIMUTATIONOBSERVER_NATIVEANONYMOUSCHILDLISTCHANGE
   NS_DECL_NSIMUTATIONOBSERVER_CHARACTERDATAWILLCHANGE
   NS_DECL_NSIMUTATIONOBSERVER_CONTENTAPPENDED
   NS_DECL_NSIMUTATIONOBSERVER_CONTENTINSERTED
@@ -368,7 +387,7 @@ public:
   {
     // We can reuse AttributeWillChange implementation.
     AttributeWillChange(aDocument, aElement, aNameSpaceID, aAttribute,
-                        nsIDOMMutationEvent::MODIFICATION);
+                        nsIDOMMutationEvent::MODIFICATION, nullptr);
   }
 
 protected:
@@ -379,7 +398,6 @@ protected:
   {
     NS_ASSERTION(!static_cast<nsMutationReceiver*>(aParent)->GetParent(),
                  "Shouldn't create deep observer hierarchies!");
-    aParent->AddClone(this);
   }
 
   virtual void AddMutationObserver() override
@@ -403,6 +421,7 @@ public:
                                      nsMutationReceiverBase* aParent)
   {
     nsAnimationReceiver* r = new nsAnimationReceiver(aRegisterTarget, aParent);
+    aParent->AddClone(r);
     r->AddObserver();
     return r;
   }
@@ -434,7 +453,7 @@ private:
     eAnimationMutation_Removed
   };
 
-  void RecordAnimationMutation(mozilla::dom::AnimationPlayer* aPlayer,
+  void RecordAnimationMutation(mozilla::dom::Animation* aAnimation,
                                AnimationMutation aMutationType);
 };
 
@@ -447,9 +466,11 @@ class nsDOMMutationObserver final : public nsISupports,
 {
 public:
   nsDOMMutationObserver(already_AddRefed<nsPIDOMWindow>&& aOwner,
-                        mozilla::dom::MutationCallback& aCb)
+                        mozilla::dom::MutationCallback& aCb,
+                        bool aChrome)
   : mOwner(aOwner), mLastPendingMutation(nullptr), mPendingMutationCount(0),
-    mCallback(&aCb), mWaitingForRun(false), mId(++sCount)
+    mCallback(&aCb), mWaitingForRun(false), mIsChrome(aChrome),
+    mMergeAttributeRecords(false), mId(++sCount)
   {
   }
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
@@ -471,6 +492,11 @@ public:
     return mOwner;
   }
 
+  bool IsChrome()
+  {
+    return mIsChrome;
+  }
+
   void Observe(nsINode& aTarget,
                const mozilla::dom::MutationObserverInit& aOptions,
                mozilla::ErrorResult& aRv);
@@ -481,9 +507,26 @@ public:
 
   void HandleMutation();
 
-  void GetObservingInfo(nsTArray<Nullable<MutationObservingInfo> >& aResult);
+  void GetObservingInfo(nsTArray<Nullable<MutationObservingInfo>>& aResult,
+                        mozilla::ErrorResult& aRv);
 
   mozilla::dom::MutationCallback* MutationCallback() { return mCallback; }
+
+  bool MergeAttributeRecords()
+  {
+    return mMergeAttributeRecords;
+  }
+
+  void SetMergeAttributeRecords(bool aVal)
+  {
+    mMergeAttributeRecords = aVal;
+  }
+
+  // If both records are for 'attributes' type and for the same target and
+  // attribute name and namespace are the same, we can skip the newer record.
+  // aOldRecord->mPrevValue holds the original value, if observed.
+  bool MergeableAttributeRecord(nsDOMMutationRecord* aOldRecord,
+                                nsDOMMutationRecord* aRecord);
 
   void AppendMutationRecord(already_AddRefed<nsDOMMutationRecord> aRecord)
   {
@@ -571,6 +614,8 @@ protected:
   nsRefPtr<mozilla::dom::MutationCallback>           mCallback;
 
   bool                                               mWaitingForRun;
+  bool                                               mIsChrome;
+  bool                                               mMergeAttributeRecords;
 
   uint64_t                                           mId;
 
@@ -710,20 +755,21 @@ class nsAutoAnimationMutationBatch
   struct Entry;
 
 public:
-  explicit nsAutoAnimationMutationBatch(nsINode* aTarget)
-    : mBatchTarget(nullptr)
+  explicit nsAutoAnimationMutationBatch(nsIDocument* aDocument)
   {
-    Init(aTarget);
+    Init(aDocument);
   }
 
-  void Init(nsINode* aTarget)
+  void Init(nsIDocument* aDocument)
   {
-    if (aTarget && aTarget->OwnerDoc()->MayHaveDOMMutationObservers()) {
-      mBatchTarget = aTarget;
-      mPreviousBatch = sCurrentBatch;
-      sCurrentBatch = this;
-      nsDOMMutationObserver::EnterMutationHandling();
+    if (!aDocument ||
+        !aDocument->MayHaveDOMMutationObservers() ||
+        sCurrentBatch) {
+      return;
     }
+
+    sCurrentBatch = this;
+    nsDOMMutationObserver::EnterMutationHandling();
   }
 
   ~nsAutoAnimationMutationBatch()
@@ -751,18 +797,14 @@ public:
     sCurrentBatch->mObservers.AppendElement(aObserver);
   }
 
-  static nsINode* GetBatchTarget()
-  {
-    return sCurrentBatch->mBatchTarget;
-  }
-
-  static void AnimationAdded(mozilla::dom::AnimationPlayer* aPlayer)
+  static void AnimationAdded(mozilla::dom::Animation* aAnimation,
+                             nsINode* aTarget)
   {
     if (!IsBatching()) {
       return;
     }
 
-    Entry* entry = sCurrentBatch->FindEntry(aPlayer);
+    Entry* entry = sCurrentBatch->FindEntry(aAnimation, aTarget);
     if (entry) {
       switch (entry->mState) {
         case eState_RemainedAbsent:
@@ -776,16 +818,16 @@ public:
                         "twice");
       }
     } else {
-      entry = sCurrentBatch->mEntries.AppendElement();
-      entry->mPlayer = aPlayer;
+      entry = sCurrentBatch->AddEntry(aAnimation, aTarget);
       entry->mState = eState_Added;
       entry->mChanged = false;
     }
   }
 
-  static void AnimationChanged(mozilla::dom::AnimationPlayer* aPlayer)
+  static void AnimationChanged(mozilla::dom::Animation* aAnimation,
+                               nsINode* aTarget)
   {
-    Entry* entry = sCurrentBatch->FindEntry(aPlayer);
+    Entry* entry = sCurrentBatch->FindEntry(aAnimation, aTarget);
     if (entry) {
       NS_ASSERTION(entry->mState == eState_RemainedPresent ||
                    entry->mState == eState_Added,
@@ -793,16 +835,16 @@ public:
                    "being removed");
       entry->mChanged = true;
     } else {
-      entry = sCurrentBatch->mEntries.AppendElement();
-      entry->mPlayer = aPlayer;
+      entry = sCurrentBatch->AddEntry(aAnimation, aTarget);
       entry->mState = eState_RemainedPresent;
       entry->mChanged = true;
     }
   }
 
-  static void AnimationRemoved(mozilla::dom::AnimationPlayer* aPlayer)
+  static void AnimationRemoved(mozilla::dom::Animation* aAnimation,
+                               nsINode* aTarget)
   {
-    Entry* entry = sCurrentBatch->FindEntry(aPlayer);
+    Entry* entry = sCurrentBatch->FindEntry(aAnimation, aTarget);
     if (entry) {
       switch (entry->mState) {
         case eState_RemainedPresent:
@@ -816,22 +858,37 @@ public:
                         "twice");
       }
     } else {
-      entry = sCurrentBatch->mEntries.AppendElement();
-      entry->mPlayer = aPlayer;
+      entry = sCurrentBatch->AddEntry(aAnimation, aTarget);
       entry->mState = eState_Removed;
       entry->mChanged = false;
     }
   }
 
 private:
-  Entry* FindEntry(mozilla::dom::AnimationPlayer* aPlayer)
+  Entry* FindEntry(mozilla::dom::Animation* aAnimation, nsINode* aTarget)
   {
-    for (Entry& e : mEntries) {
-      if (e.mPlayer == aPlayer) {
+    EntryArray* entries = mEntryTable.Get(aTarget);
+    if (!entries) {
+      return nullptr;
+    }
+
+    for (Entry& e : *entries) {
+      if (e.mAnimation == aAnimation) {
         return &e;
       }
     }
     return nullptr;
+  }
+
+  Entry* AddEntry(mozilla::dom::Animation* aAnimation, nsINode* aTarget)
+  {
+    EntryArray* entries = sCurrentBatch->mEntryTable.LookupOrAdd(aTarget);
+    if (entries->IsEmpty()) {
+      sCurrentBatch->mBatchTargets.AppendElement(aTarget);
+    }
+    Entry* entry = entries->AppendElement();
+    entry->mAnimation = aAnimation;
+    return entry;
   }
 
   enum State {
@@ -843,16 +900,17 @@ private:
 
   struct Entry
   {
-    nsRefPtr<mozilla::dom::AnimationPlayer> mPlayer;
+    nsRefPtr<mozilla::dom::Animation> mAnimation;
     State mState;
     bool mChanged;
   };
 
   static nsAutoAnimationMutationBatch* sCurrentBatch;
-  nsAutoAnimationMutationBatch* mPreviousBatch;
   nsAutoTArray<nsDOMMutationObserver*, 2> mObservers;
-  nsTArray<Entry> mEntries;
-  nsINode* mBatchTarget;
+  typedef nsTArray<Entry> EntryArray;
+  nsClassHashtable<nsPtrHashKey<nsINode>, EntryArray> mEntryTable;
+  // List of nodes referred to by mEntryTable so we can sort them
+  nsTArray<nsINode*> mBatchTargets;
 };
 
 inline

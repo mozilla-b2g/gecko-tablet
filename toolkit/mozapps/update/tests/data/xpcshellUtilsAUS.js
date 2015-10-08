@@ -2,6 +2,32 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/**
+ * Test log warnings that happen before the test has started
+ * "Couldn't get the user appdata directory. Crash events may not be produced."
+ * in nsExceptionHandler.cpp (possibly bug 619104)
+ *
+ * Test log warnings that happen after the test has finished
+ * "OOPDeinit() without successful OOPInit()" in nsExceptionHandler.cpp
+ * (bug 619104)
+ * "XPCOM objects created/destroyed from static ctor/dtor" in nsTraceRefcnt.cpp
+ * (possibly bug 457479)
+ *
+ * Other warnings printed to the test logs
+ * "site security information will not be persisted" in
+ * nsSiteSecurityService.cpp and the error in nsSystemInfo.cpp preceding this
+ * error are due to not having a profile when running some of the xpcshell
+ * tests. Since most xpcshell tests also log these errors these tests don't
+ * call do_get_profile unless necessary for the test.
+ * The "This method is lossy. Use GetCanonicalPath !" warning on Windows in
+ * nsLocalFileWin.cpp is from the call to GetNSSProfilePath in
+ * nsNSSComponent.cpp due to it using GetNativeCanonicalPath.
+ * "!mMainThread" in nsThreadManager.cpp are due to using timers and it might be
+ * possible to fix some or all of these in the test itself.
+ * "NS_FAILED(rv)" in nsThreadUtils.cpp are due to using timers and it might be
+ * possible to fix some or all of these in the test itself.
+ */
+
 'use strict';
 
 const { classes: Cc, interfaces: Ci, manager: Cm, results: Cr,
@@ -48,8 +74,14 @@ const LOG_SWITCH_SUCCESS = "rename_file: proceeding to rename the directory\n" +
 const ERR_RENAME_FILE = "rename_file: failed to rename file";
 const ERR_UNABLE_OPEN_DEST = "unable to open destination file";
 const ERR_BACKUP_DISCARD = "backup_discard: unable to remove";
+const ERR_MOVE_DESTDIR_7 = "Moving destDir to tmpDir failed, err: 7";
 
 const LOG_SVC_SUCCESSFUL_LAUNCH = "Process was started... waiting on result.";
+
+// Typical end of a message when calling assert
+const MSG_SHOULD_EQUAL = " should equal the expected value";
+const MSG_SHOULD_EXIST = "the file or directory should exist";
+const MSG_SHOULD_NOT_EXIST = "the file or directory should not exist";
 
 // All we care about is that the last modified time has changed so that Mac OS
 // X Launch Services invalidates its cache so the test allows up to one minute
@@ -113,7 +145,6 @@ var gCallbackArgs = ["./", "callback.log", "Test Arg 2", "Test Arg 3"];
 var gPostUpdateBinFile = "postup_app" + BIN_SUFFIX;
 var gStageUpdate = false;
 var gSwitchApp = false;
-var gDisableReplaceFallback = false;
 var gUseTestAppDir = true;
 
 var gTimeoutRuns = 0;
@@ -731,8 +762,9 @@ function setupTestCommon() {
 
   do_test_pending();
 
-  Assert.strictEqual(gTestID, undefined, "gTestID should be 'undefined' (" +
-                     "setupTestCommon should only be called once)");
+  Assert.strictEqual(gTestID, undefined,
+                     "gTestID should be 'undefined' (setupTestCommon should " +
+                     "only be called once)");
 
   let caller = Components.stack.caller;
   gTestID = caller.filename.toString().split("/").pop().split(".")[0];
@@ -749,7 +781,7 @@ function setupTestCommon() {
       }
       do_throw("The parallel run of this test failed. Failing non-parallel " +
                "test so the log from the parallel run can be displayed in " +
-               "non-parallel log.")
+               "non-parallel log.");
     } else {
       gRealDump = dump;
       dump = dumpOverride;
@@ -781,6 +813,17 @@ function setupTestCommon() {
   // adjustGeneralPaths registers a cleanup function that calls end_test when
   // it is defined as a function.
   adjustGeneralPaths();
+
+  // This prevents a warning about not being able to find the greprefs.js file
+  // from being logged.
+  let grePrefsFile = getGREDir();
+  if (!grePrefsFile.exists()) {
+    grePrefsFile.create(Ci.nsIFile.DIRECTORY_TYPE, PERMS_DIRECTORY);
+  }
+  grePrefsFile.append("greprefs.js");
+  if (!grePrefsFile.exists()) {
+    grePrefsFile.create(Ci.nsILocalFile.NORMAL_FILE_TYPE, PERMS_FILE);
+  }
 
   // Remove the updates directory on Windows and Mac OS X which is located
   // outside of the application directory after the call to adjustGeneralPaths
@@ -957,7 +1000,14 @@ function doTestFinish() {
   if (gPassed === undefined) {
     gPassed = true;
   }
-  do_test_finished();
+  if (DEBUG_AUS_TEST) {
+    // This prevents do_print errors from being printed by the xpcshell test
+    // harness due to nsUpdateService.js logging to the console when the
+    // app.update.log preference is true.
+    Services.prefs.setBoolPref(PREF_APP_UPDATE_LOG, false);
+    gAUS.observe(null, "nsPref:changed", PREF_APP_UPDATE_LOG);
+  }
+  do_execute_soon(do_test_finished);
 }
 
 /**
@@ -965,7 +1015,6 @@ function doTestFinish() {
  */
 function setDefaultPrefs() {
   Services.prefs.setBoolPref(PREF_APP_UPDATE_ENABLED, true);
-  Services.prefs.setBoolPref(PREF_APP_UPDATE_METRO_ENABLED, true);
   // Don't display UI for a successful installation. Some apps may not set this
   // pref to false like Firefox does.
   Services.prefs.setBoolPref(PREF_APP_UPDATE_SHOW_INSTALLED_UI, false);
@@ -1008,6 +1057,56 @@ function preventDistributionFiles() {
   });
 }
 
+/**
+ * On Mac OS X this sets the last modified time for the app bundle directory to
+ * a date in the past to test that the last modified time is updated when an
+ * update has been successfully applied (bug 600098).
+ */
+function setAppBundleModTime() {
+  if (!IS_MACOSX) {
+    return;
+  }
+  let now = Date.now();
+  let yesterday = now - (1000 * 60 * 60 * 24);
+  let applyToDir = getApplyDirFile();
+  applyToDir.lastModifiedTime = yesterday;
+}
+
+/**
+ * On Mac OS X this checks that the last modified time for the app bundle
+ * directory has been updated when an update has been successfully applied
+ * (bug 600098).
+ */
+function checkAppBundleModTime() {
+  if (!IS_MACOSX) {
+    return;
+  }
+  let now = Date.now();
+  let applyToDir = getApplyDirFile();
+  let timeDiff = Math.abs(applyToDir.lastModifiedTime - now);
+  Assert.ok(timeDiff < MAC_MAX_TIME_DIFFERENCE,
+            "the last modified time on the apply to directory should " +
+            "change after a successful update");
+}
+
+/**
+ * On Mac OS X and Windows this checks if the post update '.running' file exists
+ * to determine if the post update binary was launched.
+ *
+ * @param   aShouldExist
+ *          Whether the post update '.running' file should exist.
+ */
+function checkPostUpdateRunningFile(aShouldExist) {
+  if (!IS_WIN && !IS_MACOSX) {
+    return;
+  }
+  let postUpdateRunningFile = getPostUpdateFile(".running");
+  if (aShouldExist) {
+    Assert.ok(postUpdateRunningFile.exists(), MSG_SHOULD_EXIST);
+  } else {
+    Assert.ok(!postUpdateRunningFile.exists(), MSG_SHOULD_NOT_EXIST);
+  }
+}
 
 /**
  * Initializes the most commonly used settings and creates an instance of the
@@ -1049,7 +1148,7 @@ function getAppVersion() {
     iniFile = gGREBinDirOrig.clone();
     iniFile.append(FILE_APPLICATION_INI);
   }
-  Assert.ok(iniFile.exists(), "the application.ini file should exist");
+  Assert.ok(iniFile.exists(), MSG_SHOULD_EXIST);
   let iniParser = Cc["@mozilla.org/xpcom/ini-parser-factory;1"].
                   getService(Ci.nsIINIParserFactory).
                   createINIParser(iniFile);
@@ -1134,7 +1233,7 @@ function getStageDirFile(aRelPath, aAllowNonexistent) {
       }
     }
     if (!aAllowNonexistent) {
-      Assert.ok(file.exists(), file.path + " should exist");
+      Assert.ok(file.exists(), MSG_SHOULD_EXIST);
     }
     return file;
   }
@@ -1171,6 +1270,41 @@ function getTestDirPath() {
 function getTestDirFile(aRelPath, aAllowNonExists) {
   let relpath = getTestDirPath() + (aRelPath ? aRelPath : "");
   return do_get_file(relpath, !!aAllowNonExists);
+}
+
+/**
+ * Helper function for getting the nsIFile for the maintenance service
+ * directory on Windows.
+ *
+ * @return  The nsIFile for the maintenance service directory.
+ */
+function getMaintSvcDir() {
+  if (!IS_WIN) {
+    do_throw("Windows only function called by a different platform!");
+  }
+
+  const CSIDL_PROGRAM_FILES = 0x26;
+  const CSIDL_PROGRAM_FILESX86 = 0x2A;
+  // This will return an empty string on our Win XP build systems.
+  let maintSvcDir = getSpecialFolderDir(CSIDL_PROGRAM_FILESX86);
+  if (maintSvcDir) {
+    maintSvcDir.append("Mozilla Maintenance Service");
+    debugDump("using CSIDL_PROGRAM_FILESX86 - maintenance service install " +
+              "directory path: " + maintSvcDir.path);
+  }
+  if (!maintSvcDir || !maintSvcDir.exists()) {
+    maintSvcDir = getSpecialFolderDir(CSIDL_PROGRAM_FILES);
+    if (maintSvcDir) {
+      maintSvcDir.append("Mozilla Maintenance Service");
+      debugDump("using CSIDL_PROGRAM_FILES - maintenance service install " +
+                "directory path: " + maintSvcDir.path);
+    }
+  }
+  if (!maintSvcDir) {
+    do_throw("Unable to find the maintenance service install directory");
+  }
+
+  return maintSvcDir;
 }
 
 function getSpecialFolderDir(aCSIDL) {
@@ -1388,9 +1522,9 @@ function lockDirectory(aDir) {
   file.QueryInterface(Ci.nsILocalFileWin);
   file.fileAttributesWin |= file.WFA_READONLY;
   file.fileAttributesWin &= ~file.WFA_READWRITE;
-  debugDump("testing the successful creation of the lock file");
-  do_check_true(file.exists());
-  do_check_false(file.isWritable());
+  Assert.ok(file.exists(), MSG_SHOULD_EXIST);
+  Assert.ok(!file.isWritable(),
+            "the lock file should not be writeable");
 }
 /**
  * Helper function for unlocking a directory on Windows.
@@ -1407,9 +1541,8 @@ function unlockDirectory(aDir) {
   file.QueryInterface(Ci.nsILocalFileWin);
   file.fileAttributesWin |= file.WFA_READWRITE;
   file.fileAttributesWin &= ~file.WFA_READONLY;
-  debugDump("removing and testing the successful removal of the lock file");
   file.remove(false);
-  do_check_false(file.exists());
+  Assert.ok(!file.exists(), MSG_SHOULD_NOT_EXIST);
 }
 
 /**
@@ -1433,21 +1566,26 @@ function runUpdate(aExpectedExitValue, aExpectedStatus, aCallback) {
   if (!updater.exists()) {
     updater = getTestDirFile(FILE_UPDATER_BIN);
     if (!updater.exists()) {
-      do_throw("Unable to find updater binary!");
+      do_throw("Unable to find the updater binary!");
     }
   }
-  Assert.ok(updater.exists(), "updater or updater.app should exist");
+  Assert.ok(updater.exists(), MSG_SHOULD_EXIST);
 
   let updatesDir = getUpdatesPatchDir();
-  updater.copyToFollowingLinks(updatesDir, updater.leafName);
-  let updateBin = updatesDir.clone();
-  updateBin.append(updater.leafName);
-  if (updateBin.leafName == "updater.app") {
-    updateBin.append("Contents");
-    updateBin.append("MacOS");
-    updateBin.append("updater");
-    Assert.ok(updateBin.exists(), updateBin.path + " should exist");
+  let updateBin;
+  if (IS_WIN) {
+    updateBin = updater.clone();
+  } else {
+    updater.copyToFollowingLinks(updatesDir, updater.leafName);
+    updateBin = updatesDir.clone();
+    updateBin.append(updater.leafName);
+    if (updateBin.leafName == "updater.app") {
+      updateBin.append("Contents");
+      updateBin.append("MacOS");
+      updateBin.append("updater");
+    }
   }
+  Assert.ok(updateBin.exists(), MSG_SHOULD_EXIST);
 
   let applyToDir = getApplyDirFile(null, true);
   let applyToDirPath = applyToDir.path;
@@ -1481,20 +1619,10 @@ function runUpdate(aExpectedExitValue, aExpectedStatus, aCallback) {
   }
   debugDump("running the updater: " + updateBin.path + " " + args.join(" "));
 
-  let env = Cc["@mozilla.org/process/environment;1"].
-            getService(Ci.nsIEnvironment);
-  if (gDisableReplaceFallback) {
-    env.set("MOZ_NO_REPLACE_FALLBACK", "1");
-  }
-
   let process = Cc["@mozilla.org/process/util;1"].
                 createInstance(Ci.nsIProcess);
   process.init(updateBin);
   process.run(true, args, args.length);
-
-  if (gDisableReplaceFallback) {
-    env.set("MOZ_NO_REPLACE_FALLBACK", "");
-  }
 
   let status = readStatusFile();
   if (process.exitValue != aExpectedExitValue || status != aExpectedStatus) {
@@ -1509,18 +1637,18 @@ function runUpdate(aExpectedExitValue, aExpectedStatus, aCallback) {
     let updateLog = getUpdatesPatchDir();
     updateLog.append(FILE_UPDATE_LOG);
     // xpcshell tests won't display the entire contents so log each line.
-    let contents = readFileBytes(updateLog).replace(/\r\n/g, "\n");
-    let aryLogContents = contents.split("\n");
+    let updateLogContents = readFileBytes(updateLog).replace(/\r\n/g, "\n");
+    updateLogContents = replaceLogPaths(updateLogContents);
+    let aryLogContents = updateLogContents.split("\n");
     logTestInfo("contents of " + updateLog.path + ":");
     aryLogContents.forEach(function RU_LC_FE(aLine) {
       logTestInfo(aLine);
     });
   }
-  debugDump("testing updater binary process exitValue against expected " +
-            "exit value");
-  do_check_eq(process.exitValue, aExpectedExitValue);
-  debugDump("testing update status against expected status");
-  do_check_eq(status, aExpectedStatus);
+  Assert.equal(process.exitValue, aExpectedExitValue,
+               "the process exit value" + MSG_SHOULD_EQUAL);
+  Assert.equal(status, aExpectedStatus,
+               "the update status" + MSG_SHOULD_EQUAL);
 
   if (aCallback !== null) {
     if (typeof(aCallback) == typeof(Function)) {
@@ -1560,7 +1688,7 @@ function shouldRunServiceTest(aFirstTest) {
   let binDir = getGREBinDir();
   let updaterBin = binDir.clone();
   updaterBin.append(FILE_UPDATER_BIN);
-  Assert.ok(updaterBin.exists(), updaterBin.path + " should exist");
+  Assert.ok(updaterBin.exists(), MSG_SHOULD_EXIST);
 
   let updaterBinPath = updaterBin.path;
   if (/ /.test(updaterBinPath)) {
@@ -1581,9 +1709,10 @@ function shouldRunServiceTest(aFirstTest) {
     // in which case we should fail the test if the updater binary is signed so
     // the build system can be fixed by adding the registry key.
     if (IS_AUTHENTICODE_CHECK_ENABLED) {
-      Assert.ok(isBinSigned, "the updater.exe binary should not be signed " +
-                "when the test registry key doesn't exist (if not, build " +
-                "system configuration bug?)");
+      Assert.ok(!isBinSigned,
+                "the updater.exe binary should not be signed when the test " +
+                "registry key doesn't exist (if it is, build system " +
+                "configuration bug?)");
     }
 
     logTestInfo("this test can only run on the buildbot build system at this " +
@@ -1597,7 +1726,6 @@ function shouldRunServiceTest(aFirstTest) {
   let process = Cc["@mozilla.org/process/util;1"].
                 createInstance(Ci.nsIProcess);
   process.init(helperBin);
-  debugDump("checking if the service exists on this machine.");
   process.run(true, args, args.length);
   Assert.notEqual(process.exitValue, 0xEE, "the maintenance service should " +
                   "be installed (if not, build system configuration bug?)");
@@ -1606,16 +1734,17 @@ function shouldRunServiceTest(aFirstTest) {
   // service should be anything but stopped, so be strict here and fail the
   // test.
   if (aFirstTest) {
-    Assert.equal(process.exitValue, 0, "service should not be running for " +
-                 "the first test");
+    Assert.equal(process.exitValue, 0,
+                 "the service should not be running for the first test");
   }
 
   if (IS_AUTHENTICODE_CHECK_ENABLED) {
     // The test registry key exists and IS_AUTHENTICODE_CHECK_ENABLED is true
     // so the binaries should be signed. To run the test locally
     // DISABLE_UPDATER_AUTHENTICODE_CHECK can be defined.
-    Assert.ok(isBinSigned, "the updater.exe binary should be signed (if not, " +
-              "build system configuration bug?)");
+    Assert.ok(isBinSigned,
+              "the updater.exe binary should be signed (if not, build system " +
+              "configuration bug?)");
   }
 
   // In case the machine is running an old maintenance service or if it
@@ -1698,7 +1827,7 @@ function setupAppFiles() {
                      inGreDir : true } ];
 
   // On Linux the updater.png must also be copied
-  if (IS_UNIX && !IS_MACOSX) {
+  if (IS_UNIX && !IS_MACOSX && !IS_TOOLKIT_GONK) {
     appFiles.push( { relPath  : "icons/updater.png",
                      inGreDir : true } );
   }
@@ -1731,10 +1860,10 @@ function setupAppFiles() {
   if (!updater.exists()) {
     updater = getTestDirFile(FILE_UPDATER_BIN);
     if (!updater.exists()) {
-      do_throw("Unable to find updater binary!");
+      do_throw("Unable to find the updater binary!");
     }
   }
-  let testBinDir = getGREBinDir()
+  let testBinDir = getGREBinDir();
   updater.copyToFollowingLinks(testBinDir, updater.leafName);
 
   debugDump("finish - copying or creating symlinks to application files " +
@@ -1785,14 +1914,16 @@ function copyFileToTestAppDir(aFileRelPath, aInGreDir) {
     fileRelPath = fileRelPath + ".app";
   }
 
-  Assert.ok(srcFile.exists(), srcFile.path + " should exist");
+  Assert.ok(srcFile.exists(),
+            MSG_SHOULD_EXIST + ", leafName: " + srcFile.leafName);
 
   // Symlink libraries. Note that the XUL library on Mac OS X doesn't have a
   // file extension and shouldSymlink will always be false on Windows.
   let shouldSymlink = (pathParts[pathParts.length - 1] == "XUL" ||
                        fileRelPath.substr(fileRelPath.length - 3) == ".so" ||
                        fileRelPath.substr(fileRelPath.length - 6) == ".dylib");
-  if (!shouldSymlink) {
+  // The tests don't support symlinks on gonk.
+  if (!shouldSymlink || IS_TOOLKIT_GONK) {
     if (!destFile.exists()) {
       try {
         srcFile.copyToFollowingLinks(destFile.parent, destFile.leafName);
@@ -1821,8 +1952,8 @@ function copyFileToTestAppDir(aFileRelPath, aInGreDir) {
       process.init(ln);
       let args = ["-s", srcFile.path, destFile.path];
       process.run(true, args, args.length);
-      debugDump("verifying symlink. Path: " + destFile.path);
-      do_check_true(destFile.isSymlink());
+      Assert.ok(destFile.isSymlink(),
+                "the file should be a symlink");
     } catch (e) {
       do_throw("Unable to create symlink for file! Path: " + srcFile.path +
                ", Exception: " + e);
@@ -1837,31 +1968,11 @@ function copyFileToTestAppDir(aFileRelPath, aInGreDir) {
  * a unprivileged location.
  */
 function attemptServiceInstall() {
-  const CSIDL_PROGRAM_FILES = 0x26;
-  const CSIDL_PROGRAM_FILESX86 = 0x2A;
-  // This will return an empty string on our Win XP build systems.
-  let maintSvcDir = getSpecialFolderDir(CSIDL_PROGRAM_FILESX86);
-  if (maintSvcDir) {
-    maintSvcDir.append("Mozilla Maintenance Service");
-    debugDump("using CSIDL_PROGRAM_FILESX86 - maintenance service install " +
-              "directory path: " + maintSvcDir.path);
-  }
-  if (!maintSvcDir || !maintSvcDir.exists()) {
-    maintSvcDir = getSpecialFolderDir(CSIDL_PROGRAM_FILES);
-    if (maintSvcDir) {
-      maintSvcDir.append("Mozilla Maintenance Service");
-      debugDump("using CSIDL_PROGRAM_FILES - maintenance service install " +
-                "directory path: " + maintSvcDir.path);
-    }
-  }
-  Assert.ok(!!maintSvcDir, "maintenance service install directory should " +
-            "exist");
-  Assert.ok(maintSvcDir.exists(), "maintenance service install directory " +
-            "should exist");
+  let maintSvcDir = getMaintSvcDir();
+  Assert.ok(maintSvcDir.exists(), MSG_SHOULD_EXIST);
   let oldMaintSvcBin = maintSvcDir.clone();
   oldMaintSvcBin.append(FILE_MAINTENANCE_SERVICE_BIN);
-  Assert.ok(oldMaintSvcBin.exists(), "maintenance service install directory " +
-            "binary should exist. Path: " + oldMaintSvcBin.path);
+  Assert.ok(oldMaintSvcBin.exists(), MSG_SHOULD_EXIST);
   let buildMaintSvcBin = getGREBinDir();
   buildMaintSvcBin.append(FILE_MAINTENANCE_SERVICE_BIN);
   if (readFileBytes(oldMaintSvcBin) == readFileBytes(buildMaintSvcBin)) {
@@ -1889,7 +2000,7 @@ function attemptServiceInstall() {
     }
     Assert.ok(false, "should be able copy the test maintenance service to " +
               "the maintenance service directory (if not, build system " +
-              "configuration bug?). Path: " + maintSvcDir.path);
+              "configuration bug?), path: " + maintSvcDir.path);
   }
 
   return true;
@@ -1910,15 +2021,15 @@ function runUpdateUsingService(aInitialStatus, aExpectedStatus, aCheckSvcLog) {
   // Check the service logs for a successful update
   function checkServiceLogs(aOriginalContents) {
     let contents = readServiceLogFile();
-    debugDump("the contents of maintenanceservice.log:\n" + contents + "\n");
-    do_check_neq(contents, aOriginalContents);
-    do_check_neq(contents.indexOf(LOG_SVC_SUCCESSFUL_LAUNCH), -1);
+    Assert.notEqual(contents, aOriginalContents,
+                    "the contents of the maintenanceservice.log should not " +
+                    "be the same as the original contents");
+    Assert.notEqual(contents.indexOf(LOG_SVC_SUCCESSFUL_LAUNCH), -1,
+                    "the contents of the maintenanceservice.log should " +
+                    "contain the successful launch string");
   }
   function readServiceLogFile() {
-    let file = Cc["@mozilla.org/file/directory_service;1"].
-               getService(Ci.nsIProperties).
-               get("CmAppData", Ci.nsIFile);
-    file.append("Mozilla");
+    let file = getMaintSvcDir();
     file.append("logs");
     file.append("maintenanceservice.log");
     return readFile(file);
@@ -1945,17 +2056,17 @@ function runUpdateUsingService(aInitialStatus, aExpectedStatus, aCheckSvcLog) {
     helperBinProcess.init(helperBin);
     debugDump("stopping service...");
     helperBinProcess.run(true, helperBinArgs, helperBinArgs.length);
-    Assert.notEqual(helperBinProcess.exitValue, 0xEE, "the maintenance " +
-                    "service should exist");
+    Assert.notEqual(helperBinProcess.exitValue, 0xEE,
+                    "the maintenance service should exist");
 
     if (helperBinProcess.exitValue != 0) {
       if (aFailTest) {
-        Assert.ok(false, "maintenance service should stop! Process " +
-                  "exitValue: " + helperBinProcess.exitValue);
+        Assert.ok(false, "the maintenance service should stop, process exit " +
+                  "value: " + helperBinProcess.exitValue);
       }
 
       logTestInfo("maintenance service did not stop which may cause test " +
-                  "failures later. Process exitValue: " +
+                  "failures later, process exit value: " +
                   helperBinProcess.exitValue);
     } else {
       debugDump("service stopped");
@@ -1974,8 +2085,9 @@ function runUpdateUsingService(aInitialStatus, aExpectedStatus, aCheckSvcLog) {
                            createInstance(Ci.nsIProcess);
     helperBinProcess.init(helperBin);
     helperBinProcess.run(true, helperBinArgs, helperBinArgs.length);
-    Assert.equal(helperBinProcess.exitValue, 0, "the process for " +
-                 aApplication + " should stop");
+    Assert.equal(helperBinProcess.exitValue, 0,
+                 "the process should have stopped, process name: " +
+                 aApplication);
   }
 
   // Make sure the service from the previous test is already stopped.
@@ -2010,13 +2122,14 @@ function runUpdateUsingService(aInitialStatus, aExpectedStatus, aCheckSvcLog) {
   writeStatusFile(aInitialStatus);
 
   // sanity check
-  do_check_eq(readStatusState(), aInitialStatus);
+  Assert.equal(readStatusState(), aInitialStatus,
+               "the update status state" + MSG_SHOULD_EQUAL);
 
   writeVersionFile(DEFAULT_UPDATE_VERSION);
 
   gServiceLaunchedCallbackArgs = [
     "-no-remote",
-    "-process-updates",
+    "-test-process-updates",
     "-dump-args",
     appArgsLogPath
   ];
@@ -2030,11 +2143,10 @@ function runUpdateUsingService(aInitialStatus, aExpectedStatus, aCheckSvcLog) {
 
   let updater = getTestDirFile(FILE_UPDATER_BIN);
   if (!updater.exists()) {
-    do_throw("Unable to find updater binary!");
+    do_throw("Unable to find the updater binary!");
   }
-  let testBinDir = getGREBinDir()
+  let testBinDir = getGREBinDir();
   updater.copyToFollowingLinks(testBinDir, updater.leafName);
-  updater.copyToFollowingLinks(updatesDir, updater.leafName);
 
   // The service will execute maintenanceservice_installer.exe and
   // will copy maintenanceservice.exe out of the same directory from
@@ -2085,15 +2197,16 @@ function runUpdateUsingService(aInitialStatus, aExpectedStatus, aCheckSvcLog) {
       let updateLog = getUpdatesPatchDir();
       updateLog.append(FILE_UPDATE_LOG);
       // xpcshell tests won't display the entire contents so log each line.
-      let contents = readFileBytes(updateLog).replace(/\r\n/g, "\n");
-      let aryLogContents = contents.split("\n");
+      let updateLogContents = readFileBytes(updateLog).replace(/\r\n/g, "\n");
+      updateLogContents = replaceLogPaths(updateLogContents);
+      let aryLogContents = updateLogContents.split("\n");
       logTestInfo("contents of " + updateLog.path + ":");
       aryLogContents.forEach(function RUUS_TC_LC_FE(aLine) {
         logTestInfo(aLine);
       });
     }
-    debugDump("testing update status against expected status");
-    do_check_eq(status, aExpectedStatus);
+    Assert.equal(status, aExpectedStatus,
+                 "the update status" + MSG_SHOULD_EQUAL);
 
     if (aCheckSvcLog) {
       checkServiceLogs(svcOriginalLog);
@@ -2125,7 +2238,7 @@ function getLaunchBin() {
                 createInstance(Ci.nsILocalFile);
     launchBin.initWithPath("/bin/sh");
   }
-  Assert.ok(launchBin.exists(), launchBin.path + " should exist");
+  Assert.ok(launchBin.exists(), MSG_SHOULD_EXIST);
 
   return launchBin;
 }
@@ -2233,7 +2346,6 @@ function setupUpdaterTest(aMarFile) {
   helperBin.copyToFollowingLinks(afterApplyBinDir, gCallbackBinFile);
   helperBin.copyToFollowingLinks(afterApplyBinDir, gPostUpdateBinFile);
 
-  let applyToDir = getApplyDirFile(null, true);
   gTestFiles.forEach(function SUT_TF_FE(aTestFile) {
     if (aTestFile.originalFile || aTestFile.originalContents) {
       let testDir = getApplyDirFile(aTestFile.relPathDir, true);
@@ -2252,8 +2364,8 @@ function setupUpdaterTest(aMarFile) {
         writeFile(testFile, aTestFile.originalContents);
       }
 
-      // Skip these tests on Windows and OS/2 since their
-      // implementaions of chmod doesn't really set permissions.
+      // Skip these tests on Windows since chmod doesn't really set permissions
+      // on Windows.
       if (!IS_WIN && aTestFile.originalPerms) {
         testFile.permissions = aTestFile.originalPerms;
         // Store the actual permissions on the file for reference later after
@@ -2354,6 +2466,41 @@ function createUpdaterINI(aIsExeAsync) {
 }
 
 /**
+ * Helper function that replaces the common part of paths in the update log's
+ * contents with <test_dir_path> for paths to the the test directory and
+ * <update_dir_path> for paths to the update directory. This is needed since
+ * Assert.equal will truncate what it prints to the xpcshell log file.
+ *
+ * @param   aLogContents
+ *          The update log file's contents.
+ * @return  the log contents with the paths replaced.
+ */
+function replaceLogPaths(aLogContents) {
+  let logContents = aLogContents;
+  // Remove the majority of the path up to the test directory. This is needed
+  // since Assert.equal won't print long strings to the test logs.
+  let testDirPath = do_get_file(gTestID, false).path;
+  if (IS_WIN) {
+    // Replace \\ with \\\\ so the regexp works.
+    testDirPath = testDirPath.replace(/\\/g, "\\\\");
+  }
+  logContents = logContents.replace(new RegExp(testDirPath, "g"),
+                                    "<test_dir_path>/" + gTestID);
+  let updatesDirPath = getMockUpdRootD().path;
+  if (IS_WIN) {
+    // Replace \\ with \\\\ so the regexp works.
+    updatesDirPath = updatesDirPath.replace(/\\/g, "\\\\");
+  }
+  logContents = logContents.replace(new RegExp(updatesDirPath, "g"),
+                                    "<update_dir_path>/" + gTestID);
+  if (IS_WIN) {
+    // Replace \ with /
+    logContents = logContents.replace(/\\/g, "/");
+  }
+  return logContents;
+}
+
+/**
  * Helper function for updater binary tests for verifying the contents of the
  * update log after a successful update.
  *
@@ -2368,12 +2515,13 @@ function checkUpdateLogContents(aCompareLogFile, aExcludeDistributionDir) {
     // Sorting on Linux is different so skip checking the logs for now.
     return;
   }
+
   let updateLog = getUpdatesPatchDir();
   updateLog.append(FILE_UPDATE_LOG);
   let updateLogContents = readFileBytes(updateLog);
 
   // The channel-prefs.js is defined in gTestFilesCommon which will always be
-  // located to the end of gTestFiles.
+  // located to the end of gTestFiles when it is present.
   if (gTestFiles.length > 1 &&
       gTestFiles[gTestFiles.length - 1].fileName == "channel-prefs.js" &&
       !gTestFiles[gTestFiles.length - 1].originalContents) {
@@ -2406,6 +2554,10 @@ function checkUpdateLogContents(aCompareLogFile, aExcludeDistributionDir) {
   if (gSwitchApp) {
     // Remove the lines which contain absolute paths
     updateLogContents = updateLogContents.replace(/^Begin moving.*$/mg, "");
+    updateLogContents = updateLogContents.replace(/^ensure_remove: failed to remove file: .*$/mg, "");
+    updateLogContents = updateLogContents.replace(/^ensure_remove_recursive: unable to remove directory: .*$/mg, "");
+    updateLogContents = updateLogContents.replace(/^Removing tmpDir failed, err: -1$/mg, "");
+    updateLogContents = updateLogContents.replace(/^remove_recursive_on_reboot: .*$/mg, "");
   }
   updateLogContents = updateLogContents.replace(/\r/g, "");
   // Replace error codes since they are different on each platform.
@@ -2419,9 +2571,7 @@ function checkUpdateLogContents(aCompareLogFile, aExcludeDistributionDir) {
   updateLogContents = updateLogContents.replace(/\n+/g, "\n");
   // Remove leading and trailing newlines
   updateLogContents = updateLogContents.replace(/^\n|\n$/g, "");
-  // The update log when running the service tests sometimes starts with data
-  // from the previous launch of the updater.
-  updateLogContents = updateLogContents.replace(/^calling QuitProgressUI\n[^\n]*\nUPDATE TYPE/g, "UPDATE TYPE");
+  updateLogContents = replaceLogPaths(updateLogContents);
 
   let compareLogContents = "";
   if (aCompareLogFile) {
@@ -2453,10 +2603,9 @@ function checkUpdateLogContents(aCompareLogFile, aExcludeDistributionDir) {
   // Don't write the contents of the file to the log to reduce log spam
   // unless there is a failure.
   if (compareLogContents == updateLogContents) {
-    debugDump("log contents are correct");
-    do_check_true(true);
+    Assert.ok(true, "the update log contents" + MSG_SHOULD_EQUAL);
   } else {
-    logTestInfo("log contents are not correct");
+    logTestInfo("the update log contents are not correct");
     let aryLog = updateLogContents.split("\n");
     let aryCompare = compareLogContents.split("\n");
     // Pushing an empty string to both arrays makes it so either array's length
@@ -2466,13 +2615,15 @@ function checkUpdateLogContents(aCompareLogFile, aExcludeDistributionDir) {
     // xpcshell tests won't display the entire contents so log the incorrect
     // line.
     for (let i = 0; i < aryLog.length; ++i) {
-      if (aryCompare[i] != aryLog[i]) {
-        logTestInfo("the first incorrect line in the log is: " + aryLog[i]);
-        do_check_eq(aryCompare[i], aryLog[i]);
+      if (aryLog[i] != aryCompare[i]) {
+        logTestInfo("the first incorrect line in the update log is: " +
+                    aryLog[i]);
+        Assert.equal(aryLog[i], aryCompare[i],
+                     "the update log contents" + MSG_SHOULD_EQUAL);
       }
     }
     // This should never happen!
-    do_throw("Unable to find incorrect log contents!");
+    do_throw("Unable to find incorrect update log contents!");
   }
 }
 
@@ -2486,13 +2637,10 @@ function checkUpdateLogContains(aCheckString) {
   let updateLog = getUpdatesPatchDir();
   updateLog.append(FILE_UPDATE_LOG);
   let updateLogContents = readFileBytes(updateLog);
-  if (updateLogContents.indexOf(aCheckString) != -1) {
-    debugDump("log file does contain: " + aCheckString);
-    do_check_true(true);
-  } else {
-    logTestInfo("log file does not contain: " + aCheckString);
-    do_check_true(false);
-  }
+  updateLogContents = replaceLogPaths(updateLogContents);
+  Assert.notEqual(updateLogContents.indexOf(aCheckString), -1,
+                  "the update log contents should contain value: " +
+                  aCheckString);
 }
 
 /**
@@ -2517,21 +2665,15 @@ function checkFilesAfterUpdateSuccess(aGetFileFunc, aStageDirExists,
     let testFile = aGetFileFunc(aTestFile.relPathDir + aTestFile.fileName, true);
     debugDump("testing file: " + testFile.path);
     if (aTestFile.compareFile || aTestFile.compareContents) {
-      do_check_true(testFile.exists());
+      Assert.ok(testFile.exists(), MSG_SHOULD_EXIST);
 
-      // Skip these tests on Windows and OS/2 since their
-      // implementaions of chmod doesn't really set permissions.
+      // Skip these tests on Windows since chmod doesn't really set permissions
+      // on Windows.
       if (!IS_WIN && aTestFile.comparePerms) {
         // Check if the permssions as set in the complete mar file are correct.
-        let logPerms = "testing file permissions - ";
-        if (aTestFile.originalPerms) {
-          logPerms += "original permissions: " +
-                      aTestFile.originalPerms.toString(8) + ", ";
-        }
-        debugDump("compare permissions : " +
-                  aTestFile.comparePerms.toString(8) + ", " +
-                  "updated permissions : " + testFile.permissions.toString(8));
-        do_check_eq(testFile.permissions & 0xfff, aTestFile.comparePerms & 0xfff);
+        Assert.equal(testFile.permissions & 0xfff,
+                     aTestFile.comparePerms & 0xfff,
+                     "the file permissions" + MSG_SHOULD_EQUAL);
       }
 
       let fileContents1 = readFileBytes(testFile);
@@ -2541,14 +2683,13 @@ function checkFilesAfterUpdateSuccess(aGetFileFunc, aStageDirExists,
       // Don't write the contents of the file to the log to reduce log spam
       // unless there is a failure.
       if (fileContents1 == fileContents2) {
-        debugDump("file contents are correct");
-        do_check_true(true);
+        Assert.ok(true, "the file contents" + MSG_SHOULD_EQUAL);
       } else {
-        logTestInfo("file contents are not correct");
-        do_check_eq(fileContents1, fileContents2);
+        Assert.equal(fileContents1, fileContents2,
+                     "the file contents" + MSG_SHOULD_EQUAL);
       }
     } else {
-      do_check_false(testFile.exists());
+      Assert.ok(!testFile.exists(), MSG_SHOULD_NOT_EXIST);
     }
   });
 
@@ -2558,18 +2699,17 @@ function checkFilesAfterUpdateSuccess(aGetFileFunc, aStageDirExists,
     let testDir = aGetFileFunc(aTestDir.relPathDir, true);
     debugDump("testing directory: " + testDir.path);
     if (aTestDir.dirRemoved) {
-      do_check_false(testDir.exists());
+      Assert.ok(!testDir.exists(), MSG_SHOULD_NOT_EXIST);
     } else {
-      do_check_true(testDir.exists());
+      Assert.ok(testDir.exists(), MSG_SHOULD_EXIST);
 
       if (aTestDir.files) {
         aTestDir.files.forEach(function CFAUS_TD_F_FE(aTestFile) {
           let testFile = aGetFileFunc(aTestDir.relPathDir + aTestFile, true);
-          debugDump("testing directory file: " + testFile.path);
           if (aTestDir.filesRemoved) {
-            do_check_false(testFile.exists());
+            Assert.ok(!testFile.exists(), MSG_SHOULD_NOT_EXIST);
           } else {
-            do_check_true(testFile.exists());
+            Assert.ok(testFile.exists(), MSG_SHOULD_EXIST);
           }
         });
       }
@@ -2577,14 +2717,12 @@ function checkFilesAfterUpdateSuccess(aGetFileFunc, aStageDirExists,
       if (aTestDir.subDirs) {
         aTestDir.subDirs.forEach(function CFAUS_TD_SD_FE(aSubDir) {
           let testSubDir = aGetFileFunc(aTestDir.relPathDir + aSubDir, true);
-          debugDump("testing sub-directory: " + testSubDir.path);
-          do_check_true(testSubDir.exists());
+          Assert.ok(testSubDir.exists(), MSG_SHOULD_EXIST);
           if (aTestDir.subDirFiles) {
             aTestDir.subDirFiles.forEach(function CFAUS_TD_SDF_FE(aTestFile) {
               let testFile = aGetFileFunc(aTestDir.relPathDir +
                                           aSubDir + aTestFile, true);
-              debugDump("testing sub-directory file: " + testFile.path);
-              do_check_true(testFile.exists());
+              Assert.ok(testFile.exists(), MSG_SHOULD_EXIST);
             });
           }
         });
@@ -2618,21 +2756,15 @@ function checkFilesAfterUpdateFailure(aGetFileFunc, aStageDirExists,
     let testFile = aGetFileFunc(aTestFile.relPathDir + aTestFile.fileName, true);
     debugDump("testing file: " + testFile.path);
     if (aTestFile.compareFile || aTestFile.compareContents) {
-      do_check_true(testFile.exists());
+      Assert.ok(testFile.exists(), MSG_SHOULD_EXIST);
 
-      // Skip these tests on Windows and OS/2 since their
-      // implementaions of chmod doesn't really set permissions.
+      // Skip these tests on Windows since chmod doesn't really set permissions
+      // on Windows.
       if (!IS_WIN && aTestFile.comparePerms) {
         // Check the original permssions are retained on the file.
-        let logPerms = "testing file permissions - ";
-        if (aTestFile.originalPerms) {
-          logPerms += "original permissions: " +
-                      aTestFile.originalPerms.toString(8) + ", ";
-        }
-        debugDump("compare permissions : " +
-                  aTestFile.comparePerms.toString(8) + ", " +
-                  "updated permissions : " + testFile.permissions.toString(8));
-        do_check_eq(testFile.permissions & 0xfff, aTestFile.comparePerms & 0xfff);
+        Assert.equal(testFile.permissions & 0xfff,
+                     aTestFile.comparePerms & 0xfff,
+                     "the file permissions" + MSG_SHOULD_EQUAL);
       }
 
       let fileContents1 = readFileBytes(testFile);
@@ -2642,14 +2774,13 @@ function checkFilesAfterUpdateFailure(aGetFileFunc, aStageDirExists,
       // Don't write the contents of the file to the log to reduce log spam
       // unless there is a failure.
       if (fileContents1 == fileContents2) {
-        debugDump("file contents are correct");
-        do_check_true(true);
+        Assert.ok(true, "the file contents" + MSG_SHOULD_EQUAL);
       } else {
-        logTestInfo("file contents are not correct");
-        do_check_eq(fileContents1, fileContents2);
+        Assert.equal(fileContents1, fileContents2,
+                     "the file contents" + MSG_SHOULD_EQUAL);
       }
     } else {
-      do_check_false(testFile.exists());
+      Assert.ok(!testFile.exists(), MSG_SHOULD_NOT_EXIST);
     }
   });
 
@@ -2657,28 +2788,24 @@ function checkFilesAfterUpdateFailure(aGetFileFunc, aStageDirExists,
             "performed after a failed update");
   gTestDirs.forEach(function CFAUF_TD_FE(aTestDir) {
     let testDir = aGetFileFunc(aTestDir.relPathDir, true);
-    debugDump("testing directory: " + testDir.path);
-    do_check_true(testDir.exists());
+    Assert.ok(testDir.exists(), MSG_SHOULD_EXIST);
 
     if (aTestDir.files) {
       aTestDir.files.forEach(function CFAUS_TD_F_FE(aTestFile) {
         let testFile = aGetFileFunc(aTestDir.relPathDir + aTestFile, true);
-        debugDump("testing directory file: " + testFile.path);
-        do_check_true(testFile.exists());
+        Assert.ok(testFile.exists(), MSG_SHOULD_EXIST);
       });
     }
 
     if (aTestDir.subDirs) {
       aTestDir.subDirs.forEach(function CFAUS_TD_SD_FE(aSubDir) {
         let testSubDir = aGetFileFunc(aTestDir.relPathDir + aSubDir, true);
-        debugDump("testing sub-directory: " + testSubDir.path);
-        do_check_true(testSubDir.exists());
+        Assert.ok(testSubDir.exists(), MSG_SHOULD_EXIST);
         if (aTestDir.subDirFiles) {
           aTestDir.subDirFiles.forEach(function CFAUS_TD_SDF_FE(aTestFile) {
             let testFile = aGetFileFunc(aTestDir.relPathDir +
                                         aSubDir + aTestFile, true);
-            debugDump("testing sub-directory file: " + testFile.path);
-            do_check_true(testFile.exists());
+            Assert.ok(testFile.exists(), MSG_SHOULD_EXIST);
           });
         }
       });
@@ -2707,31 +2834,28 @@ function checkFilesAfterUpdateFailure(aGetFileFunc, aStageDirExists,
 function checkFilesAfterUpdateCommon(aGetFileFunc, aStageDirExists,
                                      aToBeDeletedDirExists) {
   debugDump("testing extra directories");
-
   let stageDir = getStageDirFile(null, true);
-  debugDump("testing directory should " +
-            (aStageDirExists ? "" : "not ") +
-            "exist: " + stageDir.path);
-  do_check_eq(stageDir.exists(), aStageDirExists);
+  if (aStageDirExists) {
+    Assert.ok(stageDir.exists(), MSG_SHOULD_EXIST);
+  } else {
+    Assert.ok(!stageDir.exists(), MSG_SHOULD_NOT_EXIST);
+  }
 
   let toBeDeletedDirExists = IS_WIN ? aToBeDeletedDirExists : false;
   let toBeDeletedDir = getApplyDirFile(DIR_TOBEDELETED, true);
-  debugDump("testing directory should " +
-            (toBeDeletedDirExists ? "" : "not ") +
-            "exist: " + toBeDeletedDir.path);
-  do_check_eq(toBeDeletedDir.exists(), toBeDeletedDirExists);
+  if (toBeDeletedDirExists) {
+    Assert.ok(toBeDeletedDir.exists(), MSG_SHOULD_EXIST);
+  } else {
+    Assert.ok(!toBeDeletedDir.exists(), MSG_SHOULD_NOT_EXIST);
+  }
 
-  debugDump("testing updating directory doesn't exist in the application " +
-            "directory");
   let updatingDir = getApplyDirFile("updating", true);
-  do_check_false(updatingDir.exists());
+  Assert.ok(!updatingDir.exists(), MSG_SHOULD_NOT_EXIST);
 
   if (stageDir.exists()) {
-    debugDump("testing updating directory doesn't exist in the staging " +
-              "directory");
     updatingDir = stageDir.clone();
     updatingDir.append("updating");
-    do_check_false(updatingDir.exists());
+    Assert.ok(!updatingDir.exists(), MSG_SHOULD_NOT_EXIST);
   }
 
   debugDump("testing backup files should not be left behind in the " +
@@ -2751,7 +2875,8 @@ function checkFilesAfterUpdateCommon(aGetFileFunc, aStageDirExists,
   let entries = updatesDir.QueryInterface(Ci.nsIFile).directoryEntries;
   while (entries.hasMoreElements()) {
     let entry = entries.getNext().QueryInterface(Ci.nsIFile);
-    do_check_neq(getFileExtension(entry), "patch");
+    Assert.notEqual(getFileExtension(entry), "patch",
+                    "the file's extension should not equal patch");
   }
 }
 
@@ -2772,19 +2897,37 @@ function checkCallbackAppLog() {
   // It is possible for the log file contents check to occur before the log file
   // contents are completely written so wait until the contents are the expected
   // value. If the contents are never the expected value then the test will
-  // fail by timing out.
+  // fail by timing out after gTimeoutRuns is greater than MAX_TIMEOUT_RUNS or
+  // the test harness times out the test.
   if (logContents != expectedLogContents) {
+    gTimeoutRuns++;
+    if (gTimeoutRuns > MAX_TIMEOUT_RUNS) {
+      logTestInfo("callback log contents are not correct");
+      // This file doesn't contain full paths so there is no need to call
+      // replaceLogPaths.
+      let aryLog = logContents.split("\n");
+      let aryCompare = expectedLogContents.split("\n");
+      // Pushing an empty string to both arrays makes it so either array's length
+      // can be used in the for loop below without going out of bounds.
+      aryLog.push("");
+      aryCompare.push("");
+      // xpcshell tests won't display the entire contents so log the incorrect
+      // line.
+      for (let i = 0; i < aryLog.length; ++i) {
+        if (aryLog[i] != aryCompare[i]) {
+          logTestInfo("the first incorrect line in the callback log is: " +
+                      aryLog[i]);
+          Assert.equal(aryLog[i], aryCompare[i],
+                       "the callback log contents" + MSG_SHOULD_EQUAL);
+        }
+      }
+      // This should never happen!
+      do_throw("Unable to find incorrect callback log contents!");
+    }
     do_timeout(TEST_HELPER_TIMEOUT, checkCallbackAppLog);
     return;
   }
-
-  if (logContents == expectedLogContents) {
-    debugDump("callback log file contents are correct");
-    do_check_true(true);
-  } else {
-    debugDump("callback log file contents are not correct");
-    do_check_eq(logContents, expectedLogContents);
-  }
+  Assert.ok(true, "the callback log contents" + MSG_SHOULD_EQUAL);
 
   waitForFilesInUse();
 }
@@ -2823,7 +2966,8 @@ function checkPostUpdateAppLog() {
   // It is possible for the log file contents check to occur before the log file
   // contents are completely written so wait until the contents are the expected
   // value. If the contents are never the expected value then the test will
-  // fail by timing out.
+  // fail by timing out after gTimeoutRuns is greater than MAX_TIMEOUT_RUNS or
+  // the test harness times out the test.
   if (logContents != "post-update\n") {
     if (gTimeoutRuns > MAX_TIMEOUT_RUNS) {
       do_throw("Exceeded MAX_TIMEOUT_RUNS while waiting for the post update " +
@@ -2833,9 +2977,7 @@ function checkPostUpdateAppLog() {
     do_timeout(TEST_HELPER_TIMEOUT, checkPostUpdateAppLog);
     return;
   }
-
-  debugDump("post update app log file contents are correct");
-  do_check_true(true);
+  Assert.ok(true, "the post update log contents" + MSG_SHOULD_EQUAL);
 
   gCheckFunc();
 }
@@ -2846,7 +2988,8 @@ function checkPostUpdateAppLog() {
  * the callback application.
  */
 function checkCallbackServiceLog() {
-  do_check_neq(gServiceLaunchedCallbackLog, null);
+  Assert.ok(!!gServiceLaunchedCallbackLog,
+            "gServiceLaunchedCallbackLog should be defined");
 
   let expectedLogContents = gServiceLaunchedCallbackArgs.join("\n") + "\n";
   let logFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsILocalFile);
@@ -2855,16 +2998,35 @@ function checkCallbackServiceLog() {
   // It is possible for the log file contents check to occur before the log file
   // contents are completely written so wait until the contents are the expected
   // value. If the contents are never the expected value then the test will
-  // fail by timing out.
+  // fail by timing out after gTimeoutRuns is greater than MAX_TIMEOUT_RUNS or
+  // the test harness times out the test.
   if (logContents != expectedLogContents) {
-    debugDump("callback service log not expected value, waiting longer");
+    gTimeoutRuns++;
+    if (gTimeoutRuns > MAX_TIMEOUT_RUNS) {
+      logTestInfo("callback service log contents are not correct");
+      let aryLog = logContents.split("\n");
+      let aryCompare = expectedLogContents.split("\n");
+      // Pushing an empty string to both arrays makes it so either array's length
+      // can be used in the for loop below without going out of bounds.
+      aryLog.push("");
+      aryCompare.push("");
+      // xpcshell tests won't display the entire contents so log the incorrect
+      // line.
+      for (let i = 0; i < aryLog.length; ++i) {
+        if (aryLog[i] != aryCompare[i]) {
+          logTestInfo("the first incorrect line in the service callback log " +
+                      "is: " + aryLog[i]);
+          Assert.equal(aryLog[i], aryCompare[i],
+                       "the service callback log contents" + MSG_SHOULD_EQUAL);
+        }
+      }
+      // This should never happen!
+      do_throw("Unable to find incorrect service callback log contents!");
+    }
     do_timeout(TEST_HELPER_TIMEOUT, checkCallbackServiceLog);
     return;
   }
-
-  debugDump("testing that the callback application successfully launched " +
-            "and the expected command line arguments were passed to it");
-  do_check_eq(logContents, expectedLogContents);
+  Assert.ok(true, "the callback service log contents" + MSG_SHOULD_EQUAL);
 
   waitForFilesInUse();
 }
@@ -2924,7 +3086,8 @@ function waitForFilesInUse() {
  *          An nsIFile to check if it has moz-backup for its extension.
  */
 function checkForBackupFiles(aFile) {
-  do_check_neq(getFileExtension(aFile), "moz-backup");
+  Assert.notEqual(getFileExtension(aFile), "moz-backup",
+                  "the file's extension should not equal moz-backup");
 }
 
 /**
@@ -3023,7 +3186,7 @@ xhr.prototype = {
     eval("this._on" + aEvent + " = aValue");
   },
   flags: Ci.nsIClassInfo.SINGLETON,
-  getScriptableHelper: function() null,
+  getScriptableHelper: () => null,
   getInterfaces: function(aCount) {
     let interfaces = [Ci.nsISupports];
     aCount.value = interfaces.length;
@@ -3051,7 +3214,7 @@ function UpdatePrompt(aCallback) {
   let fns = ["checkForUpdates", "showUpdateAvailable", "showUpdateDownloaded",
              "showUpdateError", "showUpdateHistory", "showUpdateInstalled"];
 
-  fns.forEach(function(aPromptFn) {
+  fns.forEach(function UP_fns(aPromptFn) {
     UpdatePrompt.prototype[aPromptFn] = function() {
       if (!this._callback) {
         return;
@@ -3070,7 +3233,7 @@ function UpdatePrompt(aCallback) {
 
 UpdatePrompt.prototype = {
   flags: Ci.nsIClassInfo.SINGLETON,
-  getScriptableHelper: function() null,
+  getScriptableHelper: () => null,
   getInterfaces: function(aCount) {
     let interfaces = [Ci.nsISupports, Ci.nsIUpdatePrompt];
     aCount.value = interfaces.length;
@@ -3158,7 +3321,7 @@ function start_httpserver() {
  *          The callback to call after stopping the http server.
  */
 function stop_httpserver(aCallback) {
-  do_check_true(!!aCallback);
+  Assert.ok(!!aCallback, "the aCallback parameter should be defined");
   gTestserver.stop(aCallback);
 }
 
@@ -3225,8 +3388,8 @@ function createAppInfo(aID, aName, aVersion, aPlatformVersion) {
  * Command line arguments used when launching the application:
  * -no-remote prevents shell integration from being affected by an existing
  * application process.
- * -process-updates makes the application exits after being relaunched by the
- * updater.
+ * -test-process-updates makes the application exit after being relaunched by
+ * the updater.
  * the platform specific string defined by PIPE_TO_NULL to output both stdout
  * and stderr to null. This is needed to prevent output from the application
  * from ending up in the xpchsell log.
@@ -3248,14 +3411,14 @@ function getProcessArgs(aExtraArgs) {
     launchScript.create(Ci.nsILocalFile.NORMAL_FILE_TYPE, PERMS_DIRECTORY);
 
     let scriptContents = "#! /bin/sh\n";
-    scriptContents += appBinPath + " -no-remote -process-updates " +
+    scriptContents += appBinPath + " -no-remote -test-process-updates " +
                       aExtraArgs.join(" ") + " " + PIPE_TO_NULL;
     writeFile(launchScript, scriptContents);
     debugDump("created " + launchScript.path + " containing:\n" +
               scriptContents);
     args = [launchScript.path];
   } else {
-    args = ["/D", "/Q", "/C", appBinPath, "-no-remote", "-process-updates"].
+    args = ["/D", "/Q", "/C", appBinPath, "-no-remote", "-test-process-updates"].
            concat(aExtraArgs).concat([PIPE_TO_NULL]);
   }
   return args;
@@ -3427,10 +3590,11 @@ const gProcessObserver = {
       gAppTimer.cancel();
       gAppTimer = null;
     }
-    Assert.equal(gProcess.exitValue, 0, "the exitValue for the application " +
-                 "process should be '0'");
-    Assert.equal(aTopic, "process-finished", "the application process " +
-                 "observer topic should be 'process-finished'");
+    Assert.equal(gProcess.exitValue, 0,
+                 "the application process exit value should be 0");
+    Assert.equal(aTopic, "process-finished",
+                 "the application process observer topic should be " +
+                 "process-finished");
     do_timeout(TEST_CHECK_TIMEOUT, checkUpdateFinished);
   },
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver])
@@ -3443,10 +3607,10 @@ const gTimerCallback = {
   notify: function TC_notify(aTimer) {
     gAppTimer = null;
     if (gProcess.isRunning) {
-      logTestInfo("attempt to kill process");
+      logTestInfo("attempting to kill process");
       gProcess.kill();
     }
-    Assert.ok(false, "Launch application timer expired")
+    Assert.ok(false, "launch application timer expired");
   },
   QueryInterface: XPCOMUtils.generateQI([Ci.nsITimerCallback])
 };

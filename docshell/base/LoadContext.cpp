@@ -5,13 +5,15 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/Assertions.h"
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/LoadContext.h"
 
 namespace mozilla {
 
 NS_IMPL_ISUPPORTS(LoadContext, nsILoadContext, nsIInterfaceRequestor)
 
-LoadContext::LoadContext(nsIPrincipal* aPrincipal, nsILoadContext* aOptionalBase)
+LoadContext::LoadContext(nsIPrincipal* aPrincipal,
+                         nsILoadContext* aOptionalBase)
   : mTopFrameElement(nullptr)
   , mNestedFrameId(0)
   , mIsContent(true)
@@ -21,18 +23,17 @@ LoadContext::LoadContext(nsIPrincipal* aPrincipal, nsILoadContext* aOptionalBase
   , mIsNotNull(true)
 #endif
 {
-  MOZ_ALWAYS_TRUE(NS_SUCCEEDED(aPrincipal->GetAppId(&mAppId)));
-  MOZ_ALWAYS_TRUE(NS_SUCCEEDED(
-    aPrincipal->GetIsInBrowserElement(&mIsInBrowserElement)));
+  mOriginAttributes = BasePrincipal::Cast(aPrincipal)->OriginAttributesRef();
 
   if (!aOptionalBase) {
     return;
   }
 
   MOZ_ALWAYS_TRUE(NS_SUCCEEDED(aOptionalBase->GetIsContent(&mIsContent)));
-  MOZ_ALWAYS_TRUE(NS_SUCCEEDED(
-    aOptionalBase->GetUsePrivateBrowsing(&mUsePrivateBrowsing)));
-  MOZ_ALWAYS_TRUE(NS_SUCCEEDED(aOptionalBase->GetUseRemoteTabs(&mUseRemoteTabs)));
+  MOZ_ALWAYS_TRUE(
+    NS_SUCCEEDED(aOptionalBase->GetUsePrivateBrowsing(&mUsePrivateBrowsing)));
+  MOZ_ALWAYS_TRUE(
+    NS_SUCCEEDED(aOptionalBase->GetUseRemoteTabs(&mUseRemoteTabs)));
 }
 
 //-----------------------------------------------------------------------------
@@ -149,7 +150,7 @@ LoadContext::GetIsInBrowserElement(bool* aIsInBrowserElement)
 
   NS_ENSURE_ARG_POINTER(aIsInBrowserElement);
 
-  *aIsInBrowserElement = mIsInBrowserElement;
+  *aIsInBrowserElement = mOriginAttributes.mInBrowser;
   return NS_OK;
 }
 
@@ -160,7 +161,18 @@ LoadContext::GetAppId(uint32_t* aAppId)
 
   NS_ENSURE_ARG_POINTER(aAppId);
 
-  *aAppId = mAppId;
+  *aAppId = mOriginAttributes.mAppId;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadContext::GetOriginAttributes(JS::MutableHandleValue aAttrs)
+{
+  JSContext* cx = nsContentUtils::GetCurrentJSContext();
+  MOZ_ASSERT(cx);
+
+  bool ok = ToJSValue(cx, mOriginAttributes, aAttrs);
+  NS_ENSURE_TRUE(ok, NS_ERROR_FAILURE);
   return NS_OK;
 }
 

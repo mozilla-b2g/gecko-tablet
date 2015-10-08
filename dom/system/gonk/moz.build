@@ -16,6 +16,7 @@
 
 XPIDL_SOURCES += [
     'nsIAudioManager.idl',
+    'nsINetworkInterface.idl',
     'nsINetworkInterfaceListService.idl',
     'nsINetworkManager.idl',
     'nsINetworkService.idl',
@@ -32,6 +33,7 @@ XPIDL_SOURCES += [
 XPIDL_MODULE = 'dom_system_gonk'
 
 EXPORTS += [
+    'GeolocationUtil.h',
     'GonkGPSGeolocationProvider.h',
     'nsVolume.h',
     'nsVolumeService.h',
@@ -41,6 +43,7 @@ UNIFIED_SOURCES += [
     'AudioManager.cpp',
     'AutoMounter.cpp',
     'AutoMounterSetting.cpp',
+    'GeolocationUtil.cpp',
     'GonkGPSGeolocationProvider.cpp',
     'MozMtpDatabase.cpp',
     'MozMtpServer.cpp',
@@ -85,12 +88,24 @@ EXTRA_JS_MODULES += [
 ]
 
 if CONFIG['MOZ_B2G_RIL']:
+    EXPORTS += [
+         'mozstumbler/MozStumbler.h',
+    ]
+    UNIFIED_SOURCES += [
+          'mozstumbler/MozStumbler.cpp',
+          'mozstumbler/StumblerLogging.cpp',
+          'mozstumbler/UploadStumbleRunnable.cpp',
+          'mozstumbler/WriteStumbleOnThread.cpp'
+    ]
     XPIDL_SOURCES += [
+        'nsIDataCallInterfaceService.idl',
+        'nsIDataCallManager.idl',
+        'nsIGonkDataCallInterfaceService.idl',
         'nsIRadioInterfaceLayer.idl',
     ]
     EXTRA_COMPONENTS += [
-        'RILContentHelper.js', # TODO: Bug 815526, deprecate RILContentHelper.
-        'RILContentHelper.manifest', # TODO: Bug 815526, deprecate RILContentHelper.
+        'DataCallManager.js',
+        'DataCallManager.manifest',
         'RILSystemMessengerHelper.js',
         'RILSystemMessengerHelper.manifest',
     ]
@@ -103,17 +118,17 @@ if CONFIG['MOZ_B2G_RIL']:
     ]
     if not CONFIG['DISABLE_MOZ_RIL_GEOLOC']:
         EXTRA_COMPONENTS += [
+            'DataCallInterfaceService.js',
+            'DataCallInterfaceService.manifest',
             'RadioInterfaceLayer.js',
             'RadioInterfaceLayer.manifest',
         ]
-
-FAIL_ON_WARNINGS = True
 
 include('/ipc/chromium/chromium-config.mozbuild')
 
 LOCAL_INCLUDES += [
     '/dom/base',
-    '/dom/bluetooth',
+    '/dom/bluetooth/common',
     '/dom/geolocation',
     '/dom/wifi',
 ]

@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim:set tw=80 expandtab softtabstop=2 ts=2 sw=2: */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -128,6 +128,15 @@ public:
   } 
   nsDOMTokenList* RelList();
 
+  void SetReferrer(const nsAString& aValue, mozilla::ErrorResult& rv)
+  {
+    SetHTMLAttr(nsGkAtoms::referrer, aValue, rv);
+  }
+  void GetReferrer(nsAString& aReferrer)
+  {
+    GetHTMLAttr(nsGkAtoms::referrer, aReferrer);
+  }
+
   // The Link::GetOrigin is OK for us
 
   using Link::GetProtocol;
@@ -158,7 +167,6 @@ public:
   using Link::SetHash;
 
   // The Link::GetSearchParams is OK for us
-  // The Link::SetSearchParams is OK for us
 
   bool NoHref() const
   {

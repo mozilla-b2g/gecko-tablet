@@ -165,7 +165,7 @@ nsInlineFrame::IsEmpty()
     return false;
   }
 
-  for (nsIFrame *kid = mFrames.FirstChild(); kid; kid = kid->GetNextSibling()) {
+  for (nsIFrame* kid : mFrames) {
     if (!kid->IsEmpty())
       return false;
   }
@@ -202,6 +202,45 @@ nsInlineFrame::DestroyFrom(nsIFrame* aDestructRoot)
     DrainSelfOverflowListInternal(eForDestroy, lineContainer);
   }
   nsContainerFrame::DestroyFrom(aDestructRoot);
+}
+
+nsresult
+nsInlineFrame::StealFrame(nsIFrame* aChild,
+                          bool      aForceNormal)
+{
+  if (aChild->HasAnyStateBits(NS_FRAME_IS_OVERFLOW_CONTAINER) &&
+      !aForceNormal) {
+    return nsContainerFrame::StealFrame(aChild, aForceNormal);
+  }
+
+  nsInlineFrame* parent = this;
+  bool removed = false;
+  do {
+    removed = parent->mFrames.StartRemoveFrame(aChild);
+    if (removed) {
+      break;
+    }
+
+    // We didn't find the child in our principal child list.
+    // Maybe it's on the overflow list?
+    nsFrameList* frameList = parent->GetOverflowFrames();
+    if (frameList) {
+      removed = frameList->ContinueRemoveFrame(aChild);
+      if (frameList->IsEmpty()) {
+        parent->DestroyOverflowList();
+      }
+      if (removed) {
+        break;
+      }
+    }
+
+    // Due to our "lazy reparenting" optimization 'aChild' might not actually
+    // be on any of our child lists, but instead in one of our next-in-flows.
+    parent = static_cast<nsInlineFrame*>(parent->GetNextInFlow());
+  } while (parent);
+
+  MOZ_ASSERT(removed, "nsInlineFrame::StealFrame: can't find aChild");
+  return removed ? NS_OK : NS_ERROR_UNEXPECTED;
 }
 
 void
@@ -469,7 +508,6 @@ nsInlineFrame::DrainSelfOverflowListInternal(DrainFlags aFlags,
 {
   AutoFrameListPtr overflowFrames(PresContext(), StealOverflowFrames());
   if (overflowFrames) {
-    NS_ASSERTION(mFrames.NotEmpty(), "overflow list w/o frames");
     // The frames on our own overflowlist may have been pushed by a
     // previous lazilySetParentPointer Reflow so we need to ensure the
     // correct parent pointer.  This is sometimes skipped by Reflow.
@@ -1161,8 +1199,6 @@ nsFirstLineFrame::DrainSelfOverflowList()
 {
   AutoFrameListPtr overflowFrames(PresContext(), StealOverflowFrames());
   if (overflowFrames) {
-    NS_ASSERTION(mFrames.NotEmpty(), "overflow list w/o frames");
-
     bool result = !overflowFrames->IsEmpty();
     const nsFrameList::Slice& newFrames =
       mFrames.AppendFrames(nullptr, *overflowFrames);

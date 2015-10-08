@@ -18,8 +18,6 @@
 #include "nsRegion.h"                   // for nsIntRegion
 #include "mozilla/layers/PLayerTransaction.h" // for PaintedLayerAttributes
 
-class gfxContext;
-
 namespace mozilla {
 namespace layers {
 
@@ -117,7 +115,7 @@ protected:
   RefPtr<ContentClient> mContentClient;
 };
 
-}
-}
+} // namespace layers
+} // namespace mozilla
 
 #endif

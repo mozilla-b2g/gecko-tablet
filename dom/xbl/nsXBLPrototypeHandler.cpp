@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -6,6 +7,7 @@
 #include "mozilla/ArrayUtils.h"
 
 #include "nsCOMPtr.h"
+#include "nsQueryObject.h"
 #include "nsXBLPrototypeHandler.h"
 #include "nsXBLPrototypeBinding.h"
 #include "nsContentUtils.h"
@@ -23,6 +25,7 @@
 #include "nsIDOMHTMLTextAreaElement.h"
 #include "nsIDOMHTMLInputElement.h"
 #include "nsFocusManager.h"
+#include "nsIFormControl.h"
 #include "nsIDOMEventListener.h"
 #include "nsPIDOMWindow.h"
 #include "nsPIWindowRoot.h"
@@ -313,7 +316,7 @@ nsXBLPrototypeHandler::ExecuteHandler(EventTarget* aTarget,
   NS_ENSURE_TRUE(bound, NS_ERROR_FAILURE);
 
   nsRefPtr<EventHandlerNonNull> handlerCallback =
-    new EventHandlerNonNull(bound, /* aIncumbentGlobal = */ nullptr);
+    new EventHandlerNonNull(nullptr, bound, /* aIncumbentGlobal = */ nullptr);
 
   TypedEventHandler typedHandler(handlerCallback);
 
@@ -456,6 +459,10 @@ nsXBLPrototypeHandler::DispatchXBLCommand(EventTarget* aTarget, nsIDOMEvent* aEv
   else
     controller = GetController(aTarget); // We're attached to the receiver possibly.
 
+  // We are the default action for this command.
+  // Stop any other default action from executing.
+  aEvent->PreventDefault();
+
   if (mEventName == nsGkAtoms::keypress &&
       mDetail == nsIDOMKeyEvent::DOM_VK_SPACE &&
       mMisc == 1) {
@@ -475,40 +482,19 @@ nsXBLPrototypeHandler::DispatchXBLCommand(EventTarget* aTarget, nsIDOMEvent* aEv
         nsFocusManager::GetFocusedDescendant(windowToCheck, true, getter_AddRefs(focusedWindow));
     }
 
-    bool isLink = false;
-    nsIContent *content = focusedContent;
+    // If the focus is in an editable region, don't scroll.
+    if (focusedContent && focusedContent->IsEditable()) {
+      return NS_OK;
+    }
 
-    // if the focused element is a link then we do want space to 
-    // scroll down. The focused element may be an element in a link,
-    // we need to check the parent node too. Only do this check if an
-    // element is focused and has a parent.
-    if (focusedContent && focusedContent->GetParent()) {
-      while (content) {
-        if (content->IsHTMLElement(nsGkAtoms::a)) {
-          isLink = true;
-          break;
-        }
-
-        if (content->HasAttr(kNameSpaceID_XLink, nsGkAtoms::type)) {
-          isLink = content->AttrValueIs(kNameSpaceID_XLink, nsGkAtoms::type,
-                                        nsGkAtoms::simple, eCaseMatters);
-
-          if (isLink) {
-            break;
-          }
-        }
-
-        content = content->GetParent();
-      }
-
-      if (!isLink)
+    // If the focus is in a form control, don't scroll.
+    for (nsIContent* c = focusedContent; c; c = c->GetParent()) {
+      nsCOMPtr<nsIFormControl> formControl = do_QueryInterface(c);
+      if (formControl) {
         return NS_OK;
+      }
     }
   }
-
-  // We are the default action for this command.
-  // Stop any other default action from executing.
-  aEvent->PreventDefault();
   
   if (controller)
     controller->DoCommand(command.get());

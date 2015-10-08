@@ -21,11 +21,11 @@ namespace dom {
 class AudioContext;
 class AudioBufferSourceNode;
 
-class PannerNode : public AudioNode,
-                   public SupportsWeakPtr<PannerNode>
+class PannerNode final : public AudioNode,
+                         public SupportsWeakPtr<PannerNode>
 {
 public:
-  MOZ_DECLARE_REFCOUNTED_TYPENAME(PannerNode)
+  MOZ_DECLARE_WEAKREFERENCE_TYPENAME(PannerNode)
   explicit PannerNode(AudioContext* aContext);
 
   virtual JSObject* WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto) override;
@@ -247,8 +247,8 @@ private:
   nsTArray<AudioBufferSourceNode*> mSources;
 };
 
-}
-}
+} // namespace dom
+} // namespace mozilla
 
 #endif
 

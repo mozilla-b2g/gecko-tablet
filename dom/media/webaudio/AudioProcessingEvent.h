@@ -14,7 +14,7 @@
 namespace mozilla {
 namespace dom {
 
-class AudioProcessingEvent : public Event
+class AudioProcessingEvent final : public Event
 {
 public:
   AudioProcessingEvent(ScriptProcessorNode* aOwner,
@@ -78,8 +78,8 @@ private:
   uint32_t mNumberOfInputChannels;
 };
 
-}
-}
+} // namespace dom
+} // namespace mozilla
 
 #endif
 

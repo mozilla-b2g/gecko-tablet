@@ -819,11 +819,8 @@ nsTypeAheadFind::GetSearchContainers(nsISupports *aContainer,
 
   mStartPointRange->Collapse(true); // collapse to start
 
-  *aPresShell = presShell;
-  NS_ADDREF(*aPresShell);
-
-  *aPresContext = presContext;
-  NS_ADDREF(*aPresContext);
+  presShell.forget(aPresShell);
+  presContext.forget(aPresContext);
 
   return NS_OK;
 }
@@ -1254,7 +1251,8 @@ nsTypeAheadFind::IsRangeVisible(nsIPresShell *aPresShell,
                             eLeaf,
                             false, // aVisual
                             false, // aLockInScrollView
-                            false     // aFollowOOFs
+                            false, // aFollowOOFs
+                            false  // aSkipPopupChecks
                             );
 
   if (!frameTraversal)

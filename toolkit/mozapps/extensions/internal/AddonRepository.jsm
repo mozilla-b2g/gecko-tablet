@@ -70,7 +70,7 @@ const LOGGER_ID = "addons.repository";
 
 // Create a new logger for use by the Addons Repository
 // (Requires AddonManager.jsm)
-let logger = Log.repository.getLogger(LOGGER_ID);
+var logger = Log.repository.getLogger(LOGGER_ID);
 
 // A map between XML keys to AddonSearchResult keys for string values
 // that require no extra parsing from XML
@@ -99,7 +99,7 @@ const INTEGER_KEY_MAP = {
 };
 
 // Wrap the XHR factory so that tests can override with a mock
-let XHRequest = Components.Constructor("@mozilla.org/xmlextras/xmlhttprequest;1",
+var XHRequest = Components.Constructor("@mozilla.org/xmlextras/xmlhttprequest;1",
                                        "nsIXMLHttpRequest");
 
 function convertHTMLToPlainText(html) {
@@ -989,7 +989,7 @@ this.AddonRepository = {
   // Returns null if not unique tag name.
   _getUniqueDirectDescendant: function AddonRepo_getUniqueDirectDescendant(aElement, aTagName) {
     let elementsList = Array.filter(aElement.children,
-                                    function arrayFiltering(aChild) aChild.tagName == aTagName);
+                                    aChild => aChild.tagName == aTagName);
     return (elementsList.length == 1) ? elementsList[0] : null;
   },
 
@@ -1303,7 +1303,7 @@ this.AddonRepository = {
 
       // Ignore add-on missing a required attribute
       let requiredAttributes = ["id", "name", "version", "type", "creator"];
-      if (requiredAttributes.some(function parseAddons_attributeFilter(aAttribute) !result.addon[aAttribute]))
+      if (requiredAttributes.some(aAttribute => !result.addon[aAttribute]))
         continue;
 
       // Ignore add-on with a type AddonManager doesn't understand:
@@ -1428,7 +1428,7 @@ this.AddonRepository = {
 
     let rangeNodes = aElement.querySelectorAll("version_ranges > version_range");
     compat.compatRanges = Array.map(rangeNodes, parseRangeNode.bind(this))
-                               .filter(function compatRangesFilter(aItem) !!aItem);
+                               .filter(aItem => !!aItem);
     if (compat.compatRanges.length == 0)
       return;
 

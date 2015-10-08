@@ -84,10 +84,8 @@ using base::Histogram;
 using base::LinearHistogram;
 using base::StatisticsRecorder;
 
-const char KEYED_HISTOGRAM_NAME_SEPARATOR[] = "#";
-#if !defined(MOZ_WIDGET_GONK) && !defined(MOZ_WIDGET_ANDROID)
-const char SUBSESSION_HISTOGRAM_PREFIX[] = "sub#";
-#endif
+#define KEYED_HISTOGRAM_NAME_SEPARATOR "#"
+#define SUBSESSION_HISTOGRAM_PREFIX "sub#"
 
 enum reflectStatus {
   REFLECT_OK,
@@ -107,33 +105,16 @@ template<class EntryType>
 class AutoHashtable : public nsTHashtable<EntryType>
 {
 public:
-  explicit AutoHashtable(uint32_t initLength = PL_DHASH_DEFAULT_INITIAL_LENGTH);
+  explicit AutoHashtable(uint32_t initLength =
+                         PLDHashTable::kDefaultInitialLength);
   typedef bool (*ReflectEntryFunc)(EntryType *entry, JSContext *cx, JS::Handle<JSObject*> obj);
   bool ReflectIntoJS(ReflectEntryFunc entryFunc, JSContext *cx, JS::Handle<JSObject*> obj);
-private:
-  struct EnumeratorArgs {
-    JSContext *cx;
-    JS::Handle<JSObject*> obj;
-    ReflectEntryFunc entryFunc;
-  };
-  static PLDHashOperator ReflectEntryStub(EntryType *entry, void *arg);
 };
 
 template<class EntryType>
 AutoHashtable<EntryType>::AutoHashtable(uint32_t initLength)
   : nsTHashtable<EntryType>(initLength)
 {
-}
-
-template<typename EntryType>
-PLDHashOperator
-AutoHashtable<EntryType>::ReflectEntryStub(EntryType *entry, void *arg)
-{
-  EnumeratorArgs *args = static_cast<EnumeratorArgs *>(arg);
-  if (!args->entryFunc(entry, args->cx, args->obj)) {
-    return PL_DHASH_STOP;
-  }
-  return PL_DHASH_NEXT;
 }
 
 /**
@@ -145,9 +126,12 @@ bool
 AutoHashtable<EntryType>::ReflectIntoJS(ReflectEntryFunc entryFunc,
                                         JSContext *cx, JS::Handle<JSObject*> obj)
 {
-  EnumeratorArgs args = { cx, obj, entryFunc };
-  uint32_t num = this->EnumerateEntries(ReflectEntryStub, static_cast<void*>(&args));
-  return num == this->Count();
+  for (auto iter = this->Iter(); !iter.Done(); iter.Next()) {
+    if (!entryFunc(iter.Get(), cx, obj)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // This class is conceptually a list of ProcessedStack objects, but it represents them
@@ -415,10 +399,12 @@ public:
   }
 
   size_t SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const {
-    size_t size;
-    size = mFileStats.SizeOfExcludingThis(SizeOfFileIOEntryTypeExcludingThis,
-                                          aMallocSizeOf) +
-           mSafeDirs.SizeOfExcludingThis(aMallocSizeOf);
+    size_t size = 0;
+    size += mFileStats.ShallowSizeOfExcludingThis(aMallocSizeOf);
+    for (auto iter = mFileStats.ConstIter(); !iter.Done(); iter.Next()) {
+      size += iter.Get()->GetKey().SizeOfExcludingThisIfUnshared(aMallocSizeOf);
+    }
+    size += mSafeDirs.ShallowSizeOfExcludingThis(aMallocSizeOf);
     uint32_t safeDirsLen = mSafeDirs.Length();
     for (uint32_t i = 0; i < safeDirsLen; ++i) {
       size += mSafeDirs[i].SizeOfExcludingThis(aMallocSizeOf);
@@ -467,13 +453,6 @@ private:
    */
   static bool ReflectFileStats(FileIOEntryType* entry, JSContext *cx,
                                JS::Handle<JSObject*> obj);
-
-  static size_t SizeOfFileIOEntryTypeExcludingThis(FileIOEntryType* aEntry,
-                                                   mozilla::MallocSizeOf mallocSizeOf,
-                                                   void*)
-  {
-    return aEntry->GetKey().SizeOfExcludingThisIfUnshared(mallocSizeOf);
-  }
 };
 
 TelemetryIOInterposeObserver::TelemetryIOInterposeObserver(nsIFile* aXreDir)
@@ -738,9 +717,6 @@ private:
   static TelemetryImpl *sTelemetry;
   AutoHashtable<SlowSQLEntryType> mPrivateSQL;
   AutoHashtable<SlowSQLEntryType> mSanitizedSQL;
-  // This gets marked immutable in debug builds, so we can't use
-  // AutoHashtable here.
-  nsTHashtable<nsCStringHashKey> mTrackedDBs;
   Mutex mHashMutex;
   HangReports mHangReports;
   Mutex mHangReportsMutex;
@@ -783,7 +759,7 @@ class KeyedHistogram {
 public:
   KeyedHistogram(const nsACString &name, const nsACString &expiration,
                  uint32_t histogramType, uint32_t min, uint32_t max,
-                 uint32_t bucketCount);
+                 uint32_t bucketCount, uint32_t dataset);
   nsresult GetHistogram(const nsCString& name, Histogram** histogram, bool subsession);
   Histogram* GetHistogram(const nsCString& name, bool subsession);
   uint32_t GetHistogramType() const { return mHistogramType; }
@@ -803,17 +779,9 @@ private:
   KeyedHistogramMapType mSubsessionMap;
 #endif
 
-  struct ReflectKeysArgs {
-    JSContext* jsContext;
-    JS::AutoValueVector* vector;
-  };
-  static PLDHashOperator ReflectKeys(KeyedHistogramEntry* entry, void* arg);
-
   static bool ReflectKeyedHistogram(KeyedHistogramEntry* entry,
                                     JSContext* cx,
                                     JS::Handle<JSObject*> obj);
-
-  static PLDHashOperator ClearHistogramEnumerator(KeyedHistogramEntry*, void*);
 
   const nsCString mName;
   const nsCString mExpiration;
@@ -821,10 +789,8 @@ private:
   const uint32_t mMin;
   const uint32_t mMax;
   const uint32_t mBucketCount;
+  const uint32_t mDataset;
 };
-
-// A initializer to initialize histogram collection
-StatisticsRecorder gStatisticsRecorder;
 
 // Hardcoded probes
 struct TelemetryHistogram {
@@ -873,23 +839,42 @@ IsExpired(const Histogram *histogram){
 bool
 IsValidHistogramName(const nsACString& name)
 {
-  return !FindInReadable(nsCString(KEYED_HISTOGRAM_NAME_SEPARATOR), name);
+  return !FindInReadable(NS_LITERAL_CSTRING(KEYED_HISTOGRAM_NAME_SEPARATOR), name);
 }
 
 bool
-IsInDataset(const TelemetryHistogram& h, uint32_t dataset)
+IsInDataset(uint32_t dataset, uint32_t containingDataset)
 {
-  if (h.dataset == dataset) {
+  if (dataset == containingDataset) {
     return true;
   }
 
   // The "optin on release channel" dataset is a superset of the
   // "optout on release channel one".
-  if (dataset == nsITelemetry::DATASET_RELEASE_CHANNEL_OPTIN
-      && h.dataset == nsITelemetry::DATASET_RELEASE_CHANNEL_OPTOUT) {
+  if (containingDataset == nsITelemetry::DATASET_RELEASE_CHANNEL_OPTIN
+      && dataset == nsITelemetry::DATASET_RELEASE_CHANNEL_OPTOUT) {
     return true;
   }
 
+  return false;
+}
+
+bool
+CanRecordDataset(uint32_t dataset)
+{
+  // If we are extended telemetry is enabled, we are allowed to record regardless of
+  // the dataset.
+  if (TelemetryImpl::CanRecordExtended()) {
+    return true;
+  }
+
+  // If base telemetry data is enabled and we're trying to record base telemetry, allow it.
+  if (TelemetryImpl::CanRecordBase() &&
+      IsInDataset(dataset, nsITelemetry::DATASET_RELEASE_CHANNEL_OPTOUT)) {
+      return true;
+  }
+
+  // We're not recording extended telemetry or this is not the base dataset. Bail out.
   return false;
 }
 
@@ -1082,16 +1067,44 @@ GetSubsessionHistogram(Histogram& existing)
 #endif
 
 nsresult
-HistogramAdd(Histogram& histogram, int32_t value)
+HistogramAdd(Histogram& histogram, int32_t value, uint32_t dataset)
 {
-  histogram.Add(value);
+  // Check if we are allowed to record the data.
+  if (!CanRecordDataset(dataset)) {
+    return NS_OK;
+  }
+
 #if !defined(MOZ_WIDGET_GONK) && !defined(MOZ_WIDGET_ANDROID)
   if (Histogram* subsession = GetSubsessionHistogram(histogram)) {
     subsession->Add(value);
   }
 #endif
 
+  // It is safe to add to the histogram now: the subsession histogram was already
+  // cloned from this so we won't add the sample twice.
+  histogram.Add(value);
+
   return NS_OK;
+}
+
+nsresult
+HistogramAdd(Histogram& histogram, int32_t value)
+{
+  uint32_t dataset = nsITelemetry::DATASET_RELEASE_CHANNEL_OPTIN;
+  // We only really care about the dataset of the histogram if we are not recording
+  // extended telemetry. Otherwise, we always record histogram data.
+  if (!TelemetryImpl::CanRecordExtended()) {
+    Telemetry::ID id;
+    nsresult rv = TelemetryImpl::GetHistogramEnumId(histogram.histogram_name().c_str(), &id);
+    if (NS_FAILED(rv)) {
+      // If we can't look up the dataset, it might be because the histogram was added
+      // at runtime. Since we're not recording extended telemetry, bail out.
+      return NS_OK;
+    }
+    dataset = gHistograms[id].dataset;
+  }
+
+  return HistogramAdd(histogram, value, dataset);
 }
 
 bool
@@ -1099,7 +1112,7 @@ FillRanges(JSContext *cx, JS::Handle<JSObject*> array, Histogram *h)
 {
   JS::Rooted<JS::Value> range(cx);
   for (size_t i = 0; i < h->bucket_count(); i++) {
-    range = INT_TO_JSVAL(h->ranges(i));
+    range.setInt32(h->ranges(i));
     if (!JS_DefineElement(cx, array, i, range, JSPROP_ENUMERATE))
       return false;
   }
@@ -1213,7 +1226,7 @@ JSHistogram_Add(JSContext *cx, unsigned argc, JS::Value *vp)
     }
   }
 
-  if (TelemetryImpl::CanRecordExtended()) {
+  if (TelemetryImpl::CanRecordBase()) {
     HistogramAdd(*h, value);
   }
 
@@ -1808,10 +1821,8 @@ TelemetryImpl::AsyncFetchTelemetryData(nsIFetchTelemetryDataCallback *aCallback)
 
 TelemetryImpl::TelemetryImpl():
 mHistogramMap(Telemetry::HistogramCount),
-mCanRecordBase(XRE_GetProcessType() == GeckoProcessType_Default ||
-               XRE_GetProcessType() == GeckoProcessType_Content),
-mCanRecordExtended(XRE_GetProcessType() == GeckoProcessType_Default ||
-                   XRE_GetProcessType() == GeckoProcessType_Content),
+mCanRecordBase(XRE_IsParentProcess() || XRE_IsContentProcess()),
+mCanRecordExtended(XRE_IsParentProcess() || XRE_IsContentProcess()),
 mHashMutex("Telemetry::mHashMutex"),
 mHangReportsMutex("Telemetry::mHangReportsMutex"),
 mThreadHangStatsMutex("Telemetry::mThreadHangStatsMutex"),
@@ -1819,35 +1830,6 @@ mCachedTelemetryData(false),
 mLastShutdownTime(0),
 mFailedLockCount(0)
 {
-  // A whitelist to prevent Telemetry reporting on Addon & Thunderbird DBs
-  const char *trackedDBs[] = {
-    "818200132aebmoouht.sqlite", // IndexedDB for about:home, see aboutHome.js
-    "addons.sqlite",
-    "content-prefs.sqlite",
-    "cookies.sqlite",
-    "downloads.sqlite",
-    "extensions.sqlite",
-    "formhistory.sqlite",
-    "healthreport.sqlite",
-    "index.sqlite",
-    "netpredictions.sqlite",
-    "permissions.sqlite",
-    "places.sqlite",
-    "reading-list.sqlite",
-    "search.sqlite",
-    "signons.sqlite",
-    "urlclassifier3.sqlite",
-    "webappsstore.sqlite"
-  };
-
-  for (size_t i = 0; i < ArrayLength(trackedDBs); i++)
-    mTrackedDBs.PutEntry(nsDependentCString(trackedDBs[i]));
-
-#ifdef DEBUG
-  // Mark immutable to prevent asserts on simultaneous access from multiple threads
-  mTrackedDBs.MarkImmutable();
-#endif
-
   // Populate the static histogram name->id cache.
   // Note that the histogram names are statically allocated.
   for (uint32_t i = 0; i < Telemetry::HistogramCount; i++) {
@@ -1869,7 +1851,7 @@ mFailedLockCount(0)
     const nsDependentCString id(h.id());
     const nsDependentCString expiration(h.expiration());
     mKeyedHistograms.Put(id, new KeyedHistogram(id, expiration, h.histogramType,
-                                                    h.min, h.max, h.bucketCount));
+                                                h.min, h.max, h.bucketCount, h.dataset));
   }
 }
 
@@ -1916,7 +1898,8 @@ TelemetryImpl::NewKeyedHistogram(const nsACString &name, const nsACString &expir
   }
 
   KeyedHistogram* keyed = new KeyedHistogram(name, expiration, histogramType,
-                                             min, max, bucketCount);
+                                             min, max, bucketCount,
+                                             nsITelemetry::DATASET_RELEASE_CHANNEL_OPTIN);
   if (MOZ_UNLIKELY(!mKeyedHistograms.Put(name, keyed, fallible))) {
     delete keyed;
     return NS_ERROR_OUT_OF_MEMORY;
@@ -2205,7 +2188,7 @@ TelemetryImpl::UnregisterAddonHistograms(const nsACString &id)
     // will be deleted if and when the addon registers histograms with
     // the same names.
     delete addonEntry->mData;
-    mAddonMap.RemoveEntry(id);
+    mAddonMap.RemoveEntry(addonEntry);
   }
 
   return NS_OK;
@@ -3079,7 +3062,7 @@ GetRegisteredHistogramIds(bool keyed, uint32_t dataset, uint32_t *aCount,
   for (size_t i = 0; i < ArrayLength(gHistograms); ++i) {
     const TelemetryHistogram& h = gHistograms[i];
     if (IsExpired(h.expiration()) || h.keyed != keyed ||
-        !IsInDataset(h, dataset)) {
+        !IsInDataset(h.dataset, dataset)) {
       continue;
     }
 
@@ -3382,6 +3365,57 @@ TelemetryImpl::SanitizeSQL(const nsACString &sql) {
   return output;
 }
 
+// A whitelist mechanism to prevent Telemetry reporting on Addon & Thunderbird
+// DBs.
+struct TrackedDBEntry
+{
+  const char* mName;
+  const uint32_t mNameLength;
+
+  // This struct isn't meant to be used beyond the static arrays below.
+  MOZ_CONSTEXPR
+  TrackedDBEntry(const char* aName, uint32_t aNameLength)
+    : mName(aName)
+    , mNameLength(aNameLength)
+  { }
+
+  TrackedDBEntry() = delete;
+  TrackedDBEntry(TrackedDBEntry&) = delete;
+};
+
+#define TRACKEDDB_ENTRY(_name) { _name, (sizeof(_name) - 1) }
+
+// A whitelist of database names. If the database name exactly matches one of
+// these then its SQL statements will always be recorded.
+static MOZ_CONSTEXPR_VAR TrackedDBEntry kTrackedDBs[] = {
+  // IndexedDB for about:home, see aboutHome.js
+  TRACKEDDB_ENTRY("818200132aebmoouht.sqlite"),
+  TRACKEDDB_ENTRY("addons.sqlite"),
+  TRACKEDDB_ENTRY("content-prefs.sqlite"),
+  TRACKEDDB_ENTRY("cookies.sqlite"),
+  TRACKEDDB_ENTRY("downloads.sqlite"),
+  TRACKEDDB_ENTRY("extensions.sqlite"),
+  TRACKEDDB_ENTRY("formhistory.sqlite"),
+  TRACKEDDB_ENTRY("healthreport.sqlite"),
+  TRACKEDDB_ENTRY("index.sqlite"),
+  TRACKEDDB_ENTRY("netpredictions.sqlite"),
+  TRACKEDDB_ENTRY("permissions.sqlite"),
+  TRACKEDDB_ENTRY("places.sqlite"),
+  TRACKEDDB_ENTRY("reading-list.sqlite"),
+  TRACKEDDB_ENTRY("search.sqlite"),
+  TRACKEDDB_ENTRY("signons.sqlite"),
+  TRACKEDDB_ENTRY("urlclassifier3.sqlite"),
+  TRACKEDDB_ENTRY("webappsstore.sqlite")
+};
+
+// A whitelist of database name prefixes. If the database name begins with
+// one of these prefixes then its SQL statements will always be recorded.
+static const TrackedDBEntry kTrackedDBPrefixes[] = {
+  TRACKEDDB_ENTRY("indexedDB-")
+};
+
+#undef TRACKEDDB_ENTRY
+
 // Slow SQL statements will be automatically
 // trimmed to kMaxSlowStatementLength characters.
 // This limit doesn't include the ellipsis and DB name,
@@ -3393,11 +3427,36 @@ TelemetryImpl::RecordSlowStatement(const nsACString &sql,
                                    const nsACString &dbName,
                                    uint32_t delay)
 {
+  MOZ_ASSERT(!sql.IsEmpty());
+  MOZ_ASSERT(!dbName.IsEmpty());
+
   if (!sTelemetry || !sTelemetry->mCanRecordExtended)
     return;
 
-  bool isFirefoxDB = sTelemetry->mTrackedDBs.Contains(dbName);
-  if (isFirefoxDB) {
+  bool recordStatement = false;
+
+  for (const TrackedDBEntry& nameEntry : kTrackedDBs) {
+    MOZ_ASSERT(nameEntry.mNameLength);
+    const nsDependentCString name(nameEntry.mName, nameEntry.mNameLength);
+    if (dbName == name) {
+      recordStatement = true;
+      break;
+    }
+  }
+
+  if (!recordStatement) {
+    for (const TrackedDBEntry& prefixEntry : kTrackedDBPrefixes) {
+      MOZ_ASSERT(prefixEntry.mNameLength);
+      const nsDependentCString prefix(prefixEntry.mName,
+                                      prefixEntry.mNameLength);
+      if (StringBeginsWith(dbName, prefix)) {
+        recordStatement = true;
+        break;
+      }
+    }
+  }
+
+  if (recordStatement) {
     nsAutoCString sanitizedSQL(SanitizeSQL(sql));
     if (sanitizedSQL.Length() > kMaxSlowStatementLength) {
       sanitizedSQL.SetLength(kMaxSlowStatementLength);
@@ -3520,14 +3579,13 @@ TelemetryImpl::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf)
   size_t n = aMallocSizeOf(this);
 
   // Ignore the hashtables in mAddonMap; they are not significant.
-  n += mAddonMap.SizeOfExcludingThis(nullptr, aMallocSizeOf);
-  n += mHistogramMap.SizeOfExcludingThis(nullptr, aMallocSizeOf);
+  n += mAddonMap.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  n += mHistogramMap.ShallowSizeOfExcludingThis(aMallocSizeOf);
   { // Scope for mHashMutex lock
     MutexAutoLock lock(mHashMutex);
     n += mPrivateSQL.SizeOfExcludingThis(aMallocSizeOf);
     n += mSanitizedSQL.SizeOfExcludingThis(aMallocSizeOf);
   }
-  n += mTrackedDBs.SizeOfExcludingThis(aMallocSizeOf);
   { // Scope for mHangReportsMutex lock
     MutexAutoLock lock(mHangReportsMutex);
     n += mHangReports.SizeOfExcludingThis(aMallocSizeOf);
@@ -3552,7 +3610,7 @@ TelemetryImpl::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf)
   return n;
 }
 
-} // anonymous namespace
+} // namespace
 
 namespace mozilla {
 void
@@ -3586,6 +3644,14 @@ RecordShutdownEndTimeStamp() {
   gRecordedShutdownTimeFileName = nullptr;
   gAlreadyFreedShutdownTimeFileName = true;
 
+  if (gRecordedShutdownStartTime.IsNull()) {
+    // If |CanRecordExtended()| is true before |AsyncFetchTelemetryData| is called and
+    // then disabled before shutdown, |RecordShutdownStartTimeStamp| will bail out and
+    // we will end up with a null |gRecordedShutdownStartTime| here. This can happen
+    // during tests.
+    return;
+  }
+
   nsCString tmpName = name;
   tmpName += ".tmp";
   FILE *f = fopen(tmpName.get(), "w");
@@ -3617,22 +3683,22 @@ namespace Telemetry {
 void
 Accumulate(ID aHistogram, uint32_t aSample)
 {
-  if (!TelemetryImpl::CanRecordExtended()) {
+  if (!TelemetryImpl::CanRecordBase()) {
     return;
   }
   Histogram *h;
   nsresult rv = GetHistogramByEnumId(aHistogram, &h);
-  if (NS_SUCCEEDED(rv))
-    HistogramAdd(*h, aSample);
+  if (NS_SUCCEEDED(rv)) {
+    HistogramAdd(*h, aSample, gHistograms[aHistogram].dataset);
+  }
 }
 
 void
 Accumulate(ID aID, const nsCString& aKey, uint32_t aSample)
 {
-  if (!TelemetryImpl::CanRecordExtended()) {
+  if (!TelemetryImpl::CanRecordBase()) {
     return;
   }
-
   const TelemetryHistogram& th = gHistograms[aID];
   KeyedHistogram* keyed = TelemetryImpl::GetKeyedHistogramById(nsDependentCString(th.id()));
   MOZ_ASSERT(keyed);
@@ -3642,7 +3708,7 @@ Accumulate(ID aID, const nsCString& aKey, uint32_t aSample)
 void
 Accumulate(const char* name, uint32_t sample)
 {
-  if (!TelemetryImpl::CanRecordExtended()) {
+  if (!TelemetryImpl::CanRecordBase()) {
     return;
   }
   ID id;
@@ -3654,7 +3720,7 @@ Accumulate(const char* name, uint32_t sample)
   Histogram *h;
   rv = GetHistogramByEnumId(id, &h);
   if (NS_SUCCEEDED(rv)) {
-    HistogramAdd(*h, sample);
+    HistogramAdd(*h, sample, gHistograms[id].dataset);
   }
 }
 
@@ -3683,6 +3749,13 @@ GetHistogramById(ID id)
   Histogram *h = nullptr;
   GetHistogramByEnumId(id, &h);
   return h;
+}
+
+const char*
+GetHistogramName(Telemetry::ID id)
+{
+  const TelemetryHistogram& h = gHistograms[id];
+  return h.id();
 }
 
 void
@@ -4061,7 +4134,7 @@ XRE_TelemetryAccumulate(int aID, uint32_t aSample)
 
 KeyedHistogram::KeyedHistogram(const nsACString &name, const nsACString &expiration,
                                uint32_t histogramType, uint32_t min, uint32_t max,
-                               uint32_t bucketCount)
+                               uint32_t bucketCount, uint32_t dataset)
   : mHistogramMap()
 #if !defined(MOZ_WIDGET_GONK) && !defined(MOZ_WIDGET_ANDROID)
   , mSubsessionMap()
@@ -4072,6 +4145,7 @@ KeyedHistogram::KeyedHistogram(const nsACString &name, const nsACString &expirat
   , mMin(min)
   , mMax(max)
   , mBucketCount(bucketCount)
+  , mDataset(dataset)
 {
 }
 
@@ -4093,11 +4167,11 @@ KeyedHistogram::GetHistogram(const nsCString& key, Histogram** histogram,
   nsCString histogramName;
 #if !defined(MOZ_WIDGET_GONK) && !defined(MOZ_WIDGET_ANDROID)
   if (subsession) {
-    histogramName.Append(SUBSESSION_HISTOGRAM_PREFIX);
+    histogramName.AppendLiteral(SUBSESSION_HISTOGRAM_PREFIX);
   }
 #endif
   histogramName.Append(mName);
-  histogramName.Append(KEYED_HISTOGRAM_NAME_SEPARATOR);
+  histogramName.AppendLiteral(KEYED_HISTOGRAM_NAME_SEPARATOR);
   histogramName.Append(key);
 
   Histogram* h;
@@ -4135,29 +4209,14 @@ nsresult
 KeyedHistogram::GetDataset(uint32_t* dataset) const
 {
   MOZ_ASSERT(dataset);
-
-  Telemetry::ID id;
-  nsresult rv = TelemetryImpl::GetHistogramEnumId(mName.get(), &id);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-
-  *dataset = gHistograms[id].dataset;
+  *dataset = mDataset;
   return NS_OK;
-}
-
-/* static */
-PLDHashOperator
-KeyedHistogram::ClearHistogramEnumerator(KeyedHistogramEntry* entry, void*)
-{
-  entry->mData->Clear();
-  return PL_DHASH_NEXT;
 }
 
 nsresult
 KeyedHistogram::Add(const nsCString& key, uint32_t sample)
 {
-  if (!TelemetryImpl::CanRecordExtended()) {
+  if (!CanRecordDataset(mDataset)) {
     return NS_OK;
   }
 
@@ -4185,29 +4244,19 @@ void
 KeyedHistogram::Clear(bool onlySubsession)
 {
 #if !defined(MOZ_WIDGET_GONK) && !defined(MOZ_WIDGET_ANDROID)
-  mSubsessionMap.EnumerateEntries(&KeyedHistogram::ClearHistogramEnumerator, nullptr);
+  for (auto iter = mSubsessionMap.Iter(); !iter.Done(); iter.Next()) {
+    iter.Get()->mData->Clear();
+  }
   mSubsessionMap.Clear();
   if (onlySubsession) {
     return;
   }
 #endif
 
-  mHistogramMap.EnumerateEntries(&KeyedHistogram::ClearHistogramEnumerator, nullptr);
+  for (auto iter = mHistogramMap.Iter(); !iter.Done(); iter.Next()) {
+    iter.Get()->mData->Clear();
+  }
   mHistogramMap.Clear();
-}
-
-/* static */
-PLDHashOperator
-KeyedHistogram::ReflectKeys(KeyedHistogramEntry* entry, void* arg)
-{
-  ReflectKeysArgs* args = static_cast<ReflectKeysArgs*>(arg);
-
-  JS::RootedValue jsKey(args->jsContext);
-  const NS_ConvertUTF8toUTF16 key(entry->GetKey());
-  jsKey.setString(JS_NewUCStringCopyN(args->jsContext, key.Data(), key.Length()));
-  args->vector->append(jsKey);
-
-  return PL_DHASH_NEXT;
 }
 
 nsresult
@@ -4218,11 +4267,11 @@ KeyedHistogram::GetJSKeys(JSContext* cx, JS::CallArgs& args)
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  ReflectKeysArgs reflectArgs = { cx, &keys };
-  const uint32_t num = mHistogramMap.EnumerateEntries(&KeyedHistogram::ReflectKeys,
-                                                      static_cast<void*>(&reflectArgs));
-  if (num != mHistogramMap.Count()) {
-    return NS_ERROR_FAILURE;
+  for (auto iter = mHistogramMap.Iter(); !iter.Done(); iter.Next()) {
+    JS::RootedValue jsKey(cx);
+    const NS_ConvertUTF8toUTF16 key(iter.Get()->GetKey());
+    jsKey.setString(JS_NewUCStringCopyN(cx, key.Data(), key.Length()));
+    keys.append(jsKey);
   }
 
   JS::RootedObject jsKeys(cx, JS_NewArrayObject(cx, keys));

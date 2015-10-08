@@ -1,4 +1,5 @@
-/* -*- Mode: c++; c-basic-offset: 2; indent-tabs-mode: nil; tab-width: 40 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -19,6 +20,7 @@
 #include "nsILoadContext.h"
 #include "nsIWeakReferenceUtils.h"
 #include "nsIInterfaceRequestor.h"
+#include "mozilla/dom/ChannelInfo.h"
 
 #define BEGIN_WORKERS_NAMESPACE \
   namespace mozilla { namespace dom { namespace workers {
@@ -37,12 +39,13 @@ class nsIPrincipal;
 class nsILoadGroup;
 class nsITabChild;
 class nsIChannel;
+class nsIRunnable;
 class nsIURI;
 
 namespace mozilla {
 namespace ipc {
 class PrincipalInfo;
-}
+} // namespace ipc
 
 namespace dom {
 // If you change this, the corresponding list in nsIWorkerDebugger.idl needs to
@@ -53,8 +56,9 @@ enum WorkerType
   WorkerTypeShared,
   WorkerTypeService
 };
-}
-}
+
+} // namespace dom
+} // namespace mozilla
 
 BEGIN_WORKERS_NAMESPACE
 
@@ -195,6 +199,16 @@ enum WorkerPreference
 {
   WORKERPREF_DUMP = 0, // browser.dom.window.dump.enabled
   WORKERPREF_DOM_CACHES, // dom.caches.enabled
+  WORKERPREF_SERVICEWORKERS, // dom.serviceWorkers.enabled
+  WORKERPREF_INTERCEPTION_ENABLED, // dom.serviceWorkers.interception.enabled
+  WORKERPREF_DOM_WORKERNOTIFICATION, // dom.webnotifications.workers.enabled
+  WORKERPREF_DOM_SERVICEWORKERNOTIFICATION, // dom.webnotifications.serviceworker.enabled
+  WORKERPREF_DOM_CACHES_TESTING, // dom.caches.testing.enabled
+  WORKERPREF_SERVICEWORKERS_TESTING, // dom.serviceWorkers.testing.enabled
+  WORKERPREF_INTERCEPTION_OPAQUE_ENABLED, // dom.serviceWorkers.interception.opaque.enabled
+  WORKERPREF_PERFORMANCE_LOGGING_ENABLED, // dom.performance.enable_user_timing_logging
+  WORKERPREF_PUSH, // dom.push.enabled
+  WORKERPREF_REQUESTCONTEXT, // dom.requestcontext.enabled
   WORKERPREF_COUNT
 };
 
@@ -211,6 +225,12 @@ struct WorkerLoadInfo
   nsCOMPtr<nsIContentSecurityPolicy> mCSP;
   nsCOMPtr<nsIChannel> mChannel;
   nsCOMPtr<nsILoadGroup> mLoadGroup;
+
+  // mLoadFailedAsyncRunnable will execute on main thread if script loading
+  // fails during script loading.  If script loading is never started due to
+  // a synchronous error, then the runnable is never executed.  The runnable
+  // is guaranteed to be released on the main thread.
+  nsCOMPtr<nsIRunnable> mLoadFailedAsyncRunnable;
 
   class InterfaceRequestor final : public nsIInterfaceRequestor
   {
@@ -242,7 +262,10 @@ struct WorkerLoadInfo
 
   nsString mServiceWorkerCacheName;
 
+  ChannelInfo mChannelInfo;
+
   uint64_t mWindowID;
+  uint64_t mServiceWorkerID;
 
   bool mFromWindow;
   bool mEvalAllowed;
@@ -251,7 +274,9 @@ struct WorkerLoadInfo
   bool mPrincipalIsSystem;
   bool mIsInPrivilegedApp;
   bool mIsInCertifiedApp;
-  bool mIndexedDBAllowed;
+  bool mStorageAllowed;
+  bool mPrivateBrowsing;
+  bool mServiceWorkersTestingInWindow;
 
   WorkerLoadInfo();
   ~WorkerLoadInfo();
@@ -269,6 +294,12 @@ FreezeWorkersForWindow(nsPIDOMWindow* aWindow);
 
 void
 ThawWorkersForWindow(nsPIDOMWindow* aWindow);
+
+void
+SuspendWorkersForWindow(nsPIDOMWindow* aWindow);
+
+void
+ResumeWorkersForWindow(nsPIDOMWindow* aWindow);
 
 class WorkerTask
 {
@@ -319,7 +350,7 @@ public:
 };
 
 WorkerCrossThreadDispatcher*
-GetWorkerCrossThreadDispatcher(JSContext* aCx, jsval aWorker);
+GetWorkerCrossThreadDispatcher(JSContext* aCx, JS::Value aWorker);
 
 // Random unique constant to facilitate JSPrincipal debugging
 const uint32_t kJSPrincipalsDebugToken = 0x7e2df9d2;

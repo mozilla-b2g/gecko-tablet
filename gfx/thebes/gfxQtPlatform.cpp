@@ -23,7 +23,7 @@
 #include "gfxQPainterSurface.h"
 #include "nsUnicodeProperties.h"
 
-#include "gfxPangoFonts.h"
+#include "gfxFontconfigFonts.h"
 #include "gfxContext.h"
 #include "gfxUserFontSet.h"
 
@@ -53,8 +53,8 @@ gfxQtPlatform::gfxQtPlatform()
     if (!sFontconfigUtils)
         sFontconfigUtils = gfxFontconfigUtils::GetFontconfigUtils();
 
-    mScreenDepth = qApp->primaryScreen()->depth();
-    if (mScreenDepth == 16) {
+    int32_t depth = GetScreenDepth();
+    if (depth == 16) {
         sOffscreenFormat = gfxImageFormat::RGB16_565;
     }
     uint32_t canvasMask = BackendTypeBit(BackendType::CAIRO) | BackendTypeBit(BackendType::SKIA);
@@ -89,13 +89,11 @@ gfxQtPlatform::GetXScreen(QWindow* aWindow)
 #endif
 
 already_AddRefed<gfxASurface>
-gfxQtPlatform::CreateOffscreenSurface(const IntSize& size,
-                                      gfxContentType contentType)
+gfxQtPlatform::CreateOffscreenSurface(const IntSize& aSize,
+                                      gfxImageFormat aFormat)
 {
-    gfxImageFormat imageFormat = OptimalFormatForContent(contentType);
-
     nsRefPtr<gfxASurface> newSurface =
-        new gfxImageSurface(gfxIntSize(size.width, size.height), imageFormat);
+        new gfxImageSurface(aSize, aFormat);
 
     return newSurface.forget();
 }
@@ -124,6 +122,7 @@ gfxQtPlatform::GetStandardFamilyName(const nsAString& aFontName, nsAString& aFam
 gfxFontGroup *
 gfxQtPlatform::CreateFontGroup(const FontFamilyList& aFontFamilyList,
                                const gfxFontStyle *aStyle,
+                               gfxTextPerfMetrics* aTextPerf,
                                gfxUserFontSet* aUserFontSet)
 {
     return new gfxPangoFontGroup(aFontFamilyList, aStyle, aUserFontSet);
@@ -196,13 +195,7 @@ gfxQtPlatform::GetOffscreenFormat()
     return sOffscreenFormat;
 }
 
-int
-gfxQtPlatform::GetScreenDepth() const
-{
-    return mScreenDepth;
-}
-
-TemporaryRef<ScaledFont>
+already_AddRefed<ScaledFont>
 gfxQtPlatform::GetScaledFontForFont(DrawTarget* aTarget, gfxFont* aFont)
 {
     return GetScaledFontForFontWithCairoSkia(aTarget, aFont);

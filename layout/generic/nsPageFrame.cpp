@@ -21,13 +21,9 @@
 #include "nsBidiUtils.h"
 #include "nsIPrintSettings.h"
 
-#include "prlog.h"
-#ifdef PR_LOGGING 
+#include "mozilla/Logging.h"
 extern PRLogModuleInfo *GetLayoutPrintingLog();
-#define PR_PL(_p1)  PR_LOG(GetLayoutPrintingLog(), PR_LOG_DEBUG, _p1)
-#else
-#define PR_PL(_p1)
-#endif
+#define PR_PL(_p1)  MOZ_LOG(GetLayoutPrintingLog(), mozilla::LogLevel::Debug, _p1)
 
 using namespace mozilla;
 using namespace mozilla::gfx;
@@ -39,6 +35,10 @@ NS_NewPageFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 }
 
 NS_IMPL_FRAMEARENA_HELPERS(nsPageFrame)
+
+NS_QUERYFRAME_HEAD(nsPageFrame)
+  NS_QUERYFRAME_ENTRY(nsPageFrame)
+NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 nsPageFrame::nsPageFrame(nsStyleContext* aContext)
 : nsContainerFrame(aContext)
@@ -390,7 +390,7 @@ nsPageFrame::DrawHeaderFooter(nsRenderingContext& aRenderingContext,
     gfx->Save();
     gfx->Clip(NSRectToSnappedRect(aRect, PresContext()->AppUnitsPerDevPixel(),
                                   *drawTarget));
-    aRenderingContext.ThebesContext()->SetColor(NS_RGB(0,0,0));
+    aRenderingContext.ThebesContext()->SetColor(Color(0.f, 0.f, 0.f));
     nsLayoutUtils::DrawString(this, aFontMetrics, &aRenderingContext,
                               str.get(), str.Length(),
                               nsPoint(x, y + aAscent));
@@ -480,7 +480,7 @@ static gfx::Matrix4x4 ComputePageTransform(nsIFrame* aFrame, float aAppUnitsPerP
 class nsDisplayHeaderFooter : public nsDisplayItem {
 public:
   nsDisplayHeaderFooter(nsDisplayListBuilder* aBuilder, nsPageFrame *aFrame)
-    : nsDisplayItem(aBuilder, aFrame), mFrame(aFrame)
+    : nsDisplayItem(aBuilder, aFrame)
     , mDisableSubpixelAA(false)
   {
     MOZ_COUNT_CTOR(nsDisplayHeaderFooter);
@@ -493,7 +493,12 @@ public:
 
   virtual void Paint(nsDisplayListBuilder* aBuilder,
                      nsRenderingContext* aCtx) override {
-    mFrame->PaintHeaderFooter(*aCtx, ToReferenceFrame(), mDisableSubpixelAA);
+#ifdef DEBUG
+    nsPageFrame* pageFrame = do_QueryFrame(mFrame);
+    MOZ_ASSERT(pageFrame, "We should have an nsPageFrame");
+#endif
+    static_cast<nsPageFrame*>(mFrame)->
+      PaintHeaderFooter(*aCtx, ToReferenceFrame(), mDisableSubpixelAA);
   }
   NS_DISPLAY_DECL_NAME("HeaderFooter", nsDisplayItem::TYPE_HEADER_FOOTER)
 
@@ -506,7 +511,6 @@ public:
     mDisableSubpixelAA = true;
   }
 protected:
-  nsPageFrame* mFrame;
   bool mDisableSubpixelAA;
 };
 
@@ -620,7 +624,7 @@ nsPageFrame::PaintHeaderFooter(nsRenderingContext& aRenderingContext,
   }
 
   nsRect rect(aPt, mRect.Size());
-  aRenderingContext.ThebesContext()->SetColor(NS_RGB(0,0,0));
+  aRenderingContext.ThebesContext()->SetColor(Color(0.f, 0.f, 0.f));
 
   gfxContextAutoDisableSubpixelAntialiasing disable(aRenderingContext.ThebesContext(), aDisableSubpixelAA);
 

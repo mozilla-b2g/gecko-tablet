@@ -14,7 +14,7 @@ namespace mozilla {
 using namespace layers;
 
 VideoFrame::VideoFrame(already_AddRefed<Image>& aImage,
-                       const gfxIntSize& aIntrinsicSize)
+                       const gfx::IntSize& aIntrinsicSize)
   : mImage(aImage), mIntrinsicSize(aIntrinsicSize), mForceBlack(false)
 {}
 
@@ -28,7 +28,7 @@ VideoFrame::~VideoFrame()
 void
 VideoFrame::SetNull() {
   mImage = nullptr;
-  mIntrinsicSize = gfxIntSize(0, 0);
+  mIntrinsicSize = gfx::IntSize(0, 0);
 }
 
 void
@@ -39,8 +39,9 @@ VideoFrame::TakeFrom(VideoFrame* aFrame)
   mForceBlack = aFrame->GetForceBlack();
 }
 
+#if !defined(MOZILLA_XPCOMRT_API)
 /* static */ already_AddRefed<Image>
-VideoFrame::CreateBlackImage(const gfxIntSize& aSize)
+VideoFrame::CreateBlackImage(const gfx::IntSize& aSize)
 {
   nsRefPtr<ImageContainer> container;
   nsRefPtr<Image> image;
@@ -83,6 +84,7 @@ VideoFrame::CreateBlackImage(const gfxIntSize& aSize)
 
   return image.forget();
 }
+#endif // !defined(MOZILLA_XPCOMRT_API)
 
 VideoChunk::VideoChunk()
 {}
@@ -109,4 +111,4 @@ VideoSegment::VideoSegment()
 VideoSegment::~VideoSegment()
 {}
 
-}
+} // namespace mozilla

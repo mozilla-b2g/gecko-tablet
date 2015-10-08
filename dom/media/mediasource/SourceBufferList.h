@@ -22,7 +22,6 @@ class JSObject;
 
 namespace mozilla {
 
-class ErrorResult;
 template <typename T> class AsyncEventRunner;
 
 namespace dom {
@@ -103,4 +102,5 @@ private:
 } // namespace dom
 
 } // namespace mozilla
+
 #endif /* mozilla_dom_SourceBufferList_h_ */

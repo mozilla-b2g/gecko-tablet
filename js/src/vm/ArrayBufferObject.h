@@ -11,6 +11,7 @@
 
 #include "builtin/TypedObjectConstants.h"
 #include "vm/Runtime.h"
+#include "vm/SharedMem.h"
 
 typedef struct JSProperty JSProperty;
 
@@ -21,26 +22,25 @@ class ArrayBufferViewObject;
 // The inheritance hierarchy for the various classes relating to typed arrays
 // is as follows.
 //
-// - JSObject
+// - NativeObject
 //   - ArrayBufferObjectMaybeShared
 //     - ArrayBufferObject
 //     - SharedArrayBufferObject
-//   - ArrayBufferViewObject
-//     - DataViewObject
-//     - TypedArrayObject (declared in vm/TypedArrayObject.h)
-//       - TypedArrayObjectTemplate
-//         - Int8ArrayObject
-//         - Uint8ArrayObject
-//         - ...
-//     - TypedObject (declared in builtin/TypedObject.h)
+//   - DataViewObject
+//   - TypedArrayObject (declared in vm/TypedArrayObject.h)
+//     - TypedArrayObjectTemplate
+//       - Int8ArrayObject
+//       - Uint8ArrayObject
+//       - ...
 //   - SharedTypedArrayObject (declared in vm/SharedTypedArrayObject.h)
 //     - SharedTypedArrayObjectTemplate
 //       - SharedInt8ArrayObject
 //       - SharedUint8ArrayObject
 //       - ...
+// - JSObject
+//   - ArrayBufferViewObject
+//   - TypedObject (declared in builtin/TypedObject.h)
 //
-// Note that |TypedArrayObjectTemplate| is just an implementation
-// detail that makes implementing its various subclasses easier.
 // Note that |TypedArrayObjectTemplate| and |SharedTypedArrayObjectTemplate| are
 // just implementation details that make implementing their various subclasses easier.
 //
@@ -76,7 +76,6 @@ class ArrayBufferViewObject;
 class ArrayBufferObjectMaybeShared;
 
 uint32_t AnyArrayBufferByteLength(const ArrayBufferObjectMaybeShared* buf);
-uint8_t* AnyArrayBufferDataPointer(const ArrayBufferObjectMaybeShared* buf);
 ArrayBufferObjectMaybeShared& AsAnyArrayBuffer(HandleValue val);
 
 class ArrayBufferObjectMaybeShared : public NativeObject
@@ -86,27 +85,25 @@ class ArrayBufferObjectMaybeShared : public NativeObject
         return AnyArrayBufferByteLength(this);
     }
 
-    uint8_t* dataPointer() {
-        return AnyArrayBufferDataPointer(this);
-    }
+    inline SharedMem<uint8_t*> dataPointerMaybeShared();
 };
 
 /*
  * ArrayBufferObject
  *
- * This class holds the underlying raw buffer that the various
- * ArrayBufferViewObject subclasses (DataViewObject and the TypedArrays)
- * access. It can be created explicitly and passed to an ArrayBufferViewObject
- * subclass, or can be created lazily when it is first accessed for a
- * TypedArrayObject or TypedObject that doesn't have an explicit buffer.
+ * This class holds the underlying raw buffer that the various ArrayBufferViews
+ * (eg DataViewObject, the TypedArrays, TypedObjects) access. It can be created
+ * explicitly and used to construct an ArrayBufferView, or can be created
+ * lazily when it is first accessed for a TypedArrayObject or TypedObject that
+ * doesn't have an explicit buffer.
  *
  * ArrayBufferObject (or really the underlying memory) /is not racy/: the
  * memory is private to a single worker.
  */
 class ArrayBufferObject : public ArrayBufferObjectMaybeShared
 {
-    static bool byteLengthGetterImpl(JSContext* cx, CallArgs args);
-    static bool fun_slice_impl(JSContext* cx, CallArgs args);
+    static bool byteLengthGetterImpl(JSContext* cx, const CallArgs& args);
+    static bool fun_slice_impl(JSContext* cx, const CallArgs& args);
 
   public:
     static const uint8_t DATA_SLOT = 0;
@@ -117,6 +114,10 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
     static const uint8_t RESERVED_SLOTS = 4;
 
     static const size_t ARRAY_BUFFER_ALIGNMENT = 8;
+
+    static_assert(FLAGS_SLOT == JS_ARRAYBUFFER_FLAGS_SLOT,
+                  "self-hosted code with burned-in constants must get the "
+                  "right flags slot");
 
   public:
 
@@ -163,6 +164,9 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
         TYPED_OBJECT_VIEWS  = 0x20
     };
 
+    static_assert(JS_ARRAYBUFFER_NEUTERED_FLAG == NEUTERED,
+                  "self-hosted code with burned-in constants must use the "
+                  "correct NEUTERED bit value");
   public:
 
     class BufferContents {
@@ -221,11 +225,11 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
     static JSObject* createSlice(JSContext* cx, Handle<ArrayBufferObject*> arrayBuffer,
                                  uint32_t begin, uint32_t end);
 
-    static bool createDataViewForThisImpl(JSContext* cx, CallArgs args);
+    static bool createDataViewForThisImpl(JSContext* cx, const CallArgs& args);
     static bool createDataViewForThis(JSContext* cx, unsigned argc, Value* vp);
 
     template<typename T>
-    static bool createTypedArrayFromBufferImpl(JSContext* cx, CallArgs args);
+    static bool createTypedArrayFromBufferImpl(JSContext* cx, const CallArgs& args);
 
     template<typename T>
     static bool createTypedArrayFromBuffer(JSContext* cx, unsigned argc, Value* vp);
@@ -292,6 +296,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
 
   public:
     uint8_t* dataPointer() const;
+    SharedMem<uint8_t*> dataPointerShared() const;
     size_t byteLength() const;
     BufferContents contents() const {
         return BufferContents(dataPointer(), bufferKind());

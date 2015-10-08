@@ -12,17 +12,9 @@
 #include "nsThreadUtils.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/RefPtr.h"
-#include "SharedThreadPool.h"
+#include "mozilla/SharedThreadPool.h"
 
 namespace mozilla {
-
-PRLogModuleInfo* gMediaTimerLog;
-static void EnsureMediaTimerLog()
-{
-  if (!gMediaTimerLog) {
-    gMediaTimerLog = PR_NewLogModule("MediaTimer");
-  }
-}
 
 NS_IMPL_ADDREF(MediaTimer)
 NS_IMPL_RELEASE_WITH_DESTROY(MediaTimer, DispatchDestroy())
@@ -33,7 +25,6 @@ MediaTimer::MediaTimer()
   , mCreationTimeStamp(TimeStamp::Now())
   , mUpdateScheduled(false)
 {
-  EnsureMediaTimerLog();
   TIMER_LOG("MediaTimer::MediaTimer");
 
   // Use the SharedThreadPool to create an nsIThreadPool with a maximum of one
@@ -48,7 +39,11 @@ void
 MediaTimer::DispatchDestroy()
 {
   nsCOMPtr<nsIRunnable> task = NS_NewNonOwningRunnableMethod(this, &MediaTimer::Destroy);
-  nsresult rv = mThread->Dispatch(task, NS_DISPATCH_NORMAL);
+  // Hold a strong reference to the thread so that it doesn't get deleted in
+  // Destroy(), which may run completely before the stack if Dispatch() begins
+  // to unwind.
+  nsCOMPtr<nsIEventTarget> thread = mThread;
+  nsresult rv = thread->Dispatch(task, NS_DISPATCH_NORMAL);
   MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv));
   (void) rv;
 }
@@ -179,7 +174,9 @@ MediaTimer::ArmTimer(const TimeStamp& aTarget, const TimeStamp& aNow)
   unsigned long delay = std::ceil((aTarget - aNow).ToMilliseconds());
   TIMER_LOG("MediaTimer::ArmTimer delay=%lu", delay);
   mCurrentTimerTarget = aTarget;
-  nsresult rv = mTimer->InitWithFuncCallback(&TimerCallback, this, delay, nsITimer::TYPE_ONE_SHOT);
+  nsresult rv = mTimer->InitWithNamedFuncCallback(&TimerCallback, this, delay,
+                                                  nsITimer::TYPE_ONE_SHOT,
+                                                  "MediaTimer::TimerCallback");
   MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv));
   (void) rv;
 }

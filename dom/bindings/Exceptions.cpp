@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -141,9 +142,9 @@ ThrowAndReport(nsPIDOMWindow* aWindow, nsresult aRv, const char* aMessage)
   if (NS_WARN_IF(!jsapi.InitWithLegacyErrorReporting(aWindow))) {
     return;
   }
+  jsapi.TakeOwnershipOfErrorReporting();
 
   Throw(jsapi.cx(), aRv, aMessage);
-  (void) JS_ReportPendingException(jsapi.cx());
 }
 
 already_AddRefed<Exception>
@@ -183,7 +184,7 @@ GetCurrentJSStack()
     cx = workers::GetCurrentThreadJSContext();
   }
 
-  if (!cx) {
+  if (!cx || !js::GetContextCompartment(cx)) {
     return nullptr;
   }
 
@@ -351,14 +352,12 @@ NS_IMPL_RELEASE_INHERITED(JSStackFrame, StackFrame)
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(JSStackFrame)
 NS_INTERFACE_MAP_END_INHERITING(StackFrame)
 
-/* readonly attribute uint32_t language; */
 NS_IMETHODIMP StackFrame::GetLanguage(uint32_t* aLanguage)
 {
   *aLanguage = mLanguage;
   return NS_OK;
 }
 
-/* readonly attribute string languageName; */
 NS_IMETHODIMP StackFrame::GetLanguageName(nsACString& aLanguageName)
 {
   aLanguageName.AssignLiteral("C++");
@@ -408,7 +407,6 @@ GetValueIfNotCached(JSContext* aCx, JSObject* aStack,
   aPropGetter(aCx, stack, aValue);
 }
 
-/* readonly attribute AString filename; */
 NS_IMETHODIMP JSStackFrame::GetFilename(nsAString& aFilename)
 {
   if (!mStack) {
@@ -453,7 +451,6 @@ NS_IMETHODIMP StackFrame::GetFilename(nsAString& aFilename)
   return NS_OK;
 }
 
-/* readonly attribute AString name; */
 NS_IMETHODIMP JSStackFrame::GetName(nsAString& aFunction)
 {
   if (!mStack) {
@@ -530,7 +527,6 @@ JSStackFrame::GetLineno()
   return line;
 }
 
-/* readonly attribute int32_t lineNumber; */
 NS_IMETHODIMP StackFrame::GetLineNumber(int32_t* aLineNumber)
 {
   *aLineNumber = GetLineno();
@@ -563,21 +559,18 @@ JSStackFrame::GetColNo()
   return col;
 }
 
-/* readonly attribute int32_t columnNumber; */
 NS_IMETHODIMP StackFrame::GetColumnNumber(int32_t* aColumnNumber)
 {
   *aColumnNumber = GetColNo();
   return NS_OK;
 }
 
-/* readonly attribute AUTF8String sourceLine; */
 NS_IMETHODIMP StackFrame::GetSourceLine(nsACString& aSourceLine)
 {
   aSourceLine.Truncate();
   return NS_OK;
 }
 
-/* readonly attribute AString asyncCause; */
 NS_IMETHODIMP JSStackFrame::GetAsyncCause(nsAString& aAsyncCause)
 {
   if (!mStack) {
@@ -628,7 +621,6 @@ NS_IMETHODIMP StackFrame::GetAsyncCause(nsAString& aAsyncCause)
   return NS_OK;
 }
 
-/* readonly attribute nsIStackFrame asyncCaller; */
 NS_IMETHODIMP JSStackFrame::GetAsyncCaller(nsIStackFrame** aAsyncCaller)
 {
   if (!mStack) {
@@ -665,7 +657,6 @@ NS_IMETHODIMP StackFrame::GetAsyncCaller(nsIStackFrame** aAsyncCaller)
   return NS_OK;
 }
 
-/* readonly attribute nsIStackFrame caller; */
 NS_IMETHODIMP JSStackFrame::GetCaller(nsIStackFrame** aCaller)
 {
   if (!mStack) {
@@ -763,7 +754,6 @@ NS_IMETHODIMP StackFrame::GetFormattedStack(nsAString& aStack)
   return NS_OK;
 }
 
-/* readonly attribute jsval nativeSavedFrame; */
 NS_IMETHODIMP JSStackFrame::GetNativeSavedFrame(JS::MutableHandle<JS::Value> aSavedFrame)
 {
   aSavedFrame.setObjectOrNull(mStack);
@@ -776,7 +766,6 @@ NS_IMETHODIMP StackFrame::GetNativeSavedFrame(JS::MutableHandle<JS::Value> aSave
   return NS_OK;
 }
 
-/* AUTF8String toString (); */
 NS_IMETHODIMP StackFrame::ToString(nsACString& _retval)
 {
   _retval.Truncate();

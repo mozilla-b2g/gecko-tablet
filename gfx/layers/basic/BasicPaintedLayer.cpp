@@ -23,7 +23,7 @@
 #include "nsCOMPtr.h"                   // for already_AddRefed
 #include "nsISupportsImpl.h"            // for gfxContext::Release, etc
 #include "nsPoint.h"                    // for nsIntPoint
-#include "nsRect.h"                     // for nsIntRect
+#include "nsRect.h"                     // for mozilla::gfx::IntRect
 #include "nsTArray.h"                   // for nsTArray, nsTArray_Impl
 #include "AutoMaskData.h"
 #include "gfx2DGlue.h"
@@ -38,7 +38,7 @@ IntersectWithClip(const nsIntRegion& aRegion, gfxContext* aContext)
 {
   gfxRect clip = aContext->GetClipExtents();
   clip.RoundOut();
-  nsIntRect r(clip.X(), clip.Y(), clip.Width(), clip.Height());
+  IntRect r(clip.X(), clip.Y(), clip.Width(), clip.Height());
   nsIntRegion result;
   result.And(aRegion, r);
   return result;
@@ -91,13 +91,14 @@ BasicPaintedLayer::PaintThebes(gfxContext* aContext,
         groupContext = aContext;
       }
       SetAntialiasingFlags(this, groupContext->GetDrawTarget());
-      aCallback(this, groupContext, toDraw, DrawRegionClip::NONE, nsIntRegion(), aCallbackData);
+      aCallback(this, groupContext, toDraw, toDraw,
+                DrawRegionClip::NONE, nsIntRegion(), aCallbackData);
       if (needsGroup) {
         aContext->PopGroupToSource();
         if (needsClipToVisibleRegion) {
           gfxUtils::ClipToRegion(aContext, toDraw);
         }
-        AutoSetOperator setOptimizedOperator(aContext, ThebesOp(effectiveOperator));
+        AutoSetOperator setOptimizedOperator(aContext, effectiveOperator);
         PaintWithMask(aContext, opacity, aMaskLayer);
       }
 
@@ -211,8 +212,7 @@ BasicPaintedLayer::Validate(LayerManager::DrawPaintedLayerCallback aCallback,
       NS_ASSERTION(!GetMaskLayer(), "Should only read back layers without masks");
       ctx->SetMatrix(ctx->CurrentMatrix().Translate(offset.x, offset.y));
       mContentClient->DrawTo(this, ctx->GetDrawTarget(), 1.0,
-                             CompositionOpForOp(ctx->CurrentOperator()),
-                             nullptr, nullptr);
+                             ctx->CurrentOp(), nullptr, nullptr);
       update.mLayer->GetSink()->EndUpdate(ctx, update.mUpdateRect + offset);
     }
   }
@@ -226,5 +226,5 @@ BasicLayerManager::CreatePaintedLayer()
   return layer.forget();
 }
 
-}
-}
+} // namespace layers
+} // namespace mozilla

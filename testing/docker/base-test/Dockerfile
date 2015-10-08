@@ -109,6 +109,7 @@ RUN apt-get update && apt-get install -y --force-yes \
   uuid \
   vim \
   wget \
+  x11-xserver-utils \
   xvfb \
   yasm \
   zip
@@ -127,6 +128,6 @@ ENV           LOGNAME       worker
 
 # Declare default working folder
 WORKDIR       /home/worker
-  
+
 # Set a default command useful for debugging
 CMD ["/bin/bash", "--login"]

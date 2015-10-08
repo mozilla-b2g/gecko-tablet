@@ -362,7 +362,7 @@ GLContextWGL::SetupLookupFunction()
 }
 
 static bool
-GetMaxSize(HDC hDC, int format, gfxIntSize& size)
+GetMaxSize(HDC hDC, int format, IntSize& size)
 {
     int query[] = {LOCAL_WGL_MAX_PBUFFER_WIDTH_ARB, LOCAL_WGL_MAX_PBUFFER_HEIGHT_ARB};
     int result[2];
@@ -378,9 +378,9 @@ GetMaxSize(HDC hDC, int format, gfxIntSize& size)
 
 static bool
 IsValidSizeForFormat(HDC hDC, int format,
-                     const gfxIntSize& requested)
+                     const IntSize& requested)
 {
-    gfxIntSize max;
+    IntSize max;
     if (!GetMaxSize(hDC, format, max))
         return true;
 
@@ -466,7 +466,7 @@ GLContextProviderWGL::CreateForWindow(nsIWidget *aWidget)
 }
 
 static already_AddRefed<GLContextWGL>
-CreatePBufferOffscreenContext(const gfxIntSize& aSize,
+CreatePBufferOffscreenContext(const IntSize& aSize,
                               GLContextWGL *aShareContext)
 {
     WGLLibrary& wgl = sWGLLib;
@@ -606,8 +606,8 @@ CreateWindowOffscreenContext()
     return glContext.forget();
 }
 
-already_AddRefed<GLContext>
-GLContextProviderWGL::CreateHeadless(bool)
+/*static*/ already_AddRefed<GLContext>
+GLContextProviderWGL::CreateHeadless(CreateContextFlags)
 {
     if (!sWGLLib.EnsureInitialized()) {
         return nullptr;
@@ -620,7 +620,7 @@ GLContextProviderWGL::CreateHeadless(bool)
     if (sWGLLib.fCreatePbuffer &&
         sWGLLib.fChoosePixelFormat)
     {
-        gfxIntSize dummySize = gfxIntSize(16, 16);
+        IntSize dummySize = IntSize(16, 16);
         glContext = CreatePBufferOffscreenContext(dummySize, GetGlobalContextWGL());
     }
 
@@ -639,24 +639,24 @@ GLContextProviderWGL::CreateHeadless(bool)
     return retGL.forget();
 }
 
-already_AddRefed<GLContext>
+/*static*/ already_AddRefed<GLContext>
 GLContextProviderWGL::CreateOffscreen(const IntSize& size,
-                                      const SurfaceCaps& caps,
-                                      bool requireCompatProfile)
+                                      const SurfaceCaps& minCaps,
+                                      CreateContextFlags flags)
 {
-    nsRefPtr<GLContext> glContext = CreateHeadless(requireCompatProfile);
-    if (!glContext)
+    RefPtr<GLContext> gl = CreateHeadless(flags);
+    if (!gl)
         return nullptr;
 
-    if (!glContext->InitOffscreen(size, caps))
+    if (!gl->InitOffscreen(size, minCaps))
         return nullptr;
 
-    return glContext.forget();
+    return gl.forget();
 }
 
 static nsRefPtr<GLContextWGL> gGlobalContext;
 
-GLContext *
+/*static*/ GLContext*
 GLContextProviderWGL::GetGlobalContext()
 {
     if (!sWGLLib.EnsureInitialized()) {
@@ -684,7 +684,7 @@ GLContextProviderWGL::GetGlobalContext()
     return static_cast<GLContext*>(gGlobalContext);
 }
 
-void
+/*static*/ void
 GLContextProviderWGL::Shutdown()
 {
     gGlobalContext = nullptr;

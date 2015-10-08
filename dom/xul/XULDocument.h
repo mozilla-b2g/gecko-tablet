@@ -35,7 +35,6 @@ class nsPIWindowRoot;
 #if 0 // XXXbe save me, scc (need NSCAP_FORWARD_DECL(nsXULPrototypeScript))
 class nsIObjectInputStream;
 class nsIObjectOutputStream;
-class nsIXULPrototypeScript;
 #else
 #include "nsIObjectInputStream.h"
 #include "nsIObjectOutputStream.h"
@@ -76,7 +75,7 @@ public:
   bool RemoveElement(mozilla::dom::Element* aElement);
 
 private:
-  nsSmallVoidArray mRefContentList;
+  nsTArray<mozilla::dom::Element*> mRefContentList;
 };
 
 /**
@@ -299,6 +298,12 @@ protected:
 
     nsresult
     Persist(nsIContent* aElement, int32_t aNameSpaceID, nsIAtom* aAttribute);
+    // Just like Persist but ignores the return value so we can use it
+    // as a runnable method.
+    void DoPersist(nsIContent* aElement, int32_t aNameSpaceID, nsIAtom* aAttribute)
+    {
+        Persist(aElement, aNameSpaceID, aAttribute);
+    }
 
     virtual JSObject* WrapNode(JSContext *aCx, JS::Handle<JSObject*> aGivenProto) override;
 
@@ -684,8 +689,8 @@ protected:
 
     class CachedChromeStreamListener : public nsIStreamListener {
     protected:
-        XULDocument* mDocument;
-        bool         mProtoLoaded;
+        nsRefPtr<XULDocument> mDocument;
+        bool mProtoLoaded;
 
         virtual ~CachedChromeStreamListener();
 

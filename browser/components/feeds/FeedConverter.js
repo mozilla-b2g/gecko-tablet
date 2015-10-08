@@ -254,7 +254,7 @@ FeedConverter.prototype = {
         chromeChannel = ios.newChannelFromURIWithLoadInfo(aboutFeedsURI, loadInfo);
         chromeChannel.originalURI = result.uri;
         chromeChannel.owner =
-          Services.scriptSecurityManager.getNoAppCodebasePrincipal(aboutFeedsURI);
+          Services.scriptSecurityManager.createCodebasePrincipal(aboutFeedsURI, {});
       } else {
         chromeChannel = ios.newChannelFromURIWithLoadInfo(result.uri, loadInfo);
       }
@@ -424,7 +424,8 @@ FeedResultService.prototype = {
           Cc["@mozilla.org/appshell/window-mediator;1"].
           getService(Ci.nsIWindowMediator);
       var topWindow = wm.getMostRecentWindow("navigator:browser");
-      topWindow.PlacesCommandHook.addLiveBookmark(spec, title, subtitle);
+      topWindow.PlacesCommandHook.addLiveBookmark(spec, title, subtitle)
+                                 .catch(Components.utils.reportError);
       break;
     }
   },

@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -10,9 +11,8 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsAutoPtr.h"
 #include "nsString.h"
+#include "nsWrapperCache.h"
 
-class nsIDOMBlob;
-class nsIPrincipal;
 class nsISupports;
 class nsIURI;
 
@@ -23,38 +23,54 @@ class DOMMediaStream;
 
 namespace dom {
 
-class File;
+class Blob;
 class MediaSource;
 class GlobalObject;
 struct objectURLOptions;
 
 namespace workers {
 class URLProxy;
-}
+} // namespace workers
 
 class URL final : public URLSearchParamsObserver
+                , public nsWrapperCache
 {
   ~URL() {}
 
 public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_CLASS(URL)
+  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(URL)
 
-  explicit URL(nsIURI* aURI);
+  URL(nsISupports* aParent, already_AddRefed<nsIURI> aURI);
 
   // WebIDL methods
-  bool
-  WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto, JS::MutableHandle<JSObject*> aReflector);
+  nsISupports* GetParentObject() const
+  {
+    return mParent;
+  }
+
+  virtual JSObject*
+  WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto) override;
 
   static already_AddRefed<URL>
   Constructor(const GlobalObject& aGlobal, const nsAString& aUrl,
               URL& aBase, ErrorResult& aRv);
   static already_AddRefed<URL>
   Constructor(const GlobalObject& aGlobal, const nsAString& aUrl,
+              const Optional<nsAString>& aBase, ErrorResult& aRv);
+  // Versions of Constructor that we can share with workers and other code.
+  static already_AddRefed<URL>
+  Constructor(const GlobalObject& aGlobal, const nsAString& aUrl,
               const nsAString& aBase, ErrorResult& aRv);
+  static already_AddRefed<URL>
+  Constructor(nsISupports* aParent, const nsAString& aUrl,
+              const nsAString& aBase, ErrorResult& aRv);
+  static already_AddRefed<URL>
+  Constructor(nsISupports* aParent, const nsAString& aUrl,
+              nsIURI* aBase, ErrorResult& aRv);
 
   static void CreateObjectURL(const GlobalObject& aGlobal,
-                              File& aBlob,
+                              Blob& aBlob,
                               const objectURLOptions& aOptions,
                               nsAString& aResult,
                               ErrorResult& aError);
@@ -69,7 +85,8 @@ public:
                               nsAString& aResult,
                               ErrorResult& aError);
   static void RevokeObjectURL(const GlobalObject& aGlobal,
-                              const nsAString& aURL);
+                              const nsAString& aURL,
+                              ErrorResult& aRv);
 
   void GetHref(nsAString& aHref, ErrorResult& aRv) const;
 
@@ -111,8 +128,6 @@ public:
 
   URLSearchParams* SearchParams();
 
-  void SetSearchParams(URLSearchParams& aSearchParams);
-
   void GetHash(nsAString& aRetval, ErrorResult& aRv) const;
 
   void SetHash(const nsAString& aArg, ErrorResult& aRv);
@@ -144,6 +159,7 @@ private:
                                       nsAString& aResult,
                                       ErrorResult& aError);
 
+  nsCOMPtr<nsISupports> mParent;
   nsCOMPtr<nsIURI> mURI;
   nsRefPtr<URLSearchParams> mSearchParams;
 
@@ -152,7 +168,7 @@ private:
 
 bool IsChromeURI(nsIURI* aURI);
 
-}
-}
+} // namespace dom
+} // namespace mozilla
 
 #endif /* URL_h___ */

@@ -18,8 +18,8 @@ namespace dom {
 
 class AudioContext;
 
-class OscillatorNode : public AudioNode,
-                       public MainThreadMediaStreamListener
+class OscillatorNode final : public AudioNode,
+                             public MainThreadMediaStreamListener
 {
 public:
   explicit OscillatorNode(AudioContext* aContext);
@@ -29,13 +29,8 @@ public:
 
   virtual JSObject* WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto) override;
 
-  virtual void DestroyMediaStream() override
-  {
-    if (mStream) {
-      mStream->RemoveMainThreadListener(this);
-    }
-    AudioNode::DestroyMediaStream();
-  }
+  virtual void DestroyMediaStream() override;
+
   virtual uint16_t NumberOfInputs() const final override
   {
     return 0;
@@ -78,7 +73,7 @@ public:
 
   IMPL_EVENT_HANDLER(ended)
 
-  virtual void NotifyMainThreadStateChanged() override;
+  virtual void NotifyMainThreadStreamFinished() override;
 
   virtual const char* NodeType() const override
   {
@@ -92,8 +87,6 @@ protected:
   virtual ~OscillatorNode();
 
 private:
-  static void SendFrequencyToStream(AudioNode* aNode);
-  static void SendDetuneToStream(AudioNode* aNode);
   void SendTypeToStream();
   void SendPeriodicWaveToStream();
 
@@ -103,11 +96,10 @@ private:
   nsRefPtr<AudioParam> mFrequency;
   nsRefPtr<AudioParam> mDetune;
   bool mStartCalled;
-  bool mStopped;
 };
 
-}
-}
+} // namespace dom
+} // namespace mozilla
 
 #endif
 

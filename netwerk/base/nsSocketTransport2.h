@@ -22,6 +22,7 @@
 #include "nsIClassInfo.h"
 #include "mozilla/net/DNS.h"
 #include "nsASocketHandler.h"
+#include "mozilla/Telemetry.h"
 
 #include "prerror.h"
 #include "nsAutoPtr.h"
@@ -127,6 +128,7 @@ public:
     // given type(s) to the given host or proxy.
     nsresult Init(const char **socketTypes, uint32_t typeCount,
                   const nsACString &host, uint16_t port,
+                  const nsACString &hostRoute, uint16_t portRoute,
                   nsIProxyInfo *proxyInfo);
 
     // this method instructs the socket transport to use an already connected
@@ -156,6 +158,13 @@ public:
 
     uint64_t ByteCountReceived() override { return mInput.ByteCount(); }
     uint64_t ByteCountSent() override { return mOutput.ByteCount(); }
+    static void CloseSocket(PRFileDesc *aFd, bool aTelemetryEnabled);
+    static void SendPRBlockingTelemetry(PRIntervalTime aStart,
+        mozilla::Telemetry::ID aIDNormal,
+        mozilla::Telemetry::ID aIDShutdown,
+        mozilla::Telemetry::ID aIDConnectivityChange,
+        mozilla::Telemetry::ID aIDLinkChange,
+        mozilla::Telemetry::ID aIDOffline);
 protected:
 
     virtual ~nsSocketTransport();
@@ -275,8 +284,10 @@ private:
     uint32_t     mTypeCount;
     nsCString    mHost;
     nsCString    mProxyHost;
+    nsCString    mOriginHost;
     uint16_t     mPort;
     uint16_t     mProxyPort;
+    uint16_t     mOriginPort;
     bool mProxyTransparent;
     bool mProxyTransparentResolvesHost;
     bool mHttpsProxy;

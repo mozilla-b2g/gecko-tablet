@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -16,7 +17,6 @@ namespace dom {
 
 struct MessageEventInit;
 class MessagePort;
-class MessagePortBase;
 class MessagePortList;
 class OwningWindowProxyOrMessagePortOrClient;
 
@@ -24,7 +24,7 @@ namespace workers {
 
 class ServiceWorkerClient;
 
-}
+} // namespace workers
 
 /**
  * Implements the MessageEvent event, used for cross-document messaging and
@@ -93,12 +93,17 @@ private:
   nsString mOrigin;
   nsString mLastEventId;
   nsCOMPtr<nsIDOMWindow> mWindowSource;
-  nsRefPtr<MessagePortBase> mPortSource;
+  nsRefPtr<MessagePort> mPortSource;
   nsRefPtr<workers::ServiceWorkerClient> mClientSource;
   nsRefPtr<MessagePortList> mPorts;
 };
 
 } // namespace dom
 } // namespace mozilla
+
+already_AddRefed<mozilla::dom::MessageEvent>
+NS_NewDOMMessageEvent(mozilla::dom::EventTarget* aOwner,
+                      nsPresContext* aPresContext,
+                      mozilla::WidgetEvent* aEvent);
 
 #endif // mozilla_dom_MessageEvent_h_

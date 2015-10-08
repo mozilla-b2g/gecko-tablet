@@ -1,3 +1,5 @@
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -6,12 +8,14 @@
 #include <binder/Parcel.h>
 #include "mozilla/dom/MozNDEFRecordBinding.h"
 #include "nsDebug.h"
-#include "NfcGonkMessage.h"
 #include "NfcOptions.h"
 #include "mozilla/unused.h"
 
 #include <android/log.h>
 #define NMH_LOG(args...)  __android_log_print(ANDROID_LOG_INFO, "NfcMessageHandler", args)
+
+#define NFCD_MAJOR_VERSION 1
+#define NFCD_MINOR_VERSION 22
 
 using namespace android;
 using namespace mozilla;
@@ -168,7 +172,7 @@ NfcMessageHandler::ReadNDEFResponse(const Parcel& aParcel, EventOptions& aOption
   aOptions.mRequestId = mRequestIdQueue[0];
   mRequestIdQueue.RemoveElementAt(0);
 
-  if (aOptions.mErrorCode == NfcErrorCode::Success) {
+  if (aOptions.mErrorCode == 0) {
     ReadNDEFMessage(aParcel, aOptions);
   }
 
@@ -202,7 +206,7 @@ NfcMessageHandler::TransceiveResponse(const Parcel& aParcel, EventOptions& aOpti
   aOptions.mRequestId = mRequestIdQueue[0];
   mRequestIdQueue.RemoveElementAt(0);
 
-  if (aOptions.mErrorCode == NfcErrorCode::Success) {
+  if (aOptions.mErrorCode == 0) {
     ReadTransceiveResponse(aParcel, aOptions);
   }
 

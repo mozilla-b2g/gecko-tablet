@@ -14,8 +14,10 @@
 # include "jit/x64/BaselineCompiler-x64.h"
 #elif defined(JS_CODEGEN_ARM)
 # include "jit/arm/BaselineCompiler-arm.h"
-#elif defined(JS_CODEGEN_MIPS)
-# include "jit/mips/BaselineCompiler-mips.h"
+#elif defined(JS_CODEGEN_ARM64)
+# include "jit/arm64/BaselineCompiler-arm64.h"
+#elif defined(JS_CODEGEN_MIPS32)
+# include "jit/mips32/BaselineCompiler-mips32.h"
 #elif defined(JS_CODEGEN_NONE)
 # include "jit/none/BaselineCompiler-none.h"
 #else
@@ -78,6 +80,7 @@ namespace jit {
     _(JSOP_MUL)                \
     _(JSOP_DIV)                \
     _(JSOP_MOD)                \
+    _(JSOP_POW)                \
     _(JSOP_LT)                 \
     _(JSOP_LE)                 \
     _(JSOP_GT)                 \
@@ -93,6 +96,7 @@ namespace jit {
     _(JSOP_BITNOT)             \
     _(JSOP_NEG)                \
     _(JSOP_NEWARRAY)           \
+    _(JSOP_SPREADCALLARRAY)    \
     _(JSOP_NEWARRAY_COPYONWRITE) \
     _(JSOP_INITELEM_ARRAY)     \
     _(JSOP_NEWOBJECT)          \
@@ -137,7 +141,7 @@ namespace jit {
     _(JSOP_GETINTRINSIC)       \
     _(JSOP_DEFVAR)             \
     _(JSOP_DEFCONST)           \
-    _(JSOP_SETCONST)           \
+    _(JSOP_DEFLET)             \
     _(JSOP_DEFFUN)             \
     _(JSOP_GETLOCAL)           \
     _(JSOP_SETLOCAL)           \
@@ -145,6 +149,7 @@ namespace jit {
     _(JSOP_SETARG)             \
     _(JSOP_CHECKLEXICAL)       \
     _(JSOP_INITLEXICAL)        \
+    _(JSOP_INITGLEXICAL)       \
     _(JSOP_CHECKALIASEDLEXICAL) \
     _(JSOP_INITALIASEDLEXICAL) \
     _(JSOP_UNINITIALIZED)      \
@@ -180,6 +185,7 @@ namespace jit {
     _(JSOP_RUNONCE)            \
     _(JSOP_REST)               \
     _(JSOP_TOID)               \
+    _(JSOP_TOSTRING)           \
     _(JSOP_TABLESWITCH)        \
     _(JSOP_ITER)               \
     _(JSOP_MOREITER)           \
@@ -194,7 +200,8 @@ namespace jit {
     _(JSOP_CALLEE)             \
     _(JSOP_SETRVAL)            \
     _(JSOP_RETRVAL)            \
-    _(JSOP_RETURN)
+    _(JSOP_RETURN)             \
+    _(JSOP_NEWTARGET)
 
 class BaselineCompiler : public BaselineCompilerSpecific
 {
@@ -259,6 +266,7 @@ class BaselineCompiler : public BaselineCompilerSpecific
     void emitIsDebuggeeCheck();
     bool emitDebugPrologue();
     bool emitDebugTrap();
+    void emitCoverage(jsbytecode* pc);
     bool emitTraceLoggerEnter();
     bool emitTraceLoggerExit();
 

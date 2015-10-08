@@ -33,8 +33,10 @@ XPCOMUtils.defineLazyServiceGetter(this, "etld",
  */
 
 // Internal helper methods and state
-let SocialServiceInternal = {
-  get enabled() this.providerArray.length > 0,
+var SocialServiceInternal = {
+  get enabled() {
+    return this.providerArray.length > 0;
+  },
 
   get providerArray() {
     return [p for ([, p] of Iterator(this.providers))];
@@ -122,7 +124,7 @@ let SocialServiceInternal = {
           // all enabled providers get sorted even with frecency zero.
           let providerList = SocialServiceInternal.providerArray;
           // reverse sort
-          aCallback(providerList.sort(function(a, b) b.frecency - a.frecency));
+          aCallback(providerList.sort((a, b) => b.frecency - a.frecency));
         }
       });
     } finally {
@@ -153,7 +155,7 @@ XPCOMUtils.defineLazyGetter(SocialServiceInternal, "providers", function () {
 function getOriginActivationType(origin) {
   // if this is an about uri, treat it as a directory
   let URI = Services.io.newURI(origin, null, null);
-  let principal = Services.scriptSecurityManager.getNoAppCodebasePrincipal(URI);
+  let principal = Services.scriptSecurityManager.createCodebasePrincipal(URI, {});
   if (Services.scriptSecurityManager.isSystemPrincipal(principal) || origin == "moz-safe-about:home") {
     return "internal";
   }
@@ -165,7 +167,7 @@ function getOriginActivationType(origin) {
   return "foreign";
 }
 
-let ActiveProviders = {
+var ActiveProviders = {
   get _providers() {
     delete this._providers;
     this._providers = {};
@@ -513,7 +515,7 @@ this.SocialService = {
     }
     // force/fixup origin
     let URI = Services.io.newURI(installOrigin, null, null);
-    principal = Services.scriptSecurityManager.getNoAppCodebasePrincipal(URI);
+    principal = Services.scriptSecurityManager.createCodebasePrincipal(URI, {});
     data.origin = principal.origin;
 
     // iconURL and name are required
@@ -714,7 +716,7 @@ function SocialProvider(input) {
   this.postActivationURL = input.postActivationURL;
   this.origin = input.origin;
   let originUri = Services.io.newURI(input.origin, null, null);
-  this.principal = Services.scriptSecurityManager.getNoAppCodebasePrincipal(originUri);
+  this.principal = Services.scriptSecurityManager.createCodebasePrincipal(originUri, {});
   this.ambientNotificationIcons = {};
   this.errorState = null;
   this.frecency = 0;

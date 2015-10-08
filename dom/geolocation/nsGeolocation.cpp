@@ -1,3 +1,5 @@
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -111,6 +113,7 @@ class nsGeolocationRequest final
 
   int32_t mWatchId;
   bool mShutdown;
+  nsCOMPtr<nsIContentPermissionRequester> mRequester;
 };
 
 static PositionOptions*
@@ -356,6 +359,13 @@ nsGeolocationRequest::nsGeolocationRequest(Geolocation* aLocator,
     mWatchId(aWatchId),
     mShutdown(false)
 {
+  nsCOMPtr<nsIDOMWindow> win = do_QueryReferent(mLocator->GetOwner());
+  if (win) {
+    nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(win);
+    if (window) {
+      mRequester = new nsContentPermissionRequester(window);
+    }
+  }
 }
 
 nsGeolocationRequest::~nsGeolocationRequest()
@@ -455,15 +465,7 @@ nsGeolocationRequest::Allow(JS::HandleValue aChoices)
     return NS_OK;
   }
 
-  // Kick off the geo device, if it isn't already running
   nsRefPtr<nsGeolocationService> gs = nsGeolocationService::GetGeolocationService();
-  nsresult rv = gs->StartDevice(GetPrincipal());
-
-  if (NS_FAILED(rv)) {
-    // Location provider error
-    NotifyError(nsIDOMGeoPositionError::POSITION_UNAVAILABLE);
-    return NS_OK;
-  }
 
   bool canUseCache = false;
   CachedPositionAndAccuracy lastPosition = gs->GetCachedPosition();
@@ -487,6 +489,15 @@ nsGeolocationRequest::Allow(JS::HandleValue aChoices)
     // getCurrentPosition requests serviced by the cache
     // will now be owned by the RequestSendLocationEvent
     Update(lastPosition.position);
+  } else {
+    // Kick off the geo device, if it isn't already running
+    nsresult rv = gs->StartDevice(GetPrincipal());
+
+    if (NS_FAILED(rv)) {
+      // Location provider error
+      NotifyError(nsIDOMGeoPositionError::POSITION_UNAVAILABLE);
+      return NS_OK;
+    }
   }
 
   if (mIsWatchPositionRequest || !canUseCache) {
@@ -497,6 +508,16 @@ nsGeolocationRequest::Allow(JS::HandleValue aChoices)
 
   SetTimeoutTimer();
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsGeolocationRequest::GetRequester(nsIContentPermissionRequester** aRequester)
+{
+  NS_ENSURE_ARG_POINTER(aRequester);
+
+  nsCOMPtr<nsIContentPermissionRequester> requester = mRequester;
+  requester.forget(aRequester);
   return NS_OK;
 }
 
@@ -543,7 +564,7 @@ already_AddRefed<nsIDOMGeoPosition>
 nsGeolocationRequest::AdjustedLocation(nsIDOMGeoPosition *aPosition)
 {
   nsCOMPtr<nsIDOMGeoPosition> pos = aPosition;
-  if (XRE_GetProcessType() == GeckoProcessType_Content) {
+  if (XRE_IsContentProcess()) {
     GPSLOG("child process just copying position");
     return pos.forget();
   }
@@ -737,7 +758,7 @@ nsresult nsGeolocationService::Init()
     return NS_ERROR_FAILURE;
   }
 
-  if (XRE_GetProcessType() == GeckoProcessType_Content) {
+  if (XRE_IsContentProcess()) {
     sGeoInitPending = false;
     return NS_OK;
   }
@@ -937,7 +958,9 @@ nsGeolocationService::Observe(nsISupports* aSubject,
 NS_IMETHODIMP
 nsGeolocationService::Update(nsIDOMGeoPosition *aSomewhere)
 {
-  SetCachedPosition(aSomewhere);
+  if (aSomewhere) {
+    SetCachedPosition(aSomewhere);
+  }
 
   for (uint32_t i = 0; i< mGeolocators.Length(); i++) {
     mGeolocators[i]->Update(aSomewhere);
@@ -990,7 +1013,7 @@ nsGeolocationService::StartDevice(nsIPrincipal *aPrincipal)
   // inactivivity
   SetDisconnectTimer();
 
-  if (XRE_GetProcessType() == GeckoProcessType_Content) {
+  if (XRE_IsContentProcess()) {
     ContentChild* cpc = ContentChild::GetSingleton();
     cpc->SendAddGeolocationListener(IPC::Principal(aPrincipal),
                                     HighAccuracyRequested());
@@ -1053,7 +1076,7 @@ nsGeolocationService::UpdateAccuracy(bool aForceHigh)
 {
   bool highRequired = aForceHigh || HighAccuracyRequested();
 
-  if (XRE_GetProcessType() == GeckoProcessType_Content) {
+  if (XRE_IsContentProcess()) {
     ContentChild* cpc = ContentChild::GetSingleton();
     if (cpc->IsAlive()) {
       cpc->SendSetGeolocationHigherAccuracy(highRequired);
@@ -1080,7 +1103,7 @@ nsGeolocationService::StopDevice()
     mDisconnectTimer = nullptr;
   }
 
-  if (XRE_GetProcessType() == GeckoProcessType_Content) {
+  if (XRE_IsContentProcess()) {
     ContentChild* cpc = ContentChild::GetSingleton();
     cpc->SendRemoveGeolocationListener();
     return; // bail early
@@ -1396,7 +1419,7 @@ Geolocation::GetCurrentPosition(GeoPositionCallback& callback,
     return NS_OK;
   }
 
-  if (!mOwner && !nsContentUtils::IsCallerChrome()) {
+  if (!mOwner && !nsContentUtils::LegacyIsCallerChromeOrNativeCode()) {
     return NS_ERROR_FAILURE;
   }
 
@@ -1419,7 +1442,7 @@ Geolocation::GetCurrentPositionReady(nsGeolocationRequest* aRequest)
     return NS_OK;
   }
 
-  if (!nsContentUtils::IsCallerChrome()) {
+  if (!nsContentUtils::LegacyIsCallerChromeOrNativeCode()) {
     return NS_ERROR_FAILURE;
   }
 
@@ -1490,7 +1513,7 @@ Geolocation::WatchPosition(GeoPositionCallback& aCallback,
     return NS_OK;
   }
 
-  if (!mOwner && !nsContentUtils::IsCallerChrome()) {
+  if (!mOwner && !nsContentUtils::LegacyIsCallerChromeOrNativeCode()) {
     return NS_ERROR_FAILURE;
   }
 
@@ -1512,7 +1535,7 @@ Geolocation::WatchPositionReady(nsGeolocationRequest* aRequest)
     return NS_OK;
   }
 
-  if (!nsContentUtils::IsCallerChrome()) {
+  if (!nsContentUtils::LegacyIsCallerChromeOrNativeCode()) {
     return NS_ERROR_FAILURE;
   }
 

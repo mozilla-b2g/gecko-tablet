@@ -20,9 +20,8 @@
 
 
 struct ChromePackage;
-class nsIDOMBlob;
 class nsIObserver;
-struct ResourceMapping;
+struct SubstitutionMapping;
 struct OverrideMapping;
 class nsIDomainPolicy;
 
@@ -35,10 +34,6 @@ class PFileDescriptorSetChild;
 class URIParams;
 }// namespace ipc
 
-namespace jsipc {
-class JavaScriptShared;
-}
-
 namespace layers {
 class PCompositorChild;
 } // namespace layers
@@ -46,7 +41,6 @@ class PCompositorChild;
 namespace dom {
 
 class AlertObserver;
-class PrefObserver;
 class ConsoleListener;
 class PStorageChild;
 class ClonedMessageData;
@@ -82,6 +76,7 @@ public:
               IPC::Channel* aChannel);
     void InitProcessAttributes();
     void InitXPCOM();
+    void InitGraphicsDeviceData();
 
     static ContentChild* GetSingleton() {
         return sSingleton;
@@ -135,7 +130,7 @@ public:
     AllocPProcessHangMonitorChild(Transport* aTransport,
                                   ProcessId aOtherProcess) override;
 
-    virtual bool RecvSetProcessSandbox() override;
+    virtual bool RecvSetProcessSandbox(const MaybeFileDesc& aBroker) override;
 
     PBackgroundChild*
     AllocPBackgroundChild(Transport* aTransport, ProcessId aOtherProcess)
@@ -172,6 +167,9 @@ public:
     virtual PHalChild* AllocPHalChild() override;
     virtual bool DeallocPHalChild(PHalChild*) override;
 
+    virtual PHeapSnapshotTempFileHelperChild* AllocPHeapSnapshotTempFileHelperChild() override;
+    virtual bool DeallocPHeapSnapshotTempFileHelperChild(PHeapSnapshotTempFileHelperChild*) override;
+
     PIccChild*
     SendPIccConstructor(PIccChild* aActor, const uint32_t& aServiceId);
     virtual PIccChild*
@@ -206,8 +204,11 @@ public:
                                          const FileDescriptor& aGCLog,
                                          const FileDescriptor& aCCLog) override;
 
-    virtual bool
-    RecvAudioChannelNotify() override;
+    virtual PWebBrowserPersistDocumentChild* AllocPWebBrowserPersistDocumentChild(PBrowserChild* aBrowser, const uint64_t& aOuterWindowID) override;
+    virtual bool RecvPWebBrowserPersistDocumentConstructor(PWebBrowserPersistDocumentChild *aActor,
+                                                           PBrowserChild *aBrowser,
+                                                           const uint64_t& aOuterWindowID) override;
+    virtual bool DeallocPWebBrowserPersistDocumentChild(PWebBrowserPersistDocumentChild* aActor) override;
 
     virtual bool
     RecvDataStoreNotify(const uint32_t& aAppId, const nsString& aName,
@@ -238,6 +239,10 @@ public:
                              bool* aSuccess) override;
     virtual bool DeallocPScreenManagerChild(PScreenManagerChild*) override;
 
+    virtual PPSMContentDownloaderChild* AllocPPSMContentDownloaderChild(
+            const uint32_t& aCertType) override;
+    virtual bool DeallocPPSMContentDownloaderChild(PPSMContentDownloaderChild* aDownloader) override;
+
     virtual PExternalHelperAppChild *AllocPExternalHelperAppChild(
             const OptionalURIParams& uri,
             const nsCString& aMimeContentType,
@@ -264,6 +269,9 @@ public:
     PVoicemailChild* SendPVoicemailConstructor(PVoicemailChild* aActor);
     virtual bool DeallocPVoicemailChild(PVoicemailChild*) override;
 
+    virtual PMediaChild* AllocPMediaChild() override;
+    virtual bool DeallocPMediaChild(PMediaChild* aActor) override;
+
     virtual PStorageChild* AllocPStorageChild() override;
     virtual bool DeallocPStorageChild(PStorageChild* aActor) override;
 
@@ -273,18 +281,17 @@ public:
     virtual PFMRadioChild* AllocPFMRadioChild() override;
     virtual bool DeallocPFMRadioChild(PFMRadioChild* aActor) override;
 
-    virtual PAsmJSCacheEntryChild* AllocPAsmJSCacheEntryChild(
-                                 const asmjscache::OpenMode& aOpenMode,
-                                 const asmjscache::WriteParams& aWriteParams,
-                                 const IPC::Principal& aPrincipal) override;
-    virtual bool DeallocPAsmJSCacheEntryChild(
-                                    PAsmJSCacheEntryChild* aActor) override;
+    virtual PPresentationChild* AllocPPresentationChild() override;
+    virtual bool DeallocPPresentationChild(PPresentationChild* aActor) override;
+    virtual bool RecvNotifyPresentationReceiverLaunched(PBrowserChild* aIframe,
+                                                        const nsString& aSessionId) override;
+    virtual bool RecvNotifyPresentationReceiverCleanUp(const nsString& aSessionId) override;
 
     virtual PSpeechSynthesisChild* AllocPSpeechSynthesisChild() override;
     virtual bool DeallocPSpeechSynthesisChild(PSpeechSynthesisChild* aActor) override;
 
     virtual bool RecvRegisterChrome(InfallibleTArray<ChromePackage>&& packages,
-                                    InfallibleTArray<ResourceMapping>&& resources,
+                                    InfallibleTArray<SubstitutionMapping>&& resources,
                                     InfallibleTArray<OverrideMapping>&& overrides,
                                     const nsCString& locale,
                                     const bool& reset) override;
@@ -296,8 +303,13 @@ public:
     virtual bool DeallocPRemoteSpellcheckEngineChild(PRemoteSpellcheckEngineChild*) override;
 
     virtual bool RecvSetOffline(const bool& offline) override;
+    virtual bool RecvSetConnectivity(const bool& connectivity) override;
 
     virtual bool RecvSpeakerManagerNotify() override;
+
+    virtual bool RecvBidiKeyboardNotify(const bool& isLangRTL) override;
+
+    virtual bool RecvUpdateServiceWorkerRegistrations() override;
 
     virtual bool RecvNotifyVisited(const URIParams& aURI) override;
     // auto remove when alertfinished is received.
@@ -326,7 +338,7 @@ public:
 
     virtual bool RecvAddPermission(const IPC::Permission& permission) override;
 
-    virtual bool RecvScreenSizeChanged(const gfxIntSize &size) override;
+    virtual bool RecvScreenSizeChanged(const gfx::IntSize &size) override;
 
     virtual bool RecvFlushMemory(const nsString& reason) override;
 
@@ -338,6 +350,7 @@ public:
     virtual bool RecvAppInfo(const nsCString& version, const nsCString& buildID,
                              const nsCString& name, const nsCString& UAName,
                              const nsCString& ID, const nsCString& vendor) override;
+    virtual bool RecvAppInit() override;
 
     virtual bool RecvLastPrivateDocShellDestroyed() override;
 
@@ -357,8 +370,7 @@ public:
                                       const bool& aIsUnmounting,
                                       const bool& aIsRemovable,
                                       const bool& aIsHotSwappable) override;
-
-    virtual bool RecvNuwaFork() override;
+    virtual bool RecvVolumeRemoved(const nsString& aFsName) override;
 
     virtual bool
     RecvNotifyProcessPriorityChanged(const hal::ProcessPriority& aPriority) override;
@@ -369,8 +381,6 @@ public:
     virtual bool RecvUnregisterSheet(const URIParams& aURI, const uint32_t& aType) override;
 
     virtual bool RecvNotifyPhoneStateChange(const nsString& state) override;
-
-    virtual bool RecvNuwaFreeze() override;
 
     void AddIdleObserver(nsIObserver* aObserver, uint32_t aIdleTimeInS);
     void RemoveIdleObserver(nsIObserver* aObserver, uint32_t aIdleTimeInS);
@@ -384,19 +394,26 @@ public:
                                        const base::ProcessId& aProcessId) override;
     virtual bool RecvLoadPluginResult(const uint32_t& aPluginId,
                                       const bool& aResult) override;
+    virtual bool RecvUpdateWindow(const uintptr_t& aChildId) override;
 
     virtual bool RecvStartProfiler(const uint32_t& aEntries,
                                    const double& aInterval,
                                    nsTArray<nsCString>&& aFeatures,
                                    nsTArray<nsCString>&& aThreadNameFilters) override;
+    virtual bool RecvPauseProfiler(const bool& aPause) override;
     virtual bool RecvStopProfiler() override;
-    virtual bool RecvGetProfile(nsCString* aProfile) override;
+    virtual bool RecvGatherProfile() override;
     virtual bool RecvDomainSetChanged(const uint32_t& aSetType, const uint32_t& aChangeType,
                                       const OptionalURIParams& aDomain) override;
     virtual bool RecvShutdown() override;
 
+    virtual bool
+    RecvInvokeDragSession(nsTArray<IPCDataTransfer>&& aTransfers,
+                          const uint32_t& aAction) override;
+    virtual bool RecvEndDragSession(const bool& aDoneDrag,
+                                    const bool& aUserCancelled) override;
 #ifdef ANDROID
-    gfxIntSize GetScreenSize() { return mScreenSize; }
+    gfx::IntSize GetScreenSize() { return mScreenSize; }
 #endif
 
     // Get the directory for IndexedDB files. We query the parent for this and
@@ -433,8 +450,6 @@ public:
                                          const ContentParentId& aCpID,
                                          const bool& aIsForApp,
                                          const bool& aIsForBrowser) override;
-    virtual PDocAccessibleChild* AllocPDocAccessibleChild(PDocAccessibleChild*, const uint64_t&) override;
-    virtual bool DeallocPDocAccessibleChild(PDocAccessibleChild*) override;
 
     void GetAvailableDictionaries(InfallibleTArray<nsString>& aDictionaries);
 
@@ -444,10 +459,25 @@ public:
     virtual POfflineCacheUpdateChild* AllocPOfflineCacheUpdateChild(
             const URIParams& manifestURI,
             const URIParams& documentURI,
+            const PrincipalInfo& aLoadingPrincipalInfo,
             const bool& stickDocument,
             const TabId& aTabId) override;
     virtual bool
     DeallocPOfflineCacheUpdateChild(POfflineCacheUpdateChild* offlineCacheUpdate) override;
+
+    virtual PWebrtcGlobalChild* AllocPWebrtcGlobalChild() override;
+    virtual bool DeallocPWebrtcGlobalChild(PWebrtcGlobalChild *aActor) override;
+
+    virtual PContentPermissionRequestChild*
+    AllocPContentPermissionRequestChild(const InfallibleTArray<PermissionRequest>& aRequests,
+                                        const IPC::Principal& aPrincipal,
+                                        const TabId& aTabId) override;
+    virtual bool
+    DeallocPContentPermissionRequestChild(PContentPermissionRequestChild* actor) override;
+
+    virtual bool RecvGamepadUpdate(const GamepadChangeEvent& aGamepadEvent) override;
+
+    virtual bool RecvTestGraphicsDeviceReset(const uint32_t& aResetReason) override;
 
 private:
     virtual void ActorDestroy(ActorDestroyReason why) override;
@@ -479,7 +509,7 @@ private:
     AppInfo mAppInfo;
 
 #ifdef ANDROID
-    gfxIntSize mScreenSize;
+    gfx::IntSize mScreenSize;
 #endif
 
     bool mIsForApp;
@@ -494,6 +524,9 @@ private:
 
     DISALLOW_EVIL_CONSTRUCTORS(ContentChild);
 };
+
+void
+InitOnContentProcessCreated();
 
 uint64_t
 NextWindowID();

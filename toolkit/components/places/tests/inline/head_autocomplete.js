@@ -2,10 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const Ci = Components.interfaces;
-const Cc = Components.classes;
-const Cr = Components.results;
-const Cu = Components.utils;
+var Ci = Components.interfaces;
+var Cc = Components.classes;
+var Cr = Components.results;
+var Cu = Components.utils;
 
 Cu.import("resource://gre/modules/Services.jsm");
 
@@ -54,8 +54,8 @@ AutoCompleteInput.prototype = {
     this._selEnd = aEnd;
   },
 
-  onTextEntered: function() false,
-  onTextReverted: function() false,
+  onTextEntered: () => false,
+  onTextReverted: () => false,
 
   get searchCount() {
     return this.searches.length;
@@ -140,8 +140,10 @@ function ensure_results(aSearchString, aExpectedValue) {
       }
 
       // Cleanup.
-      remove_all_bookmarks();
-      PlacesTestUtils.clearHistory().then(resolve);
+      Promise.all([
+        PlacesUtils.bookmarks.eraseEverything(),
+        PlacesTestUtils.clearHistory()
+      ]).then(resolve);
     };
   });
 
@@ -182,7 +184,7 @@ function run_test() {
   run_next_test();
 }
 
-let gAutoCompleteTests = [];
+var gAutoCompleteTests = [];
 function add_autocomplete_test(aTestData) {
   gAutoCompleteTests.push(aTestData);
 }

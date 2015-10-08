@@ -23,7 +23,13 @@ function run_test() {
   // The mock XMLHttpRequest is MUCH faster
   overrideXHR(callHandleEvent);
   standardInit();
-  do_execute_soon(run_test_pt1);
+  // Only perform the non hash check tests when mar signing is enabled since the
+  // update service doesn't perform hash checks when mar signing is enabled.
+  if (IS_MAR_CHECKS_ENABLED) {
+    do_execute_soon(run_test_pt11);
+  } else {
+    do_execute_soon(run_test_pt1);
+  }
 }
 
 // The HttpServer must be stopped before calling do_test_finished
@@ -60,7 +66,8 @@ function run_test_helper_pt1(aMsg, aExpectedStatusResult, aNextRunFunc) {
 }
 
 function check_test_helper_pt1_1() {
-  do_check_eq(gUpdateCount, 1);
+  Assert.equal(gUpdateCount, 1,
+               "the update count" + MSG_SHOULD_EQUAL);
   gCheckFunc = check_test_helper_pt1_2;
   let bestUpdate = gAUS.selectUpdate(gUpdates, gUpdateCount);
   let state = gAUS.downloadUpdate(bestUpdate, false);
@@ -71,7 +78,8 @@ function check_test_helper_pt1_1() {
 }
 
 function check_test_helper_pt1_2() {
-  do_check_eq(gStatusResult, gExpectedStatusResult);
+  Assert.equal(gStatusResult, gExpectedStatusResult,
+               "the download status result" + MSG_SHOULD_EQUAL);
   gAUS.removeDownloadListener(downloadListener);
   gNextRunFunc();
 }
@@ -91,7 +99,8 @@ function run_test_helper_bug828858_pt1(aMsg, aExpectedStatusResult, aNextRunFunc
 }
 
 function check_test_helper_bug828858_pt1_1() {
-  do_check_eq(gUpdateCount, 1);
+  Assert.equal(gUpdateCount, 1,
+               "the update count" + MSG_SHOULD_EQUAL);
   gCheckFunc = check_test_helper_bug828858_pt1_2;
   let bestUpdate = gAUS.selectUpdate(gUpdates, gUpdateCount);
   let state = gAUS.downloadUpdate(bestUpdate, false);
@@ -103,9 +112,11 @@ function check_test_helper_bug828858_pt1_1() {
 
 function check_test_helper_bug828858_pt1_2() {
   if (gStatusResult == Cr.NS_ERROR_CONTENT_CORRUPTED) {
-    do_check_eq(gStatusResult, Cr.NS_ERROR_CONTENT_CORRUPTED);
+    Assert.ok(true,
+              "the status result should equal NS_ERROR_CONTENT_CORRUPTED");
   } else {
-    do_check_eq(gStatusResult, gExpectedStatusResult);
+    Assert.equal(gStatusResult, gExpectedStatusResult,
+                 "the download status result" + MSG_SHOULD_EQUAL);
   }
   gAUS.removeDownloadListener(downloadListener);
   gNextRunFunc();

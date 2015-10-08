@@ -32,6 +32,7 @@ this.EXPORTED_SYMBOLS = ['Utils', 'Logger', 'PivotContext', 'PrefCache',  // jsh
 this.Utils = { // jshint ignore:line
   _buildAppMap: {
     '{3c2e2abc-06d4-11e1-ac3b-374f68613e61}': 'b2g',
+    '{d1bfe7d9-c01e-4237-998b-7b5f960a4314}': 'graphene',
     '{ec8030f7-c20a-464f-9b0e-13a3a9e97384}': 'browser',
     '{aa3c5121-dab2-40e2-81ca-7ea25febc110}': 'mobile/android',
     '{a23983c0-fd0e-11dc-95ff-0800200c9a66}': 'mobile/xul'
@@ -415,21 +416,41 @@ this.Utils = { // jshint ignore:line
   },
 
   getLandmarkName: function getLandmarkName(aAccessible) {
-    const landmarks = [
+    return this.matchRoles(aAccessible, [
       'banner',
       'complementary',
       'contentinfo',
       'main',
       'navigation',
       'search'
-    ];
+    ]);
+  },
+
+  getMathRole: function getMathRole(aAccessible) {
+    return this.matchRoles(aAccessible, [
+      'base',
+      'close-fence',
+      'denominator',
+      'numerator',
+      'open-fence',
+      'overscript',
+      'presubscript',
+      'presuperscript',
+      'root-index',
+      'subscript',
+      'superscript',
+      'underscript'
+    ]);
+  },
+
+  matchRoles: function matchRoles(aAccessible, aRoles) {
     let roles = this.getAttributes(aAccessible)['xml-roles'];
     if (!roles) {
       return;
     }
 
-    // Looking up a role that would match a landmark.
-    return this.matchAttributeValue(roles, landmarks);
+    // Looking up a role that would match any in the provided roles.
+    return this.matchAttributeValue(roles, aRoles);
   },
 
   getEmbeddedControl: function getEmbeddedControl(aLabel) {
@@ -884,8 +905,12 @@ PivotContext.prototype = {
       if (!aAccessible) {
         return null;
       }
-      if ([Roles.CELL, Roles.COLUMNHEADER, Roles.ROWHEADER].indexOf(
-        aAccessible.role) < 0) {
+      if ([
+            Roles.CELL,
+            Roles.COLUMNHEADER,
+            Roles.ROWHEADER,
+            Roles.MATHML_CELL
+          ].indexOf(aAccessible.role) < 0) {
           return null;
       }
       try {
@@ -950,7 +975,9 @@ PivotContext.prototype = {
         cellInfo.current.columnHeaderCells))];
     }
     cellInfo.rowHeaders = [];
-    if (cellInfo.rowChanged && cellInfo.current.role === Roles.CELL) {
+    if (cellInfo.rowChanged &&
+        (cellInfo.current.role === Roles.CELL ||
+         cellInfo.current.role === Roles.MATHML_CELL)) {
       cellInfo.rowHeaders = [headers for (headers of getHeaders( // jshint ignore:line
         cellInfo.current.rowHeaderCells))];
     }

@@ -391,14 +391,22 @@ var WifiManager = (function() {
       return null;
 
     let networkKey = getNetworkKey(network);
-    return ((networkKey in httpProxyConfig) ? httpProxyConfig : null);
+    return httpProxyConfig[networkKey];
   }
 
   function setHttpProxy(network) {
     if (!network)
       return;
 
-    gNetworkService.setNetworkProxy(network);
+    // If we got here, arg network must be the currentNetwork, so we just update
+    // WifiNetworkInterface correspondingly and notify NetworkManager.
+    WifiNetworkInterface.httpProxyHost = network.httpProxyHost;
+    WifiNetworkInterface.httpProxyPort = network.httpProxyPort;
+
+    if (WifiNetworkInterface.info.state ==
+        Ci.nsINetworkInfo.NETWORK_STATE_CONNECTED) {
+      gNetworkManager.updateNetworkInterface(WifiNetworkInterface);
+    }
   }
 
   var staticIpConfig = Object.create(null);
@@ -408,7 +416,7 @@ var WifiManager = (function() {
     let currentNetwork = Object.create(null);
     currentNetwork.netId = manager.connectionInfo.id;
 
-    manager.getNetworkConfiguration(currentNetwork, function (){
+    manager.getNetworkConfiguration(currentNetwork, function () {
       curNetworkKey = getNetworkKey(currentNetwork);
 
       // Add additional information to static ip configuration
@@ -427,15 +435,19 @@ var WifiManager = (function() {
       // If the ssid of current connection is the same as configured ssid
       // It means we need update current connection to use static IP address.
       if (setNetworkKey == curNetworkKey) {
-        // Use configureInterface directly doesn't work, the network iterface
+        // Use configureInterface directly doesn't work, the network interface
         // and routing table is changed but still cannot connect to network
         // so the workaround here is disable interface the enable again to
         // trigger network reconnect with static ip.
         gNetworkService.disableInterface(manager.ifname, function (ok) {
           gNetworkService.enableInterface(manager.ifname, function (ok) {
+            callback(ok);
           });
         });
+        return;
       }
+
+      callback(true);
     });
   }
 
@@ -625,6 +637,8 @@ var WifiManager = (function() {
     wifiCommand.connectToSupplicant(connectCallback);
   }
 
+  let dhcpRequestGen = 0;
+
   function onconnected() {
     // For now we do our own DHCP. In the future, this should be handed
     // off to the Network Manager.
@@ -640,9 +654,14 @@ var WifiManager = (function() {
           runStaticIp(manager.ifname, key);
           return;
       }
-      netUtil.runDhcp(manager.ifname, function(data) {
+      netUtil.runDhcp(manager.ifname, dhcpRequestGen++, function(data, gen) {
         dhcpInfo = data.info;
+        debug('dhcpRequestGen: ' + dhcpRequestGen + ', gen: ' + gen);
         if (!dhcpInfo) {
+          if (gen + 1 < dhcpRequestGen) {
+            debug('Do not bother younger DHCP request.');
+            return;
+          }
           if (++manager.dhcpFailuresCount >= MAX_RETRIES_ON_DHCP_FAILURE) {
             manager.dhcpFailuresCount = 0;
             notify("disconnected", {connectionInfo: manager.connectionInfo});
@@ -995,16 +1014,17 @@ var WifiManager = (function() {
     if (enabled) {
       manager.state = "INITIALIZING";
       // Register as network interface.
-      WifiNetworkInterface.name = manager.ifname;
+      WifiNetworkInterface.info.name = manager.ifname;
       if (!WifiNetworkInterface.registered) {
         gNetworkManager.registerNetworkInterface(WifiNetworkInterface);
         WifiNetworkInterface.registered = true;
       }
-      WifiNetworkInterface.state = Ci.nsINetworkInterface.NETWORK_STATE_DISCONNECTED;
-      WifiNetworkInterface.ips = [];
-      WifiNetworkInterface.prefixLengths = [];
-      WifiNetworkInterface.gateways = [];
-      WifiNetworkInterface.dnses = [];
+      WifiNetworkInterface.info.state =
+        Ci.nsINetworkInfo.NETWORK_STATE_DISCONNECTED;
+      WifiNetworkInterface.info.ips = [];
+      WifiNetworkInterface.info.prefixLengths = [];
+      WifiNetworkInterface.info.gateways = [];
+      WifiNetworkInterface.info.dnses = [];
       gNetworkManager.updateNetworkInterface(WifiNetworkInterface);
 
       prepareForStartup(function() {
@@ -1149,8 +1169,10 @@ var WifiManager = (function() {
 
         function doStartWifiTethering() {
           cancelWaitForDriverReadyTimer();
-          WifiNetworkInterface.name = libcutils.property_get("wifi.tethering.interface", manager.ifname);
-          gTetheringService.setWifiTethering(enabled, WifiNetworkInterface,
+          WifiNetworkInterface.info.name =
+            libcutils.property_get("wifi.tethering.interface", manager.ifname);
+          gTetheringService.setWifiTethering(enabled,
+                                             WifiNetworkInterface.info.name,
                                              configuration, function(result) {
             if (result) {
               manager.tetheringState = "UNINITIALIZED";
@@ -1756,7 +1778,7 @@ function isWepHexKey(s) {
 }
 
 
-let WifiNetworkInterface = {
+var WifiNetworkInterface = {
 
   QueryInterface: XPCOMUtils.generateQI([Ci.nsINetworkInterface]),
 
@@ -1764,63 +1786,67 @@ let WifiNetworkInterface = {
 
   // nsINetworkInterface
 
-  NETWORK_STATE_UNKNOWN:       Ci.nsINetworkInterface.NETWORK_STATE_UNKNOWN,
-  NETWORK_STATE_CONNECTING:    Ci.nsINetworkInterface.CONNECTING,
-  NETWORK_STATE_CONNECTED:     Ci.nsINetworkInterface.CONNECTED,
-  NETWORK_STATE_DISCONNECTING: Ci.nsINetworkInterface.DISCONNECTING,
-  NETWORK_STATE_DISCONNECTED:  Ci.nsINetworkInterface.DISCONNECTED,
+  NETWORK_STATE_UNKNOWN:       Ci.nsINetworkInfo.NETWORK_STATE_UNKNOWN,
+  NETWORK_STATE_CONNECTING:    Ci.nsINetworkInfo.CONNECTING,
+  NETWORK_STATE_CONNECTED:     Ci.nsINetworkInfo.CONNECTED,
+  NETWORK_STATE_DISCONNECTING: Ci.nsINetworkInfo.DISCONNECTING,
+  NETWORK_STATE_DISCONNECTED:  Ci.nsINetworkInfo.DISCONNECTED,
 
-  state: Ci.nsINetworkInterface.NETWORK_STATE_UNKNOWN,
+  NETWORK_TYPE_WIFI:        Ci.nsINetworkInfo.NETWORK_TYPE_WIFI,
+  NETWORK_TYPE_MOBILE:      Ci.nsINetworkInfo.NETWORK_TYPE_MOBILE,
+  NETWORK_TYPE_MOBILE_MMS:  Ci.nsINetworkInfo.NETWORK_TYPE_MOBILE_MMS,
+  NETWORK_TYPE_MOBILE_SUPL: Ci.nsINetworkInfo.NETWORK_TYPE_MOBILE_SUPL,
 
-  NETWORK_TYPE_WIFI:        Ci.nsINetworkInterface.NETWORK_TYPE_WIFI,
-  NETWORK_TYPE_MOBILE:      Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE,
-  NETWORK_TYPE_MOBILE_MMS:  Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE_MMS,
-  NETWORK_TYPE_MOBILE_SUPL: Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE_SUPL,
+  info: {
+    QueryInterface: XPCOMUtils.generateQI([Ci.nsINetworkInfo]),
 
-  type: Ci.nsINetworkInterface.NETWORK_TYPE_WIFI,
+    state: Ci.nsINetworkInfo.NETWORK_STATE_UNKNOWN,
 
-  name: null,
+    type: Ci.nsINetworkInfo.NETWORK_TYPE_WIFI,
 
-  ips: [],
+    name: null,
 
-  prefixLengths: [],
+    ips: [],
 
-  dnses: [],
+    prefixLengths: [],
 
-  gateways: [],
+    dnses: [],
+
+    gateways: [],
+
+    getAddresses: function (ips, prefixLengths) {
+      ips.value = this.ips.slice();
+      prefixLengths.value = this.prefixLengths.slice();
+
+      return this.ips.length;
+    },
+
+    getGateways: function (count) {
+      if (count) {
+        count.value = this.gateways.length;
+      }
+      return this.gateways.slice();
+    },
+
+    getDnses: function (count) {
+      if (count) {
+        count.value = this.dnses.length;
+      }
+      return this.dnses.slice();
+    }
+  },
 
   httpProxyHost: null,
 
-  httpProxyPort: null,
-
-  getAddresses: function (ips, prefixLengths) {
-    ips.value = this.ips.slice();
-    prefixLengths.value = this.prefixLengths.slice();
-
-    return this.ips.length;
-  },
-
-  getGateways: function (count) {
-    if (count) {
-      count.value = this.gateways.length;
-    }
-    return this.gateways.slice();
-  },
-
-  getDnses: function (count) {
-    if (count) {
-      count.value = this.dnses.length;
-    }
-    return this.dnses.slice();
-  }
+  httpProxyPort: null
 };
 
 function WifiScanResult() {}
 
 // TODO Make the difference between a DOM-based network object and our
 // networks objects much clearer.
-let netToDOM;
-let netFromDOM;
+var netToDOM;
+var netFromDOM;
 
 function WifiWorker() {
   var self = this;
@@ -2203,11 +2229,6 @@ function WifiWorker() {
         }
 
         var _oncompleted = function() {
-          // Update http proxy when connected to network.
-          let netConnect = WifiManager.getHttpProxyNetwork(self.currentNetwork);
-          if (netConnect)
-            WifiManager.setHttpProxy(netConnect);
-
           // The full authentication process is completed, reset the count.
           WifiManager.authenticationFailuresCount = 0;
           WifiManager.loopDetectionCount = 0;
@@ -2238,8 +2259,8 @@ function WifiWorker() {
       case "DISCONNECTED":
         // wpa_supplicant may give us a "DISCONNECTED" event even if
         // we are already in "DISCONNECTED" state.
-        if ((WifiNetworkInterface.state ===
-             Ci.nsINetworkInterface.NETWORK_STATE_DISCONNECTED) &&
+        if ((WifiNetworkInterface.info.state ===
+             Ci.nsINetworkInfo.NETWORK_STATE_DISCONNECTED) &&
              (this.prevState === "INITIALIZING" ||
               this.prevState === "DISCONNECTED" ||
               this.prevState === "INTERFACE_DISABLED" ||
@@ -2251,22 +2272,6 @@ function WifiWorker() {
         }
 
         self._fireEvent("ondisconnect", {network: netToDOM(self.currentNetwork)});
-
-        // When disconnected, clear the http proxy setting if it exists.
-        // Temporarily set http proxy to empty and restore user setting after setHttpProxy.
-        let netDisconnect = WifiManager.getHttpProxyNetwork(self.currentNetwork);
-        if (netDisconnect) {
-          let prehttpProxyHostSetting = netDisconnect.httpProxyHost;
-          let prehttpProxyPortSetting = netDisconnect.httpProxyPort;
-
-          netDisconnect.httpProxyHost = "";
-          netDisconnect.httpProxyPort = 0;
-
-          WifiManager.setHttpProxy(netDisconnect);
-
-          netDisconnect.httpProxyHost = prehttpProxyHostSetting;
-          netDisconnect.httpProxyPort = prehttpProxyPortSetting;
-        }
 
         self.currentNetwork = null;
         self.ipAddress = "";
@@ -2287,13 +2292,16 @@ function WifiWorker() {
           }
         });
 
-        WifiNetworkInterface.state =
-          Ci.nsINetworkInterface.NETWORK_STATE_DISCONNECTED;
-        WifiNetworkInterface.ips = [];
-        WifiNetworkInterface.prefixLengths = [];
-        WifiNetworkInterface.gateways = [];
-        WifiNetworkInterface.dnses = [];
+        WifiNetworkInterface.info.state =
+          Ci.nsINetworkInfo.NETWORK_STATE_DISCONNECTED;
+
+        // Update network infterface first then clear properties.
         gNetworkManager.updateNetworkInterface(WifiNetworkInterface);
+        WifiNetworkInterface.info.ips = [];
+        WifiNetworkInterface.info.prefixLengths = [];
+        WifiNetworkInterface.info.gateways = [];
+        WifiNetworkInterface.info.dnses = [];
+
 
         break;
       case "WPS_TIMEOUT":
@@ -2328,18 +2336,25 @@ function WifiWorker() {
     if (!maskLength) {
       maskLength = 32; // max prefix for IPv4.
     }
-    WifiNetworkInterface.state =
-      Ci.nsINetworkInterface.NETWORK_STATE_CONNECTED;
-    WifiNetworkInterface.ips = [this.info.ipaddr_str];
-    WifiNetworkInterface.prefixLengths = [maskLength];
-    WifiNetworkInterface.gateways = [this.info.gateway_str];
+
+    let netConnect = WifiManager.getHttpProxyNetwork(self.currentNetwork);
+    if (netConnect) {
+      WifiNetworkInterface.httpProxyHost = netConnect.httpProxyHost;
+      WifiNetworkInterface.httpProxyPort = netConnect.httpProxyPort;
+    }
+
+    WifiNetworkInterface.info.state =
+      Ci.nsINetworkInfo.NETWORK_STATE_CONNECTED;
+    WifiNetworkInterface.info.ips = [this.info.ipaddr_str];
+    WifiNetworkInterface.info.prefixLengths = [maskLength];
+    WifiNetworkInterface.info.gateways = [this.info.gateway_str];
     if (typeof this.info.dns1_str == "string" &&
         this.info.dns1_str.length) {
-      WifiNetworkInterface.dnses.push(this.info.dns1_str);
+      WifiNetworkInterface.info.dnses.push(this.info.dns1_str);
     }
     if (typeof this.info.dns2_str == "string" &&
         this.info.dns2_str.length) {
-      WifiNetworkInterface.dnses.push(this.info.dns2_str);
+      WifiNetworkInterface.info.dnses.push(this.info.dns2_str);
     }
     gNetworkManager.updateNetworkInterface(WifiNetworkInterface);
 
@@ -2621,7 +2636,9 @@ WifiWorker.prototype = {
 
         // Only fire the event if the link speed changed or the signal
         // strength changed by more than 10%.
-        function tensPlace(percent) ((percent / 10) | 0)
+        function tensPlace(percent) {
+          return (percent / 10) | 0;
+        }
 
         if (last && last.linkSpeed === info.linkSpeed &&
             last.ipAddress === info.ipAddress &&
@@ -3296,6 +3313,17 @@ WifiWorker.prototype = {
       }
     }
 
+    function connectToNetwork() {
+      WifiManager.updateNetwork(privnet, (function(ok) {
+        if (!ok) {
+          self._sendMessage(message, false, "Network is misconfigured", msg);
+          return;
+        }
+
+        networkReady();
+      }));
+    }
+
     let ssid = privnet.ssid;
     let networkKey = getNetworkKey(privnet);
     let configured;
@@ -3317,14 +3345,22 @@ WifiWorker.prototype = {
       // it can be sorted correctly in _reprioritizeNetworks() because the
       // function sort network based on priority in configure list.
       configured.priority = privnet.priority;
-      WifiManager.updateNetwork(privnet, (function(ok) {
-        if (!ok) {
-          this._sendMessage(message, false, "Network is misconfigured", msg);
-          return;
-        }
 
-        networkReady();
-      }).bind(this));
+      // When investigating Bug 1123680, we observed that gaia may unexpectedly
+      // request to associate with incorrect password before successfully
+      // forgetting the network. It would cause the network unable to connect
+      // subsequently. Aside from preventing the racing forget/associate, we
+      // also try to disable network prior to updating the network.
+      WifiManager.getNetworkId(dequote(configured.ssid), function(netId) {
+        if (netId) {
+          WifiManager.disableNetwork(netId, function() {
+            connectToNetwork();
+          });
+        }
+        else {
+          connectToNetwork();
+        }
+      });
     } else {
       // networkReady, above, calls saveConfig. We want to remember the new
       // network as being enabled, which isn't the default, so we explicitly
@@ -3481,7 +3517,7 @@ WifiWorker.prototype = {
   },
 
   setStaticIpMode: function(msg) {
-    const message = "WifiManager:setStaticMode:Return";
+    const message = "WifiManager:setStaticIpMode:Return";
     let self = this;
     let network = msg.data.network;
     let info = msg.data.info;
@@ -3865,7 +3901,7 @@ WifiWorker.prototype = {
 
 this.NSGetFactory = XPCOMUtils.generateNSGetFactory([WifiWorker]);
 
-let debug;
+var debug;
 function updateDebug() {
   if (DEBUG) {
     debug = function (s) {

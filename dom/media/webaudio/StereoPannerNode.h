@@ -15,7 +15,7 @@ namespace dom {
 
 class AudioContext;
 
-class StereoPannerNode : public AudioNode
+class StereoPannerNode final : public AudioNode
 {
 public:
   MOZ_DECLARE_REFCOUNTED_TYPENAME(StereoPannerNode)
@@ -60,12 +60,11 @@ protected:
   virtual ~StereoPannerNode();
 
 private:
-  static void SendPanToStream(AudioNode* aNode);
   nsRefPtr<AudioParam> mPan;
 };
 
-}
-}
+} // namespace dom
+} // namespace mozilla
 
 #endif
 

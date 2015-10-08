@@ -9,6 +9,14 @@
 #include "nsComponentManagerUtils.h"
 #include "nsIObserverService.h"
 #include "mozilla/Services.h"
+#include "mozilla/DetailedPromise.h"
+#ifdef XP_WIN
+#include "mozilla/WindowsVersion.h"
+#endif
+#ifdef XP_MACOSX
+#include "nsCocoaFeatures.h"
+#endif
+#include "nsPrintfCString.h"
 
 namespace mozilla {
 namespace dom {
@@ -26,7 +34,7 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(MediaKeySystemAccessManager)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(MediaKeySystemAccessManager)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mWindow)
   for (size_t i = 0; i < tmp->mRequests.Length(); i++) {
-    tmp->mRequests[i].RejectPromise();
+    tmp->mRequests[i].RejectPromise(NS_LITERAL_CSTRING("Promise still outstanding at MediaKeySystemAccessManager GC"));
     tmp->mRequests[i].CancelTimer();
     NS_IMPL_CYCLE_COLLECTION_UNLINK(mRequests[i].mPromise)
   }
@@ -43,6 +51,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 MediaKeySystemAccessManager::MediaKeySystemAccessManager(nsPIDOMWindow* aWindow)
   : mWindow(aWindow)
   , mAddedObservers(false)
+  , mTrialCreator(new GMPVideoDecoderTrialCreator())
 {
 }
 
@@ -52,12 +61,13 @@ MediaKeySystemAccessManager::~MediaKeySystemAccessManager()
 }
 
 void
-MediaKeySystemAccessManager::Request(Promise* aPromise,
+MediaKeySystemAccessManager::Request(DetailedPromise* aPromise,
                                      const nsAString& aKeySystem,
                                      const Optional<Sequence<MediaKeySystemOptions>>& aOptions)
 {
   if (aKeySystem.IsEmpty() || (aOptions.WasPassed() && aOptions.Value().IsEmpty())) {
-    aPromise->MaybeReject(NS_ERROR_DOM_INVALID_ACCESS_ERR);
+    aPromise->MaybeReject(NS_ERROR_DOM_INVALID_ACCESS_ERR,
+                          NS_LITERAL_CSTRING("Invalid keysystem type or invalid options sequence"));
     return;
   }
   Sequence<MediaKeySystemOptions> optionsNotPassed;
@@ -65,8 +75,21 @@ MediaKeySystemAccessManager::Request(Promise* aPromise,
   Request(aPromise, aKeySystem, options, RequestType::Initial);
 }
 
+static bool
+ShouldTrialCreateGMP(const nsAString& aKeySystem)
+{
+  // Trial create where the CDM has a Windows Media Foundation decoder.
+#ifdef XP_WIN
+  return Preferences::GetBool("media.gmp.trial-create.enabled", false) &&
+         aKeySystem.EqualsLiteral("org.w3.clearkey") &&
+         IsVistaOrLater();
+#else
+  return false;
+#endif
+}
+
 void
-MediaKeySystemAccessManager::Request(Promise* aPromise,
+MediaKeySystemAccessManager::Request(DetailedPromise* aPromise,
                                      const nsAString& aKeySystem,
                                      const Sequence<MediaKeySystemOptions>& aOptions,
                                      RequestType aType)
@@ -78,7 +101,8 @@ MediaKeySystemAccessManager::Request(Promise* aPromise,
     MediaKeySystemAccess::NotifyObservers(mWindow,
                                           aKeySystem,
                                           MediaKeySystemStatus::Api_disabled);
-    aPromise->MaybeReject(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+    aPromise->MaybeReject(NS_ERROR_DOM_NOT_SUPPORTED_ERR,
+                          NS_LITERAL_CSTRING("EME has been preffed off"));
     return;
   }
 
@@ -91,11 +115,25 @@ MediaKeySystemAccessManager::Request(Promise* aPromise,
     // Invalid keySystem string, or unsupported keySystem. Send notification
     // to chrome to show a failure notice.
     MediaKeySystemAccess::NotifyObservers(mWindow, aKeySystem, MediaKeySystemStatus::Cdm_not_supported);
-    aPromise->MaybeReject(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+    aPromise->MaybeReject(NS_ERROR_DOM_NOT_SUPPORTED_ERR,
+                          NS_LITERAL_CSTRING("Key system string is invalid, or key system is unsupported"));
     return;
   }
 
-  MediaKeySystemStatus status = MediaKeySystemAccess::GetKeySystemStatus(keySystem, minCdmVersion);
+  nsAutoCString message;
+  nsAutoCString cdmVersion;
+  MediaKeySystemStatus status =
+    MediaKeySystemAccess::GetKeySystemStatus(keySystem, minCdmVersion, message, cdmVersion);
+
+  nsPrintfCString msg("MediaKeySystemAccess::GetKeySystemStatus(%s, minVer=%d) "
+                      "result=%s version='%s' msg='%s'",
+                      NS_ConvertUTF16toUTF8(keySystem).get(),
+                      minCdmVersion,
+                      MediaKeySystemStatusValues::strings[(size_t)status].value,
+                      cdmVersion.get(),
+                      message.get());
+  LogToBrowserConsole(NS_ConvertUTF8toUTF16(msg));
+
   if ((status == MediaKeySystemStatus::Cdm_not_installed ||
        status == MediaKeySystemStatus::Cdm_insufficient_version) &&
       keySystem.EqualsLiteral("com.adobe.primetime")) {
@@ -117,7 +155,8 @@ MediaKeySystemAccessManager::Request(Promise* aPromise,
       // We waited or can't wait for an update and we still can't service
       // the request. Give up. Chrome will still be showing a "I can't play,
       // updating" notification.
-      aPromise->MaybeReject(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+      aPromise->MaybeReject(NS_ERROR_DOM_NOT_SUPPORTED_ERR,
+                            NS_LITERAL_CSTRING("Gave up while waiting for a CDM update"));
     }
     return;
   }
@@ -127,22 +166,34 @@ MediaKeySystemAccessManager::Request(Promise* aPromise,
       // chrome, so we can show some UI to explain how the user can rectify
       // the situation.
       MediaKeySystemAccess::NotifyObservers(mWindow, keySystem, status);
+      aPromise->MaybeReject(NS_ERROR_DOM_NOT_SUPPORTED_ERR, message);
+      return;
     }
-    aPromise->MaybeReject(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+    aPromise->MaybeReject(NS_ERROR_DOM_INVALID_STATE_ERR,
+                          NS_LITERAL_CSTRING("GetKeySystemAccess failed"));
     return;
   }
 
   if (aOptions.IsEmpty() ||
       MediaKeySystemAccess::IsSupported(keySystem, aOptions)) {
-    nsRefPtr<MediaKeySystemAccess> access(new MediaKeySystemAccess(mWindow, keySystem));
+    nsRefPtr<MediaKeySystemAccess> access(
+      new MediaKeySystemAccess(mWindow, keySystem, NS_ConvertUTF8toUTF16(cdmVersion)));
+   if (ShouldTrialCreateGMP(keySystem)) {
+      // Ensure we have tried creating a GMPVideoDecoder for this
+      // keySystem, and that we can use it to decode. This ensures that we only
+      // report that we support this keySystem when the CDM us usable.
+      mTrialCreator->MaybeAwaitTrialCreate(keySystem, access, aPromise, mWindow);
+      return;
+    }
     aPromise->MaybeResolve(access);
     return;
   }
 
-  aPromise->MaybeReject(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+  aPromise->MaybeReject(NS_ERROR_DOM_NOT_SUPPORTED_ERR,
+                        NS_LITERAL_CSTRING("Key system is not supported"));
 }
 
-MediaKeySystemAccessManager::PendingRequest::PendingRequest(Promise* aPromise,
+MediaKeySystemAccessManager::PendingRequest::PendingRequest(DetailedPromise* aPromise,
                                                             const nsAString& aKeySystem,
                                                             const Sequence<MediaKeySystemOptions>& aOptions,
                                                             nsITimer* aTimer)
@@ -177,15 +228,15 @@ MediaKeySystemAccessManager::PendingRequest::CancelTimer()
 }
 
 void
-MediaKeySystemAccessManager::PendingRequest::RejectPromise()
+MediaKeySystemAccessManager::PendingRequest::RejectPromise(const nsCString& aReason)
 {
   if (mPromise) {
-    mPromise->MaybeReject(NS_ERROR_DOM_INVALID_ACCESS_ERR);
+    mPromise->MaybeReject(NS_ERROR_DOM_INVALID_ACCESS_ERR, aReason);
   }
 }
 
 bool
-MediaKeySystemAccessManager::AwaitInstall(Promise* aPromise,
+MediaKeySystemAccessManager::AwaitInstall(DetailedPromise* aPromise,
                                           const nsAString& aKeySystem,
                                           const Sequence<MediaKeySystemOptions>& aOptions)
 {
@@ -265,7 +316,7 @@ MediaKeySystemAccessManager::Shutdown()
   for (PendingRequest& request : requests) {
     // Cancel all requests; we're shutting down.
     request.CancelTimer();
-    request.RejectPromise();
+    request.RejectPromise(NS_LITERAL_CSTRING("Promise still outstanding at MediaKeySystemAccessManager shutdown"));
   }
   if (mAddedObservers) {
     nsCOMPtr<nsIObserverService> obsService = mozilla::services::GetObserverService();

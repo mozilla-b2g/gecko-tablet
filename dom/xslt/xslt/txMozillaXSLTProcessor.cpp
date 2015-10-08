@@ -18,7 +18,6 @@
 #include "nsILoadGroup.h"
 #include "nsIStringBundle.h"
 #include "nsIURI.h"
-#include "nsNetUtil.h"
 #include "XPathResult.h"
 #include "txExecutionState.h"
 #include "txMozillaTextOutput.h"
@@ -35,6 +34,7 @@
 #include "nsIScriptSecurityManager.h"
 #include "nsJSUtils.h"
 #include "nsIXPConnect.h"
+#include "nsVariant.h"
 #include "mozilla/dom/DocumentFragment.h"
 #include "mozilla/dom/XSLTProcessorBinding.h"
 
@@ -599,7 +599,8 @@ txMozillaXSLTProcessor::ImportStylesheet(nsIDOMNode *aStyle)
     NS_ENSURE_TRUE(!mStylesheetDocument && !mStylesheet,
                    NS_ERROR_NOT_IMPLEMENTED);
 
-    if (!nsContentUtils::CanCallerAccess(aStyle)) {
+    nsCOMPtr<nsINode> node = do_QueryInterface(aStyle);
+    if (!node || !nsContentUtils::SubjectPrincipalOrSystemIfNativeCaller()->Subsumes(node->NodePrincipal())) {
         return NS_ERROR_DOM_SECURITY_ERR;
     }
     
@@ -714,8 +715,13 @@ txMozillaXSLTProcessor::TransformToFragment(nsIDOMNode *aSource,
     NS_ENSURE_ARG_POINTER(aResult);
     NS_ENSURE_SUCCESS(mCompileResult, mCompileResult);
 
-    if (!nsContentUtils::CanCallerAccess(aSource) ||
-        !nsContentUtils::CanCallerAccess(aOutput)) {
+    nsCOMPtr<nsINode> node = do_QueryInterface(aSource);
+    nsCOMPtr<nsIDocument> doc = do_QueryInterface(aOutput);
+    NS_ENSURE_TRUE(node && doc, NS_ERROR_DOM_SECURITY_ERR);
+    nsIPrincipal* subject = nsContentUtils::SubjectPrincipalOrSystemIfNativeCaller();
+    if (!subject->Subsumes(node->NodePrincipal()) ||
+        !subject->Subsumes(doc->NodePrincipal()))
+    {
         return NS_ERROR_DOM_SECURITY_ERR;
     }
 
@@ -840,9 +846,7 @@ txMozillaXSLTProcessor::SetParameter(const nsAString & aNamespaceURI,
                 rv = xpathResult->Clone(getter_AddRefs(clone));
                 NS_ENSURE_SUCCESS(rv, rv);
 
-                nsCOMPtr<nsIWritableVariant> variant =
-                    do_CreateInstance("@mozilla.org/variant;1", &rv);
-                NS_ENSURE_SUCCESS(rv, rv);
+                nsRefPtr<nsVariant> variant = new nsVariant();
 
                 rv = variant->SetAsISupports(clone);
                 NS_ENSURE_SUCCESS(rv, rv);
@@ -1245,7 +1249,8 @@ txMozillaXSLTProcessor::AttributeChanged(nsIDocument* aDocument,
                                          Element* aElement,
                                          int32_t aNameSpaceID,
                                          nsIAtom* aAttribute,
-                                         int32_t aModType)
+                                         int32_t aModType,
+                                         const nsAttrValue* aOldValue)
 {
     mStylesheet = nullptr;
 }

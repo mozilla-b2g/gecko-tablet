@@ -18,6 +18,9 @@
 
 #include "jsobjinlines.h"
 #include "jsopcodeinlines.h"
+#include "jsscriptinlines.h"
+
+#include "jit/shared/Lowering-shared-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -202,6 +205,23 @@ BlockIsSingleTest(MBasicBlock* phiBlock, MBasicBlock* testBlock, MPhi** pphi, MT
     return true;
 }
 
+// Change block so that it ends in a goto to the specific target block.
+// existingPred is an existing predecessor of the block.
+static void
+UpdateGotoSuccessor(TempAllocator& alloc, MBasicBlock* block, MBasicBlock* target,
+                     MBasicBlock* existingPred)
+{
+    MInstruction* ins = block->lastIns();
+    MOZ_ASSERT(ins->isGoto());
+    ins->toGoto()->target()->removePredecessor(block);
+    block->discardLastIns();
+
+    MGoto* newGoto = MGoto::New(alloc, target);
+    block->end(newGoto);
+
+    target->addPredecessorSameInputsAs(block, existingPred);
+}
+
 // Change block so that it ends in a test of the specified value, going to
 // either ifTrue or ifFalse. existingPred is an existing predecessor of ifTrue
 // or ifFalse with the same values incoming to ifTrue/ifFalse as block.
@@ -302,8 +322,11 @@ MaybeFoldConditionBlock(MIRGraph& graph, MBasicBlock* initialBlock)
     }
 
     // Make sure the test block does not have any outgoing loop backedges.
-    if (!SplitCriticalEdgesForBlock(graph, testBlock))
-        CrashAtUnhandlableOOM("MaybeFoldConditionBlock");
+    {
+        AutoEnterOOMUnsafeRegion oomUnsafe;
+        if (!SplitCriticalEdgesForBlock(graph, testBlock))
+            oomUnsafe.crash("MaybeFoldConditionBlock");
+    }
 
     MPhi* phi;
     MTest* finalTest;
@@ -347,6 +370,8 @@ MaybeFoldConditionBlock(MIRGraph& graph, MBasicBlock* initialBlock)
                      : finalTest->ifFalse();
         phiBlock->removePredecessor(trueBranch);
         graph.removeBlock(trueBranch);
+    } else if (initialTest->input() == trueResult) {
+        UpdateGotoSuccessor(graph.alloc(), trueBranch, finalTest->ifTrue(), testBlock);
     } else {
         UpdateTestSuccessors(graph.alloc(), trueBranch, trueResult,
                              finalTest->ifTrue(), finalTest->ifFalse(), testBlock);
@@ -359,6 +384,8 @@ MaybeFoldConditionBlock(MIRGraph& graph, MBasicBlock* initialBlock)
                       : finalTest->ifFalse();
         phiBlock->removePredecessor(falseBranch);
         graph.removeBlock(falseBranch);
+    } else if (initialTest->input() == falseResult) {
+        UpdateGotoSuccessor(graph.alloc(), falseBranch, finalTest->ifFalse(), testBlock);
     } else {
         UpdateTestSuccessors(graph.alloc(), falseBranch, falseResult,
                              finalTest->ifTrue(), finalTest->ifFalse(), testBlock);
@@ -1142,6 +1169,9 @@ TypeAnalyzer::insertConversions()
                 adjustPhiInputs(phi);
             }
         }
+
+        // AdjustInputs can add/remove/mutate instructions before and after the
+        // current instruction. Only increment the iterator after it is finished.
         for (MInstructionIterator iter(block->begin()); iter != block->end(); iter++) {
             if (!adjustInputs(*iter))
                 return false;
@@ -1660,7 +1690,7 @@ jit::BuildDominatorTree(MIRGraph& graph)
         MBasicBlock* child = *i;
         MBasicBlock* parent = child->immediateDominator();
 
-        // Domininace is defined such that blocks always dominate themselves.
+        // Dominance is defined such that blocks always dominate themselves.
         child->addNumDominated(1);
 
         // If the block only self-dominates, it has no definite parent.
@@ -2067,6 +2097,7 @@ IsResumableMIRType(MIRType type)
       case MIRType_Shape:
       case MIRType_ObjectGroup:
       case MIRType_Doublex2: // NYI, see also RSimdBox::recover
+      case MIRType_SinCosDouble:
         return false;
     }
     MOZ_CRASH("Unknown MIRType.");
@@ -2553,7 +2584,8 @@ TryOptimizeLoadObjectOrNull(MDefinition* def, MDefinitionVector* peliminateList)
                 return false;
             break;
           case MDefinition::Op_Unbox:
-            MOZ_ASSERT(ndef->type() == MIRType_Object);
+            if (ndef->type() != MIRType_Object)
+                return true;
             break;
           case MDefinition::Op_TypeBarrier:
             // For now, only handle type barriers which are not consumed
@@ -2707,6 +2739,117 @@ jit::EliminateRedundantChecks(MIRGraph& graph)
     return true;
 }
 
+static bool
+NeedsKeepAlive(MInstruction* slotsOrElements, MInstruction* use)
+{
+    MOZ_ASSERT(slotsOrElements->type() == MIRType_Elements ||
+               slotsOrElements->type() == MIRType_Slots);
+
+    if (slotsOrElements->block() != use->block())
+        return true;
+
+    MBasicBlock* block = use->block();
+    MInstructionIterator iter(block->begin(slotsOrElements));
+    MOZ_ASSERT(*iter == slotsOrElements);
+    ++iter;
+
+    while (true) {
+        if (*iter == use)
+            return false;
+
+        switch (iter->op()) {
+          case MDefinition::Op_Nop:
+          case MDefinition::Op_Constant:
+          case MDefinition::Op_KeepAliveObject:
+          case MDefinition::Op_Unbox:
+          case MDefinition::Op_LoadSlot:
+          case MDefinition::Op_StoreSlot:
+          case MDefinition::Op_LoadFixedSlot:
+          case MDefinition::Op_StoreFixedSlot:
+          case MDefinition::Op_LoadElement:
+          case MDefinition::Op_StoreElement:
+          case MDefinition::Op_InitializedLength:
+          case MDefinition::Op_ArrayLength:
+          case MDefinition::Op_BoundsCheck:
+            iter++;
+            break;
+          default:
+            return true;
+        }
+    }
+
+    MOZ_CRASH("Unreachable");
+}
+
+void
+jit::AddKeepAliveInstructions(MIRGraph& graph)
+{
+    for (MBasicBlockIterator i(graph.begin()); i != graph.end(); i++) {
+        MBasicBlock* block = *i;
+
+        for (MInstructionIterator insIter(block->begin()); insIter != block->end(); insIter++) {
+            MInstruction* ins = *insIter;
+            if (ins->type() != MIRType_Elements && ins->type() != MIRType_Slots)
+                continue;
+
+            MDefinition* ownerObject;
+            switch (ins->op()) {
+              case MDefinition::Op_ConstantElements:
+                continue;
+              case MDefinition::Op_ConvertElementsToDoubles:
+                // EliminateRedundantChecks should have replaced all uses.
+                MOZ_ASSERT(!ins->hasUses());
+                continue;
+              case MDefinition::Op_Elements:
+              case MDefinition::Op_TypedArrayElements:
+              case MDefinition::Op_TypedObjectElements:
+                MOZ_ASSERT(ins->numOperands() == 1);
+                ownerObject = ins->getOperand(0);
+                break;
+              case MDefinition::Op_Slots:
+                ownerObject = ins->toSlots()->object();
+                break;
+              default:
+                MOZ_CRASH("Unexpected op");
+            }
+
+            MOZ_ASSERT(ownerObject->type() == MIRType_Object);
+
+            if (ownerObject->isConstant()) {
+                // Constants are kept alive by other pointers, for instance
+                // ImmGCPtr in JIT code.
+                continue;
+            }
+
+            for (MUseDefIterator uses(ins); uses; uses++) {
+                MInstruction* use = uses.def()->toInstruction();
+
+                if (use->isStoreElementHole()) {
+                    // StoreElementHole has an explicit object operand. If GVN
+                    // is disabled, we can get different unbox instructions with
+                    // the same object as input, so we check for that case.
+                    MOZ_ASSERT_IF(!use->toStoreElementHole()->object()->isUnbox() && !ownerObject->isUnbox(),
+                                  use->toStoreElementHole()->object() == ownerObject);
+                    continue;
+                }
+
+                if (use->isInArray()) {
+                    // See StoreElementHole case above.
+                    MOZ_ASSERT_IF(!use->toInArray()->object()->isUnbox() && !ownerObject->isUnbox(),
+                                  use->toInArray()->object() == ownerObject);
+                    continue;
+                }
+
+                if (!NeedsKeepAlive(ins, use))
+                    continue;
+
+                MKeepAliveObject* keepAlive = MKeepAliveObject::New(graph.alloc(), ownerObject);
+                use->block()->insertAfter(use, keepAlive);
+            }
+        }
+    }
+}
+
 bool
 LinearSum::multiply(int32_t scale)
 {
@@ -2792,8 +2935,9 @@ LinearSum::add(MDefinition* term, int32_t scale)
         }
     }
 
+    AutoEnterOOMUnsafeRegion oomUnsafe;
     if (!terms_.append(LinearTerm(term, scale)))
-        CrashAtUnhandlableOOM("LinearSum::add");
+        oomUnsafe.crash("LinearSum::add");
 
     return true;
 }
@@ -2805,7 +2949,7 @@ LinearSum::add(int32_t constant)
 }
 
 void
-LinearSum::print(Sprinter& sp) const
+LinearSum::dump(GenericPrinter& out) const
 {
     for (size_t i = 0; i < terms_.length(); i++) {
         int32_t scale = terms_[i].scale;
@@ -2813,36 +2957,29 @@ LinearSum::print(Sprinter& sp) const
         MOZ_ASSERT(scale);
         if (scale > 0) {
             if (i)
-                sp.printf("+");
+                out.printf("+");
             if (scale == 1)
-                sp.printf("#%d", id);
+                out.printf("#%d", id);
             else
-                sp.printf("%d*#%d", scale, id);
+                out.printf("%d*#%d", scale, id);
         } else if (scale == -1) {
-            sp.printf("-#%d", id);
+            out.printf("-#%d", id);
         } else {
-            sp.printf("%d*#%d", scale, id);
+            out.printf("%d*#%d", scale, id);
         }
     }
     if (constant_ > 0)
-        sp.printf("+%d", constant_);
+        out.printf("+%d", constant_);
     else if (constant_ < 0)
-        sp.printf("%d", constant_);
-}
-
-void
-LinearSum::dump(FILE* fp) const
-{
-    Sprinter sp(GetJitContext()->cx);
-    sp.init();
-    print(sp);
-    fprintf(fp, "%s\n", sp.string());
+        out.printf("%d", constant_);
 }
 
 void
 LinearSum::dump() const
 {
-    dump(stderr);
+    Fprinter out(stderr);
+    dump(out);
+    out.finish();
 }
 
 MDefinition*
@@ -2856,7 +2993,7 @@ jit::ConvertLinearSum(TempAllocator& alloc, MBasicBlock* block, const LinearSum&
         if (term.scale == 1) {
             if (def) {
                 def = MAdd::New(alloc, def, term.term);
-                def->toAdd()->setInt32();
+                def->toAdd()->setInt32Specialization();
                 block->insertAtEnd(def->toInstruction());
                 def->computeRange(alloc);
             } else {
@@ -2869,7 +3006,7 @@ jit::ConvertLinearSum(TempAllocator& alloc, MBasicBlock* block, const LinearSum&
                 def->computeRange(alloc);
             }
             def = MSub::New(alloc, def, term.term);
-            def->toSub()->setInt32();
+            def->toSub()->setInt32Specialization();
             block->insertAtEnd(def->toInstruction());
             def->computeRange(alloc);
         } else {
@@ -2877,12 +3014,12 @@ jit::ConvertLinearSum(TempAllocator& alloc, MBasicBlock* block, const LinearSum&
             MConstant* factor = MConstant::New(alloc, Int32Value(term.scale));
             block->insertAtEnd(factor);
             MMul* mul = MMul::New(alloc, term.term, factor);
-            mul->setInt32();
+            mul->setInt32Specialization();
             block->insertAtEnd(mul);
             mul->computeRange(alloc);
             if (def) {
                 def = MAdd::New(alloc, def, mul);
-                def->toAdd()->setInt32();
+                def->toAdd()->setInt32Specialization();
                 block->insertAtEnd(def->toInstruction());
                 def->computeRange(alloc);
             } else {
@@ -2897,7 +3034,7 @@ jit::ConvertLinearSum(TempAllocator& alloc, MBasicBlock* block, const LinearSum&
         constant->computeRange(alloc);
         if (def) {
             def = MAdd::New(alloc, def, constant);
-            def->toAdd()->setInt32();
+            def->toAdd()->setInt32Specialization();
             block->insertAtEnd(def->toInstruction());
             def->computeRange(alloc);
         } else {
@@ -2963,7 +3100,7 @@ jit::ConvertLinearInequality(TempAllocator& alloc, MBasicBlock* block, const Lin
         block->insertAtEnd(constant->toInstruction());
         constant->computeRange(alloc);
         lhsDef = MAdd::New(alloc, lhsDef, constant);
-        lhsDef->toAdd()->setInt32();
+        lhsDef->toAdd()->setInt32Specialization();
         block->insertAtEnd(lhsDef->toInstruction());
         lhsDef->computeRange(alloc);
     } while (false);
@@ -3316,10 +3453,11 @@ ArgumentsUseCanBeLazy(JSContext* cx, JSScript* script, MInstruction* ins, size_t
         return true;
 
     // arguments.length length can read fp->numActualArgs() directly.
-    // arguments.callee can read fp->callee() directly in non-strict code.
+    // arguments.callee can read fp->callee() directly if the arguments object
+    // is mapped.
     if (ins->isCallGetProperty() && index == 0 &&
         (ins->toCallGetProperty()->name() == cx->names().length ||
-         (!script->strict() && ins->toCallGetProperty()->name() == cx->names().callee)))
+         (script->hasMappedArgsObj() && ins->toCallGetProperty()->name() == cx->names().callee)))
     {
         return true;
     }
@@ -3341,25 +3479,13 @@ jit::AnalyzeArgumentsUsage(JSContext* cx, JSScript* scriptArg)
     // and also simplifies handling of early returns.
     script->setNeedsArgsObj(true);
 
-    // Always construct arguments objects when in debug mode and for generator
-    // scripts (generators can be suspended when speculation fails).
+    // Always construct arguments objects when in debug mode, for generator
+    // scripts (generators can be suspended when speculation fails) or when
+    // direct eval is present.
     //
     // FIXME: Don't build arguments for ES6 generator expressions.
-    if (scriptArg->isDebuggee() || script->isGenerator())
+    if (scriptArg->isDebuggee() || script->isGenerator() || script->bindingsAccessedDynamically())
         return true;
-
-    // If the script has dynamic name accesses which could reach 'arguments',
-    // the parser will already have checked to ensure there are no explicit
-    // uses of 'arguments' in the function. If there are such uses, the script
-    // will be marked as definitely needing an arguments object.
-    //
-    // New accesses on 'arguments' can occur through 'eval' or the debugger
-    // statement. In the former case, we will dynamically detect the use and
-    // mark the arguments optimization as having failed.
-    if (script->bindingsAccessedDynamically()) {
-        script->setNeedsArgsObj(false);
-        return true;
-    }
 
     if (!jit::IsIonEnabled(cx))
         return true;
@@ -3380,8 +3506,11 @@ jit::AnalyzeArgumentsUsage(JSContext* cx, JSScript* scriptArg)
 
     MIRGraph graph(&temp);
     InlineScriptTree* inlineScriptTree = InlineScriptTree::New(&temp, nullptr, nullptr, script);
-    if (!inlineScriptTree)
+    if (!inlineScriptTree) {
+        ReportOutOfMemory(cx);
         return false;
+    }
+
     CompileInfo info(script, script->functionNonDelazifying(),
                      /* osrPc = */ nullptr, /* constructing = */ false,
                      Analysis_ArgumentsUsage,
@@ -3391,8 +3520,10 @@ jit::AnalyzeArgumentsUsage(JSContext* cx, JSScript* scriptArg)
     const OptimizationInfo* optimizationInfo = js_IonOptimizations.get(Optimization_Normal);
 
     CompilerConstraintList* constraints = NewCompilerConstraintList(temp);
-    if (!constraints)
+    if (!constraints) {
+        ReportOutOfMemory(cx);
         return false;
+    }
 
     BaselineInspector inspector(script);
     const JitCompileOptions options(cx);

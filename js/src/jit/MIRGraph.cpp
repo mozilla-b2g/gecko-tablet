@@ -20,7 +20,9 @@ using mozilla::Swap;
 MIRGenerator::MIRGenerator(CompileCompartment* compartment, const JitCompileOptions& options,
                            TempAllocator* alloc, MIRGraph* graph, CompileInfo* info,
                            const OptimizationInfo* optimizationInfo,
-                           Label* outOfBoundsLabel, bool usesSignalHandlersForAsmJSOOB)
+                           Label* outOfBoundsLabel,
+                           Label* conversionErrorLabel,
+                           bool usesSignalHandlersForAsmJSOOB)
   : compartment(compartment),
     info_(info),
     optimizationInfo_(optimizationInfo),
@@ -36,16 +38,17 @@ MIRGenerator::MIRGenerator(CompileCompartment* compartment, const JitCompileOpti
     performsCall_(false),
     usesSimd_(false),
     usesSimdCached_(false),
-    minAsmJSHeapLength_(0),
     modifiesFrameArguments_(false),
     instrumentedProfiling_(false),
     instrumentedProfilingIsCached_(false),
-    nurseryObjects_(*alloc),
+    safeForMinorGC_(true),
     outOfBoundsLabel_(outOfBoundsLabel),
+    conversionErrorLabel_(conversionErrorLabel),
 #if defined(ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_OOB)
     usesSignalHandlersForAsmJSOOB_(usesSignalHandlersForAsmJSOOB),
 #endif
-    options(options)
+    options(options),
+    gs_(alloc)
 { }
 
 bool
@@ -104,8 +107,49 @@ MIRGenerator::addAbortedPreliminaryGroup(ObjectGroup* group)
         if (group == abortedPreliminaryGroups_[i])
             return;
     }
+    AutoEnterOOMUnsafeRegion oomUnsafe;
     if (!abortedPreliminaryGroups_.append(group))
-        CrashAtUnhandlableOOM("addAbortedPreliminaryGroup");
+        oomUnsafe.crash("addAbortedPreliminaryGroup");
+}
+
+bool
+MIRGenerator::needsAsmJSBoundsCheckBranch(const MAsmJSHeapAccess* access) const
+{
+    // A heap access needs a bounds-check branch if we're not relying on signal
+    // handlers to catch errors, and if it's not proven to be within bounds.
+    // We use signal-handlers on x64, but on x86 there isn't enough address
+    // space for a guard region.  Also, on x64 the atomic loads and stores
+    // can't (yet) use the signal handlers.
+#if defined(ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_OOB)
+    if (usesSignalHandlersForAsmJSOOB_ && !access->isAtomicAccess())
+        return false;
+#endif
+    return access->needsBoundsCheck();
+}
+
+size_t
+MIRGenerator::foldableOffsetRange(const MAsmJSHeapAccess* access) const
+{
+    // This determines whether it's ok to fold up to AsmJSImmediateSize
+    // offsets, instead of just AsmJSCheckedImmediateSize.
+
+#if defined(ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_OOB)
+    // With signal-handler OOB handling, we reserve guard space for the full
+    // immediate size.
+    if (usesSignalHandlersForAsmJSOOB_)
+        return AsmJSImmediateRange;
+#endif
+
+    // On 32-bit platforms, if we've proven the access is in bounds after
+    // 32-bit wrapping, we can fold full offsets because they're added with
+    // 32-bit arithmetic.
+    if (sizeof(intptr_t) == sizeof(int32_t) && !access->needsBoundsCheck())
+        return AsmJSImmediateRange;
+
+    // Otherwise, only allow the checked size. This is always less than the
+    // minimum heap length, and allows explicit bounds checks to fold in the
+    // offset without overflow.
+    return AsmJSCheckedImmediateRange;
 }
 
 void
@@ -302,7 +346,7 @@ MBasicBlock::NewAsmJS(MIRGraph& graph, CompileInfo& info, MBasicBlock* pred, Kin
             size_t nphis = block->stackPosition_;
 
             TempAllocator& alloc = graph.alloc();
-            MPhi* phis = (MPhi*)alloc.allocateArray<sizeof(MPhi)>(nphis);
+            MPhi* phis = alloc.allocateArray<MPhi>(nphis);
             if (!phis)
                 return nullptr;
 
@@ -562,8 +606,9 @@ MBasicBlock::linkOsrValues(MStart* start)
             MOZ_ASSERT(def->isOsrValue() || def->isGetArgumentsObjectArg() || def->isConstant() ||
                        def->isParameter());
 
-            // A constant Undefined can show up here for an argument slot when the function uses
-            // a heavyweight argsobj, but the argument in question is stored on the scope chain.
+            // A constant Undefined can show up here for an argument slot when
+            // the function has an arguments object, but the argument in
+            // question is stored on the scope chain.
             MOZ_ASSERT_IF(def->isConstant(), def->toConstant()->value() == UndefinedValue());
 
             if (def->isOsrValue())
@@ -1093,16 +1138,18 @@ MBasicBlock::addPredecessorSameInputsAs(MBasicBlock* pred, MBasicBlock* existing
     MOZ_ASSERT(pred->hasLastIns());
     MOZ_ASSERT(!pred->successorWithPhis());
 
+    AutoEnterOOMUnsafeRegion oomUnsafe;
+
     if (!phisEmpty()) {
         size_t existingPosition = indexForPredecessor(existingPred);
         for (MPhiIterator iter = phisBegin(); iter != phisEnd(); iter++) {
             if (!iter->addInputSlow(iter->getOperand(existingPosition)))
-                CrashAtUnhandlableOOM("MBasicBlock::addPredecessorAdjustPhis");
+                oomUnsafe.crash("MBasicBlock::addPredecessorAdjustPhis");
         }
     }
 
     if (!predecessors_.append(pred))
-        CrashAtUnhandlableOOM("MBasicBlock::addPredecessorAdjustPhis");
+        oomUnsafe.crash("MBasicBlock::addPredecessorAdjustPhis");
 }
 
 bool
@@ -1474,19 +1521,6 @@ MBasicBlock::specializePhis()
     return true;
 }
 
-void
-MBasicBlock::dumpStack(FILE* fp)
-{
-#ifdef DEBUG
-    fprintf(fp, " %-3s %-16s %-6s %-10s\n", "#", "name", "copyOf", "first/next");
-    fprintf(fp, "-------------------------------------------\n");
-    for (uint32_t i = 0; i < stackPosition_; i++) {
-        fprintf(fp, " %-3d", i);
-        fprintf(fp, " %-16p\n", (void*)slots_[i]);
-    }
-#endif
-}
-
 MTest*
 MBasicBlock::immediateDominatorBranch(BranchDirection* pdirection)
 {
@@ -1516,12 +1550,33 @@ MBasicBlock::immediateDominatorBranch(BranchDirection* pdirection)
 }
 
 void
-MIRGraph::dump(FILE* fp)
+MBasicBlock::dumpStack(GenericPrinter& out)
+{
+#ifdef DEBUG
+    out.printf(" %-3s %-16s %-6s %-10s\n", "#", "name", "copyOf", "first/next");
+    out.printf("-------------------------------------------\n");
+    for (uint32_t i = 0; i < stackPosition_; i++) {
+        out.printf(" %-3d", i);
+        out.printf(" %-16p\n", (void*)slots_[i]);
+    }
+#endif
+}
+
+void
+MBasicBlock::dumpStack()
+{
+    Fprinter out(stderr);
+    dumpStack(out);
+    out.finish();
+}
+
+void
+MIRGraph::dump(GenericPrinter& out)
 {
 #ifdef DEBUG
     for (MBasicBlockIterator iter(begin()); iter != end(); iter++) {
-        iter->dump(fp);
-        fprintf(fp, "\n");
+        iter->dump(out);
+        out.printf("\n");
     }
 #endif
 }
@@ -1529,31 +1584,32 @@ MIRGraph::dump(FILE* fp)
 void
 MIRGraph::dump()
 {
-    dump(stderr);
+    Fprinter out(stderr);
+    dump(out);
+    out.finish();
 }
 
 void
-MBasicBlock::dump(FILE* fp)
+MBasicBlock::dump(GenericPrinter& out)
 {
 #ifdef DEBUG
-    fprintf(fp, "block%u:%s%s%s\n", id(),
-            isLoopHeader() ? " (loop header)" : "",
-            unreachable() ? " (unreachable)" : "",
-            isMarked() ? " (marked)" : "");
-    if (MResumePoint* resume = entryResumePoint()) {
-        resume->dump();
-    }
-    for (MPhiIterator iter(phisBegin()); iter != phisEnd(); iter++) {
-        iter->dump(fp);
-    }
-    for (MInstructionIterator iter(begin()); iter != end(); iter++) {
-        iter->dump(fp);
-    }
+    out.printf("block%u:%s%s%s\n", id(),
+               isLoopHeader() ? " (loop header)" : "",
+               unreachable() ? " (unreachable)" : "",
+               isMarked() ? " (marked)" : "");
+    if (MResumePoint* resume = entryResumePoint())
+        resume->dump(out);
+    for (MPhiIterator iter(phisBegin()); iter != phisEnd(); iter++)
+        iter->dump(out);
+    for (MInstructionIterator iter(begin()); iter != end(); iter++)
+        iter->dump(out);
 #endif
 }
 
 void
 MBasicBlock::dump()
 {
-    dump(stderr);
+    Fprinter out(stderr);
+    dump(out);
+    out.finish();
 }

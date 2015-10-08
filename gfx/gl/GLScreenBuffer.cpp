@@ -21,6 +21,7 @@
 #include "ScopedGLHelpers.h"
 #include "gfx2DGlue.h"
 #include "../layers/ipc/ShadowLayers.h"
+#include "mozilla/layers/TextureClientSharedSurface.h"
 
 namespace mozilla {
 namespace gl {
@@ -39,54 +40,42 @@ GLScreenBuffer::Create(GLContext* gl,
         return Move(ret);
     }
 
-    UniquePtr<SurfaceFactory> factory;
-
-#ifdef MOZ_WIDGET_GONK
-    /* On B2G, we want a Gralloc factory, and we want one right at the start */
-    layers::ISurfaceAllocator* allocator = caps.surfaceAllocator;
-    if (!factory &&
-        allocator &&
-        XRE_GetProcessType() != GeckoProcessType_Default)
-    {
-        layers::TextureFlags flags = layers::TextureFlags::DEALLOCATE_CLIENT |
-                                     layers::TextureFlags::ORIGIN_BOTTOM_LEFT;
-        if (!caps.premultAlpha) {
-            flags |= layers::TextureFlags::NON_PREMULTIPLIED;
-        }
-
-        factory = MakeUnique<SurfaceFactory_Gralloc>(gl, caps, flags,
-                                                     allocator);
+    layers::TextureFlags flags = layers::TextureFlags::ORIGIN_BOTTOM_LEFT;
+    if (!caps.premultAlpha) {
+        flags |= layers::TextureFlags::NON_PREMULTIPLIED;
     }
-#endif
-#ifdef XP_MACOSX
-    /* On OSX, we want an IOSurface factory, and we want one right at the start */
-    if (!factory) {
-        factory = SurfaceFactory_IOSurface::Create(gl, caps);
-    }
-#endif
 
-    if (!factory) {
-        factory = MakeUnique<SurfaceFactory_Basic>(gl, caps);
-    }
+    UniquePtr<SurfaceFactory> factory = MakeUnique<SurfaceFactory_Basic>(gl, caps, flags);
 
     ret.reset( new GLScreenBuffer(gl, caps, Move(factory)) );
     return Move(ret);
 }
 
+GLScreenBuffer::GLScreenBuffer(GLContext* gl,
+                               const SurfaceCaps& caps,
+                               UniquePtr<SurfaceFactory> factory)
+    : mGL(gl)
+    , mCaps(caps)
+    , mFactory(Move(factory))
+    , mNeedsBlit(true)
+    , mUserReadBufferMode(LOCAL_GL_BACK)
+    , mUserDrawBufferMode(LOCAL_GL_BACK)
+    , mUserDrawFB(0)
+    , mUserReadFB(0)
+    , mInternalDrawFB(0)
+    , mInternalReadFB(0)
+#ifdef DEBUG
+    , mInInternalMode_DrawFB(true)
+    , mInInternalMode_ReadFB(true)
+#endif
+{ }
+
 GLScreenBuffer::~GLScreenBuffer()
 {
+    mFactory = nullptr;
     mDraw = nullptr;
     mRead = nullptr;
-
-    // bug 914823: it is crucial to destroy the Factory _after_ we destroy
-    // the SharedSurfaces around here! Reason: the shared surfaces will want
-    // to ask the Allocator (e.g. the ClientLayerManager) to destroy their
-    // buffers, but that Allocator may be kept alive by the Factory,
-    // as it currently the case in SurfaceFactory_Gralloc holding a nsRefPtr
-    // to the Allocator!
-    mFactory = nullptr;
 }
-
 
 void
 GLScreenBuffer::BindAsFramebuffer(GLContext* const gl, GLenum target) const
@@ -457,6 +446,12 @@ GLScreenBuffer::Attach(SharedSurface* surf, const gfx::IntSize& size)
         mRead->SetReadBuffer(mUserReadBufferMode);
     }
 
+    // Update the DrawBuffer mode.
+    if (mGL->IsSupported(gl::GLFeature::draw_buffers)) {
+        BindFB(0);
+        SetDrawBuffer(mUserDrawBufferMode);
+    }
+
     RequireBlit();
 
     return true;
@@ -465,7 +460,7 @@ GLScreenBuffer::Attach(SharedSurface* surf, const gfx::IntSize& size)
 bool
 GLScreenBuffer::Swap(const gfx::IntSize& size)
 {
-    RefPtr<ShSurfHandle> newBack = mFactory->NewShSurfHandle(size);
+    RefPtr<SharedSurfaceTextureClient> newBack = mFactory->NewTexClient(size);
     if (!newBack)
         return false;
 
@@ -491,8 +486,15 @@ GLScreenBuffer::Swap(const gfx::IntSize& size)
         //uint32_t srcPixel = ReadPixel(src);
         //uint32_t destPixel = ReadPixel(dest);
         //printf_stderr("Before: src: 0x%08x, dest: 0x%08x\n", srcPixel, destPixel);
+#ifdef DEBUG
+        GLContext::LocalErrorScope errorScope(*mGL);
+#endif
 
         SharedSurface::ProdCopy(src, dest, mFactory.get());
+
+#ifdef DEBUG
+        MOZ_ASSERT(!errorScope.GetError());
+#endif
 
         //srcPixel = ReadPixel(src);
         //destPixel = ReadPixel(dest);
@@ -522,7 +524,7 @@ GLScreenBuffer::PublishFrame(const gfx::IntSize& size)
 bool
 GLScreenBuffer::Resize(const gfx::IntSize& size)
 {
-    RefPtr<ShSurfHandle> newBack = mFactory->NewShSurfHandle(size);
+    RefPtr<SharedSurfaceTextureClient> newBack = mFactory->NewTexClient(size);
     if (!newBack)
         return false;
 
@@ -561,6 +563,38 @@ GLScreenBuffer::CreateRead(SharedSurface* surf)
 }
 
 void
+GLScreenBuffer::SetDrawBuffer(GLenum mode)
+{
+    MOZ_ASSERT(mGL->IsSupported(gl::GLFeature::draw_buffers));
+    MOZ_ASSERT(GetDrawFB() == 0);
+
+    if (!mGL->IsSupported(GLFeature::draw_buffers))
+        return;
+
+    mUserDrawBufferMode = mode;
+
+    GLuint fb = mDraw ? mDraw->mFB : mRead->mFB;
+    GLenum internalMode;
+
+    switch (mode) {
+    case LOCAL_GL_BACK:
+        internalMode = (fb == 0) ? LOCAL_GL_BACK
+                                 : LOCAL_GL_COLOR_ATTACHMENT0;
+        break;
+
+    case LOCAL_GL_NONE:
+        internalMode = LOCAL_GL_NONE;
+        break;
+
+    default:
+        MOZ_CRASH("Bad value.");
+    }
+
+    mGL->MakeCurrent();
+    mGL->fDrawBuffers(1, &internalMode);
+}
+
+void
 GLScreenBuffer::SetReadBuffer(GLenum mode)
 {
     MOZ_ASSERT(mGL->IsSupported(gl::GLFeature::read_buffer));
@@ -582,6 +616,79 @@ bool
 GLScreenBuffer::IsReadFramebufferDefault() const
 {
     return SharedSurf()->mAttachType == AttachmentType::Screen;
+}
+
+////////////////////////////////////////////////////////////////////////
+// Utils
+
+static void
+RenderbufferStorageBySamples(GLContext* aGL, GLsizei aSamples,
+                             GLenum aInternalFormat, const gfx::IntSize& aSize)
+{
+    if (aSamples) {
+        aGL->fRenderbufferStorageMultisample(LOCAL_GL_RENDERBUFFER,
+                                             aSamples,
+                                             aInternalFormat,
+                                             aSize.width, aSize.height);
+    } else {
+        aGL->fRenderbufferStorage(LOCAL_GL_RENDERBUFFER,
+                                  aInternalFormat,
+                                  aSize.width, aSize.height);
+    }
+}
+
+static GLuint
+CreateRenderbuffer(GLContext* aGL, GLenum aFormat, GLsizei aSamples,
+                   const gfx::IntSize& aSize)
+{
+    GLuint rb = 0;
+    aGL->fGenRenderbuffers(1, &rb);
+    ScopedBindRenderbuffer autoRB(aGL, rb);
+
+    RenderbufferStorageBySamples(aGL, aSamples, aFormat, aSize);
+
+    return rb;
+}
+
+static void
+CreateRenderbuffersForOffscreen(GLContext* aGL, const GLFormats& aFormats,
+                                const gfx::IntSize& aSize, bool aMultisample,
+                                GLuint* aColorMSRB, GLuint* aDepthRB,
+                                GLuint* aStencilRB)
+{
+    GLsizei samples = aMultisample ? aFormats.samples : 0;
+    if (aColorMSRB) {
+        MOZ_ASSERT(aFormats.samples > 0);
+        MOZ_ASSERT(aFormats.color_rbFormat);
+
+        GLenum colorFormat = aFormats.color_rbFormat;
+        if (aGL->IsANGLE()) {
+            MOZ_ASSERT(colorFormat == LOCAL_GL_RGBA8);
+            colorFormat = LOCAL_GL_BGRA8_EXT;
+        }
+
+        *aColorMSRB = CreateRenderbuffer(aGL, colorFormat, samples, aSize);
+    }
+
+    if (aDepthRB &&
+        aStencilRB &&
+        aFormats.depthStencil)
+    {
+        *aDepthRB = CreateRenderbuffer(aGL, aFormats.depthStencil, samples, aSize);
+        *aStencilRB = *aDepthRB;
+    } else {
+        if (aDepthRB) {
+            MOZ_ASSERT(aFormats.depth);
+
+            *aDepthRB = CreateRenderbuffer(aGL, aFormats.depth, samples, aSize);
+        }
+
+        if (aStencilRB) {
+            MOZ_ASSERT(aFormats.stencil);
+
+            *aStencilRB = CreateRenderbuffer(aGL, aFormats.stencil, samples, aSize);
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -802,7 +909,8 @@ ReadBuffer::SetReadBuffer(GLenum userMode) const
 
     switch (userMode) {
     case LOCAL_GL_BACK:
-        internalMode = (mFB == 0) ? LOCAL_GL_BACK
+    case LOCAL_GL_FRONT:
+        internalMode = (mFB == 0) ? userMode
                                   : LOCAL_GL_COLOR_ATTACHMENT0;
         break;
 

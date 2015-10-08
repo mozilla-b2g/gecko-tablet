@@ -26,6 +26,7 @@
 #include "plbase64.h"
 #include "nsIClassInfoImpl.h"
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/LoadInfo.h"
 #include "mozilla/Preferences.h"
 #include "nsILoadInfo.h"
 #include "nsIContentPolicy.h"
@@ -148,18 +149,6 @@ nsFaviconService::ExpireAllFavicons()
 ////////////////////////////////////////////////////////////////////////////////
 //// nsITimerCallback
 
-static PLDHashOperator
-ExpireNonrecentUnassociatedIconsEnumerator(
-  UnassociatedIconHashKey* aIconKey,
-  void* aNow)
-{
-  PRTime now = *(reinterpret_cast<PRTime*>(aNow));
-  if (now - aIconKey->created >= UNASSOCIATED_ICON_EXPIRY_INTERVAL) {
-    return PL_DHASH_REMOVE;
-  }
-  return PL_DHASH_NEXT;
-}
-
 NS_IMETHODIMP
 nsFaviconService::Notify(nsITimer* timer)
 {
@@ -168,8 +157,13 @@ nsFaviconService::Notify(nsITimer* timer)
   }
 
   PRTime now = PR_Now();
-  mUnassociatedIcons.EnumerateEntries(
-    ExpireNonrecentUnassociatedIconsEnumerator, &now);
+  for (auto iter = mUnassociatedIcons.Iter(); !iter.Done(); iter.Next()) {
+    UnassociatedIconHashKey* iconKey = iter.Get();
+    if (now - iconKey->created >= UNASSOCIATED_ICON_EXPIRY_INTERVAL) {
+      iter.Remove();
+    }
+  }
+
   // Re-init the expiry timer if the cache isn't empty.
   if (mUnassociatedIcons.Count() > 0) {
     mExpireUnassociatedIconsTimer->InitWithCallback(
@@ -336,7 +330,7 @@ nsFaviconService::ReplaceFaviconDataFromDataURL(nsIURI* aFaviconURI,
                           nullptr, // aTriggeringPrincipal
                           nullptr, // aLoadingNode
                           nsILoadInfo::SEC_NORMAL,
-                          nsIContentPolicy::TYPE_IMAGE);
+                          nsIContentPolicy::TYPE_INTERNAL_IMAGE);
 
   nsCOMPtr<nsIChannel> channel;
   rv = protocolHandler->NewChannel2(dataURI, loadInfo, getter_AddRefs(channel));
@@ -590,7 +584,7 @@ nsFaviconService::GetFaviconDataAsync(nsIURI* aFaviconURI,
   NS_ENSURE_STATE(stmt);
 
   // Ignore the ref part of the URI before querying the database because
-  // we may have added the #-moz-resolution ref for rendering purposes.
+  // we may have added a media fragment for rendering purposes.
 
   nsAutoCString faviconURI;
   aFaviconURI->GetSpecIgnoringRef(faviconURI);

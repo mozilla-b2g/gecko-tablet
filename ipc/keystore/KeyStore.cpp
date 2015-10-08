@@ -19,6 +19,7 @@
 
 #include "KeyStore.h"
 #include "jsfriendapi.h"
+#include "KeyStoreConnector.h"
 #include "MainThreadUtils.h" // For NS_IsMainThread.
 #include "nsICryptoHash.h"
 
@@ -304,7 +305,6 @@ static const char *CA_BEGIN = "-----BEGIN ",
 namespace mozilla {
 namespace ipc {
 
-static const char* KEYSTORE_SOCKET_PATH = "/dev/socket/keystore";
 static const char* KEYSTORE_ALLOWED_USERS[] = {
   "root",
   "wifi",
@@ -672,156 +672,6 @@ checkPermission(uid_t uid)
   return false;
 }
 
-int
-KeyStoreConnector::Create()
-{
-  MOZ_ASSERT(!NS_IsMainThread());
-
-  int fd;
-
-  unlink(KEYSTORE_SOCKET_PATH);
-
-  fd = socket(AF_LOCAL, SOCK_STREAM, 0);
-
-  if (fd < 0) {
-    NS_WARNING("Could not open keystore socket!");
-    return -1;
-  }
-
-  return fd;
-}
-
-bool
-KeyStoreConnector::CreateAddr(bool aIsServer,
-                              socklen_t& aAddrSize,
-                              sockaddr_any& aAddr,
-                              const char* aAddress)
-{
-  // Keystore socket must be server
-  MOZ_ASSERT(aIsServer);
-
-  aAddr.un.sun_family = AF_LOCAL;
-  if(strlen(KEYSTORE_SOCKET_PATH) > sizeof(aAddr.un.sun_path)) {
-      NS_WARNING("Address too long for socket struct!");
-      return false;
-  }
-  strcpy((char*)&aAddr.un.sun_path, KEYSTORE_SOCKET_PATH);
-  aAddrSize = strlen(KEYSTORE_SOCKET_PATH) + offsetof(struct sockaddr_un, sun_path) + 1;
-
-  return true;
-}
-
-bool
-KeyStoreConnector::SetUp(int aFd)
-{
-  // Socket permission check.
-  struct ucred userCred;
-  socklen_t len = sizeof(struct ucred);
-
-  if (getsockopt(aFd, SOL_SOCKET, SO_PEERCRED, &userCred, &len)) {
-    return false;
-  }
-
-  return ::checkPermission(userCred.uid);
-}
-
-bool
-KeyStoreConnector::SetUpListenSocket(int aFd)
-{
-  // Allow access of wpa_supplicant(different user, differnt group)
-  chmod(KEYSTORE_SOCKET_PATH, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH);
-
-  return true;
-}
-
-void
-KeyStoreConnector::GetSocketAddr(const sockaddr_any& aAddr,
-                                 nsAString& aAddrStr)
-{
-  // Unused.
-  MOZ_CRASH("This should never be called!");
-}
-
-//
-// KeyStore::ListenSocket
-//
-
-KeyStore::ListenSocket::ListenSocket(KeyStore* aKeyStore)
-: mKeyStore(aKeyStore)
-{
-  MOZ_ASSERT(mKeyStore);
-
-  MOZ_COUNT_CTOR(KeyStore::ListenSocket);
-}
-
-void
-KeyStore::ListenSocket::OnConnectSuccess()
-{
-  mKeyStore->OnConnectSuccess(LISTEN_SOCKET);
-
-  MOZ_COUNT_DTOR(KeyStore::ListenSocket);
-}
-
-void
-KeyStore::ListenSocket::OnConnectError()
-{
-  mKeyStore->OnConnectError(LISTEN_SOCKET);
-}
-
-void
-KeyStore::ListenSocket::OnDisconnect()
-{
-  mKeyStore->OnDisconnect(LISTEN_SOCKET);
-}
-
-//
-// KeyStore::StreamSocket
-//
-
-KeyStore::StreamSocket::StreamSocket(KeyStore* aKeyStore)
-: mKeyStore(aKeyStore)
-{
-  MOZ_ASSERT(mKeyStore);
-
-  MOZ_COUNT_CTOR(KeyStore::StreamSocket);
-}
-
-KeyStore::StreamSocket::~StreamSocket()
-{
-  MOZ_COUNT_DTOR(KeyStore::StreamSocket);
-}
-
-void
-KeyStore::StreamSocket::OnConnectSuccess()
-{
-  mKeyStore->OnConnectSuccess(STREAM_SOCKET);
-}
-
-void
-KeyStore::StreamSocket::OnConnectError()
-{
-  mKeyStore->OnConnectError(STREAM_SOCKET);
-}
-
-void
-KeyStore::StreamSocket::OnDisconnect()
-{
-  mKeyStore->OnDisconnect(STREAM_SOCKET);
-}
-
-void
-KeyStore::StreamSocket::ReceiveSocketData(
-  nsAutoPtr<UnixSocketRawData>& aMessage)
-{
-  mKeyStore->ReceiveSocketData(aMessage);
-}
-
-ConnectionOrientedSocketIO*
-KeyStore::StreamSocket::GetIO()
-{
-  return PrepareAccept(new KeyStoreConnector());
-}
-
 //
 // KeyStore
 //
@@ -872,13 +722,14 @@ KeyStore::Listen()
   if (mStreamSocket) {
     mStreamSocket->Close();
   } else {
-    mStreamSocket = new StreamSocket(this);
+    mStreamSocket = new StreamSocket(this, STREAM_SOCKET);
   }
 
   if (!mListenSocket) {
     // We only ever allocate one |ListenSocket|...
-    mListenSocket = new ListenSocket(this);
-    mListenSocket->Listen(new KeyStoreConnector(), mStreamSocket);
+    mListenSocket = new ListenSocket(this, LISTEN_SOCKET);
+    mListenSocket->Listen(new KeyStoreConnector(KEYSTORE_ALLOWED_USERS),
+                          mStreamSocket);
   } else {
     // ... but keep it open.
     mListenSocket->Listen(mStreamSocket);
@@ -901,13 +752,13 @@ KeyStore::ResetHandlerInfo()
 }
 
 bool
-KeyStore::CheckSize(UnixSocketRawData *aMessage, size_t aExpectSize)
+KeyStore::CheckSize(UnixSocketBuffer *aMessage, size_t aExpectSize)
 {
   return (aMessage->GetSize() >= aExpectSize);
 }
 
 ResponseCode
-KeyStore::ReadCommand(UnixSocketRawData *aMessage)
+KeyStore::ReadCommand(UnixSocketBuffer *aMessage)
 {
   if (mHandlerInfo.state != STATE_IDLE) {
     NS_WARNING("Wrong state in ReadCommand()!");
@@ -946,7 +797,7 @@ KeyStore::ReadCommand(UnixSocketRawData *aMessage)
 }
 
 ResponseCode
-KeyStore::ReadLength(UnixSocketRawData *aMessage)
+KeyStore::ReadLength(UnixSocketBuffer *aMessage)
 {
   if (mHandlerInfo.state != STATE_READ_PARAM_LEN) {
     NS_WARNING("Wrong state in ReadLength()!");
@@ -971,7 +822,7 @@ KeyStore::ReadLength(UnixSocketRawData *aMessage)
 }
 
 ResponseCode
-KeyStore::ReadData(UnixSocketRawData *aMessage)
+KeyStore::ReadData(UnixSocketBuffer *aMessage)
 {
   if (mHandlerInfo.state != STATE_READ_PARAM_DATA) {
     NS_WARNING("Wrong state in ReadData()!");
@@ -1028,8 +879,10 @@ KeyStore::SendData(const uint8_t *aData, int aLength)
   mStreamSocket->SendSocketData(data);
 }
 
+// |StreamSocketConsumer|, |ListenSocketConsumer|
+
 void
-KeyStore::ReceiveSocketData(nsAutoPtr<UnixSocketRawData>& aMessage)
+KeyStore::ReceiveSocketData(int aIndex, nsAutoPtr<UnixSocketBuffer>& aMessage)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
@@ -1089,34 +942,34 @@ KeyStore::ReceiveSocketData(nsAutoPtr<UnixSocketRawData>& aMessage)
 }
 
 void
-KeyStore::OnConnectSuccess(SocketType aSocketType)
+KeyStore::OnConnectSuccess(int aIndex)
 {
-  if (aSocketType == STREAM_SOCKET) {
+  if (aIndex == STREAM_SOCKET) {
     mShutdown = false;
   }
 }
 
 void
-KeyStore::OnConnectError(SocketType aSocketType)
+KeyStore::OnConnectError(int aIndex)
 {
   if (mShutdown) {
     return;
   }
 
-  if (aSocketType == STREAM_SOCKET) {
+  if (aIndex == STREAM_SOCKET) {
     // Stream socket error; start listening again
     Listen();
   }
 }
 
 void
-KeyStore::OnDisconnect(SocketType aSocketType)
+KeyStore::OnDisconnect(int aIndex)
 {
   if (mShutdown) {
     return;
   }
 
-  switch (aSocketType) {
+  switch (aIndex) {
     case LISTEN_SOCKET:
       // Listen socket disconnected; start anew.
       mListenSocket = nullptr;

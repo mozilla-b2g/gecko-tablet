@@ -1,16 +1,8 @@
-// -*- indent-tabs-mode: nil; js-indent-level: 2 -*-
-
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-Components.utils.import("resource://gre/modules/Services.jsm");
-
-const Ci = Components.interfaces;
-const Cc = Components.classes;
-
-var windowMediator = Cc["@mozilla.org/appshell/window-mediator;1"]
-                       .getService(Ci.nsIWindowMediator);
+var {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 // Copied from nsILookAndFeel.h, see comments on eMetric_AlertNotificationOrigin
 const NS_ALERT_HORIZONTAL = 1;
@@ -18,6 +10,8 @@ const NS_ALERT_LEFT = 2;
 const NS_ALERT_TOP = 4;
 
 const WINDOW_MARGIN = 10;
+
+Cu.import("resource://gre/modules/Services.jsm");
 
 var gOrigin = 0; // Default value: alert from bottom right.
 var gReplacedWindow = null;
@@ -38,9 +32,19 @@ function prefillAlertInfo() {
   // arguments[7] --> lang
   // arguments[8] --> replaced alert window (nsIDOMWindow)
   // arguments[9] --> an optional callback listener (nsIObserver)
+  // arguments[10] -> the localized alert source string
 
   switch (window.arguments.length) {
     default:
+    case 11: {
+      let label = document.getElementById('alertSourceLabel');
+      if (window.arguments[10]) {
+        label.hidden = false;
+        label.setAttribute('value', window.arguments[10]);
+      } else {
+        label.hidden = true;
+      }
+    }
     case 10:
       gAlertListener = window.arguments[9];
     case 9:
@@ -97,17 +101,19 @@ function onAlertLoad() {
 
   if (Services.prefs.getBoolPref("alerts.disableSlidingEffect")) {
     setTimeout(function() { window.close(); }, ALERT_DURATION_IMMEDIATE);
-    return;
+  } else {
+    let alertBox = document.getElementById("alertBox");
+    alertBox.addEventListener("animationend", function hideAlert(event) {
+      if (event.animationName == "alert-animation") {
+        alertBox.removeEventListener("animationend", hideAlert, false);
+        window.close();
+      }
+    }, false);
+    alertBox.setAttribute("animate", true);
   }
 
-  let alertBox = document.getElementById("alertBox");
-  alertBox.addEventListener("animationend", function hideAlert(event) {
-    if (event.animationName == "alert-animation") {
-      alertBox.removeEventListener("animationend", hideAlert, false);
-      window.close();
-    }
-  }, false);
-  alertBox.setAttribute("animate", true);
+  let ev = new CustomEvent("AlertActive", {bubbles: true, cancelable: true});
+  document.documentElement.dispatchEvent(ev);
 
   if (gAlertListener) {
     gAlertListener.observe(null, "alertshow", gAlertCookie);
@@ -119,7 +125,7 @@ function moveWindowToReplace(aReplacedAlert) {
 
   // Move windows that come after the replaced alert if the height is different.
   if (heightDelta != 0) {
-    let windows = windowMediator.getEnumerator('alert:alert');
+    let windows = Services.wm.getEnumerator('alert:alert');
     while (windows.hasMoreElements()) {
       let alertWindow = windows.getNext();
       // boolean to determine if the alert window is after the replaced alert.
@@ -149,7 +155,7 @@ function moveWindowToEnd() {
           screen.availTop + screen.availHeight - window.outerHeight;
 
   // Position the window at the end of all alerts.
-  let windows = windowMediator.getEnumerator('alert:alert');
+  let windows = Services.wm.getEnumerator('alert:alert');
   while (windows.hasMoreElements()) {
     let alertWindow = windows.getNext();
     if (alertWindow != window) {
@@ -172,7 +178,7 @@ function onAlertBeforeUnload() {
   if (!gIsReplaced) {
     // Move other alert windows to fill the gap left by closing alert.
     let heightDelta = window.outerHeight + WINDOW_MARGIN;
-    let windows = windowMediator.getEnumerator('alert:alert');
+    let windows = Services.wm.getEnumerator('alert:alert');
     while (windows.hasMoreElements()) {
       let alertWindow = windows.getNext();
       if (alertWindow != window) {

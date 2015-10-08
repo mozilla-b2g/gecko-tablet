@@ -1,5 +1,6 @@
-function numClosedTabs()
-  SessionStore.getClosedTabCount(window);
+function numClosedTabs() {
+  return SessionStore.getClosedTabCount(window);
+}
 
 function isUndoCloseEnabled() {
   updateTabContextMenu();
@@ -19,9 +20,9 @@ function test() {
   browser.addEventListener("load", function() {
     browser.removeEventListener("load", arguments.callee, true);
 
-    gBrowser.removeTab(tab);
-    ok(isUndoCloseEnabled(), "Undo Close Tab should be enabled.");
-
-    finish();
+    BrowserTestUtils.removeTab(tab).then(() => {
+      ok(isUndoCloseEnabled(), "Undo Close Tab should be enabled.");
+      finish();
+    });
   }, true);
 }

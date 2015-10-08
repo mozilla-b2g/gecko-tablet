@@ -8,14 +8,14 @@
 "use strict";
 
 // Metadata to write to search-metadata.json for the test.
-let gMetadata = {"[profile]/test-search-engine.xml":{"used":true}};
+var gMetadata = {"[profile]/test-search-engine.xml":{"used":true}};
 
 /**
  * Gets a directory from the directory service.
  * @param aKey
  *        The directory service key indicating the directory to get.
  */
-let _dirSvc = null;
+var _dirSvc = null;
 function getDir(aKey, aIFace) {
   if (!aKey) {
     FAIL("getDir requires a directory key!");
@@ -28,7 +28,11 @@ function getDir(aKey, aIFace) {
   return _dirSvc.get(aKey, aIFace || Ci.nsIFile);
 }
 
-let cacheTemplate, appPluginsPath, profPlugins;
+function makeURI(uri) {
+  return Services.io.newURI(uri, null, null);
+}
+
+var cacheTemplate, appPluginsPath, profPlugins;
 
 /**
  * Test reading from search.json
@@ -51,12 +55,57 @@ function run_test() {
   let engineTemplateFile = do_get_file("data/engine.xml");
   engineTemplateFile.copyTo(engineFile.parent, "test-search-engine.xml");
 
-  // Add the app's searchplugins directory to the cache so it won't be ignored.
-  let appSearchPlugins = getDir(NS_APP_SEARCH_DIR);
-  appPluginsPath = appSearchPlugins.path;
-  cacheTemplate.directories[appPluginsPath] = {};
-  cacheTemplate.directories[appPluginsPath].lastModifiedTime = appSearchPlugins.lastModifiedTime;
-  cacheTemplate.directories[appPluginsPath].engines = [];
+  // Add the application's built-in plugin locations to the cache so it won't be ignored.
+  let filesToIgnore = []
+  let chan = NetUtil.ioService.newChannel2("resource://search-plugins/list.txt",
+                                           null, // aOriginCharset
+                                           null, // aBaseURI
+                                           null, // aLoadingNode
+                                           Services.scriptSecurityManager.getSystemPrincipal(),
+                                           null, // aTriggeringPrincipal
+                                           Ci.nsILoadInfo.SEC_NORMAL,
+                                           Ci.nsIContentPolicy.TYPE_OTHER);
+  let visibleDefaultEngines = [];
+  let sis = Cc["@mozilla.org/scriptableinputstream;1"].
+              createInstance(Ci.nsIScriptableInputStream);
+  sis.init(chan.open());
+  let list = sis.read(sis.available());
+  let names = list.split("\n").filter(n => !!n);
+  for (let name of names) {
+    if (name.endsWith(":hidden"))
+      continue;
+    visibleDefaultEngines.push(name);
+  }
+  let chromeURI = chan.URI;
+  if (chromeURI instanceof Ci.nsIJARURI) {
+    // JAR packaging, we only need the parent jar file.
+    let fileURI = chromeURI; // flat packaging
+    while (fileURI instanceof Ci.nsIJARURI)
+      fileURI = fileURI.JARFile;
+    fileURI.QueryInterface(Ci.nsIFileURL);
+    filesToIgnore.push(fileURI.file);
+  } else {
+    // flat packaging, we need to find each .xml file.
+    for (let name of names) {
+      let url = "resource://search-plugins/" + name + ".xml";
+      let chan = NetUtil.ioService.newChannel2(url,
+                                               null, // aOriginCharset
+                                               null, // aBaseURI
+                                               null, // aLoadingNode
+                                               Services.scriptSecurityManager.getSystemPrincipal(),
+                                               null, // aTriggeringPrincipal
+                                               Ci.nsILoadInfo.SEC_NORMAL,
+                                               Ci.nsIContentPolicy.TYPE_OTHER);
+      filesToIgnore.push(chan.URI.QueryInterface(Ci.nsIFileURL).file);
+    }
+  }
+
+  for (let file of filesToIgnore) {
+    cacheTemplate.directories[file.path] = {
+      lastModifiedTime: file.lastModifiedTime,
+      engines: []
+    };
+  }
 
   // Replace the profile placeholder with the correct path.
   profPlugins = engineFile.parent.path;
@@ -64,6 +113,8 @@ function run_test() {
   delete cacheTemplate.directories["[profile]/searchplugins"];
   cacheTemplate.directories[profPlugins].engines[0].filePath = engineFile.path;
   cacheTemplate.directories[profPlugins].lastModifiedTime = engineFile.parent.lastModifiedTime;
+
+  cacheTemplate.visibleDefaultEngines = visibleDefaultEngines;
 
   run_next_test();
 }
@@ -160,8 +211,12 @@ add_test(function test_cache_write() {
         // Check that the search.json cache matches the template
 
         let cacheWritten = readJSONFile(cache);
-        // Delete the app search plugins directory from the template since it's not currently written out.
-        delete cacheTemplate.directories[appPluginsPath];
+
+        // Delete the empty dirs from the template since they are not written out.
+        for (let dir of Object.keys(cacheTemplate.directories)) {
+          if (!cacheTemplate.directories[dir].engines.length)
+            delete cacheTemplate.directories[dir];
+        }
 
         do_print("Check search.json");
         isSubObjectOf(cacheTemplate, cacheWritten);
@@ -175,13 +230,12 @@ add_test(function test_cache_write() {
   });
 });
 
-let EXPECTED_ENGINE = {
+var EXPECTED_ENGINE = {
   engine: {
     name: "Test search engine",
     alias: null,
     description: "A test search engine (based on Google search)",
     searchForm: "http://www.google.com/",
-    type: Ci.nsISearchEngine.TYPE_MOZSEARCH,
     wrappedJSObject: {
       _extensionID: "test-addon-id@mozilla.org",
       "_iconURL": "data:image/png;base64,AAABAAEAEBAAAAEAGABoAwAAFgAAACgAAAAQAAAAIAAAAAEAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADs9Pt8xetPtu9FsfFNtu%2BTzvb2%2B%2Fne4dFJeBw0egA%2FfAJAfAA8ewBBegAAAAD%2B%2FPtft98Mp%2BwWsfAVsvEbs%2FQeqvF8xO7%2F%2F%2F63yqkxdgM7gwE%2FggM%2BfQA%2BegBDeQDe7PIbotgQufcMufEPtfIPsvAbs%2FQvq%2Bfz%2Bf%2F%2B%2B%2FZKhR05hgBBhQI8hgBAgAI9ewD0%2B%2Fg3pswAtO8Cxf4Kw%2FsJvvYAqupKsNv%2B%2Fv7%2F%2FP5VkSU0iQA7jQA9hgBDgQU%2BfQH%2F%2Ff%2FQ6fM4sM4KsN8AteMCruIqqdbZ7PH8%2Fv%2Fg6Nc%2Fhg05kAA8jAM9iQI%2BhQA%2BgQDQu6b97uv%2F%2F%2F7V8Pqw3eiWz97q8%2Ff%2F%2F%2F%2F7%2FPptpkkqjQE4kwA7kAA5iwI8iAA8hQCOSSKdXjiyflbAkG7u2s%2F%2B%2F%2F39%2F%2F7r8utrqEYtjQE8lgA7kwA7kwA9jwA9igA9hACiWSekVRyeSgiYSBHx6N%2F%2B%2Fv7k7OFRmiYtlAA5lwI7lwI4lAA7kgI9jwE9iwI4iQCoVhWcTxCmb0K%2BooT8%2Fv%2F7%2F%2F%2FJ2r8fdwI1mwA3mQA3mgA8lAE8lAE4jwA9iwE%2BhwGfXifWvqz%2B%2Ff%2F58u%2Fev6Dt4tr%2B%2F%2F2ZuIUsggA7mgM6mAM3lgA5lgA6kQE%2FkwBChwHt4dv%2F%2F%2F728ei1bCi7VAC5XQ7kz7n%2F%2F%2F6bsZkgcB03lQA9lgM7kwA2iQktZToPK4r9%2F%2F%2F9%2F%2F%2FSqYK5UwDKZAS9WALIkFn%2B%2F%2F3%2F%2BP8oKccGGcIRJrERILYFEMwAAuEAAdX%2F%2Ff7%2F%2FP%2B%2BfDvGXQLIZgLEWgLOjlf7%2F%2F%2F%2F%2F%2F9QU90EAPQAAf8DAP0AAfMAAOUDAtr%2F%2F%2F%2F7%2B%2Fu2bCTIYwDPZgDBWQDSr4P%2F%2Fv%2F%2F%2FP5GRuABAPkAA%2FwBAfkDAPAAAesAAN%2F%2F%2B%2Fz%2F%2F%2F64g1C5VwDMYwK8Yg7y5tz8%2Fv%2FV1PYKDOcAAP0DAf4AAf0AAfYEAOwAAuAAAAD%2F%2FPvi28ymXyChTATRrIb8%2F%2F3v8fk6P8MAAdUCAvoAAP0CAP0AAfYAAO4AAACAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAQAA",
@@ -220,11 +274,6 @@ let EXPECTED_ENGINE = {
               "purpose": undefined,
             },
             {
-              "name": "client",
-              "value": "firefox",
-              "purpose": undefined,
-            },
-            {
               "name": "channel",
               "value": "fflb",
               "purpose": "keyword",
@@ -235,15 +284,6 @@ let EXPECTED_ENGINE = {
               "purpose": "contextmenu",
             },
           ],
-          mozparams: {
-            "client": {
-              "name": "client",
-              "falseValue": "firefox",
-              "trueValue": "firefox-a",
-              "condition": "defaultEngine",
-              "mozparam": true,
-            },
-          },
         },
         {
           type: "application/x-moz-default-purpose",
@@ -254,11 +294,6 @@ let EXPECTED_ENGINE = {
             {
               "name": "q",
               "value": "{searchTerms}",
-              "purpose": undefined,
-            },
-            {
-              "name": "client",
-              "value": "firefox",
               "purpose": undefined,
             },
             {
@@ -277,15 +312,6 @@ let EXPECTED_ENGINE = {
               "purpose": "contextmenu",
             },
           ],
-          mozparams: {
-            "client": {
-              "name": "client",
-              "falseValue": "firefox",
-              "trueValue": "firefox-a",
-              "condition": "defaultEngine",
-              "mozparam": true,
-            },
-          },
         },
       ],
     },

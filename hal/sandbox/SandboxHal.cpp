@@ -122,7 +122,7 @@ GetCurrentScreenConfiguration(ScreenConfiguration* aScreenConfiguration)
 }
 
 bool
-LockScreenOrientation(const dom::ScreenOrientation& aOrientation)
+LockScreenOrientation(const dom::ScreenOrientationInternal& aOrientation)
 {
   bool allowed;
   Hal()->SendLockScreenOrientation(aOrientation, &allowed);
@@ -271,13 +271,6 @@ DisableSensorNotifications(SensorType aSensor) {
   Hal()->SendDisableSensorNotifications(aSensor);
 }
 
-//TODO: bug 852944 - IPC implementations of these
-void StartMonitoringGamepadStatus()
-{}
-
-void StopMonitoringGamepadStatus()
-{}
-
 void
 EnableWakeLockNotifications()
 {
@@ -362,6 +355,13 @@ SetProcessPriority(int aPid, ProcessPriority aPriority, uint32_t aLRU)
 
 void
 SetCurrentThreadPriority(ThreadPriority aThreadPriority)
+{
+  NS_RUNTIMEABORT("Setting current thread priority cannot be called from sandboxed contexts.");
+}
+
+void
+SetThreadPriority(PlatformThreadId aThreadId,
+                  ThreadPriority aThreadPriority)
 {
   NS_RUNTIMEABORT("Setting thread priority cannot be called from sandboxed contexts.");
 }
@@ -592,7 +592,7 @@ public:
   }
 
   virtual bool
-  RecvLockScreenOrientation(const dom::ScreenOrientation& aOrientation, bool* aAllowed) override
+  RecvLockScreenOrientation(const dom::ScreenOrientationInternal& aOrientation, bool* aAllowed) override
   {
     // FIXME/bug 777980: unprivileged content may only lock
     // orientation while fullscreen.  We should check whether the

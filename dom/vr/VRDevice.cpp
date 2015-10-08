@@ -1,4 +1,5 @@
-/* -*- Mode: c++; c-basic-offset: 2; indent-tabs-mode: nil; tab-width: 40 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -213,22 +214,18 @@ public:
   HMDInfoVRDevice(nsISupports* aParent, gfx::VRHMDInfo* aHMD)
     : HMDVRDevice(aParent, aHMD)
   {
-    // XXX TODO use real names/IDs
-    uint64_t hmdid = reinterpret_cast<uint64_t>(aHMD);
+    uint64_t hmdid = aHMD->GetDeviceIndex() << 8;
+    uint64_t devid = hmdid | 0x00; // we generate a devid with low byte 0 for the HMD, 1 for the position sensor
 
     mHWID.Truncate();
-    mHWID.AppendPrintf("HMDInfo-0x%llx", hmdid);
+    mHWID.AppendPrintf("0x%llx", hmdid);
 
     mDeviceId.Truncate();
-    mDeviceId.AppendPrintf("HMDInfo-dev-0x%llx", hmdid);
+    mDeviceId.AppendPrintf("0x%llx", devid);
 
-    if (aHMD->GetType() == VRHMDType::Oculus) {
-      mDeviceName.AssignLiteral("VR HMD Device (oculus)");
-    } else if (aHMD->GetType() == VRHMDType::Cardboard) {
-      mDeviceName.AssignLiteral("VR HMD Device (cardboard)");
-    } else {
-      mDeviceName.AssignLiteral("VR HMD Device (unknown)");
-    }
+    mDeviceName.Truncate();
+    mDeviceName.Append(NS_ConvertASCIItoUTF16(aHMD->GetDeviceName()));
+    mDeviceName.AppendLiteral(" (HMD)");
 
     mValid = true;
   }
@@ -281,22 +278,19 @@ public:
     , mHMD(aHMD)
     , mTracking(false)
   {
-    // XXX TODO use real names/IDs
-    uint64_t hmdid = reinterpret_cast<uint64_t>(aHMD);
+
+    uint64_t hmdid = aHMD->GetDeviceIndex() << 8;
+    uint64_t devid = hmdid | 0x01; // we generate a devid with low byte 0 for the HMD, 1 for the position sensor
 
     mHWID.Truncate();
-    mHWID.AppendPrintf("HMDInfo-0x%llx", hmdid);
+    mHWID.AppendPrintf("0x%llx", hmdid);
 
     mDeviceId.Truncate();
-    mDeviceId.AppendPrintf("HMDInfo-dev-0x%llx", hmdid);
+    mDeviceId.AppendPrintf("0x%llx", devid);
 
-    if (aHMD->GetType() == VRHMDType::Oculus) {
-      mDeviceName.AssignLiteral("VR Position Device (oculus)");
-    } else if (aHMD->GetType() == VRHMDType::Cardboard) {
-      mDeviceName.AssignLiteral("VR Position Device (cardboard)");
-    } else {
-      mDeviceName.AssignLiteral("VR Position Device (unknown)");
-    }
+    mDeviceName.Truncate();
+    mDeviceName.Append(NS_ConvertASCIItoUTF16(aHMD->GetDeviceName()));
+    mDeviceName.AppendLiteral(" (Sensor)");
 
     mValid = true;
   }

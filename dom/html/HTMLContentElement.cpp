@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -296,10 +297,12 @@ HTMLContentElement::GetDistributedNodes()
   return list.forget();
 }
 
-NS_IMPL_CYCLE_COLLECTION(DistributedContentList, mParent, mDistributedNodes)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(DistributedContentList, mParent,
+                                      mDistributedNodes)
 
 NS_INTERFACE_TABLE_HEAD(DistributedContentList)
-  NS_INTERFACE_TABLE(DistributedContentList, nsINodeList)
+  NS_WRAPPERCACHE_INTERFACE_TABLE_ENTRY
+  NS_INTERFACE_TABLE(DistributedContentList, nsINodeList, nsIDOMNodeList)
   NS_INTERFACE_TABLE_TO_MAP_SEGUE_CYCLE_COLLECTION(DistributedContentList)
 NS_INTERFACE_MAP_END
 

@@ -11,7 +11,7 @@ import traceback
 from Queue import Empty
 from multiprocessing import Process, current_process, Queue
 
-from mozlog.structured import structuredlog
+from mozlog import structuredlog
 
 # Special value used as a sentinal in various commands
 Stop = object()
@@ -168,7 +168,7 @@ class TestRunnerManager(threading.Thread):
 
     def __init__(self, suite_name, test_queue, test_source_cls, browser_cls, browser_kwargs,
                  executor_cls, executor_kwargs, stop_flag, pause_after_test=False,
-                 pause_on_unexpected=False, debug_args=None):
+                 pause_on_unexpected=False, debug_info=None):
         """Thread that owns a single TestRunner process and any processes required
         by the TestRunner (e.g. the Firefox binary).
 
@@ -199,6 +199,7 @@ class TestRunnerManager(threading.Thread):
 
         self.browser = None
         self.browser_pid = None
+        self.browser_started = False
 
         # Flags used to shut down this thread if we get a sigint
         self.parent_stop_flag = stop_flag
@@ -206,7 +207,7 @@ class TestRunnerManager(threading.Thread):
 
         self.pause_after_test = pause_after_test
         self.pause_on_unexpected = pause_on_unexpected
-        self.debug_args = debug_args
+        self.debug_info = debug_info
 
         self.manager_number = next_manager_number()
 
@@ -279,6 +280,10 @@ class TestRunnerManager(threading.Thread):
                         if commands[command](*data) is Stop:
                             break
                     else:
+                        if (self.debug_info and self.debug_info.interactive and
+                            self.browser_started and not browser.is_alive()):
+                            self.logger.debug("Debugger exited")
+                            break
                         if not self.test_runner_proc.is_alive():
                             if not self.command_queue.empty():
                                 # We got a new message so process that
@@ -293,8 +298,8 @@ class TestRunnerManager(threading.Thread):
                                 # reason
                                 # Need to consider the unlikely case where one test causes the
                                 # runner process to repeatedly die
-                                self.logger.info("Last test did not complete, requeueing")
-                                self.requeue_test()
+                                self.logger.critical("Last test did not complete")
+                                break
                             self.logger.warning(
                                 "More tests found, but runner process died, restarting")
                             self.restart_count += 1
@@ -333,7 +338,7 @@ class TestRunnerManager(threading.Thread):
         with self.init_lock:
             # Guard against problems initialising the browser or the browser
             # remote control method
-            if self.debug_args is None:
+            if self.debug_info is None:
                 self.init_timer = threading.Timer(self.browser.init_timeout, init_failed)
 
             test_queue = self.test_source.get_queue()
@@ -355,6 +360,7 @@ class TestRunnerManager(threading.Thread):
                 succeeded = False
             else:
                 succeeded = True
+                self.browser_started = True
 
         # This has to happen after the lock is released
         if not succeeded:
@@ -457,6 +463,7 @@ class TestRunnerManager(threading.Thread):
             return
         try:
             self.browser.stop()
+            self.browser_started = False
             if self.test_runner_proc.is_alive():
                 self.send_message("stop")
                 self.ensure_runner_stopped()
@@ -465,10 +472,6 @@ class TestRunnerManager(threading.Thread):
 
     def start_next_test(self):
         self.send_message("run_test")
-
-    def requeue_test(self):
-        self.test_source.requeue(self.test)
-        self.test = None
 
     def test_start(self, test):
         self.test = test
@@ -560,7 +563,6 @@ class TestQueue(object):
         self.test_type = test_type
         self.tests = tests
         self.kwargs = kwargs
-        self.queue = None
 
     def __enter__(self):
         if not self.tests[self.test_type]:
@@ -590,7 +592,7 @@ class ManagerGroup(object):
                  executor_cls, executor_kwargs,
                  pause_after_test=False,
                  pause_on_unexpected=False,
-                 debug_args=None):
+                 debug_info=None):
         """Main thread object that owns all the TestManager threads."""
         self.suite_name = suite_name
         self.size = size
@@ -602,7 +604,7 @@ class ManagerGroup(object):
         self.executor_kwargs = executor_kwargs
         self.pause_after_test = pause_after_test
         self.pause_on_unexpected = pause_on_unexpected
-        self.debug_args = debug_args
+        self.debug_info = debug_info
 
         self.pool = set()
         # Event that is polled by threads so that they can gracefully exit in the face
@@ -640,7 +642,7 @@ class ManagerGroup(object):
                                             self.stop_flag,
                                             self.pause_after_test,
                                             self.pause_on_unexpected,
-                                            self.debug_args)
+                                            self.debug_info)
                 manager.start()
                 self.pool.add(manager)
             self.wait()

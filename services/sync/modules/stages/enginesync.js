@@ -8,7 +8,7 @@
 
 this.EXPORTED_SYMBOLS = ["EngineSynchronizer"];
 
-const {utils: Cu} = Components;
+var {utils: Cu} = Components;
 
 Cu.import("resource://gre/modules/Log.jsm");
 Cu.import("resource://services-sync/constants.js");
@@ -138,7 +138,7 @@ EngineSynchronizer.prototype = {
     } catch (ex) {
       this._log.debug("Updating enabled engines failed: " +
                       Utils.exceptionStr(ex));
-      this.service.errorHandler.checkServerError(ex);
+      this.service.errorHandler.checkServerError(ex, "meta/global");
       this.onComplete(ex);
       return;
     }

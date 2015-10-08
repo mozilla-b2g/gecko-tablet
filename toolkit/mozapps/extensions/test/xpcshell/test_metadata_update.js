@@ -23,10 +23,10 @@ Services.prefs.setBoolPref("extensions.checkUpdateSecurity", false);
 // None of this works without the add-on repository cache
 Services.prefs.setBoolPref("extensions.getAddons.cache.enabled", true);
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
-const Cu = Components.utils;
-const Cr = Components.results;
+var Cc = Components.classes;
+var Ci = Components.interfaces;
+var Cu = Components.utils;
+var Cr = Components.results;
 
 Cu.import("resource://testing-common/httpd.js");
 Cu.import("resource://testing-common/MockRegistrar.jsm");
@@ -38,7 +38,6 @@ profileDir.append("extensions");
 // This will be called to show the compatibility update dialog.
 var WindowWatcher = {
   expected: false,
-  arguments: null,
 
   openWindow: function(parent, url, name, features, args) {
     do_check_true(Services.startup.interrupted);

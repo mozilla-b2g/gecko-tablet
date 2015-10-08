@@ -29,9 +29,7 @@
 namespace js {
 namespace jit {
 
-class MBasicBlock;
 class MIRGraph;
-class MStart;
 class OptimizationInfo;
 
 class MIRGenerator
@@ -40,7 +38,9 @@ class MIRGenerator
     MIRGenerator(CompileCompartment* compartment, const JitCompileOptions& options,
                  TempAllocator* alloc, MIRGraph* graph,
                  CompileInfo* info, const OptimizationInfo* optimizationInfo,
-                 Label* outOfBoundsLabel = nullptr, bool usesSignalHandlersForAsmJSOOB = false);
+                 Label* outOfBoundsLabel = nullptr,
+                 Label* conversionErrorLabel = nullptr,
+                 bool usesSignalHandlersForAsmJSOOB = false);
 
     TempAllocator& alloc() {
         return *alloc_;
@@ -62,10 +62,11 @@ class MIRGenerator
     }
 
     template <typename T>
-    T * allocate(size_t count = 1) {
-        if (count & mozilla::tl::MulOverflowMask<sizeof(T)>::value)
+    T* allocate(size_t count = 1) {
+        size_t bytes;
+        if (MOZ_UNLIKELY(!CalculateAllocSize<T>(count, &bytes)))
             return nullptr;
-        return reinterpret_cast<T*>(alloc().allocate(sizeof(T) * count));
+        return static_cast<T*>(alloc().allocate(bytes));
     }
 
     // Set an error state and prints a message. Returns false so errors can be
@@ -91,6 +92,13 @@ class MIRGenerator
 
     bool isOptimizationTrackingEnabled() {
         return isProfilerInstrumentationEnabled() && !info().isAnalysis();
+    }
+
+    bool safeForMinorGC() const {
+        return safeForMinorGC_;
+    }
+    void setNotSafeForMinorGC() {
+        safeForMinorGC_ = false;
     }
 
     // Whether the main thread is trying to cancel this build.
@@ -144,13 +152,6 @@ class MIRGenerator
     // Traverses the graph to find if there's any SIMD instruction. Costful but
     // the value is cached, so don't worry about calling it several times.
     bool usesSimd();
-    void initMinAsmJSHeapLength(uint32_t len) {
-        MOZ_ASSERT(minAsmJSHeapLength_ == 0);
-        minAsmJSHeapLength_ = len;
-    }
-    uint32_t minAsmJSHeapLength() const {
-        return minAsmJSHeapLength_;
-    }
 
     bool modifiesFrameArguments() const {
         return modifiesFrameArguments_;
@@ -185,7 +186,6 @@ class MIRGenerator
     bool performsCall_;
     bool usesSimd_;
     bool usesSimdCached_;
-    uint32_t minAsmJSHeapLength_;
 
     // Keep track of whether frame arguments are modified during execution.
     // RegAlloc needs to know this as spilling values back to their register
@@ -194,16 +194,15 @@ class MIRGenerator
 
     bool instrumentedProfiling_;
     bool instrumentedProfilingIsCached_;
-
-    // List of nursery objects used by this compilation. Can be traced by a
-    // minor GC while compilation happens off-thread. This Vector should only
-    // be accessed on the main thread (IonBuilder, nursery GC or
-    // CodeGenerator::link).
-    ObjectVector nurseryObjects_;
+    bool safeForMinorGC_;
 
     void addAbortedPreliminaryGroup(ObjectGroup* group);
 
     Label* outOfBoundsLabel_;
+    // Label where we should jump in asm.js mode, in the case where we have an
+    // invalid conversion or a loss of precision (when converting from a
+    // floating point SIMD type into an integer SIMD type).
+    Label* conversionErrorLabel_;
 #if defined(ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_OOB)
     bool usesSignalHandlersForAsmJSOOB_;
 #endif
@@ -225,25 +224,23 @@ class MIRGenerator
   public:
     const JitCompileOptions options;
 
-    void traceNurseryObjects(JSTracer* trc);
-
-    const ObjectVector& nurseryObjects() const {
-        return nurseryObjects_;
+    Label* conversionErrorLabel() const {
+        MOZ_ASSERT((conversionErrorLabel_ != nullptr) == compilingAsmJS());
+        return conversionErrorLabel_;
     }
-
     Label* outOfBoundsLabel() const {
+        MOZ_ASSERT(compilingAsmJS());
         return outOfBoundsLabel_;
     }
-    bool needsAsmJSBoundsCheckBranch(const MAsmJSHeapAccess* access) const {
-        // A heap access needs a bounds-check branch if we're not relying on signal
-        // handlers to catch errors, and if it's not proven to be within bounds.
-        // We use signal-handlers on x64, but on x86 there isn't enough address
-        // space for a guard region.
-#if defined(ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_OOB)
-        if (usesSignalHandlersForAsmJSOOB_)
-            return false;
-#endif
-        return access->needsBoundsCheck();
+    bool needsAsmJSBoundsCheckBranch(const MAsmJSHeapAccess* access) const;
+    size_t foldableOffsetRange(const MAsmJSHeapAccess* access) const;
+
+  private:
+    GraphSpewer gs_;
+
+  public:
+    GraphSpewer& graphSpewer() {
+        return gs_;
     }
 };
 

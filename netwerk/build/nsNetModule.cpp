@@ -37,7 +37,6 @@
 #include "nsCategoryCache.h"
 #include "nsIContentSniffer.h"
 #include "Predictor.h"
-#include "nsNetUtil.h"
 #include "nsIThreadPool.h"
 #include "mozilla/net/NeckoChild.h"
 
@@ -134,6 +133,19 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(CacheStorageService)
 
 ///////////////////////////////////////////////////////////////////////////////
 
+#include "mozilla/net/CaptivePortalService.h"
+namespace mozilla {
+namespace net {
+  NS_GENERIC_FACTORY_CONSTRUCTOR(CaptivePortalService)
+} // namespace net
+} // namespace mozilla
+
+#include "SchedulingContextService.h"
+typedef mozilla::net::SchedulingContextService SchedulingContextService;
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(SchedulingContextService, Init)
+
+///////////////////////////////////////////////////////////////////////////////
+
 extern nsresult
 net_NewIncrementalDownload(nsISupports *, const nsIID &, void **);
 
@@ -225,6 +237,7 @@ NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsFtpProtocolHandler, Init)
 #ifdef NECKO_PROTOCOL_http
 // http/https
 #include "nsHttpHandler.h"
+#include "Http2Compression.h"
 #undef LOG
 #undef LOG_ENABLED
 #include "nsHttpAuthManager.h"
@@ -245,23 +258,33 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsHttpChannelAuthProvider)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsHttpActivityDistributor)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsHttpBasicAuth)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsHttpDigestAuth)
-}
-}
+} // namespace net
+} // namespace mozilla
 #endif // !NECKO_PROTOCOL_http
 
 #include "mozilla/net/Dashboard.h"
+#include "mozilla/net/PackagedAppService.h"
+#include "mozilla/net/PackagedAppVerifier.h"
 namespace mozilla {
 namespace net {
   NS_GENERIC_FACTORY_CONSTRUCTOR(Dashboard)
-}
-}
+  NS_GENERIC_FACTORY_CONSTRUCTOR(PackagedAppService)
+  NS_GENERIC_FACTORY_CONSTRUCTOR(PackagedAppVerifier)
+} // namespace net
+} // namespace mozilla
 #include "AppProtocolHandler.h"
 
 #ifdef NECKO_PROTOCOL_res
 // resource
 #include "nsResProtocolHandler.h"
+#include "ExtensionProtocolHandler.h"
+#include "SubstitutingProtocolHandler.h"
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsResProtocolHandler, Init)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsResURL)
+
+namespace mozilla {
+NS_GENERIC_FACTORY_CONSTRUCTOR(ExtensionProtocolHandler)
+NS_GENERIC_FACTORY_CONSTRUCTOR(SubstitutingURL)
+} // namespace mozilla
 #endif
 
 #ifdef NECKO_PROTOCOL_device
@@ -326,7 +349,7 @@ type##Constructor(nsISupports *aOuter, REFNSIID aIID, \
 WEB_SOCKET_HANDLER_CONSTRUCTOR(WebSocketChannel, false)
 WEB_SOCKET_HANDLER_CONSTRUCTOR(WebSocketSSLChannel, true)
 #undef WEB_SOCKET_HANDLER_CONSTRUCTOR
-} // namespace mozilla::net
+} // namespace net
 } // namespace mozilla
 #endif
 
@@ -408,17 +431,19 @@ NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsTXTToHTMLConv, Init)
 
 nsresult NS_NewMultiMixedConv (nsMultiMixedConv** result);
 nsresult MOZ_NewTXTToHTMLConv (mozTXTToHTMLConv** result);
-nsresult NS_NewHTTPCompressConv  (nsHTTPCompressConv ** result);
+nsresult NS_NewHTTPCompressConv  (mozilla::net::nsHTTPCompressConv ** result);
 nsresult NS_NewStreamConv(nsStreamConverterService **aStreamConv);
 
 #define FTP_TO_INDEX                 "?from=text/ftp-dir&to=application/http-index-format"
 #define INDEX_TO_HTML                "?from=application/http-index-format&to=text/html"
 #define MULTI_MIXED_X                "?from=multipart/x-mixed-replace&to=*/*"
 #define MULTI_MIXED                  "?from=multipart/mixed&to=*/*"
+#define APPLICATION_PACKAGE_CONV     "?from=" APPLICATION_PACKAGE "&to=*/*"
 #define MULTI_BYTERANGES             "?from=multipart/byteranges&to=*/*"
 #define UNKNOWN_CONTENT              "?from=" UNKNOWN_CONTENT_TYPE "&to=*/*"
 #define GZIP_TO_UNCOMPRESSED         "?from=gzip&to=uncompressed"
 #define XGZIP_TO_UNCOMPRESSED        "?from=x-gzip&to=uncompressed"
+#define BROTLI_TO_UNCOMPRESSED       "?from=br&to=uncompressed"
 #define COMPRESS_TO_UNCOMPRESSED     "?from=compress&to=uncompressed"
 #define XCOMPRESS_TO_UNCOMPRESSED    "?from=x-compress&to=uncompressed"
 #define DEFLATE_TO_UNCOMPRESSED      "?from=deflate&to=uncompressed"
@@ -433,10 +458,12 @@ static const mozilla::Module::CategoryEntry kNeckoCategories[] = {
     { NS_ISTREAMCONVERTER_KEY, INDEX_TO_HTML, "" },
     { NS_ISTREAMCONVERTER_KEY, MULTI_MIXED_X, "" },
     { NS_ISTREAMCONVERTER_KEY, MULTI_MIXED, "" },
+    { NS_ISTREAMCONVERTER_KEY, APPLICATION_PACKAGE_CONV, "" },
     { NS_ISTREAMCONVERTER_KEY, MULTI_BYTERANGES, "" },
     { NS_ISTREAMCONVERTER_KEY, UNKNOWN_CONTENT, "" },
     { NS_ISTREAMCONVERTER_KEY, GZIP_TO_UNCOMPRESSED, "" },
     { NS_ISTREAMCONVERTER_KEY, XGZIP_TO_UNCOMPRESSED, "" },
+    { NS_ISTREAMCONVERTER_KEY, BROTLI_TO_UNCOMPRESSED, "" },
     { NS_ISTREAMCONVERTER_KEY, COMPRESS_TO_UNCOMPRESSED, "" },
     { NS_ISTREAMCONVERTER_KEY, XCOMPRESS_TO_UNCOMPRESSED, "" },
     { NS_ISTREAMCONVERTER_KEY, DEFLATE_TO_UNCOMPRESSED, "" },
@@ -560,7 +587,7 @@ CreateNewHTTPCompressConvFactory (nsISupports* aOuter, REFNSIID aIID, void **aRe
         *aResult = nullptr;                                           
         return NS_ERROR_NO_AGGREGATION;                              
     }   
-    nsHTTPCompressConv* inst = nullptr;
+    mozilla::net::nsHTTPCompressConv* inst = nullptr;
     nsresult rv = NS_NewHTTPCompressConv (&inst);
     if (NS_FAILED(rv)) {                                             
         *aResult = nullptr;                                           
@@ -655,6 +682,10 @@ static void nsNetShutdown()
     mozilla::net::WebSocketChannel::Shutdown();
 #endif // NECKO_PROTOCOL_websocket
 
+#ifdef NECKO_PROTOCOL_http
+    mozilla::net::Http2CompressionCleanup();
+#endif // NECKO_PROTOCOL_http
+
     delete gNetSniffers;
     gNetSniffers = nullptr;
     delete gDataSniffers;
@@ -704,6 +735,8 @@ NS_DEFINE_NAMED_CID(NS_BUFFEREDOUTPUTSTREAM_CID);
 NS_DEFINE_NAMED_CID(NS_MIMEINPUTSTREAM_CID);
 NS_DEFINE_NAMED_CID(NS_PROTOCOLPROXYSERVICE_CID);
 NS_DEFINE_NAMED_CID(NS_STREAMCONVERTERSERVICE_CID);
+NS_DEFINE_NAMED_CID(NS_PACKAGEDAPPSERVICE_CID);
+NS_DEFINE_NAMED_CID(NS_PACKAGEDAPPVERIFIER_CID);
 NS_DEFINE_NAMED_CID(NS_DASHBOARD_CID);
 #ifdef NECKO_PROTOCOL_ftp
 NS_DEFINE_NAMED_CID(NS_FTPDIRLISTINGCONVERTER_CID);
@@ -739,7 +772,8 @@ NS_DEFINE_NAMED_CID(NS_FTPPROTOCOLHANDLER_CID);
 #endif
 #ifdef NECKO_PROTOCOL_res
 NS_DEFINE_NAMED_CID(NS_RESPROTOCOLHANDLER_CID);
-NS_DEFINE_NAMED_CID(NS_RESURL_CID);
+NS_DEFINE_NAMED_CID(NS_EXTENSIONPROTOCOLHANDLER_CID);
+NS_DEFINE_NAMED_CID(NS_SUBSTITUTINGURL_CID);
 #endif
 NS_DEFINE_NAMED_CID(NS_ABOUTPROTOCOLHANDLER_CID);
 NS_DEFINE_NAMED_CID(NS_SAFEABOUTPROTOCOLHANDLER_CID);
@@ -801,6 +835,8 @@ NS_DEFINE_NAMED_CID(NS_SERIALIZATION_HELPER_CID);
 NS_DEFINE_NAMED_CID(NS_REDIRECTCHANNELREGISTRAR_CID);
 NS_DEFINE_NAMED_CID(NS_CACHE_STORAGE_SERVICE_CID);
 NS_DEFINE_NAMED_CID(NS_NETWORKPREDICTOR_CID);
+NS_DEFINE_NAMED_CID(NS_CAPTIVEPORTAL_CID);
+NS_DEFINE_NAMED_CID(NS_SCHEDULINGCONTEXTSERVICE_CID);
 
 static const mozilla::Module::CIDEntry kNeckoCIDs[] = {
     { &kNS_IOSERVICE_CID, false, nullptr, nsIOServiceConstructor },
@@ -848,6 +884,8 @@ static const mozilla::Module::CIDEntry kNeckoCIDs[] = {
     { &kNS_MIMEINPUTSTREAM_CID, false, nullptr, nsMIMEInputStreamConstructor },
     { &kNS_PROTOCOLPROXYSERVICE_CID, true, nullptr, nsProtocolProxyServiceConstructor },
     { &kNS_STREAMCONVERTERSERVICE_CID, false, nullptr, CreateNewStreamConvServiceFactory },
+    { &kNS_PACKAGEDAPPSERVICE_CID, false, NULL, mozilla::net::PackagedAppServiceConstructor },
+    { &kNS_PACKAGEDAPPVERIFIER_CID, false, NULL, mozilla::net::PackagedAppVerifierConstructor },
     { &kNS_DASHBOARD_CID, false, nullptr, mozilla::net::DashboardConstructor },
 #ifdef NECKO_PROTOCOL_ftp
     { &kNS_FTPDIRLISTINGCONVERTER_CID, false, nullptr, CreateNewFTPDirListingConv },
@@ -883,7 +921,8 @@ static const mozilla::Module::CIDEntry kNeckoCIDs[] = {
 #endif
 #ifdef NECKO_PROTOCOL_res
     { &kNS_RESPROTOCOLHANDLER_CID, false, nullptr, nsResProtocolHandlerConstructor },
-    { &kNS_RESURL_CID, false, nullptr, nsResURLConstructor },
+    { &kNS_EXTENSIONPROTOCOLHANDLER_CID, false, nullptr, mozilla::ExtensionProtocolHandlerConstructor },
+    { &kNS_SUBSTITUTINGURL_CID, false, nullptr, mozilla::SubstitutingURLConstructor },
 #endif
     { &kNS_ABOUTPROTOCOLHANDLER_CID, false, nullptr, nsAboutProtocolHandlerConstructor },
     { &kNS_SAFEABOUTPROTOCOLHANDLER_CID, false, nullptr, nsSafeAboutProtocolHandlerConstructor },
@@ -947,6 +986,8 @@ static const mozilla::Module::CIDEntry kNeckoCIDs[] = {
     { &kNS_REDIRECTCHANNELREGISTRAR_CID, false, nullptr, RedirectChannelRegistrarConstructor },
     { &kNS_CACHE_STORAGE_SERVICE_CID, false, nullptr, CacheStorageServiceConstructor },
     { &kNS_NETWORKPREDICTOR_CID, false, nullptr, mozilla::net::Predictor::Create },
+    { &kNS_CAPTIVEPORTAL_CID, false, nullptr, mozilla::net::CaptivePortalServiceConstructor },
+    { &kNS_SCHEDULINGCONTEXTSERVICE_CID, false, nullptr, SchedulingContextServiceConstructor },
     { nullptr }
 };
 
@@ -994,6 +1035,8 @@ static const mozilla::Module::ContractIDEntry kNeckoContracts[] = {
     { NS_MIMEINPUTSTREAM_CONTRACTID, &kNS_MIMEINPUTSTREAM_CID },
     { NS_PROTOCOLPROXYSERVICE_CONTRACTID, &kNS_PROTOCOLPROXYSERVICE_CID },
     { NS_STREAMCONVERTERSERVICE_CONTRACTID, &kNS_STREAMCONVERTERSERVICE_CID },
+    { NS_PACKAGEDAPPSERVICE_CONTRACTID, &kNS_PACKAGEDAPPSERVICE_CID },
+    { NS_PACKAGEDAPPVERIFIER_CONTRACTID, &kNS_PACKAGEDAPPVERIFIER_CID },
     { NS_DASHBOARD_CONTRACTID, &kNS_DASHBOARD_CID },
 #ifdef NECKO_PROTOCOL_ftp
     { NS_ISTREAMCONVERTER_KEY FTP_TO_INDEX, &kNS_FTPDIRLISTINGCONVERTER_CID },
@@ -1003,11 +1046,13 @@ static const mozilla::Module::ContractIDEntry kNeckoContracts[] = {
     { NS_ISTREAMCONVERTER_KEY MULTI_MIXED_X, &kNS_MULTIMIXEDCONVERTER_CID },
     { NS_ISTREAMCONVERTER_KEY MULTI_BYTERANGES, &kNS_MULTIMIXEDCONVERTER_CID },
     { NS_ISTREAMCONVERTER_KEY MULTI_MIXED, &kNS_MULTIMIXEDCONVERTER_CID },
+    { NS_ISTREAMCONVERTER_KEY APPLICATION_PACKAGE_CONV, &kNS_MULTIMIXEDCONVERTER_CID },
     { NS_ISTREAMCONVERTER_KEY UNKNOWN_CONTENT, &kNS_UNKNOWNDECODER_CID },
     { NS_GENERIC_CONTENT_SNIFFER, &kNS_UNKNOWNDECODER_CID },
     { NS_BINARYDETECTOR_CONTRACTID, &kNS_BINARYDETECTOR_CID },
     { NS_ISTREAMCONVERTER_KEY GZIP_TO_UNCOMPRESSED, &kNS_HTTPCOMPRESSCONVERTER_CID },
     { NS_ISTREAMCONVERTER_KEY XGZIP_TO_UNCOMPRESSED, &kNS_HTTPCOMPRESSCONVERTER_CID },
+    { NS_ISTREAMCONVERTER_KEY BROTLI_TO_UNCOMPRESSED, &kNS_HTTPCOMPRESSCONVERTER_CID },
     { NS_ISTREAMCONVERTER_KEY COMPRESS_TO_UNCOMPRESSED, &kNS_HTTPCOMPRESSCONVERTER_CID },
     { NS_ISTREAMCONVERTER_KEY XCOMPRESS_TO_UNCOMPRESSED, &kNS_HTTPCOMPRESSCONVERTER_CID },
     { NS_ISTREAMCONVERTER_KEY DEFLATE_TO_UNCOMPRESSED, &kNS_HTTPCOMPRESSCONVERTER_CID },
@@ -1036,6 +1081,7 @@ static const mozilla::Module::ContractIDEntry kNeckoContracts[] = {
 #endif
 #ifdef NECKO_PROTOCOL_res
     { NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "resource", &kNS_RESPROTOCOLHANDLER_CID },
+    { NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "moz-extension", &kNS_EXTENSIONPROTOCOLHANDLER_CID },
 #endif
     { NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "about", &kNS_ABOUTPROTOCOLHANDLER_CID },
     { NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "moz-safe-about", &kNS_SAFEABOUTPROTOCOLHANDLER_CID },
@@ -1097,6 +1143,8 @@ static const mozilla::Module::ContractIDEntry kNeckoContracts[] = {
     { NS_CACHE_STORAGE_SERVICE_CONTRACTID, &kNS_CACHE_STORAGE_SERVICE_CID },
     { NS_CACHE_STORAGE_SERVICE_CONTRACTID2, &kNS_CACHE_STORAGE_SERVICE_CID },
     { NS_NETWORKPREDICTOR_CONTRACTID, &kNS_NETWORKPREDICTOR_CID },
+    { NS_CAPTIVEPORTAL_CONTRACTID, &kNS_CAPTIVEPORTAL_CID },
+    { NS_SCHEDULINGCONTEXTSERVICE_CONTRACTID, &kNS_SCHEDULINGCONTEXTSERVICE_CID },
     { nullptr }
 };
 

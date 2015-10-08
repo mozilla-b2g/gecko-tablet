@@ -13,7 +13,7 @@ const Environment = require("sdk/system/environment").env;
 const Runtime = require("sdk/system/runtime");
 const Subprocess = require("sdk/system/child_process/subprocess");
 const { Promise: promise } = Cu.import("resource://gre/modules/Promise.jsm", {});
-const { EventEmitter } = Cu.import("resource://gre/modules/devtools/event-emitter.js", {});
+const { EventEmitter } = Cu.import("resource://gre/modules/devtools/shared/event-emitter.js", {});
 
 
 // Log subprocess error and debug messages to the console.  This logs messages
@@ -21,10 +21,10 @@ const { EventEmitter } = Cu.import("resource://gre/modules/devtools/event-emitte
 // have trailing newlines.  And note that registerLogHandler actually registers
 // an error handler, despite its name.
 Subprocess.registerLogHandler(
-  function(s) console.error("subprocess: " + s.trim())
+  s => console.error("subprocess: " + s.trim())
 );
 Subprocess.registerDebugHandler(
-  function(s) console.debug("subprocess: " + s.trim())
+  s => console.debug("subprocess: " + s.trim())
 );
 
 function SimulatorProcess(options) {
@@ -38,7 +38,9 @@ function SimulatorProcess(options) {
 SimulatorProcess.prototype = {
 
   // check if b2g is running
-  get isRunning() !!this.process,
+  get isRunning() {
+    return !!this.process;
+  },
 
   /**
    * Start the process and connect the debugger client.

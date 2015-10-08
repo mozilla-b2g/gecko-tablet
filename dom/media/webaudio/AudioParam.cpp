@@ -44,11 +44,13 @@ NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(AudioParam, AddRef)
 NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(AudioParam, Release)
 
 AudioParam::AudioParam(AudioNode* aNode,
-                       AudioParam::CallbackType aCallback,
-                       float aDefaultValue)
+                       uint32_t aIndex,
+                       float aDefaultValue,
+                       const char* aName)
   : AudioParamTimeline(aDefaultValue)
   , mNode(aNode)
-  , mCallback(aCallback)
+  , mName(aName)
+  , mIndex(aIndex)
   , mDefaultValue(aDefaultValue)
 {
 }
@@ -98,9 +100,8 @@ AudioParam::Stream()
 
   AudioNodeEngine* engine = new AudioNodeEngine(nullptr);
   nsRefPtr<AudioNodeStream> stream =
-    mNode->Context()->Graph()->CreateAudioNodeStream(engine,
-                                                     MediaStreamGraph::INTERNAL_STREAM,
-                                                     Node()->Context()->SampleRate());
+    AudioNodeStream::Create(mNode->Context(), engine,
+                            AudioNodeStream::NO_STREAM_FLAGS);
 
   // Force the input to have only one channel, and make it down-mix using
   // the speaker rules if needed.
@@ -111,15 +112,26 @@ AudioParam::Stream()
   mStream = stream.forget();
 
   // Setup the AudioParam's stream as an input to the owner AudioNode's stream
-  MediaStream* nodeStream = mNode->Stream();
-  MOZ_ASSERT(nodeStream->AsProcessedStream());
-  ProcessedMediaStream* ps = static_cast<ProcessedMediaStream*>(nodeStream);
-  mNodeStreamPort = ps->AllocateInputPort(mStream, MediaInputPort::FLAG_BLOCK_INPUT);
+  AudioNodeStream* nodeStream = mNode->GetStream();
+  if (nodeStream) {
+    mNodeStreamPort =
+      nodeStream->AllocateInputPort(mStream, AudioNodeStream::AUDIO_TRACK);
+  }
 
-  // Let the MSG's copy of AudioParamTimeline know about the change in the stream
-  mCallback(mNode);
+  // Send the stream to the timeline on the MSG side.
+  AudioTimelineEvent event(mStream);
+  SendEventToEngine(event);
 
   return mStream;
+}
+
+void
+AudioParam::SendEventToEngine(const AudioTimelineEvent& aEvent)
+{
+  AudioNodeStream* stream = mNode->GetStream();
+  if (stream) {
+    stream->SendTimelineEvent(mIndex, aEvent);
+  }
 }
 
 float
@@ -131,7 +143,7 @@ AudioParamTimeline::AudioNodeInputValue(size_t aCounter) const
   // get its value now.  We use aCounter to tell us which frame of the last
   // AudioChunk to look at.
   float audioNodeInputValue = 0.0f;
-  const AudioChunk& lastAudioNodeChunk =
+  const AudioBlock& lastAudioNodeChunk =
     static_cast<AudioNodeStream*>(mStream.get())->LastChunks()[0];
   if (!lastAudioNodeChunk.IsNull()) {
     MOZ_ASSERT(lastAudioNodeChunk.GetDuration() == WEBAUDIO_BLOCK_SIZE);
@@ -143,6 +155,6 @@ AudioParamTimeline::AudioNodeInputValue(size_t aCounter) const
   return audioNodeInputValue;
 }
 
-}
-}
+} // namespace dom
+} // namespace mozilla
 

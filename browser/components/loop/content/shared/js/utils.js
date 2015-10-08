@@ -2,12 +2,50 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* global loop:true */
+/* global Components */
 
 var loop = loop || {};
 loop.shared = loop.shared || {};
-loop.shared.utils = (function(mozL10n) {
+var inChrome = typeof Components != "undefined" && "utils" in Components;
+
+(function() {
   "use strict";
+
+  /**
+   * Root object, by default set to window if we're not in chrome code.
+   * @type {DOMWindow|Object}
+   */
+  var rootObject = inChrome ? {} : window;
+  /**
+   * Root navigator, by default set to navigator if we're not in chrome code.
+   * @type {Navigator|Object}
+   */
+  var rootNavigator = inChrome ? {} : navigator;
+
+  /**
+   * Sets new root objects.  This is useful for testing native DOM events, and also
+   * so we can easily stub items like navigator.mediaDevices.
+   * can fake them. In beforeEach(), loop.shared.utils.setRootObjects is used to
+   * substitute fake objects, and in afterEach(), the real window object is
+   * replaced.
+   *
+   * @param {Object} windowObj The fake window object, undefined to use window.
+   * @param {Object} navigatorObj The fake navigator object, undefined to use navigator.
+   */
+  function setRootObjects(windowObj, navigatorObj) {
+    rootObject = windowObj || window;
+    rootNavigator = navigatorObj || navigator;
+  }
+
+  var mozL10n;
+  if (inChrome) {
+    this.EXPORTED_SYMBOLS = ["utils"];
+    mozL10n = { get: function() {
+      throw new Error("mozL10n.get not availabled from chrome!");
+    }};
+  } else {
+    mozL10n = document.mozL10n || navigator.mozL10n;
+  }
 
   /**
    * Call types used for determining if a call is audio/video or audio-only.
@@ -36,11 +74,18 @@ loop.shared.utils = (function(mozL10n) {
 
   var FAILURE_DETAILS = {
     MEDIA_DENIED: "reason-media-denied",
+    NO_MEDIA: "reason-no-media",
+    ROOM_ALREADY_OPEN: "reason-room-already-open",
     UNABLE_TO_PUBLISH_MEDIA: "unable-to-publish-media",
+    USER_UNAVAILABLE: "reason-user-unavailable",
     COULD_NOT_CONNECT: "reason-could-not-connect",
     NETWORK_DISCONNECTED: "reason-network-disconnected",
     EXPIRED_OR_INVALID: "reason-expired-or-invalid",
-    UNKNOWN: "reason-unknown"
+    // TOS_FAILURE reflects the sdk error code 1026:
+    // https://tokbox.com/developer/sdks/js/reference/ExceptionEvent.html
+    TOS_FAILURE: "reason-tos-failure",
+    UNKNOWN: "reason-unknown",
+    ICE_FAILED: "reason-ice-failed"
   };
 
   var ROOM_INFO_FAILURES = {
@@ -65,6 +110,12 @@ loop.shared.utils = (function(mozL10n) {
     // Pending is when the user is being prompted, aka gUM in progress.
     PENDING: "ss-pending",
     ACTIVE: "ss-active"
+  };
+
+  var CHAT_CONTENT_TYPES = {
+    CONTEXT: "chat-context",
+    TEXT: "chat-text",
+    ROOM_NAME: "room-name"
   };
 
   /**
@@ -97,26 +148,17 @@ loop.shared.utils = (function(mozL10n) {
   }
 
   function isChrome(platform) {
-    return platform.toLowerCase().indexOf('chrome') > -1 ||
-           platform.toLowerCase().indexOf('chromium') > -1;
+    return platform.toLowerCase().indexOf("chrome") > -1 ||
+           platform.toLowerCase().indexOf("chromium") > -1;
   }
 
   function isFirefox(platform) {
     return platform.toLowerCase().indexOf("firefox") !== -1;
   }
 
-  function isFirefoxOS(platform) {
-    // So far WebActivities are exposed only in FxOS, but they may be
-    // exposed in Firefox Desktop soon, so we check for its existence
-    // and also check if the UA belongs to a mobile platform.
-    // XXX WebActivities are also exposed in WebRT on Firefox for Android,
-    //     so we need a better check. Bug 1065403.
-    return !!window.MozActivity && /mobi/i.test(platform);
-  }
-
   function isOpera(platform) {
-    return platform.toLowerCase().indexOf('opera') > -1 ||
-           platform.toLowerCase().indexOf('opr') > -1;
+    return platform.toLowerCase().indexOf("opera") > -1 ||
+           platform.toLowerCase().indexOf("opr") > -1;
   }
 
   /**
@@ -152,7 +194,7 @@ loop.shared.utils = (function(mozL10n) {
    *                                `false`.
    * @return {String} The platform we're currently running on, in lower-case.
    */
-  var getOS = _.memoize(function(platform, withVersion) {
+  var getOS = function(platform, withVersion) {
     if (!platform) {
       if ("oscpu" in window.navigator) {
         // See https://developer.mozilla.org/en-US/docs/Web/API/Navigator/oscpu
@@ -189,10 +231,7 @@ loop.shared.utils = (function(mozL10n) {
     }
 
     return platform.trim();
-  }, function(platform, withVersion) {
-    // Cache the return values with the following key.
-    return (platform + "") + (withVersion + "");
-  });
+  };
 
   /**
    * Helper to get the Operating System version.
@@ -205,7 +244,7 @@ loop.shared.utils = (function(mozL10n) {
    * @return {String} The current version of the platform we're currently running
    *                  on.
    */
-  var getOSVersion = _.memoize(function(platform) {
+  var getOSVersion = function(platform) {
     var os = getOS(platform, true);
     var digitsRE = /\s([0-9.]+)/;
 
@@ -249,7 +288,63 @@ loop.shared.utils = (function(mozL10n) {
     }
 
     return { major: Infinity, minor: 0 };
-  });
+  };
+
+  /**
+   * Helper to get the current short platform string, based on the return value
+   * of `getOS`.
+   * Possible return values are 'mac', 'win' or 'other'.
+   *
+   * @param  {String} [os] Optional string for the OS, used in tests only.
+   * @return {String} 'mac', 'win' or 'other'.
+   */
+  var getPlatform = function(os) {
+    os = getOS(os);
+    var platform = "other";
+    if (os.indexOf("mac") > -1) {
+      platform = "mac";
+    } else if (os.indexOf("win") > -1) {
+      platform = "win";
+    }
+    return platform;
+  };
+
+  /**
+   * Determines if the user has any audio devices installed.
+   *
+   * @param  {Function} callback Called with a boolean which is true if there
+   *                             are audio devices present.
+   */
+  function hasAudioOrVideoDevices(callback) {
+    // mediaDevices is the official API for the spec.
+    // Older versions of FF had mediaDevices but not enumerateDevices.
+    if ("mediaDevices" in rootNavigator &&
+        "enumerateDevices" in rootNavigator.mediaDevices) {
+      rootNavigator.mediaDevices.enumerateDevices().then(function(result) {
+        function checkForInput(device) {
+          return device.kind === "audioinput" || device.kind === "videoinput";
+        }
+
+        callback(result.some(checkForInput));
+      }).catch(function() {
+        callback(false);
+      });
+    // MediaStreamTrack is the older version of the API, implemented originally
+    // by Google Chrome.
+    } else if ("MediaStreamTrack" in rootObject &&
+               "getSources" in rootObject.MediaStreamTrack) {
+      rootObject.MediaStreamTrack.getSources(function(result) {
+        function checkForInput(device) {
+          return device.kind === "audio" || device.kind === "video";
+        }
+
+        callback(result.some(checkForInput));
+      });
+    } else {
+      // We don't know, so assume true.
+      callback(true);
+    }
+  }
 
   /**
    * Helper to allow getting some of the location data in a way that's compatible
@@ -263,36 +358,87 @@ loop.shared.utils = (function(mozL10n) {
   }
 
   /**
+   * Formats a url for display purposes. This includes converting the
+   * domain to punycode, and then decoding the url.
+   *
+   * @param {String} url The url to format.
+   * @return {Object}    An object containing the hostname and full location.
+   */
+  function formatURL(url) {
+    // We're using new URL to pass this through the browser's ACE/punycode
+    // processing system. If the browser considers a url to need to be
+    // punycode encoded for it to be displayed, then new URL will do that for
+    // us. This saves us needing our own punycode library.
+    var urlObject;
+    try {
+      urlObject = new URL(url);
+    } catch (ex) {
+      console.error("Error occurred whilst parsing URL:", ex);
+      return null;
+    }
+
+    // Finally, ensure we look good.
+    return {
+      hostname: urlObject.hostname,
+      location: decodeURI(urlObject.href)
+    };
+  }
+
+  /**
    * Generates and opens a mailto: url with call URL information prefilled.
    * Note: This only works for Desktop.
    *
-   * @param  {String} callUrl   The call URL.
-   * @param  {String} recipient The recipient email address (optional).
+   * @param {String} callUrl              The call URL.
+   * @param {String} [recipient]          The recipient email address (optional).
+   * @param {String} [contextDescription] The context description (optional).
+   * @param {String} [from]               The area from which this function is called.
    */
-  function composeCallUrlEmail(callUrl, recipient) {
-    if (typeof navigator.mozLoop === "undefined") {
+  function composeCallUrlEmail(callUrl, recipient, contextDescription, from) {
+    var mozLoop = navigator.mozLoop;
+    if (typeof mozLoop === "undefined") {
       console.warn("composeCallUrlEmail isn't available for Loop standalone.");
       return;
     }
-    navigator.mozLoop.composeEmail(
-      mozL10n.get("share_email_subject5", {
-        clientShortname2: mozL10n.get("clientShortname2")
-      }),
-      mozL10n.get("share_email_body5", {
+
+    var subject, body;
+    var footer = mozL10n.get("share_email_footer");
+
+    if (contextDescription) {
+      subject = mozL10n.get("share_email_subject6");
+      body = mozL10n.get("share_email_body_context2", {
         callUrl: callUrl,
-        brandShortname: mozL10n.get("brandShortname"),
-        clientShortname2: mozL10n.get("clientShortname2"),
-        clientSuperShortname: mozL10n.get("clientSuperShortname"),
-        learnMoreUrl: navigator.mozLoop.getLoopPref("learnMoreUrl")
-      }).replace(/\r\n/g, "\n").replace(/\n/g, "\r\n"),
+        title: contextDescription
+      });
+    } else {
+      subject = mozL10n.get("share_email_subject6");
+      body = mozL10n.get("share_email_body6", {
+        callUrl: callUrl
+      });
+    }
+    var bodyFooter =  body + footer;
+    bodyFooter = bodyFooter.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n");
+    mozLoop.composeEmail(
+      subject,
+      bodyFooter,
       recipient
     );
+
+    var bucket = mozLoop.SHARING_ROOM_URL["EMAIL_FROM_" + (from || "").toUpperCase()];
+    if (typeof bucket === "undefined") {
+      console.error("No URL sharing type bucket found for '" + from + "'");
+      return;
+    }
+    mozLoop.telemetryAddValue("LOOP_SHARING_ROOM_URL", bucket);
   }
 
   // We can alias `subarray` to `slice` when the latter is not available, because
   // they're semantically identical.
   if (!Uint8Array.prototype.slice) {
+    /* eslint-disable */
+    // Eslint disabled for no-extend-native; Specific override needed for Firefox 37
+    // and earlier, also for other browsers.
     Uint8Array.prototype.slice = Uint8Array.prototype.subarray;
+    /* eslint-enable */
   }
 
   /**
@@ -517,28 +663,154 @@ loop.shared.utils = (function(mozL10n) {
     return result;
   }
 
-  return {
+  /**
+   * Get the difference after comparing two different objects. It compares property
+   * names and their respective values if necessary.
+   * This function does _not_ recurse into object values to keep this functions'
+   * complexity predictable to O(2).
+   *
+   * @param  {Object} a Object number 1, the comparator.
+   * @param  {Object} b Object number 2, the comparison.
+   * @return {Object}   The diff output, which is itself an object structured as:
+   *                    {
+   *                      updated: [prop1, prop6],
+   *                      added: [prop2],
+   *                      removed: [prop3]
+   *                    }
+   */
+  function objectDiff(a, b) {
+    var propsA = a ? Object.getOwnPropertyNames(a) : [];
+    var propsB = b ? Object.getOwnPropertyNames(b) : [];
+    var diff = {
+      updated: [],
+      added: [],
+      removed: []
+    };
+
+    var prop;
+    for (var i = 0, lA = propsA.length; i < lA; ++i) {
+      prop = propsA[i];
+      if (propsB.indexOf(prop) === -1) {
+        diff.removed.push(prop);
+      } else if (a[prop] !== b[prop]) {
+        diff.updated.push(prop);
+      }
+    }
+
+    for (var j = 0, lB = propsB.length; j < lB; ++j) {
+      prop = propsB[j];
+      if (propsA.indexOf(prop) === -1) {
+        diff.added.push(prop);
+      }
+    }
+
+    return diff;
+  }
+
+  /**
+   * When comparing two object, you sometimes want to ignore falsy values when
+   * they're not persisted on the server, for example.
+   * This function removes all the empty/ falsy properties from the target object.
+   *
+   * @param  {Object} obj Target object to strip the falsy properties from
+   * @return {Object}
+   */
+  function stripFalsyValues(obj) {
+    var props = Object.getOwnPropertyNames(obj);
+    var prop;
+    for (var i = props.length; i >= 0; --i) {
+      prop = props[i];
+      // If the value of the object property evaluates to |false|, delete it.
+      if (!obj[prop]) {
+        delete obj[prop];
+      }
+    }
+    return obj;
+  }
+
+  /**
+   * Truncate a string if it exceeds the length as defined in `maxLen`, which
+   * is defined as '72' characters by default. If the string needs trimming,
+   * it'll be suffixed with the unicode ellipsis char, \u2026.
+   *
+   * @param  {String} str    The string to truncate, if needed.
+   * @param  {Number} maxLen Maximum number of characters that the string is
+   *                         allowed to contain. Optional, defaults to 72.
+   * @return {String} Truncated version of `str`.
+   */
+  function truncate(str, maxLen) {
+    maxLen = maxLen || 72;
+
+    if (str.length > maxLen) {
+      var substring = str.substr(0, maxLen);
+      // XXX Due to the fact that we have two different l10n libraries.
+      var direction = mozL10n.getDirection ? mozL10n.getDirection() :
+                      mozL10n.language.direction;
+      if (direction === "rtl") {
+        return "…" + substring;
+      }
+
+      return substring + "…";
+    }
+
+    return str;
+  }
+
+  /**
+   * Look up the DOM hierarchy for a node matching `selector`.
+   * If it is not found return the parent node, this is a sane default so
+   * that subsequent queries on the result do no fail.
+   * Better choice than the alternative `document.querySelector(selector)`
+   * because we ensure it works in the UI showcase as well.
+   *
+   * @param {HTMLElement} node Child element of the node we are looking for.
+   * @param {String} selector  CSS class value of element we are looking for.
+   * @return {HTMLElement}     Parent of node that matches selector query.
+   */
+  function findParentNode(node, selector) {
+    var parentNode = node.parentNode;
+
+    while (parentNode) {
+      if (parentNode.classList.contains(selector)) {
+        return parentNode;
+      }
+
+      parentNode = parentNode.parentNode;
+    }
+
+    return node;
+  }
+
+  this.utils = {
     CALL_TYPES: CALL_TYPES,
+    CHAT_CONTENT_TYPES: CHAT_CONTENT_TYPES,
     FAILURE_DETAILS: FAILURE_DETAILS,
     REST_ERRNOS: REST_ERRNOS,
     WEBSOCKET_REASONS: WEBSOCKET_REASONS,
     STREAM_PROPERTIES: STREAM_PROPERTIES,
     SCREEN_SHARE_STATES: SCREEN_SHARE_STATES,
     ROOM_INFO_FAILURES: ROOM_INFO_FAILURES,
+    setRootObjects: setRootObjects,
     composeCallUrlEmail: composeCallUrlEmail,
+    findParentNode: findParentNode,
     formatDate: formatDate,
+    formatURL: formatURL,
     getBoolPreference: getBoolPreference,
     getOS: getOS,
     getOSVersion: getOSVersion,
+    getPlatform: getPlatform,
     isChrome: isChrome,
     isFirefox: isFirefox,
-    isFirefoxOS: isFirefoxOS,
     isOpera: isOpera,
     getUnsupportedPlatform: getUnsupportedPlatform,
+    hasAudioOrVideoDevices: hasAudioOrVideoDevices,
     locationData: locationData,
     atob: atob,
     btoa: btoa,
     strToUint8Array: strToUint8Array,
-    Uint8ArrayToStr: Uint8ArrayToStr
+    Uint8ArrayToStr: Uint8ArrayToStr,
+    objectDiff: objectDiff,
+    stripFalsyValues: stripFalsyValues,
+    truncate: truncate
   };
-})(document.mozL10n || navigator.mozL10n);
+}).call(inChrome ? this : loop.shared);

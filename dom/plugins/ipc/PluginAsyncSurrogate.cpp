@@ -36,6 +36,7 @@ AsyncNPObject::AsyncNPObject(PluginAsyncSurrogate* aSurrogate)
 AsyncNPObject::~AsyncNPObject()
 {
   if (mRealObject) {
+    --mRealObject->asyncWrapperCount;
     parent::_releaseobject(mRealObject);
     mRealObject = nullptr;
   }
@@ -51,11 +52,19 @@ AsyncNPObject::GetRealObject()
   if (!instance) {
     return nullptr;
   }
+  NPObject* realObject = nullptr;
   NPError err = instance->NPP_GetValue(NPPVpluginScriptableNPObject,
-                                       &mRealObject);
+                                       &realObject);
   if (err != NPERR_NO_ERROR) {
     return nullptr;
   }
+  if (realObject->_class != PluginScriptableObjectParent::GetClass()) {
+    NS_ERROR("Don't know what kind of object this is!");
+    parent::_releaseobject(realObject);
+    return nullptr;
+  }
+  mRealObject = static_cast<ParentNPObject*>(realObject);
+  ++mRealObject->asyncWrapperCount;
   return mRealObject;
 }
 
@@ -556,14 +565,19 @@ PluginAsyncSurrogate::NotifyAsyncInitFailed()
   }
   mPendingNewStreamCalls.Clear();
 
+  // Make sure that any WaitForInit calls on this surrogate will fail, or else
+  // we'll be perma-blocked
+  mInitCancelled = true;
+
   nsNPAPIPluginInstance* inst =
     static_cast<nsNPAPIPluginInstance*>(mInstance->ndata);
   if (!inst) {
       return;
   }
   nsPluginInstanceOwner* owner = inst->GetOwner();
-  MOZ_ASSERT(owner);
-  owner->NotifyHostAsyncInitFailed();
+  if (owner) {
+    owner->NotifyHostAsyncInitFailed();
+  }
 }
 
 // static

@@ -30,6 +30,7 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
         'dbus-glib',
         'desktop-file-utils',
         'gtk2',
+        'gtk3',
         'hicolor-icon-theme',
         'hunspell',
         'icu',
@@ -59,12 +60,12 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
     ]
 
     AUR_PACKAGES = [
-        'https://aur.archlinux.org/packages/uu/uuid/uuid.tar.gz',
+        'https://aur.archlinux.org/cgit/aur.git/snapshot/uuid.tar.gz'
     ]
 
-    def __init__(self, version, dist_id):
+    def __init__(self, version, dist_id, **kwargs):
         print 'Using an experimental bootstrapper for Archlinux.'
-        BaseBootstrapper.__init__(self)
+        BaseBootstrapper.__init__(self, **kwargs)
 
     def install_system_packages(self):
         self.pacman_install(*self.SYSTEM_PACKAGES)

@@ -7,16 +7,14 @@
 #define GMPContentParent_h_
 
 #include "mozilla/gmp/PGMPContentParent.h"
+#include "GMPSharedMemManager.h"
 #include "nsISupportsImpl.h"
-
-class nsITimer;
+#include "GMPUtils.h"
 
 namespace mozilla {
 namespace gmp {
 
-class GeckoMediaPluginService;
 class GMPAudioDecoderParent;
-class GMPCapability;
 class GMPDecryptorParent;
 class GMPParent;
 class GMPVideoDecoderParent;
@@ -55,14 +53,16 @@ public:
   {
     return mDisplayName;
   }
-  void SetPluginId(const nsCString& aPluginId)
+  void SetPluginId(const uint32_t aPluginId)
   {
     mPluginId = aPluginId;
   }
-  const nsCString& GetPluginId()
+  const uint32_t GetPluginId()
   {
     return mPluginId;
   }
+
+  void CrashPluginNow(GMPCrashReason aReason);
 
 private:
   ~GMPContentParent();
@@ -96,7 +96,7 @@ private:
   nsCOMPtr<nsIThread> mGMPThread;
   nsRefPtr<GMPParent> mParent;
   nsCString mDisplayName;
-  nsCString mPluginId;
+  uint32_t mPluginId;
 };
 
 } // namespace gmp

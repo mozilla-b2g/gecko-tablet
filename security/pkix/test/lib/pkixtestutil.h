@@ -28,9 +28,10 @@
 #include <ctime>
 #include <stdint.h> // Some Mozilla-supported compilers lack <cstdint>
 #include <string>
+#include <cstring>
 
 #include "pkix/pkixtypes.h"
-#include "pkix/ScopedPtr.h"
+#include "../../lib/ScopedPtr.h"
 
 namespace mozilla { namespace pkix { namespace test {
 
@@ -160,13 +161,13 @@ CN(const char* value, uint8_t encodingTag = 0x0c /*UTF8String*/)
                        std::strlen(value)), encodingTag);
 }
 
-ByteString OU(const ByteString&);
+ByteString OU(const ByteString&, uint8_t encodingTag = 0x0c /*UTF8String*/);
 
 inline ByteString
-OU(const char* value)
+OU(const char* value, uint8_t encodingTag = 0x0c /*UTF8String*/)
 {
   return OU(ByteString(reinterpret_cast<const uint8_t*>(value),
-                       std::strlen(value)));
+                       std::strlen(value)), encodingTag);
 }
 
 ByteString emailAddress(const ByteString&);
@@ -241,6 +242,14 @@ DNSName(const char (&bytes)[L])
 {
   return DNSName(ByteString(reinterpret_cast<const uint8_t*>(&bytes),
                             L - 1));
+}
+
+inline ByteString
+DirectoryName(const ByteString& name)
+{
+  // (2 << 6) means "context-specific", (1 << 5) means "constructed", and 4 is
+  // the DirectoryName tag.
+  return TLV((2 << 6) | (1 << 5) | 4, name);
 }
 
 inline ByteString

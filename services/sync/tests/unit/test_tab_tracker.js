@@ -5,7 +5,7 @@ Cu.import("resource://services-sync/engines/tabs.js");
 Cu.import("resource://services-sync/service.js");
 Cu.import("resource://services-sync/util.js");
 
-let clientsEngine = Service.clientsEngine;
+var clientsEngine = Service.clientsEngine;
 
 function fakeSvcWinMediator() {
   // actions on windows are captured in logs
@@ -15,7 +15,9 @@ function fakeSvcWinMediator() {
     getEnumerator: function() {
       return {
         cnt: 2,
-        hasMoreElements: function() this.cnt-- > 0,
+        hasMoreElements: function() {
+          return this.cnt-- > 0;
+        },
         getNext: function() {
           let elt = {addTopics: [], remTopics: []};
           logs.push(elt);

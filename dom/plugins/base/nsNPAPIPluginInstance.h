@@ -17,6 +17,7 @@
 #include "nsHashKeys.h"
 #include <prinrval.h>
 #include "js/TypeDecls.h"
+#include "nsIAudioChannelAgent.h"
 #ifdef MOZ_WIDGET_ANDROID
 #include "nsAutoPtr.h"
 #include "nsIRunnable.h"
@@ -74,13 +75,14 @@ public:
   bool needUnschedule;
 };
 
-class nsNPAPIPluginInstance : public nsISupports
+class nsNPAPIPluginInstance final : public nsIAudioChannelAgentCallback
 {
 private:
   typedef mozilla::PluginLibrary PluginLibrary;
 
 public:
   NS_DECL_THREADSAFE_ISUPPORTS
+  NS_DECL_NSIAUDIOCHANNELAGENTCALLBACK
 
   nsresult Initialize(nsNPAPIPlugin *aPlugin, nsPluginInstanceOwner* aOwner, const nsACString& aMIMEType);
   nsresult Start();
@@ -116,7 +118,15 @@ public:
   nsresult GetJSContext(JSContext* *outContext);
   nsPluginInstanceOwner* GetOwner();
   void SetOwner(nsPluginInstanceOwner *aOwner);
-  nsresult ShowStatus(const char* message);
+
+  bool HasAudioChannelAgent() const
+  {
+    return !!mAudioChannelAgent;
+  }
+
+  nsresult GetOrCreateAudioChannelAgent(nsIAudioChannelAgent** aAgent);
+
+  nsresult SetMuted(bool aIsMuted);
 
   nsNPAPIPlugin* GetPlugin();
 
@@ -286,6 +296,8 @@ public:
   // Returns the contents scale factor of the screen the plugin is drawn on.
   double GetContentsScaleFactor();
 
+  nsresult GetRunID(uint32_t *aRunID);
+
   static bool InPluginCallUnsafeForReentry() { return gInUnsafePluginCalls > 0; }
   static void BeginPluginCall(NSPluginCallReentry aReentryState)
   {
@@ -385,7 +397,7 @@ private:
 
 #ifdef MOZ_WIDGET_ANDROID
   void EnsureSharedTexture();
-  mozilla::TemporaryRef<mozilla::gl::AndroidSurfaceTexture> CreateSurfaceTexture();
+  already_AddRefed<mozilla::gl::AndroidSurfaceTexture> CreateSurfaceTexture();
 
   std::map<void*, VideoInfo*> mVideos;
   bool mOnScreen;
@@ -403,6 +415,8 @@ private:
   uint32_t mCachedParamLength;
   char **mCachedParamNames;
   char **mCachedParamValues;
+
+  nsCOMPtr<nsIAudioChannelAgent> mAudioChannelAgent;
 };
 
 // On Android, we need to guard against plugin code leaking entries in the local

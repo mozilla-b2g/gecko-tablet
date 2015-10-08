@@ -573,7 +573,8 @@ function assert_records(expected, desc) {
   // Test that starting a single animation that is cancelled by updating
   // the animation-iteration-count property dispatches an added notification
   // and then a removed notification.
-  addAsyncAnimTest("single_animation_cancelled_fill", aOptions, function*() {
+  addAsyncAnimTest("single_animation_cancelled_iteration_count",
+                   aOptions, function*() {
     // Start a short, repeated animation.
     e.style = "animation: anim 0.5s infinite;";
 
@@ -601,6 +602,44 @@ function assert_records(expected, desc) {
     yield await_frame();
     assert_records([{ added: [], changed: [], removed: animations }],
                    "records after animation end");
+
+    e.style = "";
+  });
+
+  // Test that starting a single animation that is cancelled by calling
+  // cancel() dispatches an added notification and then a removed
+  // notification.
+  addAsyncAnimTest("single_animation_cancelled_api", aOptions, function*() {
+    // Start a short, filled animation.
+    e.style = "animation: anim 100s forwards;";
+
+    // The animation should cause the creation of a single Animation.
+    var animations = e.getAnimations();
+    is(animations.length, 1, "getAnimations().length after animation start");
+
+    // Wait for the single MutationRecord for the Animation addition to
+    // be delivered.
+    yield await_frame();
+    assert_records([{ added: animations, changed: [], removed: [] }],
+                   "records after animation start");
+
+    // Cancel the animation
+    animations[0].cancel();
+
+    // Wait for the single MutationRecord for the Animation removal to
+    // be delivered.
+    yield await_frame();
+    assert_records([{ added: [], changed: [], removed: animations }],
+                   "records after animation end");
+
+    // Re-trigger the animation
+    animations[0].play();
+    yield await_frame();
+
+    // Wait for the single MutationRecord for the Animation (re-)addition to
+    // be delivered.
+    assert_records([{ added: animations, changed: [], removed: [] }],
+                   "records after animation start");
 
     e.style = "";
   });
@@ -696,6 +735,72 @@ function assert_records(expected, desc) {
 
     e.style = "";
   });
+});
+
+addAsyncAnimTest("tree_ordering", { observe: div, subtree: true }, function*() {
+
+  // Create a tree with two children:
+  //
+  //         div
+  //        /  \
+  //   childA  childB
+  var childA = document.createElement("div");
+  var childB = document.createElement("div");
+
+  div.appendChild(childA);
+  div.appendChild(childB);
+
+  // Start an animation on each (using order: childB, div, childA)
+  //
+  // We include multiple animations on some nodes so that we can test batching
+  // works as expected later in this test.
+  childB.style = "animation: anim 100s";
+  div.style    = "animation: anim 100s, anim 100s, anim 100s";
+  childA.style = "animation: anim 100s, anim 100s";
+
+  var divAnimations = div.getAnimations();
+  var childAAnimations = childA.getAnimations();
+  var childBAnimations = childB.getAnimations();
+
+  // The order in which we get the corresponding records is currently
+  // based on the order we visit these nodes when updating styles.
+  //
+  // That is because we don't do any document-level batching of animation
+  // mutation records when we flush styles. We may introduce that in the
+  // future but for now all we are interested in testing here is that the order
+  // these records are dispatched is consistent between runs.
+  //
+  // We currently expect to get records in order childA, childB, div
+  yield await_frame();
+  assert_records([{ added: childAAnimations, changed: [], removed: [] },
+                  { added: childBAnimations, changed: [], removed: [] },
+                  { added: divAnimations, changed: [], removed: [] }],
+                 "records after simultaneous animation start");
+
+  // The one case where we *do* currently perform document-level (or actually
+  // timeline-level) batching is when animations are updated from a refresh
+  // driver tick. In particular, this means that when animations finish
+  // naturally the removed records should be dispatched according to the
+  // position of the elements in the tree.
+  //
+  // Fast-forward to *just* before the end of the animation.
+  var fastForward = animation => animation.currentTime = 99999;
+  divAnimations.forEach(fastForward);
+  childAAnimations.forEach(fastForward);
+  childBAnimations.forEach(fastForward);
+
+  yield await_event(div, "animationend");
+
+  // We should get records in order div, childA, childB
+  assert_records([{ added: [], changed: [], removed: divAnimations },
+                  { added: [], changed: [], removed: childAAnimations },
+                  { added: [], changed: [], removed: childBAnimations }],
+                 "records after finishing");
+
+  // Clean up
+  div.style = "";
+  childA.remove();
+  childB.remove();
 });
 
 // Run the tests.

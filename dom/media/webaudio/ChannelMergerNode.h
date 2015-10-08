@@ -14,7 +14,7 @@ namespace dom {
 
 class AudioContext;
 
-class ChannelMergerNode : public AudioNode
+class ChannelMergerNode final : public AudioNode
 {
 public:
   ChannelMergerNode(AudioContext* aContext,
@@ -43,8 +43,8 @@ private:
   const uint16_t mInputCount;
 };
 
-}
-}
+} // namespace dom
+} // namespace mozilla
 
 #endif
 

@@ -5,10 +5,10 @@
 
 const KEY_UPDATE_ARCHIVE_DIR = "UpdArchD"
 
-let gActiveUpdate;
-let gDirService;
-let gDirProvider;
-let gOldProviders;
+var gActiveUpdate;
+var gDirService;
+var gDirProvider;
+var gOldProviders;
 
 function run_test() {
   setupTestCommon();
@@ -70,14 +70,18 @@ function run_test_pt1() {
 }
 
 function check_test_pt1() {
-  do_check_eq(gUpdateCount, 1);
+  Assert.equal(gUpdateCount, 1,
+               "the update count" + MSG_SHOULD_EQUAL);
 
   gActiveUpdate = gUpdates[0];
-  do_check_neq(gActiveUpdate, null);
+  Assert.ok(!!gActiveUpdate,
+            "there should be an active update");
 
   let state = gAUS.downloadUpdate(gActiveUpdate, true);
-  do_check_eq(state, "null");
-  do_check_eq(gActiveUpdate.errorCode >>> 0 , Cr.NS_ERROR_FILE_TOO_BIG);
+  Assert.equal(state, STATE_NONE,
+               "the update state" + MSG_SHOULD_EQUAL);
+  Assert.equal(gActiveUpdate.errorCode >>> 0 , Cr.NS_ERROR_FILE_TOO_BIG,
+               "the update error code" + MSG_SHOULD_EQUAL);
 
   doTestFinish();
 }
@@ -94,7 +98,7 @@ function end_test() {
 
 function FakeDirProvider() {}
 FakeDirProvider.prototype = {
-  getFile: function(prop, persistent) {
+  getFile: function FP_getFile(prop, persistent) {
     if (prop == KEY_UPDATE_ARCHIVE_DIR) {
       if (gActiveUpdate) {
         gActiveUpdate.errorCode = Cr.NS_ERROR_FILE_TOO_BIG;

@@ -62,13 +62,12 @@ private:
 /* static */ GLManager*
 GLManager::CreateGLManager(LayerManagerComposite* aManager)
 {
-  if (aManager &&
-      Compositor::GetBackend() == LayersBackend::LAYERS_OPENGL) {
+  if (aManager && aManager->GetCompositor()->GetBackendType() == LayersBackend::LAYERS_OPENGL) {
     return new GLManagerCompositor(static_cast<CompositorOGL*>(
       aManager->GetCompositor()));
   }
   return nullptr;
 }
 
-}
-}
+} // namespace layers
+} // namespace mozilla

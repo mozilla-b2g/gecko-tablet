@@ -36,6 +36,7 @@ VibrancyManager::UpdateVibrantRegion(VibrancyType aType, const nsIntRegion& aReg
       if (i < viewsToRecycle.Length()) {
         view = viewsToRecycle[i];
         [view setFrame:rect];
+        [view setNeedsDisplay:YES];
       } else {
         view = CreateEffectView(aType, rect);
         [mContainerView addSubview:view];
@@ -190,6 +191,7 @@ AppearanceForVibrancyType(VibrancyType aType)
     case VibrancyType::TOOLTIP:
     case VibrancyType::MENU:
     case VibrancyType::HIGHLIGHTED_MENUITEM:
+    case VibrancyType::SHEET:
       return [NSAppearanceClass performSelector:@selector(appearanceNamed:)
                                      withObject:@"NSAppearanceNameVibrantLight"];
     case VibrancyType::DARK:
@@ -210,6 +212,12 @@ enum {
 };
 #endif
 
+#if !defined(MAC_OS_X_VERSION_10_11) || MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_11
+enum {
+  NSVisualEffectMaterialMenu = 5
+};
+#endif
+
 static NSUInteger
 VisualEffectStateForVibrancyType(VibrancyType aType)
 {
@@ -217,8 +225,10 @@ VisualEffectStateForVibrancyType(VibrancyType aType)
     case VibrancyType::TOOLTIP:
     case VibrancyType::MENU:
     case VibrancyType::HIGHLIGHTED_MENUITEM:
-      // Tooltip and menu windows are never "key", so we need to tell the
-      // vibrancy effect to look active regardless of window state.
+    case VibrancyType::SHEET:
+      // Tooltip and menu windows are never "key" and sheets always looks
+      // active, so we need to tell the vibrancy effect to look active
+      // regardless of window state.
       return NSVisualEffectStateActive;
     default:
       return NSVisualEffectStateFollowsWindowActiveState;
@@ -260,13 +270,14 @@ VibrancyManager::CreateEffectView(VibrancyType aType, NSRect aRect)
   [effectView setState:VisualEffectStateForVibrancyType(aType)];
 
   if (aType == VibrancyType::MENU) {
-    // NSVisualEffectMaterialTitlebar doesn't match the native menu look
-    // perfectly but comes pretty close. Ideally we'd use a material with
-    // materialTypeName "MacLight", since that's what menus use, but there's
-    // no entry with that material in the internalMaterialType-to-
-    // CGSWindowBackdropViewSpec table which NSVisualEffectView consults when
-    // setting up the effect.
-    [effectView setMaterial:NSVisualEffectMaterialTitlebar];
+    if (nsCocoaFeatures::OnElCapitanOrLater()) {
+      [effectView setMaterial:NSVisualEffectMaterialMenu];
+    } else {
+      // Before 10.11 there is no material that perfectly matches the menu
+      // look. Of all available material types, NSVisualEffectMaterialTitlebar
+      // is the one that comes closest.
+      [effectView setMaterial:NSVisualEffectMaterialTitlebar];
+    }
   } else if (aType == VibrancyType::HIGHLIGHTED_MENUITEM) {
     [effectView setMaterial:NSVisualEffectMaterialMenuItem];
     if ([effectView respondsToSelector:@selector(setEmphasized:)]) {

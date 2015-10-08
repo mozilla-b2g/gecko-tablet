@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -55,6 +56,13 @@ public:
   }
   bool operator!=(const nsSMILKeySpline& aOther) const {
     return !(*this == aOther);
+  }
+  int32_t Compare(const nsSMILKeySpline& aRhs) const {
+    if (mX1 != aRhs.mX1) return mX1 < aRhs.mX1 ? -1 : 1;
+    if (mY1 != aRhs.mY1) return mY1 < aRhs.mY1 ? -1 : 1;
+    if (mX2 != aRhs.mX2) return mX2 < aRhs.mX2 ? -1 : 1;
+    if (mY2 != aRhs.mY2) return mY2 < aRhs.mY2 ? -1 : 1;
+    return 0;
   }
 
 private:

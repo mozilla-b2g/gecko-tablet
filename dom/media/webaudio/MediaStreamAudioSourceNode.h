@@ -15,7 +15,7 @@ namespace mozilla {
 
 namespace dom {
 
-class MediaStreamAudioSourceNodeEngine : public AudioNodeEngine
+class MediaStreamAudioSourceNodeEngine final : public AudioNodeEngine
 {
 public:
   explicit MediaStreamAudioSourceNodeEngine(AudioNode* aNode)
@@ -35,6 +35,7 @@ public:
       NS_ERROR("MediaStreamAudioSourceNodeEngine bad parameter index");
     }
   }
+
 private:
   bool mEnabled;
 };
@@ -43,7 +44,8 @@ class MediaStreamAudioSourceNode : public AudioNode,
                                    public DOMMediaStream::PrincipalChangeObserver
 {
 public:
-  MediaStreamAudioSourceNode(AudioContext* aContext, DOMMediaStream* aMediaStream);
+  MediaStreamAudioSourceNode(AudioContext* aContext,
+                             DOMMediaStream* aMediaStream);
 
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(MediaStreamAudioSourceNode, AudioNode)
@@ -72,7 +74,7 @@ private:
   nsRefPtr<DOMMediaStream> mInputStream;
 };
 
-}
-}
+} // namespace dom
+} // namespace mozilla
 
 #endif

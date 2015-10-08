@@ -33,7 +33,7 @@ public:
                               dom::HTMLCanvasElement* aCanvas,
                               imgIRequest* aRequest,
                               SourceSurface* aSource,
-                              const gfxIntSize& aSize);
+                              const gfx::IntSize& aSize);
 
   /**
    * Check whether aImage has recently been drawn into aCanvas. If we return
@@ -53,6 +53,6 @@ public:
   static SourceSurface* SimpleLookup(dom::Element* aImage);
 };
 
-}
+} // namespace mozilla
 
 #endif /* CANVASIMAGECACHE_H_ */

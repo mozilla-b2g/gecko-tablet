@@ -16,22 +16,25 @@
  *  limitations under the License.
  */
 
-let {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
-let loader = Cc["@mozilla.org/moz/jssubscript-loader;1"]
-               .getService(Ci.mozIJSSubScriptLoader);
+var {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
-let utils = {};
+Cu.import("chrome://marionette/content/error.js");
+
+var loader = Cc["@mozilla.org/moz/jssubscript-loader;1"]
+    .getService(Ci.mozIJSSubScriptLoader);
+
+var utils = {};
 loader.loadSubScript("chrome://marionette/content/EventUtils.js", utils);
 loader.loadSubScript("chrome://marionette/content/ChromeUtils.js", utils);
 
-let keyModifierNames = {
+var keyModifierNames = {
     "VK_SHIFT": 'shiftKey',
     "VK_CONTROL": 'ctrlKey',
     "VK_ALT": 'altKey',
     "VK_META": 'metaKey'
 };
 
-let keyCodes = {
+var keyCodes = {
   '\uE001': "VK_CANCEL",
   '\uE002': "VK_HELP",
   '\uE003': "VK_BACK_SPACE",
@@ -123,9 +126,28 @@ function sendSingleKey (keyToSend, modifiers, document) {
   utils.synthesizeKey(keyCode, modifiers, document);
 }
 
-function sendKeysToElement (document, element, keysToSend, successCallback, errorCallback, command_id, ignoreVisibility) {
+/**
+ * Focus element and, if a textual input field and no previous selection
+ * state exists, move the caret to the end of the input field.
+ *
+ * @param {Element} el
+ *     Element to focus.
+ */
+function focusElement(el) {
+  let t = el.type;
+  if (t && (t == "text" || t == "textarea")) {
+    if (el.selectionEnd == 0) {
+      let len = el.value.length;
+      el.setSelectionRange(len, len);
+    }
+  }
+  el.focus();
+}
+
+function sendKeysToElement(document, element, keysToSend, successCallback, errorCallback, command_id, ignoreVisibility) {
   if (ignoreVisibility || checkVisible(element)) {
-    element.focus();
+    focusElement(element);
+
     let modifiers = {
       shiftKey: false,
       ctrlKey: false,
@@ -137,9 +159,9 @@ function sendKeysToElement (document, element, keysToSend, successCallback, erro
       var c = value.charAt(i);
       sendSingleKey(c, modifiers, document);
     }
+
     successCallback(command_id);
-  }
-  else {
-    errorCallback("Element is not visible", 11, null, command_id);
+  } else {
+    errorCallback(new ElementNotVisibleError("Element is not visible"), command_id);
   }
 };

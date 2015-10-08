@@ -18,7 +18,6 @@
 #include "prtime.h"
 
 class nsNavBookmarks;
-class nsIOutputStream;
 
 namespace mozilla {
 namespace places {
@@ -56,6 +55,7 @@ namespace places {
     nsCString property;
     bool isAnnotation;
     nsCString newValue;
+    nsCString oldValue;
   };
 
   typedef void (nsNavBookmarks::*ItemVisitMethod)(const ItemVisitData&);

@@ -8,6 +8,7 @@
 #include "imgILoader.h"
 #include "imgIRequest.h"
 #include "nsNetUtil.h"
+#include "nsServiceManagerUtils.h"
 #include "nsIImageToPixbuf.h"
 #include "nsIStringBundle.h"
 #include "nsIObserverService.h"
@@ -137,7 +138,9 @@ nsAlertsIconListener::OnLoadComplete(imgIRequest* aRequest)
 
   nsCOMPtr<imgIContainer> image;
   rv = aRequest->GetImage(getter_AddRefs(image));
-  MOZ_ASSERT(image);
+  if (NS_WARN_IF(NS_FAILED(rv) || !image)) {
+    return rv;
+  }
 
   // Ask the image to decode at its intrinsic size.
   int32_t width = 0, height = 0;

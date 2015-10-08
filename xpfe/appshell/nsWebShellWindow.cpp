@@ -213,7 +213,7 @@ nsresult nsWebShellWindow::Initialize(nsIXULWindow* aParent,
   // and then blowing it away with a second one, which can cause problems for the
   // top-level chrome window case. See bug 789773.
   if (nsContentUtils::IsInitialized()) { // Sometimes this happens really early  See bug 793370.
-    rv = mDocShell->CreateAboutBlankContentViewer(nsContentUtils::SubjectPrincipal());
+    rv = mDocShell->CreateAboutBlankContentViewer(nsContentUtils::SubjectPrincipalOrSystemIfNativeCaller());
     NS_ENSURE_SUCCESS(rv, rv);
     nsCOMPtr<nsIDocument> doc = mDocShell ? mDocShell->GetDocument() : nullptr;
     NS_ENSURE_TRUE(!!doc, NS_ERROR_FAILURE);
@@ -306,7 +306,7 @@ nsWebShellWindow::RequestWindowClose(nsIWidget* aWidget)
     nsRefPtr<nsPresContext> presContext = presShell->GetPresContext();
 
     nsEventStatus status = nsEventStatus_eIgnore;
-    WidgetMouseEvent event(true, NS_XUL_CLOSE, nullptr,
+    WidgetMouseEvent event(true, eWindowClose, nullptr,
                            WidgetMouseEvent::eReal);
     if (NS_SUCCEEDED(eventTarget->DispatchDOMEvent(&event, nullptr, presContext, &status)) &&
         status == nsEventStatus_eConsumeNoDefault)
@@ -341,8 +341,8 @@ nsWebShellWindow::SizeModeChanged(nsSizeMode sizeMode)
   if (ourWindow) {
     MOZ_ASSERT(ourWindow->IsOuterWindow());
 
-    // Let the application know if it's in fullscreen mode so it
-    // can update its UI.
+    // Ensure that the fullscreen state is synchronized between
+    // the widget and the outer window object.
     if (sizeMode == nsSizeMode_Fullscreen) {
       ourWindow->SetFullScreen(true);
     }
@@ -359,6 +359,16 @@ nsWebShellWindow::SizeModeChanged(nsSizeMode sizeMode)
   // the state and pass the event on to the OS. The day is coming
   // when we'll handle the event here, and the return result will
   // then need to be different.
+}
+
+void
+nsWebShellWindow::FullscreenChanged(bool aInFullscreen)
+{
+  if (mDocShell) {
+    if (nsCOMPtr<nsPIDOMWindow> ourWindow = mDocShell->GetWindow()) {
+      ourWindow->FinishFullscreenChange(aInFullscreen);
+    }
+  }
 }
 
 void
@@ -409,8 +419,8 @@ nsWebShellWindow::WindowActivated()
     fm->WindowRaised(window);
 
   if (mChromeLoaded) {
-    PersistentAttributesDirty(PAD_POSITION | PAD_SIZE | PAD_MISC);
-    SavePersistentAttributes();
+    SetAttributesDirty(PAD_POSITION | PAD_SIZE | PAD_MISC);
+    SaveAttributes();
    }
 }
 
@@ -502,14 +512,14 @@ nsWebShellWindow::SetPersistenceTimer(uint32_t aDirtyFlags)
   mSPTimer->InitWithCallback(callback, SIZE_PERSISTENCE_TIMEOUT,
                              nsITimer::TYPE_ONE_SHOT);
 
-  PersistentAttributesDirty(aDirtyFlags);
+  SetAttributesDirty(aDirtyFlags);
 }
 
 void
 nsWebShellWindow::FirePersistenceTimer()
 {
   MutexAutoLock lock(mSPTimerLock);
-  SavePersistentAttributes();
+  SaveAttributes();
 }
 
 
@@ -707,7 +717,7 @@ bool nsWebShellWindow::ExecuteCloseHandler()
       contentViewer->GetPresContext(getter_AddRefs(presContext));
 
       nsEventStatus status = nsEventStatus_eIgnore;
-      WidgetMouseEvent event(true, NS_XUL_CLOSE, nullptr,
+      WidgetMouseEvent event(true, eWindowClose, nullptr,
                              WidgetMouseEvent::eReal);
 
       nsresult rv =
@@ -762,7 +772,7 @@ NS_IMETHODIMP nsWebShellWindow::Destroy()
     MutexAutoLock lock(mSPTimerLock);
     if (mSPTimer) {
       mSPTimer->Cancel();
-      SavePersistentAttributes();
+      SaveAttributes();
       mSPTimer = nullptr;
     }
   }

@@ -28,7 +28,7 @@ tasks:
           get built.
 
       workerType: "gecko-decision"
-      provisionerId: "aws-provisioner"
+      provisionerId: "aws-provisioner-v1"
 
       tags:
         createdForUser: {{owner}}
@@ -40,6 +40,7 @@ tasks:
         - "queue:route:tc-treeherder.{{project}}.{{revision_hash}}"
 
       routes:
+        - "tc-treeherder.{{project}}.{{revision_hash}}"
         - "tc-treeherder-stage.{{project}}.{{revision_hash}}"
 
       payload:

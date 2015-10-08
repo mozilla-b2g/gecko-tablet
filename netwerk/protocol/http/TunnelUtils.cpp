@@ -20,6 +20,9 @@
 #include "prerror.h"
 #include "prio.h"
 #include "TunnelUtils.h"
+#include "nsNetCID.h"
+#include "nsServiceManagerUtils.h"
+#include "nsComponentManagerUtils.h"
 
 #ifdef DEBUG
 // defined by the socket transport service while active
@@ -1022,9 +1025,6 @@ SpdyConnectTransaction::SpdyConnectTransaction(nsHttpConnectionInfo *ci,
 SpdyConnectTransaction::~SpdyConnectTransaction()
 {
   LOG(("SpdyConnectTransaction dtor %p\n", this));
-  if (mRequestHead) {
-    delete mRequestHead;
-  }
 
   if (mDrivingTransaction) {
     // requeue it I guess. This should be gone.
@@ -1643,5 +1643,5 @@ NS_IMPL_ISUPPORTS(OutputStreamShim, nsIOutputStream, nsIAsyncOutputStream)
 NS_IMPL_ISUPPORTS(SocketInWrapper, nsIAsyncInputStream)
 NS_IMPL_ISUPPORTS(SocketOutWrapper, nsIAsyncOutputStream)
 
-} // namespace mozilla::net
+} // namespace net
 } // namespace mozilla

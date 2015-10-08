@@ -72,7 +72,7 @@ struct GrFontFeatures {
     gr_feature_val *mFeatures;
 };
 
-static PLDHashOperator
+static void
 AddFeature(const uint32_t& aTag, uint32_t& aValue, void *aUserArg)
 {
     GrFontFeatures *f = static_cast<GrFontFeatures*>(aUserArg);
@@ -81,7 +81,6 @@ AddFeature(const uint32_t& aTag, uint32_t& aValue, void *aUserArg)
     if (fref) {
         gr_fref_set_feature_value(fref, aValue, f->mFeatures);
     }
-    return PL_DHASH_NEXT;
 }
 
 bool
@@ -165,9 +164,10 @@ gfxGraphiteShaper::ShapeText(gfxContext      *aContext,
     size_t numChars = gr_count_unicode_characters(gr_utf16,
                                                   aText, aText + aLength,
                                                   nullptr);
+    gr_bidirtl grBidi = gr_bidirtl(aShapedText->IsRightToLeft()
+                                   ? (gr_rtl | gr_nobidi) : gr_nobidi);
     gr_segment *seg = gr_make_seg(mGrFont, mGrFace, 0, grFeatures,
-                                  gr_utf16, aText, numChars,
-                                  aShapedText->IsRightToLeft());
+                                  gr_utf16, aText, numChars, grBidi);
 
     gr_featureval_destroy(grFeatures);
 
@@ -213,10 +213,10 @@ gfxGraphiteShaper::SetGlyphsFromSegment(gfxContext      *aContext,
     AutoFallibleTArray<float,SMALL_GLYPH_RUN> xLocs;
     AutoFallibleTArray<float,SMALL_GLYPH_RUN> yLocs;
 
-    if (!clusters.SetLength(aLength) ||
-        !gids.SetLength(glyphCount) ||
-        !xLocs.SetLength(glyphCount) ||
-        !yLocs.SetLength(glyphCount))
+    if (!clusters.SetLength(aLength, fallible) ||
+        !gids.SetLength(glyphCount, fallible) ||
+        !xLocs.SetLength(glyphCount, fallible) ||
+        !yLocs.SetLength(glyphCount, fallible))
     {
         return NS_ERROR_OUT_OF_MEMORY;
     }

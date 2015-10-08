@@ -5,7 +5,7 @@
 
 /* global WebrtcGlobalInformation, document */
 
-const Cu = Components.utils;
+var Cu = Components.utils;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
@@ -24,11 +24,11 @@ const formatString = strings.formatStringFromName;
 const LOGFILE_NAME_DEFAULT = "aboutWebrtc.html";
 const WEBRTC_TRACE_ALL = 65535;
 
-let reportsRetrieved = new Promise(resolve =>
+var reportsRetrieved = new Promise(resolve =>
   WebrtcGlobalInformation.getAllStats(stats => resolve(stats))
 );
 
-let logRetrieved = new Promise(resolve =>
+var logRetrieved = new Promise(resolve =>
   WebrtcGlobalInformation.getLogging("", log => resolve(log))
 );
 
@@ -62,7 +62,7 @@ function onLoad() {
     });
 }
 
-let ControlSet = {
+var ControlSet = {
   render: function() {
     let controls = document.createElement("div");
     let control = document.createElement("div");
@@ -273,7 +273,7 @@ AecLogging.prototype.onClick = function () {
   this.update();
 };
 
-let AboutWebRTC = {
+var AboutWebRTC = {
   _reports: [],
   _log: [],
 
@@ -293,7 +293,7 @@ let AboutWebRTC = {
     let connections = document.createDocumentFragment();
 
     let reports = [...this._reports];
-    reports.sort((a, b) => a.timestamp - b.timestamp);
+    reports.sort((a, b) => b.timestamp - a.timestamp);
     for (let report of reports) {
       let peerConnection = new PeerConnection(report);
       connections.appendChild(peerConnection.render());
@@ -305,6 +305,10 @@ let AboutWebRTC = {
   renderConnectionLog: function() {
     let content = document.createElement("div");
     content.className = "log";
+
+    if (!this._log.length) {
+      return content;
+    }
 
     let elem = document.createElement("h3");
     elem.textContent = getString("log_heading");
@@ -631,7 +635,7 @@ ICEStats.prototype = {
         stat = {
           localcandidate: this.candidateToString(local),
           state: pair.state,
-          priority: pair.mozPriority,
+          priority: pair.priority,
           nominated: pair.nominated,
           selected: pair.selected
         };
@@ -658,6 +662,10 @@ ICEStats.prototype = {
   },
 
   candidateToString: function(c) {
+    if (!c) {
+      return "*";
+    }
+
     var type = c.candidateType;
 
     if (c.type == "localcandidate" && c.candidateType == "relayed") {

@@ -17,15 +17,12 @@ DIRS += [
     'modules',
     'themes',
     'extensions',
+    '/devtools/client',
 ]
 
 DIRS += [
-    'devtools',
     'app',
 ]
-
-if CONFIG['MOZ_METRO']:
-    DIRS += ['metro']
 
 if CONFIG['MAKENSISU']:
     DIRS += ['installer/windows']

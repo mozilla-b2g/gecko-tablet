@@ -14,7 +14,7 @@ namespace dom {
 
 class AudioContext;
 
-class ChannelSplitterNode : public AudioNode
+class ChannelSplitterNode final : public AudioNode
 {
 public:
   ChannelSplitterNode(AudioContext* aContext,
@@ -43,8 +43,8 @@ private:
   const uint16_t mOutputCount;
 };
 
-}
-}
+} // namespace dom
+} // namespace mozilla
 
 #endif
 

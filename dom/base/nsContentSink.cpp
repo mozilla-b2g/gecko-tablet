@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 sw=2 et tw=78: */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -20,6 +20,8 @@
 #include "nsCPrefetchService.h"
 #include "nsIURI.h"
 #include "nsNetUtil.h"
+#include "nsIMIMEHeaderParam.h"
+#include "nsIProtocolHandler.h"
 #include "nsIHttpChannel.h"
 #include "nsIContent.h"
 #include "nsIPresShell.h"
@@ -33,7 +35,6 @@
 #include "nsIApplicationCacheContainer.h"
 #include "nsIApplicationCacheChannel.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsISpeculativeConnect.h"
 #include "nsICookieService.h"
 #include "nsContentUtils.h"
 #include "nsNodeInfoManager.h"
@@ -48,6 +49,17 @@
 #include "nsIObserverService.h"
 #include "mozilla/Preferences.h"
 #include "nsParserConstants.h"
+#include "nsSandboxFlags.h"
+
+static PRLogModuleInfo*
+GetSriLog()
+{
+  static PRLogModuleInfo *gSriPRLog;
+  if (!gSriPRLog) {
+    gSriPRLog = PR_NewLogModule("SRI");
+  }
+  return gSriPRLog;
+}
 
 using namespace mozilla;
 
@@ -73,12 +85,14 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsContentSink)
   }
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mParser)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mCSSLoader)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mNodeInfoManager)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mScriptLoader)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsContentSink)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocument)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mParser)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCSSLoader)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mNodeInfoManager)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mScriptLoader)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
@@ -446,6 +460,9 @@ nsContentSink::ProcessLinkHeader(const nsAString& aLinkData)
   nsAutoString type;
   nsAutoString media;
   nsAutoString anchor;
+  nsAutoString crossOrigin;
+
+  crossOrigin.SetIsVoid(true);
 
   // copy to work buffer
   nsAutoString stringList(aLinkData);
@@ -620,6 +637,12 @@ nsContentSink::ProcessLinkHeader(const nsAString& aLinkData)
               anchor = value;
               anchor.StripWhitespace();
             }
+          } else if (attr.LowerCaseEqualsLiteral("crossorigin")) {
+            if (crossOrigin.IsVoid()) {
+              crossOrigin.SetIsVoid(false);
+              crossOrigin = value;
+              crossOrigin.StripWhitespace();
+            }
           }
         }
       }
@@ -633,7 +656,7 @@ nsContentSink::ProcessLinkHeader(const nsAString& aLinkData)
         rv = ProcessLink(anchor, href, rel,
                          // prefer RFC 5987 variant over non-I18zed version
                          titleStar.IsEmpty() ? title : titleStar,
-                         type, media);
+                         type, media, crossOrigin);
       }
 
       href.Truncate();
@@ -642,6 +665,7 @@ nsContentSink::ProcessLinkHeader(const nsAString& aLinkData)
       type.Truncate();
       media.Truncate();
       anchor.Truncate();
+      crossOrigin.SetIsVoid(true);
       
       seenParameters = false;
     }
@@ -654,7 +678,7 @@ nsContentSink::ProcessLinkHeader(const nsAString& aLinkData)
     rv = ProcessLink(anchor, href, rel,
                      // prefer RFC 5987 variant over non-I18zed version
                      titleStar.IsEmpty() ? title : titleStar,
-                     type, media);
+                     type, media, crossOrigin);
   }
 
   return rv;
@@ -664,7 +688,8 @@ nsContentSink::ProcessLinkHeader(const nsAString& aLinkData)
 nsresult
 nsContentSink::ProcessLink(const nsSubstring& aAnchor, const nsSubstring& aHref,
                            const nsSubstring& aRel, const nsSubstring& aTitle,
-                           const nsSubstring& aType, const nsSubstring& aMedia)
+                           const nsSubstring& aType, const nsSubstring& aMedia,
+                           const nsSubstring& aCrossOrigin)
 {
   uint32_t linkTypes =
     nsStyleLinkElement::ParseLinkTypes(aRel, mDocument->NodePrincipal());
@@ -688,7 +713,7 @@ nsContentSink::ProcessLink(const nsSubstring& aAnchor, const nsSubstring& aHref,
   }
 
   if (!aHref.IsEmpty() && (linkTypes & nsStyleLinkElement::ePRECONNECT)) {
-    Preconnect(aHref);
+    Preconnect(aHref, aCrossOrigin);
   }
 
   // is it a stylesheet link?
@@ -737,12 +762,23 @@ nsContentSink::ProcessStyleLink(nsIContent* aElement,
                aElement->NodeType() == nsIDOMNode::PROCESSING_INSTRUCTION_NODE,
                "We only expect processing instructions here");
 
+  nsAutoString integrity;
+  if (aElement) {
+    aElement->GetAttr(kNameSpaceID_None, nsGkAtoms::integrity, integrity);
+  }
+  if (!integrity.IsEmpty()) {
+    MOZ_LOG(GetSriLog(), mozilla::LogLevel::Debug,
+            ("nsContentSink::ProcessStyleLink, integrity=%s",
+             NS_ConvertUTF16toUTF8(integrity).get()));
+  }
+
   // If this is a fragment parser, we don't want to observe.
   // We don't support CORS for processing instructions
   bool isAlternate;
   rv = mCSSLoader->LoadStyleLink(aElement, url, aTitle, aMedia, aAlternate,
                                  CORS_NONE, mDocument->GetReferrerPolicy(),
-                                 mRunsToCompletion ? nullptr : this, &isAlternate);
+                                 integrity, mRunsToCompletion ? nullptr : this,
+                                 &isAlternate);
   NS_ENSURE_SUCCESS(rv, rv);
   
   if (!isAlternate && !mRunsToCompletion) {
@@ -765,10 +801,16 @@ nsContentSink::ProcessMETATag(nsIContent* aContent)
   nsAutoString header;
   aContent->GetAttr(kNameSpaceID_None, nsGkAtoms::httpEquiv, header);
   if (!header.IsEmpty()) {
+    // Ignore META REFRESH when document is sandboxed from automatic features.
+    nsContentUtils::ASCIIToLower(header);
+    if (nsGkAtoms::refresh->Equals(header) &&
+        (mDocument->GetSandboxFlags() & SANDBOXED_AUTOMATIC_FEATURES)) {
+      return NS_OK;
+    }
+
     nsAutoString result;
     aContent->GetAttr(kNameSpaceID_None, nsGkAtoms::content, result);
     if (!result.IsEmpty()) {
-      nsContentUtils::ASCIIToLower(header);
       nsCOMPtr<nsIAtom> fieldAtom(do_GetAtom(header));
       rv = ProcessHeaderData(fieldAtom, result, aContent); 
     }
@@ -869,22 +911,17 @@ nsContentSink::PrefetchDNS(const nsAString &aHref)
 }
 
 void
-nsContentSink::Preconnect(const nsAString &aHref)
+nsContentSink::Preconnect(const nsAString& aHref, const nsAString& aCrossOrigin)
 {
-  nsCOMPtr<nsISpeculativeConnect>
-    speculator(do_QueryInterface(nsContentUtils::GetIOService()));
-  if (!speculator) {
-    return;
-  }
-
   // construct URI using document charset
   const nsACString& charset = mDocument->GetDocumentCharacterSet();
   nsCOMPtr<nsIURI> uri;
   NS_NewURI(getter_AddRefs(uri), aHref,
             charset.IsEmpty() ? nullptr : PromiseFlatCString(charset).get(),
             mDocument->GetDocBaseURI());
-  if (uri) {
-    speculator->SpeculativeConnect(uri, nullptr);
+
+  if (uri && mDocument) {
+    mDocument->MaybePreconnect(uri, dom::Element::StringToCORSMode(aCrossOrigin));
   }
 }
 
@@ -1027,6 +1064,12 @@ nsContentSink::ProcessOfflineManifest(const nsAString& aManifestSpec)
     return;
   }
 
+  // If this document has been interecepted, let's skip the processing of the
+  // manifest.
+  if (nsContentUtils::IsControlledByServiceWorker(mDocument)) {
+    return;
+  }
+
   // If the docshell's in private browsing mode, we don't want to do any
   // manifest processing.
   nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(mDocShell);
@@ -1128,7 +1171,8 @@ nsContentSink::ProcessOfflineManifest(const nsAString& aManifestSpec)
 
     if (updateService) {
       nsCOMPtr<nsIDOMDocument> domdoc = do_QueryInterface(mDocument);
-      updateService->ScheduleOnDocumentStop(manifestURI, mDocumentURI, domdoc);
+      updateService->ScheduleOnDocumentStop(manifestURI, mDocumentURI,
+                                            mDocument->NodePrincipal(), domdoc);
     }
     break;
   }

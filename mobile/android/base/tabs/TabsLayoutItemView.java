@@ -4,8 +4,10 @@
 
 package org.mozilla.gecko.tabs;
 
+import org.mozilla.gecko.AppConstants;
 import org.mozilla.gecko.R;
 import org.mozilla.gecko.Tab;
+import org.mozilla.gecko.Tabs;
 import org.mozilla.gecko.util.HardwareUtils;
 import org.mozilla.gecko.widget.TabThumbnailWrapper;
 
@@ -18,7 +20,6 @@ import android.view.TouchDelegate;
 import android.view.View;
 import android.view.ViewTreeObserver;
 import android.widget.Checkable;
-import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -31,7 +32,7 @@ public class TabsLayoutItemView extends LinearLayout
 
     private int mTabId;
     private TextView mTitle;
-    private ImageView mThumbnail;
+    private TabsPanelThumbnailView mThumbnail;
     private ImageView mCloseButton;
     private TabThumbnailWrapper mThumbnailWrapper;
 
@@ -91,11 +92,11 @@ public class TabsLayoutItemView extends LinearLayout
     protected void onFinishInflate() {
         super.onFinishInflate();
         mTitle = (TextView) findViewById(R.id.title);
-        mThumbnail = (ImageView) findViewById(R.id.thumbnail);
+        mThumbnail = (TabsPanelThumbnailView) findViewById(R.id.thumbnail);
         mCloseButton = (ImageView) findViewById(R.id.close);
         mThumbnailWrapper = (TabThumbnailWrapper) findViewById(R.id.wrapper);
 
-        if (HardwareUtils.isTablet()) {
+        if (HardwareUtils.isTablet() || AppConstants.NIGHTLY_BUILD) {
             growCloseButtonHitArea();
         }
     }
@@ -130,15 +131,30 @@ public class TabsLayoutItemView extends LinearLayout
 
         mTabId = tab.getId();
 
+        setChecked(Tabs.getInstance().isSelectedTab(tab));
+
         Drawable thumbnailImage = tab.getThumbnail();
         mThumbnail.setImageDrawable(thumbnailImage);
+
+        mThumbnail.setPrivateMode(tab.isPrivate());
 
         if (mThumbnailWrapper != null) {
             mThumbnailWrapper.setRecording(tab.isRecording());
         }
-        mTitle.setText(tab.getDisplayTitle());
+
+        final String tabTitle = tab.getDisplayTitle();
+        mTitle.setText(tabTitle);
         mCloseButton.setTag(this);
 
+        if (tab.isAudioPlaying()) {
+            mTitle.setCompoundDrawablesWithIntrinsicBounds(R.drawable.tab_audio_playing, 0, 0, 0);
+            final String tabTitleWithAudio =
+                    getResources().getString(R.string.tab_title_prefix_is_playing_audio, tabTitle);
+            mTitle.setContentDescription(tabTitleWithAudio);
+        } else {
+            mTitle.setCompoundDrawables(null, null, null, null);
+            mTitle.setContentDescription(tabTitle);
+        }
     }
 
     public int getTabId() {

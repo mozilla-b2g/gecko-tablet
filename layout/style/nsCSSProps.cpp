@@ -28,6 +28,35 @@ using namespace mozilla;
 
 typedef nsCSSProps::KTableValue KTableValue;
 
+// MSVC before 2015 doesn't consider string literal as a constant
+// expression, thus we are not able to do this check here.
+#if !defined(_MSC_VER) || _MSC_VER >= 1900
+// By wrapping internal-only properties in this macro, we are not
+// exposing them in the CSSOM. Since currently it is not necessary to
+// allow accessing them in that way, it is easier and cheaper to just
+// do this rather than exposing them conditionally.
+#define CSS_PROP(name_, id_, method_, flags_, pref_, ...) \
+  static_assert(!((flags_) & CSS_PROPERTY_ENABLED_MASK) || pref_[0], \
+                "Internal-only property '" #name_ "' should be wrapped in " \
+                "#ifndef CSS_PROP_LIST_EXCLUDE_INTERNAL");
+#define CSS_PROP_LIST_INCLUDE_LOGICAL
+#define CSS_PROP_LIST_EXCLUDE_INTERNAL
+#include "nsCSSPropList.h"
+#undef CSS_PROP_LIST_EXCLUDE_INTERNAL
+#undef CSS_PROP_LIST_INCLUDE_LOGICAL
+#undef CSS_PROP
+#endif
+
+#define CSS_PROP(name_, id_, method_, flags_, pref_, ...) \
+  static_assert(!((flags_) & CSS_PROPERTY_ENABLED_IN_CHROME) || \
+                ((flags_) & CSS_PROPERTY_ENABLED_IN_UA_SHEETS), \
+                "Property '" #name_ "' is enabled in chrome, so it should " \
+                "also be enabled in UA sheets");
+#define CSS_PROP_LIST_INCLUDE_LOGICAL
+#include "nsCSSPropList.h"
+#undef CSS_PROP_LIST_INCLUDE_LOGICAL
+#undef CSS_PROP
+
 // required to make the symbol external, so that TestCSSPropertyLookup.cpp can link with it
 extern const char* const kCSSRawProperties[];
 
@@ -134,22 +163,15 @@ static nsCSSProperty gAliases[eCSSAliasCount != 0 ? eCSSAliasCount : 1] = {
 nsStaticCaseInsensitiveNameTable*
 CreateStaticTable(const char* const aRawTable[], int32_t aLength)
 {
-  auto table = new nsStaticCaseInsensitiveNameTable();
-  if (table) {
+  auto table = new nsStaticCaseInsensitiveNameTable(aRawTable, aLength);
 #ifdef DEBUG
-    // let's verify the table...
-    for (int32_t index = 0; index < aLength; ++index) {
-      nsAutoCString temp1(aRawTable[index]);
-      nsAutoCString temp2(aRawTable[index]);
-      ToLowerCase(temp1);
-      MOZ_ASSERT(temp1.Equals(temp2),
-                 "upper case char in case insensitive name table");
-      MOZ_ASSERT(-1 == temp1.FindChar('_'),
-                 "underscore char in case insensitive name table");
-    }
-#endif
-    table->Init(aRawTable, aLength);
+  // Partially verify the entries.
+  for (int32_t index = 0; index < aLength; ++index) {
+    nsAutoCString temp(aRawTable[index]);
+    MOZ_ASSERT(-1 == temp.FindChar('_'),
+               "underscore char in case insensitive name table");
   }
+#endif
   return table;
 }
 
@@ -206,13 +228,12 @@ nsCSSProps::AddRefTable(void)
 
 #ifdef DEBUG
     {
-      // Assert that if CSS_PROPERTY_ALWAYS_ENABLED_IN_UA_SHEETS or
-      // CSS_PROPERTY_ALWAYS_ENABLED_IN_CHROME_OR_CERTIFIED_APP is used on
-      // a shorthand property that all of its component longhands also
-      // has the flag.
+      // Assert that if CSS_PROPERTY_ENABLED_IN_UA_SHEETS or
+      // CSS_PROPERTY_ENABLED_IN_CHROME is used on a shorthand property
+      // that all of its component longhands also have the flag.
       static uint32_t flagsToCheck[] = {
-        CSS_PROPERTY_ALWAYS_ENABLED_IN_UA_SHEETS,
-        CSS_PROPERTY_ALWAYS_ENABLED_IN_CHROME_OR_CERTIFIED_APP
+        CSS_PROPERTY_ENABLED_IN_UA_SHEETS,
+        CSS_PROPERTY_ENABLED_IN_CHROME
       };
       for (nsCSSProperty shorthand = eCSSProperty_COUNT_no_shorthands;
            shorthand < eCSSProperty_COUNT;
@@ -228,9 +249,45 @@ nsCSSProps::AddRefTable(void)
                ++p) {
             MOZ_ASSERT(nsCSSProps::PropHasFlags(*p, flag),
                        "all subproperties of a property with a "
-                       "CSS_PROPERTY_ALWAYS_ENABLED_* flag must also have "
+                       "CSS_PROPERTY_ENABLED_* flag must also have "
                        "the flag");
           }
+        }
+      }
+
+      // Assert that CSS_PROPERTY_INTERNAL is used on properties in
+      // #ifndef CSS_PROP_LIST_EXCLUDE_INTERNAL sections of nsCSSPropList.h
+      // and on no others.
+      static nsCSSProperty nonInternalProperties[] = {
+        #define CSS_PROP(name_, id_, ...)           eCSSProperty_##id_,
+        #define CSS_PROP_SHORTHAND(name_, id_, ...) eCSSProperty_##id_,
+        #define CSS_PROP_LIST_INCLUDE_LOGICAL
+        #define CSS_PROP_LIST_EXCLUDE_INTERNAL
+        #include "nsCSSPropList.h"
+        #undef CSS_PROP_LIST_EXCLUDE_INTERNAL
+        #undef CSS_PROP_LIST_INCLUDE_LOGICAL
+        #undef CSS_PROP_SHORTHAND
+        #undef CSS_PROP
+      };
+      MOZ_ASSERT(ArrayLength(nonInternalProperties) <= eCSSProperty_COUNT);
+
+      bool found[eCSSProperty_COUNT];
+      PodArrayZero(found);
+      for (nsCSSProperty p : nonInternalProperties) {
+        MOZ_ASSERT(!nsCSSProps::PropHasFlags(p, CSS_PROPERTY_INTERNAL),
+                   "properties defined outside of #ifndef "
+                   "CSS_PROP_LIST_EXCLUDE_INTERNAL sections must not have "
+                   "the CSS_PROPERTY_INTERNAL flag");
+        found[p] = true;
+      }
+
+      for (size_t i = 0; i < ArrayLength(found); ++i) {
+        if (!found[i]) {
+          auto p = static_cast<nsCSSProperty>(i);
+          MOZ_ASSERT(nsCSSProps::PropHasFlags(p, CSS_PROPERTY_INTERNAL),
+                     "properties defined in #ifndef "
+                     "CSS_PROP_LIST_EXCLUDE_INTERNAL sections must have "
+                     "the CSS_PROPERTY_INTERNAL flag");
         }
       }
     }
@@ -466,7 +523,7 @@ nsCSSProps::LookupProperty(const nsACString& aProperty,
   }
   MOZ_ASSERT(eCSSAliasCount != 0,
              "'res' must be an alias at this point so we better have some!");
-  // We intentionally don't support eEnabledInUASheets or eEnabledInChromeOrCertifiedApp
+  // We intentionally don't support eEnabledInUASheets or eEnabledInChrome
   // for aliases yet because it's unlikely there will be a need for it.
   if (IsEnabled(res) || aEnabled == eIgnoreEnabledState) {
     res = gAliases[res - eCSSProperty_COUNT];
@@ -500,8 +557,8 @@ nsCSSProps::LookupProperty(const nsAString& aProperty, EnabledState aEnabled)
   }
   MOZ_ASSERT(eCSSAliasCount != 0,
              "'res' must be an alias at this point so we better have some!");
-  // We intentionally don't support eEnabledInUASheets for aliases yet
-  // because it's unlikely there will be a need for it.
+  // We intentionally don't support eEnabledInUASheets or eEnabledInChrome
+  // for aliases yet because it's unlikely there will be a need for it.
   if (IsEnabled(res) || aEnabled == eIgnoreEnabledState) {
     res = gAliases[res - eCSSProperty_COUNT];
     MOZ_ASSERT(0 <= res && res < eCSSProperty_COUNT,
@@ -752,6 +809,7 @@ const KTableValue nsCSSProps::kAppearanceKTable[] = {
   eCSSKeyword__moz_mac_vibrancy_dark,         NS_THEME_MAC_VIBRANCY_DARK,
   eCSSKeyword__moz_mac_disclosure_button_open,   NS_THEME_MAC_DISCLOSURE_BUTTON_OPEN,
   eCSSKeyword__moz_mac_disclosure_button_closed, NS_THEME_MAC_DISCLOSURE_BUTTON_CLOSED,
+  eCSSKeyword__moz_gtk_info_bar,              NS_THEME_GTK_INFO_BAR,
   eCSSKeyword_UNKNOWN,-1
 };
 
@@ -961,6 +1019,7 @@ const KTableValue nsCSSProps::kColorKTable[] = {
   eCSSKeyword__moz_dialog, LookAndFeel::eColorID__moz_dialog,
   eCSSKeyword__moz_dialogtext, LookAndFeel::eColorID__moz_dialogtext,
   eCSSKeyword__moz_dragtargetzone, LookAndFeel::eColorID__moz_dragtargetzone,
+  eCSSKeyword__moz_gtk_info_bar_text, LookAndFeel::eColorID__moz_gtk_info_bar_text,
   eCSSKeyword__moz_hyperlinktext, NS_COLOR_MOZ_HYPERLINKTEXT,
   eCSSKeyword__moz_html_cellhighlight, LookAndFeel::eColorID__moz_html_cellhighlight,
   eCSSKeyword__moz_html_cellhighlighttext, LookAndFeel::eColorID__moz_html_cellhighlighttext,
@@ -1476,6 +1535,15 @@ const KTableValue nsCSSProps::kMathDisplayKTable[] = {
   eCSSKeyword_UNKNOWN,-1
 };
 
+const KTableValue nsCSSProps::kContainKTable[] = {
+  eCSSKeyword_none,    NS_STYLE_CONTAIN_NONE,
+  eCSSKeyword_strict,  NS_STYLE_CONTAIN_STRICT,
+  eCSSKeyword_layout,  NS_STYLE_CONTAIN_LAYOUT,
+  eCSSKeyword_style,   NS_STYLE_CONTAIN_STYLE,
+  eCSSKeyword_paint,   NS_STYLE_CONTAIN_PAINT,
+  eCSSKeyword_UNKNOWN,-1
+};
+
 const KTableValue nsCSSProps::kContextOpacityKTable[] = {
   eCSSKeyword_context_fill_opacity, NS_STYLE_CONTEXT_FILL_OPACITY,
   eCSSKeyword_context_stroke_opacity, NS_STYLE_CONTEXT_STROKE_OPACITY,
@@ -1498,9 +1566,10 @@ const KTableValue nsCSSProps::kObjectFitKTable[] = {
 };
 
 const KTableValue nsCSSProps::kOrientKTable[] = {
+  eCSSKeyword_inline,     NS_STYLE_ORIENT_INLINE,
+  eCSSKeyword_block,      NS_STYLE_ORIENT_BLOCK,
   eCSSKeyword_horizontal, NS_STYLE_ORIENT_HORIZONTAL,
   eCSSKeyword_vertical,   NS_STYLE_ORIENT_VERTICAL,
-  eCSSKeyword_auto,       NS_STYLE_ORIENT_AUTO,
   eCSSKeyword_UNKNOWN,    -1
 };
 
@@ -1690,6 +1759,7 @@ KTableValue nsCSSProps::kTextAlignKTable[] = {
   eCSSKeyword_start, NS_STYLE_TEXT_ALIGN_DEFAULT,
   eCSSKeyword_end, NS_STYLE_TEXT_ALIGN_END,
   eCSSKeyword_true, NS_STYLE_TEXT_ALIGN_TRUE,
+  eCSSKeyword_match_parent, NS_STYLE_TEXT_ALIGN_MATCH_PARENT,
   eCSSKeyword_UNKNOWN,-1
 };
 
@@ -1735,9 +1805,8 @@ const KTableValue nsCSSProps::kTextDecorationStyleKTable[] = {
 const KTableValue nsCSSProps::kTextOrientationKTable[] = {
   eCSSKeyword_mixed, NS_STYLE_TEXT_ORIENTATION_MIXED,
   eCSSKeyword_upright, NS_STYLE_TEXT_ORIENTATION_UPRIGHT,
-  eCSSKeyword_sideways_right, NS_STYLE_TEXT_ORIENTATION_SIDEWAYS_RIGHT,
-  /* eCSSKeyword_sideways_left, NS_STYLE_TEXT_ORIENTATION_SIDEWAYS_LEFT, */
-  /* eCSSKeyword_sideways, NS_STYLE_TEXT_ORIENTATION_SIDEWAYS, */
+  eCSSKeyword_sideways, NS_STYLE_TEXT_ORIENTATION_SIDEWAYS,
+  eCSSKeyword_sideways_right, NS_STYLE_TEXT_ORIENTATION_SIDEWAYS,
   eCSSKeyword_UNKNOWN, -1
 };
 
@@ -1763,6 +1832,19 @@ const KTableValue nsCSSProps::kTouchActionKTable[] = {
   eCSSKeyword_pan_y,        NS_STYLE_TOUCH_ACTION_PAN_Y,
   eCSSKeyword_manipulation, NS_STYLE_TOUCH_ACTION_MANIPULATION,
   eCSSKeyword_UNKNOWN,      -1
+};
+
+const KTableValue nsCSSProps::kTopLayerKTable[] = {
+  eCSSKeyword_none,     NS_STYLE_TOP_LAYER_NONE,
+  eCSSKeyword_top,      NS_STYLE_TOP_LAYER_TOP,
+  eCSSKeyword_UNKNOWN,  -1
+};
+
+const KTableValue nsCSSProps::kTransformBoxKTable[] = {
+  eCSSKeyword_border_box, NS_STYLE_TRANSFORM_BOX_BORDER_BOX,
+  eCSSKeyword_fill_box, NS_STYLE_TRANSFORM_BOX_FILL_BOX,
+  eCSSKeyword_view_box, NS_STYLE_TRANSFORM_BOX_VIEW_BOX,
+  eCSSKeyword_UNKNOWN,-1
 };
 
 const KTableValue nsCSSProps::kTransitionTimingFunctionKTable[] = {
@@ -1824,6 +1906,7 @@ const KTableValue nsCSSProps::kUserSelectKTable[] = {
   eCSSKeyword_tri_state,  NS_STYLE_USER_SELECT_TRI_STATE,
   eCSSKeyword__moz_all,   NS_STYLE_USER_SELECT_MOZ_ALL,
   eCSSKeyword__moz_none,  NS_STYLE_USER_SELECT_NONE,
+  eCSSKeyword__moz_text,  NS_STYLE_USER_SELECT_MOZ_TEXT,
   eCSSKeyword_UNKNOWN,-1
 };
 
@@ -1897,6 +1980,14 @@ const KTableValue nsCSSProps::kWritingModeKTable[] = {
   eCSSKeyword_horizontal_tb, NS_STYLE_WRITING_MODE_HORIZONTAL_TB,
   eCSSKeyword_vertical_lr, NS_STYLE_WRITING_MODE_VERTICAL_LR,
   eCSSKeyword_vertical_rl, NS_STYLE_WRITING_MODE_VERTICAL_RL,
+  eCSSKeyword_sideways_lr, NS_STYLE_WRITING_MODE_SIDEWAYS_LR,
+  eCSSKeyword_sideways_rl, NS_STYLE_WRITING_MODE_SIDEWAYS_RL,
+  eCSSKeyword_lr, NS_STYLE_WRITING_MODE_HORIZONTAL_TB,
+  eCSSKeyword_lr_tb, NS_STYLE_WRITING_MODE_HORIZONTAL_TB,
+  eCSSKeyword_rl, NS_STYLE_WRITING_MODE_HORIZONTAL_TB,
+  eCSSKeyword_rl_tb, NS_STYLE_WRITING_MODE_HORIZONTAL_TB,
+  eCSSKeyword_tb, NS_STYLE_WRITING_MODE_VERTICAL_RL,
+  eCSSKeyword_tb_rl, NS_STYLE_WRITING_MODE_VERTICAL_RL,
   eCSSKeyword_UNKNOWN, -1
 };
 
@@ -2361,12 +2452,12 @@ static const nsCSSProperty gBorderColorSubpropTable[] = {
   eCSSProperty_UNKNOWN
 };
 
-static const nsCSSProperty gBorderEndSubpropTable[] = {
+static const nsCSSProperty gBorderInlineEndSubpropTable[] = {
   // Declaration.cpp output the subproperties in this order.
   // It also depends on the color being third.
-  eCSSProperty_border_end_width,
-  eCSSProperty_border_end_style,
-  eCSSProperty_border_end_color,
+  eCSSProperty_border_inline_end_width,
+  eCSSProperty_border_inline_end_style,
+  eCSSProperty_border_inline_end_color,
   eCSSProperty_UNKNOWN
 };
 
@@ -2388,12 +2479,12 @@ static const nsCSSProperty gBorderRightSubpropTable[] = {
   eCSSProperty_UNKNOWN
 };
 
-static const nsCSSProperty gBorderStartSubpropTable[] = {
+static const nsCSSProperty gBorderInlineStartSubpropTable[] = {
   // Declaration.cpp outputs the subproperties in this order.
   // It also depends on the color being third.
-  eCSSProperty_border_start_width,
-  eCSSProperty_border_start_style,
-  eCSSProperty_border_start_color,
+  eCSSProperty_border_inline_start_width,
+  eCSSProperty_border_inline_start_style,
+  eCSSProperty_border_inline_start_color,
   eCSSProperty_UNKNOWN
 };
 
@@ -2899,16 +2990,24 @@ nsCSSProps::gPropertyIndexInStruct[eCSSProperty_COUNT_no_shorthands] = {
 
 /* static */ bool
 nsCSSProps::gPropertyEnabled[eCSSProperty_COUNT_with_aliases] = {
+  // If the property has any "ENABLED_IN" flag set, it is disabled by
+  // default. Note that, if a property has pref, whatever its default
+  // value is, it will later be changed in nsCSSProps::AddRefTable().
+  // If the property has "ENABLED_IN" flags but doesn't have a pref,
+  // it is an internal property which is disabled elsewhere.
+  #define IS_ENABLED_BY_DEFAULT(flags_) \
+    (!((flags_) & CSS_PROPERTY_ENABLED_MASK))
+
   #define CSS_PROP(name_, id_, method_, flags_, pref_, parsevariant_,     \
                    kwtable_, stylestruct_, stylestructoffset_, animtype_) \
-    true,
+    IS_ENABLED_BY_DEFAULT(flags_),
   #define CSS_PROP_LIST_INCLUDE_LOGICAL
   #include "nsCSSPropList.h"
   #undef CSS_PROP_LIST_INCLUDE_LOGICAL
   #undef CSS_PROP
 
   #define  CSS_PROP_SHORTHAND(name_, id_, method_, flags_, pref_) \
-    true,
+    IS_ENABLED_BY_DEFAULT(flags_),
   #include "nsCSSPropList.h"
   #undef CSS_PROP_SHORTHAND
 
@@ -2916,6 +3015,23 @@ nsCSSProps::gPropertyEnabled[eCSSProperty_COUNT_with_aliases] = {
     true,
   #include "nsCSSPropAliasList.h"
   #undef CSS_PROP_ALIAS
+
+  #undef IS_ENABLED_BY_DEFAULT
+};
+
+#include "../../dom/base/PropertyUseCounterMap.inc"
+
+/* static */ const UseCounter
+nsCSSProps::gPropertyUseCounter[eCSSProperty_COUNT_no_shorthands] = {
+  #define CSS_PROP_PUBLIC_OR_PRIVATE(publicname_, privatename_) privatename_
+  #define CSS_PROP_LIST_INCLUDE_LOGICAL
+  #define CSS_PROP(name_, id_, method_, flags_, pref_, parsevariant_,     \
+                   kwtable_, stylestruct_, stylestructoffset_, animtype_) \
+    static_cast<UseCounter>(USE_COUNTER_FOR_CSS_PROPERTY_##method_),
+  #include "nsCSSPropList.h"
+  #undef CSS_PROP
+  #undef CSS_PROP_LIST_INCLUDE_LOGICAL
+  #undef CSS_PROP_PUBLIC_OR_PRIVATE
 };
 
 // Check that all logical property flags are used appropriately.
@@ -2949,3 +3065,5 @@ nsCSSProps::gPropertyEnabled[eCSSProperty_COUNT_with_aliases] = {
 #include "nsCSSPropList.h"
 #undef CSS_PROP_LOGICAL
 #undef CSS_PROP
+
+#include "nsCSSPropsGenerated.inc"

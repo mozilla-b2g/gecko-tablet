@@ -17,7 +17,7 @@ message = "foo"
 cause = fake_cause()
 stacktrace = "first\nsecond"
 
-class TestExceptionType(marionette_test.MarionetteTestCase):
+class TestErrors(marionette_test.MarionetteTestCase):
     def test_defaults(self):
         exc = errors.MarionetteException()
         self.assertIsNone(exc.msg)
@@ -67,10 +67,14 @@ class TestLookup(marionette_test.MarionetteTestCase):
     def test_by_unknown_string(self):
         self.assertEqual(errors.MarionetteException, errors.lookup("barbera"))
 
+    def test_by_known_unicode_string(self):
+        self.assertEqual(errors.NoSuchElementException,
+            errors.lookup(u"no such element"))
 
-class TestAllExceptions(marionette_test.MarionetteTestCase):
+
+class TestAllErrors(marionette_test.MarionetteTestCase):
     def test_properties(self):
-        for exc in errors.excs:
+        for exc in errors.es_:
             self.assertTrue(hasattr(exc, "code"),
                 "expected exception to have attribute `code'")
             self.assertTrue(hasattr(exc, "status"),

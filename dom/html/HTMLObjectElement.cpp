@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-// vim:set et sw=2 sts=2 cin:
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -161,7 +161,12 @@ HTMLObjectElement::OnFocusBlurPlugin(Element* aElement, bool aFocus)
     nsCOMPtr<nsIObjectLoadingContent> olc = do_QueryInterface(aElement);
     bool hasRunningPlugin = false;
     if (olc) {
-      olc->GetHasRunningPlugin(&hasRunningPlugin);
+      // nsIObjectLoadingContent::GetHasRunningPlugin() fails when
+      // nsContentUtils::IsCallerChrome() returns false (which it can do even
+      // when we're processing a trusted focus event).  We work around this by
+      // calling nsObjectLoadingContent::HasRunningPlugin() directly.
+      hasRunningPlugin =
+        static_cast<nsObjectLoadingContent*>(olc.get())->HasRunningPlugin();
     }
     if (!hasRunningPlugin) {
       aFocus = false;
@@ -210,15 +215,17 @@ HTMLObjectElement::HandleFocusBlurPlugin(Element* aElement,
   if (!aEvent->mFlags.mIsTrusted) {
     return;
   }
-  switch (aEvent->message) {
-    case NS_FOCUS_CONTENT: {
+  switch (aEvent->mMessage) {
+    case eFocus: {
       OnFocusBlurPlugin(aElement, true);
       break;
     }
-    case NS_BLUR_CONTENT: {
+    case eBlur: {
       OnFocusBlurPlugin(aElement, false);
       break;
     }
+    default:
+      break;
   }
 }
 
@@ -285,7 +292,7 @@ HTMLObjectElement::UnbindFromTree(bool aDeep,
 {
 #ifdef XP_MACOSX
   // When a page is reloaded (when an nsIDocument's content is removed), the
-  // focused element isn't necessarily sent an NS_BLUR_CONTENT event. See
+  // focused element isn't necessarily sent an eBlur event. See
   // nsFocusManager::ContentRemoved(). This means that a widget may think it
   // still contains a focused plugin when it doesn't -- which in turn can
   // disable text input in the browser window. See bug 1137229.

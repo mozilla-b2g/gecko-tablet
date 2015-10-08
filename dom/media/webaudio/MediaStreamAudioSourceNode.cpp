@@ -8,6 +8,7 @@
 #include "mozilla/dom/MediaStreamAudioSourceNodeBinding.h"
 #include "AudioNodeEngine.h"
 #include "AudioNodeExternalInputStream.h"
+#include "AudioStreamTrack.h"
 #include "nsIDocument.h"
 #include "mozilla/CORSMode.h"
 
@@ -39,10 +40,9 @@ MediaStreamAudioSourceNode::MediaStreamAudioSourceNode(AudioContext* aContext,
     mInputStream(aMediaStream)
 {
   AudioNodeEngine* engine = new MediaStreamAudioSourceNodeEngine(this);
-  mStream = aContext->Graph()->CreateAudioNodeExternalInputStream(engine);
+  mStream = AudioNodeExternalInputStream::Create(aContext->Graph(), engine);
   ProcessedMediaStream* outputStream = static_cast<ProcessedMediaStream*>(mStream.get());
-  mInputPort = outputStream->AllocateInputPort(aMediaStream->GetStream(),
-                                               MediaInputPort::FLAG_BLOCK_INPUT);
+  mInputPort = outputStream->AllocateInputPort(aMediaStream->GetPlaybackStream());
   mInputStream->AddConsumerToKeepAlive(static_cast<nsIDOMEventTarget*>(this));
 
   PrincipalChanged(mInputStream); // trigger enabling/disabling of the connector
@@ -80,7 +80,7 @@ MediaStreamAudioSourceNode::PrincipalChanged(DOMMediaStream* aDOMMediaStream)
     if (doc) {
       nsIPrincipal* docPrincipal = doc->NodePrincipal();
       nsIPrincipal* streamPrincipal = mInputStream->GetPrincipal();
-      if (NS_FAILED(docPrincipal->Subsumes(streamPrincipal, &subsumes))) {
+      if (!streamPrincipal || NS_FAILED(docPrincipal->Subsumes(streamPrincipal, &subsumes))) {
         subsumes = false;
       }
     }
@@ -122,5 +122,5 @@ MediaStreamAudioSourceNode::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGi
   return MediaStreamAudioSourceNodeBinding::Wrap(aCx, this, aGivenProto);
 }
 
-}
-}
+} // namespace dom
+} // namespace mozilla

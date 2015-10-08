@@ -5,11 +5,10 @@
 "use strict";
 
 /* static functions */
-const DEBUG = false;
+const DEBUG = true;
 
 function debug(aStr) {
-  if (DEBUG)
-    dump("AlarmService: " + aStr + "\n");
+  DEBUG && dump("AlarmService: " + aStr + "\n");
 }
 
 const { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
@@ -63,6 +62,8 @@ this.AlarmService = {
 
     alarmHalService.setAlarmFiredCb(this._onAlarmFired.bind(this));
     alarmHalService.setTimezoneChangedCb(this._onTimezoneChanged.bind(this));
+    alarmHalService.setSystemClockChangedCb(
+      this._onSystemClockChanged.bind(this));
 
     // Add the messages to be listened to.
     this._messages = ["AlarmsManager:GetAll",
@@ -251,6 +252,18 @@ this.AlarmService = {
     debug("_onAlarmFired()");
 
     if (this._currentAlarm) {
+      let currentAlarmTime = this._getAlarmTime(this._currentAlarm);
+
+      // If a alarm fired before the actual time that the current
+      // alarm should occur, we reset this current alarm.
+      if (currentAlarmTime > Date.now()) {
+        let currentAlarm = this._currentAlarm;
+        this._currentAlarm = currentAlarm;
+
+        this._debugCurrentAlarm();
+        return;
+      }
+
       this._removeAlarmFromDb(this._currentAlarm.id, null);
       this._notifyAlarmObserver(this._currentAlarm);
       this._currentAlarm = null;
@@ -280,6 +293,11 @@ this.AlarmService = {
     debug("_onTimezoneChanged()");
 
     this._currentTimezoneOffset = aTimezoneOffset;
+    this._restoreAlarmsFromDb();
+  },
+
+  _onSystemClockChanged: function _onSystemClockChanged(aClockDeltaMS) {
+    debug("_onSystemClockChanged");
     this._restoreAlarmsFromDb();
   },
 
@@ -408,6 +426,16 @@ this.AlarmService = {
         // the non-serializable callback to the in-memory object.
         aNewAlarm['alarmFiredCb'] = aAlarmFiredCb;
 
+        // If the new alarm already expired at this moment, we directly
+        // notify this alarm
+        let aNewAlarmTime = this._getAlarmTime(aNewAlarm);
+        if (aNewAlarmTime < Date.now()) {
+          aSuccessCb(aNewId);
+          this._removeAlarmFromDb(aNewAlarm.id, null);
+          this._notifyAlarmObserver(aNewAlarm);
+          return;
+        }
+
         // If there is no alarm being set in system, set the new alarm.
         if (this._currentAlarm == null) {
           this._currentAlarm = aNewAlarm;
@@ -419,7 +447,6 @@ this.AlarmService = {
         // If the new alarm is earlier than the current alarm, swap them and
         // push the previous alarm back to the queue.
         let alarmQueue = this._alarmQueue;
-        let aNewAlarmTime = this._getAlarmTime(aNewAlarm);
         let currentAlarmTime = this._getAlarmTime(this._currentAlarm);
         if (aNewAlarmTime < currentAlarmTime) {
           alarmQueue.unshift(this._currentAlarm);

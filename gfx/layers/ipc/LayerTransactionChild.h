@@ -20,7 +20,7 @@ namespace mozilla {
 namespace layout {
 class RenderFrameChild;
 class ShadowLayerForwarder;
-}
+} // namespace layout
 
 namespace layers {
 
@@ -47,10 +47,6 @@ public:
     mForwarder = aForwarder;
   }
 
-  virtual void SendFenceHandle(AsyncTransactionTracker* aTracker,
-                               PTextureChild* aTexture,
-                               const FenceHandle& aFence);
-
   uint64_t GetId() const { return mId; }
 
 protected:
@@ -69,6 +65,7 @@ protected:
   virtual bool DeallocPCompositableChild(PCompositableChild* actor) override;
 
   virtual PTextureChild* AllocPTextureChild(const SurfaceDescriptor& aSharedData,
+                                            const LayersBackend& aLayersBackend,
                                             const TextureFlags& aFlags) override;
   virtual bool DeallocPTextureChild(PTextureChild* actor) override;
 

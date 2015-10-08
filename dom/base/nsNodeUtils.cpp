@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 sw=2 et tw=99: */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -13,7 +13,7 @@
 #include "nsIDocument.h"
 #include "mozilla/EventListenerManager.h"
 #include "nsIXPConnect.h"
-#include "pldhash.h"
+#include "PLDHashTable.h"
 #include "nsIDOMAttr.h"
 #include "nsCOMArray.h"
 #include "nsPIDOMWindow.h"
@@ -24,8 +24,10 @@
 #include "nsBindingManager.h"
 #include "nsGenericHTMLElement.h"
 #include "mozilla/Assertions.h"
+#include "mozilla/dom/Animation.h"
 #include "mozilla/dom/HTMLImageElement.h"
 #include "mozilla/dom/HTMLMediaElement.h"
+#include "mozilla/dom/KeyframeEffect.h"
 #include "nsWrapperCacheInlines.h"
 #include "nsObjectLoadingContent.h"
 #include "nsDOMMutationObserver.h"
@@ -121,24 +123,26 @@ void
 nsNodeUtils::AttributeWillChange(Element* aElement,
                                  int32_t aNameSpaceID,
                                  nsIAtom* aAttribute,
-                                 int32_t aModType)
+                                 int32_t aModType,
+                                 const nsAttrValue* aNewValue)
 {
   nsIDocument* doc = aElement->OwnerDoc();
   IMPL_MUTATION_NOTIFICATION(AttributeWillChange, aElement,
                              (doc, aElement, aNameSpaceID, aAttribute,
-                              aModType));
+                              aModType, aNewValue));
 }
 
 void
 nsNodeUtils::AttributeChanged(Element* aElement,
                               int32_t aNameSpaceID,
                               nsIAtom* aAttribute,
-                              int32_t aModType)
+                              int32_t aModType,
+                              const nsAttrValue* aOldValue)
 {
   nsIDocument* doc = aElement->OwnerDoc();
   IMPL_MUTATION_NOTIFICATION(AttributeChanged, aElement,
                              (doc, aElement, aNameSpaceID, aAttribute,
-                              aModType));
+                              aModType, aOldValue));
 }
 
 void
@@ -161,6 +165,15 @@ nsNodeUtils::ContentAppended(nsIContent* aContainer,
   IMPL_MUTATION_NOTIFICATION(ContentAppended, aContainer,
                              (doc, aContainer, aFirstNewContent,
                               aNewIndexInContainer));
+}
+
+void
+nsNodeUtils::NativeAnonymousChildListChange(nsIContent* aContent,
+                                            bool aIsRemove)
+{
+  nsIDocument* doc = aContent->OwnerDoc();
+  IMPL_MUTATION_NOTIFICATION(NativeAnonymousChildListChange, aContent,
+                            (doc, aContent, aIsRemove));
 }
 
 void
@@ -214,16 +227,16 @@ nsNodeUtils::ContentRemoved(nsINode* aContainer,
 }
 
 static inline Element*
-GetTarget(AnimationPlayer* aPlayer)
+GetTarget(Animation* aAnimation)
 {
-  Animation* source = aPlayer->GetSource();
-  if (!source) {
+  KeyframeEffectReadOnly* effect = aAnimation->GetEffect();
+  if (!effect) {
     return nullptr;
   }
 
   Element* target;
   nsCSSPseudoElements::Type pseudoType;
-  source->GetTarget(target, pseudoType);
+  effect->GetTarget(target, pseudoType);
 
   // If the animation targets a pseudo-element, we don't dispatch
   // notifications for it.  (In the future we will have PseudoElement
@@ -232,48 +245,48 @@ GetTarget(AnimationPlayer* aPlayer)
     return nullptr;
   }
 
-  return source->GetTarget();
+  return effect->GetTarget();
 }
 
 void
-nsNodeUtils::AnimationAdded(AnimationPlayer* aPlayer)
+nsNodeUtils::AnimationAdded(Animation* aAnimation)
 {
-  Element* target = GetTarget(aPlayer);
+  Element* target = GetTarget(aAnimation);
   if (!target) {
     return;
   }
   nsIDocument* doc = target->OwnerDoc();
 
   if (doc->MayHaveAnimationObservers()) {
-    IMPL_ANIMATION_NOTIFICATION(AnimationAdded, target, (aPlayer));
+    IMPL_ANIMATION_NOTIFICATION(AnimationAdded, target, (aAnimation));
   }
 }
 
 void
-nsNodeUtils::AnimationChanged(AnimationPlayer* aPlayer)
+nsNodeUtils::AnimationChanged(Animation* aAnimation)
 {
-  Element* target = GetTarget(aPlayer);
+  Element* target = GetTarget(aAnimation);
   if (!target) {
     return;
   }
   nsIDocument* doc = target->OwnerDoc();
 
   if (doc->MayHaveAnimationObservers()) {
-    IMPL_ANIMATION_NOTIFICATION(AnimationChanged, target, (aPlayer));
+    IMPL_ANIMATION_NOTIFICATION(AnimationChanged, target, (aAnimation));
   }
 }
 
 void
-nsNodeUtils::AnimationRemoved(AnimationPlayer* aPlayer)
+nsNodeUtils::AnimationRemoved(Animation* aAnimation)
 {
-  Element* target = GetTarget(aPlayer);
+  Element* target = GetTarget(aAnimation);
   if (!target) {
     return;
   }
   nsIDocument* doc = target->OwnerDoc();
 
   if (doc->MayHaveAnimationObservers()) {
-    IMPL_ANIMATION_NOTIFICATION(AnimationRemoved, target, (aPlayer));
+    IMPL_ANIMATION_NOTIFICATION(AnimationRemoved, target, (aAnimation));
   }
 }
 

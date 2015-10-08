@@ -18,6 +18,7 @@
 #include "nsXULPopupManager.h"
 #include "nsIWidgetListener.h"
 #include "nsContentUtils.h" // for nsAutoScriptBlocker
+#include "mozilla/TimelineConsumers.h"
 
 using namespace mozilla;
 
@@ -90,6 +91,10 @@ nsView::~nsView()
     mParent->RemoveChild(this);
   }
 
+  if (mPreviousWindow) {
+    mPreviousWindow->SetPreviouslyAttachedWidgetListener(nullptr);
+  }
+
   // Destroy and release the widget
   DestroyWidget();
 
@@ -134,7 +139,7 @@ void nsView::DestroyWidget()
       NS_DispatchToMainThread(widgetDestroyer);
     }
 
-    NS_RELEASE(mWindow);
+    mWindow = nullptr;
   }
 }
 
@@ -229,11 +234,11 @@ nsIntRect nsView::CalcWidgetBounds(nsWindowType aType)
   // Compute widget bounds in device pixels
   nsIntRect newBounds = viewBounds.ToNearestPixels(p2a);
 
-#ifdef XP_MACOSX
-  // cocoa rounds widget coordinates to the nearest global "display pixel"
-  // integer value. So we avoid fractional display pixel values by rounding
-  // to the nearest value that won't yield a fractional display pixel.
-  nsIWidget* widget = parentWidget ? parentWidget : mWindow;
+#if defined(XP_MACOSX) || (MOZ_WIDGET_GTK == 3)
+  // cocoa and GTK round widget coordinates to the nearest global "display
+  // pixel" integer value. So we avoid fractional display pixel values by
+  // rounding to the nearest value that won't yield a fractional display pixel.
+  nsIWidget* widget = parentWidget ? parentWidget : mWindow.get();
   uint32_t round;
   if (aType == eWindowType_popup && widget &&
       ((round = widget->RoundsWidgetCoordinatesTo()) > 1)) {
@@ -575,7 +580,7 @@ nsresult nsView::CreateWidget(nsWidgetInitData *aWidgetInitData,
 
   // XXX: using aForceUseIWidgetParent=true to preserve previous
   // semantics.  It's not clear that it's actually needed.
-  mWindow = parentWidget->CreateChild(trect, aWidgetInitData, true).take();
+  mWindow = parentWidget->CreateChild(trect, aWidgetInitData, true);
   if (!mWindow) {
     return NS_ERROR_FAILURE;
   }
@@ -601,8 +606,7 @@ nsresult nsView::CreateWidgetForParent(nsIWidget* aParentWidget,
 
   nsIntRect trect = CalcWidgetBounds(aWidgetInitData->mWindowType);
 
-  mWindow =
-    aParentWidget->CreateChild(trect, aWidgetInitData).take();
+  mWindow = aParentWidget->CreateChild(trect, aWidgetInitData);
   if (!mWindow) {
     return NS_ERROR_FAILURE;
   }
@@ -631,7 +635,7 @@ nsresult nsView::CreateWidgetForPopup(nsWidgetInitData *aWidgetInitData,
   if (aParentWidget) {
     // XXX: using aForceUseIWidgetParent=true to preserve previous
     // semantics.  It's not clear that it's actually needed.
-    mWindow = aParentWidget->CreateChild(trect, aWidgetInitData, true).take();
+    mWindow = aParentWidget->CreateChild(trect, aWidgetInitData, true);
   }
   else {
     nsIWidget* nearestParent = GetParent() ? GetParent()->GetNearestWidget(nullptr)
@@ -642,7 +646,7 @@ nsresult nsView::CreateWidgetForPopup(nsWidgetInitData *aWidgetInitData,
       return NS_ERROR_FAILURE;
     }
 
-    mWindow = nearestParent->CreateChild(trect, aWidgetInitData).take();
+    mWindow = nearestParent->CreateChild(trect, aWidgetInitData);
   }
   if (!mWindow) {
     return NS_ERROR_FAILURE;
@@ -674,6 +678,16 @@ nsView::InitializeWindow(bool aEnableDragDrop, bool aResetVisibility)
   }
 }
 
+void
+nsView::SetNeedsWindowPropertiesSync()
+{
+  mNeedsWindowPropertiesSync = true;
+  if (mViewManager) {
+    mViewManager->PostPendingUpdate();
+  }
+}
+
+
 // Attach to a top level widget and start receiving mirrored events.
 nsresult nsView::AttachToTopLevelWidget(nsIWidget* aWidget)
 {
@@ -695,7 +709,6 @@ nsresult nsView::AttachToTopLevelWidget(nsIWidget* aWidget)
     return rv;
 
   mWindow = aWidget;
-  NS_ADDREF(mWindow);
 
   mWindow->SetAttachedWidgetListener(this);
   mWindow->EnableDragDrop(true);
@@ -714,7 +727,19 @@ nsresult nsView::DetachFromTopLevelWidget()
   NS_PRECONDITION(mWindow, "null mWindow for DetachFromTopLevelWidget!");
 
   mWindow->SetAttachedWidgetListener(nullptr);
-  NS_RELEASE(mWindow);
+  nsIWidgetListener* listener = mWindow->GetPreviouslyAttachedWidgetListener();
+
+  if (listener && listener->GetView()) {
+    // Ensure the listener doesn't think it's being used anymore
+    listener->GetView()->SetPreviousWidget(nullptr);
+  }
+
+  // If the new view's frame is paint suppressed then the window
+  // will want to use us instead until that's done
+  mWindow->SetPreviouslyAttachedWidgetListener(this);
+
+  mPreviousWindow = mWindow;
+  mWindow = nullptr;
 
   mWidgetIsTopLevel = false;
   
@@ -739,7 +764,7 @@ void nsView::AssertNoWindow()
     NS_ERROR("We already have a window for this view? BAD");
     mWindow->SetWidgetListener(nullptr);
     mWindow->Destroy();
-    NS_RELEASE(mWindow);
+    mWindow = nullptr;
   }
 }
 
@@ -772,11 +797,11 @@ void nsView::List(FILE* out, int32_t aIndent) const
     nscoord p2a = mViewManager->AppUnitsPerDevPixel();
     nsIntRect rect;
     mWindow->GetClientBounds(rect);
-    nsRect windowBounds = rect.ToAppUnits(p2a);
+    nsRect windowBounds = ToAppUnits(rect, p2a);
     mWindow->GetBounds(rect);
-    nsRect nonclientBounds = rect.ToAppUnits(p2a);
-    nsrefcnt widgetRefCnt = mWindow->AddRef() - 1;
-    mWindow->Release();
+    nsRect nonclientBounds = ToAppUnits(rect, p2a);
+    nsrefcnt widgetRefCnt = mWindow.get()->AddRef() - 1;
+    mWindow.get()->Release();
     int32_t Z = mWindow->GetZIndex();
     fprintf(out, "(widget=%p[%" PRIuPTR "] z=%d pos={%d,%d,%d,%d}) ",
             (void*)mWindow, widgetRefCnt, Z,
@@ -1047,12 +1072,28 @@ nsView::DidPaintWindow()
 }
 
 void
-nsView::DidCompositeWindow()
+nsView::DidCompositeWindow(const TimeStamp& aCompositeStart,
+                           const TimeStamp& aCompositeEnd)
 {
   nsIPresShell* presShell = mViewManager->GetPresShell();
   if (presShell) {
     nsAutoScriptBlocker scriptBlocker;
-    presShell->GetPresContext()->GetDisplayRootPresContext()->GetRootPresContext()->NotifyDidPaintForSubtree(nsIPresShell::PAINT_COMPOSITE);
+
+    nsPresContext* context = presShell->GetPresContext();
+    context->GetDisplayRootPresContext()->GetRootPresContext()->NotifyDidPaintForSubtree(nsIPresShell::PAINT_COMPOSITE);
+
+    // If the two timestamps are identical, this was likely a fake composite
+    // event which wouldn't be terribly useful to display.
+    if (aCompositeStart == aCompositeEnd) {
+      return;
+    }
+
+    nsIDocShell* docShell = context->GetDocShell();
+
+    TimelineConsumers::AddMarkerForDocShell(docShell,
+      "Composite", aCompositeStart, MarkerTracingType::START);
+    TimelineConsumers::AddMarkerForDocShell(docShell,
+      "Composite", aCompositeEnd, MarkerTracingType::END);
   }
 }
 
@@ -1087,4 +1128,10 @@ nsView::HandleEvent(WidgetGUIEvent* aEvent,
   }
 
   return result;
+}
+
+bool
+nsView::IsPrimaryFramePaintSuppressed()
+{
+  return mFrame ? mFrame->PresContext()->PresShell()->IsPaintingSuppressed() : false;
 }

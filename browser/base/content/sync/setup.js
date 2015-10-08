@@ -3,10 +3,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const Ci = Components.interfaces;
-const Cc = Components.classes;
-const Cr = Components.results;
-const Cu = Components.utils;
+var Ci = Components.interfaces;
+var Cc = Components.classes;
+var Cr = Components.results;
+var Cu = Components.utils;
 
 // page consts
 
@@ -51,7 +51,9 @@ var gSyncSetup = {
     server: false
   },
 
-  get _remoteSites() [Weave.Service.serverURL, RECAPTCHA_DOMAIN],
+  get _remoteSites() {
+    return [Weave.Service.serverURL, RECAPTCHA_DOMAIN];
+  },
 
   get _usingMainServers() {
     if (this._settingUpNew)
@@ -79,7 +81,7 @@ var gSyncSetup = {
       });
     };
     addRem(true);
-    window.addEventListener("unload", function() addRem(false), false);
+    window.addEventListener("unload", () => addRem(false), false);
 
     window.setTimeout(function () {
       // Force Service to be loaded so that engines are registered.
@@ -472,13 +474,6 @@ var gSyncSetup = {
           Weave.Service.identity.syncKey = Weave.Utils.generatePassphrase();
           this._handleNoScript(false);
           Weave.Svc.Prefs.set("firstSync", "newAccount");
-#ifdef XP_WIN
-#ifdef MOZ_METRO
-          if (document.getElementById("metroSetupCheckbox").checked) {
-            Services.metro.storeSyncInfo(email, password, Weave.Service.identity.syncKey);
-          }
-#endif
-#endif
           this.wizardFinish();
           return false;
         }
@@ -564,8 +559,6 @@ var gSyncSetup = {
 
       Weave.Service.persistLogin();
       Weave.Svc.Obs.notify("weave:service:setup-complete");
-
-      gSyncUtils.openFirstSyncProgressPage();
     }
     Weave.Utils.nextTick(Weave.Service.sync, Weave.Service);
     window.close();

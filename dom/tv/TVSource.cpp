@@ -133,6 +133,14 @@ TVSource::SetCurrentChannel(nsITVChannelData* aChannelData)
   mCurrentChannel = TVChannel::Create(GetOwner(), this, aChannelData);
   NS_ENSURE_TRUE(mCurrentChannel, NS_ERROR_DOM_ABORT_ERR);
 
+  nsRefPtr<TVSource> currentSource = mTuner->GetCurrentSource();
+  if (currentSource && mType == currentSource->Type()) {
+    rv = mTuner->ReloadMediaStream();
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+  }
+
   return DispatchCurrentChannelChangedEvent(mCurrentChannel);
 }
 
@@ -349,7 +357,7 @@ TVSource::NotifyEITBroadcasted(nsITVChannelData* aChannelData,
   for (uint32_t i = 0; i < aCount; i++) {
     nsRefPtr<TVProgram> program =
       new TVProgram(GetOwner(), channel, aProgramDataList[i]);
-    *programs.AppendElement() = program;
+    *programs.AppendElement(fallible) = program;
   }
   return DispatchEITBroadcastedEvent(programs);
 }

@@ -31,6 +31,10 @@ function makeChan(url, appId, inBrowser) {
   chan.notificationCallbacks = {
     appId: appId,
     isInBrowserElement: inBrowser,
+    originAttributes: {
+      appId: appId,
+      inBrowser: inBrowser,
+    },
     QueryInterface: function(iid) {
       if (iid.equals(Ci.nsILoadContext))
         return this;
@@ -88,7 +92,7 @@ function run_all_tests() {
   }
 }
 
-let gTests;
+var gTests;
 function run_test() {
   do_get_profile();
   do_test_pending();

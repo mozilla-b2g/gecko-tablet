@@ -64,8 +64,12 @@
 #define PROGRESS_FINISH_SIZE   5.0f
 
 // Amount of time in ms to wait for the parent process to close
-#define PARENT_WAIT 5000
-#define IMMERSIVE_PARENT_WAIT 15000
+#ifdef DEBUG
+// Use a large value for debug builds since the xpcshell tests take a long time.
+#define PARENT_WAIT 30000
+#else
+#define PARENT_WAIT 10000
+#endif
 
 #if defined(XP_MACOSX)
 // These functions are defined in launchchild_osx.mm
@@ -116,12 +120,18 @@ static bool sUseHardLinks = true;
 # define MAYBE_USE_HARD_LINKS 0
 #endif
 
-#if defined(MOZ_VERIFY_MAR_SIGNATURE) && !defined(XP_WIN) && !defined(XP_MACOSX)
+#if defined(MOZ_VERIFY_MAR_SIGNATURE) && !defined(XP_WIN) && \
+    !defined(XP_MACOSX) && !defined(MOZ_WIDGET_GONK)
 #include "nss.h"
 #include "prerror.h"
 #endif
 
 #ifdef XP_WIN
+#include "registrycertificates.h"
+BOOL PathAppendSafe(LPWSTR base, LPCWSTR extra);
+BOOL PathGetSiblingFilePath(LPWSTR destinationBuffer,
+                            LPCWSTR siblingFilePath,
+                            LPCWSTR newFileName);
 #include "updatehelper.h"
 
 // Closes the handle if valid and if the updater is elevated returns with the
@@ -133,6 +143,7 @@ static bool sUseHardLinks = true;
         CloseHandle(handle); \
       } \
       if (_waccess(path, F_OK) == 0 && NS_tremove(path) != 0) { \
+        LogFinish(); \
         return retCode; \
       } \
   }
@@ -308,8 +319,10 @@ mmin(size_t a, size_t b)
 static NS_tchar*
 mstrtok(const NS_tchar *delims, NS_tchar **str)
 {
-  if (!*str || !**str)
+  if (!*str || !**str) {
+    *str = nullptr;
     return nullptr;
+  }
 
   // skip leading "whitespace"
   NS_tchar *ret = *str;
@@ -342,6 +355,13 @@ mstrtok(const NS_tchar *delims, NS_tchar **str)
 
   *str = nullptr;
   return ret;
+}
+
+static bool
+EnvHasValue(const char *name)
+{
+  const char *val = getenv(name);
+  return (val && *val);
 }
 
 #ifdef XP_WIN
@@ -474,7 +494,8 @@ static int ensure_remove(const NS_tchar *path)
 }
 
 // Remove the directory pointed to by path and all of its files and sub-directories.
-static int ensure_remove_recursive(const NS_tchar *path)
+static int ensure_remove_recursive(const NS_tchar *path,
+                                   bool continueEnumOnFailure = false)
 {
   // We use lstat rather than stat here so that we can successfully remove
   // symlinks.
@@ -493,8 +514,8 @@ static int ensure_remove_recursive(const NS_tchar *path)
 
   dir = NS_topendir(path);
   if (!dir) {
-    LOG(("ensure_remove_recursive: path is not a directory: " LOG_S ", rv: %d, err: %d",
-         path, rv, errno));
+    LOG(("ensure_remove_recursive: unable to open directory: " LOG_S
+         ", rv: %d, err: %d", path, rv, errno));
     return rv;
   }
 
@@ -505,7 +526,7 @@ static int ensure_remove_recursive(const NS_tchar *path)
       NS_tsnprintf(childPath, sizeof(childPath)/sizeof(childPath[0]),
                    NS_T("%s/%s"), path, entry->d_name);
       rv = ensure_remove_recursive(childPath);
-      if (rv) {
+      if (rv && !continueEnumOnFailure) {
         break;
       }
     }
@@ -517,8 +538,8 @@ static int ensure_remove_recursive(const NS_tchar *path)
     ensure_write_permissions(path);
     rv = NS_trmdir(path);
     if (rv) {
-      LOG(("ensure_remove_recursive: path is not a directory: " LOG_S ", rv: %d, err: %d",
-           path, rv, errno));
+      LOG(("ensure_remove_recursive: unable to remove directory: " LOG_S
+           ", rv: %d, err: %d", path, rv, errno));
     }
   }
   return rv;
@@ -802,7 +823,7 @@ static int ensure_copy_recursive(const NS_tchar *path, const NS_tchar *dest,
       }
     }
   }
-
+  NS_tclosedir(dir);
   return rv;
 }
 
@@ -849,6 +870,73 @@ static int rename_file(const NS_tchar *spath, const NS_tchar *dpath,
 
   return OK;
 }
+
+#ifdef XP_WIN
+// Remove the directory pointed to by path and all of its files and
+// sub-directories. If a file is in use move it to the tobedeleted directory
+// and attempt to schedule removal of the file on reboot
+static int remove_recursive_on_reboot(const NS_tchar *path, const NS_tchar *deleteDir)
+{
+  struct NS_tstat_t sInfo;
+  int rv = NS_tlstat(path, &sInfo);
+  if (rv) {
+    // This error is benign
+    return rv;
+  }
+
+  if (!S_ISDIR(sInfo.st_mode)) {
+    NS_tchar tmpDeleteFile[MAXPATHLEN];
+    GetTempFileNameW(deleteDir, L"rep", 0, tmpDeleteFile);
+    NS_tremove(tmpDeleteFile);
+    rv = rename_file(path, tmpDeleteFile, false);
+    if (MoveFileEx(rv ? path : tmpDeleteFile, nullptr, MOVEFILE_DELAY_UNTIL_REBOOT)) {
+      LOG(("remove_recursive_on_reboot: file will be removed on OS reboot: "
+           LOG_S, rv ? path : tmpDeleteFile));
+    } else {
+      LOG(("remove_recursive_on_reboot: failed to schedule OS reboot removal of "
+           "file: " LOG_S, rv ? path : tmpDeleteFile));
+    }
+    return rv;
+  }
+
+  NS_tDIR *dir;
+  NS_tdirent *entry;
+
+  dir = NS_topendir(path);
+  if (!dir) {
+    LOG(("remove_recursive_on_reboot: unable to open directory: " LOG_S
+         ", rv: %d, err: %d",
+         path, rv, errno));
+    return rv;
+  }
+
+  while ((entry = NS_treaddir(dir)) != 0) {
+    if (NS_tstrcmp(entry->d_name, NS_T(".")) &&
+        NS_tstrcmp(entry->d_name, NS_T(".."))) {
+      NS_tchar childPath[MAXPATHLEN];
+      NS_tsnprintf(childPath, sizeof(childPath)/sizeof(childPath[0]),
+                   NS_T("%s/%s"), path, entry->d_name);
+      // There is no need to check the return value of this call since this
+      // function is only called after an update is successful and there is not
+      // much that can be done to recover if it isn't successful. There is also
+      // no need to log the value since it will have already been logged.
+      remove_recursive_on_reboot(childPath, deleteDir);
+    }
+  }
+
+  NS_tclosedir(dir);
+
+  if (rv == OK) {
+    ensure_write_permissions(path);
+    rv = NS_trmdir(path);
+    if (rv) {
+      LOG(("remove_recursive_on_reboot: unable to remove directory: " LOG_S
+           ", rv: %d, err: %d", path, rv, errno));
+    }
+  }
+  return rv;
+}
+#endif
 
 //-----------------------------------------------------------------------------
 
@@ -1732,22 +1820,128 @@ PatchIfFile::Finish(int status)
 #include "uachelper.h"
 #include "pathhash.h"
 
-#ifdef MOZ_METRO
 /**
- * Determines if the update came from an Immersive browser
- * @return true if the update came from an immersive browser
+ * Launch the post update application (helper.exe). It takes in the path of the
+ * callback application to calculate the path of helper.exe. For service updates
+ * this is called from both the system account and the current user account.
+ *
+ * @param  installationDir The path to the callback application binary.
+ * @param  updateInfoDir   The directory where update info is stored.
+ * @return true if there was no error starting the process.
  */
 bool
-IsUpdateFromMetro(int argc, NS_tchar **argv)
+LaunchWinPostProcess(const WCHAR *installationDir,
+                     const WCHAR *updateInfoDir)
 {
-  for (int i = 0; i < argc; i++) {
-    if (!wcsicmp(L"-ServerName:DefaultBrowserServer", argv[i])) {
-      return true;
-    }
+  WCHAR workingDirectory[MAX_PATH + 1] = { L'\0' };
+  wcsncpy(workingDirectory, installationDir, MAX_PATH);
+
+  // Launch helper.exe to perform post processing (e.g. registry and log file
+  // modifications) for the update.
+  WCHAR inifile[MAX_PATH + 1] = { L'\0' };
+  wcsncpy(inifile, installationDir, MAX_PATH);
+  if (!PathAppendSafe(inifile, L"updater.ini")) {
+    return false;
   }
-  return false;
-}
+
+  WCHAR exefile[MAX_PATH + 1];
+  WCHAR exearg[MAX_PATH + 1];
+  WCHAR exeasync[10];
+  bool async = true;
+  if (!GetPrivateProfileStringW(L"PostUpdateWin", L"ExeRelPath", nullptr,
+                                exefile, MAX_PATH + 1, inifile)) {
+    return false;
+  }
+
+  if (!GetPrivateProfileStringW(L"PostUpdateWin", L"ExeArg", nullptr, exearg,
+                                MAX_PATH + 1, inifile)) {
+    return false;
+  }
+
+  if (!GetPrivateProfileStringW(L"PostUpdateWin", L"ExeAsync", L"TRUE",
+                                exeasync,
+                                sizeof(exeasync)/sizeof(exeasync[0]),
+                                inifile)) {
+    return false;
+  }
+
+  // Verify that exeFile doesn't contain relative paths
+  if (wcsstr(exefile, L"..") != nullptr) {
+    return false;
+  }
+
+  WCHAR exefullpath[MAX_PATH + 1] = { L'\0' };
+  wcsncpy(exefullpath, installationDir, MAX_PATH);
+  if (!PathAppendSafe(exefullpath, exefile)) {
+    return false;
+  }
+
+#if !defined(TEST_UPDATER)
+  if (sUsingService &&
+      !DoesBinaryMatchAllowedCertificates(installationDir, exefullpath)) {
+    return false;
+  }
 #endif
+
+  WCHAR dlogFile[MAX_PATH + 1];
+  if (!PathGetSiblingFilePath(dlogFile, exefullpath, L"uninstall.update")) {
+    return false;
+  }
+
+  WCHAR slogFile[MAX_PATH + 1] = { L'\0' };
+  wcsncpy(slogFile, updateInfoDir, MAX_PATH);
+  if (!PathAppendSafe(slogFile, L"update.log")) {
+    return false;
+  }
+
+  WCHAR dummyArg[14] = { L'\0' };
+  wcsncpy(dummyArg, L"argv0ignored ", sizeof(dummyArg) / sizeof(dummyArg[0]) - 1);
+
+  size_t len = wcslen(exearg) + wcslen(dummyArg);
+  WCHAR *cmdline = (WCHAR *) malloc((len + 1) * sizeof(WCHAR));
+  if (!cmdline) {
+    return false;
+  }
+
+  wcsncpy(cmdline, dummyArg, len);
+  wcscat(cmdline, exearg);
+
+  if (sUsingService ||
+      !_wcsnicmp(exeasync, L"false", 6) ||
+      !_wcsnicmp(exeasync, L"0", 2)) {
+    async = false;
+  }
+
+  // We want to launch the post update helper app to update the Windows
+  // registry even if there is a failure with removing the uninstall.update
+  // file or copying the update.log file.
+  CopyFileW(slogFile, dlogFile, false);
+
+  STARTUPINFOW si = {sizeof(si), 0};
+  si.lpDesktop = L"";
+  PROCESS_INFORMATION pi = {0};
+
+  bool ok = CreateProcessW(exefullpath,
+                           cmdline,
+                           nullptr,  // no special security attributes
+                           nullptr,  // no special thread attributes
+                           false,    // don't inherit filehandles
+                           0,        // No special process creation flags
+                           nullptr,  // inherit my environment
+                           workingDirectory,
+                           &si,
+                           &pi);
+  free(cmdline);
+  if (ok) {
+    if (!async) {
+      WaitForSingleObject(pi.hProcess, INFINITE);
+    }
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+  }
+  return ok;
+}
+
 #endif
 
 static void
@@ -1774,14 +1968,6 @@ LaunchCallbackApp(const NS_tchar *workingDir,
   // Do not allow the callback to run when running an update through the
   // service as session 0.  The unelevated updater.exe will do the launching.
   if (!usingService) {
-#if defined(MOZ_METRO)
-    // If our callback application is the default metro browser, then
-    // launch it now.
-    if (IsUpdateFromMetro(argc, argv)) {
-      LaunchDefaultMetroBrowser();
-      return;
-    }
-#endif
     WinLaunchChild(argv[0], argc, argv, nullptr);
   }
 #else
@@ -1792,20 +1978,42 @@ LaunchCallbackApp(const NS_tchar *workingDir,
 static bool
 WriteStatusFile(const char* aStatus)
 {
-  NS_tchar filename[MAXPATHLEN];
+  NS_tchar filename[MAXPATHLEN] = {NS_T('\0')};
+#if defined(XP_WIN)
+  // The temp file is not removed on failure since there is client code that
+  // will remove it.
+  GetTempFileNameW(gPatchDirPath, L"sta", 0, filename);
+#else
   NS_tsnprintf(filename, sizeof(filename)/sizeof(filename[0]),
                NS_T("%s/update.status"), gPatchDirPath);
+#endif
 
   // Make sure that the directory for the update status file exists
-  if (ensure_parent_dir(filename))
+  if (ensure_parent_dir(filename)) {
     return false;
+  }
 
-  AutoFile file(NS_tfopen(filename, NS_T("wb+")));
-  if (file == nullptr)
-    return false;
+  // This is scoped to make the AutoFile close the file so it is possible to
+  // move the temp file to the update.status file on Windows.
+  {
+    AutoFile file(NS_tfopen(filename, NS_T("wb+")));
+    if (file == nullptr) {
+      return false;
+    }
 
-  if (fwrite(aStatus, strlen(aStatus), 1, file) != 1)
+    if (fwrite(aStatus, strlen(aStatus), 1, file) != 1) {
+      return false;
+    }
+  }
+
+#if defined(XP_WIN)
+  NS_tchar dstfilename[MAXPATHLEN] = {NS_T('\0')};
+  NS_tsnprintf(dstfilename, sizeof(dstfilename)/sizeof(dstfilename[0]),
+               NS_T("%s\\update.status"), gPatchDirPath);
+  if (MoveFileExW(filename, dstfilename, MOVEFILE_REPLACE_EXISTING) == 0) {
     return false;
+  }
+#endif
 
   return true;
 }
@@ -2028,16 +2236,20 @@ ProcessReplaceRequest()
   }
 
   LOG(("Now, remove the tmpDir"));
-  rv = ensure_remove_recursive(tmpDir);
+  rv = ensure_remove_recursive(tmpDir, true);
   if (rv) {
     LOG(("Removing tmpDir failed, err: %d", rv));
 #ifdef XP_WIN
-    if (MoveFileExW(tmpDir, nullptr, MOVEFILE_DELAY_UNTIL_REBOOT)) {
-      LOG(("tmpDir will be removed on OS reboot: " LOG_S, tmpDir));
-    } else {
-      LOG(("Failed to schedule OS reboot removal of directory: " LOG_S,
-           tmpDir));
+    NS_tchar deleteDir[MAXPATHLEN];
+    NS_tsnprintf(deleteDir, sizeof(deleteDir)/sizeof(deleteDir[0]),
+                 NS_T("%s\\%s"), destDir, DELETE_DIR);
+    // Attempt to remove the tobedeleted directory and then recreate it if it
+    // was successfully removed.
+    _wrmdir(deleteDir);
+    if (NS_taccess(deleteDir, F_OK)) {
+      NS_tmkdir(deleteDir, 0755);
     }
+    remove_recursive_on_reboot(tmpDir, deleteDir);
 #endif
   }
 
@@ -2214,7 +2426,18 @@ UpdateThreadFunc(void *param)
 #endif
 
     if (rv == OK && sStagedUpdate && !sIsOSUpdate) {
+#ifdef TEST_UPDATER
+      // The MOZ_TEST_SKIP_UPDATE_STAGE environment variable prevents copying
+      // the files in dist/bin in the test updater when staging an update since
+      // this can cause tests to timeout.
+      if (EnvHasValue("MOZ_TEST_SKIP_UPDATE_STAGE")) {
+        rv = OK;
+      } else {
+        rv = CopyInstallDirToDestDir();
+      }
+#else
       rv = CopyInstallDirToDestDir();
+#endif
     }
 
     if (rv == OK) {
@@ -2227,8 +2450,7 @@ UpdateThreadFunc(void *param)
     }
   }
 
-  bool reportRealResults = true;
-  if (sReplaceRequest && rv && !getenv("MOZ_NO_REPLACE_FALLBACK")) {
+  if (sReplaceRequest && rv) {
     // When attempting to replace the application, we should fall back
     // to non-staged updates in case of a failure.  We do this by
     // setting the status to pending, exiting the updater, and
@@ -2236,22 +2458,16 @@ UpdateThreadFunc(void *param)
     // startup path will see the pending status, and will start the
     // updater application again in order to apply the update without
     // staging.
-    // The MOZ_NO_REPLACE_FALLBACK environment variable is used to
-    // bypass this fallback, and is used in the updater tests.
-    // The only special thing which we should do here is to remove the
-    // staged directory as it won't be useful any more.
     ensure_remove_recursive(gWorkingDirPath);
     WriteStatusFile(sUsingService ? "pending-service" : "pending");
-    // We need to use --process-updates again in the tests
-    putenv(const_cast<char*>("MOZ_PROCESS_UPDATES="));
-    reportRealResults = false; // pretend success
-  }
-
-  if (reportRealResults) {
+#ifdef TEST_UPDATER
+    // Some tests need to use --test-process-updates again.
+    putenv(const_cast<char*>("MOZ_TEST_PROCESS_UPDATES="));
+#endif
+  } else {
     if (rv) {
       LOG(("failed: %d", rv));
-    }
-    else {
+    } else {
 #ifdef XP_MACOSX
       // If the update was successful we need to update the timestamp on the
       // top-level Mac OS X bundle directory so that Mac OS X's Launch Services
@@ -2273,7 +2489,7 @@ UpdateThreadFunc(void *param)
 int NS_main(int argc, NS_tchar **argv)
 {
 #if defined(MOZ_WIDGET_GONK)
-  if (getenv("LD_PRELOAD")) {
+  if (EnvHasValue("LD_PRELOAD")) {
     // If the updater is launched with LD_PRELOAD set, then we wind up
     // preloading libmozglue.so. Under some circumstances, this can cause
     // the remount of /system to fail when going from rw to ro, so if we
@@ -2290,7 +2506,8 @@ int NS_main(int argc, NS_tchar **argv)
   }
 #endif
 
-#if defined(MOZ_VERIFY_MAR_SIGNATURE) && !defined(XP_WIN) && !defined(XP_MACOSX)
+#if defined(MOZ_VERIFY_MAR_SIGNATURE) && !defined(XP_WIN) && \
+    !defined(XP_MACOSX) && !defined(MOZ_WIDGET_GONK)
   // On Windows and Mac we rely on native APIs to do verifications so we don't
   // need to initialize NSS at all there.
   // Otherwise, minimize the amount of NSS we depend on by avoiding all the NSS
@@ -2340,7 +2557,7 @@ int NS_main(int argc, NS_tchar **argv)
 #ifdef XP_WIN
   bool useService = false;
   bool testOnlyFallbackKeyExists = false;
-  bool noServiceFallback = getenv("MOZ_NO_SERVICE_FALLBACK") != nullptr;
+  bool noServiceFallback = EnvHasValue("MOZ_NO_SERVICE_FALLBACK");
   putenv(const_cast<char*>("MOZ_NO_SERVICE_FALLBACK="));
 
   // We never want the service to be used unless we build with
@@ -2406,7 +2623,7 @@ int NS_main(int argc, NS_tchar **argv)
     *slash = NS_T('\0');
   }
 
-  if (getenv("MOZ_OS_UPDATE")) {
+  if (EnvHasValue("MOZ_OS_UPDATE")) {
     sIsOSUpdate = true;
     putenv(const_cast<char*>("MOZ_OS_UPDATE="));
   }
@@ -2447,6 +2664,28 @@ int NS_main(int argc, NS_tchar **argv)
   LOG(("INSTALLATION DIRECTORY " LOG_S, gInstallDirPath));
   LOG(("WORKING DIRECTORY " LOG_S, gWorkingDirPath));
 
+#if defined(XP_WIN)
+  if (sReplaceRequest || sStagedUpdate) {
+    NS_tchar stagedParent[MAX_PATH];
+    NS_tsnprintf(stagedParent, sizeof(stagedParent)/sizeof(stagedParent[0]),
+                 NS_T("%s"), gWorkingDirPath);
+    if (!PathRemoveFileSpecW(stagedParent)) {
+      WriteStatusFile(REMOVE_FILE_SPEC_ERROR);
+      LOG(("Error calling PathRemoveFileSpecW: %d", GetLastError()));
+      LogFinish();
+      return 1;
+    }
+
+    if (_wcsnicmp(stagedParent, gInstallDirPath, MAX_PATH) != 0) {
+      WriteStatusFile(INVALID_STAGED_PARENT_ERROR);
+      LOG(("Stage and Replace requests require that the working directory " \
+           "is a sub-directory of the installation directory! Exiting"));
+      LogFinish();
+      return 1;
+    }
+  }
+#endif
+
 #ifdef MOZ_WIDGET_GONK
   const char *prioEnv = getenv("MOZ_UPDATER_PRIO");
   if (prioEnv) {
@@ -2484,15 +2723,10 @@ int NS_main(int argc, NS_tchar **argv)
     // Otherwise, wait for the parent process to exit before starting the
     // update.
     if (parent) {
-      bool updateFromMetro = false;
-#ifdef MOZ_METRO
-      updateFromMetro = IsUpdateFromMetro(argc, argv);
-#endif
-      DWORD waitTime = updateFromMetro ?
-                       IMMERSIVE_PARENT_WAIT : PARENT_WAIT;
+      DWORD waitTime = PARENT_WAIT;
       DWORD result = WaitForSingleObject(parent, waitTime);
       CloseHandle(parent);
-      if (result != WAIT_OBJECT_0 && !updateFromMetro)
+      if (result != WAIT_OBJECT_0)
         return 1;
     }
   }
@@ -2505,9 +2739,9 @@ int NS_main(int argc, NS_tchar **argv)
 #ifdef XP_WIN
     // On Windows, the current working directory of the process should be changed
     // so that it's not locked.
-    NS_tchar tmpDir[MAXPATHLEN];
-    if (GetTempPathW(MAXPATHLEN, tmpDir)) {
-      NS_tchdir(tmpDir);
+    NS_tchar sysDir[MAX_PATH + 1] = { L'\0' };
+    if (GetSystemDirectoryW(sysDir, MAX_PATH + 1)) {
+      NS_tchdir(sysDir);
     }
 #endif
   }
@@ -2518,7 +2752,7 @@ int NS_main(int argc, NS_tchar **argv)
   const int callbackIndex = 6;
 
 #if defined(XP_WIN)
-  sUsingService = getenv("MOZ_USING_SERVICE") != nullptr;
+  sUsingService = EnvHasValue("MOZ_USING_SERVICE");
   putenv(const_cast<char*>("MOZ_USING_SERVICE="));
   // lastFallbackError keeps track of the last error for the service not being
   // used, in case of an error when fallback is not enabled we write the
@@ -2723,14 +2957,14 @@ int NS_main(int argc, NS_tchar **argv)
         }
       }
 
-      // If the service can't be used when staging and update, make sure that
+      // If the service can't be used when staging an update, make sure that
       // the UAC prompt is not shown! In this case, just set the status to
       // pending and the update will be applied during the next startup.
       if (!useService && sStagedUpdate) {
         if (updateLockFileHandle != INVALID_HANDLE_VALUE) {
           CloseHandle(updateLockFileHandle);
         }
-        WriteStatusPending(gPatchDirPath);
+        WriteStatusFile("pending");
         return 0;
       }
 
@@ -2745,8 +2979,7 @@ int NS_main(int argc, NS_tchar **argv)
         bool updateStatusSucceeded = false;
         if (IsUpdateStatusSucceeded(updateStatusSucceeded) &&
             updateStatusSucceeded) {
-          if (!LaunchWinPostProcess(gInstallDirPath, gPatchDirPath, false,
-                                    nullptr)) {
+          if (!LaunchWinPostProcess(gInstallDirPath, gPatchDirPath)) {
             fprintf(stderr, "The post update process which runs as the user"
                     " for service update could not be launched.");
           }
@@ -2797,7 +3030,7 @@ int NS_main(int argc, NS_tchar **argv)
         // The elevated updater.exe is responsible for writing out the
         // update.status file.
         return 0;
-      } else if(useService) {
+      } else if (useService) {
         // The service command was launched. The service is responsible for
         // writing out the update.status file.
         if (updateLockFileHandle != INVALID_HANDLE_VALUE) {
@@ -3141,6 +3374,10 @@ int NS_main(int argc, NS_tchar **argv)
   if (argc > callbackIndex) {
 #if defined(XP_WIN)
     if (gSucceeded) {
+      if (!LaunchWinPostProcess(gInstallDirPath, gPatchDirPath)) {
+        fprintf(stderr, "The post update process was not launched");
+      }
+
       // The service update will only be executed if it is already installed.
       // For first time installs of the service, the install will happen from
       // the PostUpdate process. We do the service update process here
@@ -3149,10 +3386,6 @@ int NS_main(int argc, NS_tchar **argv)
       // the service to a newer version in that case. If we are not running
       // through the service, then MOZ_USING_SERVICE will not exist.
       if (!sUsingService) {
-        if (!LaunchWinPostProcess(gInstallDirPath, gPatchDirPath, false, nullptr)) {
-          LOG(("NS_main: The post update process could not be launched."));
-        }
-
         StartServiceUpdate(gInstallDirPath);
       }
     }
@@ -3164,12 +3397,10 @@ int NS_main(int argc, NS_tchar **argv)
     }
 #endif /* XP_MACOSX */
 
-    if (getenv("MOZ_PROCESS_UPDATES") == nullptr) {
-      LaunchCallbackApp(argv[5],
-                        argc - callbackIndex,
-                        argv + callbackIndex,
-                        sUsingService);
-    }
+    LaunchCallbackApp(argv[5],
+                      argc - callbackIndex,
+                      argv + callbackIndex,
+                      sUsingService);
   }
 
   return gSucceeded ? 0 : 1;

@@ -15,17 +15,16 @@ const { getInnerId } = require('../window/utils');
 const { EventTarget } = require('../event/target');
 const { isPrivate } = require('../private-browsing/utils');
 const { getTabForBrowser, getTabForContentWindow, getBrowserForTab } = require('../tabs/utils');
-const { attach, connect, detach, destroy } = require('./utils');
+const { attach, connect, detach, destroy, makeChildOptions } = require('./utils');
 const { ensure } = require('../system/unload');
 const { on: observe } = require('../system/events');
-const { uuid } = require('../util/uuid');
 const { Ci } = require('chrome');
 const { modelFor: tabFor } = require('sdk/model/core');
 const { remoteRequire, processes, frames } = require('../remote/parent');
 remoteRequire('sdk/content/worker-child');
 
 const workers = new WeakMap();
-let modelFor = (worker) => workers.get(worker);
+var modelFor = (worker) => workers.get(worker);
 
 const ERR_DESTROYED = "Couldn't find the worker to receive this message. " +
   "The script may not be initialized yet, or may already have been unloaded.";
@@ -67,6 +66,7 @@ const Worker = Class({
     let model = modelFor(this);
     if (id !== model.id || !model.attached)
       return;
+    args = JSON.parse(args);
     if (model.destroyed && args[0] != 'detach')
       return;
 
@@ -86,7 +86,7 @@ const Worker = Class({
       return;
     }
 
-    processes.port.emit('sdk/worker/message', model.id, args);
+    processes.port.emit('sdk/worker/message', model.id, JSON.stringify(args));
   },
 
   // properties
@@ -127,15 +127,12 @@ attach.define(Worker, function(worker, window) {
   if (tab)
     frame = frames.getFrameForBrowser(getBrowserForTab(tab));
 
-  merge(model.options, {
-    id: String(uuid()),
-    window: getInnerId(window),
-    url: String(window.location)
-  });
+  let childOptions = makeChildOptions(model.options);
+  childOptions.windowId = getInnerId(window);
 
-  processes.port.emit('sdk/worker/create', model.options);
+  processes.port.emit('sdk/worker/create', childOptions);
 
-  connect(worker, frame, model.options);
+  connect(worker, frame, { id: childOptions.id, url: String(window.location) });
 })
 
 connect.define(Worker, function(worker, frame, { id, url }) {

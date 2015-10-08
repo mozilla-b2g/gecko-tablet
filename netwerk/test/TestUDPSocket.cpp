@@ -10,8 +10,12 @@
 #include "nsIOutputStream.h"
 #include "nsIInputStream.h"
 #include "nsINetAddr.h"
+#include "nsIScriptSecurityManager.h"
 #include "nsITimer.h"
 #include "mozilla/net/DNS.h"
+#ifdef XP_WIN
+#include "mozilla/WindowsVersion.h"
+#endif
 #include "prerror.h"
 
 #define REQUEST  0x68656c6f
@@ -272,8 +276,16 @@ main(int32_t argc, char *argv[])
   // Create UDPServerListener to process UDP packets
   nsRefPtr<UDPServerListener> serverListener = new UDPServerListener();
 
+  nsCOMPtr<nsIScriptSecurityManager> secman =
+    do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
+  NS_ENSURE_SUCCESS(rv, -1);
+
+  nsCOMPtr<nsIPrincipal> systemPrincipal;
+  rv = secman->GetSystemPrincipal(getter_AddRefs(systemPrincipal));
+  NS_ENSURE_SUCCESS(rv, -1);
+
   // Bind server socket to 0.0.0.0
-  rv = server->Init(0, false, true, 0);
+  rv = server->Init(0, false, systemPrincipal, true, 0);
   NS_ENSURE_SUCCESS(rv, -1);
   int32_t serverPort;
   server->GetPort(&serverPort);
@@ -281,7 +293,7 @@ main(int32_t argc, char *argv[])
 
   // Bind clinet on arbitrary port
   nsRefPtr<UDPClientListener> clientListener = new UDPClientListener();
-  client->Init(0, false, true, 0);
+  client->Init(0, false, systemPrincipal, true, 0);
   client->AsyncListen(clientListener);
 
   // Write data to server
@@ -329,16 +341,11 @@ main(int32_t argc, char *argv[])
   nsRefPtr<MulticastTimerCallback> timerCb = new MulticastTimerCallback();
 
   // The following multicast tests using multiple sockets require a firewall
-  // exception on Windows XP before they pass.  For now, we'll skip them here.
-  // Later versions of Windows don't seem to have this issue.
+  // exception on Windows XP (the earliest version of Windows we now support)
+  // before they pass. For now, we'll skip them here. Later versions of Windows
+  // (Win2003 and onward) don't seem to have this issue.
 #ifdef XP_WIN
-  OSVERSIONINFO OsVersion;
-  OsVersion.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
-#pragma warning(push)
-#pragma warning(disable:4996) // 'GetVersionExA': was declared deprecated
-  GetVersionEx(&OsVersion);
-#pragma warning(pop)
-  if (OsVersion.dwMajorVersion == 5 && OsVersion.dwMinorVersion == 1) {
+  if (!mozilla::IsWin2003OrLater()) {   // i.e. if it is WinXP
     goto close;
   }
 #endif

@@ -30,33 +30,23 @@
 #include "nsDebug.h"                    // for NS_WARNING
 #include "nsISupportsImpl.h"            // for TextureImage::Release, etc
 #include "OGLShaderProgram.h"           // for ShaderProgramType, etc
-#ifdef MOZ_WIDGET_GONK
-#include <ui/GraphicBuffer.h>
-#if ANDROID_VERSION >= 17
-#include <ui/Fence.h>
-#endif
-#endif
 
-class gfxReusableSurfaceWrapper;
 class nsIntRegion;
-struct nsIntPoint;
-struct nsIntRect;
 
 namespace mozilla {
 namespace gfx {
 class DataSourceSurface;
-}
+} // namespace gfx
 
 namespace gl {
 class AndroidSurfaceTexture;
-}
+} // namespace gl
 
 namespace layers {
 
 class Compositor;
 class CompositorOGL;
 class TextureImageTextureSourceOGL;
-class TextureSharedDataGonkOGL;
 class GLTextureSource;
 
 inline void ApplyFilterToBoundTexture(gl::GLContext* aGL,
@@ -133,48 +123,6 @@ private:
 };
 
 /**
- * TextureHostOGL provides the necessary API for platform specific composition.
- */
-class TextureHostOGL
-{
-public:
-#if defined(MOZ_WIDGET_GONK) && ANDROID_VERSION >= 17
-
-  /**
-   * Store a fence that will signal when the current buffer is no longer being read.
-   * Similar to android's GLConsumer::setReleaseFence()
-   */
-  virtual bool SetReleaseFence(const android::sp<android::Fence>& aReleaseFence);
-
-  /**
-   * Return a releaseFence's Fence and clear a reference to the Fence.
-   */
-  virtual android::sp<android::Fence> GetAndResetReleaseFence();
-
-  virtual void SetAcquireFence(const android::sp<android::Fence>& aAcquireFence);
-
-  /**
-   * Return a acquireFence's Fence and clear a reference to the Fence.
-   */
-  virtual android::sp<android::Fence> GetAndResetAcquireFence();
-
-  virtual void WaitAcquireFenceSyncComplete();
-
-protected:
-  android::sp<android::Fence> mReleaseFence;
-
-  android::sp<android::Fence> mAcquireFence;
-
-  /**
-   * Hold previous ReleaseFence to prevent Fence delivery failure via gecko IPC.
-   * Fence is a kernel object and its lifetime is managed by a reference count.
-   * Until the Fence is delivered to client side, need to hold Fence on host side.
-   */
-  android::sp<android::Fence> mPrevReleaseFence;
-#endif
-};
-
-/**
  * A TextureSource backed by a TextureImage.
  *
  * Depending on the underlying TextureImage, may support texture tiling, so
@@ -204,9 +152,9 @@ public:
   void EnsureBuffer(const gfx::IntSize& aSize,
                     gfxContentType aContentType);
 
-  void CopyTo(const nsIntRect& aSourceRect,
-                      DataTextureSource* aDest,
-                      const nsIntRect& aDestRect);
+  void CopyTo(const gfx::IntRect& aSourceRect,
+              DataTextureSource* aDest,
+              const gfx::IntRect& aDestRect);
 
   virtual TextureImageTextureSourceOGL* AsTextureImageTextureSource() override { return this; }
 
@@ -250,7 +198,7 @@ public:
     mIterating = false;
   }
 
-  virtual nsIntRect GetTileRect() override;
+  virtual gfx::IntRect GetTileRect() override;
 
   virtual size_t GetTileCount() override
   {
@@ -405,7 +353,7 @@ public:
     return !!aTexture;
   }
 
-  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() override
+  virtual already_AddRefed<gfx::DataSourceSurface> GetAsSurface() override
   {
     return nullptr; // XXX - implement this (for MOZ_DUMP_PAINTING)
   }
@@ -477,7 +425,8 @@ public:
   EGLImageTextureHost(TextureFlags aFlags,
                      EGLImage aImage,
                      EGLSync aSync,
-                     gfx::IntSize aSize);
+                     gfx::IntSize aSize,
+                     bool hasAlpha);
 
   virtual ~EGLImageTextureHost();
 
@@ -498,7 +447,7 @@ public:
     return !!aTexture;
   }
 
-  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() override
+  virtual already_AddRefed<gfx::DataSourceSurface> GetAsSurface() override
   {
     return nullptr; // XXX - implement this (for MOZ_DUMP_PAINTING)
   }
@@ -513,11 +462,12 @@ protected:
   const EGLImage mImage;
   const EGLSync mSync;
   const gfx::IntSize mSize;
+  const bool mHasAlpha;
   RefPtr<CompositorOGL> mCompositor;
   RefPtr<EGLImageTextureSource> mTextureSource;
 };
 
-} // namespace
-} // namespace
+} // namespace layers
+} // namespace mozilla
 
 #endif /* MOZILLA_GFX_TEXTUREOGL_H */

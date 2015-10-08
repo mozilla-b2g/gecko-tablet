@@ -15,18 +15,18 @@
 namespace mozilla {
 
 nsresult
-CaptureTask::TaskComplete(already_AddRefed<dom::File> aBlob, nsresult aRv)
+CaptureTask::TaskComplete(already_AddRefed<dom::Blob> aBlob, nsresult aRv)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
   DetachStream();
 
   nsresult rv;
-  nsRefPtr<dom::File> blob(aBlob);
+  nsRefPtr<dom::Blob> blob(aBlob);
 
   // We have to set the parent because the blob has been generated with a valid one.
   if (blob) {
-    blob = new dom::File(mImageCapture->GetParentObject(), blob->Impl());
+    blob = dom::Blob::Create(mImageCapture->GetParentObject(), blob->Impl());
   }
 
   if (mPrincipalChanged) {
@@ -57,7 +57,7 @@ CaptureTask::AttachStream()
   nsRefPtr<DOMMediaStream> domStream = track->GetStream();
   domStream->AddPrincipalChangeObserver(this);
 
-  nsRefPtr<MediaStream> stream = domStream->GetStream();
+  nsRefPtr<MediaStream> stream = domStream->GetPlaybackStream();
   stream->AddListener(this);
 }
 
@@ -71,7 +71,7 @@ CaptureTask::DetachStream()
   nsRefPtr<DOMMediaStream> domStream = track->GetStream();
   domStream->RemovePrincipalChangeObserver(this);
 
-  nsRefPtr<MediaStream> stream = domStream->GetStream();
+  nsRefPtr<MediaStream> stream = domStream->GetPlaybackStream();
   stream->RemoveListener(this);
 }
 
@@ -86,7 +86,9 @@ void
 CaptureTask::NotifyQueuedTrackChanges(MediaStreamGraph* aGraph, TrackID aID,
                                       StreamTime aTrackOffset,
                                       uint32_t aTrackEvents,
-                                      const MediaSegment& aQueuedMedia)
+                                      const MediaSegment& aQueuedMedia,
+                                      MediaStream* aInputStream,
+                                      TrackID aInputTrackID)
 {
   if (mImageGrabbedOrTrackEnd) {
     return;
@@ -103,9 +105,9 @@ CaptureTask::NotifyQueuedTrackChanges(MediaStreamGraph* aGraph, TrackID aID,
   public:
     explicit EncodeComplete(CaptureTask* aTask) : mTask(aTask) {}
 
-    nsresult ReceiveBlob(already_AddRefed<dom::File> aBlob) override
+    nsresult ReceiveBlob(already_AddRefed<dom::Blob> aBlob) override
     {
-      nsRefPtr<dom::File> blob(aBlob);
+      nsRefPtr<dom::Blob> blob(aBlob);
       mTask->TaskComplete(blob.forget(), NS_OK);
       mTask = nullptr;
       return NS_OK;

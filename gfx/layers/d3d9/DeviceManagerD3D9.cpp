@@ -132,7 +132,7 @@ SwapChainD3D9::PrepareForRendering()
 }
 
 void
-SwapChainD3D9::Present(const nsIntRect &aRect)
+SwapChainD3D9::Present(const gfx::IntRect &aRect)
 {
   RECT r;
   r.left = aRect.x;
@@ -206,7 +206,7 @@ DeviceManagerD3D9::Init()
     if (!mNv3DVUtils) {
       mNv3DVUtils = new Nv3DVUtils();
       if (!mNv3DVUtils) {
-        NS_WARNING("Could not create a new instance of Nv3DVUtils.\n");
+        NS_WARNING("Could not create a new instance of Nv3DVUtils.");
       }
     }
 
@@ -821,7 +821,7 @@ DeviceManagerD3D9::CreateVertexBuffer()
   return true;
 }
 
-TemporaryRef<IDirect3DTexture9>
+already_AddRefed<IDirect3DTexture9>
 DeviceManagerD3D9::CreateTexture(const IntSize &aSize,
                                  _D3DFORMAT aFormat,
                                  D3DPOOL aPool,
@@ -844,7 +844,7 @@ DeviceManagerD3D9::CreateTexture(const IntSize &aSize,
     RegisterTextureHost(aTextureHost);
   }
 
-  return result;
+  return result.forget();
 }
 
 #ifdef DEBUG

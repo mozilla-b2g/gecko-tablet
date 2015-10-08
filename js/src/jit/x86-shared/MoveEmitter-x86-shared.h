@@ -13,8 +13,6 @@
 namespace js {
 namespace jit {
 
-class CodeGenerator;
-
 class MoveEmitterX86
 {
     bool inCycle_;
@@ -42,8 +40,10 @@ class MoveEmitterX86
                              bool* allGeneralRegs, bool* allFloatRegs);
     bool maybeEmitOptimizedCycle(const MoveResolver& moves, size_t i,
                                  bool allGeneralRegs, bool allFloatRegs, size_t swapCount);
-    void emitInt32Move(const MoveOperand& from, const MoveOperand& to);
-    void emitGeneralMove(const MoveOperand& from, const MoveOperand& to);
+    void emitInt32Move(const MoveOperand& from, const MoveOperand& to,
+                       const MoveResolver& moves, size_t i);
+    void emitGeneralMove(const MoveOperand& from, const MoveOperand& to,
+                         const MoveResolver& moves, size_t i);
     void emitFloat32Move(const MoveOperand& from, const MoveOperand& to);
     void emitDoubleMove(const MoveOperand& from, const MoveOperand& to);
     void emitFloat32X4Move(const MoveOperand& from, const MoveOperand& to);
@@ -63,27 +63,12 @@ class MoveEmitterX86
 #endif
     }
 
-    bool hasScratchRegister() {
-#ifdef JS_CODEGEN_X86
-        return scratchRegister_.isSome();
-#else
-        return true;
-#endif
-    }
-
-    Register scratchRegister() {
-        MOZ_ASSERT(hasScratchRegister());
-#ifdef JS_CODEGEN_X86
-        return scratchRegister_.value();
-#else
-        return ScratchReg;
-#endif
-    }
+    mozilla::Maybe<Register> findScratchRegister(const MoveResolver& moves, size_t i);
 };
 
 typedef MoveEmitterX86 MoveEmitter;
 
-} // ion
-} // js
+} // namespace jit
+} // namespace js
 
 #endif /* jit_MoveEmitter_x86_shared_h */

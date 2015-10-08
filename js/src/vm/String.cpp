@@ -13,6 +13,8 @@
 #include "mozilla/TypeTraits.h"
 
 #include "gc/Marking.h"
+#include "js/UbiNode.h"
+#include "vm/SPSProfiler.h"
 
 #include "jscntxtinlines.h"
 #include "jscompartmentinlines.h"
@@ -65,6 +67,23 @@ JSString::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf)
            ? mallocSizeOf(flat.rawLatin1Chars())
            : mallocSizeOf(flat.rawTwoByteChars());
 }
+
+JS::ubi::Node::Size
+JS::ubi::Concrete<JSString>::size(mozilla::MallocSizeOf mallocSizeOf) const
+{
+    JSString &str = get();
+    size_t size = str.isFatInline() ? sizeof(JSFatInlineString) : sizeof(JSString);
+
+    // We can't use mallocSizeof on things in the nursery. At the moment,
+    // strings are never in the nursery, but that may change.
+    MOZ_ASSERT(!IsInsideNursery(&str));
+    size += str.sizeOfExcludingThis(mallocSizeOf);
+
+    return size;
+}
+
+template<> const char16_t JS::ubi::TracerConcrete<JSString>::concreteTypeName[] =
+    MOZ_UTF16("JSString");
 
 #ifdef DEBUG
 
@@ -457,8 +476,11 @@ JSRope::flattenInternal(ExclusiveContext* maybecx)
         }
     }
 
-    if (!AllocChars(this, wholeLength, &wholeChars, &wholeCapacity))
+    if (!AllocChars(this, wholeLength, &wholeChars, &wholeCapacity)) {
+        if (maybecx)
+            ReportOutOfMemory(maybecx);
         return nullptr;
+    }
 
     pos = wholeChars;
     first_visit_node: {
@@ -533,6 +555,10 @@ JSRope::flattenInternal(ExclusiveContext* maybecx)
 JSFlatString*
 JSRope::flatten(ExclusiveContext* maybecx)
 {
+    mozilla::Maybe<AutoSPSEntry> sps;
+    if (maybecx && maybecx->isJSContext())
+        sps.emplace(maybecx->asJSContext()->runtime(), "JSRope::flatten");
+
     if (zone()->needsIncrementalBarrier())
         return flattenInternal<WithIncrementalBarrier>(maybecx);
     return flattenInternal<NoBarrier>(maybecx);
@@ -612,13 +638,6 @@ template <typename CharT>
 JSFlatString*
 JSDependentString::undependInternal(ExclusiveContext* cx)
 {
-    /*
-     * We destroy the base() pointer in undepend, so we need a pre-barrier. We
-     * don't need a post-barrier because there aren't any outgoing pointers
-     * afterwards.
-     */
-    JSString::writeBarrierPre(base());
-
     size_t n = length();
     CharT* s = cx->pod_malloc<CharT>(n + 1);
     if (!s)
@@ -809,14 +828,14 @@ StaticStrings::trace(JSTracer* trc)
     /* These strings never change, so barriers are not needed. */
 
     for (uint32_t i = 0; i < UNIT_STATIC_LIMIT; i++)
-        MarkPermanentAtom(trc, unitStaticTable[i], "unit-static-string");
+        TraceProcessGlobalRoot(trc, unitStaticTable[i], "unit-static-string");
 
     for (uint32_t i = 0; i < NUM_SMALL_CHARS * NUM_SMALL_CHARS; i++)
-        MarkPermanentAtom(trc, length2StaticTable[i], "length2-static-string");
+        TraceProcessGlobalRoot(trc, length2StaticTable[i], "length2-static-string");
 
     /* This may mark some strings more than once, but so be it. */
     for (uint32_t i = 0; i < INT_STATIC_LIMIT; i++)
-        MarkPermanentAtom(trc, intStaticTable[i], "int-static-string");
+        TraceProcessGlobalRoot(trc, intStaticTable[i], "int-static-string");
 }
 
 template <typename CharT>
@@ -1119,8 +1138,11 @@ NewStringCopyNDontDeflate(ExclusiveContext* cx, const CharT* s, size_t n)
         return NewInlineString<allowGC>(cx, mozilla::Range<const CharT>(s, n));
 
     ScopedJSFreePtr<CharT> news(cx->pod_malloc<CharT>(n + 1));
-    if (!news)
+    if (!news) {
+        if (!allowGC)
+            cx->recoverFromOutOfMemory();
         return nullptr;
+    }
 
     PodCopy(news.get(), s, n);
     news[n] = 0;

@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 sw=2 et tw=79: */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -14,7 +14,7 @@
 
 #include "AnimationCommon.h"
 #include "mozilla/DebugOnly.h"
-#include "mozilla/dom/AnimationPlayer.h"
+#include "mozilla/dom/Animation.h"
 #include "mozilla/dom/Attr.h"
 #include "nsDOMAttributeMap.h"
 #include "nsIAtom.h"
@@ -29,7 +29,6 @@
 #include "nsILinkHandler.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIURL.h"
-#include "nsNetUtil.h"
 #include "nsContainerFrame.h"
 #include "nsIAnonymousContentCreator.h"
 #include "nsIPresShell.h"
@@ -52,6 +51,7 @@
 #include "nsDOMString.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIDOMMutationEvent.h"
+#include "mozilla/AnimationComparator.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/ContentEvents.h"
 #include "mozilla/EventDispatcher.h"
@@ -139,6 +139,8 @@
 #include "mozilla/dom/WindowBinding.h"
 #include "mozilla/dom/ElementBinding.h"
 #include "mozilla/dom/VRDevice.h"
+#include "nsComputedDOMStyle.h"
+#include "mozilla/Preferences.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -385,7 +387,7 @@ Element::GetBindingURL(nsIDocument *aDocument, css::URLValue **aResult)
                                IsHTMLElement(nsGkAtoms::object) ||
                                IsHTMLElement(nsGkAtoms::embed) ||
                                IsHTMLElement(nsGkAtoms::applet));
-  nsIPresShell *shell = aDocument->GetShell();
+  nsCOMPtr<nsIPresShell> shell = aDocument->GetShell();
   if (!shell || GetPrimaryFrame() || !isXULorPluginElement) {
     *aResult = nullptr;
 
@@ -393,11 +395,8 @@ Element::GetBindingURL(nsIDocument *aDocument, css::URLValue **aResult)
   }
 
   // Get the computed -moz-binding directly from the style context
-  nsPresContext *pctx = shell->GetPresContext();
-  NS_ENSURE_TRUE(pctx, false);
-
-  nsRefPtr<nsStyleContext> sc = pctx->StyleSet()->ResolveStyleFor(this,
-                                                                  nullptr);
+  nsRefPtr<nsStyleContext> sc =
+    nsComputedDOMStyle::GetStyleContextForElementNoFlush(this, nullptr, shell);
   NS_ENSURE_TRUE(sc, false);
 
   *aResult = sc->StyleDisplay()->mBinding;
@@ -1061,10 +1060,12 @@ Element::CreateShadowRoot(ErrorResult& aError)
   return shadowRoot.forget();
 }
 
-NS_IMPL_CYCLE_COLLECTION(DestinationInsertionPointList, mParent, mDestinationPoints)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(DestinationInsertionPointList, mParent,
+                                      mDestinationPoints)
 
 NS_INTERFACE_TABLE_HEAD(DestinationInsertionPointList)
-  NS_INTERFACE_TABLE(DestinationInsertionPointList, nsINodeList)
+  NS_WRAPPERCACHE_INTERFACE_TABLE_ENTRY
+  NS_INTERFACE_TABLE(DestinationInsertionPointList, nsINodeList, nsIDOMNodeList)
   NS_INTERFACE_TABLE_TO_MAP_SEGUE_CYCLE_COLLECTION(DestinationInsertionPointList)
 NS_INTERFACE_MAP_END
 
@@ -1356,7 +1357,7 @@ Element::GetElementsByTagNameNS(const nsAString& namespaceURI,
   nsCOMPtr<nsIHTMLCollection> list =
     GetElementsByTagNameNS(namespaceURI, localName, rv);
   if (rv.Failed()) {
-    return rv.ErrorCode();
+    return rv.StealNSResult();
   }
   list.forget(aResult);
   return NS_OK;
@@ -1391,6 +1392,21 @@ Element::GetElementsByClassName(const nsAString& aClassNames,
   *aResult =
     nsContentUtils::GetElementsByClassName(this, aClassNames).take();
   return NS_OK;
+}
+
+/**
+ * Returns the count of descendants (inclusive of aContent) in
+ * the uncomposed document that are explicitly set as editable.
+ */
+static uint32_t
+EditableInclusiveDescendantCount(nsIContent* aContent)
+{
+  auto htmlElem = nsGenericHTMLElement::FromContent(aContent);
+  if (htmlElem) {
+    return htmlElem->EditableInclusiveDescendantCount();
+  }
+
+  return aContent->EditableDescendantCount();
 }
 
 nsresult
@@ -1464,6 +1480,8 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
   }
 
   bool hadForceXBL = HasFlag(NODE_FORCE_XBL_BINDINGS);
+
+  bool hadParent = !!GetParentNode();
 
   // Now set the parent and set the "Force attach xbl" flag if needed.
   if (aParent) {
@@ -1556,6 +1574,8 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
     SetDirOnBind(this, aParent);
   }
 
+  uint32_t editableDescendantCount = 0;
+
   // If NODE_FORCE_XBL_BINDINGS was set we might have anonymous children
   // that also need to be told that they are moving.
   nsresult rv;
@@ -1572,6 +1592,8 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
            child = child->GetNextSibling()) {
         rv = child->BindToTree(aDocument, this, this, allowScripts);
         NS_ENSURE_SUCCESS(rv, rv);
+
+        editableDescendantCount += EditableInclusiveDescendantCount(child);
       }
     }
   }
@@ -1584,9 +1606,34 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
     rv = child->BindToTree(aDocument, this, aBindingParent,
                            aCompileEventHandlers);
     NS_ENSURE_SUCCESS(rv, rv);
+
+    editableDescendantCount += EditableInclusiveDescendantCount(child);
+  }
+
+  if (aDocument) {
+    // Update our editable descendant count because we don't keep track of it
+    // for content that is not in the uncomposed document.
+    MOZ_ASSERT(EditableDescendantCount() == 0);
+    ChangeEditableDescendantCount(editableDescendantCount);
+
+    if (!hadParent) {
+      uint32_t editableDescendantChange = EditableInclusiveDescendantCount(this);
+      if (editableDescendantChange != 0) {
+      // If we are binding a subtree root to the document, we need to update
+      // the editable descendant count of all the ancestors.
+        nsIContent* parent = GetParent();
+        while (parent) {
+          parent->ChangeEditableDescendantCount(editableDescendantChange);
+          parent = parent->GetParent();
+        }
+      }
+    }
   }
 
   nsNodeUtils::ParentChainChanged(this);
+  if (!hadParent && IsRootOfNativeAnonymousSubtree()) {
+    nsNodeUtils::NativeAnonymousChildListChange(this, false);
+  }
 
   if (HasID()) {
     AddToIdTable(DoGetID());
@@ -1682,21 +1729,42 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
                                       nsContentUtils::eDOM_PROPERTIES,
                                       "RemovedFullScreenElement");
       // Fully exit full-screen.
-      nsIDocument::ExitFullscreen(OwnerDoc(), /* async */ false);
+      nsIDocument::ExitFullscreenInDocTree(OwnerDoc());
     }
     if (HasPointerLock()) {
       nsIDocument::UnlockPointer();
     }
+
+    if (GetParent() && GetParent()->IsInUncomposedDoc()) {
+      // Update the editable descendant count in the ancestors before we
+      // lose the reference to the parent.
+      int32_t editableDescendantChange = -1 * EditableInclusiveDescendantCount(this);
+      if (editableDescendantChange != 0) {
+        nsIContent* parent = GetParent();
+        while (parent) {
+          parent->ChangeEditableDescendantCount(editableDescendantChange);
+          parent = parent->GetParent();
+        }
+      }
+    }
+
+    if (this->IsRootOfNativeAnonymousSubtree()) {
+      nsNodeUtils::NativeAnonymousChildListChange(this, true);
+    }
+
     if (GetParent()) {
-      nsINode* p = mParent;
-      mParent = nullptr;
-      NS_RELEASE(p);
+      nsRefPtr<nsINode> p;
+      p.swap(mParent);
     } else {
       mParent = nullptr;
     }
     SetParentIsContent(false);
   }
   ClearInDocument();
+
+  // Editable descendant count only counts descendants that
+  // are in the uncomposed document.
+  ResetEditableDescendantCount();
 
   if (aNullParent || !mParent->IsInShadowTree()) {
     UnsetFlags(NODE_IS_IN_SHADOW_TREE);
@@ -1994,7 +2062,7 @@ Element::DispatchClickEvent(nsPresContext* aPresContext,
   NS_PRECONDITION(aSourceEvent, "Must have source event");
   NS_PRECONDITION(aStatus, "Null out param?");
 
-  WidgetMouseEvent event(aSourceEvent->mFlags.mIsTrusted, NS_MOUSE_CLICK,
+  WidgetMouseEvent event(aSourceEvent->mFlags.mIsTrusted, eMouseClick,
                          aSourceEvent->widget, WidgetMouseEvent::eReal);
   event.refPoint = aSourceEvent->refPoint;
   uint32_t clickCount = 1;
@@ -2182,9 +2250,11 @@ Element::SetAttr(int32_t aNamespaceID, nsIAtom* aName,
 
   nsresult rv = BeforeSetAttr(aNamespaceID, aName, &value, aNotify);
   NS_ENSURE_SUCCESS(rv, rv);
+  nsAttrValue* preparsedAttrValue = value.GetStoredAttrValue();
 
   if (aNotify) {
-    nsNodeUtils::AttributeWillChange(this, aNamespaceID, aName, modType);
+    nsNodeUtils::AttributeWillChange(this, aNamespaceID, aName, modType,
+                                     preparsedAttrValue);
   }
 
   // Hold a script blocker while calling ParseAttribute since that can call
@@ -2192,6 +2262,11 @@ Element::SetAttr(int32_t aNamespaceID, nsIAtom* aName,
   nsAutoScriptBlocker scriptBlocker;
 
   nsAttrValue attrValue;
+  if (preparsedAttrValue) {
+    attrValue.SwapValueWith(*preparsedAttrValue);
+  }
+  // Even the value was pre-parsed in BeforeSetAttr, we still need to call
+  // ParseAttribute because it can have side effects.
   if (!ParseAttribute(aNamespaceID, aName, aValue, attrValue)) {
     attrValue.SetTo(aValue);
   }
@@ -2231,7 +2306,8 @@ Element::SetParsedAttr(int32_t aNamespaceID, nsIAtom* aName,
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (aNotify) {
-    nsNodeUtils::AttributeWillChange(this, aNamespaceID, aName, modType);
+    nsNodeUtils::AttributeWillChange(this, aNamespaceID, aName, modType,
+                                     &aParsedValue);
   }
 
   return SetAttrAndNotify(aNamespaceID, aName, aPrefix, oldValue,
@@ -2258,10 +2334,10 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
   nsMutationGuard::DidMutate();
 
   // Copy aParsedValue for later use since it will be lost when we call
-  // SetAndTakeMappedAttr below
-  nsAttrValue aValueForAfterSetAttr;
+  // SetAndSwapMappedAttr below
+  nsAttrValue valueForAfterSetAttr;
   if (aCallAfterSetAttr) {
-    aValueForAfterSetAttr.SetTo(aParsedValue);
+    valueForAfterSetAttr.SetTo(aParsedValue);
   }
 
   bool hadValidDir = false;
@@ -2277,7 +2353,7 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
     // stuff to Element?
     if (!IsAttributeMapped(aName) ||
         !SetMappedAttribute(document, aName, aParsedValue, &rv)) {
-      rv = mAttrsAndChildren.SetAndTakeAttr(aName, aParsedValue);
+      rv = mAttrsAndChildren.SetAndSwapAttr(aName, aParsedValue);
     }
   }
   else {
@@ -2286,8 +2362,13 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
                                                    aNamespaceID,
                                                    nsIDOMNode::ATTRIBUTE_NODE);
 
-    rv = mAttrsAndChildren.SetAndTakeAttr(ni, aParsedValue);
+    rv = mAttrsAndChildren.SetAndSwapAttr(ni, aParsedValue);
   }
+
+  // If the old value owns its own data, we know it is OK to keep using it.
+  const nsAttrValue* oldValue =
+      aParsedValue.StoresOwnData() ? &aParsedValue : &aOldValue;
+
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (document || HasFlag(NODE_FORCE_XBL_BINDINGS)) {
@@ -2301,8 +2382,8 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
 
   nsIDocument* ownerDoc = OwnerDoc();
   if (ownerDoc && GetCustomElementData()) {
-    nsCOMPtr<nsIAtom> oldValueAtom = aOldValue.GetAsAtom();
-    nsCOMPtr<nsIAtom> newValueAtom = aValueForAfterSetAttr.GetAsAtom();
+    nsCOMPtr<nsIAtom> oldValueAtom = oldValue->GetAsAtom();
+    nsCOMPtr<nsIAtom> newValueAtom = valueForAfterSetAttr.GetAsAtom();
     LifecycleCallbackArgs args = {
       nsDependentAtomString(aName),
       aModType == nsIDOMMutationEvent::ADDITION ?
@@ -2314,21 +2395,25 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
   }
 
   if (aCallAfterSetAttr) {
-    rv = AfterSetAttr(aNamespaceID, aName, &aValueForAfterSetAttr, aNotify);
+    rv = AfterSetAttr(aNamespaceID, aName, &valueForAfterSetAttr, aNotify);
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (aNamespaceID == kNameSpaceID_None && aName == nsGkAtoms::dir) {
-      OnSetDirAttr(this, &aValueForAfterSetAttr,
+      OnSetDirAttr(this, &valueForAfterSetAttr,
                    hadValidDir, hadDirAuto, aNotify);
     }
   }
 
   if (aNotify) {
-    nsNodeUtils::AttributeChanged(this, aNamespaceID, aName, aModType);
+    // Don't pass aOldValue to AttributeChanged since it may not be reliable.
+    // Callers only compute aOldValue under certain conditions which may not
+    // be triggered by all nsIMutationObservers.
+    nsNodeUtils::AttributeChanged(this, aNamespaceID, aName, aModType,
+        oldValue == &aParsedValue ? &aParsedValue : nullptr);
   }
 
   if (aFireMutation) {
-    InternalMutationEvent mutation(true, NS_MUTATION_ATTRMODIFIED);
+    InternalMutationEvent mutation(true, eLegacyAttrModified);
 
     nsAutoString ns;
     nsContentUtils::NameSpaceManager()->GetNameSpaceURI(aNamespaceID, ns);
@@ -2342,8 +2427,8 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
     if (!newValue.IsEmpty()) {
       mutation.mNewAttrValue = do_GetAtom(newValue);
     }
-    if (!aOldValue.IsEmptyString()) {
-      mutation.mPrevAttrValue = aOldValue.GetAsAtom();
+    if (!oldValue->IsEmptyString()) {
+      mutation.mPrevAttrValue = oldValue->GetAsAtom();
     }
     mutation.mAttrChange = aModType;
 
@@ -2351,6 +2436,25 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
     (new AsyncEventDispatcher(this, mutation))->RunDOMEventWhenSafe();
   }
 
+  return NS_OK;
+}
+
+nsresult
+Element::BeforeSetAttr(int32_t aNamespaceID, nsIAtom* aName,
+                       nsAttrValueOrString* aValue, bool aNotify)
+{
+  if (aNamespaceID == kNameSpaceID_None) {
+    if (aName == nsGkAtoms::_class) {
+      // aValue->GetAttrValue will only be non-null here when this is called
+      // via Element::SetParsedAttr. This shouldn't happen for "class", but
+      // this will handle it.
+      if (aValue && !aValue->GetAttrValue()) {
+        nsAttrValue attr;
+        attr.ParseAtomArray(aValue->String());
+        aValue->TakeParsedValue(attr);
+      }
+    }
+  }
   return NS_OK;
 }
 
@@ -2363,7 +2467,7 @@ Element::ParseAttribute(int32_t aNamespaceID,
   if (aNamespaceID == kNameSpaceID_None) {
     if (aAttribute == nsGkAtoms::_class) {
       SetFlags(NODE_MAY_HAVE_CLASS);
-      aResult.ParseAtomArray(aValue);
+      // Result should have been preparsed above.
       return true;
     }
     if (aAttribute == nsGkAtoms::id) {
@@ -2470,7 +2574,8 @@ Element::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aName,
 
   if (aNotify) {
     nsNodeUtils::AttributeWillChange(this, aNameSpaceID, aName,
-                                     nsIDOMMutationEvent::REMOVAL);
+                                     nsIDOMMutationEvent::REMOVAL,
+                                     nullptr);
   }
 
   bool hasMutationListeners = aNotify &&
@@ -2536,8 +2641,10 @@ Element::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aName,
   }
 
   if (aNotify) {
+    // We can always pass oldValue here since there is no new value which could
+    // have corrupted it.
     nsNodeUtils::AttributeChanged(this, aNameSpaceID, aName,
-                                  nsIDOMMutationEvent::REMOVAL);
+                                  nsIDOMMutationEvent::REMOVAL, &oldValue);
   }
 
   rv = AfterSetAttr(aNameSpaceID, aName, nullptr, aNotify);
@@ -2548,7 +2655,7 @@ Element::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aName,
   }
 
   if (hasMutationListeners) {
-    InternalMutationEvent mutation(true, NS_MUTATION_ATTRMODIFIED);
+    InternalMutationEvent mutation(true, eLegacyAttrModified);
 
     mutation.mRelatedNode = attrNode;
     mutation.mAttrName = aName;
@@ -2751,9 +2858,9 @@ Element::CheckHandleEventForLinksPrecondition(EventChainVisitor& aVisitor,
 {
   if (aVisitor.mEventStatus == nsEventStatus_eConsumeNoDefault ||
       (!aVisitor.mEvent->mFlags.mIsTrusted &&
-       (aVisitor.mEvent->message != NS_MOUSE_CLICK) &&
-       (aVisitor.mEvent->message != NS_KEY_PRESS) &&
-       (aVisitor.mEvent->message != NS_UI_ACTIVATE)) ||
+       (aVisitor.mEvent->mMessage != eMouseClick) &&
+       (aVisitor.mEvent->mMessage != eKeyPress) &&
+       (aVisitor.mEvent->mMessage != eLegacyDOMActivate)) ||
       !aVisitor.mPresContext ||
       aVisitor.mEvent->mFlags.mMultipleActionsPrevented) {
     return false;
@@ -2768,11 +2875,11 @@ Element::PreHandleEventForLinks(EventChainPreVisitor& aVisitor)
 {
   // Optimisation: return early if this event doesn't interest us.
   // IMPORTANT: this switch and the switch below it must be kept in sync!
-  switch (aVisitor.mEvent->message) {
-  case NS_MOUSE_ENTER_SYNTH:
-  case NS_FOCUS_CONTENT:
-  case NS_MOUSE_EXIT_SYNTH:
-  case NS_BLUR_CONTENT:
+  switch (aVisitor.mEvent->mMessage) {
+  case eMouseOver:
+  case eFocus:
+  case eMouseOut:
+  case eBlur:
     break;
   default:
     return NS_OK;
@@ -2788,12 +2895,12 @@ Element::PreHandleEventForLinks(EventChainPreVisitor& aVisitor)
 
   // We do the status bar updates in PreHandleEvent so that the status bar gets
   // updated even if the event is consumed before we have a chance to set it.
-  switch (aVisitor.mEvent->message) {
+  switch (aVisitor.mEvent->mMessage) {
   // Set the status bar similarly for mouseover and focus
-  case NS_MOUSE_ENTER_SYNTH:
+  case eMouseOver:
     aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
     // FALL THROUGH
-  case NS_FOCUS_CONTENT: {
+  case eFocus: {
     InternalFocusEvent* focusEvent = aVisitor.mEvent->AsFocusEvent();
     if (!focusEvent || !focusEvent->isRefocus) {
       nsAutoString target;
@@ -2805,10 +2912,10 @@ Element::PreHandleEventForLinks(EventChainPreVisitor& aVisitor)
     }
     break;
   }
-  case NS_MOUSE_EXIT_SYNTH:
+  case eMouseOut:
     aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
     // FALL THROUGH
-  case NS_BLUR_CONTENT:
+  case eBlur:
     rv = LeaveLink(aVisitor.mPresContext);
     if (NS_SUCCEEDED(rv)) {
       aVisitor.mEvent->mFlags.mMultipleActionsPrevented = true;
@@ -2829,11 +2936,11 @@ Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor)
 {
   // Optimisation: return early if this event doesn't interest us.
   // IMPORTANT: this switch and the switch below it must be kept in sync!
-  switch (aVisitor.mEvent->message) {
-  case NS_MOUSE_BUTTON_DOWN:
-  case NS_MOUSE_CLICK:
-  case NS_UI_ACTIVATE:
-  case NS_KEY_PRESS:
+  switch (aVisitor.mEvent->mMessage) {
+  case eMouseDown:
+  case eMouseClick:
+  case eLegacyDOMActivate:
+  case eKeyPress:
     break;
   default:
     return NS_OK;
@@ -2847,8 +2954,8 @@ Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor)
 
   nsresult rv = NS_OK;
 
-  switch (aVisitor.mEvent->message) {
-  case NS_MOUSE_BUTTON_DOWN:
+  switch (aVisitor.mEvent->mMessage) {
+  case eMouseDown:
     {
       if (aVisitor.mEvent->AsMouseEvent()->button ==
             WidgetMouseEvent::eLeftButton) {
@@ -2871,7 +2978,7 @@ Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor)
     }
     break;
 
-  case NS_MOUSE_CLICK: {
+  case eMouseClick: {
     WidgetMouseEvent* mouseEvent = aVisitor.mEvent->AsMouseEvent();
     if (mouseEvent->IsLeftClickEvent()) {
       if (mouseEvent->IsControl() || mouseEvent->IsMeta() ||
@@ -2884,7 +2991,9 @@ Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor)
       if (shell) {
         // single-click
         nsEventStatus status = nsEventStatus_eIgnore;
-        InternalUIEvent actEvent(mouseEvent->mFlags.mIsTrusted, NS_UI_ACTIVATE);
+        // DOMActive event should be trusted since the activation is actually
+        // occurred even if the cause is an untrusted click event.
+        InternalUIEvent actEvent(true, eLegacyDOMActivate, mouseEvent);
         actEvent.detail = 1;
 
         rv = shell->HandleDOMEventWithTarget(this, &actEvent, &status);
@@ -2895,20 +3004,21 @@ Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor)
     }
     break;
   }
-  case NS_UI_ACTIVATE:
+  case eLegacyDOMActivate:
     {
       if (aVisitor.mEvent->originalTarget == this) {
         nsAutoString target;
         GetLinkTarget(target);
+        const InternalUIEvent* activeEvent = aVisitor.mEvent->AsUIEvent();
+        MOZ_ASSERT(activeEvent);
         nsContentUtils::TriggerLink(this, aVisitor.mPresContext, absURI, target,
-                                    true, true,
-                                    aVisitor.mEvent->mFlags.mIsTrusted);
+                                    true, true, activeEvent->IsTrustable());
         aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
       }
     }
     break;
 
-  case NS_KEY_PRESS:
+  case eKeyPress:
     {
       WidgetKeyboardEvent* keyEvent = aVisitor.mEvent->AsKeyboardEvent();
       if (keyEvent && keyEvent->keyCode == NS_VK_RETURN) {
@@ -3009,7 +3119,7 @@ Element::SetTokenList(nsIAtom* aAtom, nsIVariant* aValue)
   aValue->GetAsAString(string);
   ErrorResult rv;
   itemType->SetValue(string, rv);
-  return rv.ErrorCode();
+  return rv.StealNSResult();
 }
 
 Element*
@@ -3105,13 +3215,6 @@ Element::AttrValueToCORSMode(const nsAttrValue* aValue)
 static const char*
 GetFullScreenError(nsIDocument* aDoc)
 {
-  // Block fullscreen requests in the chrome document when the fullscreen API
-  // is configured for content only.
-  if (nsContentUtils::IsFullscreenApiContentOnly() &&
-      nsContentUtils::IsChromeDoc(aDoc)) {
-    return "FullScreenDeniedContentOnly";
-  }
-
   nsCOMPtr<nsPIDOMWindow> win = aDoc->GetWindow();
   if (aDoc->NodePrincipal()->GetAppStatus() >= nsIPrincipal::APP_STATUS_INSTALLED) {
     // Request is in a web app and in the same origin as the web app.
@@ -3123,10 +3226,6 @@ GetFullScreenError(nsIDocument* aDoc)
 
   if (!nsContentUtils::IsRequestFullScreenAllowed()) {
     return "FullScreenDeniedNotInputDriven";
-  }
-
-  if (nsContentUtils::IsSitePermDeny(aDoc->NodePrincipal(), "fullscreen")) {
-    return "FullScreenDeniedBlocked";
   }
 
   return nullptr;
@@ -3159,24 +3258,33 @@ Element::MozRequestFullScreen(JSContext* aCx, JS::Handle<JS::Value> aOptions,
     return;
   }
 
-  FullScreenOptions opts;
-  RequestFullscreenOptions fsOptions;
+  auto request = MakeUnique<FullscreenRequest>(this);
+  request->mIsCallerChrome = nsContentUtils::IsCallerChrome();
 
+  RequestFullscreenOptions fsOptions;
   // We need to check if options is convertible to a dict first before
   // trying to init fsOptions; otherwise Init() would throw, and we want to
   // silently ignore non-dictionary values
-  if (aCx && IsConvertibleToDictionary(aCx, aOptions)) {
-    if (!fsOptions.Init(aCx, aOptions)) {
+  if (aCx) {
+    bool convertible;
+    if (!IsConvertibleToDictionary(aCx, aOptions, &convertible)) {
       aError.Throw(NS_ERROR_FAILURE);
       return;
     }
 
-    if (fsOptions.mVrDisplay) {
-      opts.mVRHMDDevice = fsOptions.mVrDisplay->GetHMD();
+    if (convertible) {
+      if (!fsOptions.Init(aCx, aOptions)) {
+        aError.Throw(NS_ERROR_FAILURE);
+        return;
+      }
+
+      if (fsOptions.mVrDisplay) {
+        request->mVRHMDDevice = fsOptions.mVrDisplay->GetHMD();
+      }
     }
   }
 
-  OwnerDoc()->AsyncRequestFullScreen(this, opts);
+  OwnerDoc()->AsyncRequestFullScreen(Move(request));
 }
 
 void
@@ -3186,7 +3294,7 @@ Element::MozRequestPointerLock()
 }
 
 void
-Element::GetAnimations(nsTArray<nsRefPtr<AnimationPlayer> >& aAnimations)
+Element::GetAnimations(nsTArray<nsRefPtr<Animation>>& aAnimations)
 {
   nsIDocument* doc = GetComposedDoc();
   if (doc) {
@@ -3197,21 +3305,23 @@ Element::GetAnimations(nsTArray<nsRefPtr<AnimationPlayer> >& aAnimations)
                             nsGkAtoms::animationsProperty };
   for (size_t propIdx = 0; propIdx < MOZ_ARRAY_LENGTH(properties);
        propIdx++) {
-    AnimationPlayerCollection* collection =
-      static_cast<AnimationPlayerCollection*>(
+    AnimationCollection* collection =
+      static_cast<AnimationCollection*>(
         GetProperty(properties[propIdx]));
     if (!collection) {
       continue;
     }
-    for (size_t playerIdx = 0;
-         playerIdx < collection->mPlayers.Length();
-         playerIdx++) {
-      AnimationPlayer* player = collection->mPlayers[playerIdx];
-      if (player->IsRelevant()) {
-        aAnimations.AppendElement(player);
+    for (size_t animIdx = 0;
+         animIdx < collection->mAnimations.Length();
+         animIdx++) {
+      Animation* anim = collection->mAnimations[animIdx];
+      if (anim->IsRelevant()) {
+        aAnimations.AppendElement(anim);
       }
     }
   }
+
+  aAnimations.Sort(AnimationPtrComparator<nsRefPtr<Animation>>());
 }
 
 NS_IMETHODIMP
@@ -3490,4 +3600,17 @@ Element::FontSizeInflation()
   }
 
   return 1.0;
+}
+
+net::ReferrerPolicy
+Element::GetReferrerPolicy()
+{
+  if (Preferences::GetBool("network.http.enablePerElementReferrer", false) &&
+      IsHTMLElement()) {
+    const nsAttrValue* referrerValue = GetParsedAttr(nsGkAtoms::referrer);
+    if (referrerValue && referrerValue->Type() == nsAttrValue::eEnum) {
+      return net::ReferrerPolicy(referrerValue->GetEnumValue());
+    }
+  }
+  return net::RP_Unset;
 }

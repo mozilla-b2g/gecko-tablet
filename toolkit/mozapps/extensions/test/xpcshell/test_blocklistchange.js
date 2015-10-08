@@ -27,10 +27,10 @@
 // softblocked and have to be manually re-enabled if they become completely
 // unblocked (bug 657520)
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
-const Cu = Components.utils;
-const Cr = Components.results;
+var Cc = Components.classes;
+var Ci = Components.interfaces;
+var Cu = Components.utils;
+var Cr = Components.results;
 
 const URI_EXTENSION_BLOCKLIST_DIALOG = "chrome://mozapps/content/extensions/blocklist.xul";
 
@@ -468,46 +468,25 @@ function Pmanual_update(aVersion) {
     }));
   }
 
-  return Promise.all(Pinstalls)
-    .then(installs => {
-      return new Promise((resolve, reject) => {
-        Services.obs.addObserver(function(aSubject, aTopic, aData) {
-          Services.obs.removeObserver(arguments.callee, "addon-install-blocked");
+  return Promise.all(Pinstalls).then(installs => {
+    let completePromises = [];
+    for (let install of installs) {
+      completePromises.push(new Promise(resolve => {
+        install.addListener({
+          onDownloadCancelled: resolve,
+          onInstallEnded: resolve
+        })
+      }));
+    }
 
-          aSubject.QueryInterface(Ci.amIWebInstallInfo);
+    // Use the default web installer to cancel/allow installs based on whether
+    // the add-on is valid or not.
+    let webInstaller = Cc["@mozilla.org/addons/web-install-listener;1"]
+                       .getService(Ci.amIWebInstallListener);
+    webInstaller.onWebInstallRequested(null, null, installs);
 
-          var installCount = aSubject.installs.length;
-
-          var listener = {
-            installComplete: function() {
-              installCount--;
-              if (installCount)
-                return;
-
-              resolve();
-            },
-
-            onDownloadCancelled: function(aInstall) {
-              this.installComplete();
-            },
-
-            onInstallEnded: function(aInstall) {
-              this.installComplete();
-            }
-          };
-
-          aSubject.installs.forEach(function(aInstall) {
-            aInstall.addListener(listener);
-          });
-
-          aSubject.install();
-        }, "addon-install-blocked", false);
-
-        AddonManager.installAddonsFromWebpage("application/x-xpinstall", null,
-                                              NetUtil.newURI("http://localhost:" + gPort + "/"),
-                                              installs);
-      })
-    });
+    return Promise.all(completePromises);
+  });
 }
 
 // Checks that an add-ons properties match expected values

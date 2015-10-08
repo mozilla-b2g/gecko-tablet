@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -19,61 +20,53 @@
 #include "nsServiceManagerUtils.h"
 #endif
 
-class nsIDocument;
-class nsPIDOMWindow;
-
 namespace mozilla {
 namespace dom {
 
 /*
  * The mapping of RequestContext and nsContentPolicyType is currently as the
  * following.  Note that this mapping is not perfect yet (see the TODO comments
- * below for examples), so for now we'll have to keep both an mContext and an
- * mContentPolicyType, because we cannot have a two way conversion.
+ * below for examples).
  *
  * RequestContext    | nsContentPolicyType
  * ------------------+--------------------
- * audio             | TYPE_MEDIA
+ * audio             | TYPE_INTERNAL_AUDIO
  * beacon            | TYPE_BEACON
  * cspreport         | TYPE_CSP_REPORT
  * download          |
- * embed             | TYPE_OBJECT
+ * embed             | TYPE_INTERNAL_EMBED
  * eventsource       |
  * favicon           |
  * fetch             | TYPE_FETCH
  * font              | TYPE_FONT
  * form              |
- * frame             | TYPE_SUBDOCUMENT
+ * frame             | TYPE_INTERNAL_FRAME
  * hyperlink         |
- * iframe            | TYPE_SUBDOCUMENT
- * image             | TYPE_IMAGE
+ * iframe            | TYPE_INTERNAL_IFRAME
+ * image             | TYPE_INTERNAL_IMAGE, TYPE_INTERNAL_IMAGE_PRELOAD
  * imageset          | TYPE_IMAGESET
  * import            | Not supported by Gecko
  * internal          | TYPE_DOCUMENT, TYPE_XBL, TYPE_OTHER
  * location          |
- * manifest          |
- * object            | TYPE_OBJECT
+ * manifest          | TYPE_WEB_MANIFEST
+ * object            | TYPE_INTERNAL_OBJECT
  * ping              | TYPE_PING
  * plugin            | TYPE_OBJECT_SUBREQUEST
  * prefetch          |
- * script            | TYPE_SCRIPT
- * serviceworker     |
- * sharedworker      |
+ * script            | TYPE_INTERNAL_SCRIPT, TYPE_INTERNAL_SCRIPT_PRELOAD
+ * sharedworker      | TYPE_INTERNAL_SHARED_WORKER
  * subresource       | Not supported by Gecko
- * style             | TYPE_STYLESHEET
- * track             | TYPE_MEDIA
- * video             | TYPE_MEDIA
- * worker            |
- * xmlhttprequest    | TYPE_XMLHTTPREQUEST
+ * style             | TYPE_INTERNAL_STYLESHEET, TYPE_INTERNAL_STYLESHEET_PRELOAD
+ * track             | TYPE_INTERNAL_TRACK
+ * video             | TYPE_INTERNAL_VIDEO
+ * worker            | TYPE_INTERNAL_WORKER
+ * xmlhttprequest    | TYPE_INTERNAL_XMLHTTPREQUEST
+ * eventsource       | TYPE_INTERNAL_EVENTSOURCE
  * xslt              | TYPE_XSLT
  *
  * TODO: Figure out if TYPE_REFRESH maps to anything useful
  * TODO: Figure out if TYPE_DTD maps to anything useful
- * TODO: Split TYPE_MEDIA into TYPE_AUDIO, TYPE_VIDEO and TYPE_TRACK
- * TODO: Split TYPE_XMLHTTPREQUEST and TYPE_DATAREQUEST for EventSource
  * TODO: Figure out if TYPE_WEBSOCKET maps to anything useful
- * TODO: Differentiate between frame and iframe
- * TODO: Add content types for different kinds of workers
  * TODO: Add a content type for prefetch
  * TODO: Use the content type for manifest when it becomes available
  * TODO: Add a content type for location
@@ -81,10 +74,8 @@ namespace dom {
  * TODO: Add a content type for form
  * TODO: Add a content type for favicon
  * TODO: Add a content type for download
- * TODO: Split TYPE_OBJECT into TYPE_EMBED and TYPE_OBJECT
  */
 
-class FetchBodyStream;
 class Request;
 
 #define kFETCH_CLIENT_REFERRER_STR "about:client"
@@ -101,6 +92,7 @@ public:
     RESPONSETAINT_BASIC,
     RESPONSETAINT_CORS,
     RESPONSETAINT_OPAQUE,
+    RESPONSETAINT_OPAQUEREDIRECT,
   };
 
   explicit InternalRequest()
@@ -111,6 +103,7 @@ public:
     , mCredentialsMode(RequestCredentials::Omit)
     , mResponseTainting(RESPONSETAINT_BASIC)
     , mCacheMode(RequestCache::Default)
+    , mRedirectMode(RequestRedirect::Follow)
     , mAuthenticationFlag(false)
     , mForceOriginHeader(false)
     , mPreserveContentCodings(false)
@@ -273,6 +266,18 @@ public:
     mCacheMode = aCacheMode;
   }
 
+  RequestRedirect
+  GetRedirectMode() const
+  {
+    return mRedirectMode;
+  }
+
+  void
+  SetRedirectMode(RequestRedirect aRedirectMode)
+  {
+    mRedirectMode = aRedirectMode;
+  }
+
   nsContentPolicyType
   ContentPolicyType() const
   {
@@ -285,13 +290,7 @@ public:
   RequestContext
   Context() const
   {
-    return mContext;
-  }
-
-  void
-  SetContext(RequestContext aContext)
-  {
-    mContext = aContext;
+    return MapContentPolicyTypeToRequestContext(mContentPolicyType);
   }
 
   bool
@@ -334,7 +333,7 @@ public:
   SetBody(nsIInputStream* aStream)
   {
     // A request's body may not be reset once set.
-    MOZ_ASSERT(!mBodyStream);
+    MOZ_ASSERT_IF(aStream, !mBodyStream);
     mBodyStream = aStream;
   }
 
@@ -369,19 +368,40 @@ public:
     mCreatedByFetchEvent = false;
   }
 
+  bool
+  IsNavigationRequest() const;
+
+  bool
+  IsWorkerRequest() const;
+
+  bool
+  IsClientRequest() const;
+
+  static RequestMode
+  MapChannelToRequestMode(nsIChannel* aChannel);
+
 private:
   // Does not copy mBodyStream.  Use fallible Clone() for complete copy.
   explicit InternalRequest(const InternalRequest& aOther);
 
   ~InternalRequest();
 
+  static RequestContext
+  MapContentPolicyTypeToRequestContext(nsContentPolicyType aContentPolicyType);
+
+  static bool
+  IsNavigationContentPolicy(nsContentPolicyType aContentPolicyType);
+
+  static bool
+  IsWorkerContentPolicy(nsContentPolicyType aContentPolicyType);
+
   nsCString mMethod;
+  // mURL always stores the url with the ref stripped
   nsCString mURL;
   nsRefPtr<InternalHeaders> mHeaders;
   nsCOMPtr<nsIInputStream> mBodyStream;
 
   nsContentPolicyType mContentPolicyType;
-  RequestContext mContext;
 
   // Empty string: no-referrer
   // "about:client": client (default)
@@ -392,6 +412,7 @@ private:
   RequestCredentials mCredentialsMode;
   ResponseTainting mResponseTainting;
   RequestCache mCacheMode;
+  RequestRedirect mRedirectMode;
 
   bool mAuthenticationFlag;
   bool mForceOriginHeader;

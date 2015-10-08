@@ -18,8 +18,7 @@ function runWithMSE(testFunction) {
 
   addLoadEvent(function () {
     SpecialPowers.pushPrefEnv({"set": [
-	[ "media.mediasource.enabled", true ],
-	[ "media.mediasource.whitelist", false ],
+      [ "media.mediasource.enabled", true ],
     ]},
                               bootstrapTest);
   });
@@ -55,7 +54,7 @@ function range(start, end) {
 function once(target, name, cb) {
   var p = new Promise(function(resolve, reject) {
     target.addEventListener(name, function() {
-      target.removeEventListener(name, cb);
+      target.removeEventListener(name, arguments.callee);
       resolve();
     });
   });

@@ -10,7 +10,9 @@
 #include "mozilla/gfx/Logging.h"        // for gfxDebug
 #include "mozilla/gfx/Types.h"
 #include "mozilla/mozalloc.h"           // for operator delete
+#include "nsDebug.h"                    // for NS_WARN_IF
 #include "yuv_convert.h"                // for ConvertYCbCrToRGB32, etc
+#include "nsDebug.h"
 
 #define MOZ_ALIGN_WORD(x) (((x) + 3) & ~3)
 
@@ -276,7 +278,7 @@ YCbCrImageDataSerializer::CopyData(const uint8_t* aYData,
   return true;
 }
 
-TemporaryRef<DataSourceSurface>
+already_AddRefed<DataSourceSurface>
 YCbCrImageDataDeserializer::ToDataSourceSurface()
 {
   RefPtr<DataSourceSurface> result =
@@ -286,19 +288,22 @@ YCbCrImageDataDeserializer::ToDataSourceSurface()
   }
 
   DataSourceSurface::MappedSurface map;
-  result->Map(DataSourceSurface::MapType::WRITE, &map);
+  if (NS_WARN_IF(!result->Map(DataSourceSurface::MapType::WRITE, &map))) {
+    return nullptr;
+  }
 
+  gfx::YUVType type = TypeFromSize(GetYSize().width, GetYSize().height,
+                                   GetCbCrSize().width, GetCbCrSize().height);
   gfx::ConvertYCbCrToRGB32(GetYData(), GetCbData(), GetCrData(),
                            map.mData,
                            0, 0, //pic x and y
                            GetYSize().width, GetYSize().height,
                            GetYStride(), GetCbCrStride(),
-                           map.mStride,
-                           gfx::YV12);
+                           map.mStride, type);
   result->Unmap();
   return result.forget();
 }
 
 
-} // namespace
-} // namespace
+} // namespace layers
+} // namespace mozilla

@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -29,9 +30,11 @@
 #include "nsFrameLoader.h"
 #include "mozilla/EventListenerManager.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/ProcessGlobal.h"
 #include "xpcpublic.h"
 #include "nsObserverService.h"
 #include "nsFocusManager.h"
+#include "nsIInterfaceRequestorUtils.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -138,8 +141,16 @@ MarkChildMessageManagers(nsIMessageBroadcaster* aMM)
 static void
 MarkMessageManagers()
 {
+  if (nsFrameMessageManager::GetChildProcessManager()) {
+    // ProcessGlobal's MarkForCC marks also ChildProcessManager.
+    ProcessGlobal* pg = ProcessGlobal::Get();
+    if (pg) {
+      pg->MarkForCC();
+    }
+  }
+
   // The global message manager only exists in the root process.
-  if (XRE_GetProcessType() != GeckoProcessType_Default) {
+  if (!XRE_IsParentProcess()) {
     return;
   }
   nsCOMPtr<nsIMessageBroadcaster> strongGlobalMM =
@@ -169,9 +180,6 @@ MarkMessageManagers()
   }
   if (nsFrameMessageManager::sSameProcessParentManager) {
     nsFrameMessageManager::sSameProcessParentManager->MarkForCC();
-  }
-  if (nsFrameMessageManager::GetChildProcessManager()) {
-    nsFrameMessageManager::GetChildProcessManager()->MarkForCC();
   }
 }
 
@@ -436,7 +444,7 @@ nsCCUncollectableMarker::Observe(nsISupports* aSubject, const char* aTopic,
 
   switch(sFSState) {
     case eUnmarkJSEventListeners: {
-      nsContentUtils::UnmarkGrayJSListenersInCCGenerationDocuments(sGeneration);
+      nsContentUtils::UnmarkGrayJSListenersInCCGenerationDocuments();
       break;
     }
     case eUnmarkMessageManagers: {

@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 sw=2 et tw=78: */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -113,9 +113,7 @@ WindowNamedPropertiesHandler::getOwnPropDescriptor(JSContext* aCx,
       if (!WrapObject(aCx, childWin, &v)) {
         return false;
       }
-      aDesc.object().set(aProxy);
-      aDesc.value().set(v);
-      aDesc.setAttributes(JSPROP_ENUMERATE);
+      FillPropertyDescriptor(aDesc, aProxy, 0, v);
       return true;
     }
   }
@@ -133,9 +131,7 @@ WindowNamedPropertiesHandler::getOwnPropDescriptor(JSContext* aCx,
     if (!WrapObject(aCx, element, &v)) {
       return false;
     }
-    aDesc.object().set(aProxy);
-    aDesc.value().set(v);
-    aDesc.setAttributes(JSPROP_ENUMERATE);
+    FillPropertyDescriptor(aDesc, aProxy, 0, v);
     return true;
   }
 
@@ -149,9 +145,7 @@ WindowNamedPropertiesHandler::getOwnPropDescriptor(JSContext* aCx,
   if (!WrapObject(aCx, result, cache, nullptr, &v)) {
     return false;
   }
-  aDesc.object().set(aProxy);
-  aDesc.value().set(v);
-  aDesc.setAttributes(JSPROP_ENUMERATE);
+  FillPropertyDescriptor(aDesc, aProxy, 0, v);
   return true;
 }
 
@@ -163,7 +157,7 @@ WindowNamedPropertiesHandler::defineProperty(JSContext* aCx,
                                              JS::ObjectOpResult &result) const
 {
   ErrorResult rv;
-  rv.ThrowTypeError(MSG_DEFINEPROPERTY_ON_GSP);
+  rv.ThrowTypeError<MSG_DEFINEPROPERTY_ON_GSP>();
   rv.ReportErrorWithMessage(aCx);
   return false;
 }
@@ -174,6 +168,11 @@ WindowNamedPropertiesHandler::ownPropNames(JSContext* aCx,
                                            unsigned flags,
                                            JS::AutoIdVector& aProps) const
 {
+  if (!(flags & JSITER_HIDDEN)) {
+    // None of our named properties are enumerable.
+    return true;
+  }
+
   // Grab the DOM window.
   nsGlobalWindow* win = xpc::WindowOrNull(JS_GetGlobalForObject(aCx, aProxy));
   nsTArray<nsString> names;

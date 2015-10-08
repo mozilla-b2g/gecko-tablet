@@ -8,6 +8,7 @@ Cu.import("resource://gre/modules/FxAccountsClient.jsm");
 Cu.import("resource://gre/modules/FxAccountsCommon.js");
 Cu.import("resource://gre/modules/FxAccountsOAuthGrantClient.jsm");
 Cu.import("resource://services-common/utils.js");
+var {AccountState} = Cu.import("resource://gre/modules/FxAccounts.jsm", {});
 
 function promiseNotification(topic) {
   return new Promise(resolve => {
@@ -19,7 +20,42 @@ function promiseNotification(topic) {
   });
 }
 
-// Just enough mocks so we can avoid hawk etc.
+// Just enough mocks so we can avoid hawk and storage.
+function MockStorageManager() {
+}
+
+MockStorageManager.prototype = {
+  promiseInitialized: Promise.resolve(),
+
+  initialize(accountData) {
+    this.accountData = accountData;
+  },
+
+  finalize() {
+    return Promise.resolve();
+  },
+
+  getAccountData() {
+    return Promise.resolve(this.accountData);
+  },
+
+  updateAccountData(updatedFields) {
+    for (let [name, value] of Iterator(updatedFields)) {
+      if (value == null) {
+        delete this.accountData[name];
+      } else {
+        this.accountData[name] = value;
+      }
+    }
+    return Promise.resolve();
+  },
+
+  deleteAccountData() {
+    this.accountData = null;
+    return Promise.resolve();
+  }
+}
+
 function MockFxAccountsClient() {
   this._email = "nobody@example.com";
   this._verified = false;
@@ -43,6 +79,12 @@ function MockFxAccounts(mockGrantClient) {
   return new FxAccounts({
     fxAccountsClient: new MockFxAccountsClient(),
     getAssertion: () => Promise.resolve("assertion"),
+    newAccountState(credentials) {
+      // we use a real accountState but mocked storage.
+      let storage = new MockStorageManager();
+      storage.initialize(credentials);
+      return new AccountState(storage);
+    },
     _destroyOAuthToken: function(tokenData) {
       // somewhat sad duplication of _destroyOAuthToken, but hard to avoid.
       return mockGrantClient.destroyToken(tokenData.token).then( () => {

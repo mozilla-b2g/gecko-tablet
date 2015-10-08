@@ -21,7 +21,6 @@ import org.mozilla.gecko.util.ThreadUtils;
 
 import android.graphics.PointF;
 import android.graphics.RectF;
-import android.util.FloatMath;
 import android.util.Log;
 import android.view.GestureDetector;
 import android.view.InputDevice;
@@ -127,6 +126,8 @@ class JavaPanZoomController
     private boolean mDefaultPrevented;
     /* Whether longpress events are enabled, or suppressed by robocop tests. */
     private boolean isLongpressEnabled;
+    /* Whether longpress detection should be ignored */
+    private boolean mIgnoreLongPress;
 
     // Handler to be notified when overscroll occurs
     private Overscroll mOverscroll;
@@ -393,11 +394,22 @@ class JavaPanZoomController
     public void startingNewEventBlock(MotionEvent event, boolean waitingForTouchListeners) {
         checkMainThread();
         mSubscroller.cancel();
-        if (waitingForTouchListeners && (event.getAction() & MotionEvent.ACTION_MASK) == MotionEvent.ACTION_DOWN) {
-            // this is the first touch point going down, so we enter the pending state
-            // setting the state will kill any animations in progress, possibly leaving
-            // the page in overscroll
-            setState(PanZoomState.WAITING_LISTENERS);
+        mIgnoreLongPress = false;
+        if (waitingForTouchListeners) {
+            if ((event.getAction() & MotionEvent.ACTION_MASK) == MotionEvent.ACTION_DOWN) {
+                // this is the first touch point going down, so we enter the pending state
+                // setting the state will kill any animations in progress, possibly leaving
+                // the page in overscroll
+                setState(PanZoomState.WAITING_LISTENERS);
+            } else if ((event.getAction() & MotionEvent.ACTION_MASK) == MotionEvent.ACTION_POINTER_DOWN) {
+                // this is a second (or more) touch point going down, and we're waiting for
+                // the content listeners to respond. while we're waiting though we might end
+                // up triggering a long-press from the first touch point, which would be bad
+                // because from the user's point of view they are already in a multi-touch
+                // gesture. to prevent this from happening we set a flag that discards long-press
+                // gesture detections.
+                mIgnoreLongPress = true;
+            }
         }
     }
 
@@ -655,7 +667,7 @@ class JavaPanZoomController
     private float panDistance(MotionEvent move) {
         float dx = mX.panDistance(move.getX(0));
         float dy = mY.panDistance(move.getY(0));
-        return FloatMath.sqrt(dx * dx + dy * dy);
+        return (float) Math.sqrt(dx * dx + dy * dy);
     }
 
     private void track(float x, float y, long time) {
@@ -788,7 +800,7 @@ class JavaPanZoomController
     private float getVelocity() {
         float xvel = mX.getRealVelocity();
         float yvel = mY.getRealVelocity();
-        return FloatMath.sqrt(xvel * xvel + yvel * yvel);
+        return (float) Math.sqrt(xvel * xvel + yvel * yvel);
     }
 
     @Override
@@ -811,11 +823,7 @@ class JavaPanZoomController
         if (FloatUtils.fuzzyEquals(displacement.x, 0.0f) && FloatUtils.fuzzyEquals(displacement.y, 0.0f)) {
             return;
         }
-        if (mDefaultPrevented || mSubscroller.scrollBy(displacement)) {
-            synchronized (mTarget.getLock()) {
-                mTarget.scrollMarginsBy(displacement.x, displacement.y);
-            }
-        } else {
+        if (!mDefaultPrevented && !mSubscroller.scrollBy(displacement)) {
             synchronized (mTarget.getLock()) {
                 scrollBy(displacement.x, displacement.y);
             }
@@ -942,14 +950,14 @@ class JavaPanZoomController
             synchronized (mTarget.getLock()) {
                 float t = easeOut((float)mBounceDuration / BOUNCE_ANIMATION_DURATION);
                 ImmutableViewportMetrics newMetrics = mBounceStartMetrics.interpolate(mBounceEndMetrics, t);
-                mTarget.setViewportMetrics(newMetrics);
+                mTarget.setViewportMetrics(newMetrics.setPageRectFrom(getMetrics()));
             }
         }
 
         /* Concludes a bounce animation and snaps the viewport into place. */
         private void finishBounce() {
             synchronized (mTarget.getLock()) {
-                mTarget.setViewportMetrics(mBounceEndMetrics);
+                mTarget.setViewportMetrics(mBounceEndMetrics.setPageRectFrom(getMetrics()));
             }
         }
     }
@@ -1028,11 +1036,6 @@ class JavaPanZoomController
         float zoomFactor = viewportMetrics.zoomFactor;
         RectF pageRect = viewportMetrics.getPageRect();
         RectF viewport = viewportMetrics.getViewport();
-        RectF maxMargins = mTarget.getMaxMargins();
-        RectF margins = new RectF(Math.max(maxMargins.left, viewportMetrics.marginLeft),
-                                  Math.max(maxMargins.top, viewportMetrics.marginTop),
-                                  Math.max(maxMargins.right, viewportMetrics.marginRight),
-                                  Math.max(maxMargins.bottom, viewportMetrics.marginBottom));
 
         float focusX = viewport.width() / 2.0f;
         float focusY = viewport.height() / 2.0f;
@@ -1042,26 +1045,23 @@ class JavaPanZoomController
 
         ZoomConstraints constraints = mTarget.getZoomConstraints();
 
-        if (constraints.getMinZoom() > 0)
+        if (constraints.getMinZoom() > 0 || !constraints.getAllowZoom()) {
             minZoomFactor = constraints.getMinZoom();
-        if (constraints.getMaxZoom() > 0)
+        }
+        if (constraints.getMaxZoom() > 0 || !constraints.getAllowZoom()) {
             maxZoomFactor = constraints.getMaxZoom();
-
-        if (!constraints.getAllowZoom()) {
-            // If allowZoom is false, clamp to the default zoom level.
-            maxZoomFactor = minZoomFactor = constraints.getDefaultZoom();
         }
 
         // Ensure minZoomFactor keeps the page at least as big as the viewport.
         if (pageRect.width() > 0) {
-            float pageWidth = pageRect.width() + margins.left + margins.right;
+            float pageWidth = pageRect.width();
             float scaleFactor = viewport.width() / pageWidth;
             minZoomFactor = Math.max(minZoomFactor, zoomFactor * scaleFactor);
             if (viewport.width() > pageWidth)
                 focusX = 0.0f;
         }
         if (pageRect.height() > 0) {
-            float pageHeight = pageRect.height() + margins.top + margins.bottom;
+            float pageHeight = pageRect.height();
             float scaleFactor = viewport.height() / pageHeight;
             minZoomFactor = Math.max(minZoomFactor, zoomFactor * scaleFactor);
             if (viewport.height() > pageHeight)
@@ -1084,7 +1084,7 @@ class JavaPanZoomController
         }
 
         /* Now we pan to the right origin. */
-        viewportMetrics = viewportMetrics.clampWithMargins();
+        viewportMetrics = viewportMetrics.clamp();
 
         return viewportMetrics;
     }
@@ -1098,16 +1098,10 @@ class JavaPanZoomController
         @Override
         protected float getPageStart() { return getMetrics().pageRectLeft; }
         @Override
-        protected float getMarginStart() { return mTarget.getMaxMargins().left - getMetrics().marginLeft; }
+        protected float getPageLength() { return getMetrics().getPageWidth(); }
         @Override
-        protected float getMarginEnd() { return mTarget.getMaxMargins().right - getMetrics().marginRight; }
-        @Override
-        protected float getPageLength() { return getMetrics().getPageWidthWithMargins(); }
-        @Override
-        protected boolean marginsHidden() {
-            ImmutableViewportMetrics metrics = getMetrics();
-            RectF maxMargins = mTarget.getMaxMargins();
-            return (metrics.marginLeft < maxMargins.left || metrics.marginRight < maxMargins.right);
+        protected float getVisibleEndOfLayerView() {
+            return mTarget.getVisibleEndOfLayerView().x;
         }
         @Override
         protected void overscrollFling(final float velocity) {
@@ -1132,16 +1126,10 @@ class JavaPanZoomController
         @Override
         protected float getPageStart() { return getMetrics().pageRectTop; }
         @Override
-        protected float getPageLength() { return getMetrics().getPageHeightWithMargins(); }
+        protected float getPageLength() { return getMetrics().getPageHeight(); }
         @Override
-        protected float getMarginStart() { return mTarget.getMaxMargins().top - getMetrics().marginTop; }
-        @Override
-        protected float getMarginEnd() { return mTarget.getMaxMargins().bottom - getMetrics().marginBottom; }
-        @Override
-        protected boolean marginsHidden() {
-            ImmutableViewportMetrics metrics = getMetrics();
-            RectF maxMargins = mTarget.getMaxMargins();
-            return (metrics.marginTop < maxMargins.top || metrics.marginBottom < maxMargins.bottom);
+        protected float getVisibleEndOfLayerView() {
+            return mTarget.getVisibleEndOfLayerView().y;
         }
         @Override
         protected void overscrollFling(final float velocity) {
@@ -1357,7 +1345,7 @@ class JavaPanZoomController
 
     @Override
     public void onLongPress(MotionEvent motionEvent) {
-        if (!isLongpressEnabled) {
+        if (!isLongpressEnabled || mIgnoreLongPress) {
             return;
         }
 

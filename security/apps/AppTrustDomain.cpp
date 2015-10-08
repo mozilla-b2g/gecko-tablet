@@ -23,12 +23,15 @@
 // Trusted Hosted Apps Certificates
 #include "manifest-signing-root.inc"
 #include "manifest-signing-test-root.inc"
+// Add-on signing Certificates
+#include "addons-public.inc"
+#include "addons-stage.inc"
+// Privileged Package Certificates
+#include "privileged-package-root.inc"
 
 using namespace mozilla::pkix;
 
-#ifdef PR_LOGGING
 extern PRLogModuleInfo* gPIPNSSLog;
-#endif
 
 static const unsigned int DEFAULT_MIN_RSA_BITS = 2048;
 
@@ -83,14 +86,19 @@ AppTrustDomain::SetTrustedRoot(AppTrustedRoot trustedRoot)
       trustedDER.len = mozilla::ArrayLength(xpcshellRoot);
       break;
 
-    case nsIX509CertDB::TrustedHostedAppPublicRoot:
-      trustedDER.data = const_cast<uint8_t*>(trustedAppPublicRoot);
-      trustedDER.len = mozilla::ArrayLength(trustedAppPublicRoot);
+    case nsIX509CertDB::AddonsPublicRoot:
+      trustedDER.data = const_cast<uint8_t*>(addonsPublicRoot);
+      trustedDER.len = mozilla::ArrayLength(addonsPublicRoot);
       break;
 
-    case nsIX509CertDB::TrustedHostedAppTestRoot:
-      trustedDER.data = const_cast<uint8_t*>(trustedAppTestRoot);
-      trustedDER.len = mozilla::ArrayLength(trustedAppTestRoot);
+    case nsIX509CertDB::AddonsStageRoot:
+      trustedDER.data = const_cast<uint8_t*>(addonsStageRoot);
+      trustedDER.len = mozilla::ArrayLength(addonsStageRoot);
+      break;
+
+    case nsIX509CertDB::PrivilegedPackageRoot:
+      trustedDER.data = const_cast<uint8_t*>(privilegedPackageRoot);
+      trustedDER.len = mozilla::ArrayLength(privilegedPackageRoot);
       break;
 
     default:
@@ -223,7 +231,7 @@ AppTrustDomain::DigestBuf(Input item,
 }
 
 Result
-AppTrustDomain::CheckRevocation(EndEntityOrCA, const CertID&, Time,
+AppTrustDomain::CheckRevocation(EndEntityOrCA, const CertID&, Time, Duration,
                                 /*optional*/ const Input*,
                                 /*optional*/ const Input*)
 {
@@ -244,7 +252,9 @@ AppTrustDomain::IsChainValid(const DERArray& certChain, Time time)
 }
 
 Result
-AppTrustDomain::CheckSignatureDigestAlgorithm(DigestAlgorithm)
+AppTrustDomain::CheckSignatureDigestAlgorithm(DigestAlgorithm,
+                                              EndEntityOrCA,
+                                              Time)
 {
   // TODO: We should restrict signatures to SHA-256 or better.
   return Success;
@@ -289,6 +299,14 @@ AppTrustDomain::VerifyECDSASignedDigest(const SignedDigest& signedDigest,
 {
   return VerifyECDSASignedDigestNSS(signedDigest, subjectPublicKeyInfo,
                                     mPinArg);
+}
+
+Result
+AppTrustDomain::CheckValidityIsAcceptable(Time /*notBefore*/, Time /*notAfter*/,
+                                          EndEntityOrCA /*endEntityOrCA*/,
+                                          KeyPurposeId /*keyPurpose*/)
+{
+  return Success;
 }
 
 } } // namespace mozilla::psm

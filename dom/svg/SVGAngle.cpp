@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -47,7 +48,8 @@ SVGAngle::SetValue(float aValue, ErrorResult& rv)
     return;
   }
   bool isBaseVal = mType == BaseValue;
-  mVal->SetBaseValue(aValue, isBaseVal ? mSVGElement : nullptr, isBaseVal);
+  mVal->SetBaseValue(aValue, isBaseVal ? mSVGElement.get() : nullptr,
+                     isBaseVal);
 }
 
 float
@@ -82,7 +84,8 @@ SVGAngle::NewValueSpecifiedUnits(uint16_t unitType,
     return;
   }
   rv = mVal->NewValueSpecifiedUnits(unitType, valueInSpecifiedUnits,
-                                    mType == BaseValue ? mSVGElement : nullptr);
+                                    mType == BaseValue ? mSVGElement.get()
+                                                       : nullptr);
 }
 
 void
@@ -92,7 +95,8 @@ SVGAngle::ConvertToSpecifiedUnits(uint16_t unitType, ErrorResult& rv)
     rv.Throw(NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR);
     return;
   }
-  rv = mVal->ConvertToSpecifiedUnits(unitType, mType == BaseValue ? mSVGElement : nullptr);
+  rv = mVal->ConvertToSpecifiedUnits(unitType, mType == BaseValue ?
+                                     mSVGElement.get() : nullptr);
 }
 
 void
@@ -103,7 +107,8 @@ SVGAngle::SetValueAsString(const nsAString& aValue, ErrorResult& rv)
     return;
   }
   bool isBaseVal = mType == BaseValue;
-  rv = mVal->SetBaseValueString(aValue, isBaseVal ? mSVGElement : nullptr, isBaseVal);
+  rv = mVal->SetBaseValueString(aValue, isBaseVal ? mSVGElement.get() : nullptr,
+                                isBaseVal);
 }
 
 void

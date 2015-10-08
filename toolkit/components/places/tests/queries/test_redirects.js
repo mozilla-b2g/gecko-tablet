@@ -4,7 +4,7 @@
 
 // Array of visits we will add to the database, will be populated later
 // in the test.
-let visits = [];
+var visits = [];
 
 /**
  * Takes a sequence of query options, and compare query results obtained through
@@ -133,7 +133,7 @@ function cartProd(aSequences, aCallback)
 
   // For each sequence in aSequences, we maintain a pointer (an array index,
   // really) to the element we're currently enumerating in that sequence
-  let seqEltPtrs = aSequences.map(function (i) 0);
+  let seqEltPtrs = aSequences.map(i => 0);
 
   let numProds = 0;
   let done = false;
@@ -187,7 +187,7 @@ function run_test()
  */
 add_task(function test_add_visits_to_database()
 {
-  remove_all_bookmarks();
+  yield PlacesUtils.bookmarks.eraseEverything();
 
   // We don't really bother on this, but we need a time to add visits.
   let timeInMicroseconds = Date.now() * 1000;
@@ -210,7 +210,7 @@ add_task(function test_add_visits_to_database()
   ];
 
   // we add a visit for each of the above transition types.
-  t.forEach(function (transition) visits.push(
+  t.forEach(transition => visits.push(
     { isVisit: true,
       transType: transition,
       uri: "http://" + transition + ".example.com/",
@@ -222,7 +222,7 @@ add_task(function test_add_visits_to_database()
       isInQuery: true }));
 
   // Add a REDIRECT_TEMPORARY layer of visits for each of the above visits.
-  t.forEach(function (transition) visits.push(
+  t.forEach(transition => visits.push(
     { isVisit: true,
       transType: Ci.nsINavHistoryService.TRANSITION_REDIRECT_TEMPORARY,
       uri: "http://" + transition + ".redirect.temp.example.com/",
@@ -234,7 +234,7 @@ add_task(function test_add_visits_to_database()
       isInQuery: true }));
 
   // Add a REDIRECT_PERMANENT layer of visits for each of the above redirects.
-  t.forEach(function (transition) visits.push(
+  t.forEach(transition => visits.push(
     { isVisit: true,
       transType: Ci.nsINavHistoryService.TRANSITION_REDIRECT_PERMANENT,
       uri: "http://" + transition + ".redirect.perm.example.com/",
@@ -257,7 +257,7 @@ add_task(function test_add_visits_to_database()
     do_throw("Unknown uri.");
     return null;
   }
-  t.forEach(function (transition) visits.push(
+  t.forEach(transition => visits.push(
     { isVisit: true,
       transType: Ci.nsINavHistoryService.TRANSITION_REDIRECT_PERMANENT,
       uri: "http://" + transition + ".example.com/",
@@ -271,7 +271,7 @@ add_task(function test_add_visits_to_database()
   // Add an unvisited bookmark in the database, it should never appear.
   visits.push({ isBookmark: true,
     uri: "http://unvisited.bookmark.com/",
-    parentFolder: PlacesUtils.bookmarksMenuFolderId,
+    parentGuid: PlacesUtils.bookmarks.menuGuid,
     index: PlacesUtils.bookmarks.DEFAULT_INDEX,
     title: "Unvisited Bookmark",
     isInQuery: false });
@@ -298,7 +298,7 @@ add_task(function test_redirects()
   cartProd([includeHidden_options, maxResults_options, sorting_options],
            check_results_callback);
 
-  remove_all_bookmarks();
+  yield PlacesUtils.bookmarks.eraseEverything();
 
   yield PlacesTestUtils.clearHistory();
 });

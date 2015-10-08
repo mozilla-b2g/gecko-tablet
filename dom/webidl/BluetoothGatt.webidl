@@ -4,13 +4,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-[CheckPermissions="bluetooth"]
+[CheckAnyPermissions="bluetooth"]
 interface BluetoothGatt : EventTarget
 {
   [Cached, Pure]
   readonly attribute sequence<BluetoothGattService> services;
   readonly attribute BluetoothConnectionState       connectionState;
 
+  // Fired when the value of any characteristic changed
+           attribute EventHandler                   oncharacteristicchanged;
   // Fired when attribute connectionState changed
            attribute EventHandler                   onconnectionstatechanged;
 

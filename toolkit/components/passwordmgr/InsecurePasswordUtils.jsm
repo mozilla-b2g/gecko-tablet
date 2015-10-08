@@ -12,18 +12,18 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "devtools",
-                                  "resource://gre/modules/devtools/Loader.jsm");
+                                  "resource://gre/modules/devtools/shared/Loader.jsm");
 
 Object.defineProperty(this, "WebConsoleUtils", {
   get: function() {
-    return devtools.require("devtools/toolkit/webconsole/utils").Utils;
+    return devtools.require("devtools/shared/webconsole/utils").Utils;
   },
   configurable: true,
   enumerable: true
 });
 
 const STRINGS_URI = "chrome://global/locale/security/security.properties";
-let l10n = new WebConsoleUtils.l10n(STRINGS_URI);
+var l10n = new WebConsoleUtils.l10n(STRINGS_URI);
 
 this.InsecurePasswordUtils = {
 
@@ -75,7 +75,7 @@ this.InsecurePasswordUtils = {
    *   both places. Look at
    *   https://bugzilla.mozilla.org/show_bug.cgi?id=899099 for more info.
    */
-  _checkIfURIisSecure : function(uri) {
+  checkIfURIisSecure : function(uri) {
     let isSafe = false;
     let netutil = Cc["@mozilla.org/network/util;1"].getService(Ci.nsINetUtil);
     let ph = Ci.nsIProtocolHandler;
@@ -109,7 +109,7 @@ this.InsecurePasswordUtils = {
       // We are at the top, nothing to check here
       return false;
     }
-    if (!this._checkIfURIisSecure(uri)) {
+    if (!this.checkIfURIisSecure(uri)) {
       // We are insecure
       return true;
     }
@@ -127,7 +127,7 @@ this.InsecurePasswordUtils = {
   checkForInsecurePasswords : function (aForm) {
     var domDoc = aForm.ownerDocument;
     let pageURI = domDoc.defaultView.top.document.documentURIObject;
-    let isSafePage = this._checkIfURIisSecure(pageURI);
+    let isSafePage = this.checkIfURIisSecure(pageURI);
 
     if (!isSafePage) {
       this._sendWebConsoleMessage("InsecurePasswordsPresentOnPage", domDoc);
@@ -137,10 +137,37 @@ this.InsecurePasswordUtils = {
     // insecure iframe or document.
     if (this._checkForInsecureNestedDocuments(domDoc)) {
       this._sendWebConsoleMessage("InsecurePasswordsPresentOnIframe", domDoc);
+      isSafePage = false;
     }
 
+    let isFormSubmitHTTP = false, isFormSubmitHTTPS = false;
     if (aForm.action.match(/^http:\/\//)) {
       this._sendWebConsoleMessage("InsecureFormActionPasswordsPresent", domDoc);
+      isFormSubmitHTTP = true;
+    } else if (aForm.action.match(/^https:\/\//)) {
+      isFormSubmitHTTPS = true;
     }
+
+    // The safety of a password field determined by the form action and the page protocol
+    let passwordSafety;
+    if (isSafePage) {
+      if (isFormSubmitHTTPS) {
+        passwordSafety = 0;
+      } else if (isFormSubmitHTTP) {
+        passwordSafety = 1;
+      } else {
+        passwordSafety = 2;
+      }
+    } else {
+      if (isFormSubmitHTTPS) {
+        passwordSafety = 3;
+      } else if (isFormSubmitHTTP) {
+        passwordSafety = 4;
+      } else {
+        passwordSafety = 5;
+      }
+    }
+
+    Services.telemetry.getHistogramById("PWMGR_LOGIN_PAGE_SAFETY").add(passwordSafety);
   },
 };

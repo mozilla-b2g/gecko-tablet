@@ -86,9 +86,15 @@ EXPORTS += [
     'nsIStatefulFrame.h',
     'nsPluginFrame.h',
     'nsQueryFrame.h',
+    'nsRubyBaseContainerFrame.h',
+    'nsRubyBaseFrame.h',
+    'nsRubyFrame.h',
+    'nsRubyTextContainerFrame.h',
+    'nsRubyTextFrame.h',
     'nsSplittableFrame.h',
     'nsSubDocumentFrame.h',
     'nsTextRunTransformations.h',
+    'RubyUtils.h',
     'ScrollbarActivity.h',
 ]
 
@@ -168,10 +174,6 @@ SOURCES += [
     'nsLineLayout.cpp',
     'nsPluginFrame.cpp',
 ]
-
-FAIL_ON_WARNINGS = True
-
-MSVC_ENABLE_PGO = True
 
 include('/ipc/chromium/chromium-config.mozbuild')
 

@@ -6,41 +6,50 @@
 
 #include "AudioContext.h"
 
-#include "nsPIDOMWindow.h"
+#include "blink/PeriodicWave.h"
+
 #include "mozilla/ErrorResult.h"
+#include "mozilla/OwningNonNull.h"
+
 #include "mozilla/dom/AnalyserNode.h"
 #include "mozilla/dom/AudioContextBinding.h"
 #include "mozilla/dom/HTMLMediaElement.h"
 #include "mozilla/dom/OfflineAudioContextBinding.h"
-#include "mozilla/dom/OwningNonNull.h"
-#include "MediaStreamGraph.h"
+#include "mozilla/dom/Promise.h"
+
+#include "AudioBuffer.h"
+#include "AudioBufferSourceNode.h"
 #include "AudioChannelService.h"
 #include "AudioDestinationNode.h"
-#include "AudioBufferSourceNode.h"
-#include "AudioBuffer.h"
-#include "GainNode.h"
-#include "MediaElementAudioSourceNode.h"
-#include "MediaStreamAudioSourceNode.h"
-#include "DelayNode.h"
-#include "PannerNode.h"
 #include "AudioListener.h"
-#include "DynamicsCompressorNode.h"
+#include "AudioStream.h"
 #include "BiquadFilterNode.h"
-#include "ScriptProcessorNode.h"
-#include "StereoPannerNode.h"
 #include "ChannelMergerNode.h"
 #include "ChannelSplitterNode.h"
-#include "MediaStreamAudioDestinationNode.h"
-#include "WaveShaperNode.h"
-#include "PeriodicWave.h"
 #include "ConvolverNode.h"
-#include "OscillatorNode.h"
+#include "DelayNode.h"
+#include "DynamicsCompressorNode.h"
+#include "GainNode.h"
+#include "MediaElementAudioSourceNode.h"
+#include "MediaStreamAudioDestinationNode.h"
+#include "MediaStreamAudioSourceNode.h"
+#include "MediaStreamGraph.h"
+#include "nsNetCID.h"
 #include "nsNetUtil.h"
-#include "AudioStream.h"
-#include "mozilla/dom/Promise.h"
+#include "nsPIDOMWindow.h"
+#include "OscillatorNode.h"
+#include "PannerNode.h"
+#include "PeriodicWave.h"
+#include "ScriptProcessorNode.h"
+#include "StereoPannerNode.h"
+#include "WaveShaperNode.h"
 
 namespace mozilla {
 namespace dom {
+
+// 0 is a special value that MediaStreams use to denote they are not part of a
+// AudioContext.
+static dom::AudioContext::AudioContextId gAudioContextId = 1;
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(AudioContext)
 
@@ -85,24 +94,44 @@ AudioContext::AudioContext(nsPIDOMWindow* aWindow,
                            uint32_t aLength,
                            float aSampleRate)
   : DOMEventTargetHelper(aWindow)
+  , mId(gAudioContextId++)
   , mSampleRate(GetSampleRateForAudioContext(aIsOffline, aSampleRate))
+  , mAudioContextState(AudioContextState::Suspended)
   , mNumberOfChannels(aNumberOfChannels)
-  , mNodeCount(0)
   , mIsOffline(aIsOffline)
   , mIsStarted(!aIsOffline)
   , mIsShutDown(false)
+  , mCloseCalled(false)
+  , mSuspendCalled(false)
 {
-  aWindow->AddAudioContext(this);
+  bool mute = aWindow->AddAudioContext(this);
 
   // Note: AudioDestinationNode needs an AudioContext that must already be
   // bound to the window.
   mDestination = new AudioDestinationNode(this, aIsOffline, aChannel,
                                           aNumberOfChannels, aLength, aSampleRate);
+
+  // The context can't be muted until it has a destination.
+  if (mute) {
+    Mute();
+  }
+}
+
+nsresult
+AudioContext::Init()
+{
   // We skip calling SetIsOnlyNodeForContext and the creation of the
   // audioChannelAgent during mDestination's constructor, because we can only
   // call them after mDestination has been set up.
-  mDestination->CreateAudioChannelAgent();
-  mDestination->SetIsOnlyNodeForContext(true);
+  if (!mIsOffline) {
+    nsresult rv = mDestination->CreateAudioChannelAgent();
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+    mDestination->SetIsOnlyNodeForContext(true);
+  }
+
+  return NS_OK;
 }
 
 AudioContext::~AudioContext()
@@ -129,19 +158,9 @@ AudioContext::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 AudioContext::Constructor(const GlobalObject& aGlobal,
                           ErrorResult& aRv)
 {
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.GetAsSupports());
-  if (!window) {
-    aRv.Throw(NS_ERROR_FAILURE);
-    return nullptr;
-  }
-
-  nsRefPtr<AudioContext> object =
-    new AudioContext(window, false,
-                     AudioChannelService::GetDefaultAudioChannel());
-
-  RegisterWeakMemoryReporter(object);
-
-  return object.forget();
+  return AudioContext::Constructor(aGlobal,
+                                   AudioChannelService::GetDefaultAudioChannel(),
+                                   aRv);
 }
 
 /* static */ already_AddRefed<AudioContext>
@@ -156,6 +175,10 @@ AudioContext::Constructor(const GlobalObject& aGlobal,
   }
 
   nsRefPtr<AudioContext> object = new AudioContext(window, false, aChannel);
+  aRv = object->Init();
+  if (NS_WARN_IF(aRv.Failed())) {
+     return nullptr;
+  }
 
   RegisterWeakMemoryReporter(object);
 
@@ -197,9 +220,22 @@ AudioContext::Constructor(const GlobalObject& aGlobal,
   return object.forget();
 }
 
-already_AddRefed<AudioBufferSourceNode>
-AudioContext::CreateBufferSource()
+bool AudioContext::CheckClosed(ErrorResult& aRv)
 {
+  if (mAudioContextState == AudioContextState::Closed) {
+    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
+    return true;
+  }
+  return false;
+}
+
+already_AddRefed<AudioBufferSourceNode>
+AudioContext::CreateBufferSource(ErrorResult& aRv)
+{
+  if (CheckClosed(aRv)) {
+    return nullptr;
+  }
+
   nsRefPtr<AudioBufferSourceNode> bufferNode =
     new AudioBufferSourceNode(this);
   return bufferNode.forget();
@@ -237,13 +273,17 @@ bool IsValidBufferSize(uint32_t aBufferSize) {
   }
 }
 
-}
+} // namespace
 
 already_AddRefed<MediaStreamAudioDestinationNode>
 AudioContext::CreateMediaStreamDestination(ErrorResult& aRv)
 {
   if (mIsOffline) {
     aRv.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+    return nullptr;
+  }
+
+  if (CheckClosed(aRv)) {
     return nullptr;
   }
 
@@ -266,6 +306,10 @@ AudioContext::CreateScriptProcessor(uint32_t aBufferSize,
     return nullptr;
   }
 
+  if (CheckClosed(aRv)) {
+    return nullptr;
+  }
+
   nsRefPtr<ScriptProcessorNode> scriptProcessor =
     new ScriptProcessorNode(this, aBufferSize, aNumberOfInputChannels,
                             aNumberOfOutputChannels);
@@ -273,15 +317,23 @@ AudioContext::CreateScriptProcessor(uint32_t aBufferSize,
 }
 
 already_AddRefed<AnalyserNode>
-AudioContext::CreateAnalyser()
+AudioContext::CreateAnalyser(ErrorResult& aRv)
 {
+  if (CheckClosed(aRv)) {
+    return nullptr;
+  }
+
   nsRefPtr<AnalyserNode> analyserNode = new AnalyserNode(this);
   return analyserNode.forget();
 }
 
 already_AddRefed<StereoPannerNode>
-AudioContext::CreateStereoPanner()
+AudioContext::CreateStereoPanner(ErrorResult& aRv)
 {
+  if (CheckClosed(aRv)) {
+    return nullptr;
+  }
+
   nsRefPtr<StereoPannerNode> stereoPannerNode = new StereoPannerNode(this);
   return stereoPannerNode.forget();
 }
@@ -300,6 +352,11 @@ AudioContext::CreateMediaElementSource(HTMLMediaElement& aMediaElement,
     return nullptr;
   }
 #endif
+
+  if (CheckClosed(aRv)) {
+    return nullptr;
+  }
+
   nsRefPtr<DOMMediaStream> stream = aMediaElement.MozCaptureStream(aRv,
                                                                    mDestination->Stream()->Graph());
   if (aRv.Failed()) {
@@ -318,21 +375,34 @@ AudioContext::CreateMediaStreamSource(DOMMediaStream& aMediaStream,
     aRv.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
     return nullptr;
   }
+
+  if (CheckClosed(aRv)) {
+    return nullptr;
+  }
+
   nsRefPtr<MediaStreamAudioSourceNode> mediaStreamAudioSourceNode =
     new MediaStreamAudioSourceNode(this, &aMediaStream);
   return mediaStreamAudioSourceNode.forget();
 }
 
 already_AddRefed<GainNode>
-AudioContext::CreateGain()
+AudioContext::CreateGain(ErrorResult& aRv)
 {
+  if (CheckClosed(aRv)) {
+    return nullptr;
+  }
+
   nsRefPtr<GainNode> gainNode = new GainNode(this);
   return gainNode.forget();
 }
 
 already_AddRefed<WaveShaperNode>
-AudioContext::CreateWaveShaper()
+AudioContext::CreateWaveShaper(ErrorResult& aRv)
 {
+  if (CheckClosed(aRv)) {
+    return nullptr;
+  }
+
   nsRefPtr<WaveShaperNode> waveShaperNode = new WaveShaperNode(this);
   return waveShaperNode.forget();
 }
@@ -340,25 +410,38 @@ AudioContext::CreateWaveShaper()
 already_AddRefed<DelayNode>
 AudioContext::CreateDelay(double aMaxDelayTime, ErrorResult& aRv)
 {
+  if (CheckClosed(aRv)) {
+    return nullptr;
+  }
+
   if (aMaxDelayTime > 0. && aMaxDelayTime < 180.) {
     nsRefPtr<DelayNode> delayNode = new DelayNode(this, aMaxDelayTime);
     return delayNode.forget();
   }
+
   aRv.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
   return nullptr;
 }
 
 already_AddRefed<PannerNode>
-AudioContext::CreatePanner()
+AudioContext::CreatePanner(ErrorResult& aRv)
 {
+  if (CheckClosed(aRv)) {
+    return nullptr;
+  }
+
   nsRefPtr<PannerNode> pannerNode = new PannerNode(this);
   mPannerNodes.PutEntry(pannerNode);
   return pannerNode.forget();
 }
 
 already_AddRefed<ConvolverNode>
-AudioContext::CreateConvolver()
+AudioContext::CreateConvolver(ErrorResult& aRv)
 {
+  if (CheckClosed(aRv)) {
+    return nullptr;
+  }
+
   nsRefPtr<ConvolverNode> convolverNode = new ConvolverNode(this);
   return convolverNode.forget();
 }
@@ -369,6 +452,10 @@ AudioContext::CreateChannelSplitter(uint32_t aNumberOfOutputs, ErrorResult& aRv)
   if (aNumberOfOutputs == 0 ||
       aNumberOfOutputs > WebAudioUtils::MaxChannelCount) {
     aRv.Throw(NS_ERROR_DOM_INDEX_SIZE_ERR);
+    return nullptr;
+  }
+
+  if (CheckClosed(aRv)) {
     return nullptr;
   }
 
@@ -386,30 +473,46 @@ AudioContext::CreateChannelMerger(uint32_t aNumberOfInputs, ErrorResult& aRv)
     return nullptr;
   }
 
+  if (CheckClosed(aRv)) {
+    return nullptr;
+  }
+
   nsRefPtr<ChannelMergerNode> mergerNode =
     new ChannelMergerNode(this, aNumberOfInputs);
   return mergerNode.forget();
 }
 
 already_AddRefed<DynamicsCompressorNode>
-AudioContext::CreateDynamicsCompressor()
+AudioContext::CreateDynamicsCompressor(ErrorResult& aRv)
 {
+  if (CheckClosed(aRv)) {
+    return nullptr;
+  }
+
   nsRefPtr<DynamicsCompressorNode> compressorNode =
     new DynamicsCompressorNode(this);
   return compressorNode.forget();
 }
 
 already_AddRefed<BiquadFilterNode>
-AudioContext::CreateBiquadFilter()
+AudioContext::CreateBiquadFilter(ErrorResult& aRv)
 {
+  if (CheckClosed(aRv)) {
+    return nullptr;
+  }
+
   nsRefPtr<BiquadFilterNode> filterNode =
     new BiquadFilterNode(this);
   return filterNode.forget();
 }
 
 already_AddRefed<OscillatorNode>
-AudioContext::CreateOscillator()
+AudioContext::CreateOscillator(ErrorResult& aRv)
 {
+  if (CheckClosed(aRv)) {
+    return nullptr;
+  }
+
   nsRefPtr<OscillatorNode> oscillatorNode =
     new OscillatorNode(this);
   return oscillatorNode.forget();
@@ -532,17 +635,12 @@ AudioContext::UnregisterPannerNode(PannerNode* aNode)
   }
 }
 
-static PLDHashOperator
-FindConnectedSourcesOn(nsPtrHashKey<PannerNode>* aEntry, void* aData)
-{
-  aEntry->GetKey()->FindConnectedSources();
-  return PL_DHASH_NEXT;
-}
-
 void
 AudioContext::UpdatePannerSource()
 {
-  mPannerNodes.EnumerateEntries(FindConnectedSourcesOn, nullptr);
+  for (auto iter = mPannerNodes.Iter(); !iter.Done(); iter.Next()) {
+    iter.Get()->GetKey()->FindConnectedSources();
+  }
 }
 
 uint32_t
@@ -570,8 +668,8 @@ double
 AudioContext::CurrentTime() const
 {
   MediaStream* stream = Destination()->Stream();
-  return StreamTimeToDOMTime(stream->
-                             StreamTimeToSeconds(stream->GetCurrentTime()));
+  return stream->StreamTimeToSeconds(stream->GetCurrentTime() +
+                                     Destination()->ExtraCurrentTime());
 }
 
 void
@@ -579,11 +677,9 @@ AudioContext::Shutdown()
 {
   mIsShutDown = true;
 
-  // We mute rather than suspending, because the delay between the ::Shutdown
-  // call and the CC would make us overbuffer in the MediaStreamGraph.
-  // See bug 936784 for details.
   if (!mIsOffline) {
-    Mute();
+    ErrorResult dummy;
+    nsRefPtr<Promise> ignored = Close(dummy);
   }
 
   // Release references to active nodes.
@@ -597,33 +693,309 @@ AudioContext::Shutdown()
   }
 }
 
-void
-AudioContext::Suspend()
+StateChangeTask::StateChangeTask(AudioContext* aAudioContext,
+                                 void* aPromise,
+                                 AudioContextState aNewState)
+  : mAudioContext(aAudioContext)
+  , mPromise(aPromise)
+  , mAudioNodeStream(nullptr)
+  , mNewState(aNewState)
 {
+  MOZ_ASSERT(NS_IsMainThread(),
+             "This constructor should be used from the main thread.");
+}
+
+StateChangeTask::StateChangeTask(AudioNodeStream* aStream,
+                                 void* aPromise,
+                                 AudioContextState aNewState)
+  : mAudioContext(nullptr)
+  , mPromise(aPromise)
+  , mAudioNodeStream(aStream)
+  , mNewState(aNewState)
+{
+  MOZ_ASSERT(!NS_IsMainThread(),
+             "This constructor should be used from the graph thread.");
+}
+
+NS_IMETHODIMP
+StateChangeTask::Run()
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  if (!mAudioContext && !mAudioNodeStream) {
+    return NS_OK;
+  }
+  if (mAudioNodeStream) {
+    AudioNode* node = mAudioNodeStream->Engine()->NodeMainThread();
+    if (!node) {
+      return NS_OK;
+    }
+    mAudioContext = node->Context();
+    if (!mAudioContext) {
+      return NS_OK;
+    }
+  }
+
+  mAudioContext->OnStateChanged(mPromise, mNewState);
+  // We have can't call Release() on the AudioContext on the MSG thread, so we
+  // unref it here, on the main thread.
+  mAudioContext = nullptr;
+
+  return NS_OK;
+}
+
+/* This runnable allows to fire the "statechange" event */
+class OnStateChangeTask final : public nsRunnable
+{
+public:
+  explicit OnStateChangeTask(AudioContext* aAudioContext)
+    : mAudioContext(aAudioContext)
+  {}
+
+  NS_IMETHODIMP
+  Run() override
+  {
+    nsCOMPtr<nsPIDOMWindow> parent = do_QueryInterface(mAudioContext->GetParentObject());
+    if (!parent) {
+      return NS_ERROR_FAILURE;
+    }
+
+    nsIDocument* doc = parent->GetExtantDoc();
+    if (!doc) {
+      return NS_ERROR_FAILURE;
+    }
+
+    return nsContentUtils::DispatchTrustedEvent(doc,
+                                static_cast<DOMEventTargetHelper*>(mAudioContext),
+                                NS_LITERAL_STRING("statechange"),
+                                false, false);
+  }
+
+private:
+  nsRefPtr<AudioContext> mAudioContext;
+};
+
+void
+AudioContext::OnStateChanged(void* aPromise, AudioContextState aNewState)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  // This can happen if close() was called right after creating the
+  // AudioContext, before the context has switched to "running".
+  if (mAudioContextState == AudioContextState::Closed &&
+      aNewState == AudioContextState::Running &&
+      !aPromise) {
+    return;
+  }
+
+#ifndef WIN32 // Bug 1170547
+
+  MOZ_ASSERT((mAudioContextState == AudioContextState::Suspended &&
+              aNewState == AudioContextState::Running)   ||
+             (mAudioContextState == AudioContextState::Running   &&
+              aNewState == AudioContextState::Suspended) ||
+             (mAudioContextState == AudioContextState::Running   &&
+              aNewState == AudioContextState::Closed)    ||
+             (mAudioContextState == AudioContextState::Suspended &&
+              aNewState == AudioContextState::Closed)    ||
+             (mAudioContextState == aNewState),
+             "Invalid AudioContextState transition");
+
+#endif // WIN32
+
+  MOZ_ASSERT(
+    mIsOffline || aPromise || aNewState == AudioContextState::Running,
+    "We should have a promise here if this is a real-time AudioContext."
+    "Or this is the first time we switch to \"running\".");
+
+  if (aPromise) {
+    Promise* promise = reinterpret_cast<Promise*>(aPromise);
+    promise->MaybeResolve(JS::UndefinedHandleValue);
+    DebugOnly<bool> rv = mPromiseGripArray.RemoveElement(promise);
+    MOZ_ASSERT(rv, "Promise wasn't in the grip array?");
+  }
+
+  if (mAudioContextState != aNewState) {
+    nsRefPtr<OnStateChangeTask> onStateChangeTask =
+      new OnStateChangeTask(this);
+    NS_DispatchToMainThread(onStateChangeTask);
+  }
+
+  mAudioContextState = aNewState;
+}
+
+nsTArray<MediaStream*>
+AudioContext::GetAllStreams() const
+{
+  nsTArray<MediaStream*> streams;
+  for (auto iter = mAllNodes.ConstIter(); !iter.Done(); iter.Next()) {
+    MediaStream* s = iter.Get()->GetKey()->GetStream();
+    if (s) {
+      streams.AppendElement(s);
+    }
+  }
+  return streams;
+}
+
+already_AddRefed<Promise>
+AudioContext::Suspend(ErrorResult& aRv)
+{
+  nsCOMPtr<nsIGlobalObject> parentObject = do_QueryInterface(GetParentObject());
+  nsRefPtr<Promise> promise;
+  promise = Promise::Create(parentObject, aRv);
+  if (aRv.Failed()) {
+    return nullptr;
+  }
+  if (mIsOffline) {
+    promise->MaybeReject(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+    return promise.forget();
+  }
+
+  if (mAudioContextState == AudioContextState::Closed ||
+      mCloseCalled) {
+    promise->MaybeReject(NS_ERROR_DOM_INVALID_STATE_ERR);
+    return promise.forget();
+  }
+
+  if (mAudioContextState == AudioContextState::Suspended) {
+    promise->MaybeResolve(JS::UndefinedHandleValue);
+    return promise.forget();
+  }
+
+  Destination()->Suspend();
+
+  mPromiseGripArray.AppendElement(promise);
+
+  nsTArray<MediaStream*> streams;
+  // If mSuspendCalled is true then we already suspended all our streams,
+  // so don't suspend them again (since suspend(); suspend(); resume(); should
+  // cancel both suspends). But we still need to do ApplyAudioContextOperation
+  // to ensure our new promise is resolved.
+  if (!mSuspendCalled) {
+    streams = GetAllStreams();
+  }
+  Graph()->ApplyAudioContextOperation(DestinationStream()->AsAudioNodeStream(),
+                                      streams,
+                                      AudioContextOperation::Suspend, promise);
+
+  mSuspendCalled = true;
+
+  return promise.forget();
+}
+
+already_AddRefed<Promise>
+AudioContext::Resume(ErrorResult& aRv)
+{
+  nsCOMPtr<nsIGlobalObject> parentObject = do_QueryInterface(GetParentObject());
+  nsRefPtr<Promise> promise;
+  promise = Promise::Create(parentObject, aRv);
+  if (aRv.Failed()) {
+    return nullptr;
+  }
+
+  if (mIsOffline) {
+    promise->MaybeReject(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+    return promise.forget();
+  }
+
+  if (mAudioContextState == AudioContextState::Closed ||
+      mCloseCalled) {
+    promise->MaybeReject(NS_ERROR_DOM_INVALID_STATE_ERR);
+    return promise.forget();
+  }
+
+  if (mAudioContextState == AudioContextState::Running) {
+    promise->MaybeResolve(JS::UndefinedHandleValue);
+    return promise.forget();
+  }
+
+  Destination()->Resume();
+
+  nsTArray<MediaStream*> streams;
+  // If mSuspendCalled is false then we already resumed all our streams,
+  // so don't resume them again (since suspend(); resume(); resume(); should
+  // be OK). But we still need to do ApplyAudioContextOperation
+  // to ensure our new promise is resolved.
+  if (mSuspendCalled) {
+    streams = GetAllStreams();
+  }
+  mPromiseGripArray.AppendElement(promise);
+  Graph()->ApplyAudioContextOperation(DestinationStream()->AsAudioNodeStream(),
+                                      streams,
+                                      AudioContextOperation::Resume, promise);
+
+  mSuspendCalled = false;
+
+  return promise.forget();
+}
+
+already_AddRefed<Promise>
+AudioContext::Close(ErrorResult& aRv)
+{
+  nsCOMPtr<nsIGlobalObject> parentObject = do_QueryInterface(GetParentObject());
+  nsRefPtr<Promise> promise;
+  promise = Promise::Create(parentObject, aRv);
+  if (aRv.Failed()) {
+    return nullptr;
+  }
+
+  if (mIsOffline) {
+    promise->MaybeReject(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+    return promise.forget();
+  }
+
+  if (mAudioContextState == AudioContextState::Closed) {
+    promise->MaybeResolve(NS_ERROR_DOM_INVALID_STATE_ERR);
+    return promise.forget();
+  }
+
+  if (Destination()) {
+    Destination()->DestroyAudioChannelAgent();
+  }
+
+  mPromiseGripArray.AppendElement(promise);
+
+  // This can be called when freeing a document, and the streams are dead at
+  // this point, so we need extra null-checks.
   MediaStream* ds = DestinationStream();
   if (ds) {
-    ds->ChangeExplicitBlockerCount(1);
+    nsTArray<MediaStream*> streams;
+    // If mSuspendCalled or mCloseCalled are true then we already suspended
+    // all our streams, so don't suspend them again. But we still need to do
+    // ApplyAudioContextOperation to ensure our new promise is resolved.
+    if (!mSuspendCalled && !mCloseCalled) {
+      streams = GetAllStreams();
+    }
+    Graph()->ApplyAudioContextOperation(ds->AsAudioNodeStream(), streams,
+                                        AudioContextOperation::Close, promise);
+  }
+  mCloseCalled = true;
+
+  return promise.forget();
+}
+
+void
+AudioContext::RegisterNode(AudioNode* aNode)
+{
+  MOZ_ASSERT(!mAllNodes.Contains(aNode));
+  mAllNodes.PutEntry(aNode);
+  // mDestinationNode may be null when we're destroying nodes unlinked by CC.
+  // Skipping unnecessary calls after shutdown avoids RunInStableState events
+  // getting stuck in CycleCollectedJSRuntime during final cycle collection
+  // (bug 1200514).
+  if (mDestination && !mIsShutDown) {
+    mDestination->SetIsOnlyNodeForContext(mAllNodes.Count() == 1);
   }
 }
 
 void
-AudioContext::Resume()
+AudioContext::UnregisterNode(AudioNode* aNode)
 {
-  MediaStream* ds = DestinationStream();
-  if (ds) {
-    ds->ChangeExplicitBlockerCount(-1);
-  }
-}
-
-void
-AudioContext::UpdateNodeCount(int32_t aDelta)
-{
-  bool firstNode = mNodeCount == 0;
-  mNodeCount += aDelta;
-  MOZ_ASSERT(mNodeCount >= 0);
+  MOZ_ASSERT(mAllNodes.Contains(aNode));
+  mAllNodes.RemoveEntry(aNode);
   // mDestinationNode may be null when we're destroying nodes unlinked by CC
-  if (!firstNode && mDestination) {
-    mDestination->SetIsOnlyNodeForContext(mNodeCount == 1);
+  if (mDestination) {
+    mDestination->SetIsOnlyNodeForContext(mAllNodes.Count() == 1);
   }
 }
 
@@ -653,6 +1025,9 @@ AudioContext::StartRendering(ErrorResult& aRv)
   mIsStarted = true;
   nsRefPtr<Promise> promise = Promise::Create(parentObject, aRv);
   mDestination->StartRendering(promise);
+
+  OnStateChanged(nullptr, AudioContextState::Running);
+
   return promise.forget();
 }
 
@@ -700,12 +1075,12 @@ AudioContext::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const
   if (mListener) {
     amount += mListener->SizeOfIncludingThis(aMallocSizeOf);
   }
-  amount += mDecodeJobs.SizeOfExcludingThis(aMallocSizeOf);
+  amount += mDecodeJobs.ShallowSizeOfExcludingThis(aMallocSizeOf);
   for (uint32_t i = 0; i < mDecodeJobs.Length(); ++i) {
     amount += mDecodeJobs[i]->SizeOfIncludingThis(aMallocSizeOf);
   }
-  amount += mActiveNodes.SizeOfExcludingThis(nullptr, aMallocSizeOf);
-  amount += mPannerNodes.SizeOfExcludingThis(nullptr, aMallocSizeOf);
+  amount += mActiveNodes.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  amount += mPannerNodes.ShallowSizeOfExcludingThis(aMallocSizeOf);
   return amount;
 }
 
@@ -718,11 +1093,48 @@ AudioContext::CollectReports(nsIHandleReportCallback* aHandleReport,
                             amount, "Memory used by AudioContext objects (Web Audio).");
 }
 
-double
-AudioContext::ExtraCurrentTime() const
+BasicWaveFormCache*
+AudioContext::GetBasicWaveFormCache()
 {
-  return mDestination->ExtraCurrentTime();
+  MOZ_ASSERT(NS_IsMainThread());
+  if (!mBasicWaveFormCache) {
+    mBasicWaveFormCache = new BasicWaveFormCache(SampleRate());
+  }
+  return mBasicWaveFormCache;
 }
 
+BasicWaveFormCache::BasicWaveFormCache(uint32_t aSampleRate)
+  : mSampleRate(aSampleRate)
+{
+  MOZ_ASSERT(NS_IsMainThread());
 }
+BasicWaveFormCache::~BasicWaveFormCache()
+{ }
+
+WebCore::PeriodicWave*
+BasicWaveFormCache::GetBasicWaveForm(OscillatorType aType)
+{
+  MOZ_ASSERT(!NS_IsMainThread());
+  if (aType == OscillatorType::Sawtooth) {
+    if (!mSawtooth) {
+      mSawtooth = WebCore::PeriodicWave::createSawtooth(mSampleRate);
+    }
+    return mSawtooth;
+  } else if (aType == OscillatorType::Square) {
+    if (!mSquare) {
+      mSquare = WebCore::PeriodicWave::createSquare(mSampleRate);
+    }
+    return mSquare;
+  } else if (aType == OscillatorType::Triangle) {
+    if (!mTriangle) {
+      mTriangle = WebCore::PeriodicWave::createTriangle(mSampleRate);
+    }
+    return mTriangle;
+  } else {
+    MOZ_ASSERT(false, "Not reached");
+    return nullptr;
+  }
 }
+
+} // namespace dom
+} // namespace mozilla

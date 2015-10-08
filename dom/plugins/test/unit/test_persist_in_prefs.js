@@ -6,13 +6,11 @@
 Components.utils.import("resource://gre/modules/Services.jsm");
 
 // Plugin registry uses different field delimeters on different platforms
-let DELIM = ":";
+var DELIM = ":";
 if ("@mozilla.org/windows-registry-key;1" in Components.classes)
   DELIM = "|";
 
-let gProfD = do_get_profile_startup();
-let gDirSvc = Cc["@mozilla.org/file/directory_service;1"].
-             getService(Ci.nsIProperties);
+var gProfD = do_get_profile_startup();
 
 // Writes out some plugin registry to the profile
 function write_registry(version, info) {

@@ -14,11 +14,14 @@ If you are looking for the absolute authority on what moz.build files can
 contain, you've come to the right place.
 """
 
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 import os
 
-from collections import OrderedDict
+from collections import (
+    Counter,
+    OrderedDict,
+)
 from mozbuild.util import (
     HierarchicalStringList,
     HierarchicalStringListWithFlagsFactory,
@@ -32,9 +35,10 @@ from mozbuild.util import (
     TypedList,
     TypedNamedTuple,
 )
+
+from ..testing import all_test_flavors
 import mozpack.path as mozpath
 from types import FunctionType
-from UserString import UserString
 
 import itertools
 
@@ -43,6 +47,7 @@ class ContextDerivedValue(object):
     """Classes deriving from this one receive a special treatment in a
     Context. See Context documentation.
     """
+    __slots__ = ()
 
 
 class Context(KeyedDefaultDict):
@@ -83,7 +88,6 @@ class Context(KeyedDefaultDict):
         # a list to be a problem.
         self._all_paths = []
         self.config = config
-        self.execution_time = 0
         self._sandbox = None
         KeyedDefaultDict.__init__(self, self._factory)
 
@@ -211,33 +215,6 @@ class Context(KeyedDefaultDict):
 
         return KeyedDefaultDict.__setitem__(self, key, value)
 
-    def resolve_path(self, path):
-        """Resolves a path using moz.build conventions.
-
-        Paths may be relative to the current srcdir or objdir, or to the
-        environment's topsrcdir or topobjdir.  Different resolution contexts
-        are denoted by characters at the beginning of the path:
-
-            * '/' - relative to topsrcdir;
-            * '!/' - relative to topobjdir;
-            * '!' - relative to objdir; and
-            * any other character - relative to srcdir.
-        """
-        if path.startswith('/'):
-            resolved = mozpath.join(self.config.topsrcdir, path[1:])
-        elif path.startswith('!/'):
-            resolved = mozpath.join(self.config.topobjdir, path[2:])
-        elif path.startswith('!'):
-            resolved = mozpath.join(self.objdir, path[1:])
-        else:
-            resolved = mozpath.join(self.srcdir, path)
-
-        return mozpath.normpath(resolved)
-
-    @staticmethod
-    def is_objdir_path(path):
-        return path[0] == '!'
-
     def update(self, iterable={}, **kwargs):
         """Like dict.update(), but using the context's setitem.
 
@@ -268,6 +245,10 @@ class Context(KeyedDefaultDict):
 
 
 class TemplateContext(Context):
+    def __init__(self, template=None, allowed_variables={}, config=None):
+        self.template = template
+        super(TemplateContext, self).__init__(allowed_variables, config)
+
     def _validate(self, key, value):
         return Context._validate(self, key, value, True)
 
@@ -314,45 +295,133 @@ class FinalTargetValue(ContextDerivedValue, unicode):
         return unicode.__new__(cls, value)
 
 
-class SourcePath(ContextDerivedValue, UserString):
+def Enum(*values):
+    assert len(values)
+    default = values[0]
+
+    class EnumClass(object):
+        def __new__(cls, value=None):
+            if value is None:
+                return default
+            if value in values:
+                return value
+            raise ValueError('Invalid value. Allowed values are: %s'
+                             % ', '.join(repr(v) for v in values))
+    return EnumClass
+
+
+class PathMeta(type):
+    """Meta class for the Path family of classes.
+
+    It handles calling __new__ and __init__ with the right arguments
+    in cases where a Path is instantiated with another instance of
+    Path instead of having received a context.
+
+    It also makes Path(context, value) instantiate one of the
+    subclasses depending on the value, allowing callers to do
+    standard type checking (isinstance(path, ObjDirPath)) instead
+    of checking the value itself (path.startswith('!')).
+    """
+    def __call__(cls, context, value=None):
+        if isinstance(context, Path):
+            assert value is None
+            value = context
+            context = context.context
+        else:
+            assert isinstance(context, Context)
+            if isinstance(value, Path):
+                context = value.context
+        if not issubclass(cls, (SourcePath, ObjDirPath, AbsolutePath)):
+            if value.startswith('!'):
+                cls = ObjDirPath
+            elif value.startswith('%'):
+                cls = AbsolutePath
+            else:
+                cls = SourcePath
+        return super(PathMeta, cls).__call__(context, value)
+
+class Path(ContextDerivedValue, unicode):
     """Stores and resolves a source path relative to a given context
 
     This class is used as a backing type for some of the sandbox variables.
-    It expresses paths relative to a context. Paths starting with a '/'
-    are considered relative to the topsrcdir, and other paths relative
-    to the current source directory for the associated context.
+    It expresses paths relative to a context. Supported paths are:
+      - '/topsrcdir/relative/paths'
+      - 'srcdir/relative/paths'
+      - '!/topobjdir/relative/paths'
+      - '!objdir/relative/paths'
+      - '%/filesystem/absolute/paths'
     """
+    __metaclass__ = PathMeta
+
     def __new__(cls, context, value=None):
-        if not isinstance(context, Context) and value is None:
-            return unicode(context)
-        return super(SourcePath, cls).__new__(cls)
+        return super(Path, cls).__new__(cls, value)
 
     def __init__(self, context, value=None):
+        # Only subclasses should be instantiated.
+        assert self.__class__ != Path
         self.context = context
         self.srcdir = context.srcdir
-        self.value = value
 
-    @memoized_property
-    def data(self):
-        """Serializes the path for UserString."""
-        if self.value.startswith('/'):
-            ret = None
+    def join(self, *p):
+        """ContextDerived equivalent of mozpath.join(self, *p), returning a
+        new Path instance.
+        """
+        return Path(self.context, mozpath.join(self, *p))
+
+    def __cmp__(self, other):
+        if isinstance(other, Path) and self.srcdir != other.srcdir:
+            return cmp(self.full_path, other.full_path)
+        return cmp(unicode(self), other)
+
+    # __cmp__ is not enough because unicode has __eq__, __ne__, etc. defined
+    # and __cmp__ is only used for those when they don't exist.
+    def __eq__(self, other):
+        return self.__cmp__(other) == 0
+
+    def __ne__(self, other):
+        return self.__cmp__(other) != 0
+
+    def __lt__(self, other):
+        return self.__cmp__(other) < 0
+
+    def __gt__(self, other):
+        return self.__cmp__(other) > 0
+
+    def __le__(self, other):
+        return self.__cmp__(other) <= 0
+
+    def __ge__(self, other):
+        return self.__cmp__(other) >= 0
+
+    def __repr__(self):
+        return '<%s (%s)%s>' % (self.__class__.__name__, self.srcdir, self)
+
+    def __hash__(self):
+        return hash(self.full_path)
+
+
+class SourcePath(Path):
+    """Like Path, but limited to paths in the source directory."""
+    def __init__(self, context, value):
+        if value.startswith('!'):
+            raise ValueError('Object directory paths are not allowed')
+        if value.startswith('%'):
+            raise ValueError('Filesystem absolute paths are not allowed')
+        super(SourcePath, self).__init__(context, value)
+
+        if value.startswith('/'):
+            path = None
             # If the path starts with a '/' and is actually relative to an
             # external source dir, use that as base instead of topsrcdir.
-            if self.context.config.external_source_dir:
-                ret = mozpath.join(self.context.config.external_source_dir,
-                    self.value[1:])
-            if not ret or not os.path.exists(ret):
-                ret = mozpath.join(self.context.config.topsrcdir,
-                    self.value[1:])
+            if context.config.external_source_dir:
+                path = mozpath.join(context.config.external_source_dir,
+                                    value[1:])
+            if not path or not os.path.exists(path):
+                path = mozpath.join(context.config.topsrcdir,
+                                    value[1:])
         else:
-            ret = mozpath.join(self.srcdir, self.value)
-        return mozpath.normpath(ret)
-
-    def __unicode__(self):
-        # UserString doesn't implement a __unicode__ function at all, so add
-        # ours.
-        return self.data
+            path = mozpath.join(self.srcdir, value)
+        self.full_path = mozpath.normpath(path)
 
     @memoized_property
     def translated(self):
@@ -362,42 +431,110 @@ class SourcePath(ContextDerivedValue, UserString):
         path under topsrcdir and the external source dir end up mixed in the
         objdir (aka pseudo-rework), this is needed.
         """
-        if self.value.startswith('/'):
-            ret = mozpath.join(self.context.config.topobjdir, self.value[1:])
+        return ObjDirPath(self.context, '!%s' % self).full_path
+
+
+class ObjDirPath(Path):
+    """Like Path, but limited to paths in the object directory."""
+    def __init__(self, context, value=None):
+        if not value.startswith('!'):
+            raise ValueError('Object directory paths must start with ! prefix')
+        super(ObjDirPath, self).__init__(context, value)
+
+        if value.startswith('!/'):
+            path = mozpath.join(context.config.topobjdir,value[2:])
         else:
-            ret = mozpath.join(self.context.objdir, self.value)
-        return mozpath.normpath(ret)
+            path = mozpath.join(context.objdir, value[1:])
+        self.full_path = mozpath.normpath(path)
 
-    def join(self, *p):
-        """Lazy mozpath.join(self, *p), returning a new SourcePath instance.
 
-        In an ideal world, this wouldn't be required, but with the
-        external_source_dir business, and the fact that comm-central and
-        mozilla-central have directories in common, resolving a SourcePath
-        before doing mozpath.join doesn't work out properly.
-        """
-        return SourcePath(self.context, mozpath.join(self.value, *p))
+class AbsolutePath(Path):
+    """Like Path, but allows arbitrary paths outside the source and object directories."""
+    def __init__(self, context, value=None):
+        if not value.startswith('%'):
+            raise ValueError('Absolute paths must start with % prefix')
+        if not os.path.isabs(value[1:]):
+            raise ValueError('Path \'%s\' is not absolute' % value[1:])
+        super(AbsolutePath, self).__init__(context, value)
+
+        self.full_path = mozpath.normpath(value[1:])
 
 
 @memoize
-def ContextDerivedTypedList(type, base_class=List):
+def ContextDerivedTypedList(klass, base_class=List):
     """Specialized TypedList for use with ContextDerivedValue types.
     """
-    assert issubclass(type, ContextDerivedValue)
-    class _TypedList(ContextDerivedValue, TypedList(type, base_class)):
+    assert issubclass(klass, ContextDerivedValue)
+    class _TypedList(ContextDerivedValue, TypedList(klass, base_class)):
         def __init__(self, context, iterable=[]):
-            class _Type(type):
-                def __new__(cls, obj):
-                    return type(context, obj)
-            self.TYPE = _Type
+            self.context = context
             super(_TypedList, self).__init__(iterable)
+
+        def normalize(self, e):
+            if not isinstance(e, klass):
+                e = klass(self.context, e)
+            return e
 
     return _TypedList
 
+@memoize
+def ContextDerivedTypedListWithItems(type, base_class=List):
+    """Specialized TypedList for use with ContextDerivedValue types.
+    """
+    class _TypedListWithItems(ContextDerivedTypedList(type, base_class)):
+        def __getitem__(self, name):
+            name = self.normalize(name)
+            return super(_TypedListWithItems, self).__getitem__(name)
+
+    return _TypedListWithItems
+
+
+@memoize
+def ContextDerivedTypedRecord(*fields):
+    """Factory for objects with certain properties and dynamic
+    type checks.
+
+    This API is extremely similar to the TypedNamedTuple API,
+    except that properties may be mutated. This supports syntax like:
+
+    VARIABLE_NAME.property += [
+      'item1',
+      'item2',
+    ]
+    """
+
+    class _TypedRecord(ContextDerivedValue):
+        __slots__ = tuple([name for name, _ in fields])
+
+        def __init__(self, context):
+            for fname, ftype in self._fields.items():
+                if issubclass(ftype, ContextDerivedValue):
+                    setattr(self, fname, self._fields[fname](context))
+                else:
+                    setattr(self, fname, self._fields[fname]())
+
+        def __setattr__(self, name, value):
+            if name in self._fields and not isinstance(value, self._fields[name]):
+                value = self._fields[name](value)
+            object.__setattr__(self, name, value)
+
+    _TypedRecord._fields = dict(fields)
+    return _TypedRecord
 
 BugzillaComponent = TypedNamedTuple('BugzillaComponent',
                         [('product', unicode), ('component', unicode)])
 
+WebPlatformTestManifest = TypedNamedTuple("WebPlatformTestManifest",
+                                          [("manifest_path", unicode),
+                                           ("test_root", unicode)])
+
+OrderedSourceList = ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList)
+OrderedTestFlavorList = TypedList(Enum(*all_test_flavors()),
+                                  StrictOrderingOnAppendList)
+OrderedStringList = TypedList(unicode, StrictOrderingOnAppendList)
+DependentTestsEntry = ContextDerivedTypedRecord(('files', OrderedSourceList),
+                                                ('tags', OrderedStringList),
+                                                ('flavors', OrderedTestFlavorList))
 
 class Files(SubContext):
     """Metadata attached to files.
@@ -467,17 +604,79 @@ class Files(SubContext):
 
             See :ref:`mozbuild_files_metadata_finalizing` for more info.
             """, None),
+        'IMPACTED_TESTS': (DependentTestsEntry, list,
+            """File patterns, tags, and flavors for tests relevant to these files.
+
+            Maps source files to the tests potentially impacted by those files.
+            Tests can be specified by file pattern, tag, or flavor.
+
+            For example:
+
+            with Files('runtests.py'):
+               IMPACTED_TESTS.files += [
+                   '**',
+               ]
+
+            in testing/mochitest/moz.build will suggest that any of the tests
+            under testing/mochitest may be impacted by a change to runtests.py.
+
+            File patterns may be made relative to the topsrcdir with a leading
+            '/', so
+
+            with Files('httpd.js'):
+               IMPACTED_TESTS.files += [
+                   '/testing/mochitest/tests/Harness_sanity/**',
+               ]
+
+            in netwerk/test/httpserver/moz.build will suggest that any change to httpd.js
+            will be relevant to the mochitest sanity tests.
+
+            Tags and flavors are sorted string lists (flavors are limited to valid
+            values).
+
+            For example:
+
+            with Files('toolkit/devtools/*'):
+                IMPACTED_TESTS.tags += [
+                    'devtools',
+                ]
+
+            in the root moz.build would suggest that any test tagged 'devtools' would
+            potentially be impacted by a change to a file under toolkit/devtools, and
+
+            with Files('dom/base/nsGlobalWindow.cpp'):
+                IMPACTED_TESTS.flavors += [
+                    'mochitest',
+                ]
+
+            Would suggest that nsGlobalWindow.cpp is potentially relevant to
+            any plain mochitest.
+            """, None),
     }
 
     def __init__(self, parent, pattern=None):
         super(Files, self).__init__(parent)
         self.pattern = pattern
         self.finalized = set()
+        self.test_files = set()
+        self.test_tags = set()
+        self.test_flavors = set()
 
     def __iadd__(self, other):
         assert isinstance(other, Files)
 
+        self.test_files |= other.test_files
+        self.test_tags |= other.test_tags
+        self.test_flavors |= other.test_flavors
+
         for k, v in other.items():
+            if k == 'IMPACTED_TESTS':
+                self.test_files |= set(mozpath.relpath(e.full_path, e.context.config.topsrcdir)
+                                       for e in v.files)
+                self.test_tags |= set(v.tags)
+                self.test_flavors |= set(v.flavors)
+                continue
+
             # Ignore updates to finalized flags.
             if k in self.finalized:
                 continue
@@ -500,6 +699,49 @@ class Files(SubContext):
         if 'BUG_COMPONENT' in self:
             bc = self['BUG_COMPONENT']
             d['bug_component'] = (bc.product, bc.component)
+
+        return d
+
+    @staticmethod
+    def aggregate(files):
+        """Given a mapping of path to Files, obtain aggregate results.
+
+        Consumers may want to extract useful information from a collection of
+        Files describing paths. e.g. given the files info data for N paths,
+        recommend a single bug component based on the most frequent one. This
+        function provides logic for deriving aggregate knowledge from a
+        collection of path File metadata.
+
+        Note: the intent of this function is to operate on the result of
+        :py:func:`mozbuild.frontend.reader.BuildReader.files_info`. The
+        :py:func:`mozbuild.frontend.context.Files` instances passed in are
+        thus the "collapsed" (``__iadd__``ed) results of all ``Files`` from all
+        moz.build files relevant to a specific path, not individual ``Files``
+        instances from a single moz.build file.
+        """
+        d = {}
+
+        bug_components = Counter()
+
+        for f in files.values():
+            bug_component = f.get('BUG_COMPONENT')
+            if bug_component:
+                bug_components[bug_component] += 1
+
+        d['bug_component_counts'] = []
+        for c, count in bug_components.most_common():
+            component = (c.product, c.component)
+            d['bug_component_counts'].append((c, count))
+
+            if 'recommended_bug_component' not in d:
+                d['recommended_bug_component'] = component
+                recommended_count = count
+            elif count == recommended_count:
+                # Don't recommend a component if it doesn't have a clear lead.
+                d['recommended_bug_component'] = None
+
+        # In case no bug components.
+        d.setdefault('recommended_bug_component', None)
 
         return d
 
@@ -542,6 +784,15 @@ SUBCONTEXTS = {cls.__name__: cls for cls in SUBCONTEXTS}
 # A value of None means the variable has no direct effect on any tier.
 
 VARIABLES = {
+    'ALLOW_COMPILER_WARNINGS': (bool, bool,
+        """Whether to allow compiler warnings (i.e. *not* treat them as
+        errors).
+
+        This is commonplace (almost mandatory, in fact) in directories
+        containing third-party code that we regularly update from upstream and
+        thus do not control, but is otherwise discouraged.
+        """, None),
+
     # Variables controlling reading of other frontend files.
     'ANDROID_GENERATED_RESFILES': (StrictOrderingOnAppendList, list,
         """Android resource files generated as part of the build.
@@ -552,12 +803,41 @@ VARIABLES = {
         file.
         """, 'export'),
 
-    'ANDROID_RES_DIRS': (List, list,
+    'ANDROID_APK_NAME': (unicode, unicode,
+        """The name of an Android APK file to generate.
+        """, 'export'),
+
+    'ANDROID_APK_PACKAGE': (unicode, unicode,
+        """The name of the Android package to generate R.java for, like org.mozilla.gecko.
+        """, 'export'),
+
+    'ANDROID_EXTRA_PACKAGES': (StrictOrderingOnAppendList, list,
+        """The name of extra Android packages to generate R.java for, like ['org.mozilla.other'].
+        """, 'export'),
+
+    'ANDROID_EXTRA_RES_DIRS': (ContextDerivedTypedListWithItems(Path, List), list,
+        """Android extra package resource directories.
+
+        This variable contains a list of directories containing static files
+        to package into a 'res' directory and merge into an APK file.  These
+        directories are packaged into the APK but are assumed to be static
+        unchecked dependencies that should not be otherwise re-distributed.
+        """, 'export'),
+
+    'ANDROID_RES_DIRS': (ContextDerivedTypedListWithItems(Path, List), list,
         """Android resource directories.
 
-        This variable contains a list of directories, each relative to
-        the srcdir, containing static files to package into a 'res'
-        directory and merge into an APK file.
+        This variable contains a list of directories containing static
+        files to package into a 'res' directory and merge into an APK
+        file.
+        """, 'export'),
+
+    'ANDROID_ASSETS_DIRS': (ContextDerivedTypedListWithItems(Path, List), list,
+        """Android assets directories.
+
+        This variable contains a list of directories containing static
+        files to package into an 'assets' directory and merge into an
+        APK file.
         """, 'export'),
 
     'ANDROID_ECLIPSE_PROJECT_TARGETS': (dict, dict,
@@ -567,18 +847,11 @@ VARIABLES = {
         populated by calling add_android_eclipse{_library}_project().
         """, 'export'),
 
-    'SOURCES': (StrictOrderingOnAppendListWithFlagsFactory({'no_pgo': bool, 'flags': List}), list,
+    'SOURCES': (ContextDerivedTypedListWithItems(Path, StrictOrderingOnAppendListWithFlagsFactory({'no_pgo': bool, 'flags': List})), list,
         """Source code files.
 
         This variable contains a list of source code files to compile.
         Accepts assembler, C, C++, Objective C/C++.
-        """, None),
-
-    'GENERATED_SOURCES': (StrictOrderingOnAppendList, list,
-        """Generated source code files.
-
-        This variable contains a list of generated source code files to
-        compile. Accepts assembler, C, C++, Objective C/C++.
         """, None),
 
     'FILES_PER_UNIFIED_FILE': (int, int,
@@ -586,22 +859,13 @@ VARIABLES = {
 
         """, 'None'),
 
-    'UNIFIED_SOURCES': (StrictOrderingOnAppendList, list,
+    'UNIFIED_SOURCES': (ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList), list,
         """Source code files that can be compiled together.
 
         This variable contains a list of source code files to compile,
         that can be concatenated all together and built as a single source
         file. This can help make the build faster and reduce the debug info
         size.
-        """, None),
-
-    'GENERATED_UNIFIED_SOURCES': (StrictOrderingOnAppendList, list,
-        """Generated source code files that can be compiled together.
-
-        This variable contains a list of generated source code files to
-        compile, that can be concatenated all together, with UNIFIED_SOURCES,
-        and built as a single source file. This can help make the build faster
-        and reduce the debug info size.
         """, None),
 
     'GENERATED_FILES': (StrictOrderingOnAppendListWithFlagsFactory({
@@ -730,6 +994,12 @@ VARIABLES = {
         disabled.
         """, None),
 
+    'DIST_FILES': (StrictOrderingOnAppendList, list,
+        """Additional files to place in ``FINAL_TARGET`` (typically ``dist/bin``).
+
+        Unlike ``FINAL_TARGET_FILES``, these files are preprocessed.
+        """, 'libs'),
+
     'EXTRA_COMPONENTS': (StrictOrderingOnAppendList, list,
         """Additional component files to distribute.
 
@@ -789,10 +1059,6 @@ VARIABLES = {
         ``BIN_SUFFIX``, the name will remain unchanged.
         """, None),
 
-    'FAIL_ON_WARNINGS': (bool, bool,
-        """Whether to treat warnings as errors.
-        """, None),
-
     'FORCE_SHARED_LIB': (bool, bool,
         """Whether the library in this directory is a shared library.
         """, None),
@@ -813,7 +1079,7 @@ VARIABLES = {
         files by the compiler.
         """, None),
 
-    'HOST_SOURCES': (StrictOrderingOnAppendList, list,
+    'HOST_SOURCES': (ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList), list,
         """Source code files to compile with the host compiler.
 
         This variable contains a list of source code files to compile.
@@ -904,10 +1170,6 @@ VARIABLES = {
         """Additional directories to be searched for include files by the compiler.
         """, None),
 
-    'MSVC_ENABLE_PGO': (bool, bool,
-        """Whether profile-guided optimization is enabled for MSVC in this directory.
-        """, None),
-
     'NO_PGO': (bool, bool,
         """Whether profile-guided optimization is disable in this directory.
         """, None),
@@ -949,6 +1211,27 @@ VARIABLES = {
         """The linker version script for shared libraries.
 
         This variable can only be used on Linux.
+        """, None),
+
+    'BRANDING_FILES': (HierarchicalStringListWithFlagsFactory({'source': unicode}), list,
+        """List of files to be installed into the branding directory.
+
+        ``BRANDING_FILES`` will copy (or symlink, if the platform supports it)
+        the contents of its files to the ``dist/branding`` directory. Files that
+        are destined for a subdirectory can be specified by accessing a field.
+        For example, to export ``foo.png`` to the top-level directory and
+        ``bar.png`` to the directory ``images/subdir``, append to
+        ``BRANDING_FILES`` like so::
+
+           BRANDING_FILES += ['foo.png']
+           BRANDING_FILES.images.subdir += ['bar.png']
+
+        If the source and destination have different file names, add the
+        destination name to the list and set the ``source`` property on the
+        entry, like so::
+
+           BRANDING_FILES.dir += ['baz.png']
+           BRANDING_FILES.dir['baz.png'].source = 'quux.png'
         """, None),
 
     'RESOURCE_FILES': (HierarchicalStringListWithFlagsFactory({'preprocess': bool}), list,
@@ -1067,11 +1350,17 @@ VARIABLES = {
         ends with ``HOST_BIN_SUFFIX``, ``HOST_PROGRAM`` will remain unchanged.
         """, None),
 
-    'NO_DIST_INSTALL': (bool, bool,
-        """Disable installing certain files into the distribution directory.
+    'DIST_INSTALL': (Enum(None, False, True), bool,
+        """Whether to install certain files into the dist directory.
 
-        If present, some files defined by other variables won't be
-        distributed/shipped with the produced build.
+        By default, some files types are installed in the dist directory, and
+        some aren't. Set this variable to True to force the installation of
+        some files that wouldn't be installed by default. Set this variable to
+        False to force to not install some files that would be installed by
+        default.
+
+        This is confusing for historical reasons, but eventually, the behavior
+        will be made explicit.
         """, None),
 
     'JAR_MANIFESTS': (StrictOrderingOnAppendList, list,
@@ -1097,6 +1386,14 @@ VARIABLES = {
         This is the name of the ``.xpt`` file that is created by linking
         ``XPIDL_SOURCES`` together. If unspecified, it defaults to be the same
         as ``MODULE``.
+        """, None),
+
+    'XPIDL_NO_MANIFEST': (bool, bool,
+        """Indicate that the XPIDL module should not be added to a manifest.
+
+        This flag exists primarily to prevent test-only XPIDL modules from being
+        added to the application's chrome manifest. Most XPIDL modules should
+        not use this flag.
         """, None),
 
     'IPDL_SOURCES': (StrictOrderingOnAppendList, list,
@@ -1205,6 +1502,10 @@ VARIABLES = {
         These are commonly named reftest.list.
         """, None),
 
+    'WEB_PLATFORM_TESTS_MANIFESTS': (TypedList(WebPlatformTestManifest), list,
+        """List of (manifest_path, test_path) defining web-platform-tests.
+        """, None),
+
     'WEBRTC_SIGNALLING_TEST_MANIFESTS': (StrictOrderingOnAppendList, list,
         """List of manifest files defining WebRTC signalling tests.
         """, None),
@@ -1237,6 +1538,25 @@ VARIABLES = {
         neither are present, the result is dist/bin. If XPI_NAME is present, the
         result is dist/xpi-stage/$(XPI_NAME). If DIST_SUBDIR is present, then
         the $(DIST_SUBDIR) directory of the otherwise default value is used.
+        """, None),
+
+    'USE_EXTENSION_MANIFEST': (bool, bool,
+        """Controls the name of the manifest for JAR files.
+
+        By default, the name of the manifest is ${JAR_MANIFEST}.manifest.
+        Setting this variable to ``True`` changes the name of the manifest to
+        chrome.manifest.
+        """, None),
+
+    'NO_JS_MANIFEST': (bool, bool,
+        """Explicitly disclaims responsibility for manifest listing in EXTRA_COMPONENTS.
+
+        Normally, if you have .js files listed in ``EXTRA_COMPONENTS`` or
+        ``EXTRA_PP_COMPONENTS``, you are expected to have a corresponding
+        .manifest file to go with those .js files.  Setting ``NO_JS_MANIFEST``
+        indicates that the relevant .manifest file and entries for those .js
+        files are elsehwere (jar.mn, for instance) and this state of affairs
+        is OK.
         """, None),
 
     'GYP_DIRS': (StrictOrderingOnAppendListWithFlagsFactory({
@@ -1302,6 +1622,11 @@ VARIABLES = {
            appear in the moz.build file.
         """, None),
 
+    'HOST_DEFINES': (OrderedDict, dict,
+        """Dictionary of compiler defines to declare for host compilation.
+        See ``DEFINES`` for specifics.
+        """, None),
+
     'CMFLAGS': (List, list,
         """Flags passed to the Objective-C compiler for all of the Objective-C
            source files declared in this directory.
@@ -1314,6 +1639,33 @@ VARIABLES = {
     'CMMFLAGS': (List, list,
         """Flags passed to the Objective-C++ compiler for all of the
            Objective-C++ source files declared in this directory.
+
+           Note that the ordering of flags matters here; these flags will be
+           added to the compiler's command line in the same order as they
+           appear in the moz.build file.
+        """, None),
+
+    'ASFLAGS': (List, list,
+        """Flags passed to the assembler for all of the assembly source files
+           declared in this directory.
+
+           Note that the ordering of flags matters here; these flags will be
+           added to the assembler's command line in the same order as they
+           appear in the moz.build file.
+        """, None),
+
+    'HOST_CFLAGS': (List, list,
+        """Flags passed to the host C compiler for all of the C source files
+           declared in this directory.
+
+           Note that the ordering of flags matters here, these flags will be
+           added to the compiler's command line in the same order as they
+           appear in the moz.build file.
+        """, None),
+
+    'HOST_CXXFLAGS': (List, list,
+        """Flags passed to the host C++ compiler for all of the C++ source files
+           declared in this directory.
 
            Note that the ordering of flags matters here; these flags will be
            added to the compiler's command line in the same order as they
@@ -1362,6 +1714,11 @@ VARIABLES = {
         the path(s) with a '/' character and a '!' character, respectively::
            TEST_HARNESS_FILES.path += ['/build/bar.py', '!quux.py']
         """, 'libs'),
+
+    'NO_EXPAND_LIBS': (bool, bool,
+        """Forces to build a real static library, and no corresponding fake
+           library.
+        """, None),
 }
 
 # Sanity check: we don't want any variable above to have a list as storage type.
@@ -1730,6 +2087,26 @@ DEPRECATION_HINTS = {
     'TEST_TOOL_DIRS': 'Please use the TEST_DIRS variable instead.',
 
     'PARALLEL_DIRS': 'Please use the DIRS variable instead.',
+
+    'NO_DIST_INSTALL': '''
+        Please use
+
+            DIST_INSTALL = False
+
+        instead of
+
+            NO_DIST_INSTALL = True
+    ''',
+
+    'GENERATED_SOURCES': '''
+        Please use
+
+            SOURCES += [ '!foo.cpp' ]
+
+        instead of
+
+            GENERATED_SOURCES += [ 'foo.cpp']
+    ''',
 }
 
 # Make sure that all template variables have a deprecation hint.

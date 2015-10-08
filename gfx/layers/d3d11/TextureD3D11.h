@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 20; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+/* -*- Mode: C++; tab-width: 20; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -12,9 +12,8 @@
 #include "gfxWindowsPlatform.h"
 #include "mozilla/GfxMessageUtils.h"
 #include <d3d11.h>
+#include "d3d9.h"
 #include <vector>
-
-class gfxD2DSurface;
 
 namespace mozilla {
 namespace layers {
@@ -33,6 +32,21 @@ public:
                      TextureFlags aFlags);
 
   virtual ~TextureClientD3D11();
+
+  // Creates a TextureClient and init width.
+  static already_AddRefed<TextureClientD3D11>
+  Create(ISurfaceAllocator* aAllocator,
+         gfx::SurfaceFormat aFormat,
+         TextureFlags aFlags,
+         ID3D11Texture2D* aTexture,
+         gfx::IntSize aSize);
+
+  static already_AddRefed<TextureClientD3D11>
+  Create(ISurfaceAllocator* aAllocator,
+         gfx::SurfaceFormat aFormat,
+         TextureFlags aFlags,
+         ID3D11Device* aDevice,
+         const gfx::IntSize& aSize);
 
   // TextureClient
 
@@ -58,16 +72,24 @@ public:
 
   virtual gfx::DrawTarget* BorrowDrawTarget() override;
 
+  virtual void UpdateFromSurface(gfx::SourceSurface* aSurface) override;
+
   virtual bool AllocateForSurface(gfx::IntSize aSize,
                                   TextureAllocationFlags aFlags = ALLOC_DEFAULT) override;
 
-  virtual TemporaryRef<TextureClient>
+  virtual already_AddRefed<TextureClient>
   CreateSimilar(TextureFlags aFlags = TextureFlags::DEFAULT,
                 TextureAllocationFlags aAllocFlags = ALLOC_DEFAULT) const override;
 
   virtual void SyncWithObject(SyncObject* aSyncObject) override;
 
+  ID3D11Texture2D* GetD3D11Texture() { return mTexture; }
+
 protected:
+  bool AllocateD3D11Surface(ID3D11Device* aDevice, const gfx::IntSize& aSize);
+
+  virtual void FinalizeOnIPDLThread() override;
+
   gfx::IntSize mSize;
   RefPtr<ID3D10Texture2D> mTexture10;
   RefPtr<ID3D11Texture2D> mTexture;
@@ -86,6 +108,31 @@ public:
 
   virtual ~DXGIYCbCrTextureClient();
 
+  // Creates a TextureClient and init width.
+  static already_AddRefed<DXGIYCbCrTextureClient>
+  Create(ISurfaceAllocator* aAllocator,
+         TextureFlags aFlags,
+         IDirect3DTexture9* aTextureY,
+         IDirect3DTexture9* aTextureCb,
+         IDirect3DTexture9* aTextureCr,
+         HANDLE aHandleY,
+         HANDLE aHandleCb,
+         HANDLE aHandleCr,
+         const gfx::IntSize& aSize,
+         const gfx::IntSize& aSizeY,
+         const gfx::IntSize& aSizeCbCr);
+
+  // Creates a TextureClient and init width.
+  static already_AddRefed<DXGIYCbCrTextureClient>
+  Create(ISurfaceAllocator* aAllocator,
+         TextureFlags aFlags,
+         ID3D11Texture2D* aTextureY,
+         ID3D11Texture2D* aTextureCb,
+         ID3D11Texture2D* aTextureCr,
+         const gfx::IntSize& aSize,
+         const gfx::IntSize& aSizeY,
+         const gfx::IntSize& aSizeCbCr);
+
   // TextureClient
 
   virtual bool IsAllocated() const override{ return !!mHoldRefs[0]; }
@@ -98,27 +145,6 @@ public:
 
   virtual bool ToSurfaceDescriptor(SurfaceDescriptor& aOutDescriptor) override;
 
-  void InitWith(IUnknown* aTextureY,
-                IUnknown* aTextureCb,
-                IUnknown* aTextureCr,
-                HANDLE aHandleY,
-                HANDLE aHandleCb,
-                HANDLE aHandleCr,
-                const gfx::IntSize& aSize,
-                const gfx::IntSize& aSizeY,
-                const gfx::IntSize& aSizeCbCr)
-  {
-    mHandles[0] = aHandleY;
-    mHandles[1] = aHandleCb;
-    mHandles[2] = aHandleCr;
-    mHoldRefs[0] = aTextureY;
-    mHoldRefs[1] = aTextureCb;
-    mHoldRefs[2] = aTextureCr;
-    mSize = aSize;
-    mSizeY = aSizeY;
-    mSizeCbCr = aSizeCbCr;
-  }
-
   virtual gfx::IntSize GetSize() const
   {
     return mSize;
@@ -129,10 +155,12 @@ public:
     // This TextureClient should not be used in a context where we use CreateSimilar
     // (ex. component alpha) because the underlying texture data is always created by
     // an external producer.
-    virtual TemporaryRef<TextureClient>
+    virtual already_AddRefed<TextureClient>
     CreateSimilar(TextureFlags, TextureAllocationFlags) const override{ return nullptr; }
 
 private:
+  virtual void FinalizeOnIPDLThread() override;
+
   RefPtr<IUnknown> mHoldRefs[3];
   HANDLE mHandles[3];
   gfx::IntSize mSize;
@@ -153,12 +181,13 @@ public:
   virtual ~TextureSourceD3D11() {}
 
   virtual ID3D11Texture2D* GetD3D11Texture() const { return mTexture; }
-
+  virtual ID3D11ShaderResourceView* GetShaderResourceView();
 protected:
   virtual gfx::IntSize GetSize() const { return mSize; }
 
   gfx::IntSize mSize;
   RefPtr<ID3D11Texture2D> mTexture;
+  RefPtr<ID3D11ShaderResourceView> mSRV;
 };
 
 /**
@@ -192,6 +221,8 @@ public:
 
   virtual ID3D11Texture2D* GetD3D11Texture() const override;
 
+  virtual ID3D11ShaderResourceView* GetShaderResourceView() override;
+
   virtual DataTextureSource* AsDataTextureSource() override { return this; }
 
   virtual void DeallocateDeviceData() override { mTexture = nullptr; }
@@ -210,7 +241,7 @@ public:
 
   virtual bool NextTile() override { return (++mCurrentTile < mTileTextures.size()); }
 
-  virtual nsIntRect GetTileRect() override;
+  virtual gfx::IntRect GetTileRect() override;
 
   virtual void EndBigImageIteration() override { mIterating = false; }
 
@@ -226,6 +257,7 @@ protected:
   void Reset();
 
   std::vector< RefPtr<ID3D11Texture2D> > mTileTextures;
+  std::vector< RefPtr<ID3D11ShaderResourceView> > mTileSRVs;
   RefPtr<CompositorD3D11> mCompositor;
   gfx::SurfaceFormat mFormat;
   TextureFlags mFlags;
@@ -258,7 +290,7 @@ public:
 
   virtual gfx::IntSize GetSize() const override { return mSize; }
 
-  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() override
+  virtual already_AddRefed<gfx::DataSourceSurface> GetAsSurface() override
   {
     return nullptr;
   }
@@ -297,7 +329,7 @@ public:
 
   virtual gfx::IntSize GetSize() const override{ return mSize; }
 
-  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() override
+  virtual already_AddRefed<gfx::DataSourceSurface> GetAsSurface() override
   {
     return nullptr;
   }

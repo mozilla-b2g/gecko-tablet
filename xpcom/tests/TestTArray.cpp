@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/unused.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -288,6 +289,16 @@ class Moveable {
 
 /* static */ uint32_t Countable::sCount = 0;
 /* static */ uint32_t Moveable::sCount = 0;
+
+static nsTArray<int> returns_by_value() {
+  nsTArray<int> result;
+  return result;
+}
+
+static bool test_return_by_value() {
+  nsTArray<int> result = returns_by_value();
+  return true;
+}
 
 static bool test_move_array() {
   nsTArray<Countable> countableArray;
@@ -1001,7 +1012,12 @@ static bool test_fallible()
   const unsigned numArrays = 36;
   FallibleTArray<char> arrays[numArrays];
   for (size_t i = 0; i < numArrays; i++) {
-    bool success = arrays[i].SetCapacity(128 * 1024 * 1024);
+    // SetCapacity allocates the requested capacity + a header, and we want to
+    // avoid allocating more than 128MB overall because of the size padding it
+    // will cause, which depends on allocator behavior, so use 128MB - an
+    // arbitrary size larger than the array header, so that chances are good
+    // that allocations will always be 128MB.
+    bool success = arrays[i].SetCapacity(128 * 1024 * 1024 - 1024, fallible);
     if (!success) {
       // We got our OOM.  Check that it didn't come too early.
       if (i < 8) {
@@ -1100,9 +1116,9 @@ static bool test_SetLengthAndRetainStorage_no_ctor() {
     pre t post;                                                \
     pre tauto post;                                            \
   } while (0)
-  
+
   // Setup test arrays.
-  FOR_EACH(;, .SetLength(N));
+  FOR_EACH(; unused << , .SetLength(N, fallible));
   for (int n = 0; n < N; ++n) {
     FOR_EACH(;, [n] = n);
   }
@@ -1157,46 +1173,6 @@ static bool test_SetLengthAndRetainStorage_no_ctor() {
   return true;
 }
 
-bool test_range_based_for_loop_stable_iterator()
-{
-  const int N = 10;
-  FallibleTArray<int> f;
-  AutoFallibleTArray<int, N> fauto;
-
-  InfallibleTArray<int> i;
-  AutoInfallibleTArray<int, N> iauto;
-
-  nsTArray<int> t;
-  nsAutoTArray<int, N> tauto;
-
-#define DO_TEST(var) {             \
-    var.AppendElement(2);          \
-    var.AppendElement(3);          \
-    var.AppendElement(4);          \
-    int count = 0;                 \
-    for (const auto& elem : var) { \
-      if (elem == 2) {             \
-        var.RemoveElementAt(1);    \
-      }                            \
-      ++count;                     \
-    }                              \
-    if (count != 3) {              \
-      return false;                \
-    }                              \
-  }
-
-  DO_TEST(f)
-  DO_TEST(fauto)
-  DO_TEST(i)
-  DO_TEST(iauto)
-  DO_TEST(t)
-  DO_TEST(tauto)
-
-#undef DO_TEST
-
-  return true;
-}
-
 //----
 
 typedef bool (*TestFunc)();
@@ -1211,6 +1187,7 @@ static const struct Test {
   DECL_TEST(test_char_array),
   DECL_TEST(test_uint32_array),
   DECL_TEST(test_object_array),
+  DECL_TEST(test_return_by_value),
   DECL_TEST(test_move_array),
   DECL_TEST(test_string_array),
   DECL_TEST(test_comptr_array),
@@ -1225,11 +1202,10 @@ static const struct Test {
   DECL_TEST(test_fallible),
   DECL_TEST(test_conversion_operator),
   DECL_TEST(test_SetLengthAndRetainStorage_no_ctor),
-  DECL_TEST(test_range_based_for_loop_stable_iterator),
   { nullptr, nullptr }
 };
 
-}
+} // namespace TestTArray
 
 using namespace TestTArray;
 

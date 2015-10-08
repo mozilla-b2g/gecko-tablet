@@ -1,4 +1,5 @@
-/* vim:set ts=2 sw=2 et cindent: */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,7 +10,7 @@
 #include "nsStringBuffer.h"
 #include "nsReadableUtils.h"
 #include "nsCRTGlue.h"
-#include "nsRefPtr.h"
+#include "mozilla/nsRefPtr.h"
 #include "nsTArray.h"
 #include "gtest/gtest.h"
 
@@ -43,6 +44,7 @@ TEST(Strings, test1)
   nsAutoString buf(aStr);
 
   int32_t n = buf.FindChar(',');
+  EXPECT_EQ(n, kNotFound);
 
   n = buf.Length();
 
@@ -977,4 +979,4 @@ TEST(Strings, todouble)
   test_todouble_helper(NS_LITERAL_STRING("foo"), 0, false);
 }
 
-}
+} // namespace TestStrings

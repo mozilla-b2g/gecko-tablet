@@ -25,11 +25,11 @@ class InputEvent;
 
 namespace layers {
 class APZCTreeManager;
+class AsyncDragMetrics;
 class TargetConfig;
-class LayerTransactionParent;
 struct TextureFactoryIdentifier;
 struct ScrollableLayerGuid;
-}
+} // namespace layers
 
 namespace layout {
 
@@ -37,12 +37,12 @@ class RemoteContentController;
 
 class RenderFrameParent : public PRenderFrameParent
 {
+  typedef mozilla::layers::AsyncDragMetrics AsyncDragMetrics;
   typedef mozilla::layers::FrameMetrics FrameMetrics;
   typedef mozilla::layers::ContainerLayer ContainerLayer;
   typedef mozilla::layers::Layer Layer;
   typedef mozilla::layers::LayerManager LayerManager;
   typedef mozilla::layers::TargetConfig TargetConfig;
-  typedef mozilla::layers::LayerTransactionParent LayerTransactionParent;
   typedef mozilla::ContainerLayerParameters ContainerLayerParameters;
   typedef mozilla::layers::TextureFactoryIdentifier TextureFactoryIdentifier;
   typedef mozilla::layers::ScrollableLayerGuid ScrollableLayerGuid;
@@ -79,8 +79,6 @@ public:
 
   void OwnerContentChanged(nsIContent* aContent);
 
-  void SetBackgroundColor(nscolor aColor) { mBackgroundColor = gfxRGBA(aColor); };
-
   void ZoomToRect(uint32_t aPresShellId, ViewID aViewId, const CSSRect& aRect);
 
   void ContentReceivedInputBlock(const ScrollableLayerGuid& aGuid,
@@ -93,10 +91,11 @@ public:
 
   void UpdateZoomConstraints(uint32_t aPresShellId,
                              ViewID aViewId,
-                             bool aIsRoot,
-                             const ZoomConstraints& aConstraints);
+                             const Maybe<ZoomConstraints>& aConstraints);
 
   bool HitTest(const nsRect& aRect);
+
+  void StartScrollbarDrag(const AsyncDragMetrics& aDragMetrics);
 
   void GetTextureFactoryIdentifier(TextureFactoryIdentifier* aTextureFactoryIdentifier);
 
@@ -147,10 +146,10 @@ private:
   // It's possible for mFrameLoader==null and
   // mFrameLoaderDestroyed==false.
   bool mFrameLoaderDestroyed;
-  // this is gfxRGBA because that's what ColorLayer wants.
-  gfxRGBA mBackgroundColor;
 
   nsRegion mTouchRegion;
+
+  bool mAsyncPanZoomEnabled;
 };
 
 } // namespace layout

@@ -15,7 +15,7 @@ namespace dom {
 
 class AudioContext;
 
-class GainNode : public AudioNode
+class GainNode final : public AudioNode
 {
 public:
   explicit GainNode(AudioContext* aContext);
@@ -42,14 +42,11 @@ protected:
   virtual ~GainNode();
 
 private:
-  static void SendGainToStream(AudioNode* aNode);
-
-private:
   nsRefPtr<AudioParam> mGain;
 };
 
-}
-}
+} // namespace dom
+} // namespace mozilla
 
 #endif
 
