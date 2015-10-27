@@ -52,7 +52,7 @@ loop.standaloneRoomViews = (function(mozL10n) {
       return (
         React.createElement("p", {
           className: "terms-service", 
-          dangerouslySetInnerHTML: {__html: this._getContent()}, 
+          dangerouslySetInnerHTML: { __html: this._getContent()}, 
           onClick: this.recordClick})
       );
     }
@@ -97,7 +97,7 @@ loop.standaloneRoomViews = (function(mozL10n) {
 
     _renderFailureText: function() {
       return (
-        React.createElement("p", {className: "failure"},  mozL10n.get("rooms_already_joined") )
+        React.createElement("p", {className: "failure"}, mozL10n.get("rooms_already_joined"))
       );
     },
 
@@ -109,8 +109,8 @@ loop.standaloneRoomViews = (function(mozL10n) {
         React.createElement("div", {className: "handle-user-agent-view-scroller"}, 
           React.createElement("div", {className: "handle-user-agent-view"}, 
             React.createElement("div", {className: "info-panel"}, 
-              React.createElement("p", {className: "loop-logo-text", title:  mozL10n.get("clientShortname2") }), 
-              React.createElement("p", {className: "roomName"},  this.state.roomName), 
+              React.createElement("p", {className: "loop-logo-text", title: mozL10n.get("clientShortname2")}), 
+              React.createElement("p", {className: "roomName"}, this.state.roomName), 
               React.createElement("p", {className: "loop-logo"}), 
               
                 this.state.failureReason ?
@@ -148,7 +148,7 @@ loop.standaloneRoomViews = (function(mozL10n) {
      * @return String An appropriate string according to the failureReason.
      */
     getFailureString: function() {
-      switch(this.props.failureReason) {
+      switch (this.props.failureReason) {
         case FAILURE_DETAILS.MEDIA_DENIED:
         // XXX Bug 1166824 should provide a better string for this.
         case FAILURE_DETAILS.NO_MEDIA:
@@ -302,7 +302,7 @@ loop.standaloneRoomViews = (function(mozL10n) {
     },
 
     render: function() {
-      switch(this.props.roomState) {
+      switch (this.props.roomState) {
         case ROOM_STATES.ENDED:
         case ROOM_STATES.READY: {
           return (
@@ -317,7 +317,7 @@ loop.standaloneRoomViews = (function(mozL10n) {
         }
         case ROOM_STATES.MEDIA_WAIT: {
           var msg = mozL10n.get("call_progress_getting_media_description",
-                                {clientShortname: mozL10n.get("clientShortname2")});
+                                { clientShortname: mozL10n.get("clientShortname2") });
           var utils = loop.shared.utils;
           var isChrome = utils.isChrome(navigator.userAgent);
           var isFirefox = utils.isFirefox(navigator.userAgent);
@@ -390,32 +390,6 @@ loop.standaloneRoomViews = (function(mozL10n) {
     }
   });
 
-  var StandaloneRoomHeader = React.createClass({displayName: "StandaloneRoomHeader",
-    propTypes: {
-      dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired
-    },
-
-    recordClick: function() {
-      this.props.dispatcher.dispatch(new sharedActions.RecordClick({
-        linkInfo: "Support link click"
-      }));
-    },
-
-    render: function() {
-      return (
-        React.createElement("header", null, 
-          React.createElement("h1", null, mozL10n.get("clientShortname2")), 
-          React.createElement("a", {href: loop.config.generalSupportUrl, 
-             onClick: this.recordClick, 
-             rel: "noreferrer", 
-             target: "_blank"}, 
-            React.createElement("i", {className: "icon icon-help"})
-          )
-        )
-      );
-    }
-  });
-
   var StandaloneRoomView = React.createClass({displayName: "StandaloneRoomView",
     mixins: [
       Backbone.Events,
@@ -485,7 +459,7 @@ loop.standaloneRoomViews = (function(mozL10n) {
       if (this.state.roomState !== ROOM_STATES.MEDIA_WAIT &&
           nextState.roomState === ROOM_STATES.MEDIA_WAIT) {
         this.props.dispatcher.dispatch(new sharedActions.SetupStreamElements({
-          publisherConfig: this.getDefaultPublisherConfig({publishVideo: true})
+          publisherConfig: this.getDefaultPublisherConfig({ publishVideo: true })
         }));
       }
 
@@ -529,7 +503,7 @@ loop.standaloneRoomViews = (function(mozL10n) {
      * @return {Boolean}
      */
     _roomIsActive: function() {
-      return this.state.roomState === ROOM_STATES.JOINED            ||
+      return this.state.roomState === ROOM_STATES.JOINED ||
              this.state.roomState === ROOM_STATES.SESSION_CONNECTED ||
              this.state.roomState === ROOM_STATES.HAS_PARTICIPANTS;
     },
@@ -544,7 +518,7 @@ loop.standaloneRoomViews = (function(mozL10n) {
      *     overlapping cases.
      */
     shouldRenderRemoteVideo: function() {
-      switch(this.state.roomState) {
+      switch (this.state.roomState) {
         case ROOM_STATES.HAS_PARTICIPANTS:
           if (this.state.remoteVideoEnabled) {
             return true;
@@ -591,7 +565,7 @@ loop.standaloneRoomViews = (function(mozL10n) {
      * @returns {boolean}
      * @private
      */
-    _isLocalLoading: function () {
+    _isLocalLoading: function() {
       return this.state.roomState === ROOM_STATES.MEDIA_WAIT &&
              !this.state.localSrcMediaElement;
     },
@@ -628,8 +602,6 @@ loop.standaloneRoomViews = (function(mozL10n) {
 
       return (
         React.createElement("div", {className: "room-conversation-wrapper standalone-room-wrapper"}, 
-          React.createElement("div", {className: "beta-logo"}), 
-          React.createElement(StandaloneRoomHeader, {dispatcher: this.props.dispatcher}), 
           React.createElement(sharedViews.MediaLayoutView, {
             dispatcher: this.props.dispatcher, 
             displayScreenShare: displayScreenShare, 
@@ -647,6 +619,7 @@ loop.standaloneRoomViews = (function(mozL10n) {
             screenSharePosterUrl: this.props.screenSharePosterUrl, 
             showContextRoomName: true, 
             useDesktopPaths: false}, 
+            React.createElement(StandaloneOverlayWrapper, {dispatcher: this.props.dispatcher}), 
             React.createElement(StandaloneRoomInfoArea, {activeRoomStore: this.props.activeRoomStore, 
               dispatcher: this.props.dispatcher, 
               failureReason: this.state.failureReason, 
@@ -655,31 +628,56 @@ loop.standaloneRoomViews = (function(mozL10n) {
               roomState: this.state.roomState, 
               roomUsed: this.state.used}), 
             React.createElement(sharedViews.ConversationToolbar, {
-              audio: {enabled: !this.state.audioMuted,
+              audio: { enabled: !this.state.audioMuted,
                       visible: this._roomIsActive()}, 
               dispatcher: this.props.dispatcher, 
-              enableHangup: this._roomIsActive(), 
               hangup: this.leaveRoom, 
-              hangupButtonLabel: mozL10n.get("rooms_leave_button_label"), 
               publishStream: this.publishStream, 
               show: true, 
-              video: {enabled: !this.state.videoMuted,
-                      visible: this._roomIsActive()}}), 
-            React.createElement(StandaloneMozLogo, {dispatcher: this.props.dispatcher})
+              video: { enabled: !this.state.videoMuted,
+                      visible: this._roomIsActive()}})
           )
         )
       );
     }
   });
 
-  var StandaloneMozLogo = React.createClass({displayName: "StandaloneMozLogo",
+  var StandaloneOverlayWrapper = React.createClass({displayName: "StandaloneOverlayWrapper",
     propTypes: {
       dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired
     },
 
     render: function() {
       return (
-        React.createElement("div", {className: "standalone-moz-logo"})
+        React.createElement("div", {className: "standalone-overlay-wrapper"}, 
+          React.createElement("div", {className: "hello-logo"}), 
+          React.createElement(GeneralSupportURL, {dispatcher: this.props.dispatcher}), 
+          React.createElement("div", {className: "standalone-moz-logo"})
+        )
+      );
+    }
+  });
+
+  var GeneralSupportURL = React.createClass({displayName: "GeneralSupportURL",
+    propTypes: {
+      dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired
+    },
+
+    generalSupportUrlClick: function() {
+      this.props.dispatcher.dispatch(new sharedActions.RecordClick({
+        linkInfo: "Support link click"
+      }));
+    },
+
+    render: function() {
+      return (
+        React.createElement("a", {className: "general-support-url", 
+          href: loop.config.generalSupportUrl, 
+          onClick: this.generalSupportUrlClick, 
+          rel: "noreferrer", 
+          target: "_blank"}, 
+          React.createElement("div", {className: "icon icon-help"})
+        )
       );
     }
   });
@@ -724,8 +722,8 @@ loop.standaloneRoomViews = (function(mozL10n) {
     StandaloneHandleUserAgentView: StandaloneHandleUserAgentView,
     StandaloneRoomControllerView: StandaloneRoomControllerView,
     StandaloneRoomFailureView: StandaloneRoomFailureView,
-    StandaloneRoomHeader: StandaloneRoomHeader,
     StandaloneRoomInfoArea: StandaloneRoomInfoArea,
+    StandaloneOverlayWrapper: StandaloneOverlayWrapper,
     StandaloneRoomView: StandaloneRoomView,
     ToSView: ToSView
   };

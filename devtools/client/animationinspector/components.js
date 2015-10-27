@@ -20,12 +20,13 @@
 //    c.destroy();
 
 const {Cu} = require("chrome");
-Cu.import("resource:///modules/devtools/client/shared/widgets/ViewHelpers.jsm");
+Cu.import("resource://devtools/client/shared/widgets/ViewHelpers.jsm");
 const {Task} = Cu.import("resource://gre/modules/Task.jsm", {});
 const {
   createNode,
   drawGraphElementBackground,
-  findOptimalTimeInterval
+  findOptimalTimeInterval,
+  TargetNodeHighlighter
 } = require("devtools/client/animationinspector/utils");
 
 const STRINGS_URI = "chrome://browser/locale/devtools/animationinspector.properties";
@@ -52,6 +53,8 @@ function AnimationTargetNode(inspector, options={}) {
   this.onPreviewMouseOut = this.onPreviewMouseOut.bind(this);
   this.onSelectNodeClick = this.onSelectNodeClick.bind(this);
   this.onMarkupMutations = this.onMarkupMutations.bind(this);
+  this.onHighlightNodeClick = this.onHighlightNodeClick.bind(this);
+  this.onTargetHighlighterLocked = this.onTargetHighlighterLocked.bind(this);
 
   EventEmitter.decorate(this);
 }
@@ -71,18 +74,22 @@ AnimationTargetNode.prototype = {
     });
 
     // Icon to select the node in the inspector.
-    this.selectNodeEl = createNode({
+    this.highlightNodeEl = createNode({
       parent: this.el,
       nodeType: "span",
       attributes: {
-        "class": "node-selector"
+        "class": "node-highlighter",
+        "title": L10N.getStr("node.highlightNodeLabel")
       }
     });
 
     // Wrapper used for mouseover/out event handling.
     this.previewEl = createNode({
       parent: this.el,
-      nodeType: "span"
+      nodeType: "span",
+      attributes: {
+        "title": L10N.getStr("node.selectNodeLabel")
+      }
     });
 
     if (!this.options.compact) {
@@ -180,32 +187,48 @@ AnimationTargetNode.prototype = {
     // Init events for highlighting and selecting the node.
     this.previewEl.addEventListener("mouseover", this.onPreviewMouseOver);
     this.previewEl.addEventListener("mouseout", this.onPreviewMouseOut);
-    this.selectNodeEl.addEventListener("click", this.onSelectNodeClick);
+    this.previewEl.addEventListener("click", this.onSelectNodeClick);
+    this.highlightNodeEl.addEventListener("click", this.onHighlightNodeClick);
 
     // Start to listen for markupmutation events.
     this.inspector.on("markupmutation", this.onMarkupMutations);
+
+    // Listen to the target node highlighter.
+    TargetNodeHighlighter.on("highlighted", this.onTargetHighlighterLocked);
   },
 
   destroy: function() {
+    TargetNodeHighlighter.unhighlight().catch(e => console.error(e));
+
+    TargetNodeHighlighter.off("highlighted", this.onTargetHighlighterLocked);
     this.inspector.off("markupmutation", this.onMarkupMutations);
     this.previewEl.removeEventListener("mouseover", this.onPreviewMouseOver);
     this.previewEl.removeEventListener("mouseout", this.onPreviewMouseOut);
-    this.selectNodeEl.removeEventListener("click", this.onSelectNodeClick);
+    this.previewEl.removeEventListener("click", this.onSelectNodeClick);
+    this.highlightNodeEl.removeEventListener("click", this.onHighlightNodeClick);
+
     this.el.remove();
     this.el = this.tagNameEl = this.idEl = this.classEl = null;
-    this.selectNodeEl = this.previewEl = null;
+    this.highlightNodeEl = this.previewEl = null;
     this.nodeFront = this.inspector = this.playerFront = null;
+  },
+
+  get highlighterUtils() {
+    return this.inspector.toolbox.highlighterUtils;
   },
 
   onPreviewMouseOver: function() {
     if (!this.nodeFront) {
       return;
     }
-    this.inspector.toolbox.highlighterUtils.highlightNodeFront(this.nodeFront);
+    this.highlighterUtils.highlightNodeFront(this.nodeFront);
   },
 
   onPreviewMouseOut: function() {
-    this.inspector.toolbox.highlighterUtils.unhighlight();
+    if (!this.nodeFront) {
+      return;
+    }
+    this.highlighterUtils.unhighlight();
   },
 
   onSelectNodeClick: function() {
@@ -213,6 +236,29 @@ AnimationTargetNode.prototype = {
       return;
     }
     this.inspector.selection.setNodeFront(this.nodeFront, "animationinspector");
+  },
+
+  onHighlightNodeClick: function() {
+    let classList = this.highlightNodeEl.classList;
+
+    let isHighlighted = classList.contains("selected");
+    if (isHighlighted) {
+      classList.remove("selected");
+      TargetNodeHighlighter.unhighlight().then(() => {
+        this.emit("target-highlighter-unlocked");
+      }, e => console.error(e));
+    } else {
+      classList.add("selected");
+      TargetNodeHighlighter.highlight(this).then(() => {
+        this.emit("target-highlighter-locked");
+      }, e => console.error(e));
+    }
+  },
+
+  onTargetHighlighterLocked: function(e, animationTargetNode) {
+    if (animationTargetNode !== this) {
+      this.highlightNodeEl.classList.remove("selected");
+    }
   },
 
   onMarkupMutations: function(e, mutations) {
@@ -237,13 +283,14 @@ AnimationTargetNode.prototype = {
       this.nodeFront = yield this.inspector.walker.getNodeFromActor(
                              playerFront.actorID, ["node"]);
     } catch (e) {
-      // We might have been destroyed in the meantime, or the node might not be
-      // found.
       if (!this.el) {
+        // The panel was destroyed in the meantime. Just log a warning.
         console.warn("Cound't retrieve the animation target node, widget " +
                      "destroyed");
+      } else {
+        // This was an unexpected error, log it.
+        console.error(e);
       }
-      console.error(e);
       return;
     }
 
@@ -409,14 +456,13 @@ exports.TimeScale = TimeScale;
 function AnimationsTimeline(inspector) {
   this.animations = [];
   this.targetNodes = [];
+  this.timeBlocks = [];
   this.inspector = inspector;
-
   this.onAnimationStateChanged = this.onAnimationStateChanged.bind(this);
-  this.onTimeHeaderMouseDown = this.onTimeHeaderMouseDown.bind(this);
-  this.onTimeHeaderMouseUp = this.onTimeHeaderMouseUp.bind(this);
-  this.onTimeHeaderMouseOut = this.onTimeHeaderMouseOut.bind(this);
-  this.onTimeHeaderMouseMove = this.onTimeHeaderMouseMove.bind(this);
-
+  this.onScrubberMouseDown = this.onScrubberMouseDown.bind(this);
+  this.onScrubberMouseUp = this.onScrubberMouseUp.bind(this);
+  this.onScrubberMouseOut = this.onScrubberMouseOut.bind(this);
+  this.onScrubberMouseMove = this.onScrubberMouseMove.bind(this);
   EventEmitter.decorate(this);
 }
 
@@ -440,13 +486,21 @@ AnimationsTimeline.prototype = {
       }
     });
 
+    this.scrubberHandleEl = createNode({
+      parent: this.scrubberEl,
+      attributes: {
+        "class": "scrubber-handle"
+      }
+    });
+    this.scrubberHandleEl.addEventListener("mousedown", this.onScrubberMouseDown);
+
     this.timeHeaderEl = createNode({
       parent: this.rootWrapperEl,
       attributes: {
         "class": "time-header"
       }
     });
-    this.timeHeaderEl.addEventListener("mousedown", this.onTimeHeaderMouseDown);
+    this.timeHeaderEl.addEventListener("mousedown", this.onScrubberMouseDown);
 
     this.animationsEl = createNode({
       parent: this.rootWrapperEl,
@@ -462,7 +516,9 @@ AnimationsTimeline.prototype = {
     this.unrender();
 
     this.timeHeaderEl.removeEventListener("mousedown",
-      this.onTimeHeaderMouseDown);
+      this.onScrubberMouseDown);
+    this.scrubberHandleEl.removeEventListener("mousedown",
+      this.onScrubberMouseDown);
 
     this.rootWrapperEl.remove();
     this.animations = [];
@@ -471,39 +527,48 @@ AnimationsTimeline.prototype = {
     this.timeHeaderEl = null;
     this.animationsEl = null;
     this.scrubberEl = null;
+    this.scrubberHandleEl = null;
     this.win = null;
     this.inspector = null;
   },
-
   destroyTargetNodes: function() {
     for (let targetNode of this.targetNodes) {
       targetNode.destroy();
     }
     this.targetNodes = [];
   },
+  destroyTimeBlocks: function() {
+    for (let timeBlock of this.timeBlocks) {
+      timeBlock.destroy();
+    }
+    this.timeBlocks = [];
+  },
 
   unrender: function() {
     for (let animation of this.animations) {
       animation.off("changed", this.onAnimationStateChanged);
     }
-
     TimeScale.reset();
     this.destroyTargetNodes();
+    this.destroyTimeBlocks();
     this.animationsEl.innerHTML = "";
   },
 
-  onTimeHeaderMouseDown: function(e) {
+  onScrubberMouseDown: function(e) {
     this.moveScrubberTo(e.pageX);
-    this.win.addEventListener("mouseup", this.onTimeHeaderMouseUp);
-    this.win.addEventListener("mouseout", this.onTimeHeaderMouseOut);
-    this.win.addEventListener("mousemove", this.onTimeHeaderMouseMove);
+    this.win.addEventListener("mouseup", this.onScrubberMouseUp);
+    this.win.addEventListener("mouseout", this.onScrubberMouseOut);
+    this.win.addEventListener("mousemove", this.onScrubberMouseMove);
+
+    // Prevent text selection while dragging.
+    e.preventDefault();
   },
 
-  onTimeHeaderMouseUp: function() {
+  onScrubberMouseUp: function() {
     this.cancelTimeHeaderDragging();
   },
 
-  onTimeHeaderMouseOut: function(e) {
+  onScrubberMouseOut: function(e) {
     // Check that mouseout happened on the window itself, and if yes, cancel
     // the dragging.
     if (!this.win.document.contains(e.relatedTarget)) {
@@ -512,12 +577,12 @@ AnimationsTimeline.prototype = {
   },
 
   cancelTimeHeaderDragging: function() {
-    this.win.removeEventListener("mouseup", this.onTimeHeaderMouseUp);
-    this.win.removeEventListener("mouseout", this.onTimeHeaderMouseOut);
-    this.win.removeEventListener("mousemove", this.onTimeHeaderMouseMove);
+    this.win.removeEventListener("mouseup", this.onScrubberMouseUp);
+    this.win.removeEventListener("mouseout", this.onScrubberMouseOut);
+    this.win.removeEventListener("mousemove", this.onScrubberMouseMove);
   },
 
-  onTimeHeaderMouseMove: function(e) {
+  onScrubberMouseMove: function(e) {
     this.moveScrubberTo(e.pageX);
   },
 
@@ -537,6 +602,7 @@ AnimationsTimeline.prototype = {
     this.emit("timeline-data-changed", {
       isPaused: true,
       isMoving: false,
+      isUserDrag: true,
       time: time
     });
   },
@@ -576,25 +642,25 @@ AnimationsTimeline.prototype = {
           "class": "target"
         }
       });
+      // Draw the animated node target.
+      let targetNode = new AnimationTargetNode(this.inspector, {compact: true});
+      targetNode.init(animatedNodeEl);
+      targetNode.render(animation);
+      this.targetNodes.push(targetNode);
 
+      // Right-hand part contains the timeline itself (called time-block here).
       let timeBlockEl = createNode({
         parent: animationEl,
         attributes: {
           "class": "time-block"
         }
       });
-
-      this.drawTimeBlock(animation, timeBlockEl);
-
-      // Draw the animated node target.
-      let targetNode = new AnimationTargetNode(this.inspector, {compact: true});
-      targetNode.init(animatedNodeEl);
-      targetNode.render(animation);
-
-      // Save the targetNode so it can be destroyed later.
-      this.targetNodes.push(targetNode);
+      // Draw the animation time block.
+      let timeBlock = new AnimationTimeBlock();
+      timeBlock.init(timeBlockEl);
+      timeBlock.render(animation);
+      this.timeBlocks.push(timeBlock);
     }
-
     // Use the document's current time to position the scrubber (if the server
     // doesn't provide it, hide the scrubber entirely).
     // Note that because the currentTime was sent via the protocol, some time
@@ -603,12 +669,19 @@ AnimationsTimeline.prototype = {
       this.scrubberEl.style.display = "none";
     } else {
       this.scrubberEl.style.display = "block";
-      this.startAnimatingScrubber(documentCurrentTime);
+      this.startAnimatingScrubber(this.wasRewound()
+                                  ? TimeScale.minStartTime
+                                  : documentCurrentTime);
     }
   },
 
   isAtLeastOneAnimationPlaying: function() {
     return this.animations.some(({state}) => state.playState === "running");
+  },
+
+  wasRewound: function() {
+    return !this.isAtLeastOneAnimationPlaying() &&
+           this.animations.every(({state}) => state.currentTime === 0);
   },
 
   startAnimatingScrubber: function(time) {
@@ -620,8 +693,9 @@ AnimationsTimeline.prototype = {
         !this.isAtLeastOneAnimationPlaying()) {
       this.stopAnimatingScrubber();
       this.emit("timeline-data-changed", {
-        isPaused: false,
+        isPaused: !this.isAtLeastOneAnimationPlaying(),
         isMoving: false,
+        isUserDrag: false,
         time: TimeScale.distanceToRelativeTime(x, this.timeHeaderEl.offsetWidth)
       });
       return;
@@ -630,6 +704,7 @@ AnimationsTimeline.prototype = {
     this.emit("timeline-data-changed", {
       isPaused: false,
       isMoving: true,
+      isUserDrag: false,
       time: TimeScale.distanceToRelativeTime(x, this.timeHeaderEl.offsetWidth)
     });
 
@@ -677,30 +752,34 @@ AnimationsTimeline.prototype = {
           TimeScale.distanceToRelativeTime(i, width))
       });
     }
+  }
+};
+
+/**
+ * UI component responsible for displaying a single animation timeline, which
+ * basically looks like a rectangle that shows the delay and iterations.
+ */
+function AnimationTimeBlock() {}
+
+exports.AnimationTimeBlock = AnimationTimeBlock;
+
+AnimationTimeBlock.prototype = {
+  init: function(containerEl) {
+    this.containerEl = containerEl;
+  },
+  destroy: function() {
+    while (this.containerEl.firstChild) {
+      this.containerEl.firstChild.remove();
+    }
+    this.containerEl = null;
+    this.animation = null;
   },
 
-  getAnimationTooltipText: function(state) {
-    let getTime = time => L10N.getFormatStr("player.timeLabel",
-                            L10N.numberWithDecimals(time / 1000, 2));
+  render: function(animation) {
+    this.animation = animation;
+    let {state} = this.animation;
 
-    // The type isn't always available, older servers don't send it.
-    let title =
-      state.type
-      ? L10N.getFormatStr("timeline." + state.type + ".nameLabel", state.name)
-      : state.name;
-    let delay = L10N.getStr("player.animationDelayLabel") + " " +
-                getTime(state.delay);
-    let duration = L10N.getStr("player.animationDurationLabel") + " " +
-                   getTime(state.duration);
-    let iterations = L10N.getStr("player.animationIterationCountLabel") + " " +
-                     (state.iterationCount ||
-                      L10N.getStr("player.infiniteIterationCountText"));
-
-    return [title, duration, iterations, delay].join("\n");
-  },
-
-  drawTimeBlock: function({state}, el) {
-    let width = el.offsetWidth;
+    let width = this.containerEl.offsetWidth;
 
     // Create a container element to hold the delay and iterations.
     // It is positioned according to its delay (divided by the playbackrate),
@@ -715,7 +794,7 @@ AnimationsTimeline.prototype = {
     let w = TimeScale.durationToDistance(duration / rate, width);
 
     let iterations = createNode({
-      parent: el,
+      parent: this.containerEl,
       attributes: {
         "class": state.type + " iterations" + (count ? "" : " infinite"),
         // Individual iterations are represented by setting the size of the
@@ -733,7 +812,7 @@ AnimationsTimeline.prototype = {
       parent: iterations,
       attributes: {
         "class": "name",
-        "title": this.getAnimationTooltipText(state),
+        "title": this.getTooltipText(state),
         "style": delay < 0
                  ? "margin-left:" +
                    TimeScale.durationToDistance(Math.abs(delay), width) + "px"
@@ -745,16 +824,37 @@ AnimationsTimeline.prototype = {
     // Delay.
     if (delay) {
       // Negative delays need to start at 0.
-      let x = TimeScale.durationToDistance((delay < 0 ? 0 : delay) / rate, width);
-      let w = TimeScale.durationToDistance(Math.abs(delay) / rate, width);
+      let delayX = TimeScale.durationToDistance(
+        (delay < 0 ? 0 : delay) / rate, width);
+      let delayW = TimeScale.durationToDistance(
+        Math.abs(delay) / rate, width);
+
       createNode({
         parent: iterations,
         attributes: {
           "class": "delay" + (delay < 0 ? " negative" : ""),
-          "style": `left:-${x}px;
-                    width:${w}px;`
+          "style": `left:-${delayX}px;
+                    width:${delayW}px;`
         }
       });
     }
+  },
+
+  getTooltipText: function(state) {
+    let getTime = time => L10N.getFormatStr("player.timeLabel",
+                            L10N.numberWithDecimals(time / 1000, 2));
+    // The type isn't always available, older servers don't send it.
+    let title =
+      state.type
+      ? L10N.getFormatStr("timeline." + state.type + ".nameLabel", state.name)
+      : state.name;
+    let delay = L10N.getStr("player.animationDelayLabel") + " " +
+                getTime(state.delay);
+    let duration = L10N.getStr("player.animationDurationLabel") + " " +
+                   getTime(state.duration);
+    let iterations = L10N.getStr("player.animationIterationCountLabel") + " " +
+                     (state.iterationCount ||
+                      L10N.getStr("player.infiniteIterationCountText"));
+    return [title, duration, iterations, delay].join("\n");
   }
 };

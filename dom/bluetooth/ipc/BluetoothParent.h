@@ -51,7 +51,7 @@ class BluetoothParent : public PBluetoothParent
     Dead
   };
 
-  nsRefPtr<BluetoothService> mService;
+  RefPtr<BluetoothService> mService;
   ShutdownState mShutdownState;
   bool mReceivedStopNotifying;
   bool mSentBeginShutdown;
@@ -108,7 +108,7 @@ class BluetoothRequestParent : public PBluetoothRequestParent
 
   friend class ReplyRunnable;
 
-  nsRefPtr<BluetoothService> mService;
+  RefPtr<BluetoothService> mService;
   nsRevocableEventPtr<ReplyRunnable> mReplyRunnable;
 
 #ifdef DEBUG
@@ -220,6 +220,24 @@ protected:
 
   bool
   DoRequest(const ReplyTovCardListingRequest& aRequest);
+
+  bool
+  DoRequest(const ReplyToFolderListingRequest& aRequest);
+
+  bool
+  DoRequest(const ReplyToMessagesListingRequest& aRequest);
+
+  bool
+  DoRequest(const ReplyToGetMessageRequest& aRequest);
+
+  bool
+  DoRequest(const ReplyToSetMessageStatusRequest& aRequest);
+
+  bool
+  DoRequest(const ReplyToSendMessageRequest& aRequest);
+
+  bool
+  DoRequest(const ReplyToMessageUpdateRequest& aRequest);
 
 #ifdef MOZ_B2G_RIL
   bool

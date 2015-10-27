@@ -310,6 +310,8 @@
 @BINPATH@/components/SettingsManager.manifest
 @BINPATH@/components/BrowserElementParent.manifest
 @BINPATH@/components/BrowserElementParent.js
+@BINPATH@/components/BrowserElementProxy.manifest
+@BINPATH@/components/BrowserElementProxy.js
 @BINPATH@/components/FeedProcessor.manifest
 @BINPATH@/components/FeedProcessor.js
 @BINPATH@/components/PackagedAppUtils.manifest
@@ -464,6 +466,8 @@
 @BINPATH@/components/PresentationDeviceInfoManager.js
 @BINPATH@/components/BuiltinProviders.manifest
 @BINPATH@/components/TCPPresentationServer.js
+@BINPATH@/components/PresentationNetworkHelper.js
+@BINPATH@/components/PresentationNetworkHelper.manifest
 
 @BINPATH@/components/PACGenerator.js
 @BINPATH@/components/PACGenerator.manifest
@@ -508,6 +512,9 @@
 @BINPATH@/chrome/icons/default/default48.png
 #endif
 
+; DevTools
+@BINPATH@/chrome/devtools@JAREXT@
+@BINPATH@/chrome/devtools.manifest
 
 ; shell icons
 #ifdef XP_UNIX

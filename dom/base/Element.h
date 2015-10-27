@@ -37,6 +37,7 @@
 #include "mozilla/dom/WindowBinding.h"
 #include "mozilla/dom/ElementBinding.h"
 #include "Units.h"
+#include "nsContentListDeclarations.h"
 
 class nsIFrame;
 class nsIDOMMozNamedAttrMap;
@@ -60,11 +61,6 @@ namespace dom {
 } // namespace dom
 } // namespace mozilla
 
-
-already_AddRefed<nsContentList>
-NS_GetContentList(nsINode* aRootNode,
-                  int32_t  aMatchNameSpaceId,
-                  const nsAString& aTagname);
 
 #define ELEMENT_FLAG_BIT(n_) NODE_FLAG_BIT(NODE_TYPE_SPECIFIC_BITS_OFFSET + (n_))
 
@@ -672,11 +668,6 @@ public:
                            ErrorResult& aError);
   already_AddRefed<nsIHTMLCollection>
     GetElementsByClassName(const nsAString& aClassNames);
-  bool MozMatchesSelector(const nsAString& aSelector,
-                          ErrorResult& aError)
-  {
-    return Matches(aSelector, aError);
-  }
   void SetPointerCapture(int32_t aPointerId, ErrorResult& aError)
   {
     bool activeState = false;
@@ -815,7 +806,7 @@ public:
   {
   }
 
-  void GetAnimations(nsTArray<nsRefPtr<Animation>>& aAnimations);
+  void GetAnimations(nsTArray<RefPtr<Animation>>& aAnimations);
 
   NS_IMETHOD GetInnerHTML(nsAString& aInnerHTML);
   virtual void SetInnerHTML(const nsAString& aInnerHTML, ErrorResult& aError);
@@ -1307,8 +1298,8 @@ public:
   NS_IMETHOD Run() override;
 private:
   virtual ~RemoveFromBindingManagerRunnable();
-  nsRefPtr<nsBindingManager> mManager;
-  nsRefPtr<nsIContent> mContent;
+  RefPtr<nsBindingManager> mManager;
+  RefPtr<nsIContent> mContent;
   nsCOMPtr<nsIDocument> mDoc;
 };
 
@@ -1332,7 +1323,7 @@ public:
 protected:
   virtual ~DestinationInsertionPointList();
 
-  nsRefPtr<Element> mParent;
+  RefPtr<Element> mParent;
   nsCOMArray<nsIContent> mDestinationPoints;
 };
 
@@ -1400,7 +1391,7 @@ _elementName::Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult) const 
 {                                                                           \
   *aResult = nullptr;                                                       \
   already_AddRefed<mozilla::dom::NodeInfo> ni =                             \
-    nsRefPtr<mozilla::dom::NodeInfo>(aNodeInfo).forget();                   \
+    RefPtr<mozilla::dom::NodeInfo>(aNodeInfo).forget();                   \
   _elementName *it = new _elementName(ni);                                  \
   if (!it) {                                                                \
     return NS_ERROR_OUT_OF_MEMORY;                                          \
@@ -1421,7 +1412,7 @@ _elementName::Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult) const 
 {                                                                           \
   *aResult = nullptr;                                                       \
   already_AddRefed<mozilla::dom::NodeInfo> ni =                             \
-    nsRefPtr<mozilla::dom::NodeInfo>(aNodeInfo).forget();                   \
+    RefPtr<mozilla::dom::NodeInfo>(aNodeInfo).forget();                   \
   _elementName *it = new _elementName(ni);                                  \
   if (!it) {                                                                \
     return NS_ERROR_OUT_OF_MEMORY;                                          \
@@ -1773,8 +1764,8 @@ NS_IMETHOD MozMatchesSelector(const nsAString& selector,                      \
                               bool* _retval) final override                   \
 {                                                                             \
   mozilla::ErrorResult rv;                                                    \
-  *_retval = Element::MozMatchesSelector(selector, rv);                       \
-  return rv.StealNSResult();                                                      \
+  *_retval = Element::Matches(selector, rv);                                  \
+  return rv.StealNSResult();                                                  \
 }                                                                             \
 NS_IMETHOD SetCapture(bool retargetToElement) final override                  \
 {                                                                             \

@@ -1145,8 +1145,7 @@ private:
     nsresult rv;
     if (mSign) {
       ScopedSECItem signature(::SECITEM_AllocItem(nullptr, nullptr, 0));
-      ScopedSGNContext ctx(SGN_NewContext(mOidTag, mPrivKey));
-      if (!signature.get() || !ctx.get()) {
+      if (!signature.get()) {
         return NS_ERROR_DOM_OPERATION_ERR;
       }
 
@@ -1385,7 +1384,7 @@ public:
 
 protected:
   nsString mFormat;
-  nsRefPtr<CryptoKey> mKey;
+  RefPtr<CryptoKey> mKey;
   CryptoBuffer mKeyData;
   bool mDataIsSet;
   bool mDataIsJwk;
@@ -2210,7 +2209,7 @@ public:
   }
 
 private:
-  nsRefPtr<CryptoKey> mKey;
+  RefPtr<CryptoKey> mKey;
   size_t mLength;
   CK_MECHANISM_TYPE mMechanism;
   CryptoBuffer mKeyData;
@@ -2644,7 +2643,7 @@ public:
   }
 
 protected:
-  nsRefPtr<ImportSymmetricKeyTask> mTask;
+  RefPtr<ImportSymmetricKeyTask> mTask;
   bool mResolved;
 
 private:
@@ -2888,7 +2887,7 @@ public:
   }
 
 private:
-  nsRefPtr<KeyEncryptTask> mTask;
+  RefPtr<KeyEncryptTask> mTask;
   bool mResolved;
 
   virtual nsresult AfterCrypto() override {
@@ -2939,7 +2938,7 @@ public:
   {}
 
 private:
-  nsRefPtr<ImportKeyTask> mTask;
+  RefPtr<ImportKeyTask> mTask;
   bool mResolved;
 
   virtual void Resolve() override
@@ -3355,7 +3354,7 @@ WebCryptoTask::CreateUnwrapKeyTask(JSContext* aCx,
   }
 
   CryptoOperationData dummy;
-  nsRefPtr<ImportKeyTask> importTask;
+  RefPtr<ImportKeyTask> importTask;
   if (keyAlgName.EqualsASCII(WEBCRYPTO_ALG_AES_CBC) ||
       keyAlgName.EqualsASCII(WEBCRYPTO_ALG_AES_CTR) ||
       keyAlgName.EqualsASCII(WEBCRYPTO_ALG_AES_GCM) ||

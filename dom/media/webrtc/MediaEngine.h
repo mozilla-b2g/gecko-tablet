@@ -63,12 +63,12 @@ public:
   /* Populate an array of video sources in the nsTArray. Also include devices
    * that are currently unavailable. */
   virtual void EnumerateVideoDevices(dom::MediaSourceEnum,
-                                     nsTArray<nsRefPtr<MediaEngineVideoSource> >*) = 0;
+                                     nsTArray<RefPtr<MediaEngineVideoSource> >*) = 0;
 
   /* Populate an array of audio sources in the nsTArray. Also include devices
    * that are currently unavailable. */
   virtual void EnumerateAudioDevices(dom::MediaSourceEnum,
-                                     nsTArray<nsRefPtr<MediaEngineAudioSource> >*) = 0;
+                                     nsTArray<RefPtr<MediaEngineAudioSource> >*) = 0;
 
   virtual void Shutdown() = 0;
 
@@ -188,9 +188,21 @@ protected:
   // Only class' own members can be initialized in constructor initializer list.
   explicit MediaEngineSource(MediaEngineState aState)
     : mState(aState)
+#ifdef DEBUG
+    , mOwningThread(PR_GetCurrentThread())
+#endif
     , mHasFakeTracks(false)
   {}
+
+  void AssertIsOnOwningThread()
+  {
+    MOZ_ASSERT(PR_GetCurrentThread() == mOwningThread);
+  }
+
   MediaEngineState mState;
+#ifdef DEBUG
+  PRThread* mOwningThread;
+#endif
   bool mHasFakeTracks;
 };
 

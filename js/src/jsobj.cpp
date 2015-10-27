@@ -967,14 +967,14 @@ CreateThisForFunctionWithGroup(JSContext* cx, HandleObjectGroup group,
 }
 
 JSObject*
-js::CreateThisForFunctionWithProto(JSContext* cx, HandleObject callee, HandleObject proto,
-                                   NewObjectKind newKind /* = GenericObject */)
+js::CreateThisForFunctionWithProto(JSContext* cx, HandleObject callee, HandleObject newTarget,
+                                   HandleObject proto, NewObjectKind newKind /* = GenericObject */)
 {
     RootedObject res(cx);
 
     if (proto) {
         RootedObjectGroup group(cx, ObjectGroup::defaultNewGroup(cx, nullptr, TaggedProto(proto),
-                                                                 &callee->as<JSFunction>()));
+                                                                 newTarget));
         if (!group)
             return nullptr;
 
@@ -986,7 +986,7 @@ js::CreateThisForFunctionWithProto(JSContext* cx, HandleObject callee, HandleObj
                 // The script was analyzed successfully and may have changed
                 // the new type table, so refetch the group.
                 group = ObjectGroup::defaultNewGroup(cx, nullptr, TaggedProto(proto),
-                                                     &callee->as<JSFunction>());
+                                                     newTarget);
                 MOZ_ASSERT(group && group->newScript());
             }
         }
@@ -1007,15 +1007,16 @@ js::CreateThisForFunctionWithProto(JSContext* cx, HandleObject callee, HandleObj
 }
 
 JSObject*
-js::CreateThisForFunction(JSContext* cx, HandleObject callee, NewObjectKind newKind)
+js::CreateThisForFunction(JSContext* cx, HandleObject callee, HandleObject newTarget,
+                          NewObjectKind newKind)
 {
     RootedValue protov(cx);
-    if (!GetProperty(cx, callee, callee, cx->names().prototype, &protov))
+    if (!GetProperty(cx, newTarget, newTarget, cx->names().prototype, &protov))
         return nullptr;
     RootedObject proto(cx);
     if (protov.isObject())
         proto = &protov.toObject();
-    JSObject* obj = CreateThisForFunctionWithProto(cx, callee, proto, newKind);
+    JSObject* obj = CreateThisForFunctionWithProto(cx, callee, newTarget, proto, newKind);
 
     if (obj && newKind == SingletonObject) {
         RootedPlainObject nobj(cx, &obj->as<PlainObject>());
@@ -2228,11 +2229,17 @@ js::LookupNameUnqualified(JSContext* cx, HandlePropertyName name, HandleObject s
             break;
     }
 
-    // See note above UninitializedLexicalObject.
-    if (pobj == scope && IsUninitializedLexicalSlot(scope, shape)) {
-        scope = UninitializedLexicalObject::create(cx, scope);
-        if (!scope)
-            return false;
+    // See note above RuntimeLexicalErrorObject.
+    if (pobj == scope) {
+        if (IsUninitializedLexicalSlot(scope, shape)) {
+            scope = RuntimeLexicalErrorObject::create(cx, scope, JSMSG_UNINITIALIZED_LEXICAL);
+            if (!scope)
+                return false;
+        } else if (scope->is<ScopeObject>() && !scope->is<DeclEnvObject>() && !shape->writable()) {
+            scope = RuntimeLexicalErrorObject::create(cx, scope, JSMSG_BAD_CONST_ASSIGN);
+            if (!scope)
+                return false;
+        }
     }
 
     objp.set(scope);
@@ -2466,6 +2473,15 @@ js::SetPrototype(JSContext* cx, HandleObject obj, HandleObject proto, JS::Object
     if (!extensible)
         return result.fail(JSMSG_CANT_SET_PROTO);
 
+    // If this is a global object, resolve the Object class so that its
+    // [[Prototype]] chain is always properly immutable, even in the presence
+    // of lazy standard classes.
+    if (obj->is<GlobalObject>()) {
+        Rooted<GlobalObject*> global(cx, &obj->as<GlobalObject>());
+        if (!GlobalObject::ensureConstructor(cx, global, JSProto_Object))
+            return false;
+    }
+
     /*
      * ES6 9.1.2 step 6 forbids generating cyclical prototype chains. But we
      * have to do this comparison on the observable outer objects, not on the
@@ -2549,15 +2565,6 @@ js::GetOwnPropertyDescriptor(JSContext* cx, HandleObject obj, HandleId id,
             desc.assertCompleteIfFound();
         return ok;
     }
-
-#ifndef RELEASE_BUILD
-    if (obj->is<RegExpObject>() && id == NameToId(cx->names().source)) {
-        if (JSScript* script = cx->currentScript()) {
-            const char* filename = script->filename();
-            cx->compartment()->addTelemetry(filename, JSCompartment::RegExpSourceProperty);
-        }
-    }
-#endif
 
     RootedNativeObject nobj(cx, obj.as<NativeObject>());
     RootedShape shape(cx);
@@ -3340,6 +3347,7 @@ JSObject::dump()
     if (obj->hasUncacheableProto()) fprintf(stderr, " has_uncacheable_proto");
     if (obj->hadElementsAccess()) fprintf(stderr, " had_elements_access");
     if (obj->wasNewScriptCleared()) fprintf(stderr, " new_script_cleared");
+    if (!obj->hasLazyPrototype() && obj->nonLazyPrototypeIsImmutable()) fprintf(stderr, " immutable_prototype");
 
     if (obj->isNative()) {
         NativeObject* nobj = &obj->as<NativeObject>();
@@ -3503,8 +3511,15 @@ js::DumpBacktrace(JSContext* cx)
         const char* filename = JS_GetScriptFilename(i.script());
         unsigned line = PCToLineNumber(i.script(), i.pc());
         JSScript* script = i.script();
-        sprinter.printf("#%d %14p   %s:%d (%p @ %d)\n",
-                        depth, (i.isJit() ? 0 : i.interpFrame()), filename, line,
+        char frameType =
+            i.isInterp() ? 'i' :
+            i.isBaseline() ? 'b' :
+            i.isIon() ? 'I' :
+            i.isAsmJS() ? 'A' :
+            '?';
+
+        sprinter.printf("#%d %14p %c   %s:%d (%p @ %d)\n",
+                        depth, i.rawFramePtr(), frameType, filename, line,
                         script, script->pcToOffset(i.pc()));
     }
     fprintf(stdout, "%s", sprinter.string());
@@ -3711,11 +3726,15 @@ JSObject::traceChildren(JSTracer* trc)
             GetObjectSlotNameFunctor func(nobj);
             JS::AutoTracingDetails ctx(trc, func);
             JS::AutoTracingIndex index(trc);
-            for (uint32_t i = 0; i < nobj->slotSpan(); ++i) {
+            // Tracing can mutate the target but cannot change the slot count,
+            // but the compiler has no way of knowing this.
+            const uint32_t nslots = nobj->slotSpan();
+            for (uint32_t i = 0; i < nslots; ++i) {
                 TraceManuallyBarrieredEdge(trc, nobj->getSlotRef(i).unsafeUnbarrieredForTracing(),
                                            "object slot");
                 ++index;
             }
+            MOZ_ASSERT(nslots == nobj->slotSpan());
         }
 
         do {

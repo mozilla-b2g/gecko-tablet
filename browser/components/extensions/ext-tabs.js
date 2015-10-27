@@ -1,7 +1,15 @@
-XPCOMUtils.defineLazyModuleGetter(this, "NewTabURL",
-                                  "resource:///modules/NewTabURL.jsm");
+XPCOMUtils.defineLazyServiceGetter(this, "aboutNewTabService",
+                                   "@mozilla.org/browser/aboutnewtab-service;1",
+                                   "nsIAboutNewTabService");
+
+XPCOMUtils.defineLazyModuleGetter(this, "MatchPattern",
+                                  "resource://gre/modules/MatchPattern.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "Services",
+                                  "resource://gre/modules/Services.jsm");
 
 Cu.import("resource://gre/modules/ExtensionUtils.jsm");
+
 var {
   EventManager,
   ignoreEvent,
@@ -246,7 +254,7 @@ extensions.registerAPI((extension, context) => {
           createProperties = {};
         }
 
-        let url = createProperties.url || NewTabURL.get();
+        let url = createProperties.url || aboutNewTabService.newTabURL;
         url = extension.baseURI.resolve(url);
 
         function createInWindow(window) {
@@ -380,8 +388,13 @@ extensions.registerAPI((extension, context) => {
           queryInfo = {};
         }
 
+        let pattern = null;
+        if (queryInfo.url) {
+          pattern = new MatchPattern(queryInfo.url);
+        }
+
         function matches(window, tab) {
-          let props = ["active", "pinned", "highlighted", "status", "title", "url", "index"];
+          let props = ["active", "pinned", "highlighted", "status", "title", "index"];
           for (let prop of props) {
             if (prop in queryInfo && queryInfo[prop] != tab[prop]) {
               return false;
@@ -415,6 +428,10 @@ extensions.registerAPI((extension, context) => {
             if (queryInfo.currentWindow != eq) {
               return false;
             }
+          }
+
+          if (pattern && !pattern.matches(Services.io.newURI(tab.url, null, null))) {
+            return false;
           }
 
           return true;
@@ -493,6 +510,10 @@ extensions.registerAPI((extension, context) => {
 
       sendMessage: function(tabId, message, options, responseCallback) {
         let tab = TabManager.getTab(tabId);
+        if (!tab) {
+          // ignore sendMessage to non existent tab id
+          return;
+        }
         let mm = tab.linkedBrowser.messageManager;
 
         let recipient = {extensionId: extension.id};

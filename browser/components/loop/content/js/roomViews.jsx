@@ -52,7 +52,7 @@ loop.roomViews = (function(mozL10n) {
       // stopListening doesn't nuke the active listeners during a event
       // processing.
       if (this.isMounted()) {
-        this.setState({error: this.props.roomStore.getStoreState("error")});
+        this.setState({ error: this.props.roomStore.getStoreState("error") });
       }
     },
 
@@ -61,7 +61,7 @@ loop.roomViews = (function(mozL10n) {
       // stopListening doesn't nuke the active listeners during a event
       // processing.
       if (this.isMounted()) {
-        this.setState({savingContext: this.props.roomStore.getStoreState("savingContext")});
+        this.setState({ savingContext: this.props.roomStore.getStoreState("savingContext") });
       }
     },
 
@@ -76,10 +76,48 @@ loop.roomViews = (function(mozL10n) {
   };
 
   /**
+   * Used to display errors in direct calls and rooms to the user.
+   */
+  var FailureInfoView = React.createClass({
+    propTypes: {
+      failureReason: React.PropTypes.string.isRequired
+    },
+
+    /**
+     * Returns the translated message appropraite to the failure reason.
+     *
+     * @return {String} The translated message for the failure reason.
+     */
+    _getMessage: function() {
+      switch (this.props.failureReason) {
+        case FAILURE_DETAILS.NO_MEDIA:
+        case FAILURE_DETAILS.UNABLE_TO_PUBLISH_MEDIA:
+          return mozL10n.get("no_media_failure_message");
+        case FAILURE_DETAILS.TOS_FAILURE:
+          return mozL10n.get("tos_failure_message",
+            { clientShortname: mozL10n.get("clientShortname2") });
+        case FAILURE_DETAILS.ICE_FAILED:
+          return mozL10n.get("ice_failure_message");
+        default:
+          return mozL10n.get("generic_failure_message");
+      }
+    },
+
+    render: function() {
+      return (
+        <div className="failure-info">
+          <div className="failure-info-logo" />
+          <h2 className="failure-info-message">{this._getMessage()}</h2>
+        </div>
+      );
+    }
+  });
+
+  /**
    * Something went wrong view. Displayed when there's a big problem.
    */
   var RoomFailureView = React.createClass({
-    mixins: [ sharedMixins.AudioMixin ],
+    mixins: [sharedMixins.AudioMixin],
 
     propTypes: {
       dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired,
@@ -97,7 +135,6 @@ loop.roomViews = (function(mozL10n) {
 
     render: function() {
       var settingsMenuItems = [
-        { id: "feedback" },
         { id: "help" }
       ];
 
@@ -110,8 +147,7 @@ loop.roomViews = (function(mozL10n) {
 
       return (
         <div className="room-failure">
-          <loop.conversationViews.FailureInfoView
-            failureReason={this.props.failureReason} />
+          <FailureInfoView failureReason={this.props.failureReason} />
           <div className="btn-group call-action-group">
             <button className="btn btn-info btn-rejoin"
                     onClick={this.handleRejoinCall}>
@@ -248,7 +284,7 @@ loop.roomViews = (function(mozL10n) {
         from: "conversation"
       }));
 
-      this.setState({copiedUrl: true});
+      this.setState({ copiedUrl: true });
       setTimeout(this.resetTriggeredButtons, this.constructor.TRIGGERED_RESET_DELAY);
     },
 
@@ -257,7 +293,7 @@ loop.roomViews = (function(mozL10n) {
      */
     resetTriggeredButtons: function() {
       if (this.state.copiedUrl) {
-        this.setState({copiedUrl: false});
+        this.setState({ copiedUrl: false });
       }
     },
 
@@ -290,7 +326,7 @@ loop.roomViews = (function(mozL10n) {
       return (
         <div className="room-invitation-overlay">
           <div className="room-invitation-content">
-            <p className={cx({hide: this.props.showEditContext})}>
+            <p className={cx({ hide: this.props.showEditContext })}>
               {mozL10n.get("invite_header_text2")}
             </p>
           </div>
@@ -506,8 +542,8 @@ loop.roomViews = (function(mozL10n) {
       var availableContext = this.state.availableContext;
       return (
         <div className="room-context">
-          <p className={cx({"error": !!this.props.error,
-                            "error-display-area": true})}>
+          <p className={cx({ "error": !!this.props.error,
+                            "error-display-area": true })}>
             {mozL10n.get("rooms_change_failed_label")}
           </p>
           <h2 className="room-context-header">{mozL10n.get("context_inroom_header")}</h2>
@@ -569,7 +605,6 @@ loop.roomViews = (function(mozL10n) {
 
     getInitialState: function() {
       return {
-        contextEnabled: this.props.mozLoop.getLoopPref("contextInConversations.enabled"),
         showEditContext: false
       };
     },
@@ -639,7 +674,7 @@ loop.roomViews = (function(mozL10n) {
      *     that returns an enum
      */
     shouldRenderRemoteVideo: function() {
-      switch(this.state.roomState) {
+      switch (this.state.roomState) {
         case ROOM_STATES.HAS_PARTICIPANTS:
           if (this.state.remoteVideoEnabled) {
             return true;
@@ -681,7 +716,7 @@ loop.roomViews = (function(mozL10n) {
      * @returns {boolean}
      * @private
      */
-    _isLocalLoading: function () {
+    _isLocalLoading: function() {
       return this.state.roomState === ROOM_STATES.MEDIA_WAIT &&
              !this.state.localSrcMediaElement;
     },
@@ -730,10 +765,10 @@ loop.roomViews = (function(mozL10n) {
       };
 
       var shouldRenderInvitationOverlay = this._shouldRenderInvitationOverlay();
-      var shouldRenderEditContextView = this.state.contextEnabled && this.state.showEditContext;
+      var shouldRenderEditContextView = this.state.showEditContext;
       var roomData = this.props.roomStore.getStoreState("activeRoom");
 
-      switch(this.state.roomState) {
+      switch (this.state.roomState) {
         case ROOM_STATES.FAILED:
         case ROOM_STATES.FULL: {
           // Note: While rooms are set to hold a maximum of 2 participants, the
@@ -755,10 +790,9 @@ loop.roomViews = (function(mozL10n) {
             {
               id: "edit",
               enabled: !this.state.showEditContext,
-              visible: this.state.contextEnabled,
+              visible: true,
               onClick: this.handleEditContextClick
             },
-            { id: "feedback" },
             { id: "help" }
           ];
           return (
@@ -781,7 +815,7 @@ loop.roomViews = (function(mozL10n) {
                 showContextRoomName={false}
                 useDesktopPaths={true}>
                 <sharedViews.ConversationToolbar
-                  audio={{enabled: !this.state.audioMuted, visible: true}}
+                  audio={{ enabled: !this.state.audioMuted, visible: true }}
                   dispatcher={this.props.dispatcher}
                   hangup={this.leaveRoom}
                   mozLoop={this.props.mozLoop}
@@ -790,7 +824,7 @@ loop.roomViews = (function(mozL10n) {
                   settingsMenuItems={settingsMenuItems}
                   show={!shouldRenderEditContextView}
                   showHangup={this.props.chatWindowDetached}
-                  video={{enabled: !this.state.videoMuted, visible: true}} />
+                  video={{ enabled: !this.state.videoMuted, visible: true }} />
                 <DesktopRoomInvitationView
                   dispatcher={this.props.dispatcher}
                   error={this.state.error}
@@ -820,6 +854,7 @@ loop.roomViews = (function(mozL10n) {
 
   return {
     ActiveRoomStoreMixin: ActiveRoomStoreMixin,
+    FailureInfoView: FailureInfoView,
     RoomFailureView: RoomFailureView,
     SocialShareDropdown: SocialShareDropdown,
     DesktopRoomEditContextView: DesktopRoomEditContextView,

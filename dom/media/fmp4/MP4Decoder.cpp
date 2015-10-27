@@ -37,7 +37,8 @@ namespace mozilla {
 #undef MP4_READER_DORMANT_HEURISTIC
 #endif
 
-MP4Decoder::MP4Decoder()
+MP4Decoder::MP4Decoder(MediaDecoderOwner* aOwner)
+  : MediaDecoder(aOwner)
 {
 #if defined(MP4_READER_DORMANT_HEURISTIC)
   mDormantSupported = Preferences::GetBool("media.decoder.heuristic.dormant.enabled", false);
@@ -46,7 +47,10 @@ MP4Decoder::MP4Decoder()
 
 MediaDecoderStateMachine* MP4Decoder::CreateStateMachine()
 {
-  MediaDecoderReader* reader = new MediaFormatReader(this, new MP4Demuxer(GetResource()));
+  MediaDecoderReader* reader =
+    new MediaFormatReader(this,
+                          new MP4Demuxer(GetResource()),
+                          GetVideoFrameContainer());
 
   return new MediaDecoderStateMachine(this, reader);
 }
@@ -98,17 +102,16 @@ MP4Decoder::CanHandleMediaType(const nsACString& aMIMETypeExcludingCodecs,
   // etc output).
   const bool isMP4Audio = aMIMETypeExcludingCodecs.EqualsASCII("audio/mp4") ||
                           aMIMETypeExcludingCodecs.EqualsASCII("audio/x-m4a");
-  const bool isMP4Video = aMIMETypeExcludingCodecs.EqualsASCII("video/mp4") ||
-                          aMIMETypeExcludingCodecs.EqualsASCII("video/x-m4v");
+  const bool isMP4Video =
+  // On B2G, treat 3GPP as MP4 when Gonk PDM is available.
+#ifdef MOZ_GONK_MEDIACODEC
+    aMIMETypeExcludingCodecs.EqualsASCII(VIDEO_3GPP) ||
+#endif
+    aMIMETypeExcludingCodecs.EqualsASCII("video/mp4") ||
+    aMIMETypeExcludingCodecs.EqualsASCII("video/x-m4v");
   if (!isMP4Audio && !isMP4Video) {
     return false;
   }
-
-#ifdef MOZ_GONK_MEDIACODEC
-  if (aMIMETypeExcludingCodecs.EqualsASCII(VIDEO_3GPP)) {
-    return Preferences::GetBool("media.fragmented-mp4.gonk.enabled", false);
-  }
-#endif
 
   nsTArray<nsCString> codecMimes;
   if (aCodecs.IsEmpty()) {
@@ -148,7 +151,7 @@ MP4Decoder::CanHandleMediaType(const nsACString& aMIMETypeExcludingCodecs,
 
   // Verify that we have a PDM that supports the whitelisted types.
   PDMFactory::Init();
-  nsRefPtr<PDMFactory> platform = new PDMFactory();
+  RefPtr<PDMFactory> platform = new PDMFactory();
   for (const nsCString& codecMime : codecMimes) {
     if (!platform->SupportsMimeType(codecMime)) {
       return false;
@@ -177,7 +180,7 @@ MP4Decoder::CanHandleMediaType(const nsAString& aContentType)
 bool
 MP4Decoder::IsEnabled()
 {
-  return Preferences::GetBool("media.fragmented-mp4.enabled");
+  return Preferences::GetBool("media.mp4.enabled");
 }
 
 static const uint8_t sTestH264ExtraData[] = {
@@ -203,8 +206,8 @@ CreateTestH264Decoder(layers::LayersBackend aBackend,
 
   PDMFactory::Init();
 
-  nsRefPtr<PDMFactory> platform = new PDMFactory();
-  nsRefPtr<MediaDataDecoder> decoder(
+  RefPtr<PDMFactory> platform = new PDMFactory();
+  RefPtr<MediaDataDecoder> decoder(
     platform->CreateDecoder(aConfig, nullptr, nullptr, aBackend, nullptr));
 
   return decoder.forget();
@@ -214,7 +217,7 @@ CreateTestH264Decoder(layers::LayersBackend aBackend,
 MP4Decoder::IsVideoAccelerated(layers::LayersBackend aBackend, nsACString& aFailureReason)
 {
   VideoInfo config;
-  nsRefPtr<MediaDataDecoder> decoder(CreateTestH264Decoder(aBackend, config));
+  RefPtr<MediaDataDecoder> decoder(CreateTestH264Decoder(aBackend, config));
   if (!decoder) {
     aFailureReason.AssignLiteral("Failed to create H264 decoder");
     return false;

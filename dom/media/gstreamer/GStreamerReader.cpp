@@ -115,7 +115,7 @@ GStreamerReader::~GStreamerReader()
   NS_ASSERTION(!mPlayBin, "No Shutdown() after Init()");
 }
 
-nsresult GStreamerReader::Init(MediaDecoderReader* aCloneDonor)
+nsresult GStreamerReader::Init()
 {
   GStreamerFormatHelper::Instance();
 
@@ -178,7 +178,7 @@ nsresult GStreamerReader::Init(MediaDecoderReader* aCloneDonor)
   return NS_OK;
 }
 
-nsRefPtr<ShutdownPromise>
+RefPtr<ShutdownPromise>
 GStreamerReader::Shutdown()
 {
   ResetDecode();
@@ -258,7 +258,7 @@ GValueArray *GStreamerReader::ElementFilter(GstURIDecodeBin *aBin,
     GValue *value = &aFactories->values[i];
     GstPluginFeature *factory = GST_PLUGIN_FEATURE(g_value_peek_pointer(value));
 
-    if (!GStreamerFormatHelper::IsPluginFeatureBlacklisted(factory)) {
+    if (!GStreamerFormatHelper::IsPluginFeatureBlocked(factory)) {
       g_value_array_append(filtered, value);
     }
   }
@@ -820,7 +820,7 @@ bool GStreamerReader::DecodeVideoFrame(bool &aKeyFrameSkip,
   }
 #endif
 
-  nsRefPtr<PlanarYCbCrImage> image = GetImageFromBuffer(buffer);
+  RefPtr<PlanarYCbCrImage> image = GetImageFromBuffer(buffer);
   if (!image) {
     /* Ugh, upstream is not calling gst_pad_alloc_buffer(). Fallback to
      * allocating a PlanarYCbCrImage backed GstBuffer here and memcpy.
@@ -832,7 +832,7 @@ bool GStreamerReader::DecodeVideoFrame(bool &aKeyFrameSkip,
   }
 
   int64_t offset = mResource.Tell(); // Estimate location in media.
-  nsRefPtr<VideoData> video = VideoData::CreateFromImage(mInfo.mVideo,
+  RefPtr<VideoData> video = VideoData::CreateFromImage(mInfo.mVideo,
                                                          mDecoder->GetImageContainer(),
                                                          offset, timestamp, duration,
                                                          static_cast<Image*>(image.get()),
@@ -844,7 +844,7 @@ bool GStreamerReader::DecodeVideoFrame(bool &aKeyFrameSkip,
   return true;
 }
 
-nsRefPtr<MediaDecoderReader::SeekPromise>
+RefPtr<MediaDecoderReader::SeekPromise>
 GStreamerReader::Seek(int64_t aTarget, int64_t aEndTime)
 {
   MOZ_ASSERT(OnTaskQueue());
@@ -1206,7 +1206,7 @@ void GStreamerReader::Eos(GstAppSink* aSink)
  * This callback is called while the pipeline is automatically built, after a
  * new element has been added to the pipeline. We use it to find the
  * uridecodebin instance used by playbin and connect to it to apply our
- * blacklist.
+ * block list.
  */
 void
 GStreamerReader::PlayElementAddedCb(GstBin *aBin, GstElement *aElement,
@@ -1243,7 +1243,7 @@ GStreamerReader::ShouldAutoplugFactory(GstElementFactory* aFactory, GstCaps* aCa
 
 /**
  * This is called by uridecodebin (running inside playbin), after it has found
- * candidate factories to continue decoding the stream. We apply the blacklist
+ * candidate factories to continue decoding the stream. We apply the block list
  * here, disallowing known-crashy plugins.
  */
 GValueArray*
@@ -1288,7 +1288,7 @@ void GStreamerReader::NotifyDataArrivedInternal(uint32_t aLength,
 
   IntervalSet<int64_t> intervals = mFilter.NotifyDataArrived(aLength, aOffset);
   for (const auto& interval : intervals) {
-    nsRefPtr<MediaByteBuffer> bytes =
+    RefPtr<MediaByteBuffer> bytes =
       mResource.MediaReadAt(interval.mStart, interval.Length());
     NS_ENSURE_TRUE_VOID(bytes);
     mMP3FrameParser.Parse(bytes->Elements(), interval.Length(), interval.mStart);
@@ -1458,9 +1458,9 @@ void GStreamerReader::ImageDataFromVideoFrame(GstVideoFrame *aFrame,
   aData->mCrSkip = GST_VIDEO_FRAME_COMP_PSTRIDE(aFrame, 2) - 1;
 }
 
-nsRefPtr<PlanarYCbCrImage> GStreamerReader::GetImageFromBuffer(GstBuffer* aBuffer)
+RefPtr<PlanarYCbCrImage> GStreamerReader::GetImageFromBuffer(GstBuffer* aBuffer)
 {
-  nsRefPtr<PlanarYCbCrImage> image = nullptr;
+  RefPtr<PlanarYCbCrImage> image = nullptr;
 
   if (gst_buffer_n_memory(aBuffer) == 1) {
     GstMemory* mem = gst_buffer_peek_memory(aBuffer, 0);
@@ -1481,7 +1481,7 @@ nsRefPtr<PlanarYCbCrImage> GStreamerReader::GetImageFromBuffer(GstBuffer* aBuffe
 
 void GStreamerReader::CopyIntoImageBuffer(GstBuffer* aBuffer,
                                           GstBuffer** aOutBuffer,
-                                          nsRefPtr<PlanarYCbCrImage> &image)
+                                          RefPtr<PlanarYCbCrImage> &image)
 {
   *aOutBuffer = gst_buffer_new_allocate(mAllocator, gst_buffer_get_size(aBuffer), nullptr);
   GstMemory *mem = gst_buffer_peek_memory(*aOutBuffer, 0);

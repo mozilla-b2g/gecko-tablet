@@ -123,6 +123,11 @@ class ModuleCompiler
     bool finishGeneratingFunction(AsmFunction& func, CodeGenerator& codegen,
                                   const AsmJSFunctionLabels& labels)
     {
+        // If we have hit OOM then invariants which we assert below may not
+        // hold, so abort now.
+        if (masm().oom())
+            return false;
+
         // Code range
         unsigned line = func.lineno();
         unsigned column = func.column();
@@ -146,8 +151,8 @@ class ModuleCompiler
 
 #if defined(MOZ_VTUNE) || defined(JS_ION_PERF)
         // Perf and profiling information
-        unsigned begin = labels.begin.offset();
-        unsigned end = labels.end.offset();
+        unsigned begin = labels.nonProfilingEntry.offset();
+        unsigned end = labels.endAfterOOL.offset();
         AsmJSModule::ProfiledFunction profiledFunc(funcName, begin, end, line, column);
         if (!compileResults_->addProfiledFunction(profiledFunc))
             return false;

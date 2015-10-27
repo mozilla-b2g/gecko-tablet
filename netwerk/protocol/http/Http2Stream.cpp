@@ -324,15 +324,27 @@ Http2Stream::WriteSegments(nsAHttpSegmentWriter *writer,
     // won't block other streams. but we should not advance the flow control window
     // so that we'll eventually push back on the sender.
 
+    // with tunnels you need to make sure that this is an underlying connction established
+    // that can be meaningfully giving this signal
+    bool doBuffer = true;
+    if (mIsTunnel) {
+      RefPtr<SpdyConnectTransaction> qiTrans(mTransaction->QuerySpdyConnectTransaction());
+      if (qiTrans) {
+        doBuffer = qiTrans->ConnectedReadyForInput();
+      }
+    }
     // stash this data
-    rv = BufferInput(count, countWritten);
+    if (doBuffer) {
+      rv = BufferInput(count, countWritten);
+      LOG3(("Http2Stream::WriteSegments %p Buffered %X %d\n", this, rv, *countWritten));
+    }
   }
   mSegmentWriter = nullptr;
   return rv;
 }
 
 nsresult
-Http2Stream::MakeOriginURL(const nsACString &origin, nsRefPtr<nsStandardURL> &url)
+Http2Stream::MakeOriginURL(const nsACString &origin, RefPtr<nsStandardURL> &url)
 {
   nsAutoCString scheme;
   nsresult rv = net_ExtractURLScheme(origin, nullptr, nullptr, &scheme);
@@ -342,7 +354,7 @@ Http2Stream::MakeOriginURL(const nsACString &origin, nsRefPtr<nsStandardURL> &ur
 
 nsresult
 Http2Stream::MakeOriginURL(const nsACString &scheme, const nsACString &origin,
-                           nsRefPtr<nsStandardURL> &url)
+                           RefPtr<nsStandardURL> &url)
 {
   url = new nsStandardURL();
   nsresult rv = url->Init(nsIStandardURL::URLTYPE_AUTHORITY,
@@ -365,7 +377,7 @@ Http2Stream::CreatePushHashKey(const nsCString &scheme,
   fullOrigin.AppendLiteral("://");
   fullOrigin.Append(hostHeader);
 
-  nsRefPtr<nsStandardURL> origin;
+  RefPtr<nsStandardURL> origin;
   nsresult rv = Http2Stream::MakeOriginURL(scheme, fullOrigin, origin);
 
   if (NS_SUCCEEDED(rv)) {
@@ -603,7 +615,7 @@ Http2Stream::GenerateOpen()
   messageSize += Http2Session::kFrameHeaderBytes + 5; // frame header + priority overhead in HEADERS frame
   messageSize += (numFrames - 1) * Http2Session::kFrameHeaderBytes; // frame header overhead in CONTINUATION frames
 
-  EnsureBuffer(mTxInlineFrame, dataLength + messageSize,
+  EnsureBuffer(mTxInlineFrame, messageSize,
                mTxInlineFrameUsed, mTxInlineFrameSize);
 
   mTxInlineFrameUsed += messageSize;
@@ -715,9 +727,9 @@ Http2Stream::AdjustInitialWindow()
     return;
   }
 
-  uint8_t *packet = mTxInlineFrame.get() + mTxInlineFrameUsed;
   EnsureBuffer(mTxInlineFrame, mTxInlineFrameUsed + Http2Session::kFrameHeaderBytes + 4,
                mTxInlineFrameUsed, mTxInlineFrameSize);
+  uint8_t *packet = mTxInlineFrame.get() + mTxInlineFrameUsed;
   mTxInlineFrameUsed += Http2Session::kFrameHeaderBytes + 4;
 
   mSession->CreateFrameHeader(packet, 4,
@@ -745,9 +757,9 @@ Http2Stream::AdjustPushedPriority()
   if (mPushSource->RecvdFin() || mPushSource->RecvdReset())
     return;
 
-  uint8_t *packet = mTxInlineFrame.get() + mTxInlineFrameUsed;
   EnsureBuffer(mTxInlineFrame, mTxInlineFrameUsed + Http2Session::kFrameHeaderBytes + 5,
                mTxInlineFrameUsed, mTxInlineFrameSize);
+  uint8_t *packet = mTxInlineFrame.get() + mTxInlineFrameUsed;
   mTxInlineFrameUsed += Http2Session::kFrameHeaderBytes + 5;
 
   mSession->CreateFrameHeader(packet, 5,
@@ -1448,7 +1460,7 @@ Http2Stream::ClearTransactionsBlockedOnTunnel()
 void
 Http2Stream::MapStreamToPlainText()
 {
-  nsRefPtr<SpdyConnectTransaction> qiTrans(mTransaction->QuerySpdyConnectTransaction());
+  RefPtr<SpdyConnectTransaction> qiTrans(mTransaction->QuerySpdyConnectTransaction());
   MOZ_ASSERT(qiTrans);
   mPlainTextTunnel = true;
   qiTrans->ForcePlainText();
@@ -1457,7 +1469,7 @@ Http2Stream::MapStreamToPlainText()
 void
 Http2Stream::MapStreamToHttpConnection()
 {
-  nsRefPtr<SpdyConnectTransaction> qiTrans(mTransaction->QuerySpdyConnectTransaction());
+  RefPtr<SpdyConnectTransaction> qiTrans(mTransaction->QuerySpdyConnectTransaction());
   MOZ_ASSERT(qiTrans);
   qiTrans->MapStreamToHttpConnection(mSocketTransport,
                                      mTransaction->ConnectionInfo());

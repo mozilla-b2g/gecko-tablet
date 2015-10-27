@@ -1745,7 +1745,7 @@ IMMHandler::HandleDocumentFeed(nsWindow* aWindow,
 
   // Get the focused paragraph, we decide that it starts from the previous CRLF
   // (or start of the editor) to the next one (or the end of the editor).
-  int32_t paragraphStart = str.RFind("", false, targetOffset, -1) + 1;
+  int32_t paragraphStart = str.RFind("\n", false, targetOffset, -1) + 1;
   int32_t paragraphEnd =
     str.Find("\r", false, targetOffset + targetLength, -1);
   if (paragraphEnd < 0) {
@@ -1893,7 +1893,7 @@ IMMHandler::DispatchCompositionChangeEvent(nsWindow* aWindow,
     return;
   }
 
-  nsRefPtr<nsWindow> kungFuDeathGrip(aWindow);
+  RefPtr<nsWindow> kungFuDeathGrip(aWindow);
 
   nsIntPoint point(0, 0);
 
@@ -1922,7 +1922,7 @@ IMMHandler::CreateTextRangeArray()
     "CreateTextRangeArray is called when we don't need to fire "
     "compositionchange event");
 
-  nsRefPtr<TextRangeArray> textRangeArray = new TextRangeArray();
+  RefPtr<TextRangeArray> textRangeArray = new TextRangeArray();
 
   TextRange range;
   if (mCompositionString.IsEmpty()) {

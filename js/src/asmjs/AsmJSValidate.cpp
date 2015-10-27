@@ -105,7 +105,7 @@ static inline ParseNode*
 ReturnExpr(ParseNode* pn)
 {
     MOZ_ASSERT(pn->isKind(PNK_RETURN));
-    return BinaryLeft(pn);
+    return UnaryKid(pn);
 }
 
 static inline ParseNode*
@@ -773,6 +773,10 @@ class MOZ_STACK_CLASS ModuleValidator
             MOZ_ASSERT(isAnyArrayView());
             return u.viewInfo.isSharedView_;
         }
+        void setViewIsSharedView() {
+            MOZ_ASSERT(isAnyArrayView());
+            u.viewInfo.isSharedView_ = true;
+        }
         bool isMathFunction() const {
             return which_ == MathBuiltinFunction;
         }
@@ -918,6 +922,7 @@ class MOZ_STACK_CLASS ModuleValidator
     bool                                    canValidateChangeHeap_;
     bool                                    hasChangeHeap_;
     bool                                    supportsSimd_;
+    bool                                    atomicsPresent_;
 
     ScopedJSDeletePtr<ModuleCompileResults> compileResults_;
     DebugOnly<bool>                         finishedFunctionBodies_;
@@ -943,6 +948,7 @@ class MOZ_STACK_CLASS ModuleValidator
         canValidateChangeHeap_(false),
         hasChangeHeap_(false),
         supportsSimd_(cx->jitSupportsSimd()),
+        atomicsPresent_(false),
         compileResults_(nullptr),
         finishedFunctionBodies_(false)
     {
@@ -1155,6 +1161,7 @@ class MOZ_STACK_CLASS ModuleValidator
         Global* global = moduleLifo_.new_<Global>(Global::AtomicsBuiltinFunction);
         if (!global)
             return false;
+        atomicsPresent_ = true;
         global->u.atomicsBuiltinFunc_ = func;
         return globals_.putNew(varName, global);
     }
@@ -1509,6 +1516,14 @@ class MOZ_STACK_CLASS ModuleValidator
     }
 
     void startFunctionBodies() {
+        if (atomicsPresent_) {
+            for (GlobalMap::Range r = globals_.all() ; !r.empty() ; r.popFront()) {
+                Global* g = r.front().value();
+                if (g->isAnyArrayView())
+                    g->setViewIsSharedView();
+            }
+            module_->setViewsAreShared();
+        }
         module_->startFunctionBodies();
     }
     bool finishFunctionBodies(ScopedJSDeletePtr<ModuleCompileResults>* compileResults) {
@@ -1520,6 +1535,7 @@ class MOZ_STACK_CLASS ModuleValidator
             if (!module().addFunctionCounts(compileResults_->functionCount(i)))
                 return false;
         }
+
 #if defined(MOZ_VTUNE) || defined(JS_ION_PERF)
         for (size_t i = 0; i < compileResults_->numProfiledFunctions(); ++i) {
             if (!module().addProfiledFunction(Move(compileResults_->profiledFunction(i))))
@@ -1527,7 +1543,7 @@ class MOZ_STACK_CLASS ModuleValidator
         }
 #endif // defined(MOZ_VTUNE) || defined(JS_ION_PERF)
 
-        // Hand in code ranges, script counts and perf profiling data to the AsmJSModule
+        // Hand in code ranges to the AsmJSModule
         for (size_t i = 0; i < compileResults_->numCodeRanges(); ++i) {
             AsmJSModule::FunctionCodeRange& codeRange = compileResults_->codeRange(i);
             if (!module().addFunctionCodeRange(codeRange.name(), Move(codeRange)))
@@ -6352,8 +6368,7 @@ ParseFunction(ModuleValidator& m, ParseNode** fnOut)
         return false;
 
     Directives newDirectives = directives;
-    AsmJSParseContext funpc(&m.parser(), outerpc, fn, funbox, &newDirectives,
-                            /* blockScopeDepth = */ 0);
+    AsmJSParseContext funpc(&m.parser(), outerpc, fn, funbox, &newDirectives);
     if (!funpc.init(m.parser()))
         return false;
 
@@ -8216,6 +8231,10 @@ EstablishPreconditions(ExclusiveContext* cx, AsmJSParser& parser)
 
     if (parser.pc->isArrowFunction())
         return Warn(parser, JSMSG_USE_ASM_TYPE_FAIL, "Disabled by arrow function context");
+
+    // Class constructors are also methods
+    if (parser.pc->isMethod())
+        return Warn(parser, JSMSG_USE_ASM_TYPE_FAIL, "Disabled by class constructor or method context");
 
     return true;
 }

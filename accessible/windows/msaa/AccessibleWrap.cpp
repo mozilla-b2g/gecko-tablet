@@ -123,7 +123,7 @@ AccessibleWrap::QueryInterface(REFIID iid, void** ppv)
       return E_NOINTERFACE;
 
     *ppv = static_cast<IEnumVARIANT*>(new ChildrenEnumVariant(this));
-  } else if (IID_IServiceProvider == iid && !IsProxy())
+  } else if (IID_IServiceProvider == iid)
     *ppv = new ServiceProvider(this);
   else if (IID_ISimpleDOMNode == iid && !IsProxy()) {
     if (IsDefunct() || (!HasOwnContent() && !IsDoc()))
@@ -658,12 +658,15 @@ AccessibleWrap::get_accFocus(
   if (IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
-  // TODO make this work with proxies.
-  if (IsProxy())
-    return E_NOTIMPL;
-
   // Return the current IAccessible child that has focus
-  Accessible* focusedAccessible = FocusedChild();
+  Accessible* focusedAccessible;
+  if (IsProxy()) {
+    ProxyAccessible* proxy = Proxy()->FocusedChild();
+    focusedAccessible = proxy ? WrapperFor(proxy) : nullptr;
+  } else {
+    focusedAccessible = FocusedChild();
+  }
+
   if (focusedAccessible == this) {
     pvarChild->vt = VT_I4;
     pvarChild->lVal = CHILDID_SELF;
@@ -830,10 +833,20 @@ AccessibleWrap::get_accSelection(VARIANT __RPC_FAR *pvarChildren)
 
   if (IsSelect()) {
     nsAutoTArray<Accessible*, 10> selectedItems;
-    SelectedItems(&selectedItems);
+    if (IsProxy()) {
+      nsTArray<ProxyAccessible*> proxies;
+      Proxy()->SelectedItems(&proxies);
+
+      uint32_t selectedCount = proxies.Length();
+      for (uint32_t i = 0; i < selectedCount; i++) {
+        selectedItems.AppendElement(WrapperFor(proxies[i]));
+      }
+    } else {
+      SelectedItems(&selectedItems);
+    }
 
     // 1) Create and initialize the enumeration
-    nsRefPtr<AccessibleEnumerator> pEnum = new AccessibleEnumerator(selectedItems);
+    RefPtr<AccessibleEnumerator> pEnum = new AccessibleEnumerator(selectedItems);
     pvarChildren->vt = VT_UNKNOWN;    // this must be VT_UNKNOWN for an IEnumVARIANT
     NS_ADDREF(pvarChildren->punkVal = pEnum);
   }
@@ -864,12 +877,13 @@ AccessibleWrap::get_accDefaultAction(
   if (xpAccessible->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
-  // TODO make this work with proxies.
-  if (xpAccessible->IsProxy())
-    return E_NOTIMPL;
-
   nsAutoString defaultAction;
-  xpAccessible->ActionNameAt(0, defaultAction);
+  if (xpAccessible->IsProxy()) {
+    xpAccessible->Proxy()->ActionNameAt(0, defaultAction);
+  } else {
+    xpAccessible->ActionNameAt(0, defaultAction);
+  }
+
   *pszDefaultAction = ::SysAllocStringLen(defaultAction.get(),
                                           defaultAction.Length());
   return *pszDefaultAction ? S_OK : E_OUTOFMEMORY;
@@ -895,26 +909,42 @@ AccessibleWrap::accSelect(
   if (xpAccessible->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
-  // TODO make this work with proxies.
-  if (xpAccessible->IsProxy())
-    return E_NOTIMPL;
-
-  if (flagsSelect & (SELFLAG_TAKEFOCUS|SELFLAG_TAKESELECTION|SELFLAG_REMOVESELECTION))
-  {
-    if (flagsSelect & SELFLAG_TAKEFOCUS)
+  if (flagsSelect & SELFLAG_TAKEFOCUS) {
+    if (xpAccessible->IsProxy()) {
+      xpAccessible->Proxy()->TakeFocus();
+    } else {
       xpAccessible->TakeFocus();
+    }
 
-    if (flagsSelect & SELFLAG_TAKESELECTION)
+    return S_OK;
+  }
+
+  if (flagsSelect & SELFLAG_TAKESELECTION) {
+    if (xpAccessible->IsProxy()) {
+      xpAccessible->Proxy()->TakeSelection();
+    } else {
       xpAccessible->TakeSelection();
+    }
 
-    if (flagsSelect & SELFLAG_ADDSELECTION)
+    return S_OK;
+  }
+
+  if (flagsSelect & SELFLAG_ADDSELECTION) {
+    if (xpAccessible->IsProxy()) {
+      xpAccessible->Proxy()->SetSelected(true);
+    } else {
       xpAccessible->SetSelected(true);
+    }
 
-    if (flagsSelect & SELFLAG_REMOVESELECTION)
+    return S_OK;
+  }
+
+  if (flagsSelect & SELFLAG_REMOVESELECTION) {
+    if (xpAccessible->IsProxy()) {
+      xpAccessible->Proxy()->SetSelected(false);
+    } else {
       xpAccessible->SetSelected(false);
-
-    if (flagsSelect & SELFLAG_EXTENDSELECTION)
-      xpAccessible->ExtendSelection();
+    }
 
     return S_OK;
   }
@@ -1066,11 +1096,15 @@ AccessibleWrap::accHitTest(
   if (IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
-  // TODO make this work with proxies.
-  if (IsProxy())
-    return E_NOTIMPL;
-
-  Accessible* accessible = ChildAtPoint(xLeft, yTop, eDirectChild);
+  Accessible* accessible = nullptr;
+  if (IsProxy()) {
+    ProxyAccessible* proxy = Proxy()->ChildAtPoint(xLeft, yTop, eDirectChild);
+    if (proxy) {
+      accessible = WrapperFor(proxy);
+    }
+  } else {
+    accessible = ChildAtPoint(xLeft, yTop, eDirectChild);
+  }
 
   // if we got a child
   if (accessible) {
@@ -1110,7 +1144,7 @@ AccessibleWrap::accDoDefaultAction(
 
   // TODO make this work with proxies.
   if (xpAccessible->IsProxy())
-    return E_NOTIMPL;
+    return xpAccessible->Proxy()->DoAction(0) ? S_OK : E_INVALIDARG;
 
   return xpAccessible->DoAction(0) ? S_OK : E_INVALIDARG;
 
@@ -1480,7 +1514,7 @@ AccessibleWrap::GetXPAccessibleFor(const VARIANT& aVarChild)
 #endif
 
     // If it is a document then just return an accessible.
-    if (IsDoc())
+    if (child && IsDoc())
       return child;
 
     // Otherwise check whether the accessible is a child (this path works for
@@ -1500,7 +1534,14 @@ AccessibleWrap::GetXPAccessibleFor(const VARIANT& aVarChild)
   if (IsProxy()) {
     DocAccessibleParent* proxyDoc = Proxy()->Document();
     AccessibleWrap* wrapper = GetProxiedAccessibleInSubtree(proxyDoc, id);
+    if (!wrapper)
+      return nullptr;
+
     MOZ_ASSERT(wrapper->IsProxy());
+
+    if (proxyDoc == this->Proxy()) {
+      return wrapper;
+    }
 
     ProxyAccessible* parent = wrapper->Proxy();
     while (parent && parent != proxyDoc) {
@@ -1533,6 +1574,16 @@ AccessibleWrap::GetXPAccessibleFor(const VARIANT& aVarChild)
     }
 
     if (outerDoc->Document() != doc) {
+      continue;
+    }
+
+    if (doc == this) {
+      AccessibleWrap* proxyWrapper =
+        GetProxiedAccessibleInSubtree(remoteDocs->ElementAt(i), id);
+      if (proxyWrapper) {
+        return proxyWrapper;
+      }
+
       continue;
     }
 

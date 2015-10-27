@@ -225,6 +225,7 @@ class FirefoxMediaTestsBase(TestingMixin, VCSToolsScript):
             cmd.append(self.tests)
         if self.e10s:
             cmd.append('--e10s')
+
         return cmd
 
     def run_media_tests(self):
@@ -234,10 +235,17 @@ class FirefoxMediaTestsBase(TestingMixin, VCSToolsScript):
             log_obj=self.log_obj,
             error_list=self.error_list
         )
+
+        env = self.query_env()
+        if (not os.environ.get('MINIDUMP_STACKWALK') and
+                self.query_minidump_stackwalk()):
+            env['MINIDUMP_STACKWALK'] = self.minidump_stackwalk_path
+
         return_code = self.run_command(
             cmd,
             output_timeout=self.test_timeout,
-            output_parser=self.job_result_parser
+            output_parser=self.job_result_parser,
+            env=env
         )
         self.job_result_parser.return_code = return_code
         return self.job_result_parser.status

@@ -64,10 +64,29 @@ Request::RequestContextEnabled(JSContext* aCx, JSObject* aObj)
   return workerPrivate->RequestContextEnabled();
 }
 
+// static
+bool
+Request::RequestCacheEnabled(JSContext* aCx, JSObject* aObj)
+{
+  if (NS_IsMainThread()) {
+    return Preferences::GetBool("dom.requestcache.enabled", false);
+  }
+
+  using namespace workers;
+
+  // Otherwise, check the pref via the WorkerPrivate
+  WorkerPrivate* workerPrivate = GetWorkerPrivateFromContext(aCx);
+  if (!workerPrivate) {
+    return false;
+  }
+
+  return workerPrivate->RequestCacheEnabled();
+}
+
 already_AddRefed<InternalRequest>
 Request::GetInternalRequest()
 {
-  nsRefPtr<InternalRequest> r = mRequest;
+  RefPtr<InternalRequest> r = mRequest;
   return r.forget();
 }
 
@@ -161,7 +180,7 @@ GetRequestURLFromWorker(const GlobalObject& aGlobal, const nsAString& aInput,
   worker->AssertIsOnWorkerThread();
 
   NS_ConvertUTF8toUTF16 baseURL(worker->GetLocationInfo().mHref);
-  nsRefPtr<workers::URL> url =
+  RefPtr<workers::URL> url =
     workers::URL::Constructor(aGlobal, aInput, baseURL, aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     aRv.ThrowTypeError<MSG_INVALID_URL>(&aInput);
@@ -204,12 +223,12 @@ Request::Constructor(const GlobalObject& aGlobal,
                      const RequestInit& aInit, ErrorResult& aRv)
 {
   nsCOMPtr<nsIInputStream> temporaryBody;
-  nsRefPtr<InternalRequest> request;
+  RefPtr<InternalRequest> request;
 
   nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
 
   if (aInput.IsRequest()) {
-    nsRefPtr<Request> inputReq = &aInput.GetAsRequest();
+    RefPtr<Request> inputReq = &aInput.GetAsRequest();
     nsCOMPtr<nsIInputStream> body;
     inputReq->GetBody(getter_AddRefs(body));
     if (body) {
@@ -260,16 +279,6 @@ Request::Constructor(const GlobalObject& aGlobal,
     fallbackCache = RequestCache::Default;
   }
 
-  // CORS-with-forced-preflight is not publicly exposed and should not be
-  // considered a valid value.
-  if (aInit.mMode.WasPassed() &&
-      aInit.mMode.Value() == RequestMode::Cors_with_forced_preflight) {
-    NS_NAMED_LITERAL_STRING(sourceDescription, "'mode' member of RequestInit");
-    NS_NAMED_LITERAL_STRING(value, "cors-with-forced-preflight");
-    NS_NAMED_LITERAL_STRING(type, "RequestMode");
-    aRv.ThrowTypeError<MSG_INVALID_ENUM_VALUE>(&sourceDescription, &value, &type);
-    return nullptr;
-  }
   RequestMode mode = aInit.mMode.WasPassed() ? aInit.mMode.Value() : fallbackMode;
   RequestCredentials credentials =
     aInit.mCredentials.WasPassed() ? aInit.mCredentials.Value()
@@ -316,11 +325,11 @@ Request::Constructor(const GlobalObject& aGlobal,
     request->SetMethod(outMethod);
   }
 
-  nsRefPtr<InternalHeaders> requestHeaders = request->Headers();
+  RefPtr<InternalHeaders> requestHeaders = request->Headers();
 
-  nsRefPtr<InternalHeaders> headers;
+  RefPtr<InternalHeaders> headers;
   if (aInit.mHeaders.WasPassed()) {
-    nsRefPtr<Headers> h = Headers::Constructor(aGlobal, aInit.mHeaders.Value(), aRv);
+    RefPtr<Headers> h = Headers::Constructor(aGlobal, aInit.mHeaders.Value(), aRv);
     if (aRv.Failed()) {
       return nullptr;
     }
@@ -393,11 +402,11 @@ Request::Constructor(const GlobalObject& aGlobal,
     request->SetBody(temporaryBody);
   }
 
-  nsRefPtr<Request> domRequest = new Request(global, request);
+  RefPtr<Request> domRequest = new Request(global, request);
   domRequest->SetMimeType();
 
   if (aInput.IsRequest()) {
-    nsRefPtr<Request> inputReq = &aInput.GetAsRequest();
+    RefPtr<Request> inputReq = &aInput.GetAsRequest();
     nsCOMPtr<nsIInputStream> body;
     inputReq->GetBody(getter_AddRefs(body));
     if (body) {
@@ -416,13 +425,13 @@ Request::Clone(ErrorResult& aRv) const
     return nullptr;
   }
 
-  nsRefPtr<InternalRequest> ir = mRequest->Clone();
+  RefPtr<InternalRequest> ir = mRequest->Clone();
   if (!ir) {
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
   }
 
-  nsRefPtr<Request> request = new Request(mOwner, ir);
+  RefPtr<Request> request = new Request(mOwner, ir);
   return request.forget();
 }
 

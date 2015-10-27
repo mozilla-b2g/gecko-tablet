@@ -518,6 +518,14 @@ auto GeckoAppShell::LockScreenOrientation(int32_t a0) -> void
     return mozilla::jni::Method<LockScreenOrientation_t>::Call(nullptr, nullptr, a0);
 }
 
+constexpr char GeckoAppShell::MarkMessageRead_t::name[];
+constexpr char GeckoAppShell::MarkMessageRead_t::signature[];
+
+auto GeckoAppShell::MarkMessageRead(int32_t a0, bool a1, bool a2, int32_t a3) -> void
+{
+    return mozilla::jni::Method<MarkMessageRead_t>::Call(nullptr, nullptr, a0, a1, a2, a3);
+}
+
 constexpr char GeckoAppShell::MarkURIVisited_t::name[];
 constexpr char GeckoAppShell::MarkURIVisited_t::signature[];
 
@@ -548,30 +556,6 @@ constexpr char GeckoAppShell::NotifyDefaultPrevented_t::signature[];
 auto GeckoAppShell::NotifyDefaultPrevented(bool a0) -> void
 {
     return mozilla::jni::Method<NotifyDefaultPrevented_t>::Call(nullptr, nullptr, a0);
-}
-
-constexpr char GeckoAppShell::NotifyIME_t::name[];
-constexpr char GeckoAppShell::NotifyIME_t::signature[];
-
-auto GeckoAppShell::NotifyIME(int32_t a0) -> void
-{
-    return mozilla::jni::Method<NotifyIME_t>::Call(nullptr, nullptr, a0);
-}
-
-constexpr char GeckoAppShell::NotifyIMEChange_t::name[];
-constexpr char GeckoAppShell::NotifyIMEChange_t::signature[];
-
-auto GeckoAppShell::NotifyIMEChange(mozilla::jni::String::Param a0, int32_t a1, int32_t a2, int32_t a3) -> void
-{
-    return mozilla::jni::Method<NotifyIMEChange_t>::Call(nullptr, nullptr, a0, a1, a2, a3);
-}
-
-constexpr char GeckoAppShell::NotifyIMEContext_t::name[];
-constexpr char GeckoAppShell::NotifyIMEContext_t::signature[];
-
-auto GeckoAppShell::NotifyIMEContext(int32_t a0, mozilla::jni::String::Param a1, mozilla::jni::String::Param a2, mozilla::jni::String::Param a3) -> void
-{
-    return mozilla::jni::Method<NotifyIMEContext_t>::Call(nullptr, nullptr, a0, a1, a2, a3);
 }
 
 constexpr char GeckoAppShell::NotifyWakeLockChanged_t::name[];
@@ -742,6 +726,93 @@ auto GeckoAppShell::VibrateA(mozilla::jni::LongArray::Param a0, int32_t a1) -> v
     return mozilla::jni::Method<VibrateA_t>::Call(nullptr, nullptr, a0, a1);
 }
 
+constexpr char GeckoEditable::name[];
+
+constexpr char GeckoEditable::New_t::name[];
+constexpr char GeckoEditable::New_t::signature[];
+
+auto GeckoEditable::New() -> GeckoEditable::LocalRef
+{
+    return mozilla::jni::Constructor<New_t>::Call(nullptr, nullptr);
+}
+
+constexpr char GeckoEditable::DisposeNative_t::name[];
+constexpr char GeckoEditable::DisposeNative_t::signature[];
+
+constexpr char GeckoEditable::NotifyIME_t::name[];
+constexpr char GeckoEditable::NotifyIME_t::signature[];
+
+auto GeckoEditable::NotifyIME(int32_t a0) const -> void
+{
+    return mozilla::jni::Method<NotifyIME_t>::Call(this, nullptr, a0);
+}
+
+constexpr char GeckoEditable::NotifyIMEContext_t::name[];
+constexpr char GeckoEditable::NotifyIMEContext_t::signature[];
+
+auto GeckoEditable::NotifyIMEContext(int32_t a0, mozilla::jni::String::Param a1, mozilla::jni::String::Param a2, mozilla::jni::String::Param a3) const -> void
+{
+    return mozilla::jni::Method<NotifyIMEContext_t>::Call(this, nullptr, a0, a1, a2, a3);
+}
+
+constexpr char GeckoEditable::OnDestroy_t::name[];
+constexpr char GeckoEditable::OnDestroy_t::signature[];
+
+auto GeckoEditable::OnDestroy() const -> void
+{
+    return mozilla::jni::Method<OnDestroy_t>::Call(this, nullptr);
+}
+
+constexpr char GeckoEditable::OnImeAcknowledgeFocus_t::name[];
+constexpr char GeckoEditable::OnImeAcknowledgeFocus_t::signature[];
+
+constexpr char GeckoEditable::OnImeAddCompositionRange_t::name[];
+constexpr char GeckoEditable::OnImeAddCompositionRange_t::signature[];
+
+constexpr char GeckoEditable::OnImeRemoveComposition_t::name[];
+constexpr char GeckoEditable::OnImeRemoveComposition_t::signature[];
+
+constexpr char GeckoEditable::OnImeReplaceText_t::name[];
+constexpr char GeckoEditable::OnImeReplaceText_t::signature[];
+
+constexpr char GeckoEditable::OnImeSetSelection_t::name[];
+constexpr char GeckoEditable::OnImeSetSelection_t::signature[];
+
+constexpr char GeckoEditable::OnImeSynchronize_t::name[];
+constexpr char GeckoEditable::OnImeSynchronize_t::signature[];
+
+constexpr char GeckoEditable::OnImeUpdateComposition_t::name[];
+constexpr char GeckoEditable::OnImeUpdateComposition_t::signature[];
+
+constexpr char GeckoEditable::OnKeyEvent_t::name[];
+constexpr char GeckoEditable::OnKeyEvent_t::signature[];
+
+constexpr char GeckoEditable::OnSelectionChange_t::name[];
+constexpr char GeckoEditable::OnSelectionChange_t::signature[];
+
+auto GeckoEditable::OnSelectionChange(int32_t a0, int32_t a1) const -> void
+{
+    return mozilla::jni::Method<OnSelectionChange_t>::Call(this, nullptr, a0, a1);
+}
+
+constexpr char GeckoEditable::OnTextChange_t::name[];
+constexpr char GeckoEditable::OnTextChange_t::signature[];
+
+auto GeckoEditable::OnTextChange(mozilla::jni::String::Param a0, int32_t a1, int32_t a2, int32_t a3) const -> void
+{
+    return mozilla::jni::Method<OnTextChange_t>::Call(this, nullptr, a0, a1, a2, a3);
+}
+
+constexpr char GeckoEditable::OnViewChange_t::name[];
+constexpr char GeckoEditable::OnViewChange_t::signature[];
+
+auto GeckoEditable::OnViewChange(mozilla::jni::Object::Param a0) const -> void
+{
+    return mozilla::jni::Method<OnViewChange_t>::Call(this, nullptr, a0);
+}
+
+constexpr char GeckoEditableListener::name[];
+
 constexpr char GeckoJavaSampler::name[];
 
 constexpr char GeckoJavaSampler::GetFrameNameJavaProfilingWrapper_t::name[];
@@ -828,6 +899,12 @@ constexpr char GeckoSmsManager::NotifySmsDeleted_t::signature[];
 
 constexpr char GeckoSmsManager::NotifySmsDelivery_t::name[];
 constexpr char GeckoSmsManager::NotifySmsDelivery_t::signature[];
+
+constexpr char GeckoSmsManager::NotifySmsMarkAsReadFailed_t::name[];
+constexpr char GeckoSmsManager::NotifySmsMarkAsReadFailed_t::signature[];
+
+constexpr char GeckoSmsManager::NotifySmsMarkedAsRead_t::name[];
+constexpr char GeckoSmsManager::NotifySmsMarkedAsRead_t::signature[];
 
 constexpr char GeckoSmsManager::NotifySmsReceived_t::name[];
 constexpr char GeckoSmsManager::NotifySmsReceived_t::signature[];
@@ -1025,11 +1102,17 @@ auto GeckoView::Window::New() -> Window::LocalRef
     return mozilla::jni::Constructor<New_t>::Call(nullptr, nullptr);
 }
 
+constexpr char GeckoView::Window::Close_t::name[];
+constexpr char GeckoView::Window::Close_t::signature[];
+
 constexpr char GeckoView::Window::DisposeNative_t::name[];
 constexpr char GeckoView::Window::DisposeNative_t::signature[];
 
 constexpr char GeckoView::Window::Open_t::name[];
 constexpr char GeckoView::Window::Open_t::signature[];
+
+constexpr char GeckoView::Window::SetLayerClient_t::name[];
+constexpr char GeckoView::Window::SetLayerClient_t::signature[];
 
 constexpr char PrefsHelper::name[];
 
@@ -1548,14 +1631,6 @@ constexpr char SQLiteBridgeException::New2_t::signature[];
 auto SQLiteBridgeException::New(mozilla::jni::String::Param a0) -> SQLiteBridgeException::LocalRef
 {
     return mozilla::jni::Constructor<New2_t>::Call(nullptr, nullptr, a0);
-}
-
-constexpr char SQLiteBridgeException::SerialVersionUID_t::name[];
-constexpr char SQLiteBridgeException::SerialVersionUID_t::signature[];
-
-auto SQLiteBridgeException::SerialVersionUID() -> int64_t
-{
-    return mozilla::jni::Field<SerialVersionUID_t>::Get(nullptr, nullptr);
 }
 
 constexpr char Clipboard::name[];

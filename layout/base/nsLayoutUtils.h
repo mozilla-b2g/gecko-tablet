@@ -72,6 +72,7 @@ class Element;
 class HTMLImageElement;
 class HTMLCanvasElement;
 class HTMLVideoElement;
+class Selection;
 } // namespace dom
 namespace gfx {
 struct RectCornerRadii;
@@ -2058,7 +2059,7 @@ public:
     SurfaceFromElementResult();
 
     /* mSourceSurface will contain the resulting surface, or will be nullptr on error */
-    mozilla::RefPtr<SourceSurface> mSourceSurface;
+    RefPtr<SourceSurface> mSourceSurface;
     /* Contains info for drawing when there is no mSourceSurface. */
     DirectDrawInfo mDrawInfo;
 
@@ -2652,12 +2653,6 @@ public:
                                                 RepaintMode aRepaintMode);
 
   /**
-   * Return true if GetOrMaybeCreateDisplayPort would create a displayport.
-   */
-  static bool WantDisplayPort(const nsDisplayListBuilder* aBuilder,
-                              nsIFrame* aScrollFrame);
-
-  /**
    * Get the display port for |aScrollFrame|'s content. If |aScrollFrame|
    * WantsAsyncScroll() and we don't have a scrollable displayport yet (as
    * tracked by |aBuilder|), calculate and set a display port. Returns true if
@@ -2761,6 +2756,13 @@ public:
    */
   static void AppendFrameTextContent(nsIFrame* aFrame, nsAString& aResult);
 
+  /**
+   * Takes a selection, and returns selection's bounding rect which is relative
+   * to its root frame.
+   *
+   * @param aSel      Selection to check
+   */
+  static nsRect GetSelectionBoundingRect(mozilla::dom::Selection* aSel);
 private:
   static uint32_t sFontSizeInflationEmPerLine;
   static uint32_t sFontSizeInflationMinTwips;
@@ -2858,6 +2860,17 @@ gfx::Rect NSRectToRect(const nsRect& aRect, double aAppUnitsPerPixel);
  */
 gfx::Rect NSRectToSnappedRect(const nsRect& aRect, double aAppUnitsPerPixel,
                               const gfx::DrawTarget& aSnapDT);
+
+/**
+* Converts, where possible, an nsRect in app units to a Moz2D Rect in pixels
+* (whether those are device pixels or CSS px depends on what the caller
+*  chooses to pass as aAppUnitsPerPixel).
+*
+* If snapping results in a rectangle with zero width or height, the affected
+* coordinates are left unsnapped
+*/
+gfx::Rect NSRectToNonEmptySnappedRect(const nsRect& aRect, double aAppUnitsPerPixel,
+                                      const gfx::DrawTarget& aSnapDT);
 
 void StrokeLineWithSnapping(const nsPoint& aP1, const nsPoint& aP2,
                             int32_t aAppUnitsPerDevPixel,

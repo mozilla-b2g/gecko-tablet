@@ -27,6 +27,7 @@ class BluetoothDaemonAvrcpInterface;
 class BluetoothDaemonGattInterface;
 class BluetoothDaemonHandsfreeInterface;
 class BluetoothDaemonProtocol;
+class BluetoothDaemonSetupInterface;
 class BluetoothDaemonSocketInterface;
 
 class BluetoothDaemonInterface final
@@ -125,8 +126,9 @@ public:
 
   void ReadEnergyInfo(BluetoothResultHandler* aRes) override;
 
-  /* Profile Interfaces */
+  /* Service Interfaces */
 
+  BluetoothSetupInterface* GetBluetoothSetupInterface() override;
   BluetoothSocketInterface* GetBluetoothSocketInterface() override;
   BluetoothHandsfreeInterface* GetBluetoothHandsfreeInterface() override;
   BluetoothA2dpInterface* GetBluetoothA2dpInterface() override;
@@ -155,13 +157,14 @@ private:
   void DispatchError(BluetoothResultHandler* aRes, nsresult aRv);
 
   nsCString mListenSocketName;
-  nsRefPtr<mozilla::ipc::ListenSocket> mListenSocket;
-  nsRefPtr<mozilla::ipc::DaemonSocket> mCmdChannel;
-  nsRefPtr<mozilla::ipc::DaemonSocket> mNtfChannel;
+  RefPtr<mozilla::ipc::ListenSocket> mListenSocket;
+  RefPtr<mozilla::ipc::DaemonSocket> mCmdChannel;
+  RefPtr<mozilla::ipc::DaemonSocket> mNtfChannel;
   nsAutoPtr<BluetoothDaemonProtocol> mProtocol;
 
-  nsTArray<nsRefPtr<BluetoothResultHandler> > mResultHandlerQ;
+  nsTArray<RefPtr<BluetoothResultHandler> > mResultHandlerQ;
 
+  nsAutoPtr<BluetoothDaemonSetupInterface> mSetupInterface;
   nsAutoPtr<BluetoothDaemonSocketInterface> mSocketInterface;
   nsAutoPtr<BluetoothDaemonHandsfreeInterface> mHandsfreeInterface;
   nsAutoPtr<BluetoothDaemonA2dpInterface> mA2dpInterface;

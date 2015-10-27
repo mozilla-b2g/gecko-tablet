@@ -168,8 +168,11 @@ static_assert(MAX_WORKERS_PER_DOMAIN >= 1,
 #define PREF_SERVICEWORKERS_TESTING_ENABLED "dom.serviceWorkers.testing.enabled"
 #define PREF_INTERCEPTION_ENABLED      "dom.serviceWorkers.interception.enabled"
 #define PREF_INTERCEPTION_OPAQUE_ENABLED "dom.serviceWorkers.interception.opaque.enabled"
+#define PREF_OPEN_WINDOW_ENABLED       "dom.serviceWorkers.openWindow.enabled"
 #define PREF_PUSH_ENABLED              "dom.push.enabled"
+#define PREF_REQUESTCACHE_ENABLED      "dom.requestcache.enabled"
 #define PREF_REQUESTCONTEXT_ENABLED    "dom.requestcontext.enabled"
+#define PREF_OFFSCREENCANVAS_ENABLED   "gfx.offscreencanvas.enabled"
 
 namespace {
 
@@ -673,7 +676,7 @@ ContentSecurityPolicyAllows(JSContext* aCx)
       JS_ReportPendingException(aCx);
     }
 
-    nsRefPtr<LogViolationDetailsRunnable> runnable =
+    RefPtr<LogViolationDetailsRunnable> runnable =
         new LogViolationDetailsRunnable(worker, fileName, lineNum);
 
     if (!runnable->Dispatch(aCx)) {
@@ -1082,12 +1085,12 @@ private:
 class WorkerThreadPrimaryRunnable final : public nsRunnable
 {
   WorkerPrivate* mWorkerPrivate;
-  nsRefPtr<WorkerThread> mThread;
+  RefPtr<WorkerThread> mThread;
   JSRuntime* mParentRuntime;
 
   class FinishedRunnable final : public nsRunnable
   {
-    nsRefPtr<WorkerThread> mThread;
+    RefPtr<WorkerThread> mThread;
 
   public:
     explicit FinishedRunnable(already_AddRefed<WorkerThread> aThread)
@@ -1129,7 +1132,7 @@ private:
 
 class WorkerTaskRunnable final : public WorkerRunnable
 {
-  nsRefPtr<WorkerTask> mTask;
+  RefPtr<WorkerTask> mTask;
 
 public:
   WorkerTaskRunnable(WorkerPrivate* aWorkerPrivate, WorkerTask* aTask)
@@ -1325,7 +1328,7 @@ WorkerCrossThreadDispatcher::PostTask(WorkerTask* aTask)
     return false;
   }
 
-  nsRefPtr<WorkerTaskRunnable> runnable =
+  RefPtr<WorkerTaskRunnable> runnable =
     new WorkerTaskRunnable(mWorkerPrivate, aTask);
   return runnable->Dispatch(nullptr);
 }
@@ -1382,7 +1385,7 @@ END_WORKERS_NAMESPACE
 
 struct RuntimeService::IdleThreadInfo
 {
-  nsRefPtr<WorkerThread> mThread;
+  RefPtr<WorkerThread> mThread;
   mozilla::TimeStamp mExpirationTime;
 };
 
@@ -1728,7 +1731,7 @@ RuntimeService::ScheduleWorker(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
     return true;
   }
 
-  nsRefPtr<WorkerThread> thread;
+  RefPtr<WorkerThread> thread;
   {
     MutexAutoLock lock(mMutex);
     if (!mIdleThreadArray.IsEmpty()) {
@@ -1784,7 +1787,7 @@ RuntimeService::ShutdownIdleThreads(nsITimer* aTimer, void* /* aClosure */)
 
   TimeStamp nextExpiration;
 
-  nsAutoTArray<nsRefPtr<WorkerThread>, 20> expiredThreads;
+  nsAutoTArray<RefPtr<WorkerThread>, 20> expiredThreads;
   {
     MutexAutoLock lock(runtime->mMutex);
 
@@ -1796,7 +1799,7 @@ RuntimeService::ShutdownIdleThreads(nsITimer* aTimer, void* /* aClosure */)
         break;
       }
 
-      nsRefPtr<WorkerThread>* thread = expiredThreads.AppendElement();
+      RefPtr<WorkerThread>* thread = expiredThreads.AppendElement();
       thread->swap(info.mThread);
     }
 
@@ -1834,7 +1837,7 @@ RuntimeService::Init()
   // Make sure PBackground actors are connected as soon as possible for the main
   // thread in case workers clone remote blobs here.
   if (!BackgroundChild::GetForCurrentThread()) {
-    nsRefPtr<BackgroundChildCallback> callback = new BackgroundChildCallback();
+    RefPtr<BackgroundChildCallback> callback = new BackgroundChildCallback();
     if (!BackgroundChild::GetOrCreateForCurrentThread(callback)) {
       MOZ_CRASH("Unable to connect PBackground actor for the main thread!");
     }
@@ -1941,6 +1944,10 @@ RuntimeService::Init()
                                   reinterpret_cast<void *>(WORKERPREF_INTERCEPTION_ENABLED))) ||
       NS_FAILED(Preferences::RegisterCallbackAndCall(
                                   WorkerPrefChanged,
+                                  PREF_OPEN_WINDOW_ENABLED,
+                                  reinterpret_cast<void *>(WORKERPREF_OPEN_WINDOW_ENABLED))) ||
+      NS_FAILED(Preferences::RegisterCallbackAndCall(
+                                  WorkerPrefChanged,
                                   PREF_INTERCEPTION_OPAQUE_ENABLED,
                                   reinterpret_cast<void *>(WORKERPREF_INTERCEPTION_OPAQUE_ENABLED))) ||
       NS_FAILED(Preferences::RegisterCallbackAndCall(
@@ -1961,8 +1968,16 @@ RuntimeService::Init()
                                   reinterpret_cast<void *>(WORKERPREF_PUSH))) ||
       NS_FAILED(Preferences::RegisterCallbackAndCall(
                                   WorkerPrefChanged,
+                                  PREF_REQUESTCACHE_ENABLED,
+                                  reinterpret_cast<void *>(WORKERPREF_REQUESTCACHE))) ||
+      NS_FAILED(Preferences::RegisterCallbackAndCall(
+                                  WorkerPrefChanged,
                                   PREF_REQUESTCONTEXT_ENABLED,
                                   reinterpret_cast<void *>(WORKERPREF_REQUESTCONTEXT))) ||
+      NS_FAILED(Preferences::RegisterCallbackAndCall(
+                                  WorkerPrefChanged,
+                                  PREF_OFFSCREENCANVAS_ENABLED,
+                                  reinterpret_cast<void *>(WORKERPREF_OFFSCREENCANVAS))) ||
       NS_FAILED(Preferences::RegisterCallback(LoadRuntimeOptions,
                                               PREF_JS_OPTIONS_PREFIX,
                                               nullptr)) ||
@@ -2101,7 +2116,7 @@ RuntimeService::Cleanup()
 
       // Shut down any idle threads.
       if (!mIdleThreadArray.IsEmpty()) {
-        nsAutoTArray<nsRefPtr<WorkerThread>, 20> idleThreads;
+        nsAutoTArray<RefPtr<WorkerThread>, 20> idleThreads;
 
         uint32_t idleThreadCount = mIdleThreadArray.Length();
         idleThreads.SetLength(idleThreadCount);
@@ -2180,6 +2195,10 @@ RuntimeService::Cleanup()
                                   reinterpret_cast<void *>(WORKERPREF_INTERCEPTION_ENABLED))) ||
         NS_FAILED(Preferences::UnregisterCallback(
                                   WorkerPrefChanged,
+                                  PREF_OPEN_WINDOW_ENABLED,
+                                  reinterpret_cast<void *>(WORKERPREF_OPEN_WINDOW_ENABLED))) ||
+        NS_FAILED(Preferences::UnregisterCallback(
+                                  WorkerPrefChanged,
                                   PREF_SERVICEWORKERS_ENABLED,
                                   reinterpret_cast<void *>(WORKERPREF_SERVICEWORKERS))) ||
         NS_FAILED(Preferences::UnregisterCallback(
@@ -2200,8 +2219,16 @@ RuntimeService::Cleanup()
                                   reinterpret_cast<void *>(WORKERPREF_PUSH))) ||
         NS_FAILED(Preferences::UnregisterCallback(
                                   WorkerPrefChanged,
+                                  PREF_REQUESTCACHE_ENABLED,
+                                  reinterpret_cast<void *>(WORKERPREF_REQUESTCACHE))) ||
+        NS_FAILED(Preferences::UnregisterCallback(
+                                  WorkerPrefChanged,
                                   PREF_REQUESTCONTEXT_ENABLED,
                                   reinterpret_cast<void *>(WORKERPREF_REQUESTCONTEXT))) ||
+        NS_FAILED(Preferences::UnregisterCallback(
+                                  WorkerPrefChanged,
+                                  PREF_OFFSCREENCANVAS_ENABLED,
+                                  reinterpret_cast<void *>(WORKERPREF_OFFSCREENCANVAS))) ||
 #if DUMP_CONTROLLED_BY_PREF
         NS_FAILED(Preferences::UnregisterCallback(
                                   WorkerPrefChanged,
@@ -2487,7 +2514,7 @@ RuntimeService::CreateSharedWorkerFromLoadInfo(JSContext* aCx,
   MOZ_ASSERT(aLoadInfo);
   MOZ_ASSERT(aLoadInfo->mResolvedScriptURI);
 
-  nsRefPtr<WorkerPrivate> workerPrivate;
+  RefPtr<WorkerPrivate> workerPrivate;
   {
     MutexAutoLock lock(mMutex);
 
@@ -2532,12 +2559,12 @@ RuntimeService::CreateSharedWorkerFromLoadInfo(JSContext* aCx,
 
   // We don't actually care about this MessageChannel, but we use it to 'steal'
   // its 2 connected ports.
-  nsRefPtr<MessageChannel> channel = MessageChannel::Constructor(window, rv);
+  RefPtr<MessageChannel> channel = MessageChannel::Constructor(window, rv);
   if (NS_WARN_IF(rv.Failed())) {
     return rv.StealNSResult();
   }
 
-  nsRefPtr<SharedWorker> sharedWorker = new SharedWorker(window, workerPrivate,
+  RefPtr<SharedWorker> sharedWorker = new SharedWorker(window, workerPrivate,
                                                          channel->Port1());
 
   if (!workerPrivate->RegisterSharedWorker(aCx, sharedWorker,
@@ -2776,10 +2803,13 @@ RuntimeService::WorkerPrefChanged(const char* aPrefName, void* aClosure)
 #endif
     case WORKERPREF_INTERCEPTION_ENABLED:
     case WORKERPREF_INTERCEPTION_OPAQUE_ENABLED:
+    case WORKERPREF_OPEN_WINDOW_ENABLED:
     case WORKERPREF_SERVICEWORKERS:
     case WORKERPREF_SERVICEWORKERS_TESTING:
     case WORKERPREF_PUSH:
+    case WORKERPREF_REQUESTCACHE:
     case WORKERPREF_REQUESTCONTEXT:
+    case WORKERPREF_OFFSCREENCANVAS:
       sDefaultPreferences[key] = Preferences::GetBool(aPrefName, false);
       break;
 
@@ -2822,7 +2852,7 @@ LogViolationDetailsRunnable::Run()
     }
   }
 
-  nsRefPtr<MainThreadStopSyncLoopRunnable> response =
+  RefPtr<MainThreadStopSyncLoopRunnable> response =
     new MainThreadStopSyncLoopRunnable(mWorkerPrivate, mSyncLoopTarget.forget(),
                                        true);
   MOZ_ALWAYS_TRUE(response->Dispatch(nullptr));
@@ -2941,7 +2971,7 @@ WorkerThreadPrimaryRunnable::Run()
   nsCOMPtr<nsIThread> mainThread = do_GetMainThread();
   MOZ_ASSERT(mainThread);
 
-  nsRefPtr<FinishedRunnable> finishedRunnable =
+  RefPtr<FinishedRunnable> finishedRunnable =
     new FinishedRunnable(mThread.forget());
   MOZ_ALWAYS_TRUE(NS_SUCCEEDED(mainThread->Dispatch(finishedRunnable,
                                                     NS_DISPATCH_NORMAL)));
@@ -2986,7 +3016,7 @@ WorkerThreadPrimaryRunnable::FinishedRunnable::Run()
 {
   AssertIsOnMainThread();
 
-  nsRefPtr<WorkerThread> thread;
+  RefPtr<WorkerThread> thread;
   mThread.swap(thread);
 
   RuntimeService* rts = RuntimeService::GetService();

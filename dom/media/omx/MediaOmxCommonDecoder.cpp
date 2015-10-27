@@ -23,8 +23,8 @@ namespace mozilla {
 extern PRLogModuleInfo* gMediaDecoderLog;
 #define DECODER_LOG(type, msg) MOZ_LOG(gMediaDecoderLog, type, msg)
 
-MediaOmxCommonDecoder::MediaOmxCommonDecoder()
-  : MediaDecoder()
+MediaOmxCommonDecoder::MediaOmxCommonDecoder(MediaDecoderOwner* aOwner)
+  : MediaDecoder(aOwner)
   , mReader(nullptr)
   , mCanOffloadAudio(false)
   , mFallbackToStateMachine(false)
@@ -46,7 +46,7 @@ MediaOmxCommonDecoder::SetPlatformCanOffloadAudio(bool aCanOffloadAudio)
   GetStateMachine()->DispatchAudioOffloading(true);
 
   // Modify mCanOffloadAudio in the main thread.
-  nsRefPtr<MediaOmxCommonDecoder> self = this;
+  RefPtr<MediaOmxCommonDecoder> self = this;
   nsCOMPtr<nsIRunnable> r = NS_NewRunnableFunction([=] () {
     self->mCanOffloadAudio = true;
   });

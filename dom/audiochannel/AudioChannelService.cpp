@@ -91,7 +91,7 @@ void
 NotifyChannelActive(uint64_t aWindowID, AudioChannel aAudioChannel,
                     bool aActive)
 {
-  nsRefPtr<nsRunnable> runnable =
+  RefPtr<nsRunnable> runnable =
     new NotifyChannelActiveRunnable(aWindowID, aAudioChannel, aActive);
   NS_DispatchToCurrentThread(runnable);
 }
@@ -176,7 +176,7 @@ AudioChannelService::CreateServiceIfNeeded()
 AudioChannelService::GetOrCreate()
 {
   CreateServiceIfNeeded();
-  nsRefPtr<AudioChannelService> service = gAudioChannelService.get();
+  RefPtr<AudioChannelService> service = gAudioChannelService.get();
   return service.forget();
 }
 
@@ -184,12 +184,14 @@ void
 AudioChannelService::Shutdown()
 {
   if (gAudioChannelService) {
-    if (IsParentProcess()) {
-      nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
-      if (obs) {
+    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+    if (obs) {
+      obs->RemoveObserver(gAudioChannelService, "xpcom-shutdown");
+      obs->RemoveObserver(gAudioChannelService, "outer-window-destroyed");
+
+      if (IsParentProcess()) {
         obs->RemoveObserver(gAudioChannelService, "ipc:content-shutdown");
-        obs->RemoveObserver(gAudioChannelService, "xpcom-shutdown");
-        obs->RemoveObserver(gAudioChannelService, "outer-window-destroyed");
+
 #ifdef MOZ_WIDGET_GONK
         // To monitor the volume settings based on audio channel.
         obs->RemoveObserver(gAudioChannelService, "mozsettings-changed");
@@ -216,12 +218,13 @@ AudioChannelService::AudioChannelService()
   , mContentOrNormalChannel(false)
   , mAnyChannel(false)
 {
-  if (IsParentProcess()) {
-    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
-    if (obs) {
+  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+  if (obs) {
+    obs->AddObserver(this, "xpcom-shutdown", false);
+    obs->AddObserver(this, "outer-window-destroyed", false);
+    if (IsParentProcess()) {
       obs->AddObserver(this, "ipc:content-shutdown", false);
-      obs->AddObserver(this, "xpcom-shutdown", false);
-      obs->AddObserver(this, "outer-window-destroyed", false);
+
 #ifdef MOZ_WIDGET_GONK
       // To monitor the volume settings based on audio channel.
       obs->AddObserver(this, "mozsettings-changed", false);
@@ -262,7 +265,7 @@ AudioChannelService::RegisterAudioChannelAgent(AudioChannelAgent* aAgent,
   // If this is the first agent for this window, we must notify the observers.
   if (aNotifyPlayback == nsIAudioChannelAgent::AUDIO_AGENT_NOTIFY &&
       winData->mAgents.Length() == 1) {
-    nsRefPtr<MediaPlaybackRunnable> runnable =
+    RefPtr<MediaPlaybackRunnable> runnable =
       new MediaPlaybackRunnable(aAgent->Window(), true /* active */);
     NS_DispatchToCurrentThread(runnable);
   }
@@ -306,7 +309,7 @@ AudioChannelService::UnregisterAudioChannelAgent(AudioChannelAgent* aAgent,
   // If this is the last agent for this window, we must notify the observers.
   if (aNotifyPlayback == nsIAudioChannelAgent::AUDIO_AGENT_NOTIFY &&
       winData->mAgents.IsEmpty()) {
-    nsRefPtr<MediaPlaybackRunnable> runnable =
+    RefPtr<MediaPlaybackRunnable> runnable =
       new MediaPlaybackRunnable(aAgent->Window(), false /* active */);
     NS_DispatchToCurrentThread(runnable);
   }
@@ -770,6 +773,11 @@ AudioChannelService::SetAudioChannelMuted(nsPIDOMWindow* aWindow,
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(aWindow);
   MOZ_ASSERT(aWindow->IsOuterWindow());
+
+  if (aAudioChannel == AudioChannel::System) {
+    // Workaround for bug1183033, system channel type can always playback.
+    return;
+  }
 
   AudioChannelWindow* winData = GetOrCreateWindowData(aWindow);
   winData->mChannels[(uint32_t)aAudioChannel].mMuted = aMuted;

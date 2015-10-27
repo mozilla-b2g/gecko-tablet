@@ -34,6 +34,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "GMPInstallManager",
                                   "resource://gre/modules/GMPInstallManager.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "NewTabUtils",
                                   "resource://gre/modules/NewTabUtils.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "RemoteNewTabUtils",
+                                  "resource:///modules/RemoteNewTabUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "ContentSearch",
                                   "resource:///modules/ContentSearch.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "AboutHome",
@@ -50,6 +52,8 @@ XPCOMUtils.defineLazyServiceGetter(this, "Favicons",
 XPCOMUtils.defineLazyServiceGetter(this, "gDNSService",
                                    "@mozilla.org/network/dns-service;1",
                                    "nsIDNSService");
+XPCOMUtils.defineLazyServiceGetter(this, "WindowsUIUtils",
+                                   "@mozilla.org/windows-ui-utils;1", "nsIWindowsUIUtils");
 XPCOMUtils.defineLazyModuleGetter(this, "LightweightThemeManager",
                                   "resource://gre/modules/LightweightThemeManager.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Pocket",
@@ -185,13 +189,13 @@ XPCOMUtils.defineLazyGetter(this, "PopupNotifications", function () {
 
 XPCOMUtils.defineLazyGetter(this, "DeveloperToolbar", function() {
   let tmp = {};
-  Cu.import("resource:///modules/devtools/client/shared/DeveloperToolbar.jsm", tmp);
+  Cu.import("resource://devtools/client/shared/DeveloperToolbar.jsm", tmp);
   return new tmp.DeveloperToolbar(window, document.getElementById("developer-toolbar"));
 });
 
 XPCOMUtils.defineLazyGetter(this, "BrowserToolboxProcess", function() {
   let tmp = {};
-  Cu.import("resource:///modules/devtools/client/framework/ToolboxProcess.jsm", tmp);
+  Cu.import("resource://devtools/client/framework/ToolboxProcess.jsm", tmp);
   return tmp.BrowserToolboxProcess;
 });
 
@@ -1071,6 +1075,7 @@ var gBrowserInit = {
     }
 
     // Misc. inits.
+    TabletModeUpdater.init();
     CombinedStopReload.init();
     gPrivateBrowsingUI.init();
     TabsInTitlebar.init();
@@ -1558,6 +1563,8 @@ var gBrowserInit = {
     TabsInTitlebar.uninit();
 
     ToolbarIconColor.uninit();
+
+    TabletModeUpdater.uninit();
 
     BrowserOnClick.uninit();
 
@@ -2350,6 +2357,15 @@ function BrowserViewSourceOfDocument(aArgsOrDocument) {
         let browserWindow = RecentWindow.getMostRecentBrowserWindow();
         tabBrowser = browserWindow.gBrowser;
       }
+      // Some internal URLs (such as specific chrome: and about: URLs that are
+      // not yet remote ready) cannot be loaded in a remote browser.  View
+      // source in tab expects the new view source browser's remoteness to match
+      // that of the original URL, so disable remoteness if necessary for this
+      // URL.
+      let contentProcess = Ci.nsIXULRuntime.PROCESS_TYPE_CONTENT
+      let forceNotRemote =
+        gMultiProcessBrowser &&
+        !E10SUtils.canLoadURIInProcess(args.URL, contentProcess);
       // `viewSourceInBrowser` will load the source content from the page
       // descriptor for the tab (when possible) or fallback to the network if
       // that fails.  Either way, the view source module will manage the tab's
@@ -2357,7 +2373,8 @@ function BrowserViewSourceOfDocument(aArgsOrDocument) {
       // requests.
       let tab = tabBrowser.loadOneTab("about:blank", {
         relatedToCurrent: true,
-        inBackground: false
+        inBackground: false,
+        forceNotRemote,
       });
       args.viewSourceBrowser = tabBrowser.getBrowserForTab(tab);
       top.gViewSourceUtils.viewSourceInBrowser(args);
@@ -2743,6 +2760,7 @@ var BrowserOnClick = {
     mm.addMessageListener("Browser:SendSSLErrorReport", this);
     mm.addMessageListener("Browser:SetSSLErrorReportAuto", this);
     mm.addMessageListener("Browser:SSLErrorReportTelemetry", this);
+    mm.addMessageListener("Browser:OverrideWeakCrypto", this);
   },
 
   uninit: function () {
@@ -2753,6 +2771,7 @@ var BrowserOnClick = {
     mm.removeMessageListener("Browser:SendSSLErrorReport", this);
     mm.removeMessageListener("Browser:SetSSLErrorReportAuto", this);
     mm.removeMessageListener("Browser:SSLErrorReportTelemetry", this);
+    mm.removeMessageListener("Browser:OverrideWeakCrypto", this);
   },
 
   handleEvent: function (event) {
@@ -2809,6 +2828,14 @@ var BrowserOnClick = {
         let reportStatus = msg.data.reportStatus;
         Services.telemetry.getHistogramById("TLS_ERROR_REPORT_UI")
           .add(reportStatus);
+      break;
+      case "Browser:OverrideWeakCrypto":
+        let weakCryptoOverride = Cc["@mozilla.org/security/weakcryptooverride;1"]
+                                   .getService(Ci.nsIWeakCryptoOverride);
+        weakCryptoOverride.addWeakCryptoOverride(
+          msg.data.location.hostname,
+          PrivateBrowsingUtils.isBrowserPrivate(gBrowser.selectedBrowser),
+          true /* temporary */);
       break;
     }
   },
@@ -3518,8 +3545,11 @@ const BrowserSearch = {
       if (!aSearchBar || document.activeElement != aSearchBar.textbox.inputField) {
         let url = gBrowser.currentURI.spec.toLowerCase();
         let mm = gBrowser.selectedBrowser.messageManager;
+        let newTabRemoted = Services.prefs.getBoolPref("browser.newtabpage.remote");
         if (url === "about:home" ||
-            (url === "about:newtab" && NewTabUtils.allPages.enabled)) {
+            (url === "about:newtab" &&
+             ((!newTabRemoted && NewTabUtils.allPages.enabled) ||
+              (newTabRemoted && RemoteNewTabUtils.allPages.enabled)))) {
           ContentSearch.focusInput(mm);
         } else {
           openUILinkIn("about:home", "current");
@@ -5382,6 +5412,34 @@ var TabsInTitlebar = {
   }
 };
 
+var TabletModeUpdater = {
+  init() {
+    if (AppConstants.isPlatformAndVersionAtLeast("win", "10")) {
+      this.update(WindowsUIUtils.inTabletMode);
+      Services.obs.addObserver(this, "tablet-mode-change", false);
+    }
+  },
+
+  uninit() {
+    if (AppConstants.isPlatformAndVersionAtLeast("win", "10")) {
+      Services.obs.removeObserver(this, "tablet-mode-change");
+    }
+  },
+
+  observe(subject, topic, data) {
+    this.update(data == "tablet-mode");
+  },
+
+  update(isInTabletMode) {
+    if (isInTabletMode) {
+      document.documentElement.setAttribute("tabletmode", "true");
+    } else {
+      document.documentElement.removeAttribute("tabletmode");
+    }
+    TabsInTitlebar.updateAppearance(true);
+  },
+};
+
 #ifdef CAN_DRAW_IN_TITLEBAR
 function updateTitlebarDisplay() {
 
@@ -5858,38 +5916,79 @@ function UpdateCurrentCharset(target) {
 }
 
 var gPageStyleMenu = {
-
   // This maps from a <browser> element (or, more specifically, a
-  // browser's permanentKey) to a CPOW that gives synchronous access
-  // to the list of style sheets in a content window. The use of the
-  // permanentKey is to avoid issues with docshell swapping.
-  _pageStyleSyncHandlers: new WeakMap(),
+  // browser's permanentKey) to an Object that contains the most recent
+  // information about the browser content's stylesheets. That Object
+  // is populated via the PageStyle:StyleSheets message from the content
+  // process. The Object should have the following structure:
+  //
+  // filteredStyleSheets (Array):
+  //   An Array of objects with a filtered list representing all stylesheets
+  //   that the current page offers. Each object has the following members:
+  //
+  //   title (String):
+  //     The title of the stylesheet
+  //
+  //   disabled (bool):
+  //     Whether or not the stylesheet is currently applied
+  //
+  //   href (String):
+  //     The URL of the stylesheet. Stylesheets loaded via a data URL will
+  //     have this property set to null.
+  //
+  // authorStyleDisabled (bool):
+  //   Whether or not the user currently has "No Style" selected for
+  //   the current page.
+  //
+  // preferredStyleSheetSet (bool):
+  //   Whether or not the user currently has the "Default" style selected
+  //   for the current page.
+  //
+  _pageStyleSheets: new WeakMap(),
 
   init: function() {
     let mm = window.messageManager;
-    mm.addMessageListener("PageStyle:SetSyncHandler", (msg) => {
-      this._pageStyleSyncHandlers.set(msg.target.permanentKey, msg.objects.syncHandler);
+    mm.addMessageListener("PageStyle:StyleSheets", (msg) => {
+      this._pageStyleSheets.set(msg.target.permanentKey, msg.data);
     });
   },
 
-  getAllStyleSheets: function () {
-    let handler = this._pageStyleSyncHandlers.get(gBrowser.selectedBrowser.permanentKey);
-    try {
-      return handler.getAllStyleSheets();
-    } catch (ex) {
-      // In case the child died or timed out.
+  /**
+   * Returns an array of Objects representing stylesheets in a
+   * browser. Note that the pageshow event needs to fire in content
+   * before this information will be available.
+   *
+   * @param browser (optional)
+   *        The <xul:browser> to search for stylesheets. If omitted, this
+   *        defaults to the currently selected tab's browser.
+   * @returns Array
+   *        An Array of Objects representing stylesheets in the browser.
+   *        See the documentation for gPageStyleMenu for a description
+   *        of the Object structure.
+   */
+  getBrowserStyleSheets: function (browser) {
+    if (!browser) {
+      browser = gBrowser.selectedBrowser;
+    }
+
+    let data = this._pageStyleSheets.get(browser.permanentKey);
+    if (!data) {
       return [];
     }
+    return data.filteredStyleSheets;
   },
 
   _getStyleSheetInfo: function (browser) {
-    let handler = this._pageStyleSyncHandlers.get(gBrowser.selectedBrowser.permanentKey);
-    try {
-      return handler.getStyleSheetInfo();
-    } catch (ex) {
-      // In case the child died or timed out.
-      return {styleSheets: [], authorStyleDisabled: false, preferredStyleSheetSet: true};
+    let data = this._pageStyleSheets.get(browser.permanentKey);
+    if (!data) {
+      return {
+        filteredStyleSheets: [],
+        authorStyleDisabled: false,
+        preferredStyleSheetSet: true
+      };
     }
+
+    return data;
   },
 
   fillPopup: function (menuPopup) {
@@ -5900,7 +5999,7 @@ var gPageStyleMenu = {
     while (sep.nextSibling)
       menuPopup.removeChild(sep.nextSibling);
 
-    let styleSheets = styleSheetInfo.styleSheets;
+    let styleSheets = styleSheetInfo.filteredStyleSheets;
     var currentStyleSheets = {};
     var styleDisabled = styleSheetInfo.authorStyleDisabled;
     var haveAltSheets = false;
@@ -5948,7 +6047,6 @@ var gPageStyleMenu = {
 };
 
 /* Legacy global page-style functions */
-var getAllStyleSheets   = gPageStyleMenu.getAllStyleSheets.bind(gPageStyleMenu);
 var stylesheetFillPopup = gPageStyleMenu.fillPopup.bind(gPageStyleMenu);
 function stylesheetSwitchAll(contentWindow, title) {
   // We ignore the contentWindow param. Add-ons don't appear to use
@@ -6973,6 +7071,7 @@ var gIdentityHandler = {
    *        processed by nsIURIFixup.createExposableURI.
    */
   updateIdentity(state, uri) {
+    let shouldHidePopup = this._uri && (this._uri.spec != uri.spec);
     this._state = state;
     this._uri = uri;
 
@@ -6998,11 +7097,16 @@ var gIdentityHandler = {
 
     // Then, update the user interface with the available data.
     this.refreshIdentityBlock();
+    // Handle a location change while the Control Center is focused
+    // by closing the popup (bug 1207542)
+    if (shouldHidePopup) {
+      this._identityPopup.hidePopup();
+    }
 
     // NOTE: We do NOT update the identity popup (the control center) when
-    // we receive a new security state. If the user opened the popup and looks
-    // at the provided information we don't want to suddenly change the panel
-    // contents.
+    // we receive a new security state on the existing page (i.e. from a
+    // subframe). If the user opened the popup and looks at the provided
+    // information we don't want to suddenly change the panel contents.
   },
 
   /**
@@ -7763,14 +7867,14 @@ var TabContextMenu = {
 };
 
 XPCOMUtils.defineLazyModuleGetter(this, "gDevTools",
-                                  "resource:///modules/devtools/client/framework/gDevTools.jsm");
+                                  "resource://devtools/client/framework/gDevTools.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "gDevToolsBrowser",
-                                  "resource:///modules/devtools/client/framework/gDevTools.jsm");
+                                  "resource://devtools/client/framework/gDevTools.jsm");
 
 Object.defineProperty(this, "HUDService", {
   get: function HUDService_getter() {
-    let devtools = Cu.import("resource://gre/modules/devtools/shared/Loader.jsm", {}).devtools;
+    let devtools = Cu.import("resource://devtools/shared/Loader.jsm", {}).devtools;
     return devtools.require("devtools/client/webconsole/hudservice");
   },
   configurable: true,
@@ -7842,7 +7946,7 @@ var Scratchpad = {
 
 XPCOMUtils.defineLazyGetter(Scratchpad, "ScratchpadManager", function() {
   let tmp = {};
-  Cu.import("resource:///modules/devtools/client/scratchpad/scratchpad-manager.jsm", tmp);
+  Cu.import("resource://devtools/client/scratchpad/scratchpad-manager.jsm", tmp);
   return tmp.ScratchpadManager;
 });
 
@@ -7854,7 +7958,7 @@ var ResponsiveUI = {
 
 XPCOMUtils.defineLazyGetter(ResponsiveUI, "ResponsiveUIManager", function() {
   let tmp = {};
-  Cu.import("resource:///modules/devtools/client/responsivedesign/responsivedesign.jsm", tmp);
+  Cu.import("resource://devtools/client/responsivedesign/responsivedesign.jsm", tmp);
   return tmp.ResponsiveUIManager;
 });
 
@@ -7866,7 +7970,7 @@ function openEyedropper() {
 
 Object.defineProperty(this, "Eyedropper", {
   get: function() {
-    let devtools = Cu.import("resource://gre/modules/devtools/shared/Loader.jsm", {}).devtools;
+    let devtools = Cu.import("resource://devtools/shared/Loader.jsm", {}).devtools;
     return devtools.require("devtools/client/eyedropper/eyedropper").Eyedropper;
   },
   configurable: true,

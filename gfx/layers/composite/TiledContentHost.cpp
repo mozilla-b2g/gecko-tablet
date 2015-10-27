@@ -69,6 +69,27 @@ TiledContentHost::~TiledContentHost()
   MOZ_COUNT_DTOR(TiledContentHost);
 }
 
+already_AddRefed<TexturedEffect>
+TiledContentHost::GenEffect(const gfx::Filter& aFilter)
+{
+  // If we can use hwc for this TiledContentHost, it implies that we have exactly
+  // one high precision tile. Please check TiledContentHost::GetRenderState() for
+  // all condition.
+  MOZ_ASSERT(mTiledBuffer.GetTileCount() == 1 && mLowPrecisionTiledBuffer.GetTileCount() == 0);
+  MOZ_ASSERT(mTiledBuffer.GetTile(0).mTextureHost);
+
+  TileHost& tile = mTiledBuffer.GetTile(0);
+  if (!tile.mTextureHost->BindTextureSource(tile.mTextureSource)) {
+    return nullptr;
+  }
+
+  return CreateTexturedEffect(tile.mTextureSource,
+                              nullptr,
+                              aFilter,
+                              true,
+                              tile.mTextureHost->GetRenderState());
+}
+
 void
 TiledContentHost::Attach(Layer* aLayer,
                          Compositor* aCompositor,
@@ -141,7 +162,7 @@ bool
 GetCopyOnWriteLock(const TileLock& ipcLock, TileHost& aTile, ISurfaceAllocator* aAllocator) {
   MOZ_ASSERT(aAllocator);
 
-  nsRefPtr<gfxSharedReadLock> sharedLock;
+  RefPtr<gfxSharedReadLock> sharedLock;
   if (ipcLock.type() == TileLock::TShmemSection) {
     sharedLock = gfxShmSharedReadLock::Open(aAllocator, ipcLock.get_ShmemSection());
   } else {

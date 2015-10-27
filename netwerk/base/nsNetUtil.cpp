@@ -508,7 +508,7 @@ NS_NewLoadGroup(nsILoadGroup **aResult, nsIPrincipal *aPrincipal)
         do_CreateInstance(NS_LOADGROUP_CONTRACTID, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsRefPtr<LoadContext> loadContext = new LoadContext(aPrincipal);
+    RefPtr<LoadContext> loadContext = new LoadContext(aPrincipal);
     rv = group->SetNotificationCallbacks(loadContext);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1531,18 +1531,6 @@ NS_TryToMakeImmutable(nsIURI *uri,
     }
 
     return result.forget();
-}
-
-nsresult
-NS_URIChainHasFlags(nsIURI   *uri,
-                    uint32_t  flags,
-                    bool     *result)
-{
-    nsresult rv;
-    nsCOMPtr<nsINetUtil> util = do_GetNetUtil(&rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    return util->URIChainHasFlags(uri, flags, result);
 }
 
 already_AddRefed<nsIURI>

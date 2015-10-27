@@ -109,7 +109,7 @@ gfxUserFontEntry::gfxUserFontEntry(gfxUserFontSet* aFontSet,
              const nsTArray<gfxFontFaceSrc>& aFontFaceSrcList,
              uint32_t aWeight,
              int32_t aStretch,
-             uint32_t aItalicStyle,
+             uint8_t aStyle,
              const nsTArray<gfxFontFeature>& aFeatureSettings,
              uint32_t aLanguageOverride,
              gfxSparseBitSet* aUnicodeRanges)
@@ -127,9 +127,7 @@ gfxUserFontEntry::gfxUserFontEntry(gfxUserFontSet* aFontSet,
     mSrcIndex = 0;
     mWeight = aWeight;
     mStretch = aStretch;
-    // XXX Currently, we don't distinguish 'italic' and 'oblique' styles;
-    // we need to fix this. (Bug 543715)
-    mItalic = (aItalicStyle & (NS_FONT_STYLE_ITALIC | NS_FONT_STYLE_OBLIQUE)) != 0;
+    mStyle = aStyle;
     mFeatureSettings.AppendElements(aFeatureSettings);
     mLanguageOverride = aLanguageOverride;
 
@@ -147,18 +145,14 @@ bool
 gfxUserFontEntry::Matches(const nsTArray<gfxFontFaceSrc>& aFontFaceSrcList,
                           uint32_t aWeight,
                           int32_t aStretch,
-                          uint32_t aItalicStyle,
+                          uint8_t aStyle,
                           const nsTArray<gfxFontFeature>& aFeatureSettings,
                           uint32_t aLanguageOverride,
                           gfxSparseBitSet* aUnicodeRanges)
 {
-    // XXX font entries don't distinguish italic from oblique (bug 543715)
-    bool isItalic =
-        (aItalicStyle & (NS_FONT_STYLE_ITALIC | NS_FONT_STYLE_OBLIQUE)) != 0;
-
     return mWeight == aWeight &&
            mStretch == aStretch &&
-           mItalic == isItalic &&
+           mStyle == aStyle &&
            mFeatureSettings == aFeatureSettings &&
            mLanguageOverride == aLanguageOverride &&
            mSrcList == aFontFaceSrcList &&
@@ -412,8 +406,14 @@ gfxUserFontEntry::LoadNextSrc()
                 gfxPlatform::GetPlatform()->LookupLocalFont(currSrc.mLocalName,
                                                             mWeight,
                                                             mStretch,
-                                                            mItalic);
-            mFontSet->SetLocalRulesUsed();
+                                                            mStyle);
+            nsTArray<gfxUserFontSet*> fontSets;
+            GetUserFontSets(fontSets);
+            for (gfxUserFontSet* fontSet : fontSets) {
+                // We need to note on each gfxUserFontSet that contains the user
+                // font entry that we used a local() rule.
+                fontSet->SetLocalRulesUsed();
+            }
             if (fe) {
                 LOG(("userfonts (%p) [src %d] loaded local: (%s) for (%s) gen: %8.8x\n",
                      mFontSet, mSrcIndex,
@@ -606,11 +606,10 @@ gfxUserFontEntry::LoadPlatformFont(const uint8_t* aFontData, uint32_t& aLength)
                                           originalFullName);
         // Here ownership of saneData is passed to the platform,
         // which will delete it when no longer required
-
         fe = gfxPlatform::GetPlatform()->MakePlatformFont(mName,
                                                           mWeight,
                                                           mStretch,
-                                                          mItalic,
+                                                          mStyle,
                                                           saneData,
                                                           saneLen);
         if (!fe) {
@@ -680,6 +679,16 @@ gfxUserFontEntry::Load()
     }
 }
 
+void
+gfxUserFontEntry::IncrementGeneration()
+{
+    nsTArray<gfxUserFontSet*> fontSets;
+    GetUserFontSets(fontSets);
+    for (gfxUserFontSet* fontSet : fontSets) {
+        fontSet->IncrementGeneration();
+    }
+}
+
 // This is called when a font download finishes.
 // Ownership of aFontData passes in here, and the font set must
 // ensure that it is eventually deleted via free().
@@ -698,7 +707,7 @@ gfxUserFontEntry::FontDataDownloadComplete(const uint8_t* aFontData,
         aFontData = nullptr;
 
         if (loaded) {
-            mFontSet->IncrementGeneration();
+            IncrementGeneration();
             return true;
         }
 
@@ -720,8 +729,15 @@ gfxUserFontEntry::FontDataDownloadComplete(const uint8_t* aFontData,
     // even if loading failed, we need to bump the font-set generation
     // and return true in order to trigger reflow, so that fallback
     // will be used where the text was "masked" by the pending download
-    mFontSet->IncrementGeneration();
+    IncrementGeneration();
     return true;
+}
+
+void
+gfxUserFontEntry::GetUserFontSets(nsTArray<gfxUserFontSet*>& aResult)
+{
+    aResult.Clear();
+    aResult.AppendElement(mFontSet);
 }
 
 gfxUserFontSet::gfxUserFontSet()
@@ -748,12 +764,12 @@ gfxUserFontSet::FindOrCreateUserFontEntry(
                                const nsTArray<gfxFontFaceSrc>& aFontFaceSrcList,
                                uint32_t aWeight,
                                int32_t aStretch,
-                               uint32_t aItalicStyle,
+                               uint8_t aStyle,
                                const nsTArray<gfxFontFeature>& aFeatureSettings,
                                uint32_t aLanguageOverride,
                                gfxSparseBitSet* aUnicodeRanges)
 {
-    nsRefPtr<gfxUserFontEntry> entry;
+    RefPtr<gfxUserFontEntry> entry;
 
     // If there's already a userfont entry in the family whose descriptors all match,
     // we can just move it to the end of the list instead of adding a new
@@ -764,14 +780,14 @@ gfxUserFontSet::FindOrCreateUserFontEntry(
     gfxUserFontFamily* family = LookupFamily(aFamilyName);
     if (family) {
         entry = FindExistingUserFontEntry(family, aFontFaceSrcList, aWeight,
-                                          aStretch, aItalicStyle,
+                                          aStretch, aStyle,
                                           aFeatureSettings, aLanguageOverride,
                                           aUnicodeRanges);
     }
 
     if (!entry) {
       entry = CreateUserFontEntry(aFontFaceSrcList, aWeight, aStretch,
-                                  aItalicStyle, aFeatureSettings,
+                                  aStyle, aFeatureSettings,
                                   aLanguageOverride, aUnicodeRanges);
       entry->mFamilyName = aFamilyName;
     }
@@ -784,15 +800,15 @@ gfxUserFontSet::CreateUserFontEntry(
                                const nsTArray<gfxFontFaceSrc>& aFontFaceSrcList,
                                uint32_t aWeight,
                                int32_t aStretch,
-                               uint32_t aItalicStyle,
+                               uint8_t aStyle,
                                const nsTArray<gfxFontFeature>& aFeatureSettings,
                                uint32_t aLanguageOverride,
                                gfxSparseBitSet* aUnicodeRanges)
 {
 
-    nsRefPtr<gfxUserFontEntry> userFontEntry =
+    RefPtr<gfxUserFontEntry> userFontEntry =
         new gfxUserFontEntry(this, aFontFaceSrcList, aWeight,
-                              aStretch, aItalicStyle, aFeatureSettings,
+                              aStretch, aStyle, aFeatureSettings,
                               aLanguageOverride, aUnicodeRanges);
     return userFontEntry.forget();
 }
@@ -803,7 +819,7 @@ gfxUserFontSet::FindExistingUserFontEntry(
                                const nsTArray<gfxFontFaceSrc>& aFontFaceSrcList,
                                uint32_t aWeight,
                                int32_t aStretch,
-                               uint32_t aItalicStyle,
+                               uint8_t aStyle,
                                const nsTArray<gfxFontFeature>& aFeatureSettings,
                                uint32_t aLanguageOverride,
                                gfxSparseBitSet* aUnicodeRanges)
@@ -811,7 +827,7 @@ gfxUserFontSet::FindExistingUserFontEntry(
     MOZ_ASSERT(aWeight != 0,
                "aWeight must not be 0; use NS_FONT_WEIGHT_NORMAL instead");
 
-    nsTArray<nsRefPtr<gfxFontEntry>>& fontList = aFamily->GetFontList();
+    nsTArray<RefPtr<gfxFontEntry>>& fontList = aFamily->GetFontList();
 
     for (size_t i = 0, count = fontList.Length(); i < count; i++) {
         if (!fontList[i]->mIsUserFontContainer) {
@@ -821,7 +837,7 @@ gfxUserFontSet::FindExistingUserFontEntry(
         gfxUserFontEntry* existingUserFontEntry =
             static_cast<gfxUserFontEntry*>(fontList[i].get());
         if (!existingUserFontEntry->Matches(aFontFaceSrcList,
-                                            aWeight, aStretch, aItalicStyle,
+                                            aWeight, aStretch, aStyle,
                                             aFeatureSettings, aLanguageOverride,
                                             aUnicodeRanges)) {
             continue;
@@ -844,7 +860,8 @@ gfxUserFontSet::AddUserFontEntry(const nsAString& aFamilyName,
         LOG(("userfonts (%p) added to \"%s\" (%p) style: %s weight: %d "
              "stretch: %d",
              this, NS_ConvertUTF16toUTF8(aFamilyName).get(), aUserFontEntry,
-             (aUserFontEntry->IsItalic() ? "italic" : "normal"),
+             (aUserFontEntry->IsItalic() ? "italic" :
+              (aUserFontEntry->IsOblique() ? "oblique" : "normal")),
              aUserFontEntry->Weight(), aUserFontEntry->Stretch()));
     }
 }
@@ -1027,7 +1044,7 @@ gfxUserFontSet::UserFontCache::Entry::KeyEquals(const KeyTypePointer aKey) const
         }
     }
 
-    if (mFontEntry->mItalic           != fe->mItalic          ||
+    if (mFontEntry->mStyle            != fe->mStyle     ||
         mFontEntry->mWeight           != fe->mWeight          ||
         mFontEntry->mStretch          != fe->mStretch         ||
         mFontEntry->mFeatureSettings  != fe->mFeatureSettings ||

@@ -13,7 +13,6 @@
 #include "nsDataHashtable.h"
 #include "mozilla/Atomics.h"
 #include "nsThreadUtils.h"
-#include "GMPUtils.h"
 
 template <class> struct already_AddRefed;
 
@@ -57,8 +56,6 @@ public:
 #ifdef MOZ_CRASHREPORTER
   void SetAsyncShutdownPluginState(GMPParent* aGMPParent, char aId, const nsCString& aState);
 #endif // MOZ_CRASHREPORTER
-
-  void CrashPluginNow(uint32_t aPluginId, GMPCrashReason aReason);
 
 private:
   friend class GMPServiceParent;
@@ -104,8 +101,8 @@ private:
 
 protected:
   friend class GMPParent;
-  void ReAddOnGMPThread(const nsRefPtr<GMPParent>& aOld);
-  void PluginTerminated(const nsRefPtr<GMPParent>& aOld);
+  void ReAddOnGMPThread(const RefPtr<GMPParent>& aOld);
+  void PluginTerminated(const RefPtr<GMPParent>& aOld);
   virtual void InitializePlugins() override;
   virtual bool GetContentParentFrom(const nsACString& aNodeId,
                                     const nsCString& aAPI,
@@ -137,16 +134,16 @@ private:
     NS_DECL_NSIRUNNABLE
 
   private:
-    nsRefPtr<GeckoMediaPluginServiceParent> mService;
+    RefPtr<GeckoMediaPluginServiceParent> mService;
     nsString mPath;
     EOperation mOperation;
     bool mDefer;
   };
 
   // Protected by mMutex from the base class.
-  nsTArray<nsRefPtr<GMPParent>> mPlugins;
+  nsTArray<RefPtr<GMPParent>> mPlugins;
   bool mShuttingDown;
-  nsTArray<nsRefPtr<GMPParent>> mAsyncShutdownPlugins;
+  nsTArray<RefPtr<GMPParent>> mAsyncShutdownPlugins;
 
 #ifdef MOZ_CRASHREPORTER
   Mutex mAsyncShutdownPluginStatesMutex; // Protects mAsyncShutdownPluginStates.
@@ -226,15 +223,13 @@ public:
                                             nsCString* aVersion);
   virtual bool RecvUpdateGMPTrialCreateState(const nsString& aKeySystem,
                                              const uint32_t& aState) override;
-  virtual bool RecvCrashPluginNow(const uint32_t& aPluginId,
-                                  const GMPCrashReason& aReason) override;
 
   virtual void ActorDestroy(ActorDestroyReason aWhy) override;
 
   static PGMPServiceParent* Create(Transport* aTransport, ProcessId aOtherPid);
 
 private:
-  nsRefPtr<GeckoMediaPluginServiceParent> mService;
+  RefPtr<GeckoMediaPluginServiceParent> mService;
 };
 
 } // namespace gmp

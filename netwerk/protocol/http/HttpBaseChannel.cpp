@@ -267,6 +267,21 @@ HttpBaseChannel::GetLoadFlags(nsLoadFlags *aLoadFlags)
 NS_IMETHODIMP
 HttpBaseChannel::SetLoadFlags(nsLoadFlags aLoadFlags)
 {
+  bool synthesized = false;
+  nsresult rv = GetResponseSynthesized(&synthesized);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // If this channel is marked as awaiting a synthesized response,
+  // modifying certain load flags can interfere with the implementation
+  // of the network interception logic. This takes care of a couple
+  // known cases that attempt to mark channels as anonymous due
+  // to cross-origin redirects; since the response is entirely synthesized
+  // this is an unnecessary precaution.
+  // This should be removed when bug 1201683 is fixed.
+  if (synthesized && aLoadFlags != mLoadFlags) {
+    aLoadFlags &= ~LOAD_ANONYMOUS;
+  }
+
   mLoadFlags = aLoadFlags;
   mForceMainDocumentChannel = (aLoadFlags & LOAD_DOCUMENT_URI);
   return NS_OK;
@@ -722,13 +737,8 @@ HttpBaseChannel::ExplicitSetUploadStream(nsIInputStream *aStream,
     contentLengthStr.AppendInt(aContentLength);
     SetRequestHeader(NS_LITERAL_CSTRING("Content-Length"), contentLengthStr,
                      false);
-
-    if (aContentType.IsEmpty()) {
-      SetEmptyRequestHeader(NS_LITERAL_CSTRING("Content-Type"));
-    } else {
-      SetRequestHeader(NS_LITERAL_CSTRING("Content-Type"), aContentType,
-                       false);
-    }
+    SetRequestHeader(NS_LITERAL_CSTRING("Content-Type"), aContentType,
+                     false);
   }
 
   mUploadStreamHasHeaders = aStreamHasHeaders;
@@ -1836,7 +1846,7 @@ public:
   }
 
 private:
-  nsRefPtr<HttpBaseChannel> mChannel;
+  RefPtr<HttpBaseChannel> mChannel;
   NS_ConvertASCIItoUTF16 mCookie;
 };
 
@@ -1859,7 +1869,7 @@ HttpBaseChannel::SetCookie(const char *aCookieHeader)
     cs->SetCookieStringFromHttp(mURI, nullptr, nullptr, aCookieHeader,
                                 mResponseHead->PeekHeader(nsHttp::Date), this);
   if (NS_SUCCEEDED(rv)) {
-    nsRefPtr<CookieNotifierRunnable> r =
+    RefPtr<CookieNotifierRunnable> r =
       new CookieNotifierRunnable(this, aCookieHeader);
     NS_DispatchToMainThread(r);
   }
@@ -2313,10 +2323,8 @@ HttpBaseChannel::ShouldIntercept()
   GetCallback(controller);
   bool shouldIntercept = false;
   if (controller && !BypassServiceWorker() && mLoadInfo) {
-    nsContentPolicyType type = mLoadInfo->InternalContentPolicyType();
     nsresult rv = controller->ShouldPrepareForIntercept(mURI,
-                                                        IsNavigation(),
-                                                        type,
+                                                        nsContentUtils::IsNonSubresourceRequest(this),
                                                         &shouldIntercept);
     if (NS_FAILED(rv)) {
       return false;

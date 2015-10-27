@@ -7,9 +7,7 @@
 #ifndef nsTHashtable_h__
 #define nsTHashtable_h__
 
-#include "nscore.h"
 #include "PLDHashTable.h"
-#include "nsDebug.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/fallible.h"
@@ -118,6 +116,11 @@ public:
    * @return    number of entries
    */
   uint32_t Count() const { return mTable.EntryCount(); }
+
+  /**
+   * Return true if the hashtable is empty.
+   */
+  bool IsEmpty() const { return Count() == 0; }
 
   /**
    * Get the entry associated with a key.

@@ -32,7 +32,7 @@ class AudioOutputObserver;
  */
 struct StreamUpdate
 {
-  nsRefPtr<MediaStream> mStream;
+  RefPtr<MediaStream> mStream;
   StreamTime mNextMainThreadCurrentTime;
   bool mNextMainThreadFinished;
 };
@@ -525,7 +525,7 @@ public:
    * passed to a event that will take care of the asynchronous cleanup, as
    * audio stream can take some time to shut down.
    */
-  nsRefPtr<GraphDriver> mDriver;
+  RefPtr<GraphDriver> mDriver;
 
   // The following state is managed on the graph thread only, unless
   // mLifecycleState > LIFECYCLE_RUNNING in which case the graph thread
@@ -711,13 +711,13 @@ public:
   /**
    * Hold a ref to the Latency logger
    */
-  nsRefPtr<AsyncLatencyLogger> mLatencyLog;
+  RefPtr<AsyncLatencyLogger> mLatencyLog;
   AudioMixer mMixer;
 #ifdef MOZ_WEBRTC
-  nsRefPtr<AudioOutputObserver> mFarendObserverRef;
+  RefPtr<AudioOutputObserver> mFarendObserverRef;
 #endif
 
-  uint32_t AudioChannel() const { return mAudioChannel; }
+  dom::AudioChannel AudioChannel() const { return mAudioChannel; }
 
 private:
   virtual ~MediaStreamGraphImpl();
@@ -735,7 +735,7 @@ private:
    * nsRefPtr to itself, giving it a ref-count of 1 during its entire lifetime,
    * and Destroy() nulls this self-reference in order to trigger self-deletion.
    */
-  nsRefPtr<MediaStreamGraphImpl> mSelfRef;
+  RefPtr<MediaStreamGraphImpl> mSelfRef;
   /**
    * Used to pass memory report information across threads.
    */
@@ -744,7 +744,7 @@ private:
   struct WindowAndStream
   {
     uint64_t mWindowId;
-    nsRefPtr<ProcessedMediaStream> mCaptureStreamSink;
+    RefPtr<ProcessedMediaStream> mCaptureStreamSink;
   };
   /**
    * Stream for window audio capture.
@@ -762,9 +762,7 @@ private:
   bool mCanRunMessagesSynchronously;
 #endif
 
-  // We use uint32_t instead AudioChannel because this is just used as key for
-  // the hashtable gGraphs.
-  uint32_t mAudioChannel;
+  dom::AudioChannel mAudioChannel;
 };
 
 } // namespace mozilla

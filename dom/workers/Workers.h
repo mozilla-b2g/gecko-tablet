@@ -201,6 +201,7 @@ enum WorkerPreference
   WORKERPREF_DOM_CACHES, // dom.caches.enabled
   WORKERPREF_SERVICEWORKERS, // dom.serviceWorkers.enabled
   WORKERPREF_INTERCEPTION_ENABLED, // dom.serviceWorkers.interception.enabled
+  WORKERPREF_OPEN_WINDOW_ENABLED, // dom.serviceWorkers.openWindow.enabled
   WORKERPREF_DOM_WORKERNOTIFICATION, // dom.webnotifications.workers.enabled
   WORKERPREF_DOM_SERVICEWORKERNOTIFICATION, // dom.webnotifications.serviceworker.enabled
   WORKERPREF_DOM_CACHES_TESTING, // dom.caches.testing.enabled
@@ -208,7 +209,9 @@ enum WorkerPreference
   WORKERPREF_INTERCEPTION_OPAQUE_ENABLED, // dom.serviceWorkers.interception.opaque.enabled
   WORKERPREF_PERFORMANCE_LOGGING_ENABLED, // dom.performance.enable_user_timing_logging
   WORKERPREF_PUSH, // dom.push.enabled
+  WORKERPREF_REQUESTCACHE, // dom.requestcache.enabled
   WORKERPREF_REQUESTCONTEXT, // dom.requestcontext.enabled
+  WORKERPREF_OFFSCREENCANVAS, // gfx.offscreencanvas.enabled
   WORKERPREF_COUNT
 };
 
@@ -255,7 +258,7 @@ struct WorkerLoadInfo
   };
 
   // Only set if we have a custom overriden load group
-  nsRefPtr<InterfaceRequestor> mInterfaceRequestor;
+  RefPtr<InterfaceRequestor> mInterfaceRequestor;
 
   nsAutoPtr<mozilla::ipc::PrincipalInfo> mPrincipalInfo;
   nsCString mDomain;

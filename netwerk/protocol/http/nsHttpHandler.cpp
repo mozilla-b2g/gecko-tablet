@@ -393,7 +393,7 @@ nsHttpHandler::MakeNewRequestTokenBucket()
     if (!mConnMgr)
         return;
 
-    nsRefPtr<EventTokenBucket> tokenBucket =
+    RefPtr<EventTokenBucket> tokenBucket =
         new EventTokenBucket(RequestTokenBucketHz(), RequestTokenBucketBurst());
     mConnMgr->UpdateRequestTokenBucket(tokenBucket);
 }
@@ -594,7 +594,7 @@ nsHttpHandler::AsyncOnChannelRedirect(nsIChannel* oldChan, nsIChannel* newChan,
                                  uint32_t flags)
 {
     // TODO E10S This helper has to be initialized on the other process
-    nsRefPtr<nsAsyncRedirectVerifyHelper> redirectCallbackHelper =
+    RefPtr<nsAsyncRedirectVerifyHelper> redirectCallbackHelper =
         new nsAsyncRedirectVerifyHelper();
 
     return redirectCallbackHelper->Init(oldChan, newChan, flags);
@@ -732,7 +732,7 @@ nsHttpHandler::InitUserAgentComponents()
 #endif
 
 
-#if defined(ANDROID) || defined(FXOS_SIMULATOR)
+#ifdef ANDROID
     nsCOMPtr<nsIPropertyBag2> infoService = do_GetService("@mozilla.org/system-info;1");
     MOZ_ASSERT(infoService, "Could not find a system info service");
     nsresult rv;
@@ -753,15 +753,35 @@ nsHttpHandler::InitUserAgentComponents()
       }
     }
 #endif
-    // Add the `Mobile` or `Tablet` token when running on device or in the
-    // b2g desktop simulator.
+    // Add the `Mobile` or `Tablet` or `TV` token when running on device.
     bool isTablet;
     rv = infoService->GetPropertyAsBool(NS_LITERAL_STRING("tablet"), &isTablet);
-    if (NS_SUCCEEDED(rv) && isTablet)
+    if (NS_SUCCEEDED(rv) && isTablet) {
         mCompatDevice.AssignLiteral("Tablet");
-    else
-        mCompatDevice.AssignLiteral("Mobile");
-#endif
+    } else {
+        bool isTV;
+        rv = infoService->GetPropertyAsBool(NS_LITERAL_STRING("tv"), &isTV);
+        if (NS_SUCCEEDED(rv) && isTV) {
+            mCompatDevice.AssignLiteral("TV");
+        } else {
+            mCompatDevice.AssignLiteral("Mobile");
+        }
+    }
+#endif // ANDROID
+
+#ifdef FXOS_SIMULATOR
+    {
+        // Add the `Mobile` or `Tablet` or `TV` token when running in the b2g
+        // desktop simulator via preference.
+        nsCString deviceType;
+        nsresult rv = Preferences::GetCString("devtools.useragent.device_type", &deviceType);
+        if (NS_SUCCEEDED(rv)) {
+            mCompatDevice.Assign(deviceType);
+        } else {
+            mCompatDevice.AssignLiteral("Mobile");
+        }
+    }
+#endif // FXOS_SIMULATOR
 
 #if defined(MOZ_WIDGET_GONK)
     // Device model identifier should be a simple token, which can be composed
@@ -1616,7 +1636,7 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
 void
 nsHttpHandler::TimerCallback(nsITimer * aTimer, void * aClosure)
 {
-    nsRefPtr<nsHttpHandler> thisObject = static_cast<nsHttpHandler*>(aClosure);
+    RefPtr<nsHttpHandler> thisObject = static_cast<nsHttpHandler*>(aClosure);
     if (!thisObject->mPipeliningEnabled)
         thisObject->mCapabilities &= ~NS_HTTP_ALLOW_PIPELINING;
 }
@@ -1890,7 +1910,7 @@ nsHttpHandler::NewProxiedChannel2(nsIURI *uri,
                                   nsILoadInfo* aLoadInfo,
                                   nsIChannel** result)
 {
-    nsRefPtr<HttpBaseChannel> httpChannel;
+    RefPtr<HttpBaseChannel> httpChannel;
 
     LOG(("nsHttpHandler::NewProxiedChannel [proxyInfo=%p]\n",
         givenProxyInfo));

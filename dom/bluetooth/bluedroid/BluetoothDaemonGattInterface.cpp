@@ -15,8 +15,6 @@ using namespace mozilla::ipc;
 // GATT module
 //
 
-const int BluetoothDaemonGattModule::MAX_NUM_CLIENTS = 1;
-
 BluetoothGattNotificationHandler*
   BluetoothDaemonGattModule::sNotificationHandler;
 
@@ -1480,7 +1478,7 @@ BluetoothDaemonGattModule::HandleRsp(
     return;
   }
 
-  nsRefPtr<BluetoothGattResultHandler> res =
+  RefPtr<BluetoothGattResultHandler> res =
     static_cast<BluetoothGattResultHandler*>(aRes);
 
   if (!res) {
@@ -2010,6 +2008,7 @@ BluetoothDaemonGattInterface::BluetoothDaemonGattInterface(
 BluetoothDaemonGattInterface::~BluetoothDaemonGattInterface()
 { }
 
+#if 0
 class BluetoothDaemonGattInterface::InitResultHandler final
   : public BluetoothSetupResultHandler
 {
@@ -2035,7 +2034,7 @@ public:
   }
 
 private:
-  nsRefPtr<BluetoothGattResultHandler> mRes;
+  RefPtr<BluetoothGattResultHandler> mRes;
 };
 
 void
@@ -2057,8 +2056,8 @@ BluetoothDaemonGattInterface::Init(
   }
 
   nsresult rv = mModule->RegisterModule(
-    BluetoothDaemonGattModule::SERVICE_ID, 0x00,
-    BluetoothDaemonGattModule::MAX_NUM_CLIENTS, res);
+    SETUP_SERVICE_ID_GATT, 0x00, BluetoothDaemonGattModule::MAX_NUM_CLIENTS,
+    res);
 
   if (NS_FAILED(rv) && aRes) {
     DispatchError(aRes, rv);
@@ -2102,7 +2101,7 @@ public:
 
 private:
   BluetoothDaemonGattModule* mModule;
-  nsRefPtr<BluetoothGattResultHandler> mRes;
+  RefPtr<BluetoothGattResultHandler> mRes;
 };
 
 void
@@ -2110,11 +2109,20 @@ BluetoothDaemonGattInterface::Cleanup(
   BluetoothGattResultHandler* aRes)
 {
   nsresult rv = mModule->UnregisterModule(
-    BluetoothDaemonGattModule::SERVICE_ID,
-    new CleanupResultHandler(mModule, aRes));
+    SETUP_SERVICE_ID_GATT, new CleanupResultHandler(mModule, aRes));
   if (NS_FAILED(rv)) {
     DispatchError(aRes, rv);
   }
+}
+#endif
+
+void
+BluetoothDaemonGattInterface::SetNotificationHandler(
+  BluetoothGattNotificationHandler* aNotificationHandler)
+{
+  MOZ_ASSERT(mModule);
+
+  mModule->SetNotificationHandler(aNotificationHandler);
 }
 
 /* Register / Unregister */

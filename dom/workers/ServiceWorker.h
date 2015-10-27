@@ -55,12 +55,8 @@ public:
   void
   DispatchStateChange(ServiceWorkerState aState)
   {
-    SetState(aState);
     DOMEventTargetHelper::DispatchTrustedEvent(NS_LITERAL_STRING("statechange"));
   }
-
-  void
-  QueueStateChangeEvent(ServiceWorkerState aState);
 
 #ifdef XP_WIN
 #undef PostMessage
@@ -79,7 +75,7 @@ private:
   ~ServiceWorker();
 
   ServiceWorkerState mState;
-  const nsRefPtr<ServiceWorkerInfo> mInfo;
+  const RefPtr<ServiceWorkerInfo> mInfo;
 };
 
 } // namespace workers

@@ -120,8 +120,8 @@ static void webm_log(nestegg * context,
   va_end(args);
 }
 
-WebMReader::WebMReader(AbstractMediaDecoder* aDecoder, TaskQueue* aBorrowedTaskQueue)
-  : MediaDecoderReader(aDecoder, aBorrowedTaskQueue)
+WebMReader::WebMReader(AbstractMediaDecoder* aDecoder)
+  : MediaDecoderReader(aDecoder)
   , mContext(nullptr)
   , mVideoTrack(0)
   , mAudioTrack(0)
@@ -152,7 +152,7 @@ WebMReader::~WebMReader()
   MOZ_COUNT_DTOR(WebMReader);
 }
 
-nsRefPtr<ShutdownPromise>
+RefPtr<ShutdownPromise>
 WebMReader::Shutdown()
 {
   if (mAudioDecoder) {
@@ -168,14 +168,9 @@ WebMReader::Shutdown()
   return MediaDecoderReader::Shutdown();
 }
 
-nsresult WebMReader::Init(MediaDecoderReader* aCloneDonor)
+nsresult WebMReader::Init()
 {
-  if (aCloneDonor) {
-    mBufferedState = static_cast<WebMReader*>(aCloneDonor)->mBufferedState;
-  } else {
-    mBufferedState = new WebMBufferedState;
-  }
-
+  mBufferedState = new WebMBufferedState;
   return NS_OK;
 }
 
@@ -197,7 +192,7 @@ void WebMReader::InitLayersBackendType()
   dom::HTMLMediaElement* element = owner->GetMediaElement();
   NS_ENSURE_TRUE_VOID(element);
 
-  nsRefPtr<LayerManager> layerManager =
+  RefPtr<LayerManager> layerManager =
     nsContentUtils::LayerManagerForDocument(element->OwnerDoc());
   NS_ENSURE_TRUE_VOID(layerManager);
 
@@ -231,10 +226,10 @@ void WebMReader::Cleanup()
   }
 }
 
-nsRefPtr<MediaDecoderReader::MetadataPromise>
+RefPtr<MediaDecoderReader::MetadataPromise>
 WebMReader::AsyncReadMetadata()
 {
-  nsRefPtr<MetadataHolder> metadata = new MetadataHolder();
+  RefPtr<MetadataHolder> metadata = new MetadataHolder();
 
   if (NS_FAILED(RetrieveWebMMetadata(&metadata->mInfo)) ||
       !metadata->mInfo.HasValidMedia()) {
@@ -248,19 +243,14 @@ WebMReader::AsyncReadMetadata()
 nsresult
 WebMReader::RetrieveWebMMetadata(MediaInfo* aInfo)
 {
-  // We can't use OnTaskQueue() here because of the wacky initialization task
-  // queue that TrackBuffer uses. We should be able to fix this when we do
-  // bug 1148234.
-  MOZ_ASSERT(mDecoder->OnDecodeTaskQueue());
+  MOZ_ASSERT(OnTaskQueue());
 
   nestegg_io io;
   io.read = webm_read;
   io.seek = webm_seek;
   io.tell = webm_tell;
   io.userdata = &mResource;
-  int64_t maxOffset = mDecoder->HasInitializationData() ?
-    mBufferedState->GetInitEndOffset() : -1;
-  int r = nestegg_init(&mContext, io, &webm_log, maxOffset);
+  int r = nestegg_init(&mContext, io, &webm_log, -1);
   if (r == -1) {
     return NS_ERROR_FAILURE;
   }
@@ -493,7 +483,7 @@ bool WebMReader::DecodeAudioPacket(NesteggPacketHolder* aHolder)
   return true;
 }
 
-nsRefPtr<NesteggPacketHolder> WebMReader::NextPacket(TrackType aTrackType)
+RefPtr<NesteggPacketHolder> WebMReader::NextPacket(TrackType aTrackType)
 {
   // The packet queue that packets will be pushed on if they
   // are not the type we are interested in.
@@ -523,7 +513,7 @@ nsRefPtr<NesteggPacketHolder> WebMReader::NextPacket(TrackType aTrackType)
   }
 
   do {
-    nsRefPtr<NesteggPacketHolder> holder = DemuxPacket();
+    RefPtr<NesteggPacketHolder> holder = DemuxPacket();
     if (!holder) {
       return nullptr;
     }
@@ -541,7 +531,7 @@ nsRefPtr<NesteggPacketHolder> WebMReader::NextPacket(TrackType aTrackType)
   } while (true);
 }
 
-nsRefPtr<NesteggPacketHolder>
+RefPtr<NesteggPacketHolder>
 WebMReader::DemuxPacket()
 {
   nestegg_packet* packet;
@@ -579,7 +569,7 @@ WebMReader::DemuxPacket()
   }
 
   int64_t offset = mResource.Tell();
-  nsRefPtr<NesteggPacketHolder> holder = new NesteggPacketHolder();
+  RefPtr<NesteggPacketHolder> holder = new NesteggPacketHolder();
   if (!holder->Init(packet, offset, track, isKeyframe)) {
     return nullptr;
   }
@@ -591,7 +581,7 @@ bool WebMReader::DecodeAudioData()
 {
   MOZ_ASSERT(OnTaskQueue());
 
-  nsRefPtr<NesteggPacketHolder> holder(NextPacket(AUDIO));
+  RefPtr<NesteggPacketHolder> holder(NextPacket(AUDIO));
   if (!holder) {
     return false;
   }
@@ -604,7 +594,7 @@ bool WebMReader::FilterPacketByTime(int64_t aEndTime, WebMPacketQueue& aOutput)
   // Push the video frames to the aOutput which's timestamp is less
   // than aEndTime.
   while (true) {
-    nsRefPtr<NesteggPacketHolder> holder(NextPacket(VIDEO));
+    RefPtr<NesteggPacketHolder> holder(NextPacket(VIDEO));
     if (!holder) {
       break;
     }
@@ -627,7 +617,7 @@ int64_t WebMReader::GetNextKeyframeTime(int64_t aTimeThreshold)
     // Restore the packets before we return -1.
     uint32_t size = skipPacketQueue.GetSize();
     for (uint32_t i = 0; i < size; ++i) {
-      nsRefPtr<NesteggPacketHolder> packetHolder = skipPacketQueue.PopFront();
+      RefPtr<NesteggPacketHolder> packetHolder = skipPacketQueue.PopFront();
       PushVideoPacket(packetHolder);
     }
     return -1;
@@ -637,7 +627,7 @@ int64_t WebMReader::GetNextKeyframeTime(int64_t aTimeThreshold)
   bool foundKeyframe = false;
   int64_t keyframeTime = -1;
   while (!foundKeyframe) {
-    nsRefPtr<NesteggPacketHolder> holder(NextPacket(VIDEO));
+    RefPtr<NesteggPacketHolder> holder(NextPacket(VIDEO));
     if (!holder) {
       break;
     }
@@ -652,7 +642,7 @@ int64_t WebMReader::GetNextKeyframeTime(int64_t aTimeThreshold)
 
   uint32_t size = skipPacketQueue.GetSize();
   for (uint32_t i = 0; i < size; ++i) {
-    nsRefPtr<NesteggPacketHolder> packetHolder = skipPacketQueue.PopFront();
+    RefPtr<NesteggPacketHolder> packetHolder = skipPacketQueue.PopFront();
     PushVideoPacket(packetHolder);
   }
 
@@ -678,7 +668,7 @@ void WebMReader::PushVideoPacket(NesteggPacketHolder* aItem)
     mVideoPackets.PushFront(aItem);
 }
 
-nsRefPtr<MediaDecoderReader::SeekPromise>
+RefPtr<MediaDecoderReader::SeekPromise>
 WebMReader::Seek(int64_t aTarget, int64_t aEndTime)
 {
   nsresult res = SeekInternal(aTarget);
@@ -800,7 +790,7 @@ media::TimeIntervals WebMReader::GetBuffered()
 void WebMReader::NotifyDataArrivedInternal(uint32_t aLength, int64_t aOffset)
 {
   MOZ_ASSERT(OnTaskQueue());
-  nsRefPtr<MediaByteBuffer> bytes =
+  RefPtr<MediaByteBuffer> bytes =
     mDecoder->GetResource()->MediaReadAt(aOffset, aLength);
   NS_ENSURE_TRUE_VOID(bytes);
   mBufferedState->NotifyDataArrived(bytes->Elements(), aLength, aOffset);

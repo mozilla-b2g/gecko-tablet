@@ -37,19 +37,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(AudioNode,
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_ADDREF_INHERITED(AudioNode, DOMEventTargetHelper)
-
-NS_IMETHODIMP_(MozExternalRefCountType)
-AudioNode::Release()
-{
-  if (mRefCnt.get() == 1) {
-    // We are about to be deleted, disconnect the object from the graph before
-    // the derived type is destroyed.
-    DisconnectFromGraph();
-  }
-  nsrefcnt r = DOMEventTargetHelper::Release();
-  NS_LOG_RELEASE(this, r, "AudioNode");
-  return r;
-}
+NS_IMPL_RELEASE_INHERITED(AudioNode, DOMEventTargetHelper)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(AudioNode)
   NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
@@ -150,9 +138,8 @@ FindIndexOfNodeWithPorts(const nsTArray<InputNode>& aInputNodes, const AudioNode
 void
 AudioNode::DisconnectFromGraph()
 {
-  // Addref this temporarily so the refcount bumping below doesn't destroy us
-  // prematurely
-  nsRefPtr<AudioNode> kungFuDeathGrip = this;
+  MOZ_ASSERT(mRefCnt.get() > mInputNodes.Length(),
+             "Caller should be holding a reference");
 
   // The idea here is that we remove connections one by one, and at each step
   // the graph is in a valid state.
@@ -160,14 +147,14 @@ AudioNode::DisconnectFromGraph()
   // Disconnect inputs. We don't need them anymore.
   while (!mInputNodes.IsEmpty()) {
     size_t i = mInputNodes.Length() - 1;
-    nsRefPtr<AudioNode> input = mInputNodes[i].mInputNode;
+    RefPtr<AudioNode> input = mInputNodes[i].mInputNode;
     mInputNodes.RemoveElementAt(i);
     input->mOutputNodes.RemoveElement(this);
   }
 
   while (!mOutputNodes.IsEmpty()) {
     size_t i = mOutputNodes.Length() - 1;
-    nsRefPtr<AudioNode> output = mOutputNodes[i].forget();
+    RefPtr<AudioNode> output = mOutputNodes[i].forget();
     mOutputNodes.RemoveElementAt(i);
     size_t inputIndex = FindIndexOfNode(output->mInputNodes, this);
     // It doesn't matter which one we remove, since we're going to remove all
@@ -179,7 +166,7 @@ AudioNode::DisconnectFromGraph()
 
   while (!mOutputParams.IsEmpty()) {
     size_t i = mOutputParams.Length() - 1;
-    nsRefPtr<AudioParam> output = mOutputParams[i].forget();
+    RefPtr<AudioParam> output = mOutputParams[i].forget();
     mOutputParams.RemoveElementAt(i);
     size_t inputIndex = FindIndexOfNode(output->InputNodes(), this);
     // It doesn't matter which one we remove, since we're going to remove all
@@ -328,7 +315,7 @@ AudioNode::Disconnect(uint32_t aOutput, ErrorResult& aRv)
       return NS_OK;
     }
   private:
-    nsRefPtr<AudioNode> mNode;
+    RefPtr<AudioNode> mNode;
   };
 
   for (int32_t i = mOutputNodes.Length() - 1; i >= 0; --i) {
@@ -343,11 +330,11 @@ AudioNode::Disconnect(uint32_t aOutput, ErrorResult& aRv)
         // Remove one instance of 'dest' from mOutputNodes. There could be
         // others, and it's not correct to remove them all since some of them
         // could be for different output ports.
-        nsRefPtr<AudioNode> output = mOutputNodes[i].forget();
+        RefPtr<AudioNode> output = mOutputNodes[i].forget();
         mOutputNodes.RemoveElementAt(i);
         output->NotifyInputsChanged();
         if (mStream) {
-          nsRefPtr<nsIRunnable> runnable = new RunnableRelease(output.forget());
+          RefPtr<nsIRunnable> runnable = new RunnableRelease(output.forget());
           mStream->RunAfterPendingUpdates(runnable.forget());
         }
         break;

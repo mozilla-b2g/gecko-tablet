@@ -363,8 +363,8 @@ AsmJSModule::finish(ExclusiveContext* cx, TokenStream& tokenStream, MacroAssembl
     // Relative link metadata: absolute addresses that refer to another point within
     // the asm.js module.
 
-    // CodeLabels are used for switch cases and loads from doubles in the
-    // constant pool.
+    // CodeLabels are used for switch cases and loads from floating-point /
+    // SIMD values in the constant pool.
     for (size_t i = 0; i < masm.numCodeLabels(); i++) {
         CodeLabel src = masm.codeLabel(i);
         int32_t labelOffset = src.dest()->offset();
@@ -1364,19 +1364,19 @@ AsmJSModule::CodeRange::CodeRange(uint32_t nameIndex, uint32_t lineNumber,
                                   const AsmJSFunctionLabels& l)
   : nameIndex_(nameIndex),
     lineNumber_(lineNumber),
-    begin_(l.begin.offset()),
+    begin_(l.profilingEntry.offset()),
     profilingReturn_(l.profilingReturn.offset()),
-    end_(l.end.offset())
+    end_(l.endAfterOOL.offset())
 {
     PodZero(&u);  // zero padding for Valgrind
     u.kind_ = Function;
-    setDeltas(l.entry.offset(), l.profilingJump.offset(), l.profilingEpilogue.offset());
+    setDeltas(l.nonProfilingEntry.offset(), l.profilingJump.offset(), l.profilingEpilogue.offset());
 
-    MOZ_ASSERT(l.begin.offset() < l.entry.offset());
-    MOZ_ASSERT(l.entry.offset() < l.profilingJump.offset());
+    MOZ_ASSERT(l.profilingEntry.offset() < l.nonProfilingEntry.offset());
+    MOZ_ASSERT(l.nonProfilingEntry.offset() < l.profilingJump.offset());
     MOZ_ASSERT(l.profilingJump.offset() < l.profilingEpilogue.offset());
     MOZ_ASSERT(l.profilingEpilogue.offset() < l.profilingReturn.offset());
-    MOZ_ASSERT(l.profilingReturn.offset() < l.end.offset());
+    MOZ_ASSERT(l.profilingReturn.offset() < l.endAfterOOL.offset());
 }
 
 void
@@ -1792,6 +1792,7 @@ AsmJSModule::setProfilingEnabled(bool enabled, JSContext* cx)
 #elif defined(JS_CODEGEN_ARM64)
         MOZ_CRASH();
         void* callee = nullptr;
+        (void)callerRetAddr;
 #elif defined(JS_CODEGEN_MIPS32)
         Instruction* instr = (Instruction*)(callerRetAddr - 4 * sizeof(uint32_t));
         void* callee = (void*)Assembler::ExtractLuiOriValue(instr, instr->next());
@@ -1817,6 +1818,7 @@ AsmJSModule::setProfilingEnabled(bool enabled, JSContext* cx)
 #elif defined(JS_CODEGEN_ARM)
         new (caller) InstBLImm(BOffImm(newCallee - caller), Assembler::Always);
 #elif defined(JS_CODEGEN_ARM64)
+        (void)newCallee;
         MOZ_CRASH();
 #elif defined(JS_CODEGEN_MIPS32)
         Assembler::WriteLuiOriInstructions(instr, instr->next(),
@@ -1882,6 +1884,8 @@ AsmJSModule::setProfilingEnabled(bool enabled, JSContext* cx)
             new (jump) InstNOP();
         }
 #elif defined(JS_CODEGEN_ARM64)
+        (void)jump;
+        (void)profilingEpilogue;
         MOZ_CRASH();
 #elif defined(JS_CODEGEN_MIPS32)
         Instruction* instr = (Instruction*)jump;

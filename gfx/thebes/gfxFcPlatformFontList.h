@@ -81,7 +81,7 @@ public:
     }
 
 private:
-    nsRefPtr<FTUserFontData> mUserFontData;
+    RefPtr<FTUserFontData> mUserFontData;
 };
 
 // The names for the font entry and font classes should really
@@ -99,7 +99,7 @@ public:
     explicit gfxFontconfigFontEntry(const nsAString& aFaceName,
                                     uint16_t aWeight,
                                     int16_t aStretch,
-                                    bool aItalic,
+                                    uint8_t aStyle,
                                     const uint8_t *aData,
                                     FT_Face aFace);
 
@@ -108,7 +108,7 @@ public:
                                     FcPattern* aFontPattern,
                                     uint16_t aWeight,
                                     int16_t aStretch,
-                                    bool aItalic);
+                                    uint8_t aStyle);
 
     FcPattern* GetPattern() { return mFontPattern; }
 
@@ -148,7 +148,7 @@ protected:
     nsCountedRef<FcPattern> mFontPattern;
 
     // user font data, when needed
-    nsRefPtr<FTUserFontData> mUserFontData;
+    RefPtr<FTUserFontData> mUserFontData;
 
     // FTFace - initialized when needed
     FT_Face   mFTFace;
@@ -209,11 +209,12 @@ public:
 
     gfxFontEntry*
     LookupLocalFont(const nsAString& aFontName, uint16_t aWeight,
-                    int16_t aStretch, bool aItalic) override;
+                    int16_t aStretch, uint8_t aStyle) override;
 
     gfxFontEntry*
     MakePlatformFont(const nsAString& aFontName, uint16_t aWeight,
-                     int16_t aStretch, bool aItalic,
+                     int16_t aStretch,
+                     uint8_t aStyle,
                      const uint8_t* aFontData,
                      uint32_t aLength) override;
 

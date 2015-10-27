@@ -102,14 +102,14 @@ enum AsmJSSimdOperation
 struct MOZ_STACK_CLASS AsmJSFunctionLabels
 {
     AsmJSFunctionLabels(jit::Label& entry, jit::Label& overflowExit)
-      : entry(entry), overflowExit(overflowExit) {}
+      : nonProfilingEntry(entry), overflowExit(overflowExit) {}
 
-    jit::Label begin;
-    jit::Label& entry;
-    jit::Label profilingJump;
-    jit::Label profilingEpilogue;
-    jit::Label profilingReturn;
-    jit::Label end;
+    jit::Label  profilingEntry;
+    jit::Label& nonProfilingEntry;
+    jit::Label  profilingJump;
+    jit::Label  profilingEpilogue;
+    jit::Label  profilingReturn;
+    jit::Label  endAfterOOL;
     mozilla::Maybe<jit::Label> overflowThunk;
     jit::Label& overflowExit;
 };
@@ -313,6 +313,10 @@ class AsmJSModule
         Scalar::Type viewType() const {
             MOZ_ASSERT(pod.which_ == ArrayView || pod.which_ == SharedArrayView || pod.which_ == ArrayViewCtor);
             return pod.u.viewType_;
+        }
+        void makeViewShared() {
+            MOZ_ASSERT(pod.which_ == ArrayView);
+            pod.which_ = SharedArrayView;
         }
         PropertyName* mathName() const {
             MOZ_ASSERT(pod.which_ == MathBuiltinFunction);
@@ -1105,6 +1109,15 @@ class AsmJSModule
         if (pod.hasArrayView_)
             return pod.isSharedView_ == shared;
         return !pod.isSharedView_ || shared;
+    }
+    void setViewsAreShared() {
+        if (pod.hasArrayView_)
+            pod.isSharedView_ = true;
+        for (size_t i=0 ; i < globals_.length() ; i++) {
+            Global& g = globals_[i];
+            if (g.which() == Global::ArrayView)
+                g.makeViewShared();
+        }
     }
 
     /*************************************************************************/

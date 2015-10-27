@@ -1482,7 +1482,7 @@ needs-focus != 542116-1.html 542116-1-ref.html
 needs-focus != 542116-2.html 542116-2-ref.html
 needs-focus != 542116-3.html 542116-3-ref.html
 == 542317-1.html 542317-1-ref.html
-fuzzy-if(Android,17,2) fuzzy-if(xulRuntime.widgetToolkit=="gtk3",1,230) skip-if((B2G&&browserIsRemote)||Mulet) == 542605-hidden-unscrollable.xul 542605-hidden-unscrollable-ref.xul # bug 974780 # Initial mulet triage: parity with B2G/B2G Desktop
+fuzzy-if(Android,17,2) fuzzy-if(xulRuntime.widgetToolkit=="gtk3",1,238) skip-if((B2G&&browserIsRemote)||Mulet) == 542605-hidden-unscrollable.xul 542605-hidden-unscrollable-ref.xul # bug 974780 # Initial mulet triage: parity with B2G/B2G Desktop
 == 542620-1.html 542620-1-ref.html
 == 545049-1.html 545049-1-ref.html
 == 546033-1.html 546033-1-ref.html
@@ -1719,7 +1719,7 @@ skip-if(B2G||Mulet) == 729143-1.html 729143-1-ref.html # Initial mulet triage: p
 == 731521-1.html 731521-1-ref.html
 needs-focus == 731726-1.html 731726-1-ref.html
 == 735481-1.html 735481-1-ref.html
-== 745934-1.html 745934-1-ref.html
+fuzzy-if(cocoaWidget,1,300000) == 745934-1.html 745934-1-ref.html
 == 748692-1a.html 748692-1-ref.html
 == 748692-1b.html 748692-1-ref.html
 skip-if(B2G||Mulet) == 748803-1.html 748803-1-ref.html # Initial mulet triage: parity with B2G/B2G Desktop
@@ -1936,3 +1936,4 @@ fuzzy(1,74) fuzzy-if(gtkWidget,6,79) == 1174332-1.html 1174332-1-ref.html
 == 1202512-1.html 1202512-1-ref.html
 == 1202512-2.html 1202512-2-ref.html
 != 1207326-1.html about:blank
+== 1209603-1.html 1209603-1-ref.html

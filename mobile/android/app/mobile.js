@@ -418,7 +418,7 @@ pref("ui.zoomedview.enabled", true);
 pref("ui.zoomedview.keepLimitSize", 16); // value in layer pixels, used to not keep the large elements in the cluster list (Bug 1191041)
 pref("ui.zoomedview.limitReadableSize", 8); // value in layer pixels
 pref("ui.zoomedview.defaultZoomFactor", 2);
-pref("ui.zoomedview.simplified", true); // Do not display all the zoomed view controls
+pref("ui.zoomedview.simplified", true); // Do not display all the zoomed view controls, do not use size heurisistic
 
 pref("ui.touch.radius.enabled", false);
 pref("ui.touch.radius.leftmm", 3);
@@ -469,11 +469,8 @@ pref("app.releaseNotesURL", "http://www.mozilla.com/%LOCALE%/mobile/%VERSION%bet
 #else
 pref("app.releaseNotesURL", "http://www.mozilla.com/%LOCALE%/mobile/%VERSION%/releasenotes/");
 #endif
-#if MOZ_UPDATE_CHANNEL == beta
-pref("app.faqURL", "http://www.mozilla.com/%LOCALE%/mobile/beta/faq/");
-#else
-pref("app.faqURL", "http://www.mozilla.com/%LOCALE%/mobile/faq/");
-#endif
+
+pref("app.faqURL", "https://support.mozilla.org/1/mobile/%VERSION%/%OS%/%LOCALE%/faq");
 
 // Name of alternate about: page for certificate errors (when undefined, defaults to about:neterror)
 pref("security.alternate_certificate_error_page", "certerror");
@@ -592,9 +589,8 @@ pref("media.cache_readahead_limit", 30);
 pref("media.video-queue.default-size", 3);
 
 // Enable the MediaCodec PlatformDecoderModule by default.
-pref("media.fragmented-mp4.enabled", true);
-pref("media.fragmented-mp4.android-media-codec.enabled", true);
-pref("media.fragmented-mp4.android-media-codec.preferred", true);
+pref("media.android-media-codec.enabled", true);
+pref("media.android-media-codec.preferred", true);
 
 // Enable MSE
 pref("media.mediasource.enabled", true);
@@ -941,8 +937,8 @@ pref("dom.vr.cardboard.enabled", true);
 
 pref("browser.tabs.showAudioPlayingIcon", true);
 
-// Enable service workers and fetch interception on Nightly Fennec
-#ifdef NIGHTLY_BUILD
+// Enable service workers and fetch interception on non-release Fennec
+#ifndef RELEASE_BUILD
 pref("dom.serviceWorkers.enabled", true);
 pref("dom.serviceWorkers.interception.enabled", true);
 #endif

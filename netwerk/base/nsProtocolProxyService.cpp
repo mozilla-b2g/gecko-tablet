@@ -264,7 +264,7 @@ private:
             nsresult rv = mPPS->ConfigureFromPAC(mPACURL, false);
             if (NS_SUCCEEDED(rv)) {
                 // now that the load is triggered, we can resubmit the query
-                nsRefPtr<nsAsyncResolveRequest> newRequest =
+                RefPtr<nsAsyncResolveRequest> newRequest =
                     new nsAsyncResolveRequest(mPPS, mChannel, mAppId,
                                               mIsInBrowser, mResolveFlags,
                                               mCallback);
@@ -770,8 +770,36 @@ nsProtocolProxyService::CanUseProxy(nsIURI *aURI, int32_t defaultPort)
                 // compare last |filter_host_len| bytes of target hostname.
                 //
                 const char *host_tail = host.get() + host_len - filter_host_len;
-                if (!PL_strncasecmp(host_tail, hinfo->name.host, filter_host_len))
-                    return false; // proxy disallowed
+                if (!PL_strncasecmp(host_tail, hinfo->name.host, filter_host_len)) {
+                    // If the tail of the host string matches the filter
+
+                    if (filter_host_len > 0 && hinfo->name.host[0] == '.') {
+                        // If the filter was of the form .foo.bar.tld, all such
+                        // matches are correct
+                        return false; // proxy disallowed
+                    }
+
+                    // abc-def.example.org should not match def.example.org
+                    // however, *.def.example.org should match .def.example.org
+                    // We check that the filter doesn't start with a `.`. If it does,
+                    // then the strncasecmp above should suffice. If it doesn't,
+                    // then we should only consider it a match if the strncasecmp happened
+                    // at a subdomain boundary
+                    if (host_len > filter_host_len && *(host_tail - 1) == '.') {
+                            // If the host was something.foo.bar.tld and the filter
+                            // was foo.bar.tld, it's still a match.
+                            // the character right before the tail must be a
+                            // `.` for this to work
+                            return false; // proxy disallowed
+                    }
+
+                    if (host_len == filter_host_len) {
+                        // If the host and filter are of the same length,
+                        // they should match
+                        return false; // proxy disallowed
+                    }
+                }
+
             }
         }
     }
@@ -1187,7 +1215,7 @@ nsProtocolProxyService::DeprecatedBlockingResolve(nsIChannel *aChannel,
 
     // Use the PAC thread to do the work, so we don't have to reimplement that
     // code, but block this thread on that completion.
-    nsRefPtr<nsAsyncBridgeRequest> ctx = new nsAsyncBridgeRequest();
+    RefPtr<nsAsyncBridgeRequest> ctx = new nsAsyncBridgeRequest();
     ctx->Lock();
     if (NS_SUCCEEDED(mPACMan->AsyncGetProxyForURI(uri, NECKO_NO_APP_ID, false,
                                                   ctx, false))) {
@@ -1247,7 +1275,7 @@ nsProtocolProxyService::AsyncResolveInternal(nsIChannel *channel, uint32_t flags
     NS_GetAppInfo(channel, &appId, &isInBrowser);
 
     *result = nullptr;
-    nsRefPtr<nsAsyncResolveRequest> ctx =
+    RefPtr<nsAsyncResolveRequest> ctx =
         new nsAsyncResolveRequest(this, channel, appId, isInBrowser, flags,
                                   callback);
 
@@ -1377,11 +1405,9 @@ nsProtocolProxyService::GetFailoverForProxy(nsIProxyInfo  *aProxy,
                                             nsresult       aStatus,
                                             nsIProxyInfo **aResult)
 {
-    // We only support failover when a PAC file is configured, either
-    // directly or via system settings
-    if (mProxyConfig != PROXYCONFIG_PAC && mProxyConfig != PROXYCONFIG_WPAD &&
-        mProxyConfig != PROXYCONFIG_SYSTEM)
+    if (mProxyConfig == PROXYCONFIG_DIRECT) {
         return NS_ERROR_NOT_AVAILABLE;
+    }
 
     // Verify that |aProxy| is one of our nsProxyInfo objects.
     nsCOMPtr<nsProxyInfo> pi = do_QueryInterface(aProxy);
@@ -1977,52 +2003,41 @@ nsProtocolProxyService::PruneProxyInfo(const nsProtocolInfo &info,
             return;
     }
 
-    // Now, scan to see if all remaining proxies are disabled.  If so, then
-    // we'll just bail and return them all.  Otherwise, we'll go and prune the
-    // disabled ones.
+    // Now, scan to the next proxy not disabled. If all proxies are disabled,
+    // return blank list to enforce a DIRECT rule.
 
     bool allDisabled = true;
-
     nsProxyInfo *iter;
-    for (iter = head; iter; iter = iter->mNext) {
-        if (!IsProxyDisabled(iter)) {
-            allDisabled = false;
-            break;
+
+    // remove any disabled proxies.
+    nsProxyInfo *last = nullptr;
+    for (iter = head; iter; ) {
+        if (IsProxyDisabled(iter)) {
+            // reject!
+            nsProxyInfo *reject = iter;
+
+            iter = iter->mNext;
+            if (last)
+                last->mNext = iter;
+            else
+                head = iter;
+
+            reject->mNext = nullptr;
+            NS_RELEASE(reject);
+            continue;
         }
+
+        allDisabled = false;
+        EnableProxy(iter);
+
+        last = iter;
+        iter = iter->mNext;
     }
 
-    if (allDisabled)
-        LOG(("All proxies are disabled, so trying all again"));
-    else {
-        // remove any disabled proxies.
-        nsProxyInfo *last = nullptr;
-        for (iter = head; iter; ) {
-            if (IsProxyDisabled(iter)) {
-                // reject!
-                nsProxyInfo *reject = iter;
-
-                iter = iter->mNext;
-                if (last)
-                    last->mNext = iter;
-                else
-                    head = iter;
-
-                reject->mNext = nullptr;
-                NS_RELEASE(reject);
-                continue;
-            }
-
-            // since we are about to use this proxy, make sure it is not on
-            // the disabled proxy list.  we'll add it back to that list if
-            // we have to (in GetFailoverForProxy).
-            //
-            // XXX(darin): It might be better to do this as a final pass.
-            //
-            EnableProxy(iter);
-
-            last = iter;
-            iter = iter->mNext;
-        }
+    if (allDisabled) {
+        LOG(("All proxies are disabled, try a DIRECT rule!"));
+        *list = nullptr;
+        return;
     }
 
     // if only DIRECT was specified then return no proxy info, and we're done.

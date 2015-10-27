@@ -330,6 +330,8 @@ class CallObject : public ScopeObject
 
     /* True if this is for a strict mode eval frame. */
     bool isForEval() const {
+        if (is<ModuleEnvironmentObject>())
+            return false;
         MOZ_ASSERT(getFixedSlot(CALLEE_SLOT).isObjectOrNull());
         MOZ_ASSERT_IF(getFixedSlot(CALLEE_SLOT).isObject(),
                       getFixedSlot(CALLEE_SLOT).toObject().is<JSFunction>());
@@ -341,6 +343,7 @@ class CallObject : public ScopeObject
      * only be called if !isForEval.)
      */
     JSFunction& callee() const {
+        MOZ_ASSERT(!is<ModuleEnvironmentObject>());
         return getFixedSlot(CALLEE_SLOT).toObject().as<JSFunction>();
     }
 
@@ -403,6 +406,7 @@ class ModuleEnvironmentObject : public CallObject
                                ObjectOpResult& result);
     static bool enumerate(JSContext* cx, HandleObject obj, AutoIdVector& properties,
                           bool enumerableOnly);
+    static bool thisValue(JSContext* cx, HandleObject obj, MutableHandleValue vp);
 };
 
 typedef Rooted<ModuleEnvironmentObject*> RootedModuleEnvironmentObject;
@@ -676,8 +680,10 @@ class DynamicWithObject : public NestedScopeObject
     }
 
     /* Return object for the 'this' class hook. */
-    JSObject& withThis() const {
-        return getReservedSlot(THIS_SLOT).toObject();
+    Value withThis() const {
+        Value thisValue = getReservedSlot(THIS_SLOT);
+        MOZ_ASSERT(thisValue.isObject());
+        return thisValue;
     }
 
     /*
@@ -915,7 +921,7 @@ class ClonedBlockObject : public BlockObject
 };
 
 // Internal scope object used by JSOP_BINDNAME upon encountering an
-// uninitialized lexical slot.
+// uninitialized lexical slot or an assignment to a 'const' binding.
 //
 // ES6 lexical bindings cannot be accessed in any way (throwing
 // ReferenceErrors) until initialized. Normally, NAME operations
@@ -930,13 +936,23 @@ class ClonedBlockObject : public BlockObject
 // assignments. Instead, this sentinel scope object is pushed on the stack.
 // Attempting to access anything on this scope throws the appropriate
 // ReferenceError.
-class UninitializedLexicalObject : public ScopeObject
+//
+// ES6 'const' bindings induce a runtime assignment when assigned to outside
+// of initialization, regardless of strictness.
+class RuntimeLexicalErrorObject : public ScopeObject
 {
+    static const unsigned ERROR_SLOT = 1;
+
   public:
-    static const unsigned RESERVED_SLOTS = 1;
+    static const unsigned RESERVED_SLOTS = 2;
     static const Class class_;
 
-    static UninitializedLexicalObject* create(JSContext* cx, HandleObject enclosing);
+    static RuntimeLexicalErrorObject* create(JSContext* cx, HandleObject enclosing,
+                                             unsigned errorNumber);
+
+    unsigned errorNumber() {
+        return getReservedSlot(ERROR_SLOT).toInt32();
+    }
 };
 
 template<XDRMode mode>
@@ -1099,13 +1115,13 @@ class LiveScopeVal
  * now incomplete: it may not contain all, or any, of the ScopeObjects to
  * represent the current scope.
  *
- * To resolve this, the debugger first calls GetDebugScopeFor(Function|Frame)
- * to synthesize a "debug scope chain". A debug scope chain is just a chain of
- * objects that fill in missing scopes and protect the engine from unexpected
- * access. (The latter means that some debugger operations, like redefining a
- * lexical binding, can fail when a true eval would succeed.) To do both of
- * these things, GetDebugScopeFor* creates a new proxy DebugScopeObject to sit
- * in front of every existing ScopeObject.
+ * To resolve this, the debugger first calls GetDebugScopeFor* to synthesize a
+ * "debug scope chain". A debug scope chain is just a chain of objects that
+ * fill in missing scopes and protect the engine from unexpected access. (The
+ * latter means that some debugger operations, like redefining a lexical
+ * binding, can fail when a true eval would succeed.) To do both of these
+ * things, GetDebugScopeFor* creates a new proxy DebugScopeObject to sit in
+ * front of every existing ScopeObject.
  *
  * GetDebugScopeFor* ensures the invariant that the same DebugScopeObject is
  * always produced for the same underlying scope (optimized or not!). This is
@@ -1117,6 +1133,9 @@ GetDebugScopeForFunction(JSContext* cx, HandleFunction fun);
 
 extern JSObject*
 GetDebugScopeForFrame(JSContext* cx, AbstractFramePtr frame, jsbytecode* pc);
+
+extern JSObject*
+GetDebugScopeForGlobalLexicalScope(JSContext* cx);
 
 /* Provides debugger access to a scope. */
 class DebugScopeObject : public ProxyObject
@@ -1256,7 +1275,7 @@ JSObject::is<js::ScopeObject>() const
     return is<js::CallObject>() ||
            is<js::DeclEnvObject>() ||
            is<js::NestedScopeObject>() ||
-           is<js::UninitializedLexicalObject>() ||
+           is<js::RuntimeLexicalErrorObject>() ||
            is<js::NonSyntacticVariablesObject>();
 }
 

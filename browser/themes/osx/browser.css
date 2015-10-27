@@ -596,6 +596,18 @@ toolbarpaletteitem[place="palette"] > #personal-bookmarks > #bookmarks-toolbar-p
 
 /* ----- PRIMARY TOOLBAR BUTTONS ----- */
 
+toolbar .toolbarbutton-1 > .toolbarbutton-icon,
+toolbar .toolbarbutton-1 > :-moz-any(.toolbarbutton-menubutton-button, .toolbarbutton-badge-stack) > .toolbarbutton-icon {
+  max-width: 16px;
+  margin: 1px;
+}
+
+toolbar .toolbarbutton-1:-moz-any(@primaryToolbarButtons@) > .toolbarbutton-icon,
+toolbar .toolbarbutton-1:-moz-any(@primaryToolbarButtons@) > :-moz-any(.toolbarbutton-menubutton-button, .toolbarbutton-badge-stack) > .toolbarbutton-icon {
+  max-width: 18px;
+  margin: 0;
+}
+
 toolbar .toolbarbutton-1:not([type="menu-button"]),
 .toolbarbutton-1 > .toolbarbutton-menubutton-button,
 .toolbarbutton-1 > .toolbarbutton-menubutton-dropmarker {
@@ -1070,12 +1082,6 @@ toolbar .toolbarbutton-1 > .toolbarbutton-menubutton-dropmarker > .dropmarker-ic
     -moz-image-region: rect(36px, 1440px, 72px, 1404px);
   }
 
-  :-moz-any(@primaryToolbarButtons@) > .toolbarbutton-icon,
-  :-moz-any(@primaryToolbarButtons@) > .toolbarbutton-badge-stack > .toolbarbutton-icon,
-  :-moz-any(@primaryToolbarButtons@) > .toolbarbutton-menubutton-button > .toolbarbutton-icon {
-    width: 18px;
-  }
-
   #add-share-provider {
     list-style-image: url(chrome://browser/skin/menuPanel-small@2x.png);
     -moz-image-region: rect(0px, 192px, 32px, 160px);
@@ -1085,17 +1091,6 @@ toolbar .toolbarbutton-1 > .toolbarbutton-menubutton-dropmarker > .dropmarker-ic
 toolbar .toolbarbutton-1:not([type="menu-button"]),
 toolbar .toolbarbutton-1 > .toolbarbutton-menubutton-button {
   min-width: 28px;
-}
-
-/* Help 16px icons fit: */
-toolbar .toolbarbutton-1:not(:-moz-any(@primaryToolbarButtons@)) > .toolbarbutton-icon {
-  margin: 2px;
-}
-
-/* Help SDK icons fit: */
-toolbarbutton[constrain-size="true"][cui-areatype="toolbar"] > .toolbarbutton-icon,
-toolbarbutton[constrain-size="true"][cui-areatype="toolbar"] > .toolbarbutton-badge-stack > .toolbarbutton-icon {
-  width: 16px;
 }
 
 #main-window:not([customizing]) .toolbarbutton-1[disabled="true"] > .toolbarbutton-icon,
@@ -1200,8 +1195,10 @@ toolbarbutton[constrain-size="true"][cui-areatype="toolbar"] > .toolbarbutton-ba
   border-color: rgba(0,0,0,0.2);
 }
 
-#back-button:-moz-locale-dir(rtl) {
-  transform: scaleX(-1);
+#back-button > .toolbarbutton-icon,
+#forward-button > .toolbarbutton-icon {
+  max-width: none;
+  width: 18px;
 }
 
 /* Back button styles */
@@ -1212,6 +1209,10 @@ toolbarbutton[constrain-size="true"][cui-areatype="toolbar"] > .toolbarbutton-ba
   padding: 4px 5px 4px 3px;
   -moz-margin-end: 0;
   border-radius: 10000px;
+}
+
+#back-button:-moz-locale-dir(rtl) {
+  transform: scaleX(-1);
 }
 
 #back-button:not(:-moz-lwtheme) {
@@ -1727,6 +1728,9 @@ toolbarbutton[constrain-size="true"][cui-areatype="toolbar"] > .toolbarbutton-ba
 
 .urlbar-icon {
   padding: 0 3px;
+  /* 16x16 icon with border-box sizing */
+  width: 22px;
+  height: 16px;
 }
 
 #urlbar-search-footer {
@@ -2014,7 +2018,6 @@ richlistitem[type~="action"][actiontype="switchtab"][selected="true"] > .ac-url-
   #page-report-button {
     list-style-image: url("chrome://browser/skin/urlbar-popup-blocked@2x.png");
     -moz-image-region: rect(0, 32px, 32px, 0);
-    width: 22px;
   }
 
   #page-report-button:hover:active,
@@ -3616,7 +3619,7 @@ notification[value="loop-sharing-notification"] .messageImage {
   padding-right: 0;
 }
 
-.browser-action-panel > .panel-arrowcontainer > .panel-arrowcontent {
+.browser-extension-panel > .panel-arrowcontainer > .panel-arrowcontent {
   padding: 0;
 }
 

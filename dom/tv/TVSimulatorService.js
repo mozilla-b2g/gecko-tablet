@@ -11,6 +11,9 @@ const Cc = Components.classes;
 const Cu = Components.utils;
 const Ci = Components.interfaces;
 const Cr = Components.returnCode;
+
+Cu.importGlobalProperties(["File"]);
+
 const TV_SIMULATOR_DUMMY_DIRECTORY = "dummy";
 const TV_SIMULATOR_DUMMY_FILE      = "settings.json";
 
@@ -138,7 +141,7 @@ TVSimulatorService.prototype = {
     this._internalTuners = new Map();
 
     // TVTunerData
-    for each (let tunerData in settingsObj.tuners) {
+    for (let tunerData of settingsObj.tuners) {
       let tuner = Cc["@mozilla.org/tv/tvtunerdata;1"]
                     .createInstance(Ci.nsITVTunerData);
       tuner.id = tunerData.id;
@@ -153,11 +156,11 @@ TVSimulatorService.prototype = {
       };
 
       // TVSource
-      for each (let sourceData in tunerData.sources) {
+      for (let sourceData of tunerData.sources) {
         wrapTunerData.sourceType = sourceData.type;
 
         // TVChannel
-        for each (let channelData in sourceData.channels) {
+        for (let channelData of sourceData.channels) {
           let channel = Cc["@mozilla.org/tv/tvchanneldata;1"]
                           .createInstance(Ci.nsITVChannelData);
           channel.networkId         = channelData.networkId;
@@ -176,7 +179,7 @@ TVSimulatorService.prototype = {
           };
 
           // TVProgram
-          for each (let programData in channelData.programs) {
+          for (let programData of channelData.programs) {
             let program = Cc["@mozilla.org/tv/tvprogramdata;1"]
                             .createInstance(Ci.nsITVProgramData);
             program.eventId     = programData.eventId;
@@ -383,7 +386,7 @@ TVSimulatorService.prototype = {
       return Cr.NS_ERROR_INVALID_ARG;
     }
 
-    for each (let program in wrapChannelData.programs) {
+    for (let program of wrapChannelData.programs) {
       programArray.appendElement(program, false);
     }
 
@@ -458,7 +461,7 @@ TVSimulatorService.prototype = {
 
   _validateTuners: function TVSimValidateTuners(aTunersObject) {
     let tunerIds = new Array();
-    for each (let tuner in aTunersObject) {
+    for (let tuner of aTunersObject) {
       if (!tuner.id ||
           !tuner.supportedType ||
           !tuner.supportedType.length ||
@@ -477,7 +480,7 @@ TVSimulatorService.prototype = {
   },
 
   _validateSources: function TVSimValidateSources(aSourcesObject) {
-    for each (let source in aSourcesObject) {
+    for (let source of aSourcesObject) {
       if (!source.type ||
           !TV_SOURCE_TYPES.includes(source.type)) {
         debug("invalid source data.");
@@ -493,7 +496,7 @@ TVSimulatorService.prototype = {
 
   _validateChannels: function TVSimValidateChannels(aChannelsObject) {
     let channelNumbers = new Array();
-    for each (let channel in aChannelsObject) {
+    for (let channel of aChannelsObject) {
       if (!channel.networkId ||
           !channel.transportStreamId ||
           !channel.serviceId ||
@@ -516,7 +519,7 @@ TVSimulatorService.prototype = {
 
   _validatePrograms: function TVSimValidatePrograms(aProgramsObject) {
     let eventIds = new Array();
-    for each (let program in aProgramsObject) {
+    for (let program of aProgramsObject) {
       if (!program.eventId ||
           eventIds.includes(program.eventId) ||
           !program.title ||

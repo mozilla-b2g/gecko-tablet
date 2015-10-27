@@ -21,16 +21,20 @@ const Cr = Components.results;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/devtools/shared/event-emitter.js");
+Cu.import("resource://devtools/shared/event-emitter.js");
 
 XPCOMUtils.defineLazyModuleGetter(this, "Locale",
                                   "resource://gre/modules/Locale.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "Log",
+                                  "resource://gre/modules/Log.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "MatchPattern",
                                   "resource://gre/modules/MatchPattern.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
                                   "resource://gre/modules/NetUtil.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
                                   "resource://gre/modules/FileUtils.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
+                                  "resource://gre/modules/PrivateBrowsingUtils.jsm");
 
 Cu.import("resource://gre/modules/ExtensionManagement.jsm");
 
@@ -56,6 +60,8 @@ var {
   injectAPI,
   flushJarCache,
 } = ExtensionUtils;
+
+const LOGGER_ID_BASE = "addons.webextension.";
 
 var scriptScope = this;
 
@@ -167,6 +173,7 @@ var globalBroker = new MessageBroker([Services.mm, Services.ppmm]);
 // |contentWindow| is the DOM window the content runs in.
 // |uri| is the URI of the content (optional).
 // |docShell| is the docshell the content runs in (optional).
+// |incognito| is the content running in a private context (default: false).
 function ExtensionPage(extension, params)
 {
   let {type, contentWindow, uri, docShell} = params;
@@ -174,6 +181,7 @@ function ExtensionPage(extension, params)
   this.type = type;
   this.contentWindow = contentWindow || null;
   this.uri = uri || extension.baseURI;
+  this.incognito = params.incognito || false;
   this.onClose = new Set();
 
   // This is the sender property passed to the Messenger for this
@@ -301,7 +309,8 @@ var GlobalManager = {
     }
     let extension = this.extensionMap.get(id);
     let uri = contentWindow.document.documentURIObject;
-    let context = new ExtensionPage(extension, {type: "tab", contentWindow, uri, docShell});
+    let incognito = PrivateBrowsingUtils.isContentWindowPrivate(contentWindow);
+    let context = new ExtensionPage(extension, {type: "tab", contentWindow, uri, docShell, incognito});
     inject(extension, context);
 
     let eventHandler = docShell.chromeEventHandler;
@@ -331,8 +340,11 @@ this.Extension = function(addonData)
   this.addonData = addonData;
   this.id = addonData.id;
   this.baseURI = Services.io.newURI("moz-extension://" + uuid, null, null);
+  this.baseURI.QueryInterface(Ci.nsIURL);
   this.manifest = null;
   this.localeMessages = null;
+  this.logger = Log.repository.getLogger(LOGGER_ID_BASE + this.id.replace(/\./g, "-"));
+  this.principal = this.createPrincipal();
 
   this.views = new Set();
 
@@ -428,12 +440,10 @@ this.Extension.generate = function(id, data)
     let components = filename.split("/");
     let path = "";
     for (let component of components.slice(0, -1)) {
-      path += component;
+      path += component + "/";
       if (!zipW.hasEntry(path)) {
         zipW.addEntryDirectory(path, time, false);
       }
-
-      path += "/";
     }
   }
 
@@ -480,6 +490,24 @@ Extension.prototype = {
 
   testMessage(...args) {
     Management.emit("test-message", this, ...args);
+  },
+
+  createPrincipal(uri = this.baseURI) {
+    return Services.scriptSecurityManager.createCodebasePrincipal(
+      uri, {addonId: this.id});
+  },
+
+  // Checks that the given URL is a child of our baseURI.
+  isExtensionURL(url) {
+    let uri = Services.io.newURI(url, null, null);
+
+    let common = this.baseURI.getCommonBaseSpec(uri);
+    return common == this.baseURI.spec;
+  },
+
+  // Report an error about the extension's manifest file.
+  manifestError(message) {
+    this.logger.error(`Loading extension '${this.id}': ${message}`);
   },
 
   // Representation of the extension to send to content

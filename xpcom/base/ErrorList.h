@@ -543,6 +543,10 @@
   /* A way to represent uncatchable exceptions */
   ERROR(NS_ERROR_UNCATCHABLE_EXCEPTION,            FAILURE(1016)),
 
+  /* An nsresult value to use in ErrorResult to indicate that we want to throw
+     a DOMException */
+  ERROR(NS_ERROR_DOM_DOMEXCEPTION,                 FAILURE(1017)),
+
   /* May be used to indicate when e.g. setting a property value didn't
    * actually change the value, like for obj.foo = "bar"; obj.foo = "bar";
    * the second assignment throws NS_SUCCESS_DOM_NO_OPERATION.
@@ -929,6 +933,14 @@
   /* ======================================================================= */
 #define MODULE NS_ERROR_MODULE_SIGNED_APP
   ERROR(NS_ERROR_SIGNED_APP_MANIFEST_INVALID,   FAILURE(1)),
+#undef MODULE
+
+  /* ======================================================================= */
+  /* 39: NS_ERROR_MODULE_DOM_ANIM */
+  /* ======================================================================= */
+#define MODULE NS_ERROR_MODULE_DOM_ANIM
+  ERROR(NS_ERROR_DOM_ANIM_MISSING_PROPS_ERR,              FAILURE(1)),
+  ERROR(NS_ERROR_DOM_ANIM_NO_TARGET_ERR,                  FAILURE(2)),
 #undef MODULE
 
   /* ======================================================================= */

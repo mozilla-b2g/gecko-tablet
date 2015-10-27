@@ -113,6 +113,11 @@ private:
     eState_Observing
   };
   State GetState() const;
+  bool InitWithEditor(nsPresContext* aPresContext, nsIContent* aContent,
+                      nsIEditor* aEditor);
+  bool InitWithPlugin(nsPresContext* aPresContext, nsIContent* aContent);
+  bool IsInitializedWithPlugin() const { return !mEditor; }
+  void Clear();
   bool IsObservingContent(nsPresContext* aPresContext,
                           nsIContent* aContent) const;
   bool IsReflowLocked() const;
@@ -285,7 +290,7 @@ private:
       MOZ_ASSERT(mIMEContentObserver);
     }
 
-    nsRefPtr<IMEContentObserver> mIMEContentObserver;
+    RefPtr<IMEContentObserver> mIMEContentObserver;
 
     /**
      * CanNotifyIME() checks if mIMEContentObserver can and should notify IME.

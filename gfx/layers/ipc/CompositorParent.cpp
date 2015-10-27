@@ -612,7 +612,7 @@ CompositorParent::~CompositorParent()
 void
 CompositorParent::Destroy()
 {
-  MOZ_ASSERT(ManagedPLayerTransactionParent().Length() == 0,
+  MOZ_ASSERT(ManagedPLayerTransactionParent().Count() == 0,
              "CompositorParent destroyed before managed PLayerTransactionParent");
 
   MOZ_ASSERT(mPaused); // Ensure RecvWillStop was called
@@ -1381,7 +1381,7 @@ CompositorParent::GetAPZTestData(const LayerTransactionParent* aLayerTree,
 class NotifyAPZConfirmedTargetTask : public Task
 {
 public:
-  explicit NotifyAPZConfirmedTargetTask(const nsRefPtr<APZCTreeManager>& aAPZCTM,
+  explicit NotifyAPZConfirmedTargetTask(const RefPtr<APZCTreeManager>& aAPZCTM,
                                         const uint64_t& aInputBlockId,
                                         const nsTArray<ScrollableLayerGuid>& aTargets)
    : mAPZCTM(aAPZCTM),
@@ -1395,7 +1395,7 @@ public:
   }
 
 private:
-  nsRefPtr<APZCTreeManager> mAPZCTM;
+  RefPtr<APZCTreeManager> mAPZCTM;
   uint64_t mInputBlockId;
   nsTArray<ScrollableLayerGuid> mTargets;
 };
@@ -1470,8 +1470,6 @@ CompositorParent::AllocPLayerTransactionParent(const nsTArray<LayersBackend>& aB
 {
   MOZ_ASSERT(aId == 0);
 
-  gfx::IntRect rect;
-  mWidget->GetClientBounds(rect);
   InitializeLayerManager(aBackendHints);
 
   if (!mLayerManager) {
@@ -1823,10 +1821,10 @@ private:
   // There can be many CPCPs, and IPDL-generated code doesn't hold a
   // reference to top-level actors.  So we hold a reference to
   // ourself.  This is released (deferred) in ActorDestroy().
-  nsRefPtr<CrossProcessCompositorParent> mSelfRef;
+  RefPtr<CrossProcessCompositorParent> mSelfRef;
   Transport* mTransport;
 
-  nsRefPtr<CompositorThreadHolder> mCompositorThreadHolder;
+  RefPtr<CompositorThreadHolder> mCompositorThreadHolder;
   // If true, we should send a RemotePaintIsReady message when the layer transaction
   // is received
   bool mNotifyAfterRemotePaint;
@@ -1873,7 +1871,7 @@ CompositorParent::Create(Transport* aTransport, ProcessId aOtherPid)
 {
   gfxPlatform::InitLayersIPC();
 
-  nsRefPtr<CrossProcessCompositorParent> cpcp =
+  RefPtr<CrossProcessCompositorParent> cpcp =
     new CrossProcessCompositorParent(aTransport);
 
   cpcp->mSelfRef = cpcp;
@@ -1884,27 +1882,6 @@ CompositorParent::Create(Transport* aTransport, ProcessId aOtherPid)
   // The return value is just compared to null for success checking,
   // we're not sharing a ref.
   return cpcp.get();
-}
-
-IToplevelProtocol*
-CompositorParent::CloneToplevel(const InfallibleTArray<mozilla::ipc::ProtocolFdMapping>& aFds,
-                                base::ProcessHandle aPeerProcess,
-                                mozilla::ipc::ProtocolCloneContext* aCtx)
-{
-  for (unsigned int i = 0; i < aFds.Length(); i++) {
-    if (aFds[i].protocolId() == (unsigned)GetProtocolId()) {
-      Transport* transport = OpenDescriptor(aFds[i].fd(),
-                                            Transport::MODE_SERVER);
-      PCompositorParent* compositor = Create(transport, base::GetProcId(aPeerProcess));
-      compositor->CloneManagees(this, aCtx);
-      compositor->IToplevelProtocol::SetTransport(transport);
-      // The reference to the compositor thread is held in OnChannelConnected().
-      // We need to do this for cloned actors, too.
-      compositor->OnChannelConnected(base::GetProcId(aPeerProcess));
-      return compositor;
-    }
-  }
-  return nullptr;
 }
 
 static void
@@ -1929,7 +1906,7 @@ CompositorParent::GetIndirectShadowTree(uint64_t aId)
 bool
 CrossProcessCompositorParent::RecvNotifyHidden(const uint64_t& id)
 {
-  nsRefPtr<CompositorLRU> lru = CompositorLRU::GetSingleton();
+  RefPtr<CompositorLRU> lru = CompositorLRU::GetSingleton();
   lru->Add(this, id);
   return true;
 }
@@ -1937,7 +1914,7 @@ CrossProcessCompositorParent::RecvNotifyHidden(const uint64_t& id)
 bool
 CrossProcessCompositorParent::RecvNotifyVisible(const uint64_t& id)
 {
-  nsRefPtr<CompositorLRU> lru = CompositorLRU::GetSingleton();
+  RefPtr<CompositorLRU> lru = CompositorLRU::GetSingleton();
   lru->Remove(this, id);
   return true;
 }
@@ -1952,7 +1929,7 @@ CrossProcessCompositorParent::RecvRequestNotifyAfterRemotePaint()
 void
 CrossProcessCompositorParent::ActorDestroy(ActorDestroyReason aWhy)
 {
-  nsRefPtr<CompositorLRU> lru = CompositorLRU::GetSingleton();
+  RefPtr<CompositorLRU> lru = CompositorLRU::GetSingleton();
   lru->Remove(this);
 
   MessageLoop::current()->PostTask(
@@ -2063,7 +2040,7 @@ CrossProcessCompositorParent::ShadowLayersUpdated(
   }
 
   if (state->mLayerTreeReadyObserver) {
-    nsRefPtr<CompositorUpdateObserver> observer = state->mLayerTreeReadyObserver;
+    RefPtr<CompositorUpdateObserver> observer = state->mLayerTreeReadyObserver;
     state->mLayerTreeReadyObserver = nullptr;
     observer->ObserveUpdate(id, true);
   }
@@ -2080,7 +2057,13 @@ CrossProcessCompositorParent::ShadowLayersUpdated(
 bool
 CompositorParent::UpdatePluginWindowState(uint64_t aId)
 {
+  MonitorAutoLock lock(*sIndirectLayerTreesLock);
   CompositorParent::LayerTreeState& lts = sIndirectLayerTrees[aId];
+  if (!lts.mParent) {
+    PLUGINS_LOG("[%" PRIu64 "] layer tree compositor parent pointer is null", aId);
+    return false;
+  }
+
   // Check if this layer tree has received any shadow layer updates
   if (!lts.mUpdatedPluginDataAvailable) {
     PLUGINS_LOG("[%" PRIu64 "] no plugin data", aId);
@@ -2154,7 +2137,13 @@ CompositorParent::UpdatePluginWindowState(uint64_t aId)
                                                       lts.mPluginData);
         lts.mUpdatedPluginDataAvailable = false;
         PLUGINS_LOG("[%" PRIu64 "] updated", aId);
+      } else {
+        PLUGINS_LOG("[%" PRIu64 "] no visibility data", aId);
+        return false;
       }
+    } else {
+      PLUGINS_LOG("[%" PRIu64 "] no content root", aId);
+      return false;
     }
   }
 
@@ -2198,7 +2187,7 @@ CrossProcessCompositorParent::NotifyClearCachedResources(LayerTransactionParent*
   uint64_t id = aLayerTree->GetId();
   MOZ_ASSERT(id != 0);
 
-  nsRefPtr<CompositorUpdateObserver> observer;
+  RefPtr<CompositorUpdateObserver> observer;
   { // scope lock
     MonitorAutoLock lock(*sIndirectLayerTreesLock);
     observer = sIndirectLayerTrees[id].mLayerTreeClearedObserver;
@@ -2337,6 +2326,9 @@ CrossProcessCompositorParent::CloneToplevel(const InfallibleTArray<mozilla::ipc:
         CompositorParent::Create(transport, base::GetProcId(aPeerProcess));
       compositor->CloneManagees(this, aCtx);
       compositor->IToplevelProtocol::SetTransport(transport);
+      // The reference to the compositor thread is held in OnChannelConnected().
+      // We need to do this for cloned actors, too.
+      compositor->OnChannelConnected(base::GetProcId(aPeerProcess));
       return compositor;
     }
   }

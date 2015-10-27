@@ -9,6 +9,7 @@
 #include "mozilla/layers/ImageBridgeChild.h"
 #include "mozilla/layers/SharedBufferManagerChild.h"
 #include "mozilla/layers/ISurfaceAllocator.h"     // for GfxMemoryImageReporter
+#include "mozilla/Telemetry.h"
 
 #include "mozilla/Logging.h"
 #include "mozilla/Services.h"
@@ -185,6 +186,7 @@ class CrashStatsLogForwarder: public mozilla::gfx::LogForwarder
 public:
   explicit CrashStatsLogForwarder(const char* aKey);
   virtual void Log(const std::string& aString) override;
+  virtual void CrashAction(LogReason aReason) override;
 
   virtual std::vector<std::pair<int32_t,std::string> > StringsVectorCopy() override;
 
@@ -279,6 +281,55 @@ void CrashStatsLogForwarder::Log(const std::string& aString)
 
   if (UpdateStringsVector(aString)) {
     UpdateCrashReport();
+  }
+}
+
+class CrashTelemetryEvent : public nsRunnable
+{
+  virtual ~CrashTelemetryEvent() {}
+
+  NS_DECL_ISUPPORTS_INHERITED
+
+  explicit CrashTelemetryEvent(uint32_t aReason) : mReason(aReason) {}
+
+  NS_IMETHOD Run() override {
+    MOZ_ASSERT(NS_IsMainThread());
+    Telemetry::Accumulate(Telemetry::GFX_CRASH, mReason);
+    return NS_OK;
+  }
+
+protected:
+  uint32_t mReason;
+};
+
+NS_IMPL_ISUPPORTS_INHERITED0(CrashTelemetryEvent, nsRunnable);
+
+void
+CrashStatsLogForwarder::CrashAction(LogReason aReason)
+{
+#ifndef RELEASE_BUILD
+  // Non-release builds crash by default, but will use telemetry
+  // if this environment variable is present.
+  static bool useTelemetry = getenv("MOZ_GFX_CRASH_TELEMETRY") != 0;
+#else
+  // Release builds use telemetry bu default, but will crash
+  // if this environment variable is present.  Double negative
+  // to make the intent clear.
+  static bool useTelemetry = !(getenv("MOZ_GFX_CRASH_MOZ_CRASH") != 0);
+#endif
+
+  if (useTelemetry) {
+    // The callers need to assure that aReason is in the range
+    // that the telemetry call below supports.
+    if (NS_IsMainThread()) {
+      Telemetry::Accumulate(Telemetry::GFX_CRASH, (uint32_t)aReason);
+    } else {
+      nsCOMPtr<nsIRunnable> r1 = new CrashTelemetryEvent((uint32_t)aReason);
+      NS_DispatchToMainThread(r1);
+    }
+  } else {
+    // ignoring aReason, we can get the information we need from the stack
+    MOZ_CRASH("GFX_CRASH");
   }
 }
 
@@ -755,7 +806,7 @@ gfxPlatform::CreateDrawTargetForUpdateSurface(gfxASurface *aSurface, const IntSi
     return Factory::CreateDrawTargetForCairoCGContext(static_cast<gfxQuartzSurface*>(aSurface)->GetCGContext(), aSize);
   }
 #endif
-  MOZ_CRASH();
+  MOZ_CRASH("unused function");
   return nullptr;
 }
 
@@ -784,7 +835,7 @@ UserDataKey kThebesSurface;
 
 struct DependentSourceSurfaceUserData
 {
-  nsRefPtr<gfxASurface> mSurface;
+  RefPtr<gfxASurface> mSurface;
 };
 
 void SourceSurfaceDestroyed(void *aData)
@@ -935,7 +986,7 @@ gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurfa
 already_AddRefed<DataSourceSurface>
 gfxPlatform::GetWrappedDataSourceSurface(gfxASurface* aSurface)
 {
-  nsRefPtr<gfxImageSurface> image = aSurface->GetAsImageSurface();
+  RefPtr<gfxImageSurface> image = aSurface->GetAsImageSurface();
   if (!image) {
     return nullptr;
   }
@@ -1009,9 +1060,11 @@ gfxPlatform::ComputeTileSize()
   if (gfxPrefs::LayersTilesAdjust()) {
     gfx::IntSize screenSize = GetScreenSize();
     if (screenSize.width > 0) {
-      // FIXME: we should probably make sure this is within the max texture size,
-      // but I think everything should at least support 1024
-      w = h = std::max(std::min(NextPowerOfTwo(screenSize.width) / 2, 1024), 256);
+      // For the time being tiles larger than 512 probably do not make much
+      // sense. This is due to e.g. increased rasterisation time outweighing
+      // the decreased composition time, or large increases in memory usage
+      // for screens slightly wider than a higher power of two.
+      w = h = screenSize.width >= 512 ? 512 : 256;
     }
 
 #ifdef MOZ_WIDGET_GONK
@@ -1112,7 +1165,7 @@ gfxPlatform::GetSkiaGLGlue()
      * FIXME: This should be stored in TLS or something, since there needs to be one for each thread using it. As it
      * stands, this only works on the main thread.
      */
-    nsRefPtr<GLContext> glContext;
+    RefPtr<GLContext> glContext;
     glContext = GLContextProvider::CreateHeadless(CreateContextFlags::REQUIRE_COMPAT_PROFILE |
                                                   CreateContextFlags::ALLOW_OFFLINE_RENDERER);
     if (!glContext) {
@@ -1165,7 +1218,7 @@ gfxPlatform::CreateDrawTargetForBackend(BackendType aBackend, const IntSize& aSi
   // CreateOffscreenSurface() and CreateDrawTargetForSurface() for all
   // backends).
   if (aBackend == BackendType::CAIRO) {
-    nsRefPtr<gfxASurface> surf = CreateOffscreenSurface(aSize, SurfaceFormatToImageFormat(aFormat));
+    RefPtr<gfxASurface> surf = CreateOffscreenSurface(aSize, SurfaceFormatToImageFormat(aFormat));
     if (!surf || surf->CairoStatus()) {
       return nullptr;
     }
@@ -1325,7 +1378,7 @@ gfxFontEntry*
 gfxPlatform::MakePlatformFont(const nsAString& aFontName,
                               uint16_t aWeight,
                               int16_t aStretch,
-                              bool aItalic,
+                              uint8_t aStyle,
                               const uint8_t* aFontData,
                               uint32_t aLength)
 {
@@ -2039,7 +2092,7 @@ already_AddRefed<mozilla::gfx::VsyncSource>
 gfxPlatform::CreateHardwareVsyncSource()
 {
   NS_WARNING("Hardware Vsync support not yet implemented. Falling back to software timers");
-  nsRefPtr<mozilla::gfx::VsyncSource> softwareVsync = new SoftwareVsyncSource();
+  RefPtr<mozilla::gfx::VsyncSource> softwareVsync = new SoftwareVsyncSource();
   return softwareVsync.forget();
 }
 
@@ -2157,13 +2210,9 @@ gfxPlatform::PerfWarnings()
   return gfxPrefs::PerfWarnings();
 }
 
-void
-gfxPlatform::GetAcceleratedCompositorBackends(nsTArray<LayersBackend>& aBackends)
+static inline bool
+AllowOpenGL(bool* aWhitelisted)
 {
-  // Being whitelisted is not enough to accelerate, but not being whitelisted is
-  // enough not to:
-  bool whitelisted = false;
-
   nsCOMPtr<nsIGfxInfo> gfxInfo = do_GetService("@mozilla.org/gfx/info;1");
   if (gfxInfo) {
     // bug 655578: on X11 at least, we must always call GetData (even if we don't need that information)
@@ -2175,10 +2224,24 @@ gfxPlatform::GetAcceleratedCompositorBackends(nsTArray<LayersBackend>& aBackends
     int32_t status;
     if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_OPENGL_LAYERS, &status))) {
       if (status == nsIGfxInfo::FEATURE_STATUS_OK) {
-        aBackends.AppendElement(LayersBackend::LAYERS_OPENGL);
-        whitelisted = true;
+        *aWhitelisted = true;
+        return true;
       }
     }
+  }
+
+  return gfxPrefs::LayersAccelerationForceEnabled();
+}
+
+void
+gfxPlatform::GetAcceleratedCompositorBackends(nsTArray<LayersBackend>& aBackends)
+{
+  // Being whitelisted is not enough to accelerate, but not being whitelisted is
+  // enough not to:
+  bool whitelisted = false;
+
+  if (AllowOpenGL(&whitelisted)) {
+    aBackends.AppendElement(LayersBackend::LAYERS_OPENGL);
   }
 
   if (!whitelisted) {

@@ -46,6 +46,7 @@ a11y::ProxyCreated(ProxyAccessible* aProxy, uint32_t aInterfaces)
     wrapper = new ProxyAccessibleWrap(aProxy);
   }
 
+  wrapper->SetProxyInterfaces(aInterfaces);
   wrapper->AddRef();
   aProxy->SetWrapper(reinterpret_cast<uintptr_t>(wrapper));
 }
@@ -61,14 +62,17 @@ a11y::ProxyDestroyed(ProxyAccessible* aProxy)
 
   auto doc =
     static_cast<DocProxyAccessibleWrap*>(WrapperFor(aProxy->Document()));
+  MOZ_ASSERT(doc);
+  if (doc) {
 #ifdef _WIN64
-  uint32_t id = wrapper->GetExistingID();
-  if (id != AccessibleWrap::kNoID) {
-    doc->RemoveID(id);
-  }
+    uint32_t id = wrapper->GetExistingID();
+    if (id != AccessibleWrap::kNoID) {
+      doc->RemoveID(id);
+    }
 #else
-  doc->RemoveID(-reinterpret_cast<int32_t>(wrapper));
+    doc->RemoveID(-reinterpret_cast<int32_t>(wrapper));
 #endif
+  }
 
   wrapper->Shutdown();
   aProxy->SetWrapper(0);

@@ -179,6 +179,52 @@ public:
                       BluetoothReplyRunnable* aRunnable);
 
   virtual void
+  ReplyToMapFolderListing(long aMasId,
+                          const nsAString& aFolderlists,
+                          BluetoothReplyRunnable* aRunnable);
+
+  virtual void
+  ReplyToMapMessagesListing(BlobParent* aBlobParent,
+                            BlobChild* aBlobChild,
+                            long aMasId,
+                            bool aNewMessage,
+                            const nsAString& aTimestamp,
+                            int aSize,
+                            BluetoothReplyRunnable* aRunnable);
+
+  virtual void
+  ReplyToMapMessagesListing(long aMasId,
+                            Blob* aBlob,
+                            bool aNewMessage,
+                            const nsAString& aTimestamp,
+                            int aSize,
+                            BluetoothReplyRunnable* aRunnable);
+
+  virtual void
+  ReplyToMapGetMessage(BlobParent* aBlobParent,
+                       BlobChild* aBlobChild,
+                       long aMasId,
+                       BluetoothReplyRunnable* aRunnable);
+
+  virtual void
+  ReplyToMapGetMessage(Blob* aBlob,
+                       long aMasId,
+                       BluetoothReplyRunnable* aRunnable);
+
+  virtual void
+  ReplyToMapSetMessageStatus(long aMasId,
+                             bool aStatus,
+                             BluetoothReplyRunnable* aRunnable);
+
+  virtual void
+  ReplyToMapSendMessage(
+    long aMasId, bool aStatus, BluetoothReplyRunnable* aRunnable);
+
+  virtual void
+  ReplyToMapMessageUpdate(
+    long aMasId, bool aStatus, BluetoothReplyRunnable* aRunnable);
+
+  virtual void
   AnswerWaitingCall(BluetoothReplyRunnable* aRunnable);
 
   virtual void
@@ -452,12 +498,12 @@ protected:
   bool mIsFirstTimeToggleOffBt;
 
   // Runnable arrays
-  nsTArray<nsRefPtr<BluetoothReplyRunnable>> mChangeAdapterStateRunnables;
-  nsTArray<nsRefPtr<BluetoothReplyRunnable>> mSetAdapterPropertyRunnables;
-  nsTArray<nsRefPtr<BluetoothReplyRunnable>> mChangeDiscoveryRunnables;
-  nsTArray<nsRefPtr<BluetoothReplyRunnable>> mFetchUuidsRunnables;
-  nsTArray<nsRefPtr<BluetoothReplyRunnable>> mCreateBondRunnables;
-  nsTArray<nsRefPtr<BluetoothReplyRunnable>> mRemoveBondRunnables;
+  nsTArray<RefPtr<BluetoothReplyRunnable>> mChangeAdapterStateRunnables;
+  nsTArray<RefPtr<BluetoothReplyRunnable>> mSetAdapterPropertyRunnables;
+  nsTArray<RefPtr<BluetoothReplyRunnable>> mChangeDiscoveryRunnables;
+  nsTArray<RefPtr<BluetoothReplyRunnable>> mFetchUuidsRunnables;
+  nsTArray<RefPtr<BluetoothReplyRunnable>> mCreateBondRunnables;
+  nsTArray<RefPtr<BluetoothReplyRunnable>> mRemoveBondRunnables;
 
   // Array of get device requests. Each request remembers
   // 1) remaining device count to receive properties,

@@ -825,7 +825,7 @@ UnboxedPlainObject::obj_setProperty(JSContext* cx, HandleObject obj, HandleId id
             return SetProperty(cx, obj, id, v, receiver, result);
         }
 
-        return SetPropertyByDefining(cx, obj, id, v, receiver, result);
+        return SetPropertyByDefining(cx, id, v, receiver, result);
     }
 
     if (UnboxedExpandoObject* expando = obj->as<UnboxedPlainObject>().maybeExpando()) {
@@ -1549,7 +1549,7 @@ UnboxedArrayObject::obj_setProperty(JSContext* cx, HandleObject obj, HandleId id
             return SetProperty(cx, obj, id, v, receiver, result);
         }
 
-        return SetPropertyByDefining(cx, obj, id, v, receiver, result);
+        return SetPropertyByDefining(cx, id, v, receiver, result);
     }
 
     return SetPropertyOnProto(cx, obj, id, v, receiver, result);
@@ -1780,10 +1780,7 @@ ComputePlainObjectLayout(ExclusiveContext* cx, Shape* templateShape,
     // properties, which will allow us to generate better code if the objects
     // have a subtype/supertype relation and are accessed at common sites.
     UnboxedLayout* bestExisting = nullptr;
-    for (UnboxedLayout* existing = cx->compartment()->unboxedLayouts.getFirst();
-         existing;
-         existing = existing->getNext())
-    {
+    for (UnboxedLayout* existing : cx->compartment()->unboxedLayouts) {
         if (PropertiesAreSuperset(properties, existing)) {
             if (!bestExisting ||
                 existing->properties().length() > bestExisting->properties().length())

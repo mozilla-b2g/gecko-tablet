@@ -19,7 +19,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "PluralForm",
                                   "resource://gre/modules/PluralForm.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "BrowserToolboxProcess", function () {
-  return Cu.import("resource:///modules/devtools/client/framework/ToolboxProcess.jsm", {}).
+  return Cu.import("resource://devtools/client/framework/ToolboxProcess.jsm", {}).
          BrowserToolboxProcess;
 });
 XPCOMUtils.defineLazyModuleGetter(this, "Experiments",
@@ -638,8 +638,10 @@ var gViewController = {
     this.viewObjects["detail"] = gDetailView;
     this.viewObjects["updates"] = gUpdatesView;
 
-    for each (let view in this.viewObjects)
+    for (let type in this.viewObjects) {
+      let view = this.viewObjects[type];
       view.initialize();
+    }
 
     window.controllers.appendController(this);
 
@@ -655,7 +657,8 @@ var gViewController = {
       this.currentViewObj.hide();
     this.currentViewRequest = 0;
 
-    for each(let view in this.viewObjects) {
+    for (let type in this.viewObjects) {
+      let view = this.viewObjects[type];
       if ("shutdown" in view) {
         try {
           view.shutdown();
@@ -2891,7 +2894,7 @@ var gDetailView = {
       gCategories.select("addons://list/" + aAddon.type);
 
     document.getElementById("detail-name").textContent = aAddon.name;
-    var icon = aAddon.icon64URL ? aAddon.icon64URL : aAddon.iconURL;
+    var icon = AddonManager.getPreferredIconURL(aAddon, 64, window);
     document.getElementById("detail-icon").src = icon ? icon : "";
     document.getElementById("detail-creator").setCreator(aAddon.creator, aAddon.homepageURL);
 

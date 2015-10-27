@@ -58,14 +58,12 @@ stage-package: $(MOZ_PKG_MANIFEST) $(MOZ_PKG_MANIFEST_DEPS)
 	$(call py_action,test_archive, \
 		mozharness \
 		$(abspath $(DIST))/$(PKG_PATH)$(MOZHARNESS_PACKAGE))
-ifndef LIBXUL_SDK
 ifdef MOZ_PACKAGE_JSSHELL
 	# Package JavaScript Shell
 	@echo 'Packaging JavaScript Shell...'
 	$(RM) $(PKG_JSSHELL)
 	$(MAKE_JSSHELL)
 endif # MOZ_PACKAGE_JSSHELL
-endif # LIBXUL_SDK
 ifdef MOZ_CODE_COVERAGE
 	# Package code coverage gcno tree
 	@echo 'Packaging code coverage data...'
@@ -211,7 +209,7 @@ checksum:
 
 
 upload: checksum
-	$(PYTHON) $(MOZILLA_DIR)/build/upload.py --base-path $(DIST) \
+	$(PYTHON) -u $(MOZILLA_DIR)/build/upload.py --base-path $(DIST) \
 		--package $(PACKAGE) \
 		--properties-file $(DIST)/mach_build_properties.json \
 		$(UPLOAD_FILES) \

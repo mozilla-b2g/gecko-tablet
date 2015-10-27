@@ -696,7 +696,8 @@ this.DOMApplicationRegistry = {
           continue;
         // Remove the permissions, cookies and private data for this app.
         let localId = this.webapps[id].localId;
-        permMgr.removePermissionsForApp(localId, false);
+        let attrs = { appId: localId };
+        permMgr.removePermissionsWithAttributes(JSON.stringify(attrs));
         Services.cookies.removeCookiesForApp(localId, false);
         this._clearPrivateData(localId, false);
         delete this.webapps[id];
@@ -1937,8 +1938,7 @@ this.DOMApplicationRegistry = {
       PermissionsInstaller.installPermissions(
         { manifest: newManifest,
           origin: app.origin,
-          manifestURL: app.manifestURL,
-          kind: app.kind },
+          manifestURL: app.manifestURL },
         true);
     }
     this.updateDataStore(this.webapps[id].localId, app.origin,
@@ -2382,8 +2382,7 @@ this.DOMApplicationRegistry = {
         PermissionsInstaller.installPermissions({
           manifest: aApp.manifest,
           origin: aApp.origin,
-          manifestURL: aData.manifestURL,
-          kind: aApp.kind
+          manifestURL: aData.manifestURL
         }, true);
       }
 
@@ -3738,16 +3737,24 @@ this.DOMApplicationRegistry = {
     // true.
     if (useReviewerCerts) {
       let manifestPath = Services.io.newURI(aManifestURL, null, null).path;
+      let isReviewer = false;
+      // There are different reviewer paths for apps & addons so we keep
+      // them in a comma separated preference.
+      try {
+        let reviewerPaths =
+          Services.prefs.getCharPref("dom.apps.reviewer_paths").split(",");
+        isReviewer = reviewerPaths.some(path => { return manifestPath.startsWith(path); });
+      } catch(e) {}
 
       switch (aInstallOrigin) {
         case "https://marketplace.firefox.com":
-          root = manifestPath.startsWith("/reviewers/")
+          root = isReviewer
                ? Ci.nsIX509CertDB.AppMarketplaceProdReviewersRoot
                : Ci.nsIX509CertDB.AppMarketplaceProdPublicRoot;
           break;
 
         case "https://marketplace-dev.allizom.org":
-          root = manifestPath.startsWith("/reviewers/")
+          root = isReviewer
                ? Ci.nsIX509CertDB.AppMarketplaceDevReviewersRoot
                : Ci.nsIX509CertDB.AppMarketplaceDevPublicRoot;
           break;
@@ -4106,11 +4113,6 @@ this.DOMApplicationRegistry = {
   },
 
   doUninstall: Task.async(function*(aData, aMm) {
-    // The yields here could get stuck forever, so we only hold
-    // a weak reference to the message manager while yielding, to avoid
-    // leaking the whole page associationed with the message manager.
-    aMm = Cu.getWeakReference(aMm);
-
     let response = "Webapps:Uninstall:Return:OK";
 
     try {
@@ -4140,9 +4142,7 @@ this.DOMApplicationRegistry = {
       response = "Webapps:Uninstall:Return:KO";
     }
 
-    if ((aMm = aMm.get())) {
-      aMm.sendAsyncMessage(response, this.formatMessage(aData));
-    }
+    aMm.sendAsyncMessage(response, this.formatMessage(aData));
   }),
 
   uninstall: function(aManifestURL) {

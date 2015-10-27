@@ -16,7 +16,7 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/Task.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
-var {devtools} = Cu.import("resource://gre/modules/devtools/shared/Loader.jsm", {});
+var {devtools} = Cu.import("resource://devtools/shared/Loader.jsm", {});
 this.DevToolsUtils = devtools.require("devtools/shared/DevToolsUtils");
 
 XPCOMUtils.defineLazyServiceGetter(
@@ -1623,6 +1623,13 @@ GeckoDriver.prototype.getActiveFrame = function(cmd, resp) {
 };
 
 /**
+ *
+ */
+GeckoDriver.prototype.switchToParentFrame = function (cmd, resp) {
+  let res = yield this.listener.switchToParentFrame();
+};
+
+/**
  * Switch to a given frame within the current window.
  *
  * @param {Object} element
@@ -2535,6 +2542,9 @@ GeckoDriver.prototype.clearImportedScripts = function(cmd, resp) {
  *     PNG image encoded as base64 encoded string.
  */
 GeckoDriver.prototype.takeScreenshot = function(cmd, resp) {
+  let {id, highlights, full} = cmd.parameters;
+  highlights = highlights || [];
+
   switch (this.context) {
     case Context.CHROME:
       let win = this.getCurrentWindow();
@@ -2577,10 +2587,7 @@ GeckoDriver.prototype.takeScreenshot = function(cmd, resp) {
       break;
 
     case Context.CONTENT:
-      resp.body.value = yield this.listener.takeScreenshot({
-        id: cmd.parameters.id,
-        highlights: cmd.parameters.highlights,
-        full: cmd.parameters.full});
+      return this.listener.takeScreenshot(id, full, highlights);
       break;
   }
 };
@@ -2966,6 +2973,7 @@ GeckoDriver.prototype.commands = {
   "setWindowPosition": GeckoDriver.prototype.setWindowPosition,
   "getActiveFrame": GeckoDriver.prototype.getActiveFrame,
   "switchToFrame": GeckoDriver.prototype.switchToFrame,
+  "switchToParentFrame": GeckoDriver.prototype.switchToParentFrame,
   "switchToWindow": GeckoDriver.prototype.switchToWindow,
   "switchToShadowRoot": GeckoDriver.prototype.switchToShadowRoot,
   "deleteSession": GeckoDriver.prototype.deleteSession,

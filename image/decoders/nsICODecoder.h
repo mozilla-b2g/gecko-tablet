@@ -7,7 +7,6 @@
 #ifndef mozilla_image_decoders_nsICODecoder_h
 #define mozilla_image_decoders_nsICODecoder_h
 
-#include "nsAutoPtr.h"
 #include "StreamingLexer.h"
 #include "Decoder.h"
 #include "imgFrame.h"
@@ -119,7 +118,7 @@ private:
   LexerTransition<ICOState> FinishResource();
 
   StreamingLexer<ICOState, 32> mLexer; // The lexer.
-  nsRefPtr<Decoder> mContainedDecoder; // Either a BMP or PNG decoder.
+  RefPtr<Decoder> mContainedDecoder; // Either a BMP or PNG decoder.
   UniquePtr<uint8_t[]> mMaskBuffer;    // A temporary buffer for the alpha mask.
   char mBIHraw[40];                    // The bitmap information header.
   IconDirEntry mDirEntry;              // The dir entry for the selected resource.

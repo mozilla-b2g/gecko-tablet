@@ -390,13 +390,10 @@ DocAccessibleChild::RecvCaretOffset(const uint64_t& aID, int32_t* aOffset)
 
 bool
 DocAccessibleChild::RecvSetCaretOffset(const uint64_t& aID,
-                                       const int32_t& aOffset,
-                                       bool* aRetVal)
+                                       const int32_t& aOffset)
 {
   HyperTextAccessible* acc = IdToHyperTextAccessible(aID);
-  *aRetVal = false;
   if (acc && acc->IsTextRole() && acc->IsValidOffset(aOffset)) {
-    *aRetVal = true;
     acc->SetCaretOffset(aOffset);
   }
   return true;
@@ -1616,6 +1613,28 @@ DocAccessibleChild::RecvUnselectAll(const uint64_t& aID,
   Accessible* acc = IdToAccessibleSelect(aID);
   if (acc) {
     *aSuccess = acc->UnselectAll();
+  }
+
+  return true;
+}
+
+bool
+DocAccessibleChild::RecvTakeSelection(const uint64_t& aID)
+{
+  Accessible* acc = IdToAccessible(aID);
+  if (acc) {
+    acc->TakeSelection();
+  }
+
+  return true;
+}
+
+bool
+DocAccessibleChild::RecvSetSelected(const uint64_t& aID, const bool& aSelect)
+{
+  Accessible* acc = IdToAccessible(aID);
+  if (acc) {
+    acc->SetSelected(aSelect);
   }
 
   return true;

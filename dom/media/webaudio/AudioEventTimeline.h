@@ -38,7 +38,7 @@ struct AudioTimelineEvent final
   };
 
   AudioTimelineEvent(Type aType, double aTime, float aValue, double aTimeConstant = 0.0,
-                     float aDuration = 0.0, const float* aCurve = nullptr,
+                     double aDuration = 0.0, const float* aCurve = nullptr,
                      uint32_t aCurveLength = 0)
     : mType(aType)
     , mTimeConstant(aTimeConstant)
@@ -114,7 +114,7 @@ struct AudioTimelineEvent final
   // duration of D, we sample the buffer at floor(mCurveLength*(T-T0)/D)
   // if T<T0+D, and just take the last sample in the buffer otherwise.
   float* mCurve;
-  nsRefPtr<MediaStream> mStream;
+  RefPtr<MediaStream> mStream;
   double mTimeConstant;
   double mDuration;
 #ifdef DEBUG
@@ -209,6 +209,8 @@ public:
     // curve event.
     for (unsigned i = 0; i < mEvents.Length(); ++i) {
       if (mEvents[i].mType == AudioTimelineEvent::SetValueCurve &&
+          !(aEvent.mType == AudioTimelineEvent::SetValueCurve &&
+            aEvent.template Time<double>() == mEvents[i].template Time<double>()) &&
           mEvents[i].template Time<double>() <= aEvent.template Time<double>() &&
           (mEvents[i].template Time<double>() + mEvents[i].mDuration) >= aEvent.template Time<double>()) {
         aRv.Throw(NS_ERROR_DOM_SYNTAX_ERR);
@@ -220,6 +222,11 @@ public:
     // events.
     if (aEvent.mType == AudioTimelineEvent::SetValueCurve) {
       for (unsigned i = 0; i < mEvents.Length(); ++i) {
+        // In case we have two curve at the same time
+        if (mEvents[i].mType == AudioTimelineEvent::SetValueCurve &&
+            mEvents[i].template Time<double>() == aEvent.template Time<double>()) {
+          continue;
+        }
         if (mEvents[i].template Time<double>() > aEvent.template Time<double>() &&
             mEvents[i].template Time<double>() < (aEvent.template Time<double>() + aEvent.mDuration)) {
           aRv.Throw(NS_ERROR_DOM_SYNTAX_ERR);

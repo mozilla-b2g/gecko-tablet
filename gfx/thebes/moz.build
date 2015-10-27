@@ -271,6 +271,7 @@ GENERATED_FILES = [
 ]
 
 LOCAL_INCLUDES += [
+    '/dom/workers',
     '/dom/xml',
 ]
 
@@ -304,9 +305,6 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('gtk2', 'gtk3', 'qt'):
 LOCAL_INCLUDES += CONFIG['SKIA_INCLUDES']
 
 DEFINES['GRAPHITE2_STATIC'] = True
-
-if CONFIG['GKMEDIAS_SHARED_LIBRARY']:
-    DEFINES['OTS_DLL'] = True
 
 if CONFIG['OS_ARCH'] == 'WINNT':
     del DEFINES['UNICODE']

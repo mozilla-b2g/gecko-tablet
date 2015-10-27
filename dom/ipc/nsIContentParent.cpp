@@ -20,6 +20,7 @@
 #include "mozilla/unused.h"
 
 #include "nsFrameMessageManager.h"
+#include "nsIWebBrowserChrome.h"
 #include "nsPrintfCString.h"
 #include "xpcpublic.h"
 
@@ -70,18 +71,18 @@ nsIContentParent::DeallocPJavaScriptParent(PJavaScriptParent* aParent)
 bool
 nsIContentParent::CanOpenBrowser(const IPCTabContext& aContext)
 {
-  const IPCTabAppBrowserContext& appBrowser = aContext.appBrowserContext();
+  const IPCTabContextUnion& contextUnion = aContext.contextUnion();
 
   // We don't trust the IPCTabContext we receive from the child, so we'll bail
   // if we receive an IPCTabContext that's not a PopupIPCTabContext.
   // (PopupIPCTabContext lets the child process prove that it has access to
   // the app it's trying to open.)
-  if (appBrowser.type() != IPCTabAppBrowserContext::TPopupIPCTabContext) {
+  if (contextUnion.type() != IPCTabContextUnion::TPopupIPCTabContext) {
     ASSERT_UNLESS_FUZZING("Unexpected IPCTabContext type.  Aborting AllocPBrowserParent.");
     return false;
   }
 
-  const PopupIPCTabContext& popupContext = appBrowser.get_PopupIPCTabContext();
+  const PopupIPCTabContext& popupContext = contextUnion.get_PopupIPCTabContext();
   if (popupContext.opener().type() != PBrowserOrId::TPBrowserParent) {
     ASSERT_UNLESS_FUZZING("Unexpected PopupIPCTabContext type.  Aborting AllocPBrowserParent.");
     return false;
@@ -128,8 +129,8 @@ nsIContentParent::AllocPBrowserParent(const TabId& aTabId,
     return nullptr;
   }
 
-  const IPCTabAppBrowserContext& appBrowser = aContext.appBrowserContext();
-  const PopupIPCTabContext& popupContext = appBrowser.get_PopupIPCTabContext();
+  const IPCTabContextUnion& contextUnion = aContext.contextUnion();
+  const PopupIPCTabContext& popupContext = contextUnion.get_PopupIPCTabContext();
 
   uint32_t chromeFlags = aChromeFlags;
 
@@ -190,7 +191,7 @@ nsIContentParent::GetOrCreateActorForBlob(Blob* aBlob)
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(aBlob);
 
-  nsRefPtr<BlobImpl> blobImpl = aBlob->Impl();
+  RefPtr<BlobImpl> blobImpl = aBlob->Impl();
   MOZ_ASSERT(blobImpl);
 
   return GetOrCreateActorForBlobImpl(blobImpl);
@@ -225,7 +226,7 @@ nsIContentParent::RecvSyncMessage(const nsString& aMsg,
     }
   }
 
-  nsRefPtr<nsFrameMessageManager> ppm = mMessageManager;
+  RefPtr<nsFrameMessageManager> ppm = mMessageManager;
   if (ppm) {
     ipc::StructuredCloneData data;
     ipc::UnpackClonedMessageDataForParent(aData, data);
@@ -254,7 +255,7 @@ nsIContentParent::RecvRpcMessage(const nsString& aMsg,
     }
   }
 
-  nsRefPtr<nsFrameMessageManager> ppm = mMessageManager;
+  RefPtr<nsFrameMessageManager> ppm = mMessageManager;
   if (ppm) {
     ipc::StructuredCloneData data;
     ipc::UnpackClonedMessageDataForParent(aData, data);
@@ -282,7 +283,7 @@ nsIContentParent::RecvAsyncMessage(const nsString& aMsg,
     }
   }
 
-  nsRefPtr<nsFrameMessageManager> ppm = mMessageManager;
+  RefPtr<nsFrameMessageManager> ppm = mMessageManager;
   if (ppm) {
     ipc::StructuredCloneData data;
     ipc::UnpackClonedMessageDataForParent(aData, data);

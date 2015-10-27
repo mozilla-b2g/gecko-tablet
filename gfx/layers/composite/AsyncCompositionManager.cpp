@@ -134,13 +134,19 @@ AsyncCompositionManager::ResolveRefLayers(CompositorParent* aCompositor,
     *aHasRemoteContent = false;
   }
 
+  // If valid *aResolvePlugins indicates if we need to update plugin geometry
+  // when we walk the tree.
+  bool willResolvePlugins = (aResolvePlugins && *aResolvePlugins);
   if (!mLayerManager->GetRoot()) {
+    // Updated the return value since this result controls completing composition.
+    if (aResolvePlugins) {
+      *aResolvePlugins = false;
+    }
     return;
   }
 
   mReadyForCompose = true;
   bool hasRemoteContent = false;
-  bool willResolvePlugins = (aResolvePlugins && *aResolvePlugins);
   bool didResolvePlugins = false;
   WalkTheTree<Resolve>(mLayerManager->GetRoot(),
                        mReadyForCompose,
@@ -817,6 +823,10 @@ AsyncCompositionManager::ApplyAsyncContentTransformToTree(Layer *aLayer,
         mPaintSyncId = 0;
       }
     }
+#else
+    // Non-Android platforms still care about this flag being cleared after
+    // the first call to TransformShadowTree().
+    mIsFirstPaint = false;
 #endif
 
     // Transform the current local clip by this APZC's async transform. If we're

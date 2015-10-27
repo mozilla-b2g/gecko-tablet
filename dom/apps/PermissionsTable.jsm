@@ -131,6 +131,11 @@ this.PermissionsTable =  { geolocation: {
                              privileged: ALLOW_ACTION,
                              certified: ALLOW_ACTION
                            },
+                           "browser:embedded-system-app": {
+                             app: DENY_ACTION,
+                             privileged: DENY_ACTION,
+                             certified: ALLOW_ACTION
+                           },
                            bluetooth: {
                              app: DENY_ACTION,
                              privileged: DENY_ACTION,
@@ -591,7 +596,7 @@ this.expandPermissions = function expandPermissions(aPermName, aAccess) {
 
     // Add the same suffix to each of the additions.
     if (tableEntry.additional) {
-      for each (let additional in tableEntry.additional) {
+      for (let additional of tableEntry.additional) {
         permArr = permArr.concat(appendAccessToPermName(additional, requestedSuffixes));
       }
     }
@@ -646,7 +651,7 @@ this.AllPossiblePermissions = [];
     AllPossiblePermissions.concat(["indexedDB", "offline-app", "pin-app"]);
 })();
 
-this.isExplicitInPermissionsTable = function(aPermName, aIntStatus, aAppKind) {
+this.isExplicitInPermissionsTable = function(aPermName, aIntStatus) {
 
   // Check to see if the 'webapp' is app/privileged/certified.
   let appStatus;

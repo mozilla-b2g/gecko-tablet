@@ -61,7 +61,8 @@ class ServiceWorkerPrivate final : public nsISupports
   friend class KeepAliveToken;
 
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTION_CLASS(ServiceWorkerPrivate)
 
   explicit ServiceWorkerPrivate(ServiceWorkerInfo* aInfo);
 
@@ -83,7 +84,8 @@ public:
                      nsIRunnable* aLoadFailure);
 
   nsresult
-  SendPushEvent(const Maybe<nsTArray<uint8_t>>& aData);
+  SendPushEvent(const Maybe<nsTArray<uint8_t>>& aData,
+                ServiceWorkerRegistrationInfo* aRegistration);
 
   nsresult
   SendPushSubscriptionChangeEvent();
@@ -105,6 +107,12 @@ public:
                  nsILoadGroup* aLoadGroup,
                  UniquePtr<ServiceWorkerClientInfo>&& aClientInfo,
                  bool aIsReload);
+
+  void
+  StoreISupports(nsISupports* aSupports);
+
+  void
+  RemoveISupports(nsISupports* aSupports);
 
   // This will terminate the current running worker thread and drop the
   // workerPrivate reference.
@@ -163,7 +171,7 @@ private:
   // The WorkerPrivate object can only be closed by this class or by the
   // RuntimeService class if gecko is shutting down. Closing the worker
   // multiple times is OK, since the second attempt will be a no-op.
-  nsRefPtr<WorkerPrivate> mWorkerPrivate;
+  RefPtr<WorkerPrivate> mWorkerPrivate;
 
   nsCOMPtr<nsITimer> mIdleWorkerTimer;
 
@@ -174,9 +182,15 @@ private:
 
   // We keep a token for |dom.serviceWorkers.idle_timeout| seconds to give the
   // worker a grace period after each event.
-  nsRefPtr<KeepAliveToken> mKeepAliveToken;
+  RefPtr<KeepAliveToken> mKeepAliveToken;
 
   uint64_t mTokenCount;
+
+  // Meant for keeping objects alive while handling requests from the worker
+  // on the main thread. Access to this array is provided through
+  // |StoreISupports| and |RemoveISupports|. Note that the array is also
+  // cleared whenever the worker is terminated.
+  nsTArray<nsCOMPtr<nsISupports>> mSupportsArray;
 };
 
 } // namespace workers

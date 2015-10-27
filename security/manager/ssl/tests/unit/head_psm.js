@@ -13,8 +13,6 @@ var { Promise } = Cu.import("resource://gre/modules/Promise.jsm", {});
 var { HttpServer } = Cu.import("resource://testing-common/httpd.js", {});
 var { ctypes } = Cu.import("resource://gre/modules/ctypes.jsm");
 
-var gIsWindows = ("@mozilla.org/windows-registry-key;1" in Cc);
-
 const isDebugBuild = Cc["@mozilla.org/xpcom/debug;1"]
                        .getService(Ci.nsIDebug2).isDebugBuild;
 
@@ -65,6 +63,7 @@ const SEC_ERROR_POLICY_VALIDATION_FAILED                = SEC_ERROR_BASE + 160; 
 const SEC_ERROR_OCSP_BAD_SIGNATURE                      = SEC_ERROR_BASE + 157;
 const SEC_ERROR_CERT_SIGNATURE_ALGORITHM_DISABLED       = SEC_ERROR_BASE + 176;
 
+const SSL_ERROR_NO_CYPHER_OVERLAP                       = SSL_ERROR_BASE +   2;
 const SSL_ERROR_BAD_CERT_DOMAIN                         = SSL_ERROR_BASE +  12;
 const SSL_ERROR_BAD_CERT_ALERT                          = SSL_ERROR_BASE +  17;
 const SSL_ERROR_WEAK_SERVER_CERT_KEY                    = SSL_ERROR_BASE + 132;
@@ -409,7 +408,7 @@ function _getBinaryUtil(binaryUtilName) {
                            .getService(Ci.nsIProperties);
 
   let utilBin = directoryService.get("CurProcD", Ci.nsILocalFile);
-  utilBin.append(binaryUtilName + (gIsWindows ? ".exe" : ""));
+  utilBin.append(binaryUtilName + mozinfo.bin_suffix);
   // If we're testing locally, the above works. If not, the server executable
   // is in another location.
   if (!utilBin.exists()) {
@@ -418,7 +417,7 @@ function _getBinaryUtil(binaryUtilName) {
       utilBin = utilBin.parent;
     }
     utilBin.append("bin");
-    utilBin.append(binaryUtilName + (gIsWindows ? ".exe" : ""));
+    utilBin.append(binaryUtilName + mozinfo.bin_suffix);
   }
   // But maybe we're on Android or B2G, where binaries are in /data/local/xpcb.
   if (!utilBin.exists()) {

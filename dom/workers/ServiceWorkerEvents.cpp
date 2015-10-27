@@ -86,9 +86,9 @@ FetchEvent::Constructor(const GlobalObject& aGlobal,
                         const FetchEventInit& aOptions,
                         ErrorResult& aRv)
 {
-  nsRefPtr<EventTarget> owner = do_QueryObject(aGlobal.GetAsSupports());
+  RefPtr<EventTarget> owner = do_QueryObject(aGlobal.GetAsSupports());
   MOZ_ASSERT(owner);
-  nsRefPtr<FetchEvent> e = new FetchEvent(owner);
+  RefPtr<FetchEvent> e = new FetchEvent(owner);
   bool trusted = e->Init(owner);
   e->InitEvent(aType, aOptions.mBubbles, aOptions.mCancelable);
   e->SetTrusted(trusted);
@@ -106,19 +106,22 @@ namespace {
 class FinishResponse final : public nsRunnable
 {
   nsMainThreadPtrHandle<nsIInterceptedChannel> mChannel;
-  nsRefPtr<InternalResponse> mInternalResponse;
+  RefPtr<InternalResponse> mInternalResponse;
   ChannelInfo mWorkerChannelInfo;
   const nsCString mScriptSpec;
+  const nsCString mResponseURLSpec;
 
 public:
   FinishResponse(nsMainThreadPtrHandle<nsIInterceptedChannel>& aChannel,
                  InternalResponse* aInternalResponse,
                  const ChannelInfo& aWorkerChannelInfo,
-                 const nsACString& aScriptSpec)
+                 const nsACString& aScriptSpec,
+                 const nsACString& aResponseURLSpec)
     : mChannel(aChannel)
     , mInternalResponse(aInternalResponse)
     , mWorkerChannelInfo(aWorkerChannelInfo)
     , mScriptSpec(aScriptSpec)
+    , mResponseURLSpec(aResponseURLSpec)
   {
   }
 
@@ -127,7 +130,13 @@ public:
   {
     AssertIsOnMainThread();
 
-    if (!CSPPermitsResponse()) {
+    nsCOMPtr<nsIChannel> underlyingChannel;
+    nsresult rv = mChannel->GetChannel(getter_AddRefs(underlyingChannel));
+    NS_ENSURE_SUCCESS(rv, rv);
+    NS_ENSURE_TRUE(underlyingChannel, NS_ERROR_UNEXPECTED);
+    nsCOMPtr<nsILoadInfo> loadInfo = underlyingChannel->GetLoadInfo();
+
+    if (!CSPPermitsResponse(loadInfo)) {
       mChannel->Cancel(NS_ERROR_CONTENT_BLOCKED);
       return NS_OK;
     }
@@ -140,7 +149,7 @@ public:
       // channel info for the worker script.
       channelInfo = mWorkerChannelInfo;
     }
-    nsresult rv = mChannel->SetChannelInfo(&channelInfo);
+    rv = mChannel->SetChannelInfo(&channelInfo);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
@@ -154,14 +163,17 @@ public:
        mChannel->SynthesizeHeader(entries[i].mName, entries[i].mValue);
     }
 
-    rv = mChannel->FinishSynthesizedResponse();
+    loadInfo->MaybeIncreaseTainting(mInternalResponse->GetTainting());
+
+    rv = mChannel->FinishSynthesizedResponse(mResponseURLSpec);
     NS_WARN_IF_FALSE(NS_SUCCEEDED(rv), "Failed to finish synthesized response");
     return rv;
   }
 
-  bool CSPPermitsResponse()
+  bool CSPPermitsResponse(nsILoadInfo* aLoadInfo)
   {
     AssertIsOnMainThread();
+    MOZ_ASSERT(aLoadInfo);
 
     nsresult rv;
     nsCOMPtr<nsIURI> uri;
@@ -174,15 +186,11 @@ public:
     rv = NS_NewURI(getter_AddRefs(uri), url, nullptr, nullptr);
     NS_ENSURE_SUCCESS(rv, false);
 
-    nsCOMPtr<nsIChannel> underlyingChannel;
-    rv = mChannel->GetChannel(getter_AddRefs(underlyingChannel));
-    NS_ENSURE_SUCCESS(rv, false);
-    NS_ENSURE_TRUE(underlyingChannel, false);
-    nsCOMPtr<nsILoadInfo> loadInfo = underlyingChannel->GetLoadInfo();
-
     int16_t decision = nsIContentPolicy::ACCEPT;
-    rv = NS_CheckContentLoadPolicy(loadInfo->InternalContentPolicyType(), uri, loadInfo->LoadingPrincipal(),
-                                   loadInfo->LoadingNode(), EmptyCString(), nullptr, &decision);
+    rv = NS_CheckContentLoadPolicy(aLoadInfo->InternalContentPolicyType(), uri,
+                                   aLoadInfo->LoadingPrincipal(),
+                                   aLoadInfo->LoadingNode(), EmptyCString(),
+                                   nullptr, &decision);
     NS_ENSURE_SUCCESS(rv, false);
     return decision == nsIContentPolicy::ACCEPT;
   }
@@ -229,18 +237,21 @@ private:
 struct RespondWithClosure
 {
   nsMainThreadPtrHandle<nsIInterceptedChannel> mInterceptedChannel;
-  nsRefPtr<InternalResponse> mInternalResponse;
+  RefPtr<InternalResponse> mInternalResponse;
   ChannelInfo mWorkerChannelInfo;
   const nsCString mScriptSpec;
+  const nsCString mResponseURLSpec;
 
   RespondWithClosure(nsMainThreadPtrHandle<nsIInterceptedChannel>& aChannel,
                      InternalResponse* aInternalResponse,
                      const ChannelInfo& aWorkerChannelInfo,
-                     const nsCString& aScriptSpec)
+                     const nsCString& aScriptSpec,
+                     const nsACString& aResponseURLSpec)
     : mInterceptedChannel(aChannel)
     , mInternalResponse(aInternalResponse)
     , mWorkerChannelInfo(aWorkerChannelInfo)
     , mScriptSpec(aScriptSpec)
+    , mResponseURLSpec(aResponseURLSpec)
   {
   }
 };
@@ -253,7 +264,8 @@ void RespondWithCopyComplete(void* aClosure, nsresult aStatus)
     event = new FinishResponse(data->mInterceptedChannel,
                                data->mInternalResponse,
                                data->mWorkerChannelInfo,
-                               data->mScriptSpec);
+                               data->mScriptSpec,
+                               data->mResponseURLSpec);
   } else {
     event = new CancelChannelRunnable(data->mInterceptedChannel,
                                       NS_ERROR_INTERCEPTION_FAILED);
@@ -263,7 +275,7 @@ void RespondWithCopyComplete(void* aClosure, nsresult aStatus)
 
 class MOZ_STACK_CLASS AutoCancel
 {
-  nsRefPtr<RespondWithHandler> mOwner;
+  RefPtr<RespondWithHandler> mOwner;
   nsresult mStatus;
 
 public:
@@ -304,7 +316,7 @@ RespondWithHandler::ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValu
     return;
   }
 
-  nsRefPtr<Response> response;
+  RefPtr<Response> response;
   nsresult rv = UNWRAP_OBJECT(Response, &aValue.toObject(), response);
   if (NS_FAILED(rv)) {
     return;
@@ -351,14 +363,27 @@ RespondWithHandler::ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValu
     return;
   }
 
-  nsRefPtr<InternalResponse> ir = response->GetInternalResponse();
+  RefPtr<InternalResponse> ir = response->GetInternalResponse();
   if (NS_WARN_IF(!ir)) {
     return;
   }
 
+  // When an opaque response is encountered, we need the original channel's principal
+  // to reflect the final URL. Non-opaque responses are either same-origin or CORS-enabled
+  // cross-origin responses, which are treated as same-origin by consumers.
+  nsCString responseURL;
+  if (response->Type() == ResponseType::Opaque) {
+    ir->GetUnfilteredUrl(responseURL);
+    if (NS_WARN_IF(responseURL.IsEmpty())) {
+      autoCancel.SetCancelStatus(NS_ERROR_INTERCEPTION_FAILED);
+      return;
+    }
+  }
+
   nsAutoPtr<RespondWithClosure> closure(new RespondWithClosure(mInterceptedChannel, ir,
                                                                worker->GetChannelInfo(),
-                                                               mScriptSpec));
+                                                               mScriptSpec,
+                                                               responseURL));
   nsCOMPtr<nsIInputStream> body;
   ir->GetUnfilteredBody(getter_AddRefs(body));
   // Errors and redirects may not have a body.
@@ -412,18 +437,24 @@ RespondWithHandler::CancelRequest(nsresult aStatus)
 void
 FetchEvent::RespondWith(Promise& aArg, ErrorResult& aRv)
 {
-  if (mWaitToRespond) {
+  if (EventPhase() == nsIDOMEvent::NONE || mWaitToRespond) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
 
-  if (!mPromise) {
-    mPromise = &aArg;
+  // 4.5.3.2 If the respond-with entered flag is set, then:
+  // Throw an "InvalidStateError" exception.
+  // Here we use |mPromise != nullptr| as respond-with enter flag
+  if (mPromise) {
+    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
+    return;
   }
-  nsRefPtr<InternalRequest> ir = mRequest->GetInternalRequest();
+  mPromise = &aArg;
+
+  RefPtr<InternalRequest> ir = mRequest->GetInternalRequest();
   StopImmediatePropagation();
   mWaitToRespond = true;
-  nsRefPtr<RespondWithHandler> handler =
+  RefPtr<RespondWithHandler> handler =
     new RespondWithHandler(mChannel, mRequest->Mode(), ir->IsClientRequest(),
                            ir->IsNavigationRequest(), mScriptSpec);
   aArg.AppendNativeHandler(handler);
@@ -439,11 +470,11 @@ FetchEvent::GetClient()
 
     WorkerPrivate* worker = GetCurrentThreadWorkerPrivate();
     MOZ_ASSERT(worker);
-    nsRefPtr<nsIGlobalObject> global = worker->GlobalScope();
+    RefPtr<nsIGlobalObject> global = worker->GlobalScope();
 
     mClient = new ServiceWorkerClient(global, *mClientInfo);
   }
-  nsRefPtr<ServiceWorkerClient> client = mClient;
+  RefPtr<ServiceWorkerClient> client = mClient;
   return client.forget();
 }
 
@@ -484,7 +515,7 @@ ExtendableEvent::GetPromise()
   GlobalObject global(worker->GetJSContext(), worker->GlobalScope()->GetGlobalJSObject());
 
   ErrorResult result;
-  nsRefPtr<Promise> p = Promise::All(global, Move(mPromises), result);
+  RefPtr<Promise> p = Promise::All(global, Move(mPromises), result);
   if (NS_WARN_IF(result.Failed())) {
     return nullptr;
   }
@@ -622,7 +653,7 @@ PushMessageData::Blob(ErrorResult& aRv)
 {
   uint8_t* data = GetContentsCopy();
   if (data) {
-    nsRefPtr<mozilla::dom::Blob> blob = FetchUtil::ConsumeBlob(
+    RefPtr<mozilla::dom::Blob> blob = FetchUtil::ConsumeBlob(
       mOwner, EmptyString(), mBytes.Length(), data, aRv);
     if (blob) {
       return blob.forget();
@@ -672,7 +703,7 @@ PushEvent::Constructor(mozilla::dom::EventTarget* aOwner,
                        const PushEventInit& aOptions,
                        ErrorResult& aRv)
 {
-  nsRefPtr<PushEvent> e = new PushEvent(aOwner);
+  RefPtr<PushEvent> e = new PushEvent(aOwner);
   bool trusted = e->Init(aOwner);
   e->InitEvent(aType, aOptions.mBubbles, aOptions.mCancelable);
   e->SetTrusted(trusted);

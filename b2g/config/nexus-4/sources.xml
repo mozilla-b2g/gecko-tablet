@@ -18,12 +18,13 @@
   <project name="rilproxy" path="rilproxy" remote="b2g" revision="5ef30994f4778b4052e58a4383dbe7890048c87e"/>
   <project name="fake-libdvm" path="dalvik" remote="b2g" revision="d50ae982b19f42f0b66d08b9eb306be81687869f"/>
   <project name="fake-qemu-kernel" path="prebuilts/qemu-kernel" remote="b2g" revision="939b377d55a2f081d94029a30a75d05e5a20daf3"/>
-  <project name="gaia" path="gaia" remote="mozillaorg" revision="e698df503ff700eb5782e3d50c6eb753567d3451"/>
-  <project name="gonk-misc" path="gonk-misc" remote="b2g" revision="7938df689aa87769fad3f2cf9097fb4ecb106a43"/>
-  <project name="moztt" path="external/moztt" remote="b2g" revision="31a7849fe9a8b743d6f5e5facc212f0ef9d57499"/>
-  <project name="apitrace" path="external/apitrace" remote="apitrace" revision="f004530b30a63c08a16d82536858600446b2abf5"/>
+  <project name="gaia" path="gaia" remote="mozillaorg" revision="b564b21e08ffc3e4962f08850843c7482932ee7b"/>
+  <project name="gonk-misc" path="gonk-misc" remote="b2g" revision="956700d9754349b630a34551750ae6353614b6aa"/>
+  <project name="moztt" path="external/moztt" remote="b2g" revision="3b9a47b517d345b8d98bc7f787b9a6c2f51ca75d"/>
+  <project name="apitrace" path="external/apitrace" remote="apitrace" revision="0c28789b9957913be975eb002a22323f93585d4c"/>
   <project name="valgrind" path="external/valgrind" remote="b2g" revision="5f931350fbc87c3df9db8b0ceb37734b8b471593"/>
   <project name="vex" path="external/VEX" remote="b2g" revision="48d8c7c950745f1b166b42125e6f0d3293d71636"/>
+  <project name="platform_hardware_libhardware_moz" path="hardware/libhardware_moz" remote="b2g" revision="fdf3a143dc777e5f9d33a88373af7ea161d3b440"/>
   <!-- Stock Android things -->
   <project groups="linux" name="platform/prebuilts/clang/linux-x86/3.1" path="prebuilts/clang/linux-x86/3.1" revision="5c45f43419d5582949284eee9cef0c43d866e03b"/>
   <project groups="linux" name="platform/prebuilts/clang/linux-x86/3.2" path="prebuilts/clang/linux-x86/3.2" revision="3748b4168e7bd8d46457d4b6786003bc6a5223ce"/>
@@ -118,7 +119,7 @@
   <project name="platform/prebuilts/sdk" path="prebuilts/sdk" revision="842e33e43a55ea44833b9e23e4d180fa17c843af"/>
   <project name="platform/prebuilts/tools" path="prebuilts/tools" revision="5db24726f0f42124304195a6bdea129039eeeaeb"/>
   <project name="platform/system/bluetooth" path="system/bluetooth" revision="930ae098543881f47eac054677726ee4b998b2f8"/>
-  <project name="platform_system_bluetoothd" path="system/bluetoothd" remote="b2g" revision="fd241573c00112ca6e456b8021fb68df0349f6dd"/>
+  <project name="platform_system_bluetoothd" path="system/bluetoothd" remote="b2g" revision="07a49d1f7a7a0a1e7d70fef353c2700434ffdc5c"/>
   <project name="platform_system_core" path="system/core" remote="b2g" revision="542d1f59dc331b472307e5bd043101d14d5a3a3e"/>
   <project name="platform/system/extras" path="system/extras" revision="18c1180e848e7ab8691940481f5c1c8d22c37b3e"/>
   <project name="platform_system_libfdio" path="system/libfdio" remote="b2g" revision="34adfb400e031f3dd3353d92413572db5e3a7376"/>
@@ -128,7 +129,7 @@
   <project name="platform/system/vold" path="system/vold" revision="8de05d4a52b5a91e7336e6baa4592f945a6ddbea"/>
   <default remote="caf" revision="refs/tags/android-4.3_r2.1" sync-j="4"/>
   <!-- Nexus 4 specific things -->
-  <project name="device-mako" path="device/lge/mako" remote="b2g" revision="78d17f0c117f0c66dd55ee8d5c5dde8ccc93ecba"/>
+  <project name="device-mako" path="device/lge/mako" remote="b2g" revision="85f23c2f3410e6a555f42168f44e73777718cad1"/>
   <project name="device/generic/armv7-a-neon" path="device/generic/armv7-a-neon" revision="3a9a17613cc685aa232432566ad6cc607eab4ec1"/>
   <project name="device/lge/mako-kernel" path="device/lge/mako-kernel" revision="d1729e53d71d711c8fde25eab8728ff2b9b4df0e"/>
   <project name="platform_system_nfcd" path="system/nfcd" remote="b2g" revision="5f4b68c799927b6e078f987b12722c3a6ccd4a45"/>

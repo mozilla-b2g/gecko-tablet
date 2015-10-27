@@ -5,12 +5,12 @@
 "use strict";
 
 var Cu = Components.utils;
-const {gDevTools} = Cu.import("resource:///modules/devtools/client/framework/gDevTools.jsm", {});
-const {require} = Cu.import("resource://gre/modules/devtools/shared/Loader.jsm", {});
+const {gDevTools} = Cu.import("resource://devtools/client/framework/gDevTools.jsm", {});
+const {require} = Cu.import("resource://devtools/shared/Loader.jsm", {});
 const promise = require("promise");
 const {TargetFactory} = require("devtools/client/framework/target");
-const {console} = Cu.import("resource://gre/modules/devtools/shared/Console.jsm", {});
-const {ViewHelpers} = Cu.import("resource:///modules/devtools/client/shared/widgets/ViewHelpers.jsm", {});
+const {console} = Cu.import("resource://gre/modules/Console.jsm", {});
+const {ViewHelpers} = Cu.import("resource://devtools/client/shared/widgets/ViewHelpers.jsm", {});
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
 
 // All tests are asynchronous
@@ -449,3 +449,50 @@ var waitForAllAnimationTargets = Task.async(function*(panel) {
   }));
   return targets;
 });
+
+/**
+ * Check the scrubber element in the timeline is moving.
+ * @param {AnimationPanel} panel
+ * @param {Boolean} isMoving
+ */
+function* assertScrubberMoving(panel, isMoving) {
+  let timeline = panel.animationsTimelineComponent;
+  let scrubberEl = timeline.scrubberEl;
+
+  if (isMoving) {
+    // If we expect the scrubber to move, just wait for a couple of
+    // timeline-data-changed events and compare times.
+    let {time: time1} = yield timeline.once("timeline-data-changed");
+    let {time: time2} = yield timeline.once("timeline-data-changed");
+    ok(time2 > time1, "The scrubber is moving");
+  } else {
+    // If instead we expect the scrubber to remain at its position, just wait
+    // for some time and make sure timeline-data-changed isn't emitted.
+    let hasMoved = false;
+    timeline.once("timeline-data-changed", () => hasMoved = true);
+    yield new Promise(r => setTimeout(r, 500));
+    ok(!hasMoved, "The scrubber is not moving");
+  }
+}
+
+function* clickTimelinePlayPauseButton(panel) {
+  let onUiUpdated = panel.once(panel.UI_UPDATED_EVENT);
+
+  let btn = panel.playTimelineButtonEl;
+  let win = btn.ownerDocument.defaultView;
+  EventUtils.sendMouseEvent({type: "click"}, btn, win);
+
+  yield onUiUpdated;
+  yield waitForAllAnimationTargets(panel);
+}
+
+function* clickTimelineRewindButton(panel) {
+  let onUiUpdated = panel.once(panel.UI_UPDATED_EVENT);
+
+  let btn = panel.rewindTimelineButtonEl;
+  let win = btn.ownerDocument.defaultView;
+  EventUtils.sendMouseEvent({type: "click"}, btn, win);
+
+  yield onUiUpdated;
+  yield waitForAllAnimationTargets(panel);
+}

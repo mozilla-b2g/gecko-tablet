@@ -119,7 +119,7 @@ already_AddRefed<gfxASurface>
 gfxPlatformMac::CreateOffscreenSurface(const IntSize& aSize,
                                        gfxImageFormat aFormat)
 {
-    nsRefPtr<gfxASurface> newSurface =
+    RefPtr<gfxASurface> newSurface =
       new gfxQuartzSurface(aSize, aFormat);
     return newSurface.forget();
 }
@@ -152,19 +152,19 @@ gfxFontEntry*
 gfxPlatformMac::LookupLocalFont(const nsAString& aFontName,
                                 uint16_t aWeight,
                                 int16_t aStretch,
-                                bool aItalic)
+                                uint8_t aStyle)
 {
     return gfxPlatformFontList::PlatformFontList()->LookupLocalFont(aFontName,
                                                                     aWeight,
                                                                     aStretch,
-                                                                    aItalic);
+                                                                    aStyle);
 }
 
 gfxFontEntry* 
 gfxPlatformMac::MakePlatformFont(const nsAString& aFontName,
                                  uint16_t aWeight,
                                  int16_t aStretch,
-                                 bool aItalic,
+                                 uint8_t aStyle,
                                  const uint8_t* aFontData,
                                  uint32_t aLength)
 {
@@ -174,7 +174,7 @@ gfxPlatformMac::MakePlatformFont(const nsAString& aFontName,
     return gfxPlatformFontList::PlatformFontList()->MakePlatformFont(aFontName,
                                                                      aWeight,
                                                                      aStretch,
-                                                                     aItalic,
+                                                                     aStyle,
                                                                      aFontData,
                                                                      aLength);
 }
@@ -574,7 +574,7 @@ public:
   private:
     // Manages the display link render thread
     CVDisplayLinkRef   mDisplayLink;
-    nsRefPtr<nsITimer> mTimer;
+    RefPtr<nsITimer> mTimer;
   }; // OSXDisplay
 
 private:
@@ -622,7 +622,7 @@ static CVReturn VsyncCallback(CVDisplayLinkRef aDisplayLink,
 already_AddRefed<mozilla::gfx::VsyncSource>
 gfxPlatformMac::CreateHardwareVsyncSource()
 {
-  nsRefPtr<VsyncSource> osxVsyncSource = new OSXVsyncSource();
+  RefPtr<VsyncSource> osxVsyncSource = new OSXVsyncSource();
   VsyncSource::Display& primaryDisplay = osxVsyncSource->GetGlobalDisplay();
   primaryDisplay.EnableVsync();
   if (!primaryDisplay.IsVsyncEnabled()) {

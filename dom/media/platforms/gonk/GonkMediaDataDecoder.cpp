@@ -47,7 +47,7 @@ GonkDecoderManager::InitLoopers(MediaData::Type aType)
 nsresult
 GonkDecoderManager::Input(MediaRawData* aSample)
 {
-  nsRefPtr<MediaRawData> sample;
+  RefPtr<MediaRawData> sample;
 
   if (aSample) {
     sample = aSample;
@@ -74,7 +74,7 @@ GonkDecoderManager::ProcessQueuedSamples()
   MutexAutoLock lock(mMutex);
   status_t rv;
   while (mQueuedSamples.Length()) {
-    nsRefPtr<MediaRawData> data = mQueuedSamples.ElementAt(0);
+    RefPtr<MediaRawData> data = mQueuedSamples.ElementAt(0);
     {
       rv = mDecoder->Input(reinterpret_cast<const uint8_t*>(data->Data()),
                            data->Size(),
@@ -103,6 +103,11 @@ GonkDecoderManager::Flush()
     GMDD_LOG("Decoder is not initialized");
     return NS_ERROR_UNEXPECTED;
   }
+
+  if (!mInitPromise.IsEmpty()) {
+    return NS_OK;
+  }
+
   {
     MutexAutoLock lock(mMutex);
     mQueuedSamples.Clear();
@@ -195,18 +200,20 @@ GonkDecoderManager::ProcessToDo(bool aEndOfStream)
 
   nsresult rv = NS_OK;
   while (mWaitOutput.Length() > 0) {
-    nsRefPtr<MediaData> output;
+    RefPtr<MediaData> output;
     int64_t offset = mWaitOutput.ElementAt(0);
     rv = Output(offset, output);
     if (rv == NS_OK) {
       mWaitOutput.RemoveElementAt(0);
       mDecodeCallback->Output(output);
     } else if (rv == NS_ERROR_ABORT) {
-      GMDD_LOG("eos output");
-      mWaitOutput.RemoveElementAt(0);
-      MOZ_ASSERT(mQueuedSamples.IsEmpty());
-      MOZ_ASSERT(mWaitOutput.IsEmpty());
       // EOS
+      MOZ_ASSERT(mQueuedSamples.IsEmpty());
+      mWaitOutput.RemoveElementAt(0);
+      // Sometimes the decoder attaches EOS flag to the final output buffer
+      // instead of emits EOS by itself, hence the 2nd condition.
+      MOZ_ASSERT(mWaitOutput.IsEmpty() ||
+                 (mWaitOutput.Length() == 1 && output.get()));
       if (output) {
         mDecodeCallback->Output(output);
       }
@@ -270,7 +277,7 @@ GonkMediaDataDecoder::~GonkMediaDataDecoder()
   MOZ_COUNT_DTOR(GonkMediaDataDecoder);
 }
 
-nsRefPtr<MediaDataDecoder::InitPromise>
+RefPtr<MediaDataDecoder::InitPromise>
 GonkMediaDataDecoder::Init()
 {
   return mManager->Init();

@@ -41,10 +41,6 @@
 #include "nsIWebNavigation.h"
 #include "nsIXPConnect.h"
 
-#ifdef MOZ_ENABLE_PROFILER_SPS
-#include "nsIProfiler.h"
-#endif
-
 // The maximum allowed number of concurrent timers per page.
 #define MAX_PAGE_TIMERS 10000
 
@@ -69,7 +65,7 @@ struct
 ConsoleStructuredCloneData
 {
   nsCOMPtr<nsISupports> mParent;
-  nsTArray<nsRefPtr<BlobImpl>> mBlobs;
+  nsTArray<RefPtr<BlobImpl>> mBlobs;
 };
 
 /**
@@ -268,7 +264,7 @@ private:
   {
     class ConsoleReleaseRunnable final : public MainThreadWorkerControlRunnable
     {
-      nsRefPtr<ConsoleRunnable> mRunnable;
+      RefPtr<ConsoleRunnable> mRunnable;
 
     public:
       ConsoleReleaseRunnable(WorkerPrivate* aWorkerPrivate,
@@ -295,7 +291,7 @@ private:
       {}
     };
 
-    nsRefPtr<WorkerControlRunnable> runnable =
+    RefPtr<WorkerControlRunnable> runnable =
       new ConsoleReleaseRunnable(mWorkerPrivate, this);
     runnable->Dispatch(nullptr);
   }
@@ -306,7 +302,7 @@ private:
     AutoJSAPI jsapi;
     MOZ_ASSERT(aWindow);
 
-    nsRefPtr<nsGlobalWindow> win = static_cast<nsGlobalWindow*>(aWindow);
+    RefPtr<nsGlobalWindow> win = static_cast<nsGlobalWindow*>(aWindow);
     if (NS_WARN_IF(!jsapi.Init(win))) {
       return;
     }
@@ -364,7 +360,7 @@ protected:
 
       JS::Rooted<JS::Value> val(aCx);
       {
-        nsRefPtr<Blob> blob =
+        RefPtr<Blob> blob =
           Blob::Create(mClonedData.mParent, mClonedData.mBlobs.ElementAt(aIndex));
         if (!ToJSValue(aCx, blob, &val)) {
           return nullptr;
@@ -382,7 +378,7 @@ protected:
                                   JSStructuredCloneWriter* aWriter,
                                   JS::Handle<JSObject*> aObj) override
   {
-    nsRefPtr<Blob> blob;
+    RefPtr<Blob> blob;
     if (NS_SUCCEEDED(UNWRAP_OBJECT(Blob, aObj, blob)) &&
         blob->Impl()->MayBeClonedToOtherThreads()) {
       if (!JS_WriteUint32Pair(aWriter, CONSOLE_TAG_BLOB,
@@ -410,7 +406,7 @@ protected:
   WorkerPrivate* mWorkerPrivate;
 
   // This must be released on the worker thread.
-  nsRefPtr<Console> mConsole;
+  RefPtr<Console> mConsole;
 
   ConsoleStructuredCloneData mClonedData;
 };
@@ -432,7 +428,7 @@ private:
     class ReleaseCallData final : public nsRunnable
     {
     public:
-      explicit ReleaseCallData(nsRefPtr<ConsoleCallData>& aCallData)
+      explicit ReleaseCallData(RefPtr<ConsoleCallData>& aCallData)
       {
         mCallData.swap(aCallData);
       }
@@ -444,10 +440,10 @@ private:
       }
 
     private:
-      nsRefPtr<ConsoleCallData> mCallData;
+      RefPtr<ConsoleCallData> mCallData;
     };
 
-    nsRefPtr<ReleaseCallData> runnable = new ReleaseCallData(mCallData);
+    RefPtr<ReleaseCallData> runnable = new ReleaseCallData(mCallData);
     if(NS_FAILED(NS_DispatchToMainThread(runnable))) {
       NS_WARNING("Failed to dispatch a ReleaseCallData runnable. Leaking.");
     }
@@ -558,7 +554,7 @@ private:
     mConsole->ProcessCallData(mCallData);
   }
 
-  nsRefPtr<ConsoleCallData> mCallData;
+  RefPtr<ConsoleCallData> mCallData;
 };
 
 // This runnable calls ProfileMethod() on the console on the main-thread.
@@ -827,23 +823,6 @@ Console::TimeStamp(JSContext* aCx, const JS::Handle<JS::Value> aData)
     return;
   }
 
-#ifdef MOZ_ENABLE_PROFILER_SPS
-  if (aData.isString() && NS_IsMainThread()) {
-    if (!mProfiler) {
-      mProfiler = do_GetService("@mozilla.org/tools/profiler;1");
-    }
-    if (mProfiler) {
-      bool active = false;
-      if (NS_SUCCEEDED(mProfiler->IsActive(&active)) && active) {
-        nsAutoJSString stringValue;
-        if (stringValue.init(aCx, aData)) {
-          mProfiler->AddMarker(NS_ConvertUTF16toUTF8(stringValue).get());
-        }
-      }
-    }
-  }
-#endif
-
   Method(aCx, MethodTimeStamp, NS_LITERAL_STRING("timeStamp"), data);
 }
 
@@ -865,7 +844,7 @@ Console::ProfileMethod(JSContext* aCx, const nsAString& aAction,
 {
   if (!NS_IsMainThread()) {
     // Here we are in a worker thread.
-    nsRefPtr<ConsoleProfileRunnable> runnable =
+    RefPtr<ConsoleProfileRunnable> runnable =
       new ConsoleProfileRunnable(this, aAction, aData);
     runnable->Dispatch();
     return;
@@ -956,6 +935,13 @@ StackFrameToStackEntry(nsIStackFrame* aStackFrame,
   rv = aStackFrame->GetName(aStackEntry.mFunctionName);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  nsString cause;
+  rv = aStackFrame->GetAsyncCause(cause);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (!cause.IsEmpty()) {
+    aStackEntry.mAsyncCause.Construct(cause);
+  }
+
   aStackEntry.mLanguage = aLanguage;
   return NS_OK;
 }
@@ -981,6 +967,10 @@ ReifyStack(nsIStackFrame* aStack, nsTArray<ConsoleStackEntry>& aRefiedStack)
     rv = stack->GetCaller(getter_AddRefs(caller));
     NS_ENSURE_SUCCESS(rv, rv);
 
+    if (!caller) {
+      rv = stack->GetAsyncCaller(getter_AddRefs(caller));
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
     stack.swap(caller);
   }
 
@@ -993,7 +983,7 @@ Console::Method(JSContext* aCx, MethodName aMethodName,
                 const nsAString& aMethodString,
                 const Sequence<JS::Value>& aData)
 {
-  nsRefPtr<ConsoleCallData> callData(new ConsoleCallData());
+  RefPtr<ConsoleCallData> callData(new ConsoleCallData());
 
   ClearException ce(aCx);
 
@@ -1068,49 +1058,48 @@ Console::Method(JSContext* aCx, MethodName aMethodName,
       nsGlobalWindow *win = static_cast<nsGlobalWindow*>(mWindow.get());
       MOZ_ASSERT(win);
 
-      nsRefPtr<nsPerformance> performance = win->GetPerformance();
+      RefPtr<nsPerformance> performance = win->GetPerformance();
       if (!performance) {
         return;
       }
 
       callData->mMonotonicTimer = performance->Now();
 
-      // 'time' and 'timeEnd' are displayed in the devtools timeline if active.
-      bool isTimelineRecording = false;
       nsDocShell* docShell = static_cast<nsDocShell*>(mWindow->GetDocShell());
-      if (docShell) {
-        docShell->GetRecordProfileTimelineMarkers(&isTimelineRecording);
-      }
+      RefPtr<TimelineConsumers> timelines = TimelineConsumers::Get();
+      bool isTimelineRecording = timelines && timelines->HasConsumer(docShell);
 
-      // 'timeStamp' recordings do not need an argument; use empty string
-      // if no arguments passed in
+      // The 'timeStamp' recordings do not need an argument; use empty string
+      // if no arguments passed in.
       if (isTimelineRecording && aMethodName == MethodTimeStamp) {
-        JS::Rooted<JS::Value> value(aCx, aData.Length() == 0 ?
-                                    JS_GetEmptyStringValue(aCx) : aData[0]);
+        JS::Rooted<JS::Value> value(aCx, aData.Length() == 0
+          ? JS_GetEmptyStringValue(aCx)
+          : aData[0]);
         JS::Rooted<JSString*> jsString(aCx, JS::ToString(aCx, value));
+
         nsAutoJSString key;
         if (jsString) {
           key.init(aCx, jsString);
         }
 
-        UniquePtr<TimelineMarker> marker = MakeUnique<TimestampTimelineMarker>(key);
-        TimelineConsumers::AddMarkerForDocShell(docShell, Move(marker));
+        timelines->AddMarkerForDocShell(docShell, Move(
+          MakeUnique<TimestampTimelineMarker>(key)));
       }
-      // For `console.time(foo)` and `console.timeEnd(foo)`
+      // For `console.time(foo)` and `console.timeEnd(foo)`.
       else if (isTimelineRecording && aData.Length() == 1) {
         JS::Rooted<JS::Value> value(aCx, aData[0]);
         JS::Rooted<JSString*> jsString(aCx, JS::ToString(aCx, value));
+
         if (jsString) {
           nsAutoJSString key;
           if (key.init(aCx, jsString)) {
-            UniquePtr<TimelineMarker> marker = MakeUnique<ConsoleTimelineMarker>(
-              key, aMethodName == MethodTime ? MarkerTracingType::START
-                                             : MarkerTracingType::END);
-            TimelineConsumers::AddMarkerForDocShell(docShell, Move(marker));
+            timelines->AddMarkerForDocShell(docShell, Move(
+              MakeUnique<ConsoleTimelineMarker>(
+                key, aMethodName == MethodTime ? MarkerTracingType::START
+                                               : MarkerTracingType::END)));
           }
         }
       }
-
     } else {
       WorkerPrivate* workerPrivate = GetCurrentThreadWorkerPrivate();
       MOZ_ASSERT(workerPrivate);
@@ -1128,7 +1117,7 @@ Console::Method(JSContext* aCx, MethodName aMethodName,
     return;
   }
 
-  nsRefPtr<ConsoleCallDataRunnable> runnable =
+  RefPtr<ConsoleCallDataRunnable> runnable =
     new ConsoleCallDataRunnable(this, callData);
   runnable->Dispatch();
 }

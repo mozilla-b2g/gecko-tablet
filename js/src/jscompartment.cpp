@@ -264,7 +264,8 @@ JSCompartment::checkWrapperMapAfterMovingGC()
         CrossCompartmentKey key = e.front().key();
         CheckGCThingAfterMovingGC(key.debugger);
         CheckGCThingAfterMovingGC(key.wrapped);
-        CheckGCThingAfterMovingGC(static_cast<Cell*>(e.front().value().get().toGCThing()));
+        CheckGCThingAfterMovingGC(
+                static_cast<Cell*>(e.front().value().unbarrieredGet().toGCThing()));
 
         WrapperMap::Ptr ptr = crossCompartmentWrappers.lookup(key);
         MOZ_RELEASE_ASSERT(ptr.found() && &*ptr == &e.front());
@@ -545,7 +546,7 @@ JSCompartment::traceOutgoingCrossCompartmentWrappers(JSTracer* trc)
     MOZ_ASSERT(!zone()->isCollecting() || trc->runtime()->gc.isHeapCompacting());
 
     for (WrapperMap::Enum e(crossCompartmentWrappers); !e.empty(); e.popFront()) {
-        Value v = e.front().value();
+        Value v = e.front().value().unbarrieredGet();
         if (e.front().key().kind == CrossCompartmentKey::ObjectWrapper) {
             ProxyObject* wrapper = &v.toObject().as<ProxyObject>();
 
@@ -672,9 +673,9 @@ JSCompartment::sweepSavedStacks()
 void
 JSCompartment::sweepGlobalObject(FreeOp* fop)
 {
-    if (global_.unbarrieredGet() && IsAboutToBeFinalized(&global_)) {
+    if (global_ && IsAboutToBeFinalized(&global_)) {
         if (isDebuggee())
-            Debugger::detachAllDebuggersFromGlobal(fop, global_);
+            Debugger::detachAllDebuggersFromGlobal(fop, global_.unbarrieredGet());
         global_.set(nullptr);
     }
 }
@@ -1011,7 +1012,10 @@ JSCompartment::updateDebuggerObservesFlag(unsigned flag)
                flag == DebuggerObservesCoverage ||
                flag == DebuggerObservesAsmJS);
 
-    const GlobalObject::DebuggerVector* v = maybeGlobal()->getDebuggers();
+    GlobalObject* global = zone()->runtimeFromMainThread()->gc.isForegroundSweeping()
+                           ? unsafeUnbarrieredMaybeGlobal()
+                           : maybeGlobal();
+    const GlobalObject::DebuggerVector* v = global->getDebuggers();
     for (Debugger * const* p = v->begin(); p != v->end(); p++) {
         Debugger* dbg = *p;
         if (flag == DebuggerObservesAllExecution ? dbg->observesAllExecution() :
@@ -1123,25 +1127,29 @@ JSCompartment::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
 void
 JSCompartment::reportTelemetry()
 {
-    // Only report telemetry for web content, not add-ons or chrome JS.
-    if (addonId || isSystem_)
+    // Only report telemetry for web content and add-ons, not chrome JS.
+    if (isSystem_)
         return;
 
     // Hazard analysis can't tell that the telemetry callbacks don't GC.
     JS::AutoSuppressGCAnalysis nogc;
 
+    int id = addonId
+             ? JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_ADDONS
+             : JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT;
+
     // Call back into Firefox's Telemetry reporter.
     for (size_t i = 0; i < DeprecatedLanguageExtensionCount; i++) {
         if (sawDeprecatedLanguageExtension[i])
-            runtime_->addTelemetry(JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT, i);
+            runtime_->addTelemetry(id, i);
     }
 }
 
 void
 JSCompartment::addTelemetry(const char* filename, DeprecatedLanguageExtension e)
 {
-    // Only report telemetry for web content, not add-ons or chrome JS.
-    if (addonId || isSystem_ || !filename || strncmp(filename, "http", 4) != 0)
+    // Only report telemetry for web content and add-ons, not chrome JS.
+    if (isSystem_ || (!addonId && (!filename || strncmp(filename, "http", 4) != 0)))
         return;
 
     sawDeprecatedLanguageExtension[e] = true;

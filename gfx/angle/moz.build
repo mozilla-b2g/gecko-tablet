@@ -72,6 +72,7 @@ UNIFIED_SOURCES += [
     'src/compiler/translator/RemoveDynamicIndexing.cpp',
     'src/compiler/translator/RemovePow.cpp',
     'src/compiler/translator/RemoveSwitchFallThrough.cpp',
+    'src/compiler/translator/RewriteDoWhile.cpp',
     'src/compiler/translator/RewriteElseBlocks.cpp',
     'src/compiler/translator/ScalarizeVecAndMatConstructorArgs.cpp',
     'src/compiler/translator/SearchSymbol.cpp',
@@ -111,11 +112,21 @@ SOURCES += [
 if CONFIG['GNU_CXX']:
     CXXFLAGS += [
         '-Wno-attributes',
+        '-Wno-shadow',
         '-Wno-sign-compare',
         '-Wno-unknown-pragmas',
+        '-Wno-unreachable-code',
     ]
     if CONFIG['CLANG_CXX']:
-        CXXFLAGS += ['-Wno-unused-private-field']
+        CXXFLAGS += [
+            '-Wno-inconsistent-missing-override',
+            '-Wno-unused-private-field',
+        ]
+    else:
+        CXXFLAGS += [
+            '-Wno-shadow-compatible-local',
+            '-Wno-shadow-local',
+        ]
 
 if CONFIG['MOZ_DIRECTX_SDK_PATH'] and not CONFIG['MOZ_HAS_WINSDK_WITH_D3D']:
     CXXFLAGS += ['-I\'%s/include/\'' % CONFIG['MOZ_DIRECTX_SDK_PATH']]
@@ -151,14 +162,7 @@ EXPORTS.angle.KHR += [ 'include/KHR/khrplatform.h' ]
 
 LOCAL_INCLUDES += [ 'include', 'src' ]
 
-if CONFIG['GKMEDIAS_SHARED_LIBRARY']:
-    NO_VISIBILITY_FLAGS = True
-
-# This tells ANGLE to build the translator with declspec(dllexport) on Windows
-# which we need to get these symbols exported from gkmedias
-DEFINES['COMPONENT_BUILD'] = True
-DEFINES['ANGLE_TRANSLATOR_IMPLEMENTATION'] = True
-
+# We allow warnings for third-party code that can be updated from upstream.
 ALLOW_COMPILER_WARNINGS = True
 
 FINAL_LIBRARY = 'gkmedias'

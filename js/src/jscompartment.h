@@ -374,6 +374,12 @@ struct JSCompartment
     js::NewObjectMetadataState objectMetadataState;
 
   public:
+    // Recompute the probability with which this compartment should record
+    // profiling data (stack traces, allocations log, etc.) about each
+    // allocation. We consult the probabilities requested by the Debugger
+    // instances observing us, if any.
+    void chooseAllocationSamplingProbability() { savedStacks_.chooseSamplingProbability(this); }
+
     bool hasObjectPendingMetadata() const { return objectMetadataState.is<js::PendingMetadata>(); }
 
     void setObjectPendingMetadata(JSContext* cx, JSObject* obj) {
@@ -747,7 +753,8 @@ struct JSCompartment
         // NO LONGER USING 5
         DeprecatedNoSuchMethod = 6,         // JS 1.7+
         DeprecatedFlagsArgument = 7,        // JS 1.3 or older
-        RegExpSourceProperty = 8,           // ES5
+        // NO LONGER USING 8
+        DeprecatedRestoredRegExpStatics = 9,// Unknown
         DeprecatedLanguageExtensionCount
     };
 

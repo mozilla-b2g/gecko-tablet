@@ -635,6 +635,11 @@ public:
    */
   virtual void DisableDeviceSensor(uint32_t aType) = 0;
 
+#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
+  virtual void EnableOrientationChangeListener() = 0;
+  virtual void DisableOrientationChangeListener() = 0;
+#endif
+
   virtual void EnableTimeChangeNotifications() = 0;
   virtual void DisableTimeChangeNotifications() = 0;
 
@@ -798,7 +803,7 @@ protected:
   nsIDocShell* MOZ_NON_OWNING_REF mDocShell;  // Weak Reference
 
   // mPerformance is only used on inner windows.
-  nsRefPtr<nsPerformance>       mPerformance;
+  RefPtr<nsPerformance>       mPerformance;
 
   uint32_t               mModalStateDepth;
 

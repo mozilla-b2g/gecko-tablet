@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* global Frame:false uncaughtError:true fakeManyContacts:true fakeFewerContacts:true */
+/* global Frame:false uncaughtError:true */
 
 (function() {
   "use strict";
@@ -15,27 +15,17 @@
 
   // 1. Desktop components
   // 1.1 Panel
-  var AvailabilityDropdown = loop.panel.AvailabilityDropdown;
   var PanelView = loop.panel.PanelView;
   var SignInRequestView = loop.panel.SignInRequestView;
-  var ContactDetailsForm = loop.contacts.ContactDetailsForm;
-  var ContactDropdown = loop.contacts.ContactDropdown;
-  var ContactDetail = loop.contacts.ContactDetail;
-  var GettingStartedView = loop.panel.GettingStartedView;
   // 1.2. Conversation Window
-  var AcceptCallView = loop.conversationViews.AcceptCallView;
-  var DesktopPendingConversationView = loop.conversationViews.PendingConversationView;
-  var OngoingConversationView = loop.conversationViews.OngoingConversationView;
-  var DirectCallFailureView = loop.conversationViews.DirectCallFailureView;
   var DesktopRoomEditContextView = loop.roomViews.DesktopRoomEditContextView;
   var RoomFailureView = loop.roomViews.RoomFailureView;
   var DesktopRoomConversationView = loop.roomViews.DesktopRoomConversationView;
 
   // 2. Standalone webapp
-  var HomeView = loop.webapp.HomeView;
-  var UnsupportedBrowserView  = loop.webapp.UnsupportedBrowserView;
-  var UnsupportedDeviceView   = loop.webapp.UnsupportedDeviceView;
-  var StandaloneRoomView      = loop.standaloneRoomViews.StandaloneRoomView;
+  var UnsupportedBrowserView = loop.webapp.UnsupportedBrowserView;
+  var UnsupportedDeviceView = loop.webapp.UnsupportedDeviceView;
+  var StandaloneRoomView = loop.standaloneRoomViews.StandaloneRoomView;
   var StandaloneHandleUserAgentView = loop.standaloneRoomViews.StandaloneHandleUserAgentView;
 
   // 3. Shared components
@@ -59,7 +49,7 @@
     return false;
   }
 
-  function noop(){}
+  function noop() {}
 
   // We save the visibility change listeners so that we can fake an event
   // to the panel once we've loaded all the views.
@@ -151,12 +141,12 @@
         // (eg MacBook Pro) where that is the default camera resolution.
         var newStoreState = {
           localVideoDimensions: {
-            camera: {height: 480, orientation: 0, width: 640}
+            camera: { height: 480, orientation: 0, width: 640 }
           },
           mediaConnected: options.mediaConnected,
           receivingScreenShare: !!options.receivingScreenShare,
           remoteVideoDimensions: {
-            camera: {height: 480, orientation: 0, width: 640}
+            camera: { height: 480, orientation: 0, width: 640 }
           },
           remoteVideoEnabled: options.remoteVideoEnabled,
           // Override the matchMedia, this is so that the correct version is
@@ -182,7 +172,7 @@
           // For showcase purposes, this shouldn't matter much, as the sizes
           // of things being shared will be fairly arbitrary.
           newStoreState.remoteVideoDimensions.screen =
-          {height: 456, orientation: 0, width: 641};
+          { height: 456, orientation: 0, width: 641 };
         }
 
         store.setStoreState(newStoreState);
@@ -338,75 +328,18 @@
     sdkDriver: mockSDK
   });
 
-  /**
-   * Every view that uses an conversationStore needs its own; if they shared
-   * a conversation store, they'd interfere with each other.
-   *
-   * @param options
-   * @returns {loop.store.ConversationStore}
-   */
-  function makeConversationStore() {
-    var roomDispatcher = new loop.Dispatcher();
-
-    var store = new loop.store.ConversationStore(dispatcher, {
-      client: {},
-      mozLoop: navigator.mozLoop,
-      sdkDriver: mockSDK
-    });
-
-    store.forcedUpdate = function forcedUpdate(contentWindow) {
-      // Since this is called by setTimeout, we don't want to lose any
-      // exceptions if there's a problem and we need to debug, so...
-      try {
-        var newStoreState = {
-          // Override the matchMedia, this is so that the correct version is
-          // used for the frame.
-          //
-          // Currently, we use an icky hack, and the showcase conspires with
-          // react-frame-component to set iframe.contentWindow.matchMedia onto
-          // the store. Once React context matures a bit (somewhere between
-          // 0.14 and 1.0, apparently):
-          //
-          // https://facebook.github.io/react/blog/2015/02/24/streamlining-react-elements.html#solution-make-context-parent-based-instead-of-owner-based
-          //
-          // we should be able to use those to clean this up.
-          matchMedia: contentWindow.matchMedia.bind(contentWindow)
-        };
-
-        store.setStoreState(newStoreState);
-      } catch (ex) {
-        console.error("exception in forcedUpdate:", ex);
-      }
-    };
-
-    return store;
-  }
-
-  var conversationStores = [];
-  for (var index = 0; index < 5; index++) {
-    conversationStores[index] = makeConversationStore();
-  }
-
-  conversationStores[0].setStoreState({
-    callStateReason: FAILURE_DETAILS.NO_MEDIA
-  });
-  conversationStores[1].setStoreState({
-    callStateReason: FAILURE_DETAILS.USER_UNAVAILABLE,
-    contact: fakeManyContacts[0]
-  });
-
   // Update the text chat store with the room info.
   textChatStore.updateRoomInfo(new sharedActions.UpdateRoomInfo({
     roomName: "A Very Long Conversation Name",
     roomUrl: "http://showcase",
-    urls: [{
+    roomContextUrls: [{
       description: "A wonderful page!",
       location: "http://wonderful.invalid"
       // use the fallback thumbnail
     }]
   }));
 
-  textChatStore.setStoreState({textChatEnabled: true});
+  textChatStore.setStoreState({ textChatEnabled: true });
 
   dispatcher.dispatch(new sharedActions.SendTextChatMessage({
     contentType: loop.shared.utils.CHAT_CONTENT_TYPES.TEXT,
@@ -449,7 +382,6 @@
 
   loop.store.StoreMixin.register({
     activeRoomStore: activeRoomStore,
-    conversationStore: conversationStores[0],
     textChatStore: textChatStore
   });
 
@@ -460,10 +392,21 @@
   };
 
   var mockMozLoopNoRoomsNoContext = _.cloneDeep(navigator.mozLoop);
-  mockMozLoopNoRoomsNoContext.getSelectedTabMetadata = function(){};
+  mockMozLoopNoRoomsNoContext.getSelectedTabMetadata = function() {};
   mockMozLoopNoRoomsNoContext.rooms.getAll = function(version, callback) {
     callback(null, []);
   };
+
+  var roomStoreOpenedRoom = new loop.store.RoomStore(dispatcher, {
+    mozLoop: navigator.mozLoop,
+    activeRoomStore: makeActiveRoomStore({
+      roomState: ROOM_STATES.HAS_PARTICIPANTS
+    })
+  });
+
+  roomStoreOpenedRoom.setStoreState({
+    openedRoom: "3jKS_Els9IU"
+  });
 
   var roomStoreNoRooms = new loop.store.RoomStore(new loop.Dispatcher(), {
     mozLoop: mockMozLoopNoRooms,
@@ -493,7 +436,7 @@
   };
 
   var mockMozLoopLoggedInNoContext = _.cloneDeep(navigator.mozLoop);
-  mockMozLoopLoggedInNoContext.getSelectedTabMetadata = function(){};
+  mockMozLoopLoggedInNoContext.getSelectedTabMetadata = function() {};
   mockMozLoopLoggedInNoContext.userProfile = _.cloneDeep(mockMozLoopLoggedIn.userProfile);
 
   var mockMozLoopLoggedInLongEmail = _.cloneDeep(navigator.mozLoop);
@@ -504,27 +447,6 @@
 
   var mockMozLoopRooms = _.extend({}, navigator.mozLoop);
 
-  var mozLoopNoContacts = _.cloneDeep(navigator.mozLoop);
-  mozLoopNoContacts.contacts.getAll = function(callback) {
-    callback(null, []);
-  };
-  mozLoopNoContacts.userProfile = {
-    email: "reallyreallylongtext@example.com",
-    uid: "0354b278a381d3cb408bb46ffc01266"
-  };
-  mozLoopNoContacts.contacts.getAll = function(callback) {
-    callback(null, []);
-  };
-
-  var mozLoopNoContactsFilter = _.cloneDeep(navigator.mozLoop);
-  mozLoopNoContactsFilter.userProfile = {
-    email: "reallyreallylongtext@example.com",
-    uid: "0354b278a381d3cb408bb46ffc01266"
-  };
-  mozLoopNoContactsFilter.contacts.getAll = function(callback) {
-    callback(null, fakeFewerContacts); // Defined in fake-mozLoop.js.
-  };
-
   var firstTimeUseMozLoop = _.cloneDeep(navigator.mozLoop);
   firstTimeUseMozLoop.getLoopPref = function(prop) {
     if (prop === "gettingStarted.seen") {
@@ -534,22 +456,9 @@
     return true;
   };
 
-  var mockContact = {
-    name: ["Mr Smith"],
-    email: [{
-      value: "smith@invalid.com"
-    }]
-  };
-
   var mockClient = {
     requestCallUrlInfo: noop
   };
-
-  var mockWebSocket = new loop.CallConnectionWebSocket({
-    url: "fake",
-    callId: "fakeId",
-    websocketToken: "fakeToken"
-  });
 
   var notifications = new loop.shared.models.NotificationCollection();
   var errNotifications = new loop.shared.models.NotificationCollection();
@@ -599,13 +508,11 @@
         "volume-disabled", "clear", "magnifier"
       ],
       "16x16": ["add", "add-hover", "add-active", "audio", "audio-hover", "audio-active",
-        "block", "block-red", "block-hover", "block-active", "contacts", "contacts-hover",
-        "contacts-active", "copy", "checkmark", "delete", "globe", "google", "google-hover",
+        "block", "block-red", "block-hover", "block-active", "copy", "checkmark", "delete", "globe", "google", "google-hover",
         "google-active", "history", "history-hover", "history-active", "leave",
         "screen-white", "screenmute-white", "settings", "settings-hover", "settings-active",
         "share-darkgrey", "tag", "tag-hover", "tag-active", "trash", "unblock",
-        "unblock-hover", "unblock-active", "video", "video-hover", "video-active",
-        "status-available", "status-unavailable"
+        "unblock-hover", "unblock-active", "video", "video-hover", "video-active"
       ]
     },
 
@@ -657,7 +564,7 @@
             React.createElement("a", {href: this.makeId("#")}, " ¶")
           ), 
           React.createElement("div", {className: "comp"}, 
-            React.createElement(Frame, {className: cx({dashed: this.props.dashed}), 
+            React.createElement(Frame, {className: cx({ dashed: this.props.dashed }), 
                    cssClass: this.props.cssClass, 
                    height: height, 
                    onContentsRendered: this.props.onContentsRendered, 
@@ -797,14 +704,14 @@
             React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
                            dashed: true, 
                            height: 410, 
-                           summary: "Room list (No Context)", 
+                           summary: "Room list (active view)", 
                            width: 330}, 
               React.createElement("div", {className: "panel"}, 
                 React.createElement(PanelView, {client: mockClient, 
                            dispatcher: dispatcher, 
-                           mozLoop: mockMozLoopLoggedInNoContext, 
+                           mozLoop: navigator.mozLoop, 
                            notifications: notifications, 
-                           roomStore: roomStore})
+                           roomStore: roomStoreOpenedRoom})
               )
             ), 
 
@@ -825,20 +732,6 @@
             React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
                            dashed: true, 
                            height: 410, 
-                           summary: "Room list (no rooms and no context)", 
-                           width: 330}, 
-              React.createElement("div", {className: "panel"}, 
-                React.createElement(PanelView, {client: mockClient, 
-                           dispatcher: dispatcher, 
-                           mozLoop: mockMozLoopNoRoomsNoContext, 
-                           notifications: notifications, 
-                           roomStore: roomStoreNoRooms})
-              )
-            ), 
-
-            React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
-                           dashed: true, 
-                           height: 410, 
                            summary: "Room list (loading view)", 
                            width: 330}, 
               React.createElement("div", {className: "panel"}, 
@@ -850,62 +743,6 @@
               )
             ), 
 
-            React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
-                           dashed: true, 
-                           height: 410, 
-                           summary: "Contact list tab", 
-                           width: 330}, 
-              React.createElement("div", {className: "panel"}, 
-                React.createElement(PanelView, {client: mockClient, 
-                           dispatcher: dispatcher, 
-                           mozLoop: mockMozLoopLoggedIn, 
-                           notifications: notifications, 
-                           roomStore: roomStore, 
-                           selectedTab: "contacts"})
-              )
-            ), 
-            React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
-                           dashed: true, 
-                           height: 410, 
-                           summary: "Contact list tab (no search filter)", 
-                           width: 332}, 
-              React.createElement("div", {className: "panel"}, 
-                React.createElement(PanelView, {client: mockClient, 
-                           dispatcher: dispatcher, 
-                           mozLoop: mozLoopNoContactsFilter, 
-                           notifications: notifications, 
-                           roomStore: roomStore, 
-                           selectedTab: "contacts"})
-              )
-            ), 
-            React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
-                           dashed: true, 
-                           height: 410, 
-                           summary: "Contact list tab long email", 
-                           width: 330}, 
-              React.createElement("div", {className: "panel"}, 
-                React.createElement(PanelView, {client: mockClient, 
-                           dispatcher: dispatcher, 
-                           mozLoop: mockMozLoopLoggedInLongEmail, 
-                           notifications: notifications, 
-                           roomStore: roomStore, 
-                           selectedTab: "contacts"})
-              )
-            ), 
-            React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
-                           dashed: true, 
-                           height: 410, 
-                           summary: "Contact list tab (no contacts)", 
-                           width: 330}, 
-              React.createElement("div", {className: "panel"}, 
-                React.createElement(PanelView, {client: mockClient, 
-                           dispatcher: dispatcher, 
-                           mozLoop: mozLoopNoContacts, 
-                           notifications: notifications, 
-                           roomStore: roomStore, 
-                           selectedTab: "contacts"})
-              )
-            ), 
             React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
                            dashed: true, 
                            height: 410, 
@@ -930,173 +767,6 @@
                            mozLoop: mockMozLoopLoggedIn, 
                            notifications: errNotifications, 
                            roomStore: roomStore})
-              )
-            ), 
-            React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
-                           dashed: true, 
-                           height: 410, 
-                           summary: "Contact import success", 
-                           width: 330}, 
-              React.createElement("div", {className: "panel"}, 
-                React.createElement(PanelView, {dispatcher: dispatcher, 
-                           mozLoop: mockMozLoopLoggedIn, 
-                           notifications: new loop.shared.models.NotificationCollection([{level: "success", message: "Import success"}]), 
-                           roomStore: roomStore, 
-                           selectedTab: "contacts"})
-              )
-            ), 
-            React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
-                           dashed: true, 
-                           height: 410, 
-                           summary: "Contact import error", 
-                           width: 330}, 
-              React.createElement("div", {className: "panel"}, 
-                React.createElement(PanelView, {dispatcher: dispatcher, 
-                           mozLoop: mockMozLoopLoggedIn, 
-                           notifications: new loop.shared.models.NotificationCollection([{level: "error", message: "Import error"}]), 
-                           roomStore: roomStore, 
-                           selectedTab: "contacts"})
-              )
-            ), 
-            React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
-                           dashed: true, 
-                           height: 410, 
-                           summary: "Contact Form - Add", 
-                           width: 330}, 
-              React.createElement("div", {className: "panel"}, 
-                React.createElement(PanelView, {client: mockClient, 
-                           dispatcher: dispatcher, 
-                           initialSelectedTabComponent: "contactAdd", 
-                           mozLoop: mockMozLoopLoggedIn, 
-                           notifications: notifications, 
-                           roomStore: roomStore, 
-                           selectedTab: "contacts", 
-                           userProfile: {email: "test@example.com"}})
-              )
-            ), 
-            React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
-                           dashed: true, 
-                           height: 410, 
-                           summary: "Contact Form - Edit", 
-                           width: 330}, 
-              React.createElement("div", {className: "panel"}, 
-                React.createElement(PanelView, {client: mockClient, 
-                           dispatcher: dispatcher, 
-                           initialSelectedTabComponent: "contactEdit", 
-                           mozLoop: mockMozLoopLoggedIn, 
-                           notifications: notifications, 
-                           roomStore: roomStore, 
-                           selectedTab: "contacts", 
-                           userProfile: {email: "test@example.com"}})
-              )
-            )
-          ), 
-
-          React.createElement(Section, {name: "Availability Dropdown"}, 
-            React.createElement("p", {className: "note"}, 
-              React.createElement("strong", null, "Note:"), " 332px wide."
-            ), 
-            React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
-                           dashed: true, 
-                           height: 200, 
-                           summary: "AvailabilityDropdown", 
-                           width: 332}, 
-              React.createElement("div", {className: "panel"}, 
-                React.createElement(AvailabilityDropdown, null)
-              )
-            ), 
-
-            React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
-                           dashed: true, 
-                           height: 200, 
-                           summary: "AvailabilityDropdown Expanded", 
-                           width: 332}, 
-              React.createElement("div", {className: "panel force-menu-show", style: {"height": "100%", "paddingTop": "50px"}}, 
-                React.createElement(AvailabilityDropdown, null)
-              )
-            )
-          ), 
-
-          React.createElement(Section, {name: "ContactDetail"}, 
-            React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
-                           dashed: true, 
-                           height: 50, 
-                           summary: "ContactDetail", 
-                           width: 334}, 
-              React.createElement("div", {className: "panel force-menu-show"}, 
-                React.createElement(ContactDetail, {contact: fakeManyContacts[0], 
-                               getContainerCoordinates: function() { return {"top": 0, "height": 0 }; }, 
-                               handleContactAction: function() {}})
-              )
-            )
-          ), 
-
-          React.createElement(Section, {name: "ContactDropdown"}, 
-            React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
-                           dashed: true, 
-                           height: 272, 
-                           summary: "ContactDropdown not blocked can edit", 
-                           width: 300}, 
-             React.createElement("div", {className: "panel"}, 
-               React.createElement(ContactDropdown, {blocked: false, 
-                                canEdit: true, 
-                                eventPosY: 0, 
-                                getContainerCoordinates: function() { return {"top": 0, "height": 0 }; }, 
-                                handleAction: function () {}})
-             )
-            ), 
-            React.createElement(FramedExample, {cssClass: "fx-embedded-panel", 
-                           dashed: true, 
-                           height: 272, 
-                           summary: "ContactDropdown blocked can't edit", 
-                           width: 300}, 
-             React.createElement("div", {className: "panel"}, 
-               React.createElement(ContactDropdown, {blocked: true, 
-                                canEdit: false, 
-                                eventPosY: 0, 
-                                getContainerCoordinates: function() { return {"top": 0, "height": 0 }; }, 
-                                handleAction: function () {}})
-             )
-            )
-          ), 
-
-          React.createElement(Section, {name: "AcceptCallView"}, 
-            React.createElement(FramedExample, {dashed: true, 
-                           height: 272, 
-                           summary: "Default / incoming video call", 
-                           width: 332}, 
-              React.createElement("div", {className: "fx-embedded"}, 
-                React.createElement(AcceptCallView, {callType: CALL_TYPES.AUDIO_VIDEO, 
-                                callerId: "Mr Smith", 
-                                dispatcher: dispatcher, 
-                                mozLoop: mockMozLoopLoggedIn})
-              )
-            ), 
-
-            React.createElement(FramedExample, {dashed: true, 
-                           height: 272, 
-                           summary: "Default / incoming audio only call", 
-                           width: 332}, 
-              React.createElement("div", {className: "fx-embedded"}, 
-                React.createElement(AcceptCallView, {callType: CALL_TYPES.AUDIO_ONLY, 
-                                callerId: "Mr Smith", 
-                                dispatcher: dispatcher, 
-                                mozLoop: mockMozLoopLoggedIn})
-              )
-            )
-          ), 
-
-          React.createElement(Section, {name: "AcceptCallView-ActiveState"}, 
-            React.createElement(FramedExample, {dashed: true, 
-                           height: 272, 
-                           summary: "Default", 
-                           width: 332}, 
-              React.createElement("div", {className: "fx-embedded"}, 
-                React.createElement(AcceptCallView, {callType: CALL_TYPES.AUDIO_VIDEO, 
-                                callerId: "Mr Smith", 
-                                dispatcher: dispatcher, 
-                                mozLoop: mockMozLoopLoggedIn, 
-                                showMenu: true})
               )
             )
           ), 
@@ -1149,159 +819,6 @@
                 )
               )
             )
-          ), 
-
-          React.createElement(Section, {name: "PendingConversationView (Desktop)"}, 
-            React.createElement(FramedExample, {dashed: true, 
-                           height: 272, 
-                           summary: "Connecting", 
-                           width: 300}, 
-              React.createElement("div", {className: "fx-embedded"}, 
-                React.createElement(DesktopPendingConversationView, {callState: "gather", 
-                                                contact: mockContact, 
-                                                dispatcher: dispatcher})
-              )
-            )
-          ), 
-
-          React.createElement(Section, {name: "DirectCallFailureView"}, 
-            React.createElement(FramedExample, {
-              dashed: true, 
-              height: 254, 
-              summary: "Call Failed - Incoming", 
-              width: 298}, 
-              React.createElement("div", {className: "fx-embedded"}, 
-                React.createElement(DirectCallFailureView, {
-                  conversationStore: conversationStores[0], 
-                  dispatcher: dispatcher, 
-                  mozLoop: navigator.mozLoop, 
-                  outgoing: false})
-              )
-            ), 
-            React.createElement(FramedExample, {
-              dashed: true, 
-              height: 254, 
-              summary: "Call Failed - Outgoing", 
-              width: 298}, 
-              React.createElement("div", {className: "fx-embedded"}, 
-                React.createElement(DirectCallFailureView, {
-                  conversationStore: conversationStores[1], 
-                  dispatcher: dispatcher, 
-                  mozLoop: navigator.mozLoop, 
-                  outgoing: true})
-              )
-            ), 
-            React.createElement(FramedExample, {
-              dashed: true, 
-              height: 254, 
-              summary: "Call Failed — with call URL error", 
-              width: 298}, 
-              React.createElement("div", {className: "fx-embedded"}, 
-                React.createElement(DirectCallFailureView, {
-                  conversationStore: conversationStores[0], 
-                  dispatcher: dispatcher, 
-                  emailLinkError: true, 
-                  mozLoop: navigator.mozLoop, 
-                  outgoing: true})
-              )
-            )
-          ), 
-
-          React.createElement(Section, {name: "OngoingConversationView"}, 
-            React.createElement(FramedExample, {dashed: true, 
-                           height: 398, 
-                           onContentsRendered: conversationStores[0].forcedUpdate, 
-                           summary: "Desktop ongoing conversation window", 
-                           width: 348}, 
-              React.createElement("div", {className: "fx-embedded"}, 
-                React.createElement(OngoingConversationView, {
-                  audio: { enabled: true, visible: true}, 
-                  chatWindowDetached: false, 
-                  conversationStore: conversationStores[0], 
-                  dispatcher: dispatcher, 
-                  localPosterUrl: "sample-img/video-screen-local.png", 
-                  mediaConnected: true, 
-                  remotePosterUrl: "sample-img/video-screen-remote.png", 
-                  remoteVideoEnabled: true, 
-                  video: { enabled: true, visible: true}})
-              )
-            ), 
-
-            React.createElement(FramedExample, {dashed: true, 
-                           height: 400, 
-                           onContentsRendered: conversationStores[1].forcedUpdate, 
-                           summary: "Desktop ongoing conversation window (medium)", 
-                           width: 600}, 
-              React.createElement("div", {className: "fx-embedded"}, 
-                React.createElement(OngoingConversationView, {
-                  audio: { enabled: true, visible: true}, 
-                  chatWindowDetached: false, 
-                  conversationStore: conversationStores[1], 
-                  dispatcher: dispatcher, 
-                  localPosterUrl: "sample-img/video-screen-local.png", 
-                  mediaConnected: true, 
-                  remotePosterUrl: "sample-img/video-screen-remote.png", 
-                  remoteVideoEnabled: true, 
-                  video: { enabled: true, visible: true}})
-              )
-            ), 
-
-            React.createElement(FramedExample, {height: 600, 
-                           onContentsRendered: conversationStores[2].forcedUpdate, 
-                           summary: "Desktop ongoing conversation window (large)", 
-                           width: 800}, 
-              React.createElement("div", {className: "fx-embedded"}, 
-                React.createElement(OngoingConversationView, {
-                  audio: { enabled: true, visible: true}, 
-                  chatWindowDetached: false, 
-                  conversationStore: conversationStores[2], 
-                  dispatcher: dispatcher, 
-                  localPosterUrl: "sample-img/video-screen-local.png", 
-                  mediaConnected: true, 
-                  remotePosterUrl: "sample-img/video-screen-remote.png", 
-                  remoteVideoEnabled: true, 
-                  video: { enabled: true, visible: true}})
-              )
-            ), 
-
-            React.createElement(FramedExample, {dashed: true, 
-                           height: 398, 
-                           onContentsRendered: conversationStores[3].forcedUpdate, 
-                           summary: "Desktop ongoing conversation window - local face mute", 
-                           width: 348}, 
-              React.createElement("div", {className: "fx-embedded"}, 
-                React.createElement(OngoingConversationView, {
-                  audio: { enabled: true, visible: true}, 
-                  chatWindowDetached: false, 
-                  conversationStore: conversationStores[3], 
-                  dispatcher: dispatcher, 
-                  localPosterUrl: "sample-img/video-screen-local.png", 
-                  mediaConnected: true, 
-                  remotePosterUrl: "sample-img/video-screen-remote.png", 
-                  remoteVideoEnabled: true, 
-                  video: { enabled: false, visible: true}})
-              )
-            ), 
-
-            React.createElement(FramedExample, {dashed: true, 
-                           height: 398, 
-                           onContentsRendered: conversationStores[4].forcedUpdate, 
-                           summary: "Desktop ongoing conversation window - remote face mute", 
-                           width: 348}, 
-              React.createElement("div", {className: "fx-embedded"}, 
-                React.createElement(OngoingConversationView, {
-                  audio: { enabled: true, visible: true}, 
-                  chatWindowDetached: false, 
-                  conversationStore: conversationStores[4], 
-                  dispatcher: dispatcher, 
-                  localPosterUrl: "sample-img/video-screen-local.png", 
-                  mediaConnected: true, 
-                  remotePosterUrl: "sample-img/video-screen-remote.png", 
-                  remoteVideoEnabled: false, 
-                  video: { enabled: true, visible: true}})
-              )
-            )
-
           ), 
 
           React.createElement(Section, {name: "FeedbackView"}, 
@@ -1391,7 +908,7 @@
                   dispatcher: dispatcher, 
                   localPosterUrl: "sample-img/video-screen-local.png", 
                   mozLoop: navigator.mozLoop, 
-                  onCallTerminated: function(){}, 
+                  onCallTerminated: function() {}, 
                   roomState: ROOM_STATES.INIT, 
                   roomStore: invitationRoomStore})
               )
@@ -1406,7 +923,7 @@
                   dispatcher: dispatcher, 
                   error: {}, 
                   mozLoop: navigator.mozLoop, 
-                  onClose: function(){}, 
+                  onClose: function() {}, 
                   roomData: {}, 
                   savingContext: false, 
                   show: true}
@@ -1427,7 +944,7 @@
                   dispatcher: dispatcher, 
                   localPosterUrl: "sample-img/video-screen-local.png", 
                   mozLoop: navigator.mozLoop, 
-                  onCallTerminated: function(){}, 
+                  onCallTerminated: function() {}, 
                   remotePosterUrl: "sample-img/video-screen-remote.png", 
                   roomState: ROOM_STATES.HAS_PARTICIPANTS, 
                   roomStore: desktopRoomStoreLoading})
@@ -1445,7 +962,7 @@
                   dispatcher: dispatcher, 
                   localPosterUrl: "sample-img/video-screen-local.png", 
                   mozLoop: navigator.mozLoop, 
-                  onCallTerminated: function(){}, 
+                  onCallTerminated: function() {}, 
                   remotePosterUrl: "sample-img/video-screen-remote.png", 
                   roomState: ROOM_STATES.HAS_PARTICIPANTS, 
                   roomStore: roomStore})
@@ -1463,7 +980,7 @@
                   dispatcher: dispatcher, 
                   localPosterUrl: "sample-img/video-screen-local.png", 
                   mozLoop: navigator.mozLoop, 
-                  onCallTerminated: function(){}, 
+                  onCallTerminated: function() {}, 
                   remotePosterUrl: "sample-img/video-screen-remote.png", 
                   roomState: ROOM_STATES.HAS_PARTICIPANTS, 
                   roomStore: desktopRoomStoreMedium})
@@ -1481,7 +998,7 @@
                   dispatcher: dispatcher, 
                   localPosterUrl: "sample-img/video-screen-local.png", 
                   mozLoop: navigator.mozLoop, 
-                  onCallTerminated: function(){}, 
+                  onCallTerminated: function() {}, 
                   remotePosterUrl: "sample-img/video-screen-remote.png", 
                   roomState: ROOM_STATES.HAS_PARTICIPANTS, 
                   roomStore: desktopRoomStoreLarge})
@@ -1498,7 +1015,7 @@
                   chatWindowDetached: false, 
                   dispatcher: dispatcher, 
                   mozLoop: navigator.mozLoop, 
-                  onCallTerminated: function(){}, 
+                  onCallTerminated: function() {}, 
                   remotePosterUrl: "sample-img/video-screen-remote.png", 
                   roomStore: desktopLocalFaceMuteRoomStore})
               )
@@ -1515,7 +1032,7 @@
                   dispatcher: dispatcher, 
                   localPosterUrl: "sample-img/video-screen-local.png", 
                   mozLoop: navigator.mozLoop, 
-                  onCallTerminated: function(){}, 
+                  onCallTerminated: function() {}, 
                   remotePosterUrl: "sample-img/video-screen-remote.png", 
                   roomStore: desktopRemoteFaceMuteRoomStore})
               )
@@ -1829,9 +1346,9 @@
       React.render(React.createElement(App, null), document.getElementById("main"));
 
       for (var listener of visibilityListeners) {
-        listener({target: {hidden: false}});
+        listener({ target: { hidden: false } });
       }
-    } catch(err) {
+    } catch (err) {
       console.error(err);
       uncaughtError = err;
     }
@@ -1866,7 +1383,7 @@
 
         if (warningsMismatch) {
           liTestFail.className = "test";
-          liTestFail.className = liTestFail.className + " fail";
+          liTestFail.className += " fail";
           h2Node.innerHTML = "Unexpected number of warnings detected in UI-Showcase";
           preErrorNode.className = "error";
           preErrorNode.innerHTML = "Got: " + caughtWarnings.length + "\n" + "Expected: " + expectedWarningsCount;
@@ -1876,7 +1393,7 @@
         }
         if (uncaughtError) {
           liTestFail.className = "test";
-          liTestFail.className = liTestFail.className + " fail";
+          liTestFail.className += " fail";
           h2Node.innerHTML = "Errors rendering UI-Showcase";
           preErrorNode.className = "error";
           preErrorNode.innerHTML = uncaughtError + "\n" + uncaughtError.stack;

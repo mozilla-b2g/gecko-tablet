@@ -641,10 +641,6 @@ public:
                           EmptyContainers::yes,
                         nsIContent** outLeftNode = nullptr,
                         nsIContent** outRightNode = nullptr);
-  nsresult SplitNodeDeep(nsIDOMNode* aNode, nsIDOMNode* aSplitPointParent,
-      int32_t aSplitPointOffset, int32_t* outOffset, bool aNoEmptyContainers =
-      false, nsCOMPtr<nsIDOMNode>* outLeftNode = nullptr, nsCOMPtr<nsIDOMNode>*
-      outRightNode = nullptr);
   ::DOMPoint JoinNodeDeep(nsIContent& aLeftNode, nsIContent& aRightNode);
 
   nsresult GetString(const nsAString& name, nsAString& value);
@@ -838,9 +834,9 @@ protected:
 
   nsCOMPtr<nsIInlineSpellChecker> mInlineSpellChecker;
 
-  nsRefPtr<nsTransactionManager> mTxnMgr;
+  RefPtr<nsTransactionManager> mTxnMgr;
   nsCOMPtr<mozilla::dom::Element> mRootElement; // cached root node
-  nsRefPtr<mozilla::dom::Text>    mIMETextNode; // current IME text node
+  RefPtr<mozilla::dom::Text>    mIMETextNode; // current IME text node
   nsCOMPtr<mozilla::dom::EventTarget> mEventTarget; // The form field as an event receiver
   nsCOMPtr<nsIDOMEventListener> mEventListener;
   nsWeakPtr        mSelConWeak;          // weak reference to the nsISelectionController
@@ -851,7 +847,7 @@ protected:
   nsString         *mPhonetic;
   // IME composition this is not null between compositionstart and
   // compositionend.
-  nsRefPtr<mozilla::TextComposition> mComposition;
+  RefPtr<mozilla::TextComposition> mComposition;
 
   // various listeners
   // Listens to all low level actions on the doc

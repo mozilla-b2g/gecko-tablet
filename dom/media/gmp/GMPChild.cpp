@@ -49,13 +49,6 @@ extern PRLogModuleInfo* GetGMPLog();
 
 namespace gmp {
 
-static bool
-FileExists(nsIFile* aFile)
-{
-  bool exists = false;
-  return aFile && NS_SUCCEEDED(aFile->Exists(&exists)) && exists;
-}
-
 GMPChild::GMPChild()
   : mAsyncShutdown(nullptr)
   , mGMPMessageLoop(MessageLoop::current())
@@ -606,21 +599,10 @@ GMPChild::GetGMPStorage()
   return mStorage;
 }
 
-static MOZ_NEVER_INLINE void
-CrashForApiTimeout()
-{
-  // Never inline so that crash reports are distinctive.
-  MOZ_CRASH("Bug 1209385; GMP API actor failed to respond.");
-}
-
 bool
-GMPChild::RecvCrashPluginNow(const GMPCrashReason& aReason)
+GMPChild::RecvCrashPluginNow()
 {
-  if (aReason == kGmpApiTimeout) {
-    CrashForApiTimeout();
-  } else {
-    MOZ_CRASH();
-  }
+  MOZ_CRASH();
   return true;
 }
 

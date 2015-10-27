@@ -19,13 +19,14 @@
     <copyfile dest="Makefile" src="core/root.mk"/>
   </project>
   <project name="fake-dalvik" path="dalvik" remote="b2g" revision="ca1f327d5acc198bb4be62fa51db2c039032c9ce"/>
-  <project name="gaia.git" path="gaia" remote="mozillaorg" revision="e698df503ff700eb5782e3d50c6eb753567d3451"/>
-  <project name="gonk-misc" path="gonk-misc" remote="b2g" revision="7938df689aa87769fad3f2cf9097fb4ecb106a43"/>
+  <project name="gaia.git" path="gaia" remote="mozillaorg" revision="b564b21e08ffc3e4962f08850843c7482932ee7b"/>
+  <project name="gonk-misc" path="gonk-misc" remote="b2g" revision="956700d9754349b630a34551750ae6353614b6aa"/>
   <project name="rilproxy" path="rilproxy" remote="b2g" revision="5ef30994f4778b4052e58a4383dbe7890048c87e"/>
   <project name="platform_hardware_ril" path="hardware/ril" remote="b2g" revision="4ace9aaee0e048dfda11bb787646c59982a3dc80"/>
-  <project name="platform_external_qemu" path="external/qemu" remote="b2g" revision="065f6361461030d32c6dc08d716b013bfadab1d9"/>
-  <project name="moztt" path="external/moztt" remote="b2g" revision="31a7849fe9a8b743d6f5e5facc212f0ef9d57499"/>
+  <project name="platform_external_qemu" path="external/qemu" remote="b2g" revision="c72c9278ddc2f442d193474993d36e7f2cfb08c4"/>
+  <project name="moztt" path="external/moztt" remote="b2g" revision="3b9a47b517d345b8d98bc7f787b9a6c2f51ca75d"/>
   <project name="apitrace" path="external/apitrace" remote="apitrace" revision="34ea6163f9f0e0122fb0bb03607eccdca31ced7a"/>
+  <project name="platform_hardware_libhardware_moz" path="hardware/libhardware_moz" remote="b2g" revision="fdf3a143dc777e5f9d33a88373af7ea161d3b440"/>
   <!-- Stock Android things -->
   <project name="platform/abi/cpp" path="abi/cpp" revision="dd924f92906085b831bf1cbbc7484d3c043d613c"/>
   <project name="platform_bionic" path="bionic" remote="b2g" revision="e2b3733ba3fa5e3f404e983d2e4142b1f6b1b846"/>

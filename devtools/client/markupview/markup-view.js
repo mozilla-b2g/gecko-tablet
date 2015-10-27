@@ -20,7 +20,7 @@ const AUTOCOMPLETE_POPUP_PANEL_ID = "markupview_autoCompletePopup";
 
 const {UndoStack} = require("devtools/client/shared/undo");
 const {editableField, InplaceEditor} = require("devtools/client/shared/inplace-editor");
-const {gDevTools} = Cu.import("resource:///modules/devtools/client/framework/gDevTools.jsm", {});
+const {gDevTools} = Cu.import("resource://devtools/client/framework/gDevTools.jsm", {});
 const {HTMLEditor} = require("devtools/client/markupview/html-editor");
 const promise = require("promise");
 const {Tooltip} = require("devtools/client/shared/widgets/Tooltip");
@@ -32,7 +32,7 @@ const ELLIPSIS = Services.prefs.getComplexValue("intl.ellipsis", Ci.nsIPrefLocal
 const {Task} = require("resource://gre/modules/Task.jsm");
 const {scrollIntoViewIfNeeded} = require("devtools/shared/layout/utils");
 
-Cu.import("resource://gre/modules/devtools/shared/gcli/Templater.jsm");
+Cu.import("resource://devtools/shared/gcli/Templater.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
@@ -577,10 +577,10 @@ MarkupView.prototype = {
         }
         break;
       case Ci.nsIDOMKeyEvent.DOM_VK_DELETE:
-        this.deleteNode(this._selectedContainer.node);
+        this.deleteNodeOrAttribute();
         break;
       case Ci.nsIDOMKeyEvent.DOM_VK_BACK_SPACE:
-        this.deleteNode(this._selectedContainer.node, true);
+        this.deleteNodeOrAttribute(true);
         break;
       case Ci.nsIDOMKeyEvent.DOM_VK_HOME:
         let rootContainer = this.getContainer(this._rootNode);
@@ -678,12 +678,31 @@ MarkupView.prototype = {
   },
 
   /**
+   * If there's an attribute on the current node that's currently focused, then
+   * delete this attribute, otherwise delete the node itself.
+   * @param {boolean} moveBackward If set to true and if we're deleting the
+   * node, focus the previous sibling after deletion, otherwise the next one.
+   */
+  deleteNodeOrAttribute: function(moveBackward) {
+    let focusedAttribute = this.doc.activeElement
+                           ? this.doc.activeElement.closest(".attreditor")
+                           : null;
+    if (focusedAttribute) {
+      // The focused attribute might not be in the current selected container.
+      let container = focusedAttribute.closest("li.child").container;
+      container.removeAttribute(focusedAttribute.dataset.attr);
+    } else {
+      this.deleteNode(this._selectedContainer.node, moveBackward);
+    }
+  },
+
+  /**
    * Delete a node from the DOM.
    * This is an undoable action.
    *
    * @param {NodeFront} aNode The node to remove.
    * @param {boolean} moveBackward If set to true, focus the previous sibling,
-   *  otherwise the next one.
+   * otherwise the next one.
    */
   deleteNode: function(aNode, moveBackward) {
     if (aNode.isDocumentElement ||
@@ -1826,6 +1845,7 @@ MarkupContainer.prototype = {
 
           line.appendChild(closingTag.cloneNode(true));
 
+          flashElementOff(line);
           this.closeTagLine = line;
         }
         this.elt.appendChild(this.closeTagLine);
@@ -2304,6 +2324,36 @@ MarkupElementContainer.prototype = Heritage.extend(MarkupContainer.prototype, {
   clearSingleTextChild: function() {
     this.singleTextChild = undefined;
     this.editor.updateTextEditor();
+  },
+
+  /**
+   * Trigger new attribute field for input.
+   */
+  addAttribute: function() {
+    this.editor.newAttr.editMode();
+  },
+
+  /**
+   * Trigger attribute field for editing.
+   */
+  editAttribute: function(attrName) {
+    this.editor.attrElements.get(attrName).editMode();
+  },
+
+  /**
+   * Remove attribute from container.
+   * This is an undoable action.
+   */
+  removeAttribute: function(attrName) {
+    let doMods = this.editor._startModifyingAttributes();
+    let undoMods = this.editor._startModifyingAttributes();
+    this.editor._saveAttribute(attrName, undoMods);
+    doMods.removeAttribute(attrName);
+    this.undo.do(() => {
+      doMods.apply();
+    }, () => {
+      undoMods.apply();
+    });
   }
 });
 
@@ -2360,6 +2410,13 @@ function GenericEditor(aContainer, aNode) {
 GenericEditor.prototype = {
   destroy: function() {
     this.elt.remove();
+  },
+
+  /**
+   * Stub method for consistency with ElementEditor.
+   */
+  getInfoAtNode: function() {
+    return null;
   }
 };
 
@@ -2442,7 +2499,14 @@ TextEditor.prototype = {
     }
   },
 
-  destroy: function() {}
+  destroy: function() {},
+
+  /**
+   * Stub method for consistency with ElementEditor.
+   */
+  getInfoAtNode: function() {
+    return null;
+  }
 };
 
 /**
@@ -2496,18 +2560,14 @@ function ElementEditor(aContainer, aNode) {
         return;
       }
 
-      try {
-        let doMods = this._startModifyingAttributes();
-        let undoMods = this._startModifyingAttributes();
-        this._applyAttributes(aVal, null, doMods, undoMods);
-        this.container.undo.do(() => {
-          doMods.apply();
-        }, function() {
-          undoMods.apply();
-        });
-      } catch(x) {
-        console.error(x);
-      }
+      let doMods = this._startModifyingAttributes();
+      let undoMods = this._startModifyingAttributes();
+      this._applyAttributes(aVal, null, doMods, undoMods);
+      this.container.undo.do(() => {
+        doMods.apply();
+      }, function() {
+        undoMods.apply();
+      });
     }
   });
 
@@ -2538,6 +2598,35 @@ ElementEditor.prototype = {
     this.animationTimers[attrName] = setTimeout(() => {
       flashElementOff(this.getAttributeElement(attrName));
     }, this.markup.CONTAINER_FLASHING_DURATION);
+  },
+  /**
+   * Returns information about node in the editor.
+   *
+   * @param {DOMNode} node
+   *        The node to get information from.
+   *
+   * @return {Object}
+   *         An object literal with the following information:
+   *         {type: "attribute", name: "rel", value: "index", el: node}
+   */
+  getInfoAtNode: function(node) {
+    if (!node) {
+      return null;
+    }
+
+    let type = null;
+    let name = null;
+    let value = null;
+
+    // Attribute
+    let attribute = node.closest('.attreditor');
+    if (attribute) {
+      type = "attribute";
+      name = attribute.querySelector('.attr-name').textContent;
+      value = attribute.querySelector('.attr-value').textContent;
+    }
+
+    return {type, name, value, el: node};
   },
 
   /**
@@ -2696,19 +2785,15 @@ ElementEditor.prototype = {
         // Remove the attribute stored in this editor and re-add any attributes
         // parsed out of the input element. Restore original attribute if
         // parsing fails.
-        try {
-          this.refocusOnEdit(aAttr.name, attr, direction);
-          this._saveAttribute(aAttr.name, undoMods);
-          doMods.removeAttribute(aAttr.name);
-          this._applyAttributes(aVal, attr, doMods, undoMods);
-          this.container.undo.do(() => {
-            doMods.apply();
-          }, () => {
-            undoMods.apply();
-          });
-        } catch(ex) {
-          console.error(ex);
-        }
+        this.refocusOnEdit(aAttr.name, attr, direction);
+        this._saveAttribute(aAttr.name, undoMods);
+        doMods.removeAttribute(aAttr.name);
+        this._applyAttributes(aVal, attr, doMods, undoMods);
+        this.container.undo.do(() => {
+          doMods.apply();
+        }, () => {
+          undoMods.apply();
+        });
       }
     });
 

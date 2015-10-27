@@ -36,6 +36,7 @@ import android.content.Intent;
 import android.content.res.Configuration;
 import android.os.Bundle;
 import android.support.v4.app.Fragment;
+import android.text.TextUtils;
 import android.util.Log;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
@@ -179,7 +180,12 @@ public abstract class HomeFragment extends Fragment {
 
         // Track the menu action. We don't know much about the context, but we can use this to determine
         // the frequency of use for various actions.
-        Telemetry.sendUIEvent(TelemetryContract.Event.ACTION, TelemetryContract.Method.CONTEXT_MENU, getResources().getResourceEntryName(itemId));
+        String extras = getResources().getResourceEntryName(itemId);
+        if (TextUtils.equals(extras, "home_open_private_tab")) {
+            // Mask private browsing
+            extras = "home_open_new_tab";
+        }
+        Telemetry.sendUIEvent(TelemetryContract.Event.ACTION, TelemetryContract.Method.CONTEXT_MENU, extras);
 
         if (itemId == R.id.home_copyurl) {
             if (info.url == null) {
@@ -197,7 +203,7 @@ public abstract class HomeFragment extends Fragment {
                 return false;
             } else {
                 GeckoAppShell.openUriExternal(info.url, SHARE_MIME_TYPE, "", "",
-                                              Intent.ACTION_SEND, info.getDisplayTitle());
+                                              Intent.ACTION_SEND, info.getDisplayTitle(), false);
 
                 // Context: Sharing via chrome homepage contextmenu list (home session should be active)
                 Telemetry.sendUIEvent(TelemetryContract.Event.SHARE, TelemetryContract.Method.LIST);

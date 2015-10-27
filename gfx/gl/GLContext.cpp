@@ -1352,6 +1352,7 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
             SymLoadStruct mapBufferRangeSymbols[] = {
                 { (PRFuncPtr*) &mSymbols.fMapBufferRange, { "MapBufferRange", nullptr } },
                 { (PRFuncPtr*) &mSymbols.fFlushMappedBufferRange, { "FlushMappedBufferRange", nullptr } },
+                { (PRFuncPtr*) &mSymbols.fUnmapBuffer, { "UnmapBuffer", nullptr } },
                 END_SYMBOLS
             };
 
@@ -1430,10 +1431,11 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
         }
 
         if (IsSupported(GLFeature::uniform_buffer_object)) {
+            // Note: Don't query for glGetActiveUniformName because it is not
+            // supported by GL ES 3.
             SymLoadStruct uboSymbols[] = {
                 { (PRFuncPtr*) &mSymbols.fGetUniformIndices, { "GetUniformIndices", nullptr } },
                 { (PRFuncPtr*) &mSymbols.fGetActiveUniformsiv, { "GetActiveUniformsiv", nullptr } },
-                { (PRFuncPtr*) &mSymbols.fGetActiveUniformName, { "GetActiveUniformName", nullptr } },
                 { (PRFuncPtr*) &mSymbols.fGetUniformBlockIndex, { "GetUniformBlockIndex", nullptr } },
                 { (PRFuncPtr*) &mSymbols.fGetActiveUniformBlockiv, { "GetActiveUniformBlockiv", nullptr } },
                 { (PRFuncPtr*) &mSymbols.fGetActiveUniformBlockName, { "GetActiveUniformBlockName", nullptr } },
@@ -2650,6 +2652,7 @@ GLContext::Readback(SharedSurface* src, gfx::DataSourceSurface* dest)
     }
 
     GLuint tempFB = 0;
+    GLuint tempTex = 0;
 
     {
         ScopedBindFramebuffer autoFB(this);
@@ -2681,6 +2684,24 @@ GLContext::Readback(SharedSurface* src, gfx::DataSourceSurface* dest)
             MOZ_ASSERT(status == LOCAL_GL_FRAMEBUFFER_COMPLETE);
         }
 
+        if (src->NeedsIndirectReads()) {
+            fGenTextures(1, &tempTex);
+            {
+                ScopedBindTexture autoTex(this, tempTex);
+
+                GLenum format = src->mHasAlpha ? LOCAL_GL_RGBA
+                                               : LOCAL_GL_RGB;
+                auto width = src->mSize.width;
+                auto height = src->mSize.height;
+                fCopyTexImage2D(LOCAL_GL_TEXTURE_2D, 0, format, 0, 0, width,
+                                height, 0);
+            }
+
+            fFramebufferTexture2D(LOCAL_GL_FRAMEBUFFER,
+                                  LOCAL_GL_COLOR_ATTACHMENT0,
+                                  LOCAL_GL_TEXTURE_2D, tempTex, 0);
+        }
+
         ReadPixelsIntoDataSurface(this, dest);
 
         src->ProducerReadRelease();
@@ -2688,6 +2709,10 @@ GLContext::Readback(SharedSurface* src, gfx::DataSourceSurface* dest)
 
     if (tempFB)
         fDeleteFramebuffers(1, &tempFB);
+
+    if (tempTex) {
+        fDeleteTextures(1, &tempTex);
+    }
 
     if (needsSwap) {
         src->UnlockProd();

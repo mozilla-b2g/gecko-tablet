@@ -1329,25 +1329,10 @@ void nsWindow::SetThemeRegion()
  *
  **************************************************************/
 
-void nsWindow::ConfigureAPZCTreeManager()
-{
-  nsBaseWidget::ConfigureAPZCTreeManager();
-
-  // When APZ is enabled, we can actually enable raw touch events because we
-  // have code that can deal with them properly. If APZ is not enabled, this
-  // function doesn't get called, and |mGesture| will take care of touch-based
-  // scrolling. Note that RegisterTouchWindow may still do nothing depending
-  // on touch events prefs, and so it is possible to enable APZ without
-  // also enabling touch support.
-  RegisterTouchWindow();
-}
-
 void nsWindow::RegisterTouchWindow() {
-  if (Preferences::GetInt("dom.w3c_touch_events.enabled", 0)) {
-    mTouchWindow = true;
-    mGesture.RegisterTouchWindow(mWnd);
-    ::EnumChildWindows(mWnd, nsWindow::RegisterTouchForDescendants, 0);
-  }
+  mTouchWindow = true;
+  mGesture.RegisterTouchWindow(mWnd);
+  ::EnumChildWindows(mWnd, nsWindow::RegisterTouchForDescendants, 0);
 }
 
 BOOL CALLBACK nsWindow::RegisterTouchForDescendants(HWND aWnd, LPARAM aMsg) {
@@ -3701,7 +3686,7 @@ nsWindow::StartRemoteDrawing()
                "Unexpected render mode for remote drawing");
 
   HDC dc = (HDC)GetNativeData(NS_NATIVE_GRAPHIC);
-  nsRefPtr<gfxASurface> surf;
+  RefPtr<gfxASurface> surf;
 
   if (mTransparencyMode == eTransparencyTransparent) {
     if (!mTransparentSurface) {
@@ -3752,7 +3737,7 @@ nsWindow::EndRemoteDrawing()
 void
 nsWindow::UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeometries)
 {
-  nsRefPtr<LayerManager> layerManager = GetLayerManager();
+  RefPtr<LayerManager> layerManager = GetLayerManager();
   if (!layerManager) {
     return;
   }
@@ -4409,7 +4394,8 @@ void
 nsWindow::IPCWindowProcHandler(UINT& msg, WPARAM& wParam, LPARAM& lParam)
 {
   MOZ_ASSERT_IF(msg != WM_GETOBJECT,
-                !mozilla::ipc::MessageChannel::IsPumpingMessages());
+                !mozilla::ipc::MessageChannel::IsPumpingMessages() ||
+                mozilla::ipc::SuppressedNeuteringRegion::IsNeuteringSuppressed());
 
   // Modal UI being displayed in windowless plugins.
   if (mozilla::ipc::MessageChannel::IsSpinLoopActive() &&
@@ -6975,7 +6961,7 @@ void nsWindow::ResizeTranslucentWindow(int32_t aNewWidth, int32_t aNewHeight, bo
   if (!force && aNewWidth == mBounds.width && aNewHeight == mBounds.height)
     return;
 
-  nsRefPtr<gfxWindowsSurface> newSurface =
+  RefPtr<gfxWindowsSurface> newSurface =
     new gfxWindowsSurface(IntSize(aNewWidth, aNewHeight), gfxImageFormat::ARGB32);
   mTransparentSurface = newSurface;
   mMemoryDC = newSurface->GetDC();
@@ -7737,7 +7723,7 @@ bool nsWindow::CaptureWidgetOnScreen(RefPtr<DrawTarget> aDT)
                    ? 0
                    : gfxWindowsSurface::FLAG_IS_TRANSPARENT;
 
-  nsRefPtr<gfxASurface> surf = new gfxWindowsSurface(dc, flags);
+  RefPtr<gfxASurface> surf = new gfxWindowsSurface(dc, flags);
   IntSize size(surf->GetSize().width, surf->GetSize().height);
   if (size.width <= 0 || size.height <= 0) {
     ::ReleaseDC(mWnd, dc);

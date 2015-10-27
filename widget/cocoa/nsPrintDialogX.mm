@@ -45,7 +45,7 @@ nsPrintDialogServiceX::Show(nsIDOMWindow *aParent, nsIPrintSettings *aSettings,
 
   NS_PRECONDITION(aSettings, "aSettings must not be null");
 
-  nsRefPtr<nsPrintSettingsX> settingsX(do_QueryObject(aSettings));
+  RefPtr<nsPrintSettingsX> settingsX(do_QueryObject(aSettings));
   if (!settingsX)
     return NS_ERROR_FAILURE;
 
@@ -78,7 +78,11 @@ nsPrintDialogServiceX::Show(nsIDOMWindow *aParent, nsIPrintSettings *aSettings,
   [NSPrintOperation setCurrentOperation:printOperation];
 
   NSPrintPanel* panel = [NSPrintPanel printPanel];
-  [panel setOptions:NSPrintPanelShowsPaperSize];
+  [panel setOptions:NSPrintPanelShowsCopies
+    | NSPrintPanelShowsPageRange
+    | NSPrintPanelShowsPaperSize
+    | NSPrintPanelShowsOrientation
+    | NSPrintPanelShowsScaling ];
   PrintPanelAccessoryController* viewController =
     [[PrintPanelAccessoryController alloc] initWithSettings:aSettings];
   [panel addAccessoryController:viewController];
@@ -134,7 +138,7 @@ nsPrintDialogServiceX::ShowPageSetup(nsIDOMWindow *aParent,
   NS_PRECONDITION(aNSSettings, "aSettings must not be null");
   NS_ENSURE_TRUE(aNSSettings, NS_ERROR_FAILURE);
 
-  nsRefPtr<nsPrintSettingsX> settingsX(do_QueryObject(aNSSettings));
+  RefPtr<nsPrintSettingsX> settingsX(do_QueryObject(aNSSettings));
   if (!settingsX)
     return NS_ERROR_FAILURE;
 

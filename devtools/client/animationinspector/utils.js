@@ -6,6 +6,12 @@
 
 "use strict";
 
+const {Cu} = require("chrome");
+const {Task} = Cu.import("resource://gre/modules/Task.jsm", {});
+var {loader} = Cu.import("resource://devtools/shared/Loader.jsm");
+loader.lazyRequireGetter(this, "EventEmitter",
+                               "devtools/shared/event-emitter");
+
 // How many times, maximum, can we loop before we find the optimal time
 // interval in the timeline graph.
 const OPTIMAL_TIME_INTERVAL_MAX_ITERS = 100;
@@ -134,3 +140,71 @@ function findOptimalTimeInterval(timeScale,
 }
 
 exports.findOptimalTimeInterval = findOptimalTimeInterval;
+
+/**
+ * The TargetNodeHighlighter util is a helper for AnimationTargetNode components
+ * that is used to lock the highlighter on animated nodes in the page.
+ * It instantiates a new highlighter that is then shared amongst all instances
+ * of AnimationTargetNode. This is useful because that means showing the
+ * highlighter on one animated node will unhighlight the previously highlighted
+ * one, but will not interfere with the default inspector highlighter.
+ */
+var TargetNodeHighlighter = {
+  highlighter: null,
+  isShown: false,
+
+  highlight: Task.async(function*(animationTargetNode) {
+    if (!this.highlighter) {
+      let hUtils = animationTargetNode.inspector.toolbox.highlighterUtils;
+      this.highlighter = yield hUtils.getHighlighterByType("BoxModelHighlighter");
+    }
+
+    yield this.highlighter.show(animationTargetNode.nodeFront);
+    this.isShown = true;
+    this.emit("highlighted", animationTargetNode);
+  }),
+
+  unhighlight: Task.async(function*() {
+    if (!this.highlighter || !this.isShown) {
+      return;
+    }
+
+    yield this.highlighter.hide();
+    this.isShown = false;
+    this.emit("unhighlighted");
+  })
+};
+
+EventEmitter.decorate(TargetNodeHighlighter);
+exports.TargetNodeHighlighter = TargetNodeHighlighter;
+
+/**
+ * Format a timestamp (in ms) as a mm:ss.mmm string.
+ * @param {Number} time
+ * @return {String}
+ */
+function formatStopwatchTime(time) {
+  // Format falsy values as 0
+  if (!time) {
+    return "00:00.000";
+  }
+
+  let milliseconds = parseInt(time % 1000, 10);
+  let seconds = parseInt((time / 1000) % 60, 10);
+  let minutes = parseInt((time / (1000 * 60)), 10);
+
+  let pad = (nb, max) => {
+    if (nb < max) {
+      return new Array((max+"").length - (nb+"").length + 1).join("0") + nb;
+    }
+    return nb;
+  }
+
+  minutes = pad(minutes, 10);
+  seconds = pad(seconds, 10);
+  milliseconds = pad(milliseconds, 100);
+
+  return `${minutes}:${seconds}.${milliseconds}`;
+}
+
+exports.formatStopwatchTime = formatStopwatchTime;

@@ -68,7 +68,7 @@ using namespace mozilla::ipc;
 USING_BLUETOOTH_NAMESPACE
 
 static BluetoothInterface* sBtInterface;
-static nsTArray<nsRefPtr<BluetoothProfileController> > sControllerArray;
+static nsTArray<RefPtr<BluetoothProfileController> > sControllerArray;
 
 /*
  *  Static methods
@@ -165,7 +165,7 @@ public:
     // Register all the bluedroid callbacks before enable() gets called. This is
     // required to register a2dp callbacks before a2dp media task starts up.
     // If any interface cannot be initialized, turn on bluetooth core anyway.
-    nsRefPtr<ProfileInitResultHandler> res =
+    RefPtr<ProfileInitResultHandler> res =
       new ProfileInitResultHandler(MOZ_ARRAY_LENGTH(sInitManager));
 
     for (size_t i = 0; i < MOZ_ARRAY_LENGTH(sInitManager); ++i) {
@@ -839,7 +839,7 @@ public:
 
   int mDeviceCount;
   InfallibleTArray<BluetoothNamedValue> mDevicesPack;
-  nsRefPtr<BluetoothReplyRunnable> mRunnable;
+  RefPtr<BluetoothReplyRunnable> mRunnable;
 };
 
 class BluetoothServiceBluedroid::GetRemoteDevicePropertiesResultHandler
@@ -961,7 +961,7 @@ class BluetoothServiceBluedroid::DispatchReplyErrorResultHandler final
 {
 public:
   DispatchReplyErrorResultHandler(
-    nsTArray<nsRefPtr<BluetoothReplyRunnable>>& aRunnableArray,
+    nsTArray<RefPtr<BluetoothReplyRunnable>>& aRunnableArray,
     BluetoothReplyRunnable* aRunnable)
     : mRunnableArray(aRunnableArray)
     , mRunnable(aRunnable)
@@ -978,7 +978,7 @@ public:
   }
 
 private:
-  nsTArray<nsRefPtr<BluetoothReplyRunnable>>& mRunnableArray;
+  nsTArray<RefPtr<BluetoothReplyRunnable>>& mRunnableArray;
   BluetoothReplyRunnable* mRunnable;
 };
 
@@ -1155,7 +1155,7 @@ BluetoothServiceBluedroid::GetServiceChannel(
   mGetRemoteServiceRecordArray.AppendElement(
     GetRemoteServiceRecordRequest(address, uuid, aManager));
 
-  nsRefPtr<BluetoothResultHandler> res =
+  RefPtr<BluetoothResultHandler> res =
     new GetRemoteServiceRecordResultHandler(mGetRemoteServiceRecordArray,
                                             address, uuid);
 
@@ -1256,7 +1256,7 @@ BluetoothServiceBluedroid::UpdateSdpRecords(
   mGetRemoteServicesArray.AppendElement(
     GetRemoteServicesRequest(address, aManager));
 
-  nsRefPtr<BluetoothResultHandler> res =
+  RefPtr<BluetoothResultHandler> res =
     new GetRemoteServicesResultHandler(mGetRemoteServicesArray,
                                        address, aManager);
 
@@ -1722,6 +1722,143 @@ BluetoothServiceBluedroid::ReplyTovCardListing(
 }
 
 void
+BluetoothServiceBluedroid::ReplyToMapFolderListing(
+  long aMasId,
+  const nsAString& aFolderlists,
+  BluetoothReplyRunnable* aRunnable)
+{
+  // TODO: Implement for future Email support
+}
+
+void
+BluetoothServiceBluedroid::ReplyToMapMessagesListing(
+  BlobParent* aBlobParent,
+  BlobChild* aBlobChild,
+  long aMasId,
+  bool aNewMessage,
+  const nsAString& aTimestamp,
+  int aSize,
+  BluetoothReplyRunnable* aRunnable)
+{
+  BluetoothMapSmsManager* map = BluetoothMapSmsManager::Get();
+  if (!map) {
+    DispatchReplyError(aRunnable,
+                       NS_LITERAL_STRING("Reply to Messages Listing failed"));
+    return;
+  }
+
+  map->ReplyToMessagesListing(aBlobParent, aMasId, aNewMessage, aTimestamp,
+                              aSize);
+  DispatchReplySuccess(aRunnable);
+}
+
+void
+BluetoothServiceBluedroid:: ReplyToMapMessagesListing(
+  long aMasId,
+  Blob* aBlob,
+  bool aNewMessage,
+  const nsAString& aTimestamp,
+  int aSize,
+  BluetoothReplyRunnable* aRunnable)
+{
+  BluetoothMapSmsManager* map = BluetoothMapSmsManager::Get();
+  if (!map) {
+    DispatchReplyError(aRunnable,
+                       NS_LITERAL_STRING("Reply to Messages Listing failed"));
+    return;
+  }
+
+  map->ReplyToMessagesListing(aBlob, aMasId, aNewMessage, aTimestamp, aSize);
+  DispatchReplySuccess(aRunnable);
+}
+
+void
+BluetoothServiceBluedroid:: ReplyToMapGetMessage(
+  BlobParent* aBlobParent,
+  BlobChild* aBlobChild,
+  long aMasId,
+  BluetoothReplyRunnable* aRunnable)
+{
+  BluetoothMapSmsManager* map = BluetoothMapSmsManager::Get();
+  if (!map) {
+    DispatchReplyError(aRunnable,
+                       NS_LITERAL_STRING("Reply to Get Message failed"));
+    return;
+  }
+
+  map->ReplyToGetMessage(aBlobParent, aMasId);
+  DispatchReplySuccess(aRunnable);
+}
+
+void
+BluetoothServiceBluedroid:: ReplyToMapGetMessage(
+  Blob* aBlob,
+  long aMasId,
+  BluetoothReplyRunnable* aRunnable)
+{
+  BluetoothMapSmsManager* map = BluetoothMapSmsManager::Get();
+  if (!map) {
+    DispatchReplyError(aRunnable,
+                       NS_LITERAL_STRING("Reply to Get Message failed"));
+    return;
+  }
+
+  map->ReplyToGetMessage(aBlob, aMasId);
+  DispatchReplySuccess(aRunnable);
+}
+
+void
+BluetoothServiceBluedroid:: ReplyToMapSetMessageStatus(
+  long aMasId,
+  bool aStatus,
+  BluetoothReplyRunnable* aRunnable)
+{
+  BluetoothMapSmsManager* map = BluetoothMapSmsManager::Get();
+  if (!map) {
+    DispatchReplyError(aRunnable,
+                       NS_LITERAL_STRING("Reply to Set Message failed"));
+    return;
+  }
+
+  map->ReplyToSetMessageStatus(aMasId, aStatus);
+  DispatchReplySuccess(aRunnable);
+}
+
+void
+BluetoothServiceBluedroid:: ReplyToMapSendMessage(
+  long aMasId,
+  bool aStatus,
+  BluetoothReplyRunnable* aRunnable)
+{
+  BluetoothMapSmsManager* map = BluetoothMapSmsManager::Get();
+  if (!map) {
+    DispatchReplyError(aRunnable,
+                       NS_LITERAL_STRING("Reply to Send Message failed"));
+    return;
+  }
+
+  map->ReplyToSendMessage(aMasId, aStatus);
+  DispatchReplySuccess(aRunnable);
+}
+
+void
+BluetoothServiceBluedroid:: ReplyToMapMessageUpdate(
+  long aMasId,
+  bool aStatus,
+  BluetoothReplyRunnable* aRunnable)
+{
+  BluetoothMapSmsManager* map = BluetoothMapSmsManager::Get();
+  if (!map) {
+    DispatchReplyError(aRunnable,
+                       NS_LITERAL_STRING("Reply to MessageUpdate failed"));
+    return;
+  }
+
+  map->ReplyToMessageUpdate(aMasId, aStatus);
+  DispatchReplySuccess(aRunnable);
+}
+
+void
 BluetoothServiceBluedroid::SendMetaData(const nsAString& aTitle,
                                         const nsAString& aArtist,
                                         const nsAString& aAlbum,
@@ -1926,7 +2063,7 @@ BluetoothServiceBluedroid::AdapterStateChangedNotification(bool aState)
 
     // Cleanup Bluetooth interfaces after state becomes BT_STATE_OFF. This
     // will also stop the Bluetooth daemon and disable the adapter.
-    nsRefPtr<ProfileDeinitResultHandler> res =
+    RefPtr<ProfileDeinitResultHandler> res =
       new ProfileDeinitResultHandler(MOZ_ARRAY_LENGTH(sDeinitManager),
                                      mIsRestart);
 

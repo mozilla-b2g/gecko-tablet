@@ -293,6 +293,7 @@ nsPluginTag::nsPluginTag(uint32_t aId,
                          nsTArray<nsCString> aExtensions,
                          bool aIsJavaPlugin,
                          bool aIsFlashPlugin,
+                         bool aSupportsAsyncInit,
                          int64_t aLastModifiedTime,
                          bool aFromExtension)
   : nsIInternalPluginTag(aName, aDescription, aFileName, aVersion, aMimeTypes,
@@ -302,7 +303,7 @@ nsPluginTag::nsPluginTag(uint32_t aId,
     mLibrary(nullptr),
     mIsJavaPlugin(aIsJavaPlugin),
     mIsFlashPlugin(aIsFlashPlugin),
-    mSupportsAsyncInit(false),
+    mSupportsAsyncInit(aSupportsAsyncInit),
     mLastModifiedTime(aLastModifiedTime),
     mNiceFileName(),
     mCachedBlocklistState(nsIBlocklistService::STATE_NOT_BLOCKED),
@@ -354,6 +355,7 @@ void nsPluginTag::InitMime(const char* const* aMimeTypes,
         break;
       case nsPluginHost::eSpecialType_Silverlight:
       case nsPluginHost::eSpecialType_Unity:
+      case nsPluginHost::eSpecialType_Test:
         mSupportsAsyncInit = true;
         break;
       case nsPluginHost::eSpecialType_None:
@@ -606,7 +608,7 @@ nsPluginTag::SetEnabledState(uint32_t aEnabledState) {
   GetEnabledState(&oldState);
   if (oldState != aEnabledState) {
     Preferences::SetInt(GetStatePrefNameForPlugin(this).get(), aEnabledState);
-    if (nsRefPtr<nsPluginHost> host = nsPluginHost::GetInst()) {
+    if (RefPtr<nsPluginHost> host = nsPluginHost::GetInst()) {
       host->UpdatePluginInfo(this);
     }
   }
@@ -808,7 +810,7 @@ nsFakePluginTag::Create(const FakePluginTagInit& aInitDictionary,
 {
   NS_ENSURE_TRUE(!aInitDictionary.mMimeEntries.IsEmpty(), NS_ERROR_INVALID_ARG);
 
-  nsRefPtr<nsFakePluginTag> tag = new nsFakePluginTag();
+  RefPtr<nsFakePluginTag> tag = new nsFakePluginTag();
   nsresult rv = NS_NewURI(getter_AddRefs(tag->mHandlerURI),
                           aInitDictionary.mHandlerURI);
   NS_ENSURE_SUCCESS(rv, rv);

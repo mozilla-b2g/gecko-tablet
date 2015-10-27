@@ -13,6 +13,7 @@
 #include "mozilla/net/WyciwygChannelParent.h"
 #include "mozilla/net/FTPChannelParent.h"
 #include "mozilla/net/WebSocketChannelParent.h"
+#include "mozilla/net/WebSocketFrameListenerParent.h"
 #include "mozilla/net/DataChannelParent.h"
 #ifdef NECKO_PROTOCOL_rtsp
 #include "mozilla/net/RtspControllerParent.h"
@@ -182,7 +183,7 @@ NeckoParent::CreateChannelLoadContext(const PBrowserOrId& aBrowser,
     switch (aBrowser.type()) {
       case PBrowserOrId::TPBrowserParent:
       {
-        nsRefPtr<TabParent> tabParent =
+        RefPtr<TabParent> tabParent =
           TabParent::GetFrom(aBrowser.get_PBrowserParent());
         dom::Element* topFrameElement = nullptr;
         if (tabParent) {
@@ -331,7 +332,7 @@ NeckoParent::AllocPWebSocketParent(const PBrowserOrId& browser,
     return nullptr;
   }
 
-  nsRefPtr<TabParent> tabParent = TabParent::GetFrom(browser.get_PBrowserParent());
+  RefPtr<TabParent> tabParent = TabParent::GetFrom(browser.get_PBrowserParent());
   PBOverrideStatus overrideStatus = PBOverrideStatusFromLoadContext(serialized);
   WebSocketChannelParent* p = new WebSocketChannelParent(tabParent, loadContext,
                                                          overrideStatus);
@@ -347,17 +348,34 @@ NeckoParent::DeallocPWebSocketParent(PWebSocketParent* actor)
   return true;
 }
 
+PWebSocketFrameListenerParent*
+NeckoParent::AllocPWebSocketFrameListenerParent(const uint64_t& aInnerWindowID)
+{
+  RefPtr<WebSocketFrameListenerParent> c =
+    new WebSocketFrameListenerParent(aInnerWindowID);
+  return c.forget().take();
+}
+
+bool
+NeckoParent::DeallocPWebSocketFrameListenerParent(PWebSocketFrameListenerParent* aActor)
+{
+  RefPtr<WebSocketFrameListenerParent> c =
+    dont_AddRef(static_cast<WebSocketFrameListenerParent*>(aActor));
+  MOZ_ASSERT(c);
+  return true;
+}
+
 PDataChannelParent*
 NeckoParent::AllocPDataChannelParent(const uint32_t &channelId)
 {
-  nsRefPtr<DataChannelParent> p = new DataChannelParent();
+  RefPtr<DataChannelParent> p = new DataChannelParent();
   return p.forget().take();
 }
 
 bool
 NeckoParent::DeallocPDataChannelParent(PDataChannelParent* actor)
 {
-  nsRefPtr<DataChannelParent> p = dont_AddRef(static_cast<DataChannelParent*>(actor));
+  RefPtr<DataChannelParent> p = dont_AddRef(static_cast<DataChannelParent*>(actor));
   return true;
 }
 
@@ -480,7 +498,7 @@ PUDPSocketParent*
 NeckoParent::AllocPUDPSocketParent(const Principal& /* unused */,
                                    const nsCString& /* unused */)
 {
-  nsRefPtr<UDPSocketParent> p = new UDPSocketParent(this);
+  RefPtr<UDPSocketParent> p = new UDPSocketParent(this);
 
   return p.forget().take();
 }
@@ -836,7 +854,7 @@ NeckoParent::RecvOnAuthAvailable(const uint64_t& aCallbackId,
   }
   CallbackMap().erase(aCallbackId);
 
-  nsRefPtr<nsAuthInformationHolder> holder =
+  RefPtr<nsAuthInformationHolder> holder =
     new nsAuthInformationHolder(0, EmptyString(), EmptyCString());
   holder->SetUsername(aUser);
   holder->SetPassword(aPassword);

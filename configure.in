@@ -53,7 +53,7 @@ dnl ========================================================
 MOZJPEG=62
 MOZPNG=10617
 NSPR_VERSION=4
-NSPR_MINVER=4.10.8
+NSPR_MINVER=4.10.10
 NSS_VERSION=3
 
 dnl Set the minimum version of toolkit libs used by mozilla
@@ -68,13 +68,14 @@ CAIRO_VERSION=1.10
 PANGO_VERSION=1.22.0
 GTK2_VERSION=2.18.0
 GTK3_VERSION=3.4.0
+GDK_VERSION_MIN_REQUIRED=GDK_VERSION_3_4
 WINDRES_VERSION=2.14.90
 W32API_VERSION=3.14
 GNOMEUI_VERSION=2.2.0
 GCONF_VERSION=1.2.1
 STARTUP_NOTIFICATION_VERSION=0.8
 DBUS_VERSION=0.60
-SQLITE_VERSION=3.8.11.1
+SQLITE_VERSION=3.9.1
 
 MSMANIFEST_TOOL=
 
@@ -318,6 +319,7 @@ if test -n "$gonkdir" ; then
     AC_DEFINE(HAVE_PTHREADS)
     MOZ_CHROME_FILE_FORMAT=omni
     direct_nspr_config=1
+    android_cxx_stl=mozstlport
 else
     MOZ_ANDROID_NDK
 
@@ -3344,11 +3346,7 @@ MOZ_CONFIG_NSPR()
 
 dnl set GRE_MILESTONE
 dnl ========================================================
-if test -n "$LIBXUL_SDK"; then
-    GRE_MILESTONE=`$PYTHON "$_topsrcdir"/config/printconfigsetting.py "$LIBXUL_DIST"/bin/platform.ini Build Milestone`
-else
-    GRE_MILESTONE=`tail -n 1 "$_topsrcdir"/config/milestone.txt 2>/dev/null || tail -1 "$_topsrcdir"/config/milestone.txt`
-fi
+GRE_MILESTONE=`tail -n 1 "$_topsrcdir"/config/milestone.txt 2>/dev/null || tail -1 "$_topsrcdir"/config/milestone.txt`
 AC_SUBST(GRE_MILESTONE)
 
 # set RELEASE_BUILD and NIGHTLY_BUILD variables depending on the cycle we're in
@@ -3430,7 +3428,7 @@ MOZ_ARG_WITH_BOOL(system-nss,
     _USE_SYSTEM_NSS=1 )
 
 if test -n "$_USE_SYSTEM_NSS"; then
-    AM_PATH_NSS(3.19.2, [MOZ_NATIVE_NSS=1], [AC_MSG_ERROR([you don't have NSS installed or your version is too old])])
+    AM_PATH_NSS(3.20.1, [MOZ_NATIVE_NSS=1], [AC_MSG_ERROR([you don't have NSS installed or your version is too old])])
 fi
 
 if test -n "$MOZ_NATIVE_NSS"; then
@@ -3759,6 +3757,7 @@ MOZ_ANDROID_SEARCH_ACTIVITY=
 MOZ_ANDROID_DOWNLOADS_INTEGRATION=
 MOZ_ANDROID_MLS_STUMBLER=
 MOZ_ANDROID_SHARE_OVERLAY=
+MOZ_EXCLUDE_HYPHENATION_DICTIONARIES=
 MOZ_INSTALL_TRACKING=
 MOZ_SWITCHBOARD=
 ACCESSIBILITY=1
@@ -3772,6 +3771,7 @@ MOZ_SANDBOX=1
 MOZ_BINARY_EXTENSIONS=
 MOZ_ADDON_SIGNING=
 MOZ_REQUIRE_SIGNING=
+MOZ_DEVTOOLS=server
 
 case "$target_os" in
     mingw*)
@@ -3988,15 +3988,6 @@ WITH_APP_BASENAME=$withval,
 if test -n "$WITH_APP_BASENAME" ; then
     MOZ_APP_BASENAME="$WITH_APP_BASENAME"
 fi
-
-# Now is a good time to test for logic errors, define mismatches, etc.
-case "$MOZ_BUILD_APP" in
-xulrunner)
-  if test "$LIBXUL_SDK"; then
-    AC_MSG_ERROR([Building XULRunner --with-libxul-sdk doesn't make sense; XULRunner provides the libxul SDK.])
-  fi
-  ;;
-esac
 
 # Special cases where we need to AC_DEFINE something. Also a holdover for apps
 # that haven't made a confvars.sh yet. Don't add new stuff here, use
@@ -4257,6 +4248,8 @@ if test "$COMPILE_ENVIRONMENT"; then
     dnl of a make reference because of how TK_LIBS is mangled in toolkit/library/moz.build
     dnl for GTK+3 builds.
     TK_LIBS=$MOZ_GTK3_LIBS
+    AC_DEFINE_UNQUOTED(GDK_VERSION_MIN_REQUIRED,$GDK_VERSION_MIN_REQUIRED)
+    AC_DEFINE_UNQUOTED(GDK_VERSION_MAX_ALLOWED,$GDK_VERSION_MIN_REQUIRED)
     GLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_32
   fi
   if test "$MOZ_ENABLE_GTK2"; then
@@ -4870,6 +4863,13 @@ dnl = Temporary build flag to allow development in Nightly
 dnl ========================================================
 if test -n "$MOZ_ANDROID_TAB_QUEUE"; then
     AC_DEFINE(MOZ_ANDROID_TAB_QUEUE)
+fi
+
+dnl =========================================================
+dnl = Whether to exclude hyphenations files in the build
+dnl =========================================================
+if test -n "$MOZ_EXCLUDE_HYPHENATION_DICTIONARIES"; then
+    AC_DEFINE(MOZ_EXCLUDE_HYPHENATION_DICTIONARIES)
 fi
 
 dnl ========================================================
@@ -6273,11 +6273,6 @@ if test -z "$MOZ_ENABLE_GIO" -a `echo "$MOZ_EXTENSIONS" | grep -c gio` -ne 0; th
     if test -n "$MOZ_X11"; then
         AC_MSG_WARN([Removing gio from MOZ_EXTENSIONS due to --disable-gio.])
     fi
-    MOZ_EXTENSIONS=`echo $MOZ_EXTENSIONS | sed -e 's|gio||'`
-fi
-
-dnl Do not build gio with libxul based apps
-if test -n "$LIBXUL_SDK_DIR" -a `echo "$MOZ_EXTENSIONS" | grep -c gio` -ne 0; then
     MOZ_EXTENSIONS=`echo $MOZ_EXTENSIONS | sed -e 's|gio||'`
 fi
 
@@ -8009,13 +8004,8 @@ dnl =
 dnl ========================================================
 MOZ_ARG_HEADER(Static build options)
 
-if test -n "$GKMEDIAS_SHARED_LIBRARY"; then
-  AC_DEFINE(GKMEDIAS_SHARED_LIBRARY)
-fi
-AC_SUBST(GKMEDIAS_SHARED_LIBRARY)
-
 if test -z "$MOZ_NATIVE_ZLIB"; then
-if test -n "$JS_SHARED_LIBRARY" -o "$GKMEDIAS_SHARED_LIBRARY"; then
+if test -n "$JS_SHARED_LIBRARY"; then
   ZLIB_IN_MOZGLUE=1
   AC_DEFINE(ZLIB_IN_MOZGLUE)
 fi
@@ -8613,6 +8603,7 @@ AC_SUBST(MOZ_ANDROID_DOWNLOADS_INTEGRATION)
 AC_SUBST(MOZ_ANDROID_APPLICATION_CLASS)
 AC_SUBST(MOZ_ANDROID_BROWSER_INTENT_CLASS)
 AC_SUBST(MOZ_ANDROID_SEARCH_INTENT_CLASS)
+AC_SUBST(MOZ_EXCLUDE_HYPHENATION_DICTIONARIES)
 AC_SUBST(MOZ_INSTALL_TRACKING)
 AC_SUBST(MOZ_SWITCHBOARD)
 AC_SUBST(ENABLE_STRIP)
@@ -8793,6 +8784,18 @@ if test "$MOZILLA_OFFICIAL"; then
     # Build revisions should always be present in official builds
     MOZ_INCLUDE_SOURCE_INFO=1
 fi
+
+# On official builds, we need to know in Telemetry what revision this is built from.
+# This is e.g. needed to match incoming data to a specific revision of the Histograms.json
+# file.
+if test "$MOZILLA_OFFICIAL" && test -d ${_topsrcdir}/.hg; then
+  SOURCE_REV=`cd $_topsrcdir && hg parent --template='{node|short}'`
+  SOURCE_REPO=`cd $_topsrcdir && hg showconfig paths.default | sed -e 's|^ssh://|http://|' -e 's|/$||'`
+  SOURCE_REV_URL=$SOURCE_REPO/rev/$SOURCE_REV
+else
+  SOURCE_REV_URL=
+fi
+AC_SUBST(SOURCE_REV_URL)
 
 AC_SUBST(MOZ_INCLUDE_SOURCE_INFO)
 
@@ -8982,6 +8985,7 @@ AC_SUBST_LIST(LIBJPEG_TURBO_ASFLAGS)
 AC_SUBST(MOZ_LIBAV_FFT)
 AC_SUBST(LIBAV_FFT_AS)
 AC_SUBST_LIST(LIBAV_FFT_ASFLAGS)
+AC_SUBST(MOZ_DEVTOOLS)
 
 AC_SUBST(MOZ_PACKAGE_JSSHELL)
 AC_SUBST(MOZ_FOLD_LIBS)
@@ -9115,12 +9119,10 @@ dnl ========================================================
 dnl ICU Support
 dnl ========================================================
 
-# Internationalization isn't built or exposed by default in non-desktop
-# builds.  Bugs to enable:
-#
-#   Android:  bug 864843
+# Internationalization is not built or exposed on Fennec.
+# See Bug 1215256
 
-if test "$MOZ_WIDGET_TOOLKIT" = "android"; then
+if test "$MOZ_BUILD_APP" = "mobile/android"; then
     _INTL_API=no
 else
     _INTL_API=yes
@@ -9139,8 +9141,7 @@ AC_SUBST(JS_SHARED_LIBRARY)
 
 MOZ_CREATE_CONFIG_STATUS()
 
-# No need to run subconfigures when building with LIBXUL_SDK_DIR
-if test "$COMPILE_ENVIRONMENT" -a -z "$LIBXUL_SDK_DIR"; then
+if test "$COMPILE_ENVIRONMENT"; then
   MOZ_SUBCONFIGURE_ICU()
   MOZ_SUBCONFIGURE_FFI()
   MOZ_SUBCONFIGURE_JEMALLOC()
@@ -9208,8 +9209,7 @@ if test -n "$_subconfigure_subdir"; then
   srcdir="$_save_srcdir"
 fi
 
-# No need to run subconfigures when building with LIBXUL_SDK_DIR
-if test "$COMPILE_ENVIRONMENT" -a -z "$LIBXUL_SDK_DIR"; then
+if test "$COMPILE_ENVIRONMENT"; then
 
 export WRAP_LDFLAGS
 
@@ -9288,7 +9288,7 @@ fi
 AC_OUTPUT_SUBDIRS(js/src,$cache_file)
 ac_configure_args="$_SUBDIR_CONFIG_ARGS"
 
-fi # COMPILE_ENVIRONMENT && !LIBXUL_SDK_DIR
+fi # COMPILE_ENVIRONMENT
 
 export WRITE_MOZINFO=1
 dnl we need to run config.status after js/src subconfigure because we're

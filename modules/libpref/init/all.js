@@ -160,6 +160,9 @@ pref("dom.serviceWorkers.idle_timeout", 30000);
 // The amount of time (milliseconds) service workers can be kept running using waitUntil promises.
 pref("dom.serviceWorkers.idle_extended_timeout", 300000);
 
+// Enable test for 24 hours update, service workers will always treat last update check time is over 24 hours
+pref("dom.serviceWorkers.testUpdateOverOneDay", false);
+
 // Whether nonzero values can be returned from performance.timing.*
 pref("dom.enable_performance", true);
 
@@ -310,25 +313,27 @@ pref("media.hardware-video-decoding.enabled", true);
 pref("media.decoder.heuristic.dormant.enabled", true);
 pref("media.decoder.heuristic.dormant.timeout", 60000);
 
-pref("media.gmp.kill-hung-plugins", true);
-
-#ifdef MOZ_WMF
-pref("media.wmf.decoder.thread-count", -1);
-#endif
 #ifdef MOZ_DIRECTSHOW
 pref("media.directshow.enabled", true);
 #endif
 #ifdef MOZ_FMP4
-pref("media.fragmented-mp4.enabled", true);
-pref("media.fragmented-mp4.ffmpeg.enabled", false);
-pref("media.fragmented-mp4.gmp.enabled", false);
-pref("media.fragmented-mp4.gmp.aac", 0);
-pref("media.fragmented-mp4.gmp.h264", 0);
-// Specifies whether the fragmented MP4 parser uses a test decoder that
+pref("media.mp4.enabled", true);
+// Specifies whether the PDMFactory can create a test decoder that
+#endif
 // just outputs blank frames/audio instead of actually decoding. The blank
 // decoder works on all platforms.
-pref("media.fragmented-mp4.use-blank-decoder", false);
+pref("media.use-blank-decoder", false);
+#ifdef MOZ_WMF
+pref("media.wmf.enabled", true);
+pref("media.wmf.decoder.thread-count", -1);
+pref("media.wmf.low-latency.enabled", false);
 #endif
+#if defined(MOZ_FFMPEG)
+pref("media.ffmpeg.enabled", true);
+#endif
+pref("media.gmp.decoder.enabled", false);
+pref("media.gmp.decoder.aac", 0);
+pref("media.gmp.decoder.h264", 0);
 #ifdef MOZ_RAW
 pref("media.raw.enabled", true);
 #endif
@@ -932,10 +937,6 @@ pref("nglayout.debug.invalidation", false);
 // Whether image visibility is enabled globally (ie we will try to unlock images
 // that are not visible).
 pref("layout.imagevisibility.enabled", true);
-// Whether image visibility is enabled in documents that are within a browser
-// element as defined by nsDocShell::FrameType and GetInheritedFrameType. This
-// pref only has an effect if layout.imagevisibility.enabled is false.
-pref("layout.imagevisibility.enabled_for_browser_elements_only", false);
 pref("layout.imagevisibility.numscrollportwidths", 0);
 pref("layout.imagevisibility.numscrollportheights", 1);
 
@@ -1430,8 +1431,8 @@ pref("network.http.diagnostics", false);
 
 pref("network.http.pacing.requests.enabled", true);
 pref("network.http.pacing.requests.min-parallelism", 6);
-pref("network.http.pacing.requests.hz", 100);
-pref("network.http.pacing.requests.burst", 32);
+pref("network.http.pacing.requests.hz", 80);
+pref("network.http.pacing.requests.burst", 10);
 
 // TCP Keepalive config for HTTP connections.
 pref("network.http.tcp_keepalive.short_lived_connections", true);
@@ -1452,10 +1453,9 @@ pref("network.http.enforce-framing.soft", true);
 // See http://www.w3.org/TR/web-packaging/#streamable-package-format
 pref("network.http.enable-packaged-apps", false);
 
-// Enable this pref to skip verification process. The packaged app
-// will be considered signed no matter the package has a valid/invalid
-// signature or no signature.
-pref("network.http.packaged-apps-developer-mode", false);
+// Enable this to bring in the signature verification if the signature exists.
+// Set to false if you don't need the signed packaged web app support (i.e. NSec).
+pref("network.http.signed-packages.enabled", false);
 
 // default values for FTP
 // in a DSCP environment this should be 40 (0x28, or AF11), per RFC-4594,
@@ -1823,7 +1823,7 @@ pref("network.cookie.cookieBehavior",       0); // 0-Accept, 1-dontAcceptForeign
 pref("network.cookie.cookieBehavior",       0); // Keep the old default of accepting all cookies
 #endif
 pref("network.cookie.thirdparty.sessionOnly", false);
-pref("network.cookie.lifetimePolicy",       0); // accept normally, 1-askBeforeAccepting, 2-acceptForSession,3-acceptForNDays
+pref("network.cookie.lifetimePolicy",       0); // 0-accept, 2-acceptForSession, 3-acceptForNDays
 pref("network.cookie.alwaysAcceptSessionCookies", false);
 pref("network.cookie.prefsMigrated",        false);
 pref("network.cookie.lifetime.days",        90);
@@ -3257,19 +3257,15 @@ pref("ui.window_class_override", "");
 pref("ui.elantech_gesture_hacks.enabled", -1);
 
 // Show the Windows on-screen keyboard (osk.exe) when a text field is focused.
-#ifdef RELEASE_BUILD
-pref("ui.osk.enabled", false);
-#else
 pref("ui.osk.enabled", true);
-#endif
 // Only show the on-screen keyboard if there are no physical keyboards attached
 // to the device.
 pref("ui.osk.detect_physical_keyboard", true);
 // Path to TabTip.exe on local machine. Cached for performance reasons.
 pref("ui.osk.on_screen_keyboard_path", "");
-// Only show the on-screen keyboard when Windows is in Tablet mode. Setting
-// this pref to false will allow the OSK to show in regular non-tablet mode.
-pref("ui.osk.require_tablet_mode", true);
+// Only try to show the on-screen keyboard on Windows 10 and later. Setting
+// this pref to false will allow the OSK to show on Windows 8 and 8.1.
+pref("ui.osk.require_win10", false);
 // This pref stores the "reason" that the on-screen keyboard was either
 // shown or not shown when focus is moved to an editable text field. It is
 // used to help debug why the keyboard is either not appearing when expected
@@ -4196,6 +4192,8 @@ pref("webgl.angle.force-d3d11", false);
 pref("webgl.angle.force-warp", false);
 #endif
 
+pref("gfx.offscreencanvas.enabled", false);
+
 #ifdef MOZ_WIDGET_GONK
 pref("gfx.gralloc.fence-with-readpixels", false);
 #endif
@@ -4527,8 +4525,12 @@ pref("dom.mozSettings.enabled", false);
 pref("dom.mozPermissionSettings.enabled", false);
 
 // W3C touch events
-// 0 - disabled, 1 - enabled, 2 - autodetect (win)
+// 0 - disabled, 1 - enabled, 2 - autodetect (win/gtk3)
 #ifdef XP_WIN
+pref("dom.w3c_touch_events.enabled", 2);
+#endif
+
+#if MOZ_WIDGET_GTK == 3
 pref("dom.w3c_touch_events.enabled", 2);
 #endif
 
@@ -4805,6 +4807,8 @@ pref("urlclassifier.trackingWhitelistTable", "test-trackwhite-simple,mozstd-trac
 pref("browser.safebrowsing.provider.mozilla.lists", "mozstd-track-digest256,mozstd-trackwhite-digest256,mozfull-track-digest256");
 pref("browser.safebrowsing.provider.mozilla.updateURL", "https://shavar.services.mozilla.com/downloads?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
 pref("browser.safebrowsing.provider.mozilla.gethashURL", "https://shavar.services.mozilla.com/gethash?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
+// Set to a date in the past to force immediate download in new profiles.
+pref("browser.safebrowsing.provider.mozilla.nextupdatetime", "1");
 // Block lists for tracking protection. The name values will be used as the keys
 // to lookup the localized name in preferences.properties.
 pref("browser.safebrowsing.provider.mozilla.lists.mozstd.name", "mozstdName");
@@ -4857,9 +4861,9 @@ pref("caret.manages-android-actionbar", false);
 pref("layout.accessiblecaret.enabled", false);
 
 // CSS attributes of the AccessibleCaret in CSS pixels.
-pref("layout.accessiblecaret.width", "44.0");
-pref("layout.accessiblecaret.height", "47.0");
-pref("layout.accessiblecaret.margin-left", "-23.5");
+pref("layout.accessiblecaret.width", "34.0");
+pref("layout.accessiblecaret.height", "36.0");
+pref("layout.accessiblecaret.margin-left", "-18.5");
 pref("layout.accessiblecaret.bar.width", "2.0");
 
 // Timeout in milliseconds to hide the accessiblecaret under cursor mode while
@@ -4914,7 +4918,7 @@ pref("dom.beforeAfterKeyboardEvent.enabled", false);
 // Presentation API
 pref("dom.presentation.enabled", false);
 pref("dom.presentation.tcp_server.debug", false);
-pref("dom.presentation.discovery.enabled", true);
+pref("dom.presentation.discovery.enabled", false);
 pref("dom.presentation.discovery.timeout_ms", 10000);
 pref("dom.presentation.discoverable", false);
 
@@ -5092,6 +5096,9 @@ pref("memory.report_concurrency", 10);
 
 // Add Mozilla AudioChannel APIs.
 pref("media.useAudioChannelAPI", false);
+
+// Expose Request.cache. Currently disabled since the implementation is incomplete.
+pref("dom.requestcache.enabled", false);
 
 // Expose Request.context. Currently disabled since the spec is in flux.
 pref("dom.requestcontext.enabled", false);

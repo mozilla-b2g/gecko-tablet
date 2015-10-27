@@ -231,7 +231,7 @@ gfxFontCache::Lookup(const gfxFontEntry* aFontEntry,
     if (!entry)
         return nullptr;
 
-    nsRefPtr<gfxFont> font = entry->mFont;
+    RefPtr<gfxFont> font = entry->mFont;
     return font.forget();
 }
 
@@ -573,9 +573,6 @@ gfxShapedText::SetupClusterBoundaries(uint32_t        aOffset,
         // mark all the rest as cluster-continuations
         while (aString < iter) {
             *glyphs = extendCluster;
-            if (NS_IS_LOW_SURROGATE(*aString)) {
-                glyphs->SetIsLowSurrogate();
-            }
             glyphs++;
             aString++;
         }
@@ -1523,7 +1520,7 @@ private:
             if (state.pattern || mFontParams.contextPaint) {
                 Pattern *pat;
 
-                nsRefPtr<gfxPattern> fillPattern;
+                RefPtr<gfxPattern> fillPattern;
                 if (!mFontParams.contextPaint ||
                     !(fillPattern = mFontParams.contextPaint->GetFillPattern(
                                         mRunParams.context->GetDrawTarget(),
@@ -1607,7 +1604,7 @@ private:
         RefPtr<Path> path =
             mFontParams.scaledFont->GetPathForGlyphs(aBuf, mRunParams.dt);
         if (mFontParams.contextPaint) {
-            nsRefPtr<gfxPattern> strokePattern =
+            RefPtr<gfxPattern> strokePattern =
                 mFontParams.contextPaint->GetStrokePattern(
                     mRunParams.context->GetDrawTarget(),
                     mRunParams.context->CurrentMatrix());
@@ -1909,7 +1906,7 @@ gfxFont::Draw(gfxTextRun *aTextRun, uint32_t aStart, uint32_t aEnd,
         // If no pattern is specified for fill, use the current pattern
         NS_ASSERTION((int(aRunParams.drawMode) & int(DrawMode::GLYPH_STROKE)) == 0,
                      "no pattern supplied for stroking text");
-        nsRefPtr<gfxPattern> fillPattern = aRunParams.context->GetPattern();
+        RefPtr<gfxPattern> fillPattern = aRunParams.context->GetPattern();
         contextPaint =
             new SimpleTextContextPaint(fillPattern, nullptr,
                                        aRunParams.context->CurrentMatrix());
@@ -2290,7 +2287,9 @@ gfxFont::Measure(gfxTextRun *aTextRun,
     // If the font may be rendered with a fake-italic effect, we need to allow
     // for the top-right of the glyphs being skewed to the right, and the
     // bottom-left being skewed further left.
-    if (mStyle.style != NS_FONT_STYLE_NORMAL && !mFontEntry->IsItalic()) {
+    if (mStyle.style != NS_FONT_STYLE_NORMAL &&
+        mFontEntry->IsUpright() &&
+        mStyle.allowSyntheticStyle) {
         gfxFloat extendLeftEdge =
             ceil(OBLIQUE_SKEW_FACTOR * metrics.mBoundingBox.YMost());
         gfxFloat extendRightEdge =
@@ -2343,10 +2342,15 @@ gfxFont::NotifyGlyphsChanged()
     }
 }
 
-static bool
+// If aChar is a "word boundary" for shaped-word caching purposes, return it;
+// else return 0.
+static char16_t
 IsBoundarySpace(char16_t aChar, char16_t aNextChar)
 {
-    return (aChar == ' ' || aChar == 0x00A0) && !IsClusterExtender(aNextChar);
+    if ((aChar == ' ' || aChar == 0x00A0) && !IsClusterExtender(aNextChar)) {
+        return aChar;
+    }
+    return 0;
 }
 
 #ifdef __GNUC__
@@ -2765,7 +2769,7 @@ gfxFont::SplitAndInitTextRun(gfxContext *aContext,
     for (uint32_t i = 0; i <= aRunLength; ++i) {
         T ch = nextCh;
         nextCh = (i < aRunLength - 1) ? aString[i + 1] : '\n';
-        bool boundary = IsBoundarySpace(ch, nextCh);
+        T boundary = IsBoundarySpace(ch, nextCh);
         bool invalid = !boundary && gfxFontGroup::IsInvalidChar(ch);
         uint32_t length = i - wordStart;
 
@@ -2827,16 +2831,21 @@ gfxFont::SplitAndInitTextRun(gfxContext *aContext,
                     gfxTextRunFactory::TEXT_ORIENT_VERTICAL_UPRIGHT :
                     gfxTextRunFactory::TEXT_ORIENT_VERTICAL_SIDEWAYS_RIGHT;
             }
-            if (!aTextRun->SetSpaceGlyphIfSimple(this, aContext,
+            if (boundary != ' ' ||
+                !aTextRun->SetSpaceGlyphIfSimple(this, aContext,
                                                  aRunStart + i, ch,
-                                                 orientation))
-            {
-                static const uint8_t space = ' ';
+                                                 orientation)) {
+                // Currently, the only "boundary" characters we recognize are
+                // space and no-break space, which are both 8-bit, so we force
+                // that flag (below). If we ever change IsBoundarySpace, we
+                // may need to revise this.
+                // Avoid tautological-constant-out-of-range-compare in 8-bit:
+                DebugOnly<char16_t> boundary16 = boundary;
+                NS_ASSERTION(boundary16 < 256, "unexpected boundary!");
                 gfxShapedWord *sw =
-                    GetShapedWord(aContext,
-                                  &space, 1,
-                                  gfxShapedWord::HashMix(0, ' '), aRunScript, aVertical,
-                                  appUnitsPerDevUnit,
+                    GetShapedWord(aContext, &boundary, 1,
+                                  gfxShapedWord::HashMix(0, boundary),
+                                  aRunScript, aVertical, appUnitsPerDevUnit,
                                   flags | gfxTextRunFactory::TEXT_IS_8BIT, tp);
                 if (sw) {
                     aTextRun->CopyGlyphDataFrom(sw, aRunStart + i);
@@ -2916,7 +2925,7 @@ gfxFont::InitFakeSmallCapsRun(gfxContext     *aContext,
 {
     bool ok = true;
 
-    nsRefPtr<gfxFont> smallCapsFont = GetSmallCapsFont();
+    RefPtr<gfxFont> smallCapsFont = GetSmallCapsFont();
 
     enum RunCaseAction {
         kNoChange,

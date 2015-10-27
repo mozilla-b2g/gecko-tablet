@@ -162,8 +162,8 @@ NS_IMPL_ISUPPORTS(HttpChannelParent,
                   nsIDeprecationWarner)
 
 NS_IMETHODIMP
-HttpChannelParent::ShouldPrepareForIntercept(nsIURI* aURI, bool aIsNavigate,
-                                             nsContentPolicyType aType,
+HttpChannelParent::ShouldPrepareForIntercept(nsIURI* aURI,
+                                             bool aIsNonSubresourceRequest,
                                              bool* aShouldIntercept)
 {
   *aShouldIntercept = mShouldIntercept;
@@ -203,7 +203,9 @@ public:
 
   NS_IMETHOD Run()
   {
-    mChannel->FinishSynthesizedResponse();
+    // The URL passed as an argument here doesn't matter, since the child will
+    // receive a redirection notification as a result of this synthesized response.
+    mChannel->FinishSynthesizedResponse(EmptyCString());
     return NS_OK;
   }
 };
@@ -227,7 +229,7 @@ private:
   }
 
   nsCOMPtr<nsIInterceptedChannel> mChannel;
-  nsRefPtr<HttpChannelParent> mParentChannel;
+  RefPtr<HttpChannelParent> mParentChannel;
 };
 
 NS_IMPL_ISUPPORTS(ResponseSynthesizer, nsIFetchEventDispatcher)
@@ -244,7 +246,7 @@ NS_IMETHODIMP
 HttpChannelParent::ChannelIntercepted(nsIInterceptedChannel* aChannel,
                                       nsIFetchEventDispatcher** aDispatcher)
 {
-  nsRefPtr<ResponseSynthesizer> dispatcher =
+  RefPtr<ResponseSynthesizer> dispatcher =
     new ResponseSynthesizer(aChannel, this);
   dispatcher.forget(aDispatcher);
   return NS_OK;
@@ -1055,7 +1057,7 @@ NS_IMETHODIMP
 HttpChannelParent::OnStartSignedPackageRequest(const nsACString& aPackageId)
 {
   if (mTabParent) {
-    mTabParent->OnStartSignedPackageRequest(mChannel);
+    mTabParent->OnStartSignedPackageRequest(mChannel, aPackageId);
   }
   return NS_OK;
 }
@@ -1515,7 +1517,7 @@ public:
     return NS_OK;
   }
 private:
-  nsRefPtr<HttpChannelParent> mChannelParent;
+  RefPtr<HttpChannelParent> mChannelParent;
   nsresult mErrorCode;
   bool mSkipResume;
 };

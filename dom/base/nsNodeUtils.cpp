@@ -226,8 +226,8 @@ nsNodeUtils::ContentRemoved(nsINode* aContainer,
                               aPreviousSibling));
 }
 
-static inline Element*
-GetTarget(Animation* aAnimation)
+Element*
+nsNodeUtils::GetTargetForAnimation(const Animation* aAnimation)
 {
   KeyframeEffectReadOnly* effect = aAnimation->GetEffect();
   if (!effect) {
@@ -251,7 +251,7 @@ GetTarget(Animation* aAnimation)
 void
 nsNodeUtils::AnimationAdded(Animation* aAnimation)
 {
-  Element* target = GetTarget(aAnimation);
+  Element* target = GetTargetForAnimation(aAnimation);
   if (!target) {
     return;
   }
@@ -265,7 +265,7 @@ nsNodeUtils::AnimationAdded(Animation* aAnimation)
 void
 nsNodeUtils::AnimationChanged(Animation* aAnimation)
 {
-  Element* target = GetTarget(aAnimation);
+  Element* target = GetTargetForAnimation(aAnimation);
   if (!target) {
     return;
   }
@@ -279,7 +279,7 @@ nsNodeUtils::AnimationChanged(Animation* aAnimation)
 void
 nsNodeUtils::AnimationRemoved(Animation* aAnimation)
 {
-  Element* target = GetTarget(aAnimation);
+  Element* target = GetTargetForAnimation(aAnimation);
   if (!target) {
     return;
   }
@@ -438,7 +438,7 @@ nsNodeUtils::CloneAndAdopt(nsINode *aNode, bool aClone, bool aDeep,
 
   // aNode.
   NodeInfo *nodeInfo = aNode->mNodeInfo;
-  nsRefPtr<NodeInfo> newNodeInfo;
+  RefPtr<NodeInfo> newNodeInfo;
   if (nodeInfoManager) {
 
     // Don't allow importing/adopting nodes from non-privileged "scriptable"

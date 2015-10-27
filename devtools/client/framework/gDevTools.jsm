@@ -10,14 +10,14 @@ const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
-const { require, loader } = Cu.import("resource://gre/modules/devtools/shared/Loader.jsm", {});
+const { require, loader } = Cu.import("resource://devtools/shared/Loader.jsm", {});
 const promise = require("promise");
 // Load target and toolbox lazily as they need gDevTools to be fully initialized
 loader.lazyRequireGetter(this, "TargetFactory", "devtools/client/framework/target", true);
 loader.lazyRequireGetter(this, "Toolbox", "devtools/client/framework/toolbox", true);
 
 XPCOMUtils.defineLazyModuleGetter(this, "console",
-                                  "resource://gre/modules/devtools/shared/Console.jsm");
+                                  "resource://gre/modules/Console.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "CustomizableUI",
                                   "resource:///modules/CustomizableUI.jsm");
 loader.lazyRequireGetter(this, "DebuggerServer", "devtools/server/main", true);
@@ -26,6 +26,7 @@ loader.lazyRequireGetter(this, "DebuggerClient", "devtools/shared/client/main", 
 const DefaultTools = require("devtools/client/definitions").defaultTools;
 const EventEmitter = require("devtools/shared/event-emitter");
 const Telemetry = require("devtools/client/shared/telemetry");
+const {JsonView} = require("devtools/client/jsonview/main");
 
 const TABS_OPEN_PEAK_HISTOGRAM = "DEVTOOLS_TABS_OPEN_PEAK_LINEAR";
 const TABS_OPEN_AVG_HISTOGRAM = "DEVTOOLS_TABS_OPEN_AVERAGE_LINEAR";
@@ -50,6 +51,9 @@ this.DevTools = function DevTools() {
   // destroy() is an observer's handler so we need to preserve context.
   this.destroy = this.destroy.bind(this);
   this._teardown = this._teardown.bind(this);
+
+  // JSON Viewer for 'application/json' documents.
+  JsonView.initialize();
 
   EventEmitter.decorate(this);
 
@@ -489,6 +493,8 @@ DevTools.prototype = {
     for (let [key, tool] of this.getToolDefinitionMap()) {
       this.unregisterTool(key, true);
     }
+
+    JsonView.destroy();
 
     this._pingTelemetry();
     this._telemetry = null;

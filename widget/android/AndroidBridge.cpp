@@ -1101,6 +1101,25 @@ AndroidBridge::DeleteMessage(int32_t aMessageId, nsIMobileMessageCallback* aRequ
     GeckoAppShell::DeleteMessageWrapper(aMessageId, requestId);
 }
 
+void
+AndroidBridge::MarkMessageRead(int32_t aMessageId,
+                               bool aValue,
+                               bool aSendReadReport,
+                               nsIMobileMessageCallback* aRequest)
+{
+    ALOG_BRIDGE("AndroidBridge::MarkMessageRead");
+
+    uint32_t requestId;
+    if (!QueueSmsRequest(aRequest, &requestId)) {
+        return;
+    }
+
+    GeckoAppShell::MarkMessageRead(aMessageId,
+                                   aValue,
+                                   aSendReadReport,
+                                   requestId);
+}
+
 NS_IMPL_ISUPPORTS0(MessageCursorContinueCallback)
 
 NS_IMETHODIMP
@@ -1819,7 +1838,7 @@ AndroidBridge::CaptureZoomedView(nsIDOMWindow *window, nsIntRect zoomedViewRect,
     if (!win) {
         return NS_ERROR_FAILURE;
     }
-    nsRefPtr <nsPresContext> presContext;
+    RefPtr<nsPresContext> presContext;
 
     nsIDocShell* docshell = win->GetDocShell();
 
@@ -1860,7 +1879,7 @@ AndroidBridge::CaptureZoomedView(nsIDOMWindow *window, nsIntRect zoomedViewRect,
         ALOG_BRIDGE("Error creating DrawTarget");
         return NS_ERROR_FAILURE;
     }
-    nsRefPtr <gfxContext> context = new gfxContext(dt);
+    RefPtr<gfxContext> context = new gfxContext(dt);
     context->SetMatrix(context->CurrentMatrix().Scale(zoomFactor, zoomFactor));
 
     rv = presShell->RenderDocument(r, renderDocFlags, bgColor, context);
@@ -1924,7 +1943,7 @@ nsresult AndroidBridge::CaptureThumbnail(nsIDOMWindow *window, int32_t bufW, int
     nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(window);
     if (!win)
         return NS_ERROR_FAILURE;
-    nsRefPtr<nsPresContext> presContext;
+    RefPtr<nsPresContext> presContext;
 
     nsIDocShell* docshell = win->GetDocShell();
 
@@ -1966,7 +1985,7 @@ nsresult AndroidBridge::CaptureThumbnail(nsIDOMWindow *window, int32_t bufW, int
         ALOG_BRIDGE("Error creating DrawTarget");
         return NS_ERROR_FAILURE;
     }
-    nsRefPtr<gfxContext> context = new gfxContext(dt);
+    RefPtr<gfxContext> context = new gfxContext(dt);
     context->SetMatrix(
       context->CurrentMatrix().Scale(scale * bufW / srcW,
                                      scale * bufH / srcH));

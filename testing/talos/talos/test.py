@@ -148,6 +148,7 @@ class sessionrestore(TsBase):
     2. Launch Firefox.
     3. Measure the delta between firstPaint and sessionRestored.
     """
+    extensions = '${talos}/startup_test/sessionrestore/addon'
     cycles = 10
     timeout = 1000000
     sps_profile_startup = True
@@ -155,7 +156,7 @@ class sessionrestore(TsBase):
     profile_path = '${talos}/startup_test/sessionrestore/profile'
     url = 'startup_test/sessionrestore/index.html'
     shutdown = False
-    reinstall = ['sessionstore.js']
+    reinstall = ['sessionstore.js', 'sessionCheckpoints.json']
     # Restore the session
     preferences = {'browser.startup.page': 3}
 
@@ -358,6 +359,7 @@ class damp(PageloaderTest):
     sps_profile_entries = 1000000
     win_counters = w7_counters = linux_counters = mac_counters = None
     filters = filter.ignore_first.prepare(1) + filter.median.prepare()
+    preferences = {'devtools.memory.enabled': True}
 
 
 @register_test()

@@ -134,6 +134,7 @@ public:
     NS_IMETHOD AsyncOpen2(nsIStreamListener *aListener) override;
     // nsIHttpChannelInternal
     NS_IMETHOD SetupFallbackChannel(const char *aFallbackKey) override;
+    NS_IMETHOD ForceIntercepted(uint64_t aInterceptionID) override;
     // nsISupportsPriority
     NS_IMETHOD SetPriority(int32_t value) override;
     // nsIClassOfService
@@ -388,7 +389,6 @@ private:
 
     static bool HasQueryString(nsHttpRequestHead::ParsedMethodType method, nsIURI * uri);
     bool ResponseWouldVary(nsICacheEntry* entry) const;
-    bool MustValidateBasedOnQueryUrl() const;
     bool IsResumable(int64_t partialLen, int64_t contentLength,
                      bool ignoreMissingPartialLen = false) const;
     nsresult MaybeSetupByteRangeRequest(int64_t partialLen, int64_t contentLength,
@@ -406,8 +406,8 @@ private:
 private:
     nsCOMPtr<nsICancelable>           mProxyRequest;
 
-    nsRefPtr<nsInputStreamPump>       mTransactionPump;
-    nsRefPtr<nsHttpTransaction>       mTransaction;
+    RefPtr<nsInputStreamPump>       mTransactionPump;
+    RefPtr<nsHttpTransaction>       mTransaction;
 
     uint64_t                          mLogicalOffset;
 
@@ -415,7 +415,7 @@ private:
     nsCOMPtr<nsICacheEntry>           mCacheEntry;
     // We must close mCacheInputStream explicitly to avoid leaks.
     AutoClose<nsIInputStream>         mCacheInputStream;
-    nsRefPtr<nsInputStreamPump>       mCachePump;
+    RefPtr<nsInputStreamPump>       mCachePump;
     nsAutoPtr<nsHttpResponseHead>     mCachedResponseHead;
     nsCOMPtr<nsISupports>             mCachedSecurityInfo;
     uint32_t                          mPostID;
@@ -434,8 +434,9 @@ private:
         MAYBE_INTERCEPT,   // interception in progress, but can be cancelled
         INTERCEPTED,       // a synthesized response has been provided
     } mInterceptCache;
-    // Unique ID of this channel for the interception purposes.
-    const uint64_t mInterceptionID;
+    // ID of this channel for the interception purposes. Unique unless this
+    // channel is replacing an intercepted one via an redirection.
+    uint64_t mInterceptionID;
 
     bool PossiblyIntercepted() {
         return mInterceptCache != DO_NOT_INTERCEPT;
@@ -504,7 +505,7 @@ private:
     nsTArray<nsContinueRedirectionFunc> mRedirectFuncStack;
 
     // Needed for accurate DNS timing
-    nsRefPtr<nsDNSPrefetch>           mDNSPrefetch;
+    RefPtr<nsDNSPrefetch>           mDNSPrefetch;
 
     Http2PushedStream                 *mPushedStream;
     // True if the channel's principal was found on a phishing, malware, or

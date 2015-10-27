@@ -56,6 +56,17 @@
 // Keyword used iff gfx.font_rendering.opentype_svg.enabled is true:
 #define VARIANT_OPENTYPE_SVG_KEYWORD 0x40000000
 
+// Variants that can consume more than one token
+#define VARIANT_MULTIPLE_TOKENS \
+  (VARIANT_COLOR |            /* rgb(...), hsl(...), etc. */                  \
+   VARIANT_COUNTER |          /* counter(...), counters(...) */               \
+   VARIANT_ATTR |             /* attr(...) */                                 \
+   VARIANT_GRADIENT |         /* linear-gradient(...), etc. */                \
+   VARIANT_TIMING_FUNCTION |  /* cubic-bezier(...), steps(...) */             \
+   VARIANT_IMAGE_RECT |       /* -moz-image-rect(...) */                      \
+   VARIANT_CALC |             /* calc(...) */                                 \
+   VARIANT_ELEMENT)           /* -moz-element(...) */
+
 // Common combinations of variants
 #define VARIANT_AL   (VARIANT_AUTO | VARIANT_LENGTH)
 #define VARIANT_LP   (VARIANT_LENGTH | VARIANT_PERCENT)
@@ -287,7 +298,7 @@ enum nsStyleAnimType {
   // nsStyleSVGPaint values
   eStyleAnimType_PaintServer,
 
-  // nsRefPtr<nsCSSShadowArray> values
+  // RefPtr<nsCSSShadowArray> values
   eStyleAnimType_Shadow,
 
   // property not animatable
@@ -323,6 +334,15 @@ public:
                                       EnabledState aEnabled);
   static nsCSSProperty LookupProperty(const nsACString& aProperty,
                                       EnabledState aEnabled);
+  // As above, but looked up using a property's IDL name.
+  // eCSSPropertyExtra_variable won't be returned from these methods.
+  static nsCSSProperty LookupPropertyByIDLName(
+      const nsAString& aPropertyIDLName,
+      EnabledState aEnabled);
+  static nsCSSProperty LookupPropertyByIDLName(
+      const nsACString& aPropertyIDLName,
+      EnabledState aEnabled);
+
   // Returns whether aProperty is a custom property name, i.e. begins with
   // "--".  This assumes that the CSS Variables pref has been enabled.
   static bool IsCustomPropertyName(const nsAString& aProperty);

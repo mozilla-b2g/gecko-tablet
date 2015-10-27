@@ -33,7 +33,7 @@ public:
 
     // for use with data fonts
     MacOSFontEntry(const nsAString& aPostscriptName, CGFontRef aFontRef,
-                   uint16_t aWeight, uint16_t aStretch, uint32_t aItalicStyle,
+                   uint16_t aWeight, uint16_t aStretch, uint8_t aStyle,
                    bool aIsDataUserFont, bool aIsLocal);
 
     virtual ~MacOSFontEntry() {
@@ -86,12 +86,12 @@ public:
     gfxFontEntry* LookupLocalFont(const nsAString& aFontName,
                                   uint16_t aWeight,
                                   int16_t aStretch,
-                                  bool aItalic) override;
-    
+                                  uint8_t aStyle) override;
+
     gfxFontEntry* MakePlatformFont(const nsAString& aFontName,
                                    uint16_t aWeight,
                                    int16_t aStretch,
-                                   bool aItalic,
+                                   uint8_t aStyle,
                                    const uint8_t* aFontData,
                                    uint32_t aLength) override;
 
@@ -167,8 +167,8 @@ private:
     // or Helvetica Neue. For OSX 10.11, Apple uses pair of families
     // for the UI, one for text sizes and another for display sizes
     bool mUseSizeSensitiveSystemFont;
-    nsRefPtr<gfxFontFamily> mSystemTextFontFamily;
-    nsRefPtr<gfxFontFamily> mSystemDisplayFontFamily; // only used on OSX 10.11
+    RefPtr<gfxFontFamily> mSystemTextFontFamily;
+    RefPtr<gfxFontFamily> mSystemDisplayFontFamily; // only used on OSX 10.11
 };
 
 #endif /* gfxMacPlatformFontList_H_ */

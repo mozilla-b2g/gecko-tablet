@@ -18,7 +18,7 @@ const promise = require("promise");
 const PromiseDebugging = require("PromiseDebugging");
 const xpcInspector = require("xpcInspector");
 const ScriptStore = require("./utils/ScriptStore");
-const { DevToolsWorker } = require("devtools/shared/shared/worker");
+const { DevToolsWorker } = require("devtools/shared/worker/worker");
 
 const { defer, resolve, reject, all } = promise;
 
@@ -520,7 +520,7 @@ ThreadActor.prototype = {
   get prettyPrintWorker() {
     if (!this._prettyPrintWorker) {
       this._prettyPrintWorker = new DevToolsWorker(
-        "resource://gre/modules/devtools/server/actors/pretty-print-worker.js",
+        "resource://devtools/server/actors/pretty-print-worker.js",
         { name: "pretty-print",
           verbose: dumpn.wantLogging }
       );
@@ -3633,7 +3633,7 @@ function hackDebugger(Debugger) {
     configurable: true,
     get: function() {
       if (this.script) {
-        return this.script.getOffsetLine(this.offset);
+        return this.script.getOffsetLocation(this.offset).lineNumber;
       } else {
         return null;
       }

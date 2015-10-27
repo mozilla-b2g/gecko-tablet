@@ -128,6 +128,7 @@ public:
               nsTArray<nsCString> aExtensions,
               bool aIsJavaPlugin,
               bool aIsFlashPlugin,
+              bool aSupportsAsyncInit,
               int64_t aLastModifiedTime,
               bool aFromExtension);
 
@@ -152,7 +153,7 @@ public:
 
   bool IsFromExtension() const;
 
-  nsRefPtr<nsPluginTag> mNext;
+  RefPtr<nsPluginTag> mNext;
   uint32_t      mId;
 
   // Number of PluginModuleParents living in all content processes.
@@ -162,7 +163,7 @@ public:
   bool          mHadLocalInstance;
 
   PRLibrary     *mLibrary;
-  nsRefPtr<nsNPAPIPlugin> mPlugin;
+  RefPtr<nsNPAPIPlugin> mPlugin;
   bool          mIsJavaPlugin;
   bool          mIsFlashPlugin;
   bool          mSupportsAsyncInit;

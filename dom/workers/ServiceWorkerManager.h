@@ -69,9 +69,11 @@ public:
 
   nsCOMPtr<nsIPrincipal> mPrincipal;
 
-  nsRefPtr<ServiceWorkerInfo> mActiveWorker;
-  nsRefPtr<ServiceWorkerInfo> mWaitingWorker;
-  nsRefPtr<ServiceWorkerInfo> mInstallingWorker;
+  RefPtr<ServiceWorkerInfo> mActiveWorker;
+  RefPtr<ServiceWorkerInfo> mWaitingWorker;
+  RefPtr<ServiceWorkerInfo> mInstallingWorker;
+
+  uint64_t mLastUpdateCheckTime;
 
   // When unregister() is called on a registration, it is not immediately
   // removed since documents may be controlled. It is marked as
@@ -84,7 +86,7 @@ public:
   already_AddRefed<ServiceWorkerInfo>
   Newest()
   {
-    nsRefPtr<ServiceWorkerInfo> newest;
+    RefPtr<ServiceWorkerInfo> newest;
     if (mInstallingWorker) {
       newest = mInstallingWorker;
     } else if (mWaitingWorker) {
@@ -95,6 +97,9 @@ public:
 
     return newest.forget();
   }
+
+  already_AddRefed<ServiceWorkerInfo>
+  GetServiceWorkerInfoById(uint64_t aId);
 
   void
   StartControllingADocument()
@@ -129,6 +134,11 @@ public:
   void
   FinishActivate(bool aSuccess);
 
+  void
+  RefreshLastUpdateCheckTime();
+
+  bool
+  IsLastUpdateCheckTimeOverOneDay() const;
 };
 
 class ServiceWorkerUpdateFinishCallback
@@ -177,7 +187,7 @@ private:
   // associated with this all the time.
   nsAutoTArray<ServiceWorker*, 1> mInstances;
 
-  nsRefPtr<ServiceWorkerPrivate> mServiceWorkerPrivate;
+  RefPtr<ServiceWorkerPrivate> mServiceWorkerPrivate;
   bool mSkipWaitingFlag;
 
   ~ServiceWorkerInfo();
@@ -547,7 +557,7 @@ private:
     { }
 
     nsCOMPtr<nsIURI> mURI;
-    nsRefPtr<Promise> mPromise;
+    RefPtr<Promise> mPromise;
   };
 
   void AppendPendingOperation(nsIRunnable* aRunnable);
@@ -582,7 +592,7 @@ private:
   void
   RemoveAllRegistrations(OriginAttributes* aParams);
 
-  nsRefPtr<ServiceWorkerManagerChild> mActor;
+  RefPtr<ServiceWorkerManagerChild> mActor;
 
   struct PendingOperation;
   nsTArray<PendingOperation> mPendingOperations;

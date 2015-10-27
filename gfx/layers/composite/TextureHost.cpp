@@ -18,7 +18,7 @@
 #include "mozilla/layers/TextureHostOGL.h"  // for TextureHostOGL
 #include "mozilla/layers/YCbCrImageDataSerializer.h"
 #include "nsAString.h"
-#include "mozilla/nsRefPtr.h"                   // for nsRefPtr
+#include "mozilla/RefPtr.h"                   // for nsRefPtr
 #include "nsPrintfCString.h"            // for nsPrintfCString
 #include "mozilla/layers/PTextureParent.h"
 #include "mozilla/unused.h"
@@ -176,7 +176,7 @@ TextureHost::SetAcquireFenceHandle(const FenceHandle& aAcquireFenceHandle)
 FenceHandle
 TextureHost::GetAndResetAcquireFenceHandle()
 {
-  nsRefPtr<FenceHandle::FdObj> fdObj = mAcquireFenceHandle.GetAndResetFdObj();
+  RefPtr<FenceHandle::FdObj> fdObj = mAcquireFenceHandle.GetAndResetFdObj();
   return FenceHandle(fdObj);
 }
 
@@ -598,8 +598,13 @@ BufferTextureHost::Upload(nsIntRegion *aRegion)
     }
   } else {
     // non-YCbCr case
+    nsIntRegion* regionToUpdate = aRegion;
     if (!mFirstSource) {
-      mFirstSource = mCompositor->CreateDataTextureSource();
+      mFirstSource = mCompositor->CreateDataTextureSource(mFlags);
+      if (mFlags & TextureFlags::COMPONENT_ALPHA) {
+        // Update the full region the first time for component alpha textures.
+        regionToUpdate = nullptr;
+      }
     }
     ImageDataDeserializer deserializer(GetBuffer(), GetBufferSize());
     if (!deserializer.IsValid()) {
@@ -612,7 +617,7 @@ BufferTextureHost::Upload(nsIntRegion *aRegion)
       return false;
     }
 
-    if (!mFirstSource->Update(surf.get(), aRegion)) {
+    if (!mFirstSource->Update(surf.get(), regionToUpdate)) {
       NS_WARNING("failed to update the DataTextureSource");
       return false;
     }

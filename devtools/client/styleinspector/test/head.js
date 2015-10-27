@@ -5,8 +5,8 @@
 "use strict";
 
 var Cu = Components.utils;
-var {gDevTools} = Cu.import("resource:///modules/devtools/client/framework/gDevTools.jsm", {});
-var {require} = Cu.import("resource://gre/modules/devtools/shared/Loader.jsm", {});
+var {gDevTools} = Cu.import("resource://devtools/client/framework/gDevTools.jsm", {});
+var {require} = Cu.import("resource://devtools/shared/Loader.jsm", {});
 var {TargetFactory} = require("devtools/client/framework/target");
 var {CssComputedView} = require("devtools/client/styleinspector/computed-view");
 var {CssRuleView, _ElementStyle} = require("devtools/client/styleinspector/rule-view");
@@ -16,7 +16,7 @@ var promise = require("promise");
 var {editableField, getInplaceEditorForSpan: inplaceEditor} =
   require("devtools/client/shared/inplace-editor");
 var {console} =
-  Components.utils.import("resource://gre/modules/devtools/shared/Console.jsm", {});
+  Components.utils.import("resource://gre/modules/Console.jsm", {});
 
 // All tests are asynchronous
 waitForExplicitFinish();

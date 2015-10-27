@@ -104,9 +104,7 @@ class MediaCache {
 public:
   friend class MediaCacheStream::BlockList;
   typedef MediaCacheStream::BlockList BlockList;
-  enum {
-    BLOCK_SIZE = MediaCacheStream::BLOCK_SIZE
-  };
+  static const int64_t BLOCK_SIZE = MediaCacheStream::BLOCK_SIZE;
 
   MediaCache() : mNextResourceID(1),
     mReentrantMonitor("MediaCache.mReentrantMonitor"),
@@ -340,7 +338,7 @@ protected:
   // The Blocks describing the cache entries.
   nsTArray<Block> mIndex;
   // Writer which performs IO, asynchronously writing cache blocks.
-  nsRefPtr<FileBlockCache> mFileCache;
+  RefPtr<FileBlockCache> mFileCache;
   // The list of free blocks; they are not ordered.
   BlockList       mFreeBlocks;
   // True if an event to run Update() has been queued but not processed
@@ -2224,7 +2222,7 @@ MediaCacheStream::Read(char* aBuffer, uint32_t aCount, uint32_t* aBytes)
     uint32_t streamBlock = uint32_t(mStreamOffset/BLOCK_SIZE);
     uint32_t offsetInStreamBlock =
       uint32_t(mStreamOffset - streamBlock*BLOCK_SIZE);
-    int64_t size = std::min(aCount - count, BLOCK_SIZE - offsetInStreamBlock);
+    int64_t size = std::min<int64_t>(aCount - count, BLOCK_SIZE - offsetInStreamBlock);
 
     if (mStreamLength >= 0) {
       // Don't try to read beyond the end of the stream

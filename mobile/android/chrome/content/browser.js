@@ -118,6 +118,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "GMPInstallManager",
 
 XPCOMUtils.defineLazyModuleGetter(this, "ReaderMode", "resource://gre/modules/ReaderMode.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "Snackbars", "resource://gre/modules/Snackbars.jsm");
+
 var lazilyLoadedBrowserScripts = [
   ["SelectHelper", "chrome://browser/content/SelectHelper.js"],
   ["InputWidgetHelper", "chrome://browser/content/InputWidgetHelper.js"],
@@ -696,7 +698,7 @@ var BrowserApp = {
       NativeWindow.contextmenus.add(stringGetter("contextmenu.openInPrivateTab"),
         NativeWindow.contextmenus.linkOpenableContext,
         function (aTarget) {
-          UITelemetry.addEvent("action.1", "contextmenu", null, "web_open_private_tab");
+          UITelemetry.addEvent("action.1", "contextmenu", null, "web_open_new_tab");
           UITelemetry.addEvent("loadurl.1", "contextmenu", null);
 
           let url = NativeWindow.contextmenus._getLinkURL(aTarget);
@@ -1269,9 +1271,8 @@ var BrowserApp = {
         message = Strings.browser.GetStringFromName("undoCloseToast.messageDefault");
       }
 
-      NativeWindow.toast.show(message, "short", {
-        button: {
-          icon: "drawable://undo_button_icon",
+      Snackbars.show(message, Snackbars.LENGTH_SHORT, {
+        action: {
           label: Strings.browser.GetStringFromName("undoCloseToast.action2"),
           callback: function() {
             UITelemetry.addEvent("undo.1", "toast", null, "closetab");
@@ -1318,6 +1319,7 @@ var BrowserApp = {
    * @return the tab with the given URL, or null if no such tab exists
    */
   getTabWithURL: function getTabWithURL(aURL, aOptions) {
+    aOptions = aOptions || {};
     let uri = Services.io.newURI(aURL, null, null);
     for (let i = 0; i < this._tabs.length; ++i) {
       let tab = this._tabs[i];
@@ -1339,15 +1341,16 @@ var BrowserApp = {
    * Otherwise, a new tab is opened with the given URL.
    *
    * @param aURL URL to open
-   * @param  aFlags Options for the search. Currently supports:
+   * @param aParam Options used if a tab is created
+   * @param aFlags Options for the search. Currently supports:
    **  @option startsWith a Boolean indicating whether to search for a tab who's url starts with the
    *           requested url. Useful if you want to ignore hash codes on the end of a url. For instance
    *           to have about:downloads match about:downloads#123.
    */
-  selectOrOpenTab: function selectOrOpenTab(aURL, aFlags) {
+  selectOrAddTab: function selectOrAddTab(aURL, aParams, aFlags) {
     let tab = this.getTabWithURL(aURL, aFlags);
     if (tab == null) {
-      tab = this.addTab(aURL);
+      tab = this.addTab(aURL, aParams);
     } else {
       this.selectTab(tab);
     }
@@ -1804,8 +1807,8 @@ var BrowserApp = {
                 PrivateBrowsingUtils.addToTrackingAllowlist(normalizedUrl);
               } else {
                 Services.perms.add(normalizedUrl, "trackingprotection", Services.perms.ALLOW_ACTION);
+                Telemetry.addData("TRACKING_PROTECTION_EVENTS", 1);
               }
-              Telemetry.addData("TRACKING_PROTECTION_EVENTS", 1);
             } else {
               // Remove the current host from the 'trackingprotection' consumer
               // of the permission manager. This effectively removes this host
@@ -1814,8 +1817,8 @@ var BrowserApp = {
                 PrivateBrowsingUtils.removeFromTrackingAllowlist(normalizedUrl);
               } else {
                 Services.perms.remove(normalizedUrl, "trackingprotection");
+                Telemetry.addData("TRACKING_PROTECTION_EVENTS", 2);
               }
-              Telemetry.addData("TRACKING_PROTECTION_EVENTS", 2);
             }
           }
         }
@@ -2315,9 +2318,9 @@ var NativeWindow = {
       if (arguments.length == 1) {
         options = arguments[0];
       } else if (arguments.length == 3) {
+          Log.w("Browser", "This menu addon API has been deprecated. Instead, use the options object API.");
           options = {
             name: arguments[0],
-            icon: arguments[1],
             callback: arguments[2]
           };
       } else {
@@ -2831,6 +2834,11 @@ var NativeWindow = {
           (node instanceof Ci.nsIDOMHTMLAreaElement && node.href)) {
         return this._getLinkURL(node);
       } else if (node instanceof Ci.nsIImageLoadingContent && node.currentURI) {
+        // The image is blocked by Tap-to-load Images
+        let originalURL = node.getAttribute("data-ctv-src");
+        if (originalURL) {
+          return originalURL;
+        }
         return node.currentURI.spec;
       } else if (node instanceof Ci.nsIDOMHTMLMediaElement) {
         return (node.currentSrc || node.src);
@@ -5840,6 +5848,8 @@ var HealthReportStatusListener = {
 
 var XPInstallObserver = {
   init: function() {
+    Services.obs.addObserver(this, "addon-install-origin-blocked", false);
+    Services.obs.addObserver(this, "addon-install-disabled", false);
     Services.obs.addObserver(this, "addon-install-blocked", false);
     Services.obs.addObserver(this, "addon-install-started", false);
     Services.obs.addObserver(this, "xpi-signature-changed", false);
@@ -5849,76 +5859,104 @@ var XPInstallObserver = {
   },
 
   observe: function(aSubject, aTopic, aData) {
+    let installInfo, tab, host;
+    if (aSubject) {
+      installInfo = aSubject.QueryInterface(Ci.amIWebInstallInfo);
+      tab = BrowserApp.getTabForBrowser(installInfo.browser);
+      if (installInfo.originatingURI) {
+        host = installInfo.originatingURI.host;
+      }
+    }
+
+    let strings = Strings.browser;
+    let brandShortName = Strings.brand.GetStringFromName("brandShortName");
+
     switch (aTopic) {
       case "addon-install-started":
-        NativeWindow.toast.show(Strings.browser.GetStringFromName("alertAddonsDownloading"), "short");
+        NativeWindow.toast.show(strings.GetStringFromName("alertAddonsDownloading"), "short");
         break;
-      case "addon-install-blocked": {
-        let installInfo = aSubject.QueryInterface(Ci.amIWebInstallInfo);
-        let tab = BrowserApp.getTabForBrowser(installInfo.browser);
+      case "addon-install-disabled": {
         if (!tab)
           return;
 
-        let host = null;
-        if (installInfo.originatingURI) {
-          host = installInfo.originatingURI.host;
-        }
-
-        let brandShortName = Strings.brand.GetStringFromName("brandShortName");
-        let notificationName, buttons, message;
-        let strings = Strings.browser;
         let enabled = true;
         try {
           enabled = Services.prefs.getBoolPref("xpinstall.enabled");
-        }
-        catch (e) {}
+        } catch (e) {}
 
+        let buttons, message, callback;
         if (!enabled) {
-          notificationName = "xpinstall-disabled";
-          if (Services.prefs.prefIsLocked("xpinstall.enabled")) {
-            message = strings.GetStringFromName("xpinstallDisabledMessageLocked");
-            buttons = [];
-          } else {
-            message = strings.formatStringFromName("xpinstallDisabledMessage2", [brandShortName, host], 2);
-            buttons = [{
-              label: strings.GetStringFromName("xpinstallDisabledButton"),
-              callback: function editPrefs() {
-                Services.prefs.setBoolPref("xpinstall.enabled", true);
-                return false;
-              }
-            }];
-          }
+          message = strings.GetStringFromName("xpinstallDisabledMessageLocked");
+          buttons = [strings.GetStringFromName("unsignedAddonsDisabled.dismiss")];
+          callback: (data) => {};
         } else {
-          notificationName = "xpinstall";
-          if (host) {
-            // We have a host which asked for the install.
-            message = strings.formatStringFromName("xpinstallPromptWarning2", [brandShortName, host], 2);
-          } else {
-            // Without a host we address the add-on as the initiator of the install.
-            let addon = null;
-            if (installInfo.installs.length > 0) {
-              addon = installInfo.installs[0].name;
+          message = strings.formatStringFromName("xpinstallDisabledMessage2", [brandShortName, host], 2);
+          buttons = [
+              strings.GetStringFromName("xpinstallDisabledButton"),
+              strings.GetStringFromName("unsignedAddonsDisabled.dismiss")
+          ];
+          callback: (data) => {
+            if (data.button === 1) {
+              Services.prefs.setBoolPref("xpinstall.enabled", true)
             }
-            if (addon) {
-              // We have an addon name, show the regular message.
-              message = strings.formatStringFromName("xpinstallPromptWarningLocal", [brandShortName, addon], 2);
-            } else {
-              // We don't have an addon name, show an alternative message.
-              message = strings.formatStringFromName("xpinstallPromptWarningDirect", [brandShortName], 1);
-            }
-          }
-
-          buttons = [{
-            label: strings.GetStringFromName("xpinstallPromptAllowButton"),
-            callback: function() {
-              // Kick off the install
-              installInfo.install();
-              return false;
-            },
-            positive: true
-          }];
+          };
         }
-        NativeWindow.doorhanger.show(message, aTopic, buttons, tab.id);
+
+        new Prompt({
+          title: Strings.browser.GetStringFromName("addonError.titleError"),
+          message: message,
+          buttons: buttons
+        }).show(callback);
+        break;
+      }
+      case "addon-install-blocked": {
+        if (!tab)
+          return;
+
+        let message;
+        if (host) {
+          // We have a host which asked for the install.
+          message = strings.formatStringFromName("xpinstallPromptWarning2", [brandShortName, host], 2);
+        } else {
+          // Without a host we address the add-on as the initiator of the install.
+          let addon = null;
+          if (installInfo.installs.length > 0) {
+            addon = installInfo.installs[0].name;
+          }
+          if (addon) {
+            // We have an addon name, show the regular message.
+            message = strings.formatStringFromName("xpinstallPromptWarningLocal", [brandShortName, addon], 2);
+          } else {
+            // We don't have an addon name, show an alternative message.
+            message = strings.formatStringFromName("xpinstallPromptWarningDirect", [brandShortName], 1);
+          }
+        }
+
+        let buttons = [
+            strings.GetStringFromName("xpinstallPromptAllowButton"),
+            strings.GetStringFromName("unsignedAddonsDisabled.dismiss")
+        ];
+        new Prompt({
+          title: Strings.browser.GetStringFromName("addonError.titleBlocked"),
+          message: message,
+          buttons: buttons
+        }).show((data) => {
+          if (data.button === 0) {
+            // Kick off the install
+            installInfo.install();
+          }
+        });
+        break;
+      }
+      case "addon-install-origin-blocked": {
+        if (!tab)
+          return;
+
+        new Prompt({
+          title: Strings.browser.GetStringFromName("addonError.titleBlocked"),
+          message: strings.formatStringFromName("xpinstallPromptWarningDirect", [brandShortName], 1),
+          buttons: [strings.GetStringFromName("unsignedAddonsDisabled.dismiss")]
+        }).show((data) => {});
         break;
       }
       case "xpi-signature-changed": {
@@ -5952,7 +5990,7 @@ var XPInstallObserver = {
     }).show((data) => {
       if (data.button === 0) {
         // TODO: Open about:addons to show only unsigned add-ons?
-        BrowserApp.addTab("about:addons", { parentId: BrowserApp.selectedTab.id });
+        BrowserApp.selectOrAddTab("about:addons", { parentId: BrowserApp.selectedTab.id });
       }
     });
   },
@@ -5980,7 +6018,10 @@ var XPInstallObserver = {
           button: {
             icon: "drawable://alert_addon",
             label: Strings.browser.GetStringFromName("alertAddonsInstalledNoRestart.action2"),
-            callback: () => { BrowserApp.addTab("about:addons#" + aAddon.id, { parentId: BrowserApp.selectedTab.id }); },
+            callback: () => {
+              UITelemetry.addEvent("show.1", "toast", null, "addons");
+              BrowserApp.selectOrAddTab("about:addons", { parentId: BrowserApp.selectedTab.id });
+            },
           }
         });
       }
@@ -6545,7 +6586,7 @@ var IdentityHandler = {
 
   getTrackingMode: function getTrackingMode(aState, aBrowser) {
     if (aState & Ci.nsIWebProgressListener.STATE_BLOCKED_TRACKING_CONTENT) {
-      Telemetry.addData("TRACKING_PROTECTION_SHIELD", 2);
+      this.shieldHistogramAdd(aBrowser, 2);
       return this.TRACKING_MODE_CONTENT_BLOCKED;
     }
 
@@ -6555,12 +6596,19 @@ var IdentityHandler = {
                      PrivateBrowsingUtils.isBrowserPrivate(aBrowser));
 
     if ((aState & Ci.nsIWebProgressListener.STATE_LOADED_TRACKING_CONTENT) && tpEnabled) {
-      Telemetry.addData("TRACKING_PROTECTION_SHIELD", 1);
+      this.shieldHistogramAdd(aBrowser, 1);
       return this.TRACKING_MODE_CONTENT_LOADED;
     }
 
-    Telemetry.addData("TRACKING_PROTECTION_SHIELD", 0);
+    this.shieldHistogramAdd(aBrowser, 0);
     return this.TRACKING_MODE_UNKNOWN;
+  },
+
+  shieldHistogramAdd: function(browser, value) {
+    if (PrivateBrowsingUtils.isBrowserPrivate(browser)) {
+      return;
+    }
+    Telemetry.addData("TRACKING_PROTECTION_SHIELD", value);
   },
 
   /**

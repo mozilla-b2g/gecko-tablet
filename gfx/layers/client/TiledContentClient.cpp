@@ -929,7 +929,7 @@ ClientMultiTiledLayerBuffer::PaintThebes(const nsIntRegion& aNewValidRegion,
   NS_ASSERTION(!aPaintRegion.GetBounds().IsEmpty(), "Empty paint region\n");
 
   if (!gfxPrefs::TiledDrawTargetEnabled()) {
-    nsRefPtr<gfxContext> ctxt;
+    RefPtr<gfxContext> ctxt;
 
     const IntRect bounds = aPaintRegion.GetBounds();
     {
@@ -1240,7 +1240,8 @@ ClientMultiTiledLayerBuffer::ValidateTile(TileClient& aTile,
   if (aTile.IsPlaceholderTile()) {
     aTile.SetLayerManager(mManager);
     aTile.SetTextureAllocator(mManager->GetTexturePool(
-      gfxPlatform::GetPlatform()->Optimal2DFormatForContent(content)));
+      gfxPlatform::GetPlatform()->Optimal2DFormatForContent(content),
+      TextureFlags::DISALLOW_BIGIMAGE | TextureFlags::IMMEDIATE_UPLOAD));
   }
   aTile.SetCompositableClient(mCompositableClient);
 

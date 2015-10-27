@@ -12,6 +12,9 @@
 #include "gfxDrawable.h"
 #include "imgIEncoder.h"
 #include "mozilla/Base64.h"
+#include "mozilla/dom/ImageEncoder.h"
+#include "mozilla/dom/WorkerPrivate.h"
+#include "mozilla/dom/WorkerRunnable.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/DataSurfaceHelpers.h"
 #include "mozilla/gfx/Logging.h"
@@ -21,6 +24,7 @@
 #include "nsComponentManagerUtils.h"
 #include "nsIClipboardHelper.h"
 #include "nsIFile.h"
+#include "nsIGfxInfo.h"
 #include "nsIPresShell.h"
 #include "nsPresContext.h"
 #include "nsRegion.h"
@@ -451,13 +455,13 @@ CreateSamplingRestrictedDrawable(gfxDrawable* aDrawable,
       return nullptr;
     }
 
-    nsRefPtr<gfxContext> tmpCtx = new gfxContext(target);
+    RefPtr<gfxContext> tmpCtx = new gfxContext(target);
     tmpCtx->SetOp(OptimalFillOp());
     aDrawable->Draw(tmpCtx, needed - needed.TopLeft(), true, Filter::LINEAR,
                     1.0, gfxMatrix::Translation(needed.TopLeft()));
     RefPtr<SourceSurface> surface = target->Snapshot();
 
-    nsRefPtr<gfxDrawable> drawable = new gfxSurfaceDrawable(surface, size, gfxMatrix::Translation(-needed.TopLeft()));
+    RefPtr<gfxDrawable> drawable = new gfxSurfaceDrawable(surface, size, gfxMatrix::Translation(-needed.TopLeft()));
     return drawable.forget();
 }
 #endif // !MOZ_GFX_OPTIMIZE_MOBILE
@@ -530,7 +534,7 @@ static gfxMatrix
 DeviceToImageTransform(gfxContext* aContext)
 {
     gfxFloat deviceX, deviceY;
-    nsRefPtr<gfxASurface> currentTarget =
+    RefPtr<gfxASurface> currentTarget =
         aContext->CurrentSurface(&deviceX, &deviceY);
     gfxMatrix deviceToUser = aContext->CurrentMatrix();
     if (!deviceToUser.Invert()) {
@@ -675,7 +679,7 @@ PrescaleAndTileDrawable(gfxDrawable* aDrawable,
     return false;
   }
 
-  nsRefPtr<gfxContext> tmpCtx = new gfxContext(scaledDT);
+  RefPtr<gfxContext> tmpCtx = new gfxContext(scaledDT);
   scaledDT->SetTransform(ToMatrix(scaleMatrix));
   gfxRect gfxImageRect(aImageRect.x, aImageRect.y, aImageRect.width, aImageRect.height);
   aDrawable->Draw(tmpCtx, gfxImageRect, true, aFilter, 1.0, gfxMatrix());
@@ -721,7 +725,7 @@ gfxUtils::DrawPixelSnapped(gfxContext*         aContext,
     bool doTile = !imageRect.Contains(region) &&
                   !(aImageFlags & imgIContainer::FLAG_CLAMP);
 
-    nsRefPtr<gfxASurface> currentTarget = aContext->CurrentSurface();
+    RefPtr<gfxASurface> currentTarget = aContext->CurrentSurface();
     gfxMatrix deviceSpaceToImageSpace = DeviceToImageTransform(aContext);
 
     AutoCairoPixmanBugWorkaround workaround(aContext, deviceSpaceToImageSpace,
@@ -729,7 +733,7 @@ gfxUtils::DrawPixelSnapped(gfxContext*         aContext,
     if (!workaround.Succeeded())
         return;
 
-    nsRefPtr<gfxDrawable> drawable = aDrawable;
+    RefPtr<gfxDrawable> drawable = aDrawable;
 
     aFilter = ReduceResamplingFilter(aFilter,
                                      imageRect.Width(), imageRect.Height(),
@@ -759,7 +763,7 @@ gfxUtils::DrawPixelSnapped(gfxContext*         aContext,
             // allocating very large temporary surfaces, especially since we'll
             // do full-page snapshots often (see bug 749426).
 #if !defined(MOZ_GFX_OPTIMIZE_MOBILE)
-            nsRefPtr<gfxDrawable> restrictedDrawable =
+            RefPtr<gfxDrawable> restrictedDrawable =
               CreateSamplingRestrictedDrawable(aDrawable, aContext,
                                                aRegion, aFormat);
             if (restrictedDrawable) {
@@ -1458,7 +1462,7 @@ gfxUtils::WriteAsPNG(nsIPresShell* aShell, const char* aFile)
                                      SurfaceFormat::B8G8R8A8);
   NS_ENSURE_TRUE(dt, /*void*/);
 
-  nsRefPtr<gfxContext> context = new gfxContext(dt);
+  RefPtr<gfxContext> context = new gfxContext(dt);
   aShell->RenderDocument(r, 0, NS_RGB(255, 255, 0), context);
   WriteAsPNG(dt.get(), aFile);
 }
@@ -1541,6 +1545,125 @@ gfxUtils::CopyAsDataURI(DrawTarget* aDT)
   } else {
     NS_WARNING("Failed to get surface!");
   }
+}
+
+/* static */ void
+gfxUtils::GetImageBuffer(gfx::DataSourceSurface* aSurface,
+                         bool aIsAlphaPremultiplied,
+                         uint8_t** outImageBuffer,
+                         int32_t* outFormat)
+{
+    *outImageBuffer = nullptr;
+    *outFormat = 0;
+
+    DataSourceSurface::MappedSurface map;
+    if (!aSurface->Map(DataSourceSurface::MapType::READ, &map))
+        return;
+
+    uint32_t bufferSize = aSurface->GetSize().width * aSurface->GetSize().height * 4;
+    uint8_t* imageBuffer = new (fallible) uint8_t[bufferSize];
+    if (!imageBuffer) {
+        aSurface->Unmap();
+        return;
+    }
+    memcpy(imageBuffer, map.mData, bufferSize);
+
+    aSurface->Unmap();
+
+    int32_t format = imgIEncoder::INPUT_FORMAT_HOSTARGB;
+    if (!aIsAlphaPremultiplied) {
+        // We need to convert to INPUT_FORMAT_RGBA, otherwise
+        // we are automatically considered premult, and unpremult'd.
+        // Yes, it is THAT silly.
+        // Except for different lossy conversions by color,
+        // we could probably just change the label, and not change the data.
+        gfxUtils::ConvertBGRAtoRGBA(imageBuffer, bufferSize);
+        format = imgIEncoder::INPUT_FORMAT_RGBA;
+    }
+
+    *outImageBuffer = imageBuffer;
+    *outFormat = format;
+}
+
+/* static */ nsresult
+gfxUtils::GetInputStream(gfx::DataSourceSurface* aSurface,
+                         bool aIsAlphaPremultiplied,
+                         const char* aMimeType,
+                         const char16_t* aEncoderOptions,
+                         nsIInputStream** outStream)
+{
+    nsCString enccid("@mozilla.org/image/encoder;2?type=");
+    enccid += aMimeType;
+    nsCOMPtr<imgIEncoder> encoder = do_CreateInstance(enccid.get());
+    if (!encoder)
+        return NS_ERROR_FAILURE;
+
+    nsAutoArrayPtr<uint8_t> imageBuffer;
+    int32_t format = 0;
+    GetImageBuffer(aSurface, aIsAlphaPremultiplied, getter_Transfers(imageBuffer), &format);
+    if (!imageBuffer)
+        return NS_ERROR_FAILURE;
+
+    return dom::ImageEncoder::GetInputStream(aSurface->GetSize().width,
+                                             aSurface->GetSize().height,
+                                             imageBuffer, format,
+                                             encoder, aEncoderOptions, outStream);
+}
+
+class GetFeatureStatusRunnable final : public dom::workers::WorkerMainThreadRunnable
+{
+public:
+    GetFeatureStatusRunnable(dom::workers::WorkerPrivate* workerPrivate,
+                             const nsCOMPtr<nsIGfxInfo>& gfxInfo,
+                             int32_t feature,
+                             int32_t* status)
+      : WorkerMainThreadRunnable(workerPrivate)
+      , mGfxInfo(gfxInfo)
+      , mFeature(feature)
+      , mStatus(status)
+      , mNSResult(NS_OK)
+    {
+    }
+
+    bool MainThreadRun() override
+    {
+      if (mGfxInfo) {
+        mNSResult = mGfxInfo->GetFeatureStatus(mFeature, mStatus);
+      }
+      return true;
+    }
+
+    nsresult GetNSResult() const
+    {
+      return mNSResult;
+    }
+
+protected:
+    ~GetFeatureStatusRunnable() {}
+
+private:
+    nsCOMPtr<nsIGfxInfo> mGfxInfo;
+    int32_t mFeature;
+    int32_t* mStatus;
+    nsresult mNSResult;
+};
+
+/* static */ nsresult
+gfxUtils::ThreadSafeGetFeatureStatus(const nsCOMPtr<nsIGfxInfo>& gfxInfo,
+                                     int32_t feature, int32_t* status)
+{
+  if (!NS_IsMainThread()) {
+    dom::workers::WorkerPrivate* workerPrivate =
+      dom::workers::GetCurrentThreadWorkerPrivate();
+    RefPtr<GetFeatureStatusRunnable> runnable =
+      new GetFeatureStatusRunnable(workerPrivate, gfxInfo, feature, status);
+
+    runnable->Dispatch(workerPrivate->GetJSContext());
+
+    return runnable->GetNSResult();
+  }
+
+  return gfxInfo->GetFeatureStatus(feature, status);
 }
 
 /* static */ bool

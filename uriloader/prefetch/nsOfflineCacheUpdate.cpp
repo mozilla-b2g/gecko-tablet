@@ -148,7 +148,7 @@ private:
                                   uint32_t aCount,
                                   uint32_t *aBytesConsumed);
 
-    nsRefPtr<nsOfflineCacheUpdate> mUpdate;
+    RefPtr<nsOfflineCacheUpdate> mUpdate;
     nsCOMPtr<nsIURI> mURI;
     nsCOMPtr<nsIURI> mReferrerURI;
     nsCOMPtr<nsIPrincipal> mLoadingPrincipal;
@@ -499,7 +499,6 @@ nsOfflineCacheUpdateItem::OnStopRequest(nsIRequest *aRequest,
     return NS_OK;
 }
 
-
 //-----------------------------------------------------------------------------
 // nsOfflineCacheUpdateItem::nsIRunnable
 //-----------------------------------------------------------------------------
@@ -514,7 +513,7 @@ nsOfflineCacheUpdateItem::Run()
     // and Run() of this item.  Finish() would then have been called twice.
     mState = LoadStatus::LOADED;
 
-    nsRefPtr<nsOfflineCacheUpdate> update;
+    RefPtr<nsOfflineCacheUpdate> update;
     update.swap(mUpdate);
     update->LoadCompleted(this);
 
@@ -752,7 +751,7 @@ nsOfflineManifestItem::ReadManifest(nsIInputStream *aInputStream,
 
     for (iter = begin; iter != end; iter++) {
         if (*iter == '\r' || *iter == '\n') {
-            nsresult rv = manifest->HandleManifestLine(begin, iter);
+            rv = manifest->HandleManifestLine(begin, iter);
 
             if (NS_FAILED(rv)) {
                 LOG(("HandleManifestLine failed with 0x%08x", rv));
@@ -827,7 +826,7 @@ nsOfflineManifestItem::HandleManifestLine(const nsCString::const_iterator &aBegi
 
         if (!magic.EqualsLiteral("CACHE MANIFEST")) {
             mParserState = PARSE_ERROR;
-            LogToConsole("Offline cache manifest magic incorect", this);
+            LogToConsole("Offline cache manifest magic incorrect", this);
             return NS_OK;
         }
 
@@ -923,7 +922,6 @@ nsOfflineManifestItem::HandleManifestLine(const nsCString::const_iterator &aBegi
         rv = namespaceURI->GetAsciiSpec(namespaceSpec);
         if (NS_FAILED(rv))
             break;
-
 
         nsCOMPtr<nsIURI> fallbackURI;
         rv = NS_NewURI(getter_AddRefs(fallbackURI), fallbackSpec, nullptr, mURI);
@@ -1705,7 +1703,7 @@ nsOfflineCacheUpdate::ManifestCheckCompleted(nsresult aStatus,
         // correct.
         FinishNoNotify();
 
-        nsRefPtr<nsOfflineCacheUpdate> newUpdate =
+        RefPtr<nsOfflineCacheUpdate> newUpdate =
             new nsOfflineCacheUpdate();
         // Leave aDocument argument null. Only glues and children keep
         // document instances.
@@ -1740,7 +1738,7 @@ nsOfflineCacheUpdate::Begin()
     mItemsInProgress = 0;
 
     if (mState == STATE_CANCELLED) {
-      nsRefPtr<nsRunnableMethod<nsOfflineCacheUpdate> > errorNotification =
+      RefPtr<nsRunnableMethod<nsOfflineCacheUpdate> > errorNotification =
         NS_NewRunnableMethod(this,
                              &nsOfflineCacheUpdate::AsyncFinishWithError);
       nsresult rv = NS_DispatchToMainThread(errorNotification);
@@ -1866,7 +1864,7 @@ nsOfflineCacheUpdate::ProcessNextURI()
             // update, to prevent capturing a cache while the server
             // is being updated.  The check will call
             // ManifestCheckCompleted() when it's done.
-            nsRefPtr<nsManifestCheck> manifestCheck =
+            RefPtr<nsManifestCheck> manifestCheck =
                 new nsManifestCheck(this, mManifestURI, mDocumentURI, mLoadingPrincipal);
             if (NS_FAILED(manifestCheck->Begin())) {
                 mSucceeded = false;
@@ -2044,7 +2042,7 @@ nsOfflineCacheUpdate::ScheduleImplicit()
 
     nsresult rv;
 
-    nsRefPtr<nsOfflineCacheUpdate> update = new nsOfflineCacheUpdate();
+    RefPtr<nsOfflineCacheUpdate> update = new nsOfflineCacheUpdate();
     NS_ENSURE_TRUE(update, NS_ERROR_OUT_OF_MEMORY);
 
     nsAutoCString clientID;
@@ -2299,7 +2297,7 @@ nsOfflineCacheUpdate::AddURI(nsIURI *aURI, uint32_t aType)
         }
     }
 
-    nsRefPtr<nsOfflineCacheUpdateItem> item =
+    RefPtr<nsOfflineCacheUpdateItem> item =
         new nsOfflineCacheUpdateItem(aURI,
                                      mDocumentURI,
                                      mLoadingPrincipal,

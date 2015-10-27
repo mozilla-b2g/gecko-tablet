@@ -291,6 +291,12 @@ toolbar[customizing] > .overflow-button {
 #main-window[sizemode="maximized"] #titlebar-buttonbox {
   -moz-appearance: -moz-window-button-box-maximized;
 }
+
+#main-window[tabletmode] #titlebar-min,
+#main-window[tabletmode] #titlebar-max {
+  display: none !important;
+}
+
 %endif
 
 %endif
@@ -602,10 +608,7 @@ menupopup[emptyplacesresult="true"] > .hide-if-empty-places-result {
 menuitem.spell-suggestion {
   font-weight: bold;
 }
-/* apply Fitts' law to the notification bar's close button */
-window:not([sizemode="normal"]) .notification-inner {
-  -moz-border-end-width: 0 !important;
-}
+
 /* Hide extension toolbars that neglected to set the proper class */
 window[chromehidden~="location"][chromehidden~="toolbar"] toolbar:not(.chromeclass-menubar),
 window[chromehidden~="toolbar"] toolbar:not(#nav-bar):not(#TabsToolbar):not(#print-preview-toolbar):not(.chromeclass-menubar) {
@@ -759,6 +762,7 @@ html|*#fullscreen-exit-button {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
+  -moz-stack-sizing: ignore;
 }
 
 #addon-progress-notification {

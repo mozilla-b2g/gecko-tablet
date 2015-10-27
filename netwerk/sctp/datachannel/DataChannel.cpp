@@ -80,9 +80,6 @@ static bool sctp_initialized;
 
 namespace mozilla {
 
-class DataChannelShutdown;
-StaticRefPtr<DataChannelShutdown> gDataChannelShutdown;
-
 class DataChannelShutdown : public nsIObserver
 {
 public:
@@ -90,7 +87,8 @@ public:
   // around (singleton likely) unless we want to shutdown sctp whenever
   // we're not using it (and in which case we'd keep a refcnt'd object
   // ref'd by each DataChannelConnection to release the SCTP usrlib via
-  // sctp_finish)
+  // sctp_finish). Right now, the single instance of this class is
+  // owned by the observer service.
 
   NS_DECL_ISUPPORTS
 
@@ -104,25 +102,21 @@ public:
         return;
 
       nsresult rv = observerService->AddObserver(this,
-                                                 "profile-change-net-teardown",
+                                                 "xpcom-will-shutdown",
                                                  false);
       MOZ_ASSERT(rv == NS_OK);
       (void) rv;
     }
 
 private:
-  virtual ~DataChannelShutdown()
-    {
-      nsCOMPtr<nsIObserverService> observerService =
-        mozilla::services::GetObserverService();
-      if (observerService)
-        observerService->RemoveObserver(this, "profile-change-net-teardown");
-    }
+  // The only instance of DataChannelShutdown is owned by the observer
+  // service, so there is no need to call RemoveObserver here.
+  virtual ~DataChannelShutdown() {}
 
 public:
   NS_IMETHODIMP Observe(nsISupports* aSubject, const char* aTopic,
                         const char16_t* aData) override {
-    if (strcmp(aTopic, "profile-change-net-teardown") == 0) {
+    if (strcmp(aTopic, "xpcom-will-shutdown") == 0) {
       LOG(("Shutting down SCTP"));
       if (sctp_initialized) {
         usrsctp_finish();
@@ -134,12 +128,9 @@ public:
         return NS_ERROR_FAILURE;
 
       nsresult rv = observerService->RemoveObserver(this,
-                                                    "profile-change-net-teardown");
+                                                    "xpcom-will-shutdown");
       MOZ_ASSERT(rv == NS_OK);
       (void) rv;
-
-      nsRefPtr<DataChannelShutdown> kungFuDeathGrip(this);
-      gDataChannelShutdown = nullptr;
     }
     return NS_OK;
   }
@@ -260,7 +251,7 @@ DataChannelConnection::Destroy()
   // Finish Destroy on STS thread to avoid bug 876167 - once that's fixed,
   // the usrsctp_close() calls can move back here (and just proxy the
   // disconnect_all())
-  RUN_ON_THREAD(mSTS, WrapRunnable(nsRefPtr<DataChannelConnection>(this),
+  RUN_ON_THREAD(mSTS, WrapRunnable(RefPtr<DataChannelConnection>(this),
                                    &DataChannelConnection::DestroyOnSTS,
                                    mSocket, mMasterSocket),
                 NS_DISPATCH_NORMAL);
@@ -345,8 +336,8 @@ DataChannelConnection::Init(unsigned short aPort, uint16_t aNumStreams, bool aUs
       usrsctp_sysctl_set_sctp_ecn_enable(0);
       sctp_initialized = true;
 
-      gDataChannelShutdown = new DataChannelShutdown();
-      gDataChannelShutdown->Init();
+      RefPtr<DataChannelShutdown> shutdown = new DataChannelShutdown();
+      shutdown->Init();
     }
   }
 
@@ -549,7 +540,7 @@ DataChannelConnection::ConnectViaTransportFlow(TransportFlow *aFlow, uint16_t lo
   mRemotePort = remoteport;
   mState = CONNECTING;
 
-  RUN_ON_THREAD(mSTS, WrapRunnable(nsRefPtr<DataChannelConnection>(this),
+  RUN_ON_THREAD(mSTS, WrapRunnable(RefPtr<DataChannelConnection>(this),
                                    &DataChannelConnection::SetSignals),
                 NS_DISPATCH_NORMAL);
   return true;
@@ -662,7 +653,7 @@ DataChannelConnection::ProcessQueuedOpens()
     temp.Push(static_cast<void *>(temp_channel));
   }
 
-  nsRefPtr<DataChannel> channel;
+  RefPtr<DataChannel> channel;
   // All these entries have an AddRef(); make that explicit now via the dont_AddRef()
   while (nullptr != (channel = dont_AddRef(static_cast<DataChannel *>(temp.PopFront())))) {
     if (channel->mFlags & DATA_CHANNEL_FLAGS_FINISH_OPEN) {
@@ -736,7 +727,7 @@ DataChannelConnection::SctpDtlsOutput(void *addr, void *buffer, size_t length,
     // DISPATCH_SYNC is not fully blocking.  This may be tricky, as it
     // needs to be a per-thread check, not a global.
     peer->mSTS->Dispatch(WrapRunnable(
-                           nsRefPtr<DataChannelConnection>(peer),
+                           RefPtr<DataChannelConnection>(peer),
                            &DataChannelConnection::SendPacket, data, length, true),
                                    NS_DISPATCH_NORMAL);
     res = 0; // cheat!  Packets can always be dropped later anyways
@@ -1053,7 +1044,7 @@ bool
 DataChannelConnection::SendDeferredMessages()
 {
   uint32_t i;
-  nsRefPtr<DataChannel> channel; // we may null out the refs to this
+  RefPtr<DataChannel> channel; // we may null out the refs to this
   bool still_blocked = false;
   bool sent = false;
 
@@ -1195,7 +1186,7 @@ DataChannelConnection::HandleOpenRequestMessage(const struct rtcweb_datachannel_
                                                 size_t length,
                                                 uint16_t stream)
 {
-  nsRefPtr<DataChannel> channel;
+  RefPtr<DataChannel> channel;
   uint32_t prValue;
   uint16_t prPolicy;
   uint32_t flags;
@@ -1699,7 +1690,7 @@ DataChannelConnection::ClearResets()
   }
 
   for (uint32_t i = 0; i < mStreamsResetting.Length(); ++i) {
-    nsRefPtr<DataChannel> channel;
+    RefPtr<DataChannel> channel;
     channel = FindChannelByStream(mStreamsResetting[i]);
     if (channel) {
       LOG(("Forgetting channel %u (%p) with pending reset",channel->mStream, channel.get()));
@@ -1765,7 +1756,7 @@ void
 DataChannelConnection::HandleStreamResetEvent(const struct sctp_stream_reset_event *strrst)
 {
   uint32_t n, i;
-  nsRefPtr<DataChannel> channel; // since we may null out the ref to the channel
+  RefPtr<DataChannel> channel; // since we may null out the ref to the channel
 
   if (!(strrst->strreset_flags & SCTP_STREAM_RESET_DENIED) &&
       !(strrst->strreset_flags & SCTP_STREAM_RESET_FAILED)) {
@@ -1824,7 +1815,7 @@ DataChannelConnection::HandleStreamChangeEvent(const struct sctp_stream_change_e
 {
   uint16_t stream;
   uint32_t i;
-  nsRefPtr<DataChannel> channel;
+  RefPtr<DataChannel> channel;
 
   if (strchg->strchange_flags == SCTP_STREAM_CHANGE_DENIED) {
     LOG(("*** Failed increasing number of streams from %u (%u/%u)",
@@ -2029,7 +2020,7 @@ DataChannelConnection::Open(const nsACString& label, const nsACString& protocol,
   }
 
   flags = !inOrder ? DATA_CHANNEL_FLAGS_OUT_OF_ORDER_ALLOWED : 0;
-  nsRefPtr<DataChannel> channel(new DataChannel(this,
+  RefPtr<DataChannel> channel(new DataChannel(this,
                                                 aStream,
                                                 DataChannel::CONNECTING,
                                                 label, protocol,
@@ -2048,7 +2039,7 @@ DataChannelConnection::Open(const nsACString& label, const nsACString& protocol,
 already_AddRefed<DataChannel>
 DataChannelConnection::OpenFinish(already_AddRefed<DataChannel>&& aChannel)
 {
-  nsRefPtr<DataChannel> channel(aChannel); // takes the reference passed in
+  RefPtr<DataChannel> channel(aChannel); // takes the reference passed in
   // Normally 1 reference if called from ::Open(), or 2 if called from
   // ProcessQueuedOpens() unless the DOMDataChannel was gc'd
   uint16_t stream = channel->mStream;
@@ -2353,10 +2344,10 @@ private:
   // when we send our runnable back to MainThread.  Then ~DataChannelConnection
   // can send the IOThread to MainThread to die in a runnable, avoiding
   // unsafe event loop recursion.  Evil.
-  nsRefPtr<DataChannelConnection> mConnection;
+  RefPtr<DataChannelConnection> mConnection;
   uint16_t mStream;
   // Use RefCount for preventing the object is deleted when SendBlob returns.
-  nsRefPtr<nsIInputStream> mBlob;
+  RefPtr<nsIInputStream> mBlob;
 };
 
 int32_t
@@ -2408,7 +2399,7 @@ public:
 private:
   // Note: we can be destroyed off the target thread, so be careful not to let this
   // get Released()ed on the temp thread!
-  nsRefPtr<DataChannelConnection> mConnection;
+  RefPtr<DataChannelConnection> mConnection;
   uint16_t mStream;
 };
 
@@ -2433,10 +2424,10 @@ DataChannelConnection::ReadBlob(already_AddRefed<DataChannelConnection> aThis,
   NS_GetMainThread(getter_AddRefs(mainThread));
 
   // Must not let Dispatching it cause the DataChannelConnection to get
-  // released on the wrong thread.  Using WrapRunnable(nsRefPtr<DataChannelConnection>(aThis),...
+  // released on the wrong thread.  Using WrapRunnable(RefPtr<DataChannelConnection>(aThis),...
   // will occasionally cause aThis to get released on this thread.  Also, an explicit Runnable
   // lets us avoid copying the blob data an extra time.
-  nsRefPtr<DataChannelBlobSendRunnable> runnable = new DataChannelBlobSendRunnable(aThis,
+  RefPtr<DataChannelBlobSendRunnable> runnable = new DataChannelBlobSendRunnable(aThis,
                                                                                    aStream);
   // avoid copying the blob data by passing the mData from the runnable
   if (NS_FAILED(aBlob->Available(&len)) ||
@@ -2500,7 +2491,7 @@ void
 DataChannelConnection::CloseInt(DataChannel *aChannel)
 {
   MOZ_ASSERT(aChannel);
-  nsRefPtr<DataChannel> channel(aChannel); // make sure it doesn't go away on us
+  RefPtr<DataChannel> channel(aChannel); // make sure it doesn't go away on us
 
   mLock.AssertCurrentThreadOwns();
   LOG(("Connection %p/Channel %p: Closing stream %u",
@@ -2557,7 +2548,7 @@ void DataChannelConnection::CloseAll()
   }
 
   // Clean up any pending opens for channels
-  nsRefPtr<DataChannel> channel;
+  RefPtr<DataChannel> channel;
   while (nullptr != (channel = dont_AddRef(static_cast<DataChannel *>(mPending.PopFront())))) {
     LOG(("closing pending channel %p, stream %u", channel.get(), channel->mStream));
     channel->Close(); // also releases the ref on each iteration

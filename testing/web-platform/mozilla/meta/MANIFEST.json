@@ -106,6 +106,12 @@
             "url": "/_mozilla/service-workers/service-worker/extendable-event-waituntil.https.html"
           }
         ],
+        "service-workers/service-worker/fetch-canvas-tainting-cache.https.html": [
+          {
+            "path": "service-workers/service-worker/fetch-canvas-tainting-cache.https.html",
+            "url": "/_mozilla/service-workers/service-worker/fetch-canvas-tainting-cache.https.html"
+          }
+        ],
         "service-workers/service-worker/fetch-canvas-tainting.https.html": [
           {
             "path": "service-workers/service-worker/fetch-canvas-tainting.https.html",
@@ -197,12 +203,6 @@
           {
             "path": "service-workers/service-worker/fetch-request-fallback.https.html",
             "url": "/_mozilla/service-workers/service-worker/fetch-request-fallback.https.html"
-          }
-        ],
-        "service-workers/service-worker/fetch-request-html-imports.https.html": [
-          {
-            "path": "service-workers/service-worker/fetch-request-html-imports.https.html",
-            "url": "/_mozilla/service-workers/service-worker/fetch-request-html-imports.https.html"
           }
         ],
         "service-workers/service-worker/fetch-request-no-freshness-headers.https.html": [
@@ -397,36 +397,6 @@
             "url": "/_mozilla/service-workers/service-worker/resource-timing.https.html"
           }
         ],
-        "service-workers/service-worker/resources/fetch-request-resources-iframe.https.html": [
-          {
-            "path": "service-workers/service-worker/resources/fetch-request-resources-iframe.https.html",
-            "url": "/_mozilla/service-workers/service-worker/resources/fetch-request-resources-iframe.https.html"
-          }
-        ],
-        "service-workers/service-worker/resources/fetch-request-xhr-iframe.https.html": [
-          {
-            "path": "service-workers/service-worker/resources/fetch-request-xhr-iframe.https.html",
-            "url": "/_mozilla/service-workers/service-worker/resources/fetch-request-xhr-iframe.https.html"
-          }
-        ],
-        "service-workers/service-worker/resources/fetch-response-xhr-iframe.https.html": [
-          {
-            "path": "service-workers/service-worker/resources/fetch-response-xhr-iframe.https.html",
-            "url": "/_mozilla/service-workers/service-worker/resources/fetch-response-xhr-iframe.https.html"
-          }
-        ],
-        "service-workers/service-worker/resources/invalid-blobtype-iframe.https.html": [
-          {
-            "path": "service-workers/service-worker/resources/invalid-blobtype-iframe.https.html",
-            "url": "/_mozilla/service-workers/service-worker/resources/invalid-blobtype-iframe.https.html"
-          }
-        ],
-        "service-workers/service-worker/resources/invalid-header-iframe.https.html": [
-          {
-            "path": "service-workers/service-worker/resources/invalid-header-iframe.https.html",
-            "url": "/_mozilla/service-workers/service-worker/resources/invalid-header-iframe.https.html"
-          }
-        ],
         "service-workers/service-worker/service-worker-csp-connect.https.html": [
           {
             "path": "service-workers/service-worker/service-worker-csp-connect.https.html",
@@ -487,22 +457,10 @@
             "url": "/_mozilla/service-workers/service-worker/skip-waiting.https.html"
           }
         ],
-        "service-workers/service-worker/stashed-ports.https.html": [
-          {
-            "path": "service-workers/service-worker/stashed-ports.https.html",
-            "url": "/_mozilla/service-workers/service-worker/stashed-ports.https.html"
-          }
-        ],
         "service-workers/service-worker/state.https.html": [
           {
             "path": "service-workers/service-worker/state.https.html",
             "url": "/_mozilla/service-workers/service-worker/state.https.html"
-          }
-        ],
-        "service-workers/service-worker/sync-xhr-doesnt-deadlock.https.html": [
-          {
-            "path": "service-workers/service-worker/sync-xhr-doesnt-deadlock.https.html",
-            "url": "/_mozilla/service-workers/service-worker/sync-xhr-doesnt-deadlock.https.html"
           }
         ],
         "service-workers/service-worker/synced-state.https.html": [
@@ -547,6 +505,18 @@
             "url": "/_mozilla/service-workers/service-worker/update.https.html"
           }
         ],
+        "service-workers/service-worker/update-after-navigation-fetch-event.https.html": [
+          {
+            "path": "service-workers/service-worker//update-after-navigation-fetch-event.https.html",
+            "url": "/_mozilla/service-workers/service-worker//update-after-navigation-fetch-event.https.html"
+          }
+        ],
+        "service-workers/service-worker/update-after-oneday.https.html": [
+          {
+            "path": "service-workers/service-worker//update-after-oneday.https.html",
+            "url": "/_mozilla/service-workers/service-worker//update-after-oneday.https.html"
+          }
+        ],
         "service-workers/service-worker/waiting.https.html": [
           {
             "path": "service-workers/service-worker/waiting.https.html",
@@ -557,6 +527,12 @@
           {
             "path": "service-workers/service-worker/worker-interception.https.html",
             "url": "/_mozilla/service-workers/service-worker/worker-interception.https.html"
+          }
+        ],
+        "service-workers/service-worker/xhr.https.html": [
+          {
+            "path": "service-workers/service-worker/xhr.https.html",
+            "url": "/_mozilla/service-workers/service-worker/xhr.https.html"
           }
         ]
       }

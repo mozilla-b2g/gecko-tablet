@@ -104,7 +104,7 @@ PrincipalInfoToPrincipal(const PrincipalInfo& aPrincipalInfo,
         whitelist.AppendElement(wlPrincipal);
       }
 
-      nsRefPtr<nsExpandedPrincipal> expandedPrincipal = new nsExpandedPrincipal(whitelist);
+      RefPtr<nsExpandedPrincipal> expandedPrincipal = new nsExpandedPrincipal(whitelist);
       if (!expandedPrincipal) {
         NS_WARNING("could not instantiate expanded principal");
         return nullptr;
@@ -235,13 +235,14 @@ LoadInfoToLoadInfoArgs(nsILoadInfo *aLoadInfo,
       requestingPrincipalInfo,
       triggeringPrincipalInfo,
       aLoadInfo->GetSecurityFlags(),
-      aLoadInfo->GetContentPolicyType(),
+      aLoadInfo->InternalContentPolicyType(),
       aLoadInfo->GetUpgradeInsecureRequests(),
       aLoadInfo->GetInnerWindowID(),
       aLoadInfo->GetOuterWindowID(),
       aLoadInfo->GetParentOuterWindowID(),
       aLoadInfo->GetEnforceSecurity(),
       aLoadInfo->GetInitialSecurityCheckDone(),
+      aLoadInfo->GetOriginAttributes(),
       redirectChain);
 
   return NS_OK;
@@ -286,6 +287,7 @@ LoadInfoArgsToLoadInfo(const OptionalLoadInfoArgs& aOptionalLoadInfoArgs,
                           loadInfoArgs.parentOuterWindowID(),
                           loadInfoArgs.enforceSecurity(),
                           loadInfoArgs.initialSecurityCheckDone(),
+                          loadInfoArgs.originAttributes(),
                           redirectChain);
 
    loadInfo.forget(outLoadInfo);

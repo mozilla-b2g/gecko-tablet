@@ -59,8 +59,6 @@ public:
     bool OnMultitouchEvent(mozilla::AndroidGeckoEvent *ae);
     void OnNativeGestureEvent(mozilla::AndroidGeckoEvent *ae);
     void OnMouseEvent(mozilla::AndroidGeckoEvent *ae);
-    void OnKeyEvent(mozilla::AndroidGeckoEvent *ae);
-    void OnIMEEvent(mozilla::AndroidGeckoEvent *ae);
 
     void OnSizeChanged(const mozilla::gfx::IntSize& aSize);
 
@@ -141,8 +139,6 @@ public:
     NS_IMETHOD_(void) SetInputContext(const InputContext& aContext,
                                       const InputContextAction& aAction) override;
     NS_IMETHOD_(InputContext) GetInputContext() override;
-
-    nsresult NotifyIMEOfTextChange(const IMENotification& aIMENotification);
     virtual nsIMEUpdatePreference GetIMEUpdatePreference() override;
 
     LayerManager* GetLayerManager (PLayerTransactionChild* aShadowManager = nullptr,
@@ -185,38 +181,8 @@ protected:
     nsWindow *FindTopLevel();
     bool IsTopLevel();
 
-    struct IMEChange {
-        int32_t mStart, mOldEnd, mNewEnd;
-
-        IMEChange() :
-            mStart(-1), mOldEnd(-1), mNewEnd(-1)
-        {
-        }
-        IMEChange(const IMENotification& aIMENotification)
-            : mStart(aIMENotification.mTextChangeData.mStartOffset)
-            , mOldEnd(aIMENotification.mTextChangeData.mRemovedEndOffset)
-            , mNewEnd(aIMENotification.mTextChangeData.mAddedEndOffset)
-        {
-            MOZ_ASSERT(aIMENotification.mMessage ==
-                           mozilla::widget::NOTIFY_IME_OF_TEXT_CHANGE,
-                       "IMEChange initialized with wrong notification");
-            MOZ_ASSERT(aIMENotification.mTextChangeData.IsValid(),
-                       "The text change notification isn't initialized");
-            MOZ_ASSERT(aIMENotification.mTextChangeData.IsInInt32Range(),
-                       "The text change notification is out of range");
-        }
-        bool IsEmpty() const
-        {
-            return mStart < 0;
-        }
-    };
-
-    nsRefPtr<mozilla::TextComposition> GetIMEComposition();
+    RefPtr<mozilla::TextComposition> GetIMEComposition();
     void RemoveIMEComposition();
-    void SendIMEDummyKeyEvents();
-    void AddIMETextChange(const IMEChange& aChange);
-    void PostFlushIMEChanges();
-    void FlushIMEChanges();
 
     void ConfigureAPZCTreeManager() override;
     void ConfigureAPZControllerThread() override;
@@ -236,18 +202,8 @@ protected:
 
     nsCOMPtr<nsIIdleServiceInternal> mIdleService;
 
-    bool mIMEMaskSelectionUpdate;
-    int32_t mIMEMaskEventsCount; // Mask events when > 0
-    nsRefPtr<mozilla::TextRangeArray> mIMERanges;
-    bool mIMEUpdatingContext;
-    nsAutoTArray<mozilla::AndroidGeckoEvent, 8> mIMEKeyEvents;
-    nsAutoTArray<IMEChange, 4> mIMETextChanges;
-    bool mIMESelectionChanged;
-
     bool mAwaitingFullScreen;
     bool mIsFullScreen;
-
-    InputContext mInputContext;
 
     virtual nsresult NotifyIMEInternal(
                          const IMENotification& aIMENotification) override;
@@ -257,10 +213,6 @@ protected:
     static void LogWindow(nsWindow *win, int index, int indent);
 
 private:
-    void InitKeyEvent(mozilla::WidgetKeyboardEvent& event,
-                      mozilla::AndroidGeckoEvent& key,
-                      ANPEvent* pluginEvent);
-    void HandleSpecialKey(mozilla::AndroidGeckoEvent *ae);
     void CreateLayerManager(int aCompositorWidth, int aCompositorHeight);
     void RedrawAll();
 

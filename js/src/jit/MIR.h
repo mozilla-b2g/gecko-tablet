@@ -4613,11 +4613,11 @@ class MCreateThisWithTemplate
 // Caller-side allocation of |this| for |new|:
 // Given a prototype operand, construct |this| for JSOP_NEW.
 class MCreateThisWithProto
-  : public MBinaryInstruction,
-    public MixPolicy<ObjectPolicy<0>, ObjectPolicy<1> >::Data
+  : public MTernaryInstruction,
+    public Mix3Policy<ObjectPolicy<0>, ObjectPolicy<1>, ObjectPolicy<2> >::Data
 {
-    MCreateThisWithProto(MDefinition* callee, MDefinition* prototype)
-      : MBinaryInstruction(callee, prototype)
+    MCreateThisWithProto(MDefinition* callee, MDefinition* newTarget, MDefinition* prototype)
+      : MTernaryInstruction(callee, newTarget, prototype)
     {
         setResultType(MIRType_Object);
     }
@@ -4625,16 +4625,19 @@ class MCreateThisWithProto
   public:
     INSTRUCTION_HEADER(CreateThisWithProto)
     static MCreateThisWithProto* New(TempAllocator& alloc, MDefinition* callee,
-                                     MDefinition* prototype)
+                                     MDefinition* newTarget, MDefinition* prototype)
     {
-        return new(alloc) MCreateThisWithProto(callee, prototype);
+        return new(alloc) MCreateThisWithProto(callee, newTarget, prototype);
     }
 
     MDefinition* getCallee() const {
         return getOperand(0);
     }
-    MDefinition* getPrototype() const {
+    MDefinition* getNewTarget() const {
         return getOperand(1);
+    }
+    MDefinition* getPrototype() const {
+        return getOperand(2);
     }
 
     // Although creation of |this| modifies global state, it is safely repeatable.
@@ -4649,23 +4652,26 @@ class MCreateThisWithProto
 // Caller-side allocation of |this| for |new|:
 // Constructs |this| when possible, else MagicValue(JS_IS_CONSTRUCTING).
 class MCreateThis
-  : public MUnaryInstruction,
-    public ObjectPolicy<0>::Data
+  : public MBinaryInstruction,
+    public MixPolicy<ObjectPolicy<0>, ObjectPolicy<1> >::Data
 {
-    explicit MCreateThis(MDefinition* callee)
-      : MUnaryInstruction(callee)
+    explicit MCreateThis(MDefinition* callee, MDefinition* newTarget)
+      : MBinaryInstruction(callee, newTarget)
     {
         setResultType(MIRType_Value);
     }
 
   public:
     INSTRUCTION_HEADER(CreateThis)
-    static MCreateThis* New(TempAllocator& alloc, MDefinition* callee)
+    static MCreateThis* New(TempAllocator& alloc, MDefinition* callee, MDefinition* newTarget)
     {
-        return new(alloc) MCreateThis(callee);
+        return new(alloc) MCreateThis(callee, newTarget);
     }
 
     MDefinition* getCallee() const {
+        return getOperand(0);
+    }
+    MDefinition* getNewTarget() const {
         return getOperand(0);
     }
 
@@ -7230,8 +7236,10 @@ class MLexicalCheck
   : public MUnaryInstruction,
     public BoxPolicy<0>::Data
 {
-    explicit MLexicalCheck(MDefinition* input)
-      : MUnaryInstruction(input)
+    BailoutKind kind_;
+    explicit MLexicalCheck(MDefinition* input, BailoutKind kind)
+      : MUnaryInstruction(input),
+        kind_(kind)
     {
         setResultType(MIRType_Value);
         setResultTypeSet(input->resultTypeSet());
@@ -7242,8 +7250,9 @@ class MLexicalCheck
   public:
     INSTRUCTION_HEADER(LexicalCheck)
 
-    static MLexicalCheck* New(TempAllocator& alloc, MDefinition* input) {
-        return new(alloc) MLexicalCheck(input);
+    static MLexicalCheck* New(TempAllocator& alloc, MDefinition* input,
+                              BailoutKind kind = Bailout_UninitializedLexical) {
+        return new(alloc) MLexicalCheck(input, kind);
     }
 
     AliasSet getAliasSet() const override {
@@ -7254,24 +7263,36 @@ class MLexicalCheck
         return getOperand(0);
     }
 
+    BailoutKind bailoutKind() const {
+        return kind_;
+    }
+
     bool congruentTo(const MDefinition* ins) const override {
         return congruentIfOperandsEqual(ins);
     }
 };
 
 // Unconditionally throw an uninitialized let error.
-class MThrowUninitializedLexical : public MNullaryInstruction
+class MThrowRuntimeLexicalError : public MNullaryInstruction
 {
-    MThrowUninitializedLexical() {
+    unsigned errorNumber_;
+
+    explicit MThrowRuntimeLexicalError(unsigned errorNumber)
+      : errorNumber_(errorNumber)
+    {
         setGuard();
         setResultType(MIRType_None);
     }
 
   public:
-    INSTRUCTION_HEADER(ThrowUninitializedLexical)
+    INSTRUCTION_HEADER(ThrowRuntimeLexicalError)
 
-    static MThrowUninitializedLexical* New(TempAllocator& alloc) {
-        return new(alloc) MThrowUninitializedLexical();
+    static MThrowRuntimeLexicalError* New(TempAllocator& alloc, unsigned errorNumber) {
+        return new(alloc) MThrowRuntimeLexicalError(errorNumber);
+    }
+
+    unsigned errorNumber() const {
+        return errorNumber_;
     }
 
     AliasSet getAliasSet() const override {
@@ -10225,20 +10246,18 @@ class CacheLocationList : public InlineConcatList<CacheLocationList>
 };
 
 class MGetPropertyCache
-  : public MUnaryInstruction,
-    public SingleObjectPolicy::Data
+  : public MBinaryInstruction,
+    public MixPolicy<ObjectPolicy<0>, CacheIdPolicy<1>>::Data
 {
-    CompilerPropertyName name_;
-    bool idempotent_;
-    bool monitoredResult_;
+    bool idempotent_ : 1;
+    bool monitoredResult_ : 1;
 
     CacheLocationList location_;
 
     InlinePropertyTable* inlinePropertyTable_;
 
-    MGetPropertyCache(MDefinition* obj, PropertyName* name, bool monitoredResult)
-      : MUnaryInstruction(obj),
-        name_(name),
+    MGetPropertyCache(MDefinition* obj, MDefinition* id, bool monitoredResult)
+      : MBinaryInstruction(obj, id),
         idempotent_(false),
         monitoredResult_(monitoredResult),
         location_(),
@@ -10255,9 +10274,9 @@ class MGetPropertyCache
   public:
     INSTRUCTION_HEADER(GetPropertyCache)
 
-    static MGetPropertyCache* New(TempAllocator& alloc, MDefinition* obj, PropertyName* name,
+    static MGetPropertyCache* New(TempAllocator& alloc, MDefinition* obj, MDefinition* id,
                                   bool monitoredResult) {
-        return new(alloc) MGetPropertyCache(obj, name, monitoredResult);
+        return new(alloc) MGetPropertyCache(obj, id, monitoredResult);
     }
 
     InlinePropertyTable* initInlinePropertyTable(TempAllocator& alloc, jsbytecode* pc) {
@@ -10277,9 +10296,10 @@ class MGetPropertyCache
     MDefinition* object() const {
         return getOperand(0);
     }
-    PropertyName* name() const {
-        return name_;
+    MDefinition* idval() const {
+        return getOperand(1);
     }
+
     bool idempotent() const {
         return idempotent_;
     }
@@ -10299,8 +10319,6 @@ class MGetPropertyCache
             return false;
         if (!ins->isGetPropertyCache())
             return false;
-        if (name() != ins->toGetPropertyCache()->name())
-            return false;
         return congruentIfOperandsEqual(ins);
     }
 
@@ -10315,6 +10333,8 @@ class MGetPropertyCache
 
     void setBlock(MBasicBlock* block) override;
     bool updateForReplacement(MDefinition* ins) override;
+
+    bool allowDoubleResult() const;
 };
 
 // Emit code to load a value from an object if it matches one of the receivers
@@ -10631,44 +10651,6 @@ class MFunctionDispatch : public MDispatchInstruction
     static MFunctionDispatch* New(TempAllocator& alloc, MDefinition* ins) {
         return new(alloc) MFunctionDispatch(alloc, ins);
     }
-};
-
-class MGetElementCache
-  : public MBinaryInstruction
-{
-    MixPolicy<ObjectPolicy<0>, BoxPolicy<1> >::Data PolicyV;
-    MixPolicy<ObjectPolicy<0>, IntPolicy<1> >::Data PolicyT;
-    TypePolicy* thisTypePolicy();
-
-    // See the comment in IonBuilder::jsop_getelem.
-    bool monitoredResult_;
-
-    MGetElementCache(MDefinition* obj, MDefinition* value, bool monitoredResult)
-      : MBinaryInstruction(obj, value), monitoredResult_(monitoredResult)
-    {
-        setResultType(MIRType_Value);
-    }
-
-  public:
-    INSTRUCTION_HEADER(GetElementCache)
-
-    static MGetElementCache* New(TempAllocator& alloc, MDefinition* obj, MDefinition* value,
-                                 bool monitoredResult)
-    {
-        return new(alloc) MGetElementCache(obj, value, monitoredResult);
-    }
-
-    MDefinition* object() const {
-        return getOperand(0);
-    }
-    MDefinition* index() const {
-        return getOperand(1);
-    }
-    bool monitoredResult() const {
-        return monitoredResult_;
-    }
-
-    bool allowDoubleResult() const;
 };
 
 class MBindNameCache
@@ -11250,13 +11232,12 @@ class MSetPropertyInstruction : public MBinaryInstruction
 {
     CompilerPropertyName name_;
     bool strict_;
-    bool needsBarrier_;
 
   protected:
     MSetPropertyInstruction(MDefinition* obj, MDefinition* value, PropertyName* name,
                             bool strict)
       : MBinaryInstruction(obj, value),
-        name_(name), strict_(strict), needsBarrier_(true)
+        name_(name), strict_(strict)
     {}
 
   public:
@@ -11271,12 +11252,6 @@ class MSetPropertyInstruction : public MBinaryInstruction
     }
     bool strict() const {
         return strict_;
-    }
-    bool needsBarrier() const {
-        return needsBarrier_;
-    }
-    void setNeedsBarrier() {
-        needsBarrier_ = true;
     }
 };
 
@@ -11399,59 +11374,52 @@ class MCallSetProperty
 };
 
 class MSetPropertyCache
-  : public MSetPropertyInstruction,
-    public MixPolicy<SingleObjectPolicy, NoFloatPolicy<1> >::Data
+  : public MTernaryInstruction,
+    public Mix3Policy<SingleObjectPolicy, CacheIdPolicy<1>, NoFloatPolicy<2>>::Data
 {
-    bool needsTypeBarrier_;
+    bool strict_ : 1;
+    bool needsTypeBarrier_ : 1;
+    bool guardHoles_ : 1;
 
-    MSetPropertyCache(MDefinition* obj, MDefinition* value, PropertyName* name, bool strict,
-                      bool typeBarrier)
-      : MSetPropertyInstruction(obj, value, name, strict),
-        needsTypeBarrier_(typeBarrier)
+    MSetPropertyCache(MDefinition* obj, MDefinition* id, MDefinition* value, bool strict,
+                      bool typeBarrier, bool guardHoles)
+      : MTernaryInstruction(obj, id, value),
+        strict_(strict),
+        needsTypeBarrier_(typeBarrier),
+        guardHoles_(guardHoles)
     {
     }
 
   public:
     INSTRUCTION_HEADER(SetPropertyCache)
 
-    static MSetPropertyCache* New(TempAllocator& alloc, MDefinition* obj, MDefinition* value,
-                                  PropertyName* name, bool strict, bool typeBarrier)
+    static MSetPropertyCache* New(TempAllocator& alloc, MDefinition* obj, MDefinition* id,
+                                  MDefinition* value, bool strict, bool typeBarrier,
+                                  bool guardHoles)
     {
-        return new(alloc) MSetPropertyCache(obj, value, name, strict, typeBarrier);
+        return new(alloc) MSetPropertyCache(obj, id, value, strict, typeBarrier, guardHoles);
     }
 
     bool needsTypeBarrier() const {
         return needsTypeBarrier_;
-    }
-};
-
-class MSetElementCache
-  : public MSetElementInstruction,
-    public MixPolicy<ObjectPolicy<0>, BoxPolicy<1> >::Data
-{
-    bool guardHoles_;
-
-    MSetElementCache(MDefinition* obj, MDefinition* index, MDefinition* value, bool strict,
-                     bool guardHoles)
-      : MSetElementInstruction(obj, index, value, strict),
-        guardHoles_(guardHoles)
-    {
-    }
-
-  public:
-    INSTRUCTION_HEADER(SetElementCache)
-
-    static MSetElementCache* New(TempAllocator& alloc, MDefinition* obj, MDefinition* index,
-                                 MDefinition* value, bool strict, bool guardHoles)
-    {
-        return new(alloc) MSetElementCache(obj, index, value, strict, guardHoles);
     }
 
     bool guardHoles() const {
         return guardHoles_;
     }
 
-    bool canConsumeFloat32(MUse* use) const override { return use == getUseFor(2); }
+    MDefinition* object() const {
+        return getOperand(0);
+    }
+    MDefinition* idval() const {
+        return getOperand(1);
+    }
+    MDefinition* value() const {
+        return getOperand(2);
+    }
+    bool strict() const {
+        return strict_;
+    }
 };
 
 class MCallGetProperty
@@ -12933,6 +12901,33 @@ class MHasClass
         if (getClass() != ins->toHasClass()->getClass())
             return false;
         return congruentIfOperandsEqual(ins);
+    }
+};
+
+class MCheckReturn
+  : public MBinaryInstruction,
+    public BoxInputsPolicy::Data
+{
+    explicit MCheckReturn(MDefinition* retVal, MDefinition* thisVal)
+      : MBinaryInstruction(retVal, thisVal)
+    {
+        setGuard();
+        setResultType(MIRType_Value);
+        setResultTypeSet(retVal->resultTypeSet());
+    }
+
+  public:
+    INSTRUCTION_HEADER(CheckReturn)
+
+    static MCheckReturn* New(TempAllocator& alloc, MDefinition* retVal, MDefinition* thisVal) {
+        return new (alloc) MCheckReturn(retVal, thisVal);
+    }
+
+    MDefinition* returnValue() const {
+        return getOperand(0);
+    }
+    MDefinition* thisValue() const {
+        return getOperand(1);
     }
 };
 

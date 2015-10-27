@@ -20,7 +20,7 @@
                   flex="1" eventnode="document" xbl:inherits="handleCtrlPageUpDown"
                   onselect="if (event.target.localName == 'tabpanels') this.parentNode.updateCurrentBrowser();">
         <xul:tabpanels flex="1" class="plain" selectedIndex="0" anonid="panelcontainer">
-          <xul:notificationbox flex="1">
+          <xul:notificationbox flex="1" notificationside="top">
             <xul:hbox flex="1" class="browserSidebarContainer">
               <xul:vbox flex="1" class="browserContainer">
                 <xul:stack flex="1" class="browserStack" anonid="browserStack">
@@ -1579,6 +1579,11 @@
             if (wasActive)
               aBrowser.focus();
 
+            // If the findbar has been initialised, reset its browser reference.
+            if (this.isFindBarInitialized(tab)) {
+              this.getFindBar(tab).browser = aBrowser;
+            }
+
             let evt = document.createEvent("Events");
             evt.initEvent("TabRemotenessChange", true, false);
             tab.dispatchEvent(evt);
@@ -1648,7 +1653,7 @@
             // and the URL is "about:newtab". We do not support preloading for
             // custom newtab URLs.
             return Services.prefs.getBoolPref("browser.newtab.preload") &&
-                   !NewTabURL.overridden;
+                   !aboutNewTabService.overridden;
           ]]>
         </body>
       </method>
@@ -1743,6 +1748,7 @@
             var notificationbox = document.createElementNS(NS_XUL,
                                                            "notificationbox");
             notificationbox.setAttribute("flex", "1");
+            notificationbox.setAttribute("notificationside", "top");
             notificationbox.appendChild(browserSidebarContainer);
 
             // Prevent the superfluous initial load of a blank document
@@ -6005,8 +6011,8 @@
           let overlayIcon =
             document.getAnonymousElementByAttribute(this, "anonid", "overlay-icon");
 
-          return soundPlayingIcon && soundPlayingIcon.mozMatchesSelector(":hover") ||
-                 (overlayIcon && overlayIcon.mozMatchesSelector(":hover") && iconVisible);
+          return soundPlayingIcon && soundPlayingIcon.matches(":hover") ||
+                 (overlayIcon && overlayIcon.matches(":hover") && iconVisible);
         ]]></getter>
       </property>
       <field name="mCorrespondingMenuitem">null</field>

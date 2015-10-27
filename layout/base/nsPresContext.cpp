@@ -56,6 +56,7 @@
 #include "mozilla/dom/TabParent.h"
 #include "nsRefreshDriver.h"
 #include "Layers.h"
+#include "LayerUserData.h"
 #include "ClientLayerManager.h"
 #include "mozilla/dom/NotifyPaintEvent.h"
 #include "gfxPrefs.h"
@@ -119,7 +120,7 @@ public:
   }
 
 private:
-  nsRefPtr<nsPresContext> mPresContext;
+  RefPtr<nsPresContext> mPresContext;
   nsCString mCharSet;
 };
 
@@ -162,7 +163,7 @@ nsPresContext::IsDOMPaintEventPending()
 void
 nsPresContext::PrefChangedCallback(const char* aPrefName, void* instance_data)
 {
-  nsRefPtr<nsPresContext>  presContext =
+  RefPtr<nsPresContext>  presContext =
     static_cast<nsPresContext*>(instance_data);
 
   NS_ASSERTION(nullptr != presContext, "bad instance data");
@@ -698,7 +699,7 @@ nsPresContext::GetDocumentColorPreferences()
   // 0 = default: always, except in high contrast mode
   // 1 = always
   // 2 = never
-  if (sDocumentColorsSetting == 1) {
+  if (sDocumentColorsSetting == 1 || mDocument->IsBeingUsedAsImage()) {
     mUseDocumentColors = true;
   } else if (sDocumentColorsSetting == 2) {
     mUseDocumentColors = isChromeDocShell || mIsChromeOriginImage;
@@ -873,7 +874,7 @@ nsPresContext::PreferenceChanged(const char* aPrefName)
       // Re-fetch the view manager's window dimensions in case there's a deferred
       // resize which hasn't affected our mVisibleArea yet
       nscoord oldWidthAppUnits, oldHeightAppUnits;
-      nsRefPtr<nsViewManager> vm = shell->GetViewManager();
+      RefPtr<nsViewManager> vm = shell->GetViewManager();
       if (!vm) {
         return;
       }
@@ -1242,7 +1243,7 @@ nsPresContext::Observe(nsISupports* aSubject,
                         const char16_t* aData)
 {
   if (!nsCRT::strcmp(aTopic, "charset")) {
-    nsRefPtr<CharSetChangingRunnable> runnable =
+    RefPtr<CharSetChangingRunnable> runnable =
       new CharSetChangingRunnable(this, NS_LossyConvertUTF16toASCII(aData));
     return NS_DispatchToCurrentThread(runnable);
   }
@@ -1381,11 +1382,11 @@ nsPresContext::CompatibilityModeChanged()
   if (needsQuirkSheet) {
     // quirk.css needs to come after html.css; we just keep it at the end.
     DebugOnly<nsresult> rv =
-      styleSet->AppendStyleSheet(nsStyleSet::eAgentSheet, sheet);
+      styleSet->AppendStyleSheet(SheetType::Agent, sheet);
     NS_WARN_IF_FALSE(NS_SUCCEEDED(rv), "failed to insert quirk.css");
   } else {
     DebugOnly<nsresult> rv =
-      styleSet->RemoveStyleSheet(nsStyleSet::eAgentSheet, sheet);
+      styleSet->RemoveStyleSheet(SheetType::Agent, sheet);
     NS_WARN_IF_FALSE(NS_SUCCEEDED(rv), "failed to remove quirk.css");
   }
 
@@ -1617,7 +1618,7 @@ GetPropagatedScrollbarStylesForViewport(nsPresContext* aPresContext,
 
   // Check the style on the document root element
   nsStyleSet *styleSet = aPresContext->StyleSet();
-  nsRefPtr<nsStyleContext> rootStyle;
+  RefPtr<nsStyleContext> rootStyle;
   rootStyle = styleSet->ResolveStyleFor(docElement, nullptr);
   if (CheckOverflow(rootStyle->StyleDisplay(), aStyles)) {
     // tell caller we stole the overflow style from the root element
@@ -1645,7 +1646,7 @@ GetPropagatedScrollbarStylesForViewport(nsPresContext* aPresContext,
     return nullptr;
   }
 
-  nsRefPtr<nsStyleContext> bodyStyle;
+  RefPtr<nsStyleContext> bodyStyle;
   bodyStyle = styleSet->ResolveStyleFor(bodyElement->AsElement(), rootStyle);
 
   if (CheckOverflow(bodyStyle->StyleDisplay(), aStyles)) {
@@ -1985,7 +1986,7 @@ NotifyChildrenUIResolutionChanged(nsIDOMWindow* aWindow)
     return;
   }
   nsCOMPtr<nsIDocument> doc = piWin->GetExtantDoc();
-  nsRefPtr<nsPIWindowRoot> topLevelWin = nsContentUtils::GetWindowRoot(doc);
+  RefPtr<nsPIWindowRoot> topLevelWin = nsContentUtils::GetWindowRoot(doc);
   if (!topLevelWin) {
     return;
   }
@@ -2188,7 +2189,7 @@ nsPresContext::EnsureVisible()
     docShell->GetContentViewer(getter_AddRefs(cv));
     // Make sure this is the content viewer we belong with
     if (cv) {
-      nsRefPtr<nsPresContext> currentPresContext;
+      RefPtr<nsPresContext> currentPresContext;
       cv->GetPresContext(getter_AddRefs(currentPresContext));
       if (currentPresContext == this) {
         // OK, this is us.  We want to call Show() on the content viewer.
@@ -2365,7 +2366,7 @@ nsPresContext::FireDOMPaintEvent(nsInvalidateRequestList* aList)
   // This will empty our list in case dispatching the event causes more damage
   // (hopefully it won't, or we're likely to get an infinite loop! At least
   // it won't be blocking app execution though).
-  nsRefPtr<NotifyPaintEvent> event =
+  RefPtr<NotifyPaintEvent> event =
     NS_NewDOMNotifyPaintEvent(eventTarget, this, nullptr, eAfterPaint, aList);
 
   // Even if we're not telling the window about the event (so eventTarget is
@@ -2593,7 +2594,7 @@ public:
     return NS_OK;
   }
 
-  nsRefPtr<nsPresContext> mPresContext;
+  RefPtr<nsPresContext> mPresContext;
   nsInvalidateRequestList mList;
 };
 

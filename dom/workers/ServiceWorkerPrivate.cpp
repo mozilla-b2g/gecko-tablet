@@ -5,15 +5,23 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "ServiceWorkerPrivate.h"
-
 #include "ServiceWorkerManager.h"
+#include "nsStreamUtils.h"
+#include "nsStringStream.h"
+#include "mozilla/dom/FetchUtil.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
 
 BEGIN_WORKERS_NAMESPACE
 
-NS_IMPL_ISUPPORTS0(ServiceWorkerPrivate)
+NS_IMPL_CYCLE_COLLECTING_ADDREF(ServiceWorkerPrivate)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(ServiceWorkerPrivate)
+NS_IMPL_CYCLE_COLLECTION(ServiceWorkerPrivate, mSupportsArray)
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(ServiceWorkerPrivate)
+  NS_INTERFACE_MAP_ENTRY(nsISupports)
+NS_INTERFACE_MAP_END
 
 // Tracks the "dom.disable_open_click_delay" preference.  Modified on main
 // thread, read on worker threads.
@@ -45,7 +53,7 @@ private:
     mPrivate->ReleaseToken();
   }
 
-  nsRefPtr<ServiceWorkerPrivate> mPrivate;
+  RefPtr<ServiceWorkerPrivate> mPrivate;
 };
 
 NS_IMPL_ISUPPORTS0(KeepAliveToken)
@@ -67,6 +75,7 @@ ServiceWorkerPrivate::~ServiceWorkerPrivate()
   MOZ_ASSERT(!mWorkerPrivate);
   MOZ_ASSERT(!mTokenCount);
   MOZ_ASSERT(!mInfo);
+  MOZ_ASSERT(mSupportsArray.IsEmpty());
 
   mIdleWorkerTimer->Cancel();
 }
@@ -94,7 +103,7 @@ namespace {
 class CheckScriptEvaluationWithCallback final : public WorkerRunnable
 {
   nsMainThreadPtrHandle<KeepAliveToken> mKeepAliveToken;
-  nsRefPtr<nsRunnable> mCallback;
+  RefPtr<nsRunnable> mCallback;
 
 public:
   CheckScriptEvaluationWithCallback(WorkerPrivate* aWorkerPrivate,
@@ -131,7 +140,7 @@ ServiceWorkerPrivate::ContinueOnSuccessfulScriptEvaluation(nsRunnable* aCallback
   NS_ENSURE_SUCCESS(rv, rv);
 
   MOZ_ASSERT(mKeepAliveToken);
-  nsRefPtr<WorkerRunnable> r = new CheckScriptEvaluationWithCallback(mWorkerPrivate,
+  RefPtr<WorkerRunnable> r = new CheckScriptEvaluationWithCallback(mWorkerPrivate,
                                                                      mKeepAliveToken,
                                                                      aCallback);
   AutoJSAPI jsapi;
@@ -184,6 +193,51 @@ public:
 
 NS_IMPL_ISUPPORTS0(KeepAliveHandler)
 
+class SoftUpdateRequest : public nsRunnable
+{
+protected:
+  nsMainThreadPtrHandle<ServiceWorkerRegistrationInfo> mRegistration;
+public:
+  explicit SoftUpdateRequest(nsMainThreadPtrHandle<ServiceWorkerRegistrationInfo>& aRegistration)
+    : mRegistration(aRegistration)
+  {
+    MOZ_ASSERT(aRegistration);
+  }
+
+  NS_IMETHOD Run()
+  {
+    AssertIsOnMainThread();
+
+    RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
+    MOZ_ASSERT(swm);
+
+    OriginAttributes attrs =
+      mozilla::BasePrincipal::Cast(mRegistration->mPrincipal)->OriginAttributesRef();
+
+    swm->PropagateSoftUpdate(attrs,
+                             NS_ConvertUTF8toUTF16(mRegistration->mScope));
+    return NS_OK;
+  }
+};
+
+class CheckLastUpdateTimeRequest final : public SoftUpdateRequest
+{
+public:
+  explicit CheckLastUpdateTimeRequest(
+    nsMainThreadPtrHandle<ServiceWorkerRegistrationInfo>& aRegistration)
+    : SoftUpdateRequest(aRegistration)
+  {}
+
+  NS_IMETHOD Run()
+  {
+    AssertIsOnMainThread();
+    if (mRegistration->IsLastUpdateCheckTimeOverOneDay()) {
+      SoftUpdateRequest::Run();
+    }
+    return NS_OK;
+  }
+};
+
 class ExtendableEventWorkerRunnable : public WorkerRunnable
 {
 protected:
@@ -220,7 +274,7 @@ public:
       return;
     }
 
-    nsRefPtr<Promise> waitUntilPromise = aEvent->GetPromise();
+    RefPtr<Promise> waitUntilPromise = aEvent->GetPromise();
     if (!waitUntilPromise) {
       waitUntilPromise =
         Promise::Resolve(sgo, aCx, JS::UndefinedHandleValue, result);
@@ -231,13 +285,40 @@ public:
     }
 
     MOZ_ASSERT(waitUntilPromise);
-    nsRefPtr<KeepAliveHandler> keepAliveHandler =
+    RefPtr<KeepAliveHandler> keepAliveHandler =
       new KeepAliveHandler(mKeepAliveToken);
     waitUntilPromise->AppendNativeHandler(keepAliveHandler);
 
     if (aWaitUntilPromise) {
       waitUntilPromise.forget(aWaitUntilPromise);
     }
+  }
+};
+
+// Handle functional event
+// 9.9.7 If the time difference in seconds calculated by the current time minus
+// registration's last update check time is greater than 86400, invoke Soft Update
+// algorithm.
+class ExtendableFunctionalEventWorkerRunnable : public ExtendableEventWorkerRunnable
+{
+protected:
+  nsMainThreadPtrHandle<ServiceWorkerRegistrationInfo> mRegistration;
+public:
+  ExtendableFunctionalEventWorkerRunnable(WorkerPrivate* aWorkerPrivate,
+                                          KeepAliveToken* aKeepAliveToken,
+                                          nsMainThreadPtrHandle<ServiceWorkerRegistrationInfo>& aRegistration)
+    : ExtendableEventWorkerRunnable(aWorkerPrivate, aKeepAliveToken)
+    , mRegistration(aRegistration)
+  {
+    MOZ_ASSERT(aRegistration);
+  }
+
+  void
+  PostRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate, bool aRunResult)
+  {
+    nsCOMPtr<nsIRunnable> runnable = new CheckLastUpdateTimeRequest(mRegistration);
+
+    MOZ_ALWAYS_TRUE(NS_SUCCEEDED(NS_DispatchToMainThread(runnable.forget())));
   }
 };
 
@@ -250,7 +331,7 @@ public:
 class LifecycleEventWorkerRunnable : public ExtendableEventWorkerRunnable
 {
   nsString mEventName;
-  nsRefPtr<LifeCycleEventCallback> mCallback;
+  RefPtr<LifeCycleEventCallback> mCallback;
 
 public:
   LifecycleEventWorkerRunnable(WorkerPrivate* aWorkerPrivate,
@@ -283,7 +364,7 @@ private:
  */
 class LifecycleEventPromiseHandler final : public PromiseNativeHandler
 {
-  nsRefPtr<LifeCycleEventCallback> mCallback;
+  RefPtr<LifeCycleEventCallback> mCallback;
 
   virtual
   ~LifecycleEventPromiseHandler()
@@ -334,12 +415,11 @@ public:
       return;
     }
 
-    nsRefPtr<xpc::ErrorReport> xpcReport = new xpc::ErrorReport();
+    RefPtr<xpc::ErrorReport> xpcReport = new xpc::ErrorReport();
     xpcReport->Init(report.report(), report.message(),
-                    /* aIsChrome = */ false, /* aWindowID = */ 0);
+                    /* aIsChrome = */ false, workerPrivate->WindowID());
 
-    nsRefPtr<AsyncErrorReporter> aer =
-      new AsyncErrorReporter(CycleCollectedJSRuntime::Get()->Runtime(), xpcReport);
+    RefPtr<AsyncErrorReporter> aer = new AsyncErrorReporter(xpcReport);
     NS_DispatchToMainThread(aer);
   }
 };
@@ -353,8 +433,8 @@ LifecycleEventWorkerRunnable::DispatchLifecycleEvent(JSContext* aCx,
   aWorkerPrivate->AssertIsOnWorkerThread();
   MOZ_ASSERT(aWorkerPrivate->IsServiceWorker());
 
-  nsRefPtr<ExtendableEvent> event;
-  nsRefPtr<EventTarget> target = aWorkerPrivate->GlobalScope();
+  RefPtr<ExtendableEvent> event;
+  RefPtr<EventTarget> target = aWorkerPrivate->GlobalScope();
 
   if (mEventName.EqualsASCII("install") || mEventName.EqualsASCII("activate")) {
     ExtendableEventInit init;
@@ -367,11 +447,11 @@ LifecycleEventWorkerRunnable::DispatchLifecycleEvent(JSContext* aCx,
 
   event->SetTrusted(true);
 
-  nsRefPtr<Promise> waitUntil;
+  RefPtr<Promise> waitUntil;
   DispatchExtendableEventOnWorkerScope(aCx, aWorkerPrivate->GlobalScope(),
                                        event, getter_AddRefs(waitUntil));
   if (waitUntil) {
-    nsRefPtr<LifecycleEventPromiseHandler> handler =
+    RefPtr<LifecycleEventPromiseHandler> handler =
       new LifecycleEventPromiseHandler(mCallback);
     waitUntil->AppendNativeHandler(handler);
   } else {
@@ -393,7 +473,7 @@ ServiceWorkerPrivate::SendLifeCycleEvent(const nsAString& aEventType,
   NS_ENSURE_SUCCESS(rv, rv);
 
   MOZ_ASSERT(mKeepAliveToken);
-  nsRefPtr<WorkerRunnable> r = new LifecycleEventWorkerRunnable(mWorkerPrivate,
+  RefPtr<WorkerRunnable> r = new LifecycleEventWorkerRunnable(mWorkerPrivate,
                                                                 mKeepAliveToken,
                                                                 aEventType,
                                                                 aCallback);
@@ -409,15 +489,17 @@ ServiceWorkerPrivate::SendLifeCycleEvent(const nsAString& aEventType,
 #ifndef MOZ_SIMPLEPUSH
 namespace {
 
-class SendPushEventRunnable final : public ExtendableEventWorkerRunnable
+class SendPushEventRunnable final : public ExtendableFunctionalEventWorkerRunnable
 {
   Maybe<nsTArray<uint8_t>> mData;
 
 public:
   SendPushEventRunnable(WorkerPrivate* aWorkerPrivate,
                         KeepAliveToken* aKeepAliveToken,
-                        const Maybe<nsTArray<uint8_t>>& aData)
-      : ExtendableEventWorkerRunnable(aWorkerPrivate, aKeepAliveToken)
+                        const Maybe<nsTArray<uint8_t>>& aData,
+                        nsMainThreadPtrHandle<ServiceWorkerRegistrationInfo> aRegistration)
+      : ExtendableFunctionalEventWorkerRunnable(
+          aWorkerPrivate, aKeepAliveToken, aRegistration)
       , mData(aData)
   {
     AssertIsOnMainThread();
@@ -444,7 +526,7 @@ public:
     pei.mCancelable = false;
 
     ErrorResult result;
-    nsRefPtr<PushEvent> event =
+    RefPtr<PushEvent> event =
       PushEvent::Constructor(globalObj, NS_LITERAL_STRING("push"), pei, result);
     if (NS_WARN_IF(result.Failed())) {
       result.SuppressException();
@@ -479,7 +561,7 @@ public:
 
     WorkerGlobalScope* globalScope = aWorkerPrivate->GlobalScope();
 
-    nsRefPtr<Event> event = NS_NewDOMEvent(globalScope, nullptr, nullptr);
+    RefPtr<Event> event = NS_NewDOMEvent(globalScope, nullptr, nullptr);
 
     nsresult rv = event->InitEvent(NS_LITERAL_STRING("pushsubscriptionchange"),
                                    false, false);
@@ -498,7 +580,8 @@ public:
 #endif // !MOZ_SIMPLEPUSH
 
 nsresult
-ServiceWorkerPrivate::SendPushEvent(const Maybe<nsTArray<uint8_t>>& aData)
+ServiceWorkerPrivate::SendPushEvent(const Maybe<nsTArray<uint8_t>>& aData,
+                                    ServiceWorkerRegistrationInfo* aRegistration)
 {
 #ifdef MOZ_SIMPLEPUSH
   return NS_ERROR_NOT_AVAILABLE;
@@ -507,9 +590,14 @@ ServiceWorkerPrivate::SendPushEvent(const Maybe<nsTArray<uint8_t>>& aData)
   NS_ENSURE_SUCCESS(rv, rv);
 
   MOZ_ASSERT(mKeepAliveToken);
-  nsRefPtr<WorkerRunnable> r = new SendPushEventRunnable(mWorkerPrivate,
+
+  nsMainThreadPtrHandle<ServiceWorkerRegistrationInfo> regInfo(
+    new nsMainThreadPtrHolder<ServiceWorkerRegistrationInfo>(aRegistration, false));
+
+  RefPtr<WorkerRunnable> r = new SendPushEventRunnable(mWorkerPrivate,
                                                          mKeepAliveToken,
-                                                         aData);
+                                                         aData,
+                                                         regInfo);
   AutoJSAPI jsapi;
   jsapi.Init();
   if (NS_WARN_IF(!r->Dispatch(jsapi.cx()))) {
@@ -530,7 +618,7 @@ ServiceWorkerPrivate::SendPushSubscriptionChangeEvent()
   NS_ENSURE_SUCCESS(rv, rv);
 
   MOZ_ASSERT(mKeepAliveToken);
-  nsRefPtr<WorkerRunnable> r =
+  RefPtr<WorkerRunnable> r =
     new SendPushSubscriptionChangeEventRunnable(mWorkerPrivate, mKeepAliveToken);
   AutoJSAPI jsapi;
   jsapi.Init();
@@ -582,7 +670,7 @@ private:
   bool
   WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override;
 
-  nsRefPtr<AllowWindowInteractionHandler> mHandler;
+  RefPtr<AllowWindowInteractionHandler> mHandler;
 };
 
 class AllowWindowInteractionHandler final : public PromiseNativeHandler
@@ -632,10 +720,10 @@ class AllowWindowInteractionHandler final : public PromiseNativeHandler
       return;
     }
 
-    nsRefPtr<ClearWindowAllowedRunnable> r =
+    RefPtr<ClearWindowAllowedRunnable> r =
       new ClearWindowAllowedRunnable(aWorkerPrivate, this);
 
-    nsRefPtr<TimerThreadEventTarget> target =
+    RefPtr<TimerThreadEventTarget> target =
       new TimerThreadEventTarget(aWorkerPrivate, r);
 
     rv = timer->SetTarget(target);
@@ -744,10 +832,10 @@ public:
   {
     MOZ_ASSERT(aWorkerPrivate);
 
-    nsRefPtr<EventTarget> target = do_QueryObject(aWorkerPrivate->GlobalScope());
+    RefPtr<EventTarget> target = do_QueryObject(aWorkerPrivate->GlobalScope());
 
     ErrorResult result;
-    nsRefPtr<Notification> notification =
+    RefPtr<Notification> notification =
       Notification::ConstructFromFields(aWorkerPrivate->GlobalScope(), mID,
                                         mTitle, mDir, mLang, mBody, mTag, mIcon,
                                         mData, mScope, result);
@@ -760,7 +848,7 @@ public:
     nei.mBubbles = false;
     nei.mCancelable = false;
 
-    nsRefPtr<NotificationEvent> event =
+    RefPtr<NotificationEvent> event =
       NotificationEvent::Constructor(target,
                                      NS_LITERAL_STRING("notificationclick"),
                                      nei, result);
@@ -769,13 +857,13 @@ public:
     }
 
     event->SetTrusted(true);
-    nsRefPtr<Promise> waitUntil;
+    RefPtr<Promise> waitUntil;
     aWorkerPrivate->GlobalScope()->AllowWindowInteraction();
     DispatchExtendableEventOnWorkerScope(aCx, aWorkerPrivate->GlobalScope(),
                                          event, getter_AddRefs(waitUntil));
       aWorkerPrivate->GlobalScope()->ConsumeWindowInteraction();
     if (waitUntil) {
-      nsRefPtr<AllowWindowInteractionHandler> allowWindowInteraction =
+      RefPtr<AllowWindowInteractionHandler> allowWindowInteraction =
         new AllowWindowInteractionHandler(aWorkerPrivate);
       waitUntil->AppendNativeHandler(allowWindowInteraction);
     }
@@ -803,7 +891,7 @@ ServiceWorkerPrivate::SendNotificationClickEvent(const nsAString& aID,
 
   gDOMDisableOpenClickDelay = Preferences::GetInt("dom.disable_open_click_delay");
 
-  nsRefPtr<WorkerRunnable> r =
+  RefPtr<WorkerRunnable> r =
     new SendNotificationClickEventRunnable(mWorkerPrivate, mKeepAliveToken,
                                            aID, aTitle, aDir, aLang,
                                            aBody, aTag, aIcon, aData,
@@ -821,7 +909,7 @@ namespace {
 
 // Inheriting ExtendableEventWorkerRunnable so that the worker is not terminated
 // while handling the fetch event, though that's very unlikely.
-class FetchEventRunnable : public ExtendableEventWorkerRunnable
+class FetchEventRunnable : public ExtendableFunctionalEventWorkerRunnable
                          , public nsIHttpHeaderVisitor {
   nsMainThreadPtrHandle<nsIInterceptedChannel> mInterceptedChannel;
   const nsCString mScriptSpec;
@@ -845,9 +933,11 @@ public:
                      // CSP checks might require the worker script spec
                      // later on.
                      const nsACString& aScriptSpec,
+                     nsMainThreadPtrHandle<ServiceWorkerRegistrationInfo>& aRegistration,
                      UniquePtr<ServiceWorkerClientInfo>&& aClientInfo,
                      bool aIsReload)
-    : ExtendableEventWorkerRunnable(aWorkerPrivate, aKeepAliveToken)
+    : ExtendableFunctionalEventWorkerRunnable(
+        aWorkerPrivate, aKeepAliveToken, aRegistration)
     , mInterceptedChannel(aChannel)
     , mScriptSpec(aScriptSpec)
     , mClientInfo(Move(aClientInfo))
@@ -941,8 +1031,17 @@ public:
       nsCOMPtr<nsIUploadChannel2> uploadChannel = do_QueryInterface(httpChannel);
       if (uploadChannel) {
         MOZ_ASSERT(!mUploadStream);
-        rv = uploadChannel->CloneUploadStream(getter_AddRefs(mUploadStream));
+        bool bodyHasHeaders = false;
+        rv = uploadChannel->GetUploadStreamHasHeaders(&bodyHasHeaders);
         NS_ENSURE_SUCCESS(rv, rv);
+        nsCOMPtr<nsIInputStream> uploadStream;
+        rv = uploadChannel->CloneUploadStream(getter_AddRefs(uploadStream));
+        NS_ENSURE_SUCCESS(rv, rv);
+        if (bodyHasHeaders) {
+          HandleBodyWithHeaders(uploadStream);
+        } else {
+          mUploadStream = uploadStream;
+        }
       }
     } else {
       nsCOMPtr<nsIJARChannel> jarChannel = do_QueryInterface(channel);
@@ -1003,7 +1102,7 @@ private:
     RootedDictionary<RequestInit> reqInit(aCx);
     reqInit.mMethod.Construct(mMethod);
 
-    nsRefPtr<InternalHeaders> internalHeaders = new InternalHeaders(HeadersGuardEnum::Request);
+    RefPtr<InternalHeaders> internalHeaders = new InternalHeaders(HeadersGuardEnum::Request);
     MOZ_ASSERT(mHeaderNames.Length() == mHeaderValues.Length());
     for (uint32_t i = 0; i < mHeaderNames.Length(); i++) {
       ErrorResult result;
@@ -1014,7 +1113,7 @@ private:
       }
     }
 
-    nsRefPtr<Headers> headers = new Headers(globalObj.GetAsSupports(), internalHeaders);
+    RefPtr<Headers> headers = new Headers(globalObj.GetAsSupports(), internalHeaders);
     reqInit.mHeaders.Construct();
     reqInit.mHeaders.Value().SetAsHeaders() = headers;
 
@@ -1023,13 +1122,13 @@ private:
     reqInit.mCredentials.Construct(mRequestCredentials);
 
     ErrorResult result;
-    nsRefPtr<Request> request = Request::Constructor(globalObj, requestInfo, reqInit, result);
+    RefPtr<Request> request = Request::Constructor(globalObj, requestInfo, reqInit, result);
     if (NS_WARN_IF(result.Failed())) {
       result.SuppressException();
       return false;
     }
     // For Telemetry, note that this Request object was created by a Fetch event.
-    nsRefPtr<InternalRequest> internalReq = request->GetInternalRequest();
+    RefPtr<InternalRequest> internalReq = request->GetInternalRequest();
     MOZ_ASSERT(internalReq);
     internalReq->SetCreatedByFetchEvent();
 
@@ -1037,6 +1136,12 @@ private:
     internalReq->SetReferrer(NS_ConvertUTF8toUTF16(mReferrer));
 
     request->SetContentPolicyType(mContentPolicyType);
+
+    request->GetInternalHeaders()->SetGuard(HeadersGuardEnum::Immutable, result);
+    if (NS_WARN_IF(result.Failed())) {
+      result.SuppressException();
+      return false;
+    }
 
     // TODO: remove conditional on http here once app protocol support is
     //       removed from service worker interception
@@ -1049,7 +1154,7 @@ private:
     init.mBubbles = false;
     init.mCancelable = true;
     init.mIsReload.Construct(mIsReload);
-    nsRefPtr<FetchEvent> event =
+    RefPtr<FetchEvent> event =
       FetchEvent::Constructor(globalObj, NS_LITERAL_STRING("fetch"), init, result);
     if (NS_WARN_IF(result.Failed())) {
       result.SuppressException();
@@ -1059,7 +1164,7 @@ private:
     event->PostInit(mInterceptedChannel, mScriptSpec, Move(mClientInfo));
     event->SetTrusted(true);
 
-    nsRefPtr<EventTarget> target = do_QueryObject(aWorkerPrivate->GlobalScope());
+    RefPtr<EventTarget> target = do_QueryObject(aWorkerPrivate->GlobalScope());
     nsresult rv2 = target->DispatchDOMEvent(nullptr, event, nullptr, nullptr);
     if (NS_WARN_IF(NS_FAILED(rv2)) || !event->WaitToRespond()) {
       nsCOMPtr<nsIRunnable> runnable;
@@ -1072,13 +1177,66 @@ private:
       MOZ_ALWAYS_TRUE(NS_SUCCEEDED(NS_DispatchToMainThread(runnable)));
     }
 
-    nsRefPtr<Promise> respondWithPromise = event->GetPromise();
+    RefPtr<Promise> respondWithPromise = event->GetPromise();
     if (respondWithPromise) {
-      nsRefPtr<KeepAliveHandler> keepAliveHandler =
+      RefPtr<KeepAliveHandler> keepAliveHandler =
         new KeepAliveHandler(mKeepAliveToken);
       respondWithPromise->AppendNativeHandler(keepAliveHandler);
     }
+
+    // 9.8.22 If request is a non-subresource request, then: Invoke Soft Update algorithm
+    if (internalReq->IsNavigationRequest()) {
+      nsCOMPtr<nsIRunnable> runnable= new SoftUpdateRequest(mRegistration);
+
+      MOZ_ALWAYS_TRUE(NS_SUCCEEDED(NS_DispatchToMainThread(runnable.forget())));
+    }
     return true;
+  }
+
+  nsresult
+  HandleBodyWithHeaders(nsIInputStream* aUploadStream)
+  {
+    // We are dealing with an nsMIMEInputStream which uses string input streams
+    // under the hood, so all of the data is available synchronously.
+    bool nonBlocking = false;
+    nsresult rv = aUploadStream->IsNonBlocking(&nonBlocking);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (NS_WARN_IF(!nonBlocking)) {
+      return NS_ERROR_NOT_AVAILABLE;
+    }
+    nsAutoCString body;
+    rv = NS_ConsumeStream(aUploadStream, UINT32_MAX, body);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Extract the headers in the beginning of the buffer
+    nsAutoCString::const_iterator begin, end;
+    body.BeginReading(begin);
+    body.EndReading(end);
+    const nsAutoCString::const_iterator body_end = end;
+    nsAutoCString headerName, headerValue;
+    bool emptyHeader = false;
+    while (FetchUtil::ExtractHeader(begin, end, headerName,
+                                    headerValue, &emptyHeader) &&
+           !emptyHeader) {
+      mHeaderNames.AppendElement(headerName);
+      mHeaderValues.AppendElement(headerValue);
+      headerName.Truncate();
+      headerValue.Truncate();
+    }
+
+    // Replace the upload stream with one only containing the body text.
+    nsCOMPtr<nsIStringInputStream> strStream =
+      do_CreateInstance(NS_STRINGINPUTSTREAM_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    // Skip past the "\r\n" that separates the headers and the body.
+    ++begin;
+    ++begin;
+    body.Assign(Substring(begin, body_end));
+    rv = strStream->SetData(body.BeginReading(), body.Length());
+    NS_ENSURE_SUCCESS(rv, rv);
+    mUploadStream = strStream;
+
+    return NS_OK;
   }
 };
 
@@ -1107,9 +1265,19 @@ ServiceWorkerPrivate::SendFetchEvent(nsIInterceptedChannel* aChannel,
     return NS_ERROR_FAILURE;
   }
 
-  nsRefPtr<FetchEventRunnable> r =
+  RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
+  MOZ_ASSERT(swm);
+
+  RefPtr<ServiceWorkerRegistrationInfo> registration =
+    swm->GetRegistration(mInfo->GetPrincipal(), mInfo->Scope());
+
+  nsMainThreadPtrHandle<ServiceWorkerRegistrationInfo> regInfo(
+    new nsMainThreadPtrHolder<ServiceWorkerRegistrationInfo>(registration, false));
+
+  RefPtr<FetchEventRunnable> r =
     new FetchEventRunnable(mWorkerPrivate, mKeepAliveToken, handle,
-                           mInfo->ScriptSpec(), Move(aClientInfo), aIsReload);
+                           mInfo->ScriptSpec(), regInfo,
+                           Move(aClientInfo), aIsReload);
   rv = r->Init();
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
@@ -1143,6 +1311,10 @@ ServiceWorkerPrivate::SpawnWorkerIfNeeded(WakeUpReason aWhy,
 
     return NS_OK;
   }
+
+  // Sanity check: mSupportsArray should be empty if we're about to
+  // spin up a new worker.
+  MOZ_ASSERT(mSupportsArray.IsEmpty());
 
   if (NS_WARN_IF(!mInfo)) {
     NS_WARNING("Trying to wake up a dead service worker.");
@@ -1221,6 +1393,23 @@ ServiceWorkerPrivate::SpawnWorkerIfNeeded(WakeUpReason aWhy,
 }
 
 void
+ServiceWorkerPrivate::StoreISupports(nsISupports* aSupports)
+{
+  AssertIsOnMainThread();
+  MOZ_ASSERT(mWorkerPrivate);
+  MOZ_ASSERT(!mSupportsArray.Contains(aSupports));
+
+  mSupportsArray.AppendElement(aSupports);
+}
+
+void
+ServiceWorkerPrivate::RemoveISupports(nsISupports* aSupports)
+{
+  AssertIsOnMainThread();
+  mSupportsArray.RemoveElement(aSupports);
+}
+
+void
 ServiceWorkerPrivate::TerminateWorker()
 {
   AssertIsOnMainThread();
@@ -1239,6 +1428,7 @@ ServiceWorkerPrivate::TerminateWorker()
     jsapi.Init();
     NS_WARN_IF(!mWorkerPrivate->Terminate(jsapi.cx()));
     mWorkerPrivate = nullptr;
+    mSupportsArray.Clear();
   }
 }
 
@@ -1267,7 +1457,7 @@ ServiceWorkerPrivate::NoteIdleWorkerCallback(nsITimer* aTimer, void* aPrivate)
   AssertIsOnMainThread();
   MOZ_ASSERT(aPrivate);
 
-  nsRefPtr<ServiceWorkerPrivate> swp = static_cast<ServiceWorkerPrivate*>(aPrivate);
+  RefPtr<ServiceWorkerPrivate> swp = static_cast<ServiceWorkerPrivate*>(aPrivate);
 
   MOZ_ASSERT(aTimer == swp->mIdleWorkerTimer, "Invalid timer!");
 
@@ -1294,7 +1484,7 @@ ServiceWorkerPrivate::TerminateWorkerCallback(nsITimer* aTimer, void *aPrivate)
   AssertIsOnMainThread();
   MOZ_ASSERT(aPrivate);
 
-  nsRefPtr<ServiceWorkerPrivate> serviceWorkerPrivate =
+  RefPtr<ServiceWorkerPrivate> serviceWorkerPrivate =
     static_cast<ServiceWorkerPrivate*>(aPrivate);
 
   MOZ_ASSERT(aTimer == serviceWorkerPrivate->mIdleWorkerTimer,

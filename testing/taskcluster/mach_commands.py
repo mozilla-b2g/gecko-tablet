@@ -6,10 +6,13 @@
 
 from __future__ import absolute_import
 
+from collections import defaultdict
 import os
 import json
 import copy
 import sys
+import time
+from collections import namedtuple
 
 from mach.decorators import (
     CommandArgument,
@@ -202,6 +205,44 @@ def remove_caches_from_task(task):
     except KeyError:
         pass
 
+def query_pushinfo(repository, revision):
+    """Query the pushdate and pushid of a repository/revision.
+    This is intended to be used on hg.mozilla.org/mozilla-central and
+    similar. It may or may not work for other hg repositories.
+    """
+    PushInfo = namedtuple('PushInfo', ['pushid', 'pushdate'])
+
+    try:
+        import urllib2
+        url = '%s/json-pushes?changeset=%s' % (repository, revision)
+        sys.stderr.write("Querying URL for pushdate: %s\n" % url)
+        contents = json.load(urllib2.urlopen(url))
+
+        # The contents should be something like:
+        # {
+        #   "28537": {
+        #    "changesets": [
+        #     "1d0a914ae676cc5ed203cdc05c16d8e0c22af7e5",
+        #    ],
+        #    "date": 1428072488,
+        #    "user": "user@mozilla.com"
+        #   }
+        # }
+        #
+        # So we grab the first element ("28537" in this case) and then pull
+        # out the 'date' field.
+        pushid = contents.iterkeys().next()
+        pushdate = contents[pushid]['date']
+        return PushInfo(pushid, pushdate)
+
+    except Exception:
+        sys.stderr.write(
+            "Error querying pushinfo for repository '%s' revision '%s'\n" % (
+                repository, revision,
+            )
+        )
+        return None
+
 @CommandProvider
 class DecisionTask(object):
     @Command('taskcluster-decision', category="ci",
@@ -288,6 +329,12 @@ class Graph(object):
         action="store_true",
         dest="interactive",
         help="Run the tasks with the interactive feature enabled")
+    @CommandArgument('--print-names-only',
+        action='store_true', default=False,
+        help="Only print the names of each scheduled task, one per line.")
+    @CommandArgument('--dry-run',
+        action='store_true', default=False,
+        help="Stub out taskIds and date fields from the task definitions.")
     def create_graph(self, **params):
         from taskcluster_graph.commit_parser import parse_commit
         from slugid import nice as slugid
@@ -297,6 +344,13 @@ class Graph(object):
         )
         from taskcluster_graph.templates import Templates
         import taskcluster_graph.build_task
+
+        if params['dry_run']:
+            from taskcluster_graph.dry_run import (
+                json_time_from_now,
+                current_json_time,
+                slugid,
+            )
 
         project = params['project']
         message = params.get('message', '') if project == 'try' else DEFAULT_TRY
@@ -319,6 +373,12 @@ class Graph(object):
 
         cmdline_interactive = params.get('interactive', False)
 
+        # Default to current time if querying the head rev fails
+        pushdate = time.strftime('%Y%m%d%H%M%S', time.gmtime())
+        pushinfo = query_pushinfo(params['head_repository'], params['head_rev'])
+        if pushinfo:
+            pushdate = time.strftime('%Y%m%d%H%M%S', time.gmtime(pushinfo.pushdate))
+
         # Template parameters used when expanding the graph
         parameters = dict(gaia_info().items() + {
             'index': 'index',
@@ -330,6 +390,10 @@ class Graph(object):
             'head_repository': params['head_repository'],
             'head_ref': params['head_ref'] or params['head_rev'],
             'head_rev': params['head_rev'],
+            'pushdate': pushdate,
+            'year': pushdate[0:4],
+            'month': pushdate[4:6],
+            'day': pushdate[6:8],
             'owner': params['owner'],
             'from_now': json_time_from_now,
             'now': current_json_time(),
@@ -364,6 +428,8 @@ class Graph(object):
             'description': 'Task graph generated via ./mach taskcluster-graph',
             'name': 'task graph local'
         }
+
+        all_routes = {}
 
         for build in job_graph:
             interactive = cmdline_interactive or build["interactive"]
@@ -423,6 +489,15 @@ class Graph(object):
 
             define_task = DEFINE_TASK.format(build_task['task']['workerType'])
 
+            for route in build_task['task'].get('routes', []):
+                if route.startswith('index.gecko.v2') and route in all_routes:
+                    raise Exception("Error: route '%s' is in use by multiple tasks: '%s' and '%s'" % (
+                        route,
+                        build_task['task']['metadata']['name'],
+                        all_routes[route],
+                    ))
+                all_routes[route] = build_task['task']['metadata']['name']
+
             graph['scopes'].append(define_task)
             graph['scopes'].extend(build_task['task'].get('scopes', []))
             route_scopes = map(lambda route: 'queue:route:' + route, build_task['task'].get('routes', []))
@@ -468,20 +543,28 @@ class Graph(object):
                 if mozharness_url:
                     test_parameters['mozharness_url'] = mozharness_url
                 test_definition = templates.load(test['task'], {})['task']
-                chunk_config = test_definition['extra']['chunks']
+                chunk_config = test_definition['extra'].get('chunks', {})
 
                 # Allow branch configs to override task level chunking...
                 if 'chunks' in test:
                     chunk_config['total'] = test['chunks']
 
-                test_parameters['total_chunks'] = chunk_config['total']
+                chunked = 'total' in chunk_config
+                if chunked:
+                    test_parameters['total_chunks'] = chunk_config['total']
 
-                for chunk in range(1, chunk_config['total'] + 1):
-                    if 'only_chunks' in test and \
+                if 'suite' in test_definition['extra']:
+                    suite_config = test_definition['extra']['suite']
+                    test_parameters['suite'] = suite_config['name']
+                    test_parameters['flavor'] = suite_config.get('flavor', '')
+
+                for chunk in range(1, chunk_config.get('total', 1) + 1):
+                    if 'only_chunks' in test and chunked and \
                         chunk not in test['only_chunks']:
                         continue
 
-                    test_parameters['chunk'] = chunk
+                    if chunked:
+                        test_parameters['chunk'] = chunk
                     test_task = configure_dependent_task(test['task'],
                                                          test_parameters,
                                                          slugid(),
@@ -503,6 +586,27 @@ class Graph(object):
                     graph['scopes'].extend(test_task['task'].get('scopes', []))
 
         graph['scopes'] = list(set(graph['scopes']))
+
+        if params['print_names_only']:
+            tIDs = defaultdict(list)
+
+            def print_task(task, indent=0):
+                print('{}- {}'.format(' ' * indent, task['task']['metadata']['name']))
+
+                for child in tIDs[task['taskId']]:
+                    print_task(child, indent=indent+2)
+
+            # build a dependency map
+            for task in graph['tasks']:
+                if 'requires' in task:
+                    for tID in task['requires']:
+                        tIDs[tID].append(task)
+
+            # recursively print root tasks
+            for task in graph['tasks']:
+                if 'requires' not in task:
+                    print_task(task)
+            return
 
         # When we are extending the graph remove extra fields...
         if params['ci'] is True:

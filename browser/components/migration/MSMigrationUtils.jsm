@@ -99,7 +99,8 @@ CtypesKernelHelpers.prototype = {
   finalize() {
     this._structs = {};
     this._functions = {};
-    for each (let lib in this._libs) {
+    for (let key in this._libs) {
+      let lib = this._libs[key];
       try {
         lib.close();
       } catch (ex) {}
@@ -657,17 +658,33 @@ Cookies.prototype = {
    *  - Creation time least significant integer
    *  - Record delimiter "*"
    *
+   * Unfortunately, "*" can also occur inside the value of the cookie, so we
+   * can't rely exclusively on it as a record separator.
+   *
    * @note All the times are in FILETIME format.
    */
   _parseCookieBuffer(aTextBuffer) {
-    // Note the last record is an empty string.
-    let records = [r for each (r in aTextBuffer.split("*\n")) if (r)];
+    // Note the last record is an empty string...
+    let records = [];
+    let lines = aTextBuffer.split("\n");
+    while (lines.length > 0) {
+      let record = lines.splice(0, 9);
+      // ... which means this is going to be a 1-element array for that record
+      if (record.length > 1) {
+        records.push(record);
+      }
+    }
     for (let record of records) {
       let [name, value, hostpath, flags,
-           expireTimeLo, expireTimeHi] = record.split("\n");
+           expireTimeLo, expireTimeHi] = record;
 
       // IE stores deleted cookies with a zero-length value, skip them.
       if (value.length == 0)
+        continue;
+
+      // IE sometimes has cookies created by apps that use "~~local~~/local/file/path"
+      // as the hostpath, ignore those:
+      if (hostpath.startsWith("~~local~~"))
         continue;
 
       let hostLen = hostpath.indexOf("/");

@@ -84,6 +84,7 @@ static nsStaticCaseInsensitiveNameTable* gPropertyTable;
 static nsStaticCaseInsensitiveNameTable* gFontDescTable;
 static nsStaticCaseInsensitiveNameTable* gCounterDescTable;
 static nsStaticCaseInsensitiveNameTable* gPredefinedCounterStyleTable;
+static nsDataHashtable<nsCStringHashKey,nsCSSProperty>* gPropertyIDLNameTable;
 
 /* static */ nsCSSProperty *
   nsCSSProps::gShorthandsContainingTable[eCSSProperty_COUNT_no_shorthands];
@@ -183,6 +184,7 @@ nsCSSProps::AddRefTable(void)
     MOZ_ASSERT(!gFontDescTable, "pre existing array!");
     MOZ_ASSERT(!gCounterDescTable, "pre existing array!");
     MOZ_ASSERT(!gPredefinedCounterStyleTable, "pre existing array!");
+    MOZ_ASSERT(!gPropertyIDLNameTable, "pre existing array!");
 
     gPropertyTable = CreateStaticTable(
         kCSSRawProperties, eCSSProperty_COUNT_with_aliases);
@@ -192,6 +194,15 @@ nsCSSProps::AddRefTable(void)
     gPredefinedCounterStyleTable = CreateStaticTable(
         kCSSRawPredefinedCounterStyles,
         ArrayLength(kCSSRawPredefinedCounterStyles));
+
+    gPropertyIDLNameTable = new nsDataHashtable<nsCStringHashKey,nsCSSProperty>;
+    for (nsCSSProperty p = nsCSSProperty(0);
+         size_t(p) < ArrayLength(kIDLNameTable);
+         p = nsCSSProperty(p + 1)) {
+      if (kIDLNameTable[p]) {
+        gPropertyIDLNameTable->Put(nsDependentCString(kIDLNameTable[p]), p);
+      }
+    }
 
     BuildShorthandsContainingTable();
 
@@ -474,6 +485,9 @@ nsCSSProps::ReleaseTable(void)
     delete gPredefinedCounterStyleTable;
     gPredefinedCounterStyleTable = nullptr;
 
+    delete gPropertyIDLNameTable;
+    gPropertyIDLNameTable = nullptr;
+
     delete [] gShorthandsContainingPool;
     gShorthandsContainingPool = nullptr;
   }
@@ -568,6 +582,30 @@ nsCSSProps::LookupProperty(const nsAString& aProperty, EnabledState aEnabled)
     }
   }
   return eCSSProperty_UNKNOWN;
+}
+
+nsCSSProperty
+nsCSSProps::LookupPropertyByIDLName(const nsACString& aPropertyIDLName,
+                                    EnabledState aEnabled)
+{
+  nsCSSProperty res;
+  if (!gPropertyIDLNameTable->Get(aPropertyIDLName, &res)) {
+    return eCSSProperty_UNKNOWN;
+  }
+  MOZ_ASSERT(res < eCSSProperty_COUNT);
+  if (!IsEnabled(res, aEnabled)) {
+    return eCSSProperty_UNKNOWN;
+  }
+  return res;
+}
+
+nsCSSProperty
+nsCSSProps::LookupPropertyByIDLName(const nsAString& aPropertyIDLName,
+                                    EnabledState aEnabled)
+{
+  MOZ_ASSERT(gPropertyIDLNameTable, "no lookup table, needs addref");
+  return LookupPropertyByIDLName(NS_ConvertUTF16toUTF8(aPropertyIDLName),
+                                 aEnabled);
 }
 
 nsCSSFontDesc
@@ -790,7 +828,6 @@ const KTableValue nsCSSProps::kAppearanceKTable[] = {
   eCSSKeyword__moz_win_browsertabbar_toolbox,  NS_THEME_WIN_BROWSER_TAB_BAR_TOOLBOX,
   eCSSKeyword__moz_win_glass,         NS_THEME_WIN_GLASS,
   eCSSKeyword__moz_win_borderless_glass,      NS_THEME_WIN_BORDERLESS_GLASS,
-  eCSSKeyword__moz_mac_unified_toolbar,       NS_THEME_MOZ_MAC_UNIFIED_TOOLBAR,
   eCSSKeyword__moz_mac_fullscreen_button,     NS_THEME_MOZ_MAC_FULLSCREEN_BUTTON,
   eCSSKeyword__moz_mac_help_button,           NS_THEME_MOZ_MAC_HELP_BUTTON,
   eCSSKeyword__moz_window_titlebar,           NS_THEME_WINDOW_TITLEBAR,
@@ -2278,9 +2315,6 @@ bool nsCSSProps::GetColorName(int32_t aPropValue, nsCString &aStr)
 }
 
 const nsStyleStructID nsCSSProps::kSIDTable[eCSSProperty_COUNT_no_shorthands] = {
-    // Note that this uses the special BackendOnly style struct ID
-    // (which does need to be valid for storing in the
-    // nsCSSCompressedDataBlock::mStyleBits bitfield).
     #define CSS_PROP(name_, id_, method_, flags_, pref_, parsevariant_,     \
                      kwtable_, stylestruct_, stylestructoffset_, animtype_) \
         eStyleStruct_##stylestruct_,
@@ -2971,9 +3005,6 @@ nsCSSProps::gPropertyCountInStruct[nsStyleStructID_Length] = {
 /* static */ const size_t
 nsCSSProps::gPropertyIndexInStruct[eCSSProperty_COUNT_no_shorthands] = {
 
-  #define CSS_PROP_BACKENDONLY(name_, id_, method_, flags_, pref_, \
-                               parsevariant_, kwtable_)            \
-      size_t(-1),
   #define CSS_PROP_LOGICAL(name_, id_, method_, flags_, pref_, parsevariant_, \
                            kwtable_, group_, stylestruct_,                    \
                            stylestructoffset_, animtype_)                     \
@@ -2984,7 +3015,6 @@ nsCSSProps::gPropertyIndexInStruct[eCSSProperty_COUNT_no_shorthands] = {
   #include "nsCSSPropList.h"
   #undef CSS_PROP
   #undef CSS_PROP_LOGICAL
-  #undef CSS_PROP_BACKENDONLY
 
 };
 

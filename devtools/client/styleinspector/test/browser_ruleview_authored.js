@@ -55,16 +55,17 @@ function* basicTest() {
 }
 
 function* overrideTest() {
-  let gradientText = "(45deg, rgba(255,255,255,0.2) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0.2) 75%, transparent 75%, transparent);";
+  let gradientText1 = "(orange, blue);";
+  let gradientText2 = "(pink, teal);";
 
   let view =
       yield createTestContent("#testid {" +
-                              "  background-image: -moz-linear-gradient" +
-                              gradientText +
-                              "  background-image: -webkit-linear-gradient" +
-                              gradientText +
                               "  background-image: linear-gradient" +
-                              gradientText +
+                              gradientText1 +
+                              "  background-image: -ms-linear-gradient" +
+                              gradientText2 +
+                              "  background-image: linear-gradient" +
+                              gradientText2 +
                               "} ");
 
   let elementStyle = view._elementStyle;
@@ -90,8 +91,10 @@ function* overrideTest() {
 
 function* colorEditingTest() {
   let colors = [
-    {name: "hex", text: "#f0c", result: "#0F0"},
-    {name: "rgb", text: "rgb(0,128,250)", result: "rgb(0, 255, 0)"}
+    {name: "hex", text: "#f0c", result: "#0f0"},
+    {name: "rgb", text: "rgb(0,128,250)", result: "rgb(0, 255, 0)"},
+    // Test case preservation.
+    {name: "hex", text: "#F0C", result: "#0F0"},
   ];
 
   Services.prefs.setCharPref("devtools.defaultColorUnit", "authored");

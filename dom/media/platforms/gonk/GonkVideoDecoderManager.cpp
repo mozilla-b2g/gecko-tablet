@@ -59,17 +59,23 @@ GonkVideoDecoderManager::GonkVideoDecoderManager(
   nsIntSize frameSize(mVideoWidth, mVideoHeight);
   mPicture = pictureRect;
   mInitialFrame = frameSize;
-  mVideoListener = new VideoResourceListener(this);
+  mVideoListener = new VideoResourceListener();
 
 }
 
 GonkVideoDecoderManager::~GonkVideoDecoderManager()
 {
-  mVideoListener->NotifyManagerRelease();
   MOZ_COUNT_DTOR(GonkVideoDecoderManager);
 }
 
-nsRefPtr<MediaDataDecoder::InitPromise>
+nsresult
+GonkVideoDecoderManager::Shutdown()
+{
+  mVideoCodecRequest.DisconnectIfExists();
+  return GonkDecoderManager::Shutdown();
+}
+
+RefPtr<MediaDataDecoder::InitPromise>
 GonkVideoDecoderManager::Init()
 {
   nsIntSize displaySize(mDisplayWidth, mDisplayHeight);
@@ -106,7 +112,17 @@ GonkVideoDecoderManager::Init()
     return InitPromise::CreateAndReject(DecoderFailureReason::INIT_ERROR, __func__);
   }
 
-  nsRefPtr<InitPromise> p = mInitPromise.Ensure(__func__);
+  RefPtr<InitPromise> p = mInitPromise.Ensure(__func__);
+  android::sp<GonkVideoDecoderManager> self = this;
+  mVideoCodecRequest.Begin(mVideoListener->Init()
+    ->Then(mReaderTaskQueue, __func__,
+      [self] (bool) -> void {
+        self->mVideoCodecRequest.Complete();
+        self->codecReserved();
+      }, [self] (bool) -> void {
+        self->mVideoCodecRequest.Complete();
+        self->codecCanceled();
+      }));
   mDecoder = MediaCodecProxy::CreateByType(mDecodeLooper, mMimeType.get(), false, mVideoListener);
   mDecoder->AsyncAskMediaCodec();
 
@@ -123,7 +139,7 @@ nsresult
 GonkVideoDecoderManager::CreateVideoData(int64_t aStreamOffset, VideoData **v)
 {
   *v = nullptr;
-  nsRefPtr<VideoData> data;
+  RefPtr<VideoData> data;
   int64_t timeUs;
   int32_t keyFrame;
 
@@ -311,7 +327,7 @@ GonkVideoDecoderManager::SetVideoFormat()
 // Blocks until decoded sample is produced by the deoder.
 nsresult
 GonkVideoDecoderManager::Output(int64_t aStreamOffset,
-                                nsRefPtr<MediaData>& aOutData)
+                                RefPtr<MediaData>& aOutData)
 {
   aOutData = nullptr;
   status_t err;
@@ -324,7 +340,7 @@ GonkVideoDecoderManager::Output(int64_t aStreamOffset,
   switch (err) {
     case OK:
     {
-      nsRefPtr<VideoData> data;
+      RefPtr<VideoData> data;
       nsresult rv = CreateVideoData(aStreamOffset, getter_AddRefs(data));
       if (rv == NS_ERROR_NOT_AVAILABLE) {
         // Decoder outputs a empty video buffer, try again
@@ -361,7 +377,7 @@ GonkVideoDecoderManager::Output(int64_t aStreamOffset,
     case android::ERROR_END_OF_STREAM:
     {
       GVDM_LOG("Got the EOS frame!");
-      nsRefPtr<VideoData> data;
+      RefPtr<VideoData> data;
       nsresult rv = CreateVideoData(aStreamOffset, getter_AddRefs(data));
       if (rv == NS_ERROR_NOT_AVAILABLE) {
         // For EOS, no need to do any thing.
@@ -399,6 +415,9 @@ void GonkVideoDecoderManager::ReleaseVideoBuffer() {
 void
 GonkVideoDecoderManager::codecReserved()
 {
+  if (mInitPromise.IsEmpty()) {
+    return;
+  }
   GVDM_LOG("codecReserved");
   sp<AMessage> format = new AMessage;
   sp<Surface> surface;
@@ -408,6 +427,9 @@ GonkVideoDecoderManager::codecReserved()
   format->setString("mime", mMimeType.get());
   format->setInt32("width", mVideoWidth);
   format->setInt32("height", mVideoHeight);
+  // Set the "moz-use-undequeued-bufs" to use the undeque buffers to accelerate
+  // the video decoding.
+  format->setInt32("moz-use-undequeued-bufs", 1);
   if (mNativeWindow != nullptr) {
     surface = new Surface(mNativeWindow->getBufferQueue());
   }
@@ -427,7 +449,7 @@ GonkVideoDecoderManager::codecReserved()
     return;
   }
 
-  mInitPromise.ResolveIfExists(TrackType::kVideoTrack, __func__);
+  mInitPromise.Resolve(TrackType::kVideoTrack, __func__);
 }
 
 void
@@ -456,66 +478,24 @@ GonkVideoDecoderManager::onMessageReceived(const sp<AMessage> &aMessage)
   }
 }
 
-GonkVideoDecoderManager::VideoResourceListener::VideoResourceListener(GonkVideoDecoderManager *aManager)
-  : mManager(aManager)
+GonkVideoDecoderManager::VideoResourceListener::VideoResourceListener()
 {
 }
 
 GonkVideoDecoderManager::VideoResourceListener::~VideoResourceListener()
 {
-  mManager = nullptr;
 }
 
 void
 GonkVideoDecoderManager::VideoResourceListener::codecReserved()
 {
-  // This class holds VideoResourceListener reference to prevent it's destroyed.
-  class CodecListenerHolder : public nsRunnable {
-  public:
-    CodecListenerHolder(VideoResourceListener* aListener)
-      : mVideoListener(aListener) {}
-
-    NS_IMETHOD Run()
-    {
-      mVideoListener->NotifyCodecReserved();
-      mVideoListener = nullptr;
-      return NS_OK;
-    }
-
-    android::sp<VideoResourceListener> mVideoListener;
-  };
-
-  if (mManager) {
-    nsRefPtr<CodecListenerHolder> runner = new CodecListenerHolder(this);
-    mManager->mReaderTaskQueue->Dispatch(runner.forget());
-  }
+  mVideoCodecPromise.Resolve(true, __func__);
 }
 
 void
 GonkVideoDecoderManager::VideoResourceListener::codecCanceled()
 {
-  if (mManager) {
-    MOZ_ASSERT(mManager->mReaderTaskQueue->IsCurrentThreadIn());
-    nsCOMPtr<nsIRunnable> r =
-      NS_NewNonOwningRunnableMethod(mManager, &GonkVideoDecoderManager::codecCanceled);
-    mManager->mReaderTaskQueue->Dispatch(r.forget());
-  }
-}
-
-void
-GonkVideoDecoderManager::VideoResourceListener::NotifyManagerRelease()
-{
-  MOZ_ASSERT_IF(mManager, mManager->mReaderTaskQueue->IsCurrentThreadIn());
-  mManager = nullptr;
-}
-
-void
-GonkVideoDecoderManager::VideoResourceListener::NotifyCodecReserved()
-{
-  if (mManager) {
-    MOZ_ASSERT(mManager->mReaderTaskQueue->IsCurrentThreadIn());
-    mManager->codecReserved();
-  }
+  mVideoCodecPromise.Reject(true, __func__);
 }
 
 uint8_t *
@@ -574,7 +554,7 @@ void GonkVideoDecoderManager::ReleaseAllPendingVideoBuffers()
   // Free all pending video buffers without holding mPendingReleaseItemsLock.
   size_t size = releasingItems.Length();
   for (size_t i = 0; i < size; i++) {
-    nsRefPtr<FenceHandle::FdObj> fdObj = releasingItems[i].mReleaseFence.GetAndResetFdObj();
+    RefPtr<FenceHandle::FdObj> fdObj = releasingItems[i].mReleaseFence.GetAndResetFdObj();
     sp<Fence> fence = new Fence(fdObj->GetAndResetFd());
     fence->waitForever("GonkVideoDecoderManager");
     mDecoder->ReleaseMediaBuffer(releasingItems[i].mBuffer);

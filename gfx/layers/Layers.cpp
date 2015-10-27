@@ -25,6 +25,7 @@
 #include "mozilla/gfx/2D.h"             // for DrawTarget
 #include "mozilla/gfx/BaseSize.h"       // for BaseSize
 #include "mozilla/gfx/Matrix.h"         // for Matrix4x4
+#include "mozilla/layers/AsyncCanvasRenderer.h"
 #include "mozilla/layers/CompositableClient.h"  // for CompositableClient
 #include "mozilla/layers/Compositor.h"  // for Compositor
 #include "mozilla/layers/CompositorTypes.h"
@@ -194,7 +195,7 @@ LayerManager::Mutated(Layer* aLayer)
 already_AddRefed<ImageContainer>
 LayerManager::CreateImageContainer(ImageContainer::Mode flag)
 {
-  nsRefPtr<ImageContainer> container = new ImageContainer(flag);
+  RefPtr<ImageContainer> container = new ImageContainer(flag);
   return container.forget();
 }
 
@@ -202,6 +203,19 @@ bool
 LayerManager::AreComponentAlphaLayersEnabled()
 {
   return gfxPrefs::ComponentAlphaEnabled();
+}
+
+/*static*/ void
+LayerManager::LayerUserDataDestroy(void* data)
+{
+  delete static_cast<LayerUserData*>(data);
+}
+
+nsAutoPtr<LayerUserData>
+LayerManager::RemoveUserData(void* aKey)
+{
+  nsAutoPtr<LayerUserData> d(static_cast<LayerUserData*>(mUserData.Remove(static_cast<gfx::UserDataKey*>(aKey))));
+  return d;
 }
 
 //--------------------------------------------------
@@ -301,7 +315,7 @@ CreateCSSValueList(const InfallibleTArray<TransformFunction>& aFunctions)
   nsAutoPtr<nsCSSValueList> result;
   nsCSSValueList** resultTail = getter_Transfers(result);
   for (uint32_t i = 0; i < aFunctions.Length(); i++) {
-    nsRefPtr<nsCSSValue::Array> arr;
+    RefPtr<nsCSSValue::Array> arr;
     switch (aFunctions[i].type()) {
       case TransformFunction::TRotationX:
       {
@@ -2057,6 +2071,13 @@ Layer::IsBackfaceHidden()
   return false;
 }
 
+nsAutoPtr<LayerUserData>
+Layer::RemoveUserData(void* aKey)
+{
+  nsAutoPtr<LayerUserData> d(static_cast<LayerUserData*>(mUserData.Remove(static_cast<gfx::UserDataKey*>(aKey))));
+  return d;
+}
+
 void
 PaintedLayer::PrintInfo(std::stringstream& aStream, const char* aPrefix)
 {
@@ -2131,6 +2152,19 @@ ColorLayer::DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent)
   layer->set_type(LayersPacket::Layer::ColorLayer);
   layer->set_color(mColor.ToABGR());
 }
+
+CanvasLayer::CanvasLayer(LayerManager* aManager, void* aImplData)
+  : Layer(aManager, aImplData)
+  , mPreTransCallback(nullptr)
+  , mPreTransCallbackData(nullptr)
+  , mPostTransCallback(nullptr)
+  , mPostTransCallbackData(nullptr)
+  , mFilter(gfx::Filter::GOOD)
+  , mDirty(false)
+{}
+
+CanvasLayer::~CanvasLayer()
+{}
 
 void
 CanvasLayer::PrintInfo(std::stringstream& aStream, const char* aPrefix)

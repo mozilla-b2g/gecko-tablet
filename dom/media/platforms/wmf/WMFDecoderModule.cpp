@@ -28,6 +28,7 @@ namespace mozilla {
 static bool sDXVAEnabled = false;
 static int  sNumDecoderThreads = -1;
 static bool sIsIntelDecoderEnabled = false;
+static bool sLowLatencyMFTEnabled = false;
 
 WMFDecoderModule::WMFDecoderModule()
   : mWMFInitialized(false)
@@ -68,6 +69,7 @@ WMFDecoderModule::Init()
   MOZ_ASSERT(NS_IsMainThread(), "Must be on main thread.");
   sDXVAEnabled = gfxPlatform::GetPlatform()->CanUseHardwareVideoDecoding();
   sIsIntelDecoderEnabled = Preferences::GetBool("media.webm.intel_decoder.enabled", false);
+  sLowLatencyMFTEnabled = Preferences::GetBool("media.wmf.low-latency.enabled", false);
   SetNumOfDecoderThreads();
 }
 
@@ -76,6 +78,13 @@ int
 WMFDecoderModule::GetNumDecoderThreads()
 {
   return sNumDecoderThreads;
+}
+
+/* static */
+bool
+WMFDecoderModule::LowLatencyMFTEnabled()
+{
+  return sLowLatencyMFTEnabled;
 }
 
 nsresult
@@ -102,7 +111,7 @@ WMFDecoderModule::CreateVideoDecoder(const VideoInfo& aConfig,
     return nullptr;
   }
 
-  nsRefPtr<MediaDataDecoder> decoder =
+  RefPtr<MediaDataDecoder> decoder =
     new WMFMediaDataDecoder(manager.forget(), aVideoTaskQueue, aCallback);
 
   return decoder.forget();
@@ -119,7 +128,7 @@ WMFDecoderModule::CreateAudioDecoder(const AudioInfo& aConfig,
     return nullptr;
   }
 
-  nsRefPtr<MediaDataDecoder> decoder =
+  RefPtr<MediaDataDecoder> decoder =
     new WMFMediaDataDecoder(manager.forget(), aAudioTaskQueue, aCallback);
   return decoder.forget();
 }

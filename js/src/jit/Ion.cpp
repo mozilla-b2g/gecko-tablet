@@ -605,6 +605,9 @@ jit::LazyLink(JSContext* cx, HandleScript calleeScript)
             // doesn't has code to handle it after linking happened. So it's
             // not OK to throw a catchable exception from there.
             cx->clearPendingException();
+
+            // Reset the TypeZone's compiler output for this script, if any.
+            InvalidateCompilerOutputsForScript(cx, calleeScript);
         }
     }
 
@@ -1510,7 +1513,8 @@ OptimizeMIR(MIRGenerator* mir)
 
     {
         AutoTraceLog log(logger, TraceLogger_FoldTests);
-        FoldTests(graph);
+        if (!FoldTests(graph))
+            return false;
         gs.spewPass("Fold Tests");
         AssertBasicGraphCoherency(graph);
 
@@ -2202,14 +2206,16 @@ IonCompile(JSContext* cx, JSScript* script,
             TrackIonAbort(cx, abortScript, abortPc, abortMessage);
         }
 
+        if (cx->isThrowingOverRecursed()) {
+            // Non-analysis compilations should never fail with stack overflow.
+            MOZ_CRASH("Stack overflow during compilation");
+        }
+
         return reason;
     }
 
     // If possible, compile the script off thread.
     if (options.offThreadCompilationAvailable()) {
-        if (!recompile)
-            builderScript->setIonScript(cx, ION_COMPILING_SCRIPT);
-
         JitSpew(JitSpew_IonSyncLogs, "Can't log script %s:%" PRIuSIZE
                 ". (Compiled on background thread.)",
                 builderScript->filename(), builderScript->lineno());
@@ -2219,6 +2225,9 @@ IonCompile(JSContext* cx, JSScript* script,
             builder->graphSpewer().endFunction();
             return AbortReason_Alloc;
         }
+
+        if (!recompile)
+            builderScript->setIonScript(cx, ION_COMPILING_SCRIPT);
 
         // The allocator and associated data will be destroyed after being
         // processed in the finishedOffThreadCompilations list.
@@ -2547,8 +2556,11 @@ jit::CanEnter(JSContext* cx, RunState& state)
         }
 
         if (!state.maybeCreateThisForConstructor(cx)) {
-            cx->recoverFromOutOfMemory();
-            return Method_Skipped;
+            if (cx->isThrowingOutOfMemory()) {
+                cx->recoverFromOutOfMemory();
+                return Method_Skipped;
+            }
+            return Method_Error;
         }
     }
 
@@ -2659,7 +2671,8 @@ EnterIon(JSContext* cx, EnterJitData& data)
     EnterJitCode enter = cx->runtime()->jitRuntime()->enterIon();
 
     // Caller must construct |this| before invoking the Ion function.
-    MOZ_ASSERT_IF(data.constructing, data.maxArgv[0].isObject());
+    MOZ_ASSERT_IF(data.constructing,
+                  data.maxArgv[0].isObject() || data.maxArgv[0].isMagic(JS_UNINITIALIZED_LEXICAL));
 
     data.result.setInt32(data.numActualArgs);
     {
@@ -2672,9 +2685,13 @@ EnterIon(JSContext* cx, EnterJitData& data)
 
     MOZ_ASSERT(!cx->runtime()->jitRuntime()->hasIonReturnOverride());
 
-    // Jit callers wrap primitive constructor return.
-    if (!data.result.isMagic() && data.constructing && data.result.isPrimitive())
+    // Jit callers wrap primitive constructor return, except for derived class constructors.
+    if (!data.result.isMagic() && data.constructing &&
+        data.result.isPrimitive())
+    {
+        MOZ_ASSERT(data.maxArgv[0].isObject());
         data.result = data.maxArgv[0];
+    }
 
     // Release temporary buffer used for OSR into Ion.
     cx->runtime()->getJitRuntime(cx)->freeOsrTempData();

@@ -2,10 +2,11 @@
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
 /**
- * Tests the async action creator `takeSnapshot(front)`
+ * Tests the async reducer responding to the action `takeSnapshot(front)`
  */
 
-var actions = require("devtools/client/memory/actions/snapshot");
+let actions = require("devtools/client/memory/actions/snapshot");
+let { snapshotState: states } = require("devtools/client/memory/constants");
 
 function run_test() {
   run_next_test();
@@ -14,32 +15,40 @@ function run_test() {
 add_task(function *() {
   let front = new StubbedMemoryFront();
   yield front.attach();
-  let controller = new MemoryController({ toolbox: {}, target: {}, front });
+  let store = Store();
 
-  let unsubscribe = controller.subscribe(checkState);
+  let unsubscribe = store.subscribe(checkState);
 
   let foundPendingState = false;
   let foundDoneState = false;
 
   function checkState () {
-    let state = controller.getState();
-    if (state.snapshots.length === 1 && state.snapshots[0].status === "start") {
+    let { snapshots } = store.getState();
+    let lastSnapshot = snapshots[snapshots.length - 1];
+
+    if (lastSnapshot.state === states.SAVING) {
       foundPendingState = true;
       ok(foundPendingState, "Got state change for pending heap snapshot request");
-      ok(!(state.snapshots[0].snapshotId), "Snapshot does not yet have a snapshotId");
+      ok(!lastSnapshot.path, "Snapshot does not yet have a path");
+      ok(!lastSnapshot.census, "Has no census data when loading");
     }
-    if (state.snapshots.length === 1 && state.snapshots[0].status === "done") {
+    else if (lastSnapshot.state === states.SAVED) {
       foundDoneState = true;
       ok(foundDoneState, "Got state change for completed heap snapshot request");
-      ok(state.snapshots[0].snapshotId, "Snapshot fetched with a snapshotId");
-    }
-    if (state.snapshots.lenght === 1 && state.snapshots[0].status === "error") {
-      ok(false, "takeSnapshot's promise returned with an error");
+      ok(foundPendingState, "SAVED state occurs after SAVING state");
+      ok(lastSnapshot.path, "Snapshot fetched with a path");
+      ok(snapshots.every(s => s.selected === (s.id === lastSnapshot.id)),
+        "Only recent snapshot is selected");
     }
   }
 
-  controller.dispatch(actions.takeSnapshot(front));
-  yield waitUntilState(controller, () => foundPendingState && foundDoneState);
+  for (let i = 0; i < 4; i++) {
+    store.dispatch(actions.takeSnapshot(front));
+    yield waitUntilState(store, () => foundPendingState && foundDoneState);
+
+    // reset state trackers
+    foundDoneState = foundPendingState = false;
+  }
 
   unsubscribe();
 });

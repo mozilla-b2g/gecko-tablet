@@ -673,7 +673,7 @@ MobileMessageDB.prototype = {
         stores = txn.objectStore(storeNames[0]);
       } else {
         stores = [];
-        for each (let storeName in storeNames) {
+        for (let storeName of storeNames) {
           if (DEBUG) debug("Retrieving object store " + storeName);
           stores.push(txn.objectStore(storeName));
         }
@@ -1460,7 +1460,7 @@ MobileMessageDB.prototype = {
               let timestamp = messageRecord.timestamp;
               // Setup participantIdsIndex.
               messageRecord.participantIdsIndex = [];
-              for each (let id in participantIds) {
+              for (let id of participantIds) {
                 messageRecord.participantIdsIndex.push([id, timestamp]);
               }
               if (threadRecord) {
@@ -2857,7 +2857,7 @@ MobileMessageDB.prototype = {
         aMessageRecord.threadIdIndex = [threadId, timestamp];
         // Setup participantIdsIndex.
         aMessageRecord.participantIdsIndex = [];
-        for each (let id in participantIds) {
+        for (let id of participantIds) {
           aMessageRecord.participantIdsIndex.push([id, timestamp]);
         }
 
@@ -3827,8 +3827,35 @@ MobileMessageDB.prototype = {
         }
 
         if (segmentRecord.segments[seq]) {
-          if (DEBUG) debug("Got duplicated segment no. " + seq);
-          return;
+          if (segmentRecord.encoding == RIL.PDU_DCS_MSG_CODING_8BITS_ALPHABET &&
+              segmentRecord.encoding == aSmsSegment.encoding &&
+              segmentRecord.segments[seq].length == aSmsSegment.data.length &&
+              segmentRecord.segments[seq].every(function(aElement, aIndex) {
+                return aElement == aSmsSegment.data[aIndex];
+              })) {
+            if (DEBUG) {
+              debug("Got duplicated binary segment no: " + seq);
+            }
+            return;
+          }
+
+          if (segmentRecord.encoding != RIL.PDU_DCS_MSG_CODING_8BITS_ALPHABET &&
+              aSmsSegment.encoding != RIL.PDU_DCS_MSG_CODING_8BITS_ALPHABET &&
+              segmentRecord.segments[seq] == aSmsSegment.body) {
+            if (DEBUG) {
+              debug("Got duplicated text segment no: " + seq);
+            }
+            return;
+          }
+
+          // Update mandatory properties to ensure that the segments could be
+          // concatenated properly.
+          segmentRecord.encoding = aSmsSegment.encoding;
+          segmentRecord.originatorPort = aSmsSegment.originatorPort;
+          segmentRecord.destinationPort = aSmsSegment.destinationPort;
+          segmentRecord.teleservice = aSmsSegment.teleservice;
+          // Decrease the counter for this collided segment.
+          segmentRecord.receivedSegments--;
         }
 
         segmentRecord.timestamp = aSmsSegment.timestamp;

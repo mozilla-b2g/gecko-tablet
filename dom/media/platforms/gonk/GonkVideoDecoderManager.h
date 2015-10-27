@@ -36,15 +36,19 @@ typedef android::MediaCodecProxy MediaCodecProxy;
 typedef mozilla::layers::TextureClient TextureClient;
 
 public:
+  typedef MozPromise<bool /* aIgnored */, bool /* aIgnored */, /* IsExclusive = */ true> MediaResourcePromise;
+
   GonkVideoDecoderManager(mozilla::layers::ImageContainer* aImageContainer,
                           const VideoInfo& aConfig);
 
   virtual ~GonkVideoDecoderManager();
 
-  nsRefPtr<InitPromise> Init() override;
+  RefPtr<InitPromise> Init() override;
 
   nsresult Output(int64_t aStreamOffset,
-                          nsRefPtr<MediaData>& aOutput) override;
+                          RefPtr<MediaData>& aOutput) override;
+
+  nsresult Shutdown() override;
 
   static void RecycleCallback(TextureClient* aClient, void* aClosure);
 
@@ -67,24 +71,25 @@ private:
   class VideoResourceListener : public android::MediaCodecProxy::CodecResourceListener
   {
   public:
-    VideoResourceListener(GonkVideoDecoderManager *aManager);
+    VideoResourceListener();
     ~VideoResourceListener();
+
+    RefPtr<MediaResourcePromise> Init()
+    {
+      RefPtr<MediaResourcePromise> p = mVideoCodecPromise.Ensure(__func__);
+      return p.forget();
+    }
 
     void codecReserved() override;
     void codecCanceled() override;
 
-    void NotifyManagerRelease();
-    void NotifyCodecReserved();
-
   private:
     // Forbidden
-    VideoResourceListener() = delete;
     VideoResourceListener(const VideoResourceListener &rhs) = delete;
     const VideoResourceListener &operator=(const VideoResourceListener &rhs) = delete;
 
-    GonkVideoDecoderManager *mManager;
+    MozPromiseHolder<MediaResourcePromise> mVideoCodecPromise;
   };
-  friend class VideoResourceListener;
 
   bool SetVideoFormat();
 
@@ -107,12 +112,13 @@ private:
   nsIntRect mPicture;
   nsIntSize mInitialFrame;
 
-  nsRefPtr<layers::ImageContainer> mImageContainer;
+  RefPtr<layers::ImageContainer> mImageContainer;
 
   android::MediaBuffer* mVideoBuffer;
 
   MediaInfo mInfo;
   android::sp<VideoResourceListener> mVideoListener;
+  MozPromiseRequestHolder<MediaResourcePromise> mVideoCodecRequest;
   FrameInfo mFrameInfo;
 
   // color converter
@@ -139,7 +145,7 @@ private:
 
   // This TaskQueue should be the same one in mDecodeCallback->OnReaderTaskQueue().
   // It is for codec resource mangement, decoding task should not dispatch to it.
-  nsRefPtr<TaskQueue> mReaderTaskQueue;
+  RefPtr<TaskQueue> mReaderTaskQueue;
 };
 
 } // namespace mozilla

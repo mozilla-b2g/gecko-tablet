@@ -151,7 +151,7 @@ public:
           mBiquads.Clear();
           aStream->CheckForInactive();
 
-          nsRefPtr<PlayingRefChangeHandler> refchanged =
+          RefPtr<PlayingRefChangeHandler> refchanged =
             new PlayingRefChangeHandler(aStream, PlayingRefChangeHandler::RELEASE);
           aStream->Graph()->
             DispatchToMainThreadAfterStreamStateUpdate(refchanged.forget());
@@ -165,7 +165,7 @@ public:
 
     } else if(mBiquads.Length() != aInput.ChannelCount()){
       if (mBiquads.IsEmpty()) {
-        nsRefPtr<PlayingRefChangeHandler> refchanged =
+        RefPtr<PlayingRefChangeHandler> refchanged =
           new PlayingRefChangeHandler(aStream, PlayingRefChangeHandler::ADDREF);
         aStream->Graph()->
           DispatchToMainThreadAfterStreamStateUpdate(refchanged.forget());
@@ -322,7 +322,11 @@ BiquadFilterNode::GetFrequencyResponse(const Float32Array& aFrequencyHz,
 
   // Normalize the frequencies
   for (uint32_t i = 0; i < length; ++i) {
-    frequencies[i] = static_cast<float>(frequencyHz[i] / nyquist);
+    if (frequencyHz[i] >= 0 && frequencyHz[i] <= nyquist) {
+        frequencies[i] = static_cast<float>(frequencyHz[i] / nyquist);
+    } else {
+        frequencies[i] = std::numeric_limits<float>::quiet_NaN();
+    }
   }
 
   const double currentTime = Context()->CurrentTime();

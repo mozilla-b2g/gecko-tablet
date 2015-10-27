@@ -9,7 +9,7 @@ const {AppProjects} = require("devtools/client/app-manager/app-projects");
 const {AppManager} = require("devtools/client/webide/modules/app-manager");
 const EventEmitter = require("devtools/shared/event-emitter");
 const {RuntimeScanners, WiFiScanner} = require("devtools/client/webide/modules/runtimes");
-const {Devices} = Cu.import("resource://gre/modules/devtools/shared/apps/Devices.jsm");
+const {Devices} = Cu.import("resource://devtools/shared/apps/Devices.jsm");
 const {Task} = Cu.import("resource://gre/modules/Task.jsm", {});
 const utils = require("devtools/client/webide/modules/utils");
 
@@ -60,12 +60,7 @@ RuntimeList.prototype = {
   },
 
   takeScreenshot: function() {
-    return this._UI.busyUntil(AppManager.deviceFront.screenshotToDataURL().then(longstr => {
-       return longstr.string().then(dataURL => {
-         longstr.release().then(null, console.error);
-         this._UI.openInBrowser(dataURL);
-       });
-    }), "taking screenshot");
+    this._Cmds.takeScreenshot();
   },
 
   showRuntimeDetails: function() {

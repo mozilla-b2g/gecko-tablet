@@ -8,6 +8,7 @@
 #include "ActiveElementManager.h"
 #include "APZCCallbackHelper.h"
 #include "gfxPrefs.h"
+#include "LayersLogging.h"
 #include "mozilla/BasicEvents.h"
 #include "mozilla/Move.h"
 #include "mozilla/Preferences.h"
@@ -191,7 +192,7 @@ APZEventState::ProcessSingleTap(const CSSPoint& aPoint,
 
   APZES_LOG("Active element uses style, scheduling timer for click event\n");
   nsCOMPtr<nsITimer> timer = do_CreateInstance(NS_TIMER_CONTRACTID);
-  nsRefPtr<DelayedFireSingleTapEvent> callback =
+  RefPtr<DelayedFireSingleTapEvent> callback =
     new DelayedFireSingleTapEvent(mWidget, currentPoint, aModifiers, timer);
   nsresult rv = timer->InitWithCallback(callback,
                                         sActiveDurationMs,
@@ -288,10 +289,10 @@ APZEventState::ProcessTouchEvent(const WidgetTouchEvent& aEvent,
       mTouchEndCancelled = true;
       mEndTouchIsClick = false;
     }
-    // fall through
+    MOZ_FALLTHROUGH;
   case eTouchCancel:
     mActiveElementManager->HandleTouchEndEvent(mEndTouchIsClick);
-    // fall through
+    MOZ_FALLTHROUGH;
   case eTouchMove: {
     if (mPendingTouchPreventedResponse) {
       MOZ_ASSERT(aGuid == mPendingTouchPreventedGuid);
@@ -426,4 +427,3 @@ APZEventState::GetWidget() const
 
 } // namespace layers
 } // namespace mozilla
-

@@ -15,24 +15,20 @@ loader.lazyServiceGetter(this, "clipboardHelper",
                          "@mozilla.org/widget/clipboardhelper;1",
                          "nsIClipboardHelper");
 loader.lazyImporter(this, "Services", "resource://gre/modules/Services.jsm");
-loader.lazyGetter(this, "EventEmitter", () => require("devtools/shared/event-emitter"));
-loader.lazyGetter(this, "AutocompletePopup",
-                  () => require("devtools/client/shared/autocomplete-popup").AutocompletePopup);
-loader.lazyGetter(this, "ToolSidebar",
-                  () => require("devtools/client/framework/sidebar").ToolSidebar);
-loader.lazyGetter(this, "ConsoleOutput",
-                  () => require("devtools/client/webconsole/console-output").ConsoleOutput);
-loader.lazyGetter(this, "Messages",
-                  () => require("devtools/client/webconsole/console-output").Messages);
-loader.lazyGetter(this, "asyncStorage",
-                  () => require("devtools/shared/shared/async-storage"));
+loader.lazyRequireGetter(this, "EventEmitter", "devtools/shared/event-emitter");
+loader.lazyRequireGetter(this, "AutocompletePopup", "devtools/client/shared/autocomplete-popup", true);
+loader.lazyRequireGetter(this, "ToolSidebar", "devtools/client/framework/sidebar", true);
+loader.lazyRequireGetter(this, "ConsoleOutput", "devtools/client/webconsole/console-output", true);
+loader.lazyRequireGetter(this, "Messages", "devtools/client/webconsole/console-output", true);
+loader.lazyRequireGetter(this, "asyncStorage", "devtools/shared/async-storage");
 loader.lazyRequireGetter(this, "EnvironmentClient", "devtools/shared/client/main", true);
 loader.lazyRequireGetter(this, "ObjectClient", "devtools/shared/client/main", true);
-loader.lazyImporter(this, "VariablesView", "resource:///modules/devtools/client/shared/widgets/VariablesView.jsm");
-loader.lazyImporter(this, "VariablesViewController", "resource:///modules/devtools/client/shared/widgets/VariablesViewController.jsm");
+loader.lazyRequireGetter(this, "system", "devtools/shared/system");
+loader.lazyRequireGetter(this, "Timers", "sdk/timers");
+loader.lazyImporter(this, "VariablesView", "resource://devtools/client/shared/widgets/VariablesView.jsm");
+loader.lazyImporter(this, "VariablesViewController", "resource://devtools/client/shared/widgets/VariablesViewController.jsm");
 loader.lazyImporter(this, "PluralForm", "resource://gre/modules/PluralForm.jsm");
-loader.lazyImporter(this, "gDevTools", "resource:///modules/devtools/client/framework/gDevTools.jsm");
-loader.lazyGetter(this, "Timers", () => require("sdk/timers"));
+loader.lazyImporter(this, "gDevTools", "resource://devtools/client/framework/gDevTools.jsm");
 
 const STRINGS_URI = "chrome://browser/locale/devtools/webconsole.properties";
 var l10n = new WebConsoleUtils.l10n(STRINGS_URI);
@@ -527,6 +523,12 @@ WebConsoleFrame.prototype = {
     this._contextMenuHandler = new ConsoleContextMenu(this);
 
     let doc = this.document;
+
+    if (system.constants.platform === "macosx") {
+      doc.querySelector("#key_clearOSX").removeAttribute("disabled");
+    } else {
+      doc.querySelector("#key_clear").removeAttribute("disabled");
+    }
 
     this.filterBox = doc.querySelector(".hud-filter-box");
     this.outputNode = doc.getElementById("output-container");
@@ -3228,6 +3230,13 @@ JSTerm.prototype = {
     this.lastInputValue && this.setInputValue(this.lastInputValue);
   },
 
+  focus: function() {
+    let inputNode = this.inputNode;
+    if (!inputNode.getAttribute("focused")) {
+      inputNode.focus();
+    }
+  },
+
   /**
    * The JavaScript evaluation response handler.
    *
@@ -3442,6 +3451,7 @@ JSTerm.prototype = {
       bindObjectActor: aOptions.bindObjectActor,
       frameActor: frameActor,
       selectedNodeActor: aOptions.selectedNodeActor,
+      selectedObjectActor: aOptions.selectedObjectActor,
     };
 
     this.webConsoleClient.evaluateJSAsync(aString, onResult, evalOptions);
@@ -3943,6 +3953,7 @@ JSTerm.prototype = {
     this.completeNode.value = "";
     this.resizeInput();
     this._inputChanged = true;
+    this.emit("set-input-value");
   },
 
   /**

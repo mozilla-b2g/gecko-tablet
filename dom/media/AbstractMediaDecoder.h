@@ -54,8 +54,6 @@ public:
 
   virtual bool OnStateMachineTaskQueue() const = 0;
 
-  virtual bool OnDecodeTaskQueue() const = 0;
-
   // Get the current MediaResource being used. Its URI will be returned
   // by currentSrc. Returns what was passed to Load(), if Load() has been called.
   virtual MediaResource* GetResource() const = 0;
@@ -124,10 +122,6 @@ public:
   // Called from HTMLMediaElement when owner document activity changes
   virtual void SetElementVisibility(bool aIsVisible) {}
 
-  // Called by some MediaDecoderReader to determine if we can rely
-  // on the resource length to limit reads.
-  virtual bool HasInitializationData() { return false; }
-
   // Stack based class to assist in notifying the frame statistics of
   // parsed and decoded frames. Use inside video demux & decode functions
   // to ensure all parsed and decoded frames are reported on all return paths.
@@ -167,7 +161,7 @@ protected:
       mEventVisibility(aEventVisibility)
   {}
 
-  nsRefPtr<AbstractMediaDecoder> mDecoder;
+  RefPtr<AbstractMediaDecoder> mDecoder;
   nsAutoPtr<MediaInfo>  mInfo;
   nsAutoPtr<MetadataTags> mTags;
   MediaDecoderEventVisibility mEventVisibility;

@@ -116,11 +116,6 @@ WaveReader::~WaveReader()
   MOZ_COUNT_DTOR(WaveReader);
 }
 
-nsresult WaveReader::Init(MediaDecoderReader* aCloneDonor)
-{
-  return NS_OK;
-}
-
 nsresult WaveReader::ReadMetadata(MediaInfo* aInfo,
                                   MetadataTags** aTags)
 {
@@ -249,7 +244,7 @@ bool WaveReader::DecodeVideoFrame(bool &aKeyframeSkip,
   return false;
 }
 
-nsRefPtr<MediaDecoderReader::SeekPromise>
+RefPtr<MediaDecoderReader::SeekPromise>
 WaveReader::Seek(int64_t aTarget, int64_t aEndTime)
 {
   MOZ_ASSERT(OnTaskQueue());

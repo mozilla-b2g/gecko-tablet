@@ -13,7 +13,7 @@
 #ifdef MOZ_ANDROID_MAX_SDK_VERSION
               android:maxSdkVersion="@MOZ_ANDROID_MAX_SDK_VERSION@"
 #endif
-              android:targetSdkVersion="@ANDROID_TARGET_SDK@"/>
+              android:targetSdkVersion="22"/>
 
 #include ../services/manifests/FxAccountAndroidManifest_permissions.xml.in
 #include ../services/manifests/HealthReportAndroidManifest_permissions.xml.in
@@ -498,6 +498,10 @@
 #include ../services/manifests/FxAccountAndroidManifest_services.xml.in
 #include ../services/manifests/HealthReportAndroidManifest_services.xml.in
 #include ../services/manifests/SyncAndroidManifest_services.xml.in
+
+        <receiver android:name="org.mozilla.gecko.sync.TabReceivedBroadcastReceiver"
+                  android:exported="false"/>
+
 #ifdef MOZ_ANDROID_SEARCH_ACTIVITY
 #include ../search/manifests/SearchAndroidManifest_services.xml.in
 #endif

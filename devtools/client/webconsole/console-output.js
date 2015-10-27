@@ -9,9 +9,9 @@ const {Cc, Ci, Cu} = require("chrome");
 
 const { Services } = require("resource://gre/modules/Services.jsm");
 
-loader.lazyImporter(this, "VariablesView", "resource:///modules/devtools/client/shared/widgets/VariablesView.jsm");
-loader.lazyImporter(this, "escapeHTML", "resource:///modules/devtools/client/shared/widgets/VariablesView.jsm");
-loader.lazyImporter(this, "gDevTools", "resource:///modules/devtools/client/framework/gDevTools.jsm");
+loader.lazyImporter(this, "VariablesView", "resource://devtools/client/shared/widgets/VariablesView.jsm");
+loader.lazyImporter(this, "escapeHTML", "resource://devtools/client/shared/widgets/VariablesView.jsm");
+loader.lazyImporter(this, "gDevTools", "resource://devtools/client/framework/gDevTools.jsm");
 loader.lazyImporter(this, "Task", "resource://gre/modules/Task.jsm");
 loader.lazyImporter(this, "PluralForm", "resource://gre/modules/PluralForm.jsm");
 
@@ -2534,6 +2534,25 @@ Widgets.JSObject.prototype = Heritage.extend(Widgets.BaseWidget.prototype,
     });
   },
 
+  storeObjectInWindow: function()
+  {
+    let evalString = `{ let i = 0;
+      while (this.hasOwnProperty("temp" + i) && i < 1000) {
+        i++;
+      }
+      this["temp" + i] = _self;
+      "temp" + i;
+    }`;
+    let options = {
+      selectedObjectActor: this.objectActor.actor,
+    };
+
+    this.output.owner.jsterm.requestEvaluation(evalString, options).then((res) => {
+      this.output.owner.jsterm.focus();
+      this.output.owner.jsterm.setInputValue(res.result);
+    });
+  },
+
   /**
    * The click event handler for objects shown inline.
    * @private
@@ -2549,6 +2568,7 @@ Widgets.JSObject.prototype = Heritage.extend(Widgets.BaseWidget.prototype,
     // https://github.com/firebug/firebug/blob/master/extension/content/firebug/chrome/menu.js
     let doc = ev.target.ownerDocument;
     let cmPopup = doc.getElementById("output-contextmenu");
+
     let openInVarViewCmd = doc.getElementById("menu_openInVarView");
     let openVarView = this.openObjectInVariablesView.bind(this);
     openInVarViewCmd.addEventListener("command", openVarView);
@@ -2558,6 +2578,22 @@ Widgets.JSObject.prototype = Heritage.extend(Widgets.BaseWidget.prototype,
       openInVarViewCmd.removeEventListener("command", openVarView);
       openInVarViewCmd.setAttribute("disabled", "true");
     });
+
+    // 'Store as global variable' command isn't supported on pre-44 servers,
+    // so remove it from the menu in that case.
+    let storeInGlobalCmd = doc.getElementById("menu_storeAsGlobal");
+    if (!this.output.webConsoleClient.traits.selectedObjectActor) {
+      storeInGlobalCmd.remove();
+    } else if (storeInGlobalCmd) {
+      let storeObjectInWindow = this.storeObjectInWindow.bind(this);
+      storeInGlobalCmd.addEventListener("command", storeObjectInWindow);
+      storeInGlobalCmd.removeAttribute("disabled");
+      cmPopup.addEventListener("popuphiding", function onPopupHiding() {
+        cmPopup.removeEventListener("popuphiding", onPopupHiding);
+        storeInGlobalCmd.removeEventListener("command", storeObjectInWindow);
+        storeInGlobalCmd.setAttribute("disabled", "true");
+      });
+    }
   },
 
   /**
@@ -3529,8 +3565,10 @@ Widgets.Stacktrace.prototype = Heritage.extend(Widgets.BaseWidget.prototype,
     let result = this.element = this.document.createElementNS(XHTML_NS, "ul");
     result.className = "stacktrace devtools-monospace";
 
-    for (let frame of this.stacktrace) {
-      result.appendChild(this._renderFrame(frame));
+    if (this.stacktrace) {
+      for (let frame of this.stacktrace) {
+        result.appendChild(this._renderFrame(frame));
+      }
     }
 
     return this;
@@ -3549,15 +3587,22 @@ Widgets.Stacktrace.prototype = Heritage.extend(Widgets.BaseWidget.prototype,
   {
     let fn = this.document.createElementNS(XHTML_NS, "span");
     fn.className = "function";
+
+    let asyncCause = "";
+    if (frame.asyncCause) {
+      asyncCause =
+        l10n.getFormatStr("stacktrace.asyncStack", [frame.asyncCause]) + " ";
+    }
+
     if (frame.functionName) {
       let span = this.document.createElementNS(XHTML_NS, "span");
       span.className = "cm-variable";
-      span.textContent = frame.functionName;
+      span.textContent = asyncCause + frame.functionName;
       fn.appendChild(span);
       fn.appendChild(this.document.createTextNode("()"));
     } else {
       fn.classList.add("cm-comment");
-      fn.textContent = l10n.getStr("stacktrace.anonymousFunction");
+      fn.textContent = asyncCause + l10n.getStr("stacktrace.anonymousFunction");
     }
 
     let location = this.output.owner.createLocationNode({url: frame.filename,

@@ -58,6 +58,7 @@ JAVA_CLASSPATH += \
     $(ANDROID_SUPPORT_V4_AAR_LIB) \
     $(ANDROID_SUPPORT_V4_AAR_INTERNAL_LIB) \
     $(ANDROID_APPCOMPAT_V7_AAR_LIB) \
+    $(ANDROID_DESIGN_AAR_LIB) \
     $(ANDROID_RECYCLERVIEW_V7_AAR_LIB) \
     $(NULL)
 
@@ -81,6 +82,7 @@ java_bundled_libs := \
     $(ANDROID_SUPPORT_V4_AAR_LIB) \
     $(ANDROID_SUPPORT_V4_AAR_INTERNAL_LIB) \
     $(ANDROID_APPCOMPAT_V7_AAR_LIB) \
+    $(ANDROID_DESIGN_AAR_LIB) \
     $(ANDROID_RECYCLERVIEW_V7_AAR_LIB) \
     $(NULL)
 
@@ -210,17 +212,9 @@ classycle_jar := $(topsrcdir)/mobile/android/build/classycle/classycle-1.4.1.jar
 CLASSES_WITH_JNI= \
     org.mozilla.gecko.GeckoAppShell \
     org.mozilla.gecko.GeckoJavaSampler \
+    org.mozilla.gecko.GeckoSmsManager \
     org.mozilla.gecko.gfx.NativePanZoomController \
     $(NULL)
-
-ifdef MOZ_WEBSMS_BACKEND
-# Note: if you are building with MOZ_WEBSMS_BACKEND turned on, then
-# you will get a build error because the generated jni-stubs.inc will
-# be different than the one checked in (i.e. it will have the sms-related
-# JNI stubs as well). Just copy the generated file to mozglue/android/
-# like the error message says and rebuild. All should be well after that.
-CLASSES_WITH_JNI += org.mozilla.gecko.GeckoSmsManager
-endif
 
 jni-stubs.inc: gecko-browser.jar constants.jar gecko-mozglue.jar gecko-util.jar sync-thirdparty.jar
 	$(JAVAH) -o javah.out -bootclasspath $(JAVA_BOOTCLASSPATH) -classpath $(subst $(NULL) $(NULL),:,$^) $(CLASSES_WITH_JNI)
@@ -371,6 +365,7 @@ generated/org/mozilla/gecko/R.java: .aapt.deps ;
 # If native devices are enabled, add Google Play Services, build their resources
 generated/android/support/v4/R.java: .aapt.deps ;
 generated/android/support/v7/appcompat/R.java: .aapt.deps ;
+generated/android/support/design/R.java: .aapt.deps ;
 generated/android/support/v7/mediarouter/R.java: .aapt.deps ;
 generated/android/support/v7/recyclerview/R.java: .aapt.deps ;
 generated/com/google/android/gms/R.java: .aapt.deps ;
@@ -471,7 +466,9 @@ $(abspath $(DIST)/fennec/$(OMNIJAR_NAME)): FORCE
 	$(RM) $(DIST)/fennec/$(notdir $(OMNIJAR_NAME))
 
 # Targets built very early during a Gradle build.
-gradle-targets: .aapt.deps
+gradle-targets: $(foreach f,$(constants_PP_JAVAFILES),$(f))
+gradle-targets: $(abspath AndroidManifest.xml)
+gradle-targets: $(ANDROID_GENERATED_RESFILES)
 
 gradle-omnijar: $(abspath $(DIST)/fennec/$(OMNIJAR_NAME))
 

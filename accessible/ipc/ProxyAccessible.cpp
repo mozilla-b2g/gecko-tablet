@@ -216,12 +216,10 @@ ProxyAccessible::CaretOffset()
   return offset;
 }
 
-bool
+void
 ProxyAccessible::SetCaretOffset(int32_t aOffset)
 {
-  bool valid = false;
-  unused << mDoc->SendSetCaretOffset(mID, aOffset, &valid);
-  return valid;
+  unused << mDoc->SendSetCaretOffset(mID, aOffset);
 }
 
 int32_t
@@ -904,6 +902,18 @@ ProxyAccessible::UnselectAll()
   bool success = false;
   unused << mDoc->SendUnselectAll(mID, &success);
   return success;
+}
+
+void
+ProxyAccessible::TakeSelection()
+{
+  unused << mDoc->SendTakeSelection(mID);
+}
+
+void
+ProxyAccessible::SetSelected(bool aSelect)
+{
+  unused << mDoc->SendSetSelected(mID, aSelect);
 }
 
 bool

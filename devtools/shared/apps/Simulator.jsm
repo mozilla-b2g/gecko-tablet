@@ -4,7 +4,7 @@
 
 "use strict";
 
-Components.utils.import("resource://gre/modules/devtools/shared/event-emitter.js");
+Components.utils.import("resource://devtools/shared/event-emitter.js");
 
 /**
  * TODO (Bug 1132453) The `Simulator` module is deprecated, and should be
@@ -16,9 +16,9 @@ Components.utils.import("resource://gre/modules/devtools/shared/event-emitter.js
  *   devtools/client/webide/modules/simulators.js
  */
 
-const EXPORTED_SYMBOLS = ["Simulator"];
+this.EXPORTED_SYMBOLS = ["Simulator"];
 
-const Simulator = {
+let Simulator = this.Simulator = {
   _simulators: {},
 
   register: function (name, simulator) {

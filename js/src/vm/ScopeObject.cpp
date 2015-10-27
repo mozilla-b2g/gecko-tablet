@@ -344,7 +344,7 @@ const Class ModuleEnvironmentObject::class_ = {
         nullptr, nullptr,                                    /* watch/unwatch */
         nullptr,                                             /* getElements */
         ModuleEnvironmentObject::enumerate,
-        nullptr                                              /* thisObject */
+        ModuleEnvironmentObject::thisValue
     }
 };
 
@@ -519,6 +519,13 @@ ModuleEnvironmentObject::enumerate(JSContext* cx, HandleObject obj, AutoIdVector
     return true;
 }
 
+/* static */ bool
+ModuleEnvironmentObject::thisValue(JSContext* cx, HandleObject obj, MutableHandleValue vp)
+{
+    vp.setUndefined();
+    return true;
+}
+
 /*****************************************************************************/
 
 const Class DeclEnvObject::class_ = {
@@ -626,13 +633,13 @@ DynamicWithObject::create(JSContext* cx, HandleObject object, HandleObject enclo
     if (!obj)
         return nullptr;
 
-    JSObject* thisp = GetThisObject(cx, object);
-    if (!thisp)
+    RootedValue thisv(cx);
+    if (!GetThisValue(cx, object, &thisv))
         return nullptr;
 
     obj->setEnclosingScope(enclosing);
     obj->setFixedSlot(OBJECT_SLOT, ObjectValue(*object));
-    obj->setFixedSlot(THIS_SLOT, ObjectValue(*thisp));
+    obj->setFixedSlot(THIS_SLOT, thisv);
     obj->setFixedSlot(KIND_SLOT, Int32Value(kind));
 
     return obj;
@@ -698,10 +705,11 @@ with_DeleteProperty(JSContext* cx, HandleObject obj, HandleId id, ObjectOpResult
     return DeleteProperty(cx, actual, id, result);
 }
 
-static JSObject*
-with_ThisObject(JSContext* cx, HandleObject obj)
+static bool
+with_ThisValue(JSContext* cx, HandleObject obj, MutableHandleValue vp)
 {
-    return &obj->as<DynamicWithObject>().withThis();
+    vp.set(obj->as<DynamicWithObject>().withThis());
+    return true;
 }
 
 const Class StaticWithObject::class_ = {
@@ -739,7 +747,7 @@ const Class DynamicWithObject::class_ = {
         nullptr, nullptr,    /* watch/unwatch */
         nullptr,             /* getElements */
         nullptr,             /* enumerate (native enumeration of target doesn't work) */
-        with_ThisObject,
+        with_ThisValue,
     }
 };
 
@@ -1005,8 +1013,8 @@ StaticBlockObject::addVar(ExclusiveContext* cx, Handle<StaticBlockObject*> block
                                              /* allowDictionary = */ false);
 }
 
-static JSObject*
-block_ThisObject(JSContext* cx, HandleObject obj)
+static bool
+block_ThisValue(JSContext* cx, HandleObject obj, MutableHandleValue vp)
 {
     // No other block objects should ever get passed to the 'this' object
     // hook except the global lexical scope and non-syntactic ones.
@@ -1015,7 +1023,7 @@ block_ThisObject(JSContext* cx, HandleObject obj)
     MOZ_ASSERT_IF(obj->as<ClonedBlockObject>().isGlobal(),
                   obj->enclosingScope() == cx->global());
     RootedObject enclosing(cx, obj->enclosingScope());
-    return GetThisObject(cx, enclosing);
+    return GetThisValue(cx, enclosing, vp);
 }
 
 const Class BlockObject::class_ = {
@@ -1047,7 +1055,7 @@ const Class BlockObject::class_ = {
         nullptr, nullptr, /* watch/unwatch */
         nullptr,          /* getElements */
         nullptr,          /* enumerate (native enumeration of target doesn't work) */
-        block_ThisObject,
+        block_ThisValue,
     }
 };
 
@@ -1218,78 +1226,79 @@ js::CloneNestedScopeObject(JSContext* cx, HandleObject enclosingScope, Handle<Ne
     }
 }
 
-/* static */ UninitializedLexicalObject*
-UninitializedLexicalObject::create(JSContext* cx, HandleObject enclosing)
+/* static */ RuntimeLexicalErrorObject*
+RuntimeLexicalErrorObject::create(JSContext* cx, HandleObject enclosing, unsigned errorNumber)
 {
-    UninitializedLexicalObject* obj =
-        NewObjectWithNullTaggedProto<UninitializedLexicalObject>(cx, GenericObject,
-                                                                 BaseShape::DELEGATE);
+    RuntimeLexicalErrorObject* obj =
+        NewObjectWithNullTaggedProto<RuntimeLexicalErrorObject>(cx, GenericObject,
+                                                                BaseShape::DELEGATE);
     if (!obj)
         return nullptr;
     obj->setEnclosingScope(enclosing);
+    obj->setReservedSlot(ERROR_SLOT, Int32Value(int32_t(errorNumber)));
     return obj;
 }
 
 static void
-ReportUninitializedLexicalId(JSContext* cx, HandleId id)
+ReportRuntimeLexicalErrorId(JSContext* cx, unsigned errorNumber, HandleId id)
 {
     if (JSID_IS_ATOM(id)) {
         RootedPropertyName name(cx, JSID_TO_ATOM(id)->asPropertyName());
-        ReportUninitializedLexical(cx, name);
+        ReportRuntimeLexicalError(cx, errorNumber, name);
         return;
     }
-    MOZ_CRASH("UninitializedLexicalObject should only be used with property names");
+    MOZ_CRASH("RuntimeLexicalErrorObject should only be used with property names");
 }
 
 static bool
-uninitialized_LookupProperty(JSContext* cx, HandleObject obj, HandleId id,
-                             MutableHandleObject objp, MutableHandleShape propp)
+lexicalError_LookupProperty(JSContext* cx, HandleObject obj, HandleId id,
+                            MutableHandleObject objp, MutableHandleShape propp)
 {
-    ReportUninitializedLexicalId(cx, id);
+    ReportRuntimeLexicalErrorId(cx, obj->as<RuntimeLexicalErrorObject>().errorNumber(), id);
     return false;
 }
 
 static bool
-uninitialized_HasProperty(JSContext* cx, HandleObject obj, HandleId id, bool* foundp)
+lexicalError_HasProperty(JSContext* cx, HandleObject obj, HandleId id, bool* foundp)
 {
-    ReportUninitializedLexicalId(cx, id);
+    ReportRuntimeLexicalErrorId(cx, obj->as<RuntimeLexicalErrorObject>().errorNumber(), id);
     return false;
 }
 
 static bool
-uninitialized_GetProperty(JSContext* cx, HandleObject obj, HandleValue receiver, HandleId id,
-                          MutableHandleValue vp)
+lexicalError_GetProperty(JSContext* cx, HandleObject obj, HandleValue receiver, HandleId id,
+                         MutableHandleValue vp)
 {
-    ReportUninitializedLexicalId(cx, id);
+    ReportRuntimeLexicalErrorId(cx, obj->as<RuntimeLexicalErrorObject>().errorNumber(), id);
     return false;
 }
 
 static bool
-uninitialized_SetProperty(JSContext* cx, HandleObject obj, HandleId id, HandleValue v,
-                          HandleValue receiver, ObjectOpResult& result)
+lexicalError_SetProperty(JSContext* cx, HandleObject obj, HandleId id, HandleValue v,
+                         HandleValue receiver, ObjectOpResult& result)
 {
-    ReportUninitializedLexicalId(cx, id);
+    ReportRuntimeLexicalErrorId(cx, obj->as<RuntimeLexicalErrorObject>().errorNumber(), id);
     return false;
 }
 
 static bool
-uninitialized_GetOwnPropertyDescriptor(JSContext* cx, HandleObject obj, HandleId id,
-                                       MutableHandle<JSPropertyDescriptor> desc)
+lexicalError_GetOwnPropertyDescriptor(JSContext* cx, HandleObject obj, HandleId id,
+                                      MutableHandle<JSPropertyDescriptor> desc)
 {
-    ReportUninitializedLexicalId(cx, id);
+    ReportRuntimeLexicalErrorId(cx, obj->as<RuntimeLexicalErrorObject>().errorNumber(), id);
     return false;
 }
 
 static bool
-uninitialized_DeleteProperty(JSContext* cx, HandleObject obj, HandleId id, ObjectOpResult& result)
+lexicalError_DeleteProperty(JSContext* cx, HandleObject obj, HandleId id, ObjectOpResult& result)
 {
-    ReportUninitializedLexicalId(cx, id);
+    ReportRuntimeLexicalErrorId(cx, obj->as<RuntimeLexicalErrorObject>().errorNumber(), id);
     return false;
 }
 
-const Class UninitializedLexicalObject::class_ = {
-    "UninitializedLexical",
-    JSCLASS_HAS_RESERVED_SLOTS(UninitializedLexicalObject::RESERVED_SLOTS) |
+const Class RuntimeLexicalErrorObject::class_ = {
+    "RuntimeLexicalError",
+    JSCLASS_HAS_RESERVED_SLOTS(RuntimeLexicalErrorObject::RESERVED_SLOTS) |
     JSCLASS_IS_ANONYMOUS,
     nullptr, /* addProperty */
     nullptr, /* delProperty */
@@ -1306,13 +1315,13 @@ const Class UninitializedLexicalObject::class_ = {
     JS_NULL_CLASS_SPEC,
     JS_NULL_CLASS_EXT,
     {
-        uninitialized_LookupProperty,
+        lexicalError_LookupProperty,
         nullptr,             /* defineProperty */
-        uninitialized_HasProperty,
-        uninitialized_GetProperty,
-        uninitialized_SetProperty,
-        uninitialized_GetOwnPropertyDescriptor,
-        uninitialized_DeleteProperty,
+        lexicalError_HasProperty,
+        lexicalError_GetProperty,
+        lexicalError_SetProperty,
+        lexicalError_GetOwnPropertyDescriptor,
+        lexicalError_DeleteProperty,
         nullptr, nullptr,    /* watch/unwatch */
         nullptr,             /* getElements */
         nullptr,             /* enumerate (native enumeration of target doesn't work) */
@@ -1606,6 +1615,11 @@ class DebugScopeProxy : public BaseProxyHandler
         *accessResult = ACCESS_GENERIC;
         LiveScopeVal* maybeLiveScope = DebugScopes::hasLiveScope(*scope);
 
+        if (scope->is<ModuleEnvironmentObject>()) {
+            /* Everything is aliased and stored in the environment object. */
+            return true;
+        }
+
         /* Handle unaliased formals, vars, lets, and consts at function scope. */
         if (scope->is<CallObject>() && !scope->as<CallObject>().isForEval()) {
             CallObject& callobj = scope->as<CallObject>();
@@ -1739,9 +1753,11 @@ class DebugScopeProxy : public BaseProxyHandler
         return id == NameToId(cx->names().arguments);
     }
 
-    static bool isFunctionScope(ScopeObject& scope)
+    static bool isFunctionScope(const JSObject& scope)
     {
-        return scope.is<CallObject>() && !scope.as<CallObject>().isForEval();
+        return scope.is<CallObject>() &&
+               !scope.is<ModuleEnvironmentObject>() &&
+               !scope.as<CallObject>().isForEval();
     }
 
     /*
@@ -2042,7 +2058,7 @@ class DebugScopeProxy : public BaseProxyHandler
          * Function scopes are optimized to not contain unaliased variables so
          * they must be manually appended here.
          */
-        if (scope->is<CallObject>() && !scope->as<CallObject>().isForEval()) {
+        if (isFunctionScope(*scope)) {
             RootedScript script(cx, scope->as<CallObject>().callee().nonLazyScript());
             for (BindingIter bi(script); bi; bi++) {
                 if (!bi->aliased() && !props.append(NameToId(bi->name())))
@@ -2077,7 +2093,7 @@ class DebugScopeProxy : public BaseProxyHandler
          * Function scopes are optimized to not contain unaliased variables so
          * a manual search is necessary.
          */
-        if (!found && scope->is<CallObject>() && !scope->as<CallObject>().isForEval()) {
+        if (!found && isFunctionScope(*scope)) {
             RootedScript script(cx, scope->as<CallObject>().callee().nonLazyScript());
             for (BindingIter bi(script); bi; bi++) {
                 if (!bi->aliased() && NameToId(bi->name()) == id) {
@@ -2174,7 +2190,7 @@ DebugScopeObject::isOptimizedOut() const
     if (s.is<ClonedBlockObject>())
         return !s.as<ClonedBlockObject>().staticBlock().needsClone();
 
-    if (s.is<CallObject>()) {
+    if (s.is<CallObject>() && !s.is<ModuleEnvironmentObject>()) {
         return !s.as<CallObject>().isForEval() &&
                !s.as<CallObject>().callee().needsCallObject() &&
                !maybeSnapshot();
@@ -2248,7 +2264,7 @@ DebugScopes::sweep(JSRuntime* rt)
              * Thus, we must explicitly remove the entries from both liveScopes
              * and missingScopes here.
              */
-            liveScopes.remove(&e.front().value()->scope());
+            liveScopes.remove(&e.front().value().unbarrieredGet()->scope());
             e.removeFront();
         } else {
             MissingScopeKey key = e.front().key();
@@ -2855,6 +2871,13 @@ js::GetDebugScopeForFrame(JSContext* cx, AbstractFramePtr frame, jsbytecode* pc)
         return nullptr;
 
     ScopeIter si(cx, frame, pc);
+    return GetDebugScope(cx, si);
+}
+
+JSObject*
+js::GetDebugScopeForGlobalLexicalScope(JSContext* cx)
+{
+    ScopeIter si(cx, &cx->global()->lexicalScope(), &cx->global()->lexicalScope().staticBlock());
     return GetDebugScope(cx, si);
 }
 

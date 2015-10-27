@@ -15,12 +15,12 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/EnumSet.h"
 #include "nsCOMPtr.h"
 #include "nsContainerFrame.h"
 #include "nsPoint.h"
 #include "nsRect.h"
 #include "plarena.h"
-#include "Layers.h"
 #include "nsRegion.h"
 #include "nsDisplayListInvalidation.h"
 #include "DisplayListClipState.h"
@@ -37,6 +37,7 @@
 
 class nsIContent;
 class nsRenderingContext;
+class nsDisplayList;
 class nsDisplayTableItem;
 class nsISelection;
 class nsDisplayLayerEventRegions;
@@ -136,7 +137,9 @@ class nsDisplayListBuilder {
   public:
     typedef mozilla::gfx::Matrix4x4 Matrix4x4;
 
-    Preserves3DContext() {}
+    Preserves3DContext()
+      : mAccumulatedRectLevels(0)
+    {}
     Preserves3DContext(const Preserves3DContext &aOther)
       : mAccumulatedTransform()
       , mAccumulatedRect()
@@ -289,7 +292,7 @@ public:
   /**
    * Get the scrollframe to ignore, if any.
    */
-  nsIFrame* GetIgnoreScrollFrame() const { return mIgnoreScrollFrame; }
+  nsIFrame* GetIgnoreScrollFrame() { return mIgnoreScrollFrame; }
   /**
    * Get the ViewID of the nearest scrolling ancestor frame.
    */
@@ -309,6 +312,13 @@ public:
   {
     *aOutScrollbarTarget = mCurrentScrollbarTarget;
     *aOutScrollbarFlags = mCurrentScrollbarFlags;
+  }
+  /**
+   * Returns true if building a scrollbar, and the scrollbar will not be
+   * layerized.
+   */
+  bool IsBuildingNonLayerizedScrollbar() const {
+    return mIsBuildingScrollbar && !mCurrentScrollbarWillHaveLayer;
   }
   /**
    * Calling this setter makes us include all out-of-flow descendant
@@ -544,8 +554,7 @@ public:
   /**
    * Notifies the builder that a particular themed widget exists
    * at the given rectangle within the currently built display list.
-   * For certain appearance values (currently only
-   * NS_THEME_MOZ_MAC_UNIFIED_TOOLBAR, NS_THEME_TOOLBAR and
+   * For certain appearance values (currently only NS_THEME_TOOLBAR and
    * NS_THEME_WINDOW_TITLEBAR) this gets called during every display list
    * construction, for every themed widget of the right type within the
    * display list, except for themed widgets which are transformed or have
@@ -751,15 +760,19 @@ public:
   class AutoCurrentScrollbarInfoSetter {
   public:
     AutoCurrentScrollbarInfoSetter(nsDisplayListBuilder* aBuilder, ViewID aScrollTargetID,
-                                   uint32_t aScrollbarFlags)
+                                   uint32_t aScrollbarFlags, bool aWillHaveLayer)
      : mBuilder(aBuilder) {
+      aBuilder->mIsBuildingScrollbar = true;
       aBuilder->mCurrentScrollbarTarget = aScrollTargetID;
       aBuilder->mCurrentScrollbarFlags = aScrollbarFlags;
+      aBuilder->mCurrentScrollbarWillHaveLayer = aWillHaveLayer;
     }
     ~AutoCurrentScrollbarInfoSetter() {
       // No need to restore old values because scrollbars cannot be nested.
+      mBuilder->mIsBuildingScrollbar = false;
       mBuilder->mCurrentScrollbarTarget = FrameMetrics::NULL_SCROLL_ID;
       mBuilder->mCurrentScrollbarFlags = 0;
+      mBuilder->mCurrentScrollbarWillHaveLayer = false;
     }
   private:
     nsDisplayListBuilder* mBuilder;
@@ -841,6 +854,10 @@ public:
   const nsRect& GetAccumulatedRect() {
     return mPreserves3DCtx.mAccumulatedRect;
   }
+  /**
+   * The level is increased by one for items establishing 3D rendering
+   * context and starting a new accumulation.
+   */
   int GetAccumulatedRectLevels() {
     return mPreserves3DCtx.mAccumulatedRectLevels;
   }
@@ -1107,7 +1124,7 @@ private:
     }
 
     PLDHashNumber Hash() const {
-      return mozilla::HashBytes(this, sizeof(this));
+      return mozilla::HashBytes(this, sizeof(*this));
     }
 
     bool operator==(const AnimatedGeometryRootLookup& aOther) const {
@@ -1150,6 +1167,8 @@ private:
   uint32_t                       mCurrentScrollbarFlags;
   BlendModeSet                   mContainedBlendModes;
   Preserves3DContext             mPreserves3DCtx;
+  bool                           mIsBuildingScrollbar;
+  bool                           mCurrentScrollbarWillHaveLayer;
   bool                           mBuildCaret;
   bool                           mIgnoreSuppression;
   bool                           mHadToIgnoreSuppression;
@@ -1604,6 +1623,21 @@ public:
    */
   virtual nsDisplayList* GetSameCoordinateSystemChildren() { return nullptr; }
   virtual void UpdateBounds(nsDisplayListBuilder* aBuilder) {}
+  /**
+   * Do UpdateBounds() for items with frames establishing or extending
+   * 3D rendering context.
+   *
+   * This function is called by UpdateBoundsFor3D() of
+   * nsDisplayTransform(), and it is called by
+   * BuildDisplayListForStackingContext() on transform items
+   * establishing 3D rendering context.
+   *
+   * The bounds of a transform item with the frame establishing 3D
+   * rendering context should be computed by calling
+   * DoUpdateBoundsPreserves3D() on all descendants that participate
+   * the same 3d rendering context.
+   */
+  virtual void DoUpdateBoundsPreserves3D(nsDisplayListBuilder* aBuilder) {}
 
   /**
    * If this has a child list, return it, even if the children are in
@@ -2370,7 +2404,7 @@ public:
   void SetNeedsCustomScrollClip() { mNeedsCustomScrollClip = true; }
 
 protected:
-  nsRefPtr<nsCaret> mCaret;
+  RefPtr<nsCaret> mCaret;
   nsRect mBounds;
   bool mNeedsCustomScrollClip;
 };
@@ -2589,7 +2623,7 @@ protected:
   // mIsThemed is true or if FindBackground returned false.
   const nsStyleBackground* mBackgroundStyle;
   nsCOMPtr<imgIContainer> mImage;
-  nsRefPtr<ImageContainer> mImageContainer;
+  RefPtr<ImageContainer> mImageContainer;
   LayoutDeviceRect mDestRect;
   /* Bounds of this display item */
   nsRect mBounds;
@@ -3167,7 +3201,7 @@ protected:
 class nsDisplayOpacity : public nsDisplayWrapList {
 public:
   nsDisplayOpacity(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
-                   nsDisplayList* aList);
+                   nsDisplayList* aList, bool aForEventsOnly);
 #ifdef NS_BUILD_REFCNT_LOGGING
   virtual ~nsDisplayOpacity();
 #endif
@@ -3202,6 +3236,7 @@ public:
 
 private:
   float mOpacity;
+  bool mForEventsOnly;
 };
 
 class nsDisplayMixBlendMode : public nsDisplayWrapList {
@@ -3252,13 +3287,7 @@ public:
                                                const ContainerLayerParameters& aContainerParameters) override;
     virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
                                      LayerManager* aManager,
-                                     const ContainerLayerParameters& aParameters) override
-    {
-      if (mCanBeActive && aManager->SupportsMixBlendModes(mContainedBlendModes)) {
-        return mozilla::LAYER_ACTIVE;
-      }
-      return mozilla::LAYER_INACTIVE;
-    }
+                                     const ContainerLayerParameters& aParameters) override;
     virtual bool TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem) override;
     virtual bool ShouldFlattenAway(nsDisplayListBuilder* aBuilder) override {
       return false;
@@ -3614,13 +3643,18 @@ class nsDisplayTransform: public nsDisplayItem
       nsDisplayWrapList(aBuilder, aFrame, aItem) {}
     virtual ~StoreList() {}
 
-    virtual void UpdateBounds(nsDisplayListBuilder* aBuilder) override {}
-    virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder,
-                             bool* aSnap) override {
-      // The bounds should not be computed until now, because we don't
-      // get accmulated transform before.
+    virtual void UpdateBounds(nsDisplayListBuilder* aBuilder) override {
+      // For extending 3d rendering context, the bounds would be
+      // updated by DoUpdateBoundsPreserves3D(), not here.
+      if (!mFrame->Extend3DContext()) {
+        nsDisplayWrapList::UpdateBounds(aBuilder);
+      }
+    }
+    virtual void DoUpdateBoundsPreserves3D(nsDisplayListBuilder* aBuilder) override {
+      for (nsDisplayItem *i = mList.GetBottom(); i; i = i->GetAbove()) {
+        i->DoUpdateBoundsPreserves3D(aBuilder);
+      }
       nsDisplayWrapList::UpdateBounds(aBuilder);
-      return nsDisplayWrapList::GetBounds(aBuilder, aSnap);
     }
   };
 
@@ -3795,7 +3829,7 @@ public:
     }
 
     const nsIFrame* mFrame;
-    nsRefPtr<nsCSSValueSharedList> mTransformList;
+    RefPtr<nsCSSValueSharedList> mTransformList;
     const Point3D mToTransformOrigin;
     nscoord mChildPerspective;
 
@@ -3862,7 +3896,54 @@ public:
   // See nsIFrame::BuildDisplayListForStackingContext()
   void SetNoExtendContext() { mNoExtendContext = true; }
 
+  virtual void DoUpdateBoundsPreserves3D(nsDisplayListBuilder* aBuilder) override {
+    MOZ_ASSERT(mFrame->Combines3DTransformWithAncestors() ||
+               IsTransformSeparator());
+    // Updating is not going through to child 3D context.
+    ComputeBounds(aBuilder);
+  }
+
+  /**
+   * This function updates bounds for items with a frame establishing
+   * 3D rendering context.
+   *
+   * \see nsDisplayItem::DoUpdateBoundsPreserves3D()
+   */
+  void UpdateBoundsFor3D(nsDisplayListBuilder* aBuilder) {
+    if (!mFrame->Extend3DContext() ||
+        mFrame->Combines3DTransformWithAncestors() ||
+        IsTransformSeparator()) {
+      // Not an establisher of a 3D rendering context.
+      return;
+    }
+    // Always start updating from an establisher of a 3D rendering context.
+
+    nsDisplayListBuilder::AutoAccumulateRect accRect(aBuilder);
+    nsDisplayListBuilder::AutoAccumulateTransform accTransform(aBuilder);
+    accTransform.StartRoot();
+    ComputeBounds(aBuilder);
+    mBounds = aBuilder->GetAccumulatedRect();
+    mHasBounds = true;
+  }
+
+  /**
+   * This item is an additional item as the boundary between parent
+   * and child 3D rendering context.
+   * \see nsIFrame::BuildDisplayListForStackingContext().
+   */
+  bool IsTransformSeparator() { return mIsTransformSeparator; }
+  /**
+   * This item is the boundary between parent and child 3D rendering
+   * context.
+   */
+  bool IsLeafOf3DContext() {
+    return (IsTransformSeparator() ||
+            (!mFrame->Extend3DContext() &&
+             mFrame->Combines3DTransformWithAncestors()));
+  }
+
 private:
+  void ComputeBounds(nsDisplayListBuilder* aBuilder);
   void SetReferenceFrameToAncestor(nsDisplayListBuilder* aBuilder);
   void Init(nsDisplayListBuilder* aBuilder);
 
@@ -3881,6 +3962,9 @@ private:
   ComputeTransformFunction mTransformGetter;
   nsRect mChildrenVisibleRect;
   uint32_t mIndex;
+  nsRect mBounds;
+  // True for mBounds is valid.
+  bool mHasBounds;
   // We wont know if we pre-render until the layer building phase where we can
   // check layers will-change budget.
   bool mMaybePrerender;
@@ -3891,8 +3975,9 @@ private:
   // the child preserves3d context doesn't create a transform item.
   // With this flags, we force the item not extending 3D context.
   bool mNoExtendContext;
+  // This item is a separator between 3D rendering contexts, and
   // mTransform have been presetted by the constructor.
-  bool mHasPresetTransform;
+  bool mIsTransformSeparator;
   // True if mTransformPreserves3D have been initialized.
   bool mTransformPreserves3DInited;
 };
@@ -3990,7 +4075,7 @@ public:
                                              const ContainerLayerParameters& aContainerParameters) override;
 
 protected:
-  nsRefPtr<mozilla::gfx::VRHMDInfo> mHMD;
+  RefPtr<mozilla::gfx::VRHMDInfo> mHMD;
 };
 
 #endif /*NSDISPLAYLIST_H_*/

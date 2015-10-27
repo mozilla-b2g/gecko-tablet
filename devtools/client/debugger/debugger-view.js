@@ -31,6 +31,7 @@ const SEARCH_AUTOFILL = [SEARCH_GLOBAL_FLAG, SEARCH_FUNCTION_FLAG, SEARCH_TOKEN_
 const EDITOR_VARIABLE_HOVER_DELAY = 750; // ms
 const EDITOR_VARIABLE_POPUP_POSITION = "topcenter bottomleft";
 const TOOLBAR_ORDER_POPUP_POSITION = "topcenter bottomleft";
+const FUNCTION_SEARCH_POPUP_POSITION = "topcenter bottomleft";
 const RESIZE_REFRESH_RATE = 50; // ms
 const PROMISE_DEBUGGER_URL =
   "chrome://devtools/content/promisedebugger/promise-debugger.xhtml";
@@ -310,7 +311,10 @@ var DebuggerView = {
       if (button == 2) {
         this.clickedLine = line;
       }
-      else {
+      // Bug 1201008: Only add the breakpoint to the editor if we're currently
+      // looking at a source. Even if no source is loaded, you can
+      // interact with line 1 of the editor.
+      else if (DebuggerView.Sources.selectedValue) {
         if (this.editor.hasBreakpoint(line)) {
           this.editor.removeBreakpoint(line);
         } else {

@@ -197,6 +197,7 @@
 #include "mozIThirdPartyUtil.h"
 #include "nsICookieService.h"
 #include "mozilla/EnumSet.h"
+#include "mozilla/BloomFilter.h"
 
 #include "nsIBidiKeyboard.h"
 
@@ -403,7 +404,7 @@ protected:          // declared protected to silence clang warnings
   const void *mKey; // must be first, to look like PLDHashEntryStub
 
 public:
-  nsRefPtr<EventListenerManager> mListenerManager;
+  RefPtr<EventListenerManager> mListenerManager;
 };
 
 static void
@@ -487,7 +488,7 @@ nsContentUtils::Init()
 
   // We use the constructor here because we want infallible initialization; we
   // apparently don't care whether sNullSubjectPrincipal has a sane URI or not.
-  nsRefPtr<nsNullPrincipal> nullPrincipal = new nsNullPrincipal();
+  RefPtr<nsNullPrincipal> nullPrincipal = new nsNullPrincipal();
   nullPrincipal->Init();
   nullPrincipal.forget(&sNullSubjectPrincipal);
 
@@ -1751,7 +1752,7 @@ nsContentUtils::IsControlledByServiceWorker(nsIDocument* aDocument)
     return false;
   }
 
-  nsRefPtr<workers::ServiceWorkerManager> swm =
+  RefPtr<workers::ServiceWorkerManager> swm =
     workers::ServiceWorkerManager::GetInstance();
   MOZ_ASSERT(swm);
 
@@ -2710,6 +2711,9 @@ nsContentUtils::SubjectPrincipal()
   MOZ_ASSERT(NS_IsMainThread());
   JSContext* cx = GetCurrentJSContext();
   if (!cx) {
+#ifndef RELEASE_BUILD
+    MOZ_CRASH("Accessing the Subject Principal without an AutoJSAPI on the stack is forbidden");
+#endif
     Telemetry::Accumulate(Telemetry::SUBJECT_PRINCIPAL_ACCESSED_WITHOUT_SCRIPT_ON_STACK, true);
     return GetSystemPrincipal();
   }
@@ -3211,7 +3215,7 @@ already_AddRefed<imgRequestProxy>
 nsContentUtils::GetStaticRequest(imgRequestProxy* aRequest)
 {
   NS_ENSURE_TRUE(aRequest, nullptr);
-  nsRefPtr<imgRequestProxy> retval;
+  RefPtr<imgRequestProxy> retval;
   aRequest->GetStaticRequest(getter_AddRefs(retval));
   return retval.forget();
 }
@@ -4226,7 +4230,7 @@ nsContentUtils::RemoveListenerManager(nsINode *aNode)
     auto entry = static_cast<EventListenerManagerMapEntry*>
                             (sEventListenerManagersHash->Search(aNode));
     if (entry) {
-      nsRefPtr<EventListenerManager> listenerManager;
+      RefPtr<EventListenerManager> listenerManager;
       listenerManager.swap(entry->mListenerManager);
       // Remove the entry and *then* do operations that could cause further
       // modification of sEventListenerManagersHash.  See bug 334177.
@@ -4307,7 +4311,7 @@ nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
 #endif
 
   if (isHTML) {
-    nsRefPtr<DocumentFragment> frag =
+    RefPtr<DocumentFragment> frag =
       new DocumentFragment(document->NodeInfoManager());
     
     nsCOMPtr<nsIContent> contextAsContent = do_QueryInterface(aContextNode);
@@ -4637,7 +4641,7 @@ nsContentUtils::SetNodeTextContent(nsIContent* aContent,
     return NS_OK;
   }
 
-  nsRefPtr<nsTextNode> textContent =
+  RefPtr<nsTextNode> textContent =
     new nsTextNode(aContent->NodeInfo()->NodeInfoManager());
 
   textContent->SetText(aValue, true);
@@ -5351,14 +5355,6 @@ static void ProcessViewportToken(nsIDocument *aDocument,
 
 #define IS_SEPARATOR(c) ((c == '=') || (c == ',') || (c == ';') || \
                          (c == '\t') || (c == '\n') || (c == '\r'))
-
-/* static */
-nsViewportInfo
-nsContentUtils::GetViewportInfo(nsIDocument *aDocument,
-                                const ScreenIntSize& aDisplaySize)
-{
-  return aDocument->GetViewportInfo(aDisplaySize);
-}
 
 /* static */
 nsresult
@@ -6209,7 +6205,7 @@ nsContentUtils::CreateBlobBuffer(JSContext* aCx,
 {
   uint32_t blobLen = aData.Length();
   void* blobData = malloc(blobLen);
-  nsRefPtr<Blob> blob;
+  RefPtr<Blob> blob;
   if (blobData) {
     memcpy(blobData, aData.BeginReading(), blobLen);
     blob = mozilla::dom::Blob::CreateMemoryBlob(aParent, blobData, blobLen,
@@ -6538,7 +6534,7 @@ LayerManagerForDocumentInternal(const nsIDocument *aDoc, bool aRequirePersistent
 {
   nsIWidget *widget = nsContentUtils::WidgetForDocument(aDoc);
   if (widget) {
-    nsRefPtr<LayerManager> manager =
+    RefPtr<LayerManager> manager =
       widget->GetLayerManager(aRequirePersistent ? nsIWidget::LAYER_MANAGER_PERSISTENT : 
                               nsIWidget::LAYER_MANAGER_CURRENT,
                               aAllowRetaining);
@@ -6816,7 +6812,7 @@ CheckForWindowedPlugins(nsISupports* aSupports, void* aResult)
   if (!olc) {
     return;
   }
-  nsRefPtr<nsNPAPIPluginInstance> plugin;
+  RefPtr<nsNPAPIPluginInstance> plugin;
   olc->GetPluginInstance(getter_AddRefs(plugin));
   if (!plugin) {
     return;
@@ -7024,38 +7020,6 @@ nsContentUtils::GetSelectionInTextControl(Selection* aSelection,
   // Make sure aOutStartOffset <= aOutEndOffset.
   aOutStartOffset = std::min(anchorOffset, focusOffset);
   aOutEndOffset = std::max(anchorOffset, focusOffset);
-}
-
-/* static */
-nsRect
-nsContentUtils::GetSelectionBoundingRect(Selection* aSel)
-{
-  nsRect res;
-  // Bounding client rect may be empty after calling GetBoundingClientRect
-  // when range is collapsed. So we get caret's rect when range is
-  // collapsed.
-  if (aSel->IsCollapsed()) {
-    nsIFrame* frame = nsCaret::GetGeometry(aSel, &res);
-    if (frame) {
-      nsIFrame* relativeTo =
-        nsLayoutUtils::GetContainingBlockForClientRect(frame);
-      res = nsLayoutUtils::TransformFrameRectToAncestor(frame, res, relativeTo);
-    }
-  } else {
-    int32_t rangeCount = aSel->RangeCount();
-    nsLayoutUtils::RectAccumulator accumulator;
-    for (int32_t idx = 0; idx < rangeCount; ++idx) {
-      nsRange* range = aSel->GetRangeAt(idx);
-      nsRange::CollectClientRects(&accumulator, range,
-                                  range->GetStartParent(), range->StartOffset(),
-                                  range->GetEndParent(), range->EndOffset(),
-                                  true, false);
-    }
-    res = accumulator.mResultRect.IsEmpty() ? accumulator.mFirstRect :
-      accumulator.mResultRect;
-  }
-
-  return res;
 }
 
 
@@ -7498,7 +7462,7 @@ nsContentUtils::TransferableToIPCTransferable(nsITransferable* aTransferable,
               image->GetFrame(imgIContainer::FRAME_CURRENT,
                               imgIContainer::FLAG_SYNC_DECODE);
             if (surface) {
-              mozilla::RefPtr<mozilla::gfx::DataSourceSurface> dataSurface =
+              RefPtr<mozilla::gfx::DataSourceSurface> dataSurface =
                 surface->GetDataSurface();
               size_t length;
               int32_t stride;
@@ -8101,10 +8065,21 @@ nsContentUtils::PushEnabled(JSContext* aCx, JSObject* aObj)
 
 // static
 bool
-nsContentUtils::IsWorkerLoad(nsContentPolicyType aType)
+nsContentUtils::IsNonSubresourceRequest(nsIChannel* aChannel)
 {
-  return aType == nsIContentPolicy::TYPE_INTERNAL_WORKER ||
-         aType == nsIContentPolicy::TYPE_INTERNAL_SHARED_WORKER;
+  nsLoadFlags loadFlags = 0;
+  aChannel->GetLoadFlags(&loadFlags);
+  if (loadFlags & nsIChannel::LOAD_DOCUMENT_URI) {
+    return true;
+  }
+
+  nsCOMPtr<nsILoadInfo> loadInfo = aChannel->GetLoadInfo();
+  if (!loadInfo) {
+    return false;
+  }
+  nsContentPolicyType type = loadInfo->InternalContentPolicyType();
+  return type == nsIContentPolicy::TYPE_INTERNAL_WORKER ||
+         type == nsIContentPolicy::TYPE_INTERNAL_SHARED_WORKER;
 }
 
 // static, public
@@ -8219,10 +8194,8 @@ nsContentUtils::InternalStorageAllowedForPrincipal(nsIPrincipal* aPrincipal,
     return access;
   }
 
-  // We don't want to prompt for every attempt to access permissions, so we
-  // treat the cookie ASK_BEFORE_ACCEPT as though it was a reject.
-  if (sCookiesBehavior == nsICookieService::BEHAVIOR_REJECT ||
-      sCookiesLifetimePolicy == nsICookieService::ASK_BEFORE_ACCEPT) {
+  // We don't want to prompt for every attempt to access permissions.
+  if (sCookiesBehavior == nsICookieService::BEHAVIOR_REJECT) {
     return StorageAccess::eDeny;
   }
 
@@ -8246,4 +8219,610 @@ nsContentUtils::InternalStorageAllowedForPrincipal(nsIPrincipal* aPrincipal,
   }
 
   return access;
+}
+
+namespace {
+
+// We put StringBuilder in the anonymous namespace to prevent anything outside
+// this file from accidentally being linked against it.
+
+class StringBuilder
+{
+private:
+  // Try to keep the size of StringBuilder close to a jemalloc bucket size.
+  static const uint32_t STRING_BUFFER_UNITS = 1020;
+  class Unit
+  {
+  public:
+    Unit() : mAtom(nullptr), mType(eUnknown), mLength(0)
+    {
+      MOZ_COUNT_CTOR(StringBuilder::Unit);
+    }
+    ~Unit()
+    {
+      if (mType == eString || mType == eStringWithEncode) {
+        delete mString;
+      }
+      MOZ_COUNT_DTOR(StringBuilder::Unit);
+    }
+
+    enum Type
+    {
+      eUnknown,
+      eAtom,
+      eString,
+      eStringWithEncode,
+      eLiteral,
+      eTextFragment,
+      eTextFragmentWithEncode,
+    };
+
+    union
+    {
+      nsIAtom*              mAtom;
+      const char*           mLiteral;
+      nsAutoString*         mString;
+      const nsTextFragment* mTextFragment;
+    };
+    Type     mType;
+    uint32_t mLength;
+  };
+public:
+  StringBuilder() : mLast(this), mLength(0)
+  {
+    MOZ_COUNT_CTOR(StringBuilder);
+  }
+
+  ~StringBuilder()
+  {
+    MOZ_COUNT_DTOR(StringBuilder);
+  }
+
+  void Append(nsIAtom* aAtom)
+  {
+    Unit* u = AddUnit();
+    u->mAtom = aAtom;
+    u->mType = Unit::eAtom;
+    uint32_t len = aAtom->GetLength();
+    u->mLength = len;
+    mLength += len;
+  }
+
+  template<int N>
+  void Append(const char (&aLiteral)[N])
+  {
+    Unit* u = AddUnit();
+    u->mLiteral = aLiteral;
+    u->mType = Unit::eLiteral;
+    uint32_t len = N - 1;
+    u->mLength = len;
+    mLength += len;
+  }
+
+  template<int N>
+  void Append(char (&aLiteral)[N])
+  {
+    Unit* u = AddUnit();
+    u->mLiteral = aLiteral;
+    u->mType = Unit::eLiteral;
+    uint32_t len = N - 1;
+    u->mLength = len;
+    mLength += len;
+  }
+
+  void Append(const nsAString& aString)
+  {
+    Unit* u = AddUnit();
+    u->mString = new nsAutoString(aString);
+    u->mType = Unit::eString;
+    uint32_t len = aString.Length();
+    u->mLength = len;
+    mLength += len;
+  }
+
+  void Append(nsAutoString* aString)
+  {
+    Unit* u = AddUnit();
+    u->mString = aString;
+    u->mType = Unit::eString;
+    uint32_t len = aString->Length();
+    u->mLength = len;
+    mLength += len;
+  }
+
+  void AppendWithAttrEncode(nsAutoString* aString, uint32_t aLen)
+  {
+    Unit* u = AddUnit();
+    u->mString = aString;
+    u->mType = Unit::eStringWithEncode;
+    u->mLength = aLen;
+    mLength += aLen;
+  }
+
+  void Append(const nsTextFragment* aTextFragment)
+  {
+    Unit* u = AddUnit();
+    u->mTextFragment = aTextFragment;
+    u->mType = Unit::eTextFragment;
+    uint32_t len = aTextFragment->GetLength();
+    u->mLength = len;
+    mLength += len;
+  }
+
+  void AppendWithEncode(const nsTextFragment* aTextFragment, uint32_t aLen)
+  {
+    Unit* u = AddUnit();
+    u->mTextFragment = aTextFragment;
+    u->mType = Unit::eTextFragmentWithEncode;
+    u->mLength = aLen;
+    mLength += aLen;
+  }
+
+  bool ToString(nsAString& aOut)
+  {
+    if (!aOut.SetCapacity(mLength, fallible)) {
+      return false;
+    }
+
+    for (StringBuilder* current = this; current; current = current->mNext) {
+      uint32_t len = current->mUnits.Length();
+      for (uint32_t i = 0; i < len; ++i) {
+        Unit& u = current->mUnits[i];
+        switch (u.mType) {
+          case Unit::eAtom:
+            aOut.Append(nsDependentAtomString(u.mAtom));
+            break;
+          case Unit::eString:
+            aOut.Append(*(u.mString));
+            break;
+          case Unit::eStringWithEncode:
+            EncodeAttrString(*(u.mString), aOut);
+            break;
+          case Unit::eLiteral:
+            aOut.AppendASCII(u.mLiteral, u.mLength);
+            break;
+          case Unit::eTextFragment:
+            u.mTextFragment->AppendTo(aOut);
+            break;
+          case Unit::eTextFragmentWithEncode:
+            EncodeTextFragment(u.mTextFragment, aOut);
+            break;
+          default:
+            MOZ_CRASH("Unknown unit type?");
+        }
+      }
+    }
+    return true;
+  }
+private:
+  Unit* AddUnit()
+  {
+    if (mLast->mUnits.Length() == STRING_BUFFER_UNITS) {
+      new StringBuilder(this);
+    }
+    return mLast->mUnits.AppendElement();
+  }
+
+  explicit StringBuilder(StringBuilder* aFirst)
+  : mLast(nullptr), mLength(0)
+  {
+    MOZ_COUNT_CTOR(StringBuilder);
+    aFirst->mLast->mNext = this;
+    aFirst->mLast = this;
+  }
+
+  void EncodeAttrString(const nsAutoString& aValue, nsAString& aOut)
+  {
+    const char16_t* c = aValue.BeginReading();
+    const char16_t* end = aValue.EndReading();
+    while (c < end) {
+      switch (*c) {
+      case '"':
+        aOut.AppendLiteral("&quot;");
+        break;
+      case '&':
+        aOut.AppendLiteral("&amp;");
+        break;
+      case 0x00A0:
+        aOut.AppendLiteral("&nbsp;");
+        break;
+      default:
+        aOut.Append(*c);
+        break;
+      }
+      ++c;
+    }
+  }
+
+  void EncodeTextFragment(const nsTextFragment* aValue, nsAString& aOut)
+  {
+    uint32_t len = aValue->GetLength();
+    if (aValue->Is2b()) {
+      const char16_t* data = aValue->Get2b();
+      for (uint32_t i = 0; i < len; ++i) {
+        const char16_t c = data[i];
+        switch (c) {
+          case '<':
+            aOut.AppendLiteral("&lt;");
+            break;
+          case '>':
+            aOut.AppendLiteral("&gt;");
+            break;
+          case '&':
+            aOut.AppendLiteral("&amp;");
+            break;
+          case 0x00A0:
+            aOut.AppendLiteral("&nbsp;");
+            break;
+          default:
+            aOut.Append(c);
+            break;
+        }
+      }
+    } else {
+      const char* data = aValue->Get1b();
+      for (uint32_t i = 0; i < len; ++i) {
+        const unsigned char c = data[i];
+        switch (c) {
+          case '<':
+            aOut.AppendLiteral("&lt;");
+            break;
+          case '>':
+            aOut.AppendLiteral("&gt;");
+            break;
+          case '&':
+            aOut.AppendLiteral("&amp;");
+            break;
+          case 0x00A0:
+            aOut.AppendLiteral("&nbsp;");
+            break;
+          default:
+            aOut.Append(c);
+            break;
+        }
+      }
+    }
+  }
+
+  nsAutoTArray<Unit, STRING_BUFFER_UNITS> mUnits;
+  nsAutoPtr<StringBuilder>                mNext;
+  StringBuilder*                          mLast;
+  // mLength is used only in the first StringBuilder object in the linked list.
+  uint32_t                                mLength;
+};
+
+} // namespace
+
+static void
+AppendEncodedCharacters(const nsTextFragment* aText, StringBuilder& aBuilder)
+{
+  uint32_t extraSpaceNeeded = 0;
+  uint32_t len = aText->GetLength();
+  if (aText->Is2b()) {
+    const char16_t* data = aText->Get2b();
+    for (uint32_t i = 0; i < len; ++i) {
+      const char16_t c = data[i];
+      switch (c) {
+        case '<':
+          extraSpaceNeeded += ArrayLength("&lt;") - 2;
+          break;
+        case '>':
+          extraSpaceNeeded += ArrayLength("&gt;") - 2;
+          break;
+        case '&':
+          extraSpaceNeeded += ArrayLength("&amp;") - 2;
+          break;
+        case 0x00A0:
+          extraSpaceNeeded += ArrayLength("&nbsp;") - 2;
+          break;
+        default:
+          break;
+      }
+    }
+  } else {
+    const char* data = aText->Get1b();
+    for (uint32_t i = 0; i < len; ++i) {
+      const unsigned char c = data[i];
+      switch (c) {
+        case '<':
+          extraSpaceNeeded += ArrayLength("&lt;") - 2;
+          break;
+        case '>':
+          extraSpaceNeeded += ArrayLength("&gt;") - 2;
+          break;
+        case '&':
+          extraSpaceNeeded += ArrayLength("&amp;") - 2;
+          break;
+        case 0x00A0:
+          extraSpaceNeeded += ArrayLength("&nbsp;") - 2;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  if (extraSpaceNeeded) {
+    aBuilder.AppendWithEncode(aText, len + extraSpaceNeeded);
+  } else {
+    aBuilder.Append(aText);
+  }
+}
+
+static void
+AppendEncodedAttributeValue(nsAutoString* aValue, StringBuilder& aBuilder)
+{
+  const char16_t* c = aValue->BeginReading();
+  const char16_t* end = aValue->EndReading();
+
+  uint32_t extraSpaceNeeded = 0;
+  while (c < end) {
+    switch (*c) {
+      case '"':
+        extraSpaceNeeded += ArrayLength("&quot;") - 2;
+        break;
+      case '&':
+        extraSpaceNeeded += ArrayLength("&amp;") - 2;
+        break;
+      case 0x00A0:
+        extraSpaceNeeded += ArrayLength("&nbsp;") - 2;
+        break;
+      default:
+        break;
+    }
+    ++c;
+  }
+
+  if (extraSpaceNeeded) {
+    aBuilder.AppendWithAttrEncode(aValue, aValue->Length() + extraSpaceNeeded);
+  } else {
+    aBuilder.Append(aValue);
+  }
+}
+
+static void
+StartElement(Element* aContent, StringBuilder& aBuilder)
+{
+  nsIAtom* localName = aContent->NodeInfo()->NameAtom();
+  int32_t tagNS = aContent->GetNameSpaceID();
+
+  aBuilder.Append("<");
+  if (aContent->IsHTMLElement() || aContent->IsSVGElement() ||
+      aContent->IsMathMLElement()) {
+    aBuilder.Append(localName);
+  } else {
+    aBuilder.Append(aContent->NodeName());
+  }
+
+  int32_t count = aContent->GetAttrCount();
+  for (int32_t i = count; i > 0;) {
+    --i;
+    const nsAttrName* name = aContent->GetAttrNameAt(i);
+    int32_t attNs = name->NamespaceID();
+    nsIAtom* attName = name->LocalName();
+
+    // Filter out any attribute starting with [-|_]moz
+    nsDependentAtomString attrNameStr(attName);
+    if (StringBeginsWith(attrNameStr, NS_LITERAL_STRING("_moz")) ||
+        StringBeginsWith(attrNameStr, NS_LITERAL_STRING("-moz"))) {
+      continue;
+    }
+
+    nsAutoString* attValue = new nsAutoString();
+    aContent->GetAttr(attNs, attName, *attValue);
+
+    // Filter out special case of <br type="_moz*"> used by the editor.
+    // Bug 16988.  Yuck.
+    if (localName == nsGkAtoms::br && tagNS == kNameSpaceID_XHTML &&
+        attName == nsGkAtoms::type && attNs == kNameSpaceID_None &&
+        StringBeginsWith(*attValue, NS_LITERAL_STRING("_moz"))) {
+      delete attValue;
+      continue;
+    }
+
+    aBuilder.Append(" ");
+
+    if (MOZ_LIKELY(attNs == kNameSpaceID_None) ||
+        (attNs == kNameSpaceID_XMLNS &&
+         attName == nsGkAtoms::xmlns)) {
+      // Nothing else required
+    } else if (attNs == kNameSpaceID_XML) {
+      aBuilder.Append("xml:");
+    } else if (attNs == kNameSpaceID_XMLNS) {
+      aBuilder.Append("xmlns:");
+    } else if (attNs == kNameSpaceID_XLink) {
+      aBuilder.Append("xlink:");
+    } else {
+      nsIAtom* prefix = name->GetPrefix();
+      if (prefix) {
+        aBuilder.Append(prefix);
+        aBuilder.Append(":");
+      }
+    }
+
+    aBuilder.Append(attName);
+    aBuilder.Append("=\"");
+    AppendEncodedAttributeValue(attValue, aBuilder);
+    aBuilder.Append("\"");
+  }
+
+  aBuilder.Append(">");
+
+  /*
+  // Per HTML spec we should append one \n if the first child of
+  // pre/textarea/listing is a textnode and starts with a \n.
+  // But because browsers haven't traditionally had that behavior,
+  // we're not changing our behavior either - yet.
+  if (aContent->IsHTMLElement()) {
+    if (localName == nsGkAtoms::pre || localName == nsGkAtoms::textarea ||
+        localName == nsGkAtoms::listing) {
+      nsIContent* fc = aContent->GetFirstChild();
+      if (fc &&
+          (fc->NodeType() == nsIDOMNode::TEXT_NODE ||
+           fc->NodeType() == nsIDOMNode::CDATA_SECTION_NODE)) {
+        const nsTextFragment* text = fc->GetText();
+        if (text && text->GetLength() && text->CharAt(0) == char16_t('\n')) {
+          aBuilder.Append("\n");
+        }
+      }
+    }
+  }*/
+}
+
+static inline bool
+ShouldEscape(nsIContent* aParent)
+{
+  if (!aParent || !aParent->IsHTMLElement()) {
+    return true;
+  }
+
+  static const nsIAtom* nonEscapingElements[] = {
+    nsGkAtoms::style, nsGkAtoms::script, nsGkAtoms::xmp,
+    nsGkAtoms::iframe, nsGkAtoms::noembed, nsGkAtoms::noframes,
+    nsGkAtoms::plaintext,
+    // Per the current spec noscript should be escaped in case
+    // scripts are disabled or if document doesn't have
+    // browsing context. However the latter seems to be a spec bug
+    // and Gecko hasn't traditionally done the former.
+    nsGkAtoms::noscript
+  };
+  static mozilla::BloomFilter<12, nsIAtom> sFilter;
+  static bool sInitialized = false;
+  if (!sInitialized) {
+    sInitialized = true;
+    for (uint32_t i = 0; i < ArrayLength(nonEscapingElements); ++i) {
+      sFilter.add(nonEscapingElements[i]);
+    }
+  }
+
+  nsIAtom* tag = aParent->NodeInfo()->NameAtom();
+  if (sFilter.mightContain(tag)) {
+    for (uint32_t i = 0; i < ArrayLength(nonEscapingElements); ++i) {
+      if (tag == nonEscapingElements[i]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+static inline bool
+IsVoidTag(Element* aElement)
+{
+  if (!aElement->IsHTMLElement()) {
+    return false;
+  }
+  return FragmentOrElement::IsHTMLVoid(aElement->NodeInfo()->NameAtom());
+}
+
+bool
+nsContentUtils::SerializeNodeToMarkup(nsINode* aRoot,
+                                      bool aDescendentsOnly,
+                                      nsAString& aOut)
+{
+  // If you pass in a DOCUMENT_NODE, you must pass aDescendentsOnly as true
+  MOZ_ASSERT(aDescendentsOnly ||
+             aRoot->NodeType() != nsIDOMNode::DOCUMENT_NODE);
+
+  nsINode* current = aDescendentsOnly ?
+    nsNodeUtils::GetFirstChildOfTemplateOrNode(aRoot) : aRoot;
+
+  if (!current) {
+    return true;
+  }
+
+  StringBuilder builder;
+  nsIContent* next;
+  while (true) {
+    bool isVoid = false;
+    switch (current->NodeType()) {
+      case nsIDOMNode::ELEMENT_NODE: {
+        Element* elem = current->AsElement();
+        StartElement(elem, builder);
+        isVoid = IsVoidTag(elem);
+        if (!isVoid &&
+            (next = nsNodeUtils::GetFirstChildOfTemplateOrNode(current))) {
+          current = next;
+          continue;
+        }
+        break;
+      }
+
+      case nsIDOMNode::TEXT_NODE:
+      case nsIDOMNode::CDATA_SECTION_NODE: {
+        const nsTextFragment* text = static_cast<nsIContent*>(current)->GetText();
+        nsIContent* parent = current->GetParent();
+        if (ShouldEscape(parent)) {
+          AppendEncodedCharacters(text, builder);
+        } else {
+          builder.Append(text);
+        }
+        break;
+      }
+
+      case nsIDOMNode::COMMENT_NODE: {
+        builder.Append("<!--");
+        builder.Append(static_cast<nsIContent*>(current)->GetText());
+        builder.Append("-->");
+        break;
+      }
+
+      case nsIDOMNode::DOCUMENT_TYPE_NODE: {
+        builder.Append("<!DOCTYPE ");
+        builder.Append(current->NodeName());
+        builder.Append(">");
+        break;
+      }
+
+      case nsIDOMNode::PROCESSING_INSTRUCTION_NODE: {
+        builder.Append("<?");
+        builder.Append(current->NodeName());
+        builder.Append(" ");
+        builder.Append(static_cast<nsIContent*>(current)->GetText());
+        builder.Append(">");
+        break;
+      }
+    }
+
+    while (true) {
+      if (!isVoid && current->NodeType() == nsIDOMNode::ELEMENT_NODE) {
+        builder.Append("</");
+        nsIContent* elem = static_cast<nsIContent*>(current);
+        if (elem->IsHTMLElement() || elem->IsSVGElement() ||
+            elem->IsMathMLElement()) {
+          builder.Append(elem->NodeInfo()->NameAtom());
+        } else {
+          builder.Append(current->NodeName());
+        }
+        builder.Append(">");
+      }
+      isVoid = false;
+
+      if (current == aRoot) {
+        return builder.ToString(aOut);
+      }
+
+      if ((next = current->GetNextSibling())) {
+        current = next;
+        break;
+      }
+
+      current = current->GetParentNode();
+
+      // Handle template element. If the parent is a template's content,
+      // then adjust the parent to be the template element.
+      if (current != aRoot &&
+          current->NodeType() == nsIDOMNode::DOCUMENT_FRAGMENT_NODE) {
+        DocumentFragment* frag = static_cast<DocumentFragment*>(current);
+        nsIContent* fragHost = frag->GetHost();
+        if (fragHost && nsNodeUtils::IsTemplateElement(fragHost)) {
+          current = fragHost;
+        }
+      }
+
+      if (aDescendentsOnly && current == aRoot) {
+        return builder.ToString(aOut);
+      }
+    }
+  }
 }

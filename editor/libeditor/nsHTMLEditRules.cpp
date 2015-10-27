@@ -314,7 +314,7 @@ nsHTMLEditRules::BeforeEdit(EditAction action,
 
     // get selection
     NS_ENSURE_STATE(mHTMLEditor);
-    nsRefPtr<Selection> selection = mHTMLEditor->GetSelection();
+    RefPtr<Selection> selection = mHTMLEditor->GetSelection();
 
     // get the selection location
     if (!selection->RangeCount()) {
@@ -423,7 +423,7 @@ nsHTMLEditRules::AfterEditInner(EditAction action,
   if (action == EditAction::ignore) return NS_OK;
 
   NS_ENSURE_STATE(mHTMLEditor);
-  nsRefPtr<Selection> selection = mHTMLEditor->GetSelection();
+  RefPtr<Selection> selection = mHTMLEditor->GetSelection();
   NS_ENSURE_STATE(selection);
 
   nsCOMPtr<nsIDOMNode> rangeStartParent, rangeEndParent;
@@ -588,7 +588,7 @@ nsHTMLEditRules::WillDoAction(Selection* aSelection,
   }
   NS_ENSURE_TRUE(aSelection->RangeCount(), NS_OK);
 
-  nsRefPtr<nsRange> range = aSelection->GetRangeAt(0);
+  RefPtr<nsRange> range = aSelection->GetRangeAt(0);
   nsCOMPtr<nsINode> selStartNode = range->GetStartParent();
 
   NS_ENSURE_STATE(mHTMLEditor);
@@ -797,7 +797,7 @@ nsHTMLEditRules::GetAlignment(bool *aMixed, nsIHTMLEditor::EAlignment *aAlign)
 
   // get selection
   NS_ENSURE_STATE(mHTMLEditor);
-  nsRefPtr<Selection> selection = mHTMLEditor->GetSelection();
+  RefPtr<Selection> selection = mHTMLEditor->GetSelection();
   NS_ENSURE_STATE(selection);
 
   // get selection location
@@ -834,7 +834,7 @@ nsHTMLEditRules::GetAlignment(bool *aMixed, nsIHTMLEditor::EAlignment *aAlign)
   }
   else
   {
-    nsTArray<nsRefPtr<nsRange>> arrayOfRanges;
+    nsTArray<RefPtr<nsRange>> arrayOfRanges;
     GetPromotedRanges(*selection, arrayOfRanges, EditAction::align);
 
     // use these ranges to construct a list of nodes to act on.
@@ -849,14 +849,8 @@ nsHTMLEditRules::GetAlignment(bool *aMixed, nsIHTMLEditor::EAlignment *aAlign)
 
   NS_NAMED_LITERAL_STRING(typeAttrName, "align");
   nsIAtom  *dummyProperty = nullptr;
-  nsCOMPtr<Element> blockParent;
   NS_ENSURE_STATE(mHTMLEditor);
-  if (mHTMLEditor->IsBlockNode(nodeToExamine))
-    blockParent = nodeToExamine->AsElement();
-  else {
-    NS_ENSURE_STATE(mHTMLEditor);
-    blockParent = mHTMLEditor->GetBlockNodeParent(nodeToExamine);
-  }
+  nsCOMPtr<Element> blockParent = mHTMLEditor->GetBlock(*nodeToExamine);
 
   NS_ENSURE_TRUE(blockParent, NS_ERROR_FAILURE);
 
@@ -1010,7 +1004,7 @@ nsHTMLEditRules::GetIndentState(bool *aCanIndent, bool *aCanOutdent)
     NS_ENSURE_TRUE(root, NS_ERROR_NULL_POINTER);
     int32_t selOffset;
     NS_ENSURE_STATE(mHTMLEditor);
-    nsRefPtr<Selection> selection = mHTMLEditor->GetSelection();
+    RefPtr<Selection> selection = mHTMLEditor->GetSelection();
     NS_ENSURE_TRUE(selection, NS_ERROR_NULL_POINTER);
 
     // test start parent hierarchy
@@ -1085,7 +1079,7 @@ nsHTMLEditRules::GetParagraphState(bool *aMixed, nsAString &outFormat)
     nsCOMPtr<nsINode> selNode;
     int32_t selOffset;
     NS_ENSURE_STATE(mHTMLEditor);
-    nsRefPtr<Selection> selection = mHTMLEditor->GetSelection();
+    RefPtr<Selection> selection = mHTMLEditor->GetSelection();
     NS_ENSURE_STATE(selection);
     NS_ENSURE_STATE(mHTMLEditor);
     res = mHTMLEditor->GetStartNodeAndOffset(selection, getter_AddRefs(selNode), &selOffset);
@@ -2004,7 +1998,7 @@ nsHTMLEditRules::WillDeleteSelection(Selection* aSelection,
           }
         }
       } else {
-        nsRefPtr<nsRange> range = aSelection->GetRangeAt(0);
+        RefPtr<nsRange> range = aSelection->GetRangeAt(0);
         NS_ENSURE_STATE(range);
 
         NS_ASSERTION(range->GetStartParent() == visNode,
@@ -2339,21 +2333,9 @@ nsHTMLEditRules::WillDeleteSelection(Selection* aSelection,
       }
 
       // Figure out block parents
-      nsCOMPtr<Element> leftParent;
-      if (IsBlockNode(GetAsDOMNode(startNode))) {
-        leftParent = startNode->AsElement();
-      } else {
-        NS_ENSURE_STATE(mHTMLEditor);
-        leftParent = mHTMLEditor->GetBlockNodeParent(startNode);
-      }
-
-      nsCOMPtr<Element> rightParent;
-      if (IsBlockNode(GetAsDOMNode(endNode))) {
-        rightParent = endNode->AsElement();
-      } else {
-        NS_ENSURE_STATE(mHTMLEditor);
-        rightParent = mHTMLEditor->GetBlockNodeParent(endNode);
-      }
+      NS_ENSURE_STATE(mHTMLEditor);
+      nsCOMPtr<Element> leftParent = mHTMLEditor->GetBlock(*startNode);
+      nsCOMPtr<Element> rightParent = mHTMLEditor->GetBlock(*endNode);
 
       // Are endpoint block parents the same?  Use default deletion
       if (leftParent && leftParent == rightParent) {
@@ -3342,7 +3324,7 @@ nsHTMLEditRules::WillRemoveList(Selection* aSelection,
   NS_ENSURE_STATE(mHTMLEditor);
   nsAutoSelectionReset selectionResetter(aSelection, mHTMLEditor);
 
-  nsTArray<nsRefPtr<nsRange>> arrayOfRanges;
+  nsTArray<RefPtr<nsRange>> arrayOfRanges;
   GetPromotedRanges(*aSelection, arrayOfRanges, EditAction::makeList);
 
   // use these ranges to contruct a list of nodes to act on.
@@ -3459,13 +3441,8 @@ nsHTMLEditRules::WillMakeBasicBlock(Selection* aSelection,
     if (tString.EqualsLiteral("normal") ||
         tString.IsEmpty() ) // we are removing blocks (going to "body text")
     {
-      nsCOMPtr<Element> curBlock;
-      if (IsBlockNode(GetAsDOMNode(parent))) {
-        curBlock = parent->AsElement();
-      } else {
-        NS_ENSURE_STATE(mHTMLEditor);
-        curBlock = mHTMLEditor->GetBlockNodeParent(parent);
-      }
+      NS_ENSURE_STATE(mHTMLEditor);
+      nsCOMPtr<Element> curBlock = mHTMLEditor->GetBlock(*parent);
       NS_ENSURE_TRUE(curBlock, NS_ERROR_NULL_POINTER);
       nsCOMPtr<nsIDOMNode> curBlockPar =
         GetAsDOMNode(curBlock->GetParentNode());
@@ -3617,17 +3594,11 @@ nsHTMLEditRules::WillCSSIndent(Selection* aSelection,
   nsCOMPtr<Element> liNode;
   if (aSelection->Collapsed()) {
     nsCOMPtr<nsINode> node;
-    nsCOMPtr<Element> block;
     int32_t offset;
     NS_ENSURE_STATE(mHTMLEditor);
     nsresult res = mHTMLEditor->GetStartNodeAndOffset(aSelection, getter_AddRefs(node), &offset);
     NS_ENSURE_SUCCESS(res, res);
-    if (IsBlockNode(GetAsDOMNode(node))) {
-      block = node->AsElement();
-    } else {
-      NS_ENSURE_STATE(mHTMLEditor);
-      block = mHTMLEditor->GetBlockNodeParent(node);
-    }
+    nsCOMPtr<Element> block = mHTMLEditor->GetBlock(*node);
     if (block && nsHTMLEditUtils::IsListItem(block))
       liNode = block;
   }
@@ -3824,7 +3795,7 @@ nsHTMLEditRules::WillHTMLIndent(Selection* aSelection,
   // block parent, and then further expands to include any ancestors
   // whose children are all in the range
 
-  nsTArray<nsRefPtr<nsRange>> arrayOfRanges;
+  nsTArray<RefPtr<nsRange>> arrayOfRanges;
   GetPromotedRanges(*aSelection, arrayOfRanges, EditAction::indent);
 
   // use these ranges to contruct a list of nodes to act on.
@@ -4978,27 +4949,23 @@ nsHTMLEditRules::CheckForEmptyBlock(nsINode* aStartNode,
   if (IsInlineNode(GetAsDOMNode(aBodyNode))) {
     return NS_OK;
   }
+  NS_ENSURE_STATE(mHTMLEditor);
+  nsCOMPtr<nsIEditor> kungFuDeathGrip(mHTMLEditor);
+
   // If we are inside an empty block, delete it.  Note: do NOT delete table
   // elements this way.
-  nsCOMPtr<Element> block;
-  if (IsBlockNode(GetAsDOMNode(aStartNode))) {
-    block = aStartNode->AsElement();
-  } else {
-    block = mHTMLEditor->GetBlockNodeParent(aStartNode);
-  }
+  nsCOMPtr<Element> block = mHTMLEditor->GetBlock(*aStartNode);
   bool bIsEmptyNode;
   nsCOMPtr<Element> emptyBlock;
   nsresult res;
   if (block && block != aBodyNode) {
     // Efficiency hack, avoiding IsEmptyNode() call when in body
-    NS_ENSURE_STATE(mHTMLEditor);
     res = mHTMLEditor->IsEmptyNode(block, &bIsEmptyNode, true, false);
     NS_ENSURE_SUCCESS(res, res);
     while (block && bIsEmptyNode && !nsHTMLEditUtils::IsTableElement(block) &&
            block != aBodyNode) {
       emptyBlock = block;
       block = mHTMLEditor->GetBlockNodeParent(emptyBlock);
-      NS_ENSURE_STATE(mHTMLEditor);
       if (block) {
         res = mHTMLEditor->IsEmptyNode(block, &bIsEmptyNode, true, false);
         NS_ENSURE_SUCCESS(res, res);
@@ -5151,7 +5118,7 @@ nsHTMLEditRules::ExpandSelectionForDeletion(Selection* aSelection)
   if (rangeCount != 1) return NS_OK;
 
   // find current sel start and end
-  nsRefPtr<nsRange> range = aSelection->GetRangeAt(0);
+  RefPtr<nsRange> range = aSelection->GetRangeAt(0);
   NS_ENSURE_TRUE(range, NS_ERROR_NULL_POINTER);
   nsCOMPtr<nsIDOMNode> selStartNode, selEndNode, selCommon;
   int32_t selStartOffset, selEndOffset;
@@ -5275,7 +5242,7 @@ nsHTMLEditRules::ExpandSelectionForDeletion(Selection* aSelection)
     // create a range that represents expanded selection
     nsCOMPtr<nsINode> node = do_QueryInterface(selStartNode);
     NS_ENSURE_STATE(node);
-    nsRefPtr<nsRange> range = new nsRange(node);
+    RefPtr<nsRange> range = new nsRange(node);
     res = range->SetStart(selStartNode, selStartOffset);
     NS_ENSURE_SUCCESS(res, res);
     res = range->SetEnd(selEndNode, selEndOffset);
@@ -5330,7 +5297,7 @@ nsHTMLEditRules::NormalizeSelection(Selection* inSelection)
   // we don't need to mess with cell selections, and we assume multirange selections are those.
   if (rangeCount != 1) return NS_OK;
 
-  nsRefPtr<nsRange> range = inSelection->GetRangeAt(0);
+  RefPtr<nsRange> range = inSelection->GetRangeAt(0);
   NS_ENSURE_TRUE(range, NS_ERROR_NULL_POINTER);
   nsCOMPtr<nsIDOMNode> startNode, endNode;
   int32_t startOffset, endOffset;
@@ -5676,17 +5643,17 @@ nsHTMLEditRules::GetPromotedPoint(RulesEndpoint aWhere, nsIDOMNode* aNode,
 //
 void
 nsHTMLEditRules::GetPromotedRanges(Selection& aSelection,
-                                   nsTArray<nsRefPtr<nsRange>>& outArrayOfRanges,
+                                   nsTArray<RefPtr<nsRange>>& outArrayOfRanges,
                                    EditAction inOperationType)
 {
   uint32_t rangeCount = aSelection.RangeCount();
 
   for (uint32_t i = 0; i < rangeCount; i++) {
-    nsRefPtr<nsRange> selectionRange = aSelection.GetRangeAt(i);
+    RefPtr<nsRange> selectionRange = aSelection.GetRangeAt(i);
     MOZ_ASSERT(selectionRange);
 
     // Clone range so we don't muck with actual selection ranges
-    nsRefPtr<nsRange> opRange = selectionRange->CloneRange();
+    RefPtr<nsRange> opRange = selectionRange->CloneRange();
 
     // Make a new adjusted range to represent the appropriate block content.
     // The basic idea is to push out the range endpoints to truly enclose the
@@ -5719,12 +5686,7 @@ nsHTMLEditRules::PromoteRange(nsRange& aRange, EditAction aOperationType)
   // inside block elements that contain nothing but a solo <br>.  It's easier
   // to put a workaround here than to revamp GetPromotedPoint.  :-(
   if (startNode == endNode && startOffset == endOffset) {
-    nsCOMPtr<Element> block;
-    if (IsBlockNode(GetAsDOMNode(startNode))) {
-      block = startNode->AsElement();
-    } else {
-      block = mHTMLEditor->GetBlockNodeParent(startNode);
-    }
+    nsCOMPtr<Element> block = mHTMLEditor->GetBlock(*startNode);
     if (block) {
       bool bIsEmptyNode = false;
       nsCOMPtr<nsIContent> root = mHTMLEditor->GetActiveEditingHost();
@@ -5749,7 +5711,7 @@ nsHTMLEditRules::PromoteRange(nsRange& aRange, EditAction aOperationType)
   nsCOMPtr<nsIDOMNode> opStartNode;
   nsCOMPtr<nsIDOMNode> opEndNode;
   int32_t opStartOffset, opEndOffset;
-  nsRefPtr<nsRange> opRange;
+  RefPtr<nsRange> opRange;
 
   GetPromotedPoint(kStart, GetAsDOMNode(startNode), startOffset,
                    aOperationType, address_of(opStartNode), &opStartOffset);
@@ -5791,7 +5753,7 @@ private:
 //                       new array of nodes to be acted on.
 //
 nsresult
-nsHTMLEditRules::GetNodesForOperation(nsTArray<nsRefPtr<nsRange>>& aArrayOfRanges,
+nsHTMLEditRules::GetNodesForOperation(nsTArray<RefPtr<nsRange>>& aArrayOfRanges,
                                       nsTArray<OwningNonNull<nsINode>>& aOutArrayOfNodes,
                                       EditAction aOperationType,
                                       TouchContent aTouchContent)
@@ -5807,7 +5769,7 @@ nsHTMLEditRules::GetNodesForOperation(nsTArray<nsRefPtr<nsRange>>& aArrayOfRange
     // range ending in a text node in case where part of a pre-formatted
     // elements needs to be moved.
     for (int32_t i = 0; i < rangeCount; i++) {
-      nsRefPtr<nsRange> r = aArrayOfRanges[i];
+      RefPtr<nsRange> r = aArrayOfRanges[i];
       nsCOMPtr<nsIContent> endParent = do_QueryInterface(r->GetEndParent());
       if (!mHTMLEditor->IsTextNode(endParent)) {
         continue;
@@ -5964,7 +5926,7 @@ nsHTMLEditRules::GetListActionNodes(nsTArray<OwningNonNull<nsINode>>& aOutArrayO
   NS_ENSURE_STATE(mHTMLEditor);
   nsCOMPtr<nsIEditor> kungFuDeathGrip(mHTMLEditor);
 
-  nsRefPtr<Selection> selection = mHTMLEditor->GetSelection();
+  RefPtr<Selection> selection = mHTMLEditor->GetSelection();
   NS_ENSURE_TRUE(selection, NS_ERROR_FAILURE);
 
   // Added this in so that ui code can ask to change an entire list, even if
@@ -5972,7 +5934,7 @@ nsHTMLEditRules::GetListActionNodes(nsTArray<OwningNonNull<nsINode>>& aOutArrayO
   if (aEntireList == EntireList::yes) {
     uint32_t rangeCount = selection->RangeCount();
     for (uint32_t rangeIdx = 0; rangeIdx < rangeCount; ++rangeIdx) {
-      nsRefPtr<nsRange> range = selection->GetRangeAt(rangeIdx);
+      RefPtr<nsRange> range = selection->GetRangeAt(rangeIdx);
       for (nsCOMPtr<nsINode> parent = range->GetCommonAncestor();
            parent; parent = parent->GetParentNode()) {
         if (nsHTMLEditUtils::IsList(parent)) {
@@ -6105,7 +6067,7 @@ nsHTMLEditRules::GetParagraphFormatNodes(nsTArray<OwningNonNull<nsINode>>& outAr
   NS_ENSURE_STATE(mHTMLEditor);
   nsCOMPtr<nsIEditor> kungFuDeathGrip(mHTMLEditor);
 
-  nsRefPtr<Selection> selection = mHTMLEditor->GetSelection();
+  RefPtr<Selection> selection = mHTMLEditor->GetSelection();
   NS_ENSURE_STATE(selection);
 
   // Contruct a list of nodes to act on.
@@ -6276,7 +6238,7 @@ nsHTMLEditRules::GetNodesFromPoint(::DOMPoint aPoint,
                                    TouchContent aTouchContent)
 {
   NS_ENSURE_STATE(aPoint.node);
-  nsRefPtr<nsRange> range = new nsRange(aPoint.node);
+  RefPtr<nsRange> range = new nsRange(aPoint.node);
   nsresult res = range->SetStart(aPoint.node, aPoint.offset);
   MOZ_ASSERT(NS_SUCCEEDED(res));
 
@@ -6284,7 +6246,7 @@ nsHTMLEditRules::GetNodesFromPoint(::DOMPoint aPoint,
   PromoteRange(*range, aOperation);
 
   // Make array of ranges
-  nsTArray<nsRefPtr<nsRange>> arrayOfRanges;
+  nsTArray<RefPtr<nsRange>> arrayOfRanges;
 
   // Stuff new opRange into array
   arrayOfRanges.AppendElement(range);
@@ -6309,7 +6271,7 @@ nsHTMLEditRules::GetNodesFromSelection(Selection& aSelection,
                                        TouchContent aTouchContent)
 {
   // Promote selection ranges
-  nsTArray<nsRefPtr<nsRange>> arrayOfRanges;
+  nsTArray<RefPtr<nsRange>> arrayOfRanges;
   GetPromotedRanges(aSelection, arrayOfRanges, aOperation);
 
   // Use these ranges to contruct a list of nodes to act on.
@@ -6393,25 +6355,25 @@ nsHTMLEditRules::ReturnInHeader(Selection* aSelection,
                                 nsIDOMNode *aNode,
                                 int32_t aOffset)
 {
-  NS_ENSURE_TRUE(aSelection && aHeader && aNode, NS_ERROR_NULL_POINTER);
+  nsCOMPtr<Element> header = do_QueryInterface(aHeader);
+  nsCOMPtr<nsINode> node = do_QueryInterface(aNode);
+  NS_ENSURE_TRUE(aSelection && header && node, NS_ERROR_NULL_POINTER);
 
   // remeber where the header is
   int32_t offset;
   nsCOMPtr<nsIDOMNode> headerParent = nsEditor::GetNodeLocation(aHeader, &offset);
 
   // get ws code to adjust any ws
-  nsCOMPtr<nsINode> selNode(do_QueryInterface(aNode));
   NS_ENSURE_STATE(mHTMLEditor);
   nsresult res = nsWSRunObject::PrepareToSplitAcrossBlocks(mHTMLEditor,
-                                                           address_of(selNode),
+                                                           address_of(node),
                                                            &aOffset);
   NS_ENSURE_SUCCESS(res, res);
 
   // split the header
-  int32_t newOffset;
+  NS_ENSURE_STATE(node->IsContent());
   NS_ENSURE_STATE(mHTMLEditor);
-  res = mHTMLEditor->SplitNodeDeep(aHeader, GetAsDOMNode(selNode), aOffset, &newOffset);
-  NS_ENSURE_SUCCESS(res, res);
+  mHTMLEditor->SplitNodeDeep(*header, *node->AsContent(), aOffset);
 
   // if the leftand heading is empty, put a mozbr in it
   nsCOMPtr<nsIDOMNode> prevItem;
@@ -6598,13 +6560,14 @@ nsHTMLEditRules::SplitParagraph(nsIDOMNode *aPara,
                                 nsCOMPtr<nsIDOMNode> *aSelNode,
                                 int32_t *aOffset)
 {
-  NS_ENSURE_TRUE(aPara && aBRNode && aSelNode && *aSelNode && aOffset && aSelection, NS_ERROR_NULL_POINTER);
+  nsCOMPtr<Element> para = do_QueryInterface(aPara);
+  NS_ENSURE_TRUE(para && aBRNode && aSelNode && *aSelNode && aOffset &&
+                 aSelection, NS_ERROR_NULL_POINTER);
   nsresult res = NS_OK;
 
   // split para
-  int32_t newOffset;
   // get ws code to adjust any ws
-  nsCOMPtr<nsIDOMNode> leftPara, rightPara;
+  nsCOMPtr<nsIContent> leftPara, rightPara;
   NS_ENSURE_STATE(mHTMLEditor);
   nsCOMPtr<nsINode> selNode(do_QueryInterface(*aSelNode));
   res = nsWSRunObject::PrepareToSplitAcrossBlocks(mHTMLEditor, address_of(selNode), aOffset);
@@ -6612,9 +6575,11 @@ nsHTMLEditRules::SplitParagraph(nsIDOMNode *aPara,
   NS_ENSURE_SUCCESS(res, res);
   // split the paragraph
   NS_ENSURE_STATE(mHTMLEditor);
-  res = mHTMLEditor->SplitNodeDeep(aPara, *aSelNode, *aOffset, &newOffset, false,
-                                   address_of(leftPara), address_of(rightPara));
-  NS_ENSURE_SUCCESS(res, res);
+  NS_ENSURE_STATE(selNode->IsContent());
+  mHTMLEditor->SplitNodeDeep(*para, *selNode->AsContent(), *aOffset,
+                             nsHTMLEditor::EmptyContainers::yes,
+                             getter_AddRefs(leftPara),
+                             getter_AddRefs(rightPara));
   // get rid of the break, if it is visible (otherwise it may be needed to prevent an empty p)
   NS_ENSURE_STATE(mHTMLEditor);
   if (mHTMLEditor->IsVisBreak(aBRNode))
@@ -6631,9 +6596,9 @@ nsHTMLEditRules::SplitParagraph(nsIDOMNode *aPara,
   NS_ENSURE_SUCCESS(res, res);
 
   // check both halves of para to see if we need mozBR
-  res = InsertMozBRIfNeeded(leftPara);
+  res = InsertMozBRIfNeeded(GetAsDOMNode(leftPara));
   NS_ENSURE_SUCCESS(res, res);
-  res = InsertMozBRIfNeeded(rightPara);
+  res = InsertMozBRIfNeeded(GetAsDOMNode(rightPara));
   NS_ENSURE_SUCCESS(res, res);
 
   // selection to beginning of right hand para;
@@ -6751,10 +6716,9 @@ nsHTMLEditRules::ReturnInListItem(Selection* aSelection,
   res = nsWSRunObject::PrepareToSplitAcrossBlocks(mHTMLEditor, address_of(selNode), &aOffset);
   NS_ENSURE_SUCCESS(res, res);
   // now split list item
-  int32_t newOffset;
   NS_ENSURE_STATE(mHTMLEditor);
-  res = mHTMLEditor->SplitNodeDeep(aListItem, GetAsDOMNode(selNode), aOffset, &newOffset, false);
-  NS_ENSURE_SUCCESS(res, res);
+  NS_ENSURE_STATE(selNode->IsContent());
+  mHTMLEditor->SplitNodeDeep(*listItem, *selNode->AsContent(), aOffset);
   // hack: until I can change the damaged doc range code back to being
   // extra inclusive, I have to manually detect certain list items that
   // may be left empty.
@@ -7156,14 +7120,15 @@ nsHTMLEditRules::SplitAsNeeded(nsIAtom& aTag,
     // Could not find a place to build tag!
     return NS_ERROR_FAILURE;
   }
-  if (splitNode) {
+  if (splitNode && splitNode->IsContent() && inOutParent->IsContent()) {
     // We found a place for block, but above inOutParent. We need to split.
     NS_ENSURE_STATE(mHTMLEditor);
-    nsresult res = mHTMLEditor->SplitNodeDeep(splitNode->AsDOMNode(),
-                                              inOutParent->AsDOMNode(),
-                                              inOutOffset, &inOutOffset);
-    NS_ENSURE_SUCCESS(res, res);
+    int32_t offset = mHTMLEditor->SplitNodeDeep(*splitNode->AsContent(),
+                                                *inOutParent->AsContent(),
+                                                inOutOffset);
+    NS_ENSURE_STATE(offset != -1);
     inOutParent = tagParent;
+    inOutOffset = offset;
   }
   return NS_OK;
 }
@@ -7299,7 +7264,7 @@ nsHTMLEditRules::ReapplyCachedStyles()
 
   // get selection point; if it doesn't exist, we have nothing to do
   NS_ENSURE_STATE(mHTMLEditor);
-  nsRefPtr<Selection> selection = mHTMLEditor->GetSelection();
+  RefPtr<Selection> selection = mHTMLEditor->GetSelection();
   MOZ_ASSERT(selection);
   if (!selection->RangeCount()) {
     // Nothing to do
@@ -7419,7 +7384,7 @@ nsHTMLEditRules::PinSelectionToNewBlock(Selection* aSelection)
   // use ranges and sRangeHelper to compare sel point to new block
   nsCOMPtr<nsINode> node = do_QueryInterface(selNode);
   NS_ENSURE_STATE(node);
-  nsRefPtr<nsRange> range = new nsRange(node);
+  RefPtr<nsRange> range = new nsRange(node);
   res = range->SetStart(selNode, selOffset);
   NS_ENSURE_SUCCESS(res, res);
   res = range->SetEnd(selNode, selOffset);
@@ -7546,14 +7511,9 @@ nsHTMLEditRules::AdjustSelection(Selection* aSelection,
 
   // make sure we aren't in an empty block - user will see no cursor.  If this
   // is happening, put a <br> in the block if allowed.
-  nsCOMPtr<nsINode> theblock;
-  if (IsBlockNode(GetAsDOMNode(selNode))) {
-    theblock = selNode;
-  } else {
-    NS_ENSURE_STATE(mHTMLEditor);
-    theblock = mHTMLEditor->GetBlockNodeParent(selNode);
-  }
   NS_ENSURE_STATE(mHTMLEditor);
+  nsCOMPtr<Element> theblock = mHTMLEditor->GetBlock(*selNode);
+
   if (theblock && mHTMLEditor->IsEditable(theblock)) {
     bool bIsEmptyNode;
     NS_ENSURE_STATE(mHTMLEditor);
@@ -7594,15 +7554,9 @@ nsHTMLEditRules::AdjustSelection(Selection* aSelection,
   if (nearNode)
   {
     // is nearNode also a descendant of same block?
-    nsCOMPtr<nsINode> block, nearBlock;
-    if (IsBlockNode(GetAsDOMNode(selNode))) {
-      block = selNode;
-    } else {
-      NS_ENSURE_STATE(mHTMLEditor);
-      block = mHTMLEditor->GetBlockNodeParent(selNode);
-    }
     NS_ENSURE_STATE(mHTMLEditor);
-    nearBlock = mHTMLEditor->GetBlockNodeParent(nearNode);
+    nsCOMPtr<Element> block = mHTMLEditor->GetBlock(*selNode);
+    nsCOMPtr<Element> nearBlock = mHTMLEditor->GetBlockNodeParent(nearNode);
     if (block && block == nearBlock) {
       if (nearNode && nsTextEditUtils::IsBreak(nearNode) )
       {
@@ -7929,12 +7883,12 @@ nsHTMLEditRules::SelectionEndpointInNode(nsINode* aNode, bool* aResult)
   *aResult = false;
 
   NS_ENSURE_STATE(mHTMLEditor);
-  nsRefPtr<Selection> selection = mHTMLEditor->GetSelection();
+  RefPtr<Selection> selection = mHTMLEditor->GetSelection();
   NS_ENSURE_STATE(selection);
 
   uint32_t rangeCount = selection->RangeCount();
   for (uint32_t rangeIdx = 0; rangeIdx < rangeCount; ++rangeIdx) {
-    nsRefPtr<nsRange> range = selection->GetRangeAt(rangeIdx);
+    RefPtr<nsRange> range = selection->GetRangeAt(rangeIdx);
     nsCOMPtr<nsIDOMNode> startParent, endParent;
     range->GetStartContainer(getter_AddRefs(startParent));
     if (startParent)
@@ -8131,7 +8085,7 @@ nsHTMLEditRules::ConfirmSelectionInBody()
 
   // get the selection
   NS_ENSURE_STATE(mHTMLEditor);
-  nsRefPtr<Selection> selection = mHTMLEditor->GetSelection();
+  RefPtr<Selection> selection = mHTMLEditor->GetSelection();
   NS_ENSURE_STATE(selection);
 
   // get the selection start location
@@ -8447,7 +8401,7 @@ nsHTMLEditRules::WillDeleteSelection(nsISelection* aSelection)
   if (!mListenerEnabled) {
     return NS_OK;
   }
-  nsRefPtr<Selection> selection = static_cast<Selection*>(aSelection);
+  RefPtr<Selection> selection = static_cast<Selection*>(aSelection);
   // get the (collapsed) selection location
   nsCOMPtr<nsIDOMNode> selNode;
   int32_t selOffset;
@@ -8812,7 +8766,7 @@ nsHTMLEditRules::WillAbsolutePosition(Selection* aSelection,
   // block parent, and then further expands to include any ancestors
   // whose children are all in the range
 
-  nsTArray<nsRefPtr<nsRange>> arrayOfRanges;
+  nsTArray<RefPtr<nsRange>> arrayOfRanges;
   GetPromotedRanges(*aSelection, arrayOfRanges,
                     EditAction::setAbsolutePosition);
 
@@ -9080,7 +9034,7 @@ nsHTMLEditRules::DocumentModifiedWorker()
   nsAutoScriptBlockerSuppressNodeRemoved scriptBlocker;
 
   nsCOMPtr<nsIHTMLEditor> kungFuDeathGrip(mHTMLEditor);
-  nsRefPtr<Selection> selection = mHTMLEditor->GetSelection();
+  RefPtr<Selection> selection = mHTMLEditor->GetSelection();
   if (!selection) {
     return;
   }

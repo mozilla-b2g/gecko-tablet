@@ -226,6 +226,12 @@ public:
   }
 
   // KeyframeEffectReadOnly interface
+  static already_AddRefed<KeyframeEffectReadOnly>
+  Constructor(const GlobalObject& aGlobal,
+              Element* aTarget,
+              const Optional<JS::Handle<JSObject*>>& aFrames,
+              const Optional<double>& aOptions,
+              ErrorResult& aRv);
   Element* GetTarget() const {
     // Currently we never return animations from the API whose effect
     // targets a pseudo-element so this should never be called when
@@ -306,7 +312,7 @@ public:
   // AnimationEffect for the current time except any properties already
   // contained in |aSetProperties|.
   // Any updated properties are added to |aSetProperties|.
-  void ComposeStyle(nsRefPtr<AnimValuesStyleRule>& aStyleRule,
+  void ComposeStyle(RefPtr<AnimValuesStyleRule>& aStyleRule,
                     nsCSSPropertySet& aSetProperties);
   bool IsRunningOnCompositor() const;
   void SetIsRunningOnCompositor(nsCSSProperty aProperty, bool aIsRunning);
@@ -315,8 +321,17 @@ protected:
   virtual ~KeyframeEffectReadOnly();
   void ResetIsRunningOnCompositor();
 
+  static AnimationTiming ConvertKeyframeEffectOptions(
+      const Optional<double>& aOptions);
+  static void BuildAnimationPropertyList(
+      JSContext* aCx,
+      Element* aTarget,
+      const Optional<JS::Handle<JSObject*>>& aFrames,
+      InfallibleTArray<AnimationProperty>& aResult,
+      ErrorResult& aRv);
+
   nsCOMPtr<Element> mTarget;
-  nsRefPtr<Animation> mAnimation;
+  RefPtr<Animation> mAnimation;
 
   AnimationTiming mTiming;
   nsCSSPseudoElements::Type mPseudoType;

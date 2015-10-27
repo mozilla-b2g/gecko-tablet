@@ -10,7 +10,7 @@ const DEVELOPER_HUD_LOG_PREFIX = 'DeveloperHUD';
 const CUSTOM_HISTOGRAM_PREFIX = 'DEVTOOLS_HUD_CUSTOM_';
 
 XPCOMUtils.defineLazyGetter(this, 'devtools', function() {
-  const {devtools} = Cu.import('resource://gre/modules/devtools/shared/Loader.jsm', {});
+  const {devtools} = Cu.import('resource://devtools/shared/Loader.jsm', {});
   return devtools;
 });
 
@@ -36,7 +36,7 @@ XPCOMUtils.defineLazyGetter(this, 'MemoryFront', function() {
 
 Cu.import('resource://gre/modules/Frames.jsm');
 
-var _telemetryDebug = true;
+var _telemetryDebug = false;
 
 function telemetryDebug(...args) {
   if (_telemetryDebug) {
@@ -108,8 +108,8 @@ var developerHUD = {
       this._logging = enabled;
     });
 
-    SettingsListener.observe('debug.performance_data.advanced_telemetry', this._telemetry, enabled => {
-      this._telemetry = enabled;
+    SettingsListener.observe('metrics.selectedMetrics.level', "", level => {
+      this._telemetry = (level === 'Enhanced');
     });
   },
 
@@ -836,7 +836,8 @@ var performanceEntriesWatcher = {
       target._logHistogram({name: eventName, value: time});
 
       memoryWatcher.front(target).residentUnique().then(value => {
-        eventName = 'app_memory_' + name;
+        // bug 1215277, need 'v2' for app-memory histograms
+        eventName = 'app_memory_' + name + '_v2';
         target._logHistogram({name: eventName, value: value});
       }, err => {
         console.error(err);

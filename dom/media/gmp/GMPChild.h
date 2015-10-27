@@ -71,7 +71,7 @@ private:
                                                   ProcessId aOtherPid) override;
   void GMPContentChildActorDestroy(GMPContentChild* aGMPContentChild);
 
-  virtual bool RecvCrashPluginNow(const GMPCrashReason& aReason) override;
+  virtual bool RecvCrashPluginNow() override;
   virtual bool RecvBeginAsyncShutdown() override;
   virtual bool RecvCloseActive() override;
 
@@ -83,8 +83,8 @@ private:
   nsTArray<UniquePtr<GMPContentChild>> mGMPContentChildren;
 
   GMPAsyncShutdown* mAsyncShutdown;
-  nsRefPtr<GMPTimerChild> mTimerChild;
-  nsRefPtr<GMPStorageChild> mStorage;
+  RefPtr<GMPTimerChild> mTimerChild;
+  RefPtr<GMPStorageChild> mStorage;
 
   MessageLoop* mGMPMessageLoop;
   nsString mPluginPath;

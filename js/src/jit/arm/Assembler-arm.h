@@ -647,33 +647,13 @@ class Imm8 : public Operand2
 
   public:
     static datastore::Imm8mData EncodeImm(uint32_t imm) {
-        // mozilla::CountLeadingZeroes32(imm) requires imm != 0.
-        if (imm == 0)
-            return datastore::Imm8mData(0, 0);
-        int left = mozilla::CountLeadingZeroes32(imm) & 30;
-        // See if imm is a simple value that can be encoded with a rotate of 0.
-        // This is effectively imm <= 0xff, but I assume this can be optimized
-        // more.
-        if (left >= 24)
-            return datastore::Imm8mData(imm, 0);
-
-        // Mask out the 8 bits following the first bit that we found, see if we
-        // have 0 yet.
-        int no_imm = imm & ~(0xff << (24 - left));
-        if (no_imm == 0) {
-            return  datastore::Imm8mData(imm >> (24 - left), ((8 + left) >> 1));
+        // An encodable integer has a maximum of 8 contiguous set bits,
+        // with an optional wrapped left rotation to even bit positions.
+        for (int rot = 0; rot < 16; rot++) {
+            uint32_t rotimm = mozilla::RotateLeft(imm, rot*2);
+            if (rotimm <= 0xFF)
+                return datastore::Imm8mData(rotimm, rot);
         }
-        // Look for the most signifigant bit set, once again.
-        int right = 32 - (mozilla::CountLeadingZeroes32(no_imm) & 30);
-        // If it is in the bottom 8 bits, there is a chance that this is a
-        // wraparound case.
-        if (right >= 8)
-            return datastore::Imm8mData();
-        // Rather than masking out bits and checking for 0, just rotate the
-        // immediate that we were passed in, and see if it fits into 8 bits.
-        unsigned int mask = imm << (8 - right) | imm >> (24 + right);
-        if (mask <= 0xff)
-            return datastore::Imm8mData(mask, (8 - right) >> 1);
         return datastore::Imm8mData();
     }
 
@@ -1294,7 +1274,6 @@ class Assembler : public AssemblerShared
 
     // TODO: this should actually be a pool-like object. It is currently a big
     // hack, and probably shouldn't exist.
-    js::Vector<CodeLabel, 0, SystemAllocPolicy> codeLabels_;
     js::Vector<RelativePatch, 8, SystemAllocPolicy> jumps_;
     js::Vector<BufferOffset, 0, SystemAllocPolicy> tmpJumpRelocations_;
     js::Vector<BufferOffset, 0, SystemAllocPolicy> tmpDataRelocations_;
@@ -1423,14 +1402,6 @@ class Assembler : public AssemblerShared
     void copyJumpRelocationTable(uint8_t* dest);
     void copyDataRelocationTable(uint8_t* dest);
     void copyPreBarrierTable(uint8_t* dest);
-
-    void addCodeLabel(CodeLabel label);
-    size_t numCodeLabels() const {
-        return codeLabels_.length();
-    }
-    CodeLabel codeLabel(size_t i) {
-        return codeLabels_[i];
-    }
 
     // Size of the instruction stream, in bytes, after pools are flushed.
     size_t size() const;

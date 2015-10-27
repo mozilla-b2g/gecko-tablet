@@ -15,6 +15,7 @@
 #include "mozilla/gfx/Helpers.h"
 #include "mozilla/gfx/PathHelpers.h"
 #include "mozilla/MouseEvents.h"
+#include "mozilla/unused.h"
 
 #include "nsCOMPtr.h"
 #include "nsFontMetrics.h"
@@ -1133,7 +1134,7 @@ nsImageFrame::DisplayAltText(nsPresContext*      aPresContext,
   // Set font and color
   aRenderingContext.ThebesContext()->
     SetColor(Color::FromABGR(StyleColor()->mColor));
-  nsRefPtr<nsFontMetrics> fm;
+  RefPtr<nsFontMetrics> fm;
   nsLayoutUtils::GetFontMetricsForFrame(this, getter_AddRefs(fm),
     nsLayoutUtils::FontSizeInflationFor(this));
 
@@ -1337,9 +1338,16 @@ nsImageFrame::DisplayAltFeedback(nsRenderingContext& aRenderingContext,
   // Paint the border
   if (!isLoading || gIconLoad->mPrefShowLoadingPlaceholder) {
     nsRecessedBorder recessedBorder(borderEdgeWidth, PresContext());
-    nsCSSRendering::PaintBorderWithStyleBorder(PresContext(), aRenderingContext,
-                                               this, inner, inner,
-                                               recessedBorder, mStyleContext);
+
+    // Assert that we're not drawing a border-image here; if we were, we
+    // couldn't ignore the DrawResult that PaintBorderWithStyleBorder returns.
+    MOZ_ASSERT(recessedBorder.mBorderImageSource.GetType() == eStyleImageType_Null);
+
+    unused <<
+      nsCSSRendering::PaintBorderWithStyleBorder(PresContext(), aRenderingContext,
+                                                 this, inner, inner,
+                                                 recessedBorder, mStyleContext,
+                                                 PaintBorderFlags::SYNC_DECODE_IMAGES);
   }
 
   // Adjust the inner rect to account for the one pixel recessed border,
@@ -1650,13 +1658,13 @@ nsDisplayImage::BuildLayer(nsDisplayListBuilder* aBuilder,
                  ? imgIContainer::FLAG_SYNC_DECODE
                  : imgIContainer::FLAG_NONE;
 
-  nsRefPtr<ImageContainer> container =
+  RefPtr<ImageContainer> container =
     mImage->GetImageContainer(aManager, flags);
   if (!container) {
     return nullptr;
   }
 
-  nsRefPtr<ImageLayer> layer = static_cast<ImageLayer*>
+  RefPtr<ImageLayer> layer = static_cast<ImageLayer*>
     (aManager->GetLayerBuilder()->GetLeafLayerFor(aBuilder, this));
   if (!layer) {
     layer = aManager->CreateImageLayer();
@@ -2080,7 +2088,7 @@ nsImageFrame::GetCursor(const nsPoint& aPoint,
       // technically correct, but it's probably the right thing to do
       // here, since it means that areas on which the cursor isn't
       // specified will inherit the style from the image.
-      nsRefPtr<nsStyleContext> areaStyle = 
+      RefPtr<nsStyleContext> areaStyle = 
         PresContext()->PresShell()->StyleSet()->
           ResolveStyleFor(area->AsElement(), StyleContext());
       FillCursorInformationFromStyle(areaStyle->StyleUserInterface(),
@@ -2197,7 +2205,7 @@ nsImageFrame::LoadIcon(const nsAString& aSpec,
   nsCOMPtr<nsIURI> realURI;
   SpecToURI(aSpec, sIOService, getter_AddRefs(realURI));
 
-  nsRefPtr<imgLoader> il =
+  RefPtr<imgLoader> il =
     nsContentUtils::GetImgLoaderForDocument(aPresContext->Document());
 
   nsCOMPtr<nsILoadGroup> loadGroup;

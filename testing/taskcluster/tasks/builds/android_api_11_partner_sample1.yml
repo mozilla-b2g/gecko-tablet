@@ -15,7 +15,7 @@ task:
     - 'index.buildbot.revisions.{{head_rev}}.{{project}}.android-api-11-partner-sample1'
 
   scopes:
-    - 'docker-worker:cache:build-android-api-11-c6-workspace'
+    - 'docker-worker:cache:build-{{project}}-android-api-11-c6-workspace'
     - 'docker-worker:cache:tooltool-cache'
     - 'docker-worker:relengapi-proxy:tooltool.download.internal'
     - 'docker-worker:relengapi-proxy:tooltool.download.public'
@@ -23,7 +23,7 @@ task:
   payload:
     image: '{{#docker_image}}desktop-build{{/docker_image}}'
     cache:
-      build-android-api-11-c6-workspace: '/home/worker/workspace'
+      build-{{project}}-android-api-11-c6-workspace: '/home/worker/workspace'
       tooltool-cache: '/home/worker/tooltool-cache'
 
     features:
@@ -63,7 +63,7 @@ task:
     treeherder:
       machine:
         # see https://github.com/mozilla/treeherder/blob/master/ui/js/values.js
-        platform: android-4-0-armv7-api11
+        platform: android-4-0-armv7-api11-partner1
     # Rather then enforcing particular conventions we require that all build
     # tasks provide the "build" extra field to specify where the build and tests
     # files are located.

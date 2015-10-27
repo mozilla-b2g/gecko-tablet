@@ -253,7 +253,7 @@ TabChildBase::DispatchMessageManagerMessage(const nsAString& aMessageName,
     nsCOMPtr<nsIXPConnectJSObjectHolder> kungFuDeathGrip(GetGlobal());
     // Let the BrowserElementScrolling helper (if it exists) for this
     // content manipulate the frame state.
-    nsRefPtr<nsFrameMessageManager> mm =
+    RefPtr<nsFrameMessageManager> mm =
       static_cast<nsFrameMessageManager*>(mTabChildGlobal->mMessageManager.get());
     mm->ReceiveMessage(static_cast<EventTarget*>(mTabChildGlobal), nullptr,
                        aMessageName, false, &data, nullptr, nullptr, nullptr);
@@ -399,7 +399,7 @@ private:
 class TabChild::DelayedDeleteRunnable final
   : public nsRunnable
 {
-    nsRefPtr<TabChild> mTabChild;
+    RefPtr<TabChild> mTabChild;
 
 public:
     explicit DelayedDeleteRunnable(TabChild* aTabChild)
@@ -435,11 +435,11 @@ private:
 namespace {
 StaticRefPtr<TabChild> sPreallocatedTab;
 
-std::map<TabId, nsRefPtr<TabChild>>&
+std::map<TabId, RefPtr<TabChild>>&
 NestedTabChildMap()
 {
   MOZ_ASSERT(NS_IsMainThread());
-  static std::map<TabId, nsRefPtr<TabChild>> sNestedTabChildMap;
+  static std::map<TabId, RefPtr<TabChild>> sNestedTabChildMap;
   return sNestedTabChildMap;
 }
 } // namespace
@@ -451,7 +451,7 @@ TabChild::FindTabChild(const TabId& aTabId)
   if (iter == NestedTabChildMap().end()) {
     return nullptr;
   }
-  nsRefPtr<TabChild> tabChild = iter->second;
+  RefPtr<TabChild> tabChild = iter->second;
   return tabChild.forget();
 }
 
@@ -510,16 +510,8 @@ private:
             content->GetIPCChannel()->Unblock();
         }
 
-        nsTArray<IToplevelProtocol*> actors;
-        content->GetOpenedActors(actors);
-        for (size_t j = 0; j < actors.Length(); j++) {
-            IToplevelProtocol* actor = actors[j];
-            if (aBlock) {
-                actor->GetIPCChannel()->Block();
-            } else {
-                actor->GetIPCChannel()->Unblock();
-            }
-        }
+        // Other IPC channels do not perform the checks through Block() and
+        // Unblock().
     }
 };
 #endif
@@ -538,7 +530,7 @@ TabChild::PreloadSlowThings()
     // Pass nullptr to aManager since at this point the TabChild is
     // not connected to any manager. Any attempt to use the TabChild
     // in IPC will crash.
-    nsRefPtr<TabChild> tab(new TabChild(nullptr,
+    RefPtr<TabChild> tab(new TabChild(nullptr,
                                         TabId(0),
                                         TabContext(), /* chromeFlags */ 0));
     if (!NS_SUCCEEDED(tab->Init()) ||
@@ -583,7 +575,7 @@ TabChild::Create(nsIContentChild* aManager,
         sPreallocatedTab->mChromeFlags == aChromeFlags &&
         aContext.IsBrowserOrApp()) {
 
-        nsRefPtr<TabChild> child = sPreallocatedTab.get();
+        RefPtr<TabChild> child = sPreallocatedTab.get();
         sPreallocatedTab = nullptr;
 
         MOZ_ASSERT(!child->mTriedBrowserInit);
@@ -595,7 +587,7 @@ TabChild::Create(nsIContentChild* aManager,
         return child.forget();
     }
 
-    nsRefPtr<TabChild> iframe = new TabChild(aManager, aTabId,
+    RefPtr<TabChild> iframe = new TabChild(aManager, aTabId,
                                              aContext, aChromeFlags);
     return NS_SUCCEEDED(iframe->Init()) ? iframe.forget() : nullptr;
 }
@@ -1170,7 +1162,7 @@ TabChild::ProvideWindowCommon(nsIDOMWindow* aOpener,
                         cc->GetID(),
                         &tabId);
 
-  nsRefPtr<TabChild> newChild = new TabChild(ContentChild::GetSingleton(), tabId,
+  RefPtr<TabChild> newChild = new TabChild(ContentChild::GetSingleton(), tabId,
                                              /* TabContext */ *this, aChromeFlags);
   if (NS_FAILED(newChild->Init())) {
     return NS_ERROR_ABORT;
@@ -1179,7 +1171,7 @@ TabChild::ProvideWindowCommon(nsIDOMWindow* aOpener,
   context.opener() = this;
   unused << Manager()->SendPBrowserConstructor(
       // We release this ref in DeallocPBrowserChild
-      nsRefPtr<TabChild>(newChild).forget().take(),
+      RefPtr<TabChild>(newChild).forget().take(),
       tabId, IPCTabContext(context), aChromeFlags,
       cc->GetID(), cc->IsForApp(), cc->IsForBrowser());
 
@@ -1317,7 +1309,7 @@ TabChild::DestroyWindow()
         if (info->mFileDescriptor.IsValid()) {
             MOZ_ASSERT(!info->mCanceled);
 
-            nsRefPtr<CloseFileRunnable> runnable =
+            RefPtr<CloseFileRunnable> runnable =
                 new CloseFileRunnable(info->mFileDescriptor);
             runnable->Dispatch();
         }
@@ -1411,7 +1403,7 @@ TabChild::RecvLoadURL(const nsCString& aURI,
 
     SetProcessNameToAppName();
 
-    nsRefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
+    RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
     MOZ_ASSERT(swm);
     swm->LoadRegistrations(aConfiguration.serviceWorkerRegistrations());
 
@@ -1469,7 +1461,7 @@ TabChild::RecvCacheFileDescriptor(const nsString& aPath,
     if (info->mCanceled) {
         // Only close if this is a valid file descriptor.
         if (aFileDescriptor.IsValid()) {
-            nsRefPtr<CloseFileRunnable> runnable =
+            RefPtr<CloseFileRunnable> runnable =
                 new CloseFileRunnable(aFileDescriptor);
             runnable->Dispatch();
         }
@@ -1530,7 +1522,7 @@ TabChild::GetCachedFileDescriptor(const nsAString& aPath,
     MOZ_ASSERT(!info->mCallback);
     info->mCallback = aCallback;
 
-    nsRefPtr<CachedFileDescriptorCallbackRunnable> runnable =
+    RefPtr<CachedFileDescriptorCallbackRunnable> runnable =
         new CachedFileDescriptorCallbackRunnable(info.forget());
     runnable->Dispatch();
 
@@ -2030,7 +2022,7 @@ TabChild::UpdateTapState(const WidgetTouchEvent& aEvent, nsEventStatus aStatus)
     if (sClickHoldContextMenusEnabled) {
       MOZ_ASSERT(!mTapHoldTimer);
       mTapHoldTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
-      nsRefPtr<DelayedFireContextMenuEvent> callback =
+      RefPtr<DelayedFireContextMenuEvent> callback =
         new DelayedFireContextMenuEvent(this);
       mTapHoldTimer->InitWithCallback(callback,
                                       sContextMenuDelayMs,
@@ -2429,7 +2421,7 @@ TabChild::RecvActivateFrameEvent(const nsString& aType, const bool& capture)
   nsCOMPtr<EventTarget> chromeHandler =
     do_QueryInterface(window->GetChromeEventHandler());
   NS_ENSURE_TRUE(chromeHandler, true);
-  nsRefPtr<ContentListener> listener = new ContentListener(this);
+  RefPtr<ContentListener> listener = new ContentListener(this);
   chromeHandler->AddEventListener(aType, listener, capture);
   return true;
 }
@@ -2456,7 +2448,7 @@ TabChild::RecvAsyncMessage(const nsString& aMessage,
     nsCOMPtr<nsIXPConnectJSObjectHolder> kungFuDeathGrip(GetGlobal());
     StructuredCloneData data;
     UnpackClonedMessageDataForChild(aData, data);
-    nsRefPtr<nsFrameMessageManager> mm =
+    RefPtr<nsFrameMessageManager> mm =
       static_cast<nsFrameMessageManager*>(mTabChildGlobal->mMessageManager.get());
     CrossProcessCpowHolder cpows(Manager(), aCpows);
     mm->ReceiveMessage(static_cast<EventTarget*>(mTabChildGlobal), nullptr,
@@ -2490,7 +2482,7 @@ TabChild::RecvSwappedWithOtherRemoteLoader()
     return true;
   }
 
-  nsRefPtr<nsDocShell> docShell = static_cast<nsDocShell*>(ourDocShell.get());
+  RefPtr<nsDocShell> docShell = static_cast<nsDocShell*>(ourDocShell.get());
 
   nsCOMPtr<EventTarget> ourEventTarget = ourWindow->GetParentTarget();
 
@@ -2582,7 +2574,7 @@ TabChild::RecvSetUpdateHitRegion(const bool& aEnabled)
     NS_ENSURE_TRUE(document, true);
     nsCOMPtr<nsIPresShell> presShell = document->GetShell();
     NS_ENSURE_TRUE(presShell, true);
-    nsRefPtr<nsPresContext> presContext = presShell->GetPresContext();
+    RefPtr<nsPresContext> presContext = presShell->GetPresContext();
     NS_ENSURE_TRUE(presContext, true);
     presContext->InvalidatePaintedLayers();
 
@@ -2651,7 +2643,7 @@ TabChild::InitTabChildGlobal(FrameScriptLoading aScriptLoading)
       do_QueryInterface(window->GetChromeEventHandler());
     NS_ENSURE_TRUE(chromeHandler, false);
 
-    nsRefPtr<TabChildGlobal> scope = new TabChildGlobal(this);
+    RefPtr<TabChildGlobal> scope = new TabChildGlobal(this);
     mTabChildGlobal = scope;
 
     nsISupports* scopeSupports = NS_ISUPPORTS_CAST(EventTarget*, scope);
@@ -2921,7 +2913,7 @@ TabChild::DoSendBlockingMessage(JSContext* aCx,
                         Principal(aPrincipal), aRetVal);
 }
 
-bool
+nsresult
 TabChild::DoSendAsyncMessage(JSContext* aCx,
                              const nsAString& aMessage,
                              StructuredCloneData& aData,
@@ -2930,14 +2922,17 @@ TabChild::DoSendAsyncMessage(JSContext* aCx,
 {
   ClonedMessageData data;
   if (!BuildClonedMessageDataForChild(Manager(), aData, data)) {
-    return false;
+    return NS_ERROR_DOM_DATA_CLONE_ERR;
   }
   InfallibleTArray<CpowEntry> cpows;
   if (aCpows && !Manager()->GetCPOWManager()->Wrap(aCx, aCpows, &cpows)) {
-    return false;
+    return NS_ERROR_UNEXPECTED;
   }
-  return SendAsyncMessage(PromiseFlatString(aMessage), data, cpows,
-                          Principal(aPrincipal));
+  if (!SendAsyncMessage(PromiseFlatString(aMessage), data, cpows,
+                        Principal(aPrincipal))) {
+    return NS_ERROR_UNEXPECTED;
+  }
+  return NS_OK;
 }
 
 TabChild*
@@ -2980,15 +2975,20 @@ void
 TabChild::DidRequestComposite(const TimeStamp& aCompositeReqStart,
                               const TimeStamp& aCompositeReqEnd)
 {
-  nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
-  if (!docShell) {
+  nsCOMPtr<nsIDocShell> docShellComPtr = do_GetInterface(WebNavigation());
+  if (!docShellComPtr) {
     return;
   }
 
-  TimelineConsumers::AddMarkerForDocShell(docShell.get(),
-    "CompositeForwardTransaction", aCompositeReqStart, MarkerTracingType::START);
-  TimelineConsumers::AddMarkerForDocShell(docShell.get(),
-    "CompositeForwardTransaction", aCompositeReqEnd, MarkerTracingType::END);
+  nsDocShell* docShell = static_cast<nsDocShell*>(docShellComPtr.get());
+  RefPtr<TimelineConsumers> timelines = TimelineConsumers::Get();
+
+  if (timelines && timelines->HasConsumer(docShell)) {
+    timelines->AddMarkerForDocShell(docShell,
+      "CompositeForwardTransaction", aCompositeReqStart, MarkerTracingType::START);
+    timelines->AddMarkerForDocShell(docShell,
+      "CompositeForwardTransaction", aCompositeReqEnd, MarkerTracingType::END);
+  }
 }
 
 void
@@ -3042,7 +3042,7 @@ TabChild::RecvUIResolutionChanged(const float& aDpi, const double& aScale)
   nsCOMPtr<nsIDocument> document(GetDocument());
   nsCOMPtr<nsIPresShell> presShell = document->GetShell();
   if (presShell) {
-    nsRefPtr<nsPresContext> presContext = presShell->GetPresContext();
+    RefPtr<nsPresContext> presContext = presShell->GetPresContext();
     if (presContext) {
       presContext->UIResolutionChangedSync();
     }
@@ -3070,7 +3070,7 @@ TabChild::RecvThemeChanged(nsTArray<LookAndFeelInt>&& aLookAndFeelIntCache)
   nsCOMPtr<nsIDocument> document(GetDocument());
   nsCOMPtr<nsIPresShell> presShell = document->GetShell();
   if (presShell) {
-    nsRefPtr<nsPresContext> presContext = presShell->GetPresContext();
+    RefPtr<nsPresContext> presContext = presShell->GetPresContext();
     if (presContext) {
       presContext->ThemeChanged();
     }

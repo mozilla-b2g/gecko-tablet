@@ -362,7 +362,8 @@ var PlacesOrganizer = {
    * cookies, history, preferences, and bookmarks.
    */
   importFromBrowser: function PO_importFromBrowser() {
-    MigrationUtils.showMigrationWizard(window);
+    // We pass in the type of source we're using for use in telemetry:
+    MigrationUtils.showMigrationWizard(window, [MigrationUtils.MIGRATION_ENTRYPOINT_PLACES]);
   },
 
   /**
@@ -1355,11 +1356,11 @@ var ContentArea = {
       // On Windows and Linux the menu buttons are menus wrapped in a menubar.
       if (elt.id == "placesMenu") {
         for (let menuElt of elt.childNodes) {
-          menuElt.hidden = options.toolbarSet.indexOf(menuElt.id) == -1;
+          menuElt.hidden = !options.toolbarSet.includes(menuElt.id);
         }
       }
       else {
-        elt.hidden = options.toolbarSet.indexOf(elt.id) == -1;
+        elt.hidden = !options.toolbarSet.includes(elt.id);
       }
     }
   },

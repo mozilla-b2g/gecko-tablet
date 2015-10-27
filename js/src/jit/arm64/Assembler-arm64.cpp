@@ -14,6 +14,7 @@
 
 #include "gc/Marking.h"
 
+#include "jit/arm64/Architecture-arm64.h"
 #include "jit/arm64/MacroAssembler-arm64.h"
 #include "jit/ExecutableAllocator.h"
 #include "jit/JitCompartment.h"
@@ -123,15 +124,18 @@ Assembler::emitExtendedJumpTable()
         br(vixl::ip0);
 
         DebugOnly<size_t> prePointer = size_t(armbuffer_.nextOffset().getOffset());
-        MOZ_ASSERT(prePointer - preOffset == OffsetOfJumpTableEntryPointer);
+        MOZ_ASSERT_IF(!oom(), prePointer - preOffset == OffsetOfJumpTableEntryPointer);
 
         brk(0x0);
         brk(0x0);
 
         DebugOnly<size_t> postOffset = size_t(armbuffer_.nextOffset().getOffset());
 
-        MOZ_ASSERT(postOffset - preOffset == SizeOfJumpTableEntry);
+        MOZ_ASSERT_IF(!oom(), postOffset - preOffset == SizeOfJumpTableEntry);
     }
+
+    if (oom())
+        return BufferOffset();
 
     return tableOffset;
 }
@@ -220,7 +224,10 @@ void
 Assembler::bind(Label* label, BufferOffset targetOffset)
 {
     // Nothing has seen the label yet: just mark the location.
-    if (!label->used()) {
+    // If we've run out of memory, don't attempt to modify the buffer which may
+    // not be there. Just mark the label as bound to the (possibly bogus)
+    // targetOffset.
+    if (!label->used() || oom()) {
         label->bind(targetOffset.getOffset());
         return;
     }
@@ -258,7 +265,9 @@ void
 Assembler::bind(RepatchLabel* label)
 {
     // Nothing has seen the label yet: just mark the location.
-    if (!label->used()) {
+    // If we've run out of memory, don't attempt to modify the buffer which may
+    // not be there. Just mark the label as bound to nextOffset().
+    if (!label->used() || oom()) {
         label->bind(nextOffset().getOffset());
         return;
     }
@@ -384,38 +393,46 @@ Assembler::ToggleToCmp(CodeLocationLabel inst_)
 void
 Assembler::ToggleCall(CodeLocationLabel inst_, bool enabled)
 {
-    Instruction* first = (Instruction*)inst_.raw();
+    const Instruction* first = reinterpret_cast<Instruction*>(inst_.raw());
     Instruction* load;
     Instruction* call;
 
-    if (first->InstructionBits() == 0x9100039f) {
-        load = (Instruction*)NextInstruction(first);
-        call = NextInstruction(load);
-    } else {
-        load = first;
-        call = NextInstruction(first);
-    }
+    // There might be a constant pool at the very first instruction.
+    first = first->skipPool();
+
+    // Skip the stack pointer restore instruction.
+    if (first->IsStackPtrSync())
+        first = first->InstructionAtOffset(vixl::kInstructionSize)->skipPool();
+
+    load = const_cast<Instruction*>(first);
+
+    // The call instruction follows the load, but there may be an injected
+    // constant pool.
+    call = const_cast<Instruction*>(load->InstructionAtOffset(vixl::kInstructionSize)->skipPool());
 
     if (call->IsBLR() == enabled)
         return;
 
     if (call->IsBLR()) {
-        // if the second instruction is blr(), then wehave:
-        // ldr x17, [pc, offset]
-        // blr x17
-        // we want to transform this to:
-        // adr xzr, [pc, offset]
-        // nop
+        // If the second instruction is blr(), then wehave:
+        //   ldr x17, [pc, offset]
+        //   blr x17
+        MOZ_ASSERT(load->IsLDR());
+        // We want to transform this to:
+        //   adr xzr, [pc, offset]
+        //   nop
         int32_t offset = load->ImmLLiteral();
         adr(load, xzr, int32_t(offset));
         nop(call);
     } else {
-        // we have adr xzr, [pc, offset]
-        // nop
-        // transform this to
-        // ldr x17, [pc, offset]
-        // blr x17
-
+        // We have:
+        //   adr xzr, [pc, offset] (or ldr x17, [pc, offset])
+        //   nop
+        MOZ_ASSERT(load->IsADR() || load->IsLDR());
+        MOZ_ASSERT(call->IsNOP());
+        // Transform this to:
+        //   ldr x17, [pc, offset]
+        //   blr x17
         int32_t offset = (int)load->ImmPCRawOffset();
         MOZ_ASSERT(vixl::is_int19(offset));
         ldr(load, ScratchReg2_64, int32_t(offset));

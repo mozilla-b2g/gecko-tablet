@@ -22,13 +22,13 @@ var HUDService = require("devtools/client/webconsole/hudservice");
 var sourceUtils = require("devtools/client/shared/source-utils");
 
 Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource:///modules/devtools/client/framework/gDevTools.jsm");
-Cu.import("resource:///modules/devtools/client/scratchpad/scratchpad-manager.jsm");
-Cu.import("resource:///modules/devtools/client/shared/DOMHelpers.jsm");
+Cu.import("resource://devtools/client/framework/gDevTools.jsm");
+Cu.import("resource://devtools/client/scratchpad/scratchpad-manager.jsm");
+Cu.import("resource://devtools/client/shared/DOMHelpers.jsm");
 Cu.import("resource://gre/modules/Task.jsm");
 
 loader.lazyImporter(this, "CommandUtils",
-  "resource:///modules/devtools/client/shared/DeveloperToolbar.jsm");
+  "resource://devtools/client/shared/DeveloperToolbar.jsm");
 loader.lazyGetter(this, "toolboxStrings", () => {
   const properties = "chrome://browser/locale/devtools/toolbox.properties";
   const bundle = Services.strings.createBundle(properties);
@@ -59,7 +59,7 @@ loader.lazyRequireGetter(this, "showDoorhanger",
 loader.lazyRequireGetter(this, "createPerformanceFront",
   "devtools/server/actors/performance", true);
 loader.lazyRequireGetter(this, "system",
-  "devtools/shared/shared/system");
+  "devtools/shared/system");
 loader.lazyGetter(this, "osString", () => {
   return Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULRuntime).OS;
 });
@@ -328,6 +328,17 @@ Toolbox.prototype = {
   get splitConsole() {
     return this._splitConsole;
   },
+  /**
+   * Get the focused state of the split console
+   */
+  isSplitConsoleFocused: function() {
+    if (!this._splitConsole) {
+      return false;
+    }
+    let focusedWin = Services.focus.focusedWindow;
+    return focusedWin && focusedWin ===
+      this.doc.querySelector("#toolbox-panel-iframe-webconsole").contentWindow;
+  },
 
   /**
    * Open the toolbox
@@ -482,6 +493,28 @@ Toolbox.prototype = {
         e.preventDefault();
       }
     }
+  },
+  /**
+   * Add a shortcut key that should work when a split console
+   * has focus to the toolbox.
+   *
+   * @param {element} keyElement
+   *        They <key> XUL element describing the shortcut key
+   * @param {string} whichTool
+   *        The tool the key belongs to. The corresponding command
+   *        will only trigger if this tool is active.
+   */
+  useKeyWithSplitConsole: function(keyElement, whichTool) {
+    let cloned = keyElement.cloneNode();
+    cloned.setAttribute("oncommand", "void(0)");
+    cloned.removeAttribute("command");
+    cloned.addEventListener("command", (e) => {
+      // Only forward the command if the tool is active
+      if (this.currentToolId === whichTool && this.isSplitConsoleFocused()) {
+        keyElement.doCommand();
+      }
+    }, true);
+    this.doc.getElementById("toolbox-keyset").appendChild(cloned);
   },
 
   _addReloadKeys: function() {
@@ -1614,7 +1647,7 @@ Toolbox.prototype = {
   },
 
   reload: function () {
-    const {devtools} = Cu.import("resource://gre/modules/devtools/Loader.jsm", {});
+    const {devtools} = Cu.import("resource://devtools/shared/Loader.jsm", {});
     devtools.reload(true);
   },
 

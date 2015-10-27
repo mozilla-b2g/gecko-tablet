@@ -13,76 +13,6 @@ loop.panel = (function(_, mozL10n) {
   var Button = sharedViews.Button;
   var Checkbox = sharedViews.Checkbox;
 
-  /**
-   * Availability drop down menu subview.
-   */
-  var AvailabilityDropdown = React.createClass({displayName: "AvailabilityDropdown",
-    mixins: [sharedMixins.DropdownMenuMixin()],
-
-    getInitialState: function() {
-      return {
-        doNotDisturb: navigator.mozLoop.doNotDisturb
-      };
-    },
-
-    // XXX target event can either be the li, the span or the i tag
-    // this makes it easier to figure out the target by making a
-    // closure with the desired status already passed in.
-    changeAvailability: function(newAvailabilty) {
-      return function(event) {
-        // Note: side effect!
-        switch (newAvailabilty) {
-          case "available":
-            this.setState({doNotDisturb: false});
-            navigator.mozLoop.doNotDisturb = false;
-            break;
-          case "do-not-disturb":
-            this.setState({doNotDisturb: true});
-            navigator.mozLoop.doNotDisturb = true;
-            break;
-        }
-        this.hideDropdownMenu();
-      }.bind(this);
-    },
-
-    render: function() {
-      var cx = React.addons.classSet;
-      var availabilityDropdown = cx({
-        "dropdown-menu": true,
-        "hide": !this.state.showMenu
-      });
-      var statusIcon = cx({
-        "status-unavailable": this.state.doNotDisturb,
-        "status-available": !this.state.doNotDisturb
-      });
-      var availabilityText = this.state.doNotDisturb ?
-                             mozL10n.get("display_name_dnd_status") :
-                             mozL10n.get("display_name_available_status");
-
-      return (
-        React.createElement("div", {className: "dropdown"}, 
-          React.createElement("p", {className: "dnd-status"}, 
-            React.createElement("span", {className: statusIcon, 
-                  onClick: this.toggleDropdownMenu, 
-                  ref: "menu-button"}, 
-              availabilityText
-            )
-          ), 
-          React.createElement("ul", {className: availabilityDropdown}, 
-            React.createElement("li", {className: "dropdown-menu-item status-available", 
-                onClick: this.changeAvailability("available")}, 
-              React.createElement("span", null, mozL10n.get("display_name_available_status"))
-            ), 
-            React.createElement("li", {className: "dropdown-menu-item status-unavailable", 
-                onClick: this.changeAvailability("do-not-disturb")}, 
-              React.createElement("span", null, mozL10n.get("display_name_dnd_status"))
-            )
-          )
-        )
-      );
-    }
-  });
-
   var GettingStartedView = React.createClass({displayName: "GettingStartedView",
     mixins: [sharedMixins.WindowCloseMixin],
 
@@ -212,7 +142,7 @@ loop.panel = (function(_, mozL10n) {
             mozL10n.get("powered_by_afterLogo")
           ), 
           React.createElement("p", {className: "terms-service", 
-             dangerouslySetInnerHTML: {__html: tosHTML}, 
+             dangerouslySetInnerHTML: { __html: tosHTML}, 
              onClick: this.handleLinkClick})
          )
       );
@@ -231,7 +161,7 @@ loop.panel = (function(_, mozL10n) {
     },
 
     getDefaultProps: function() {
-      return {displayed: true};
+      return { displayed: true };
     },
 
     render: function() {
@@ -290,6 +220,21 @@ loop.panel = (function(_, mozL10n) {
       this.closeWindow();
     },
 
+    handleToggleNotifications: function() {
+      this.props.mozLoop.doNotDisturb = !this.props.mozLoop.doNotDisturb;
+      this.hideDropdownMenu();
+    },
+
+    /**
+     * Load on the browser the feedback url from prefs
+     */
+    handleSubmitFeedback: function(event) {
+      event.preventDefault();
+      var helloFeedbackUrl = this.props.mozLoop.getLoopPref("feedback.formURL");
+      this.props.mozLoop.openURL(helloFeedbackUrl);
+      this.closeWindow();
+    },
+
     _isSignedIn: function() {
       return !!this.props.mozLoop.userProfile;
     },
@@ -303,6 +248,8 @@ loop.panel = (function(_, mozL10n) {
       var cx = React.addons.classSet;
       var accountEntryCSSClass = this._isSignedIn() ? "entry-settings-signout" :
                                                       "entry-settings-signin";
+      var notificationsLabel = this.props.mozLoop.doNotDisturb ? "settings_menu_item_turnnotificationson" :
+                                                                 "settings_menu_item_turnnotificationsoff";
 
       return (
         React.createElement("div", {className: "settings-menu dropdown"}, 
@@ -310,7 +257,11 @@ loop.panel = (function(_, mozL10n) {
              onClick: this.toggleDropdownMenu, 
              ref: "menu-button", 
              title: mozL10n.get("settings_menu_button_tooltip")}), 
-          React.createElement("ul", {className: cx({"dropdown-menu": true, hide: !this.state.showMenu})}, 
+          React.createElement("ul", {className: cx({ "dropdown-menu": true, hide: !this.state.showMenu })}, 
+            React.createElement(SettingsDropdownEntry, {
+                extraCSSClass: "entry-settings-notifications entries-divider", 
+                label: mozL10n.get(notificationsLabel), 
+                onClick: this.handleToggleNotifications}), 
             React.createElement(SettingsDropdownEntry, {
                 displayed: this._isSignedIn() && this.props.mozLoop.fxAEnabled, 
                 extraCSSClass: "entry-settings-account", 
@@ -321,6 +272,9 @@ loop.panel = (function(_, mozL10n) {
                                    onClick: this.handleClickSettingsEntry}), 
             React.createElement(SettingsDropdownEntry, {label: mozL10n.get("tour_label"), 
                                    onClick: this.openGettingStartedTour}), 
+            React.createElement(SettingsDropdownEntry, {extraCSSClass: "entry-settings-feedback", 
+                                   label: mozL10n.get("settings_menu_item_feedback"), 
+                                   onClick: this.handleSubmitFeedback}), 
             React.createElement(SettingsDropdownEntry, {displayed: this.props.mozLoop.fxAEnabled, 
                                    extraCSSClass: accountEntryCSSClass, 
                                    label: this._isSignedIn() ?
@@ -708,10 +662,10 @@ loop.panel = (function(_, mozL10n) {
     _renderLoadingRoomsView: function() {
       return (
         React.createElement("div", {className: "room-list"}, 
+          this._renderNewRoomButton(), 
           React.createElement("div", {className: "room-list-loading"}, 
             React.createElement("img", {src: "loop/shared/img/animated-spinner.svg"})
-          ), 
-          this._renderNewRoomButton()
+          )
         )
       );
     },
@@ -719,6 +673,7 @@ loop.panel = (function(_, mozL10n) {
     _renderNoRoomsView: function() {
       return (
         React.createElement("div", {className: "rooms"}, 
+          this._renderNewRoomButton(), 
           React.createElement("div", {className: "room-list-empty"}, 
             React.createElement("div", {className: "no-conversations-message"}, 
               React.createElement("p", {className: "panel-text-medium"}, 
@@ -728,8 +683,7 @@ loop.panel = (function(_, mozL10n) {
                 mozL10n.get("no_conversations_start_message2")
               )
             )
-          ), 
-          this._renderNewRoomButton()
+          )
         )
       );
     },
@@ -737,6 +691,7 @@ loop.panel = (function(_, mozL10n) {
     _renderNewRoomButton: function() {
       return (
         React.createElement(NewRoomView, {dispatcher: this.props.dispatcher, 
+          inRoom: this.state.openedRoom !== null, 
           mozLoop: this.props.mozLoop, 
           pendingOperation: this.state.pendingCreation ||
                             this.state.pendingInitialRetrieval})
@@ -759,6 +714,7 @@ loop.panel = (function(_, mozL10n) {
 
       return (
         React.createElement("div", {className: "rooms"}, 
+          this._renderNewRoomButton(), 
           React.createElement("h1", null, mozL10n.get("rooms_list_recent_conversations")), 
           React.createElement("div", {className: "room-list"}, 
             this.state.rooms.map(function(room, i) {
@@ -770,8 +726,7 @@ loop.panel = (function(_, mozL10n) {
                   room: room})
               );
             }, this)
-          ), 
-          this._renderNewRoomButton()
+          )
         )
       );
     }
@@ -783,6 +738,7 @@ loop.panel = (function(_, mozL10n) {
   var NewRoomView = React.createClass({displayName: "NewRoomView",
     propTypes: {
       dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired,
+      inRoom: React.PropTypes.bool.isRequired,
       mozLoop: React.PropTypes.object.isRequired,
       pendingOperation: React.PropTypes.bool.isRequired
     },
@@ -794,7 +750,6 @@ loop.panel = (function(_, mozL10n) {
 
     getInitialState: function() {
       return {
-        checked: false,
         previewImage: "",
         description: "",
         url: ""
@@ -818,7 +773,6 @@ loop.panel = (function(_, mozL10n) {
         var description = metadata.title || metadata.description;
         var url = metadata.url;
         this.setState({
-          checked: false,
           previewImage: previewImage,
           description: description,
           url: url
@@ -826,60 +780,37 @@ loop.panel = (function(_, mozL10n) {
       }.bind(this));
     },
 
-    onCheckboxChange: function(newState) {
-      this.setState({checked: newState.checked});
-    },
-
     handleCreateButtonClick: function() {
       var createRoomAction = new sharedActions.CreateRoom({
         nameTemplate: mozL10n.get("rooms_default_room_name_template")
       });
 
-      if (this.state.checked) {
-        createRoomAction.urls = [{
-          location: this.state.url,
-          description: this.state.description,
-          thumbnail: this.state.previewImage
-        }];
-      }
+      createRoomAction.urls = [{
+        location: this.state.url,
+        description: this.state.description,
+        thumbnail: this.state.previewImage
+      }];
       this.props.dispatcher.dispatch(createRoomAction);
     },
 
+    handleStopSharingButtonClick: function() {
+      this.props.mozLoop.hangupAllChatWindows();
+    },
+
     render: function() {
-      var hostname;
-
-      try {
-        hostname = new URL(this.state.url).hostname;
-      } catch (ex) {
-        // Empty catch - if there's an error, then we won't show the context.
-      }
-
-      var contextClasses = React.addons.classSet({
-        context: true,
-        "context-checkbox-checked": this.state.checked,
-        hide: !hostname ||
-          !this.props.mozLoop.getLoopPref("contextInConversations.enabled")
-      });
-
       return (
         React.createElement("div", {className: "new-room-view"}, 
-          React.createElement("div", {className: contextClasses}, 
-            React.createElement(Checkbox, {checked: this.state.checked, 
-                      label: mozL10n.get("context_inroom_label2"), 
-                      onChange: this.onCheckboxChange}), 
-            React.createElement(sharedViews.ContextUrlView, {
-              allowClick: false, 
-              description: this.state.description, 
-              showContextTitle: false, 
-              thumbnail: this.state.previewImage, 
-              url: this.state.url, 
-              useDesktopPaths: true})
-          ), 
-          React.createElement("button", {className: "btn btn-info new-room-button", 
-                  disabled: this.props.pendingOperation, 
-                  onClick: this.handleCreateButtonClick}, 
-            mozL10n.get("rooms_new_room_button_label")
-          )
+          this.props.inRoom ?
+            React.createElement("button", {className: "btn btn-info stop-sharing-button", 
+              disabled: this.props.pendingOperation, 
+              onClick: this.handleStopSharingButtonClick}, 
+              mozL10n.get("panel_stop_sharing_tabs_button")
+            ) :
+            React.createElement("button", {className: "btn btn-info new-room-button", 
+              disabled: this.props.pendingOperation, 
+              onClick: this.handleCreateButtonClick}, 
+              mozL10n.get("panel_browse_with_friend_button")
+            )
         )
       );
     }
@@ -940,9 +871,9 @@ loop.panel = (function(_, mozL10n) {
       var newUid = profile ? profile.uid : null;
       if (currUid === newUid) {
         // Update the state of hasEncryptionKey as this might have changed now.
-        this.setState({hasEncryptionKey: this.props.mozLoop.hasEncryptionKey});
+        this.setState({ hasEncryptionKey: this.props.mozLoop.hasEncryptionKey });
       } else {
-        this.setState({userProfile: profile});
+        this.setState({ userProfile: profile });
       }
       this.updateServiceErrors();
     },
@@ -996,11 +927,10 @@ loop.panel = (function(_, mozL10n) {
                       store: this.props.roomStore}), 
           React.createElement("div", {className: "footer"}, 
             React.createElement("div", {className: "user-details"}, 
-              React.createElement(AvailabilityDropdown, null)
+              React.createElement(AccountLink, {fxAEnabled: this.props.mozLoop.fxAEnabled, 
+                           userProfile: this.state.userProfile})
             ), 
             React.createElement("div", {className: "signin-details"}, 
-              React.createElement(AccountLink, {fxAEnabled: this.props.mozLoop.fxAEnabled, 
-                           userProfile: this.state.userProfile}), 
               React.createElement(SettingsDropdown, {mozLoop: this.props.mozLoop})
             )
           )
@@ -1042,7 +972,6 @@ loop.panel = (function(_, mozL10n) {
 
   return {
     AccountLink: AccountLink,
-    AvailabilityDropdown: AvailabilityDropdown,
     ConversationDropdown: ConversationDropdown,
     GettingStartedView: GettingStartedView,
     init: init,

@@ -370,7 +370,7 @@ NS_IMETHODIMP nsXULPopupShownEvent::HandleEvent(nsIDOMEvent* aEvent)
   if (popup) {
     // ResetPopupShownDispatcher will delete the reference to this, so keep
     // another one until Run is finished.
-    nsRefPtr<nsXULPopupShownEvent> event = this;
+    RefPtr<nsXULPopupShownEvent> event = this;
     // Only call Run if it the dispatcher was assigned. This avoids calling the
     // Run method if the transitionend event fires multiple times.
     if (popup->ClearPopupShownDispatcher()) {
@@ -1845,8 +1845,7 @@ nsMenuPopupFrame::ChangeMenuItem(nsMenuFrame* aMenuItem,
           // Fire a command event as the new item, but we don't want to close
           // the menu, blink it, or update any other state of the menuitem. The
           // command event will cause the item to be selected.
-          nsContentUtils::DispatchXULCommand(aMenuItem->GetContent(),
-                                             nsContentUtils::IsCallerChrome(),
+          nsContentUtils::DispatchXULCommand(aMenuItem->GetContent(), /* aTrusted = */ true,
                                              nullptr, PresContext()->PresShell(),
                                              false, false, false, false);
         }
@@ -2184,8 +2183,7 @@ nsMenuPopupFrame::MoveTo(const CSSIntPoint& aPos, bool aUpdateAttrs)
   }
 
   nsPresContext* presContext = PresContext();
-  mAnchorType = aPos.x == -1 || aPos.y == -1 ?
-                MenuPopupAnchorType_Node : MenuPopupAnchorType_Point;
+  mAnchorType = MenuPopupAnchorType_Point;
   mScreenRect.x = aPos.x - presContext->AppUnitsToIntCSSPixels(margin.left);
   mScreenRect.y = aPos.y - presContext->AppUnitsToIntCSSPixels(margin.top);
 

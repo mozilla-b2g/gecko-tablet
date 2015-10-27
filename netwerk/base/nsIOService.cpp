@@ -662,7 +662,6 @@ nsIOService::NewChannelFromURIWithLoadInfo(nsIURI* aURI,
                                            nsILoadInfo* aLoadInfo,
                                            nsIChannel** result)
 {
-  NS_ENSURE_ARG_POINTER(aLoadInfo);
   return NewChannelFromURIWithProxyFlagsInternal(aURI,
                                                  nullptr, // aProxyURI
                                                  0,       // aProxyFlags
@@ -759,8 +758,11 @@ nsIOService::NewChannelFromURIWithProxyFlagsInternal(nsIURI* aURI,
             rv = pph->NewProxiedChannel(aURI, nullptr, aProxyFlags, aProxyURI,
                                         getter_AddRefs(channel));
             NS_ENSURE_SUCCESS(rv, rv);
-            // we have to wrap that channel
-            channel = new nsSecCheckWrapChannel(channel, aLoadInfo);
+
+            // The protocol handler does not implement NewProxiedChannel2, so
+            // maybe we need to wrap the channel (see comment in MaybeWrap
+            // function).
+            channel = nsSecCheckWrapChannel::MaybeWrap(channel, aLoadInfo);
         }
     }
     else {
@@ -770,8 +772,10 @@ nsIOService::NewChannelFromURIWithProxyFlagsInternal(nsIURI* aURI,
         if (NS_FAILED(rv)) {
             rv = handler->NewChannel(aURI, getter_AddRefs(channel));
             NS_ENSURE_SUCCESS(rv, rv);
-            // we have to wrap that channel
-            channel = new nsSecCheckWrapChannel(channel, aLoadInfo);
+            // The protocol handler does not implement NewChannel2, so
+            // maybe we need to wrap the channel (see comment in MaybeWrap
+            // function).
+            channel = nsSecCheckWrapChannel::MaybeWrap(channel, aLoadInfo);
         }
     }
 
@@ -1776,8 +1780,8 @@ public:
     { }
 
 private:
-    nsRefPtr<nsIInterfaceRequestor> mCallbacks;
-    nsRefPtr<nsIOService>           mIOService;
+    RefPtr<nsIInterfaceRequestor> mCallbacks;
+    RefPtr<nsIOService>           mIOService;
 };
 
 NS_IMPL_ISUPPORTS(IOServiceProxyCallback, nsIProtocolProxyCallback)
@@ -1872,7 +1876,7 @@ nsIOService::SpeculativeConnectInternal(nsIURI *aURI,
     }
 
     nsCOMPtr<nsICancelable> cancelable;
-    nsRefPtr<IOServiceProxyCallback> callback =
+    RefPtr<IOServiceProxyCallback> callback =
         new IOServiceProxyCallback(aCallbacks, this);
     nsCOMPtr<nsIProtocolProxyService2> pps2 = do_QueryInterface(pps);
     if (pps2) {
@@ -1906,7 +1910,7 @@ nsIOService::NotifyAppOfflineStatus(uint32_t appId, int32_t state)
     MOZ_ASSERT(observerService, "The observer service should not be null");
 
     if (observerService) {
-        nsRefPtr<nsAppOfflineInfo> info = new nsAppOfflineInfo(appId, state);
+        RefPtr<nsAppOfflineInfo> info = new nsAppOfflineInfo(appId, state);
         observerService->NotifyObservers(
             info,
             NS_IOSERVICE_APP_OFFLINE_STATUS_TOPIC,

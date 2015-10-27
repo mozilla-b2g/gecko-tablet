@@ -2706,11 +2706,11 @@ ASTSerializer::statement(ParseNode* pn, MutableHandleValue dst)
 
       case PNK_RETURN:
       {
-        MOZ_ASSERT_IF(pn->pn_left, pn->pn_pos.encloses(pn->pn_left->pn_pos));
+        MOZ_ASSERT_IF(pn->pn_kid, pn->pn_pos.encloses(pn->pn_kid->pn_pos));
 
         RootedValue arg(cx);
 
-        return optExpression(pn->pn_left, &arg) &&
+        return optExpression(pn->pn_kid, &arg) &&
                builder.returnStatement(arg, &pn->pn_pos, dst);
       }
 
@@ -3111,13 +3111,20 @@ ASTSerializer::expression(ParseNode* pn, MutableHandleValue dst)
       case PNK_NEW:
       case PNK_TAGGED_TEMPLATE:
       case PNK_CALL:
+      case PNK_SUPERCALL:
       {
         ParseNode* next = pn->pn_head;
         MOZ_ASSERT(pn->pn_pos.encloses(next->pn_pos));
 
         RootedValue callee(cx);
-        if (!expression(next, &callee))
-            return false;
+        if (pn->isKind(PNK_SUPERCALL)) {
+            MOZ_ASSERT(next->isKind(PNK_POSHOLDER));
+            if (!builder.super(&next->pn_pos, &callee))
+                return false;
+        } else {
+            if (!expression(next, &callee))
+                return false;
+        }
 
         NodeVector args(cx);
         if (!args.reserve(pn->pn_count - 1))
@@ -3135,6 +3142,7 @@ ASTSerializer::expression(ParseNode* pn, MutableHandleValue dst)
         if (pn->getKind() == PNK_TAGGED_TEMPLATE)
             return builder.taggedTemplate(callee, args, &pn->pn_pos, dst);
 
+        // SUPERCALL is Call(super, args)
         return pn->isKind(PNK_NEW)
                ? builder.newExpression(callee, args, &pn->pn_pos, dst)
 
@@ -3607,7 +3615,7 @@ ASTSerializer::functionArgsAndBody(ParseNode* pn, NodeVector& args, NodeVector& 
     switch (pnbody->getKind()) {
       case PNK_RETURN: /* expression closure, no destructured args */
         return functionArgs(pn, pnargs, pnbody, args, defaults, rest) &&
-               expression(pnbody->pn_left, body);
+               expression(pnbody->pn_kid, body);
 
       case PNK_STATEMENTLIST:     /* statement closure */
       {
@@ -3847,7 +3855,7 @@ reflect_parse(JSContext* cx, uint32_t argc, Value* vp)
         if (!pn)
             return false;
     } else {
-        Rooted<ModuleObject*> module(cx, ModuleObject::create(cx));
+        Rooted<ModuleObject*> module(cx, ModuleObject::create(cx, nullptr));
         if (!module)
             return false;
 

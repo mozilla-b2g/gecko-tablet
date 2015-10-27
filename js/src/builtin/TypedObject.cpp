@@ -641,11 +641,8 @@ ArrayMetaTypeDescr::construct(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
-    if (!args.isConstructing()) {
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr,
-                             JSMSG_NOT_FUNCTION, "ArrayType");
+    if (!ThrowIfNotConstructing(cx, args, "ArrayType"))
         return false;
-    }
 
     RootedObject arrayTypeGlobal(cx, &args.callee());
 
@@ -998,11 +995,8 @@ StructMetaTypeDescr::construct(JSContext* cx, unsigned int argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
-    if (!args.isConstructing()) {
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr,
-                             JSMSG_NOT_FUNCTION, "StructType");
+    if (!ThrowIfNotConstructing(cx, args, "StructType"))
         return false;
-    }
 
     if (args.length() >= 1 && args[0].isObject()) {
         RootedObject metaTypeDescr(cx, &args.callee());
@@ -1920,7 +1914,7 @@ TypedObject::obj_setProperty(JSContext* cx, HandleObject obj, HandleId id, Handl
         uint32_t index;
         if (IdIsIndex(id, &index)) {
             if (!receiver.isObject() || obj != &receiver.toObject())
-                return SetPropertyByDefining(cx, obj, id, v, receiver, result);
+                return SetPropertyByDefining(cx, id, v, receiver, result);
 
             if (index >= uint32_t(typedObj->length())) {
                 JS_ReportErrorNumber(cx, GetErrorMessage,
@@ -1946,7 +1940,7 @@ TypedObject::obj_setProperty(JSContext* cx, HandleObject obj, HandleId id, Handl
             break;
 
         if (!receiver.isObject() || obj != &receiver.toObject())
-            return SetPropertyByDefining(cx, obj, id, v, receiver, result);
+            return SetPropertyByDefining(cx, id, v, receiver, result);
 
         size_t offset = descr->fieldOffset(fieldIndex);
         Rooted<TypeDescr*> fieldType(cx, &descr->fieldDescr(fieldIndex));

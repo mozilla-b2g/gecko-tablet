@@ -145,7 +145,7 @@ public:
   }
 
   nsCOMPtr<nsIContentFrameMessageManager> mMessageManager;
-  nsRefPtr<TabChildBase> mTabChild;
+  RefPtr<TabChildBase> mTabChild;
 
 protected:
   ~TabChildGlobal();
@@ -210,7 +210,7 @@ protected:
     bool UpdateFrameHandler(const mozilla::layers::FrameMetrics& aFrameMetrics);
 
 protected:
-    nsRefPtr<TabChildGlobal> mTabChildGlobal;
+    RefPtr<TabChildGlobal> mTabChildGlobal;
     nsCOMPtr<nsIWebBrowserChrome3> mWebBrowserChrome;
 };
 
@@ -280,11 +280,11 @@ public:
                                        nsIPrincipal* aPrincipal,
                                        nsTArray<StructuredCloneData>* aRetVal,
                                        bool aIsSync) override;
-    virtual bool DoSendAsyncMessage(JSContext* aCx,
-                                    const nsAString& aMessage,
-                                    StructuredCloneData& aData,
-                                    JS::Handle<JSObject *> aCpows,
-                                    nsIPrincipal* aPrincipal) override;
+    virtual nsresult DoSendAsyncMessage(JSContext* aCx,
+                                        const nsAString& aMessage,
+                                        StructuredCloneData& aData,
+                                        JS::Handle<JSObject *> aCpows,
+                                        nsIPrincipal* aPrincipal) override;
     virtual bool DoUpdateZoomConstraints(const uint32_t& aPresShellId,
                                          const ViewID& aViewId,
                                          const Maybe<ZoomConstraints>& aConstraints) override;
@@ -610,10 +610,10 @@ private:
 
     TextureFactoryIdentifier mTextureFactoryIdentifier;
     nsCOMPtr<nsIWebNavigation> mWebNav;
-    nsRefPtr<PuppetWidget> mPuppetWidget;
+    RefPtr<PuppetWidget> mPuppetWidget;
     nsCOMPtr<nsIURI> mLastURI;
     RenderFrameChild* mRemoteFrame;
-    nsRefPtr<nsIContentChild> mManager;
+    RefPtr<nsIContentChild> mManager;
     uint32_t mChromeFlags;
     int32_t mActiveSuppressDisplayport;
     uint64_t mLayersId;
@@ -640,7 +640,7 @@ private:
     bool mUpdateHitRegion;
 
     bool mIgnoreKeyPressEvent;
-    nsRefPtr<APZEventState> mAPZEventState;
+    RefPtr<APZEventState> mAPZEventState;
     SetAllowedTouchBehaviorCallback mSetAllowedTouchBehaviorCallback;
     bool mHasValidInnerSize;
     bool mDestroyed;

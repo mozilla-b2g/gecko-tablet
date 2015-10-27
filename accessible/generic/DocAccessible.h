@@ -624,12 +624,12 @@ protected:
     bool mStateBitWasOn;
   };
 
-  nsTArray<nsRefPtr<DocAccessible> > mChildDocuments;
+  nsTArray<RefPtr<DocAccessible> > mChildDocuments;
 
   /**
    * The virtual cursor of the document.
    */
-  nsRefPtr<nsAccessiblePivot> mVirtualCursor;
+  RefPtr<nsAccessiblePivot> mVirtualCursor;
 
   /**
    * A storage class for pairing content with one of its relation attributes.
@@ -658,11 +658,6 @@ protected:
    */
   DependentIDsHashtable mDependentIDsHash;
 
-  static PLDHashOperator
-    CycleCollectorTraverseDepIDsEntry(const nsAString& aKey,
-                                      AttrRelProviderArray* aProviders,
-                                      void* aUserArg);
-
   friend class RelatedAccIterator;
 
   /**
@@ -687,7 +682,7 @@ protected:
     ARIAOwnsPair& operator =(const ARIAOwnsPair& aPair)
       { mOwner = aPair.mOwner; mChild = aPair.mChild; return *this; }
 
-    nsRefPtr<Accessible> mOwner;
+    RefPtr<Accessible> mOwner;
     nsCOMPtr<nsIContent> mChild;
   };
   nsTArray<ARIAOwnsPair> mARIAOwnsInvalidationList;
@@ -695,7 +690,7 @@ protected:
   /**
    * Used to process notification from core and accessible events.
    */
-  nsRefPtr<NotificationController> mNotificationController;
+  RefPtr<NotificationController> mNotificationController;
   friend class EventQueue;
   friend class NotificationController;
 

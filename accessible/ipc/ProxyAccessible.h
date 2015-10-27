@@ -132,7 +132,7 @@ public:
 
   int32_t CaretLineNumber();
   int32_t CaretOffset();
-  bool SetCaretOffset(int32_t aOffset);
+  void SetCaretOffset(int32_t aOffset);
 
   int32_t CharacterCount();
   int32_t SelectionCount();
@@ -308,6 +308,9 @@ public:
   bool RemoveItemFromSelection(uint32_t aIndex);
   bool SelectAll();
   bool UnselectAll();
+
+  void TakeSelection();
+  void SetSelected(bool aSelect);
 
   bool DoAction(uint8_t aIndex);
   uint8_t ActionCount();

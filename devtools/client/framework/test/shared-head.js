@@ -13,10 +13,10 @@ function scopedCuImport(path) {
 }
 
 const {Services} = scopedCuImport("resource://gre/modules/Services.jsm");
-const {gDevTools} = scopedCuImport("resource:///modules/devtools/client/framework/gDevTools.jsm");
-const {console} = scopedCuImport("resource://gre/modules/devtools/shared/Console.jsm");
-const {ScratchpadManager} = scopedCuImport("resource:///modules/devtools/client/scratchpad/scratchpad-manager.jsm");
-const {require} = scopedCuImport("resource://gre/modules/devtools/shared/Loader.jsm");
+const {gDevTools} = scopedCuImport("resource://devtools/client/framework/gDevTools.jsm");
+const {console} = scopedCuImport("resource://gre/modules/Console.jsm");
+const {ScratchpadManager} = scopedCuImport("resource://devtools/client/scratchpad/scratchpad-manager.jsm");
+const {require} = scopedCuImport("resource://devtools/shared/Loader.jsm");
 
 const {TargetFactory} = require("devtools/client/framework/target");
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
@@ -97,9 +97,8 @@ function removeTab(tab) {
   });
 }
 
-function synthesizeKeyFromKeyTag(aKeyId, document) {
-  let key = document.getElementById(aKeyId);
-  isnot(key, null, "Successfully retrieved the <key> node");
+function synthesizeKeyFromKeyTag(key) {
+  is(key && key.tagName, "key", "Successfully retrieved the <key> node");
 
   let modifiersAttr = key.getAttribute("modifiers");
 
@@ -113,13 +112,14 @@ function synthesizeKeyFromKeyTag(aKeyId, document) {
   isnot(name, null, "Successfully retrieved keycode/key");
 
   let modifiers = {
-    shiftKey: modifiersAttr.match("shift"),
-    ctrlKey: modifiersAttr.match("ctrl"),
-    altKey: modifiersAttr.match("alt"),
-    metaKey: modifiersAttr.match("meta"),
-    accelKey: modifiersAttr.match("accel")
+    shiftKey: !!modifiersAttr.match("shift"),
+    ctrlKey: !!modifiersAttr.match("control"),
+    altKey: !!modifiersAttr.match("alt"),
+    metaKey: !!modifiersAttr.match("meta"),
+    accelKey: !!modifiersAttr.match("accel")
   };
 
+  info("Synthesizing key " + name + " " + JSON.stringify(modifiers));
   EventUtils.synthesizeKey(name, modifiers);
 }
 

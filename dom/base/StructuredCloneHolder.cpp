@@ -21,6 +21,8 @@
 #include "mozilla/dom/StructuredClone.h"
 #include "mozilla/dom/MessagePort.h"
 #include "mozilla/dom/MessagePortBinding.h"
+#include "mozilla/dom/OffscreenCanvas.h"
+#include "mozilla/dom/OffscreenCanvasBinding.h"
 #include "mozilla/dom/PMessagePort.h"
 #include "mozilla/dom/StructuredCloneTags.h"
 #include "mozilla/dom/SubtleCryptoBinding.h"
@@ -402,7 +404,7 @@ StructuredCloneHolder::ReadFullySerializableObjects(JSContext* aCx,
     // Prevent the return value from being trashed by a GC during ~nsRefPtr.
     JS::Rooted<JSObject*> result(aCx);
     {
-      nsRefPtr<CryptoKey> key = new CryptoKey(global);
+      RefPtr<CryptoKey> key = new CryptoKey(global);
       if (!key->ReadStructuredClone(aReader)) {
         result = nullptr;
       } else {
@@ -450,7 +452,7 @@ StructuredCloneHolder::ReadFullySerializableObjects(JSContext* aCx,
     // Prevent the return value from being trashed by a GC during ~nsRefPtr.
     JS::Rooted<JSObject*> result(aCx);
     {
-      nsRefPtr<MozNDEFRecord> ndefRecord = new MozNDEFRecord(global);
+      RefPtr<MozNDEFRecord> ndefRecord = new MozNDEFRecord(global);
       result = ndefRecord->ReadStructuredClone(aCx, aReader) ?
                ndefRecord->WrapObject(aCx, nullptr) : nullptr;
     }
@@ -472,7 +474,7 @@ StructuredCloneHolder::ReadFullySerializableObjects(JSContext* aCx,
     // Prevent the return value from being trashed by a GC during ~nsRefPtr.
     JS::Rooted<JSObject*> result(aCx);
     {
-      nsRefPtr<RTCCertificate> cert = new RTCCertificate(global);
+      RefPtr<RTCCertificate> cert = new RTCCertificate(global);
       if (!cert->ReadStructuredClone(aReader)) {
         result = nullptr;
       } else {
@@ -503,7 +505,7 @@ StructuredCloneHolder::WriteFullySerializableObjects(JSContext* aCx,
 
   // Handle Key cloning
   {
-    CryptoKey* key;
+    CryptoKey* key = nullptr;
     if (NS_SUCCEEDED(UNWRAP_OBJECT(CryptoKey, aObj, key))) {
       MOZ_ASSERT(NS_IsMainThread());
       return JS_WriteUint32Pair(aWriter, SCTAG_DOM_WEBCRYPTO_KEY, 0) &&
@@ -514,7 +516,7 @@ StructuredCloneHolder::WriteFullySerializableObjects(JSContext* aCx,
 #ifdef MOZ_WEBRTC
   {
     // Handle WebRTC Certificate cloning
-    RTCCertificate* cert;
+    RTCCertificate* cert = nullptr;
     if (NS_SUCCEEDED(UNWRAP_OBJECT(RTCCertificate, aObj, cert))) {
       MOZ_ASSERT(NS_IsMainThread());
       return JS_WriteUint32Pair(aWriter, SCTAG_DOM_RTC_CERTIFICATE, 0) &&
@@ -534,7 +536,7 @@ StructuredCloneHolder::WriteFullySerializableObjects(JSContext* aCx,
 
 #ifdef MOZ_NFC
   {
-    MozNDEFRecord* ndefRecord;
+    MozNDEFRecord* ndefRecord = nullptr;
     if (NS_SUCCEEDED(UNWRAP_OBJECT(MozNDEFRecord, aObj, ndefRecord))) {
       MOZ_ASSERT(NS_IsMainThread());
       return JS_WriteUint32Pair(aWriter, SCTAG_DOM_NFC_NDEF, 0) &&
@@ -562,9 +564,9 @@ EnsureBlobForBackgroundManager(BlobImpl* aBlobImpl,
     MOZ_ASSERT(aManager);
   }
 
-  nsRefPtr<BlobImpl> blobImpl = aBlobImpl;
+  RefPtr<BlobImpl> blobImpl = aBlobImpl;
 
-  const nsTArray<nsRefPtr<BlobImpl>>* subBlobImpls =
+  const nsTArray<RefPtr<BlobImpl>>* subBlobImpls =
     aBlobImpl->GetSubBlobImpls();
 
   if (!subBlobImpls || !subBlobImpls->Length()) {
@@ -590,16 +592,16 @@ EnsureBlobForBackgroundManager(BlobImpl* aBlobImpl,
   const uint32_t subBlobCount = subBlobImpls->Length();
   MOZ_ASSERT(subBlobCount);
 
-  nsTArray<nsRefPtr<BlobImpl>> newSubBlobImpls;
+  nsTArray<RefPtr<BlobImpl>> newSubBlobImpls;
   newSubBlobImpls.SetLength(subBlobCount);
 
   bool newBlobImplNeeded = false;
 
   for (uint32_t index = 0; index < subBlobCount; index++) {
-    const nsRefPtr<BlobImpl>& subBlobImpl = subBlobImpls->ElementAt(index);
+    const RefPtr<BlobImpl>& subBlobImpl = subBlobImpls->ElementAt(index);
     MOZ_ASSERT(subBlobImpl);
 
-    nsRefPtr<BlobImpl>& newSubBlobImpl = newSubBlobImpls[index];
+    RefPtr<BlobImpl>& newSubBlobImpl = newSubBlobImpls[index];
 
     newSubBlobImpl = EnsureBlobForBackgroundManager(subBlobImpl, aManager);
     MOZ_ASSERT(newSubBlobImpl);
@@ -635,19 +637,19 @@ ReadBlob(JSContext* aCx,
 {
   MOZ_ASSERT(aHolder);
   MOZ_ASSERT(aIndex < aHolder->BlobImpls().Length());
-  nsRefPtr<BlobImpl> blobImpl = aHolder->BlobImpls()[aIndex];
+  RefPtr<BlobImpl> blobImpl = aHolder->BlobImpls()[aIndex];
 
   blobImpl = EnsureBlobForBackgroundManager(blobImpl);
   MOZ_ASSERT(blobImpl);
 
-  // nsRefPtr<File> needs to go out of scope before toObjectOrNull() is
+  // RefPtr<File> needs to go out of scope before toObjectOrNull() is
   // called because the static analysis thinks dereferencing XPCOM objects
   // can GC (because in some cases it can!), and a return statement with a
   // JSObject* type means that JSObject* is on the stack as a raw pointer
   // while destructors are running.
   JS::Rooted<JS::Value> val(aCx);
   {
-    nsRefPtr<Blob> blob = Blob::Create(aHolder->ParentDuringRead(), blobImpl);
+    RefPtr<Blob> blob = Blob::Create(aHolder->ParentDuringRead(), blobImpl);
     if (!ToJSValue(aCx, blob, &val)) {
       return nullptr;
     }
@@ -665,7 +667,7 @@ WriteBlob(JSStructuredCloneWriter* aWriter,
   MOZ_ASSERT(aBlob);
   MOZ_ASSERT(aHolder);
 
-  nsRefPtr<BlobImpl> blobImpl = EnsureBlobForBackgroundManager(aBlob->Impl());
+  RefPtr<BlobImpl> blobImpl = EnsureBlobForBackgroundManager(aBlob->Impl());
   MOZ_ASSERT(blobImpl);
 
   // We store the position of the blobImpl in the array as index.
@@ -690,7 +692,7 @@ ReadFileList(JSContext* aCx,
 
   JS::Rooted<JS::Value> val(aCx);
   {
-    nsRefPtr<FileList> fileList = new FileList(aHolder->ParentDuringRead());
+    RefPtr<FileList> fileList = new FileList(aHolder->ParentDuringRead());
 
     uint32_t tag, offset;
     // Offset is the index of the blobImpl from which we can find the blobImpl
@@ -706,13 +708,13 @@ ReadFileList(JSContext* aCx,
       uint32_t index = offset + i;
       MOZ_ASSERT(index < aHolder->BlobImpls().Length());
 
-      nsRefPtr<BlobImpl> blobImpl = aHolder->BlobImpls()[index];
+      RefPtr<BlobImpl> blobImpl = aHolder->BlobImpls()[index];
       MOZ_ASSERT(blobImpl->IsFile());
 
       blobImpl = EnsureBlobForBackgroundManager(blobImpl);
       MOZ_ASSERT(blobImpl);
 
-      nsRefPtr<File> file = File::Create(aHolder->ParentDuringRead(), blobImpl);
+      RefPtr<File> file = File::Create(aHolder->ParentDuringRead(), blobImpl);
       if (!fileList->Append(file)) {
         return nullptr;
       }
@@ -749,7 +751,7 @@ WriteFileList(JSStructuredCloneWriter* aWriter,
   }
 
   for (uint32_t i = 0; i < aFileList->Length(); ++i) {
-    nsRefPtr<BlobImpl> blobImpl =
+    RefPtr<BlobImpl> blobImpl =
       EnsureBlobForBackgroundManager(aFileList->Item(i)->Impl());
     MOZ_ASSERT(blobImpl);
 
@@ -773,7 +775,7 @@ ReadFormData(JSContext* aCx,
   // See the serialization of the FormData for the format.
   JS::Rooted<JS::Value> val(aCx);
   {
-    nsRefPtr<nsFormData> formData =
+    RefPtr<nsFormData> formData =
       new nsFormData(aHolder->ParentDuringRead());
 
     Optional<nsAString> thirdArg;
@@ -791,11 +793,11 @@ ReadFormData(JSContext* aCx,
       if (tag == SCTAG_DOM_BLOB) {
         MOZ_ASSERT(indexOrLengthOfString < aHolder->BlobImpls().Length());
 
-        nsRefPtr<BlobImpl> blobImpl =
+        RefPtr<BlobImpl> blobImpl =
           aHolder->BlobImpls()[indexOrLengthOfString];
         MOZ_ASSERT(blobImpl->IsFile());
 
-        nsRefPtr<File> file =
+        RefPtr<File> file =
           File::Create(aHolder->ParentDuringRead(), blobImpl);
         MOZ_ASSERT(file);
 
@@ -860,16 +862,16 @@ WriteFormData(JSStructuredCloneWriter* aWriter,
     { }
 
     static bool
-    Write(const nsString& aName, bool isFile, const nsString& aValue,
-          File* aFile, void* aClosure)
+    Write(const nsString& aName, const OwningFileOrUSVString& aValue,
+          void* aClosure)
     {
       Closure* closure = static_cast<Closure*>(aClosure);
       if (!WriteString(closure->mWriter, aName)) {
         return false;
       }
 
-      if (isFile) {
-        BlobImpl* blobImpl = aFile->Impl();
+      if (aValue.IsFile()) {
+        BlobImpl* blobImpl = aValue.GetAsFile()->Impl();
         if (!JS_WriteUint32Pair(closure->mWriter, SCTAG_DOM_BLOB,
                                 closure->mHolder->BlobImpls().Length())) {
           return false;
@@ -880,9 +882,10 @@ WriteFormData(JSStructuredCloneWriter* aWriter,
       }
 
       size_t charSize = sizeof(nsString::char_type);
-      if (!JS_WriteUint32Pair(closure->mWriter, 0, aValue.Length()) ||
-          !JS_WriteBytes(closure->mWriter, aValue.get(),
-                         aValue.Length() * charSize)) {
+      if (!JS_WriteUint32Pair(closure->mWriter, 0,
+                              aValue.GetAsUSVString().Length()) ||
+          !JS_WriteBytes(closure->mWriter, aValue.GetAsUSVString().get(),
+                         aValue.GetAsUSVString().Length() * charSize)) {
         return false;
       }
 
@@ -996,7 +999,7 @@ StructuredCloneHolder::CustomReadTransferHandler(JSContext* aCx,
 
     // aExtraData is the index of this port identifier.
     ErrorResult rv;
-    nsRefPtr<MessagePort> port =
+    RefPtr<MessagePort> port =
       MessagePort::Create(window, portIdentifier, rv);
     if (NS_WARN_IF(rv.Failed())) {
       return false;
@@ -1006,6 +1009,25 @@ StructuredCloneHolder::CustomReadTransferHandler(JSContext* aCx,
 
     JS::Rooted<JS::Value> value(aCx);
     if (!GetOrCreateDOMReflector(aCx, port, &value)) {
+      JS_ClearPendingException(aCx);
+      return false;
+    }
+
+    aReturnObject.set(&value.toObject());
+    return true;
+  }
+
+  if (aTag == SCTAG_DOM_CANVAS) {
+    MOZ_ASSERT(mSupportedContext == SameProcessSameThread ||
+               mSupportedContext == SameProcessDifferentThread);
+    MOZ_ASSERT(aContent);
+    OffscreenCanvasCloneData* data =
+      static_cast<OffscreenCanvasCloneData*>(aContent);
+    RefPtr<OffscreenCanvas> canvas = OffscreenCanvas::CreateFromCloneData(data);
+    delete data;
+
+    JS::Rooted<JS::Value> value(aCx);
+    if (!GetOrCreateDOMReflector(aCx, canvas, &value)) {
       JS_ClearPendingException(aCx);
       return false;
     }
@@ -1045,6 +1067,24 @@ StructuredCloneHolder::CustomWriteTransferHandler(JSContext* aCx,
 
       return true;
     }
+
+    if (mSupportedContext == SameProcessSameThread ||
+        mSupportedContext == SameProcessDifferentThread) {
+      OffscreenCanvas* canvas = nullptr;
+      rv = UNWRAP_OBJECT(OffscreenCanvas, aObj, canvas);
+      if (NS_SUCCEEDED(rv)) {
+        MOZ_ASSERT(canvas);
+
+        *aExtraData = 0;
+        *aTag = SCTAG_DOM_CANVAS;
+        *aOwnership = JS::SCTAG_TMO_CUSTOM;
+        *aContent = canvas->ToCloneData();
+        MOZ_ASSERT(*aContent);
+        canvas->SetNeutered();
+
+        return true;
+      }
+    }
   }
 
   return false;
@@ -1062,6 +1102,17 @@ StructuredCloneHolder::CustomFreeTransferHandler(uint32_t aTag,
     MOZ_ASSERT(!aContent);
     MOZ_ASSERT(aExtraData < mPortIdentifiers.Length());
     MessagePort::ForceClose(mPortIdentifiers[aExtraData]);
+    return;
+  }
+
+  if (aTag == SCTAG_DOM_CANVAS) {
+    MOZ_ASSERT(mSupportedContext == SameProcessSameThread ||
+               mSupportedContext == SameProcessDifferentThread);
+    MOZ_ASSERT(aContent);
+    OffscreenCanvasCloneData* data =
+      static_cast<OffscreenCanvasCloneData*>(aContent);
+    delete data;
+    return;
   }
 }
 

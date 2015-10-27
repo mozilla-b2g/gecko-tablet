@@ -9,7 +9,7 @@ const NS_ALERT_HORIZONTAL = 1;
 const NS_ALERT_LEFT = 2;
 const NS_ALERT_TOP = 4;
 
-const WINDOW_MARGIN = 10;
+const WINDOW_MARGIN = 0;
 
 Cu.import("resource://gre/modules/Services.jsm");
 
@@ -32,17 +32,39 @@ function prefillAlertInfo() {
   // arguments[7] --> lang
   // arguments[8] --> replaced alert window (nsIDOMWindow)
   // arguments[9] --> an optional callback listener (nsIObserver)
-  // arguments[10] -> the localized alert source string
+  // arguments[10] -> the nsIURI.hostPort of the origin, optional
 
   switch (window.arguments.length) {
     default:
     case 11: {
-      let label = document.getElementById('alertSourceLabel');
       if (window.arguments[10]) {
-        label.hidden = false;
-        label.setAttribute('value', window.arguments[10]);
-      } else {
-        label.hidden = true;
+        let alertBox = document.getElementById("alertBox");
+        alertBox.setAttribute("hasOrigin", true);
+
+        let hostPort = window.arguments[10];
+        const ALERT_BUNDLE = Services.strings.createBundle(
+          "chrome://alerts/locale/alert.properties");
+        const BRAND_BUNDLE = Services.strings.createBundle(
+          "chrome://branding/locale/brand.properties");
+        const BRAND_NAME = BRAND_BUNDLE.GetStringFromName("brandShortName");
+        let label = document.getElementById("alertSourceLabel");
+        label.setAttribute("value",
+          ALERT_BUNDLE.formatStringFromName("source.label",
+                                            [hostPort],
+                                            1));
+        let doNotDisturbMenuItem = document.getElementById("doNotDisturbMenuItem");
+        doNotDisturbMenuItem.setAttribute("label",
+          ALERT_BUNDLE.formatStringFromName("doNotDisturb.label",
+                                            [BRAND_NAME],
+                                            1));
+        let disableForOrigin = document.getElementById("disableForOriginMenuItem");
+        disableForOrigin.setAttribute("label",
+          ALERT_BUNDLE.formatStringFromName("webActions.disableForOrigin.label",
+                                            [hostPort],
+                                            1));
+        let openSettings = document.getElementById("openSettingsMenuItem");
+        openSettings.setAttribute("label",
+          ALERT_BUNDLE.GetStringFromName("webActions.settings.label"));
       }
     }
     case 10:
@@ -51,12 +73,12 @@ function prefillAlertInfo() {
       gReplacedWindow = window.arguments[8];
     case 8:
       if (window.arguments[7]) {
-        document.getElementById('alertTitleLabel').setAttribute('lang', window.arguments[7]);
-        document.getElementById('alertTextLabel').setAttribute('lang', window.arguments[7]);
+        document.getElementById("alertTitleLabel").setAttribute("lang", window.arguments[7]);
+        document.getElementById("alertTextLabel").setAttribute("lang", window.arguments[7]);
       }
     case 7:
       if (window.arguments[6]) {
-        document.getElementById('alertNotification').style.direction = window.arguments[6];
+        document.getElementById("alertNotification").style.direction = window.arguments[6];
       }
     case 6:
       gOrigin = window.arguments[5];
@@ -65,16 +87,20 @@ function prefillAlertInfo() {
     case 4:
       gAlertTextClickable = window.arguments[3];
       if (gAlertTextClickable) {
-        document.getElementById('alertNotification').setAttribute('clickable', true);
-        document.getElementById('alertTextLabel').setAttribute('clickable', true);
+        document.getElementById("alertNotification").setAttribute("clickable", true);
+        document.getElementById("alertTextLabel").setAttribute("clickable", true);
       }
     case 3:
-      document.getElementById('alertTextLabel').textContent = window.arguments[2];
+      if (window.arguments[2]) {
+        document.getElementById("alertBox").setAttribute("hasBodyText", true);
+        document.getElementById("alertTextLabel").textContent = window.arguments[2];
+      }
     case 2:
-      document.getElementById('alertTitleLabel').setAttribute('value', window.arguments[1]);
+      document.getElementById("alertTitleLabel").textContent = window.arguments[1];
     case 1:
       if (window.arguments[0]) {
-        document.getElementById('alertImage').setAttribute('src', window.arguments[0]);
+        document.getElementById("alertBox").setAttribute("hasImage", true);
+        document.getElementById("alertImage").setAttribute("src", window.arguments[0]);
       }
     case 0:
       break;
@@ -82,7 +108,7 @@ function prefillAlertInfo() {
 }
 
 function onAlertLoad() {
-  const ALERT_DURATION_IMMEDIATE = 4000;
+  const ALERT_DURATION_IMMEDIATE = 12000;
   let alertTextBox = document.getElementById("alertTextBox");
   let alertImageBox = document.getElementById("alertImageBox");
   alertImageBox.style.minHeight = alertTextBox.scrollHeight + "px";
@@ -104,7 +130,9 @@ function onAlertLoad() {
   } else {
     let alertBox = document.getElementById("alertBox");
     alertBox.addEventListener("animationend", function hideAlert(event) {
-      if (event.animationName == "alert-animation") {
+      if (event.animationName == "alert-animation" ||
+          event.animationName == "alert-zoom-animation" ||
+          event.animationName == "alert-fadeout-animation") {
         alertBox.removeEventListener("animationend", hideAlert, false);
         window.close();
       }
@@ -125,7 +153,7 @@ function moveWindowToReplace(aReplacedAlert) {
 
   // Move windows that come after the replaced alert if the height is different.
   if (heightDelta != 0) {
-    let windows = Services.wm.getEnumerator('alert:alert');
+    let windows = Services.wm.getEnumerator("alert:alert");
     while (windows.hasMoreElements()) {
       let alertWindow = windows.getNext();
       // boolean to determine if the alert window is after the replaced alert.
@@ -155,7 +183,7 @@ function moveWindowToEnd() {
           screen.availTop + screen.availHeight - window.outerHeight;
 
   // Position the window at the end of all alerts.
-  let windows = Services.wm.getEnumerator('alert:alert');
+  let windows = Services.wm.getEnumerator("alert:alert");
   while (windows.hasMoreElements()) {
     let alertWindow = windows.getNext();
     if (alertWindow != window) {
@@ -178,7 +206,7 @@ function onAlertBeforeUnload() {
   if (!gIsReplaced) {
     // Move other alert windows to fill the gap left by closing alert.
     let heightDelta = window.outerHeight + WINDOW_MARGIN;
-    let windows = Services.wm.getEnumerator('alert:alert');
+    let windows = Services.wm.getEnumerator("alert:alert");
     while (windows.hasMoreElements()) {
       let alertWindow = windows.getNext();
       if (alertWindow != window) {
@@ -205,5 +233,39 @@ function onAlertClick() {
     gAlertListener.observe(null, "alertclickcallback", gAlertCookie);
   }
 
-  window.close();
+  let alertBox = document.getElementById("alertBox");
+  if (alertBox.getAttribute("animate") == "true") {
+    // Closed when the animation ends.
+    alertBox.setAttribute("clicked", "true");
+  } else {
+    window.close();
+  }
+}
+
+function doNotDisturb() {
+  const alertService = Cc["@mozilla.org/alerts-service;1"]
+                         .getService(Ci.nsIAlertsService)
+                         .QueryInterface(Ci.nsIAlertsDoNotDisturb);
+  alertService.manualDoNotDisturb = true;
+  onAlertClose();
+}
+
+function disableForOrigin() {
+  gAlertListener.observe(null, "alertdisablecallback", gAlertCookie);
+  onAlertClose();
+}
+
+function openSettings() {
+  gAlertListener.observe(null, "alertsettingscallback", gAlertCookie);
+  onAlertClose();
+}
+
+function onAlertClose() {
+  let alertBox = document.getElementById("alertBox");
+  if (alertBox.getAttribute("animate") == "true") {
+    // Closed when the animation ends.
+    alertBox.setAttribute("closing", "true");
+  } else {
+    window.close();
+  }
 }

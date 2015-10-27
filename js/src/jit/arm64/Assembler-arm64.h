@@ -34,14 +34,14 @@ static constexpr ARMRegister ScratchReg64 = { ScratchReg, 64 };
 static constexpr Register ScratchReg2 = { Registers::ip1 };
 static constexpr ARMRegister ScratchReg2_64 = { ScratchReg2, 64 };
 
-static constexpr FloatRegister ScratchDoubleReg = { FloatRegisters::d31 };
-static constexpr FloatRegister ReturnDoubleReg = { FloatRegisters::d0 };
+static constexpr FloatRegister ScratchDoubleReg = { FloatRegisters::d31, FloatRegisters::Double };
+static constexpr FloatRegister ReturnDoubleReg = { FloatRegisters::d0, FloatRegisters::Double };
 
-static constexpr FloatRegister ReturnFloat32Reg = { FloatRegisters::s0 , FloatRegisters::Single };
-static constexpr FloatRegister ScratchFloat32Reg = { FloatRegisters::s31 , FloatRegisters::Single };
+static constexpr FloatRegister ReturnFloat32Reg = { FloatRegisters::s0, FloatRegisters::Single };
+static constexpr FloatRegister ScratchFloat32Reg = { FloatRegisters::s31, FloatRegisters::Single };
 
 static constexpr Register InvalidReg = { Registers::invalid_reg };
-static constexpr FloatRegister InvalidFloatReg = { FloatRegisters::invalid_fpreg };
+static constexpr FloatRegister InvalidFloatReg = { FloatRegisters::invalid_fpreg, FloatRegisters::Single };
 
 static constexpr FloatRegister ReturnInt32x4Reg = InvalidFloatReg;
 static constexpr FloatRegister ReturnFloat32x4Reg = InvalidFloatReg;
@@ -63,9 +63,6 @@ static constexpr Register FramePointer = { Registers::fp };
 static constexpr Register ZeroRegister = { Registers::sp };
 static constexpr ARMRegister ZeroRegister64 = { Registers::sp, 64 };
 static constexpr ARMRegister ZeroRegister32 = { Registers::sp, 32 };
-
-static constexpr FloatRegister ReturnFloatReg = { FloatRegisters::d0 };
-static constexpr FloatRegister ScratchFloatReg = { FloatRegisters::d31 };
 
 static constexpr FloatRegister ReturnSimdReg = InvalidFloatReg;
 static constexpr FloatRegister ScratchSimdReg = InvalidFloatReg;
@@ -142,7 +139,7 @@ static constexpr Register AsmJSIonExitRegD2 = r4;
 static constexpr Register JSReturnReg_Type = r3;
 static constexpr Register JSReturnReg_Data = r2;
 
-static constexpr FloatRegister NANReg = { FloatRegisters::d14 };
+static constexpr FloatRegister NANReg = { FloatRegisters::d14, FloatRegisters::Single };
 // N.B. r8 isn't listed as an aapcs temp register, but we can use it as such because we never
 // use return-structs.
 static constexpr Register CallTempNonArgRegs[] = { r8, r9, r10, r11, r12, r13, r14, r15 };
@@ -236,15 +233,6 @@ class Assembler : public vixl::Assembler
             preBarrierTableBytes();
     }
 
-    void addCodeLabel(CodeLabel label) {
-        propagateOOM(codeLabels_.append(label));
-    }
-    size_t numCodeLabels() const {
-        return codeLabels_.length();
-    }
-    CodeLabel codeLabel(size_t i) {
-        return codeLabels_[i];
-    }
     void processCodeLabels(uint8_t* rawCode) {
         for (size_t i = 0; i < codeLabels_.length(); i++) {
             CodeLabel label = codeLabels_[i];
@@ -335,36 +323,6 @@ class Assembler : public vixl::Assembler
     }
     static uint32_t AlignDoubleArg(uint32_t offset) {
         MOZ_CRASH("AlignDoubleArg()");
-    }
-    static Instruction* NextInstruction(Instruction* instruction, uint32_t* count = nullptr) {
-        if (count != nullptr)
-            *count += 4;
-        Instruction* cur = instruction;
-        Instruction* next = cur + 4;
-        // Artificial pool guards can only be B (rather than BR)
-        if (next->IsUncondB()) {
-            uint32_t* snd = (uint32_t*)(instruction + 8);
-            // test both the upper 16 bits, but also bit 15, which should be unset
-            // for an artificial branch guard.
-            if ((*snd & 0xffff8000) == 0xffff0000) {
-                // that was a guard before a pool, step over the pool.
-                int poolSize =  (*snd & 0x7fff);
-                return (Instruction*)(snd + poolSize);
-            }
-        } else if (cur->IsBR() || cur->IsUncondB()) {
-            // natural pool guards can be anything
-            // but they need to have bit 15 set.
-            if ((next->InstructionBits() & 0xffff0000) == 0xffff0000) {
-                int poolSize = (next->InstructionBits() & 0x7fff);
-                Instruction* ret = (next + (poolSize << 2));
-                return ret;
-            }
-        }
-        return (instruction + 4);
-
-    }
-    static uint8_t* NextInstruction(uint8_t* instruction, uint32_t* count = nullptr) {
-        return (uint8_t*)NextInstruction((Instruction*)instruction, count);
     }
     static uintptr_t GetPointer(uint8_t* ptr) {
         Instruction* i = reinterpret_cast<Instruction*>(ptr);
@@ -465,8 +423,6 @@ class Assembler : public vixl::Assembler
           : offset(offset), target(target), kind(kind)
         { }
     };
-
-    js::Vector<CodeLabel, 0, SystemAllocPolicy> codeLabels_;
 
     // List of jumps for which the target is either unknown until finalization,
     // or cannot be known due to GC. Each entry here requires a unique entry

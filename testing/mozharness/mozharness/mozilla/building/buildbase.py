@@ -19,7 +19,6 @@ import time
 import uuid
 import copy
 import glob
-import logging
 import shlex
 from itertools import chain
 
@@ -31,9 +30,17 @@ from mozharness.base.config import BaseConfig, parse_config_file
 from mozharness.base.log import ERROR, OutputParser, FATAL
 from mozharness.base.script import PostScriptRun
 from mozharness.base.vcs.vcsbase import MercurialScript
-from mozharness.mozilla.buildbot import BuildbotMixin, TBPL_STATUS_DICT, \
-    TBPL_EXCEPTION, TBPL_RETRY, EXIT_STATUS_DICT, TBPL_WARNING, TBPL_SUCCESS, \
-    TBPL_WORST_LEVEL_TUPLE, TBPL_FAILURE
+from mozharness.mozilla.buildbot import (
+    BuildbotMixin,
+    EXIT_STATUS_DICT,
+    TBPL_STATUS_DICT,
+    TBPL_EXCEPTION,
+    TBPL_FAILURE,
+    TBPL_RETRY,
+    TBPL_WARNING,
+    TBPL_SUCCESS,
+    TBPL_WORST_LEVEL_TUPLE,
+)
 from mozharness.mozilla.purge import PurgeMixin
 from mozharness.mozilla.mock import MockMixin
 from mozharness.mozilla.signing import SigningMixin
@@ -79,6 +86,7 @@ TBPL_UPLOAD_ERRORS = [
         'level': TBPL_RETRY,
     }
 ]
+
 
 class MakeUploadOutputParser(OutputParser):
     tbpl_error_list = TBPL_UPLOAD_ERRORS
@@ -127,10 +135,15 @@ class MakeUploadOutputParser(OutputParser):
                     # For android builds, the package is also used as the mar file.
                     # Grab the first one, since that is the one in the
                     # nightly/YYYY/MM directory
-                    if self.use_package_as_marfile and 'completeMarUrl' not in self.matches:
-                        self.info("Using package as mar file: %s" % m)
-                        self.matches['completeMarUrl'] = m
-                        u, self.package_filename = os.path.split(m)
+                    if self.use_package_as_marfile:
+                        if 'tinderbox-builds' in m or 'nightly/latest-' in m:
+                            self.info("Skipping wrong packageUrl: %s" % m)
+                        else:
+                            if 'completeMarUrl' in self.matches:
+                                self.fatal("Found multiple package URLs. Please update buildbase.py")
+                            self.info("Using package as mar file: %s" % m)
+                            self.matches['completeMarUrl'] = m
+                            u, self.package_filename = os.path.split(m)
 
         if self.use_package_as_marfile and self.package_filename:
             # The checksum file is also dumped during 'make upload'. Look
@@ -157,6 +170,7 @@ class MakeUploadOutputParser(OutputParser):
         else:
             self.info(line)
 
+
 class CheckTestCompleteParser(OutputParser):
     tbpl_error_list = TBPL_UPLOAD_ERRORS
 
@@ -167,6 +181,7 @@ class CheckTestCompleteParser(OutputParser):
         self.fail_count = 0
         self.leaked = False
         self.harness_err_re = TinderBoxPrintRe['harness_error']['full_regex']
+        self.tbpl_status = TBPL_SUCCESS
 
     def parse_single_line(self, line):
         # Counts and flags.
@@ -184,17 +199,38 @@ class CheckTestCompleteParser(OutputParser):
                     self.leaked = None
                 else:
                     self.leaked = True
-            else:
-                self.fail_count += 1
+            self.fail_count += 1
             return self.warning(line)
         self.info(line)  # else
 
-    def evaluate_parser(self):
-        # Return the summary.
+    def evaluate_parser(self, return_code,  success_codes=None):
+        success_codes = success_codes or [0]
+
+        if self.num_errors:  # ran into a script error
+            self.tbpl_status = self.worst_level(TBPL_FAILURE, self.tbpl_status,
+                                                levels=TBPL_WORST_LEVEL_TUPLE)
+
+        if self.fail_count > 0:
+            self.tbpl_status = self.worst_level(TBPL_WARNING, self.tbpl_status,
+                                                levels=TBPL_WORST_LEVEL_TUPLE)
+
+        # Account for the possibility that no test summary was output.
+        if self.pass_count == 0 and self.fail_count == 0:
+            self.error('No tests run or test summary not found')
+            self.tbpl_status = self.worst_level(TBPL_WARNING, self.tbpl_status,
+                                                levels=TBPL_WORST_LEVEL_TUPLE)
+
+        if return_code not in success_codes:
+            self.tbpl_status = self.worst_level(TBPL_FAILURE, self.tbpl_status,
+                                                levels=TBPL_WORST_LEVEL_TUPLE)
+
+        # Print the summary.
         summary = tbox_print_summary(self.pass_count,
                                      self.fail_count,
                                      self.leaked)
         self.info("TinderboxPrint: check<br/>%s\n" % summary)
+
+        return self.tbpl_status
 
 
 class BuildingConfig(BaseConfig):
@@ -310,6 +346,7 @@ class BuildOptionParser(object):
         'tsan': 'builds/releng_sub_%s_configs/%s_tsan.py',
         'b2g-debug': 'b2g/releng_sub_%s_configs/%s_debug.py',
         'cross-debug': 'builds/releng_sub_%s_configs/%s_cross_debug.py',
+        'cross-opt': 'builds/releng_sub_%s_configs/%s_cross_opt.py',
         'debug': 'builds/releng_sub_%s_configs/%s_debug.py',
         'asan-and-debug': 'builds/releng_sub_%s_configs/%s_asan_and_debug.py',
         'stat-and-debug': 'builds/releng_sub_%s_configs/%s_stat_and_debug.py',
@@ -1395,12 +1432,17 @@ or run without that action (ie: --no-{action})"
         repo = self._query_repo()
         revision = self.query_revision()
         pushinfo = self.vcs_query_pushinfo(repo, revision)
+        pushdate = time.strftime('%Y%m%d%H%M%S', time.gmtime(pushinfo.pushdate))
 
         index = self.config.get('taskcluster_index', 'index.garbage.staging')
         fmt = {
             'index': index,
             'project': self.buildbot_config['properties']['branch'],
             'head_rev': revision,
+            'pushdate': pushdate,
+            'year': pushdate[0:4],
+            'month': pushdate[4:6],
+            'day': pushdate[6:8],
             'build_product': self.config['stage_product'],
             'build_name': self.query_build_name(),
             'build_type': self.query_build_type(),
@@ -1536,8 +1578,8 @@ or run without that action (ie: --no-{action})"
         # Find a stripped version of libxul if possible
         def find_file(rootPath, fileName):
             for root, dirs, files in os.walk(rootPath):
-               for file in files:
-                   if file == fileName:
+                for file in files:
+                    if file == fileName:
                         return (fileName, os.path.join(root, file))
             return None
 
@@ -1594,42 +1636,6 @@ or run without that action (ie: --no-{action})"
         self.set_buildbot_property(prop_type + 'Hash',
                                    hash_prop.strip().split(' ', 2)[1],
                                    write_to_file=True)
-
-    def _query_previous_buildid(self):
-        dirs = self.query_abs_dirs()
-        previous_buildid = self.query_buildbot_property('previous_buildid')
-        if previous_buildid:
-            return previous_buildid
-        cmd = [
-            "bash", "-c", "find previous -maxdepth 4 -type f -name application.ini"
-        ]
-        self.info("finding previous mar's inipath...")
-        prev_ini_path = self.get_output_from_command(cmd,
-                                                     cwd=dirs['abs_obj_dir'],
-                                                     halt_on_failure=True,
-                                                     fatal_exit_code=3)
-        print_conf_path = os.path.join(dirs['abs_src_dir'],
-                                       'config',
-                                       'printconfigsetting.py')
-        abs_prev_ini_path = os.path.join(dirs['abs_obj_dir'], prev_ini_path)
-        python = self.query_exe('python2.7')
-        cmd = [
-            python, os.path.join(dirs['abs_src_dir'], 'mach'), 'python',
-            print_conf_path, abs_prev_ini_path, 'App', 'BuildID'
-        ]
-        env = self.query_build_env()
-        # dirs['abs_obj_dir'] can be different from env['MOZ_OBJDIR'] on
-        # mac, and that confuses mach.
-        del env['MOZ_OBJDIR']
-        previous_buildid = self.get_output_from_command_m(cmd,
-            cwd=dirs['abs_obj_dir'], env=env)
-        if not previous_buildid:
-            self.fatal("Could not determine previous_buildid. This property"
-                       "requires the upload action creating a partial mar.")
-        self.set_buildbot_property("previous_buildid",
-                                   previous_buildid,
-                                   write_to_file=True)
-        return previous_buildid
 
     def clone_tools(self):
         """clones the tools repo."""
@@ -1801,10 +1807,8 @@ or run without that action (ie: --no-{action})"
             self._ccache_s()
 
     def preflight_package_source(self):
-        # Make sure to have an empty .mozconfig. Removing it is not enough,
-        # because MOZ_OBJDIR is not used in this case
-        self._touch_file(os.path.join(self.query_abs_dirs()['abs_src_dir'],
-                                      '.mozconfig'))
+        self._get_mozconfig()
+        self._run_tooltool()
 
     def package_source(self):
         """generates source archives and uploads them"""
@@ -1847,10 +1851,12 @@ or run without that action (ie: --no-{action})"
                                          cwd=dirs['abs_obj_dir'],
                                          env=env,
                                          output_parser=parser)
-        parser.evaluate_parser()
+        tbpl_status = parser.evaluate_parser(return_code)
+        return_code = EXIT_STATUS_DICT[tbpl_status]
+
         if return_code:
             self.return_code = self.worst_level(
-                EXIT_STATUS_DICT[TBPL_WARNING], self.return_code,
+                return_code,  self.return_code,
                 AUTOMATION_EXIT_CODES[::-1]
             )
             self.error("'make -k check' did not run successfully. Please check "

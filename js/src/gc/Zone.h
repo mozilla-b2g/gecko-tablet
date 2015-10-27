@@ -142,6 +142,8 @@ struct Zone : public JS::shadow::Zone,
     void onTooMuchMalloc();
 
     void* onOutOfMemory(js::AllocFunction allocFunc, size_t nbytes, void* reallocPtr = nullptr) {
+        if (!CurrentThreadCanAccessRuntime(runtime_))
+            return nullptr;
         return runtimeFromMainThread()->onOutOfMemory(allocFunc, nbytes, reallocPtr);
     }
     void reportAllocationOverflow() { js::ReportAllocationOverflow(nullptr); }
@@ -281,8 +283,8 @@ struct Zone : public JS::shadow::Zone,
 
     js::TypeZone types;
 
-    /* Linked list of live weakmaps in this zone. */
-    js::WeakMapBase* gcWeakMapList;
+    /* Live weakmaps in this zone. */
+    mozilla::LinkedList<js::WeakMapBase> gcWeakMapList;
 
     // The set of compartments in this zone.
     typedef js::Vector<JSCompartment*, 1, js::SystemAllocPolicy> CompartmentVector;

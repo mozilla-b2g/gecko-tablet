@@ -112,7 +112,7 @@ private:
     nsCOMPtr<nsIAndroidBrowserApp> mBrowserApp;
     nsTArray<nsIntPoint> mPoints;
     int mTabId;
-    nsRefPtr<RefCountedJavaObject> mBuffer;
+    RefPtr<RefCountedJavaObject> mBuffer;
 };
 
 class WakeLockListener final : public nsIDOMMozWakeLockListener {
@@ -255,6 +255,7 @@ nsAppShell::Init()
     if (obsServ) {
         obsServ->AddObserver(this, "browser-delayed-startup-finished", false);
         obsServ->AddObserver(this, "profile-after-change", false);
+        obsServ->AddObserver(this, "quit-application-granted", false);
         obsServ->AddObserver(this, "xpcom-shutdown", false);
     }
 
@@ -271,6 +272,8 @@ nsAppShell::Observe(nsISupports* aSubject,
                     const char* aTopic,
                     const char16_t* aData)
 {
+    bool removeObserver = false;
+
     if (!strcmp(aTopic, "xpcom-shutdown")) {
         // We need to ensure no observers stick around after XPCOM shuts down
         // or we'll see crashes, as the app shell outlives XPConnect.
@@ -303,10 +306,27 @@ nsAppShell::Observe(nsISupports* aSubject,
                 appStartup->EnterLastWindowClosingSurvivalArea();
             }
         }
+        removeObserver = true;
+
+    } else if (!strcmp(aTopic, "quit-application-granted")) {
+        if (jni::IsAvailable()) {
+            // We are told explicitly to quit, perhaps due to
+            // nsIAppStartup::Quit being called. We should release our hold on
+            // nsIAppStartup and let it continue to quit.
+            nsCOMPtr<nsIAppStartup> appStartup =
+                do_GetService(NS_APPSTARTUP_CONTRACTID);
+            if (appStartup) {
+                appStartup->ExitLastWindowClosingSurvivalArea();
+            }
+        }
+        removeObserver = true;
+    }
+
+    if (removeObserver) {
         nsCOMPtr<nsIObserverService> obsServ =
             mozilla::services::GetObserverService();
         if (obsServ) {
-            obsServ->RemoveObserver(this, "profile-after-change");
+            obsServ->RemoveObserver(this, aTopic);
         }
     }
     return NS_OK;
@@ -363,7 +383,7 @@ public:
     void Run() override;
     void PostTo(mozilla::LinkedList<Event>& queue) override;
 
-    mozilla::HangMonitor::ActivityType ActivityType() const
+    Event::Type ActivityType() const override
     {
         return ae->IsInputEvent() ? mozilla::HangMonitor::kUIActivity
                                   : mozilla::HangMonitor::kGeneralActivity;
@@ -434,17 +454,6 @@ nsAppShell::LegacyGeckoEvent::Run()
       }
       break;
 
-    case AndroidGeckoEvent::PROCESS_OBJECT: {
-
-      switch (curEvent->Action()) {
-      case AndroidGeckoEvent::ACTION_OBJECT_LAYER_CLIENT:
-        AndroidBridge::Bridge()->SetLayerClient(
-                widget::GeckoLayerClient::Ref::From(curEvent->Object().wrappedObject()));
-        break;
-      }
-      break;
-    }
-
     case AndroidGeckoEvent::LOCATION_EVENT: {
         if (!gLocationCallback)
             break;
@@ -511,7 +520,7 @@ nsAppShell::LegacyGeckoEvent::Run()
         int32_t tabId = curEvent->MetaState();
         const nsTArray<nsIntPoint>& points = curEvent->Points();
         RefCountedJavaObject* buffer = curEvent->ByteBuffer();
-        nsRefPtr<ThumbnailRunnable> sr = new ThumbnailRunnable(nsAppShell::gAppShell->mBrowserApp, tabId, points, buffer);
+        RefPtr<ThumbnailRunnable> sr = new ThumbnailRunnable(nsAppShell::gAppShell->mBrowserApp, tabId, points, buffer);
         MessageLoop::current()->PostIdleTask(FROM_HERE, NewRunnableMethod(sr.get(), &ThumbnailRunnable::Run));
         break;
     }
@@ -522,7 +531,7 @@ nsAppShell::LegacyGeckoEvent::Run()
         int32_t tabId = curEvent->MetaState();
         const nsTArray<nsIntPoint>& points = curEvent->Points();
         float scaleFactor = (float) curEvent->X();
-        nsRefPtr<RefCountedJavaObject> javaBuffer = curEvent->ByteBuffer();
+        RefPtr<RefCountedJavaObject> javaBuffer = curEvent->ByteBuffer();
         const auto& mBuffer = jni::Object::Ref::From(javaBuffer->GetObject());
 
         nsCOMPtr<nsIDOMWindow> domWindow;
