@@ -3275,12 +3275,11 @@ nsIDocument::HasFocus(ErrorResult& rv) const
     return false;
   }
 
-  // Are we an ancestor of the focused DOMWindow?
-  nsCOMPtr<nsIDOMDocument> domDocument;
-  focusedWindow->GetDocument(getter_AddRefs(domDocument));
-  nsCOMPtr<nsIDocument> document = do_QueryInterface(domDocument);
+  nsCOMPtr<nsPIDOMWindow> piWindow = do_QueryInterface(focusedWindow);
+  MOZ_ASSERT(piWindow);
 
-  for (nsIDocument* currentDoc = document; currentDoc;
+  // Are we an ancestor of the focused DOMWindow?
+  for (nsIDocument* currentDoc = piWindow->GetDoc(); currentDoc;
        currentDoc = currentDoc->GetParentDocument()) {
     if (currentDoc == this) {
       // Yes, we are an ancestor
@@ -5109,6 +5108,14 @@ nsDocument::DispatchContentLoadedEvents()
   nsContentUtils::DispatchTrustedEvent(this, static_cast<nsIDocument*>(this),
                                        NS_LITERAL_STRING("DOMContentLoaded"),
                                        true, false);
+
+  RefPtr<TimelineConsumers> timelines = TimelineConsumers::Get();
+  nsIDocShell* docShell = this->GetDocShell();
+
+  if (timelines && timelines->HasConsumer(docShell)) {
+    timelines->AddMarkerForDocShell(
+      docShell, "document::DOMContentLoaded", MarkerTracingType::TIMESTAMP);
+  }
 
   if (mTiming) {
     mTiming->NotifyDOMContentLoadedEnd(nsIDocument::GetDocumentURI());
@@ -7002,9 +7009,11 @@ nsIDocument::GetLocation() const
     return nullptr;
   }
 
-  nsCOMPtr<nsIDOMLocation> loc;
-  w->GetLocation(getter_AddRefs(loc));
-  return loc.forget().downcast<nsLocation>();
+  nsGlobalWindow* window = static_cast<nsGlobalWindow*>(w.get());
+  ErrorResult dummy;
+  RefPtr<nsLocation> loc = window->GetLocation(dummy);
+  dummy.SuppressException();
+  return loc.forget();
 }
 
 Element*
@@ -7597,7 +7606,6 @@ nsIDocument::GetDocumentURIObject() const
 }
 
 
-// readonly attribute DOMString compatMode;
 // Returns "BackCompat" if we are in quirks mode, "CSS1Compat" if we are
 // in almost standards or full standards mode. See bug 105640.  This was
 // implemented to match MSIE's compatMode property.
@@ -11789,9 +11797,7 @@ ShouldApplyFullscreenDirectly(nsIDocument* aDoc,
   } else {
     // If we are in the chrome process, and the window has not been in
     // fullscreen, we certainly need to make that fullscreen first.
-    bool fullscreen;
-    NS_WARN_IF(NS_FAILED(aRootWin->GetFullScreen(&fullscreen)));
-    if (!fullscreen) {
+    if (!aRootWin->GetFullScreen()) {
       return false;
     }
     // The iterator not being at end indicates there is still some
@@ -12493,18 +12499,15 @@ nsDocument::ShouldLockPointer(Element* aElement, Element* aCurrentLock,
     return false;
   }
 
-  nsCOMPtr<nsIDOMWindow> top;
-  ownerWindow->GetScriptableTop(getter_AddRefs(top));
-  nsCOMPtr<nsPIDOMWindow> piTop = do_QueryInterface(top);
-  if (!piTop || !piTop->GetExtantDoc() ||
-      piTop->GetExtantDoc()->Hidden()) {
+  nsCOMPtr<nsPIDOMWindow> top = ownerWindow->GetScriptableTop();
+  if (!top || !top->GetExtantDoc() || top->GetExtantDoc()->Hidden()) {
     NS_WARNING("ShouldLockPointer(): Top document isn't visible.");
     return false;
   }
 
   if (!aNoFocusCheck) {
     mozilla::ErrorResult rv;
-    if (!piTop->GetExtantDoc()->HasFocus(rv)) {
+    if (!top->GetExtantDoc()->HasFocus(rv)) {
       NS_WARNING("ShouldLockPointer(): Top document isn't focused.");
       return false;
     }
@@ -13286,10 +13289,7 @@ nsAutoSyncOperation::nsAutoSyncOperation(nsIDocument* aDoc)
   if (aDoc) {
     nsPIDOMWindow* win = aDoc->GetWindow();
     if (win) {
-      nsCOMPtr<nsIDOMWindow> topWindow;
-      win->GetTop(getter_AddRefs(topWindow));
-      nsCOMPtr<nsPIDOMWindow> top = do_QueryInterface(topWindow);
-      if (top) {
+      if (nsCOMPtr<nsPIDOMWindow> top = win->GetTop()) {
         nsCOMPtr<nsIDocument> doc = top->GetExtantDoc();
         MarkDocumentTreeToBeInSyncOperation(doc, &mDocuments);
       }
