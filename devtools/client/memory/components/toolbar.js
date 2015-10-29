@@ -16,7 +16,9 @@ const Toolbar = module.exports = createClass({
     onTakeSnapshotClick: PropTypes.func.isRequired,
     onBreakdownChange: PropTypes.func.isRequired,
     onToggleRecordAllocationStacks: PropTypes.func.isRequired,
-    allocations: models.allocations
+    allocations: models.allocations,
+    onToggleInverted: PropTypes.func.isRequired,
+    inverted: PropTypes.bool.isRequired,
   },
 
   render() {
@@ -26,16 +28,31 @@ const Toolbar = module.exports = createClass({
       breakdowns,
       onToggleRecordAllocationStacks,
       allocations,
+      onToggleInverted,
+      inverted
     } = this.props;
 
     return (
       DOM.div({ className: "devtools-toolbar" }, [
         DOM.button({ className: `take-snapshot devtools-button`, onClick: onTakeSnapshotClick }),
 
-        DOM.select({
-          className: `select-breakdown`,
-          onChange: e => onBreakdownChange(e.target.value),
-        }, breakdowns.map(({ name, displayName }) => DOM.option({ value: name }, displayName))),
+        DOM.label({},
+          "Breakdown by ",
+          DOM.select({
+            className: `select-breakdown`,
+            onChange: e => onBreakdownChange(e.target.value),
+          }, breakdowns.map(({ name, displayName }) => DOM.option({ value: name }, displayName)))
+        ),
+
+        DOM.label({}, [
+          DOM.input({
+            type: "checkbox",
+            checked: inverted,
+            onChange: onToggleInverted,
+          }),
+          // TODO bug 1214799
+          "Invert tree"
+        ]),
 
         DOM.label({}, [
           DOM.input({
@@ -47,7 +64,7 @@ const Toolbar = module.exports = createClass({
           // TODO bug 1214799
           "Record allocation stacks"
         ])
-      ])
+])
     );
   }
 });

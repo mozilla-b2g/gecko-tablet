@@ -2555,64 +2555,6 @@ MacroAssembler::PopRegsInMaskIgnore(LiveRegisterSet set, LiveRegisterSet ignore)
 }
 
 void
-MacroAssembler::Push(Register reg)
-{
-    ma_push(reg);
-    adjustFrame(sizeof(intptr_t));
-}
-
-void
-MacroAssembler::Push(const Imm32 imm)
-{
-    ma_li(ScratchRegister, imm);
-    ma_push(ScratchRegister);
-    adjustFrame(sizeof(intptr_t));
-}
-
-void
-MacroAssembler::Push(const ImmWord imm)
-{
-    ma_li(ScratchRegister, imm);
-    ma_push(ScratchRegister);
-    adjustFrame(sizeof(intptr_t));
-}
-
-void
-MacroAssembler::Push(const ImmPtr imm)
-{
-    Push(ImmWord(uintptr_t(imm.value)));
-}
-
-void
-MacroAssembler::Push(const ImmGCPtr ptr)
-{
-    ma_li(ScratchRegister, ptr);
-    ma_push(ScratchRegister);
-    adjustFrame(sizeof(intptr_t));
-}
-
-void
-MacroAssembler::Push(FloatRegister f)
-{
-    ma_push(f);
-    adjustFrame(sizeof(double));
-}
-
-void
-MacroAssembler::Pop(Register reg)
-{
-    ma_pop(reg);
-    adjustFrame(-sizeof(intptr_t));
-}
-
-void
-MacroAssembler::Pop(const ValueOperand& val)
-{
-    popValue(val);
-    framePushed_ -= sizeof(Value);
-}
-
-void
 MacroAssembler::reserveStack(uint32_t amount)
 {
     if (amount)
@@ -2622,49 +2564,6 @@ MacroAssembler::reserveStack(uint32_t amount)
 
 // ===============================================================
 // Simple call functions.
-
-void
-MacroAssembler::call(Register reg)
-{
-    as_jalr(reg);
-    as_nop();
-}
-
-void
-MacroAssembler::call(Label* label)
-{
-    ma_bal(label);
-}
-
-void
-MacroAssembler::call(AsmJSImmPtr target)
-{
-    movePtr(target, CallReg);
-    call(CallReg);
-}
-
-void
-MacroAssembler::call(ImmWord target)
-{
-    call(ImmPtr((void*)target.value));
-}
-
-void
-MacroAssembler::call(ImmPtr target)
-{
-    BufferOffset bo = m_buffer.nextOffset();
-    addPendingJump(bo, target, Relocation::HARDCODED);
-    ma_call(target);
-}
-
-void
-MacroAssembler::call(JitCode* c)
-{
-    BufferOffset bo = m_buffer.nextOffset();
-    addPendingJump(bo, ImmPtr(c->raw()), Relocation::JITCODE);
-    ma_liPatchable(ScratchRegister, ImmPtr(c->raw()));
-    callJitNoProfiler(ScratchRegister);
-}
 
 void
 MacroAssembler::callAndPushReturnAddress(Register callee)
@@ -2783,23 +2682,6 @@ MacroAssembler::callWithABINoProfiler(const Address& fun, MoveOp::Type result)
     callWithABIPre(&stackAdjust);
     call(t9);
     callWithABIPost(stackAdjust, result);
-}
-
-// ===============================================================
-// Jit Frames.
-
-uint32_t
-MacroAssembler::pushFakeReturnAddress(Register scratch)
-{
-    CodeLabel cl;
-
-    ma_li(scratch, cl.dest());
-    Push(scratch);
-    bind(cl.src());
-    uint32_t retAddr = currentOffset();
-
-    addCodeLabel(cl);
-    return retAddr;
 }
 
 //}}} check_macroassembler_style

@@ -812,9 +812,27 @@ exports.openFileStream = function (filePath) {
 }
 
 exports.isGenerator = function (fn) {
-  return typeof fn === "function" && fn.isGenerator();
+  if (typeof fn !== "function") {
+    return false;
+  }
+  let proto = Object.getPrototypeOf(fn);
+  if (!proto) {
+    return false;
+  }
+  let ctor = proto.constructor;
+  if (!ctor) {
+    return false;
+  }
+  return ctor.name == "GeneratorFunction";
 };
 
 exports.isPromise = function (p) {
   return p && typeof p.then === "function";
+};
+
+/**
+ * Return true if `thing` is a SavedFrame, false otherwise.
+ */
+exports.isSavedFrame = function (thing) {
+  return Object.prototype.toString.call(thing) === "[object SavedFrame]";
 };

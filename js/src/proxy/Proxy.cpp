@@ -637,7 +637,7 @@ ProxyObject::trace(JSTracer* trc, JSObject* obj)
 
 #ifdef DEBUG
     if (trc->runtime()->gc.isStrictProxyCheckingEnabled() && proxy->is<WrapperObject>()) {
-        JSObject* referent = MaybeForwarded(&proxy->private_().toObject());
+        JSObject* referent = MaybeForwarded(proxy->target());
         if (referent->compartment() != proxy->compartment()) {
             /*
              * Assert that this proxy is tracked in the wrapper map. We maintain
@@ -736,6 +736,12 @@ js::proxy_GetElements(JSContext* cx, HandleObject proxy, uint32_t begin, uint32_
                       ElementAdder* adder)
 {
     return Proxy::getElements(cx, proxy, begin, end, adder);
+}
+
+JSString*
+js::proxy_FunToString(JSContext* cx, HandleObject proxy, unsigned indent)
+{
+    return Proxy::fun_toString(cx, proxy, indent);
 }
 
 const Class js::ProxyObject::class_ =
