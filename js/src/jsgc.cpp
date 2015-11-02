@@ -1619,31 +1619,54 @@ GCRuntime::callFinalizeCallbacks(FreeOp* fop, JSFinalizeStatus status) const
 }
 
 bool
-GCRuntime::addWeakPointerCallback(JSWeakPointerCallback callback, void* data)
+GCRuntime::addWeakPointerZoneGroupCallback(JSWeakPointerZoneGroupCallback callback, void* data)
 {
-    return updateWeakPointerCallbacks.append(Callback<JSWeakPointerCallback>(callback, data));
+    return updateWeakPointerZoneGroupCallbacks.append(
+            Callback<JSWeakPointerZoneGroupCallback>(callback, data));
 }
 
 void
-GCRuntime::removeWeakPointerCallback(JSWeakPointerCallback callback)
+GCRuntime::removeWeakPointerZoneGroupCallback(JSWeakPointerZoneGroupCallback callback)
 {
-    for (Callback<JSWeakPointerCallback>* p = updateWeakPointerCallbacks.begin();
-         p < updateWeakPointerCallbacks.end(); p++)
-    {
-        if (p->op == callback) {
-            updateWeakPointerCallbacks.erase(p);
+    for (auto& p : updateWeakPointerZoneGroupCallbacks) {
+        if (p.op == callback) {
+            updateWeakPointerZoneGroupCallbacks.erase(&p);
             break;
         }
     }
 }
 
 void
-GCRuntime::callWeakPointerCallbacks() const
+GCRuntime::callWeakPointerZoneGroupCallbacks() const
 {
-    for (const Callback<JSWeakPointerCallback>* p = updateWeakPointerCallbacks.begin();
-         p < updateWeakPointerCallbacks.end(); p++)
-    {
-        p->op(rt, p->data);
+    for (auto const& p : updateWeakPointerZoneGroupCallbacks) {
+        p.op(rt, p.data);
+    }
+}
+
+bool
+GCRuntime::addWeakPointerCompartmentCallback(JSWeakPointerCompartmentCallback callback, void* data)
+{
+    return updateWeakPointerCompartmentCallbacks.append(
+            Callback<JSWeakPointerCompartmentCallback>(callback, data));
+}
+
+void
+GCRuntime::removeWeakPointerCompartmentCallback(JSWeakPointerCompartmentCallback callback)
+{
+    for (auto& p : updateWeakPointerCompartmentCallbacks) {
+        if (p.op == callback) {
+            updateWeakPointerCompartmentCallbacks.erase(&p);
+            break;
+        }
+    }
+}
+
+void
+GCRuntime::callWeakPointerCompartmentCallbacks(JSCompartment* comp) const
+{
+    for (auto const& p : updateWeakPointerCompartmentCallbacks) {
+        p.op(rt, comp, p.data);
     }
 }
 
@@ -2665,7 +2688,9 @@ GCRuntime::updatePointersToRelocatedCells(Zone* zone)
     rt->nativeIterCache.purge();
 
     // Call callbacks to get the rest of the system to fixup other untraced pointers.
-    callWeakPointerCallbacks();
+    callWeakPointerZoneGroupCallbacks();
+    for (CompartmentsInZoneIter comp(zone); !comp.done(); comp.next())
+        callWeakPointerCompartmentCallbacks(comp);
 
     // Finally, iterate through all cells that can contain JSObject pointers to
     // update them. Since updating each cell is independent we try to
@@ -4228,19 +4253,25 @@ js::gc::MarkingValidator::nonIncrementalMark()
     if (!markedWeakMaps.init())
         return;
 
-    for (GCZonesIter zone(runtime); !zone.done(); zone.next()) {
-        if (!WeakMapBase::saveZoneMarkedWeakMaps(zone, markedWeakMaps))
-            return;
-    }
-
+    /*
+     * For saving, smush all of the keys into one big table and split them back
+     * up into per-zone tables when restoring.
+     */
     gc::WeakKeyTable savedWeakKeys;
     if (!savedWeakKeys.init())
         return;
 
-    for (gc::WeakKeyTable::Range r = gc->marker.weakKeys.all(); !r.empty(); r.popFront()) {
-        AutoEnterOOMUnsafeRegion oomUnsafe;
-        if (!savedWeakKeys.put(Move(r.front().key), Move(r.front().value)))
-            oomUnsafe.crash("saving weak keys table for validator");
+    for (GCZonesIter zone(runtime); !zone.done(); zone.next()) {
+        if (!WeakMapBase::saveZoneMarkedWeakMaps(zone, markedWeakMaps))
+            return;
+
+        for (gc::WeakKeyTable::Range r = zone->gcWeakKeys.all(); !r.empty(); r.popFront()) {
+            AutoEnterOOMUnsafeRegion oomUnsafe;
+            if (!savedWeakKeys.put(Move(r.front().key), Move(r.front().value)))
+                oomUnsafe.crash("saving weak keys table for validator");
+        }
+
+        zone->gcWeakKeys.clear();
     }
 
     /*
@@ -4248,8 +4279,6 @@ js::gc::MarkingValidator::nonIncrementalMark()
      * do anything fallible.
      */
     initialized = true;
-
-    gc->marker.weakKeys.clear();
 
     /* Re-do all the marking, but non-incrementally. */
     js::gc::State state = gc->incrementalState;
@@ -4311,14 +4340,17 @@ js::gc::MarkingValidator::nonIncrementalMark()
         Swap(*entry, *bitmap);
     }
 
-    for (GCZonesIter zone(runtime); !zone.done(); zone.next())
+    for (GCZonesIter zone(runtime); !zone.done(); zone.next()) {
         WeakMapBase::unmarkZone(zone);
+        zone->gcWeakKeys.clear();
+    }
+
     WeakMapBase::restoreMarkedWeakMaps(markedWeakMaps);
 
-    gc->marker.weakKeys.clear();
     for (gc::WeakKeyTable::Range r = savedWeakKeys.all(); !r.empty(); r.popFront()) {
         AutoEnterOOMUnsafeRegion oomUnsafe;
-        if (!gc->marker.weakKeys.put(Move(r.front().key), Move(r.front().value)))
+        Zone* zone = gc::TenuredCell::fromPointer(r.front().key.asCell())->zone();
+        if (!zone->gcWeakKeys.put(Move(r.front().key), Move(r.front().value)))
             oomUnsafe.crash("restoring weak keys table for validator");
     }
 
@@ -4987,25 +5019,17 @@ GCRuntime::beginSweepingZoneGroup()
 
     validateIncrementalMarking();
 
-    /* Clear out this zone group's keys from the weakKeys table, to prevent later accesses. */
-    for (WeakKeyTable::Range r = marker.weakKeys.all(); !r.empty(); ) {
-        auto key(r.front().key);
-        r.popFront();
-        if (gc::TenuredCell::fromPointer(key.asCell())->zone()->isGCSweeping()) {
-            bool found;
-            marker.weakKeys.remove(key, &found);
-            MOZ_ASSERT(found);
-        }
-    }
-
-    /* Clear all weakrefs that point to unmarked things. */
     for (GCZoneGroupIter zone(rt); !zone.done(); zone.next()) {
+        /* Clear all weakrefs that point to unmarked things. */
         for (auto edge : zone->gcWeakRefs) {
             /* Edges may be present multiple times, so may already be nulled. */
             if (*edge && IsAboutToBeFinalizedDuringSweep(**edge))
                 *edge = nullptr;
         }
         zone->gcWeakRefs.clear();
+
+        /* No need to look up any more weakmap keys from this zone group. */
+        zone->gcWeakKeys.clear();
     }
 
     FreeOp fop(rt);
@@ -5021,7 +5045,17 @@ GCRuntime::beginSweepingZoneGroup()
     {
         gcstats::AutoPhase ap(stats, gcstats::PHASE_FINALIZE_START);
         callFinalizeCallbacks(&fop, JSFINALIZE_GROUP_START);
-        callWeakPointerCallbacks();
+        {
+            gcstats::AutoPhase ap2(stats, gcstats::PHASE_WEAK_ZONEGROUP_CALLBACK);
+            callWeakPointerZoneGroupCallbacks();
+        }
+        {
+            gcstats::AutoPhase ap2(stats, gcstats::PHASE_WEAK_COMPARTMENT_CALLBACK);
+            for (GCZoneGroupIter zone(rt); !zone.done(); zone.next()) {
+                for (CompartmentsInZoneIter comp(zone); !comp.done(); comp.next())
+                    callWeakPointerCompartmentCallbacks(comp);
+            }
+        }
     }
 
     if (sweepingAtoms) {

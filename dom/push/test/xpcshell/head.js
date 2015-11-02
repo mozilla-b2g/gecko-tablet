@@ -180,7 +180,7 @@ function disableServiceWorkerEvents(...scopes) {
   for (let scope of scopes) {
     Services.perms.add(
       Services.io.newURI(scope, null, null),
-      'push',
+      'desktop-notification',
       Ci.nsIPermissionManager.DENY_ACTION
     );
   }
@@ -378,7 +378,11 @@ MockWebSocket.prototype = {
       () => this._listener.onServerClose(this._context, statusCode, reason),
       () => this._listener.onStop(this._context, Cr.NS_BASE_STREAM_CLOSED)
     );
-  }
+  },
+
+  serverInterrupt(result = Cr.NS_ERROR_NET_RESET) {
+    waterfall(() => this._listener.onStop(this._context, result));
+  },
 };
 
 /**

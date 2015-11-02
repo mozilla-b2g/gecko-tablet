@@ -241,10 +241,15 @@ PDMFactory::CreatePDMs()
 {
   RefPtr<PlatformDecoderModule> m;
 
-  if (sGMPDecoderEnabled) {
-    m = new GMPDecoderModule();
+  if (sUseBlankDecoder) {
+    m = CreateBlankDecoderModule();
     StartupPDM(m);
+    // The Blank PDM SupportsMimeType reports true for all codecs; the creation
+    // of its decoder is infallible. As such it will be used for all media, we
+    // can stop creating more PDM from this point.
+    return;
   }
+
 #ifdef MOZ_WIDGET_ANDROID
   if(sAndroidMCDecoderPreferred && sAndroidMCDecoderEnabled) {
     m = new AndroidDecoderModule();
@@ -283,10 +288,10 @@ PDMFactory::CreatePDMs()
   m = new AgnosticDecoderModule();
   StartupPDM(m);
 
-  if (sUseBlankDecoder) {
-    m = CreateBlankDecoderModule();
+  if (sGMPDecoderEnabled) {
+    m = new GMPDecoderModule();
     StartupPDM(m);
-  }
+  }  
 }
 
 bool

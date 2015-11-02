@@ -70,7 +70,8 @@
 #include "mozilla/dom/TreeWalker.h"
 
 #include "nsIServiceManager.h"
-#include "nsIServiceWorkerManager.h"
+#include "mozilla/dom/workers/ServiceWorkerManager.h"
+#include "imgLoader.h"
 
 #include "nsCanvasFrame.h"
 #include "nsContentCID.h"
@@ -2117,19 +2118,11 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDocument)
   tmp->mInUnlinkOrDeletion = false;
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
-static bool sPrefsInitialized = false;
-static uint32_t sOnloadDecodeLimit = 0;
-
 nsresult
 nsDocument::Init()
 {
   if (mCSSLoader || mStyleImageLoader || mNodeInfoManager || mScriptLoader) {
     return NS_ERROR_ALREADY_INITIALIZED;
-  }
-
-  if (!sPrefsInitialized) {
-    sPrefsInitialized = true;
-    Preferences::AddUintVarCache(&sOnloadDecodeLimit, "image.onload.decode.limit", 0);
   }
 
   // Force initialization.
@@ -7633,42 +7626,36 @@ nsIDocument::GetCompatMode(nsString& aCompatMode) const
   }
 }
 
-static void BlastSubtreeToPieces(nsINode *aNode);
-
-PLDHashOperator
-BlastFunc(nsAttrHashKey::KeyType aKey, Attr *aData, void* aUserArg)
-{
-  nsCOMPtr<nsIAttribute> *attr =
-    static_cast<nsCOMPtr<nsIAttribute>*>(aUserArg);
-
-  *attr = aData;
-
-  NS_ASSERTION(attr->get(),
-               "non-nsIAttribute somehow made it into the hashmap?!");
-
-  return PL_DHASH_STOP;
-}
-
-static void
-BlastSubtreeToPieces(nsINode *aNode)
+void
+nsDOMAttributeMap::BlastSubtreeToPieces(nsINode *aNode)
 {
   if (aNode->IsElement()) {
     Element *element = aNode->AsElement();
     const nsDOMAttributeMap *map = element->GetAttributeMap();
     if (map) {
       nsCOMPtr<nsIAttribute> attr;
-      while (map->Enumerate(BlastFunc, &attr) > 0) {
+
+      // This non-standard style of iteration is presumably used because some
+      // of the code in the loop body can trigger element removal, which
+      // invalidates the iterator.
+      while (true) {
+        auto iter = map->mAttributeCache.ConstIter();
+        if (iter.Done()) {
+          break;
+        }
+        nsCOMPtr<nsIAttribute> attr = iter.UserData();
+        NS_ASSERTION(attr.get(),
+                     "non-nsIAttribute somehow made it into the hashmap?!");
+
         BlastSubtreeToPieces(attr);
 
-#ifdef DEBUG
-        nsresult rv =
-#endif
+        DebugOnly<nsresult> rv =
           element->UnsetAttr(attr->NodeInfo()->NamespaceID(),
                              attr->NodeInfo()->NameAtom(),
                              false);
 
         // XXX Should we abort here?
-        NS_ASSERTION(NS_SUCCEEDED(rv), "Uhoh, UnsetAttr shouldn't fail!");
+        NS_ASSERTION(NS_SUCCEEDED(rv), "Uh-oh, UnsetAttr shouldn't fail!");
       }
     }
   }
@@ -7835,7 +7822,7 @@ nsIDocument::AdoptNode(nsINode& aAdoptedNode, ErrorResult& rv)
   if (rv.Failed()) {
     // Disconnect all nodes from their parents, since some have the old document
     // as their ownerDocument and some have this as their ownerDocument.
-    BlastSubtreeToPieces(adoptedNode);
+    nsDOMAttributeMap::BlastSubtreeToPieces(adoptedNode);
 
     if (!sameDocument && oldDocument) {
       uint32_t count = nodesWithProperties.Count();
@@ -7864,7 +7851,7 @@ nsIDocument::AdoptNode(nsINode& aAdoptedNode, ErrorResult& rv)
 
     if (rv.Failed()) {
       // Disconnect all nodes from their parents.
-      BlastSubtreeToPieces(adoptedNode);
+      nsDOMAttributeMap::BlastSubtreeToPieces(adoptedNode);
 
       return nullptr;
     }
@@ -8907,8 +8894,13 @@ nsDocument::Destroy()
 
   mRegistry = nullptr;
 
-  nsCOMPtr<nsIServiceWorkerManager> swm = mozilla::services::GetServiceWorkerManager();
+  using mozilla::dom::workers::ServiceWorkerManager;
+  RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
   if (swm) {
+    ErrorResult error;
+    if (swm->IsControlled(this, error)) {
+      nsContentUtils::GetImgLoaderForDocument(this)->ClearCacheForControlledDocument(this);
+    }
     swm->MaybeStopControlling(this);
   }
 
@@ -10528,12 +10520,8 @@ nsDocument::AddImage(imgIRequest* aImage)
 
   // If this is the first insertion and we're locking images, lock this image
   // too.
-  if (oldCount == 0) {
-    if (mLockingImages)
-      rv = aImage->LockImage();
-    if (NS_SUCCEEDED(rv) && (!sOnloadDecodeLimit ||
-                             mImageTracker.Count() < sOnloadDecodeLimit))
-      rv = aImage->StartDecoding();
+  if (oldCount == 0 && mLockingImages) {
+    rv = aImage->LockImage();
   }
 
   // If this is the first insertion and we're animating images, request
@@ -10664,7 +10652,6 @@ PLDHashOperator LockEnumerator(imgIRequest* aKey,
                                void*    userArg)
 {
   aKey->LockImage();
-  aKey->RequestDecode();
   return PL_DHASH_NEXT;
 }
 

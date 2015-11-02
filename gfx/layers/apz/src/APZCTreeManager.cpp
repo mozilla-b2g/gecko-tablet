@@ -190,6 +190,9 @@ APZCTreeManager::UpdateHitTestingTree(CompositorParent* aCompositor,
     mApzcTreeLog << "[end]\n";
   }
 
+  // We do not support tree structures where the root node has siblings.
+  MOZ_ASSERT(!(mRootNode && mRootNode->GetPrevSibling()));
+
   for (size_t i = 0; i < state.mNodesToDestroy.Length(); i++) {
     APZCTM_LOG("Destroying node at %p with APZC %p\n",
         state.mNodesToDestroy[i].get(),
@@ -361,9 +364,8 @@ APZCTreeManager::StartScrollbarDrag(const ScrollableLayerGuid& aGuid,
     return;
   }
 
-  // TODO Confirm the input block
-  //uint64_t inputBlockId = aDragMetrics.mDragStartSequenceNumber;
-  //mInputQueue->SetConfirmedMouseBlock(inputBlockId, apzc, aDragMetrics);
+  uint64_t inputBlockId = aDragMetrics.mDragStartSequenceNumber;
+  mInputQueue->ConfirmDragBlock(inputBlockId, apzc, aDragMetrics);
 }
 
 HitTestingTreeNode*
@@ -696,6 +698,13 @@ APZCTreeManager::ReceiveInputEvent(InputData& aEvent,
 
       RefPtr<AsyncPanZoomController> apzc = GetTargetAPZC(mouseInput.mOrigin,
                                                             &hitResult);
+
+      // When the mouse is outside the window we still want to handle dragging
+      // but we won't find an APZC. Fallback to root APZC then.
+      if (!apzc) {
+        apzc = mRootNode->GetApzc();
+      }
+
       if (apzc) {
         result = mInputQueue->ReceiveInputEvent(
           apzc,
@@ -1049,6 +1058,7 @@ APZCTreeManager::ProcessMouseEvent(WidgetMouseEventBase& aEvent,
 
   aEvent.refPoint.x = input.mOrigin.x;
   aEvent.refPoint.y = input.mOrigin.y;
+  aEvent.mFlags.mHandledByAPZ = true;
   return status;
 }
 

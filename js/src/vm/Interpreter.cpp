@@ -524,7 +524,7 @@ js::Invoke(JSContext* cx, const Value& thisv, const Value& fval, unsigned argc, 
 
     if (args.thisv().isObject()) {
         /*
-         * We must call the thisObject hook in case we are not called from the
+         * We must call the thisValue hook in case we are not called from the
          * interpreter, where a prior bytecode has computed an appropriate
          * |this| already.  But don't do that if fval is a DOM function.
          */
@@ -1799,6 +1799,7 @@ CASE(EnableInterruptsPseudoOpcode)
 CASE(JSOP_NOP)
 CASE(JSOP_UNUSED14)
 CASE(JSOP_BACKPATCH)
+CASE(JSOP_UNUSED145)
 CASE(JSOP_UNUSED171)
 CASE(JSOP_UNUSED172)
 CASE(JSOP_UNUSED173)
@@ -2138,16 +2139,6 @@ CASE(JSOP_PICK)
     REGS.sp[-1] = lval;
 }
 END_CASE(JSOP_PICK)
-
-CASE(JSOP_BINDINTRINSIC)
-{
-    NativeObject* holder = GlobalObject::getIntrinsicsHolder(cx, cx->global());
-    if (!holder)
-        goto error;
-
-    PUSH_OBJECT(*holder);
-}
-END_CASE(JSOP_BINDINTRINSIC)
 
 CASE(JSOP_BINDGNAME)
 CASE(JSOP_BINDNAME)
@@ -2572,9 +2563,6 @@ CASE(JSOP_SETINTRINSIC)
 
     if (!SetIntrinsicOperation(cx, script, REGS.pc, value))
         goto error;
-
-    REGS.sp[-2] = REGS.sp[-1];
-    REGS.sp--;
 }
 END_CASE(JSOP_SETINTRINSIC)
 

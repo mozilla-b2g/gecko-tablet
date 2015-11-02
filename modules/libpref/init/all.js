@@ -353,6 +353,9 @@ pref("media.gstreamer.enabled", true);
 pref("media.gstreamer.enable-blacklist", true);
 #endif
 #ifdef MOZ_APPLEMEDIA
+#ifdef MOZ_WIDGET_UIKIT
+pref("media.mp3.enabled", true);
+#endif
 pref("media.apple.mp3.enabled", true);
 pref("media.apple.mp4.enabled", true);
 #endif
@@ -4148,9 +4151,6 @@ pref("image.multithreaded_decoding.limit", -1);
 // Limit for the canvas image cache. 0 means we don't limit the size of the
 // cache.
 pref("canvas.image.cache.limit", 0);
-
-// How many images to eagerly decode on a given page. 0 means "no limit".
-pref("image.onload.decode.limit", 0);
 
 // WebGL prefs
 #ifdef ANDROID

@@ -6974,6 +6974,12 @@
     "kind": "boolean",
     "description": "How many times has the devtool's Developer Toolbar been opened via the toolbox button?"
   },
+  "DEVTOOLS_ABOUTDEBUGGING_OPENED_BOOLEAN": {
+    "alert_emails": ["dev-developer-tools@lists.mozilla.org", "jan@mozilla.com"],
+    "expires_in_version": "55",
+    "kind": "boolean",
+    "description": "How many times has about:debugging been opened? (bug 1204601)"
+  },
   "DEVTOOLS_WEBIDE_OPENED_BOOLEAN": {
     "expires_in_version": "never",
     "kind": "boolean",
@@ -7138,6 +7144,12 @@
     "expires_in_version": "never",
     "kind": "flag",
     "description": "How many users have opened the devtool's Developer Toolbar been opened via the toolbox button?"
+  },
+  "DEVTOOLS_ABOUTDEBUGGING_OPENED_PER_USER_FLAG": {
+    "alert_emails": ["dev-developer-tools@lists.mozilla.org", "jan@mozilla.com"],
+    "expires_in_version": "55",
+    "kind": "flag",
+    "description": "How many users have opened about:debugging? (bug 1204601)"
   },
   "DEVTOOLS_WEBIDE_OPENED_PER_USER_FLAG": {
     "expires_in_version": "never",
@@ -7336,6 +7348,14 @@
     "high": "10000000",
     "n_buckets": 100,
     "description": "How long has the developer toolbar been active (seconds)"
+  },
+  "DEVTOOLS_ABOUTDEBUGGING_TIME_ACTIVE_SECONDS": {
+    "alert_emails": ["dev-developer-tools@lists.mozilla.org", "jan@mozilla.com"],
+    "expires_in_version": "55",
+    "kind": "exponential",
+    "high": "10000000",
+    "n_buckets": 100,
+    "description": "How long has about:debugging been active? (seconds) (bug 1204601)"
   },
   "DEVTOOLS_WEBIDE_TIME_ACTIVE_SECONDS": {
     "expires_in_version": "never",
@@ -8014,7 +8034,7 @@
     "expires_in_version": "default",
     "kind": "enumerated",
     "n_values": 100,
-    "description": "If certificate verification failed in a TLS handshake, what was the error? (see mapping in SSLServerCertVerification.cpp)"
+    "description": "If certificate verification failed in a TLS handshake, what was the error? (see MapCertErrorToProbeValue in security/manager/ssl/SSLServerCertVerification.cpp and the values in security/pkix/include/pkix/Result.h)"
   },
   "SSL_PERMANENT_CERT_ERROR_OVERRIDES": {
     "alert_emails": ["seceng@mozilla.org"],
@@ -8360,7 +8380,7 @@
   },
   "LOOP_TWO_WAY_MEDIA_CONN_LENGTH_1": {
     "alert_emails": ["firefox-dev@mozilla.org", "dmose@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "enumerated",
     "n_values": 8,
     "releaseChannelCollection": "opt-out",
@@ -8368,7 +8388,7 @@
   },
   "LOOP_SHARING_STATE_CHANGE_1": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "enumerated",
     "n_values": 8,
     "releaseChannelCollection": "opt-out",
@@ -8376,7 +8396,7 @@
   },
   "LOOP_SHARING_ROOM_URL": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "enumerated",
     "n_values": 8,
     "releaseChannelCollection": "opt-out",
@@ -8384,7 +8404,7 @@
   },
   "LOOP_ROOM_CREATE": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "enumerated",
     "n_values": 4,
     "releaseChannelCollection": "opt-out",
@@ -8392,7 +8412,7 @@
   },
   "LOOP_ROOM_DELETE": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "enumerated",
     "n_values": 4,
     "releaseChannelCollection": "opt-out",
@@ -8400,7 +8420,7 @@
   },
   "LOOP_ROOM_CONTEXT_ADD": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "enumerated",
     "n_values": 8,
     "releaseChannelCollection": "opt-out",
@@ -8408,14 +8428,14 @@
   },
   "LOOP_ROOM_CONTEXT_CLICK": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "count",
     "releaseChannelCollection": "opt-out",
     "description": "Number times room context is clicked to visit the attached URL"
   },
   "LOOP_ROOM_SESSION_WITHCHAT": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "count",
     "releaseChannelCollection": "opt-out",
     "description": "Number of sessions where at least one chat message was exchanged"
@@ -9691,14 +9711,14 @@
   },
   "FXA_CONFIGURED": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "flag",
     "releaseChannelCollection": "opt-out",
     "description": "If the user is signed in to a Firefox Account on this device"
   },
   "FXA_UNVERIFIED_ACCOUNT_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9706,7 +9726,7 @@
   },
   "FXA_HAWK_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9714,7 +9734,7 @@
   },
   "FXA_SERVER_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9722,7 +9742,7 @@
   },
   "TOKENSERVER_AUTH_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9730,7 +9750,7 @@
   },
   "WEAVE_ENGINE_APPLY_NEW_FAILURES": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9738,7 +9758,7 @@
   },
   "WEAVE_ENGINE_APPLY_FAILURES": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9746,7 +9766,7 @@
   },
   "WEAVE_ENGINE_SYNC_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9754,21 +9774,21 @@
   },
   "WEAVE_CAN_FETCH_KEYS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "flag",
     "releaseChannelCollection": "opt-out",
     "description": "Whether Sync keys are present in account storage."
   },
   "WEAVE_FXA_KEY_FETCH_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "count",
     "releaseChannelCollection": "opt-out",
     "description": "Errors encountered fetching Sync keys, including network errors."
   },
   "WEAVE_STORAGE_AUTH_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9776,7 +9796,7 @@
   },
   "WEAVE_HMAC_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "45",
+    "expires_in_version": "46",
     "kind": "count",
     "releaseChannelCollection": "opt-out",
     "description": "Sync cryptoKeys collection HMAC mismatches."
