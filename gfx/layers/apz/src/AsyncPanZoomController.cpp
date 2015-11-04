@@ -902,7 +902,7 @@ AsyncPanZoomController::Destroy()
   PCompositorParent* compositor = GetSharedFrameMetricsCompositor();
   // Only send the release message if the SharedFrameMetrics has been created.
   if (compositor && mSharedFrameMetricsBuffer) {
-    unused << compositor->SendReleaseSharedCompositorFrameMetrics(mFrameMetrics.GetScrollId(), mAPZCId);
+    Unused << compositor->SendReleaseSharedCompositorFrameMetrics(mFrameMetrics.GetScrollId(), mAPZCId);
   }
 
   { // scope the lock
@@ -3351,11 +3351,8 @@ AsyncPanZoomController::CurrentPanGestureBlock()
 }
 
 void
-AsyncPanZoomController::ResetInputState()
+AsyncPanZoomController::ResetTouchInputState()
 {
-  // This may be called during non-touch input blocks as well. We send
-  // a fake cancel touch event here but on the assumption that none of the
-  // code in GEL assumes a CurrentTouchBlock()
   MultiTouchInput cancel(MultiTouchInput::MULTITOUCH_CANCEL, 0, TimeStamp::Now(), 0);
   RefPtr<GestureEventListener> listener = GetGestureEventListener();
   if (listener) {

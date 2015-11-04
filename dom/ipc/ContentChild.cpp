@@ -81,7 +81,6 @@
 #include "nsIMutable.h"
 #include "nsIObserverService.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsIServiceWorkerManager.h"
 #include "nsScreenManagerProxy.h"
 #include "nsMemoryInfoDumper.h"
 #include "nsServiceManagerUtils.h"
@@ -349,7 +348,7 @@ private:
         }
         // The XPCOM refcount drives the IPC lifecycle; see also
         // DeallocPCycleCollectWithLogsChild.
-        unused << Send__delete__(this);
+        Unused << Send__delete__(this);
     }
 
     nsresult UnimplementedProperty()
@@ -813,7 +812,7 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
         ipcContext->get_PopupIPCTabContext().opener() = aTabOpener;
     }
 
-    unused << SendPBrowserConstructor(
+    Unused << SendPBrowserConstructor(
         // We release this ref in DeallocPBrowserChild
         RefPtr<TabChild>(newChild).forget().take(),
         tabId, *ipcContext, aChromeFlags,
@@ -1430,16 +1429,6 @@ ContentChild::RecvBidiKeyboardNotify(const bool& aIsLangRTL)
     PuppetBidiKeyboard* bidi = static_cast<PuppetBidiKeyboard*>(nsContentUtils::GetBidiKeyboard());
     if (bidi) {
         bidi->SetIsLangRTL(aIsLangRTL);
-    }
-    return true;
-}
-
-bool
-ContentChild::RecvUpdateServiceWorkerRegistrations()
-{
-    nsCOMPtr<nsIServiceWorkerManager> swm = mozilla::services::GetServiceWorkerManager();
-    if (swm) {
-        swm->UpdateAllRegistrations();
     }
     return true;
 }
@@ -2479,7 +2468,7 @@ OnFinishNuwaPreparation()
     }
 
     // This will create the actor.
-    unused << mozilla::dom::NuwaChild::GetSingleton();
+    Unused << mozilla::dom::NuwaChild::GetSingleton();
 
     MakeNuwaProcess();
 }
@@ -2604,17 +2593,17 @@ ContentChild::RecvFileSystemUpdate(const nsString& aFsName,
     }
 #else
     // Remove warnings about unused arguments
-    unused << aFsName;
-    unused << aVolumeName;
-    unused << aState;
-    unused << aMountGeneration;
-    unused << aIsMediaPresent;
-    unused << aIsSharing;
-    unused << aIsFormatting;
-    unused << aIsFake;
-    unused << aIsUnmounting;
-    unused << aIsRemovable;
-    unused << aIsHotSwappable;
+    Unused << aFsName;
+    Unused << aVolumeName;
+    Unused << aState;
+    Unused << aMountGeneration;
+    Unused << aIsMediaPresent;
+    Unused << aIsSharing;
+    Unused << aIsFormatting;
+    Unused << aIsFake;
+    Unused << aIsUnmounting;
+    Unused << aIsRemovable;
+    Unused << aIsHotSwappable;
 #endif
     return true;
 }
@@ -2629,7 +2618,7 @@ ContentChild::RecvVolumeRemoved(const nsString& aFsName)
     }
 #else
     // Remove warnings about unused arguments
-    unused << aFsName;
+    Unused << aFsName;
 #endif
     return true;
 }
@@ -2821,7 +2810,7 @@ ContentChild::RecvGatherProfile()
         profileCString = EmptyCString();
     }
 
-    unused << SendProfile(profileCString);
+    Unused << SendProfile(profileCString);
     return true;
 }
 
@@ -2932,7 +2921,7 @@ ContentChild::RecvShutdown()
 
     // Ignore errors here. If this fails, the parent will kill us after a
     // timeout.
-    unused << SendFinishShutdown();
+    Unused << SendFinishShutdown();
     return true;
 }
 

@@ -43,7 +43,6 @@
 #include "nsISecurityConsoleMessage.h"
 #include "nsCOMArray.h"
 
-extern PRLogModuleInfo *gHttpLog;
 class nsPerformance;
 class nsISecurityConsoleMessage;
 class nsIPrincipal;
@@ -53,6 +52,7 @@ namespace mozilla {
 class LogCollector;
 
 namespace net {
+extern mozilla::LazyLogModule gHttpLog;
 
 /*
  * This class is a partial implementation of nsIHttpChannel.  It contains code
@@ -164,9 +164,13 @@ public:
   NS_IMETHOD GetRequestSucceeded(bool *aValue) override;
   NS_IMETHOD RedirectTo(nsIURI *newURI) override;
   NS_IMETHOD GetSchedulingContextID(nsID *aSCID) override;
+  NS_IMETHOD GetTransferSize(uint64_t *aTransferSize) override;
+  NS_IMETHOD GetDecodedBodySize(uint64_t *aDecodedBodySize) override;
+  NS_IMETHOD GetEncodedBodySize(uint64_t *aEncodedBodySize) override;
   NS_IMETHOD SetSchedulingContextID(const nsID aSCID) override;
   NS_IMETHOD GetIsMainDocumentChannel(bool* aValue) override;
   NS_IMETHOD SetIsMainDocumentChannel(bool aValue) override;
+  NS_IMETHOD GetProtocolVersion(nsACString & aProtocolVersion) override;
 
   // nsIHttpChannelInternal
   NS_IMETHOD GetDocumentURI(nsIURI **aDocumentURI) override;
@@ -243,6 +247,9 @@ public:
   void
   FlushConsoleReports(nsIDocument* aDocument) override;
 
+  void
+  FlushConsoleReports(nsIConsoleReportCollector* aCollector) override;
+
   class nsContentEncodings : public nsIUTF8StringEnumerator
     {
     public:
@@ -308,7 +315,8 @@ protected:
   void AddCookiesToRequest();
   virtual nsresult SetupReplacementChannel(nsIURI *,
                                            nsIChannel *,
-                                           bool preserveMethod);
+                                           bool preserveMethod,
+                                           uint32_t redirectFlags);
 
   // bundle calling OMR observers and marking flag into one function
   inline void CallOnModifyRequestObservers() {
@@ -353,6 +361,9 @@ protected:
   nsCOMPtr<nsIProgressEventSink>    mProgressSink;
   nsCOMPtr<nsIURI>                  mReferrer;
   nsCOMPtr<nsIApplicationCache>     mApplicationCache;
+
+  // An instance of nsHTTPCompressConv
+  nsCOMPtr<nsIStreamListener>       mCompressListener;
 
   nsHttpRequestHead                 mRequestHead;
   nsCOMPtr<nsIInputStream>          mUploadStream;
@@ -469,6 +480,10 @@ protected:
   // This parameter is used to ensure that we do not call OnStartRequest more
   // than once.
   bool mOnStartRequestCalled;
+
+  uint64_t mTransferSize;
+  uint64_t mDecodedBodySize;
+  uint64_t mEncodedBodySize;
 
   // The network interface id that's associated with this channel.
   nsCString mNetworkInterfaceId;
