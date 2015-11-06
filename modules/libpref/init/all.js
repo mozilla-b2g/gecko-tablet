@@ -567,7 +567,6 @@ pref("apz.fling_curve_function_x2", "1.0");
 pref("apz.fling_curve_function_y2", "1.0");
 pref("apz.fling_curve_threshold_inches_per_ms", "-1.0");
 pref("apz.fling_friction", "0.002");
-pref("apz.fling_snap_friction", "0.015");
 pref("apz.fling_stop_on_tap_threshold", "0.05");
 pref("apz.fling_stopped_threshold", "0.01");
 pref("apz.highlight_checkerboarded_areas", false);
@@ -1527,7 +1526,7 @@ pref("dom.server-events.default-reconnection-time", 5000); // in milliseconds
 // by the jar channel.
 pref("network.jar.open-unsafe-types", false);
 // If true, loading remote JAR files using the jar: protocol will be prevented.
-pref("network.jar.block-remote-files", false);
+pref("network.jar.block-remote-files", true);
 
 // This preference, if true, causes all UTF-8 domain names to be normalized to
 // punycode.  The intention is to allow UTF-8 domain names as input, but never

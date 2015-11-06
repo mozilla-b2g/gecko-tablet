@@ -165,7 +165,7 @@ loop.panel = (function(_, mozL10n) {
     },
 
     render: function() {
-      var cx = React.addons.classSet;
+      var cx = classNames;
 
       if (!this.props.displayed) {
         return null;
@@ -245,7 +245,7 @@ loop.panel = (function(_, mozL10n) {
     },
 
     render: function() {
-      var cx = React.addons.classSet;
+      var cx = classNames;
       var accountEntryCSSClass = this._isSignedIn() ? "entry-settings-signout" :
                                                       "entry-settings-signin";
       var notificationsLabel = this.props.mozLoop.doNotDisturb ? "settings_menu_item_turnnotificationson" :
@@ -436,7 +436,7 @@ loop.panel = (function(_, mozL10n) {
     },
 
     render: function() {
-      var roomClasses = React.addons.classSet({
+      var roomClasses = classNames({
         "room-entry": true,
         "room-active": this._isActive(),
         "room-opened": this.props.isOpenedRoom
@@ -588,7 +588,7 @@ loop.panel = (function(_, mozL10n) {
     },
 
     render: function() {
-      var dropdownClasses = React.addons.classSet({
+      var dropdownClasses = classNames({
         "dropdown-menu": true,
         "dropdown-menu-up": this.state.openDirUp
       });
@@ -611,7 +611,7 @@ loop.panel = (function(_, mozL10n) {
             className: "dropdown-menu-item", 
             onClick: this.props.handleDeleteButtonClick, 
             ref: "deleteButton"}, 
-            mozL10n.get("delete_conversation_menuitem")
+            mozL10n.get("delete_conversation_menuitem2")
           )
         )
       );
@@ -921,12 +921,17 @@ loop.panel = (function(_, mozL10n) {
       window.removeEventListener("GettingStartedSeen", this._gettingStartedSeen);
     },
 
+    handleContextMenu: function(e) {
+      e.preventDefault();
+    },
+
     render: function() {
       var NotificationListView = sharedViews.NotificationListView;
 
       if (!this.state.gettingStartedSeen) {
         return (
-          React.createElement("div", {className: "fte-get-started-container"}, 
+          React.createElement("div", {className: "fte-get-started-container", 
+               onContextMenu: this.handleContextMenu}, 
             React.createElement(NotificationListView, {
               clearOnDocumentHidden: true, 
               notifications: this.props.notifications}), 
@@ -941,7 +946,8 @@ loop.panel = (function(_, mozL10n) {
       }
 
       return (
-        React.createElement("div", {className: "panel-content"}, 
+        React.createElement("div", {className: "panel-content", 
+             onContextMenu: this.handleContextMenu}, 
           React.createElement("div", {className: "beta-ribbon"}), 
           React.createElement(NotificationListView, {
             clearOnDocumentHidden: true, 

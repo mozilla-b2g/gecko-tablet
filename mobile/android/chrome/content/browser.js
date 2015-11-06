@@ -4502,10 +4502,7 @@ Tab.prototype = {
     if (!ParentalControls.isAllowed(ParentalControls.VISIT_FILE_URLS, fixedURI)) {
       aRequest.cancel(Cr.NS_BINDING_ABORTED);
 
-      aRequest = this.browser.docShell.displayLoadError(Cr.NS_ERROR_UNKNOWN_PROTOCOL, fixedURI, null);
-      if (aRequest) {
-        fixedURI = aRequest.URI;
-      }
+      this.browser.docShell.displayLoadError(Cr.NS_ERROR_UNKNOWN_PROTOCOL, fixedURI, null);
     }
 
     let contentType = contentWin.document.contentType;
@@ -4767,7 +4764,9 @@ var BrowserEventHandler = {
 
     InitLater(() => BrowserApp.deck.addEventListener("click", InputWidgetHelper, true));
     InitLater(() => BrowserApp.deck.addEventListener("click", SelectHelper, true));
-    InitLater(() => BrowserApp.deck.addEventListener("InsecureLoginFormsStateChange", IdentityHandler.sendLoginInsecure, true));
+    if (AppConstants.NIGHTLY_BUILD) {
+      InitLater(() => BrowserApp.deck.addEventListener("InsecureLoginFormsStateChange", IdentityHandler.sendLoginInsecure, true));
+    }
 
     // ReaderViews support backPress listeners.
     Messaging.addListener(() => {

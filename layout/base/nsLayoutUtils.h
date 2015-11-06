@@ -610,11 +610,18 @@ public:
      */
     SCROLLABLE_ONLY_ASYNC_SCROLLABLE = 0x04,
     /**
-     * If the SCROLLABLE_ALWAYS_MATCH_ROOT flag is set, then return the
-     * root scrollable frame for the root document (in the current process)
-     * if we don't hit anything else.
+     * If the SCROLLABLE_ALWAYS_MATCH_ROOT flag is set, then we will always
+     * return the root scrollable frame for the root document (in the current
+     * process) if we encounter it, whether or not it is async scrollable or
+     * overflow: hidden.
      */
     SCROLLABLE_ALWAYS_MATCH_ROOT = 0x08,
+    /**
+     * If the SCROLLABLE_FIXEDPOS_FINDS_ROOT flag is set, then for fixed-pos
+     * frames that are in the root document (in the current process) return the
+     * root scrollable frame for that document.
+     */
+    SCROLLABLE_FIXEDPOS_FINDS_ROOT = 0x10
   };
   /**
    * GetNearestScrollableFrame locates the first ancestor of aFrame
@@ -1041,9 +1048,11 @@ public:
    * to force rendering to use the widget's layer manager for testing
    * or speed. PAINT_WIDGET_LAYERS must be set if aRenderingContext is null.
    * If PAINT_DOCUMENT_RELATIVE is used, the visible region is interpreted
-   * as being relative to the document.  (Normally it's relative to the CSS
-   * viewport.) PAINT_TO_WINDOW sets painting to window to true on the display
-   * list builder even if we can't tell that we are painting to the window.
+   * as being relative to the document (normally it's relative to the CSS
+   * viewport) and the document is painted as if no scrolling has occured.
+   * Only considered if nsIPresShell::IgnoringViewportScrolling is true.
+   * PAINT_TO_WINDOW sets painting to window to true on the display list
+   * builder even if we can't tell that we are painting to the window.
    * If PAINT_EXISTING_TRANSACTION is set, then BeginTransaction() has already
    * been called on aFrame's widget's layer manager and should not be
    * called again.
@@ -2694,6 +2703,15 @@ public:
                                           nsIFrame* aScrollFrame,
                                           nsRect aDisplayPortBase,
                                           nsRect* aOutDisplayport);
+
+  static nsIScrollableFrame* GetAsyncScrollableAncestorFrame(nsIFrame* aTarget);
+
+  /**
+   * Sets a zero margin display port on all proper ancestors of aFrame that
+   * are async scrollable.
+   */
+  static void SetZeroMarginDisplayPortOnAsyncScrollableAncestors(nsIFrame* aFrame,
+                                                                 RepaintMode aRepaintMode);
 
   static bool IsOutlineStyleAutoEnabled();
 

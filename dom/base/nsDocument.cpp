@@ -332,13 +332,6 @@ nsIdentifierMapEntry::RemoveContentChangeCallback(nsIDocument::IDTargetObserver 
   }
 }
 
-// XXX Workaround for bug 980560 to maintain the existing broken semantics
-template<>
-struct nsIStyleRule::COMTypeInfo<css::Rule, void> {
-  static const nsIID kIID;
-};
-const nsIID nsIStyleRule::COMTypeInfo<css::Rule, void>::kIID = NS_ISTYLE_RULE_IID;
-
 namespace mozilla {
 namespace dom {
 
@@ -393,30 +386,14 @@ CandidatesTraverse(CustomElementHashKey* aKey,
   return PL_DHASH_NEXT;
 }
 
-struct CustomDefinitionTraceArgs
-{
-  const TraceCallbacks& callbacks;
-  void* closure;
-};
-
-static PLDHashOperator
-CustomDefinitionTrace(CustomElementHashKey *aKey,
-                      CustomElementDefinition *aData,
-                      void *aArg)
-{
-  CustomDefinitionTraceArgs* traceArgs = static_cast<CustomDefinitionTraceArgs*>(aArg);
-  MOZ_ASSERT(aData, "Definition must not be null");
-  traceArgs->callbacks.Trace(&aData->mPrototype, "mCustomDefinitions prototype",
-                             traceArgs->closure);
-  return PL_DHASH_NEXT;
-}
-
 NS_IMPL_CYCLE_COLLECTION_CLASS(Registry)
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(Registry)
-  CustomDefinitionTraceArgs customDefinitionArgs = { aCallbacks, aClosure };
-  tmp->mCustomDefinitions.EnumerateRead(CustomDefinitionTrace,
-                                        &customDefinitionArgs);
+  for (auto iter = tmp->mCustomDefinitions.Iter(); !iter.Done(); iter.Next()) {
+    aCallbacks.Trace(&iter.UserData()->mPrototype,
+                     "mCustomDefinitions prototype",
+                     aClosure);
+  }
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(Registry)
@@ -948,57 +925,16 @@ nsExternalResourceMap::RequestResource(nsIURI* aURI,
   return nullptr;
 }
 
-struct
-nsExternalResourceEnumArgs
-{
-  nsIDocument::nsSubDocEnumFunc callback;
-  void *data;
-};
-
-static PLDHashOperator
-ExternalResourceEnumerator(nsIURI* aKey,
-                           nsExternalResourceMap::ExternalResource* aData,
-                           void* aClosure)
-{
-  nsExternalResourceEnumArgs* args =
-    static_cast<nsExternalResourceEnumArgs*>(aClosure);
-  bool next =
-    aData->mDocument ? args->callback(aData->mDocument, args->data) : true;
-  return next ? PL_DHASH_NEXT : PL_DHASH_STOP;
-}
-
 void
 nsExternalResourceMap::EnumerateResources(nsIDocument::nsSubDocEnumFunc aCallback,
                                           void* aData)
 {
-  nsExternalResourceEnumArgs args = { aCallback, aData };
-  mMap.EnumerateRead(ExternalResourceEnumerator, &args);
-}
-
-static PLDHashOperator
-ExternalResourceTraverser(nsIURI* aKey,
-                          nsExternalResourceMap::ExternalResource* aData,
-                          void* aClosure)
-{
-  nsCycleCollectionTraversalCallback *cb =
-    static_cast<nsCycleCollectionTraversalCallback*>(aClosure);
-
-  NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*cb,
-                                     "mExternalResourceMap.mMap entry"
-                                     "->mDocument");
-  cb->NoteXPCOMChild(aData->mDocument);
-
-  NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*cb,
-                                     "mExternalResourceMap.mMap entry"
-                                     "->mViewer");
-  cb->NoteXPCOMChild(aData->mViewer);
-
-  NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*cb,
-                                     "mExternalResourceMap.mMap entry"
-                                     "->mLoadGroup");
-  cb->NoteXPCOMChild(aData->mLoadGroup);
-
-  return PL_DHASH_NEXT;
+  for (auto iter = mMap.Iter(); !iter.Done(); iter.Next()) {
+    nsExternalResourceMap::ExternalResource* resource = iter.UserData();
+    if (resource->mDocument && !aCallback(resource->mDocument, aData)) {
+      break;
+    }
+  }
 }
 
 void
@@ -1006,7 +942,24 @@ nsExternalResourceMap::Traverse(nsCycleCollectionTraversalCallback* aCallback) c
 {
   // mPendingLoads will get cleared out as the requests complete, so
   // no need to worry about those here.
-  mMap.EnumerateRead(ExternalResourceTraverser, aCallback);
+  for (auto iter = mMap.ConstIter(); !iter.Done(); iter.Next()) {
+    nsExternalResourceMap::ExternalResource* resource = iter.UserData();
+
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*aCallback,
+                                       "mExternalResourceMap.mMap entry"
+                                       "->mDocument");
+    aCallback->NoteXPCOMChild(resource->mDocument);
+
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*aCallback,
+                                       "mExternalResourceMap.mMap entry"
+                                       "->mViewer");
+    aCallback->NoteXPCOMChild(resource->mViewer);
+
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*aCallback,
+                                       "mExternalResourceMap.mMap entry"
+                                       "->mLoadGroup");
+    aCallback->NoteXPCOMChild(resource->mLoadGroup);
+  }
 }
 
 static PLDHashOperator
@@ -2498,11 +2451,6 @@ nsDocument::FillStyleSet(nsStyleSet* aStyleSet)
   NS_PRECONDITION(aStyleSet, "Must have a style set");
   NS_PRECONDITION(aStyleSet->SheetCount(SheetType::Doc) == 0,
                   "Style set already has document sheets?");
-
-  // We could consider moving this to nsStyleSet::Init, to match its
-  // handling of the eAnimationSheet and eTransitionSheet levels.
-  aStyleSet->DirtyRuleProcessors(SheetType::PresHint);
-  aStyleSet->DirtyRuleProcessors(SheetType::StyleAttr);
 
   int32_t i;
   for (i = mStyleSheets.Count() - 1; i >= 0; --i) {
@@ -5241,51 +5189,51 @@ nsDocument::DocumentStatesChanged(EventStates aStateMask)
 
 void
 nsDocument::StyleRuleChanged(nsIStyleSheet* aSheet,
-                             nsIStyleRule* aOldStyleRule,
-                             nsIStyleRule* aNewStyleRule)
+                             css::Rule* aOldStyleRule,
+                             css::Rule* aNewStyleRule)
 {
   NS_DOCUMENT_NOTIFY_OBSERVERS(StyleRuleChanged,
                                (this, aSheet,
                                 aOldStyleRule, aNewStyleRule));
 
   if (StyleSheetChangeEventsEnabled()) {
-    nsCOMPtr<css::Rule> rule = do_QueryInterface(aNewStyleRule);
     DO_STYLESHEET_NOTIFICATION(StyleRuleChangeEvent,
                                "StyleRuleChanged",
                                mRule,
-                               rule ? rule->GetDOMRule() : nullptr);
+                               aNewStyleRule ? aNewStyleRule->GetDOMRule()
+                                             : nullptr);
   }
 }
 
 void
 nsDocument::StyleRuleAdded(nsIStyleSheet* aSheet,
-                           nsIStyleRule* aStyleRule)
+                           css::Rule* aStyleRule)
 {
   NS_DOCUMENT_NOTIFY_OBSERVERS(StyleRuleAdded,
                                (this, aSheet, aStyleRule));
 
   if (StyleSheetChangeEventsEnabled()) {
-    nsCOMPtr<css::Rule> rule = do_QueryInterface(aStyleRule);
     DO_STYLESHEET_NOTIFICATION(StyleRuleChangeEvent,
                                "StyleRuleAdded",
                                mRule,
-                               rule ? rule->GetDOMRule() : nullptr);
+                               aStyleRule ? aStyleRule->GetDOMRule()
+                                          : nullptr);
   }
 }
 
 void
 nsDocument::StyleRuleRemoved(nsIStyleSheet* aSheet,
-                             nsIStyleRule* aStyleRule)
+                             css::Rule* aStyleRule)
 {
   NS_DOCUMENT_NOTIFY_OBSERVERS(StyleRuleRemoved,
                                (this, aSheet, aStyleRule));
 
   if (StyleSheetChangeEventsEnabled()) {
-    nsCOMPtr<css::Rule> rule = do_QueryInterface(aStyleRule);
     DO_STYLESHEET_NOTIFICATION(StyleRuleChangeEvent,
                                "StyleRuleRemoved",
                                mRule,
-                               rule ? rule->GetDOMRule() : nullptr);
+                               aStyleRule ? aStyleRule->GetDOMRule()
+                                          : nullptr);
   }
 }
 
@@ -8894,16 +8842,6 @@ nsDocument::Destroy()
 
   mRegistry = nullptr;
 
-  using mozilla::dom::workers::ServiceWorkerManager;
-  RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
-  if (swm) {
-    ErrorResult error;
-    if (swm->IsControlled(this, error)) {
-      nsContentUtils::GetImgLoaderForDocument(this)->ClearCacheForControlledDocument(this);
-    }
-    swm->MaybeStopControlling(this);
-  }
-
   // XXX We really should let cycle collection do this, but that currently still
   //     leaks (see https://bugzilla.mozilla.org/show_bug.cgi?id=406684).
   ReleaseWrapper(static_cast<nsINode*>(this));
@@ -8914,6 +8852,19 @@ nsDocument::RemovedFromDocShell()
 {
   if (mRemovedFromDocShell)
     return;
+
+  using mozilla::dom::workers::ServiceWorkerManager;
+  RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
+  if (swm) {
+    ErrorResult error;
+    if (swm->IsControlled(this, error)) {
+      imgLoader* loader = nsContentUtils::GetImgLoaderForDocument(this);
+      if (loader) {
+        loader->ClearCacheForControlledDocument(this);
+      }
+    }
+    swm->MaybeStopControlling(this);
+  }
 
   mRemovedFromDocShell = true;
   EnumerateActivityObservers(NotifyActivityChanged, nullptr);
