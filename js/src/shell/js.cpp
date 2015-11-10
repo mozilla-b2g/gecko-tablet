@@ -2553,9 +2553,8 @@ EvalInContext(JSContext* cx, unsigned argc, Value* vp)
             ac.emplace(cx, sobj);
         }
 
-        sobj = GetInnerObject(sobj);
-        if (!sobj)
-            return false;
+        sobj = ToWindowIfWindowProxy(sobj);
+
         if (!(sobj->getClass()->flags & JSCLASS_IS_GLOBAL)) {
             JS_ReportError(cx, "Invalid scope argument to evalcx");
             return false;
@@ -4417,7 +4416,8 @@ class ShellAutoEntryMonitor : JS::dbg::AutoEntryMonitor {
         MOZ_ASSERT(!enteredWithoutExit);
     }
 
-    void Entry(JSContext* cx, JSFunction* function) override {
+    void Entry(JSContext* cx, JSFunction* function, JS::HandleValue asyncStack,
+               JS::HandleString asyncCause) override {
         MOZ_ASSERT(!enteredWithoutExit);
         enteredWithoutExit = true;
 
@@ -4431,7 +4431,8 @@ class ShellAutoEntryMonitor : JS::dbg::AutoEntryMonitor {
         oom = !log.append(make_string_copy("anonymous"));
     }
 
-    void Entry(JSContext* cx, JSScript* script) override {
+    void Entry(JSContext* cx, JSScript* script, JS::HandleValue asyncStack,
+               JS::HandleString asyncCause) override {
         MOZ_ASSERT(!enteredWithoutExit);
         enteredWithoutExit = true;
 

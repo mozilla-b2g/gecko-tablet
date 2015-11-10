@@ -3144,7 +3144,7 @@ GLPresenter::EndFrame()
 // in our native NSView (it is set in |draggingEntered:|). It is unset when the
 // drag session ends for this view, either with the mouse exiting or when a drop
 // occurs in this view.
-NSPasteboardWrapper* globalDragPboard = nil;
+NSPasteboard* globalDragPboard = nil;
 
 // gLastDragView and gLastDragMouseDownEvent are used to communicate information
 // to the drag service during drag invocation (starting a drag in from the view).
@@ -5221,116 +5221,6 @@ PanGestureTypeForEvent(NSEvent* aEvent)
 }
 
 #pragma mark -
-// NSTextInput implementation
-
-- (void)insertText:(id)insertString
-{
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
-
-  // We're considering not implementing NSTextInput. Start by just
-  // preffing its methods off.
-  if (!Preferences::GetBool("intl.ime.nstextinput.enable", false)) {
-    NSLog(@"Set intl.ime.nstextinput.enable to true in about:config to fix input.");
-    return;
-  }
-
-  NS_ENSURE_TRUE_VOID(mGeckoChild);
-
-  nsAutoRetainCocoaObject kungFuDeathGrip(self);
-
-  NSAttributedString* attrStr;
-  if ([insertString isKindOfClass:[NSAttributedString class]]) {
-    attrStr = static_cast<NSAttributedString*>(insertString);
-  } else {
-    attrStr =
-      [[[NSAttributedString alloc] initWithString:insertString] autorelease];
-  }
-
-  mTextInputHandler->InsertText(attrStr);
-
-  NS_OBJC_END_TRY_ABORT_BLOCK;
-}
-
-- (void)insertNewline:(id)sender
-{
-  // We're considering not implementing NSTextInput. Start by just
-  // preffing its methods off.
-  if (!Preferences::GetBool("intl.ime.nstextinput.enable", false)) {
-    NSLog(@"Set intl.ime.nstextinput.enable to true in about:config to fix input.");
-    return;
-  }
-
-  [self insertText:@"\n"];
-}
-
-- (NSInteger)conversationIdentifier
-{
-  // We're considering not implementing NSTextInput. Start by just
-  // preffing its methods off.
-  if (!Preferences::GetBool("intl.ime.nstextinput.enable", false)) {
-    NSLog(@"Set intl.ime.nstextinput.enable to true in about:config to fix input.");
-    return 0;
-  }
-
-  NS_ENSURE_TRUE(mTextInputHandler, reinterpret_cast<NSInteger>(self));
-  return mTextInputHandler->ConversationIdentifier();
-}
-
-- (NSRect)firstRectForCharacterRange:(NSRange)theRange
-{
-  // We're considering not implementing NSTextInput. Start by just
-  // preffing its methods off.
-  if (!Preferences::GetBool("intl.ime.nstextinput.enable", false)) {
-    NSLog(@"Set intl.ime.nstextinput.enable to true in about:config to fix input.");
-    return NSMakeRect(0.0, 0.0, 0.0, 0.0);
-  }
-
-  NSRect rect;
-  NS_ENSURE_TRUE(mTextInputHandler, rect);
-  return mTextInputHandler->FirstRectForCharacterRange(theRange);
-}
-
-- (NSAttributedString *)attributedSubstringFromRange:(NSRange)theRange
-{
-  // We're considering not implementing NSTextInput. Start by just
-  // preffing its methods off.
-  if (!Preferences::GetBool("intl.ime.nstextinput.enable", false)) {
-    NSLog(@"Set intl.ime.nstextinput.enable to true in about:config to fix input.");
-    return nil;
-  }
-
-  NS_ENSURE_TRUE(mTextInputHandler, nil);
-  return mTextInputHandler->GetAttributedSubstringFromRange(theRange);
-}
-
-- (void)setMarkedText:(id)aString selectedRange:(NSRange)selRange
-{
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
-
-  // We're considering not implementing NSTextInput. Start by just
-  // preffing its methods off.
-  if (!Preferences::GetBool("intl.ime.nstextinput.enable", false)) {
-    NSLog(@"Set intl.ime.nstextinput.enable to true in about:config to fix input.");
-    return;
-  }
-
-  NS_ENSURE_TRUE_VOID(mTextInputHandler);
-
-  nsAutoRetainCocoaObject kungFuDeathGrip(self);
-
-  NSAttributedString* attrStr;
-  if ([aString isKindOfClass:[NSAttributedString class]]) {
-    attrStr = static_cast<NSAttributedString*>(aString);
-  } else {
-    attrStr = [[[NSAttributedString alloc] initWithString:aString] autorelease];
-  }
-
-  mTextInputHandler->SetMarkedText(attrStr, selRange);
-
-  NS_OBJC_END_TRY_ABORT_BLOCK;
-}
-
-#pragma mark -
 // NSTextInputClient implementation
 
 - (NSRange)markedRange
@@ -5567,6 +5457,15 @@ PanGestureTypeForEvent(NSEvent* aEvent)
   mTextInputHandler->HandleKeyUpEvent(theEvent);
 
   NS_OBJC_END_TRY_ABORT_BLOCK;
+}
+
+- (void)insertNewline:(id)sender
+{
+  if (mTextInputHandler) {
+    NSAttributedString *attrStr = [[NSAttributedString alloc] initWithString:@"\n"];
+    mTextInputHandler->InsertText(attrStr);
+    [attrStr release];
+  }
 }
 
 - (void)flagsChanged:(NSEvent*)theEvent
@@ -5850,8 +5749,7 @@ PanGestureTypeForEvent(NSEvent* aEvent)
   // Set the global drag pasteboard that will be used for this drag session.
   // This will be set back to nil when the drag session ends (mouse exits
   // the view or a drop happens within the view).
-  globalDragPboard =
-    [[NSPasteboardWrapper alloc] initWithPasteboard:[sender draggingPasteboard]];
+  globalDragPboard = [[sender draggingPasteboard] retain];
 
   return [self doDragAction:eDragEnter sender:sender];
 

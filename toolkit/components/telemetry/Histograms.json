@@ -2496,6 +2496,14 @@
     "extended_statistics_ok": true,
     "description": "How many speculative connections are made needlessly"
   },
+  "TAP_TO_LOAD_IMAGE_SIZE": {
+    "expires_in_version": "50",
+    "kind": "exponential",
+    "high": "32 * 1024",
+    "n_buckets": 50,
+    "description": "The size of the image being shown, when using tap-to-load images. (kilobytes)",
+    "bug_numbers": [1208167]
+  },
   "STS_POLL_AND_EVENTS_CYCLE": {
     "expires_in_version": "never",
     "kind": "exponential",
@@ -4090,7 +4098,14 @@
     "kind": "exponential",
     "high": "10000",
     "n_buckets": 50,
-    "description": "Delay in ms between the target and the actual handling time of the frame at refresh driver in chrome process."
+    "description": "Delay in ms between the target and the actual handling time of the frame at refresh driver in the chrome process."
+  },
+  "FX_REFRESH_DRIVER_CONTENT_FRAME_DELAY_MS": {
+    "expires_in_version": "default",
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": 50,
+    "description": "Delay in ms between the target and the actual handling time of the frame at refresh driver in the content process."
   },
   "FX_TAB_SWITCH_UPDATE_MS": {
     "alert_emails": ["perf-telemetry-alerts@mozilla.com"],
@@ -6259,6 +6274,12 @@
     "n_buckets": "1000",
     "description": "The time (in milliseconds) that it took a 'reconfigure thread' request to go round trip."
   },
+  "MEDIA_RUST_MP4PARSE_SUCCESS": {
+    "expires_in_version": "50",
+    "kind": "boolean",
+    "description": "(Bug 1220885) Whether the rust mp4 demuxer successfully parsed a stream segment.",
+    "cpp_guard": "MOZ_RUST_MP4PARSE"
+  },
   "MEDIA_WMF_DECODE_ERROR": {
     "expires_in_version": "50",
     "kind": "enumerated",
@@ -8364,6 +8385,13 @@
     "kind": "enumerated",
     "n_values": 8,
     "description": "Baseline Requirements section 9.2.2: subject common name field (0: present, in subject alt. names; 1: not present; 2: not present in subject alt. names)"
+  },
+  "TAP_TO_LOAD_ENABLED": {
+    "expires_in_version": "50",
+    "kind": "enumerated",
+    "n_values": 3,
+    "description": "Whether or not a user has tap-to-load enabled.",
+    "bug_numbers": [1208167]
   },
   "TRACKING_PROTECTION_ENABLED": {
     "expires_in_version": "never",

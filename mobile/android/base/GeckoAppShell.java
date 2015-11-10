@@ -1224,7 +1224,7 @@ public class GeckoAppShell
 
         // Have a special handling for SMS, as the message body
         // is not extracted from the URI automatically.
-        if (!"sms".equals(scheme)) {
+        if (!"sms".equals(scheme) && !"smsto".equals(scheme)) {
             return intent;
         }
 
@@ -2695,6 +2695,9 @@ public class GeckoAppShell
             systemType = Environment.DIRECTORY_MOVIES;
         } else if ("music".equals(type)) {
             systemType = Environment.DIRECTORY_MUSIC;
+        } else if ("apps".equals(type)) {
+            File appInternalStorageDirectory = getContext().getFilesDir();
+            return new File(appInternalStorageDirectory, "mozilla").getAbsolutePath();
         } else {
             return null;
         }

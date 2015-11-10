@@ -135,6 +135,12 @@ ThrowMethodFailed(JSContext* cx, ErrorResult& rv)
     // uncatchable exception.
     return false;
   }
+  if (rv.IsJSContextException()) {
+    // Whatever we need to throw is on the JSContext already.  We
+    // can't assert that there is a pending exception on it, though,
+    // because in the uncatchable exception case there won't be one.
+    return false;
+  }
   if (rv.IsErrorWithMessage()) {
     rv.ReportErrorWithMessage(cx);
     return false;
@@ -997,7 +1003,7 @@ QueryInterface(JSContext* cx, unsigned argc, JS::Value* vp)
   // unwrap.
   JS::Rooted<JSObject*> origObj(cx, &thisv.toObject());
   JS::Rooted<JSObject*> obj(cx, js::CheckedUnwrap(origObj,
-                                                  /* stopAtOuter = */ false));
+                                                  /* stopAtWindowProxy = */ false));
   if (!obj) {
       JS_ReportError(cx, "Permission denied to access object");
       return false;
@@ -2007,7 +2013,7 @@ GlobalObject::GlobalObject(JSContext* aCx, JSObject* aObject)
   MOZ_ASSERT(mCx);
   JS::Rooted<JSObject*> obj(aCx, aObject);
   if (js::IsWrapper(obj)) {
-    obj = js::CheckedUnwrap(obj, /* stopAtOuter = */ false);
+    obj = js::CheckedUnwrap(obj, /* stopAtWindowProxy = */ false);
     if (!obj) {
       // We should never end up here on a worker thread, since there shouldn't
       // be any security wrappers to worry about.
@@ -2078,7 +2084,8 @@ InterfaceHasInstance(JSContext* cx, JS::Handle<JSObject*> obj,
   const DOMIfaceAndProtoJSClass* clasp =
     DOMIfaceAndProtoJSClass::FromJSClass(js::GetObjectClass(obj));
 
-  const DOMJSClass* domClass = GetDOMClass(js::UncheckedUnwrap(instance, /* stopAtOuter = */ false));
+  const DOMJSClass* domClass =
+    GetDOMClass(js::UncheckedUnwrap(instance, /* stopAtWindowProxy = */ false));
 
   MOZ_ASSERT(!domClass || clasp->mPrototypeID != prototypes::id::_ID_Count,
              "Why do we have a hasInstance hook if we don't have a prototype "
@@ -2909,7 +2916,7 @@ GetMaplikeSetlikeBackingObject(JSContext* aCx, JS::Handle<JSObject*> aObj,
 {
   JS::Rooted<JSObject*> reflector(aCx);
   reflector = IsDOMObject(aObj) ? aObj : js::UncheckedUnwrap(aObj,
-                                                             /* stopAtOuter = */ false);
+                                                             /* stopAtWindowProxy = */ false);
 
   // Retrieve the backing object from the reserved slot on the maplike/setlike
   // object. If it doesn't exist yet, create it.
@@ -3119,14 +3126,6 @@ DeprecationWarning(JSContext* aCx, JSObject* aObject,
   if (window && window->GetExtantDoc()) {
     window->GetExtantDoc()->WarnOnceAbout(aOperation);
   }
-}
-
-bool
-ObjectToOuterObjectValue(JSContext* cx, JS::Handle<JSObject*> obj, JS::MutableHandle<JS::Value> vp)
-{
-  JSObject* outer = JS_ObjectToOuterObject(cx, obj);
-  vp.setObject(*outer);
-  return true;
 }
 
 } // namespace dom

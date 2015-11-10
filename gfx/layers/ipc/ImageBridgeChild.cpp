@@ -114,6 +114,7 @@ ImageBridgeChild::UseTextures(CompositableClient* aCompositable,
 {
   MOZ_ASSERT(aCompositable);
   MOZ_ASSERT(aCompositable->GetIPDLActor());
+  MOZ_ASSERT(aCompositable->IsConnected());
 
   nsAutoTArray<TimedTexture,4> textures;
 
@@ -143,7 +144,7 @@ ImageBridgeChild::UseComponentAlphaTextures(CompositableClient* aCompositable,
   MOZ_ASSERT(aCompositable);
   MOZ_ASSERT(aTextureOnWhite);
   MOZ_ASSERT(aTextureOnBlack);
-  MOZ_ASSERT(aCompositable->GetIPDLActor());
+  MOZ_ASSERT(aCompositable->IsConnected());
   MOZ_ASSERT(aTextureOnWhite->GetIPDLActor());
   MOZ_ASSERT(aTextureOnBlack->GetIPDLActor());
   MOZ_ASSERT(aTextureOnBlack->GetSize() == aTextureOnWhite->GetSize());
@@ -159,6 +160,7 @@ ImageBridgeChild::UseOverlaySource(CompositableClient* aCompositable,
                                    const nsIntRect& aPictureRect)
 {
   MOZ_ASSERT(aCompositable);
+  MOZ_ASSERT(aCompositable->IsConnected());
   mTxn->AddEdit(OpUseOverlaySource(nullptr, aCompositable->GetIPDLActor(),
       aOverlay, aPictureRect));
 }
@@ -456,7 +458,7 @@ void ImageBridgeChild::DispatchReleaseTextureClient(TextureClient* aClient)
     NewRunnableFunction(&ReleaseTextureClientNow, aClient));
 }
 
-static void UpdateImageClientNow(ImageClient* aClient, ImageContainer* aContainer)
+static void UpdateImageClientNow(ImageClient* aClient, RefPtr<ImageContainer>&& aContainer)
 {
   if (!ImageBridgeChild::IsCreated()) {
     NS_WARNING("Something is holding on to graphics resources after the shutdown"
@@ -489,10 +491,7 @@ void ImageBridgeChild::DispatchImageClientUpdate(ImageClient* aClient,
   }
   sImageBridgeChildSingleton->GetMessageLoop()->PostTask(
     FROM_HERE,
-    NewRunnableFunction<
-      void (*)(ImageClient*, ImageContainer*),
-      ImageClient*,
-      RefPtr<ImageContainer> >(&UpdateImageClientNow, aClient, aContainer));
+    NewRunnableFunction(&UpdateImageClientNow, aClient, RefPtr<ImageContainer>(aContainer)));
 }
 
 static void UpdateAsyncCanvasRendererSync(AsyncCanvasRenderer* aWrapper,
@@ -541,7 +540,7 @@ void ImageBridgeChild::UpdateAsyncCanvasRendererNow(AsyncCanvasRenderer* aWrappe
 }
 
 static void FlushAllImagesSync(ImageClient* aClient, ImageContainer* aContainer,
-                               AsyncTransactionWaiter* aWaiter)
+                               RefPtr<AsyncTransactionWaiter>&& aWaiter)
 {
   if (!ImageBridgeChild::IsCreated()) {
     // How sad. If we get into this branch it means that the ImageBridge
@@ -1095,7 +1094,8 @@ ImageBridgeChild::RemoveTextureFromCompositable(CompositableClient* aCompositabl
   MOZ_ASSERT(!mShuttingDown);
   MOZ_ASSERT(aTexture);
   MOZ_ASSERT(aTexture->IsSharedWithCompositor());
-  if (!aTexture || !aTexture->IsSharedWithCompositor()) {
+  MOZ_ASSERT(aCompositable->IsConnected());
+  if (!aTexture || !aTexture->IsSharedWithCompositor() || !aCompositable->IsConnected()) {
     return;
   }
   if (aTexture->GetFlags() & TextureFlags::DEALLOCATE_CLIENT) {
@@ -1117,7 +1117,8 @@ ImageBridgeChild::RemoveTextureFromCompositableAsync(AsyncTransactionTracker* aA
   MOZ_ASSERT(!mShuttingDown);
   MOZ_ASSERT(aTexture);
   MOZ_ASSERT(aTexture->IsSharedWithCompositor());
-  if (!aTexture || !aTexture->IsSharedWithCompositor()) {
+  MOZ_ASSERT(aCompositable->IsConnected());
+  if (!aTexture || !aTexture->IsSharedWithCompositor() || !aCompositable->IsConnected()) {
     return;
   }
   mTxn->AddNoSwapEdit(OpRemoveTextureAsync(CompositableClient::GetTrackersHolderId(aCompositable->GetIPDLActor()),

@@ -1453,10 +1453,9 @@ MoveChildrenTo(nsPresContext* aPresContext,
 
 //----------------------------------------------------------------------
 
-nsCSSFrameConstructor::nsCSSFrameConstructor(nsIDocument *aDocument,
-                                             nsIPresShell *aPresShell,
-                                             nsStyleSet* aStyleSet)
-  : nsFrameManager(aPresShell, aStyleSet)
+nsCSSFrameConstructor::nsCSSFrameConstructor(nsIDocument* aDocument,
+                                             nsIPresShell* aPresShell)
+  : nsFrameManager(aPresShell)
   , mDocument(aDocument)
   , mRootElementFrame(nullptr)
   , mRootElementStyleFrame(nullptr)
@@ -4007,7 +4006,10 @@ nsCSSFrameConstructor::GetAnonymousContent(nsIContent* aParent,
     return NS_OK;
 
   nsresult rv = creator->CreateAnonymousContent(aContent);
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_FAILED(rv)) {
+    // CreateAnonymousContent failed, e.g. because the page has a <use> loop.
+    return rv;
+  }
 
   uint32_t count = aContent.Length();
   for (uint32_t i=0; i < count; i++) {

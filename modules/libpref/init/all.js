@@ -588,6 +588,7 @@ pref("apz.printtree", false);
 
 pref("apz.test.logging_enabled", false);
 pref("apz.touch_start_tolerance", "0.2222222");  // 0.2222222 came from 1.0/4.5
+pref("apz.touch_move_tolerance", "0.0");
 pref("apz.use_paint_duration", true);
 pref("apz.velocity_bias", "1.0");
 pref("apz.velocity_relevance_time_ms", 150);
@@ -4479,7 +4480,7 @@ pref("dom.mozAlarms.enabled", false);
 
 pref("dom.push.enabled", false);
 
-pref("dom.push.debug", false);
+pref("dom.push.loglevel", "off");
 
 pref("dom.push.serverURL", "wss://push.services.mozilla.com/");
 pref("dom.push.userAgentID", "");
@@ -4933,10 +4934,6 @@ pref("dom.presentation.discoverable", false);
 #ifdef XP_MACOSX
 // Use raw ICU instead of CoreServices API in Unicode collation
 pref("intl.collation.mac.use_icu", true);
-
-// Enable NSTextInput protocol for use with IMEs that have not
-// been updated to use the NSTextInputClient protocol.
-pref("intl.ime.nstextinput.enable", false);
 
 #if !defined(RELEASE_BUILD) || defined(DEBUG)
 // In non-release builds we crash by default on insecure text input (when a
