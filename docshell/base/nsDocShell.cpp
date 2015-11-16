@@ -4656,7 +4656,10 @@ nsDocShell::LoadURIWithOptions(const char16_t* aURI,
   // what happens
 
   if (NS_ERROR_MALFORMED_URI == rv) {
-    DisplayLoadError(rv, uri, aURI, nullptr);
+    if (DisplayLoadError(rv, uri, aURI, nullptr) &&
+        (aLoadFlags & LOAD_FLAGS_ERROR_LOAD_CHANGES_RV) != 0) {
+      return NS_ERROR_LOAD_SHOWED_ERRORPAGE;
+    }
   }
 
   if (NS_FAILED(rv) || !uri) {
@@ -4721,8 +4724,10 @@ nsDocShell::LoadURIWithOptions(const char16_t* aURI,
 NS_IMETHODIMP
 nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
                              const char16_t* aURL,
-                             nsIChannel* aFailedChannel)
+                             nsIChannel* aFailedChannel,
+                             bool* aDisplayedErrorPage)
 {
+  *aDisplayedErrorPage = false;
   // Get prompt and string bundle servcies
   nsCOMPtr<nsIPrompt> prompter;
   nsCOMPtr<nsIStringBundle> stringBundle;
@@ -5100,8 +5105,10 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
 
   if (UseErrorPages()) {
     // Display an error page
-    LoadErrorPage(aURI, aURL, errorPage.get(), error.get(),
-                  messageStr.get(), cssClass.get(), aFailedChannel);
+    nsresult loadedPage = LoadErrorPage(aURI, aURL, errorPage.get(),
+                                        error.get(), messageStr.get(),
+                                        cssClass.get(), aFailedChannel);
+    *aDisplayedErrorPage = NS_SUCCEEDED(loadedPage);
   } else {
     // The prompter reqires that our private window has a document (or it
     // asserts). Satisfy that assertion now since GetDoc will force
@@ -5781,7 +5788,7 @@ nsDocShell::GetPositionAndSize(int32_t* aX, int32_t* aY, int32_t* aWidth,
 {
   if (mParentWidget) {
     // ensure size is up-to-date if window has changed resolution
-    nsIntRect r;
+    LayoutDeviceIntRect r;
     mParentWidget->GetClientBounds(r);
     SetPositionAndSize(mBounds.x, mBounds.y, r.width, r.height, false);
   }
@@ -5976,7 +5983,19 @@ nsDocShell::GetIsOffScreenBrowser(bool* aIsOffScreen)
 }
 
 NS_IMETHODIMP
+nsDocShell::SetIsActiveAndForeground(bool aIsActive)
+{
+  return SetIsActiveInternal(aIsActive, false);
+}
+
+NS_IMETHODIMP
 nsDocShell::SetIsActive(bool aIsActive)
+{
+  return SetIsActiveInternal(aIsActive, true);
+}
+
+nsresult
+nsDocShell::SetIsActiveInternal(bool aIsActive, bool aIsHidden)
 {
   // We disallow setting active on chrome docshells.
   if (mItemType == nsIDocShellTreeItem::typeChrome) {
@@ -5989,7 +6008,7 @@ nsDocShell::SetIsActive(bool aIsActive)
   // Tell the PresShell about it.
   nsCOMPtr<nsIPresShell> pshell = GetPresShell();
   if (pshell) {
-    pshell->SetIsActive(aIsActive);
+    pshell->SetIsActive(aIsActive, aIsHidden);
   }
 
   // Tell the window about it
@@ -6023,7 +6042,11 @@ nsDocShell::SetIsActive(bool aIsActive)
     }
 
     if (!docshell->GetIsBrowserOrApp()) {
-      docshell->SetIsActive(aIsActive);
+      if (aIsHidden) {
+        docshell->SetIsActive(aIsActive);
+      } else {
+        docshell->SetIsActiveAndForeground(aIsActive);
+      }
     }
   }
 
@@ -7782,7 +7805,7 @@ nsDocShell::CreateAboutBlankContentViewer(nsIPrincipal* aPrincipal,
     mTiming->NotifyBeforeUnload();
 
     bool okToUnload;
-    rv = mContentViewer->PermitUnload(false, &okToUnload);
+    rv = mContentViewer->PermitUnload(&okToUnload);
 
     if (NS_SUCCEEDED(rv) && !okToUnload) {
       // The user chose not to unload the page, interrupt the load.
@@ -10120,7 +10143,7 @@ nsDocShell::InternalLoad(nsIURI* aURI,
   // protocol handler deals with this for javascript: URLs.
   if (!isJavaScript && aFileName.IsVoid() && mContentViewer) {
     bool okToUnload;
-    rv = mContentViewer->PermitUnload(false, &okToUnload);
+    rv = mContentViewer->PermitUnload(&okToUnload);
 
     if (NS_SUCCEEDED(rv) && !okToUnload) {
       // The user chose not to unload the page, interrupt the
@@ -10276,7 +10299,10 @@ nsDocShell::InternalLoad(nsIURI* aURI,
 
   if (NS_FAILED(rv)) {
     nsCOMPtr<nsIChannel> chan(do_QueryInterface(req));
-    DisplayLoadError(rv, aURI, nullptr, chan);
+    if (DisplayLoadError(rv, aURI, nullptr, chan) &&
+        (aFlags & LOAD_FLAGS_ERROR_LOAD_CHANGES_RV) != 0) {
+      return NS_ERROR_LOAD_SHOWED_ERRORPAGE;
+    }
   }
 
   return rv;

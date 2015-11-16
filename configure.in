@@ -4019,14 +4019,14 @@ fi
 case "$MOZ_BUILD_APP" in
 browser)
   AC_DEFINE(MOZ_PHOENIX)
-
-  BUILD_BACKENDS="$BUILD_BACKENDS FasterMake"
   ;;
 
 xulrunner)
   AC_DEFINE(MOZ_XULRUNNER)
   ;;
 esac
+
+BUILD_BACKENDS="$BUILD_BACKENDS FasterMake"
 
 if test -n "$MOZ_B2G"; then
     AC_DEFINE(MOZ_B2G)
@@ -9171,6 +9171,9 @@ if test -z "$JS_SHARED_LIBRARY"; then
   AC_DEFINE(MOZ_STATIC_JS)
 fi
 AC_SUBST(JS_SHARED_LIBRARY)
+
+# Avoid using obsolete NSPR features
+AC_DEFINE(NO_NSPR_10_SUPPORT)
 
 MOZ_CREATE_CONFIG_STATUS()
 

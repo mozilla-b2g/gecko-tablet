@@ -485,6 +485,8 @@ protected:
                                      uint32_t aRedirectFlags,
                                      uint32_t aStateFlags) override;
 
+  nsresult SetIsActiveInternal(bool aIsActive, bool aIsHidden);
+
   /**
    * Helper function that determines if channel is an HTTP POST.
    *
@@ -727,6 +729,14 @@ protected:
    * After calling this, mTiming is non-null.
    */
   void MaybeInitTiming();
+
+  bool DisplayLoadError(nsresult aError, nsIURI* aURI, const char16_t* aURL,
+                        nsIChannel* aFailedChannel)
+  {
+    bool didDisplayLoadError = false;
+    DisplayLoadError(aError, aURI, aURL, aFailedChannel, &didDisplayLoadError);
+    return didDisplayLoadError;
+  }
 
 public:
   // Event type dispatched by RestorePresentation

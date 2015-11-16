@@ -240,7 +240,7 @@ PuppetWidget::ConfigureChildren(const nsTArray<Configuration>& aConfigurations)
     NS_ASSERTION(w->GetParent() == this,
                  "Configured widget is not a child");
     w->SetWindowClipRegion(configuration.mClipRegion, true);
-    nsIntRect bounds;
+    LayoutDeviceIntRect bounds;
     w->GetBounds(bounds);
     if (bounds.Size() != configuration.mBounds.Size()) {
       w->Resize(configuration.mBounds.x, configuration.mBounds.y,
@@ -287,16 +287,14 @@ PuppetWidget::Invalidate(const nsIntRect& aRect)
 }
 
 void
-PuppetWidget::InitEvent(WidgetGUIEvent& event, nsIntPoint* aPoint)
+PuppetWidget::InitEvent(WidgetGUIEvent& event, LayoutDeviceIntPoint* aPoint)
 {
   if (nullptr == aPoint) {
     event.refPoint.x = 0;
     event.refPoint.y = 0;
-  }
-  else {
+  } else {
     // use the point override if provided
-    event.refPoint.x = aPoint->x;
-    event.refPoint.y = aPoint->y;
+    event.refPoint = *aPoint;
   }
   event.time = PR_Now() / 1000;
 }
@@ -1157,7 +1155,7 @@ PuppetWidget::GetChromeDimensions()
     NS_WARNING("PuppetWidget without Tab does not have chrome information.");
     return nsIntPoint();
   }
-  return LayoutDeviceIntPoint::ToUntyped(GetOwningTabChild()->GetChromeDisplacement());
+  return GetOwningTabChild()->GetChromeDisplacement().ToUnknownPoint();
 }
 
 nsIntPoint
@@ -1173,8 +1171,8 @@ PuppetWidget::GetWindowPosition()
 }
 
 NS_METHOD
-PuppetWidget::GetScreenBounds(nsIntRect &aRect) {
-  aRect.MoveTo(LayoutDeviceIntPoint::ToUntyped(WidgetToScreenOffset()));
+PuppetWidget::GetScreenBoundsUntyped(nsIntRect &aRect) {
+  aRect.MoveTo(WidgetToScreenOffset().ToUnknownPoint());
   aRect.SizeTo(mBounds.Size());
   return NS_OK;
 }

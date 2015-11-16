@@ -112,8 +112,10 @@ SurfaceFormatToColorDepth(int32_t aSurfaceFormat)
 
 nsScreenGonk::nsScreenGonk(uint32_t aId,
                            GonkDisplay::DisplayType aDisplayType,
-                           const GonkDisplay::NativeData& aNativeData)
+                           const GonkDisplay::NativeData& aNativeData,
+                           NotifyDisplayChangedEvent aEventVisibility)
     : mId(aId)
+    , mEventVisibility(aEventVisibility)
     , mNativeWindow(aNativeData.mNativeWindow)
     , mDpi(aNativeData.mXdpi)
     , mScreenRotation(nsIScreen::ROTATION_0_DEG)
@@ -179,6 +181,12 @@ uint32_t
 nsScreenGonk::GetId()
 {
     return mId;
+}
+
+NotifyDisplayChangedEvent
+nsScreenGonk::GetEventVisibility()
+{
+    return mEventVisibility;
 }
 
 NS_IMETHODIMP
@@ -281,10 +289,10 @@ nsScreenGonk::SetRotation(uint32_t aRotation)
     return NS_OK;
 }
 
-nsIntRect
+LayoutDeviceIntRect
 nsScreenGonk::GetNaturalBounds()
 {
-    return mNaturalBounds;
+    return LayoutDeviceIntRect::FromUnknownRect(mNaturalBounds);
 }
 
 uint32_t
@@ -436,7 +444,16 @@ nsScreenGonk::GetEGLDisplay()
 hwc_surface_t
 nsScreenGonk::GetEGLSurface()
 {
+    MOZ_ASSERT(CompositorParent::IsInCompositorThread());
     return mEGLSurface;
+}
+
+already_AddRefed<mozilla::gl::GLContext>
+nsScreenGonk::GetGLContext()
+{
+    MOZ_ASSERT(CompositorParent::IsInCompositorThread());
+    RefPtr<mozilla::gl::GLContext>glContext = mGLContext;
+    return glContext.forget();
 }
 
 static void
@@ -771,7 +788,8 @@ NotifyDisplayChange(uint32_t aId, bool aConnected)
 
 nsresult
 nsScreenManagerGonk::AddScreen(GonkDisplay::DisplayType aDisplayType,
-                               android::IGraphicBufferProducer* aSink)
+                               android::IGraphicBufferProducer* aSink,
+                               NotifyDisplayChangedEvent aEventVisibility)
 {
     MOZ_ASSERT(NS_IsMainThread());
 
@@ -783,11 +801,15 @@ nsScreenManagerGonk::AddScreen(GonkDisplay::DisplayType aDisplayType,
 
     GonkDisplay::NativeData nativeData =
         GetGonkDisplay()->GetNativeData(aDisplayType, aSink);
-    nsScreenGonk* screen = new nsScreenGonk(id, aDisplayType, nativeData);
-
+    nsScreenGonk* screen = new nsScreenGonk(id,
+                                            aDisplayType,
+                                            nativeData,
+                                            aEventVisibility);
     mScreens.AppendElement(screen);
 
-    NotifyDisplayChange(id, true);
+    if (aEventVisibility == NotifyDisplayChangedEvent::Observable) {
+        NotifyDisplayChange(id, true);
+    }
 
     // By default, non primary screen does mirroring.
     if (aDisplayType != GonkDisplay::DISPLAY_PRIMARY &&
@@ -806,6 +828,7 @@ nsScreenManagerGonk::RemoveScreen(GonkDisplay::DisplayType aDisplayType)
     NS_ENSURE_TRUE(aDisplayType < GonkDisplay::DisplayType::NUM_DISPLAY_TYPES,
                    NS_ERROR_FAILURE);
 
+    NotifyDisplayChangedEvent eventVisibility = NotifyDisplayChangedEvent::Observable;
     uint32_t screenId = GetIdFromType(aDisplayType);
     NS_ENSURE_TRUE(IsScreenConnected(screenId), NS_ERROR_FAILURE);
 
@@ -814,12 +837,14 @@ nsScreenManagerGonk::RemoveScreen(GonkDisplay::DisplayType aDisplayType)
             if (mScreens[i]->IsMirroring()) {
                 mScreens[i]->DisableMirroring();
             }
+            eventVisibility = mScreens[i]->GetEventVisibility();
             mScreens.RemoveElementAt(i);
             break;
         }
     }
 
-    NotifyDisplayChange(screenId, false);
-
+    if (eventVisibility == NotifyDisplayChangedEvent::Observable) {
+      NotifyDisplayChange(screenId, false);
+    }
     return NS_OK;
 }

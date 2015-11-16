@@ -1190,9 +1190,9 @@ nsDisplayListBuilder::AdjustWindowDraggingRegion(nsIFrame* aFrame)
     if (transformedDevPixelBorderBox.ToIntRect(&transformedDevPixelBorderBoxInt)) {
       const nsStyleUserInterface* styleUI = aFrame->StyleUserInterface();
       if (styleUI->mWindowDragging == NS_STYLE_WINDOW_DRAGGING_DRAG) {
-        mWindowDraggingRegion.OrWith(LayoutDevicePixel::ToUntyped(transformedDevPixelBorderBoxInt));
+        mWindowDraggingRegion.OrWith(transformedDevPixelBorderBoxInt.ToUnknownRect());
       } else {
-        mWindowDraggingRegion.SubOut(LayoutDevicePixel::ToUntyped(transformedDevPixelBorderBoxInt));
+        mWindowDraggingRegion.SubOut(transformedDevPixelBorderBoxInt.ToUnknownRect());
       }
     }
   }
@@ -1996,11 +1996,17 @@ void nsDisplayList::Sort(nsDisplayListBuilder* aBuilder,
 nsDisplayItem::nsDisplayItem(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame)
   : mFrame(aFrame)
   , mClip(aBuilder->ClipState().GetCurrentCombinedClip(aBuilder))
+  , mAnimatedGeometryRoot(nullptr)
 #ifdef MOZ_DUMP_PAINTING
   , mPainted(false)
 #endif
 {
   mReferenceFrame = aBuilder->FindReferenceFrameFor(aFrame, &mToReferenceFrame);
+  // This can return the wrong result if the item override ShouldFixToViewport(),
+  // the item needs to set it again in its constructor.
+  mAnimatedGeometryRoot = nsLayoutUtils::GetAnimatedGeometryRootForInit(this, aBuilder);
+  MOZ_ASSERT(nsLayoutUtils::IsAncestorFrameCrossDoc(aBuilder->RootReferenceFrame(),
+                                                      mAnimatedGeometryRoot), "Bad");
   NS_ASSERTION(aBuilder->GetDirtyRect().width >= 0 ||
                !aBuilder->IsForPainting(), "dirty rect not set");
   // The dirty rect is for mCurrentFrame, so we have to use
@@ -2141,6 +2147,9 @@ nsDisplayBackgroundImage::nsDisplayBackgroundImage(nsDisplayListBuilder* aBuilde
 
   mBounds = GetBoundsInternal(aBuilder);
   mDestArea = GetDestAreaInternal(aBuilder);
+  if (ShouldFixToViewport(aBuilder)) {
+    mAnimatedGeometryRoot = nsLayoutUtils::GetAnimatedGeometryRootFor(this, aBuilder);
+  }
 }
 
 nsRect
@@ -3786,8 +3795,7 @@ RequiredLayerStateForChildren(nsDisplayListBuilder* aBuilder,
   LayerState result = LAYER_INACTIVE;
   for (nsDisplayItem* i = aList.GetBottom(); i; i = i->GetAbove()) {
     if (result == LAYER_INACTIVE &&
-        nsLayoutUtils::GetAnimatedGeometryRootFor(i, aBuilder) !=
-          aExpectedAnimatedGeometryRootForChildren) {
+        i->AnimatedGeometryRoot() != aExpectedAnimatedGeometryRootForChildren) {
       result = LAYER_ACTIVE;
     }
 
@@ -4001,8 +4009,13 @@ nsDisplayOpacity::CanApplyOpacity() const
 bool
 nsDisplayOpacity::ShouldFlattenAway(nsDisplayListBuilder* aBuilder)
 {
-  if (NeedsActiveLayer(aBuilder))
+  if (NeedsActiveLayer(aBuilder) || mOpacity == 0.0) {
+    // If our opacity is zero then we'll discard all descendant display items
+    // except for layer event regions, so there's no point in doing this
+    // optimization (and if we do do it, then invalidations of those descendants
+    // might trigger repainting).
     return false;
+  }
 
   nsDisplayItem* child = mList.GetBottom();
   // Only try folding our opacity down if we have at most three children
@@ -4061,8 +4074,7 @@ nsDisplayOpacity::GetLayerState(nsDisplayListBuilder* aBuilder,
   if (NeedsActiveLayer(aBuilder))
     return LAYER_ACTIVE;
 
-  return RequiredLayerStateForChildren(aBuilder, aManager, aParameters, mList,
-    nsLayoutUtils::GetAnimatedGeometryRootFor(this, aBuilder));
+  return RequiredLayerStateForChildren(aBuilder, aManager, aParameters, mList, AnimatedGeometryRoot());
 }
 
 bool
@@ -4794,6 +4806,7 @@ nsDisplayTransform::SetReferenceFrameToAncestor(nsDisplayListBuilder* aBuilder)
   mReferenceFrame =
     aBuilder->FindReferenceFrameFor(outerFrame);
   mToReferenceFrame = mFrame->GetOffsetToCrossDoc(mReferenceFrame);
+  mAnimatedGeometryRoot = nsLayoutUtils::GetAnimatedGeometryRootForFrame(aBuilder, outerFrame);
   mVisibleRect = aBuilder->GetDirtyRect() + mToReferenceFrame;
 }
 

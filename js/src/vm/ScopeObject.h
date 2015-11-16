@@ -1205,9 +1205,9 @@ class DebugScopes
      * removes scopes as they are popped). Thus, two consecutive debugger lazy
      * updates of liveScopes need only fill in the new scopes.
      */
-    typedef HashMap<ScopeObject*,
+    typedef HashMap<ReadBarriered<ScopeObject*>,
                     LiveScopeVal,
-                    DefaultHasher<ScopeObject*>,
+                    MovableCellHasher<ReadBarriered<ScopeObject*>>,
                     RuntimeAllocPolicy> LiveScopeMap;
     LiveScopeMap liveScopes;
     static MOZ_ALWAYS_INLINE void liveScopesPostWriteBarrier(JSRuntime* rt, LiveScopeMap* map,
@@ -1446,6 +1446,19 @@ CreateScopeObjectsForScopeChain(JSContext* cx, AutoObjectVector& scopeChain,
 
 bool HasNonSyntacticStaticScopeChain(JSObject* staticScope);
 uint32_t StaticScopeChainLength(JSObject* staticScope);
+
+bool CheckVarNameConflict(JSContext* cx, Handle<ClonedBlockObject*> lexicalScope,
+                          HandlePropertyName name);
+
+bool CheckLexicalNameConflict(JSContext* cx, Handle<ClonedBlockObject*> lexicalScope,
+                              HandleObject varObj, HandlePropertyName name);
+
+bool CheckGlobalDeclarationConflicts(JSContext* cx, HandleScript script,
+                                     Handle<ClonedBlockObject*> lexicalScope,
+                                     HandleObject varObj);
+
+bool CheckEvalDeclarationConflicts(JSContext* cx, HandleScript script,
+                                   HandleObject scopeChain, HandleObject varObj);
 
 #ifdef DEBUG
 void DumpStaticScopeChain(JSScript* script);

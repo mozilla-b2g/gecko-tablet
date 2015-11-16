@@ -20,6 +20,7 @@
 #include "nsDataHashtable.h"
 #include "harfbuzz/hb.h"
 #include "mozilla/gfx/2D.h"
+#include "mozilla/UniquePtr.h"
 
 typedef struct gr_face gr_face;
 
@@ -429,7 +430,7 @@ public:
 
     RefPtr<gfxCharacterMap> mCharacterMap;
     uint32_t         mUVSOffset;
-    nsAutoArrayPtr<uint8_t> mUVSData;
+    mozilla::UniquePtr<uint8_t[]> mUVSData;
     nsAutoPtr<gfxUserFontData> mUserFontData;
     nsAutoPtr<gfxSVGGlyphs> mSVGGlyphs;
     // list of gfxFonts that are using SVG glyphs
@@ -663,7 +664,8 @@ public:
         mIsSimpleFamily(false),
         mIsBadUnderlineFamily(false),
         mFamilyCharacterMapInitialized(false),
-        mSkipDefaultFeatureSpaceCheck(false)
+        mSkipDefaultFeatureSpaceCheck(false),
+        mCheckForFallbackFaces(false)
         { }
 
     const nsString& Name() { return mName; }
@@ -767,6 +769,7 @@ public:
     }
 
     bool IsBadUnderlineFamily() const { return mIsBadUnderlineFamily; }
+    bool CheckForFallbackFaces() const { return mCheckForFallbackFaces; }
 
     // sort available fonts to put preferred (standard) faces towards the end
     void SortAvailableFonts();
@@ -822,6 +825,7 @@ protected:
     bool mIsBadUnderlineFamily : 1;
     bool mFamilyCharacterMapInitialized : 1;
     bool mSkipDefaultFeatureSpaceCheck : 1;
+    bool mCheckForFallbackFaces : 1;  // check other faces for character
 
     enum {
         // for "simple" families, the faces are stored in mAvailableFonts

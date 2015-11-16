@@ -957,7 +957,7 @@ TabParent::UpdateDimensions(const nsIntRect& rect, const ScreenIntSize& size)
       ViewAs<LayoutDevicePixel>(mRect,
                                 PixelCastJustification::LayoutDeviceIsScreenForTabDims);
     LayoutDeviceIntSize devicePixelSize =
-      ViewAs<LayoutDevicePixel>(mDimensions.ToUnknownSize(),
+      ViewAs<LayoutDevicePixel>(mDimensions,
                                 PixelCastJustification::LayoutDeviceIsScreenForTabDims);
 
     CSSRect unscaledRect = devicePixelRect / widgetScale;
@@ -2878,11 +2878,13 @@ TabParent::InjectTouchEvent(const nsAString& aType,
         CSSPoint::ToAppUnits(CSSPoint(aXs[i], aYs[i])),
         presContext->AppUnitsPerDevPixel());
 
-    RefPtr<Touch> t = new Touch(aIdentifiers[i],
-                                  pt,
-                                  nsIntPoint(aRxs[i], aRys[i]),
-                                  aRotationAngles[i],
-                                  aForces[i]);
+    LayoutDeviceIntPoint radius =
+      LayoutDeviceIntPoint::FromAppUnitsRounded(
+        CSSPoint::ToAppUnits(CSSPoint(aRxs[i], aRys[i])),
+        presContext->AppUnitsPerDevPixel());
+
+    RefPtr<Touch> t =
+      new Touch(aIdentifiers[i], pt, radius, aRotationAngles[i], aForces[i]);
 
     // Consider all injected touch events as changedTouches. For more details
     // about the meaning of changedTouches for each event, see
@@ -2907,7 +2909,7 @@ NS_IMETHODIMP
 TabParent::SetDocShellIsActive(bool isActive)
 {
   mDocShellIsActive = isActive;
-  Unused << SendSetDocShellIsActive(isActive);
+  Unused << SendSetDocShellIsActive(isActive, true);
   return NS_OK;
 }
 
@@ -2915,6 +2917,14 @@ NS_IMETHODIMP
 TabParent::GetDocShellIsActive(bool* aIsActive)
 {
   *aIsActive = mDocShellIsActive;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TabParent::SetDocShellIsActiveAndForeground(bool isActive)
+{
+  mDocShellIsActive = isActive;
+  Unused << SendSetDocShellIsActive(isActive, false);
   return NS_OK;
 }
 

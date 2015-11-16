@@ -301,7 +301,7 @@ SourceBuffer::Ended()
   mContentManager->Ended();
   // We want the MediaSourceReader to refresh its buffered range as it may
   // have been modified (end lined up).
-  mMediaSource->GetDecoder()->NotifyDataArrived(1, mReportedOffset++, /* aThrottleUpdates = */ false);
+  mMediaSource->GetDecoder()->NotifyDataArrived();
 }
 
 SourceBuffer::SourceBuffer(MediaSource* aMediaSource, const nsACString& aType)
@@ -310,7 +310,6 @@ SourceBuffer::SourceBuffer(MediaSource* aMediaSource, const nsACString& aType)
   , mUpdating(false)
   , mActive(false)
   , mUpdateID(0)
-  , mReportedOffset(0)
   , mType(aType)
 {
   MOZ_ASSERT(NS_IsMainThread());
@@ -482,9 +481,7 @@ SourceBuffer::AppendDataCompletedWithSuccess(bool aHasActiveTracks)
   }
   if (mActive) {
     // Tell our parent decoder that we have received new data.
-    // The information provided do not matter much so long as it is monotonically
-    // increasing.
-    mMediaSource->GetDecoder()->NotifyDataArrived(1, mReportedOffset++, /* aThrottleUpdates = */ false);
+    mMediaSource->GetDecoder()->NotifyDataArrived();
     // Send progress event.
     mMediaSource->GetDecoder()->NotifyBytesDownloaded();
   }

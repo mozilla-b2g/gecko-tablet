@@ -95,7 +95,6 @@ XPCOMUtils.defineLazyGetter(this, "gBrowserBundle", function() {
 const nsIWebNavigation = Ci.nsIWebNavigation;
 
 var gLastBrowserCharset = null;
-var gProxyFavIcon = null;
 var gLastValidURLStr = "";
 var gInPrintPreviewMode = false;
 var gContextMenu = null; // nsContextMenu instance
@@ -2562,11 +2561,7 @@ function SetPageProxyState(aState)
   if (!gURLBar)
     return;
 
-  if (!gProxyFavIcon)
-    gProxyFavIcon = document.getElementById("page-proxy-favicon");
-
   gURLBar.setAttribute("pageproxystate", aState);
-  gProxyFavIcon.setAttribute("pageproxystate", aState);
 
   // the page proxy state is set to valid via OnLocationChange, which
   // gets called when we switch tabs.
@@ -2836,8 +2831,7 @@ var BrowserOnClick = {
                                    .getService(Ci.nsIWeakCryptoOverride);
         weakCryptoOverride.addWeakCryptoOverride(
           msg.data.location.hostname,
-          PrivateBrowsingUtils.isBrowserPrivate(gBrowser.selectedBrowser),
-          true /* temporary */);
+          PrivateBrowsingUtils.isBrowserPrivate(gBrowser.selectedBrowser));
       break;
     }
   },
@@ -5010,6 +5004,10 @@ nsBrowserAccess.prototype = {
   isTabContentWindow: function (aWindow) {
     return gBrowser.browsers.some(browser => browser.contentWindow == aWindow);
   },
+
+  canClose() {
+    return CanCloseWindow();
+  },
 }
 
 function getTogglableToolbars() {
@@ -6566,6 +6564,26 @@ var IndexedDBPromptHelper = {
   }
 };
 
+function CanCloseWindow()
+{
+  // Avoid redundant calls to canClose from showing multiple
+  // PermitUnload dialogs.
+  if (window.skipNextCanClose) {
+    return true;
+  }
+
+  for (let browser of gBrowser.browsers) {
+    let {permitUnload, timedOut} = browser.permitUnload();
+    if (timedOut) {
+      return true;
+    }
+    if (!permitUnload) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function WindowIsClosing()
 {
   if (TabView.isVisible()) {
@@ -6576,27 +6594,19 @@ function WindowIsClosing()
   if (!closeWindow(false, warnAboutClosingWindow))
     return false;
 
-  // Bug 967873 - Proxy nsDocumentViewer::PermitUnload to the child process
-  if (gMultiProcessBrowser)
+  // In theory we should exit here and the Window's internal Close
+  // method should trigger canClose on nsBrowserAccess. However, by
+  // that point it's too late to be able to show a prompt for
+  // PermitUnload. So we do it here, when we still can.
+  if (CanCloseWindow()) {
+    // This flag ensures that the later canClose call does nothing.
+    // It's only needed to make tests pass, since they detect the
+    // prompt even when it's not actually shown.
+    window.skipNextCanClose = true;
     return true;
-
-  for (let browser of gBrowser.browsers) {
-    let ds = browser.docShell;
-    // Passing true to permitUnload indicates we plan on closing the window.
-    // This means that once unload is permitted, all further calls to
-    // permitUnload will be ignored. This avoids getting multiple prompts
-    // to unload the page.
-    if (ds.contentViewer && !ds.contentViewer.permitUnload(true)) {
-      // ... however, if the user aborts closing, we need to undo that,
-      // to ensure they get prompted again when we next try to close the window.
-      // We do this on the window's toplevel docshell instead of on the tab, so
-      // that all tabs we iterated before will get this reset.
-      window.getInterface(Ci.nsIDocShell).contentViewer.resetCloseWindow();
-      return false;
-    }
   }
 
-  return true;
+  return false;
 }
 
 /**
@@ -6986,36 +6996,13 @@ var gIdentityHandler = {
     delete this._identityIconCountryLabel;
     return this._identityIconCountryLabel = document.getElementById("identity-icon-country-label");
   },
-  get _identityIcons () {
-    delete this._identityIcons;
-    return this._identityIcons = document.getElementById("identity-icons");
-  },
   get _identityIcon () {
     delete this._identityIcon;
-    return this._identityIcon = document.getElementById("page-proxy-favicon");
+    return this._identityIcon = document.getElementById("identity-icon");
   },
   get _permissionList () {
     delete this._permissionList;
     return this._permissionList = document.getElementById("identity-popup-permission-list");
-  },
-
-  /**
-   * Rebuild cache of the elements that may or may not exist depending
-   * on whether there's a location bar.
-   */
-  _cacheElements : function() {
-    delete this._identityBox;
-    delete this._identityIcons;
-    delete this._identityIconLabel;
-    delete this._identityIconCountryLabel;
-    delete this._identityIcon;
-    delete this._permissionList;
-    this._identityBox = document.getElementById("identity-box");
-    this._identityIcons = document.getElementById("identity-icons");
-    this._identityIconLabel = document.getElementById("identity-icon-label");
-    this._identityIconCountryLabel = document.getElementById("identity-icon-country-label");
-    this._identityIcon = document.getElementById("page-proxy-favicon");
-    this._permissionList = document.getElementById("identity-popup-permission-list");
   },
 
   /**
@@ -7140,6 +7127,7 @@ var gIdentityHandler = {
     if (shouldHidePopup) {
       this._identityPopup.hidePopup();
     }
+    this.showWeakCryptoInfoBar();
 
     // NOTE: We do NOT update the identity popup (the control center) when
     // we receive a new security state on the existing page (i.e. from a
@@ -7286,6 +7274,55 @@ var gIdentityHandler = {
     this._identityIconLabel.parentNode.style.direction = icon_labels_dir;
     // Hide completely if the organization label is empty
     this._identityIconLabel.parentNode.collapsed = icon_label ? false : true;
+  },
+
+  /**
+   * Show the weak crypto notification bar.
+   */
+  showWeakCryptoInfoBar() {
+    if (!this._uriHasHost || !this._isBroken || !this._sslStatus.cipherName ||
+        this._sslStatus.cipherName.indexOf("_RC4_") < 0) {
+      return;
+    }
+
+    let notificationBox = gBrowser.getNotificationBox();
+    let notification = notificationBox.getNotificationWithValue("weak-crypto");
+    if (notification) {
+      return;
+    }
+
+    let brandBundle = document.getElementById("bundle_brand");
+    let brandShortName = brandBundle.getString("brandShortName");
+    let message = gNavigatorBundle.getFormattedString("weakCryptoOverriding.message",
+                                                      [brandShortName]);
+
+    let host = this._uri.host;
+    let port = 443;
+    try {
+      if (this._uri.port > 0) {
+        port = this._uri.port;
+      }
+    } catch (e) {}
+
+    let buttons = [{
+      label: gNavigatorBundle.getString("revokeOverride.label"),
+      accessKey: gNavigatorBundle.getString("revokeOverride.accesskey"),
+      callback: function (aNotification, aButton) {
+        try {
+          let weakCryptoOverride = Cc["@mozilla.org/security/weakcryptooverride;1"]
+                                     .getService(Ci.nsIWeakCryptoOverride);
+          weakCryptoOverride.removeWeakCryptoOverride(host, port,
+            PrivateBrowsingUtils.isBrowserPrivate(gBrowser.selectedBrowser));
+          BrowserReloadWithFlags(nsIWebNavigation.LOAD_FLAGS_BYPASS_CACHE);
+        } catch (e) {
+          Cu.reportError(e);
+        }
+      }
+    }];
+
+    const priority = notificationBox.PRIORITY_WARNING_MEDIUM;
+    notificationBox.appendNotification(message, "weak-crypto", null,
+                                       priority, buttons);
   },
 
   /**
@@ -7467,7 +7504,7 @@ var gIdentityHandler = {
     this._identityBox.setAttribute("open", "true");
 
     // Now open the popup, anchored off the primary chrome element
-    this._identityPopup.openPopup(this._identityIcons, "bottomcenter topleft");
+    this._identityPopup.openPopup(this._identityIcon, "bottomcenter topleft");
   },
 
   onPopupShown(event) {
@@ -7510,7 +7547,7 @@ var gIdentityHandler = {
     dt.setData("text/uri-list", value);
     dt.setData("text/plain", value);
     dt.setData("text/html", htmlString);
-    dt.setDragImage(gProxyFavIcon, 16, 16);
+    dt.setDragImage(this._identityIcon, 16, 16);
   },
 
   updateSitePermissions: function () {

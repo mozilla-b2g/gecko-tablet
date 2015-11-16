@@ -14,6 +14,8 @@
 
 #include "builtin/ModuleObject.h"
 
+#include "frontend/ParseNode.h"
+
 #include "vm/ArgumentsObject.h"
 #include "vm/GlobalObject.h"
 #include "vm/ProxyObject.h"
@@ -2187,13 +2189,6 @@ js::IsDebugScopeSlow(ProxyObject* proxy)
 
 /*****************************************************************************/
 
-/* static */ MOZ_ALWAYS_INLINE void
-DebugScopes::liveScopesPostWriteBarrier(JSRuntime* rt, LiveScopeMap* map, ScopeObject* key)
-{
-    if (key && IsInsideNursery(key))
-        rt->gc.storeBuffer.putGeneric(gc::HashKeyRef<LiveScopeMap, ScopeObject*>(map, key));
-}
-
 DebugScopes::DebugScopes(JSContext* cx)
  : proxiedScopes(cx),
    missingScopes(cx->runtime()),
@@ -2255,18 +2250,14 @@ DebugScopes::sweep(JSRuntime* rt)
     }
 
     for (LiveScopeMap::Enum e(liveScopes); !e.empty(); e.popFront()) {
-        ScopeObject* scope = e.front().key();
-
         e.front().value().sweep();
 
         /*
          * Scopes can be finalized when a debugger-synthesized ScopeObject is
          * no longer reachable via its DebugScopeObject.
          */
-        if (IsAboutToBeFinalizedUnbarriered(&scope))
+        if (IsAboutToBeFinalized(&e.front().mutableKey()))
             e.removeFront();
-        else if (scope != e.front().key())
-            e.rekeyFront(scope);
     }
 }
 
@@ -2399,7 +2390,6 @@ DebugScopes::addDebugScope(JSContext* cx, const ScopeIter& si, DebugScopeObject&
             ReportOutOfMemory(cx);
             return false;
         }
-        liveScopesPostWriteBarrier(cx->runtime(), &scopes->liveScopes, &debugScope.scope());
     }
 
     return true;
@@ -2595,7 +2585,6 @@ DebugScopes::updateLiveScopes(JSContext* cx)
                     return false;
                 if (!scopes->liveScopes.put(&si.scope(), LiveScopeVal(si)))
                     return false;
-                liveScopesPostWriteBarrier(cx->runtime(), &scopes->liveScopes, &si.scope());
             }
         }
 
@@ -2934,6 +2923,152 @@ js::StaticScopeChainLength(JSObject* staticScope)
     for (StaticScopeIter<NoGC> ssi(staticScope); !ssi.done(); ssi++)
         length++;
     return length;
+}
+
+bool
+js::CheckLexicalNameConflict(JSContext* cx, Handle<ClonedBlockObject*> lexicalScope,
+                             HandleObject varObj, HandlePropertyName name)
+{
+    mozilla::Maybe<frontend::Definition::Kind> redeclKind;
+    RootedId id(cx, NameToId(name));
+    RootedShape shape(cx);
+    if ((shape = lexicalScope->lookup(cx, name))) {
+        redeclKind = mozilla::Some(shape->writable() ? frontend::Definition::LET
+                                                     : frontend::Definition::CONSTANT);
+    } else if (varObj->isNative() && (shape = varObj->as<NativeObject>().lookup(cx, name))) {
+        if (!shape->configurable())
+            redeclKind = mozilla::Some(frontend::Definition::VAR);
+    } else {
+        Rooted<PropertyDescriptor> desc(cx);
+        if (!GetOwnPropertyDescriptor(cx, varObj, id, &desc))
+            return false;
+        if (desc.object() && desc.hasConfigurable() && !desc.configurable())
+            redeclKind = mozilla::Some(frontend::Definition::VAR);
+    }
+
+    if (redeclKind.isSome()) {
+        ReportRuntimeRedeclaration(cx, name, *redeclKind);
+        return false;
+    }
+
+    return true;
+}
+
+bool
+js::CheckVarNameConflict(JSContext* cx, Handle<ClonedBlockObject*> lexicalScope,
+                         HandlePropertyName name)
+{
+    if (Shape* shape = lexicalScope->lookup(cx, name)) {
+        ReportRuntimeRedeclaration(cx, name, shape->writable() ? frontend::Definition::LET
+                                                               : frontend::Definition::CONSTANT);
+        return false;
+    }
+    return true;
+}
+
+static bool
+CheckVarNameConflict(JSContext* cx, Handle<CallObject*> callObj, HandlePropertyName name)
+{
+    RootedFunction fun(cx, &callObj->callee());
+    RootedScript script(cx, fun->nonLazyScript());
+    uint32_t bodyLevelLexicalsStart = script->bindings.numVars();
+
+    for (BindingIter bi(script); !bi.done(); bi++) {
+        if (name == bi->name() &&
+            bi.isBodyLevelLexical() &&
+            bi.localIndex() >= bodyLevelLexicalsStart)
+        {
+            ReportRuntimeRedeclaration(cx, name,
+                                       bi->kind() == Binding::CONSTANT
+                                       ? frontend::Definition::CONSTANT
+                                       : frontend::Definition::LET);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool
+js::CheckGlobalDeclarationConflicts(JSContext* cx, HandleScript script,
+                                    Handle<ClonedBlockObject*> lexicalScope,
+                                    HandleObject varObj)
+{
+    // Due to the extensibility of the global lexical scope, we must check for
+    // redeclaring a binding.
+    //
+    // In the case of non-syntactic scope chains, we are checking
+    // redeclarations against the non-syntactic lexical scope and the
+    // variables object that the lexical scope corresponds to.
+    RootedPropertyName name(cx);
+    BindingIter bi(script);
+
+    for (uint32_t i = 0; i < script->bindings.numVars(); i++, bi++) {
+        name = bi->name();
+        if (!CheckVarNameConflict(cx, lexicalScope, name))
+            return false;
+    }
+
+    for (uint32_t i = 0; i < script->bindings.numBodyLevelLexicals(); i++, bi++) {
+        name = bi->name();
+        if (!CheckLexicalNameConflict(cx, lexicalScope, varObj, name))
+            return false;
+    }
+
+    return true;
+}
+
+template <class ScopeT>
+static bool
+CheckVarNameConflictsInScope(JSContext* cx, HandleScript script, HandleObject obj)
+{
+    Rooted<ScopeT*> scope(cx);
+
+    // We return true when the scope object is not ScopeT below, because
+    // ScopeT is either ClonedBlockObject or CallObject. No other scope
+    // objects can contain lexical bindings, and there are no other overloads
+    // for CheckVarNameConflict.
+
+    if (obj->is<ScopeT>())
+        scope = &obj->as<ScopeT>();
+    else if (obj->is<DebugScopeObject>() && obj->as<DebugScopeObject>().scope().is<ScopeT>())
+        scope = &obj->as<DebugScopeObject>().scope().as<ScopeT>();
+    else
+        return true;
+
+    RootedPropertyName name(cx);
+
+    for (BindingIter bi(script); !bi.done(); bi++) {
+        name = bi->name();
+        if (!CheckVarNameConflict(cx, scope, name))
+            return false;
+    }
+
+    return true;
+}
+
+bool
+js::CheckEvalDeclarationConflicts(JSContext* cx, HandleScript script,
+                                  HandleObject scopeChain, HandleObject varObj)
+{
+    // We don't need to check body-level lexical bindings for conflict. Eval
+    // scripts always execute under their own lexical scope.
+    if (script->bindings.numVars() == 0)
+        return true;
+
+    RootedObject obj(cx, scopeChain);
+
+    // ES6 18.2.1.2 step d
+    //
+    // Check that a direct eval will not hoist 'var' bindings over lexical
+    // bindings with the same name.
+    while (obj != varObj) {
+        if (!CheckVarNameConflictsInScope<ClonedBlockObject>(cx, script, obj))
+            return false;
+        obj = obj->enclosingScope();
+    }
+
+    return CheckVarNameConflictsInScope<CallObject>(cx, script, varObj);
 }
 
 #ifdef DEBUG

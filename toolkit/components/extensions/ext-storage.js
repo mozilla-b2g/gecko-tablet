@@ -6,7 +6,6 @@ XPCOMUtils.defineLazyModuleGetter(this, "ExtensionStorage",
 Cu.import("resource://gre/modules/ExtensionUtils.jsm");
 var {
   EventManager,
-  ignoreEvent,
   runSafe,
 } = ExtensionUtils;
 
@@ -28,6 +27,13 @@ extensions.registerPrivilegedAPI("storage", (extension, context) => {
         },
         remove: function(items, callback) {
           ExtensionStorage.remove(extension.id, items).then(() => {
+            if (callback) {
+              runSafe(context, callback);
+            }
+          });
+        },
+        clear: function(callback) {
+          ExtensionStorage.clear(extension.id).then(() => {
             if (callback) {
               runSafe(context, callback);
             }

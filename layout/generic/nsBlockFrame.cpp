@@ -728,7 +728,7 @@ nsBlockFrame::GetMinISize(nsRenderingContext *aRenderingContext)
         // XXX Bug NNNNNN Should probably handle percentage text-indent.
 
         data.line = &line;
-        data.lineContainer = curFrame;
+        data.SetLineContainer(curFrame);
         nsIFrame *kid = line->mFirstChild;
         for (int32_t i = 0, i_end = line->GetChildCount(); i != i_end;
              ++i, kid = kid->GetNextSibling()) {
@@ -813,7 +813,7 @@ nsBlockFrame::GetPrefISize(nsRenderingContext *aRenderingContext)
         // XXX Bug NNNNNN Should probably handle percentage text-indent.
 
         data.line = &line;
-        data.lineContainer = curFrame;
+        data.SetLineContainer(curFrame);
         nsIFrame *kid = line->mFirstChild;
         for (int32_t i = 0, i_end = line->GetChildCount(); i != i_end;
              ++i, kid = kid->GetNextSibling()) {
@@ -887,7 +887,7 @@ nsBlockFrame::GetPrefWidthTightBounds(nsRenderingContext* aRenderingContext,
         // XXX Bug NNNNNN Should probably handle percentage text-indent.
 
         data.line = &line;
-        data.lineContainer = curFrame;
+        data.SetLineContainer(curFrame);
         nsIFrame *kid = line->mFirstChild;
         for (int32_t i = 0, i_end = line->GetChildCount(); i != i_end;
              ++i, kid = kid->GetNextSibling()) {
@@ -3090,7 +3090,8 @@ nsBlockFrame::ReflowBlockFrame(nsBlockReflowState& aState,
   const nsStyleDisplay* display = frame->StyleDisplay();
   nsBlockReflowContext brc(aState.mPresContext, aState.mReflowState);
 
-  uint8_t breakType = display->mBreakType;
+  uint8_t breakType =
+    display->PhysicalBreakType(aState.mReflowState.GetWritingMode());
   if (NS_STYLE_CLEAR_NONE != aState.mFloatBreakType) {
     breakType = nsLayoutUtils::CombineBreakType(breakType,
                                                 aState.mFloatBreakType);
@@ -4201,11 +4202,12 @@ nsBlockFrame::SplitFloat(nsBlockReflowState& aState,
     nextInFlow->AddStateBits(NS_FRAME_IS_OVERFLOW_CONTAINER);
   }
 
-  if (aFloat->StyleDisplay()->mFloats == NS_STYLE_FLOAT_LEFT) {
+  uint8_t floatStyle =
+    aFloat->StyleDisplay()->PhysicalFloats(aState.mReflowState.GetWritingMode());
+  if (floatStyle == NS_STYLE_FLOAT_LEFT) {
     aState.mFloatManager->SetSplitLeftFloatAcrossBreak();
   } else {
-    MOZ_ASSERT(aFloat->StyleDisplay()->mFloats == NS_STYLE_FLOAT_RIGHT,
-               "unexpected float side");
+    MOZ_ASSERT(floatStyle == NS_STYLE_FLOAT_RIGHT, "unexpected float side");
     aState.mFloatManager->SetSplitRightFloatAcrossBreak();
   }
 
@@ -6759,8 +6761,11 @@ nsBlockFrame::Init(nsIContent*       aContent,
   //   If the box is a block container, then it establishes a new block
   //   formatting context.
   // (http://dev.w3.org/csswg/css-writing-modes/#block-flow)
-  if (GetParent() && StyleVisibility()->mWritingMode !=
-                     GetParent()->StyleVisibility()->mWritingMode) {
+  // If the box has contain: paint (or contain: strict), then it should also
+  // establish a formatting context.
+  if ((GetParent() && StyleVisibility()->mWritingMode !=
+                      GetParent()->StyleVisibility()->mWritingMode) ||
+      StyleDisplay()->IsContainPaint()) {
     AddStateBits(NS_BLOCK_FLOAT_MGR | NS_BLOCK_MARGIN_ROOT);
   }
 

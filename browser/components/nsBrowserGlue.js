@@ -32,6 +32,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "RemoteAboutNewTab",
 XPCOMUtils.defineLazyModuleGetter(this, "RemoteNewTabUtils",
                                   "resource:///modules/RemoteNewTabUtils.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "NewTabPrefsProvider",
+                                  "resource:///modules/NewTabPrefsProvider.jsm");
+
 XPCOMUtils.defineLazyModuleGetter(this, "UITour",
                                   "resource:///modules/UITour.jsm");
 
@@ -575,6 +578,7 @@ BrowserGlue.prototype = {
       switchtab: 6,
       tag: 7,
       visiturl: 8,
+      remotetab: 9,
     };
     if (actionType in buckets) {
       Services.telemetry
@@ -848,6 +852,7 @@ BrowserGlue.prototype = {
     RemoteNewTabUtils.init();
     RemoteNewTabUtils.links.addProvider(DirectoryLinksProvider);
     RemoteAboutNewTab.init();
+    NewTabPrefsProvider.prefs.init();
 
     SessionStore.init();
     BrowserUITelemetry.init();
@@ -1169,6 +1174,7 @@ BrowserGlue.prototype = {
     WebappManager.uninit();
 
     RemoteAboutNewTab.uninit();
+    NewTabPrefsProvider.prefs.uninit();
     AboutNewTab.uninit();
 #ifdef NIGHTLY_BUILD
     if (Services.prefs.getBoolPref("dom.identity.enabled")) {
@@ -1329,7 +1335,7 @@ BrowserGlue.prototype = {
       let wins = Services.wm.getEnumerator("navigator:browser");
       while (wins.hasMoreElements()) {
         let win = wins.getNext();
-        if (win.TabView._tabBrowserHasHiddenTabs() && win.TabView.firstUseExperienced()) {
+        if (win.TabView._tabBrowserHasHiddenTabs() && win.TabView.firstUseExperienced) {
           haveTabGroups = true;
           break;
         }
@@ -1905,7 +1911,7 @@ BrowserGlue.prototype = {
   },
 
   _migrateUI: function BG__migrateUI() {
-    const UI_VERSION = 33;
+    const UI_VERSION = 34;
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul";
     let currentUIVersion = 0;
     try {
@@ -2250,7 +2256,7 @@ BrowserGlue.prototype = {
       this._notifyNotificationsUpgrade().catch(Cu.reportError);
     }
 
-    if (currentUIVersion < 33) {
+    if (currentUIVersion < 34) {
       // We'll do something once windows are open:
       this._mayNeedToWarnAboutTabGroups = true;
     }
@@ -2287,7 +2293,8 @@ BrowserGlue.prototype = {
                    "chrome://branding/content/about-logo.png";
     let title = gBrowserBundle.GetStringFromName("webNotifications.upgradeTitle");
     let text = gBrowserBundle.GetStringFromName("webNotifications.upgradeBody");
-    let url = Services.urlFormatter.formatURLPref("browser.push.warning.migrationURL");
+    let url = Services.urlFormatter.formatURLPref("app.support.baseURL") +
+      "push#w_upgraded-notifications";
 
     AlertsService.showAlertNotification(imageURL, title, text,
                                         true, url, clickCallback);
@@ -2765,7 +2772,8 @@ ContentPermissionPrompt.prototype = {
     }
 
     var options = {
-      learnMoreURL: Services.urlFormatter.formatURLPref("browser.push.warning.infoURL"),
+      learnMoreURL:
+        Services.urlFormatter.formatURLPref("app.support.baseURL") + "push",
     };
 
     this._showPrompt(aRequest, message, "desktop-notification", actions,

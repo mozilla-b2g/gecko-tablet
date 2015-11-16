@@ -3756,9 +3756,7 @@ nsresult GetEventAndTarget(nsIDocument* aDoc, nsISupports* aTarget,
     domDoc->CreateEvent(NS_LITERAL_STRING("Events"), getter_AddRefs(event));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = event->InitEvent(aEventName, aCanBubble, aCancelable);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  event->InitEvent(aEventName, aCanBubble, aCancelable);
   event->SetTrusted(aTrusted);
 
   rv = event->SetTarget(target);
@@ -6616,22 +6614,6 @@ nsContentUtils::FindInternalContentViewer(const nsACString& aType,
   return nullptr;
 }
 
-bool
-nsContentUtils::GetContentSecurityPolicy(nsIContentSecurityPolicy** aCSP)
-{
-  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
-
-  nsCOMPtr<nsIContentSecurityPolicy> csp;
-  nsresult rv = SubjectPrincipal()->GetCsp(getter_AddRefs(csp));
-  if (NS_FAILED(rv)) {
-    NS_ERROR("CSP: Failed to get CSP from principal.");
-    return false;
-  }
-
-  csp.forget(aCSP);
-  return true;
-}
-
 // static
 bool
 nsContentUtils::IsPatternMatching(nsAString& aValue, nsAString& aPattern,
@@ -8039,6 +8021,45 @@ nsContentUtils::InternalContentPolicyTypeToExternalOrPreload(nsContentPolicyType
   if (aType == nsIContentPolicy::TYPE_INTERNAL_SCRIPT_PRELOAD ||
       aType == nsIContentPolicy::TYPE_INTERNAL_IMAGE_PRELOAD ||
       aType == nsIContentPolicy::TYPE_INTERNAL_STYLESHEET_PRELOAD) {
+    return aType;
+  }
+  return InternalContentPolicyTypeToExternal(aType);
+}
+
+
+/* static */
+nsContentPolicyType
+nsContentUtils::InternalContentPolicyTypeToExternalOrWorker(nsContentPolicyType aType)
+{
+  switch (aType) {
+  case nsIContentPolicy::TYPE_INTERNAL_WORKER:
+  case nsIContentPolicy::TYPE_INTERNAL_SHARED_WORKER:
+  case nsIContentPolicy::TYPE_INTERNAL_SERVICE_WORKER:
+    return aType;
+
+  default:
+    return InternalContentPolicyTypeToExternal(aType);
+  }
+}
+
+/* static */
+bool
+nsContentUtils::IsPreloadType(nsContentPolicyType aType)
+{
+  if (aType == nsIContentPolicy::TYPE_INTERNAL_SCRIPT_PRELOAD ||
+      aType == nsIContentPolicy::TYPE_INTERNAL_IMAGE_PRELOAD ||
+      aType == nsIContentPolicy::TYPE_INTERNAL_STYLESHEET_PRELOAD) {
+    return true;
+  }
+  return false;
+}
+
+/* static */
+nsContentPolicyType
+nsContentUtils::InternalContentPolicyTypeToExternalOrCSPInternal(nsContentPolicyType aType)
+{
+  if (aType == InternalContentPolicyTypeToExternalOrWorker(aType) ||
+      aType == InternalContentPolicyTypeToExternalOrPreload(aType)) {
     return aType;
   }
   return InternalContentPolicyTypeToExternal(aType);

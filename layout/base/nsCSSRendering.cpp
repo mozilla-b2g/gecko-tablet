@@ -4166,9 +4166,9 @@ nsCSSRendering::PaintDecorationLine(nsIFrame* aFrame,
                                     DrawTarget& aDrawTarget,
                                     const Rect& aDirtyRect,
                                     const nscolor aColor,
-                                    const gfxPoint& aPt,
+                                    const Point& aPt,
                                     const Float aICoordInFrame,
-                                    const gfxSize& aLineSize,
+                                    const Size& aLineSize,
                                     const gfxFloat aAscent,
                                     const gfxFloat aOffset,
                                     const uint8_t aDecoration,
@@ -4437,7 +4437,7 @@ nsCSSRendering::DecorationLineToPath(const Rect& aDirtyRect,
   Rect path; // To benefit from RVO, we return this from all return points
 
   Rect rect = ToRect(
-    GetTextDecorationRectInternal(ThebesPoint(aPt), ThebesSize(aLineSize),
+    GetTextDecorationRectInternal(aPt, aLineSize,
                                   aAscent, aOffset,
                                   aDecoration, aStyle, aVertical,
                                   aDescentLimit));
@@ -4475,7 +4475,7 @@ nsCSSRendering::DecorationLineToPath(const Rect& aDirtyRect,
 
 nsRect
 nsCSSRendering::GetTextDecorationRect(nsPresContext* aPresContext,
-                                      const gfxSize& aLineSize,
+                                      const Size& aLineSize,
                                       const gfxFloat aAscent,
                                       const gfxFloat aOffset,
                                       const uint8_t aDecoration,
@@ -4487,7 +4487,7 @@ nsCSSRendering::GetTextDecorationRect(nsPresContext* aPresContext,
   NS_ASSERTION(aStyle != NS_STYLE_TEXT_DECORATION_STYLE_NONE, "aStyle is none");
 
   gfxRect rect =
-    GetTextDecorationRectInternal(gfxPoint(0, 0), aLineSize, aAscent, aOffset,
+    GetTextDecorationRectInternal(Point(0, 0), aLineSize, aAscent, aOffset,
                                   aDecoration, aStyle, aVertical,
                                   aDescentLimit);
   // The rect values are already rounded to nearest device pixels.
@@ -4500,8 +4500,8 @@ nsCSSRendering::GetTextDecorationRect(nsPresContext* aPresContext,
 }
 
 gfxRect
-nsCSSRendering::GetTextDecorationRectInternal(const gfxPoint& aPt,
-                                              const gfxSize& aLineSize,
+nsCSSRendering::GetTextDecorationRectInternal(const Point& aPt,
+                                              const Size& aLineSize,
                                               const gfxFloat aAscent,
                                               const gfxFloat aOffset,
                                               const uint8_t aDecoration,
@@ -5053,24 +5053,12 @@ nsImageRenderer::Draw(nsPresContext*       aPresContext,
         return DrawResult::TEMPORARY_ERROR;
       }
 
-      gfxContext* ctx = aRenderingContext.ThebesContext();
-      CompositionOp op = ctx->CurrentOp();
-      if (op != CompositionOp::OP_OVER) {
-        ctx->PushGroup(gfxContentType::COLOR_ALPHA);
-        ctx->SetOp(CompositionOp::OP_OVER);
-      }
-
       nsCOMPtr<imgIContainer> image(ImageOps::CreateFromDrawable(drawable));
       DrawResult result =
         nsLayoutUtils::DrawImage(*aRenderingContext.ThebesContext(),
                                  aPresContext, image,
                                  filter, aDest, aFill, aAnchor, aDirtyRect,
                                  ConvertImageRendererToDrawFlags(mFlags));
-
-      if (op != CompositionOp::OP_OVER) {
-        ctx->PopGroupToSource();
-        ctx->Paint();
-      }
 
       return result;
     }

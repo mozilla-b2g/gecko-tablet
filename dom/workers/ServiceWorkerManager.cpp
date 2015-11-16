@@ -436,6 +436,36 @@ ServiceWorkerRegistrationInfo::GetActiveWorker(nsIServiceWorkerInfo **aResult)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+ServiceWorkerRegistrationInfo::AddListener(
+                            nsIServiceWorkerRegistrationInfoListener *aListener)
+{
+  AssertIsOnMainThread();
+
+  if (!aListener || mListeners.Contains(aListener)) {
+    return NS_ERROR_INVALID_ARG;
+  }
+
+  mListeners.AppendElement(aListener);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+ServiceWorkerRegistrationInfo::RemoveListener(
+                            nsIServiceWorkerRegistrationInfoListener *aListener)
+{
+  AssertIsOnMainThread();
+
+  if (!aListener || !mListeners.Contains(aListener)) {
+    return NS_ERROR_INVALID_ARG;
+  }
+
+  mListeners.RemoveElement(aListener);
+
+  return NS_OK;
+}
+
 already_AddRefed<ServiceWorkerInfo>
 ServiceWorkerRegistrationInfo::GetServiceWorkerInfoById(uint64_t aId)
 {
@@ -970,6 +1000,7 @@ public:
       }
 
       mRegistration->mScriptSpec = mScriptSpec;
+      mRegistration->NotifyListenersOnChange();
       swm->StoreRegistration(mPrincipal, mRegistration);
     } else {
       MOZ_ASSERT(mJobType == UPDATE_JOB);
@@ -1162,6 +1193,7 @@ public:
 
     mRegistration->mInstallingWorker = mUpdateAndInstallInfo.forget();
     mRegistration->mInstallingWorker->UpdateState(ServiceWorkerState::Installing);
+    mRegistration->NotifyListenersOnChange();
 
     Succeed();
     // The job should NOT call fail from this point on.
@@ -1329,6 +1361,7 @@ private:
 
     mRegistration->mWaitingWorker = mRegistration->mInstallingWorker.forget();
     mRegistration->mWaitingWorker->UpdateState(ServiceWorkerState::Installed);
+    mRegistration->NotifyListenersOnChange();
     swm->InvalidateServiceWorkerRegistrationWorker(mRegistration,
                                                    WhichServiceWorker::INSTALLING_WORKER | WhichServiceWorker::WAITING_WORKER);
 
@@ -1399,7 +1432,23 @@ IsFromAuthenticatedOrigin(nsIDocument* aDoc)
 
   while (doc && !nsContentUtils::IsChromeDoc(doc)) {
     bool trustworthyURI = false;
-    csm->IsURIPotentiallyTrustworthy(doc->GetDocumentURI(), &trustworthyURI);
+
+    // The origin of the document may be different from the document URI
+    // itself.  Check the principal, not the document URI itself.
+    nsCOMPtr<nsIPrincipal> documentPrincipal = doc->NodePrincipal();
+
+    // The check for IsChromeDoc() above should mean we never see a system
+    // principal inside the loop.
+    MOZ_ASSERT(!nsContentUtils::IsSystemPrincipal(documentPrincipal));
+
+    // Pass the principal as a URI to the security manager
+    nsCOMPtr<nsIURI> uri;
+    documentPrincipal->GetURI(getter_AddRefs(uri));
+    if (NS_WARN_IF(!uri)) {
+      return false;
+    }
+
+    csm->IsURIPotentiallyTrustworthy(uri, &trustworthyURI);
     if (!trustworthyURI) {
       return false;
     }
@@ -1429,9 +1478,10 @@ ServiceWorkerManager::Register(nsIDOMWindow* aWindow,
     return NS_ERROR_FAILURE;
   }
 
-  // Don't allow service workers to register when the *document* is chrome for
-  // now.
-  MOZ_ASSERT(!nsContentUtils::IsSystemPrincipal(doc->NodePrincipal()));
+  // Don't allow service workers to register when the *document* is chrome.
+  if (NS_WARN_IF(nsContentUtils::IsSystemPrincipal(doc->NodePrincipal()))) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
 
   nsCOMPtr<nsPIDOMWindow> outerWindow = window->GetOuterWindow();
   bool serviceWorkersTestingEnabled =
@@ -1480,6 +1530,28 @@ ServiceWorkerManager::Register(nsIDOMWindow* aWindow,
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 
+  // The IsURIPotentiallyTrustworthy() check allows file:// and possibly other
+  // URI schemes.  We need to explicitly only allows http and https schemes.
+  // Note, we just use the aScriptURI here for the check since its already
+  // been verified as same origin with the document principal.  This also
+  // is a good block against accidentally allowing blob: script URIs which
+  // might inherit the origin.
+  bool isHttp = false;
+  bool isHttps = false;
+  aScriptURI->SchemeIs("http", &isHttp);
+  aScriptURI->SchemeIs("https", &isHttps);
+  if (NS_WARN_IF(!isHttp && !isHttps)) {
+#ifdef RELEASE_BUILD
+    return NS_ERROR_DOM_SECURITY_ERR;
+#else
+    bool isApp = false;
+    aScriptURI->SchemeIs("app", &isApp);
+    if (NS_WARN_IF(!isApp)) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+    }
+#endif
+  }
+
   nsCString cleanedScope;
   rv = aScopeURI->GetSpecIgnoringRef(cleanedScope);
   if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -1487,7 +1559,7 @@ ServiceWorkerManager::Register(nsIDOMWindow* aWindow,
   }
 
   nsAutoCString spec;
-  rv = aScriptURI->GetSpec(spec);
+  rv = aScriptURI->GetSpecIgnoringRef(spec);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -1609,6 +1681,7 @@ ServiceWorkerRegistrationInfo::Activate()
   mActiveWorker = activatingWorker.forget();
   mWaitingWorker = nullptr;
   mActiveWorker->UpdateState(ServiceWorkerState::Activating);
+  NotifyListenersOnChange();
 
   // FIXME(nsm): Unlink appcache if there is one.
 
@@ -2421,6 +2494,15 @@ ServiceWorkerRegistrationInfo::IsLastUpdateCheckTimeOverOneDay() const
     return true;
   }
   return false;
+}
+
+void
+ServiceWorkerRegistrationInfo::NotifyListenersOnChange()
+{
+  nsTArray<nsCOMPtr<nsIServiceWorkerRegistrationInfoListener>> listeners(mListeners);
+  for (size_t index = 0; index < listeners.Length(); ++index) {
+    listeners[index]->OnChange();
+  }
 }
 
 void
@@ -3844,7 +3926,7 @@ ServiceWorkerManager::AddListener(nsIServiceWorkerManagerListener* aListener)
 {
   AssertIsOnMainThread();
 
-  if (mListeners.Contains(aListener)) {
+  if (!aListener || mListeners.Contains(aListener)) {
     return NS_ERROR_INVALID_ARG;
   }
 
@@ -3858,7 +3940,7 @@ ServiceWorkerManager::RemoveListener(nsIServiceWorkerManagerListener* aListener)
 {
   AssertIsOnMainThread();
 
-  if (!mListeners.Contains(aListener)) {
+  if (!aListener || !mListeners.Contains(aListener)) {
     return NS_ERROR_INVALID_ARG;
   }
 

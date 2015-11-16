@@ -4642,36 +4642,9 @@ PresShell::RenderDocument(const nsRect& aRect, uint32_t aFlags,
 
   gfxContextAutoSaveRestore save(aThebesContext);
 
-  CompositionOp oldOp = aThebesContext->CurrentOp();
-  if (oldOp == CompositionOp::OP_OVER) {
-    // Clip to the destination rectangle before we push the group,
-    // to limit the size of the temporary surface
-    aThebesContext->Clip();
-  }
+  MOZ_ASSERT(aThebesContext->CurrentOp() == CompositionOp::OP_OVER);
 
-  // we want the window to be composited as a single image using
-  // whatever operator was set; set OP_OVER here, which is
-  // either already the case, or overrides the operator in a group.
-  // the original operator will be present when we PopGroup.
-  // we can avoid using a temporary surface if we're using OP_OVER
-  bool needsGroup = oldOp != CompositionOp::OP_OVER;
-
-  if (needsGroup) {
-    aThebesContext->PushGroup(NS_GET_A(aBackgroundColor) == 0xff ?
-                              gfxContentType::COLOR :
-                              gfxContentType::COLOR_ALPHA);
-    aThebesContext->Save();
-
-    if (oldOp != CompositionOp::OP_OVER) {
-      // Clip now while we paint to the temporary surface. For
-      // non-source-bounded operators (e.g., SOURCE), we need to do clip
-      // here after we've pushed the group, so that eventually popping
-      // the group and painting it will be able to clear the entire
-      // destination surface.
-      aThebesContext->Clip();
-      aThebesContext->SetOp(CompositionOp::OP_OVER);
-    }
-  }
+  aThebesContext->Clip();
 
   nsDeviceContext* devCtx = mPresContext->DeviceContext();
 
@@ -4742,13 +4715,6 @@ PresShell::RenderDocument(const nsRect& aRect, uint32_t aFlags,
 
   nsLayoutUtils::PaintFrame(&rc, rootFrame, nsRegion(aRect),
                             aBackgroundColor, flags);
-
-  // if we had to use a group, paint it to the destination now
-  if (needsGroup) {
-    aThebesContext->Restore();
-    aThebesContext->PopGroupToSource();
-    aThebesContext->Paint();
-  }
 
   return NS_OK;
 }
@@ -6679,8 +6645,7 @@ DispatchPointerFromMouseOrTouch(PresShell* aShell,
       WidgetPointerEvent event(touchEvent->mFlags.mIsTrusted, pointerMessage, touchEvent->widget);
       event.isPrimary = i == 0;
       event.pointerId = touch->Identifier();
-      event.refPoint.x = touch->mRefPoint.x;
-      event.refPoint.y = touch->mRefPoint.y;
+      event.refPoint = touch->mRefPoint;
       event.modifiers = touchEvent->modifiers;
       event.width = touch->RadiusX();
       event.height = touch->RadiusY();
@@ -8198,7 +8163,7 @@ PresShell::AdjustContextMenuKeyEvent(WidgetMouseEvent* aEvent)
       nsCOMPtr<nsIWidget> widget = popupFrame->GetNearestWidget();
       aEvent->widget = widget;
       LayoutDeviceIntPoint widgetPoint = widget->WidgetToScreenOffset();
-      aEvent->refPoint = LayoutDeviceIntPoint::FromUntyped(
+      aEvent->refPoint = LayoutDeviceIntPoint::FromUnknownPoint(
         itemFrame->GetScreenRect().BottomLeft()) - widgetPoint;
 
       mCurrentEventContent = itemFrame->GetContent();
@@ -9684,8 +9649,8 @@ CompareTrees(nsPresContext* aFirstPresContext, nsIFrame* aFirstFrame,
             LogVerifyMessage(k1, k2, "child widgets are not matched\n");
           }
           else if (nullptr != w1) {
-            w1->GetBounds(r1);
-            w2->GetBounds(r2);
+            w1->GetBoundsUntyped(r1);
+            w2->GetBoundsUntyped(r2);
             if (!r1.IsEqualEdges(r2)) {
               LogVerifyMessage(k1, k2, "(widget rects)", r1, r2);
             }
@@ -10612,7 +10577,7 @@ SetPluginIsActive(nsISupports* aSupports, void* aClosure)
 }
 
 nsresult
-PresShell::SetIsActive(bool aIsActive)
+PresShell::SetIsActive(bool aIsActive, bool aIsHidden)
 {
   NS_PRECONDITION(mDocument, "should only be called with a document");
 
@@ -10656,21 +10621,22 @@ PresShell::SetIsActive(bool aIsActive)
   // and (ii) has easy access to the TabChild.  So we use this
   // notification to signal the TabChild to drop its layer tree and
   // stop trying to repaint.
-  if (TabChild* tab = TabChild::GetFrom(this)) {
-    if (aIsActive) {
-      tab->MakeVisible();
-      if (!mIsZombie) {
-        if (nsIFrame* root = mFrameConstructor->GetRootFrame()) {
-          FrameLayerBuilder::InvalidateAllLayersForFrame(
-            nsLayoutUtils::GetDisplayRootFrame(root));
-          root->SchedulePaint();
+  if (aIsHidden) {
+    if (TabChild* tab = TabChild::GetFrom(this)) {
+      if (aIsActive) {
+        tab->MakeVisible();
+        if (!mIsZombie) {
+          if (nsIFrame* root = mFrameConstructor->GetRootFrame()) {
+            FrameLayerBuilder::InvalidateAllLayersForFrame(
+              nsLayoutUtils::GetDisplayRootFrame(root));
+            root->SchedulePaint();
+          }
         }
+      } else {
+        tab->MakeHidden();
       }
-    } else {
-      tab->MakeHidden();
     }
   }
-
   return rv;
 }
 

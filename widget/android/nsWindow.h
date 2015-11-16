@@ -22,6 +22,7 @@ struct ANPEvent;
 namespace mozilla {
     class AndroidGeckoEvent;
     class TextComposition;
+    class WidgetTouchEvent;
 
     namespace layers {
         class CompositorParent;
@@ -62,7 +63,8 @@ public:
 
     void OnSizeChanged(const mozilla::gfx::IntSize& aSize);
 
-    void InitEvent(mozilla::WidgetGUIEvent& event, nsIntPoint* aPoint = 0);
+    void InitEvent(mozilla::WidgetGUIEvent& event,
+                   mozilla::LayoutDeviceIntPoint* aPoint = 0);
 
     //
     // nsIWidget
@@ -103,7 +105,7 @@ public:
     virtual bool IsEnabled() const override;
     NS_IMETHOD Invalidate(const nsIntRect &aRect) override;
     NS_IMETHOD SetFocus(bool aRaise = false) override;
-    NS_IMETHOD GetScreenBounds(nsIntRect &aRect) override;
+    NS_IMETHOD GetScreenBoundsUntyped(nsIntRect &aRect) override;
     virtual mozilla::LayoutDeviceIntPoint WidgetToScreenOffset() override;
     NS_IMETHOD DispatchEvent(mozilla::WidgetGUIEvent* aEvent,
                              nsEventStatus& aStatus) override;
@@ -186,6 +188,7 @@ protected:
 
     void ConfigureAPZCTreeManager() override;
     void ConfigureAPZControllerThread() override;
+    void DispatchHitTest(const mozilla::WidgetTouchEvent& aEvent);
 
     already_AddRefed<GeckoContentController> CreateRootContentController() override;
 

@@ -733,7 +733,7 @@ Layer::SnapTransform(const Matrix4x4& aTransform,
   Matrix4x4 result;
   if (mManager->IsSnappingEffectiveTransforms() &&
       aTransform.Is2D(&matrix2D) &&
-      gfx::Size(1.0, 1.0) <= ToSize(aSnapRect.Size()) &&
+      gfxSize(1.0, 1.0) <= aSnapRect.Size() &&
       matrix2D.PreservesAxisAlignedRectangles()) {
     IntPoint transformedTopLeft = RoundedToInt(matrix2D * ToPoint(aSnapRect.TopLeft()));
     IntPoint transformedTopRight = RoundedToInt(matrix2D * ToPoint(aSnapRect.TopRight()));
@@ -1006,9 +1006,8 @@ RenderTargetRect
 Layer::TransformRectToRenderTarget(const LayerIntRect& aRect)
 {
   LayerRect rect(aRect);
-  RenderTargetRect quad = RenderTargetRect::FromUnknown(
-    GetEffectiveTransform().TransformBounds(
-      LayerPixel::ToUnknown(rect)));
+  RenderTargetRect quad = RenderTargetRect::FromUnknownRect(
+    GetEffectiveTransform().TransformBounds(rect.ToUnknownRect()));
   return quad;
 }
 
@@ -1041,7 +1040,7 @@ Layer::GetVisibleRegionRelativeToRootLayer(nsIntRegion& aResult,
     // If the parent layer clips its lower layers, clip the visible region
     // we're accumulating.
     if (layer->GetEffectiveClipRect()) {
-      aResult.AndWith(ParentLayerIntRect::ToUntyped(*layer->GetEffectiveClipRect()));
+      aResult.AndWith(layer->GetEffectiveClipRect()->ToUnknownRect());
     }
 
     // Now we need to walk across the list of siblings for this parent layer,
@@ -1067,7 +1066,7 @@ Layer::GetVisibleRegionRelativeToRootLayer(nsIntRegion& aResult,
       // Layer clip rects are not affected by the layer's transform.
       Maybe<ParentLayerIntRect> clipRect = sibling->GetEffectiveClipRect();
       if (clipRect) {
-        siblingVisibleRegion.AndWith(ParentLayerIntRect::ToUntyped(*clipRect));
+        siblingVisibleRegion.AndWith(clipRect->ToUnknownRect());
       }
       // Subtract the sibling visible region from the visible region of |this|.
       aResult.SubOut(siblingVisibleRegion);
@@ -1915,8 +1914,9 @@ Layer::PrintInfo(std::stringstream& aStream, const char* aPrefix)
   }
   if (GetIsFixedPosition()) {
     LayerPoint anchor = GetFixedPositionAnchor();
-    aStream << nsPrintfCString(" [isFixedPosition scrollId=%lld anchor=%s%s]",
+    aStream << nsPrintfCString(" [isFixedPosition scrollId=%lld sides=0x%x anchor=%s%s]",
                      GetFixedPositionScrollContainerId(),
+                     GetFixedPositionSides(),
                      ToString(anchor).c_str(),
                      IsClipFixed() ? "" : " scrollingClip").get();
   }

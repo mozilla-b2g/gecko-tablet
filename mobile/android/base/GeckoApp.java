@@ -170,6 +170,8 @@ public abstract class GeckoApp
     // after a version upgrade.
     private static final int CLEANUP_DEFERRAL_SECONDS = 15;
 
+    private static boolean sAlreadyLoaded;
+
     protected RelativeLayout mRootLayout;
     protected RelativeLayout mMainLayout;
 
@@ -831,15 +833,6 @@ public abstract class GeckoApp
         });
     }
 
-    public void showToast(final int resId, final int duration) {
-        ThreadUtils.postToUiThread(new Runnable() {
-            @Override
-            public void run() {
-                Toast.makeText(GeckoApp.this, resId, duration).show();
-            }
-        });
-    }
-
     public void showNormalToast(final String message, final String duration) {
         ThreadUtils.postToUiThread(new Runnable() {
             @Override
@@ -1278,6 +1271,7 @@ public abstract class GeckoApp
         // When that's fixed, `this` can change to
         // `(GeckoApplication) getApplication()` here.
         GeckoAppShell.setContextGetter(this);
+        GeckoAppShell.setApplicationContext(getApplicationContext());
         GeckoAppShell.setGeckoInterface(this);
 
         Tabs.getInstance().attachToContext(this);
@@ -1301,7 +1295,7 @@ public abstract class GeckoApp
             return;
         }
 
-        if (GeckoThread.isLaunched()) {
+        if (sAlreadyLoaded) {
             // This happens when the GeckoApp activity is destroyed by Android
             // without killing the entire application (see Bug 769269).
             mIsRestoringActivity = true;
@@ -1310,6 +1304,7 @@ public abstract class GeckoApp
         } else {
             final String uri = getURIFromIntent(intent);
 
+            sAlreadyLoaded = true;
             GeckoThread.ensureInit(args, action,
                     /* debugging */ ACTION_DEBUG.equals(action));
 

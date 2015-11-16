@@ -4118,20 +4118,25 @@ nsIFrame::InlinePrefISizeData::ForceBreak(nsRenderingContext *aRenderingContext)
     for (uint32_t i = 0, i_end = floats.Length(); i != i_end; ++i) {
       const FloatInfo& floatInfo = floats[i];
       const nsStyleDisplay *floatDisp = floatInfo.Frame()->StyleDisplay();
-      if (floatDisp->mBreakType == NS_STYLE_CLEAR_LEFT ||
-          floatDisp->mBreakType == NS_STYLE_CLEAR_RIGHT ||
-          floatDisp->mBreakType == NS_STYLE_CLEAR_BOTH) {
+      uint8_t breakType = floatDisp->PhysicalBreakType(lineContainerWM);
+      if (breakType == NS_STYLE_CLEAR_LEFT ||
+          breakType == NS_STYLE_CLEAR_RIGHT ||
+          breakType == NS_STYLE_CLEAR_BOTH) {
         nscoord floats_cur = NSCoordSaturatingAdd(floats_cur_left,
                                                   floats_cur_right);
-        if (floats_cur > floats_done)
+        if (floats_cur > floats_done) {
           floats_done = floats_cur;
-        if (floatDisp->mBreakType != NS_STYLE_CLEAR_RIGHT)
+        }
+        if (breakType != NS_STYLE_CLEAR_RIGHT) {
           floats_cur_left = 0;
-        if (floatDisp->mBreakType != NS_STYLE_CLEAR_LEFT)
+        }
+        if (breakType != NS_STYLE_CLEAR_LEFT) {
           floats_cur_right = 0;
+        }
       }
 
-      nscoord &floats_cur = floatDisp->mFloats == NS_STYLE_FLOAT_LEFT
+      uint8_t floatStyle = floatDisp->PhysicalFloats(lineContainerWM);
+      nscoord& floats_cur = floatStyle == NS_STYLE_FLOAT_LEFT
                               ? floats_cur_left : floats_cur_right;
       nscoord floatWidth = floatInfo.Width();
       // Negative-width floats don't change the available space so they
@@ -4607,12 +4612,13 @@ nsFrame::ReflowAbsoluteFrames(nsPresContext*           aPresContext,
     // child frames that need to be reflowed
 
     // The containing block for the abs pos kids is formed by our padding edge.
-    nsMargin computedBorder =
-      aReflowState.ComputedPhysicalBorderPadding() - aReflowState.ComputedPhysicalPadding();
+    nsMargin usedBorder = GetUsedBorder();
     nscoord containingBlockWidth =
-      aDesiredSize.Width() - computedBorder.LeftRight();
+      aDesiredSize.Width() - usedBorder.LeftRight();
+    MOZ_ASSERT(containingBlockWidth >= 0);
     nscoord containingBlockHeight =
-      aDesiredSize.Height() - computedBorder.TopBottom();
+      aDesiredSize.Height() - usedBorder.TopBottom();
+    MOZ_ASSERT(containingBlockHeight >= 0);
 
     nsContainerFrame* container = do_QueryFrame(this);
     NS_ASSERTION(container, "Abs-pos children only supported on container frames for now");
@@ -5049,11 +5055,12 @@ nsIFrame::GetTransformMatrix(const nsIFrame* aStopAtAncestor,
     if (widget && rootPresContext) {
       nsIWidget* toplevel = rootPresContext->GetNearestWidget();
       if (toplevel) {
-        nsIntRect screenBounds;
+        LayoutDeviceIntRect screenBounds;
         widget->GetClientBounds(screenBounds);
-        nsIntRect toplevelScreenBounds;
+        LayoutDeviceIntRect toplevelScreenBounds;
         toplevel->GetClientBounds(toplevelScreenBounds);
-        nsIntPoint translation = screenBounds.TopLeft() - toplevelScreenBounds.TopLeft();
+        LayoutDeviceIntPoint translation =
+          screenBounds.TopLeft() - toplevelScreenBounds.TopLeft();
 
         Matrix4x4 transformToTop;
         transformToTop._41 = translation.x;

@@ -135,6 +135,7 @@ using namespace mozilla::gfx;
 #define STICKY_ENABLED_PREF_NAME "layout.css.sticky.enabled"
 #define DISPLAY_CONTENTS_ENABLED_PREF_NAME "layout.css.display-contents.enabled"
 #define TEXT_ALIGN_TRUE_ENABLED_PREF_NAME "layout.css.text-align-true-value.enabled"
+#define FLOAT_LOGICAL_VALUES_ENABLED_PREF_NAME "layout.css.float-logical-values.enabled"
 
 #ifdef DEBUG
 // TODO: remove, see bug 598468.
@@ -382,6 +383,61 @@ TextAlignTrueEnabledPrefChangeCallback(const char* aPrefName, void* aClosure)
   MOZ_ASSERT(sIndexOfTrueInTextAlignLastTable >= 0);
   nsCSSProps::kTextAlignLastKTable[sIndexOfTrueInTextAlignLastTable] =
     isTextAlignTrueEnabled ? eCSSKeyword_true : eCSSKeyword_UNKNOWN;
+}
+
+// When the pref "layout.css.float-logical-values.enabled" changes, this
+// function is called to let us update kFloatKTable & kClearKTable,
+// to selectively disable or restore the entries for logical values
+// (inline-start and inline-end) in those tables.
+static void
+FloatLogicalValuesEnabledPrefChangeCallback(const char* aPrefName,
+                                            void* aClosure)
+{
+  NS_ASSERTION(strcmp(aPrefName, FLOAT_LOGICAL_VALUES_ENABLED_PREF_NAME) == 0,
+               "Did you misspell " FLOAT_LOGICAL_VALUES_ENABLED_PREF_NAME " ?");
+
+  static bool sIsInitialized;
+  static int32_t sIndexOfInlineStartInFloatTable;
+  static int32_t sIndexOfInlineEndInFloatTable;
+  static int32_t sIndexOfInlineStartInClearTable;
+  static int32_t sIndexOfInlineEndInClearTable;
+  bool isFloatLogicalValuesEnabled =
+    Preferences::GetBool(FLOAT_LOGICAL_VALUES_ENABLED_PREF_NAME, false);
+
+  if (!sIsInitialized) {
+    // First run: find the position of "inline-start" in kFloatKTable.
+    sIndexOfInlineStartInFloatTable =
+      nsCSSProps::FindIndexOfKeyword(eCSSKeyword_inline_start,
+                                     nsCSSProps::kFloatKTable);
+    // First run: find the position of "inline-end" in kFloatKTable.
+    sIndexOfInlineEndInFloatTable =
+      nsCSSProps::FindIndexOfKeyword(eCSSKeyword_inline_end,
+                                     nsCSSProps::kFloatKTable);
+    // First run: find the position of "inline-start" in kClearKTable.
+    sIndexOfInlineStartInClearTable =
+      nsCSSProps::FindIndexOfKeyword(eCSSKeyword_inline_start,
+                                     nsCSSProps::kClearKTable);
+    // First run: find the position of "inline-end" in kClearKTable.
+    sIndexOfInlineEndInClearTable =
+      nsCSSProps::FindIndexOfKeyword(eCSSKeyword_inline_end,
+                                     nsCSSProps::kClearKTable);
+    sIsInitialized = true;
+  }
+
+  // OK -- now, stomp on or restore the logical entries in the keyword tables,
+  // depending on whether the pref is enabled vs. disabled.
+  MOZ_ASSERT(sIndexOfInlineStartInFloatTable >= 0);
+  nsCSSProps::kFloatKTable[sIndexOfInlineStartInFloatTable] =
+    isFloatLogicalValuesEnabled ? eCSSKeyword_inline_start : eCSSKeyword_UNKNOWN;
+  MOZ_ASSERT(sIndexOfInlineEndInFloatTable >= 0);
+  nsCSSProps::kFloatKTable[sIndexOfInlineEndInFloatTable] =
+    isFloatLogicalValuesEnabled ? eCSSKeyword_inline_end : eCSSKeyword_UNKNOWN;
+  MOZ_ASSERT(sIndexOfInlineStartInClearTable >= 0);
+  nsCSSProps::kClearKTable[sIndexOfInlineStartInClearTable] =
+    isFloatLogicalValuesEnabled ? eCSSKeyword_inline_start : eCSSKeyword_UNKNOWN;
+  MOZ_ASSERT(sIndexOfInlineEndInClearTable >= 0);
+  nsCSSProps::kClearKTable[sIndexOfInlineEndInClearTable] =
+    isFloatLogicalValuesEnabled ? eCSSKeyword_inline_end : eCSSKeyword_UNKNOWN;
 }
 
 bool
@@ -932,10 +988,6 @@ GetDisplayPortFromMarginsData(nsIContent* aContent,
   ScreenRect screenRect = LayoutDeviceRect::FromAppUnits(base, auPerDevPixel)
                         * parentRes;
 
-  nsRect expandedScrollableRect =
-    nsLayoutUtils::CalculateExpandedScrollableRect(frame);
-
-
   // Note on the correctness of applying the alignment in Screen space:
   //   The correct space to apply the alignment in would be Layer space, but
   //   we don't necessarily know the scale to convert to Layer space at this
@@ -1011,12 +1063,6 @@ GetDisplayPortFromMarginsData(nsIContent* aContent,
     }
   }
 
-  // Inflate the rectangle by 1 so that we always push to the next tile
-  // boundary. This is desirable to stop from having a rectangle with a
-  // moving origin occasionally being smaller when it coincidentally lines
-  // up to tile boundaries.
-  screenRect.Inflate(1);
-
   ScreenPoint scrollPosScreen = LayoutDevicePoint::FromAppUnits(scrollPos, auPerDevPixel)
                               * res;
 
@@ -1029,21 +1075,16 @@ GetDisplayPortFromMarginsData(nsIContent* aContent,
   screenRect = ScreenRect(x, y, w, h);
   screenRect -= scrollPosScreen;
 
-  ScreenRect screenExpScrollableRect =
-    LayoutDeviceRect::FromAppUnits(expandedScrollableRect,
-                                   auPerDevPixel) * res;
-
-  // Make sure the displayport remains within the scrollable rect.
-  screenRect = screenRect.ForceInside(screenExpScrollableRect - scrollPosScreen);
-
   // Convert the aligned rect back into app units.
   nsRect result = LayoutDeviceRect::ToAppUnits(screenRect / res, auPerDevPixel);
 
   // Expand it for the low-res buffer if needed
   result = ApplyRectMultiplier(result, aMultiplier);
 
-  // Finally, clamp it to the expanded scrollable rect.
-  result = expandedScrollableRect.Intersect(result + scrollPos) - scrollPos;
+  // Make sure the displayport remains within the scrollable rect.
+  nsRect expandedScrollableRect =
+    nsLayoutUtils::CalculateExpandedScrollableRect(frame);
+  result = result.MoveInsideAndClamp(expandedScrollableRect - scrollPos);
 
   return result;
 }
@@ -1804,17 +1845,22 @@ nsLayoutUtils::SetFixedPositionLayerData(Layer* aLayer,
   // defaulting to top-left.
   LayerPoint anchor(anchorRect.x, anchorRect.y);
 
+  int32_t sides = eSideBitsNone;
   if (aFixedPosFrame != aViewportFrame) {
     const nsStylePosition* position = aFixedPosFrame->StylePosition();
     if (position->mOffset.GetRightUnit() != eStyleUnit_Auto) {
+      sides |= eSideBitsRight;
       if (position->mOffset.GetLeftUnit() != eStyleUnit_Auto) {
+        sides |= eSideBitsLeft;
         anchor.x = anchorRect.x + anchorRect.width / 2.f;
       } else {
         anchor.x = anchorRect.XMost();
       }
     }
     if (position->mOffset.GetBottomUnit() != eStyleUnit_Auto) {
+      sides |= eSideBitsBottom;
       if (position->mOffset.GetTopUnit() != eStyleUnit_Auto) {
+        sides |= eSideBitsTop;
         anchor.y = anchorRect.y + anchorRect.height / 2.f;
       } else {
         anchor.y = anchorRect.YMost();
@@ -1828,7 +1874,7 @@ nsLayoutUtils::SetFixedPositionLayerData(Layer* aLayer,
       id = FindOrCreateIDFor(content);
     }
   }
-  aLayer->SetFixedPositionData(id, anchor, aIsClipFixed);
+  aLayer->SetFixedPositionData(id, anchor, sides, aIsClipFixed);
 }
 
 bool
@@ -1900,6 +1946,25 @@ nsLayoutUtils::GetAnimatedGeometryRootFor(nsDisplayItem* aItem,
     nsIFrame* parent = nsLayoutUtils::GetCrossDocParentFrame(f);
     if (parent) {
       return GetAnimatedGeometryRootForFrame(aBuilder, parent);
+    }
+  }
+  return GetAnimatedGeometryRootForFrame(aBuilder, f);
+}
+
+nsIFrame*
+nsLayoutUtils::GetAnimatedGeometryRootForInit(nsDisplayItem* aItem,
+                                              nsDisplayListBuilder* aBuilder)
+{
+  nsIFrame* f = aItem->Frame();
+  if (aItem->ShouldFixToViewport(aBuilder)) {
+    // Make its active scrolled root be the active scrolled root of
+    // the enclosing viewport, since it shouldn't be scrolled by scrolled
+    // frames in its document. InvalidateFixedBackgroundFramesFromList in
+    // nsGfxScrollFrame will not repaint this item when scrolling occurs.
+    nsIFrame* viewportFrame =
+      nsLayoutUtils::GetClosestFrameOfType(f, nsGkAtoms::viewportFrame, aBuilder->RootReferenceFrame());
+    if (viewportFrame) {
+      return GetAnimatedGeometryRootForFrame(aBuilder, viewportFrame);
     }
   }
   return GetAnimatedGeometryRootForFrame(aBuilder, f);
@@ -2833,9 +2898,9 @@ static LayoutDeviceIntPoint GetWidgetOffset(nsIWidget* aWidget, nsIWidget*& aRoo
     if (!parent) {
       break;
     }
-    nsIntRect bounds;
+    LayoutDeviceIntRect bounds;
     aWidget->GetBounds(bounds);
-    offset += LayoutDeviceIntPoint::FromUntyped(bounds.TopLeft());
+    offset += bounds.TopLeft();
     aWidget = parent;
   }
   aRootWidget = aWidget;
@@ -6322,6 +6387,8 @@ DrawImageInternal(gfxContext&            aContext,
                   const SVGImageContext* aSVGContext,
                   uint32_t               aImageFlags)
 {
+  DrawResult result = DrawResult::SUCCESS;
+
   if (aPresContext->Type() == nsPresContext::eContext_Print) {
     // We want vector images to be passed on as vector commands, not a raster
     // image.
@@ -6339,21 +6406,48 @@ DrawImageInternal(gfxContext&            aContext,
                                          aGraphicsFilter, aImageFlags);
 
   if (!params.shouldDraw) {
-    return DrawResult::SUCCESS;
+    return result;
   }
 
-  gfxContextMatrixAutoSaveRestore contextMatrixRestorer(&aContext);
-  aContext.SetMatrix(params.imageSpaceToDeviceSpace);
+  {
+    gfxContextMatrixAutoSaveRestore contextMatrixRestorer(&aContext);
 
-  Maybe<SVGImageContext> svgContext = ToMaybe(aSVGContext);
-  if (!svgContext) {
-    // Use the default viewport.
-    svgContext = Some(SVGImageContext(params.svgViewportSize, Nothing()));
+    RefPtr<gfxContext> destCtx = &aContext;
+
+    IntRect tmpDTRect;
+
+    if (destCtx->CurrentOp() != CompositionOp::OP_OVER) {
+      Rect imageRect = ToRect(params.imageSpaceToDeviceSpace.TransformBounds(params.region.Rect()));
+      imageRect.ToIntRect(&tmpDTRect);
+
+      RefPtr<DrawTarget> tempDT = destCtx->GetDrawTarget()->CreateSimilarDrawTarget(tmpDTRect.Size(), SurfaceFormat::B8G8R8A8);
+      destCtx = new gfxContext(tempDT, imageRect.TopLeft());
+    }
+    destCtx->SetMatrix(params.imageSpaceToDeviceSpace);
+
+    Maybe<SVGImageContext> svgContext = ToMaybe(aSVGContext);
+    if (!svgContext) {
+      // Use the default viewport.
+      svgContext = Some(SVGImageContext(params.svgViewportSize, Nothing()));
+    }
+
+    result = aImage->Draw(destCtx, params.size, params.region,
+                          imgIContainer::FRAME_CURRENT, aGraphicsFilter,
+                          svgContext, aImageFlags);
+
+    if (!tmpDTRect.IsEmpty()) {
+      DrawTarget* dt = aContext.GetDrawTarget();
+      RefPtr<SourceSurface> surf = destCtx->GetDrawTarget()->Snapshot();
+
+      dt->SetTransform(Matrix::Translation(-aContext.GetDeviceOffset()));
+      dt->DrawSurface(surf, Rect(tmpDTRect.x, tmpDTRect.y, tmpDTRect.width, tmpDTRect.height),
+                      Rect(0, 0, tmpDTRect.width, tmpDTRect.height),
+                      DrawSurfaceOptions(Filter::POINT),
+                      DrawOptions(1.0f, aContext.CurrentOp()));
+    }
   }
 
-  return aImage->Draw(&aContext, params.size, params.region,
-                      imgIContainer::FRAME_CURRENT, aGraphicsFilter,
-                      svgContext, aImageFlags);
+  return result;
 }
 
 /* static */ DrawResult
@@ -7369,6 +7463,10 @@ nsLayoutUtils::Initialize()
                                            nullptr);
   TextAlignTrueEnabledPrefChangeCallback(TEXT_ALIGN_TRUE_ENABLED_PREF_NAME,
                                          nullptr);
+  Preferences::RegisterCallback(FloatLogicalValuesEnabledPrefChangeCallback,
+                                FLOAT_LOGICAL_VALUES_ENABLED_PREF_NAME);
+  FloatLogicalValuesEnabledPrefChangeCallback(FLOAT_LOGICAL_VALUES_ENABLED_PREF_NAME,
+                                              nullptr);
 
   nsComputedDOMStyle::RegisterPrefChangeCallbacks();
 }
@@ -7894,7 +7992,7 @@ nsLayoutUtils::GetContentViewerSize(nsPresContext* aPresContext,
 
   nsIntRect bounds;
   cv->GetBounds(bounds);
-  aOutSize = LayoutDeviceIntRect::FromUntyped(bounds).Size();
+  aOutSize = LayoutDeviceIntRect::FromUnknownRect(bounds).Size();
   return true;
 }
 
@@ -7919,7 +8017,7 @@ UpdateCompositionBoundsForRCDRSF(ParentLayerRect& aCompBounds,
 
   if (widget) {
     nsIntRect widgetBounds;
-    widget->GetBounds(widgetBounds);
+    widget->GetBoundsUntyped(widgetBounds);
     widgetBounds.MoveTo(0, 0);
     aCompBounds = ParentLayerRect(ViewAs<ParentLayerPixel>(widgetBounds));
     return true;
@@ -8044,7 +8142,7 @@ nsLayoutUtils::CalculateRootCompositionSize(nsIFrame* aFrame,
   } else {
     nsIWidget* widget = aFrame->GetNearestWidget();
     nsIntRect widgetBounds;
-    widget->GetBounds(widgetBounds);
+    widget->GetBoundsUntyped(widgetBounds);
     rootCompositionSize = ScreenSize(ViewAs<ScreenPixel>(widgetBounds.Size()));
   }
 
