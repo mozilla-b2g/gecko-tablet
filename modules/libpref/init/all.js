@@ -606,8 +606,10 @@ pref("apz.y_skate_size_multiplier", "3.5");
 pref("apz.fling_repaint_interval", 75);
 pref("apz.smooth_scroll_repaint_interval", 75);
 pref("apz.pan_repaint_interval", 250);
-pref("apz.x_skate_size_multiplier", "1.5");
-pref("apz.y_skate_size_multiplier", "2.5");
+pref("apz.x_skate_size_multiplier", "1.25");
+pref("apz.y_skate_size_multiplier", "1.5");
+pref("apz.x_stationary_size_multiplier", "1.5");
+pref("apz.y_stationary_size_multiplier", "1.8");
 #endif
 
 // APZ testing (bug 961289)
@@ -1822,6 +1824,13 @@ pref("network.proxy.socks_remote_dns",      false);
 pref("network.proxy.proxy_over_tls",        true);
 pref("network.proxy.no_proxies_on",         "localhost, 127.0.0.1");
 pref("network.proxy.failover_timeout",      1800); // 30 minutes
+
+// If this value is 'true' and a PAC or all given proxies are inaccessible or
+// failing, Firefox will attempt to connect to the server DIRECTly. Meaning
+// without a proxy. If set 'false', Firefox will not try to access without
+// proxy.
+pref("network.proxy.use_direct_on_fail",    true);
+
 pref("network.online",                      true); //online/offline
 pref("network.cookie.cookieBehavior",       0); // 0-Accept, 1-dontAcceptForeign, 2-dontUse, 3-limitForeign
 #ifdef ANDROID
@@ -4494,9 +4503,13 @@ pref("dom.push.loglevel", "off");
 pref("dom.push.serverURL", "wss://push.services.mozilla.com/");
 pref("dom.push.userAgentID", "");
 
-// The maximum number of notifications that a service worker can receive
+// The maximum number of push messages that a service worker can receive
 // without user interaction.
 pref("dom.push.maxQuotaPerSubscription", 16);
+
+// The delay between receiving a push message and updating the quota for a
+// subscription.
+pref("dom.push.quotaUpdateDelay", 3000); // 3 seconds
 
 // Is the network connection allowed to be up?
 // This preference should be used in UX to enable/disable push.

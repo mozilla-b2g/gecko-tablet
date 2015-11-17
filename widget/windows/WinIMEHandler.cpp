@@ -38,7 +38,11 @@ namespace widget {
  * IMEHandler
  ******************************************************************************/
 
+nsWindow* IMEHandler::sFocusedWindow = nullptr;
+InputContextAction::Cause IMEHandler::sLastContextActionCause =
+  InputContextAction::CAUSE_UNKNOWN;
 bool IMEHandler::sPluginHasFocus = false;
+
 #ifdef NS_ENABLE_TSF
 bool IMEHandler::sIsInTSFMode = false;
 bool IMEHandler::sIsIMMEnabled = true;
@@ -217,6 +221,7 @@ IMEHandler::NotifyIME(nsWindow* aWindow,
       case NOTIFY_IME_OF_TEXT_CHANGE:
         return TSFTextStore::OnTextChange(aIMENotification);
       case NOTIFY_IME_OF_FOCUS: {
+        sFocusedWindow = aWindow;
         IMMHandler::OnFocusChange(true, aWindow);
         nsresult rv =
           TSFTextStore::OnFocusChange(true, aWindow,
@@ -225,6 +230,7 @@ IMEHandler::NotifyIME(nsWindow* aWindow,
         return rv;
       }
       case NOTIFY_IME_OF_BLUR:
+        sFocusedWindow = nullptr;
         IMEHandler::MaybeDismissOnScreenKeyboard();
         IMMHandler::OnFocusChange(false, aWindow);
         return TSFTextStore::OnFocusChange(false, aWindow,
@@ -331,6 +337,16 @@ IMEHandler::GetOpenState(nsWindow* aWindow)
 void
 IMEHandler::OnDestroyWindow(nsWindow* aWindow)
 {
+  // When focus is in remote process, but the window is being destroyed, we
+  // need to clean up TSFTextStore here since NOTIFY_IME_OF_BLUR won't reach
+  // here because TabParent already lost the reference to the nsWindow when
+  // it receives from the remote process.
+  if (sFocusedWindow == aWindow) {
+    NS_ASSERTION(aWindow->GetInputContext().IsOriginContentProcess(),
+      "input context of focused widget should be set from a remote process");
+    NotifyIME(aWindow, IMENotification(NOTIFY_IME_OF_BLUR));
+  }
+
 #ifdef NS_ENABLE_TSF
   // We need to do nothing here for TSF. Just restore the default context
   // if it's been disassociated.
@@ -349,6 +365,7 @@ IMEHandler::SetInputContext(nsWindow* aWindow,
                             InputContext& aInputContext,
                             const InputContextAction& aAction)
 {
+  sLastContextActionCause = aAction.mCause;
   // FYI: If there is no composition, this call will do nothing.
   NotifyIME(aWindow, IMENotification(REQUEST_TO_COMMIT_COMPOSITION));
 
@@ -690,6 +707,14 @@ IMEHandler::IsKeyboardPresentOnSlate()
   if (::GetSystemMetrics(SM_CONVERTIBLESLATEMODE) != 0) {
     Preferences::SetString(kOskDebugReason, L"IKPOS: ConvertibleSlateMode is non-zero");
     return true;
+  }
+
+  // Before we check for a keyboard, we should check if the last input was touch,
+  // in which case we ignore whether or not a keyboard is present:
+  if (sLastContextActionCause == InputContextAction::CAUSE_TOUCH) {
+    Preferences::SetString(kOskDebugReason,
+      L"IKPOS: Used touch to focus control, ignoring keyboard presence");
+    return false;
   }
 
   const GUID KEYBOARD_CLASS_GUID =

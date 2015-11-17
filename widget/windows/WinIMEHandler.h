@@ -111,6 +111,9 @@ public:
 #endif // #ifdef DEBUG
 
 private:
+  static nsWindow* sFocusedWindow;
+  static InputContextAction::Cause sLastContextActionCause;
+
   static bool sPluginHasFocus;
 
 #ifdef NS_ENABLE_TSF

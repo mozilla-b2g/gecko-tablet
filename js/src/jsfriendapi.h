@@ -81,6 +81,9 @@ JS_GetCustomIteratorCount(JSContext* cx);
 extern JS_FRIEND_API(bool)
 JS_NondeterministicGetWeakMapKeys(JSContext* cx, JS::HandleObject obj, JS::MutableHandleObject ret);
 
+extern JS_FRIEND_API(bool)
+JS_NondeterministicGetWeakSetKeys(JSContext* cx, JS::HandleObject obj, JS::MutableHandleObject ret);
+
 // Raw JSScript* because this needs to be callable from a signal handler.
 extern JS_FRIEND_API(unsigned)
 JS_PCToLineNumber(JSScript* script, jsbytecode* pc, unsigned* columnp = nullptr);
@@ -912,6 +915,27 @@ CopyFlatStringChars(char16_t* dest, JSFlatString* s, size_t len)
     CopyLinearStringChars(dest, FlatStringToLinearString(s), len);
 }
 
+/**
+ * Add some or all property keys of obj to the id vector *props.
+ *
+ * The flags parameter controls which property keys are added. Pass a
+ * combination of the following bits:
+ *
+ *     JSITER_OWNONLY - Don't also search the prototype chain; only consider
+ *       obj's own properties.
+ *
+ *     JSITER_HIDDEN - Include nonenumerable properties.
+ *
+ *     JSITER_SYMBOLS - Include property keys that are symbols. The default
+ *       behavior is to filter out symbols.
+ *
+ *     JSITER_SYMBOLSONLY - Exclude non-symbol property keys.
+ *
+ * This is the closest C++ API we have to `Reflect.ownKeys(obj)`, or
+ * equivalently, the ES6 [[OwnPropertyKeys]] internal method. Pass
+ * `JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS` as flags to get
+ * results that match the output of Reflect.ownKeys.
+ */
 JS_FRIEND_API(bool)
 GetPropertyKeys(JSContext* cx, JS::HandleObject obj, unsigned flags, JS::AutoIdVector* props);
 
