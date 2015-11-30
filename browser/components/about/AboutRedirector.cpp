@@ -79,10 +79,8 @@ static RedirEntry kRedirMap[] = {
     nsIAboutModule::ALLOW_SCRIPT },
   { "welcomeback", "chrome://browser/content/aboutWelcomeBack.xhtml",
     nsIAboutModule::ALLOW_SCRIPT },
-#ifdef MOZ_SERVICES_SYNC
   { "sync-tabs", "chrome://browser/content/sync/aboutSyncTabs.xul",
     nsIAboutModule::ALLOW_SCRIPT },
-#endif
   { "home", "chrome://browser/content/abouthome/aboutHome.xhtml",
     nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
     nsIAboutModule::URI_MUST_LOAD_IN_CHILD |
@@ -90,9 +88,11 @@ static RedirEntry kRedirMap[] = {
     nsIAboutModule::ENABLE_INDEXED_DB },
   { "newtab", "chrome://browser/content/newtab/newTab.xhtml",
     nsIAboutModule::ALLOW_SCRIPT },
+#ifndef RELEASE_BUILD
   { "remote-newtab", "chrome://browser/content/remote-newtab/newTab.xhtml",
     nsIAboutModule::URI_MUST_LOAD_IN_CHILD |
     nsIAboutModule::ALLOW_SCRIPT },
+#endif
   { "preferences", "chrome://browser/content/preferences/in-content/preferences.xul",
     nsIAboutModule::ALLOW_SCRIPT },
   { "downloads", "chrome://browser/content/downloads/contentAreaDownloadsView.xul",
@@ -108,12 +108,12 @@ static RedirEntry kRedirMap[] = {
   {
     "debugging", "chrome://devtools/content/aboutdebugging/aboutdebugging.xhtml",
     nsIAboutModule::ALLOW_SCRIPT },
-  { "loopconversation", "chrome://browser/content/loop/conversation.html",
+  { "loopconversation", "chrome://loop/content/panels/conversation.html",
     nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
     nsIAboutModule::ALLOW_SCRIPT |
     nsIAboutModule::HIDE_FROM_ABOUTABOUT |
     nsIAboutModule::ENABLE_INDEXED_DB },
-  { "looppanel", "chrome://browser/content/loop/panel.html",
+  { "looppanel", "chrome://loop/content/panels/panel.html",
     nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
     nsIAboutModule::ALLOW_SCRIPT |
     nsIAboutModule::HIDE_FROM_ABOUTABOUT |

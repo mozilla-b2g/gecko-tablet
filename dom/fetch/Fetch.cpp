@@ -976,8 +976,14 @@ FetchBody<Derived>::ContinueConsumeBody(nsresult aStatus, uint32_t aResultLength
         // FetchBody on the main thread.
         RefPtr<CancelPumpRunnable<Derived>> r =
           new CancelPumpRunnable<Derived>(this);
-        if (!r->Dispatch(mWorkerPrivate->GetJSContext())) {
+        ErrorResult rv;
+        r->Dispatch(rv);
+        if (rv.Failed()) {
           NS_WARNING("Could not dispatch CancelPumpRunnable. Nothing we can do here");
+          // None of our callers are callled directly from JS, so there is no
+          // point in trying to propagate this failure out of here.  And
+          // localPromise is already rejected.  Just suppress the failure.
+          rv.SuppressException();
         }
       }
     }
@@ -1007,7 +1013,6 @@ FetchBody<Derived>::ContinueConsumeBody(nsresult aStatus, uint32_t aResultLength
       FetchUtil::ConsumeArrayBuffer(cx, &arrayBuffer, aResultLength, aResult,
                                     error);
 
-      error.WouldReportJSException();
       if (!error.Failed()) {
         JS::Rooted<JS::Value> val(cx);
         val.setObjectOrNull(arrayBuffer);
@@ -1022,7 +1027,6 @@ FetchBody<Derived>::ContinueConsumeBody(nsresult aStatus, uint32_t aResultLength
       RefPtr<dom::Blob> blob = FetchUtil::ConsumeBlob(
         DerivedClass()->GetParentObject(), NS_ConvertUTF8toUTF16(mMimeType),
         aResultLength, aResult, error);
-      error.WouldReportJSException();
       if (!error.Failed()) {
         localPromise->MaybeResolve(blob);
         // File takes over ownership.
@@ -1066,13 +1070,7 @@ FetchBody<Derived>::ContinueConsumeBody(nsresult aStatus, uint32_t aResultLength
 
   error.WouldReportJSException();
   if (error.Failed()) {
-    if (error.IsJSException()) {
-      JS::Rooted<JS::Value> exn(cx);
-      error.StealJSException(cx, &exn);
-      localPromise->MaybeReject(cx, exn);
-    } else {
-      localPromise->MaybeReject(error);
-    }
+    localPromise->MaybeReject(error);
   }
 }
 

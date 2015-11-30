@@ -84,6 +84,7 @@ XPCOMUtils.defineLazyGetter(this, "CertUtils", function certUtilsLazyGetter() {
   return certUtils;
 });
 
+const INTEGER = /^[1-9]\d*$/;
 
 this.EXPORTED_SYMBOLS = [ "AddonManager", "AddonManagerPrivate" ];
 
@@ -2316,6 +2317,27 @@ var AddonManagerInternal = {
   },
 
   /**
+   * Starts installation of a temporary add-on from a local directory.
+   * @param  aDirectory
+   *         The directory of the add-on to be temporarily installed
+   * @return a Promise that rejects if the add-on is not restartless
+   *         or an add-on with the same ID is already temporarily installed
+   */
+  installTemporaryAddon: function AMI_installTemporaryAddon(aFile) {
+    if (!gStarted)
+      throw Components.Exception("AddonManager is not initialized",
+                                 Cr.NS_ERROR_NOT_INITIALIZED);
+
+    if (!(aFile instanceof Ci.nsIFile))
+      throw Components.Exception("aFile must be a nsIFile",
+                                 Cr.NS_ERROR_INVALID_ARG);
+
+    return AddonManagerInternal._getProviderByName("XPIProvider")
+                               .installTemporaryAddon(aFile);
+  },
+
+
+  /**
    * Gets an icon from the icon set provided by the add-on
    * that is closest to the specified size.
    *
@@ -2325,7 +2347,10 @@ var AddonManagerInternal = {
    * match an icon of size 96px.
    *
    * @param  aAddon
-   *         The addon to find an icon for
+   *         An addon object, meaning:
+   *         An object with either an icons property that is a key-value
+   *         list of icon size and icon URL, or an object having an iconURL
+   *         and icon64URL property.
    * @param  aSize
    *         Ideal icon size in pixels
    * @param  aWindow
@@ -2359,11 +2384,12 @@ var AddonManagerInternal = {
     let bestSize = null;
 
     for (let size of Object.keys(icons)) {
-      size = parseInt(size, 10);
-      if (isNaN(size)) {
+      if (!INTEGER.test(size)) {
         throw Components.Exception("Invalid icon size, must be an integer",
                                    Cr.NS_ERROR_ILLEGAL_VALUE);
       }
+
+      size = parseInt(size, 10);
 
       if (!bestSize) {
         bestSize = size;
@@ -2949,6 +2975,8 @@ this.AddonManager = {
   ERROR_FILE_ACCESS: -4,
   // The add-on must be signed and isn't.
   ERROR_SIGNEDSTATE_REQUIRED: -5,
+  // The downloaded add-on had a different type than expected.
+  ERROR_UNEXPECTED_ADDON_TYPE: -6,
 
   // These must be kept in sync with AddonUpdateChecker.
   // No error was encountered.
@@ -3026,8 +3054,10 @@ this.AddonManager = {
   SCOPE_APPLICATION: 4,
   // Installed for all users of the computer.
   SCOPE_SYSTEM: 8,
+  // Installed temporarily
+  SCOPE_TEMPORARY: 16,
   // The combination of all scopes.
-  SCOPE_ALL: 15,
+  SCOPE_ALL: 31,
 
   // 1-15 are different built-in views for the add-on type
   VIEW_TYPE_LIST: "list",
@@ -3205,6 +3235,10 @@ this.AddonManager = {
     AddonManagerInternal.installAddonsFromWebpage(aType, aBrowser,
                                                   ensurePrincipal(aInstallingPrincipal),
                                                   aInstalls);
+  },
+
+  installTemporaryAddon: function AM_installTemporaryAddon(aDirectory) {
+    return AddonManagerInternal.installTemporaryAddon(aDirectory);
   },
 
   addManagerListener: function AM_addManagerListener(aListener) {

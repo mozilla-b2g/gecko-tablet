@@ -208,7 +208,7 @@ struct BidiParagraphData {
   nsresult SetPara()
   {
     return mBidiEngine->SetPara(mBuffer.get(), BufferLength(),
-                                mParaLevel, nullptr);
+                                mParaLevel);
   }
 
   /**
@@ -1187,7 +1187,7 @@ nsBidiPresUtils::TraverseFrames(nsBlockFrame*              aBlockFrame,
     } else {
       // For a non-leaf frame, recurse into TraverseFrames
       nsIFrame* kid = frame->GetFirstPrincipalChild();
-      MOZ_ASSERT(!frame->GetFirstChild(nsIFrame::kOverflowList),
+      MOZ_ASSERT(!frame->GetChildList(nsIFrame::kOverflowList).FirstChild(),
                  "should have drained the overflow list above");
       if (kid) {
         const nsStyleTextReset* text = frame->StyleTextReset();
@@ -1257,8 +1257,14 @@ nsBidiPresUtils::ReorderFrames(nsIFrame* aFirstFrameOnLine,
                                const nsSize& aContainerSize,
                                nscoord aStart)
 {
+  nsSize containerSize(aContainerSize);
+
   // If this line consists of a line frame, reorder the line frame's children.
   if (aFirstFrameOnLine->GetType() == nsGkAtoms::lineFrame) {
+    // The line frame is positioned at the start-edge, so use its size
+    // as the container size.
+    containerSize = aFirstFrameOnLine->GetSize();
+
     aFirstFrameOnLine = aFirstFrameOnLine->GetFirstPrincipalChild();
     if (!aFirstFrameOnLine) {
       return 0;
@@ -1270,7 +1276,7 @@ nsBidiPresUtils::ReorderFrames(nsIFrame* aFirstFrameOnLine,
 
   BidiLineData bld(aFirstFrameOnLine, aNumFramesOnLine);
   return RepositionInlineFrames(&bld, aFirstFrameOnLine, aLineWM,
-                                aContainerSize, aStart);
+                                containerSize, aStart);
 }
 
 nsIFrame*
@@ -2006,7 +2012,7 @@ nsresult nsBidiPresUtils::ProcessText(const char16_t*       aText,
 
   nsAutoString textBuffer(aText, aLength);
 
-  nsresult rv = aBidiEngine->SetPara(aText, aLength, aBaseLevel, nullptr);
+  nsresult rv = aBidiEngine->SetPara(aText, aLength, aBaseLevel);
   if (NS_FAILED(rv))
     return rv;
 

@@ -46,6 +46,11 @@ static bool SchemeIs(nsIURI* aURI, const char* aScheme)
 static nsresult
 DoCheckLoadURIChecks(nsIURI* aURI, nsILoadInfo* aLoadInfo)
 {
+  // Bug 1228117: determine the correct security policy for DTD loads
+  if (aLoadInfo->GetExternalContentPolicyType() == nsIContentPolicy::TYPE_DTD) {
+    return NS_OK;
+  }
+
   nsresult rv = NS_OK;
 
   nsCOMPtr<nsIPrincipal> loadingPrincipal = aLoadInfo->LoadingPrincipal();
@@ -217,7 +222,15 @@ DoContentSecurityChecks(nsIURI* aURI, nsILoadInfo* aLoadInfo)
       break;
     }
 
-    case nsIContentPolicy::TYPE_DTD:
+    case nsIContentPolicy::TYPE_DTD: {
+      mimeTypeGuess = EmptyCString();
+      requestingContext = aLoadInfo->LoadingNode();
+      MOZ_ASSERT(!requestingContext ||
+                 requestingContext->NodeType() == nsIDOMNode::DOCUMENT_NODE,
+                 "type_dtd requires requestingContext of type Document");
+      break;
+    }
+
     case nsIContentPolicy::TYPE_FONT: {
       MOZ_ASSERT(false, "contentPolicyType not supported yet");
       break;
@@ -421,7 +434,9 @@ nsContentSecurityManager::IsURIPotentiallyTrustworthy(nsIURI* aURI, bool* aIsTru
   *aIsTrustWorthy = false;
   nsAutoCString scheme;
   nsresult rv = aURI->GetScheme(scheme);
-  NS_ENSURE_SUCCESS(rv, NS_OK);
+  if (NS_FAILED(rv)) {
+    return NS_OK;
+  }
 
   if (scheme.EqualsLiteral("https") ||
       scheme.EqualsLiteral("file") ||
@@ -433,7 +448,9 @@ nsContentSecurityManager::IsURIPotentiallyTrustworthy(nsIURI* aURI, bool* aIsTru
 
   nsAutoCString host;
   rv = aURI->GetHost(host);
-  NS_ENSURE_SUCCESS(rv, NS_OK);
+  if (NS_FAILED(rv)) {
+    return NS_OK;
+  }
 
   if (host.Equals("127.0.0.1") ||
       host.Equals("localhost") ||
@@ -441,6 +458,5 @@ nsContentSecurityManager::IsURIPotentiallyTrustworthy(nsIURI* aURI, bool* aIsTru
     *aIsTrustWorthy = true;
     return NS_OK;
   }
-
   return NS_OK;
 }

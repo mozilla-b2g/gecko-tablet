@@ -18,16 +18,12 @@ import org.mozilla.gecko.db.BrowserContract;
 import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.db.SuggestedSites;
-import org.mozilla.gecko.db.TabsAccessor;
 import org.mozilla.gecko.distribution.Distribution;
 import org.mozilla.gecko.favicons.Favicons;
 import org.mozilla.gecko.favicons.LoadFaviconTask;
 import org.mozilla.gecko.favicons.OnFaviconLoadedListener;
 import org.mozilla.gecko.favicons.decoders.IconDirectoryEntry;
 import org.mozilla.gecko.firstrun.FirstrunPane;
-import org.mozilla.gecko.fxa.FirefoxAccounts;
-import org.mozilla.gecko.fxa.FxAccountConstants;
-import org.mozilla.gecko.fxa.activities.FxAccountWebFlowActivity;
 import org.mozilla.gecko.gfx.DynamicToolbarAnimator;
 import org.mozilla.gecko.gfx.ImmutableViewportMetrics;
 import org.mozilla.gecko.gfx.LayerView;
@@ -53,7 +49,7 @@ import org.mozilla.gecko.preferences.ClearOnShutdownPref;
 import org.mozilla.gecko.preferences.GeckoPreferences;
 import org.mozilla.gecko.prompts.Prompt;
 import org.mozilla.gecko.prompts.PromptListItem;
-import org.mozilla.gecko.restrictions.Restriction;
+import org.mozilla.gecko.restrictions.Restrictable;
 import org.mozilla.gecko.sync.repositories.android.FennecTabsRepository;
 import org.mozilla.gecko.tabqueue.TabQueueHelper;
 import org.mozilla.gecko.tabqueue.TabQueuePrompt;
@@ -83,12 +79,13 @@ import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.gecko.util.UIAsyncTask;
 import org.mozilla.gecko.widget.AnchoredPopup;
 import org.mozilla.gecko.widget.ButtonToast;
-import org.mozilla.gecko.widget.ButtonToast.ToastListener;
 import org.mozilla.gecko.widget.GeckoActionProvider;
 
-import android.accounts.Account;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Notification;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -109,11 +106,10 @@ import android.nfc.NfcEvent;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.StrictMode;
-import android.support.annotation.NonNull;
-import android.support.annotation.WorkerThread;
 import android.support.design.widget.Snackbar;
 import android.support.v4.app.Fragment;
 import android.support.v4.app.FragmentManager;
+import android.support.v4.app.NotificationCompat;
 import android.support.v4.view.MenuItemCompat;
 import android.text.TextUtils;
 import android.util.AttributeSet;
@@ -188,6 +184,7 @@ public class BrowserApp extends GeckoApp
 
     @RobocopTarget
     public static final String EXTRA_SKIP_STARTPANE = "skipstartpane";
+    private static final String HONEYCOMB_EOL_NOTIFIED = "honeycomb_eol_notified";
 
     private BrowserSearch mBrowserSearch;
     private View mBrowserSearchContainer;
@@ -542,7 +539,7 @@ public class BrowserApp extends GeckoApp
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        if (!isSupportedSDK()) {
+        if (!isSupportedSystem()) {
             // This build does not support the Android version of the device; Exit early.
             super.onCreate(savedInstanceState);
             return;
@@ -737,6 +734,45 @@ public class BrowserApp extends GeckoApp
 
         ViewStub stub = (ViewStub) findViewById(R.id.zoomed_view_stub);
         mZoomedView = (ZoomedView) stub.inflate();
+    }
+
+    private void conditionallyNotifyHCEOL() {
+        final StrictMode.ThreadPolicy savedPolicy = StrictMode.allowThreadDiskReads();
+        try {
+            final SharedPreferences prefs = GeckoSharedPrefs.forProfile(this);
+            if (!prefs.getBoolean(HONEYCOMB_EOL_NOTIFIED, false)) {
+
+                // Launch main App to load SUMO url on EOL notification.
+                final String link = getString(R.string.eol_notification_url,
+                                              AppConstants.MOZ_APP_VERSION,
+                                              AppConstants.OS_TARGET,
+                                              Locale.getDefault());
+
+                final Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.setClassName(AppConstants.ANDROID_PACKAGE_NAME, AppConstants.MOZ_ANDROID_BROWSER_INTENT_CLASS);
+                intent.setData(Uri.parse(link));
+                final PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT);
+
+                final Notification notification = new NotificationCompat.Builder(this)
+                        .setContentTitle(getString(R.string.eol_notification_title))
+                        .setContentText(getString(R.string.eol_notification_summary))
+                        .setSmallIcon(R.drawable.ic_status_logo)
+                        .setAutoCancel(true)
+                        .setContentIntent(pendingIntent)
+                        .build();
+
+                final NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                final int notificationID = HONEYCOMB_EOL_NOTIFIED.hashCode();
+                notificationManager.notify(notificationID, notification);
+
+                GeckoSharedPrefs.forProfile(this)
+                                .edit()
+                                .putBoolean(HONEYCOMB_EOL_NOTIFIED, true)
+                                .apply();
+            }
+        } finally {
+            StrictMode.setThreadPolicy(savedPolicy);
+        }
     }
 
     /**
@@ -1210,7 +1246,7 @@ public class BrowserApp extends GeckoApp
 
     @Override
     public void onDestroy() {
-        if (!isSupportedSDK()) {
+        if (!isSupportedSystem()) {
             // This build does not support the Android version of the device; Exit early.
             super.onDestroy();
             return;
@@ -1757,7 +1793,7 @@ public class BrowserApp extends GeckoApp
                     }
                 }
 
-                if (AppConstants.MOZ_STUMBLER_BUILD_TIME_ENABLED && RestrictedProfiles.isAllowed(this, Restriction.DISALLOW_LOCATION_SERVICE)) {
+                if (AppConstants.MOZ_STUMBLER_BUILD_TIME_ENABLED && Restrictions.isAllowed(this, Restrictable.LOCATION_SERVICE)) {
                     // Start (this acts as ping if started already) the stumbler lib; if the stumbler has queued data it will upload it.
                     // Stumbler operates on its own thread, and startup impact is further minimized by delaying work (such as upload) a few seconds.
                     // Avoid any potential startup CPU/thread contention by delaying the pref broadcast.
@@ -2360,6 +2396,10 @@ public class BrowserApp extends GeckoApp
             mMenu.clear();
             onCreateOptionsMenu(mMenu);
         }
+
+        if (!Versions.preHC && !Versions.feature14Plus) {
+            conditionallyNotifyHCEOL();
+        }
     }
 
     @Override
@@ -2406,7 +2446,9 @@ public class BrowserApp extends GeckoApp
             mFirstrunPane.registerOnFinishListener(new FirstrunPane.OnFinishListener() {
                 @Override
                 public void onFinish() {
-                    enterEditingMode();
+                    if (mFirstrunPane.showBrowserHint()) {
+                        enterEditingMode();
+                    }
                 }
             });
         }
@@ -2455,7 +2497,7 @@ public class BrowserApp extends GeckoApp
             });
 
             // Don't show the banner in guest mode.
-            if (!RestrictedProfiles.isUserRestricted()) {
+            if (!Restrictions.isUserRestricted()) {
                 final ViewStub homeBannerStub = (ViewStub) findViewById(R.id.home_banner_stub);
                 final HomeBanner homeBanner = (HomeBanner) homeBannerStub.inflate();
                 mHomePager.setBanner(homeBanner);
@@ -2833,9 +2875,12 @@ public class BrowserApp extends GeckoApp
         // Action providers are available only ICS+.
         if (Versions.feature14Plus) {
             GeckoMenuItem share = (GeckoMenuItem) mMenu.findItem(R.id.share);
+            final GeckoMenuItem quickShare = (GeckoMenuItem) mMenu.findItem(R.id.quickshare);
 
             GeckoActionProvider provider = GeckoActionProvider.getForType(GeckoActionProvider.DEFAULT_MIME_TYPE, this);
+
             share.setActionProvider(provider);
+            quickShare.setActionProvider(provider);
         }
 
         return true;
@@ -2930,7 +2975,7 @@ public class BrowserApp extends GeckoApp
         final MenuItem back = aMenu.findItem(R.id.back);
         final MenuItem forward = aMenu.findItem(R.id.forward);
         final MenuItem share = aMenu.findItem(R.id.share);
-        final MenuItem sendToDevice = aMenu.findItem(R.id.send_to_device);
+        final MenuItem quickShare = aMenu.findItem(R.id.quickshare);
         final MenuItem saveAsPDF = aMenu.findItem(R.id.save_as_pdf);
         final MenuItem print = aMenu.findItem(R.id.print);
         final MenuItem charEncoding = aMenu.findItem(R.id.char_encoding);
@@ -2956,7 +3001,7 @@ public class BrowserApp extends GeckoApp
             back.setEnabled(false);
             forward.setEnabled(false);
             share.setEnabled(false);
-            sendToDevice.setEnabled(false);
+            quickShare.setEnabled(false);
             saveAsPDF.setEnabled(false);
             print.setEnabled(false);
             findInPage.setEnabled(false);
@@ -3039,13 +3084,11 @@ public class BrowserApp extends GeckoApp
         }
 
         // Disable share menuitem for about:, chrome:, file:, and resource: URIs
-        final boolean shareVisible = RestrictedProfiles.isAllowed(this, Restriction.DISALLOW_SHARE);
+        final boolean shareVisible = Restrictions.isAllowed(this, Restrictable.SHARE);
         share.setVisible(shareVisible);
-        sendToDevice.setVisible(shareVisible);
         final boolean shareEnabled = StringUtils.isShareableUrl(url) && shareVisible;
         share.setEnabled(shareEnabled);
-        sendToDevice.setEnabled(shareEnabled);
-        MenuUtils.safeSetEnabled(aMenu, R.id.downloads, RestrictedProfiles.isAllowed(this, Restriction.DISALLOW_DOWNLOADS));
+        MenuUtils.safeSetEnabled(aMenu, R.id.downloads, Restrictions.isAllowed(this, Restrictable.DOWNLOAD));
 
         // NOTE: Use MenuUtils.safeSetEnabled because some actions might
         // be on the BrowserToolbar context menu.
@@ -3058,6 +3101,10 @@ public class BrowserApp extends GeckoApp
 
         // Action providers are available only ICS+.
         if (Versions.feature14Plus) {
+            quickShare.setVisible(shareVisible);
+            quickShare.setEnabled(shareEnabled);
+
+            // This provider also applies to the quick share menu item.
             final GeckoActionProvider provider = ((GeckoMenuItem) share).getGeckoActionProvider();
             if (provider != null) {
                 Intent shareIntent = provider.getIntent();
@@ -3104,7 +3151,7 @@ public class BrowserApp extends GeckoApp
             }
         }
 
-        final boolean privateTabVisible = RestrictedProfiles.isAllowed(this, Restriction.DISALLOW_PRIVATE_BROWSING);
+        final boolean privateTabVisible = Restrictions.isAllowed(this, Restrictable.PRIVATE_BROWSING);
         MenuUtils.safeSetVisible(aMenu, R.id.new_private_tab, privateTabVisible);
 
         // Disable PDF generation (save and print) for about:home and xul pages.
@@ -3126,11 +3173,11 @@ public class BrowserApp extends GeckoApp
             enterGuestMode.setVisible(true);
         }
 
-        if (!RestrictedProfiles.isAllowed(this, Restriction.DISALLOW_GUEST_BROWSING)) {
+        if (!Restrictions.isAllowed(this, Restrictable.GUEST_BROWSING)) {
             MenuUtils.safeSetVisible(aMenu, R.id.new_guest_session, false);
         }
 
-        if (!RestrictedProfiles.isAllowed(this, Restriction.DISALLOW_INSTALL_EXTENSION)) {
+        if (!Restrictions.isAllowed(this, Restrictable.INSTALL_EXTENSION)) {
             MenuUtils.safeSetVisible(aMenu, R.id.addons, false);
         }
 
@@ -3207,20 +3254,6 @@ public class BrowserApp extends GeckoApp
                     item.setIcon(resolveReadingListIconID(true));
                     item.setTitle(resolveReadingListTitleID(true));
                 }
-            }
-            return true;
-        }
-
-        if (itemId == R.id.send_to_device) {
-            tab = Tabs.getInstance().getSelectedTab();
-            if (tab != null) {
-                final Tab selectedTab = tab;
-                ThreadUtils.postToBackgroundThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        handleSendToDevice(selectedTab);
-                    }
-                });
             }
             return true;
         }
@@ -3361,46 +3394,6 @@ public class BrowserApp extends GeckoApp
         }
 
         return super.onOptionsItemSelected(item);
-    }
-
-    /**
-     * Handles a press to the send to device button in the browser menu. The
-     * expected states when the user presses the button are:
-     *   * Not signed in: open to FxA sign-up
-     *   * Signed in but no other devices: display toast with a message
-     * explaining they should connect another device to use this feature
-     *   * Signed in but >= 1 other device: display device list
-     */
-    @WorkerThread
-    private void handleSendToDevice(@NonNull final Tab selectedTab) {
-        final Account account = FirefoxAccounts.getFirefoxAccount(this);
-        if (account == null) {
-            // TODO (bug 1217164): Go back to previous tab on back press
-            final Intent intent = new Intent(FxAccountConstants.ACTION_FXA_GET_STARTED);
-            intent.putExtra(FxAccountWebFlowActivity.EXTRA_ENDPOINT, FxAccountConstants.ENDPOINT_PREFERENCES);
-            startActivity(intent);
-            return;
-        }
-
-        final BrowserDB browserDB = GeckoProfile.get(this).getDB();
-        final TabsAccessor tabsAccessor = browserDB.getTabsAccessor();
-        final int remoteClientCount = tabsAccessor.getRemoteClientCount(this);
-        if (remoteClientCount == 0) {
-            final Toast toast = Toast.makeText(this, R.string.menu_no_synced_devices, Toast.LENGTH_LONG);
-            toast.show();
-
-        } else {
-            String url = selectedTab.getURL();
-            if (url != null) {
-                if (AboutPages.isAboutReader(url)) {
-                    url = ReaderModeUtils.getUrlFromAboutReader(url);
-                }
-                final Intent sendToDeviceIntent = GeckoAppShell.getShareIntent(getContext(), url,
-                        "text/plain", selectedTab.getDisplayTitle());
-                sendToDeviceIntent.setClass(getContext(), ShareDialog.class);
-                startActivity(sendToDeviceIntent);
-            }
-        }
     }
 
     @Override
@@ -3803,7 +3796,7 @@ public class BrowserApp extends GeckoApp
         if (inGuestMode) {
             return StartupAction.GUEST;
         }
-        if (RestrictedProfiles.isRestrictedProfile(this)) {
+        if (Restrictions.isRestrictedProfile(this)) {
             return StartupAction.RESTRICTED;
         }
         return (passedURL == null ? StartupAction.NORMAL : StartupAction.URL);

@@ -30,6 +30,11 @@ Components.utils.import("resource://gre/modules/osfile.jsm");
 Components.utils.import("resource://gre/modules/AsyncShutdown.jsm");
 Components.utils.import("resource://testing-common/MockRegistrar.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "Extension",
+                                  "resource://gre/modules/Extension.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "HttpServer",
+                                  "resource://testing-common/httpd.js");
+
 // We need some internal bits of AddonManager
 var AMscope = Components.utils.import("resource://gre/modules/AddonManager.jsm");
 var AddonManager = AMscope.AddonManager;
@@ -1023,6 +1028,26 @@ function createTempXPIFile(aData) {
 }
 
 /**
+ * Creates an XPI file for some WebExtension data in the temporary directory and
+ * returns the nsIFile for it. The file will be deleted when the test completes.
+ *
+ * @param   aData
+ *          The object holding data about the add-on, as expected by
+ *          |Extension.generateXPI|.
+ * @return  A file pointing to the created XPI file
+ */
+function createTempWebExtensionFile(aData) {
+  if (!aData.id) {
+    const uuidGenerator = AM_Cc["@mozilla.org/uuid-generator;1"].getService(AM_Ci.nsIUUIDGenerator);
+    aData.id = uuidGenerator.generateUUID().number;
+  }
+
+  let file = Extension.generateXPI(aData.id, aData);
+  temp_xpis.push(file);
+  return file;
+}
+
+/**
  * Sets the last modified time of the extension, usually to trigger an update
  * of its metadata. If the extension is unpacked, this function assumes that
  * the extension contains only the install.rdf file.
@@ -1405,6 +1430,23 @@ function ensure_test_completed() {
 }
 
 /**
+ * Returns a promise that resolves when the given add-on event is fired. The
+ * resolved value is an array of arguments passed for the event.
+ */
+function promiseAddonEvent(event) {
+  return new Promise(resolve => {
+    let listener = {
+      [event]: function(...args) {
+        AddonManager.removeAddonListener(listener);
+        resolve(args);
+      }
+    }
+
+    AddonManager.addAddonListener(listener);
+  });
+}
+
+/**
  * A helper method to install an array of AddonInstall to completion and then
  * call a provided callback.
  *
@@ -1641,6 +1683,12 @@ gTmpD.append("temp");
 gTmpD.create(AM_Ci.nsIFile.DIRECTORY_TYPE, FileUtils.PERMS_DIRECTORY);
 registerDirectory("TmpD", gTmpD);
 
+// Create a replacement app directory for the tests.
+const gAppDirForAddons = gProfD.clone();
+gAppDirForAddons.append("appdir-addons");
+gAppDirForAddons.create(AM_Ci.nsIFile.DIRECTORY_TYPE, FileUtils.PERMS_DIRECTORY);
+registerDirectory("XREAddonAppDir", gAppDirForAddons);
+
 // Write out an empty blocklist.xml file to the profile to ensure nothing
 // is blocklisted by default
 var blockFile = gProfD.clone();
@@ -1703,6 +1751,10 @@ do_register_cleanup(function addon_cleanup() {
     do_throw("Found unexpected file in temporary directory: " + entry.leafName);
   }
   dirEntries.close();
+
+  try {
+    gAppDirForAddons.remove(true);
+  } catch (ex) { do_print("Got exception removing addon app dir, " + ex); }
 
   var testDir = gProfD.clone();
   testDir.append("extensions");
@@ -1775,7 +1827,7 @@ function interpolateAndServeFile(request, response) {
 
     response.write(data);
   } catch (e) {
-    do_throw("Exception while serving interpolated file.");
+    do_throw(`Exception while serving interpolated file: ${e}\n${e.stack}`);
   } finally {
     cstream.close(); // this closes fstream as well
   }
@@ -1926,23 +1978,23 @@ function promiseFindAddonUpdates(addon, reason = AddonManager.UPDATE_WHEN_PERIOD
         if ("compatibilityUpdate" in result) {
           do_throw("Saw multiple compatibility update events");
         }
-        equal(addon, addon2);
-        addon.compatibilityUpdate = false;
+        equal(addon, addon2, "onNoCompatibilityUpdateAvailable");
+        result.compatibilityUpdate = false;
       },
 
       onCompatibilityUpdateAvailable: function(addon2) {
         if ("compatibilityUpdate" in result) {
           do_throw("Saw multiple compatibility update events");
         }
-        equal(addon, addon2);
-        addon.compatibilityUpdate = true;
+        equal(addon, addon2, "onCompatibilityUpdateAvailable");
+        result.compatibilityUpdate = true;
       },
 
       onNoUpdateAvailable: function(addon2) {
         if ("updateAvailable" in result) {
           do_throw("Saw multiple update available events");
         }
-        equal(addon, addon2);
+        equal(addon, addon2, "onNoUpdateAvailable");
         result.updateAvailable = false;
       },
 
@@ -1950,12 +2002,12 @@ function promiseFindAddonUpdates(addon, reason = AddonManager.UPDATE_WHEN_PERIOD
         if ("updateAvailable" in result) {
           do_throw("Saw multiple update available events");
         }
-        equal(addon, addon2);
+        equal(addon, addon2, "onUpdateAvailable");
         result.updateAvailable = install;
       },
 
       onUpdateFinished: function(addon2, error) {
-        equal(addon, addon2);
+        equal(addon, addon2, "onUpdateFinished");
         if (error == AddonManager.UPDATE_STATUS_NO_ERROR) {
           resolve(result);
         } else {

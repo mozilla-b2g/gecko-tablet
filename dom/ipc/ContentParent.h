@@ -648,6 +648,9 @@ private:
                                           override;
     virtual bool DeallocPBlobParent(PBlobParent* aActor) override;
 
+    virtual bool RecvPBlobConstructor(PBlobParent* aActor,
+                                      const BlobConstructorParams& params) override;
+
     virtual bool DeallocPCrashReporterParent(PCrashReporterParent* crashreporter) override;
 
     virtual bool RecvGetRandomValues(const uint32_t& length,
@@ -879,6 +882,7 @@ private:
 
     virtual bool RecvCopyFavicon(const URIParams& aOldURI,
                                  const URIParams& aNewURI,
+                                 const IPC::Principal& aLoadingPrincipal,
                                  const bool& aInPrivateBrowsing) override;
 
     virtual void ProcessingError(Result aCode, const char* aMsgName) override;
@@ -919,16 +923,6 @@ private:
     DeallocPFileDescriptorSetParent(PFileDescriptorSetParent*) override;
 
     virtual bool
-    RecvGetFileReferences(const PersistenceType& aPersistenceType,
-                          const nsCString& aOrigin,
-                          const nsString& aDatabaseName,
-                          const int64_t& aFileId,
-                          int32_t* aRefCnt,
-                          int32_t* aDBRefCnt,
-                          int32_t* aSliceRefCnt,
-                          bool* aResult) override;
-
-    virtual bool
     RecvFlushPendingFileDeletions() override;
 
     virtual PWebrtcGlobalParent* AllocPWebrtcGlobalParent() override;
@@ -944,6 +938,7 @@ private:
     virtual bool RecvGamepadListenerRemoved() override;
     virtual bool RecvProfile(const nsCString& aProfile) override;
     virtual bool RecvGetGraphicsDeviceInitData(DeviceInitData* aOut) override;
+    void StartProfiler(nsIProfilerStartParams* aParams);
 
     virtual bool RecvGetDeviceStorageLocation(const nsString& aType,
                                               nsString* aPath) override;

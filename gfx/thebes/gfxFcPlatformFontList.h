@@ -225,7 +225,8 @@ public:
                      uint32_t aLength) override;
 
     gfxFontFamily* FindFamily(const nsAString& aFamily,
-                              gfxFontStyle* aStyle = nullptr) override;
+                              gfxFontStyle* aStyle = nullptr,
+                              gfxFloat aDevToCssSize = 1.0) override;
 
     bool GetStandardFamilyName(const nsAString& aFontName,
                                nsAString& aFamilyName) override;
@@ -238,6 +239,11 @@ public:
                          nsTArray<gfxFontFamily*>& aFamilyList) override;
 
     void ClearLangGroupPrefFonts() override;
+
+    // clear out cached generic-lang ==> family-list mappings
+    void ClearGenericMappings() {
+        mGenericMappings.Clear();
+    }
 
     void GetSampleLangForGroup(nsIAtom* aLanguage, nsACString& aLangStr);
 

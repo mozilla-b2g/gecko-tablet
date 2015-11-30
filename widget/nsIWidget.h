@@ -123,8 +123,8 @@ typedef void* nsNativeWidget;
 #endif
 
 #define NS_IWIDGET_IID \
-{ 0x7b736a0c, 0x2262, 0x4f37, \
-  { 0xbd, 0xed, 0xe5, 0x60, 0x88, 0x1c, 0x36, 0xdd } }
+{ 0xd953b7a1, 0x6981, 0x4ed7, \
+  { 0xbc, 0xf0, 0xed, 0x96, 0x70, 0xee, 0x23, 0x28 } }
 
 /*
  * Window shadow styles
@@ -335,6 +335,7 @@ class nsIWidget : public nsISupports {
     typedef mozilla::LayoutDeviceIntMargin LayoutDeviceIntMargin;
     typedef mozilla::LayoutDeviceIntPoint LayoutDeviceIntPoint;
     typedef mozilla::LayoutDeviceIntRect LayoutDeviceIntRect;
+    typedef mozilla::LayoutDeviceIntRegion LayoutDeviceIntRegion;
     typedef mozilla::LayoutDeviceIntSize LayoutDeviceIntSize;
 
     // Used in UpdateThemeGeometries.
@@ -593,6 +594,15 @@ class nsIWidget : public nsISupports {
      *
      */
     NS_IMETHOD SetModal(bool aModal) = 0;
+
+    /**
+     * Make the non-modal window opened by modal window fake-modal, that will
+     * call SetFakeModal(false) on destroy on Cocoa.
+     */
+    NS_IMETHOD SetFakeModal(bool aModal)
+    {
+        return SetModal(aModal);
+    }
 
     /**
      * The maximum number of simultaneous touch contacts supported by the device.
@@ -1249,7 +1259,8 @@ class nsIWidget : public nsISupports {
      *
      * Always called from the compositing thread.
      */
-    virtual void DrawWindowOverlay(LayerManagerComposite* aManager, nsIntRect aRect) = 0;
+    virtual void DrawWindowOverlay(LayerManagerComposite* aManager,
+                                   LayoutDeviceIntRect aRect) = 0;
 
     /**
      * Return a DrawTarget for the window which can be composited into.
@@ -1491,7 +1502,7 @@ class nsIWidget : public nsISupports {
      * @param aResizerRect The resizer's rect in device pixels.
      * @return Whether a resize widget is shown.
      */
-    virtual bool ShowsResizeIndicator(nsIntRect* aResizerRect) = 0;
+    virtual bool ShowsResizeIndicator(LayoutDeviceIntRect* aResizerRect) = 0;
 
     /**
      * Return the popup that was last rolled up, or null if there isn't one.

@@ -44,8 +44,13 @@ pref("browser.viewport.desktopWidth", 980);
 // the value is divided by 1000 and clamped to hard-coded min/max scale values.
 pref("browser.viewport.defaultZoom", -1);
 
-/* allow scrollbars to float above chrome ui */
-pref("ui.scrollbarsCanOverlapContent", 1);
+#ifdef MOZ_ANDROID_APZ
+// Show/Hide scrollbars when active/inactive
+pref("ui.showHideScrollbars", 1);
+pref("ui.useOverlayScrollbars", 1);
+pref("ui.scrollbarFadeBeginDelay", 450);
+pref("ui.scrollbarFadeDuration", 0);
+#endif
 
 /* turn off the caret blink after 10 cycles */
 pref("ui.caretBlinkCount", 10);
@@ -184,7 +189,7 @@ pref("xpinstall.signatures.required", false);
 pref("extensions.enabledScopes", 1);
 pref("extensions.autoupdate.enabled", true);
 pref("extensions.autoupdate.interval", 86400);
-pref("extensions.update.enabled", false);
+pref("extensions.update.enabled", true);
 pref("extensions.update.interval", 86400);
 pref("extensions.dss.enabled", false);
 pref("extensions.dss.switchPending", false);
@@ -554,6 +559,7 @@ pref("layers.async-video.enabled", true);
 #ifdef MOZ_ANDROID_APZ
 pref("layers.async-pan-zoom.enabled", true);
 pref("apz.axis_lock.mode", 1);
+pref("apz.fling_stop_on_tap_threshold", "0.08");
 #endif
 pref("apz.allow_zooming", true);
 pref("layers.progressive-paint", true);
@@ -604,9 +610,6 @@ pref("image.downscale-during-decode.enabled", true);
 // Shumway component (SWF player) is disabled by default. Also see bug 904346.
 pref("shumway.disabled", true);
 #endif
-
-// enable touch events interfaces
-pref("dom.w3c_touch_events.enabled", 1);
 
 #ifdef MOZ_SAFE_BROWSING
 pref("browser.safebrowsing.enabled", true);

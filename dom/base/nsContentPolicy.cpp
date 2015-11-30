@@ -30,14 +30,12 @@ using mozilla::LogLevel;
 
 NS_IMPL_ISUPPORTS(nsContentPolicy, nsIContentPolicy)
 
-static PRLogModuleInfo* gConPolLog;
+static mozilla::LazyLogModule gConPolLog("nsContentPolicy");
 
 nsresult
 NS_NewContentPolicy(nsIContentPolicy **aResult)
 {
   *aResult = new nsContentPolicy;
-  if (!*aResult)
-      return NS_ERROR_OUT_OF_MEMORY;
   NS_ADDREF(*aResult);
   return NS_OK;
 }
@@ -46,9 +44,6 @@ nsContentPolicy::nsContentPolicy()
     : mPolicies(NS_CONTENTPOLICY_CATEGORY)
     , mSimplePolicies(NS_SIMPLECONTENTPOLICY_CATEGORY)
 {
-    if (! gConPolLog) {
-        gConPolLog = PR_NewLogModule("nsContentPolicy");
-    }
 }
 
 nsContentPolicy::~nsContentPolicy()

@@ -231,6 +231,7 @@ struct MOZ_STACK_CLASS nsGridContainerFrame::Tracks
   explicit Tracks(LogicalAxis aAxis) : mAxis(aAxis) {}
 
   void Initialize(const TrackSizingFunctions& aFunctions,
+                  nscoord                     aGridGap,
                   uint32_t                    aNumTracks,
                   nscoord                     aContentBoxSize);
 
@@ -270,9 +271,11 @@ struct MOZ_STACK_CLASS nsGridContainerFrame::Tracks
                                  const LineRange&            aRange,
                                  nsIFrame*                   aGridItem);
   /**
-   * Collect the tracks which are growable (matching aSelector) and return
-   * aAvailableSpace minus the sum of mBase's in aPlan for the tracks
-   * in aRange, or 0 if this subtraction goes below 0.
+   * Collect the tracks which are growable (matching aSelector) into
+   * aGrowableTracks, and return the amount of space that can be used
+   * to grow those tracks.  Specifically, we return aAvailableSpace minus
+   * the sum of mBase's in aPlan (clamped to 0) for the tracks in aRange,
+   * or zero when there are no growable tracks.
    * @note aPlan[*].mBase represents a planned new base or limit.
    */
   static nscoord CollectGrowable(nscoord                    aAvailableSpace,
@@ -287,16 +290,15 @@ struct MOZ_STACK_CLASS nsGridContainerFrame::Tracks
     const uint32_t end = aRange.mEnd;
     for (uint32_t i = start; i < end; ++i) {
       const TrackSize& sz = aPlan[i];
-      MOZ_ASSERT(!sz.IsFrozen());
       space -= sz.mBase;
       if (space <= 0) {
         return 0;
       }
-      if (sz.mState & aSelector) {
+      if ((sz.mState & aSelector) && !sz.IsFrozen()) {
         aGrowableTracks.AppendElement(i);
       }
     }
-    return space;
+    return aGrowableTracks.IsEmpty() ? 0 : space;
   }
 
   void SetupGrowthPlan(nsTArray<TrackSize>&      aPlan,
@@ -595,6 +597,11 @@ struct MOZ_STACK_CLASS nsGridContainerFrame::Tracks
                            const LogicalSize& aContainerSize);
 
 
+  nscoord SumOfGridGaps() const {
+    auto len = mSizes.Length();
+    return MOZ_LIKELY(len > 1) ? (len - 1) * mGridGap : 0;
+  }
+
 #ifdef DEBUG
   void Dump() const
   {
@@ -607,6 +614,7 @@ struct MOZ_STACK_CLASS nsGridContainerFrame::Tracks
 #endif
 
   nsAutoTArray<TrackSize, 32> mSizes;
+  nscoord mGridGap;
   LogicalAxis mAxis;
 };
 
@@ -1013,10 +1021,10 @@ AlignSelf(uint8_t aAlignSelf, const LogicalRect& aCB, const WritingMode aCBWM,
   auto alignSelf = aAlignSelf;
   bool overflowSafe = alignSelf & NS_STYLE_ALIGN_SAFE;
   alignSelf &= ~NS_STYLE_ALIGN_FLAG_BITS;
-  MOZ_ASSERT(alignSelf != NS_STYLE_ALIGN_LEFT &&
-             alignSelf != NS_STYLE_ALIGN_RIGHT,
-             "Grid's 'align-self' axis is never parallel to the container's "
-             "inline axis, so these should've computed to 'start' already");
+  // Grid's 'align-self' axis is never parallel to the container's inline axis.
+  if (alignSelf == NS_STYLE_ALIGN_LEFT || alignSelf == NS_STYLE_ALIGN_RIGHT) {
+    alignSelf = NS_STYLE_ALIGN_START;
+  }
   if (MOZ_UNLIKELY(alignSelf == NS_STYLE_ALIGN_AUTO)) {
     // Happens in rare edge cases when 'position' was ignored by the frame
     // constructor (and the style system computed 'auto' based on 'position').
@@ -1090,9 +1098,10 @@ GetAlignJustifyValue(uint16_t aAlignment, const WritingMode aWM,
   switch (aAlignment) {
     case NS_STYLE_ALIGN_LEFT:
     case NS_STYLE_ALIGN_RIGHT: {
-      MOZ_ASSERT(!aIsAlign, "Grid container's 'align-contents' axis is never "
-                 "parallel to its inline axis, so these should've computed to "
-                 "'start' already");
+      if (aIsAlign) {
+        // Grid's 'align-content' axis is never parallel to the inline axis.
+        return NS_STYLE_ALIGN_START;
+      }
       bool isStart = aWM.IsBidiLTR() == (aAlignment == NS_STYLE_ALIGN_LEFT);
       return isStart ? NS_STYLE_ALIGN_START : NS_STYLE_ALIGN_END;
     }
@@ -1903,6 +1912,7 @@ nsGridContainerFrame::TrackSize::Initialize(nscoord aPercentageBasis,
 void
 nsGridContainerFrame::Tracks::Initialize(
   const TrackSizingFunctions& aFunctions,
+  nscoord                     aGridGap,
   uint32_t                    aNumTracks,
   nscoord                     aContentBoxSize)
 {
@@ -1918,24 +1928,32 @@ nsGridContainerFrame::Tracks::Initialize(
                explicitGridOffset + aFunctions.mMinSizingFunctions.Length());
   MOZ_ASSERT(aFunctions.mMinSizingFunctions.Length() ==
                aFunctions.mMaxSizingFunctions.Length());
+  // First we initialize the implicit tracks before the explicit grid starts.
   uint32_t i = 0;
-  for (; i < explicitGridOffset; ++i) {
+  uint32_t sentinel = std::min<uint32_t>(explicitGridOffset, mSizes.Length());
+  for (; i < sentinel; ++i) {
     mSizes[i].Initialize(percentageBasis,
                          aFunctions.mAutoMinSizing,
                          aFunctions.mAutoMaxSizing);
   }
-  uint32_t j = 0;
-  for (uint32_t len = aFunctions.mMinSizingFunctions.Length(); j < len; ++j) {
-    mSizes[i + j].Initialize(percentageBasis,
-                             aFunctions.mMinSizingFunctions[j],
-                             aFunctions.mMaxSizingFunctions[j]);
+  // Now initialize the explicit grid tracks.
+  sentinel = std::min<uint32_t>(i + aFunctions.mMinSizingFunctions.Length(),
+                                mSizes.Length());
+  for (uint32_t j = 0; i < sentinel; ++i, ++j) {
+    mSizes[i].Initialize(percentageBasis,
+                         aFunctions.mMinSizingFunctions[j],
+                         aFunctions.mMaxSizingFunctions[j]);
   }
-  i += j;
-  for (; i < mSizes.Length(); ++i) {
+  // Finally, initialize the implicit tracks that comes after the explicit grid.
+  sentinel = mSizes.Length();
+  for (; i < sentinel; ++i) {
     mSizes[i].Initialize(percentageBasis,
                          aFunctions.mAutoMinSizing,
                          aFunctions.mAutoMaxSizing);
   }
+
+  mGridGap = aGridGap;
+  MOZ_ASSERT(mGridGap >= nscoord(0), "negative grid gap");
 }
 
 /**
@@ -2066,8 +2084,12 @@ nsGridContainerFrame::Tracks::CalculateSizes(
   ResolveIntrinsicSize(aState, aGridItems, aFunctions, aRange, percentageBasis,
                        aConstraint);
   if (aConstraint != nsLayoutUtils::MIN_ISIZE) {
-    DistributeFreeSpace(aContentBoxSize);
-    StretchFlexibleTracks(aState, aGridItems, aFunctions, aContentBoxSize);
+    nscoord freeSpace = aContentBoxSize;
+    if (freeSpace != NS_UNCONSTRAINEDSIZE) {
+      freeSpace -= SumOfGridGaps();
+    }
+    DistributeFreeSpace(freeSpace);
+    StretchFlexibleTracks(aState, aGridItems, aFunctions, freeSpace);
   }
 }
 
@@ -2077,10 +2099,11 @@ nsGridContainerFrame::CalculateTrackSizes(GridReflowState&   aState,
                                           IntrinsicISizeType aConstraint)
 {
   const WritingMode& wm = aState.mWM;
-  aState.mCols.Initialize(aState.mColFunctions, mGridColEnd,
-                          aContentBox.ISize(wm));
-  aState.mRows.Initialize(aState.mRowFunctions, mGridRowEnd,
-                          aContentBox.BSize(wm));
+  const nsStylePosition* stylePos = aState.mGridStyle;
+  aState.mCols.Initialize(aState.mColFunctions, stylePos->mGridColumnGap,
+                          mGridColEnd, aContentBox.ISize(wm));
+  aState.mRows.Initialize(aState.mRowFunctions, stylePos->mGridRowGap,
+                          mGridRowEnd, aContentBox.BSize(wm));
 
   aState.mCols.CalculateSizes(aState, mGridItems, aState.mColFunctions,
                               aContentBox.ISize(wm), &GridArea::mCols,
@@ -2582,7 +2605,7 @@ nsGridContainerFrame::Tracks::AlignJustifyContent(
   const bool isAlign = mAxis == eLogicalAxisBlock;
   auto stylePos = aReflowState.mStylePosition;
   const auto valueAndFallback = isAlign ?
-    stylePos->ComputedAlignContent(aReflowState.mStyleDisplay) :
+    stylePos->ComputedAlignContent() :
     stylePos->ComputedJustifyContent(aReflowState.mStyleDisplay);
   WritingMode wm = aReflowState.GetWritingMode();
   bool overflowSafe;
@@ -2605,7 +2628,7 @@ nsGridContainerFrame::Tracks::AlignJustifyContent(
     }
     nscoord cbSize = isAlign ? aContainerSize.BSize(wm)
                              : aContainerSize.ISize(wm);
-    space = cbSize - trackSizeSum;
+    space = cbSize - trackSizeSum - SumOfGridGaps();
     // Use the fallback value instead when applicable.
     if (space < 0 ||
         (alignment == NS_STYLE_ALIGN_SPACE_BETWEEN && mSizes.Length() == 1)) {
@@ -2646,7 +2669,7 @@ nsGridContainerFrame::Tracks::AlignJustifyContent(
   if (!distribute) {
     for (TrackSize& sz : mSizes) {
       sz.mPosition = pos;
-      pos += sz.mBase;
+      pos += sz.mBase + mGridGap;
     }
     return;
   }
@@ -2660,12 +2683,9 @@ nsGridContainerFrame::Tracks::AlignJustifyContent(
       nscoord spacePerTrack;
       roundingError = NSCoordDivRem(space, numAutoTracks, &spacePerTrack);
       for (TrackSize& sz : mSizes) {
-#ifdef DEBUG
-        space += sz.mBase; // for the assert below: space + all mBase == pos
-#endif
         sz.mPosition = pos;
         if (!(sz.mState & TrackSize::eAutoMaxSizing)) {
-          pos += sz.mBase;
+          pos += sz.mBase + mGridGap;
           continue;
         }
         nscoord stretch = spacePerTrack;
@@ -2675,10 +2695,9 @@ nsGridContainerFrame::Tracks::AlignJustifyContent(
         }
         nscoord newBase = sz.mBase + stretch;
         sz.mBase = newBase;
-        pos += newBase;
+        pos += newBase + mGridGap;
       }
-      MOZ_ASSERT(pos == space && !roundingError,
-                 "we didn't distribute all space?");
+      MOZ_ASSERT(!roundingError, "we didn't distribute all rounding error?");
       return;
     }
     case NS_STYLE_ALIGN_SPACE_BETWEEN:
@@ -2695,7 +2714,9 @@ nsGridContainerFrame::Tracks::AlignJustifyContent(
       break;
     default:
       MOZ_ASSERT_UNREACHABLE("unknown align-/justify-content value");
+      between = 0; // just to avoid a compiler warning
   }
+  between += mGridGap;
   for (TrackSize& sz : mSizes) {
     sz.mPosition = pos;
     nscoord spacing = between;
@@ -2705,7 +2726,7 @@ nsGridContainerFrame::Tracks::AlignJustifyContent(
     }
     pos += sz.mBase + spacing;
   }
-  MOZ_ASSERT(!roundingError, "we didn't distribute all space?");
+  MOZ_ASSERT(!roundingError, "we didn't distribute all rounding error?");
 }
 
 void
@@ -2964,6 +2985,7 @@ nsGridContainerFrame::Reflow(nsPresContext*           aPresContext,
     for (uint32_t i = 0; i < mGridRowEnd; ++i) {
       bSize += gridReflowState.mRows.mSizes[i].mBase;
     }
+    bSize += gridReflowState.mRows.SumOfGridGaps();
   } else {
     bSize = computedBSize;
   }
@@ -3000,8 +3022,8 @@ nsGridContainerFrame::IntrinsicISize(nsRenderingContext* aRenderingContext,
   if (mGridColEnd == 0) {
     return 0;
   }
-  state.mCols.Initialize(state.mColFunctions, mGridColEnd,
-                         NS_UNCONSTRAINEDSIZE);
+  state.mCols.Initialize(state.mColFunctions, state.mGridStyle->mGridColumnGap,
+                         mGridColEnd, NS_UNCONSTRAINEDSIZE);
   state.mIter.Reset();
   state.mCols.CalculateSizes(state, mGridItems, state.mColFunctions,
                              NS_UNCONSTRAINEDSIZE, &GridArea::mCols,
@@ -3010,7 +3032,7 @@ nsGridContainerFrame::IntrinsicISize(nsRenderingContext* aRenderingContext,
   for (const TrackSize& sz : state.mCols.mSizes) {
     length += sz.mBase;
   }
-  return length;
+  return length + state.mCols.SumOfGridGaps();
 }
 
 nscoord

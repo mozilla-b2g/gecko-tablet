@@ -2177,8 +2177,7 @@ ContentChild::ActorDestroy(ActorDestroyReason why)
     // going through the full XPCOM shutdown path, because it doesn't
     // keep persistent state.
     QuickExit();
-#endif
-
+#else
     if (sFirstIdleTask) {
         sFirstIdleTask->Cancel();
     }
@@ -2203,6 +2202,7 @@ ContentChild::ActorDestroy(ActorDestroyReason why)
 #endif
 
     XRE_ShutdownChildProcess();
+#endif // NS_FREE_PERMANENT_DATA
 }
 
 void
@@ -2411,7 +2411,7 @@ ContentChild::RecvAddPermission(const IPC::Permission& permission)
                "We have no permissionManager in the Content process !");
 
     nsAutoCString originNoSuffix;
-    OriginAttributes attrs;
+    PrincipalOriginAttributes attrs;
     attrs.PopulateFromOrigin(permission.origin, originNoSuffix);
 
     nsCOMPtr<nsIURI> uri;
@@ -2807,22 +2807,20 @@ ContentChild::RecvOnAppThemeChanged()
 }
 
 bool
-ContentChild::RecvStartProfiler(const uint32_t& aEntries,
-                                const double& aInterval,
-                                nsTArray<nsCString>&& aFeatures,
-                                nsTArray<nsCString>&& aThreadNameFilters)
+ContentChild::RecvStartProfiler(const ProfilerInitParams& params)
 {
     nsTArray<const char*> featureArray;
-    for (size_t i = 0; i < aFeatures.Length(); ++i) {
-        featureArray.AppendElement(aFeatures[i].get());
+    for (size_t i = 0; i < params.features().Length(); ++i) {
+        featureArray.AppendElement(params.features()[i].get());
     }
 
     nsTArray<const char*> threadNameFilterArray;
-    for (size_t i = 0; i < aThreadNameFilters.Length(); ++i) {
-        threadNameFilterArray.AppendElement(aThreadNameFilters[i].get());
+    for (size_t i = 0; i < params.threadFilters().Length(); ++i) {
+        threadNameFilterArray.AppendElement(params.threadFilters()[i].get());
     }
 
-    profiler_start(aEntries, aInterval, featureArray.Elements(), featureArray.Length(),
+    profiler_start(params.entries(), params.interval(),
+                   featureArray.Elements(), featureArray.Length(),
                    threadNameFilterArray.Elements(), threadNameFilterArray.Length());
 
     return true;

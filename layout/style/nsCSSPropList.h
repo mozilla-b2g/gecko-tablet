@@ -2126,6 +2126,34 @@ CSS_PROP_SHORTHAND(
     CSS_PROPERTY_PARSE_FUNCTION,
     "layout.css.grid.enabled")
 CSS_PROP_POSITION(
+    grid-column-gap,
+    grid_column_gap,
+    GridColumnGap,
+    CSS_PROPERTY_PARSE_VALUE |
+        CSS_PROPERTY_VALUE_NONNEGATIVE,
+    "layout.css.grid.enabled",
+    VARIANT_HL | VARIANT_CALC,
+    nullptr,
+    offsetof(nsStylePosition, mGridColumnGap),
+    eStyleAnimType_nscoord)
+CSS_PROP_POSITION(
+    grid-row-gap,
+    grid_row_gap,
+    GridRowGap,
+    CSS_PROPERTY_PARSE_VALUE |
+      CSS_PROPERTY_VALUE_NONNEGATIVE,
+    "layout.css.grid.enabled",
+    VARIANT_HL | VARIANT_CALC,
+    nullptr,
+    offsetof(nsStylePosition, mGridRowGap),
+    eStyleAnimType_nscoord)
+CSS_PROP_SHORTHAND(
+    grid-gap,
+    grid_gap,
+    GridGap,
+    CSS_PROPERTY_PARSE_FUNCTION,
+    "layout.css.grid.enabled")
+CSS_PROP_POSITION(
     height,
     height,
     Height,
@@ -3236,6 +3264,45 @@ CSS_PROP_TEXTRESET(
     kTextDecorationStyleKTable,
     CSS_PROP_NO_OFFSET,
     eStyleAnimType_Custom)
+CSS_PROP_SHORTHAND(
+    text-emphasis,
+    text_emphasis,
+    TextEmphasis,
+    CSS_PROPERTY_PARSE_FUNCTION,
+    "layout.css.text-emphasis.enabled")
+CSS_PROP_TEXT(
+    text-emphasis-color,
+    text_emphasis_color,
+    TextEmphasisColor,
+    CSS_PROPERTY_PARSE_VALUE |
+        CSS_PROPERTY_IGNORED_WHEN_COLORS_DISABLED,
+    "layout.css.text-emphasis.enabled",
+    VARIANT_HC,
+    nullptr,
+    CSS_PROP_NO_OFFSET,
+    eStyleAnimType_Custom)
+CSS_PROP_TEXT(
+    text-emphasis-position,
+    text_emphasis_position,
+    TextEmphasisPosition,
+    CSS_PROPERTY_PARSE_VALUE |
+        CSS_PROPERTY_VALUE_PARSER_FUNCTION,
+    "layout.css.text-emphasis.enabled",
+    0,
+    kTextEmphasisPositionKTable,
+    CSS_PROP_NO_OFFSET,
+    eStyleAnimType_None)
+CSS_PROP_TEXT(
+    text-emphasis-style,
+    text_emphasis_style,
+    TextEmphasisStyle,
+    CSS_PROPERTY_PARSE_VALUE |
+        CSS_PROPERTY_VALUE_PARSER_FUNCTION,
+    "layout.css.text-emphasis.enabled",
+    0,
+    nullptr,
+    CSS_PROP_NO_OFFSET,
+    eStyleAnimType_None)
 CSS_PROP_TEXT(
     text-indent,
     text_indent,

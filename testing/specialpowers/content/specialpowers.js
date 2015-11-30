@@ -28,6 +28,7 @@ function SpecialPowers(window) {
   this._createFilesOnSuccess = null;
   this.SP_SYNC_MESSAGES = ["SPChromeScriptMessage",
                            "SPLoadChromeScript",
+                           "SPImportInMainProcess",
                            "SPObserverService",
                            "SPPermissionManager",
                            "SPPrefService",
@@ -41,7 +42,6 @@ function SpecialPowers(window) {
                             "SpecialPowers.CreateFiles",
                             "SpecialPowers.RemoveFiles",
                             "SPPingService",
-                            "SPQuotaManager",
                             "SPLoadExtension",
                             "SPStartupExtension",
                             "SPUnloadExtension",
@@ -213,10 +213,9 @@ SpecialPowers.prototype.nestedFrameSetup = function() {
           });
       });
 
-      let specialPowersBase = "chrome://specialpowers/content/";
-      mm.loadFrameScript(specialPowersBase + "MozillaLogger.js", false);
-      mm.loadFrameScript(specialPowersBase + "specialpowersAPI.js", false);
-      mm.loadFrameScript(specialPowersBase + "specialpowers.js", false);
+      mm.loadFrameScript("chrome://specialpowers/content/MozillaLogger.js", false);
+      mm.loadFrameScript("chrome://specialpowers/content/specialpowersAPI.js", false);
+      mm.loadFrameScript("chrome://specialpowers/content/specialpowers.js", false);
 
       let frameScript = "SpecialPowers.prototype.IsInNestedFrame=true;";
       mm.loadFrameScript("data:," + frameScript, false);

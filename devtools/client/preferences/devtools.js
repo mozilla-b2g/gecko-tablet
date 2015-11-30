@@ -66,6 +66,10 @@ pref("devtools.inspector.showAllAnonymousContent", false);
 // Enable the MDN docs tooltip
 pref("devtools.inspector.mdnDocsTooltip.enabled", true);
 
+// Collapse attributes that are too long.
+// Use -1 to not collapse attributes at all.
+pref("devtools.markup.collapseAttributeLength", 120);
+
 // DevTools default color unit
 pref("devtools.defaultColorUnit", "authored");
 
@@ -231,7 +235,7 @@ pref("devtools.webconsole.filter.info", true);
 pref("devtools.webconsole.filter.log", true);
 pref("devtools.webconsole.filter.secerror", true);
 pref("devtools.webconsole.filter.secwarn", true);
-pref("devtools.webconsole.filter.serviceworkers", false);
+pref("devtools.webconsole.filter.serviceworkers", true);
 pref("devtools.webconsole.filter.sharedworkers", false);
 pref("devtools.webconsole.filter.windowlessworkers", false);
 pref("devtools.webconsole.filter.servererror", false);

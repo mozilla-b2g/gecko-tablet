@@ -514,10 +514,8 @@
 @RESPATH@/browser/components/SelfSupportService.manifest
 @RESPATH@/browser/components/SelfSupportService.js
 #endif
-#ifdef MOZ_SERVICES_SYNC
 @RESPATH@/components/SyncComponents.manifest
 @RESPATH@/components/Weave.js
-#endif
 @RESPATH@/components/CaptivePortalDetectComponents.manifest
 @RESPATH@/components/captivedetect.js
 @RESPATH@/components/servicesComponents.manifest
@@ -678,6 +676,7 @@
 @RESPATH@/browser/chrome/icons/default/default32.png
 @RESPATH@/browser/chrome/icons/default/default48.png
 #endif
+@RESPATH@/browser/features/*
 
 ; [Webide Files]
 @RESPATH@/browser/chrome/webide@JAREXT@
@@ -708,6 +707,7 @@
 @RESPATH@/greprefs.js
 @RESPATH@/defaults/autoconfig/prefcalls.js
 @RESPATH@/browser/defaults/profile/prefs.js
+@RESPATH@/browser/defaults/permissions
 
 ; Warning: changing the path to channel-prefs.js can cause bugs (Bug 756325)
 ; Technically this is an app pref file, but we are keeping it in the original
@@ -718,9 +718,7 @@
 #ifdef MOZ_SERVICES_NOTIFICATIONS
 @RESPATH@/defaults/pref/services-notifications.js
 #endif
-#ifdef MOZ_SERVICES_SYNC
 @RESPATH@/defaults/pref/services-sync.js
-#endif
 
 ; [Layout Engine Resources]
 ; Style Sheets, Graphics and other Resources used by the layout engine.

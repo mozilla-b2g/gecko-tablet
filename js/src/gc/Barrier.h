@@ -280,12 +280,12 @@ struct InternalGCMethods<Value>
         // If the target needs an entry, add it.
         js::gc::StoreBuffer* sb;
         if (next.isObject() && (sb = reinterpret_cast<gc::Cell*>(&next.toObject())->storeBuffer())) {
-            // If we know that the prev has already inserted an entry, we can skip
-            // doing the lookup to add the new entry.
-            if (prev.isObject() && reinterpret_cast<gc::Cell*>(&prev.toObject())->storeBuffer()) {
-                sb->assertHasValueEdge(vp);
+            // If we know that the prev has already inserted an entry, we can
+            // skip doing the lookup to add the new entry. Note that we cannot
+            // safely assert the presence of the entry because it may have been
+            // added via a different store buffer.
+            if (prev.isObject() && reinterpret_cast<gc::Cell*>(&prev.toObject())->storeBuffer())
                 return;
-            }
             sb->putValue(vp);
             return;
         }
@@ -782,28 +782,6 @@ class ImmutableTenuredPtr
 
     T get() const { return value; }
     const T* address() { return &value; }
-};
-
-// Provide hash codes for Cell kinds that may be relocated and, thus, not have
-// a stable address to use as the base for a hash code. Instead of the address,
-// this hasher uses Cell::getUniqueId to provide exact matches and as a base
-// for generating hash codes.
-//
-// Note: this hasher, like PointerHasher can "hash" a nullptr. While a nullptr
-// would not likely be a useful key, there are some cases where being able to
-// hash a nullptr is useful, either on purpose or because of bugs:
-// (1) existence checks where the key may happen to be null and (2) some
-// aggregate Lookup kinds embed a JSObject* that is frequently null and do not
-// null test before dispatching to the hasher.
-template <typename T>
-struct MovableCellHasher
-{
-    using Key = T;
-    using Lookup = T;
-
-    static HashNumber hash(const Lookup& l);
-    static bool match(const Key& k, const Lookup& l);
-    static void rekey(Key& k, const Key& newKey) { k = newKey; }
 };
 
 template <typename T>

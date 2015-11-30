@@ -99,6 +99,7 @@ static void RollUpPopups()
 
 nsCocoaWindow::nsCocoaWindow()
 : mParent(nullptr)
+, mAncestorLink(nullptr)
 , mWindow(nil)
 , mDelegate(nil)
 , mSheetWindowParent(nil)
@@ -112,6 +113,7 @@ nsCocoaWindow::nsCocoaWindow()
 , mInFullScreenMode(false)
 , mInFullScreenTransition(false)
 , mModal(false)
+, mFakeModal(false)
 , mSupportsNativeFullScreen(false)
 , mInNativeFullScreenMode(false)
 , mIsAnimationSuppressed(false)
@@ -157,6 +159,7 @@ nsCocoaWindow::~nsCocoaWindow()
     } else {
       nsCocoaWindow* childWindow = static_cast<nsCocoaWindow*>(kid);
       childWindow->mParent = nullptr;
+      childWindow->mAncestorLink = mAncestorLink;
       kid = kid->GetPrevSibling();
     }
   }
@@ -271,6 +274,7 @@ nsresult nsCocoaWindow::Create(nsIWidget *aParent,
   Inherited::BaseCreate(aParent, newBounds, aInitData);
 
   mParent = aParent;
+  mAncestorLink = aParent;
 
   // Applications that use native popups don't want us to create popup windows.
   if ((mWindowType == eWindowType_popup) && UseNativePopupWindows())
@@ -505,6 +509,13 @@ NS_IMETHODIMP nsCocoaWindow::Destroy()
     return NS_OK;
   mOnDestroyCalled = true;
 
+  // SetFakeModal(true) is called for non-modal window opened by modal window.
+  // On Cocoa, it needs corresponding SetFakeModal(false) on destroy to restore
+  // ancestor windows' state.
+  if (mFakeModal) {
+    SetFakeModal(false);
+  }
+
   // If we don't hide here we run into problems with panels, this is not ideal.
   // (Bug 891424)
   Show(false);
@@ -604,7 +615,7 @@ NS_IMETHODIMP nsCocoaWindow::SetModal(bool aState)
   nsAutoreleasePool localPool;
 
   mModal = aState;
-  nsCocoaWindow *aParent = static_cast<nsCocoaWindow*>(mParent);
+  nsCocoaWindow *ancestor = static_cast<nsCocoaWindow*>(mAncestorLink);
   if (aState) {
     ++gXULModalLevel;
     // When a non-sheet window gets "set modal", make the window(s) that it
@@ -615,16 +626,16 @@ NS_IMETHODIMP nsCocoaWindow::SetModal(bool aState)
     // ShowModal() (each of these event loops is "exclusive", and can't run at
     // the same time as other (similar) event loops).
     if (mWindowType != eWindowType_sheet) {
-      while (aParent) {
-        if (aParent->mNumModalDescendents++ == 0) {
-          NSWindow *aWindow = aParent->GetCocoaWindow();
-          if (aParent->mWindowType != eWindowType_invisible) {
+      while (ancestor) {
+        if (ancestor->mNumModalDescendents++ == 0) {
+          NSWindow *aWindow = ancestor->GetCocoaWindow();
+          if (ancestor->mWindowType != eWindowType_invisible) {
             [[aWindow standardWindowButton:NSWindowCloseButton] setEnabled:NO];
             [[aWindow standardWindowButton:NSWindowMiniaturizeButton] setEnabled:NO];
             [[aWindow standardWindowButton:NSWindowZoomButton] setEnabled:NO];
           }
         }
-        aParent = static_cast<nsCocoaWindow*>(aParent->mParent);
+        ancestor = static_cast<nsCocoaWindow*>(ancestor->mParent);
       }
       [mWindow setLevel:NSModalPanelWindowLevel];
       nsCocoaWindowList *windowList = new nsCocoaWindowList;
@@ -639,17 +650,17 @@ NS_IMETHODIMP nsCocoaWindow::SetModal(bool aState)
     --gXULModalLevel;
     NS_ASSERTION(gXULModalLevel >= 0, "Mismatched call to nsCocoaWindow::SetModal(false)!");
     if (mWindowType != eWindowType_sheet) {
-      while (aParent) {
-        if (--aParent->mNumModalDescendents == 0) {
-          NSWindow *aWindow = aParent->GetCocoaWindow();
-          if (aParent->mWindowType != eWindowType_invisible) {
+      while (ancestor) {
+        if (--ancestor->mNumModalDescendents == 0) {
+          NSWindow *aWindow = ancestor->GetCocoaWindow();
+          if (ancestor->mWindowType != eWindowType_invisible) {
             [[aWindow standardWindowButton:NSWindowCloseButton] setEnabled:YES];
             [[aWindow standardWindowButton:NSWindowMiniaturizeButton] setEnabled:YES];
             [[aWindow standardWindowButton:NSWindowZoomButton] setEnabled:YES];
           }
         }
-        NS_ASSERTION(aParent->mNumModalDescendents >= 0, "Widget hierarchy changed while modal!");
-        aParent = static_cast<nsCocoaWindow*>(aParent->mParent);
+        NS_ASSERTION(ancestor->mNumModalDescendents >= 0, "Widget hierarchy changed while modal!");
+        ancestor = static_cast<nsCocoaWindow*>(ancestor->mParent);
       }
       if (gGeckoAppModalWindowList) {
         NS_ASSERTION(gGeckoAppModalWindowList->window == this, "Widget hierarchy changed while modal!");
@@ -664,6 +675,12 @@ NS_IMETHODIMP nsCocoaWindow::SetModal(bool aState)
     }
   }
   return NS_OK;
+}
+
+NS_IMETHODIMP nsCocoaWindow::SetFakeModal(bool aState)
+{
+    mFakeModal = aState;
+    return SetModal(aState);
 }
 
 // Hide or show this window
@@ -1556,8 +1573,7 @@ NS_IMETHODIMP nsCocoaWindow::GetClientBounds(mozilla::LayoutDeviceIntRect& aRect
 
   CGFloat scaleFactor = BackingScaleFactor();
   if (!mWindow) {
-    aRect = LayoutDeviceIntRect::FromUnknownRect(
-      nsCocoaUtils::CocoaRectToGeckoRectDevPix(NSZeroRect, scaleFactor));
+    aRect = nsCocoaUtils::CocoaRectToGeckoRectDevPix(NSZeroRect, scaleFactor);
     return NS_OK;
   }
 
@@ -1569,8 +1585,7 @@ NS_IMETHODIMP nsCocoaWindow::GetClientBounds(mozilla::LayoutDeviceIntRect& aRect
     r = [mWindow contentRectForFrameRect:[mWindow frame]];
   }
 
-  aRect = LayoutDeviceIntRect::FromUnknownRect(
-    nsCocoaUtils::CocoaRectToGeckoRectDevPix(r, scaleFactor));
+  aRect = nsCocoaUtils::CocoaRectToGeckoRectDevPix(r, scaleFactor);
 
   return NS_OK;
 
@@ -1584,7 +1599,8 @@ nsCocoaWindow::UpdateBounds()
   if (mWindow) {
     frame = [mWindow frame];
   }
-  mBounds = nsCocoaUtils::CocoaRectToGeckoRectDevPix(frame, BackingScaleFactor());
+  mBounds = nsCocoaUtils::CocoaRectToGeckoRectDevPix(
+    frame, BackingScaleFactor()).ToUnknownRect();
 }
 
 NS_IMETHODIMP nsCocoaWindow::GetScreenBounds(LayoutDeviceIntRect &aRect)
@@ -1592,8 +1608,8 @@ NS_IMETHODIMP nsCocoaWindow::GetScreenBounds(LayoutDeviceIntRect &aRect)
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
 
 #ifdef DEBUG
-  nsIntRect r = nsCocoaUtils::CocoaRectToGeckoRectDevPix([mWindow frame], BackingScaleFactor());
-  NS_ASSERTION(mWindow && mBounds == r, "mBounds out of sync!");
+  LayoutDeviceIntRect r = nsCocoaUtils::CocoaRectToGeckoRectDevPix([mWindow frame], BackingScaleFactor());
+  NS_ASSERTION(mWindow && mBounds == r.ToUnknownRect(), "mBounds out of sync!");
 #endif
 
   aRect = LayoutDeviceIntRect::FromUnknownRect(mBounds);
@@ -1969,13 +1985,13 @@ LayoutDeviceIntPoint nsCocoaWindow::WidgetToScreenOffset()
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_RETURN;
 
   NSRect rect = NSZeroRect;
-  nsIntRect r;
+  LayoutDeviceIntRect r;
   if (mWindow) {
     rect = [mWindow contentRectForFrameRect:[mWindow frame]];
   }
   r = nsCocoaUtils::CocoaRectToGeckoRectDevPix(rect, BackingScaleFactor());
 
-  return LayoutDeviceIntPoint::FromUnknownPoint(r.TopLeft());
+  return r.TopLeft();
 
   NS_OBJC_END_TRY_ABORT_BLOCK_RETURN(LayoutDeviceIntPoint(0,0));
 }
@@ -2002,12 +2018,12 @@ nsCocoaWindow::ClientToWindowSize(const LayoutDeviceIntSize& aClientSize)
     return LayoutDeviceIntSize(0, 0);
 
   CGFloat backingScale = BackingScaleFactor();
-  nsIntRect r(0, 0, aClientSize.width, aClientSize.height);
+  LayoutDeviceIntRect r(0, 0, aClientSize.width, aClientSize.height);
   NSRect rect = nsCocoaUtils::DevPixelsToCocoaPoints(r, backingScale);
 
   NSRect inflatedRect = [mWindow frameRectForContentRect:rect];
   r = nsCocoaUtils::CocoaRectToGeckoRectDevPix(inflatedRect, backingScale);
-  return LayoutDeviceIntSize(r.width, r.height);
+  return r.Size();
 
   NS_OBJC_END_TRY_ABORT_BLOCK_RETURN(LayoutDeviceIntSize(0,0));
 }

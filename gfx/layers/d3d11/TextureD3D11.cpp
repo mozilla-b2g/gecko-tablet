@@ -370,6 +370,9 @@ TextureClientD3D11::Unlock()
 
   if (NS_IsMainThread() && mReadbackSink && mTexture10) {
     ID3D10Device* device = gfxWindowsPlatform::GetPlatform()->GetD3D10Device();
+    if (!device) {
+      return;
+    }
 
     D3D10_TEXTURE2D_DESC desc;
     mTexture10->GetDesc(&desc);
@@ -588,6 +591,9 @@ TextureClientD3D11::AllocateForSurface(gfx::IntSize aSize, TextureAllocationFlag
     }
   } else {
     ID3D10Device* device = gfxWindowsPlatform::GetPlatform()->GetD3D10Device();
+    if (!device) {
+      return false;
+    }
 
     CD3D10_TEXTURE2D_DESC newDesc(DXGI_FORMAT_B8G8R8A8_UNORM,
       aSize.width, aSize.height, 1, 1,
@@ -1039,12 +1045,17 @@ DataTextureSourceD3D11::Update(DataSourceSurface* aSurface,
       }
     }
 
+    nsIntRegion *regionToUpdate = aDestRegion;
     if (!mTexture) {
       hr = mCompositor->GetDevice()->CreateTexture2D(&desc, nullptr, getter_AddRefs(mTexture));
       mIsTiled = false;
       if (FAILED(hr) || !mTexture) {
         Reset();
         return false;
+      }
+
+      if (mFlags & TextureFlags::COMPONENT_ALPHA) {
+        regionToUpdate = nullptr;
       }
     }
 
@@ -1055,8 +1066,8 @@ DataTextureSourceD3D11::Update(DataSourceSurface* aSurface,
       return false;
     }
 
-    if (aDestRegion) {
-      nsIntRegionRectIterator iter(*aDestRegion);
+    if (regionToUpdate) {
+      nsIntRegionRectIterator iter(*regionToUpdate);
       const IntRect *iterRect;
       while ((iterRect = iter.Next())) {
         D3D11_BOX box;
@@ -1235,6 +1246,9 @@ SyncObjectD3D11::FinalizeFrame()
 
   if (!mD3D10Texture && mD3D10SyncedTextures.size()) {
     ID3D10Device* device = gfxWindowsPlatform::GetPlatform()->GetD3D10Device();
+    if (!device) {
+      return;
+    }
 
     hr = device->OpenSharedResource(mHandle, __uuidof(ID3D10Texture2D), (void**)(ID3D10Texture2D**)getter_AddRefs(mD3D10Texture));
     
@@ -1305,6 +1319,9 @@ SyncObjectD3D11::FinalizeFrame()
     box.back = box.bottom = box.right = 1;
 
     ID3D10Device* device = gfxWindowsPlatform::GetPlatform()->GetD3D10Device();
+    if (!device) {
+      return;
+    }
 
     for (auto iter = mD3D10SyncedTextures.begin(); iter != mD3D10SyncedTextures.end(); iter++) {
       device->CopySubresourceRegion(mD3D10Texture, 0, 0, 0, 0, *iter, 0, &box);

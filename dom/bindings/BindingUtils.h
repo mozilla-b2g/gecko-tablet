@@ -92,9 +92,6 @@ ThrowInvalidThis(JSContext* aCx, const JS::CallArgs& aArgs,
                  const ErrNum aErrorNumber,
                  prototypes::ID aProtoId);
 
-bool
-ThrowMethodFailed(JSContext* cx, ErrorResult& rv);
-
 // Returns true if the JSClass is used for DOM objects.
 inline bool
 IsDOMClass(const JSClass* clasp)
@@ -3157,15 +3154,6 @@ ConvertExceptionToPromise(JSContext* cx,
                           JSObject* promiseScope,
                           JS::MutableHandle<JS::Value> rval);
 
-// While we wait for the outcome of spec discussions on whether properties for
-// DOM global objects live on the object or the prototype, we supply this one
-// place to switch the behaviour, so we can easily turn this off on branches.
-inline bool
-GlobalPropertiesAreOwn()
-{
-  return true;
-}
-
 #ifdef DEBUG
 void
 AssertReturnTypeMatchesJitinfo(const JSJitInfo* aJitinfo,
@@ -3283,6 +3271,13 @@ JSObject*
 GetErrorPrototype(JSContext* aCx, JS::Handle<JSObject*> aForObj)
 {
   return JS_GetErrorPrototype(aCx);
+}
+
+inline
+JSObject*
+GetIteratorPrototype(JSContext* aCx, JS::Handle<JSObject*> aForObj)
+{
+  return JS_GetIteratorPrototype(aCx);
 }
 
 // Resolve an id on the given global object that wants to be included in

@@ -1825,7 +1825,6 @@ ScrollFrameHelper::ScrollFrameHelper(nsContainerFrame* aOuter,
   , mScrollPosAtLastPaint(0, 0)
   , mRestorePos(-1, -1)
   , mLastPos(-1, -1)
-  , mResolution(1.0)
   , mScrollPosForLayerPixelAlignment(-1, -1)
   , mLastUpdateImagesPos(-1, -1)
   , mNeverHasVerticalScrollbar(false)
@@ -1849,9 +1848,7 @@ ScrollFrameHelper::ScrollFrameHelper(nsContainerFrame* aOuter,
   , mWillBuildScrollableLayer(false)
   , mIsScrollableLayerInRootContainer(false)
   , mHasBeenScrolled(false)
-  , mIsResolutionSet(false)
   , mIgnoreMomentumScroll(false)
-  , mScaleToResolution(false)
   , mTransformingByAPZ(false)
   , mZoomableByAPZ(false)
   , mVelocityQueue(aOuter->PresContext())
@@ -3408,29 +3405,6 @@ ScrollFrameHelper::GetScrollPositionClampingScrollPortSize() const
   return mScrollPort.Size();
 }
 
-float
-ScrollFrameHelper::GetResolution() const
-{
-  return mResolution;
-}
-
-void
-ScrollFrameHelper::SetResolution(float aResolution)
-{
-  mResolution = aResolution;
-  mIsResolutionSet = true;
-  mScaleToResolution = false;
-}
-
-void
-ScrollFrameHelper::SetResolutionAndScaleTo(float aResolution)
-{
-  MOZ_ASSERT(mIsRoot);  // This API should only be called on root scroll frames.
-  mResolution = aResolution;
-  mIsResolutionSet = true;
-  mScaleToResolution = true;
-}
-
 static void
 AdjustForWholeDelta(int32_t aDelta, nscoord* aCoord)
 {
@@ -4789,7 +4763,7 @@ ScrollFrameHelper::ReflowFinished()
     mMayHaveDirtyFixedChildren = false;
     nsIFrame* parentFrame = mOuter->GetParent();
     for (nsIFrame* fixedChild =
-           parentFrame->GetFirstChild(nsIFrame::kFixedList);
+           parentFrame->GetChildList(nsIFrame::kFixedList).FirstChild();
          fixedChild; fixedChild = fixedChild->GetNextSibling()) {
       // force a reflow of the fixed child
       presContext->PresShell()->
@@ -4954,7 +4928,7 @@ ScrollFrameHelper::AdjustScrollbarRectForResizer(
   else {
     nsPoint offset;
     nsIWidget* widget = aFrame->GetNearestWidget(offset);
-    nsIntRect widgetRect;
+    LayoutDeviceIntRect widgetRect;
     if (!widget || !widget->ShowsResizeIndicator(&widgetRect))
       return;
 
@@ -5385,8 +5359,12 @@ ScrollFrameHelper::SaveState() const
     pt = mRestorePos;
   }
   state->SetScrollState(pt);
-  state->SetResolution(mResolution);
-  state->SetScaleToResolution(mScaleToResolution);
+  if (mIsRoot) {
+    // Only save resolution properties for root scroll frames
+    nsIPresShell* shell = mOuter->PresContext()->PresShell();
+    state->SetResolution(shell->GetResolution());
+    state->SetScaleToResolution(shell->ScaleToResolution());
+  }
   return state;
 }
 
@@ -5396,19 +5374,17 @@ ScrollFrameHelper::RestoreState(nsPresState* aState)
   mRestorePos = aState->GetScrollState();
   mDidHistoryRestore = true;
   mLastPos = mScrolledFrame ? GetLogicalScrollPosition() : nsPoint(0,0);
-  mResolution = aState->GetResolution();
-  mIsResolutionSet = true;
-  mScaleToResolution = aState->GetScaleToResolution();
 
-  // Scaling-to-resolution should only be used on root scroll frames.
-  MOZ_ASSERT(mIsRoot || !mScaleToResolution);
+  // Resolution properties should only exist on root scroll frames.
+  MOZ_ASSERT(mIsRoot || (!aState->GetScaleToResolution() &&
+                         aState->GetResolution() == 1.0));
 
   if (mIsRoot) {
     nsIPresShell* presShell = mOuter->PresContext()->PresShell();
-    if (mScaleToResolution) {
-      presShell->SetResolutionAndScaleTo(mResolution);
+    if (aState->GetScaleToResolution()) {
+      presShell->SetResolutionAndScaleTo(aState->GetResolution());
     } else {
-      presShell->SetResolution(mResolution);
+      presShell->SetResolution(aState->GetResolution());
     }
   }
 }

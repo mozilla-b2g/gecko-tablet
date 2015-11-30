@@ -174,13 +174,19 @@ LayerTransactionParent::RecvShutdown()
 void
 LayerTransactionParent::Destroy()
 {
-  mDestroyed = true;
   const ManagedContainer<PLayerParent>& layers = ManagedPLayerParent();
   for (auto iter = layers.ConstIter(); !iter.Done(); iter.Next()) {
     ShadowLayerParent* slp =
       static_cast<ShadowLayerParent*>(iter.Get()->GetKey());
     slp->Destroy();
   }
+  InfallibleTArray<PTextureParent*> textures;
+  ManagedPTextureParent(textures);
+  for (unsigned int i = 0; i < textures.Length(); ++i) {
+    RefPtr<TextureHost> tex = TextureHost::AsTextureHost(textures[i]);
+    tex->DeallocateDeviceData();
+  }
+  mDestroyed = true;
 }
 
 bool
@@ -322,6 +328,7 @@ LayerTransactionParent::RecvUpdate(InfallibleTArray<Edit>&& cset,
       layer->SetOpacity(common.opacity());
       layer->SetClipRect(common.useClipRect() ? Some(common.clipRect()) : Nothing());
       layer->SetBaseTransform(common.transform().value());
+      layer->SetTransformIsPerspective(common.transformIsPerspective());
       layer->SetPostScale(common.postXScale(), common.postYScale());
       layer->SetIsFixedPosition(common.isFixedPosition());
       if (common.isFixedPosition()) {
@@ -737,14 +744,16 @@ LayerTransactionParent::RecvGetAnimationTransform(PLayerParent* aParent,
     }
   }
 
-  // Undo the translation to the origin of the reference frame applied by
-  // AsyncCompositionManager::SampleValue
-  transform.PreTranslate(-scaledOrigin.x, -scaledOrigin.y, -scaledOrigin.z);
+  // If our parent isn't a perspective layer, then the offset into reference
+  // frame coordinates will have been applied to us. Add an inverse translation
+  // to cancel it out.
+  if (!layer->GetParent() || !layer->GetParent()->GetTransformIsPerspective()) {
+    transform.PostTranslate(-scaledOrigin.x, -scaledOrigin.y, -scaledOrigin.z);
+  }
 
   // Undo the rebasing applied by
   // nsDisplayTransform::GetResultingTransformMatrixInternal
-  Point3D basis = -scaledOrigin - transformOrigin;
-  transform.ChangeBasis(basis.x, basis.y, basis.z);
+  transform.ChangeBasis(-transformOrigin);
 
   // Convert to CSS pixels (this undoes the operations performed by
   // nsStyleTransformMatrix::ProcessTranslatePart which is called from
@@ -987,6 +996,38 @@ LayerTransactionParent::RecvChildAsyncMessages(InfallibleTArray<AsyncChildMessag
 void
 LayerTransactionParent::ActorDestroy(ActorDestroyReason why)
 {
+}
+
+bool
+LayerTransactionParent::AllocShmem(size_t aSize,
+                                   ipc::SharedMemory::SharedMemoryType aType,
+                                   ipc::Shmem* aShmem)
+{
+  if (!mIPCOpen || mDestroyed) {
+    return false;
+  }
+  return PLayerTransactionParent::AllocShmem(aSize, aType, aShmem);
+}
+
+bool
+LayerTransactionParent::AllocUnsafeShmem(size_t aSize,
+                                         ipc::SharedMemory::SharedMemoryType aType,
+                                         ipc::Shmem* aShmem)
+{
+  if (!mIPCOpen || mDestroyed) {
+    return false;
+  }
+
+  return PLayerTransactionParent::AllocUnsafeShmem(aSize, aType, aShmem);
+}
+
+void
+LayerTransactionParent::DeallocShmem(ipc::Shmem& aShmem)
+{
+  if (!mIPCOpen || mDestroyed) {
+    return;
+  }
+  PLayerTransactionParent::DeallocShmem(aShmem);
 }
 
 bool LayerTransactionParent::IsSameProcess() const

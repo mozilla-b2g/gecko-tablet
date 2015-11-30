@@ -1521,6 +1521,24 @@ nsPresContext::GetDefaultFont(uint8_t aFontID, nsIAtom *aLanguage) const
   return font;
 }
 
+already_AddRefed<nsIAtom>
+nsPresContext::GetContentLanguage() const
+{
+  nsAutoString language;
+  Document()->GetContentLanguage(language);
+  language.StripWhitespace();
+
+  // Content-Language may be a comma-separated list of language codes,
+  // in which case the HTML5 spec says to treat it as unknown
+  if (!language.IsEmpty() &&
+      !language.Contains(char16_t(','))) {
+    return do_GetAtom(language);
+    // NOTE:  This does *not* count as an explicit language; in other
+    // words, it doesn't trigger language-specific hyphenation.
+  }
+  return nullptr;
+}
+
 void
 nsPresContext::SetFullZoom(float aZoom)
 {
@@ -2525,7 +2543,7 @@ nsPresContext::NotifySubDocInvalidation(ContainerLayer* aContainer,
     return;
   }
 
-  nsIntPoint topLeft = aContainer->GetVisibleRegion().GetBounds().TopLeft();
+  nsIntPoint topLeft = aContainer->GetVisibleRegion().ToUnknownRegion().GetBounds().TopLeft();
 
   nsIntRegionRectIterator iter(aRegion);
   while (const nsIntRect* r = iter.Next()) {
@@ -2853,11 +2871,10 @@ nsPresContext::GetPrimaryFrameFor(nsIContent* aContent)
   return nullptr;
 }
 
-
 size_t
 nsPresContext::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
 {
-  return mPropertyTable.SizeOfExcludingThis(aMallocSizeOf);
+  return mPropertyTable.SizeOfExcludingThis(aMallocSizeOf) +
          mLangGroupFontPrefs.SizeOfExcludingThis(aMallocSizeOf);
 
   // Measurement of other members may be added later if DMD finds it is
@@ -3207,6 +3224,12 @@ nsRootPresContext::CollectPluginGeometryUpdates(LayerManager* aLayerManager)
   mozilla::layers::ClientLayerManager* clm = aLayerManager->AsClientLayerManager();
 
   nsTArray<nsIWidget::Configuration> configurations;
+  // If there aren't any plugins to configure, clear the plugin data cache
+  // in the layer system.
+  if (!mRegisteredPlugins.Count() && clm) {
+    clm->StorePluginWidgetConfigurations(configurations);
+    return;
+  }
   PluginGetGeometryUpdate(mRegisteredPlugins, &configurations);
   if (configurations.IsEmpty()) {
     PluginDidSetGeometry(mRegisteredPlugins);

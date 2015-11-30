@@ -533,12 +533,15 @@ nsComputedDOMStyle::GetAdjustedValuesForBoxSizing()
 
   nsMargin adjustment;
   switch(stylePos->mBoxSizing) {
-    case NS_STYLE_BOX_SIZING_BORDER:
+    case StyleBoxSizing::Border:
       adjustment += mInnerFrame->GetUsedBorder();
       // fall through
-
-    case NS_STYLE_BOX_SIZING_PADDING:
+    case StyleBoxSizing::Padding:
       adjustment += mInnerFrame->GetUsedPadding();
+      // fall through
+    case StyleBoxSizing::Content:
+      // nothing
+      break;
   }
 
   return adjustment;
@@ -1791,7 +1794,7 @@ nsComputedDOMStyle::DoGetFontVariantPosition()
 CSSValue*
 nsComputedDOMStyle::GetBackgroundList(uint8_t nsStyleBackground::Layer::* aMember,
                                       uint32_t nsStyleBackground::* aCount,
-                                      const KTableValue aTable[])
+                                      const KTableEntry aTable[])
 {
   const nsStyleBackground* bg = StyleBackground();
 
@@ -2557,6 +2560,22 @@ nsComputedDOMStyle::DoGetGridRowEnd()
 }
 
 CSSValue*
+nsComputedDOMStyle::DoGetGridColumnGap()
+{
+  nsROCSSPrimitiveValue* val = new nsROCSSPrimitiveValue;
+  val->SetAppUnits(StylePosition()->mGridColumnGap);
+  return val;
+}
+
+CSSValue*
+nsComputedDOMStyle::DoGetGridRowGap()
+{
+  nsROCSSPrimitiveValue* val = new nsROCSSPrimitiveValue;
+  val->SetAppUnits(StylePosition()->mGridRowGap);
+  return val;
+}
+
+CSSValue*
 nsComputedDOMStyle::DoGetPaddingTop()
 {
   return GetPaddingWidthFor(NS_SIDE_TOP);
@@ -3294,7 +3313,7 @@ nsComputedDOMStyle::DoGetVerticalAlign()
 
 CSSValue*
 nsComputedDOMStyle::CreateTextAlignValue(uint8_t aAlign, bool aAlignTrue,
-                                         const KTableValue aTable[])
+                                         const KTableEntry aTable[])
 {
   nsROCSSPrimitiveValue* val = new nsROCSSPrimitiveValue;
   val->SetIdent(nsCSSProps::ValueToKeywordEnum(aAlign, aTable));
@@ -3427,6 +3446,79 @@ nsComputedDOMStyle::DoGetTextDecorationStyle()
                                    nsCSSProps::kTextDecorationStyleKTable));
 
   return val;
+}
+
+CSSValue*
+nsComputedDOMStyle::DoGetTextEmphasisColor()
+{
+  nsROCSSPrimitiveValue* val = new nsROCSSPrimitiveValue;
+  const nsStyleText* text = StyleText();
+  nscolor color = text->mTextEmphasisColorForeground ?
+    StyleColor()->mColor : text->mTextEmphasisColor;
+  SetToRGBAColor(val, color);
+  return val;
+}
+
+CSSValue*
+nsComputedDOMStyle::DoGetTextEmphasisPosition()
+{
+  auto position = StyleText()->mTextEmphasisPosition;
+
+  MOZ_ASSERT(!(position & NS_STYLE_TEXT_EMPHASIS_POSITION_OVER) !=
+             !(position & NS_STYLE_TEXT_EMPHASIS_POSITION_UNDER));
+  nsROCSSPrimitiveValue* first = new nsROCSSPrimitiveValue;
+  first->SetIdent((position & NS_STYLE_TEXT_EMPHASIS_POSITION_OVER) ?
+                  eCSSKeyword_over : eCSSKeyword_under);
+
+  MOZ_ASSERT(!(position & NS_STYLE_TEXT_EMPHASIS_POSITION_LEFT) !=
+             !(position & NS_STYLE_TEXT_EMPHASIS_POSITION_RIGHT));
+  nsROCSSPrimitiveValue* second = new nsROCSSPrimitiveValue;
+  second->SetIdent((position & NS_STYLE_TEXT_EMPHASIS_POSITION_LEFT) ?
+                   eCSSKeyword_left : eCSSKeyword_right);
+
+  nsDOMCSSValueList* valueList = GetROCSSValueList(false);
+  valueList->AppendCSSValue(first);
+  valueList->AppendCSSValue(second);
+  return valueList;
+}
+
+CSSValue*
+nsComputedDOMStyle::DoGetTextEmphasisStyle()
+{
+  auto style = StyleText()->mTextEmphasisStyle;
+  if (style == NS_STYLE_TEXT_EMPHASIS_STYLE_NONE) {
+    nsROCSSPrimitiveValue* val = new nsROCSSPrimitiveValue;
+    val->SetIdent(eCSSKeyword_none);
+    return val;
+  }
+  if (style == NS_STYLE_TEXT_EMPHASIS_STYLE_STRING) {
+    nsROCSSPrimitiveValue* val = new nsROCSSPrimitiveValue;
+    nsString tmp;
+    nsStyleUtil::AppendEscapedCSSString(
+      StyleText()->mTextEmphasisStyleString, tmp);
+    val->SetString(tmp);
+    return val;
+  }
+
+  nsROCSSPrimitiveValue* fillVal = new nsROCSSPrimitiveValue;
+  if ((style & NS_STYLE_TEXT_EMPHASIS_STYLE_FILL_MASK) ==
+      NS_STYLE_TEXT_EMPHASIS_STYLE_FILLED) {
+    fillVal->SetIdent(eCSSKeyword_filled);
+  } else {
+    MOZ_ASSERT((style & NS_STYLE_TEXT_EMPHASIS_STYLE_FILL_MASK) ==
+               NS_STYLE_TEXT_EMPHASIS_STYLE_OPEN);
+    fillVal->SetIdent(eCSSKeyword_open);
+  }
+
+  nsROCSSPrimitiveValue* shapeVal = new nsROCSSPrimitiveValue;
+  shapeVal->SetIdent(nsCSSProps::ValueToKeywordEnum(
+    style & NS_STYLE_TEXT_EMPHASIS_STYLE_SHAPE_MASK,
+    nsCSSProps::kTextEmphasisStyleShapeKTable));
+
+  nsDOMCSSValueList* valueList = GetROCSSValueList(false);
+  valueList->AppendCSSValue(fillVal);
+  valueList->AppendCSSValue(shapeVal);
+  return valueList;
 }
 
 CSSValue*
@@ -3763,7 +3855,7 @@ nsComputedDOMStyle::DoGetBoxSizing()
 {
   nsROCSSPrimitiveValue *val = new nsROCSSPrimitiveValue;
   val->SetIdent(
-    nsCSSProps::ValueToKeywordEnum(StylePosition()->mBoxSizing,
+    nsCSSProps::ValueToKeywordEnum(uint8_t(StylePosition()->mBoxSizing),
                                    nsCSSProps::kBoxSizingKTable));
   return val;
 }
@@ -3930,7 +4022,7 @@ nsComputedDOMStyle::DoGetAlignContent()
 {
   nsROCSSPrimitiveValue* val = new nsROCSSPrimitiveValue;
   nsAutoString str;
-  auto align = StylePosition()->ComputedAlignContent(StyleDisplay());
+  auto align = StylePosition()->ComputedAlignContent();
   nsCSSValue::AppendAlignJustifyValueToString(align & NS_STYLE_ALIGN_ALL_BITS, str);
   auto fallback = align >> NS_STYLE_ALIGN_ALL_SHIFT;
   if (fallback) {
@@ -4850,7 +4942,7 @@ nsComputedDOMStyle::SetValueToCoord(nsROCSSPrimitiveValue* aValue,
                                     const nsStyleCoord& aCoord,
                                     bool aClampNegativeCalc,
                                     PercentageBaseGetter aPercentageBaseGetter,
-                                    const KTableValue aTable[],
+                                    const KTableEntry aTable[],
                                     nscoord aMinAppUnits,
                                     nscoord aMaxAppUnits)
 {
@@ -5814,7 +5906,8 @@ nsComputedDOMStyle::DoGetTransitionProperty()
       property->SetIdent(eCSSKeyword_all);
     else if (cssprop == eCSSPropertyExtra_no_properties)
       property->SetIdent(eCSSKeyword_none);
-    else if (cssprop == eCSSProperty_UNKNOWN)
+    else if (cssprop == eCSSProperty_UNKNOWN ||
+             cssprop == eCSSPropertyExtra_variable)
     {
       nsAutoString escaped;
       nsStyleUtil::AppendEscapedCSSIdent(
@@ -5979,8 +6072,9 @@ nsComputedDOMStyle::DoGetAnimationDirection()
     nsROCSSPrimitiveValue* direction = new nsROCSSPrimitiveValue;
     valueList->AppendCSSValue(direction);
     direction->SetIdent(
-      nsCSSProps::ValueToKeywordEnum(animation->GetDirection(),
-                                     nsCSSProps::kAnimationDirectionKTable));
+      nsCSSProps::ValueToKeywordEnum(
+        static_cast<int32_t>(animation->GetDirection()),
+        nsCSSProps::kAnimationDirectionKTable));
   } while (++i < display->mAnimationDirectionCount);
 
   return valueList;
@@ -6001,8 +6095,9 @@ nsComputedDOMStyle::DoGetAnimationFillMode()
     nsROCSSPrimitiveValue* fillMode = new nsROCSSPrimitiveValue;
     valueList->AppendCSSValue(fillMode);
     fillMode->SetIdent(
-      nsCSSProps::ValueToKeywordEnum(animation->GetFillMode(),
-                                     nsCSSProps::kAnimationFillModeKTable));
+      nsCSSProps::ValueToKeywordEnum(
+        static_cast<int32_t>(animation->GetFillMode()),
+        nsCSSProps::kAnimationFillModeKTable));
   } while (++i < display->mAnimationFillModeCount);
 
   return valueList;

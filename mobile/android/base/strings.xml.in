@@ -136,7 +136,6 @@
   <string name="overlay_share_no_url">&overlay_share_no_url;</string>
   <string name="overlay_share_select_device">&overlay_share_select_device;</string>
   <string name="overlay_no_synced_devices">&overlay_no_synced_devices;</string>
-  <string name="menu_no_synced_devices">&menu_no_synced_devices;</string>
 
   <string name="settings">&settings;</string>
   <string name="settings_title">&settings_title;</string>
@@ -185,7 +184,6 @@
   <string name="pref_home_suggested_sites_summary">&pref_home_suggested_sites_summary;</string>
   <string name="pref_category_home_homepage">&pref_category_home_homepage;</string>
   <string name="home_homepage_title">&home_homepage_title;</string>
-  <string name="home_homepage_use_current_tab">&home_homepage_use_current_tab;</string>
 
   <string name="pref_header_general">&pref_header_general;</string>
   <string name="pref_header_search">&pref_header_search;</string>
@@ -356,7 +354,6 @@
   <string name="site_settings_title">&site_settings_title3;</string>
   <string name="site_settings_cancel">&site_settings_cancel;</string>
   <string name="site_settings_clear">&site_settings_clear;</string>
-  <string name="site_settings_no_settings">&site_settings_no_settings;</string>
 
   <string name="reading_list_added">&reading_list_added3;</string>
   <string name="reading_list_removed">&reading_list_removed;</string>
@@ -567,15 +564,15 @@
   <!-- Voice search from the Awesome Bar -->
   <string name="voicesearch_prompt">&voicesearch_prompt;</string>
 
-  <!-- Restrictions -->
-  <string name="restriction_disallow_addons_title">&restriction_disallow_addons_title2;</string>
-  <string name="restriction_disallow_private_browsing_title">&restriction_disallow_private_browsing_title2;</string>
-  <string name="restriction_disallow_location_services_title">&restriction_disallow_location_services_title2;</string>
-  <string name="restriction_disallow_clear_history_title">&restriction_disallow_clear_history_title2;</string>
-  <string name="restriction_disallow_master_password_title">&restriction_disallow_master_password_title2;</string>
-  <string name="restriction_disallow_guest_browsing_title">&restriction_disallow_guest_browsing_title2;</string>
-  <string name="restriction_disallow_advanced_settings_title">&restriction_disallow_advanced_settings_title;</string>
-  <string name="restriction_disallow_camera_microphone_title">&restriction_disallow_camera_microphone_title;</string>
+  <!-- Restrictable features -->
+  <string name="restrictable_feature_addons_installation">&restrictable_feature_addons_installation;</string>
+  <string name="restrictable_feature_private_browsing">&restrictable_feature_private_browsing;</string>
+  <string name="restrictable_feature_location_services">&restrictable_feature_location_services;</string>
+  <string name="restrictable_feature_clear_history">&restrictable_feature_clear_history;</string>
+  <string name="restrictable_feature_guest_browsing">&restrictable_feature_guest_browsing;</string>
+  <string name="restrictable_feature_master_password">&restrictable_feature_master_password;</string>
+  <string name="restrictable_feature_advanced_settings">&restrictable_feature_advanced_settings;</string>
+  <string name="restrictable_feature_camera_microphone">&restrictable_feature_camera_microphone;</string>
 
   <!-- Miscellaneous -->
   <string name="ellipsis">&ellipsis;</string>
@@ -593,4 +590,7 @@
   <string name="devtools_auth_scan_header">&devtools_auth_scan_header;</string>
 
   <string name="unsupported_sdk_version">&unsupported_sdk_version;</string>
+  <string name="eol_notification_title">&eol_notification_title;</string>
+  <string name="eol_notification_summary">&eol_notification_summary;</string>
+  <string name="eol_notification_url">&eol_notification_url;</string>
 </resources>

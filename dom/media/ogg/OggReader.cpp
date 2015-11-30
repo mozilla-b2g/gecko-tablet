@@ -321,6 +321,7 @@ void OggReader::SetupMediaTracksInfo(const nsTArray<uint32_t>& aSerials)
                   &mInfo.mVideo,
                   mTheoraState == theoraState);
       }
+      mInfo.mVideo.mMimeType = NS_LITERAL_CSTRING("video/ogg; codecs=theora");
 
       nsIntRect picture = nsIntRect(theoraState->mInfo.pic_x,
                                     theoraState->mInfo.pic_y,
@@ -345,6 +346,7 @@ void OggReader::SetupMediaTracksInfo(const nsTArray<uint32_t>& aSerials)
                   &mInfo.mAudio,
                   mVorbisState == vorbisState);
       }
+      mInfo.mAudio.mMimeType = NS_LITERAL_CSTRING("audio/ogg; codecs=vorbis");
 
       mInfo.mAudio.mRate = vorbisState->mInfo.rate;
       mInfo.mAudio.mChannels = vorbisState->mInfo.channels;
@@ -359,6 +361,7 @@ void OggReader::SetupMediaTracksInfo(const nsTArray<uint32_t>& aSerials)
                   &mInfo.mAudio,
                   mOpusState == opusState);
       }
+      mInfo.mAudio.mMimeType = NS_LITERAL_CSTRING("audio/ogg; codecs=opus");
 
       mInfo.mAudio.mRate = opusState->mRate;
       mInfo.mAudio.mChannels = opusState->mChannels;
@@ -774,6 +777,7 @@ bool OggReader::ReadOggChain()
     if (msgInfo) {
       InitTrack(msgInfo, &mInfo.mAudio, true);
     }
+    mInfo.mAudio.mMimeType = NS_LITERAL_CSTRING("audio/ogg; codec=vorbis");
     mInfo.mAudio.mRate = newVorbisState->mInfo.rate;
     mInfo.mAudio.mChannels = newVorbisState->mInfo.channels;
 
@@ -790,6 +794,7 @@ bool OggReader::ReadOggChain()
     if (msgInfo) {
       InitTrack(msgInfo, &mInfo.mAudio, true);
     }
+    mInfo.mAudio.mMimeType = NS_LITERAL_CSTRING("audio/ogg; codec=opus");
     mInfo.mAudio.mRate = newOpusState->mRate;
     mInfo.mAudio.mChannels = newOpusState->mChannels;
 
@@ -1155,12 +1160,12 @@ nsresult OggReader::GetSeekRanges(nsTArray<SeekRange>& aRanges)
 {
   MOZ_ASSERT(OnTaskQueue());
   AutoPinned<MediaResource> resource(mDecoder->GetResource());
-  nsTArray<MediaByteRange> cached;
+  MediaByteRangeSet cached;
   nsresult res = resource->GetCachedRanges(cached);
   NS_ENSURE_SUCCESS(res, res);
 
   for (uint32_t index = 0; index < cached.Length(); index++) {
-    MediaByteRange& range = cached[index];
+    auto& range = cached[index];
     int64_t startTime = -1;
     int64_t endTime = -1;
     if (NS_FAILED(ResetDecode())) {
@@ -1836,7 +1841,7 @@ media::TimeIntervals OggReader::GetBuffered()
   }
 
   AutoPinned<MediaResource> resource(mDecoder->GetResource());
-  nsTArray<MediaByteRange> ranges;
+  MediaByteRangeSet ranges;
   nsresult res = resource->GetCachedRanges(ranges);
   NS_ENSURE_SUCCESS(res, media::TimeIntervals::Invalid());
 

@@ -69,19 +69,228 @@ namespace ubi {
 class JS_PUBLIC_API(DominatorTree)
 {
   private:
-    // Type aliases.
+    // Types.
+
     using NodeSet = js::HashSet<Node, js::DefaultHasher<Node>, js::SystemAllocPolicy>;
     using NodeSetPtr = mozilla::UniquePtr<NodeSet, JS::DeletePolicy<NodeSet>>;
     using PredecessorSets = js::HashMap<Node, NodeSetPtr, js::DefaultHasher<Node>,
                                         js::SystemAllocPolicy>;
     using NodeToIndexMap = js::HashMap<Node, uint32_t, js::DefaultHasher<Node>,
                                        js::SystemAllocPolicy>;
+    class DominatedSets;
+
+  public:
+    class DominatedSetRange;
+
+    /**
+     * A pointer to an immediately dominated node.
+     *
+     * Don't use this type directly; it is no safer than regular pointers. This
+     * is only for use indirectly with range-based for loops and
+     * `DominatedSetRange`.
+     *
+     * @see JS::ubi::DominatorTree::getDominatedSet
+     */
+    class DominatedNodePtr
+    {
+        friend class DominatedSetRange;
+
+        const mozilla::Vector<Node>& postOrder;
+        const uint32_t* ptr;
+
+        DominatedNodePtr(const mozilla::Vector<Node>& postOrder, const uint32_t* ptr)
+          : postOrder(postOrder)
+          , ptr(ptr)
+        { }
+
+      public:
+        bool operator!=(const DominatedNodePtr& rhs) const { return ptr != rhs.ptr; }
+        void operator++() { ptr++; }
+        const Node& operator*() const { return postOrder[*ptr]; }
+    };
+
+    /**
+     * A range of immediately dominated `JS::ubi::Node`s for use with
+     * range-based for loops.
+     *
+     * @see JS::ubi::DominatorTree::getDominatedSet
+     */
+    class DominatedSetRange
+    {
+        friend class DominatedSets;
+
+        const mozilla::Vector<Node>& postOrder;
+        const uint32_t* beginPtr;
+        const uint32_t* endPtr;
+
+        DominatedSetRange(mozilla::Vector<Node>& postOrder, const uint32_t* begin, const uint32_t* end)
+          : postOrder(postOrder)
+          , beginPtr(begin)
+          , endPtr(end)
+        {
+            MOZ_ASSERT(begin <= end);
+        }
+
+      public:
+        DominatedNodePtr begin() const {
+            MOZ_ASSERT(beginPtr <= endPtr);
+            return DominatedNodePtr(postOrder, beginPtr);
+        }
+
+        DominatedNodePtr end() const {
+            return DominatedNodePtr(postOrder, endPtr);
+        }
+
+        /**
+         * Safely skip ahead `n` dominators in the range, in O(1) time.
+         *
+         * Example usage:
+         *
+         *     mozilla::Maybe<DominatedSetRange> range = myDominatorTree.getDominatedSet(myNode);
+         *     if (range.isNothing()) {
+         *         // Handle unknown nodes however you see fit...
+         *         return false;
+         *     }
+         *
+         *     // Don't care about the first ten, for whatever reason.
+         *     range->skip(10);
+         *     for (const JS::ubi::Node& dominatedNode : *range) {
+         *         // ...
+         *     }
+         */
+        void skip(size_t n) {
+            beginPtr += n;
+            if (beginPtr > endPtr)
+                beginPtr = endPtr;
+        }
+    };
+
+  private:
+    /**
+     * The set of all dominated sets in a dominator tree.
+     *
+     * Internally stores the sets in a contiguous array, with a side table of
+     * indices into that contiguous array to denote the start index of each
+     * individual set.
+     */
+    class DominatedSets
+    {
+        mozilla::Vector<uint32_t> dominated;
+        mozilla::Vector<uint32_t> indices;
+
+        DominatedSets(mozilla::Vector<uint32_t>&& dominated, mozilla::Vector<uint32_t>&& indices)
+          : dominated(mozilla::Move(dominated))
+          , indices(mozilla::Move(indices))
+        { }
+
+      public:
+        // DominatedSets is not copy-able.
+        DominatedSets(const DominatedSets& rhs) = delete;
+        DominatedSets& operator=(const DominatedSets& rhs) = delete;
+
+        // DominatedSets is move-able.
+        DominatedSets(DominatedSets&& rhs)
+          : dominated(mozilla::Move(rhs.dominated))
+          , indices(mozilla::Move(rhs.indices))
+        {
+            MOZ_ASSERT(this != &rhs, "self-move not allowed");
+        }
+        DominatedSets& operator=(DominatedSets&& rhs) {
+            this->~DominatedSets();
+            new (this) DominatedSets(mozilla::Move(rhs));
+            return *this;
+        }
+
+        /**
+         * Create the DominatedSets given the mapping of a node index to its
+         * immediate dominator. Returns `Some` on success, `Nothing` on OOM
+         * failure.
+         */
+        static mozilla::Maybe<DominatedSets> Create(const mozilla::Vector<uint32_t>& doms) {
+            auto length = doms.length();
+            MOZ_ASSERT(length < UINT32_MAX);
+
+            // Create a vector `dominated` holding a flattened set of buckets of
+            // immediately dominated children nodes, with a lookup table
+            // `indices` mapping from each node to the beginning of its bucket.
+            //
+            // This has three phases:
+            //
+            // 1. Iterate over the full set of nodes and count up the size of
+            //    each bucket. These bucket sizes are temporarily stored in the
+            //    `indices` vector.
+            //
+            // 2. Convert the `indices` vector to store the cumulative sum of
+            //    the sizes of all buckets before each index, resulting in a
+            //    mapping from node index to one past the end of that node's
+            //    bucket.
+            //
+            // 3. Iterate over the full set of nodes again, filling in bucket
+            //    entries from the end of the bucket's range to its
+            //    beginning. This decrements each index as a bucket entry is
+            //    filled in. After having filled in all of a bucket's entries,
+            //    the index points to the start of the bucket.
+
+            mozilla::Vector<uint32_t> dominated;
+            mozilla::Vector<uint32_t> indices;
+            if (!dominated.growBy(length) || !indices.growBy(length))
+                return mozilla::Nothing();
+
+            // 1
+            memset(indices.begin(), 0, length * sizeof(uint32_t));
+            for (uint32_t i = 0; i < length; i++)
+                indices[doms[i]]++;
+
+            // 2
+            uint32_t sumOfSizes = 0;
+            for (uint32_t i = 0; i < length; i++) {
+                sumOfSizes += indices[i];
+                MOZ_ASSERT(sumOfSizes <= length);
+                indices[i] = sumOfSizes;
+            }
+
+            // 3
+            for (uint32_t i = 0; i < length; i++) {
+                auto idxOfDom = doms[i];
+                indices[idxOfDom]--;
+                dominated[indices[idxOfDom]] = i;
+            }
+
+#ifdef DEBUG
+            // Assert that our buckets are non-overlapping and don't run off the
+            // end of the vector.
+            uint32_t lastIndex = 0;
+            for (uint32_t i = 0; i < length; i++) {
+                MOZ_ASSERT(indices[i] >= lastIndex);
+                MOZ_ASSERT(indices[i] < length);
+                lastIndex = indices[i];
+            }
+#endif
+
+            return mozilla::Some(DominatedSets(mozilla::Move(dominated), mozilla::Move(indices)));
+        }
+
+        /**
+         * Get the set of nodes immediately dominated by the node at
+         * `postOrder[nodeIndex]`.
+         */
+        DominatedSetRange dominatedSet(mozilla::Vector<Node>& postOrder, uint32_t nodeIndex) const {
+            MOZ_ASSERT(postOrder.length() == indices.length());
+            MOZ_ASSERT(nodeIndex < indices.length());
+            auto end = nodeIndex == indices.length() - 1
+                ? dominated.end()
+                : &dominated[indices[nodeIndex + 1]];
+            return DominatedSetRange(postOrder, &dominated[indices[nodeIndex]], end);
+        }
+    };
 
   private:
     // Data members.
     mozilla::Vector<Node> postOrder;
     NodeToIndexMap nodeToPostOrderIndex;
     mozilla::Vector<uint32_t> doms;
+    DominatedSets dominatedSets;
+    mozilla::Maybe<mozilla::Vector<JS::ubi::Node::Size>> retainedSizes;
 
   private:
     // We use `UNDEFINED` as a sentinel value in the `doms` vector to signal
@@ -90,10 +299,12 @@ class JS_PUBLIC_API(DominatorTree)
     static const uint32_t UNDEFINED = UINT32_MAX;
 
     DominatorTree(mozilla::Vector<Node>&& postOrder, NodeToIndexMap&& nodeToPostOrderIndex,
-                  mozilla::Vector<uint32_t>&& doms)
+                  mozilla::Vector<uint32_t>&& doms, DominatedSets&& dominatedSets)
         : postOrder(mozilla::Move(postOrder))
         , nodeToPostOrderIndex(mozilla::Move(nodeToPostOrderIndex))
         , doms(mozilla::Move(doms))
+        , dominatedSets(mozilla::Move(dominatedSets))
+        , retainedSizes(mozilla::Nothing())
     { }
 
     static uint32_t intersect(mozilla::Vector<uint32_t>& doms, uint32_t finger1, uint32_t finger2) {
@@ -121,7 +332,7 @@ class JS_PUBLIC_API(DominatorTree)
         auto onEdge = [&](const Node& origin, const Edge& edge) {
             auto p = predecessorSets.lookupForAdd(edge.referent);
             if (!p) {
-                auto set = rt->make_unique<NodeSet>();
+                mozilla::UniquePtr<NodeSet, DeletePolicy<NodeSet>> set(js_new<NodeSet>());
                 if (!set ||
                     !set->init() ||
                     !predecessorSets.add(p, edge.referent, mozilla::Move(set)))
@@ -206,6 +417,47 @@ class JS_PUBLIC_API(DominatorTree)
     void assertSanity() const {
         MOZ_ASSERT(postOrder.length() == doms.length());
         MOZ_ASSERT(postOrder.length() == nodeToPostOrderIndex.count());
+        MOZ_ASSERT_IF(retainedSizes.isSome(), postOrder.length() == retainedSizes->length());
+    }
+
+    bool computeRetainedSizes(mozilla::MallocSizeOf mallocSizeOf) {
+        MOZ_ASSERT(retainedSizes.isNothing());
+        auto length = postOrder.length();
+
+        retainedSizes.emplace();
+        if (!retainedSizes->growBy(length)) {
+            retainedSizes = mozilla::Nothing();
+            return false;
+        }
+
+        // Iterate in forward order so that we know all of a node's children in
+        // the dominator tree have already had their retained size
+        // computed. Then we can simply say that the retained size of a node is
+        // its shallow size (JS::ubi::Node::size) plus the retained sizes of its
+        // immediate children in the tree.
+
+        for (uint32_t i = 0; i < length; i++) {
+            auto size = postOrder[i].size(mallocSizeOf);
+
+            for (const auto& dominated : dominatedSets.dominatedSet(postOrder, i)) {
+                // The root node dominates itself, but shouldn't contribute to
+                // its own retained size.
+                if (dominated == postOrder[length - 1]) {
+                    MOZ_ASSERT(i == length - 1);
+                    continue;
+                }
+
+                auto ptr = nodeToPostOrderIndex.lookup(dominated);
+                MOZ_ASSERT(ptr);
+                auto idxOfDominated = ptr->value();
+                MOZ_ASSERT(idxOfDominated < i);
+                size += retainedSizes.ref()[idxOfDominated];
+            }
+
+            retainedSizes.ref()[i] = size;
+        }
+
+        return true;
     }
 
   public:
@@ -218,6 +470,8 @@ class JS_PUBLIC_API(DominatorTree)
       : postOrder(mozilla::Move(rhs.postOrder))
       , nodeToPostOrderIndex(mozilla::Move(rhs.nodeToPostOrderIndex))
       , doms(mozilla::Move(rhs.doms))
+      , dominatedSets(mozilla::Move(rhs.dominatedSets))
+      , retainedSizes(mozilla::Move(rhs.retainedSizes))
     {
         MOZ_ASSERT(this != &rhs, "self-move is not allowed");
     }
@@ -326,9 +580,21 @@ class JS_PUBLIC_API(DominatorTree)
             }
         }
 
+        auto maybeDominatedSets = DominatedSets::Create(doms);
+        if (maybeDominatedSets.isNothing())
+            return mozilla::Nothing();
+
         return mozilla::Some(DominatorTree(mozilla::Move(postOrder),
                                            mozilla::Move(nodeToPostOrderIndex),
-                                           mozilla::Move(doms)));
+                                           mozilla::Move(doms),
+                                           mozilla::Move(*maybeDominatedSets)));
+    }
+
+    /**
+     * Get the root node for this dominator tree.
+     */
+    const Node& root() const {
+        return postOrder[postOrder.length() - 1];
     }
 
     /**
@@ -345,6 +611,56 @@ class JS_PUBLIC_API(DominatorTree)
         auto idx = ptr->value();
         MOZ_ASSERT(idx < postOrder.length());
         return postOrder[doms[idx]];
+    }
+
+    /**
+     * Get the set of nodes immediately dominated by the given `node`. If `node`
+     * is not a member of this dominator tree, return `Nothing`.
+     *
+     * Example usage:
+     *
+     *     mozilla::Maybe<DominatedSetRange> range = myDominatorTree.getDominatedSet(myNode);
+     *     if (range.isNothing()) {
+     *         // Handle unknown node however you see fit...
+     *         return false;
+     *     }
+     *
+     *     for (const JS::ubi::Node& dominatedNode : *range) {
+     *         // Do something with each immediately dominated node...
+     *     }
+     */
+    mozilla::Maybe<DominatedSetRange> getDominatedSet(const Node& node) {
+        assertSanity();
+        auto ptr = nodeToPostOrderIndex.lookup(node);
+        if (!ptr)
+            return mozilla::Nothing();
+
+        auto idx = ptr->value();
+        MOZ_ASSERT(idx < postOrder.length());
+        return mozilla::Some(dominatedSets.dominatedSet(postOrder, idx));
+    }
+
+    /**
+     * Get the retained size of the given `node`. The size is placed in
+     * `outSize`, or 0 if `node` is not a member of the dominator tree. Returns
+     * false on OOM failure, leaving `outSize` unchanged.
+     */
+    bool getRetainedSize(const Node& node, mozilla::MallocSizeOf mallocSizeOf,
+                         Node::Size& outSize) {
+        assertSanity();
+        auto ptr = nodeToPostOrderIndex.lookup(node);
+        if (!ptr) {
+            outSize = 0;
+            return true;
+        }
+
+        if (retainedSizes.isNothing() && !computeRetainedSizes(mallocSizeOf))
+            return false;
+
+        auto idx = ptr->value();
+        MOZ_ASSERT(idx < postOrder.length());
+        outSize = retainedSizes.ref()[idx];
+        return true;
     }
 };
 

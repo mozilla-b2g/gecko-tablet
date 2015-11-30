@@ -134,7 +134,7 @@ const FILE_WEB_MANIFEST               = "manifest.json";
 const FILE_XPI_ADDONS_LIST            = "extensions.ini";
 
 const KEY_PROFILEDIR                  = "ProfD";
-const KEY_APPDIR                      = "XCurProcD";
+const KEY_ADDON_APP_DIR               = "XREAddonAppDir";
 const KEY_TEMPDIR                     = "TmpD";
 const KEY_APP_DISTRIBUTION            = "XREAppDist";
 const KEY_APP_FEATURES                = "XREAppFeat";
@@ -146,6 +146,7 @@ const KEY_APP_GLOBAL                  = "app-global";
 const KEY_APP_SYSTEM_LOCAL            = "app-system-local";
 const KEY_APP_SYSTEM_SHARE            = "app-system-share";
 const KEY_APP_SYSTEM_USER             = "app-system-user";
+const KEY_APP_TEMPORARY               = "app-temporary";
 
 const NOTIFICATION_FLUSH_PERMISSIONS  = "flush-pending-permissions";
 const XPI_PERMISSION                  = "install";
@@ -240,6 +241,7 @@ function mustSign(aType) {
   return REQUIRE_SIGNING || Preferences.get(PREF_XPI_SIGNATURES_REQUIRED, false);
 }
 
+const INTEGER = /^[1-9]\d*$/;
 
 // Keep track of where we are in startup for telemetry
 // event happened during XPIDatabase.startup()
@@ -646,6 +648,12 @@ function canRunInSafeMode(aAddon) {
   // Even though the updated system add-ons aren't generally run in safe mode we
   // include them here so their uninstall functions get called when switching
   // back to the default set.
+
+  // TODO product should make the call about temporary add-ons running
+  // in safe mode. assuming for now that they are.
+  if (aAddon._installLocation.name == KEY_APP_TEMPORARY)
+    return true;
+
   return aAddon._installLocation.name == KEY_APP_SYSTEM_DEFAULTS ||
          aAddon._installLocation.name == KEY_APP_SYSTEM_ADDONS;
 }
@@ -666,8 +674,10 @@ function isUsableAddon(aAddon) {
       aAddon.signedState != AddonManager.SIGNEDSTATE_SYSTEM) {
     return false;
   }
-
-  if (aAddon._installLocation.name != KEY_APP_SYSTEM_DEFAULTS && mustSign(aAddon.type)) {
+  // temporary and system add-ons do not require signing
+  if ((aAddon._installLocation.name != KEY_APP_SYSTEM_DEFAULTS &&
+       aAddon._installLocation.name != KEY_APP_TEMPORARY) &&
+       mustSign(aAddon.type)) {
     if (aAddon.signedState <= AddonManager.SIGNEDSTATE_MISSING)
       return false;
     if (aAddon.foreignInstall && aAddon.signedState < AddonManager.SIGNEDSTATE_SIGNED)
@@ -858,20 +868,24 @@ var loadManifestFromWebManifest = Task.async(function* loadManifestFromWebManife
     return findProp(obj[field], current, properties.slice(1));
   }
 
-  function getProp(path) {
-    return findProp(manifest, "", path.split("."));
+  function getProp(path, type = "String") {
+    let val = findProp(manifest, "", path.split("."));
+
+    if ({}.toString.call(val) != `[object ${type}]`)
+      throw new SyntaxError(`Expected property ${path} to be of type ${type}`);
+    return val;
   }
 
-  function getOptionalProp(path, defValue = null) {
+  function getOptionalProp(path, defValue = null, type = "String") {
     try {
-      return findProp(manifest, "", path.split("."));
+      return getProp(path, type);
     }
-    catch (e) {
+    catch (e if !(e instanceof SyntaxError)) {
       return defValue;
     }
   }
 
-  let mVersion = getProp("manifest_version");
+  let mVersion = getProp("manifest_version", "Number");
   if (mVersion != 2) {
     throw new Error("Expected manifest_version to be 2 but was " + mVersion);
   }
@@ -888,23 +902,32 @@ var loadManifestFromWebManifest = Task.async(function* loadManifestFromWebManife
   addon.hasBinaryComponents = false;
   addon.multiprocessCompatible = true;
   addon.internalName = null;
-  addon.updateURL = null;
+  addon.updateURL = getOptionalProp("applications.gecko.update_url");
   addon.updateKey = null;
   addon.optionsURL = null;
   addon.optionsType = null;
   addon.aboutURL = null;
+
+  if (addon.updateURL != null) {
+    // Make sure that the URL is a valid absolute URL, and that anyone is
+    // allowed to load it.
+    let ssm = Services.scriptSecurityManager;
+    ssm.checkLoadURIStrWithPrincipal(ssm.createNullPrincipal({}),
+                                     addon.updateURL,
+                                     ssm.DISALLOW_INHERIT_PRINCIPAL);
+  }
 
   // WebExtensions don't use iconURLs
   addon.iconURL = null;
   addon.icon64URL = null;
   addon.icons = {};
 
-  let icons = getOptionalProp('icons');
+  let icons = getOptionalProp("icons", null, "Object");
   if (icons) {
     // filter out invalid (non-integer) size keys
     Object.keys(icons)
+          .filter((size) => INTEGER.test(size))
           .map((size) => parseInt(size, 10))
-          .filter((size) => !isNaN(size))
           .forEach((size) => addon.icons[size] = icons[size]);
   }
 
@@ -940,8 +963,9 @@ var loadManifestFromWebManifest = Task.async(function* loadManifestFromWebManife
 
   addon.targetApplications = [{
     id: TOOLKIT_ID,
-    minVersion: AddonManagerPrivate.webExtensionsMinPlatformVersion,
-    maxVersion: "*",
+    minVersion: getOptionalProp("application.gecko.strict_min_version",
+                                AddonManagerPrivate.webExtensionsMinPlatformVersion),
+    maxVersion: getOptionalProp("application.gecko.strict_max_version", "*"),
   }];
 
   addon.targetPlatforms = [];
@@ -1189,16 +1213,16 @@ function loadManifestFromRDF(aUri, aStream) {
     addon.userDisabled = !!LightweightThemeManager.currentTheme ||
                          addon.internalName != XPIProvider.selectedSkin;
   }
-  // Experiments are disabled by default. It is up to the Experiments Manager
-  // to enable them (it drives installation).
   else if (addon.type == "experiment") {
+    // Experiments are disabled by default. It is up to the Experiments Manager
+    // to enable them (it drives installation).
     addon.userDisabled = true;
   }
   else {
     addon.userDisabled = false;
-    addon.softDisabled = addon.blocklistState == Blocklist.STATE_SOFTBLOCKED;
   }
 
+  addon.softDisabled = addon.blocklistState == Blocklist.STATE_SOFTBLOCKED;
   addon.applyBackgroundUpdates = AddonManager.AUTOUPDATE_DEFAULT;
 
   // Experiments are managed and updated through an external "experiments
@@ -1207,9 +1231,6 @@ function loadManifestFromRDF(aUri, aStream) {
     addon.applyBackgroundUpdates = AddonManager.AUTOUPDATE_DISABLE;
     addon.updateURL = null;
     addon.updateKey = null;
-
-    addon.targetApplications = [];
-    addon.targetPlatforms = [];
   }
 
   // icons will be filled by the calling function
@@ -1633,6 +1654,25 @@ function getSignedStatus(aRv, aCert, aAddonID) {
   }
 }
 
+function shouldVerifySignedState(aAddon) {
+  // Updated system add-ons should always have their signature checked
+  if (aAddon._installLocation.name == KEY_APP_SYSTEM_ADDONS)
+    return true;
+
+  // We don't care about signatures for default system add-ons
+  if (aAddon._installLocation.name == KEY_APP_SYSTEM_DEFAULTS)
+    return false;
+
+  // Hotfixes should always have their signature checked
+  let hotfixID = Preferences.get(PREF_EM_HOTFIX_ID, undefined);
+  if (hotfixID && aAddon.id == hotfixID)
+    return true;
+
+  // Otherwise only check signatures if signing is enabled and the add-on is one
+  // of the signed types.
+  return ADDON_SIGNING && SIGNED_TYPES.has(aAddon.type);
+}
+
 /**
  * Verifies that a zip file's contents are all correctly signed by an
  * AMO-issued certificate
@@ -1644,7 +1684,7 @@ function getSignedStatus(aRv, aCert, aAddonID) {
  * @return a Promise that resolves to an AddonManager.SIGNEDSTATE_* constant.
  */
 function verifyZipSignedState(aFile, aAddon) {
-  if (!ADDON_SIGNING || !SIGNED_TYPES.has(aAddon.type))
+  if (!shouldVerifySignedState(aAddon))
     return Promise.resolve(AddonManager.SIGNEDSTATE_NOT_REQUIRED);
 
   let certDB = Cc["@mozilla.org/security/x509certdb;1"]
@@ -1674,7 +1714,7 @@ function verifyZipSignedState(aFile, aAddon) {
  * @return a Promise that resolves to an AddonManager.SIGNEDSTATE_* constant.
  */
 function verifyDirSignedState(aDir, aAddon) {
-  if (!ADDON_SIGNING || !SIGNED_TYPES.has(aAddon.type))
+  if (!shouldVerifySignedState(aAddon))
     return Promise.resolve(AddonManager.SIGNEDSTATE_NOT_REQUIRED);
 
   let certDB = Cc["@mozilla.org/security/x509certdb;1"]
@@ -2308,8 +2348,6 @@ this.XPIProvider = {
   _mostRecentlyModifiedFile: {},
   // Per-addon telemetry information
   _telemetryDetails: {},
-  // Experiments are disabled by default. Track ones that are locally enabled.
-  _enabledExperiments: null,
   // A Map from an add-on install to its ID
   _addonFileMap: new Map(),
   // Flag to know if ToolboxProcess.jsm has already been loaded by someone or not
@@ -2520,8 +2558,6 @@ this.XPIProvider = {
       this._shutdownError = null;
       // Clear this at startup for xpcshell test restarts
       this._telemetryDetails = {};
-      // Clear the set of enabled experiments (experiments disabled by default).
-      this._enabledExperiments = new Set();
       // Register our details structure with AddonManager
       AddonManagerPrivate.setTelemetryDetails("XPI", this._telemetryDetails);
 
@@ -2532,6 +2568,11 @@ this.XPIProvider = {
 
       // These must be in order of priority, highest to lowest,
       // for processFileChanges etc. to work
+
+      XPIProvider.installLocations.push(TemporaryInstallLocation);
+      XPIProvider.installLocationsByName[TemporaryInstallLocation.name] =
+        TemporaryInstallLocation;
+
       // The profile location is always enabled
       addDirectoryInstallLocation(KEY_APP_PROFILE, KEY_PROFILEDIR,
                                   [DIR_EXTENSIONS],
@@ -2555,11 +2596,9 @@ this.XPIProvider = {
         }
       }
 
-      if (enabledScopes & AddonManager.SCOPE_APPLICATION) {
-        addDirectoryInstallLocation(KEY_APP_GLOBAL, KEY_APPDIR,
-                                    [DIR_EXTENSIONS],
-                                    AddonManager.SCOPE_APPLICATION, true);
-      }
+      addDirectoryInstallLocation(KEY_APP_GLOBAL, KEY_ADDON_APP_DIR,
+                                  [DIR_EXTENSIONS],
+                                  AddonManager.SCOPE_APPLICATION, true);
 
       if (enabledScopes & AddonManager.SCOPE_SYSTEM) {
         addDirectoryInstallLocation(KEY_APP_SYSTEM_SHARE, "XRESysSExtPD",
@@ -3775,6 +3814,95 @@ this.XPIProvider = {
   },
 
   /**
+   * Temporarily installs add-on from local directory.
+   * As this is intended for development, the signature is not checked and
+   * the add-on does not persist on application restart.
+   *
+   * @param aDirectory
+   *        The directory containing the unpacked add-on directory or XPI file
+   *
+   * @return a Promise that rejects if the add-on is not restartless
+   *         or an add-on with the same ID is already temporarily installed
+   */
+  installTemporaryAddon: Task.async(function*
+                                    XPI_installTemporaryAddon(aDirectory) {
+    let addon = yield loadManifestFromFile(aDirectory, TemporaryInstallLocation);
+
+    if (!addon.bootstrap) {
+      throw new Error("Only restartless (bootstrap) add-ons"
+                    + " can be temporarily installed:", addon.id);
+    }
+    let oldAddon = yield new Promise(
+                   resolve => XPIDatabase.getVisibleAddonForID(addon.id, resolve));
+    if (oldAddon) {
+      if (oldAddon.location == KEY_APP_TEMPORARY) {
+        logger.warn("temporary add-on already installed:", addon.id);
+        throw new Error("Add-on with ID " + oldAddon.id + " is already"
+                        + " temporarily installed");
+      }
+      else if (!oldAddon.bootstrap) {
+        logger.warn("Non-restartless Add-on is already installed", addon.id);
+        throw new Error("Non-restartless add-on with ID "
+                        + oldAddon.id + " is already installed");
+      }
+      else {
+        logger.warn("Addon with ID " + oldAddon.id + " already installed,"
+                    + " older version will be disabled");
+
+        let existingAddonID = oldAddon.id;
+        let existingAddon = oldAddon._sourceBundle;
+
+        // We'll be replacing a currently active bootstrapped add-on so
+        // call its uninstall method
+        let newVersion = addon.version;
+        let oldVersion = oldAddon.version;
+        let uninstallReason = Services.vc.compare(oldVersion, newVersion) < 0 ?
+                              BOOTSTRAP_REASONS.ADDON_UPGRADE :
+                              BOOTSTRAP_REASONS.ADDON_DOWNGRADE;
+
+        if (oldAddon.active) {
+          XPIProvider.callBootstrapMethod(oldAddon, existingAddon,
+                                          "shutdown", uninstallReason,
+                                          { newVersion });
+        }
+        this.callBootstrapMethod(oldAddon, existingAddon,
+                                 "uninstall", uninstallReason, { newVersion });
+        this.unloadBootstrapScope(existingAddonID);
+        flushStartupCache();
+      }
+    }
+
+    let file = addon._sourceBundle;
+
+    let wrapper = createWrapper(addon);
+    let oldWrapper = createWrapper(oldAddon);
+    XPIProvider.callBootstrapMethod(addon, file, "install",
+                                    BOOTSTRAP_REASONS.ADDON_INSTALL);
+    addon.state = AddonManager.STATE_INSTALLED;
+    logger.debug("Install of temporary addon in " + aDirectory.path + " completed.");
+    addon.visible = true;
+    addon.enabled = true;
+    addon.active = true;
+
+    addon = XPIDatabase.addAddonMetadata(addon, file.persistentDescriptor);
+
+    XPIStates.addAddon(addon);
+    XPIDatabase.saveChanges();
+
+    // addon was modified above, create new wrapper
+    wrapper = createWrapper(addon);
+
+    AddonManagerPrivate.callAddonListeners("onInstalling", wrapper,
+                                           false);
+    XPIProvider.callBootstrapMethod(addon, file, "startup",
+                                    BOOTSTRAP_REASONS.ADDON_ENABLE);
+    AddonManagerPrivate.callInstallListeners("onExternalInstall",
+                                             null, wrapper, oldWrapper,
+                                             false);
+    AddonManagerPrivate.callAddonListeners("onInstalled", wrapper);
+  }),
+
+  /**
    * Removes an AddonInstall from the list of active installs.
    *
    * @param  install
@@ -4539,15 +4667,11 @@ this.XPIProvider = {
     let appDisabledChanged = aAddon.appDisabled != appDisabled;
 
     // Update the properties in the database.
-    // We never persist this for experiments because the disabled flags
-    // are controlled by the Experiments Manager.
-    if (aAddon.type != "experiment") {
-      XPIDatabase.setAddonProperties(aAddon, {
-        userDisabled: aUserDisabled,
-        appDisabled: appDisabled,
-        softDisabled: aSoftDisabled
-      });
-    }
+    XPIDatabase.setAddonProperties(aAddon, {
+      userDisabled: aUserDisabled,
+      appDisabled: appDisabled,
+      softDisabled: aSoftDisabled
+    });
 
     let wrapper = createWrapper(aAddon);
 
@@ -5311,6 +5435,13 @@ AddonInstall.prototype = {
                                  "XPI is incorrectly signed"]);
         }
       }
+    }
+
+    if (this.existingAddon && this.existingAddon.type == "webextension" &&
+        this.addon.type != "webextension") {
+      zipreader.close();
+      return Promise.reject([AddonManager.ERROR_UNEXPECTED_ADDON_TYPE,
+                             "WebExtensions may not be upated to other extension types"]);
     }
 
     if (this.addon.type == "multipackage")
@@ -6368,17 +6499,6 @@ AddonInternal.prototype = {
   },
 
   isCompatibleWith: function AddonInternal_isCompatibleWith(aAppVersion, aPlatformVersion) {
-    // Experiments are installed through an external mechanism that
-    // limits target audience to compatible clients. We trust it knows what
-    // it's doing and skip compatibility checks.
-    //
-    // This decision does forfeit defense in depth. If the experiments system
-    // is ever wrong about targeting an add-on to a specific application
-    // or platform, the client will likely see errors.
-    if (this.type == "experiment") {
-      return true;
-    }
-
     let app = this.matchingTargetApplication;
     if (!app)
       return false;
@@ -6554,13 +6674,6 @@ AddonInternal.prototype = {
     if (!(this.inDatabase))
       return permissions;
 
-    // Experiments can only be uninstalled. An uninstall reflects the user
-    // intent of "disable this experiment." This is partially managed by the
-    // experiments manager.
-    if (this.type == "experiment") {
-      return AddonManager.PERM_CAN_UNINSTALL;
-    }
-
     if (!this.appDisabled) {
       if (this.userDisabled || this.softDisabled) {
         permissions |= AddonManager.PERM_CAN_ENABLE;
@@ -6573,8 +6686,9 @@ AddonInternal.prototype = {
     // Add-ons that are in locked install locations, or are pending uninstall
     // cannot be upgraded or uninstalled
     if (!this._installLocation.locked && !this.pendingUninstall) {
-      // Add-ons that are installed by a file link cannot be upgraded
-      if (!this._installLocation.isLinkedAddon(this.id)) {
+      // Experiments cannot be upgraded.
+      // Add-ons that are installed by a file link cannot be upgraded.
+      if (this.type != "experiment" && !this._installLocation.isLinkedAddon(this.id)) {
         permissions |= AddonManager.PERM_CAN_UPGRADE;
       }
 
@@ -6905,15 +7019,10 @@ function AddonWrapper(aAddon) {
       return AddonManager.PENDING_UNINSTALL;
     }
 
-    // Extensions have an intentional inconsistency between what the DB says is
-    // enabled and what we say to the ouside world. so we need to cover up that
-    // lie here as well.
-    if (aAddon.type != "experiment") {
-      if (aAddon.active && aAddon.disabled)
-        pending |= AddonManager.PENDING_DISABLE;
-      else if (!aAddon.active && !aAddon.disabled)
-        pending |= AddonManager.PENDING_ENABLE;
-    }
+    if (aAddon.active && aAddon.disabled)
+      pending |= AddonManager.PENDING_DISABLE;
+    else if (!aAddon.active && !aAddon.disabled)
+      pending |= AddonManager.PENDING_ENABLE;
 
     if (aAddon.pendingUpgrade)
       pending |= AddonManager.PENDING_UPGRADE;
@@ -6952,23 +7061,11 @@ function AddonWrapper(aAddon) {
   });
 
   this.__defineGetter__("userDisabled", function AddonWrapper_userDisabledGetter() {
-    if (XPIProvider._enabledExperiments.has(aAddon.id)) {
-      return false;
-    }
-
     return aAddon.softDisabled || aAddon.userDisabled;
   });
   this.__defineSetter__("userDisabled", function AddonWrapper_userDisabledSetter(val) {
     if (val == this.userDisabled) {
       return val;
-    }
-
-    if (aAddon.type == "experiment") {
-      if (val) {
-        XPIProvider._enabledExperiments.delete(aAddon.id);
-      } else {
-        XPIProvider._enabledExperiments.add(aAddon.id);
-      }
     }
 
     if (aAddon.inDatabase) {
@@ -7016,6 +7113,9 @@ function AddonWrapper(aAddon) {
   });
 
   this.__defineGetter__("hidden", function AddonWrapper_hidden() {
+    if (aAddon._installLocation.name == KEY_APP_TEMPORARY)
+      return false;
+
     return (aAddon._installLocation.name == KEY_APP_SYSTEM_DEFAULTS ||
             aAddon._installLocation.name == KEY_APP_SYSTEM_ADDONS);
   });
@@ -7845,6 +7945,21 @@ Object.assign(SystemAddonInstallLocation.prototype, {
     this._nextDir = newDir;
   }),
 });
+
+/**
+ * An object which identifies a directory install location for temporary
+ * add-ons.
+ */
+const TemporaryInstallLocation = {
+  locked: false,
+  name: KEY_APP_TEMPORARY,
+  scope: AddonManager.SCOPE_TEMPORARY,
+  getAddonLocations: () => [],
+  isLinkedAddon: () => false,
+  installAddon: () => {},
+  uninstallAddon: (aAddon) => {},
+  getStagingDir: () => {},
+}
 
 #ifdef XP_WIN
 /**

@@ -606,9 +606,6 @@ pref("image.downscale-during-decode.enabled", true);
 pref("shumway.disabled", true);
 #endif
 
-// enable touch events interfaces
-pref("dom.w3c_touch_events.enabled", 1);
-
 #ifdef MOZ_SAFE_BROWSING
 pref("browser.safebrowsing.enabled", true);
 pref("browser.safebrowsing.malware.enabled", true);
@@ -1013,6 +1010,9 @@ pref("dom.mozContacts.enabled", true);
 // OOP apps.
 pref("dom.ipc.tabs.disabled", false);
 pref("dom.ipc.processCount", 100000);
+
+// Retain at most 10 processes' layers buffers
+pref("layers.compositor-lru-size", 10);
 
 // Enable pre-launching content processes for improved startup time
 // (hiding latency).

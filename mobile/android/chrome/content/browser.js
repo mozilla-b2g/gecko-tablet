@@ -116,9 +116,6 @@ XPCOMUtils.defineLazyModuleGetter(this, "SharedPreferences",
 XPCOMUtils.defineLazyModuleGetter(this, "Notifications",
                                   "resource://gre/modules/Notifications.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "GMPInstallManager",
-                                  "resource://gre/modules/GMPInstallManager.jsm");
-
 XPCOMUtils.defineLazyModuleGetter(this, "ReaderMode", "resource://gre/modules/ReaderMode.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "Snackbars", "resource://gre/modules/Snackbars.jsm");
@@ -616,11 +613,6 @@ var BrowserApp = {
 
       InitLater(() => Cc["@mozilla.org/login-manager;1"].getService(Ci.nsILoginManager));
       InitLater(() => LoginManagerParent.init(), window, "LoginManagerParent");
-
-      InitLater(() => {
-          BrowserApp.gmpInstallManager = new GMPInstallManager();
-          BrowserApp.gmpInstallManager.simpleCheckAndInstall().then(null, () => {});
-      }, BrowserApp, "gmpInstallManager");
 
     }, false);
   },
@@ -1390,10 +1382,6 @@ var BrowserApp = {
   },
 
   quit: function quit(aClear = { sanitize: {}, dontSaveSession: false }) {
-    if (this.gmpInstallManager) {
-      this.gmpInstallManager.uninit();
-    }
-
     // Notify all windows that an application quit has been requested.
     let cancelQuit = Cc["@mozilla.org/supports-PRBool;1"].createInstance(Ci.nsISupportsPRBool);
     Services.obs.notifyObservers(cancelQuit, "quit-application-requested", "restart");
@@ -4499,8 +4487,8 @@ Tab.prototype = {
       fixedURI = URIFixup.createExposableURI(aLocationURI);
     } catch (ex) { }
 
-    // In restricted profiles, we refuse to let you open any file urls.
-    if (!ParentalControls.isAllowed(ParentalControls.VISIT_FILE_URLS, fixedURI)) {
+    // In restricted profiles, we refuse to let you open various urls.
+    if (!ParentalControls.isAllowed(ParentalControls.BROWSE, fixedURI)) {
       aRequest.cancel(Cr.NS_BINDING_ABORTED);
 
       this.browser.docShell.displayLoadError(Cr.NS_ERROR_UNKNOWN_PROTOCOL, fixedURI, null);
@@ -5287,6 +5275,8 @@ var ErrorPageEventHandler = {
             bucketName = "WARNING_MALWARE_PAGE_";
           } else if (errorDoc.documentURI.contains("e=unwantedBlocked")) {
             bucketName = "WARNING_UNWANTED_PAGE_";
+          } else if (errorDoc.documentURI.contains("e=forbiddenBlocked")) {
+            return; // no telemetry for forbidden pages
           }
           let nsISecTel = Ci.nsISecurityUITelemetry;
           let isIframe = (errorDoc.defaultView.parent === errorDoc.defaultView);
@@ -6204,9 +6194,9 @@ var ViewportHandler = {
 
     if (aData) {
       let scrollChange = JSON.parse(aData);
-      let win = BrowserApp.selectedTab.browser.contentWindow;
-      let windowUtils = win.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
+      let windowUtils = window.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
       windowUtils.setNextPaintSyncId(scrollChange.id);
+      let win = BrowserApp.selectedTab.browser.contentWindow;
       win.scrollBy(scrollChange.x, scrollChange.y);
     }
   },

@@ -903,13 +903,13 @@ class GTestCommands(MachCommandBase):
         # Parameters come from the CLI. We need to convert them before
         # their use.
         if debugger_args:
-            import pymake.process
-            argv, badchar = pymake.process.clinetoargv(debugger_args, os.getcwd())
-            if badchar:
+            from mozbuild import shellutil
+            try:
+                debugger_args = shellutil.split(debugger_args)
+            except shellutil.MetaCharacterException as e:
                 print("The --debugger_args you passed require a real shell to parse them.")
-                print("(We can't handle the %r character.)" % (badchar,))
+                print("(We can't handle the %r character.)" % e.char)
                 return 1
-            debugger_args = argv;
 
         # Prepend the debugger args.
         args = [debuggerInfo.path] + debuggerInfo.args + args
@@ -1046,41 +1046,45 @@ class RunProgram(MachCommandBase):
 
         if conditions.is_android(self):
             # Running Firefox for Android is completely different
-            if debug or debugger or debugparams:
-                print("Debugging Firefox for Android is not yet supported")
-                return 1
             if dmd:
                 print("DMD is not supported for Firefox for Android")
                 return 1
-            return self._run_android(params)
+            from mozrunner.devices.android_device import verify_android_device, run_firefox_for_android
+            if not (debug or debugger or debugparams):
+                verify_android_device(self, install=True)
+                return run_firefox_for_android(self, params)
+            verify_android_device(self, install=True, debugger=True)
+            args = ['']
 
-        try:
-            binpath = self.get_binary_path('app')
-        except Exception as e:
-            print("It looks like your program isn't built.",
-                "You can run |mach build| to build it.")
-            print(e)
-            return 1
+        else:
 
-        args = [binpath]
+            try:
+                binpath = self.get_binary_path('app')
+            except Exception as e:
+                print("It looks like your program isn't built.",
+                    "You can run |mach build| to build it.")
+                print(e)
+                return 1
 
-        if params:
-            args.extend(params)
+            args = [binpath]
 
-        if not remote:
-            args.append('-no-remote')
+            if params:
+                args.extend(params)
 
-        if not background and sys.platform == 'darwin':
-            args.append('-foreground')
+            if not remote:
+                args.append('-no-remote')
 
-        no_profile_option_given = \
-            all(p not in params for p in ['-profile', '--profile', '-P'])
-        if no_profile_option_given and not noprofile:
-            path = os.path.join(self.topobjdir, 'tmp', 'scratch_user')
-            if not os.path.isdir(path):
-                os.makedirs(path)
-            args.append('-profile')
-            args.append(path)
+            if not background and sys.platform == 'darwin':
+                args.append('-foreground')
+
+            no_profile_option_given = \
+                all(p not in params for p in ['-profile', '--profile', '-P'])
+            if no_profile_option_given and not noprofile:
+                path = os.path.join(self.topobjdir, 'tmp', 'scratch_user')
+                if not os.path.isdir(path):
+                    os.makedirs(path)
+                args.append('-profile')
+                args.append(path)
 
         extra_env = {}
 
@@ -1100,13 +1104,13 @@ class RunProgram(MachCommandBase):
             # Parameters come from the CLI. We need to convert them before
             # their use.
             if debugparams:
-                import pymake.process
-                argv, badchar = pymake.process.clinetoargv(debugparams, os.getcwd())
-                if badchar:
+                from mozbuild import shellutil
+                try:
+                    debugparams = shellutil.split(debugparams)
+                except shellutil.MetaCharacterException as e:
                     print("The --debugparams you passed require a real shell to parse them.")
-                    print("(We can't handle the %r character.)" % (badchar,))
+                    print("(We can't handle the %r character.)" % e.char)
                     return 1
-                debugparams = argv;
 
             if not slowscript:
                 extra_env['JS_DISABLE_SLOW_SCRIPT_SIGNALS'] = '1'
@@ -1158,11 +1162,6 @@ class RunProgram(MachCommandBase):
 
         return self.run_process(args=args, ensure_exit_code=False,
             pass_thru=True, append_env=extra_env)
-
-    def _run_android(self, params):
-        from mozrunner.devices.android_device import verify_android_device, run_firefox_for_android
-        verify_android_device(self, install=True)
-        return run_firefox_for_android(self, params)
 
 @CommandProvider
 class Buildsymbols(MachCommandBase):

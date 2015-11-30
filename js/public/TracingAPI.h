@@ -311,6 +311,12 @@ JS_CallScriptTracer(JSTracer* trc, JS::Heap<JSScript*>* scriptp, const char* nam
 extern JS_PUBLIC_API(void)
 JS_CallFunctionTracer(JSTracer* trc, JS::Heap<JSFunction*>* funp, const char* name);
 
+namespace JS {
+template <typename T>
+extern JS_PUBLIC_API(void)
+TraceEdge(JSTracer* trc, JS::Heap<T>* edgep, const char* name);
+} // namespace JS
+
 // The following JS_CallUnbarriered*Tracer functions should only be called where
 // you know for sure that a heap post barrier is not required.  Use with extreme
 // caution!
@@ -328,16 +334,6 @@ JS_CallUnbarrieredStringTracer(JSTracer* trc, JSString** strp, const char* name)
 
 extern JS_PUBLIC_API(void)
 JS_CallUnbarrieredScriptTracer(JSTracer* trc, JSScript** scriptp, const char* name);
-
-template <typename HashSetEnum>
-inline void
-JS_CallHashSetObjectTracer(JSTracer* trc, HashSetEnum& e, JSObject* const& key, const char* name)
-{
-    JSObject* updated = key;
-    JS_CallUnbarrieredObjectTracer(trc, &updated, name);
-    if (updated != key)
-        e.rekeyFront(updated);
-}
 
 /**
  * Trace an object that is known to always be tenured.  No post barriers are
@@ -368,6 +364,11 @@ JS_GetTraceThingInfo(char* buf, size_t bufsize, JSTracer* trc,
                      void* thing, JS::TraceKind kind, bool includeDetails);
 
 namespace js {
+namespace gc {
+template <typename T>
+extern JS_PUBLIC_API(bool)
+EdgeNeedsSweep(JS::Heap<T>* edgep);
+} // namespace gc
 
 // Automates static dispatch for GC interaction with TraceableContainers.
 template <typename>
@@ -384,12 +385,17 @@ struct StructGCPolicy {
         // trace method.
         t->trace(trc);
     }
+
+    static bool needsSweep(T* t) {
+        return t->needsSweep();
+    }
 };
 
 // This policy ignores any GC interaction, e.g. for non-GC types.
 template <typename T>
 struct IgnoreGCPolicy {
-    static void trace(JSTracer* trc, uint32_t* id, const char* name) {}
+    static void trace(JSTracer* trc, T* t, const char* name) {}
+    static bool needsSweep(T* v) { return false; }
 };
 
 // The default policy when no other more specific policy fits (e.g. for a
@@ -407,6 +413,17 @@ struct DefaultGCPolicy<jsid>
 };
 
 template <> struct DefaultGCPolicy<uint32_t> : public IgnoreGCPolicy<uint32_t> {};
+
+template <typename T>
+struct DefaultGCPolicy<JS::Heap<T>>
+{
+    static void trace(JSTracer* trc, JS::Heap<T>* thingp, const char* name) {
+        JS::TraceEdge(trc, thingp, name);
+    }
+    static bool needsSweep(JS::Heap<T>* thingp) {
+        return gc::EdgeNeedsSweep(thingp);
+    }
+};
 
 } // namespace js
 

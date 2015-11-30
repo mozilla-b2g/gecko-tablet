@@ -50,9 +50,6 @@ with Files('../public/TrackedOptimizationInfo.h'):
     BUG_COMPONENT = component_jit
 
 
-if CONFIG['DEHYDRA_PATH']:
-    DIRS += ['analysis-tests']
-
 if CONFIG['JS_BUNDLED_EDITLINE']:
     DIRS += ['editline']
 
@@ -111,6 +108,7 @@ EXPORTS.js += [
     '../public/Date.h',
     '../public/Debug.h',
     '../public/GCAPI.h',
+    '../public/GCHashTable.h',
     '../public/HashTable.h',
     '../public/HeapAPI.h',
     '../public/Id.h',
@@ -125,7 +123,6 @@ EXPORTS.js += [
     '../public/RootingAPI.h',
     '../public/SliceBudget.h',
     '../public/StructuredClone.h',
-    '../public/TraceableHashTable.h',
     '../public/TraceableVector.h',
     '../public/TraceKind.h',
     '../public/TracingAPI.h',
@@ -478,6 +475,7 @@ elif CONFIG['JS_CODEGEN_ARM64']:
     if CONFIG['JS_SIMULATOR_ARM64']:
         UNIFIED_SOURCES += [
             'jit/arm64/vixl/Debugger-vixl.cpp',
+            'jit/arm64/vixl/Logic-vixl.cpp',
             'jit/arm64/vixl/MozSimulator-vixl.cpp',
             'jit/arm64/vixl/Simulator-vixl.cpp'
         ]
@@ -704,3 +702,10 @@ selfhosted.inputs = [
     'builtin/TypedObject.js',
     'builtin/WeakSet.js'
 ]
+
+if CONFIG['JS_HAS_CTYPES']:
+    if CONFIG['MOZ_NATIVE_FFI']:
+        CXXFLAGS += CONFIG['MOZ_FFI_CFLAGS']
+    else:
+        # Windows needs this to be linked with a static library.
+        DEFINES['FFI_BUILDING'] = True

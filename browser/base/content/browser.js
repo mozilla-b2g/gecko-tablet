@@ -11,7 +11,6 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/NotificationDB.jsm");
 Cu.import("resource:///modules/RecentWindow.jsm");
 
-
 XPCOMUtils.defineLazyModuleGetter(this, "Preferences",
                                   "resource://gre/modules/Preferences.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Deprecated",
@@ -34,8 +33,6 @@ XPCOMUtils.defineLazyModuleGetter(this, "GMPInstallManager",
                                   "resource://gre/modules/GMPInstallManager.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "NewTabUtils",
                                   "resource://gre/modules/NewTabUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "RemoteNewTabUtils",
-                                  "resource:///modules/RemoteNewTabUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "ContentSearch",
                                   "resource:///modules/ContentSearch.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "AboutHome",
@@ -168,10 +165,8 @@ XPCOMUtils.defineLazyGetter(this, "gCustomizeMode", function() {
   return new scope.CustomizeMode(window);
 });
 
-#ifdef MOZ_SERVICES_SYNC
 XPCOMUtils.defineLazyModuleGetter(this, "Weave",
   "resource://services-sync/main.js");
-#endif
 
 XPCOMUtils.defineLazyGetter(this, "PopupNotifications", function () {
   let tmp = {};
@@ -233,11 +228,11 @@ XPCOMUtils.defineLazyModuleGetter(this, "fxAccounts",
 XPCOMUtils.defineLazyModuleGetter(this, "gWebRTCUI",
   "resource:///modules/webrtcUI.jsm", "webrtcUI");
 
+XPCOMUtils.defineLazyModuleGetter(this, "TabCrashHandler",
+  "resource:///modules/ContentCrashHandlers.jsm");
 #ifdef MOZ_CRASHREPORTER
-XPCOMUtils.defineLazyModuleGetter(this, "TabCrashReporter",
-  "resource:///modules/ContentCrashReporters.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PluginCrashReporter",
-  "resource:///modules/ContentCrashReporters.jsm");
+  "resource:///modules/ContentCrashHandlers.jsm");
 #endif
 
 XPCOMUtils.defineLazyModuleGetter(this, "FormValidationHandler",
@@ -279,22 +274,18 @@ var gInitialPages = [
 #include browser-fullScreen.js
 #include browser-fullZoom.js
 #include browser-gestureSupport.js
-#include browser-loop.js
 #include browser-places.js
 #include browser-plugins.js
 #include browser-safebrowsing.js
 #include browser-sidebar.js
 #include browser-social.js
+#include browser-syncui.js
 #include browser-tabview.js
 #include browser-thumbnails.js
 #include browser-trackingprotection.js
 
 #ifdef MOZ_DATA_REPORTING
 #include browser-data-submission-info-bar.js
-#endif
-
-#ifdef MOZ_SERVICES_SYNC
-#include browser-syncui.js
 #endif
 
 #include browser-fxaccounts.js
@@ -919,6 +910,7 @@ function _loadURIWithFlags(browser, uri, params) {
     // We might lose history that way but at least the browser loaded a page.
     // This might be necessary if SessionStore wasn't initialized yet i.e.
     // when the homepage is a non-remote page.
+    Cu.reportError(e);
     gBrowser.updateBrowserRemotenessByURL(browser, uri);
     browser.webNavigation.loadURIWithOptions(uri, flags, referrer, referrerPolicy,
                                              postData, null, null);
@@ -1147,56 +1139,15 @@ var gBrowserInit = {
     });
 
     gBrowser.addEventListener("AboutTabCrashedLoad", function(event) {
-      let browser = gBrowser.getBrowserForDocument(event.target);
-#ifdef MOZ_CRASHREPORTER
-      TabCrashReporter.onAboutTabCrashedLoad(browser, {
-        crashedTabCount: SessionStore.crashedTabCount,
-      });
-#endif
-
-      // Reset the zoom for the tabcrashed page.
-      ZoomManager.setZoomForBrowser(browser, 1);
-    }, false, true);
-
-    gBrowser.addEventListener("AboutTabCrashedMessage", function(event) {
       let ownerDoc = event.originalTarget;
 
       if (!ownerDoc.documentURI.startsWith("about:tabcrashed")) {
         return;
       }
 
-      let isTopFrame = (ownerDoc.defaultView.parent === ownerDoc.defaultView);
-      if (!isTopFrame) {
-        return;
-      }
-
-      let browser = gBrowser.getBrowserForDocument(ownerDoc);
-#ifdef MOZ_CRASHREPORTER
-      if (event.detail.sendCrashReport) {
-        TabCrashReporter.submitCrashReport(browser, {
-          comments: event.detail.comments,
-          email: event.detail.email,
-          emailMe: event.detail.emailMe,
-          includeURL: event.detail.includeURL,
-          URL: event.detail.URL,
-        });
-      } else {
-        TabCrashReporter.dontSubmitCrashReport();
-      }
-#endif
-
-      let tab = gBrowser.getTabForBrowser(browser);
-      switch (event.detail.message) {
-      case "closeTab":
-        gBrowser.removeTab(tab, { animate: true });
-        break;
-      case "restoreTab":
-        SessionStore.reviveCrashedTab(tab);
-        break;
-      case "restoreAll":
-        SessionStore.reviveAllCrashedTabs();
-        break;
-      }
+      let browser = gBrowser.getBrowserForDocument(event.target);
+      // Reset the zoom for the tabcrashed page.
+      ZoomManager.setZoomForBrowser(browser, 1);
     }, false, true);
 
     gBrowser.addEventListener("InsecureLoginFormsStateChange", function() {
@@ -1397,17 +1348,13 @@ var gBrowserInit = {
 
     FullScreen.init();
 
-#ifdef MOZ_SERVICES_SYNC
     // initialize the sync UI
     gSyncUI.init();
     gFxAccounts.init();
-#endif
 
 #ifdef MOZ_DATA_REPORTING
     gDataNotificationInfoBar.init();
 #endif
-
-    LoopUI.init();
 
     gBrowserThumbnails.init();
 
@@ -1543,9 +1490,7 @@ var gBrowserInit = {
 
     FullScreen.uninit();
 
-#ifdef MOZ_SERVICES_SYNC
     gFxAccounts.uninit();
-#endif
 
     Services.obs.removeObserver(gPluginHandler.NPAPIPluginCrashed, "plugin-crashed");
 
@@ -1592,7 +1537,6 @@ var gBrowserInit = {
       TabView.uninit();
       SocialUI.uninit();
       gBrowserThumbnails.uninit();
-      LoopUI.uninit();
       FullZoom.destroy();
 
       Services.obs.removeObserver(gSessionHistoryObserver, "browser:purge-session-history");
@@ -1702,10 +1646,8 @@ var gBrowserInit = {
     // initialize the private browsing UI
     gPrivateBrowsingUI.init();
 
-#ifdef MOZ_SERVICES_SYNC
     // initialize the sync UI
     gSyncUI.init();
-#endif
 
 #ifdef E10S_TESTING_ONLY
     gRemoteTabsUI.init();
@@ -3001,10 +2943,16 @@ var BrowserOnClick = {
   onAboutBlocked: function (elementId, reason, isTopFrame, location) {
     // Depending on what page we are displaying here (malware/phishing/unwanted)
     // use the right strings and links for each.
-    let bucketName = "WARNING_PHISHING_PAGE_";
+    let bucketName = "";
+    let sendTelemetry = false;
     if (reason === 'malware') {
+      sendTelemetry = true;
       bucketName = "WARNING_MALWARE_PAGE_";
+    } else if (reason === 'phishing') {
+      sendTelemetry = true;
+      bucketName = "WARNING_PHISHING_PAGE_";
     } else if (reason === 'unwanted') {
+      sendTelemetry = true;
       bucketName = "WARNING_UNWANTED_PAGE_";
     }
     let secHistogram = Services.telemetry.getHistogramById("SECURITY_UI");
@@ -3012,7 +2960,9 @@ var BrowserOnClick = {
     bucketName += isTopFrame ? "TOP_" : "FRAME_";
     switch (elementId) {
       case "getMeOutButton":
-        secHistogram.add(nsISecTel[bucketName + "GET_ME_OUT_OF_HERE"]);
+        if (sendTelemetry) {
+          secHistogram.add(nsISecTel[bucketName + "GET_ME_OUT_OF_HERE"]);
+        }
         getMeOutOfHere();
         break;
 
@@ -3022,14 +2972,19 @@ var BrowserOnClick = {
 
         // We log even if malware/phishing/unwanted info URL couldn't be found:
         // the measurement is for how many users clicked the WHY BLOCKED button
-        secHistogram.add(nsISecTel[bucketName + "WHY_BLOCKED"]);
-
+        if (sendTelemetry) {
+          secHistogram.add(nsISecTel[bucketName + "WHY_BLOCKED"]);
+        }
         openHelpLink("phishing-malware", false, "current");
         break;
 
       case "ignoreWarningButton":
-        secHistogram.add(nsISecTel[bucketName + "IGNORE_WARNING"]);
-        this.ignoreWarningButton(reason);
+        if (gPrefService.getBoolPref("browser.safebrowsing.allowOverride")) {
+          if (sendTelemetry) {
+            secHistogram.add(nsISecTel[bucketName + "IGNORE_WARNING"]);
+          }
+          this.ignoreWarningButton(reason);
+        }
         break;
     }
   },
@@ -3097,6 +3052,8 @@ var BrowserOnClick = {
       title = gNavigatorBundle.getString("safebrowsing.reportedUnwantedSite");
       // There is no button for reporting errors since Google doesn't currently
       // provide a URL endpoint for these reports.
+    } else {
+      return; // no notifications for forbidden sites
     }
 
     let notificationBox = gBrowser.getNotificationBox();
@@ -3446,7 +3403,7 @@ const DOMLinkHandler = {
         break;
 
       case "Link:SetIcon":
-        return this.setIcon(aMsg.target, aMsg.data.url);
+        return this.setIcon(aMsg.target, aMsg.data.url, aMsg.data.loadingPrincipal);
         break;
 
       case "Link:AddSearch":
@@ -3455,7 +3412,7 @@ const DOMLinkHandler = {
     }
   },
 
-  setIcon: function(aBrowser, aURL) {
+  setIcon: function(aBrowser, aURL, aLoadingPrincipal) {
     if (gBrowser.isFailedIcon(aURL))
       return false;
 
@@ -3463,7 +3420,7 @@ const DOMLinkHandler = {
     if (!tab)
       return false;
 
-    gBrowser.setIcon(tab, aURL);
+    gBrowser.setIcon(tab, aURL, aLoadingPrincipal);
     return true;
   },
 
@@ -3564,11 +3521,8 @@ const BrowserSearch = {
       if (!aSearchBar || document.activeElement != aSearchBar.textbox.inputField) {
         let url = gBrowser.currentURI.spec.toLowerCase();
         let mm = gBrowser.selectedBrowser.messageManager;
-        let newTabRemoted = Services.prefs.getBoolPref("browser.newtabpage.remote");
         if (url === "about:home" ||
-            (url === "about:newtab" &&
-             ((!newTabRemoted && NewTabUtils.allPages.enabled) ||
-              (newTabRemoted && RemoteNewTabUtils.allPages.enabled)))) {
+            (url === "about:newtab" && NewTabUtils.allPages.enabled)) {
           ContentSearch.focusInput(mm);
         } else {
           openUILinkIn("about:home", "current");
@@ -6144,12 +6098,6 @@ var BrowserOffline = {
   {
     var ioService = Services.io;
 
-    // Stop automatic management of the offline status
-    try {
-      ioService.manageOfflineStatus = false;
-    } catch (ex) {
-    }
-
     if (!ioService.offline && !this._canGoOffline()) {
       this._updateOfflineUI(false);
       return;
@@ -6165,7 +6113,9 @@ var BrowserOffline = {
     if (aTopic != "network:offline-status-changed")
       return;
 
-    this._updateOfflineUI(aState == "offline");
+    // This notification is also received because of a loss in connectivity,
+    // which we ignore by updating the UI to the current value of io.offline
+    this._updateOfflineUI(Services.io.offline);
   },
 
   /////////////////////////////////////////////////////////////////////////////
@@ -6879,11 +6829,9 @@ function isTabEmpty(aTab) {
   return true;
 }
 
-#ifdef MOZ_SERVICES_SYNC
 function BrowserOpenSyncTabs() {
   switchToTabHavingURI("about:sync-tabs", true);
 }
-#endif
 
 /**
  * Format a URL

@@ -9,6 +9,7 @@
 
 #include "Units.h"
 #include "mozilla/gfx/Matrix.h"
+#include "nsRegion.h"
 
 namespace mozilla {
 
@@ -38,9 +39,10 @@ enum class PixelCastJustification : uint8_t {
   // When an OS event is initially constructed, its reference point is
   // technically in screen pixels, as it has not yet accounted for any
   // asynchronous transforms. This justification is for viewing the initial
-  // reference point as a screen point.
-  LayoutDeviceToScreenForUntransformedEvent,
-  // Similar to LayoutDeviceToScreenForUntransformedEvent, PBrowser handles
+  // reference point as a screen point. The reverse is useful when synthetically
+  // created WidgetEvents need to be converted back to InputData.
+  LayoutDeviceIsScreenForUntransformedEvent,
+  // Similar to LayoutDeviceIsScreenForUntransformedEvent, PBrowser handles
   // some widget/tab dimension information as the OS does -- in screen units.
   LayoutDeviceIsScreenForTabDims
 };
@@ -77,6 +79,10 @@ template <class TargetUnits, class SourceUnits>
 gfx::IntMarginTyped<TargetUnits> ViewAs(const gfx::IntMarginTyped<SourceUnits>& aMargin, PixelCastJustification) {
   return gfx::IntMarginTyped<TargetUnits>(aMargin.top, aMargin.right, aMargin.bottom, aMargin.left);
 }
+template <class TargetUnits, class SourceUnits>
+gfx::IntRegionTyped<TargetUnits> ViewAs(const gfx::IntRegionTyped<SourceUnits>& aRegion, PixelCastJustification) {
+  return gfx::IntRegionTyped<TargetUnits>::FromUnknownRegion(aRegion.ToUnknownRegion());
+}
 template <class NewTargetUnits, class OldTargetUnits, class SourceUnits>
 gfx::ScaleFactor<SourceUnits, NewTargetUnits> ViewTargetAs(
     const gfx::ScaleFactor<SourceUnits, OldTargetUnits>& aScaleFactor,
@@ -111,6 +117,10 @@ template <class TargetUnits>
 gfx::IntRectTyped<TargetUnits> ViewAs(const nsIntRect& aRect) {
   return gfx::IntRectTyped<TargetUnits>(aRect.x, aRect.y, aRect.width, aRect.height);
 }
+template <class TargetUnits>
+gfx::IntRegionTyped<TargetUnits> ViewAs(const nsIntRegion& aRegion) {
+  return gfx::IntRegionTyped<TargetUnits>::FromUnknownRegion(aRegion);
+}
 
 // Convenience functions for transforming an entity from one strongly-typed
 // coordinate system to another using the provided transformation matrix.
@@ -138,6 +148,12 @@ static gfx::IntRectTyped<TargetUnits> TransformTo(const gfx::Matrix4x4& aTransfo
 {
   gfx::Rect rect(aRect.ToUnknownRect());
   return RoundedToInt(ViewAs<TargetUnits>(aTransform.TransformBounds(rect)));
+}
+template <typename TargetUnits, typename SourceUnits>
+static gfx::IntRegionTyped<TargetUnits> TransformTo(const gfx::Matrix4x4& aTransform,
+                                                    const gfx::IntRegionTyped<SourceUnits>& aRegion)
+{
+  return ViewAs<TargetUnits>(aRegion.ToUnknownRegion().Transform(aTransform));
 }
 
 // Transform |aVector|, which is anchored at |aAnchor|, by the given transform

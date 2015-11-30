@@ -62,14 +62,25 @@ using mozilla::PodCopy;
 using mozilla::PodZero;
 using mozilla::RotateLeft;
 
+static BindingIter
+GetBinding(HandleScript script, HandlePropertyName name)
+{
+    BindingIter bi(script);
+    while (bi->name() != name)
+        bi++;
+    return bi;
+}
+
 /* static */ BindingIter
 Bindings::argumentsBinding(ExclusiveContext* cx, HandleScript script)
 {
-    HandlePropertyName arguments = cx->names().arguments;
-    BindingIter bi(script);
-    while (bi->name() != arguments)
-        bi++;
-    return bi;
+    return GetBinding(script, cx->names().arguments);
+}
+
+/* static */ BindingIter
+Bindings::thisBinding(ExclusiveContext* cx, HandleScript script)
+{
+    return GetBinding(script, cx->names().dotThis);
 }
 
 bool
@@ -144,9 +155,11 @@ Bindings::initWithTemporaryStorage(ExclusiveContext* cx, MutableHandle<Bindings>
 
     // Start with the empty shape and then append one shape per aliased binding.
     const Class* cls = isModule ? &ModuleEnvironmentObject::class_ : &CallObject::class_;
+    uint32_t baseShapeFlags = BaseShape::QUALIFIED_VAROBJ | BaseShape::DELEGATE;
+    if (isModule)
+        baseShapeFlags |= BaseShape::NOT_EXTENSIBLE; // Module code is always strict.
     RootedShape shape(cx,
-        EmptyShape::getInitialShape(cx, cls, TaggedProto(nullptr), nfixed,
-                                    BaseShape::QUALIFIED_VAROBJ | BaseShape::DELEGATE));
+        EmptyShape::getInitialShape(cx, cls, TaggedProto(nullptr), nfixed, baseShapeFlags));
     if (!shape)
         return false;
 
@@ -173,7 +186,7 @@ Bindings::initWithTemporaryStorage(ExclusiveContext* cx, MutableHandle<Bindings>
         }
 #endif
 
-        StackBaseShape stackBase(cx, cls, BaseShape::QUALIFIED_VAROBJ | BaseShape::DELEGATE);
+        StackBaseShape stackBase(cx, cls, baseShapeFlags);
         UnownedBaseShape* base = BaseShape::getUnowned(cx, stackBase);
         if (!base)
             return false;
@@ -597,6 +610,7 @@ js::XDRScript(XDRState<mode>* xdr, HandleObject enclosingScopeArg, HandleScript 
         ArgumentsHasVarBinding,
         NeedsArgsObj,
         HasMappedArgsObj,
+        FunctionHasThisBinding,
         IsGeneratorExp,
         IsLegacyGenerator,
         IsStarGenerator,
@@ -727,6 +741,8 @@ js::XDRScript(XDRState<mode>* xdr, HandleObject enclosingScopeArg, HandleScript 
             scriptBits |= (1 << NeedsArgsObj);
         if (script->hasMappedArgsObj())
             scriptBits |= (1 << HasMappedArgsObj);
+        if (script->functionHasThisBinding())
+            scriptBits |= (1 << FunctionHasThisBinding);
         if (!enclosingScript || enclosingScript->scriptSource() != script->scriptSource())
             scriptBits |= (1 << OwnSource);
         if (script->isGeneratorExp())
@@ -873,6 +889,8 @@ js::XDRScript(XDRState<mode>* xdr, HandleObject enclosingScopeArg, HandleScript 
             script->setNeedsArgsObj(true);
         if (scriptBits & (1 << HasMappedArgsObj))
             script->hasMappedArgsObj_ = true;
+        if (scriptBits & (1 << FunctionHasThisBinding))
+            script->functionHasThisBinding_ = true;
         if (scriptBits & (1 << IsGeneratorExp))
             script->isGeneratorExp_ = true;
         if (scriptBits & (1 << HasSingleton))
@@ -1322,6 +1340,30 @@ JSScript::initScriptCounts(JSContext* cx)
                     return false;
             }
         }
+
+        if (JSOp(*pc) == JSOP_TABLESWITCH) {
+            jsbytecode* pc2 = pc;
+            int32_t len = GET_JUMP_OFFSET(pc2);
+
+            // Default target.
+            if (!jumpTargets.append(pc + len))
+                return false;
+
+            pc2 += JUMP_OFFSET_LEN;
+            int32_t low = GET_JUMP_OFFSET(pc2);
+            pc2 += JUMP_OFFSET_LEN;
+            int32_t high = GET_JUMP_OFFSET(pc2);
+
+            for (int i = 0; i < high-low+1; i++) {
+                pc2 += JUMP_OFFSET_LEN;
+                int32_t off = (int32_t) GET_JUMP_OFFSET(pc2);
+                if (off) {
+                    // Case (i + low)
+                    if (!jumpTargets.append(pc + off))
+                        return false;
+                }
+            }
+        }
     }
 
     // Mark catch/finally blocks as being jump targets.
@@ -1357,10 +1399,15 @@ JSScript::initScriptCounts(JSContext* cx)
     ScriptCountsMap* map = compartment()->scriptCountsMap;
     if (!map) {
         map = cx->new_<ScriptCountsMap>();
-        if (!map || !map->init()) {
+        if (!map)
+            return false;
+
+        if (!map->init()) {
             js_delete(map);
+            ReportOutOfMemory(cx);
             return false;
         }
+
         compartment()->scriptCountsMap = map;
     }
 
@@ -2797,9 +2844,9 @@ JSScript::partiallyInit(ExclusiveContext* cx, HandleScript script, uint32_t ncon
     }
 
     if (script->bindings.count() != 0) {
-	// Make sure bindings are sufficiently aligned.
-	cursor = reinterpret_cast<uint8_t*>
-	    (JS_ROUNDUP(reinterpret_cast<uintptr_t>(cursor), JS_ALIGNMENT_OF(Binding)));
+        // Make sure bindings are sufficiently aligned.
+        cursor = reinterpret_cast<uint8_t*>
+            (JS_ROUNDUP(reinterpret_cast<uintptr_t>(cursor), JS_ALIGNMENT_OF(Binding)));
     }
     cursor = script->bindings.switchToScriptStorage(reinterpret_cast<Binding*>(cursor));
 
@@ -2843,6 +2890,8 @@ JSScript::linkToFunctionFromEmitter(js::ExclusiveContext* cx, JS::Handle<JSScrip
         MOZ_ASSERT(!funbox->definitelyNeedsArgsObj());
     }
     script->hasMappedArgsObj_ = funbox->hasMappedArgsObj();
+
+    script->functionHasThisBinding_ = funbox->hasThisBinding();
 
     script->funLength_ = funbox->length;
 
@@ -2935,6 +2984,7 @@ JSScript::fullyInitFromEmitter(ExclusiveContext* cx, HandleScript script, Byteco
         MOZ_ASSERT(script->isDerivedClassConstructor_ == funbox->isDerivedClassConstructor());
         MOZ_ASSERT(script->argumentsHasVarBinding() == funbox->argumentsHasLocalBinding());
         MOZ_ASSERT(script->hasMappedArgsObj() == funbox->hasMappedArgsObj());
+        MOZ_ASSERT(script->functionHasThisBinding() == funbox->hasThisBinding());
         MOZ_ASSERT(script->functionNonDelazifying() == funbox->function());
         MOZ_ASSERT(script->isGeneratorExp_ == funbox->inGenexpLambda);
         MOZ_ASSERT(script->generatorKind() == funbox->generatorKind());
@@ -3047,7 +3097,7 @@ JSScript::finalize(FreeOp* fop)
 
     // Collect code coverage information for this script and all its inner
     // scripts, and store the aggregated information on the compartment.
-    if (isTopLevel() && fop->runtime()->lcovOutput.isEnabled())
+    if (fop->runtime()->lcovOutput.isEnabled())
         compartment()->lcovOutput.collectCodeCoverageInfo(compartment(), sourceObject(), this);
 
     fop->runtime()->spsProfiler.onScriptFinalized(this);
@@ -3374,7 +3424,7 @@ js::detail::CopyScript(JSContext* cx, HandleObject scriptStaticScope, HandleScri
     /* Script data */
 
     size_t size = src->dataSize();
-    uint8_t* data = AllocScriptData(cx->zone(), size);
+    ScopedJSFreePtr<uint8_t> data(AllocScriptData(cx->zone(), size));
     if (size && !data) {
         ReportOutOfMemory(cx);
         return false;
@@ -3473,9 +3523,9 @@ js::detail::CopyScript(JSContext* cx, HandleObject scriptStaticScope, HandleScri
     dst->bindings = bindings;
 
     /* This assignment must occur before all the Rebase calls. */
-    dst->data = data;
+    dst->data = data.forget();
     dst->dataSize_ = size;
-    memcpy(data, src->data, size);
+    memcpy(dst->data, src->data, size);
 
     /* Script filenames, bytecodes and atoms are runtime-wide. */
     dst->setCode(src->code());
@@ -3494,6 +3544,7 @@ js::detail::CopyScript(JSContext* cx, HandleObject scriptStaticScope, HandleScri
             dst->setNeedsArgsObj(src->needsArgsObj());
     }
     dst->hasMappedArgsObj_ = src->hasMappedArgsObj();
+    dst->functionHasThisBinding_ = src->functionHasThisBinding();
     dst->cloneHasArray(src);
     dst->strict_ = src->strict();
     dst->explicitUseStrict_ = src->explicitUseStrict();

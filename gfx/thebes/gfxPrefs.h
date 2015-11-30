@@ -145,7 +145,6 @@ private:
   DECL_GFX_PREF(Live, "apz.axis_lock.lock_angle",              APZAxisLockAngle, float, float(M_PI / 6.0) /* 30 degrees */);
   DECL_GFX_PREF(Live, "apz.axis_lock.mode",                    APZAxisLockMode, int32_t, 0);
   DECL_GFX_PREF(Live, "apz.content_response_timeout",          APZContentResponseTimeout, int32_t, 300);
-  DECL_GFX_PREF(Live, "apz.cross_slide.enabled",               APZCrossSlideEnabled, bool, false);
   DECL_GFX_PREF(Live, "apz.danger_zone_x",                     APZDangerZoneX, int32_t, 50);
   DECL_GFX_PREF(Live, "apz.danger_zone_y",                     APZDangerZoneY, int32_t, 100);
   DECL_GFX_PREF(Live, "apz.drag.enabled",                      APZDragEnabled, bool, false);
@@ -185,8 +184,10 @@ private:
   DECL_GFX_PREF(Live, "apz.velocity_bias",                     APZVelocityBias, float, 1.0f);
   DECL_GFX_PREF(Live, "apz.velocity_relevance_time_ms",        APZVelocityRelevanceTime, uint32_t, 150);
   DECL_GFX_PREF(Live, "apz.x_skate_size_multiplier",           APZXSkateSizeMultiplier, float, 1.5f);
+  DECL_GFX_PREF(Live, "apz.x_skate_highmem_adjust",            APZXSkateHighMemAdjust, float, 0.0f);
   DECL_GFX_PREF(Live, "apz.x_stationary_size_multiplier",      APZXStationarySizeMultiplier, float, 3.0f);
   DECL_GFX_PREF(Live, "apz.y_skate_size_multiplier",           APZYSkateSizeMultiplier, float, 2.5f);
+  DECL_GFX_PREF(Live, "apz.y_skate_highmem_adjust",            APZYSkateHighMemAdjust, float, 0.0f);
   DECL_GFX_PREF(Live, "apz.y_stationary_size_multiplier",      APZYStationarySizeMultiplier, float, 3.5f);
   DECL_GFX_PREF(Live, "apz.zoom_animation_duration_ms",        APZZoomAnimationDuration, int32_t, 250);
 
@@ -247,6 +248,9 @@ private:
   DECL_GFX_PREF(Live, "gfx.layerscope.port",                   LayerScopePort, int32_t, 23456);
   // Note that        "gfx.logging.level" is defined in Logging.h
   DECL_GFX_PREF(Once, "gfx.logging.crash.length",              GfxLoggingCrashLength, uint32_t, 6);
+  // The maximums here are quite conservative, we can tighten them if problems show up.
+  DECL_GFX_PREF(Once, "gfx.max-alloc-size",                    MaxAllocSize, int32_t, (int32_t)500000000);
+  DECL_GFX_PREF(Once, "gfx.max-texture-size",                  MaxTextureSize, int32_t, (int32_t)32767);
   DECL_GFX_PREF(Live, "gfx.perf-warnings.enabled",             PerfWarnings, bool, false);
   DECL_GFX_PREF(Live, "gfx.SurfaceTexture.detach.enabled",     SurfaceTextureDetachEnabled, bool, true);
   DECL_GFX_PREF(Live, "gfx.testing.device-reset",              DeviceResetForTesting, int32_t, 0);
@@ -406,9 +410,13 @@ private:
   DECL_GFX_PREF(Live, "webgl.default-no-alpha",                WebGLDefaultNoAlpha, bool, false);
   DECL_GFX_PREF(Live, "webgl.disable-angle",                   WebGLDisableANGLE, bool, false);
   DECL_GFX_PREF(Live, "webgl.disable-extensions",              WebGLDisableExtensions, bool, false);
+  DECL_GFX_PREF(Live, "webgl.dxgl.enabled",                    WebGLDXGLEnabled, bool, false);
 
   DECL_GFX_PREF(Live, "webgl.disable-fail-if-major-performance-caveat",
                 WebGLDisableFailIfMajorPerformanceCaveat, bool, false);
+  DECL_GFX_PREF(Live, "webgl.disable-DOM-blit-uploads",
+                WebGLDisableDOMBlitUploads, bool, false);
+
   DECL_GFX_PREF(Live, "webgl.disabled",                        WebGLDisabled, bool, false);
 
   DECL_GFX_PREF(Live, "webgl.enable-draft-extensions",         WebGLDraftExtensionsEnabled, bool, false);
@@ -421,6 +429,8 @@ private:
   DECL_GFX_PREF(Live, "webgl.msaa-force",                      WebGLForceMSAA, bool, false);
   DECL_GFX_PREF(Live, "webgl.prefer-16bpp",                    WebGLPrefer16bpp, bool, false);
   DECL_GFX_PREF(Live, "webgl.restore-context-when-visible",    WebGLRestoreWhenVisible, bool, true);
+
+  DECL_GFX_PREF(Live, "webgl.webgl2-compat-mode",              WebGL2CompatMode, bool, false);
 
   // WARNING:
   // Please make sure that you've added your new preference to the list above in alphabetical order.

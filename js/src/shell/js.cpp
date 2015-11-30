@@ -3315,8 +3315,8 @@ ParseModule(JSContext* cx, unsigned argc, Value* vp)
     CompileOptions options(cx);
     if (args.length() > 1) {
         if (!args[1].isString()) {
-            JS_ReportError(cx, "expected filename string, got %s",
-                           JS_TypeOfValue(cx, args[1]));
+            const char* typeName = InformalValueTypeName(args[1]);
+            JS_ReportError(cx, "expected filename string, got %s", typeName);
             return false;
         }
 
@@ -3972,6 +3972,11 @@ NewGlobal(JSContext* cx, unsigned argc, Value* vp)
             return false;
         if (v.isBoolean())
             options.setCloneSingletons(v.toBoolean());
+
+        if (!JS_GetProperty(cx, opts, "disableLazyParsing", &v))
+            return false;
+        if (v.isBoolean())
+            options.setDisableLazyParsing(v.toBoolean());
 
         if (!JS_GetProperty(cx, opts, "principal", &v))
             return false;

@@ -213,11 +213,60 @@ ExportEntryObject::create(JSContext* cx,
 }
 
 ///////////////////////////////////////////////////////////////////////////
-// IndirectBinding
+// IndirectBindingMap
 
-IndirectBinding::IndirectBinding(Handle<ModuleEnvironmentObject*> environment, HandleId localName)
-  : environment(environment), localName(localName)
+IndirectBindingMap::Binding::Binding(ModuleEnvironmentObject* environment, Shape* shape)
+  : environment(environment), shape(shape)
 {}
+
+IndirectBindingMap::IndirectBindingMap(Zone* zone)
+  : map_(ZoneAllocPolicy(zone))
+{
+}
+
+bool
+IndirectBindingMap::init()
+{
+    return map_.init();
+}
+
+void
+IndirectBindingMap::trace(JSTracer* trc)
+{
+    for (Map::Enum e(map_); !e.empty(); e.popFront()) {
+        Binding& b = e.front().value();
+        TraceEdge(trc, &b.environment, "module bindings environment");
+        TraceEdge(trc, &b.shape, "module bindings shape");
+        jsid bindingName = e.front().key();
+        TraceManuallyBarrieredEdge(trc, &bindingName, "module bindings binding name");
+        MOZ_ASSERT(bindingName == e.front().key());
+    }
+}
+
+bool
+IndirectBindingMap::putNew(JSContext* cx, HandleId name,
+                           HandleModuleEnvironmentObject environment, HandleId localName)
+{
+    RootedShape shape(cx, environment->lookup(cx, localName));
+    MOZ_ASSERT(shape);
+    return map_.putNew(name, Binding(environment, shape));
+}
+
+bool
+IndirectBindingMap::lookup(jsid name, ModuleEnvironmentObject** envOut, Shape** shapeOut) const
+{
+    auto ptr = map_.lookup(name);
+    if (!ptr)
+        return false;
+
+    const Binding& binding = ptr->value();
+    MOZ_ASSERT(binding.environment);
+    MOZ_ASSERT(!binding.environment->inDictionaryMode());
+    MOZ_ASSERT(binding.environment->containsPure(binding.shape));
+    *envOut = binding.environment;
+    *shapeOut = binding.shape;
+    return true;
+}
 
 ///////////////////////////////////////////////////////////////////////////
 // ModuleNamespaceObject
@@ -283,8 +332,7 @@ ModuleNamespaceObject::addBinding(JSContext* cx, HandleAtom exportedName,
     RootedModuleEnvironmentObject environment(cx, &targetModule->initialEnvironment());
     RootedId exportedNameId(cx, AtomToId(exportedName));
     RootedId localNameId(cx, AtomToId(localName));
-    IndirectBinding binding(environment, localNameId);
-    return bindings->putNew(exportedNameId, binding);
+    return bindings->putNew(cx, exportedNameId, environment, localNameId);
 }
 
 const char ModuleNamespaceObject::ProxyHandler::family = 0;
@@ -360,19 +408,12 @@ ModuleNamespaceObject::ProxyHandler::getOwnPropertyDescriptor(JSContext* cx, Han
     }
 
     const IndirectBindingMap& bindings = ns->bindings();
-    auto ptr = bindings.lookup(id);
-    if (!ptr)
+    ModuleEnvironmentObject* env;
+    Shape* shape;
+    if (!bindings.lookup(id, &env, &shape))
         return true;
 
-    const IndirectBinding& binding = ptr->value();
-    RootedModuleEnvironmentObject env(cx, binding.environment);
-    MOZ_ASSERT(env->module().environment());
-
-    RootedId localName(cx, binding.localName);
-    RootedValue value(cx);
-    if (!GetProperty(cx, env, env, localName, &value))
-        return false;
-
+    RootedValue value(cx, env->getSlot(shape->slot()));
     if (value.isMagic(JS_UNINITIALIZED_LEXICAL)) {
         ReportRuntimeLexicalError(cx, JSMSG_UNINITIALIZED_LEXICAL, id);
         return false;
@@ -425,19 +466,12 @@ ModuleNamespaceObject::ProxyHandler::get(JSContext* cx, HandleObject proxy, Hand
         return false;
     }
 
-    auto ptr = ns->bindings().lookup(id);
-    if (!ptr)
+    ModuleEnvironmentObject* env;
+    Shape* shape;
+    if (!ns->bindings().lookup(id, &env, &shape))
         return false;
 
-    const IndirectBinding& binding = ptr->value();
-    RootedModuleEnvironmentObject env(cx, binding.environment);
-    MOZ_ASSERT(env->module().environment());
-
-    RootedId localName(cx, binding.localName);
-    RootedValue value(cx);
-    if (!GetProperty(cx, env, env, localName, &value))
-        return false;
-
+    RootedValue value(cx, env->getSlot(shape->slot()));
     if (value.isMagic(JS_UNINITIALIZED_LEXICAL)) {
         ReportRuntimeLexicalError(cx, JSMSG_UNINITIALIZED_LEXICAL, id);
         return false;
@@ -554,7 +588,8 @@ ModuleObject::create(ExclusiveContext* cx, HandleObject enclosingStaticScope)
 
     self->initReservedSlot(StaticScopeSlot, ObjectOrNullValue(enclosingStaticScope));
 
-    IndirectBindingMap* bindings = cx->new_<IndirectBindingMap>();
+    Zone* zone = cx->zone();
+    IndirectBindingMap* bindings = zone->new_<IndirectBindingMap>(zone);
     if (!bindings || !bindings->init()) {
         ReportOutOfMemory(cx);
         return nullptr;
@@ -562,9 +597,11 @@ ModuleObject::create(ExclusiveContext* cx, HandleObject enclosingStaticScope)
 
     self->initReservedSlot(ImportBindingsSlot, PrivateValue(bindings));
 
-    FunctionDeclarationVector* funDecls = cx->new_<FunctionDeclarationVector>(cx);
-    if (!funDecls)
+    FunctionDeclarationVector* funDecls = zone->new_<FunctionDeclarationVector>(zone);
+    if (!funDecls) {
+        ReportOutOfMemory(cx);
         return nullptr;
+    }
 
     self->initReservedSlot(FunctionDeclarationsSlot, PrivateValue(funDecls));
     return self;
@@ -703,19 +740,6 @@ ModuleObject::enclosingStaticScope() const
     return getReservedSlot(StaticScopeSlot).toObjectOrNull();
 }
 
-static void
-TraceBindings(JSTracer* trc, IndirectBindingMap& bindings)
-{
-    for (IndirectBindingMap::Enum e(bindings); !e.empty(); e.popFront()) {
-        IndirectBinding& b = e.front().value();
-        TraceEdge(trc, &b.environment, "module bindings environment");
-        TraceEdge(trc, &b.localName, "module bindings local name");
-        jsid bindingName = e.front().key();
-        TraceManuallyBarrieredEdge(trc, &bindingName, "module bindings binding name");
-        MOZ_ASSERT(bindingName == e.front().key());
-    }
-}
-
 /* static */ void
 ModuleObject::trace(JSTracer* trc, JSObject* obj)
 {
@@ -727,9 +751,9 @@ ModuleObject::trace(JSTracer* trc, JSObject* obj)
     }
 
     if (module.hasImportBindings())
-        TraceBindings(trc, module.importBindings());
+        module.importBindings().trace(trc);
     if (IndirectBindingMap* bindings = module.namespaceBindings())
-        TraceBindings(trc, *bindings);
+        bindings->trace(trc);
 
     if (FunctionDeclarationVector* funDecls = module.functionDeclarations())
         funDecls->trace(trc);
@@ -810,7 +834,8 @@ ModuleObject::createNamespace(JSContext* cx, HandleModuleObject self, HandleArra
     if (!ns)
         return nullptr;
 
-    IndirectBindingMap* bindings = cx->new_<IndirectBindingMap>();
+    Zone* zone = cx->zone();
+    IndirectBindingMap* bindings = zone->new_<IndirectBindingMap>(zone);
     if (!bindings || !bindings->init()) {
         ReportOutOfMemory(cx);
         return nullptr;
@@ -872,8 +897,9 @@ js::InitModuleClass(JSContext* cx, HandleObject obj)
 ///////////////////////////////////////////////////////////////////////////
 // ModuleBuilder
 
-ModuleBuilder::ModuleBuilder(JSContext* cx)
+ModuleBuilder::ModuleBuilder(JSContext* cx, HandleModuleObject module)
   : cx_(cx),
+    module_(cx, module),
     requestedModules_(cx, AtomVector(cx)),
     importedBoundNames_(cx, AtomVector(cx)),
     importEntries_(cx, ImportEntryVector(cx)),
@@ -884,7 +910,7 @@ ModuleBuilder::ModuleBuilder(JSContext* cx)
 {}
 
 bool
-ModuleBuilder::buildAndInit(frontend::ParseNode* moduleNode, HandleModuleObject module)
+ModuleBuilder::buildAndInit(frontend::ParseNode* moduleNode)
 {
     MOZ_ASSERT(moduleNode->isKind(PNK_MODULE));
 
@@ -920,11 +946,11 @@ ModuleBuilder::buildAndInit(frontend::ParseNode* moduleNode, HandleModuleObject 
         if (!exp->moduleRequest()) {
             RootedImportEntry importEntry(cx_, importEntryFor(exp->localName()));
             if (!importEntry) {
-                if (!localExportEntries_.append(exp))
+                if (!appendLocalExportEntry(exp))
                     return false;
             } else {
                 if (importEntry->importName() == cx_->names().star) {
-                    if (!localExportEntries_.append(exp))
+                    if (!appendLocalExportEntry(exp))
                         return false;
                 } else {
                     RootedAtom exportName(cx_, exp->exportName());
@@ -970,13 +996,26 @@ ModuleBuilder::buildAndInit(frontend::ParseNode* moduleNode, HandleModuleObject 
     if (!starExportEntries)
         return false;
 
-    module->initImportExportData(requestedModules,
+    module_->initImportExportData(requestedModules,
                                  importEntries,
                                  localExportEntries,
                                  indirectExportEntries,
                                  starExportEntries);
 
     return true;
+}
+
+bool
+ModuleBuilder::appendLocalExportEntry(HandleExportEntryObject exp)
+{
+    if (!module_->initialEnvironment().lookup(cx_, AtomToId(exp->localName()))) {
+        JSAutoByteString str;
+        str.encodeLatin1(cx_, exp->localName());
+        JS_ReportErrorNumber(cx_, GetErrorMessage, nullptr, JSMSG_MISSING_EXPORT, str.ptr());
+        return false;
+    }
+
+    return localExportEntries_.append(exp);
 }
 
 bool
@@ -1025,7 +1064,7 @@ ModuleBuilder::processExport(frontend::ParseNode* pn)
             MOZ_ASSERT(spec->isKind(PNK_EXPORT_SPEC));
             RootedAtom localName(cx_, spec->pn_left->pn_atom);
             RootedAtom exportName(cx_, spec->pn_right->pn_atom);
-            if (!appendLocalExportEntry(exportName, localName))
+            if (!appendExportEntry(exportName, localName))
                 return false;
         }
         break;
@@ -1034,7 +1073,7 @@ ModuleBuilder::processExport(frontend::ParseNode* pn)
           RootedFunction func(cx_, kid->pn_funbox->function());
           RootedAtom localName(cx_, func->atom());
           RootedAtom exportName(cx_, isDefault ? cx_->names().default_ : localName.get());
-          if (!appendLocalExportEntry(exportName, localName))
+          if (!appendExportEntry(exportName, localName))
               return false;
           break;
       }
@@ -1044,7 +1083,7 @@ ModuleBuilder::processExport(frontend::ParseNode* pn)
           MOZ_ASSERT(cls.names());
           RootedAtom localName(cx_, cls.names()->innerBinding()->pn_atom);
           RootedAtom exportName(cx_, isDefault ? cx_->names().default_ : localName.get());
-          if (!appendLocalExportEntry(exportName, localName))
+          if (!appendExportEntry(exportName, localName))
               return false;
           break;
       }
@@ -1059,7 +1098,7 @@ ModuleBuilder::processExport(frontend::ParseNode* pn)
               MOZ_ASSERT(var->isKind(PNK_NAME));
               RootedAtom localName(cx_, var->pn_atom);
               RootedAtom exportName(cx_, isDefault ? cx_->names().default_ : localName.get());
-              if (!appendLocalExportEntry(exportName, localName))
+              if (!appendExportEntry(exportName, localName))
                   return false;
           }
           break;
@@ -1069,7 +1108,7 @@ ModuleBuilder::processExport(frontend::ParseNode* pn)
         MOZ_ASSERT(isDefault);
         RootedAtom localName(cx_, cx_->names().starDefaultStar);
         RootedAtom exportName(cx_, cx_->names().default_);
-        if (!appendLocalExportEntry(exportName, localName))
+        if (!appendExportEntry(exportName, localName))
             return false;
         break;
     }
@@ -1091,12 +1130,12 @@ ModuleBuilder::processExportFrom(frontend::ParseNode* pn)
         if (spec->isKind(PNK_EXPORT_SPEC)) {
             RootedAtom bindingName(cx_, spec->pn_left->pn_atom);
             RootedAtom exportName(cx_, spec->pn_right->pn_atom);
-            if (!appendIndirectExportEntry(exportName, module, bindingName))
+            if (!appendExportFromEntry(exportName, module, bindingName))
                 return false;
         } else {
             MOZ_ASSERT(spec->isKind(PNK_EXPORT_BATCH_SPEC));
             RootedAtom importName(cx_, cx_->names().star);
-            if (!appendIndirectExportEntry(nullptr, module, importName))
+            if (!appendExportFromEntry(nullptr, module, importName))
                 return false;
         }
     }
@@ -1115,7 +1154,7 @@ ModuleBuilder::importEntryFor(JSAtom* localName)
 }
 
 bool
-ModuleBuilder::appendLocalExportEntry(HandleAtom exportName, HandleAtom localName)
+ModuleBuilder::appendExportEntry(HandleAtom exportName, HandleAtom localName)
 {
     Rooted<ExportEntryObject*> exportEntry(cx_);
     exportEntry = ExportEntryObject::create(cx_, exportName, nullptr, nullptr, localName);
@@ -1123,8 +1162,8 @@ ModuleBuilder::appendLocalExportEntry(HandleAtom exportName, HandleAtom localNam
 }
 
 bool
-ModuleBuilder::appendIndirectExportEntry(HandleAtom exportName, HandleAtom moduleRequest,
-                                         HandleAtom importName)
+ModuleBuilder::appendExportFromEntry(HandleAtom exportName, HandleAtom moduleRequest,
+                                     HandleAtom importName)
 {
     Rooted<ExportEntryObject*> exportEntry(cx_);
     exportEntry = ExportEntryObject::create(cx_, exportName, moduleRequest, importName, nullptr);

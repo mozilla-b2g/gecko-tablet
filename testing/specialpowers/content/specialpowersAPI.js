@@ -11,10 +11,10 @@ var Ci = Components.interfaces;
 var Cc = Components.classes;
 var Cu = Components.utils;
 
-Cu.import("resource://specialpowers/MockFilePicker.jsm");
-Cu.import("resource://specialpowers/MockColorPicker.jsm");
-Cu.import("resource://specialpowers/MockPermissionPrompt.jsm");
-Cu.import("resource://specialpowers/MockPaymentsUIGlue.jsm");
+Cu.import("chrome://specialpowers/content/MockFilePicker.jsm");
+Cu.import("chrome://specialpowers/content/MockColorPicker.jsm");
+Cu.import("chrome://specialpowers/content/MockPermissionPrompt.jsm");
+Cu.import("chrome://specialpowers/content/MockPaymentsUIGlue.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
@@ -47,7 +47,6 @@ function SpecialPowersAPI() {
   this._observingPermissions = false;
   this._fm = null;
   this._cb = null;
-  this._quotaManagerCallbackInfos = null;
 }
 
 function bindDOMWindowUtils(aWindow) {
@@ -642,6 +641,14 @@ SpecialPowersAPI.prototype = {
     };
 
     return this.wrap(chromeScript);
+  },
+
+  importInMainProcess: function (importString) {
+    var message = this._sendSyncMessage("SPImportInMainProcess", importString)[0];
+    if (message.hadError) {
+      throw "SpecialPowers.importInMainProcess failed with error " + message.errorMessage;
+    }
+    return;
   },
 
   get Services() {
@@ -1930,61 +1937,6 @@ SpecialPowersAPI.prototype = {
       'observerData': data
     };
     this._sendSyncMessage('SPObserverService', msg);
-  },
-
-  clearStorageForDoc: function(wrappedDocument, callback) {
-    this._quotaManagerRequest('clear', wrappedDocument, callback);
-  },
-
-  getStorageUsageForDoc: function(wrappedDocument, callback) {
-    this._quotaManagerRequest('getUsage', wrappedDocument, callback);
-  },
-
-  resetStorageForDoc: function(wrappedDocument, callback) {
-    this._quotaManagerRequest('reset', wrappedDocument, callback);
-  },
-
-  _quotaManagerRequest: function(op, wrappedDocument, callback) {
-    const messageTopic = "SPQuotaManager";
-    const id = Cc["@mozilla.org/uuid-generator;1"]
-                 .getService(Ci.nsIUUIDGenerator)
-                 .generateUUID()
-                 .toString();
-
-    let callbackInfo = { id: id, callback: callback };
-
-    if (this._quotaManagerCallbackInfos) {
-      callbackInfo.listener = this._quotaManagerCallbackInfos[0].listener;
-      this._quotaManagerCallbackInfos.push(callbackInfo)
-    } else {
-      callbackInfo.listener = function(msg) {
-        msg = msg.data;
-        for (let index in this._quotaManagerCallbackInfos) {
-          let callbackInfo = this._quotaManagerCallbackInfos[index];
-          if (callbackInfo.id == msg.id) {
-            if (this._quotaManagerCallbackInfos.length > 1) {
-              this._quotaManagerCallbackInfos.splice(index, 1);
-            } else {
-              this._quotaManagerCallbackInfos = null;
-              this._removeMessageListener(messageTopic, callbackInfo.listener);
-            }
-
-            if ('usage' in msg) {
-              callbackInfo.callback(msg.usage, msg.fileUsage);
-            } else {
-              callbackInfo.callback();
-            }
-          }
-        }
-      }.bind(this);
-
-      this._addMessageListener(messageTopic, callbackInfo.listener);
-      this._quotaManagerCallbackInfos = [ callbackInfo ];
-    }
-
-    let principal = unwrapIfWrapped(wrappedDocument).nodePrincipal;
-    let msg = { op: op, principal: principal, id: id };
-    this._sendAsyncMessage(messageTopic, msg);
   },
 
   createDOMFile: function(path, options) {

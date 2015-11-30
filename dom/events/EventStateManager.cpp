@@ -288,6 +288,7 @@ EventStateManager::DeltaAccumulator*
 
 EventStateManager::EventStateManager()
   : mLockCursor(0)
+  , mLastFrameConsumedSetCursor(false)
   , mPreLockPoint(0,0)
   , mCurrentTarget(nullptr)
     // init d&d gesture state machine variables
@@ -481,6 +482,30 @@ EventStateManager::TryToFlushPendingNotificationsToIME()
   }
 }
 
+static bool
+IsMessageMouseUserActivity(EventMessage aMessage)
+{
+  return aMessage == eMouseMove ||
+         aMessage == eMouseUp ||
+         aMessage == eMouseDown ||
+         aMessage == eMouseDoubleClick ||
+         aMessage == eMouseClick ||
+         aMessage == eMouseActivate ||
+         aMessage == eMouseLongTap;
+}
+
+static bool
+IsMessageGamepadUserActivity(EventMessage aMessage)
+{
+#ifndef MOZ_GAMEPAD
+  return false;
+#else
+  return aMessage == eGamepadButtonDown ||
+         aMessage == eGamepadButtonUp ||
+         aMessage == eGamepadAxisMove;
+#endif
+}
+
 nsresult
 EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
                                   WidgetEvent* aEvent,
@@ -509,12 +534,12 @@ EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
   WidgetMouseEvent* mouseEvent = aEvent->AsMouseEvent();
   if (aEvent->mFlags.mIsTrusted &&
       ((mouseEvent && mouseEvent->IsReal() &&
-        mouseEvent->mMessage != eMouseEnterIntoWidget &&
-        mouseEvent->mMessage != eMouseExitFromWidget) ||
+        IsMessageMouseUserActivity(mouseEvent->mMessage)) ||
        aEvent->mClass == eWheelEventClass ||
        aEvent->mClass == ePointerEventClass ||
        aEvent->mClass == eTouchEventClass ||
-       aEvent->mClass == eKeyboardEventClass)) {
+       aEvent->mClass == eKeyboardEventClass ||
+       IsMessageGamepadUserActivity(aEvent->mMessage))) {
     if (gMouseOrKeyboardEventCounter == 0) {
       nsCOMPtr<nsIObserverService> obs =
         mozilla::services::GetObserverService();
@@ -3527,8 +3552,19 @@ EventStateManager::UpdateCursor(nsPresContext* aPresContext,
       nsIFrame::Cursor framecursor;
       nsPoint pt = nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent,
                                                                 aTargetFrame);
-      if (NS_FAILED(aTargetFrame->GetCursor(pt, framecursor)))
-        return;  // don't update the cursor if we failed to get it from the frame see bug 118877
+      // Avoid setting cursor when the mouse is over a windowless pluign.
+      if (NS_FAILED(aTargetFrame->GetCursor(pt, framecursor))) {
+        if (XRE_IsContentProcess()) {
+          mLastFrameConsumedSetCursor = true;
+        }
+        return;
+      }
+      // Make sure cursors get reset after the mouse leaves a
+      // windowless plugin frame.
+      if (mLastFrameConsumedSetCursor) {
+        ClearCachedWidgetCursor(aTargetFrame);
+        mLastFrameConsumedSetCursor = false;
+      }
       cursor = framecursor.mCursor;
       container = framecursor.mContainer;
       haveHotspot = framecursor.mHaveHotspot;

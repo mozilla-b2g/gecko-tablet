@@ -173,9 +173,9 @@ static const char kDirectoryServiceContractID[] = "@mozilla.org/file/directory_s
 #define kPluginRegistryFilename NS_LITERAL_CSTRING("pluginreg.dat")
 
 #ifdef PLUGIN_LOGGING
-PRLogModuleInfo* nsPluginLogging::gNPNLog = nullptr;
-PRLogModuleInfo* nsPluginLogging::gNPPLog = nullptr;
-PRLogModuleInfo* nsPluginLogging::gPluginLog = nullptr;
+LazyLogModule nsPluginLogging::gNPNLog(NPN_LOG_NAME);
+LazyLogModule nsPluginLogging::gNPPLog(NPP_LOG_NAME);
+LazyLogModule nsPluginLogging::gPluginLog(PLUGIN_LOG_NAME);
 #endif
 
 // #defines for plugin cache and prefs
@@ -320,10 +320,6 @@ nsPluginHost::nsPluginHost()
   }
 
 #ifdef PLUGIN_LOGGING
-  nsPluginLogging::gNPNLog = PR_NewLogModule(NPN_LOG_NAME);
-  nsPluginLogging::gNPPLog = PR_NewLogModule(NPP_LOG_NAME);
-  nsPluginLogging::gPluginLog = PR_NewLogModule(PLUGIN_LOG_NAME);
-
   MOZ_LOG(nsPluginLogging::gNPNLog, PLUGIN_LOG_ALWAYS,("NPN Logging Active!\n"));
   MOZ_LOG(nsPluginLogging::gPluginLog, PLUGIN_LOG_ALWAYS,("General Plugin Logging Active! (nsPluginHost::ctor)\n"));
   MOZ_LOG(nsPluginLogging::gNPPLog, PLUGIN_LOG_ALWAYS,("NPP Logging Active!\n"));
@@ -2038,11 +2034,17 @@ bool
 nsPluginHost::ShouldAddPlugin(nsPluginTag* aPluginTag)
 {
 #if defined(XP_WIN) && (defined(__x86_64__) || defined(_M_X64))
-  // On 64-bit windows, the only plugin we should load is flash. Use library
-  // filename and MIME type to check.
+  // On 64-bit windows, the only plugins we should load are flash and
+  // silverlight. Use library filename and MIME type to check.
   if (StringBeginsWith(aPluginTag->FileName(), NS_LITERAL_CSTRING("NPSWF"), nsCaseInsensitiveCStringComparator()) &&
       (aPluginTag->HasMimeType(NS_LITERAL_CSTRING("application/x-shockwave-flash")) ||
        aPluginTag->HasMimeType(NS_LITERAL_CSTRING("application/x-shockwave-flash-test")))) {
+    return true;
+  }
+  if (StringBeginsWith(aPluginTag->FileName(), NS_LITERAL_CSTRING("npctrl"), nsCaseInsensitiveCStringComparator()) &&
+      (aPluginTag->HasMimeType(NS_LITERAL_CSTRING("application/x-silverlight-test")) ||
+       aPluginTag->HasMimeType(NS_LITERAL_CSTRING("application/x-silverlight-2")) ||
+       aPluginTag->HasMimeType(NS_LITERAL_CSTRING("application/x-silverlight")))) {
     return true;
   }
   // Accept the test plugin MIME types, so mochitests still work.
@@ -2227,9 +2229,6 @@ nsresult nsPluginHost::ScanPluginsDirectory(nsIFile *pluginsDir,
 
       pluginTag = new nsPluginTag(&info, fileModTime, fromExtension);
       pluginFile.FreePluginInfo(info);
-      if (!pluginTag)
-        return NS_ERROR_OUT_OF_MEMORY;
-
       pluginTag->mLibrary = library;
       uint32_t state;
       rv = pluginTag->GetBlocklistState(&state);
@@ -3319,8 +3318,6 @@ nsPluginHost::EnsurePrivateDirServiceProvider()
   if (!mPrivateDirServiceProvider) {
     nsresult rv;
     mPrivateDirServiceProvider = new nsPluginDirServiceProvider();
-    if (!mPrivateDirServiceProvider)
-      return NS_ERROR_OUT_OF_MEMORY;
     nsCOMPtr<nsIDirectoryService> dirService(do_GetService(kDirectoryServiceContractID, &rv));
     if (NS_FAILED(rv))
       return rv;

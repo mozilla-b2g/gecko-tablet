@@ -52,6 +52,7 @@
 #include "nsRuleData.h"
 #include "nsIPrincipal.h"
 #include "nsContainerFrame.h"
+#include "nsStyleUtil.h"
 
 #include "nsPresState.h"
 #include "nsILayoutHistoryState.h"
@@ -404,7 +405,7 @@ nsGenericHTMLElement::GetOffsetRect(CSSIntRect& aRect)
 
   // Subtract the parent border unless it uses border-box sizing.
   if (parent &&
-      parent->StylePosition()->mBoxSizing != NS_STYLE_BOX_SIZING_BORDER) {
+      parent->StylePosition()->mBoxSizing != StyleBoxSizing::Border) {
     const nsStyleBorder* border = parent->StyleBorder();
     origin.x -= border->GetComputedBorderWidth(NS_SIDE_LEFT);
     origin.y -= border->GetComputedBorderWidth(NS_SIDE_TOP);
@@ -1326,12 +1327,28 @@ nsGenericHTMLElement::MapCommonAttributesIntoExceptHidden(const nsMappedAttribut
     }
   }
 
-  if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Font)) {
-    nsCSSValue* lang = aData->ValueForLang();
-    if (lang->GetUnit() == eCSSUnit_Null) {
-      const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::lang);
-      if (value && value->Type() == nsAttrValue::eString) {
-        lang->SetStringValue(value->GetStringValue(), eCSSUnit_Ident);
+  const nsAttrValue* langValue = aAttributes->GetAttr(nsGkAtoms::lang);
+  if (langValue && langValue->Type() == nsAttrValue::eString) {
+    if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Font)) {
+      nsCSSValue* lang = aData->ValueForLang();
+      if (lang->GetUnit() == eCSSUnit_Null) {
+        lang->SetStringValue(langValue->GetStringValue(), eCSSUnit_Ident);
+      }
+    }
+    if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Text)) {
+      nsCSSValue* emphasisPos = aData->ValueForTextEmphasisPosition();
+      if (emphasisPos->GetUnit() == eCSSUnit_Null) {
+        const nsAString& lang = langValue->GetStringValue();
+        if (nsStyleUtil::MatchesLanguagePrefix(lang, MOZ_UTF16("zh"))) {
+          emphasisPos->SetIntValue(NS_STYLE_TEXT_EMPHASIS_POSITION_DEFAULT_ZH,
+                                   eCSSUnit_Enumerated);
+        } else if (nsStyleUtil::MatchesLanguagePrefix(lang, MOZ_UTF16("ja")) ||
+                   nsStyleUtil::MatchesLanguagePrefix(lang, MOZ_UTF16("mn"))) {
+          // This branch is currently no part of the spec.
+          // See bug 1040668 comment 69 and comment 75.
+          emphasisPos->SetIntValue(NS_STYLE_TEXT_EMPHASIS_POSITION_DEFAULT,
+                                   eCSSUnit_Enumerated);
+        }
       }
     }
   }
@@ -3294,15 +3311,47 @@ nsGenericHTMLElement::NewURIFromString(const nsAString& aURISpec,
   return NS_OK;
 }
 
+static bool
+IsOrHasAncestorWithDisplayNone(Element* aElement, nsIPresShell* aPresShell)
+{
+  nsTArray<Element*> elementsToCheck;
+  for (Element* e = aElement; e; e = e->GetParentElement()) {
+    if (e->GetPrimaryFrame()) {
+      // e definitely isn't display:none and doesn't have a display:none
+      // ancestor.
+      break;
+    }
+    elementsToCheck.AppendElement(e);
+  }
+
+  if (elementsToCheck.IsEmpty()) {
+    return false;
+  }
+
+  nsStyleSet* styleSet = aPresShell->StyleSet();
+  RefPtr<nsStyleContext> sc;
+  for (int32_t i = elementsToCheck.Length() - 1; i >= 0; --i) {
+    if (sc) {
+      sc = styleSet->ResolveStyleFor(elementsToCheck[i], sc);
+    } else {
+      sc = nsComputedDOMStyle::GetStyleContextForElementNoFlush(elementsToCheck[i],
+                                                                nullptr, aPresShell);
+    }
+    if (sc->StyleDisplay()->mDisplay == NS_STYLE_DISPLAY_NONE) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 void
 nsGenericHTMLElement::GetInnerText(mozilla::dom::DOMString& aValue,
                                    mozilla::ErrorResult& aError)
 {
   if (!GetPrimaryFrame(Flush_Layout)) {
-    RefPtr<nsStyleContext> sc =
-      nsComputedDOMStyle::GetStyleContextForElementNoFlush(this, nullptr, nullptr);
-    if (!sc || sc->StyleDisplay()->mDisplay == NS_STYLE_DISPLAY_NONE ||
-        !IsInComposedDoc()) {
+    nsIPresShell* presShell = nsComputedDOMStyle::GetPresShellForContent(this);
+    if (!presShell || IsOrHasAncestorWithDisplayNone(this, presShell)) {
       GetTextContentInternal(aValue, aError);
       return;
     }

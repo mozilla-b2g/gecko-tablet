@@ -1343,6 +1343,25 @@ nsCSSValue::AppendToString(nsCSSProperty aProperty, nsAString& aResult,
       AppendAlignJustifyValueToString(intValue, aResult);
       break;
 
+    case eCSSProperty_text_emphasis_position: {
+      nsStyleUtil::AppendBitmaskCSSValue(aProperty, intValue,
+                                         NS_STYLE_TEXT_EMPHASIS_POSITION_OVER,
+                                         NS_STYLE_TEXT_EMPHASIS_POSITION_RIGHT,
+                                         aResult);
+      break;
+    }
+
+    case eCSSProperty_text_emphasis_style: {
+      auto fill = intValue & NS_STYLE_TEXT_EMPHASIS_STYLE_FILL_MASK;
+      AppendASCIItoUTF16(nsCSSProps::ValueToKeyword(
+        fill, nsCSSProps::kTextEmphasisStyleFillKTable), aResult);
+      aResult.Append(' ');
+      auto shape = intValue & NS_STYLE_TEXT_EMPHASIS_STYLE_SHAPE_MASK;
+      AppendASCIItoUTF16(nsCSSProps::ValueToKeyword(
+        shape, nsCSSProps::kTextEmphasisStyleShapeKTable), aResult);
+      break;
+    }
+
     default:
       const nsAFlatCString& name = nsCSSProps::LookupPropertyValue(aProperty, intValue);
       AppendASCIItoUTF16(name, aResult);
@@ -2477,35 +2496,22 @@ css::ImageValue::ImageValue(nsIURI* aURI, nsStringBuffer* aString,
   }
 }
 
-static PLDHashOperator
-ClearRequestHashtable(nsISupports* aKey, RefPtr<imgRequestProxy>& aValue,
-                      void* aClosure)
-{
-  mozilla::css::ImageValue* image =
-    static_cast<mozilla::css::ImageValue*>(aClosure);
-  nsIDocument* doc = static_cast<nsIDocument*>(aKey);
-
-#ifdef DEBUG
-  {
-    nsCOMPtr<nsIDocument> slowDoc = do_QueryInterface(aKey);
-    MOZ_ASSERT(slowDoc == doc);
-  }
-#endif
-
-  if (doc) {
-    doc->StyleImageLoader()->DeregisterCSSImage(image);
-  }
-
-  if (aValue) {
-    aValue->CancelAndForgetObserver(NS_BINDING_ABORTED);
-  }
-
-  return PL_DHASH_REMOVE;
-}
-
 css::ImageValue::~ImageValue()
 {
-  mRequests.Enumerate(&ClearRequestHashtable, this);
+  for (auto iter = mRequests.Iter(); !iter.Done(); iter.Next()) {
+    nsIDocument* doc = iter.Key();
+    RefPtr<imgRequestProxy>& proxy = iter.Data();
+
+    if (doc) {
+      doc->StyleImageLoader()->DeregisterCSSImage(this);
+    }
+
+    if (proxy) {
+      proxy->CancelAndForgetObserver(NS_BINDING_ABORTED);
+    }
+
+    iter.Remove();
+  }
 }
 
 NS_IMPL_ADDREF(css::ImageValue)

@@ -243,6 +243,17 @@ public:
   Matrix4x4 GetTransformToLastDispatchedPaint() const;
 
   /**
+   * Returns the number of CSS pixels of checkerboard according to the metrics
+   * in this APZC.
+   */
+  uint32_t GetCheckerboardMagnitude() const;
+
+  /**
+   * Report the number of CSSPixel-milliseconds of checkerboard to telemetry.
+   */
+  void ReportCheckerboard(const TimeStamp& aSampleTime);
+
+  /**
    * Returns whether or not the APZC is currently in a state of checkerboarding.
    * This is a simple computation based on the last-painted content and whether
    * the async transform has pushed it so far that it doesn't fully contain the
@@ -381,6 +392,11 @@ public:
   bool CanScroll(Layer::ScrollDirection aDirection) const;
 
   void NotifyMozMouseScrollEvent(const nsString& aString) const;
+
+  // This is called to request that the main thread snap the scroll position
+  // to a nearby snap position if appropriate. The current scroll position is
+  // used as the final destination.
+  void RequestSnap();
 
 protected:
   // Protected destructor, to discourage deletion outside of Release():
@@ -633,11 +649,6 @@ protected:
   // Common processing at the end of a touch block.
   void OnTouchEndOrCancel();
 
-  // This is called to request that the main thread snap the scroll position
-  // to a nearby snap position if appropriate. The current scroll position is
-  // used as the final destination.
-  void RequestSnap();
-
   uint64_t mLayersId;
   RefPtr<CompositorParent> mCompositorParent;
   RefPtr<TaskThrottler> mPaintThrottler;
@@ -714,6 +725,9 @@ private:
   // frame.
   TimeStamp mLastSampleTime;
 
+  // The last sample time at which we submitted a checkerboarding report.
+  TimeStamp mLastCheckerboardReport;
+
   // Stores the previous focus point if there is a pinch gesture happening. Used
   // to allow panning by moving multiple fingers (thus moving the focus point).
   ParentLayerPoint mLastZoomFocus;
@@ -740,17 +754,18 @@ protected:
 
     PAN_MOMENTUM,             /* like PANNING, but controlled by momentum PanGestureInput events */
 
-    CROSS_SLIDING_X,          /* Panning disabled while user does a horizontal gesture
-                                 on a vertically-scrollable view. This used for the
-                                 Windows Metro "cross-slide" gesture. */
-    CROSS_SLIDING_Y,          /* as above for Y axis */
-
     PINCHING,                 /* nth touch-start, where n > 1. this mode allows pan and zoom */
     ANIMATING_ZOOM,           /* animated zoom to a new rect */
     OVERSCROLL_ANIMATION,     /* Spring-based animation used to relieve overscroll once
                                  the finger is lifted. */
     SMOOTH_SCROLL,            /* Smooth scrolling to destination. Used by
                                  CSSOM-View smooth scroll-behavior */
+
+    PANNING_LOCKED_X_SMOOTH_SCROLL, /* Smooth scrolling animation initiated
+                                       while simultaneously panning the frame
+                                       with the X axis locked. */
+    PANNING_LOCKED_Y_SMOOTH_SCROLL, /* as above for Y axis. */
+
     WHEEL_SCROLL              /* Smooth scrolling to a destination for a wheel event. */
   };
 
@@ -1036,7 +1051,8 @@ public:
 
 private:
   /* This is the cumulative CSS transform for all the layers from (and including)
-   * the parent APZC down to (but excluding) this one. */
+   * the parent APZC down to (but excluding) this one, and excluding any
+   * perspective transforms. */
   Matrix4x4 mAncestorTransform;
 
 

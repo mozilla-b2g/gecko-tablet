@@ -89,6 +89,15 @@
     "kind": "boolean",
     "description": "blocklist.xml has been loaded synchronously *** No longer needed (bug 1156565). Delete histogram and accumulation code! ***"
   },
+  "CHECKERBOARDED_CSSPIXELS_MS": {
+    "alert_emails": ["kgupta@mozilla.com"],
+    "bug_numbers": [1221694],
+    "expires_in_version": "55",
+    "kind": "exponential",
+    "high": "3840 * 2160 * 16",
+    "n_buckets": 50,
+    "description": "Magnitude of checkerboarding in CSSPixel-milliseconds per scrollable frame per composite"
+  },
   "COMPOSITE_TIME" : {
     "expires_in_version": "never",
     "description": "Composite times in milliseconds",
@@ -444,29 +453,39 @@
     "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": 10,
-    "description": "Use of SpiderMonkey's deprecated language extensions in web content: ForEach=0, DestructuringForIn=1, LegacyGenerator=2, ExpressionClosure=3, LetBlock=4, LetExpression=5, NoSuchMethod=6, FlagsArgument=7, RegExpSourceProp=8, RestoredRegExpStatics=9"
+    "description": "Use of SpiderMonkey's deprecated language extensions in web content: ForEach=0, DestructuringForIn=1 (obsolete), LegacyGenerator=2, ExpressionClosure=3, LetBlock=4 (obsolete), LetExpression=5 (obsolete), NoSuchMethod=6 (obsolete), FlagsArgument=7, RegExpSourceProp=8 (obsolete), RestoredRegExpStatics=9 (obsolete)"
   },
   "JS_DEPRECATED_LANGUAGE_EXTENSIONS_IN_ADDONS": {
     "alert_emails": ["jdemooij@mozilla.com"],
     "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": 10,
-    "description": "Use of SpiderMonkey's deprecated language extensions in add-ons: ForEach=0, DestructuringForIn=1, LegacyGenerator=2, ExpressionClosure=3, LetBlock=4, LetExpression=5, NoSuchMethod=6, FlagsArgument=7, RegExpSourceProp=8, RestoredRegExpStatics=9"
+    "description": "Use of SpiderMonkey's deprecated language extensions in add-ons: ForEach=0, DestructuringForIn=1 (obsolete), LegacyGenerator=2, ExpressionClosure=3, LetBlock=4 (obsolete), LetExpression=5 (obsolete), NoSuchMethod=6 (obsolete), FlagsArgument=7, RegExpSourceProp=8 (obsolete), RestoredRegExpStatics=9 (obsolete)"
   },
   "XUL_CACHE_DISABLED": {
     "expires_in_version": "default",
     "kind": "flag",
     "description": "XUL cache was disabled"
   },
-  "MEMORY_RESIDENT": {
+  "MEMORY_RESIDENT_FAST": {
     "alert_emails": ["memshrink-telemetry-alerts@mozilla.com"],
     "expires_in_version": "never",
     "kind": "exponential",
     "low": "32 * 1024",
     "high": "16 * 1024 * 1024",
-    "n_buckets": 200,
-    "extended_statistics_ok": true,
+    "n_buckets": 100,
+    "bug_numbers": [1226196],
     "description": "Resident memory size (KB)"
+  },
+  "MEMORY_UNIQUE": {
+    "alert_emails": ["memshrink-telemetry-alerts@mozilla.com"],
+    "bug_numbers": [1198209],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "low": "32 * 1024",
+    "high": "16 * 1024 * 1024",
+    "n_buckets": 100,
+    "description": "Unique Set Size (KB)"
   },
   "MEMORY_VSIZE": {
     "alert_emails": ["memshrink-telemetry-alerts@mozilla.com"],
@@ -6093,6 +6112,22 @@
     "n_buckets": "1000",
     "description": "The time (in milliseconds) that it took a 'listTabs' request to go round trip."
   },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_LISTSERVICEWORKERREGISTRATIONS_MS": {
+    "alert_emails": ["dev-developer-tools@lists.mozilla.org", "ejpbruel@mozilla.com"],
+    "expires_in_version": "50",
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "100",
+    "description": "The time (in milliseconds) that it took a 'listServiceWorkerRegistrations' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_LISTSERVICEWORKERREGISTRATIONS_MS": {
+    "alert_emails": ["dev-developer-tools@lists.mozilla.org", "ejpbruel@mozilla.com"],
+    "expires_in_version": "50",
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "100",
+    "description": "The time (in milliseconds) that it took a 'listServiceWorkerRegistrations' request to go round trip."
+  },
   "DEVTOOLS_DEBUGGER_RDP_LOCAL_PROTOCOLDESCRIPTION_MS": {
     "expires_in_version": "never",
     "kind": "exponential",
@@ -6346,52 +6381,60 @@
     "description": "SPS.max_num_ref_frames indicates how deep the H.264 queue is going to be, and as such the minimum memory usage by the decoder, from 0 to 16. 17 indicates an invalid value."
   },
   "WEBRTC_ICE_FINAL_CONNECTION_STATE": {
-    "expires_in_version": "never",
+    "alert_emails": ["webrtc-ice-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "53",
     "kind": "enumerated",
     "n_values": 7,
     "description": "The ICE connection state when the PC was closed"
   },
   "WEBRTC_ICE_ON_TIME_TRICKLE_ARRIVAL_TIME": {
-    "expires_in_version": "never",
+    "alert_emails": ["webrtc-ice-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "53",
     "kind": "exponential",
     "high": "10000",
     "n_buckets": "20",
     "description": "The length of time (in milliseconds) that a trickle candidate took to arrive after the start of ICE, given that it arrived when ICE was not in a failure state (ie; a candidate that we could do something with, hence 'on time')"
   },
   "WEBRTC_ICE_LATE_TRICKLE_ARRIVAL_TIME": {
-    "expires_in_version": "never",
+    "alert_emails": ["webrtc-ice-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "53",
     "kind": "exponential",
     "high": "10000",
     "n_buckets": "20",
     "description": "The length of time (in milliseconds) that a trickle candidate took to arrive after the start of ICE, given that it arrived after ICE failed."
   },
   "WEBRTC_ICE_SUCCESS_TIME": {
-    "expires_in_version": "never",
+    "alert_emails": ["webrtc-ice-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "53",
     "kind": "exponential",
     "high": "10000",
     "n_buckets": "20",
     "description": "The length of time (in milliseconds) it took for ICE to complete, given that ICE succeeded."
   },
   "WEBRTC_ICE_FAILURE_TIME": {
-    "expires_in_version": "never",
+    "alert_emails": ["webrtc-ice-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "53",
     "kind": "exponential",
     "high": "10000",
     "n_buckets": "20",
     "description": "The length of time (in milliseconds) it took for ICE to complete, given that it failed."
   },
   "WEBRTC_ICE_SUCCESS_RATE": {
-    "expires_in_version": "never",
+    "alert_emails": ["webrtc-ice-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "53",
     "kind": "boolean",
     "description": "The number of failed ICE Connections (0) vs. number of successful ICE connections (1)."
   },
   "WEBRTC_STUN_RATE_LIMIT_EXCEEDED_BY_TYPE_GIVEN_SUCCESS": {
-    "expires_in_version": "never",
+    "alert_emails": ["webrtc-ice-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "53",
     "kind": "enumerated",
     "n_values": 4,
     "description": "For each successful PeerConnection, bit 0 indicates the short-duration rate limit was reached, bit 1 indicates the long-duration rate limit was reached"
   },
   "WEBRTC_STUN_RATE_LIMIT_EXCEEDED_BY_TYPE_GIVEN_FAILURE": {
-    "expires_in_version": "never",
+    "alert_emails": ["webrtc-ice-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "53",
     "kind": "enumerated",
     "n_values": 4,
     "description": "For each failed PeerConnection, bit 0 indicates the short-duration rate limit was reached, bit 1 indicates the long-duration rate limit was reached"
@@ -6621,14 +6664,16 @@
     "description": "The number of calls made during a session."
   },
   "WEBRTC_ICE_ADD_CANDIDATE_ERRORS_GIVEN_SUCCESS": {
-    "expires_in_version": "never",
+    "alert_emails": ["webrtc-ice-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "53",
     "kind": "linear",
     "high": "30",
     "n_buckets": "29",
     "description": "The number of times AddIceCandidate failed on a given PeerConnection, given that ICE succeeded."
   },
   "WEBRTC_ICE_ADD_CANDIDATE_ERRORS_GIVEN_FAILURE": {
-    "expires_in_version": "never",
+    "alert_emails": ["webrtc-ice-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "53",
     "kind": "linear",
     "high": "30",
     "n_buckets": "29",
@@ -8745,6 +8790,13 @@
     "description": "OpenH264 GMP files missing (0=none, or sum of: 1=library, 2=info)",
     "releaseChannelCollection": "opt-out"
   },
+  "MEDIA_CODEC_USED": {
+    "alert_emails": ["cpearce@mozilla.com"],
+    "expires_in_version": "never",
+    "keyed": true,
+    "kind": "count",
+    "description": "Count of use of audio/video codecs in HTMLMediaElements and WebAudio. Those with 'resource' prefix are approximate; report based on HTTP ContentType or sniffing. Those with 'webaudio' prefix are for WebAudio."
+  },
   "FX_SANITIZE_TOTAL": {
     "alert_emails": ["firefox-dev@mozilla.org", "gavin@mozilla.com"],
     "expires_in_version": "50",
@@ -10039,5 +10091,82 @@
     "expires_in_version": "48",
     "kind": "flag",
     "description": "Flag activated whenever a youtube flash embed is seen during a session."
+  },
+  "WEBFONT_DOWNLOAD_TIME": {
+    "alert_emails": ["jdaggett@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "60000",
+    "n_buckets": 50,
+    "extended_statistics_ok": true,
+    "description": "Time to download a webfont (ms)"
+  },
+  "WEBFONT_DOWNLOAD_TIME_AFTER_START": {
+    "alert_emails": ["jdaggett@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "60000",
+    "n_buckets": 50,
+    "extended_statistics_ok": true,
+    "description": "Time after navigationStart webfont download completed (ms)"
+  },
+  "WEBFONT_FONTTYPE": {
+    "alert_emails": ["jdaggett@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 10,
+    "description": "Font format type (woff/woff2/ttf/...)"
+  },
+  "WEBFONT_SRCTYPE": {
+    "alert_emails": ["jdaggett@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 5,
+    "description": "Font src type loaded (1 = local, 2 = url, 3 = data)"
+  },
+  "WEBFONT_PER_PAGE": {
+    "alert_emails": ["jdaggett@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "count",
+    "description": "Number of fonts loaded at page load"
+  },
+  "WEBFONT_SIZE_PER_PAGE": {
+    "alert_emails": ["jdaggett@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "5000",
+    "n_buckets": 50,
+    "extended_statistics_ok": true,
+    "description": "Size of all fonts loaded at page load (kb)"
+  },
+  "WEBFONT_SIZE": {
+    "alert_emails": ["jdaggett@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "5000",
+    "n_buckets": 50,
+    "extended_statistics_ok": true,
+    "description": "Size of font loaded (kb)"
+  },
+  "WEBFONT_COMPRESSION_WOFF": {
+    "alert_emails": ["jdaggett@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 50,
+    "description": "Compression ratio of WOFF data (%)"
+  },
+  "WEBFONT_COMPRESSION_WOFF2": {
+    "alert_emails": ["jdaggett@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 50,
+    "description": "Compression ratio of WOFF2 data (%)"
+  },
+  "WEBRTC_ICE_CHECKING_RATE": {
+    "alert_emails": ["webrtc-ice-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "53",
+    "kind": "boolean",
+    "bug_numbers": [1188391],
+    "description": "The number of ICE connections which immediately failed (0) vs. reached at least checking state (1)."
   }
 }

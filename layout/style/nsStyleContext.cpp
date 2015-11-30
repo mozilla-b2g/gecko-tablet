@@ -654,8 +654,9 @@ nsStyleContext::ApplyStyleFixups(bool aSkipParentDisplayBasedStyleFixup)
       displayVal = NS_STYLE_DISPLAY_BLOCK;
     }
     if (displayVal != disp->mDisplay) {
-      nsStyleDisplay *mutable_display =
+      nsStyleDisplay* mutable_display =
         static_cast<nsStyleDisplay*>(GetUniqueStyleData(eStyleStruct_Display));
+      disp = mutable_display;
 
       // If we're in this code, then mOriginalDisplay doesn't matter
       // for purposes of the cascade (because this nsStyleDisplay
@@ -718,8 +719,9 @@ nsStyleContext::ApplyStyleFixups(bool aSkipParentDisplayBasedStyleFixup)
                        "We shouldn't be changing the display value of "
                        "positioned content (and we should have already "
                        "converted its display value to be block-level...)");
-          nsStyleDisplay *mutable_display =
+          nsStyleDisplay* mutable_display =
             static_cast<nsStyleDisplay*>(GetUniqueStyleData(eStyleStruct_Display));
+          disp = mutable_display;
           mutable_display->mDisplay = displayVal;
         }
       }
@@ -730,8 +732,9 @@ nsStyleContext::ApplyStyleFixups(bool aSkipParentDisplayBasedStyleFixup)
       uint8_t displayVal = disp->mDisplay;
       nsRuleNode::EnsureInlineDisplay(displayVal);
       if (displayVal != disp->mDisplay) {
-        nsStyleDisplay *mutable_display =
+        nsStyleDisplay* mutable_display =
           static_cast<nsStyleDisplay*>(GetUniqueStyleData(eStyleStruct_Display));
+        disp = mutable_display;
         mutable_display->mDisplay = displayVal;
       }
     }
@@ -781,8 +784,9 @@ nsStyleContext::ApplyStyleFixups(bool aSkipParentDisplayBasedStyleFixup)
     // and text-orientation) here; just the writing-mode property is enough.
     if (StyleVisibility()->mWritingMode !=
         mParent->StyleVisibility()->mWritingMode) {
-      nsStyleDisplay *mutable_display =
+      nsStyleDisplay* mutable_display =
         static_cast<nsStyleDisplay*>(GetUniqueStyleData(eStyleStruct_Display));
+      disp = mutable_display;
       mutable_display->mOriginalDisplay = mutable_display->mDisplay =
         NS_STYLE_DISPLAY_INLINE_BLOCK;
     }
@@ -1062,6 +1066,17 @@ nsStyleContext::CalcStyleDifference(nsStyleContext* aOther,
     }
 
     // NB: Calling Peek on |this|, not |thisVis| (see above).
+    if (!change && PeekStyleText()) {
+      const nsStyleText* thisVisText = thisVis->StyleText();
+      const nsStyleText* otherVisText = otherVis->StyleText();
+      if (thisVisText->mTextEmphasisColorForeground !=
+          otherVisText->mTextEmphasisColorForeground ||
+          thisVisText->mTextEmphasisColor != otherVisText->mTextEmphasisColor) {
+        change = true;
+      }
+    }
+
+    // NB: Calling Peek on |this|, not |thisVis| (see above).
     if (!change && PeekStyleTextReset()) {
       const nsStyleTextReset *thisVisTextReset = thisVis->StyleTextReset();
       const nsStyleTextReset *otherVisTextReset = otherVis->StyleTextReset();
@@ -1277,6 +1292,7 @@ nsStyleContext::GetVisitedDependentColor(nsCSSProperty aProperty)
                aProperty == eCSSProperty_outline_color ||
                aProperty == eCSSProperty__moz_column_rule_color ||
                aProperty == eCSSProperty_text_decoration_color ||
+               aProperty == eCSSProperty_text_emphasis_color ||
                aProperty == eCSSProperty_fill ||
                aProperty == eCSSProperty_stroke,
                "we need to add to nsStyleContext::CalcStyleDifference");

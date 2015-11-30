@@ -580,6 +580,8 @@ def InterfacePrototypeObjectProtoGetter(descriptor):
             protoGetter = "JS_GetArrayPrototype"
         elif descriptor.interface.getExtendedAttribute("ExceptionClass"):
             protoGetter = "GetErrorPrototype"
+        elif descriptor.interface.isIteratorInterface():
+            protoGetter = "GetIteratorPrototype"
         else:
             protoGetter = "JS_GetObjectPrototype"
         protoHandleGetter = None
@@ -1661,11 +1663,7 @@ class CGClassConstructor(CGAbstractStaticMethod):
             JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
             JS::Rooted<JSObject*> obj(cx, &args.callee());
             $*{chromeOnlyCheck}
-            bool mayInvoke = args.isConstructing();
-            #ifdef RELEASE_BUILD
-            mayInvoke = mayInvoke || nsContentUtils::ThreadsafeIsCallerChrome();
-            #endif // RELEASE_BUILD
-            if (!mayInvoke) {
+            if (!args.isConstructing()) {
               // XXXbz wish I could get the name from the callee instead of
               // Adding more relocations
               return ThrowConstructorWithoutNew(cx, "${ctorName}");
@@ -1726,9 +1724,7 @@ class CGConstructNavigatorObject(CGAbstractMethod):
             JS::Rooted<JS::Value> v(aCx);
             {  // Scope to make sure |result| goes out of scope while |v| is rooted
               RefPtr<mozilla::dom::${descriptorName}> result = ConstructNavigatorObjectHelper(aCx, global, rv);
-              rv.WouldReportJSException();
-              if (rv.Failed()) {
-                ThrowMethodFailed(aCx, rv);
+              if (rv.MaybeSetPendingException(aCx)) {
                 return nullptr;
               }
               if (!GetOrCreateDOMReflector(aCx, result, &v)) {
@@ -2256,6 +2252,22 @@ class MethodDefiner(PropertyDefiner):
                 "selfHostedName": "ArrayValues",
                 "length": 0,
                 "flags": "JSPROP_ENUMERATE",
+                "condition": MemberCondition(None, None)
+            })
+
+        # Output an @@iterator for generated iterator interfaces.  This should
+        # not be necessary, but
+        # https://bugzilla.mozilla.org/show_bug.cgi?id=1091945 means that
+        # %IteratorPrototype%[@@iterator] is a broken puppy.
+        if (not static and
+            not unforgeable and
+            descriptor.interface.isIteratorInterface()):
+            self.regular.append({
+                "name": "@@iterator",
+                "methodInfo": False,
+                "selfHostedName": "IteratorIdentity",
+                "length": 0,
+                "flags": "0",
                 "condition": MemberCondition(None, None)
             })
 
@@ -2810,14 +2822,10 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
         isGlobal = self.descriptor.isGlobal() is not None
         if not isGlobal and self.properties.hasNonChromeOnly():
             properties = "&sNativeProperties"
-        elif self.properties.hasNonChromeOnly():
-            properties = "!GlobalPropertiesAreOwn() ? &sNativeProperties : nullptr"
         else:
             properties = "nullptr"
         if not isGlobal and self.properties.hasChromeOnly():
             chromeProperties = "nsContentUtils::ThreadsafeIsCallerChrome() ? &sChromeOnlyNativeProperties : nullptr"
-        elif self.properties.hasChromeOnly():
-            chromeProperties = "!GlobalPropertiesAreOwn() && nsContentUtils::ThreadsafeIsCallerChrome() ? &sChromeOnlyNativeProperties : nullptr"
         else:
             chromeProperties = "nullptr"
 
@@ -3675,11 +3683,11 @@ class CGWrapGlobalMethod(CGAbstractMethod):
 
     def definition_body(self):
         if self.properties.hasNonChromeOnly():
-            properties = "GlobalPropertiesAreOwn() ? &sNativeProperties : nullptr"
+            properties = "&sNativeProperties"
         else:
             properties = "nullptr"
         if self.properties.hasChromeOnly():
-            chromeProperties = "GlobalPropertiesAreOwn() && nsContentUtils::ThreadsafeIsCallerChrome() ? &sChromeOnlyNativeProperties : nullptr"
+            chromeProperties = "nsContentUtils::ThreadsafeIsCallerChrome() ? &sChromeOnlyNativeProperties : nullptr"
         else:
             chromeProperties = "nullptr"
 
@@ -4391,11 +4399,13 @@ def getJSToNativeConversionInfo(type, descriptorProvider, failureCode=None,
         templateBody = "${declName} = &${val}.toObject();\n"
 
         # For JS-implemented APIs, we refuse to allow passing objects that the
-        # API consumer does not subsume.
+        # API consumer does not subsume. The extra parens around
+        # ($${passedToJSImpl}) suppress unreachable code warnings when
+        # $${passedToJSImpl} is the literal `false`.
         if not isinstance(descriptorProvider, Descriptor) or descriptorProvider.interface.isJSImplemented():
             templateBody = fill(
                 """
-                if ($${passedToJSImpl} && !CallerSubsumes($${val})) {
+                if (($${passedToJSImpl}) && !CallerSubsumes($${val})) {
                   ThrowErrorMessage(cx, MSG_PERMISSION_DENIED_TO_PASS_ARG, "${sourceDescription}");
                   $*{exceptionCode}
                 }
@@ -5081,8 +5091,7 @@ def getJSToNativeConversionInfo(type, descriptorProvider, failureCode=None,
                   }
                   ErrorResult promiseRv;
                   $${declName} = Promise::Resolve(promiseGlobal, $${val}, promiseRv);
-                  if (promiseRv.Failed()) {
-                    ThrowMethodFailed(cx, promiseRv);
+                  if (promiseRv.MaybeSetPendingException(cx)) {
                     $*{exceptionCode}
                   }
                 }
@@ -5438,11 +5447,13 @@ def getJSToNativeConversionInfo(type, descriptorProvider, failureCode=None,
         templateBody = "${declName} = ${val};\n"
 
         # For JS-implemented APIs, we refuse to allow passing objects that the
-        # API consumer does not subsume.
+        # API consumer does not subsume. The extra parens around
+        # ($${passedToJSImpl}) suppress unreachable code warnings when
+        # $${passedToJSImpl} is the literal `false`.
         if not isinstance(descriptorProvider, Descriptor) or descriptorProvider.interface.isJSImplemented():
             templateBody = fill(
                 """
-                if ($${passedToJSImpl} && !CallerSubsumes($${val})) {
+                if (($${passedToJSImpl}) && !CallerSubsumes($${val})) {
                   ThrowErrorMessage(cx, MSG_PERMISSION_DENIED_TO_PASS_ARG, "${sourceDescription}");
                   $*{exceptionCode}
                 }
@@ -6252,21 +6263,14 @@ def getWrapTemplateForType(type, descriptorProvider, result, successCode,
             resultLoc = result
         conversion = fill(
             """
-            {
-              // Scope for resultStr
-              MOZ_ASSERT(uint32_t(${result}) < ArrayLength(${strings}));
-              JSString* resultStr = JS_NewStringCopyN(cx, ${strings}[uint32_t(${result})].value, ${strings}[uint32_t(${result})].length);
-              if (!resultStr) {
-                $*{exceptionCode}
-              }
-              $*{setResultStr}
+            if (!ToJSValue(cx, ${result}, $${jsvalHandle})) {
+              $*{exceptionCode}
             }
+            $*{successCode}
             """,
             result=resultLoc,
-            strings=(type.unroll().inner.identifier.name + "Values::" +
-                     ENUM_ENTRY_VARIABLE_NAME),
             exceptionCode=exceptionCode,
-            setResultStr=setString("resultStr"))
+            successCode=successCode)
 
         if type.nullable():
             conversion = CGIfElseWrapper(
@@ -6642,22 +6646,17 @@ class CGCallGenerator(CGThing):
     A class to generate an actual call to a C++ object.  Assumes that the C++
     object is stored in a variable whose name is given by the |object| argument.
 
-    errorReport should be a CGThing for an error report or None if no
-    error reporting is needed.
+    isFallible is a boolean indicating whether the call should be fallible.
 
     resultVar: If the returnType is not void, then the result of the call is
     stored in a C++ variable named by resultVar. The caller is responsible for
     declaring the result variable. If the caller doesn't care about the result
     value, resultVar can be omitted.
     """
-    def __init__(self, errorReport, arguments, argsPre, returnType,
+    def __init__(self, isFallible, arguments, argsPre, returnType,
                  extendedAttributes, descriptorProvider, nativeMethodName,
                  static, object="self", argsPost=[], resultVar=None):
         CGThing.__init__(self)
-
-        assert errorReport is None or isinstance(errorReport, CGThing)
-
-        isFallible = errorReport is not None
 
         result, resultOutParam, resultRooter, resultArgs, resultConversion = \
             getRetvalDeclarationForType(returnType, descriptorProvider)
@@ -6753,10 +6752,12 @@ class CGCallGenerator(CGThing):
 
         if isFallible:
             self.cgRoot.prepend(CGGeneric("ErrorResult rv;\n"))
-            self.cgRoot.append(CGGeneric("rv.WouldReportJSException();\n"))
-            self.cgRoot.append(CGGeneric("if (MOZ_UNLIKELY(rv.Failed())) {\n"))
-            self.cgRoot.append(CGIndenter(errorReport))
-            self.cgRoot.append(CGGeneric("}\n"))
+            self.cgRoot.append(CGGeneric(dedent(
+                """
+                if (MOZ_UNLIKELY(rv.MaybeSetPendingException(cx))) {
+                  return false;
+                }
+                """)))
 
         self.cgRoot.append(CGGeneric("MOZ_ASSERT(!JS_IsExceptionPending(cx));\n"))
 
@@ -7150,7 +7151,7 @@ class CGPerSignatureCall(CGThing):
                                                           idlNode.identifier.name))
         else:
             cgThings.append(CGCallGenerator(
-                self.getErrorReport() if self.isFallible() else None,
+                self.isFallible(),
                 self.getArguments(), argsPre, returnType,
                 self.extendedAttributes, descriptor, nativeMethodName,
                 static, argsPost=argsPost, resultVar=resultVar))
@@ -7257,9 +7258,6 @@ class CGPerSignatureCall(CGThing):
                 maybeWrap=getMaybeWrapValueFuncForType(self.idlNode.type))
         return wrapCode
 
-    def getErrorReport(self):
-        return CGGeneric('return ThrowMethodFailed(cx, rv);\n')
-
     def define(self):
         return (self.cgRoot.define() + self.wrap_return_value())
 
@@ -7301,7 +7299,7 @@ class CGCase(CGList):
         self.append(CGGeneric("case " + expression + ": {\n"))
         bodyList = CGList([body])
         if fallThrough:
-            bodyList.append(CGGeneric("/* Fall through */\n"))
+            bodyList.append(CGGeneric("MOZ_FALLTHROUGH;\n"))
         else:
             bodyList.append(CGGeneric("break;\n"))
         self.append(CGIndenter(bodyList))
@@ -8228,9 +8226,8 @@ class CGEnumerateHook(CGAbstractBindingMethod):
             nsAutoTArray<nsString, 8> names;
             ErrorResult rv;
             self->GetOwnPropertyNames(cx, names, rv);
-            rv.WouldReportJSException();
-            if (rv.Failed()) {
-              return ThrowMethodFailed(cx, rv);
+            if (rv.MaybeSetPendingException(cx)) {
+              return false;
             }
             bool dummy;
             for (uint32_t i = 0; i < names.Length(); ++i) {
@@ -9046,11 +9043,53 @@ def getEnumValueName(value):
                           ' rename our internal EndGuard_ to something else')
     return nativeName
 
+class CGEnumToJSValue(CGAbstractMethod):
+    def __init__(self, enum):
+        enumType = enum.identifier.name
+        self.stringsArray = enumType + "Values::" + ENUM_ENTRY_VARIABLE_NAME
+        CGAbstractMethod.__init__(self, None, "ToJSValue", "bool",
+                                  [Argument("JSContext*", "aCx"),
+                                   Argument(enumType, "aArgument"),
+                                   Argument("JS::MutableHandle<JS::Value>",
+                                            "aValue")])
+
+    def definition_body(self):
+        return fill(
+            """
+            MOZ_ASSERT(uint32_t(aArgument) < ArrayLength(${strings}));
+            JSString* resultStr =
+              JS_NewStringCopyN(aCx, ${strings}[uint32_t(aArgument)].value,
+                                ${strings}[uint32_t(aArgument)].length);
+            if (!resultStr) {
+              return false;
+            }
+            aValue.setString(resultStr);
+            return true;
+            """,
+            strings=self.stringsArray)
+
 
 class CGEnum(CGThing):
     def __init__(self, enum):
         CGThing.__init__(self)
         self.enum = enum
+        strings = CGNamespace(
+            self.stringsNamespace(),
+            CGGeneric(declare=("extern const EnumEntry %s[%d];\n" %
+                               (ENUM_ENTRY_VARIABLE_NAME, self.nEnumStrings())),
+                      define=fill(
+                          """
+                          extern const EnumEntry ${name}[${count}] = {
+                            $*{entries}
+                            { nullptr, 0 }
+                          };
+                          """,
+                          name=ENUM_ENTRY_VARIABLE_NAME,
+                          count=self.nEnumStrings(),
+                          entries=''.join('{"%s", %d},\n' % (val, len(val))
+                                          for val in self.enum.values()))))
+        toJSValue = CGEnumToJSValue(enum)
+        self.cgThings = CGList([strings, toJSValue], "\n")
 
     def stringsNamespace(self):
         return self.enum.identifier.name + "Values"
@@ -9071,22 +9110,10 @@ class CGEnum(CGThing):
         strings = CGNamespace(self.stringsNamespace(),
                               CGGeneric(declare="extern const EnumEntry %s[%d];\n"
                                         % (ENUM_ENTRY_VARIABLE_NAME, self.nEnumStrings())))
-        return decl + "\n" + strings.declare()
+        return decl + "\n" + self.cgThings.declare()
 
     def define(self):
-        strings = fill(
-            """
-            extern const EnumEntry ${name}[${count}] = {
-              $*{entries}
-              { nullptr, 0 }
-            };
-            """,
-            name=ENUM_ENTRY_VARIABLE_NAME,
-            count=self.nEnumStrings(),
-            entries=''.join('{"%s", %d},\n' % (val, len(val))
-                            for val in self.enum.values()))
-        return CGNamespace(self.stringsNamespace(),
-                           CGGeneric(define=indent(strings))).define()
+        return self.cgThings.define()
 
     def deps(self):
         return self.enum.getDeps()
@@ -10286,9 +10313,8 @@ class CGEnumerateOwnPropertiesViaGetOwnPropertyNames(CGAbstractBindingMethod):
             nsAutoTArray<nsString, 8> names;
             ErrorResult rv;
             self->GetOwnPropertyNames(cx, names, rv);
-            rv.WouldReportJSException();
-            if (rv.Failed()) {
-              return ThrowMethodFailed(cx, rv);
+            if (rv.MaybeSetPendingException(cx)) {
+              return false;
             }
             // OK to pass null as "proxy" because it's ignored if
             // shadowPrototypeProperties is true
@@ -12150,11 +12176,9 @@ class CGDictionary(CGThing):
             if m.canHaveMissingValue():
                 memberAssign = CGGeneric(fill(
                     """
+                    ${name}.Reset();
                     if (aOther.${name}.WasPassed()) {
-                      ${name}.Construct();
-                      ${name}.Value() = aOther.${name}.Value();
-                    } else {
-                      ${name}.Reset();
+                      ${name}.Construct(aOther.${name}.Value());
                     }
                     """,
                     name=memberName))
@@ -12992,6 +13016,11 @@ class CGBindingRoot(CGThing):
         bindingHeaders["mozilla/dom/DOMJSClass.h"] = descriptors
         bindingHeaders["mozilla/dom/ScriptSettings.h"] = dictionaries  # AutoJSAPI
         bindingHeaders["xpcpublic.h"] = dictionaries  # xpc::UnprivilegedJunkScope
+        # Ensure we see our enums in the generated .cpp file, for the ToJSValue
+        # method body.  Also ensure that we see jsapi.h.
+        if enums:
+            bindingHeaders[CGHeaders.getDeclarationFilename(enums[0])] = True
+            bindingHeaders["jsapi.h"] = True
 
         # For things that have [UseCounter]
         def descriptorRequiresTelemetry(desc):

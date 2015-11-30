@@ -242,7 +242,6 @@ const CustomizableWidgets = [
         recentlyClosedWindows.removeChild(recentlyClosedWindows.firstChild);
       }
 
-#ifdef MOZ_SERVICES_SYNC
       let tabsFromOtherComputers = doc.getElementById("sync-tabs-menuitem2");
       if (PlacesUIUtils.shouldShowTabsFromOtherComputersMenuitem()) {
         tabsFromOtherComputers.removeAttribute("hidden");
@@ -255,7 +254,6 @@ const CustomizableWidgets = [
       } else {
         tabsFromOtherComputers.setAttribute("disabled", true);
       }
-#endif
 
       let utils = RecentlyClosedTabsAndWindowsMenuUtils;
       let tabsFragment = utils.getTabsFragment(doc.defaultView, "toolbarbutton", true,
@@ -951,42 +949,6 @@ const CustomizableWidgets = [
     onCommand: function(aEvent) {
       let win = aEvent.view;
       win.MailIntegration.sendLinkForBrowser(win.gBrowser.selectedBrowser)
-    }
-  }, {
-    id: "loop-button",
-    type: "custom",
-    label: "loop-call-button3.label",
-    tooltiptext: "loop-call-button3.tooltiptext",
-    privateBrowsingTooltiptext: "loop-call-button3-pb.tooltiptext",
-    defaultArea: CustomizableUI.AREA_NAVBAR,
-    introducedInVersion: 4,
-    onBuild: function(aDocument) {
-      // If we're not supposed to see the button, return zip.
-      if (!Services.prefs.getBoolPref("loop.enabled")) {
-        return null;
-      }
-
-      let isWindowPrivate = PrivateBrowsingUtils.isWindowPrivate(aDocument.defaultView);
-
-      let node = aDocument.createElementNS(kNSXUL, "toolbarbutton");
-      node.setAttribute("id", this.id);
-      node.classList.add("toolbarbutton-1");
-      node.classList.add("chromeclass-toolbar-additional");
-      node.classList.add("badged-button");
-      node.setAttribute("label", CustomizableUI.getLocalizedProperty(this, "label"));
-      if (isWindowPrivate)
-        node.setAttribute("disabled", "true");
-      let tooltiptext = isWindowPrivate ?
-        CustomizableUI.getLocalizedProperty(this, "privateBrowsingTooltiptext",
-          [CustomizableUI.getLocalizedProperty(this, "label")]) :
-        CustomizableUI.getLocalizedProperty(this, "tooltiptext");
-      node.setAttribute("tooltiptext", tooltiptext);
-      node.setAttribute("removable", "true");
-      node.addEventListener("command", function(event) {
-        aDocument.defaultView.LoopUI.togglePanel(event);
-      });
-
-      return node;
     }
   }, {
     id: "web-apps-button",

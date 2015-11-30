@@ -19,6 +19,7 @@
 #include "mozilla/dom/ProfileTimelineMarkerBinding.h"
 #include "mozilla/dom/ScreenOrientation.h"
 #include "mozilla/dom/ToJSValue.h"
+#include "mozilla/dom/PermissionMessageUtils.h"
 #include "mozilla/dom/workers/ServiceWorkerManager.h"
 #include "mozilla/EventStateManager.h"
 #include "mozilla/LoadInfo.h"
@@ -4909,7 +4910,8 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
     }
   } else if (NS_ERROR_PHISHING_URI == aError ||
              NS_ERROR_MALWARE_URI == aError ||
-             NS_ERROR_UNWANTED_URI == aError) {
+             NS_ERROR_UNWANTED_URI == aError ||
+             NS_ERROR_FORBIDDEN_URI == aError) {
     nsAutoCString host;
     aURI->GetHost(host);
     CopyUTF8toUTF16(host, formatStrs[0]);
@@ -4924,21 +4926,27 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
     }
 
     uint32_t bucketId;
+    bool sendTelemetry = false;
     if (NS_ERROR_PHISHING_URI == aError) {
+      sendTelemetry = true;
       error.AssignLiteral("phishingBlocked");
       bucketId = IsFrame() ? nsISecurityUITelemetry::WARNING_PHISHING_PAGE_FRAME
                            : nsISecurityUITelemetry::WARNING_PHISHING_PAGE_TOP;
     } else if (NS_ERROR_MALWARE_URI == aError) {
+      sendTelemetry = true;
       error.AssignLiteral("malwareBlocked");
       bucketId = IsFrame() ? nsISecurityUITelemetry::WARNING_MALWARE_PAGE_FRAME
                            : nsISecurityUITelemetry::WARNING_MALWARE_PAGE_TOP;
-    } else {
+    } else if (NS_ERROR_UNWANTED_URI == aError) {
+      sendTelemetry = true;
       error.AssignLiteral("unwantedBlocked");
       bucketId = IsFrame() ? nsISecurityUITelemetry::WARNING_UNWANTED_PAGE_FRAME
                            : nsISecurityUITelemetry::WARNING_UNWANTED_PAGE_TOP;
+    } else if (NS_ERROR_FORBIDDEN_URI == aError) {
+      error.AssignLiteral("forbiddenBlocked");
     }
 
-    if (errorPage.EqualsIgnoreCase("blocked")) {
+    if (sendTelemetry && errorPage.EqualsIgnoreCase("blocked")) {
       Telemetry::Accumulate(Telemetry::SECURITY_UI, bucketId);
     }
 
@@ -5124,6 +5132,8 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
   return NS_OK;
 }
 
+#define PREF_SAFEBROWSING_ALLOWOVERRIDE "browser.safebrowsing.allowOverride"
+
 NS_IMETHODIMP
 nsDocShell::LoadErrorPage(nsIURI* aURI, const char16_t* aURL,
                           const char* aErrorPage,
@@ -5202,6 +5212,10 @@ nsDocShell::LoadErrorPage(nsIURI* aURI, const char16_t* aURL,
   errorPageUrl.AppendASCII(escapedError.get());
   errorPageUrl.AppendLiteral("&u=");
   errorPageUrl.AppendASCII(escapedUrl.get());
+  if ((strcmp(aErrorPage, "blocked") == 0) &&
+      Preferences::GetBool(PREF_SAFEBROWSING_ALLOWOVERRIDE, true)) {
+    errorPageUrl.AppendLiteral("&o=1");
+  }
   if (!escapedCSSClass.IsEmpty()) {
     errorPageUrl.AppendLiteral("&s=");
     errorPageUrl.AppendASCII(escapedCSSClass.get());
@@ -7699,6 +7713,7 @@ nsDocShell::EndPageLoad(nsIWebProgress* aProgress,
                aStatus == NS_ERROR_MALWARE_URI ||
                aStatus == NS_ERROR_PHISHING_URI ||
                aStatus == NS_ERROR_UNWANTED_URI ||
+               aStatus == NS_ERROR_FORBIDDEN_URI ||
                aStatus == NS_ERROR_UNSAFE_CONTENT_TYPE ||
                aStatus == NS_ERROR_REMOTE_XUL ||
                aStatus == NS_ERROR_INTERCEPTION_FAILED ||
@@ -9289,9 +9304,11 @@ public:
 
   nsCopyFaviconCallback(mozIAsyncFavicons* aSvc,
                         nsIURI* aNewURI,
+                        nsIPrincipal* aLoadingPrincipal,
                         bool aInPrivateBrowsing)
     : mSvc(aSvc)
     , mNewURI(aNewURI)
+    , mLoadingPrincipal(aLoadingPrincipal)
     , mInPrivateBrowsing(aInPrivateBrowsing)
   {
   }
@@ -9312,7 +9329,7 @@ public:
       mNewURI, aFaviconURI, false,
       mInPrivateBrowsing ? nsIFaviconService::FAVICON_LOAD_PRIVATE :
                            nsIFaviconService::FAVICON_LOAD_NON_PRIVATE,
-      nullptr);
+      nullptr, mLoadingPrincipal);
   }
 
 private:
@@ -9320,6 +9337,7 @@ private:
 
   nsCOMPtr<mozIAsyncFavicons> mSvc;
   nsCOMPtr<nsIURI> mNewURI;
+  nsCOMPtr<nsIPrincipal> mLoadingPrincipal;
   bool mInPrivateBrowsing;
 };
 
@@ -9331,6 +9349,7 @@ NS_IMPL_ISUPPORTS(nsCopyFaviconCallback, nsIFaviconDataCallback)
 void
 nsDocShell::CopyFavicon(nsIURI* aOldURI,
                         nsIURI* aNewURI,
+                        nsIPrincipal* aLoadingPrincipal,
                         bool aInPrivateBrowsing)
 {
   if (XRE_IsContentProcess()) {
@@ -9339,7 +9358,9 @@ nsDocShell::CopyFavicon(nsIURI* aOldURI,
       mozilla::ipc::URIParams oldURI, newURI;
       SerializeURI(aOldURI, oldURI);
       SerializeURI(aNewURI, newURI);
-      contentChild->SendCopyFavicon(oldURI, newURI, aInPrivateBrowsing);
+      contentChild->SendCopyFavicon(oldURI, newURI,
+                                    IPC::Principal(aLoadingPrincipal),
+                                    aInPrivateBrowsing);
     }
     return;
   }
@@ -9349,7 +9370,9 @@ nsDocShell::CopyFavicon(nsIURI* aOldURI,
     do_GetService("@mozilla.org/browser/favicon-service;1");
   if (favSvc) {
     nsCOMPtr<nsIFaviconDataCallback> callback =
-      new nsCopyFaviconCallback(favSvc, aNewURI, aInPrivateBrowsing);
+      new nsCopyFaviconCallback(favSvc, aNewURI,
+                                aLoadingPrincipal,
+                                aInPrivateBrowsing);
     favSvc->GetFaviconURLForPage(aOldURI, callback);
   }
 #endif
@@ -9448,7 +9471,8 @@ nsresult
 nsDocShell::CreatePrincipalFromReferrer(nsIURI* aReferrer,
                                         nsIPrincipal** aResult)
 {
-  OriginAttributes attrs = GetOriginAttributes();
+  PrincipalOriginAttributes attrs;
+  attrs.InheritFromDocShellToDoc(GetOriginAttributes(), aReferrer);
   nsCOMPtr<nsIPrincipal> prin =
     BasePrincipal::CreateCodebasePrincipal(aReferrer, attrs);
   prin.forget(aResult);
@@ -10054,7 +10078,7 @@ nsDocShell::InternalLoad(nsIURI* aURI,
 
       // Inform the favicon service that the favicon for oldURI also
       // applies to aURI.
-      CopyFavicon(currentURI, aURI, mInPrivateBrowsing);
+      CopyFavicon(currentURI, aURI, doc->NodePrincipal(), mInPrivateBrowsing);
 
       RefPtr<nsGlobalWindow> win = mScriptGlobal ?
         mScriptGlobal->GetCurrentInnerWindowInternal() : nullptr;
@@ -11669,7 +11693,7 @@ nsDocShell::AddState(JS::Handle<JS::Value> aData, const nsAString& aTitle,
 
     // Inform the favicon service that our old favicon applies to this new
     // URI.
-    CopyFavicon(oldURI, newURI, mInPrivateBrowsing);
+    CopyFavicon(oldURI, newURI, document->NodePrincipal(), mInPrivateBrowsing);
   } else {
     FireDummyOnLocationChange();
   }
@@ -13811,13 +13835,19 @@ nsDocShell::GetAppId(uint32_t* aAppId)
   return parent->GetAppId(aAppId);
 }
 
-OriginAttributes
+DocShellOriginAttributes
 nsDocShell::GetOriginAttributes()
 {
-  OriginAttributes attrs;
+  DocShellOriginAttributes attrs;
   RefPtr<nsDocShell> parent = GetParentDocshell();
   if (parent) {
-    attrs.InheritFromDocShellParent(parent->GetOriginAttributes());
+    nsCOMPtr<nsIPrincipal> parentPrin = parent->GetDocument()->NodePrincipal();
+    PrincipalOriginAttributes poa = BasePrincipal::Cast(parentPrin)->OriginAttributesRef();
+    attrs.InheritFromDocToChildDocShell(poa);
+  } else {
+    // This is the topmost docshell, so we get the mSignedPkg attribute if it is
+    // set before.
+    attrs.mSignedPkg = mSignedPkg;
   }
 
   if (mOwnOrContainingAppId != nsIScriptSecurityManager::UNKNOWN_APP_ID) {
@@ -13828,9 +13858,6 @@ nsDocShell::GetOriginAttributes()
     attrs.mInBrowser = true;
   }
 
-  // Bug 1209162 will address the inheritance of each attributes.
-  attrs.mSignedPkg = mSignedPkg;
-
   return attrs;
 }
 
@@ -13840,8 +13867,7 @@ nsDocShell::GetOriginAttributes(JS::MutableHandle<JS::Value> aVal)
   JSContext* cx = nsContentUtils::GetCurrentJSContext();
   MOZ_ASSERT(cx);
 
-  OriginAttributes attrs = GetOriginAttributes();
-  bool ok = ToJSValue(cx, attrs, aVal);
+  bool ok = ToJSValue(cx, GetOriginAttributes(), aVal);
   NS_ENSURE_TRUE(ok, NS_ERROR_FAILURE);
   return NS_OK;
 }
@@ -14040,7 +14066,8 @@ nsDocShell::ShouldPrepareForIntercept(nsIURI* aURI, bool aIsNonSubresourceReques
   }
 
   if (aIsNonSubresourceRequest) {
-    OriginAttributes attrs(GetAppId(), GetIsInBrowserElement());
+    PrincipalOriginAttributes attrs;
+    attrs.InheritFromDocShellToDoc(GetOriginAttributes(), aURI);
     *aShouldIntercept = swm->IsAvailable(attrs, aURI);
     return NS_OK;
   }
@@ -14131,7 +14158,12 @@ nsDocShell::ChannelIntercepted(nsIInterceptedChannel* aChannel,
 
   bool isReload = mLoadType & LOAD_CMD_RELOAD;
 
-  OriginAttributes attrs(GetAppId(), GetIsInBrowserElement());
+  nsCOMPtr<nsIURI> uri;
+  rv = channel->GetURI(getter_AddRefs(uri));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  PrincipalOriginAttributes attrs;
+  attrs.InheritFromDocShellToDoc(GetOriginAttributes(), uri);
 
   ErrorResult error;
   nsCOMPtr<nsIRunnable> runnable =

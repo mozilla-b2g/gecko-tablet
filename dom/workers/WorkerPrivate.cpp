@@ -496,6 +496,9 @@ private:
     ErrorResult rv;
     scriptloader::LoadMainScript(aCx, mScriptURL, WorkerScript, rv);
     if (NS_WARN_IF(rv.Failed())) {
+      // I guess suppress the exception since that's what we used to
+      // do, though this seems moderately weird.
+      rv.SuppressException();
       return false;
     }
 
@@ -532,6 +535,9 @@ private:
     JSAutoCompartment ac(aCx, global);
     scriptloader::LoadMainScript(aCx, mScriptURL, DebuggerScript, rv);
     if (NS_WARN_IF(rv.Failed())) {
+      // I guess suppress the exception since that's what we used to
+      // do, though this seems moderately weird.
+      rv.SuppressException();
       return false;
     }
 
@@ -2192,24 +2198,11 @@ WorkerPrivateParent<Derived>::WorkerPrivateParent(
     aParent->CopyJSSettings(mJSSettings);
 
     MOZ_ASSERT(IsDedicatedWorker());
-    mNowBaseTimeStamp = aParent->NowBaseTimeStamp();
-    mNowBaseTimeHighRes = aParent->NowBaseTimeHighRes();
   }
   else {
     AssertIsOnMainThread();
 
     RuntimeService::GetDefaultJSSettings(mJSSettings);
-
-    if (IsDedicatedWorker() && mLoadInfo.mWindow &&
-        mLoadInfo.mWindow->GetPerformance()) {
-      mNowBaseTimeStamp = mLoadInfo.mWindow->GetPerformance()->GetDOMTiming()->
-        GetNavigationStartTimeStamp();
-      mNowBaseTimeHighRes = mLoadInfo.mWindow->GetPerformance()->GetDOMTiming()->
-        GetNavigationStartHighRes();
-    } else {
-      mNowBaseTimeStamp = CreationTimeStamp();
-      mNowBaseTimeHighRes = CreationTimeHighRes();
-    }
   }
 }
 

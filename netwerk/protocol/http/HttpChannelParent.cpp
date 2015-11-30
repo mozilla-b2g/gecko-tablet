@@ -41,7 +41,6 @@
 #include "nsIDocument.h"
 
 using mozilla::BasePrincipal;
-using mozilla::OriginAttributes;
 using namespace mozilla::dom;
 using namespace mozilla::ipc;
 
@@ -560,11 +559,18 @@ HttpChannelParent::DoAsyncOpen(  const URIParams&           aURI,
     }
 
     if (setChooseApplicationCache) {
-      OriginAttributes attrs;
+      DocShellOriginAttributes docShellAttrs;
       if (mLoadContext) {
-        attrs.CopyFromLoadContext(mLoadContext);
+        bool result = mLoadContext->GetOriginAttributes(docShellAttrs);
+        if (!result) {
+          return SendFailedAsyncOpen(NS_ERROR_FAILURE);
+        }
       }
 
+      NeckoOriginAttributes neckoAttrs;
+      neckoAttrs.InheritFromDocShellToNecko(docShellAttrs);
+      PrincipalOriginAttributes attrs;
+      attrs.InheritFromNecko(neckoAttrs);
       nsCOMPtr<nsIPrincipal> principal =
         BasePrincipal::CreateCodebasePrincipal(uri, attrs);
 
@@ -1178,6 +1184,7 @@ HttpChannelParent::OnStopRequest(nsIRequest *aRequest,
   mChannel->GetEncodedBodySize(&timing.encodedBodySize);
   // decodedBodySize can be computed in the child process so it doesn't need
   // to be passed down.
+  mChannel->GetProtocolVersion(timing.protocolVersion);
 
   if (mIPCClosed || !SendOnStopRequest(aStatusCode, timing))
     return NS_ERROR_UNEXPECTED;

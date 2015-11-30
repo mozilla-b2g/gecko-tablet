@@ -73,7 +73,7 @@ _PTHREAD_LDFLAGS=""
 
 dnl Do not allow objdir == srcdir builds
 dnl ==============================================================
-_topsrcdir=`cd $srcdir; pwd`
+_topsrcdir=`cd $srcdir; pwd -W 2>/dev/null || pwd`
 _objdir=`pwd`
 
 if test "$_topsrcdir" = "$_objdir"
@@ -3292,24 +3292,6 @@ MOZ_ARG_ENABLE_BOOL(oom-breakpoint,
 if test -n "$JS_OOM_BREAKPOINT"; then
     AC_DEFINE(JS_OOM_BREAKPOINT)
 fi
-
-dnl ========================================================
-dnl = Enable static checking using gcc-dehydra
-dnl ========================================================
-
-MOZ_ARG_WITH_STRING(static-checking,
-[  --with-static-checking=path/to/gcc_dehydra.so
-                          Enable static checking of code using GCC-dehydra],
-    DEHYDRA_PATH=$withval,
-    DEHYDRA_PATH= )
-
-if test -n "$DEHYDRA_PATH"; then
-    if test ! -f "$DEHYDRA_PATH"; then
-        AC_MSG_ERROR([The dehydra plugin is not at the specified path.])
-    fi
-    AC_DEFINE(NS_STATIC_CHECKING)
-fi
-AC_SUBST(DEHYDRA_PATH)
 
 dnl ========================================================
 dnl = Enable using the clang plugin to build

@@ -36,10 +36,14 @@ template<>
 struct Concrete<FakeNode> : public Base
 {
     static const char16_t concreteTypeName[];
-    const char16_t* typeName() const { return concreteTypeName; }
+    const char16_t* typeName() const override { return concreteTypeName; }
 
-    UniquePtr<EdgeRange> edges(JSRuntime* rt, bool wantNames) const {
+    UniquePtr<EdgeRange> edges(JSRuntime* rt, bool wantNames) const override {
         return UniquePtr<EdgeRange>(js_new<PreComputedEdgeRange>(get().edges));
+    }
+
+    Node::Size size(mozilla::MallocSizeOf) const override {
+        return 1;
     }
 
     static void construct(void* storage, FakeNode* ptr) { new (storage) Concrete(ptr); }
@@ -519,58 +523,93 @@ BEGIN_TEST(test_JS_ubi_DominatorTree)
     // graph when computing the dominator tree.
     FakeNode m('m');
     CHECK(tree.getImmediateDominator(&m) == JS::ubi::Node());
+    CHECK(tree.getDominatedSet(&m).isNothing());
 
-    fprintf(stderr, "r's immediate dominator is %c\n",
-            tree.getImmediateDominator(&r).as<FakeNode>()->name);
-    CHECK(tree.getImmediateDominator(&r) == JS::ubi::Node(&r));
+    struct {
+        FakeNode& dominated;
+        FakeNode& dominator;
+    } domination[] = {
+        {r, r},
+        {a, r},
+        {b, r},
+        {c, r},
+        {d, r},
+        {e, r},
+        {f, c},
+        {g, c},
+        {h, r},
+        {i, r},
+        {j, g},
+        {k, r},
+        {l, d}
+    };
 
-    fprintf(stderr, "a's immediate dominator is %c\n",
-            tree.getImmediateDominator(&a).as<FakeNode>()->name);
-    CHECK(tree.getImmediateDominator(&a) == JS::ubi::Node(&r));
+    for (auto& relation : domination) {
+        // Test immediate dominator.
+        fprintf(stderr,
+                "%c's immediate dominator is %c\n",
+                relation.dominated.name,
+                tree.getImmediateDominator(&relation.dominator).as<FakeNode>()->name);
+        CHECK(tree.getImmediateDominator(&relation.dominated) == JS::ubi::Node(&relation.dominator));
 
-    fprintf(stderr, "b's immediate dominator is %c\n",
-            tree.getImmediateDominator(&b).as<FakeNode>()->name);
-    CHECK(tree.getImmediateDominator(&b) == JS::ubi::Node(&r));
+        // Test the dominated set. Build up the expected dominated set based on
+        // the set of nodes immediately dominated by this one in `domination`,
+        // then iterate over the actual dominated set and check against the
+        // expected set.
 
-    fprintf(stderr, "c's immediate dominator is %c\n",
-            tree.getImmediateDominator(&c).as<FakeNode>()->name);
-    CHECK(tree.getImmediateDominator(&c) == JS::ubi::Node(&r));
+        auto& node = relation.dominated;
+        fprintf(stderr, "Checking %c's dominated set:\n", node.name);
 
-    fprintf(stderr, "d's immediate dominator is %c\n",
-            tree.getImmediateDominator(&d).as<FakeNode>()->name);
-    CHECK(tree.getImmediateDominator(&d) == JS::ubi::Node(&r));
+        js::HashSet<char> expectedDominatedSet(cx);
+        CHECK(expectedDominatedSet.init());
+        for (auto& rel : domination) {
+            if (&rel.dominator == &node) {
+                fprintf(stderr, "    Expecting %c\n", rel.dominated.name);
+                CHECK(expectedDominatedSet.putNew(rel.dominated.name));
+            }
+        }
 
-    fprintf(stderr, "e's immediate dominator is %c\n",
-            tree.getImmediateDominator(&e).as<FakeNode>()->name);
-    CHECK(tree.getImmediateDominator(&e) == JS::ubi::Node(&r));
+        auto maybeActualDominatedSet = tree.getDominatedSet(&node);
+        CHECK(maybeActualDominatedSet.isSome());
+        auto& actualDominatedSet = *maybeActualDominatedSet;
 
-    fprintf(stderr, "f's immediate dominator is %c\n",
-            tree.getImmediateDominator(&f).as<FakeNode>()->name);
-    CHECK(tree.getImmediateDominator(&f) == JS::ubi::Node(&c));
+        for (const auto& dominated : actualDominatedSet) {
+            fprintf(stderr, "    Found %c\n", dominated.as<FakeNode>()->name);
+            CHECK(expectedDominatedSet.has(dominated.as<FakeNode>()->name));
+            expectedDominatedSet.remove(dominated.as<FakeNode>()->name);
+        }
 
-    fprintf(stderr, "g's immediate dominator is %c\n",
-            tree.getImmediateDominator(&g).as<FakeNode>()->name);
-    CHECK(tree.getImmediateDominator(&g) == JS::ubi::Node(&c));
+        // Ensure we found them all and aren't still expecting nodes we never
+        // got.
+        CHECK(expectedDominatedSet.count() == 0);
 
-    fprintf(stderr, "h's immediate dominator is %c\n",
-            tree.getImmediateDominator(&h).as<FakeNode>()->name);
-    CHECK(tree.getImmediateDominator(&h) == JS::ubi::Node(&r));
+        fprintf(stderr, "Done checking %c's dominated set.\n\n", node.name);
+    }
 
-    fprintf(stderr, "i's immediate dominator is %c\n",
-            tree.getImmediateDominator(&i).as<FakeNode>()->name);
-    CHECK(tree.getImmediateDominator(&i) == JS::ubi::Node(&r));
+    struct {
+        FakeNode& node;
+        JS::ubi::Node::Size retainedSize;
+    } sizes[] = {
+        {r, 13},
+        {a, 1},
+        {b, 1},
+        {c, 4},
+        {d, 2},
+        {e, 1},
+        {f, 1},
+        {g, 2},
+        {h, 1},
+        {i, 1},
+        {j, 1},
+        {k, 1},
+        {l, 1},
+    };
 
-    fprintf(stderr, "j's immediate dominator is %c\n",
-            tree.getImmediateDominator(&j).as<FakeNode>()->name);
-    CHECK(tree.getImmediateDominator(&j) == JS::ubi::Node(&g));
-
-    fprintf(stderr, "k's immediate dominator is %c\n",
-            tree.getImmediateDominator(&k).as<FakeNode>()->name);
-    CHECK(tree.getImmediateDominator(&k) == JS::ubi::Node(&r));
-
-    fprintf(stderr, "l's immediate dominator is %c\n",
-            tree.getImmediateDominator(&l).as<FakeNode>()->name);
-    CHECK(tree.getImmediateDominator(&l) == JS::ubi::Node(&d));
+    for (auto& expected : sizes) {
+        JS::ubi::Node::Size actual = 0;
+        CHECK(tree.getRetainedSize(&expected.node, nullptr, actual));
+        CHECK(actual == expected.retainedSize);
+    }
 
     return true;
 }

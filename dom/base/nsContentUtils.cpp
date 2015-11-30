@@ -2116,14 +2116,6 @@ nsContentUtils::IsCallerContentXBL()
     return xpc::IsContentXBLScope(c);
 }
 
-
-bool
-nsContentUtils::IsImageSrcSetDisabled()
-{
-  return Preferences::GetBool("dom.disable_image_src_set") &&
-         !IsCallerChrome();
-}
-
 // static
 bool
 nsContentUtils::LookupBindingMember(JSContext* aCx, nsIContent *aContent,
@@ -2713,11 +2705,7 @@ nsContentUtils::SubjectPrincipal()
   MOZ_ASSERT(NS_IsMainThread());
   JSContext* cx = GetCurrentJSContext();
   if (!cx) {
-#ifndef RELEASE_BUILD
     MOZ_CRASH("Accessing the Subject Principal without an AutoJSAPI on the stack is forbidden");
-#endif
-    Telemetry::Accumulate(Telemetry::SUBJECT_PRINCIPAL_ACCESSED_WITHOUT_SCRIPT_ON_STACK, true);
-    return GetSystemPrincipal();
   }
 
   JSCompartment *compartment = js::GetContextCompartment(cx);
@@ -7670,9 +7658,11 @@ nsContentUtils::ToWidgetPoint(const CSSPoint& aPoint,
                               const nsPoint& aOffset,
                               nsPresContext* aPresContext)
 {
-  return LayoutDeviceIntPoint::FromAppUnitsRounded(
-    CSSPoint::ToAppUnits(aPoint) + aOffset,
-    aPresContext->AppUnitsPerDevPixel());
+  nsPoint point = CSSPoint::ToAppUnits(aPoint) + aOffset;
+#if defined(MOZ_SINGLE_PROCESS_APZ)
+  point = point.ApplyResolution(aPresContext->PresShell()->GetCumulativeScaleResolution());
+#endif
+  return LayoutDeviceIntPoint::FromAppUnitsRounded(point, aPresContext->AppUnitsPerDevPixel());
 }
 
 nsView*

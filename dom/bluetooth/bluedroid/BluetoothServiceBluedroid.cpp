@@ -36,20 +36,20 @@
 #include "mozilla/StaticPtr.h"
 #include "mozilla/unused.h"
 
-#define ENSURE_BLUETOOTH_IS_READY(runnable, result)                    \
+#define ENSURE_BLUETOOTH_IS_ENABLED(runnable, result)                  \
   do {                                                                 \
-    if (!sBtInterface || !IsEnabled()) {                               \
+    if (!IsEnabled()) {                                                \
       DispatchReplyError(runnable,                                     \
-        NS_LITERAL_STRING("Bluetooth is not ready"));                  \
+        NS_LITERAL_STRING("Bluetooth is not enabled"));                \
       return result;                                                   \
     }                                                                  \
   } while(0)
 
-#define ENSURE_BLUETOOTH_IS_READY_VOID(runnable)                       \
+#define ENSURE_BLUETOOTH_IS_ENABLED_VOID(runnable)                     \
   do {                                                                 \
-    if (!sBtInterface || !IsEnabled()) {                               \
+    if (!IsEnabled()) {                                                \
       DispatchReplyError(runnable,                                     \
-        NS_LITERAL_STRING("Bluetooth is not ready"));                  \
+        NS_LITERAL_STRING("Bluetooth is not enabled"));                \
       return;                                                          \
     }                                                                  \
   } while(0)
@@ -68,10 +68,11 @@ using namespace mozilla::ipc;
 USING_BLUETOOTH_NAMESPACE
 
 static BluetoothInterface* sBtInterface;
+static BluetoothCoreInterface* sBtCoreInterface;
 static nsTArray<RefPtr<BluetoothProfileController> > sControllerArray;
 
 class BluetoothServiceBluedroid::EnableResultHandler final
-  : public BluetoothResultHandler
+  : public BluetoothCoreResultHandler
 {
 public:
   void OnError(BluetoothStatus aStatus) override
@@ -115,7 +116,16 @@ public:
 private:
   void Proceed() const
   {
-    sBtInterface->Enable(new EnableResultHandler());
+    BluetoothService* bs = BluetoothService::Get();
+    NS_ENSURE_TRUE_VOID(bs);
+
+    sBtCoreInterface = sBtInterface->GetBluetoothCoreInterface();
+    NS_ENSURE_TRUE_VOID(sBtCoreInterface);
+
+    sBtCoreInterface->SetNotificationHandler(
+      reinterpret_cast<BluetoothServiceBluedroid*>(bs));
+
+    sBtCoreInterface->Enable(new EnableResultHandler());
   }
 
   unsigned char mNumProfiles;
@@ -182,7 +192,7 @@ BluetoothServiceBluedroid::StartGonkBluetooth()
 }
 
 class BluetoothServiceBluedroid::DisableResultHandler final
-  : public BluetoothResultHandler
+  : public BluetoothCoreResultHandler
 {
 public:
   void OnError(BluetoothStatus aStatus) override
@@ -212,7 +222,7 @@ BluetoothServiceBluedroid::StopGonkBluetooth()
     return NS_OK;
   }
 
-  sBtInterface->Disable(new DisableResultHandler());
+  sBtCoreInterface->Disable(new DisableResultHandler());
 
   return NS_OK;
 }
@@ -330,7 +340,7 @@ BluetoothServiceBluedroid::StartLeScanInternal(
   BluetoothReplyRunnable* aRunnable)
 {
   MOZ_ASSERT(NS_IsMainThread());
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -344,7 +354,7 @@ BluetoothServiceBluedroid::StopLeScanInternal(
   BluetoothReplyRunnable* aRunnable)
 {
   MOZ_ASSERT(NS_IsMainThread());
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -359,7 +369,7 @@ BluetoothServiceBluedroid::ConnectGattClientInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -374,7 +384,7 @@ BluetoothServiceBluedroid::DisconnectGattClientInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -388,7 +398,7 @@ BluetoothServiceBluedroid::DiscoverGattServicesInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -403,7 +413,7 @@ BluetoothServiceBluedroid::GattClientStartNotificationsInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -418,7 +428,7 @@ BluetoothServiceBluedroid::GattClientStopNotificationsInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -432,7 +442,7 @@ BluetoothServiceBluedroid::UnregisterGattClientInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -447,7 +457,7 @@ BluetoothServiceBluedroid::GattClientReadRemoteRssiInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -464,7 +474,7 @@ BluetoothServiceBluedroid::GattClientReadCharacteristicValueInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -484,7 +494,7 @@ BluetoothServiceBluedroid::GattClientWriteCharacteristicValueInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -503,7 +513,7 @@ BluetoothServiceBluedroid::GattClientReadDescriptorValueInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -523,7 +533,7 @@ BluetoothServiceBluedroid::GattClientWriteDescriptorValueInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -540,7 +550,7 @@ BluetoothServiceBluedroid::GattServerConnectPeripheralInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -555,7 +565,7 @@ BluetoothServiceBluedroid::GattServerDisconnectPeripheralInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -569,7 +579,7 @@ BluetoothServiceBluedroid::UnregisterGattServerInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -586,7 +596,7 @@ BluetoothServiceBluedroid::GattServerAddServiceInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -603,7 +613,7 @@ BluetoothServiceBluedroid::GattServerAddIncludedServiceInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -625,7 +635,7 @@ BluetoothServiceBluedroid::GattServerAddCharacteristicInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -649,7 +659,7 @@ BluetoothServiceBluedroid::GattServerAddDescriptorInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -670,7 +680,7 @@ BluetoothServiceBluedroid::GattServerRemoveServiceInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -686,7 +696,7 @@ BluetoothServiceBluedroid::GattServerStartServiceInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -702,7 +712,7 @@ BluetoothServiceBluedroid::GattServerStopServiceInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -721,7 +731,7 @@ BluetoothServiceBluedroid::GattServerSendResponseInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -741,7 +751,7 @@ BluetoothServiceBluedroid::GattServerSendIndicationInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothGattManager* gatt = BluetoothGattManager::Get();
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
@@ -816,9 +826,8 @@ public:
   RefPtr<BluetoothReplyRunnable> mRunnable;
 };
 
-class BluetoothServiceBluedroid::GetRemoteDevicePropertiesResultHandler
-  final
-  : public BluetoothResultHandler
+class BluetoothServiceBluedroid::GetRemoteDevicePropertiesResultHandler final
+  : public BluetoothCoreResultHandler
 {
 public:
   GetRemoteDevicePropertiesResultHandler(
@@ -860,7 +869,7 @@ BluetoothServiceBluedroid::GetConnectedDevicePropertiesInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY(aRunnable, NS_OK);
+  ENSURE_BLUETOOTH_IS_ENABLED(aRunnable, NS_OK);
 
   BluetoothProfileManagerBase* profile =
     BluetoothUuidHelper::GetBluetoothProfileManager(aServiceUuid);
@@ -883,7 +892,7 @@ BluetoothServiceBluedroid::GetConnectedDevicePropertiesInternal(
   GetDeviceRequest request(1, aRunnable);
   mGetDeviceRequests.AppendElement(request);
 
-  sBtInterface->GetRemoteDeviceProperties(address,
+  sBtCoreInterface->GetRemoteDeviceProperties(address,
     new GetRemoteDevicePropertiesResultHandler(mGetDeviceRequests, address));
 
   return NS_OK;
@@ -896,7 +905,7 @@ BluetoothServiceBluedroid::GetPairedDevicePropertiesInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY(aRunnable, NS_OK);
+  ENSURE_BLUETOOTH_IS_ENABLED(aRunnable, NS_OK);
 
   if (aDeviceAddress.IsEmpty()) {
     DispatchReplySuccess(aRunnable);
@@ -909,7 +918,7 @@ BluetoothServiceBluedroid::GetPairedDevicePropertiesInternal(
 
   for (uint8_t i = 0; i < aDeviceAddress.Length(); i++) {
     // Retrieve all properties of devices
-    sBtInterface->GetRemoteDeviceProperties(aDeviceAddress[i],
+    sBtCoreInterface->GetRemoteDeviceProperties(aDeviceAddress[i],
       new GetRemoteDevicePropertiesResultHandler(mGetDeviceRequests,
                                                  aDeviceAddress[i]));
   }
@@ -918,7 +927,7 @@ BluetoothServiceBluedroid::GetPairedDevicePropertiesInternal(
 }
 
 class BluetoothServiceBluedroid::DispatchReplyErrorResultHandler final
-  : public BluetoothResultHandler
+  : public BluetoothCoreResultHandler
 {
 public:
   DispatchReplyErrorResultHandler(
@@ -948,10 +957,10 @@ BluetoothServiceBluedroid::StartDiscoveryInternal(
   BluetoothReplyRunnable* aRunnable)
 {
   MOZ_ASSERT(NS_IsMainThread());
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   mChangeDiscoveryRunnables.AppendElement(aRunnable);
-  sBtInterface->StartDiscovery(
+  sBtCoreInterface->StartDiscovery(
     new DispatchReplyErrorResultHandler(mChangeDiscoveryRunnables, aRunnable));
 }
 
@@ -961,7 +970,7 @@ BluetoothServiceBluedroid::FetchUuidsInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY(aRunnable, NS_OK);
+  ENSURE_BLUETOOTH_IS_ENABLED(aRunnable, NS_OK);
 
   /*
    * get_remote_services request will not be performed by bluedroid
@@ -972,7 +981,7 @@ BluetoothServiceBluedroid::FetchUuidsInternal(
   }
 
   mFetchUuidsRunnables.AppendElement(aRunnable);
-  sBtInterface->GetRemoteServices(aDeviceAddress,
+  sBtCoreInterface->GetRemoteServices(aDeviceAddress,
     new DispatchReplyErrorResultHandler(mFetchUuidsRunnables, aRunnable));
 
   return NS_OK;
@@ -984,10 +993,10 @@ BluetoothServiceBluedroid::StopDiscoveryInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   mChangeDiscoveryRunnables.AppendElement(aRunnable);
-  sBtInterface->CancelDiscovery(
+  sBtCoreInterface->CancelDiscovery(
     new DispatchReplyErrorResultHandler(mChangeDiscoveryRunnables, aRunnable));
 }
 
@@ -998,7 +1007,7 @@ BluetoothServiceBluedroid::SetProperty(BluetoothObjectType aType,
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY(aRunnable, NS_OK);
+  ENSURE_BLUETOOTH_IS_ENABLED(aRunnable, NS_OK);
 
   BluetoothProperty property;
   nsresult rv = NamedValueToProperty(aValue, property);
@@ -1008,7 +1017,7 @@ BluetoothServiceBluedroid::SetProperty(BluetoothObjectType aType,
   }
 
   mSetAdapterPropertyRunnables.AppendElement(aRunnable);
-  sBtInterface->SetAdapterProperty(
+  sBtCoreInterface->SetAdapterProperty(
     property,
     new DispatchReplyErrorResultHandler(mSetAdapterPropertyRunnables,
                                         aRunnable));
@@ -1034,7 +1043,7 @@ struct BluetoothServiceBluedroid::GetRemoteServiceRecordRequest final
 };
 
 class BluetoothServiceBluedroid::GetRemoteServiceRecordResultHandler final
-  : public BluetoothResultHandler
+  : public BluetoothCoreResultHandler
 {
 public:
   GetRemoteServiceRecordResultHandler(
@@ -1067,7 +1076,7 @@ public:
   void CancelDiscovery() override
   {
     // Disabled discovery mode, now perform SDP operation.
-    sBtInterface->GetRemoteServiceRecord(mDeviceAddress, mUuid, this);
+    sBtCoreInterface->GetRemoteServiceRecord(mDeviceAddress, mUuid, this);
   }
 
 private:
@@ -1097,7 +1106,7 @@ BluetoothServiceBluedroid::GetServiceChannel(
   mGetRemoteServiceRecordArray.AppendElement(
     GetRemoteServiceRecordRequest(aDeviceAddress, aServiceUuid, aManager));
 
-  RefPtr<BluetoothResultHandler> res =
+  RefPtr<BluetoothCoreResultHandler> res =
     new GetRemoteServiceRecordResultHandler(mGetRemoteServiceRecordArray,
                                             aDeviceAddress, aServiceUuid);
 
@@ -1105,9 +1114,9 @@ BluetoothServiceBluedroid::GetServiceChannel(
    * won't be performed while the adapter is in discovery mode.
    */
   if (mDiscovering) {
-    sBtInterface->CancelDiscovery(res);
+    sBtCoreInterface->CancelDiscovery(res);
   } else {
-    sBtInterface->GetRemoteServiceRecord(aDeviceAddress, aServiceUuid, res);
+    sBtCoreInterface->GetRemoteServiceRecord(aDeviceAddress, aServiceUuid, res);
   }
 
   return NS_OK;
@@ -1128,7 +1137,7 @@ struct BluetoothServiceBluedroid::GetRemoteServicesRequest final
 };
 
 class BluetoothServiceBluedroid::GetRemoteServicesResultHandler final
-  : public BluetoothResultHandler
+  : public BluetoothCoreResultHandler
 {
 public:
   GetRemoteServicesResultHandler(
@@ -1161,7 +1170,7 @@ public:
   void CancelDiscovery() override
   {
     // Disabled discovery mode, now perform SDP operation.
-    sBtInterface->GetRemoteServices(mDeviceAddress, this);
+    sBtCoreInterface->GetRemoteServices(mDeviceAddress, this);
   }
 
 private:
@@ -1190,7 +1199,7 @@ BluetoothServiceBluedroid::UpdateSdpRecords(
   mGetRemoteServicesArray.AppendElement(
     GetRemoteServicesRequest(aDeviceAddress, aManager));
 
-  RefPtr<BluetoothResultHandler> res =
+  RefPtr<BluetoothCoreResultHandler> res =
     new GetRemoteServicesResultHandler(mGetRemoteServicesArray,
                                        aDeviceAddress, aManager);
 
@@ -1198,9 +1207,9 @@ BluetoothServiceBluedroid::UpdateSdpRecords(
    * won't be performed while the adapter is in discovery mode.
    */
   if (mDiscovering) {
-    sBtInterface->CancelDiscovery(res);
+    sBtCoreInterface->CancelDiscovery(res);
   } else {
-    sBtInterface->GetRemoteServices(aDeviceAddress, res);
+    sBtCoreInterface->GetRemoteServices(aDeviceAddress, res);
   }
 
   return true;
@@ -1213,10 +1222,10 @@ BluetoothServiceBluedroid::CreatePairedDeviceInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY(aRunnable, NS_OK);
+  ENSURE_BLUETOOTH_IS_ENABLED(aRunnable, NS_OK);
 
   mCreateBondRunnables.AppendElement(aRunnable);
-  sBtInterface->CreateBond(aDeviceAddress, TRANSPORT_AUTO,
+  sBtCoreInterface->CreateBond(aDeviceAddress, TRANSPORT_AUTO,
     new DispatchReplyErrorResultHandler(mCreateBondRunnables, aRunnable));
 
   return NS_OK;
@@ -1228,17 +1237,17 @@ BluetoothServiceBluedroid::RemoveDeviceInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY(aRunnable, NS_OK);
+  ENSURE_BLUETOOTH_IS_ENABLED(aRunnable, NS_OK);
 
   mRemoveBondRunnables.AppendElement(aRunnable);
-  sBtInterface->RemoveBond(aDeviceAddress,
+  sBtCoreInterface->RemoveBond(aDeviceAddress,
     new DispatchReplyErrorResultHandler(mRemoveBondRunnables, aRunnable));
 
   return NS_OK;
 }
 
 class BluetoothServiceBluedroid::PinReplyResultHandler final
-  : public BluetoothResultHandler
+  : public BluetoothCoreResultHandler
 {
 public:
   PinReplyResultHandler(BluetoothReplyRunnable* aRunnable)
@@ -1259,6 +1268,28 @@ private:
   BluetoothReplyRunnable* mRunnable;
 };
 
+class BluetoothServiceBluedroid::CancelBondResultHandler final
+  : public BluetoothCoreResultHandler
+{
+public:
+  CancelBondResultHandler(BluetoothReplyRunnable* aRunnable)
+    : mRunnable(aRunnable)
+  { }
+
+  void CancelBond() override
+  {
+    DispatchReplySuccess(mRunnable);
+  }
+
+  void OnError(BluetoothStatus aStatus) override
+  {
+    DispatchReplyError(mRunnable, aStatus);
+  }
+
+private:
+  BluetoothReplyRunnable* mRunnable;
+};
+
 void
 BluetoothServiceBluedroid::PinReplyInternal(
   const BluetoothAddress& aDeviceAddress, bool aAccept,
@@ -1266,10 +1297,16 @@ BluetoothServiceBluedroid::PinReplyInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
-  sBtInterface->PinReply(aDeviceAddress, aAccept, aPinCode,
-                         new PinReplyResultHandler(aRunnable));
+  if (aAccept) {
+    sBtCoreInterface->PinReply(aDeviceAddress, aAccept, aPinCode,
+                               new PinReplyResultHandler(aRunnable));
+  } else {
+    // Call CancelBond to trigger BondStateChangedNotification
+    sBtCoreInterface->CancelBond(aDeviceAddress,
+                                 new CancelBondResultHandler(aRunnable));
+  }
 }
 
 void
@@ -1289,7 +1326,7 @@ BluetoothServiceBluedroid::SetPasskeyInternal(
 }
 
 class BluetoothServiceBluedroid::SspReplyResultHandler final
-  : public BluetoothResultHandler
+  : public BluetoothCoreResultHandler
 {
 public:
   SspReplyResultHandler(BluetoothReplyRunnable* aRunnable)
@@ -1317,10 +1354,11 @@ BluetoothServiceBluedroid::SspReplyInternal(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
-  sBtInterface->SspReply(aDeviceAddress, aVariant, aAccept, 0 /* passkey */,
-                         new SspReplyResultHandler(aRunnable));
+  sBtCoreInterface->SspReply(aDeviceAddress, aVariant, aAccept,
+                             0 /* passkey */,
+                             new SspReplyResultHandler(aRunnable));
 }
 
 void
@@ -1523,7 +1561,7 @@ BluetoothServiceBluedroid::SetObexPassword(const nsAString& aPassword,
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothPbapManager* pbap = BluetoothPbapManager::Get();
   if (!pbap) {
@@ -1542,7 +1580,7 @@ BluetoothServiceBluedroid::RejectObexAuth(
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  ENSURE_BLUETOOTH_IS_READY_VOID(aRunnable);
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
   BluetoothPbapManager* pbap = BluetoothPbapManager::Get();
   if (!pbap) {
@@ -1926,6 +1964,7 @@ private:
       return;
     }
 
+    sBtCoreInterface = nullptr;
     sBtInterface->Cleanup(new CleanupResultHandler());
   }
 
@@ -1935,7 +1974,7 @@ private:
 
 class BluetoothServiceBluedroid::SetAdapterPropertyDiscoverableResultHandler
   final
-  : public BluetoothResultHandler
+  : public BluetoothCoreResultHandler
 {
 public:
   void OnError(BluetoothStatus aStatus) override
@@ -2027,8 +2066,7 @@ BluetoothServiceBluedroid::AdapterStateChangedNotification(bool aState)
 
     // Bluetooth scan mode is SCAN_MODE_CONNECTABLE by default, i.e., it should
     // be connectable and non-discoverable.
-    NS_ENSURE_TRUE_VOID(sBtInterface);
-    sBtInterface->SetAdapterProperty(
+    sBtCoreInterface->SetAdapterProperty(
       BluetoothProperty(PROPERTY_ADAPTER_SCAN_MODE, SCAN_MODE_CONNECTABLE),
       new SetAdapterPropertyDiscoverableResultHandler());
 

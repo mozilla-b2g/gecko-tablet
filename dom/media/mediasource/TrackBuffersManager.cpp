@@ -680,7 +680,7 @@ TrackBuffersManager::SegmentParserLoop()
     // 5. If the append state equals PARSING_INIT_SEGMENT, then run the
     // following steps:
     if (mAppendState == AppendState::PARSING_INIT_SEGMENT) {
-      if (mParser->InitSegmentRange().IsNull()) {
+      if (mParser->InitSegmentRange().IsEmpty()) {
         mInputBuffer = nullptr;
         NeedMoreData();
         return;
@@ -707,7 +707,7 @@ TrackBuffersManager::SegmentParserLoop()
           ResetDemuxingState();
           return;
         }
-        if (newData || !mParser->MediaSegmentRange().IsNull()) {
+        if (newData || !mParser->MediaSegmentRange().IsEmpty()) {
           if (mPendingInputBuffer) {
             // We now have a complete media segment header. We can resume parsing
             // the data.
@@ -1135,7 +1135,7 @@ TrackBuffersManager::CodedFrameProcessing()
   MOZ_ASSERT(mProcessingPromise.IsEmpty());
 
   MediaByteRange mediaRange = mParser->MediaSegmentRange();
-  if (mediaRange.IsNull()) {
+  if (mediaRange.IsEmpty()) {
     AppendDataToCurrentInputBuffer(mInputBuffer);
     mInputBuffer = nullptr;
   } else {
@@ -1309,7 +1309,7 @@ TrackBuffersManager::CompleteCodedFrameProcessing()
   }
 
   // 5. If the input buffer does not contain a complete media segment, then jump to the need more data step below.
-  if (mParser->MediaSegmentRange().IsNull()) {
+  if (mParser->MediaSegmentRange().IsEmpty()) {
     ResolveProcessing(true, __func__);
     return;
   }
@@ -1387,11 +1387,15 @@ TrackBuffersManager::ProcessFrames(TrackBuffer& aSamples, TrackData& aTrackData)
   // 5. Let track buffer equal the track buffer that the coded frame will be added to.
   auto& trackBuffer = aTrackData;
 
-  // We apply a fuzz search +- mLongestFrameDuration to get around videos where
-  // the start time is negative but close to 0.
-  TimeInterval targetWindow{
-    TimeInterval(mAppendWindow.mStart, mAppendWindow.mEnd,
-                 trackBuffer.mLongestFrameDuration.refOr(TimeUnit::FromMicroseconds(aSamples[0]->mDuration)))};
+  // Some videos do not exactly start at 0, but instead a small negative value.
+  // To avoid evicting the starting frame of those videos, we allow a leeway
+  // of +- mLongestFrameDuration on the append window start.
+  // We only apply the leeway with the default append window start of 0
+  // otherwise do as per spec.
+  TimeInterval targetWindow = mAppendWindow.mStart != TimeUnit::FromSeconds(0)
+    ? mAppendWindow
+    : TimeInterval(mAppendWindow.mStart, mAppendWindow.mEnd,
+                   trackBuffer.mLongestFrameDuration.refOr(TimeUnit::FromMicroseconds(aSamples[0]->mDuration)));
 
   TimeIntervals samplesRange;
   uint32_t sizeNewSamples = 0;
@@ -1520,7 +1524,7 @@ TrackBuffersManager::ProcessFrames(TrackBuffer& aSamples, TrackData& aTrackData)
 
     // 8. If presentation timestamp is less than appendWindowStart, then set the need random access point flag to true, drop the coded frame, and jump to the top of the loop to start processing the next coded frame.
     // 9. If frame end timestamp is greater than appendWindowEnd, then set the need random access point flag to true, drop the coded frame, and jump to the top of the loop to start processing the next coded frame.
-    if (!targetWindow.Contains(sampleInterval)) {
+    if (!targetWindow.ContainsWithStrictEnd(sampleInterval)) {
       if (samples.Length()) {
         // We are creating a discontinuity in the samples.
         // Insert the samples processed so far.

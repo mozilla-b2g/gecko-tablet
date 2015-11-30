@@ -79,6 +79,7 @@ using mozilla::Unused;
 #include "nsString.h"
 #include "GeckoProfiler.h" // For PROFILER_LABEL
 #include "nsIXULRuntime.h"
+#include "nsPrintfCString.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -2636,7 +2637,8 @@ nsWindow::DrawWindowUnderlay(LayerManagerComposite* aManager, nsIntRect aRect)
 }
 
 void
-nsWindow::DrawWindowOverlay(LayerManagerComposite* aManager, nsIntRect aRect)
+nsWindow::DrawWindowOverlay(LayerManagerComposite* aManager,
+                            LayoutDeviceIntRect aRect)
 {
     PROFILER_LABEL("nsWindow", "DrawWindowOverlay",
         js::ProfileEntry::Category::GRAPHICS);

@@ -18,6 +18,7 @@
 #include "mozilla/dom/FragmentOrElement.h"
 
 #include "mozilla/AsyncEventDispatcher.h"
+#include "mozilla/EffectSet.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/EventListenerManager.h"
 #include "mozilla/EventStates.h"
@@ -509,7 +510,6 @@ nsNodeSupportsWeakRefTearoff::GetWeakReference(nsIWeakReference** aInstancePtr)
   nsINode::nsSlots* slots = mNode->Slots();
   if (!slots->mWeakReference) {
     slots->mWeakReference = new nsNodeWeakReference(mNode);
-    NS_ENSURE_TRUE(slots->mWeakReference, NS_ERROR_OUT_OF_MEMORY);
   }
 
   NS_ADDREF(*aInstancePtr = slots->mWeakReference);
@@ -1352,6 +1352,11 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(FragmentOrElement)
       for (uint32_t i = 0; props[i]; ++i) {
         tmp->DeleteProperty(*props[i]);
       }
+      // Bug 1226091: Call MayHaveAnimations() first
+      nsIAtom** effectProps = EffectSet::GetEffectSetPropertyAtoms();
+      for (uint32_t i = 0; effectProps[i]; ++i) {
+        tmp->DeleteProperty(effectProps[i]);
+      }
     }
   }
 
@@ -1901,6 +1906,15 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(FragmentOrElement)
         nsISupports* property =
           static_cast<nsISupports*>(tmp->GetProperty(*props[i]));
         cb.NoteXPCOMChild(property);
+      }
+      // Bug 1226091: Check MayHaveAnimations() first
+      nsIAtom** effectProps = EffectSet::GetEffectSetPropertyAtoms();
+      for (uint32_t i = 0; effectProps[i]; ++i) {
+        EffectSet* effectSet =
+          static_cast<EffectSet*>(tmp->GetProperty(effectProps[i]));
+        if (effectSet) {
+          effectSet->Traverse(cb);
+        }
       }
     }
   }

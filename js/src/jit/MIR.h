@@ -1401,16 +1401,16 @@ class MSimdValueX4
     static MSimdValueX4* NewAsmJS(TempAllocator& alloc, MIRType type, MDefinition* x,
                                   MDefinition* y, MDefinition* z, MDefinition* w)
     {
-        mozilla::DebugOnly<MIRType> scalarType = SimdTypeToScalarType(type);
-        MOZ_ASSERT(scalarType == x->type());
-        MOZ_ASSERT(scalarType == y->type());
-        MOZ_ASSERT(scalarType == z->type());
-        MOZ_ASSERT(scalarType == w->type());
+        mozilla::DebugOnly<MIRType> laneType = SimdTypeToLaneType(type);
+        MOZ_ASSERT(laneType == x->type());
+        MOZ_ASSERT(laneType == y->type());
+        MOZ_ASSERT(laneType == z->type());
+        MOZ_ASSERT(laneType == w->type());
         return MSimdValueX4::New(alloc, type, x, y, z, w);
     }
 
     bool canConsumeFloat32(MUse* use) const override {
-        return SimdTypeToScalarType(type()) == MIRType_Float32;
+        return SimdTypeToLaneType(type()) == MIRType_Float32;
     }
 
     AliasSet getAliasSet() const override {
@@ -1445,7 +1445,7 @@ class MSimdSplatX4
 
     static MSimdSplatX4* NewAsmJS(TempAllocator& alloc, MDefinition* v, MIRType type)
     {
-        MOZ_ASSERT(SimdTypeToScalarType(type) == v->type());
+        MOZ_ASSERT(SimdTypeToLaneType(type) == v->type());
         return new(alloc) MSimdSplatX4(type, v);
     }
 
@@ -1455,7 +1455,7 @@ class MSimdSplatX4
     }
 
     bool canConsumeFloat32(MUse* use) const override {
-        return SimdTypeToScalarType(type()) == MIRType_Float32;
+        return SimdTypeToLaneType(type()) == MIRType_Float32;
     }
 
     AliasSet getAliasSet() const override {
@@ -1596,17 +1596,17 @@ class MSimdExtractElement
   protected:
     SimdLane lane_;
 
-    MSimdExtractElement(MDefinition* obj, MIRType vecType, MIRType scalarType, SimdLane lane)
+    MSimdExtractElement(MDefinition* obj, MIRType vecType, MIRType laneType, SimdLane lane)
       : MUnaryInstruction(obj), lane_(lane)
     {
         MOZ_ASSERT(IsSimdType(vecType));
         MOZ_ASSERT(uint32_t(lane) < SimdTypeToLength(vecType));
-        MOZ_ASSERT(!IsSimdType(scalarType));
-        MOZ_ASSERT(SimdTypeToScalarType(vecType) == scalarType);
+        MOZ_ASSERT(!IsSimdType(laneType));
+        MOZ_ASSERT(SimdTypeToLaneType(vecType) == laneType);
 
         setMovable();
         specialization_ = vecType;
-        setResultType(scalarType);
+        setResultType(laneType);
     }
 
   public:
@@ -1665,7 +1665,7 @@ class MSimdInsertElement
                                          MIRType type, SimdLane lane)
     {
         MOZ_ASSERT(vec->type() == type);
-        MOZ_ASSERT(SimdTypeToScalarType(type) == val->type());
+        MOZ_ASSERT(SimdTypeToLaneType(type) == val->type());
         return new(alloc) MSimdInsertElement(vec, val, type, lane);
     }
 
@@ -1696,7 +1696,7 @@ class MSimdInsertElement
     }
 
     bool canConsumeFloat32(MUse* use) const override {
-        return use == getUseFor(1) && SimdTypeToScalarType(type()) == MIRType_Float32;
+        return use == getUseFor(1) && SimdTypeToLaneType(type()) == MIRType_Float32;
     }
 
     AliasSet getAliasSet() const override {
@@ -3906,6 +3906,49 @@ class MApplyArgs
     }
 };
 
+// fun.apply(fn, array)
+class MApplyArray
+  : public MAryInstruction<3>,
+    public Mix3Policy<ObjectPolicy<0>, ObjectPolicy<1>, BoxPolicy<2> >::Data
+{
+  protected:
+    // Monomorphic cache of single target from TI, or nullptr.
+    CompilerFunction target_;
+
+    MApplyArray(JSFunction* target, MDefinition* fun, MDefinition* elements, MDefinition* self)
+      : target_(target)
+    {
+        initOperand(0, fun);
+        initOperand(1, elements);
+        initOperand(2, self);
+        setResultType(MIRType_Value);
+    }
+
+  public:
+    INSTRUCTION_HEADER(ApplyArray)
+    static MApplyArray* New(TempAllocator& alloc, JSFunction* target, MDefinition* fun,
+                            MDefinition* elements, MDefinition* self);
+
+    MDefinition* getFunction() const {
+        return getOperand(0);
+    }
+
+    // For TI-informed monomorphic callsites.
+    JSFunction* getSingleTarget() const {
+        return target_;
+    }
+
+    MDefinition* getElements() const {
+        return getOperand(1);
+    }
+    MDefinition* getThis() const {
+        return getOperand(2);
+    }
+    bool possiblyCalls() const override {
+        return true;
+    }
+};
+
 class MBail : public MNullaryInstruction
 {
   protected:
@@ -4066,21 +4109,19 @@ class MGetDynamicName
 };
 
 class MCallDirectEval
-  : public MAryInstruction<4>,
-    public Mix4Policy<ObjectPolicy<0>,
+  : public MAryInstruction<3>,
+    public Mix3Policy<ObjectPolicy<0>,
                       StringPolicy<1>,
-                      BoxPolicy<2>,
-                      BoxPolicy<3> >::Data
+                      BoxPolicy<2> >::Data
 {
   protected:
-    MCallDirectEval(MDefinition* scopeChain, MDefinition* string, MDefinition* thisValue,
+    MCallDirectEval(MDefinition* scopeChain, MDefinition* string,
                     MDefinition* newTargetValue, jsbytecode* pc)
         : pc_(pc)
     {
         initOperand(0, scopeChain);
         initOperand(1, string);
-        initOperand(2, thisValue);
-        initOperand(3, newTargetValue);
+        initOperand(2, newTargetValue);
         setResultType(MIRType_Value);
     }
 
@@ -4088,10 +4129,10 @@ class MCallDirectEval
     INSTRUCTION_HEADER(CallDirectEval)
 
     static MCallDirectEval*
-    New(TempAllocator& alloc, MDefinition* scopeChain, MDefinition* string, MDefinition* thisValue,
+    New(TempAllocator& alloc, MDefinition* scopeChain, MDefinition* string,
         MDefinition* newTargetValue, jsbytecode* pc)
     {
-        return new(alloc) MCallDirectEval(scopeChain, string, thisValue, newTargetValue, pc);
+        return new(alloc) MCallDirectEval(scopeChain, string, newTargetValue, pc);
     }
 
     MDefinition* getScopeChain() const {
@@ -4100,11 +4141,8 @@ class MCallDirectEval
     MDefinition* getString() const {
         return getOperand(1);
     }
-    MDefinition* getThisValue() const {
-        return getOperand(2);
-    }
     MDefinition* getNewTargetValue() const {
-        return getOperand(3);
+        return getOperand(2);
     }
 
     jsbytecode* pc() const {
@@ -6746,36 +6784,6 @@ class MComputeThis
     // Note: don't override getAliasSet: the thisValue hook can be effectful.
 };
 
-// Load an arrow function's |this| value.
-class MLoadArrowThis
-  : public MUnaryInstruction,
-    public SingleObjectPolicy::Data
-{
-    explicit MLoadArrowThis(MDefinition* callee)
-      : MUnaryInstruction(callee)
-    {
-        setResultType(MIRType_Value);
-        setMovable();
-    }
-
-  public:
-    INSTRUCTION_HEADER(LoadArrowThis)
-
-    static MLoadArrowThis* New(TempAllocator& alloc, MDefinition* callee) {
-        return new(alloc) MLoadArrowThis(callee);
-    }
-    MDefinition* callee() const {
-        return getOperand(0);
-    }
-    bool congruentTo(const MDefinition* ins) const override {
-        return congruentIfOperandsEqual(ins);
-    }
-    AliasSet getAliasSet() const override {
-        // An arrow function's lexical |this| value is immutable.
-        return AliasSet::None();
-    }
-};
-
 // Load an arrow function's |new.target| value.
 class MArrowNewTarget
   : public MUnaryInstruction,
@@ -7730,14 +7738,14 @@ class MLambda
 };
 
 class MLambdaArrow
-  : public MTernaryInstruction,
-    public Mix3Policy<ObjectPolicy<0>, BoxPolicy<1>, BoxPolicy<2> >::Data
+  : public MBinaryInstruction,
+    public MixPolicy<ObjectPolicy<0>, BoxPolicy<1>>::Data
 {
     const LambdaFunctionInfo info_;
 
     MLambdaArrow(CompilerConstraintList* constraints, MDefinition* scopeChain,
-                 MDefinition* this_, MDefinition* newTarget_, JSFunction* fun)
-      : MTernaryInstruction(scopeChain, this_, newTarget_), info_(fun)
+                 MDefinition* newTarget_, JSFunction* fun)
+      : MBinaryInstruction(scopeChain, newTarget_), info_(fun)
     {
         setResultType(MIRType_Object);
         MOZ_ASSERT(!ObjectGroup::useSingletonForClone(fun));
@@ -7749,19 +7757,15 @@ class MLambdaArrow
     INSTRUCTION_HEADER(LambdaArrow)
 
     static MLambdaArrow* New(TempAllocator& alloc, CompilerConstraintList* constraints,
-                             MDefinition* scopeChain, MDefinition* this_, MDefinition* newTarget_,
-                             JSFunction* fun)
+                             MDefinition* scopeChain, MDefinition* newTarget_, JSFunction* fun)
     {
-        return new(alloc) MLambdaArrow(constraints, scopeChain, this_, newTarget_, fun);
+        return new(alloc) MLambdaArrow(constraints, scopeChain, newTarget_, fun);
     }
     MDefinition* scopeChain() const {
         return getOperand(0);
     }
-    MDefinition* thisDef() const {
-        return getOperand(1);
-    }
     MDefinition* newTargetDef() const {
-        return getOperand(2);
+        return getOperand(1);
     }
     const LambdaFunctionInfo& info() const {
         return info_;

@@ -667,6 +667,7 @@ html|*#fullscreen-warning {
 }
 html|*#fullscreen-warning:not([hidden]) {
   display: flex;
+  will-change: transform;
 }
 html|*#fullscreen-warning[onscreen] {
   transform: translate(-50%, 50px);
@@ -899,11 +900,6 @@ panelview > .social-panel-frame {
 /* Translation */
 notification[value="translation"] {
   -moz-binding: url("chrome://browser/content/translation-infobar.xml#translationbar");
-}
-
-/* Loop/ Hello */
-notification[value="loop-sharing-notification"] .close-icon {
-  display: none;
 }
 
 /* Social */

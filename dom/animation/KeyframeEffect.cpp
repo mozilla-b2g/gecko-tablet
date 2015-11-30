@@ -5,6 +5,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/dom/KeyframeEffect.h"
+
 #include "mozilla/dom/AnimationEffectReadOnlyBinding.h"
 #include "mozilla/dom/KeyframeEffectBinding.h"
 #include "mozilla/dom/PropertyIndexedKeyframesBinding.h"
@@ -22,43 +23,21 @@
 
 namespace mozilla {
 
+bool
+AnimationTiming::FillsForwards() const
+{
+  return mFillMode == dom::FillMode::Both ||
+         mFillMode == dom::FillMode::Forwards;
+}
+
+bool
+AnimationTiming::FillsBackwards() const
+{
+  return mFillMode == dom::FillMode::Both ||
+         mFillMode == dom::FillMode::Backwards;
+}
+
 // Helper functions for generating a ComputedTimingProperties dictionary
-static dom::FillMode
-ConvertFillMode(uint8_t aFill)
-{
-  switch (aFill) {
-    case NS_STYLE_ANIMATION_FILL_MODE_NONE:
-      return dom::FillMode::None;
-    case NS_STYLE_ANIMATION_FILL_MODE_FORWARDS:
-      return dom::FillMode::Forwards;
-    case NS_STYLE_ANIMATION_FILL_MODE_BACKWARDS:
-      return dom::FillMode::Backwards;
-    case NS_STYLE_ANIMATION_FILL_MODE_BOTH:
-      return dom::FillMode::Both;
-    default:
-      MOZ_ASSERT(false, "The mapping of FillMode is not correct");
-      return dom::FillMode::None;
-  }
-}
-
-static dom::PlaybackDirection
-ConvertPlaybackDirection(uint8_t aDirection)
-{
-  switch (aDirection) {
-    case NS_STYLE_ANIMATION_DIRECTION_NORMAL:
-      return dom::PlaybackDirection::Normal;
-    case NS_STYLE_ANIMATION_DIRECTION_REVERSE:
-      return dom::PlaybackDirection::Reverse;
-    case NS_STYLE_ANIMATION_DIRECTION_ALTERNATE:
-      return dom::PlaybackDirection::Alternate;
-    case NS_STYLE_ANIMATION_DIRECTION_ALTERNATE_REVERSE:
-      return dom::PlaybackDirection::Alternate_reverse;
-    default:
-      MOZ_ASSERT(false, "The mapping of PlaybackDirection is not correct");
-      return dom::PlaybackDirection::Normal;
-  }
-}
-
 static void
 GetComputedTimingDictionary(const ComputedTiming& aComputedTiming,
                             const Nullable<TimeDuration>& aLocalTime,
@@ -67,10 +46,10 @@ GetComputedTimingDictionary(const ComputedTiming& aComputedTiming,
 {
   // AnimationEffectTimingProperties
   aRetVal.mDelay = aTiming.mDelay.ToMilliseconds();
-  aRetVal.mFill = ConvertFillMode(aTiming.mFillMode);
+  aRetVal.mFill = aTiming.mFillMode;
   aRetVal.mIterations = aTiming.mIterationCount;
   aRetVal.mDuration.SetAsUnrestrictedDouble() = aTiming.mIterationDuration.ToMilliseconds();
-  aRetVal.mDirection = ConvertPlaybackDirection(aTiming.mDirection);
+  aRetVal.mDirection = aTiming.mDirection;
 
   // ComputedTimingProperties
   aRetVal.mActiveDuration = aComputedTiming.mActiveDuration.ToMilliseconds();
@@ -126,6 +105,18 @@ KeyframeEffectReadOnly::WrapObject(JSContext* aCx,
   return KeyframeEffectReadOnlyBinding::Wrap(aCx, this, aGivenProto);
 }
 
+IterationCompositeOperation
+KeyframeEffectReadOnly::IterationComposite() const
+{
+  return IterationCompositeOperation::Replace;
+}
+
+CompositeOperation
+KeyframeEffectReadOnly::Composite() const
+{
+  return CompositeOperation::Replace;
+}
+
 void
 KeyframeEffectReadOnly::SetTiming(const AnimationTiming& aTiming)
 {
@@ -136,6 +127,9 @@ KeyframeEffectReadOnly::SetTiming(const AnimationTiming& aTiming)
   if (mAnimation) {
     mAnimation->NotifyEffectTimingUpdated();
   }
+  // NotifyEffectTimingUpdated will eventually cause
+  // NotifyAnimationTimingUpdated to be called on this object which will
+  // update our registration with the target element.
 }
 
 Nullable<TimeDuration>
@@ -271,18 +265,20 @@ KeyframeEffectReadOnly::GetComputedTimingAt(
 
   bool thisIterationReverse = false;
   switch (aTiming.mDirection) {
-    case NS_STYLE_ANIMATION_DIRECTION_NORMAL:
+    case PlaybackDirection::Normal:
       thisIterationReverse = false;
       break;
-    case NS_STYLE_ANIMATION_DIRECTION_REVERSE:
+    case PlaybackDirection::Reverse:
       thisIterationReverse = true;
       break;
-    case NS_STYLE_ANIMATION_DIRECTION_ALTERNATE:
+    case PlaybackDirection::Alternate:
       thisIterationReverse = (result.mCurrentIteration & 1) == 1;
       break;
-    case NS_STYLE_ANIMATION_DIRECTION_ALTERNATE_REVERSE:
+    case PlaybackDirection::Alternate_reverse:
       thisIterationReverse = (result.mCurrentIteration & 1) == 0;
       break;
+    default:
+      MOZ_ASSERT(true, "Unknown PlaybackDirection type");
   }
   if (thisIterationReverse) {
     result.mProgress.SetValue(1.0 - result.mProgress.Value());
@@ -343,6 +339,7 @@ void
 KeyframeEffectReadOnly::SetAnimation(Animation* aAnimation)
 {
   mAnimation = aAnimation;
+  NotifyAnimationTimingUpdated();
 }
 
 const AnimationProperty*
@@ -518,8 +515,6 @@ KeyframeEffectReadOnly::SetIsRunningOnCompositor(nsCSSProperty aProperty,
   }
 }
 
-// We need to define this here since Animation is an incomplete type
-// (forward-declared) in the header.
 KeyframeEffectReadOnly::~KeyframeEffectReadOnly()
 {
 }
@@ -529,6 +524,34 @@ KeyframeEffectReadOnly::ResetIsRunningOnCompositor()
 {
   for (bool& isPropertyRunningOnCompositor : mIsPropertyRunningOnCompositor) {
     isPropertyRunningOnCompositor = false;
+  }
+}
+
+void
+KeyframeEffectReadOnly::UpdateTargetRegistration()
+{
+  if (!mTarget) {
+    return;
+  }
+
+  bool isRelevant = mAnimation && mAnimation->IsRelevant();
+
+  // Animation::IsRelevant() returns a cached value. It only updates when
+  // something calls Animation::UpdateRelevance. Whenever our timing changes,
+  // we should be notifying our Animation before calling this, so
+  // Animation::IsRelevant() should be up-to-date by the time we get here.
+  MOZ_ASSERT(isRelevant == IsCurrent() || IsInEffect(),
+             "Out of date Animation::IsRelevant value");
+
+  if (isRelevant) {
+    EffectSet* effectSet = EffectSet::GetOrCreateEffectSet(mTarget,
+                                                           mPseudoType);
+    effectSet->AddEffect(*this);
+  } else {
+    EffectSet* effectSet = EffectSet::GetEffectSet(mTarget, mPseudoType);
+    if (effectSet) {
+      effectSet->RemoveEffect(*this);
+    }
   }
 }
 
@@ -554,25 +577,52 @@ DumpAnimationProperties(nsTArray<AnimationProperty>& aAnimationProperties)
 }
 #endif
 
+// Extract an iteration duration from an UnrestrictedDoubleOrXXX object.
+template <typename T>
+static TimeDuration
+GetIterationDuration(const T& aDuration) {
+  // Always return the same object to benefit from return-value optimization.
+  TimeDuration result;
+  if (aDuration.IsUnrestrictedDouble()) {
+    double durationMs = aDuration.GetAsUnrestrictedDouble();
+    if (!IsNaN(durationMs) && durationMs >= 0.0f) {
+      result = TimeDuration::FromMilliseconds(durationMs);
+    }
+  }
+  // else, aDuration should be zero
+  return result;
+}
+
 /* static */ AnimationTiming
 KeyframeEffectReadOnly::ConvertKeyframeEffectOptions(
-    const Optional<double>& aOptions)
+    const UnrestrictedDoubleOrKeyframeEffectOptions& aOptions)
 {
   AnimationTiming animationTiming;
 
-  // The spec says to treat auto durations as 0 until a later version of
-  // the spec says otherwise.  Bug 1215406 is for handling a
-  // KeyframeEffectOptions object and not just an offset.
-  if (aOptions.WasPassed()) {
-    animationTiming.mIterationDuration =
-      TimeDuration::FromMilliseconds(aOptions.Value());
-  } else {
-    animationTiming.mIterationDuration = TimeDuration(0);
-  }
-  animationTiming.mIterationCount = 1.0f;
-  animationTiming.mDirection = NS_STYLE_ANIMATION_DIRECTION_NORMAL;
-  animationTiming.mFillMode = NS_STYLE_ANIMATION_FILL_MODE_NONE;
+  if (aOptions.IsKeyframeEffectOptions()) {
+    const KeyframeEffectOptions& opt = aOptions.GetAsKeyframeEffectOptions();
 
+    animationTiming.mIterationDuration = GetIterationDuration(opt.mDuration);
+    animationTiming.mDelay = TimeDuration::FromMilliseconds(opt.mDelay);
+    // FIXME: Covert mIterationCount to a valid value.
+    // Bug 1214536 should revise this and keep the original value, so
+    // AnimationTimingEffectReadOnly can get the original iterations.
+    animationTiming.mIterationCount = (IsNaN(opt.mIterations) ||
+                                      opt.mIterations < 0.0f) ?
+                                        1.0f :
+                                        opt.mIterations;
+    animationTiming.mDirection = opt.mDirection;
+    // FIXME: We should store original value.
+    animationTiming.mFillMode = (opt.mFill == FillMode::Auto) ?
+                                  FillMode::None :
+                                  opt.mFill;
+  } else {
+    animationTiming.mIterationDuration = GetIterationDuration(aOptions);
+    animationTiming.mDelay = TimeDuration(0);
+    animationTiming.mIterationCount = 1.0f;
+    animationTiming.mDirection = PlaybackDirection::Normal;
+    animationTiming.mFillMode = FillMode::None;
+  }
   return animationTiming;
 }
 
@@ -1600,7 +1650,7 @@ KeyframeEffectReadOnly::Constructor(
     const GlobalObject& aGlobal,
     Element* aTarget,
     const Optional<JS::Handle<JSObject*>>& aFrames,
-    const Optional<double>& aOptions,
+    const UnrestrictedDoubleOrKeyframeEffectOptions& aOptions,
     ErrorResult& aRv)
 {
   if (!aTarget) {

@@ -69,7 +69,7 @@
 #include "mozilla/dom/power/PowerManagerService.h"
 #include "mozilla/dom/PresentationParent.h"
 #include "mozilla/dom/PPresentationParent.h"
-#include "mozilla/dom/quota/QuotaManager.h"
+#include "mozilla/dom/quota/QuotaManagerService.h"
 #include "mozilla/dom/telephony/TelephonyParent.h"
 #include "mozilla/dom/time/DateCacheCleaner.h"
 #include "mozilla/dom/voicemail/VoicemailParent.h"
@@ -1557,6 +1557,21 @@ ContentParent::Init()
         Unused << SendActivateA11y();
     }
 #endif
+
+#ifdef MOZ_ENABLE_PROFILER_SPS
+    nsCOMPtr<nsIProfiler> profiler(do_GetService("@mozilla.org/tools/profiler;1"));
+    bool profilerActive = false;
+    DebugOnly<nsresult> rv = profiler->IsActive(&profilerActive);
+    MOZ_ASSERT(NS_SUCCEEDED(rv));
+
+    if (profilerActive) {
+        nsCOMPtr<nsIProfilerStartParams> currentProfilerParams;
+        rv = profiler->GetStartParams(getter_AddRefs(currentProfilerParams));
+        MOZ_ASSERT(NS_SUCCEEDED(rv));
+
+        StartProfiler(currentProfilerParams);
+    }
+#endif
 }
 
 void
@@ -1795,10 +1810,10 @@ ContentParent::ShutDownProcess(ShutDownMethod aMethod)
         return;
     }
 
-    using mozilla::dom::quota::QuotaManager;
+    using mozilla::dom::quota::QuotaManagerService;
 
-    if (QuotaManager* quotaManager = QuotaManager::Get()) {
-        quotaManager->AbortOperationsForProcess(mChildID);
+    if (QuotaManagerService* quotaManagerService = QuotaManagerService::Get()) {
+        quotaManagerService->AbortOperationsForProcess(mChildID);
     }
 
     // If Close() fails with an error, we'll end up back in this function, but
@@ -3275,13 +3290,7 @@ ContentParent::Observe(nsISupports* aSubject,
 #ifdef MOZ_ENABLE_PROFILER_SPS
     else if (!strcmp(aTopic, "profiler-started")) {
         nsCOMPtr<nsIProfilerStartParams> params(do_QueryInterface(aSubject));
-        uint32_t entries;
-        double interval;
-        params->GetEntries(&entries);
-        params->GetInterval(&interval);
-        const nsTArray<nsCString>& features = params->GetFeatures();
-        const nsTArray<nsCString>& threadFilterNames = params->GetThreadFilterNames();
-        Unused << SendStartProfiler(entries, interval, features, threadFilterNames);
+        StartProfiler(params);
     }
     else if (!strcmp(aTopic, "profiler-stopped")) {
         Unused << SendStopProfiler();
@@ -3513,6 +3522,18 @@ bool
 ContentParent::DeallocPBlobParent(PBlobParent* aActor)
 {
     return nsIContentParent::DeallocPBlobParent(aActor);
+}
+
+bool
+ContentParent::RecvPBlobConstructor(PBlobParent* aActor,
+                                    const BlobConstructorParams& aParams)
+{
+  const ParentBlobConstructorParams& params = aParams.get_ParentBlobConstructorParams();
+  if (params.blobParams().type() == AnyBlobConstructorParams::TKnownBlobConstructorParams) {
+    return aActor->SendCreatedFromKnownBlob();
+  }
+
+  return true;
 }
 
 mozilla::PRemoteSpellcheckEngineParent *
@@ -4813,6 +4834,7 @@ ContentParent::RecvNotifyKeywordSearchLoading(const nsString &aProvider,
 bool
 ContentParent::RecvCopyFavicon(const URIParams& aOldURI,
                                const URIParams& aNewURI,
+                               const IPC::Principal& aLoadingPrincipal,
                                const bool& aInPrivateBrowsing)
 {
     nsCOMPtr<nsIURI> oldURI = DeserializeURI(aOldURI);
@@ -4824,7 +4846,7 @@ ContentParent::RecvCopyFavicon(const URIParams& aOldURI,
         return true;
     }
 
-    nsDocShell::CopyFavicon(oldURI, newURI, aInPrivateBrowsing);
+    nsDocShell::CopyFavicon(oldURI, newURI, aLoadingPrincipal, aInPrivateBrowsing);
     return true;
 }
 
@@ -4993,64 +5015,6 @@ bool
 ContentParent::DeallocPFileDescriptorSetParent(PFileDescriptorSetParent* aActor)
 {
     delete static_cast<FileDescriptorSetParent*>(aActor);
-    return true;
-}
-
-bool
-ContentParent::RecvGetFileReferences(const PersistenceType& aPersistenceType,
-                                     const nsCString& aOrigin,
-                                     const nsString& aDatabaseName,
-                                     const int64_t& aFileId,
-                                     int32_t* aRefCnt,
-                                     int32_t* aDBRefCnt,
-                                     int32_t* aSliceRefCnt,
-                                     bool* aResult)
-{
-    MOZ_ASSERT(aRefCnt);
-    MOZ_ASSERT(aDBRefCnt);
-    MOZ_ASSERT(aSliceRefCnt);
-    MOZ_ASSERT(aResult);
-
-    if (NS_WARN_IF(aPersistenceType != quota::PERSISTENCE_TYPE_PERSISTENT &&
-                   aPersistenceType != quota::PERSISTENCE_TYPE_TEMPORARY &&
-                   aPersistenceType != quota::PERSISTENCE_TYPE_DEFAULT)) {
-        return false;
-    }
-
-    if (NS_WARN_IF(aOrigin.IsEmpty())) {
-        return false;
-    }
-
-    if (NS_WARN_IF(aDatabaseName.IsEmpty())) {
-        return false;
-    }
-
-    if (NS_WARN_IF(aFileId < 1)) {
-        return false;
-    }
-
-    RefPtr<IndexedDatabaseManager> mgr = IndexedDatabaseManager::Get();
-    if (NS_WARN_IF(!mgr)) {
-        return false;
-    }
-
-    if (NS_WARN_IF(!mgr->IsMainProcess())) {
-        return false;
-    }
-
-    nsresult rv =
-        mgr->BlockAndGetFileReferences(aPersistenceType,
-                                       aOrigin,
-                                       aDatabaseName,
-                                       aFileId,
-                                       aRefCnt,
-                                       aDBRefCnt,
-                                       aSliceRefCnt,
-                                       aResult);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return false;
-    }
-
     return true;
 }
 
@@ -5763,6 +5727,26 @@ ContentParent::RecvGetAndroidSystemInfo(AndroidSystemInfo* aInfo)
 #else
   MOZ_CRASH("wrong platform!");
   return false;
+#endif
+}
+
+void
+ContentParent::StartProfiler(nsIProfilerStartParams* aParams)
+{
+#ifdef MOZ_ENABLE_PROFILER_SPS
+    if (NS_WARN_IF(!aParams)) {
+        return;
+    }
+
+    ProfilerInitParams ipcParams;
+
+    ipcParams.enabled() = true;
+    aParams->GetEntries(&ipcParams.entries());
+    aParams->GetInterval(&ipcParams.interval());
+    ipcParams.features() = aParams->GetFeatures();
+    ipcParams.threadFilters() = aParams->GetThreadFilterNames();
+
+    Unused << SendStartProfiler(ipcParams);
 #endif
 }
 

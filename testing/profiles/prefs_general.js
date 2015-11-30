@@ -161,9 +161,6 @@ user_pref("layout.css.object-fit-and-position.enabled", true);
 // Enable CSS Ruby for testing
 user_pref("layout.css.ruby.enabled", true);
 
-// Enable unicode-range for testing
-user_pref("layout.css.unicode-range.enabled", true);
-
 // Enable webkit prefixed CSS features for testing
 user_pref("layout.css.prefixes.webkit", true);
 
@@ -289,7 +286,7 @@ user_pref("browser.newtabpage.directory.ping", "");
 user_pref("loop.debug.loglevel", "All");
 user_pref("loop.enabled", true);
 user_pref("loop.throttled", false);
-user_pref("loop.server", "http://%(server)s/browser/browser/components/loop/test/mochitest/loop_fxa.sjs?");
+user_pref("loop.server", "http://%(server)s/browser/browser/extensions/loop/test/mochitest/loop_fxa.sjs?");
 user_pref("loop.CSP","default-src 'self' about: file: chrome: data: wss://* http://* https://*");
 
 // Ensure UITour won't hit the network
