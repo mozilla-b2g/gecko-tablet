@@ -1,11 +1,9 @@
-/* -*- Mode: C++; tab-width: 20; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifdef _MSC_VER
-#define _USE_MATH_DEFINES
-#endif
 #include <math.h>
 
 #include "mozilla/Alignment.h"
@@ -71,7 +69,6 @@ PatternFromState::operator mozilla::gfx::Pattern&()
 gfxContext::gfxContext(DrawTarget *aTarget, const Point& aDeviceOffset)
   : mPathIsRect(false)
   , mTransformChanged(false)
-  , mRefCairo(nullptr)
   , mDT(aTarget)
   , mOriginalDT(aTarget)
 {
@@ -88,6 +85,11 @@ gfxContext::gfxContext(DrawTarget *aTarget, const Point& aDeviceOffset)
 /* static */ already_AddRefed<gfxContext>
 gfxContext::ContextForDrawTarget(DrawTarget* aTarget)
 {
+  if (!aTarget || !aTarget->IsValid()) {
+    gfxWarning() << "Invalid target in gfxContext::ContextForDrawTarget";
+    return nullptr;
+  }
+
   Matrix transform = aTarget->GetTransform();
   RefPtr<gfxContext> result = new gfxContext(aTarget);
   result->SetMatrix(ThebesMatrix(transform));
@@ -96,16 +98,9 @@ gfxContext::ContextForDrawTarget(DrawTarget* aTarget)
 
 gfxContext::~gfxContext()
 {
-  if (mRefCairo) {
-    cairo_destroy(mRefCairo);
-  }
   for (int i = mStateStack.Length() - 1; i >= 0; i--) {
     for (unsigned int c = 0; c < mStateStack[i].pushedClips.Length(); c++) {
       mDT->PopClip();
-    }
-
-    if (mStateStack[i].clipWasReset) {
-      break;
     }
   }
   mDT->Flush();
@@ -134,25 +129,38 @@ gfxContext::CurrentSurface(gfxFloat *dx, gfxFloat *dy)
   return nullptr;
 }
 
-cairo_t *
-gfxContext::GetCairo()
+static void
+DestroyRefCairo(void* aData)
 {
-  if (mDT->GetBackendType() == BackendType::CAIRO) {
-    cairo_t *ctx =
-      (cairo_t*)mDT->GetNativeSurface(NativeSurfaceType::CAIRO_CONTEXT);
-    if (ctx) {
-      return ctx;
+  cairo_t* refCairo = static_cast<cairo_t*>(aData);
+  MOZ_ASSERT(refCairo);
+  cairo_destroy(refCairo);
+}
+
+/* static */ cairo_t *
+gfxContext::RefCairo(DrawTarget* aDT)
+{
+  // DrawTargets that don't use a Cairo backend can be given a 1x1 "reference"
+  // |cairo_t*|, stored in the DrawTarget's user data, for doing font-related
+  // operations.
+  static UserDataKey sRefCairo;
+
+  cairo_t* refCairo = nullptr;
+  if (aDT->GetBackendType() == BackendType::CAIRO) {
+    refCairo = static_cast<cairo_t*>
+      (aDT->GetNativeSurface(NativeSurfaceType::CAIRO_CONTEXT));
+    if (refCairo) {
+      return refCairo;
     }
   }
 
-  if (mRefCairo) {
-    // Set transform!
-    return mRefCairo;
+  refCairo = static_cast<cairo_t*>(aDT->GetUserData(&sRefCairo));
+  if (!refCairo) {
+    refCairo = cairo_create(gfxPlatform::GetPlatform()->ScreenReferenceSurface()->CairoSurface());
+    aDT->AddUserData(&sRefCairo, refCairo, DestroyRefCairo);
   }
 
-  mRefCairo = cairo_create(gfxPlatform::GetPlatform()->ScreenReferenceSurface()->CairoSurface()); 
-
-  return mRefCairo;
+  return refCairo;
 }
 
 void
@@ -160,7 +168,6 @@ gfxContext::Save()
 {
   CurrentState().transform = mTransform;
   mStateStack.AppendElement(AzureState(CurrentState()));
-  CurrentState().clipWasReset = false;
   CurrentState().pushedClips.Clear();
 }
 
@@ -169,11 +176,6 @@ gfxContext::Restore()
 {
   for (unsigned int c = 0; c < CurrentState().pushedClips.Length(); c++) {
     mDT->PopClip();
-  }
-
-  if (CurrentState().clipWasReset &&
-      CurrentState().drawTarget == mStateStack[mStateStack.Length() - 2].drawTarget) {
-    PushClipsToDT(mDT);
   }
 
   mStateStack.RemoveElementAt(mStateStack.Length() - 1);
@@ -540,18 +542,6 @@ gfxContext::CurrentMiterLimit() const
   return CurrentState().strokeOptions.mMiterLimit;
 }
 
-void
-gfxContext::SetFillRule(FillRule rule)
-{
-  CurrentState().fillRule = rule;
-}
-
-FillRule
-gfxContext::CurrentFillRule() const
-{
-  return CurrentState().fillRule;
-}
-
 // clipping
 void
 gfxContext::Clip(const Rect& rect)
@@ -628,9 +618,6 @@ gfxContext::HasComplexClip() const
         return true;
       }
     }
-    if (mStateStack[i].clipWasReset) {
-      break;
-    }
   }
   return false;
 }
@@ -638,15 +625,7 @@ gfxContext::HasComplexClip() const
 bool
 gfxContext::ExportClip(ClipExporter& aExporter)
 {
-  unsigned int lastReset = 0;
-  for (int i = mStateStack.Length() - 1; i > 0; i--) {
-    if (mStateStack[i].clipWasReset) {
-      lastReset = i;
-      break;
-    }
-  }
-
-  for (unsigned int i = lastReset; i < mStateStack.Length(); i++) {
+  for (unsigned int i = 0; i < mStateStack.Length(); i++) {
     for (unsigned int c = 0; c < mStateStack[i].pushedClips.Length(); c++) {
       AzureState::PushedClip &clip = mStateStack[i].pushedClips[c];
       gfx::Matrix transform = clip.transform;
@@ -672,20 +651,12 @@ gfxContext::ExportClip(ClipExporter& aExporter)
 bool
 gfxContext::ClipContainsRect(const gfxRect& aRect)
 {
-  unsigned int lastReset = 0;
-  for (int i = mStateStack.Length() - 2; i > 0; i--) {
-    if (mStateStack[i].clipWasReset) {
-      lastReset = i;
-      break;
-    }
-  }
-
   // Since we always return false when the clip list contains a
   // non-rectangular clip or a non-rectilinear transform, our 'total' clip
   // is always a rectangle if we hit the end of this function.
   Rect clipBounds(0, 0, Float(mDT->GetSize().width), Float(mDT->GetSize().height));
 
-  for (unsigned int i = lastReset; i < mStateStack.Length(); i++) {
+  for (unsigned int i = 0; i < mStateStack.Length(); i++) {
     for (unsigned int c = 0; c < mStateStack[i].pushedClips.Length(); c++) {
       AzureState::PushedClip &clip = mStateStack[i].pushedClips[c];
       if (clip.path || !clip.transform.IsRectilinear()) {
@@ -1042,18 +1013,18 @@ gfxContext::EnsurePath()
       Matrix mat = mTransform;
       mat.Invert();
       mat = mPathTransform * mat;
-      mPathBuilder = mPath->TransformedCopyToBuilder(mat, CurrentState().fillRule);
+      mPathBuilder = mPath->TransformedCopyToBuilder(mat);
       mPath = mPathBuilder->Finish();
       mPathBuilder = nullptr;
 
       mTransformChanged = false;
     }
 
-    if (CurrentState().fillRule == mPath->GetFillRule()) {
+    if (FillRule::FILL_WINDING == mPath->GetFillRule()) {
       return;
     }
 
-    mPathBuilder = mPath->CopyToBuilder(CurrentState().fillRule);
+    mPathBuilder = mPath->CopyToBuilder();
 
     mPath = mPathBuilder->Finish();
     mPathBuilder = nullptr;
@@ -1074,13 +1045,13 @@ gfxContext::EnsurePathBuilder()
 
   if (mPath) {
     if (!mTransformChanged) {
-      mPathBuilder = mPath->CopyToBuilder(CurrentState().fillRule);
+      mPathBuilder = mPath->CopyToBuilder();
       mPath = nullptr;
     } else {
       Matrix invTransform = mTransform;
       invTransform.Invert();
       Matrix toNewUS = mPathTransform * invTransform;
-      mPathBuilder = mPath->TransformedCopyToBuilder(toNewUS, CurrentState().fillRule);
+      mPathBuilder = mPath->TransformedCopyToBuilder(toNewUS);
     }
     return;
   }
@@ -1088,7 +1059,7 @@ gfxContext::EnsurePathBuilder()
   DebugOnly<PathBuilder*> oldPath = mPathBuilder.get();
 
   if (!mPathBuilder) {
-    mPathBuilder = mDT->CreatePathBuilder(CurrentState().fillRule);
+    mPathBuilder = mDT->CreatePathBuilder(FillRule::FILL_WINDING);
 
     if (mPathIsRect) {
       mPathBuilder->MoveTo(mRect.TopLeft());
@@ -1111,7 +1082,7 @@ gfxContext::EnsurePathBuilder()
     Matrix toNewUS = mPathTransform * invTransform;
 
     RefPtr<Path> path = mPathBuilder->Finish();
-    mPathBuilder = path->TransformedCopyToBuilder(toNewUS, CurrentState().fillRule);
+    mPathBuilder = path->TransformedCopyToBuilder(toNewUS);
   }
 
   mPathIsRect = false;
@@ -1143,22 +1114,10 @@ gfxContext::FillAzure(const Pattern& aPattern, Float aOpacity)
 void
 gfxContext::PushClipsToDT(DrawTarget *aDT)
 {
-  // Tricky, we have to restore all clips -since the last time- the clip
-  // was reset. If we didn't reset the clip, just popping the clips we
-  // added was fine.
-  unsigned int lastReset = 0;
-  for (int i = mStateStack.Length() - 2; i > 0; i--) {
-    if (mStateStack[i].clipWasReset) {
-      lastReset = i;
-      break;
-    }
-  }
-
   // Don't need to save the old transform, we'll be setting a new one soon!
 
-  // Push all clips from the last state on the stack where the clip was
-  // reset to the clip before ours.
-  for (unsigned int i = lastReset; i < mStateStack.Length() - 1; i++) {
+  // Push all clips from the bottom of the stack to the clip before ours.
+  for (unsigned int i = 0; i < mStateStack.Length() - 1; i++) {
     for (unsigned int c = 0; c < mStateStack[i].pushedClips.Length(); c++) {
       aDT->SetTransform(mStateStack[i].pushedClips[c].transform * GetDeviceTransform());
       if (mStateStack[i].pushedClips[c].path) {
@@ -1232,8 +1191,8 @@ gfxContext::ChangeTransform(const Matrix &aNewMatrix, bool aUpdatePatternTransfo
       mRect = toNewUS.TransformBounds(mRect);
       mRect.NudgeToIntegers();
     } else {
-      mPathBuilder = mDT->CreatePathBuilder(CurrentState().fillRule);
-      
+      mPathBuilder = mDT->CreatePathBuilder(FillRule::FILL_WINDING);
+
       mPathBuilder->MoveTo(toNewUS * mRect.TopLeft());
       mPathBuilder->LineTo(toNewUS * mRect.TopRight());
       mPathBuilder->LineTo(toNewUS * mRect.BottomRight());
@@ -1258,17 +1217,9 @@ gfxContext::ChangeTransform(const Matrix &aNewMatrix, bool aUpdatePatternTransfo
 Rect
 gfxContext::GetAzureDeviceSpaceClipBounds()
 {
-  unsigned int lastReset = 0;
-  for (int i = mStateStack.Length() - 1; i > 0; i--) {
-    if (mStateStack[i].clipWasReset) {
-      lastReset = i;
-      break;
-    }
-  }
-
   Rect rect(CurrentState().deviceOffset.x, CurrentState().deviceOffset.y,
             Float(mDT->GetSize().width), Float(mDT->GetSize().height));
-  for (unsigned int i = lastReset; i < mStateStack.Length(); i++) {
+  for (unsigned int i = 0; i < mStateStack.Length(); i++) {
     for (unsigned int c = 0; c < mStateStack[i].pushedClips.Length(); c++) {
       AzureState::PushedClip &clip = mStateStack[i].pushedClips[c];
       if (clip.path) {
@@ -1371,7 +1322,7 @@ gfxContext::GetRoundOffsetsToPixels(bool *aRoundX, bool *aRoundY)
     // Print backends set CAIRO_HINT_METRICS_OFF.
     *aRoundY = true;
 
-    cairo_t *cr = GetCairo();
+    cairo_t *cr = gfxContext::RefCairo(GetDrawTarget());
     cairo_scaled_font_t *scaled_font = cairo_get_scaled_font(cr);
 
     // bug 1198921 - this sometimes fails under Windows for whatver reason

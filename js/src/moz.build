@@ -61,9 +61,11 @@ TEST_DIRS += ['jsapi-tests', 'tests', 'gdb']
 
 CONFIGURE_SUBST_FILES += [
     'devtools/rootAnalysis/Makefile',
-    'js-confdefs.h',
     'js-config',
     'js.pc',
+]
+CONFIGURE_DEFINE_FILES += [
+    'js-confdefs.h',
 ]
 
 if not CONFIG['JS_STANDALONE']:
@@ -140,12 +142,14 @@ EXPORTS.js += [
 ]
 
 UNIFIED_SOURCES += [
-    'asmjs/AsmJSCompile.cpp',
     'asmjs/AsmJSFrameIterator.cpp',
     'asmjs/AsmJSLink.cpp',
     'asmjs/AsmJSModule.cpp',
     'asmjs/AsmJSSignalHandlers.cpp',
     'asmjs/AsmJSValidate.cpp',
+    'asmjs/WasmGenerator.cpp',
+    'asmjs/WasmIonCompile.cpp',
+    'asmjs/WasmStubs.cpp',
     'builtin/AtomicsObject.cpp',
     'builtin/Eval.cpp',
     'builtin/Intl.cpp',
@@ -319,7 +323,6 @@ UNIFIED_SOURCES += [
     'vm/SelfHosting.cpp',
     'vm/Shape.cpp',
     'vm/SharedArrayObject.cpp',
-    'vm/SharedTypedArrayObject.cpp',
     'vm/SPSProfiler.cpp',
     'vm/Stack.cpp',
     'vm/Stopwatch.cpp',
@@ -640,6 +643,8 @@ if CONFIG['_MSC_VER']:
     # Parser<SyntaxParseHandler> definition, see bug 1167030.
     CXXFLAGS += ['-wd4661']
     CXXFLAGS += ['-we4067', '-we4258', '-we4275']
+    CXXFLAGS += ['-wd4146'] # FIXME: unary minus operator applied to unsigned type (bug 1229189)
+    CXXFLAGS += ['-wd4273'] # FIXME: inconsistent dll linkage (bug 1229666)
 
 if CONFIG['OS_ARCH'] not in ('WINNT', 'HP-UX'):
     OS_LIBS += [
@@ -666,9 +671,7 @@ if CONFIG['OS_ARCH'] == 'SunOS':
 
 CFLAGS += CONFIG['MOZ_ICU_CFLAGS']
 CXXFLAGS += CONFIG['MOZ_ICU_CFLAGS']
-
-if not CONFIG['GNU_CXX']:
-    ALLOW_COMPILER_WARNINGS = True
+LOCAL_INCLUDES += CONFIG['MOZ_ICU_INCLUDES']
 
 NO_EXPAND_LIBS = True
 

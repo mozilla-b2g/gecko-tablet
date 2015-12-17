@@ -232,6 +232,7 @@ public:
   NS_IMETHOD GetUseRemoteTabs(bool*) override;
   NS_IMETHOD SetRemoteTabs(bool) override;
   NS_IMETHOD GetOriginAttributes(JS::MutableHandle<JS::Value>) override;
+  NS_IMETHOD SetUserContextId(uint32_t);
 
   // Restores a cached presentation from history (mLSHE).
   // This method swaps out the content viewer and simulates loads for
@@ -271,6 +272,11 @@ public:
   bool InFrameSwap();
 
   mozilla::DocShellOriginAttributes GetOriginAttributes();
+
+  void GetInterceptedDocumentId(nsAString& aId)
+  {
+    aId = mInterceptedDocumentId;
+  }
 
 private:
   // An observed docshell wrapper is created when recording markers is enabled.
@@ -787,6 +793,7 @@ protected:
   nsIntRect mBounds;
   nsString mName;
   nsString mTitle;
+  nsString mCustomUserAgent;
 
   /**
    * Content-Type Hint of the most-recently initiated load. Used for
@@ -1002,6 +1009,9 @@ protected:
   // find it by walking up the docshell hierarchy.)
   uint32_t mOwnOrContainingAppId;
 
+  // userContextId signifying which container we are in
+  uint32_t mUserContextId;
+
   nsString mPaymentRequestId;
 
   nsString GetInheritedPaymentRequestId();
@@ -1009,6 +1019,8 @@ protected:
   // The packageId for a signed packaged iff this docShell is created
   // for a signed package.
   nsString mSignedPkg;
+
+  nsString mInterceptedDocumentId;
 
 private:
   nsCString mForcedCharset;

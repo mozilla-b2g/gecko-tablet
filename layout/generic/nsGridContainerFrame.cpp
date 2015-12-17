@@ -29,7 +29,7 @@
 using namespace mozilla;
 typedef nsGridContainerFrame::TrackSize TrackSize;
 const uint32_t nsGridContainerFrame::kTranslatedMaxLine =
-  uint32_t(nsStyleGridLine::kMaxLine - nsStyleGridLine::kMinLine - 1);
+  uint32_t(nsStyleGridLine::kMaxLine - nsStyleGridLine::kMinLine);
 const uint32_t nsGridContainerFrame::kAutoLine = kTranslatedMaxLine + 3457U;
 
 MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(TrackSize::StateBits)
@@ -813,16 +813,29 @@ IsNameWithStartSuffix(const nsString& aString, uint32_t* aIndex)
   return IsNameWithSuffix(aString, NS_LITERAL_STRING("-start"), aIndex);
 }
 
+enum class GridLineSide {
+  eBeforeGridGap,
+  eAfterGridGap,
+};
+
 static nscoord
-GridLinePosition(uint32_t aLine, const nsTArray<TrackSize>& aTrackSizes)
+GridLineEdge(uint32_t aLine, const nsTArray<TrackSize>& aTrackSizes,
+             GridLineSide aSide)
 {
-  if (aTrackSizes.Length() == 0) {
+  if (MOZ_UNLIKELY(aTrackSizes.IsEmpty())) {
     // https://drafts.csswg.org/css-grid/#grid-definition
     // "... the explicit grid still contains one grid line in each axis."
     MOZ_ASSERT(aLine == 0, "We should only resolve line 1 in an empty grid");
     return nscoord(0);
   }
   MOZ_ASSERT(aLine <= aTrackSizes.Length(), "aTrackSizes is too small");
+  if (aSide == GridLineSide::eBeforeGridGap) {
+    if (aLine == 0) {
+      return aTrackSizes[0].mPosition;
+    }
+    const TrackSize& sz = aTrackSizes[aLine - 1];
+    return sz.mPosition + sz.mBase;
+  }
   if (aLine == aTrackSizes.Length()) {
     const TrackSize& sz = aTrackSizes[aLine - 1];
     return sz.mPosition + sz.mBase;
@@ -859,6 +872,7 @@ SpaceToFill(WritingMode aWM, const LogicalSize& aSize, nscoord aMargin,
   return aCBSize - (size + aMargin);
 }
 
+// Align (or stretch) an item's margin box in its aAxis inside aCBSize.
 static bool
 AlignJustifySelf(uint8_t aAlignment, bool aOverflowSafe, LogicalAxis aAxis,
                  bool aSameSide, nscoord aCBSize, const nsHTMLReflowState& aRS,
@@ -914,21 +928,42 @@ AlignJustifySelf(uint8_t aAlignment, bool aOverflowSafe, LogicalAxis aAxis,
     }
   }
 
+  const auto& styleMargin = aRS.mStyleMargin->mMargin;
+  bool hasAutoMarginStart;
+  bool hasAutoMarginEnd;
+  if (aAxis == eLogicalAxisBlock) {
+    hasAutoMarginStart = styleMargin.GetBStartUnit(wm) == eStyleUnit_Auto;
+    hasAutoMarginEnd = styleMargin.GetBEndUnit(wm) == eStyleUnit_Auto;
+  } else {
+    hasAutoMarginStart = styleMargin.GetIStartUnit(wm) == eStyleUnit_Auto;
+    hasAutoMarginEnd = styleMargin.GetIEndUnit(wm) == eStyleUnit_Auto;
+  }
+
   // https://drafts.csswg.org/css-align-3/#overflow-values
   // This implements <overflow-position> = 'safe'.
-  if (MOZ_UNLIKELY(aOverflowSafe) && aAlignment != NS_STYLE_ALIGN_START) {
+  // And auto-margins: https://drafts.csswg.org/css-grid/#auto-margins
+  if ((MOZ_UNLIKELY(aOverflowSafe) && aAlignment != NS_STYLE_ALIGN_START) ||
+      hasAutoMarginStart || hasAutoMarginEnd) {
     nscoord space = SpaceToFill(wm, aChildSize, marginStart + marginEnd,
                                 aAxis, aCBSize);
     // XXX we might want to include == 0 here as an optimization -
     // I need to see what the baseline/last-baseline code looks like first.
     if (space < 0) {
+      // "Overflowing elements ignore their auto margins and overflow
+      // in the end directions"
       aAlignment = NS_STYLE_ALIGN_START;
+    } else if (hasAutoMarginEnd) {
+      aAlignment = hasAutoMarginStart ? NS_STYLE_ALIGN_CENTER
+                                      : (aSameSide ? NS_STYLE_ALIGN_START
+                                                   : NS_STYLE_ALIGN_END);
+    } else if (hasAutoMarginStart) {
+      aAlignment = aSameSide ? NS_STYLE_ALIGN_END : NS_STYLE_ALIGN_START;
     }
   }
 
   // Set the position and size (aPos/aContentSize) for the requested alignment.
   bool didResize = false;
-  nscoord offset = 0;
+  nscoord offset = 0; // NOTE: this is the resulting frame offset (border box).
   switch (aAlignment) {
     case NS_STYLE_ALIGN_BASELINE:
     case NS_STYLE_ALIGN_LAST_BASELINE:
@@ -942,20 +977,18 @@ AlignJustifySelf(uint8_t aAlignment, bool aOverflowSafe, LogicalAxis aAxis,
       offset = aCBSize - (size + marginEnd);
       break;
     }
-    case NS_STYLE_ALIGN_CENTER:
-      offset = SpaceToFill(wm, aChildSize, marginStart + marginEnd,
-                           aAxis, aCBSize) / 2;
+    case NS_STYLE_ALIGN_CENTER: {
+      nscoord size = aAxis == eLogicalAxisBlock ? aChildSize.BSize(wm)
+                                                : aChildSize.ISize(wm);
+      offset = (aCBSize - size + marginStart - marginEnd) / 2;
       break;
+    }
     case NS_STYLE_ALIGN_STRETCH: {
+      MOZ_ASSERT(!hasAutoMarginStart && !hasAutoMarginEnd);
       offset = marginStart;
-      const auto& styleMargin = aRS.mStyleMargin->mMargin;
       if (aAxis == eLogicalAxisBlock
-             ? (aRS.mStylePosition->BSize(wm).GetUnit() == eStyleUnit_Auto &&
-                styleMargin.GetBStartUnit(wm) != eStyleUnit_Auto &&
-                styleMargin.GetBEndUnit(wm) != eStyleUnit_Auto)
-             : (aRS.mStylePosition->ISize(wm).GetUnit() == eStyleUnit_Auto &&
-                styleMargin.GetIStartUnit(wm) != eStyleUnit_Auto &&
-                styleMargin.GetIEndUnit(wm) != eStyleUnit_Auto)) {
+            ? (aRS.mStylePosition->BSize(wm).GetUnit() == eStyleUnit_Auto)
+            : (aRS.mStylePosition->ISize(wm).GetUnit() == eStyleUnit_Auto)) {
         nscoord size = aAxis == eLogicalAxisBlock ? aChildSize.BSize(wm)
                                                   : aChildSize.ISize(wm);
         nscoord gap = aCBSize - (size + marginStart + marginEnd);
@@ -1514,15 +1547,12 @@ nsGridContainerFrame::FindAutoCol(uint32_t aStartCol, uint32_t aLockedRow,
     // Find the first gap in the current row that's at least 'extent' wide.
     // ('gap' tracks how wide the current column gap is.)
     for (uint32_t j = candidate, gap = 0; j < len && gap < extent; ++j) {
-      ++gap; // tentative, but we may reset it below if a column is occupied
-      if (cellsInRow[j].mIsOccupied) {
-        // Optimization: skip as many occupied cells as we can.
-        do {
-          ++j;
-        } while (j < len && cellsInRow[j].mIsOccupied);
-        candidate = j;
-        gap = 0;
+      if (!cellsInRow[j].mIsOccupied) {
+        ++gap;
+        continue;
       }
+      candidate = j + 1;
+      gap = 0;
     }
     if (lastCandidate < candidate && i != iStart) {
       // Couldn't fit 'extent' tracks at 'lastCandidate' here so we must
@@ -1564,7 +1594,7 @@ nsGridContainerFrame::PlaceAutoCol(uint32_t aStartCol, GridArea* aArea) const
 {
   MOZ_ASSERT(aArea->mRows.IsDefinite() && aArea->mCols.IsAuto());
   uint32_t col = FindAutoCol(aStartCol, aArea->mRows.mStart, aArea);
-  aArea->mCols.ResolveAutoPosition(col);
+  aArea->mCols.ResolveAutoPosition(col, mExplicitGridOffsetCol);
   MOZ_ASSERT(aArea->IsDefinite());
 }
 
@@ -1602,7 +1632,7 @@ nsGridContainerFrame::PlaceAutoRow(uint32_t aStartRow, GridArea* aArea) const
 {
   MOZ_ASSERT(aArea->mCols.IsDefinite() && aArea->mRows.IsAuto());
   uint32_t row = FindAutoRow(aArea->mCols.mStart, aStartRow, aArea);
-  aArea->mRows.ResolveAutoPosition(row);
+  aArea->mRows.ResolveAutoPosition(row, mExplicitGridOffsetRow);
   MOZ_ASSERT(aArea->IsDefinite());
 }
 
@@ -1626,8 +1656,8 @@ nsGridContainerFrame::PlaceAutoAutoInRowOrder(uint32_t aStartCol,
   }
   MOZ_ASSERT(row < gridRowEnd || col == 0,
              "expected column 0 for placing in a new row");
-  aArea->mCols.ResolveAutoPosition(col);
-  aArea->mRows.ResolveAutoPosition(row);
+  aArea->mCols.ResolveAutoPosition(col, mExplicitGridOffsetCol);
+  aArea->mRows.ResolveAutoPosition(row, mExplicitGridOffsetRow);
   MOZ_ASSERT(aArea->IsDefinite());
 }
 
@@ -1651,8 +1681,8 @@ nsGridContainerFrame::PlaceAutoAutoInColOrder(uint32_t aStartCol,
   }
   MOZ_ASSERT(col < gridColEnd || row == 0,
              "expected row 0 for placing in a new column");
-  aArea->mCols.ResolveAutoPosition(col);
-  aArea->mRows.ResolveAutoPosition(row);
+  aArea->mCols.ResolveAutoPosition(col, mExplicitGridOffsetCol);
+  aArea->mRows.ResolveAutoPosition(row, mExplicitGridOffsetRow);
   MOZ_ASSERT(aArea->IsDefinite());
 }
 
@@ -1994,7 +2024,8 @@ ContentContribution(nsIFrame*                         aChild,
 #endif
     // XXX this will give mostly correct results for now (until bug 1174569).
     LogicalSize availableSize(wm, INFINITE_ISIZE_COORD, NS_UNCONSTRAINEDSIZE);
-    nsHTMLReflowState childRS(pc, *rs, aChild, availableSize);
+    nsHTMLReflowState childRS(pc, *rs, aChild, availableSize, nullptr,
+                              nsHTMLReflowState::COMPUTE_SIZE_SHRINK_WRAP);
     nsHTMLReflowMetrics childSize(childRS);
     nsReflowStatus childStatus;
     const uint32_t flags = NS_FRAME_NO_MOVE_FRAME | NS_FRAME_NO_SIZE_VIEW;
@@ -2766,13 +2797,15 @@ nsGridContainerFrame::LineRange::ToPositionAndLengthForAbsPos(
       // done
     } else {
       const nscoord endPos = *aPos + *aLength;
-      nscoord startPos = ::GridLinePosition(mStart, aTrackSizes);
+      nscoord startPos =
+        ::GridLineEdge(mStart, aTrackSizes, GridLineSide::eAfterGridGap);
       *aPos = aGridOrigin + startPos;
       *aLength = std::max(endPos - *aPos, 0);
     }
   } else {
     if (mStart == kAutoLine) {
-      nscoord endPos = ::GridLinePosition(mEnd, aTrackSizes);
+      nscoord endPos =
+        ::GridLineEdge(mEnd, aTrackSizes, GridLineSide::eBeforeGridGap);
       *aLength = std::max(aGridOrigin + endPos, 0);
     } else {
       nscoord pos;
@@ -2980,12 +3013,30 @@ nsGridContainerFrame::Reflow(nsPresContext*           aPresContext,
                       LogicalSize(wm, computedISize, computedBSize),
                       nsLayoutUtils::PREF_ISIZE);
 
+  // FIXME bug 1229180: Instead of doing this on every reflow, we should only
+  // set these properties if they are needed.
+  nsTArray<nscoord> colTrackSizes(gridReflowState.mCols.mSizes.Length());
+  for (const TrackSize& sz : gridReflowState.mCols.mSizes) {
+    colTrackSizes.AppendElement(sz.mBase);
+  }
+  Properties().Set(GridColTrackSizes(),
+                   new nsTArray<nscoord>(mozilla::Move(colTrackSizes)));
+  nsTArray<nscoord> rowTrackSizes(gridReflowState.mRows.mSizes.Length());
+  for (const TrackSize& sz : gridReflowState.mRows.mSizes) {
+    rowTrackSizes.AppendElement(sz.mBase);
+  }
+  Properties().Set(GridRowTrackSizes(),
+                   new nsTArray<nscoord>(mozilla::Move(rowTrackSizes)));
+  
   nscoord bSize = 0;
   if (computedBSize == NS_AUTOHEIGHT) {
     for (uint32_t i = 0; i < mGridRowEnd; ++i) {
       bSize += gridReflowState.mRows.mSizes[i].mBase;
     }
     bSize += gridReflowState.mRows.SumOfGridGaps();
+    bSize = NS_CSS_MINMAX(bSize,
+                          aReflowState.ComputedMinBSize(),
+                          aReflowState.ComputedMaxBSize());
   } else {
     bSize = computedBSize;
   }

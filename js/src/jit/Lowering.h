@@ -307,7 +307,9 @@ class LIRGenerator : public LIRGeneratorSpecific
     void visitNewTarget(MNewTarget* ins);
     void visitArrowNewTarget(MArrowNewTarget* ins);
     void visitAtomicIsLockFree(MAtomicIsLockFree* ins);
+    void visitGuardSharedTypedArray(MGuardSharedTypedArray* ins);
     void visitCheckReturn(MCheckReturn* ins);
+    void visitCheckObjCoercible(MCheckObjCoercible* ins);
 };
 
 } // namespace jit

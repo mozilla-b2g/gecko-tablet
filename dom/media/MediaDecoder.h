@@ -222,6 +222,8 @@ namespace mozilla {
 class VideoFrameContainer;
 class MediaDecoderStateMachine;
 
+enum class MediaEventType : int8_t;
+
 // GetCurrentTime is defined in winbase.h as zero argument macro forwarding to
 // GetTickCount() and conflicts with MediaDecoder::GetCurrentTime implementation.
 #ifdef GetCurrentTime
@@ -469,7 +471,7 @@ public:
   virtual void SetElementVisibility(bool aIsVisible) {}
 
   // Set a flag indicating whether seeking is supported
-  virtual void SetMediaSeekable(bool aMediaSeekable) override;
+  void SetMediaSeekable(bool aMediaSeekable);
 
   // Returns true if this media supports seeking. False for example for WebM
   // files without an index and chained ogg files.
@@ -575,7 +577,7 @@ private:
 
   // Returns true if we can play the entire media through without stopping
   // to buffer, given the current download and playback rates.
-  bool CanPlayThrough();
+  virtual bool CanPlayThrough();
 
   void SetAudioChannel(dom::AudioChannel aChannel) { mAudioChannel = aChannel; }
   dom::AudioChannel GetAudioChannel() { return mAudioChannel; }
@@ -633,9 +635,6 @@ private:
   // Find the end of the cached data starting at the current decoder
   // position.
   int64_t GetDownloadPosition();
-
-  // Drop reference to state machine.  Only called during shutdown dance.
-  virtual void BreakCycles();
 
   // Notifies the element that decoding has failed.
   void DecodeError();
@@ -698,7 +697,7 @@ private:
   MediaStatistics GetStatistics();
 
   // Return the frame decode/paint related statistics.
-  FrameStatistics& GetFrameStatistics() { return mFrameStats; }
+  FrameStatistics& GetFrameStatistics() { return *mFrameStats; }
 
   // Increments the parsed and decoded frame counters by the passed in counts.
   // Can be called on any thread.
@@ -717,6 +716,7 @@ private:
   }
 
   virtual MediaDecoderOwner::NextFrameStatus NextFrameStatus() { return mNextFrameStatus; }
+  virtual MediaDecoderOwner::NextFrameStatus NextFrameBufferedStatus();
 
 protected:
   virtual ~MediaDecoder();
@@ -790,6 +790,11 @@ protected:
   // Media data resource.
   RefPtr<MediaResource> mResource;
 
+  // Amount of buffered data ahead of current time required to consider that
+  // the next frame is available.
+  // An arbitrary value of 250ms is used.
+  static const int DEFAULT_NEXT_FRAME_AVAILABLE_BUFFERED = 250000;
+
 private:
   // Called when the metadata from the media file has been loaded by the
   // state machine. Call on the main thread only.
@@ -800,17 +805,14 @@ private:
   MediaEventSource<void>*
   DataArrivedEvent() override { return &mDataArrivedEvent; }
 
-  // Used to estimate rates of data passing through the decoder's channel.
-  // Records activity stopping on the channel.
-  void OnPlaybackStarted() { mPlaybackStatistics->Start(); }
+  void OnPlaybackEvent(MediaEventType aEvent);
 
-  // Used to estimate rates of data passing through the decoder's channel.
-  // Records activity stopping on the channel.
-  void OnPlaybackStopped()
+  void OnMediaNotSeekable()
   {
-    mPlaybackStatistics->Stop();
-    ComputePlaybackRate();
+    SetMediaSeekable(false);
   }
+
+  void FinishShutdown();
 
   MediaEventProducer<void> mDataArrivedEvent;
 
@@ -863,7 +865,7 @@ protected:
   MediaDecoderOwner* const mOwner;
 
   // Counters related to decode and presentation of frames.
-  FrameStatistics mFrameStats;
+  const RefPtr<FrameStatistics> mFrameStats;
 
   const RefPtr<VideoFrameContainer> mVideoFrameContainer;
 
@@ -933,12 +935,9 @@ protected:
   MediaEventListener mMetadataLoadedListener;
   MediaEventListener mFirstFrameLoadedListener;
 
-  MediaEventListener mOnPlaybackStart;
-  MediaEventListener mOnPlaybackStop;
-  MediaEventListener mOnPlaybackEnded;
-  MediaEventListener mOnDecodeError;
-  MediaEventListener mOnInvalidate;
+  MediaEventListener mOnPlaybackEvent;
   MediaEventListener mOnSeekingStart;
+  MediaEventListener mOnMediaNotSeekable;
 
 protected:
   // Whether the state machine is shut down.
@@ -1094,7 +1093,7 @@ private:
   // download has ended. Called on the main thread only. aStatus is
   // the result from OnStopRequest.
   void NotifyDownloadEnded(nsresult aStatus);
-  
+
   bool mTelemetryReported;
 };
 

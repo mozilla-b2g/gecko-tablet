@@ -50,6 +50,7 @@
 #include "CaptivePortalService.h"
 #include "ClosingService.h"
 #include "ReferrerPolicy.h"
+#include "nsContentSecurityManager.h"
 
 #ifdef MOZ_WIDGET_GONK
 #include "nsINetworkManager.h"
@@ -415,8 +416,11 @@ nsIOService::AsyncOnChannelRedirect(nsIChannel* oldChan, nsIChannel* newChan,
     // are in a captive portal, so we trigger a recheck.
     RecheckCaptivePortalIfLocalRedirect(newChan);
 
+    // This is silly. I wish there was a simpler way to get at the global
+    // reference of the contentSecurityManager. But it lives in the XPCOM
+    // service registry.
     nsCOMPtr<nsIChannelEventSink> sink =
-        do_GetService(NS_GLOBAL_CHANNELEVENTSINK_CONTRACTID);
+        do_GetService(NS_CONTENTSECURITYMANAGER_CONTRACTID);
     if (sink) {
         nsresult rv = helper->DelegateOnChannelRedirect(sink, oldChan,
                                                         newChan, flags);
@@ -786,9 +790,7 @@ nsIOService::NewChannelFromURIWithProxyFlagsInternal(nsIURI* aURI,
     // Make sure that all the individual protocolhandlers attach a loadInfo.
     if (aLoadInfo) {
       // make sure we have the same instance of loadInfo on the newly created channel
-      nsCOMPtr<nsILoadInfo> loadInfo;
-      channel->GetLoadInfo(getter_AddRefs(loadInfo));
-
+      nsCOMPtr<nsILoadInfo> loadInfo = channel->GetLoadInfo();
       if (aLoadInfo != loadInfo) {
         MOZ_ASSERT(false, "newly created channel must have a loadinfo attached");
         return NS_ERROR_UNEXPECTED;

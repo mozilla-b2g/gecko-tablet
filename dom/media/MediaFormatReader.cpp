@@ -65,7 +65,6 @@ MediaFormatReader::MediaFormatReader(AbstractMediaDecoder* aDecoder,
   , mLastReportedNumDecodedFrames(0)
   , mLayersBackendType(aLayersBackend)
   , mInitDone(false)
-  , mSeekable(false)
   , mIsEncrypted(false)
   , mTrackDemuxersMayBlock(false)
   , mHardwareAccelerationDisabled(false)
@@ -324,7 +323,7 @@ MediaFormatReader::OnDemuxerInitDone(nsresult)
     mInfo.mMetadataDuration = Some(TimeUnit::FromMicroseconds(duration));
   }
 
-  mSeekable = mDemuxer->IsSeekable();
+  mInfo.mMediaSeekable = mDemuxer->IsSeekable();
 
   if (!videoActive && !audioActive) {
     mMetadataPromise.Reject(ReadMetadataFailureReason::METADATA_ERROR, __func__);
@@ -511,6 +510,14 @@ MediaFormatReader::RequestVideoData(bool aSkipToNextKeyframe,
   if (ShouldSkip(aSkipToNextKeyframe, timeThreshold)) {
     // Cancel any pending demux request.
     mVideo.mDemuxRequest.DisconnectIfExists();
+
+    // I think it's still possible for an output to have been sent from the decoder
+    // and is currently sitting in our event queue waiting to be processed. The following
+    // flush won't clear it, and when we return to the event loop it'll be added to our
+    // output queue and be used.
+    // This code will count that as dropped, which was the intent, but not quite true.
+    mDecoder->NotifyDecodedFrames(0, 0, SizeOfVideoQueueInFrames());
+
     Flush(TrackInfo::kVideoTrack);
     RefPtr<VideoDataPromise> p = mVideo.mPromise.Ensure(__func__);
     SkipVideoDemuxToNextKeyFrame(timeThreshold);
@@ -1241,6 +1248,7 @@ MediaFormatReader::Flush(TrackType aTrack)
 
   auto& decoder = GetDecoderData(aTrack);
   if (!decoder.mDecoder) {
+    decoder.ResetState();
     return;
   }
 
@@ -1331,7 +1339,7 @@ MediaFormatReader::Seek(int64_t aTime, int64_t aUnused)
   MOZ_DIAGNOSTIC_ASSERT(mVideo.mTimeThreshold.isNothing());
   MOZ_DIAGNOSTIC_ASSERT(mAudio.mTimeThreshold.isNothing());
 
-  if (!mSeekable) {
+  if (!mInfo.mMediaSeekable) {
     LOG("Seek() END (Unseekable)");
     return SeekPromise::CreateAndReject(NS_ERROR_FAILURE, __func__);
   }

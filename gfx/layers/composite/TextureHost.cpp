@@ -213,7 +213,7 @@ TextureHost::Create(const SurfaceDescriptor& aDesc,
     case SurfaceDescriptor::TSurfaceDescriptorSharedGLTexture:
       return CreateTextureHostOGL(aDesc, aDeallocator, aFlags);
 
-    case SurfaceDescriptor::TNewSurfaceDescriptorGralloc:
+    case SurfaceDescriptor::TSurfaceDescriptorGralloc:
     case SurfaceDescriptor::TSurfaceDescriptorMacIOSurface:
       if (aBackend == LayersBackend::LAYERS_OPENGL) {
         return CreateTextureHostOGL(aDesc, aDeallocator, aFlags);
@@ -241,7 +241,7 @@ TextureHost::Create(const SurfaceDescriptor& aDesc,
       }
 #endif
     default:
-      MOZ_CRASH("Unsupported Surface type");
+      MOZ_CRASH("GFX: Unsupported Surface type host");
   }
 }
 

@@ -372,10 +372,10 @@ var PingPicker = {
         return d;
       };
 
-      this._weeks = [for (startTime of weekStartDates.values()) {
+      this._weeks = Array.from(weekStartDates.values(), startTime => ({
         startDate: new Date(startTime),
         endDate: plusOneWeek(new Date(startTime)),
-      }];
+      }));
 
       // Render the archive data.
       this._renderWeeks();
@@ -931,11 +931,11 @@ var ThreadHangStats = {
   /**
    * Renders raw thread hang stats data
    */
-  render: function(aPing) {
+  render: function(aPayload) {
     let div = document.getElementById("thread-hang-stats");
     removeAllChildNodes(div);
 
-    let stats = aPing.payload.threadHangStats;
+    let stats = aPayload.threadHangStats;
     setHasData("thread-hang-stats-section", stats && (stats.length > 0));
     if (!stats) {
       return;
@@ -1041,7 +1041,7 @@ var Histogram = {
   },
 
   processHistogram: function(aHgram, aName) {
-    const values = [for (k of Object.keys(aHgram.values)) aHgram.values[k]];
+    const values = Object.keys(aHgram.values).map(k => aHgram.values[k]);
     if (!values.length) {
       // If we have no values collected for this histogram, just return
       // zero values so we still render it.
@@ -1058,7 +1058,7 @@ var Histogram = {
     const average = Math.round(aHgram.sum * 10 / sample_count) / 10;
     const max_value = Math.max(...values);
 
-    const labelledValues = [for (k of Object.keys(aHgram.values)) [Number(k), aHgram.values[k]]];
+    const labelledValues = Object.keys(aHgram.values).map(k => [Number(k), aHgram.values[k]]);
 
     let result = {
       values: labelledValues,
@@ -1608,9 +1608,6 @@ function displayPingData(ping, updatePayloadList = false) {
   // Show chrome hang stacks
   ChromeHangs.render(ping);
 
-  // Show thread hang stats
-  ThreadHangStats.render(ping);
-
   // Render Addon details.
   AddonDetails.render(ping);
 
@@ -1623,6 +1620,9 @@ function displayPingData(ping, updatePayloadList = false) {
   if (payloadIndex > 0) {
     payload = ping.payload.childPayloads[payloadIndex - 1];
   }
+
+  // Show thread hang stats
+  ThreadHangStats.render(payload);
 
   // Show simple measurements
   let simpleMeasurements = sortStartupMilestones(payload.simpleMeasurements);

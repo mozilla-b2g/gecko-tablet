@@ -13,8 +13,7 @@ const {setTimeout, clearTimeout} =
 const {CssLogic} = require("devtools/shared/styleinspector/css-logic");
 const {InplaceEditor, editableField, editableItem} =
       require("devtools/client/shared/inplace-editor");
-const {ELEMENT_STYLE, PSEUDO_ELEMENTS} =
-      require("devtools/server/actors/styles");
+const {ELEMENT_STYLE} = require("devtools/server/actors/styles");
 const {OutputParser} = require("devtools/client/shared/output-parser");
 const {PrefObserver, PREF_ORIG_SOURCES} = require("devtools/client/styleeditor/utils");
 const {
@@ -570,11 +569,12 @@ Rule.prototype = {
   getOriginalSourceStrings: function() {
     return this.domRule.getOriginalLocation().then(({href, line, mediaText}) => {
       let mediaString = mediaText ? " @" + mediaText : "";
+      let linePart = line > 0 ? (":" + line) : "";
 
       let sourceStrings = {
-        full: (href || CssLogic.l10n("rule.sourceInline")) + ":" +
-          line + mediaString,
-        short: CssLogic.shortSource({href: href}) + ":" + line + mediaString
+        full: (href || CssLogic.l10n("rule.sourceInline")) + linePart +
+          mediaString,
+        short: CssLogic.shortSource({href: href}) + linePart + mediaString
       };
 
       return sourceStrings;
@@ -4058,4 +4058,8 @@ XPCOMUtils.defineLazyGetter(this, "domUtils", function() {
 
 loader.lazyGetter(this, "AutocompletePopup", function() {
   return require("devtools/client/shared/autocomplete-popup").AutocompletePopup;
+});
+
+loader.lazyGetter(this, "PSEUDO_ELEMENTS", () => {
+  return domUtils.getCSSPseudoElementNames();
 });

@@ -52,6 +52,7 @@
 #include "nsExpirationTracker.h"
 #include "nsUnicodeProperties.h"
 #include "nsStyleUtil.h"
+#include "nsRubyFrame.h"
 
 #include "nsTextFragment.h"
 #include "nsGkAtoms.h"
@@ -1709,8 +1710,8 @@ BuildTextRunsScanner::ContinueTextRunAcrossFrames(nsTextFrame* aFrame1, nsTextFr
   const nsStyleFont* fontStyle2 = sc2->StyleFont();
   nscoord letterSpacing1 = LetterSpacing(aFrame1);
   nscoord letterSpacing2 = LetterSpacing(aFrame2);
-  return fontStyle1->mFont.BaseEquals(fontStyle2->mFont) &&
-    sc1->StyleFont()->mLanguage == sc2->StyleFont()->mLanguage &&
+  return fontStyle1->mFont == fontStyle2->mFont &&
+    fontStyle1->mLanguage == fontStyle2->mLanguage &&
     textStyle1->mTextTransform == textStyle2->mTextTransform &&
     nsLayoutUtils::GetTextRunFlagsForStyle(sc1, fontStyle1, textStyle1, letterSpacing1) ==
       nsLayoutUtils::GetTextRunFlagsForStyle(sc2, fontStyle2, textStyle2, letterSpacing2);
@@ -4044,7 +4045,9 @@ a11y::AccType
 nsTextFrame::AccessibleType()
 {
   if (IsEmpty()) {
-    RenderedText text = GetRenderedText();
+    RenderedText text = GetRenderedText(0,
+        UINT32_MAX, TextOffsetType::OFFSETS_IN_CONTENT_TEXT,
+        TrailingWhitespace::DONT_TRIM_TRAILING_WHITESPACE);
     if (text.mString.IsEmpty()) {
       return a11y::eNoType;
     }
@@ -4788,9 +4791,9 @@ nsDisplayText::Paint(nsDisplayListBuilder* aBuilder,
   extraVisible.Inflate(appUnitsPerDevPixel, appUnitsPerDevPixel);
   nsTextFrame* f = static_cast<nsTextFrame*>(mFrame);
 
-  gfxContext* ctx = aCtx->ThebesContext();
-  gfxContextAutoDisableSubpixelAntialiasing disable(ctx,
+  DrawTargetAutoDisableSubpixelAntialiasing disable(aCtx->GetDrawTarget(),
                                                     mDisableSubpixelAA);
+  gfxContext* ctx = aCtx->ThebesContext();
   gfxContextAutoSaveRestore save(ctx);
 
   gfxRect pixelVisible =
@@ -5114,27 +5117,6 @@ GetInflationForTextDecorations(nsIFrame* aFrame, nscoord aInflationMinFontSize)
   return nsLayoutUtils::FontSizeInflationInner(aFrame, aInflationMinFontSize);
 }
 
-static already_AddRefed<nsFontMetrics>
-GetFontMetricsOfEmphasisMarks(nsStyleContext* aStyleContext, float aInflation)
-{
-  nsPresContext* pc = aStyleContext->PresContext();
-  WritingMode wm(aStyleContext);
-  gfxFont::Orientation orientation = wm.IsVertical() && !wm.IsSideways() ?
-                                     gfxFont::eVertical : gfxFont::eHorizontal;
-
-  const nsStyleFont* styleFont = aStyleContext->StyleFont();
-  nsFont font = styleFont->mFont;
-  font.size = NSToCoordRound(font.size * aInflation * 0.5f);
-
-  RefPtr<nsFontMetrics> fm;
-  pc->DeviceContext()->GetMetricsFor(font, styleFont->mLanguage,
-                                     styleFont->mExplicitLanguage,
-                                     orientation, pc->GetUserFontSet(),
-                                     pc->GetTextPerfMetrics(),
-                                     *getter_AddRefs(fm));
-  return fm.forget();
-}
-
 static gfxTextRun*
 GenerateTextRunForEmphasisMarks(nsTextFrame* aFrame, nsFontMetrics* aFontMetrics,
                                 WritingMode aWM, const nsStyleText* aStyleText)
@@ -5153,6 +5135,19 @@ GenerateTextRunForEmphasisMarks(nsTextFrame* aFrame, nsFontMetrics* aFontMetrics
                           ctx, appUnitsPerDevUnit, flags, nullptr);
 }
 
+static nsRubyFrame*
+FindRubyAncestor(nsTextFrame* aFrame)
+{
+  for (nsIFrame* frame = aFrame->GetParent();
+       frame && frame->IsFrameOfType(nsIFrame::eLineParticipant);
+       frame = frame->GetParent()) {
+    if (frame->GetType() == nsGkAtoms::rubyFrame) {
+      return static_cast<nsRubyFrame*>(frame);
+    }
+  }
+  return nullptr;
+}
+
 nsRect
 nsTextFrame::UpdateTextEmphasis(WritingMode aWM, PropertyProvider& aProvider)
 {
@@ -5162,8 +5157,9 @@ nsTextFrame::UpdateTextEmphasis(WritingMode aWM, PropertyProvider& aProvider)
     return nsRect();
   }
 
-  RefPtr<nsFontMetrics> fm =
-    GetFontMetricsOfEmphasisMarks(StyleContext(), GetFontSizeInflation());
+  RefPtr<nsFontMetrics> fm;
+  nsLayoutUtils::GetFontMetricsOfEmphasisMarks(
+    StyleContext(), getter_AddRefs(fm), GetFontSizeInflation());
   EmphasisMarkInfo* info = new EmphasisMarkInfo;
   info->textRun =
     GenerateTextRunForEmphasisMarks(this, fm, aWM, styleText);
@@ -5186,14 +5182,18 @@ nsTextFrame::UpdateTextEmphasis(WritingMode aWM, PropertyProvider& aProvider)
   nscoord absOffset = (side == eLogicalSideBStart) != aWM.IsLineInverted() ?
     baseFontMetrics->MaxAscent() + fm->MaxDescent() :
     baseFontMetrics->MaxDescent() + fm->MaxAscent();
-  // XXX emphasis marks should be drawn outside ruby, see bug 1224013.
+  nscoord startLeading = 0;
+  nscoord endLeading = 0;
+  if (nsRubyFrame* ruby = FindRubyAncestor(this)) {
+    ruby->GetBlockLeadings(startLeading, endLeading);
+  }
   if (side == eLogicalSideBStart) {
-    info->baselineOffset = -absOffset;
-    overflowRect.BStart(aWM) = -overflowRect.BSize(aWM);
+    info->baselineOffset = -absOffset - startLeading;
+    overflowRect.BStart(aWM) = -overflowRect.BSize(aWM) - startLeading;
   } else {
     MOZ_ASSERT(side == eLogicalSideBEnd);
-    info->baselineOffset = absOffset;
-    overflowRect.BStart(aWM) = frameSize.BSize(aWM);
+    info->baselineOffset = absOffset + endLeading;
+    overflowRect.BStart(aWM) = frameSize.BSize(aWM) + endLeading;
   }
 
   Properties().Set(EmphasisMarkProperty(), info);
@@ -6198,6 +6198,7 @@ void
 nsTextFrame::DrawEmphasisMarks(gfxContext* aContext, WritingMode aWM,
                                const gfxPoint& aTextBaselinePt,
                                uint32_t aOffset, uint32_t aLength,
+                               const nscolor* aDecorationOverrideColor,
                                PropertyProvider& aProvider)
 {
   auto info = static_cast<const EmphasisMarkInfo*>(
@@ -6207,8 +6208,8 @@ nsTextFrame::DrawEmphasisMarks(gfxContext* aContext, WritingMode aWM,
     return;
   }
 
-  nscolor color = nsLayoutUtils::
-    GetColor(this, eCSSProperty_text_emphasis_color);
+  nscolor color = aDecorationOverrideColor ? *aDecorationOverrideColor :
+    nsLayoutUtils::GetColor(this, eCSSProperty_text_emphasis_color);
   aContext->SetColor(Color::FromABGR(color));
   gfxPoint pt(aTextBaselinePt);
   if (!aWM.IsVertical()) {
@@ -6727,7 +6728,8 @@ nsTextFrame::DrawTextRunAndDecorations(
                 aAdvanceWidth, aDrawSoftHyphen, aContextPaint, aCallbacks);
 
     // Emphasis marks
-    DrawEmphasisMarks(aCtx, wm, aTextBaselinePt, aOffset, aLength, aProvider);
+    DrawEmphasisMarks(aCtx, wm, aTextBaselinePt, aOffset, aLength,
+                      aDecorationOverrideColor, aProvider);
 
     // Line-throughs
     for (uint32_t i = aDecorations.mStrikes.Length(); i-- > 0; ) {
@@ -7904,14 +7906,12 @@ nsTextFrame::AddInlineMinISizeForFlow(nsRenderingContext *aRenderingContext,
         (i == textRun->GetLength() &&
          (textRun->GetFlags() & nsTextFrameUtils::TEXT_HAS_TRAILING_BREAK))) {
       if (preformattedNewline) {
-        aData->ForceBreak(aRenderingContext);
+        aData->ForceBreak();
       } else if (i < flowEndInTextRun && hyphBreakBefore &&
-                 hyphBreakBefore[i - start])
-      {
-        aData->OptionallyBreak(aRenderingContext, 
-                               NSToCoordRound(provider.GetHyphenWidth()));
+                 hyphBreakBefore[i - start]) {
+        aData->OptionallyBreak(NSToCoordRound(provider.GetHyphenWidth()));
       } else {
-        aData->OptionallyBreak(aRenderingContext);
+        aData->OptionallyBreak();
       }
       wordStart = i;
     }
@@ -8054,7 +8054,7 @@ nsTextFrame::AddInlinePrefISizeForFlow(nsRenderingContext *aRenderingContext,
       aData->currentLine = nscoord(afterTab + spacing.mAfter);
       lineStart = i + 1;
     } else if (preformattedNewline) {
-      aData->ForceBreak(aRenderingContext);
+      aData->ForceBreak();
       lineStart = i;
     }
   }
@@ -9197,7 +9197,8 @@ LineEndsInHardLineBreak(nsTextFrame* aFrame)
 nsIFrame::RenderedText
 nsTextFrame::GetRenderedText(uint32_t aStartOffset,
                              uint32_t aEndOffset,
-                             TextOffsetType aOffsetType)
+                             TextOffsetType aOffsetType,
+                             TrailingWhitespace aTrimTrailingWhitespace)
 {
   NS_ASSERTION(!GetPrevContinuation(), "Must be called on first-in-flow");
 
@@ -9225,7 +9226,8 @@ nsTextFrame::GetRenderedText(uint32_t aStartOffset,
 
     // Skip to the start of the text run, past ignored chars at start of line
     TrimmedOffsets trimmedOffsets = textFrame->GetTrimmedOffsets(textFrag,
-       textFrame->IsAtEndOfLine() && LineEndsInHardLineBreak(textFrame));
+       textFrame->IsAtEndOfLine() && LineEndsInHardLineBreak(textFrame) &&
+       aTrimTrailingWhitespace == TrailingWhitespace::TRIM_TRAILING_WHITESPACE);
     bool trimmedSignificantNewline =
         trimmedOffsets.GetEnd() < GetContentEnd() &&
         HasSignificantTerminalNewline();

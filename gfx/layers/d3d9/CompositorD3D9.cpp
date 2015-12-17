@@ -220,7 +220,7 @@ ShaderModeForEffectType(EffectTypes aEffectType, gfx::SurfaceFormat aFormat)
     return DeviceManagerD3D9::YCBCRLAYER;
   }
 
-  MOZ_CRASH("Bad effect type");
+  MOZ_CRASH("GFX: Bad effect type");
 }
 
 void
@@ -610,7 +610,7 @@ CompositorD3D9::FailedToResetDevice() {
   // 10 is a totally arbitrary number that we may want to increase or decrease
   // depending on how things behave in the wild.
   if (mFailedResetAttempts > 10) {
-    MOZ_CRASH("Unable to get a working D3D9 Compositor");
+    MOZ_CRASH("GFX: Unable to get a working D3D9 Compositor");
   }
 }
 
@@ -702,10 +702,10 @@ CompositorD3D9::PrepareViewport(const gfx::IntSize& aSize)
 void
 CompositorD3D9::EnsureSize()
 {
-  IntRect rect;
-  mWidget->GetClientBoundsUntyped(rect);
+  LayoutDeviceIntRect rect;
+  mWidget->GetClientBounds(rect);
 
-  mSize = rect.Size();
+  mSize = rect.Size().ToUnknownSize();
 }
 
 void

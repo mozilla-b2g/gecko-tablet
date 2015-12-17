@@ -16,6 +16,7 @@
 #include "mozilla/LinkedList.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/TypedEnumBits.h"
+#include "mozilla/UniquePtr.h"
 #include "mozilla/WeakPtr.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/Promise.h"
@@ -56,6 +57,15 @@ class ServiceWorkerRegistrationInfo final
 {
   uint32_t mControlledDocumentsCounter;
 
+  enum
+  {
+    NoUpdate,
+    NeedTimeCheckAndUpdate,
+    NeedUpdate
+  } mUpdateState;
+
+  uint64_t mLastUpdateCheckTime;
+
   virtual ~ServiceWorkerRegistrationInfo();
 
 public:
@@ -63,9 +73,6 @@ public:
   NS_DECL_NSISERVICEWORKERREGISTRATIONINFO
 
   nsCString mScope;
-  // The scriptURL for the registration. This may be completely different from
-  // the URLs of the following three workers.
-  nsCString mScriptSpec;
 
   nsCOMPtr<nsIPrincipal> mPrincipal;
 
@@ -74,8 +81,6 @@ public:
   RefPtr<ServiceWorkerInfo> mInstallingWorker;
 
   nsTArray<nsCOMPtr<nsIServiceWorkerRegistrationInfoListener>> mListeners;
-
-  uint64_t mLastUpdateCheckTime;
 
   // According to the spec, Soft Update shouldn't queue an update job
   // if the registration queue is not empty. Because our job queue
@@ -92,7 +97,7 @@ public:
                                 nsIPrincipal* aPrincipal);
 
   already_AddRefed<ServiceWorkerInfo>
-  Newest()
+  Newest() const
   {
     RefPtr<ServiceWorkerInfo> newest;
     if (mInstallingWorker) {
@@ -151,6 +156,15 @@ public:
 
   void
   NotifyListenersOnChange();
+
+  void
+  MaybeScheduleTimeCheckAndUpdate();
+
+  void
+  MaybeScheduleUpdate();
+
+  bool
+  CheckAndClearIfUpdateNeeded();
 };
 
 class ServiceWorkerUpdateFinishCallback
@@ -315,8 +329,10 @@ class ServiceWorkerManager final
   friend class ServiceWorkerInstallJob;
   friend class ServiceWorkerRegisterJob;
   friend class ServiceWorkerJobBase;
+  friend class ServiceWorkerScriptJobBase;
   friend class ServiceWorkerRegistrationInfo;
   friend class ServiceWorkerUnregisterJob;
+  friend class UpdateTimerCallback;
 
 public:
   NS_DECL_ISUPPORTS
@@ -360,6 +376,7 @@ public:
   already_AddRefed<nsIRunnable>
   PrepareFetchEvent(const PrincipalOriginAttributes& aOriginAttributes,
                     nsIDocument* aDoc,
+                    const nsAString& aDocumentIdForTopLevelNavigation,
                     nsIInterceptedChannel* aChannel,
                     bool aIsReload,
                     bool aIsSubresourceLoad,
@@ -434,10 +451,16 @@ public:
               uint32_t aFlags,
               JSExnType aExnType);
 
+  UniquePtr<ServiceWorkerClientInfo>
+  GetClient(nsIPrincipal* aPrincipal,
+            const nsAString& aClientId,
+            ErrorResult& aRv);
+
   void
   GetAllClients(nsIPrincipal* aPrincipal,
                 const nsCString& aScope,
-                nsTArray<ServiceWorkerClientInfo>& aControlledDocuments);
+                bool aIncludeUncontrolled,
+                nsTArray<ServiceWorkerClientInfo>& aDocuments);
 
   void
   MaybeClaimClient(nsIDocument* aDocument,
@@ -472,6 +495,10 @@ public:
   NS_IMETHOD
   RemoveRegistrationEventListener(const nsAString& aScope,
                                   ServiceWorkerRegistrationListener* aListener);
+
+  void
+  MaybeCheckNavigationUpdate(nsIDocument* aDoc);
+
 private:
   ServiceWorkerManager();
   ~ServiceWorkerManager();
@@ -522,7 +549,8 @@ private:
 
   void
   StartControllingADocument(ServiceWorkerRegistrationInfo* aRegistration,
-                            nsIDocument* aDoc);
+                            nsIDocument* aDoc,
+                            const nsAString& aDocumentId);
 
   void
   StopControllingADocument(ServiceWorkerRegistrationInfo* aRegistration);
@@ -649,6 +677,12 @@ private:
   void
   RemoveNavigationInterception(const nsACString& aScope,
                                nsIInterceptedChannel* aChannel);
+
+  void
+  ScheduleUpdateTimer(nsIPrincipal* aPrincipal, const nsACString& aScope);
+
+  void
+  UpdateTimerFired(nsIPrincipal* aPrincipal, const nsACString& aScope);
 };
 
 } // namespace workers

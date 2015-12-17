@@ -2802,8 +2802,8 @@ public:
   virtual void Paint(nsDisplayListBuilder* aBuilder,
                      nsRenderingContext* aCtx) override
   {
-    gfxContext* ctx = aCtx->ThebesContext();
-    gfxContextAutoDisableSubpixelAntialiasing disable(ctx, mDisableSubpixelAA);
+    DrawTargetAutoDisableSubpixelAntialiasing disable(aCtx->GetDrawTarget(),
+                                                      mDisableSubpixelAA);
 
     DrawResult result = static_cast<nsTreeBodyFrame*>(mFrame)
       ->PaintTreeBody(*aCtx, mVisibleRect, ToReferenceFrame());
@@ -3748,15 +3748,16 @@ nsTreeBodyFrame::PaintText(int32_t              aRowIndex,
 
   nscoord offset;
   nscoord size;
-  if (decorations & (NS_FONT_DECORATION_OVERLINE | NS_FONT_DECORATION_UNDERLINE)) {
+  if (decorations & (NS_STYLE_TEXT_DECORATION_LINE_OVERLINE |
+                     NS_STYLE_TEXT_DECORATION_LINE_UNDERLINE)) {
     fontMet->GetUnderline(offset, size);
-    if (decorations & NS_FONT_DECORATION_OVERLINE) {
+    if (decorations & NS_STYLE_TEXT_DECORATION_LINE_OVERLINE) {
       nsRect r(textRect.x, textRect.y, textRect.width, size);
       Rect devPxRect =
         NSRectToSnappedRect(r, appUnitsPerDevPixel, *drawTarget);
       drawTarget->FillRect(devPxRect, color);
     }
-    if (decorations & NS_FONT_DECORATION_UNDERLINE) {
+    if (decorations & NS_STYLE_TEXT_DECORATION_LINE_UNDERLINE) {
       nsRect r(textRect.x, textRect.y + baseline - offset,
                textRect.width, size);
       Rect devPxRect =
@@ -3764,7 +3765,7 @@ nsTreeBodyFrame::PaintText(int32_t              aRowIndex,
       drawTarget->FillRect(devPxRect, color);
     }
   }
-  if (decorations & NS_FONT_DECORATION_LINE_THROUGH) {
+  if (decorations & NS_STYLE_TEXT_DECORATION_LINE_LINE_THROUGH) {
     fontMet->GetStrikeout(offset, size);
     nsRect r(textRect.x, textRect.y + baseline - offset, textRect.width, size);
     Rect devPxRect =

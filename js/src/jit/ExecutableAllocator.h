@@ -28,6 +28,9 @@
 #ifndef jit_ExecutableAllocator_h
 #define jit_ExecutableAllocator_h
 
+#include "mozilla/Maybe.h"
+#include "mozilla/XorShift128PlusRNG.h"
+
 #include <limits>
 #include <stddef.h> // for ptrdiff_t
 
@@ -183,6 +186,10 @@ class ExecutableAllocator
     typedef void (*DestroyCallback)(void* addr, size_t size);
     DestroyCallback destroyCallback;
 
+#ifdef XP_WIN
+    mozilla::Maybe<mozilla::non_crypto::XorShift128PlusRNG> randomNumberGenerator;
+#endif
+
   public:
     enum ProtectionSetting { Writable, Executable };
 
@@ -263,9 +270,6 @@ class ExecutableAllocator
   private:
     static size_t pageSize;
     static size_t largeAllocSize;
-#ifdef XP_WIN
-    static uint64_t rngSeed;
-#endif
 
     static const size_t OVERSIZE_ALLOCATION = size_t(-1);
 
@@ -350,9 +354,10 @@ class ExecutableAllocator
         // At this point, local |pool| is the owner.
 
         if (m_smallPools.length() < maxSmallPools) {
-            // We haven't hit the maximum number of live pools;  add the new pool.
-            m_smallPools.append(pool);
-            pool->addRef();
+            // We haven't hit the maximum number of live pools; add the new pool.
+            // If append() OOMs, we just return an unshared allocator.
+            if (m_smallPools.append(pool))
+                pool->addRef();
         } else {
             // Find the pool with the least space.
             int iMin = 0;
@@ -404,7 +409,23 @@ class ExecutableAllocator
 #elif defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
     static void cacheFlush(void* code, size_t size)
     {
-#if defined(__GNUC__)
+#if defined(_MIPS_ARCH_LOONGSON3A)
+        // On Loongson3-CPUs, The cache flushed automatically
+        // by hardware. Just need to execute an instruction hazard.
+        uintptr_t tmp;
+        asm volatile (
+            ".set   push \n"
+            ".set   noreorder \n"
+            "move   %[tmp], $ra \n"
+            "bal    1f \n"
+            "daddiu $ra, 8 \n"
+            "1: \n"
+            "jr.hb  $ra \n"
+            "move   $ra, %[tmp] \n"
+            ".set   pop\n"
+            :[tmp]"=&r"(tmp)
+        );
+#elif defined(__GNUC__)
         intptr_t end = reinterpret_cast<intptr_t>(code) + size;
         __builtin___clear_cache(reinterpret_cast<char*>(code), reinterpret_cast<char*>(end));
 #else

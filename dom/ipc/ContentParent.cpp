@@ -139,6 +139,7 @@
 #include "nsIMutable.h"
 #include "nsIObserverService.h"
 #include "nsIPresShell.h"
+#include "nsIRemoteWindowContext.h"
 #include "nsIScriptError.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsISiteSecurityService.h"
@@ -147,7 +148,6 @@
 #include "nsISystemMessagesInternal.h"
 #include "nsITimer.h"
 #include "nsIURIFixup.h"
-#include "nsIWindowMediator.h"
 #include "nsIDocShellTreeOwner.h"
 #include "nsIXULWindow.h"
 #include "nsIDOMChromeWindow.h"
@@ -269,6 +269,11 @@ using namespace mozilla::system;
 #endif
 
 static NS_DEFINE_CID(kCClipboardCID, NS_CLIPBOARD_CID);
+
+#if defined(XP_WIN)
+// e10s forced enable pref, defined in nsAppRunner.cpp
+extern const char* kForceEnableE10sPref;
+#endif
 
 using base::ChildPrivileges;
 using base::KillProcess;
@@ -1554,7 +1559,15 @@ ContentParent::Init()
     // If accessibility is running in chrome process then start it in content
     // process.
     if (nsIPresShell::IsAccessibilityActive()) {
+#if !defined(XP_WIN)
         Unused << SendActivateA11y();
+#else
+        // On Windows we currently only enable a11y in the content process
+        // for testing purposes.
+        if (Preferences::GetBool(kForceEnableE10sPref, false)) {
+            Unused << SendActivateA11y();
+        }
+#endif
     }
 #endif
 
@@ -1568,6 +1581,11 @@ ContentParent::Init()
         nsCOMPtr<nsIProfilerStartParams> currentProfilerParams;
         rv = profiler->GetStartParams(getter_AddRefs(currentProfilerParams));
         MOZ_ASSERT(NS_SUCCEEDED(rv));
+
+        nsCOMPtr<nsISupports> gatherer;
+        rv = profiler->GetProfileGatherer(getter_AddRefs(gatherer));
+        MOZ_ASSERT(NS_SUCCEEDED(rv));
+        mGatherer = static_cast<ProfileGatherer*>(gatherer.get());
 
         StartProfiler(currentProfilerParams);
     }
@@ -1584,7 +1602,7 @@ ContentParent::ForwardKnownInfo()
 #ifdef MOZ_WIDGET_GONK
     InfallibleTArray<VolumeInfo> volumeInfo;
     RefPtr<nsVolumeService> vs = nsVolumeService::GetSingleton();
-    if (vs && !mIsForBrowser) {
+    if (vs) {
         vs->GetVolumesForIPC(&volumeInfo);
         Unused << SendVolumes(volumeInfo);
     }
@@ -1685,6 +1703,47 @@ StaticAutoPtr<LinkedList<SystemMessageHandledListener> >
 
 NS_IMPL_ISUPPORTS(SystemMessageHandledListener,
                   nsITimerCallback)
+
+
+class RemoteWindowContext final : public nsIRemoteWindowContext
+                                , public nsIInterfaceRequestor
+{
+public:
+    explicit RemoteWindowContext(TabParent* aTabParent)
+    : mTabParent(aTabParent)
+    {
+    }
+
+    NS_DECL_ISUPPORTS
+    NS_DECL_NSIINTERFACEREQUESTOR
+    NS_DECL_NSIREMOTEWINDOWCONTEXT
+
+private:
+    ~RemoteWindowContext();
+    RefPtr<TabParent> mTabParent;
+};
+
+NS_IMPL_ISUPPORTS(RemoteWindowContext, nsIRemoteWindowContext, nsIInterfaceRequestor)
+
+RemoteWindowContext::~RemoteWindowContext()
+{
+}
+
+NS_IMETHODIMP
+RemoteWindowContext::GetInterface(const nsIID& aIID, void** aSink)
+{
+    return QueryInterface(aIID, aSink);
+}
+
+NS_IMETHODIMP
+RemoteWindowContext::OpenURI(nsIURI* aURI, uint32_t aFlags)
+{
+    URIParams uri;
+    SerializeURI(aURI, uri);
+
+    Unused << mTabParent->SendOpenURI(uri, aFlags);
+    return NS_OK;
+}
 
 } // namespace
 
@@ -2088,6 +2147,12 @@ ContentParent::ActorDestroy(ActorDestroyReason why)
     RecvRemoveGeolocationListener();
 
     mConsoleService = nullptr;
+
+#ifdef MOZ_ENABLE_PROFILER_SPS
+    if (mGatherer && !mProfile.IsEmpty()) {
+        mGatherer->OOPExitProfile(mProfile);
+    }
+#endif
 
     if (obs) {
         RefPtr<nsHashPropertyBag> props = new nsHashPropertyBag();
@@ -3281,7 +3346,15 @@ ContentParent::Observe(nsISupports* aSubject,
     // gets initiated in chrome process.
     else if (aData && (*aData == '1') &&
              !strcmp(aTopic, "a11y-init-or-shutdown")) {
+#if !defined(XP_WIN)
         Unused << SendActivateA11y();
+#else
+        // On Windows we currently only enable a11y in the content process
+        // for testing purposes.
+        if (Preferences::GetBool(kForceEnableE10sPref, false)) {
+            Unused << SendActivateA11y();
+        }
+#endif
     }
 #endif
     else if (!strcmp(aTopic, "app-theme-changed")) {
@@ -3293,6 +3366,7 @@ ContentParent::Observe(nsISupports* aSubject,
         StartProfiler(params);
     }
     else if (!strcmp(aTopic, "profiler-stopped")) {
+        mGatherer = nullptr;
         Unused << SendStopProfiler();
     }
     else if (!strcmp(aTopic, "profiler-paused")) {
@@ -3302,9 +3376,10 @@ ContentParent::Observe(nsISupports* aSubject,
         Unused << SendPauseProfiler(false);
     }
     else if (!strcmp(aTopic, "profiler-subprocess-gather")) {
-        mGatherer = static_cast<ProfileGatherer*>(aSubject);
-        mGatherer->WillGatherOOPProfile();
-        Unused << SendGatherProfile();
+        if (mGatherer) {
+            mGatherer->WillGatherOOPProfile();
+            Unused << SendGatherProfile();
+        }
     }
     else if (!strcmp(aTopic, "profiler-subprocess")) {
         nsCOMPtr<nsIProfileSaveEvent> pse = do_QueryInterface(aSubject);
@@ -4308,7 +4383,8 @@ ContentParent::RecvAccumulateMixedContentHSTS(const URIParams& aURI, const bool&
 }
 
 bool
-ContentParent::RecvLoadURIExternal(const URIParams& uri)
+ContentParent::RecvLoadURIExternal(const URIParams& uri,
+                                   PBrowserParent* windowContext)
 {
     nsCOMPtr<nsIExternalProtocolService> extProtService(do_GetService(NS_EXTERNALPROTOCOLSERVICE_CONTRACTID));
     if (!extProtService) {
@@ -4318,7 +4394,10 @@ ContentParent::RecvLoadURIExternal(const URIParams& uri)
     if (!ourURI) {
         return false;
     }
-    extProtService->LoadURI(ourURI, nullptr);
+
+    RefPtr<RemoteWindowContext> context =
+        new RemoteWindowContext(static_cast<TabParent*>(windowContext));
+    extProtService->LoadURI(ourURI, context);
     return true;
 }
 
@@ -5330,34 +5409,6 @@ ContentParent::DeallocPWebBrowserPersistDocumentParent(PWebBrowserPersistDocumen
   return true;
 }
 
-static already_AddRefed<nsPIDOMWindow>
-FindMostRecentOpenWindow()
-{
-    nsCOMPtr<nsIWindowMediator> windowMediator =
-        do_GetService(NS_WINDOWMEDIATOR_CONTRACTID);
-    nsCOMPtr<nsISimpleEnumerator> windowEnumerator;
-    windowMediator->GetEnumerator(MOZ_UTF16("navigator:browser"),
-                                  getter_AddRefs(windowEnumerator));
-
-    nsCOMPtr<nsPIDOMWindow> latest;
-
-    bool hasMore = false;
-    MOZ_ALWAYS_TRUE(NS_SUCCEEDED(windowEnumerator->HasMoreElements(&hasMore)));
-    while (hasMore) {
-        nsCOMPtr<nsISupports> item;
-        MOZ_ALWAYS_TRUE(NS_SUCCEEDED(windowEnumerator->GetNext(getter_AddRefs(item))));
-        nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(item);
-
-        if (window && !window->Closed()) {
-            latest = window;
-        }
-
-        MOZ_ALWAYS_TRUE(NS_SUCCEEDED(windowEnumerator->HasMoreElements(&hasMore)));
-    }
-
-    return latest.forget();
-}
-
 bool
 ContentParent::RecvCreateWindow(PBrowserParent* aThisTab,
                                 PBrowserParent* aNewTab,
@@ -5431,7 +5482,7 @@ ContentParent::RecvCreateWindow(PBrowserParent* aThisTab,
     // If we haven't found a chrome window to open in, just use the most recently
     // opened one.
     if (!parent) {
-        parent = FindMostRecentOpenWindow();
+        parent = nsContentUtils::GetMostRecentNonPBWindow();
         if (NS_WARN_IF(!parent)) {
             *aResult = NS_ERROR_FAILURE;
             return true;
@@ -5656,7 +5707,6 @@ ContentParent::RecvProfile(const nsCString& aProfile)
     }
     mProfile = aProfile;
     mGatherer->GatheredOOPProfile();
-    mGatherer = nullptr;
 #endif
     return true;
 }
@@ -5747,6 +5797,14 @@ ContentParent::StartProfiler(nsIProfilerStartParams* aParams)
     ipcParams.threadFilters() = aParams->GetThreadFilterNames();
 
     Unused << SendStartProfiler(ipcParams);
+
+    nsCOMPtr<nsIProfiler> profiler(do_GetService("@mozilla.org/tools/profiler;1"));
+    if (NS_WARN_IF(!profiler)) {
+        return;
+    }
+    nsCOMPtr<nsISupports> gatherer;
+    profiler->GetProfileGatherer(getter_AddRefs(gatherer));
+    mGatherer = static_cast<ProfileGatherer*>(gatherer.get());
 #endif
 }
 

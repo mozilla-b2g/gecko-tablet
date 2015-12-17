@@ -854,6 +854,21 @@ RestyleManager::ProcessRestyledFrames(nsStyleChangeList& aChangeList)
         didReflowThisFrame = true;
       }
 
+      if ((hint & nsChangeHint_UpdateUsesOpacity) &&
+          frame->IsFrameOfType(nsIFrame::eTablePart)) {
+        NS_ASSERTION(hint & nsChangeHint_UpdateOpacityLayer,
+                     "should only return UpdateUsesOpacity hint "
+                     "when also returning UpdateOpacityLayer hint");
+        // When an internal table part (including cells) changes between
+        // having opacity 1 and non-1, it changes whether its
+        // backgrounds (and those of table parts inside of it) are
+        // painted as part of the table's nsDisplayTableBorderBackground
+        // display item, or part of its own display item.  That requires
+        // invalidation, so change UpdateOpacityLayer to RepaintFrame.
+        hint &= ~nsChangeHint_UpdateOpacityLayer;
+        hint |= nsChangeHint_RepaintFrame;
+      }
+
       if (hint & (nsChangeHint_RepaintFrame | nsChangeHint_SyncFrameView |
                   nsChangeHint_UpdateOpacityLayer | nsChangeHint_UpdateTransformLayer |
                   nsChangeHint_ChildrenOnlyTransform | nsChangeHint_SchedulePaint)) {
@@ -1320,19 +1335,10 @@ RestyleManager::AttributeChanged(Element* aElement,
 /* static */ uint64_t
 RestyleManager::GetMaxAnimationGenerationForFrame(nsIFrame* aFrame)
 {
-  nsIContent* content = aFrame->GetContent();
-  if (!content || !content->IsElement()) {
-    return 0;
-  }
-
-  nsCSSPseudoElements::Type pseudoType =
-    aFrame->StyleContext()->GetPseudoType();
   AnimationCollection* transitions =
-    aFrame->PresContext()->TransitionManager()->GetAnimations(
-      content->AsElement(), pseudoType, false /* don't create */);
+    aFrame->PresContext()->TransitionManager()->GetAnimationCollection(aFrame);
   AnimationCollection* animations =
-    aFrame->PresContext()->AnimationManager()->GetAnimations(
-      content->AsElement(), pseudoType, false /* don't create */);
+    aFrame->PresContext()->AnimationManager()->GetAnimationCollection(aFrame);
 
   return std::max(transitions ? transitions->mAnimationGeneration : 0,
                   animations ? animations->mAnimationGeneration : 0);
@@ -1995,8 +2001,8 @@ VerifySameTree(nsStyleContext* aContext1, nsStyleContext* aContext2)
 }
 
 static void
-VerifyContextParent(nsPresContext* aPresContext, nsIFrame* aFrame,
-                    nsStyleContext* aContext, nsStyleContext* aParentContext)
+VerifyContextParent(nsIFrame* aFrame, nsStyleContext* aContext,
+                    nsStyleContext* aParentContext)
 {
   // get the contexts not provided
   if (!aContext) {
@@ -2056,11 +2062,10 @@ VerifyContextParent(nsPresContext* aPresContext, nsIFrame* aFrame,
 }
 
 static void
-VerifyStyleTree(nsPresContext* aPresContext, nsIFrame* aFrame,
-                nsStyleContext* aParentContext)
+VerifyStyleTree(nsIFrame* aFrame, nsStyleContext* aParentContext)
 {
   nsStyleContext*  context = aFrame->StyleContext();
-  VerifyContextParent(aPresContext, aFrame, context, nullptr);
+  VerifyContextParent(aFrame, context, nullptr);
 
   nsIFrame::ChildListIterator lists(aFrame);
   for (; !lists.IsDone(); lists.Next()) {
@@ -2075,15 +2080,15 @@ VerifyStyleTree(nsPresContext* aPresContext, nsIFrame* aFrame,
 
           // recurse to out of flow frame, letting the parent context get resolved
           do {
-            VerifyStyleTree(aPresContext, outOfFlowFrame, nullptr);
+            VerifyStyleTree(outOfFlowFrame, nullptr);
           } while ((outOfFlowFrame = outOfFlowFrame->GetNextContinuation()));
 
           // verify placeholder using the parent frame's context as
           // parent context
-          VerifyContextParent(aPresContext, child, nullptr, nullptr);
+          VerifyContextParent(child, nullptr, nullptr);
         }
         else { // regular frame
-          VerifyStyleTree(aPresContext, child, nullptr);
+          VerifyStyleTree(child, nullptr);
         }
       }
     }
@@ -2094,7 +2099,7 @@ VerifyStyleTree(nsPresContext* aPresContext, nsIFrame* aFrame,
   for (nsStyleContext* extraContext;
        (extraContext = aFrame->GetAdditionalStyleContext(contextIndex));
        ++contextIndex) {
-    VerifyContextParent(aPresContext, aFrame, extraContext, context);
+    VerifyContextParent(aFrame, extraContext, context);
   }
 }
 
@@ -2104,7 +2109,7 @@ RestyleManager::DebugVerifyStyleTree(nsIFrame* aFrame)
   if (aFrame) {
     nsStyleContext* context = aFrame->StyleContext();
     nsStyleContext* parentContext = context->GetParent();
-    VerifyStyleTree(mPresContext, aFrame, parentContext);
+    VerifyStyleTree(aFrame, parentContext);
   }
 }
 
@@ -2522,7 +2527,7 @@ RestyleManager::ReparentStyleContext(nsIFrame* aFrame)
         }
       }
 #ifdef DEBUG
-      VerifyStyleTree(mPresContext, aFrame, newParentContext);
+      VerifyStyleTree(aFrame, newParentContext);
 #endif
     }
   }
@@ -5095,7 +5100,8 @@ RestyleManager::ChangeHintToString(nsChangeHint aHint)
     "ChildrenOnlyTransform", "RecomputePosition", "AddOrRemoveTransform",
     "BorderStyleNoneChange", "UpdateTextPath", "SchedulePaint",
     "NeutralChange", "InvalidateRenderingObservers",
-    "ReflowChangesSizeOrPosition", "UpdateComputedBSize"
+    "ReflowChangesSizeOrPosition", "UpdateComputedBSize",
+    "UpdateUsesOpacity"
   };
   uint32_t hint = aHint & ((1 << ArrayLength(names)) - 1);
   uint32_t rest = aHint & ~((1 << ArrayLength(names)) - 1);

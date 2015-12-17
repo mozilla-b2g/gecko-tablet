@@ -42,6 +42,7 @@
 #include "nsThreadUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsComponentManagerUtils.h"
+#include "nsContentUtils.h"
 #include "nsXULAppAPI.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/SettingChangeNotificationBinding.h"
@@ -1286,9 +1287,7 @@ AudioManager::SelectDeviceFromDevices(uint32_t aOutDevices)
        device &= AUDIO_DEVICE_OUT_ALL_A2DP;
     }
   }
-#if ANDROID_VERSION >= 17
   MOZ_ASSERT(audio_is_output_device(device));
-#endif
   return device;
 }
 AudioManager::VolumeStreamState::VolumeStreamState(AudioManager& aManager,

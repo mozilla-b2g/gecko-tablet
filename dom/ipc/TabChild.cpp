@@ -23,6 +23,7 @@
 #include "mozilla/plugins/PluginWidgetChild.h"
 #include "mozilla/IMEStateManager.h"
 #include "mozilla/ipc/DocumentRendererChild.h"
+#include "mozilla/ipc/URIUtils.h"
 #ifdef MOZ_NUWA_PROCESS
 #include "ipc/Nuwa.h"
 #endif
@@ -101,6 +102,7 @@
 #include "nsIAppsService.h"
 #include "nsNetUtil.h"
 #include "nsIPermissionManager.h"
+#include "nsIURILoader.h"
 #include "nsIScriptError.h"
 #include "mozilla/EventForwards.h"
 #include "nsDeviceContext.h"
@@ -757,7 +759,7 @@ TabChild::Init()
   }
   mPuppetWidget->Create(
     nullptr, 0,              // no parents
-    gfx::IntRect(gfx::IntPoint(0, 0), gfx::IntSize(0, 0)),
+    LayoutDeviceIntRect(0, 0, 0, 0),
     nullptr                  // HandleWidgetEvent
   );
 
@@ -1261,6 +1263,31 @@ TabChild::RecvLoadURL(const nsCString& aURI,
 #endif
 
     return true;
+}
+
+bool
+TabChild::RecvOpenURI(const URIParams& aURI, const uint32_t& aFlags)
+{
+  nsCOMPtr<nsIURI> uri = DeserializeURI(aURI);
+  nsCOMPtr<nsIChannel> channel;
+  nsresult rv =
+    NS_NewChannel(getter_AddRefs(channel),
+                  uri,
+                  nsContentUtils::GetSystemPrincipal(),
+                  nsILoadInfo::SEC_NORMAL,
+                  nsIContentPolicy::TYPE_DOCUMENT);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return true;
+  }
+
+  nsCOMPtr<nsIURILoader> loader = do_GetService("@mozilla.org/uriloader;1");
+  if (NS_WARN_IF(!loader)) {
+    return true;
+  }
+
+  nsCOMPtr<nsIInterfaceRequestor> context(do_QueryInterface(WebNavigation()));
+  loader->OpenURI(channel, aFlags, context);
+  return true;
 }
 
 bool
@@ -1808,10 +1835,11 @@ TabChild::RecvMouseWheelEvent(const WidgetWheelEvent& aEvent,
   event.widget = mPuppetWidget;
   APZCCallbackHelper::DispatchWidgetEvent(event);
 
+  if (event.mCanTriggerSwipe) {
+    SendRespondStartSwipeEvent(aInputBlockId, event.TriggersSwipe());
+  }
+
   if (aEvent.mFlags.mHandledByAPZ) {
-    if (event.mCanTriggerSwipe) {
-      SendRespondStartSwipeEvent(aInputBlockId, event.TriggersSwipe());
-    }
     mAPZEventState->ProcessWheelEvent(event, aGuid, aInputBlockId);
   }
   return true;
@@ -2837,8 +2865,9 @@ TabChild::CreatePluginWidget(nsIWidget* aParent, nsIWidget** aOut)
   initData.mUnicode = false;
   initData.clipChildren = true;
   initData.clipSiblings = true;
-  nsresult rv = pluginWidget->Create(aParent, nullptr, gfx::IntRect(gfx::IntPoint(0, 0),
-                                     nsIntSize(0, 0)), &initData);
+  nsresult rv = pluginWidget->Create(aParent, nullptr,
+                                     LayoutDeviceIntRect(0, 0, 0, 0),
+                                     &initData);
   if (NS_FAILED(rv)) {
     NS_WARNING("Creating native plugin widget on the chrome side failed.");
   }

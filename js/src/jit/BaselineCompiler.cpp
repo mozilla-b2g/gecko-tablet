@@ -248,7 +248,7 @@ BaselineCompiler::compile()
 
     // Patch IC loads using IC entries.
     for (size_t i = 0; i < icLoadLabels_.length(); i++) {
-        CodeOffsetLabel label = icLoadLabels_[i].label;
+        CodeOffset label = icLoadLabels_[i].label;
         size_t icEntry = icLoadLabels_[i].icEntry;
         ICEntry* entryAddr = &(baselineScript->icEntry(icEntry));
         Assembler::PatchDataWithValueCheck(CodeLocationLabel(code, label),
@@ -416,7 +416,7 @@ BaselineCompiler::emitPrologue()
 
     // Record the offset of the prologue, because Ion can bailout before
     // the scope chain is initialized.
-    prologueOffset_ = CodeOffsetLabel(masm.currentOffset());
+    prologueOffset_ = CodeOffset(masm.currentOffset());
 
     // When compiling with Debugger instrumentation, set the debuggeeness of
     // the frame before any operation that can call into the VM.
@@ -447,7 +447,7 @@ BaselineCompiler::emitEpilogue()
 {
     // Record the offset of the epilogue, so we can do early return from
     // Debugger handlers during on-stack recompile.
-    epilogueOffset_ = CodeOffsetLabel(masm.currentOffset());
+    epilogueOffset_ = CodeOffset(masm.currentOffset());
 
     masm.bind(&return_);
 
@@ -509,9 +509,9 @@ BaselineCompiler::emitIC(ICStub* stub, ICEntry::Kind kind)
     if (!entry)
         return false;
 
-    CodeOffsetLabel patchOffset;
+    CodeOffset patchOffset;
     EmitCallIC(&patchOffset, masm);
-    entry->setReturnOffset(CodeOffsetLabel(masm.currentOffset()));
+    entry->setReturnOffset(CodeOffset(masm.currentOffset()));
     if (!addICLoadLabel(patchOffset))
         return false;
 
@@ -624,7 +624,7 @@ BaselineCompiler::emitDebugPrologue()
         masm.bind(&done);
     }
 
-    postDebugPrologueOffset_ = CodeOffsetLabel(masm.currentOffset());
+    postDebugPrologueOffset_ = CodeOffset(masm.currentOffset());
 
     return true;
 }
@@ -741,7 +741,7 @@ BaselineCompiler::emitWarmUpCounterIncrement(bool allowOsr)
 
     Label skipCall;
 
-    const OptimizationInfo* info = js_IonOptimizations.get(js_IonOptimizations.firstLevel());
+    const OptimizationInfo* info = IonOptimizations.get(IonOptimizations.firstLevel());
     uint32_t warmUpThreshold = info->compilerWarmUpThreshold(script, pc);
     masm.branch32(Assembler::LessThan, countReg, Imm32(warmUpThreshold), &skipCall);
 
@@ -798,7 +798,7 @@ BaselineCompiler::emitDebugTrap()
     JitCode* handler = cx->runtime()->jitRuntime()->debugTrapHandler(cx);
     if (!handler)
         return false;
-    mozilla::DebugOnly<CodeOffsetLabel> offset = masm.toggledCall(handler, enabled);
+    mozilla::DebugOnly<CodeOffset> offset = masm.toggledCall(handler, enabled);
 
 #ifdef DEBUG
     // Patchable call offset has to match the pc mapping offset.
@@ -886,12 +886,12 @@ BaselineCompiler::emitProfilerEnterFrame()
     // Store stack position to lastProfilingFrame variable, guarded by a toggled jump.
     // Starts off initially disabled.
     Label noInstrument;
-    CodeOffsetLabel toggleOffset = masm.toggledJump(&noInstrument);
+    CodeOffset toggleOffset = masm.toggledJump(&noInstrument);
     masm.profilerEnterFrame(masm.getStackPointer(), R0.scratchReg());
     masm.bind(&noInstrument);
 
     // Store the start offset in the appropriate location.
-    MOZ_ASSERT(!profilerEnterFrameToggleOffset_.used());
+    MOZ_ASSERT(!profilerEnterFrameToggleOffset_.bound());
     profilerEnterFrameToggleOffset_ = toggleOffset;
 }
 
@@ -901,12 +901,12 @@ BaselineCompiler::emitProfilerExitFrame()
     // Store previous frame to lastProfilingFrame variable, guarded by a toggled jump.
     // Starts off initially disabled.
     Label noInstrument;
-    CodeOffsetLabel toggleOffset = masm.toggledJump(&noInstrument);
+    CodeOffset toggleOffset = masm.toggledJump(&noInstrument);
     masm.profilerExitFrame();
     masm.bind(&noInstrument);
 
     // Store the start offset in the appropriate location.
-    MOZ_ASSERT(!profilerExitFrameToggleOffset_.used());
+    MOZ_ASSERT(!profilerExitFrameToggleOffset_.bound());
     profilerExitFrameToggleOffset_ = toggleOffset;
 }
 
@@ -923,7 +923,7 @@ BaselineCompiler::emitBody()
     while (true) {
         JSOp op = JSOp(*pc);
         JitSpew(JitSpew_BaselineOp, "Compiling op @ %d: %s",
-                int(script->pcToOffset(pc)), js_CodeName[op]);
+                int(script->pcToOffset(pc)), CodeName[op]);
 
         BytecodeInfo* info = analysis_.maybeInfo(pc);
 
@@ -979,7 +979,7 @@ BaselineCompiler::emitBody()
 
         switch (op) {
           default:
-            JitSpew(JitSpew_BaselineAbort, "Unhandled op: %s", js_CodeName[op]);
+            JitSpew(JitSpew_BaselineAbort, "Unhandled op: %s", CodeName[op]);
             return Method_CantCompile;
 
 #define EMIT_OP(OP)                            \
@@ -3099,6 +3099,12 @@ BaselineCompiler::emit_JSOP_CALL()
 }
 
 bool
+BaselineCompiler::emit_JSOP_CALLITER()
+{
+    return emitCall();
+}
+
+bool
 BaselineCompiler::emit_JSOP_NEW()
 {
     return emitCall();
@@ -3562,8 +3568,7 @@ BaselineCompiler::emit_JSOP_RETRVAL()
     return emitReturn();
 }
 
-typedef bool (*ToIdFn)(JSContext*, HandleScript, jsbytecode*, HandleValue, HandleValue,
-                       MutableHandleValue);
+typedef bool (*ToIdFn)(JSContext*, HandleScript, jsbytecode*, HandleValue, MutableHandleValue);
 static const VMFunction ToIdInfo = FunctionInfo<ToIdFn>(js::ToIdOperation);
 
 bool
@@ -3579,10 +3584,7 @@ BaselineCompiler::emit_JSOP_TOID()
 
     prepareVMCall();
 
-    masm.loadValue(frame.addressOfStackValue(frame.peek(-2)), R1);
-
     pushArg(R0);
-    pushArg(R1);
     pushArg(ImmPtr(pc));
     pushArg(ImmGCPtr(script));
 
@@ -3592,6 +3594,32 @@ BaselineCompiler::emit_JSOP_TOID()
     masm.bind(&done);
     frame.pop(); // Pop index.
     frame.push(R0);
+    return true;
+}
+
+typedef bool (*ThrowObjectCoercibleFn)(JSContext*, HandleValue);
+static const VMFunction ThrowObjectCoercibleInfo = FunctionInfo<ThrowObjectCoercibleFn>(ThrowObjectCoercible);
+
+bool
+BaselineCompiler::emit_JSOP_CHECKOBJCOERCIBLE()
+{
+    frame.syncStack(0);
+    masm.loadValue(frame.addressOfStackValue(frame.peek(-1)), R0);
+
+    Label fail, done;
+
+    masm.branchTestUndefined(Assembler::Equal, R0, &fail);
+    masm.branchTestNull(Assembler::NotEqual, R0, &done);
+
+    masm.bind(&fail);
+    prepareVMCall();
+
+    pushArg(R0);
+
+    if (!callVM(ThrowObjectCoercibleInfo))
+        return false;
+
+    masm.bind(&done);
     return true;
 }
 

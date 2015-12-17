@@ -257,6 +257,7 @@
     _(StoreTypedArrayElementHole)   \
     _(StoreTypedArrayElementStatic) \
     _(AtomicIsLockFree)             \
+    _(GuardSharedTypedArray)        \
     _(CompareExchangeTypedArrayElement) \
     _(AtomicExchangeTypedArrayElement) \
     _(AtomicTypedArrayElementBinop) \
@@ -365,6 +366,7 @@
     _(Debugger)                     \
     _(NewTarget)                    \
     _(ArrowNewTarget)               \
-    _(CheckReturn)
+    _(CheckReturn)                  \
+    _(CheckObjCoercible)
 
 #endif /* jit_shared_LOpcodes_shared_h */

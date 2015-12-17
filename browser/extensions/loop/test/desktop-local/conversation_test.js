@@ -29,6 +29,7 @@ describe("loop.conversation", function() {
       GetLoopPref: function(prefName) {
         switch (prefName) {
           case "debug.sdk":
+          case "debug.dispatcher":
             return false;
           default:
             return "http://fake";
@@ -56,6 +57,9 @@ describe("loop.conversation", function() {
         return new Blob([new ArrayBuffer(10)], { type: "audio/ogg" });
       }),
       GetSelectedTabMetadata: function() {
+        return {};
+      },
+      GetConversationWindowData: function() {
         return {};
       }
     });

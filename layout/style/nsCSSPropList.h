@@ -1482,7 +1482,8 @@ CSS_PROP_DISPLAY(
     contain,
     Contain,
     CSS_PROPERTY_PARSE_VALUE |
-        CSS_PROPERTY_VALUE_PARSER_FUNCTION,
+        CSS_PROPERTY_VALUE_PARSER_FUNCTION |
+        CSS_PROPERTY_FIXPOS_CB,
     "layout.css.contain.enabled",
     // Does not affect parsing, but is needed for tab completion in devtools:
     VARIANT_HK | VARIANT_NONE,
@@ -3028,7 +3029,8 @@ CSS_PROP_DISPLAY(
     Position,
     CSS_PROPERTY_PARSE_VALUE |
         // For position: sticky/fixed
-        CSS_PROPERTY_CREATES_STACKING_CONTEXT,
+        CSS_PROPERTY_CREATES_STACKING_CONTEXT |
+        CSS_PROPERTY_ABSPOS_CB,
     "",
     VARIANT_HK,
     kPositionKTable,
@@ -3076,7 +3078,7 @@ CSS_PROP_TEXT(
     ruby_align,
     RubyAlign,
     CSS_PROPERTY_PARSE_VALUE,
-    "layout.css.ruby.enabled",
+    "",
     VARIANT_HK,
     kRubyAlignKTable,
     offsetof(nsStyleText, mRubyAlign),
@@ -3086,7 +3088,7 @@ CSS_PROP_TEXT(
     ruby_position,
     RubyPosition,
     CSS_PROPERTY_PARSE_VALUE,
-    "layout.css.ruby.enabled",
+    "",
     VARIANT_HK,
     kRubyPositionKTable,
     offsetof(nsStyleText, mRubyPosition),
@@ -3268,14 +3270,16 @@ CSS_PROP_SHORTHAND(
     text-emphasis,
     text_emphasis,
     TextEmphasis,
-    CSS_PROPERTY_PARSE_FUNCTION,
+    CSS_PROPERTY_PARSE_FUNCTION |
+        CSS_PROPERTY_ENABLED_IN_UA_SHEETS,
     "layout.css.text-emphasis.enabled")
 CSS_PROP_TEXT(
     text-emphasis-color,
     text_emphasis_color,
     TextEmphasisColor,
     CSS_PROPERTY_PARSE_VALUE |
-        CSS_PROPERTY_IGNORED_WHEN_COLORS_DISABLED,
+        CSS_PROPERTY_IGNORED_WHEN_COLORS_DISABLED |
+        CSS_PROPERTY_ENABLED_IN_UA_SHEETS,
     "layout.css.text-emphasis.enabled",
     VARIANT_HC,
     nullptr,
@@ -3286,7 +3290,8 @@ CSS_PROP_TEXT(
     text_emphasis_position,
     TextEmphasisPosition,
     CSS_PROPERTY_PARSE_VALUE |
-        CSS_PROPERTY_VALUE_PARSER_FUNCTION,
+        CSS_PROPERTY_VALUE_PARSER_FUNCTION |
+        CSS_PROPERTY_ENABLED_IN_UA_SHEETS,
     "layout.css.text-emphasis.enabled",
     0,
     kTextEmphasisPositionKTable,
@@ -3297,7 +3302,8 @@ CSS_PROP_TEXT(
     text_emphasis_style,
     TextEmphasisStyle,
     CSS_PROPERTY_PARSE_VALUE |
-        CSS_PROPERTY_VALUE_PARSER_FUNCTION,
+        CSS_PROPERTY_VALUE_PARSER_FUNCTION |
+        CSS_PROPERTY_ENABLED_IN_UA_SHEETS,
     "layout.css.text-emphasis.enabled",
     0,
     nullptr,
@@ -3383,7 +3389,8 @@ CSS_PROP_DISPLAY(
     CSS_PROPERTY_PARSE_FUNCTION |
         CSS_PROPERTY_GETCS_NEEDS_LAYOUT_FLUSH |
         CSS_PROPERTY_CREATES_STACKING_CONTEXT |
-        CSS_PROPERTY_CAN_ANIMATE_ON_COMPOSITOR,
+        CSS_PROPERTY_CAN_ANIMATE_ON_COMPOSITOR |
+        CSS_PROPERTY_FIXPOS_CB,
     "",
     0,
     nullptr,
@@ -3428,7 +3435,8 @@ CSS_PROP_DISPLAY(
     perspective,
     Perspective,
     CSS_PROPERTY_PARSE_VALUE |
-        CSS_PROPERTY_CREATES_STACKING_CONTEXT,
+        CSS_PROPERTY_CREATES_STACKING_CONTEXT |
+        CSS_PROPERTY_FIXPOS_CB,
     "",
     VARIANT_NONE | VARIANT_INHERIT | VARIANT_LENGTH | VARIANT_POSITIVE_DIMENSION,
     nullptr,
@@ -3439,7 +3447,8 @@ CSS_PROP_DISPLAY(
     transform_style,
     TransformStyle,
     CSS_PROPERTY_PARSE_VALUE |
-        CSS_PROPERTY_CREATES_STACKING_CONTEXT,
+        CSS_PROPERTY_CREATES_STACKING_CONTEXT |
+        CSS_PROPERTY_FIXPOS_CB,
     "",
     VARIANT_HK,
     kTransformStyleKTable,
@@ -3967,7 +3976,8 @@ CSS_PROP_SVGRESET(
     filter,
     Filter,
     CSS_PROPERTY_PARSE_FUNCTION |
-        CSS_PROPERTY_CREATES_STACKING_CONTEXT,
+        CSS_PROPERTY_CREATES_STACKING_CONTEXT |
+        CSS_PROPERTY_FIXPOS_CB,
     "",
     0,
     nullptr,

@@ -1634,6 +1634,11 @@ GetPropagatedScrollbarStylesForViewport(nsPresContext* aPresContext,
   nsIDocument* document = aPresContext->Document();
   Element* docElement = document->GetRootElement();
 
+  // docElement might be null if we're doing this after removing it.
+  if (!docElement) {
+    return nullptr;
+  }
+
   // Check the style on the document root element
   nsStyleSet *styleSet = aPresContext->StyleSet();
   RefPtr<nsStyleContext> rootStyle;
@@ -3098,14 +3103,17 @@ nsRootPresContext::CancelApplyPluginGeometryTimer()
 #ifndef XP_MACOSX
 
 static bool
-HasOverlap(const nsIntPoint& aOffset1, const nsTArray<nsIntRect>& aClipRects1,
-           const nsIntPoint& aOffset2, const nsTArray<nsIntRect>& aClipRects2)
+HasOverlap(const LayoutDeviceIntPoint& aOffset1,
+           const nsTArray<LayoutDeviceIntRect>& aClipRects1,
+           const LayoutDeviceIntPoint& aOffset2,
+           const nsTArray<LayoutDeviceIntRect>& aClipRects2)
 {
-  nsIntPoint offsetDelta = aOffset1 - aOffset2;
+  LayoutDeviceIntPoint offsetDelta = aOffset1 - aOffset2;
   for (uint32_t i = 0; i < aClipRects1.Length(); ++i) {
     for (uint32_t j = 0; j < aClipRects2.Length(); ++j) {
-      if ((aClipRects1[i] + offsetDelta).Intersects(aClipRects2[j]))
+      if ((aClipRects1[i] + offsetDelta).Intersects(aClipRects2[j])) {
         return true;
+      }
     }
   }
   return false;
@@ -3144,12 +3152,12 @@ SortConfigurations(nsTArray<nsIWidget::Configuration>* aConfigurations)
       for (uint32_t j = 0; j < pluginsToMove.Length(); ++j) {
         if (i == j)
           continue;
-        nsIntRect bounds;
-        pluginsToMove[j].mChild->GetBoundsUntyped(bounds);
-        nsAutoTArray<nsIntRect,1> clipRects;
+        LayoutDeviceIntRect bounds;
+        pluginsToMove[j].mChild->GetBounds(bounds);
+        nsAutoTArray<LayoutDeviceIntRect,1> clipRects;
         pluginsToMove[j].mChild->GetWindowClipRegion(&clipRects);
         if (HasOverlap(bounds.TopLeft(), clipRects,
-                       config->mBounds.ToUnknownRect().TopLeft(),
+                       config->mBounds.TopLeft(),
                        config->mClipRegion)) {
           foundOverlap = true;
           break;

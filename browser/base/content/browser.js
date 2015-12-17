@@ -1,7 +1,7 @@
-# -*- indent-tabs-mode: nil; js-indent-level: 2 -*-
-# This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*-
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 var Ci = Components.interfaces;
 var Cu = Components.utils;
@@ -104,9 +104,9 @@ var gAppInfo = Cc["@mozilla.org/xre/app-info;1"]
                   .getService(Ci.nsIXULAppInfo)
                   .QueryInterface(Ci.nsIXULRuntime);
 
-#ifndef XP_MACOSX
-var gEditUIVisible = true;
-#endif
+if (AppConstants.platform != "macosx") {
+  var gEditUIVisible = true;
+}
 
 [
   ["gBrowser",            "content"],
@@ -202,10 +202,10 @@ XPCOMUtils.defineLazyModuleGetter(this, "PageThumbs",
 XPCOMUtils.defineLazyModuleGetter(this, "ProcessHangMonitor",
   "resource:///modules/ProcessHangMonitor.jsm");
 
-#ifdef MOZ_SAFE_BROWSING
-XPCOMUtils.defineLazyModuleGetter(this, "SafeBrowsing",
-  "resource://gre/modules/SafeBrowsing.jsm");
-#endif
+if (AppConstants.MOZ_SAFE_BROWSING) {
+  XPCOMUtils.defineLazyModuleGetter(this, "SafeBrowsing",
+    "resource://gre/modules/SafeBrowsing.jsm");
+}
 
 XPCOMUtils.defineLazyModuleGetter(this, "gCustomizationTabPreloader",
   "resource:///modules/CustomizationTabPreloader.jsm", "CustomizationTabPreloader");
@@ -230,10 +230,11 @@ XPCOMUtils.defineLazyModuleGetter(this, "gWebRTCUI",
 
 XPCOMUtils.defineLazyModuleGetter(this, "TabCrashHandler",
   "resource:///modules/ContentCrashHandlers.jsm");
-#ifdef MOZ_CRASHREPORTER
-XPCOMUtils.defineLazyModuleGetter(this, "PluginCrashReporter",
-  "resource:///modules/ContentCrashHandlers.jsm");
-#endif
+
+if (AppConstants.MOZ_CRASHREPORTER) {
+  XPCOMUtils.defineLazyModuleGetter(this, "PluginCrashReporter",
+    "resource:///modules/ContentCrashHandlers.jsm");
+}
 
 XPCOMUtils.defineLazyModuleGetter(this, "FormValidationHandler",
   "resource:///modules/FormValidationHandler.jsm");
@@ -265,33 +266,10 @@ var gInitialPages = [
   "about:sessionrestore"
 ];
 
-#include browser-addons.js
-#include browser-ctrlTab.js
-#include browser-customization.js
-#include browser-devedition.js
-#include browser-eme.js
-#include browser-feeds.js
-#include browser-fullScreen.js
-#include browser-fullZoom.js
-#include browser-gestureSupport.js
-#include browser-places.js
-#include browser-plugins.js
-#include browser-safebrowsing.js
-#include browser-sidebar.js
-#include browser-social.js
-#include browser-syncui.js
-#include browser-tabview.js
-#include browser-thumbnails.js
-#include browser-trackingprotection.js
-
-#ifdef MOZ_DATA_REPORTING
-#include browser-data-submission-info-bar.js
-#endif
-
-#include browser-fxaccounts.js
-
 XPCOMUtils.defineLazyGetter(this, "Win7Features", function () {
-#ifdef XP_WIN
+  if (AppConstants.platform != "win")
+    return null;
+
   // Bug 666808 - AeroPeek support for e10s
   if (gMultiProcessBrowser)
     return null;
@@ -309,15 +287,14 @@ XPCOMUtils.defineLazyGetter(this, "Win7Features", function () {
       }
     };
   }
-#endif
   return null;
 });
 
-#ifdef MOZ_CRASHREPORTER
-XPCOMUtils.defineLazyServiceGetter(this, "gCrashReporter",
-                                   "@mozilla.org/xre/app-info;1",
-                                   "nsICrashReporter");
-#endif
+if (AppConstants.MOZ_CRASHREPORTER) {
+  XPCOMUtils.defineLazyServiceGetter(this, "gCrashReporter",
+                                     "@mozilla.org/xre/app-info;1",
+                                     "nsICrashReporter");
+}
 
 XPCOMUtils.defineLazyGetter(this, "PageMenuParent", function() {
   let tmp = {};
@@ -525,8 +502,8 @@ var gPopupBlockerObserver = {
         this._reportButton.hidden = true;
 
       // Hide the notification box (if it's visible).
-      var notificationBox = gBrowser.getNotificationBox();
-      var notification = notificationBox.getNotificationWithValue("popup-blocked");
+      let notificationBox = gBrowser.getNotificationBox();
+      let notification = notificationBox.getNotificationWithValue("popup-blocked");
       if (notification) {
         notificationBox.removeNotification(notification, false);
       }
@@ -544,20 +521,21 @@ var gPopupBlockerObserver = {
         var brandBundle = document.getElementById("bundle_brand");
         var brandShortName = brandBundle.getString("brandShortName");
         var popupCount = gBrowser.selectedBrowser.blockedPopups.length;
-#ifdef XP_WIN
-        var popupButtonText = gNavigatorBundle.getString("popupWarningButton");
-        var popupButtonAccesskey = gNavigatorBundle.getString("popupWarningButton.accesskey");
-#else
-        var popupButtonText = gNavigatorBundle.getString("popupWarningButtonUnix");
-        var popupButtonAccesskey = gNavigatorBundle.getString("popupWarningButtonUnix.accesskey");
-#endif
+
+        var stringKey = AppConstants.platform == "win"
+                        ? "popupWarningButton"
+                        : "popupWarningButtonUnix";
+
+        var popupButtonText = gNavigatorBundle.getString(stringKey);
+        var popupButtonAccesskey = gNavigatorBundle.getString(stringKey + ".accesskey");
+
         var messageBase = gNavigatorBundle.getString("popupWarning.message");
         var message = PluralForm.get(popupCount, messageBase)
                                 .replace("#1", brandShortName)
                                 .replace("#2", popupCount);
 
-        var notificationBox = gBrowser.getNotificationBox();
-        var notification = notificationBox.getNotificationWithValue("popup-blocked");
+        let notificationBox = gBrowser.getNotificationBox();
+        let notification = notificationBox.getNotificationWithValue("popup-blocked");
         if (notification) {
           notification.label = message;
         }
@@ -1045,12 +1023,6 @@ var gBrowserInit = {
           defaultWidth = screen.availWidth * .75;
           defaultHeight = screen.availHeight * .75;
         }
-
-#if MOZ_WIDGET_GTK == 2
-        // On X, we're not currently able to account for the size of the window
-        // border.  Use 28px as a guess (titlebar + bottom window border)
-        defaultHeight -= 28;
-#endif
       }
       document.documentElement.setAttribute("width", defaultWidth);
       document.documentElement.setAttribute("height", defaultHeight);
@@ -1071,7 +1043,6 @@ var gBrowserInit = {
     gPrivateBrowsingUI.init();
     TabsInTitlebar.init();
 
-#ifdef XP_WIN
     if (window.matchMedia("(-moz-os-version: windows-win8)").matches &&
         window.matchMedia("(-moz-windows-default-theme)").matches) {
       let windowFrameColor = Cu.import("resource:///modules/Windows8WindowFrameColor.jsm", {})
@@ -1094,7 +1065,6 @@ var gBrowserInit = {
         document.documentElement.setAttribute("darkwindowframe", "true");
       }
     }
-#endif
 
     ToolbarIconColor.init();
 
@@ -1223,10 +1193,10 @@ var gBrowserInit = {
       }
     }
 
-#ifdef MOZ_SAFE_BROWSING
-    // Bug 778855 - Perf regression if we do this here. To be addressed in bug 779008.
-    setTimeout(function() { SafeBrowsing.init(); }, 2000);
-#endif
+    if (AppConstants.MOZ_SAFE_BROWSING) {
+      // Bug 778855 - Perf regression if we do this here. To be addressed in bug 779008.
+      setTimeout(function() { SafeBrowsing.init(); }, 2000);
+    }
 
     Services.obs.addObserver(gSessionHistoryObserver, "browser:purge-session-history", false);
     Services.obs.addObserver(gXPInstallObserver, "addon-install-disabled", false);
@@ -1241,9 +1211,10 @@ var gBrowserInit = {
     BrowserOffline.init();
     OfflineApps.init();
     IndexedDBPromptHelper.init();
-#ifdef E10S_TESTING_ONLY
-    gRemoteTabsUI.init();
-#endif
+
+    if (AppConstants.E10S_TESTING_ONLY)
+      gRemoteTabsUI.init();
+
     // Initialize the full zoom setting.
     // We do this before the session restore service gets initialized so we can
     // apply full zoom settings to tabs restored by the session restore service.
@@ -1334,12 +1305,12 @@ var gBrowserInit = {
     // unless there are downloads to be displayed.
     DownloadsButton.initializeIndicator();
 
-#ifndef XP_MACOSX
-    updateEditUIVisibility();
-    let placesContext = document.getElementById("placesContext");
-    placesContext.addEventListener("popupshowing", updateEditUIVisibility, false);
-    placesContext.addEventListener("popuphiding", updateEditUIVisibility, false);
-#endif
+    if (AppConstants.platform != "macosx") {
+      updateEditUIVisibility();
+      let placesContext = document.getElementById("placesContext");
+      placesContext.addEventListener("popupshowing", updateEditUIVisibility, false);
+      placesContext.addEventListener("popuphiding", updateEditUIVisibility, false);
+    }
 
     LightWeightThemeWebInstaller.init();
 
@@ -1352,9 +1323,8 @@ var gBrowserInit = {
     gSyncUI.init();
     gFxAccounts.init();
 
-#ifdef MOZ_DATA_REPORTING
-    gDataNotificationInfoBar.init();
-#endif
+    if (AppConstants.MOZ_DATA_REPORTING)
+      gDataNotificationInfoBar.init();
 
     gBrowserThumbnails.init();
 
@@ -1413,7 +1383,6 @@ var gBrowserInit = {
       RestoreLastSessionObserver.init();
 
       SocialUI.init();
-      TabView.init();
 
       // Telemetry for master-password - we do this after 5 seconds as it
       // can cause IO if NSS/PSM has not already initialized.
@@ -1534,7 +1503,6 @@ var gBrowserInit = {
 
       gPrefService.removeObserver(ctrlTab.prefName, ctrlTab);
       ctrlTab.uninit();
-      TabView.uninit();
       SocialUI.uninit();
       gBrowserThumbnails.uninit();
       FullZoom.destroy();
@@ -1577,19 +1545,20 @@ var gBrowserInit = {
           .XULBrowserWindow = null;
     window.QueryInterface(Ci.nsIDOMChromeWindow).browserDOMWindow = null;
   },
+};
 
-#ifdef XP_MACOSX
+if (AppConstants.platform == "macosx") {
   // nonBrowserWindowStartup(), nonBrowserWindowDelayedStartup(), and
   // nonBrowserWindowShutdown() are used for non-browser windows in
   // macBrowserOverlay
-  nonBrowserWindowStartup: function() {
+  gBrowserInit.nonBrowserWindowStartup = function() {
     // Disable inappropriate commands / submenus
     var disabledItems = ['Browser:SavePage',
                          'Browser:SendLink', 'cmd_pageSetup', 'cmd_print', 'cmd_find', 'cmd_findAgain',
                          'viewToolbarsMenu', 'viewSidebarMenuMenu', 'Browser:Reload',
                          'viewFullZoomMenu', 'pageStyleMenu', 'charsetMenu', 'View:PageSource', 'View:FullScreen',
                          'viewHistorySidebar', 'Browser:AddBookmarkAs', 'Browser:BookmarkAllTabs',
-                         'View:PageInfo', 'Browser:ToggleTabView'];
+                         'View:PageInfo'];
     var element;
 
     for (let disabledItem of disabledItems) {
@@ -1635,9 +1604,9 @@ var gBrowserInit = {
     }
 
     this._delayedStartupTimeoutId = setTimeout(this.nonBrowserWindowDelayedStartup.bind(this), 0);
-  },
+  };
 
-  nonBrowserWindowDelayedStartup: function() {
+  gBrowserInit.nonBrowserWindowDelayedStartup = function() {
     this._delayedStartupTimeoutId = null;
 
     // initialise the offline listener
@@ -1649,12 +1618,12 @@ var gBrowserInit = {
     // initialize the sync UI
     gSyncUI.init();
 
-#ifdef E10S_TESTING_ONLY
-    gRemoteTabsUI.init();
-#endif
-  },
+    if (AppConstants.E10S_TESTING_ONLY) {
+      gRemoteTabsUI.init();
+    }
+  };
 
-  nonBrowserWindowShutdown: function() {
+  gBrowserInit.nonBrowserWindowShutdown = function() {
     // If nonBrowserWindowDelayedStartup hasn't run yet, we have no work to do -
     // just cancel the pending timeout and return;
     if (this._delayedStartupTimeoutId) {
@@ -1663,19 +1632,19 @@ var gBrowserInit = {
     }
 
     BrowserOffline.uninit();
-  },
-#endif
+  };
 }
 
 
 /* Legacy global init functions */
 var BrowserStartup        = gBrowserInit.onLoad.bind(gBrowserInit);
 var BrowserShutdown       = gBrowserInit.onUnload.bind(gBrowserInit);
-#ifdef XP_MACOSX
-var nonBrowserWindowStartup        = gBrowserInit.nonBrowserWindowStartup.bind(gBrowserInit);
-var nonBrowserWindowDelayedStartup = gBrowserInit.nonBrowserWindowDelayedStartup.bind(gBrowserInit);
-var nonBrowserWindowShutdown       = gBrowserInit.nonBrowserWindowShutdown.bind(gBrowserInit);
-#endif
+
+if (AppConstants.platform == "macosx") {
+  var nonBrowserWindowStartup        = gBrowserInit.nonBrowserWindowStartup.bind(gBrowserInit);
+  var nonBrowserWindowDelayedStartup = gBrowserInit.nonBrowserWindowDelayedStartup.bind(gBrowserInit);
+  var nonBrowserWindowShutdown       = gBrowserInit.nonBrowserWindowShutdown.bind(gBrowserInit);
+}
 
 function HandleAppCommandEvent(evt) {
   switch (evt.command) {
@@ -1818,12 +1787,11 @@ function BrowserStop() {
 }
 
 function BrowserReloadOrDuplicate(aEvent) {
-  var backgroundTabModifier = aEvent.button == 1 ||
-#ifdef XP_MACOSX
-    aEvent.metaKey;
-#else
-    aEvent.ctrlKey;
-#endif
+  let metaKeyPressed = AppConstants.platform == "macosx"
+                       ? aEvent.metaKey
+                       : aEvent.ctrlKey;
+  var backgroundTabModifier = aEvent.button == 1 || metaKeyPressed;
+
   if (aEvent.shiftKey && !backgroundTabModifier) {
     BrowserReloadSkipCache();
     return;
@@ -1886,14 +1854,13 @@ function BrowserGoHome(aEvent) {
 
 function loadOneOrMoreURIs(aURIString)
 {
-#ifdef XP_MACOSX
   // we're not a browser window, pass the URI string to a new browser window
   if (window.location.href != getBrowserURL())
   {
     window.openDialog(getBrowserURL(), "_blank", "all,dialog=no", aURIString);
     return;
   }
-#endif
+
   // This function throws for certain malformed URIs, so use exception handling
   // so that we don't disrupt startup
   try {
@@ -1919,7 +1886,6 @@ function openLocation() {
   if (focusAndSelectUrlBar())
     return;
 
-#ifdef XP_MACOSX
   if (window.location.href != getBrowserURL()) {
     var win = getTopWin();
     if (win) {
@@ -1933,7 +1899,6 @@ function openLocation() {
                         "chrome,all,dialog=no", BROWSER_NEW_TAB_URL);
     }
   }
-#endif
 }
 
 function BrowserOpenTab()
@@ -2031,13 +1996,11 @@ function BrowserOpenFileWindow()
 }
 
 function BrowserCloseTabOrWindow() {
-#ifdef XP_MACOSX
   // If we're not a browser window, just close the window
   if (window.location.href != getBrowserURL()) {
     closeWindow(true);
     return;
   }
-#endif
 
   // If the current tab is the last one, this will close the window.
   gBrowser.removeCurrentTab({animate: true});
@@ -2700,6 +2663,7 @@ var BrowserOnClick = {
     mm.addMessageListener("Browser:SetSSLErrorReportAuto", this);
     mm.addMessageListener("Browser:SSLErrorReportTelemetry", this);
     mm.addMessageListener("Browser:OverrideWeakCrypto", this);
+    mm.addMessageListener("Browser:SSLErrorGoBack", this);
   },
 
   uninit: function () {
@@ -2711,6 +2675,7 @@ var BrowserOnClick = {
     mm.removeMessageListener("Browser:SetSSLErrorReportAuto", this);
     mm.removeMessageListener("Browser:SSLErrorReportTelemetry", this);
     mm.removeMessageListener("Browser:OverrideWeakCrypto", this);
+    mm.removeMessageListener("Browser:SSLErrorGoBack", this);
   },
 
   handleEvent: function (event) {
@@ -2736,7 +2701,7 @@ var BrowserOnClick = {
       case "Browser:CertExceptionError":
         this.onAboutCertError(msg.target, msg.data.elementId,
                               msg.data.isTopFrame, msg.data.location,
-                              msg.data.sslStatusAsString);
+                              msg.data.securityInfoAsString);
       break;
       case "Browser:SiteBlockedError":
         this.onAboutBlocked(msg.data.elementId, msg.data.reason,
@@ -2774,6 +2739,9 @@ var BrowserOnClick = {
         weakCryptoOverride.addWeakCryptoOverride(
           msg.data.location.hostname,
           PrivateBrowsingUtils.isBrowserPrivate(gBrowser.selectedBrowser));
+      break;
+      case "Browser:SSLErrorGoBack":
+        goBackFromErrorPage();
       break;
     }
   },
@@ -2818,19 +2786,6 @@ var BrowserOnClick = {
      *
      * The request data should be added to the report by the receiving server.
      */
-
-    // TODO: can we pull this in from pippki.js isntead of duplicating it
-    // here?
-    function getDERString(cert)
-    {
-      var length = {};
-      var derArray = cert.getRawDER(length);
-      var derString = '';
-      for (var i = 0; i < derArray.length; i++) {
-        derString += String.fromCharCode(derArray[i]);
-      }
-      return derString;
-    }
 
     // Convert the nsIX509CertList into a format that can be parsed into
     // JSON
@@ -2888,7 +2843,7 @@ var BrowserOnClick = {
     xhr.send(JSON.stringify(report));
   },
 
-  onAboutCertError: function (browser, elementId, isTopFrame, location, sslStatusAsString) {
+  onAboutCertError: function (browser, elementId, isTopFrame, location, securityInfoAsString) {
     let secHistogram = Services.telemetry.getHistogramById("SECURITY_UI");
 
     switch (elementId) {
@@ -2899,8 +2854,9 @@ var BrowserOnClick = {
 
         let serhelper = Cc["@mozilla.org/network/serialization-helper;1"]
                            .getService(Ci.nsISerializationHelper);
-        let sslStatus = serhelper.deserializeObject(sslStatusAsString);
-        sslStatus.QueryInterface(Components.interfaces.nsISSLStatus);
+        let securityInfo = serhelper.deserializeObject(securityInfoAsString);
+        let sslStatus = securityInfo.QueryInterface(Ci.nsISSLStatusProvider)
+                                    .SSLStatus;
         let params = { exceptionAdded : false,
                        sslStatus : sslStatus };
 
@@ -2935,6 +2891,19 @@ var BrowserOnClick = {
         if (isTopFrame) {
           secHistogram.add(Ci.nsISecurityUITelemetry.WARNING_BAD_CERT_TOP_UNDERSTAND_RISKS);
         }
+
+        let errorInfo = getDetailedCertErrorInfo(location,
+                                                 securityInfoAsString);
+        browser.messageManager.sendAsyncMessage("AboutCertErrorDetails",
+                                                { info: errorInfo });
+        break;
+
+      case "copyToClipboard":
+        const gClipboardHelper = Cc["@mozilla.org/widget/clipboardhelper;1"]
+                                    .getService(Ci.nsIClipboardHelper);
+        let detailedInfo = getDetailedCertErrorInfo(location,
+                                                    securityInfoAsString);
+        gClipboardHelper.copyString(detailedInfo);
         break;
 
     }
@@ -3187,6 +3156,76 @@ function BrowserReloadWithFlags(reloadFlags) {
           .sendAsyncMessage("Browser:Reload",
                             { flags: reloadFlags,
                               handlingUserInput: windowUtils.isHandlingUserInput });
+}
+
+/**
+ * Returns a string with detailed information about the certificate validation
+ * failure from the specified URI that can be used to send a report.
+ */
+function getDetailedCertErrorInfo(location, securityInfoAsString) {
+  if (!securityInfoAsString)
+    return "";
+
+  let details = [];
+  details.push(location);
+
+  const serhelper = Cc["@mozilla.org/network/serialization-helper;1"]
+                       .getService(Ci.nsISerializationHelper);
+  let securityInfo = serhelper.deserializeObject(securityInfoAsString);
+  securityInfo.QueryInterface(Ci.nsITransportSecurityInfo);
+
+  let errors = Cc["@mozilla.org/nss_errors_service;1"]
+                  .getService(Ci.nsINSSErrorsService);
+  let code = securityInfo.errorCode;
+  details.push(errors.getErrorMessage(errors.getXPCOMFromNSSError(code)));
+
+  const sss = Cc["@mozilla.org/ssservice;1"]
+                 .getService(Ci.nsISiteSecurityService);
+  // SiteSecurityService uses different storage if the channel is
+  // private. Thus we must give isSecureHost correct flags or we
+  // might get incorrect results.
+  let flags = PrivateBrowsingUtils.isWindowPrivate(window) ?
+              Ci.nsISocketProvider.NO_PERMANENT_STORAGE : 0;
+
+  let uri = Services.io.newURI(location, null, null);
+  details.push(sss.isSecureHost(sss.HEADER_HSTS, uri.host, flags));
+  details.push(sss.isSecureHost(sss.HEADER_HPKP, uri.host, flags));
+
+  let certChain = "";
+  if (securityInfo.failedCertChain) {
+    let certs = securityInfo.failedCertChain.getEnumerator();
+    while (certs.hasMoreElements()) {
+      let cert = certs.getNext();
+      cert.QueryInterface(Ci.nsIX509Cert);
+      certChain += getPEMString(cert);
+    }
+  }
+  details.push(certChain);
+  return gNavigatorBundle.getFormattedString("certErrorDetails.label", details, 5);
+}
+
+// TODO: can we pull getDERString and getPEMString in from pippki.js instead of
+// duplicating them here?
+function getDERString(cert)
+{
+  var length = {};
+  var derArray = cert.getRawDER(length);
+  var derString = '';
+  for (var i = 0; i < derArray.length; i++) {
+    derString += String.fromCharCode(derArray[i]);
+  }
+  return derString;
+}
+
+function getPEMString(cert)
+{
+  var derb64 = btoa(getDERString(cert));
+  // Wrap the Base64 string into lines of 64 characters,
+  // with CRLF line breaks (as specified in RFC 1421).
+  var wrapped = derb64.replace(/(\S{64}(?!$))/g, "$1\r\n");
+  return "-----BEGIN CERTIFICATE-----\r\n"
+         + wrapped
+         + "\r\n-----END CERTIFICATE-----\r\n";
 }
 
 var PrintPreviewListener = {
@@ -3495,7 +3534,6 @@ const BrowserSearch = {
    * or focuses an existing window, if necessary.
    */
   webSearch: function BrowserSearch_webSearch() {
-#ifdef XP_MACOSX
     if (window.location.href != getBrowserURL()) {
       var win = getTopWin();
       if (win) {
@@ -3516,7 +3554,7 @@ const BrowserSearch = {
       }
       return;
     }
-#endif
+
     let openSearchPageIfFieldIsNotActive = function(aSearchBar) {
       if (!aSearchBar || document.activeElement != aSearchBar.textbox.inputField) {
         let url = gBrowser.currentURI.spec.toLowerCase();
@@ -3672,11 +3710,13 @@ const BrowserSearch = {
   recordSearchInHealthReport: function (engine, source, selection) {
     BrowserUITelemetry.countSearchEvent(source, null, selection);
     this.recordSearchInTelemetry(engine, source);
-#ifdef MOZ_SERVICES_HEALTHREPORT
-    let reporter = Cc["@mozilla.org/datareporting/service;1"]
+
+    let reporter = AppConstants.MOZ_SERVICES_HEALTHREPORT
+                   ? Cc["@mozilla.org/datareporting/service;1"]
                      .getService()
                      .wrappedJSObject
-                     .healthReporter;
+                     .healthReporter
+                   : null;
 
     // This can happen if the FHR component of the data reporting service is
     // disabled. This is controlled by a pref that most will never use.
@@ -3691,7 +3731,6 @@ const BrowserSearch = {
         Cu.reportError(ex);
       }
     });
-#endif
   },
 
   _getSearchEngineId: function (engine) {
@@ -3994,7 +4033,9 @@ function BrowserCustomizeToolbar() {
  */
 function updateEditUIVisibility()
 {
-#ifndef XP_MACOSX
+  if (AppConstants.platform == "macosx")
+    return;
+
   let editMenuPopupState = document.getElementById("menu_EditPopup").state;
   let contextMenuPopupState = document.getElementById("contentAreaContextMenu").state;
   let placesContextMenuPopupState = document.getElementById("placesContext").state;
@@ -4028,7 +4069,6 @@ function updateEditUIVisibility()
     goSetCommandEnabled("cmd_delete", true);
     goSetCommandEnabled("cmd_switchTextDirection", true);
   }
-#endif
 }
 
 /**
@@ -4483,8 +4523,7 @@ var XULBrowserWindow = {
     else
       this.asyncUpdateUI();
 
-#ifdef MOZ_CRASHREPORTER
-    if (aLocationURI) {
+    if (AppConstants.MOZ_CRASHREPORTER && aLocationURI) {
       let uri = aLocationURI.clone();
       try {
         // If the current URI contains a username/password, remove it.
@@ -4493,11 +4532,13 @@ var XULBrowserWindow = {
 
       try {
         gCrashReporter.annotateCrashReport("URL", uri.spec);
-      } catch (ex if ex.result == Components.results.NS_ERROR_NOT_INITIALIZED) {
+      } catch (ex) {
         // Don't make noise when the crash reporter is built but not enabled.
+        if (ex.result != Components.results.NS_ERROR_NOT_INITIALIZED) {
+          throw ex;
+        }
       }
     }
-#endif
   },
 
   asyncUpdateUI: function () {
@@ -5099,9 +5140,9 @@ function setToolbarVisibility(toolbar, isVisible, persist=true) {
   let hidingAttribute;
   if (toolbar.getAttribute("type") == "menubar") {
     hidingAttribute = "autohide";
-#ifdef MOZ_WIDGET_GTK
-    Services.prefs.setBoolPref("ui.key.menuAccessKeyFocuses", !isVisible);
-#endif
+    if (AppConstants.platform == "linux") {
+      Services.prefs.setBoolPref("ui.key.menuAccessKeyFocuses", !isVisible);
+    }
   } else {
     hidingAttribute = "collapsed";
   }
@@ -5126,269 +5167,6 @@ function setToolbarVisibility(toolbar, isVisible, persist=true) {
   if (isVisible)
     ToolbarIconColor.inferFromText();
 }
-
-var TabsInTitlebar = {
-  init: function () {
-#ifdef CAN_DRAW_IN_TITLEBAR
-    this._readPref();
-    Services.prefs.addObserver(this._prefName, this, false);
-
-    // We need to update the appearance of the titlebar when the menu changes
-    // from the active to the inactive state. We can't, however, rely on
-    // DOMMenuBarInactive, because the menu fires this event and then removes
-    // the inactive attribute after an event-loop spin.
-    //
-    // Because updating the appearance involves sampling the heights and margins
-    // of various elements, it's important that the layout be more or less
-    // settled before updating the titlebar. So instead of listening to
-    // DOMMenuBarActive and DOMMenuBarInactive, we use a MutationObserver to
-    // watch the "invalid" attribute directly.
-    let menu = document.getElementById("toolbar-menubar");
-    this._menuObserver = new MutationObserver(this._onMenuMutate);
-    this._menuObserver.observe(menu, {attributes: true});
-
-    this.onAreaReset = function(aArea) {
-      if (aArea == CustomizableUI.AREA_TABSTRIP || aArea == CustomizableUI.AREA_MENUBAR)
-        this._update(true);
-    };
-    this.onWidgetAdded = this.onWidgetRemoved = function(aWidgetId, aArea) {
-      if (aArea == CustomizableUI.AREA_TABSTRIP || aArea == CustomizableUI.AREA_MENUBAR)
-        this._update(true);
-    };
-    CustomizableUI.addListener(this);
-
-    this._initialized = true;
-#endif
-  },
-
-  allowedBy: function (condition, allow) {
-#ifdef CAN_DRAW_IN_TITLEBAR
-    if (allow) {
-      if (condition in this._disallowed) {
-        delete this._disallowed[condition];
-        this._update(true);
-      }
-    } else {
-      if (!(condition in this._disallowed)) {
-        this._disallowed[condition] = null;
-        this._update(true);
-      }
-    }
-#endif
-  },
-
-  updateAppearance: function updateAppearance(aForce) {
-#ifdef CAN_DRAW_IN_TITLEBAR
-    this._update(aForce);
-#endif
-  },
-
-  get enabled() {
-    return document.documentElement.getAttribute("tabsintitlebar") == "true";
-  },
-
-#ifdef CAN_DRAW_IN_TITLEBAR
-  observe: function (subject, topic, data) {
-    if (topic == "nsPref:changed")
-      this._readPref();
-  },
-
-  _onMenuMutate: function (aMutations) {
-    for (let mutation of aMutations) {
-      if (mutation.attributeName == "inactive" ||
-          mutation.attributeName == "autohide") {
-        TabsInTitlebar._update(true);
-        return;
-      }
-    }
-  },
-
-  _initialized: false,
-  _disallowed: {},
-  _prefName: "browser.tabs.drawInTitlebar",
-  _lastSizeMode: null,
-
-  _readPref: function () {
-    this.allowedBy("pref",
-                   Services.prefs.getBoolPref(this._prefName));
-  },
-
-  _update: function (aForce=false) {
-    let $ = id => document.getElementById(id);
-    let rect = ele => ele.getBoundingClientRect();
-    let verticalMargins = cstyle => parseFloat(cstyle.marginBottom) + parseFloat(cstyle.marginTop);
-
-    if (!this._initialized || window.fullScreen)
-      return;
-
-    let allowed = true;
-
-    if (!aForce) {
-      // _update is called on resize events, because the window is not ready
-      // after sizemode events. However, we only care about the event when the
-      // sizemode is different from the last time we updated the appearance of
-      // the tabs in the titlebar.
-      let sizemode = document.documentElement.getAttribute("sizemode");
-      if (this._lastSizeMode == sizemode) {
-        return;
-      }
-      let oldSizeMode = this._lastSizeMode;
-      this._lastSizeMode = sizemode;
-      // Don't update right now if we are leaving fullscreen, since the UI is
-      // still changing in the consequent "fullscreen" event. Code there will
-      // call this function again when everything is ready.
-      // See browser-fullScreen.js: FullScreen.toggle and bug 1173768.
-      if (oldSizeMode == "fullscreen") {
-        return;
-      }
-    }
-
-    for (let something in this._disallowed) {
-      allowed = false;
-      break;
-    }
-
-    let titlebar = $("titlebar");
-    let titlebarContent = $("titlebar-content");
-    let menubar = $("toolbar-menubar");
-
-    if (allowed) {
-      // We set the tabsintitlebar attribute first so that our CSS for
-      // tabsintitlebar manifests before we do our measurements.
-      document.documentElement.setAttribute("tabsintitlebar", "true");
-      updateTitlebarDisplay();
-
-      // Try to avoid reflows in this code by calculating dimensions first and
-      // then later set the properties affecting layout together in a batch.
-
-      // Get the full height of the tabs toolbar:
-      let tabsToolbar = $("TabsToolbar");
-      let tabsStyles = window.getComputedStyle(tabsToolbar);
-      let fullTabsHeight = rect(tabsToolbar).height + verticalMargins(tabsStyles);
-      // Buttons first:
-      let captionButtonsBoxWidth = rect($("titlebar-buttonbox-container")).width;
-
-#ifdef XP_MACOSX
-      let secondaryButtonsWidth = rect($("titlebar-secondary-buttonbox")).width;
-      // No need to look up the menubar stuff on OS X:
-      let menuHeight = 0;
-      let fullMenuHeight = 0;
-#else
-      // Otherwise, get the height and margins separately for the menubar
-      let menuHeight = rect(menubar).height;
-      let menuStyles = window.getComputedStyle(menubar);
-      let fullMenuHeight = verticalMargins(menuStyles) + menuHeight;
-#endif
-
-      // And get the height of what's in the titlebar:
-      let titlebarContentHeight = rect(titlebarContent).height;
-
-      // Begin setting CSS properties which will cause a reflow
-
-      // If the menubar is around (menuHeight is non-zero), try to adjust
-      // its full height (i.e. including margins) to match the titlebar,
-      // by changing the menubar's bottom padding
-      if (menuHeight) {
-        // Calculate the difference between the titlebar's height and that of the menubar
-        let menuTitlebarDelta = titlebarContentHeight - fullMenuHeight;
-        let paddingBottom;
-        // The titlebar is bigger:
-        if (menuTitlebarDelta > 0) {
-          fullMenuHeight += menuTitlebarDelta;
-          // If there is already padding on the menubar, we need to add that
-          // to the difference so the total padding is correct:
-          if ((paddingBottom = menuStyles.paddingBottom)) {
-            menuTitlebarDelta += parseFloat(paddingBottom);
-          }
-          menubar.style.paddingBottom = menuTitlebarDelta + "px";
-        // The menubar is bigger, but has bottom padding we can remove:
-        } else if (menuTitlebarDelta < 0 && (paddingBottom = menuStyles.paddingBottom)) {
-          let existingPadding = parseFloat(paddingBottom);
-          // menuTitlebarDelta is negative; work out what's left, but don't set negative padding:
-          let desiredPadding = Math.max(0, existingPadding + menuTitlebarDelta);
-          menubar.style.paddingBottom = desiredPadding + "px";
-          // We've changed the menu height now:
-          fullMenuHeight += desiredPadding - existingPadding;
-        }
-      }
-
-      // Next, we calculate how much we need to stretch the titlebar down to
-      // go all the way to the bottom of the tab strip, if necessary.
-      let tabAndMenuHeight = fullTabsHeight + fullMenuHeight;
-
-      if (tabAndMenuHeight > titlebarContentHeight) {
-        // We need to increase the titlebar content's outer height (ie including margins)
-        // to match the tab and menu height:
-        let extraMargin = tabAndMenuHeight - titlebarContentHeight;
-#ifndef XP_MACOSX
-        titlebarContent.style.marginBottom = extraMargin + "px";
-#endif
-        titlebarContentHeight += extraMargin;
-      } else {
-        titlebarContent.style.removeProperty("margin-bottom");
-      }
-
-      // Then we bring up the titlebar by the same amount, but we add any negative margin:
-      titlebar.style.marginBottom = "-" + titlebarContentHeight + "px";
-
-
-      // Finally, size the placeholders:
-#ifdef XP_MACOSX
-      this._sizePlaceholder("fullscreen-button", secondaryButtonsWidth);
-#endif
-      this._sizePlaceholder("caption-buttons", captionButtonsBoxWidth);
-
-      if (!this._draghandles) {
-        this._draghandles = {};
-        let tmp = {};
-        Components.utils.import("resource://gre/modules/WindowDraggingUtils.jsm", tmp);
-
-        let mouseDownCheck = function () {
-          return !this._dragBindingAlive && TabsInTitlebar.enabled;
-        };
-
-        this._draghandles.tabsToolbar = new tmp.WindowDraggingElement(tabsToolbar);
-        this._draghandles.tabsToolbar.mouseDownCheck = mouseDownCheck;
-
-        this._draghandles.navToolbox = new tmp.WindowDraggingElement(gNavToolbox);
-        this._draghandles.navToolbox.mouseDownCheck = mouseDownCheck;
-      }
-    } else {
-      document.documentElement.removeAttribute("tabsintitlebar");
-      updateTitlebarDisplay();
-
-#ifdef XP_MACOSX
-      let secondaryButtonsWidth = rect($("titlebar-secondary-buttonbox")).width;
-      this._sizePlaceholder("fullscreen-button", secondaryButtonsWidth);
-#endif
-      // Reset the margins and padding that might have been modified:
-      titlebarContent.style.marginTop = "";
-      titlebarContent.style.marginBottom = "";
-      titlebar.style.marginBottom = "";
-      menubar.style.paddingBottom = "";
-    }
-
-    ToolbarIconColor.inferFromText();
-    if (CustomizationHandler.isCustomizing()) {
-      gCustomizeMode.updateLWTStyling();
-    }
-  },
-
-  _sizePlaceholder: function (type, width) {
-    Array.forEach(document.querySelectorAll(".titlebar-placeholder[type='"+ type +"']"),
-                  function (node) { node.width = width; });
-  },
-#endif
-
-  uninit: function () {
-#ifdef CAN_DRAW_IN_TITLEBAR
-    this._initialized = false;
-    Services.prefs.removeObserver(this._prefName, this);
-    this._menuObserver.disconnect();
-    CustomizableUI.removeListener(this);
-#endif
-  }
-};
 
 var TabletModeUpdater = {
   init() {
@@ -5440,52 +5218,6 @@ var gTabletModePageCounter = {
     Services.telemetry.getKeyedHistogramById("FX_TABLETMODE_PAGE_LOAD").add("desktop", this._desktopCount);
   },
 };
-
-#ifdef CAN_DRAW_IN_TITLEBAR
-function updateTitlebarDisplay() {
-
-#ifdef XP_MACOSX
-  // OS X and the other platforms differ enough to necessitate this kind of
-  // special-casing. Like the other platforms where we CAN_DRAW_IN_TITLEBAR,
-  // we draw in the OS X titlebar when putting the tabs up there. However, OS X
-  // also draws in the titlebar when a lightweight theme is applied, regardless
-  // of whether or not the tabs are drawn in the titlebar.
-  if (TabsInTitlebar.enabled) {
-    document.documentElement.setAttribute("chromemargin-nonlwtheme", "0,-1,-1,-1");
-    document.documentElement.setAttribute("chromemargin", "0,-1,-1,-1");
-    document.documentElement.removeAttribute("drawtitle");
-  } else {
-    // We set chromemargin-nonlwtheme to "" instead of removing it as a way of
-    // making sure that LightweightThemeConsumer doesn't take it upon itself to
-    // detect this value again if and when we do a lwtheme state change.
-    document.documentElement.setAttribute("chromemargin-nonlwtheme", "");
-    let isCustomizing = document.documentElement.hasAttribute("customizing");
-    let hasLWTheme = document.documentElement.hasAttribute("lwtheme");
-    let isPrivate = PrivateBrowsingUtils.isWindowPrivate(window);
-    if ((!hasLWTheme || isCustomizing) && !isPrivate) {
-      document.documentElement.removeAttribute("chromemargin");
-    }
-    document.documentElement.setAttribute("drawtitle", "true");
-  }
-
-#else
-
-  if (TabsInTitlebar.enabled)
-    document.documentElement.setAttribute("chromemargin", "0,2,2,2");
-  else
-    document.documentElement.removeAttribute("chromemargin");
-#endif
-}
-#endif
-
-#ifdef CAN_DRAW_IN_TITLEBAR
-function onTitlebarMaxClick() {
-  if (window.windowState == window.STATE_MAXIMIZED)
-    window.restore();
-  else
-    window.maximize();
-}
-#endif
 
 function displaySecurityInfo()
 {
@@ -5539,28 +5271,26 @@ var gHomeButton = {
 
 const nodeToTooltipMap = {
   "bookmarks-menu-button": "bookmarksMenuButton.tooltip",
-#ifdef XP_MACOSX
-  "print-button": "printButton.tooltip",
-#endif
   "new-window-button": "newWindowButton.tooltip",
   "new-tab-button": "newTabButton.tooltip",
   "tabs-newtab-button": "newTabButton.tooltip",
   "fullscreen-button": "fullscreenButton.tooltip",
-  "tabview-button": "tabviewButton.tooltip",
   "downloads-button": "downloads.tooltip",
 };
 const nodeToShortcutMap = {
   "bookmarks-menu-button": "manBookmarkKb",
-#ifdef XP_MACOSX
-  "print-button": "printKb",
-#endif
   "new-window-button": "key_newNavigator",
   "new-tab-button": "key_newNavigatorTab",
   "tabs-newtab-button": "key_newNavigatorTab",
   "fullscreen-button": "key_fullScreen",
-  "tabview-button": "key_tabview",
   "downloads-button": "key_openDownloads"
 };
+
+if (AppConstants.platform == "macosx") {
+  nodeToTooltipMap["print-button"] = "printButton.tooltip";
+  nodeToShortcutMap["print-button"] = "printKb";
+}
+
 const gDynamicTooltipCache = new Map();
 function UpdateDynamicShortcutTooltipText(aTooltip) {
   let nodeId = aTooltip.triggerNode.id || aTooltip.triggerNode.getAttribute("anonid");
@@ -5664,10 +5394,14 @@ function hrefAndLinkNodeForClickEvent(event)
   let href, baseURI;
   node = event.target;
   while (node && !href) {
-    if (node.nodeType == Node.ELEMENT_NODE) {
+    if (node.nodeType == Node.ELEMENT_NODE &&
+        (node.localName == "a" ||
+         node.namespaceURI == "http://www.w3.org/1998/Math/MathML")) {
       href = node.getAttributeNS("http://www.w3.org/1999/xlink", "href");
-      if (href)
+      if (href) {
         baseURI = node.baseURI;
+        break;
+      }
     }
     node = node.parentNode;
   }
@@ -5808,7 +5542,7 @@ function handleLinkClick(event, href, linkNode) {
   if (Services.prefs.getBoolPref("network.http.enablePerElementReferrer") &&
       linkNode) {
     let referrerAttrValue = Services.netUtils.parseAttributePolicyString(linkNode.
-                            getAttribute("referrer"));
+                            getAttribute("referrerpolicy"));
     if (referrerAttrValue != Ci.nsIHttpChannel.REFERRER_POLICY_DEFAULT) {
       referrerPolicy = referrerAttrValue;
     }
@@ -6559,11 +6293,6 @@ function CanCloseWindow()
 
 function WindowIsClosing()
 {
-  if (TabView.isVisible()) {
-    TabView.hide();
-    return false;
-  }
-
   if (!closeWindow(false, warnAboutClosingWindow))
     return false;
 
@@ -6639,14 +6368,11 @@ function warnAboutClosingWindow() {
 
   os.notifyObservers(null, "browser-lastwindow-close-granted", null);
 
-#ifdef XP_MACOSX
   // OS X doesn't quit the application when the last window is closed, but keeps
   // the session alive. Hence don't prompt users to save tabs, but warn about
   // closing multiple tabs.
-  return isPBWindow || gBrowser.warnAboutClosingTabs(gBrowser.closingTabsEnum.ALL);
-#else
-  return true;
-#endif
+  return AppConstants.platform != "macosx"
+         || (isPBWindow || gBrowser.warnAboutClosingTabs(gBrowser.closingTabsEnum.ALL));
 }
 
 var MailIntegration = {
@@ -6783,9 +6509,7 @@ function undoCloseTab(aIndex) {
 
   var tab = null;
   if (SessionStore.getClosedTabCount(window) > (aIndex || 0)) {
-    TabView.prepareUndoCloseTab(blankTabToRemove);
     tab = SessionStore.undoCloseTab(window, aIndex || 0);
-    TabView.afterUndoCloseTab();
 
     if (blankTabToRemove)
       gBrowser.removeTab(blankTabToRemove);
@@ -6830,7 +6554,7 @@ function isTabEmpty(aTab) {
 }
 
 function BrowserOpenSyncTabs() {
-  switchToTabHavingURI("about:sync-tabs", true);
+  gSyncUI.openSyncedTabsPanel();
 }
 
 /**
@@ -7668,13 +7392,12 @@ var gRemoteTabsUI = {
       return;
     }
 
-#ifdef XP_MACOSX
-    if (Services.prefs.getBoolPref("layers.acceleration.disabled")) {
+    if (AppConstants.platform == "macosx" &&
+        Services.prefs.getBoolPref("layers.acceleration.disabled")) {
       // On OS X, "Disable Hardware Acceleration" also disables OMTC and forces
       // a fallback to Basic Layers. This is incompatible with e10s.
       return;
     }
-#endif
 
     let newNonRemoteWindow = document.getElementById("menu_newNonRemoteWindow");
     let autostart = Services.appinfo.browserTabsRemoteAutostart;
@@ -7841,11 +7564,11 @@ var TabContextMenu = {
     for (let menuItem of menuItems)
       menuItem.disabled = disabled;
 
-#ifdef E10S_TESTING_ONLY
-    menuItems = aPopupMenu.getElementsByAttribute("tbattr", "tabbrowser-remote");
-    for (let menuItem of menuItems)
-      menuItem.hidden = !gMultiProcessBrowser;
-#endif
+    if (AppConstants.E10S_TESTING_ONLY) {
+      menuItems = aPopupMenu.getElementsByAttribute("tbattr", "tabbrowser-remote");
+      for (let menuItem of menuItems)
+        menuItem.hidden = !gMultiProcessBrowser;
+    }
 
     disabled = gBrowser.visibleTabs.length == 1;
     menuItems = aPopupMenu.getElementsByAttribute("tbattr", "tabbrowser-multiple-visible");
@@ -7878,10 +7601,6 @@ var TabContextMenu = {
     bookmarkAllTabs.hidden = this.contextTab.pinned;
     if (!bookmarkAllTabs.hidden)
       PlacesCommandHook.updateBookmarkAllTabsCommand();
-
-    // Hide "Move to Group" if it's a pinned tab.
-    document.getElementById("context_tabViewMenu").hidden =
-      (this.contextTab.pinned || !TabView.firstUseExperienced);
 
     // Adjust the state of the toggle mute menu item.
     let toggleMute = document.getElementById("context_toggleMuteTab");
@@ -8026,12 +7745,8 @@ Object.defineProperty(this, "Eyedropper", {
 });
 
 XPCOMUtils.defineLazyGetter(window, "gShowPageResizers", function () {
-#ifdef XP_WIN
   // Only show resizers on Windows 2000 and XP
-  return parseFloat(Services.sysinfo.getProperty("version")) < 6;
-#else
-  return false;
-#endif
+  return AppConstants.isPlatformAndVersionAtMost("win", "5.9");
 });
 
 var MousePosTracker = {
@@ -8154,9 +7869,8 @@ var ToolbarIconColor = {
     }
 
     let toolbarSelector = "#navigator-toolbox > toolbar:not([collapsed=true]):not(#addon-bar)";
-#ifdef XP_MACOSX
-    toolbarSelector += ":not([type=menubar])";
-#endif
+    if (AppConstants.platform == "macosx")
+      toolbarSelector += ":not([type=menubar])";
 
     // The getComputedStyle calls and setting the brighttext are separated in
     // two loops to avoid flushing layout and making it dirty repeatedly.
@@ -8302,4 +8016,3 @@ TabModalPromptBox.prototype = {
     return browser;
   },
 };
-

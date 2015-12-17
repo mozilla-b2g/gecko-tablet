@@ -130,6 +130,7 @@ var gOriginalPageListeners = null;
 var gSocialProviders = null;
 var gStringBundle = null;
 var gStubbedMessageHandlers = null;
+var gOriginalPanelHeight = null;
 const kBatchMessage = "Batch";
 const kMaxLoopCount = 10;
 const kMessageName = "Loop:Message";
@@ -896,9 +897,33 @@ const kMessageHandlers = {
    *                           message handler. The result will be sent back to
    *                           the senders' channel.
    */
-  SetLoopPref: function(message) {
+  SetLoopPref: function(message, reply) {
     let [prefName, value, prefType] = message.data;
     MozLoopService.setLoopPref(prefName, value, prefType);
+    reply();
+  },
+
+  /**
+   * Set panel height
+   *
+   * @param {Object}   message Message meant for the handler function, containing
+   *                           the following parameters in its `data` property:
+   *                           [
+   *                             {Number} height The pixel height value.
+   *                           ]
+   * @param {Function} reply   Callback function, invoked with the result of this
+   *                           message handler. The result will be sent back to
+   *                           the senders' channel.
+   */
+  SetPanelHeight: function(message, reply) {
+    let [height] = message.data;
+    let win = Services.wm.getMostRecentWindow("navigator:browser");
+    let node = win.LoopUI.browser;
+    if (!gOriginalPanelHeight) {
+      gOriginalPanelHeight = parseInt(win.getComputedStyle(node, null).height, 10);
+    }
+    node.style.height = (height || gOriginalPanelHeight) + "px";
+    reply();
   },
 
   /**
@@ -1077,7 +1102,11 @@ const LoopAPIInternal = {
 
     if (!reply) {
       reply = result => {
-        message.target.sendAsyncMessage(message.name, [seq, result]);
+        try {
+          message.target.sendAsyncMessage(message.name, [seq, result]);
+        } catch (ex) {
+          MozLoopService.log.error("Failed to send reply back to content:", ex);
+        }
       }
     }
 

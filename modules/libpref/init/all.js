@@ -440,11 +440,7 @@ pref("media.getusermedia.aec_enabled", true);
 pref("media.getusermedia.noise_enabled", true);
 #endif
 pref("media.getusermedia.aec_extended_filter", true);
-#if defined(ANDROID)
 pref("media.getusermedia.aec_delay_agnostic", true);
-#else
-pref("media.getusermedia.aec_delay_agnostic", false);
-#endif
 pref("media.getusermedia.noise", 1);
 pref("media.getusermedia.agc_enabled", false);
 pref("media.getusermedia.agc", 1);
@@ -504,6 +500,7 @@ pref("media.mediasource.webm.enabled", false);
 #else
 pref("media.mediasource.webm.enabled", true);
 #endif
+pref("media.mediasource.webm.audio.enabled", true);
 
 // Enable new MediaFormatReader architecture for plain webm.
 pref("media.format-reader.webm", true);
@@ -539,12 +536,17 @@ pref("layers.amd-switchable-gfx.enabled", true);
 // Whether to use async panning and zooming
 pref("layers.async-pan-zoom.enabled", false);
 
+#ifdef MOZ_WIDGET_UIKIT
+pref("layers.async-pan-zoom.enabled", true);
+#endif
+
 // Whether to enable event region building during painting
 pref("layout.event-regions.enabled", false);
 
 // APZ preferences. For documentation/details on what these prefs do, check
 // gfx/layers/apz/src/AsyncPanZoomController.cpp.
 pref("apz.allow_checkerboarding", true);
+pref("apz.allow_immediate_handoff", true);
 pref("apz.allow_zooming", false);
 
 // Whether to lock touch scrolling to one axis at a time
@@ -570,6 +572,7 @@ pref("apz.fling_curve_function_x2", "1.0");
 pref("apz.fling_curve_function_y2", "1.0");
 pref("apz.fling_curve_threshold_inches_per_ms", "-1.0");
 pref("apz.fling_friction", "0.002");
+pref("apz.fling_repaint_interval", 16);
 pref("apz.fling_stop_on_tap_threshold", "0.05");
 pref("apz.fling_stopped_threshold", "0.01");
 pref("apz.highlight_checkerboarded_areas", false);
@@ -580,49 +583,42 @@ pref("apz.minimap.enabled", false);
 pref("apz.num_paint_duration_samples", 3);
 pref("apz.overscroll.enabled", false);
 pref("apz.overscroll.min_pan_distance_ratio", "1.0");
-pref("apz.overscroll.stretch_factor", "0.5");
-pref("apz.overscroll.spring_stiffness", "0.001");
 pref("apz.overscroll.spring_friction", "0.015");
+pref("apz.overscroll.spring_stiffness", "0.0018");
 pref("apz.overscroll.stop_distance_threshold", "5.0");
 pref("apz.overscroll.stop_velocity_threshold", "0.01");
+pref("apz.overscroll.stretch_factor", "0.35");
+pref("apz.pan_repaint_interval", 16);
 
 // Whether to print the APZC tree for debugging
 pref("apz.printtree", false);
 
+pref("apz.smooth_scroll_repaint_interval", 16);
 pref("apz.test.logging_enabled", false);
-pref("apz.touch_start_tolerance", "0.2222222");  // 0.2222222 came from 1.0/4.5
-pref("apz.touch_move_tolerance", "0.0");
+pref("apz.touch_start_tolerance", "0.1");
+pref("apz.touch_move_tolerance", "0.03");
 pref("apz.use_paint_duration", true);
 pref("apz.velocity_bias", "1.0");
 pref("apz.velocity_relevance_time_ms", 150);
+pref("apz.x_skate_highmem_adjust", "0.0");
+pref("apz.y_skate_highmem_adjust", "0.0");
+pref("apz.x_skate_size_multiplier", "2.5");
+pref("apz.y_skate_size_multiplier", "3.5");
 pref("apz.x_stationary_size_multiplier", "3.0");
 pref("apz.y_stationary_size_multiplier", "3.5");
 pref("apz.zoom_animation_duration_ms", 250);
 
-#if !defined(MOZ_WIDGET_GONK) && !defined(MOZ_WIDGET_ANDROID)
-// Desktop prefs
-pref("apz.fling_repaint_interval", 16);
-pref("apz.smooth_scroll_repaint_interval", 16);
-pref("apz.pan_repaint_interval", 16);
-pref("apz.x_skate_size_multiplier", "2.5");
-pref("apz.y_skate_size_multiplier", "3.5");
-pref("apz.x_skate_highmem_adjust", "1.0");
-pref("apz.y_skate_highmem_adjust", "2.5");
-#else
+#if defined(MOZ_WIDGET_GONK) || defined(MOZ_WIDGET_ANDROID)
 // Mobile prefs
+pref("apz.allow_zooming", true);
+pref("apz.enlarge_displayport_when_clipped", true);
 pref("apz.fling_repaint_interval", 75);
 pref("apz.smooth_scroll_repaint_interval", 75);
-pref("apz.pan_repaint_interval", 250);
 pref("apz.x_skate_size_multiplier", "1.25");
 pref("apz.y_skate_size_multiplier", "1.5");
 pref("apz.x_stationary_size_multiplier", "1.5");
 pref("apz.y_stationary_size_multiplier", "1.8");
-pref("apz.x_skate_highmem_adjust", "0.0");
-pref("apz.y_skate_highmem_adjust", "0.0");
 #endif
-
-// APZ testing (bug 961289)
-pref("apz.test.logging_enabled", false);
 
 #ifdef XP_MACOSX
 // Whether to run in native HiDPI mode on machines with "Retina"/HiDPI display;
@@ -1700,6 +1696,13 @@ pref("network.dnsCacheExpirationGracePeriod", 60);
 // This preference can be used to turn off DNS prefetch.
 pref("network.dns.disablePrefetch", false);
 
+// This preference controls whether .onion hostnames are
+// rejected before being given to DNS. RFC 7686
+pref("network.dns.blockDotOnion", true);
+
+// These domains are treated as localhost equivalent
+pref("network.dns.localDomains", "");
+
 // Contols whether or not "localhost" should resolve when offline
 pref("network.dns.offline-localhost", true);
 
@@ -1832,23 +1835,16 @@ pref("network.proxy.socks_remote_dns",      false);
 pref("network.proxy.proxy_over_tls",        true);
 pref("network.proxy.no_proxies_on",         "localhost, 127.0.0.1");
 pref("network.proxy.failover_timeout",      1800); // 30 minutes
-
-// If this value is 'true' and a PAC or all given proxies are inaccessible or
-// failing, Firefox will attempt to connect to the server DIRECTly. Meaning
-// without a proxy. If set 'false', Firefox will not try to access without
-// proxy.
-pref("network.proxy.use_direct_on_fail",    true);
-
 pref("network.online",                      true); //online/offline
-pref("network.cookie.cookieBehavior",       0); // 0-Accept, 1-dontAcceptForeign, 2-dontUse, 3-limitForeign
+pref("network.cookie.cookieBehavior",       0); // 0-Accept, 1-dontAcceptForeign, 2-dontAcceptAny, 3-limitForeign
 #ifdef ANDROID
 pref("network.cookie.cookieBehavior",       0); // Keep the old default of accepting all cookies
 #endif
 pref("network.cookie.thirdparty.sessionOnly", false);
-pref("network.cookie.lifetimePolicy",       0); // 0-accept, 2-acceptForSession, 3-acceptForNDays
+pref("network.cookie.lifetimePolicy",       0); // 0-accept, 1-dontUse 2-acceptForSession, 3-acceptForNDays
 pref("network.cookie.alwaysAcceptSessionCookies", false);
 pref("network.cookie.prefsMigrated",        false);
-pref("network.cookie.lifetime.days",        90);
+pref("network.cookie.lifetime.days",        90); // Ignored unless network.cookie.lifetimePolicy is 3.
 
 // The PAC file to load.  Ignored unless network.proxy.type is 2.
 pref("network.proxy.autoconfig_url", "");
@@ -2388,14 +2384,6 @@ pref("layout.css.grid-template-subgrid-value.enabled", false);
 // Is support for CSS contain enabled?
 pref("layout.css.contain.enabled", false);
 
-// Is support for CSS Ruby enabled?
-//
-// When this pref is removed, make sure that the pref callback registration
-// in nsLayoutStylesheetCache::EnsureGlobal and the invalidation of
-// mUASheet in nsLayoutStylesheetCache::DependentPrefChanged (if it's not
-// otherwise needed) are removed.
-pref("layout.css.ruby.enabled", true);
-
 // Is support for CSS display:contents enabled?
 pref("layout.css.display-contents.enabled", true);
 
@@ -2600,6 +2588,9 @@ pref("dom.ipc.plugins.asyncInit.enabled", false);
 #else
 pref("dom.ipc.plugins.asyncInit.enabled", true);
 #endif
+
+// Allow the AsyncDrawing mode to be used for plugins.
+pref("dom.ipc.plugins.asyncdrawing.enabled", true);
 
 pref("dom.ipc.processCount", 1);
 
@@ -3183,9 +3174,6 @@ pref("plugin.scan.WindowsMediaPlayer", "7.0");
 // Which is currently HKLM\Software\MozillaPlugins\xxxPLIDxxx\Path
 pref("plugin.scan.plid.all", true);
 
-// Allow the new AsyncDrawing mode to be used for plugins.
-pref("plugin.allow.asyncdrawing", false);
-
 // Help Windows NT, 2000, and XP dialup a RAS connection
 // when a network address is unreachable.
 pref("network.autodial-helper.enabled", true);
@@ -3667,12 +3655,16 @@ pref("print.print_paper_size", 0);
 // around the content of the page for Print Preview only
 pref("print.print_extra_margin", 0); // twips
 
-// CSSOM-View scroll-behavior smooth scrolling requires the C++ APZC
+// CSSOM-View scroll-behavior smooth scrolling and scroll snap requires the C++ APZC
+#ifdef MOZ_ANDROID_APZ
+pref("layout.css.scroll-behavior.enabled", true);
+pref("layout.css.scroll-behavior.property-enabled", true);
+pref("layout.css.scroll-snap.enabled", true);
+#else
 pref("layout.css.scroll-behavior.enabled", false);
 pref("layout.css.scroll-behavior.property-enabled", false);
-
-// CSS Scroll Snapping requires the C++ APZC
 pref("layout.css.scroll-snap.enabled", false);
+#endif
 
 /* PostScript print module prefs */
 // pref("print.postscript.enabled",      true);
@@ -4081,7 +4073,11 @@ pref("font.name.monospace.x-unicode", "dt-interface user-ucs2.cjk_japan-0");
 
 // Login Manager prefs
 pref("signon.rememberSignons",              true);
+#ifdef NIGHTLY_BUILD
 pref("signon.rememberSignons.visibilityToggle", true);
+#else
+pref("signon.rememberSignons.visibilityToggle", false);
+#endif
 pref("signon.autofillForms",                true);
 pref("signon.autologin.proxy",              false);
 pref("signon.storeWhenAutocompleteOff",     true);
@@ -4324,10 +4320,6 @@ pref("layers.offmainthreadcomposition.enabled", true);
 // -1 -> default (match layout.frame_rate or 60 FPS)
 // 0  -> full-tilt mode: Recomposite even if not transaction occured.
 pref("layers.offmainthreadcomposition.frame-rate", -1);
-
-#ifdef MOZ_WIDGET_UIKIT
-pref("layers.async-pan-zoom.enabled", true);
-#endif
 
 #ifdef XP_MACOSX
 pref("layers.enable-tiles", true);
@@ -4887,25 +4879,6 @@ pref("selectioncaret.enabled", false);
 // user click on selection caret or not. In app units.
 pref("selectioncaret.inflatesize.threshold", 40);
 
-// Selection carets will fall-back to internal LongTap detector.
-pref("selectioncaret.detects.longtap", true);
-
-// Selection carets do not affect caret visibility.
-pref("selectioncaret.visibility.affectscaret", false);
-
-// Selection caret visibility does not observe composition
-// selections generated by soft keyboard managers.
-pref("selectioncaret.observes.compositions", false);
-
-// The Touch caret by default observes the b2g visibility rules, and
-// not the extended Android visibility rules that allow for touchcaret
-// display in empty editable fields, for example.
-pref("touchcaret.extendedvisibility", false);
-
-// Desktop and b2g don't need to open or close the Android
-// TextSelection (Actionbar) utility.
-pref("caret.manages-android-actionbar", false);
-
 // New implementation to unify touch-caret and selection-carets.
 pref("layout.accessiblecaret.enabled", false);
 
@@ -4922,6 +4895,13 @@ pref("layout.accessiblecaret.timeout_ms", 3000);
 // Simulate long tap to select words on the platforms where APZ is not enabled
 // or long tap events does not fired by APZ.
 pref("layout.accessiblecaret.use_long_tap_injector", true);
+
+// Selection change notifications generated by Javascript, or misc internal
+// events hide AccessibleCarets by default.
+pref("layout.accessiblecaret.extendedvisibility", false);
+
+// Optionally provide haptic feedback on longPress selection events.
+pref("layout.accessiblecaret.hapticfeedback", false);
 
 // Wakelock is disabled by default.
 pref("dom.wakelock.enabled", false);

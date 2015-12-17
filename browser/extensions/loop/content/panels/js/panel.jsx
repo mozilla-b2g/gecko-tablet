@@ -13,31 +13,47 @@ loop.panel = (function(_, mozL10n) {
   var Button = sharedViews.Button;
   var Checkbox = sharedViews.Checkbox;
 
+  var FTU_VERSION = 1;
+
   var GettingStartedView = React.createClass({
     mixins: [sharedMixins.WindowCloseMixin],
 
     handleButtonClick: function() {
       loop.requestMulti(
         ["OpenGettingStartedTour", "getting-started"],
-        ["SetLoopPref", "gettingStarted.seen", true]);
-      var event = new CustomEvent("GettingStartedSeen");
-      window.dispatchEvent(event);
+        ["SetLoopPref", "gettingStarted.latestFTUVersion", FTU_VERSION],
+        ["SetPanelHeight"]).then(function() {
+          var event = new CustomEvent("GettingStartedSeen");
+          window.dispatchEvent(event);
+        }.bind(this));
       this.closeWindow();
+    },
+
+    componentWillMount: function() {
+      // Set 553 pixel height to show the full FTU panel content.
+      loop.request("SetPanelHeight", 553);
     },
 
     render: function() {
       return (
         <div className="fte-get-started-content">
-          <header className="fte-title">
-            <img src="shared/img/hello_logo.svg" />
+          <div className="fte-title">
+            <img className="fte-logo" src="shared/img/hello_logo.svg" />
             <div className="fte-subheader">
-              {mozL10n.get("first_time_experience_subheading")}
+              {mozL10n.get("first_time_experience_subheading2")}
             </div>
-          </header>
-          <Button additionalClass="fte-get-started-button"
-                  caption={mozL10n.get("first_time_experience_button_label")}
-                  htmlId="fte-button"
-                  onClick={this.handleButtonClick} />
+            <hr className="fte-separator"/>
+            <div className="fte-content">
+              {mozL10n.get("first_time_experience_content")}
+            </div>
+            <img className="fte-hello-web-share" src="shared/img/hello-web-share.svg" />
+          </div>
+          <div className="fte-button-container">
+            <Button additionalClass="fte-get-started-button"
+                    caption={mozL10n.get("first_time_experience_button_label")}
+                    htmlId="fte-button"
+                    onClick={this.handleButtonClick} />
+          </div>
         </div>
       );
     }
@@ -94,21 +110,9 @@ loop.panel = (function(_, mozL10n) {
 
     getInitialState: function() {
       return {
-        terms_of_use_url: null,
-        privacy_notice_url: null
+        terms_of_use_url: loop.getStoredRequest(["GetLoopPref", "legal.ToS_url"]),
+        privacy_notice_url: loop.getStoredRequest(["GetLoopPref", "legal.privacy_url"])
       };
-    },
-
-    componentWillMount: function() {
-      loop.requestMulti(
-        ["GetLoopPref", "legal.ToS_url"],
-        ["GetLoopPref", "legal.privacy_url"]
-      ).then(function(results) {
-        this.setState({
-          terms_of_use_url: results[0],
-          privacy_notice_url: results[1]
-        });
-      }.bind(this));
     },
 
     handleLinkClick: function(event) {
@@ -197,34 +201,26 @@ loop.panel = (function(_, mozL10n) {
 
     getInitialState: function() {
       return {
-        doNotDisturb: false,
-        fxAEnabled: false,
-        signedIn: false
+        signedIn: !!loop.getStoredRequest(["GetUserProfile"]),
+        fxAEnabled: loop.getStoredRequest(["GetFxAEnabled"]),
+        doNotDisturb: loop.getStoredRequest(["GetDoNotDisturb"])
       };
-    },
-
-    componentWillMount: function() {
-      this._updateState();
     },
 
     componentWillUpdate: function(nextProps, nextState) {
       if (nextState.showMenu !== this.state.showMenu) {
-        this._updateState();
+        loop.requestMulti(
+          ["GetUserProfile"],
+          ["GetFxAEnabled"],
+          ["GetDoNotDisturb"]
+        ).then(function(results) {
+          this.setState({
+            signedIn: !!results[0],
+            fxAEnabled: results[1],
+            doNotDisturb: results[2]
+          });
+        }.bind(this));
       }
-    },
-
-    _updateState: function() {
-      loop.requestMulti(
-        ["GetUserProfile"],
-        ["GetFxAEnabled"],
-        ["GetDoNotDisturb"]
-      ).then(function(results) {
-        this.setState({
-          signedIn: !!results[0],
-          fxAEnabled: results[1],
-          doNotDisturb: results[2]
-        });
-      }.bind(this));
     },
 
     handleClickSettingsEntry: function() {
@@ -264,7 +260,7 @@ loop.panel = (function(_, mozL10n) {
      */
     handleSubmitFeedback: function(event) {
       event.preventDefault();
-      loop.request("GetLoopPref", "feedback.formURL").then(function(helloFeedbackUrl) {
+      loop.request("GetLoopPref", "feedback.manualFormURL").then(function(helloFeedbackUrl) {
         loop.request("OpenURL", helloFeedbackUrl);
         this.closeWindow();
       }.bind(this));
@@ -400,9 +396,9 @@ loop.panel = (function(_, mozL10n) {
       var roomUrl = this.props.roomUrls && this.props.roomUrls[0];
       if (roomUrl && roomUrl.location) {
         return this._renderIcon(roomUrl);
-      } else {
-        return this._renderDefaultIcon();
       }
+
+      return this._renderDefaultIcon();
     }
   });
 
@@ -922,11 +918,11 @@ loop.panel = (function(_, mozL10n) {
 
     getInitialState: function() {
       return {
-        fxAEnabled: true,
-        hasEncryptionKey: false,
-        userProfile: null,
-        gettingStartedSeen: true,
-        multiProcessEnabled: false
+        fxAEnabled: loop.getStoredRequest(["GetFxAEnabled"]),
+        hasEncryptionKey: loop.getStoredRequest(["GetHasEncryptionKey"]),
+        userProfile: loop.getStoredRequest(["GetUserProfile"]),
+        gettingStartedSeen: loop.getStoredRequest(["GetLoopPref", "gettingStarted.latestFTUVersion"]) >= FTU_VERSION,
+        multiProcessEnabled: loop.getStoredRequest(["IsMultiProcessEnabled"])
       };
     },
 
@@ -984,31 +980,15 @@ loop.panel = (function(_, mozL10n) {
     },
 
     _gettingStartedSeen: function() {
-      loop.request("GetLoopPref", "gettingStarted.seen").then(function(result) {
+      loop.request("GetLoopPref", "gettingStarted.latestFTUVersion").then(function(result) {
         this.setState({
-          gettingStartedSeen: result
+          gettingStartedSeen: result >= FTU_VERSION
         });
       }.bind(this));
     },
 
     componentWillMount: function() {
       this.updateServiceErrors();
-
-      loop.requestMulti(
-        ["GetFxAEnabled"],
-        ["GetHasEncryptionKey"],
-        ["GetUserProfile"],
-        ["GetLoopPref", "gettingStarted.seen"],
-        ["IsMultiProcessEnabled"]
-      ).then(function(results) {
-        this.setState({
-          fxAEnabled: results[0],
-          hasEncryptionKey: results[1],
-          userProfile: results[2],
-          gettingStartedSeen: results[3],
-          multiProcessEnabled: results[4]
-        });
-      }.bind(this));
     },
 
     componentDidMount: function() {
@@ -1052,7 +1032,6 @@ loop.panel = (function(_, mozL10n) {
           </div>
         );
       }
-
       if (!this.state.hasEncryptionKey) {
         return <SignInRequestView />;
       }
@@ -1084,18 +1063,33 @@ loop.panel = (function(_, mozL10n) {
    * Panel initialisation.
    */
   function init() {
-    return loop.requestMulti(
+    var requests = [
       ["GetAllConstants"],
       ["GetAllStrings"],
       ["GetLocale"],
       ["GetPluralRule"]
-    ).then(function(results) {
-      var constants = results[0];
+    ];
+    var prefetch = [
+      ["GetLoopPref", "gettingStarted.latestFTUVersion"],
+      ["GetLoopPref", "legal.ToS_url"],
+      ["GetLoopPref", "legal.privacy_url"],
+      ["GetUserProfile"],
+      ["GetFxAEnabled"],
+      ["GetDoNotDisturb"],
+      ["GetHasEncryptionKey"],
+      ["IsMultiProcessEnabled"]
+    ];
+
+    return loop.requestMulti.apply(null, requests.concat(prefetch)).then(function(results) {
+      // `requestIdx` is keyed off the order of the `requests` and `prefetch`
+      // arrays. Be careful to update both when making changes.
+      var requestIdx = 0;
+      var constants = results[requestIdx];
       // Do the initial L10n setup, we do this before anything
       // else to ensure the L10n environment is setup correctly.
-      var stringBundle = results[1];
-      var locale = results[2];
-      var pluralRule = results[3];
+      var stringBundle = results[++requestIdx];
+      var locale = results[++requestIdx];
+      var pluralRule = results[++requestIdx];
       mozL10n.initialize({
         locale: locale,
         pluralRule: pluralRule,
@@ -1107,6 +1101,11 @@ loop.panel = (function(_, mozL10n) {
 
           return JSON.stringify({ textContent: stringBundle[key] });
         }
+      });
+
+      prefetch.forEach(function(req) {
+        req.shift();
+        loop.storeRequest(req, results[++requestIdx]);
       });
 
       var notifications = new sharedModels.NotificationCollection();

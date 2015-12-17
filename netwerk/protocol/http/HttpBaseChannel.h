@@ -100,6 +100,7 @@ public:
   NS_IMETHOD SetLoadGroup(nsILoadGroup *aLoadGroup) override;
   NS_IMETHOD GetLoadFlags(nsLoadFlags *aLoadFlags) override;
   NS_IMETHOD SetLoadFlags(nsLoadFlags aLoadFlags) override;
+  NS_IMETHOD SetDocshellUserAgentOverride();
 
   // nsIChannel
   NS_IMETHOD GetOriginalURI(nsIURI **aOriginalURI) override;
@@ -213,9 +214,7 @@ public:
   NS_IMETHOD SetRedirectMode(uint32_t aRedirectMode) override;
   NS_IMETHOD GetTopWindowURI(nsIURI **aTopWindowURI) override;
   NS_IMETHOD GetProxyURI(nsIURI **proxyURI) override;
-  NS_IMETHOD SetCorsPreflightParameters(const nsTArray<nsCString>& unsafeHeaders,
-                                        bool aWithCredentials,
-                                        nsIPrincipal* aPrincipal) override;
+  virtual void SetCorsPreflightParameters(const nsTArray<nsCString>& unsafeHeaders) override;
 
   inline void CleanRedirectCacheChainIfNecessary()
   {
@@ -492,9 +491,7 @@ protected:
   bool EnsureSchedulingContextID();
 
   bool                              mRequireCORSPreflight;
-  bool                              mWithCredentials;
   nsTArray<nsCString>               mUnsafeHeaders;
-  nsCOMPtr<nsIPrincipal>            mPreflightPrincipal;
 
   nsCOMPtr<nsIConsoleReportCollector> mReportCollector;
 

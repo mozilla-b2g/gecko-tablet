@@ -1474,7 +1474,16 @@
      *   Stack: val => val
      */ \
     macro(JSOP_SETINTRINSIC,  144, "setintrinsic",  NULL, 5,  1,  1, JOF_ATOM|JOF_NAME|JOF_SET|JOF_DETECTING) \
-    macro(JSOP_UNUSED145,     145, "unused145",     NULL, 1,  0,  0, JOF_BYTE) \
+    /*
+     * Like JSOP_CALL, but used as part of for-of and destructuring bytecode
+     * to provide better error messages.
+     *   Category: Statements
+     *   Type: Function
+     *   Operands: uint16_t argc (must be 0)
+     *   Stack: callee, this => rval
+     *   nuses: 2
+     */ \
+    macro(JSOP_CALLITER,      145, "calliter",      NULL, 3, -1,  1, JOF_UINT16|JOF_INVOKE|JOF_TYPESET) \
     /*
      * Initialize a non-configurable, non-writable, non-enumerable data-property on an object.
      *
@@ -1659,7 +1668,14 @@
      *   Stack: =>
      */ \
     macro(JSOP_DEFLET,        162,"deflet",     NULL,     5,  0,  0,  JOF_ATOM) \
-    macro(JSOP_UNUSED163,     163,"unused163",  NULL,     1,  0,  1,  JOF_BYTE) \
+    /*
+     * Throw if the value on the stack is not coerscible to an object (is |null| or |undefined|).
+     *   Category: Literals
+     *   Type: Object
+     *   Operands:
+     *   Stack: val => val
+     */ \
+    macro(JSOP_CHECKOBJCOERCIBLE, 163, "checkobjcoercible", NULL, 1,  1,  1, JOF_BYTE) \
     /*
      * Find the function to invoke with |super()| on the scope chain.
      *
@@ -2105,15 +2121,12 @@
     macro(JSOP_REST,          224, "rest",         NULL,  1,  0,  1,  JOF_BYTE|JOF_TYPESET) \
     \
     /*
-     * First, throw a TypeError if baseValue is null or undefined. Then,
-     * replace the top-of-stack value propertyNameValue with
-     * ToPropertyKey(propertyNameValue). This opcode implements ES6 12.3.2.1
-     * steps 7-10.  It is also used to implement computed property names; in
-     * that case, baseValue is always an object, so the first step is a no-op.
+     * Replace the top-of-stack value propertyNameValue with
+     * ToPropertyKey(propertyNameValue).
      *   Category: Literals
      *   Type: Object
      *   Operands:
-     *   Stack: baseValue, propertyNameValue => baseValue, propertyKey
+     *   Stack: propertyNameValue => propertyKey
      */ \
     macro(JSOP_TOID,          225, "toid",         NULL,  1,  1,  1,  JOF_BYTE) \
     \

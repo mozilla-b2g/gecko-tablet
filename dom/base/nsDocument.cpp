@@ -240,6 +240,7 @@
 #include "mozilla/dom/BoxObject.h"
 #include "gfxVR.h"
 #include "gfxPrefs.h"
+#include "nsISupportsPrimitives.h"
 
 #include "mozilla/DocLoadingTimelineMarker.h"
 
@@ -374,19 +375,11 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(Registry)
       cb.NoteXPCOMChild(callbacks->mDetachedCallback.Value());
     }
   }
-  for (auto iter = tmp->mCandidatesMap.Iter(); !iter.Done(); iter.Next()) {
-    nsTArray<RefPtr<Element>>* elems = iter.UserData();
-    for (size_t i = 0; i < elems->Length(); ++i) {
-      NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mCandidatesMap->Element");
-      cb.NoteXPCOMChild(elems->ElementAt(i));
-    }
-  }
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Registry)
   tmp->mCustomDefinitions.Clear();
-  tmp->mCandidatesMap.Clear();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(Registry)
@@ -1442,6 +1435,7 @@ nsIDocument::nsIDocument()
     mPostedFlushUserFontSet(false),
     mPartID(0),
     mDidFireDOMContentLoaded(true),
+    mHasScrollLinkedEffect(false),
     mUserHasInteracted(false)
 {
   SetInDocument();
@@ -1562,6 +1556,8 @@ nsDocument::~nsDocument()
         mixedContentLevel = MIXED_DISPLAY_CONTENT;
       }
       Accumulate(Telemetry::MIXED_CONTENT_PAGE_LOAD, mixedContentLevel);
+
+      Accumulate(Telemetry::SCROLL_LINKED_EFFECT_FOUND, mHasScrollLinkedEffect);
     }
   }
 
@@ -1644,6 +1640,11 @@ nsDocument::~nsDocument()
   mImageTracker.Clear();
 
   mPlugins.Clear();
+
+  nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
+  if (os) {
+    os->RemoveObserver(this, "service-worker-get-client");
+  }
 }
 
 NS_INTERFACE_TABLE_HEAD(nsDocument)
@@ -2045,6 +2046,11 @@ nsDocument::Init()
 
   mozilla::HoldJSObjects(this);
 
+  nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
+  if (os) {
+    os->AddObserver(this, "service-worker-get-client", /* ownsWeak */ true);
+  }
+
   return NS_OK;
 }
 
@@ -2310,6 +2316,11 @@ nsDocument::ResetStylesheetsToURI(nsIURI* aURI)
   RemoveStyleSheetsFromStyleSets(mAdditionalSheets[eAgentSheet], SheetType::Agent);
   RemoveStyleSheetsFromStyleSets(mAdditionalSheets[eUserSheet], SheetType::User);
   RemoveStyleSheetsFromStyleSets(mAdditionalSheets[eAuthorSheet], SheetType::Doc);
+
+  nsStyleSheetService *sheetService = nsStyleSheetService::GetInstance();
+  if (sheetService) {
+    RemoveStyleSheetsFromStyleSets(*sheetService->AuthorStyleSheets(), SheetType::Doc);
+  }
 
   // Release all the sheets
   mStyleSheets.Clear();
@@ -2670,6 +2681,16 @@ nsDocument::InitCSP(nsIChannel* aChannel)
   nsAutoCString tCspHeaderValue, tCspROHeaderValue;
 
   nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel);
+  if (!httpChannel) {
+    // check baseChannel for CSP when loading a multipart channel
+    nsCOMPtr<nsIMultiPartChannel> multipart = do_QueryInterface(aChannel);
+    if (multipart) {
+      nsCOMPtr<nsIChannel> baseChannel;
+      multipart->GetBaseChannel(getter_AddRefs(baseChannel));
+      httpChannel = do_QueryInterface(baseChannel);
+    }
+  }
+
   if (httpChannel) {
     httpChannel->GetResponseHeader(
         NS_LITERAL_CSTRING("content-security-policy"),
@@ -4614,7 +4635,10 @@ nsDocument::SetScriptGlobalObject(nsIScriptGlobalObject *aScriptGlobalObject)
 
     nsCOMPtr<nsIServiceWorkerManager> swm = mozilla::services::GetServiceWorkerManager();
     if (swm) {
-      swm->MaybeStartControlling(this);
+      nsAutoString documentId;
+      static_cast<nsDocShell*>(docShell.get())->GetInterceptedDocumentId(documentId);
+
+      swm->MaybeStartControlling(this, documentId);
       mMaybeServiceWorkerControlled = true;
     }
   }
@@ -5037,6 +5061,14 @@ nsDocument::DispatchContentLoadedEvents()
     nsContentUtils::DispatchChromeEvent(this, static_cast<nsIDocument*>(this),
                                         NS_LITERAL_STRING("MozApplicationManifest"),
                                         true, true);
+  }
+
+  if (mMaybeServiceWorkerControlled) {
+    using mozilla::dom::workers::ServiceWorkerManager;
+    RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
+    if (swm) {
+      swm->MaybeCheckNavigationUpdate(this);
+    }
   }
 
   UnblockOnload(true);
@@ -5763,16 +5795,16 @@ nsDocument::RegisterUnresolvedElement(Element* aElement, nsIAtom* aTypeName)
     return NS_OK;
   }
 
-  nsTArray<RefPtr<Element>>* unresolved;
+  nsTArray<nsWeakPtr>* unresolved;
   mRegistry->mCandidatesMap.Get(&key, &unresolved);
   if (!unresolved) {
-    unresolved = new nsTArray<RefPtr<Element>>();
+    unresolved = new nsTArray<nsWeakPtr>();
     // Ownership of unresolved is taken by mCandidatesMap.
     mRegistry->mCandidatesMap.Put(&key, unresolved);
   }
 
-  RefPtr<Element>* elem = unresolved->AppendElement();
-  *elem = aElement;
+  nsWeakPtr* elem = unresolved->AppendElement();
+  *elem = do_GetWeakReference(aElement);
   aElement->AddStates(NS_EVENT_STATE_UNRESOLVED);
 
   return NS_OK;
@@ -6156,11 +6188,14 @@ nsDocument::RegisterElement(JSContext* aCx, const nsAString& aType,
   definitions.Put(&key, definition);
 
   // Do element upgrade.
-  nsAutoPtr<nsTArray<RefPtr<Element>>> candidates;
+  nsAutoPtr<nsTArray<nsWeakPtr>> candidates;
   mRegistry->mCandidatesMap.RemoveAndForget(&key, candidates);
   if (candidates) {
     for (size_t i = 0; i < candidates->Length(); ++i) {
-      Element *elem = candidates->ElementAt(i);
+      nsCOMPtr<Element> elem = do_QueryReferent(candidates->ElementAt(i));
+      if (!elem) {
+        continue;
+      }
 
       elem->RemoveStates(NS_EVENT_STATE_UNRESOLVED);
 
@@ -12197,6 +12232,16 @@ nsDocument::Observe(nsISupports *aSubject,
       // We don't want to style the chrome window, only app ones.
       OnAppThemeChanged();
     }
+  } else if (strcmp("service-worker-get-client", aTopic) == 0) {
+    nsAutoString clientId;
+    GetOrCreateId(clientId);
+    if (!clientId.IsEmpty() && clientId.Equals(aData)) {
+      nsCOMPtr<nsISupportsInterfacePointer> ifptr = do_QueryInterface(aSubject);
+      if (ifptr) {
+        ifptr->SetData(static_cast<nsIDocument*>(this));
+        ifptr->SetDataIID(&NS_GET_IID(nsIDocument));
+      }
+    }
   }
   return NS_OK;
 }
@@ -13048,33 +13093,45 @@ nsIDocument::CreateHTMLElement(nsIAtom* aTag)
   return element.forget();
 }
 
+/* static */
 nsresult
-nsIDocument::GetId(nsAString& aId)
+nsIDocument::GenerateDocumentId(nsAString& aId)
+{
+  nsID id;
+  nsresult rv = nsContentUtils::GenerateUUIDInPlace(id);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  // Build a string in {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx} format
+  char buffer[NSID_LENGTH];
+  id.ToProvidedString(buffer);
+  NS_ConvertASCIItoUTF16 uuid(buffer);
+
+  // Remove {} and the null terminator
+  aId.Assign(Substring(uuid, 1, NSID_LENGTH - 3));
+  return NS_OK;
+}
+
+nsresult
+nsIDocument::GetOrCreateId(nsAString& aId)
 {
   if (mId.IsEmpty()) {
-    nsresult rv;
-    nsCOMPtr<nsIUUIDGenerator> uuidgen = do_GetService("@mozilla.org/uuid-generator;1", &rv);
+    nsresult rv = GenerateDocumentId(mId);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
-
-    nsID id;
-    rv = uuidgen->GenerateUUIDInPlace(&id);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
-
-    // Build a string in {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx} format
-    char buffer[NSID_LENGTH];
-    id.ToProvidedString(buffer);
-    NS_ConvertASCIItoUTF16 uuid(buffer);
-
-    // Remove {} and the null terminator
-    mId.Assign(Substring(uuid, 1, NSID_LENGTH - 3));
   }
 
   aId = mId;
   return NS_OK;
+}
+
+void
+nsIDocument::SetId(const nsAString& aId)
+{
+  MOZ_ASSERT(mId.IsEmpty(), "Cannot set the document ID after we have one");
+  mId = aId;
 }
 
 bool
@@ -13231,4 +13288,18 @@ nsIDocument::Fonts()
     GetUserFontSet();  // this will cause the user font set to be created/updated
   }
   return mFontFaceSet;
+}
+
+void
+nsIDocument::ReportHasScrollLinkedEffect()
+{
+  if (mHasScrollLinkedEffect) {
+    // We already did this once for this document, don't do it again.
+    return;
+  }
+  mHasScrollLinkedEffect = true;
+  nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
+                                  NS_LITERAL_CSTRING("Async Pan/Zoom"),
+                                  this, nsContentUtils::eLAYOUT_PROPERTIES,
+                                  "ScrollLinkedEffectFound");
 }

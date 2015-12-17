@@ -279,7 +279,7 @@ public:
    * Handler for events which should not be intercepted by the touch listener.
    */
   nsEventStatus HandleInputEvent(const InputData& aEvent,
-                                 const Matrix4x4& aTransformToApzc);
+                                 const ScreenToParentLayerMatrix4x4& aTransformToApzc);
 
   /**
    * Handler for gesture events.
@@ -355,7 +355,7 @@ public:
    * To respect the lock ordering, mMonitor must NOT be held when calling
    * this function (since this function acquires the tree lock).
    */
-  Matrix4x4 GetTransformToThis() const;
+  ScreenToParentLayerMatrix4x4 GetTransformToThis() const;
 
   /**
    * Convert the vector |aVector|, rooted at the point |aAnchor|, from
@@ -392,11 +392,6 @@ public:
   bool CanScroll(Layer::ScrollDirection aDirection) const;
 
   void NotifyMozMouseScrollEvent(const nsString& aString) const;
-
-  // This is called to request that the main thread snap the scroll position
-  // to a nearby snap position if appropriate. The current scroll position is
-  // used as the final destination.
-  void RequestSnap();
 
 protected:
   // Protected destructor, to discourage deletion outside of Release():
@@ -649,6 +644,11 @@ protected:
   // Common processing at the end of a touch block.
   void OnTouchEndOrCancel();
 
+  // This is called to request that the main thread snap the scroll position
+  // to a nearby snap position if appropriate. The current scroll position is
+  // used as the final destination.
+  void RequestSnap();
+
   uint64_t mLayersId;
   RefPtr<CompositorParent> mCompositorParent;
   RefPtr<TaskThrottler> mPaintThrottler;
@@ -760,12 +760,6 @@ protected:
                                  the finger is lifted. */
     SMOOTH_SCROLL,            /* Smooth scrolling to destination. Used by
                                  CSSOM-View smooth scroll-behavior */
-
-    PANNING_LOCKED_X_SMOOTH_SCROLL, /* Smooth scrolling animation initiated
-                                       while simultaneously panning the frame
-                                       with the X axis locked. */
-    PANNING_LOCKED_Y_SMOOTH_SCROLL, /* as above for Y axis. */
-
     WHEEL_SCROLL              /* Smooth scrolling to a destination for a wheel event. */
   };
 
@@ -830,15 +824,11 @@ private:
   void CancelAnimationAndGestureState();
 
   RefPtr<InputQueue> mInputQueue;
-  TouchBlockState* CurrentTouchBlock();
-  bool HasReadyTouchBlock();
+  CancelableBlockState* CurrentInputBlock() const;
+  TouchBlockState* CurrentTouchBlock() const;
+  bool HasReadyTouchBlock() const;
 
-  PanGestureBlockState* CurrentPanGestureBlock();
-
-  /* ===================================================================
-   * The functions and members in this section are used to manage
-   * pan gestures.
-   */
+  PanGestureBlockState* CurrentPanGestureBlock() const;
 
 private:
   /* ===================================================================
@@ -848,18 +838,17 @@ private:
    */
 public:
   /**
-   * Attempt a fling with the given velocity. If we are not pannable, the fling
-   * is handed off to the next APZC in the handoff chain via
-   * mTreeManager->DispatchFling(). Returns true iff. the entire velocity of
-   * the fling was consumed by this APZC. aVelocity is modified to contain any
+   * Attempt a fling with the velocity specified in |aHandoffState|.
+   * If we are not pannable, the fling is handed off to the next APZC in
+   * the handoff chain via mTreeManager->DispatchFling().
+   * Returns true iff. the entire velocity of the fling was consumed by
+   * this APZC. |aHandoffState.mVelocity| is modified to contain any
    * unused, residual velocity.
-   * |aHandoff| should be true iff. the fling was handed off from a previous
-   *            APZC, and determines whether acceleration is applied to the
-   *            fling.
+   * |aHandoffState.mIsHandoff| should be true iff. the fling was handed off
+   * from a previous APZC, and determines whether acceleration is applied
+   * to the fling.
    */
-  bool AttemptFling(ParentLayerPoint& aVelocity,
-                    const RefPtr<const OverscrollHandoffChain>& aOverscrollHandoffChain,
-                    bool aHandoff);
+  bool AttemptFling(FlingHandoffState& aHandoffState);
 
 private:
   friend class FlingAnimation;
@@ -878,14 +867,13 @@ private:
   // later in the handoff chain, or if there are no takers, continuing the
   // fling and entering an overscrolled state.
   void HandleFlingOverscroll(const ParentLayerPoint& aVelocity,
-                             const RefPtr<const OverscrollHandoffChain>& aOverscrollHandoffChain);
+                             const RefPtr<const OverscrollHandoffChain>& aOverscrollHandoffChain,
+                             const RefPtr<const AsyncPanZoomController>& aScrolledApzc);
 
   void HandleSmoothScrollOverscroll(const ParentLayerPoint& aVelocity);
 
-  // Helper function used by TakeOverFling() and HandleFlingOverscroll().
-  void AcceptFling(ParentLayerPoint& aVelocity,
-                   const RefPtr<const OverscrollHandoffChain>& aOverscrollHandoffChain,
-                   bool aHandoff);
+  // Helper function used by AttemptFling().
+  void AcceptFling(FlingHandoffState& aHandoffState);
 
   // Start an overscroll animation with the given initial velocity.
   void StartOverscrollAnimation(const ParentLayerPoint& aVelocity);
@@ -894,6 +882,8 @@ private:
 
   // Returns whether overscroll is allowed during an event.
   bool AllowScrollHandoffInCurrentBlock() const;
+
+  void AcknowledgeScrollUpdate() const;
 
   /* ===================================================================
    * The functions and members in this section are used to make ancestor chains

@@ -109,6 +109,7 @@ EXPORTS.mozilla.layers += [
     'apz/util/ChromeProcessController.h',
     'apz/util/DoubleTapToZoom.h',
     'apz/util/InputAPZContext.h',
+    'apz/util/ScrollLinkedEffectDetector.h',
     'AsyncCanvasRenderer.h',
     'AtomicRefCountedWithFinalize.h',
     'AxisPhysicsModel.h',
@@ -116,6 +117,7 @@ EXPORTS.mozilla.layers += [
     'basic/BasicCompositor.h',
     'basic/MacIOSurfaceTextureHostBasic.h',
     'basic/TextureHostBasic.h',
+    'BufferTexture.h',
     'client/CanvasClient.h',
     'client/CompositableClient.h',
     'client/ContentClient.h',
@@ -176,6 +178,7 @@ EXPORTS.mozilla.layers += [
     'opengl/TextureHostOGL.h',
     'PersistentBufferProvider.h',
     'RenderTrace.h',
+    'TextureWrapperImage.h',
     'TransactionIdAllocator.h',
     'YCbCrImageDataSerializer.h',
 ]
@@ -258,6 +261,7 @@ UNIFIED_SOURCES += [
     'apz/util/ChromeProcessController.cpp',
     'apz/util/DoubleTapToZoom.cpp',
     'apz/util/InputAPZContext.cpp',
+    'apz/util/ScrollLinkedEffectDetector.cpp',
     'AsyncCanvasRenderer.cpp',
     'AxisPhysicsModel.cpp',
     'AxisPhysicsMSDModel.cpp',
@@ -270,6 +274,7 @@ UNIFIED_SOURCES += [
     'basic/BasicLayersImpl.cpp',
     'basic/BasicPaintedLayer.cpp',
     'basic/TextureHostBasic.cpp',
+    'BufferTexture.cpp',
     'BufferUnrotate.cpp',
     'client/CanvasClient.cpp',
     'client/ClientCanvasLayer.cpp',
@@ -346,6 +351,7 @@ UNIFIED_SOURCES += [
     'ReadbackProcessor.cpp',
     'RenderTrace.cpp',
     'RotatedBuffer.cpp',
+    'TextureWrapperImage.cpp',
     'YCbCrImageDataSerializer.cpp',
 ]
 

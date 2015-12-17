@@ -874,7 +874,10 @@ function makeURI(aURLSpec, aCharset) {
  */
 function makeChannel(url) {
   try {
-    return NetUtil.newChannel({uri: url, loadUsingSystemPrincipal: true});
+    return NetUtil.newChannel({
+             uri: url,
+             loadUsingSystemPrincipal: true
+           });
   } catch (ex) { }
 
   return null;
@@ -1451,12 +1454,10 @@ Engine.prototype = {
 
     LOG("_initFromURIAndLoad: Downloading engine from: \"" + uri.spec + "\".");
 
-    var chan = NetUtil.ioService.newChannelFromURI2(uri,
-                                                    null,      // aLoadingNode
-                                                    Services.scriptSecurityManager.getSystemPrincipal(),
-                                                    null,      // aTriggeringPrincipal
-                                                    Ci.nsILoadInfo.SEC_NORMAL,
-                                                    Ci.nsIContentPolicy.TYPE_OTHER);
+    var chan = NetUtil.newChannel({
+                 uri: uri,
+                 loadUsingSystemPrincipal: true
+               });
 
     if (this._engineToUpdate && (chan instanceof Ci.nsIHttpChannel)) {
       var lastModified = this._engineToUpdate.getAttr("updatelastmodified");
@@ -1466,7 +1467,7 @@ Engine.prototype = {
     this._uri = uri;
     var listener = new loadListener(chan, this, this._onLoad);
     chan.notificationCallbacks = listener;
-    chan.asyncOpen(listener, null);
+    chan.asyncOpen2(listener);
   },
 
   /**
@@ -1521,14 +1522,12 @@ Engine.prototype = {
 
     LOG("_initFromURISync: Loading engine from: \"" + uri.spec + "\".");
 
-    var chan = NetUtil.ioService.newChannelFromURI2(uri,
-                                                    null,      // aLoadingNode
-                                                    Services.scriptSecurityManager.getSystemPrincipal(),
-                                                    null,      // aTriggeringPrincipal
-                                                    Ci.nsILoadInfo.SEC_NORMAL,
-                                                    Ci.nsIContentPolicy.TYPE_OTHER);
+    var chan = NetUtil.newChannel({
+                 uri: uri,
+                 loadUsingSystemPrincipal: true
+               });
 
-    var stream = chan.open();
+    var stream = chan.open2();
     var parser = Cc["@mozilla.org/xmlextras/domparser;1"].
                  createInstance(Ci.nsIDOMParser);
     var doc = parser.parseFromStream(stream, "UTF-8", stream.available(), "text/xml");
@@ -1803,12 +1802,10 @@ Engine.prototype = {
         // No use downloading the icon if the engine file is read-only
         LOG("_setIcon: Downloading icon: \"" + uri.spec +
             "\" for engine: \"" + this.name + "\"");
-        var chan = NetUtil.ioService.newChannelFromURI2(uri,
-                                                        null,      // aLoadingNode
-                                                        Services.scriptSecurityManager.getSystemPrincipal(),
-                                                        null,      // aTriggeringPrincipal
-                                                        Ci.nsILoadInfo.SEC_NORMAL,
-                                                        Ci.nsIContentPolicy.TYPE_INTERNAL_IMAGE);
+        var chan = NetUtil.newChannel({
+                     uri: uri,
+                     loadUsingSystemPrincipal: true
+                   });
 
         let iconLoadCallback = function (aByteArray, aEngine) {
           // This callback may run after we've already set a preferred icon,
@@ -1840,7 +1837,7 @@ Engine.prototype = {
 
         var listener = new loadListener(chan, engineToSet, iconLoadCallback);
         chan.notificationCallbacks = listener;
-        chan.asyncOpen(listener, null);
+        chan.asyncOpen2(listener);
         break;
     }
   },
@@ -2211,6 +2208,16 @@ Engine.prototype = {
      *   [other]/engine.xml
      */
 
+    const NS_XPCOM_CURRENT_PROCESS_DIR = "XCurProcD";
+    const NS_APP_USER_PROFILE_50_DIR = "ProfD";
+    const XRE_APP_DISTRIBUTION_DIR = "XREAppDist";
+
+    const knownDirs = {
+      app: NS_XPCOM_CURRENT_PROCESS_DIR,
+      profile: NS_APP_USER_PROFILE_50_DIR,
+      distribution: XRE_APP_DISTRIBUTION_DIR
+    };
+
     let leafName = this._shortName;
     if (!leafName)
       return "null";
@@ -2229,6 +2236,25 @@ Engine.prototype = {
         packageName = uri.hostPort;
         uri = gChromeReg.convertChromeURL(uri);
       }
+
+#ifdef ANDROID
+      // On Android the omni.ja file isn't at the same path as the binary
+      // used to start the process. We tweak the path here so that the code
+      // shared with Desktop will correctly identify files from the omni.ja
+      // file as coming from the [app] folder.
+      let appPath = Services.io.getProtocolHandler("resource")
+                            .QueryInterface(Ci.nsIResProtocolHandler)
+                            .getSubstitution("android");
+      if (appPath) {
+        appPath = appPath.spec;
+        let spec = uri.spec;
+        if (spec.includes(appPath)) {
+          let appURI = Services.io.newFileURI(getDir(knownDirs["app"]));
+          uri = NetUtil.newURI(spec.replace(appPath, appURI.spec));
+        }
+      }
+#endif
+
       if (uri instanceof Ci.nsINestedURI) {
         prefix = "jar:";
         suffix = "!" + packageName + "/" + leafName;
@@ -2247,16 +2273,6 @@ Engine.prototype = {
 
     let id;
     let enginePath = file.path;
-
-    const NS_XPCOM_CURRENT_PROCESS_DIR = "XCurProcD";
-    const NS_APP_USER_PROFILE_50_DIR = "ProfD";
-    const XRE_APP_DISTRIBUTION_DIR = "XREAppDist";
-
-    const knownDirs = {
-      app: NS_XPCOM_CURRENT_PROCESS_DIR,
-      profile: NS_APP_USER_PROFILE_50_DIR,
-      distribution: XRE_APP_DISTRIBUTION_DIR
-    };
 
     for (let key in knownDirs) {
       let path;
@@ -3093,17 +3109,29 @@ SearchService.prototype = {
     // Start by clearing the initialized state, so we don't abort early.
     gInitialized = false;
 
-    // Clear the engines, too, so we don't stick with the stale ones.
-    this._engines = {};
-    this.__sortedEngines = null;
-    this._currentEngine = null;
-    this._defaultEngine = null;
-    this._visibleDefaultEngines = [];
-    this._metaData = {};
-    this._cacheFileJSON = null;
-
     Task.spawn(function* () {
       try {
+        if (this._batchTask) {
+          LOG("finalizing batch task");
+          let task = this._batchTask;
+          this._batchTask = null;
+          yield task.finalize();
+        }
+
+        // Clear the engines, too, so we don't stick with the stale ones.
+        this._engines = {};
+        this.__sortedEngines = null;
+        this._currentEngine = null;
+        this._defaultEngine = null;
+        this._visibleDefaultEngines = [];
+        this._metaData = {};
+        this._cacheFileJSON = null;
+
+        // Tests that want to force a synchronous re-initialization need to
+        // be notified when we are done uninitializing.
+        Services.obs.notifyObservers(null, SEARCH_SERVICE_TOPIC,
+                                     "uninit-complete");
+
         let cache = {};
         cache = yield this._asyncReadCacheFile();
         if (!gInitialized && cache.metaData)
@@ -3527,7 +3555,7 @@ SearchService.prototype = {
 
     let sis = Cc["@mozilla.org/scriptableinputstream;1"].
                 createInstance(Ci.nsIScriptableInputStream);
-    sis.init(chan.open());
+    sis.init(chan.open2());
     this._parseListTxt(sis.read(sis.available()), uris);
     return uris;
   },
@@ -4105,7 +4133,8 @@ SearchService.prototype = {
 
   get currentEngine() {
     this._ensureInitialized();
-    if (!this._currentEngine) {
+    let currentEngine = this._currentEngine;
+    if (!currentEngine) {
       let name = this.getGlobalAttr("current");
       let engine = this.getEngineByName(name);
       if (engine && (this.getGlobalAttr("hash") == getVerificationHash(name) ||
@@ -4113,23 +4142,32 @@ SearchService.prototype = {
         // If the current engine is a default one, we can relax the
         // verification hash check to reduce the annoyance for users who
         // backup/sync their profile in custom ways.
-        this._currentEngine = engine;
+        currentEngine = engine;
       }
     }
 
-    if (!this._currentEngine || this._currentEngine.hidden)
-      this._currentEngine = this._originalDefaultEngine;
-    if (!this._currentEngine || this._currentEngine.hidden)
-      this._currentEngine = this._getSortedEngines(false)[0];
+    if (!currentEngine || currentEngine.hidden)
+      currentEngine = this._originalDefaultEngine;
+    if (!currentEngine || currentEngine.hidden)
+      currentEngine = this._getSortedEngines(false)[0];
 
-    if (!this._currentEngine) {
+    if (!currentEngine) {
       // Last resort fallback: unhide the original default engine.
-      this._currentEngine = this._originalDefaultEngine;
-      if (this._currentEngine)
-        this._currentEngine.hidden = false;
+      currentEngine = this._originalDefaultEngine;
+      if (currentEngine)
+        currentEngine.hidden = false;
     }
 
-    return this._currentEngine;
+    if (currentEngine) {
+      // If the current engine wasn't set or was hidden, we used a fallback
+      // to pick a new current engine. As soon as we return it, this new
+      // current engine will become user-visible, so we should persist it.
+      // Calling the setter achieves this, and is a no-op when we haven't
+      // actually changed the current engine.
+      this.currentEngine = currentEngine;
+    }
+
+    return currentEngine;
   },
 
   set currentEngine(val) {

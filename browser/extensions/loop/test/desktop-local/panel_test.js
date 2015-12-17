@@ -56,8 +56,9 @@ describe("loop.panel", function() {
       GetPluralRule: sinon.stub(),
       SetLoopPref: sinon.stub(),
       GetLoopPref: function(prefName) {
-        return "unseen";
+        return 1;
       },
+      SetPanelHeight: function() { return null; },
       GetPluralForm: function() {
         return "fakeText";
       },
@@ -76,6 +77,17 @@ describe("loop.panel", function() {
       GetSelectedTabMetadata: sinon.stub().returns({}),
       GetUserProfile: function() { return null; }
     });
+
+    loop.storedRequests = {
+      GetFxAEnabled: true,
+      GetHasEncryptionKey: true,
+      GetUserProfile: null,
+      GetDoNotDisturb: false,
+      "GetLoopPref|gettingStarted.latestFTUVersion": 1,
+      "GetLoopPref|legal.ToS_url": "",
+      "GetLoopPref|legal.privacy_url": "",
+      IsMultiProcessEnabled: false
+    };
 
     roomName = "First Room Name";
     roomData = {
@@ -255,11 +267,7 @@ describe("loop.panel", function() {
       });
 
       it("should add ellipsis to text over 24chars", function() {
-        LoopMochaUtils.stubLoopRequest({
-          GetUserProfile: function() {
-            return { email: "reallyreallylongtext@example.com" };
-          }
-        });
+        loop.storedRequests.GetUserProfile = { email: "reallyreallylongtext@example.com" };
         var view = createTestPanelView();
         var node = view.getDOMNode().querySelector(".user-identity");
 
@@ -349,9 +357,7 @@ describe("loop.panel", function() {
       });
 
       it("should show a signout entry when user is authenticated", function() {
-        LoopMochaUtils.stubLoopRequest({
-          GetUserProfile: function() { return { email: "test@example.com" }; }
-        });
+        loop.storedRequests.GetUserProfile = { email: "test@example.com" };
 
         var view = mountTestComponent();
 
@@ -374,9 +380,7 @@ describe("loop.panel", function() {
 
       it("should open the FxA settings when the account entry is clicked",
          function() {
-           LoopMochaUtils.stubLoopRequest({
-            GetUserProfile: function() { return { email: "test@example.com" }; }
-          });
+           loop.storedRequests.GetUserProfile = { email: "test@example.com" };
 
            var view = mountTestComponent();
 
@@ -387,9 +391,7 @@ describe("loop.panel", function() {
          });
 
       it("should sign out the user on click when authenticated", function() {
-        LoopMochaUtils.stubLoopRequest({
-          GetUserProfile: function() { return { email: "test@example.com" }; }
-        });
+        loop.storedRequests.GetUserProfile = { email: "test@example.com" };
         var view = mountTestComponent();
 
         TestUtils.Simulate.click(view.getDOMNode()
@@ -463,7 +465,7 @@ describe("loop.panel", function() {
               return supportUrl;
             }
 
-            return "unseen";
+            return 1;
           }
         });
       });
@@ -500,11 +502,11 @@ describe("loop.panel", function() {
         feedbackUrl = "https://example.com";
         LoopMochaUtils.stubLoopRequest({
           GetLoopPref: function(pref) {
-            if (pref === "feedback.formURL") {
+            if (pref === "feedback.manualFormURL") {
               return feedbackUrl;
             }
 
-            return "unseen";
+            return 1;
           }
         });
       });
@@ -530,10 +532,8 @@ describe("loop.panel", function() {
     });
 
     describe("#render", function() {
-      it("should not render a ToSView when gettingStarted.seen is true", function() {
-        LoopMochaUtils.stubLoopRequest({
-          GetLoopPref: function() { return true; }
-        });
+      it("should not render a ToSView when gettingStarted.latestFTUVersion is equal to or greater than FTU_VERSION", function() {
+        loop.storedRequests["GetLoopPref|gettingStarted.latestFTUVersion"] = 2;
         var view = createTestPanelView();
 
         expect(function() {
@@ -541,10 +541,8 @@ describe("loop.panel", function() {
         }).to.Throw(/not find/);
       });
 
-      it("should not render a ToSView when gettingStarted.seen is false", function() {
-        LoopMochaUtils.stubLoopRequest({
-          GetLoopPref: function() { return false; }
-        });
+      it("should render a ToSView when gettingStarted.latestFTUVersion is less than FTU_VERSION", function() {
+        loop.storedRequests["GetLoopPref|gettingStarted.latestFTUVersion"] = 0;
         var view = createTestPanelView();
 
         expect(function() {
@@ -552,19 +550,16 @@ describe("loop.panel", function() {
         }).to.not.Throw();
       });
 
-      it("should render a GettingStarted view", function() {
-        LoopMochaUtils.stubLoopRequest({
-          GetLoopPref: function() { return false; }
-        });
-        var view = createTestPanelView();
 
-        TestUtils.findRenderedComponentWithType(view, loop.panel.GettingStartedView);
+      it("should render a GettingStarted view when gettingStarted.latestFTUVersion is less than FTU_VERSION", function() {
+        loop.storedRequests["GetLoopPref|gettingStarted.latestFTUVersion"] = 0;
+        var view = createTestPanelView();
+        expect(function() {
+          TestUtils.findRenderedComponentWithType(view, loop.panel.GettingStartedView);
+        }).to.not.Throw();
       });
 
       it("should not render a GettingStartedView when the view has been seen", function() {
-        LoopMochaUtils.stubLoopRequest({
-          GetLoopPref: function() { return true; }
-        });
         var view = createTestPanelView();
 
         try {
@@ -576,16 +571,16 @@ describe("loop.panel", function() {
       });
 
       it("should render a SignInRequestView when mozLoop.hasEncryptionKey is false", function() {
-        LoopMochaUtils.stubLoopRequest({
-          GetHasEncryptionKey: function() { return false; }
-        });
+        loop.storedRequests.GetHasEncryptionKey = false;
 
         var view = createTestPanelView();
 
-        TestUtils.findRenderedComponentWithType(view, loop.panel.SignInRequestView);
+        expect(function() {
+          TestUtils.findRenderedComponentWithType(view, loop.panel.SignInRequestView);
+        }).to.not.Throw();
       });
 
-      it("should render a SignInRequestView when mozLoop.hasEncryptionKey is true", function() {
+      it("should not render a SignInRequestView when mozLoop.hasEncryptionKey is true", function() {
         var view = createTestPanelView();
 
         try {
@@ -597,13 +592,13 @@ describe("loop.panel", function() {
       });
 
       it("should render a E10sNotSupported when multiprocess is enabled", function() {
-        LoopMochaUtils.stubLoopRequest({
-          IsMultiProcessEnabled: function() { return true; }
-        });
+        loop.storedRequests.IsMultiProcessEnabled = true;
 
         var view = createTestPanelView();
 
-        TestUtils.findRenderedComponentWithType(view, loop.panel.E10sNotSupported);
+        expect(function() {
+          TestUtils.findRenderedComponentWithType(view, loop.panel.E10sNotSupported);
+        }).to.not.Throw();
       });
 
     });

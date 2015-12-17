@@ -1427,8 +1427,7 @@ nsFrameConstructorSaveState::~nsFrameConstructorSaveState()
 // relevant part of ReparentFrameViewList, I suppose...  Or just get rid of
 // views, which would make most of this function go away.
 static void
-MoveChildrenTo(nsPresContext* aPresContext,
-               nsIFrame* aOldParent,
+MoveChildrenTo(nsIFrame* aOldParent,
                nsContainerFrame* aNewParent,
                nsFrameList& aFrameList)
 {
@@ -2815,8 +2814,7 @@ nsCSSFrameConstructor::SetUpDocElementContainingBlock(nsIContent* aDocElement)
     // Set the initial child lists
     nsContainerFrame* canvasFrame;
     nsContainerFrame* pageFrame =
-      ConstructPageFrame(mPresShell, presContext, rootFrame, nullptr,
-                         canvasFrame);
+      ConstructPageFrame(mPresShell, rootFrame, nullptr, canvasFrame);
     SetInitialSingleChild(rootFrame, pageFrame);
 
     // The eventual parent of the document element frame.
@@ -2857,7 +2855,6 @@ nsCSSFrameConstructor::ConstructAnonymousContentForCanvas(nsFrameConstructorStat
 
 nsContainerFrame*
 nsCSSFrameConstructor::ConstructPageFrame(nsIPresShell*  aPresShell,
-                                          nsPresContext* aPresContext,
                                           nsContainerFrame* aParentFrame,
                                           nsIFrame*      aPrevPageFrame,
                                           nsContainerFrame*& aCanvasFrame)
@@ -3158,11 +3155,57 @@ nsCSSFrameConstructor::ConstructFieldSetFrame(nsFrameConstructorState& aState,
                                false, scrollFrame);
   }
 
-  nsContainerFrame* blockFrame =
-    NS_NewBlockFrame(mPresShell, fieldsetContentStyle,
-                     NS_BLOCK_FLOAT_MGR | NS_BLOCK_MARGIN_ROOT);
-  InitAndRestoreFrame(aState, content,
-    scrollFrame ? scrollFrame : fieldsetFrame, blockFrame);
+  nsContainerFrame* absPosContainer = nullptr;
+  if (fieldsetFrame->IsAbsPosContaininingBlock()) {
+    absPosContainer = fieldsetFrame;
+  }
+
+  // Create the inner ::-moz-fieldset-content frame.
+  nsContainerFrame* contentFrameTop;
+  nsContainerFrame* contentFrame;
+  auto parent = scrollFrame ? scrollFrame : fieldsetFrame;
+  switch (fieldsetContentDisplay->mDisplay) {
+    case NS_STYLE_DISPLAY_FLEX:
+      contentFrame = NS_NewFlexContainerFrame(mPresShell, fieldsetContentStyle);
+      InitAndRestoreFrame(aState, content, parent, contentFrame);
+      contentFrameTop = contentFrame;
+      break;
+    case NS_STYLE_DISPLAY_GRID:
+      contentFrame = NS_NewGridContainerFrame(mPresShell, fieldsetContentStyle);
+      InitAndRestoreFrame(aState, content, parent, contentFrame);
+      contentFrameTop = contentFrame;
+      break;
+    default: {
+      MOZ_ASSERT(fieldsetContentDisplay->mDisplay == NS_STYLE_DISPLAY_BLOCK,
+                 "bug in nsRuleNode::ComputeDisplayData?");
+
+      nsContainerFrame* columnSetFrame = nullptr;
+      RefPtr<nsStyleContext> innerSC = fieldsetContentStyle;
+      const nsStyleColumn* columns = fieldsetContentStyle->StyleColumn();
+      if (columns->mColumnCount != NS_STYLE_COLUMN_COUNT_AUTO ||
+          columns->mColumnWidth.GetUnit() != eStyleUnit_Auto) {
+        columnSetFrame =
+          NS_NewColumnSetFrame(mPresShell, fieldsetContentStyle, nsFrameState(0));
+        InitAndRestoreFrame(aState, content, parent, columnSetFrame);
+        innerSC = mPresShell->StyleSet()->ResolveAnonymousBoxStyle(
+                    nsCSSAnonBoxes::columnContent, fieldsetContentStyle);
+        if (absPosContainer) {
+          absPosContainer = columnSetFrame;
+        }
+      }
+      contentFrame = NS_NewBlockFrame(mPresShell, innerSC,
+                                      NS_BLOCK_FLOAT_MGR | NS_BLOCK_MARGIN_ROOT);
+      if (columnSetFrame) {
+        InitAndRestoreFrame(aState, content, columnSetFrame, contentFrame);
+        SetInitialSingleChild(columnSetFrame, contentFrame);
+        contentFrameTop = columnSetFrame;
+      } else {
+        InitAndRestoreFrame(aState, content, parent, contentFrame);
+        contentFrameTop = contentFrame;
+      }
+      break;
+    }
+  }
 
   aState.AddChild(fieldsetFrame, aFrameItems, content, styleContext, aParentFrame);
 
@@ -3170,16 +3213,16 @@ nsCSSFrameConstructor::ConstructFieldSetFrame(nsFrameConstructorState& aState,
   nsFrameConstructorSaveState absoluteSaveState;
   nsFrameItems                childItems;
 
-  blockFrame->AddStateBits(NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN);
-  if (fieldsetFrame->IsAbsPosContaininingBlock()) {
-    aState.PushAbsoluteContainingBlock(blockFrame, fieldsetFrame, absoluteSaveState);
+  contentFrame->AddStateBits(NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN);
+  if (absPosContainer) {
+    aState.PushAbsoluteContainingBlock(contentFrame, absPosContainer, absoluteSaveState);
   }
 
-  ProcessChildren(aState, content, styleContext, blockFrame, true,
+  ProcessChildren(aState, content, styleContext, contentFrame, true,
                   childItems, true, aItem.mPendingBinding);
 
   nsFrameItems fieldsetKids;
-  fieldsetKids.AddChild(scrollFrame ? scrollFrame : blockFrame);
+  fieldsetKids.AddChild(scrollFrame ? scrollFrame : contentFrameTop);
 
   for (nsFrameList::Enumerator e(childItems); !e.AtEnd(); e.Next()) {
     nsIFrame* child = e.get();
@@ -3195,18 +3238,18 @@ nsCSSFrameConstructor::ConstructFieldSetFrame(nsFrameConstructorState& aState,
       fieldsetKids.InsertFrame(fieldsetFrame, nullptr, child);
       if (scrollFrame) {
         StickyScrollContainer::NotifyReparentedFrameAcrossScrollFrameBoundary(
-            child, blockFrame);
+            child, contentFrame);
       }
       break;
     }
   }
 
   if (isScrollable) {
-    FinishBuildingScrollFrame(scrollFrame, blockFrame);
+    FinishBuildingScrollFrame(scrollFrame, contentFrameTop);
   }
 
   // Set the inner frame's initial child lists
-  blockFrame->SetInitialChildList(kPrincipalList, childItems);
+  contentFrame->SetInitialChildList(kPrincipalList, childItems);
 
   // Set the outer frame's initial child list
   fieldsetFrame->SetInitialChildList(kPrincipalList, fieldsetKids);
@@ -3364,7 +3407,8 @@ IsFrameForFieldSet(nsIFrame* aFrame, nsIAtom* aFrameType)
 {
   nsIAtom* pseudo = aFrame->StyleContext()->GetPseudo();
   if (pseudo == nsCSSAnonBoxes::fieldsetContent ||
-      pseudo == nsCSSAnonBoxes::scrolledContent) {
+      pseudo == nsCSSAnonBoxes::scrolledContent ||
+      pseudo == nsCSSAnonBoxes::columnContent) {
     return IsFrameForFieldSet(aFrame->GetParent(), aFrame->GetParent()->GetType());
   }
   return aFrameType == nsGkAtoms::fieldSetFrame;
@@ -6193,7 +6237,7 @@ nsCSSFrameConstructor::AppendFramesToParent(nsFrameConstructorState&       aStat
         prevBlock = static_cast<nsContainerFrame*>(prevBlock->LastContinuation());
         NS_ASSERTION(prevBlock, "Should have previous block here");
 
-        MoveChildrenTo(aState.mPresContext, aParentFrame, prevBlock, blockKids);
+        MoveChildrenTo(aParentFrame, prevBlock, blockKids);
       }
     }
 
@@ -7125,8 +7169,7 @@ nsCSSFrameConstructor::ContentAppended(nsIContent*     aContainer,
 
   if (haveFirstLetterStyle) {
     // Before we get going, remove the current letter frames
-    RemoveLetterFrames(state.mPresContext, state.mPresShell,
-                       containingBlock);
+    RemoveLetterFrames(state.mPresShell, containingBlock);
   }
 
   nsIAtom* frameType = parentFrame->GetType();
@@ -7289,7 +7332,7 @@ bool NotifyListBoxBody(nsPresContext*    aPresContext,
         return true;
       }
     } else {
-      listBoxBodyFrame->OnContentInserted(aPresContext, aChild);
+      listBoxBodyFrame->OnContentInserted(aChild);
       return true;
     }
   }
@@ -7621,8 +7664,7 @@ nsCSSFrameConstructor::ContentRangeInserted(nsIContent*            aContainer,
       }
 
       // Remove the old letter frames before doing the insertion
-      RemoveLetterFrames(state.mPresContext, mPresShell,
-                         state.mFloatedItems.containingBlock);
+      RemoveLetterFrames(mPresShell, state.mFloatedItems.containingBlock);
 
       // Removing the letterframes messes around with the frame tree, removing
       // and creating frames.  We need to reget our prevsibling, parent frame,
@@ -7900,6 +7942,13 @@ nsCSSFrameConstructor::ContentRemoved(nsIContent*  aContainer,
     *aDestroyedFramesFor = aChild;
   }
 
+  if (aChild->IsHTMLElement(nsGkAtoms::body) ||
+      (!aContainer && aChild->IsElement())) {
+    // This might be the element we propagated viewport scrollbar
+    // styles from.  Recompute those.
+    mPresShell->GetPresContext()->UpdateViewportScrollbarStylesOverride();
+  }
+
   // XXXldb Do we need to re-resolve style to handle the CSS2 + combinator and
   // the :empty pseudo-class?
 
@@ -8113,7 +8162,7 @@ nsCSSFrameConstructor::ContentRemoved(nsIContent*  aContainer,
       // First update the containing blocks structure by removing the
       // existing letter frames. This makes the subsequent logic
       // simpler.
-      RemoveLetterFrames(presContext, mPresShell, containingBlock);
+      RemoveLetterFrames(mPresShell, containingBlock);
 
       // Recover childFrame and parentFrame
       childFrame = aChild->GetPrimaryFrame();
@@ -8327,8 +8376,7 @@ nsCSSFrameConstructor::CharacterDataChanged(nsIContent* aContent,
       // See if the block has first-letter style applied to it.
       haveFirstLetterStyle = HasFirstLetterStyle(block);
       if (haveFirstLetterStyle) {
-        RemoveLetterFrames(mPresShell->GetPresContext(), mPresShell,
-                           block);
+        RemoveLetterFrames(mPresShell, block);
         // Reget |frame|, since we might have killed it.
         // Do we really need to call CharacterDataChanged in this case, though?
         frame = aContent->GetPrimaryFrame();
@@ -8480,7 +8528,6 @@ nsCSSFrameConstructor::CreateContinuingOuterTableFrame(nsIPresShell*     aPresSh
 
 nsIFrame*
 nsCSSFrameConstructor::CreateContinuingTableFrame(nsIPresShell*     aPresShell,
-                                                  nsPresContext*    aPresContext,
                                                   nsIFrame*         aFrame,
                                                   nsContainerFrame* aParentFrame,
                                                   nsIContent*       aContent,
@@ -8533,7 +8580,7 @@ nsCSSFrameConstructor::CreateContinuingTableFrame(nsIPresShell*     aPresShell,
       headerFooterFrame->SetRepeatable(true);
 
       // Table specific initialization
-      headerFooterFrame->InitRepeatedFrame(aPresContext, rowGroupFrame);
+      headerFooterFrame->InitRepeatedFrame(rowGroupFrame);
 
       // XXX Deal with absolute and fixed frames...
       childFrames.AddChild(headerFooterFrame);
@@ -8588,8 +8635,7 @@ nsCSSFrameConstructor::CreateContinuingFrame(nsPresContext*    aPresContext,
     newFrame->Init(content, aParentFrame, aFrame);
   } else if (nsGkAtoms::pageFrame == frameType) {
     nsContainerFrame* canvasFrame;
-    newFrame = ConstructPageFrame(shell, aPresContext, aParentFrame, aFrame,
-                                  canvasFrame);
+    newFrame = ConstructPageFrame(shell, aParentFrame, aFrame, canvasFrame);
   } else if (nsGkAtoms::tableOuterFrame == frameType) {
     newFrame =
       CreateContinuingOuterTableFrame(shell, aPresContext, aFrame, aParentFrame,
@@ -8597,7 +8643,7 @@ nsCSSFrameConstructor::CreateContinuingFrame(nsPresContext*    aPresContext,
 
   } else if (nsGkAtoms::tableFrame == frameType) {
     newFrame =
-      CreateContinuingTableFrame(shell, aPresContext, aFrame, aParentFrame,
+      CreateContinuingTableFrame(shell, aFrame, aParentFrame,
                                  content, styleContext);
 
   } else if (nsGkAtoms::tableRowGroupFrame == frameType) {
@@ -11030,7 +11076,6 @@ FindFirstLetterFrame(nsIFrame* aFrame, nsIFrame::ChildListID aListID)
 
 nsresult
 nsCSSFrameConstructor::RemoveFloatingFirstLetterFrames(
-  nsPresContext* aPresContext,
   nsIPresShell* aPresShell,
   nsIFrame* aBlockFrame,
   bool* aStopLooking)
@@ -11121,8 +11166,7 @@ nsCSSFrameConstructor::RemoveFloatingFirstLetterFrames(
 }
 
 nsresult
-nsCSSFrameConstructor::RemoveFirstLetterFrames(nsPresContext* aPresContext,
-                                               nsIPresShell* aPresShell,
+nsCSSFrameConstructor::RemoveFirstLetterFrames(nsIPresShell* aPresShell,
                                                nsContainerFrame* aFrame,
                                                nsContainerFrame* aBlockFrame,
                                                bool* aStopLooking)
@@ -11184,8 +11228,7 @@ nsCSSFrameConstructor::RemoveFirstLetterFrames(nsPresContext* aPresContext,
       nsContainerFrame* kidAsContainerFrame = do_QueryFrame(kid);
       if (kidAsContainerFrame) {
         // Look inside child inline frame for the letter frame.
-        RemoveFirstLetterFrames(aPresContext, aPresShell,
-                                kidAsContainerFrame,
+        RemoveFirstLetterFrames(aPresShell, kidAsContainerFrame,
                                 aBlockFrame, aStopLooking);
         if (*aStopLooking) {
           break;
@@ -11200,8 +11243,7 @@ nsCSSFrameConstructor::RemoveFirstLetterFrames(nsPresContext* aPresContext,
 }
 
 nsresult
-nsCSSFrameConstructor::RemoveLetterFrames(nsPresContext* aPresContext,
-                                          nsIPresShell* aPresShell,
+nsCSSFrameConstructor::RemoveLetterFrames(nsIPresShell* aPresShell,
                                           nsContainerFrame* aBlockFrame)
 {
   aBlockFrame =
@@ -11211,10 +11253,10 @@ nsCSSFrameConstructor::RemoveLetterFrames(nsPresContext* aPresContext,
   bool stopLooking = false;
   nsresult rv;
   do {
-    rv = RemoveFloatingFirstLetterFrames(aPresContext, aPresShell,
+    rv = RemoveFloatingFirstLetterFrames(aPresShell,
                                          continuation, &stopLooking);
     if (NS_SUCCEEDED(rv) && !stopLooking) {
-      rv = RemoveFirstLetterFrames(aPresContext, aPresShell,
+      rv = RemoveFirstLetterFrames(aPresShell,
                                    continuation, aBlockFrame, &stopLooking);
     }
     if (stopLooking) {
@@ -11267,8 +11309,7 @@ nsCSSFrameConstructor::RecoverLetterFrames(nsContainerFrame* aBlockFrame)
 // listbox Widget Routines
 
 nsresult
-nsCSSFrameConstructor::CreateListBoxContent(nsPresContext*         aPresContext,
-                                            nsContainerFrame*      aParentFrame,
+nsCSSFrameConstructor::CreateListBoxContent(nsContainerFrame*      aParentFrame,
                                             nsIFrame*              aPrevFrame,
                                             nsIContent*            aChild,
                                             nsIFrame**             aNewFrame,
@@ -11586,7 +11627,7 @@ nsCSSFrameConstructor::CreateIBSiblings(nsFrameConstructorState& aState,
       FindFirstNonBlock(aChildItems);
     nsFrameList blockKids = aChildItems.ExtractHead(firstNonBlock);
 
-    MoveChildrenTo(aState.mPresContext, aInitialInline, blockFrame, blockKids);
+    MoveChildrenTo(aInitialInline, blockFrame, blockKids);
 
     SetFrameIsIBSplit(lastNewInline, blockFrame);
     aSiblings.AddChild(blockFrame);
@@ -11606,8 +11647,7 @@ nsCSSFrameConstructor::CreateIBSiblings(nsFrameConstructorState& aState,
       FindFirstBlock(firstBlock);
       nsFrameList inlineKids = aChildItems.ExtractHead(firstBlock);
 
-      MoveChildrenTo(aState.mPresContext, aInitialInline, inlineFrame,
-                     inlineKids);
+      MoveChildrenTo(aInitialInline, inlineFrame, inlineKids);
     }
 
     SetFrameIsIBSplit(blockFrame, inlineFrame);

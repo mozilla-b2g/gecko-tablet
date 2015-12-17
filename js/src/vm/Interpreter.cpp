@@ -291,7 +291,7 @@ js::ReportIsNotFunction(JSContext* cx, HandleValue v, int numToSkip, MaybeConstr
     unsigned error = construct ? JSMSG_NOT_CONSTRUCTOR : JSMSG_NOT_FUNCTION;
     int spIndex = numToSkip >= 0 ? -(numToSkip + 1) : JSDVG_SEARCH_STACK;
 
-    ReportValueError3(cx, error, spIndex, v, nullptr, nullptr, nullptr);
+    ReportValueError(cx, error, spIndex, v, nullptr);
     return false;
 }
 
@@ -1740,8 +1740,6 @@ CASE(JSOP_NOP)
 CASE(JSOP_UNUSED14)
 CASE(JSOP_UNUSED65)
 CASE(JSOP_BACKPATCH)
-CASE(JSOP_UNUSED145)
-CASE(JSOP_UNUSED163)
 CASE(JSOP_UNUSED177)
 CASE(JSOP_UNUSED178)
 CASE(JSOP_UNUSED179)
@@ -1764,7 +1762,7 @@ CASE(JSOP_UNUSED223)
 CASE(JSOP_CONDSWITCH)
 CASE(JSOP_TRY)
 {
-    MOZ_ASSERT(js_CodeSpec[*REGS.pc].length == 1);
+    MOZ_ASSERT(CodeSpec[*REGS.pc].length == 1);
     ADVANCE_AND_DISPATCH(1);
 }
 
@@ -1892,7 +1890,7 @@ CASE(JSOP_RETRVAL)
 
   jit_return:
 
-        MOZ_ASSERT(js_CodeSpec[*REGS.pc].format & JOF_INVOKE);
+        MOZ_ASSERT(CodeSpec[*REGS.pc].format & JOF_INVOKE);
 
         /* Resume execution in the calling frame. */
         if (MOZ_LIKELY(interpReturnOK)) {
@@ -1958,7 +1956,7 @@ END_CASE(JSOP_AND)
 
 #define TRY_BRANCH_AFTER_COND(cond,spdec)                                     \
     JS_BEGIN_MACRO                                                            \
-        MOZ_ASSERT(js_CodeSpec[*REGS.pc].length == 1);                        \
+        MOZ_ASSERT(CodeSpec[*REGS.pc].length == 1);                           \
         unsigned diff_ = (unsigned) GET_UINT8(REGS.pc) - (unsigned) JSOP_IFEQ; \
         if (diff_ <= 1) {                                                     \
             REGS.sp -= (spdec);                                               \
@@ -2418,10 +2416,9 @@ CASE(JSOP_TOID)
      * but we need to avoid the observable stringification the second time.
      * There must be an object value below the id, which will not be popped.
      */
-    ReservedRooted<Value> objval(&rootValue0, REGS.sp[-2]);
     ReservedRooted<Value> idval(&rootValue1, REGS.sp[-1]);
     MutableHandleValue res = REGS.stackHandleAt(-1);
-    if (!ToIdOperation(cx, script, REGS.pc, objval, idval, res))
+    if (!ToIdOperation(cx, script, REGS.pc, idval, res))
         goto error;
 }
 END_CASE(JSOP_TOID)
@@ -2737,6 +2734,7 @@ CASE(JSOP_FUNAPPLY)
 
 CASE(JSOP_NEW)
 CASE(JSOP_CALL)
+CASE(JSOP_CALLITER)
 CASE(JSOP_SUPERCALL)
 CASE(JSOP_FUNCALL)
 {
@@ -2760,6 +2758,11 @@ CASE(JSOP_FUNCALL)
             if (!ConstructFromStack(cx, args))
                 goto error;
         } else {
+            if (*REGS.pc == JSOP_CALLITER && args.calleev().isPrimitive()) {
+                MOZ_ASSERT(args.length() == 0, "thisv must be on top of the stack");
+                ReportValueError(cx, JSMSG_NOT_ITERABLE, -1, args.thisv(), nullptr);
+                goto error;
+            }
             if (!Invoke(cx, args))
                 goto error;
         }
@@ -3222,10 +3225,7 @@ CASE(JSOP_SETLOCAL)
 {
     uint32_t i = GET_LOCALNO(REGS.pc);
 
-    // Derived class constructors store the TDZ Value in the .this slot
-    // before a super() call.
-    MOZ_ASSERT_IF(!script->isDerivedClassConstructor(),
-                  !IsUninitializedLexical(REGS.fp()->unaliasedLocal(i)));
+    MOZ_ASSERT(!IsUninitializedLexical(REGS.fp()->unaliasedLocal(i)));
 
     REGS.fp()->unaliasedLocal(i) = REGS.sp[-1];
 }
@@ -3882,6 +3882,14 @@ CASE(JSOP_CLASSCONSTRUCTOR)
     PUSH_OBJECT(*constructor);
 }
 END_CASE(JSOP_CLASSCONSTRUCTOR)
+
+CASE(JSOP_CHECKOBJCOERCIBLE)
+{
+    ReservedRooted<Value> checkVal(&rootValue0, REGS.sp[-1]);
+    if (checkVal.isNullOrUndefined() && !ToObjectFromStack(cx, checkVal))
+        goto error;
+}
+END_CASE(JSOP_CHECKOBJCOERCIBLE)
 
 DEFAULT()
 {
@@ -4770,20 +4778,7 @@ js::DefaultClassConstructor(JSContext* cx, unsigned argc, Value* vp)
     }
 
     RootedObject newTarget(cx, &args.newTarget().toObject());
-    RootedValue protoVal(cx);
-
-    if (!GetProperty(cx, newTarget, newTarget, cx->names().prototype, &protoVal))
-        return false;
-
-    RootedObject proto(cx);
-    if (!protoVal.isObject()) {
-        if (!GetBuiltinPrototype(cx, JSProto_Object, &proto))
-            return false;
-    } else {
-        proto = &protoVal.toObject();
-    }
-
-    JSObject* obj = NewObjectWithGivenProto(cx, &PlainObject::class_, proto);
+    JSObject* obj = CreateThis(cx, &PlainObject::class_, newTarget);
     if (!obj)
         return false;
 
@@ -4839,9 +4834,6 @@ bool
 js::ThrowUninitializedThis(JSContext* cx, AbstractFramePtr frame)
 {
     RootedFunction fun(cx, frame.callee());
-
-    MOZ_ASSERT(fun->isClassConstructor());
-    MOZ_ASSERT(fun->nonLazyScript()->isDerivedClassConstructor());
 
     const char* name = "anonymous";
     JSAutoByteString str;

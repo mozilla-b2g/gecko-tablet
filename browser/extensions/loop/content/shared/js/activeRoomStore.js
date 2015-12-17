@@ -59,6 +59,8 @@ loop.store.ActiveRoomStore = (function() {
     socialShareProviders: "socialShareProviders"
   };
 
+  var updateContextTimer = null;
+
   /**
    * Active room store.
    *
@@ -169,6 +171,9 @@ loop.store.ActiveRoomStore = (function() {
           case REST_ERRNOS.INVALID_TOKEN:
           case REST_ERRNOS.EXPIRED:
             return FAILURE_DETAILS.EXPIRED_OR_INVALID;
+          case undefined:
+            // XHR errors reach here with errno as undefined
+            return FAILURE_DETAILS.COULD_NOT_CONNECT;
           default:
             return FAILURE_DETAILS.UNKNOWN;
         }
@@ -257,7 +262,7 @@ loop.store.ActiveRoomStore = (function() {
         "mediaStreamDestroyed",
         "remoteVideoStatus",
         "videoDimensionsChanged",
-        "startScreenShare",
+        "startBrowserShare",
         "endScreenShare",
         "updateSocialShareInfo",
         "connectionStatus",
@@ -355,6 +360,7 @@ loop.store.ActiveRoomStore = (function() {
       this.setStoreState({
         roomState: ROOM_STATES.GATHER,
         roomToken: actionData.token,
+        roomCryptoKey: actionData.cryptoKey,
         standalone: true
       });
 
@@ -917,14 +923,35 @@ loop.store.ActiveRoomStore = (function() {
       } else {
         console.error("Unexpectedly received windowId for browser sharing when pending");
       }
+
+      // The browser being shared changed, so update to the new context
+      loop.request("GetSelectedTabMetadata").then(function(meta) {
+        if (!meta) {
+          return;
+        }
+
+        if (updateContextTimer) {
+          clearTimeout(updateContextTimer);
+        }
+
+        updateContextTimer = setTimeout(function() {
+          this.dispatchAction(new sharedActions.UpdateRoomContext({
+            newRoomDescription: meta.title || meta.description || meta.url,
+            newRoomThumbnail: meta.favicon,
+            newRoomURL: meta.url,
+            roomToken: this.getStoreState().roomToken
+          }));
+          updateContextTimer = null;
+        }.bind(this), 500);
+      }.bind(this));
     },
 
     /**
-     * Initiates a screen sharing publisher.
+     * Initiates a browser tab sharing publisher.
      *
-     * @param {sharedActions.StartScreenShare} actionData
+     * @param {sharedActions.StartBrowserShare} actionData
      */
-    startScreenShare: function(actionData) {
+    startBrowserShare: function(actionData) {
       // For the unit test we already set the state here, instead of indirectly
       // via an action, because actions are queued thus depending on the
       // asynchronous nature of `loop.request`.
@@ -934,19 +961,16 @@ loop.store.ActiveRoomStore = (function() {
       }));
 
       var options = {
-        videoSource: actionData.type
+        videoSource: "browser"
       };
-      if (options.videoSource === "browser") {
-        this._browserSharingListener = this._handleSwitchBrowserShare.bind(this);
+      this._browserSharingListener = this._handleSwitchBrowserShare.bind(this);
 
-        // Set up a listener for watching screen shares. This will get notified
-        // with the first windowId when it is added, so we start off the sharing
-        // from within the listener.
-        loop.request("AddBrowserSharingListener").then(this._browserSharingListener);
-        loop.subscribe("BrowserSwitch", this._browserSharingListener);
-      } else {
-        this._sdkDriver.startScreenShare(options);
-      }
+      // Set up a listener for watching screen shares. This will get notified
+      // with the first windowId when it is added, so we start off the sharing
+      // from within the listener.
+      loop.request("AddBrowserSharingListener", this.getStoreState().windowId)
+        .then(this._browserSharingListener);
+      loop.subscribe("BrowserSwitch", this._browserSharingListener);
     },
 
     /**

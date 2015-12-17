@@ -1125,22 +1125,22 @@ MacroAssembler::Pop(const ValueOperand& val)
 // ===============================================================
 // Simple call functions.
 
-CodeOffsetLabel
+CodeOffset
 MacroAssembler::call(Register reg)
 {
     as_jalr(reg);
     as_nop();
-    return CodeOffsetLabel(currentOffset());
+    return CodeOffset(currentOffset());
 }
 
-CodeOffsetLabel
+CodeOffset
 MacroAssembler::call(Label* label)
 {
     ma_bal(label);
-    return CodeOffsetLabel(currentOffset());
+    return CodeOffset(currentOffset());
 }
 
-CodeOffsetLabel
+CodeOffset
 MacroAssembler::callWithPatch()
 {
     addLongJump(nextOffset());
@@ -1151,12 +1151,13 @@ MacroAssembler::callWithPatch()
 void
 MacroAssembler::patchCall(uint32_t callerOffset, uint32_t calleeOffset)
 {
-    BufferOffset li(callerOffset - 6 * sizeof(uint32_t));
-    Assembler::UpdateLoad64Value(editSrc(li), calleeOffset);
+    BufferOffset li(callerOffset - Assembler::PatchWrite_NearCallSize());
+    Assembler::PatchInstructionImmediate((uint8_t*)editSrc(li),
+                                         PatchedImmPtr((const void*)calleeOffset));
 }
 
 void
-MacroAssembler::call(AsmJSImmPtr target)
+MacroAssembler::call(wasm::SymbolicAddress target)
 {
     movePtr(target, CallReg);
     call(CallReg);
@@ -1211,9 +1212,9 @@ MacroAssembler::pushFakeReturnAddress(Register scratch)
 {
     CodeLabel cl;
 
-    ma_li(scratch, cl.dest());
+    ma_li(scratch, cl.patchAt());
     Push(scratch);
-    bind(cl.src());
+    bind(cl.target());
     uint32_t retAddr = currentOffset();
 
     addCodeLabel(cl);

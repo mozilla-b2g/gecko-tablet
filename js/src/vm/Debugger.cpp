@@ -356,11 +356,12 @@ Breakpoint::nextInSite()
 
 Debugger::Debugger(JSContext* cx, NativeObject* dbg)
   : object(dbg),
+    debuggees(cx->runtime()),
     uncaughtExceptionHook(nullptr),
     enabled(true),
     allowUnobservedAsmJS(false),
     collectCoverageInfo(false),
-    observedGCs(cx),
+    observedGCs(cx->runtime()),
     tenurePromotionsLog(cx),
     trackingTenurePromotions(false),
     maxTenurePromotionsLogLength(DEFAULT_MAX_LOG_LENGTH),
@@ -975,6 +976,26 @@ Debugger::unwrapPropertyDescriptor(JSContext* cx, HandleObject obj,
     return true;
 }
 
+namespace {
+class MOZ_STACK_CLASS ReportExceptionClosure : public ScriptEnvironmentPreparer::Closure
+{
+public:
+    explicit ReportExceptionClosure(RootedValue& exn)
+        : exn_(exn)
+    {
+    }
+
+    bool operator()(JSContext* cx) override
+    {
+        cx->setPendingException(exn_);
+        return false;
+    }
+
+private:
+    RootedValue& exn_;
+};
+} // anonymous namespace
+
 JSTrapStatus
 Debugger::handleUncaughtExceptionHelper(Maybe<AutoCompartment>& ac,
                                         MutableHandleValue* vp, bool callHook)
@@ -993,7 +1014,31 @@ Debugger::handleUncaughtExceptionHelper(Maybe<AutoCompartment>& ac,
         }
 
         if (cx->isExceptionPending()) {
-            JS_ReportPendingException(cx);
+            /*
+             * We want to report the pending exception, but we want to let the
+             * embedding handle it however it wants to.  So pretend like we're
+             * starting a new script execution on our current compartment (which
+             * is the debugger compartment, so reported errors won't get
+             * reported to various onerror handlers in debuggees) and as part of
+             * that "execution" simply throw our exception so the embedding can
+             * deal.
+             */
+            RootedValue exn(cx);
+            if (cx->getPendingException(&exn)) {
+                /*
+                 * Clear the exception, because
+                 * PrepareScriptEnvironmentAndInvoke will assert that we don't
+                 * have one.
+                 */
+                cx->clearPendingException();
+                ReportExceptionClosure reportExn(exn);
+                PrepareScriptEnvironmentAndInvoke(cx, cx->global(), reportExn);
+            }
+            /*
+             * And if not, or if PrepareScriptEnvironmentAndInvoke somehow left
+             * an exception on cx (which it totally shouldn't do), just give
+             * up.
+             */
             cx->clearPendingException();
         }
     }
@@ -4329,8 +4374,8 @@ Debugger::setupTraceLogger(JSContext* cx, unsigned argc, Value* vp)
         if (!GetProperty(cx, obj, obj, ids[i], &v))
             return false;
 
-        textIds.append(textId);
-        values.append(ToBoolean(v));
+        textIds.infallibleAppend(textId);
+        values.infallibleAppend(ToBoolean(v));
     }
 
     MOZ_ASSERT(ids.length() == textIds.length());
@@ -5040,7 +5085,7 @@ class FlowGraphSummary {
             if (FlowsIntoNext(prevOp))
                 addEdge(prevLineno, prevColumn, r.frontOffset());
 
-            if (js_CodeSpec[op].type() == JOF_JUMP) {
+            if (CodeSpec[op].type() == JOF_JUMP) {
                 addEdge(lineno, column, r.frontOffset() + GET_JUMP_OFFSET(r.frontPC()));
             } else if (op == JSOP_TABLESWITCH) {
                 jsbytecode* pc = r.frontPC();
@@ -6679,13 +6724,6 @@ DebuggerGenericEval(JSContext* cx, const char* fullMethodName, const Value& code
     /* Either we're specifying the frame, or a global. */
     MOZ_ASSERT_IF(iter, !scope);
     MOZ_ASSERT_IF(!iter, scope && IsGlobalLexicalScope(scope));
-
-    if (iter && iter->script()->isDerivedClassConstructor()) {
-        MOZ_ASSERT(iter->isFunctionFrame() && iter->calleeTemplate()->isClassConstructor());
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_DISABLED_DERIVED_CLASS,
-                             "debugger eval");
-        return false;
-    }
 
     /* Check the first argument, the eval code string. */
     if (!code.isString()) {

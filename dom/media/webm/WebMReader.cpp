@@ -7,6 +7,7 @@
 #include "MediaDecoderStateMachine.h"
 #include "AbstractMediaDecoder.h"
 #include "SoftwareWebMVideoDecoder.h"
+#include "nsContentUtils.h"
 #include "WebMReader.h"
 #include "WebMBufferedParser.h"
 #include "gfx2DGlue.h"
@@ -402,15 +403,11 @@ WebMReader::RetrieveWebMMetadata(MediaInfo* aInfo)
     }
   }
 
+  mInfo.mMediaSeekable = nestegg_has_cues(mContext);
+
   *aInfo = mInfo;
 
   return NS_OK;
-}
-
-bool
-WebMReader::IsMediaSeekable()
-{
-  return mContext && nestegg_has_cues(mContext);
 }
 
 bool WebMReader::DecodeAudioPacket(NesteggPacketHolder* aHolder)

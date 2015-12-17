@@ -238,14 +238,23 @@ nsPluginInstanceOwner::GetImageContainer()
   if (!img) {
     AttachToContainerAsSurfaceTexture(container, mInstance, r, &img);
   }
-  MOZ_ASSERT(img);
 
-  container->SetCurrentImageInTransaction(img);
+  if (img) {
+    container->SetCurrentImageInTransaction(img);
+  }
 #else
   mInstance->GetImageContainer(getter_AddRefs(container));
 #endif
 
   return container.forget();
+}
+
+void
+nsPluginInstanceOwner::DidComposite()
+{
+  if (mInstance) {
+    mInstance->DidComposite();
+  }
 }
 
 void
@@ -599,9 +608,10 @@ NS_IMETHODIMP nsPluginInstanceOwner::InvalidateRect(NPRect *invalidRect)
   // Windowed plugins should not be calling NPN_InvalidateRect, but
   // Silverlight does and expects it to "work"
   if (mWidget) {
-    mWidget->Invalidate(nsIntRect(invalidRect->left, invalidRect->top,
-                                  invalidRect->right - invalidRect->left,
-                                  invalidRect->bottom - invalidRect->top));
+    mWidget->Invalidate(
+      LayoutDeviceIntRect(invalidRect->left, invalidRect->top,
+                          invalidRect->right - invalidRect->left,
+                          invalidRect->bottom - invalidRect->top));
     return NS_OK;
   }
 #endif
@@ -832,8 +842,8 @@ NPBool nsPluginInstanceOwner::ConvertPointPuppet(PuppetWidget *widget,
   nsPoint windowPosition = AsNsPoint(rootWidget->GetWindowPosition()) / scaleFactor;
 
   // Window size is tab size + chrome size.
-  nsIntRect tabContentBounds;
-  NS_ENSURE_SUCCESS(puppetWidget->GetBoundsUntyped(tabContentBounds), false);
+  LayoutDeviceIntRect tabContentBounds;
+  NS_ENSURE_SUCCESS(puppetWidget->GetBounds(tabContentBounds), false);
   tabContentBounds.ScaleInverseRoundOut(scaleFactor);
   int32_t windowH = tabContentBounds.height + int(chromeSize.y);
 
@@ -1033,6 +1043,21 @@ NPBool nsPluginInstanceOwner::ConvertPoint(double sourceX, double sourceY, NPCoo
 #else
   return false;
 #endif
+}
+
+NPError nsPluginInstanceOwner::InitAsyncSurface(NPSize *size, NPImageFormat format,
+                                                void *initData, NPAsyncSurface *surface)
+{
+  return NPERR_INCOMPATIBLE_VERSION_ERROR;
+}
+
+NPError nsPluginInstanceOwner::FinalizeAsyncSurface(NPAsyncSurface *)
+{
+  return NPERR_INCOMPATIBLE_VERSION_ERROR;
+}
+
+void nsPluginInstanceOwner::SetCurrentAsyncSurface(NPAsyncSurface *, NPRect*)
+{
 }
 
 NS_IMETHODIMP nsPluginInstanceOwner::GetTagType(nsPluginTagType *result)
@@ -2936,8 +2961,8 @@ NS_IMETHODIMP nsPluginInstanceOwner::CreateWidget(void)
       initData.mUnicode = false;
       initData.clipChildren = true;
       initData.clipSiblings = true;
-      rv = mWidget->Create(parentWidget.get(), nullptr, nsIntRect(0,0,0,0),
-                           &initData);
+      rv = mWidget->Create(parentWidget.get(), nullptr,
+                           LayoutDeviceIntRect(0, 0, 0, 0), &initData);
       if (NS_FAILED(rv)) {
         mWidget->Destroy();
         mWidget = nullptr;
@@ -3001,6 +3026,22 @@ NS_IMETHODIMP nsPluginInstanceOwner::CreateWidget(void)
   return NS_OK;
 }
 
+#if defined(XP_WIN)
+// See QUIRK_FLASH_FIXUP_MOUSE_CURSOR
+void
+nsPluginInstanceOwner::ResetWidgetCursorCaching()
+{
+  if (!mPluginFrame || !XRE_IsContentProcess()) {
+    return;
+  }
+  nsIWidget* aWidget = mPluginFrame->GetNearestWidget();
+  if (!aWidget) {
+    return;
+  }
+  aWidget->ClearCachedCursor();
+}
+#endif
+
 // Mac specific code to fix up the port location and clipping region
 #ifdef XP_MACOSX
 
@@ -3012,7 +3053,7 @@ void nsPluginInstanceOwner::FixUpPluginWindow(int32_t inPaintState)
 
   SetPluginPort();
 
-  nsIntSize widgetClip = mPluginFrame->GetWidgetlessClipRect().Size();
+  LayoutDeviceIntSize widgetClip = mPluginFrame->GetWidgetlessClipRect().Size();
 
   mPluginWindow->x = 0;
   mPluginWindow->y = 0;

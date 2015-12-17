@@ -240,18 +240,13 @@ Assembler::trace(JSTracer* trc)
 }
 
 void
-Assembler::Bind(uint8_t* rawCode, AbsoluteLabel* label, const void* address)
+Assembler::Bind(uint8_t* rawCode, CodeOffset* label, const void* address)
 {
-    if (label->used()) {
-        int32_t src = label->offset();
-        do {
-            Instruction* inst = (Instruction*) (rawCode + src);
-            uint32_t next = Assembler::ExtractLuiOriValue(inst, inst->next());
-            Assembler::UpdateLuiOriValue(inst, inst->next(), (uint32_t)address);
-            src = next;
-        } while (src != AbsoluteLabel::INVALID_OFFSET);
+    if (label->bound()) {
+        intptr_t offset = label->offset();
+        Instruction* inst = (Instruction*) (rawCode + offset);
+        Assembler::UpdateLuiOriValue(inst, inst->next(), (uint32_t)address);
     }
-    label->bind();
 }
 
 void
@@ -421,6 +416,13 @@ Assembler::PatchInstructionImmediate(uint8_t* code, PatchedImmPtr imm)
 {
     InstImm* inst = (InstImm*)code;
     Assembler::UpdateLuiOriValue(inst, inst->next(), (uint32_t)imm.value);
+}
+
+uint32_t
+Assembler::ExtractInstructionImmediate(uint8_t* code)
+{
+    InstImm* inst = (InstImm*)code;
+    return Assembler::ExtractLuiOriValue(inst, inst->next());
 }
 
 void

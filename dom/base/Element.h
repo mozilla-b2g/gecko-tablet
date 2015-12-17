@@ -624,6 +624,9 @@ public:
 
     return slots->mAttributeMap;
   }
+
+  void GetAttributeNames(nsTArray<nsString>& aResult);
+
   void GetAttribute(const nsAString& aName, nsString& aReturn)
   {
     DOMString str;
@@ -1074,7 +1077,7 @@ public:
    */
   float FontSizeInflation();
 
-  net::ReferrerPolicy GetReferrerPolicy();
+  net::ReferrerPolicy GetReferrerPolicyAsEnum();
 
 protected:
   /*

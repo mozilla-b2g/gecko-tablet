@@ -55,6 +55,9 @@ public:
 
   void AddSizeOfResources(MediaSourceDecoder::ResourceSizes* aSizes);
 
+  // Gap allowed between frames.
+  static const media::TimeUnit EOS_FUZZ;
+
 private:
   ~MediaSourceDemuxer();
   friend class MediaSourceTrackDemuxer;
@@ -126,6 +129,7 @@ private:
   // Monitor protecting members below accessed from multiple threads.
   Monitor mMonitor;
   media::TimeUnit mNextRandomAccessPoint;
+  Maybe<media::TimeUnit> mLastSeek;
 };
 
 } // namespace mozilla

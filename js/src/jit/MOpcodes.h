@@ -208,6 +208,7 @@ namespace jit {
     _(StoreTypedArrayElementHole)                                           \
     _(StoreTypedArrayElementStatic)                                         \
     _(AtomicIsLockFree)                                                     \
+    _(GuardSharedTypedArray)                                                \
     _(CompareExchangeTypedArrayElement)                                     \
     _(AtomicExchangeTypedArrayElement)                                      \
     _(AtomicTypedArrayElementBinop)                                         \
@@ -277,7 +278,8 @@ namespace jit {
     _(Debugger)                                                             \
     _(NewTarget)                                                            \
     _(ArrowNewTarget)                                                       \
-    _(CheckReturn)
+    _(CheckReturn)                                                          \
+    _(CheckObjCoercible)
 
 // Forward declarations of MIR types.
 #define FORWARD_DECLARE(op) class M##op;

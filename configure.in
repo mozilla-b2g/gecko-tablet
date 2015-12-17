@@ -446,44 +446,6 @@ esac
 
 AC_SUBST(MACOSX_DEPLOYMENT_TARGET)
 
-dnl ========================================================
-dnl Special MacOS X checks
-dnl ========================================================
-
-if test -n "$MACOSX_DEPLOYMENT_TARGET" -a -n "$MOZ_RUST"; then
-  AC_MSG_CHECKING([rustc compatibility with MacOS X])
-  # Stock rustc doesn't support MacOS X 10.6 or earlier.
-  # https://github.com/rust-lang/rust/issues/25342
-  _MACOSX_TARGET_MINOR=`echo "$MACOSX_DEPLOYMENT_TARGET" | cut -d. -f2`
-  if test "$_MACOSX_TARGET_MINOR" -lt 7; then
-    dnl Test C linkage against rust code to see if the rust
-    dnl toolchain output is compatible.
-    cat > conftest.rs <<EOF
-      [#[no_mangle]]
-      pub extern fn rusty_answer() -> u8 { 42 }
-EOF
-    ac_try="$RUSTC --crate-type staticlib -o conftest.a conftest.rs >/dev/null"
-    AC_TRY_EVAL(ac_try)
-    save_LDFLAGS=$LDFLAGS
-    LDFLAGS="$LDFLAGS conftest.a -lpthread -lm"
-    AC_TRY_LINK_FUNC([rusty_answer], [
-      AC_MSG_RESULT([$MACOSX_DEPLOYMENT_TARGET is ok with this rustc])
-    ], [
-      AC_MSG_RESULT([cannot link on $MACOSX_DEPLOYMENT_TARGET])
-      MOZ_RUST=
-    ])
-    LDFLAGS=$save_LDFLAGS
-    rm -rf conftest*
-  else
-    AC_MSG_RESULT([$MACOSX_DEPLOYMENT_TARGET is ok])
-  fi
-  if test -z "$MOZ_RUST"; then
-    AC_MSG_ERROR([rustc does not support MacOS X $MACOSX_DEPLOYMENT_TARGET
-      Add 'ac_add_options --enable-macos-target=10.7' (or later)
-      to mozconfig, disable Rust support, or use an alternate toolchain.])
-  fi
-fi
-
 AC_PROG_CPP
 AC_PROG_CXXCPP
 
@@ -552,6 +514,7 @@ case "$target" in
 
         AC_DEFINE(_CRT_SECURE_NO_WARNINGS)
         AC_DEFINE(_CRT_NONSTDC_NO_WARNINGS)
+        AC_DEFINE(_USE_MATH_DEFINES) # Otherwise MSVC's math.h doesn't #define M_PI.
 
         if test "$_CC_MAJOR_VERSION" = "18" -a "$_CC_BUILD_VERSION" -ge "30723"; then
             _CC_SUITE=12
@@ -672,7 +635,7 @@ See https://developer.mozilla.org/en/Windows_Build_Prerequisites.])
         fi
 
         if test "$WRAP_STL_INCLUDES" = "1"; then
-            STL_FLAGS='-I$(DIST)/stl_wrappers'
+            STL_FLAGS="-I${DIST}/stl_wrappers"
         fi
         CFLAGS="$CFLAGS -D_HAS_EXCEPTIONS=0"
         CXXFLAGS="$CXXFLAGS -D_HAS_EXCEPTIONS=0"
@@ -1681,6 +1644,51 @@ AC_LANG_RESTORE
 fi # COMPILE_ENVIRONMENT
 
 dnl ========================================================
+dnl Special rust checks
+dnl ========================================================
+
+if test -n "$MACOSX_DEPLOYMENT_TARGET" -a -n "$MOZ_RUST"; then
+  AC_MSG_CHECKING([if we're targeting 32-bit])
+  if test -z "$HAVE_64BIT_BUILD"; then
+    RUSTC="$RUSTC --target=i686-apple-darwin"
+    AC_MSG_RESULT([using $RUSTC])
+  else
+    AC_MSG_RESULT([no])
+  fi
+  AC_MSG_CHECKING([rustc compatibility with MacOS X])
+  # Stock rustc doesn't support MacOS X 10.6 or earlier.
+  # https://github.com/rust-lang/rust/issues/25342
+  _MACOSX_TARGET_MINOR=`echo "$MACOSX_DEPLOYMENT_TARGET" | cut -d. -f2`
+  if test "$_MACOSX_TARGET_MINOR" -lt 7; then
+    dnl Test C linkage against rust code to see if the rust
+    dnl toolchain output is compatible.
+    cat > conftest.rs <<EOF
+      [#[no_mangle]]
+      pub extern fn rusty_answer() -> u8 { 42 }
+EOF
+    ac_try="$RUSTC --crate-type staticlib -o conftest.a conftest.rs >/dev/null"
+    AC_TRY_EVAL(ac_try)
+    save_LDFLAGS=$LDFLAGS
+    LDFLAGS="$LDFLAGS conftest.a -lpthread -lm"
+    AC_TRY_LINK_FUNC([rusty_answer], [
+      AC_MSG_RESULT([$MACOSX_DEPLOYMENT_TARGET is ok with this rustc])
+    ], [
+      AC_MSG_RESULT([cannot link for $MACOSX_DEPLOYMENT_TARGET])
+      MOZ_RUST=
+    ])
+    LDFLAGS=$save_LDFLAGS
+    rm -rf conftest*
+  else
+    AC_MSG_RESULT([$MACOSX_DEPLOYMENT_TARGET is ok])
+  fi
+  if test -z "$MOZ_RUST"; then
+    AC_MSG_ERROR([rustc does not support MacOS X $MACOSX_DEPLOYMENT_TARGET
+      Add 'ac_add_options --enable-macos-target=10.7' (or later)
+      to mozconfig, disable Rust support, or use an alternate toolchain.])
+  fi
+fi
+
+dnl ========================================================
 dnl = Use profiling compile flags
 dnl ========================================================
 MOZ_ARG_ENABLE_BOOL(profiling,
@@ -2583,7 +2591,7 @@ if test "$GNU_CC" -a "$OS_TARGET" != WINNT; then
     VISIBILITY_FLAGS='-fvisibility=hidden -fvisibility-inlines-hidden'
     ;;
   *)
-    VISIBILITY_FLAGS='-I$(DIST)/system_wrappers -include $(MOZILLA_DIR)/config/gcc_hidden.h'
+    VISIBILITY_FLAGS="-I${DIST}/system_wrappers -include ${_topsrcdir}/config/gcc_hidden.h"
     WRAP_SYSTEM_INCLUDES=1
     ;;
   esac
@@ -2598,13 +2606,13 @@ case "${OS_TARGET}" in
 WINNT|Darwin|Android)
   ;;
 *)
-  STL_FLAGS='-I$(DIST)/stl_wrappers'
+  STL_FLAGS="-I${DIST}/stl_wrappers"
   WRAP_STL_INCLUDES=1
   ;;
 esac
 
 AC_SUBST(WRAP_SYSTEM_INCLUDES)
-AC_SUBST(VISIBILITY_FLAGS)
+AC_SUBST_LIST(VISIBILITY_FLAGS)
 
 dnl Checks for header files.
 dnl ========================================================
@@ -4216,7 +4224,6 @@ cairo-uikit)
     CXXFLAGS="$CXXFLAGS $TK_CFLAGS"
     MOZ_USER_DIR="Mozilla"
     MOZ_FS_LAYOUT=bundle
-    AC_DEFINE(MOZ_SINGLE_PROCESS_APZ)
     ;;
 
 cairo-android)
@@ -4703,16 +4710,6 @@ fi
 AC_SUBST(MOZ_ENABLE_LIBPROXY)
 
 dnl ========================================================
-dnl = GNOME component (mozgnome)
-dnl ========================================================
-
-if test "$MOZ_ENABLE_GTK"
-then
-    MOZ_ENABLE_GNOME_COMPONENT=1
-fi
-AC_SUBST(MOZ_ENABLE_GNOME_COMPONENT)
-
-dnl ========================================================
 dnl = libgnomeui support module
 dnl ========================================================
 
@@ -4800,11 +4797,8 @@ MOZ_ARG_ENABLE_BOOL(android-apz,
     MOZ_ANDROID_APZ=1,
     MOZ_ANDROID_APZ=)
 if test -n "$MOZ_ANDROID_APZ"; then
-    dnl Do this if defined in confvars.sh
-    AC_DEFINE(MOZ_ANDROID_APZ)
-    if test -z "$MOZ_B2GDROID"; then
-      AC_DEFINE(MOZ_SINGLE_PROCESS_APZ)
-    fi
+     dnl Do this if defined in confvars.sh
+     AC_DEFINE(MOZ_ANDROID_APZ)
 fi
 
 dnl ========================================================
@@ -4874,6 +4868,13 @@ dnl = Whether to exclude hyphenations files in the build
 dnl =========================================================
 if test -n "$MOZ_EXCLUDE_HYPHENATION_DICTIONARIES"; then
     AC_DEFINE(MOZ_EXCLUDE_HYPHENATION_DICTIONARIES)
+fi
+
+dnl =========================================================
+dnl = Background service for downloading additional content at runtime.
+dnl =========================================================
+if test -n "$MOZ_ANDROID_DOWNLOAD_CONTENT_SERVICE"; then
+    AC_DEFINE(MOZ_ANDROID_DOWNLOAD_CONTENT_SERVICE)
 fi
 
 dnl ========================================================
@@ -8143,12 +8144,8 @@ fi
 if test "$MOZ_TREE_PIXMAN"; then
     AC_DEFINE(MOZ_TREE_PIXMAN)
 else
-    PKG_CHECK_MODULES(PIXMAN, pixman-1 >= 0.19.2)
-    MOZ_PIXMAN_CFLAGS="$PIXMAN_CFLAGS"
-    MOZ_PIXMAN_LIBS="$PIXMAN_LIBS"
+    PKG_CHECK_MODULES(MOZ_PIXMAN, pixman-1 >= 0.19.2)
 fi
-AC_SUBST(MOZ_PIXMAN_CFLAGS)
-AC_SUBST_LIST(MOZ_PIXMAN_LIBS)
 
 # Check for headers defining standard int types.
 if test -n "$COMPILE_ENVIRONMENT"; then
@@ -8485,13 +8482,6 @@ if test -n "$MOZ_DEVICES"; then
   AC_DEFINE(MOZ_DEVICES)
 fi
 
-dnl Build Fennec Android native UI to manage accounts.  This will go away as
-dnl Fennec transitions to web UI to manage accounts.
-AC_SUBST(MOZ_ANDROID_NATIVE_ACCOUNT_UI)
-if test -n "$MOZ_ANDROID_NATIVE_ACCOUNT_UI"; then
-  AC_DEFINE(MOZ_ANDROID_NATIVE_ACCOUNT_UI)
-fi
-
 dnl ========================================================
 if test "$MOZ_DEBUG" -o "$MOZ_DMD"; then
     MOZ_COMPONENTS_VERSION_SCRIPT_LDFLAGS=
@@ -8591,6 +8581,7 @@ AC_SUBST(MOZ_ANDROID_DOWNLOADS_INTEGRATION)
 AC_SUBST(MOZ_ANDROID_APPLICATION_CLASS)
 AC_SUBST(MOZ_ANDROID_BROWSER_INTENT_CLASS)
 AC_SUBST(MOZ_ANDROID_SEARCH_INTENT_CLASS)
+AC_SUBST(MOZ_ANDROID_DOWNLOAD_CONTENT_SERVICE)
 AC_SUBST(MOZ_EXCLUDE_HYPHENATION_DICTIONARIES)
 AC_SUBST(MOZ_INSTALL_TRACKING)
 AC_SUBST(MOZ_SWITCHBOARD)
@@ -8844,11 +8835,11 @@ AC_SUBST(MOZ_NATIVE_JPEG)
 AC_SUBST(MOZ_NATIVE_PNG)
 AC_SUBST(MOZ_NATIVE_BZ2)
 
-AC_SUBST(MOZ_JPEG_CFLAGS)
+AC_SUBST_LIST(MOZ_JPEG_CFLAGS)
 AC_SUBST_LIST(MOZ_JPEG_LIBS)
 AC_SUBST_LIST(MOZ_BZ2_CFLAGS)
 AC_SUBST_LIST(MOZ_BZ2_LIBS)
-AC_SUBST(MOZ_PNG_CFLAGS)
+AC_SUBST_LIST(MOZ_PNG_CFLAGS)
 AC_SUBST_LIST(MOZ_PNG_LIBS)
 
 if test "$MOZ_WIDGET_TOOLKIT" = gonk -a -n "$MOZ_NUWA_PROCESS"; then
@@ -8865,10 +8856,8 @@ if test "$MOZ_WIDGET_TOOLKIT" = gonk -a -n "$MOZ_B2G_LOADER"; then
 fi
 AC_SUBST(MOZ_B2G_LOADER)
 
-AC_SUBST(NSPR_CFLAGS)
 AC_SUBST(MOZ_NATIVE_NSPR)
 
-AC_SUBST(NSS_CFLAGS)
 AC_SUBST(MOZ_NATIVE_NSS)
 AC_SUBST(NSS_DISABLE_DBM)
 
@@ -8987,11 +8976,6 @@ AC_SUBST(DMG_TOOL)
 
 dnl Host JavaScript runtime, if any, to use during cross compiles.
 AC_SUBST(JS_BINARY)
-
-if test "$MOZ_DEBUG"; then
-    MOZ_EM_DEBUG=1
-fi
-AC_SUBST(MOZ_EM_DEBUG)
 
 AC_SUBST(NSS_EXTRA_SYMBOLS_FILE)
 
@@ -9280,6 +9264,7 @@ export MOZILLA_CENTRAL_PATH=$_topsrcdir
 export STLPORT_CPPFLAGS
 export STLPORT_LIBS
 export JS_STANDALONE=no
+export DIST
 export MOZ_LINKER
 export ZLIB_IN_MOZGLUE
 export MOZ_MEMORY

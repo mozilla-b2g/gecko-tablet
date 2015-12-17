@@ -2746,6 +2746,11 @@ var gCSSProperties = {
       "table-column",
       "table-cell",
       "table-caption",
+      "ruby",
+      "ruby-base",
+      "ruby-base-container",
+      "ruby-text",
+      "ruby-text-container",
       "none"
     ],
     invalid_values: []
@@ -3550,6 +3555,27 @@ var gCSSProperties = {
     ],
     invalid_values: [],
     quirks_values: { "5": "5px" },
+  },
+  "ruby-align": {
+    domProp: "rubyAlign",
+    inherited: true,
+    type: CSS_TYPE_LONGHAND,
+    initial_values: [ "space-around" ],
+    other_values: [ "start", "center", "space-between" ],
+    invalid_values: [
+      "end", "1", "10px", "50%", "start center"
+    ]
+  },
+  "ruby-position": {
+    domProp: "rubyPosition",
+    inherited: true,
+    type: CSS_TYPE_LONGHAND,
+    initial_values: [ "over" ],
+    other_values: [ "under" ],
+    invalid_values: [
+      "left", "right", "auto", "none", "not_a_position",
+      "over left", "right under", "0", "100px", "50%"
+    ]
   },
   "table-layout": {
     domProp: "tableLayout",
@@ -5831,38 +5857,6 @@ if (IsCSSPropertyPrefEnabled("layout.css.filters.enabled")) {
   };
 }
 
-if (IsCSSPropertyPrefEnabled("layout.css.ruby.enabled")) {
-  // Using unshift to add these values at the beginning.
-  // Adding them to the end would trigger bug 1038905. The "unshift" should be
-  // changed to a "push" when this bug is resolved.
-  gCSSProperties["display"].other_values.unshift("ruby",
-                                                 "ruby-base",
-                                                 "ruby-base-container",
-                                                 "ruby-text",
-                                                 "ruby-text-container");
-  gCSSProperties["ruby-align"] = {
-    domProp: "rubyAlign",
-    inherited: true,
-    type: CSS_TYPE_LONGHAND,
-    initial_values: [ "space-around" ],
-    other_values: [ "start", "center", "space-between" ],
-    invalid_values: [
-      "end", "1", "10px", "50%", "start center"
-    ]
-  };
-  gCSSProperties["ruby-position"] = {
-    domProp: "rubyPosition",
-    inherited: true,
-    type: CSS_TYPE_LONGHAND,
-    initial_values: [ "over" ],
-    other_values: [ "under" ],
-    invalid_values: [
-      "left", "right", "auto", "none", "not_a_position",
-      "over left", "right under", "0", "100px", "50%"
-    ]
-  };
-}
-
 if (IsCSSPropertyPrefEnabled("layout.css.grid.enabled")) {
   var isGridTemplateSubgridValueEnabled =
     IsCSSPropertyPrefEnabled("layout.css.grid-template-subgrid-value.enabled");
@@ -6889,41 +6883,6 @@ if (IsCSSPropertyPrefEnabled("layout.css.prefixes.webkit")) {
     type: CSS_TYPE_TRUE_SHORTHAND,
     alias_for: "border-image",
     subproperties: [ "border-image-source", "border-image-slice", "border-image-width",  "border-image-outset", "border-image-repeat" ],
-  };
-  gCSSProperties["-webkit-border-image-outset"] = {
-    domProp: "webkitBorderImageOutset",
-    inherited: false,
-    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
-    alias_for: "border-image-outset",
-    subproperties: [ "border-image-outset" ],
-  };
-  gCSSProperties["-webkit-border-image-repeat"] = {
-    domProp: "webkitBorderImageRepeat",
-    inherited: false,
-    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
-    alias_for: "border-image-repeat",
-    subproperties: [ "border-image-repeat" ],
-  };
-  gCSSProperties["-webkit-border-image-slice"] = {
-    domProp: "webkitBorderImageSlice",
-    inherited: false,
-    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
-    alias_for: "border-image-slice",
-    subproperties: [ "border-image-slice" ],
-  };
-  gCSSProperties["-webkit-border-image-source"] = {
-    domProp: "webkitBorderImageSource",
-    inherited: false,
-    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
-    alias_for: "border-image-source",
-    subproperties: [ "border-image-source" ],
-  };
-  gCSSProperties["-webkit-border-image-width"] = {
-    domProp: "webkitBorderImageWidth",
-    inherited: false,
-    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
-    alias_for: "border-image-width",
-    subproperties: [ "border-image-width" ],
   };
   gCSSProperties["-webkit-box-shadow"] = {
     domProp: "webkitBoxShadow",

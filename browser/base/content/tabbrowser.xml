@@ -761,7 +761,7 @@
                 }
 
                 // If the browser was playing audio, we should remove the playing state.
-                if (this.mTab.hasAttribute("soundplaying")) {
+                if (this.mTab.hasAttribute("soundplaying") && this.mBrowser.lastURI != aLocation) {
                   this.mTab.removeAttribute("soundplaying");
                   this.mTabBrowser._tabAttrModified(this.mTab, ["soundplaying"]);
                 }
@@ -1007,14 +1007,7 @@
       <method name="updateTitlebar">
         <body>
           <![CDATA[
-            if ("TabView" in window && TabView.isVisible()) {
-              // ToDo: this will be removed when we gain ability to draw to the menu bar.
-              // Bug 586175
-              this.ownerDocument.title = TabView.windowTitle;
-            }
-            else {
-              this.ownerDocument.title = this.getWindowTitleForBrowser(this.mCurrentBrowser);
-            }
+            this.ownerDocument.title = this.getWindowTitleForBrowser(this.mCurrentBrowser);
           ]]>
         </body>
       </method>
@@ -4034,7 +4027,7 @@
             case "DOMTitleChanged": {
               let tab = this.getTabForBrowser(browser);
               if (!tab || tab.hasAttribute("pending"))
-                return;
+                return undefined;
               let titleChanged = this.setTabTitle(tab);
               if (titleChanged && !tab.selected && !tab.hasAttribute("busy"))
                 tab.setAttribute("titlechanged", "true");
@@ -4047,7 +4040,7 @@
                 // need to do it again for any tabs.
                 window.skipNextCanClose = true;
                 window.close();
-                return;
+                return undefined;
               }
 
               let tab = this.getTabForBrowser(browser);
@@ -4095,7 +4088,7 @@
             case "DOMWebNotificationClicked": {
               let tab = this.getTabForBrowser(browser);
               if (!tab)
-                return;
+                return undefined;
               this.selectedTab = tab;
               window.focus();
               break;
@@ -4103,7 +4096,7 @@
             case "Browser:Init": {
               let tab = this.getTabForBrowser(browser);
               if (!tab)
-                return;
+                return undefined;
 
               this._outerWindowIDBrowserMap.set(browser.outerWindowID, browser);
               browser.messageManager.sendAsyncMessage("Browser:AppTab", { isAppTab: tab.pinned })
@@ -4374,11 +4367,9 @@
           if (tabForEvent.selected)
             return;
 
-          // If this is a tabprompt, and we're not in tabview/panorama with
-          // the prompt being a beforeunload one, we won't switch tabs
-          // (unless this behaviour has been disabled entirely using the pref).
+          // If this is a tabprompt, we won't switch tabs
+          // (unless this behaviour has been disabled entirely using the pref)
           if (event.detail && event.detail.tabPrompt &&
-              !(event.detail.inPermitUnload && ("TabView" in window) && TabView.isVisible()) &&
               Services.prefs.getBoolPref("browser.tabs.dontfocusfordialogs")) {
             let docPrincipal = targetIsWindow ? event.target.document.nodePrincipal : null;
             // At least one of these should/will be non-null:
@@ -5211,10 +5202,9 @@
             return "none";
 
           var types = dt.mozTypesAt(0);
-          var sourceNode = null;
           // tabs are always added as the first type
           if (types[0] == TAB_DROP_TYPE) {
-            var sourceNode = dt.mozGetDataAt(TAB_DROP_TYPE, 0);
+            let sourceNode = dt.mozGetDataAt(TAB_DROP_TYPE, 0);
             if (sourceNode instanceof XULElement &&
                 sourceNode.localName == "tab" &&
                 sourceNode.ownerDocument.defaultView instanceof ChromeWindow &&
@@ -6224,7 +6214,7 @@
           var tabstripBO = tabContainer.mTabstrip.scrollBoxObject;
           for (var i = 0; i < this.childNodes.length; i++) {
             let curTab = this.childNodes[i].tab;
-            if (!curTab) // "Tab Groups" menuitem and its menuseparator
+            if (!curTab) // "Undo close tab", menuseparator, or entries put here by addons.
               continue;
             let curTabBO = curTab.boxObject;
             if (curTabBO.screenX >= tabstripBO.screenX &&

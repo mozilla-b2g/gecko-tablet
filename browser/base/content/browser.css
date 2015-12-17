@@ -836,11 +836,6 @@ statuspanel[inactive][previoustype=overLink] {
   -moz-binding: url("chrome://browser/content/urlbarBindings.xml#promobox");
 }
 
-/* tabview menus */
-.tabview-menuitem {
-  max-width: 32em;
-}
-
 /* gcli */
 
 html|*#gcli-tooltip-frame,
@@ -1141,6 +1136,7 @@ chatbox:-moz-full-screen-ancestor > .chat-titlebar {
 
 /* Apply crisp rendering for favicons at exactly 2dppx resolution */
 @media (resolution: 2dppx) {
+  #PanelUI-remotetabs-tabslist > toolbarbutton > .toolbarbutton-icon,
   #PanelUI-recentlyClosedWindows > toolbarbutton > .toolbarbutton-icon,
   #PanelUI-recentlyClosedTabs > toolbarbutton > .toolbarbutton-icon,
   #PanelUI-historyItems > toolbarbutton > .toolbarbutton-icon {

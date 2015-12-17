@@ -2008,7 +2008,9 @@ gfxFont::Draw(gfxTextRun *aTextRun, uint32_t aStart, uint32_t aEnd,
             // get the glyphs positioned correctly in the new device space
             // though, since the font matrix should only be applied to drawing
             // the glyphs, and not to their position.
-            mat = ToMatrix(*reinterpret_cast<gfxMatrix*>(&matrix));
+            mat = Matrix(matrix.xx, matrix.yx,
+                         matrix.xy, matrix.yy,
+                         matrix.x0, matrix.y0);
 
             mat._11 = mat._22 = 1.0;
             mat._21 /= GetAdjustedSize();
@@ -2884,8 +2886,7 @@ gfxFont::SplitAndInitTextRun(gfxContext *aContext,
                     gfxTextRunFactory::TEXT_ORIENT_VERTICAL_SIDEWAYS_RIGHT;
             }
             if (boundary != ' ' ||
-                !aTextRun->SetSpaceGlyphIfSimple(this, aContext,
-                                                 aRunStart + i, ch,
+                !aTextRun->SetSpaceGlyphIfSimple(this, aRunStart + i, ch,
                                                  orientation)) {
                 // Currently, the only "boundary" characters we recognize are
                 // space and no-break space, which are both 8-bit, so we force
@@ -3212,7 +3213,8 @@ gfxFont::SetupGlyphExtents(gfxContext *aContext,
     glyph.x = 0;
     glyph.y = 0;
     cairo_text_extents_t extents;
-    cairo_glyph_extents(aContext->GetCairo(), &glyph, 1, &extents);
+    cairo_glyph_extents(gfxContext::RefCairo(aContext->GetDrawTarget()),
+                        &glyph, 1, &extents);
 
     const Metrics& fontMetrics = GetMetrics(eHorizontal);
     int32_t appUnitsPerDevUnit = aExtents->GetAppUnitsPerDevUnit();

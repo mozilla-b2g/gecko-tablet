@@ -490,10 +490,10 @@ ShouldCacheTitleBarInfo(nsWindowType aWindowType, nsBorderStyle aBorderStyle)
 
 // Create the proper widget
 nsresult
-nsWindow::Create(nsIWidget *aParent,
+nsWindow::Create(nsIWidget* aParent,
                  nsNativeWidget aNativeParent,
-                 const nsIntRect &aRect,
-                 nsWidgetInitData *aInitData)
+                 const LayoutDeviceIntRect& aRect,
+                 nsWidgetInitData* aInitData)
 {
   nsWidgetInitData defaultInitData;
   if (!aInitData)
@@ -507,7 +507,7 @@ nsWindow::Create(nsIWidget *aParent,
                           nullptr : aParent;
 
   mIsTopWidgetWindow = (nullptr == baseParent);
-  mBounds = aRect;
+  mBounds = aRect.ToUnknownRect();
 
   // Ensure that the toolkit is created.
   nsToolkit::GetToolkit();
@@ -656,6 +656,7 @@ nsWindow::Create(nsIWidget *aParent,
                                                        NOTIFY_FOR_THIS_SESSION);
   NS_ASSERTION(wtsRegistered, "WTSRegisterSessionNotification failed!\n");
 
+  mDefaultIMC.Init(this);
   IMEHandler::InitInputContext(this, mInputContext);
 
   // If the internal variable set by the config.trim_on_minimize pref has not
@@ -1425,7 +1426,7 @@ NS_METHOD nsWindow::Move(double aX, double aY)
     if (IsPlugin() &&
         (!mLayerManager || mLayerManager->GetBackendType() == LayersBackend::LAYERS_D3D9) &&
         mClipRects &&
-        (mClipRectCount != 1 || !mClipRects[0].IsEqualInterior(nsIntRect(0, 0, mBounds.width, mBounds.height)))) {
+        (mClipRectCount != 1 || !mClipRects[0].IsEqualInterior(LayoutDeviceIntRect(0, 0, mBounds.width, mBounds.height)))) {
       flags |= SWP_NOCOPYBITS;
     }
     VERIFY(::SetWindowPos(mWnd, nullptr, x, y, 0, 0, flags));
@@ -2653,7 +2654,7 @@ void nsWindow::SetTransparencyMode(nsTransparencyMode aMode)
   GetTopLevelWindow(true)->SetWindowTranslucencyInner(aMode);
 }
 
-void nsWindow::UpdateOpaqueRegion(const nsIntRegion &aOpaqueRegion)
+void nsWindow::UpdateOpaqueRegion(const LayoutDeviceIntRegion& aOpaqueRegion)
 {
   if (!HasGlass() || GetParent())
     return;
@@ -2663,12 +2664,12 @@ void nsWindow::UpdateOpaqueRegion(const nsIntRegion &aOpaqueRegion)
   // all values must be set to -1 to get a full sheet of glass.
   MARGINS margins = { -1, -1, -1, -1 };
   if (!aOpaqueRegion.IsEmpty()) {
-    nsIntRect pluginBounds;
+    LayoutDeviceIntRect pluginBounds;
     for (nsIWidget* child = GetFirstChild(); child; child = child->GetNextSibling()) {
       if (child->IsPlugin()) {
         // Collect the bounds of all plugins for GetLargestRectangle.
-        nsIntRect childBounds;
-        child->GetBoundsUntyped(childBounds);
+        LayoutDeviceIntRect childBounds;
+        child->GetBounds(childBounds);
         pluginBounds.UnionRect(pluginBounds, childBounds);
       }
     }
@@ -2678,7 +2679,8 @@ void nsWindow::UpdateOpaqueRegion(const nsIntRegion &aOpaqueRegion)
 
     // Find the largest rectangle and use that to calculate the inset. Our top
     // priority is to include the bounds of all plugins.
-    nsIntRect largest = aOpaqueRegion.GetLargestRectangle(pluginBounds);
+    LayoutDeviceIntRect largest =
+      aOpaqueRegion.GetLargestRectangle(pluginBounds);
     margins.cxLeftWidth = largest.x;
     margins.cxRightWidth = clientBounds.width - largest.XMost();
     margins.cyBottomHeight = clientBounds.height - largest.YMost();
@@ -2708,7 +2710,7 @@ void nsWindow::UpdateOpaqueRegion(const nsIntRegion &aOpaqueRegion)
 **************************************************************/
 
 void
-nsWindow::UpdateWindowDraggingRegion(const nsIntRegion& aRegion)
+nsWindow::UpdateWindowDraggingRegion(const LayoutDeviceIntRegion& aRegion)
 {
   if (mDraggableRegion != aRegion) {
     mDraggableRegion = aRegion;
@@ -2848,10 +2850,9 @@ NS_METHOD nsWindow::Invalidate(bool aEraseBackground,
 }
 
 // Invalidate this component visible area
-NS_METHOD nsWindow::Invalidate(const nsIntRect & aRect)
+NS_METHOD nsWindow::Invalidate(const LayoutDeviceIntRect& aRect)
 {
-  if (mWnd)
-  {
+  if (mWnd) {
 #ifdef WIDGET_DEBUG_OUTPUT
     debug_DumpInvalidate(stdout,
                          this,
@@ -3149,10 +3150,11 @@ void* nsWindow::GetNativeData(uint32_t aDataType)
       return (void*)::GetDC(mWnd);
 #endif
 
+    case NS_RAW_NATIVE_IME_CONTEXT:
     case NS_NATIVE_TSF_THREAD_MGR:
     case NS_NATIVE_TSF_CATEGORY_MGR:
     case NS_NATIVE_TSF_DISPLAY_ATTR_MGR:
-      return IMEHandler::GetNativeData(aDataType);
+      return IMEHandler::GetNativeData(this, aDataType);
 
     default:
       break;
@@ -3757,7 +3759,7 @@ nsWindow::UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeometries)
   if (!IsWin10OrLater()) {
     for (size_t i = 0; i < aThemeGeometries.Length(); i++) {
       if (aThemeGeometries[i].mType == nsNativeThemeWin::eThemeGeometryTypeWindowButtons) {
-        nsIntRect bounds = aThemeGeometries[i].mRect;
+        LayoutDeviceIntRect bounds = aThemeGeometries[i].mRect;
         clearRegion.Or(clearRegion, nsIntRect(bounds.X(), bounds.Y(), bounds.Width(), bounds.Height() - 2.0));
         clearRegion.Or(clearRegion, nsIntRect(bounds.X() + 1.0, bounds.YMost() - 2.0, bounds.Width() - 1.0, 1.0));
         clearRegion.Or(clearRegion, nsIntRect(bounds.X() + 2.0, bounds.YMost() - 1.0, bounds.Width() - 3.0, 1.0));
@@ -6541,11 +6543,11 @@ nsWindow::ConfigureChildren(const nsTArray<Configuration>& aConfigurations)
         // XXX - Workaround for Bug 587508. This will invalidate the part of the
         // plugin window that might be touched by moving content somehow. The
         // underlying problem should be found and fixed!
-        nsIntRegion r;
-        r.Sub(bounds.ToUnknownRect(), configuration.mBounds.ToUnknownRect());
+        LayoutDeviceIntRegion r;
+        r.Sub(bounds, configuration.mBounds);
         r.MoveBy(-bounds.x,
                  -bounds.y);
-        nsIntRect toInvalidate = r.GetBounds();
+        LayoutDeviceIntRect toInvalidate = r.GetBounds();
 
         WinUtils::InvalidatePluginAsWorkaround(w, toInvalidate);
       }
@@ -6557,7 +6559,7 @@ nsWindow::ConfigureChildren(const nsTArray<Configuration>& aConfigurations)
 }
 
 static HRGN
-CreateHRGNFromArray(const nsTArray<nsIntRect>& aRects)
+CreateHRGNFromArray(const nsTArray<LayoutDeviceIntRect>& aRects)
 {
   int32_t size = sizeof(RGNDATAHEADER) + sizeof(RECT)*aRects.Length();
   nsAutoTArray<uint8_t,100> buf;
@@ -6567,9 +6569,9 @@ CreateHRGNFromArray(const nsTArray<nsIntRect>& aRects)
   data->rdh.dwSize = sizeof(data->rdh);
   data->rdh.iType = RDH_RECTANGLES;
   data->rdh.nCount = aRects.Length();
-  nsIntRect bounds;
+  LayoutDeviceIntRect bounds;
   for (uint32_t i = 0; i < aRects.Length(); ++i) {
-    const nsIntRect& r = aRects[i];
+    const LayoutDeviceIntRect& r = aRects[i];
     bounds.UnionRect(bounds, r);
     ::SetRect(&rects[i], r.x, r.y, r.XMost(), r.YMost());
   }
@@ -6578,7 +6580,7 @@ CreateHRGNFromArray(const nsTArray<nsIntRect>& aRects)
 }
 
 nsresult
-nsWindow::SetWindowClipRegion(const nsTArray<nsIntRect>& aRects,
+nsWindow::SetWindowClipRegion(const nsTArray<LayoutDeviceIntRect>& aRects,
                               bool aIntersectWithExisting)
 {
   if (IsWindowClipRegionEqual(aRects)) {

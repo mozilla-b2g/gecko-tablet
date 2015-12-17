@@ -11,6 +11,7 @@ const kPrefBrowserSharingInfoBar = "browserSharing.showInfoBar";
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+Cu.import("resource://gre/modules/AppConstants.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
   "resource://gre/modules/PrivateBrowsingUtils.jsm");
@@ -39,7 +40,8 @@ var WindowListener = {
     var LoopUI = {
       /**
        * @var {XULWidgetSingleWrapper} toolbarButton Getter for the Loop toolbarbutton
-       *                                             instance for this window.
+       *                                             instance for this window. This should
+       *                                             not be used in the hidden window.
        */
       get toolbarButton() {
         delete this.toolbarButton;
@@ -262,18 +264,10 @@ var WindowListener = {
       },
 
       /**
-       * Triggers the initialization of the loop service.  Called by
-       * delayedStartup.
+       * Triggers the initialization of the loop service if necessary.
+       * Also adds appropraite observers for the UI.
        */
       init: function() {
-        // Cleanup when the window unloads.
-        window.addEventListener("unload", () => {
-          this.uninit();
-        });
-
-        // Add observer notifications before the service is initialized
-        Services.obs.addObserver(this, "loop-status-changed", false);
-
         // This is a promise for test purposes, but we don't want to be logging
         // expected errors to the console, so we catch them here.
         this.MozLoopService.initialize().catch(ex => {
@@ -283,11 +277,21 @@ var WindowListener = {
             console.error(ex);
           }
         });
-        this.updateToolbarState();
-      },
 
-      uninit: function() {
-        Services.obs.removeObserver(this, "loop-status-changed");
+        // Don't do the rest if this is for the hidden window - we don't
+        // have a toolbar there.
+        if (window == Services.appShell.hiddenDOMWindow) {
+          return;
+        }
+
+        // Cleanup when the window unloads.
+        window.addEventListener("unload", () => {
+          Services.obs.removeObserver(this, "loop-status-changed");
+        });
+
+        Services.obs.addObserver(this, "loop-status-changed", false);
+
+        this.updateToolbarState();
       },
 
       // Implements nsIObserver
@@ -299,7 +303,8 @@ var WindowListener = {
       },
 
       /**
-       * Updates the toolbar/menu-button state to reflect Loop status.
+       * Updates the toolbar/menu-button state to reflect Loop status. This should
+       * not be called from the hidden window.
        *
        * @param {string} [aReason] Some states are only shown if
        *                           a related reason is provided.
@@ -351,7 +356,8 @@ var WindowListener = {
       },
 
       /**
-       * Updates the tootltiptext to reflect Loop status.
+       * Updates the tootltiptext to reflect Loop status. This should not be called
+       * from the hidden window.
        *
        * @param {string} [mozL10nId] l10n ID that refelct the current
        *                           Loop status.
@@ -455,6 +461,10 @@ var WindowListener = {
         if (!this._listeningToTabSelect) {
           gBrowser.tabContainer.addEventListener("TabSelect", this);
           this._listeningToTabSelect = true;
+
+          // Watch for title changes as opposed to location changes as more
+          // metadata about the page is available when this event fires.
+          gBrowser.addEventListener("DOMTitleChanged", this);
         }
 
         this._maybeShowBrowserSharingInfoBar();
@@ -474,6 +484,7 @@ var WindowListener = {
 
         this._hideBrowserSharingInfoBar();
         gBrowser.tabContainer.removeEventListener("TabSelect", this);
+        gBrowser.removeEventListener("DOMTitleChanged", this);
         this._listeningToTabSelect = false;
       },
 
@@ -508,7 +519,7 @@ var WindowListener = {
         let box = gBrowser.getNotificationBox();
         let paused = false;
         let bar = box.appendNotification(
-          this._getString("infobar_screenshare_browser_message"),
+          this._getString("infobar_screenshare_browser_message2"),
           kBrowserSharingNotificationId,
           // Icon is defined in browser theme CSS.
           null,
@@ -520,7 +531,7 @@ var WindowListener = {
             callback: (event, buttonInfo, buttonNode) => {
               paused = !paused;
               bar.label = paused ? this._getString("infobar_screenshare_paused_browser_message") :
-                this._getString("infobar_screenshare_browser_message");
+                this._getString("infobar_screenshare_browser_message2");
               bar.classList.toggle("paused", paused);
               buttonNode.label = paused ? this._getString("infobar_button_resume_label") :
                 this._getString("infobar_button_pause_label");
@@ -569,30 +580,40 @@ var WindowListener = {
       },
 
       /**
+       * Broadcast 'BrowserSwitch' event.
+      */
+      _notifyBrowserSwitch() {
+         // Get the first window Id for the listener.
+        this.LoopAPI.broadcastPushMessage("BrowserSwitch",
+          gBrowser.selectedBrowser.outerWindowID);
+      },
+
+      /**
        * Handles events from gBrowser.
        */
       handleEvent: function(event) {
-        // We only should get "select" events.
-        if (event.type != "TabSelect") {
-          return;
-        }
+        switch(event.type) {
+          case "DOMTitleChanged":
+            // Get the new title of the shared tab
+            this._notifyBrowserSwitch();
+            break;
+          case "TabSelect":
+            let wasVisible = false;
+            // Hide the infobar from the previous tab.
+            if (event.detail.previousTab) {
+              wasVisible = this._hideBrowserSharingInfoBar(false, event.detail.previousTab.linkedBrowser);
+            }
 
-        let wasVisible = false;
-        // Hide the infobar from the previous tab.
-        if (event.detail.previousTab) {
-          wasVisible = this._hideBrowserSharingInfoBar(false,
-            event.detail.previousTab.linkedBrowser);
-        }
+            // We've changed the tab, so get the new window id.
+            this._notifyBrowserSwitch();
 
-        // We've changed the tab, so get the new window id.
-        this.LoopAPI.broadcastPushMessage("BrowserSwitch",
-          gBrowser.selectedBrowser.outerWindowID);
-
-        if (wasVisible) {
-          // If the infobar was visible before, we should show it again after the
-          // switch.
-          this._maybeShowBrowserSharingInfoBar();
-        }
+            if (wasVisible) {
+              // If the infobar was visible before, we should show it again after the
+              // switch.
+              this._maybeShowBrowserSharingInfoBar();
+            }
+            break;
+          }
       },
 
       /**
@@ -758,15 +779,17 @@ function startup() {
   createLoopButton();
 
   // Attach to hidden window (for OS X).
-  try {
-    WindowListener.setupBrowserUI(Services.appShell.hiddenDOMWindow);
-  } catch (ex) {
-    // Hidden window didn't exist, so wait until startup is done.
-    let topic = "browser-delayed-startup-finished";
-    Services.obs.addObserver(function observer() {
-      Services.obs.removeObserver(observer, topic);
+  if (AppConstants.platform == "macosx") {
+    try {
       WindowListener.setupBrowserUI(Services.appShell.hiddenDOMWindow);
-    }, topic, false);
+    } catch (ex) {
+      // Hidden window didn't exist, so wait until startup is done.
+      let topic = "browser-delayed-startup-finished";
+      Services.obs.addObserver(function observer() {
+        Services.obs.removeObserver(observer, topic);
+        WindowListener.setupBrowserUI(Services.appShell.hiddenDOMWindow);
+      }, topic, false);
+    }
   }
 
   // Attach to existing browser windows, for modifying UI.
@@ -783,16 +806,16 @@ function startup() {
   // Load our stylesheets.
   let styleSheetService = Cc["@mozilla.org/content/style-sheet-service;1"]
     .getService(Components.interfaces.nsIStyleSheetService);
-  let sheets = ["chrome://loop-shared/skin/loop.css",
-                "chrome://loop/skin/platform.css"];
+  let sheets = ["chrome://loop-shared/skin/loop.css"];
+
+  if (AppConstants.platform != "linux") {
+    sheets.push("chrome://loop/skin/platform.css");
+  }
+
   for (let sheet of sheets) {
     let styleSheetURI = Services.io.newURI(sheet, null, null);
-    // XXX We would love to specify AUTHOR_SHEET here and in shutdown, however
-    // bug 1228542 prevents us from doing that as we'd cause a lot of assertions
-    // in debug mode for tests. Once that is fixed, we should be able to change
-    // this, and remove the !important attributes from our syle sheets.
     styleSheetService.loadAndRegisterSheet(styleSheetURI,
-                                           styleSheetService.USER_SHEET);
+                                           styleSheetService.AUTHOR_SHEET);
   }
 }
 
@@ -809,7 +832,9 @@ function shutdown() {
   });
 
   // Detach from hidden window (for OS X).
-  WindowListener.tearDownBrowserUI(Services.appShell.hiddenDOMWindow);
+  if (AppConstants.platform == "macosx") {
+    WindowListener.tearDownBrowserUI(Services.appShell.hiddenDOMWindow);
+  }
 
   // Detach from browser windows.
   let wm = Cc["@mozilla.org/appshell/window-mediator;1"].getService(Ci.nsIWindowMediator);
@@ -832,9 +857,9 @@ function shutdown() {
   for (let sheet of sheets) {
     let styleSheetURI = Services.io.newURI(sheet, null, null);
     if (styleSheetService.sheetRegistered(styleSheetURI,
-                                          styleSheetService.USER_SHEET)) {
+                                          styleSheetService.AUTHOR_SHEET)) {
       styleSheetService.unregisterSheet(styleSheetURI,
-                                        styleSheetService.USER_SHEET);
+                                        styleSheetService.AUTHOR_SHEET);
     }
   }
 

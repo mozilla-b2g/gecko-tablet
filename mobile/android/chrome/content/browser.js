@@ -120,6 +120,10 @@ XPCOMUtils.defineLazyModuleGetter(this, "ReaderMode", "resource://gre/modules/Re
 
 XPCOMUtils.defineLazyModuleGetter(this, "Snackbars", "resource://gre/modules/Snackbars.jsm");
 
+XPCOMUtils.defineLazyServiceGetter(this, "FontEnumerator",
+  "@mozilla.org/gfx/fontenumerator;1",
+  "nsIFontEnumerator");
+
 var lazilyLoadedBrowserScripts = [
   ["SelectHelper", "chrome://browser/content/SelectHelper.js"],
   ["InputWidgetHelper", "chrome://browser/content/InputWidgetHelper.js"],
@@ -159,7 +163,7 @@ var lazilyLoadedObserverScripts = [
 ];
 if (AppConstants.NIGHTLY_BUILD) {
   lazilyLoadedObserverScripts.push(
-    ["ActionBarHandler", ["ActionBar:OpenNew", "ActionBar:Close", "TextSelection:Get"],
+    ["ActionBarHandler", ["TextSelection:Get", "TextSelection:Action", "TextSelection:End"],
       "chrome://browser/content/ActionBarHandler.js"]
   );
 }
@@ -456,10 +460,12 @@ var BrowserApp = {
     Services.obs.addObserver(this, "Webapps:Load", false);
     Services.obs.addObserver(this, "Webapps:AutoUninstall", false);
     Services.obs.addObserver(this, "sessionstore-state-purge-complete", false);
+    Services.obs.addObserver(this, "Fonts:Reload", false);
+
     Messaging.addListener(this.getHistory.bind(this), "Session:GetHistory");
 
     function showFullScreenWarning() {
-      NativeWindow.toast.show(Strings.browser.GetStringFromName("alertFullScreenToast"), "short");
+      Snackbars.show(Strings.browser.GetStringFromName("alertFullScreenToast"), Snackbars.LENGTH_SHORT);
     }
 
     window.addEventListener("fullscreen", function() {
@@ -563,20 +569,18 @@ var BrowserApp = {
       InitLater(() => AccessFu.attach(window), window, "AccessFu");
     }
 
-    if (!AppConstants.MOZ_ANDROID_NATIVE_ACCOUNT_UI) {
-      // We can't delay registering WebChannel listeners: if the first page is
-      // about:accounts, which can happen when starting the Firefox Account flow
-      // from the first run experience, or via the Firefox Account Status
-      // Activity, we can and do miss messages from the fxa-content-server.
-      // However, we never allow suitably restricted profiles from listening to
-      // fxa-content-server messages.
-      if (ParentalControls.isAllowed(ParentalControls.MODIFY_ACCOUNTS)) {
-        console.log("browser.js: loading Firefox Accounts WebChannel");
-        Cu.import("resource://gre/modules/FxAccountsWebChannel.jsm");
-        EnsureFxAccountsWebChannel();
-      } else {
-        console.log("browser.js: not loading Firefox Accounts WebChannel; this profile cannot connect to Firefox Accounts.");
-      }
+    // We can't delay registering WebChannel listeners: if the first page is
+    // about:accounts, which can happen when starting the Firefox Account flow
+    // from the first run experience, or via the Firefox Account Status
+    // Activity, we can and do miss messages from the fxa-content-server.
+    // However, we never allow suitably restricted profiles from listening to
+    // fxa-content-server messages.
+    if (ParentalControls.isAllowed(ParentalControls.MODIFY_ACCOUNTS)) {
+      console.log("browser.js: loading Firefox Accounts WebChannel");
+      Cu.import("resource://gre/modules/FxAccountsWebChannel.jsm");
+      EnsureFxAccountsWebChannel();
+    } else {
+      console.log("browser.js: not loading Firefox Accounts WebChannel; this profile cannot connect to Firefox Accounts.");
     }
 
     // Notify Java that Gecko has loaded.
@@ -615,6 +619,13 @@ var BrowserApp = {
       InitLater(() => LoginManagerParent.init(), window, "LoginManagerParent");
 
     }, false);
+
+    // Pass caret StateChanged events to ActionBarHandler.
+    if (AppConstants.NIGHTLY_BUILD) {
+      window.addEventListener("mozcaretstatechanged", e => {
+        ActionBarHandler.caretStateChangedHandler(e);
+      }, /* useCapture = */ true, /* wantsUntrusted = */ false);
+    }
   },
 
   get _startupStatus() {
@@ -1260,7 +1271,7 @@ var BrowserApp = {
 
   // Calling this will update the state in BrowserApp after a tab has been
   // closed in the Java UI.
-  _handleTabClosed: function _handleTabClosed(aTab, aShowUndoToast) {
+  _handleTabClosed: function _handleTabClosed(aTab, aShowUndoSnackbar) {
     if (aTab == this.selectedTab)
       this.selectedTab = null;
 
@@ -1270,8 +1281,8 @@ var BrowserApp = {
     evt.initUIEvent("TabClose", true, false, window, tabIndex);
     aTab.browser.dispatchEvent(evt);
 
-    if (aShowUndoToast) {
-      // Get a title for the undo close toast. Fall back to the URL if there is no title.
+    if (aShowUndoSnackbar) {
+      // Get a title for the undo close snackbar. Fall back to the URL if there is no title.
       let ss = Cc["@mozilla.org/browser/sessionstore;1"].getService(Ci.nsISessionStore);
       let closedTabData = ss.getClosedTabs(window)[0];
 
@@ -2095,6 +2106,10 @@ var BrowserApp = {
         tab.tilesData = data.payload;
         break;
 
+      case "Fonts:Reload":
+        FontEnumerator.updateFontList();
+        break;
+
       default:
         dump('BrowserApp.observe: unexpected topic "' + aTopic + '"\n');
         break;
@@ -2268,8 +2283,6 @@ var NativeWindow = {
   init: function() {
     Services.obs.addObserver(this, "Menu:Clicked", false);
     Services.obs.addObserver(this, "Doorhanger:Reply", false);
-    Services.obs.addObserver(this, "Toast:Click", false);
-    Services.obs.addObserver(this, "Toast:Hidden", false);
     this.contextmenus.init();
   },
 
@@ -2286,38 +2299,6 @@ var NativeWindow = {
       type: "Dex:Unload",
       zipfile: zipFile
     });
-  },
-
-  toast: {
-    _callbacks: {},
-    show: function(aMessage, aDuration, aOptions) {
-      let msg = {
-        type: "Toast:Show",
-        message: aMessage,
-        duration: aDuration
-      };
-
-      if (aOptions && aOptions.button) {
-        msg.button = {
-          id: uuidgen.generateUUID().toString(),
-        };
-
-        // null is badly handled by the receiver, so try to avoid including nulls.
-        if (aOptions.button.label) {
-          msg.button.label = aOptions.button.label;
-        }
-
-        if (aOptions.button.icon) {
-          // If the caller specified a button, make sure we convert any chrome urls
-          // to jar:jar urls so that the frontend can show them
-          msg.button.icon = resolveGeckoURI(aOptions.button.icon);
-        };
-
-        this._callbacks[msg.button.id] = aOptions.button.callback;
-      }
-
-      Messaging.sendRequest(msg);
-    }
   },
 
   menu: {
@@ -2432,14 +2413,6 @@ var NativeWindow = {
     if (aTopic == "Menu:Clicked") {
       if (this.menu._callbacks[aData])
         this.menu._callbacks[aData]();
-    } else if (aTopic == "Toast:Click") {
-      if (this.toast._callbacks[aData]) {
-        this.toast._callbacks[aData]();
-        delete this.toast._callbacks[aData];
-      }
-    } else if (aTopic == "Toast:Hidden") {
-      if (this.toast._callbacks[aData])
-        delete this.toast._callbacks[aData];
     } else if (aTopic == "Doorhanger:Reply") {
       let data = JSON.parse(aData);
       let reply_id = data["callback"];
@@ -3120,7 +3093,7 @@ var NativeWindow = {
     _copyStringToDefaultClipboard: function(aString) {
       let clipboard = Cc["@mozilla.org/widget/clipboardhelper;1"].getService(Ci.nsIClipboardHelper);
       clipboard.copyString(aString);
-      NativeWindow.toast.show(Strings.browser.GetStringFromName("selectionHelper.textCopied"), "short");
+      Snackbars.show(Strings.browser.GetStringFromName("selectionHelper.textCopied"), Snackbars.LENGTH_SHORT);
     },
 
     _stripScheme: function(aString) {
@@ -3135,7 +3108,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "PageActions",
 
 // These alias to the old, deprecated NativeWindow interfaces
 [
-  ["pageactions", "resource://gre/modules/PageActions.jsm", "PageActions"]
+  ["pageactions", "resource://gre/modules/PageActions.jsm", "PageActions"],
+  ["toast", "resource://gre/modules/Snackbars.jsm", "Snackbars"]
 ].forEach(item => {
   let [name, script, exprt] = item;
 
@@ -5270,13 +5244,17 @@ var ErrorPageEventHandler = {
           // The event came from a button on a malware/phishing block page
           // First check whether it's malware, phishing or unwanted, so that we
           // can use the right strings/links
-          let bucketName = "WARNING_PHISHING_PAGE_";
+          let bucketName = "";
+          let sendTelemetry = false;
           if (errorDoc.documentURI.contains("e=malwareBlocked")) {
+            sendTelemetry = true;
             bucketName = "WARNING_MALWARE_PAGE_";
+          } else if (errorDoc.documentURI.contains("e=phishingBlocked")) {
+            sendTelemetry = true;
+            bucketName = "WARNING_PHISHING_PAGE_";
           } else if (errorDoc.documentURI.contains("e=unwantedBlocked")) {
+            sendTelemetry = true;
             bucketName = "WARNING_UNWANTED_PAGE_";
-          } else if (errorDoc.documentURI.contains("e=forbiddenBlocked")) {
-            return; // no telemetry for forbidden pages
           }
           let nsISecTel = Ci.nsISecurityUITelemetry;
           let isIframe = (errorDoc.defaultView.parent === errorDoc.defaultView);
@@ -5285,19 +5263,26 @@ var ErrorPageEventHandler = {
           let formatter = Cc["@mozilla.org/toolkit/URLFormatterService;1"].getService(Ci.nsIURLFormatter);
 
           if (target == errorDoc.getElementById("getMeOutButton")) {
-            Telemetry.addData("SECURITY_UI", nsISecTel[bucketName + "GET_ME_OUT_OF_HERE"]);
+            if (sendTelemetry) {
+              Telemetry.addData("SECURITY_UI", nsISecTel[bucketName + "GET_ME_OUT_OF_HERE"]);
+            }
             errorDoc.location = "about:home";
           } else if (target == errorDoc.getElementById("reportButton")) {
             // We log even if malware/phishing info URL couldn't be found:
             // the measurement is for how many users clicked the WHY BLOCKED button
-            Telemetry.addData("SECURITY_UI", nsISecTel[bucketName + "WHY_BLOCKED"]);
+            if (sendTelemetry) {
+              Telemetry.addData("SECURITY_UI", nsISecTel[bucketName + "WHY_BLOCKED"]);
+            }
 
             // This is the "Why is this site blocked" button. We redirect
             // to the generic page describing phishing/malware protection.
             let url = Services.urlFormatter.formatURLPref("app.support.baseURL");
             BrowserApp.selectedBrowser.loadURI(url + "phishing-malware");
-          } else if (target == errorDoc.getElementById("ignoreWarningButton")) {
-            Telemetry.addData("SECURITY_UI", nsISecTel[bucketName + "IGNORE_WARNING"]);
+          } else if (target == errorDoc.getElementById("ignoreWarningButton") &&
+                     Services.prefs.getBoolPref("browser.safebrowsing.allowOverride")) {
+            if (sendTelemetry) {
+              Telemetry.addData("SECURITY_UI", nsISecTel[bucketName + "IGNORE_WARNING"]);
+            }
 
             // Allow users to override and continue through to the site,
             let webNav = BrowserApp.selectedBrowser.docShell.QueryInterface(Ci.nsIWebNavigation);
@@ -5900,7 +5885,7 @@ var XPInstallObserver = {
 
     switch (aTopic) {
       case "addon-install-started":
-        NativeWindow.toast.show(strings.GetStringFromName("alertAddonsDownloading"), "short");
+        Snackbars.show(strings.GetStringFromName("alertAddonsDownloading"), Snackbars.LENGTH_SHORT);
         break;
       case "addon-install-disabled": {
         if (!tab)
@@ -6943,7 +6928,7 @@ var SearchEngines = {
     Services.search.addEngine(engine.url, Ci.nsISearchEngine.DATA_XML, engine.iconURL, false, {
       onSuccess: function() {
         // Display a toast confirming addition of new search engine.
-        NativeWindow.toast.show(Strings.browser.formatStringFromName("alertSearchEngineAddedToast", [engine.title], 1), "long");
+        Snackbars.show(Strings.browser.formatStringFromName("alertSearchEngineAddedToast", [engine.title], 1), Snackbars.LENGTH_SHORT);
       },
 
       onError: function(aCode) {
@@ -6957,7 +6942,7 @@ var SearchEngines = {
           errorMessage = "alertSearchEngineErrorToast";
         }
 
-        NativeWindow.toast.show(Strings.browser.formatStringFromName(errorMessage, [engine.title], 1), "long");
+        Snackbars.show(Strings.browser.formatStringFromName(errorMessage, [engine.title], 1), Snackbars.LENGTH_SHORT);
       }
     });
   },
@@ -7038,7 +7023,7 @@ var SearchEngines = {
             name = title.value + " " + i;
 
           Services.search.addEngineWithDetails(name, favicon, null, null, method, formURL);
-          NativeWindow.toast.show(Strings.browser.formatStringFromName("alertSearchEngineAddedToast", [name], 1), "long");
+          Snackbars.show(Strings.browser.formatStringFromName("alertSearchEngineAddedToast", [name], 1), Snackbars.LENGTH_SHORT);
           let engine = Services.search.getEngineByName(name);
           engine.wrappedJSObject._queryCharset = charset;
           for (let i = 0; i < formData.length; ++i) {
@@ -7665,3 +7650,4 @@ HTMLContextMenuItem.prototype = Object.create(ContextMenuItem.prototype, {
     }
   },
 });
+

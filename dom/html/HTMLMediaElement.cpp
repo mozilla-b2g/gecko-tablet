@@ -1289,7 +1289,7 @@ nsresult HTMLMediaElement::LoadResource()
                                nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_INHERITS;
 
   if (GetCORSMode() == CORS_USE_CREDENTIALS) {
-    securityFlags |= nsILoadInfo::SEC_REQUIRE_CORS_WITH_CREDENTIALS;
+    securityFlags |= nsILoadInfo::SEC_COOKIES_INCLUDE;
   }
 
   MOZ_ASSERT(IsAnyOfHTMLElements(nsGkAtoms::audio, nsGkAtoms::video));
@@ -3422,15 +3422,7 @@ void HTMLMediaElement::MetadataLoaded(const MediaInfo* aInfo,
 #endif // MOZ_EME
   }
 
-  // If this element had a video track, but consists only of an audio track now,
-  // delete the VideoFrameContainer. This happens when the src is changed to an
-  // audio only file.
-  // Else update its dimensions.
-  if (!aInfo->HasVideo()) {
-    ResetState();
-  } else {
-    mWatchManager.ManualNotify(&HTMLMediaElement::UpdateReadyStateInternal);
-  }
+  mWatchManager.ManualNotify(&HTMLMediaElement::UpdateReadyStateInternal);
 
   if (IsVideo() && aInfo->HasVideo()) {
     // We are a video element playing video so update the screen wakelock
@@ -3772,7 +3764,12 @@ HTMLMediaElement::UpdateReadyStateInternal()
     MetadataLoaded(&mediaInfo, nsAutoPtr<const MetadataTags>(nullptr));
   }
 
-  if (NextFrameStatus() == MediaDecoderOwner::NEXT_FRAME_UNAVAILABLE_SEEKING) {
+  enum NextFrameStatus nextFrameStatus = NextFrameStatus();
+  if (mDecoder && nextFrameStatus == NEXT_FRAME_UNAVAILABLE) {
+    nextFrameStatus = mDecoder->NextFrameBufferedStatus();
+  }
+
+  if (nextFrameStatus == MediaDecoderOwner::NEXT_FRAME_UNAVAILABLE_SEEKING) {
     LOG(LogLevel::Debug, ("MediaElement %p UpdateReadyStateInternal() "
                           "NEXT_FRAME_UNAVAILABLE_SEEKING; Forcing HAVE_METADATA", this));
     ChangeReadyState(nsIDOMHTMLMediaElement::HAVE_METADATA);
@@ -3808,13 +3805,13 @@ HTMLMediaElement::UpdateReadyStateInternal()
     return;
   }
 
-  if (NextFrameStatus() != MediaDecoderOwner::NEXT_FRAME_AVAILABLE) {
+  if (nextFrameStatus != MediaDecoderOwner::NEXT_FRAME_AVAILABLE) {
     LOG(LogLevel::Debug, ("MediaElement %p UpdateReadyStateInternal() "
                           "Next frame not available", this));
     if (mFirstFrameLoaded) {
       ChangeReadyState(nsIDOMHTMLMediaElement::HAVE_CURRENT_DATA);
     }
-    if (!mWaitingFired && NextFrameStatus() == MediaDecoderOwner::NEXT_FRAME_UNAVAILABLE_BUFFERING) {
+    if (!mWaitingFired && nextFrameStatus == MediaDecoderOwner::NEXT_FRAME_UNAVAILABLE_BUFFERING) {
       FireTimeUpdate(false);
       DispatchAsyncEvent(NS_LITERAL_STRING("waiting"));
       mWaitingFired = true;
@@ -4983,7 +4980,7 @@ HTMLMediaElement::GetTopLevelPrincipal()
 
 NS_IMETHODIMP HTMLMediaElement::WindowAudioCaptureChanged()
 {
-   MOZ_ASSERT(mAudioChannelAgent);
+  MOZ_ASSERT(mAudioChannelAgent);
 
   if (!OwnerDoc()->GetInnerWindow()) {
     return NS_OK;
@@ -4998,7 +4995,7 @@ NS_IMETHODIMP HTMLMediaElement::WindowAudioCaptureChanged()
       uint64_t id = window->WindowID();
       MediaStreamGraph* msg =
         MediaStreamGraph::GetInstance(MediaStreamGraph::AUDIO_THREAD_DRIVER,
-                                      AudioChannel::Normal);
+                                      mAudioChannel);
 
       if (GetSrcMediaStream()) {
         mCaptureStreamPort = msg->ConnectToCaptureStream(id, GetSrcMediaStream());

@@ -127,8 +127,12 @@ SharedContext::computeAllowSyntax(JSObject* staticScope)
             // Any function supports new.target.
             allowNewTarget_ = true;
             allowSuperProperty_ = it.fun().allowSuperProperty();
-            if (it.maybeFunctionBox())
+            if (it.maybeFunctionBox()) {
                 superScopeAlreadyNeedsHomeObject_ = it.maybeFunctionBox()->needsHomeObject();
+                allowSuperCall_ = it.maybeFunctionBox()->isDerivedClassConstructor();
+            } else {
+                allowSuperCall_ = it.fun().isDerivedClassConstructor();
+            }
             break;
         }
     }
@@ -263,7 +267,7 @@ ParseContext<FullParseHandler>::define(TokenStream& ts,
     switch (kind) {
       case Definition::ARG:
         MOZ_ASSERT(sc->isFunctionBox());
-        dn->setOp((js_CodeSpec[dn->getOp()].format & JOF_SET) ? JSOP_SETARG : JSOP_GETARG);
+        dn->setOp((CodeSpec[dn->getOp()].format & JOF_SET) ? JSOP_SETARG : JSOP_GETARG);
         dn->pn_blockid = bodyid;
         dn->pn_dflags |= PND_BOUND;
         if (!dn->pn_scopecoord.setSlot(ts, args_.length()))
@@ -294,7 +298,7 @@ ParseContext<FullParseHandler>::define(TokenStream& ts,
         // and non-deoptimized (e.g., inside a with scope) vars live in frame
         // or CallObject slots.
         if (!sc->isGlobalContext() && !dn->isDeoptimized()) {
-            dn->setOp((js_CodeSpec[dn->getOp()].format & JOF_SET) ? JSOP_SETLOCAL : JSOP_GETLOCAL);
+            dn->setOp((CodeSpec[dn->getOp()].format & JOF_SET) ? JSOP_SETLOCAL : JSOP_GETLOCAL);
             dn->pn_dflags |= PND_BOUND;
             if (!dn->pn_scopecoord.setSlot(ts, vars_.length() - 1))
                 return false;
@@ -1452,7 +1456,7 @@ Parser<FullParseHandler>::makeDefIntoUse(Definition* dn, ParseNode* pn, HandleAt
     MOZ_ASSERT(dn->isKind(PNK_NAME));
     MOZ_ASSERT(dn->isArity(PN_NAME));
     MOZ_ASSERT(dn->pn_atom == atom);
-    dn->setOp((js_CodeSpec[dn->getOp()].format & JOF_SET) ? JSOP_SETNAME : JSOP_GETNAME);
+    dn->setOp((CodeSpec[dn->getOp()].format & JOF_SET) ? JSOP_SETNAME : JSOP_GETNAME);
     dn->setDefn(false);
     dn->setUsed(true);
     dn->pn_lexdef = (Definition*) pn;
@@ -5370,9 +5374,6 @@ Parser<FullParseHandler>::forStatement(YieldHandling yieldHandling)
                 if (parseDecl) {
                     bool constDecl = tt == TOK_CONST;
                     isForDecl = true;
-                    blockObj = StaticBlockObject::create(context);
-                    if (!blockObj)
-                        return null();
 
                     // Initialize the enclosing scope manually for the call to
                     // |variables| below.
@@ -7293,11 +7294,6 @@ Parser<ParseHandler>::assignExpr(InHandling inHandling, YieldHandling yieldHandl
         if (!tokenStream.peekToken(&ignored, TokenStream::Operand))
             return null();
 
-        if (pc->sc->isFunctionBox() && pc->sc->asFunctionBox()->isDerivedClassConstructor()) {
-            report(ParseError, false, null(), JSMSG_DISABLED_DERIVED_CLASS, "arrow functions");
-            return null();
-        }
-
         Node arrowFunc = functionDef(inHandling, yieldHandling, nullptr, Arrow, NotGenerator);
         if (!arrowFunc)
             return null();
@@ -7906,12 +7902,10 @@ Parser<FullParseHandler>::legacyComprehensionTail(ParseNode* bodyExpr, unsigned 
                      JSMSG_ARRAY_INIT_TOO_BIG);
 
     while (true) {
-        /*
-         * FOR node is binary, left is loop control and right is body.  Use
-         * index to count each block-local let-variable on the left-hand side
-         * of the in/of.
-         */
-        ParseNode* pn2 = handler.new_<BinaryNode>(PNK_FOR, JSOP_ITER, pos(),
+        // PNK_COMPREHENSIONFOR is binary: left is loop control, right is body.
+        // Use index to count each block-local let-variable on the left-hand
+        // side of the in/of.
+        ParseNode* pn2 = handler.new_<BinaryNode>(PNK_COMPREHENSIONFOR, JSOP_ITER, pos(),
                                                   nullptr, nullptr);
         if (!pn2)
             return null();
@@ -8360,7 +8354,7 @@ Parser<ParseHandler>::comprehensionFor(GeneratorKind comprehensionKind)
     if (!tail)
         return null();
 
-    return handler.newForStatement(begin, head, tail, JSOP_ITER);
+    return handler.newComprehensionFor(begin, head, tail);
 }
 
 template <typename ParseHandler>
@@ -8715,7 +8709,7 @@ Parser<ParseHandler>::memberExpr(YieldHandling yieldHandling, TripledotHandling 
                    tt == TOK_NO_SUBS_TEMPLATE)
         {
             if (handler.isSuperBase(lhs)) {
-                if (!pc->sc->isFunctionBox() || !pc->sc->asFunctionBox()->isDerivedClassConstructor()) {
+                if (!pc->sc->allowSuperCall()) {
                     report(ParseError, false, null(), JSMSG_BAD_SUPERCALL);
                     return null();
                 }

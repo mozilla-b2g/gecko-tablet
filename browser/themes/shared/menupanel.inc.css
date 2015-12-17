@@ -60,12 +60,7 @@
 
   #sync-button[cui-areatype="menu-panel"],
   toolbarpaletteitem[place="palette"] > #sync-button {
-    -moz-image-region: rect(0px, 384px, 32px, 352px);
-  }
-
-  #sync-button[cui-areatype="menu-panel"][status="active"] {
-    list-style-image: url(chrome://browser/skin/syncProgress-menuPanel.png);
-    -moz-image-region: rect(0px, 32px, 32px, 0px);
+    -moz-image-region: rect(0px, 1024px, 32px, 992px);
   }
 
   #feed-button[cui-areatype="menu-panel"],
@@ -109,11 +104,6 @@
   #privatebrowsing-button[cui-areatype="menu-panel"],
   toolbarpaletteitem[place="palette"] > #privatebrowsing-button {
     -moz-image-region: rect(0px, 576px, 32px, 544px);
-  }
-
-  #tabview-button[cui-areatype="menu-panel"],
-  toolbarpaletteitem[place="palette"] > #tabview-button {
-    -moz-image-region: rect(0px, 608px, 32px, 576px);
   }
 
   #find-button[cui-areatype="menu-panel"],
@@ -284,12 +274,7 @@
 
   #sync-button[cui-areatype="menu-panel"],
   toolbarpaletteitem[place="palette"] > #sync-button {
-    -moz-image-region: rect(0px, 768px, 64px, 704px);
-  }
-
-  #sync-button[cui-areatype="menu-panel"][status="active"] {
-    list-style-image: url(chrome://browser/skin/syncProgress-menuPanel@2x.png);
-    -moz-image-region: rect(0px, 64px, 64px, 0px);
+    -moz-image-region: rect(0px, 2048px, 64px, 1984px);
   }
 
   #feed-button[cui-areatype="menu-panel"],
@@ -347,11 +332,6 @@
   #privatebrowsing-button[cui-areatype="menu-panel"],
   toolbarpaletteitem[place="palette"] > #privatebrowsing-button {
     -moz-image-region: rect(0px, 1152px, 64px, 1088px);
-  }
-
-  #tabview-button[cui-areatype="menu-panel"],
-  toolbarpaletteitem[place="palette"] > #tabview-button {
-    -moz-image-region: rect(0px, 1216px, 64px, 1152px);
   }
 
   #find-button[cui-areatype="menu-panel"],

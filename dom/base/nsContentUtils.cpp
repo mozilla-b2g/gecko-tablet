@@ -162,6 +162,7 @@
 #include "nsIURIWithPrincipal.h"
 #include "nsIURL.h"
 #include "nsIWebNavigation.h"
+#include "nsIWindowMediator.h"
 #include "nsIWordBreaker.h"
 #include "nsIXPConnect.h"
 #include "nsJSUtils.h"
@@ -5168,6 +5169,23 @@ nsContentUtils::GetWindowProviderForContentProcess()
 }
 
 /* static */
+already_AddRefed<nsPIDOMWindow>
+nsContentUtils::GetMostRecentNonPBWindow()
+{
+  nsCOMPtr<nsIWindowMediator> windowMediator =
+    do_GetService(NS_WINDOWMEDIATOR_CONTRACTID);
+  nsCOMPtr<nsIWindowMediator_44> wm = do_QueryInterface(windowMediator);
+
+  nsCOMPtr<nsIDOMWindow> window;
+  wm->GetMostRecentNonPBWindow(MOZ_UTF16("navigator:browser"),
+                               getter_AddRefs(window));
+  nsCOMPtr<nsPIDOMWindow> pwindow;
+  pwindow = do_QueryInterface(window);
+
+  return pwindow.forget();
+}
+
+/* static */
 void
 nsContentUtils::WarnScriptWasIgnored(nsIDocument* aDocument)
 {
@@ -6057,6 +6075,15 @@ nsContentTypeParser::GetParameter(const char* aParameterName, nsAString& aResult
                                     aResult);
 }
 
+nsresult
+nsContentTypeParser::GetType(nsAString& aResult)
+{
+  nsresult rv = GetParameter(nullptr, aResult);
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsContentUtils::ASCIIToLower(aResult);
+  return NS_OK;
+}
+
 /* static */
 
 bool
@@ -6150,7 +6177,9 @@ nsContentUtils::CreateArrayBuffer(JSContext *aCx, const nsACString& aData,
   if (dataLen > 0) {
     NS_ASSERTION(JS_IsArrayBufferObject(*aResult), "What happened?");
     JS::AutoCheckCannotGC nogc;
-    memcpy(JS_GetArrayBufferData(*aResult, nogc), aData.BeginReading(), dataLen);
+    bool isShared;
+    memcpy(JS_GetArrayBufferData(*aResult, &isShared, nogc), aData.BeginReading(), dataLen);
+    MOZ_ASSERT(!isShared);
   }
 
   return NS_OK;
@@ -7498,7 +7527,9 @@ nsContentUtils::TransferableToIPCTransferable(nsITransferable* aTransferable,
               if (IsFileImage(file, type)) {
                 IPCDataTransferItem* item = aIPCDataTransfer->items().AppendElement();
                 item->flavor() = type;
-                SlurpFileToString(file, item->data());
+                nsAutoCString data;
+                SlurpFileToString(file, data);
+                item->data() = data;
               }
 
               continue;
@@ -7658,11 +7689,10 @@ nsContentUtils::ToWidgetPoint(const CSSPoint& aPoint,
                               const nsPoint& aOffset,
                               nsPresContext* aPresContext)
 {
-  nsPoint point = CSSPoint::ToAppUnits(aPoint) + aOffset;
-#if defined(MOZ_SINGLE_PROCESS_APZ)
-  point = point.ApplyResolution(aPresContext->PresShell()->GetCumulativeScaleResolution());
-#endif
-  return LayoutDeviceIntPoint::FromAppUnitsRounded(point, aPresContext->AppUnitsPerDevPixel());
+  return LayoutDeviceIntPoint::FromAppUnitsRounded(
+    (CSSPoint::ToAppUnits(aPoint) +
+    aOffset).ApplyResolution(aPresContext->PresShell()->GetCumulativeNonRootScaleResolution()),
+    aPresContext->AppUnitsPerDevPixel());
 }
 
 nsView*

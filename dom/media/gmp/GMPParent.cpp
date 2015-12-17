@@ -73,8 +73,6 @@ GMPParent::GMPParent()
 
 GMPParent::~GMPParent()
 {
-  // Can't Close or Destroy the process here, since destruction is MainThread only
-  MOZ_ASSERT(NS_IsMainThread());
   LOGD("GMPParent dtor");
 
   MOZ_ASSERT(!mProcess);
@@ -866,6 +864,12 @@ GMPParent::ReadGMPMetaData()
           cap->mAPITags.AppendElement(tag);
         }
       }
+    }
+
+    // We support the current GMPDecryptor version, and the previous.
+    // We Adapt the previous to the current in the GMPContentChild.
+    if (cap->mAPIName.EqualsLiteral(GMP_API_DECRYPTOR_BACKWARDS_COMPAT)) {
+      cap->mAPIName.AssignLiteral(GMP_API_DECRYPTOR);
     }
 
     if (cap->mAPIName.EqualsLiteral(GMP_API_DECRYPTOR)) {

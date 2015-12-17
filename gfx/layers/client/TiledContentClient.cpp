@@ -55,7 +55,8 @@ static void DrawDebugOverlay(mozilla::gfx::DrawTarget* dt, int x, int y, int wid
   ss << x << ", " << y;
 
   // Draw text using cairo toy text API
-  cairo_t* cr = c.GetCairo();
+  // XXX: this drawing will silently fail if |dt| doesn't have a Cairo backend
+  cairo_t* cr = gfxContext::RefCairo(dt);
   cairo_set_font_size(cr, 25);
   cairo_text_extents_t extents;
   cairo_text_extents(cr, ss.str().c_str(), &extents);
@@ -703,7 +704,7 @@ TileClient::DiscardBackBuffer()
 {
   if (mBackBuffer) {
     MOZ_ASSERT(mBackLock);
-    if (!mBackBuffer->ImplementsLocking() && mBackLock->GetReadCount() > 1) {
+    if (!mBackBuffer->HasSynchronization() && mBackLock->GetReadCount() > 1) {
       // Our current back-buffer is still locked by the compositor. This can occur
       // when the client is producing faster than the compositor can consume. In
       // this case we just want to drop it and not return it to the pool.
@@ -1020,16 +1021,16 @@ void PadDrawTargetOutFromRegion(RefPtr<DrawTarget> drawTarget, nsIntRegion &regi
     static void ensure_memcpy(uint8_t *dst, uint8_t *src, size_t n, uint8_t *bitmap, int stride, int height)
     {
         if (src + n > bitmap + stride*height) {
-            MOZ_CRASH("long src memcpy");
+            MOZ_CRASH("GFX: long src memcpy");
         }
         if (src < bitmap) {
-            MOZ_CRASH("short src memcpy");
+            MOZ_CRASH("GFX: short src memcpy");
         }
         if (dst + n > bitmap + stride*height) {
-            MOZ_CRASH("long dst mempcy");
+            MOZ_CRASH("GFX: long dst mempcy");
         }
         if (dst < bitmap) {
-            MOZ_CRASH("short dst mempcy");
+            MOZ_CRASH("GFX: short dst mempcy");
         }
     }
 
@@ -1400,13 +1401,14 @@ ClientMultiTiledLayerBuffer::ValidateTile(TileClient& aTile,
  */
 static Maybe<LayerRect>
 GetCompositorSideCompositionBounds(const LayerMetricsWrapper& aScrollAncestor,
-                                   const Matrix4x4& aTransformToCompBounds,
+                                   const LayerToParentLayerMatrix4x4& aTransformToCompBounds,
                                    const ViewTransform& aAPZTransform,
                                    const LayerRect& aClip)
 {
-  Matrix4x4 transform = aTransformToCompBounds * Matrix4x4(aAPZTransform);
+  LayerToParentLayerMatrix4x4 transform = aTransformToCompBounds *
+      ViewAs<ParentLayerToParentLayerMatrix4x4>(aAPZTransform);
 
-  return UntransformTo<LayerPixel>(transform.Inverse(),
+  return UntransformBy(transform.Inverse(),
     aScrollAncestor.Metrics().GetCompositionBounds(), aClip);
 }
 

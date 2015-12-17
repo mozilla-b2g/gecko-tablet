@@ -409,8 +409,7 @@ function promiseStartExternalHelperAppServiceDownload(aSourceUrl) {
 
     let channel = NetUtil.newChannel({
       uri: sourceURI,
-      loadUsingSystemPrincipal: true,
-      securityFlags: Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL
+      loadUsingSystemPrincipal: true
     });
 
     // Start the actual download process.
@@ -533,7 +532,7 @@ function promiseNewList(aIsPrivate)
  */
 function promiseVerifyContents(aPath, aExpectedContents)
 {
-  return Task.spawn(function() {
+  return Task.spawn(function* () {
     let file = new FileUtils.File(aPath);
 
     if (!(yield OS.File.exists(aPath))) {

@@ -1352,7 +1352,7 @@
     "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": 16,
-    "description": "NPN Results (0=none, 1=negotiated, 2=no-overlap)"
+    "description": "NPN Results (0=none, 1=negotiated, 2=no-overlap, 3=selected(alpn))"
   },
   "SSL_RESUMED_SESSION": {
     "expires_in_version": "never",
@@ -1584,6 +1584,11 @@
     "kind": "enumerated",
     "n_values": 32,
     "description": "H2: goaway reason from peer from rfc 7540. 31 is none received."
+  },
+  "HTTP_CONNECTION_ENTRY_CACHE_HIT_1" : {
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "description": "Fraction of sockets that used a nsConnectionEntry with history - size 300."
   },
   "DISK_CACHE_CORRUPT_DETAILS": {
     "expires_in_version": "40",
@@ -4424,16 +4429,20 @@
     "description": "Windows only. Counts occurrences of touch events"
   },
   "FX_URLBAR_SELECTED_RESULT_INDEX": {
-    "expires_in_version": "45",
+    "alert_emails": ["mbonardo@mozilla.com"],
+    "expires_in_version": "50",
     "kind": "enumerated",
     "n_values": 17,
+    "bug_numbers": [775825],
     "description": "Firefox: The index of the selected result in the URL bar popup"
   },
   "FX_URLBAR_SELECTED_RESULT_TYPE": {
-    "expires_in_version": "45",
+    "alert_emails": ["mbonardo@mozilla.com"],
+    "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": 14,
-    "description": "Firefox: The type of the selected result in the URL bar popup"
+    "bug_numbers": [775825],
+    "description": "Firefox: The type of the selected result in the URL bar popup. See nsBrowserGlue.js::_handleURLBarTelemetry for the result types."
   },
   "INNERWINDOWS_WITH_MUTATION_LISTENERS": {
     "expires_in_version": "never",
@@ -5147,38 +5156,6 @@
     "n_values": 10,
     "description": "Track click count on about:newtab tiles per index (0-8). For non-default row or column configurations all clicks into the '9' bucket. *** No longer needed (bug 1156565). Delete histogram and accumulation code! ***"
   },
-  "PANORAMA_INITIALIZATION_TIME_MS": {
-    "expires_in_version": "40",
-    "kind": "exponential",
-    "high": "10000",
-    "n_buckets": 15,
-    "extended_statistics_ok": true,
-    "description": "Time it takes to initialize Panorama (ms) *** No longer needed (bug 1156565). Delete histogram and accumulation code! ***"
-  },
-  "PANORAMA_GROUPS_COUNT": {
-    "expires_in_version": "40",
-    "kind": "exponential",
-    "high": "25",
-    "n_buckets": 15,
-    "extended_statistics_ok": true,
-    "description": "Number of groups in Panorama *** No longer needed (bug 1156565). Delete histogram and accumulation code! ***"
-  },
-  "PANORAMA_STACKED_GROUPS_COUNT": {
-    "expires_in_version": "40",
-    "kind": "exponential",
-    "high": "25",
-    "n_buckets": 15,
-    "extended_statistics_ok": true,
-    "description": "Number of stacked groups in Panorama *** No longer needed (bug 1156565). Delete histogram and accumulation code! ***"
-  },
-  "PANORAMA_MEDIAN_TABS_IN_GROUPS_COUNT": {
-    "expires_in_version": "40",
-    "kind": "exponential",
-    "high": "100",
-    "n_buckets": 15,
-    "extended_statistics_ok": true,
-    "description": "Median of tabs in groups in Panorama"
-  },
   "BROWSERPROVIDER_XUL_IMPORT_TIME": {
     "expires_in_version": "40",
     "kind": "exponential",
@@ -5314,22 +5291,6 @@
      "high": 10000000,
      "n_buckets": 10,
      "description": "Whenever the same-process MessageManager cannot be sent through sendAsyncMessage as it would cause an OOM, the size of the message content, in kb."
-  },
-  "MISBEHAVING_ADDONS_CPOW_TIME_MS": {
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "low": 1,
-    "high": 10000,
-    "n_buckets": 20,
-    "keyed": true,
-    "description": "Time spent by an add-on performing blocking cross-process communications (ms, keyed by add-on ID, updated every 15s by default)"
-  },
-  "MISBEHAVING_ADDONS_JANK_LEVEL": {
-    "expires_in_version": "never",
-    "kind": "enumerated",
-    "n_values": 10,
-    "keyed": true,
-    "description": "Longest blocking operation performed by the add-on (log2(duration in ms), keyed by add-on, updated every 15s by default)"
   },
   "SLOW_ADDON_WARNING_STATES": {
     "expires_in_version": "never",
@@ -6323,6 +6284,13 @@
     "kind": "enumerated",
     "n_values": 256,
     "description": "WMF media decoder error or success (0) codes."
+  },
+  "MEDIA_OGG_LOADED_IS_CHAINED": {
+    "alert_emails": ["cpearce@mozilla.com"],
+    "expires_in_version": "53",
+    "kind": "boolean",
+    "description": "Whether Ogg audio/video encountered are chained or not.",
+    "bug_numbers": [1230295]
   },
   "VIDEO_CAN_CREATE_AAC_DECODER": {
     "alert_emails": ["cpearce@mozilla.com"],
@@ -8487,7 +8455,7 @@
   },
   "LOOP_TWO_WAY_MEDIA_CONN_LENGTH_1": {
     "alert_emails": ["firefox-dev@mozilla.org", "dmose@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "enumerated",
     "n_values": 8,
     "releaseChannelCollection": "opt-out",
@@ -8495,7 +8463,7 @@
   },
   "LOOP_SHARING_STATE_CHANGE_1": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "enumerated",
     "n_values": 8,
     "releaseChannelCollection": "opt-out",
@@ -8503,7 +8471,7 @@
   },
   "LOOP_SHARING_ROOM_URL": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "enumerated",
     "n_values": 8,
     "releaseChannelCollection": "opt-out",
@@ -8511,7 +8479,7 @@
   },
   "LOOP_ROOM_CREATE": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "enumerated",
     "n_values": 4,
     "releaseChannelCollection": "opt-out",
@@ -8519,7 +8487,7 @@
   },
   "LOOP_ROOM_DELETE": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "enumerated",
     "n_values": 4,
     "releaseChannelCollection": "opt-out",
@@ -8527,7 +8495,7 @@
   },
   "LOOP_ROOM_CONTEXT_ADD": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "enumerated",
     "n_values": 8,
     "releaseChannelCollection": "opt-out",
@@ -8535,14 +8503,14 @@
   },
   "LOOP_ROOM_CONTEXT_CLICK": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "count",
     "releaseChannelCollection": "opt-out",
     "description": "Number times room context is clicked to visit the attached URL"
   },
   "LOOP_ROOM_SESSION_WITHCHAT": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "count",
     "releaseChannelCollection": "opt-out",
     "description": "Number of sessions where at least one chat message was exchanged"
@@ -9260,12 +9228,6 @@
     "kind": "flag",
     "description": "Reports the state of the open external links in private tabs preference"
   },
-  "VIDEO_EME_DISABLED": {
-    "alert_emails": ["edwin@mozilla.com"],
-    "expires_in_version": "45",
-    "kind": "boolean",
-    "description": "Set if media.eme.enabled is false, in a build that supports the Adobe Primetime Content Decryption Module."
-  },
   "GRAPHICS_DRIVER_STARTUP_TEST": {
     "alert_emails": ["danderson@mozilla.com"],
     "expires_in_version": "never",
@@ -9563,6 +9525,20 @@
     "n_values": 7,
     "description": "The ICE connection state when the PC was closed"
   },
+  "LOOP_ICE_ON_TIME_TRICKLE_ARRIVAL_TIME": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "20",
+    "description": "The length of time (in milliseconds) that a trickle candidate took to arrive after the start of ICE, given that it arrived when ICE was not in a failure state (ie; a candidate that we could do something with, hence 'on time')"
+  },
+  "LOOP_ICE_LATE_TRICKLE_ARRIVAL_TIME": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "20",
+    "description": "The length of time (in milliseconds) that a trickle candidate took to arrive after the start of ICE, given that it arrived after ICE failed."
+  },
   "LOOP_ICE_SUCCESS_TIME": {
     "expires_in_version": "never",
     "kind": "exponential",
@@ -9803,6 +9779,24 @@
     "n_buckets": "20",
     "description": "Proportion (%) of reschedulings of the main process to another CPU during the execution of code inside a JS compartment. Updated while we are measuring jank."
   },
+  "PERF_MONITORING_SLOW_ADDON_JANK_US": {
+    "expires_in_version": "48",
+    "kind": "exponential",
+    "low": 1,
+    "high": 10000000,
+    "n_buckets": 20,
+    "keyed": true,
+    "description": "Contiguous time spent by an add-on blocking the main loop (microseconds, keyed by add-on ID)."
+  },
+  "PERF_MONITORING_SLOW_ADDON_CPOW_US": {
+    "expires_in_version": "48",
+    "kind": "exponential",
+    "low": 1,
+    "high": 10000000,
+    "n_buckets": 20,
+    "keyed": true,
+    "description": "Contiguous time spent by an add-on blocking the main loop by performing a blocking cross-process call (microseconds, keyed by add-on ID)."
+  },
   "VIDEO_EME_ADOBE_INSTALL_FAILED_REASON": {
     "alert_emails": ["edwin@mozilla.com"],
     "expires_in_version": "50",
@@ -9847,14 +9841,14 @@
   },
   "FXA_CONFIGURED": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "flag",
     "releaseChannelCollection": "opt-out",
     "description": "If the user is signed in to a Firefox Account on this device"
   },
   "FXA_UNVERIFIED_ACCOUNT_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9862,7 +9856,7 @@
   },
   "FXA_HAWK_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9870,7 +9864,7 @@
   },
   "FXA_SERVER_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9878,7 +9872,7 @@
   },
   "TOKENSERVER_AUTH_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9886,7 +9880,7 @@
   },
   "WEAVE_ENGINE_APPLY_NEW_FAILURES": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9894,7 +9888,7 @@
   },
   "WEAVE_ENGINE_APPLY_FAILURES": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9902,7 +9896,7 @@
   },
   "WEAVE_ENGINE_SYNC_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9910,21 +9904,21 @@
   },
   "WEAVE_CAN_FETCH_KEYS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "flag",
     "releaseChannelCollection": "opt-out",
     "description": "Whether Sync keys are present in account storage."
   },
   "WEAVE_FXA_KEY_FETCH_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "count",
     "releaseChannelCollection": "opt-out",
     "description": "Errors encountered fetching Sync keys, including network errors."
   },
   "WEAVE_STORAGE_AUTH_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
@@ -9932,7 +9926,7 @@
   },
   "WEAVE_HMAC_ERRORS": {
     "alert_emails": ["fx-team@mozilla.com"],
-    "expires_in_version": "46",
+    "expires_in_version": "47",
     "kind": "count",
     "releaseChannelCollection": "opt-out",
     "description": "Sync cryptoKeys collection HMAC mismatches."
@@ -10086,11 +10080,34 @@
     "releaseChannelCollection": "opt-out",
     "description": "Counts number of times a certain plugin has been activated."
   },
-  "YOUTUBE_EMBED_SEEN": {
-    "alert_emails": ["cpeterson@mozilla.com"],
-    "expires_in_version": "48",
-    "kind": "flag",
-    "description": "Flag activated whenever a youtube flash embed is seen during a session."
+  "SCROLL_LINKED_EFFECT_FOUND": {
+    "alert_emails": ["kgupta@mozilla.com"],
+    "bug_numbers": [1229052],
+    "expires_in_version": "50",
+    "kind": "boolean",
+    "description": "Attempt to determine prevalence of scroll-linked effects on the web."
+  },
+  "WEB_NOTIFICATION_CLICKED": {
+    "alert_emails": ["firefox-dev@mozilla.org"],
+    "bug_numbers": [1225336],
+    "expires_in_version": "50",
+    "kind": "count",
+    "description": "Count of times a web notification was clicked"
+  },
+  "WEB_NOTIFICATION_MENU": {
+    "alert_emails": ["firefox-dev@mozilla.org"],
+    "bug_numbers": [1225336],
+    "expires_in_version": "50",
+    "kind": "enumerated",
+    "n_values": 5,
+    "description": "Count of times a contextual menu item was used from a Notification (0: DND, 1: Disable, 2: Settings)"
+  },
+  "WEB_NOTIFICATION_SHOWN": {
+    "alert_emails": ["firefox-dev@mozilla.org"],
+    "bug_numbers": [1225336],
+    "expires_in_version": "50",
+    "kind": "count",
+    "description": "Count of times a Notification was rendered (accounting for XUL DND). A system backend may put the notification directly into the tray if its own DND is on."
   },
   "WEBFONT_DOWNLOAD_TIME": {
     "alert_emails": ["jdaggett@mozilla.com"],
@@ -10168,5 +10185,20 @@
     "kind": "boolean",
     "bug_numbers": [1188391],
     "description": "The number of ICE connections which immediately failed (0) vs. reached at least checking state (1)."
+  },
+  "YOUTUBE_REWRITABLE_EMBED_SEEN": {
+    "alert_emails": ["cpeterson@mozilla.com"],
+    "expires_in_version": "48",
+    "kind": "flag",
+    "bug_numbers": [1229971],
+    "description": "Flag activated whenever a rewritable youtube flash embed is seen during a session."
+  },
+  "PLUGIN_DRAWING_MODEL": {
+    "alert_emails": ["danderson@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "bug_numbers": [1229961],
+    "n_values": 12,
+    "description": "Plugin drawing model. 0 when windowed, otherwise NPDrawingModel + 1."
   }
 }

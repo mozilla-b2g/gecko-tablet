@@ -242,7 +242,7 @@ IonBuilder::spew(const char* message)
 static inline int32_t
 GetJumpOffset(jsbytecode* pc)
 {
-    MOZ_ASSERT(js_CodeSpec[JSOp(*pc)].type() == JOF_JUMP);
+    MOZ_ASSERT(CodeSpec[JSOp(*pc)].type() == JOF_JUMP);
     return GET_JUMP_OFFSET(pc);
 }
 
@@ -615,7 +615,8 @@ IonBuilder::analyzeNewLoopTypes(MBasicBlock* entry, jsbytecode* start, jsbytecod
             return true;
         }
     }
-    loopHeaders_.append(LoopHeader(start, entry));
+    if (!loopHeaders_.append(LoopHeader(start, entry)))
+        return false;
 
     jsbytecode* last = nullptr;
     jsbytecode* earlier = nullptr;
@@ -639,7 +640,7 @@ IonBuilder::analyzeNewLoopTypes(MBasicBlock* entry, jsbytecode* start, jsbytecod
         if (*last == JSOP_POS)
             last = earlier;
 
-        if (js_CodeSpec[*last].format & JOF_TYPESET) {
+        if (CodeSpec[*last].format & JOF_TYPESET) {
             TemporaryTypeSet* typeSet = bytecodeTypes(last);
             if (!typeSet->empty()) {
                 MIRType type = typeSet->getKnownMIRType();
@@ -1565,7 +1566,7 @@ IonBuilder::traverseBytecode()
         }
 #endif
 
-        pc += js_CodeSpec[op].length;
+        pc += CodeSpec[op].length;
         current->updateTrackedSite(bytecodeSite(pc));
     }
 
@@ -1880,6 +1881,7 @@ IonBuilder::inspectOpcode(JSOp op)
         return jsop_funapply(GET_ARGC(pc));
 
       case JSOP_CALL:
+      case JSOP_CALLITER:
       case JSOP_NEW:
       case JSOP_SUPERCALL:
         return jsop_call(GET_ARGC(pc), (JSOp)*pc == JSOP_NEW || (JSOp)*pc == JSOP_SUPERCALL);
@@ -1993,6 +1995,9 @@ IonBuilder::inspectOpcode(JSOp op)
       case JSOP_FUNCTIONTHIS:
         return jsop_functionthis();
 
+      case JSOP_GLOBALTHIS:
+        return jsop_globalthis();
+
       case JSOP_CALLEE: {
          MDefinition* callee = getCallee();
          current->push(callee);
@@ -2091,6 +2096,9 @@ IonBuilder::inspectOpcode(JSOp op)
       case JSOP_NEWTARGET:
         return jsop_newtarget();
 
+      case JSOP_CHECKOBJCOERCIBLE:
+        return jsop_checkobjcoercible();
+
 #ifdef DEBUG
       case JSOP_PUSHBLOCKSCOPE:
       case JSOP_FRESHENBLOCKSCOPE:
@@ -2111,7 +2119,7 @@ IonBuilder::inspectOpcode(JSOp op)
     // thing anyways.
     trackActionableAbort("Unsupported bytecode");
 #ifdef DEBUG
-    return abort("Unsupported opcode: %s", js_CodeName[op]);
+    return abort("Unsupported opcode: %s", CodeName[op]);
 #else
     return abort("Unsupported opcode: %d", op);
 #endif
@@ -2436,7 +2444,7 @@ IonBuilder::restartLoop(CFGState state)
 {
     spew("New types at loop header, restarting loop body");
 
-    if (js_JitOptions.limitScriptSize) {
+    if (JitOptions.limitScriptSize) {
         if (++numLoopRestarts_ >= MAX_LOOP_RESTARTS)
             return ControlStatus_Abort;
     }
@@ -2922,7 +2930,7 @@ IonBuilder::processBreak(JSOp op, jssrcnote* sn)
     MOZ_ASSERT(found);
 
     setCurrent(nullptr);
-    pc += js_CodeSpec[op].length;
+    pc += CodeSpec[op].length;
     return processControlEnd();
 }
 
@@ -2959,7 +2967,7 @@ IonBuilder::processContinue(JSOp op)
     state.loop.continues = new(alloc()) DeferredEdge(current, state.loop.continues);
 
     setCurrent(nullptr);
-    pc += js_CodeSpec[op].length;
+    pc += CodeSpec[op].length;
     return processControlEnd();
 }
 
@@ -2998,7 +3006,7 @@ IonBuilder::processSwitchBreak(JSOp op)
     *breaks = new(alloc()) DeferredEdge(current, *breaks);
 
     setCurrent(nullptr);
-    pc += js_CodeSpec[op].length;
+    pc += CodeSpec[op].length;
     return processControlEnd();
 }
 
@@ -3412,8 +3420,12 @@ IonBuilder::tableSwitch(JSOp op, jssrcnote* sn)
     MBasicBlock* defaultcase = newBlock(current, defaultpc);
     if (!defaultcase)
         return ControlStatus_Error;
-    tableswitch->addDefault(defaultcase);
-    tableswitch->addBlock(defaultcase);
+
+    if (!tableswitch->addDefault(defaultcase))
+        return ControlStatus_Error;
+
+    if (!tableswitch->addBlock(defaultcase))
+        return ControlStatus_Error;
 
     // Create cases
     jsbytecode* casepc = nullptr;
@@ -3441,14 +3453,22 @@ IonBuilder::tableSwitch(JSOp op, jssrcnote* sn)
             if (!caseblock)
                 return ControlStatus_Error;
 
-            tableswitch->addBlock(caseblock);
+            if (!tableswitch->addBlock(caseblock))
+                return ControlStatus_Error;
+
             // Add constant to indicate which case this is for use by
             // processNextTableSwitchCase.
             MConstant* constant = MConstant::New(alloc(), Int32Value(i + low));
             caseblock->add(constant);
         }
 
-        tableswitch->addCase(tableswitch->addSuccessor(caseblock));
+        size_t caseIndex;
+        if (!tableswitch->addSuccessor(caseblock, &caseIndex))
+            return ControlStatus_Error;
+
+        if (!tableswitch->addCase(caseIndex))
+            return ControlStatus_Error;
+
         pc2 += JUMP_OFFSET_LEN;
     }
 
@@ -4246,7 +4266,7 @@ IonBuilder::jsop_andor(JSOp op)
 {
     MOZ_ASSERT(op == JSOP_AND || op == JSOP_OR);
 
-    jsbytecode* rhsStart = pc + js_CodeSpec[op].length;
+    jsbytecode* rhsStart = pc + CodeSpec[op].length;
     jsbytecode* joinStart = pc + GetJumpOffset(pc);
     MOZ_ASSERT(joinStart > pc);
 
@@ -4308,7 +4328,7 @@ bool
 IonBuilder::jsop_ifeq(JSOp op)
 {
     // IFEQ always has a forward offset.
-    jsbytecode* trueStart = pc + js_CodeSpec[op].length;
+    jsbytecode* trueStart = pc + CodeSpec[op].length;
     jsbytecode* falseStart = pc + GetJumpOffset(pc);
     MOZ_ASSERT(falseStart > pc);
 
@@ -4785,7 +4805,7 @@ IonBuilder::arithTrySharedStub(bool* emitted, JSOp op,
 
     // Try to emit a shared stub cache.
 
-    if (js_JitOptions.disableSharedStubs)
+    if (JitOptions.disableSharedStubs)
         return true;
 
     // The actual jsop 'jsop_pos' is not supported yet.
@@ -5266,7 +5286,7 @@ IonBuilder::makeInliningDecision(JSObject* targetArg, CallInfo& callInfo)
     // Cap the inlining depth.
 
     uint32_t maxInlineDepth;
-    if (js_JitOptions.isSmallFunction(targetScript)) {
+    if (JitOptions.isSmallFunction(targetScript)) {
         maxInlineDepth = optimizationInfo().smallFunctionMaxInlineDepth();
     } else {
         maxInlineDepth = optimizationInfo().maxInlineDepth();
@@ -5382,7 +5402,7 @@ IonBuilder::selectInliningTargets(const ObjectVector& targets, CallInfo& callInf
             inlineable = false;
         }
 
-        choiceSet.append(inlineable);
+        choiceSet.infallibleAppend(inlineable);
         if (inlineable)
             *numInlineable += 1;
     }
@@ -5874,7 +5894,8 @@ IonBuilder::inlineCalls(CallInfo& callInfo, const ObjectVector& targets, BoolVec
 
         // Connect the inline path to the returnBlock.
         ObjectGroup* funcGroup = target->isSingleton() ? nullptr : target->group();
-        dispatch->addCase(target, funcGroup, inlineBlock);
+        if (!dispatch->addCase(target, funcGroup, inlineBlock))
+            return false;
 
         MDefinition* retVal = inlineReturnBlock->peek(-1);
         retPhi->addInput(retVal);
@@ -7017,7 +7038,7 @@ IonBuilder::compareTrySharedStub(bool* emitted, JSOp op, MDefinition* left, MDef
 
     // Try to emit a shared stub cache.
 
-    if (js_JitOptions.disableSharedStubs)
+    if (JitOptions.disableSharedStubs)
         return true;
 
     if (JSOp(*pc) == JSOP_CASE)
@@ -7733,7 +7754,7 @@ IonBuilder::insertRecompileCheck()
 {
     // No need for recompile checks if this is the highest optimization level.
     OptimizationLevel curLevel = optimizationInfo().level();
-    if (js_IonOptimizations.isLastLevel(curLevel))
+    if (IonOptimizations.isLastLevel(curLevel))
         return;
 
     // Add recompile check.
@@ -7744,8 +7765,8 @@ IonBuilder::insertRecompileCheck()
 
     // Add recompile check to recompile when the warm-up count reaches the
     // threshold of the next optimization level.
-    OptimizationLevel nextLevel = js_IonOptimizations.nextLevel(curLevel);
-    const OptimizationInfo* info = js_IonOptimizations.get(nextLevel);
+    OptimizationLevel nextLevel = IonOptimizations.nextLevel(curLevel);
+    const OptimizationInfo* info = IonOptimizations.get(nextLevel);
     uint32_t warmUpThreshold = info->compilerWarmUpThreshold(topBuilder->script());
     MRecompileCheck* check = MRecompileCheck::New(alloc(), topBuilder->script(), warmUpThreshold,
                                 MRecompileCheck::RecompileCheck_OptimizationLevel);
@@ -10292,6 +10313,31 @@ IonBuilder::jsop_rest()
     return true;
 }
 
+bool
+IonBuilder::jsop_checkobjcoercible()
+{
+    MDefinition* toCheck = current->peek(-1);
+
+    if (!toCheck->mightBeType(MIRType_Undefined) &&
+        !toCheck->mightBeType(MIRType_Null))
+    {
+        toCheck->setImplicitlyUsedUnchecked();
+        return true;
+    }
+
+    MOZ_ASSERT(toCheck->type() == MIRType_Value ||
+               toCheck->type() == MIRType_Null  ||
+               toCheck->type() == MIRType_Undefined);
+
+    // If we want to squeeze more perf here, we can throw without checking,
+    // if IsNullOrUndefined(toCheck->type()). Since this is a failure case,
+    // it should be OK.
+    MCheckObjCoercible* check = MCheckObjCoercible::New(alloc(), current->pop());
+    current->add(check);
+    current->push(check);
+    return resumeAfter(check);
+}
+
 uint32_t
 IonBuilder::getDefiniteSlot(TemporaryTypeSet* types, PropertyName* name, uint32_t* pnfixed)
 {
@@ -10938,6 +10984,11 @@ IonBuilder::jsop_getprop(PropertyName* name)
         trackOptimizationAttempt(TrackedStrategy::GetProp_InlineAccess);
         if (!getPropTryInlineAccess(&emitted, obj, name, barrier, types) || emitted)
             return emitted;
+
+        // Try to emit loads from a module namespace.
+        trackOptimizationAttempt(TrackedStrategy::GetProp_ModuleNamespace);
+        if (!getPropTryModuleNamespace(&emitted, obj, name, barrier, types) || emitted)
+            return emitted;
     }
 
     // Try to emit a polymorphic cache.
@@ -11396,6 +11447,49 @@ IonBuilder::getPropTryDefiniteSlot(bool* emitted, MDefinition* obj, PropertyName
     current->push(load);
 
     if (!pushTypeBarrier(load, types, barrier))
+        return false;
+
+    trackOptimizationSuccess();
+    *emitted = true;
+    return true;
+}
+
+bool
+IonBuilder::getPropTryModuleNamespace(bool* emitted, MDefinition* obj, PropertyName* name,
+                                      BarrierKind barrier, TemporaryTypeSet* types)
+{
+    MOZ_ASSERT(*emitted == false);
+
+    TemporaryTypeSet* objTypes = obj->resultTypeSet();
+    if (!objTypes) {
+        trackOptimizationOutcome(TrackedOutcome::NoTypeInfo);
+        return true;
+    }
+
+    JSObject* singleton = objTypes->maybeSingleton();
+    if (!singleton) {
+        trackOptimizationOutcome(TrackedOutcome::NotSingleton);
+        return true;
+    }
+
+    if (!singleton->is<ModuleNamespaceObject>()) {
+        trackOptimizationOutcome(TrackedOutcome::NotModuleNamespace);
+        return true;
+    }
+
+    ModuleNamespaceObject* ns = &singleton->as<ModuleNamespaceObject>();
+    ModuleEnvironmentObject* env;
+    Shape* shape;
+    if (!ns->bindings().lookup(NameToId(name), &env, &shape)) {
+        trackOptimizationOutcome(TrackedOutcome::UnknownProperty);
+        return true;
+    }
+
+    obj->setImplicitlyUsedUnchecked();
+    MConstant* envConst = constant(ObjectValue(*env));
+    uint32_t slot = shape->slot();
+    uint32_t nfixed = env->numFixedSlots();
+    if (!loadSlot(envConst, slot, nfixed, types->getKnownMIRType(), barrier, types))
         return false;
 
     trackOptimizationSuccess();
@@ -11907,7 +12001,7 @@ IonBuilder::getPropTrySharedStub(bool* emitted, MDefinition* obj)
 
     // Try to emit a shared stub cache.
 
-    if (js_JitOptions.disableSharedStubs)
+    if (JitOptions.disableSharedStubs)
         return true;
 
     MInstruction* stub = MUnarySharedStub::New(alloc(), obj);
@@ -12921,6 +13015,20 @@ IonBuilder::jsop_functionthis()
 }
 
 bool
+IonBuilder::jsop_globalthis()
+{
+    if (script()->hasNonSyntacticScope()) {
+        // Ion does not compile global scripts with a non-syntactic scope, but
+        // we can end up here when we're compiling an arrow function.
+        return abort("JSOP_GLOBALTHIS in script with non-syntactic scope");
+    }
+
+    ClonedBlockObject* globalLexical = &script()->global().lexicalScope();
+    pushConstant(globalLexical->thisValue());
+    return true;
+}
+
+bool
 IonBuilder::jsop_typeof()
 {
     MDefinition* input = current->pop();
@@ -12942,7 +13050,7 @@ IonBuilder::jsop_toid()
         return true;
 
     MDefinition* index = current->pop();
-    MToId* ins = MToId::New(alloc(), current->peek(-1), index);
+    MToId* ins = MToId::New(alloc(), index);
 
     current->add(ins);
     current->push(ins);
@@ -13506,6 +13614,14 @@ IonBuilder::addGuardReceiverPolymorphic(MDefinition* obj,
             return nullptr;
     }
 
+    return guard;
+}
+
+MInstruction*
+IonBuilder::addSharedTypedArrayGuard(MDefinition* obj)
+{
+    MGuardSharedTypedArray* guard = MGuardSharedTypedArray::New(alloc(), obj);
+    current->add(guard);
     return guard;
 }
 

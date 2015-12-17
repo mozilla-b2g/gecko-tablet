@@ -28,6 +28,7 @@
 #include "mozilla/StartupTimeline.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/unused.h"
+#include "Navigator.h"
 #include "URIUtils.h"
 
 #include "nsIContent.h"
@@ -3128,6 +3129,38 @@ nsDocShell::NameEquals(const char16_t* aName, bool* aResult)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsDocShell::GetCustomUserAgent(nsAString& aCustomUserAgent)
+{
+  aCustomUserAgent = mCustomUserAgent;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocShell::SetCustomUserAgent(const nsAString& aCustomUserAgent)
+{
+  mCustomUserAgent = aCustomUserAgent;
+  RefPtr<nsGlobalWindow> win = mScriptGlobal ?
+    mScriptGlobal->GetCurrentInnerWindowInternal() : nullptr;
+  if (win) {
+    ErrorResult ignored;
+    Navigator* navigator = win->GetNavigator(ignored);
+    ignored.SuppressException();
+    if (navigator) {
+      navigator->ClearUserAgentCache();
+    }
+  }
+
+  uint32_t childCount = mChildList.Length();
+  for (uint32_t i = 0; i < childCount; ++i) {
+    nsCOMPtr<nsIDocShell> childShell = do_QueryInterface(ChildAt(i));
+    if (childShell) {
+      childShell->SetCustomUserAgent(aCustomUserAgent);
+    }
+  }
+  return NS_OK;
+}
+
 /* virtual */ int32_t
 nsDocShell::ItemType()
 {
@@ -3255,6 +3288,7 @@ nsDocShell::SetDocLoaderParent(nsDocLoader* aParent)
   // If parent is another docshell, we inherit all their flags for
   // allowing plugins, scripting etc.
   bool value;
+  nsString customUserAgent;
   nsCOMPtr<nsIDocShell> parentAsDocShell(do_QueryInterface(parent));
   if (parentAsDocShell) {
     if (mAllowPlugins && NS_SUCCEEDED(parentAsDocShell->GetAllowPlugins(&value))) {
@@ -3283,6 +3317,10 @@ nsDocShell::SetDocLoaderParent(nsDocLoader* aParent)
     }
     if (parentAsDocShell->GetIsPrerendered()) {
       SetIsPrerendered(true);
+    }
+    if (NS_SUCCEEDED(parentAsDocShell->GetCustomUserAgent(customUserAgent)) &&
+        !customUserAgent.IsEmpty()) {
+      SetCustomUserAgent(customUserAgent);
     }
     if (NS_FAILED(parentAsDocShell->GetAllowDNSPrefetch(&value))) {
       value = false;
@@ -13486,7 +13524,7 @@ nsDocShell::OnLinkClickSync(nsIContent* aContent,
   // if per element referrer is enabled, the element referrer overrules
   // the document wide referrer
   if (IsElementAnchor(aContent)) {
-    net::ReferrerPolicy refPolEnum = aContent->AsElement()->GetReferrerPolicy();
+    net::ReferrerPolicy refPolEnum = aContent->AsElement()->GetReferrerPolicyAsEnum();
     if (refPolEnum != net::RP_Unset) {
       refererPolicy = refPolEnum;
     }
@@ -13745,6 +13783,13 @@ nsDocShell::SetIsSignedPackage(const nsAString& aSignedPkg)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsDocShell::SetUserContextId(uint32_t aUserContextId)
+{
+  mUserContextId = aUserContextId;
+  return NS_OK;
+}
+
 /* [infallible] */ NS_IMETHODIMP
 nsDocShell::GetIsBrowserElement(bool* aIsBrowser)
 {
@@ -13853,6 +13898,8 @@ nsDocShell::GetOriginAttributes()
   if (mOwnOrContainingAppId != nsIScriptSecurityManager::UNKNOWN_APP_ID) {
     attrs.mAppId = mOwnOrContainingAppId;
   }
+
+  attrs.mUserContextId = mUserContextId;
 
   if (mFrameType == eFrameTypeBrowser) {
     attrs.mInBrowser = true;
@@ -14154,6 +14201,11 @@ nsDocShell::ChannelIntercepted(nsIInterceptedChannel* aChannel,
     if (!doc) {
       return NS_ERROR_NOT_AVAILABLE;
     }
+  } else {
+    // For top-level navigations, save a document ID which will be passed to
+    // the FetchEvent as the clientId later on.
+    rv = nsIDocument::GenerateDocumentId(mInterceptedDocumentId);
+    NS_ENSURE_SUCCESS(rv, rv);
   }
 
   bool isReload = mLoadType & LOAD_CMD_RELOAD;
@@ -14167,7 +14219,8 @@ nsDocShell::ChannelIntercepted(nsIInterceptedChannel* aChannel,
 
   ErrorResult error;
   nsCOMPtr<nsIRunnable> runnable =
-    swm->PrepareFetchEvent(attrs, doc, aChannel, isReload, isSubresourceLoad, error);
+    swm->PrepareFetchEvent(attrs, doc, mInterceptedDocumentId, aChannel,
+                           isReload, isSubresourceLoad, error);
   if (NS_WARN_IF(error.Failed())) {
     return error.StealNSResult();
   }

@@ -18,7 +18,7 @@
 #endif
 
 #include "MainThreadUtils.h"
-#include "prprf.h"
+#include "mozilla/Snprintf.h"
 #include "prenv.h"
 #include "nsXPCOMPrivate.h"
 
@@ -545,7 +545,7 @@ AddAppDirToCommandLine(std::vector<std::string>& aCmdLine)
         nsString path;
         MOZ_ALWAYS_TRUE(NS_SUCCEEDED(appDir->GetPath(path)));
         aCmdLine.AppendLooseValue(UTF8ToWide("-appdir"));
-        std::wstring wpath = path.get();
+        std::wstring wpath(path.get());
         aCmdLine.AppendLooseValue(wpath);
 #else
         nsAutoCString path;
@@ -617,8 +617,7 @@ GeckoChildProcessHost::PerformAsyncLaunchInternal(std::vector<std::string>& aExt
   // send the child the PID so that it can open a ProcessHandle back to us.
   // probably don't want to do this in the long run
   char pidstring[32];
-  PR_snprintf(pidstring, sizeof(pidstring) - 1,
-	      "%ld", base::Process::Current().pid());
+  snprintf_literal(pidstring,"%d", base::Process::Current().pid());
 
   const char* const childProcessType =
       XRE_ChildProcessTypeToString(mProcessType);

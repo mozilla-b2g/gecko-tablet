@@ -96,6 +96,7 @@ class GlobalObject : public NativeObject
 
         /* One-off properties stored after slots for built-ins. */
         LEXICAL_SCOPE,
+        ITERATOR_PROTO,
         ARRAY_ITERATOR_PROTO,
         STRING_ITERATOR_PROTO,
         LEGACY_GENERATOR_OBJECT_PROTO,
@@ -107,6 +108,9 @@ class GlobalObject : public NativeObject
         COLLATOR_PROTO,
         NUMBER_FORMAT_PROTO,
         DATE_TIME_FORMAT_PROTO,
+        MODULE_PROTO,
+        IMPORT_ENTRY_PROTO,
+        EXPORT_ENTRY_PROTO,
         REGEXP_STATICS,
         WARNED_ONCE_FLAGS,
         RUNTIME_CODEGEN_ENABLED,
@@ -450,7 +454,7 @@ class GlobalObject : public NativeObject
 
     TypedObjectModuleObject& getTypedObjectModule() const;
 
-    JSObject* getIteratorPrototype() {
+    JSObject* getLegacyIteratorPrototype() {
         return &getPrototype(JSProto_Iterator).toObject();
     }
 
@@ -464,6 +468,18 @@ class GlobalObject : public NativeObject
 
     JSObject* getOrCreateDateTimeFormatPrototype(JSContext* cx) {
         return getOrCreateObject(cx, DATE_TIME_FORMAT_PROTO, initDateTimeFormatProto);
+    }
+
+    JSObject* getModulePrototype() {
+        return &getSlot(MODULE_PROTO).toObject();
+    }
+
+    JSObject* getImportEntryPrototype() {
+        return &getSlot(IMPORT_ENTRY_PROTO).toObject();
+    }
+
+    JSObject* getExportEntryPrototype() {
+        return &getSlot(EXPORT_ENTRY_PROTO).toObject();
     }
 
     static JSFunction*
@@ -494,13 +510,9 @@ class GlobalObject : public NativeObject
     }
 
   public:
-    static NativeObject* getOrCreateIteratorPrototype(JSContext* cx,
-                                                      Handle<GlobalObject*> global)
+    static NativeObject* getOrCreateIteratorPrototype(JSContext* cx, Handle<GlobalObject*> global)
     {
-        if (!ensureConstructor(cx, global, JSProto_Iterator))
-            return nullptr;
-        size_t slot = APPLICATION_SLOTS + JSProto_LIMIT + JSProto_Iterator;
-        return &global->getSlot(slot).toObject().as<NativeObject>();
+        return MaybeNativeObject(global->getOrCreateObject(cx, ITERATOR_PROTO, initIteratorProto));
     }
 
     static NativeObject* getOrCreateArrayIteratorPrototype(JSContext* cx, Handle<GlobalObject*> global)
@@ -663,6 +675,7 @@ class GlobalObject : public NativeObject
     bool valueIsEval(Value val);
 
     // Implemented in jsiter.cpp.
+    static bool initIteratorProto(JSContext* cx, Handle<GlobalObject*> global);
     static bool initArrayIteratorProto(JSContext* cx, Handle<GlobalObject*> global);
     static bool initStringIteratorProto(JSContext* cx, Handle<GlobalObject*> global);
 
@@ -679,6 +692,11 @@ class GlobalObject : public NativeObject
     static bool initCollatorProto(JSContext* cx, Handle<GlobalObject*> global);
     static bool initNumberFormatProto(JSContext* cx, Handle<GlobalObject*> global);
     static bool initDateTimeFormatProto(JSContext* cx, Handle<GlobalObject*> global);
+
+    // Implemented in builtin/ModuleObject.cpp
+    static bool initModuleProto(JSContext* cx, Handle<GlobalObject*> global);
+    static bool initImportEntryProto(JSContext* cx, Handle<GlobalObject*> global);
+    static bool initExportEntryProto(JSContext* cx, Handle<GlobalObject*> global);
 
     // Implemented in builtin/TypedObject.cpp
     static bool initTypedObjectModule(JSContext* cx, Handle<GlobalObject*> global);

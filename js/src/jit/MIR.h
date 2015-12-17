@@ -2536,11 +2536,11 @@ class MTableSwitch final
         return successors_.length();
     }
 
-    size_t addSuccessor(MBasicBlock* successor) {
+    bool addSuccessor(MBasicBlock* successor, size_t* index) {
         MOZ_ASSERT(successors_.length() < (size_t)(high_ - low_ + 2));
         MOZ_ASSERT(!successors_.empty());
-        successors_.append(successor);
-        return successors_.length() - 1;
+        *index = successors_.length();
+        return successors_.append(successor);
     }
 
     MBasicBlock* getSuccessor(size_t i) const override {
@@ -2581,14 +2581,15 @@ class MTableSwitch final
         return high() - low() + 1;
     }
 
-    size_t addDefault(MBasicBlock* block) {
+    bool addDefault(MBasicBlock* block, size_t* index = nullptr) {
         MOZ_ASSERT(successors_.empty());
-        successors_.append(block);
-        return 0;
+        if (index)
+            *index = 0;
+        return successors_.append(block);
     }
 
-    void addCase(size_t successorIndex) {
-        cases_.append(successorIndex);
+    bool addCase(size_t successorIndex) {
+        return cases_.append(successorIndex);
     }
 
     MBasicBlock* getBlock(size_t i) const {
@@ -2596,8 +2597,8 @@ class MTableSwitch final
         return blocks_[i];
     }
 
-    void addBlock(MBasicBlock* block) {
-        blocks_.append(block);
+    bool addBlock(MBasicBlock* block) {
+        return blocks_.append(block);
     }
 
     MDefinition* getOperand(size_t index) const override {
@@ -5371,11 +5372,11 @@ class MTypeOf
 };
 
 class MToId
-  : public MBinaryInstruction,
+  : public MUnaryInstruction,
     public BoxInputsPolicy::Data
 {
-    MToId(MDefinition* object, MDefinition* index)
-      : MBinaryInstruction(object, index)
+    explicit MToId(MDefinition* index)
+      : MUnaryInstruction(index)
     {
         setResultType(MIRType_Value);
     }
@@ -5383,8 +5384,8 @@ class MToId
   public:
     INSTRUCTION_HEADER(ToId)
 
-    static MToId* New(TempAllocator& alloc, MDefinition* object, MDefinition* index) {
-        return new(alloc) MToId(object, index);
+    static MToId* New(TempAllocator& alloc, MDefinition* index) {
+        return new(alloc) MToId(index);
     }
 };
 
@@ -7218,9 +7219,9 @@ class MAsmJSInterruptCheck
   : public MNullaryInstruction
 {
     Label* interruptExit_;
-    CallSiteDesc funcDesc_;
+    wasm::CallSiteDesc funcDesc_;
 
-    MAsmJSInterruptCheck(Label* interruptExit, const CallSiteDesc& funcDesc)
+    MAsmJSInterruptCheck(Label* interruptExit, const wasm::CallSiteDesc& funcDesc)
       : interruptExit_(interruptExit), funcDesc_(funcDesc)
     {}
 
@@ -7228,14 +7229,14 @@ class MAsmJSInterruptCheck
     INSTRUCTION_HEADER(AsmJSInterruptCheck)
 
     static MAsmJSInterruptCheck* New(TempAllocator& alloc, Label* interruptExit,
-                                     const CallSiteDesc& funcDesc)
+                                     const wasm::CallSiteDesc& funcDesc)
     {
         return new(alloc) MAsmJSInterruptCheck(interruptExit, funcDesc);
     }
     Label* interruptExit() const {
         return interruptExit_;
     }
-    const CallSiteDesc& funcDesc() const {
+    const wasm::CallSiteDesc& funcDesc() const {
         return funcDesc_;
     }
 };
@@ -10646,8 +10647,8 @@ class MDispatchInstruction
     }
 
   public:
-    void addCase(JSFunction* func, ObjectGroup* funcGroup, MBasicBlock* block) {
-        map_.append(Entry(func, funcGroup, block));
+    bool addCase(JSFunction* func, ObjectGroup* funcGroup, MBasicBlock* block) {
+        return map_.append(Entry(func, funcGroup, block));
     }
     uint32_t numCases() const {
         return map_.length();
@@ -13138,6 +13139,34 @@ class MAtomicIsLockFree
     ALLOW_CLONE(MAtomicIsLockFree)
 };
 
+// This applies to an object that is known to be a TypedArray, it bails out
+// if the obj does not map a SharedArrayBuffer.
+
+class MGuardSharedTypedArray
+  : public MUnaryInstruction,
+    public SingleObjectPolicy::Data
+{
+    explicit MGuardSharedTypedArray(MDefinition* obj)
+      : MUnaryInstruction(obj)
+    {
+        setGuard();
+        setMovable();
+    }
+
+public:
+    INSTRUCTION_HEADER(GuardSharedTypedArray)
+
+    static MGuardSharedTypedArray* New(TempAllocator& alloc, MDefinition* obj) {
+        return new(alloc) MGuardSharedTypedArray(obj);
+    }
+    MDefinition* obj() const {
+        return getOperand(0);
+    }
+    AliasSet getAliasSet() const override {
+        return AliasSet::None();
+    }
+};
+
 class MCompareExchangeTypedArrayElement
   : public MAryInstruction<4>,
     public Mix4Policy<ObjectPolicy<0>, IntPolicy<1>, TruncateToInt32Policy<2>, TruncateToInt32Policy<3>>::Data
@@ -13167,8 +13196,7 @@ class MCompareExchangeTypedArrayElement
     }
     bool isByteArray() const {
         return (arrayType_ == Scalar::Int8 ||
-                arrayType_ == Scalar::Uint8 ||
-                arrayType_ == Scalar::Uint8Clamped);
+                arrayType_ == Scalar::Uint8);
     }
     MDefinition* elements() {
         return getOperand(0);
@@ -13222,8 +13250,7 @@ class MAtomicExchangeTypedArrayElement
 
     bool isByteArray() const {
         return (arrayType_ == Scalar::Int8 ||
-                arrayType_ == Scalar::Uint8 ||
-                arrayType_ == Scalar::Uint8Clamped);
+                arrayType_ == Scalar::Uint8);
     }
     MDefinition* elements() {
         return getOperand(0);
@@ -13274,8 +13301,7 @@ class MAtomicTypedArrayElementBinop
 
     bool isByteArray() const {
         return (arrayType_ == Scalar::Int8 ||
-                arrayType_ == Scalar::Uint8 ||
-                arrayType_ == Scalar::Uint8Clamped);
+                arrayType_ == Scalar::Uint8);
     }
     AtomicOp operation() const {
         return op_;
@@ -13304,6 +13330,29 @@ class MDebugger : public MNullaryInstruction
 
     static MDebugger* New(TempAllocator& alloc) {
         return new(alloc) MDebugger();
+    }
+};
+
+class MCheckObjCoercible
+  : public MUnaryInstruction,
+    public BoxInputsPolicy::Data
+{
+    explicit MCheckObjCoercible(MDefinition* toCheck)
+      : MUnaryInstruction(toCheck)
+    {
+        setGuard();
+        setResultType(MIRType_Value);
+        setResultTypeSet(toCheck->resultTypeSet());
+    }
+
+  public:
+    INSTRUCTION_HEADER(CheckObjCoercible)
+    static MCheckObjCoercible* New(TempAllocator& alloc, MDefinition* toCheck) {
+        return new(alloc) MCheckObjCoercible(toCheck);
+    }
+
+    MDefinition* checkValue() {
+        return getOperand(0);
     }
 };
 
@@ -13771,26 +13820,26 @@ class MAsmJSCall final
         union {
             AsmJSInternalCallee internal_;
             MDefinition* dynamic_;
-            AsmJSImmKind builtin_;
+            wasm::Builtin builtin_;
         } u;
       public:
         Callee() {}
         explicit Callee(AsmJSInternalCallee callee) : which_(Internal) { u.internal_ = callee; }
         explicit Callee(MDefinition* callee) : which_(Dynamic) { u.dynamic_ = callee; }
-        explicit Callee(AsmJSImmKind callee) : which_(Builtin) { u.builtin_ = callee; }
+        explicit Callee(wasm::Builtin callee) : which_(Builtin) { u.builtin_ = callee; }
         Which which() const { return which_; }
         AsmJSInternalCallee internal() const { MOZ_ASSERT(which_ == Internal); return u.internal_; }
         MDefinition* dynamic() const { MOZ_ASSERT(which_ == Dynamic); return u.dynamic_; }
-        AsmJSImmKind builtin() const { MOZ_ASSERT(which_ == Builtin); return u.builtin_; }
+        wasm::Builtin builtin() const { MOZ_ASSERT(which_ == Builtin); return u.builtin_; }
     };
 
   private:
-    CallSiteDesc desc_;
+    wasm::CallSiteDesc desc_;
     Callee callee_;
     FixedList<AnyRegister> argRegs_;
     size_t spIncrement_;
 
-    MAsmJSCall(const CallSiteDesc& desc, Callee callee, size_t spIncrement)
+    MAsmJSCall(const wasm::CallSiteDesc& desc, Callee callee, size_t spIncrement)
      : desc_(desc), callee_(callee), spIncrement_(spIncrement)
     { }
 
@@ -13804,7 +13853,7 @@ class MAsmJSCall final
     };
     typedef Vector<Arg, 8, SystemAllocPolicy> Args;
 
-    static MAsmJSCall* New(TempAllocator& alloc, const CallSiteDesc& desc, Callee callee,
+    static MAsmJSCall* New(TempAllocator& alloc, const wasm::CallSiteDesc& desc, Callee callee,
                            const Args& args, MIRType resultType, size_t spIncrement);
 
     size_t numArgs() const {
@@ -13814,7 +13863,7 @@ class MAsmJSCall final
         MOZ_ASSERT(index < numArgs());
         return argRegs_[index];
     }
-    const CallSiteDesc& desc() const {
+    const wasm::CallSiteDesc& desc() const {
         return desc_;
     }
     Callee callee() const {

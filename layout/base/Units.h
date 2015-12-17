@@ -8,6 +8,7 @@
 #define MOZ_UNITS_H_
 
 #include "mozilla/gfx/Coord.h"
+#include "mozilla/gfx/Matrix.h"
 #include "mozilla/gfx/Point.h"
 #include "mozilla/gfx/Rect.h"
 #include "mozilla/gfx/ScaleFactor.h"
@@ -152,6 +153,14 @@ typedef gfx::ScaleFactors2D<ParentLayerPixel, LayerPixel> ParentLayerToLayerScal
 typedef gfx::ScaleFactors2D<ParentLayerPixel, ScreenPixel> ParentLayerToScreenScale2D;
 typedef gfx::ScaleFactors2D<ParentLayerPixel, ParentLayerPixel> ParentLayerToParentLayerScale2D;
 
+typedef gfx::Matrix4x4Typed<LayoutDevicePixel, LayoutDevicePixel> LayoutDeviceToLayoutDeviceMatrix4x4;
+typedef gfx::Matrix4x4Typed<LayerPixel, ParentLayerPixel> LayerToParentLayerMatrix4x4;
+typedef gfx::Matrix4x4Typed<ScreenPixel, ScreenPixel> ScreenToScreenMatrix4x4;
+typedef gfx::Matrix4x4Typed<ScreenPixel, ParentLayerPixel> ScreenToParentLayerMatrix4x4;
+typedef gfx::Matrix4x4Typed<ParentLayerPixel, LayerPixel> ParentLayerToLayerMatrix4x4;
+typedef gfx::Matrix4x4Typed<ParentLayerPixel, ScreenPixel> ParentLayerToScreenMatrix4x4;
+typedef gfx::Matrix4x4Typed<ParentLayerPixel, ParentLayerPixel> ParentLayerToParentLayerMatrix4x4;
+
 /*
  * The pixels that content authors use to specify sizes in.
  */
@@ -286,6 +295,13 @@ struct LayoutDevicePixel {
   static nsSize ToAppUnits(const LayoutDeviceSize& aSize, nscoord aAppUnitsPerDevPixel) {
     return nsSize(NSFloatPixelsToAppUnits(aSize.width, aAppUnitsPerDevPixel),
                   NSFloatPixelsToAppUnits(aSize.height, aAppUnitsPerDevPixel));
+  }
+
+  static nsRect ToAppUnits(const LayoutDeviceIntRect& aRect, nscoord aAppUnitsPerDevPixel) {
+    return nsRect(aRect.x * aAppUnitsPerDevPixel,
+                  aRect.y * aAppUnitsPerDevPixel,
+                  aRect.width * aAppUnitsPerDevPixel,
+                  aRect.height * aAppUnitsPerDevPixel);
   }
 
   static nsRect ToAppUnits(const LayoutDeviceRect& aRect, nscoord aAppUnitsPerDevPixel) {

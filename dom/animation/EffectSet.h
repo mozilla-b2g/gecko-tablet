@@ -45,6 +45,7 @@ public:
 
   static EffectSet* GetEffectSet(dom::Element* aElement,
                                  nsCSSPseudoElements::Type aPseudoType);
+  static EffectSet* GetEffectSet(const nsIFrame* aFrame);
   static EffectSet* GetOrCreateEffectSet(dom::Element* aElement,
                                          nsCSSPseudoElements::Type aPseudoType);
 
@@ -117,6 +118,7 @@ public:
   {
     return Iterator::EndIterator(mEffects.Iter());
   }
+  bool IsEmpty() const { return mEffects.IsEmpty(); }
 
   static nsIAtom** GetEffectSetPropertyAtoms();
 

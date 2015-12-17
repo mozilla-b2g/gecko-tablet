@@ -1,4 +1,4 @@
-FROM          taskcluster/ubuntu1204-test-upd:0.1.3.20151125000000
+FROM          taskcluster/ubuntu1204-test-upd:0.1.4.20151130132801
 MAINTAINER    Jonas Finnemann Jensen <jopsen@gmail.com>
 
 # Add utilities and configuration
@@ -38,6 +38,10 @@ RUN            chown -R root:root /home/worker
 
 # clean up
 RUN rm -Rf .cache && mkdir -p .cache
+
+# Disable Ubuntu update prompt
+# http://askubuntu.com/questions/515161/ubuntu-12-04-disable-release-notification-of-14-04-in-update-manager
+ADD release-upgrades /etc/update-manager/release-upgrades
 
 # Set a default command useful for debugging
 CMD ["/bin/bash", "--login"]

@@ -54,15 +54,6 @@ var ecmaGlobals =
     "RegExp",
     "Set",
     {name: "SharedArrayBuffer", nightly: true},
-    {name: "SharedInt8Array", nightly: true},
-    {name: "SharedUint8Array", nightly: true},
-    {name: "SharedUint8ClampedArray", nightly: true},
-    {name: "SharedInt16Array", nightly: true},
-    {name: "SharedUint16Array", nightly: true},
-    {name: "SharedInt32Array", nightly: true},
-    {name: "SharedUint32Array", nightly: true},
-    {name: "SharedFloat32Array", nightly: true},
-    {name: "SharedFloat64Array", nightly: true},
     {name: "SIMD", nightly: true},
     {name: "Atomics", nightly: true},
     "StopIteration",
@@ -176,7 +167,7 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "Response",
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    { name: "ServiceWorkerRegistration", b2g: false, release: false },
+    { name: "ServiceWorkerRegistration", b2g: false },
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "TextDecoder",
 // IMPORTANT: Do not change this list without review from a DOM peer!

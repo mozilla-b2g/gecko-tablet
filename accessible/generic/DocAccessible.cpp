@@ -1983,7 +1983,8 @@ DocAccessible::ValidateARIAOwned()
     nsTArray<RefPtr<Accessible> >* children = it.UserData();
 
     // Owner is about to die, put children back if applicable.
-    if (!owner->IsInDocument()) {
+    if (!mAccessibleCache.GetWeak(reinterpret_cast<void*>(owner)) ||
+        !owner->IsInDocument()) {
       PutChildrenBack(children, 0);
       it.Remove();
       continue;
@@ -2021,6 +2022,9 @@ void
 DocAccessible::DoARIAOwnsRelocation(Accessible* aOwner)
 {
   nsTArray<RefPtr<Accessible> >* children = mARIAOwnsHash.LookupOrAdd(aOwner);
+
+  MOZ_ASSERT(aOwner, "aOwner must be a valid pointer");
+  MOZ_ASSERT(aOwner->Elm(), "aOwner->Elm() must be a valid pointer");
 
   IDRefsIterator iter(this, aOwner->Elm(), nsGkAtoms::aria_owns);
   Accessible* child = nullptr;

@@ -209,7 +209,6 @@ loop.store = loop.store || {};
 
     /**
      * Executed when the user switches accounts.
-     *
      */
     _onRoomsRefresh: function() {
       this.dispatchAction(new sharedActions.UpdateRoomList({
@@ -340,7 +339,7 @@ loop.store = loop.store || {};
     emailRoomUrl: function(actionData) {
       var from = actionData.from;
       loop.shared.utils.composeCallUrlEmail(actionData.roomUrl, null,
-        actionData.roomDescription, from);
+        actionData.roomDescription);
 
       var bucket = this._constants.SHARING_ROOM_URL["EMAIL_FROM_" + (from || "").toUpperCase()];
       if (typeof bucket === "undefined") {
@@ -386,10 +385,8 @@ loop.store = loop.store || {};
 
     /**
      * Open the share panel to add a Social share provider.
-     *
-     * @param {sharedActions.AddSocialShareProvider} actionData The action data.
      */
-    addSocialShareProvider: function(actionData) {
+    addSocialShareProvider: function() {
       loop.request("AddSocialShareProvider");
     },
 
@@ -490,7 +487,7 @@ loop.store = loop.store || {};
         var roomData = {};
         var context = result.decryptedContext;
         var oldRoomName = context.roomName;
-        var newRoomName = actionData.newRoomName.trim();
+        var newRoomName = (actionData.newRoomName || "").trim();
         if (newRoomName && oldRoomName !== newRoomName) {
           roomData.roomName = newRoomName;
         }
@@ -499,10 +496,9 @@ loop.store = loop.store || {};
         // Since we want to prevent storing falsy (i.e. empty) values for context
         // data, there's no need to send that to the server as an update.
         var newRoomURL = loop.shared.utils.stripFalsyValues({
-          location: actionData.newRoomURL ? actionData.newRoomURL.trim() : "",
-          thumbnail: actionData.newRoomURL ? actionData.newRoomThumbnail.trim() : "",
-          description: actionData.newRoomDescription ?
-            actionData.newRoomDescription.trim() : ""
+          location: (actionData.newRoomURL || "").trim(),
+          thumbnail: (actionData.newRoomThumbnail || "").trim(),
+          description: (actionData.newRoomDescription || "").trim()
         });
         // Only attach a context to the room when
         // 1) there was already a URL set,

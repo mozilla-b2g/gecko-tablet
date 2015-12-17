@@ -109,10 +109,12 @@ GLBlitHelper::InitTexQuadProgram(BlitType target)
     ";
 
     const char kTex2DBlit_FragShaderSource[] = "\
+        #ifdef GL_ES                                        \n\
         #ifdef GL_FRAGMENT_PRECISION_HIGH                   \n\
             precision highp float;                          \n\
         #else                                               \n\
-            prevision mediump float;                        \n\
+            precision mediump float;                        \n\
+        #endif                                              \n\
         #endif                                              \n\
         uniform sampler2D uTexUnit;                         \n\
                                                             \n\
@@ -955,7 +957,7 @@ GLBlitHelper::DrawBlitTextureToFramebuffer(GLuint srcTex, GLuint destFB,
         type = BlitTexRect;
         break;
     default:
-        MOZ_CRASH("Fatal Error: Bad `srcTarget`.");
+        MOZ_CRASH("GFX: Fatal Error: Bad `srcTarget`.");
         break;
     }
 

@@ -266,7 +266,9 @@ public:
   virtual RenderedText GetRenderedText(uint32_t aStartOffset = 0,
                                        uint32_t aEndOffset = UINT32_MAX,
                                        TextOffsetType aOffsetType =
-                                           TextOffsetType::OFFSETS_IN_CONTENT_TEXT) override;
+                                           TextOffsetType::OFFSETS_IN_CONTENT_TEXT,
+                                       TrailingWhitespace aTrimTrailingWhitespace =
+                                           TrailingWhitespace::TRIM_TRAILING_WHITESPACE) override;
 
   nsOverflowAreas RecomputeOverflow(nsIFrame* aBlockFrame);
 
@@ -444,6 +446,7 @@ public:
                          mozilla::WritingMode aWM,
                          const gfxPoint& aTextBaselinePt,
                          uint32_t aOffset, uint32_t aLength,
+                         const nscolor* aDecorationOverrideColor,
                          PropertyProvider& aProvider);
 
   virtual nscolor GetCaretColorAt(int32_t aOffset) override;

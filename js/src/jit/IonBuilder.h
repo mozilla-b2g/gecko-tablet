@@ -399,6 +399,7 @@ class IonBuilder
     MInstruction* addShapeGuard(MDefinition* obj, Shape* const shape, BailoutKind bailoutKind);
     MInstruction* addGroupGuard(MDefinition* obj, ObjectGroup* group, BailoutKind bailoutKind);
     MInstruction* addUnboxedExpandoGuard(MDefinition* obj, bool hasExpando, BailoutKind bailoutKind);
+    MInstruction* addSharedTypedArrayGuard(MDefinition* obj);
 
     MInstruction*
     addGuardReceiverPolymorphic(MDefinition* obj, const BaselineInspector::ReceiverVector& receivers);
@@ -432,6 +433,8 @@ class IonBuilder
     bool getPropTryConstant(bool* emitted, MDefinition* obj, jsid id, TemporaryTypeSet* types);
     bool getPropTryDefiniteSlot(bool* emitted, MDefinition* obj, PropertyName* name,
                                 BarrierKind barrier, TemporaryTypeSet* types);
+    bool getPropTryModuleNamespace(bool* emitted, MDefinition* obj, PropertyName* name,
+                                   BarrierKind barrier, TemporaryTypeSet* types);
     bool getPropTryUnboxed(bool* emitted, MDefinition* obj, PropertyName* name,
                            BarrierKind barrier, TemporaryTypeSet* types);
     bool getPropTryCommonGetter(bool* emitted, MDefinition* obj, PropertyName* name,
@@ -720,6 +723,7 @@ class IonBuilder
     bool jsop_lambda(JSFunction* fun);
     bool jsop_lambda_arrow(JSFunction* fun);
     bool jsop_functionthis();
+    bool jsop_globalthis();
     bool jsop_typeof();
     bool jsop_toid();
     bool jsop_iter(uint8_t flags);
@@ -733,6 +737,7 @@ class IonBuilder
     bool jsop_setaliasedvar(ScopeCoordinate sc);
     bool jsop_debugger();
     bool jsop_newtarget();
+    bool jsop_checkobjcoercible();
 
     /* Inlining. */
 
@@ -928,6 +933,7 @@ class IonBuilder
     };
 
     bool atomicsMeetsPreconditions(CallInfo& callInfo, Scalar::Type* arrayElementType,
+                                   bool* requiresDynamicCheck,
                                    AtomicCheckResult checkResult=DoCheckAtomicResult);
     void atomicsCheckBounds(CallInfo& callInfo, MInstruction** elements, MDefinition** index);
 
@@ -1263,7 +1269,7 @@ class IonBuilder
     }
 
     bool forceInlineCaches() {
-        return MOZ_UNLIKELY(js_JitOptions.forceInlineCaches);
+        return MOZ_UNLIKELY(JitOptions.forceInlineCaches);
     }
 
     // Out-of-line variants that don't check if optimization tracking is
