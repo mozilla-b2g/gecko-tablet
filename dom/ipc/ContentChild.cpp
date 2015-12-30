@@ -199,6 +199,7 @@
 #include "GMPDecoderModule.h"
 #include "gfxPlatform.h"
 #include "nscore.h" // for NS_FREE_PERMANENT_DATA
+#include "VRManagerChild.h"
 
 using namespace mozilla;
 using namespace mozilla::docshell;
@@ -1260,6 +1261,13 @@ ContentChild::AllocPImageBridgeChild(mozilla::ipc::Transport* aTransport,
     return ImageBridgeChild::StartUpInChildProcess(aTransport, aOtherProcess);
 }
 
+gfx::PVRManagerChild*
+ContentChild::AllocPVRManagerChild(Transport* aTransport,
+                                   ProcessId aOtherProcess)
+{
+  return gfx::VRManagerChild::StartUpInChildProcess(aTransport, aOtherProcess);
+}
+
 PBackgroundChild*
 ContentChild::AllocPBackgroundChild(Transport* aTransport,
                                     ProcessId aOtherProcess)
@@ -1723,7 +1731,7 @@ ContentChild::DeallocPTestShellChild(PTestShellChild* shell)
 jsipc::CPOWManager*
 ContentChild::GetCPOWManager()
 {
-    if (PJavaScriptChild* c = LoneManagedOrNull(ManagedPJavaScriptChild())) {
+    if (PJavaScriptChild* c = LoneManagedOrNullAsserts(ManagedPJavaScriptChild())) {
         return CPOWManagerFor(c);
     }
     return CPOWManagerFor(SendPJavaScriptConstructor());
@@ -2226,7 +2234,7 @@ ContentChild::ProcessingError(Result aCode, const char* aReason)
     }
 
 #if defined(MOZ_CRASHREPORTER) && !defined(MOZ_B2G)
-    if (PCrashReporterChild* c = LoneManagedOrNull(ManagedPCrashReporterChild())) {
+    if (PCrashReporterChild* c = LoneManagedOrNullAsserts(ManagedPCrashReporterChild())) {
         CrashReporterChild* crashReporter =
             static_cast<CrashReporterChild*>(c);
         nsDependentCString reason(aReason);

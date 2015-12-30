@@ -26,6 +26,7 @@
 
 #include "jsscriptinlines.h"
 
+#include "jit/BaselineFrameInfo-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "vm/Interpreter-inl.h"
 #include "vm/NativeObject-inl.h"
@@ -238,13 +239,11 @@ BaselineCompiler::compile()
 
     // All barriers are emitted off-by-default, toggle them on if needed.
     if (cx->zone()->needsIncrementalBarrier())
-        baselineScript->toggleBarriers(true);
+        baselineScript->toggleBarriers(true, DontReprotect);
 
     // If profiler instrumentation is enabled, toggle instrumentation on.
     if (cx->runtime()->jitRuntime()->isProfilerInstrumentationEnabled(cx->runtime()))
         baselineScript->toggleProfilerInstrumentation(true);
-
-    AutoWritableJitCode awjc(code);
 
     // Patch IC loads using IC entries.
     for (size_t i = 0; i < icLoadLabels_.length(); i++) {
@@ -2259,6 +2258,26 @@ BaselineCompiler::emit_JSOP_BINDGNAME()
     return emit_JSOP_BINDNAME();
 }
 
+typedef JSObject* (*BindVarFn)(JSContext*, HandleObject);
+static const VMFunction BindVarInfo = FunctionInfo<BindVarFn>(jit::BindVar);
+
+bool
+BaselineCompiler::emit_JSOP_BINDVAR()
+{
+    frame.syncStack(0);
+    masm.loadPtr(frame.addressOfScopeChain(), R0.scratchReg());
+
+    prepareVMCall();
+    pushArg(R0.scratchReg());
+
+    if (!callVM(BindVarInfo))
+        return false;
+
+    masm.tagValue(JSVAL_TYPE_OBJECT, ReturnReg, R0);
+    frame.push(R0);
+    return true;
+}
+
 bool
 BaselineCompiler::emit_JSOP_SETPROP()
 {
@@ -4241,3 +4260,22 @@ BaselineCompiler::emit_JSOP_RESUME()
     return true;
 }
 
+typedef bool (*CheckSelfHostedFn)(JSContext*, HandleValue);
+static const VMFunction CheckSelfHostedInfo = FunctionInfo<CheckSelfHostedFn>(js::Debug_CheckSelfHosted);
+
+bool
+BaselineCompiler::emit_JSOP_DEBUGCHECKSELFHOSTED()
+{
+#ifdef DEBUG
+    frame.syncStack(0);
+
+    masm.loadValue(frame.addressOfStackValue(frame.peek(-1)), R0);
+
+    prepareVMCall();
+    pushArg(R0);
+    if (!callVM(CheckSelfHostedInfo))
+        return false;
+#endif
+    return true;
+
+}

@@ -2965,6 +2965,11 @@ nsCookieService::GetCookieStringInternal(nsIURI *aHostURI,
     break;
   }
 
+  // Note: The following permissions logic is mirrored in
+  // toolkit/modules/addons/MatchPattern.jsm:MatchPattern.matchesCookie().
+  // If it changes, please update that function, or file a bug for someone
+  // else to do so.
+
   // check if aHostURI is using an https secure protocol.
   // if it isn't, then we can't send a secure cookie over the connection.
   // if SchemeIs fails, assume an insecure connection, to be on the safe side
@@ -3171,7 +3176,13 @@ nsCookieService::SetCookieInternal(nsIURI                        *aHostURI,
     return newCookie;
   }
 
-  if (cookieAttributes.name.Contains('\t')) {
+  const char illegalNameCharacters[] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+                                         0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+                                         0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12,
+                                         0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+                                         0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E,
+                                         0x1F, 0x20, 0x00 };
+  if (cookieAttributes.name.FindCharInSet(illegalNameCharacters, 0) != -1) {
     COOKIE_LOGFAILURE(SET_COOKIE, aHostURI, savedCookieHeader, "invalid name character");
     return newCookie;
   }
@@ -3826,6 +3837,11 @@ nsCookieService::CheckDomain(nsCookieAttributes &aCookieAttributes,
                              const nsCString    &aBaseDomain,
                              bool                aRequireHostMatch)
 {
+  // Note: The logic in this function is mirrored in
+  // toolkit/components/extensions/ext-cookies.js:checkSetCookiePermissions().
+  // If it changes, please update that function, or file a bug for someone
+  // else to do so.
+
   // get host from aHostURI
   nsAutoCString hostFromURI;
   aHostURI->GetAsciiHost(hostFromURI);

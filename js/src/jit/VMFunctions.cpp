@@ -34,8 +34,7 @@ using namespace js::jit;
 namespace js {
 namespace jit {
 
-// Don't explicitly initialize, it's not guaranteed that this initializer will
-// run before the constructors for static VMFunctions.
+// Statics are initialized to null.
 /* static */ VMFunction* VMFunction::functions;
 
 AutoDetectInvalidation::AutoDetectInvalidation(JSContext* cx, MutableHandleValue rval)
@@ -48,11 +47,6 @@ AutoDetectInvalidation::AutoDetectInvalidation(JSContext* cx, MutableHandleValue
 void
 VMFunction::addToFunctions()
 {
-    static bool initialized = false;
-    if (!initialized) {
-        initialized = true;
-        functions = nullptr;
-    }
     this->next = functions;
     functions = this;
 }
@@ -167,14 +161,21 @@ CheckOverRecursedWithExtra(JSContext* cx, BaselineFrame* frame,
     return cx->runtime()->handleInterrupt(cx);
 }
 
+JSObject*
+BindVar(JSContext* cx, HandleObject scopeChain)
+{
+    JSObject* obj = scopeChain;
+    while (!obj->isQualifiedVarObj())
+        obj = obj->enclosingScope();
+    MOZ_ASSERT(obj);
+    return obj;
+}
+
 bool
 DefVar(JSContext* cx, HandlePropertyName dn, unsigned attrs, HandleObject scopeChain)
 {
     // Given the ScopeChain, extract the VarObj.
-    RootedObject obj(cx, scopeChain);
-    while (!obj->isQualifiedVarObj())
-        obj = obj->enclosingScope();
-
+    RootedObject obj(cx, BindVar(cx, scopeChain));
     return DefVarOperation(cx, obj, dn, attrs);
 }
 
@@ -185,10 +186,7 @@ DefLexical(JSContext* cx, HandlePropertyName dn, unsigned attrs, HandleObject sc
     Rooted<ClonedBlockObject*> lexical(cx, &NearestEnclosingExtensibleLexicalScope(scopeChain));
 
     // Find the variables object.
-    RootedObject varObj(cx, scopeChain);
-    while (!varObj->isQualifiedVarObj())
-        varObj = varObj->enclosingScope();
-
+    RootedObject varObj(cx, BindVar(cx, scopeChain));
     return DefLexicalOperation(cx, lexical, varObj, dn, attrs);
 }
 
@@ -382,40 +380,14 @@ ArrayConcatDense(JSContext* cx, HandleObject obj1, HandleObject obj2, HandleObje
 JSString*
 ArrayJoin(JSContext* cx, HandleObject array, HandleString sep)
 {
-    // The annotations in this function follow the first steps of join
-    // specified in ES5.
-
-    // Step 1
-    RootedObject obj(cx, array);
-    if (!obj)
+    JS::AutoValueArray<3> argv(cx);
+    argv[0].setUndefined();
+    argv[1].setObject(*array);
+    argv[2].setString(sep);
+    if (!js::array_join(cx, 1, argv.begin()))
         return nullptr;
-
-    AutoCycleDetector detector(cx, obj);
-    if (!detector.init())
-        return nullptr;
-
-    if (detector.foundCycle())
-        return nullptr;
-
-    // Steps 2 and 3
-    uint32_t length;
-    if (!GetLengthProperty(cx, obj, &length))
-        return nullptr;
-
-    // Steps 4 and 5
-    RootedLinearString sepstr(cx);
-    if (sep) {
-        sepstr = sep->ensureLinear(cx);
-        if (!sepstr)
-            return nullptr;
-    } else {
-        sepstr = cx->names().comma;
-    }
-
-    // Step 6 to 11
-    return js::ArrayJoin<false>(cx, obj, sepstr, length);
+    return argv[0].toString();
 }
-
 
 bool
 CharCodeAt(JSContext* cx, HandleString str, int32_t index, uint32_t* code)
@@ -481,9 +453,9 @@ InterruptCheck(JSContext* cx)
     gc::MaybeVerifyBarriers(cx);
 
     {
-        JitRuntime* jrt = cx->runtime()->jitRuntime();
-        JitRuntime::AutoMutateBackedges amb(jrt);
-        jrt->patchIonBackedges(cx->runtime(), JitRuntime::BackedgeLoopHeader);
+        JSRuntime* rt = cx->runtime();
+        JitRuntime::AutoPreventBackedgePatching apbp(rt);
+        rt->jitRuntime()->patchIonBackedges(rt, JitRuntime::BackedgeLoopHeader);
     }
 
     return CheckForInterrupt(cx);
@@ -853,9 +825,8 @@ bool
 InitGlobalOrEvalScopeObjects(JSContext* cx, BaselineFrame* frame)
 {
     RootedScript script(cx, frame->script());
-    RootedObject varObj(cx, frame->scopeChain());
-    while (!varObj->isQualifiedVarObj())
-        varObj = varObj->enclosingScope();
+    RootedObject scopeChain(cx, frame->scopeChain());
+    RootedObject varObj(cx, BindVar(cx, scopeChain));
 
     if (script->isForEval()) {
         // Strict eval needs its own call object.
@@ -866,13 +837,12 @@ InitGlobalOrEvalScopeObjects(JSContext* cx, BaselineFrame* frame)
             if (!frame->initStrictEvalScopeObjects(cx))
                 return false;
         } else {
-            RootedObject scopeChain(cx, frame->scopeChain());
             if (!CheckEvalDeclarationConflicts(cx, script, scopeChain, varObj))
                 return false;
         }
     } else {
         Rooted<ClonedBlockObject*> lexicalScope(cx,
-            &NearestEnclosingExtensibleLexicalScope(frame->scopeChain()));
+            &NearestEnclosingExtensibleLexicalScope(scopeChain));
         if (!CheckGlobalDeclarationConflicts(cx, script, lexicalScope, varObj))
             return false;
     }

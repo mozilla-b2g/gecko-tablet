@@ -171,6 +171,8 @@ public class AccountLoader extends AsyncTaskLoader<Account> {
     intentFilter.addAction(AccountManager.LOGIN_ACCOUNTS_CHANGED_ACTION);
     // Firefox Account internal state changed.
     intentFilter.addAction(FxAccountConstants.ACCOUNT_STATE_CHANGED_ACTION);
+    // Firefox Account profile state changed.
+    intentFilter.addAction(FxAccountConstants.ACCOUNT_PROFILE_JSON_UPDATED_ACTION);
 
     // null means: "the main thread of the process will be used." We must call
     // onContentChanged on the main thread of the process; this ensures we do.

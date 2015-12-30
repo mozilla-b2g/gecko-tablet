@@ -68,7 +68,7 @@ OmxDataDecoder::OmxDataDecoder(const TrackInfo& aTrackInfo,
   , mOmxState(OMX_STATETYPE::OMX_StateInvalid, "OmxDataDecoder::mOmxState")
   , mTrackInfo(aTrackInfo.Clone())
   , mFlushing(false)
-  , mShutdown(false)
+  , mShuttingDown(false)
   , mCheckingInputExhausted(false)
   , mPortSettingsChanged(-1, "OmxDataDecoder::mPortSettingsChanged")
   , mAudioCompactor(mAudioQueue)
@@ -86,7 +86,6 @@ OmxDataDecoder::~OmxDataDecoder()
 {
   LOG("(%p)", this);
   mWatchManager.Shutdown();
-  mOmxTaskQueue->AwaitShutdownAndIdle();
 }
 
 void
@@ -207,11 +206,24 @@ OmxDataDecoder::Shutdown()
 {
   LOG("(%p)", this);
 
-  mShutdown = true;
+  mShuttingDown = true;
 
   nsCOMPtr<nsIRunnable> r =
     NS_NewRunnableMethod(this, &OmxDataDecoder::DoAsyncShutdown);
   mOmxTaskQueue->Dispatch(r.forget());
+
+  {
+    // DoAsyncShutdown() will be running for a while, it could be still running
+    // when reader releasing the decoder and then it causes problem. To avoid it,
+    // Shutdown() must block until DoAsyncShutdown() is completed.
+    MonitorAutoLock lock(mMonitor);
+    while (mShuttingDown) {
+      lock.Wait();
+    }
+  }
+
+  mOmxTaskQueue->BeginShutdown();
+  mOmxTaskQueue->AwaitShutdownAndIdle();
 
   return NS_OK;
 }
@@ -226,23 +238,12 @@ OmxDataDecoder::DoAsyncShutdown()
   mWatchManager.Unwatch(mOmxState, &OmxDataDecoder::OmxStateRunner);
   mWatchManager.Unwatch(mPortSettingsChanged, &OmxDataDecoder::PortSettingsChanged);
 
-  // Do flush so all port can be returned to client.
+  // Flush to all ports, so all buffers can be returned from component.
   RefPtr<OmxDataDecoder> self = this;
   mOmxLayer->SendCommand(OMX_CommandFlush, OMX_ALL, nullptr)
     ->Then(mOmxTaskQueue, __func__,
            [self] () -> RefPtr<OmxCommandPromise> {
-             LOG("DoAsyncShutdown: flush complete, collecting buffers...");
-             self->CollectBufferPromises(OMX_DirMax)
-               ->Then(self->mOmxTaskQueue, __func__,
-                   [self] () {
-                     LOG("DoAsyncShutdown: releasing all buffers.");
-                     self->ReleaseBuffers(OMX_DirInput);
-                     self->ReleaseBuffers(OMX_DirOutput);
-                   },
-                   [self] () {
-                     self->mOmxLayer->Shutdown();
-                   });
-
+             LOG("DoAsyncShutdown: flush complete");
              return self->mOmxLayer->SendCommand(OMX_CommandStateSet, OMX_StateIdle, nullptr);
            },
            [self] () {
@@ -251,8 +252,30 @@ OmxDataDecoder::DoAsyncShutdown()
     ->CompletionPromise()
     ->Then(mOmxTaskQueue, __func__,
            [self] () -> RefPtr<OmxCommandPromise> {
-             LOG("DoAsyncShutdown: OMX_StateIdle");
-             return self->mOmxLayer->SendCommand(OMX_CommandStateSet, OMX_StateLoaded, nullptr);
+             RefPtr<OmxCommandPromise> p =
+               self->mOmxLayer->SendCommand(OMX_CommandStateSet, OMX_StateLoaded, nullptr);
+
+             LOG("DoAsyncShutdown: collecting buffers...");
+             self->CollectBufferPromises(OMX_DirMax)
+               ->Then(self->mOmxTaskQueue, __func__,
+                   [self] () {
+                   // According to spec 3.1.1.2.2.1:
+                   // OMX_StateLoaded needs to be sent before releasing buffers.
+                   // And state transition from OMX_StateIdle to OMX_StateLoaded
+                   // is completed when all of the buffers have been removed
+                   // from the component.
+                   // Here the buffer promises are not resolved due to displaying
+                   // in layer, it needs to wait before the layer returns the
+                   // buffers.
+                   LOG("DoAsyncShutdown: all buffers collected, releasing buffers...");
+                   self->ReleaseBuffers(OMX_DirInput);
+                   self->ReleaseBuffers(OMX_DirOutput);
+                   },
+                   [self] () {
+                     self->mOmxLayer->Shutdown();
+                   });
+
+             return p;
            },
            [self] () {
              self->mOmxLayer->Shutdown();
@@ -262,9 +285,17 @@ OmxDataDecoder::DoAsyncShutdown()
            [self] () {
              LOG("DoAsyncShutdown: OMX_StateLoaded, it is safe to shutdown omx");
              self->mOmxLayer->Shutdown();
+
+             MonitorAutoLock lock(self->mMonitor);
+             self->mShuttingDown = false;
+             self->mMonitor.Notify();
            },
            [self] () {
              self->mOmxLayer->Shutdown();
+
+             MonitorAutoLock lock(self->mMonitor);
+             self->mShuttingDown = false;
+             self->mMonitor.Notify();
            });
 }
 
@@ -389,12 +420,8 @@ OmxDataDecoder::FillAndEmptyBuffers()
   MOZ_ASSERT(mOmxTaskQueue->IsCurrentThreadIn());
   MOZ_ASSERT(mOmxState == OMX_StateExecuting);
 
-  // During the port setting changed, it is forbided to do any buffer operations.
-  if (mPortSettingsChanged != -1 || mShutdown) {
-    return;
-  }
-
-  if (mFlushing) {
+  // During the port setting changed, it is forbidden to do any buffer operation.
+  if (mPortSettingsChanged != -1 || mShuttingDown || mFlushing) {
     return;
   }
 
@@ -831,7 +858,6 @@ OmxDataDecoder::DoFlush()
 
   // 1. Call OMX command OMX_CommandFlush in Omx TaskQueue.
   // 2. Remove all elements in mMediaRawDatas when flush is completed.
-  RefPtr<OmxDataDecoder> self = this;
   mOmxLayer->SendCommand(OMX_CommandFlush, OMX_ALL, nullptr)
     ->Then(mOmxTaskQueue, __func__, this,
            &OmxDataDecoder::FlushComplete,

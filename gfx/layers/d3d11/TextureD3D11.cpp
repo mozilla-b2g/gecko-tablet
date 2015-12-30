@@ -7,7 +7,6 @@
 #include "CompositorD3D11.h"
 #include "gfxContext.h"
 #include "Effects.h"
-#include "mozilla/layers/YCbCrImageDataSerializer.h"
 #include "gfxWindowsPlatform.h"
 #include "gfx2DGlue.h"
 #include "gfxPrefs.h"
@@ -665,8 +664,7 @@ CreateTextureHostD3D11(const SurfaceDescriptor& aDesc,
 {
   RefPtr<TextureHost> result;
   switch (aDesc.type()) {
-    case SurfaceDescriptor::TSurfaceDescriptorShmem:
-    case SurfaceDescriptor::TSurfaceDescriptorMemory: {
+    case SurfaceDescriptor::TSurfaceDescriptorBuffer: {
       result = CreateBackendIndependentTextureHost(aDesc, aDeallocator, aFlags);
       break;
     }
@@ -844,6 +842,7 @@ DXGITextureHostD3D11::Lock()
   }
   if (!mTextureSource) {
     if (!mTexture && !OpenSharedHandle()) {
+      gfxWindowsPlatform::GetPlatform()->ForceDeviceReset(ForcedDeviceResetReason::OPENSHAREDHANDLE);
       return false;
     }
 

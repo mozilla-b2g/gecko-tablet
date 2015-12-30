@@ -1543,6 +1543,24 @@ public:
     static auto SetKeepScreenOn(bool) -> void;
 
 public:
+    struct SetScreenDepthOverride_t {
+        typedef GeckoAppShell Owner;
+        typedef void ReturnType;
+        typedef void SetterType;
+        typedef mozilla::jni::Args<
+                int32_t> Args;
+        static constexpr char name[] = "setScreenDepthOverride";
+        static constexpr char signature[] =
+                "(I)V";
+        static const bool isStatic = true;
+        static const bool isMultithreaded = false;
+        static const mozilla::jni::ExceptionMode exceptionMode =
+                mozilla::jni::ExceptionMode::ABORT;
+    };
+
+    static auto SetScreenDepthOverride(int32_t) -> void;
+
+public:
     struct SetURITitle_t {
         typedef GeckoAppShell Owner;
         typedef void ReturnType;
@@ -1571,17 +1589,18 @@ public:
                 mozilla::jni::String::Param,
                 mozilla::jni::String::Param,
                 mozilla::jni::String::Param,
+                mozilla::jni::String::Param,
                 mozilla::jni::String::Param> Args;
         static constexpr char name[] = "showAlertNotification";
         static constexpr char signature[] =
-                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V";
+                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V";
         static const bool isStatic = true;
         static const bool isMultithreaded = false;
         static const mozilla::jni::ExceptionMode exceptionMode =
                 mozilla::jni::ExceptionMode::ABORT;
     };
 
-    static auto ShowAlertNotificationWrapper(mozilla::jni::String::Param, mozilla::jni::String::Param, mozilla::jni::String::Param, mozilla::jni::String::Param, mozilla::jni::String::Param) -> void;
+    static auto ShowAlertNotificationWrapper(mozilla::jni::String::Param, mozilla::jni::String::Param, mozilla::jni::String::Param, mozilla::jni::String::Param, mozilla::jni::String::Param, mozilla::jni::String::Param) -> void;
 
 public:
     struct ShowInputMethodPicker_t {
@@ -1744,17 +1763,18 @@ public:
         typedef GeckoEditable Owner;
         typedef GeckoEditable::LocalRef ReturnType;
         typedef GeckoEditable::Param SetterType;
-        typedef mozilla::jni::Args<> Args;
+        typedef mozilla::jni::Args<
+                mozilla::jni::Object::Param> Args;
         static constexpr char name[] = "<init>";
         static constexpr char signature[] =
-                "()V";
+                "(Lorg/mozilla/gecko/GeckoView;)V";
         static const bool isStatic = false;
         static const bool isMultithreaded = false;
         static const mozilla::jni::ExceptionMode exceptionMode =
                 mozilla::jni::ExceptionMode::ABORT;
     };
 
-    static auto New() -> GeckoEditable::LocalRef;
+    static auto New(mozilla::jni::Object::Param) -> GeckoEditable::LocalRef;
 
 public:
     struct DisposeNative_t {
@@ -2963,11 +2983,12 @@ public:
         typedef mozilla::jni::Args<
                 Window::Param,
                 GeckoView::Param,
+                mozilla::jni::Object::Param,
                 int32_t,
                 int32_t> Args;
         static constexpr char name[] = "open";
         static constexpr char signature[] =
-                "(Lorg/mozilla/gecko/GeckoView$Window;Lorg/mozilla/gecko/GeckoView;II)V";
+                "(Lorg/mozilla/gecko/GeckoView$Window;Lorg/mozilla/gecko/GeckoView;Lorg/mozilla/gecko/gfx/GLController;II)V";
         static const bool isStatic = true;
         static const bool isMultithreaded = true;
         static const mozilla::jni::ExceptionMode exceptionMode =
@@ -2975,20 +2996,37 @@ public:
     };
 
 public:
-    struct SetLayerClient_t {
+    struct Reattach_t {
         typedef Window Owner;
         typedef void ReturnType;
         typedef void SetterType;
         typedef mozilla::jni::Args<
-                mozilla::jni::Object::Param> Args;
-        static constexpr char name[] = "setLayerClient";
+                GeckoView::Param> Args;
+        static constexpr char name[] = "reattach";
         static constexpr char signature[] =
-                "(Ljava/lang/Object;)V";
-        static const bool isStatic = true;
+                "(Lorg/mozilla/gecko/GeckoView;)V";
+        static const bool isStatic = false;
         static const bool isMultithreaded = true;
         static const mozilla::jni::ExceptionMode exceptionMode =
                 mozilla::jni::ExceptionMode::ABORT;
     };
+
+public:
+    struct GlController_t {
+        typedef Window Owner;
+        typedef mozilla::jni::Object::LocalRef ReturnType;
+        typedef mozilla::jni::Object::Param SetterType;
+        typedef mozilla::jni::Args<> Args;
+        static constexpr char name[] = "glController";
+        static constexpr char signature[] =
+                "Lorg/mozilla/gecko/gfx/GLController;";
+        static const bool isStatic = false;
+        static const bool isMultithreaded = true;
+        static const mozilla::jni::ExceptionMode exceptionMode =
+                mozilla::jni::ExceptionMode::ABORT;
+    };
+
+    auto GlController() const -> mozilla::jni::Object::LocalRef;
 
 public:
     template<class Impl> class Natives;
@@ -3331,12 +3369,29 @@ protected:
     GLController(jobject instance) : Class(instance) {}
 
 public:
-    struct CreateEGLSurfaceForCompositorWrapper_t {
+    struct CreateCompositor_t {
+        typedef GLController Owner;
+        typedef void ReturnType;
+        typedef void SetterType;
+        typedef mozilla::jni::Args<
+                int32_t,
+                int32_t> Args;
+        static constexpr char name[] = "createCompositor";
+        static constexpr char signature[] =
+                "(II)V";
+        static const bool isStatic = false;
+        static const bool isMultithreaded = false;
+        static const mozilla::jni::ExceptionMode exceptionMode =
+                mozilla::jni::ExceptionMode::ABORT;
+    };
+
+public:
+    struct CreateEGLSurface_t {
         typedef GLController Owner;
         typedef mozilla::jni::Object::LocalRef ReturnType;
         typedef mozilla::jni::Object::Param SetterType;
         typedef mozilla::jni::Args<> Args;
-        static constexpr char name[] = "createEGLSurfaceForCompositor";
+        static constexpr char name[] = "createEGLSurface";
         static constexpr char signature[] =
                 "()Ljavax/microedition/khronos/egl/EGLSurface;";
         static const bool isStatic = false;
@@ -3345,8 +3400,88 @@ public:
                 mozilla::jni::ExceptionMode::ABORT;
     };
 
-    auto CreateEGLSurfaceForCompositorWrapper() const -> mozilla::jni::Object::LocalRef;
+    auto CreateEGLSurface() const -> mozilla::jni::Object::LocalRef;
 
+public:
+    struct DisposeNative_t {
+        typedef GLController Owner;
+        typedef void ReturnType;
+        typedef void SetterType;
+        typedef mozilla::jni::Args<> Args;
+        static constexpr char name[] = "disposeNative";
+        static constexpr char signature[] =
+                "()V";
+        static const bool isStatic = false;
+        static const bool isMultithreaded = false;
+        static const mozilla::jni::ExceptionMode exceptionMode =
+                mozilla::jni::ExceptionMode::ABORT;
+    };
+
+public:
+    struct PauseCompositor_t {
+        typedef GLController Owner;
+        typedef void ReturnType;
+        typedef void SetterType;
+        typedef mozilla::jni::Args<> Args;
+        static constexpr char name[] = "pauseCompositor";
+        static constexpr char signature[] =
+                "()V";
+        static const bool isStatic = false;
+        static const bool isMultithreaded = false;
+        static const mozilla::jni::ExceptionMode exceptionMode =
+                mozilla::jni::ExceptionMode::ABORT;
+    };
+
+public:
+    struct SetLayerClient_t {
+        typedef GLController Owner;
+        typedef void ReturnType;
+        typedef void SetterType;
+        typedef mozilla::jni::Args<
+                mozilla::jni::Object::Param> Args;
+        static constexpr char name[] = "setLayerClient";
+        static constexpr char signature[] =
+                "(Lorg/mozilla/gecko/gfx/GeckoLayerClient;)V";
+        static const bool isStatic = false;
+        static const bool isMultithreaded = false;
+        static const mozilla::jni::ExceptionMode exceptionMode =
+                mozilla::jni::ExceptionMode::ABORT;
+    };
+
+public:
+    struct SyncInvalidateAndScheduleComposite_t {
+        typedef GLController Owner;
+        typedef void ReturnType;
+        typedef void SetterType;
+        typedef mozilla::jni::Args<> Args;
+        static constexpr char name[] = "syncInvalidateAndScheduleComposite";
+        static constexpr char signature[] =
+                "()V";
+        static const bool isStatic = false;
+        static const bool isMultithreaded = false;
+        static const mozilla::jni::ExceptionMode exceptionMode =
+                mozilla::jni::ExceptionMode::ABORT;
+    };
+
+public:
+    struct SyncResumeResizeCompositor_t {
+        typedef GLController Owner;
+        typedef void ReturnType;
+        typedef void SetterType;
+        typedef mozilla::jni::Args<
+                int32_t,
+                int32_t> Args;
+        static constexpr char name[] = "syncResumeResizeCompositor";
+        static constexpr char signature[] =
+                "(II)V";
+        static const bool isStatic = false;
+        static const bool isMultithreaded = false;
+        static const mozilla::jni::ExceptionMode exceptionMode =
+                mozilla::jni::ExceptionMode::ABORT;
+    };
+
+public:
+    template<class Impl> class Natives;
 };
 
 class GeckoLayerClient : public mozilla::jni::Class<GeckoLayerClient>
@@ -3646,6 +3781,109 @@ public:
 
 };
 
+class LayerRenderer : public mozilla::jni::Class<LayerRenderer>
+{
+public:
+    typedef mozilla::jni::Ref<LayerRenderer> Ref;
+    typedef mozilla::jni::LocalRef<LayerRenderer> LocalRef;
+    typedef mozilla::jni::GlobalRef<LayerRenderer> GlobalRef;
+    typedef const mozilla::jni::Param<LayerRenderer>& Param;
+
+    static constexpr char name[] =
+            "org/mozilla/gecko/gfx/LayerRenderer";
+
+protected:
+    LayerRenderer(jobject instance) : Class(instance) {}
+
+public:
+    class Frame;
+
+};
+
+class LayerRenderer::Frame : public mozilla::jni::Class<Frame>
+{
+public:
+    typedef mozilla::jni::Ref<Frame> Ref;
+    typedef mozilla::jni::LocalRef<Frame> LocalRef;
+    typedef mozilla::jni::GlobalRef<Frame> GlobalRef;
+    typedef const mozilla::jni::Param<Frame>& Param;
+
+    static constexpr char name[] =
+            "org/mozilla/gecko/gfx/LayerRenderer$Frame";
+
+protected:
+    Frame(jobject instance) : Class(instance) {}
+
+public:
+    struct BeginDrawing_t {
+        typedef Frame Owner;
+        typedef void ReturnType;
+        typedef void SetterType;
+        typedef mozilla::jni::Args<> Args;
+        static constexpr char name[] = "beginDrawing";
+        static constexpr char signature[] =
+                "()V";
+        static const bool isStatic = false;
+        static const bool isMultithreaded = true;
+        static const mozilla::jni::ExceptionMode exceptionMode =
+                mozilla::jni::ExceptionMode::ABORT;
+    };
+
+    auto BeginDrawing() const -> void;
+
+public:
+    struct DrawBackground_t {
+        typedef Frame Owner;
+        typedef void ReturnType;
+        typedef void SetterType;
+        typedef mozilla::jni::Args<> Args;
+        static constexpr char name[] = "drawBackground";
+        static constexpr char signature[] =
+                "()V";
+        static const bool isStatic = false;
+        static const bool isMultithreaded = true;
+        static const mozilla::jni::ExceptionMode exceptionMode =
+                mozilla::jni::ExceptionMode::ABORT;
+    };
+
+    auto DrawBackground() const -> void;
+
+public:
+    struct DrawForeground_t {
+        typedef Frame Owner;
+        typedef void ReturnType;
+        typedef void SetterType;
+        typedef mozilla::jni::Args<> Args;
+        static constexpr char name[] = "drawForeground";
+        static constexpr char signature[] =
+                "()V";
+        static const bool isStatic = false;
+        static const bool isMultithreaded = true;
+        static const mozilla::jni::ExceptionMode exceptionMode =
+                mozilla::jni::ExceptionMode::ABORT;
+    };
+
+    auto DrawForeground() const -> void;
+
+public:
+    struct EndDrawing_t {
+        typedef Frame Owner;
+        typedef void ReturnType;
+        typedef void SetterType;
+        typedef mozilla::jni::Args<> Args;
+        static constexpr char name[] = "endDrawing";
+        static constexpr char signature[] =
+                "()V";
+        static const bool isStatic = false;
+        static const bool isMultithreaded = true;
+        static const mozilla::jni::ExceptionMode exceptionMode =
+                mozilla::jni::ExceptionMode::ABORT;
+    };
+
+    auto EndDrawing() const -> void;
+
+};
+
 class LayerView : public mozilla::jni::Class<LayerView>
 {
 public:
@@ -3659,23 +3897,6 @@ public:
 
 protected:
     LayerView(jobject instance) : Class(instance) {}
-
-public:
-    struct RegisterCompositorWrapper_t {
-        typedef LayerView Owner;
-        typedef mozilla::jni::Object::LocalRef ReturnType;
-        typedef mozilla::jni::Object::Param SetterType;
-        typedef mozilla::jni::Args<> Args;
-        static constexpr char name[] = "registerCxxCompositor";
-        static constexpr char signature[] =
-                "()Lorg/mozilla/gecko/gfx/GLController;";
-        static const bool isStatic = true;
-        static const bool isMultithreaded = true;
-        static const mozilla::jni::ExceptionMode exceptionMode =
-                mozilla::jni::ExceptionMode::ABORT;
-    };
-
-    static auto RegisterCompositorWrapper() -> mozilla::jni::Object::LocalRef;
 
 public:
     struct updateZoomedView_t {

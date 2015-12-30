@@ -266,7 +266,6 @@ public class GeckoAppShell
     public static native void registerJavaUiThread();
 
     // helper methods
-    public static native void onResume();
     public static void callObserver(String observerKey, String topic, String data) {
         sendEventToGecko(GeckoEvent.createCallObserverEvent(observerKey, topic, data));
     }
@@ -282,17 +281,9 @@ public class GeckoAppShell
         sendEventToGecko(GeckoEvent.createVisitedEvent(uri));
     }
 
-    public static native void processNextNativeEvent(boolean mayWait);
-
     public static native void notifyBatteryChange(double aLevel, boolean aCharging, double aRemainingTime);
 
     public static native void invalidateAndScheduleComposite();
-
-    // Resuming the compositor is a synchronous request, so be
-    // careful of possible deadlock. Resuming the compositor will also cause
-    // a composition, so there is no need to schedule a composition after
-    // resuming.
-    public static native void scheduleResumeComposition(int width, int height);
 
     public static native float computeRenderIntegrity();
 
@@ -1306,12 +1297,10 @@ public class GeckoAppShell
     }
 
     @WrapForJNI(stubName = "ShowAlertNotificationWrapper")
-    public static void showAlertNotification(String aImageUrl, String aAlertTitle, String aAlertText,
-                                             String aAlertCookie, String aAlertName) {
+    public static void showAlertNotification(String aImageUrl, String aAlertTitle, String aAlertText, String aAlertCookie, String aAlertName, String aHost) {
         // The intent to launch when the user clicks the expanded notification
-        String app = getContext().getClass().getName();
         Intent notificationIntent = new Intent(GeckoApp.ACTION_ALERT_CALLBACK);
-        notificationIntent.setClassName(AppConstants.ANDROID_PACKAGE_NAME, app);
+        notificationIntent.setClassName(AppConstants.ANDROID_PACKAGE_NAME, AppConstants.MOZ_ANDROID_BROWSER_INTENT_CLASS);
         notificationIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
         int notificationID = aAlertName.hashCode();
@@ -1329,7 +1318,7 @@ public class GeckoAppShell
         ALERT_COOKIES.put(aAlertName, aAlertCookie);
         callObserver(aAlertName, "alertshow", aAlertCookie);
 
-        notificationClient.add(notificationID, aImageUrl, aAlertTitle, aAlertText, contentIntent);
+        notificationClient.add(notificationID, aImageUrl, aHost, aAlertTitle, aAlertText, contentIntent);
     }
 
     @WrapForJNI
@@ -1404,6 +1393,7 @@ public class GeckoAppShell
         return sScreenDepth;
     }
 
+    @WrapForJNI
     public static synchronized void setScreenDepthOverride(int aScreenDepth) {
         if (sScreenDepth != 0) {
             Log.e(LOGTAG, "Tried to override screen depth after it's already been set");

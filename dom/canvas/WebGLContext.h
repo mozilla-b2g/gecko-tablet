@@ -331,8 +331,8 @@ public:
         return ActiveBoundTextureForTarget(texTarget);
     }
 
-    already_AddRefed<CanvasLayer>
-    GetCanvasLayer(nsDisplayListBuilder* builder, CanvasLayer* oldLayer,
+    already_AddRefed<Layer>
+    GetCanvasLayer(nsDisplayListBuilder* builder, Layer* oldLayer,
                    LayerManager* manager) override;
 
     // Note that 'clean' here refers to its invalidation state, not the
@@ -1311,7 +1311,7 @@ public:
         if (!mPixelStore_PremultiplyAlpha)
             flags |= nsLayoutUtils::SFE_PREFER_NO_PREMULTIPLY_ALPHA;
 
-        gfx::DrawTarget* idealDrawTarget = nullptr; // Don't care for now.
+        RefPtr<gfx::DrawTarget> idealDrawTarget = nullptr; // Don't care for now.
         return nsLayoutUtils::SurfaceFromElement(elem, flags, idealDrawTarget);
     }
 

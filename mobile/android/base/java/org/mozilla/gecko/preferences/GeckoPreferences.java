@@ -7,6 +7,7 @@ package org.mozilla.gecko.preferences;
 
 import android.annotation.TargetApi;
 import org.mozilla.gecko.AboutPages;
+import org.mozilla.gecko.AdjustConstants;
 import org.mozilla.gecko.AppConstants;
 import org.mozilla.gecko.AppConstants.Versions;
 import org.mozilla.gecko.BrowserApp;
@@ -106,6 +107,7 @@ OnSharedPreferenceChangeListener
     public static final String INTENT_EXTRA_RESOURCES = "resource";
     public static final String PREFS_TRACKING_PROTECTION_PROMPT_SHOWN = NON_PREF_PREFIX + "trackingProtectionPromptShown";
     public static String PREFS_HEALTHREPORT_UPLOAD_ENABLED = NON_PREF_PREFIX + "healthreport.uploadEnabled";
+    public static final String PREFS_SYNC = NON_PREF_PREFIX + "sync";
 
     private static boolean sIsCharEncodingEnabled;
     private boolean mInitialized;
@@ -119,7 +121,6 @@ OnSharedPreferenceChangeListener
     private static final String PREFS_CRASHREPORTER_ENABLED = "datareporting.crashreporter.submitEnabled";
     private static final String PREFS_MENU_CHAR_ENCODING = "browser.menu.showCharacterEncoding";
     private static final String PREFS_MP_ENABLED = "privacy.masterpassword.enabled";
-    private static final String PREFS_ZOOMED_VIEW_ENABLED = "ui.zoomedview.enabled";
     private static final String PREFS_UPDATER_AUTODOWNLOAD = "app.update.autodownload";
     private static final String PREFS_UPDATER_URL = "app.update.url.android";
     private static final String PREFS_GEO_REPORTING = NON_PREF_PREFIX + "app.geo.reportdata";
@@ -128,10 +129,8 @@ OnSharedPreferenceChangeListener
     private static final String PREFS_DEVTOOLS_REMOTE_USB_ENABLED = "devtools.remote.usb.enabled";
     private static final String PREFS_DEVTOOLS_REMOTE_WIFI_ENABLED = "devtools.remote.wifi.enabled";
     private static final String PREFS_DEVTOOLS_REMOTE_LINK = NON_PREF_PREFIX + "remote_debugging.link";
-    private static final String PREFS_SYNC = NON_PREF_PREFIX + "sync";
     private static final String PREFS_TRACKING_PROTECTION = "privacy.trackingprotection.state";
     private static final String PREFS_TRACKING_PROTECTION_PB = "privacy.trackingprotection.pbmode.enabled";
-    public static final String PREFS_OPEN_URLS_IN_PRIVATE = NON_PREF_PREFIX + "openExternalURLsPrivately";
     public static final String PREFS_VOICE_INPUT_ENABLED = NON_PREF_PREFIX + "voice_input_enabled";
     public static final String PREFS_QRCODE_ENABLED = NON_PREF_PREFIX + "qrcode_enabled";
     private static final String PREFS_ADVANCED = NON_PREF_PREFIX + "advanced.enabled";
@@ -453,6 +452,7 @@ OnSharedPreferenceChangeListener
         return GeckoPreferenceFragment.class.getName().equals(fragmentName);
     }
 
+    @TargetApi(11)
     @Override
     public void onBuildHeaders(List<Header> target) {
         if (onIsMultiPane()) {
@@ -464,6 +464,9 @@ OnSharedPreferenceChangeListener
                 Header header = iterator.next();
 
                 if (header.id == R.id.pref_header_advanced && !Restrictions.isAllowed(this, Restrictable.ADVANCED_SETTINGS)) {
+                    iterator.remove();
+                } else if (header.id == R.id.pref_header_clear_private_data
+                           && !Restrictions.isAllowed(this, Restrictable.CLEAR_HISTORY)) {
                     iterator.remove();
                 }
             }
@@ -697,13 +700,6 @@ OnSharedPreferenceChangeListener
                 pref.setOnPreferenceChangeListener(this);
                 if (PREFS_UPDATER_AUTODOWNLOAD.equals(key)) {
                     if (!AppConstants.MOZ_UPDATER) {
-                        preferences.removePreference(pref);
-                        i--;
-                        continue;
-                    }
-                } else if (PREFS_OPEN_URLS_IN_PRIVATE.equals(key)) {
-                    // Remove UI for opening external links in private browsing on non-Nightly builds.
-                    if (!AppConstants.NIGHTLY_BUILD || !Restrictions.isAllowed(this, Restrictable.PRIVATE_BROWSING)) {
                         preferences.removePreference(pref);
                         i--;
                         continue;
@@ -1188,7 +1184,9 @@ OnSharedPreferenceChangeListener
             // to Gecko, but we do broadcast intent to the health report
             // background uploader service, which will start or stop the
             // repeated background upload attempts.
-            broadcastHealthReportUploadPref(this, (Boolean) newValue);
+            final Boolean newBooleanValue = (Boolean) newValue;
+            broadcastHealthReportUploadPref(this, newBooleanValue);
+            AdjustConstants.getAdjustHelper().setEnabled(newBooleanValue);
         } else if (PREFS_GEO_REPORTING.equals(prefName)) {
             broadcastStumblerPref(this, (Boolean) newValue);
             // Translate boolean value to int for geo reporting pref.

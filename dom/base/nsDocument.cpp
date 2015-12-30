@@ -2117,7 +2117,15 @@ nsDocument::Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup)
   // Note that, since mTiming does not change during a reset, the
   // navigationStart time remains unchanged and therefore any future new
   // timeline will have the same global clock time as the old one.
-  mDocumentTimeline = nullptr;
+  if (mDocumentTimeline) {
+    nsRefreshDriver* rd = mPresShell && mPresShell->GetPresContext() ?
+                          mPresShell->GetPresContext()->RefreshDriver() :
+                          nullptr;
+    if (rd) {
+      mDocumentTimeline->NotifyRefreshDriverDestroying(rd);
+    }
+    mDocumentTimeline = nullptr;
+  }
 
   nsCOMPtr<nsIPropertyBag2> bag = do_QueryInterface(aChannel);
   if (bag) {
@@ -7763,7 +7771,7 @@ nsDocument::GetViewportInfo(const ScreenIntSize& aDisplaySize)
   // pixel an integer, and we want the adjusted value.
   float fullZoom = context ? context->DeviceContext()->GetFullZoom() : 1.0;
   fullZoom = (fullZoom == 0.0) ? 1.0 : fullZoom;
-  CSSToLayoutDeviceScale layoutDeviceScale = context->CSSToDevPixelScale();
+  CSSToLayoutDeviceScale layoutDeviceScale = context ? context->CSSToDevPixelScale() : CSSToLayoutDeviceScale(1);
 
   CSSToScreenScale defaultScale = layoutDeviceScale
                                 * LayoutDeviceToScreenScale(1.0);
@@ -11434,10 +11442,10 @@ nsresult nsDocument::RemoteFrameFullscreenReverted()
 }
 
 static void
-ReleaseHMDInfoRef(void *, nsIAtom*, void *aPropertyValue, void *)
+ReleaseVRDeviceProxyRef(void *, nsIAtom*, void *aPropertyValue, void *)
 {
   if (aPropertyValue) {
-    static_cast<gfx::VRHMDInfo*>(aPropertyValue)->Release();
+    static_cast<gfx::VRDeviceProxy*>(aPropertyValue)->Release();
   }
 }
 
@@ -11756,9 +11764,9 @@ nsDocument::ApplyFullscreen(const FullscreenRequest& aRequest)
 
   // Process options -- in this case, just HMD
   if (aRequest.mVRHMDDevice) {
-    RefPtr<gfx::VRHMDInfo> hmdRef = aRequest.mVRHMDDevice;
+    RefPtr<gfx::VRDeviceProxy> hmdRef = aRequest.mVRHMDDevice;
     elem->SetProperty(nsGkAtoms::vr_state, hmdRef.forget().take(),
-                      ReleaseHMDInfoRef, true);
+                      ReleaseVRDeviceProxyRef, true);
   }
 
   // Set the full-screen element. This sets the full-screen style on the

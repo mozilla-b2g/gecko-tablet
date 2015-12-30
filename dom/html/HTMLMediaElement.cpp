@@ -114,31 +114,18 @@ using mozilla::net::nsMediaFragmentURIParser;
 class MOZ_STACK_CLASS AutoNotifyAudioChannelAgent
 {
   RefPtr<mozilla::dom::HTMLMediaElement> mElement;
-  bool mShouldNotify;
   MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER;
 public:
-  AutoNotifyAudioChannelAgent(mozilla::dom::HTMLMediaElement* aElement,
-                              bool aNotify
-                              MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+  explicit AutoNotifyAudioChannelAgent(mozilla::dom::HTMLMediaElement* aElement
+                                       MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
     : mElement(aElement)
-    , mShouldNotify(aNotify)
   {
     MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-    if (mShouldNotify) {
-      // The audio channel agent may not exist now.
-      if (mElement->MaybeCreateAudioChannelAgent()) {
-        mElement->NotifyAudioChannelAgent(false);
-      }
-    }
   }
+
   ~AutoNotifyAudioChannelAgent()
   {
-    if (mShouldNotify) {
-      // The audio channel agent is destroyed at this point.
-      if (mElement->MaybeCreateAudioChannelAgent()) {
-        mElement->NotifyAudioChannelAgent(true);
-      }
-    }
+    mElement->UpdateAudioChannelPlayingState();
   }
 };
 
@@ -370,8 +357,18 @@ NS_IMETHODIMP HTMLMediaElement::MediaLoadListener::OnStartRequest(nsIRequest* aR
   nsresult rv = aRequest->GetStatus(&status);
   NS_ENSURE_SUCCESS(rv, rv);
   if (NS_FAILED(status)) {
-    if (element)
+    if (element) {
+      // Handle media not loading error because source was a tracking URL.
+      // We make a note of this media node by including it in a dedicated
+      // array of blocked tracking nodes under its parent document.
+      if (status == NS_ERROR_TRACKING_URI) {
+        nsIDocument* ownerDoc = element->OwnerDoc();
+        if (ownerDoc) {
+          ownerDoc->AddBlockedTrackingNode(element);
+        }
+      }
       element->NotifyLoadError();
+    }
     return status;
   }
 
@@ -1307,6 +1304,7 @@ nsresult HTMLMediaElement::LoadResource()
                               nullptr,   // aCallbacks
                               nsICachingChannel::LOAD_BYPASS_LOCAL_CACHE_IF_BUSY |
                               nsIChannel::LOAD_MEDIA_SNIFFER_OVERRIDES_CONTENT_TYPE |
+                              nsIChannel::LOAD_CLASSIFY_URI |
                               nsIChannel::LOAD_CALL_CONTENT_SNIFFERS);
 
   NS_ENSURE_SUCCESS(rv,rv);
@@ -1870,6 +1868,11 @@ HTMLMediaElement::CaptureStreamInternal(bool aFinishWhenEnded,
       HasAudio() ? MediaStreamGraph::AUDIO_THREAD_DRIVER
                  : MediaStreamGraph::SYSTEM_THREAD_DRIVER;
     aGraph = MediaStreamGraph::GetInstance(graphDriverType, mAudioChannel);
+  }
+
+  if (!mOutputStreams.IsEmpty() &&
+      aGraph != mOutputStreams[0].mStream->GetInputStream()->Graph()) {
+    return nullptr;
   }
 
   OutputMediaStream* out = mOutputStreams.AppendElement();
@@ -3170,17 +3173,7 @@ void HTMLMediaElement::UpdateSrcMediaStreamPlaying(uint32_t aFlags)
     stream->AddAudioOutput(this);
     SetVolumeInternal();
 
-  #ifdef MOZ_WIDGET_GONK
-    bool bUseOverlayImage = mSrcStream->AsDOMHwMediaStream() != nullptr;
-  #else
-    bool bUseOverlayImage = false;
-  #endif
-    VideoFrameContainer* container;
-    if (bUseOverlayImage) {
-      container = GetOverlayImageVideoFrameContainer();
-    } else {
-      container = GetVideoFrameContainer();
-    }
+    VideoFrameContainer* container = GetVideoFrameContainer();
     if (container) {
       stream->AddVideoOutput(container);
     }
@@ -3383,10 +3376,7 @@ void HTMLMediaElement::MetadataLoaded(const MediaInfo* aInfo,
   // If the element is gaining or losing an audio track, we need to notify
   // the audio channel agent so that the correct audio-playback events will
   // get dispatched.
-  bool audioTrackChanging = mMediaInfo.HasAudio() != aInfo->HasAudio();
-  AutoNotifyAudioChannelAgent autoNotify(this,
-                                         audioTrackChanging &&
-                                         mPlayingThroughTheAudioChannel);
+  AutoNotifyAudioChannelAgent autoNotify(this);
 
   mMediaInfo = *aInfo;
   mIsEncrypted = aInfo->IsEncrypted()
@@ -4030,22 +4020,6 @@ VideoFrameContainer* HTMLMediaElement::GetVideoFrameContainer()
   return mVideoFrameContainer;
 }
 
-VideoFrameContainer* HTMLMediaElement::GetOverlayImageVideoFrameContainer()
-{
-  if (mVideoFrameContainer)
-    return mVideoFrameContainer;
-
-  // Only video frames need an image container.
-  if (!IsVideo()) {
-    return nullptr;
-  }
-
-  mVideoFrameContainer =
-    new VideoFrameContainer(this, LayerManager::CreateImageContainer(ImageContainer::ASYNCHRONOUS_OVERLAY));
-
-  return mVideoFrameContainer;
-}
-
 nsresult HTMLMediaElement::DispatchEvent(const nsAString& aName)
 {
   LOG_EVENT(LogLevel::Debug, ("%p Dispatching event %s", this,
@@ -4346,8 +4320,6 @@ void HTMLMediaElement::DoRemoveSelfReference()
 nsresult HTMLMediaElement::Observe(nsISupports* aSubject,
                                    const char* aTopic, const char16_t* aData)
 {
-  NS_ENSURE_TRUE(nsContentUtils::IsCallerChrome(), NS_ERROR_NOT_AVAILABLE);
-
   if (strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID) == 0) {
     mShuttingDown = true;
     AddRemoveSelfReference();
@@ -4384,6 +4356,9 @@ void HTMLMediaElement::NotifyAddedSource()
   // A load was paused in the resource selection algorithm, waiting for
   // a new source child to be added, resume the resource selection algorithm.
   if (mLoadWaitStatus == WAITING_FOR_SOURCE) {
+    // Rest the flag so we don't queue multiple LoadFromSourceTask() when
+    // multiple <source> are attached in an event loop.
+    mLoadWaitStatus = NOT_WAITING;
     QueueLoadFromSourceTask();
   }
 }
@@ -4745,6 +4720,11 @@ HTMLMediaElement::IsPlayingThroughTheAudioChannel() const
     return false;
   }
 
+  // If this element doesn't have any audio tracks.
+  if (!HasAudio()) {
+    return false;
+  }
+
   // The volume should not be ~0
   if (std::fabs(Volume()) <= 1e-7) {
     return false;
@@ -4800,23 +4780,15 @@ HTMLMediaElement::UpdateAudioChannelPlayingState()
 void
 HTMLMediaElement::NotifyAudioChannelAgent(bool aPlaying)
 {
-  // Immediately check if this should go to the MSG instead of the normal
-  // media playback route.
-  WindowAudioCaptureChanged();
-
   // This is needed to pass nsContentUtils::IsCallerChrome().
   // AudioChannel API should not called from content but it can happen that
   // this method has some content JS in its stack.
   AutoNoJSAPI nojsapi;
 
   if (aPlaying) {
-    // Don't notify playback if this element doesn't have any audio tracks.
-    uint32_t notify = HasAudio() ? nsIAudioChannelAgent::AUDIO_AGENT_NOTIFY :
-                                   nsIAudioChannelAgent::AUDIO_AGENT_DONT_NOTIFY;
-
     float volume = 0.0;
     bool muted = true;
-    mAudioChannelAgent->NotifyStartedPlaying(notify, &volume, &muted);
+    mAudioChannelAgent->NotifyStartedPlaying(&volume, &muted);
     WindowVolumeChanged(volume, muted);
   } else {
     mAudioChannelAgent->NotifyStoppedPlaying();
@@ -4978,17 +4950,17 @@ HTMLMediaElement::GetTopLevelPrincipal()
 }
 #endif // MOZ_EME
 
-NS_IMETHODIMP HTMLMediaElement::WindowAudioCaptureChanged()
+NS_IMETHODIMP HTMLMediaElement::WindowAudioCaptureChanged(bool aCapture)
 {
   MOZ_ASSERT(mAudioChannelAgent);
+  MOZ_ASSERT(HasAudio());
 
   if (!OwnerDoc()->GetInnerWindow()) {
     return NS_OK;
   }
-  bool captured = OwnerDoc()->GetInnerWindow()->GetAudioCaptured();
 
-  if (captured != mAudioCapturedByWindow) {
-    if (captured) {
+  if (aCapture != mAudioCapturedByWindow) {
+    if (aCapture) {
       mAudioCapturedByWindow = true;
       nsCOMPtr<nsPIDOMWindow> window =
         do_QueryInterface(OwnerDoc()->GetParentObject());
@@ -5024,7 +4996,7 @@ NS_IMETHODIMP HTMLMediaElement::WindowAudioCaptureChanged()
     }
   }
 
-   return NS_OK;
+  return NS_OK;
 }
 
 AudioTrackList*

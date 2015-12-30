@@ -10,6 +10,7 @@
 #define INLINABLE_NATIVE_LIST(_)    \
     _(Array)                        \
     _(ArrayIsArray)                 \
+    _(ArrayJoin)                    \
     _(ArrayPop)                     \
     _(ArrayShift)                   \
     _(ArrayPush)                    \
@@ -81,6 +82,7 @@
                                     \
     _(SimdInt32x4)                  \
     _(SimdFloat32x4)                \
+    _(SimdBool32x4)                 \
                                     \
     _(TestBailout)                  \
     _(TestAssertFloat32)            \

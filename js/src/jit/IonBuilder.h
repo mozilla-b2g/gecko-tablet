@@ -441,7 +441,6 @@ class IonBuilder
                                 TemporaryTypeSet* types);
     bool getPropTryInlineAccess(bool* emitted, MDefinition* obj, PropertyName* name,
                                 BarrierKind barrier, TemporaryTypeSet* types);
-    bool getPropTrySimdGetter(bool* emitted, MDefinition* obj, PropertyName* name);
     bool getPropTryTypedObject(bool* emitted, MDefinition* obj, PropertyName* name);
     bool getPropTryScalarPropOfTypedObject(bool* emitted, MDefinition* typedObj,
                                            int32_t fieldOffset,
@@ -683,12 +682,15 @@ class IonBuilder
     bool jsop_compare(JSOp op, MDefinition* left, MDefinition* right);
     bool getStaticName(JSObject* staticObject, PropertyName* name, bool* psucceeded,
                        MDefinition* lexicalCheck = nullptr);
+    bool loadStaticSlot(JSObject* staticObject, BarrierKind barrier, TemporaryTypeSet* types,
+                        uint32_t slot);
     bool setStaticName(JSObject* staticObject, PropertyName* name);
     bool jsop_getgname(PropertyName* name);
     bool jsop_getname(PropertyName* name);
     bool jsop_intrinsic(PropertyName* name);
     bool jsop_getimport(PropertyName* name);
     bool jsop_bindname(PropertyName* name);
+    bool jsop_bindvar();
     bool jsop_getelem();
     bool jsop_getelem_dense(MDefinition* obj, MDefinition* index, JSValueType unboxedType);
     bool jsop_getelem_typed(MDefinition* obj, MDefinition* index, ScalarTypeDescr::Type arrayType);
@@ -856,9 +858,11 @@ class IonBuilder
                          unsigned numArgs, InlineTypedObject** templateObj);
     IonBuilder::InliningStatus boxSimd(CallInfo& callInfo, MInstruction* ins,
                                        InlineTypedObject* templateObj);
+    MDefinition* convertToBooleanSimdLane(MDefinition* scalar);
 
     InliningStatus inlineSimdInt32x4(CallInfo& callInfo, JSNative native);
     InliningStatus inlineSimdFloat32x4(CallInfo& callInfo, JSNative native);
+    InliningStatus inlineSimdBool32x4(CallInfo& callInfo, JSNative native);
 
     template <typename T>
     InliningStatus inlineBinarySimd(CallInfo& callInfo, JSNative native,
@@ -877,8 +881,7 @@ class IonBuilder
     InliningStatus inlineSimdCheck(CallInfo& callInfo, JSNative native, SimdTypeDescr::Type type);
     InliningStatus inlineSimdConvert(CallInfo& callInfo, JSNative native, bool isCast,
                                      SimdTypeDescr::Type from, SimdTypeDescr::Type to);
-    InliningStatus inlineSimdSelect(CallInfo& callInfo, JSNative native, bool isElementWise,
-                                    SimdTypeDescr::Type type);
+    InliningStatus inlineSimdSelect(CallInfo& callInfo, JSNative native, SimdTypeDescr::Type type);
 
     bool prepareForSimdLoadStore(CallInfo& callInfo, Scalar::Type simdType, MInstruction** elements,
                                  MDefinition** index, Scalar::Type* arrayType);
@@ -886,6 +889,8 @@ class IonBuilder
                                   unsigned numElems);
     InliningStatus inlineSimdStore(CallInfo& callInfo, JSNative native, SimdTypeDescr::Type type,
                                    unsigned numElems);
+
+    InliningStatus inlineSimdAnyAllTrue(CallInfo& callInfo, bool IsAllTrue, JSNative native);
 
     // Utility intrinsics.
     InliningStatus inlineIsCallable(CallInfo& callInfo);

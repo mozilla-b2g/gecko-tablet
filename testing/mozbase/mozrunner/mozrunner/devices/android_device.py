@@ -278,7 +278,7 @@ class AndroidEmulator(object):
                 emulator.wait()
     """
 
-    def __init__(self, avd_type='4.3', verbose=False, substs=None):
+    def __init__(self, avd_type='4.3', verbose=False, substs=None, device_serial=None):
         global verbose_logging
         self.emulator_log = None
         self.emulator_path = 'emulator'
@@ -290,7 +290,7 @@ class AndroidEmulator(object):
         if not adb_path:
             adb_path = 'adb'
         self.dm = DeviceManagerADB(autoconnect=False, adbPath=adb_path, retryLimit=1,
-            deviceSerial='emulator-5554')
+            deviceSerial=device_serial)
         self.dm.default_timeout = 10
         _log_debug("Emulator created with type %s" % self.avd_type)
 
@@ -581,6 +581,11 @@ def _find_sdk_exe(substs, exe, tools):
                     "Unable to find executable at %s" % exe_path)
         except KeyError:
             _log_debug("%s not set" % exe.upper())
+
+    # Append '.exe' to the name on Windows if it's not present,
+    # so that the executable can be found.
+    if (os.name == 'nt' and not exe.lower().endswith('.exe')):
+        exe += '.exe'
 
     if not found:
         # Can exe be found in the Android SDK?

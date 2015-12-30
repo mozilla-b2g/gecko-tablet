@@ -2276,6 +2276,41 @@ DoMatchLocal(JSContext* cx, const CallArgs& args, RegExpStatics* res, HandleLine
     return true;
 }
 
+/* ES6 21.2.5.2.3. */
+static size_t
+AdvanceStringIndex(HandleLinearString input, size_t length, size_t index, bool unicode)
+{
+    /* Steps 1-3 (implicit). */
+
+    /* Step 4: If input is latin1, there is no surrogate pair. */
+    if (!unicode || input->hasLatin1Chars())
+        return index + 1;
+
+    JS::AutoCheckCannotGC nogc;
+    const char16_t* S = input->twoByteChars(nogc);
+
+    /* Step 6. */
+    if (index + 1 >= length)
+        return index + 1;
+
+    /* Step 7. */
+    char16_t first = S[index];
+
+    /* Step 8. */
+    if (!unicode::IsLeadSurrogate(first))
+        return index + 1;
+
+    /* Step 9. */
+    char16_t second = S[index + 1];
+
+    /* Step 10. */
+    if (!unicode::IsTrailSurrogate(second))
+        return index + 1;
+
+    /* Step 11. */
+    return index + 2;
+}
+
 /* ES5 15.5.4.10 step 8. */
 static bool
 DoMatchGlobal(JSContext* cx, const CallArgs& args, RegExpStatics* res, HandleLinearString input,
@@ -2331,6 +2366,7 @@ DoMatchGlobal(JSContext* cx, const CallArgs& args, RegExpStatics* res, HandleLin
     ScopedMatchPairs matches(&cx->tempLifoAlloc());
     size_t charsLen = input->length();
     RegExpShared& re = g.regExp();
+    bool unicode = re.unicode();
     for (size_t searchIndex = 0; searchIndex <= charsLen; ) {
         if (!CheckForInterrupt(cx))
             return false;
@@ -2348,7 +2384,9 @@ DoMatchGlobal(JSContext* cx, const CallArgs& args, RegExpStatics* res, HandleLin
         MatchPair& match = matches[0];
 
         // Steps 8f(iii)(1-3).
-        searchIndex = match.isEmpty() ? match.limit + 1 : match.limit;
+        searchIndex = match.isEmpty()
+                      ? AdvanceStringIndex(input, charsLen, match.limit, unicode)
+                      : match.limit;
 
         // Step 8f(iii)(4-5).
         JSLinearString* str = NewDependentString(cx, input, match.start, match.length());
@@ -2614,6 +2652,7 @@ static bool
 DoMatchForReplaceGlobal(JSContext* cx, RegExpStatics* res, HandleLinearString linearStr,
                         RegExpShared& re, ReplaceData& rdata, size_t* rightContextOffset)
 {
+    bool unicode = re.unicode();
     size_t charsLen = linearStr->length();
     ScopedMatchPairs matches(&cx->tempLifoAlloc());
     for (size_t count = 0, searchIndex = 0; searchIndex <= charsLen; ++count) {
@@ -2628,7 +2667,9 @@ DoMatchForReplaceGlobal(JSContext* cx, RegExpStatics* res, HandleLinearString li
             break;
 
         MatchPair& match = matches[0];
-        searchIndex = match.isEmpty() ? match.limit + 1 : match.limit;
+        searchIndex = match.isEmpty()
+                      ? AdvanceStringIndex(linearStr, charsLen, match.limit, unicode)
+                      : match.limit;
         *rightContextOffset = match.limit;
 
         if (!res->updateFromMatchPairs(cx, linearStr, matches))
@@ -3228,6 +3269,7 @@ StrReplaceRegexpRemove(JSContext* cx, HandleString str, RegExpShared& re)
     size_t lazyIndex = 0;  /* Index before last successful match. */
 
     /* Accumulate StringRanges for unmatched substrings. */
+    bool unicode = re.unicode();
     while (startIndex <= charsLen) {
         if (!CheckForInterrupt(cx))
             return nullptr;
@@ -3248,7 +3290,9 @@ StrReplaceRegexpRemove(JSContext* cx, HandleString str, RegExpShared& re)
         lazyIndex = lastIndex;
         lastIndex = match.limit;
 
-        startIndex = match.isEmpty() ? match.limit + 1 : match.limit;
+        startIndex = match.isEmpty()
+                     ? AdvanceStringIndex(linearStr, charsLen, match.limit, unicode)
+                     : match.limit;
 
         /* Non-global removal executes at most once. */
         if (!re.global())
@@ -3397,11 +3441,124 @@ StrReplaceString(JSContext* cx, ReplaceData& rdata, const FlatMatch& fm)
     return BuildFlatReplacement(cx, rdata.str, rdata.repstr, fm);
 }
 
+template <typename StrChar, typename RepChar>
+static bool
+StrFlatReplaceGlobal(JSContext *cx, JSLinearString *str, JSLinearString *pat, JSLinearString *rep,
+                     StringBuffer &sb)
+{
+    MOZ_ASSERT(str->length() > 0);
+
+    AutoCheckCannotGC nogc;
+    const StrChar *strChars = str->chars<StrChar>(nogc);
+    const RepChar *repChars = rep->chars<RepChar>(nogc);
+
+    // The pattern is empty, so we interleave the replacement string in-between
+    // each character.
+    if (!pat->length()) {
+        CheckedInt<uint32_t> strLength(str->length());
+        CheckedInt<uint32_t> repLength(rep->length());
+        CheckedInt<uint32_t> length = repLength * (strLength - 1) + strLength;
+        if (!length.isValid()) {
+            ReportAllocationOverflow(cx);
+            return false;
+        }
+
+        if (!sb.reserve(length.value()))
+            return false;
+
+        for (unsigned i = 0; i < str->length() - 1; ++i, ++strChars) {
+            sb.infallibleAppend(*strChars);
+            sb.infallibleAppend(repChars, rep->length());
+        }
+        sb.infallibleAppend(*strChars);
+        return true;
+    }
+
+    // If it's true, we are sure that the result's length is, at least, the same
+    // length as |str->length()|.
+    if (rep->length() >= pat->length()) {
+        if (!sb.reserve(str->length()))
+            return false;
+    }
+
+    uint32_t start = 0;
+    for (;;) {
+        int match = StringMatch(str, pat, start);
+        if (match < 0)
+            break;
+        if (!sb.append(strChars + start, match - start))
+            return false;
+        if (!sb.append(repChars, rep->length()))
+            return false;
+        start = match + pat->length();
+    }
+
+    if (!sb.append(strChars + start, str->length() - start))
+        return false;
+
+    return true;
+}
+
+// This is identical to "str.split(pattern).join(replacement)" except that we
+// do some deforestation optimization in Ion.
+JSString *
+js::str_flat_replace_string(JSContext *cx, HandleString string, HandleString pattern,
+                            HandleString replacement)
+{
+    MOZ_ASSERT(string);
+    MOZ_ASSERT(pattern);
+    MOZ_ASSERT(replacement);
+
+    if (!string->length())
+        return string;
+
+    RootedLinearString linearRepl(cx, replacement->ensureLinear(cx));
+    if (!linearRepl)
+        return nullptr;
+
+    RootedLinearString linearPat(cx, pattern->ensureLinear(cx));
+    if (!linearPat)
+        return nullptr;
+
+    RootedLinearString linearStr(cx, string->ensureLinear(cx));
+    if (!linearStr)
+        return nullptr;
+
+    StringBuffer sb(cx);
+    if (linearStr->hasTwoByteChars()) {
+        if (!sb.ensureTwoByteChars())
+            return nullptr;
+        if (linearRepl->hasTwoByteChars()) {
+            if (!StrFlatReplaceGlobal<char16_t, char16_t>(cx, linearStr, linearPat, linearRepl, sb))
+                return nullptr;
+        } else {
+            if (!StrFlatReplaceGlobal<char16_t, Latin1Char>(cx, linearStr, linearPat, linearRepl, sb))
+                return nullptr;
+        }
+    } else {
+        if (linearRepl->hasTwoByteChars()) {
+            if (!sb.ensureTwoByteChars())
+                return nullptr;
+            if (!StrFlatReplaceGlobal<Latin1Char, char16_t>(cx, linearStr, linearPat, linearRepl, sb))
+                return nullptr;
+        } else {
+            if (!StrFlatReplaceGlobal<Latin1Char, Latin1Char>(cx, linearStr, linearPat, linearRepl, sb))
+                return nullptr;
+        }
+    }
+
+    JSString *str = sb.finishString();
+    if (!str)
+        return nullptr;
+
+    return str;
+}
+
 static const uint32_t ReplaceOptArg = 2;
 
 JSString*
 js::str_replace_string_raw(JSContext* cx, HandleString string, HandleString pattern,
-                          HandleString replacement)
+                           HandleString replacement)
 {
     ReplaceData rdata(cx);
 
@@ -3631,7 +3788,7 @@ class SplitMatchResult {
 template<class Matcher>
 static JSObject*
 SplitHelper(JSContext* cx, HandleLinearString str, uint32_t limit, const Matcher& splitMatch,
-            HandleObjectGroup group)
+            HandleObjectGroup group, bool unicode)
 {
     size_t strLength = str->length();
     SplitMatchResult result;
@@ -3696,7 +3853,7 @@ SplitHelper(JSContext* cx, HandleLinearString str, uint32_t limit, const Matcher
 
         /* Step 13(c)(ii). */
         if (endIndex == lastEndIndex) {
-            index++;
+            index = AdvanceStringIndex(str, strLength, index, unicode);
             continue;
         }
 
@@ -3925,14 +4082,14 @@ js::str_split(JSContext* cx, unsigned argc, Value* vp)
             aobj = CharSplitHelper(cx, linearStr, limit, group);
         } else {
             SplitStringMatcher matcher(cx, sepstr);
-            aobj = SplitHelper(cx, linearStr, limit, matcher, group);
+            aobj = SplitHelper(cx, linearStr, limit, matcher, group, false);
         }
     } else {
         RegExpStatics* res = cx->global()->getRegExpStatics(cx);
         if (!res)
             return false;
         SplitRegExpMatcher matcher(*re, res);
-        aobj = SplitHelper(cx, linearStr, limit, matcher, group);
+        aobj = SplitHelper(cx, linearStr, limit, matcher, group, re->unicode());
     }
     if (!aobj)
         return false;
@@ -3960,7 +4117,7 @@ js::str_split_string(JSContext* cx, HandleObjectGroup group, HandleString str, H
         return CharSplitHelper(cx, linearStr, limit, group);
 
     SplitStringMatcher matcher(cx, linearSep);
-    return SplitHelper(cx, linearStr, limit, matcher, group);
+    return SplitHelper(cx, linearStr, limit, matcher, group, false);
 }
 
 /*

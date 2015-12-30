@@ -22,7 +22,7 @@
   title="&windowtitle.label;"
   orient="vertical" 
   buttons="accept,cancel"
-  style="width: 80em; height: 40em;"
+  style="width: 60em; height: 40em;"
   onload="startup();"
   ondialogaccept="return acceptDialog()"
   ondialogcancel="return exitDialog()"
@@ -36,6 +36,6 @@
 
   <script type="application/javascript" src="chrome://mozapps/content/profile/profileSelection.js"/>
 
-  <browser id="browser" src="about:profiles?profileManager" flex="1" />
+  <browser id="browser" src="about:profiles?manage" flex="1" />
 
 </dialog>

@@ -196,6 +196,7 @@ public abstract class GeckoApp
     protected DoorHangerPopup mDoorHangerPopup;
     protected FormAssistPopup mFormAssistPopup;
     protected ButtonToast mToast;
+    protected Snackbar mSnackbar;
 
     protected LayerView mLayerView;
     private AbsoluteLayout mPluginContainer;
@@ -854,6 +855,8 @@ public abstract class GeckoApp
         }
 
         snackbar.show();
+
+        this.mSnackbar = snackbar;
     }
 
     /**
@@ -2174,8 +2177,6 @@ public abstract class GeckoApp
 
         deleteTempFiles();
 
-        if (mLayerView != null)
-            mLayerView.destroy();
         if (mDoorHangerPopup != null)
             mDoorHangerPopup.destroy();
         if (mFormAssistPopup != null)
@@ -2589,8 +2590,7 @@ public abstract class GeckoApp
         GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Update:CheckResult", result));
     }
 
-    protected void geckoConnected() {
-        mLayerView.geckoConnected();
+    private void geckoConnected() {
         mLayerView.setOverScrollMode(View.OVER_SCROLL_NEVER);
     }
 

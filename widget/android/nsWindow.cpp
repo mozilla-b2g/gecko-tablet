@@ -144,10 +144,8 @@ NS_IMPL_ISUPPORTS(ContentCreationNotifier,
 // one.
 static nsTArray<nsWindow*> gTopLevelWindows;
 
-// FIXME: because we don't support separate nsWindow for each GeckoView
-// yet, we have to attach a new GeckoView to an existing nsWindow if it
-// exists. Eventually, an nsWindow will be opened/closed as each GeckoView
-// is created/destroyed.
+// FIXME: because we don't support multiple GeckoViews for every feature
+// yet, we have to default to a particular GeckoView for certain calls.
 static nsWindow* gGeckoViewWindow;
 
 static bool sFailedToCreateGLContext = false;
@@ -157,14 +155,15 @@ static const double SWIPE_MAX_PINCH_DELTA_INCHES = 0.4;
 static const double SWIPE_MIN_DISTANCE_INCHES = 0.6;
 
 
-class nsWindow::Natives final
-    : public GeckoView::Window::Natives<Natives>
-    , public GeckoEditable::Natives<Natives>
-    , public SupportsWeakPtr<Natives>
+class nsWindow::GeckoViewSupport final
+    : public GeckoView::Window::Natives<GeckoViewSupport>
+    , public GeckoEditable::Natives<GeckoViewSupport>
+    , public SupportsWeakPtr<GeckoViewSupport>
     , public UsesGeckoThreadProxy
 {
     nsWindow& window;
 
+public:
     template<typename T>
     class WindowEvent : public nsAppShell::LambdaEvent<T>
     {
@@ -181,7 +180,8 @@ class nsWindow::Natives final
             JNIEnv* const env = mozilla::jni::GetEnvForThread();
             const auto& thisArg = Base::lambda.GetThisArg();
 
-            const auto natives = reinterpret_cast<mozilla::WeakPtr<Natives>*>(
+            const auto natives = reinterpret_cast<
+                    mozilla::WeakPtr<typename T::TargetClass>*>(
                     jni::GetNativeHandle(env, thisArg.Get()));
             jni::HandleUncaughtException(env);
 
@@ -206,9 +206,9 @@ class nsWindow::Natives final
         nsAppShell::Event::Type ActivityType() const override
         {
             // Events that result in user-visible changes count as UI events.
-            if (Base::lambda.IsTarget(&Natives::OnKeyEvent) ||
-                Base::lambda.IsTarget(&Natives::OnImeReplaceText) ||
-                Base::lambda.IsTarget(&Natives::OnImeUpdateComposition))
+            if (Base::lambda.IsTarget(&GeckoViewSupport::OnKeyEvent) ||
+                Base::lambda.IsTarget(&GeckoViewSupport::OnImeReplaceText) ||
+                Base::lambda.IsTarget(&GeckoViewSupport::OnImeUpdateComposition))
             {
                 return nsAppShell::Event::Type::kUIActivity;
             }
@@ -216,11 +216,10 @@ class nsWindow::Natives final
         }
     };
 
-public:
-    typedef GeckoView::Window::Natives<Natives> Base;
-    typedef GeckoEditable::Natives<Natives> EditableBase;
+    typedef GeckoView::Window::Natives<GeckoViewSupport> Base;
+    typedef GeckoEditable::Natives<GeckoViewSupport> EditableBase;
 
-    MOZ_DECLARE_WEAKREFERENCE_TYPENAME(Natives);
+    MOZ_DECLARE_WEAKREFERENCE_TYPENAME(GeckoViewSupport);
 
     template<typename Functor>
     static void OnNativeCall(Functor&& aCall)
@@ -231,20 +230,31 @@ public:
             // can get a head start on opening our window.
             return aCall();
         }
-        return nsAppShell::gAppShell->PostEvent(mozilla::MakeUnique<
+        return nsAppShell::PostEvent(mozilla::MakeUnique<
                 WindowEvent<Functor>>(mozilla::Move(aCall)));
     }
 
-    Natives(nsWindow* aWindow)
+    GeckoViewSupport(nsWindow* aWindow,
+                     const GeckoView::Window::LocalRef& aInstance,
+                     GeckoView::Param aView)
         : window(*aWindow)
+        , mEditable(GeckoEditable::New(aView))
         , mIMERanges(new TextRangeArray())
         , mIMEMaskEventsCount(1) // Mask IME events since there's no focus yet
         , mIMEUpdatingContext(false)
         , mIMESelectionChanged(false)
         , mIMETextChangedDuringFlush(false)
-    {}
+    {
+        Reattach(aInstance);
+        EditableBase::AttachNative(mEditable, this);
+    }
 
-    ~Natives();
+    ~GeckoViewSupport();
+
+    void Reattach(const GeckoView::Window::LocalRef& aInstance)
+    {
+        Base::AttachNative(aInstance, this);
+    }
 
     using Base::DisposeNative;
     using EditableBase::DisposeNative;
@@ -256,19 +266,14 @@ public:
     // Create and attach a window.
     static void Open(const jni::ClassObject::LocalRef& aCls,
                      GeckoView::Window::Param aWindow,
-                     GeckoView::Param aView,
+                     GeckoView::Param aView, jni::Object::Param aGLController,
                      int32_t aWidth, int32_t aHeight);
-
-    // Set the active layer client object
-    static void SetLayerClient(jni::Object::Param aClient)
-    {
-        MOZ_ASSERT(NS_IsMainThread());
-        AndroidBridge::Bridge()->SetLayerClient(
-                widget::GeckoLayerClient::Ref::From(aClient.Get()));
-    }
 
     // Close and destroy the nsWindow.
     void Close();
+
+    // Reattach this nsWindow to a new GeckoView.
+    void Reattach(GeckoView::Param aView);
 
     /**
      * GeckoEditable methods
@@ -362,7 +367,242 @@ public:
     void OnImeUpdateComposition(int32_t aStart, int32_t aEnd);
 };
 
-nsWindow::Natives::~Natives()
+/**
+ * GLController has some unique requirements for its native calls, so make it
+ * separate from GeckoViewSupport.
+ */
+class nsWindow::GLControllerSupport final
+    : public GLController::Natives<GLControllerSupport>
+    , public SupportsWeakPtr<GLControllerSupport>
+    , public UsesGeckoThreadProxy
+{
+    nsWindow& window;
+    GLController::GlobalRef mGLController;
+    GeckoLayerClient::GlobalRef mLayerClient;
+    Atomic<bool, ReleaseAcquire> mCompositorPaused;
+
+    // In order to use Event::HasSameTypeAs in PostTo(), we cannot make
+    // GLControllerEvent a template because each template instantiation is
+    // a different type. So implement GLControllerEvent as a ProxyEvent.
+    class GLControllerEvent final : public nsAppShell::ProxyEvent
+    {
+        using Event = nsAppShell::Event;
+
+    public:
+        static UniquePtr<Event> MakeEvent(UniquePtr<Event>&& event)
+        {
+            return MakeUnique<GLControllerEvent>(mozilla::Move(event));
+        }
+
+        GLControllerEvent(UniquePtr<Event>&& event)
+            : nsAppShell::ProxyEvent(mozilla::Move(event))
+        {}
+
+        void PostTo(LinkedList<Event>& queue) override
+        {
+            // Give priority to compositor events, but keep in order with
+            // existing compositor events.
+            nsAppShell::Event* event = queue.getFirst();
+            while (event && event->HasSameTypeAs(this)) {
+                event = event->getNext();
+            }
+            if (event) {
+                event->setPrevious(this);
+            } else {
+                queue.insertBack(this);
+            }
+        }
+    };
+
+public:
+    typedef GLController::Natives<GLControllerSupport> Base;
+
+    MOZ_DECLARE_WEAKREFERENCE_TYPENAME(GLControllerSupport);
+
+    template<class Functor>
+    static void OnNativeCall(Functor&& aCall)
+    {
+        if (aCall.IsTarget(&GLControllerSupport::CreateCompositor) ||
+            aCall.IsTarget(&GLControllerSupport::PauseCompositor)) {
+
+            // These calls are blocking.
+            nsAppShell::SyncRunEvent(GeckoViewSupport::WindowEvent<Functor>(
+                    mozilla::Move(aCall)), &GLControllerEvent::MakeEvent);
+            return;
+
+        } else if (aCall.IsTarget(
+                &GLControllerSupport::SyncResumeResizeCompositor)) {
+            // This call is synchronous. Perform the original call using a copy
+            // of the lambda. Then redirect the original lambda to
+            // OnResumedCompositor, to be run on the Gecko thread. We use
+            // Functor instead of our own lambda so that Functor can handle
+            // object lifetimes for us.
+            (Functor(aCall))();
+            aCall.SetTarget(&GLControllerSupport::OnResumedCompositor);
+
+        } else if (aCall.IsTarget(
+                &GLControllerSupport::SyncInvalidateAndScheduleComposite)) {
+            // This call is synchronous.
+            return aCall();
+        }
+
+        nsAppShell::PostEvent(
+                mozilla::MakeUnique<GLControllerEvent>(
+                mozilla::MakeUnique<GeckoViewSupport::WindowEvent<Functor>>(
+                mozilla::Move(aCall))));
+    }
+
+    GLControllerSupport(nsWindow* aWindow,
+                        const GLController::LocalRef& aInstance)
+        : window(*aWindow)
+        , mGLController(aInstance)
+        , mCompositorPaused(true)
+    {
+        Reattach(aInstance);
+    }
+
+    ~GLControllerSupport()
+    {
+        GLController::GlobalRef glController(mozilla::Move(mGLController));
+        nsAppShell::PostEvent([glController] {
+            GLControllerSupport::DisposeNative(GLController::LocalRef(
+                        jni::GetGeckoThreadEnv(), glController));
+        });
+    }
+
+    void Reattach(const GLController::LocalRef& aInstance)
+    {
+        Base::AttachNative(aInstance, this);
+    }
+
+    const GeckoLayerClient::Ref& GetLayerClient() const
+    {
+        return mLayerClient;
+    }
+
+    bool CompositorPaused() const
+    {
+        return mCompositorPaused;
+    }
+
+    EGLSurface CreateEGLSurface()
+    {
+        static jfieldID eglSurfacePointerField;
+
+        JNIEnv* const env = jni::GetEnvForThread();
+
+        if (!eglSurfacePointerField) {
+            AutoJNIClass egl(env, "com/google/android/gles_jni/EGLSurfaceImpl");
+            // The pointer type moved to a 'long' in Android L, API version 20
+            eglSurfacePointerField = egl.getField("mEGLSurface",
+                    AndroidBridge::Bridge()->GetAPIVersion() >= 20 ? "J" : "I");
+        }
+
+        // Called on the compositor thread.
+        auto eglSurface = mGLController->CreateEGLSurface();
+        return reinterpret_cast<EGLSurface>(
+                AndroidBridge::Bridge()->GetAPIVersion() >= 20 ?
+                env->GetLongField(eglSurface.Get(), eglSurfacePointerField) :
+                env->GetIntField(eglSurface.Get(), eglSurfacePointerField));
+    }
+
+private:
+    void OnResumedCompositor(int32_t aWidth, int32_t aHeight)
+    {
+        // When we receive this, the compositor has already been told to
+        // resume. (It turns out that waiting till we reach here to tell
+        // the compositor to resume takes too long, resulting in a black
+        // flash.) This means it's now safe for layer updates to occur.
+        // Since we might have prevented one or more draw events from
+        // occurring while the compositor was paused, we need to schedule
+        // a draw event now.
+        if (!mCompositorPaused) {
+            window.RedrawAll();
+        }
+    }
+
+    /**
+     * GLController methods
+     */
+public:
+    using Base::DisposeNative;
+
+    void SetLayerClient(jni::Object::Param aClient)
+    {
+        const auto& layerClient = GeckoLayerClient::Ref::From(aClient);
+
+        AndroidBridge::Bridge()->SetLayerClient(layerClient);
+
+        // If resetting is true, Android destroyed our GeckoApp activity and we
+        // had to recreate it, but all the Gecko-side things were not
+        // destroyed.  We therefore need to link up the new java objects to
+        // Gecko, and that's what we do here.
+        const bool resetting = !!mLayerClient;
+        mLayerClient = layerClient;
+
+        if (resetting) {
+            // Since we are re-linking the new java objects to Gecko, we need
+            // to get the viewport from the compositor (since the Java copy was
+            // thrown away) and we do that by setting the first-paint flag.
+            if (window.mCompositorParent) {
+                window.mCompositorParent->ForceIsFirstPaint();
+            }
+        }
+    }
+
+    void CreateCompositor(int32_t aWidth, int32_t aHeight)
+    {
+        window.CreateLayerManager(aWidth, aHeight);
+        mCompositorPaused = false;
+        OnResumedCompositor(aWidth, aHeight);
+    }
+
+    void PauseCompositor()
+    {
+        // The compositor gets paused when the app is about to go into the
+        // background. While the compositor is paused, we need to ensure that
+        // no layer tree updates (from draw events) occur, since the compositor
+        // cannot make a GL context current in order to process updates.
+        if (window.mCompositorChild) {
+            window.mCompositorChild->SendPause();
+        }
+        mCompositorPaused = true;
+    }
+
+    void SyncPauseCompositor()
+    {
+        if (window.mCompositorParent) {
+            window.mCompositorParent->SchedulePauseOnCompositorThread();
+            mCompositorPaused = true;
+        }
+    }
+
+    void SyncResumeCompositor()
+    {
+        if (window.mCompositorParent &&
+                window.mCompositorParent->ScheduleResumeOnCompositorThread()) {
+            mCompositorPaused = false;
+        }
+    }
+
+    void SyncResumeResizeCompositor(int32_t aWidth, int32_t aHeight)
+    {
+        if (window.mCompositorParent && window.mCompositorParent->
+                ScheduleResumeOnCompositorThread(aWidth, aHeight)) {
+            mCompositorPaused = false;
+        }
+    }
+
+    void SyncInvalidateAndScheduleComposite()
+    {
+        if (window.mCompositorParent) {
+            window.mCompositorParent->InvalidateOnCompositorThread();
+            window.mCompositorParent->ScheduleRenderOnCompositorThread();
+        }
+    }
+};
+
+nsWindow::GeckoViewSupport::~GeckoViewSupport()
 {
     // Disassociate our GeckoEditable instance with our native object.
     // OnDestroy will call disposeNative after any pending native calls have
@@ -371,28 +611,17 @@ nsWindow::Natives::~Natives()
     mEditable->OnDestroy();
 }
 
-void
-nsWindow::Natives::Open(const jni::ClassObject::LocalRef& aCls,
-                        GeckoView::Window::Param aWindow,
-                        GeckoView::Param aView,
-                        int32_t aWidth, int32_t aHeight)
+/* static */ void
+nsWindow::GeckoViewSupport::Open(const jni::ClassObject::LocalRef& aCls,
+                                 GeckoView::Window::Param aWindow,
+                                 GeckoView::Param aView,
+                                 jni::Object::Param aGLController,
+                                 int32_t aWidth, int32_t aHeight)
 {
     MOZ_ASSERT(NS_IsMainThread());
 
-    PROFILER_LABEL("nsWindow", "Natives::Open",
+    PROFILER_LABEL("nsWindow", "GeckoViewSupport::Open",
                    js::ProfileEntry::Category::OTHER);
-
-    if (gGeckoViewWindow) {
-        // Should have been created the first time.
-        MOZ_ASSERT(gGeckoViewWindow->mNatives);
-
-        // Associate our previous GeckoEditable with the new GeckoView.
-        gGeckoViewWindow->mNatives->mEditable->OnViewChange(aView);
-
-        Base::AttachNative(GeckoView::Window::LocalRef(aCls.Env(), aWindow),
-                           gGeckoViewWindow->mNatives.get());
-        return;
-    }
 
     nsCOMPtr<nsIWindowWatcher> ww = do_GetService(NS_WINDOWWATCHER_CONTRACTID);
     MOZ_ASSERT(ww);
@@ -418,30 +647,30 @@ nsWindow::Natives::Open(const jni::ClassObject::LocalRef& aCls,
         args->AppendElement(heightArg);
     }
 
-    nsCOMPtr<nsIDOMWindow> window;
+    nsCOMPtr<nsIDOMWindow> domWindow;
     ww->OpenWindow(nullptr, url, "_blank", "chrome,dialog=no,all",
-                   args, getter_AddRefs(window));
-    MOZ_ASSERT(window);
+                   args, getter_AddRefs(domWindow));
+    MOZ_ASSERT(domWindow);
 
-    nsCOMPtr<nsIWidget> widget = WidgetUtils::DOMWindowToWidget(window);
+    nsCOMPtr<nsIWidget> widget = WidgetUtils::DOMWindowToWidget(domWindow);
     MOZ_ASSERT(widget);
 
-    gGeckoViewWindow = static_cast<nsWindow*>(widget.get());
-    UniquePtr<Natives> natives = mozilla::MakeUnique<Natives>(gGeckoViewWindow);
+    const auto window = static_cast<nsWindow*>(widget.get());
 
-    // Create GeckoEditable for the new nsWindow/GeckoView pair.
-    GeckoEditable::LocalRef editable = GeckoEditable::New();
-    EditableBase::AttachNative(editable, natives.get());
-    natives->mEditable = editable;
-    editable->OnViewChange(aView);
+    // Attach a new GeckoView support object to the new window.
+    window->mGeckoViewSupport  = mozilla::MakeUnique<GeckoViewSupport>(
+            window, GeckoView::Window::LocalRef(aCls.Env(), aWindow), aView);
 
-    Base::AttachNative(GeckoView::Window::LocalRef(aCls.Env(), aWindow),
-                       natives.get());
-    gGeckoViewWindow->mNatives = mozilla::Move(natives);
+    // Attach the GLController to the new window.
+    window->mGLControllerSupport = mozilla::MakeUnique<GLControllerSupport>(
+            window, GLController::LocalRef(
+            aCls.Env(), GLController::Ref::From(aGLController)));
+
+    gGeckoViewWindow = window;
 }
 
 void
-nsWindow::Natives::Close()
+nsWindow::GeckoViewSupport::Close()
 {
     nsIWidgetListener* const widgetListener = window.mWidgetListener;
 
@@ -460,10 +689,18 @@ nsWindow::Natives::Close()
 }
 
 void
+nsWindow::GeckoViewSupport::Reattach(GeckoView::Param aView)
+{
+    // Associate our previous GeckoEditable with the new GeckoView.
+    mEditable->OnViewChange(aView);
+}
+
+void
 nsWindow::InitNatives()
 {
-    nsWindow::Natives::Base::Init();
-    nsWindow::Natives::EditableBase::Init();
+    nsWindow::GeckoViewSupport::Base::Init();
+    nsWindow::GeckoViewSupport::EditableBase::Init();
+    nsWindow::GLControllerSupport::Init();
 }
 
 nsWindow*
@@ -516,10 +753,9 @@ nsWindow::~nsWindow()
 {
     gTopLevelWindows.RemoveElement(this);
     ALOG("nsWindow %p destructor", (void*)this);
-    if (mLayerManager == sLayerManager) {
-        // If this window was the one that created the global OMTC layer manager
-        // and compositor, then we should null those out.
-        SetCompositor(nullptr, nullptr, nullptr);
+
+    if (gGeckoViewWindow == this) {
+        gGeckoViewWindow = nullptr;
     }
 }
 
@@ -583,9 +819,9 @@ nsWindow::Destroy(void)
 {
     nsBaseWidget::mOnDestroyCalled = true;
 
-    if (mNatives) {
+    if (mGeckoViewSupport) {
         // Disassociate our native object with GeckoView.
-        mNatives = nullptr;
+        mGeckoViewSupport = nullptr;
     }
 
     while (mChildren.Length()) {
@@ -957,7 +1193,7 @@ nsWindow::BringToFront()
     }
 
     // force a window resize
-    nsAppShell::gAppShell->ResendLastResizeEvent(newTop);
+    nsAppShell::Get()->ResendLastResizeEvent(newTop);
     RedrawAll();
 }
 
@@ -1034,11 +1270,6 @@ nsWindow::GetLayerManager(PLayerTransactionChild*, LayersBackend, LayerManagerPe
     if (mLayerManager) {
         return mLayerManager;
     }
-    // for OMTC allow use of the single layer manager/compositor
-    // shared across all windows
-    if (ShouldUseOffMainThreadCompositing()) {
-        return sLayerManager;
-    }
     return nullptr;
 }
 
@@ -1056,15 +1287,8 @@ nsWindow::CreateLayerManager(int aCompositorWidth, int aCompositorHeight)
     }
 
     if (ShouldUseOffMainThreadCompositing()) {
-        if (sLayerManager) {
-            return;
-        }
         CreateCompositor(aCompositorWidth, aCompositorHeight);
         if (mLayerManager) {
-            // for OMTC create a single layer manager and compositor that will be
-            // used for all windows.
-            SetCompositor(mLayerManager, mCompositorParent, mCompositorChild);
-            sCompositorPaused = false;
             return;
         }
 
@@ -1194,34 +1418,6 @@ nsWindow::OnGlobalAndroidEvent(AndroidGeckoEvent *ae)
             win->OnNativeGestureEvent(ae);
             break;
         }
-
-        case AndroidGeckoEvent::COMPOSITOR_PAUSE:
-            // The compositor gets paused when the app is about to go into the
-            // background. While the compositor is paused, we need to ensure that
-            // no layer tree updates (from draw events) occur, since the compositor
-            // cannot make a GL context current in order to process updates.
-            if (sCompositorChild) {
-                sCompositorChild->SendPause();
-            }
-            sCompositorPaused = true;
-            break;
-
-        case AndroidGeckoEvent::COMPOSITOR_CREATE:
-            win->CreateLayerManager(ae->Width(), ae->Height());
-            // Fallthrough
-
-        case AndroidGeckoEvent::COMPOSITOR_RESUME:
-            // When we receive this, the compositor has already been told to
-            // resume. (It turns out that waiting till we reach here to tell
-            // the compositor to resume takes too long, resulting in a black
-            // flash.) This means it's now safe for layer updates to occur.
-            // Since we might have prevented one or more draw events from
-            // occurring while the compositor was paused, we need to schedule
-            // a draw event now.
-            if (!sCompositorPaused) {
-                win->RedrawAll();
-            }
-            break;
     }
 }
 
@@ -1275,6 +1471,11 @@ nsWindow::GetNativeData(uint32_t aDataType)
             // We assume that there is only one context per process on Android
             return NS_ONLY_ONE_NATIVE_IME_CONTEXT;
 
+        case NS_NATIVE_NEW_EGL_SURFACE:
+            if (!mGLControllerSupport) {
+                return nullptr;
+            }
+            return static_cast<void*>(mGLControllerSupport->CreateEGLSurface());
     }
 
     return nullptr;
@@ -1852,7 +2053,7 @@ InitKeyEvent(WidgetKeyboardEvent& event,
 }
 
 void
-nsWindow::Natives::OnKeyEvent(int32_t aAction, int32_t aKeyCode,
+nsWindow::GeckoViewSupport::OnKeyEvent(int32_t aAction, int32_t aKeyCode,
         int32_t aScanCode, int32_t aMetaState, int64_t aTime,
         int32_t aUnicodeChar, int32_t aBaseUnicodeChar,
         int32_t aDomPrintableKeyValue, int32_t aRepeatCount, int32_t aFlags,
@@ -1970,7 +2171,7 @@ nsWindow::RemoveIMEComposition()
  * Our dummy key events have 0 as the keycode.
  */
 void
-nsWindow::Natives::SendIMEDummyKeyEvents()
+nsWindow::GeckoViewSupport::SendIMEDummyKeyEvents()
 {
     WidgetKeyboardEvent downEvent(true, eKeyDown, &window);
     window.InitEvent(downEvent, nullptr);
@@ -1984,7 +2185,7 @@ nsWindow::Natives::SendIMEDummyKeyEvents()
 }
 
 void
-nsWindow::Natives::AddIMETextChange(const IMETextChange& aChange)
+nsWindow::GeckoViewSupport::AddIMETextChange(const IMETextChange& aChange)
 {
     mIMETextChanges.AppendElement(aChange);
 
@@ -2050,7 +2251,7 @@ nsWindow::Natives::AddIMETextChange(const IMETextChange& aChange)
 }
 
 void
-nsWindow::Natives::PostFlushIMEChanges(FlushChangesFlag aFlags)
+nsWindow::GeckoViewSupport::PostFlushIMEChanges(FlushChangesFlag aFlags)
 {
     if (aFlags != FLUSH_FLAG_RETRY &&
             (!mIMETextChanges.IsEmpty() || mIMESelectionChanged)) {
@@ -2061,7 +2262,7 @@ nsWindow::Natives::PostFlushIMEChanges(FlushChangesFlag aFlags)
     // Keep a strong reference to the window to keep 'this' alive.
     RefPtr<nsWindow> window(&this->window);
 
-    nsAppShell::gAppShell->PostEvent([this, window, aFlags] {
+    nsAppShell::PostEvent([this, window, aFlags] {
         if (!window->Destroyed()) {
             FlushIMEChanges(aFlags);
         }
@@ -2069,7 +2270,7 @@ nsWindow::Natives::PostFlushIMEChanges(FlushChangesFlag aFlags)
 }
 
 void
-nsWindow::Natives::FlushIMEChanges(FlushChangesFlag aFlags)
+nsWindow::GeckoViewSupport::FlushIMEChanges(FlushChangesFlag aFlags)
 {
     // Only send change notifications if we are *not* masking events,
     // i.e. if we have a focused editor,
@@ -2154,7 +2355,7 @@ nsWindow::Natives::FlushIMEChanges(FlushChangesFlag aFlags)
 }
 
 bool
-nsWindow::Natives::NotifyIME(const IMENotification& aIMENotification)
+nsWindow::GeckoViewSupport::NotifyIME(const IMENotification& aIMENotification)
 {
     MOZ_ASSERT(mEditable);
 
@@ -2228,8 +2429,8 @@ nsWindow::Natives::NotifyIME(const IMENotification& aIMENotification)
 }
 
 void
-nsWindow::Natives::SetInputContext(const InputContext& aContext,
-                                   const InputContextAction& aAction)
+nsWindow::GeckoViewSupport::SetInputContext(const InputContext& aContext,
+                                            const InputContextAction& aAction)
 {
     MOZ_ASSERT(mEditable);
 
@@ -2273,7 +2474,7 @@ nsWindow::Natives::SetInputContext(const InputContext& aContext,
     RefPtr<nsWindow> window(&this->window);
     mIMEUpdatingContext = true;
 
-    nsAppShell::gAppShell->PostEvent([this, window] {
+    nsAppShell::PostEvent([this, window] {
         mIMEUpdatingContext = false;
         if (window->Destroyed()) {
             return;
@@ -2287,7 +2488,7 @@ nsWindow::Natives::SetInputContext(const InputContext& aContext,
 }
 
 InputContext
-nsWindow::Natives::GetInputContext()
+nsWindow::GeckoViewSupport::GetInputContext()
 {
     InputContext context = mInputContext;
     context.mIMEState.mOpen = IMEState::OPEN_STATE_NOT_SUPPORTED;
@@ -2295,7 +2496,7 @@ nsWindow::Natives::GetInputContext()
 }
 
 void
-nsWindow::Natives::OnImeSynchronize()
+nsWindow::GeckoViewSupport::OnImeSynchronize()
 {
     if (!mIMEMaskEventsCount) {
         FlushIMEChanges();
@@ -2304,7 +2505,7 @@ nsWindow::Natives::OnImeSynchronize()
 }
 
 void
-nsWindow::Natives::OnImeAcknowledgeFocus()
+nsWindow::GeckoViewSupport::OnImeAcknowledgeFocus()
 {
     MOZ_ASSERT(mIMEMaskEventsCount > 0);
 
@@ -2330,8 +2531,8 @@ nsWindow::Natives::OnImeAcknowledgeFocus()
 }
 
 void
-nsWindow::Natives::OnImeReplaceText(int32_t aStart, int32_t aEnd,
-                                    jni::String::Param aText)
+nsWindow::GeckoViewSupport::OnImeReplaceText(int32_t aStart, int32_t aEnd,
+                                             jni::String::Param aText)
 {
     if (mIMEMaskEventsCount > 0) {
         // Not focused; still reply to events, but don't do anything else.
@@ -2445,7 +2646,7 @@ nsWindow::Natives::OnImeReplaceText(int32_t aStart, int32_t aEnd,
 }
 
 void
-nsWindow::Natives::OnImeAddCompositionRange(
+nsWindow::GeckoViewSupport::OnImeAddCompositionRange(
         int32_t aStart, int32_t aEnd, int32_t aRangeType, int32_t aRangeStyle,
         int32_t aRangeLineStyle, bool aRangeBoldLine, int32_t aRangeForeColor,
         int32_t aRangeBackColor, int32_t aRangeLineColor)
@@ -2472,7 +2673,7 @@ nsWindow::Natives::OnImeAddCompositionRange(
 }
 
 void
-nsWindow::Natives::OnImeUpdateComposition(int32_t aStart, int32_t aEnd)
+nsWindow::GeckoViewSupport::OnImeUpdateComposition(int32_t aStart, int32_t aEnd)
 {
     if (mIMEMaskEventsCount > 0) {
         // Not focused.
@@ -2584,12 +2785,12 @@ nsWindow::NotifyIMEInternal(const IMENotification& aIMENotification)
 {
     MOZ_ASSERT(this == FindTopLevel());
 
-    if (!mNatives) {
+    if (!mGeckoViewSupport) {
         // Non-GeckoView windows don't support IME operations.
         return NS_ERROR_NOT_AVAILABLE;
     }
 
-    if (mNatives->NotifyIME(aIMENotification)) {
+    if (mGeckoViewSupport->NotifyIME(aIMENotification)) {
         return NS_OK;
     }
     return NS_ERROR_NOT_IMPLEMENTED;
@@ -2607,7 +2808,7 @@ nsWindow::SetInputContext(const InputContext& aContext,
     nsWindow* top = FindTopLevel();
     MOZ_ASSERT(top);
 
-    if (!top->mNatives) {
+    if (!top->mGeckoViewSupport) {
         // Non-GeckoView windows don't support IME operations.
         return;
     }
@@ -2616,7 +2817,7 @@ nsWindow::SetInputContext(const InputContext& aContext,
     // will be processed by the top window. Therefore, to ensure the
     // IME event uses the correct mInputContext, we need to let the top
     // window process SetInputContext
-    top->mNatives->SetInputContext(aContext, aAction);
+    top->mGeckoViewSupport->SetInputContext(aContext, aAction);
 }
 
 NS_IMETHODIMP_(InputContext)
@@ -2625,14 +2826,14 @@ nsWindow::GetInputContext()
     nsWindow* top = FindTopLevel();
     MOZ_ASSERT(top);
 
-    if (!top->mNatives) {
+    if (!top->mGeckoViewSupport) {
         // Non-GeckoView windows don't support IME operations.
         return InputContext();
     }
 
     // We let the top window process SetInputContext,
     // so we should let it process GetInputContext as well.
-    return top->mNatives->GetInputContext();
+    return top->mGeckoViewSupport->GetInputContext();
 }
 
 nsIMEUpdatePreference
@@ -2652,20 +2853,15 @@ void
 nsWindow::DrawWindowUnderlay(LayerManagerComposite* aManager,
                              LayoutDeviceIntRect aRect)
 {
-    GeckoLayerClient::LocalRef client = AndroidBridge::Bridge()->GetLayerClient();
-    if (!client) {
-        ALOG_BRIDGE("Exceptional Exit: %s", __PRETTY_FUNCTION__);
+    MOZ_ASSERT(mGLControllerSupport);
+    GeckoLayerClient::LocalRef client = mGLControllerSupport->GetLayerClient();
+
+    LayerRenderer::Frame::LocalRef frame = client->CreateFrame();
+    mLayerRendererFrame = frame;
+    if (NS_WARN_IF(!mLayerRendererFrame)) {
         return;
     }
 
-    AutoLocalJNIFrame jniFrame(client.Env());
-    auto frameObj = client->CreateFrame();
-    if (!frameObj) {
-        NS_WARNING("Warning: unable to obtain a LayerRenderer frame; aborting window underlay draw");
-        return;
-    }
-
-    mLayerRendererFrame.Init(client.Env(), frameObj.Get());
     if (!WidgetPaintsBackground()) {
         return;
     }
@@ -2678,8 +2874,8 @@ nsWindow::DrawWindowUnderlay(LayerManagerComposite* aManager,
     gl->fGetIntegerv(LOCAL_GL_SCISSOR_BOX, scissorRect);
 
     client->ActivateProgram();
-    if (!mLayerRendererFrame.BeginDrawing(&jniFrame)) return;
-    if (!mLayerRendererFrame.DrawBackground(&jniFrame)) return;
+    frame->BeginDrawing();
+    frame->DrawBackground();
     client->DeactivateProgramAndRestoreState(scissorEnabled,
         scissorRect[0], scissorRect[1], scissorRect[2], scissorRect[3]);
 }
@@ -2691,14 +2887,10 @@ nsWindow::DrawWindowOverlay(LayerManagerComposite* aManager,
     PROFILER_LABEL("nsWindow", "DrawWindowOverlay",
         js::ProfileEntry::Category::GRAPHICS);
 
-    if (mLayerRendererFrame.isNull()) {
-        NS_WARNING("Warning: do not have a LayerRenderer frame; aborting window overlay draw");
+    if (NS_WARN_IF(!mLayerRendererFrame)) {
         return;
     }
 
-    GeckoLayerClient::LocalRef client = AndroidBridge::Bridge()->GetLayerClient();
-
-    AutoLocalJNIFrame jniFrame(client.Env());
     CompositorOGL *compositor = static_cast<CompositorOGL*>(aManager->GetCompositor());
     compositor->ResetProgram();
     gl::GLContext* gl = compositor->gl();
@@ -2706,85 +2898,60 @@ nsWindow::DrawWindowOverlay(LayerManagerComposite* aManager,
     GLint scissorRect[4];
     gl->fGetIntegerv(LOCAL_GL_SCISSOR_BOX, scissorRect);
 
+    MOZ_ASSERT(mGLControllerSupport);
+    GeckoLayerClient::LocalRef client = mGLControllerSupport->GetLayerClient();
+
     client->ActivateProgram();
-    if (!mLayerRendererFrame.DrawForeground(&jniFrame)) return;
-    if (!mLayerRendererFrame.EndDrawing(&jniFrame)) return;
+    mLayerRendererFrame->DrawForeground();
+    mLayerRendererFrame->EndDrawing();
     client->DeactivateProgramAndRestoreState(scissorEnabled,
         scissorRect[0], scissorRect[1], scissorRect[2], scissorRect[3]);
-    mLayerRendererFrame.Dispose(client.Env());
+    mLayerRendererFrame = nullptr;
 }
 
 // off-main-thread compositor fields and functions
 
 StaticRefPtr<mozilla::layers::APZCTreeManager> nsWindow::sApzcTreeManager;
-StaticRefPtr<mozilla::layers::LayerManager> nsWindow::sLayerManager;
-StaticRefPtr<mozilla::layers::CompositorParent> nsWindow::sCompositorParent;
-StaticRefPtr<mozilla::layers::CompositorChild> nsWindow::sCompositorChild;
-bool nsWindow::sCompositorPaused = true;
-
-void
-nsWindow::SetCompositor(mozilla::layers::LayerManager* aLayerManager,
-                        mozilla::layers::CompositorParent* aCompositorParent,
-                        mozilla::layers::CompositorChild* aCompositorChild)
-{
-    sLayerManager = aLayerManager;
-    sCompositorParent = aCompositorParent;
-    sCompositorChild = aCompositorChild;
-}
 
 void
 nsWindow::InvalidateAndScheduleComposite()
 {
-    if (sCompositorParent) {
-        sCompositorParent->InvalidateOnCompositorThread();
-        sCompositorParent->ScheduleRenderOnCompositorThread();
+    if (gGeckoViewWindow && gGeckoViewWindow->mGLControllerSupport) {
+        gGeckoViewWindow->mGLControllerSupport->
+                SyncInvalidateAndScheduleComposite();
     }
 }
 
 bool
 nsWindow::IsCompositionPaused()
 {
-    return sCompositorPaused;
+    if (gGeckoViewWindow && gGeckoViewWindow->mGLControllerSupport) {
+        return gGeckoViewWindow->mGLControllerSupport->CompositorPaused();
+    }
+    return false;
 }
 
 void
 nsWindow::SchedulePauseComposition()
 {
-    if (sCompositorParent) {
-        sCompositorParent->SchedulePauseOnCompositorThread();
-        sCompositorPaused = true;
+    if (gGeckoViewWindow && gGeckoViewWindow->mGLControllerSupport) {
+        return gGeckoViewWindow->mGLControllerSupport->SyncPauseCompositor();
     }
 }
 
 void
 nsWindow::ScheduleResumeComposition()
 {
-    if (sCompositorParent && sCompositorParent->ScheduleResumeOnCompositorThread()) {
-        sCompositorPaused = false;
-    }
-}
-
-void
-nsWindow::ScheduleResumeComposition(int width, int height)
-{
-    if (sCompositorParent && sCompositorParent->ScheduleResumeOnCompositorThread(width, height)) {
-        sCompositorPaused = false;
-    }
-}
-
-void
-nsWindow::ForceIsFirstPaint()
-{
-    if (sCompositorParent) {
-        sCompositorParent->ForceIsFirstPaint();
+    if (gGeckoViewWindow && gGeckoViewWindow->mGLControllerSupport) {
+        return gGeckoViewWindow->mGLControllerSupport->SyncResumeCompositor();
     }
 }
 
 float
 nsWindow::ComputeRenderIntegrity()
 {
-    if (sCompositorParent) {
-        return sCompositorParent->ComputeRenderIntegrity();
+    if (gGeckoViewWindow && gGeckoViewWindow->mCompositorParent) {
+        return gGeckoViewWindow->mCompositorParent->ComputeRenderIntegrity();
     }
 
     return 1.f;
@@ -2809,10 +2976,12 @@ nsWindow::WidgetPaintsBackground()
 bool
 nsWindow::NeedsPaint()
 {
-  if (sCompositorPaused || FindTopLevel() != nsWindow::TopWindow() || !GetLayerManager(nullptr)) {
-    return false;
-  }
-  return nsIWidget::NeedsPaint();
+    if (!mGLControllerSupport || mGLControllerSupport->CompositorPaused() ||
+            // FindTopLevel() != nsWindow::TopWindow() ||
+            !GetLayerManager(nullptr)) {
+        return false;
+    }
+    return nsIWidget::NeedsPaint();
 }
 
 CompositorParent*
@@ -2852,8 +3021,8 @@ nsWindow::CreateRootContentController()
 uint64_t
 nsWindow::RootLayerTreeId()
 {
-    MOZ_ASSERT(sCompositorParent);
-    return sCompositorParent->RootLayerTreeId();
+    MOZ_ASSERT(gGeckoViewWindow && gGeckoViewWindow->mCompositorParent);
+    return gGeckoViewWindow->mCompositorParent->RootLayerTreeId();
 }
 
 uint32_t

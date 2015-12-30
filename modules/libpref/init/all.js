@@ -128,11 +128,7 @@ pref("dom.indexedDB.logging.profiler-marks", false);
 pref("dom.fileHandle.enabled", true);
 
 // Whether or not the Permissions API is enabled.
-#ifdef NIGHTLY_BUILD
 pref("dom.permissions.enabled", true);
-#else
-pref("dom.permissions.enabled", false);
-#endif
 
 // Whether or not selection events are enabled
 #ifdef NIGHTLY_BUILD
@@ -339,19 +335,12 @@ pref("media.raw.enabled", true);
 #endif
 pref("media.ogg.enabled", true);
 pref("media.opus.enabled", true);
-#ifdef MOZ_WAVE
 pref("media.wave.enabled", true);
-#endif
-#ifdef MOZ_WEBM
 pref("media.webm.enabled", true);
 #if defined(MOZ_FMP4) && defined(MOZ_WMF)
 pref("media.webm.intel_decoder.enabled", false);
 #endif
-#endif
-#ifdef MOZ_GSTREAMER
-pref("media.gstreamer.enabled", true);
-pref("media.gstreamer.enable-blacklist", true);
-#endif
+
 #ifdef MOZ_APPLEMEDIA
 #ifdef MOZ_WIDGET_UIKIT
 pref("media.mp3.enabled", true);
@@ -502,9 +491,6 @@ pref("media.mediasource.webm.enabled", true);
 #endif
 pref("media.mediasource.webm.audio.enabled", true);
 
-// Enable new MediaFormatReader architecture for plain webm.
-pref("media.format-reader.webm", true);
-
 #ifdef MOZ_WEBSPEECH
 pref("media.webspeech.recognition.enable", false);
 pref("media.webspeech.synth.enabled", false);
@@ -580,7 +566,6 @@ pref("apz.max_velocity_inches_per_ms", "-1.0");
 pref("apz.max_velocity_queue_size", 5);
 pref("apz.min_skate_speed", "1.0");
 pref("apz.minimap.enabled", false);
-pref("apz.num_paint_duration_samples", 3);
 pref("apz.overscroll.enabled", false);
 pref("apz.overscroll.min_pan_distance_ratio", "1.0");
 pref("apz.overscroll.spring_friction", "0.015");
@@ -597,7 +582,6 @@ pref("apz.smooth_scroll_repaint_interval", 16);
 pref("apz.test.logging_enabled", false);
 pref("apz.touch_start_tolerance", "0.1");
 pref("apz.touch_move_tolerance", "0.03");
-pref("apz.use_paint_duration", true);
 pref("apz.velocity_bias", "1.0");
 pref("apz.velocity_relevance_time_ms", 150);
 pref("apz.x_skate_highmem_adjust", "0.0");
@@ -4204,10 +4188,15 @@ pref("webgl.max-warnings-per-context", 32);
 pref("webgl.enable-draft-extensions", false);
 pref("webgl.enable-privileged-extensions", false);
 pref("webgl.bypass-shader-validation", false);
-pref("webgl.enable-prototype-webgl2", false);
 pref("webgl.disable-fail-if-major-performance-caveat", false);
 pref("webgl.disable-DOM-blit-uploads", false);
 pref("webgl.webgl2-compat-mode", false);
+
+#ifdef NIGHTLY_BUILD
+pref("webgl.enable-prototype-webgl2", true);
+#else
+pref("webgl.enable-prototype-webgl2", false);
+#endif
 
 #ifdef RELEASE_BUILD
 // Keep this disabled on Release and Beta for now. (see bug 1171228)
@@ -4341,9 +4330,6 @@ pref("layers.tiles.edge-padding", true);
 // same effect as layers.offmainthreadcomposition.enabled, but specifically for
 // use with tests.
 pref("layers.offmainthreadcomposition.testing.enabled", false);
-
-// whether to allow use of the basic compositor
-pref("layers.offmainthreadcomposition.force-basic", false);
 
 // Whether to animate simple opacity and transforms on the compositor
 pref("layers.offmainthreadcomposition.async-animations", true);
@@ -4860,25 +4846,6 @@ pref("browser.safebrowsing.allowOverride", true);
 // Turn off Spatial navigation by default.
 pref("snav.enabled", false);
 
-// Original caret implementation on collapsed selection.
-pref("touchcaret.enabled", false);
-
-// This will inflate the size of the touch caret frame when checking if user
-// clicks on the caret or not. In app units.
-pref("touchcaret.inflatesize.threshold", 40);
-
-// We'll start to increment time when user release the control of touch caret.
-// When time exceed this expiration time, we'll hide touch caret.
-// In milliseconds. (0 means disable this feature)
-pref("touchcaret.expiration.time", 3000);
-
-// Original caret implementation on non-collapsed selection.
-pref("selectioncaret.enabled", false);
-
-// This will inflate size of selection caret frame when we checking if
-// user click on selection caret or not. In app units.
-pref("selectioncaret.inflatesize.threshold", 40);
-
 // New implementation to unify touch-caret and selection-carets.
 pref("layout.accessiblecaret.enabled", false);
 
@@ -4948,9 +4915,6 @@ pref("dom.presentation.discovery.timeout_ms", 10000);
 pref("dom.presentation.discoverable", false);
 
 #ifdef XP_MACOSX
-// Use raw ICU instead of CoreServices API in Unicode collation
-pref("intl.collation.mac.use_icu", true);
-
 #if !defined(RELEASE_BUILD) || defined(DEBUG)
 // In non-release builds we crash by default on insecure text input (when a
 // password editor has focus but secure event input isn't enabled).  The
@@ -5129,3 +5093,6 @@ pref("dom.mozKillSwitch.enabled", false);
 pref("toolkit.pageThumbs.screenSizeDivisor", 7);
 pref("toolkit.pageThumbs.minWidth", 0);
 pref("toolkit.pageThumbs.minHeight", 0);
+
+// Allow customization of the fallback directory for file uploads
+pref("dom.input.fallbackUploadDir", "");

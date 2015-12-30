@@ -33,7 +33,6 @@
 #include "jstypes.h"
 #include "jsutil.h"
 
-#include "asmjs/AsmJSModule.h"
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/SourceNotes.h"
 #include "gc/GCInternals.h"
@@ -973,7 +972,7 @@ js::Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
 
       default: {
         char numBuf[12];
-        JS_snprintf(numBuf, sizeof numBuf, "%lx", (unsigned long) cs->format);
+        JS_snprintf(numBuf, sizeof numBuf, "%x", cs->format);
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr,
                              JSMSG_UNKNOWN_FORMAT, numBuf);
         return 0;

@@ -89,9 +89,52 @@ LIRGenerator::visitIsConstructing(MIsConstructing* ins)
     define(new(alloc()) LIsConstructing(), ins);
 }
 
+static void
+TryToUseImplicitInterruptCheck(MIRGraph& graph, MBasicBlock* backedge)
+{
+    // Implicit interrupt checks require asm.js signal handlers to be installed.
+    if (!GetJitContext()->runtime->canUseSignalHandlers())
+        return;
+
+    // To avoid triggering expensive interrupts (backedge patching) in
+    // requestMajorGC and requestMinorGC, use an implicit interrupt check only
+    // if the loop body can not trigger GC or affect GC state like the store
+    // buffer. We do this by checking there are no safepoints attached to LIR
+    // instructions inside the loop.
+
+    MBasicBlockIterator block = graph.begin(backedge->loopHeaderOfBackedge());
+    LInterruptCheck* check = nullptr;
+    while (true) {
+        LBlock* lir = block->lir();
+        for (LInstructionIterator iter = lir->begin(); iter != lir->end(); iter++) {
+            if (iter->isInterruptCheck()) {
+                if (!check) {
+                    MOZ_ASSERT(*block == backedge->loopHeaderOfBackedge());
+                    check = iter->toInterruptCheck();
+                }
+                continue;
+            }
+
+            MOZ_ASSERT_IF(iter->isPostWriteBarrierO() || iter->isPostWriteBarrierV(),
+                          iter->safepoint());
+
+            if (iter->safepoint())
+                return;
+        }
+        if (*block == backedge)
+            break;
+        block++;
+    }
+
+    check->setImplicit();
+}
+
 void
 LIRGenerator::visitGoto(MGoto* ins)
 {
+    if (!gen->compilingAsmJS() && ins->block()->isLoopBackedge())
+        TryToUseImplicitInterruptCheck(graph, ins->block());
+
     add(new(alloc()) LGoto(ins->target()));
 }
 
@@ -2304,19 +2347,7 @@ LIRGenerator::visitFunctionEnvironment(MFunctionEnvironment* ins)
 void
 LIRGenerator::visitInterruptCheck(MInterruptCheck* ins)
 {
-    // Implicit interrupt checks require asm.js signal handlers to be installed.
-    // They also require writable JIT code: reprotecting in patchIonBackedges
-    // would be expensive and using AutoWritableJitCode in the signal handler
-    // is complicated because there could be another AutoWritableJitCode on the
-    // stack.
-    LInstructionHelper<0, 0, 0>* lir;
-    if (GetJitContext()->runtime->canUseSignalHandlers() &&
-        !ExecutableAllocator::nonWritableJitCode)
-    {
-        lir = new(alloc()) LInterruptCheckImplicit();
-    } else {
-        lir = new(alloc()) LInterruptCheck();
-    }
+    LInstruction* lir = new(alloc()) LInterruptCheck();
     add(lir, ins);
     assignSafepoint(lir, ins);
 }
@@ -3362,6 +3393,16 @@ LIRGenerator::visitBindNameCache(MBindNameCache* ins)
 }
 
 void
+LIRGenerator::visitCallBindVar(MCallBindVar* ins)
+{
+    MOZ_ASSERT(ins->scopeChain()->type() == MIRType_Object);
+    MOZ_ASSERT(ins->type() == MIRType_Object);
+
+    LCallBindVar* lir = new(alloc()) LCallBindVar(useRegister(ins->scopeChain()));
+    define(lir, ins);
+}
+
+void
 LIRGenerator::visitGuardObjectIdentity(MGuardObjectIdentity* ins)
 {
     LGuardObjectIdentity* guard = new(alloc()) LGuardObjectIdentity(useRegister(ins->obj()),
@@ -4007,6 +4048,9 @@ LIRGenerator::visitSimdUnbox(MSimdUnbox* ins)
 
     BailoutKind kind;
     switch (ins->type()) {
+      case MIRType_Bool32x4:
+        kind = Bailout_NonSimdBool32x4Input;
+        break;
       case MIRType_Int32x4:
         kind = Bailout_NonSimdInt32x4Input;
         break;
@@ -4027,12 +4071,17 @@ LIRGenerator::visitSimdConstant(MSimdConstant* ins)
 {
     MOZ_ASSERT(IsSimdType(ins->type()));
 
-    if (ins->type() == MIRType_Int32x4)
+    switch (ins->type()) {
+      case MIRType_Bool32x4:
+      case MIRType_Int32x4:
         define(new(alloc()) LInt32x4(), ins);
-    else if (ins->type() == MIRType_Float32x4)
+        break;
+      case MIRType_Float32x4:
         define(new(alloc()) LFloat32x4(), ins);
-    else
+        break;
+      default:
         MOZ_CRASH("Unknown SIMD kind when generating constant");
+    }
 }
 
 void
@@ -4073,15 +4122,25 @@ LIRGenerator::visitSimdExtractElement(MSimdExtractElement* ins)
     MOZ_ASSERT(IsSimdType(ins->input()->type()));
     MOZ_ASSERT(!IsSimdType(ins->type()));
 
-    if (ins->input()->type() == MIRType_Int32x4) {
+    switch (ins->input()->type()) {
+      case MIRType_Int32x4: {
         // Note: there could be int16x8 in the future, which doesn't use the
         // same instruction. We either need to pass the arity or create new LIns.
         LUse use = useRegisterAtStart(ins->input());
         define(new(alloc()) LSimdExtractElementI(use), ins);
-    } else if (ins->input()->type() == MIRType_Float32x4) {
+        break;
+      }
+      case MIRType_Float32x4: {
         LUse use = useRegisterAtStart(ins->input());
         define(new(alloc()) LSimdExtractElementF(use), ins);
-    } else {
+        break;
+      }
+      case MIRType_Bool32x4: {
+        LUse use = useRegisterAtStart(ins->input());
+        define(new(alloc()) LSimdExtractElementB(use), ins);
+        break;
+      }
+      default:
         MOZ_CRASH("Unknown SIMD kind when extracting element");
     }
 }
@@ -4093,31 +4152,37 @@ LIRGenerator::visitSimdInsertElement(MSimdInsertElement* ins)
 
     LUse vec = useRegisterAtStart(ins->vector());
     LUse val = useRegister(ins->value());
-    if (ins->type() == MIRType_Int32x4)
+    switch (ins->type()) {
+      case MIRType_Int32x4:
+      case MIRType_Bool32x4:
         defineReuseInput(new(alloc()) LSimdInsertElementI(vec, val), ins, 0);
-    else if (ins->type() == MIRType_Float32x4)
+        break;
+      case MIRType_Float32x4:
         defineReuseInput(new(alloc()) LSimdInsertElementF(vec, val), ins, 0);
-    else
+        break;
+      default:
         MOZ_CRASH("Unknown SIMD kind when generating constant");
+    }
 }
 
 void
-LIRGenerator::visitSimdSignMask(MSimdSignMask* ins)
+LIRGenerator::visitSimdAllTrue(MSimdAllTrue* ins)
 {
     MDefinition* input = ins->input();
-    MOZ_ASSERT(IsSimdType(input->type()));
-    MOZ_ASSERT(ins->type() == MIRType_Int32);
+    MOZ_ASSERT(IsBooleanSimdType(input->type()));
 
     LUse use = useRegisterAtStart(input);
+    define(new(alloc()) LSimdAllTrue(use), ins);
+}
 
-    switch (input->type()) {
-      case MIRType_Int32x4:
-      case MIRType_Float32x4:
-        define(new(alloc()) LSimdSignMaskX4(use), ins);
-        break;
-      default:
-        MOZ_CRASH("Unexpected SIMD type extracting sign bits.");
-    }
+void
+LIRGenerator::visitSimdAnyTrue(MSimdAnyTrue* ins)
+{
+    MDefinition* input = ins->input();
+    MOZ_ASSERT(IsBooleanSimdType(input->type()));
+
+    LUse use = useRegisterAtStart(input);
+    define(new(alloc()) LSimdAnyTrue(use), ins);
 }
 
 void
@@ -4198,7 +4263,7 @@ LIRGenerator::visitSimdUnaryArith(MSimdUnaryArith* ins)
     // Cannot be at start, as the ouput is used as a temporary to store values.
     LUse in = use(ins->input());
 
-    if (ins->type() == MIRType_Int32x4) {
+    if (ins->type() == MIRType_Int32x4 || ins->type() == MIRType_Bool32x4) {
         LSimdUnaryArithIx4* lir = new(alloc()) LSimdUnaryArithIx4(in);
         define(lir, ins);
     } else if (ins->type() == MIRType_Float32x4) {
@@ -4214,7 +4279,7 @@ LIRGenerator::visitSimdBinaryComp(MSimdBinaryComp* ins)
 {
     MOZ_ASSERT(IsSimdType(ins->lhs()->type()));
     MOZ_ASSERT(IsSimdType(ins->rhs()->type()));
-    MOZ_ASSERT(ins->type() == MIRType_Int32x4);
+    MOZ_ASSERT(IsBooleanSimdType(ins->type()));
 
     if (ShouldReorderCommutative(ins->lhs(), ins->rhs(), ins))
         ins->reverse();
@@ -4241,10 +4306,15 @@ LIRGenerator::visitSimdBinaryBitwise(MSimdBinaryBitwise* ins)
     MDefinition* rhs = ins->rhs();
     ReorderCommutative(&lhs, &rhs, ins);
 
-    if (ins->type() == MIRType_Int32x4 || ins->type() == MIRType_Float32x4) {
+    switch (ins->type()) {
+      case MIRType_Bool32x4:
+      case MIRType_Int32x4:
+      case MIRType_Float32x4: {
         LSimdBinaryBitwiseX4* lir = new(alloc()) LSimdBinaryBitwiseX4;
         lowerForFPU(lir, ins, lhs, rhs);
-    } else {
+        break;
+      }
+      default:
         MOZ_CRASH("Unknown SIMD kind when doing bitwise operations");
     }
 }
@@ -4328,6 +4398,19 @@ LIRGenerator::visitCheckObjCoercible(MCheckObjCoercible* ins)
 
     LCheckObjCoercible* lir = new(alloc()) LCheckObjCoercible();
     useBoxAtStart(lir, LCheckObjCoercible::CheckValue, checkVal);
+    redefine(ins, checkVal);
+    add(lir, ins);
+    assignSafepoint(lir, ins);
+}
+
+void
+LIRGenerator::visitDebugCheckSelfHosted(MDebugCheckSelfHosted* ins)
+{
+    MDefinition* checkVal = ins->checkValue();
+    MOZ_ASSERT(checkVal->type() == MIRType_Value);
+
+    LDebugCheckSelfHosted* lir = new (alloc()) LDebugCheckSelfHosted();
+    useBoxAtStart(lir, LDebugCheckSelfHosted::CheckValue, checkVal);
     redefine(ins, checkVal);
     add(lir, ins);
     assignSafepoint(lir, ins);

@@ -53,37 +53,6 @@ XPCOMUtils.defineLazyServiceGetter(this, "WindowsUIUtils",
                                    "@mozilla.org/windows-ui-utils;1", "nsIWindowsUIUtils");
 XPCOMUtils.defineLazyModuleGetter(this, "LightweightThemeManager",
                                   "resource://gre/modules/LightweightThemeManager.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Pocket",
-                                  "resource:///modules/Pocket.jsm");
-
-// Can't use XPCOMUtils for these because the scripts try to define the variables
-// on window, and so the defineProperty inside defineLazyGetter fails.
-Object.defineProperty(window, "pktApi", {
-  get: function() {
-    // Avoid this getter running again:
-    delete window.pktApi;
-    Services.scriptloader.loadSubScript("chrome://browser/content/pocket/pktApi.js", window);
-    return window.pktApi;
-  },
-  configurable: true,
-  enumerable: true
-});
-
-function pktUIGetter(prop) {
-  return {
-    get: function() {
-      // Avoid either of these getters running again:
-      delete window.pktUI;
-      delete window.pktUIMessaging;
-      Services.scriptloader.loadSubScript("chrome://browser/content/pocket/main.js", window);
-      return window[prop];
-    },
-    configurable: true,
-    enumerable: true
-  };
-}
-Object.defineProperty(window, "pktUI", pktUIGetter("pktUI"));
-Object.defineProperty(window, "pktUIMessaging", pktUIGetter("pktUIMessaging"));
 
 XPCOMUtils.defineLazyGetter(this, "gBrowserBundle", function() {
   return Services.strings.createBundle('chrome://browser/locale/browser.properties');
@@ -997,35 +966,17 @@ var gBrowserInit = {
 
     // Set a sane starting width/height for all resolutions on new profiles.
     if (!document.documentElement.hasAttribute("width")) {
-      let defaultWidth;
-      let defaultHeight;
+      const TARGET_WIDTH = 1280;
+      const TARGET_HEIGHT = 1040;
+      let width = Math.min(screen.availWidth * .9, TARGET_WIDTH);
+      let height = Math.min(screen.availHeight * .9, TARGET_HEIGHT);
 
-      // Very small: maximize the window
-      // Portrait  : use about full width and 3/4 height, to view entire pages
-      //             at once (without being obnoxiously tall)
-      // Widescreen: use about half width, to suggest side-by-side page view
-      // Otherwise : use 3/4 height and width
-      if (screen.availHeight <= 600) {
+      document.documentElement.setAttribute("width", width);
+      document.documentElement.setAttribute("height", height);
+
+      if (width < TARGET_WIDTH && height < TARGET_HEIGHT) {
         document.documentElement.setAttribute("sizemode", "maximized");
-        defaultWidth = 610;
-        defaultHeight = 450;
       }
-      else {
-        if (screen.availWidth <= screen.availHeight) {
-          defaultWidth = screen.availWidth * .9;
-          defaultHeight = screen.availHeight * .75;
-        }
-        else if (screen.availWidth >= 2048) {
-          defaultWidth = (screen.availWidth / 2) - 20;
-          defaultHeight = screen.availHeight - 10;
-        }
-        else {
-          defaultWidth = screen.availWidth * .75;
-          defaultHeight = screen.availHeight * .75;
-        }
-      }
-      document.documentElement.setAttribute("width", defaultWidth);
-      document.documentElement.setAttribute("height", defaultHeight);
     }
 
     if (!window.toolbar.visible) {
@@ -4752,7 +4703,7 @@ var CombinedStopReload = {
 var TabsProgressListener = {
   onStateChange: function (aBrowser, aWebProgress, aRequest, aStateFlags, aStatus) {
     // Collect telemetry data about tab load times.
-    if (aWebProgress.isTopLevel) {
+    if (aWebProgress.isTopLevel && (!aRequest.originalURI || aRequest.originalURI.spec.scheme != "about")) {
       if (aStateFlags & Ci.nsIWebProgressListener.STATE_IS_WINDOW) {
         if (aStateFlags & Ci.nsIWebProgressListener.STATE_START) {
           TelemetryStopwatch.start("FX_PAGE_LOAD_MS", aBrowser);
@@ -5197,8 +5148,10 @@ var TabletModeUpdater = {
 };
 
 var gTabletModePageCounter = {
+  enabled: false,
   inc() {
-    if (!AppConstants.isPlatformAndVersionAtLeast("win", "10.0")) {
+    this.enabled = AppConstants.isPlatformAndVersionAtLeast("win", "10.0");
+    if (!this.enabled) {
       this.inc = () => {};
       return;
     }
@@ -5214,8 +5167,11 @@ var gTabletModePageCounter = {
   },
 
   finish() {
-    Services.telemetry.getKeyedHistogramById("FX_TABLETMODE_PAGE_LOAD").add("tablet", this._tabletCount);
-    Services.telemetry.getKeyedHistogramById("FX_TABLETMODE_PAGE_LOAD").add("desktop", this._desktopCount);
+    if (this.enabled) {
+      let histogram = Services.telemetry.getKeyedHistogramById("FX_TABLETMODE_PAGE_LOAD");
+      histogram.add("tablet", this._tabletCount);
+      histogram.add("desktop", this._desktopCount);
+    }
   },
 };
 
@@ -7110,6 +7066,9 @@ var gIdentityHandler = {
     // Fallback for special protocols.
     if (!host) {
       host = this._uri.specIgnoringRef;
+      // Special URIs without a host (eg, about:) should crop the end so
+      // the protocol can be seen.
+      crop = "end";
     }
 
     // Fill in the CA name if we have a valid TLS certificate.

@@ -1191,7 +1191,7 @@ VARIABLES = {
         This variable can only be used on Linux.
         """, None),
 
-    'BRANDING_FILES': (HierarchicalStringList, list,
+    'BRANDING_FILES': (ContextDerivedTypedHierarchicalStringList(Path), list,
         """List of files to be installed into the branding directory.
 
         ``BRANDING_FILES`` will copy (or symlink, if the platform supports it)
@@ -1239,15 +1239,6 @@ VARIABLES = {
         If the configuration token ``HOST_BIN_SUFFIX`` is set, its value will
         be automatically appended to each name. If a name already ends with
         ``HOST_BIN_SUFFIX``, the name will remain unchanged.
-        """, None),
-
-    'TEST_DIRS': (ContextDerivedTypedList(SourcePath), list,
-        """Like DIRS but only for directories that contain test-only code.
-
-        If tests are not enabled, this variable will be ignored.
-
-        This variable may go away once the transition away from Makefiles is
-        complete.
         """, None),
 
     'CONFIGURE_SUBST_FILES': (ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList), list,
@@ -1877,6 +1868,10 @@ FUNCTIONS = {
         """),
 }
 
+
+TestDirsPlaceHolder = List()
+
+
 # Special variables. These complement VARIABLES.
 #
 # Each entry is a tuple of:
@@ -2000,6 +1995,15 @@ SPECIAL_VARIABLES = {
         ``TESTING_JS_MODULES.foo += ['module.jsm']``.
         """),
 
+    'TEST_DIRS': (lambda context: context['DIRS'] if context.config.substs.get('ENABLE_TESTS')
+                                  else TestDirsPlaceHolder, list,
+        """Like DIRS but only for directories that contain test-only code.
+
+        If tests are not enabled, this variable will be ignored.
+
+        This variable may go away once the transition away from Makefiles is
+        complete.
+        """),
 }
 
 # Deprecation hints.

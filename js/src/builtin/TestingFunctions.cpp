@@ -17,8 +17,7 @@
 #include "jsprf.h"
 #include "jswrapper.h"
 
-#include "asmjs/AsmJSLink.h"
-#include "asmjs/AsmJSValidate.h"
+#include "asmjs/AsmJS.h"
 #include "jit/InlinableNatives.h"
 #include "jit/JitFrameIterator.h"
 #include "js/Debug.h"
@@ -38,6 +37,7 @@
 #include "jsobjinlines.h"
 
 #include "vm/NativeObject-inl.h"
+#include "vm/ScopeObject-inl.h"
 
 using namespace js;
 
@@ -306,8 +306,8 @@ GC(JSContext* cx, unsigned argc, Value* vp)
 
     char buf[256] = { '\0' };
 #ifndef JS_MORE_DETERMINISTIC
-    JS_snprintf(buf, sizeof(buf), "before %lu, after %lu\n",
-                (unsigned long)preBytes, (unsigned long)cx->runtime()->gc.usage.gcBytes());
+    JS_snprintf(buf, sizeof(buf), "before %" PRIuSIZE ", after %" PRIuSIZE "\n",
+                preBytes, cx->runtime()->gc.usage.gcBytes());
 #endif
     JSString* str = JS_NewStringCopyZ(cx, buf);
     if (!str)
@@ -487,7 +487,7 @@ IsRelazifiableFunction(JSContext* cx, unsigned argc, Value* vp)
         !args[0].toObject().is<JSFunction>())
     {
         JS_ReportError(cx, "The first argument should be a function.");
-        return true;
+        return false;
     }
 
     JSFunction* fun = &args[0].toObject().as<JSFunction>();
@@ -2108,6 +2108,18 @@ DumpObject(JSContext* cx, unsigned argc, Value* vp)
 }
 #endif
 
+static bool
+SharedMemoryEnabled(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+#ifdef ENABLE_SHARED_ARRAY_BUFFER
+    args.rval().setBoolean(true);
+#else
+    args.rval().setBoolean(false);
+#endif
+    return true;
+}
+
 #ifdef NIGHTLY_BUILD
 static bool
 ObjectAddress(JSContext* cx, unsigned argc, Value* vp)
@@ -2624,7 +2636,7 @@ static bool
 IsSimdAvailable(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-#ifdef JS_CODEGEN_NONE
+#if defined(JS_CODEGEN_NONE) || !defined(ENABLE_SIMD)
     bool available = false;
 #else
     bool available = cx->jitSupportsSimd();
@@ -3507,6 +3519,10 @@ gc::ZealModeHelpText),
 "dumpObject()",
 "  Dump an internal representation of an object."),
 #endif
+
+    JS_FN_HELP("sharedMemoryEnabled", SharedMemoryEnabled, 0, 0,
+"sharedMemoryEnabled()",
+"  Return true if SharedArrayBuffer and Atomics are enabled"),
 
 #ifdef NIGHTLY_BUILD
     JS_FN_HELP("objectAddress", ObjectAddress, 1, 0,

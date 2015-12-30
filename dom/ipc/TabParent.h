@@ -9,6 +9,7 @@
 
 #include "js/TypeDecls.h"
 #include "mozilla/ContentCache.h"
+#include "mozilla/dom/AudioChannelBinding.h"
 #include "mozilla/dom/ipc/IdType.h"
 #include "mozilla/dom/PBrowserParent.h"
 #include "mozilla/dom/PContent.h"
@@ -455,6 +456,11 @@ public:
     void OnStartSignedPackageRequest(nsIChannel* aChannel,
                                      const nsACString& aPackageId);
 
+    void AudioChannelChangeNotification(nsPIDOMWindow* aWindow,
+                                        AudioChannel aAudioChannel,
+                                        float aVolume,
+                                        bool aMuted);
+
 protected:
     bool ReceiveMessage(const nsString& aMessage,
                         bool aSync,
@@ -495,7 +501,7 @@ protected:
 
     // Decide whether we have to use a new process to reload the URI associated
     // with the given channel.
-    bool ShouldSwitchProcess(nsIChannel* aChannel);
+    bool ShouldSwitchProcess(nsIChannel* aChannel, const nsACString& aSignedPkg);
 
     ContentCacheInParent mContentCache;
 

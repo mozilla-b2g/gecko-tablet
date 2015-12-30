@@ -40,19 +40,21 @@ class nsRenderingContext;
 class nsDisplayList;
 class nsDisplayTableItem;
 class nsISelection;
+class nsIScrollableFrame;
 class nsDisplayLayerEventRegions;
 class nsDisplayScrollInfoLayer;
 class nsCaret;
 
 namespace mozilla {
 class FrameLayerBuilder;
+class DisplayItemScrollClip;
 namespace layers {
 class Layer;
 class ImageLayer;
 class ImageContainer;
 } // namespace layers
 namespace gfx {
-class VRHMDInfo;
+class VRDeviceProxy;
 } // namespace gfx
 } // namespace mozilla
 
@@ -204,6 +206,7 @@ public:
   typedef mozilla::FrameLayerBuilder FrameLayerBuilder;
   typedef mozilla::DisplayItemClip DisplayItemClip;
   typedef mozilla::DisplayListClipState DisplayListClipState;
+  typedef mozilla::DisplayItemScrollClip DisplayItemScrollClip;
   typedef nsIWidget::ThemeGeometry ThemeGeometry;
   typedef mozilla::layers::Layer Layer;
   typedef mozilla::layers::FrameMetrics FrameMetrics;
@@ -625,10 +628,20 @@ public:
   void* Allocate(size_t aSize);
 
   /**
-   * Allocate a new DisplayListClip in the arena. Will be cleaned up
+   * Allocate a new DisplayItemClip in the arena. Will be cleaned up
    * automatically when the arena goes away.
    */
   const DisplayItemClip* AllocateDisplayItemClip(const DisplayItemClip& aOriginal);
+
+  /**
+   * Allocate a new DisplayItemScrollClip in the arena. Will be cleaned up
+   * automatically when the arena goes away.
+   */
+  DisplayItemScrollClip* AllocateDisplayItemScrollClip(const DisplayItemScrollClip* aParent,
+                                                 const DisplayItemScrollClip* aCrossStackingContextParent,
+                                                 nsIScrollableFrame* aScrollableFrame,
+                                                 const DisplayItemClip* aClip,
+                                                 bool aIsAsyncScrollable);
 
   /**
    * Transfer off main thread animations to the layer.  May be called
@@ -933,15 +946,15 @@ public:
   void SetCurrentTableItem(nsDisplayTableItem* aTableItem) { mCurrentTableItem = aTableItem; }
 
   struct OutOfFlowDisplayData {
-    OutOfFlowDisplayData(const DisplayItemClip& aContainingBlockClip,
+    OutOfFlowDisplayData(const DisplayItemClip* aContainingBlockClip,
+                         const DisplayItemScrollClip* aContainingBlockScrollClip,
                          const nsRect &aDirtyRect)
-      : mContainingBlockClip(aContainingBlockClip)
+      : mContainingBlockClip(aContainingBlockClip ? *aContainingBlockClip : DisplayItemClip())
+      , mContainingBlockScrollClip(aContainingBlockScrollClip)
       , mDirtyRect(aDirtyRect)
     {}
-    explicit OutOfFlowDisplayData(const nsRect &aDirtyRect)
-      : mDirtyRect(aDirtyRect)
-    {}
     DisplayItemClip mContainingBlockClip;
+    const DisplayItemScrollClip* mContainingBlockScrollClip;
     nsRect mDirtyRect;
   };
 
@@ -1223,6 +1236,7 @@ private:
   // info items until the end of display list building.
   nsDisplayList*                 mPendingScrollInfoItems;
   nsDisplayList*                 mCommittedScrollInfoItems;
+  nsTArray<DisplayItemScrollClip*> mScrollClipsToDestroy;
   nsTArray<DisplayItemClip*>     mDisplayItemClipsToDestroy;
   Mode                           mMode;
   ViewID                         mCurrentScrollParentId;
@@ -1298,6 +1312,7 @@ class nsDisplayItem : public nsDisplayItemLink {
 public:
   typedef mozilla::ContainerLayerParameters ContainerLayerParameters;
   typedef mozilla::DisplayItemClip DisplayItemClip;
+  typedef mozilla::DisplayItemScrollClip DisplayItemScrollClip;
   typedef mozilla::layers::FrameMetrics FrameMetrics;
   typedef mozilla::layers::FrameMetrics::ViewID ViewID;
   typedef mozilla::layers::Layer Layer;
@@ -1314,6 +1329,7 @@ public:
   explicit nsDisplayItem(nsIFrame* aFrame)
     : mFrame(aFrame)
     , mClip(nullptr)
+    , mScrollClip(nullptr)
     , mReferenceFrame(nullptr)
     , mAnimatedGeometryRoot(nullptr)
 #ifdef MOZ_DUMP_PAINTING
@@ -1413,6 +1429,17 @@ public:
    * account.
    */
   nsRect GetClippedBounds(nsDisplayListBuilder* aBuilder);
+  /**
+   * Returns the result of GetClippedBounds, intersected with the item's
+   * scroll clips. The item walks up its chain of scroll clips, *not* crossing
+   * stacking contexts, applying each scroll clip until aIncludeScrollClipsUpTo
+   * is reached. aIncludeScrollClipsUpTo is *not* applied.
+   * The intersection is approximate since rounded corners are not taking into
+   * account.
+   */
+  nsRect GetScrollClippedBoundsUpTo(nsDisplayListBuilder* aBuilder,
+                                    const DisplayItemScrollClip* aIncludeScrollClipsUpTo);
+
   nsRect GetBorderRect() {
     return nsRect(ToReferenceFrame(), Frame()->GetSize());
   }
@@ -1834,6 +1861,9 @@ public:
     }
   }
 
+  void SetScrollClip(const DisplayItemScrollClip* aScrollClip) { mScrollClip = aScrollClip; }
+  const DisplayItemScrollClip* ScrollClip() const { return mScrollClip; }
+
   bool BackfaceIsHidden() {
     return mFrame->StyleDisplay()->BackfaceIsHidden();
   }
@@ -1845,6 +1875,7 @@ protected:
 
   nsIFrame* mFrame;
   const DisplayItemClip* mClip;
+  const DisplayItemScrollClip* mScrollClip;
   // Result of FindReferenceFrameFor(mFrame), if mFrame is non-null
   const nsIFrame* mReferenceFrame;
   struct AnimatedGeometryRoot* mAnimatedGeometryRoot;
@@ -1880,6 +1911,7 @@ protected:
  */
 class nsDisplayList {
 public:
+  typedef mozilla::DisplayItemScrollClip DisplayItemScrollClip;
   typedef mozilla::layers::Layer Layer;
   typedef mozilla::layers::LayerManager LayerManager;
   typedef mozilla::layers::PaintedLayer PaintedLayer;
@@ -2130,6 +2162,11 @@ public:
    * The result is not cached.
    */
   nsRect GetBounds(nsDisplayListBuilder* aBuilder) const;
+  /**
+   * Return the union of the scroll clipped bounds of all children.
+   */
+  nsRect GetScrollClippedBoundsUpTo(nsDisplayListBuilder* aBuilder,
+                                    const DisplayItemScrollClip* aIncludeScrollClipsUpTo) const;
   /**
    * Find the topmost display item that returns a non-null frame, and return
    * the frame.
@@ -2477,13 +2514,9 @@ public:
   virtual void Paint(nsDisplayListBuilder* aBuilder, nsRenderingContext* aCtx) override;
   NS_DISPLAY_DECL_NAME("Caret", TYPE_CARET)
 
-  bool NeedsCustomScrollClip() { return mNeedsCustomScrollClip; }
-  void SetNeedsCustomScrollClip() { mNeedsCustomScrollClip = true; }
-
 protected:
   RefPtr<nsCaret> mCaret;
   nsRect mBounds;
-  bool mNeedsCustomScrollClip;
 };
 
 /**
@@ -3157,7 +3190,7 @@ public:
    */
   virtual void UpdateBounds(nsDisplayListBuilder* aBuilder) override
   {
-    mBounds = mList.GetBounds(aBuilder);
+    mBounds = mList.GetScrollClippedBoundsUpTo(aBuilder, mScrollClip);
     // The display list may contain content that's visible outside the visible
     // rect (i.e. the current dirty rect) passed in when the item was created.
     // This happens when the dirty rect has been restricted to the visual
@@ -3300,7 +3333,9 @@ protected:
 class nsDisplayOpacity : public nsDisplayWrapList {
 public:
   nsDisplayOpacity(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
-                   nsDisplayList* aList, bool aForEventsOnly);
+                   nsDisplayList* aList,
+                   const DisplayItemScrollClip* aScrollClipForSameAGRChildren,
+                   bool aForEventsOnly);
 #ifdef NS_BUILD_REFCNT_LOGGING
   virtual ~nsDisplayOpacity();
 #endif
@@ -3333,7 +3368,11 @@ public:
 
   bool CanUseAsyncAnimations(nsDisplayListBuilder* aBuilder) override;
 
+  const DisplayItemScrollClip* ScrollClipForSameAGRChildren() const
+  { return mScrollClipForSameAGRChildren; }
+
 private:
+  const DisplayItemScrollClip* mScrollClipForSameAGRChildren;
   float mOpacity;
   bool mForEventsOnly;
 };
@@ -4046,6 +4085,14 @@ public:
             (!mFrame->Extend3DContext() &&
              mFrame->Combines3DTransformWithAncestors()));
   }
+  /**
+   * The backing frame of this item participates a 3D rendering
+   * context.
+   */
+  bool IsParticipating3DContext() {
+    return mFrame->Extend3DContext() ||
+      mFrame->Combines3DTransformWithAncestors();
+  }
 
 private:
   void ComputeBounds(nsDisplayListBuilder* aBuilder);
@@ -4160,6 +4207,11 @@ public:
 
   nsIFrame* TransformFrame() { return mTransformFrame; }
 
+  virtual void
+  DoUpdateBoundsPreserves3D(nsDisplayListBuilder* aBuilder) override {
+    static_cast<nsDisplayTransform*>(mList.GetChildren()->GetTop())->DoUpdateBoundsPreserves3D(aBuilder);
+  }
+
 private:
   nsDisplayWrapList mList;
   nsIFrame* mTransformFrame;
@@ -4245,7 +4297,7 @@ public:
 class nsDisplayVR : public nsDisplayOwnLayer {
 public:
   nsDisplayVR(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
-              nsDisplayList* aList, mozilla::gfx::VRHMDInfo* aHMD);
+              nsDisplayList* aList, mozilla::gfx::VRDeviceProxy* aHMD);
 
   virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
                                    LayerManager* aManager,
@@ -4259,7 +4311,7 @@ public:
                                              const ContainerLayerParameters& aContainerParameters) override;
 
 protected:
-  RefPtr<mozilla::gfx::VRHMDInfo> mHMD;
+  RefPtr<mozilla::gfx::VRDeviceProxy> mHMD;
 };
 
 #endif /*NSDISPLAYLIST_H_*/

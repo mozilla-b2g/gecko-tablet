@@ -250,6 +250,12 @@ int             nsWindow::sTrimOnMinimize         = 2;
 
 TriStateBool nsWindow::sHasBogusPopupsDropShadowOnMultiMonitor = TRI_UNKNOWN;
 
+static SystemTimeConverter<DWORD>&
+TimeConverter() {
+  static SystemTimeConverter<DWORD> timeConverterSingleton;
+  return timeConverterSingleton;
+}
+
 namespace mozilla {
 
 class CurrentWindowsTimeGetter {
@@ -261,17 +267,13 @@ public:
 
   void GetTimeAsyncForPossibleBackwardsSkew(const TimeStamp& aNow)
   {
-    // FIXME: Get time async
+    NS_DispatchToMainThread(NS_NewRunnableFunction([aNow]() {
+      TimeConverter().CompensateForBackwardsSkew(::GetMessageTime(), aNow);
+    }));
   }
 };
 
 } // namespace mozilla
-
-static SystemTimeConverter<DWORD>&
-TimeConverter() {
-  static SystemTimeConverter<DWORD> timeConverterSingleton;
-  return timeConverterSingleton;
-}
 
 /**************************************************************
  *
@@ -5081,7 +5083,7 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
     case WM_MOUSEMOVE:
     {
       if (!mMousePresent) {
-        // First MOOUSEMOVE over the client area. Ask for MOUSELEAVE
+        // First MOUSEMOVE over the client area. Ask for MOUSELEAVE
         TRACKMOUSEEVENT mTrack;
         mTrack.cbSize = sizeof(TRACKMOUSEEVENT);
         mTrack.dwFlags = TME_LEAVE;

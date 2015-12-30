@@ -154,7 +154,7 @@ InterceptStreamListener::OnStopRequest(nsIRequest* aRequest, nsISupports* aConte
 {
   if (mOwner) {
     mOwner->DoPreOnStopRequest(aStatusCode);
-    mOwner->DoOnStopRequest(mOwner, mContext);
+    mOwner->DoOnStopRequest(mOwner, aStatusCode, mContext);
   }
   Cleanup();
   return NS_OK;
@@ -188,6 +188,7 @@ HttpChannelChild::HttpChannelChild()
   , mShouldInterceptSubsequentRedirect(false)
   , mRedirectingForSubsequentSynthesizedResponse(false)
   , mShouldParentIntercept(false)
+  , mSuspendParentAfterSynthesizeResponse(false)
 {
   LOG(("Creating HttpChannelChild @%x\n", this));
 
@@ -457,6 +458,8 @@ HttpChannelChild::OnStartRequest(const nsresult& channelStatus,
   mCacheEntryAvailable = cacheEntryAvailable;
   mCacheExpirationTime = cacheExpirationTime;
   mCachedCharset = cachedCharset;
+  mSelfAddr = selfAddr;
+  mPeerAddr = peerAddr;
 
   AutoEventEnqueuer ensureSerialDispatch(mEventQ);
 
@@ -486,10 +489,62 @@ HttpChannelChild::OnStartRequest(const nsresult& channelStatus,
   mTracingEnabled = false;
 
   DoOnStartRequest(this, mListenerContext);
-
-  mSelfAddr = selfAddr;
-  mPeerAddr = peerAddr;
 }
+
+namespace {
+
+class SyntheticDiversionListener final : public nsIStreamListener
+{
+  RefPtr<HttpChannelChild> mChannel;
+
+  ~SyntheticDiversionListener()
+  {
+  }
+
+public:
+  explicit SyntheticDiversionListener(HttpChannelChild* aChannel)
+    : mChannel(aChannel)
+  {
+    MOZ_ASSERT(mChannel);
+  }
+
+  NS_IMETHOD
+  OnStartRequest(nsIRequest* aRequest, nsISupports* aContext) override
+  {
+    MOZ_ASSERT_UNREACHABLE("SyntheticDiversionListener should never see OnStartRequest");
+    return NS_OK;
+  }
+
+  NS_IMETHOD
+  OnStopRequest(nsIRequest* aRequest, nsISupports* aContext,
+                nsresult aStatus) override
+  {
+    mChannel->SendDivertOnStopRequest(aStatus);
+    return NS_OK;
+  }
+
+  NS_IMETHOD
+  OnDataAvailable(nsIRequest* aRequest, nsISupports* aContext,
+                  nsIInputStream* aInputStream, uint64_t aOffset,
+                  uint32_t aCount) override
+  {
+    nsAutoCString data;
+    nsresult rv = NS_ConsumeStream(aInputStream, aCount, data);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      aRequest->Cancel(rv);
+      return rv;
+    }
+
+    mChannel->SendDivertOnDataAvailable(data, aOffset, aCount);
+    return NS_OK;
+  }
+
+  NS_DECL_ISUPPORTS
+};
+
+NS_IMPL_ISUPPORTS(SyntheticDiversionListener, nsIStreamListener);
+
+} // anonymous namespace
 
 void
 HttpChannelChild::DoOnStartRequest(nsIRequest* aRequest, nsISupports* aContext)
@@ -508,6 +563,15 @@ HttpChannelChild::DoOnStartRequest(nsIRequest* aRequest, nsISupports* aContext)
     if (mLoadGroup) {
       mLoadGroup->RemoveRequest(this, nullptr, mStatus);
     }
+
+    // If the response has been synthesized in the child, then we are going
+    // be getting OnDataAvailable and OnStopRequest from the synthetic
+    // stream pump.  We need to forward these back to the parent diversion
+    // listener.
+    if (mSynthesizedResponse) {
+      mListener = new SyntheticDiversionListener(this);
+    }
+
     return;
   }
 
@@ -874,7 +938,7 @@ HttpChannelChild::OnStopRequest(const nsresult& channelStatus,
     // so make sure this goes out of scope before then.
     AutoEventEnqueuer ensureSerialDispatch(mEventQ);
 
-    DoOnStopRequest(this, mListenerContext);
+    DoOnStopRequest(this, channelStatus, mListenerContext);
   }
 
   ReleaseListeners();
@@ -903,12 +967,15 @@ HttpChannelChild::DoPreOnStopRequest(nsresult aStatus)
 }
 
 void
-HttpChannelChild::DoOnStopRequest(nsIRequest* aRequest, nsISupports* aContext)
+HttpChannelChild::DoOnStopRequest(nsIRequest* aRequest, nsresult aChannelStatus, nsISupports* aContext)
 {
   LOG(("HttpChannelChild::DoOnStopRequest [this=%p]\n", this));
   MOZ_ASSERT(!mIsPending);
 
-  if (mStatus == NS_ERROR_TRACKING_URI) {
+  // NB: We use aChannelStatus here instead of mStatus because if there was an
+  // nsCORSListenerProxy on this request, it will override the tracking
+  // protection's return value.
+  if (aChannelStatus == NS_ERROR_TRACKING_URI) {
     nsChannelClassifier::SetBlockedTrackingContent(this);
   }
 
@@ -1823,8 +1890,11 @@ HttpChannelChild::ContinueAsyncOpen()
 
   if (mResponseHead) {
     openArgs.synthesizedResponseHead() = *mResponseHead;
+    openArgs.suspendAfterSynthesizeResponse() =
+      mSuspendParentAfterSynthesizeResponse;
   } else {
     openArgs.synthesizedResponseHead() = mozilla::void_t();
+    openArgs.suspendAfterSynthesizeResponse() = false;
   }
 
   nsCOMPtr<nsISerializable> secInfoSer = do_QueryInterface(mSecurityInfo);
@@ -1990,36 +2060,6 @@ HttpChannelChild::SetupFallbackChannel(const char *aFallbackKey)
 {
   DROP_DEAD();
 }
-
-// The next four _should_ be implemented, but we need to figure out how
-// to transfer the data from the chrome process first.
-
-NS_IMETHODIMP
-HttpChannelChild::GetRemoteAddress(nsACString & _result)
-{
-  return NS_ERROR_NOT_AVAILABLE;
-}
-
-NS_IMETHODIMP
-HttpChannelChild::GetRemotePort(int32_t * _result)
-{
-  NS_ENSURE_ARG_POINTER(_result);
-  return NS_ERROR_NOT_AVAILABLE;
-}
-
-NS_IMETHODIMP
-HttpChannelChild::GetLocalAddress(nsACString & _result)
-{
-  return NS_ERROR_NOT_AVAILABLE;
-}
-
-NS_IMETHODIMP
-HttpChannelChild::GetLocalPort(int32_t * _result)
-{
-  NS_ENSURE_ARG_POINTER(_result);
-  return NS_ERROR_NOT_AVAILABLE;
-}
-
 
 //-----------------------------------------------------------------------------
 // HttpChannelChild::nsICacheInfoChannel
@@ -2383,10 +2423,15 @@ HttpChannelChild::DivertToParent(ChannelDiverterChild **aChild)
   MOZ_RELEASE_ASSERT(gNeckoChild);
   MOZ_RELEASE_ASSERT(!mDivertingToParent);
 
-  // If we have a synthesized response, then there is no parent actor.  We
-  // need to make this work somehow, but for now avoid crashing.  (bug 1220681)
-  if (mSynthesizedResponse) {
-    return NS_ERROR_NOT_AVAILABLE;
+  nsresult rv = NS_OK;
+
+  // If the channel was intercepted, then we likely do not have an IPC actor
+  // yet.  We need one, though, in order to have a parent side to divert to.
+  // Therefore, create the actor just in time for us to suspend and divert it.
+  if (mSynthesizedResponse && !RemoteChannelExists()) {
+    mSuspendParentAfterSynthesizeResponse = true;
+    rv = ContinueAsyncOpen();
+    NS_ENSURE_SUCCESS(rv, rv);
   }
 
   // We must fail DivertToParent() if there's no parent end of the channel (and
@@ -2395,13 +2440,13 @@ HttpChannelChild::DivertToParent(ChannelDiverterChild **aChild)
     return mStatus;
   }
 
-  nsresult rv = Suspend();
+  // Once this is set, it should not be unset before the child is taken down.
+  mDivertingToParent = true;
+
+  rv = Suspend();
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
-
-  // Once this is set, it should not be unset before the child is taken down.
-  mDivertingToParent = true;
 
   HttpChannelDiverterArgs args;
   args.mChannelChild() = this;
@@ -2566,6 +2611,34 @@ HttpChannelChild::RecvIssueDeprecationWarning(const uint32_t& warning,
   if (warner) {
     warner->IssueWarning(warning, asError);
   }
+  return true;
+}
+
+bool
+HttpChannelChild::RecvReportRedirectionError()
+{
+  nsCOMPtr<nsIURI> uri;
+  GetURI(getter_AddRefs(uri));
+  nsCString spec;
+  uri->GetSpec(spec);
+  nsString wideSpec = NS_ConvertUTF8toUTF16(spec);
+
+  nsCOMPtr<nsIDocument> doc;
+  GetCallback(doc);
+
+  nsString msg = NS_LITERAL_STRING("Failed to load '");
+  msg.Append(wideSpec);
+  msg.AppendLiteral("'. A Service Worker for a multiprocess window encountered a redirection ");
+  msg.AppendLiteral("response, which is currently unsupported and tracked in bug 1219469.");
+  nsContentUtils::ReportToConsoleNonLocalized(msg,
+                                              nsIScriptError::errorFlag,
+                                              NS_LITERAL_CSTRING("Service Worker Interception"),
+                                              doc,
+                                              uri,
+                                              EmptyString(),
+                                              0,
+                                              0);
+  Cancel(NS_ERROR_NOT_AVAILABLE);
   return true;
 }
 

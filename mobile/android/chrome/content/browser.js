@@ -538,19 +538,22 @@ var BrowserApp = {
       Services.prefs.setBoolPref("xpinstall.enabled", true);
     }
 
+    if (ParentalControls.parentalControlsEnabled) {
+        let isBlockListEnabled = ParentalControls.isAllowed(ParentalControls.BLOCK_LIST);
+        Services.prefs.setBoolPref("browser.safebrowsing.forbiddenURIs.enabled", isBlockListEnabled);
+        Services.prefs.setBoolPref("browser.safebrowsing.allowOverride", !isBlockListEnabled);
+
+        let isTelemetryEnabled = ParentalControls.isAllowed(ParentalControls.TELEMETRY);
+        Services.prefs.setBoolPref("toolkit.telemetry.enabled", isTelemetryEnabled);
+
+        let isHealthReportEnabled = ParentalControls.isAllowed(ParentalControls.HEALTH_REPORT);
+        SharedPreferences.forApp().setBoolPref("android.not_a_preference.healthreport.uploadEnabled", isHealthReportEnabled);
+    }
+
     let sysInfo = Cc["@mozilla.org/system-info;1"].getService(Ci.nsIPropertyBag2);
     if (sysInfo.get("version") < 16) {
       let defaults = Services.prefs.getDefaultBranch(null);
       defaults.setBoolPref("media.autoplay.enabled", false);
-    }
-
-    try {
-      // Set the tiles click observer only if tiles reporting is enabled (that
-      // is, a report URL is set in prefs).
-      gTilesReportURL = Services.prefs.getCharPref("browser.tiles.reportURL");
-      Services.obs.addObserver(this, "Tiles:Click", false);
-    } catch (e) {
-      // Tiles reporting is disabled.
     }
 
     InitLater(() => {
@@ -597,10 +600,7 @@ var BrowserApp = {
 
       if (AppConstants.NIGHTLY_BUILD) {
         InitLater(() => ShumwayUtils.init(), window, "ShumwayUtils");
-        InitLater(() => Telemetry.addData("TRACKING_PROTECTION_ENABLED",
-            Services.prefs.getBoolPref("privacy.trackingprotection.enabled")));
-        InitLater(() => Telemetry.addData("TRACKING_PROTECTION_PBM_DISABLED",
-            !Services.prefs.getBoolPref("privacy.trackingprotection.pbmode.enabled")));
+        InitLater(() => Telemetry.addData("FENNEC_TRACKING_PROTECTION_STATE", parseInt(BrowserApp.getTrackingProtectionState())));
         InitLater(() => WebcompatReporter.init());
       }
 
@@ -774,6 +774,7 @@ var BrowserApp = {
       },
       icon: "drawable://ic_menu_share",
       callback: function(aTarget) {
+        // share.1 telemetry is handled in Java via PromptList
         UITelemetry.addEvent("action.1", "contextmenu", null, "web_share_link");
       }
     });
@@ -793,6 +794,7 @@ var BrowserApp = {
       },
       icon: "drawable://ic_menu_share",
       callback: function(aTarget) {
+        // share.1 telemetry is handled in Java via PromptList
         UITelemetry.addEvent("action.1", "contextmenu", null, "web_share_email");
       }
     });
@@ -812,6 +814,7 @@ var BrowserApp = {
       },
       icon: "drawable://ic_menu_share",
       callback: function(aTarget) {
+        // share.1 telemetry is handled in Java via PromptList
         UITelemetry.addEvent("action.1", "contextmenu", null, "web_share_phone");
       }
     });
@@ -891,6 +894,7 @@ var BrowserApp = {
       },
       icon: "drawable://ic_menu_share",
       callback: function(aTarget) {
+        // share.1 telemetry is handled in Java via PromptList
         UITelemetry.addEvent("action.1", "contextmenu", null, "web_share_media");
       }
     });
@@ -952,6 +956,7 @@ var BrowserApp = {
       NativeWindow.contextmenus.imageSaveableContext,
       function(aTarget) {
         UITelemetry.addEvent("action.1", "contextmenu", null, "web_save_image");
+        UITelemetry.addEvent("save.1", "contextmenu", null, "image");
 
         ContentAreaUtils.saveImageURL(aTarget.currentURI.spec, null, "SaveImageTitle",
                                       false, true, aTarget.ownerDocument.documentURIObject,
@@ -985,6 +990,7 @@ var BrowserApp = {
       }, NativeWindow.contextmenus.mediaSaveableContext,
       function(aTarget) {
         UITelemetry.addEvent("action.1", "contextmenu", null, "web_save_media");
+        UITelemetry.addEvent("save.1", "contextmenu", null, "media");
 
         let url = aTarget.currentSrc || aTarget.src;
         let filePickerTitleKey = (aTarget instanceof HTMLVideoElement &&
@@ -1451,6 +1457,20 @@ var BrowserApp = {
   PREF_TRACKING_PROTECTION_ENABLED_PB: "1",
   PREF_TRACKING_PROTECTION_DISABLED: "0",
 
+  /**
+   * Returns the current state of the tracking protection pref.
+   * (0 = Disabled, 1 = Enabled in PB, 2 = Enabled)
+   */
+  getTrackingProtectionState: function() {
+    if (Services.prefs.getBoolPref("privacy.trackingprotection.enabled")) {
+      return this.PREF_TRACKING_PROTECTION_ENABLED;
+    }
+    if (Services.prefs.getBoolPref("privacy.trackingprotection.pbmode.enabled")) {
+      return this.PREF_TRACKING_PROTECTION_ENABLED_PB;
+    }
+    return this.PREF_TRACKING_PROTECTION_DISABLED;
+  },
+
   handlePreferencesRequest: function handlePreferencesRequest(aRequestId,
                                                               aPrefNames,
                                                               aListen) {
@@ -1491,13 +1511,7 @@ var BrowserApp = {
           continue;
         case "privacy.trackingprotection.state": {
           pref.type = "string";
-          if (Services.prefs.getBoolPref("privacy.trackingprotection.enabled")) {
-            pref.value = this.PREF_TRACKING_PROTECTION_ENABLED;
-          } else if (Services.prefs.getBoolPref("privacy.trackingprotection.pbmode.enabled")) {
-            pref.value = this.PREF_TRACKING_PROTECTION_ENABLED_PB;
-          } else {
-            pref.value = this.PREF_TRACKING_PROTECTION_DISABLED;
-          }
+          pref.value = this.getTrackingProtectionState();
           prefs.push(pref);
           continue;
         }
@@ -2097,13 +2111,6 @@ var BrowserApp = {
         }
 
         this.computeAcceptLanguages(osLocale, aData);
-        break;
-
-      case "Tiles:Click":
-        // Set the click data for the given tab to be handled on the next page load.
-        let data = JSON.parse(aData);
-        let tab = this.getTabForId(data.tabId);
-        tab.tilesData = data.payload;
         break;
 
       case "Fonts:Reload":
@@ -3131,6 +3138,13 @@ var LightWeightThemeWebInstaller = {
     BrowserApp.deck.addEventListener("InstallBrowserTheme", this, false, true);
     BrowserApp.deck.addEventListener("PreviewBrowserTheme", this, false, true);
     BrowserApp.deck.addEventListener("ResetBrowserThemePreview", this, false, true);
+
+    if (ParentalControls.parentalControlsEnabled &&
+        !this._manager.currentTheme &&
+        ParentalControls.isAllowed(ParentalControls.DEFAULT_THEME)) {
+      // We are using the DEFAULT_THEME restriction to differentiate between restricted profiles & guest mode - Bug 1199596
+      this._installParentalControlsTheme();
+    }
   },
 
   handleEvent: function (event) {
@@ -3165,6 +3179,18 @@ var LightWeightThemeWebInstaller = {
     Cu.import("resource://gre/modules/LightweightThemeManager.jsm", temp);
     delete this._manager;
     return this._manager = temp.LightweightThemeManager;
+  },
+
+  _installParentalControlsTheme: function() {
+    let mgr = this._manager;
+    let parentalControlsTheme = {
+      "headerURL": "resource://android/assets/parental_controls_theme.png",
+      "name": "Parental Controls Theme",
+      "id": "parental-controls-theme@mozilla.org"
+    };
+
+    mgr.addBuiltInTheme(parentalControlsTheme);
+    mgr.themeChanged(parentalControlsTheme);
   },
 
   _installRequest: function (event) {
@@ -3444,9 +3470,6 @@ nsBrowserAccess.prototype = {
 var gScreenWidth = 1;
 var gScreenHeight = 1;
 
-// The URL where suggested tile clicks are posted.
-var gTilesReportURL = null;
-
 function Tab(aURL, aParams) {
   this.filter = null;
   this.browser = null;
@@ -3463,7 +3486,6 @@ function Tab(aURL, aParams) {
   this.desktopMode = false;
   this.originalURI = null;
   this.hasTouchListener = false;
-  this.tilesData = null;
 
   this.create(aURL, aParams);
 }
@@ -3527,7 +3549,7 @@ Tab.prototype = {
       }
     }
 
-    // Must be called after appendChild so the docshell has been created.
+    // Must be called after appendChild so the docShell has been created.
     this.setActive(false);
 
     let isPrivate = ("isPrivate" in aParams) && aParams.isPrivate;
@@ -3535,9 +3557,14 @@ Tab.prototype = {
       this.browser.docShell.QueryInterface(Ci.nsILoadContext).usePrivateBrowsing = true;
     }
 
+    // Set the new docShell load flags based on network state.
+    if (Tabs.useCache) {
+      this.browser.docShell.defaultLoadFlags |= Ci.nsIRequest.LOAD_FROM_CACHE;
+    }
+
     this.browser.stop();
 
-    // only set tab uri if uri is valid
+    // Only set tab uri if uri is valid
     let uri = null;
     let title = aParams.title || aURL;
     try {
@@ -4353,27 +4380,6 @@ Tab.prototype = {
             ExternalApps.clearPageAction();
           }
         }
-
-        // Upload any pending tile click events.
-        // Tiles data will be non-null for this tab only if:
-        // 1) the user just clicked a suggested site with a tracking ID, and
-        // 2) tiles reporting is enabled (gTilesReportURL != null).
-        if (this.tilesData) {
-          let xhr = new XMLHttpRequest();
-          xhr.open("POST", gTilesReportURL, true);
-          xhr.setRequestHeader("Content-Type", "application/json");
-          xhr.onload = function (e) {
-            // Broadcast reply if X-Robocop header is set. Used for testing only.
-            if (this.status == 200 && this.getResponseHeader("X-Robocop")) {
-              Messaging.sendRequest({
-                type: "Robocop:TilesResponse",
-                response: this.response
-              });
-            }
-          };
-          xhr.send(this.tilesData);
-          this.tilesData = null;
-        }
       }
     }
   },
@@ -4419,14 +4425,6 @@ Tab.prototype = {
         // If the request does not handle the nsIHttpChannel interface, use nsIRequest's success
         // status. Used for local files. See bug 948849.
         success = aRequest.status == 0;
-      }
-
-      // At this point, either:
-      // 1) the page loaded, the pageshow event fired, and the tilesData XHR has been posted, or
-      // 2) the page did not load, and we're loading a new page.
-      // Either way, we're done with the tiles data, so clear it out.
-      if (this.tilesData && (aStateFlags & Ci.nsIWebProgressListener.STATE_STOP)) {
-        this.tilesData = null;
       }
 
       // Check to see if we restoring the content from a previous presentation (session)
@@ -7431,6 +7429,7 @@ var Distribution = {
 
 var Tabs = {
   _enableTabExpiration: false,
+  _useCache: false,
   _domains: new Set(),
 
   init: function() {
@@ -7442,7 +7441,14 @@ var Tabs = {
       Services.obs.addObserver(this, "memory-pressure", false);
     }
 
+    // Watch for opportunities to pre-connect to high probability targets.
     Services.obs.addObserver(this, "Session:Prefetch", false);
+
+    // Track the network connection so we can efficiently use the cache
+    // for possible offline rendering.
+    Services.obs.addObserver(this, "network:link-status-changed", false);
+    let network = Cc["@mozilla.org/network/network-link-service;1"].getService(Ci.nsINetworkLinkService);
+    this.useCache = !network.isLinkUp;
 
     BrowserApp.deck.addEventListener("pageshow", this, false);
     BrowserApp.deck.addEventListener("TabOpen", this, false);
@@ -7472,14 +7478,33 @@ var Tabs = {
           } catch (e) {}
         }
         break;
+      case "network:link-status-changed":
+        if (["down", "unknown", "up"].indexOf(aData) == -1) {
+          return;
+        }
+        this.useCache = (aData != "up");
+        break;
     }
   },
 
   handleEvent: function(aEvent) {
     switch (aEvent.type) {
       case "pageshow":
-        // Clear the domain cache whenever a page get loaded into any browser.
+        // Clear the domain cache whenever a page is loaded into any browser.
         this._domains.clear();
+
+        // Notify if we are loading a page from cache.
+        if (this._useCache) {
+          let targetDoc = aEvent.originalTarget;
+          let isTopLevel = (targetDoc.defaultView.parent === targetDoc.defaultView);
+
+          // Ignore any about: pages, especially about:neterror since it means we failed to find the page in cache.
+          let targetURI = targetDoc.documentURI;
+          if (isTopLevel && !targetURI.startsWith("about:")) {
+            UITelemetry.addEvent("neterror.1", "toast", null, "usecache");
+            Snackbars.show(Strings.browser.GetStringFromName("networkOffline.message"), Snackbars.LENGTH_INDEFINITE);
+          }
+        }
         break;
       case "TabOpen":
         // Use opening a new tab as a trigger to expire the most stale tab.
@@ -7521,6 +7546,34 @@ var Tabs = {
       }
     }
     return false;
+  },
+
+  get useCache() {
+    if (!Services.prefs.getBoolPref("browser.tabs.useCache")) {
+      return false;
+    }
+    return this._useCache;
+  },
+
+  set useCache(aUseCache) {
+    if (!Services.prefs.getBoolPref("browser.tabs.useCache")) {
+      return;
+    }
+
+    if (this._useCache == aUseCache) {
+      return;
+    }
+
+    BrowserApp.tabs.forEach(function(tab) {
+      if (tab.browser && tab.browser.docShell) {
+        if (aUseCache) {
+          tab.browser.docShell.defaultLoadFlags &= ~Ci.nsIRequest.LOAD_FROM_CACHE;
+        } else {
+          tab.browser.docShell.defaultLoadFlags |= Ci.nsIRequest.LOAD_FROM_CACHE;
+        }
+      }
+    });
+    this._useCache = aUseCache;
   },
 
   // For debugging

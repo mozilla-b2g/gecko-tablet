@@ -31,13 +31,14 @@ constants_jar.extra_jars = [
     CONFIG['ANDROID_SUPPORT_ANNOTATIONS_JAR_LIB'],
     CONFIG['ANDROID_SUPPORT_V4_AAR_LIB'],
     CONFIG['ANDROID_SUPPORT_V4_AAR_INTERNAL_LIB'],
+    CONFIG['ANDROID_APPCOMPAT_V7_AAR_LIB'],
 ]
 
 if CONFIG['MOZ_INSTALL_TRACKING']:
     constants_jar.sources += ['java/org/mozilla/gecko/' + x for x in [
         'adjust/AdjustHelper.java',
     ]]
-    constants_jar.extra_jars = [
+    constants_jar.extra_jars += [
         'gecko-thirdparty-adjust_sdk.jar',
     ]
 else:
@@ -118,6 +119,7 @@ gujar.sources += ['java/org/mozilla/gecko/' + x for x in [
     'util/PrefUtils.java',
     'util/ProxySelector.java',
     'util/RawResource.java',
+    'util/ScreenshotObserver.java',
     'util/StringUtils.java',
     'util/ThreadUtils.java',
     'util/UIAsyncTask.java',
@@ -270,9 +272,9 @@ gbjar.sources += ['java/org/mozilla/gecko/' + x for x in [
     'FilePicker.java',
     'FilePickerResultHandler.java',
     'FindInPageBar.java',
+    'firstrun/FirstrunAnimationContainer.java',
     'firstrun/FirstrunPager.java',
     'firstrun/FirstrunPagerConfig.java',
-    'firstrun/FirstrunPane.java',
     'firstrun/FirstrunPanel.java',
     'firstrun/ImportPanel.java',
     'firstrun/RestrictedWelcomePanel.java',
@@ -537,8 +539,6 @@ gbjar.sources += ['java/org/mozilla/gecko/' + x for x in [
     'TextSelection.java',
     'TextSelectionHandle.java',
     'ThumbnailHelper.java',
-    'tiles/Tile.java',
-    'tiles/TilesRecorder.java',
     'toolbar/AutocompleteHandler.java',
     'toolbar/BackButton.java',
     'toolbar/BrowserToolbar.java',
@@ -885,7 +885,7 @@ ANDROID_ASSETS_DIRS += [
 for var in ('MOZ_ANDROID_ANR_REPORTER', 'MOZ_LINKER_EXTRACT', 'MOZ_DEBUG',
             'MOZ_ANDROID_SEARCH_ACTIVITY', 'MOZ_NATIVE_DEVICES', 'MOZ_ANDROID_MLS_STUMBLER',
             'MOZ_ANDROID_DOWNLOADS_INTEGRATION', 'MOZ_INSTALL_TRACKING',
-            'MOZ_ANDROID_GCM', 'MOZ_ANDROID_TAB_QUEUE'):
+            'MOZ_ANDROID_GCM'):
     if CONFIG[var]:
         DEFINES[var] = 1
 

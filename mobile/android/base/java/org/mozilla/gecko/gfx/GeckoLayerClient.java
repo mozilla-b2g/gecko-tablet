@@ -5,6 +5,7 @@
 
 package org.mozilla.gecko.gfx;
 
+import org.mozilla.gecko.annotation.ReflectionTarget;
 import org.mozilla.gecko.annotation.RobocopTarget;
 import org.mozilla.gecko.annotation.WrapForJNI;
 import org.mozilla.gecko.GeckoAppShell;
@@ -91,7 +92,7 @@ class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
 
     private ZoomConstraints mZoomConstraints;
 
-    private boolean mGeckoIsReady;
+    private volatile boolean mGeckoIsReady;
 
     private final PanZoomController mPanZoomController;
     private final DynamicToolbarAnimator mToolbarAnimator;
@@ -146,7 +147,13 @@ class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
     }
 
     /** Attaches to root layer so that Gecko appears. */
-    public void notifyGeckoReady() {
+    /* package */ boolean isGeckoReady() {
+        return mGeckoIsReady;
+    }
+
+    // Used by GeckoThread.queueNativeCallUntil through LayerView.onAttachedToWindow.
+    @ReflectionTarget
+    public void onGeckoReady() {
         mGeckoIsReady = true;
 
         mRootLayer = new VirtualLayer(new IntSize(mView.getWidth(), mView.getHeight()));
@@ -749,12 +756,9 @@ class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
     /** Implementation of LayerView.Listener */
     @Override
     public void renderRequested() {
-        try {
-            GeckoAppShell.invalidateAndScheduleComposite();
-        } catch (UnsupportedOperationException uoe) {
-            // In some very rare cases this gets called before libxul is loaded,
-            // so catch and ignore the exception that will throw. See bug 837821
-            Log.d(LOGTAG, "Dropping renderRequested call before libxul load.");
+        final GLController glController = mView.getGLController();
+        if (glController != null) {
+            glController.invalidateAndScheduleComposite();
         }
     }
 

@@ -4950,6 +4950,7 @@ JS_ObjectIsDate(JSContext* cx, JS::HandleObject obj, bool* isDate);
 #define JSREG_GLOB      0x02u   /* global exec, creates array of matches */
 #define JSREG_MULTILINE 0x04u   /* treat ^ and $ as begin and end of line */
 #define JSREG_STICKY    0x08u   /* only match starting at lastIndex */
+#define JSREG_UNICODE   0x10u   /* unicode */
 
 extern JS_PUBLIC_API(JSObject*)
 JS_NewRegExpObject(JSContext* cx, JS::HandleObject obj, const char* bytes, size_t length,
@@ -5207,25 +5208,7 @@ JS_IsIdentifier(const char16_t* chars, size_t length);
 
 namespace JS {
 
-/**
- * AutoFilename encapsulates a pointer to a C-string and keeps the C-string
- * alive for as long as the associated AutoFilename object is alive.
- */
-class MOZ_STACK_CLASS JS_PUBLIC_API(AutoFilename)
-{
-    void* scriptSource_;
-
-    AutoFilename(const AutoFilename&) = delete;
-    void operator=(const AutoFilename&) = delete;
-
-  public:
-    AutoFilename() : scriptSource_(nullptr) {}
-    ~AutoFilename() { reset(nullptr); }
-
-    const char* get() const;
-
-    void reset(void* newScriptSource);
-};
+typedef js::UniqueChars AutoFilename;
 
 /**
  * Return the current filename, line number and column number of the most

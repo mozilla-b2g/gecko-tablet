@@ -61,7 +61,7 @@ class CodeGenerator : public CodeGeneratorSpecific
 
   public:
     bool generate();
-    bool generateAsmJS(AsmJSFunctionOffsets *offsets);
+    bool generateAsmJS(wasm::FuncOffsets *offsets);
     bool link(JSContext* cx, CompilerConstraintList* constraints);
     bool linkSharedStubs(JSContext* cx);
 
@@ -329,6 +329,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     void visitSetDOMProperty(LSetDOMProperty* lir);
     void visitCallDOMNative(LCallDOMNative* lir);
     void visitCallGetIntrinsicValue(LCallGetIntrinsicValue* lir);
+    void visitCallBindVar(LCallBindVar* lir);
     void visitIsCallable(LIsCallable* lir);
     void visitOutOfLineIsCallable(OutOfLineIsCallable* ool);
     void visitIsObject(LIsObject* lir);
@@ -345,12 +346,10 @@ class CodeGenerator : public CodeGeneratorSpecific
     void visitArrowNewTarget(LArrowNewTarget* ins);
     void visitCheckReturn(LCheckReturn* ins);
     void visitCheckObjCoercible(LCheckObjCoercible* ins);
+    void visitDebugCheckSelfHosted(LDebugCheckSelfHosted* ins);
 
     void visitCheckOverRecursed(LCheckOverRecursed* lir);
     void visitCheckOverRecursedFailure(CheckOverRecursedFailure* ool);
-
-    void visitInterruptCheckImplicit(LInterruptCheckImplicit* ins);
-    void visitOutOfLineInterruptCheckImplicit(OutOfLineInterruptCheckImplicit* ins);
 
     void visitUnboxFloatingPoint(LUnboxFloatingPoint* lir);
     void visitOutOfLineUnboxFloatingPoint(OutOfLineUnboxFloatingPoint* ool);
@@ -385,6 +384,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     void emitAssertObjectOrStringResult(Register input, MIRType type, const TemporaryTypeSet* typeset);
 
     void visitInterruptCheck(LInterruptCheck* lir);
+    void visitOutOfLineInterruptCheckImplicit(OutOfLineInterruptCheckImplicit* ins);
     void visitAsmJSInterruptCheck(LAsmJSInterruptCheck* lir);
     void visitRecompileCheck(LRecompileCheck* ins);
 

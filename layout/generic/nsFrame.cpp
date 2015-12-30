@@ -108,10 +108,11 @@ using namespace mozilla::dom;
 using namespace mozilla::gfx;
 using namespace mozilla::layers;
 using namespace mozilla::layout;
+typedef nsAbsoluteContainingBlock::AbsPosReflowFlags AbsPosReflowFlags;
 
 namespace mozilla {
 namespace gfx {
-class VRHMDInfo;
+class VRDeviceProxy;
 } // namespace gfx
 } // namespace mozilla
 
@@ -1922,6 +1923,9 @@ ItemParticipatesIn3DContext(nsIFrame* aAncestor, nsDisplayItem* aItem)
   } else {
     return false;
   }
+  if (aAncestor == transformFrame) {
+    return true;
+  }
   return FrameParticipatesIn3DContext(aAncestor, transformFrame);
 }
 
@@ -2043,9 +2047,9 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
   nsDisplayListBuilder::AutoBuildingDisplayList
     buildingDisplayList(aBuilder, this, dirtyRect, true);
 
-  mozilla::gfx::VRHMDInfo* vrHMDInfo = nullptr;
+  mozilla::gfx::VRDeviceProxy* vrHMDInfo = nullptr;
   if ((GetStateBits() & NS_FRAME_HAS_VR_CONTENT)) {
-    vrHMDInfo = static_cast<mozilla::gfx::VRHMDInfo*>(mContent->GetProperty(nsGkAtoms::vr_state));
+    vrHMDInfo = static_cast<mozilla::gfx::VRDeviceProxy*>(mContent->GetProperty(nsGkAtoms::vr_state));
   }
 
   DisplayListClipState::AutoSaveRestore clipState(aBuilder);
@@ -2058,7 +2062,11 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
     // item itself will be clipped.
     // For transforms we also need to clear ancestor clipping because it's
     // relative to the wrong display item reference frame anyway.
-    clipState.Clear();
+    // We clear both regular and scroll clips here. Our content needs to be
+    // able to walk up the complete cross stacking context scroll clip chain,
+    // so we call a special method on the clip state that keeps the ancestor
+    // scroll clip around.
+    clipState.ClearForStackingContextContents();
   }
 
   nsDisplayListCollection set;
@@ -2175,10 +2183,19 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
     // Don't clip nsDisplayOpacity items. We clip their descendants instead.
     // The clip we would set on an element with opacity would clip
     // all descendant content, but some should not be clipped.
+    // We clear both regular clips and scroll clips. If this item's animated
+    // geometry root has async scrolling, then the async scroll transform will
+    // be applied on the opacity's descendants (because that's where the
+    // scroll clip will be). However, this won't work if the opacity item is
+    // inactive, which is why we record the pre-clear scroll clip here.
+    const DisplayItemScrollClip* scrollClipForSameAGRChildren =
+      aBuilder->ClipState().GetCurrentInnermostScrollClip();
     DisplayListClipState::AutoSaveRestore opacityClipState(aBuilder);
-    opacityClipState.Clear();
+    opacityClipState.ClearIncludingScrollClip();
     resultList.AppendNewToTop(
-        new (aBuilder) nsDisplayOpacity(aBuilder, this, &resultList, opacityItemForEventsOnly));
+        new (aBuilder) nsDisplayOpacity(aBuilder, this, &resultList,
+                                        scrollClipForSameAGRChildren,
+                                        opacityItemForEventsOnly));
   }
 
   /* If we're going to apply a transformation and don't have preserve-3d set, wrap
@@ -2495,6 +2512,8 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
   if (savedOutOfFlowData) {
     clipState.SetClipForContainingBlockDescendants(
       &savedOutOfFlowData->mContainingBlockClip);
+    clipState.SetScrollClipForContainingBlockDescendants(
+      savedOutOfFlowData->mContainingBlockScrollClip);
   }
 
   // Setup clipping for the parent's overflow:-moz-hidden-unscrollable,
@@ -4330,10 +4349,10 @@ nsFrame::ComputeSize(nsRenderingContext *aRenderingContext,
   switch (stylePos->mBoxSizing) {
     case StyleBoxSizing::Border:
       boxSizingAdjust += aBorder;
-      // fall through
+      MOZ_FALLTHROUGH;
     case StyleBoxSizing::Padding:
       boxSizingAdjust += aPadding;
-      // fall through
+      MOZ_FALLTHROUGH;
     case StyleBoxSizing::Content:
       // nothing
       break;
@@ -4651,9 +4670,13 @@ nsFrame::ReflowAbsoluteFrames(nsPresContext*           aPresContext,
     NS_ASSERTION(container, "Abs-pos children only supported on container frames for now");
 
     nsRect containingBlock(0, 0, containingBlockWidth, containingBlockHeight);
+    AbsPosReflowFlags flags =
+      AbsPosReflowFlags::eCBWidthAndHeightChanged; // XXX could be optimized
+    if (aConstrainBSize) {
+      flags |= AbsPosReflowFlags::eConstrainHeight;
+    }
     absoluteContainer->Reflow(container, aPresContext, aReflowState, aStatus,
-                              containingBlock,
-                              aConstrainBSize, true, true, // XXX could be optimized
+                              containingBlock, flags,
                               &aDesiredSize.mOverflowAreas);
   }
 }
@@ -6773,6 +6796,7 @@ nsIFrame::PeekOffset(nsPeekOffsetStruct* aPos)
         aPos->mWordMovementType = eEndWord;
       }
       // Intentionally fall through the eSelectWord case.
+      MOZ_FALLTHROUGH;
     case eSelectWord:
     {
       // wordSelectEatSpace means "are we looking for a boundary between whitespace

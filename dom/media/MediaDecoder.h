@@ -662,20 +662,11 @@ private:
 
   static bool IsOggEnabled();
   static bool IsOpusEnabled();
-
-#ifdef MOZ_WAVE
   static bool IsWaveEnabled();
-#endif
-
-#ifdef MOZ_WEBM
   static bool IsWebMEnabled();
-#endif
+
 #ifdef NECKO_PROTOCOL_rtsp
   static bool IsRtspEnabled();
-#endif
-
-#ifdef MOZ_GSTREAMER
-  static bool IsGStreamerEnabled();
 #endif
 
 #ifdef MOZ_OMX_DECODER

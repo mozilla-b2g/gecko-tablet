@@ -43,16 +43,18 @@
 #include "jsweakmap.h"
 #include "jswrapper.h"
 
-#include "asmjs/AsmJSLink.h"
+#include "asmjs/AsmJS.h"
 #include "builtin/AtomicsObject.h"
 #include "builtin/Eval.h"
 #include "builtin/Intl.h"
 #include "builtin/MapObject.h"
 #include "builtin/RegExp.h"
 #include "builtin/SymbolObject.h"
+#ifdef ENABLE_SIMD
+# include "builtin/SIMD.h"
+#endif
 #ifdef ENABLE_BINARYDATA
-#include "builtin/SIMD.h"
-#include "builtin/TypedObject.h"
+# include "builtin/TypedObject.h"
 #endif
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/FullParseHandler.h"  // for JS_BufferIsCompileableUnit
@@ -1040,8 +1042,10 @@ static const JSStdName builtin_property_names[] = {
 #if JS_HAS_UNEVAL
     { EAGER_ATOM(uneval), JSProto_String },
 #endif
-#ifdef ENABLE_BINARYDATA
+#ifdef ENABLE_SIMD
     { EAGER_ATOM(SIMD), JSProto_SIMD },
+#endif
+#ifdef ENABLE_BINARYDATA
     { EAGER_ATOM(TypedObject), JSProto_TypedObject },
 #endif
 #ifdef ENABLE_SHARED_ARRAY_BUFFER
@@ -3097,7 +3101,7 @@ PropertySpecNameToSymbolCode(const char* name)
     return JS::SymbolCode(u - 1);
 }
 
-static bool
+bool
 PropertySpecNameToId(JSContext* cx, const char* name, MutableHandleId id,
                      js::PinningBehavior pin = js::DoNotPinAtom)
 {
@@ -3513,7 +3517,7 @@ CloneFunctionObject(JSContext* cx, HandleObject funobj, HandleObject dynamicScop
         return nullptr;
     }
 
-    if (fun->isNative() && IsAsmJSModuleNative(fun->native())) {
+    if (IsAsmJSModule(fun)) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_CANT_CLONE_OBJECT);
         return nullptr;
     }
@@ -3614,87 +3618,6 @@ JS_IsConstructor(JSFunction* fun)
     return fun->isConstructor();
 }
 
-static bool
-GenericNativeMethodDispatcher(JSContext* cx, unsigned argc, Value* vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-
-    const JSFunctionSpec* fs = (JSFunctionSpec*)
-        args.callee().as<JSFunction>().getExtendedSlot(0).toPrivate();
-    MOZ_ASSERT((fs->flags & JSFUN_GENERIC_NATIVE) != 0);
-
-    if (argc < 1) {
-        ReportMissingArg(cx, args.calleev(), 0);
-        return false;
-    }
-
-    /*
-     * Copy all actual (argc) arguments down over our |this| parameter, vp[1],
-     * which is almost always the class constructor object, e.g. Array.  Then
-     * call the corresponding prototype native method with our first argument
-     * passed as |this|.
-     */
-    memmove(vp + 1, vp + 2, argc * sizeof(Value));
-
-    /* Clear the last parameter in case too few arguments were passed. */
-    vp[2 + --argc].setUndefined();
-
-    return fs->call.op(cx, argc, vp);
-}
-
-static bool
-DefineFunctionFromSpec(JSContext* cx, HandleObject obj, const JSFunctionSpec* fs, unsigned flags)
-{
-    GetterOp gop;
-    SetterOp sop;
-    if (flags & JSFUN_STUB_GSOPS) {
-        // JSFUN_STUB_GSOPS is a request flag only, not stored in fun->flags or
-        // the defined property's attributes.
-        flags &= ~JSFUN_STUB_GSOPS;
-        gop = nullptr;
-        sop = nullptr;
-    } else {
-        gop = obj->getClass()->getProperty;
-        sop = obj->getClass()->setProperty;
-        MOZ_ASSERT(gop != JS_PropertyStub);
-        MOZ_ASSERT(sop != JS_StrictPropertyStub);
-    }
-
-    RootedId id(cx);
-    if (!PropertySpecNameToId(cx, fs->name, &id))
-        return false;
-
-    // Define a generic arity N+1 static method for the arity N prototype
-    // method if flags contains JSFUN_GENERIC_NATIVE.
-    if (flags & JSFUN_GENERIC_NATIVE) {
-        // We require that any consumers using JSFUN_GENERIC_NATIVE stash
-        // the prototype and constructor in the global slots before invoking
-        // JS_DefineFunctions on the proto.
-        JSProtoKey key = JSCLASS_CACHED_PROTO_KEY(obj->getClass());
-        MOZ_ASSERT(obj == &obj->global().getPrototype(key).toObject());
-        RootedObject ctor(cx, &obj->global().getConstructor(key).toObject());
-
-        flags &= ~JSFUN_GENERIC_NATIVE;
-        JSFunction* fun = DefineFunction(cx, ctor, id,
-                                         GenericNativeMethodDispatcher,
-                                         fs->nargs + 1, flags,
-                                         gc::AllocKind::FUNCTION_EXTENDED);
-        if (!fun)
-            return false;
-
-        // As jsapi.h notes, fs must point to storage that lives as long
-        // as fun->object lives.
-        fun->setExtendedSlot(0, PrivateValue(const_cast<JSFunctionSpec*>(fs)));
-    }
-
-    JSFunction* fun = NewFunctionFromSpec(cx, fs, id);
-    if (!fun)
-        return false;
-
-    RootedValue funVal(cx, ObjectValue(*fun));
-    return DefineProperty(cx, obj, id, funVal, gop, sop, flags & ~JSFUN_FLAGS_MASK);
-}
-
 JS_PUBLIC_API(bool)
 JS_DefineFunctions(JSContext* cx, HandleObject obj, const JSFunctionSpec* fs,
                    PropertyDefinitionBehavior behavior)
@@ -3704,25 +3627,7 @@ JS_DefineFunctions(JSContext* cx, HandleObject obj, const JSFunctionSpec* fs,
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj);
 
-    for (; fs->name; fs++) {
-        unsigned flags = fs->flags;
-        switch (behavior) {
-          case DefineAllProperties:
-            break;
-          case OnlyDefineLateProperties:
-            if (!(flags & JSPROP_DEFINE_LATE))
-                continue;
-            break;
-          default:
-            MOZ_ASSERT(behavior == DontDefineLateProperties);
-            if (flags & JSPROP_DEFINE_LATE)
-                continue;
-        }
-
-        if (!DefineFunctionFromSpec(cx, obj, fs, flags & ~JSPROP_DEFINE_LATE))
-            return false;
-    }
-    return true;
+    return DefineFunctions(cx, obj, fs, NotIntrinsic, behavior);
 }
 
 JS_PUBLIC_API(JSFunction*)
@@ -5107,14 +5012,7 @@ JS_EncodeStringToUTF8(JSContext* cx, HandleString str)
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
 
-    JSLinearString* linear = str->ensureLinear(cx);
-    if (!linear)
-        return nullptr;
-
-    JS::AutoCheckCannotGC nogc;
-    return linear->hasLatin1Chars()
-           ? JS::CharsToNewUTF8CharsZ(cx, linear->latin1Range(nogc)).c_str()
-           : JS::CharsToNewUTF8CharsZ(cx, linear->twoByteRange(nogc)).c_str();
+    return StringToNewUTF8CharsZ(cx, *str).release();
 }
 
 JS_PUBLIC_API(size_t)
@@ -6007,24 +5905,8 @@ JS_IsIdentifier(const char16_t* chars, size_t length)
 
 namespace JS {
 
-void
-AutoFilename::reset(void* newScriptSource)
-{
-    if (newScriptSource)
-        reinterpret_cast<ScriptSource*>(newScriptSource)->incref();
-    if (scriptSource_)
-        reinterpret_cast<ScriptSource*>(scriptSource_)->decref();
-    scriptSource_ = newScriptSource;
-}
-
-const char*
-AutoFilename::get() const
-{
-    return scriptSource_ ? reinterpret_cast<ScriptSource*>(scriptSource_)->filename() : nullptr;
-}
-
 JS_PUBLIC_API(bool)
-DescribeScriptedCaller(JSContext* cx, AutoFilename* filename, unsigned* lineno,
+DescribeScriptedCaller(JSContext* cx, UniqueChars* filename, unsigned* lineno,
                        unsigned* column)
 {
     if (lineno)
@@ -6041,8 +5923,12 @@ DescribeScriptedCaller(JSContext* cx, AutoFilename* filename, unsigned* lineno,
     if (i.activation()->scriptedCallerIsHidden())
         return false;
 
-    if (filename)
-        filename->reset(i.scriptSource());
+    if (filename) {
+        UniqueChars copy = make_string_copy(i.filename());
+        if (!copy)
+            return false;
+        *filename = Move(copy);
+    }
 
     if (lineno)
         *lineno = i.computeLine(column);

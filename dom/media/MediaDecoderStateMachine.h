@@ -105,6 +105,7 @@ class MediaSink;
 
 class AudioSegment;
 class DecodedStream;
+class OutputStreamManager;
 class TaskQueue;
 
 extern LazyLogModule gMediaDecoderLog;
@@ -447,12 +448,6 @@ protected:
 
   // Returns true if we have less than aUsecs of undecoded data available.
   bool HasLowUndecodedData(int64_t aUsecs);
-
-  // Returns the number of unplayed usecs of audio we've got decoded and/or
-  // pushed to the hardware waiting to play. This is how much audio we can
-  // play without having to run the audio decoder. The decoder monitor
-  // must be held.
-  int64_t AudioDecodedUsecs();
 
   // Returns true when there's decoded audio waiting to play.
   // The decoder monitor must be held.
@@ -1101,6 +1096,9 @@ private:
   // been written to the MediaStream.
   Watchable<bool> mAudioCompleted;
 
+  // True if all video frames are already rendered.
+  Watchable<bool> mVideoCompleted;
+
   // Set if MDSM receives dormant request during reading metadata.
   Maybe<bool> mPendingDormant;
 
@@ -1188,6 +1186,9 @@ private:
   Watchable<bool> mSentFirstFrameLoadedEvent;
 
   bool mSentPlaybackEndedEvent;
+
+  // Data about MediaStreams that are being fed by the decoder.
+  const RefPtr<OutputStreamManager> mOutputStreamManager;
 
   // The SourceMediaStream we are using to feed the mOutputStreams. This stream
   // is never exposed outside the decoder.

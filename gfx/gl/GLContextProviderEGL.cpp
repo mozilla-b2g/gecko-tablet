@@ -21,11 +21,6 @@
     #endif
 
     #ifdef ANDROID
-        /* from widget */
-        #ifdef MOZ_WIDGET_ANDROID
-            #include "AndroidBridge.h"
-        #endif
-
         #include <android/log.h>
         #define LOG(args...)  __android_log_print(ANDROID_LOG_INFO, "Gonk" , ## args)
 
@@ -172,13 +167,12 @@ static EGLSurface
 CreateSurfaceForWindow(nsIWidget* widget, const EGLConfig& config) {
     EGLSurface newSurface = nullptr;
 
+    MOZ_ASSERT(widget);
 #ifdef MOZ_WIDGET_ANDROID
-        mozilla::AndroidBridge::Bridge()->RegisterCompositor();
-        newSurface = mozilla::AndroidBridge::Bridge()->CreateEGLSurfaceForCompositor();
+    newSurface = EGLSurface(widget->GetNativeData(NS_NATIVE_NEW_EGL_SURFACE));
 #else
-        MOZ_ASSERT(widget != nullptr);
-        newSurface = sEGLLibrary.fCreateWindowSurface(EGL_DISPLAY(), config,
-                                                      GET_NATIVE_WINDOW(widget), 0);
+    newSurface = sEGLLibrary.fCreateWindowSurface(EGL_DISPLAY(), config,
+                                                  GET_NATIVE_WINDOW(widget), 0);
 #endif
     return newSurface;
 }
@@ -388,22 +382,14 @@ GLContextEGL::IsCurrent() {
 }
 
 bool
-GLContextEGL::RenewSurface() {
+GLContextEGL::RenewSurface(nsIWidget* aWidget) {
     if (!mOwnsContext) {
         return false;
     }
-#ifndef MOZ_WIDGET_ANDROID
-    MOZ_CRASH("GFX: unimplemented");
-    // to support this on non-Android platforms, need to keep track of the nsIWidget that
-    // this GLContext was created for (with CreateForWindow) so that we know what to
-    // pass again to CreateSurfaceForWindow below.
-    // The reason why Android doesn't need this is that it delegates EGLSurface creation to
-    // Java code which is the only thing that knows about our actual widget.
-#endif
     // unconditionally release the surface and create a new one. Don't try to optimize this away.
     // If we get here, then by definition we know that we want to get a new surface.
     ReleaseSurface();
-    mSurface = mozilla::gl::CreateSurfaceForWindow(nullptr, mConfig); // the nullptr here is where we assume Android.
+    mSurface = mozilla::gl::CreateSurfaceForWindow(aWidget, mConfig);
     if (!mSurface) {
         return false;
     }
@@ -763,7 +749,7 @@ GLContextProviderEGL::CreateWrappingExisting(void* aContext, void* aSurface)
 }
 
 already_AddRefed<GLContext>
-GLContextProviderEGL::CreateForWindow(nsIWidget *aWidget)
+GLContextProviderEGL::CreateForWindow(nsIWidget *aWidget, bool aForceAccelerated)
 {
     if (!sEGLLibrary.EnsureInitialized()) {
         MOZ_CRASH("GFX: Failed to load EGL library 3!\n");

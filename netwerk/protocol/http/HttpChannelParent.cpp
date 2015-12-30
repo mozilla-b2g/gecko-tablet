@@ -60,11 +60,13 @@ HttpChannelParent::HttpChannelParent(const PBrowserOrId& iframeEmbedding,
   , mPBOverride(aOverrideStatus)
   , mLoadContext(aLoadContext)
   , mStatus(NS_OK)
+  , mPendingDiversion(false)
   , mDivertingFromChild(false)
   , mDivertedOnStartRequest(false)
   , mSuspendedForDiversion(false)
   , mShouldIntercept(false)
   , mShouldSuspendIntercept(false)
+  , mSuspendAfterSynthesizeResponse(false)
   , mNestedFrameId(0)
 {
   LOG(("Creating HttpChannelParent [this=%p]\n", this));
@@ -131,7 +133,7 @@ HttpChannelParent::Init(const HttpChannelCreationArgs& aArgs)
                        a.loadInfo(), a.synthesizedResponseHead(),
                        a.synthesizedSecurityInfoSerialization(),
                        a.cacheKey(), a.schedulingContextID(), a.preflightArgs(),
-                       a.initialRwin());
+                       a.initialRwin(), a.suspendAfterSynthesizeResponse());
   }
   case HttpChannelCreationArgs::THttpChannelConnectArgs:
   {
@@ -259,6 +261,12 @@ HttpChannelParent::SynthesizeResponse(nsIInterceptedChannel* aChannel)
     return;
   }
 
+  if (!mSynthesizedResponseHead) {
+    // Near-term crash fix for bug 1219469.
+    mozilla::Unused << SendReportRedirectionError();
+    return;
+  }
+
   aChannel->SynthesizeStatus(mSynthesizedResponseHead->Status(),
                              mSynthesizedResponseHead->StatusText());
   nsCOMPtr<nsIHttpHeaderVisitor> visitor = new HeaderVisitor(aChannel);
@@ -268,6 +276,16 @@ HttpChannelParent::SynthesizeResponse(nsIInterceptedChannel* aChannel)
   NS_DispatchToCurrentThread(event);
 
   mSynthesizedResponseHead = nullptr;
+
+  // Suspend now even though the FinishSynthesizeResponse runnable has
+  // not executed.  We want to suspend after we get far enough to trigger
+  // the synthesis, but not actually allow the nsHttpChannel to trigger
+  // any OnStartRequests().
+  if (mSuspendAfterSynthesizeResponse) {
+    mChannel->Suspend();
+  }
+
+  MaybeFlushPendingDiversion();
 }
 
 //-----------------------------------------------------------------------------
@@ -367,7 +385,8 @@ HttpChannelParent::DoAsyncOpen(  const URIParams&           aURI,
                                  const uint32_t&            aCacheKey,
                                  const nsCString&           aSchedulingContextID,
                                  const OptionalCorsPreflightArgs& aCorsPreflightArgs,
-                                 const uint32_t&            aInitialRwin)
+                                 const uint32_t&            aInitialRwin,
+                                 const bool&                aSuspendAfterSynthesizeResponse)
 {
   nsCOMPtr<nsIURI> uri = DeserializeURI(aURI);
   if (!uri) {
@@ -579,6 +598,8 @@ HttpChannelParent::DoAsyncOpen(  const URIParams&           aURI,
   nsID schedulingContextID;
   schedulingContextID.Parse(aSchedulingContextID.BeginReading());
   mChannel->SetSchedulingContextID(schedulingContextID);
+
+  mSuspendAfterSynthesizeResponse = aSuspendAfterSynthesizeResponse;
 
   if (loadInfo && loadInfo->GetEnforceSecurity()) {
     rv = mChannel->AsyncOpen2(mParentListener);
@@ -1039,6 +1060,27 @@ HttpChannelParent::DivertComplete()
   mParentListener = nullptr;
 }
 
+void
+HttpChannelParent::MaybeFlushPendingDiversion()
+{
+  if (!mPendingDiversion) {
+    return;
+  }
+
+  mPendingDiversion = false;
+
+  nsresult rv = SuspendForDiversion();
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return;
+  }
+
+  if (mDivertListener) {
+    DivertTo(mDivertListener);
+  }
+
+  return;
+}
+
 bool
 HttpChannelParent::RecvRemoveCorsPreflightCacheEntry(const URIParams& uri,
   const mozilla::ipc::PrincipalInfo& requestingPrincipal)
@@ -1382,16 +1424,35 @@ HttpChannelParent::SuspendForDiversion()
   LOG(("HttpChannelParent::SuspendForDiversion [this=%p]\n", this));
   MOZ_ASSERT(mChannel);
   MOZ_ASSERT(mParentListener);
+
+  // If we're in the process of opening a synthesized response, we must wait
+  // to perform the diversion.  Some of our diversion listeners clear callbacks
+  // which breaks the synthesis process.
+  if (mSynthesizedResponseHead) {
+    mPendingDiversion = true;
+    return NS_OK;
+  }
+
   if (NS_WARN_IF(mDivertingFromChild)) {
     MOZ_ASSERT(!mDivertingFromChild, "Already suspended for diversion!");
     return NS_ERROR_UNEXPECTED;
   }
 
+  nsresult rv = NS_OK;
+
   // Try suspending the channel. Allow it to fail, since OnStopRequest may have
-  // been called and thus the channel may not be pending.
-  nsresult rv = mChannel->Suspend();
-  MOZ_ASSERT(NS_SUCCEEDED(rv) || rv == NS_ERROR_NOT_AVAILABLE);
-  mSuspendedForDiversion = NS_SUCCEEDED(rv);
+  // been called and thus the channel may not be pending.  If we've already
+  // automatically suspended after synthesizing the response, then we don't
+  // need to suspend again here.
+  if (!mSuspendAfterSynthesizeResponse) {
+    rv = mChannel->Suspend();
+    MOZ_ASSERT(NS_SUCCEEDED(rv) || rv == NS_ERROR_NOT_AVAILABLE);
+    mSuspendedForDiversion = NS_SUCCEEDED(rv);
+  } else {
+    // Take ownership of the automatic suspend that occurred after synthesizing
+    // the response.
+    mSuspendedForDiversion = true;
+  }
 
   rv = mParentListener->SuspendForDiversion();
   MOZ_ASSERT(NS_SUCCEEDED(rv));
@@ -1438,6 +1499,18 @@ HttpChannelParent::DivertTo(nsIStreamListener *aListener)
   LOG(("HttpChannelParent::DivertTo [this=%p aListener=%p]\n",
        this, aListener));
   MOZ_ASSERT(mParentListener);
+
+  // If we're in the process of opening a synthesized response, we must wait
+  // to perform the diversion.  Some of our diversion listeners clear callbacks
+  // which breaks the synthesis process.
+  if (mSynthesizedResponseHead) {
+    // We should already have started pending the diversion when
+    // SuspendForDiversion() was called.
+    MOZ_ASSERT(mPendingDiversion);
+    mDivertListener = aListener;
+    return;
+  }
+
   if (NS_WARN_IF(!mDivertingFromChild)) {
     MOZ_ASSERT(mDivertingFromChild,
                "Cannot DivertTo new listener if diverting is not set!");

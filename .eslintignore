@@ -4,6 +4,10 @@
 # Exclude expected objdirs.
 obj*/**
 
+# Temporarily ignore HTML files that still need to be fixed.
+browser/extensions/loop/**/*.html
+devtools/**/*.html
+
 # We ignore all these directories by default, until we get them enabled.
 # If you are enabling a directory, please add directory specific exclusions
 # below.
@@ -78,12 +82,10 @@ browser/components/shell/**
 browser/components/tabview/**
 browser/components/translation/**
 browser/components/uitour/**
-browser/experiments/**
 browser/extensions/pdfjs/**
 browser/extensions/shumway/**
 browser/fuel/**
 browser/locales/**
-browser/modules/**
 
 # Loop specific exclusions
 
@@ -195,6 +197,7 @@ toolkit/components/places/**
 
 # Uses preprocessing
 toolkit/content/contentAreaUtils.js
+toolkit/content/widgets/videocontrols.xml
 toolkit/components/jsdownloads/src/DownloadIntegration.jsm
 toolkit/components/search/nsSearchService.js
 toolkit/components/url-classifier/**

@@ -58,6 +58,8 @@ const PREF_UNIFIED = PREF_BRANCH + "unified";
 
 const MESSAGE_TELEMETRY_PAYLOAD = "Telemetry:Payload";
 const MESSAGE_TELEMETRY_GET_CHILD_PAYLOAD = "Telemetry:GetChildPayload";
+const MESSAGE_TELEMETRY_USS = "Telemetry:USS";
+const MESSAGE_TELEMETRY_GET_CHILD_USS = "Telemetry:GetChildUSS";
 
 const DATAREPORTING_DIRECTORY = "datareporting";
 const ABORTED_SESSION_FILE_NAME = "aborted-session-ping";
@@ -93,6 +95,9 @@ const IDLE_TIMEOUT_SECONDS = Preferences.get("toolkit.telemetry.idleTimeout", 5 
 const ABORTED_SESSION_UPDATE_INTERVAL_MS = 5 * 60 * 1000;
 
 const TOPIC_CYCLE_COLLECTOR_BEGIN = "cycle-collector-begin";
+
+// How long to wait in millis for all the child memory reports to come in
+const TOTAL_MEMORY_COLLECTOR_TIMEOUT = 200;
 
 var gLastMemoryPoll = null;
 
@@ -666,6 +671,15 @@ var Impl = {
   _delayedInitTask: null,
   // The deferred promise resolved when the initialization task completes.
   _delayedInitTaskDeferred: null,
+  // Need a timeout in case children are tardy in giving back their memory reports.
+  _totalMemoryTimeout: undefined,
+  // An accumulator of total memory across all processes. Only valid once the final child reports.
+  _totalMemory: null,
+  // A Set of outstanding USS report ids
+  _childrenToHearFrom: null,
+  // monotonically-increasing id for USS reports
+  _nextTotalMemoryId: 1,
+
 
   get _log() {
     if (!this._logger) {
@@ -782,7 +796,6 @@ var Impl = {
    * with the following properties:
    *
    * - min, max, histogram_type, sum, sum_squares_{lo,hi}: simple integers;
-   * - log_sum, log_sum_squares: doubles;
    * - counts: array of counts for histogram buckets;
    * - ranges: array of calculated bucket sizes.
    *
@@ -795,7 +808,6 @@ var Impl = {
    *   histogram_type: <histogram_type>, sum: <sum>,
    *   sum_squares_lo: <sum_squares_lo>,
    *   sum_squares_hi: <sum_squares_hi>,
-   *   log_sum: <log_sum>, log_sum_squares: <log_sum_squares>,
    *   values: { bucket1: count1, bucket2: count2, ... } }
    */
   packHistogram: function packHistogram(hgram) {
@@ -809,10 +821,7 @@ var Impl = {
       sum: hgram.sum
     };
 
-    if (hgram.histogram_type == Telemetry.HISTOGRAM_EXPONENTIAL) {
-      retgram.log_sum = hgram.log_sum;
-      retgram.log_sum_squares = hgram.log_sum_squares;
-    } else {
+    if (hgram.histogram_type != Telemetry.HISTOGRAM_EXPONENTIAL) {
       retgram.sum_squares_lo = hgram.sum_squares_lo;
       retgram.sum_squares_hi = hgram.sum_squares_hi;
     }
@@ -1055,6 +1064,32 @@ var Impl = {
     cc("LOW_MEMORY_EVENTS_PHYSICAL", "lowMemoryEventsPhysical");
     c("GHOST_WINDOWS", "ghostWindows");
     cc("PAGE_FAULTS_HARD", "pageFaultsHard");
+
+    if (!Utils.isContentProcess && !this._totalMemoryTimeout) {
+      // Only the chrome process should gather total memory
+      // total = parent RSS + sum(child USS)
+      this._totalMemory = mgr.residentFast;
+      if (ppmm.childCount > 1) {
+        // Do not report If we time out waiting for the children to call
+        this._totalMemoryTimeout = setTimeout(
+          () => {
+            this._totalMemoryTimeout = undefined;
+            this._childrenToHearFrom.clear();
+          },
+          TOTAL_MEMORY_COLLECTOR_TIMEOUT);
+        this._childrenToHearFrom = new Set();
+        for (let i = 1; i < ppmm.childCount; i++) {
+          ppmm.getChildAt(i).sendAsyncMessage(MESSAGE_TELEMETRY_GET_CHILD_USS, {id: this._nextTotalMemoryId});
+          this._childrenToHearFrom.add(this._nextTotalMemoryId);
+          this._nextTotalMemoryId++;
+        }
+      } else {
+        boundHandleMemoryReport(
+          "MEMORY_TOTAL",
+          Ci.nsIMemoryReporter.UNITS_BYTES,
+          this._totalMemory);
+      }
+    }
 
     histogram.add(new Date() - startTime);
   },
@@ -1337,6 +1372,7 @@ var Impl = {
     this._hasXulWindowVisibleObserver = true;
 
     ppml.addMessageListener(MESSAGE_TELEMETRY_PAYLOAD, this);
+    ppml.addMessageListener(MESSAGE_TELEMETRY_USS, this);
 
     // Delay full telemetry initialization to give the browser time to
     // run various late initializers. Otherwise our gathered memory
@@ -1402,6 +1438,7 @@ var Impl = {
 
     Services.obs.addObserver(this, "content-child-shutdown", false);
     cpml.addMessageListener(MESSAGE_TELEMETRY_GET_CHILD_PAYLOAD, this);
+    cpml.addMessageListener(MESSAGE_TELEMETRY_GET_CHILD_USS, this);
 
     this.gatherStartupHistograms();
 
@@ -1461,12 +1498,52 @@ var Impl = {
       this.sendContentProcessPing("saved-session");
       break;
     }
+    case MESSAGE_TELEMETRY_USS:
+    {
+      if (this._totalMemoryTimeout && this._childrenToHearFrom.delete(message.data.id)) {
+        this._totalMemory += message.data.bytes;
+        if (this._childrenToHearFrom.size == 0) {
+          clearTimeout(this._totalMemoryTimeout);
+          this._totalMemoryTimeout = undefined;
+          this.handleMemoryReport(
+            "MEMORY_TOTAL",
+            Ci.nsIMemoryReporter.UNITS_BYTES,
+            this._totalMemory);
+        }
+      } else {
+        this._log.trace("Child USS report was missed");
+      }
+      break;
+    }
+    case MESSAGE_TELEMETRY_GET_CHILD_USS:
+    {
+      this.sendContentProcessUSS(message.data.id);
+      break
+    }
     default:
       throw new Error("Telemetry.receiveMessage: bad message name");
     }
   },
 
   _processUUID: generateUUID(),
+
+  sendContentProcessUSS: function sendContentProcessUSS(aMessageId) {
+    this._log.trace("sendContentProcessUSS");
+
+    let mgr;
+    try {
+      mgr = Cc["@mozilla.org/memory-reporter-manager;1"].
+            getService(Ci.nsIMemoryReporterManager);
+    } catch (e) {
+      // OK to skip memory reporters in xpcshell
+      return;
+    }
+
+    cpmm.sendAsyncMessage(
+      MESSAGE_TELEMETRY_USS,
+      {bytes: mgr.residentUnique, id: aMessageId}
+    );
+  },
 
   sendContentProcessPing: function sendContentProcessPing(reason) {
     this._log.trace("sendContentProcessPing - Reason " + reason);

@@ -420,8 +420,15 @@ SimdTypeDescr::size(Type t)
       case SimdTypeDescr::Int8x16:
       case SimdTypeDescr::Int16x8:
       case SimdTypeDescr::Int32x4:
+      case SimdTypeDescr::Uint8x16:
+      case SimdTypeDescr::Uint16x8:
+      case SimdTypeDescr::Uint32x4:
       case SimdTypeDescr::Float32x4:
       case SimdTypeDescr::Float64x2:
+      case SimdTypeDescr::Bool8x16:
+      case SimdTypeDescr::Bool16x8:
+      case SimdTypeDescr::Bool32x4:
+      case SimdTypeDescr::Bool64x2:
         return 16;
     }
     MOZ_CRASH("unexpected SIMD type");
@@ -2629,6 +2636,76 @@ js::GetInt32x4TypeDescr(JSContext* cx, unsigned argc, Value* vp)
     Rooted<GlobalObject*> global(cx, cx->global());
     MOZ_ASSERT(global);
     args.rval().setObject(*global->getOrCreateSimdTypeDescr<Int32x4>(cx));
+    return true;
+}
+
+bool
+js::GetUint8x16TypeDescr(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    Rooted<GlobalObject*> global(cx, cx->global());
+    MOZ_ASSERT(global);
+    args.rval().setObject(*global->getOrCreateSimdTypeDescr<Uint8x16>(cx));
+    return true;
+}
+
+bool
+js::GetUint16x8TypeDescr(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    Rooted<GlobalObject*> global(cx, cx->global());
+    MOZ_ASSERT(global);
+    args.rval().setObject(*global->getOrCreateSimdTypeDescr<Uint16x8>(cx));
+    return true;
+}
+
+bool
+js::GetUint32x4TypeDescr(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    Rooted<GlobalObject*> global(cx, cx->global());
+    MOZ_ASSERT(global);
+    args.rval().setObject(*global->getOrCreateSimdTypeDescr<Uint32x4>(cx));
+    return true;
+}
+
+bool
+js::GetBool8x16TypeDescr(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    Rooted<GlobalObject*> global(cx, cx->global());
+    MOZ_ASSERT(global);
+    args.rval().setObject(*global->getOrCreateSimdTypeDescr<Bool8x16>(cx));
+    return true;
+}
+
+bool
+js::GetBool16x8TypeDescr(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    Rooted<GlobalObject*> global(cx, cx->global());
+    MOZ_ASSERT(global);
+    args.rval().setObject(*global->getOrCreateSimdTypeDescr<Bool16x8>(cx));
+    return true;
+}
+
+bool
+js::GetBool32x4TypeDescr(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    Rooted<GlobalObject*> global(cx, cx->global());
+    MOZ_ASSERT(global);
+    args.rval().setObject(*global->getOrCreateSimdTypeDescr<Bool32x4>(cx));
+    return true;
+}
+
+bool
+js::GetBool64x2TypeDescr(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    Rooted<GlobalObject*> global(cx, cx->global());
+    MOZ_ASSERT(global);
+    args.rval().setObject(*global->getOrCreateSimdTypeDescr<Bool64x2>(cx));
     return true;
 }
 

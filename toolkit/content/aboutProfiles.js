@@ -21,22 +21,79 @@ const gManage = window.location.href.indexOf('?manage') != -1;
 const bundle = Services.strings.createBundle(
   'chrome://global/locale/aboutProfiles.properties');
 
-function refreshUI() {
-  if (gManage) {
-    document.getElementById('action-box').style.display = 'none';
+// nsIToolkitProfileService.selectProfile can be used only during the selection
+// of the profile in the ProfileManager. If we are showing about:profiles in a
+// tab, the selectedProfile returns the default profile.
+// In this function we use the ProfD to find the current profile.
+function findCurrentProfile() {
+  let cpd;
+  try {
+    cpd = Cc["@mozilla.org/file/directory_service;1"]
+            .getService(Ci.nsIProperties)
+            .get("ProfD", Ci.nsIFile);
+  } catch(e) {}
+
+  if (cpd) {
+    let itr = ProfileService.profiles;
+    while(itr.hasMoreElements()) {
+      let profile = itr.getNext().QueryInterface(Ci.nsIToolkitProfile);
+      if (profile.rootDir.path == cpd.path) {
+        return profile;
+      }
+    }
   }
 
+  // selectedProfile can trow if nothing is selected or if the selected profile
+  // has been deleted.
+  try {
+    return ProfileService.selectedProfile;
+  } catch(e) {
+    return null;
+  }
+}
+
+function initializeUI() {
+  if (gManage) {
+    document.getElementById('about-profile-action-box').style.display = 'none';
+    document.getElementById('profile-manager-action-box').style.display = 'block';
+
+    let autoSelect = document.getElementById("auto-select");
+    autoSelect.checked = ProfileService.startWithLastProfile;
+    autoSelect.addEventListener('change', function() {
+      ProfileService.startWithLastProfile = autoSelect.checked;
+    });
+
+    let offline = document.getElementById("work-offline");
+    offline.addEventListener('change', function() {
+      ProfileService.startOffline = offline.checked;
+    });
+  } else {
+    document.getElementById('about-profile-action-box').style.display = 'block';
+    document.getElementById('profile-manager-action-box').style.display = 'none';
+  }
+
+  refreshUI();
+}
+
+function refreshUI() {
   let parent = document.getElementById('profiles');
   while (parent.firstChild) {
     parent.removeChild(parent.firstChild);
   }
 
+  let defaultProfile;
+  try {
+    defaultProfile = ProfileService.defaultProfile;
+  } catch(e) {}
+
+  let currentProfile = findCurrentProfile() || defaultProfile;
+
   let iter = ProfileService.profiles;
   while (iter.hasMoreElements()) {
     let profile = iter.getNext().QueryInterface(Ci.nsIToolkitProfile);
     display({ profile: profile,
-              isDefault: profile == ProfileService.defaultProfile,
-              isCurrentProfile: !gManage && profile == ProfileService.selectedProfile });
+              isDefault: profile == defaultProfile,
+              isCurrentProfile: profile == currentProfile });
   }
 
   let createButton = document.getElementById('create-button');
@@ -49,18 +106,48 @@ function refreshUI() {
   restartNormalModeButton.onclick = function() { restart(false); }
 }
 
+function openDirectory(dir) {
+  let nsLocalFile = Components.Constructor("@mozilla.org/file/local;1",
+                                           "nsILocalFile", "initWithPath");
+  new nsLocalFile(dir).reveal();
+}
+
 function display(profileData) {
   let parent = document.getElementById('profiles');
 
   let div = document.createElement('div');
   parent.appendChild(div);
 
-  let name = document.createElement('h2');
   let nameStr = bundle.formatStringFromName('name', [profileData.profile.name], 1);
-  name.appendChild(document.createTextNode(nameStr));
+
+  let name = document.createElement('h2');
+
+  if (gManage) {
+    let checkBox = document.createElement('input');
+    checkBox.setAttribute('type', 'radio');
+    checkBox.setAttribute('name', 'profile');
+    checkBox.setAttribute('id', profileData.profile.name);
+    if (profileData.isCurrentProfile) {
+      checkBox.setAttribute('checked', 'checked');
+    }
+    name.appendChild(checkBox);
+
+    checkBox.addEventListener('change', function() {
+      ProfileService.selectedProfile = profileData.profile;
+      ProfileService.flush();
+    });
+
+    let label = document.createElement('label');
+    label.appendChild(document.createTextNode(nameStr));
+    label.setAttribute('for', profileData.profile.name);
+    name.appendChild(label);
+  } else {
+    name.appendChild(document.createTextNode(nameStr));
+  }
+
   div.appendChild(name);
 
-  if (profileData.isCurrentProfile) {
+  if (!gManage && profileData.isCurrentProfile) {
     let currentProfile = document.createElement('h3');
     let currentProfileStr = bundle.GetStringFromName('currentProfile');
     currentProfile.appendChild(document.createTextNode(currentProfileStr));
@@ -73,7 +160,7 @@ function display(profileData) {
   let tbody = document.createElement('tbody');
   table.appendChild(tbody);
 
-  function createItem(title, value) {
+  function createItem(title, value, dir = false) {
     let tr = document.createElement('tr');
     tbody.appendChild(tr);
 
@@ -85,15 +172,35 @@ function display(profileData) {
     let td = document.createElement('td');
     td.appendChild(document.createTextNode(value));
     tr.appendChild(td);
+
+    if (dir) {
+      td.appendChild(document.createTextNode(' '));
+      let button = document.createElement('button');
+      let buttonText = document.createTextNode(bundle.GetStringFromName(
+#ifdef XP_WIN
+        'winOpenDir'
+#elif XP_MACOSX
+        'macOpenDir'
+#else
+        'openDir'
+#endif
+      ));
+      button.appendChild(buttonText);
+      td.appendChild(button);
+
+      button.addEventListener('click', function(e) {
+        openDirectory(value);
+      });
+    }
   }
 
   createItem(bundle.GetStringFromName('isDefault'),
              profileData.isDefault ? bundle.GetStringFromName('yes') : bundle.GetStringFromName('no'));
 
-  createItem(bundle.GetStringFromName('rootDir'), profileData.profile.rootDir.path);
+  createItem(bundle.GetStringFromName('rootDir'), profileData.profile.rootDir.path, true);
 
   if (profileData.profile.localDir.path != profileData.profile.rootDir.path) {
-    createItem(bundle.GetStringFromName('localDir'), profileData.profile.localDir.path);
+    createItem(bundle.GetStringFromName('localDir'), profileData.profile.localDir.path, true);
   }
 
   let renameButton = document.createElement('button');
@@ -103,7 +210,7 @@ function display(profileData) {
   };
   div.appendChild(renameButton);
 
-  if (!profileData.isCurrentProfile) {
+  if (gManage || !profileData.isCurrentProfile) {
     let removeButton = document.createElement('button');
     removeButton.appendChild(document.createTextNode(bundle.GetStringFromName('remove')));
     removeButton.onclick = function() {
@@ -122,20 +229,12 @@ function display(profileData) {
     div.appendChild(defaultButton);
   }
 
-  if (gManage) {
-    let openButton = document.createElement('button');
-    openButton.appendChild(document.createTextNode(bundle.GetStringFromName('open')));
-    openButton.onclick = function() {
-      openProfile(profileData.profile);
-    };
-    div.appendChild(openButton);
-  }
-
   let sep = document.createElement('hr');
   div.appendChild(sep);
 }
 
 function CreateProfile(profile) {
+  ProfileService.selectedProfile = profile;
   ProfileService.flush();
   refreshUI();
 }
@@ -210,13 +309,6 @@ function defaultProfile(profile) {
   refreshUI();
 }
 
-function openProfile(profile) {
-  ProfileService.selectedProfile = profile;
-  ProfileService.flush();
-
-  dispatchEvent(new CustomEvent("startbrowser"));
-}
-
 function restart(safeMode) {
   let cancelQuit = Cc["@mozilla.org/supports-PRBool;1"]
                      .createInstance(Ci.nsISupportsPRBool);
@@ -237,5 +329,5 @@ function restart(safeMode) {
 
 window.addEventListener('DOMContentLoaded', function load() {
   window.removeEventListener('DOMContentLoaded', load);
-  refreshUI();
+  initializeUI();
 });

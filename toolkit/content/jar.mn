@@ -23,8 +23,10 @@ toolkit.jar:
 #endif
    content/global/aboutNetworking.js
    content/global/aboutNetworking.xhtml
-   content/global/aboutProfiles.js
+#ifndef ANDROID
+*  content/global/aboutProfiles.js
    content/global/aboutProfiles.xhtml
+#endif
    content/global/aboutServiceWorkers.js
    content/global/aboutServiceWorkers.xhtml
    content/global/aboutwebrtc/aboutWebrtc.css   (aboutwebrtc/aboutWebrtc.css)
@@ -101,7 +103,7 @@ toolkit.jar:
    content/global/bindings/toolbar.xml         (widgets/toolbar.xml)
    content/global/bindings/toolbarbutton.xml   (widgets/toolbarbutton.xml)
 *+ content/global/bindings/tree.xml            (widgets/tree.xml)
-+  content/global/bindings/videocontrols.xml   (widgets/videocontrols.xml)
+*+ content/global/bindings/videocontrols.xml   (widgets/videocontrols.xml)
    content/global/bindings/videocontrols.css   (widgets/videocontrols.css)
 *+ content/global/bindings/wizard.xml          (widgets/wizard.xml)
 #ifdef XP_MACOSX

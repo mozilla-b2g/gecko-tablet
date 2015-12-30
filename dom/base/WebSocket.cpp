@@ -1910,9 +1910,11 @@ WebSocket::CreateAndDispatchCloseEvent(bool aWasClean,
   MOZ_ASSERT(mImpl);
   AssertIsOnTargetThread();
 
-  mImpl->mService->WebSocketClosed(mImpl->mChannel->Serial(),
-                                   mImpl->mInnerWindowID,
-                                   aWasClean, aCode, aReason);
+  if (mImpl->mChannel) {
+    mImpl->mService->WebSocketClosed(mImpl->mChannel->Serial(),
+                                     mImpl->mInnerWindowID,
+                                     aWasClean, aCode, aReason);
+  }
 
   nsresult rv = CheckInnerWindowCorrectness();
   if (NS_FAILED(rv)) {
@@ -2117,17 +2119,6 @@ public:
                                       EmptyCString());
     }
 
-    return true;
-  }
-
-  bool Suspend(JSContext* aCx) override
-  {
-    {
-      MutexAutoLock lock(mWebSocketImpl->mMutex);
-      mWebSocketImpl->mWorkerShuttingDown = true;
-    }
-
-    mWebSocketImpl->CloseConnection(nsIWebSocketChannel::CLOSE_GOING_AWAY);
     return true;
   }
 

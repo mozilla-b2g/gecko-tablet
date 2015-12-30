@@ -46,11 +46,18 @@ public:
     NS_DECL_ISUPPORTS_INHERITED
 
     static void InitNatives();
-    class Natives;
-    // Object that implements native GeckoView calls;
-    // nullptr for nsWindows that were not opened from GeckoView.
-    mozilla::UniquePtr<Natives> mNatives;
 
+private:
+    class GeckoViewSupport;
+    // Object that implements native GeckoView calls and associated states.
+    // nullptr for nsWindows that were not opened from GeckoView.
+    mozilla::UniquePtr<GeckoViewSupport> mGeckoViewSupport;
+
+    class GLControllerSupport;
+    // Object that implements native GLController calls.
+    mozilla::UniquePtr<GLControllerSupport> mGLControllerSupport;
+
+public:
     static void OnGlobalAndroidEvent(mozilla::AndroidGeckoEvent *ae);
     static mozilla::gfx::IntSize GetAndroidScreenBounds();
     static nsWindow* TopWindow();
@@ -156,15 +163,10 @@ public:
 
     virtual mozilla::layers::CompositorParent* NewCompositorParent(int aSurfaceWidth, int aSurfaceHeight) override;
 
-    static void SetCompositor(mozilla::layers::LayerManager* aLayerManager,
-                              mozilla::layers::CompositorParent* aCompositorParent,
-                              mozilla::layers::CompositorChild* aCompositorChild);
     static bool IsCompositionPaused();
     static void InvalidateAndScheduleComposite();
     static void SchedulePauseComposition();
     static void ScheduleResumeComposition();
-    static void ScheduleResumeComposition(int width, int height);
-    static void ForceIsFirstPaint();
     static float ComputeRenderIntegrity();
     static mozilla::layers::APZCTreeManager* GetAPZCTreeManager();
     /* RootLayerTreeId() can only be called when GetAPZCTreeManager() returns non-null */
@@ -219,13 +221,9 @@ private:
     void CreateLayerManager(int aCompositorWidth, int aCompositorHeight);
     void RedrawAll();
 
-    mozilla::AndroidLayerRendererFrame mLayerRendererFrame;
+    mozilla::widget::LayerRenderer::Frame::GlobalRef mLayerRendererFrame;
 
     static mozilla::StaticRefPtr<mozilla::layers::APZCTreeManager> sApzcTreeManager;
-    static mozilla::StaticRefPtr<mozilla::layers::LayerManager> sLayerManager;
-    static mozilla::StaticRefPtr<mozilla::layers::CompositorParent> sCompositorParent;
-    static mozilla::StaticRefPtr<mozilla::layers::CompositorChild> sCompositorChild;
-    static bool sCompositorPaused;
 };
 
 #endif /* NSWINDOW_H_ */

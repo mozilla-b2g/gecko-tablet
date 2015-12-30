@@ -209,6 +209,10 @@
 #include "AndroidBridge.h"
 #endif
 
+#if defined(MOZ_SANDBOX) && defined(XP_LINUX) && !defined(ANDROID)
+#include "mozilla/SandboxInfo.h"
+#endif
+
 extern uint32_t gRestartMode;
 extern void InstallSignalHandlers(const char *ProgramName);
 
@@ -4089,6 +4093,14 @@ XREMain::XRE_mainRun()
     file->AppendNative(NS_LITERAL_CSTRING("override.ini"));
     nsINIParser parser;
     nsresult rv = parser.Init(file);
+    // if override.ini doesn't exist, also check for distribution.ini
+    if (NS_FAILED(rv)) {
+      bool persistent;
+      mDirProvider.GetFile(XRE_APP_DISTRIBUTION_DIR, &persistent,
+                           getter_AddRefs(file));
+      file->AppendNative(NS_LITERAL_CSTRING("distribution.ini"));
+      rv = parser.Init(file);
+    }
     if (NS_SUCCEEDED(rv)) {
       nsAutoCString buf;
       rv = parser.GetString("XRE", "EnableProfileMigrator", buf);
@@ -4312,6 +4324,10 @@ int
 XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
 {
   ScopedLogging log;
+
+#if defined(MOZ_SANDBOX) && defined(XP_LINUX) && !defined(ANDROID)
+  SandboxInfo::ThreadingCheck();
+#endif
 
   char aLocal;
   GeckoProfilerInitRAII profilerGuard(&aLocal);
@@ -4670,15 +4686,10 @@ mozilla::BrowserTabsRemoteAutostart()
                      gfxPrefs::GetSingleton().LayersOffMainThreadCompositionTestingEnabled();
 #endif
 
-  // Disable for VR
-  bool disabledForVR = Preferences::GetBool("dom.vr.enabled", false);
-
   if (e10sAllowed && prefEnabled) {
     if (disabledForA11y) {
       status = kE10sDisabledForAccessibility;
       LogE10sBlockedReason("An accessibility tool is or was active. See bug 1198459.");
-    } else if (disabledForVR) {
-      LogE10sBlockedReason("Experimental VR interfaces are enabled");
     } else {
       gBrowserTabsRemoteAutostart = true;
     }

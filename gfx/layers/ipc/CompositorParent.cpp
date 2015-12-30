@@ -28,6 +28,7 @@
 #include "mozilla/gfx/2D.h"          // for DrawTarget
 #include "mozilla/gfx/Point.h"          // for IntSize
 #include "mozilla/gfx/Rect.h"          // for IntSize
+#include "VRManager.h"                  // for VRManager
 #include "mozilla/ipc/Transport.h"      // for Transport
 #include "mozilla/layers/APZCTreeManager.h"  // for APZCTreeManager
 #include "mozilla/layers/APZThreadUtils.h"  // for APZCTreeManager
@@ -79,6 +80,12 @@
 #include "LayerScope.h"
 
 namespace mozilla {
+
+namespace gfx {
+// See VRManagerChild.cpp
+void ReleaseVRManagerParentSingleton();
+} // namespace gfx
+
 namespace layers {
 
 using namespace mozilla::ipc;
@@ -426,6 +433,7 @@ CompositorVsyncScheduler::Composite(TimeStamp aVsyncTimestamp)
   }
 
   DispatchTouchEvents(aVsyncTimestamp);
+  DispatchVREvents(aVsyncTimestamp);
 
   if (mNeedsComposite || mAsapScheduling) {
     mNeedsComposite = 0;
@@ -497,6 +505,15 @@ CompositorVsyncScheduler::DispatchTouchEvents(TimeStamp aVsyncTimestamp)
 #endif
 }
 
+void
+CompositorVsyncScheduler::DispatchVREvents(TimeStamp aVsyncTimestamp)
+{
+  MOZ_ASSERT(CompositorParent::IsInCompositorThread());
+
+  VRManager* vm = VRManager::Get();
+  vm->NotifyVsync(aVsyncTimestamp);
+}
+
 void CompositorParent::StartUp()
 {
   MOZ_ASSERT(NS_IsMainThread(), "Should be on the main Thread!");
@@ -511,6 +528,7 @@ void CompositorParent::ShutDown()
   MOZ_ASSERT(sCompositorThreadHolder, "The compositor thread has already been shut down!");
 
   ReleaseImageBridgeParentSingleton();
+  ReleaseVRManagerParentSingleton();
   MediaSystemResourceService::Shutdown();
 
   sCompositorThreadHolder = nullptr;
@@ -1546,10 +1564,6 @@ CompositorParent::RecvNotifyChildCreated(const uint64_t& child)
 void
 CompositorParent::NotifyChildCreated(const uint64_t& aChild)
 {
-  if (mApzcTreeManager) {
-    NS_DispatchToMainThread(NS_NewRunnableMethodWithArg<uint64_t>(
-        mApzcTreeManager, &APZCTreeManager::InitializeForLayersId, aChild));
-  }
   sIndirectLayerTreesLock->AssertCurrentThreadOwns();
   sIndirectLayerTrees[aChild].mParent = this;
   sIndirectLayerTrees[aChild].mLayerManager = mLayerManager;
@@ -1559,9 +1573,6 @@ bool
 CompositorParent::RecvAdoptChild(const uint64_t& child)
 {
   MonitorAutoLock lock(*sIndirectLayerTreesLock);
-  if (mApzcTreeManager) {
-    mApzcTreeManager->AdoptLayersId(child, sIndirectLayerTrees[child].mParent->mApzcTreeManager.get());
-  }
   NotifyChildCreated(child);
   if (sIndirectLayerTrees[child].mLayerTree) {
     sIndirectLayerTrees[child].mLayerTree->mLayerManager = mLayerManager;
@@ -1633,7 +1644,6 @@ ScopedLayerTreeRegistration::ScopedLayerTreeRegistration(APZCTreeManager* aApzct
     : mLayersId(aLayersId)
 {
   EnsureLayerTreeMapReady();
-  aApzctm->InitializeForLayersId(aLayersId);
   MonitorAutoLock lock(*sIndirectLayerTreesLock);
   sIndirectLayerTrees[aLayersId].mRoot = aRoot;
   sIndirectLayerTrees[aLayersId].mController = aController;
@@ -1649,9 +1659,6 @@ ScopedLayerTreeRegistration::~ScopedLayerTreeRegistration()
 CompositorParent::SetControllerForLayerTree(uint64_t aLayersId,
                                             GeckoContentController* aController)
 {
-  if (APZCTreeManager* apzctm = GetAPZCTreeManager(aLayersId)) {
-    apzctm->InitializeForLayersId(aLayersId);
-  }
   // This ref is adopted by UpdateControllerForLayersId().
   aController->AddRef();
   CompositorLoop()->PostTask(FROM_HERE,

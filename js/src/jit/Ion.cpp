@@ -165,8 +165,9 @@ jit::InitializeIon()
     return true;
 }
 
-JitRuntime::JitRuntime()
-  : execAlloc_(),
+JitRuntime::JitRuntime(JSRuntime* rt)
+  : execAlloc_(rt),
+    backedgeExecAlloc_(rt),
     exceptionTail_(nullptr),
     bailoutTail_(nullptr),
     profilerExitFrameTail_(nullptr),
@@ -179,7 +180,8 @@ JitRuntime::JitRuntime()
     baselineDebugModeOSRHandler_(nullptr),
     functionWrappers_(nullptr),
     osrTempData_(nullptr),
-    mutatingBackedgeList_(false),
+    preventBackedgePatching_(false),
+    backedgeTarget_(BackedgeLoopHeader),
     ionReturnOverride_(MagicValue(JS_ARG_POISON)),
     jitcodeGlobalTable_(nullptr)
 {
@@ -357,8 +359,26 @@ JitRuntime::freeOsrTempData()
 void
 JitRuntime::patchIonBackedges(JSRuntime* rt, BackedgeTarget target)
 {
-    MOZ_ASSERT_IF(target == BackedgeLoopHeader, mutatingBackedgeList_);
-    MOZ_ASSERT_IF(target == BackedgeInterruptCheck, !mutatingBackedgeList_);
+    if (target == BackedgeLoopHeader) {
+        // We must be on the main thread. The caller must use
+        // AutoPreventBackedgePatching to ensure we don't reenter.
+        MOZ_ASSERT(preventBackedgePatching_);
+        MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt));
+    } else {
+        // We must be called from InterruptRunningJitCode, or a signal handler
+        // triggered there. rt->handlingJitInterrupt() ensures we can't reenter
+        // this code.
+        MOZ_ASSERT(!preventBackedgePatching_);
+        MOZ_ASSERT(rt->handlingJitInterrupt());
+    }
+
+    // Do nothing if we know all backedges are already jumping to `target`.
+    if (backedgeTarget_ == target)
+        return;
+
+    backedgeTarget_ = target;
+
+    backedgeExecAlloc_.makeAllWritable();
 
     // Patch all loop backedges in Ion code so that they either jump to the
     // normal loop header or to an interrupt handler each time they run.
@@ -372,6 +392,8 @@ JitRuntime::patchIonBackedges(JSRuntime* rt, BackedgeTarget target)
         else
             PatchBackedge(patchableBackedge->backedge, patchableBackedge->interruptCheck, target);
     }
+
+    backedgeExecAlloc_.makeAllExecutable();
 }
 
 JitCompartment::JitCompartment()
@@ -743,14 +765,14 @@ JitCompartment::toggleBarriers(bool enabled)
 {
     // Toggle barriers in compartment wide stubs that have patchable pre barriers.
     if (regExpExecStub_)
-        regExpExecStub_->togglePreBarriers(enabled);
+        regExpExecStub_->togglePreBarriers(enabled, Reprotect);
     if (regExpTestStub_)
-        regExpTestStub_->togglePreBarriers(enabled);
+        regExpTestStub_->togglePreBarriers(enabled, Reprotect);
 
     // Toggle barriers in baseline IC stubs.
     for (ICStubCodeMap::Enum e(*stubCodes_); !e.empty(); e.popFront()) {
         JitCode* code = *e.front().value().unsafeGet();
-        code->togglePreBarriers(enabled);
+        code->togglePreBarriers(enabled, Reprotect);
     }
 }
 
@@ -826,18 +848,16 @@ JitCode::traceChildren(JSTracer* trc)
     if (invalidated())
         return;
 
-    // If we're moving objects, we need writable JIT code.
-    ReprotectCode reprotect = (trc->runtime()->isHeapMinorCollecting() || zone()->isGCCompacting())
-                              ? Reprotect
-                              : DontReprotect;
-    MaybeAutoWritableJitCode awjc(this, reprotect);
-
     if (jumpRelocTableBytes_) {
         uint8_t* start = code_ + jumpRelocTableOffset();
         CompactBufferReader reader(start, start + jumpRelocTableBytes_);
         MacroAssembler::TraceJumpRelocations(trc, this, reader);
     }
     if (dataRelocTableBytes_) {
+        // If we're moving objects, we need writable JIT code.
+        bool movingObjects = trc->runtime()->isHeapMinorCollecting() || zone()->isGCCompacting();
+        MaybeAutoWritableJitCode awjc(this, movingObjects ? Reprotect : DontReprotect);
+
         uint8_t* start = code_ + dataRelocTableOffset();
         CompactBufferReader reader(start, start + dataRelocTableBytes_);
         MacroAssembler::TraceDataRelocations(trc, this, reader);
@@ -857,41 +877,42 @@ JitCode::finalize(FreeOp* fop)
     }
 #endif
 
-    // Buffer can be freed at any time hereafter. Catch use-after-free bugs.
-    // Don't do this if the Ion code is protected, as the signal handler will
-    // deadlock trying to reacquire the interrupt lock.
-    {
-        AutoWritableJitCode awjc(this);
-        memset(code_, JS_SWEPT_CODE_PATTERN, bufferSize_);
-        code_ = nullptr;
-    }
+    MOZ_ASSERT(pool_);
 
-    // Code buffers are stored inside JSC pools.
-    // Pools are refcounted. Releasing the pool may free it.
-    if (pool_) {
-        // Horrible hack: if we are using perf integration, we don't
-        // want to reuse code addresses, so we just leak the memory instead.
-        if (!PerfEnabled())
-            pool_->release(headerSize_ + bufferSize_, CodeKind(kind_));
-        pool_ = nullptr;
-    }
+    // With W^X JIT code, reprotecting memory for each JitCode instance is
+    // slow, so we record the ranges and poison them later all at once. It's
+    // safe to ignore OOM here, it just means we won't poison the code.
+    if (fop->appendJitPoisonRange(JitPoisonRange(pool_, code_, bufferSize_)))
+        pool_->addRef();
+    code_ = nullptr;
+
+    // Code buffers are stored inside ExecutablePools. Pools are refcounted.
+    // Releasing the pool may free it. Horrible hack: if we are using perf
+    // integration, we don't want to reuse code addresses, so we just leak the
+    // memory instead.
+    if (!PerfEnabled())
+        pool_->release(headerSize_ + bufferSize_, CodeKind(kind_));
+    pool_ = nullptr;
 }
 
 void
-JitCode::togglePreBarriers(bool enabled)
+JitCode::togglePreBarriers(bool enabled, ReprotectCode reprotect)
 {
-    AutoWritableJitCode awjc(this);
     uint8_t* start = code_ + preBarrierTableOffset();
     CompactBufferReader reader(start, start + preBarrierTableBytes_);
 
-    while (reader.more()) {
+    if (!reader.more())
+        return;
+
+    MaybeAutoWritableJitCode awjc(this, reprotect);
+    do {
         size_t offset = reader.readUnsigned();
         CodeLocationLabel loc(this, CodeOffset(offset));
         if (enabled)
             Assembler::ToggleToCmp(loc);
         else
             Assembler::ToggleToJmp(loc);
-    }
+    } while (reader.more());
 }
 
 IonScript::IonScript()
@@ -1121,7 +1142,7 @@ IonScript::copyPatchableBackedges(JSContext* cx, JitCode* code,
                                   MacroAssembler& masm)
 {
     JitRuntime* jrt = cx->runtime()->jitRuntime();
-    JitRuntime::AutoMutateBackedges amb(jrt);
+    JitRuntime::AutoPreventBackedgePatching apbp(cx->runtime());
 
     for (size_t i = 0; i < backedgeEntries_; i++) {
         PatchableBackedgeInfo& info = backedges[i];
@@ -1133,11 +1154,9 @@ IonScript::copyPatchableBackedges(JSContext* cx, JitCode* code,
         CodeLocationLabel interruptCheck(code, CodeOffset(info.interruptCheck->offset()));
         new(patchableBackedge) PatchableBackedge(backedge, loopHeader, interruptCheck);
 
-        // Point the backedge to either of its possible targets, according to
-        // whether an interrupt is currently desired, matching the targets
-        // established by ensureIonCodeAccessible() above. We don't handle the
-        // interrupt immediately as the interrupt lock is held here.
-        if (cx->runtime()->hasPendingInterrupt())
+        // Point the backedge to either of its possible targets, matching the
+        // other backedges in the runtime.
+        if (jrt->backedgeTarget() == JitRuntime::BackedgeInterruptCheck)
             PatchBackedge(backedge, interruptCheck, JitRuntime::BackedgeInterruptCheck);
         else
             PatchBackedge(backedge, loopHeader, JitRuntime::BackedgeLoopHeader);
@@ -1269,9 +1288,9 @@ IonScript::Destroy(FreeOp* fop, IonScript* script)
 }
 
 void
-IonScript::toggleBarriers(bool enabled)
+IonScript::toggleBarriers(bool enabled, ReprotectCode reprotect)
 {
-    method()->togglePreBarriers(enabled);
+    method()->togglePreBarriers(enabled, reprotect);
 }
 
 void
@@ -1343,6 +1362,9 @@ IonScript::purgeCaches()
     if (invalidated())
         return;
 
+    if (numCaches() == 0)
+        return;
+
     AutoWritableJitCode awjc(method());
     for (size_t i = 0; i < numCaches(); i++)
         getCacheFromIndex(i).reset(DontReprotect);
@@ -1355,7 +1377,7 @@ IonScript::unlinkFromRuntime(FreeOp* fop)
     // make sure that those backedges are unlinked from the runtime and not
     // reclobbered with garbage if an interrupt is requested.
     JitRuntime* jrt = fop->runtime()->jitRuntime();
-    JitRuntime::AutoMutateBackedges amb(jrt);
+    JitRuntime::AutoPreventBackedgePatching apbp(fop->runtime());
     for (size_t i = 0; i < backedgeEntries_; i++)
         jrt->removePatchableBackedge(&backedgeList()[i]);
 
@@ -2108,8 +2130,6 @@ IonCompile(JSContext* cx, JSScript* script,
     AutoTraceLog logScript(logger, event);
     AutoTraceLog logCompile(logger, TraceLogger_IonCompilation);
 
-    MOZ_ASSERT(optimizationLevel > Optimization_DontCompile);
-
     // Make sure the script's canonical function isn't lazy. We can't de-lazify
     // it in a helper thread.
     script->ensureNonLazyCanonicalFunction(cx);
@@ -2396,7 +2416,7 @@ Compile(JSContext* cx, HandleScript script, BaselineFrame* osrFrame, jsbytecode*
 
     bool recompile = false;
     OptimizationLevel optimizationLevel = GetOptimizationLevel(script, osrPc);
-    if (optimizationLevel == Optimization_DontCompile)
+    if (optimizationLevel == OptimizationLevel::DontCompile)
         return Method_Skipped;
 
     if (script->hasIonScript()) {
@@ -3116,17 +3136,17 @@ jit::Invalidate(JSContext* cx, const RecompileInfoVector& invalid, bool resetUse
                     cancelOffThread);
 }
 
-bool
+void
 jit::IonScript::invalidate(JSContext* cx, bool resetUses, const char* reason)
 {
     JitSpew(JitSpew_IonInvalidate, " Invalidate IonScript %p: %s", this, reason);
+
+    // RecompileInfoVector has inline space for at least one element.
     RecompileInfoVector list;
-    if (!list.append(recompileInfo())) {
-        ReportOutOfMemory(cx);
-        return false;
-    }
+    MOZ_RELEASE_ASSERT(list.reserve(1));
+    list.infallibleAppend(recompileInfo());
+
     Invalidate(cx, list, resetUses, true);
-    return true;
 }
 
 bool
@@ -3155,12 +3175,11 @@ jit::Invalidate(JSContext* cx, JSScript* script, bool resetUses, bool cancelOffT
         js_free(buf);
     }
 
+    // RecompileInfoVector has inline space for at least one element.
     RecompileInfoVector scripts;
     MOZ_ASSERT(script->hasIonScript());
-    if (!scripts.append(script->ionScript()->recompileInfo())) {
-        ReportOutOfMemory(cx);
-        return false;
-    }
+    MOZ_RELEASE_ASSERT(scripts.reserve(1));
+    scripts.infallibleAppend(script->ionScript()->recompileInfo());
 
     Invalidate(cx, scripts, resetUses, cancelOffThread);
     return true;
@@ -3271,6 +3290,7 @@ AutoFlushICache::flush(uintptr_t start, size_t len)
     PerThreadData* pt = TlsPerThreadData.get();
     AutoFlushICache* afc = pt ? pt->PerThreadData::autoFlushICache() : nullptr;
     if (!afc) {
+        MOZ_ASSERT(!IsCompilingAsmJS(), "asm.js should always create an AutoFlushICache");
         JitSpewCont(JitSpew_CacheFlush, "#");
         ExecutableAllocator::cacheFlush((void*)start, len);
         MOZ_ASSERT(len <= 32);
@@ -3284,6 +3304,7 @@ AutoFlushICache::flush(uintptr_t start, size_t len)
         return;
     }
 
+    MOZ_ASSERT(!IsCompilingAsmJS(), "asm.js should always flush within the range");
     JitSpewCont(JitSpew_CacheFlush, afc->inhibit_ ? "x" : "*");
     ExecutableAllocator::cacheFlush((void*)start, len);
 #endif

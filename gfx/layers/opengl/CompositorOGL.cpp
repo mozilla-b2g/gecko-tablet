@@ -107,7 +107,7 @@ CompositorOGL::CreateContext()
 #ifdef XP_WIN
   if (gfxEnv::LayersPreferEGL()) {
     printf_stderr("Trying GL layers...\n");
-    context = gl::GLContextProviderEGL::CreateForWindow(mWidget);
+    context = gl::GLContextProviderEGL::CreateForWindow(mWidget, false);
   }
 #endif
 
@@ -122,7 +122,8 @@ CompositorOGL::CreateContext()
   }
 
   if (!context) {
-    context = gl::GLContextProvider::CreateForWindow(mWidget);
+    context = gl::GLContextProvider::CreateForWindow(mWidget,
+                gfxPlatform::GetPlatform()->RequiresAcceleratedGLContextForCompositorOGL());
   }
 
   if (!context) {
@@ -1538,7 +1539,7 @@ CompositorOGL::Resume()
     return false;
 
   // RenewSurface internally calls MakeCurrent.
-  return gl()->RenewSurface();
+  return gl()->RenewSurface(GetWidget());
 #endif
   return true;
 }

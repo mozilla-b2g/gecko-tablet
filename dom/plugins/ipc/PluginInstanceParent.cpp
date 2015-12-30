@@ -957,7 +957,7 @@ PluginInstanceParent::RecvShow(const NPRect& updatedRect,
 
         RefPtr<gfx::SourceSurface> sourceSurface =
             gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(nullptr, surface);
-        RefPtr<CairoImage> image = new CairoImage(surface->GetSize(), sourceSurface);
+        RefPtr<SourceSurfaceImage> image = new SourceSurfaceImage(surface->GetSize(), sourceSurface);
 
         nsAutoTArray<ImageContainer::NonOwningImage,1> imageList;
         imageList.AppendElement(
@@ -2367,23 +2367,6 @@ PluginInstanceParent::Cast(NPP aInstance, PluginAsyncSurrogate** aSurrogate)
 
     return instancePtr;
 }
-
-bool
-PluginInstanceParent::RecvPluginDidSetCursor()
-{
-#if defined(OS_WIN)
-    nsPluginInstanceOwner* owner = GetOwner();
-    if (!owner) {
-        return true;
-    }
-    owner->ResetWidgetCursorCaching();
-    return true;
-#else
-    NS_NOTREACHED("PluginInstanceParent::RecvPluginDidSetCursor not implemented!");
-    return false;
-#endif
-}
-
 
 void
 PluginInstanceParent::RecordDrawingModel()
