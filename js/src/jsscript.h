@@ -1188,6 +1188,7 @@ class JSScript : public js::gc::TenuredCell
     bool needsHomeObject_:1;
 
     bool isDerivedClassConstructor_:1;
+    bool isDefaultClassConstructor_:1;
 
     // Add padding so JSScript is gc::Cell aligned. Make padding protected
     // instead of private to suppress -Wunused-private-field compiler warnings.
@@ -1280,23 +1281,23 @@ class JSScript : public js::gc::TenuredCell
 
     void setColumn(size_t column) { column_ = column; }
 
-    // The fixed part of a stack frame is comprised of vars (in function code)
-    // and block-scoped locals (in all kinds of code).
+    // The fixed part of a stack frame is comprised of vars (in function and
+    // module code) and block-scoped locals (in all kinds of code).
     size_t nfixed() const {
-        return function_ ? bindings.numFixedLocals() : bindings.numBlockScoped();
+        return isGlobalCode() ? bindings.numBlockScoped() : bindings.numFixedLocals();
     }
 
     // Number of fixed slots reserved for vars.  Only nonzero for function
-    // code.
+    // or module code.
     size_t nfixedvars() const {
-        return function_ ? bindings.numUnaliasedVars() : 0;
+        return isGlobalCode() ? 0 : bindings.numUnaliasedVars();
     }
 
     // Number of fixed slots reserved for body-level lexicals and vars. This
     // value minus nfixedvars() is the number of body-level lexicals. Only
-    // nonzero for function code.
+    // nonzero for function or module code.
     size_t nbodyfixed() const {
-        return function_ ? bindings.numUnaliasedBodyLevelLocals() : 0;
+        return isGlobalCode() ? 0 : bindings.numUnaliasedBodyLevelLocals();
     }
 
     // Calculate the number of fixed slots that are live at a particular bytecode.
@@ -1419,6 +1420,9 @@ class JSScript : public js::gc::TenuredCell
     bool failedLexicalCheck() const {
         return failedLexicalCheck_;
     }
+    bool isDefaultClassConstructor() const {
+        return isDefaultClassConstructor_;
+    }
 
     void setFailedBoundsCheck() { failedBoundsCheck_ = true; }
     void setFailedShapeGuard() { failedShapeGuard_ = true; }
@@ -1427,6 +1431,7 @@ class JSScript : public js::gc::TenuredCell
     void setUninlineable() { uninlineable_ = true; }
     void setInvalidatedIdempotentCache() { invalidatedIdempotentCache_ = true; }
     void setFailedLexicalCheck() { failedLexicalCheck_ = true; }
+    void setIsDefaultClassConstructor() { isDefaultClassConstructor_ = true; }
 
     bool hasScriptCounts() const { return hasScriptCounts_; }
 
@@ -1626,6 +1631,14 @@ class JSScript : public js::gc::TenuredCell
         return module_;
     }
     inline void setModule(js::ModuleObject* module);
+
+    bool isGlobalCode() const {
+        return !function_ && !module_;
+    }
+
+    // Returns true if the script may read formal arguments on the stack
+    // directly, via lazy arguments or a rest parameter.
+    bool mayReadFrameArgsDirectly();
 
     JSFlatString* sourceData(JSContext* cx);
 

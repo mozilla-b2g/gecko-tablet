@@ -157,6 +157,8 @@ struct JitPoisonRange
 
 typedef Vector<JitPoisonRange, 0, SystemAllocPolicy> JitPoisonRangeVector;
 
+#define NON_WRITABLE_JIT_CODE 1
+
 class ExecutableAllocator
 {
 #ifdef XP_WIN
@@ -183,8 +185,6 @@ class ExecutableAllocator
 
     static void initStatic();
 
-    static bool nonWritableJitCode;
-
   private:
     static size_t pageSize;
     static size_t largeAllocSize;
@@ -204,16 +204,24 @@ class ExecutableAllocator
     static void reprotectPool(JSRuntime* rt, ExecutablePool* pool, ProtectionSetting protection);
 
   public:
-    static void makeWritable(void* start, size_t size)
+    MOZ_WARN_UNUSED_RESULT
+    static bool makeWritable(void* start, size_t size)
     {
-        if (nonWritableJitCode)
-            reprotectRegion(start, size, Writable);
+#ifdef NON_WRITABLE_JIT_CODE
+        return reprotectRegion(start, size, Writable);
+#else
+        return true;
+#endif
     }
 
-    static void makeExecutable(void* start, size_t size)
+    MOZ_WARN_UNUSED_RESULT
+    static bool makeExecutable(void* start, size_t size)
     {
-        if (nonWritableJitCode)
-            reprotectRegion(start, size, Executable);
+#ifdef NON_WRITABLE_JIT_CODE
+        return reprotectRegion(start, size, Executable);
+#else
+        return true;
+#endif
     }
 
     void makeAllWritable() {
@@ -299,7 +307,8 @@ class ExecutableAllocator
     ExecutableAllocator(const ExecutableAllocator&) = delete;
     void operator=(const ExecutableAllocator&) = delete;
 
-    static void reprotectRegion(void*, size_t, ProtectionSetting);
+    MOZ_WARN_UNUSED_RESULT
+    static bool reprotectRegion(void*, size_t, ProtectionSetting);
     void reprotectAll(ProtectionSetting);
 
     // These are strong references;  they keep pools alive.

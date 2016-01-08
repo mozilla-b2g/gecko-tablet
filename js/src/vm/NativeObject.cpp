@@ -134,7 +134,7 @@ js::NativeObject::checkShapeConsistency()
         for (int n = throttle; --n >= 0 && shape->parent; shape = shape->parent) {
             MOZ_ASSERT_IF(lastProperty() != shape, !shape->hasTable());
 
-            ShapeTable::Entry& entry = table.search(shape->propid(), false);
+            ShapeTable::Entry& entry = table.search<MaybeAdding::NotAdding>(shape->propid());
             MOZ_ASSERT(entry.shape() == shape);
         }
 
@@ -155,7 +155,7 @@ js::NativeObject::checkShapeConsistency()
                 ShapeTable& table = shape->table();
                 MOZ_ASSERT(shape->parent);
                 for (Shape::Range<NoGC> r(shape); !r.empty(); r.popFront()) {
-                    ShapeTable::Entry& entry = table.search(r.front().propid(), false);
+                    ShapeTable::Entry& entry = table.search<MaybeAdding::NotAdding>(r.front().propid());
                     MOZ_ASSERT(entry.shape() == &r.front());
                 }
             }
@@ -356,7 +356,7 @@ void
 NativeObject::setLastPropertyMakeNative(ExclusiveContext* cx, Shape* shape)
 {
     MOZ_ASSERT(getClass()->isNative());
-    MOZ_ASSERT(shape->isNative());
+    MOZ_ASSERT(shape->getObjectClass()->isNative());
     MOZ_ASSERT(!shape->inDictionary());
 
     // This method is used to convert unboxed objects into native objects. In
@@ -1345,6 +1345,11 @@ js::NativeDefineProperty(ExclusiveContext* cx, HandleNativeObject obj, HandleId 
             if ((desc_.attributes() & JSPROP_RESOLVING) == 0)
                 obj->as<ArgumentsObject>().markLengthOverridden();
         }
+        if (JSID_IS_SYMBOL(id) && JSID_TO_SYMBOL(id) == cx->wellKnownSymbols().iterator) {
+            // Do same thing as .length for [@@iterator].
+            if ((desc_.attributes() & JSPROP_RESOLVING) == 0)
+                obj->as<ArgumentsObject>().markIteratorOverridden();
+        }
     }
 
     // 9.1.6.1 OrdinaryDefineOwnProperty steps 1-2.
@@ -1822,7 +1827,7 @@ GetNonexistentProperty(JSContext* cx, HandleNativeObject obj, HandleId id,
     //
     // Don't warn if extra warnings not enabled or for random getprop
     // operations.
-    if (!cx->compartment()->options().extraWarnings(cx))
+    if (!cx->compartment()->behaviors().extraWarnings(cx))
         return true;
 
     jsbytecode* pc;
@@ -2001,7 +2006,7 @@ MaybeReportUndeclaredVarAssignment(JSContext* cx, JSString* propname)
         // check is needed.
         if (IsStrictSetPC(pc))
             flags = JSREPORT_ERROR;
-        else if (cx->compartment()->options().extraWarnings(cx))
+        else if (cx->compartment()->behaviors().extraWarnings(cx))
             flags = JSREPORT_WARNING | JSREPORT_STRICT;
         else
             return true;

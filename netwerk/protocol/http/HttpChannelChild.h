@@ -150,8 +150,6 @@ protected:
   bool RecvIssueDeprecationWarning(const uint32_t& warning,
                                    const bool& asError) override;
 
-  bool RecvReportRedirectionError() override;
-
   bool GetAssociatedContentSecurity(nsIAssociatedContentSecurity** res = nullptr);
   virtual void DoNotifyListenerCleanup() override;
 
@@ -167,6 +165,8 @@ private:
                          uint64_t offset, uint32_t count);
   void DoPreOnStopRequest(nsresult aStatus);
   void DoOnStopRequest(nsIRequest* aRequest, nsresult aChannelStatus, nsISupports* aContext);
+
+  bool ShouldInterceptURI(nsIURI* aURI, bool& aShouldUpgrade);
 
   // Discard the prior interception and continue with the original network request.
   void ResetInterception();
@@ -226,6 +226,14 @@ private:
   // Set if a redirection is being initiated to facilitate providing a synthesized
   // response to a channel using a different principal than the current one.
   bool mRedirectingForSubsequentSynthesizedResponse;
+
+  // Set if a manual redirect mode channel needs to be intercepted in the
+  // parent.
+  bool mPostRedirectChannelShouldIntercept;
+  // Set if a manual redirect mode channel needs to be upgraded to a secure URI
+  // when it's being considered for interception.  Can only be true if
+  // mPostRedirectChannelShouldIntercept is true.
+  bool mPostRedirectChannelShouldUpgrade;
 
   // Set if the corresponding parent channel should force an interception to occur
   // before the network transaction is initiated.

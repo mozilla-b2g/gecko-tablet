@@ -173,7 +173,6 @@ Bindings::initWithTemporaryStorage(ExclusiveContext* cx, MutableHandle<Bindings>
 
     uint32_t slot = CallObject::RESERVED_SLOTS;
     for (BindingIter bi(self); bi; bi++) {
-        MOZ_ASSERT_IF(isModule, bi->aliased());
         if (!bi->aliased())
             continue;
 
@@ -624,6 +623,7 @@ js::XDRScript(XDRState<mode>* xdr, HandleObject enclosingScopeArg, HandleScript 
         HasInnerFunctions,
         NeedsHomeObject,
         IsDerivedClassConstructor,
+        IsDefaultClassConstructor,
     };
 
     uint32_t length, lineno, column, nslots;
@@ -658,8 +658,10 @@ js::XDRScript(XDRState<mode>* xdr, HandleObject enclosingScopeArg, HandleScript 
             // JSOP_OBJECT that then got modified.  So throw if we're not
             // cloning in JSOP_OBJECT or if we ever didn't clone in it in the
             // past.
-            const JS::CompartmentOptions& opts = JS::CompartmentOptionsRef(cx);
-            if (!opts.cloneSingletons() || !opts.getSingletonsAsTemplates()) {
+            JSCompartment* comp = cx->compartment();
+            if (!comp->creationOptions().cloneSingletons() ||
+                !comp->behaviors().getSingletonsAsTemplates())
+            {
                 JS_ReportError(cx,
                                "Can't serialize a run-once non-function script "
                                "when we're not doing singleton cloning");
@@ -767,6 +769,8 @@ js::XDRScript(XDRState<mode>* xdr, HandleObject enclosingScopeArg, HandleScript 
             scriptBits |= (1 << NeedsHomeObject);
         if (script->isDerivedClassConstructor())
             scriptBits |= (1 << IsDerivedClassConstructor);
+        if (script->isDefaultClassConstructor())
+            scriptBits |= (1 << IsDefaultClassConstructor);
     }
 
     if (!xdr->codeUint32(&prologueLength))
@@ -911,6 +915,8 @@ js::XDRScript(XDRState<mode>* xdr, HandleObject enclosingScopeArg, HandleScript 
             script->needsHomeObject_ = true;
         if (scriptBits & (1 << IsDerivedClassConstructor))
             script->isDerivedClassConstructor_ = true;
+        if (scriptBits & (1 << IsDefaultClassConstructor))
+            script->isDefaultClassConstructor_ = true;
 
         if (scriptBits & (1 << IsLegacyGenerator)) {
             MOZ_ASSERT(!(scriptBits & (1 << IsStarGenerator)));
@@ -3241,21 +3247,17 @@ js::PCToLineNumber(unsigned startLine, jssrcnote* notes, jsbytecode* code, jsbyt
     ptrdiff_t target = pc - code;
     for (jssrcnote* sn = notes; !SN_IS_TERMINATOR(sn); sn = SN_NEXT(sn)) {
         offset += SN_DELTA(sn);
-        SrcNoteType type = (SrcNoteType) SN_TYPE(sn);
-        if (type == SRC_SETLINE) {
-            if (offset <= target)
-                lineno = unsigned(GetSrcNoteOffset(sn, 0));
-            column = 0;
-        } else if (type == SRC_NEWLINE) {
-            if (offset <= target)
-                lineno++;
-            column = 0;
-        }
-
         if (offset > target)
             break;
 
-        if (type == SRC_COLSPAN) {
+        SrcNoteType type = (SrcNoteType) SN_TYPE(sn);
+        if (type == SRC_SETLINE) {
+            lineno = unsigned(GetSrcNoteOffset(sn, 0));
+            column = 0;
+        } else if (type == SRC_NEWLINE) {
+            lineno++;
+            column = 0;
+        } else if (type == SRC_COLSPAN) {
             ptrdiff_t colspan = SN_OFFSET_TO_COLSPAN(GetSrcNoteOffset(sn, 0));
             MOZ_ASSERT(ptrdiff_t(column) + colspan >= 0);
             column += colspan;
@@ -3585,6 +3587,9 @@ js::detail::CopyScript(JSContext* cx, HandleObject scriptStaticScope, HandleScri
     dst->hasInnerFunctions_ = src->hasInnerFunctions();
     dst->isGeneratorExp_ = src->isGeneratorExp();
     dst->setGeneratorKind(src->generatorKind());
+    dst->isDerivedClassConstructor_ = src->isDerivedClassConstructor();
+    dst->needsHomeObject_ = src->needsHomeObject();
+    dst->isDefaultClassConstructor_ = src->isDefaultClassConstructor();
 
     if (nconsts != 0) {
         HeapValue* vector = Rebase<HeapValue>(dst, src, src->consts()->vector);
@@ -4434,6 +4439,12 @@ JSScript::hasLoops()
             return true;
     }
     return false;
+}
+
+bool
+JSScript::mayReadFrameArgsDirectly()
+{
+    return argumentsHasVarBinding() || (function_ && function_->hasRest());
 }
 
 static inline void

@@ -1007,7 +1007,7 @@ StaticBlockObject::addVar(ExclusiveContext* cx, Handle<StaticBlockObject*> block
 
     /* Inline NativeObject::addProperty in order to trap the redefinition case. */
     ShapeTable::Entry* entry;
-    if (Shape::search(cx, block->lastProperty(), id, &entry, true)) {
+    if (Shape::search<MaybeAdding::Adding>(cx, block->lastProperty(), id, &entry)) {
         *redeclared = true;
         return nullptr;
     }
@@ -2354,7 +2354,7 @@ DebugScopes::DebugScopes(JSContext* cx)
 
 DebugScopes::~DebugScopes()
 {
-    MOZ_ASSERT(missingScopes.empty());
+    MOZ_ASSERT_IF(missingScopes.initialized(), missingScopes.empty());
 }
 
 bool
@@ -2454,15 +2454,14 @@ DebugScopes::ensureCompartmentData(JSContext* cx)
     if (c->debugScopes)
         return c->debugScopes;
 
-    c->debugScopes = cx->runtime()->new_<DebugScopes>(cx);
-    if (c->debugScopes && c->debugScopes->init())
-        return c->debugScopes;
+    AutoInitGCManagedObject<DebugScopes> debugScopes(cx->make_unique<DebugScopes>(cx));
+    if (!debugScopes || !debugScopes->init()) {
+        ReportOutOfMemory(cx);
+        return nullptr;
+    }
 
-    if (c->debugScopes)
-        js_delete<DebugScopes>(c->debugScopes);
-    c->debugScopes = nullptr;
-    ReportOutOfMemory(cx);
-    return nullptr;
+    c->debugScopes = debugScopes.release();
+    return c->debugScopes;
 }
 
 DebugScopeObject*

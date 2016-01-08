@@ -9,6 +9,8 @@
  */
 
 #include "nsILayoutDebugger.h"
+
+#include "nsAttrValue.h"
 #include "nsFrame.h"
 #include "nsDisplayList.h"
 #include "FrameLayerBuilder.h"
@@ -34,15 +36,6 @@ public:
   NS_IMETHOD SetShowEventTargetFrameBorder(bool aEnable) override;
 
   NS_IMETHOD GetShowEventTargetFrameBorder(bool* aResult) override;
-
-  NS_IMETHOD GetContentSize(nsIDocument* aDocument,
-                            int32_t* aSizeInBytesResult) override;
-
-  NS_IMETHOD GetFrameSize(nsIPresShell* aPresentation,
-                          int32_t* aSizeInBytesResult) override;
-
-  NS_IMETHOD GetStyleSize(nsIPresShell* aPresentation,
-                          int32_t* aSizeInBytesResult) override;
 
 protected:
   virtual ~nsLayoutDebugger();
@@ -97,29 +90,6 @@ nsLayoutDebugger::GetShowEventTargetFrameBorder(bool* aResult)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsLayoutDebugger::GetContentSize(nsIDocument* aDocument,
-                                 int32_t* aSizeInBytesResult)
-{
-  *aSizeInBytesResult = 0;
-  return NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP
-nsLayoutDebugger::GetFrameSize(nsIPresShell* aPresentation,
-                               int32_t* aSizeInBytesResult)
-{
-  *aSizeInBytesResult = 0;
-  return NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP
-nsLayoutDebugger::GetStyleSize(nsIPresShell* aPresentation,
-                               int32_t* aSizeInBytesResult)
-{
-  *aSizeInBytesResult = 0;
-  return NS_ERROR_FAILURE;
-}
 #endif
 
 std::ostream& operator<<(std::ostream& os, const nsPrintfCString& rhs) {
@@ -190,7 +160,7 @@ PrintDisplayItemTo(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem,
           clip.ToString().get(),
           DisplayItemScrollClip::ToString(aItem->ScrollClip()).get(),
           aItem->IsUniform(aBuilder, &color) ? " uniform" : "",
-          aItem->ReferenceFrame(), aItem->GetAnimatedGeometryRoot());
+          aItem->ReferenceFrame(), aItem->GetAnimatedGeometryRoot()->mFrame);
 
   nsRegionRectIterator iter(opaque);
   for (const nsRect* r = iter.Next(); r; r = iter.Next()) {

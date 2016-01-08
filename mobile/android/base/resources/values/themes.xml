@@ -81,6 +81,7 @@
         <item name="android:dropDownItemStyle">@style/Widget.DropDownItem</item>
         <item name="android:editTextStyle">@style/Widget.EditText</item>
         <item name="android:textViewStyle">@style/Widget.TextView</item>
+        <item name="android:panelBackground">@drawable/menu_panel_bg</item>
         <item name="menuItemDefaultStyle">@style/Widget.MenuItemDefault</item>
     </style>
 
@@ -104,6 +105,8 @@
 
     <style name="Gecko.Preferences" parent="GeckoPreferencesBase">
         <item name="floatingHintEditTextStyle">@style/FloatingHintEditText</item>
+        <!-- This fixed bug 1233412 (Crash in GeckoPrefs due to missing colorAccent in JB) -->
+        <item name="colorAccent">@color/action_orange</item>
     </style>
 
     <!-- Make an activity appear like an overlay. -->

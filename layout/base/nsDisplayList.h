@@ -23,6 +23,7 @@
 #include "plarena.h"
 #include "nsRegion.h"
 #include "nsDisplayListInvalidation.h"
+#include "nsRenderingContext.h"
 #include "DisplayListClipState.h"
 #include "LayerState.h"
 #include "FrameMetrics.h"
@@ -1570,8 +1571,7 @@ public:
   virtual bool ClearsBackground()
   { return false; }
 
-  virtual bool ProvidesFontSmoothingBackgroundColor(nsDisplayListBuilder* aBuilder,
-                                                    nscolor* aColor)
+  virtual bool ProvidesFontSmoothingBackgroundColor(nscolor* aColor)
   { return false; }
 
   /**
@@ -1689,7 +1689,7 @@ public:
    * (also for correctness).
    * @return true if the merge was successful and the other item should be deleted
    */
-  virtual bool TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem) {
+  virtual bool TryMerge(nsDisplayItem* aItem) {
     return false;
   }
 
@@ -2038,7 +2038,7 @@ public:
    * each item. 'auto' is counted as zero.
    * It is assumed that the list is already in content document order.
    */
-  void SortByZOrder(nsDisplayListBuilder* aBuilder);
+  void SortByZOrder();
   /**
    * Stable sort the list by the tree order of the content of
    * GetUnderlyingFrame() on each item. z-index is ignored.
@@ -2047,14 +2047,14 @@ public:
    * checks, or nullptr if not known; it's only a hint, if it is not an
    * ancestor of some elements, then we lose performance but not correctness
    */
-  void SortByContentOrder(nsDisplayListBuilder* aBuilder, nsIContent* aCommonAncestor);
+  void SortByContentOrder(nsIContent* aCommonAncestor);
   /**
    * Stable sort this list by CSS 'order' property order.
    * http://dev.w3.org/csswg/css-flexbox-1/#order-property
    * (also applies to CSS Grid although it's in the Flexbox spec ATM)
    * It is assumed that the list is already in document content order.
    */
-  void SortByCSSOrder(nsDisplayListBuilder* aBuilder);
+  void SortByCSSOrder();
 
   /**
    * Generic stable sort. Take care, because some of the items might be nsDisplayLists
@@ -2064,7 +2064,7 @@ public:
    */
   typedef bool (* SortLEQ)(nsDisplayItem* aItem1, nsDisplayItem* aItem2,
                              void* aClosure);
-  void Sort(nsDisplayListBuilder* aBuilder, SortLEQ aCmp, void* aClosure);
+  void Sort(SortLEQ aCmp, void* aClosure);
 
   /**
    * Compute visiblity for the items in the list.
@@ -2085,15 +2085,11 @@ public:
    * I.e., opaque contents of this list are subtracted from aVisibleRegion.
    * @param aListVisibleBounds must be equal to the bounds of the intersection
    * of aVisibleRegion and GetBounds() for this list.
-   * @param aDisplayPortFrame If the item for which this list corresponds is
-   * within a displayport, the scroll frame for which that display port
-   * applies. For root scroll frames, you can pass the the root frame instead.
    * @return true if any item in the list is visible.
    */
   bool ComputeVisibilityForSublist(nsDisplayListBuilder* aBuilder,
                                    nsRegion* aVisibleRegion,
-                                   const nsRect& aListVisibleBounds,
-                                   nsIFrame* aDisplayPortFrame = nullptr);
+                                   const nsRect& aListVisibleBounds);
 
   /**
    * As ComputeVisibilityForSublist, but computes visibility for a root
@@ -2101,11 +2097,9 @@ public:
    * This method needs to be idempotent.
    *
    * @param aVisibleRegion the area that is visible
-   * @param aDisplayPortFrame The root scroll frame, if a displayport is set
    */
   bool ComputeVisibilityForRoot(nsDisplayListBuilder* aBuilder,
-                                nsRegion* aVisibleRegion,
-                                nsIFrame* aDisplayPortFrame = nullptr);
+                                nsRegion* aVisibleRegion);
 
   /**
    * Returns true if the visible region output from ComputeVisiblity was
@@ -2311,9 +2305,9 @@ struct nsDisplayListCollection : public nsDisplayListSet {
   /**
    * Sort all lists by content order.
    */                     
-  void SortAllByContentOrder(nsDisplayListBuilder* aBuilder, nsIContent* aCommonAncestor) {
+  void SortAllByContentOrder(nsIContent* aCommonAncestor) {
     for (int32_t i = 0; i < 6; ++i) {
-      mLists[i].SortByContentOrder(aBuilder, aCommonAncestor);
+      mLists[i].SortByContentOrder(aCommonAncestor);
     }
   }
 
@@ -2365,14 +2359,34 @@ public:
  */
 class nsDisplayGeneric : public nsDisplayItem {
 public:
-  typedef void (* PaintCallback)(nsIFrame* aFrame, nsRenderingContext* aCtx,
+  typedef class mozilla::gfx::DrawTarget DrawTarget;
+
+  typedef void (* PaintCallback)(nsIFrame* aFrame, DrawTarget* aDrawTarget,
                                  const nsRect& aDirtyRect, nsPoint aFramePt);
+
+  // XXX: should be removed eventually
+  typedef void (* OldPaintCallback)(nsIFrame* aFrame, nsRenderingContext* aCtx,
+                                    const nsRect& aDirtyRect, nsPoint aFramePt);
 
   nsDisplayGeneric(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
                    PaintCallback aPaint, const char* aName, Type aType)
-    : nsDisplayItem(aBuilder, aFrame), mPaint(aPaint)
-      , mName(aName)
-      , mType(aType)
+    : nsDisplayItem(aBuilder, aFrame)
+    , mPaint(aPaint)
+    , mOldPaint(nullptr)
+    , mName(aName)
+    , mType(aType)
+  {
+    MOZ_COUNT_CTOR(nsDisplayGeneric);
+  }
+
+  // XXX: should be removed eventually
+  nsDisplayGeneric(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
+                   OldPaintCallback aOldPaint, const char* aName, Type aType)
+    : nsDisplayItem(aBuilder, aFrame)
+    , mPaint(nullptr)
+    , mOldPaint(aOldPaint)
+    , mName(aName)
+    , mType(aType)
   {
     MOZ_COUNT_CTOR(nsDisplayGeneric);
   }
@@ -2384,13 +2398,19 @@ public:
   
   virtual void Paint(nsDisplayListBuilder* aBuilder,
                      nsRenderingContext* aCtx) override {
-    mPaint(mFrame, aCtx, mVisibleRect, ToReferenceFrame());
+    MOZ_ASSERT(!!mPaint != !!mOldPaint);
+    if (mPaint) {
+      mPaint(mFrame, aCtx->GetDrawTarget(), mVisibleRect, ToReferenceFrame());
+    } else {
+      mOldPaint(mFrame, aCtx, mVisibleRect, ToReferenceFrame());
+    }
   }
   NS_DISPLAY_DECL_NAME(mName, mType)
 
 protected:
   PaintCallback mPaint;
-  const char*   mName;
+  OldPaintCallback mOldPaint;   // XXX: should be removed eventually
+  const char* mName;
   Type mType;
 };
 
@@ -2404,6 +2424,13 @@ class nsDisplayGenericOverflow : public nsDisplayGeneric {
     nsDisplayGenericOverflow(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
                              PaintCallback aPaint, const char* aName, Type aType)
       : nsDisplayGeneric(aBuilder, aFrame, aPaint, aName, aType)
+    {
+      MOZ_COUNT_CTOR(nsDisplayGenericOverflow);
+    }
+    // XXX: should be removed eventually
+    nsDisplayGenericOverflow(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
+                             OldPaintCallback aOldPaint, const char* aName, Type aType)
+      : nsDisplayGeneric(aBuilder, aFrame, aOldPaint, aName, aType)
     {
       MOZ_COUNT_CTOR(nsDisplayGenericOverflow);
     }
@@ -2716,7 +2743,7 @@ public:
                               const ContainerLayerParameters& aParameters) override;
 
   static nsRegion GetInsideClipRegion(nsDisplayItem* aItem, uint8_t aClip,
-                                      const nsRect& aRect, bool* aSnap);
+                                      const nsRect& aRect);
 
   virtual bool ShouldFixToViewport(nsDisplayListBuilder* aBuilder) override;
 
@@ -2776,8 +2803,7 @@ public:
   virtual nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
                                    bool* aSnap) override;
   virtual bool IsUniform(nsDisplayListBuilder* aBuilder, nscolor* aColor) override;
-  virtual bool ProvidesFontSmoothingBackgroundColor(nsDisplayListBuilder* aBuilder,
-                                                    nscolor* aColor) override;
+  virtual bool ProvidesFontSmoothingBackgroundColor(nscolor* aColor) override;
 
   /**
    * GetBounds() returns the background painting area.
@@ -3209,7 +3235,7 @@ public:
   virtual void Paint(nsDisplayListBuilder* aBuilder, nsRenderingContext* aCtx) override;
   virtual bool ComputeVisibility(nsDisplayListBuilder* aBuilder,
                                  nsRegion* aVisibleRegion) override;
-  virtual bool TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem) override {
+  virtual bool TryMerge(nsDisplayItem* aItem) override {
     return false;
   }
   virtual void GetMergedFrames(nsTArray<nsIFrame*>* aFrames) override
@@ -3350,7 +3376,7 @@ public:
                                    const ContainerLayerParameters& aParameters) override;
   virtual bool ComputeVisibility(nsDisplayListBuilder* aBuilder,
                                  nsRegion* aVisibleRegion) override;
-  virtual bool TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem) override;
+  virtual bool TryMerge(nsDisplayItem* aItem) override;
   virtual void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
                                          const nsDisplayItemGeometry* aGeometry,
                                          nsRegion* aInvalidRegion) override
@@ -3380,7 +3406,7 @@ private:
 class nsDisplayMixBlendMode : public nsDisplayWrapList {
 public:
   nsDisplayMixBlendMode(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
-                        nsDisplayList* aList, uint32_t aFlags = 0);
+                        nsDisplayList* aList);
 #ifdef NS_BUILD_REFCNT_LOGGING
   virtual ~nsDisplayMixBlendMode();
 #endif
@@ -3402,7 +3428,7 @@ public:
                                    const ContainerLayerParameters& aParameters) override;
   virtual bool ComputeVisibility(nsDisplayListBuilder* aBuilder,
                                  nsRegion* aVisibleRegion) override;
-  virtual bool TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem) override;
+  virtual bool TryMerge(nsDisplayItem* aItem) override;
   virtual bool ShouldFlattenAway(nsDisplayListBuilder* aBuilder) override {
     return false;
   }
@@ -3426,7 +3452,7 @@ public:
     virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
                                      LayerManager* aManager,
                                      const ContainerLayerParameters& aParameters) override;
-    virtual bool TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem) override;
+    virtual bool TryMerge(nsDisplayItem* aItem) override;
     virtual bool ShouldFlattenAway(nsDisplayListBuilder* aBuilder) override {
       return false;
     }
@@ -3486,7 +3512,7 @@ public:
   {
     return mozilla::LAYER_ACTIVE_FORCE;
   }
-  virtual bool TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem) override
+  virtual bool TryMerge(nsDisplayItem* aItem) override
   {
     // Don't allow merging, each sublist must have its own layer
     return false;
@@ -3583,7 +3609,7 @@ public:
   {
     return mozilla::LAYER_ACTIVE;
   }
-  virtual bool TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem) override;
+  virtual bool TryMerge(nsDisplayItem* aItem) override;
 };
 
 /**
@@ -3714,8 +3740,7 @@ public:
   }
   virtual bool ComputeVisibility(nsDisplayListBuilder* aBuilder,
                                  nsRegion* aVisibleRegion) override;
-  virtual bool TryMerge(nsDisplayListBuilder* aBuilder,
-                        nsDisplayItem* aItem) override;
+  virtual bool TryMerge(nsDisplayItem* aItem) override;
   virtual bool ShouldFlattenAway(nsDisplayListBuilder* aBuilder) override {
     return false;
   }
@@ -3859,7 +3884,7 @@ public:
   virtual bool ShouldBuildLayerEvenIfInvisible(nsDisplayListBuilder* aBuilder) override;
   virtual bool ComputeVisibility(nsDisplayListBuilder *aBuilder,
                                  nsRegion *aVisibleRegion) override;
-  virtual bool TryMerge(nsDisplayListBuilder *aBuilder, nsDisplayItem *aItem) override;
+  virtual bool TryMerge(nsDisplayItem *aItem) override;
   
   virtual uint32_t GetPerFrameKey() override { return (mIndex << nsDisplayItem::TYPE_BITS) | nsDisplayItem::GetPerFrameKey(); }
   

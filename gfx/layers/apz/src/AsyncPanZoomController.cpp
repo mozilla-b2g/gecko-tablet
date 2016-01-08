@@ -1968,6 +1968,7 @@ nsEventStatus AsyncPanZoomController::OnPanMomentumStart(const PanGestureInput& 
   }
 
   SetState(PAN_MOMENTUM);
+  RequestSnapToDestination();
 
   // Call into OnPan in order to process any delta included in this event.
   OnPan(aEvent, false);
@@ -2429,6 +2430,14 @@ void AsyncPanZoomController::AcceptFling(FlingHandoffState& aHandoffState) {
       aHandoffState.mChain,
       !aHandoffState.mIsHandoff,  // only apply acceleration if this is an initial fling
       aHandoffState.mScrolledApzc);
+  RequestSnapToDestination();
+  StartAnimation(fling);
+}
+
+void
+AsyncPanZoomController::RequestSnapToDestination()
+{
+  ReentrantMonitorAutoEnter lock(mMonitor);
 
   float friction = gfxPrefs::APZFlingFriction();
   ParentLayerPoint velocity(mX.GetVelocity(), mY.GetVelocity());
@@ -2462,8 +2471,6 @@ void AsyncPanZoomController::AcceptFling(FlingHandoffState& aHandoffState) {
                                    predictedDestination);
     }
   }
-
-  StartAnimation(fling);
 }
 
 bool AsyncPanZoomController::AttemptFling(FlingHandoffState& aHandoffState) {
@@ -2805,7 +2812,7 @@ void AsyncPanZoomController::RequestContentRepaint() {
 
 void AsyncPanZoomController::RequestContentRepaint(FrameMetrics& aFrameMetrics) {
   aFrameMetrics.SetDisplayPortMargins(CalculatePendingDisplayPort(aFrameMetrics, GetVelocityVector()));
-  aFrameMetrics.SetUseDisplayPortMargins();
+  aFrameMetrics.SetUseDisplayPortMargins(true);
 
   // If we're trying to paint what we already think is painted, discard this
   // request since it's a pointless paint.
@@ -3399,7 +3406,7 @@ void AsyncPanZoomController::ZoomToRect(CSSRect aRect) {
     endZoomToMetrics.SetScrollOffset(aRect.TopLeft());
     endZoomToMetrics.SetDisplayPortMargins(
       CalculatePendingDisplayPort(endZoomToMetrics, ParentLayerPoint(0,0)));
-    endZoomToMetrics.SetUseDisplayPortMargins();
+    endZoomToMetrics.SetUseDisplayPortMargins(true);
 
     StartAnimation(new ZoomAnimation(
         mFrameMetrics.GetScrollOffset(),

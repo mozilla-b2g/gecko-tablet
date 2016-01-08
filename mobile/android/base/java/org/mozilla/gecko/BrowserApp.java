@@ -5,6 +5,7 @@
 
 package org.mozilla.gecko;
 
+import android.os.AsyncTask;
 import org.mozilla.gecko.adjust.AdjustHelperInterface;
 import org.mozilla.gecko.annotation.RobocopTarget;
 import org.mozilla.gecko.AppConstants.Versions;
@@ -52,6 +53,7 @@ import org.mozilla.gecko.preferences.GeckoPreferences;
 import org.mozilla.gecko.prompts.Prompt;
 import org.mozilla.gecko.prompts.PromptListItem;
 import org.mozilla.gecko.restrictions.Restrictable;
+import org.mozilla.gecko.restrictions.RestrictedProfileConfiguration;
 import org.mozilla.gecko.sync.repositories.android.FennecTabsRepository;
 import org.mozilla.gecko.tabqueue.TabQueueHelper;
 import org.mozilla.gecko.tabqueue.TabQueuePrompt;
@@ -300,9 +302,12 @@ public class BrowserApp extends GeckoApp
 
         Log.d(LOGTAG, "BrowserApp.onTabChanged: " + tab.getId() + ": " + msg);
         switch(msg) {
-            case LOCATION_CHANGE:
-                // fall through
             case SELECTED:
+                if (Tabs.getInstance().isSelectedTab(tab) && mDynamicToolbar.isEnabled()) {
+                    mDynamicToolbar.setVisible(true, VisibilityTransition.ANIMATE);
+                }
+                // fall through
+            case LOCATION_CHANGE:
                 if (mZoomedView != null) {
                     mZoomedView.stopZoomDisplay(false);
                 }
@@ -1107,11 +1112,11 @@ public class BrowserApp extends GeckoApp
                     Telemetry.sendUIEvent(TelemetryContract.Event.ACTION,
                         TelemetryContract.Method.DIALOG, extrasId);
 
-                    String url = tab.getURL();
-                    String title = tab.getDisplayTitle();
-                    Bitmap favicon = tab.getFavicon();
+                    final String url = tab.getURL();
+                    final String title = tab.getDisplayTitle();
+
                     if (url != null && title != null) {
-                        GeckoAppShell.createShortcut(title, url, favicon);
+                        GeckoAppShell.createShortcut(title, url);
                     }
                 }
             }
@@ -1236,7 +1241,7 @@ public class BrowserApp extends GeckoApp
         }
 
         if (itemId == R.id.add_to_launcher) {
-            Tab tab = Tabs.getInstance().getSelectedTab();
+            final Tab tab = Tabs.getInstance().getSelectedTab();
             if (tab == null) {
                 return true;
             }
@@ -1247,13 +1252,13 @@ public class BrowserApp extends GeckoApp
                 return true;
             }
 
-            final OnFaviconLoadedListener listener = new GeckoAppShell.CreateShortcutFaviconLoadedListener(url, title);
-            Favicons.getSizedFavicon(getContext(),
-                                     url,
-                                     tab.getFaviconURL(),
-                                     Integer.MAX_VALUE,
-                                     LoadFaviconTask.FLAG_PERSIST,
-                                     listener);
+            new AsyncTask<Void, Void, Void>() {
+                @Override
+                protected Void doInBackground(Void... voids) {
+                    GeckoAppShell.createShortcut(title, url);
+                    return null;
+                }
+            }.execute();
 
             Telemetry.sendUIEvent(TelemetryContract.Event.ACTION, TelemetryContract.Method.CONTEXT_MENU,
                 getResources().getResourceEntryName(itemId));
@@ -1689,6 +1694,13 @@ public class BrowserApp extends GeckoApp
             Telemetry.addToHistogram("FENNEC_TABQUEUE_ENABLED", (TabQueueHelper.isTabQueueEnabled(BrowserApp.this) ? 1 : 0));
             if (Versions.feature16Plus) {
                 Telemetry.addToHistogram("BROWSER_IS_ASSIST_DEFAULT", (isDefaultBrowser(Intent.ACTION_ASSIST) ? 1 : 0));
+            }
+
+            if (Restrictions.isRestrictedProfile(this)) {
+                for (Restrictable rest : RestrictedProfileConfiguration.getVisibleRestrictions()) {
+                    int value = Restrictions.isAllowed(this, rest) ? 1 : 0;
+                    Telemetry.addToKeyedHistogram("FENNEC_RESTRICTED_PROFILE_RESTRICTIONS", rest.name(), value);
+                }
             }
         } else if ("Updater:Launch".equals(event)) {
             handleUpdaterLaunch();
@@ -2170,13 +2182,21 @@ public class BrowserApp extends GeckoApp
 
         final Tab tab = Tabs.getInstance().getSelectedTab();
         if (tab != null) {
-            final String userRequested = tab.getUserRequested();
+            final String userSearchTerm = tab.getUserRequested();
 
             // Check to see if there's a user-entered search term,
             // which we save whenever the user performs a search.
-            url = (TextUtils.isEmpty(userRequested) ? tab.getURL() : userRequested);
-        }
+            final String telemetryMsg;
+            if (!TextUtils.isEmpty(userSearchTerm)) {
+                url = userSearchTerm;
+                telemetryMsg = "urlbar-userentered";
+            } else {
+                url = tab.getURL();
+                telemetryMsg = url.isEmpty() ? "urlbar-empty" : "urlbar-url";
+            }
 
+            Telemetry.sendUIEvent(TelemetryContract.Event.SHOW, TelemetryContract.Method.ACTIONBAR, telemetryMsg);
+        }
         enterEditingMode(url);
     }
 
@@ -2210,7 +2230,12 @@ public class BrowserApp extends GeckoApp
 
         mBrowserToolbar.startEditing(url, animator);
 
-        showHomePagerWithAnimator(panelId, animator);
+        final boolean isUserSearchTerm = !TextUtils.isEmpty(selectedTab.getUserRequested());
+        if (isUserSearchTerm && AppConstants.NIGHTLY_BUILD) {
+            showBrowserSearchAfterAnimation(animator);
+        } else {
+            showHomePagerWithAnimator(panelId, animator);
+        }
 
         animator.start();
         Telemetry.startUISession(TelemetryContract.Session.AWESOMESCREEN);
@@ -2622,6 +2647,24 @@ public class BrowserApp extends GeckoApp
         refreshToolbarHeight();
     }
 
+    private void showBrowserSearchAfterAnimation(PropertyAnimator animator) {
+        if (animator == null) {
+            showBrowserSearch();
+            return;
+        }
+
+        animator.addPropertyAnimationListener(new PropertyAnimator.PropertyAnimationListener() {
+            @Override
+            public void onPropertyAnimationStart() {
+            }
+
+            @Override
+            public void onPropertyAnimationEnd() {
+                showBrowserSearch();
+            }
+        });
+    }
+
     private void showBrowserSearch() {
         if (mBrowserSearch.getUserVisibleHint()) {
             return;
@@ -2672,7 +2715,7 @@ public class BrowserApp extends GeckoApp
 
         // To prevent overdraw, the HomePager is hidden when BrowserSearch is displayed:
         // reverse that.
-        mHomePagerContainer.setVisibility(View.VISIBLE);
+        showHomePager(Tabs.getInstance().getSelectedTab().getMostRecentHomePanel());
 
         mBrowserSearchContainer.setVisibility(View.INVISIBLE);
 

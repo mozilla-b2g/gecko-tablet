@@ -192,6 +192,8 @@ class JSFunction : public js::NativeObject
     bool hasScript()                const { return flags() & INTERPRETED; }
     bool isBeingParsed()            const { return flags() & BEING_PARSED; }
 
+    bool infallibleIsDefaultClassConstructor(JSContext* cx) const;
+
     // Arrow functions store their lexical new.target in the first extended slot.
     bool isArrow()                  const { return kind() == Arrow; }
     // Every class-constructor is also a method.
@@ -255,6 +257,13 @@ class JSFunction : public js::NativeObject
         flags_ |= CONSTRUCTOR;
     }
 
+    void setIsClassConstructor() {
+        MOZ_ASSERT(!isClassConstructor());
+        MOZ_ASSERT(isConstructor());
+
+        setKind(ClassConstructor);
+    }
+
     // Can be called multiple times by the parser.
     void setArgCount(uint16_t nargs) {
         this->nargs_ = nargs;
@@ -307,6 +316,8 @@ class JSFunction : public js::NativeObject
     }
 
     void initAtom(JSAtom* atom) { atom_.init(atom); }
+
+    void setAtom(JSAtom* atom) { atom_ = atom; }
 
     JSAtom* displayAtom() const {
         return atom_;
@@ -641,7 +652,8 @@ NewNativeConstructor(ExclusiveContext* cx, JSNative native, unsigned nargs, Hand
 // the global.
 extern JSFunction*
 NewScriptedFunction(ExclusiveContext* cx, unsigned nargs, JSFunction::Flags flags,
-                    HandleAtom atom, gc::AllocKind allocKind = gc::AllocKind::FUNCTION,
+                    HandleAtom atom, HandleObject proto = nullptr,
+                    gc::AllocKind allocKind = gc::AllocKind::FUNCTION,
                     NewObjectKind newKind = GenericObject,
                     HandleObject enclosingDynamicScope = nullptr);
 
@@ -664,7 +676,7 @@ NewFunctionWithProto(ExclusiveContext* cx, JSNative native, unsigned nargs,
                      NewFunctionProtoHandling protoHandling = NewFunctionClassProto);
 
 extern JSAtom*
-IdToFunctionName(JSContext* cx, HandleId id);
+IdToFunctionName(JSContext* cx, HandleId id, const char* prefix = nullptr);
 
 extern JSFunction*
 DefineFunction(JSContext* cx, HandleObject obj, HandleId id, JSNative native,
@@ -699,13 +711,13 @@ class FunctionExtended : public JSFunction
      * All asm.js/wasm functions store their compiled module (either
      * WasmModuleObject or AsmJSModuleObject) in the first extended slot.
      */
-    static const unsigned ASM_MODULE_SLOT = 0;
+    static const unsigned WASM_MODULE_SLOT = 0;
 
     /*
      * wasm/asm.js exported functions store the index of the export in the
      * module's export vector in the second slot.
      */
-    static const unsigned ASM_EXPORT_INDEX_SLOT = 1;
+    static const unsigned WASM_EXPORT_INDEX_SLOT = 1;
 
     static inline size_t offsetOfExtendedSlot(unsigned which) {
         MOZ_ASSERT(which < NUM_EXTENDED_SLOTS);

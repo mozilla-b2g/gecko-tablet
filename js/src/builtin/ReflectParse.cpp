@@ -2977,10 +2977,8 @@ ASTSerializer::expression(ParseNode* pn, MutableHandleValue dst)
                builder.unaryExpression(op, expr, &pn->pn_pos, dst);
       }
 
-#if JS_HAS_GENERATOR_EXPRS
       case PNK_GENEXP:
         return generatorExpression(pn->generatorExpr(), dst);
-#endif
 
       case PNK_NEW:
       case PNK_TAGGED_TEMPLATE:
@@ -3745,7 +3743,8 @@ reflect_parse(JSContext* cx, uint32_t argc, Value* vp)
         if (!module)
             return false;
 
-        pn = parser.standaloneModule(module);
+        ModuleBuilder builder(cx, module);
+        pn = parser.standaloneModule(module, builder);
         if (!pn)
             return false;
 

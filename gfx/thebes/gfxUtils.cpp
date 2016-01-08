@@ -92,11 +92,11 @@ void mozilla_dump_image(void* bytes, int width, int height, int bytepp,
 
 }
 
-static const uint8_t PremultiplyValue(uint8_t a, uint8_t v) {
+static uint8_t PremultiplyValue(uint8_t a, uint8_t v) {
     return gfxUtils::sPremultiplyTable[a*256+v];
 }
 
-static const uint8_t UnpremultiplyValue(uint8_t a, uint8_t v) {
+static uint8_t UnpremultiplyValue(uint8_t a, uint8_t v) {
     return gfxUtils::sUnpremultiplyTable[a*256+v];
 }
 
@@ -746,7 +746,11 @@ gfxUtils::DrawPixelSnapped(gfxContext*         aContext,
 
     if (aContext->CurrentMatrix().HasNonIntegerTranslation()) {
         if ((extendMode != ExtendMode::CLAMP) || !aRegion.RestrictionContains(imageRect)) {
-            if (drawable->DrawWithSamplingRect(aContext, aRegion.Rect(), aRegion.Restriction(),
+            if (drawable->DrawWithSamplingRect(aContext->GetDrawTarget(),
+                                               aContext->CurrentOp(),
+                                               aContext->CurrentAntialiasMode(),
+                                               aRegion.Rect(),
+                                               aRegion.Restriction(),
                                                extendMode, aFilter, aOpacity)) {
               return;
             }

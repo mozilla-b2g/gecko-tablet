@@ -17,6 +17,7 @@
 #include "mozilla/HashFunctions.h"
 #include "mozilla/MathAlgorithms.h"
 
+#include "BorderConsts.h"
 #include "nsStyleConsts.h"
 #include "nsPresContext.h"
 #include "nsIFrame.h"
@@ -736,8 +737,7 @@ nsCSSRendering::PaintBorderWithStyleBorder(nsPresContext* aPresContext,
      joinedBorderArea.width, joinedBorderArea.height);
 
   // start drawing
-  gfxContext* ctx = aRenderingContext.ThebesContext();
-  ctx->Save();
+  bool needToPopClip = false;
 
   if (::IsBoxDecorationSlice(aStyleBorder)) {
     if (joinedBorderArea.IsEqualEdges(aBorderArea)) {
@@ -746,10 +746,11 @@ nsCSSRendering::PaintBorderWithStyleBorder(nsPresContext* aPresContext,
     } else {
       // We're drawing borders around the joined continuation boxes so we need
       // to clip that to the slice that we want for this frame.
-      aRenderingContext.ThebesContext()->
-        Clip(NSRectToSnappedRect(aBorderArea,
-                                 aForFrame->PresContext()->AppUnitsPerDevPixel(),
-                                 aDrawTarget));
+      aDrawTarget.PushClipRect(
+        NSRectToSnappedRect(aBorderArea,
+                            aForFrame->PresContext()->AppUnitsPerDevPixel(),
+                            aDrawTarget));
+      needToPopClip = true;
     }
   } else {
     MOZ_ASSERT(joinedBorderArea.IsEqualEdges(aBorderArea),
@@ -803,7 +804,9 @@ nsCSSRendering::PaintBorderWithStyleBorder(nsPresContext* aPresContext,
                          bgColor);
   br.DrawBorders();
 
-  ctx->Restore();
+  if (needToPopClip) {
+    aDrawTarget.PopClip();
+  }
 
   PrintAsStringNewline();
 
@@ -929,10 +932,9 @@ nsCSSRendering::PaintOutline(nsPresContext* aPresContext,
                              Float(width / twipsPerPixel) };
 
   // start drawing
-  gfxContext *ctx = aRenderingContext.ThebesContext();
 
   nsCSSBorderRenderer br(aPresContext->Type(),
-                         ctx->GetDrawTarget(),
+                         aRenderingContext.GetDrawTarget(),
                          oRect,
                          outlineStyles,
                          outlineWidths,
@@ -1477,8 +1479,7 @@ void
 nsCSSRendering::PaintBoxShadowInner(nsPresContext* aPresContext,
                                     nsRenderingContext& aRenderingContext,
                                     nsIFrame* aForFrame,
-                                    const nsRect& aFrameArea,
-                                    const nsRect& aDirtyRect)
+                                    const nsRect& aFrameArea)
 {
   const nsStyleBorder* styleBorder = aForFrame->StyleBorder();
   nsCSSShadowArray* shadows = styleBorder->mBoxShadow;
@@ -5409,7 +5410,7 @@ nsContextBoxBlur::Init(const nsRect& aRect, nscoord aSpreadRadius,
 
   IntSize blurRadius;
   IntSize spreadRadius;
-  GetBlurAndSpreadRadius(aDestinationCtx, aAppUnitsPerDevPixel,
+  GetBlurAndSpreadRadius(aDestinationCtx->GetDrawTarget(), aAppUnitsPerDevPixel,
                          aBlurRadius, aSpreadRadius,
                          blurRadius, spreadRadius);
 
@@ -5559,7 +5560,7 @@ nsContextBoxBlur::BlurRectangle(gfxContext* aDestinationCtx,
 }
 
 /* static */ void
-nsContextBoxBlur::GetBlurAndSpreadRadius(gfxContext* aDestinationCtx,
+nsContextBoxBlur::GetBlurAndSpreadRadius(DrawTarget* aDestDrawTarget,
                                          int32_t aAppUnitsPerDevPixel,
                                          nscoord aBlurRadius,
                                          nscoord aSpreadRadius,
@@ -5567,16 +5568,15 @@ nsContextBoxBlur::GetBlurAndSpreadRadius(gfxContext* aDestinationCtx,
                                          IntSize& aOutSpreadRadius,
                                          bool aConstrainSpreadRadius)
 {
-  gfxFloat scaleX = 1;
-  gfxFloat scaleY = 1;
-
   // Do blurs in device space when possible.
   // Chrome/Skia always does the blurs in device space
   // and will sometimes get incorrect results (e.g. rotated blurs)
-  gfxMatrix transform = aDestinationCtx->CurrentMatrix();
+  Matrix transform = aDestDrawTarget->GetTransform();
   // XXX: we could probably handle negative scales but for now it's easier just to fallback
+  gfxFloat scaleX, scaleY;
   if (transform.HasNonAxisAlignedTransform() || transform._11 <= 0.0 || transform._22 <= 0.0) {
-    transform = gfxMatrix();
+    scaleX = 1;
+    scaleY = 1;
   } else {
     scaleX = transform._11;
     scaleY = transform._22;
@@ -5618,7 +5618,7 @@ nsContextBoxBlur::InsetBoxBlur(gfxContext* aDestinationCtx,
   IntSize spreadRadius;
   // Convert the blur and spread radius to device pixels
   bool constrainSpreadRadius = false;
-  GetBlurAndSpreadRadius(aDestinationCtx, aAppUnitsPerDevPixel,
+  GetBlurAndSpreadRadius(aDestinationCtx->GetDrawTarget(), aAppUnitsPerDevPixel,
                          aBlurRadiusAppUnits, aSpreadDistanceAppUnits,
                          blurRadius, spreadRadius, constrainSpreadRadius);
 

@@ -1235,6 +1235,7 @@ RestyleManager::AttributeWillChange(Element* aElement,
   RestyleHintData rsdata;
   nsRestyleHint rshint =
     mPresContext->StyleSet()->HasAttributeDependentStyle(aElement,
+                                                         aNameSpaceID,
                                                          aAttribute,
                                                          aModType,
                                                          false,
@@ -1326,6 +1327,7 @@ RestyleManager::AttributeChanged(Element* aElement,
   RestyleHintData rsdata;
   nsRestyleHint rshint =
     mPresContext->StyleSet()->HasAttributeDependentStyle(aElement,
+                                                         aNameSpaceID,
                                                          aAttribute,
                                                          aModType,
                                                          true,
@@ -1335,15 +1337,10 @@ RestyleManager::AttributeChanged(Element* aElement,
 }
 
 /* static */ uint64_t
-RestyleManager::GetMaxAnimationGenerationForFrame(nsIFrame* aFrame)
+RestyleManager::GetAnimationGenerationForFrame(nsIFrame* aFrame)
 {
-  AnimationCollection* transitions =
-    aFrame->PresContext()->TransitionManager()->GetAnimationCollection(aFrame);
-  AnimationCollection* animations =
-    aFrame->PresContext()->AnimationManager()->GetAnimationCollection(aFrame);
-
-  return std::max(transitions ? transitions->mAnimationGeneration : 0,
-                  animations ? animations->mAnimationGeneration : 0);
+  EffectSet* effectSet = EffectSet::GetEffectSet(aFrame);
+  return effectSet ? effectSet->GetAnimationGeneration() : 0;
 }
 
 void
@@ -2064,7 +2061,7 @@ VerifyContextParent(nsIFrame* aFrame, nsStyleContext* aContext,
 }
 
 static void
-VerifyStyleTree(nsIFrame* aFrame, nsStyleContext* aParentContext)
+VerifyStyleTree(nsIFrame* aFrame)
 {
   nsStyleContext*  context = aFrame->StyleContext();
   VerifyContextParent(aFrame, context, nullptr);
@@ -2082,7 +2079,7 @@ VerifyStyleTree(nsIFrame* aFrame, nsStyleContext* aParentContext)
 
           // recurse to out of flow frame, letting the parent context get resolved
           do {
-            VerifyStyleTree(outOfFlowFrame, nullptr);
+            VerifyStyleTree(outOfFlowFrame);
           } while ((outOfFlowFrame = outOfFlowFrame->GetNextContinuation()));
 
           // verify placeholder using the parent frame's context as
@@ -2090,7 +2087,7 @@ VerifyStyleTree(nsIFrame* aFrame, nsStyleContext* aParentContext)
           VerifyContextParent(child, nullptr, nullptr);
         }
         else { // regular frame
-          VerifyStyleTree(child, nullptr);
+          VerifyStyleTree(child);
         }
       }
     }
@@ -2109,9 +2106,7 @@ void
 RestyleManager::DebugVerifyStyleTree(nsIFrame* aFrame)
 {
   if (aFrame) {
-    nsStyleContext* context = aFrame->StyleContext();
-    nsStyleContext* parentContext = context->GetParent();
-    VerifyStyleTree(aFrame, parentContext);
+    VerifyStyleTree(aFrame);
   }
 }
 
@@ -2529,7 +2524,7 @@ RestyleManager::ReparentStyleContext(nsIFrame* aFrame)
         }
       }
 #ifdef DEBUG
-      VerifyStyleTree(aFrame, newParentContext);
+      VerifyStyleTree(aFrame);
 #endif
     }
   }
@@ -2706,7 +2701,7 @@ ElementRestyler::AddLayerChangesForAnimation()
   // on layers for transitions and animations and use != comparison below
   // rather than a > comparison.
   uint64_t frameGeneration =
-    RestyleManager::GetMaxAnimationGenerationForFrame(mFrame);
+    RestyleManager::GetAnimationGenerationForFrame(mFrame);
 
   nsChangeHint hint = nsChangeHint(0);
   for (const LayerAnimationInfo::Record& layerInfo :

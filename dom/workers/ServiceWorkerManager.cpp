@@ -6,8 +6,6 @@
 
 #include "ServiceWorkerManager.h"
 
-#include "mozIApplication.h"
-#include "nsIAppsService.h"
 #include "nsIConsoleService.h"
 #include "nsIDOMEventTarget.h"
 #include "nsIDocument.h"
@@ -1042,9 +1040,10 @@ protected:
     // stderr as a warning.
     nsresult origStatus = static_cast<nsresult>(aRv.ErrorCodeAsInt());
 
-    // Ensure that we only surface SecurityErr or TypeErr to script.
+    // Ensure that we only surface SecurityErr, TypeErr or InvalidStateErr to script.
     if (aRv.Failed() && !aRv.ErrorCodeIs(NS_ERROR_DOM_SECURITY_ERR) &&
-                        !aRv.ErrorCodeIs(NS_ERROR_DOM_TYPE_ERR)) {
+                        !aRv.ErrorCodeIs(NS_ERROR_DOM_TYPE_ERR) &&
+                        !aRv.ErrorCodeIs(NS_ERROR_DOM_INVALID_STATE_ERR)) {
 
       // Remove the old error code so we can replace it with a TypeError.
       aRv.SuppressException();
@@ -1346,6 +1345,18 @@ public:
         // Do nothing here, but since mRegistration is nullptr we will
         // trigger the async Fail() call below.
         MOZ_ASSERT(!mRegistration);
+      }
+
+      // "If registration's uninstalling flag is set, abort these steps."
+      if (mRegistration && mRegistration->mPendingUninstall) {
+        nsCOMPtr<nsIRunnable> runnable =
+          NS_NewRunnableMethodWithArg<nsresult>(
+            this,
+            &ServiceWorkerRegisterJob::Fail,
+            NS_ERROR_DOM_INVALID_STATE_ERR);
+          MOZ_ALWAYS_TRUE(NS_SUCCEEDED(NS_DispatchToCurrentThread(runnable)));
+
+        return;
       }
 
       // If a different script spec has been registered between when this update
@@ -3555,14 +3566,14 @@ public:
 
 } // anonymous namespace
 
-already_AddRefed<nsIRunnable>
-ServiceWorkerManager::PrepareFetchEvent(const PrincipalOriginAttributes& aOriginAttributes,
-                                        nsIDocument* aDoc,
-                                        const nsAString& aDocumentIdForTopLevelNavigation,
-                                        nsIInterceptedChannel* aChannel,
-                                        bool aIsReload,
-                                        bool aIsSubresourceLoad,
-                                        ErrorResult& aRv)
+void
+ServiceWorkerManager::DispatchFetchEvent(const PrincipalOriginAttributes& aOriginAttributes,
+                                         nsIDocument* aDoc,
+                                         const nsAString& aDocumentIdForTopLevelNavigation,
+                                         nsIInterceptedChannel* aChannel,
+                                         bool aIsReload,
+                                         bool aIsSubresourceLoad,
+                                         ErrorResult& aRv)
 {
   MOZ_ASSERT(aChannel);
   AssertIsOnMainThread();
@@ -3577,13 +3588,13 @@ ServiceWorkerManager::PrepareFetchEvent(const PrincipalOriginAttributes& aOrigin
     loadGroup = aDoc->GetDocumentLoadGroup();
     nsresult rv = aDoc->GetOrCreateId(documentId);
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      return nullptr;
+      return;
     }
   } else {
     nsCOMPtr<nsIChannel> internalChannel;
     aRv = aChannel->GetChannel(getter_AddRefs(internalChannel));
     if (NS_WARN_IF(aRv.Failed())) {
-      return nullptr;
+      return;
     }
 
     internalChannel->GetLoadGroup(getter_AddRefs(loadGroup));
@@ -3591,9 +3602,9 @@ ServiceWorkerManager::PrepareFetchEvent(const PrincipalOriginAttributes& aOrigin
     documentId = aDocumentIdForTopLevelNavigation;
 
     nsCOMPtr<nsIURI> uri;
-    aRv = internalChannel->GetURI(getter_AddRefs(uri));
+    aRv = aChannel->GetSecureUpgradedChannelURI(getter_AddRefs(uri));
     if (NS_WARN_IF(aRv.Failed())) {
-      return nullptr;
+      return;
     }
 
     RefPtr<ServiceWorkerRegistrationInfo> registration =
@@ -3601,7 +3612,7 @@ ServiceWorkerManager::PrepareFetchEvent(const PrincipalOriginAttributes& aOrigin
     if (!registration) {
       NS_WARNING("No registration found when dispatching the fetch event");
       aRv.Throw(NS_ERROR_FAILURE);
-      return nullptr;
+      return;
     }
 
     // This should only happen if IsAvailable() returned true.
@@ -3612,25 +3623,13 @@ ServiceWorkerManager::PrepareFetchEvent(const PrincipalOriginAttributes& aOrigin
   }
 
   if (NS_WARN_IF(aRv.Failed()) || !serviceWorker) {
-    return nullptr;
+    return;
   }
 
   nsCOMPtr<nsIRunnable> continueRunnable =
     new ContinueDispatchFetchEventRunnable(serviceWorker->WorkerPrivate(),
                                            aChannel, loadGroup,
                                            documentId, aIsReload);
-
-  return continueRunnable.forget();
-}
-
-void
-ServiceWorkerManager::DispatchPreparedFetchEvent(nsIInterceptedChannel* aChannel,
-                                                 nsIRunnable* aPreparedRunnable,
-                                                 ErrorResult& aRv)
-{
-  MOZ_ASSERT(aChannel);
-  MOZ_ASSERT(aPreparedRunnable);
-  AssertIsOnMainThread();
 
   nsCOMPtr<nsIChannel> innerChannel;
   aRv = aChannel->GetChannel(getter_AddRefs(innerChannel));
@@ -3642,12 +3641,12 @@ ServiceWorkerManager::DispatchPreparedFetchEvent(nsIInterceptedChannel* aChannel
 
   // If there is no upload stream, then continue immediately
   if (!uploadChannel) {
-    MOZ_ALWAYS_TRUE(NS_SUCCEEDED(aPreparedRunnable->Run()));
+    MOZ_ALWAYS_TRUE(NS_SUCCEEDED(continueRunnable->Run()));
     return;
   }
   // Otherwise, ensure the upload stream can be cloned directly.  This may
   // require some async copying, so provide a callback.
-  aRv = uploadChannel->EnsureUploadStreamIsCloneable(aPreparedRunnable);
+  aRv = uploadChannel->EnsureUploadStreamIsCloneable(continueRunnable);
 }
 
 bool
@@ -3872,11 +3871,6 @@ ServiceWorkerManager::Update(nsIPrincipal* aPrincipal,
   RefPtr<ServiceWorkerRegistrationInfo> registration =
     GetRegistration(scopeKey, aScope);
   if (NS_WARN_IF(!registration)) {
-    return;
-  }
-
-  // "If registration's uninstalling flag is set, abort these steps."
-  if (registration->mPendingUninstall) {
     return;
   }
 
@@ -4470,11 +4464,11 @@ ServiceWorkerManager::PropagateRemoveAll()
 }
 
 void
-ServiceWorkerManager::RemoveAllRegistrations(PrincipalOriginAttributes* aParams)
+ServiceWorkerManager::RemoveAllRegistrations(OriginAttributesPattern* aPattern)
 {
   AssertIsOnMainThread();
 
-  MOZ_ASSERT(aParams);
+  MOZ_ASSERT(aPattern);
 
   for (auto it1 = mRegistrationInfos.Iter(); !it1.Done(); it1.Next()) {
     ServiceWorkerManager::RegistrationDataPerPrincipal* data = it1.UserData();
@@ -4488,49 +4482,14 @@ ServiceWorkerManager::RemoveAllRegistrations(PrincipalOriginAttributes* aParams)
       MOZ_ASSERT(reg);
       MOZ_ASSERT(reg->mPrincipal);
 
-      bool equals = false;
-
-      if (aParams->mInBrowser) {
-        // When we do a system wide "clear cookies and stored data" on B2G we
-        // get the "clear-origin-data" notification with the System app appID
-        // and the browserOnly flag set to true. Web sites registering a
-        // service worker on B2G have a principal with the following
-        // information: web site origin + System app appId + inBrowser=1 So
-        // we need to check if the service worker registration info contains
-        // the System app appID and the enabled inBrowser flag and in that
-        // case remove it from the registry.
-        OriginAttributes attrs =
-          mozilla::BasePrincipal::Cast(reg->mPrincipal)->OriginAttributesRef();
-        equals = attrs == *aParams;
-      } else {
-        // If we get the "clear-origin-data" notification because of an app
-        // uninstallation, we need to check the full principal to get the
-        // match in the service workers registry. If we find a match, we
-        // unregister the worker.
-        nsCOMPtr<nsIAppsService> appsService = do_GetService(APPS_SERVICE_CONTRACTID);
-        if (NS_WARN_IF(!appsService)) {
-          continue;
-        }
-
-        nsCOMPtr<mozIApplication> app;
-        appsService->GetAppByLocalId(aParams->mAppId, getter_AddRefs(app));
-        if (NS_WARN_IF(!app)) {
-          continue;
-        }
-
-        nsCOMPtr<nsIPrincipal> principal;
-        app->GetPrincipal(getter_AddRefs(principal));
-        if (NS_WARN_IF(!principal)) {
-          continue;
-        }
-
-        reg->mPrincipal->Equals(principal, &equals);
+      bool matches =
+        aPattern->Matches(BasePrincipal::Cast(reg->mPrincipal)->OriginAttributesRef());
+      if (!matches) {
+        continue;
       }
 
-      if (equals) {
-        RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
-        swm->ForceUnregister(data, reg);
-      }
+      RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
+      swm->ForceUnregister(data, reg);
     }
   }
 }
@@ -4703,10 +4662,10 @@ ServiceWorkerManager::Observe(nsISupports* aSubject,
 
   if (strcmp(aTopic, CLEAR_ORIGIN_DATA) == 0) {
     MOZ_ASSERT(XRE_IsParentProcess());
-    PrincipalOriginAttributes attrs;
-    MOZ_ALWAYS_TRUE(attrs.Init(nsAutoString(aData)));
+    OriginAttributesPattern pattern;
+    MOZ_ALWAYS_TRUE(pattern.Init(nsAutoString(aData)));
 
-    RemoveAllRegistrations(&attrs);
+    RemoveAllRegistrations(&pattern);
     return NS_OK;
   }
 
@@ -5056,7 +5015,7 @@ ServiceWorkerManager::UpdateTimerFired(nsIPrincipal* aPrincipal,
   }
 
   PrincipalOriginAttributes attrs =
-    mozilla::BasePrincipal::Cast(aPrincipal)->OriginAttributesRef();
+    BasePrincipal::Cast(aPrincipal)->OriginAttributesRef();
 
   // Then trigger an update to fire asynchronously now.
   PropagateSoftUpdate(attrs, NS_ConvertUTF8toUTF16(aScope));

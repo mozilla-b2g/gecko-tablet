@@ -422,6 +422,8 @@ class CGDOMJSClass(CGThing):
             classFlags += "JSCLASS_HAS_RESERVED_SLOTS(%d)" % slotCount
             traceHook = 'nullptr'
             reservedSlots = slotCount
+        if self.descriptor.interface.isProbablyShortLivingObject():
+            classFlags += " | JSCLASS_SKIP_NURSERY_FINALIZE"
         if self.descriptor.interface.getExtendedAttribute("NeedResolve"):
             resolveHook = RESOLVE_HOOK_NAME
             mayResolveHook = MAY_RESOLVE_HOOK_NAME
@@ -8103,7 +8105,7 @@ class CGGenericMethod(CGAbstractBindingMethod):
     """
     def __init__(self, descriptor, allowCrossOriginThis=False):
         unwrapFailureCode = (
-            'return ThrowInvalidThis(cx, args, GetInvalidThisErrorForMethod(%%(securityError)s), "%s");\n' %
+            'return ThrowInvalidThis(cx, args, %%(securityError)s, "%s");\n' %
             descriptor.interface.identifier.name)
         name = "genericCrossOriginMethod" if allowCrossOriginThis else "genericMethod"
         CGAbstractBindingMethod.__init__(self, descriptor, name,
@@ -8134,7 +8136,7 @@ class CGGenericPromiseReturningMethod(CGAbstractBindingMethod):
     """
     def __init__(self, descriptor):
         unwrapFailureCode = dedent("""
-            ThrowInvalidThis(cx, args, GetInvalidThisErrorForMethod(%%(securityError)s), "%s");\n
+            ThrowInvalidThis(cx, args, %%(securityError)s, "%s");\n
             return ConvertExceptionToPromise(cx, xpc::XrayAwareCalleeGlobal(callee),
                                              args.rval());\n""" %
                                    descriptor.interface.identifier.name)
@@ -8475,7 +8477,7 @@ class CGGenericGetter(CGAbstractBindingMethod):
             else:
                 name = "genericGetter"
             unwrapFailureCode = (
-                'return ThrowInvalidThis(cx, args, GetInvalidThisErrorForGetter(%%(securityError)s), "%s");\n' %
+                'return ThrowInvalidThis(cx, args, %%(securityError)s, "%s");\n' %
                 descriptor.interface.identifier.name)
         CGAbstractBindingMethod.__init__(self, descriptor, name, JSNativeArguments(),
                                          unwrapFailureCode,
@@ -8606,7 +8608,7 @@ class CGGenericSetter(CGAbstractBindingMethod):
             else:
                 name = "genericSetter"
             unwrapFailureCode = (
-                'return ThrowInvalidThis(cx, args, GetInvalidThisErrorForSetter(%%(securityError)s), "%s");\n' %
+                'return ThrowInvalidThis(cx, args, %%(securityError)s, "%s");\n' %
                 descriptor.interface.identifier.name)
 
         CGAbstractBindingMethod.__init__(self, descriptor, name, JSNativeArguments(),

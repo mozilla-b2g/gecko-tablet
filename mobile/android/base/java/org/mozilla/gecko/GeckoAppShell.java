@@ -23,6 +23,7 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -32,11 +33,14 @@ import java.util.StringTokenizer;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
+import android.content.ContentResolver;
 import org.mozilla.gecko.annotation.JNITarget;
 import org.mozilla.gecko.annotation.RobocopTarget;
 import org.mozilla.gecko.annotation.WrapForJNI;
 import org.mozilla.gecko.AppConstants.Versions;
 import org.mozilla.gecko.db.BrowserDB;
+import org.mozilla.gecko.db.LocalURLMetadata;
+import org.mozilla.gecko.db.URLMetadataTable;
 import org.mozilla.gecko.favicons.Favicons;
 import org.mozilla.gecko.favicons.OnFaviconLoadedListener;
 import org.mozilla.gecko.gfx.BitmapUtils;
@@ -294,21 +298,6 @@ public class GeckoAppShell
 
     public static native void onFullScreenPluginHidden(View view);
 
-    public static class CreateShortcutFaviconLoadedListener implements OnFaviconLoadedListener {
-        private final String title;
-        private final String url;
-
-        public CreateShortcutFaviconLoadedListener(final String url, final String title) {
-            this.url = url;
-            this.title = title;
-        }
-
-        @Override
-        public void onFaviconLoaded(String pageUrl, String faviconURL, Bitmap favicon) {
-            GeckoAppShell.createShortcut(title, url, favicon);
-        }
-    }
-
     private static LayerView sLayerView;
 
     public static void setLayerView(LayerView lv) {
@@ -396,8 +385,20 @@ public class GeckoAppShell
      */
 
     @WrapForJNI(allowMultithread = true, noThrow = true)
-    public static void handleUncaughtException(Thread thread, Throwable e) {
-        CRASH_HANDLER.uncaughtException(thread, e);
+    public static String handleUncaughtException(Throwable e) {
+        if (AppConstants.MOZ_CRASHREPORTER) {
+            final Throwable exc = CrashHandler.getRootException(e);
+            final StackTraceElement[] stack = exc.getStackTrace();
+            if (stack.length >= 1 && stack[0].isNativeMethod()) {
+                // The exception occurred when running native code. Return an exception
+                // string and trigger the crash reporter inside the caller so that we get
+                // a better native stack in Socorro.
+                CrashHandler.logException(Thread.currentThread(), exc);
+                return CrashHandler.getExceptionStackTrace(exc);
+            }
+        }
+        CRASH_HANDLER.uncaughtException(null, e);
+        return null;
     }
 
     private static final Object sEventAckLock = new Object();
@@ -583,77 +584,124 @@ public class GeckoAppShell
 
         Intent intent = new Intent(getApplicationContext(), AlarmReceiver.class);
         PendingIntent pi = PendingIntent.getBroadcast(
-                getApplicationContext(), 0, intent, PendingIntent.FLAG_UPDATE_CURRENT);
+                getApplicationContext(), 0, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT);
         am.cancel(pi);
     }
 
     @WrapForJNI
     public static void enableSensor(int aSensortype) {
         GeckoInterface gi = getGeckoInterface();
-        if (gi == null)
+        if (gi == null) {
             return;
+        }
         SensorManager sm = (SensorManager)
             getApplicationContext().getSystemService(Context.SENSOR_SERVICE);
 
         switch(aSensortype) {
+        case GeckoHalDefines.SENSOR_GAME_ROTATION_VECTOR:
+            if (gGameRotationVectorSensor == null) {
+                gGameRotationVectorSensor = sm.getDefaultSensor(15);
+                    // sm.getDefaultSensor(
+                    //     Sensor.TYPE_GAME_ROTATION_VECTOR); // API >= 18
+            }
+            if (gGameRotationVectorSensor != null) {
+                sm.registerListener(gi.getSensorEventListener(),
+                                    gGameRotationVectorSensor,
+                                    SensorManager.SENSOR_DELAY_FASTEST);
+            }
+            if (gGameRotationVectorSensor != null) {
+              break;
+            }
+            // Fallthrough
+
+        case GeckoHalDefines.SENSOR_ROTATION_VECTOR:
+            if (gRotationVectorSensor == null) {
+                gRotationVectorSensor = sm.getDefaultSensor(
+                    Sensor.TYPE_ROTATION_VECTOR);
+            }
+            if (gRotationVectorSensor != null) {
+                sm.registerListener(gi.getSensorEventListener(),
+                                    gRotationVectorSensor,
+                                    SensorManager.SENSOR_DELAY_FASTEST);
+            }
+            if (gRotationVectorSensor != null) {
+              break;
+            }
+            // Fallthrough
+
         case GeckoHalDefines.SENSOR_ORIENTATION:
-            if (gOrientationSensor == null)
-                gOrientationSensor = sm.getDefaultSensor(Sensor.TYPE_ORIENTATION);
-            if (gOrientationSensor != null)
-                sm.registerListener(gi.getSensorEventListener(), gOrientationSensor, SensorManager.SENSOR_DELAY_FASTEST);
+            if (gOrientationSensor == null) {
+                gOrientationSensor = sm.getDefaultSensor(
+                    Sensor.TYPE_ORIENTATION);
+            }
+            if (gOrientationSensor != null) {
+                sm.registerListener(gi.getSensorEventListener(),
+                                    gOrientationSensor,
+                                    SensorManager.SENSOR_DELAY_FASTEST);
+            }
             break;
 
         case GeckoHalDefines.SENSOR_ACCELERATION:
-            if (gAccelerometerSensor == null)
-                gAccelerometerSensor = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
-            if (gAccelerometerSensor != null)
-                sm.registerListener(gi.getSensorEventListener(), gAccelerometerSensor, SensorManager.SENSOR_DELAY_FASTEST);
+            if (gAccelerometerSensor == null) {
+                gAccelerometerSensor = sm.getDefaultSensor(
+                    Sensor.TYPE_ACCELEROMETER);
+            }
+            if (gAccelerometerSensor != null) {
+                sm.registerListener(gi.getSensorEventListener(),
+                                    gAccelerometerSensor,
+                                    SensorManager.SENSOR_DELAY_FASTEST);
+            }
             break;
 
         case GeckoHalDefines.SENSOR_PROXIMITY:
-            if (gProximitySensor == null)
+            if (gProximitySensor == null) {
                 gProximitySensor = sm.getDefaultSensor(Sensor.TYPE_PROXIMITY);
-            if (gProximitySensor != null)
-                sm.registerListener(gi.getSensorEventListener(), gProximitySensor, SensorManager.SENSOR_DELAY_NORMAL);
+            }
+            if (gProximitySensor != null) {
+                sm.registerListener(gi.getSensorEventListener(),
+                                    gProximitySensor,
+                                    SensorManager.SENSOR_DELAY_NORMAL);
+            }
             break;
 
         case GeckoHalDefines.SENSOR_LIGHT:
-            if (gLightSensor == null)
+            if (gLightSensor == null) {
                 gLightSensor = sm.getDefaultSensor(Sensor.TYPE_LIGHT);
-            if (gLightSensor != null)
-                sm.registerListener(gi.getSensorEventListener(), gLightSensor, SensorManager.SENSOR_DELAY_NORMAL);
+            }
+            if (gLightSensor != null) {
+                sm.registerListener(gi.getSensorEventListener(),
+                                    gLightSensor,
+                                    SensorManager.SENSOR_DELAY_NORMAL);
+            }
             break;
 
         case GeckoHalDefines.SENSOR_LINEAR_ACCELERATION:
-            if (gLinearAccelerometerSensor == null)
-                gLinearAccelerometerSensor = sm.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION);
-            if (gLinearAccelerometerSensor != null)
-                sm.registerListener(gi.getSensorEventListener(), gLinearAccelerometerSensor, SensorManager.SENSOR_DELAY_FASTEST);
+            if (gLinearAccelerometerSensor == null) {
+                gLinearAccelerometerSensor = sm.getDefaultSensor(
+                    Sensor.TYPE_LINEAR_ACCELERATION);
+            }
+            if (gLinearAccelerometerSensor != null) {
+                sm.registerListener(gi.getSensorEventListener(),
+                                    gLinearAccelerometerSensor,
+                                    SensorManager.SENSOR_DELAY_FASTEST);
+            }
             break;
 
         case GeckoHalDefines.SENSOR_GYROSCOPE:
-            if (gGyroscopeSensor == null)
+            if (gGyroscopeSensor == null) {
                 gGyroscopeSensor = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
-            if (gGyroscopeSensor != null)
-                sm.registerListener(gi.getSensorEventListener(), gGyroscopeSensor, SensorManager.SENSOR_DELAY_FASTEST);
-            break;
-
-        case GeckoHalDefines.SENSOR_ROTATION_VECTOR:
-            if (gRotationVectorSensor == null)
-                gRotationVectorSensor = sm.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
-            if (gRotationVectorSensor != null)
-                sm.registerListener(gi.getSensorEventListener(), gRotationVectorSensor, SensorManager.SENSOR_DELAY_FASTEST);
-            break;
-
-        case GeckoHalDefines.SENSOR_GAME_ROTATION_VECTOR:
-            if (gGameRotationVectorSensor == null)
-                gGameRotationVectorSensor = sm.getDefaultSensor(15 /* Sensor.TYPE_GAME_ROTATION_VECTOR */); // API >= 18
-            if (gGameRotationVectorSensor != null)
-                sm.registerListener(gi.getSensorEventListener(), gGameRotationVectorSensor, SensorManager.SENSOR_DELAY_FASTEST);
+            }
+            if (gGyroscopeSensor != null) {
+                sm.registerListener(gi.getSensorEventListener(),
+                                    gGyroscopeSensor,
+                                    SensorManager.SENSOR_DELAY_FASTEST);
+            }
             break;
 
         default:
-            Log.w(LOGTAG, "Error! Can't enable unknown SENSOR type " + aSensortype);
+            Log.w(LOGTAG, "Error! Can't enable unknown SENSOR type " +
+                  aSensortype);
         }
     }
 
@@ -667,44 +715,54 @@ public class GeckoAppShell
             getApplicationContext().getSystemService(Context.SENSOR_SERVICE);
 
         switch (aSensortype) {
+        case GeckoHalDefines.SENSOR_GAME_ROTATION_VECTOR:
+            if (gGameRotationVectorSensor != null) {
+                sm.unregisterListener(gi.getSensorEventListener(), gGameRotationVectorSensor);
+              break;
+            }
+            // Fallthrough
+
+        case GeckoHalDefines.SENSOR_ROTATION_VECTOR:
+            if (gRotationVectorSensor != null) {
+                sm.unregisterListener(gi.getSensorEventListener(), gRotationVectorSensor);
+              break;
+            }
+            // Fallthrough
+
         case GeckoHalDefines.SENSOR_ORIENTATION:
-            if (gOrientationSensor != null)
+            if (gOrientationSensor != null) {
                 sm.unregisterListener(gi.getSensorEventListener(), gOrientationSensor);
+            }
             break;
 
         case GeckoHalDefines.SENSOR_ACCELERATION:
-            if (gAccelerometerSensor != null)
+            if (gAccelerometerSensor != null) {
                 sm.unregisterListener(gi.getSensorEventListener(), gAccelerometerSensor);
+            }
             break;
 
         case GeckoHalDefines.SENSOR_PROXIMITY:
-            if (gProximitySensor != null)
+            if (gProximitySensor != null) {
                 sm.unregisterListener(gi.getSensorEventListener(), gProximitySensor);
+            }
             break;
 
         case GeckoHalDefines.SENSOR_LIGHT:
-            if (gLightSensor != null)
+            if (gLightSensor != null) {
                 sm.unregisterListener(gi.getSensorEventListener(), gLightSensor);
+            }
             break;
 
         case GeckoHalDefines.SENSOR_LINEAR_ACCELERATION:
-            if (gLinearAccelerometerSensor != null)
+            if (gLinearAccelerometerSensor != null) {
                 sm.unregisterListener(gi.getSensorEventListener(), gLinearAccelerometerSensor);
-            break;
-
-        case GeckoHalDefines.SENSOR_ROTATION_VECTOR:
-            if (gRotationVectorSensor != null)
-                sm.unregisterListener(gi.getSensorEventListener(), gRotationVectorSensor);
-            break;
-
-        case GeckoHalDefines.SENSOR_GAME_ROTATION_VECTOR:
-            if (gGameRotationVectorSensor != null)
-                sm.unregisterListener(gi.getSensorEventListener(), gGameRotationVectorSensor);
+            }
             break;
 
         case GeckoHalDefines.SENSOR_GYROSCOPE:
-            if (gGyroscopeSensor != null)
+            if (gGyroscopeSensor != null) {
                 sm.unregisterListener(gi.getSensorEventListener(), gGyroscopeSensor);
+            }
             break;
         default:
             Log.w(LOGTAG, "Error! Can't disable unknown SENSOR type " + aSensortype);
@@ -755,21 +813,41 @@ public class GeckoAppShell
     // Creates a homescreen shortcut for a web page.
     // This is the entry point from nsIShellService.
     @WrapForJNI
-    static void createShortcut(final String aTitle, final String aURI, final String aIconData) {
-        // We have the favicon data (base64) decoded on the background thread, callback here, then
-        // call the other createShortcut method with the decoded favicon.
-        // This is slightly contrived, but makes the images available to the favicon cache.
-        Favicons.getSizedFavicon(getApplicationContext(), aURI, aIconData, Integer.MAX_VALUE, 0,
-            new OnFaviconLoadedListener() {
-                @Override
-                public void onFaviconLoaded(String url, String faviconURL, Bitmap favicon) {
-                    createShortcut(aTitle, url, favicon);
-                }
-            }
+    public static void createShortcut(final String aTitle, final String aURI) {
+        final BrowserDB db = GeckoProfile.get(getApplicationContext()).getDB();
+
+        final ContentResolver cr = getContext().getContentResolver();
+        final Map<String, Map<String, Object>> metadata = db.getURLMetadata().getForURLs(cr,
+                Collections.singletonList(aURI),
+                Collections.singletonList(URLMetadataTable.TOUCH_ICON_COLUMN)
         );
+
+        final Map<String, Object> row = metadata.get(aURI);
+
+        String touchIconURL = null;
+
+        if (row != null) {
+            touchIconURL = (String) row.get(URLMetadataTable.TOUCH_ICON_COLUMN);
+        }
+
+        OnFaviconLoadedListener listener = new OnFaviconLoadedListener() {
+            @Override
+            public void onFaviconLoaded(String url, String faviconURL, Bitmap favicon) {
+                createShortcutWithBitmap(aTitle, url, favicon);
+            }
+        };
+
+        if (touchIconURL != null) {
+            // We have the favicon data (base64) decoded on the background thread, callback here, then
+            // call the other createShortcut method with the decoded favicon.
+            // This is slightly contrived, but makes the images available to the favicon cache.
+            Favicons.getSizedFavicon(getApplicationContext(), aURI, touchIconURL, Integer.MAX_VALUE, 0, listener);
+        } else {
+            Favicons.getPreferredSizeFaviconForPage(getApplicationContext(), aURI, listener);
+        }
     }
 
-    public static void createShortcut(final String aTitle, final String aURI, final Bitmap aBitmap) {
+    private static void createShortcutWithBitmap(final String aTitle, final String aURI, final Bitmap aBitmap) {
         ThreadUtils.postToBackgroundThread(new Runnable() {
             @Override
             public void run() {
@@ -1046,7 +1124,9 @@ public class GeckoAppShell
                                           String action,
                                           String title,
                                           final boolean showPromptInPrivateBrowsing) {
-        final Context context = getApplicationContext();
+        final GeckoInterface gi = getGeckoInterface();
+        final Context activityContext = gi != null ? gi.getActivity() : null;
+        final Context context = activityContext != null ? activityContext : getApplicationContext();
         final Intent intent = getOpenURIIntent(context, targetURI,
                                                mimeType, action, title);
 
@@ -1063,15 +1143,16 @@ public class GeckoAppShell
             }
         }
 
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-
-        if (!showPromptInPrivateBrowsing) {
+        if (!showPromptInPrivateBrowsing || activityContext == null) {
+            if (activityContext == null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            }
             return ActivityHandlerHelper.startIntentAndCatch(LOGTAG, context, intent);
         } else {
             // Ideally we retrieve the Activity from the calling args, rather than
             // statically, but since this method is called from Gecko and I'm
             // unfamiliar with that code, this is a simpler solution.
-            final FragmentActivity fragmentActivity = (FragmentActivity) getGeckoInterface().getActivity();
+            final FragmentActivity fragmentActivity = (FragmentActivity) activityContext;
             return ExternalIntentDuringPrivateBrowsingPromptFragment.showDialogOrAndroidChooser(
                     context, fragmentActivity.getSupportFragmentManager(), intent);
         }

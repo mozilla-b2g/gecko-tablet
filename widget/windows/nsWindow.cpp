@@ -3385,12 +3385,19 @@ NS_METHOD nsWindow::EnableDragDrop(bool aEnable)
 
 NS_METHOD nsWindow::CaptureMouse(bool aCapture)
 {
+  TRACKMOUSEEVENT mTrack;
+  mTrack.cbSize = sizeof(TRACKMOUSEEVENT);
+  mTrack.dwHoverTime = 0;
+  mTrack.hwndTrack = mWnd;
   if (aCapture) {
+    mTrack.dwFlags = TME_CANCEL | TME_LEAVE;
     ::SetCapture(mWnd);
   } else {
+    mTrack.dwFlags = TME_LEAVE;
     ::ReleaseCapture();
   }
   sIsInMouseCapture = aCapture;
+  TrackMouseEvent(&mTrack);
   return NS_OK;
 }
 
@@ -5082,7 +5089,7 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
 
     case WM_MOUSEMOVE:
     {
-      if (!mMousePresent) {
+      if (!mMousePresent && !sIsInMouseCapture) {
         // First MOUSEMOVE over the client area. Ask for MOUSELEAVE
         TRACKMOUSEEVENT mTrack;
         mTrack.cbSize = sizeof(TRACKMOUSEEVENT);
@@ -7749,6 +7756,39 @@ nsWindow::ComputeShouldAccelerate()
     return false;
   }
   return nsBaseWidget::ComputeShouldAccelerate();
+}
+
+void
+nsWindow::SetCandidateWindowForPlugin(int32_t aX, int32_t aY)
+{
+  CANDIDATEFORM form;
+  form.dwIndex = 0;
+  form.dwStyle = CFS_CANDIDATEPOS;
+  form.ptCurrentPos.x = aX;
+  form.ptCurrentPos.y = aY;
+
+  IMEHandler::SetCandidateWindow(this, &form);
+}
+
+void
+nsWindow::DefaultProcOfPluginEvent(const WidgetPluginEvent& aEvent)
+{
+  const NPEvent* pPluginEvent =
+   static_cast<const NPEvent*>(aEvent.mPluginEvent);
+
+  if (NS_WARN_IF(!pPluginEvent)) {
+    return;
+  }
+
+  if (!mWnd) {
+    return;
+  }
+
+  // For WM_IME_*COMPOSITION
+  IMEHandler::DefaultProcOfPluginEvent(this, pPluginEvent);
+
+  CallWindowProcW(GetPrevWindowProc(), mWnd, pPluginEvent->event,
+                  pPluginEvent->wParam, pPluginEvent->lParam);
 }
 
 /**************************************************************

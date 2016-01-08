@@ -401,8 +401,8 @@ JitCompartment::JitCompartment()
     baselineGetPropReturnAddr_(nullptr),
     baselineSetPropReturnAddr_(nullptr),
     stringConcatStub_(nullptr),
-    regExpExecStub_(nullptr),
-    regExpTestStub_(nullptr)
+    regExpMatcherStub_(nullptr),
+    regExpTesterStub_(nullptr)
 {
     baselineCallReturnAddrs_[0] = baselineCallReturnAddrs_[1] = nullptr;
 }
@@ -415,7 +415,7 @@ JitCompartment::~JitCompartment()
 bool
 JitCompartment::initialize(JSContext* cx)
 {
-    stubCodes_ = cx->new_<ICStubCodeMap>(cx);
+    stubCodes_ = cx->new_<ICStubCodeMap>(cx->runtime());
     if (!stubCodes_)
         return false;
 
@@ -730,7 +730,7 @@ JitCompartment::sweep(FreeOp* fop, JSCompartment* compartment)
     CancelOffThreadIonCompile(compartment, nullptr);
     FinishAllOffThreadCompilations(compartment);
 
-    stubCodes_->sweep(fop);
+    stubCodes_->sweep();
 
     // If the sweep removed the ICCall_Fallback stub, nullptr the baselineCallReturnAddr_ field.
     if (!stubCodes_->lookup(ICCall_Fallback::Compiler::BASELINE_CALL_KEY))
@@ -747,11 +747,11 @@ JitCompartment::sweep(FreeOp* fop, JSCompartment* compartment)
     if (stringConcatStub_ && !IsMarkedUnbarriered(&stringConcatStub_))
         stringConcatStub_ = nullptr;
 
-    if (regExpExecStub_ && !IsMarkedUnbarriered(&regExpExecStub_))
-        regExpExecStub_ = nullptr;
+    if (regExpMatcherStub_ && !IsMarkedUnbarriered(&regExpMatcherStub_))
+        regExpMatcherStub_ = nullptr;
 
-    if (regExpTestStub_ && !IsMarkedUnbarriered(&regExpTestStub_))
-        regExpTestStub_ = nullptr;
+    if (regExpTesterStub_ && !IsMarkedUnbarriered(&regExpTesterStub_))
+        regExpTesterStub_ = nullptr;
 
     for (size_t i = 0; i <= SimdTypeDescr::LAST_TYPE; i++) {
         ReadBarrieredObject& obj = simdTemplateObjects_[i];
@@ -764,10 +764,10 @@ void
 JitCompartment::toggleBarriers(bool enabled)
 {
     // Toggle barriers in compartment wide stubs that have patchable pre barriers.
-    if (regExpExecStub_)
-        regExpExecStub_->togglePreBarriers(enabled, Reprotect);
-    if (regExpTestStub_)
-        regExpTestStub_->togglePreBarriers(enabled, Reprotect);
+    if (regExpMatcherStub_)
+        regExpMatcherStub_->togglePreBarriers(enabled, Reprotect);
+    if (regExpTesterStub_)
+        regExpTesterStub_->togglePreBarriers(enabled, Reprotect);
 
     // Toggle barriers in baseline IC stubs.
     for (ICStubCodeMap::Enum e(*stubCodes_); !e.empty(); e.popFront()) {
@@ -3290,7 +3290,6 @@ AutoFlushICache::flush(uintptr_t start, size_t len)
     PerThreadData* pt = TlsPerThreadData.get();
     AutoFlushICache* afc = pt ? pt->PerThreadData::autoFlushICache() : nullptr;
     if (!afc) {
-        MOZ_ASSERT(!IsCompilingAsmJS(), "asm.js should always create an AutoFlushICache");
         JitSpewCont(JitSpew_CacheFlush, "#");
         ExecutableAllocator::cacheFlush((void*)start, len);
         MOZ_ASSERT(len <= 32);
@@ -3304,7 +3303,6 @@ AutoFlushICache::flush(uintptr_t start, size_t len)
         return;
     }
 
-    MOZ_ASSERT(!IsCompilingAsmJS(), "asm.js should always flush within the range");
     JitSpewCont(JitSpew_CacheFlush, afc->inhibit_ ? "x" : "*");
     ExecutableAllocator::cacheFlush((void*)start, len);
 #endif

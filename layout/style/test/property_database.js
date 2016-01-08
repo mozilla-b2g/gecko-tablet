@@ -4233,38 +4233,38 @@ var gCSSProperties = {
     domProp: "alignContent",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
-    initial_values: [ "auto" ],
+    initial_values: [ "normal" ],
     other_values: [ "start", "end", "flex-start", "flex-end", "center", "left",
                     "right", "space-between", "space-around", "space-evenly",
                     "baseline", "last-baseline", "stretch", "start safe",
-                    "true end", "true end stretch", "end safe space-evenly" ],
-    invalid_values: [ "none", "5", "self-end", "safe", "auto true", "true safe",
-                      "safe baseline", "baseline true", "baseline end", "end auto",
-                      "safe end true start", "safe end true", "auto safe start",
-                      "true end start", "end start safe", "space-between true",
-                      "stretch safe" ]
+                    "unsafe end", "unsafe end stretch", "end safe space-evenly" ],
+    invalid_values: [ "none", "5", "self-end", "safe", "normal unsafe", "unsafe safe",
+                      "safe baseline", "baseline unsafe", "baseline end", "end normal",
+                      "safe end unsafe start", "safe end unsafe", "normal safe start",
+                      "unsafe end start", "end start safe", "space-between unsafe",
+                      "stretch safe", "auto" ]
   },
   "align-items": {
     domProp: "alignItems",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
-    initial_values: [ "auto", "start" ],
+    initial_values: [ "normal" ],
     // Can't test 'left'/'right' here since that computes to 'start' for blocks.
     other_values: [ "end", "flex-start", "flex-end", "self-start", "self-end",
-                    "center", "stretch", "baseline", "true left",
-                    "center true", "safe right", "center safe" ],
+                    "center", "stretch", "baseline", "unsafe left", "start",
+                    "center unsafe", "safe right", "center safe" ],
     invalid_values: [ "space-between", "abc", "5%", "legacy", "legacy end",
-                      "end legacy", "true", "true baseline", "auto true",
-                      "safe left true", "safe stretch", "end end" ]
+                      "end legacy", "unsafe", "unsafe baseline", "normal unsafe",
+                      "safe left unsafe", "safe stretch", "end end", "auto" ]
   },
   "align-self": {
     domProp: "alignSelf",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
-    // (Assuming defaults on the parent, 'auto' will compute to 'start'.)
-    initial_values: [ "auto", "start" ],
-    other_values: [ "flex-start", "flex-end", "center", "stretch",
-                    "baseline", "last-baseline", "right safe", "true center",
+    // (Assuming defaults on the parent, 'auto' will compute to 'normal'.)
+    initial_values: [ "auto", "normal" ],
+    other_values: [ "start", "flex-start", "flex-end", "center", "stretch",
+                    "baseline", "last-baseline", "right safe", "unsafe center",
                     "self-start", "self-end safe" ],
     invalid_values: [ "space-between", "abc", "30px", "stretch safe", "safe" ]
   },
@@ -4272,40 +4272,40 @@ var gCSSProperties = {
     domProp: "justifyContent",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
-    initial_values: [ "auto" ],
+    initial_values: [ "normal" ],
     other_values: [ "start", "end", "flex-start", "flex-end", "center", "left",
                     "right", "space-between", "space-around", "space-evenly",
                     "baseline", "last-baseline", "stretch", "start safe",
-                    "true end", "true end stretch", "end safe space-evenly" ],
-    invalid_values: [ "30px", "5%", "self-end", "safe", "auto true", "true safe",
-                      "safe baseline", "baseline true", "baseline end", "auto end",
-                      "safe end true start", "safe end true", "auto safe start",
-                      "true end start", "end start safe", "space-around true",
-                      "safe stretch"]
+                    "unsafe end", "unsafe end stretch", "end safe space-evenly" ],
+    invalid_values: [ "30px", "5%", "self-end", "safe", "normal unsafe", "unsafe safe",
+                      "safe baseline", "baseline unsafe", "baseline end", "normal end",
+                      "safe end unsafe start", "safe end unsafe", "normal safe start",
+                      "unsafe end start", "end start safe", "space-around unsafe",
+                      "safe stretch", "auto" ]
   },
   "justify-items": {
     domProp: "justifyItems",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
-    initial_values: [ "auto", "start" ],
+    initial_values: [ "auto", "normal" ],
     other_values: [ "end", "flex-start", "flex-end", "self-start", "self-end",
-                    "center", "left", "right", "baseline", "stretch",
+                    "center", "left", "right", "baseline", "stretch", "start",
                     "legacy left", "right legacy", "legacy center",
-                    "true right", "left true", "safe right", "center safe" ],
+                    "unsafe right", "left unsafe", "safe right", "center safe" ],
     invalid_values: [ "space-between", "abc", "30px", "legacy", "legacy start",
-                      "end legacy", "legacy baseline", "legacy legacy", "true",
+                      "end legacy", "legacy baseline", "legacy legacy", "unsafe",
                       "safe legacy left", "legacy left safe", "legacy safe left",
-                      "safe left legacy", "legacy left legacy", "baseline true",
-                      "safe true", "safe left true", "safe stretch" ]
+                      "safe left legacy", "legacy left legacy", "baseline unsafe",
+                      "safe unsafe", "safe left unsafe", "safe stretch" ]
   },
   "justify-self": {
     domProp: "justifySelf",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
-    initial_values: [ "auto", "start" ],
-    other_values: [ "end", "flex-start", "flex-end", "self-start",
+    initial_values: [ "auto", "normal" ],
+    other_values: [ "start", "end", "flex-start", "flex-end", "self-start",
                     "self-end", "center", "left", "right", "baseline",
-                    "last-baseline", "stretch", "left true", "true right",
+                    "last-baseline", "stretch", "left unsafe", "unsafe right",
                     "safe right", "center safe" ],
     invalid_values: [ "space-between", "abc", "30px", "none",
                       "legacy left", "right legacy" ]
@@ -4847,6 +4847,25 @@ function logical_box_prop_get_computed(cs, property)
     throw "Unexpected property";
   }
   return cs.getPropertyValue(property);
+}
+
+// Helper to get computed style of "-webkit-box-orient" from "flex-direction"
+// and the "writing-mode".
+function webkit_orient_get_computed(cs, property)
+{
+  var writingMode = cs.getPropertyValue("writing-mode") || "horizontal-tb";
+
+  var mapping; // map from flex-direction values to -webkit-box-orient values.
+  if (writingMode == "horizontal-tb") {
+    // Horizontal writing-mode
+    mapping = { "row" : "horizontal", "column" : "vertical"};
+  } else {
+    // Vertical writing-mode
+    mapping = { "row" : "vertical",   "column" : "horizontal"};
+  }
+
+  var flexDirection = cs.getPropertyValue("flex-direction");
+  return mapping[flexDirection];
 }
 
 // Get the computed value for a property.  For shorthands, return the
@@ -6765,6 +6784,13 @@ if (IsCSSPropertyPrefEnabled("layout.css.prefixes.webkit")) {
     alias_for: "animation-timing-function",
     subproperties: [ "animation-timing-function" ],
   };
+  gCSSProperties["-webkit-filter"] = {
+    domProp: "webkitFilter",
+    inherited: false,
+    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+    alias_for: "filter",
+    subproperties: [ "filter" ],
+  };
   gCSSProperties["-webkit-text-size-adjust"] = {
     domProp: "webkitTextSizeAdjust",
     inherited: true,
@@ -6947,6 +6973,21 @@ if (IsCSSPropertyPrefEnabled("layout.css.prefixes.webkit")) {
     alias_for: "order",
     subproperties: [ "order" ],
   };
+  /* This one is not an alias - it's implemented as a logical property: */
+  gCSSProperties["-webkit-box-orient"] = {
+    domProp: "webkitBoxOrient",
+    inherited: false,
+    type: CSS_TYPE_LONGHAND,
+    logical: true,
+    get_computed: webkit_orient_get_computed,
+    initial_values: [ "horizontal" ],
+    other_values: [ "vertical" ],
+    invalid_values: [
+      "0", "0px", "auto",
+      /* Flex-direction values: */
+      "row", "column", "row-reverse", "column-reverse",
+    ],
+  };
   gCSSProperties["-webkit-box-align"] = {
     domProp: "webkitBoxAlign",
     inherited: false,
@@ -7021,9 +7062,10 @@ if (IsCSSPropertyPrefEnabled("layout.css.text-emphasis.enabled")) {
     domProp: "textEmphasis",
     inherited: true,
     type: CSS_TYPE_TRUE_SHORTHAND,
+    prerequisites: { "color": "black" },
     subproperties: [ "text-emphasis-style", "text-emphasis-color" ],
-    initial_values: [ "none currentColor", "currentColor none", "none", "currentColor" ],
-    other_values: [ "filled dot black", "#f00 circle open", "sesame filled rgba(0,0,255,0.5)", "red", "none black", "green none", "currentColor filled", "currentColor open" ],
+    initial_values: [ "none currentColor", "currentColor none", "none", "currentColor", "none black" ],
+    other_values: [ "filled dot black", "#f00 circle open", "sesame filled rgba(0,0,255,0.5)", "red", "green none", "currentColor filled", "currentColor open" ],
     invalid_values: [ "filled black dot", "filled filled red", "open open circle #000", "circle dot #f00", "rubbish" ]
   };
   gCSSProperties["text-emphasis-color"] = {
@@ -7031,7 +7073,7 @@ if (IsCSSPropertyPrefEnabled("layout.css.text-emphasis.enabled")) {
     inherited: true,
     type: CSS_TYPE_LONGHAND,
     prerequisites: { "color": "black" },
-    initial_values: [ "currentColor", "-moz-use-text-color" ],
+    initial_values: [ "currentColor", "black", "rgb(0,0,0)" ],
     other_values: [ "red", "rgba(255,255,255,0.5)", "transparent" ],
     invalid_values: [ "#0", "#00", "#0000", "#00000", "#0000000", "#00000000", "#000000000", "000000", "ff00ff", "rgb(255,xxx,255)" ]
   };

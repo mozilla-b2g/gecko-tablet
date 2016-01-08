@@ -372,7 +372,11 @@ class SimdConstant {
         MOZ_ASSERT(defined() && rhs.defined());
         if (type() != rhs.type())
             return false;
+        // Takes negative zero into accuont, as it's a bit comparison.
         return memcmp(&u, &rhs.u, sizeof(u)) == 0;
+    }
+    bool operator!=(const SimdConstant& rhs) const {
+        return !operator==(rhs);
     }
 
     // SimdConstant is a HashPolicy
@@ -541,11 +545,12 @@ StringFromMIRType(MIRType type)
       return "Float32x4";
     case MIRType_Int32x4:
       return "Int32x4";
+    case MIRType_Bool32x4:
+      return "Bool32x4";
     case MIRType_Doublex2:
       return "Doublex2";
-    default:
-      MOZ_CRASH("Unknown MIRType.");
   }
+  MOZ_CRASH("Unknown MIRType.");
 }
 
 static inline bool

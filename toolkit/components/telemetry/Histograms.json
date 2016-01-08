@@ -1249,11 +1249,6 @@
     "kind": "boolean",
     "description": "Whether a HTTP transaction routed via Alt-Svc was scheme=http"
   },
-  "HTTP_WAP_CONTENT_TYPE_RECEIVED": {
-    "expires_in_version": "45",
-    "kind": "boolean",
-    "description": "Whether a WAP content type response is served to the browser."
-  },
   "HTTP_SCHEME_UPGRADE": {
     "expires_in_version": "never",
     "kind": "enumerated",
@@ -5021,8 +5016,17 @@
     "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": 10,
-    "description": "The way the GeckoApp was launched. (Normal, URL, Prefetch, WebApp, Guest)",
+    "description": "The way the GeckoApp was launched. (Normal, URL, Prefetch, WebApp, Guest, Restricted)",
     "cpp_guard": "ANDROID"
+  },
+  "FENNEC_RESTRICTED_PROFILE_RESTRICTIONS": {
+    "expires_in_version": "50",
+    "kind": "enumerated",
+    "n_values": 30,
+    "description": "Whether various restrictions are set, keyed by restiction name",
+    "keyed": true,
+    "bug_numbers": [1218942],
+    "alert_emails": ["mobile-frontend@mozilla.com"]
   },
   "FENNEC_STARTUP_TIME_GECKOREADY": {
     "expires_in_version": "never",
@@ -8209,6 +8213,13 @@
     "description": "Whether or not a user has tap-to-load enabled.",
     "bug_numbers": [1208167]
   },
+  "ZOOMED_VIEW_ENABLED": {
+    "expires_in_version": "50",
+    "kind": "boolean",
+    "description": "Whether or not a user has the zoomed view (a.k.a. \"Magnify small areas\") enabled.",
+    "alert_emails": ["mobile-frontend@mozilla.com"],
+    "bug_numbers": [1235061]
+  },
   "TRACKING_PROTECTION_ENABLED": {
     "expires_in_version": "never",
     "kind": "boolean",
@@ -8283,7 +8294,7 @@
     "kind": "enumerated",
     "n_values": 8,
     "releaseChannelCollection": "opt-out",
-    "description": "Number of times a room URL is shared (0=COPY_FROM_PANEL, 1=COPY_FROM_CONVERSATION, 2=EMAIL_FROM_CALLFAILED, 3=EMAIL_FROM_CONVERSATION)"
+    "description": "Number of times a room URL is shared (0=COPY_FROM_PANEL, 1=COPY_FROM_CONVERSATION, 2=EMAIL_FROM_CALLFAILED, 3=EMAIL_FROM_CONVERSATION, 4=FACEBOOK_FROM_CONVERSATION)"
   },
   "LOOP_ROOM_CREATE": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],

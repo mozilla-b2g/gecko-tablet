@@ -8,6 +8,7 @@ const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 Cu.import('resource://gre/modules/Services.jsm');
 Cu.import('resource://gre/modules/XPCOMUtils.jsm');
+Cu.import('resource://gre/modules/AppConstants.jsm');
 
 XPCOMUtils.defineLazyServiceGetter(
   this,
@@ -176,15 +177,13 @@ function display(profileData) {
     if (dir) {
       td.appendChild(document.createTextNode(' '));
       let button = document.createElement('button');
-      let buttonText = document.createTextNode(bundle.GetStringFromName(
-#ifdef XP_WIN
-        'winOpenDir'
-#elif XP_MACOSX
-        'macOpenDir'
-#else
-        'openDir'
-#endif
-      ));
+      let string = 'openDir';
+      if (AppConstants.platform == "win") {
+        string = 'winOpenDir';
+      } else if (AppConstants.platform == "macosx") {
+        string = 'macOpenDir';
+      }
+      let buttonText = document.createTextNode(bundle.GetStringFromName(string));
       button.appendChild(buttonText);
       td.appendChild(button);
 
@@ -298,6 +297,38 @@ function removeProfile(profile) {
     }
   }
 
+  // If we are deleting the selected or the default profile we must choose a
+  // different one.
+  let isSelected = false;
+  try {
+    isSelected = ProfileService.selectedProfile == profile;
+  } catch(e) {}
+
+  let isDefault = false;
+  try {
+    isDefault = ProfileService.defaultProfile == profile;
+  } catch(e) {}
+
+  if (isSelected || isDefault) {
+    let itr = ProfileService.profiles;
+    while(itr.hasMoreElements()) {
+      let p = itr.getNext().QueryInterface(Ci.nsIToolkitProfile);
+      if (profile == p) {
+        continue;
+      }
+
+      if (isSelected) {
+        ProfileService.selectedProfile = p;
+      }
+
+      if (isDefault) {
+        ProfileService.defaultProfile = p;
+      }
+
+      break;
+    }
+  }
+
   profile.remove(deleteFiles);
   ProfileService.flush();
   refreshUI();
@@ -305,6 +336,7 @@ function removeProfile(profile) {
 
 function defaultProfile(profile) {
   ProfileService.defaultProfile = profile;
+  ProfileService.selectedProfile = profile;
   ProfileService.flush();
   refreshUI();
 }

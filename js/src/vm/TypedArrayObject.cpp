@@ -865,6 +865,7 @@ TypedArrayObject::protoFunctions[] = {
     JS_SELF_HOSTED_FN("reverse", "TypedArrayReverse", 0, 0),
     JS_SELF_HOSTED_FN("slice", "TypedArraySlice", 2, 0),
     JS_SELF_HOSTED_FN("some", "TypedArraySome", 2, 0),
+    JS_SELF_HOSTED_FN("sort", "TypedArraySort", 1, 0),
     JS_SELF_HOSTED_FN("entries", "TypedArrayEntries", 0, 0),
     JS_SELF_HOSTED_FN("keys", "TypedArrayKeys", 0, 0),
     // Both of these are actually defined to the same object in FinishTypedArrayInit.
@@ -2098,11 +2099,14 @@ bool
 DataViewObject::defineGetter(JSContext* cx, PropertyName* name, HandleNativeObject proto)
 {
     RootedId id(cx, NameToId(name));
+    RootedAtom atom(cx, IdToFunctionName(cx, id, "get"));
+    if (!atom)
+        return false;
     unsigned attrs = JSPROP_SHARED | JSPROP_GETTER;
 
     Rooted<GlobalObject*> global(cx, cx->compartment()->maybeGlobal());
     JSObject* getter =
-        NewNativeFunction(cx, DataViewObject::getter<ValueGetter>, 0, nullptr);
+        NewNativeFunction(cx, DataViewObject::getter<ValueGetter>, 0, atom);
     if (!getter)
         return false;
 

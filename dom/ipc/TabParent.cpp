@@ -438,7 +438,7 @@ TabParent::GetAppType(nsAString& aOut)
 }
 
 bool
-TabParent::IsVisible()
+TabParent::IsVisible() const
 {
   RefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
   if (!frameLoader) {
@@ -2393,6 +2393,31 @@ TabParent::RecvSetPluginFocused(const bool& aFocused)
     return true;
   }
   widget->SetPluginFocused((bool&)aFocused);
+  return true;
+}
+
+ bool
+TabParent::RecvSetCandidateWindowForPlugin(const int32_t& aX,
+                                           const int32_t& aY)
+{
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (!widget) {
+    return true;
+  }
+
+  widget->SetCandidateWindowForPlugin(aX, aY);
+  return true;
+}
+
+bool
+TabParent::RecvDefaultProcOfPluginEvent(const WidgetPluginEvent& aEvent)
+{
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (!widget) {
+    return true;
+  }
+
+  widget->DefaultProcOfPluginEvent(aEvent);
   return true;
 }
 

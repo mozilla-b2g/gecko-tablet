@@ -1291,6 +1291,8 @@ PluginModuleChromeParent::TerminateChildProcess(MessageLoop* aMsgLoop,
     }
 
     if (reportsReady) {
+        // Important to set this here, it tells the ActorDestroy handler
+        // that we have an existing crash report that needs to be finalized.
         mPluginDumpID = crashReporter->ChildDumpID();
         PLUGIN_LOG_DEBUG(
                 ("generated paired browser/plugin minidumps: %s)",
@@ -1537,7 +1539,13 @@ PluginModuleChromeParent::ProcessFirstMinidump()
     WriteExtraDataForMinidump(notes);
 
     if (!mPluginDumpID.IsEmpty()) {
+        // mPluginDumpID may be set in TerminateChildProcess, which means the
+        // process hang monitor has already collected a 3-way browser, plugin,
+        // content crash report. If so, update the existing report with our
+        // annotations and finalize it. If not, fall through for standard
+        // plugin crash report handling.
         crashReporter->GenerateChildData(&notes);
+        crashReporter->FinalizeChildData();
         return;
     }
 
@@ -1986,25 +1994,23 @@ PluginModuleParent::SetBackgroundUnknown(NPP instance)
 nsresult
 PluginModuleParent::BeginUpdateBackground(NPP instance,
                                           const nsIntRect& aRect,
-                                          gfxContext** aCtx)
+                                          DrawTarget** aDrawTarget)
 {
     PluginInstanceParent* i = PluginInstanceParent::Cast(instance);
     if (!i)
         return NS_ERROR_FAILURE;
 
-    return i->BeginUpdateBackground(aRect, aCtx);
+    return i->BeginUpdateBackground(aRect, aDrawTarget);
 }
 
 nsresult
-PluginModuleParent::EndUpdateBackground(NPP instance,
-                                        gfxContext* aCtx,
-                                        const nsIntRect& aRect)
+PluginModuleParent::EndUpdateBackground(NPP instance, const nsIntRect& aRect)
 {
     PluginInstanceParent* i = PluginInstanceParent::Cast(instance);
     if (!i)
         return NS_ERROR_FAILURE;
 
-    return i->EndUpdateBackground(aCtx, aRect);
+    return i->EndUpdateBackground(aRect);
 }
 
 void

@@ -839,7 +839,6 @@ class ParseNode
     /* Return true if this node appears in a Directive Prologue. */
     bool isDirectivePrologueMember() const { return pn_prologue; }
 
-#ifdef JS_HAS_GENERATOR_EXPRS
     ParseNode* generatorExpr() const {
         MOZ_ASSERT(isKind(PNK_GENEXP));
         ParseNode* callee = this->pn_head;
@@ -849,7 +848,6 @@ class ParseNode
                    body->last()->isKind(PNK_COMPREHENSIONFOR));
         return body->last();
     }
-#endif
 
     inline void markAsAssigned();
 
@@ -1721,7 +1719,7 @@ class ObjectBox
     ObjectBox(JSObject* object, ObjectBox* traceLink);
     bool isFunctionBox() { return object->is<JSFunction>(); }
     FunctionBox* asFunctionBox();
-    bool isModuleBox() { return object->is<ModuleObject>(); }
+    bool isModuleBox();
     ModuleBox* asModuleBox();
     virtual void trace(JSTracer* trc);
 
