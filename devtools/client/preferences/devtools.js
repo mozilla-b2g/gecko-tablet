@@ -17,6 +17,9 @@ pref("devtools.devedition.promo.url", "https://www.mozilla.org/firefox/developer
 // Disable the error console
 pref("devtools.errorconsole.enabled", false);
 
+// DevTools development workflow
+pref("devtools.loader.hotreload", false);
+
 // Developer toolbar preferences
 pref("devtools.toolbar.enabled", true);
 pref("devtools.toolbar.visible", false);
@@ -48,6 +51,7 @@ pref("devtools.command-button-eyedropper.enabled", false);
 pref("devtools.command-button-screenshot.enabled", false);
 pref("devtools.command-button-rulers.enabled", false);
 pref("devtools.command-button-measure.enabled", false);
+pref("devtools.command-button-noautohide.enabled", false);
 
 // Inspector preferences
 // Enable the Inspector
@@ -66,8 +70,10 @@ pref("devtools.inspector.showAllAnonymousContent", false);
 // Enable the MDN docs tooltip
 pref("devtools.inspector.mdnDocsTooltip.enabled", true);
 
-// Collapse attributes that are too long.
-// Use -1 to not collapse attributes at all.
+// Enable to collapse attributes that are too long.
+pref("devtools.markup.collapseAttributes", true);
+
+// Length to collapse attributes
 pref("devtools.markup.collapseAttributeLength", 120);
 
 // DevTools default color unit
@@ -103,6 +109,7 @@ pref("devtools.debugger.ui.variables-searchbox-visible", false);
 pref("devtools.memory.enabled", false);
 
 pref("devtools.memory.custom-breakdowns", "{}");
+pref("devtools.memory.custom-dominator-tree-breakdowns", "{}");
 
 // Enable the Performance tools
 pref("devtools.performance.enabled", true);
@@ -324,3 +331,7 @@ pref("devtools.telemetry.tools.opened.version", "{}");
 #else
   pref("devtools.jsonview.enabled", false);
 #endif
+
+// Disable the HTML responsive design tool by default.  Currently disabled until
+// ready to replace the legacy XUL version.
+pref("devtools.responsive.html.enabled", false);

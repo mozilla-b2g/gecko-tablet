@@ -10,9 +10,9 @@
 #include "mozilla/EventForwards.h"  // for Modifiers
 #include "mozilla/StaticPtr.h"
 #include "mozilla/TimeStamp.h"
-#include "GeneratedJNIWrappers.h"
 #include "nsIDOMWindowUtils.h"
 #include "nsTArray.h"
+#include "nsWindow.h"
 
 namespace mozilla {
 namespace layers {
@@ -20,32 +20,33 @@ class APZEventState;
 class APZCTreeManager;
 }
 namespace widget {
-namespace android {
 
-class AndroidContentController final : public mozilla::layers::ChromeProcessController
+class AndroidContentController final
+    : public mozilla::layers::ChromeProcessController
 {
 public:
-    AndroidContentController(nsIWidget* aWidget,
+    AndroidContentController(nsWindow* aWindow,
                              mozilla::layers::APZEventState* aAPZEventState,
                              mozilla::layers::APZCTreeManager* aAPZCTreeManager)
-      : mozilla::layers::ChromeProcessController(aWidget, aAPZEventState, aAPZCTreeManager)
+      : mozilla::layers::ChromeProcessController(aWindow, aAPZEventState, aAPZCTreeManager)
+      , mAndroidWindow(aWindow)
     {}
 
     // ChromeProcessController methods
+    virtual void Destroy() override;
     void HandleSingleTap(const CSSPoint& aPoint,
                          Modifiers aModifiers,
                          const ScrollableLayerGuid& aGuid) override;
     void PostDelayedTask(Task* aTask, int aDelayMs) override;
+    void UpdateOverscrollVelocity(const float aX, const float aY) override;
+    void UpdateOverscrollOffset(const float aX,const  float aY) override;
 
-public:
-    static NativePanZoomController::LocalRef SetNativePanZoomController(NativePanZoomController::Param obj);
-    static void NotifyDefaultPrevented(uint64_t aInputBlockId, bool aDefaultPrevented);
-
+    static void NotifyDefaultPrevented(mozilla::layers::APZCTreeManager* aManager,
+                                       uint64_t aInputBlockId, bool aDefaultPrevented);
 private:
-    static NativePanZoomController::GlobalRef sNativePanZoomController;
+    nsWindow* mAndroidWindow;
 };
 
-} // namespace android
 } // namespace widget
 } // namespace mozilla
 

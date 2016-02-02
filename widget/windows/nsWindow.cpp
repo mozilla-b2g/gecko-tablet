@@ -124,7 +124,6 @@
 #include "nsISound.h"
 #include "SystemTimeConverter.h"
 #include "WinTaskbar.h"
-#include "WinUtils.h"
 #include "WidgetUtils.h"
 #include "nsIWidgetListener.h"
 #include "mozilla/dom/Touch.h"
@@ -184,8 +183,13 @@
 #define SM_CONVERTIBLESLATEMODE 0x2003
 #endif
 
+#if !defined(WM_DPICHANGED)
+#define WM_DPICHANGED 0x02E0
+#endif
+
 #include "mozilla/layers/APZCTreeManager.h"
 #include "mozilla/layers/InputAPZContext.h"
+#include "ClientLayerManager.h"
 #include "InputData.h"
 
 #include "mozilla/Telemetry.h"
@@ -260,6 +264,11 @@ namespace mozilla {
 
 class CurrentWindowsTimeGetter {
 public:
+  CurrentWindowsTimeGetter(HWND aWnd)
+    : mWnd(aWnd)
+  {
+  }
+
   DWORD GetCurrentTime() const
   {
     return ::GetTickCount();
@@ -267,11 +276,39 @@ public:
 
   void GetTimeAsyncForPossibleBackwardsSkew(const TimeStamp& aNow)
   {
-    NS_DispatchToMainThread(NS_NewRunnableFunction([aNow]() {
-      TimeConverter().CompensateForBackwardsSkew(::GetMessageTime(), aNow);
-    }));
+    DWORD currentTime = GetCurrentTime();
+    if (sBackwardsSkewStamp && currentTime == sLastPostTime) {
+      // There's already one inflight with this timestamp. Don't
+      // send a duplicate.
+      return;
+    }
+    sBackwardsSkewStamp = Some(aNow);
+    sLastPostTime = currentTime;
+    static_assert(sizeof(WPARAM) >= sizeof(DWORD), "Can't fit a DWORD in a WPARAM");
+    ::PostMessage(mWnd, MOZ_WM_SKEWFIX, sLastPostTime, 0);
   }
+
+  static bool GetAndClearBackwardsSkewStamp(DWORD aPostTime, TimeStamp* aOutSkewStamp)
+  {
+    if (aPostTime != sLastPostTime) {
+      // The SKEWFIX message is stale; we've sent a new one since then.
+      // Ignore this one.
+      return false;
+    }
+    MOZ_ASSERT(sBackwardsSkewStamp);
+    *aOutSkewStamp = sBackwardsSkewStamp.value();
+    sBackwardsSkewStamp = Nothing();
+    return true;
+  }
+
+private:
+  static Maybe<TimeStamp> sBackwardsSkewStamp;
+  static DWORD sLastPostTime;
+  HWND mWnd;
 };
+
+Maybe<TimeStamp> CurrentWindowsTimeGetter::sBackwardsSkewStamp;
+DWORD CurrentWindowsTimeGetter::sLastPostTime = 0;
 
 } // namespace mozilla
 
@@ -393,6 +430,7 @@ nsWindow::nsWindow()
   DWORD background      = ::GetSysColor(COLOR_BTNFACE);
   mBrush                = ::CreateSolidBrush(NSRGB_2_COLOREF(background));
   mSendingSetText       = false;
+  mDefaultScale         = -1.0; // not yet set, will be calculated on first use
 
   mTaskbarPreview = nullptr;
 
@@ -422,7 +460,7 @@ nsWindow::nsWindow()
 
   mIdleService = nullptr;
 
-  ::InitializeCriticalSection(&mPresentLock);
+  mSizeConstraintsScale = GetDefaultScale().scale;
 
   sInstanceCount++;
 }
@@ -458,7 +496,6 @@ nsWindow::~nsWindow()
       sIsOleInitialized = FALSE;
     }
   }
-  ::DeleteCriticalSection(&mPresentLock);
 
   NS_IF_RELEASE(mNativeDragTarget);
 }
@@ -509,12 +546,12 @@ nsWindow::Create(nsIWidget* aParent,
                           nullptr : aParent;
 
   mIsTopWidgetWindow = (nullptr == baseParent);
-  mBounds = aRect.ToUnknownRect();
+  mBounds = aRect;
 
   // Ensure that the toolkit is created.
   nsToolkit::GetToolkit();
 
-  BaseCreate(baseParent, aRect, aInitData);
+  BaseCreate(baseParent, aInitData);
 
   HWND parent;
   if (aParent) { // has a nsIWidget parent
@@ -1046,7 +1083,17 @@ float nsWindow::GetDPI()
 
 double nsWindow::GetDefaultScaleInternal()
 {
-  return WinUtils::LogToPhysFactor();
+  if (mDefaultScale <= 0.0) {
+    mDefaultScale = WinUtils::LogToPhysFactor(mWnd);
+  }
+  return WinUtils::LogToPhysFactor(mWnd);
+}
+
+int32_t nsWindow::LogToPhys(double aValue)
+{
+  return WinUtils::LogToPhys(::MonitorFromWindow(mWnd,
+                                                 MONITOR_DEFAULTTOPRIMARY),
+                             aValue);
 }
 
 nsWindow*
@@ -1362,8 +1409,47 @@ nsWindow::SetSizeConstraints(const SizeConstraints& aConstraints)
     c.mMinSize.width = std::max(int32_t(::GetSystemMetrics(SM_CXMINTRACK)), c.mMinSize.width);
     c.mMinSize.height = std::max(int32_t(::GetSystemMetrics(SM_CYMINTRACK)), c.mMinSize.height);
   }
+  ClientLayerManager *clientLayerManager =
+      (GetLayerManager()->GetBackendType() == LayersBackend::LAYERS_CLIENT)
+      ? static_cast<ClientLayerManager*>(GetLayerManager())
+      : nullptr;
+
+  if (clientLayerManager) {
+    int32_t maxSize = clientLayerManager->GetMaxTextureSize();
+    // We can't make ThebesLayers bigger than this anyway.. no point it letting
+    // a window grow bigger as we won't be able to draw content there in
+    // general.
+    c.mMaxSize.width = std::min(c.mMaxSize.width, maxSize);
+    c.mMaxSize.height = std::min(c.mMaxSize.height, maxSize);
+  }
+
+  mSizeConstraintsScale = GetDefaultScale().scale;
 
   nsBaseWidget::SetSizeConstraints(c);
+}
+
+const SizeConstraints
+nsWindow::GetSizeConstraints()
+{
+  double scale = GetDefaultScale().scale;
+  if (mSizeConstraintsScale == scale || mSizeConstraintsScale == 0.0) {
+    return mSizeConstraints;
+  }
+  scale /= mSizeConstraintsScale;
+  SizeConstraints c = mSizeConstraints;
+  if (c.mMinSize.width != NS_MAXSIZE) {
+    c.mMinSize.width = NSToIntRound(c.mMinSize.width * scale);
+  }
+  if (c.mMinSize.height != NS_MAXSIZE) {
+    c.mMinSize.height = NSToIntRound(c.mMinSize.height * scale);
+  }
+  if (c.mMaxSize.width != NS_MAXSIZE) {
+    c.mMaxSize.width = NSToIntRound(c.mMaxSize.width * scale);
+  }
+  if (c.mMaxSize.height != NS_MAXSIZE) {
+    c.mMaxSize.height = NSToIntRound(c.mMaxSize.height * scale);
+  }
+  return c;
 }
 
 // Move this component
@@ -1374,12 +1460,11 @@ NS_METHOD nsWindow::Move(double aX, double aY)
     SetSizeMode(nsSizeMode_Normal);
   }
 
-  // for top-level windows only, convert coordinates from global display pixels
+  // for top-level windows only, convert coordinates from desktop pixels
   // (the "parent" coordinate space) to the window's device pixel space
-  CSSToLayoutDeviceScale scale = BoundsUseDisplayPixels() ? GetDefaultScale()
-                                    : CSSToLayoutDeviceScale(1.0);
-  int32_t x = NSToIntRound(aX * scale.scale);
-  int32_t y = NSToIntRound(aY * scale.scale);
+  double scale = BoundsUseDesktopPixels() ? GetDesktopToDeviceScale().scale : 1.0;
+  int32_t x = NSToIntRound(aX * scale);
+  int32_t y = NSToIntRound(aY * scale);
 
   // Check to see if window needs to be moved first
   // to avoid a costly call to SetWindowPos. This check
@@ -1431,7 +1516,13 @@ NS_METHOD nsWindow::Move(double aX, double aY)
         (mClipRectCount != 1 || !mClipRects[0].IsEqualInterior(LayoutDeviceIntRect(0, 0, mBounds.width, mBounds.height)))) {
       flags |= SWP_NOCOPYBITS;
     }
+    double oldScale = mDefaultScale;
+    mResizeState = IN_SIZEMOVE;
     VERIFY(::SetWindowPos(mWnd, nullptr, x, y, 0, 0, flags));
+    mResizeState = NOT_RESIZING;
+    if (WinUtils::LogToPhysFactor(mWnd) != oldScale) {
+      ChangedDPI();
+    }
 
     SetThemeRegion();
   }
@@ -1442,12 +1533,11 @@ NS_METHOD nsWindow::Move(double aX, double aY)
 // Resize this component
 NS_METHOD nsWindow::Resize(double aWidth, double aHeight, bool aRepaint)
 {
-  // for top-level windows only, convert coordinates from global display pixels
+  // for top-level windows only, convert coordinates from desktop pixels
   // (the "parent" coordinate space) to the window's device pixel space
-  CSSToLayoutDeviceScale scale = BoundsUseDisplayPixels() ? GetDefaultScale()
-                                    : CSSToLayoutDeviceScale(1.0);
-  int32_t width = NSToIntRound(aWidth * scale.scale);
-  int32_t height = NSToIntRound(aHeight * scale.scale);
+  double scale = BoundsUseDesktopPixels() ? GetDesktopToDeviceScale().scale : 1.0;
+  int32_t width = NSToIntRound(aWidth * scale);
+  int32_t height = NSToIntRound(aHeight * scale);
 
   NS_ASSERTION((width >= 0) , "Negative width passed to nsWindow::Resize");
   NS_ASSERTION((height >= 0), "Negative height passed to nsWindow::Resize");
@@ -1479,8 +1569,12 @@ NS_METHOD nsWindow::Resize(double aWidth, double aHeight, bool aRepaint)
     }
 
     ClearThemeRegion();
+    double oldScale = mDefaultScale;
     VERIFY(::SetWindowPos(mWnd, nullptr, 0, 0,
                           width, GetHeight(height), flags));
+    if (WinUtils::LogToPhysFactor(mWnd) != oldScale) {
+      ChangedDPI();
+    }
     SetThemeRegion();
   }
 
@@ -1494,14 +1588,13 @@ NS_METHOD nsWindow::Resize(double aWidth, double aHeight, bool aRepaint)
 // Resize this component
 NS_METHOD nsWindow::Resize(double aX, double aY, double aWidth, double aHeight, bool aRepaint)
 {
-  // for top-level windows only, convert coordinates from global display pixels
+  // for top-level windows only, convert coordinates from desktop pixels
   // (the "parent" coordinate space) to the window's device pixel space
-  CSSToLayoutDeviceScale scale = BoundsUseDisplayPixels() ? GetDefaultScale()
-                                    : CSSToLayoutDeviceScale(1.0);
-  int32_t x = NSToIntRound(aX * scale.scale);
-  int32_t y = NSToIntRound(aY * scale.scale);
-  int32_t width = NSToIntRound(aWidth * scale.scale);
-  int32_t height = NSToIntRound(aHeight * scale.scale);
+  double scale = BoundsUseDesktopPixels() ? GetDesktopToDeviceScale().scale : 1.0;
+  int32_t x = NSToIntRound(aX * scale);
+  int32_t y = NSToIntRound(aY * scale);
+  int32_t width = NSToIntRound(aWidth * scale);
+  int32_t height = NSToIntRound(aHeight * scale);
 
   NS_ASSERTION((width >= 0),  "Negative width passed to nsWindow::Resize");
   NS_ASSERTION((height >= 0), "Negative height passed to nsWindow::Resize");
@@ -1535,8 +1628,12 @@ NS_METHOD nsWindow::Resize(double aX, double aY, double aWidth, double aHeight, 
     }
 
     ClearThemeRegion();
+    double oldScale = mDefaultScale;
     VERIFY(::SetWindowPos(mWnd, nullptr, x, y,
                           width, GetHeight(height), flags));
+    if (WinUtils::LogToPhysFactor(mWnd) != oldScale) {
+      ChangedDPI();
+    }
     if (mTransitionWnd) {
       // If we have a fullscreen transition window, we need to make
       // it topmost again, otherwise the taskbar may be raised by
@@ -1654,6 +1751,15 @@ NS_METHOD nsWindow::PlaceBehind(nsTopLevelWidgetZPlacement aPlacement,
   return NS_OK;
 }
 
+static UINT
+GetCurrentShowCmd(HWND aWnd)
+{
+  WINDOWPLACEMENT pl;
+  pl.length = sizeof(pl);
+  ::GetWindowPlacement(aWnd, &pl);
+  return pl.showCmd;
+}
+
 // Maximize, minimize or restore the window.
 NS_IMETHODIMP
 nsWindow::SetSizeMode(nsSizeMode aMode) {
@@ -1695,14 +1801,11 @@ nsWindow::SetSizeMode(nsSizeMode aMode) {
         mode = SW_RESTORE;
     }
 
-    WINDOWPLACEMENT pl;
-    pl.length = sizeof(pl);
-    ::GetWindowPlacement(mWnd, &pl);
     // Don't call ::ShowWindow if we're trying to "restore" a window that is
     // already in a normal state.  Prevents a bug where snapping to one side
     // of the screen and then minimizing would cause Windows to forget our
     // window's correct restored position/size.
-    if( !(pl.showCmd == SW_SHOWNORMAL && mode == SW_RESTORE) ) {
+    if(!(GetCurrentShowCmd(mWnd) == SW_SHOWNORMAL && mode == SW_RESTORE)) {
       ::ShowWindow(mWnd, mode);
     }
     // we activate here to ensure that the right child window is focused
@@ -1713,21 +1816,23 @@ nsWindow::SetSizeMode(nsSizeMode aMode) {
 }
 
 // Constrain a potential move to fit onscreen
-// Position (aX, aY) is specified in Windows screen (logical) pixels
+// Position (aX, aY) is specified in Windows screen (logical) pixels,
+// except when using per-monitor DPI, in which case it's device pixels.
 NS_METHOD nsWindow::ConstrainPosition(bool aAllowSlop,
                                       int32_t *aX, int32_t *aY)
 {
   if (!mIsTopWidgetWindow) // only a problem for top-level windows
     return NS_OK;
 
-  double dpiScale = GetDefaultScale().scale;
+  double dpiScale = GetDesktopToDeviceScale().scale;
 
-  // we need to use the window size in logical screen pixels
+  // We need to use the window size in the kind of pixels used for window-
+  // manipulation APIs.
   int32_t logWidth = std::max<int32_t>(NSToIntRound(mBounds.width / dpiScale), 1);
   int32_t logHeight = std::max<int32_t>(NSToIntRound(mBounds.height / dpiScale), 1);
 
   /* get our playing field. use the current screen, or failing that
-    for any reason, use device caps for the default screen. */
+  for any reason, use device caps for the default screen. */
   RECT screenRect;
 
   nsCOMPtr<nsIScreenManager> screenmgr = do_GetService(sScreenManagerContractID);
@@ -1929,7 +2034,7 @@ NS_METHOD nsWindow::GetBounds(LayoutDeviceIntRect& aRect)
     aRect.x = r.left;
     aRect.y = r.top;
   } else {
-    aRect = LayoutDeviceIntRect::FromUnknownRect(mBounds);
+    aRect = mBounds;
   }
   return NS_OK;
 }
@@ -1965,7 +2070,7 @@ NS_METHOD nsWindow::GetScreenBounds(LayoutDeviceIntRect& aRect)
     aRect.x = r.left;
     aRect.y = r.top;
   } else {
-    aRect = LayoutDeviceIntRect::FromUnknownRect(mBounds);
+    aRect = mBounds;
   }
   return NS_OK;
 }
@@ -2223,6 +2328,18 @@ nsWindow::UpdateNonClientMargins(int32_t aSizeMode, bool aReflowWindow)
     // maximized.  If we try to mess with the frame sizes by setting these
     // offsets to positive values, our client area will fall off the screen.
     mNonClientOffset.top = mCaptionHeight;
+    // Adjust for the case where the window is maximized on a screen with DPI
+    // different from the primary monitor; this seems to be linked to Windows'
+    // failure to scale the non-client area the same as the client area.
+    // Any modifications here need to be tested for both high- and low-dpi
+    // secondary displays, and for windows both with and without the titlebar
+    // and/or menubar displayed.
+    double ourScale = WinUtils::LogToPhysFactor(mWnd);
+    double primaryScale =
+      WinUtils::LogToPhysFactor(WinUtils::GetPrimaryMonitor());
+    mNonClientOffset.top +=
+      NSToIntRound(mVertResizeMargin * (ourScale - primaryScale));
+
     mNonClientOffset.bottom = 0;
     mNonClientOffset.left = 0;
     mNonClientOffset.right = 0;
@@ -3013,13 +3130,13 @@ nsWindow::PrepareForFullscreenTransition(nsISupports** aData)
   nsCOMPtr<nsIScreen> screen = GetWidgetScreen();
   int32_t x, y, width, height;
   screen->GetRectDisplayPix(&x, &y, &width, &height);
-  MOZ_ASSERT(BoundsUseDisplayPixels(),
+  MOZ_ASSERT(BoundsUseDesktopPixels(),
              "Should only be called on top-level window");
-  CSSToLayoutDeviceScale scale = GetDefaultScale();
-  initData.mBounds.x = NSToIntRound(x * scale.scale);
-  initData.mBounds.y = NSToIntRound(y * scale.scale);
-  initData.mBounds.width = NSToIntRound(width * scale.scale);
-  initData.mBounds.height = NSToIntRound(height * scale.scale);
+  double scale = GetDesktopToDeviceScale().scale; // XXX or GetDefaultScale() ?
+  initData.mBounds.x = NSToIntRound(x * scale);
+  initData.mBounds.y = NSToIntRound(y * scale);
+  initData.mBounds.width = NSToIntRound(width * scale);
+  initData.mBounds.height = NSToIntRound(height * scale);
 
   // Create a semaphore for synchronizing the window handle which will
   // be created by the transition thread and used by the main thread for
@@ -3596,92 +3713,6 @@ nsWindow::OnDefaultButtonLoaded(const LayoutDeviceIntRect& aButtonRect)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsWindow::OverrideSystemMouseScrollSpeed(double aOriginalDeltaX,
-                                         double aOriginalDeltaY,
-                                         double& aOverriddenDeltaX,
-                                         double& aOverriddenDeltaY)
-{
-  // The default vertical and horizontal scrolling speed is 3, this is defined
-  // on the document of SystemParametersInfo in MSDN.
-  const uint32_t kSystemDefaultScrollingSpeed = 3;
-
-  double absOriginDeltaX = Abs(aOriginalDeltaX);
-  double absOriginDeltaY = Abs(aOriginalDeltaY);
-
-  // Compute the simple overridden speed.
-  double absComputedOverriddenDeltaX, absComputedOverriddenDeltaY;
-  nsresult rv =
-    nsBaseWidget::OverrideSystemMouseScrollSpeed(absOriginDeltaX,
-                                                 absOriginDeltaY,
-                                                 absComputedOverriddenDeltaX,
-                                                 absComputedOverriddenDeltaY);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  aOverriddenDeltaX = aOriginalDeltaX;
-  aOverriddenDeltaY = aOriginalDeltaY;
-
-  if (absComputedOverriddenDeltaX == absOriginDeltaX &&
-      absComputedOverriddenDeltaY == absOriginDeltaY) {
-    // We don't override now.
-    return NS_OK;
-  }
-
-  // Otherwise, we should check whether the user customized the system settings
-  // or not.  If the user did it, we should respect the will.
-  UINT systemSpeed;
-  if (!::SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &systemSpeed, 0)) {
-    return NS_ERROR_FAILURE;
-  }
-  // The default vertical scrolling speed is 3, this is defined on the document
-  // of SystemParametersInfo in MSDN.
-  if (systemSpeed != kSystemDefaultScrollingSpeed) {
-    return NS_OK;
-  }
-
-  // Only Vista and later, Windows has the system setting of horizontal
-  // scrolling by the mouse wheel.
-  if (IsVistaOrLater()) {
-    if (!::SystemParametersInfo(SPI_GETWHEELSCROLLCHARS, 0, &systemSpeed, 0)) {
-      return NS_ERROR_FAILURE;
-    }
-    // The default horizontal scrolling speed is 3, this is defined on the
-    // document of SystemParametersInfo in MSDN.
-    if (systemSpeed != kSystemDefaultScrollingSpeed) {
-      return NS_OK;
-    }
-  }
-
-  // Limit the overridden delta value from the system settings.  The mouse
-  // driver might accelerate the scrolling speed already.  If so, we shouldn't
-  // override the scrolling speed for preventing the unexpected high speed
-  // scrolling.
-  double absDeltaLimitX, absDeltaLimitY;
-  rv =
-    nsBaseWidget::OverrideSystemMouseScrollSpeed(kSystemDefaultScrollingSpeed,
-                                                 kSystemDefaultScrollingSpeed,
-                                                 absDeltaLimitX,
-                                                 absDeltaLimitY);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // If the given delta is larger than our computed limitation value, the delta
-  // was accelerated by the mouse driver.  So, we should do nothing here.
-  if (absDeltaLimitX <= absOriginDeltaX || absDeltaLimitY <= absOriginDeltaY) {
-    return NS_OK;
-  }
-
-  aOverriddenDeltaX = std::min(absComputedOverriddenDeltaX, absDeltaLimitX);
-  aOverriddenDeltaY = std::min(absComputedOverriddenDeltaY, absDeltaLimitY);
-
-  if (aOriginalDeltaX < 0) {
-    aOverriddenDeltaX *= -1;
-  }
-  if (aOriginalDeltaY < 0) {
-    aOverriddenDeltaY *= -1;
-  }
-  return NS_OK;
-}
-
 already_AddRefed<mozilla::gfx::DrawTarget>
 nsWindow::StartRemoteDrawing()
 {
@@ -3761,7 +3792,7 @@ nsWindow::UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeometries)
     RECT rect;
     ::GetWindowRect(mWnd, &rect);
     // We want 1 pixel of border for every whole 100% of scaling
-    double borderSize = RoundDown(GetDefaultScale().scale);
+    double borderSize = std::min(1, RoundDown(GetDesktopToDeviceScale().scale));
     clearRegion.Or(clearRegion, nsIntRect(0, 0, rect.right - rect.left, borderSize));
   }
 
@@ -4934,13 +4965,13 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
         //
         // To do this we take mPresentLock in nsWindow::PreRender and
         // if that lock is taken we wait before doing WM_SETTEXT
-        EnterCriticalSection(&mPresentLock);
+        mPresentLock.Enter();
         DWORD style = GetWindowLong(mWnd, GWL_STYLE);
         SetWindowLong(mWnd, GWL_STYLE, style & ~WS_VISIBLE);
         *aRetValue = CallWindowProcW(GetPrevWindowProc(), mWnd,
                                      msg, wParam, lParam);
         SetWindowLong(mWnd, GWL_STYLE, style);
-        LeaveCriticalSection(&mPresentLock);
+        mPresentLock.Leave();
 
         return true;
       }
@@ -5196,18 +5227,11 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
                                     WidgetMouseEvent::eLeftButton :
                                     WidgetMouseEvent::eRightButton,
                                   MOUSE_INPUT_SOURCE());
-      if (lParam != -1 && !result && mCustomNonClient) {
-        WidgetMouseEvent event(true, eMouseHitTest, this,
-                               WidgetMouseEvent::eReal,
-                               WidgetMouseEvent::eNormal);
-        event.refPoint = LayoutDeviceIntPoint(GET_X_LPARAM(pos), GET_Y_LPARAM(pos));
-        event.inputSource = MOUSE_INPUT_SOURCE();
-        event.mFlags.mOnlyChromeDispatch = true;
-        if (DispatchWindowEvent(&event)) {
-          // Blank area hit, throw up the system menu.
-          DisplaySystemMenu(mWnd, mSizeMode, mIsRTL, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-          result = true;
-        }
+      if (lParam != -1 && !result && mCustomNonClient &&
+          mDraggableRegion.Contains(GET_X_LPARAM(pos), GET_Y_LPARAM(pos))) {
+        // Blank area hit, throw up the system menu.
+        DisplaySystemMenu(mWnd, mSizeMode, mIsRTL, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        result = true;
       }
     }
     break;
@@ -5316,6 +5340,29 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
       DispatchPendingEvents();
       break;
 
+    // Windows doesn't provide to customize the behavior of 4th nor 5th button
+    // of mouse.  If 5-button mouse works with standard mouse deriver of
+    // Windows, users cannot disable 4th button (browser back) nor 5th button
+    // (browser forward).  We should allow to do it with our prefs since we can
+    // prevent Windows to generate WM_APPCOMMAND message if WM_XBUTTONUP
+    // messages are not sent to DefWindowProc.
+    case WM_XBUTTONDOWN:
+    case WM_XBUTTONUP:
+    case WM_NCXBUTTONDOWN:
+    case WM_NCXBUTTONUP:
+      *aRetValue = TRUE;
+      switch (GET_XBUTTON_WPARAM(wParam)) {
+        case XBUTTON1:
+          result = !Preferences::GetBool("mousebutton.4th.enabled", true);
+          break;
+        case XBUTTON2:
+          result = !Preferences::GetBool("mousebutton.5th.enabled", true);
+          break;
+        default:
+          break;
+      }
+      break;
+
     case WM_SIZING:
     {
       // When we get WM_ENTERSIZEMOVE we don't know yet if we're in a live
@@ -5345,13 +5392,12 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
     case WM_EXITSIZEMOVE:
     {
       if (mResizeState == RESIZING) {
-        mResizeState = NOT_RESIZING;
         nsCOMPtr<nsIObserverService> observerService = mozilla::services::GetObserverService();
-
         if (observerService) {
           observerService->NotifyObservers(nullptr, "live-resize-end", nullptr);
         }
       }
+      mResizeState = NOT_RESIZING;
 
       if (!sIsInMouseCapture) {
         NotifySizeMoveDone();
@@ -5517,6 +5563,7 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
         }
       }
     }
+    break;
 #endif
 
     case WM_SYSCOMMAND:
@@ -5527,8 +5574,10 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
         ::ShowWindow(mWnd, SW_SHOWMINIMIZED);
         result = true;
       }
-	  
-      if (mSizeMode == nsSizeMode_Fullscreen && filteredWParam == SC_RESTORE) {
+
+      if (mSizeMode == nsSizeMode_Fullscreen &&
+          filteredWParam == SC_RESTORE &&
+          GetCurrentShowCmd(mWnd) != SW_SHOWMINIMIZED) {
         MakeFullScreen(false);
         result = true;
       }
@@ -5556,6 +5605,14 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
     UpdateGlass();
     Invalidate(true, true, true);
     break;
+
+  case WM_DPICHANGED:
+  {
+    LPRECT rect = (LPRECT) lParam;
+    OnDPIChanged(rect->left, rect->top, rect->right - rect->left,
+                 rect->bottom - rect->top);
+    break;
+  }
 
   case WM_UPDATEUISTATE:
   {
@@ -5701,6 +5758,15 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
       DispatchWindowEvent(&command);
       *aRetValue = (LRESULT)(command.mSucceeded && command.mIsEnabled);
       result = true;
+    }
+    break;
+
+    case MOZ_WM_SKEWFIX:
+    {
+      TimeStamp skewStamp;
+      if (CurrentWindowsTimeGetter::GetAndClearBackwardsSkewStamp(wParam, &skewStamp)) {
+        TimeConverter().CompensateForBackwardsSkew(::GetMessageTime(), skewStamp);
+      }
     }
     break;
 
@@ -5876,24 +5942,11 @@ nsWindow::ClientMarginHitTestPoint(int32_t mx, int32_t my)
     if (pt.x == mCachedHitTestPoint.x && pt.y == mCachedHitTestPoint.y &&
         TimeStamp::Now() - mCachedHitTestTime < TimeDuration::FromMilliseconds(HITTEST_CACHE_LIFETIME_MS)) {
       return mCachedHitTestResult;
-    } else if (mDraggableRegion.Contains(pt.x, pt.y)) {
+    }
+    if (mDraggableRegion.Contains(pt.x, pt.y)) {
       testResult = HTCAPTION;
     } else {
-      WidgetMouseEvent event(true, eMouseHitTest, this,
-                             WidgetMouseEvent::eReal,
-                             WidgetMouseEvent::eNormal);
-      event.refPoint = LayoutDeviceIntPoint(pt.x, pt.y);
-      event.inputSource = MOUSE_INPUT_SOURCE();
-      event.mFlags.mOnlyChromeDispatch = true;
-      bool result = ConvertStatus(DispatchInputEvent(&event));
-      if (result) {
-        // The mouse is over a blank area
-        testResult = testResult == HTCLIENT ? HTCAPTION : testResult;
-      } else {
-        // There's content over the mouse pointer. Set HTCLIENT
-        // to possibly override a resizer border.
-        testResult = HTCLIENT;
-      }
+      testResult = HTCLIENT;
     }
     mCachedHitTestPoint = pt;
     mCachedHitTestTime = TimeStamp::Now();
@@ -5906,7 +5959,7 @@ nsWindow::ClientMarginHitTestPoint(int32_t mx, int32_t my)
 TimeStamp
 nsWindow::GetMessageTimeStamp(LONG aEventTime)
 {
-  CurrentWindowsTimeGetter getCurrentTime;
+  CurrentWindowsTimeGetter getCurrentTime(mWnd);
   return TimeConverter().GetTimeStampFromSystemTime(aEventTime,
                                                     getCurrentTime);
 }
@@ -6146,7 +6199,7 @@ void nsWindow::OnWindowPosChanged(WINDOWPOS* wp)
       default:
           MOZ_LOG(gWindowsLog, LogLevel::Info, ("*** mSizeMode: ??????\n"));
         break;
-    };
+    }
 #endif
 
     if (mWidgetListener)
@@ -6823,6 +6876,37 @@ nsWindow::OnSysColorChanged()
   }
 }
 
+void
+nsWindow::OnDPIChanged(int32_t x, int32_t y, int32_t width, int32_t height)
+{
+  if (DefaultScaleOverride() > 0.0) {
+    return;
+  }
+  double oldScale = mDefaultScale;
+  mDefaultScale = -1.0; // force recomputation of scale factor
+  double newScale = GetDefaultScaleInternal();
+  if (mResizeState != NOT_RESIZING) {
+    // We want to try and maintain the size of the client area, rather than
+    // the overall size of the window including non-client area, so we prefer
+    // to calculate the new size instead of using Windows' suggested values.
+    if (oldScale > 0.0) {
+      double ratio = newScale / oldScale;
+      LayoutDeviceIntRect cr, sr;
+      GetClientBounds(cr);
+      GetScreenBounds(sr);
+      int32_t w = sr.width - cr.width + NSToIntRound(cr.width * ratio);
+      int32_t h = sr.height - cr.height + NSToIntRound(cr.height * ratio);
+      // Adjust x and y to preserve the center point of the suggested rect.
+      x -= (w - width) / 2;
+      y -= (h - height) / 2;
+      width = w;
+      height = h;
+    }
+    Resize(x, y, width, height, true);
+  }
+  ChangedDPI();
+}
+
 /**************************************************************
  **************************************************************
  **
@@ -6939,7 +7023,7 @@ void nsWindow::ResizeTranslucentWindow(int32_t aNewWidth, int32_t aNewHeight, bo
     return;
 
   RefPtr<gfxWindowsSurface> newSurface =
-    new gfxWindowsSurface(IntSize(aNewWidth, aNewHeight), gfxImageFormat::ARGB32);
+    new gfxWindowsSurface(IntSize(aNewWidth, aNewHeight), SurfaceFormat::A8R8G8B8_UINT32);
   mTransparentSurface = newSurface;
   mMemoryDC = newSurface->GetDC();
 }
@@ -7731,13 +7815,13 @@ bool nsWindow::PreRender(LayerManagerComposite*)
   // Using PreRender is unnecessarily pessimistic because
   // we technically only need to block during the present call
   // not all of compositor rendering
-  EnterCriticalSection(&mPresentLock);
+  mPresentLock.Enter();
   return true;
 }
 
 void nsWindow::PostRender(LayerManagerComposite*)
 {
-  LeaveCriticalSection(&mPresentLock);
+  mPresentLock.Leave();
 }
 
 bool

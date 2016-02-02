@@ -100,8 +100,7 @@ FetchEvent::Constructor(const GlobalObject& aGlobal,
   bool trusted = e->Init(owner);
   e->InitEvent(aType, aOptions.mBubbles, aOptions.mCancelable);
   e->SetTrusted(trusted);
-  e->mRequest = aOptions.mRequest.WasPassed() ?
-      &aOptions.mRequest.Value() : nullptr;
+  e->mRequest = aOptions.mRequest;
   e->mClientId = aOptions.mClientId;
   e->mIsReload = aOptions.mIsReload;
   return e.forget();
@@ -210,6 +209,12 @@ public:
 
     rv = mChannel->FinishSynthesizedResponse(mResponseURLSpec);
     NS_WARN_IF_FALSE(NS_SUCCEEDED(rv), "Failed to finish synthesized response");
+
+    nsCOMPtr<nsIObserverService> obsService = services::GetObserverService();
+    if (obsService) {
+      obsService->NotifyObservers(underlyingChannel, "service-worker-synthesized-response", nullptr);
+    }
+
     return rv;
   }
 
@@ -563,7 +568,8 @@ RespondWithHandler::ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValu
     return;
   }
 
-  MOZ_ASSERT_IF(mIsClientRequest, mRequestMode == RequestMode::Same_origin);
+  MOZ_ASSERT_IF(mIsClientRequest, mRequestMode == RequestMode::Same_origin ||
+                                  mRequestMode == RequestMode::Navigate);
 
   if (response->Type() == ResponseType::Opaque && mRequestMode != RequestMode::No_cors) {
     uint32_t mode = static_cast<uint32_t>(mRequestMode);
@@ -875,11 +881,20 @@ ExtendableEvent::GetPromise()
   MOZ_ASSERT(worker);
   worker->AssertIsOnWorkerThread();
 
-  GlobalObject global(worker->GetJSContext(), worker->GlobalScope()->GetGlobalJSObject());
+  nsIGlobalObject* globalObj = worker->GlobalScope();
+
+  AutoJSAPI jsapi;
+  if (!jsapi.Init(globalObj)) {
+    return nullptr;
+  }
+  jsapi.TakeOwnershipOfErrorReporting();
+  JSContext* cx = jsapi.cx();
+
+  GlobalObject global(cx, globalObj->GetGlobalJSObject());
 
   ErrorResult result;
   RefPtr<Promise> p = Promise::All(global, Move(mPromises), result);
-  if (NS_WARN_IF(result.Failed())) {
+  if (NS_WARN_IF(result.MaybeSetPendingException(cx))) {
     return nullptr;
   }
 

@@ -259,7 +259,7 @@ nsHTMLEditor::GetFirstRow(nsIDOMElement* aTableElement, nsIDOMNode** aRowNode)
     NS_ENSURE_SUCCESS(res, res);
 
     tableChild = nextChild;
-  };
+  }
   // If here, row was not found
   return NS_EDITOR_ELEMENT_NOT_FOUND;
 }
@@ -360,7 +360,7 @@ nsHTMLEditor::GetLastCellInRow(nsIDOMNode* aRowNode, nsIDOMNode** aCellNode)
     NS_ENSURE_SUCCESS(res, res);
 
     rowChild = previousChild;
-  };
+  }
   if (rowChild)
   {
     *aCellNode = rowChild.get();
@@ -599,6 +599,7 @@ nsHTMLEditor::InsertTableRow(int32_t aNumber, bool aAfter)
     // We are adding a new row after all others
     // If it weren't for colspan=0 effect,
     // we could simply use colCount for number of new cells...
+    // XXX colspan=0 support has now been removed in table layout so maybe this can be cleaned up now? (bug 1243183)
     cellsInRow = colCount;
 
     // ...but we must compensate for all cells with rowSpan = 0 in the last row

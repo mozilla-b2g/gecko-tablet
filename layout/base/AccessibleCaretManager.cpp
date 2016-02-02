@@ -65,7 +65,11 @@ std::ostream& operator<<(std::ostream& aStream,
 #undef AC_PROCESS_ENUM_TO_STREAM
 
 /*static*/ bool
+AccessibleCaretManager::sSelectionBarEnabled = false;
+/*static*/ bool
 AccessibleCaretManager::sCaretsExtendedVisibility = false;
+/*static*/ bool
+AccessibleCaretManager::sCaretsScriptUpdates = false;
 /*static*/ bool
 AccessibleCaretManager::sHapticFeedback = false;
 
@@ -83,8 +87,12 @@ AccessibleCaretManager::AccessibleCaretManager(nsIPresShell* aPresShell)
 
   static bool addedPrefs = false;
   if (!addedPrefs) {
+    Preferences::AddBoolVarCache(&sSelectionBarEnabled,
+                                 "layout.accessiblecaret.bar.enabled");
     Preferences::AddBoolVarCache(&sCaretsExtendedVisibility,
                                  "layout.accessiblecaret.extendedvisibility");
+    Preferences::AddBoolVarCache(&sCaretsScriptUpdates,
+      "layout.accessiblecaret.allow_script_change_updates");
     Preferences::AddBoolVarCache(&sHapticFeedback,
                                  "layout.accessiblecaret.hapticfeedback");
     addedPrefs = true;
@@ -108,25 +116,17 @@ AccessibleCaretManager::OnSelectionChanged(nsIDOMDocument* aDoc,
   }
 
   // eSetSelection events from the Fennec widget IME can be generated
-  // by autoSuggest, autoCorrect, and nsCaret position changes.
+  // by autoSuggest / autoCorrect composition changes, or by TYPE_REPLACE_TEXT
+  // actions, either positioning cursor for text insert, or selecting
+  // text-to-be-replaced. None should affect AccessibleCaret visibility.
   if (aReason & nsISelectionListener::IME_REASON) {
-    if (GetCaretMode() == CaretMode::Cursor) {
-      // Caret position changes need us to open/update,
-      // or hide the AccessibleCaret.
-      FlushLayout();
-      UpdateCarets();
-    } else {
-      // Ignore transient autoSuggest selection styling,
-      // or autoCorrect text updates.
-    }
     return NS_OK;
   }
 
   // Move the cursor by Javascript / or unknown internal.
   if (aReason == nsISelectionListener::NO_REASON) {
-    // Extended visibility won't make hidden carets visible. Visible carets will
-    // be updated or hidden as appropriate.
-    if (sCaretsExtendedVisibility &&
+    // Update visible carets, if javascript changes are allowed.
+    if (sCaretsScriptUpdates &&
         (mFirstCaret->IsLogicallyVisible() || mSecondCaret->IsLogicallyVisible())) {
         FlushLayout();
         UpdateCarets();
@@ -319,7 +319,7 @@ AccessibleCaretManager::UpdateCaretsForSelectionMode()
                               int32_t aOffset) -> PositionChangedResult
   {
     PositionChangedResult result = aCaret->SetPosition(aFrame, aOffset);
-    aCaret->SetSelectionBarEnabled(true);
+    aCaret->SetSelectionBarEnabled(sSelectionBarEnabled);
 
     switch (result) {
       case PositionChangedResult::NotChanged:
@@ -452,6 +452,11 @@ AccessibleCaretManager::TapCaret(const nsPoint& aPoint)
 nsresult
 AccessibleCaretManager::SelectWordOrShortcut(const nsPoint& aPoint)
 {
+  auto UpdateCaretsWithHapticFeedback = [this] {
+    UpdateCarets();
+    ProvideHapticFeedback();
+  };
+
   if (!mPresShell) {
     return NS_ERROR_UNEXPECTED;
   }
@@ -484,8 +489,7 @@ AccessibleCaretManager::SelectWordOrShortcut(const nsPoint& aPoint)
     ChangeFocusToOrClearOldFocus(focusableFrame);
     // We need to update carets to get correct information before dispatching
     // CaretStateChangedEvent.
-    UpdateCarets();
-    ProvideHapticFeedback();
+    UpdateCaretsWithHapticFeedback();
     DispatchCaretStateChangedEvent(CaretChangedReason::Longpressonemptycontent);
     return NS_OK;
   }
@@ -510,13 +514,22 @@ AccessibleCaretManager::SelectWordOrShortcut(const nsPoint& aPoint)
   // ptFrame is selectable. Now change the focus.
   ChangeFocusToOrClearOldFocus(focusableFrame);
 
+  if (GetCaretMode() == CaretMode::Selection &&
+      !mFirstCaret->IsLogicallyVisible() && !mSecondCaret->IsLogicallyVisible()) {
+    // We have a selection while both carets have Appearance::None because of
+    // previous operations like blur event. Just update carets on the selection
+    // without selecting a new word.
+    AC_LOG("%s: UpdateCarets() for current selection", __FUNCTION__);
+    UpdateCaretsWithHapticFeedback();
+    return NS_OK;
+  }
+
   // Then try select a word under point.
   nsPoint ptInFrame = aPoint;
   nsLayoutUtils::TransformPoint(rootFrame, ptFrame, ptInFrame);
 
   nsresult rv = SelectWord(ptFrame, ptInFrame);
-  UpdateCarets();
-  ProvideHapticFeedback();
+  UpdateCaretsWithHapticFeedback();
 
   return rv;
 }
@@ -704,7 +717,7 @@ AccessibleCaretManager::ChangeFocusToOrClearOldFocus(nsIFrame* aFrame) const
     nsCOMPtr<nsIDOMElement> focusableElement = do_QueryInterface(focusableContent);
     fm->SetFocus(focusableElement, nsIFocusManager::FLAG_BYMOUSE);
   } else {
-    nsIDOMWindow* win = mPresShell->GetDocument()->GetWindow();
+    nsPIDOMWindowOuter* win = mPresShell->GetDocument()->GetWindow();
     if (win) {
       fm->ClearFocus(win);
       fm->SetFocusedWindow(win);

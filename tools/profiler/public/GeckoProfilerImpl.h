@@ -40,9 +40,9 @@ namespace mozilla {
 class TimeStamp;
 } // namespace mozilla
 
-extern mozilla::ThreadLocal<PseudoStack *> tlsPseudoStack;
-extern mozilla::ThreadLocal<GeckoSampler *> tlsTicker;
-extern mozilla::ThreadLocal<void *> tlsStackTop;
+extern MOZ_THREAD_LOCAL(PseudoStack *) tlsPseudoStack;
+extern MOZ_THREAD_LOCAL(GeckoSampler *) tlsTicker;
+extern MOZ_THREAD_LOCAL(void *) tlsStackTop;
 extern bool stack_key_initialized;
 
 #ifndef SAMPLE_FUNCTION_NAME
@@ -411,27 +411,31 @@ protected:
   const char* mInfo;
 };
 
-class MOZ_STACK_CLASS SamplerStackFrameRAII {
+class MOZ_RAII SamplerStackFrameRAII {
 public:
   // we only copy the strings at save time, so to take multiple parameters we'd need to copy them then.
   SamplerStackFrameRAII(const char *aInfo,
-    js::ProfileEntry::Category aCategory, uint32_t line)
+    js::ProfileEntry::Category aCategory, uint32_t line
+    MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
   {
+    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     mHandle = mozilla_sampler_call_enter(aInfo, aCategory, this, false, line);
   }
   ~SamplerStackFrameRAII() {
     mozilla_sampler_call_exit(mHandle);
   }
 private:
+  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
   void* mHandle;
 };
 
 static const int SAMPLER_MAX_STRING = 128;
-class MOZ_STACK_CLASS SamplerStackFramePrintfRAII {
+class MOZ_RAII SamplerStackFramePrintfRAII {
 public:
   // we only copy the strings at save time, so to take multiple parameters we'd need to copy them then.
   SamplerStackFramePrintfRAII(const char *aInfo,
     js::ProfileEntry::Category aCategory, uint32_t line, const char *aFormat, ...)
+    : mHandle(nullptr)
   {
     if (profiler_is_active() && !profiler_in_privacy_mode()) {
       va_list args;

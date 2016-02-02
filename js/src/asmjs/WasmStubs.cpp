@@ -30,10 +30,6 @@ using namespace js::wasm;
 using mozilla::ArrayLength;
 using mozilla::MakeEnumeratedRange;
 
-typedef Vector<MIRType, 8, SystemAllocPolicy> MIRTypeVector;
-typedef ABIArgIter<MIRTypeVector> ABIArgMIRTypeIter;
-typedef ABIArgIter<MallocSig::ArgVector> ABIArgValTypeIter;
-
 static void
 AssertStackAlignment(MacroAssembler& masm, uint32_t alignment, uint32_t addBeforeAssert = 0)
 {
@@ -102,7 +98,7 @@ static bool
 GenerateEntry(ModuleGenerator& mg, unsigned exportIndex, bool usesHeap)
 {
     MacroAssembler& masm = mg.masm();
-    const MallocSig& sig = mg.exportSig(exportIndex);
+    const Sig& sig = mg.exportSig(exportIndex);
 
     masm.haltingAlign(CodeAlignment);
 
@@ -240,7 +236,7 @@ GenerateEntry(ModuleGenerator& mg, unsigned exportIndex, bool usesHeap)
     // Call into the real function.
     masm.assertStackAlignment(AsmJSStackAlignment);
     Label target;
-    target.bind(mg.funcEntryOffsets()[mg.exportFuncIndex(exportIndex)]);
+    target.bind(mg.exportEntryOffset(exportIndex));
     masm.call(CallSiteDesc(CallSiteDesc::Relative), &target);
 
     // Recover the stack pointer value before dynamic alignment.
@@ -262,7 +258,7 @@ GenerateEntry(ModuleGenerator& mg, unsigned exportIndex, bool usesHeap)
         MOZ_CRASH("no int64 in asm.js");
       case ExprType::F32:
         masm.convertFloat32ToDouble(ReturnFloat32Reg, ReturnDoubleReg);
-        // Fall through as ReturnDoubleReg now contains a Double
+        MOZ_FALLTHROUGH; // as ReturnDoubleReg now contains a Double
       case ExprType::F64:
         masm.canonicalizeDouble(ReturnDoubleReg);
         masm.storeDouble(ReturnDoubleReg, Address(argv, 0));
@@ -276,6 +272,8 @@ GenerateEntry(ModuleGenerator& mg, unsigned exportIndex, bool usesHeap)
         // We don't have control on argv alignment, do an unaligned access.
         masm.storeUnalignedFloat32x4(ReturnSimd128Reg, Address(argv, 0));
         break;
+      case ExprType::Limit:
+        MOZ_CRASH("Limit");
     }
 
     // Restore clobbered non-volatile registers of the caller.
@@ -293,7 +291,7 @@ GenerateEntry(ModuleGenerator& mg, unsigned exportIndex, bool usesHeap)
 }
 
 static void
-FillArgumentArray(MacroAssembler& masm, const MallocSig::ArgVector& args, unsigned argOffset,
+FillArgumentArray(MacroAssembler& masm, const ValTypeVector& args, unsigned argOffset,
                   unsigned offsetToCallerStackArgs, Register scratch)
 {
     for (ABIArgValTypeIter i(args); !i.done(); i++) {
@@ -340,7 +338,7 @@ GenerateInterpExitStub(ModuleGenerator& mg, unsigned importIndex, Label* throwLa
                        ProfilingOffsets* offsets)
 {
     MacroAssembler& masm = mg.masm();
-    const MallocSig& sig = mg.importSig(importIndex);
+    const Sig& sig = *mg.import(importIndex).sig;
 
     masm.setFramePushed(0);
 
@@ -420,6 +418,8 @@ GenerateInterpExitStub(ModuleGenerator& mg, unsigned importIndex, Label* throwLa
       case ExprType::F32x4:
       case ExprType::B32x4:
         MOZ_CRASH("SIMD types shouldn't be returned from a FFI");
+      case ExprType::Limit:
+        MOZ_CRASH("Limit");
     }
 
     GenerateExitEpilogue(masm, framePushed, ExitReason::ImportInterp, offsets);
@@ -445,7 +445,7 @@ GenerateJitExitStub(ModuleGenerator& mg, unsigned importIndex, bool usesHeap,
                     Label* throwLabel, ProfilingOffsets* offsets)
 {
     MacroAssembler& masm = mg.masm();
-    const MallocSig& sig = mg.importSig(importIndex);
+    const Sig& sig = *mg.import(importIndex).sig;
 
     masm.setFramePushed(0);
 
@@ -475,7 +475,7 @@ GenerateJitExitStub(ModuleGenerator& mg, unsigned importIndex, bool usesHeap,
     Register scratch = ABIArgGenerator::NonArgReturnReg1;  // repeatedly clobbered
 
     // 2.1. Get ExitDatum
-    unsigned globalDataOffset = mg.importExitGlobalDataOffset(importIndex);
+    unsigned globalDataOffset = mg.import(importIndex).globalDataOffset;
 #if defined(JS_CODEGEN_X64)
     masm.append(AsmJSGlobalAccess(masm.leaRipRelative(callee), globalDataOffset));
 #elif defined(JS_CODEGEN_X86)
@@ -667,6 +667,8 @@ GenerateJitExitStub(ModuleGenerator& mg, unsigned importIndex, bool usesHeap,
       case ExprType::F32x4:
       case ExprType::B32x4:
         MOZ_CRASH("SIMD types shouldn't be returned from an import");
+      case ExprType::Limit:
+        MOZ_CRASH("Limit");
     }
 
     Label done;
@@ -1074,14 +1076,14 @@ GenerateThrowStub(ModuleGenerator& mg, Label* throwLabel)
 bool
 wasm::GenerateStubs(ModuleGenerator& mg, bool usesHeap)
 {
-    for (unsigned i = 0; i < mg.numDeclaredExports(); i++) {
+    for (unsigned i = 0; i < mg.numExports(); i++) {
         if (!GenerateEntry(mg, i, usesHeap))
             return false;
     }
 
     Label onThrow;
 
-    for (size_t i = 0; i < mg.numDeclaredImports(); i++) {
+    for (size_t i = 0; i < mg.numImports(); i++) {
         ProfilingOffsets interp;
         if (!GenerateInterpExitStub(mg, i, &onThrow, &interp))
             return false;

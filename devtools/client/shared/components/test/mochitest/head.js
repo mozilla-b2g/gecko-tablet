@@ -8,15 +8,6 @@ Cu.import("resource://testing-common/Assert.jsm");
 Cu.import("resource://gre/modules/Task.jsm");
 var { Services } = Cu.import("resource://gre/modules/Services.jsm", {});
 
-// Disable logging for all the tests. Both the debugger server and frontend will
-// be affected by this pref.
-var gEnableLogging = Services.prefs.getBoolPref("devtools.debugger.log");
-Services.prefs.setBoolPref("devtools.debugger.log", false);
-
-// Enable the memory tool for all tests.
-var gMemoryToolEnabled = Services.prefs.getBoolPref("devtools.memory.enabled");
-Services.prefs.setBoolPref("devtools.memory.enabled", true);
-
 var { Promise: promise } = Cu.import("resource://gre/modules/Promise.jsm", {});
 var { require } = Cu.import("resource://gre/modules/devtools/shared/Loader.jsm", {});
 var { gDevTools } = Cu.import("resource:///modules/devtools/gDevTools.jsm", {});
@@ -31,6 +22,59 @@ DevToolsUtils.testing = true;
 var { require: browserRequire } = BrowserLoader("resource://devtools/client/shared/", this);
 
 var EXAMPLE_URL = "http://example.com/browser/browser/devtools/shared/test/";
+
+function forceRender(comp) {
+  return setState(comp, {})
+    .then(() => setState(comp, {}));
+}
+
+// All tests are asynchronous.
+SimpleTest.waitForExplicitFinish();
+
+function onNextAnimationFrame(fn) {
+  return () =>
+    requestAnimationFrame(() =>
+      requestAnimationFrame(fn));
+}
+
+function setState(component, newState) {
+  var deferred = promise.defer();
+  component.setState(newState, onNextAnimationFrame(deferred.resolve));
+  return deferred.promise;
+}
+
+function setProps(component, newState) {
+  var deferred = promise.defer();
+  component.setProps(newState, onNextAnimationFrame(deferred.resolve));
+  return deferred.promise;
+}
+
+function dumpn(msg) {
+  dump(`SHARED-COMPONENTS-TEST: ${msg}\n`);
+}
+
+/**
+ * Tree
+ */
+
+var TEST_TREE_INTERFACE = {
+  getParent: x => TEST_TREE.parent[x],
+  getChildren: x => TEST_TREE.children[x],
+  renderItem: (x, depth, focused, arrow) => "-".repeat(depth) + x + ":" + focused + "\n",
+  getRoots: () => ["A", "M"],
+  getKey: x => "key-" + x,
+  itemHeight: 1,
+  onExpand: x => TEST_TREE.expanded.add(x),
+  onCollapse: x => TEST_TREE.expanded.delete(x),
+  isExpanded: x => TEST_TREE.expanded.has(x),
+};
+
+function isRenderedTree(actual, expectedDescription, msg) {
+  const expected = expectedDescription.map(x => x + "\n").join("");
+  dumpn(`Expected tree:\n${expected}`);
+  dumpn(`Actual tree:\n${actual}`);
+  is(actual, expected, msg);
+}
 
 // Encoding of the following tree/forest:
 //
@@ -83,136 +127,30 @@ var TEST_TREE = {
     M: null,
     N: "M",
     O: "N"
-  }
+  },
+  expanded: new Set(),
 };
 
-var TEST_TREE_INTERFACE = {
-  getParent: x => TEST_TREE.parent[x],
-  getChildren: x => TEST_TREE.children[x],
-  renderItem: (x, depth, focused, arrow) => "-".repeat(depth) + x + ":" + focused + "\n",
-  getRoots: () => ["A", "M"],
-  getKey: x => "key-" + x,
-  itemHeight: 1,
-};
-
-// All tests are asynchronous.
-SimpleTest.waitForExplicitFinish();
-
-SimpleTest.registerCleanupFunction(() => {
-  info("finish() was called, cleaning up...");
-  Services.prefs.setBoolPref("devtools.debugger.log", gEnableLogging);
-  Services.prefs.setBoolPref("devtools.memory.enabled", gMemoryToolEnabled);
-});
-
-function addTab(url) {
-  info("Adding tab: " + url);
-
-  var deferred = promise.defer();
-  var tab = gBrowser.selectedTab = gBrowser.addTab(url);
-  var linkedBrowser = tab.linkedBrowser;
-
-  linkedBrowser.addEventListener("load", function onLoad() {
-    linkedBrowser.removeEventListener("load", onLoad, true);
-    info("Tab added and finished loading: " + url);
-    deferred.resolve(tab);
-  }, true);
-
-  return deferred.promise;
-}
-
-function removeTab(tab) {
-  info("Removing tab.");
-
-  var deferred = promise.defer();
-  var tabContainer = gBrowser.tabContainer;
-
-  tabContainer.addEventListener("TabClose", function onClose(aEvent) {
-    tabContainer.removeEventListener("TabClose", onClose, false);
-    info("Tab removed and finished closing.");
-    deferred.resolve();
-  }, false);
-
-  gBrowser.removeTab(tab);
-  return deferred.promise;
-}
-
-var withTab = Task.async(function* (url, generator) {
-  var tab = yield addTab(url);
-  try {
-    yield* generator(tab);
-  } finally {
-    yield removeTab(tab);
+/**
+ * Frame
+ */
+function checkFrameString (component, file, line, column) {
+  let el = component.getDOMNode();
+  is(el.querySelector(".frame-link-filename").textContent, file);
+  is(+el.querySelector(".frame-link-line").textContent, +line);
+  if (column != null) {
+    is(+el.querySelector(".frame-link-column").textContent, +column);
+    is(el.querySelectorAll(".frame-link-colon").length, 2);
+  } else {
+    is(el.querySelector(".frame-link-column"), null,
+      "Should not render column when none specified");
+    is(el.querySelectorAll(".frame-link-colon").length, 1,
+      "Should only render one colon when no column specified");
   }
-});
-
-var openMemoryTool = Task.async(function* (tab) {
-  info("Initializing a memory panel.");
-
-  var target = TargetFactory.forTab(tab);
-  var debuggee = target.window.wrappedJSObject;
-
-  yield target.makeRemote();
-
-  var toolbox = yield gDevTools.showToolbox(target, "memory");
-  var panel = toolbox.getCurrentPanel();
-  return [target, debuggee, panel];
-});
-
-var closeMemoryTool = Task.async(function* (panel) {
-  info("Closing a memory panel");
-  yield panel._toolbox.destroy();
-});
-
-var withMemoryTool = Task.async(function* (tab, generator) {
-  var [target, debuggee, panel] = yield openMemoryTool(tab);
-  try {
-    yield* generator(target, debuggee, panel);
-  } finally {
-    yield closeMemoryTool(panel);
-  }
-});
-
-var withTabAndMemoryTool = Task.async(function* (url, generator) {
-  yield withTab(url, function* (tab) {
-    yield withMemoryTool(tab, function* (target, debuggee, panel) {
-      yield* generator(tab, target, debuggee, panel);
-    });
-  });
-});
-
-function reload(target) {
-  info("Reloading tab.");
-  var deferred = promise.defer();
-  target.once("navigate", deferred.resolve);
-  target.activeTab.reload();
-  return deferred.promise;
 }
 
-function onNextAnimationFrame(fn) {
-  return () =>
-    requestAnimationFrame(() =>
-      requestAnimationFrame(fn));
-}
-
-function setState(component, newState) {
-  var deferred = promise.defer();
-  component.setState(newState, onNextAnimationFrame(deferred.resolve));
-  return deferred.promise;
-}
-
-function setProps(component, newState) {
-  var deferred = promise.defer();
-  component.setProps(newState, onNextAnimationFrame(deferred.resolve));
-  return deferred.promise;
-}
-
-function dumpn(msg) {
-  dump(`MEMORY-TEST: ${msg}\n`);
-}
-
-function isRenderedTree(actual, expectedDescription, msg) {
-  const expected = expectedDescription.map(x => x + "\n").join("");
-  dumpn(`Expected tree:\n${expected}`);
-  dumpn(`Actual tree:\n${actual}`);
-  is(actual, expected, msg);
+function checkFrameTooltips (component, mainTooltip, linkTooltip) {
+  let el = component.getDOMNode();
+  is(el.getAttribute("title"), mainTooltip);
+  is(el.querySelector("a.frame-link-filename").getAttribute("title"), linkTooltip);
 }

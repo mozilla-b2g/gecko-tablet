@@ -26,11 +26,11 @@
 
 #include "js/CallArgs.h"
 #include "js/Class.h"
+#include "js/GCVector.h"
 #include "js/HashTable.h"
 #include "js/Id.h"
 #include "js/Principals.h"
 #include "js/RootingAPI.h"
-#include "js/TraceableVector.h"
 #include "js/TracingAPI.h"
 #include "js/Utility.h"
 #include "js/Value.h"
@@ -218,9 +218,9 @@ typedef AutoVectorRooter<Value> AutoValueVector;
 typedef AutoVectorRooter<jsid> AutoIdVector;
 typedef AutoVectorRooter<JSObject*> AutoObjectVector;
 
-using ValueVector = js::TraceableVector<JS::Value>;
-using IdVector = js::TraceableVector<jsid>;
-using ScriptVector = js::TraceableVector<JSScript*>;
+using ValueVector = js::GCVector<JS::Value>;
+using IdVector = js::GCVector<jsid>;
+using ScriptVector = js::GCVector<JSScript*>;
 
 template<class Key, class Value>
 class MOZ_RAII AutoHashMapRooter : protected AutoGCRooter
@@ -848,7 +848,9 @@ class MOZ_STACK_CLASS SourceBufferHolder final
  */
 #define JSFUN_GENERIC_NATIVE   0x800
 
-#define JSFUN_FLAGS_MASK       0xe00    /* | of all the JSFUN_* flags */
+#define JSFUN_HAS_REST        0x1000    /* function has ...rest parameter. */
+
+#define JSFUN_FLAGS_MASK      0x1e00    /* | of all the JSFUN_* flags */
 
 /*
  * If set, will allow redefining a non-configurable property, but only on a
@@ -2175,7 +2177,8 @@ class JS_PUBLIC_API(CompartmentCreationOptions)
         mergeable_(false),
         preserveJitCode_(false),
         cloneSingletons_(false),
-        experimentalDateTimeFormatFormatToPartsEnabled_(false)
+        experimentalDateTimeFormatFormatToPartsEnabled_(false),
+        sharedMemoryAndAtomics_(false)
     {
         zone_.spec = JS::FreshZone;
     }
@@ -2255,6 +2258,8 @@ class JS_PUBLIC_API(CompartmentCreationOptions)
         return *this;
     }
 
+    bool getSharedMemoryAndAtomicsEnabled() const;
+    CompartmentCreationOptions& setSharedMemoryAndAtomicsEnabled(bool flag);
 
   private:
     JSAddonId* addonId_;
@@ -2268,6 +2273,7 @@ class JS_PUBLIC_API(CompartmentCreationOptions)
     bool preserveJitCode_;
     bool cloneSingletons_;
     bool experimentalDateTimeFormatFormatToPartsEnabled_;
+    bool sharedMemoryAndAtomics_;
 };
 
 /**
@@ -2452,7 +2458,7 @@ enum OnNewGlobalHookOption {
 extern JS_PUBLIC_API(JSObject*)
 JS_NewGlobalObject(JSContext* cx, const JSClass* clasp, JSPrincipals* principals,
                    JS::OnNewGlobalHookOption hookOption,
-                   const JS::CompartmentOptions& options = JS::CompartmentOptions());
+                   const JS::CompartmentOptions& options);
 /**
  * Spidermonkey does not have a good way of keeping track of what compartments should be marked on
  * their own. We can mark the roots unconditionally, but marking GC things only relevant in live
@@ -2505,27 +2511,27 @@ JS_FreezeObject(JSContext* cx, JS::Handle<JSObject*> obj);
 
 /*** Property descriptors ************************************************************************/
 
-struct JSPropertyDescriptor : public JS::Traceable {
+namespace JS {
+
+struct PropertyDescriptor : public Traceable {
     JSObject* obj;
     unsigned attrs;
     JSGetterOp getter;
     JSSetterOp setter;
     JS::Value value;
 
-    JSPropertyDescriptor()
+    PropertyDescriptor()
       : obj(nullptr), attrs(0), getter(nullptr), setter(nullptr), value(JS::UndefinedValue())
     {}
 
-    static void trace(JSPropertyDescriptor* self, JSTracer* trc) { self->trace(trc); }
+    static void trace(PropertyDescriptor* self, JSTracer* trc) { self->trace(trc); }
     void trace(JSTracer* trc);
 };
-
-namespace JS {
 
 template <typename Outer>
 class PropertyDescriptorOperations
 {
-    const JSPropertyDescriptor& desc() const { return static_cast<const Outer*>(this)->get(); }
+    const PropertyDescriptor& desc() const { return static_cast<const Outer*>(this)->get(); }
 
     bool has(unsigned bit) const {
         MOZ_ASSERT(bit != 0);
@@ -2657,7 +2663,7 @@ class PropertyDescriptorOperations
 template <typename Outer>
 class MutablePropertyDescriptorOperations : public PropertyDescriptorOperations<Outer>
 {
-    JSPropertyDescriptor& desc() { return static_cast<Outer*>(this)->get(); }
+    PropertyDescriptor& desc() { return static_cast<Outer*>(this)->get(); }
 
   public:
     void clear() {
@@ -2680,7 +2686,7 @@ class MutablePropertyDescriptorOperations : public PropertyDescriptorOperations<
         setSetter(setterOp);
     }
 
-    void assign(JSPropertyDescriptor& other) {
+    void assign(PropertyDescriptor& other) {
         object().set(other.obj);
         setAttributes(other.attrs);
         setGetter(other.getter);
@@ -2768,18 +2774,18 @@ class MutablePropertyDescriptorOperations : public PropertyDescriptorOperations<
 namespace js {
 
 template <>
-class RootedBase<JSPropertyDescriptor>
-  : public JS::MutablePropertyDescriptorOperations<JS::Rooted<JSPropertyDescriptor>>
+class RootedBase<JS::PropertyDescriptor>
+  : public JS::MutablePropertyDescriptorOperations<JS::Rooted<JS::PropertyDescriptor>>
 {};
 
 template <>
-class HandleBase<JSPropertyDescriptor>
-  : public JS::PropertyDescriptorOperations<JS::Handle<JSPropertyDescriptor>>
+class HandleBase<JS::PropertyDescriptor>
+  : public JS::PropertyDescriptorOperations<JS::Handle<JS::PropertyDescriptor>>
 {};
 
 template <>
-class MutableHandleBase<JSPropertyDescriptor>
-  : public JS::MutablePropertyDescriptorOperations<JS::MutableHandle<JSPropertyDescriptor>>
+class MutableHandleBase<JS::PropertyDescriptor>
+  : public JS::MutablePropertyDescriptorOperations<JS::MutableHandle<JS::PropertyDescriptor>>
 {};
 
 } /* namespace js */
@@ -2790,7 +2796,7 @@ extern JS_PUBLIC_API(bool)
 ObjectToCompletePropertyDescriptor(JSContext* cx,
                                    JS::HandleObject obj,
                                    JS::HandleValue descriptor,
-                                   JS::MutableHandle<JSPropertyDescriptor> desc);
+                                   JS::MutableHandle<PropertyDescriptor> desc);
 
 } // namespace JS
 
@@ -2877,15 +2883,15 @@ JS_SetImmutablePrototype(JSContext* cx, JS::HandleObject obj, bool* succeeded);
  */
 extern JS_PUBLIC_API(bool)
 JS_GetOwnPropertyDescriptorById(JSContext* cx, JS::HandleObject obj, JS::HandleId id,
-                                JS::MutableHandle<JSPropertyDescriptor> desc);
+                                JS::MutableHandle<JS::PropertyDescriptor> desc);
 
 extern JS_PUBLIC_API(bool)
 JS_GetOwnPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char* name,
-                            JS::MutableHandle<JSPropertyDescriptor> desc);
+                            JS::MutableHandle<JS::PropertyDescriptor> desc);
 
 extern JS_PUBLIC_API(bool)
 JS_GetOwnUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char16_t* name,
-                              JS::MutableHandle<JSPropertyDescriptor> desc);
+                              JS::MutableHandle<JS::PropertyDescriptor> desc);
 
 /**
  * Like JS_GetOwnPropertyDescriptorById, but also searches the prototype chain
@@ -2895,11 +2901,11 @@ JS_GetOwnUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char16_
  */
 extern JS_PUBLIC_API(bool)
 JS_GetPropertyDescriptorById(JSContext* cx, JS::HandleObject obj, JS::HandleId id,
-                             JS::MutableHandle<JSPropertyDescriptor> desc);
+                             JS::MutableHandle<JS::PropertyDescriptor> desc);
 
 extern JS_PUBLIC_API(bool)
 JS_GetPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char* name,
-                         JS::MutableHandle<JSPropertyDescriptor> desc);
+                         JS::MutableHandle<JS::PropertyDescriptor> desc);
 
 /**
  * Define a property on obj.
@@ -2914,7 +2920,7 @@ JS_GetPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char* name,
  */
 extern JS_PUBLIC_API(bool)
 JS_DefinePropertyById(JSContext* cx, JS::HandleObject obj, JS::HandleId id,
-                      JS::Handle<JSPropertyDescriptor> desc,
+                      JS::Handle<JS::PropertyDescriptor> desc,
                       JS::ObjectOpResult& result);
 
 /**
@@ -2923,7 +2929,7 @@ JS_DefinePropertyById(JSContext* cx, JS::HandleObject obj, JS::HandleId id,
  */
 extern JS_PUBLIC_API(bool)
 JS_DefinePropertyById(JSContext* cx, JS::HandleObject obj, JS::HandleId id,
-                      JS::Handle<JSPropertyDescriptor> desc);
+                      JS::Handle<JS::PropertyDescriptor> desc);
 
 extern JS_PUBLIC_API(bool)
 JS_DefinePropertyById(JSContext* cx, JS::HandleObject obj, JS::HandleId id, JS::HandleValue value,
@@ -2975,12 +2981,12 @@ JS_DefineProperty(JSContext* cx, JS::HandleObject obj, const char* name, double 
 
 extern JS_PUBLIC_API(bool)
 JS_DefineUCProperty(JSContext* cx, JS::HandleObject obj, const char16_t* name, size_t namelen,
-                    JS::Handle<JSPropertyDescriptor> desc,
+                    JS::Handle<JS::PropertyDescriptor> desc,
                     JS::ObjectOpResult& result);
 
 extern JS_PUBLIC_API(bool)
 JS_DefineUCProperty(JSContext* cx, JS::HandleObject obj, const char16_t* name, size_t namelen,
-                    JS::Handle<JSPropertyDescriptor> desc);
+                    JS::Handle<JS::PropertyDescriptor> desc);
 
 extern JS_PUBLIC_API(bool)
 JS_DefineUCProperty(JSContext* cx, JS::HandleObject obj, const char16_t* name, size_t namelen,
@@ -3319,21 +3325,18 @@ Call(JSContext* cx, JS::HandleValue thisv, JS::HandleObject funObj, const JS::Ha
  */
 extern JS_PUBLIC_API(bool)
 Construct(JSContext* cx, JS::HandleValue fun, HandleObject newTarget,
-          const JS::HandleValueArray &args, MutableHandleValue rval);
+          const JS::HandleValueArray &args, MutableHandleObject objp);
 
 /**
  * Invoke a constructor. This is the C++ equivalent of
  * `rval = new fun(...args)`.
- *
- * The value left in rval on success is always an object in practice,
- * though at the moment this is not enforced by the C++ type system.
  *
  * Implements: ES6 7.3.13 Construct(F, [argumentsList], [newTarget]), when
  * newTarget is omitted.
  */
 extern JS_PUBLIC_API(bool)
 Construct(JSContext* cx, JS::HandleValue fun, const JS::HandleValueArray& args,
-          MutableHandleValue rval);
+          MutableHandleObject objp);
 
 } /* namespace JS */
 
@@ -3453,7 +3456,7 @@ JS_CreateMappedArrayBufferContents(int fd, size_t offset, size_t length);
  * Release the allocated resource of mapped array buffer contents before the
  * object is created.
  * If a new object has been created by JS_NewMappedArrayBufferWithContents()
- * with this content, then JS_NeuterArrayBuffer() should be used instead to
+ * with this content, then JS_DetachArrayBuffer() should be used instead to
  * release the resource used by the object.
  */
 extern JS_PUBLIC_API(void)
@@ -4559,7 +4562,7 @@ class MOZ_RAII JSAutoByteString
     }
 
     ~JSAutoByteString() {
-        js_free(mBytes);
+        JS_free(nullptr, mBytes);
     }
 
     /* Take ownership of the given byte array. */
@@ -4604,7 +4607,7 @@ class MOZ_RAII JSAutoByteString
     }
 
   private:
-    char*       mBytes;
+    char* mBytes;
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 
     /* Copy and assignment are not supported. */
@@ -5306,8 +5309,6 @@ JS_IsIdentifier(const char16_t* chars, size_t length);
 
 namespace JS {
 
-typedef js::UniqueChars AutoFilename;
-
 /**
  * Return the current filename, line number and column number of the most
  * currently running frame. Returns true if a scripted frame was found, false
@@ -5317,7 +5318,7 @@ typedef js::UniqueChars AutoFilename;
  * record, this will also return false.
  */
 extern JS_PUBLIC_API(bool)
-DescribeScriptedCaller(JSContext* cx, AutoFilename* filename = nullptr,
+DescribeScriptedCaller(JSContext* cx, UniqueChars* filename = nullptr,
                        unsigned* lineno = nullptr, unsigned* column = nullptr);
 
 extern JS_PUBLIC_API(JSObject*)

@@ -19,6 +19,8 @@
 #include "nsICaptivePortalService.h"
 #include "nsICryptoHash.h"
 #include "nsINetworkInterceptController.h"
+#include "nsINSSErrorsService.h"
+#include "nsISecurityReporter.h"
 #include "nsIStringBundle.h"
 #include "nsIStreamListenerTee.h"
 #include "nsISeekableStream.h"
@@ -88,6 +90,8 @@
 #include "nsIDeprecationWarner.h"
 #include "nsIDocument.h"
 #include "nsICompressConvStats.h"
+#include "nsCORSListenerProxy.h"
+#include "nsISocketProvider.h"
 
 namespace mozilla { namespace net {
 
@@ -235,6 +239,7 @@ nsHttpChannel::nsHttpChannel()
     , mTransactionReplaced(false)
     , mAuthRetryPending(false)
     , mProxyAuthPending(false)
+    , mCustomAuthHeader(false)
     , mResuming(false)
     , mInitedCacheEntry(false)
     , mFallbackChannel(false)
@@ -478,6 +483,10 @@ nsHttpChannel::SpeculativeConnect()
     if (mLoadFlags & (LOAD_ONLY_FROM_CACHE | LOAD_FROM_CACHE |
                       LOAD_NO_NETWORK_IO | LOAD_CHECK_OFFLINE_CACHE))
         return;
+
+    if (mAllowStaleCacheContent) {
+        return;
+    }
 
     nsCOMPtr<nsIInterfaceRequestor> callbacks;
     NS_NewNotificationCallbacksAggregation(mCallbacks, mLoadGroup,
@@ -1316,6 +1325,56 @@ nsHttpChannel::ProcessSecurityHeaders()
     return NS_OK;
 }
 
+/**
+ * Decide whether or not to send a security report and, if so, give the
+ * SecurityReporter the information required to send such a report.
+ */
+void
+nsHttpChannel::ProcessSecurityReport(nsresult status) {
+    uint32_t errorClass;
+    nsCOMPtr<nsINSSErrorsService> errSvc =
+            do_GetService("@mozilla.org/nss_errors_service;1");
+    // getErrorClass will throw a generic NS_ERROR_FAILURE if the error code is
+    // not in the set of errors covered by the NSS errors service.
+    nsresult rv = errSvc->GetErrorClass(status, &errorClass);
+    if (!NS_SUCCEEDED(rv)) {
+        return;
+    }
+
+    // if the content was not loaded succesfully and we have security info,
+    // send a TLS error report - we must do this early as other parts of
+    // OnStopRequest can return early
+    bool reportingEnabled =
+            Preferences::GetBool("security.ssl.errorReporting.enabled");
+    bool reportingAutomatic =
+            Preferences::GetBool("security.ssl.errorReporting.automatic");
+    if (!mSecurityInfo || !reportingEnabled || !reportingAutomatic) {
+        return;
+    }
+
+    nsCOMPtr<nsITransportSecurityInfo> secInfo =
+            do_QueryInterface(mSecurityInfo);
+    nsCOMPtr<nsISecurityReporter> errorReporter =
+            do_GetService("@mozilla.org/securityreporter;1");
+
+    if (!secInfo || !mURI) {
+        return;
+    }
+
+    nsAutoCString hostStr;
+    int32_t port;
+    rv = mURI->GetHost(hostStr);
+    if (!NS_SUCCEEDED(rv)) {
+        return;
+    }
+
+    rv = mURI->GetPort(&port);
+
+    if (NS_SUCCEEDED(rv)) {
+        errorReporter->ReportTLSError(secInfo, hostStr, port);
+    }
+}
+
 bool
 nsHttpChannel::IsHTTPS()
 {
@@ -1580,9 +1639,17 @@ nsHttpChannel::ProcessResponse()
         break;
     case 401:
     case 407:
-        rv = mAuthProvider->ProcessAuthentication(
-            httpStatus, mConnectionInfo->EndToEndSSL() &&
-                        mTransaction->ProxyConnectFailed());
+        if (MOZ_UNLIKELY(mCustomAuthHeader) && httpStatus == 401) {
+            // When a custom auth header fails, we don't want to try
+            // any cached credentials, nor we want to ask the user.
+            // It's up to the consumer to re-try w/o setting a custom
+            // auth header if cached credentials should be attempted.
+            rv = NS_ERROR_FAILURE;
+        } else {
+            rv = mAuthProvider->ProcessAuthentication(
+                httpStatus,
+                mConnectionInfo->EndToEndSSL() && mTransaction->ProxyConnectFailed());
+        }
         if (rv == NS_ERROR_IN_PROGRESS)  {
             // authentication prompt has been invoked and result
             // is expected asynchronously
@@ -1597,17 +1664,16 @@ nsHttpChannel::ProcessResponse()
             LOG(("Suspending the transaction, asynchronously prompting for credentials"));
             mTransactionPump->Suspend();
             rv = NS_OK;
-        }
-        else if (NS_FAILED(rv)) {
+        } else if (NS_FAILED(rv)) {
             LOG(("ProcessAuthentication failed [rv=%x]\n", rv));
             if (mTransaction->ProxyConnectFailed())
                 return ProcessFailedProxyConnect(httpStatus);
             if (!mAuthRetryPending)
                 mAuthProvider->CheckForSuperfluousAuth();
             rv = ProcessNormal();
-        }
-        else
+        } else {
             mAuthRetryPending = true; // see DoAuthRetry
+        }
         break;
     default:
         rv = ProcessNormal();
@@ -3178,7 +3244,7 @@ nsHttpChannel::OnCacheEntryCheck(nsICacheEntry* entry, nsIApplicationCache* appC
         doValidation = false;
     }
     // If the LOAD_FROM_CACHE flag is set, any cached data can simply be used
-    else if (mLoadFlags & nsIRequest::LOAD_FROM_CACHE) {
+    else if (mLoadFlags & nsIRequest::LOAD_FROM_CACHE || mAllowStaleCacheContent) {
         LOG(("NOT validating based on LOAD_FROM_CACHE load flag\n"));
         doValidation = false;
     }
@@ -3192,11 +3258,9 @@ nsHttpChannel::OnCacheEntryCheck(nsICacheEntry* entry, nsIApplicationCache* appC
     // which we must validate the cached response with the server.
     else if (mLoadFlags & nsIRequest::VALIDATE_NEVER) {
         LOG(("VALIDATE_NEVER set\n"));
-        // if no-store or if no-cache and ssl, validate cached response (see
-        // bug 112564 for an explanation of this logic)
-        if (mCachedResponseHead->NoStore() ||
-           (mCachedResponseHead->NoCache() && isHttps)) {
-            LOG(("Validating based on (no-store || (no-cache && ssl)) logic\n"));
+        // if no-store validate cached response (see bug 112564)
+        if (mCachedResponseHead->NoStore()) {
+            LOG(("Validating based on no-store logic\n"));
             doValidation = true;
         }
         else {
@@ -4768,6 +4832,7 @@ NS_INTERFACE_MAP_BEGIN(nsHttpChannel)
     NS_INTERFACE_MAP_ENTRY(nsICachingChannel)
     NS_INTERFACE_MAP_ENTRY(nsIClassOfService)
     NS_INTERFACE_MAP_ENTRY(nsIUploadChannel)
+    NS_INTERFACE_MAP_ENTRY(nsIFormPOSTActionChannel)
     NS_INTERFACE_MAP_ENTRY(nsIUploadChannel2)
     NS_INTERFACE_MAP_ENTRY(nsICacheEntryOpenCallback)
     NS_INTERFACE_MAP_ENTRY(nsIHttpChannelInternal)
@@ -4967,6 +5032,10 @@ nsHttpChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *context)
     // timing.
     mAsyncOpenTime = TimeStamp::Now();
 
+    // Remember we have Authorization header set here.  We need to check on it
+    // just once and early, AsyncOpen is the best place.
+    mCustomAuthHeader = !!mRequestHead.PeekHeader(nsHttp::Authorization);
+
     // the only time we would already know the proxy information at this
     // point would be if we were proxying a non-http protocol like ftp
     if (!mProxyInfo && NS_SUCCEEDED(ResolveProxy()))
@@ -5102,7 +5171,8 @@ nsHttpChannel::BeginConnect()
     }
 
     // check to see if authorization headers should be included
-    mAuthProvider->AddAuthorizationHeaders();
+    // mCustomAuthHeader is set in AsyncOpen if we find Authorization header
+    mAuthProvider->AddAuthorizationHeaders(mCustomAuthHeader);
 
     // notify "http-on-modify-request" observers
     CallOnModifyRequestObservers();
@@ -5746,6 +5816,13 @@ nsHttpChannel::OnStopRequest(nsIRequest *request, nsISupports *ctxt, nsresult st
     LOG(("nsHttpChannel::OnStopRequest [this=%p request=%p status=%x]\n",
         this, request, status));
 
+    MOZ_ASSERT(NS_IsMainThread(),
+               "OnStopRequest should only be called from the main thread");
+
+    if (NS_FAILED(status)) {
+        ProcessSecurityReport(status);
+    }
+
     if (mTimingEnabled && request == mCachePump) {
         mCacheReadEnd = TimeStamp::Now();
     }
@@ -6279,6 +6356,22 @@ nsHttpChannel::SetCacheTokenCachedCharset(const nsACString &aCharset)
 
     return mCacheEntry->SetMetaDataElement("charset",
                                            PromiseFlatCString(aCharset).get());
+}
+
+NS_IMETHODIMP
+nsHttpChannel::SetAllowStaleCacheContent(bool aAllowStaleCacheContent)
+{
+    LOG(("nsHttpChannel::SetAllowStaleCacheContent [this=%p, allow=%d]",
+         this, aAllowStaleCacheContent));
+    mAllowStaleCacheContent = aAllowStaleCacheContent;
+    return NS_OK;
+}
+NS_IMETHODIMP
+nsHttpChannel::GetAllowStaleCacheContent(bool *aAllowStaleCacheContent)
+{
+    NS_ENSURE_ARG(aAllowStaleCacheContent);
+    *aAllowStaleCacheContent = mAllowStaleCacheContent;
+    return NS_OK;
 }
 
 //-----------------------------------------------------------------------------

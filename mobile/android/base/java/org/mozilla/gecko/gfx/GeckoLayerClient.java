@@ -226,7 +226,7 @@ class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
         }
         mViewportMetrics = mViewportMetrics.setViewportSize(width, height);
         if (scrollChange != null) {
-            mViewportMetrics = mViewportMetrics.offsetViewportByAndClamp(scrollChange.x, scrollChange.y);
+            mViewportMetrics = mPanZoomController.adjustScrollForSurfaceShift(mViewportMetrics, scrollChange);
         }
 
         if (mGeckoIsReady) {
@@ -277,9 +277,8 @@ class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
             Log.d(LOGTAG, "Window-size changed to " + mWindowSize);
         }
 
-        GeckoEvent event = GeckoEvent.createSizeChangedEvent(mWindowSize.width, mWindowSize.height,
-                                                             mScreenSize.width, mScreenSize.height);
-        GeckoAppShell.sendEventToGecko(event);
+        mView.getGLController().onSizeChanged(mWindowSize.width, mWindowSize.height,
+                                              mScreenSize.width, mScreenSize.height);
 
         String json = "";
         try {
@@ -297,7 +296,7 @@ class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
                 json = jsonObj.toString();
             }
         } catch (Exception e) {
-            Log.e(LOGTAG, "Unable to convert point to JSON for " + event, e);
+            Log.e(LOGTAG, "Unable to convert point to JSON", e);
         }
         GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Window:Resize", json));
     }
@@ -766,7 +765,7 @@ class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
         // We need to make sure a draw happens synchronously at this point,
         // but resizing the surface before the SurfaceView has resized will
         // cause a visible jump.
-        mView.getGLController().resumeCompositor(mWindowSize.width, mWindowSize.height);
+        mView.getGLController().resumeCompositor(width, height);
     }
 
     /** Implementation of LayerView.Listener */

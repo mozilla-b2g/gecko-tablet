@@ -10,7 +10,6 @@ var { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 const NET_STRINGS_URI = "chrome://devtools/locale/netmonitor.properties";
 const PKI_STRINGS_URI = "chrome://pippki/locale/pippki.properties";
 const LISTENERS = [ "NetworkActivity" ];
-const NET_PREFS = { "NetworkMonitor.saveRequestAndResponseBodies": true };
 
 // The panel's window global is an EventEmitter firing the following events:
 const EVENTS = {
@@ -223,13 +222,6 @@ var NetMonitorController = {
       this.tabClient = this._target.activeTab;
     }
 
-    let connectWebConsole = () => {
-      let deferred = promise.defer();
-      this.webConsoleClient = this._target.activeConsole;
-      this.webConsoleClient.setPreferences(NET_PREFS, deferred.resolve);
-      return deferred.promise;
-    };
-
     let connectTimeline = () => {
       // Don't start up waiting for timeline markers if the server isn't
       // recent enough to emit the markers we're interested in.
@@ -239,7 +231,7 @@ var NetMonitorController = {
       }
     };
 
-    yield connectWebConsole();
+    this.webConsoleClient = this._target.activeConsole;
     yield connectTimeline();
 
     this.TargetEventsHandler.connect();
@@ -261,7 +253,9 @@ var NetMonitorController = {
     this._disconnection = promise.defer();
 
     // Wait for the connection to finish first.
-    yield this._connection.promise;
+    if (!this.isConnected()) {
+      yield this._connection.promise;
+    }
 
     // When debugging local or a remote instance, the connection is closed by
     // the RemoteTarget. The webconsole actor is stopped on disconnect.
@@ -614,10 +608,10 @@ NetworkEventsHandler.prototype = {
    *        The network request information.
    */
   _onNetworkEvent: function(type, networkInfo) {
-    let { actor, startedDateTime, request: { method, url }, isXHR, fromCache } = networkInfo;
+    let { actor, startedDateTime, request: { method, url }, isXHR, fromCache, fromServiceWorker } = networkInfo;
 
     NetMonitorView.RequestsMenu.addRequest(
-      actor, startedDateTime, method, url, isXHR, fromCache
+      actor, startedDateTime, method, url, isXHR, fromCache, fromServiceWorker
     );
     window.emit(EVENTS.NETWORK_EVENT, actor);
   },

@@ -358,7 +358,9 @@ APZCTreeManager::PrepareNodeForLayer(const LayerMetricsWrapper& aLayer,
   if (!needsApzc) {
     node = RecycleOrCreateNode(aState, nullptr, aLayersId);
     AttachNodeToTree(node, aParent, aNextSibling);
-    node->SetHitTestData(GetEventRegions(aLayer), aLayer.GetTransform(),
+    node->SetHitTestData(
+        GetEventRegions(aLayer),
+        aLayer.GetTransformTyped(),
         aLayer.GetClipRect() ? Some(ParentLayerIntRegion(*aLayer.GetClipRect())) : Nothing(),
         GetEventRegionsOverride(aParent, aLayer));
     node->SetScrollbarData(aLayer.GetScrollbarTargetContainerId(),
@@ -453,8 +455,8 @@ APZCTreeManager::PrepareNodeForLayer(const LayerMetricsWrapper& aLayer,
 
     APZCTM_LOG("Using APZC %p for layer %p with identifiers %" PRId64 " %" PRId64 "\n", apzc, aLayer.GetLayer(), aLayersId, aMetrics.GetScrollId());
 
-    apzc->NotifyLayersUpdated(aMetrics,
-        aState.mIsFirstPaint && (aLayersId == aState.mOriginatingLayersId));
+    apzc->NotifyLayersUpdated(aMetrics, aState.mIsFirstPaint,
+        aLayersId == aState.mOriginatingLayersId);
 
     // Since this is the first time we are encountering an APZC with this guid,
     // the node holding it must be the primary holder. It may be newly-created
@@ -462,7 +464,10 @@ APZCTreeManager::PrepareNodeForLayer(const LayerMetricsWrapper& aLayer,
     MOZ_ASSERT(node->IsPrimaryHolder() && node->GetApzc() && node->GetApzc()->Matches(guid));
 
     ParentLayerIntRegion clipRegion = ComputeClipRegion(state->mController, aLayer);
-    node->SetHitTestData(GetEventRegions(aLayer), aLayer.GetTransform(), Some(clipRegion),
+    node->SetHitTestData(
+        GetEventRegions(aLayer),
+        aLayer.GetTransformTyped(),
+        Some(clipRegion),
         GetEventRegionsOverride(aParent, aLayer));
     apzc->SetAncestorTransform(aAncestorTransform);
 
@@ -526,7 +531,10 @@ APZCTreeManager::PrepareNodeForLayer(const LayerMetricsWrapper& aLayer,
     MOZ_ASSERT(aAncestorTransform.FuzzyEqualsMultiplicative(apzc->GetAncestorTransform()));
 
     ParentLayerIntRegion clipRegion = ComputeClipRegion(state->mController, aLayer);
-    node->SetHitTestData(GetEventRegions(aLayer), aLayer.GetTransform(), Some(clipRegion),
+    node->SetHitTestData(
+        GetEventRegions(aLayer),
+        aLayer.GetTransformTyped(),
+        Some(clipRegion),
         GetEventRegionsOverride(aParent, aLayer));
   }
 
@@ -1054,7 +1062,8 @@ APZCTreeManager::ProcessWheelEvent(WidgetWheelEvent& aEvent,
                          scrollMode,
                          ScrollWheelInput::DeltaTypeForDeltaMode(aEvent.deltaMode),
                          origin,
-                         aEvent.deltaX, aEvent.deltaY);
+                         aEvent.deltaX, aEvent.deltaY,
+                         aEvent.mAllowToOverrideSystemScrollSpeed);
 
   // We add the user multiplier as a separate field, rather than premultiplying
   // it, because if the input is converted back to a WidgetWheelEvent, then
@@ -1130,11 +1139,12 @@ APZCTreeManager::ReceiveInputEvent(WidgetInputEvent& aEvent,
 
 void
 APZCTreeManager::ZoomToRect(const ScrollableLayerGuid& aGuid,
-                            const CSSRect& aRect)
+                            const CSSRect& aRect,
+                            const uint32_t aFlags)
 {
   RefPtr<AsyncPanZoomController> apzc = GetTargetAPZC(aGuid);
   if (apzc) {
-    apzc->ZoomToRect(aRect);
+    apzc->ZoomToRect(aRect, aFlags);
   }
 }
 
@@ -1254,6 +1264,16 @@ APZCTreeManager::CancelAnimation(const ScrollableLayerGuid &aGuid)
   RefPtr<AsyncPanZoomController> apzc = GetTargetAPZC(aGuid);
   if (apzc) {
     apzc->CancelAnimation();
+  }
+}
+
+void
+APZCTreeManager::AdjustScrollForSurfaceShift(const ScreenPoint& aShift)
+{
+  MonitorAutoLock lock(mTreeLock);
+  RefPtr<AsyncPanZoomController> apzc = FindRootContentOrRootApzc();
+  if (apzc) {
+    apzc->AdjustScrollForSurfaceShift(aShift);
   }
 }
 
@@ -1732,6 +1752,33 @@ APZCTreeManager::FindRootContentApzcForLayersId(uint64_t aLayersId) const
   return resultNode ? resultNode->GetApzc() : nullptr;
 }
 
+AsyncPanZoomController*
+APZCTreeManager::FindRootContentOrRootApzc() const
+{
+  mTreeLock.AssertCurrentThreadOwns();
+
+  // Note: this is intended to find the same "root" that would be found
+  // by AsyncCompositionManager::ApplyAsyncContentTransformToTree inside
+  // the MOZ_ANDROID_APZ block. That is, it should find the RCD node if there
+  // is one, or the root APZC if there is not.
+  // Since BreadthFirstSearch is a pre-order search, we first do a search for
+  // the RCD, and then if we don't find one, we do a search for the root APZC.
+  HitTestingTreeNode* resultNode = BreadthFirstSearch(mRootNode.get(),
+      [](HitTestingTreeNode* aNode) {
+        AsyncPanZoomController* apzc = aNode->GetApzc();
+        return apzc && apzc->IsRootContent();
+      });
+  if (resultNode) {
+    return resultNode->GetApzc();
+  }
+  resultNode = BreadthFirstSearch(mRootNode.get(),
+      [](HitTestingTreeNode* aNode) {
+        AsyncPanZoomController* apzc = aNode->GetApzc();
+        return (apzc != nullptr);
+      });
+  return resultNode ? resultNode->GetApzc() : nullptr;
+}
+
 /* The methods GetScreenToApzcTransform() and GetApzcToGeckoTransform() return
    some useful transformations that input events may need applied. This is best
    illustrated with an example. Consider a chain of layers, L, M, N, O, P, Q, R. Layer L
@@ -1848,7 +1895,7 @@ APZCTreeManager::GetScreenToApzcTransform(const AsyncPanZoomController *aApzc) c
     // ancestorUntransform is updated to RC.Inverse() * QC.Inverse() when parent == P
     ancestorUntransform = parent->GetAncestorTransform().Inverse();
     // asyncUntransform is updated to PA.Inverse() when parent == P
-    Matrix4x4 asyncUntransform = parent->GetCurrentAsyncTransformWithOverscroll().Inverse();
+    Matrix4x4 asyncUntransform = parent->GetCurrentAsyncTransformWithOverscroll().Inverse().ToUnknownMatrix();
     // untransformSinceLastApzc is RC.Inverse() * QC.Inverse() * PA.Inverse()
     Matrix4x4 untransformSinceLastApzc = ancestorUntransform * asyncUntransform;
 
@@ -1880,7 +1927,7 @@ APZCTreeManager::GetApzcToGeckoTransform(const AsyncPanZoomController *aApzc) co
   // leftmost matrix in a multiplication is applied first.
 
   // asyncUntransform is LA.Inverse()
-  Matrix4x4 asyncUntransform = aApzc->GetCurrentAsyncTransformWithOverscroll().Inverse();
+  Matrix4x4 asyncUntransform = aApzc->GetCurrentAsyncTransformWithOverscroll().Inverse().ToUnknownMatrix();
 
   // aTransformToGeckoOut is initialized to LA.Inverse() * LD * MC * NC * OC * PC
   result = asyncUntransform * aApzc->GetTransformToLastDispatchedPaint() * aApzc->GetAncestorTransform();

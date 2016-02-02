@@ -11,13 +11,12 @@
  * JS bytecode definitions.
  */
 
-#include "mozilla/UniquePtr.h"
-
 #include "jsbytecode.h"
 #include "jstypes.h"
 #include "NamespaceImports.h"
 
 #include "frontend/SourceNotes.h"
+#include "js/UniquePtr.h"
 #include "vm/Opcodes.h"
 #include "vm/Printer.h"
 
@@ -558,7 +557,7 @@ GetVariableBytecodeLength(jsbytecode* pc);
  *
  * The caller must call JS_free on the result after a successful call.
  */
-mozilla::UniquePtr<char[], JS::FreePolicy>
+UniqueChars
 DecompileValueGenerator(JSContext* cx, int spindex, HandleValue v,
                         HandleString fallback, int skipStackHits = 0);
 
@@ -847,7 +846,8 @@ DumpPCCounts(JSContext* cx, JS::Handle<JSScript*> script, Sprinter* sp);
 
 namespace jit { struct IonScriptCounts; }
 void
-DumpIonScriptCounts(js::Sprinter* sp, jit::IonScriptCounts* ionCounts);
+DumpIonScriptCounts(js::Sprinter* sp, HandleScript script,
+                    jit::IonScriptCounts* ionCounts);
 
 void
 DumpCompartmentPCCounts(JSContext* cx);

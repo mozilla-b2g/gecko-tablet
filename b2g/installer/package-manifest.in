@@ -28,10 +28,6 @@
 @RESPATH@/chrome/@AB_CD@.manifest
 @RESPATH@/@PREF_DIR@/b2g-l10n.js
 @RESPATH@/searchplugins/*
-@RESPATH@/defaults/profile/bookmarks.html
-@RESPATH@/defaults/profile/localstore.rdf
-@RESPATH@/defaults/profile/mimeTypes.rdf
-@RESPATH@/defaults/profile/chrome/*
 #ifdef MOZ_UPDATER
 @RESPATH@/update.locale
 @RESPATH@/updater.ini
@@ -251,7 +247,6 @@
 @RESPATH@/components/filepicker.xpt
 #endif
 @RESPATH@/components/find.xpt
-@RESPATH@/components/fuel.xpt
 @RESPATH@/components/gfx.xpt
 @RESPATH@/components/hal.xpt
 @RESPATH@/components/html5.xpt
@@ -330,6 +325,7 @@
 @RESPATH@/components/toolkit_finalizationwitness.xpt
 @RESPATH@/components/toolkit_formautofill.xpt
 @RESPATH@/components/toolkit_osfile.xpt
+@RESPATH@/components/toolkit_securityreporter.xpt
 #ifdef NIGHTLY_BUILD
 @RESPATH@/components/toolkit_perfmonitoring.xpt
 #endif
@@ -404,8 +400,6 @@
 @RESPATH@/components/BrowserFeeds.manifest
 @RESPATH@/components/FeedConverter.js
 @RESPATH@/components/FeedWriter.js
-@RESPATH@/components/fuelApplication.manifest
-@RESPATH@/components/fuelApplication.js
 @RESPATH@/components/WebContentConverter.js
 @RESPATH@/components/BrowserComponents.manifest
 @RESPATH@/components/nsBrowserContentHandler.js
@@ -631,10 +625,6 @@
 #endif
 @RESPATH@/components/servicesComponents.manifest
 @RESPATH@/components/cryptoComponents.manifest
-#ifdef MOZ_SERVICES_HEALTHREPORT
-@RESPATH@/components/HealthReportComponents.manifest
-@RESPATH@/components/HealthReportService.js
-#endif
 @RESPATH@/components/CaptivePortalDetectComponents.manifest
 @RESPATH@/components/captivedetect.js
 @RESPATH@/components/TelemetryStartup.js
@@ -718,6 +708,10 @@
 @RESPATH@/components/PrivateBrowsing.manifest
 @RESPATH@/components/PrivateBrowsingTrackingProtectionWhitelist.js
 
+; Security Reports
+@RESPATH@/components/SecurityReporter.manifest
+@RESPATH@/components/SecurityReporter.js
+
 ; Signed Packaged Content
 @RESPATH@/components/InstallPackagedWebapp.manifest
 @RESPATH@/components/InstallPackagedWebapp.js
@@ -768,7 +762,6 @@
 @RESPATH@/@PREF_DIR@/channel-prefs.js
 @RESPATH@/greprefs.js
 @RESPATH@/defaults/autoconfig/prefcalls.js
-@RESPATH@/defaults/profile/prefs.js
 
 ; Services (gre) prefs
 #ifdef MOZ_SERVICES_SYNC

@@ -260,8 +260,11 @@ jit::ExceptionHandlerBailout(JSContext* cx, const InlineFrameIterator& frame,
 bool
 jit::EnsureHasScopeObjects(JSContext* cx, AbstractFramePtr fp)
 {
+    // Ion does not compile eval scripts.
+    MOZ_ASSERT(!fp.isEvalFrame());
+
     if (fp.isFunctionFrame() &&
-        fp.fun()->needsCallObject() &&
+        fp.callee()->needsCallObject() &&
         !fp.hasCallObj())
     {
         return fp.initFunctionScopeObjects(cx);
@@ -269,7 +272,7 @@ jit::EnsureHasScopeObjects(JSContext* cx, AbstractFramePtr fp)
     return true;
 }
 
-bool
+void
 jit::CheckFrequentBailouts(JSContext* cx, JSScript* script, BailoutKind bailoutKind)
 {
     if (script->hasIonScript()) {
@@ -288,12 +291,9 @@ jit::CheckFrequentBailouts(JSContext* cx, JSScript* script, BailoutKind bailoutK
 
             JitSpew(JitSpew_IonInvalidate, "Invalidating due to too many bailouts");
 
-            if (!Invalidate(cx, script))
-                return false;
+            Invalidate(cx, script);
         }
     }
-
-    return true;
 }
 
 void

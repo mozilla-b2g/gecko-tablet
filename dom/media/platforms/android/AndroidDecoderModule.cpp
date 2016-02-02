@@ -85,6 +85,11 @@ public:
 
   }
 
+  const char* GetDescriptionName() const override
+  {
+    return "android video decoder";
+  }
+
   RefPtr<InitPromise> Init() override
   {
     mSurfaceTexture = AndroidSurfaceTexture::Create();
@@ -189,6 +194,11 @@ public:
     }
   }
 
+  const char* GetDescriptionName() const override
+  {
+    return "android audio decoder";
+  }
+
   nsresult Output(BufferInfo::Param aInfo, void* aBuffer,
                   MediaFormat::Param aFormat, const TimeUnit& aDuration)
   {
@@ -239,7 +249,7 @@ bool
 AndroidDecoderModule::SupportsMimeType(const nsACString& aMimeType) const
 {
   if (!AndroidBridge::Bridge() ||
-      (AndroidBridge::Bridge()->GetAPIVersion() < 16)) {
+      AndroidBridge::Bridge()->GetAPIVersion() < 16) {
     return false;
   }
 
@@ -248,12 +258,8 @@ AndroidDecoderModule::SupportsMimeType(const nsACString& aMimeType) const
     return true;
   }
 
-  MediaCodec::LocalRef ref = mozilla::CreateDecoder(aMimeType);
-  if (!ref) {
-    return false;
-  }
-  ref->Release();
-  return true;
+  return widget::HardwareCodecCapabilityUtils::FindDecoderCodecInfoForMimeType(
+      nsCString(TranslateMimeType(aMimeType)));
 }
 
 already_AddRefed<MediaDataDecoder>

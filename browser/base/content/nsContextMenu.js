@@ -1065,12 +1065,14 @@ nsContextMenu.prototype = {
   },
 
   viewInfo: function() {
-    BrowserPageInfo(this.target.ownerDocument.defaultView.top.document);
+    BrowserPageInfo();
   },
 
   viewImageInfo: function() {
-    BrowserPageInfo(this.target.ownerDocument.defaultView.top.document,
-                    "mediaTab", this.target);
+    // Don't need to pass in ownerDocument.defaultView.top.document here;
+    // window.gBrowser.selectedBrowser.currentURI.spec does the job without
+    // using CPOWs
+    BrowserPageInfo(null, "mediaTab", this.target);
   },
 
   viewImageDesc: function(e) {
@@ -1082,7 +1084,7 @@ nsContextMenu.prototype = {
   },
 
   viewFrameInfo: function() {
-    BrowserPageInfo(this.target.ownerDocument, null, null,
+    BrowserPageInfo(gContextMenuContentData.docLocation, null, null,
                     this.frameOuterWindowID);
   },
 
@@ -1128,6 +1130,8 @@ nsContextMenu.prototype = {
 
   saveVideoFrameAsImage: function () {
     let mm = this.browser.messageManager;
+    let isPrivate = PrivateBrowsingUtils.isBrowserPrivate(this.browser);
+
     let name = "";
     if (this.mediaURL) {
       try {
@@ -1148,7 +1152,8 @@ nsContextMenu.prototype = {
       mm.removeMessageListener("ContextMenu:SaveVideoFrameAsImage:Result", onMessage);
       let dataURL = message.data.dataURL;
       saveImageURL(dataURL, name, "SaveImageTitle", true, false,
-                   document.documentURIObject, document);
+                   document.documentURIObject, null, null, null,
+                   isPrivate);
     };
     mm.addMessageListener("ContextMenu:SaveVideoFrameAsImage:Result", onMessage);
   },
@@ -1384,18 +1389,20 @@ nsContextMenu.prototype = {
   saveMedia: function() {
     let doc = this.ownerDoc;
     let referrerURI = gContextMenuContentData.documentURIObject;
+    let isPrivate = PrivateBrowsingUtils.isBrowserPrivate(this.browser);
     if (this.onCanvas) {
       // Bypass cache, since it's a data: URL.
       this._canvasToDataURL(this.target).then(function(dataURL) {
         saveImageURL(dataURL, "canvas.png", "SaveImageTitle",
-                     true, false, referrerURI, doc);
+                     true, false, referrerURI, null, null, null,
+                     isPrivate);
       }, Cu.reportError);
     }
     else if (this.onImage) {
       urlSecurityCheck(this.mediaURL, this.principal);
       saveImageURL(this.mediaURL, null, "SaveImageTitle", false,
-                   false, referrerURI, doc, gContextMenuContentData.contentType,
-                   gContextMenuContentData.contentDisposition);
+                   false, referrerURI, null, gContextMenuContentData.contentType,
+                   gContextMenuContentData.contentDisposition, isPrivate);
     }
     else if (this.onVideo || this.onAudio) {
       urlSecurityCheck(this.mediaURL, this.principal);
@@ -1759,17 +1766,8 @@ nsContextMenu.prototype = {
       selectedText = selectedText.substr(0,truncLength) + this.ellipsis;
     }
 
-    // Use the current engine if the search bar is visible, the default
-    // engine otherwise.
-    var engineName = "";
-    var ss = Cc["@mozilla.org/browser/search-service;1"].
-             getService(Ci.nsIBrowserSearchService);
-    if (isElementVisible(BrowserSearch.searchBar))
-      engineName = ss.currentEngine.name;
-    else
-      engineName = ss.defaultEngine.name;
-
     // format "Search <engine> for <selection>" string to show in menu
+    let engineName = Services.search.currentEngine.name;
     var menuLabel = gNavigatorBundle.getFormattedString("contextMenuSearch",
                                                         [engineName,
                                                          selectedText]);

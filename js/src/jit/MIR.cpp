@@ -1037,6 +1037,148 @@ MSimdGeneralShuffle::foldsTo(TempAllocator& alloc)
     return MSimdShuffle::New(alloc, vector(0), vector(1), type(), lanes[0], lanes[1], lanes[2], lanes[3]);
 }
 
+MInstruction*
+MSimdConvert::AddLegalized(TempAllocator& alloc, MBasicBlock* addTo, MDefinition* obj,
+                           MIRType fromType, MIRType toType, SimdSign sign)
+{
+    if (SupportsUint32x4FloatConversions || sign != SimdSign::Unsigned) {
+        MInstruction* ins = New(alloc, obj, fromType, toType, sign);
+        addTo->add(ins);
+        return ins;
+    }
+
+    // This architecture can't do Uint32x4 <-> Float32x4 conversions (Hi SSE!)
+    MOZ_ASSERT(sign == SimdSign::Unsigned);
+    if (fromType == MIRType_Int32x4 && toType == MIRType_Float32x4) {
+        // Converting Uint32x4 -> Float32x4. This algorithm is from LLVM.
+        //
+        // Split the input number into high and low parts:
+        //
+        // uint32_t hi = x >> 16;
+        // uint32_t lo = x & 0xffff;
+        //
+        // Insert these parts as the low mantissa bits in a float32 number with
+        // the corresponding exponent:
+        //
+        // float fhi = (bits-as-float)(hi | 0x53000000); // 0x1.0p39f + hi*2^16
+        // float flo = (bits-as-float)(lo | 0x4b000000); // 0x1.0p23f + lo
+        //
+        // Subtract the bias from the hi part:
+        //
+        // fhi -= (0x1.0p39 + 0x1.0p23) // hi*2^16 - 0x1.0p23
+        //
+        // And finally combine:
+        //
+        // result = flo + fhi // lo + hi*2^16.
+
+        // Compute hi = obj >> 16 (lane-wise unsigned shift).
+        MInstruction* c16 = MConstant::New(alloc, Int32Value(16));
+        addTo->add(c16);
+        MInstruction* hi = MSimdShift::New(alloc, obj, c16, MSimdShift::ursh, MIRType_Int32x4);
+        addTo->add(hi);
+
+        // Compute lo = obj & 0xffff (lane-wise).
+        MInstruction* m16 =
+          MSimdConstant::New(alloc, SimdConstant::SplatX4(0xffff), MIRType_Int32x4);
+        addTo->add(m16);
+        MInstruction* lo =
+          MSimdBinaryBitwise::New(alloc, obj, m16, MSimdBinaryBitwise::and_, MIRType_Int32x4);
+        addTo->add(lo);
+
+        // Mix in the exponents.
+        MInstruction* exphi =
+          MSimdConstant::New(alloc, SimdConstant::SplatX4(0x53000000), MIRType_Int32x4);
+        addTo->add(exphi);
+        MInstruction* mhi =
+          MSimdBinaryBitwise::New(alloc, hi, exphi, MSimdBinaryBitwise::or_, MIRType_Int32x4);
+        addTo->add(mhi);
+        MInstruction* explo =
+          MSimdConstant::New(alloc, SimdConstant::SplatX4(0x4b000000), MIRType_Int32x4);
+        addTo->add(explo);
+        MInstruction* mlo =
+          MSimdBinaryBitwise::New(alloc, lo, explo, MSimdBinaryBitwise::or_, MIRType_Int32x4);
+        addTo->add(mlo);
+
+        // Bit-cast both to Float32x4.
+        MInstruction* fhi =
+          MSimdReinterpretCast::New(alloc, mhi, MIRType_Int32x4, MIRType_Float32x4);
+        addTo->add(fhi);
+        MInstruction* flo =
+          MSimdReinterpretCast::New(alloc, mlo, MIRType_Int32x4, MIRType_Float32x4);
+        addTo->add(flo);
+
+        // Subtract out the bias: 0x1.0p39f + 0x1.0p23f.
+        // MSVC doesn't support the hexadecimal float syntax.
+        const float BiasValue = 549755813888.f + 8388608.f;
+        MInstruction* bias =
+          MSimdConstant::New(alloc, SimdConstant::SplatX4(BiasValue), MIRType_Float32x4);
+        addTo->add(bias);
+        MInstruction* fhi_debiased =
+          MSimdBinaryArith::New(alloc, fhi, bias, MSimdBinaryArith::Op_sub, MIRType_Float32x4);
+        addTo->add(fhi_debiased);
+
+        // Compute the final result.
+        MInstruction* result = MSimdBinaryArith::New(alloc, fhi_debiased, flo,
+                                                     MSimdBinaryArith::Op_add, MIRType_Float32x4);
+        addTo->add(result);
+
+        return result;
+    }
+
+    if (fromType == MIRType_Float32x4 && toType == MIRType_Int32x4) {
+        // The Float32x4 -> Uint32x4 conversion can throw if the input is out of
+        // range. This is handled by the LFloat32x4ToUint32x4 expansion.
+        MInstruction* ins = New(alloc, obj, fromType, toType, sign);
+        addTo->add(ins);
+        return ins;
+    }
+
+    MOZ_CRASH("Unhandled SIMD type conversion");
+}
+
+MInstruction*
+MSimdBinaryComp::AddLegalized(TempAllocator& alloc, MBasicBlock* addTo, MDefinition* left,
+                              MDefinition* right, Operation op, MIRType opType, SimdSign sign)
+{
+    bool IsEquality = op == equal || op == notEqual;
+
+    if (!SupportsUint32x4Compares && sign == SimdSign::Unsigned && !IsEquality) {
+        MOZ_ASSERT(opType == MIRType_Int32x4);
+        // This is an order comparison of Uint32x4 vectors which are not supported on this target.
+        // Simply offset |left| and |right| by INT_MIN, then do a signed comparison.
+        MInstruction* bias =
+          MSimdConstant::New(alloc, SimdConstant::SplatX4(int32_t(0x80000000)), opType);
+        addTo->add(bias);
+
+        // Add the bias.
+        MInstruction* bleft =
+          MSimdBinaryArith::New(alloc, left, bias, MSimdBinaryArith::Op_add, opType);
+        addTo->add(bleft);
+        MInstruction* bright =
+          MSimdBinaryArith::New(alloc, right, bias, MSimdBinaryArith::Op_add, opType);
+        addTo->add(bright);
+
+        // Do the equivalent signed comparison.
+        MInstruction* result =
+          MSimdBinaryComp::New(alloc, bleft, bright, op, opType, SimdSign::Signed);
+        addTo->add(result);
+
+        return result;
+    }
+
+    if (!SupportsUint32x4Compares && sign == SimdSign::Unsigned && opType == MIRType_Int32x4) {
+        // The sign doesn't matter for equality tests. Flip it to make the
+        // backend assertions happy.
+        MOZ_ASSERT(IsEquality);
+        sign = SimdSign::Signed;
+    }
+
+    // This is a legal operation already. Just create the instruction requested.
+    MInstruction* result = MSimdBinaryComp::New(alloc, left, right, op, opType, sign);
+    addTo->add(result);
+    return result;
+}
+
 template <typename T>
 static void
 PrintOpcodeOperation(T* mir, GenericPrinter& out)
@@ -2236,6 +2378,7 @@ CanProduceNegativeZero(MDefinition* def) {
         case MDefinition::Op_Constant:
             if (def->type() == MIRType_Double && def->constantValue().toDouble() == -0.0)
                 return true;
+            MOZ_FALLTHROUGH;
         case MDefinition::Op_BitAnd:
         case MDefinition::Op_BitOr:
         case MDefinition::Op_BitXor:
@@ -2314,7 +2457,7 @@ NeedNegativeZeroCheck(MDefinition* def)
             if (rhs->id() < lhs->id() && CanProduceNegativeZero(lhs))
                 return true;
 
-            /* Fall through...  */
+            MOZ_FALLTHROUGH;
           }
           case MDefinition::Op_StoreElement:
           case MDefinition::Op_StoreElementHole:
@@ -3093,7 +3236,7 @@ MTypeOf::foldsTo(TempAllocator& alloc)
             type = JSTYPE_OBJECT;
             break;
         }
-        // FALL THROUGH
+        MOZ_FALLTHROUGH;
       default:
         return this;
     }
@@ -3378,9 +3521,10 @@ MToInt32::foldsTo(TempAllocator& alloc)
           case MIRType_Float32:
           case MIRType_Double:
             int32_t ival;
-            // Only the value within the range of Int32 can be substitued as constant.
+            // Only the value within the range of Int32 can be substituted as constant.
             if (mozilla::NumberEqualsInt32(val.toNumber(), &ival))
                 return MConstant::New(alloc, Int32Value(ival));
+            break;
           default:
             break;
         }
@@ -4682,13 +4826,13 @@ InlinePropertyTable::buildTypeSetForFunction(JSFunction* func) const
 SharedMem<void*>
 MLoadTypedArrayElementStatic::base() const
 {
-    return AnyTypedArrayViewData(someTypedArray_);
+    return someTypedArray_->as<TypedArrayObject>().viewDataEither();
 }
 
 size_t
 MLoadTypedArrayElementStatic::length() const
 {
-    return AnyTypedArrayByteLength(someTypedArray_);
+    return someTypedArray_->as<TypedArrayObject>().byteLength();
 }
 
 bool
@@ -4711,7 +4855,7 @@ MLoadTypedArrayElementStatic::congruentTo(const MDefinition* ins) const
 SharedMem<void*>
 MStoreTypedArrayElementStatic::base() const
 {
-    return AnyTypedArrayViewData(someTypedArray_);
+    return someTypedArray_->as<TypedArrayObject>().viewDataEither();
 }
 
 bool
@@ -4726,7 +4870,7 @@ MGetPropertyCache::allowDoubleResult() const
 size_t
 MStoreTypedArrayElementStatic::length() const
 {
-    return AnyTypedArrayByteLength(someTypedArray_);
+    return someTypedArray_->as<TypedArrayObject>().byteLength();
 }
 
 bool
@@ -4882,6 +5026,20 @@ MTableSwitch::foldsTo(TempAllocator& alloc)
     if (numSuccessors() == 1 || (op->type() != MIRType_Value && !IsNumberType(op->type())))
         return MGoto::New(alloc, getDefault());
 
+    if (op->isConstantValue()) {
+        Value v = op->constantValue();
+        if (v.isInt32()) {
+            int32_t i = v.toInt32() - low_;
+            MBasicBlock* target;
+            if (size_t(i) < numCases())
+                target = getCase(size_t(i));
+            else
+                target = getDefault();
+            MOZ_ASSERT(target);
+            return MGoto::New(alloc, target);
+        }
+    }
+
     return this;
 }
 
@@ -4961,7 +5119,7 @@ jit::ElementAccessIsDenseNative(CompilerConstraintList* constraints,
 
     // Typed arrays are native classes but do not have dense elements.
     const Class* clasp = types->getKnownClass(constraints);
-    return clasp && clasp->isNative() && !IsAnyTypedArrayClass(clasp);
+    return clasp && clasp->isNative() && !IsTypedArrayClass(clasp);
 }
 
 JSValueType
@@ -5007,9 +5165,9 @@ jit::UnboxedArrayElementType(CompilerConstraintList* constraints, MDefinition* o
 }
 
 bool
-jit::ElementAccessIsAnyTypedArray(CompilerConstraintList* constraints,
-                                  MDefinition* obj, MDefinition* id,
-                                  Scalar::Type* arrayType)
+jit::ElementAccessIsTypedArray(CompilerConstraintList* constraints,
+                               MDefinition* obj, MDefinition* id,
+                               Scalar::Type* arrayType)
 {
     if (obj->mightBeType(MIRType_String))
         return false;
@@ -5410,7 +5568,7 @@ jit::TypeCanHaveExtraIndexedProperties(IonBuilder* builder, TemporaryTypeSet* ty
     // Note: typed arrays have indexed properties not accounted for by type
     // information, though these are all in bounds and will be accounted for
     // by JIT paths.
-    if (!clasp || (ClassCanHaveExtraProperties(clasp) && !IsAnyTypedArrayClass(clasp)))
+    if (!clasp || (ClassCanHaveExtraProperties(clasp) && !IsTypedArrayClass(clasp)))
         return true;
 
     if (types->hasObjectFlags(builder->constraints(), OBJECT_FLAG_SPARSE_INDEXES))
@@ -5595,7 +5753,7 @@ jit::PropertyWriteNeedsTypeBarrier(TempAllocator& alloc, CompilerConstraintList*
 
         // TI doesn't track TypedArray indexes and should never insert a type
         // barrier for them.
-        if (!name && IsAnyTypedArrayClass(key->clasp()))
+        if (!name && IsTypedArrayClass(key->clasp()))
             continue;
 
         jsid id = name ? NameToId(name) : JSID_VOID;
@@ -5645,7 +5803,7 @@ jit::PropertyWriteNeedsTypeBarrier(TempAllocator& alloc, CompilerConstraintList*
         TypeSet::ObjectKey* key = types->getObject(i);
         if (!key || key->unknownProperties())
             continue;
-        if (!name && IsAnyTypedArrayClass(key->clasp()))
+        if (!name && IsTypedArrayClass(key->clasp()))
             continue;
 
         jsid id = name ? NameToId(name) : JSID_VOID;

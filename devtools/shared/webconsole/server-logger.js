@@ -1,5 +1,5 @@
-/* -*- js-indent-level: 2; indent-tabs-mode: nil -*- */
-/* vim: set ts=2 et sw=2 tw=80: */
+/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
+/* vim: set ft= javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -408,7 +408,15 @@ function format(msg) {
   msg.styles = [];
 
   // Remove and get the first log (in which the specifiers are).
-  let firstString = msg.logs.shift();
+  // Note that the first string doesn't have to be specified.
+  // An example of a log on the server side:
+  // ChromePhp::log("server info: ", $_SERVER);
+  // ChromePhp::log($_SERVER);
+  let firstString = "";
+  if (typeof msg.logs[0] == "string") {
+    firstString = msg.logs.shift();
+  }
+
   // All the specifiers present in the first string.
   let splitLogRegExp = /(.*?)(%[oOcsdif]|$)/g;
   let splitLogRegExpRes;

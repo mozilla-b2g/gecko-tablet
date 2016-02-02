@@ -570,7 +570,7 @@ WebAudioDecodeJob::OnFailure(ErrorCode aErrorCode)
   const char* errorMessage;
   switch (aErrorCode) {
   case NoError:
-    MOZ_ASSERT(false, "Who passed NoError to OnFailure?");
+    MOZ_FALLTHROUGH_ASSERT("Who passed NoError to OnFailure?");
     // Fall through to get some sort of a sane error message if this actually
     // happens at runtime.
   case UnknownError:
@@ -587,9 +587,8 @@ WebAudioDecodeJob::OnFailure(ErrorCode aErrorCode)
     break;
   }
 
-  nsCOMPtr<nsPIDOMWindow> pWindow = do_QueryInterface(mContext->GetParentObject());
   nsIDocument* doc = nullptr;
-  if (pWindow) {
+  if (nsPIDOMWindowInner* pWindow = mContext->GetParentObject()) {
     doc = pWindow->GetExtantDoc();
   }
   nsContentUtils::ReportToConsole(nsIScriptError::errorFlag,

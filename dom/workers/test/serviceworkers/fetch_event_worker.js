@@ -98,6 +98,10 @@ onfetch = function(ev) {
     ));
   }
 
+  else if (ev.request.url.includes('user-pass')) {
+    ev.respondWith(new Response(ev.request.url));
+  }
+
   else if (ev.request.url.includes("nonexistent_image.gif")) {
     var imageAsBinaryString = atob("R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs");
     var imageLength = imageAsBinaryString.length;
@@ -293,10 +297,15 @@ onfetch = function(ev) {
   }
 
   else if (ev.request.url.includes('fetchevent-request')) {
-    if ((new FetchEvent("foo")).request === null) {
-      ev.respondWith(new Response("nullable"));
-    } else {
-      ev.respondWith(Promise.reject());
+    var threw = false;
+    try {
+      new FetchEvent("foo");
+    } catch(e) {
+      if (e.name == "TypeError") {
+        threw = true;
+      }
+    } finally {
+      ev.respondWith(new Response(threw ? "non-nullable" : "nullable"));
     }
   }
 };

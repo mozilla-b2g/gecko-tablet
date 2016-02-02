@@ -40,7 +40,6 @@
 #include "nsWrapperCacheInlines.h"
 
 class nsIJSID;
-class nsPIDOMWindow;
 
 namespace mozilla {
 
@@ -52,6 +51,9 @@ template<typename DataType> class MozMap;
 nsresult
 UnwrapArgImpl(JS::Handle<JSObject*> src, const nsIID& iid, void** ppArg);
 
+nsresult
+UnwrapWindowProxyImpl(JS::Handle<JSObject*> src, nsPIDOMWindowOuter** ppArg);
+
 /** Convert a jsval to an XPCOM pointer. */
 template <class Interface>
 inline nsresult
@@ -59,6 +61,13 @@ UnwrapArg(JS::Handle<JSObject*> src, Interface** ppArg)
 {
   return UnwrapArgImpl(src, NS_GET_TEMPLATE_IID(Interface),
                        reinterpret_cast<void**>(ppArg));
+}
+
+template <>
+inline nsresult
+UnwrapArg<nsPIDOMWindowOuter>(JS::Handle<JSObject*> src, nsPIDOMWindowOuter** ppArg)
+{
+  return UnwrapWindowProxyImpl(src, ppArg);
 }
 
 bool
@@ -311,7 +320,7 @@ class ProtoAndIfaceCache
 
     void Trace(JSTracer* aTracer) {
       for (size_t i = 0; i < ArrayLength(*this); ++i) {
-        JS::TraceNullableEdge(aTracer, &(*this)[i], "protoAndIfaceCache[i]");
+        JS::TraceEdge(aTracer, &(*this)[i], "protoAndIfaceCache[i]");
       }
     }
 
@@ -370,7 +379,7 @@ class ProtoAndIfaceCache
         Page* p = mPages[i];
         if (p) {
           for (size_t j = 0; j < ArrayLength(*p); ++j) {
-            JS::TraceNullableEdge(trc, &(*p)[j], "protoAndIfaceCache[i]");
+            JS::TraceEdge(trc, &(*p)[j], "protoAndIfaceCache[i]");
           }
         }
       }
@@ -1594,7 +1603,7 @@ WrapNativeParent(JSContext* cx, T* p, nsWrapperCache* cache,
   }
 
   JSObject* parent = WrapNativeParentHelper<T>::Wrap(cx, p, cache);
-  if (!useXBLScope) {
+  if (!parent || !useXBLScope) {
     return parent;
   }
 
@@ -2095,7 +2104,7 @@ class SequenceTracer<JSObject*, false, false, false>
 public:
   static void TraceSequence(JSTracer* trc, JSObject** objp, JSObject** end) {
     for (; objp != end; ++objp) {
-      JS_CallUnbarrieredObjectTracer(trc, objp, "sequence<object>");
+      JS::UnsafeTraceRoot(trc, objp, "sequence<object>");
     }
   }
 };
@@ -2109,7 +2118,7 @@ class SequenceTracer<JS::Value, false, false, false>
 public:
   static void TraceSequence(JSTracer* trc, JS::Value* valp, JS::Value* end) {
     for (; valp != end; ++valp) {
-      JS_CallUnbarrieredValueTracer(trc, valp, "sequence<any>");
+      JS::UnsafeTraceRoot(trc, valp, "sequence<any>");
     }
   }
 };
@@ -2309,7 +2318,7 @@ public:
 
 // Rooter class for MozMap; this is what we mostly use in the codegen.
 template<typename T>
-class MOZ_RAII MozMapRooter : private JS::CustomAutoRooter
+class MOZ_RAII MozMapRooter final : private JS::CustomAutoRooter
 {
 public:
   MozMapRooter(JSContext *aCx, MozMap<T>* aMozMap
@@ -2417,7 +2426,7 @@ bool
 XrayResolveOwnProperty(JSContext* cx, JS::Handle<JSObject*> wrapper,
                        JS::Handle<JSObject*> obj,
                        JS::Handle<jsid> id,
-                       JS::MutableHandle<JSPropertyDescriptor> desc,
+                       JS::MutableHandle<JS::PropertyDescriptor> desc,
                        bool& cacheOnHolder);
 
 /**
@@ -2434,7 +2443,7 @@ XrayResolveOwnProperty(JSContext* cx, JS::Handle<JSObject*> wrapper,
 bool
 XrayDefineProperty(JSContext* cx, JS::Handle<JSObject*> wrapper,
                    JS::Handle<JSObject*> obj, JS::Handle<jsid> id,
-                   JS::Handle<JSPropertyDescriptor> desc,
+                   JS::Handle<JS::PropertyDescriptor> desc,
                    JS::ObjectOpResult &result,
                    bool *defined);
 
@@ -3014,6 +3023,11 @@ RegisterDOMNames();
 
 // The return value is whatever the ProtoHandleGetter we used
 // returned.  This should be the DOM prototype for the global.
+//
+// Typically this method's caller will want to ensure that
+// xpc::InitGlobalObjectOptions is called before, and xpc::InitGlobalObject is
+// called after, this method, to ensure that this global object and its
+// compartment are consistent with other global objects.
 template <class T, ProtoHandleGetter GetProto>
 JS::Handle<JSObject*>
 CreateGlobal(JSContext* aCx, T* aNative, nsWrapperCache* aCache,
@@ -3022,6 +3036,9 @@ CreateGlobal(JSContext* aCx, T* aNative, nsWrapperCache* aCache,
              JS::MutableHandle<JSObject*> aGlobal)
 {
   aOptions.creationOptions().setTrace(CreateGlobalOptions<T>::TraceGlobal);
+  if (xpc::SharedMemoryEnabled()) {
+    aOptions.creationOptions().setSharedMemoryAndAtomicsEnabled(true);
+  }
 
   aGlobal.set(JS_NewGlobalObject(aCx, aClass, aPrincipal,
                                  JS::DontFireOnNewGlobalHook, aOptions));
@@ -3146,7 +3163,7 @@ EnforceNotInPrerendering(JSContext* aCx, JSObject* aObj);
 // aborting the scripts, and preventing timers and event handlers from running
 // in the window in the future.
 void
-HandlePrerenderingViolation(nsPIDOMWindow* aWindow);
+HandlePrerenderingViolation(nsPIDOMWindowInner* aWindow);
 
 bool
 CallerSubsumes(JSObject* aObject);

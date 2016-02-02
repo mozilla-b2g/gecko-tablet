@@ -89,8 +89,6 @@ RestyleManager::RestyleManager(nsPresContext* aPresContext)
   , mHoverGeneration(0)
   , mRebuildAllExtraHint(nsChangeHint(0))
   , mRebuildAllRestyleHint(nsRestyleHint(0))
-  , mLastUpdateForThrottledAnimations(aPresContext->RefreshDriver()->
-                                        MostRecentRefresh())
   , mAnimationGeneration(0)
   , mReframingStyleContexts(nullptr)
   , mAnimationsWithDestroyedFrame(nullptr)
@@ -225,13 +223,13 @@ GetFrameForChildrenOnlyTransformHint(nsIFrame *aFrame)
     // This happens if the root-<svg> is fixed positioned, in which case we
     // can't use aFrame->GetContent() to find the primary frame, since
     // GetContent() returns nullptr for ViewportFrame.
-    aFrame = aFrame->GetFirstPrincipalChild();
+    aFrame = aFrame->PrincipalChildList().FirstChild();
   }
   // For an nsHTMLScrollFrame, this will get the SVG frame that has the
   // children-only transforms:
   aFrame = aFrame->GetContent()->GetPrimaryFrame();
   if (aFrame->GetType() == nsGkAtoms::svgOuterSVGFrame) {
-    aFrame = aFrame->GetFirstPrincipalChild();
+    aFrame = aFrame->PrincipalChildList().FirstChild();
     MOZ_ASSERT(aFrame->GetType() == nsGkAtoms::svgOuterSVGAnonChildFrame,
                "Where is the nsSVGOuterSVGFrame's anon child??");
   }
@@ -329,7 +327,7 @@ DoApplyRenderingChangeToTree(nsIFrame* aFrame,
     if (aChange & nsChangeHint_ChildrenOnlyTransform) {
       needInvalidatingPaint = true;
       nsIFrame* childFrame =
-        GetFrameForChildrenOnlyTransformHint(aFrame)->GetFirstPrincipalChild();
+        GetFrameForChildrenOnlyTransformHint(aFrame)->PrincipalChildList().FirstChild();
       for ( ; childFrame; childFrame = childFrame->GetNextSibling()) {
         ActiveLayerTracker::NotifyRestyle(childFrame, eCSSProperty_transform);
       }
@@ -644,7 +642,7 @@ RestyleManager::AddSubtreeToOverflowTracker(nsIFrame* aFrame)
   }
 }
 
-NS_DECLARE_FRAME_PROPERTY(ChangeListProperty, nullptr)
+NS_DECLARE_FRAME_PROPERTY_SMALL_VALUE(ChangeListProperty, bool)
 
 /**
  * Return true if aFrame's subtree has placeholders for out-of-flow content
@@ -737,8 +735,7 @@ RestyleManager::ProcessRestyledFrames(nsStyleChangeList& aChangeList)
     const nsStyleChangeData* changeData;
     aChangeList.ChangeAt(index, &changeData);
     if (changeData->mFrame) {
-      propTable->Set(changeData->mFrame, ChangeListProperty(),
-                     NS_INT32_TO_PTR(1));
+      propTable->Set(changeData->mFrame, ChangeListProperty(), true);
     }
   }
 
@@ -905,7 +902,7 @@ RestyleManager::ProcessRestyledFrames(nsStyleChangeList& aChangeList)
         if (hint & nsChangeHint_ChildrenOnlyTransform) {
           // The overflow areas of the child frames need to be updated:
           nsIFrame* hintFrame = GetFrameForChildrenOnlyTransformHint(frame);
-          nsIFrame* childFrame = hintFrame->GetFirstPrincipalChild();
+          nsIFrame* childFrame = hintFrame->PrincipalChildList().FirstChild();
           NS_ASSERTION(!nsLayoutUtils::GetNextContinuationOrIBSplitSibling(frame),
                        "SVG frames should not have continuations "
                        "or ib-split siblings");
@@ -1841,9 +1838,7 @@ RestyleManager::EndProcessingRestyles()
 void
 RestyleManager::UpdateOnlyAnimationStyles()
 {
-  TimeStamp now = mPresContext->RefreshDriver()->MostRecentRefresh();
-  bool doCSS = mLastUpdateForThrottledAnimations != now;
-  mLastUpdateForThrottledAnimations = now;
+  bool doCSS = mPresContext->EffectCompositor()->HasPendingStyleUpdates();
 
   nsIDocument* document = mPresContext->Document();
   nsSMILAnimationController* animationController =
@@ -1858,7 +1853,6 @@ RestyleManager::UpdateOnlyAnimationStyles()
   }
 
   nsTransitionManager* transitionManager = mPresContext->TransitionManager();
-  nsAnimationManager* animationManager = mPresContext->AnimationManager();
 
   transitionManager->SetInAnimationOnlyStyleUpdate(true);
 
@@ -1871,8 +1865,7 @@ RestyleManager::UpdateOnlyAnimationStyles()
     // add only the elements for which animations are currently throttled
     // (i.e., animating on the compositor with main-thread style updates
     // suppressed).
-    transitionManager->AddStyleUpdatesTo(tracker);
-    animationManager->AddStyleUpdatesTo(tracker);
+    mPresContext->EffectCompositor()->AddStyleUpdatesTo(tracker);
   }
 
   if (doSMIL) {
@@ -2339,7 +2332,8 @@ GetNextContinuationWithSameStyle(nsIFrame* aFrame,
 nsresult
 RestyleManager::ReparentStyleContext(nsIFrame* aFrame)
 {
-  if (nsGkAtoms::placeholderFrame == aFrame->GetType()) {
+  nsIAtom* frameType = aFrame->GetType();
+  if (frameType == nsGkAtoms::placeholderFrame) {
     // Also reparent the out-of-flow and all its continuations.
     nsIFrame* outOfFlow =
       nsPlaceholderFrame::GetRealFrameForPlaceholder(aFrame);
@@ -2347,6 +2341,10 @@ RestyleManager::ReparentStyleContext(nsIFrame* aFrame)
     do {
       ReparentStyleContext(outOfFlow);
     } while ((outOfFlow = outOfFlow->GetNextContinuation()));
+  } else if (frameType == nsGkAtoms::backdropFrame) {
+    // Style context of backdrop frame has no parent style context, and
+    // thus we do not need to reparent it.
+    return NS_OK;
   }
 
   // DO NOT verify the style tree before reparenting.  The frame

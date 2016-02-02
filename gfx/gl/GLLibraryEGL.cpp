@@ -8,6 +8,7 @@
 #include "gfxUtils.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Assertions.h"
+#include "mozilla/unused.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsDirectoryServiceUtils.h"
 #include "nsIGfxInfo.h"
@@ -28,7 +29,7 @@ namespace gl {
 StaticMutex GLLibraryEGL::sMutex;
 GLLibraryEGL sEGLLibrary;
 #ifdef MOZ_B2G
-ThreadLocal<EGLContext> GLLibraryEGL::sCurrentContext;
+MOZ_THREAD_LOCAL(EGLContext) GLLibraryEGL::sCurrentContext;
 #endif
 
 // should match the order of EGLExtensions, and be null-terminated.
@@ -150,6 +151,34 @@ GetAndInitDisplay(GLLibraryEGL& egl, void* displayType)
         return EGL_NO_DISPLAY;
 
     return display;
+}
+
+static EGLDisplay
+GetAndInitDisplayForAccelANGLE(GLLibraryEGL& egl)
+{
+    EGLDisplay ret = 0;
+
+    // D3D11 ANGLE only works with OMTC; there's a bug in the non-OMTC layer
+    // manager, and it's pointless to try to fix it.  We also don't try
+    // D3D11 ANGLE if the layer manager is prefering D3D9 (hrm, do we care?)
+    if (gfxPrefs::LayersOffMainThreadCompositionEnabled() &&
+        !gfxPrefs::LayersPreferD3D9())
+    {
+        if (gfxPrefs::WebGLANGLEForceD3D11())
+            return GetAndInitDisplay(egl, LOCAL_EGL_D3D11_ONLY_DISPLAY_ANGLE);
+
+        if (gfxPrefs::WebGLANGLETryD3D11() &&
+            gfxPlatform::CanUseDirect3D11ANGLE())
+        {
+            ret = GetAndInitDisplay(egl, LOCAL_EGL_D3D11_ELSE_D3D9_DISPLAY_ANGLE);
+        }
+    }
+
+    if (!ret) {
+        ret = GetAndInitDisplay(egl, EGL_DEFAULT_DISPLAY);
+    }
+
+    return ret;
 }
 
 bool
@@ -306,8 +335,8 @@ GLLibraryEGL::EnsureInitialized(bool forceAccel)
     };
 
     // Do not warn about the failure to load this - see bug 1092191
-    GLLibraryLoader::LoadSymbols(mEGLLibrary, &optionalSymbols[0], nullptr, nullptr,
-                                 false);
+    Unused << GLLibraryLoader::LoadSymbols(mEGLLibrary, &optionalSymbols[0],
+                                           nullptr, nullptr, false);
 
 #if defined(MOZ_WIDGET_GONK) && ANDROID_VERSION >= 18
     MOZ_RELEASE_ASSERT(mSymbols.fQueryStringImplementationANDROID,
@@ -366,30 +395,14 @@ GLLibraryEGL::EnsureInitialized(bool forceAccel)
 
         if (!chosenDisplay) {
             // If falling back to WARP did not work and we don't want to try
-            // using HW accelerated ANGLE, then fail
+            // using HW accelerated ANGLE, then fail.
             if (!shouldTryAccel) {
                 NS_ERROR("Fallback WARP ANGLE context failed to initialize.");
                 return false;
             }
 
             // Hardware accelerated ANGLE path
-
-            // D3D11 ANGLE only works with OMTC; there's a bug in the non-OMTC layer
-            // manager, and it's pointless to try to fix it.  We also don't try
-            // D3D11 ANGLE if the layer manager is prefering D3D9 (hrm, do we care?)
-            if (gfxPrefs::LayersOffMainThreadCompositionEnabled() &&
-                !gfxPrefs::LayersPreferD3D9())
-            {
-                if (gfxPrefs::WebGLANGLEForceD3D11()) {
-                    chosenDisplay = GetAndInitDisplay(*this,
-                                                      LOCAL_EGL_D3D11_ONLY_DISPLAY_ANGLE);
-                } else if (gfxPrefs::WebGLANGLETryD3D11() &&
-                           gfxPlatform::CanUseDirect3D11ANGLE())
-                {
-                    chosenDisplay = GetAndInitDisplay(*this,
-                                                      LOCAL_EGL_D3D11_ELSE_D3D9_DISPLAY_ANGLE);
-                }
-            }
+            chosenDisplay = GetAndInitDisplayForAccelANGLE(*this);
         }
     } else {
         chosenDisplay = GetAndInitDisplay(*this, EGL_DEFAULT_DISPLAY);

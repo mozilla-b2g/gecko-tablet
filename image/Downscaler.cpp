@@ -72,6 +72,13 @@ Downscaler::BeginFrame(const nsIntSize& aOriginalSize,
   MOZ_ASSERT(aOriginalSize.width > 0 && aOriginalSize.height > 0,
              "Invalid original size");
 
+  // Only downscale from reasonable sizes to avoid using too much memory/cpu
+  // downscaling and decoding. 1 << 20 == 1,048,576 seems a reasonable limit.
+  if (aOriginalSize.width > (1 << 20) || aOriginalSize.height > (1 << 20)) {
+    NS_WARNING("Trying to downscale image frame that is too large");
+    return NS_ERROR_INVALID_ARG;
+  }
+
   mFrameRect = aFrameRect.valueOr(nsIntRect(nsIntPoint(), aOriginalSize));
   MOZ_ASSERT(mFrameRect.x >= 0 && mFrameRect.y >= 0 &&
              mFrameRect.width >= 0 && mFrameRect.height >= 0,
@@ -99,10 +106,20 @@ Downscaler::BeginFrame(const nsIntSize& aOriginalSize,
                                0, mTargetSize.width,
                                mXFilter.get());
 
+  if (mXFilter->max_filter() <= 0 || mXFilter->num_values() != mTargetSize.width) {
+    NS_WARNING("Failed to compute filters for image downscaling");
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+
   skia::resize::ComputeFilters(resizeMethod,
                                mOriginalSize.height, mTargetSize.height,
                                0, mTargetSize.height,
                                mYFilter.get());
+
+  if (mYFilter->max_filter() <= 0 || mYFilter->num_values() != mTargetSize.height) {
+    NS_WARNING("Failed to compute filters for image downscaling");
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
 
   // Allocate the buffer, which contains scanlines of the original image.
   // pad by 15 to handle overreads by the simd code
@@ -199,33 +216,34 @@ Downscaler::CommitRow()
 {
   MOZ_ASSERT(mOutputBuffer, "Should have a current frame");
   MOZ_ASSERT(mCurrentInLine < mOriginalSize.height, "Past end of input");
-  MOZ_ASSERT(mCurrentOutLine < mTargetSize.height, "Past end of output");
 
-  int32_t filterOffset = 0;
-  int32_t filterLength = 0;
-  GetFilterOffsetAndLength(mYFilter, mCurrentOutLine,
-                           &filterOffset, &filterLength);
-
-  int32_t inLineToRead = filterOffset + mLinesInBuffer;
-  MOZ_ASSERT(mCurrentInLine <= inLineToRead, "Reading past end of input");
-  if (mCurrentInLine == inLineToRead) {
-    skia::ConvolveHorizontally(mRowBuffer.get(), *mXFilter,
-                               mWindow[mLinesInBuffer++], mHasAlpha,
-                               supports_sse2());
-  }
-
-  MOZ_ASSERT(mCurrentOutLine < mTargetSize.height,
-             "Writing past end of output");
-
-  while (mLinesInBuffer == filterLength) {
-    DownscaleInputLine();
-
-    if (mCurrentOutLine == mTargetSize.height) {
-      break;  // We're done.
-    }
-
+  if (mCurrentOutLine < mTargetSize.height) {
+    int32_t filterOffset = 0;
+    int32_t filterLength = 0;
     GetFilterOffsetAndLength(mYFilter, mCurrentOutLine,
                              &filterOffset, &filterLength);
+
+    int32_t inLineToRead = filterOffset + mLinesInBuffer;
+    MOZ_ASSERT(mCurrentInLine <= inLineToRead, "Reading past end of input");
+    if (mCurrentInLine == inLineToRead) {
+      skia::ConvolveHorizontally(mRowBuffer.get(), *mXFilter,
+                                 mWindow[mLinesInBuffer++], mHasAlpha,
+                                 supports_sse2());
+    }
+
+    MOZ_ASSERT(mCurrentOutLine < mTargetSize.height,
+               "Writing past end of output");
+
+    while (mLinesInBuffer == filterLength) {
+      DownscaleInputLine();
+
+      if (mCurrentOutLine == mTargetSize.height) {
+        break;  // We're done.
+      }
+
+      GetFilterOffsetAndLength(mYFilter, mCurrentOutLine,
+                               &filterOffset, &filterLength);
+    }
   }
 
   mCurrentInLine += 1;

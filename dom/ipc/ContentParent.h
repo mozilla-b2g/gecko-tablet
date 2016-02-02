@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/* vim: set sw=4 ts=8 et tw=80 : */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -457,16 +457,14 @@ public:
   AllocPOfflineCacheUpdateParent(const URIParams& aManifestURI,
                                  const URIParams& aDocumentURI,
                                  const PrincipalInfo& aLoadingPrincipalInfo,
-                                 const bool& aStickDocument,
-                                 const TabId& aTabId) override;
+                                 const bool& aStickDocument) override;
 
   virtual bool
   RecvPOfflineCacheUpdateConstructor(POfflineCacheUpdateParent* aActor,
                                      const URIParams& aManifestURI,
                                      const URIParams& aDocumentURI,
                                      const PrincipalInfo& aLoadingPrincipal,
-                                     const bool& stickDocument,
-                                     const TabId& aTabId) override;
+                                     const bool& stickDocument) override;
 
   virtual bool
   DeallocPOfflineCacheUpdateParent(POfflineCacheUpdateParent* aActor) override;

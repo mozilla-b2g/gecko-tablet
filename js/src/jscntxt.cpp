@@ -55,7 +55,6 @@ using namespace js::gc;
 using mozilla::DebugOnly;
 using mozilla::PodArrayZero;
 using mozilla::PointerRangeSize;
-using mozilla::UniquePtr;
 
 bool
 js::AutoCycleDetector::init()
@@ -187,8 +186,9 @@ js::DestroyContext(JSContext* cx, DestroyContextMode mode)
 void
 RootLists::checkNoGCRooters() {
 #ifdef DEBUG
-    for (int i = 0; i < THING_ROOT_LIMIT; ++i)
-        MOZ_ASSERT(stackRoots_[i] == nullptr);
+    for (auto const& stackRootPtr : stackRoots_) {
+        MOZ_ASSERT(stackRootPtr == nullptr);
+    }
 #endif
 }
 
@@ -291,7 +291,7 @@ js::ReportOutOfMemory(ExclusiveContext* cxArg)
 #endif
 
     if (!cxArg->isJSContext())
-        return;
+        return cxArg->addPendingOutOfMemory();
 
     JSContext* cx = cxArg->asJSContext();
     cx->runtime()->hadOutOfMemory = true;
@@ -645,7 +645,6 @@ js::ExpandErrorArgumentsVA(ExclusiveContext* cx, JSErrorCallback callback,
                 */
                 reportp->ucmessage = out = cx->pod_malloc<char16_t>(expandedLength + 1);
                 if (!out) {
-                    ReportOutOfMemory(cx);
                     js_free(buffer);
                     goto error;
                 }
@@ -844,8 +843,7 @@ js::ReportIsNullOrUndefined(JSContext* cx, int spindex, HandleValue v,
 {
     bool ok;
 
-    UniquePtr<char[], JS::FreePolicy> bytes =
-        DecompileValueGenerator(cx, spindex, v, fallback);
+    UniqueChars bytes = DecompileValueGenerator(cx, spindex, v, fallback);
     if (!bytes)
         return false;
 
@@ -875,7 +873,7 @@ void
 js::ReportMissingArg(JSContext* cx, HandleValue v, unsigned arg)
 {
     char argbuf[11];
-    UniquePtr<char[], JS::FreePolicy> bytes;
+    UniqueChars bytes;
     RootedAtom atom(cx);
 
     JS_snprintf(argbuf, sizeof argbuf, "%u", arg);
@@ -895,7 +893,7 @@ js::ReportValueErrorFlags(JSContext* cx, unsigned flags, const unsigned errorNum
                           int spindex, HandleValue v, HandleString fallback,
                           const char* arg1, const char* arg2)
 {
-    UniquePtr<char[], JS::FreePolicy> bytes;
+    UniqueChars bytes;
     bool ok;
 
     MOZ_ASSERT(js_ErrorFormatString[errorNumber].argCount >= 1);
@@ -937,13 +935,16 @@ ExclusiveContext::ExclusiveContext(JSRuntime* rt, PerThreadData* pt, ContextKind
 void
 ExclusiveContext::recoverFromOutOfMemory()
 {
-    // If this is not a JSContext, there's nothing to do.
     if (JSContext* maybecx = maybeJSContext()) {
         if (maybecx->isExceptionPending()) {
             MOZ_ASSERT(maybecx->isThrowingOutOfMemory());
             maybecx->clearPendingException();
         }
+        return;
     }
+    // Keep in sync with addPendingOutOfMemory.
+    if (ParseTask* task = helperThread()->parseTask())
+        task->outOfMemory = false;
 }
 
 JSContext::JSContext(JSRuntime* rt)

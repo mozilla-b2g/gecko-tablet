@@ -463,14 +463,19 @@ endif
 endif
 
 ifdef SYMBOLS_FILE
+ifeq ($(OS_TARGET),WINNT)
+ifndef GNU_CC
+EXTRA_DSO_LDOPTS += -DEF:$(call normalizepath,$(SYMBOLS_FILE))
+else
+EXTRA_DSO_LDOPTS += $(call normalizepath,$(SYMBOLS_FILE))
+endif
+else
 ifdef GCC_USE_GNU_LD
 EXTRA_DSO_LDOPTS += -Wl,--version-script,$(SYMBOLS_FILE)
 else
 ifeq ($(OS_TARGET),Darwin)
 EXTRA_DSO_LDOPTS += -Wl,-exported_symbols_list,$(SYMBOLS_FILE)
 endif
-ifeq ($(OS_TARGET),WINNT)
-EXTRA_DSO_LDOPTS += -DEF:$(call normalizepath,$(SYMBOLS_FILE))
 endif
 endif
 EXTRA_DEPS += $(SYMBOLS_FILE)
@@ -527,12 +532,17 @@ endif
 ifndef MOZBUILD_BACKEND_CHECKED
 ifndef MACH
 ifndef TOPLEVEL_BUILD
-$(DEPTH)/backend.RecursiveMakeBackend:
+BUILD_BACKEND_FILES := $(addprefix $(DEPTH)/backend.,$(addsuffix Backend,$(BUILD_BACKENDS)))
+$(DEPTH)/backend.%Backend:
 	$(error Build configuration changed. Build with |mach build| or run |mach build-backend| to regenerate build config)
 
-include $(DEPTH)/backend.RecursiveMakeBackend.pp
+define build_backend_rule
+$(1): $$(shell cat $(1).in)
 
-default:: $(DEPTH)/backend.RecursiveMakeBackend
+endef
+$(foreach file,$(BUILD_BACKEND_FILES),$(eval $(call build_backend_rule,$(file))))
+
+default:: $(BUILD_BACKEND_FILES)
 
 export MOZBUILD_BACKEND_CHECKED=1
 endif
@@ -902,6 +912,7 @@ $(HOST_COBJS):
 
 $(HOST_CPPOBJS):
 	$(REPORT_BUILD)
+	$(call BUILDSTATUS,OBJECT_FILE $@)
 	$(ELOG) $(HOST_CXX) $(HOST_OUTOPTION)$@ -c $(HOST_CXXFLAGS) $(INCLUDES) $(NSPR_CFLAGS) $(_VPATH_SRCS)
 
 $(HOST_CMOBJS):
@@ -954,6 +965,7 @@ $(SOBJS):
 
 $(CPPOBJS):
 	$(REPORT_BUILD)
+	$(call BUILDSTATUS,OBJECT_FILE $@)
 	@$(MAKE_DEPS_AUTO_CXX)
 	$(ELOG) $(CCC) $(OUTOPTION)$@ -c $(COMPILE_CXXFLAGS) $($(notdir $<)_FLAGS) $(TARGET_LOCAL_INCLUDES) $(_VPATH_SRCS)
 
@@ -1222,12 +1234,6 @@ libs realchrome:: $(FINAL_TARGET)/chrome
 
 endif
 
-# This is a temporary check to ensure patches relying on the old behavior
-# of silently picking up jar.mn files continue to work.
-else # No JAR_MANIFEST
-ifneq (,$(wildcard $(srcdir)/jar.mn))
-$(error $(srcdir) contains a jar.mn file but this file is not declared in a JAR_MANIFESTS variable in a moz.build file)
-endif
 endif
 
 # When you move this out of the tools tier, please remove the corresponding
@@ -1579,7 +1585,3 @@ include $(MOZILLA_DIR)/config/makefiles/autotargets.mk
 ifneq ($(NULL),$(AUTO_DEPS))
   default all libs tools export:: $(AUTO_DEPS)
 endif
-
-export:: $(GENERATED_FILES)
-
-GARBAGE += $(GENERATED_FILES)

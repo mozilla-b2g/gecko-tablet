@@ -77,8 +77,8 @@ AVD_DICT = {
                     'init,console,gles,memcheck,adbserver,adbclient,adb,avd_config,socket',
                     '-qemu', '-m', '1024', '-enable-kvm'],
                    5554,
-                   True,
-                   20701, 20700)
+                   False,
+                   0, 0)
 }
 
 def verify_android_device(build_obj, install=False, xre=False, debugger=False):
@@ -180,7 +180,7 @@ def verify_android_device(build_obj, install=False, xre=False, debugger=False):
 
     if debugger:
         # Optionally set up JimDB. See https://wiki.mozilla.org/Mobile/Fennec/Android/GDB.
-        build_platform = _get_build_platform(build_obj.substs)
+        build_platform = _get_device_platform(build_obj.substs)
         jimdb_path = os.path.join(EMULATOR_HOME_DIR, 'jimdb-%s' % build_platform)
         jimdb_utils_path = os.path.join(jimdb_path, 'utils')
         gdb_path = os.path.join(jimdb_path, 'bin', 'gdb')
@@ -259,6 +259,26 @@ def run_firefox_for_android(build_obj, params):
         _log_warning("unable to launch Firefox for Android")
         return 1
     return 0
+
+def grant_runtime_permissions(build_obj, app):
+    """
+       Grant required runtime permissions to the specified app (typically org.mozilla.fennec_$USER).
+    """
+    adb_path = _find_sdk_exe(build_obj.substs, 'adb', False)
+    if not adb_path:
+        adb_path = 'adb'
+    dm = DeviceManagerADB(autoconnect=False, adbPath=adb_path, retryLimit=1)
+    dm.default_timeout = 10
+    try:
+        sdk_level = dm.shellCheckOutput(['getprop', 'ro.build.version.sdk'])
+        if sdk_level and int(sdk_level) >= 23:
+            _log_info("Granting important runtime permissions to %s" % app)
+            dm.shellCheckOutput(['pm', 'grant', app, 'android.permission.WRITE_EXTERNAL_STORAGE'])
+            dm.shellCheckOutput(['pm', 'grant', app, 'android.permission.ACCESS_FINE_LOCATION'])
+            dm.shellCheckOutput(['pm', 'grant', app, 'android.permission.CAMERA'])
+            dm.shellCheckOutput(['pm', 'grant', app, 'android.permission.WRITE_CONTACTS'])
+    except DMError:
+        _log_warning("Unable to grant runtime permissions to %s" % app)
 
 class AndroidEmulator(object):
 
@@ -693,9 +713,28 @@ def _get_host_platform():
             plat = 'linux32'
     return plat
 
-def _get_build_platform(substs):
+def _get_device_platform(substs):
+    # PIE executables are required when SDK level >= 21 - important for gdbserver
+    adb_path = _find_sdk_exe(substs, 'adb', False)
+    if not adb_path:
+        adb_path = 'adb'
+    dm = DeviceManagerADB(autoconnect=False, adbPath=adb_path, retryLimit=1)
+    sdk_level = None
+    try:
+        cmd = ['getprop', 'ro.build.version.sdk']
+        _log_debug(cmd)
+        output = dm.shellCheckOutput(cmd, timeout=10)
+        if output:
+            sdk_level = int(output)
+    except:
+        _log_warning("unable to determine Android sdk level")
+    pie = ''
+    if sdk_level and sdk_level >= 21:
+        pie = '-pie'
     if substs['TARGET_CPU'].startswith('arm'):
-        return 'arm'
+        return 'arm%s' % pie
+    if sdk_level and sdk_level >= 21:
+        _log_warning("PIE gdbserver is not yet available for x86: you may not be able to debug on this platform")
     return 'x86'
 
 def _update_gdbinit(substs, path):

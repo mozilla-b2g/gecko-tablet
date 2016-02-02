@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/* vim: set sw=4 ts=8 et tw=80 : */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -161,6 +161,10 @@
 
 #ifdef MOZ_GAMEPAD
 #include "mozilla/dom/GamepadService.h"
+#endif
+
+#ifndef MOZ_SIMPLEPUSH
+#include "mozilla/dom/PushNotifier.h"
 #endif
 
 #include "mozilla/dom/File.h"
@@ -618,7 +622,26 @@ ContentChild::Init(MessageLoop* aIOLoop,
                    IPC::Channel* aChannel)
 {
 #ifdef MOZ_WIDGET_GTK
-  gtk_init(nullptr, nullptr);
+  // We need to pass a display down to gtk_init because it's not going to
+  // use the one from the environment on its own when deciding which backend
+  // to use, and when starting under XWayland, it may choose to start with
+  // the wayland backend instead of the x11 backend.
+  // The DISPLAY environment variable is normally set by the parent process.
+  char* display_name = PR_GetEnv("DISPLAY");
+  if (display_name) {
+    int argc = 3;
+    char option_name[] = "--display";
+    char* argv[] = {
+      nullptr,
+      option_name,
+      display_name,
+      nullptr
+    };
+    char** argvp = argv;
+    gtk_init(&argc, &argvp);
+  } else {
+    gtk_init(nullptr, nullptr);
+  }
 #endif
 
 #ifdef MOZ_WIDGET_QT
@@ -649,10 +672,6 @@ ContentChild::Init(MessageLoop* aIOLoop,
     return false;
   }
   sSingleton = this;
-
-  // Make sure there's an nsAutoScriptBlocker on the stack when dispatching
-  // urgent messages.
-  GetIPCChannel()->BlockScripts();
 
   // If communications with the parent have broken down, take the process
   // down so it's not hanging around.
@@ -744,7 +763,7 @@ ContentChild::SetProcessName(const nsAString& aName, bool aDontOverride)
 }
 
 NS_IMETHODIMP
-ContentChild::ProvideWindow(nsIDOMWindow* aParent,
+ContentChild::ProvideWindow(mozIDOMWindowProxy* aParent,
                             uint32_t aChromeFlags,
                             bool aCalledFromJS,
                             bool aPositionSpecified,
@@ -753,7 +772,7 @@ ContentChild::ProvideWindow(nsIDOMWindow* aParent,
                             const nsAString& aName,
                             const nsACString& aFeatures,
                             bool* aWindowIsNew,
-                            nsIDOMWindow** aReturn)
+                            mozIDOMWindowProxy** aReturn)
 {
   return ProvideWindowCommon(nullptr, aParent, false, aChromeFlags,
                              aCalledFromJS, aPositionSpecified,
@@ -763,7 +782,7 @@ ContentChild::ProvideWindow(nsIDOMWindow* aParent,
 
 nsresult
 ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
-                                  nsIDOMWindow* aParent,
+                                  mozIDOMWindowProxy* aParent,
                                   bool aIframeMoz,
                                   uint32_t aChromeFlags,
                                   bool aCalledFromJS,
@@ -773,7 +792,7 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
                                   const nsAString& aName,
                                   const nsACString& aFeatures,
                                   bool* aWindowIsNew,
-                                  nsIDOMWindow** aReturn)
+                                  mozIDOMWindowProxy** aReturn)
 {
   *aReturn = nullptr;
 
@@ -841,7 +860,7 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
   } else {
     nsAutoCString baseURIString;
     if (aTabOpener) {
-      nsCOMPtr<nsPIDOMWindow> opener = do_QueryInterface(aParent);
+      auto* opener = nsPIDOMWindowOuter::From(aParent);
       nsCOMPtr<nsIDocument> doc = opener->GetDoc();
       nsCOMPtr<nsIURI> baseURI = doc->GetDocBaseURI();
       if (!baseURI) {
@@ -886,7 +905,7 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
   }
 
   ShowInfo showInfo(EmptyString(), false, false, true, 0, 0);
-  nsCOMPtr<nsPIDOMWindow> opener = do_QueryInterface(aParent);
+  auto* opener = nsPIDOMWindowOuter::From(aParent);
   nsIDocShell* openerShell;
   if (opener && (openerShell = opener->GetDocShell())) {
     nsCOMPtr<nsILoadContext> context = do_QueryInterface(openerShell);
@@ -911,7 +930,7 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
     newChild->RecvLoadURL(urlToLoad, BrowserConfiguration(), showInfo);
   }
 
-  nsCOMPtr<nsIDOMWindow> win = do_GetInterface(newChild->WebNavigation());
+  nsCOMPtr<mozIDOMWindowProxy> win = do_GetInterface(newChild->WebNavigation());
   win.forget(aReturn);
   return NS_OK;
 }
@@ -1572,7 +1591,7 @@ ContentChild::AllocPBlobChild(const BlobConstructorParams& aParams)
 mozilla::PRemoteSpellcheckEngineChild *
 ContentChild::AllocPRemoteSpellcheckEngineChild()
 {
-  NS_NOTREACHED("Default Constructor for PRemoteSpellcheckEngineChild should never be called");
+  MOZ_CRASH("Default Constructor for PRemoteSpellcheckEngineChild should never be called");
   return nullptr;
 }
 
@@ -1599,7 +1618,7 @@ ContentChild::SendPBlobConstructor(PBlobChild* aActor,
 PPresentationChild*
 ContentChild::AllocPPresentationChild()
 {
-  NS_NOTREACHED("We should never be manually allocating PPresentationChild actors");
+  MOZ_CRASH("We should never be manually allocating PPresentationChild actors");
   return nullptr;
 }
 
@@ -1704,7 +1723,7 @@ ContentChild::SendPIccConstructor(PIccChild* aActor,
 PIccChild*
 ContentChild::AllocPIccChild(const uint32_t& aServiceId)
 {
-  NS_NOTREACHED("No one should be allocating PIccChild actors");
+  MOZ_CRASH("No one should be allocating PIccChild actors");
   return nullptr;
 }
 
@@ -1760,7 +1779,7 @@ ContentChild::DeallocPDeviceStorageRequestChild(PDeviceStorageRequestChild* aDev
 PFileSystemRequestChild*
 ContentChild::AllocPFileSystemRequestChild(const FileSystemParams& aParams)
 {
-  NS_NOTREACHED("Should never get here!");
+  MOZ_CRASH("Should never get here!");
   return nullptr;
 }
 
@@ -1785,7 +1804,7 @@ ContentChild::SendPMobileConnectionConstructor(PMobileConnectionChild* aActor,
   static_cast<MobileConnectionChild*>(aActor)->AddRef();
   return PContentChild::SendPMobileConnectionConstructor(aActor, aClientId);
 #else
-  MOZ_CRASH("No support for mobileconnection on this platform!");;
+  MOZ_CRASH("No support for mobileconnection on this platform!");
 #endif
 }
 
@@ -1793,10 +1812,10 @@ PMobileConnectionChild*
 ContentChild::AllocPMobileConnectionChild(const uint32_t& aClientId)
 {
 #ifdef MOZ_B2G_RIL
-  NS_NOTREACHED("No one should be allocating PMobileConnectionChild actors");
+  MOZ_CRASH("No one should be allocating PMobileConnectionChild actors");
   return nullptr;
 #else
-  MOZ_CRASH("No support for mobileconnection on this platform!");;
+  MOZ_CRASH("No support for mobileconnection on this platform!");
 #endif
 }
 
@@ -1832,7 +1851,7 @@ ContentChild::AllocPPrintingChild()
   // which implements PPrintingChild. Instead, the nsPrintingProxy service is
   // requested and instantiated via XPCOM, and the constructor of
   // nsPrintingProxy sets up the IPC connection.
-  NS_NOTREACHED("Should never get here!");
+  MOZ_CRASH("Should never get here!");
   return nullptr;
 }
 
@@ -1851,7 +1870,7 @@ ContentChild::AllocPScreenManagerChild(uint32_t* aNumberOfScreens,
   // nsScreenManagerProxy. Instead, the nsScreenManagerProxy
   // service is requested and instantiated via XPCOM, and the
   // constructor of nsScreenManagerProxy sets up the IPC connection.
-  NS_NOTREACHED("Should never get here!");
+  MOZ_CRASH("Should never get here!");
   return nullptr;
 }
 
@@ -2007,7 +2026,7 @@ ContentChild::DeallocPMediaChild(media::PMediaChild *aActor)
 PStorageChild*
 ContentChild::AllocPStorageChild()
 {
-  NS_NOTREACHED("We should never be manually allocating PStorageChild actors");
+  MOZ_CRASH("We should never be manually allocating PStorageChild actors");
   return nullptr;
 }
 
@@ -2794,8 +2813,7 @@ POfflineCacheUpdateChild*
 ContentChild::AllocPOfflineCacheUpdateChild(const URIParams& manifestURI,
                                             const URIParams& documentURI,
                                             const PrincipalInfo& aLoadingPrincipalInfo,
-                                            const bool& stickDocument,
-                                            const TabId& aTabId)
+                                            const bool& stickDocument)
 {
   NS_RUNTIMEABORT("unused");
   return nullptr;
@@ -3023,7 +3041,7 @@ ContentChild::RecvUpdateWindow(const uintptr_t& aChildId)
   }
   return true;
 #else
-  NS_NOTREACHED("ContentChild::RecvUpdateWindow calls unexpected on this platform.");
+  MOZ_ASSERT(false, "ContentChild::RecvUpdateWindow calls unexpected on this platform.");
   return false;
 #endif
 }
@@ -3195,6 +3213,63 @@ ContentChild::RecvTestGraphicsDeviceReset(const uint32_t& aResetReason)
 {
 #if defined(XP_WIN)
   gfxPlatform::GetPlatform()->TestDeviceReset(DeviceResetReason(aResetReason));
+#endif
+  return true;
+}
+
+bool
+ContentChild::RecvPush(const nsCString& aScope,
+                       const IPC::Principal& aPrincipal)
+{
+#ifndef MOZ_SIMPLEPUSH
+  nsCOMPtr<nsIPushNotifier> pushNotifierIface =
+      do_GetService("@mozilla.org/push/Notifier;1");
+  if (NS_WARN_IF(!pushNotifierIface)) {
+      return true;
+  }
+  PushNotifier* pushNotifier =
+    static_cast<PushNotifier*>(pushNotifierIface.get());
+  nsresult rv = pushNotifier->NotifyPushWorkers(aScope, aPrincipal, Nothing());
+  Unused << NS_WARN_IF(NS_FAILED(rv));
+#endif
+  return true;
+}
+
+bool
+ContentChild::RecvPushWithData(const nsCString& aScope,
+                               const IPC::Principal& aPrincipal,
+                               InfallibleTArray<uint8_t>&& aData)
+{
+#ifndef MOZ_SIMPLEPUSH
+  nsCOMPtr<nsIPushNotifier> pushNotifierIface =
+      do_GetService("@mozilla.org/push/Notifier;1");
+  if (NS_WARN_IF(!pushNotifierIface)) {
+      return true;
+  }
+  PushNotifier* pushNotifier =
+    static_cast<PushNotifier*>(pushNotifierIface.get());
+  nsresult rv = pushNotifier->NotifyPushWorkers(aScope, aPrincipal,
+                                                Some(aData));
+  Unused << NS_WARN_IF(NS_FAILED(rv));
+#endif
+  return true;
+}
+
+bool
+ContentChild::RecvPushSubscriptionChange(const nsCString& aScope,
+                                         const IPC::Principal& aPrincipal)
+{
+#ifndef MOZ_SIMPLEPUSH
+  nsCOMPtr<nsIPushNotifier> pushNotifierIface =
+      do_GetService("@mozilla.org/push/Notifier;1");
+  if (NS_WARN_IF(!pushNotifierIface)) {
+      return true;
+  }
+  PushNotifier* pushNotifier =
+    static_cast<PushNotifier*>(pushNotifierIface.get());
+  nsresult rv = pushNotifier->NotifySubscriptionChangeWorkers(aScope,
+                                                              aPrincipal);
+  Unused << NS_WARN_IF(NS_FAILED(rv));
 #endif
   return true;
 }

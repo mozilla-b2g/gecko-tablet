@@ -27,10 +27,11 @@ InitSharedArrayBufferClass(JSContext* cx, HandleObject obj);
 
 class Debugger;
 class TypedObjectModuleObject;
-class StaticBlockObject;
+class StaticBlockScope;
 class ClonedBlockObject;
 
 class SimdTypeDescr;
+enum class SimdType : uint8_t;
 
 /*
  * Global object slots are reserved as follows:
@@ -133,9 +134,10 @@ class GlobalObject : public NativeObject
                   "global object slot counts are inconsistent");
 
     enum WarnOnceFlag : int32_t {
-        WARN_WATCH_DEPRECATED                   = 0x00000001,
-        WARN_PROTO_SETTING_SLOW                 = 0x00000002,
-        WARN_STRING_CONTAINS_DEPRECATED         = 0x00000004
+        WARN_WATCH_DEPRECATED                   = 1 << 0,
+        WARN_PROTO_SETTING_SLOW                 = 1 << 1,
+        WARN_STRING_CONTAINS_DEPRECATED         = 1 << 2,
+        WARN_PROXY_CREATE_DEPRECATED            = 1 << 3,
     };
 
     // Emit the specified warning if the given slot in |obj|'s global isn't
@@ -163,6 +165,7 @@ class GlobalObject : public NativeObject
         MOZ_ASSERT(key <= JSProto_LIMIT);
         return getSlot(APPLICATION_SLOTS + key);
     }
+    static bool skipDeselectedConstructor(JSContext* cx, JSProtoKey key);
     static bool ensureConstructor(JSContext* cx, Handle<GlobalObject*> global, JSProtoKey key);
     static bool resolveConstructor(JSContext* cx, Handle<GlobalObject*> global, JSProtoKey key);
     static bool initBuiltinConstructor(JSContext* cx, Handle<GlobalObject*> global,
@@ -442,15 +445,11 @@ class GlobalObject : public NativeObject
         return getOrCreateObject(cx, APPLICATION_SLOTS + JSProto_SIMD, initSimdObject);
     }
 
-    template<class /* SimdTypeDescriptor (cf SIMD.h) */ T>
-    SimdTypeDescr* getOrCreateSimdTypeDescr(JSContext* cx) {
-        RootedObject globalSimdObject(cx, cx->global()->getOrCreateSimdGlobalObject(cx));
-        if (!globalSimdObject)
-            return nullptr;
-        const Value& slot = globalSimdObject->as<NativeObject>().getReservedSlot(uint32_t(T::type));
-        MOZ_ASSERT(slot.isObject());
-        return &slot.toObject().as<SimdTypeDescr>();
-    }
+    // Get the type descriptor for one of the SIMD types.
+    // simdType is one of the JS_SIMDTYPEREPR_* constants.
+    // Implemented in builtin/SIMD.cpp.
+    static SimdTypeDescr* getOrCreateSimdTypeDescr(JSContext* cx, Handle<GlobalObject*> global,
+                                                   SimdType simdType);
 
     TypedObjectModuleObject& getTypedObjectModule() const;
 
@@ -572,16 +571,32 @@ class GlobalObject : public NativeObject
 
     static NativeObject* getIntrinsicsHolder(JSContext* cx, Handle<GlobalObject*> global);
 
-    Value existingIntrinsicValue(PropertyName* name) {
+    bool maybeExistingIntrinsicValue(PropertyName* name, Value* vp) {
         Value slot = getReservedSlot(INTRINSICS);
-        MOZ_ASSERT(slot.isObject(), "intrinsics holder must already exist");
+        // If we're in the self-hosting compartment itself, the
+        // intrinsics-holder isn't initialized at this point.
+        if (slot.isUndefined()) {
+            *vp = UndefinedValue();
+            return false;
+        }
 
         NativeObject* holder = &slot.toObject().as<NativeObject>();
-
         Shape* shape = holder->lookupPure(name);
-        MOZ_ASSERT(shape, "intrinsic must already have been added to holder");
+        if (!shape) {
+            *vp = UndefinedValue();
+            return false;
+        }
 
-        return holder->getSlot(shape->slot());
+        *vp = holder->getSlot(shape->slot());
+        return true;
+    }
+
+    Value existingIntrinsicValue(PropertyName* name) {
+        Value val;
+        mozilla::DebugOnly<bool> exists = maybeExistingIntrinsicValue(name, &val);
+        MOZ_ASSERT(exists, "intrinsic must already have been added to holder");
+
+        return val;
     }
 
     static bool
@@ -663,9 +678,15 @@ class GlobalObject : public NativeObject
     }
 
     // Warn about use of the deprecated String.prototype.contains method
-    static bool warnOnceAboutStringContains(JSContext *cx, HandleObject strContains) {
+    static bool warnOnceAboutStringContains(JSContext* cx, HandleObject strContains) {
         return warnOnceAbout(cx, strContains, WARN_STRING_CONTAINS_DEPRECATED,
                              JSMSG_DEPRECATED_STRING_CONTAINS);
+    }
+
+    // Warn about uses of Proxy.create and Proxy.createFunction
+    static bool warnOnceAboutProxyCreate(JSContext* cx, HandleObject create) {
+        return warnOnceAbout(cx, create, WARN_PROXY_CREATE_DEPRECATED,
+                             JSMSG_DEPRECATED_PROXY_CREATE);
     }
 
     static bool getOrCreateEval(JSContext* cx, Handle<GlobalObject*> global,
@@ -701,8 +722,9 @@ class GlobalObject : public NativeObject
     // Implemented in builtin/TypedObject.cpp
     static bool initTypedObjectModule(JSContext* cx, Handle<GlobalObject*> global);
 
-    // Implemented in builtim/SIMD.cpp
+    // Implemented in builtin/SIMD.cpp
     static bool initSimdObject(JSContext* cx, Handle<GlobalObject*> global);
+    static bool initSimdType(JSContext* cx, Handle<GlobalObject*> global, SimdType simdType);
 
     static bool initStandardClasses(JSContext* cx, Handle<GlobalObject*> global);
     static bool initSelfHostingBuiltins(JSContext* cx, Handle<GlobalObject*> global,

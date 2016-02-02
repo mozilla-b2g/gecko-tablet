@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/* vim: set sw=4 ts=8 et tw=80 : */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -77,7 +77,7 @@ public:
 
   nsresult
   ProvideWindowCommon(TabChild* aTabOpener,
-                      nsIDOMWindow* aOpener,
+                      mozIDOMWindowProxy* aOpener,
                       bool aIframeMoz,
                       uint32_t aChromeFlags,
                       bool aCalledFromJS,
@@ -87,7 +87,7 @@ public:
                       const nsAString& aName,
                       const nsACString& aFeatures,
                       bool* aWindowIsNew,
-                      nsIDOMWindow** aReturn);
+                      mozIDOMWindowProxy** aReturn);
 
   bool Init(MessageLoop* aIOLoop,
             base::ProcessId aParentPid,
@@ -526,6 +526,19 @@ public:
   virtual bool RecvEndDragSession(const bool& aDoneDrag,
                                   const bool& aUserCancelled) override;
 
+  virtual bool
+  RecvPush(const nsCString& aScope,
+           const IPC::Principal& aPrincipal) override;
+
+  virtual bool
+  RecvPushWithData(const nsCString& aScope,
+                   const IPC::Principal& aPrincipal,
+                   InfallibleTArray<uint8_t>&& aData) override;
+
+  virtual bool
+  RecvPushSubscriptionChange(const nsCString& aScope,
+                             const IPC::Principal& aPrincipal) override;
+
 #ifdef ANDROID
   gfx::IntSize GetScreenSize() { return mScreenSize; }
 #endif
@@ -574,8 +587,7 @@ public:
   AllocPOfflineCacheUpdateChild(const URIParams& manifestURI,
                                 const URIParams& documentURI,
                                 const PrincipalInfo& aLoadingPrincipalInfo,
-                                const bool& stickDocument,
-                                const TabId& aTabId) override;
+                                const bool& stickDocument) override;
 
   virtual bool
   DeallocPOfflineCacheUpdateChild(POfflineCacheUpdateChild* offlineCacheUpdate) override;

@@ -88,6 +88,25 @@
           toggleVisibility('advancedPanel');
         }
 
+        var checkbox = document.getElementById("automaticallyReportInFuture");
+        checkbox.addEventListener("change", function ({target: {checked}}) {
+          document.dispatchEvent(new CustomEvent("AboutCertErrorSetAutomatic", {
+            detail: checked,
+            bubbles: true
+          }));
+        });
+
+        addEventListener("AboutCertErrorOptions", function (event) {
+          var options = JSON.parse(event.detail);
+          if (options && options.enabled) {
+            // Display error reporting UI
+            document.getElementById("certificateErrorReporting").style.display = "block";
+
+            // set the checkbox
+            checkbox.checked = !!options.automatic;
+          }
+        }, true, true);
+
         // Disallow overrides if this is a Strict-Transport-Security
         // host and the cert is bad (STS Spec section 7.3) or if the
         // certerror is in a frame (bug 633691).
@@ -246,7 +265,7 @@
         </div>
         <p id="badStsCertExplanation">&certerror.whatShouldIDo.badStsCertExplanation;</p>
         <div>
-          <p><a href="https://support.mozilla.org/kb/tls-error-reports" id="learnMoreLink" target="new">&certerror.learnMore;</a></p>
+          <p><a href="https://support.mozilla.org/kb/what-does-your-connection-is-not-secure-mean" id="learnMoreLink" target="new">&certerror.learnMore;</a></p>
         </div>
 
         <div id="buttonContainer">
@@ -254,11 +273,20 @@
           <div id="buttonSpacer"></div>
           <button id="advancedButton" autocomplete="off" onclick="toggleVisibility('advancedPanel');" autofocus="true">&certerror.advanced.label;</button>
         </div>
-        <!-- Advanced panel, which is hidden by default -->
-        <div id="advancedPanel" style="visibility: hidden;">
-          <p id="technicalContentText"/>
-          <button id="exceptionDialogButton">&certerror.addException.label;</button>
-        </div>
+      </div>
+
+      <!-- UI for option to report certificate errors to Mozilla. -->
+      <div id="certificateErrorReporting">
+        <p>
+          <input type="checkbox" id="automaticallyReportInFuture" />
+          <label for="automaticallyReportInFuture" id="automaticallyReportInFuture">&errorReporting.automatic;</label>
+        </p>
+      </div>
+
+      <!-- Advanced panel, which is hidden by default -->
+      <div id="advancedPanel" style="visibility: hidden;">
+        <p id="technicalContentText"/>
+        <button id="exceptionDialogButton">&certerror.addException.label;</button>
       </div>
     </div>
 

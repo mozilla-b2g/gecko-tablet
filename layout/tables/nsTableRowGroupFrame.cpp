@@ -197,7 +197,7 @@ DisplayRows(nsDisplayListBuilder* aBuilder, nsFrame* aFrame,
 
   // No cursor. Traverse children the hard way and build a cursor while we're at it
   nsTableRowGroupFrame::FrameCursorData* cursor = f->SetupRowCursor();
-  kid = f->GetFirstPrincipalChild();
+  kid = f->PrincipalChildList().FirstChild();
   while (kid) {
     f->BuildDisplayListForChild(aBuilder, kid, aDirtyRect, aLists);
 
@@ -1365,7 +1365,7 @@ nsTableRowGroupFrame::Reflow(nsPresContext*           aPresContext,
   // XXXmats The following is just bogus.  We leave it here for now because
   // ReflowChildren should pull up rows from our next-in-flow before returning
   // a Complete status, but doesn't (bug 804888).
-  if (GetNextInFlow() && GetNextInFlow()->GetFirstPrincipalChild()) {
+  if (GetNextInFlow() && GetNextInFlow()->PrincipalChildList().FirstChild()) {
     NS_FRAME_SET_INCOMPLETE(aStatus);
   }
 
@@ -1858,8 +1858,8 @@ nsTableRowGroupFrame::GetNextSiblingOnLine(nsIFrame*& aFrame,
 
 //end nsLineIterator methods
 
-NS_DECLARE_FRAME_PROPERTY(RowCursorProperty,
-                          DeleteValue<nsTableRowGroupFrame::FrameCursorData>)
+NS_DECLARE_FRAME_PROPERTY_DELETABLE(RowCursorProperty,
+                                    nsTableRowGroupFrame::FrameCursorData)
 
 void
 nsTableRowGroupFrame::ClearRowCursor()
@@ -1905,8 +1905,7 @@ nsTableRowGroupFrame::GetFirstRowContaining(nscoord aY, nscoord* aOverflowAbove)
     return nullptr;
   }
 
-  FrameCursorData* property = static_cast<FrameCursorData*>
-    (Properties().Get(RowCursorProperty()));
+  FrameCursorData* property = Properties().Get(RowCursorProperty());
   uint32_t cursorIndex = property->mCursorIndex;
   uint32_t frameCount = property->mFrames.Length();
   if (cursorIndex >= frameCount)

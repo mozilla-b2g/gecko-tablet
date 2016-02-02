@@ -16,7 +16,7 @@ function run_test()
   initTestDebuggerServer();
   gDebuggee = addTestGlobal("test-source-map");
   gClient = new DebuggerClient(DebuggerServer.connectPipe());
-  gClient.connect(function() {
+  gClient.connect().then(function() {
     attachTestTabAndResume(gClient, "test-source-map", function(aResponse, aTabClient, aThreadClient) {
       gThreadClient = aThreadClient;
       test_simple_source_map();
@@ -47,7 +47,7 @@ function testBreakpointMapping(aName, aCallback)
     // because of our breakpoint, we resume again to finish the eval, and
     // finally receive our last pause which has the result of the client
     // evaluation.
-    response = yield rdpRequest(gThreadClient, gThreadClient.eval, null, aName + "()");
+    response = yield gThreadClient.eval(null, aName + "()");
     do_check_eq(response.type, "resumed");
 
     response = yield waitForPause(gThreadClient);

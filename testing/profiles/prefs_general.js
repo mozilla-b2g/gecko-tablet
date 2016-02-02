@@ -26,8 +26,9 @@ user_pref("browser.warnOnQuit", false);
 user_pref("accessibility.typeaheadfind.autostart", false);
 user_pref("javascript.options.showInConsole", true);
 user_pref("devtools.browsertoolbox.panel", "jsdebugger");
-user_pref("devtools.errorconsole.enabled", true);
 user_pref("devtools.debugger.remote-port", 6023);
+user_pref("devtools.devedition.promo.enabled", false);
+user_pref("devtools.errorconsole.enabled", true);
 user_pref("browser.EULA.override", true);
 user_pref("gfx.color_management.force_srgb", true);
 user_pref("network.manage-offline-status", false);
@@ -83,7 +84,7 @@ user_pref("geo.wifi.logging.enabled", true);
 // Make url-classifier updates so rare that they won't affect tests
 user_pref("urlclassifier.updateinterval", 172800);
 // Point the url-classifier to the local testing server for fast failures
-user_pref("browser.safebrowsing.appRepURL", "http://%(server)s/safebrowsing-dummy/update");
+user_pref("browser.safebrowsing.downloads.remote.url", "http://%(server)s/safebrowsing-dummy/update");
 user_pref("browser.safebrowsing.provider.google.gethashURL", "http://%(server)s/safebrowsing-dummy/gethash");
 user_pref("browser.safebrowsing.provider.google.updateURL", "http://%(server)s/safebrowsing-dummy/update");
 user_pref("browser.safebrowsing.provider.mozilla.gethashURL", "http://%(server)s/safebrowsing-dummy/gethash");
@@ -144,14 +145,14 @@ user_pref("datareporting.policy.dataSubmissionPolicyBypassNotification", true);
 // Point Firefox Health Report at a local server. We don't care if it actually
 // works. It just can't hit the default production endpoint.
 user_pref("datareporting.healthreport.documentServerURI", "http://%(server)s/healthreport/");
-user_pref("datareporting.healthreport.about.reportUrl", "http://%(server)s/abouthealthreport/");
-user_pref("datareporting.healthreport.about.reportUrlUnified", "http://%(server)s/abouthealthreport/v4/");
+user_pref("datareporting.healthreport.about.reportUrl", "http://%(server)s/abouthealthreport/v4/");
 
 // Make sure CSS error reporting is enabled for tests
 user_pref("layout.css.report_errors", true);
 
 // Enable CSS Grid for testing
 user_pref("layout.css.grid.enabled", true);
+user_pref("layout.css.grid-template-subgrid-value.enabled", true);
 
 // Enable CSS 'contain' for testing
 user_pref("layout.css.contain.enabled", true);
@@ -161,6 +162,9 @@ user_pref("layout.css.object-fit-and-position.enabled", true);
 
 // Enable webkit prefixed CSS features for testing
 user_pref("layout.css.prefixes.webkit", true);
+
+// Enable -webkit-{min|max}-device-pixel-ratio media queries for testing
+user_pref("layout.css.prefixes.device-pixel-ratio-webkit", true);
 
 // Disable spammy layout warnings because they pollute test logs
 user_pref("layout.spammy_warnings.enabled", false);
@@ -229,9 +233,6 @@ user_pref('browser.contentHandlers.types.5.uri', 'http://test1.example.org/rss?u
 
 // We want to collect telemetry, but we don't want to send in the results.
 user_pref('toolkit.telemetry.server', 'https://%(server)s/telemetry-dummy/');
-// Our current tests expect the unified Telemetry feature to be opt-out,
-// which is not true while we hold back shipping it.
-user_pref('toolkit.telemetry.unifiedIsOptIn', false);
 
 // A couple of preferences with default values to test that telemetry preference
 // watching is working.
@@ -250,6 +251,9 @@ user_pref("identity.fxaccounts.remote.signin.uri", "https://%(server)s/fxa-signi
 user_pref("identity.fxaccounts.settings.uri", "https://%(server)s/fxa-settings");
 user_pref('identity.fxaccounts.remote.webchannel.uri', 'https://%(server)s/');
 
+// We don't want browser tests to perform FxA device registration.
+user_pref('identity.fxaccounts.skipDeviceRegistration', true);
+
 // Increase the APZ content response timeout in tests to 1 minute.
 // This is to accommodate the fact that test environments tends to be slower
 // than production environments (with the b2g emulator being the slowest of them
@@ -259,7 +263,7 @@ user_pref('identity.fxaccounts.remote.webchannel.uri', 'https://%(server)s/');
 user_pref("apz.content_response_timeout", 60000);
 
 // Make sure SSL Error reports don't hit the network
-user_pref("security.ssl.errorReporting.url", "https://example.com/browser/browser/base/content/test/general/pinning_reports.sjs?succeed");
+user_pref("security.ssl.errorReporting.url", "https://example.com/browser/browser/base/content/test/general/ssl_error_reports.sjs?succeed");
 
 // Make sure Translation won't hit the network.
 user_pref("browser.translation.bing.authURL", "http://%(server)s/browser/browser/components/translation/test/bing.sjs");
@@ -281,7 +285,7 @@ user_pref("browser.newtabpage.directory.ping", "");
 user_pref("loop.debug.loglevel", "All");
 user_pref("loop.enabled", true);
 user_pref("loop.throttled", false);
-user_pref("loop.server", "http://%(server)s/browser/browser/extensions/loop/test/mochitest/loop_fxa.sjs?");
+user_pref("loop.server", "http://%(server)s/browser/browser/extensions/loop/chrome/test/mochitest/loop_fxa.sjs?");
 user_pref("loop.CSP","default-src 'self' about: file: chrome: data: wss://* http://* https://*");
 
 // Ensure UITour won't hit the network
@@ -307,7 +311,6 @@ user_pref("media.decoder.heuristic.dormant.timeout", 0);
 #endif
 
 // Don't prompt about e10s
-user_pref("browser.displayedE10SNotice", 5);
 user_pref("browser.displayedE10SPrompt.1", 5);
 // Don't use auto-enabled e10s
 user_pref("browser.tabs.remote.autostart.1", false);

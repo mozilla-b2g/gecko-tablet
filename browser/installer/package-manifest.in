@@ -46,9 +46,6 @@
 @RESPATH@/browser/chrome/@AB_CD@.manifest
 @RESPATH@/chrome/@AB_CD@@JAREXT@
 @RESPATH@/chrome/@AB_CD@.manifest
-@RESPATH@/browser/defaults/profile/chrome/*
-@RESPATH@/browser/defaults/profile/localstore.rdf
-@RESPATH@/browser/defaults/profile/mimeTypes.rdf
 @RESPATH@/dictionaries/*
 @RESPATH@/hyphenation/*
 @RESPATH@/browser/@PREF_DIR@/firefox-l10n.js
@@ -251,7 +248,6 @@
 @RESPATH@/components/filepicker.xpt
 #endif
 @RESPATH@/components/find.xpt
-@RESPATH@/browser/components/fuel.xpt
 @RESPATH@/components/gfx.xpt
 @RESPATH@/components/html5.xpt
 @RESPATH@/components/htmlparser.xpt
@@ -323,6 +319,7 @@
 @RESPATH@/components/toolkit_finalizationwitness.xpt
 @RESPATH@/components/toolkit_formautofill.xpt
 @RESPATH@/components/toolkit_osfile.xpt
+@RESPATH@/components/toolkit_securityreporter.xpt
 #ifdef NIGHTLY_BUILD
 @RESPATH@/components/toolkit_perfmonitoring.xpt
 #endif
@@ -376,8 +373,6 @@
 @RESPATH@/browser/components/BrowserFeeds.manifest
 @RESPATH@/browser/components/FeedConverter.js
 @RESPATH@/browser/components/FeedWriter.js
-@RESPATH@/browser/components/fuelApplication.manifest
-@RESPATH@/browser/components/fuelApplication.js
 @RESPATH@/browser/components/WebContentConverter.js
 @RESPATH@/browser/components/BrowserComponents.manifest
 @RESPATH@/browser/components/nsBrowserContentHandler.js
@@ -390,6 +385,9 @@
 @RESPATH@/browser/components/webideComponents.manifest
 @RESPATH@/browser/components/Experiments.manifest
 @RESPATH@/browser/components/ExperimentsService.js
+@RESPATH@/browser/components/browser-newtab.xpt
+@RESPATH@/browser/components/aboutNewTabService.js
+@RESPATH@/browser/components/NewTabComponents.manifest
 @RESPATH@/components/Downloads.manifest
 @RESPATH@/components/DownloadLegacy.js
 @RESPATH@/components/BrowserPageThumbs.manifest
@@ -501,12 +499,7 @@
 @RESPATH@/components/nsINIProcessor.js
 @RESPATH@/components/nsPrompter.manifest
 @RESPATH@/components/nsPrompter.js
-#ifdef MOZ_DATA_REPORTING
-@RESPATH@/components/DataReporting.manifest
-@RESPATH@/components/DataReportingService.js
-#endif
 #ifdef MOZ_SERVICES_HEALTHREPORT
-@RESPATH@/components/HealthReportComponents.manifest
 @RESPATH@/browser/components/SelfSupportService.manifest
 @RESPATH@/browser/components/SelfSupportService.js
 #endif
@@ -550,6 +543,9 @@
 @RESPATH@/components/Push.js
 @RESPATH@/components/Push.manifest
 @RESPATH@/components/PushComponents.js
+
+@RESPATH@/components/remotebrowserutils.manifest
+@RESPATH@/components/RemoteWebNavigation.js
 
 @RESPATH@/components/SlowScriptDebug.manifest
 @RESPATH@/components/SlowScriptDebug.js
@@ -634,6 +630,10 @@
 @RESPATH@/components/PrivateBrowsing.manifest
 @RESPATH@/components/PrivateBrowsingTrackingProtectionWhitelist.js
 
+; Security Reports
+@RESPATH@/components/SecurityReporter.manifest
+@RESPATH@/components/SecurityReporter.js
+
 ; Signed Packaged Content
 @RESPATH@/components/InstallPackagedWebapp.manifest
 @RESPATH@/components/InstallPackagedWebapp.js
@@ -704,7 +704,6 @@
 @RESPATH@/browser/@PREF_DIR@/firefox-branding.js
 @RESPATH@/greprefs.js
 @RESPATH@/defaults/autoconfig/prefcalls.js
-@RESPATH@/browser/defaults/profile/prefs.js
 @RESPATH@/browser/defaults/permissions
 
 ; Warning: changing the path to channel-prefs.js can cause bugs (Bug 756325)

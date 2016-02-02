@@ -978,7 +978,7 @@ nsTextInputListener::UpdateTextInputCommands(const nsAString& commandsToUpdate,
   nsCOMPtr<nsIDocument> doc = content->GetComposedDoc();
   NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
 
-  nsPIDOMWindow *domWindow = doc->GetWindow();
+  nsPIDOMWindowOuter *domWindow = doc->GetWindow();
   NS_ENSURE_TRUE(domWindow, NS_ERROR_FAILURE);
 
   return domWindow->UpdateCommands(commandsToUpdate, sel, reason);
@@ -1934,6 +1934,21 @@ nsTextEditorState::SetValue(const nsAString& aValue, uint32_t aFlags)
         // be set later with the updated mValueBeingSet.
         return true;
       }
+      if (NS_WARN_IF(!mBoundFrame)) {
+        // We're not sure if this case is possible.
+      } else {
+        // If setting value won't change current value, we shouldn't commit
+        // composition for compatibility with the other browsers.
+        nsAutoString currentValue;
+        mBoundFrame->GetText(currentValue);
+        if (newValue == currentValue) {
+          // Note that in this case, we shouldn't fire any events with setting
+          // value because event handlers may try to set value recursively but
+          // we cannot commit composition at that time due to unsafe to run
+          // script (see below).
+          return true;
+        }
+      }
       // If there is composition, need to commit composition first because
       // other browsers do that.
       // NOTE: We don't need to block nested calls of this because input nor
@@ -2153,7 +2168,7 @@ nsTextEditorState::InitializeKeyboardEventListeners()
                                     TrustedEventsAtSystemGroupBubble());
   }
 
-  mSelCon->SetScrollableFrame(do_QueryFrame(mBoundFrame->GetFirstPrincipalChild()));
+  mSelCon->SetScrollableFrame(do_QueryFrame(mBoundFrame->PrincipalChildList().FirstChild()));
 }
 
 void

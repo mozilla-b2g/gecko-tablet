@@ -96,6 +96,10 @@ public:
   }
   virtual ~NrSocketBase() {}
 
+  // Factory method; will create either an NrSocket, NrUdpSocketIpc, or
+  // NrTcpSocketIpc as appropriate.
+  static int CreateSocket(nr_transport_addr *addr, RefPtr<NrSocketBase> *sock);
+
   // the nr_socket APIs
   virtual int create(nr_transport_addr *addr) = 0;
   virtual int sendto(const void *msg, size_t len,
@@ -132,8 +136,9 @@ public:
     return my_addr_;
   }
 
-protected:
   void fire_callback(int how);
+
+protected:
 
   bool connect_invoked_;
   nr_transport_addr my_addr_;
@@ -243,6 +248,7 @@ public:
                                          const uint8_t *data,
                                          uint32_t data_length);
   NS_IMETHODIMP CallListenerOpened();
+  NS_IMETHODIMP CallListenerConnected();
   NS_IMETHODIMP CallListenerClosed();
 
   NrUdpSocketIpc();
@@ -267,8 +273,11 @@ private:
 
   DISALLOW_COPY_ASSIGN(NrUdpSocketIpc);
 
+  nsresult SetAddress();  // Set the local address from parent info.
+
   // Main or private thread executors of the NrSocketBase APIs
   void create_i(const nsACString &host, const uint16_t port);
+  void connect_i(const nsACString &host, const uint16_t port);
   void sendto_i(const net::NetAddr &addr, nsAutoPtr<DataBuffer> buf);
   void close_i();
 #if defined(MOZILLA_INTERNAL_API) && !defined(MOZILLA_XPCOMRT_API)

@@ -17,6 +17,7 @@
 #include "jswrapper.h"
 
 #include "gc/Marking.h"
+#include "gc/Policy.h"
 #include "jit/JitCompartment.h"
 #include "jit/JitOptions.h"
 #include "js/Date.h"
@@ -63,7 +64,7 @@ JSCompartment::JSCompartment(Zone* zone, const JS::CompartmentOptions& options =
     lastAnimationTime(0),
     regExps(runtime_),
     globalWriteBarriered(false),
-    neuteredTypedObjects(0),
+    detachedTypedObjects(0),
     objectMetadataState(ImmediateMetadata()),
     propertyTree(thisForCtor()),
     selfHostingScriptSource(nullptr),
@@ -1080,8 +1081,9 @@ JSCompartment::clearScriptCounts()
     // Clear all hasScriptCounts_ flags of JSScript, in order to release all
     // ScriptCounts entry of the current compartment.
     for (ScriptCountsMap::Range r = scriptCountsMap->all(); !r.empty(); r.popFront()) {
-        ScriptCounts* value = &r.front().value();
+        ScriptCounts* value = r.front().value();
         r.front().key()->takeOverScriptCountsMapEntry(value);
+        js_delete(value);
     }
 
     js_delete(scriptCountsMap);

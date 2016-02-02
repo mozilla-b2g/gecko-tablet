@@ -35,7 +35,6 @@ this.Utils = {
   // In the ideal world, references to these would be removed.
   nextTick: CommonUtils.nextTick,
   namedTimer: CommonUtils.namedTimer,
-  stackTrace: CommonUtils.stackTrace,
   makeURI: CommonUtils.makeURI,
   encodeUTF8: CommonUtils.encodeUTF8,
   decodeUTF8: CommonUtils.decodeUTF8,
@@ -337,11 +336,13 @@ this.Utils = {
 
     try {
       json = yield CommonUtils.readJSON(path);
-    } catch (e if e instanceof OS.File.Error && e.becauseNoSuchFile) {
-      // Ignore non-existent files.
     } catch (e) {
-      if (that._log) {
-        that._log.debug("Failed to load json", e);
+      if (e instanceof OS.File.Error && e.becauseNoSuchFile) {
+        // Ignore non-existent files.
+      } else {
+        if (that._log) {
+          that._log.debug("Failed to load json", e);
+        }
       }
     }
 
@@ -670,6 +671,20 @@ this.Utils = {
       Cc["@mozilla.org/network/protocol;1?name=http"].getService(Ci.nsIHttpProtocolHandler).oscpu;
 
     return Str.sync.get("client.name2", [user, appName, system]);
+  },
+
+  getDeviceName() {
+    const deviceName = Svc.Prefs.get("client.name", "");
+
+    if (deviceName === "") {
+      return this.getDefaultDeviceName();
+    }
+
+    return deviceName;
+  },
+
+  getDeviceType() {
+    return Svc.Prefs.get("client.type", DEVICE_TYPE_DESKTOP);
   }
 };
 

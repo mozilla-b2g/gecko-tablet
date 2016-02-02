@@ -537,7 +537,47 @@ WebGLContext::FramebufferTexture2D(GLenum target,
     if (!ValidateFramebufferTarget(target, "framebufferTexture2D"))
         return;
 
-    if (!IsWebGL2() && level != 0) {
+    if (level < 0) {
+        ErrorInvalidValue("framebufferTexture2D: level must not be negative.");
+        return;
+    }
+
+    if (textarget != LOCAL_GL_TEXTURE_2D &&
+        (textarget < LOCAL_GL_TEXTURE_CUBE_MAP_POSITIVE_X ||
+         textarget > LOCAL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Z))
+    {
+        return ErrorInvalidEnumInfo("framebufferTexture2D: textarget:",
+                                    textarget);
+    }
+
+    if (IsWebGL2()) {
+        /* GLES 3.0.4 p208:
+         *   If textarget is one of TEXTURE_CUBE_MAP_POSITIVE_X,
+         *   TEXTURE_CUBE_MAP_POSITIVE_Y, TEXTURE_CUBE_MAP_POSITIVE_Z,
+         *   TEXTURE_CUBE_MAP_NEGATIVE_X, TEXTURE_CUBE_MAP_NEGATIVE_Y,
+         *   or TEXTURE_CUBE_MAP_NEGATIVE_Z, then level must be greater
+         *   than or equal to zero and less than or equal to log2 of the
+         *   value of MAX_CUBE_MAP_TEXTURE_SIZE. If textarget is TEXTURE_2D,
+         *   level must be greater than or equal to zero and no larger than
+         *   log2 of the value of MAX_TEXTURE_SIZE. Otherwise, an
+         *   INVALID_VALUE error is generated.
+         */
+
+        if (textarget == LOCAL_GL_TEXTURE_2D) {
+            if (uint32_t(level) > FloorLog2(mImplMaxTextureSize)) {
+                ErrorInvalidValue("framebufferTexture2D: level is too large.");
+                return;
+            }
+        } else {
+            MOZ_ASSERT(textarget >= LOCAL_GL_TEXTURE_CUBE_MAP_POSITIVE_X &&
+                       textarget <= LOCAL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Z);
+
+            if (uint32_t(level) > FloorLog2(mImplMaxCubeMapTextureSize)) {
+                ErrorInvalidValue("framebufferTexture2D: level is too large.");
+                return;
+            }
+        }
+    } else if (level != 0) {
         ErrorInvalidValue("framebufferTexture2D: level must be 0.");
         return;
     }
@@ -560,14 +600,6 @@ WebGLContext::FramebufferTexture2D(GLenum target,
     if (!fb) {
         return ErrorInvalidOperation("framebufferTexture2D: cannot modify"
                                      " framebuffer 0.");
-    }
-
-    if (textarget != LOCAL_GL_TEXTURE_2D &&
-        (textarget < LOCAL_GL_TEXTURE_CUBE_MAP_POSITIVE_X ||
-         textarget > LOCAL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Z))
-    {
-        return ErrorInvalidEnumInfo("framebufferTexture2D: textarget:",
-                                    textarget);
     }
 
     if (!ValidateFramebufferAttachment(fb, attachment, "framebufferTexture2D"))
@@ -731,7 +763,7 @@ WebGLContext::GetFramebufferAttachmentParameter(JSContext* cx,
     }
 
     switch (attachment) {
-    case LOCAL_GL_COLOR:
+    case LOCAL_GL_BACK:
     case LOCAL_GL_DEPTH:
     case LOCAL_GL_STENCIL:
         break;
@@ -755,12 +787,12 @@ WebGLContext::GetFramebufferAttachmentParameter(JSContext* cx,
     case LOCAL_GL_FRAMEBUFFER_ATTACHMENT_RED_SIZE:
     case LOCAL_GL_FRAMEBUFFER_ATTACHMENT_GREEN_SIZE:
     case LOCAL_GL_FRAMEBUFFER_ATTACHMENT_BLUE_SIZE:
-        if (attachment == LOCAL_GL_COLOR)
+        if (attachment == LOCAL_GL_BACK)
             return JS::NumberValue(8);
         return JS::NumberValue(0);
 
     case LOCAL_GL_FRAMEBUFFER_ATTACHMENT_ALPHA_SIZE:
-        if (attachment == LOCAL_GL_COLOR)
+        if (attachment == LOCAL_GL_BACK)
             return JS::NumberValue(mOptions.alpha ? 8 : 0);
         return JS::NumberValue(0);
 
@@ -807,6 +839,7 @@ WebGLContext::GetRenderbufferParameter(GLenum target, GLenum pname)
     MakeContextCurrent();
 
     switch (pname) {
+        case LOCAL_GL_RENDERBUFFER_SAMPLES:
         case LOCAL_GL_RENDERBUFFER_WIDTH:
         case LOCAL_GL_RENDERBUFFER_HEIGHT:
         case LOCAL_GL_RENDERBUFFER_RED_SIZE:
@@ -1311,15 +1344,49 @@ WebGLContext::DoReadPixelsAndConvert(GLint x, GLint y, GLsizei width, GLsizei he
 }
 
 static bool
-IsFormatAndTypeUnpackable(GLenum format, GLenum type)
+IsFormatAndTypeUnpackable(GLenum format, GLenum type, bool isWebGL2)
 {
     switch (type) {
     case LOCAL_GL_UNSIGNED_BYTE:
+        switch (format) {
+        case LOCAL_GL_LUMINANCE:
+        case LOCAL_GL_LUMINANCE_ALPHA:
+            return isWebGL2;
+        case LOCAL_GL_ALPHA:
+        case LOCAL_GL_RED:
+        case LOCAL_GL_RED_INTEGER:
+        case LOCAL_GL_RG:
+        case LOCAL_GL_RG_INTEGER:
+        case LOCAL_GL_RGB:
+        case LOCAL_GL_RGB_INTEGER:
+        case LOCAL_GL_RGBA:
+        case LOCAL_GL_RGBA_INTEGER:
+            return true;
+        default:
+            return false;
+        }
+
+    case LOCAL_GL_BYTE:
+        switch (format) {
+        case LOCAL_GL_RED:
+        case LOCAL_GL_RED_INTEGER:
+        case LOCAL_GL_RG:
+        case LOCAL_GL_RG_INTEGER:
+        case LOCAL_GL_RGB:
+        case LOCAL_GL_RGB_INTEGER:
+        case LOCAL_GL_RGBA:
+        case LOCAL_GL_RGBA_INTEGER:
+            return true;
+        default:
+            return false;
+        }
+
     case LOCAL_GL_FLOAT:
     case LOCAL_GL_HALF_FLOAT:
     case LOCAL_GL_HALF_FLOAT_OES:
         switch (format) {
-        case LOCAL_GL_ALPHA:
+        case LOCAL_GL_RED:
+        case LOCAL_GL_RG:
         case LOCAL_GL_RGB:
         case LOCAL_GL_RGBA:
             return true;
@@ -1343,14 +1410,28 @@ static bool
 IsIntegerFormatAndTypeUnpackable(GLenum format, GLenum type)
 {
     switch (type) {
+    case LOCAL_GL_UNSIGNED_SHORT:
+    case LOCAL_GL_SHORT:
     case LOCAL_GL_UNSIGNED_INT:
     case LOCAL_GL_INT:
         switch (format) {
+        case LOCAL_GL_RED_INTEGER:
+        case LOCAL_GL_RG_INTEGER:
+        case LOCAL_GL_RGB_INTEGER:
         case LOCAL_GL_RGBA_INTEGER:
             return true;
         default:
             return false;
         }
+
+    case LOCAL_GL_UNSIGNED_INT_2_10_10_10_REV:
+        return format == LOCAL_GL_RGBA ||
+               format == LOCAL_GL_RGBA_INTEGER;
+
+    case LOCAL_GL_UNSIGNED_INT_10F_11F_11F_REV:
+    case LOCAL_GL_UNSIGNED_INT_5_9_9_9_REV:
+        return format == LOCAL_GL_RGB;
+
     default:
         return false;
     }
@@ -1413,7 +1494,7 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum
         return ErrorInvalidValue("readPixels: null destination buffer");
 
     if (!(IsWebGL2() && IsIntegerFormatAndTypeUnpackable(format, type)) &&
-        !IsFormatAndTypeUnpackable(format, type)) {
+        !IsFormatAndTypeUnpackable(format, type, IsWebGL2())) {
         return ErrorInvalidEnum("readPixels: Bad format or type.");
     }
 
@@ -1422,9 +1503,18 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum
     // Check the format param
     switch (format) {
     case LOCAL_GL_ALPHA:
+    case LOCAL_GL_LUMINANCE:
+    case LOCAL_GL_RED:
+    case LOCAL_GL_RED_INTEGER:
         channels = 1;
         break;
+    case LOCAL_GL_LUMINANCE_ALPHA:
+    case LOCAL_GL_RG:
+    case LOCAL_GL_RG_INTEGER:
+        channels = 2;
+        break;
     case LOCAL_GL_RGB:
+    case LOCAL_GL_RGB_INTEGER:
         channels = 3;
         break;
     case LOCAL_GL_RGBA:
@@ -1440,11 +1530,22 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum
     int bytesPerPixel;
     int requiredDataType;
     switch (type) {
+    case LOCAL_GL_BYTE:
+        bytesPerPixel = 1*channels;
+        requiredDataType = js::Scalar::Int8;
+        break;
+
     case LOCAL_GL_UNSIGNED_BYTE:
         bytesPerPixel = 1*channels;
         requiredDataType = js::Scalar::Uint8;
         break;
 
+    case LOCAL_GL_SHORT:
+        bytesPerPixel = 2*channels;
+        requiredDataType = js::Scalar::Int16;
+        break;
+
+    case LOCAL_GL_UNSIGNED_SHORT:
     case LOCAL_GL_UNSIGNED_SHORT_4_4_4_4:
     case LOCAL_GL_UNSIGNED_SHORT_5_5_5_1:
     case LOCAL_GL_UNSIGNED_SHORT_5_6_5:
@@ -1452,13 +1553,21 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum
         requiredDataType = js::Scalar::Uint16;
         break;
 
-    case LOCAL_GL_UNSIGNED_INT:
+    case LOCAL_GL_UNSIGNED_INT_2_10_10_10_REV:
+    case LOCAL_GL_UNSIGNED_INT_5_9_9_9_REV:
+    case LOCAL_GL_UNSIGNED_INT_10F_11F_11F_REV:
+    case LOCAL_GL_UNSIGNED_INT_24_8:
         bytesPerPixel = 4;
         requiredDataType = js::Scalar::Uint32;
         break;
 
+    case LOCAL_GL_UNSIGNED_INT:
+        bytesPerPixel = 4*channels;
+        requiredDataType = js::Scalar::Uint32;
+        break;
+
     case LOCAL_GL_INT:
-        bytesPerPixel = 4;
+        bytesPerPixel = 4*channels;
         requiredDataType = js::Scalar::Int32;
         break;
 
@@ -1519,14 +1628,28 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum
     if (!ValidateCurFBForRead("readPixels", &srcFormat, &srcWidth, &srcHeight))
         return;
 
-    auto srcType = srcFormat->format->componentType;
-    const bool isSrcTypeFloat = (srcType == webgl::ComponentType::Float);
-
     // Check the format and type params to assure they are an acceptable pair (as per spec)
-
-    const GLenum mainReadFormat = LOCAL_GL_RGBA;
-    const GLenum mainReadType = isSrcTypeFloat ? LOCAL_GL_FLOAT
-                                               : LOCAL_GL_UNSIGNED_BYTE;
+    auto srcType = srcFormat->format->componentType;
+    GLenum mainReadFormat;
+    GLenum mainReadType;
+    switch (srcType) {
+        case webgl::ComponentType::Float:
+            mainReadFormat = LOCAL_GL_RGBA;
+            mainReadType = LOCAL_GL_FLOAT;
+            break;
+        case webgl::ComponentType::UInt:
+            mainReadFormat = LOCAL_GL_RGBA_INTEGER;
+            mainReadType = LOCAL_GL_UNSIGNED_INT;
+            break;
+        case webgl::ComponentType::Int:
+            mainReadFormat = LOCAL_GL_RGBA_INTEGER;
+            mainReadType = LOCAL_GL_INT;
+            break;
+        default:
+            mainReadFormat = LOCAL_GL_RGBA;
+            mainReadType = LOCAL_GL_UNSIGNED_BYTE;
+            break;
+    }
 
     GLenum auxReadFormat = mainReadFormat;
     GLenum auxReadType = mainReadType;
@@ -1542,7 +1665,18 @@ WebGLContext::ReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum
 
     const bool mainMatches = (format == mainReadFormat && type == mainReadType);
     const bool auxMatches = (format == auxReadFormat && type == auxReadType);
-    const bool isValid = mainMatches || auxMatches;
+    bool isValid = mainMatches || auxMatches;
+
+    // OpenGL ES 3.0.4 p194 - When the internal format of the rendering surface is
+    // RGB10_A2, a third combination of format RGBA and type UNSIGNED_INT_2_10_10_10_REV
+    // is accepted.
+    if (srcFormat->format->effectiveFormat == webgl::EffectiveFormat::RGB10_A2 &&
+        format == LOCAL_GL_RGBA &&
+        type == LOCAL_GL_UNSIGNED_INT_2_10_10_10_REV)
+    {
+        isValid = true;
+    }
+
     if (!isValid)
         return ErrorInvalidOperation("readPixels: Invalid format/type pair");
 

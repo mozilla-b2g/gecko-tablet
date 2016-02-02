@@ -40,6 +40,7 @@
 #include "nsPIDNSService.h"
 #include "nsIProtocolProxyService2.h"
 #include "MainThreadUtils.h"
+#include "nsINode.h"
 #include "nsIWidget.h"
 #include "nsThreadUtils.h"
 #include "mozilla/LoadInfo.h"
@@ -48,9 +49,9 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/net/DNS.h"
 #include "CaptivePortalService.h"
-#include "ClosingService.h"
 #include "ReferrerPolicy.h"
 #include "nsContentSecurityManager.h"
+#include "nsHttpHandler.h"
 
 #ifdef MOZ_WIDGET_GONK
 #include "nsINetworkManager.h"
@@ -63,8 +64,8 @@
 
 using namespace mozilla;
 using mozilla::net::IsNeckoChild;
-using mozilla::net::ClosingService;
 using mozilla::net::CaptivePortalService;
+using mozilla::net::gHttpHandler;
 
 #define PORT_PREF_PREFIX           "network.security.ports."
 #define PORT_PREF(x)               PORT_PREF_PREFIX x
@@ -189,6 +190,7 @@ nsIOService::nsIOService()
     , mLastOfflineStateChange(PR_IntervalNow())
     , mLastConnectivityChange(PR_IntervalNow())
     , mLastNetworkLinkChange(PR_IntervalNow())
+    , mNetTearingDownStarted(0)
 {
 }
 
@@ -257,10 +259,6 @@ nsIOService::Init()
 
     InitializeNetworkLinkService();
 
-    // Start the closing service. Actual PR_Close() will be carried out on
-    // a separate "closing" thread. Start the closing servicee here since this
-    // point is executed only once per session.
-    ClosingService::Start();
     SetOffline(false);
 
     return NS_OK;
@@ -1074,9 +1072,6 @@ nsIOService::SetOffline(bool offline)
             DebugOnly<nsresult> rv = mSocketTransportService->Shutdown();
             NS_ASSERTION(NS_SUCCEEDED(rv), "socket transport service shutdown failed");
         }
-        if (mShutdown) {
-            ClosingService::Shutdown();
-        }
     }
 
     mSettingOffline = false;
@@ -1425,6 +1420,10 @@ nsIOService::Observe(nsISupports *subject,
     } else if (!strcmp(topic, kProfileChangeNetTeardownTopic)) {
         if (!mOffline) {
             mOfflineForProfileChange = true;
+            mNetTearingDownStarted = PR_IntervalNow();
+            if (gHttpHandler) {
+                gHttpHandler->ShutdownConnectionManager();
+            }
             SetOffline(true);
         }
     } else if (!strcmp(topic, kProfileChangeNetRestoreTopic)) {
@@ -1450,7 +1449,12 @@ nsIOService::Observe(nsISupports *subject,
         // changes of the offline status from now. We must not allow going
         // online after this point.
         mShutdown = true;
-
+        if (!mOfflineForProfileChange) {
+          mNetTearingDownStarted = PR_IntervalNow();
+        }
+        if (gHttpHandler) {
+            gHttpHandler->ShutdownConnectionManager();
+        }
         SetOffline(true);
 
         if (mCaptivePortalService) {

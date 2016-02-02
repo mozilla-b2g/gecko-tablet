@@ -1,7 +1,7 @@
-/*
- * Any copyright is dedicated to the Public Domain.
- * http://creativecommons.org/publicdomain/zero/1.0/
- */
+/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
+/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
+/* Any copyright is dedicated to the Public Domain.
+ * http://creativecommons.org/publicdomain/zero/1.0/ */
 
 // Whitelisting this test.
 // As part of bug 1077403, the leaking uncaught rejections should be fixed.
@@ -74,6 +74,15 @@ var inputTests = [
   },
 
   {
+    input: "testLotsOfAttributes()",
+    output: '<p n="" m="" l="" k="" j="" i="" h="" g="" f="" e="" d="" c="" b="" a="" id="lots-of-attributes">',
+    printOutput: "[object HTMLParagraphElement]",
+    inspectable: true,
+    noClick: true,
+    inspectorIcon: true
+  },
+
+  {
     input: "testDocumentFragment()",
     output: "DocumentFragment [ <span.foo>, <div#fragdiv> ]",
     printOutput: "[object DocumentFragment]",
@@ -99,15 +108,6 @@ var inputTests = [
     noClick: true,
     inspectorIcon: false
   },
-
-  {
-    input: "testLotsOfAttributes()",
-    output: '<p n="" m="" l="" k="" j="" i="" h="" g="" f="" e="" d="" c="" b="" a="" id="lots-of-attributes">',
-    printOutput: "[object HTMLParagraphElement]",
-    inspectable: true,
-    noClick: true,
-    inspectorIcon: true
-  }
 ];
 
 function test() {

@@ -77,9 +77,20 @@ InvokeFunction(JSContext* cx, HandleObject obj, bool constructing, uint32_t argc
 
         RootedValue newTarget(cx, argvWithoutThis[argc]);
 
-        // If |this| hasn't been created, we can use normal construction code.
-        if (thisv.isMagic(JS_IS_CONSTRUCTING))
-            return Construct(cx, fval, cargs, newTarget, rval);
+        // If |this| hasn't been created, or is JS_UNINITIALIZED_LEXICAL,
+        // we can use normal construction code without creating an extraneous
+        // object.
+        if (thisv.isMagic()) {
+            MOZ_ASSERT(thisv.whyMagic() == JS_IS_CONSTRUCTING ||
+                       thisv.whyMagic() == JS_UNINITIALIZED_LEXICAL);
+
+            RootedObject obj(cx);
+            if (!Construct(cx, fval, cargs, newTarget, &obj))
+                return false;
+
+            rval.setObject(*obj);
+            return true;
+        }
 
         // Otherwise the default |this| has already been created.  We could
         // almost perform a *call* at this point, but we'd break |new.target|
@@ -543,12 +554,12 @@ CreateThis(JSContext* cx, HandleObject callee, HandleObject newTarget, MutableHa
     rval.set(MagicValue(JS_IS_CONSTRUCTING));
 
     if (callee->is<JSFunction>()) {
-        JSFunction* fun = &callee->as<JSFunction>();
+        RootedFunction fun(cx, &callee->as<JSFunction>());
         if (fun->isInterpreted() && fun->isConstructor()) {
             JSScript* script = fun->getOrCreateScript(cx);
             if (!script || !script->ensureHasTypes(cx))
                 return false;
-            if (script->isDerivedClassConstructor()) {
+            if (fun->isBoundFunction() || script->isDerivedClassConstructor()) {
                 rval.set(MagicValue(JS_UNINITIALIZED_LEXICAL));
             } else {
                 JSObject* thisObj = CreateThisForFunction(cx, callee, newTarget, GenericObject);
@@ -686,7 +697,7 @@ DebugEpilogue(JSContext* cx, BaselineFrame* frame, jsbytecode* pc, bool ok)
     JSScript* script = frame->script();
     frame->setOverridePc(script->lastPC());
 
-    if (frame->isNonEvalFunctionFrame()) {
+    if (frame->isFunctionFrame()) {
         MOZ_ASSERT_IF(ok, frame->hasReturnValue());
         DebugScopes::onPopCall(frame, cx);
     } else if (frame->isStrictEvalFrame()) {
@@ -979,7 +990,7 @@ GlobalHasLiveOnDebuggerStatement(JSContext* cx)
 }
 
 bool
-PushBlockScope(JSContext* cx, BaselineFrame* frame, Handle<StaticBlockObject*> block)
+PushBlockScope(JSContext* cx, BaselineFrame* frame, Handle<StaticBlockScope*> block)
 {
     return frame->pushBlock(cx, block);
 }
@@ -1022,7 +1033,7 @@ DebugLeaveBlock(JSContext* cx, BaselineFrame* frame, jsbytecode* pc)
 }
 
 bool
-EnterWith(JSContext* cx, BaselineFrame* frame, HandleValue val, Handle<StaticWithObject*> templ)
+EnterWith(JSContext* cx, BaselineFrame* frame, HandleValue val, Handle<StaticWithScope*> templ)
 {
     return EnterWithOperation(cx, frame, val, templ);
 }
@@ -1284,7 +1295,7 @@ bool
 ThrowObjectCoercible(JSContext* cx, HandleValue v)
 {
     MOZ_ASSERT(v.isUndefined() || v.isNull());
-    MOZ_ALWAYS_FALSE(ToObjectSlow(cx, v, false));
+    MOZ_ALWAYS_FALSE(ToObjectSlow(cx, v, true));
     return false;
 }
 

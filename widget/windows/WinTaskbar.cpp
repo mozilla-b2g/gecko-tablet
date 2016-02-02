@@ -54,18 +54,18 @@ GetHWNDFromDocShell(nsIDocShell *aShell) {
 }
 
 HWND
-GetHWNDFromDOMWindow(nsIDOMWindow *dw) {
+GetHWNDFromDOMWindow(mozIDOMWindow *dw) {
   nsCOMPtr<nsIWidget> widget;
 
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(dw);
-  if (!window) 
+  if (!dw) 
     return nullptr;
 
+  nsCOMPtr<nsPIDOMWindowInner> window = nsPIDOMWindowInner::From(dw);
   return GetHWNDFromDocShell(window->GetDocShell());
 }
 
 nsresult
-SetWindowAppUserModelProp(nsIDOMWindow *aParent,
+SetWindowAppUserModelProp(mozIDOMWindow *aParent,
                           const nsString & aIdentifier) {
   NS_ENSURE_ARG_POINTER(aParent);
 
@@ -164,15 +164,27 @@ DefaultController::GetThumbnailAspectRatio(float *aThumbnailAspectRatio) {
   return NS_OK;
 }
 
+// deprecated
 NS_IMETHODIMP
 DefaultController::DrawPreview(nsISupports *ctx, bool *rDrawFrame) {
   *rDrawFrame = true;
+  return NS_ERROR_UNEXPECTED;
+}
+
+// deprecated
+NS_IMETHODIMP
+DefaultController::DrawThumbnail(nsISupports *ctx, uint32_t width, uint32_t height, bool *rDrawFrame) {
+  *rDrawFrame = false;
+  return NS_ERROR_UNEXPECTED;
+}
+
+NS_IMETHODIMP
+DefaultController::RequestThumbnail(nsITaskbarPreviewCallback *aCallback, uint32_t width, uint32_t height) {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-DefaultController::DrawThumbnail(nsISupports *ctx, uint32_t width, uint32_t height, bool *rDrawFrame) {
-  *rDrawFrame = false;
+DefaultController::RequestPreview(nsITaskbarPreviewCallback *aCallback) {
   return NS_OK;
 }
 
@@ -455,13 +467,13 @@ WinTaskbar::CreateJumpListBuilder(nsIJumpListBuilder * *aJumpListBuilder) {
 }
 
 NS_IMETHODIMP
-WinTaskbar::SetGroupIdForWindow(nsIDOMWindow *aParent,
+WinTaskbar::SetGroupIdForWindow(mozIDOMWindow *aParent,
                                 const nsAString & aIdentifier) {
   return SetWindowAppUserModelProp(aParent, nsString(aIdentifier));
 }
 
 NS_IMETHODIMP
-WinTaskbar::PrepareFullScreen(nsIDOMWindow *aWindow, bool aFullScreen) {
+WinTaskbar::PrepareFullScreen(mozIDOMWindow *aWindow, bool aFullScreen) {
   NS_ENSURE_ARG_POINTER(aWindow);
 
   HWND toplevelHWND = ::GetAncestor(GetHWNDFromDOMWindow(aWindow), GA_ROOT);

@@ -7,7 +7,7 @@
 // Test that markup-containers in the markup-view do flash when their
 // corresponding DOM nodes mutate
 
-const TEST_URL = TEST_URL_ROOT + "doc_markup_flashing.html";
+const TEST_URL = URL_ROOT + "doc_markup_flashing.html";
 
 // The test data contains a list of mutations to test.
 // Each item is an object:
@@ -44,6 +44,12 @@ const TEST_DATA = [{
     rootNode.setAttribute("test-name", "value-" + Date.now());
   }
 }, {
+  desc: "Adding an attribute with css reserved characters should flash the attribute",
+  attribute: "one:two",
+  mutate: (doc, rootNode) => {
+    rootNode.setAttribute("one:two", "value-" + Date.now());
+  }
+}, {
   desc: "Editing an attribute should flash the attribute",
   attribute: "class",
   mutate: (doc, rootNode) => {
@@ -68,7 +74,7 @@ const TEST_DATA = [{
 }];
 
 add_task(function*() {
-  let {inspector} = yield addTab(TEST_URL).then(openInspector);
+  let {inspector} = yield openInspectorForURL(TEST_URL);
 
   // Make sure mutated nodes flash for a very long time so we can more easily
   // assert they do

@@ -240,8 +240,36 @@ this.AppConstants = Object.freeze({
   false,
 #endif
 
+  MOZ_NATIVE_NSS:
+#ifdef MOZ_NATIVE_NSS
+  true,
+#else
+  false,
+#endif
+
   MOZ_PLACES:
 #ifdef MOZ_PLACES
+  true,
+#else
+  false,
+#endif
+
+  MOZ_REQUIRE_SIGNING:
+#ifdef MOZ_REQUIRE_SIGNING
+  true,
+#else
+  false,
+#endif
+
+  MENUBAR_CAN_AUTOHIDE:
+#ifdef MENUBAR_CAN_AUTOHIDE
+  true,
+#else
+  false,
+#endif
+
+  CAN_DRAW_IN_TITLEBAR:
+#ifdef CAN_DRAW_IN_TITLEBAR
   true,
 #else
   false,

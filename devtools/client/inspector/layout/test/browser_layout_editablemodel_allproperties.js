@@ -32,9 +32,9 @@ function*(inspector, view) {
   node.style.padding = "5px";
   yield waitForUpdate(inspector);
 
-  yield selectNode(node, inspector);
+  yield selectNode("#div1", inspector);
 
-  let span = view.doc.querySelector(".padding.bottom > span");
+  let span = view.doc.querySelector(".layout-padding.layout-bottom > span");
   is(span.textContent, 5, "Should have the right value in the box model.");
 
   EventUtils.synthesizeMouseAtCenter(span, {}, view.doc.defaultView);
@@ -61,9 +61,9 @@ function*(inspector, view) {
   node.style.padding = "5px";
   yield waitForUpdate(inspector);
 
-  yield selectNode(node, inspector);
+  yield selectNode("#div1", inspector);
 
-  let span = view.doc.querySelector(".padding.left > span");
+  let span = view.doc.querySelector(".layout-padding.layout-left > span");
   is(span.textContent, 5, "Should have the right value in the box model.");
 
   EventUtils.synthesizeMouseAtCenter(span, {}, view.doc.defaultView);
@@ -90,9 +90,9 @@ function*(inspector, view) {
 
   node.style.padding = "5px";
 
-  yield selectNode(node, inspector);
+  yield selectNode("#div1", inspector);
 
-  let span = view.doc.querySelector(".padding.left > span");
+  let span = view.doc.querySelector(".layout-padding.layout-left > span");
   is(span.textContent, 5, "Should have the right value in the box model.");
 
   EventUtils.synthesizeMouseAtCenter(span, {}, view.doc.defaultView);
@@ -119,9 +119,9 @@ function*(inspector, view) {
   node.style.padding = "5px";
   yield waitForUpdate(inspector);
 
-  yield selectNode(node, inspector);
+  yield selectNode("#div1", inspector);
 
-  let span = view.doc.querySelector(".padding.left > span");
+  let span = view.doc.querySelector(".layout-padding.layout-left > span");
   is(span.textContent, 5, "Should have the right value in the box model.");
 
   EventUtils.synthesizeMouseAtCenter(span, {}, view.doc.defaultView);

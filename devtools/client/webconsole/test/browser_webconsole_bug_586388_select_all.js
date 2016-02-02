@@ -1,12 +1,7 @@
-/* vim:set ts=2 sw=2 sts=2 et: */
-/* ***** BEGIN LICENSE BLOCK *****
- * Any copyright is dedicated to the Public Domain.
- * http://creativecommons.org/publicdomain/zero/1.0/
- *
- * Contributor(s):
- *  Patrick Walton <pcwalton@mozilla.com>
- *
- * ***** END LICENSE BLOCK ***** */
+/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
+/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
+/* Any copyright is dedicated to the Public Domain.
+ * http://creativecommons.org/publicdomain/zero/1.0/ */
 
 "use strict";
 
@@ -68,7 +63,7 @@ function performTestsAfterOutput(hud) {
 
   // Test the context menu "Select All" (which has a different code path) works
   // properly as well.
-  let contextMenuId = outputNode.parentNode.getAttribute("context");
+  let contextMenuId = hud.ui.outputWrapper.getAttribute("context");
   let contextMenu = hud.ui.document.getElementById(contextMenuId);
   ok(contextMenu != null, "the output node has a context menu");
 

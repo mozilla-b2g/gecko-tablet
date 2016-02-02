@@ -7,6 +7,8 @@ Components.utils.import("resource://gre/modules/DownloadUtils.jsm");
 Components.utils.import("resource://gre/modules/LoadContextInfo.jsm");
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
 
+const PREF_UPLOAD_ENABLED = "datareporting.healthreport.uploadEnabled";
+
 var gAdvancedPane = {
   _inited: false,
 
@@ -42,9 +44,10 @@ var gAdvancedPane = {
     this.initSubmitCrashes();
 #endif
     this.initTelemetry();
-#ifdef MOZ_SERVICES_HEALTHREPORT
+#ifdef MOZ_TELEMETRY_REPORTING
     this.initSubmitHealthReport();
 #endif
+    this.updateOnScreenKeyboardVisibility();
     this.updateCacheSizeInputField();
     this.updateActualCacheSize();
     this.updateActualAppCacheSize();
@@ -53,7 +56,7 @@ var gAdvancedPane = {
                      gAdvancedPane.updateHardwareAcceleration);
     setEventListener("advancedPrefs", "select",
                      gAdvancedPane.tabSelectionChanged);
-#ifdef MOZ_SERVICES_HEALTHREPORT
+#ifdef MOZ_TELEMETRY_REPORTING
     setEventListener("submitHealthReportBox", "command",
                      gAdvancedPane.updateSubmitHealthReport);
 #endif
@@ -122,6 +125,10 @@ var gAdvancedPane = {
    * - when set to true, typing outside text areas and input boxes will
    *   automatically start searching for what's typed within the current
    *   document; when set to false, no search action happens
+   * ui.osk.enabled
+   * - when set to true, subject to other conditions, we may sometimes invoke
+   *   an on-screen keyboard when a text input is focused.
+   *   (Currently Windows-only, and depending on prefs, may be Windows-8-only)
    * general.autoScroll
    * - when set to true, clicking the scroll wheel on the mouse activates a
    *   mouse mode where moving the mouse down scrolls the document downward with
@@ -282,48 +289,42 @@ var gAdvancedPane = {
 #endif
   },
 
-#ifdef MOZ_SERVICES_HEALTHREPORT
+#ifdef MOZ_TELEMETRY_REPORTING
   /**
    * Initialize the health report service reference and checkbox.
    */
   initSubmitHealthReport: function () {
     this._setupLearnMoreLink("datareporting.healthreport.infoURL", "FHRLearnMore");
 
-    let policy = Components.classes["@mozilla.org/datareporting/service;1"]
-                                   .getService(Components.interfaces.nsISupports)
-                                   .wrappedJSObject
-                                   .policy;
-
     let checkbox = document.getElementById("submitHealthReportBox");
 
-    if (!policy || policy.healthReportUploadLocked) {
+    if (Services.prefs.prefIsLocked(PREF_UPLOAD_ENABLED)) {
       checkbox.setAttribute("disabled", "true");
       return;
     }
 
-    checkbox.checked = policy.healthReportUploadEnabled;
+    checkbox.checked = Services.prefs.getBoolPref(PREF_UPLOAD_ENABLED);
     this.setTelemetrySectionEnabled(checkbox.checked);
   },
 
   /**
-   * Update the health report policy acceptance with state from checkbox.
+   * Update the health report preference with state from checkbox.
    */
   updateSubmitHealthReport: function () {
-    let policy = Components.classes["@mozilla.org/datareporting/service;1"]
-                                   .getService(Components.interfaces.nsISupports)
-                                   .wrappedJSObject
-                                   .policy;
-
-    if (!policy) {
-      return;
-    }
-
     let checkbox = document.getElementById("submitHealthReportBox");
-    policy.recordHealthReportUploadEnabled(checkbox.checked,
-                                           "Checkbox from preferences pane");
+    Services.prefs.setBoolPref(PREF_UPLOAD_ENABLED, checkbox.checked);
     this.setTelemetrySectionEnabled(checkbox.checked);
   },
 #endif
+
+  updateOnScreenKeyboardVisibility() {
+    if (AppConstants.platform == "win") {
+      let minVersion = Services.prefs.getBoolPref("ui.osk.require_win10") ? 10 : 6.2;
+      if (Services.vc.compare(Services.sysinfo.getProperty("version"), minVersion) >= 0) {
+        document.getElementById("useOnScreenKeyboard").hidden = false;
+      }
+    }
+  },
 
   // NETWORK TAB
 

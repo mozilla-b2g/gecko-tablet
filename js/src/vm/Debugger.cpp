@@ -50,7 +50,6 @@ using mozilla::ArrayLength;
 using mozilla::DebugOnly;
 using mozilla::MakeScopeExit;
 using mozilla::Maybe;
-using mozilla::UniquePtr;
 
 
 /*** Forward declarations ************************************************************************/
@@ -245,6 +244,28 @@ class Debugger::FrameRange
                 break;
             nextDebugger++;
         }
+    }
+};
+
+class AutoRestoreCompartmentDebugMode
+{
+    JSCompartment* comp_;
+    unsigned bits_;
+
+  public:
+    explicit AutoRestoreCompartmentDebugMode(JSCompartment* comp)
+      : comp_(comp), bits_(comp->debugModeBits)
+    {
+        MOZ_ASSERT(comp_);
+    }
+
+    ~AutoRestoreCompartmentDebugMode() {
+        if (comp_)
+            comp_->debugModeBits = bits_;
+    }
+
+    void release() {
+        comp_ = nullptr;
     }
 };
 
@@ -2092,27 +2113,6 @@ UpdateExecutionObservabilityOfScriptsInZone(JSContext* cx, Zone* zone,
     JSRuntime* rt = cx->runtime();
     FreeOp* fop = cx->runtime()->defaultFreeOp();
 
-    // Mark active baseline scripts in the observable set so that they don't
-    // get discarded. They will be recompiled.
-    for (JitActivationIterator actIter(rt); !actIter.done(); ++actIter) {
-        if (actIter->compartment()->zone() != zone)
-            continue;
-
-        for (JitFrameIterator iter(actIter); !iter.done(); ++iter) {
-            switch (iter.type()) {
-              case JitFrame_BaselineJS:
-                MarkBaselineScriptActiveIfObservable(iter.script(), obs);
-                break;
-              case JitFrame_IonJS:
-                MarkBaselineScriptActiveIfObservable(iter.script(), obs);
-                for (InlineFrameIterator inlineIter(rt, &iter); inlineIter.more(); ++inlineIter)
-                    MarkBaselineScriptActiveIfObservable(inlineIter.script(), obs);
-                break;
-              default:;
-            }
-        }
-    }
-
     Vector<JSScript*> scripts(cx);
 
     // Iterate through observable scripts, invalidating their Ion scripts and
@@ -2133,6 +2133,30 @@ UpdateExecutionObservabilityOfScriptsInZone(JSContext* cx, Zone* zone,
                     if (!AppendAndInvalidateScript(cx, zone, script, scripts))
                         return false;
                 }
+            }
+        }
+    }
+
+    // Code below this point must be infallible to ensure the active bit of
+    // BaselineScripts is in a consistent state.
+    //
+    // Mark active baseline scripts in the observable set so that they don't
+    // get discarded. They will be recompiled.
+    for (JitActivationIterator actIter(rt); !actIter.done(); ++actIter) {
+        if (actIter->compartment()->zone() != zone)
+            continue;
+
+        for (JitFrameIterator iter(actIter); !iter.done(); ++iter) {
+            switch (iter.type()) {
+              case JitFrame_BaselineJS:
+                MarkBaselineScriptActiveIfObservable(iter.script(), obs);
+                break;
+              case JitFrame_IonJS:
+                MarkBaselineScriptActiveIfObservable(iter.script(), obs);
+                for (InlineFrameIterator inlineIter(rt, &iter); inlineIter.more(); ++inlineIter)
+                    MarkBaselineScriptActiveIfObservable(inlineIter.script(), obs);
+                break;
+              default:;
             }
         }
     }
@@ -2272,11 +2296,16 @@ Debugger::updateObservesAllExecutionOnDebuggees(JSContext* cx, IsObserving obser
         // so add the compartment to the set only if we are observing.
         if (observing && !obs.add(comp))
             return false;
-
-        comp->updateDebuggerObservesAllExecution();
     }
 
-    return updateExecutionObservability(cx, obs, observing);
+    if (!updateExecutionObservability(cx, obs, observing))
+        return false;
+
+    typedef ExecutionObservableCompartments::CompartmentRange CompartmentRange;
+    for (CompartmentRange r = obs.compartments()->all(); !r.empty(); r.popFront())
+        r.front()->updateDebuggerObservesAllExecution();
+
+    return true;
 }
 
 bool
@@ -2836,10 +2865,14 @@ Debugger::setHookImpl(JSContext* cx, CallArgs& args, Debugger& dbg, Hook which)
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_NOT_CALLABLE_OR_UNDEFINED);
         return false;
     }
-    dbg.object->setReservedSlot(JSSLOT_DEBUG_HOOK_START + which, args[0]);
+    uint32_t slot = JSSLOT_DEBUG_HOOK_START + which;
+    RootedValue oldHook(cx, dbg.object->getReservedSlot(slot));
+    dbg.object->setReservedSlot(slot, args[0]);
     if (hookObservesAllExecution(which)) {
-        if (!dbg.updateObservesAllExecutionOnDebuggees(cx, dbg.observesAllExecution()))
+        if (!dbg.updateObservesAllExecutionOnDebuggees(cx, dbg.observesAllExecution())) {
+            dbg.object->setReservedSlot(slot, oldHook);
             return false;
+        }
     }
     args.rval().setUndefined();
     return true;
@@ -3474,6 +3507,7 @@ Debugger::addDebuggeeGlobal(JSContext* cx, Handle<GlobalObject*> global)
     });
 
     // (6)
+    AutoRestoreCompartmentDebugMode debugModeGuard(debuggeeCompartment);
     debuggeeCompartment->setIsDebuggee();
     debuggeeCompartment->updateDebuggerObservesAsmJS();
     debuggeeCompartment->updateDebuggerObservesCoverage();
@@ -3485,6 +3519,7 @@ Debugger::addDebuggeeGlobal(JSContext* cx, Handle<GlobalObject*> global)
     zoneDebuggersGuard.release();
     debuggeeZonesGuard.release();
     allocationsTrackingGuard.release();
+    debugModeGuard.release();
     return true;
 }
 
@@ -5378,6 +5413,19 @@ Debugger::observesScript(JSScript* script) const
 Debugger::replaceFrameGuts(JSContext* cx, AbstractFramePtr from, AbstractFramePtr to,
                            ScriptFrameIter& iter)
 {
+    auto removeFromDebuggerFramesOnExit = MakeScopeExit([&] {
+        // Remove any remaining old entries on exit, as the 'from' frame will
+        // be gone. On success, the range will be empty.
+        for (Debugger::FrameRange r(from); !r.empty(); r.popFront()) {
+            r.frontFrame()->setPrivate(nullptr);
+            r.removeFrontFrame();
+        }
+
+        // Rekey missingScopes to maintain Debugger.Environment identity and
+        // forward liveScopes to point to the new frame.
+        DebugScopes::forwardLiveFrame(cx, from, to);
+    });
+
     // Forward live Debugger.Frame objects.
     for (Debugger::FrameRange r(from); !r.empty(); r.popFront()) {
         RootedNativeObject frameobj(cx, r.frontFrame());
@@ -5391,7 +5439,7 @@ Debugger::replaceFrameGuts(JSContext* cx, AbstractFramePtr from, AbstractFramePt
             return false;
         frameobj->setPrivate(data);
 
-        // Remove the old entry before mutating the HashMap.
+        // Remove the old frame.
         r.removeFrontFrame();
 
         // Add the frame object with |to| as key.
@@ -5400,11 +5448,6 @@ Debugger::replaceFrameGuts(JSContext* cx, AbstractFramePtr from, AbstractFramePt
             return false;
         }
     }
-
-    // Rekey missingScopes to maintain Debugger.Environment identity and
-    // forward liveScopes to point to the new frame, as the old frame will be
-    // gone.
-    DebugScopes::forwardLiveFrame(cx, from, to);
 
     return true;
 }
@@ -6320,7 +6363,7 @@ static bool
 DebuggerFrame_getCallee(JSContext* cx, unsigned argc, Value* vp)
 {
     THIS_FRAME(cx, argc, vp, "get callee", args, thisobj, frame);
-    RootedValue calleev(cx, frame.isNonEvalFunctionFrame() ? frame.calleev() : NullValue());
+    RootedValue calleev(cx, frame.isFunctionFrame() ? frame.calleev() : NullValue());
     if (!Debugger::fromChildJSObject(thisobj)->wrapDebuggeeValue(cx, &calleev))
         return false;
     args.rval().set(calleev);
@@ -6509,7 +6552,7 @@ DebuggerFrame_getScript(JSContext* cx, unsigned argc, Value* vp)
     Debugger* debug = Debugger::fromChildJSObject(thisobj);
 
     RootedObject scriptObject(cx);
-    if (frame.isFunctionFrame() && !frame.isEvalFrame()) {
+    if (frame.isFunctionFrame()) {
         RootedFunction callee(cx, frame.callee());
         if (callee->isInterpreted()) {
             RootedScript script(cx, callee->nonLazyScript());
@@ -6653,19 +6696,19 @@ EvaluateInEnv(JSContext* cx, Handle<Env*> env, AbstractFramePtr frame,
     MOZ_ASSERT_IF(frame, pc);
 
     /*
-     * Pass in a StaticEvalObject *not* linked to env for evalStaticScope, as
+     * Pass in a StaticEvalScope *not* linked to env for evalStaticScope, as
      * ScopeIter should stop at any non-ScopeObject or non-syntactic With
      * boundaries, and we are putting a DebugScopeProxy or non-syntactic With on
      * the scope chain.
      */
-    Rooted<ScopeObject*> enclosingStaticScope(cx);
+    Rooted<StaticScope*> enclosingStaticScope(cx);
     if (!IsGlobalLexicalScope(env)) {
         // If we are doing a global evalWithBindings, we will still need to
         // link the static global lexical scope to the static non-syntactic
         // scope.
         if (IsGlobalLexicalScope(env->enclosingScope()))
             enclosingStaticScope = &cx->global()->lexicalScope().staticBlock();
-        enclosingStaticScope = StaticNonSyntacticScopeObjects::create(cx, enclosingStaticScope);
+        enclosingStaticScope = StaticNonSyntacticScope::create(cx, enclosingStaticScope);
         if (!enclosingStaticScope)
             return false;
     } else {
@@ -6677,9 +6720,9 @@ EvaluateInEnv(JSContext* cx, Handle<Env*> env, AbstractFramePtr frame,
     // circumvent the fresh lexical scope that all eval have, so that the
     // users of executeInGlobal, like the web console, may add new bindings to
     // the global scope.
-    Rooted<ScopeObject*> staticScope(cx);
+    Rooted<StaticScope*> staticScope(cx);
     if (frame) {
-        staticScope = StaticEvalObject::create(cx, enclosingStaticScope);
+        staticScope = StaticEvalScope::create(cx, enclosingStaticScope);
         if (!staticScope)
             return false;
     } else {
@@ -6705,12 +6748,11 @@ EvaluateInEnv(JSContext* cx, Handle<Env*> env, AbstractFramePtr frame,
     // Again, executeInGlobal is not considered eval.
     if (frame) {
         if (script->strict())
-            staticScope->as<StaticEvalObject>().setStrict();
+            staticScope->as<StaticEvalScope>().setStrict();
         script->setActiveEval();
     }
 
-    ExecuteType type = !frame ? EXECUTE_GLOBAL : EXECUTE_DEBUG;
-    return ExecuteKernel(cx, script, *env, NullValue(), type, frame, rval.address());
+    return ExecuteKernel(cx, script, *env, NullValue(), frame, rval.address());
 }
 
 enum EvalBindings { EvalHasExtraBindings = true, EvalWithDefaultBindings = false };
@@ -7244,7 +7286,7 @@ DebuggerObject_getBoundArguments(JSContext* cx, unsigned argc, Value* vp)
     if (!boundArgs.resize(length))
         return false;
     for (size_t i = 0; i < length; i++) {
-        boundArgs[i].set(fun->getBoundFunctionArgument(i));
+        boundArgs[i].set(fun->getBoundFunctionArgument(cx, i));
         if (!dbg->wrapDebuggeeValue(cx, boundArgs[i]))
             return false;
     }
@@ -8431,8 +8473,7 @@ AssertIsPromise(JSContext* cx, HandleObject promise)
 {
     MOZ_ASSERT(promise);
     assertSameCompartment(cx, promise);
-    MOZ_ASSERT(strcmp(promise->getClass()->name, "Promise") == 0 ||
-               strcmp(promise->getClass()->name, "MozAbortablePromise") == 0);
+    MOZ_ASSERT(strcmp(promise->getClass()->name, "Promise") == 0);
 }
 
 JS_PUBLIC_API(void)
@@ -8496,7 +8537,7 @@ GarbageCollectionEvent::Create(JSRuntime* rt, ::js::gcstats::Statistics& stats, 
             // reasons this data is stored and replicated on each slice. Each
             // slice used to have its own GCReason, but now they are all the
             // same.
-            data->reason = gcstats::ExplainReason(range.front().reason);
+            data->reason = gcreason::ExplainReason(range.front().reason);
             MOZ_ASSERT(data->reason);
         }
 

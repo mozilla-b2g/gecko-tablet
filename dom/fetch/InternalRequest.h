@@ -88,9 +88,10 @@ class InternalRequest final
 public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(InternalRequest)
 
-  explicit InternalRequest()
+  InternalRequest()
     : mMethod("GET")
     , mHeaders(new InternalHeaders(HeadersGuardEnum::None))
+    , mContentPolicyType(nsIContentPolicy::TYPE_FETCH)
     , mReferrer(NS_LITERAL_STRING(kFETCH_CLIENT_REFERRER_STR))
     , mMode(RequestMode::No_cors)
     , mCredentialsMode(RequestCredentials::Omit)
@@ -104,6 +105,36 @@ public:
       // algorithm never loading data: URLs right now. See Bug 1018872 about
       // how certain contexts will override it to set it to true. Fetch
       // specification does not handle this yet.
+    , mSameOriginDataURL(true)
+    , mSkipServiceWorker(false)
+    , mSynchronous(false)
+    , mUnsafeRequest(false)
+    , mUseURLCredentials(false)
+  {
+  }
+
+  InternalRequest(const nsACString& aURL,
+                  const nsACString& aMethod,
+                  already_AddRefed<InternalHeaders> aHeaders,
+                  RequestMode aMode,
+                  RequestRedirect aRequestRedirect,
+                  RequestCredentials aRequestCredentials,
+                  const nsAString& aReferrer,
+                  nsContentPolicyType aContentPolicyType)
+    : mMethod(aMethod)
+    , mURL(aURL)
+    , mHeaders(aHeaders)
+    , mContentPolicyType(aContentPolicyType)
+    , mReferrer(aReferrer)
+    , mMode(aMode)
+    , mCredentialsMode(aRequestCredentials)
+    , mResponseTainting(LoadTainting::Basic)
+    , mCacheMode(RequestCache::Default)
+    , mRedirectMode(aRequestRedirect)
+    , mAuthenticationFlag(false)
+    , mForceOriginHeader(false)
+    , mPreserveContentCodings(false)
+      // FIXME See the above comment in the default constructor.
     , mSameOriginDataURL(true)
     , mSkipServiceWorker(false)
     , mSynchronous(false)
@@ -375,6 +406,9 @@ public:
   static RequestMode
   MapChannelToRequestMode(nsIChannel* aChannel);
 
+  static RequestCredentials
+  MapChannelToRequestCredentials(nsIChannel* aChannel);
+
 private:
   // Does not copy mBodyStream.  Use fallible Clone() for complete copy.
   explicit InternalRequest(const InternalRequest& aOther);
@@ -413,7 +447,6 @@ private:
   bool mForceOriginHeader;
   bool mPreserveContentCodings;
   bool mSameOriginDataURL;
-  bool mSandboxedStorageAreaURLs;
   bool mSkipServiceWorker;
   bool mSynchronous;
   bool mUnsafeRequest;

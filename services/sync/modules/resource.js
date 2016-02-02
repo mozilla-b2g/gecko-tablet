@@ -13,6 +13,7 @@ var Cr = Components.results;
 var Cu = Components.utils;
 
 Cu.import("resource://gre/modules/Preferences.jsm");
+Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource://services-common/async.js");
 Cu.import("resource://gre/modules/Log.jsm");
 Cu.import("resource://services-common/observers.js");
@@ -148,16 +149,9 @@ AsyncResource.prototype = {
   // to obtain a request channel.
   //
   _createRequest: function Res__createRequest(method) {
-    let channel = Services.io.newChannel2(this.spec,
-                                          null,
-                                          null,
-                                          null,      // aLoadingNode
-                                          Services.scriptSecurityManager.getSystemPrincipal(),
-                                          null,      // aTriggeringPrincipal
-                                          Ci.nsILoadInfo.SEC_NORMAL,
-                                          Ci.nsIContentPolicy.TYPE_OTHER)
-                          .QueryInterface(Ci.nsIRequest)
-                          .QueryInterface(Ci.nsIHttpChannel);
+    let channel = NetUtil.newChannel({uri: this.spec, loadUsingSystemPrincipal: true})
+                         .QueryInterface(Ci.nsIRequest)
+                         .QueryInterface(Ci.nsIHttpChannel);
 
     channel.loadFlags |= DEFAULT_LOAD_FLAGS;
 
@@ -230,10 +224,10 @@ AsyncResource.prototype = {
                                        this._log, this.ABORT_TIMEOUT);
     channel.requestMethod = action;
     try {
-      channel.asyncOpen(listener, null);
+      channel.asyncOpen2(listener);
     } catch (ex) {
-      // asyncOpen can throw in a bunch of cases -- e.g., a forbidden port.
-      this._log.warn("Caught an error in asyncOpen", ex);
+      // asyncOpen2 can throw in a bunch of cases -- e.g., a forbidden port.
+      this._log.warn("Caught an error in asyncOpen2", ex);
       CommonUtils.nextTick(callback.bind(this, ex));
     }
   },
@@ -402,7 +396,10 @@ Resource.prototype = {
     try {
       this._doRequest(action, data, callback);
       return Async.waitForSyncCallback(cb);
-    } catch (ex if !Async.isShutdownException(ex)) {
+    } catch (ex) {
+      if (Async.isShutdownException(ex)) {
+        throw ex;
+      }
       // Combine the channel stack with this request stack.  Need to create
       // a new error object for that.
       let error = Error(ex.message);
@@ -555,7 +552,10 @@ ChannelListener.prototype = {
 
     try {
       this._onProgress();
-    } catch (ex if !Async.isShutdownException(ex)) {
+    } catch (ex) {
+      if (Async.isShutdownException(ex)) {
+        throw ex;
+      }
       this._log.warn("Got exception calling onProgress handler during fetch of "
                      + req.URI.spec, ex);
       this._log.trace("Rethrowing; expect a failure code from the HTTP channel.");

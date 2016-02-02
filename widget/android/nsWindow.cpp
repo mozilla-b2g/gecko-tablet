@@ -73,6 +73,7 @@ using mozilla::Unused;
 #include "android_npapi.h"
 #include "GeneratedJNINatives.h"
 #include "KeyEvent.h"
+#include "MotionEvent.h"
 
 #include "imgIEncoder.h"
 
@@ -88,8 +89,6 @@ using namespace mozilla::layers;
 
 NS_IMPL_ISUPPORTS_INHERITED0(nsWindow, nsBaseWidget)
 
-// The dimensions of the current android view
-static gfx::IntSize gAndroidBounds = gfx::IntSize(0, 0);
 static gfx::IntSize gAndroidScreenBounds;
 
 #include "mozilla/layers/CompositorChild.h"
@@ -140,7 +139,7 @@ NS_IMPL_ISUPPORTS(ContentCreationNotifier,
                   nsIObserver)
 
 // All the toplevel windows that have been created; these are in
-// stacking order, so the window at gAndroidBounds[0] is the topmost
+// stacking order, so the window at gTopLevelWindows[0] is the topmost
 // one.
 static nsTArray<nsWindow*> gTopLevelWindows;
 
@@ -154,6 +153,7 @@ static bool sFailedToCreateGLContext = false;
 static const double SWIPE_MAX_PINCH_DELTA_INCHES = 0.4;
 static const double SWIPE_MIN_DISTANCE_INCHES = 0.6;
 
+static Modifiers GetModifiers(int32_t metaState);
 
 class nsWindow::GeckoViewSupport final
     : public GeckoView::Window::Natives<GeckoViewSupport>
@@ -245,16 +245,11 @@ public:
         , mIMESelectionChanged(false)
         , mIMETextChangedDuringFlush(false)
     {
-        Reattach(aInstance);
+        Base::AttachNative(aInstance, this);
         EditableBase::AttachNative(mEditable, this);
     }
 
     ~GeckoViewSupport();
-
-    void Reattach(const GeckoView::Window::LocalRef& aInstance)
-    {
-        Base::AttachNative(aInstance, this);
-    }
 
     using Base::DisposeNative;
     using EditableBase::DisposeNative;
@@ -368,6 +363,309 @@ public:
 };
 
 /**
+ * NativePanZoomController handles its native calls on the UI thread, so make
+ * it separate from GeckoViewSupport.
+ */
+class nsWindow::NPZCSupport final
+    : public NativePanZoomController::Natives<NPZCSupport>
+{
+    nsWindow* mWindow;
+    // Lock for keeping mWindow alive when accessed off of the Gecko thread.
+    Mutex mWindowLock;
+    NativePanZoomController::GlobalRef mNPZC;
+
+public:
+    typedef NativePanZoomController::Natives<NPZCSupport> Base;
+
+    NPZCSupport(nsWindow* aWindow,
+                const NativePanZoomController::LocalRef& aNPZC)
+        : mWindow(aWindow)
+        , mWindowLock("NPZCSupport")
+        , mNPZC(aNPZC)
+    {
+        if (mWindow->mNPZCSupport) {
+            mWindow->mNPZCSupport->DetachFromWindow();
+        }
+        mWindow->mNPZCSupport = this;
+    }
+
+    ~NPZCSupport()
+    {}
+
+    using Base::AttachNative;
+
+    void DetachFromWindow()
+    {
+        // There are several considerations when shutting down NPZC. 1) The
+        // Gecko thread may destroy NPZC at any time when nsWindow closes. 2)
+        // There may be pending events on the Gecko thread when NPZC is
+        // destroyed. 3) mWindow may not be available when the pending event
+        // runs. 4) The UI thread may destroy NPZC at any time when GeckoView
+        // is destroyed. 5) The UI thread may destroy NPZC at the same time as
+        // Gecko thread trying to destroy NPZC. 6) There may be pending calls
+        // on the UI thread when NPZC is destroyed. 7) mWindow may have been
+        // cleared on the Gecko thread when the pending call happens on the UI
+        // thread.
+        //
+        // 1) happens through DetachFromWindow, which first notifies the UI
+        // thread through Destroy; Destroy then calls DisposeNative, which
+        // finally disposes the native instance back on the Gecko thread. Using
+        // Destroy to indirectly call DisposeNative here also solves 5), by
+        // making everything go through the UI thread, avoiding contention.
+        //
+        // 2) and 3) are solved by clearing mWindow, which signals to the
+        // pending event that we had shut down. In that case the event bails
+        // and does not touch mWindow.
+        //
+        // 4) happens through DisposeNative directly. DetachFromWindow is not
+        // called.
+        //
+        // 6) is solved by keeping a destroyed flag in the Java NPZC instance,
+        // and only make a pending call if the destroyed flag is not set.
+        //
+        // 7) is solved by taking a lock whenever mWindow is modified on the
+        // Gecko thread or accessed on the UI thread. That way, we don't
+        // release mWindow until the UI thread is done using it, thus avoiding
+        // the race condition.
+
+        typedef NativePanZoomController::GlobalRef NPZCRef;
+        auto callDestroy = [] (const NPZCRef& npzc) {
+            npzc->Destroy();
+        };
+
+        NativePanZoomController::GlobalRef npzc = mNPZC;
+        AndroidBridge::Bridge()->PostTaskToUiThread(NewRunnableFunction(
+                static_cast<void(*)(const NPZCRef&)>(callDestroy),
+                mozilla::Move(npzc)), 0);
+
+        // Signal to any pending calls on either Gecko or UI thread that NPZC
+        // is being destroyed.
+        MutexAutoLock lock(mWindowLock);
+        mWindow->mNPZCSupport = nullptr;
+        mWindow = nullptr;
+    }
+
+private:
+    void DisposeOnGeckoThread()
+    {
+        MOZ_ASSERT(NS_IsMainThread());
+
+        if (mWindow && mWindow->mNPZCSupport == this) {
+            mWindow->mNPZCSupport = nullptr;
+        }
+        // Base::DisposeNative implicitly deletes 'this'.
+        Base::DisposeNative(NativePanZoomController::LocalRef(
+                jni::GetGeckoThreadEnv(), mNPZC));
+    }
+
+public:
+    void DisposeNative()
+    {
+        // Capturing 'this' is okay because 'this' is owned by the Java
+        // instance, it is alive until this lambda is run, and we make sure to
+        // only call DisposeNative once.
+        nsAppShell::PostEvent([this] {
+            DisposeOnGeckoThread();
+        });
+    }
+
+    void AbortAnimation()
+    {
+        MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
+
+        MutexAutoLock lock(mWindowLock);
+        if (!mWindow) {
+            // We already shut down.
+            return;
+        }
+
+        RefPtr<APZCTreeManager> controller = mWindow->mAPZC;
+        RefPtr<CompositorParent> compositor = mWindow->mCompositorParent;
+        if (controller && compositor) {
+            // TODO: Pass in correct values for presShellId and viewId.
+            controller->CancelAnimation(ScrollableLayerGuid(
+                    compositor->RootLayerTreeId(), 0, 0));
+        }
+    }
+
+    void AdjustScrollForSurfaceShift(float aX, float aY)
+    {
+        MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
+
+        MutexAutoLock lock(mWindowLock);
+        if (!mWindow) {
+            // We already shut down.
+            return;
+        }
+
+        RefPtr<APZCTreeManager> controller = mWindow->mAPZC;
+        if (controller) {
+            controller->AdjustScrollForSurfaceShift(
+                ScreenPoint(aX, aY));
+        }
+    }
+
+    void SetIsLongpressEnabled(bool aIsLongpressEnabled)
+    {
+        MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
+
+        APZCTreeManager::SetLongTapEnabled(aIsLongpressEnabled);
+    }
+
+    bool HandleMotionEvent(const NativePanZoomController::LocalRef& aInstance,
+                           int32_t aAction, int32_t aActionIndex,
+                           int64_t aTime, int32_t aMetaState,
+                           jni::IntArray::Param aPointerId,
+                           jni::FloatArray::Param aX,
+                           jni::FloatArray::Param aY,
+                           jni::FloatArray::Param aOrientation,
+                           jni::FloatArray::Param aPressure,
+                           jni::FloatArray::Param aToolMajor,
+                           jni::FloatArray::Param aToolMinor)
+    {
+        MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
+
+        MutexAutoLock lock(mWindowLock);
+        if (!mWindow) {
+            // We already shut down.
+            return false;
+        }
+
+        RefPtr<APZCTreeManager> controller = mWindow->mAPZC;
+        if (!controller) {
+            return false;
+        }
+
+        nsTArray<int32_t> pointerId(aPointerId);
+        MultiTouchInput::MultiTouchType type;
+        size_t startIndex = 0;
+        size_t endIndex = pointerId.Length();
+
+        switch (aAction) {
+            case sdk::MotionEvent::ACTION_DOWN:
+            case sdk::MotionEvent::ACTION_POINTER_DOWN:
+                type = MultiTouchInput::MULTITOUCH_START;
+                break;
+            case sdk::MotionEvent::ACTION_MOVE:
+                type = MultiTouchInput::MULTITOUCH_MOVE;
+                break;
+            case sdk::MotionEvent::ACTION_UP:
+            case sdk::MotionEvent::ACTION_POINTER_UP:
+                // for pointer-up events we only want the data from
+                // the one pointer that went up
+                type = MultiTouchInput::MULTITOUCH_END;
+                startIndex = aActionIndex;
+                endIndex = aActionIndex + 1;
+                break;
+            case sdk::MotionEvent::ACTION_OUTSIDE:
+            case sdk::MotionEvent::ACTION_CANCEL:
+                type = MultiTouchInput::MULTITOUCH_CANCEL;
+                break;
+            default:
+                return false;
+        }
+
+        MultiTouchInput input(type, aTime, TimeStamp(), 0);
+        input.modifiers = GetModifiers(aMetaState);
+        input.mTouches.SetCapacity(endIndex - startIndex);
+
+        nsTArray<float> x(aX);
+        nsTArray<float> y(aY);
+        nsTArray<float> orientation(aOrientation);
+        nsTArray<float> pressure(aPressure);
+        nsTArray<float> toolMajor(aToolMajor);
+        nsTArray<float> toolMinor(aToolMinor);
+
+        MOZ_ASSERT(pointerId.Length() == x.Length());
+        MOZ_ASSERT(pointerId.Length() == y.Length());
+        MOZ_ASSERT(pointerId.Length() == orientation.Length());
+        MOZ_ASSERT(pointerId.Length() == pressure.Length());
+        MOZ_ASSERT(pointerId.Length() == toolMajor.Length());
+        MOZ_ASSERT(pointerId.Length() == toolMinor.Length());
+
+        const nsIntPoint& offset =
+                mWindow->WidgetToScreenOffset().ToUnknownPoint();
+
+        for (size_t i = startIndex; i < endIndex; i++) {
+
+            float orien = orientation[i] * 180.0f / M_PI;
+            // w3c touchevents spec does not allow orientations == 90
+            // this shifts it to -90, which will be shifted to zero below
+            if (orien >= 90.0) {
+                orien -= 180.0f;
+            }
+
+            nsIntPoint point = nsIntPoint(int32_t(floorf(x[i])),
+                                          int32_t(floorf(y[i]))) - offset;
+
+            // w3c touchevent radii are given with an orientation between 0 and
+            // 90. The radii are found by removing the orientation and
+            // measuring the x and y radii of the resulting ellipse. For
+            // Android orientations >= 0 and < 90, use the y radius as the
+            // major radius, and x as the minor radius. However, for an
+            // orientation < 0, we have to shift the orientation by adding 90,
+            // and reverse which radius is major and minor.
+            gfx::Size radius;
+            if (orien < 0.0f) {
+                orien += 90.0f;
+                radius = gfx::Size(int32_t(toolMajor[i] / 2.0f),
+                                   int32_t(toolMinor[i] / 2.0f));
+            } else {
+                radius = gfx::Size(int32_t(toolMinor[i] / 2.0f),
+                                   int32_t(toolMajor[i] / 2.0f));
+            }
+
+            input.mTouches.AppendElement(SingleTouchData(
+                    pointerId[i], ScreenIntPoint::FromUnknownPoint(point),
+                    ScreenSize::FromUnknownSize(radius), orien, pressure[i]));
+        }
+
+        ScrollableLayerGuid guid;
+        uint64_t blockId;
+        nsEventStatus status =
+            controller->ReceiveInputEvent(input, &guid, &blockId);
+
+        if (status == nsEventStatus_eConsumeNoDefault) {
+            return true;
+        }
+
+        // Dispatch APZ input event on Gecko thread.
+        NativePanZoomController::GlobalRef npzc = mNPZC;
+        nsAppShell::PostEvent([npzc, input, guid, blockId, status] {
+            MOZ_ASSERT(NS_IsMainThread());
+
+            JNIEnv* const env = jni::GetGeckoThreadEnv();
+            NPZCSupport* npzcSupport = GetNative(
+                    NativePanZoomController::LocalRef(env, npzc));
+
+            if (!npzcSupport || !npzcSupport->mWindow) {
+                // We already shut down.
+                env->ExceptionClear();
+                return;
+            }
+
+            nsWindow* const window = npzcSupport->mWindow;
+            window->UserActivity();
+            WidgetTouchEvent touchEvent = input.ToWidgetTouchEvent(window);
+            window->ProcessUntransformedAPZEvent(&touchEvent, guid,
+                                                 blockId, status);
+            window->DispatchHitTest(touchEvent);
+        });
+        return true;
+    }
+
+    void UpdateOverscrollVelocity(const float x, const float y)
+    {
+        mNPZC->UpdateOverscrollVelocity(x, y);
+    }
+
+    void UpdateOverscrollOffset(const float x, const float y)
+    {
+        mNPZC->UpdateOverscrollOffset(x, y);
+    }
+};
+
+/**
  * GLController has some unique requirements for its native calls, so make it
  * separate from GeckoViewSupport.
  */
@@ -465,17 +763,15 @@ public:
         , mGLController(aInstance)
         , mCompositorPaused(true)
     {
-        Reattach(aInstance);
+        Base::AttachNative(aInstance, this);
     }
 
     ~GLControllerSupport()
     {
+        if (window.mNPZCSupport) {
+            window.mNPZCSupport->DetachFromWindow();
+        }
         mGLController->Destroy();
-    }
-
-    void Reattach(const GLController::LocalRef& aInstance)
-    {
-        Base::AttachNative(aInstance, this);
     }
 
     const GeckoLayerClient::Ref& GetLayerClient() const
@@ -503,6 +799,12 @@ public:
 
         // Called on the compositor thread.
         auto eglSurface = mGLController->CreateEGLSurface();
+        if (!eglSurface) {
+            // We failed to create a surface, but because the compositor is
+            // able to handle this failure gracefully, we pass back null
+            // instead of crashing.
+            return nullptr;
+        }
         return reinterpret_cast<EGLSurface>(
                 AndroidBridge::Bridge()->GetAPIVersion() >= 20 ?
                 env->GetLongField(eglSurface.Get(), eglSurfacePointerField) :
@@ -530,7 +832,7 @@ private:
 public:
     using Base::DisposeNative;
 
-    void SetLayerClient(jni::Object::Param aClient)
+    void AttachToJava(jni::Object::Param aClient, jni::Object::Param aNPZC)
     {
         const auto& layerClient = GeckoLayerClient::Ref::From(aClient);
 
@@ -552,6 +854,67 @@ public:
                 window.mCompositorParent->ForceIsFirstPaint();
             }
         }
+
+#ifdef MOZ_ANDROID_APZ
+        MOZ_ASSERT(aNPZC);
+        auto npzc = NativePanZoomController::LocalRef(
+                jni::GetGeckoThreadEnv(),
+                NativePanZoomController::Ref::From(aNPZC));
+        NPZCSupport::AttachNative(
+                npzc, mozilla::MakeUnique<NPZCSupport>(&window, npzc));
+#endif
+    }
+
+    void OnSizeChanged(int32_t aWindowWidth, int32_t aWindowHeight,
+                       int32_t aScreenWidth, int32_t aScreenHeight)
+    {
+        if (aWindowWidth != window.mBounds.width ||
+            aWindowHeight != window.mBounds.height) {
+
+            window.Resize(aWindowWidth, aWindowHeight, /* repaint */ false);
+        }
+
+        if (aScreenWidth == gAndroidScreenBounds.width &&
+            aScreenHeight == gAndroidScreenBounds.height) {
+
+            return;
+        }
+
+        gAndroidScreenBounds.width = aScreenWidth;
+        gAndroidScreenBounds.height = aScreenHeight;
+
+        if (!XRE_IsParentProcess() &&
+            !Preferences::GetBool("browser.tabs.remote.desktopbehavior",
+                                  false)) {
+            return;
+        }
+
+        // Tell the content process the new screen size.
+        nsTArray<ContentParent*> cplist;
+        ContentParent::GetAll(cplist);
+        for (uint32_t i = 0; i < cplist.Length(); ++i) {
+            Unused << cplist[i]->SendScreenSizeChanged(gAndroidScreenBounds);
+        }
+
+        if (gContentCreationNotifier) {
+            return;
+        }
+
+        // If the content process is not created yet, wait until it's
+        // created and then tell it the screen size.
+        nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
+        if (!obs) {
+            return;
+        }
+
+        RefPtr<ContentCreationNotifier> notifier = new ContentCreationNotifier;
+        if (NS_FAILED(obs->AddObserver(notifier, "xpcom-shutdown", false)) ||
+            NS_FAILED(obs->AddObserver(
+                notifier, "ipc:content-created", false))) {
+            return;
+        }
+
+        gContentCreationNotifier = notifier;
     }
 
     void CreateCompositor(int32_t aWidth, int32_t aHeight)
@@ -651,12 +1014,13 @@ nsWindow::GeckoViewSupport::Open(const jni::ClassObject::LocalRef& aCls,
         args->AppendElement(heightArg);
     }
 
-    nsCOMPtr<nsIDOMWindow> domWindow;
-    ww->OpenWindow(nullptr, url, "_blank", "chrome,dialog=no,all",
+    nsCOMPtr<mozIDOMWindowProxy> domWindow;
+    ww->OpenWindow(nullptr, url, nullptr, "chrome,dialog=0,resizable",
                    args, getter_AddRefs(domWindow));
     MOZ_ASSERT(domWindow);
 
-    nsCOMPtr<nsIWidget> widget = WidgetUtils::DOMWindowToWidget(domWindow);
+    nsCOMPtr<nsIWidget> widget =
+        WidgetUtils::DOMWindowToWidget(nsPIDOMWindowOuter::From(domWindow));
     MOZ_ASSERT(widget);
 
     const auto window = static_cast<nsWindow*>(widget.get());
@@ -671,6 +1035,16 @@ nsWindow::GeckoViewSupport::Open(const jni::ClassObject::LocalRef& aCls,
             aCls.Env(), GLController::Ref::From(aGLController)));
 
     gGeckoViewWindow = window;
+
+    if (window->mWidgetListener) {
+        nsCOMPtr<nsIXULWindow> xulWindow(
+                window->mWidgetListener->GetXULWindow());
+        if (xulWindow) {
+            // Out window is not intrinsically sized, so tell nsXULWindow to
+            // not set a size for us.
+            xulWindow->SetIntrinsicallySized(false);
+        }
+    }
 }
 
 void
@@ -705,6 +1079,7 @@ nsWindow::InitNatives()
     nsWindow::GeckoViewSupport::Base::Init();
     nsWindow::GeckoViewSupport::EditableBase::Init();
     nsWindow::GLControllerSupport::Init();
+    nsWindow::NPZCSupport::Init();
 }
 
 nsWindow*
@@ -746,6 +1121,7 @@ nsWindow::DumpWindows(const nsTArray<nsWindow*>& wins, int indent)
 }
 
 nsWindow::nsWindow() :
+    mNPZCSupport(nullptr),
     mIsVisible(false),
     mParent(nullptr),
     mAwaitingFullScreen(false),
@@ -777,36 +1153,31 @@ nsWindow::Create(nsIWidget* aParent,
                  const LayoutDeviceIntRect& aRect,
                  nsWidgetInitData* aInitData)
 {
-    ALOG("nsWindow[%p]::Create %p [%d %d %d %d]", (void*)this, (void*)aParent, aRect.x, aRect.y, aRect.width, aRect.height);
+    ALOG("nsWindow[%p]::Create %p [%d %d %d %d]", (void*)this, (void*)aParent,
+         aRect.x, aRect.y, aRect.width, aRect.height);
+
     nsWindow *parent = (nsWindow*) aParent;
     if (aNativeParent) {
         if (parent) {
-            ALOG("Ignoring native parent on Android window [%p], since parent was specified (%p %p)", (void*)this, (void*)aNativeParent, (void*)aParent);
+            ALOG("Ignoring native parent on Android window [%p], "
+                 "since parent was specified (%p %p)", (void*)this,
+                 (void*)aNativeParent, (void*)aParent);
         } else {
             parent = (nsWindow*) aNativeParent;
         }
     }
 
-    mBounds = aRect.ToUnknownRect();
+    mBounds = aRect;
 
-    // for toplevel windows, bounds are fixed to full screen size
-    if (!parent) {
-        mBounds.x = 0;
-        mBounds.y = 0;
-        mBounds.width = gAndroidBounds.width;
-        mBounds.height = gAndroidBounds.height;
-    }
+    BaseCreate(nullptr, aInitData);
 
-    BaseCreate(nullptr, LayoutDeviceIntRect::FromUnknownRect(mBounds),
-               aInitData);
-
-    NS_ASSERTION(IsTopLevel() || parent, "non top level windowdoesn't have a parent!");
+    NS_ASSERTION(IsTopLevel() || parent,
+                 "non-top-level window doesn't have a parent!");
 
     if (IsTopLevel()) {
         gTopLevelWindows.AppendElement(this);
-    }
 
-    if (parent) {
+    } else if (parent) {
         parent->mChildren.AppendElement(this);
         mParent = parent;
     }
@@ -960,10 +1331,9 @@ nsWindow::Show(bool aState)
         // if Show() is the right place to do this, though.
 
         if (aState) {
-            // It just became visible, so send a resize update if necessary
-            // and bring it to the front.
-            Resize(0, 0, gAndroidBounds.width, gAndroidBounds.height, false);
+            // It just became visible, so bring it to the front.
             BringToFront();
+
         } else if (nsWindow::TopWindow() == this) {
             // find the next visible window to show
             unsigned int i;
@@ -1156,7 +1526,7 @@ nsWindow::BringToFront()
     // window that is created will be first in the window list but won't yet
     // be focused.
     nsCOMPtr<nsIFocusManager> fm = do_GetService(FOCUSMANAGER_CONTRACTID);
-    nsCOMPtr<nsIDOMWindow> existingTopWindow;
+    nsCOMPtr<mozIDOMWindowProxy> existingTopWindow;
     fm->GetActiveWindow(getter_AddRefs(existingTopWindow));
     if (existingTopWindow && FindTopLevel() == nsWindow::TopWindow())
         return;
@@ -1169,9 +1539,9 @@ nsWindow::BringToFront()
     RefPtr<nsWindow> kungFuDeathGrip(this);
 
     nsWindow *oldTop = nullptr;
-    nsWindow *newTop = this;
-    if (!gTopLevelWindows.IsEmpty())
+    if (!gTopLevelWindows.IsEmpty()) {
         oldTop = gTopLevelWindows[0];
+    }
 
     gTopLevelWindows.RemoveElement(this);
     gTopLevelWindows.InsertElementAt(0, this);
@@ -1183,21 +1553,10 @@ nsWindow::BringToFront()
       }
     }
 
-    if (Destroyed()) {
-        // somehow the deactivate event handler destroyed this window.
-        // try to recover by grabbing the next window in line and activating
-        // that instead
-        if (gTopLevelWindows.IsEmpty())
-            return;
-        newTop = gTopLevelWindows[0];
-    }
-
     if (mWidgetListener) {
         mWidgetListener->WindowActivated();
     }
 
-    // force a window resize
-    nsAppShell::Get()->ResendLastResizeEvent(newTop);
     RedrawAll();
 }
 
@@ -1314,76 +1673,6 @@ nsWindow::OnGlobalAndroidEvent(AndroidGeckoEvent *ae)
         return;
 
     switch (ae->Type()) {
-        case AndroidGeckoEvent::FORCED_RESIZE:
-            win->mBounds.width = 0;
-            win->mBounds.height = 0;
-            // also resize the children
-            for (uint32_t i = 0; i < win->mChildren.Length(); i++) {
-                win->mChildren[i]->mBounds.width = 0;
-                win->mChildren[i]->mBounds.height = 0;
-            }
-        case AndroidGeckoEvent::SIZE_CHANGED: {
-            const nsTArray<nsIntPoint>& points = ae->Points();
-            NS_ASSERTION(points.Length() == 2, "Size changed does not have enough coordinates");
-
-            int nw = points[0].x;
-            int nh = points[0].y;
-
-            if (ae->Type() == AndroidGeckoEvent::FORCED_RESIZE || nw != gAndroidBounds.width ||
-                nh != gAndroidBounds.height) {
-                gAndroidBounds.width = nw;
-                gAndroidBounds.height = nh;
-
-                // tell all the windows about the new size
-                for (size_t i = 0; i < gTopLevelWindows.Length(); ++i) {
-                    if (gTopLevelWindows[i]->mIsVisible)
-                        gTopLevelWindows[i]->Resize(gAndroidBounds.width,
-                                                    gAndroidBounds.height,
-                                                    false);
-                }
-            }
-
-            int newScreenWidth = points[1].x;
-            int newScreenHeight = points[1].y;
-
-            if (newScreenWidth == gAndroidScreenBounds.width &&
-                newScreenHeight == gAndroidScreenBounds.height)
-                break;
-
-            gAndroidScreenBounds.width = newScreenWidth;
-            gAndroidScreenBounds.height = newScreenHeight;
-
-            if (!XRE_IsParentProcess() &&
-                !Preferences::GetBool("browser.tabs.remote.desktopbehavior", false)) {
-                break;
-            }
-
-            // Tell the content process the new screen size.
-            nsTArray<ContentParent*> cplist;
-            ContentParent::GetAll(cplist);
-            for (uint32_t i = 0; i < cplist.Length(); ++i)
-                Unused << cplist[i]->SendScreenSizeChanged(gAndroidScreenBounds);
-
-            if (gContentCreationNotifier)
-                break;
-
-            // If the content process is not created yet, wait until it's
-            // created and then tell it the screen size.
-            nsCOMPtr<nsIObserverService> obs =
-                mozilla::services::GetObserverService();
-            if (!obs)
-                break;
-
-            RefPtr<ContentCreationNotifier> notifier = new ContentCreationNotifier;
-            if (NS_SUCCEEDED(obs->AddObserver(notifier, "ipc:content-created", false))) {
-                if (NS_SUCCEEDED(obs->AddObserver(notifier, "xpcom-shutdown", false)))
-                    gContentCreationNotifier = notifier;
-                else
-                    obs->RemoveObserver(notifier, "ipc:content-created");
-            }
-            break;
-        }
-
         case AndroidGeckoEvent::APZ_INPUT_EVENT: {
             win->UserActivity();
 
@@ -1436,6 +1725,10 @@ nsWindow::OnSizeChanged(const gfx::IntSize& aSize)
     if (mWidgetListener) {
         mWidgetListener->WindowResized(this, aSize.width, aSize.height);
     }
+
+    if (mAttachedWidgetListener) {
+        mAttachedWidgetListener->WindowResized(this, aSize.width, aSize.height);
+    }
 }
 
 void
@@ -1449,6 +1742,22 @@ nsWindow::InitEvent(WidgetGUIEvent& event, LayoutDeviceIntPoint* aPoint)
     }
 
     event.time = PR_Now() / 1000;
+}
+
+void
+nsWindow::UpdateOverscrollVelocity(const float aX, const float aY)
+{
+    if (mNPZCSupport) {
+        mNPZCSupport->UpdateOverscrollVelocity(aX, aY);
+    }
+}
+
+void
+nsWindow::UpdateOverscrollOffset(const float aX, const float aY)
+{
+    if (mNPZCSupport) {
+        mNPZCSupport->UpdateOverscrollOffset(aX, aY);
+    }
 }
 
 gfx::IntSize
@@ -1621,7 +1930,10 @@ bool nsWindow::OnMultitouchEvent(AndroidGeckoEvent *ae)
         // previous block should not be default-prevented
         bool defaultPrevented = isDownEvent ? false : preventDefaultActions;
         if (ae->Type() == AndroidGeckoEvent::APZ_INPUT_EVENT) {
-            widget::android::AndroidContentController::NotifyDefaultPrevented(ae->ApzInputBlockId(), defaultPrevented);
+            if (mAPZC) {
+                AndroidContentController::NotifyDefaultPrevented(
+                        mAPZC, ae->ApzInputBlockId(), defaultPrevented);
+            }
         } else {
             GeckoAppShell::NotifyDefaultPrevented(defaultPrevented);
         }
@@ -1634,7 +1946,10 @@ bool nsWindow::OnMultitouchEvent(AndroidGeckoEvent *ae)
     if (isDownEvent) {
         if (preventDefaultActions) {
             if (ae->Type() == AndroidGeckoEvent::APZ_INPUT_EVENT) {
-                widget::android::AndroidContentController::NotifyDefaultPrevented(ae->ApzInputBlockId(), true);
+                if (mAPZC) {
+                    AndroidContentController::NotifyDefaultPrevented(
+                            mAPZC, ae->ApzInputBlockId(), true);
+                }
             } else {
                 GeckoAppShell::NotifyDefaultPrevented(true);
             }
@@ -2583,11 +2898,14 @@ nsWindow::GeckoViewSupport::OnImeReplaceText(int32_t aStart, int32_t aEnd,
         window.RemoveIMEComposition();
 
         {
+            // Use text selection to set target postion(s) for
+            // insert, or replace, of text.
             WidgetSelectionEvent event(true, eSetSelection, &window);
             window.InitEvent(event, nullptr);
             event.mOffset = uint32_t(aStart);
             event.mLength = uint32_t(aEnd - aStart);
             event.mExpandToClusterBoundary = false;
+            event.mReason = nsISelectionListener::IME_REASON;
             window.DispatchEvent(&event);
         }
 
@@ -2877,6 +3195,9 @@ void
 nsWindow::DrawWindowUnderlay(LayerManagerComposite* aManager,
                              LayoutDeviceIntRect aRect)
 {
+    if (Destroyed()) {
+        return;
+    }
     MOZ_ASSERT(mGLControllerSupport);
     GeckoLayerClient::LocalRef client = mGLControllerSupport->GetLayerClient();
 
@@ -2911,7 +3232,7 @@ nsWindow::DrawWindowOverlay(LayerManagerComposite* aManager,
     PROFILER_LABEL("nsWindow", "DrawWindowOverlay",
         js::ProfileEntry::Category::GRAPHICS);
 
-    if (NS_WARN_IF(!mLayerRendererFrame)) {
+    if (Destroyed() || NS_WARN_IF(!mLayerRendererFrame)) {
         return;
     }
 
@@ -2934,8 +3255,6 @@ nsWindow::DrawWindowOverlay(LayerManagerComposite* aManager,
 }
 
 // off-main-thread compositor fields and functions
-
-StaticRefPtr<mozilla::layers::APZCTreeManager> nsWindow::sApzcTreeManager;
 
 void
 nsWindow::InvalidateAndScheduleComposite()
@@ -3014,21 +3333,6 @@ nsWindow::NewCompositorParent(int aSurfaceWidth, int aSurfaceHeight)
     return new CompositorParent(this, true, aSurfaceWidth, aSurfaceHeight);
 }
 
-mozilla::layers::APZCTreeManager*
-nsWindow::GetAPZCTreeManager()
-{
-    return sApzcTreeManager;
-}
-
-void
-nsWindow::ConfigureAPZCTreeManager()
-{
-    nsBaseWidget::ConfigureAPZCTreeManager();
-    if (!sApzcTreeManager) {
-        sApzcTreeManager = mAPZC;
-    }
-}
-
 void
 nsWindow::ConfigureAPZControllerThread()
 {
@@ -3038,15 +3342,8 @@ nsWindow::ConfigureAPZControllerThread()
 already_AddRefed<GeckoContentController>
 nsWindow::CreateRootContentController()
 {
-    RefPtr<GeckoContentController> controller = new widget::android::AndroidContentController(this, mAPZEventState, mAPZC);
+    RefPtr<GeckoContentController> controller = new AndroidContentController(this, mAPZEventState, mAPZC);
     return controller.forget();
-}
-
-uint64_t
-nsWindow::RootLayerTreeId()
-{
-    MOZ_ASSERT(gGeckoViewWindow && gGeckoViewWindow->mCompositorParent);
-    return gGeckoViewWindow->mCompositorParent->RootLayerTreeId();
 }
 
 uint32_t

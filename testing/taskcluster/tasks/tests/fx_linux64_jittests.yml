@@ -7,7 +7,7 @@ task:
     description: Jittests run {{chunk}}
   extra:
     chunks:
-      total: 2
+      total: 6
     suite:
       name: jittest
       flavor: jittest-chunked

@@ -7,7 +7,7 @@ android {
     buildToolsVersion "23.0.1"
 
     defaultConfig {
-        targetSdkVersion 22
+        targetSdkVersion 23
         minSdkVersion 15
         // Used by Robolectric based tests; see TestRunner.
         buildConfigField 'String', 'BUILD_DIR', "\"${project.buildDir}\""
@@ -70,6 +70,10 @@ android {
                     srcDir "${topsrcdir}/mobile/android/base/crashreporter/res"
                 }
             }
+
+            assets {
+                srcDir "${topsrcdir}/mobile/android/app/assets"
+            }
         }
 
         test {
@@ -118,11 +122,15 @@ dependencies {
         compile 'com.google.android.gms:play-services-gcm:8.1.0'
     }
 
+    // Gradle based builds include LeakCanary. Mach based builds only include the no-op version of
+    // this library.
+    compile 'com.squareup.leakcanary:leakcanary-android:1.4-beta1'
+
     compile project(':thirdparty')
 
     testCompile 'junit:junit:4.12'
     testCompile 'org.robolectric:robolectric:3.0'
-    testCompile 'org.simpleframework:simple-http:4.1.13'
+    testCompile 'org.simpleframework:simple-http:6.0.1'
     testCompile 'org.mockito:mockito-core:1.10.19'
 }
 

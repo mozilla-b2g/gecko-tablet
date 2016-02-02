@@ -18,7 +18,6 @@ from itertools import chain
 
 from reftest import ReftestManifest
 
-from mozpack.copier import FilePurger
 from mozpack.manifests import (
     InstallManifest,
 )
@@ -392,28 +391,21 @@ class RecursiveMakeBackend(CommonBackend):
         self.backend_input_files.add(mozpath.join(self.environment.topobjdir,
             'config', 'autoconf.mk'))
 
-        self._install_manifests = {
-            k: InstallManifest() for k in [
-                'dist_bin',
-                'dist_branding',
-                'dist_idl',
-                'dist_include',
-                'dist_public',
-                'dist_private',
-                'dist_sdk',
-                'dist_xpi-stage',
-                '_tests',
-                'xpidl',
-            ]}
+        self._install_manifests = defaultdict(InstallManifest)
+        # The build system relies on some install manifests always existing
+        # even if they are empty, because the directories are still filled
+        # by the build system itself, and the install manifests are only
+        # used for a "magic" rm -rf.
+        self._install_manifests['dist_public']
+        self._install_manifests['dist_private']
+        self._install_manifests['dist_sdk']
 
         self._traversal = RecursiveMakeTraversal()
         self._compile_graph = defaultdict(set)
 
-        self._may_skip = {
+        self._no_skip = {
             'export': set(),
             'libs': set(),
-        }
-        self._no_skip = {
             'misc': set(),
             'tools': set(),
         }
@@ -499,6 +491,9 @@ class RecursiveMakeBackend(CommonBackend):
         elif isinstance(obj, VariablePassthru):
             # Sorted so output is consistent and we don't bump mtimes.
             for k, v in sorted(obj.variables.items()):
+                if k == 'HAS_MISC_RULE':
+                    self._no_skip['misc'].add(backend_file.relobjdir)
+                    continue
                 if isinstance(v, list):
                     for item in v:
                         backend_file.write(
@@ -514,17 +509,21 @@ class RecursiveMakeBackend(CommonBackend):
             self._process_defines(obj, backend_file)
 
         elif isinstance(obj, GeneratedFile):
+            self._no_skip['export'].add(backend_file.relobjdir)
             dep_file = "%s.pp" % obj.output
-            backend_file.write('GENERATED_FILES += %s\n' % obj.output)
+            backend_file.write('export:: %s\n' % obj.output)
+            backend_file.write('GARBAGE += %s\n' % obj.output)
             backend_file.write('EXTRA_MDDEPEND_FILES += %s\n' % dep_file)
             if obj.script:
-                backend_file.write("""{output}: {script}{inputs}
+                backend_file.write("""{output}: {script}{inputs}{backend}
 \t$(REPORT_BUILD)
-\t$(call py_action,file_generate,{script} {method} {output} $(MDDEPDIR)/{dep_file}{inputs})
+\t$(call py_action,file_generate,{script} {method} {output} $(MDDEPDIR)/{dep_file}{inputs}{flags})
 
 """.format(output=obj.output,
            dep_file=dep_file,
            inputs=' ' + ' '.join(obj.inputs) if obj.inputs else '',
+           flags=' ' + ' '.join(obj.flags) if obj.flags else '',
+           backend=' backend.mk' if obj.flags else '',
            script=obj.script,
            method=obj.method))
 
@@ -532,6 +531,7 @@ class RecursiveMakeBackend(CommonBackend):
             self._process_test_harness_files(obj, backend_file)
 
         elif isinstance(obj, JARManifest):
+            self._no_skip['libs'].add(backend_file.relobjdir)
             backend_file.write('JAR_MANIFEST := %s\n' % obj.path.full_path)
 
         elif isinstance(obj, Program):
@@ -624,18 +624,12 @@ class RecursiveMakeBackend(CommonBackend):
         convenience variables, and the other dependency definitions for a
         hopefully proper directory traversal.
         """
-        for tier, skip in self._may_skip.items():
-            self.log(logging.DEBUG, 'fill_root_mk', {
-                'number': len(skip), 'tier': tier
-                }, 'Ignoring {number} directories during {tier}')
         for tier, no_skip in self._no_skip.items():
             self.log(logging.DEBUG, 'fill_root_mk', {
                 'number': len(no_skip), 'tier': tier
                 }, 'Using {number} directories during {tier}')
 
         def should_skip(tier, dir):
-            if tier in self._may_skip:
-                return dir in self._may_skip[tier]
             if tier in self._no_skip:
                 return dir not in self._no_skip[tier]
             return False
@@ -790,10 +784,13 @@ class RecursiveMakeBackend(CommonBackend):
                         {'path': makefile}, 'Substituting makefile: {path}')
                     self._makefile_in_count += 1
 
-                    for tier, skiplist in self._may_skip.items():
-                        # topobjdir is an exception, it's still skipped.
-                        if bf.relobjdir and bf.relobjdir in skiplist:
-                            skiplist.remove(bf.relobjdir)
+                    # In the export and libs tiers, we don't skip directories
+                    # containing a Makefile.in.
+                    # topobjdir is handled separatedly, don't do anything for
+                    # it.
+                    if bf.relobjdir:
+                        for tier in ('export', 'libs',):
+                            self._no_skip[tier].add(bf.relobjdir)
                 else:
                     self.log(logging.DEBUG, 'stub_makefile',
                         {'path': makefile}, 'Creating stub Makefile: {path}')
@@ -826,19 +823,6 @@ class RecursiveMakeBackend(CommonBackend):
                     self._check_blacklisted_variables(makefile_in, content)
 
         self._fill_root_mk()
-
-        # Write out a dependency file used to determine whether a config.status
-        # re-run is needed.
-        inputs = sorted(p.replace(os.sep, '/') for p in self.backend_input_files)
-
-        # We need to use $(DEPTH) so the target here matches what's in
-        # rules.mk. If they are different, the dependencies don't get pulled in
-        # properly.
-        with self._write_file('%s.pp' % self._backend_output_list_file) as backend_deps:
-            backend_deps.write('$(DEPTH)/backend.%s: %s\n' %
-                (self.__class__.__name__, ' '.join(inputs)))
-            for path in inputs:
-                backend_deps.write('%s:\n' % path)
 
         # Make the master test manifest files.
         for flavor, t in self._test_manifests.items():
@@ -918,14 +902,6 @@ class RecursiveMakeBackend(CommonBackend):
         # registered or not.
         self._traversal.add(backend_file.relobjdir)
 
-        affected_tiers = set(obj.affected_tiers)
-
-        for tier in set(self._may_skip.keys()) - affected_tiers:
-            self._may_skip[tier].add(backend_file.relobjdir)
-
-        for tier in set(self._no_skip.keys()) & affected_tiers:
-            self._no_skip[tier].add(backend_file.relobjdir)
-
     def _process_defines(self, obj, backend_file, which='DEFINES'):
         """Output the DEFINES rules to the given backend file."""
         defines = list(obj.get_defines())
@@ -944,10 +920,12 @@ class RecursiveMakeBackend(CommonBackend):
                 self._install_manifests['_tests'].add_pattern_symlink(p[0], p[1], path)
 
         for path, files in obj.objdir_files.iteritems():
+            self._no_skip['misc'].add(backend_file.relobjdir)
             prefix = 'TEST_HARNESS_%s' % path.replace('/', '_')
             backend_file.write("""
 %(prefix)s_FILES := %(files)s
 %(prefix)s_DEST := %(dest)s
+%(prefix)s_TARGET := misc
 INSTALL_TARGETS += %(prefix)s
 """ % { 'prefix': prefix,
         'dest': '$(DEPTH)/_tests/%s' % path,
@@ -1309,11 +1287,13 @@ INSTALL_TARGETS += %(prefix)s
         # being added via some Makefiles, so for now we just pass them through
         # to the underlying Makefile.in.
         for i, (path, files) in enumerate(files.walk()):
+            self._no_skip['misc'].add(backend_file.relobjdir)
             for f in files:
                 backend_file.write('DIST_FILES_%d += %s\n' % (
                     i, self._pretty_path(f, backend_file)))
             backend_file.write('DIST_FILES_%d_PATH := $(DEPTH)/%s\n'
                                % (i, mozpath.join(obj.install_target, path)))
+            backend_file.write('DIST_FILES_%d_TARGET := misc\n' % i)
             backend_file.write('PP_TARGETS += DIST_FILES_%d\n' % i)
 
     def _process_chrome_manifest_entry(self, obj, backend_file):
@@ -1343,17 +1323,9 @@ INSTALL_TARGETS += %(prefix)s
         man_dir = mozpath.join(self.environment.topobjdir, '_build_manifests',
             dest)
 
-        # We have a purger for the manifests themselves to ensure legacy
-        # manifests are deleted.
-        purger = FilePurger()
-
         for k, manifest in manifests.items():
-            purger.add(k)
-
             with self._write_file(mozpath.join(man_dir, k)) as fh:
                 manifest.write(fileobj=fh)
-
-        purger.purge(man_dir)
 
     def _write_master_test_manifest(self, path, manifests):
         with self._write_file(path) as master:

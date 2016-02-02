@@ -72,5 +72,5 @@ function* testPickingNewColor(view) {
       "rgb(0, 0, 0) 100%)",
     "The gradient has been updated correctly");
 
-  cPicker.hide();
+  yield hideTooltipAndWaitForRuleViewChanged(cPicker, view);
 }

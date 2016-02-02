@@ -29,6 +29,7 @@ EXTRA_JS_MODULES += [
     'FormSubmitObserver.jsm',
     'FormValidationHandler.jsm',
     'HiddenFrame.jsm',
+    'LaterRun.jsm',
     'NetworkPrioritizer.jsm',
     'offlineAppCache.jsm',
     'PanelFrame.jsm',
@@ -43,6 +44,7 @@ EXTRA_JS_MODULES += [
     'Social.jsm',
     'TabGroupsMigrator.jsm',
     'TransientPrefs.jsm',
+    'UserContextUI.jsm',
     'WebappManager.jsm',
     'webrtcUI.jsm',
 ]
@@ -52,9 +54,4 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
         'Windows8WindowFrameColor.jsm',
         'WindowsJumpLists.jsm',
         'WindowsPreviewPerTab.jsm',
-    ]
-
-if CONFIG['NIGHTLY_BUILD']:
-    EXTRA_JS_MODULES += [
-        'SignInToWebsite.jsm',
     ]

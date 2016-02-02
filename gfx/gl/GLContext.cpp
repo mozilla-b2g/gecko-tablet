@@ -228,9 +228,20 @@ ParseGLSLVersion(GLContext* gl, uint32_t* out_version)
         return true;
     }
 
+    const auto fnSkipPrefix = [&versionString](const char* prefix) {
+        const auto len = strlen(prefix);
+        if (strncmp(versionString, prefix, len) == 0)
+            versionString += len;
+    };
+
     const char kGLESVersionPrefix[] = "OpenGL ES GLSL ES";
-    if (strncmp(versionString, kGLESVersionPrefix, strlen(kGLESVersionPrefix)) == 0)
-        versionString += strlen(kGLESVersionPrefix);
+    fnSkipPrefix(kGLESVersionPrefix);
+
+    if (gl->WorkAroundDriverBugs()) {
+        // Nexus 7 2013 (bug 1234441)
+        const char kBadGLESVersionPrefix[] = "OpenGL ES GLSL";
+        fnSkipPrefix(kBadGLESVersionPrefix);
+    }
 
     const char* itr = versionString;
     char* end = nullptr;
@@ -407,11 +418,14 @@ GLContext::GLContext(const SurfaceCaps& caps,
     mMaxCubeMapTextureSize(0),
     mMaxTextureImageSize(0),
     mMaxRenderbufferSize(0),
+    mMaxSamples(0),
     mNeedsTextureSizeChecks(false),
     mNeedsFlushBeforeDeleteFB(false),
     mWorkAroundDriverBugs(true),
     mHeavyGLCallsSinceLastFlush(false)
 {
+    mMaxViewportDims[0] = 0;
+    mMaxViewportDims[1] = 0;
     mOwningThreadId = PlatformThread::CurrentId();
 }
 
@@ -1705,11 +1719,18 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
         }
 #endif
 #ifdef MOZ_X11
-        if (mWorkAroundDriverBugs &&
-            mVendor == GLVendor::Nouveau) {
-            // see bug 814716. Clamp MaxCubeMapTextureSize at 2K for Nouveau.
-            mMaxCubeMapTextureSize = std::min(mMaxCubeMapTextureSize, 2048);
-            mNeedsTextureSizeChecks = true;
+        if (mWorkAroundDriverBugs) {
+            if (mVendor == GLVendor::Nouveau) {
+                // see bug 814716. Clamp MaxCubeMapTextureSize at 2K for Nouveau.
+                mMaxCubeMapTextureSize = std::min(mMaxCubeMapTextureSize, 2048);
+                mNeedsTextureSizeChecks = true;
+            } else if (mVendor == GLVendor::Intel) {
+                // Bug 1199923. Driver seems to report a larger max size than
+                // actually supported.
+                mMaxTextureSize /= 2;
+                mMaxRenderbufferSize /= 2;
+                mNeedsTextureSizeChecks = true;
+            }
         }
 #endif
         if (mWorkAroundDriverBugs &&
@@ -1721,7 +1742,6 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
 
         mMaxTextureImageSize = mMaxTextureSize;
 
-        mMaxSamples = 0;
         if (IsSupported(GLFeature::framebuffer_multisample)) {
             fGetIntegerv(LOCAL_GL_MAX_SAMPLES, (GLint*)&mMaxSamples);
         }
@@ -2063,7 +2083,7 @@ GLContext::ChooseGLFormats(const SurfaceCaps& caps) const
 
     // Be clear that these are 0 if unavailable.
     formats.depthStencil = 0;
-    if (!IsGLES() || IsExtensionSupported(OES_packed_depth_stencil)) {
+    if (IsSupported(GLFeature::packed_depth_stencil)) {
         formats.depthStencil = LOCAL_GL_DEPTH24_STENCIL8;
     }
 

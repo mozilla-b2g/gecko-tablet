@@ -138,6 +138,10 @@ public:
   void Init() override
   {
     static void (* const sInitManager[])(BluetoothProfileResultHandler*) = {
+      BluetoothMapSmsManager::InitMapSmsInterface,
+      BluetoothOppManager::InitOppInterface,
+      BluetoothPbapManager::InitPbapInterface,
+      BluetoothHidManager::InitHidInterface,
       BluetoothHfpManager::InitHfpInterface,
       BluetoothA2dpManager::InitA2dpInterface,
       BluetoothAvrcpManager::InitAvrcpInterface,
@@ -280,14 +284,15 @@ BluetoothServiceBluedroid::StopInternal(BluetoothReplyRunnable* aRunnable)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  static BluetoothProfileManagerBase* sProfiles[] = {
-    BluetoothHfpManager::Get(),
+  BluetoothProfileManagerBase* sProfiles[] = {
+    // BluetoothGattManager not handled here
     BluetoothAvrcpManager::Get(),
     BluetoothA2dpManager::Get(),
-    BluetoothOppManager::Get(),
+    BluetoothHfpManager::Get(),
+    BluetoothHidManager::Get(),
     BluetoothPbapManager::Get(),
-    BluetoothMapSmsManager::Get(),
-    BluetoothHidManager::Get()
+    BluetoothOppManager::Get(),
+    BluetoothMapSmsManager::Get()
   };
 
   // Disconnect all connected profiles
@@ -360,6 +365,35 @@ BluetoothServiceBluedroid::StopLeScanInternal(
   ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
 
   gatt->StopLeScan(aScanUuid, aRunnable);
+}
+
+void
+BluetoothServiceBluedroid::StartAdvertisingInternal(
+  const BluetoothUuid& aAppUuid,
+  const BluetoothGattAdvertisingData& aAdvData,
+  BluetoothReplyRunnable* aRunnable)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
+
+  BluetoothGattManager* gatt = BluetoothGattManager::Get();
+  ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
+
+  gatt->StartAdvertising(aAppUuid, aAdvData, aRunnable);
+}
+
+void
+BluetoothServiceBluedroid::StopAdvertisingInternal(
+  const BluetoothUuid& aAppUuid,
+  BluetoothReplyRunnable* aRunnable)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
+
+  BluetoothGattManager* gatt = BluetoothGattManager::Get();
+  ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
+
+  gatt->StopAdvertising(aAppUuid, aRunnable);
 }
 
 void
@@ -543,6 +577,20 @@ BluetoothServiceBluedroid::GattClientWriteDescriptorValueInternal(
 }
 
 // GATT Server
+void
+BluetoothServiceBluedroid::GattServerRegisterInternal(
+  const BluetoothUuid& aAppUuid, BluetoothReplyRunnable* aRunnable)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
+
+  BluetoothGattManager* gatt = BluetoothGattManager::Get();
+  ENSURE_GATT_MGR_IS_READY_VOID(gatt, aRunnable);
+
+  gatt->RegisterServer(aAppUuid, aRunnable);
+}
+
 void
 BluetoothServiceBluedroid::GattServerConnectPeripheralInternal(
   const BluetoothUuid& aAppUuid, const BluetoothAddress& aAddress,
@@ -1288,7 +1336,7 @@ BluetoothServiceBluedroid::PinReplyInternal(
 
   ENSURE_BLUETOOTH_IS_ENABLED_VOID(aRunnable);
 
-  if (aAccept) {
+  if (aAccept && aPinCode.mLength) {
     sBtCoreInterface->PinReply(aDeviceAddress, aAccept, aPinCode,
                                new PinReplyResultHandler(aRunnable));
   } else {
@@ -1994,7 +2042,11 @@ BluetoothServiceBluedroid::AdapterStateChangedNotification(bool aState)
       BluetoothGattManager::DeinitGattInterface,
       BluetoothAvrcpManager::DeinitAvrcpInterface,
       BluetoothA2dpManager::DeinitA2dpInterface,
-      BluetoothHfpManager::DeinitHfpInterface
+      BluetoothHfpManager::DeinitHfpInterface,
+      BluetoothHidManager::DeinitHidInterface,
+      BluetoothPbapManager::DeinitPbapInterface,
+      BluetoothOppManager::DeinitOppInterface,
+      BluetoothMapSmsManager::DeinitMapSmsInterface
     };
 
     // Return error if BluetoothService is unavailable

@@ -187,6 +187,7 @@ public:
   virtual void NotifyTracksAvailable(DOMMediaStream* aStream) override
   {
     MOZ_ASSERT(NS_IsMainThread());
+    MOZ_ASSERT(aStream);
 
     PeerConnectionWrapper wrapper(mPcHandle);
 
@@ -199,6 +200,13 @@ public:
 
     std::string streamId = PeerConnectionImpl::GetStreamId(*aStream);
     bool notifyStream = true;
+
+    Sequence<OwningNonNull<DOMMediaStream>> streams;
+    if (!streams.AppendElement(OwningNonNull<DOMMediaStream>(*aStream),
+                               fallible)) {
+      MOZ_ASSERT(false);
+      return;
+    }
 
     for (size_t i = 0; i < tracks.Length(); i++) {
       std::string trackId;
@@ -231,7 +239,7 @@ public:
 
       JSErrorResult jrv;
       CSFLogInfo(logTag, "Calling OnAddTrack(%s)", trackId.c_str());
-      mObserver->OnAddTrack(*tracks[i], jrv);
+      mObserver->OnAddTrack(*tracks[i], streams, jrv);
       if (jrv.Failed()) {
         CSFLogError(logTag, ": OnAddTrack(%u) failed! Error: %u",
                     static_cast<unsigned>(i),
@@ -367,6 +375,24 @@ bool PCUuidGenerator::Generate(std::string* idp) {
   return true;
 }
 
+bool IsPrivateBrowsing(nsPIDOMWindowInner* aWindow)
+{
+#if defined(MOZILLA_EXTERNAL_LINKAGE)
+  return false;
+#else
+  if (!aWindow) {
+    return false;
+  }
+
+  nsIDocument *doc = aWindow->GetExtantDoc();
+  if (!doc) {
+    return false;
+  }
+
+  nsILoadContext *loadContext = doc->GetLoadContext();
+  return loadContext && loadContext->UsePrivateBrowsing();
+#endif
+}
 
 PeerConnectionImpl::PeerConnectionImpl(const GlobalObject* aGlobal)
 : mTimeCard(MOZ_LOG_TEST(signalingLogInfo(),LogLevel::Error) ?
@@ -395,11 +421,17 @@ PeerConnectionImpl::PeerConnectionImpl(const GlobalObject* aGlobal)
   , mAddCandidateErrorCount(0)
   , mTrickle(true) // TODO(ekr@rtfm.com): Use pref
   , mNegotiationNeeded(false)
+  , mPrivateWindow(false)
 {
 #if !defined(MOZILLA_EXTERNAL_LINKAGE)
   MOZ_ASSERT(NS_IsMainThread());
+  auto log = RLogRingBuffer::CreateInstance();
   if (aGlobal) {
     mWindow = do_QueryInterface(aGlobal->GetAsSupports());
+    if (IsPrivateBrowsing(mWindow)) {
+      mPrivateWindow = true;
+      log->EnterPrivateMode();
+    }
   }
 #endif
   CSFLogInfo(logTag, "%s: PeerConnectionImpl constructor for %s",
@@ -425,6 +457,15 @@ PeerConnectionImpl::~PeerConnectionImpl()
   }
   // This aborts if not on main thread (in Debug builds)
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
+#if !defined(MOZILLA_EXTERNAL_LINKAGE)
+  if (mPrivateWindow) {
+    auto * log = RLogRingBuffer::GetInstance();
+    if (log) {
+      log->ExitPrivateMode();
+    }
+    mPrivateWindow = false;
+  }
+#endif
   if (PeerConnectionCtx::isActive()) {
     PeerConnectionCtx::GetInstance()->mPeerConnections.erase(mHandle);
   } else {
@@ -680,7 +721,7 @@ PeerConnectionImpl::Initialize(PeerConnectionObserver& aObserver,
   // Currently no standalone unit tests for DataChannel,
   // which is the user of mWindow
   MOZ_ASSERT(aWindow);
-  mWindow = aWindow;
+  mWindow = aWindow->AsInner();
   NS_ENSURE_STATE(mWindow);
 #endif // MOZILLA_INTERNAL_API
 
@@ -1860,19 +1901,31 @@ PeerConnectionImpl::SetRemoteDescription(int32_t action, const char* aSDP)
       mJsepSession->GetRemoteTracksRemoved();
 
     for (auto i = removedTracks.begin(); i != removedTracks.end(); ++i) {
-      RefPtr<RemoteSourceStreamInfo> info =
-        mMedia->GetRemoteStreamById((*i)->GetStreamId());
+      const std::string& streamId = (*i)->GetStreamId();
+      const std::string& trackId = (*i)->GetTrackId();
+
+      RefPtr<RemoteSourceStreamInfo> info = mMedia->GetRemoteStreamById(streamId);
       if (!info) {
         MOZ_ASSERT(false, "A stream/track was removed that wasn't in PCMedia. "
                           "This is a bug.");
         continue;
       }
 
-      mMedia->RemoveRemoteTrack((*i)->GetStreamId(), (*i)->GetTrackId());
+      mMedia->RemoveRemoteTrack(streamId, trackId);
+
+      DOMMediaStream* stream = info->GetMediaStream();
+      nsTArray<RefPtr<MediaStreamTrack>> tracks;
+      stream->GetTracks(tracks);
+      for (auto& track : tracks) {
+        if (PeerConnectionImpl::GetTrackId(*track) == trackId) {
+          pco->OnRemoveTrack(*track, jrv);
+          break;
+        }
+      }
 
       // We might be holding the last ref, but that's ok.
       if (!info->GetTrackCount()) {
-        pco->OnRemoveStream(*info->GetMediaStream(), jrv);
+        pco->OnRemoveStream(*stream, jrv);
       }
     }
 
@@ -2191,6 +2244,24 @@ PeerConnectionImpl::AddTrack(MediaStreamTrack& aTrack,
     mNumVideoStreams++;
   }
   OnNegotiationNeeded();
+  return NS_OK;
+}
+
+nsresult
+PeerConnectionImpl::SelectSsrc(MediaStreamTrack& aRecvTrack,
+                               unsigned short aSsrcIndex)
+{
+  for (size_t i = 0; i < mMedia->RemoteStreamsLength(); ++i) {
+    if (mMedia->GetRemoteStreamByIndex(i)->GetMediaStream()->
+        HasTrack(aRecvTrack)) {
+      auto& pipelines = mMedia->GetRemoteStreamByIndex(i)->GetPipelines();
+      std::string trackId = PeerConnectionImpl::GetTrackId(aRecvTrack);
+      auto it = pipelines.find(trackId);
+      if (it != pipelines.end()) {
+        it->second->SelectSsrc_m(aSsrcIndex);
+      }
+    }
+  }
   return NS_OK;
 }
 
@@ -2629,7 +2700,9 @@ PeerConnectionImpl::CloseInt()
   // for all trickle ICE candidates to come in; this can happen well after we've
   // transitioned to connected. As a bonus, this allows us to detect race
   // conditions where a stats dispatch happens right as the PC closes.
-  RecordLongtermICEStatistics();
+  if (!mPrivateWindow) {
+    RecordLongtermICEStatistics();
+  }
   RecordEndOfCallTelemetry();
   CSFLogInfo(logTag, "%s: Closing PeerConnectionImpl %s; "
              "ending call", __FUNCTION__, mHandle.c_str());

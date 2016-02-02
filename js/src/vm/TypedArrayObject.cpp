@@ -77,7 +77,7 @@ TypedArrayObject::dataOffset()
 }
 
 void
-TypedArrayObject::neuter(void* newData)
+TypedArrayObject::notifyBufferDetached(void* newData)
 {
     MOZ_ASSERT(!isSharedMemory());
     setFixedSlot(TypedArrayObject::LENGTH_SLOT, Int32Value(0));
@@ -399,7 +399,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject
             uint32_t bufferByteLength = buffer->byteLength();
             // Unwraps are safe: both are for the pointer value.
             if (IsArrayBuffer(buffer.get())) {
-                MOZ_ASSERT_IF(!AsArrayBuffer(buffer.get()).isNeutered(),
+                MOZ_ASSERT_IF(!AsArrayBuffer(buffer.get()).isDetached(),
                               buffer->dataPointerEither().unwrap(/*safe*/) <= obj->viewDataEither().unwrap(/*safe*/));
             }
             MOZ_ASSERT(bufferByteLength - arrayByteOffset >= arrayByteLength);
@@ -410,7 +410,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject
         MOZ_ASSERT(obj->numFixedSlots() == TypedArrayObject::DATA_SLOT);
 #endif
 
-        // ArrayBufferObjects track their views to support neutering.
+        // ArrayBufferObjects track their views to support detaching.
         if (buffer && buffer->is<ArrayBufferObject>()) {
             if (!buffer->as<ArrayBufferObject>().addView(cx, obj))
                 return nullptr;
@@ -592,7 +592,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject
         Rooted<ArrayBufferObjectMaybeShared*> buffer(cx);
         if (IsArrayBuffer(bufobj)) {
             ArrayBufferObject& buf = AsArrayBuffer(bufobj);
-            if (buf.isNeutered()) {
+            if (buf.isDetached()) {
                 JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_TYPED_ARRAY_DETACHED);
                 return nullptr;
             }
@@ -722,15 +722,15 @@ TypedArrayObjectTemplate<T>::fromArray(JSContext* cx, HandleObject other,
     RootedObject proto(cx);
 
     uint32_t len;
-    if (IsAnyTypedArray(other)) {
+    if (other->is<TypedArrayObject>()) {
         if (!GetPrototypeForInstance(cx, newTarget, &proto))
             return nullptr;
 
-        if (AnyTypedArrayIsDetached(other)) {
+        if (other->as<TypedArrayObject>().hasDetachedBuffer()) {
             JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_TYPED_ARRAY_DETACHED);
             return nullptr;
         }
-        len = AnyTypedArrayLength(other);
+        len = other->as<TypedArrayObject>().length();
     } else {
         if (!GetLengthProperty(cx, other, &len))
             return nullptr;
@@ -1109,7 +1109,7 @@ DataViewObject::getAndCheckConstructorArgs(JSContext* cx, JSObject* bufobj, cons
         }
     }
 
-    if (buffer->isNeutered()) {
+    if (buffer->isDetached()) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_TYPED_ARRAY_DETACHED);
         return false;
     }
@@ -1360,7 +1360,7 @@ DataViewObject::read(JSContext* cx, Handle<DataViewObject*> obj,
 
     bool fromLittleEndian = args.length() >= 2 && ToBoolean(args[1]);
 
-    if (obj->arrayBuffer().isNeutered()) {
+    if (obj->arrayBuffer().isDetached()) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_TYPED_ARRAY_DETACHED);
         return false;
     }
@@ -1426,7 +1426,7 @@ DataViewObject::write(JSContext* cx, Handle<DataViewObject*> obj,
 
     bool toLittleEndian = args.length() >= 3 && ToBoolean(args[2]);
 
-    if (obj->arrayBuffer().isNeutered()) {
+    if (obj->arrayBuffer().isDetached()) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_TYPED_ARRAY_DETACHED);
         return false;
     }
@@ -2164,7 +2164,7 @@ DataViewObject::initClass(JSContext* cx)
 }
 
 void
-DataViewObject::neuter(void* newData)
+DataViewObject::notifyBufferDetached(void* newData)
 {
     setFixedSlot(TypedArrayObject::LENGTH_SLOT, Int32Value(0));
     setFixedSlot(TypedArrayObject::BYTEOFFSET_SLOT, Int32Value(0));
@@ -2266,12 +2266,12 @@ bool
 js::DefineTypedArrayElement(JSContext* cx, HandleObject obj, uint64_t index,
                             Handle<PropertyDescriptor> desc, ObjectOpResult& result)
 {
-    MOZ_ASSERT(IsAnyTypedArray(obj));
+    MOZ_ASSERT(obj->is<TypedArrayObject>());
 
     // These are all substeps of 3.c.
     // Steps i-vi.
     // We (wrongly) ignore out of range defines with a value.
-    if (index >= AnyTypedArrayLength(obj))
+    if (index >= obj->as<TypedArrayObject>().length())
         return result.succeed();
 
     // Step vii.
@@ -2522,9 +2522,8 @@ JS_NewDataView(JSContext* cx, HandleObject arrayBuffer, uint32_t byteOffset, int
     cargs[2].setInt32(byteLength);
 
     RootedValue fun(cx, ObjectValue(*constructor));
-    RootedValue rval(cx);
-    if (!Construct(cx, fun, cargs, fun, &rval))
+    RootedObject obj(cx);
+    if (!Construct(cx, fun, cargs, fun, &obj))
         return nullptr;
-    MOZ_ASSERT(rval.isObject());
-    return &rval.toObject();
+    return obj;
 }

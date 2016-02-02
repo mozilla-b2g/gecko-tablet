@@ -14,7 +14,6 @@
 #include "mozilla/PodOperations.h"
 #include "mozilla/Scoped.h"
 #include "mozilla/ThreadLocal.h"
-#include "mozilla/UniquePtr.h"
 #include "mozilla/Vector.h"
 
 #include <setjmp.h>
@@ -33,11 +32,12 @@
 #include "gc/Tracer.h"
 #include "irregexp/RegExpStack.h"
 #include "js/Debug.h"
+#include "js/GCVector.h"
 #include "js/HashTable.h"
 #ifdef DEBUG
 # include "js/Proxy.h" // For AutoEnterPolicy
 #endif
-#include "js/TraceableVector.h"
+#include "js/UniquePtr.h"
 #include "js/Vector.h"
 #include "vm/CodeCoverage.h"
 #include "vm/CommonPropertyNames.h"
@@ -63,7 +63,7 @@ class TraceLoggerThread;
 #endif
 
 /* Thread Local Storage slot for storing the runtime for a thread. */
-extern mozilla::ThreadLocal<PerThreadData*> TlsPerThreadData;
+extern MOZ_THREAD_LOCAL(PerThreadData*) TlsPerThreadData;
 
 } // namespace js
 
@@ -146,7 +146,7 @@ struct ScopeCoordinateNameCache {
     void purge();
 };
 
-using ScriptAndCountsVector = TraceableVector<ScriptAndCounts, 0, SystemAllocPolicy>;
+using ScriptAndCountsVector = GCVector<ScriptAndCounts, 0, SystemAllocPolicy>;
 
 struct EvalCacheEntry
 {
@@ -796,6 +796,31 @@ struct JSRuntime : public JS::shadow::Runtime,
     JSRuntime* parentRuntime;
 
   private:
+#ifdef DEBUG
+    /* The number of child runtimes that have this runtime as their parent. */
+    mozilla::Atomic<size_t> childRuntimeCount;
+
+    class AutoUpdateChildRuntimeCount
+    {
+        JSRuntime* parent_;
+
+      public:
+        explicit AutoUpdateChildRuntimeCount(JSRuntime* parent)
+          : parent_(parent)
+        {
+            if (parent_)
+                parent_->childRuntimeCount++;
+        }
+
+        ~AutoUpdateChildRuntimeCount() {
+            if (parent_)
+                parent_->childRuntimeCount--;
+        }
+    };
+
+    AutoUpdateChildRuntimeCount updateChildRuntimeCount;
+#endif
+
     mozilla::Atomic<uint32_t, mozilla::Relaxed> interrupt_;
 
     /* Call this to accumulate telemetry data. */
@@ -1925,7 +1950,7 @@ class MOZ_RAII AutoEnterIonCompilation
 template <typename T>
 class MOZ_STACK_CLASS AutoInitGCManagedObject
 {
-    typedef mozilla::UniquePtr<T, JS::DeletePolicy<T>> UniquePtrT;
+    typedef UniquePtr<T> UniquePtrT;
 
     UniquePtrT ptr_;
 

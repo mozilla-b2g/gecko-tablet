@@ -382,6 +382,12 @@ NS_IMETHODIMP nsChromeTreeOwner::GetUnscaledDevicePixelsPerCSSPixel(double *aSca
    return mXULWindow->GetUnscaledDevicePixelsPerCSSPixel(aScale);
 }
 
+NS_IMETHODIMP nsChromeTreeOwner::GetDevicePixelsPerDesktopPixel(double *aScale)
+{
+   NS_ENSURE_STATE(mXULWindow);
+   return mXULWindow->GetDevicePixelsPerDesktopPixel(aScale);
+}
+
 NS_IMETHODIMP nsChromeTreeOwner::SetPosition(int32_t x, int32_t y)
 {
    NS_ENSURE_STATE(mXULWindow);
@@ -542,12 +548,13 @@ NS_IMETHODIMP nsChromeTreeOwner::OnLocationChange(nsIWebProgress* aWebProgress,
 
   if (aWebProgress) {
     NS_ENSURE_STATE(mXULWindow);
-    nsCOMPtr<nsIDOMWindow> progressWin;
+    nsCOMPtr<mozIDOMWindowProxy> progressWin;
     aWebProgress->GetDOMWindow(getter_AddRefs(progressWin));
 
     nsCOMPtr<nsIDocShell> docshell;
     mXULWindow->GetDocShell(getter_AddRefs(docshell));
-    nsCOMPtr<nsIDOMWindow> ourWin(do_QueryInterface(docshell));
+    // XXXkhuey this is totally wrong, bug 1223303.
+    nsCOMPtr<mozIDOMWindowProxy> ourWin(do_QueryInterface(docshell));
 
     if (ourWin != progressWin)
       itsForYou = false;

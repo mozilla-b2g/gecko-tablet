@@ -43,7 +43,6 @@ const PREF_SEENPAGEIDS    = "browser.uitour.seenPageIDs";
 const PREF_READERVIEW_TRIGGER = "browser.uitour.readerViewTrigger";
 
 const BACKGROUND_PAGE_ACTIONS_ALLOWED = new Set([
-  "endUrlbarCapture",
   "forceShowReaderIcon",
   "getConfiguration",
   "getTreatmentTag",
@@ -90,9 +89,11 @@ this.UITour = {
   pageIDSourceBrowsers: new WeakMap(),
   /* Map from browser chrome windows to a Set of <browser>s in which a tour is open (both visible and hidden) */
   tourBrowsersByWindow: new WeakMap(),
-  urlbarCapture: new WeakMap(),
   appMenuOpenForAnnotation: new Set(),
   availableTargetsCache: new WeakMap(),
+  clearAvailableTargetsCache() {
+    this.availableTargetsCache = new WeakMap();
+  },
 
   _annotationPanelMutationObservers: new WeakMap(),
 
@@ -285,7 +286,7 @@ this.UITour = {
       "onAreaReset",
     ];
     CustomizableUI.addListener(listenerMethods.reduce((listener, method) => {
-      listener[method] = () => this.availableTargetsCache.clear();
+      listener[method] = () => this.clearAvailableTargetsCache();
       return listener;
     }, {}));
   },
@@ -530,13 +531,18 @@ this.UITour = {
           }
 
           let infoOptions = {};
+          if (typeof data.closeButtonCallbackID == "string") {
+            infoOptions.closeButtonCallback = () => {
+              this.sendPageCallback(messageManager, data.closeButtonCallbackID);
+            };
+          }
+          if (typeof data.targetCallbackID == "string") {
+            infoOptions.targetCallback = details => {
+              this.sendPageCallback(messageManager, data.targetCallbackID, details);
+            };
+          }
 
-          if (typeof data.closeButtonCallbackID == "string")
-            infoOptions.closeButtonCallbackID = data.closeButtonCallbackID;
-          if (typeof data.targetCallbackID == "string")
-            infoOptions.targetCallbackID = data.targetCallbackID;
-
-          this.showInfo(window, messageManager, target, data.title, data.text, iconURL, buttons, infoOptions);
+          this.showInfo(window, target, data.title, data.text, iconURL, buttons, infoOptions);
         }).catch(log.error);
         break;
       }
@@ -566,41 +572,6 @@ this.UITour = {
 
       case "hideMenu": {
         this.hideMenu(window, data.name);
-        break;
-      }
-
-      case "startUrlbarCapture": {
-        if (typeof data.text != "string" || !data.text ||
-            typeof data.url != "string" || !data.url) {
-          log.warn("startUrlbarCapture: Text or URL not specified");
-          return false;
-        }
-
-        let uri = null;
-        try {
-          uri = Services.io.newURI(data.url, null, null);
-        } catch (e) {
-          log.warn("startUrlbarCapture: Malformed URL specified");
-          return false;
-        }
-
-        let secman = Services.scriptSecurityManager;
-        let contentDocument = browser.contentWindow.document;
-        let principal = contentDocument.nodePrincipal;
-        let flags = secman.DISALLOW_INHERIT_PRINCIPAL;
-        try {
-          secman.checkLoadURIWithPrincipal(principal, uri, flags);
-        } catch (e) {
-          log.warn("startUrlbarCapture: Orginating page doesn't have permission to open specified URL");
-          return false;
-        }
-
-        this.startUrlbarCapture(window, data.text, data.url);
-        break;
-      }
-
-      case "endUrlbarCapture": {
-        this.endUrlbarCapture(window);
         break;
       }
 
@@ -690,8 +661,8 @@ this.UITour = {
         targetPromise.then(target => {
           let searchbar = target.node;
           searchbar.value = data.term;
-          searchbar.inputChanged();
-        }).then(null, Cu.reportError);
+          searchbar.updateGoButtonVisibility();
+        });
         break;
       }
 
@@ -731,6 +702,18 @@ this.UITour = {
         targetPromise.then(target => {
           ReaderParent.toggleReaderMode({target: target.node});
         });
+        break;
+      }
+
+      case "closeTab": {
+        // Find the <tabbrowser> element of the <browser> for which the event
+        // was generated originally. If the browser where the UI tour is loaded
+        // is windowless, just ignore the request to close the tab. The request
+        // is also ignored if this is the only tab in the window.
+        let tabBrowser = browser.ownerDocument.defaultView.gBrowser;
+        if (tabBrowser && tabBrowser.browsers.length > 1) {
+          tabBrowser.removeTab(tabBrowser.getTabForBrowser(browser));
+        }
         break;
       }
     }
@@ -784,14 +767,6 @@ this.UITour = {
       case "SSWindowClosing": {
         let window = aEvent.target;
         this.teardownTourForWindow(window);
-        break;
-      }
-
-      case "input": {
-        if (aEvent.target.id == "urlbar") {
-          let window = aEvent.target.ownerDocument.defaultView;
-          this.handleUrlbarInput(window);
-        }
         break;
       }
     }
@@ -883,7 +858,6 @@ this.UITour = {
     controlCenterPanel.removeEventListener("popuphidden", this.onPanelHidden);
     controlCenterPanel.removeEventListener("popuphiding", this.hideControlCenterAnnotations);
 
-    this.endUrlbarCapture(aWindow);
     this.resetTheme();
 
     // If there are no more tour tabs left in the window, teardown the tour for the whole window.
@@ -1395,17 +1369,17 @@ this.UITour = {
    * Show an info panel.
    *
    * @param {ChromeWindow} aChromeWindow
-   * @param {nsIMessageSender} aMessageManager
    * @param {Node}     aAnchor
    * @param {String}   [aTitle=""]
    * @param {String}   [aDescription=""]
    * @param {String}   [aIconURL=""]
    * @param {Object[]} [aButtons=[]]
    * @param {Object}   [aOptions={}]
-   * @param {String}   [aOptions.closeButtonCallbackID]
+   * @param {String}   [aOptions.closeButtonCallback]
+   * @param {String}   [aOptions.targetCallback]
    */
-  showInfo: function(aChromeWindow, aMessageManager, aAnchor, aTitle = "", aDescription = "", aIconURL = "",
-                     aButtons = [], aOptions = {}) {
+  showInfo(aChromeWindow, aAnchor, aTitle = "", aDescription = "",
+           aIconURL = "", aButtons = [], aOptions = {}) {
     function showInfoPanel(aAnchorEl) {
       aAnchorEl.focus();
 
@@ -1461,8 +1435,9 @@ this.UITour = {
       let tooltipClose = document.getElementById("UITourTooltipClose");
       let closeButtonCallback = (event) => {
         this.hideInfo(document.defaultView);
-        if (aOptions && aOptions.closeButtonCallbackID)
-          this.sendPageCallback(aMessageManager, aOptions.closeButtonCallbackID);
+        if (aOptions && aOptions.closeButtonCallback) {
+          aOptions.closeButtonCallback();
+        }
       };
       tooltipClose.addEventListener("command", closeButtonCallback);
 
@@ -1471,16 +1446,16 @@ this.UITour = {
           target: aAnchor.targetName,
           type: event.type,
         };
-        this.sendPageCallback(aMessageManager, aOptions.targetCallbackID, details);
+        aOptions.targetCallback(details);
       };
-      if (aOptions.targetCallbackID && aAnchor.addTargetListener) {
+      if (aOptions.targetCallback && aAnchor.addTargetListener) {
         aAnchor.addTargetListener(document, targetCallback);
       }
 
       tooltip.addEventListener("popuphiding", function tooltipHiding(event) {
         tooltip.removeEventListener("popuphiding", tooltipHiding);
         tooltipClose.removeEventListener("command", closeButtonCallback);
-        if (aOptions.targetCallbackID && aAnchor.removeTargetListener) {
+        if (aOptions.targetCallback && aAnchor.removeTargetListener) {
           aAnchor.removeTargetListener(document, targetCallback);
         }
       });
@@ -1576,7 +1551,7 @@ this.UITour = {
       popup.addEventListener("popuphidden", this.onPanelHidden);
 
       popup.setAttribute("noautohide", true);
-      this.availableTargetsCache.clear();
+      this.clearAvailableTargetsCache();
 
       if (popup.state == "open") {
         if (aOpenCallback) {
@@ -1605,7 +1580,7 @@ this.UITour = {
       panel.setAttribute("noautohide", true);
       if (panel.state != "open") {
         this.recreatePopup(panel);
-        this.availableTargetsCache.clear();
+        this.clearAvailableTargetsCache();
       }
 
       // An event object is expected but we don't want to toggle the panel with a click if the panel
@@ -1725,7 +1700,7 @@ this.UITour = {
   onPanelHidden: function(aEvent) {
     aEvent.target.removeAttribute("noautohide");
     UITour.recreatePopup(aEvent.target);
-    UITour.availableTargetsCache.clear();
+    UITour.clearAvailableTargetsCache();
   },
 
   recreatePopup: function(aPanel) {
@@ -1740,41 +1715,6 @@ this.UITour = {
     aPanel.hidden = true;
     aPanel.clientWidth; // flush
     aPanel.hidden = false;
-  },
-
-  startUrlbarCapture: function(aWindow, aExpectedText, aUrl) {
-    let urlbar = aWindow.document.getElementById("urlbar");
-    this.urlbarCapture.set(aWindow, {
-      expected: aExpectedText.toLocaleLowerCase(),
-      url: aUrl
-    });
-    urlbar.addEventListener("input", this);
-  },
-
-  endUrlbarCapture: function(aWindow) {
-    let urlbar = aWindow.document.getElementById("urlbar");
-    urlbar.removeEventListener("input", this);
-    this.urlbarCapture.delete(aWindow);
-  },
-
-  handleUrlbarInput: function(aWindow) {
-    if (!this.urlbarCapture.has(aWindow))
-      return;
-
-    let urlbar = aWindow.document.getElementById("urlbar");
-
-    let {expected, url} = this.urlbarCapture.get(aWindow);
-
-    if (urlbar.value.toLocaleLowerCase().localeCompare(expected) != 0)
-      return;
-
-    urlbar.handleRevert();
-
-    let tab = aWindow.gBrowser.addTab(url, {
-      owner: aWindow.gBrowser.selectedTab,
-      relatedToCurrent: true
-    });
-    aWindow.gBrowser.selectedTab = tab;
   },
 
   getConfiguration: function(aMessageManager, aWindow, aConfiguration, aCallbackID) {
@@ -1793,12 +1733,8 @@ this.UITour = {
         appinfo["defaultBrowser"] = isDefaultBrowser;
 
         let canSetDefaultBrowserInBackground = true;
-        if (AppConstants.isPlatformAndVersionAtLeast("win", "6.2")) {
-          let prefBranch =
-            Services.prefs.getBranch("browser.shell.associationHash");
-          let prefChildren = prefBranch.getChildList("");
-          canSetDefaultBrowserInBackground = prefChildren.length > 0;
-        } else if (AppConstants.isPlatformAndVersionAtLeast("macosx", "10.10")) {
+        if (AppConstants.isPlatformAndVersionAtLeast("win", "6.2") ||
+            AppConstants.isPlatformAndVersionAtLeast("macosx", "10.10")) {
           canSetDefaultBrowserInBackground = false;
         } else if (AppConstants.platform == "linux") {
           // The ShellService may not exist on some versions of Linux.
@@ -1993,10 +1929,12 @@ this.UITour = {
         for (let engine of engines) {
           if (engine.identifier == aID) {
             Services.search.defaultEngine = engine;
-            return resolve();
+            resolve();
+            return;
           }
         }
         reject("selectSearchEngine could not find engine with given ID");
+        return;
       });
     });
   },

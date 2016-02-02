@@ -19,7 +19,6 @@
 using mozilla::ArrayLength;
 using mozilla::DebugOnly;
 using mozilla::PodCopy;
-using mozilla::UniquePtr;
 
 using namespace js;
 
@@ -347,6 +346,11 @@ UnboxedPlainObject::ensureExpando(JSContext* cx, Handle<UnboxedPlainObject*> obj
         NewObjectWithGivenProto<UnboxedExpandoObject>(cx, nullptr, gc::AllocKind::OBJECT4);
     if (!expando)
         return nullptr;
+
+    // Don't track property types for expando objects. This allows Baseline
+    // and Ion AddSlot ICs to guard on the unboxed group without guarding on
+    // the expando group.
+    MarkObjectGroupUnknownProperties(cx, expando->group());
 
     // If the expando is tenured then the original object must also be tenured.
     // Otherwise barriers triggered on the original object for writes to the
@@ -736,7 +740,7 @@ UnboxedPlainObject::obj_lookupProperty(JSContext* cx, HandleObject obj,
 
 /* static */ bool
 UnboxedPlainObject::obj_defineProperty(JSContext* cx, HandleObject obj, HandleId id,
-                                       Handle<JSPropertyDescriptor> desc,
+                                       Handle<PropertyDescriptor> desc,
                                        ObjectOpResult& result)
 {
     const UnboxedLayout& layout = obj->as<UnboxedPlainObject>().layout();
@@ -845,7 +849,7 @@ UnboxedPlainObject::obj_setProperty(JSContext* cx, HandleObject obj, HandleId id
 
 /* static */ bool
 UnboxedPlainObject::obj_getOwnPropertyDescriptor(JSContext* cx, HandleObject obj, HandleId id,
-                                                 MutableHandle<JSPropertyDescriptor> desc)
+                                                 MutableHandle<PropertyDescriptor> desc)
 {
     const UnboxedLayout& layout = obj->as<UnboxedPlainObject>().layout();
 
@@ -1429,7 +1433,7 @@ UnboxedArrayObject::obj_lookupProperty(JSContext* cx, HandleObject obj,
 
 /* static */ bool
 UnboxedArrayObject::obj_defineProperty(JSContext* cx, HandleObject obj, HandleId id,
-                                       Handle<JSPropertyDescriptor> desc,
+                                       Handle<PropertyDescriptor> desc,
                                        ObjectOpResult& result)
 {
     if (JSID_IS_INT(id) && !desc.getter() && !desc.setter() && desc.attributes() == JSPROP_ENUMERATE) {
@@ -1533,7 +1537,7 @@ UnboxedArrayObject::obj_setProperty(JSContext* cx, HandleObject obj, HandleId id
 
 /* static */ bool
 UnboxedArrayObject::obj_getOwnPropertyDescriptor(JSContext* cx, HandleObject obj, HandleId id,
-                                                 MutableHandle<JSPropertyDescriptor> desc)
+                                                 MutableHandle<PropertyDescriptor> desc)
 {
     if (obj->as<UnboxedArrayObject>().containsProperty(cx, id)) {
         if (JSID_IS_INT(id)) {

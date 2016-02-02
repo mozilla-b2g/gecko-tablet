@@ -12,7 +12,6 @@ DIRS += [
     'base',
     'components',
     'experiments',
-    'fuel',
     'locales',
     'modules',
     'themes',
@@ -25,6 +24,10 @@ DIRS += [
 
 if CONFIG['MAKENSISU']:
     DIRS += ['installer/windows']
+
+TEST_DIRS += [
+    'tools/mozscreenshots',
+]
 
 DIST_SUBDIR = 'browser'
 export('DIST_SUBDIR')

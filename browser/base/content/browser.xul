@@ -8,7 +8,7 @@
 
 <?xml-stylesheet href="chrome://browser/content/browser.css" type="text/css"?>
 <?xml-stylesheet href="chrome://browser/content/places/places.css" type="text/css"?>
-<?xml-stylesheet href="chrome://devtools/skin/common.css" type="text/css"?>
+<?xml-stylesheet href="chrome://devtools/skin/devtools-browser.css" type="text/css"?>
 <?xml-stylesheet href="chrome://browser/skin/controlcenter/panel.css" type="text/css"?>
 <?xml-stylesheet href="chrome://browser/skin/customizableui/panelUIOverlay.css" type="text/css"?>
 <?xml-stylesheet href="chrome://browser/skin/" type="text/css"?>
@@ -464,15 +464,17 @@
     <tooltip id="dynamic-shortcut-tooltip"
              onpopupshowing="UpdateDynamicShortcutTooltipText(this);"/>
 
-    <menupopup id="emeNotificationsPopup">
-      <menuitem id="emeNotificationsNotNow"
-                label="&emeNotificationsNotNow.label;"
-                acceskey="&emeNotificationsNotNow.accesskey;"
-                oncommand="gEMEHandler.onNotNow(this);"/>
-      <menuitem id="emeNotificationsDontAskAgain"
-                label="&emeNotificationsDontAskAgain.label;"
-                acceskey="&emeNotificationsDontAskAgain.accesskey;"
-                oncommand="gEMEHandler.onDontAskAgain(this);"/>
+    <menupopup id="SyncedTabsSidebarContext">
+      <menuitem label="&syncedTabs.context.openTab.label;"
+                accesskey="&syncedTabs.context.openTab.accesskey;"
+                id="syncedTabsOpenSelected"/>
+      <menuitem label="&syncedTabs.context.bookmarkSingleTab.label;"
+                accesskey="&syncedTabs.context.bookmarkSingleTab.accesskey;"
+                id="syncedTabsBookmarkSelected"/>
+      <menuseparator/>
+      <menuitem label="&syncedTabs.context.refreshList.label;"
+                accesskey="&syncedTabs.context.refreshList.accesskey;"
+                id="syncedTabsRefresh"/>
     </menupopup>
   </popupset>
 
@@ -670,10 +672,6 @@
               <box id="notification-popup-box" hidden="true" align="center">
                 <image id="default-notification-icon" class="notification-anchor-icon" role="button"
                        aria-label="&urlbar.defaultNotificationAnchor.label;"/>
-                <!-- NB: the identity-notification-icon is used for persona-based auth and preffed
-                     off by default. It hasn't been updated for some time and liable to being
-                     removed.-->
-                <image id="identity-notification-icon" class="notification-anchor-icon" role="button"/>
                 <image id="geo-notification-icon" class="notification-anchor-icon" role="button"
                        aria-label="&urlbar.geolocationNotificationAnchor.label;"/>
                 <image id="addons-notification-icon" class="notification-anchor-icon" role="button"

@@ -144,12 +144,6 @@
         }
       }
 
-      function sendErrorReport() {
-        var event = new CustomEvent("AboutNetErrorSendReport", {bubbles:true});
-
-        document.dispatchEvent(event);
-      }
-
       function initPage()
       {
         var err = getErrorCode();
@@ -260,16 +254,7 @@
                   var event = new CustomEvent("AboutNetErrorSetAutomatic",
                     {bubbles:true, detail:evt.target.checked});
                   document.dispatchEvent(event);
-                  if (evt.target.checked && reportBtn.style.display != "none") {
-                    sendErrorReport();
-                  }
                 }, false);
-
-              var reportBtn = document.getElementById('reportCertificateError');
-              var retryBtn = document.getElementById('reportCertificateErrorRetry');
-
-              reportBtn.addEventListener('click', sendErrorReport, false);
-              retryBtn.addEventListener('click', sendErrorReport, false);
             }
           }
           if (getErrorCode() == "weakCryptoUsed" || getErrorCode() == "sslv3Used") {
@@ -497,7 +482,7 @@
         </div>
 
         <div id="learnMoreContainer">
-          <p><a href="https://support.mozilla.org/kb/tls-error-reports" id="learnMoreLink" target="new">&errorReporting.learnMore;</a></p>
+          <p><a href="https://support.mozilla.org/kb/what-does-your-connection-is-not-secure-mean" id="learnMoreLink" target="new">&errorReporting.learnMore;</a></p>
         </div>
 
         <div id="buttonContainer">
@@ -530,13 +515,6 @@
         <p>
           <input type="checkbox" id="automaticallyReportInFuture" />
           <label for="automaticallyReportInFuture" id="automaticallyReportInFuture">&errorReporting.automatic2;</label>
-
-          <span id="reportingState">
-            <button id="reportCertificateError">&errorReporting.report;</button>
-            <button id="reportCertificateErrorRetry">&errorReporting.tryAgain;</button>
-            <span id="reportSendingMessage">&errorReporting.sending;</span>
-            <span id="reportSentMessage">&errorReporting.sent;</span>
-          </span>
         </p>
       </div>
 

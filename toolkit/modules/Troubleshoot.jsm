@@ -219,6 +219,16 @@ var dataProviders = {
 
     data.remoteAutoStart = Services.appinfo.browserTabsRemoteAutostart;
 
+    try {
+      let e10sStatus = Cc["@mozilla.org/supports-PRUint64;1"]
+                         .createInstance(Ci.nsISupportsPRUint64);
+      let appinfo = Services.appinfo.QueryInterface(Ci.nsIObserver);
+      appinfo.observe(e10sStatus, "getE10SBlocked", "");
+      data.autoStartStatus = e10sStatus.data;
+    } catch (e) {
+      data.autoStartStatus = -1;
+    }
+
     done(data);
   },
 
@@ -308,6 +318,13 @@ var dataProviders = {
     }
     catch (e) {}
 
+    let promises = [];
+    // done will be called upon all pending promises being resolved.
+    // add your pending promise to promises when adding new ones.
+    function completed() {
+      Promise.all(promises).then(() => done(data));
+    }
+
     data.numTotalWindows = 0;
     data.numAcceleratedWindows = 0;
     let winEnumer = Services.ww.getWindowEnumerator();
@@ -323,7 +340,6 @@ var dataProviders = {
         data.numTotalWindows++;
         data.windowLayerManagerType = winUtils.layerManagerType;
         data.windowLayerManagerRemote = winUtils.layerManagerRemote;
-        data.supportsHardwareH264 = winUtils.supportsHardwareH264Decoding;
       }
       catch (e) {
         continue;
@@ -331,6 +347,16 @@ var dataProviders = {
       if (data.windowLayerManagerType != "Basic")
         data.numAcceleratedWindows++;
     }
+
+    let winUtils = Services.wm.getMostRecentWindow("").
+                   QueryInterface(Ci.nsIInterfaceRequestor).
+                   getInterface(Ci.nsIDOMWindowUtils)
+    data.supportsHardwareH264 = "Unknown";
+    let promise = winUtils.supportsHardwareH264Decoding;
+    promise.then(function(v) {
+      data.supportsHardwareH264 = v;
+    });
+    promises.push(promise);
 
     if (!data.numAcceleratedWindows && gfxInfo) {
       let win = AppConstants.platform == "win";
@@ -340,7 +366,7 @@ var dataProviders = {
     }
 
     if (!gfxInfo) {
-      done(data);
+      completed();
       return;
     }
 
@@ -438,7 +464,7 @@ var dataProviders = {
       }
     }
 
-    done(data);
+    completed();
   },
 
   javaScript: function javaScript(done) {

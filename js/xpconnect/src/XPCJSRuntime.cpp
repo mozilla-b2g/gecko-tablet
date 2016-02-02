@@ -46,6 +46,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/ProcessHangMonitor.h"
 #include "mozilla/UniquePtrExtensions.h"
+#include "mozilla/unused.h"
 #include "AccessCheck.h"
 #include "nsGlobalWindow.h"
 #include "nsAboutProtocolUtils.h"
@@ -116,6 +117,11 @@ bool xpc::ExtraWarningsForSystemJS() { return sExtraWarningsForSystemJS; }
 #else
 bool xpc::ExtraWarningsForSystemJS() { return false; }
 #endif
+
+static mozilla::Atomic<bool> sSharedMemoryEnabled(false);
+
+bool
+xpc::SharedMemoryEnabled() { return sSharedMemoryEnabled; }
 
 // *Some* NativeSets are referenced from mClassInfo2NativeSetMap.
 // *All* NativeSets are referenced from mNativeSetMap.
@@ -196,6 +202,7 @@ CompartmentPrivate::CompartmentPrivate(JSCompartment* c)
     , skipWriteToGlobalPrototype(false)
     , isWebExtensionContentScript(false)
     , waiveInterposition(false)
+    , allowCPOWs(false)
     , universalXPConnectEnabled(false)
     , forcePermissiveCOWs(false)
     , scriptability(c)
@@ -1439,7 +1446,7 @@ XPCJSRuntime::InterruptCallback(JSContext* cx)
     if (win->GetIsPrerendered()) {
         // We cannot display a dialog if the page is being prerendered, so
         // just kill the page.
-        mozilla::dom::HandlePrerenderingViolation(win);
+        mozilla::dom::HandlePrerenderingViolation(win->AsInner());
         return false;
     }
 
@@ -1564,6 +1571,9 @@ ReloadPrefsCallback(const char* pref, void* data)
     bool werror = Preferences::GetBool(JS_OPTIONS_DOT_STR "werror");
 
     bool extraWarnings = Preferences::GetBool(JS_OPTIONS_DOT_STR "strict");
+
+    sSharedMemoryEnabled = Preferences::GetBool(JS_OPTIONS_DOT_STR "shared_memory");
+
 #ifdef DEBUG
     sExtraWarningsForSystemJS = Preferences::GetBool(JS_OPTIONS_DOT_STR "strict.debug");
 #endif
@@ -2656,7 +2666,7 @@ class JSMainRuntimeCompartmentsReporter final : public nsIMemoryReporter
                     ? NS_LITERAL_CSTRING("js-main-runtime-compartments/system/")
                     : NS_LITERAL_CSTRING("js-main-runtime-compartments/user/"),
                     0);
-        data->paths.append(path);
+        mozilla::Unused << data->paths.append(path);
     }
 
     NS_IMETHOD CollectReports(nsIMemoryReporterCallback* cb,
@@ -2775,7 +2785,7 @@ class XPCJSRuntimeStats : public JS::RuntimeStats
             // might crash.
             JSAutoCompartment ac(cx, global);
             nsISupports* native = xpc->GetNativeOfWrapper(cx, global);
-            if (nsCOMPtr<nsPIDOMWindow> piwindow = do_QueryInterface(native)) {
+            if (nsCOMPtr<nsPIDOMWindowInner> piwindow = do_QueryInterface(native)) {
                 // The global is a |window| object.  Use the path prefix that
                 // we should have already created for it.
                 if (mTopWindowPaths->Get(piwindow->WindowID(),
@@ -2819,7 +2829,7 @@ class XPCJSRuntimeStats : public JS::RuntimeStats
             // might crash.
             JSAutoCompartment ac(cx, global);
             nsISupports* native = xpc->GetNativeOfWrapper(cx, global);
-            if (nsCOMPtr<nsPIDOMWindow> piwindow = do_QueryInterface(native)) {
+            if (nsCOMPtr<nsPIDOMWindowInner> piwindow = do_QueryInterface(native)) {
                 // The global is a |window| object.  Use the path prefix that
                 // we should have already created for it.
                 if (mWindowPaths->Get(piwindow->WindowID(),

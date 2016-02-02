@@ -67,9 +67,6 @@ GetSriLog()
   return gSriPRLog;
 }
 
-// The nsScriptLoadRequest is passed as the context to necko, and thus
-// it needs to be threadsafe. Necko won't do anything with this
-// context, but it will AddRef and Release it on other threads.
 NS_IMPL_ISUPPORTS0(nsScriptLoadRequest)
 
 nsScriptLoadRequestList::~nsScriptLoadRequestList()
@@ -288,7 +285,7 @@ nsScriptLoader::StartLoad(nsScriptLoadRequest *aRequest, const nsAString &aType,
   }
 
   nsCOMPtr<nsILoadGroup> loadGroup = mDocument->GetDocumentLoadGroup();
-  nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(mDocument->MasterDocument()->GetWindow()));
+  nsCOMPtr<nsPIDOMWindowOuter> window = mDocument->MasterDocument()->GetWindow();
   NS_ENSURE_TRUE(window, NS_ERROR_NULL_POINTER);
   nsIDocShell *docshell = window->GetDocShell();
   nsCOMPtr<nsIInterfaceRequestor> prompter(do_QueryInterface(docshell));
@@ -297,7 +294,9 @@ nsScriptLoader::StartLoad(nsScriptLoadRequest *aRequest, const nsAString &aType,
     aRequest->mCORSMode == CORS_NONE
     ? nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL
     : nsILoadInfo::SEC_REQUIRE_CORS_DATA_INHERITS;
-  if (aRequest->mCORSMode == CORS_USE_CREDENTIALS) {
+  if (aRequest->mCORSMode == CORS_ANONYMOUS) {
+    securityFlags |= nsILoadInfo::SEC_COOKIES_SAME_ORIGIN;
+  } else if (aRequest->mCORSMode == CORS_USE_CREDENTIALS) {
     securityFlags |= nsILoadInfo::SEC_COOKIES_INCLUDE;
   }
   securityFlags |= nsILoadInfo::SEC_ALLOW_CHROME;
@@ -947,7 +946,7 @@ nsScriptLoader::ProcessRequest(nsScriptLoadRequest* aRequest)
     nsAutoMicroTask mt;
   }
 
-  nsPIDOMWindow *pwin = master->GetInnerWindow();
+  nsPIDOMWindowInner *pwin = master->GetInnerWindow();
   bool runScript = !!pwin;
   if (runScript) {
     nsContentUtils::DispatchTrustedEvent(scriptElem->OwnerDoc(),
@@ -1029,7 +1028,7 @@ already_AddRefed<nsIScriptGlobalObject>
 nsScriptLoader::GetScriptGlobalObject()
 {
   nsCOMPtr<nsIDocument> master = mDocument->MasterDocument();
-  nsPIDOMWindow *pwin = master->GetInnerWindow();
+  nsPIDOMWindowInner *pwin = master->GetInnerWindow();
   if (!pwin) {
     return nullptr;
   }
@@ -1791,7 +1790,7 @@ nsScriptLoadHandler::TryDecodeRawData(const uint8_t* aData,
 
   haveRead += dstLen;
   MOZ_ASSERT(haveRead <= capacity, "mDecoder produced more data than expected");
-  mBuffer.resizeUninitialized(haveRead);
+  MOZ_ALWAYS_TRUE(mBuffer.resizeUninitialized(haveRead));
 
   return NS_OK;
 }

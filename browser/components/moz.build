@@ -21,6 +21,7 @@ DIRS += [
     'sessionstore',
     'shell',
     'selfsupport',
+    'syncedtabs',
     'uitour',
     'translation',
 ]
@@ -28,7 +29,6 @@ DIRS += [
 DIRS += ['build']
 
 XPIDL_SOURCES += [
-    'nsIAboutNewTabService.idl',
     'nsIBrowserGlue.idl',
     'nsIBrowserHandler.idl',
 ]
@@ -37,11 +37,11 @@ XPIDL_MODULE = 'browsercompsbase'
 
 EXTRA_PP_COMPONENTS += [
     'BrowserComponents.manifest',
-    'nsBrowserGlue.js',
 ]
 
 EXTRA_COMPONENTS += [
     'nsBrowserContentHandler.js',
+    'nsBrowserGlue.js',
 ]
 
 EXTRA_JS_MODULES += [
@@ -60,6 +60,3 @@ with Files('safebrowsing/*'):
 
 with Files('controlcenter/**'):
     BUG_COMPONENT = ('Firefox', 'General')
-
-if CONFIG['MOZ_REQUIRE_SIGNING']:
-    DEFINES['MOZ_REQUIRE_SIGNING'] = 1

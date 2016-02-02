@@ -214,6 +214,7 @@
 #include "gc/GCTrace.h"
 #include "gc/Marking.h"
 #include "gc/Memory.h"
+#include "gc/Policy.h"
 #include "jit/BaselineJIT.h"
 #include "jit/IonCode.h"
 #include "jit/JitcodeMap.h"
@@ -1150,7 +1151,7 @@ GCRuntime::GCRuntime(JSRuntime* rt) :
     arenasAllocatedDuringSweep(nullptr),
     startedCompacting(false),
     relocatedArenasToRelease(nullptr),
-#ifdef JS_GC_MARKING_VALIDATION
+#ifdef JS_GC_ZEAL
     markingValidator(nullptr),
 #endif
     interFrameGC(false),
@@ -1169,7 +1170,6 @@ GCRuntime::GCRuntime(JSRuntime* rt) :
     deterministicOnly(false),
     incrementalLimit(0),
 #endif
-    validate(true),
     fullCompartmentChecks(false),
     mallocBytesUntilGC(0),
     mallocGCTriggered(false),
@@ -1208,7 +1208,7 @@ const char* gc::ZealModeHelpText =
     "    8: Incremental GC in two slices: 1) mark roots 2) finish collection\n"
     "    9: Incremental GC in two slices: 1) mark all 2) new marking and finish\n"
     "   10: Incremental GC in multiple slices\n"
-    "   11: unused\n"
+    "   11: Verify incremental marking\n"
     "   12: unused\n"
     "   13: Check internal hashtables on minor GC\n"
     "   14: Perform a shrinking collection every N allocations\n";
@@ -1293,7 +1293,7 @@ GCRuntime::init(uint32_t maxbytes, uint32_t maxNurseryBytes)
      * for default backward API compatibility.
      */
     AutoLockGC lock(rt);
-    tunables.setParameter(JSGC_MAX_BYTES, maxbytes, lock);
+    MOZ_ALWAYS_TRUE(tunables.setParameter(JSGC_MAX_BYTES, maxbytes, lock));
     setMaxMallocBytes(maxbytes);
 
     const char* size = getenv("JSGC_MARK_STACK_LIMIT");
@@ -1389,7 +1389,7 @@ js::gc::FinishPersistentRootedChains(RootLists& roots)
     FinishPersistentRootedChain(roots.getPersistentRootedList<JSString*>());
     FinishPersistentRootedChain(roots.getPersistentRootedList<jsid>());
     FinishPersistentRootedChain(roots.getPersistentRootedList<Value>());
-    FinishPersistentRootedChain(roots.heapRoots_[THING_ROOT_TRACEABLE]);
+    FinishPersistentRootedChain(roots.heapRoots_[JS::RootKind::Traceable]);
 }
 
 void
@@ -1401,7 +1401,7 @@ GCRuntime::finishRoots()
     FinishPersistentRootedChains(rt->mainThread.roots);
 }
 
-void
+bool
 GCRuntime::setParameter(JSGCParamKey key, uint32_t value, AutoLockGC& lock)
 {
     switch (key) {
@@ -1414,30 +1414,38 @@ GCRuntime::setParameter(JSGCParamKey key, uint32_t value, AutoLockGC& lock)
         defaultTimeBudget_ = value ? value : SliceBudget::UnlimitedTimeBudget;
         break;
       case JSGC_MARK_STACK_LIMIT:
+        if (value == 0)
+            return false;
         setMarkStackLimit(value, lock);
         break;
       case JSGC_DECOMMIT_THRESHOLD:
         decommitThreshold = (uint64_t)value * 1024 * 1024;
         break;
       case JSGC_MODE:
+        if (mode != JSGC_MODE_GLOBAL &&
+            mode != JSGC_MODE_COMPARTMENT &&
+            mode != JSGC_MODE_INCREMENTAL)
+        {
+            return false;
+        }
         mode = JSGCMode(value);
-        MOZ_ASSERT(mode == JSGC_MODE_GLOBAL ||
-                   mode == JSGC_MODE_COMPARTMENT ||
-                   mode == JSGC_MODE_INCREMENTAL);
         break;
       case JSGC_COMPACTING_ENABLED:
         compactingEnabled = value != 0;
         break;
       default:
-        tunables.setParameter(key, value, lock);
+        if (!tunables.setParameter(key, value, lock))
+            return false;
         for (ZonesIter zone(rt, WithAtoms); !zone.done(); zone.next()) {
             zone->threshold.updateAfterGC(zone->usage.gcBytes(), GC_NORMAL, tunables,
                                           schedulingState, lock);
         }
     }
+
+    return true;
 }
 
-void
+bool
 GCSchedulingTunables::setParameter(JSGCParamKey key, uint32_t value, const AutoLockGC& lock)
 {
     switch(key) {
@@ -1447,31 +1455,50 @@ GCSchedulingTunables::setParameter(JSGCParamKey key, uint32_t value, const AutoL
       case JSGC_HIGH_FREQUENCY_TIME_LIMIT:
         highFrequencyThresholdUsec_ = value * PRMJ_USEC_PER_MSEC;
         break;
-      case JSGC_HIGH_FREQUENCY_LOW_LIMIT:
-        highFrequencyLowLimitBytes_ = (uint64_t)value * 1024 * 1024;
+      case JSGC_HIGH_FREQUENCY_LOW_LIMIT: {
+        uint64_t newLimit = (uint64_t)value * 1024 * 1024;
+        if (newLimit == UINT64_MAX)
+            return false;
+        highFrequencyLowLimitBytes_ = newLimit;
         if (highFrequencyLowLimitBytes_ >= highFrequencyHighLimitBytes_)
             highFrequencyHighLimitBytes_ = highFrequencyLowLimitBytes_ + 1;
         MOZ_ASSERT(highFrequencyHighLimitBytes_ > highFrequencyLowLimitBytes_);
         break;
-      case JSGC_HIGH_FREQUENCY_HIGH_LIMIT:
-        MOZ_ASSERT(value > 0);
-        highFrequencyHighLimitBytes_ = (uint64_t)value * 1024 * 1024;
+      }
+      case JSGC_HIGH_FREQUENCY_HIGH_LIMIT: {
+        uint64_t newLimit = (uint64_t)value * 1024 * 1024;
+        if (newLimit == 0)
+            return false;
+        highFrequencyHighLimitBytes_ = newLimit;
         if (highFrequencyHighLimitBytes_ <= highFrequencyLowLimitBytes_)
             highFrequencyLowLimitBytes_ = highFrequencyHighLimitBytes_ - 1;
         MOZ_ASSERT(highFrequencyHighLimitBytes_ > highFrequencyLowLimitBytes_);
         break;
-      case JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MAX:
-        highFrequencyHeapGrowthMax_ = value / 100.0;
+      }
+      case JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MAX: {
+        double newGrowth = value / 100.0;
+        if (newGrowth <= 0.85)
+            return false;
+        highFrequencyHeapGrowthMax_ = newGrowth;
         MOZ_ASSERT(highFrequencyHeapGrowthMax_ / 0.85 > 1.0);
         break;
-      case JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MIN:
-        highFrequencyHeapGrowthMin_ = value / 100.0;
+      }
+      case JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MIN: {
+        double newGrowth = value / 100.0;
+        if (newGrowth <= 0.85)
+            return false;
+        highFrequencyHeapGrowthMin_ = newGrowth;
         MOZ_ASSERT(highFrequencyHeapGrowthMin_ / 0.85 > 1.0);
         break;
-      case JSGC_LOW_FREQUENCY_HEAP_GROWTH:
-        lowFrequencyHeapGrowth_ = value / 100.0;
+      }
+      case JSGC_LOW_FREQUENCY_HEAP_GROWTH: {
+        double newGrowth = value / 100.0;
+        if (newGrowth <= 0.9)
+            return false;
+        lowFrequencyHeapGrowth_ = newGrowth;
         MOZ_ASSERT(lowFrequencyHeapGrowth_ / 0.9 > 1.0);
         break;
+      }
       case JSGC_DYNAMIC_HEAP_GROWTH:
         dynamicHeapGrowthEnabled_ = value != 0;
         break;
@@ -1496,6 +1523,8 @@ GCSchedulingTunables::setParameter(JSGCParamKey key, uint32_t value, const AutoL
       default:
         MOZ_CRASH("Unknown GC parameter.");
     }
+
+    return true;
 }
 
 uint32_t
@@ -1728,6 +1757,11 @@ GCRuntime::callWeakPointerCompartmentCallbacks(JSCompartment* comp) const
 JS::GCSliceCallback
 GCRuntime::setSliceCallback(JS::GCSliceCallback callback) {
     return stats.setSliceCallback(callback);
+}
+
+JS::GCNurseryCollectionCallback
+GCRuntime::setNurseryCollectionCallback(JS::GCNurseryCollectionCallback callback) {
+    return stats.setNurseryCollectionCallback(callback);
 }
 
 bool
@@ -4227,7 +4261,7 @@ GCRuntime::markAllGrayReferences(gcstats::Phase phase)
     markGrayReferences<GCZonesIter, GCCompartmentsIter>(phase);
 }
 
-#ifdef DEBUG
+#ifdef JS_GC_ZEAL
 
 struct GCChunkHasher {
     typedef gc::Chunk* Lookup;
@@ -4263,10 +4297,6 @@ class js::gc::MarkingValidator
     typedef HashMap<Chunk*, ChunkBitmap*, GCChunkHasher, SystemAllocPolicy> BitmapMap;
     BitmapMap map;
 };
-
-#endif // DEBUG
-
-#ifdef JS_GC_MARKING_VALIDATION
 
 js::gc::MarkingValidator::MarkingValidator(GCRuntime* gc)
   : gc(gc),
@@ -4485,14 +4515,14 @@ js::gc::MarkingValidator::validate()
     }
 }
 
-#endif // JS_GC_MARKING_VALIDATION
+#endif // JS_GC_ZEAL
 
 void
 GCRuntime::computeNonIncrementalMarkingForValidation()
 {
-#ifdef JS_GC_MARKING_VALIDATION
+#ifdef JS_GC_ZEAL
     MOZ_ASSERT(!markingValidator);
-    if (isIncremental && validate)
+    if (isIncremental && zeal() == ZealIncrementalMarkingValidator)
         markingValidator = js_new<MarkingValidator>(this);
     if (markingValidator)
         markingValidator->nonIncrementalMark();
@@ -4502,7 +4532,7 @@ GCRuntime::computeNonIncrementalMarkingForValidation()
 void
 GCRuntime::validateIncrementalMarking()
 {
-#ifdef JS_GC_MARKING_VALIDATION
+#ifdef JS_GC_ZEAL
     if (markingValidator)
         markingValidator->validate();
 #endif
@@ -4511,7 +4541,7 @@ GCRuntime::validateIncrementalMarking()
 void
 GCRuntime::finishMarkingValidation()
 {
-#ifdef JS_GC_MARKING_VALIDATION
+#ifdef JS_GC_ZEAL
     js_delete(markingValidator);
     markingValidator = nullptr;
 #endif
@@ -6052,7 +6082,8 @@ GCRuntime::incrementalCollectSlice(SliceBudget& budget, JS::gcreason::Reason rea
         lastMarkSlice = false;
 
         incrementalState = MARK_ROOTS;
-        /* fall through */
+
+        MOZ_FALLTHROUGH;
 
       case MARK_ROOTS:
         if (!beginMarkPhase(reason)) {
@@ -6068,7 +6099,7 @@ GCRuntime::incrementalCollectSlice(SliceBudget& budget, JS::gcreason::Reason rea
         if (isIncremental && zeal == ZealIncrementalRootsThenFinish)
             break;
 
-        /* fall through */
+        MOZ_FALLTHROUGH;
 
       case MARK:
         AutoGCRooter::traceAllWrappers(&marker);
@@ -6114,7 +6145,7 @@ GCRuntime::incrementalCollectSlice(SliceBudget& budget, JS::gcreason::Reason rea
         if (isIncremental && zeal == ZealIncrementalMultipleSlices)
             break;
 
-        /* fall through */
+        MOZ_FALLTHROUGH;
 
       case SWEEP:
         if (sweepPhase(budget) == NotFinished)
@@ -6128,6 +6159,8 @@ GCRuntime::incrementalCollectSlice(SliceBudget& budget, JS::gcreason::Reason rea
         /* Yield before compacting since it is not incremental. */
         if (isCompacting && isIncremental)
             break;
+
+        MOZ_FALLTHROUGH;
 
       case COMPACT:
         if (isCompacting) {
@@ -6826,6 +6859,10 @@ gc::MergeCompartments(JSCompartment* source, JSCompartment* target)
         script->compartment_ = target;
         script->setTypesGeneration(target->zone()->types.generation);
 
+        // If the script failed to compile, no need to fix up.
+        if (!script->code())
+            continue;
+
         // See warning in handleParseWorkload. If we start optimizing global
         // lexicals, we would need to merge the contents of the static global
         // lexical scope.
@@ -6839,9 +6876,9 @@ gc::MergeCompartments(JSCompartment* source, JSCompartment* target)
             for (uint32_t i = 0; i < scopes->length; i++) {
                 uint32_t scopeIndex = scopes->vector[i].index;
                 if (scopeIndex != BlockScopeNote::NoBlockScopeIndex) {
-                    ScopeObject* scope = &script->getObject(scopeIndex)->as<ScopeObject>();
+                    StaticScope* scope = &script->getObject(scopeIndex)->as<StaticScope>();
                     MOZ_ASSERT(!IsStaticGlobalLexicalScope(scope));
-                    JSObject* enclosing = &scope->enclosingScope();
+                    JSObject* enclosing = scope->enclosingScope();
                     if (IsStaticGlobalLexicalScope(enclosing))
                         scope->setEnclosingScope(targetStaticGlobalLexicalScope);
                 }
@@ -6964,13 +7001,6 @@ GCRuntime::runDebugGC()
     }
 
 #endif
-}
-
-void
-GCRuntime::setValidate(bool enabled)
-{
-    MOZ_ASSERT(!rt->isHeapMajorCollecting());
-    validate = enabled;
 }
 
 void
@@ -7407,7 +7437,7 @@ JS::GCDescription::formatSliceMessage(JSRuntime* rt) const
     UniqueChars cstr = rt->gc.stats.formatCompactSliceMessage();
 
     size_t nchars = strlen(cstr.get());
-    UniquePtr<char16_t, JS::FreePolicy> out(js_pod_malloc<char16_t>(nchars + 1));
+    UniqueTwoByteChars out(js_pod_malloc<char16_t>(nchars + 1));
     if (!out)
         return nullptr;
     out.get()[nchars] = 0;
@@ -7422,7 +7452,7 @@ JS::GCDescription::formatSummaryMessage(JSRuntime* rt) const
     UniqueChars cstr = rt->gc.stats.formatCompactSummaryMessage();
 
     size_t nchars = strlen(cstr.get());
-    UniquePtr<char16_t, JS::FreePolicy> out(js_pod_malloc<char16_t>(nchars + 1));
+    UniqueTwoByteChars out(js_pod_malloc<char16_t>(nchars + 1));
     if (!out)
         return nullptr;
     out.get()[nchars] = 0;
@@ -7443,7 +7473,7 @@ JS::GCDescription::formatJSON(JSRuntime* rt, uint64_t timestamp) const
     UniqueChars cstr = rt->gc.stats.formatJsonMessage(timestamp);
 
     size_t nchars = strlen(cstr.get());
-    UniquePtr<char16_t, JS::FreePolicy> out(js_pod_malloc<char16_t>(nchars + 1));
+    UniqueTwoByteChars out(js_pod_malloc<char16_t>(nchars + 1));
     if (!out)
         return nullptr;
     out.get()[nchars] = 0;
@@ -7456,6 +7486,12 @@ JS_PUBLIC_API(JS::GCSliceCallback)
 JS::SetGCSliceCallback(JSRuntime* rt, GCSliceCallback callback)
 {
     return rt->gc.setSliceCallback(callback);
+}
+
+JS_PUBLIC_API(JS::GCNurseryCollectionCallback)
+JS::SetGCNurseryCollectionCallback(JSRuntime* rt, GCNurseryCollectionCallback callback)
+{
+    return rt->gc.setNurseryCollectionCallback(callback);
 }
 
 JS_PUBLIC_API(void)

@@ -333,7 +333,6 @@ nsBaseWidget::~nsBaseWidget()
 //
 //-------------------------------------------------------------------------
 void nsBaseWidget::BaseCreate(nsIWidget* aParent,
-                              const LayoutDeviceIntRect& aRect,
                               nsWidgetInitData* aInitData)
 {
   static bool gDisableNativeThemeCached = false;
@@ -758,9 +757,8 @@ void
 nsBaseWidget::ArrayFromRegion(const LayoutDeviceIntRegion& aRegion,
                               nsTArray<LayoutDeviceIntRect>& aRects)
 {
-  const LayoutDeviceIntRect* r;
-  for (LayoutDeviceIntRegion::RectIterator iter(aRegion); (r = iter.Next()); ) {
-    aRects.AppendElement(*r);
+  for (auto iter = aRegion.RectIter(); !iter.Done(); iter.Next()) {
+    aRects.AppendElement(iter.Get());
   }
 }
 
@@ -832,9 +830,9 @@ NS_IMETHODIMP nsBaseWidget::MakeFullScreen(bool aFullScreen, nsIScreen* aScreen)
 
   if (aFullScreen) {
     if (!mOriginalBounds) {
-      mOriginalBounds = new CSSIntRect();
+      mOriginalBounds = new LayoutDeviceIntRect();
     }
-    *mOriginalBounds = GetScaledScreenBounds();
+    GetScreenBounds(*mOriginalBounds);
 
     // Move to top-left corner of screen and size to the screen dimensions
     nsCOMPtr<nsIScreen> screen = aScreen;
@@ -848,8 +846,13 @@ NS_IMETHODIMP nsBaseWidget::MakeFullScreen(bool aFullScreen, nsIScreen* aScreen)
       }
     }
   } else if (mOriginalBounds) {
-    Resize(mOriginalBounds->x, mOriginalBounds->y, mOriginalBounds->width,
-           mOriginalBounds->height, true);
+    if (BoundsUseDesktopPixels()) {
+      DesktopRect deskRect = *mOriginalBounds / GetDesktopToDeviceScale();
+      Resize(deskRect.x, deskRect.y, deskRect.width, deskRect.height, true);
+    } else {
+      Resize(mOriginalBounds->x, mOriginalBounds->y, mOriginalBounds->width,
+             mOriginalBounds->height, true);
+    }
   }
 
   return NS_OK;
@@ -1353,15 +1356,14 @@ NS_METHOD nsBaseWidget::MoveClient(double aX, double aY)
 {
   LayoutDeviceIntPoint clientOffset(GetClientOffset());
 
-  // GetClientOffset returns device pixels; scale back to display pixels
+  // GetClientOffset returns device pixels; scale back to desktop pixels
   // if that's what this widget uses for the Move/Resize APIs
-  CSSToLayoutDeviceScale scale = BoundsUseDisplayPixels()
-                                    ? GetDefaultScale()
-                                    : CSSToLayoutDeviceScale(1.0);
-  aX -= clientOffset.x * 1.0 / scale.scale;
-  aY -= clientOffset.y * 1.0 / scale.scale;
-
-  return Move(aX, aY);
+  if (BoundsUseDesktopPixels()) {
+    DesktopPoint desktopOffset = clientOffset / GetDesktopToDeviceScale();
+    return Move(aX - desktopOffset.x, aY - desktopOffset.y);
+  } else {
+    return Move(aX - clientOffset.x, aY - clientOffset.y);
+  }
 }
 
 NS_METHOD nsBaseWidget::ResizeClient(double aWidth,
@@ -1374,16 +1376,18 @@ NS_METHOD nsBaseWidget::ResizeClient(double aWidth,
   LayoutDeviceIntRect clientBounds;
   GetClientBounds(clientBounds);
 
-  // GetClientBounds and mBounds are device pixels; scale back to display pixels
+  // GetClientBounds and mBounds are device pixels; scale back to desktop pixels
   // if that's what this widget uses for the Move/Resize APIs
-  CSSToLayoutDeviceScale scale = BoundsUseDisplayPixels()
-                                    ? GetDefaultScale()
-                                    : CSSToLayoutDeviceScale(1.0);
-  double invScale = 1.0 / scale.scale;
-  aWidth = mBounds.width * invScale + (aWidth - clientBounds.width * invScale);
-  aHeight = mBounds.height * invScale + (aHeight - clientBounds.height * invScale);
-
-  return Resize(aWidth, aHeight, aRepaint);
+  if (BoundsUseDesktopPixels()) {
+    DesktopSize desktopDelta =
+      (LayoutDeviceIntSize(mBounds.width, mBounds.height) -
+       clientBounds.Size()) / GetDesktopToDeviceScale();
+    return Resize(aWidth + desktopDelta.width, aHeight + desktopDelta.height,
+                  aRepaint);
+  } else {
+    return Resize(mBounds.width + (aWidth - clientBounds.width),
+                  mBounds.height + (aHeight - clientBounds.height), aRepaint);
+  }
 }
 
 NS_METHOD nsBaseWidget::ResizeClient(double aX,
@@ -1398,15 +1402,23 @@ NS_METHOD nsBaseWidget::ResizeClient(double aX,
   LayoutDeviceIntRect clientBounds;
   GetClientBounds(clientBounds);
 
-  double scale = BoundsUseDisplayPixels() ? 1.0 / GetDefaultScale().scale : 1.0;
-  aWidth = mBounds.width * scale + (aWidth - clientBounds.width * scale);
-  aHeight = mBounds.height * scale + (aHeight - clientBounds.height * scale);
-
   LayoutDeviceIntPoint clientOffset(GetClientOffset());
-  aX -= clientOffset.x * scale;
-  aY -= clientOffset.y * scale;
 
-  return Resize(aX, aY, aWidth, aHeight, aRepaint);
+  if (BoundsUseDesktopPixels()) {
+    DesktopToLayoutDeviceScale scale = GetDesktopToDeviceScale();
+    DesktopPoint desktopOffset = clientOffset / scale;
+    DesktopSize desktopDelta =
+      (LayoutDeviceIntSize(mBounds.width, mBounds.height) -
+       clientBounds.Size()) / scale;
+    return Resize(aX - desktopOffset.x, aY - desktopOffset.y,
+                  aWidth + desktopDelta.width, aHeight + desktopDelta.height,
+                  aRepaint);
+  } else {
+    return Resize(aX - clientOffset.x, aY - clientOffset.y,
+                  aWidth + mBounds.width - clientBounds.width,
+                  aHeight + mBounds.height - clientBounds.height,
+                  aRepaint);
+  }
 }
 
 //-------------------------------------------------------------------------
@@ -1430,7 +1442,7 @@ NS_METHOD nsBaseWidget::GetClientBounds(LayoutDeviceIntRect &aRect)
 **/
 NS_METHOD nsBaseWidget::GetBounds(LayoutDeviceIntRect &aRect)
 {
-  aRect = LayoutDeviceIntRect::FromUnknownRect(mBounds);
+  aRect = mBounds;
   return NS_OK;
 }
 
@@ -1513,51 +1525,6 @@ nsBaseWidget::ShowsResizeIndicator(LayoutDeviceIntRect* aResizerRect)
 {
   return false;
 }
-
-NS_IMETHODIMP
-nsBaseWidget::OverrideSystemMouseScrollSpeed(double aOriginalDeltaX,
-                                             double aOriginalDeltaY,
-                                             double& aOverriddenDeltaX,
-                                             double& aOverriddenDeltaY)
-{
-  aOverriddenDeltaX = aOriginalDeltaX;
-  aOverriddenDeltaY = aOriginalDeltaY;
-
-  static bool sInitialized = false;
-  static bool sIsOverrideEnabled = false;
-  static int32_t sIntFactorX = 0;
-  static int32_t sIntFactorY = 0;
-
-  if (!sInitialized) {
-    Preferences::AddBoolVarCache(&sIsOverrideEnabled,
-      "mousewheel.system_scroll_override_on_root_content.enabled", false);
-    Preferences::AddIntVarCache(&sIntFactorX,
-      "mousewheel.system_scroll_override_on_root_content.horizontal.factor", 0);
-    Preferences::AddIntVarCache(&sIntFactorY,
-      "mousewheel.system_scroll_override_on_root_content.vertical.factor", 0);
-    sIntFactorX = std::max(sIntFactorX, 0);
-    sIntFactorY = std::max(sIntFactorY, 0);
-    sInitialized = true;
-  }
-
-  if (!sIsOverrideEnabled) {
-    return NS_OK;
-  }
-
-  // The pref value must be larger than 100, otherwise, we don't override the
-  // delta value.
-  if (sIntFactorX > 100) {
-    double factor = static_cast<double>(sIntFactorX) / 100;
-    aOverriddenDeltaX *= factor;
-  }
-  if (sIntFactorY > 100) {
-    double factor = static_cast<double>(sIntFactorY) / 100;
-    aOverriddenDeltaY *= factor;
-  }
-
-  return NS_OK;
-}
-
 
 /**
  * Modifies aFile to point at an icon file with the given name and suffix.  The
@@ -1653,7 +1620,7 @@ void nsBaseWidget::SetSizeConstraints(const SizeConstraints& aConstraints)
   // probably in the middle of a reflow.
 }
 
-const widget::SizeConstraints& nsBaseWidget::GetSizeConstraints() const
+const widget::SizeConstraints nsBaseWidget::GetSizeConstraints()
 {
   return mSizeConstraints;
 }
@@ -1735,7 +1702,7 @@ nsBaseWidget::NotifyUIStateChanged(UIStateChangeType aShowAccelerators,
                                    UIStateChangeType aShowFocusRings)
 {
   if (nsIDocument* doc = GetDocument()) {
-    nsPIDOMWindow* win = doc->GetWindow();
+    nsPIDOMWindowOuter* win = doc->GetWindow();
     if (win) {
       win->SetKeyboardIndicators(aShowAccelerators, aShowFocusRings);
     }
@@ -1790,6 +1757,19 @@ nsBaseWidget::GetTextEventDispatcher()
   return mTextEventDispatcher;
 }
 
+void
+nsBaseWidget::ZoomToRect(const uint32_t& aPresShellId,
+                         const FrameMetrics::ViewID& aViewId,
+                         const CSSRect& aRect,
+                         const uint32_t& aFlags)
+{
+  if (!mCompositorParent || !mAPZC) {
+    return;
+  }
+  uint64_t layerId = mCompositorParent->RootLayerTreeId();
+  mAPZC->ZoomToRect(ScrollableLayerGuid(layerId, aPresShellId, aViewId), aRect, aFlags);
+}
+
 #ifdef ACCESSIBILITY
 
 a11y::Accessible*
@@ -1837,18 +1817,6 @@ nsBaseWidget::StartAsyncScrollbarDrag(const AsyncDragMetrics& aDragMetrics)
     NewRunnableMethod(mAPZC.get(), &APZCTreeManager::StartScrollbarDrag, guid, aDragMetrics));
 }
 
-CSSIntRect
-nsBaseWidget::GetScaledScreenBounds()
-{
-  LayoutDeviceIntRect bounds;
-  GetScreenBounds(bounds);
-
-  // *Dividing* a LayoutDeviceIntRect by a CSSToLayoutDeviceScale gives a
-  // CSSIntRect.
-  CSSToLayoutDeviceScale scale = GetDefaultScale();
-  return RoundedToInt(bounds / scale);
-}
-
 already_AddRefed<nsIScreen>
 nsBaseWidget::GetWidgetScreen()
 {
@@ -1858,7 +1826,8 @@ nsBaseWidget::GetWidgetScreen()
     return nullptr;
   }
 
-  CSSIntRect bounds = GetScaledScreenBounds();
+  LayoutDeviceIntRect bounds;
+  GetScreenBounds(bounds);
   nsCOMPtr<nsIScreen> screen;
   screenManager->ScreenForRect(bounds.x, bounds.y,
                                bounds.width, bounds.height,
@@ -2196,14 +2165,35 @@ IMENotification::TextChangeDataBase::MergeWith(
   const TextChangeDataBase& newData = aOther;
   const TextChangeDataBase oldData = *this;
 
-  // mCausedByComposition should be true only when all changes are caused by
-  // composition.
-  mCausedByComposition =
-    newData.mCausedByComposition && oldData.mCausedByComposition;
-  // mOccurredDuringComposition should be true only when all changes occurred
-  // during composition.
-  mOccurredDuringComposition =
-    newData.mOccurredDuringComposition && oldData.mOccurredDuringComposition;
+  // mCausedOnlyByComposition should be true only when all changes are caused
+  // by composition.
+  mCausedOnlyByComposition =
+    newData.mCausedOnlyByComposition && oldData.mCausedOnlyByComposition;
+
+  // mIncludingChangesWithoutComposition should be true if at least one of
+  // merged changes occurred without composition.
+  mIncludingChangesWithoutComposition =
+    newData.mIncludingChangesWithoutComposition ||
+      oldData.mIncludingChangesWithoutComposition;
+
+  // mIncludingChangesDuringComposition should be true when at least one of
+  // the merged non-composition changes occurred during the latest composition.
+  if (!newData.mCausedOnlyByComposition &&
+      !newData.mIncludingChangesDuringComposition) {
+    MOZ_ASSERT(newData.mIncludingChangesWithoutComposition);
+    MOZ_ASSERT(mIncludingChangesWithoutComposition);
+    // If new change is neither caused by composition nor occurred during
+    // composition, set mIncludingChangesDuringComposition to false because
+    // IME doesn't want outdated text changes as text change during current
+    // composition.
+    mIncludingChangesDuringComposition = false;
+  } else {
+    // Otherwise, set mIncludingChangesDuringComposition to true if either
+    // oldData or newData includes changes during composition.
+    mIncludingChangesDuringComposition =
+      newData.mIncludingChangesDuringComposition ||
+        oldData.mIncludingChangesDuringComposition;
+  }
 
   if (newData.mStartOffset >= oldData.mAddedEndOffset) {
     // Case 1:

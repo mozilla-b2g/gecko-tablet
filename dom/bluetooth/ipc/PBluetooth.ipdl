@@ -14,6 +14,8 @@ include "mozilla/dom/bluetooth/ipc/BluetoothMessageUtils.h";
 
 using mozilla::dom::bluetooth::BluetoothAddress
   from "mozilla/dom/bluetooth/BluetoothCommon.h";
+using mozilla::dom::bluetooth::BluetoothGattAdvertisingData
+  from "mozilla/dom/bluetooth/BluetoothCommon.h";
 using mozilla::dom::bluetooth::BluetoothObjectType
   from "mozilla/dom/bluetooth/BluetoothCommon.h";
 using mozilla::dom::bluetooth::BluetoothPinCode
@@ -68,6 +70,17 @@ struct StartLeScanRequest
 struct StopLeScanRequest
 {
   BluetoothUuid scanUuid;
+};
+
+struct StartAdvertisingRequest
+{
+  BluetoothUuid appUuid;
+  BluetoothGattAdvertisingData data;
+};
+
+struct StopAdvertisingRequest
+{
+  BluetoothUuid appUuid;
 };
 
 struct PairRequest
@@ -348,6 +361,11 @@ struct GattClientWriteDescriptorValueRequest
   uint8_t[] value;
 };
 
+struct GattServerRegisterRequest
+{
+  BluetoothUuid appUuid;
+};
+
 struct GattServerConnectPeripheralRequest
 {
   BluetoothUuid appUuid;
@@ -444,6 +462,8 @@ union Request
   StopDiscoveryRequest;
   StartLeScanRequest;
   StopLeScanRequest;
+  StartAdvertisingRequest;
+  StopAdvertisingRequest;
   PairRequest;
   UnpairRequest;
   PinReplyRequest;
@@ -491,6 +511,7 @@ union Request
   GattClientWriteCharacteristicValueRequest;
   GattClientReadDescriptorValueRequest;
   GattClientWriteDescriptorValueRequest;
+  GattServerRegisterRequest;
   GattServerConnectPeripheralRequest;
   GattServerDisconnectPeripheralRequest;
   UnregisterGattServerRequest;
@@ -524,53 +545,53 @@ child:
   /**
    * Sent when a settings change has enabled or disabled the bluetooth firmware.
    */
-  Enabled(bool enabled);
+  async Enabled(bool enabled);
 
   /**
    * Sent when a bluetooth signal is broadcasted to child processes.
    */
-  Notify(BluetoothSignal signal);
+  async Notify(BluetoothSignal signal);
 
   /**
    * Sent when the parent process is about to be shut down. See shutdown note
    * above.
    */
-  BeginShutdown();
+  async BeginShutdown();
 
   /**
    * Sent to inform the child process that it will no longer receive any
    * messages from the parent. See shutdown note above.
    */
-  NotificationsStopped();
+  async NotificationsStopped();
 
 parent:
   /**
    * Sent when the child no longer needs to use bluetooth. See shutdown note
    * above.
    */
-  __delete__();
+  async __delete__();
 
   /**
    * Sent when the child needs to receive signals related to the given node.
    */
-  RegisterSignalHandler(nsString node);
+  async RegisterSignalHandler(nsString node);
 
   /**
    * Sent when the child no longer needs to receive signals related to the given
    * node.
    */
-  UnregisterSignalHandler(nsString node);
+  async UnregisterSignalHandler(nsString node);
 
   /**
    * Sent when the child no longer needs to receive any messages from the
    * parent. See shutdown note above.
    */
-  StopNotifying();
+  async StopNotifying();
 
   /**
    * Sent when the child makes an asynchronous request to the parent.
    */
-  PBluetoothRequest(Request request);
+  async PBluetoothRequest(Request request);
 
   /**
    * FIXME: Bug 547703.

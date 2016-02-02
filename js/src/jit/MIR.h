@@ -67,6 +67,18 @@ MIRType MIRTypeFromValue(const js::Value& vp)
     return MIRTypeFromValueType(vp.extractNonDoubleType());
 }
 
+static inline
+SimdType MIRTypeToSimdType(MIRType type)
+{
+    switch (type) {
+      case MIRType_Float32x4: return SimdType::Float32x4;
+      case MIRType_Int32x4:   return SimdType::Int32x4;
+      case MIRType_Bool32x4:  return SimdType::Bool32x4;
+      default:                break;
+    }
+    MOZ_CRASH("unhandled MIRType");
+}
+
 #define MIR_FLAG_LIST(_)                                                        \
     _(InWorklist)                                                               \
     _(EmittedAtUses)                                                            \
@@ -564,6 +576,21 @@ class MDefinition : public MNode
         // Direct and infallible truncation to int32.
         Truncate = 3
     };
+
+    static const char * TruncateKindString(TruncateKind kind) {
+        switch(kind) {
+          case NoTruncate:
+            return "NoTruncate";
+          case TruncateAfterBailouts:
+            return "TruncateAfterBailouts";
+          case IndirectTruncate:
+            return "IndirectTruncate";
+          case Truncate:
+            return "Truncate";
+          default:
+            MOZ_CRASH("Unknown truncate kind.");
+        }
+    }
 
     // |needTruncation| records the truncation kind of the results, such that it
     // can be used to truncate the operands of this instruction.  If
@@ -1515,10 +1542,18 @@ class MSimdConvert
   : public MUnaryInstruction,
     public SimdPolicy<0>::Data
 {
-    MSimdConvert(MDefinition* obj, MIRType fromType, MIRType toType)
-      : MUnaryInstruction(obj)
+    // When either fromType or toType is an integer vector, should it be treated
+    // as signed or unsigned. Note that we don't support int-int conversions -
+    // use MSimdReinterpretCast for that.
+    SimdSign sign_;
+
+    MSimdConvert(MDefinition* obj, MIRType fromType, MIRType toType, SimdSign sign)
+      : MUnaryInstruction(obj), sign_(sign)
     {
         MOZ_ASSERT(IsSimdType(toType));
+        // All conversions are int <-> float, so signedness is required.
+        MOZ_ASSERT(sign != SimdSign::NotApplicable);
+
         setResultType(toType);
         specialization_ = fromType; // expects fromType as input
 
@@ -1535,20 +1570,35 @@ class MSimdConvert
                                   MIRType toType)
     {
         MOZ_ASSERT(IsSimdType(obj->type()) && fromType == obj->type());
-        return new(alloc) MSimdConvert(obj, fromType, toType);
+        // AsmJS only has signed integer vectors for now.
+        return new(alloc) MSimdConvert(obj, fromType, toType, SimdSign::Signed);
     }
 
     static MSimdConvert* New(TempAllocator& alloc, MDefinition* obj, MIRType fromType,
-                             MIRType toType)
+                             MIRType toType, SimdSign sign)
     {
-        return new(alloc) MSimdConvert(obj, fromType, toType);
+        return new(alloc) MSimdConvert(obj, fromType, toType, sign);
+    }
+
+    // Create a MSimdConvert instruction and add it to the basic block.
+    // Possibly create and add an equivalent sequence of instructions instead if
+    // the current target doesn't support the requested conversion directly.
+    // Return the inserted MInstruction that computes the converted value.
+    static MInstruction* AddLegalized(TempAllocator& alloc, MBasicBlock* addTo, MDefinition* obj,
+                                      MIRType fromType, MIRType toType, SimdSign sign);
+
+    SimdSign signedness() const {
+        return sign_;
     }
 
     AliasSet getAliasSet() const override {
         return AliasSet::None();
     }
     bool congruentTo(const MDefinition* ins) const override {
-        return congruentIfOperandsEqual(ins);
+        if (!congruentIfOperandsEqual(ins))
+            return false;
+        const MSimdConvert* other = ins->toSimdConvert();
+        return sign_ == other->sign_;
     }
     ALLOW_CLONE(MSimdConvert)
 };
@@ -1592,23 +1642,38 @@ class MSimdReinterpretCast
 };
 
 // Extracts a lane element from a given vector type, given by its lane symbol.
+//
+// For integer SIMD types, a SimdSign must be provided so the lane value can be
+// converted to a scalar correctly.
 class MSimdExtractElement
   : public MUnaryInstruction,
     public SimdPolicy<0>::Data
 {
   protected:
     SimdLane lane_;
+    SimdSign sign_;
 
-    MSimdExtractElement(MDefinition* obj, MIRType vecType, MIRType laneType, SimdLane lane)
-      : MUnaryInstruction(obj), lane_(lane)
+    MSimdExtractElement(MDefinition* obj, MIRType vecType, MIRType laneType, SimdLane lane,
+                        SimdSign sign)
+      : MUnaryInstruction(obj), lane_(lane), sign_(sign)
     {
         MOZ_ASSERT(IsSimdType(vecType));
         MOZ_ASSERT(uint32_t(lane) < SimdTypeToLength(vecType));
         MOZ_ASSERT(!IsSimdType(laneType));
+        MOZ_ASSERT((sign != SimdSign::NotApplicable) == IsIntegerSimdType(vecType),
+                   "Signedness must be specified for integer SIMD extractLanes");
         // The resulting type should match the lane type.
         // Allow extracting boolean lanes directly into an Int32 (for asm.js).
+        // Allow extracting Uint32 lanes into a double.
+        //
+        // We also allow extracting Uint32 lanes into a MIRType_Int32. This is
+        // equivalent to extracting the Uint32 lane to a double and then
+        // applying MTruncateToInt32, but it bypasses the conversion to/from
+        // double.
         MOZ_ASSERT(SimdTypeToLaneType(vecType) == laneType ||
-                   (IsBooleanSimdType(vecType) && laneType == MIRType_Int32));
+                   (IsBooleanSimdType(vecType) && laneType == MIRType_Int32) ||
+                   (vecType == MIRType_Int32x4 && laneType == MIRType_Double &&
+                    sign == SimdSign::Unsigned));
 
         setMovable();
         specialization_ = vecType;
@@ -1621,17 +1686,24 @@ class MSimdExtractElement
     static MSimdExtractElement* NewAsmJS(TempAllocator& alloc, MDefinition* obj, MIRType type,
                                          SimdLane lane)
     {
-        return new(alloc) MSimdExtractElement(obj, obj->type(), type, lane);
+        // Only signed integer types in AsmJS so far.
+        SimdSign sign =
+          IsIntegerSimdType(obj->type()) ? SimdSign::Signed : SimdSign::NotApplicable;
+        return new (alloc) MSimdExtractElement(obj, obj->type(), type, lane, sign);
     }
 
     static MSimdExtractElement* New(TempAllocator& alloc, MDefinition* obj, MIRType vecType,
-                                    MIRType scalarType, SimdLane lane)
+                                    MIRType scalarType, SimdLane lane, SimdSign sign)
     {
-        return new(alloc) MSimdExtractElement(obj, vecType, scalarType, lane);
+        return new(alloc) MSimdExtractElement(obj, vecType, scalarType, lane, sign);
     }
 
     SimdLane lane() const {
         return lane_;
+    }
+
+    SimdSign signedness() const {
+        return sign_;
     }
 
     AliasSet getAliasSet() const override {
@@ -1641,7 +1713,7 @@ class MSimdExtractElement
         if (!ins->isSimdExtractElement())
             return false;
         const MSimdExtractElement* other = ins->toSimdExtractElement();
-        if (other->lane_ != lane_)
+        if (other->lane_ != lane_ || other->sign_ != sign_)
             return false;
         return congruentIfOperandsEqual(other);
     }
@@ -2083,8 +2155,10 @@ class MSimdUnaryArith
 };
 
 // Compares each value of a SIMD vector to each corresponding lane's value of
-// another SIMD vector, and returns a int32x4 vector containing the results of
+// another SIMD vector, and returns a boolean vector containing the results of
 // the comparison: all bits are set to 1 if the comparison is true, 0 otherwise.
+// When comparing integer vectors, a SimdSign must be provided to request signed
+// or unsigned comparison.
 class MSimdBinaryComp
   : public MBinaryInstruction,
     public SimdAllPolicy::Data
@@ -2107,10 +2181,14 @@ class MSimdBinaryComp
 
   private:
     Operation operation_;
+    SimdSign sign_;
 
-    MSimdBinaryComp(MDefinition* left, MDefinition* right, Operation op, MIRType opType)
-      : MBinaryInstruction(left, right), operation_(op)
+    MSimdBinaryComp(MDefinition* left, MDefinition* right, Operation op, MIRType opType,
+                    SimdSign sign)
+      : MBinaryInstruction(left, right), operation_(op), sign_(sign)
     {
+        MOZ_ASSERT((sign != SimdSign::NotApplicable) == IsIntegerSimdType(opType),
+                   "Signedness must be specified for integer SIMD compares");
         setResultType(MIRType_Bool32x4);
         specialization_ = opType;
         setMovable();
@@ -2125,20 +2203,32 @@ class MSimdBinaryComp
     {
         MOZ_ASSERT(IsSimdType(left->type()));
         MOZ_ASSERT(left->type() == right->type());
-        return new(alloc) MSimdBinaryComp(left, right, op, left->type());
+        // AsmJS only has signed vectors for now.
+        SimdSign sign =
+          IsIntegerSimdType(left->type()) ? SimdSign::Signed : SimdSign::NotApplicable;
+        return new (alloc) MSimdBinaryComp(left, right, op, left->type(), sign);
     }
 
     static MSimdBinaryComp* New(TempAllocator& alloc, MDefinition* left, MDefinition* right,
-                                Operation op, MIRType opType)
+                                Operation op, MIRType opType, SimdSign sign)
     {
-        return new(alloc) MSimdBinaryComp(left, right, op, opType);
+        return new(alloc) MSimdBinaryComp(left, right, op, opType, sign);
     }
 
-    AliasSet getAliasSet() const override {
+    // Create a MSimdBinaryComp or an equivalent sequence of instructions
+    // supported by the current target.
+    // Add all instructions to the basic block |addTo|.
+    static MInstruction* AddLegalized(TempAllocator& alloc, MBasicBlock* addTo, MDefinition* left,
+                                      MDefinition* right, Operation op, MIRType opType,
+                                      SimdSign sign);
+
+    AliasSet getAliasSet() const override
+    {
         return AliasSet::None();
     }
 
     Operation operation() const { return operation_; }
+    SimdSign signedness() const { return sign_; }
     MIRType specialization() const { return specialization_; }
 
     // Swap the operands and reverse the comparison predicate.
@@ -2161,7 +2251,8 @@ class MSimdBinaryComp
             return false;
         const MSimdBinaryComp* other = ins->toSimdBinaryComp();
         return specialization_ == other->specialization() &&
-               operation_ == other->operation();
+               operation_ == other->operation() &&
+               sign_ == other->signedness();
     }
 
     void printOpcode(GenericPrinter& out) const override;
@@ -2338,6 +2429,11 @@ class MSimdShift
     {
         MOZ_ASSERT(type == MIRType_Int32x4);
         return new(alloc) MSimdShift(left, right, op);
+    }
+
+    // Get the relevant right shift operation given the signedness of a type.
+    static Operation rshForSign(SimdSign sign) {
+        return sign == SimdSign::Unsigned ? ursh : rsh;
     }
 
     AliasSet getAliasSet() const override {
@@ -7516,7 +7612,10 @@ class MRegExp : public MNullaryInstruction
 
 class MRegExpMatcher
   : public MAryInstruction<4>,
-    public NoTypePolicy::Data
+    public Mix4Policy<ObjectPolicy<0>,
+                      StringPolicy<1>,
+                      IntPolicy<2>,
+                      BooleanPolicy<3> >::Data
 {
   private:
 
@@ -7529,6 +7628,7 @@ class MRegExpMatcher
         initOperand(2, lastIndex);
         initOperand(3, sticky);
 
+        setMovable();
         // May be object or null.
         setResultType(MIRType_Value);
     }
@@ -7558,10 +7658,7 @@ class MRegExpMatcher
     bool writeRecoverData(CompactBufferWriter& writer) const override;
 
     bool canRecoverOnBailout() const override {
-        // XXX: always return false for now, to work around bug 1132128.
-        if (false && regexp()->isRegExp())
-            return !regexp()->toRegExp()->source()->needUpdateLastIndex();
-        return false;
+        return true;
     }
 
     bool possiblyCalls() const override {
@@ -7571,7 +7668,10 @@ class MRegExpMatcher
 
 class MRegExpTester
   : public MAryInstruction<4>,
-    public NoTypePolicy::Data
+    public Mix4Policy<ObjectPolicy<0>,
+                      StringPolicy<1>,
+                      IntPolicy<2>,
+                      BooleanPolicy<3> >::Data
 {
   private:
 
@@ -7584,6 +7684,7 @@ class MRegExpTester
         initOperand(2, lastIndex);
         initOperand(3, sticky);
 
+        setMovable();
         setResultType(MIRType_Int32);
     }
 
@@ -7615,13 +7716,7 @@ class MRegExpTester
 
     bool writeRecoverData(CompactBufferWriter& writer) const override;
     bool canRecoverOnBailout() const override {
-        // RegExpTester has a side-effect on the regexp object's lastIndex
-        // when sticky or global flags are set.
-        // Return false unless we are sure it's not the case.
-        // XXX: always return false for now, to work around bug 1132128.
-        if (false && regexp()->isRegExp())
-            return !regexp()->toRegExp()->source()->needUpdateLastIndex();
-        return false;
+        return true;
     }
 };
 
@@ -9822,7 +9917,7 @@ class MLoadTypedArrayElementStatic
     }
 
     Scalar::Type accessType() const {
-        return AnyTypedArrayType(someTypedArray_);
+        return someTypedArray_->as<TypedArrayObject>().type();
     }
     SharedMem<void*> base() const;
     size_t length() const;
@@ -10059,7 +10154,7 @@ class MStoreTypedArrayElementStatic :
     MStoreTypedArrayElementStatic(JSObject* someTypedArray, MDefinition* ptr, MDefinition* v,
                                   int32_t offset, bool needsBoundsCheck)
         : MBinaryInstruction(ptr, v),
-          StoreUnboxedScalarBase(AnyTypedArrayType(someTypedArray)),
+          StoreUnboxedScalarBase(someTypedArray->as<TypedArrayObject>().type()),
           someTypedArray_(someTypedArray),
           offset_(offset), needsBoundsCheck_(needsBoundsCheck)
     {}
@@ -12581,7 +12676,10 @@ class MFilterTypeSet
     }
     void computeRange(TempAllocator& alloc) override;
 
-    bool isFloat32Commutative() const override { return true; }
+    bool isFloat32Commutative() const override {
+        return IsFloatingPointType(type());
+    }
+
     bool canProduceFloat32() const override;
     bool canConsumeFloat32(MUse* operand) const override;
     void trySpecializeFloat32(TempAllocator& alloc) override;
@@ -14135,9 +14233,9 @@ bool ElementAccessIsDenseNative(CompilerConstraintList* constraints,
                                 MDefinition* obj, MDefinition* id);
 JSValueType UnboxedArrayElementType(CompilerConstraintList* constraints, MDefinition* obj,
                                     MDefinition* id);
-bool ElementAccessIsAnyTypedArray(CompilerConstraintList* constraints,
-                                  MDefinition* obj, MDefinition* id,
-                                  Scalar::Type* arrayType);
+bool ElementAccessIsTypedArray(CompilerConstraintList* constraints,
+                               MDefinition* obj, MDefinition* id,
+                               Scalar::Type* arrayType);
 bool ElementAccessIsPacked(CompilerConstraintList* constraints, MDefinition* obj);
 bool ElementAccessMightBeCopyOnWrite(CompilerConstraintList* constraints, MDefinition* obj);
 bool ElementAccessHasExtraIndexedProperty(IonBuilder* builder, MDefinition* obj);

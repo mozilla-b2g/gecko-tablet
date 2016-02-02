@@ -6,11 +6,11 @@
 // Test that correct previews are shown if the text is edited after 'Show all'
 // button is pressed.
 
-const TEST_URI = BASE_URI + "browser_fontinspector.html";
+const TEST_URI = URL_ROOT + "browser_fontinspector.html";
 
 add_task(function*() {
-  let { inspector, fontInspector } = yield openFontInspectorForURL(TEST_URI);
-  let viewDoc = fontInspector.chromeDoc;
+  let { inspector, view } = yield openFontInspectorForURL(TEST_URI);
+  let viewDoc = view.chromeDoc;
 
   info("Selecting a node that doesn't contain all document fonts.");
   yield selectNode(".normal-text", inspector);
@@ -21,7 +21,7 @@ add_task(function*() {
   let onUpdated = inspector.once("fontinspector-updated");
 
   info("Clicking 'Select all' button.");
-  viewDoc.getElementById("showall").click();
+  viewDoc.getElementById("font-showall").click();
 
   info("Waiting for font-inspector to update.");
   yield onUpdated;
@@ -36,7 +36,7 @@ add_task(function*() {
     "The .normal-text didn't show all fonts.");
 
   info("Editing the preview text.");
-  yield updatePreviewText(fontInspector, "The quick brown");
+  yield updatePreviewText(view, "The quick brown");
 
   let numPreviews = viewDoc.querySelectorAll("#all-fonts .font-preview").length;
   is(numPreviews, allFontsNumPreviews,

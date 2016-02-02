@@ -24,7 +24,7 @@ public interface PanZoomController {
     static class Factory {
         static PanZoomController create(PanZoomTarget target, View view, EventDispatcher dispatcher) {
             if (org.mozilla.gecko.AppConstants.MOZ_ANDROID_APZ) {
-                return new NativePanZoomController(target, view, dispatcher);
+                return new NativePanZoomController(target, view);
             } else {
                 return new JavaPanZoomController(target, view, dispatcher);
             }
@@ -51,4 +51,6 @@ public interface PanZoomController {
     public void setOverscrollHandler(final Overscroll controller);
 
     public void setIsLongpressEnabled(boolean isLongpressEnabled);
+
+    public ImmutableViewportMetrics adjustScrollForSurfaceShift(ImmutableViewportMetrics aMetrics, PointF aShift);
 }

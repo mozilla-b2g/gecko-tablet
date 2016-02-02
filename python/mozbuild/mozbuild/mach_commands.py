@@ -39,6 +39,8 @@ from mozpack.manifests import (
     InstallManifest,
 )
 
+from mozbuild.backend import backends
+
 
 BUILD_WHAT_HELP = '''
 What to build. Can be a top-level make target or a relative directory. If
@@ -325,6 +327,8 @@ class Build(MachCommandBase):
                 if directory.startswith('/'):
                     directory = directory[1:]
 
+            status = None
+            monitor.start_resource_recording()
             if what:
                 top_make = os.path.join(self.topobjdir, 'Makefile')
                 if not os.path.exists(top_make):
@@ -382,8 +386,7 @@ class Build(MachCommandBase):
                 # backend. But that involves make reinvoking itself and there
                 # are undesired side-effects of this. See bug 877308 for a
                 # comprehensive history lesson.
-                self._run_make(directory=self.topobjdir,
-                    target='backend.RecursiveMakeBackend',
+                self._run_make(directory=self.topobjdir, target='backend',
                     line_handler=output.on_line, log=False,
                     print_directory=False)
 
@@ -417,7 +420,6 @@ class Build(MachCommandBase):
                     self.log(logging.DEBUG, 'artifact',
                              {}, "Not running |mach artifact install| -- it will be run by client.mk.")
 
-                monitor.start_resource_recording()
                 status = self._run_make(srcdir=True, filename='client.mk',
                     line_handler=output.on_line, log=False, print_directory=False,
                     allow_parallel=False, ensure_exit_code=False, num_jobs=jobs,
@@ -600,11 +602,13 @@ class Build(MachCommandBase):
         help='Show a diff of changes.')
     # It would be nice to filter the choices below based on
     # conditions, but that is for another day.
-    @CommandArgument('-b', '--backend', nargs='+',
-        choices=['RecursiveMake', 'AndroidEclipse', 'CppEclipse',
-                 'VisualStudio', 'FasterMake', 'CompileDB'],
+    @CommandArgument('-b', '--backend', nargs='+', choices=sorted(backends),
         help='Which backend to build.')
-    def build_backend(self, backend, diff=False):
+    @CommandArgument('-v', '--verbose', action='store_true',
+        help='Verbose output.')
+    @CommandArgument('-n', '--dry-run', action='store_true',
+        help='Do everything except writing files out.')
+    def build_backend(self, backend, diff=False, verbose=False, dry_run=False):
         python = self.virtualenv_manager.python_path
         config_status = os.path.join(self.topobjdir, 'config.status')
 
@@ -620,6 +624,10 @@ class Build(MachCommandBase):
             args.extend(backend)
         if diff:
             args.append('--diff')
+        if verbose:
+            args.append('--verbose')
+        if dry_run:
+            args.append('--dry-run')
 
         return self._run_command_in_objdir(args=args, pass_thru=True,
             ensure_exit_code=False)
@@ -633,7 +641,7 @@ class Build(MachCommandBase):
         self.log(logging.INFO, 'artifact',
                  {}, "Running |mach artifact install|.")
         args = [os.path.join(self.topsrcdir, 'mach'), 'artifact', 'install']
-        self._run_command_in_srcdir(args=args,
+        self._run_command_in_srcdir(args=args, require_unix_environment=True,
             pass_thru=True, ensure_exit_code=True)
 
 @CommandProvider
@@ -1008,8 +1016,11 @@ class Package(MachCommandBase):
 
     @Command('package', category='post-build',
         description='Package the built product for distribution as an APK, DMG, etc.')
-    def package(self):
-        ret = self._run_make(directory=".", target='package', ensure_exit_code=False)
+    @CommandArgument('-v', '--verbose', action='store_true',
+        help='Verbose output for what commands the packaging process is running.')
+    def package(self, verbose=False):
+        ret = self._run_make(directory=".", target='package',
+                             silent=not verbose, ensure_exit_code=False)
         if ret == 0:
             self.notify('Packaging complete')
         return ret
@@ -1120,7 +1131,7 @@ class RunProgram(MachCommandBase):
                 args.append('-profile')
                 args.append(path)
 
-        extra_env = {}
+        extra_env = {'MOZ_CRASHREPORTER_DISABLE': '1'}
 
         if debug or debugger or debugparams:
             import mozdebug
@@ -1148,8 +1159,6 @@ class RunProgram(MachCommandBase):
 
             if not slowscript:
                 extra_env['JS_DISABLE_SLOW_SCRIPT_SIGNALS'] = '1'
-
-            extra_env['MOZ_CRASHREPORTER_DISABLE'] = '1'
 
             # Prepend the debugger args.
             args = [self.debuggerInfo.path] + self.debuggerInfo.args + args
@@ -1397,10 +1406,19 @@ class MachDebug(MachCommandBase):
 class ArtifactSubCommand(SubCommand):
     def __call__(self, func):
         after = SubCommand.__call__(self, func)
+        jobchoices = {
+            'android-api-15',
+            'android-x86',
+            'linux',
+            'linux64',
+            'macosx64',
+            'win32',
+            'win64'
+        }
         args = [
             CommandArgument('--tree', metavar='TREE', type=str,
                 help='Firefox tree.'),
-            CommandArgument('--job', metavar='JOB', choices=['android-api-11', 'android-x86', 'macosx64'],
+            CommandArgument('--job', metavar='JOB', choices=jobchoices,
                 help='Build job.'),
             CommandArgument('--verbose', '-v', action='store_true',
                 help='Print verbose output.'),
@@ -1439,34 +1457,22 @@ class PackageFrontend(MachCommandBase):
     def _make_artifacts(self, tree=None, job=None):
         self._activate_virtualenv()
         self.virtualenv_manager.install_pip_package('pylru==1.0.9')
-        self.virtualenv_manager.install_pip_package('taskcluster==0.0.16')
+        self.virtualenv_manager.install_pip_package('taskcluster==0.0.32')
         self.virtualenv_manager.install_pip_package('mozregression==1.0.2')
 
         state_dir = self._mach_context.state_dir
         cache_dir = os.path.join(state_dir, 'package-frontend')
 
         import which
-        hg = which.which('hg')
+        if self._is_windows():
+          hg = which.which('hg.exe')
+        else:
+          hg = which.which('hg')
 
         # Absolutely must come after the virtualenv is populated!
         from mozbuild.artifacts import Artifacts
         artifacts = Artifacts(tree, job, log=self.log, cache_dir=cache_dir, hg=hg)
         return artifacts
-
-    def _compute_defaults(self, tree=None, job=None):
-        # Firefox front-end developers mostly use fx-team.  Post auto-land, make this central.
-        tree = tree or 'fx-team'
-        if job:
-            return (tree, job)
-        if self.substs.get('MOZ_BUILD_APP', '') == 'mobile/android':
-            if self.substs['ANDROID_CPU_ARCH'] == 'x86':
-                return (tree, 'android-x86')
-            return (tree, 'android-api-11')
-        if self.defines.get('XP_MACOSX', False):
-            # TODO: check for 64 bit builds.  We'd like to use HAVE_64BIT_BUILD
-            # but that relies on the compile environment.
-            return (tree, 'macosx64')
-        raise Exception('Cannot determine default tree and job for |mach artifact|!')
 
     @ArtifactSubCommand('artifact', 'install',
         'Install a good pre-built artifact.')
@@ -1477,28 +1483,14 @@ class PackageFrontend(MachCommandBase):
         default=None)
     def artifact_install(self, source=None, tree=None, job=None, verbose=False):
         self._set_log_level(verbose)
-        tree, job = self._compute_defaults(tree, job)
         artifacts = self._make_artifacts(tree=tree, job=job)
 
-        manifest_path = mozpath.join(self.topobjdir, '_build_manifests', 'install', 'dist_bin')
-        manifest = InstallManifest(manifest_path)
-
-        def install_callback(path, file_existed, file_updated):
-            if path not in manifest:
-                manifest.add_optional_exists(path)
-
-        retcode = artifacts.install_from(source, self.bindir, install_callback=install_callback)
-
-        if retcode == 0:
-            manifest.write(manifest_path)
-
-        return retcode
+        return artifacts.install_from(source, self.distdir)
 
     @ArtifactSubCommand('artifact', 'last',
         'Print the last pre-built artifact installed.')
     def artifact_print_last(self, tree=None, job=None, verbose=False):
         self._set_log_level(verbose)
-        tree, job = self._compute_defaults(tree, job)
         artifacts = self._make_artifacts(tree=tree, job=job)
         artifacts.print_last()
         return 0
@@ -1507,7 +1499,6 @@ class PackageFrontend(MachCommandBase):
         'Print local artifact cache for debugging.')
     def artifact_print_cache(self, tree=None, job=None, verbose=False):
         self._set_log_level(verbose)
-        tree, job = self._compute_defaults(tree, job)
         artifacts = self._make_artifacts(tree=tree, job=job)
         artifacts.print_cache()
         return 0
@@ -1516,7 +1507,6 @@ class PackageFrontend(MachCommandBase):
         'Delete local artifacts and reset local artifact cache.')
     def artifact_clear_cache(self, tree=None, job=None, verbose=False):
         self._set_log_level(verbose)
-        tree, job = self._compute_defaults(tree, job)
         artifacts = self._make_artifacts(tree=tree, job=job)
         artifacts.clear_cache()
         return 0

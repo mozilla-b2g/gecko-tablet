@@ -15,6 +15,7 @@ XPIDL_SOURCES += [
 XPIDL_MODULE = 'telemetry'
 
 EXPORTS.mozilla += [
+    '!TelemetryHistogramEnums.h',
     'ProcessedStack.h',
     'Telemetry.h',
     'ThreadHangStats.h',
@@ -81,3 +82,4 @@ LOCAL_INCLUDES += [
 ]
 
 SPHINX_TREES['telemetry'] = 'docs'
+SPHINX_TREES['healthreport'] = 'docs/fhr'

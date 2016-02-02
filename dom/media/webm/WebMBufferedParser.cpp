@@ -45,6 +45,7 @@ void WebMBufferedParser::Append(const unsigned char* aBuffer, uint32_t aLength,
   static const uint32_t CLUSTER_ID = 0x1f43b675;
   static const uint32_t TIMECODESCALE_ID = 0x2ad7b1;
   static const unsigned char TIMECODE_ID = 0xe7;
+  static const unsigned char BLOCKGROUP_ID = 0xa0;
   static const unsigned char BLOCK_ID = 0xa1;
   static const unsigned char SIMPLEBLOCK_ID = 0xa3;
   static const uint32_t BLOCK_TIMECODE_LENGTH = 2;
@@ -115,6 +116,9 @@ void WebMBufferedParser::Append(const unsigned char* aBuffer, uint32_t aLength,
         }
         mState = READ_ELEMENT_ID;
         break;
+      case BLOCKGROUP_ID:
+        mState = READ_ELEMENT_ID;
+        break;
       case SIMPLEBLOCK_ID:
         /* FALLTHROUGH */
       case BLOCK_ID:
@@ -133,7 +137,7 @@ void WebMBufferedParser::Append(const unsigned char* aBuffer, uint32_t aLength,
       case EBML_ID:
         mLastInitStartOffset = mCurrentOffset + (p - aBuffer) -
                             (mElement.mID.mLength + mElement.mSize.mLength);
-        /* FALLTHROUGH */
+        MOZ_FALLTHROUGH;
       default:
         mSkipBytes = mElement.mSize.mValue;
         mState = SKIP_DATA;

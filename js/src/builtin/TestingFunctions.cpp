@@ -7,7 +7,6 @@
 #include "builtin/TestingFunctions.h"
 
 #include "mozilla/Move.h"
-#include "mozilla/UniquePtr.h"
 
 #include <cmath>
 
@@ -20,6 +19,7 @@
 #include "jswrapper.h"
 
 #include "asmjs/AsmJS.h"
+#include "asmjs/Wasm.h"
 #include "jit/InlinableNatives.h"
 #include "jit/JitFrameIterator.h"
 #include "js/Debug.h"
@@ -27,6 +27,7 @@
 #include "js/StructuredClone.h"
 #include "js/UbiNode.h"
 #include "js/UbiNodeBreadthFirst.h"
+#include "js/UniquePtr.h"
 #include "js/Vector.h"
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
@@ -45,7 +46,6 @@ using namespace js;
 
 using mozilla::ArrayLength;
 using mozilla::Move;
-using mozilla::UniquePtr;
 
 // If fuzzingSafe is set, remove functionality that could cause problems with
 // fuzzers. Set this via the environment variable MOZ_FUZZING_SAFE.
@@ -330,43 +330,42 @@ MinorGC(JSContext* cx, unsigned argc, Value* vp)
     return true;
 }
 
-#define FOR_EACH_GC_PARAM(_)                                                            \
-    _("maxBytes",                   JSGC_MAX_BYTES,                      true,  false)  \
-    _("maxMallocBytes",             JSGC_MAX_MALLOC_BYTES,               true,  false)  \
-    _("gcBytes",                    JSGC_BYTES,                          false, false)  \
-    _("gcNumber",                   JSGC_NUMBER,                         false, false)  \
-    _("mode",                       JSGC_MODE,                           true,  true)   \
-    _("unusedChunks",               JSGC_UNUSED_CHUNKS,                  false, false)  \
-    _("totalChunks",                JSGC_TOTAL_CHUNKS,                   false, false)  \
-    _("sliceTimeBudget",            JSGC_SLICE_TIME_BUDGET,              true,  false)  \
-    _("markStackLimit",             JSGC_MARK_STACK_LIMIT,               true,  false)  \
-    _("highFrequencyTimeLimit",     JSGC_HIGH_FREQUENCY_TIME_LIMIT,      true,  false)  \
-    _("highFrequencyLowLimit",      JSGC_HIGH_FREQUENCY_LOW_LIMIT,       true,  false)  \
-    _("highFrequencyHighLimit",     JSGC_HIGH_FREQUENCY_HIGH_LIMIT,      true,  false)  \
-    _("highFrequencyHeapGrowthMax", JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MAX, true,  false)  \
-    _("highFrequencyHeapGrowthMin", JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MIN, true,  false)  \
-    _("lowFrequencyHeapGrowth",     JSGC_LOW_FREQUENCY_HEAP_GROWTH,      true,  false)  \
-    _("dynamicHeapGrowth",          JSGC_DYNAMIC_HEAP_GROWTH,            true,  true)   \
-    _("dynamicMarkSlice",           JSGC_DYNAMIC_MARK_SLICE,             true,  true)   \
-    _("allocationThreshold",        JSGC_ALLOCATION_THRESHOLD,           true,  false)  \
-    _("decommitThreshold",          JSGC_DECOMMIT_THRESHOLD,             true,  false)  \
-    _("minEmptyChunkCount",         JSGC_MIN_EMPTY_CHUNK_COUNT,          true,  true)   \
-    _("maxEmptyChunkCount",         JSGC_MAX_EMPTY_CHUNK_COUNT,          true,  true)   \
-    _("compactingEnabled",          JSGC_COMPACTING_ENABLED,             true,  true)
+#define FOR_EACH_GC_PARAM(_)                                                    \
+    _("maxBytes",                   JSGC_MAX_BYTES,                      true)  \
+    _("maxMallocBytes",             JSGC_MAX_MALLOC_BYTES,               true)  \
+    _("gcBytes",                    JSGC_BYTES,                          false) \
+    _("gcNumber",                   JSGC_NUMBER,                         false) \
+    _("mode",                       JSGC_MODE,                           true)  \
+    _("unusedChunks",               JSGC_UNUSED_CHUNKS,                  false) \
+    _("totalChunks",                JSGC_TOTAL_CHUNKS,                   false) \
+    _("sliceTimeBudget",            JSGC_SLICE_TIME_BUDGET,              true)  \
+    _("markStackLimit",             JSGC_MARK_STACK_LIMIT,               true)  \
+    _("highFrequencyTimeLimit",     JSGC_HIGH_FREQUENCY_TIME_LIMIT,      true)  \
+    _("highFrequencyLowLimit",      JSGC_HIGH_FREQUENCY_LOW_LIMIT,       true)  \
+    _("highFrequencyHighLimit",     JSGC_HIGH_FREQUENCY_HIGH_LIMIT,      true)  \
+    _("highFrequencyHeapGrowthMax", JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MAX, true)  \
+    _("highFrequencyHeapGrowthMin", JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MIN, true)  \
+    _("lowFrequencyHeapGrowth",     JSGC_LOW_FREQUENCY_HEAP_GROWTH,      true)  \
+    _("dynamicHeapGrowth",          JSGC_DYNAMIC_HEAP_GROWTH,            true)  \
+    _("dynamicMarkSlice",           JSGC_DYNAMIC_MARK_SLICE,             true)  \
+    _("allocationThreshold",        JSGC_ALLOCATION_THRESHOLD,           true)  \
+    _("decommitThreshold",          JSGC_DECOMMIT_THRESHOLD,             true)  \
+    _("minEmptyChunkCount",         JSGC_MIN_EMPTY_CHUNK_COUNT,          true)  \
+    _("maxEmptyChunkCount",         JSGC_MAX_EMPTY_CHUNK_COUNT,          true)  \
+    _("compactingEnabled",          JSGC_COMPACTING_ENABLED,             true)
 
 static const struct ParamInfo {
     const char*     name;
     JSGCParamKey    param;
     bool            writable;
-    bool            allowZero;
 } paramMap[] = {
-#define DEFINE_PARAM_INFO(name, key, writable, allowZero)                     \
-    {name, key, writable, allowZero},
+#define DEFINE_PARAM_INFO(name, key, writable)                                  \
+    {name, key, writable},
 FOR_EACH_GC_PARAM(DEFINE_PARAM_INFO)
 #undef DEFINE_PARAM_INFO
 };
 
-#define PARAM_NAME_LIST_ENTRY(name, key, writable, allowZero)                 \
+#define PARAM_NAME_LIST_ENTRY(name, key, writable)                              \
     " " name
 #define GC_PARAMETER_ARGS_LIST FOR_EACH_GC_PARAM(PARAM_NAME_LIST_ENTRY)
 
@@ -423,12 +422,6 @@ GCParameter(JSContext* cx, unsigned argc, Value* vp)
     }
 
     uint32_t value = floor(d);
-    if (!info.allowZero && value == 0) {
-        JS_ReportError(cx, "the second argument must be convertable to uint32_t "
-                           "with non-zero value");
-        return false;
-    }
-
     if (param == JSGC_MARK_STACK_LIMIT && JS::IsIncrementalGCInProgress(cx->runtime())) {
         JS_ReportError(cx, "attempt to set markStackLimit while a GC is in progress");
         return false;
@@ -445,7 +438,18 @@ GCParameter(JSContext* cx, unsigned argc, Value* vp)
         }
     }
 
-    JS_SetGCParameter(cx->runtime(), param, value);
+    bool ok;
+    {
+        JSRuntime* rt = cx->runtime();
+        AutoLockGC lock(rt);
+        ok = rt->gc.setParameter(param, value, lock);
+    }
+
+    if (!ok) {
+        JS_ReportError(cx, "Parameter value out of range");
+        return false;
+    }
+
     args.rval().setUndefined();
     return true;
 }
@@ -818,22 +822,6 @@ AbortGC(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static bool
-ValidateGC(JSContext* cx, unsigned argc, Value* vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-
-    if (args.length() != 1) {
-        RootedObject callee(cx, &args.callee());
-        ReportUsageError(cx, callee, "Wrong number of arguments");
-        return false;
-    }
-
-    cx->runtime()->gc.setValidate(ToBoolean(args[0]));
-    args.rval().setUndefined();
-    return true;
-}
-
-static bool
 FullCompartmentChecks(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1138,10 +1126,29 @@ OOMTest(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
-    if (args.length() != 1 || !args[0].isObject() || !args[0].toObject().is<JSFunction>()) {
-        JS_ReportError(cx, "oomTest() takes a single function argument.");
+    if (args.length() < 1 || args.length() > 2) {
+        JS_ReportError(cx, "oomTest() takes between 1 and 2 arguments.");
         return false;
     }
+
+    if (!args[0].isObject() || !args[0].toObject().is<JSFunction>()) {
+        JS_ReportError(cx, "The first argument to oomTest() must be a function.");
+        return false;
+    }
+
+    if (args.length() == 2 && !args[1].isBoolean()) {
+        JS_ReportError(cx, "The optional second argument to oomTest() must be a boolean.");
+        return false;
+    }
+
+    bool expectExceptionOnFailure = true;
+    if (args.length() == 2)
+        expectExceptionOnFailure = args[1].toBoolean();
+
+    // There are some places where we do fail without raising an exception, so
+    // we can't expose this to the fuzzers by default.
+    if (fuzzingSafe)
+        expectExceptionOnFailure = false;
 
     if (disableOOMFunctions) {
         args.rval().setUndefined();
@@ -1199,6 +1206,16 @@ OOMTest(JSContext* cx, unsigned argc, Value* vp)
             OOM_maxAllocations = UINT32_MAX;
 
             MOZ_ASSERT_IF(ok, !cx->isExceptionPending());
+
+            if (ok) {
+                MOZ_ASSERT(!cx->isExceptionPending(),
+                           "Thunk execution succeeded but an exception was raised - "
+                           "missing error check?");
+            } else if (expectExceptionOnFailure) {
+                MOZ_ASSERT(cx->isExceptionPending(),
+                           "Thunk execution failed but no exception was raised - "
+                           "missing call to js::ReportOutOfMemory()?");
+            }
 
             // Note that it is possible that the function throws an exception
             // unconnected to OOM, in which case we ignore it. More correct
@@ -2033,12 +2050,12 @@ Deserialize(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static bool
-Neuter(JSContext* cx, unsigned argc, Value* vp)
+DetachArrayBuffer(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
     if (args.length() != 2) {
-        JS_ReportError(cx, "wrong number of arguments to neuter()");
+        JS_ReportError(cx, "wrong number of arguments to detachArrayBuffer()");
         return false;
     }
 
@@ -2047,27 +2064,28 @@ Neuter(JSContext* cx, unsigned argc, Value* vp)
         return false;
 
     if (!obj) {
-        JS_ReportError(cx, "neuter must be passed an object");
+        JS_ReportError(cx, "detachArrayBuffer must be passed an object");
         return false;
     }
 
-    NeuterDataDisposition changeData;
     RootedString str(cx, JS::ToString(cx, args[1]));
     if (!str)
         return false;
     JSAutoByteString dataDisposition(cx, str);
     if (!dataDisposition)
         return false;
+
+    DetachDataDisposition changeData;
     if (strcmp(dataDisposition.ptr(), "same-data") == 0) {
         changeData = KeepData;
     } else if (strcmp(dataDisposition.ptr(), "change-data") == 0) {
         changeData = ChangeData;
     } else {
-        JS_ReportError(cx, "unknown parameter 2 to neuter()");
+        JS_ReportError(cx, "unknown parameter 2 to detachArrayBuffer()");
         return false;
     }
 
-    if (!JS_NeuterArrayBuffer(cx, obj, changeData))
+    if (!JS_DetachArrayBuffer(cx, obj, changeData))
         return false;
 
     args.rval().setUndefined();
@@ -2143,11 +2161,7 @@ static bool
 SharedMemoryEnabled(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-#ifdef ENABLE_SHARED_ARRAY_BUFFER
-    args.rval().setBoolean(true);
-#else
-    args.rval().setBoolean(false);
-#endif
+    args.rval().setBoolean(cx->compartment()->creationOptions().getSharedMemoryAndAtomicsEnabled());
     return true;
 }
 
@@ -2305,7 +2319,7 @@ ReportLargeAllocationFailure(JSContext* cx, unsigned argc, Value* vp)
 
 namespace heaptools {
 
-typedef UniquePtr<char16_t[], JS::FreePolicy> EdgeName;
+typedef UniqueTwoByteChars EdgeName;
 
 // An edge to a node from its predecessor in a path through the graph.
 class BackEdge {
@@ -2497,7 +2511,11 @@ FindPath(JSContext* cx, unsigned argc, Value* vp)
         if (!obj)
             return false;
 
-        if (!JS_DefineProperty(cx, obj, "node", nodes[i],
+        RootedValue wrapped(cx, nodes[i]);
+        if (!cx->compartment()->wrap(cx, &wrapped))
+            return false;
+
+        if (!JS_DefineProperty(cx, obj, "node", wrapped,
                                JSPROP_ENUMERATE, nullptr, nullptr))
             return false;
 
@@ -2544,10 +2562,10 @@ EvalReturningScope(JSContext* cx, unsigned argc, Value* vp)
     size_t srclen = chars.length();
     const char16_t* src = chars.start().get();
 
-    JS::AutoFilename filename;
+    JS::UniqueChars filename;
     unsigned lineno;
 
-    DescribeScriptedCaller(cx, &filename, &lineno);
+    JS::DescribeScriptedCaller(cx, &filename, &lineno);
 
     JS::CompileOptions options(cx);
     options.setFileAndLine(filename.get(), lineno);
@@ -2630,10 +2648,10 @@ ShellCloneAndExecuteScript(JSContext* cx, unsigned argc, Value* vp)
     size_t srclen = chars.length();
     const char16_t* src = chars.start().get();
 
-    JS::AutoFilename filename;
+    JS::UniqueChars filename;
     unsigned lineno;
 
-    DescribeScriptedCaller(cx, &filename, &lineno);
+    JS::DescribeScriptedCaller(cx, &filename, &lineno);
 
     JS::CompileOptions options(cx);
     options.setFileAndLine(filename.get(), lineno);
@@ -3247,10 +3265,13 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "  oomAtAllocation() and return whether any allocation had been caused to fail."),
 
     JS_FN_HELP("oomTest", OOMTest, 0, 0,
-"oomTest(function)",
+"oomTest(function, [expectExceptionOnFailure = true])",
 "  Test that the passed function behaves correctly under OOM conditions by\n"
 "  repeatedly executing it and simulating allocation failure at successive\n"
-"  allocations until the function completes without seeing a failure."),
+"  allocations until the function completes without seeing a failure.\n"
+"  By default this tests that an exception is raised if execution fails, but\n"
+"  this can be disabled by passing false as the optional second parameter.\n"
+"  This is also disabled when --fuzzing-safe is specified."),
 #endif
 
     JS_FN_HELP("makeFakePromise", MakeFakePromise, 0, 0,
@@ -3325,10 +3346,6 @@ gc::ZealModeHelpText),
     JS_FN_HELP("abortgc", AbortGC, 1, 0,
 "abortgc()",
 "  Abort the current incremental GC."),
-
-    JS_FN_HELP("validategc", ValidateGC, 1, 0,
-"validategc(true|false)",
-"  If true, a separate validation step is performed after an incremental GC."),
 
     JS_FN_HELP("fullcompartmentchecks", FullCompartmentChecks, 1, 0,
 "fullcompartmentchecks(true|false)",
@@ -3473,12 +3490,12 @@ gc::ZealModeHelpText),
 "deserialize(clonebuffer)",
 "  Deserialize data generated by serialize."),
 
-    JS_FN_HELP("neuter", Neuter, 1, 0,
-"neuter(buffer, \"change-data\"|\"same-data\")",
-"  Neuter the given ArrayBuffer object as if it had been transferred to a\n"
-"  WebWorker. \"change-data\" will update the internal data pointer.\n"
-"  \"same-data\" will leave it set to its original value, to mimic eg\n"
-"  asm.js ArrayBuffer neutering."),
+    JS_FN_HELP("detachArrayBuffer", DetachArrayBuffer, 1, 0,
+"detachArrayBuffer(buffer, \"change-data\"|\"same-data\")",
+"  Detach the given ArrayBuffer object from its memory, i.e. as if it\n"
+"  had been transferred to a WebWorker. \"change-data\" will update\n"
+"  the internal data pointer.  \"same-data\" will leave it set to \n"
+"  its original value, mimicking, e.g.,  asm.js ArrayBuffer detaching."),
 
     JS_FN_HELP("helperThreadCount", HelperThreadCount, 0, 0,
 "helperThreadCount()",
@@ -3656,6 +3673,9 @@ js::DefineTestingFunctions(JSContext* cx, HandleObject obj, bool fuzzingSafe_,
         fuzzingSafe = true;
 
     disableOOMFunctions = disableOOMFunctions_;
+
+    if (!wasm::DefineTestingFunctions(cx, obj))
+        return false;
 
     if (!JS_DefineProperties(cx, obj, TestingProperties))
         return false;

@@ -13,7 +13,6 @@
 #include "mozilla/PodOperations.h"
 #include "mozilla/Range.h"
 #include "mozilla/TypeTraits.h"
-#include "mozilla/UniquePtr.h"
 
 #include <ctype.h>
 #include <string.h>
@@ -34,6 +33,7 @@
 #include "builtin/RegExp.h"
 #include "jit/InlinableNatives.h"
 #include "js/Conversions.h"
+#include "js/UniquePtr.h"
 #if ENABLE_INTL_API
 #include "unicode/unorm.h"
 #endif
@@ -69,7 +69,6 @@ using mozilla::Move;
 using mozilla::PodCopy;
 using mozilla::PodEqual;
 using mozilla::RangedPtr;
-using mozilla::UniquePtr;
 
 using JS::AutoCheckCannotGC;
 
@@ -1129,13 +1128,13 @@ FirstCharMatcherUnrolled(const TextChar* text, uint32_t n, const PatChar pat)
     const TextChar* t = text;
 
     switch ((textend - t) & 7) {
-        case 0: if (*t++ == pat) return t - 1;
-        case 7: if (*t++ == pat) return t - 1;
-        case 6: if (*t++ == pat) return t - 1;
-        case 5: if (*t++ == pat) return t - 1;
-        case 4: if (*t++ == pat) return t - 1;
-        case 3: if (*t++ == pat) return t - 1;
-        case 2: if (*t++ == pat) return t - 1;
+        case 0: if (*t++ == pat) return t - 1; MOZ_FALLTHROUGH;
+        case 7: if (*t++ == pat) return t - 1; MOZ_FALLTHROUGH;
+        case 6: if (*t++ == pat) return t - 1; MOZ_FALLTHROUGH;
+        case 5: if (*t++ == pat) return t - 1; MOZ_FALLTHROUGH;
+        case 4: if (*t++ == pat) return t - 1; MOZ_FALLTHROUGH;
+        case 3: if (*t++ == pat) return t - 1; MOZ_FALLTHROUGH;
+        case 2: if (*t++ == pat) return t - 1; MOZ_FALLTHROUGH;
         case 1: if (*t++ == pat) return t - 1;
     }
     while (textend != t) {
@@ -4352,7 +4351,7 @@ static const JSFunctionSpec string_static_methods[] = {
     JS_INLINABLE_FN("fromCharCode", js::str_fromCharCode, 1, 0, StringFromCharCode),
 
     JS_SELF_HOSTED_FN("fromCodePoint",   "String_static_fromCodePoint", 1,0),
-    JS_SELF_HOSTED_FN("raw",             "String_static_raw",           2,0),
+    JS_SELF_HOSTED_FN("raw",             "String_static_raw",           2,JSFUN_HAS_REST),
     JS_SELF_HOSTED_FN("substring",       "String_static_substring",     3,0),
     JS_SELF_HOSTED_FN("substr",          "String_static_substr",        3,0),
     JS_SELF_HOSTED_FN("slice",           "String_static_slice",         3,0),
@@ -4710,7 +4709,7 @@ js_strcmp(const char16_t* lhs, const char16_t* rhs)
     }
 }
 
-UniquePtr<char[], JS::FreePolicy>
+UniqueChars
 js::DuplicateString(js::ExclusiveContext* cx, const char* s)
 {
     size_t n = strlen(s) + 1;
@@ -4721,7 +4720,7 @@ js::DuplicateString(js::ExclusiveContext* cx, const char* s)
     return ret;
 }
 
-UniquePtr<char16_t[], JS::FreePolicy>
+UniqueTwoByteChars
 js::DuplicateString(js::ExclusiveContext* cx, const char16_t* s)
 {
     size_t n = js_strlen(s) + 1;
@@ -4732,11 +4731,17 @@ js::DuplicateString(js::ExclusiveContext* cx, const char16_t* s)
     return ret;
 }
 
-UniquePtr<char16_t[], JS::FreePolicy>
+UniqueChars
+js::DuplicateString(const char* s)
+{
+    return UniqueChars(js_strdup(s));
+}
+
+UniqueTwoByteChars
 js::DuplicateString(const char16_t* s)
 {
     size_t n = js_strlen(s) + 1;
-    UniquePtr<char16_t[], JS::FreePolicy> ret(js_pod_malloc<char16_t>(n));
+    UniqueTwoByteChars ret(js_pod_malloc<char16_t>(n));
     if (!ret)
         return nullptr;
     PodCopy(ret.get(), s, n);

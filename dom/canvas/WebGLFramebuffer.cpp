@@ -20,6 +20,8 @@ WebGLFBAttachPoint::WebGLFBAttachPoint(WebGLFramebuffer* fb, GLenum attachmentPo
     : mFB(fb)
     , mAttachmentPoint(attachmentPoint)
     , mTexImageTarget(LOCAL_GL_NONE)
+    , mTexImageLayer(0)
+    , mTexImageLevel(0)
 { }
 
 WebGLFBAttachPoint::~WebGLFBAttachPoint()
@@ -476,9 +478,11 @@ WebGLFBAttachPoint::GetParameter(const char* funcName, WebGLContext* webgl, JSCo
         if (webgl->IsWebGL2() ||
             webgl->IsExtensionEnabled(WebGLExtensionID::EXT_sRGB))
         {
-            const auto format = Format()->format;
-            return JS::Int32Value(format->isSRGB ? LOCAL_GL_SRGB
-                                                 : LOCAL_GL_LINEAR);
+            const auto format = Format();
+            if (!format)
+                return JS::NullValue();
+            return JS::Int32Value(format->format->isSRGB ? LOCAL_GL_SRGB
+                                                         : LOCAL_GL_LINEAR);
         }
         break;
 
@@ -843,11 +847,10 @@ WebGLFramebuffer::PrecheckFramebufferStatus(nsCString* const out_info) const
     if (HasIncompleteAttachments(out_info))
         return LOCAL_GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
 
-    if (!mContext->IsWebGL2()) {
-        // INCOMPLETE_DIMENSIONS doesn't exist in GLES3.
-        if (!AllImageRectsMatch())
-            return LOCAL_GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS; // Inconsistent sizes
+    if (!AllImageRectsMatch())
+        return LOCAL_GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS; // Inconsistent sizes
 
+    if (!mContext->IsWebGL2()) {
         const auto depthOrStencilCount = int(mDepthAttachment.IsDefined()) +
                                          int(mStencilAttachment.IsDefined()) +
                                          int(mDepthStencilAttachment.IsDefined());
@@ -985,7 +988,13 @@ WebGLFramebuffer::ValidateAndInitAttachments(const char* funcName)
     }
 
     // Clear!
-    mContext->ForceClearFramebufferWithDefaultValues(clearBits, false);
+    {
+        // This FB maybe bind to GL_READ_FRAMEBUFFER and glClear only
+        // clear GL_DRAW_FRAMEBUFFER. So bind FB to GL_DRAW_FRAMEBUFFER
+        // here.
+        gl::ScopedBindFramebuffer autoFB(mContext->gl, mGLName);
+        mContext->ForceClearFramebufferWithDefaultValues(clearBits, false);
+    }
 
     if (hasDrawBuffers) {
         fnDrawBuffers(mDrawBuffers);
@@ -1146,6 +1155,8 @@ WebGLFramebuffer::GetAttachmentParameter(const char* funcName, JSContext* cx,
 
         attachPoint = GetAttachPoint(LOCAL_GL_DEPTH_ATTACHMENT);
     }
+
+    FinalizeAttachments();
 
     return attachPoint->GetParameter(funcName, mContext, cx, target, attachment, pname,
                                      out_error);

@@ -154,8 +154,7 @@ class UpdateTestCase(FirefoxTestCase):
 
             # No further updates should be offered now with the same update type
             if update_available:
-                about_window.download(wait_for_finish=False)
-
+                self.download_update(about_window, wait_for_finish=False)
                 self.assertNotEqual(self.software_update.active_update.type,
                                     self.updates[self.current_update_index].type)
 
@@ -331,7 +330,7 @@ class UpdateTestCase(FirefoxTestCase):
                                 'Available update has been found')
 
                 # Download update and wait until it has been applied
-                self.download(about_window)
+                self.download_update(about_window)
                 self.wait_for_update_applied(about_window)
 
             finally:

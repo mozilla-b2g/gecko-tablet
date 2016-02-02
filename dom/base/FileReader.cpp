@@ -13,6 +13,7 @@
 #include "nsIStreamTransportService.h"
 
 #include "mozilla/Base64.h"
+#include "mozilla/CheckedInt.h"
 #include "mozilla/dom/DOMError.h"
 #include "mozilla/dom/EncodingUtils.h"
 #include "mozilla/dom/File.h"
@@ -98,9 +99,9 @@ FileReader::RootResultArrayBuffer()
 
 //FileReader constructors/initializers
 
-FileReader::FileReader(nsPIDOMWindow* aWindow,
+FileReader::FileReader(nsIGlobalObject* aGlobal,
                        WorkerPrivate* aWorkerPrivate)
-  : DOMEventTargetHelper(aWindow)
+  : DOMEventTargetHelper(aGlobal)
   , mFileData(nullptr)
   , mDataLen(0)
   , mDataFormat(FILE_AS_BINARY)
@@ -114,8 +115,8 @@ FileReader::FileReader(nsPIDOMWindow* aWindow,
   , mBusyCount(0)
   , mWorkerPrivate(aWorkerPrivate)
 {
-  MOZ_ASSERT_IF(!NS_IsMainThread(), mWorkerPrivate && !aWindow);
-  MOZ_ASSERT_IF(NS_IsMainThread(), !mWorkerPrivate);
+  MOZ_ASSERT(aGlobal);
+  MOZ_ASSERT(NS_IsMainThread() == !mWorkerPrivate);
   SetDOMStringToNull(mResult);
 }
 
@@ -128,8 +129,7 @@ FileReader::~FileReader()
 /* static */ already_AddRefed<FileReader>
 FileReader::Constructor(const GlobalObject& aGlobal, ErrorResult& aRv)
 {
-  // The owner can be null when this object is used by chrome code.
-  nsCOMPtr<nsPIDOMWindow> owner = do_QueryInterface(aGlobal.GetAsSupports());
+  nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
   WorkerPrivate* workerPrivate = nullptr;
 
   if (!NS_IsMainThread()) {
@@ -138,14 +138,7 @@ FileReader::Constructor(const GlobalObject& aGlobal, ErrorResult& aRv)
     MOZ_ASSERT(workerPrivate);
   }
 
-  RefPtr<FileReader> fileReader = new FileReader(owner, workerPrivate);
-
-  if (!owner && nsContentUtils::ThreadsafeIsCallerChrome()) {
-    // Instead of grabbing some random global from the context stack,
-    // let's use the default one (junk scope) for now.
-    // We should move away from this Init...
-    fileReader->BindToOwner(xpc::NativeGlobal(xpc::PrivilegedJunkScope()));
-  }
+  RefPtr<FileReader> fileReader = new FileReader(global, workerPrivate);
 
   return fileReader.forget();
 }
@@ -242,17 +235,7 @@ FileReader::DoOnLoadEnd(nsresult aStatus,
   switch (mDataFormat) {
     case FILE_AS_ARRAYBUFFER: {
       AutoJSAPI jsapi;
-      nsCOMPtr<nsIGlobalObject> globalObject;
-
-      if (NS_IsMainThread()) {
-        globalObject = do_QueryInterface(GetParentObject());
-      } else {
-        MOZ_ASSERT(mWorkerPrivate);
-        MOZ_ASSERT(mBusyCount);
-        globalObject = mWorkerPrivate->GlobalScope();
-      }
-
-      if (!globalObject || !jsapi.Init(globalObject)) {
+      if (!jsapi.Init(GetParentObject())) {
         FreeFileData();
         return NS_ERROR_FAILURE;
       }
@@ -333,11 +316,17 @@ FileReader::DoReadData(uint64_t aCount)
     NS_ASSERTION(bytesRead == aCount, "failed to read data");
   }
   else {
+    CheckedInt<uint64_t> size = mDataLen;
+    size += aCount;
+
     //Update memory buffer to reflect the contents of the file
-    if (mDataLen + aCount > UINT32_MAX) {
-      // PR_Realloc doesn't support over 4GB memory size even if 64-bit OS
+    if (!size.isValid() ||
+        // PR_Realloc doesn't support over 4GB memory size even if 64-bit OS
+        size.value() > UINT32_MAX ||
+        size.value() > mTotal) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
+
     if (mDataFormat != FILE_AS_ARRAYBUFFER) {
       mFileData = (char *) realloc(mFileData, mDataLen + aCount);
       NS_ENSURE_TRUE(mFileData, NS_ERROR_OUT_OF_MEMORY);
@@ -364,6 +353,14 @@ FileReader::ReadFileContent(Blob& aBlob,
   ErrorResult error;
   Abort(error);
   error.SuppressException();
+
+  if (mReadyState == LOADING) {
+    // A nested ReadAsSomething() as been called during one of the events
+    // dispatched by Abort(). We have to terminate this operation in order to
+    // continue the nested one.
+    aRv.Throw(NS_ERROR_ABORT);
+    return;
+  }
 
   mError = nullptr;
   SetDOMStringToNull(mResult);

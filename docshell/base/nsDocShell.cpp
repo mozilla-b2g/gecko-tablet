@@ -106,6 +106,7 @@
 #include "nsEscape.h"
 
 // Interfaces Needed
+#include "nsIFormPOSTActionChannel.h"
 #include "nsIUploadChannel.h"
 #include "nsIUploadChannel2.h"
 #include "nsIWebProgress.h"
@@ -805,6 +806,7 @@ nsDocShell::nsDocShell()
   , mBlankTiming(false)
   , mFrameType(eFrameTypeRegular)
   , mOwnOrContainingAppId(nsIScriptSecurityManager::UNKNOWN_APP_ID)
+  , mUserContextId(nsIScriptSecurityManager::DEFAULT_USER_CONTEXT_ID)
   , mParentCharsetSource(0)
   , mJSRunToCompletionDepth(0)
 {
@@ -962,7 +964,8 @@ nsDocShell::GetInterface(const nsIID& aIID, void** aSink)
     *aSink = mContentListener;
   } else if ((aIID.Equals(NS_GET_IID(nsIScriptGlobalObject)) ||
               aIID.Equals(NS_GET_IID(nsIGlobalObject)) ||
-              aIID.Equals(NS_GET_IID(nsPIDOMWindow)) ||
+              aIID.Equals(NS_GET_IID(nsPIDOMWindowOuter)) ||
+              aIID.Equals(NS_GET_IID(mozIDOMWindowProxy)) ||
               aIID.Equals(NS_GET_IID(nsIDOMWindow)) ||
               aIID.Equals(NS_GET_IID(nsIDOMWindowInternal))) &&
              NS_SUCCEEDED(EnsureScriptEnvironment())) {
@@ -1010,7 +1013,7 @@ nsDocShell::GetInterface(const nsIID& aIID, void** aSink)
     // Get the an auth prompter for our window so that the parenting
     // of the dialogs works as it should when using tabs.
     nsIPrompt* prompt;
-    rv = wwatch->GetNewPrompter(mScriptGlobal, &prompt);
+    rv = wwatch->GetNewPrompter(mScriptGlobal->AsOuter(), &prompt);
     NS_ENSURE_SUCCESS(rv, rv);
 
     *aSink = prompt;
@@ -1078,8 +1081,7 @@ nsDocShell::GetInterface(const nsIID& aIID, void** aSink)
     if (tabChild) {
       tabChild->GetMessageManager(getter_AddRefs(mm));
     } else {
-      nsCOMPtr<nsPIDOMWindow> win = GetWindow();
-      if (win) {
+      if (nsPIDOMWindowOuter* win = GetWindow()) {
         mm = do_QueryInterface(win->GetParentTarget());
       }
     }
@@ -1715,7 +1717,8 @@ nsDocShell::MaybeInitTiming()
   }
 
   if (mScriptGlobal && mBlankTiming) {
-    nsPIDOMWindow* innerWin = mScriptGlobal->GetCurrentInnerWindow();
+    nsPIDOMWindowInner* innerWin =
+      mScriptGlobal->AsOuter()->GetCurrentInnerWindow();
     if (innerWin && innerWin->GetPerformance()) {
       mTiming = innerWin->GetPerformance()->GetDOMTiming();
       mBlankTiming = false;
@@ -2428,8 +2431,8 @@ nsDocShell::SetAllowMedia(bool aAllowMedia)
 
   // Mute or unmute audio contexts attached to the inner window.
   if (mScriptGlobal) {
-    nsPIDOMWindow* innerWin = mScriptGlobal->GetCurrentInnerWindow();
-    if (innerWin) {
+    if (nsPIDOMWindowInner* innerWin =
+        mScriptGlobal->AsOuter()->GetCurrentInnerWindow()) {
       if (aAllowMedia) {
         innerWin->UnmuteAudioContexts();
       } else {
@@ -2515,7 +2518,7 @@ nsDocShell::GetFullscreenAllowed(bool* aFullscreenAllowed)
   // Assume false until we determine otherwise...
   *aFullscreenAllowed = false;
 
-  nsCOMPtr<nsPIDOMWindow> win = GetWindow();
+  nsCOMPtr<nsPIDOMWindowOuter> win = GetWindow();
   if (!win) {
     return NS_OK;
   }
@@ -2970,14 +2973,15 @@ nsDocShell::GetSessionStorageForPrincipal(nsIPrincipal* aPrincipal,
     return NS_ERROR_UNEXPECTED;
   }
 
-  nsCOMPtr<nsIDOMWindow> domWin = do_GetInterface(GetAsSupports(this));
+  nsCOMPtr<nsPIDOMWindowOuter> domWin = do_GetInterface(GetAsSupports(this));
 
   if (aCreate) {
-    return manager->CreateStorage(domWin, aPrincipal, aDocumentURI,
-                                  mInPrivateBrowsing, aStorage);
+    return manager->CreateStorage(domWin->GetCurrentInnerWindow(), aPrincipal,
+                                  aDocumentURI, mInPrivateBrowsing, aStorage);
   }
 
-  return manager->GetStorage(domWin, aPrincipal, mInPrivateBrowsing, aStorage);
+  return manager->GetStorage(domWin->GetCurrentInnerWindow(), aPrincipal,
+                             mInPrivateBrowsing, aStorage);
 }
 
 nsresult
@@ -3543,13 +3547,13 @@ nsDocShell::CanAccessItem(nsIDocShellTreeItem* aTargetItem,
     return false;
   }
 
-  nsCOMPtr<nsPIDOMWindow> targetWindow = aTargetItem->GetWindow();
+  nsCOMPtr<nsPIDOMWindowOuter> targetWindow = aTargetItem->GetWindow();
   if (!targetWindow) {
     NS_ERROR("This should not happen, really");
     return false;
   }
 
-  nsCOMPtr<nsIDOMWindow> targetOpener = targetWindow->GetOpener();
+  nsCOMPtr<mozIDOMWindowProxy> targetOpener = targetWindow->GetOpener();
   nsCOMPtr<nsIWebNavigation> openerWebNav(do_GetInterface(targetOpener));
   nsCOMPtr<nsIDocShellTreeItem> openerItem(do_QueryInterface(openerWebNav));
 
@@ -3563,8 +3567,8 @@ nsDocShell::CanAccessItem(nsIDocShellTreeItem* aTargetItem,
 static bool
 ItemIsActive(nsIDocShellTreeItem* aItem)
 {
-  if (nsCOMPtr<nsIDOMWindow> window = aItem->GetWindow()) {
-    auto* win = static_cast<nsGlobalWindow*>(window.get());
+  if (nsCOMPtr<nsPIDOMWindowOuter> window = aItem->GetWindow()) {
+    auto* win = nsGlobalWindow::Cast(window);
     MOZ_ASSERT(win->IsOuterWindow());
     if (!win->GetClosedOuter()) {
       return true;
@@ -3821,7 +3825,7 @@ PrintDocTree(nsIDocShellTreeItem* aParentNode, int aLevel)
   parentAsDocShell->GetPresContext(getter_AddRefs(presContext));
   nsIDocument* doc = presShell->GetDocument();
 
-  nsCOMPtr<nsIDOMWindow> domwin(doc->GetWindow());
+  nsCOMPtr<nsPIDOMWindowOuter> domwin(doc->GetWindow());
 
   nsCOMPtr<nsIWidget> widget;
   nsViewManager* vm = presShell->GetViewManager();
@@ -4010,6 +4014,7 @@ nsDocShell::AddChild(nsIDocShellTreeItem* aChild)
   }
 
   aChild->SetTreeOwner(mTreeOwner);
+  childDocShell->SetUserContextId(mUserContextId);
 
   nsCOMPtr<nsIDocShell> childAsDocShell(do_QueryInterface(aChild));
   if (!childAsDocShell) {
@@ -4439,13 +4444,13 @@ nsDocShell::GetDocument()
   return mContentViewer->GetDocument();
 }
 
-nsPIDOMWindow*
+nsPIDOMWindowOuter*
 nsDocShell::GetWindow()
 {
   if (NS_FAILED(EnsureScriptEnvironment())) {
     return nullptr;
   }
-  return mScriptGlobal;
+  return mScriptGlobal->AsOuter();
 }
 
 NS_IMETHODIMP
@@ -5776,6 +5781,23 @@ nsDocShell::GetUnscaledDevicePixelsPerCSSPixel(double* aScale)
   nsCOMPtr<nsIBaseWindow> ownerWindow(do_QueryInterface(mTreeOwner));
   if (ownerWindow) {
     return ownerWindow->GetUnscaledDevicePixelsPerCSSPixel(aScale);
+  }
+
+  *aScale = 1.0;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocShell::GetDevicePixelsPerDesktopPixel(double* aScale)
+{
+  if (mParentWidget) {
+    *aScale = mParentWidget->GetDesktopToDeviceScale().scale;
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIBaseWindow> ownerWindow(do_QueryInterface(mTreeOwner));
+  if (ownerWindow) {
+    return ownerWindow->GetDevicePixelsPerDesktopPixel(aScale);
   }
 
   *aScale = 1.0;
@@ -7555,7 +7577,7 @@ nsDocShell::EndPageLoad(nsIWebProgress* aProgress,
     if (isTopFrame == false && aStatus == NS_ERROR_TRACKING_URI) {
       // frameElement is our nsIContent to be annotated
       nsCOMPtr<nsIDOMElement> frameElement;
-      nsPIDOMWindow* thisWindow = GetWindow();
+      nsPIDOMWindowOuter* thisWindow = GetWindow();
       if (!thisWindow) {
         return NS_OK;
       }
@@ -7794,8 +7816,7 @@ nsDocShell::EnsureContentViewer()
   nsCOMPtr<nsIDocShellTreeItem> parentItem;
   GetSameTypeParent(getter_AddRefs(parentItem));
   if (parentItem) {
-    nsCOMPtr<nsPIDOMWindow> domWin = GetWindow();
-    if (domWin) {
+    if (nsCOMPtr<nsPIDOMWindowOuter> domWin = GetWindow()) {
       nsCOMPtr<Element> parentElement = domWin->GetFrameElementInternal();
       if (parentElement) {
         baseURI = parentElement->GetBaseURI();
@@ -8648,8 +8669,7 @@ nsDocShell::RestoreFromHistory()
                                           d->AnimationsPaused());
         }
 
-        nsCOMPtr<nsPIDOMWindow> parentWindow = d->GetWindow();
-        if (parentWindow) {
+        if (nsCOMPtr<nsPIDOMWindowOuter> parentWindow = d->GetWindow()) {
           parentSuspendCount = parentWindow->TimeoutSuspendCount();
         }
       }
@@ -8668,7 +8688,7 @@ nsDocShell::RestoreFromHistory()
   // This is the end of our CreateContentViewer() replacement.
   // Now we simulate a load.  First, we restore the state of the javascript
   // window object.
-  nsCOMPtr<nsPIDOMWindow> privWin = GetWindow();
+  nsCOMPtr<nsPIDOMWindowOuter> privWin = GetWindow();
   NS_ASSERTION(privWin, "could not get nsPIDOMWindow interface");
 
   rv = privWin->RestoreWindowState(windowState);
@@ -9588,7 +9608,7 @@ nsDocShell::InternalLoad(nsIURI* aURI,
   nsCOMPtr<Element> requestingElement;
   // Use nsPIDOMWindow since we _want_ to cross the chrome boundary if needed
   if (mScriptGlobal) {
-    requestingElement = mScriptGlobal->GetFrameElementInternal();
+    requestingElement = mScriptGlobal->AsOuter()->GetFrameElementInternal();
   }
 
   RefPtr<nsGlobalWindow> MMADeathGrip = mScriptGlobal;
@@ -9742,11 +9762,11 @@ nsDocShell::InternalLoad(nsIURI* aURI,
         }
       }
 
-      nsCOMPtr<nsPIDOMWindow> win = GetWindow();
+      nsCOMPtr<nsPIDOMWindowOuter> win = GetWindow();
       NS_ENSURE_TRUE(win, NS_ERROR_NOT_AVAILABLE);
 
       nsDependentString name(aWindowTarget);
-      nsCOMPtr<nsIDOMWindow> newWin;
+      nsCOMPtr<nsPIDOMWindowOuter> newWin;
       nsAutoCString spec;
       if (aURI) {
         aURI->GetSpec(spec);
@@ -9759,7 +9779,7 @@ nsDocShell::InternalLoad(nsIURI* aURI,
       // In some cases the Open call doesn't actually result in a new
       // window being opened.  We can detect these cases by examining the
       // document in |newWin|, if any.
-      nsCOMPtr<nsPIDOMWindow> piNewWin = do_QueryInterface(newWin);
+      nsCOMPtr<nsPIDOMWindowOuter> piNewWin = do_QueryInterface(newWin);
       if (piNewWin) {
         nsCOMPtr<nsIDocument> newDoc = piNewWin->GetExtantDoc();
         if (!newDoc || newDoc->IsInitialDocument()) {
@@ -9812,7 +9832,7 @@ nsDocShell::InternalLoad(nsIURI* aURI,
           // So, the best we can do, is to tear down the new window
           // that was just created!
           //
-          if (nsCOMPtr<nsPIDOMWindow> domWin = targetDocShell->GetWindow()) {
+          if (nsCOMPtr<nsPIDOMWindowOuter> domWin = targetDocShell->GetWindow()) {
             domWin->Close();
           }
         }
@@ -10167,7 +10187,7 @@ nsDocShell::InternalLoad(nsIURI* aURI,
           win->DispatchSyncPopState();
         }
 
-        if (needsScrollPosUpdate && win->HasActiveDocument()) {
+        if (needsScrollPosUpdate && win->AsInner()->HasActiveDocument()) {
           SetCurScrollPosEx(bx, by);
         }
 
@@ -10510,7 +10530,7 @@ nsDocShell::DoURILoad(nsIURI* aURI,
     rv = aURI->SchemeIs("about", &isAbout);
     if (NS_SUCCEEDED(rv) && !isAbout &&
         nsIDocShell::GetIsApp()) {
-      nsCOMPtr<Element> frameElement = mScriptGlobal->GetFrameElementInternal();
+      nsCOMPtr<Element> frameElement = mScriptGlobal->AsOuter()->GetFrameElementInternal();
       if (frameElement) {
         nsCOMPtr<nsIMozBrowserFrame> browserFrame = do_QueryInterface(frameElement);
         // |GetReallyIsApp| indicates the browser frame is a valid app or widget.
@@ -10534,7 +10554,7 @@ nsDocShell::DoURILoad(nsIURI* aURI,
 
   nsCOMPtr<nsINode> requestingNode;
   if (mScriptGlobal) {
-    requestingNode = mScriptGlobal->GetFrameElementInternal();
+    requestingNode = mScriptGlobal->AsOuter()->GetFrameElementInternal();
     if (!requestingNode) {
       requestingNode = mScriptGlobal->GetExtantDoc();
     }
@@ -10748,21 +10768,20 @@ nsDocShell::DoURILoad(nsIURI* aURI,
   }
 
   nsCOMPtr<nsICacheInfoChannel> cacheChannel(do_QueryInterface(channel));
-  nsCOMPtr<nsIUploadChannel> uploadChannel(do_QueryInterface(channel));
-
-
   /* Get the cache Key from SH */
   nsCOMPtr<nsISupports> cacheKey;
-  if (mLSHE) {
-    mLSHE->GetCacheKey(getter_AddRefs(cacheKey));
-  } else if (mOSHE) {  // for reload cases
-    mOSHE->GetCacheKey(getter_AddRefs(cacheKey));
+  if (cacheChannel) {
+    if (mLSHE) {
+      mLSHE->GetCacheKey(getter_AddRefs(cacheKey));
+    } else if (mOSHE) {  // for reload cases
+      mOSHE->GetCacheKey(getter_AddRefs(cacheKey));
+    }
   }
 
-  if (uploadChannel) {
-    // figure out if we need to set the post data stream on the channel...
-    // right now, this is only done for http channels.....
-    if (aPostData) {
+  // figure out if we need to set the post data stream on the channel...
+  if (aPostData) {
+    nsCOMPtr<nsIFormPOSTActionChannel> postChannel(do_QueryInterface(channel));
+    if (postChannel) {
       // XXX it's a bit of a hack to rewind the postdata stream here but
       // it has to be done in case the post data is being reused multiple
       // times.
@@ -10774,38 +10793,39 @@ nsDocShell::DoURILoad(nsIURI* aURI,
       }
 
       // we really need to have a content type associated with this stream!!
-      uploadChannel->SetUploadStream(aPostData, EmptyCString(), -1);
-      /* If there is a valid postdata *and* it is a History Load,
-       * set up the cache key on the channel, to retrieve the
-       * data *only* from the cache. If it is a normal reload, the
-       * cache is free to go to the server for updated postdata.
-       */
-      if (cacheChannel && cacheKey) {
-        if (mLoadType == LOAD_HISTORY ||
-            mLoadType == LOAD_RELOAD_CHARSET_CHANGE) {
-          cacheChannel->SetCacheKey(cacheKey);
-          uint32_t loadFlags;
-          if (NS_SUCCEEDED(channel->GetLoadFlags(&loadFlags))) {
-            channel->SetLoadFlags(
-              loadFlags | nsICachingChannel::LOAD_ONLY_FROM_CACHE);
-          }
-        } else if (mLoadType == LOAD_RELOAD_NORMAL) {
-          cacheChannel->SetCacheKey(cacheKey);
-        }
-      }
-    } else {
-      /* If there is no postdata, set the cache key on the channel, and
-       * do not set the LOAD_ONLY_FROM_CACHE flag, so that the channel
-       * will be free to get it from net if it is not found in cache.
-       * New cache may use it creatively on CGI pages with GET
-       * method and even on those that say "no-cache"
-       */
+      postChannel->SetUploadStream(aPostData, EmptyCString(), -1);
+    }
+
+    /* If there is a valid postdata *and* it is a History Load,
+     * set up the cache key on the channel, to retrieve the
+     * data *only* from the cache. If it is a normal reload, the
+     * cache is free to go to the server for updated postdata.
+     */
+    if (cacheChannel && cacheKey) {
       if (mLoadType == LOAD_HISTORY ||
-          mLoadType == LOAD_RELOAD_NORMAL ||
           mLoadType == LOAD_RELOAD_CHARSET_CHANGE) {
-        if (cacheChannel && cacheKey) {
-          cacheChannel->SetCacheKey(cacheKey);
+        cacheChannel->SetCacheKey(cacheKey);
+        uint32_t loadFlags;
+        if (NS_SUCCEEDED(channel->GetLoadFlags(&loadFlags))) {
+          channel->SetLoadFlags(
+            loadFlags | nsICachingChannel::LOAD_ONLY_FROM_CACHE);
         }
+      } else if (mLoadType == LOAD_RELOAD_NORMAL) {
+        cacheChannel->SetCacheKey(cacheKey);
+      }
+    }
+  } else {
+    /* If there is no postdata, set the cache key on the channel, and
+     * do not set the LOAD_ONLY_FROM_CACHE flag, so that the channel
+     * will be free to get it from net if it is not found in cache.
+     * New cache may use it creatively on CGI pages with GET
+     * method and even on those that say "no-cache"
+     */
+    if (mLoadType == LOAD_HISTORY ||
+        mLoadType == LOAD_RELOAD_NORMAL ||
+        mLoadType == LOAD_RELOAD_CHARSET_CHANGE) {
+      if (cacheChannel && cacheKey) {
+        cacheChannel->SetCacheKey(cacheKey);
       }
     }
   }
@@ -10965,9 +10985,15 @@ nsDocShell::DoChannelLoad(nsIChannel* aChannel,
       break;
     }
 
-    case LOAD_RELOAD_CHARSET_CHANGE:
-      loadFlags |= nsIRequest::LOAD_FROM_CACHE;
+    case LOAD_RELOAD_CHARSET_CHANGE: {
+      // Use SetAllowStaleCacheContent (not LOAD_FROM_CACHE flag) since we only want
+      // to force cache load for this channel, not the whole loadGroup.
+      nsCOMPtr<nsICacheInfoChannel> cachingChannel = do_QueryInterface(aChannel);
+      if (cachingChannel) {
+        cachingChannel->SetAllowStaleCacheContent(true);
+      }
       break;
+    }
 
     case LOAD_RELOAD_NORMAL:
     case LOAD_REFRESH:
@@ -12515,13 +12541,9 @@ nsDocShell::ShouldDiscardLayoutState(nsIHttpChannel* aChannel)
   }
 
   // figure out if SH should be saving layout state
-  nsCOMPtr<nsISupports> securityInfo;
-  bool noStore = false, noCache = false;
-  aChannel->GetSecurityInfo(getter_AddRefs(securityInfo));
+  bool noStore = false;
   aChannel->IsNoStoreResponse(&noStore);
-  aChannel->IsNoCacheResponse(&noCache);
-
-  return (noStore || (noCache && securityInfo));
+  return noStore;
 }
 
 NS_IMETHODIMP
@@ -12942,8 +12964,8 @@ nsDocShell::EnsureFind()
   NS_ENSURE_TRUE(scriptGO, NS_ERROR_UNEXPECTED);
 
   // default to our window
-  nsCOMPtr<nsPIDOMWindow> ourWindow = do_QueryInterface(scriptGO);
-  nsCOMPtr<nsPIDOMWindow> windowToSearch;
+  nsCOMPtr<nsPIDOMWindowOuter> ourWindow = do_QueryInterface(scriptGO);
+  nsCOMPtr<nsPIDOMWindowOuter> windowToSearch;
   nsFocusManager::GetFocusedDescendant(ourWindow, true,
                                        getter_AddRefs(windowToSearch));
 
@@ -13116,7 +13138,7 @@ nsDocShell::GetAuthPrompt(uint32_t aPromptReason, const nsIID& aIID,
   // Get the an auth prompter for our window so that the parenting
   // of the dialogs works as it should when using tabs.
 
-  return wwatch->GetPrompt(mScriptGlobal, aIID,
+  return wwatch->GetPrompt(mScriptGlobal->AsOuter(), aIID,
                            reinterpret_cast<void**>(aResult));
 }
 
@@ -13125,16 +13147,16 @@ nsDocShell::GetAuthPrompt(uint32_t aPromptReason, const nsIID& aIID,
 //*****************************************************************************
 
 NS_IMETHODIMP
-nsDocShell::GetAssociatedWindow(nsIDOMWindow** aWindow)
+nsDocShell::GetAssociatedWindow(mozIDOMWindowProxy** aWindow)
 {
   CallGetInterface(this, aWindow);
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsDocShell::GetTopWindow(nsIDOMWindow** aWindow)
+nsDocShell::GetTopWindow(mozIDOMWindowProxy** aWindow)
 {
-  nsCOMPtr<nsPIDOMWindow> win = GetWindow();
+  nsCOMPtr<nsPIDOMWindowOuter> win = GetWindow();
   if (win) {
     win = win->GetTop();
   }
@@ -13146,12 +13168,12 @@ NS_IMETHODIMP
 nsDocShell::GetTopFrameElement(nsIDOMElement** aElement)
 {
   *aElement = nullptr;
-  nsCOMPtr<nsPIDOMWindow> win = GetWindow();
+  nsCOMPtr<nsPIDOMWindowOuter> win = GetWindow();
   if (!win) {
     return NS_OK;
   }
 
-  nsCOMPtr<nsPIDOMWindow> top = win->GetScriptableTop();
+  nsCOMPtr<nsPIDOMWindowOuter> top = win->GetScriptableTop();
   NS_ENSURE_TRUE(top, NS_ERROR_FAILURE);
 
   // GetFrameElementInternal, /not/ GetScriptableFrameElement -- if |top| is
@@ -13273,7 +13295,7 @@ nsDocShell::EnsureCommandHandler()
       return NS_ERROR_OUT_OF_MEMORY;
     }
 
-    nsCOMPtr<nsIDOMWindow> domWindow = GetWindow();
+    nsCOMPtr<nsPIDOMWindowOuter> domWindow = GetWindow();
     nsresult rv = commandUpdater->Init(domWindow);
     if (NS_SUCCEEDED(rv)) {
       mCommandManager = do_QueryInterface(commandUpdater);
@@ -13562,10 +13584,10 @@ nsDocShell::OnLinkClickSync(nsIContent* aContent,
   // Now check that the refererDoc's inner window is the current inner
   // window for mScriptGlobal.  If it's not, then we don't want to
   // follow this link.
-  nsPIDOMWindow* refererInner = refererDoc->GetInnerWindow();
+  nsPIDOMWindowInner* refererInner = refererDoc->GetInnerWindow();
   NS_ENSURE_TRUE(refererInner, NS_ERROR_UNEXPECTED);
   if (!mScriptGlobal ||
-      mScriptGlobal->GetCurrentInnerWindow() != refererInner) {
+      mScriptGlobal->AsOuter()->GetCurrentInnerWindow() != refererInner) {
     // We're no longer the current inner window
     return NS_OK;
   }
@@ -13840,6 +13862,17 @@ NS_IMETHODIMP
 nsDocShell::SetUserContextId(uint32_t aUserContextId)
 {
   mUserContextId = aUserContextId;
+
+  nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
+  while (iter.HasMore()) {
+    nsCOMPtr<nsIDocShell> docshell = do_QueryObject(iter.GetNext());
+    if (!docshell || docshell->ItemType() != ItemType()) {
+      continue;
+    }
+
+    docshell->SetUserContextId(aUserContextId);
+  }
+
   return NS_OK;
 }
 
@@ -14056,7 +14089,7 @@ nsDocShell::NotifyJSRunToCompletionStart(const char* aReason,
     RefPtr<TimelineConsumers> timelines = TimelineConsumers::Get();
     if (timelines && timelines->HasConsumer(this)) {
       timelines->AddMarkerForDocShell(this, Move(
-        MakeUnique<JavascriptTimelineMarker>(
+        mozilla::MakeUnique<JavascriptTimelineMarker>(
           aReason, aFunctionName, aFilename, aLineNumber, MarkerTracingType::START,
           aAsyncStack, aAsyncCause)));
     }

@@ -115,6 +115,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "ReaderMode", "resource://gre/modules/Re
 
 XPCOMUtils.defineLazyModuleGetter(this, "Snackbars", "resource://gre/modules/Snackbars.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "RuntimePermissions", "resource://gre/modules/RuntimePermissions.jsm");
+
 XPCOMUtils.defineLazyServiceGetter(this, "FontEnumerator",
   "@mozilla.org/gfx/fontenumerator;1",
   "nsIFontEnumerator");
@@ -395,7 +397,6 @@ function InitLater(fn, object, name) {
 var BrowserApp = {
   _tabs: [],
   _selectedTab: null,
-  _prefObservers: [],
 
   get isTablet() {
     let sysInfo = Cc["@mozilla.org/system-info;1"].getService(Ci.nsIPropertyBag2);
@@ -435,7 +436,6 @@ var BrowserApp = {
     Services.obs.addObserver(this, "Session:Stop", false);
     Services.obs.addObserver(this, "SaveAs:PDF", false);
     Services.obs.addObserver(this, "Browser:Quit", false);
-    Services.obs.addObserver(this, "Preferences:Set", false);
     Services.obs.addObserver(this, "ScrollTo:FocusedInput", false);
     Services.obs.addObserver(this, "Sanitize:ClearData", false);
     Services.obs.addObserver(this, "FullScreen:Exit", false);
@@ -443,6 +443,8 @@ var BrowserApp = {
     Services.obs.addObserver(this, "Viewport:Flush", false);
     Services.obs.addObserver(this, "Passwords:Init", false);
     Services.obs.addObserver(this, "FormHistory:Init", false);
+    Services.obs.addObserver(this, "android-get-pref", false);
+    Services.obs.addObserver(this, "android-set-pref", false);
     Services.obs.addObserver(this, "gather-telemetry", false);
     Services.obs.addObserver(this, "keyword-search", false);
     Services.obs.addObserver(this, "webapps-runtime-install", false);
@@ -492,7 +494,6 @@ var BrowserApp = {
     NativeWindow.init();
     FormAssistant.init();
     IndexedDB.init();
-    HealthReportStatusListener.init();
     XPInstallObserver.init();
     CharacterEncoding.init();
     ActivityObserver.init();
@@ -1041,7 +1042,7 @@ var BrowserApp = {
   },
 
   _migrateUI: function() {
-    const UI_VERSION = 1;
+    const UI_VERSION = 2;
     let currentUIVersion = 0;
     try {
       currentUIVersion = Services.prefs.getIntPref("browser.migration.version");
@@ -1084,6 +1085,25 @@ var BrowserApp = {
       // Power users can go into about:config to re-enable this if they choose.
       if (Services.prefs.prefHasUserValue("nglayout.debug.paint_flashing")) {
         Services.prefs.clearUserPref("nglayout.debug.paint_flashing");
+      }
+    }
+
+    if (currentUIVersion < 2) {
+      let name;
+      if (Services.prefs.prefHasUserValue("browser.search.defaultenginename")) {
+        name = Services.prefs.getCharPref("browser.search.defaultenginename");
+      }
+      if (!name && Services.prefs.prefHasUserValue("browser.search.defaultenginename.US")) {
+        name = Services.prefs.getCharPref("browser.search.defaultenginename.US");
+      }
+      if (name) {
+        Services.search.init(() => {
+          let engine = Services.search.getEngineByName(name);
+          if (engine) {
+            Services.search.defaultEngine = engine;
+            Services.obs.notifyObservers(null, "default-search-engine-migrated", "");
+          }
+        });
       }
     }
 
@@ -1421,35 +1441,35 @@ var BrowserApp = {
   },
 
   saveAsPDF: function saveAsPDF(aBrowser) {
-    Task.spawn(function* () {
-      let fileName = ContentAreaUtils.getDefaultFileName(aBrowser.contentTitle, aBrowser.currentURI, null, null);
-      fileName = fileName.trim() + ".pdf";
+    RuntimePermissions.waitForPermissions(RuntimePermissions.WRITE_EXTERNAL_STORAGE).then(function(permissionGranted) {
+      if (!permissionGranted) {
+        return;
+      }
 
-      let downloadsDir = yield Downloads.getPreferredDownloadsDirectory();
-      let file = OS.Path.join(downloadsDir, fileName);
+      Task.spawn(function* () {
+        let fileName = ContentAreaUtils.getDefaultFileName(aBrowser.contentTitle, aBrowser.currentURI, null, null);
+        fileName = fileName.trim() + ".pdf";
 
-      // Force this to have a unique name.
-      let openedFile = yield OS.File.openUnique(file, { humanReadable: true });
-      file = openedFile.path;
-      yield openedFile.file.close();
+        let downloadsDir = yield Downloads.getPreferredDownloadsDirectory();
+        let file = OS.Path.join(downloadsDir, fileName);
 
-      let download = yield Downloads.createDownload({
-        source: aBrowser.contentWindow,
-        target: file,
-        saver: "pdf",
-        startTime: Date.now(),
+        // Force this to have a unique name.
+        let openedFile = yield OS.File.openUnique(file, { humanReadable: true });
+        file = openedFile.path;
+        yield openedFile.file.close();
+
+        let download = yield Downloads.createDownload({
+          source: aBrowser.contentWindow,
+          target: file,
+          saver: "pdf",
+          startTime: Date.now(),
+        });
+
+        let list = yield Downloads.getList(download.source.isPrivate ? Downloads.PRIVATE : Downloads.PUBLIC)
+        yield list.add(download);
+        yield download.start();
       });
-
-      let list = yield Downloads.getList(download.source.isPrivate ? Downloads.PRIVATE : Downloads.PUBLIC)
-      yield list.add(download);
-      yield download.start();
     });
-  },
-
-  notifyPrefObservers: function(aPref) {
-    this._prefObservers[aPref].forEach(function(aRequestId) {
-      this.getPreferences(aRequestId, [aPref], 1);
-    }, this);
   },
 
   // These values come from pref_tracking_protection_entries in arrays.xml.
@@ -1469,205 +1489,6 @@ var BrowserApp = {
       return this.PREF_TRACKING_PROTECTION_ENABLED_PB;
     }
     return this.PREF_TRACKING_PROTECTION_DISABLED;
-  },
-
-  handlePreferencesRequest: function handlePreferencesRequest(aRequestId,
-                                                              aPrefNames,
-                                                              aListen) {
-
-    let prefs = [];
-
-    for (let prefName of aPrefNames) {
-      let pref = {
-        name: prefName,
-        type: "",
-        value: null
-      };
-
-      if (aListen) {
-        if (this._prefObservers[prefName])
-          this._prefObservers[prefName].push(aRequestId);
-        else
-          this._prefObservers[prefName] = [ aRequestId ];
-        Services.prefs.addObserver(prefName, this, false);
-      }
-
-      // These pref names are not "real" pref names.
-      // They are used in the setting menu,
-      // and these are passed when initializing the setting menu.
-      switch (prefName) {
-        // The plugin pref is actually two separate prefs, so
-        // we need to handle it differently
-        case "plugin.enable":
-          pref.type = "string";// Use a string type for java's ListPreference
-          pref.value = PluginHelper.getPluginPreference();
-          prefs.push(pref);
-          continue;
-        // Handle master password
-        case "privacy.masterpassword.enabled":
-          pref.type = "bool";
-          pref.value = MasterPassword.enabled;
-          prefs.push(pref);
-          continue;
-        case "privacy.trackingprotection.state": {
-          pref.type = "string";
-          pref.value = this.getTrackingProtectionState();
-          prefs.push(pref);
-          continue;
-        }
-        // Crash reporter submit pref must be fetched from nsICrashReporter service.
-        case "datareporting.crashreporter.submitEnabled":
-          let crashReporterBuilt = "nsICrashReporter" in Ci && Services.appinfo instanceof Ci.nsICrashReporter;
-          if (crashReporterBuilt) {
-            pref.type = "bool";
-            pref.value = Services.appinfo.submitReports;
-            prefs.push(pref);
-          }
-          continue;
-      }
-
-      try {
-        switch (Services.prefs.getPrefType(prefName)) {
-          case Ci.nsIPrefBranch.PREF_BOOL:
-            pref.type = "bool";
-            pref.value = Services.prefs.getBoolPref(prefName);
-            break;
-          case Ci.nsIPrefBranch.PREF_INT:
-            pref.type = "int";
-            pref.value = Services.prefs.getIntPref(prefName);
-            break;
-          case Ci.nsIPrefBranch.PREF_STRING:
-          default:
-            pref.type = "string";
-            try {
-              // Try in case it's a localized string (will throw an exception if not)
-              pref.value = Services.prefs.getComplexValue(prefName, Ci.nsIPrefLocalizedString).data;
-            } catch (e) {
-              pref.value = Services.prefs.getCharPref(prefName);
-            }
-            break;
-        }
-      } catch (e) {
-        dump("Error reading pref [" + prefName + "]: " + e);
-        // preference does not exist; do not send it
-        continue;
-      }
-
-      // Some Gecko preferences use integers or strings to reference
-      // state instead of directly representing the value.
-      // Since the Java UI uses the type to determine which ui elements
-      // to show and how to handle them, we need to normalize these
-      // preferences to the correct type.
-      switch (prefName) {
-        // (string) index for determining which multiple choice value to display.
-        case "browser.chrome.titlebarMode":
-        case "network.cookie.cookieBehavior":
-        case "font.size.inflation.minTwips":
-        case "home.sync.updateMode":
-        case "browser.image_blocking":
-          pref.type = "string";
-          pref.value = pref.value.toString();
-          break;
-      }
-
-      prefs.push(pref);
-    }
-
-    Messaging.sendRequest({
-      type: "Preferences:Data",
-      requestId: aRequestId,    // opaque request identifier, can be any string/int/whatever
-      preferences: prefs
-    });
-  },
-
-  setPreferences: function (aPref) {
-    let json = JSON.parse(aPref);
-
-    switch (json.name) {
-      // The plugin pref is actually two separate prefs, so
-      // we need to handle it differently
-      case "plugin.enable":
-        PluginHelper.setPluginPreference(json.value);
-        return;
-
-      // MasterPassword pref is not real, we just need take action and leave
-      case "privacy.masterpassword.enabled":
-        if (MasterPassword.enabled)
-          MasterPassword.removePassword(json.value);
-        else
-          MasterPassword.setPassword(json.value);
-        return;
-
-      // "privacy.trackingprotection.state" is not a "real" pref name, but it's used in the setting menu.
-      // By default "privacy.trackingprotection.pbmode.enabled" is true,
-      // and "privacy.trackingprotection.enabled" is false.
-      case "privacy.trackingprotection.state": {
-        switch (json.value) {
-          // Tracking protection disabled.
-          case this.PREF_TRACKING_PROTECTION_DISABLED:
-            Services.prefs.setBoolPref("privacy.trackingprotection.pbmode.enabled", false);
-            Services.prefs.setBoolPref("privacy.trackingprotection.enabled", false);
-            break;
-          // Tracking protection only in private browsing,
-          case this.PREF_TRACKING_PROTECTION_ENABLED_PB:
-            Services.prefs.setBoolPref("privacy.trackingprotection.pbmode.enabled", true);
-            Services.prefs.setBoolPref("privacy.trackingprotection.enabled", false);
-            break;
-          // Tracking protection everywhere.
-          case this.PREF_TRACKING_PROTECTION_ENABLED:
-            Services.prefs.setBoolPref("privacy.trackingprotection.pbmode.enabled", true);
-            Services.prefs.setBoolPref("privacy.trackingprotection.enabled", true);
-            break;
-        }
-        return;
-      }
-      // Enabling or disabling suggestions will prevent future prompts
-      case SearchEngines.PREF_SUGGEST_ENABLED:
-        Services.prefs.setBoolPref(SearchEngines.PREF_SUGGEST_PROMPTED, true);
-        break;
-
-      // Crash reporter preference is in a service; set and return.
-      case "datareporting.crashreporter.submitEnabled":
-        let crashReporterBuilt = "nsICrashReporter" in Ci && Services.appinfo instanceof Ci.nsICrashReporter;
-        if (crashReporterBuilt) {
-          Services.appinfo.submitReports = json.value;
-        }
-        return;
-
-      // When sending to Java, we normalized special preferences that use
-      // integers and strings to represent booleans. Here, we convert them back
-      // to their actual types so we can store them.
-      case "browser.chrome.titlebarMode":
-      case "network.cookie.cookieBehavior":
-      case "font.size.inflation.minTwips":
-      case "home.sync.updateMode":
-      case "browser.image_blocking":
-        json.type = "int";
-        json.value = parseInt(json.value);
-        break;
-    }
-
-    switch (json.type) {
-      case "bool":
-        Services.prefs.setBoolPref(json.name, json.value);
-        break;
-      case "int":
-        Services.prefs.setIntPref(json.name, json.value);
-        break;
-      default: {
-        let pref = Cc["@mozilla.org/pref-localizedstring;1"].createInstance(Ci.nsIPrefLocalizedString);
-        pref.data = json.value;
-        Services.prefs.setComplexValue(json.name, Ci.nsISupportsString, pref);
-        break;
-      }
-    }
-
-    // Finally, if we were asked to flush, flush prefs to disk right now.
-    // This allows us to be confident that prefs set in Settings are persisted,
-    // even if we crash very soon after.
-    if (json.flush) {
-      Services.prefs.savePrefFile(null);
-    }
   },
 
   sanitize: function (aItems, callback) {
@@ -1750,15 +1571,22 @@ var BrowserApp = {
     if (formHelperMode == kFormHelperModeDisabled)
       return;
 
-    let focused = this.getFocusedInput(aBrowser);
-
-    if (focused) {
-      let shouldZoom = Services.prefs.getBoolPref("formhelper.autozoom");
-      if (formHelperMode == kFormHelperModeDynamic && this.isTablet)
-        shouldZoom = false;
-      // ZoomHelper.zoomToElement will handle not sending any message if this input is already mostly filling the screen
-      ZoomHelper.zoomToElement(focused, -1, false,
-          aAllowZoom && shouldZoom && !ViewportHandler.isViewportSpecified(aBrowser.contentWindow));
+    if (!AppConstants.MOZ_ANDROID_APZ) {
+      let focused = this.getFocusedInput(aBrowser);
+      if (focused) {
+        let shouldZoom = Services.prefs.getBoolPref("formhelper.autozoom");
+        if (formHelperMode == kFormHelperModeDynamic && this.isTablet)
+          shouldZoom = false;
+        // ZoomHelper.zoomToElement will handle not sending any message if this input is already mostly filling the screen
+        ZoomHelper.zoomToElement(focused, -1, false,
+            aAllowZoom && shouldZoom && !ViewportHandler.isViewportSpecified(aBrowser.contentWindow));
+      }
+    } else {
+      // Using a timeout to let the viewport propagate to the compositor thread before requesting a pan and zoom animation
+      // so the element will end up in the middle of the correctly sized viewport. See Bug 1231517.
+      setTimeout(function(e) {
+        aBrowser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils).zoomToFocusedInput();
+      }, 500);
     }
   },
 
@@ -1965,10 +1793,6 @@ var BrowserApp = {
         this.saveAsPDF(browser);
         break;
 
-      case "Preferences:Set":
-        this.setPreferences(aData);
-        break;
-
       case "ScrollTo:FocusedInput":
         // these messages come from a change in the viewable area and not user interaction
         // we allow scrolling to the selected input, but not zooming the page
@@ -2007,16 +1831,117 @@ var BrowserApp = {
         break;
       }
 
+      case "android-get-pref": {
+        // These pref names are not "real" pref names. They are used in the
+        // setting menu, and these are passed when initializing the setting
+        // menu. aSubject is a nsIWritableVariant to hold the pref value.
+        aSubject.QueryInterface(Ci.nsIWritableVariant);
+
+        switch (aData) {
+          // The plugin pref is actually two separate prefs, so
+          // we need to handle it differently
+          case "plugin.enable":
+            aSubject.setAsAString(PluginHelper.getPluginPreference());
+            break;
+
+          // Handle master password
+          case "privacy.masterpassword.enabled":
+            aSubject.setAsBool(MasterPassword.enabled);
+            break;
+
+          case "privacy.trackingprotection.state": {
+            aSubject.setAsAString(this.getTrackingProtectionState());
+            break;
+          }
+
+          // Crash reporter submit pref must be fetched from nsICrashReporter
+          // service.
+          case "datareporting.crashreporter.submitEnabled":
+            let crashReporterBuilt = "nsICrashReporter" in Ci &&
+                Services.appinfo instanceof Ci.nsICrashReporter;
+            if (crashReporterBuilt) {
+              aSubject.setAsBool(Services.appinfo.submitReports);
+            }
+            break;
+        }
+        break;
+      }
+
+      case "android-set-pref": {
+        // Pseudo-prefs. aSubject is an nsIWritableVariant that holds the pref
+        // value. Set to empty to signal the pref was handled.
+        aSubject.QueryInterface(Ci.nsIWritableVariant);
+        let value = aSubject.QueryInterface(Ci.nsIVariant);
+
+        switch (aData) {
+          // The plugin pref is actually two separate prefs, so we need to
+          // handle it differently.
+          case "plugin.enable":
+            PluginHelper.setPluginPreference(value);
+            aSubject.setAsEmpty();
+            break;
+
+          // MasterPassword pref is not real, we just need take action and leave
+          case "privacy.masterpassword.enabled":
+            if (MasterPassword.enabled) {
+              MasterPassword.removePassword(value);
+            } else {
+              MasterPassword.setPassword(value);
+            }
+            aSubject.setAsEmpty();
+            break;
+
+          // "privacy.trackingprotection.state" is not a "real" pref name, but
+          // it's used in the setting menu.  By default
+          // "privacy.trackingprotection.pbmode.enabled" is true, and
+          // "privacy.trackingprotection.enabled" is false.
+          case "privacy.trackingprotection.state": {
+            switch (value) {
+              // Tracking protection disabled.
+              case this.PREF_TRACKING_PROTECTION_DISABLED:
+                Services.prefs.setBoolPref("privacy.trackingprotection.pbmode.enabled", false);
+                Services.prefs.setBoolPref("privacy.trackingprotection.enabled", false);
+                break;
+              // Tracking protection only in private browsing,
+              case this.PREF_TRACKING_PROTECTION_ENABLED_PB:
+                Services.prefs.setBoolPref("privacy.trackingprotection.pbmode.enabled", true);
+                Services.prefs.setBoolPref("privacy.trackingprotection.enabled", false);
+                break;
+              // Tracking protection everywhere.
+              case this.PREF_TRACKING_PROTECTION_ENABLED:
+                Services.prefs.setBoolPref("privacy.trackingprotection.pbmode.enabled", true);
+                Services.prefs.setBoolPref("privacy.trackingprotection.enabled", true);
+                break;
+            }
+            aSubject.setAsEmpty();
+            break;
+          }
+
+          // Enabling or disabling suggestions will prevent future prompts
+          case SearchEngines.PREF_SUGGEST_ENABLED:
+            Services.prefs.setBoolPref(SearchEngines.PREF_SUGGEST_PROMPTED, true);
+            aSubject.setAsEmpty();
+            break;
+
+          // Crash reporter preference is in a service; set and return.
+          case "datareporting.crashreporter.submitEnabled":
+            let crashReporterBuilt = "nsICrashReporter" in Ci &&
+                Services.appinfo instanceof Ci.nsICrashReporter;
+            if (crashReporterBuilt) {
+              Services.appinfo.submitReports = value;
+              aSubject.setAsEmpty();
+            }
+            break;
+        }
+        break;
+      }
+
       case "sessionstore-state-purge-complete":
         Messaging.sendRequest({ type: "Session:StatePurged" });
         break;
 
       case "gather-telemetry":
         Messaging.sendRequest({ type: "Telemetry:Gather" });
-        break;
-
-      case "nsPref:changed":
-        this.notifyPrefObservers(aData);
         break;
 
       case "webapps-runtime-install":
@@ -2193,34 +2118,6 @@ var BrowserApp = {
 
   getUITelemetryObserver: function() {
     return UITelemetry;
-  },
-
-  getPreferences: function getPreferences(requestId, prefNames, count) {
-    this.handlePreferencesRequest(requestId, prefNames, false);
-  },
-
-  observePreferences: function observePreferences(requestId, prefNames, count) {
-    this.handlePreferencesRequest(requestId, prefNames, true);
-  },
-
-  removePreferenceObservers: function removePreferenceObservers(aRequestId) {
-    let newPrefObservers = [];
-    for (let prefName in this._prefObservers) {
-      let requestIds = this._prefObservers[prefName];
-      // Remove the requestID from the preference handlers
-      let i = requestIds.indexOf(aRequestId);
-      if (i >= 0) {
-        requestIds.splice(i, 1);
-      }
-
-      // If there are no more request IDs, remove the observer
-      if (requestIds.length == 0) {
-        Services.prefs.removeObserver(prefName, this);
-      } else {
-        newPrefObservers[prefName] = requestIds;
-      }
-    }
-    this._prefObservers = newPrefObservers;
   },
 
   // This method will return a list of history items and toIndex based on the action provided from the fromIndex to toIndex,
@@ -4691,16 +4588,13 @@ Tab.prototype = {
           }
           this.contentDocumentIsDisplayed = true;
 
+          if (contentDocument instanceof Ci.nsIImageDocument) {
+            contentDocument.shrinkToFit();
+          }
+
           let zoom = this.restoredSessionZoom();
           if (zoom) {
             this.setResolution(zoom, true);
-          }
-
-          if (!this.restoredSessionZoom() && contentDocument.mozSyntheticDocument) {
-            let fitZoom = Math.min(gScreenWidth / contentDocument.body.scrollWidth,
-                                   gScreenHeight / contentDocument.body.scrollHeight);
-            this.setResolution(fitZoom, false);
-            this.sendViewportUpdate();  // recompute displayport
           }
         }
         break;
@@ -5308,6 +5202,9 @@ var ErrorPageEventHandler = {
             // ....but add a notify bar as a reminder, so that they don't lose
             // track after, e.g., tab switching.
             NativeWindow.doorhanger.show(Strings.browser.GetStringFromName("safeBrowsingDoorhanger"), "safebrowsing-warning", [], BrowserApp.selectedTab.id);
+          } else if (target == errorDoc.getElementById("whyForbiddenButton")) {
+            // This is the "Why is this site blocked" button for family friendly browsing.
+            BrowserApp.selectedBrowser.loadURI("https://support.mozilla.org/kb/controlledaccess");
           }
         }
         break;
@@ -5688,192 +5585,6 @@ var FormAssistant = {
   }
 };
 
-/**
- * An object to watch for Gecko status changes -- add-on installs, pref changes
- * -- and reflect them back to Java.
- */
-var HealthReportStatusListener = {
-  PREF_ACCEPT_LANG: "intl.accept_languages",
-  PREF_BLOCKLIST_ENABLED: "extensions.blocklist.enabled",
-
-  PREF_TELEMETRY_ENABLED: AppConstants.MOZ_TELEMETRY_REPORTING ?
-    "toolkit.telemetry.enabled" :
-    null,
-
-  init: function () {
-    try {
-      AddonManager.addAddonListener(this);
-    } catch (ex) {
-      dump("Failed to initialize add-on status listener. FHR cannot report add-on state. " + ex);
-    }
-
-    dump("Adding HealthReport:RequestSnapshot observer.");
-    Services.obs.addObserver(this, "HealthReport:RequestSnapshot", false);
-    Services.prefs.addObserver(this.PREF_ACCEPT_LANG, this, false);
-    Services.prefs.addObserver(this.PREF_BLOCKLIST_ENABLED, this, false);
-    if (this.PREF_TELEMETRY_ENABLED) {
-      Services.prefs.addObserver(this.PREF_TELEMETRY_ENABLED, this, false);
-    }
-  },
-
-  observe: function (aSubject, aTopic, aData) {
-    switch (aTopic) {
-      case "HealthReport:RequestSnapshot":
-        HealthReportStatusListener.sendSnapshotToJava();
-        break;
-      case "nsPref:changed":
-        let response = {
-          type: "Pref:Change",
-          pref: aData,
-          isUserSet: Services.prefs.prefHasUserValue(aData),
-        };
-
-        switch (aData) {
-          case this.PREF_ACCEPT_LANG:
-            response.value = Services.prefs.getCharPref(aData);
-            break;
-          case this.PREF_TELEMETRY_ENABLED:
-          case this.PREF_BLOCKLIST_ENABLED:
-            response.value = Services.prefs.getBoolPref(aData);
-            break;
-          default:
-            console.log("Unexpected pref in HealthReportStatusListener: " + aData);
-            return;
-        }
-
-        Messaging.sendRequest(response);
-        break;
-    }
-  },
-
-  MILLISECONDS_PER_DAY: 24 * 60 * 60 * 1000,
-
-  COPY_FIELDS: [
-    "blocklistState",
-    "userDisabled",
-    "appDisabled",
-    "version",
-    "type",
-    "scope",
-    "foreignInstall",
-    "hasBinaryComponents",
-  ],
-
-  // Add-on types for which full details are recorded in FHR.
-  // All other types are ignored.
-  FULL_DETAIL_TYPES: [
-    "plugin",
-    "extension",
-    "service",
-  ],
-
-  /**
-   * Return true if the add-on is not of a type for which we report full details.
-   * These add-ons will still make it over to Java, but will be filtered out.
-   */
-  _shouldIgnore: function (aAddon) {
-    return this.FULL_DETAIL_TYPES.indexOf(aAddon.type) == -1;
-  },
-
-  _dateToDays: function (aDate) {
-    return Math.floor(aDate.getTime() / this.MILLISECONDS_PER_DAY);
-  },
-
-  jsonForAddon: function (aAddon) {
-    let o = {};
-    if (aAddon.installDate) {
-      o.installDay = this._dateToDays(aAddon.installDate);
-    }
-    if (aAddon.updateDate) {
-      o.updateDay = this._dateToDays(aAddon.updateDate);
-    }
-
-    for (let field of this.COPY_FIELDS) {
-      o[field] = aAddon[field];
-    }
-
-    return o;
-  },
-
-  notifyJava: function (aAddon, aNeedsRestart, aAction="Addons:Change") {
-    let json = this.jsonForAddon(aAddon);
-    if (this._shouldIgnore(aAddon)) {
-      json.ignore = true;
-    }
-    Messaging.sendRequest({ type: aAction, id: aAddon.id, json: json });
-  },
-
-  // Add-on listeners.
-  onEnabling: function (aAddon, aNeedsRestart) {
-    this.notifyJava(aAddon, aNeedsRestart);
-  },
-  onDisabling: function (aAddon, aNeedsRestart) {
-    this.notifyJava(aAddon, aNeedsRestart);
-  },
-  onInstalling: function (aAddon, aNeedsRestart) {
-    this.notifyJava(aAddon, aNeedsRestart);
-  },
-  onUninstalling: function (aAddon, aNeedsRestart) {
-    this.notifyJava(aAddon, aNeedsRestart, "Addons:Uninstalling");
-  },
-  onPropertyChanged: function (aAddon, aProperties) {
-    this.notifyJava(aAddon);
-  },
-  onOperationCancelled: function (aAddon) {
-    this.notifyJava(aAddon);
-  },
-
-  sendSnapshotToJava: function () {
-    AddonManager.getAllAddons(function (aAddons) {
-        let jsonA = {};
-        if (aAddons) {
-          for (let i = 0; i < aAddons.length; ++i) {
-            let addon = aAddons[i];
-            try {
-              let addonJSON = HealthReportStatusListener.jsonForAddon(addon);
-              if (HealthReportStatusListener._shouldIgnore(addon)) {
-                addonJSON.ignore = true;
-              }
-              jsonA[addon.id] = addonJSON;
-            } catch (e) {
-              // Just skip this add-on.
-            }
-          }
-        }
-
-        // Now add prefs.
-        let jsonP = {};
-        for (let pref of [this.PREF_BLOCKLIST_ENABLED, this.PREF_TELEMETRY_ENABLED]) {
-          if (!pref) {
-            // This will be the case for PREF_TELEMETRY_ENABLED in developer builds.
-            continue;
-          }
-          jsonP[pref] = {
-            pref: pref,
-            value: Services.prefs.getBoolPref(pref),
-            isUserSet: Services.prefs.prefHasUserValue(pref),
-          };
-        }
-        for (let pref of [this.PREF_ACCEPT_LANG]) {
-          jsonP[pref] = {
-            pref: pref,
-            value: Services.prefs.getCharPref(pref),
-            isUserSet: Services.prefs.prefHasUserValue(pref),
-          };
-        }
-
-        console.log("Sending snapshot message.");
-        Messaging.sendRequest({
-          type: "HealthReport:Snapshot",
-          json: {
-            addons: jsonA,
-            prefs: jsonP,
-          },
-        });
-      }.bind(this));
-  },
-};
-
 var XPInstallObserver = {
   init: function() {
     Services.obs.addObserver(this, "addon-install-origin-blocked", false);
@@ -6197,8 +5908,10 @@ var ViewportHandler = {
       let scrollChange = JSON.parse(aData);
       let windowUtils = window.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
       windowUtils.setNextPaintSyncId(scrollChange.id);
-      let win = BrowserApp.selectedTab.browser.contentWindow;
-      win.scrollBy(scrollChange.x, scrollChange.y);
+      if (!AppConstants.MOZ_ANDROID_APZ) {
+        let win = BrowserApp.selectedTab.browser.contentWindow;
+        win.scrollBy(scrollChange.x, scrollChange.y);
+      }
     }
   },
 
@@ -6509,6 +6222,9 @@ var IdentityHandler = {
   // Extended-Validation SSL CA-signed identity information (EV). A more rigorous validation process.
   IDENTITY_MODE_VERIFIED: "verified",
 
+  // Part of the product's UI (built in about: pages)
+  IDENTITY_MODE_CHROMEUI: "chromeUI",
+
   // The following mixed content modes are only used if "security.mixed_content.block_active_content"
   // is enabled. Our Java frontend coalesces them into one indicator.
 
@@ -6573,13 +6289,19 @@ var IdentityHandler = {
   /**
    * Determines the identity mode corresponding to the icon we show in the urlbar.
    */
-  getIdentityMode: function getIdentityMode(aState) {
+  getIdentityMode: function getIdentityMode(aState, uri) {
     if (aState & Ci.nsIWebProgressListener.STATE_IDENTITY_EV_TOPLEVEL) {
       return this.IDENTITY_MODE_VERIFIED;
     }
 
     if (aState & Ci.nsIWebProgressListener.STATE_IS_SECURE) {
       return this.IDENTITY_MODE_IDENTIFIED;
+    }
+
+    // We also allow "about:" by allowing the selector to be empty (i.e. '(|.....|...|...)'
+    let whitelist = /^about:($|about|accounts|addons|buildconfig|cache|config|crashes|devices|downloads|fennec|firefox|feedback|healthreport|license|logins|logo|memory|mozilla|networking|plugins|privatebrowsing|rights|serviceworkers|support|telemetry|webrtc)($|\?)/i;
+    if (uri.schemeIs("about") && whitelist.test(uri.spec)) {
+        return this.IDENTITY_MODE_CHROMEUI;
     }
 
     return this.IDENTITY_MODE_UNKNOWN;
@@ -6676,7 +6398,12 @@ var IdentityHandler = {
     }
     this._lastLocation = locationObj;
 
-    let identityMode = this.getIdentityMode(aState);
+    let uri = aBrowser.currentURI;
+    try {
+      uri = Services.uriFixup.createExposableURI(uri);
+    } catch (e) {}
+
+    let identityMode = this.getIdentityMode(aState, uri);
     let mixedDisplay = this.getMixedDisplayMode(aState);
     let mixedActive = this.getMixedActiveMode(aState);
     let trackingMode = this.getTrackingMode(aState, aBrowser);
@@ -6692,7 +6419,12 @@ var IdentityHandler = {
 
     // Don't show identity data for pages with an unknown identity or if any
     // mixed content is loaded (mixed display content is loaded by default).
-    if (identityMode == this.IDENTITY_MODE_UNKNOWN || aState & Ci.nsIWebProgressListener.STATE_IS_BROKEN) {
+    // We also return for CHROMEUI pages since they don't have any certificate
+    // information to load either. result.secure specifically refers to connection
+    // security, which is irrelevant for about: pages, as they're loaded locally.
+    if (identityMode == this.IDENTITY_MODE_UNKNOWN ||
+        identityMode == this.IDENTITY_MODE_CHROMEUI ||
+        aState & Ci.nsIWebProgressListener.STATE_IS_BROKEN) {
       result.secure = false;
       return result;
     }
@@ -7487,8 +7219,8 @@ var Tabs = {
         break;
       case "Session:Prefetch":
         if (aData) {
-          let uri = Services.io.newURI(aData, null, null);
           try {
+            let uri = Services.io.newURI(aData, null, null);
             if (uri && !this._domains.has(uri.host)) {
               Services.io.QueryInterface(Ci.nsISpeculativeConnect).speculativeConnect(uri, null);
               this._domains.add(uri.host);

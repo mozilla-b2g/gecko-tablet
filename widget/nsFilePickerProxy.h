@@ -16,7 +16,7 @@
 
 class nsIWidget;
 class nsIFile;
-class nsPIDOMWindow;
+class nsPIDOMWindowInner;
 
 namespace mozilla {
 namespace dom {
@@ -39,7 +39,7 @@ public:
     NS_DECL_ISUPPORTS
 
     // nsIFilePicker (less what's in nsBaseFilePicker)
-    NS_IMETHODIMP Init(nsIDOMWindow* aParent, const nsAString& aTitle, int16_t aMode) override;
+    NS_IMETHODIMP Init(mozIDOMWindowProxy* aParent, const nsAString& aTitle, int16_t aMode) override;
     NS_IMETHODIMP AppendFilter(const nsAString& aTitle, const nsAString& aFilter) override;
     NS_IMETHODIMP GetDefaultString(nsAString& aDefaultString) override;
     NS_IMETHODIMP SetDefaultString(const nsAString& aDefaultString) override;
@@ -51,8 +51,8 @@ public:
     NS_IMETHODIMP GetFileURL(nsIURI** aFileURL) override;
     NS_IMETHODIMP GetFiles(nsISimpleEnumerator** aFiles) override;
 
-    NS_IMETHODIMP GetDomfile(nsISupports** aFile) override;
-    NS_IMETHODIMP GetDomfiles(nsISimpleEnumerator** aFiles) override;
+    NS_IMETHODIMP GetDomFileOrDirectory(nsISupports** aValue) override;
+    NS_IMETHODIMP GetDomFileOrDirectoryEnumerator(nsISimpleEnumerator** aValue) override;
 
     NS_IMETHODIMP Show(int16_t* aReturn) override;
     NS_IMETHODIMP Open(nsIFilePickerShownCallback* aCallback) override;
@@ -65,7 +65,7 @@ private:
     ~nsFilePickerProxy();
     void InitNative(nsIWidget*, const nsAString&) override;
 
-    nsTArray<RefPtr<mozilla::dom::File>> mDomfiles;
+    nsTArray<RefPtr<mozilla::dom::File>> mFilesOrDirectories;
     nsCOMPtr<nsIFilePickerShownCallback> mCallback;
 
     int16_t   mSelectedType;

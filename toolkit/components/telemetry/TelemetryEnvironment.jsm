@@ -65,12 +65,20 @@ this.TelemetryEnvironment = {
     return getGlobal().onInitialized();
   },
 
+  delayedInit: function() {
+    return getGlobal().delayedInit();
+  },
+
   registerChangeListener: function(name, listener) {
     return getGlobal().registerChangeListener(name, listener);
   },
 
   unregisterChangeListener: function(name) {
     return getGlobal().unregisterChangeListener(name);
+  },
+
+  shutdown: function() {
+    return getGlobal().shutdown();
   },
 
   // Policy to use when saving preferences. Exported for using them in tests.
@@ -104,7 +112,6 @@ const DEFAULT_ENVIRONMENT_PREFS = new Map([
   ["browser.newtab.url", {what: RECORD_PREF_STATE}],
   ["browser.newtabpage.enabled", {what: RECORD_PREF_VALUE}],
   ["browser.newtabpage.enhanced", {what: RECORD_PREF_VALUE}],
-  ["browser.polaris.enabled", {what: RECORD_PREF_VALUE}],
   ["browser.shell.checkDefaultBrowser", {what: RECORD_PREF_VALUE}],
   ["browser.search.suggest.enabled", {what: RECORD_PREF_VALUE}],
   ["browser.startup.homepage", {what: RECORD_PREF_STATE}],
@@ -261,7 +268,7 @@ function getGfxField(aPropertyName, aDefault) {
  * @return {String} The substring or null if the input string is null.
  */
 function limitStringToLength(aString, aMaxLength) {
-  if (aString === null || aString === undefined) {
+  if (typeof(aString) !== "string") {
     return null;
   }
   return aString.substring(0, aMaxLength);
@@ -512,28 +519,36 @@ EnvironmentAddonBuilder.prototype = {
         continue;
       }
 
-      // Make sure to have valid dates.
-      let installDate = new Date(Math.max(0, addon.installDate));
-      let updateDate = new Date(Math.max(0, addon.updateDate));
+      // Weird addon data in the wild can lead to exceptions while collecting
+      // the data.
+      try {
+        // Make sure to have valid dates.
+        let installDate = new Date(Math.max(0, addon.installDate));
+        let updateDate = new Date(Math.max(0, addon.updateDate));
 
-      activeAddons[addon.id] = {
-        blocklisted: (addon.blocklistState !== Ci.nsIBlocklistService.STATE_NOT_BLOCKED),
-        description: limitStringToLength(addon.description, MAX_ADDON_STRING_LENGTH),
-        name: limitStringToLength(addon.name, MAX_ADDON_STRING_LENGTH),
-        userDisabled: addon.userDisabled,
-        appDisabled: addon.appDisabled,
-        version: limitStringToLength(addon.version, MAX_ADDON_STRING_LENGTH),
-        scope: addon.scope,
-        type: addon.type,
-        foreignInstall: addon.foreignInstall,
-        hasBinaryComponents: addon.hasBinaryComponents,
-        installDay: Utils.millisecondsToDays(installDate.getTime()),
-        updateDay: Utils.millisecondsToDays(updateDate.getTime()),
-        signedState: addon.signedState,
-      };
+        activeAddons[addon.id] = {
+          blocklisted: (addon.blocklistState !== Ci.nsIBlocklistService.STATE_NOT_BLOCKED),
+          description: limitStringToLength(addon.description, MAX_ADDON_STRING_LENGTH),
+          name: limitStringToLength(addon.name, MAX_ADDON_STRING_LENGTH),
+          userDisabled: addon.userDisabled,
+          appDisabled: addon.appDisabled,
+          version: limitStringToLength(addon.version, MAX_ADDON_STRING_LENGTH),
+          scope: addon.scope,
+          type: addon.type,
+          foreignInstall: addon.foreignInstall,
+          hasBinaryComponents: addon.hasBinaryComponents,
+          installDay: Utils.millisecondsToDays(installDate.getTime()),
+          updateDay: Utils.millisecondsToDays(updateDate.getTime()),
+          signedState: addon.signedState,
+        };
 
-      if (addon.signedState !== undefined)
-        activeAddons[addon.id].signedState = addon.signedState;
+        if (addon.signedState !== undefined)
+          activeAddons[addon.id].signedState = addon.signedState;
+
+      } catch (ex) {
+        this._environment._log.error("_getActiveAddons - An addon was discarded due to an error", ex);
+        continue;
+      }
     }
 
     return activeAddons;
@@ -589,19 +604,24 @@ EnvironmentAddonBuilder.prototype = {
         continue;
       }
 
-      // Make sure to have a valid date.
-      let updateDate = new Date(Math.max(0, tag.lastModifiedTime));
+      try {
+        // Make sure to have a valid date.
+        let updateDate = new Date(Math.max(0, tag.lastModifiedTime));
 
-      activePlugins.push({
-        name: limitStringToLength(tag.name, MAX_ADDON_STRING_LENGTH),
-        version: limitStringToLength(tag.version, MAX_ADDON_STRING_LENGTH),
-        description: limitStringToLength(tag.description, MAX_ADDON_STRING_LENGTH),
-        blocklisted: tag.blocklisted,
-        disabled: tag.disabled,
-        clicktoplay: tag.clicktoplay,
-        mimeTypes: tag.getMimeTypes({}),
-        updateDay: Utils.millisecondsToDays(updateDate.getTime()),
-      });
+        activePlugins.push({
+          name: limitStringToLength(tag.name, MAX_ADDON_STRING_LENGTH),
+          version: limitStringToLength(tag.version, MAX_ADDON_STRING_LENGTH),
+          description: limitStringToLength(tag.description, MAX_ADDON_STRING_LENGTH),
+          blocklisted: tag.blocklisted,
+          disabled: tag.disabled,
+          clicktoplay: tag.clicktoplay,
+          mimeTypes: tag.getMimeTypes({}),
+          updateDay: Utils.millisecondsToDays(updateDate.getTime()),
+        });
+      } catch (ex) {
+        this._environment._log.error("_getActivePlugins - A plugin was discarded due to an error", ex);
+        continue;
+      }
     }
 
     return activePlugins;
@@ -625,11 +645,16 @@ EnvironmentAddonBuilder.prototype = {
         continue;
       }
 
-      activeGMPlugins[plugin.id] = {
-        version: plugin.version,
-        userDisabled: plugin.userDisabled,
-        applyBackgroundUpdates: plugin.applyBackgroundUpdates,
-      };
+      try {
+        activeGMPlugins[plugin.id] = {
+          version: plugin.version,
+          userDisabled: plugin.userDisabled,
+          applyBackgroundUpdates: plugin.applyBackgroundUpdates,
+        };
+      } catch (ex) {
+        this._environment._log.error("_getActiveGMPlugins - A GMPlugin was discarded due to an error", ex);
+        continue;
+      }
     }
 
     return activeGMPlugins;
@@ -664,6 +689,7 @@ function EnvironmentCache() {
   this._log.trace("constructor");
 
   this._shutdown = false;
+  this._delayedInitFinished = false;
 
   // A map of listeners that will be called on environment changes.
   this._changeListeners = new Map();
@@ -741,6 +767,13 @@ EnvironmentCache.prototype = {
   },
 
   /**
+   * This gets called when the delayed init completes.
+   */
+  delayedInit: function() {
+    this._delayedInitFinished = true;
+  },
+
+  /**
    * Register a listener for environment changes.
    * @param name The name of the listener. If a new listener is registered
    *             with the same name, the old listener will be replaced.
@@ -770,6 +803,11 @@ EnvironmentCache.prototype = {
     this._changeListeners.delete(name);
   },
 
+  shutdown: function() {
+    this._log.trace("shutdown");
+    this._shutdown = true;
+  },
+
   /**
    * Only used in tests, set the preferences to watch.
    * @param aPreferences A map of preferences names and their recording policy.
@@ -794,7 +832,7 @@ EnvironmentCache.prototype = {
       if (!Preferences.isSet(pref)) {
         continue;
       }
-      
+
       // Check the policy for the preference and decide if we need to store its value
       // or whether it changed from the default value.
       let prefValue = undefined;
@@ -863,7 +901,7 @@ EnvironmentCache.prototype = {
     this._log.trace("observe - aTopic: " + aTopic + ", aData: " + aData);
     switch (aTopic) {
       case SEARCH_ENGINE_MODIFIED_TOPIC:
-        if (aData != "engine-default" && aData != "engine-current") {
+        if (aData != "engine-current") {
           return;
         }
         // Record the new default search choice and send the change notification.
@@ -1010,6 +1048,7 @@ EnvironmentCache.prototype = {
     if (AppConstants.platform === "gonk") {
       return true;
     }
+
     if (!("@mozilla.org/browser/shell-service;1" in Cc)) {
       this._log.info("_isDefaultBrowser - Could not obtain browser shell service");
       return null;
@@ -1017,11 +1056,21 @@ EnvironmentCache.prototype = {
 
     let shellService;
     try {
-      shellService = Cc["@mozilla.org/browser/shell-service;1"]
-                       .getService(Ci.nsIShellService);
+      let scope = {};
+      Cu.import("resource:///modules/ShellService.jsm", scope);
+      shellService = scope.ShellService;
     } catch (ex) {
-      this._log.error("_isDefaultBrowser - Could not obtain shell service", ex);
-      return null;
+      this._log.error("_isDefaultBrowser - Could not obtain shell service JSM");
+    }
+
+    if (!shellService) {
+      try {
+        shellService = Cc["@mozilla.org/browser/shell-service;1"]
+                         .getService(Ci.nsIShellService);
+      } catch (ex) {
+        this._log.error("_isDefaultBrowser - Could not obtain shell service", ex);
+        return null;
+      }
     }
 
     try {
@@ -1048,7 +1097,6 @@ EnvironmentCache.prototype = {
       blocklistEnabled: Preferences.get(PREF_BLOCKLIST_ENABLED, true),
       e10sEnabled: Services.appinfo.browserTabsRemoteAutostart,
       telemetryEnabled: Utils.isTelemetryEnabled,
-      isInOptoutSample: TelemetryController.isInOptoutSample,
       locale: getBrowserLocale(),
       update: {
         channel: updateChannel,
@@ -1304,6 +1352,7 @@ EnvironmentCache.prototype = {
     // We are already skipping change events in _checkChanges if there is a pending change task running.
     let now = Policy.now();
     if (this._lastEnvironmentChangeDate &&
+        this._delayedInitFinished &&
         (CHANGE_THROTTLE_INTERVAL_MS >=
          (now.getTime() - this._lastEnvironmentChangeDate.getTime()))) {
       this._log.trace("_onEnvironmentChange - throttling changes, now: " + now +
@@ -1311,7 +1360,9 @@ EnvironmentCache.prototype = {
       return;
     }
 
-    this._lastEnvironmentChangeDate = now;
+    if(this._delayedInitFinished) {
+      this._lastEnvironmentChangeDate = now;
+    }
 
     for (let [name, listener] of this._changeListeners) {
       try {

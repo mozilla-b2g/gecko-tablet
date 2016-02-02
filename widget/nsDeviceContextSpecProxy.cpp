@@ -67,15 +67,8 @@ nsDeviceContextSpecProxy::GetSurfaceForPrinter(gfxASurface** aSurface)
   MOZ_ASSERT(aSurface);
   MOZ_ASSERT(mRealDeviceContextSpec);
 
-  // The real device context may need to have created a real printing surface
-  // even though we're not using it directly.
-  nsresult rv = mRealDeviceContextSpec->GetSurfaceForPrinter(aSurface);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
   double width, height;
-  rv = mPrintSettings->GetEffectivePageSize(&width, &height);
+  nsresult rv = mPrintSettings->GetEffectivePageSize(&width, &height);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -86,7 +79,7 @@ nsDeviceContextSpecProxy::GetSurfaceForPrinter(gfxASurface** aSurface)
 
   RefPtr<gfxASurface> surface = gfxPlatform::GetPlatform()->
     CreateOffscreenSurface(mozilla::gfx::IntSize(width, height),
-                           gfxImageFormat::ARGB32);
+                           SurfaceFormat::A8R8G8B8_UINT32);
 
   surface.forget(aSurface);
   return NS_OK;

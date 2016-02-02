@@ -4,7 +4,7 @@
 
 "use strict";
 
-var {interfaces: Ci, utils: Cu} = Components;
+const {interfaces: Ci, utils: Cu} = Components;
 
 const errors = [
   "ElementNotAccessibleError",
@@ -90,21 +90,49 @@ error.stringify = function(err) {
 };
 
 /**
- * Marshal an Error to a JSON structure.
+ * Marshal a WebDriverError prototype to a JSON dictionary.
  *
- * @param {Error} err
- *     The Error to serialise.
+ * @param {WebDriverError} err
+ *     Error to serialise.
  *
  * @return {Object.<string, Object>}
- *     JSON structure with the keys "error", "message", and "stacktrace".
+ *     JSON dictionary with the keys "error", "message", and "stacktrace".
+ * @throws {TypeError}
+ *     If error type is not serialisable.
  */
 error.toJson = function(err) {
+  if (!error.isWebDriverError(err)) {
+    throw new TypeError(`Unserialisable error type: ${err}`);
+  }
+
   let json = {
     error: err.status,
     message: err.message || null,
     stacktrace: err.stack || null,
   };
   return json;
+};
+
+/**
+ * Unmarshal a JSON dictionary to a WebDriverError prototype.
+ *
+ * @param {Object.<string, string>} json
+ *     JSON dictionary with the keys "error", "message", and "stacktrace".
+ *
+ * @return {WebDriverError}
+ *     Deserialised error prototype.
+ */
+error.fromJson = function(json) {
+  if (!statusLookup.has(json.error)) {
+    throw new TypeError(`Undeserialisable error type: ${json.error}`);
+  }
+
+  let errCls = statusLookup.get(json.error);
+  let err = new errCls(json.message);
+  if ("stacktrace" in json) {
+    err.stack = json.stacktrace;
+  }
+  return err;
 };
 
 /**
@@ -168,25 +196,29 @@ InvalidSessionIdError.prototype = Object.create(WebDriverError.prototype);
  *
  * @param {Error} err
  *     An Error object passed to a catch block or a message.
- * @param {string} fnName
+ * @param {string=} fnName
  *     The name of the function to use in the stack trace message
  *     (e.g. execute_script).
- * @param {string} file
+ * @param {string=} file
  *     The filename of the test file containing the Marionette
  *     command that caused this error to occur.
- * @param {number} line
+ * @param {number=} line
  *     The line number of the above test file.
  * @param {string=} script
  *     The JS script being executed in text form.
  */
-this.JavaScriptError = function(err, fnName, file, line, script) {
+this.JavaScriptError = function(
+    err, fnName = null, file = null, line = null, script = null) {
   let msg = String(err);
   let trace = "";
 
-  if (fnName && line) {
-    trace += `${fnName} @${file}`;
-    if (line) {
-      trace += `, line ${line}`;
+  if (fnName) {
+    trace += fnName;
+    if (file) {
+      trace += ` @${file}`;
+      if (line) {
+        trace += `, line ${line}`;
+      }
     }
   }
 
@@ -293,3 +325,12 @@ this.UnsupportedOperationError = function(msg) {
   this.status = "unsupported operation";
 };
 UnsupportedOperationError.prototype = Object.create(WebDriverError.prototype);
+
+const nameLookup = new Map();
+const statusLookup = new Map();
+for (let s of errors) {
+  let cls = this[s];
+  let inst = new cls();
+  nameLookup.set(inst.name, cls);
+  statusLookup.set(inst.status, cls);
+};

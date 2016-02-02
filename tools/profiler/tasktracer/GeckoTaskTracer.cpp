@@ -59,7 +59,7 @@ pid_t gettid();
 namespace mozilla {
 namespace tasktracer {
 
-static mozilla::ThreadLocal<TraceInfo*> sTraceInfoTLS;
+static MOZ_THREAD_LOCAL(TraceInfo*) sTraceInfoTLS;
 static mozilla::StaticMutex sMutex;
 
 // The generation of TraceInfo. It will be > 0 if the Task Tracer is started and
@@ -139,7 +139,7 @@ CreateSourceEvent(SourceEventType aType)
 #include "SourceEventTypeMap.h"
     default:
       MOZ_CRASH("Unknown SourceEvent.");
-  };
+  }
 #undef CREATE_SOURCE_EVENT_NAME
 
   // Log a fake dispatch and start for this source event.

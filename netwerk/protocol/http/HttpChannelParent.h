@@ -40,6 +40,7 @@ class PBrowserOrId;
 namespace net {
 
 class HttpChannelParentListener;
+class ChannelEventQueue;
 
 // Note: nsIInterfaceRequestor must be the first base so that do_QueryObject()
 // works correctly on this object, as it's needed to compute a void* pointing to
@@ -136,7 +137,9 @@ protected:
                    const nsCString&           aSchedulingContextID,
                    const OptionalCorsPreflightArgs& aCorsPreflightArgs,
                    const uint32_t&            aInitialRwin,
-                   const bool&                aSuspendAfterSynthesizeResponse);
+                   const bool&                aBlockAuthPrompt,
+                   const bool&                aSuspendAfterSynthesizeResponse,
+                   const bool&                aAllowStaleCacheContent);
 
   virtual bool RecvSetPriority(const uint16_t& priority) override;
   virtual bool RecvSetClassOfService(const uint32_t& cos) override;

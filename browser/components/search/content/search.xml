@@ -31,6 +31,7 @@
       <xul:textbox class="searchbar-textbox"
                    anonid="searchbar-textbox"
                    type="autocomplete"
+                   inputtype="search"
                    flex="1"
                    autocompletepopup="PopupSearchAutoComplete"
                    autocompletesearch="search-autocomplete"
@@ -130,8 +131,7 @@
 
       <property name="currentEngine">
         <setter><![CDATA[
-          let ss = Services.search;
-          ss.defaultEngine = ss.currentEngine = val;
+          Services.search.currentEngine = val;
           return val;
         ]]></setter>
         <getter><![CDATA[
@@ -421,7 +421,7 @@
           if (telemetrySearchDetails && telemetrySearchDetails.index == -1) {
             telemetrySearchDetails = null;
           }
-          BrowserSearch.recordSearchInHealthReport(engine, "searchbar", telemetrySearchDetails);
+          BrowserSearch.recordSearchInTelemetry(engine, "searchbar", telemetrySearchDetails);
           // null parameter below specifies HTML response for search
           let params = {
             postData: submission.postData,

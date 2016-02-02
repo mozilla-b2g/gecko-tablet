@@ -127,7 +127,7 @@
 
   <commandset id="placesCommands">
     <command id="Browser:ShowAllBookmarks"
-             oncommand="PlacesCommandHook.showPlacesOrganizer('AllBookmarks');"/>
+             oncommand="PlacesCommandHook.showPlacesOrganizer('UnfiledBookmarks');"/>
     <command id="Browser:ShowAllHistory"
              oncommand="PlacesCommandHook.showPlacesOrganizer('History');"/>
   </commandset>
@@ -188,6 +188,11 @@
     <broadcaster id="sync-setup-state"/>
     <broadcaster id="sync-syncnow-state" hidden="true"/>
     <broadcaster id="sync-reauth-state" hidden="true"/>
+    <broadcaster id="viewTabsSidebar" autoCheck="false" sidebartitle="&syncedTabs.sidebar.label;"
+                 type="checkbox" group="sidebar"
+                 hidden="true"
+                 sidebarurl="chrome://browser/content/syncedtabs/sidebar.xhtml"
+                 oncommand="SidebarUI.toggle('viewTabsSidebar');"/>
     <broadcaster id="workOfflineMenuitemState"/>
     <broadcaster id="socialSidebarBroadcaster" hidden="true"/>
 

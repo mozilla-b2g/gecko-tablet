@@ -408,13 +408,19 @@ partial interface Navigator {
                               // The originating innerWindowID is needed to
                               // avoid calling the callbacks if the window has
                               // navigated away. It is optional only as legacy.
-                              optional unsigned long long innerWindowID = 0);
+                              optional unsigned long long innerWindowID = 0,
+                              // The callID is needed in case of multiple
+                              // concurrent requests to find the right one.
+                              // It is optional only as legacy.
+                              // TODO: Rewrite to not need this method anymore,
+                              // now that devices are enumerated earlier.
+                              optional DOMString callID = "");
 };
 #endif // MOZ_MEDIA_NAVIGATOR
 
 // Service Workers/Navigation Controllers
 partial interface Navigator {
-  [Func="ServiceWorkerContainer::IsEnabled"]
+  [Func="ServiceWorkerContainer::IsEnabled", SameObject]
   readonly attribute ServiceWorkerContainer serviceWorker;
 };
 
@@ -457,5 +463,16 @@ partial interface Navigator {
 partial interface Navigator {
   [Func="Navigator::IsE10sEnabled"]
   readonly attribute boolean mozE10sEnabled;
+};
+#endif
+
+#ifdef MOZ_PAY
+partial interface Navigator {
+  [Throws, NewObject, Pref="dom.mozPay.enabled"]
+  // The 'jwts' parameter can be either a single DOMString or an array of
+  // DOMStrings. In both cases, it represents the base64url encoded and
+  // digitally signed payment information. Each payment provider should
+  // define its supported JWT format.
+  DOMRequest mozPay(any jwts);
 };
 #endif

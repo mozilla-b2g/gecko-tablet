@@ -48,6 +48,7 @@ import org.mozilla.gecko.gfx.LayerView;
 import org.mozilla.gecko.gfx.PanZoomController;
 import org.mozilla.gecko.mozglue.ContextUtils;
 import org.mozilla.gecko.overlays.ui.ShareDialog;
+import org.mozilla.gecko.permissions.Permissions;
 import org.mozilla.gecko.prompts.PromptService;
 import org.mozilla.gecko.util.EventCallback;
 import org.mozilla.gecko.util.GeckoRequest;
@@ -61,6 +62,7 @@ import org.mozilla.gecko.util.ProxySelector;
 import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.gecko.widget.ExternalIntentDuringPrivateBrowsingPromptFragment;
 
+import android.Manifest;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.ActivityManager;
@@ -502,45 +504,50 @@ public class GeckoAppShell
 
     @WrapForJNI
     public static void enableLocation(final boolean enable) {
-        ThreadUtils.postToUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    LocationManager lm = getLocationManager(getApplicationContext());
-                    if (lm == null) {
-                        return;
-                    }
-
-                    if (enable) {
-                        Location lastKnownLocation = getLastKnownLocation(lm);
-                        if (lastKnownLocation != null) {
-                            getGeckoInterface().getLocationListener().onLocationChanged(lastKnownLocation);
-                        }
-
-                        Criteria criteria = new Criteria();
-                        criteria.setSpeedRequired(false);
-                        criteria.setBearingRequired(false);
-                        criteria.setAltitudeRequired(false);
-                        if (locationHighAccuracyEnabled) {
-                            criteria.setAccuracy(Criteria.ACCURACY_FINE);
-                            criteria.setCostAllowed(true);
-                            criteria.setPowerRequirement(Criteria.POWER_HIGH);
-                        } else {
-                            criteria.setAccuracy(Criteria.ACCURACY_COARSE);
-                            criteria.setCostAllowed(false);
-                            criteria.setPowerRequirement(Criteria.POWER_LOW);
-                        }
-
-                        String provider = lm.getBestProvider(criteria, true);
-                        if (provider == null)
+        Permissions
+                .from((Activity) getContext())
+                .withPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+                .onUIThread()
+                .doNotPromptIf(!enable)
+                .run(new Runnable() {
+                    @Override
+                    public void run() {
+                        LocationManager lm = getLocationManager(getApplicationContext());
+                        if (lm == null) {
                             return;
+                        }
 
-                        Looper l = Looper.getMainLooper();
-                        lm.requestLocationUpdates(provider, 100, (float).5, getGeckoInterface().getLocationListener(), l);
-                    } else {
-                        lm.removeUpdates(getGeckoInterface().getLocationListener());
+                        if (enable) {
+                            Location lastKnownLocation = getLastKnownLocation(lm);
+                            if (lastKnownLocation != null) {
+                                getGeckoInterface().getLocationListener().onLocationChanged(lastKnownLocation);
+                            }
+
+                            Criteria criteria = new Criteria();
+                            criteria.setSpeedRequired(false);
+                            criteria.setBearingRequired(false);
+                            criteria.setAltitudeRequired(false);
+                            if (locationHighAccuracyEnabled) {
+                                criteria.setAccuracy(Criteria.ACCURACY_FINE);
+                                criteria.setCostAllowed(true);
+                                criteria.setPowerRequirement(Criteria.POWER_HIGH);
+                            } else {
+                                criteria.setAccuracy(Criteria.ACCURACY_COARSE);
+                                criteria.setCostAllowed(false);
+                                criteria.setPowerRequirement(Criteria.POWER_LOW);
+                            }
+
+                            String provider = lm.getBestProvider(criteria, true);
+                            if (provider == null)
+                                return;
+
+                            Looper l = Looper.getMainLooper();
+                            lm.requestLocationUpdates(provider, 100, (float) .5, getGeckoInterface().getLocationListener(), l);
+                        } else {
+                            lm.removeUpdates(getGeckoInterface().getLocationListener());
+                        }
                     }
-                }
-            });
+                });
     }
 
     private static LocationManager getLocationManager(Context context) {
@@ -837,14 +844,13 @@ public class GeckoAppShell
             }
         };
 
-        if (touchIconURL != null) {
-            // We have the favicon data (base64) decoded on the background thread, callback here, then
-            // call the other createShortcut method with the decoded favicon.
-            // This is slightly contrived, but makes the images available to the favicon cache.
-            Favicons.getSizedFavicon(getApplicationContext(), aURI, touchIconURL, Integer.MAX_VALUE, 0, listener);
-        } else {
-            Favicons.getPreferredSizeFaviconForPage(getApplicationContext(), aURI, listener);
-        }
+        // Retrieve the icon while bypassing the cache. Homescreen icon creation is a one-off event, hence it isn't
+        // useful to cache these icons. (Android takes care of storing homescreen icons after a shortcut
+        // has been created.)
+        // The cache is also (currently) limited to 32dp, hence we explicitly need to avoid accessing those icons.
+        // If touchIconURL is null, then Favicons falls back to finding the best possible favicon for
+        // the site URI, hence we can use this call even when there is no touchIcon defined.
+        Favicons.getPreferredSizeFaviconForPage(getApplicationContext(), aURI, touchIconURL, listener);
     }
 
     private static void createShortcutWithBitmap(final String aTitle, final String aURI, final Bitmap aBitmap) {
@@ -2673,8 +2679,10 @@ public class GeckoAppShell
 
     // Don't fail silently, tell the user that we weren't able to share the image
     private static final void showImageShareFailureSnackbar() {
-        View rootView = ((Activity)getContext()).findViewById(android.R.id.content);
-        Snackbar.make(rootView, R.string.share_image_failed, Snackbar.LENGTH_SHORT).show();
+        SnackbarHelper.showSnackbar((Activity) getContext(),
+                getApplicationContext().getString(R.string.share_image_failed),
+                Snackbar.LENGTH_SHORT
+        );
     }
 
     @WrapForJNI(allowMultithread = true)

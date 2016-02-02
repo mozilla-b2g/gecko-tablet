@@ -15,6 +15,7 @@
 #include "nsString.h"
 #include "nsThreadUtils.h"
 #include "nsProxyRelease.h"
+#include "mozilla/Monitor.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/TimeStamp.h"
@@ -366,13 +367,14 @@ private:
   class IOThreadSuspender : public nsRunnable
   {
   public:
-    IOThreadSuspender() : mMon("IOThreadSuspender") { }
+    IOThreadSuspender() : mMon("IOThreadSuspender"), mSignaled(false) { }
     void Notify();
   private:
     virtual ~IOThreadSuspender() { }
     NS_IMETHOD Run() override;
 
     Monitor mMon;
+    bool mSignaled;
   };
 
   RefPtr<IOThreadSuspender> mActiveIOSuspender;

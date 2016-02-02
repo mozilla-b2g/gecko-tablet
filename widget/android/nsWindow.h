@@ -57,6 +57,11 @@ private:
     // Object that implements native GLController calls.
     mozilla::UniquePtr<GLControllerSupport> mGLControllerSupport;
 
+    class NPZCSupport;
+    // Object that implements native NativePanZoomController calls.
+    // Owned by the Java NativePanZoomController instance.
+    NPZCSupport* mNPZCSupport;
+
 public:
     static void OnGlobalAndroidEvent(mozilla::AndroidGeckoEvent *ae);
     static mozilla::gfx::IntSize GetAndroidScreenBounds();
@@ -73,10 +78,14 @@ public:
     void InitEvent(mozilla::WidgetGUIEvent& event,
                    LayoutDeviceIntPoint* aPoint = 0);
 
+    void UpdateOverscrollVelocity(const float aX, const float aY);
+    void UpdateOverscrollOffset(const float aX, const float aY);
+
     //
     // nsIWidget
     //
 
+    using nsBaseWidget::Create; // for Create signature not overridden here
     NS_IMETHOD Create(nsIWidget* aParent,
                       nsNativeWidget aNativeParent,
                       const LayoutDeviceIntRect& aRect,
@@ -168,9 +177,6 @@ public:
     static void SchedulePauseComposition();
     static void ScheduleResumeComposition();
     static float ComputeRenderIntegrity();
-    static mozilla::layers::APZCTreeManager* GetAPZCTreeManager();
-    /* RootLayerTreeId() can only be called when GetAPZCTreeManager() returns non-null */
-    static uint64_t RootLayerTreeId();
 
     virtual bool WidgetPaintsBackground() override;
 
@@ -188,7 +194,6 @@ protected:
     RefPtr<mozilla::TextComposition> GetIMEComposition();
     void RemoveIMEComposition();
 
-    void ConfigureAPZCTreeManager() override;
     void ConfigureAPZControllerThread() override;
     void DispatchHitTest(const mozilla::WidgetTouchEvent& aEvent);
 
@@ -222,8 +227,6 @@ private:
     void RedrawAll();
 
     mozilla::widget::LayerRenderer::Frame::GlobalRef mLayerRendererFrame;
-
-    static mozilla::StaticRefPtr<mozilla::layers::APZCTreeManager> sApzcTreeManager;
 };
 
 #endif /* NSWINDOW_H_ */

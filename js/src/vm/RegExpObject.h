@@ -201,6 +201,7 @@ class RegExpShared
     }
 
     void trace(JSTracer* trc);
+    bool needsSweep(JSRuntime* rt);
 
     bool marked() const { return marked_; }
     void clearMarked() { marked_ = false; }
@@ -426,10 +427,6 @@ class RegExpObject : public NativeObject
         flags |= sticky() ? StickyFlag : 0;
         flags |= unicode() ? UnicodeFlag : 0;
         return RegExpFlag(flags);
-    }
-
-    bool needUpdateLastIndex() const {
-        return sticky() || global();
     }
 
     /* Flags. */

@@ -90,9 +90,7 @@ function* testComplexMultipleColorChanges(inspector, ruleView) {
   }
 
   info("Closing the color picker");
-  let onHidden = picker.tooltip.once("hidden");
-  picker.tooltip.hide();
-  yield onHidden;
+  yield hideTooltipAndWaitForRuleViewChanged(picker.tooltip, ruleView);
 }
 
 function* testOverriddenMultipleColorChanges(inspector, ruleView) {

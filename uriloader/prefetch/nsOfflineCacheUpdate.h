@@ -281,9 +281,6 @@ private:
     nsCOMPtr<nsIPrincipal> mLoadingPrincipal;
     nsCOMPtr<nsIFile> mCustomProfileDir;
 
-    uint32_t mAppID;
-    bool mInBrowser;
-
     nsCOMPtr<nsIObserver> mUpdateAvailableObserver;
 
     nsCOMPtr<nsIApplicationCache> mApplicationCache;
@@ -335,8 +332,7 @@ public:
 
     nsresult ScheduleUpdate(nsOfflineCacheUpdate *aUpdate);
     nsresult FindUpdate(nsIURI *aManifestURI,
-                        uint32_t aAppID,
-                        bool aInBrowser,
+                        nsACString const &aOriginSuffix,
                         nsIFile *aCustomProfileDir,
                         nsOfflineCacheUpdate **aUpdate);
 
@@ -344,10 +340,8 @@ public:
                       nsIURI *aDocumentURI,
                       nsIPrincipal* aLoadingPrincipal,
                       nsIDOMDocument *aDocument,
-                      nsIDOMWindow* aWindow,
+                      nsPIDOMWindowInner* aWindow,
                       nsIFile* aCustomProfileDir,
-                      uint32_t aAppID,
-                      bool aInBrowser,
                       nsIOfflineCacheUpdate **aUpdate);
 
     virtual nsresult UpdateFinished(nsOfflineCacheUpdate *aUpdate) override;

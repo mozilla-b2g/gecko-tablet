@@ -16,6 +16,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Likely.h"
 #include "mozilla/MathAlgorithms.h"
+#include "mozilla/unused.h"
 
 #include "base/histogram.h"
 #include "base/pickle.h"
@@ -1221,22 +1222,28 @@ enum reflectStatus
 ReflectHistogramAndSamples(JSContext *cx, JS::Handle<JSObject*> obj, Histogram *h,
                            const Histogram::SampleSet &ss)
 {
+  mozilla::OffTheBooksMutexAutoLock locker(ss.mutex());
+
   // We don't want to reflect corrupt histograms.
-  if (h->FindCorruption(ss) != Histogram::NO_INCONSISTENCIES) {
+  if (h->FindCorruption(ss, locker) != Histogram::NO_INCONSISTENCIES) {
     return REFLECT_CORRUPT;
   }
 
-  if (!(JS_DefineProperty(cx, obj, "min", h->declared_min(), JSPROP_ENUMERATE)
-        && JS_DefineProperty(cx, obj, "max", h->declared_max(), JSPROP_ENUMERATE)
-        && JS_DefineProperty(cx, obj, "histogram_type", h->histogram_type(), JSPROP_ENUMERATE)
-        && JS_DefineProperty(cx, obj, "sum", double(ss.sum()), JSPROP_ENUMERATE))) {
+  if (!(JS_DefineProperty(cx, obj, "min",
+                          h->declared_min(), JSPROP_ENUMERATE)
+        && JS_DefineProperty(cx, obj, "max",
+                             h->declared_max(), JSPROP_ENUMERATE)
+        && JS_DefineProperty(cx, obj, "histogram_type",
+                             h->histogram_type(), JSPROP_ENUMERATE)
+        && JS_DefineProperty(cx, obj, "sum",
+                             double(ss.sum(locker)), JSPROP_ENUMERATE))) {
     return REFLECT_FAILURE;
   }
 
   if (h->histogram_type() != Histogram::HISTOGRAM) {
     // Export |sum_squares| as two separate 32-bit properties so that we
     // can accurately reconstruct it on the analysis side.
-    uint64_t sum_squares = ss.sum_squares();
+    uint64_t sum_squares = ss.sum_squares(locker);
     // Cast to avoid implicit truncation warnings.
     uint32_t lo = static_cast<uint32_t>(sum_squares);
     uint32_t hi = static_cast<uint32_t>(sum_squares >> 32);
@@ -1264,7 +1271,8 @@ ReflectHistogramAndSamples(JSContext *cx, JS::Handle<JSObject*> obj, Histogram *
     return REFLECT_FAILURE;
   }
   for (size_t i = 0; i < count; i++) {
-    if (!JS_DefineElement(cx, counts_array, i, ss.counts(i), JSPROP_ENUMERATE)) {
+    if (!JS_DefineElement(cx, counts_array, i,
+                          ss.counts(locker, i), JSPROP_ENUMERATE)) {
       return REFLECT_FAILURE;
     }
   }
@@ -1286,7 +1294,8 @@ IsEmpty(const Histogram *h)
   Histogram::SampleSet ss;
   h->SnapshotSample(&ss);
 
-  return ss.counts(0) == 0 && ss.sum() == 0;
+  mozilla::OffTheBooksMutexAutoLock locker(ss.mutex());
+  return ss.counts(locker, 0) == 0 && ss.sum(locker) == 0;
 }
 
 bool
@@ -2131,7 +2140,13 @@ TelemetryImpl::IdentifyCorruptHistograms(StatisticsRecorder::Histograms &hs)
 
     Histogram::SampleSet ss;
     h->SnapshotSample(&ss);
-    Histogram::Inconsistencies check = h->FindCorruption(ss);
+
+    Histogram::Inconsistencies check;
+    {
+      mozilla::OffTheBooksMutexAutoLock locker(ss.mutex());
+      check = h->FindCorruption(ss, locker);
+    }
+
     bool corrupt = (check != Histogram::NO_INCONSISTENCIES);
 
     if (corrupt) {
@@ -2334,7 +2349,7 @@ TelemetryImpl::CreateHistogramSnapshots(JSContext *cx,
       DebugOnly<nsresult> rv = GetHistogramByEnumId(Telemetry::ID(i), &h);
       MOZ_ASSERT(NS_SUCCEEDED(rv));
     }
-  };
+  }
 
   StatisticsRecorder::Histograms hs;
   StatisticsRecorder::GetHistograms(&hs);
@@ -3544,7 +3559,6 @@ static MOZ_CONSTEXPR_VAR TrackedDBEntry kTrackedDBs[] = {
   TRACKEDDB_ENTRY("downloads.sqlite"),
   TRACKEDDB_ENTRY("extensions.sqlite"),
   TRACKEDDB_ENTRY("formhistory.sqlite"),
-  TRACKEDDB_ENTRY("healthreport.sqlite"),
   TRACKEDDB_ENTRY("index.sqlite"),
   TRACKEDDB_ENTRY("netpredictions.sqlite"),
   TRACKEDDB_ENTRY("permissions.sqlite"),
@@ -3631,7 +3645,7 @@ void
 TelemetryImpl::RecordIceCandidates(const uint32_t iceCandidateBitmask,
                                    const bool success, const bool loop)
 {
-  if (!sTelemetry)
+  if (!sTelemetry || !sTelemetry->mCanRecordExtended)
     return;
 
   sTelemetry->mWebrtcTelemetry.RecordIceCandidateMask(iceCandidateBitmask, success, loop);
@@ -3670,7 +3684,8 @@ TelemetryImpl::RecordThreadHangStats(Telemetry::ThreadHangStats& aStats)
 
   MutexAutoLock autoLock(sTelemetry->mThreadHangStatsMutex);
 
-  sTelemetry->mThreadHangStats.append(Move(aStats));
+  // Ignore OOM.
+  mozilla::Unused << sTelemetry->mThreadHangStats.append(Move(aStats));
 }
 
 NS_IMPL_ISUPPORTS(TelemetryImpl, nsITelemetry, nsIMemoryReporter)

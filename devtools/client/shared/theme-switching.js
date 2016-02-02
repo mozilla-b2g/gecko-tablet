@@ -3,8 +3,27 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 (function() {
-  const SCROLLBARS_URL = "chrome://devtools/skin/floating-scrollbars-light.css";
+  const SCROLLBARS_URL = "chrome://devtools/skin/floating-scrollbars-dark-theme.css";
   let documentElement = document.documentElement;
+
+  let os;
+  let platform = navigator.platform;
+  if (platform.startsWith("Win")) {
+    os = "win";
+  } else if (platform.startsWith("Mac")) {
+    os = "mac";
+  } else {
+    os = "linux";
+  }
+
+  documentElement.setAttribute("platform", os);
+
+  // no-theme attributes allows to just est the platform attribute
+  // to have per-platform CSS working correctly.
+  if (documentElement.getAttribute("no-theme") === "true") {
+    return;
+  }
+
   let devtoolsStyleSheets = new WeakMap();
 
   function forceStyle() {
@@ -65,15 +84,6 @@
     }
 
     let oldThemeDef = gDevTools.getThemeDefinition(oldTheme);
-
-    // Unload all theme stylesheets related to the old theme.
-    if (oldThemeDef) {
-      for (let sheet of devtoolsStyleSheets.get(oldThemeDef) || []) {
-        sheet.remove();
-      }
-    }
-
-    // Load all stylesheets associated with the new theme.
     let newThemeDef = gDevTools.getThemeDefinition(newTheme);
 
     // The theme might not be available anymore (e.g. uninstalled)
@@ -110,28 +120,35 @@
       forceStyle();
     }
 
-    if (oldThemeDef) {
-      for (let name of oldThemeDef.classList) {
-        documentElement.classList.remove(name);
+    Promise.all(loadEvents).then(() => {
+      // Unload all stylesheets and classes from the old theme.
+      if (oldThemeDef) {
+        for (let name of oldThemeDef.classList) {
+          documentElement.classList.remove(name);
+        }
+
+        for (let sheet of devtoolsStyleSheets.get(oldThemeDef) || []) {
+          sheet.remove();
+        }
+
+        if (oldThemeDef.onUnapply) {
+          oldThemeDef.onUnapply(window, newTheme);
+        }
       }
 
-      if (oldThemeDef.onUnapply) {
-        oldThemeDef.onUnapply(window, newTheme);
+      // Load all stylesheets and classes from the new theme.
+      for (let name of newThemeDef.classList) {
+        documentElement.classList.add(name);
       }
-    }
 
-    for (let name of newThemeDef.classList) {
-      documentElement.classList.add(name);
-    }
+      if (newThemeDef.onApply) {
+        newThemeDef.onApply(window, oldTheme);
+      }
 
-    if (newThemeDef.onApply) {
-      newThemeDef.onApply(window, oldTheme);
-    }
-
-    // Final notification for further theme-switching related logic.
-    gDevTools.emit("theme-switched", window, newTheme, oldTheme);
-
-    Promise.all(loadEvents).then(notifyWindow, console.error.bind(console));
+      // Final notification for further theme-switching related logic.
+      gDevTools.emit("theme-switched", window, newTheme, oldTheme);
+      notifyWindow();
+    }, console.error.bind(console));
   }
 
   function handlePrefChange(event, data) {
@@ -145,17 +162,6 @@
   Cu.import("resource://devtools/client/framework/gDevTools.jsm");
   const {require} = Components.utils.import("resource://devtools/shared/Loader.jsm", {});
   const StylesheetUtils = require("sdk/stylesheet/utils");
-
-  let os;
-  let platform = navigator.platform;
-  if (platform.startsWith("Win")) {
-    os = "win";
-  } else if (platform.startsWith("Mac")) {
-    os = "mac";
-  } else {
-    os = "linux";
-  }
-  documentElement.setAttribute("platform", os);
 
   if (documentElement.hasAttribute("force-theme")) {
     switchTheme(documentElement.getAttribute("force-theme"));

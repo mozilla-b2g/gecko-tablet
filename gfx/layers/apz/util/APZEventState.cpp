@@ -10,6 +10,7 @@
 #include "gfxPrefs.h"
 #include "LayersLogging.h"
 #include "mozilla/BasicEvents.h"
+#include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/Move.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/TouchEvents.h"
@@ -181,7 +182,7 @@ APZEventState::ProcessSingleTap(const CSSPoint& aPoint,
 
   LayoutDevicePoint currentPoint =
       APZCCallbackHelper::ApplyCallbackTransform(aPoint, aGuid)
-    * widget->GetDefaultScale();;
+    * widget->GetDefaultScale();
   if (!mActiveElementManager->ActiveElementUsesStyle()) {
     // If the active element isn't visually affected by the :active style, we
     // have no need to wait the extra sActiveDurationMs to make the activation

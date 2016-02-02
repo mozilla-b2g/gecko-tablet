@@ -114,7 +114,7 @@ if test "$_conflict_files"; then
 fi
 MOZ_BUILD_ROOT=`pwd -W 2>/dev/null || pwd -P`
 
-MOZ_BUILD_BACKEND
+MOZ_BUILD_BACKEND(../..)
 
 MOZ_DEFAULT_COMPILER
 
@@ -760,7 +760,6 @@ OBJ_SUFFIX=o
 LIB_SUFFIX=a
 ASM_SUFFIX=s
 IMPORT_LIB_SUFFIX=
-TARGET_MD_ARCH=unix
 DIRENT_INO=d_ino
 MOZ_USER_DIR=".mozilla"
 
@@ -1200,6 +1199,7 @@ if test "$GNU_CC"; then
     _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wpointer-arith"
     _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wtype-limits"
 
+    # -Wclass-varargs - catches objects passed by value to variadic functions.
     # -Wnon-literal-null-conversion - catches expressions used as a null pointer constant
     # -Wsometimes-initialized - catches some uninitialized values
     # -Wunreachable-code-aggressive - catches lots of dead code
@@ -1211,6 +1211,8 @@ if test "$GNU_CC"; then
     # -Werror=non-literal-null-conversion, but we only do that when
     # --enable-warnings-as-errors is specified so that no unexpected fatal
     # warnings are produced.
+    MOZ_C_SUPPORTS_WARNING(-W, class-varargs, ac_c_has_wclass_varargs)
+
     if test "$MOZ_ENABLE_WARNINGS_AS_ERRORS"; then
         MOZ_C_SUPPORTS_WARNING(-Werror=, non-literal-null-conversion, ac_c_has_non_literal_null_conversion)
     fi
@@ -1279,7 +1281,7 @@ if test "$GNU_CXX"; then
     _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wpointer-arith"
     _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wtype-limits"
 
-    # -Wclass-varargs - ???
+    # -Wclass-varargs - catches objects passed by value to variadic functions.
     # -Wnon-literal-null-conversion - catches expressions used as a null pointer constant
     # -Wrange-loop-analysis - catches copies during range-based for loops.
     # -Wsometimes-initialized - catches some uninitialized values
@@ -1495,7 +1497,6 @@ case "$target" in
     DSO_LDOPTS=''
     STRIP="$STRIP -x -S"
     _PLATFORM_DEFAULT_TOOLKIT='cairo-cocoa'
-    TARGET_NSPR_MDCPUCFG='\"md/_darwin.cfg\"'
     LDFLAGS="$LDFLAGS -lobjc"
     # The ExceptionHandling framework is needed for Objective-C exception
     # logging code in nsObjCExceptions.h. Currently we only use that in debug
@@ -1577,7 +1578,6 @@ ia64*-hpux*)
     AC_DEFINE(NO_PW_GECOS)
     no_x=yes
     _PLATFORM_DEFAULT_TOOLKIT=cairo-android
-    TARGET_NSPR_MDCPUCFG='\"md/_linux.cfg\"'
 
     MOZ_GFX_OPTIMIZE_MOBILE=1
     MOZ_OPTIMIZE_FLAGS="-O3 -fno-reorder-functions"
@@ -1602,8 +1602,6 @@ ia64*-hpux*)
            MOZ_OPTIMIZE_FLAGS="-freorder-blocks $MOZ_OPTIMIZE_FLAGS"
         fi
     fi
-
-    TARGET_NSPR_MDCPUCFG='\"md/_linux.cfg\"'
 
     case "${target_cpu}" in
     alpha*)
@@ -1688,10 +1686,8 @@ ia64*-hpux*)
         _DEFINES_CXXFLAGS='-FI $(topobjdir)/js/src/js-confdefs.h -DMOZILLA_CLIENT'
         CFLAGS="$CFLAGS -W3 -Gy"
         CXXFLAGS="$CXXFLAGS -W3 -Gy"
-        if test "$CPU_ARCH" = "x86" -a -z "$CLANG_CL"; then
+        if test "$CPU_ARCH" = "x86"; then
             dnl VS2012+ defaults to -arch:SSE2.
-            dnl Clang-cl gets confused by -arch:IA32, so don't add it.
-            dnl (See https://llvm.org/bugs/show_bug.cgi?id=24335)
             CFLAGS="$CFLAGS -arch:IA32"
             CXXFLAGS="$CXXFLAGS -arch:IA32"
         fi
@@ -1765,6 +1761,11 @@ ia64*-hpux*)
             # At least one MSVC header and several headers in-tree have
             # unused typedefs, so turn this on.
             CXXFLAGS="$CXXFLAGS -Wno-unused-local-typedef"
+            # Several JS engine header files use __declspec(dllimport) on
+            # classes, and clang-cl helpfully warns about its non-support
+            # for such cases.  We're not particularly worried about that,
+            # so ignore that warning.
+            CXXFLAGS="$CXXFLAGS -Wno-ignored-attributes"
         fi
         # make 'foo == bar;' error out
         CFLAGS="$CFLAGS -we4553"
@@ -1774,13 +1775,9 @@ ia64*-hpux*)
         WARNINGS_AS_ERRORS='-WX'
         MOZ_OPTIMIZE_FLAGS="-O2"
         MOZ_FIX_LINK_PATHS=
-        # Disable these flags on clang-cl since it doesn't ignore unknown arguments by default, and
-        # autoconf insists on passing $LDFLAGS to the compiler.
-        if test -z "$CLANG_CL"; then
-            LDFLAGS="$LDFLAGS -LARGEADDRESSAWARE -NXCOMPAT"
-            if test -z "$DEVELOPER_OPTIONS"; then
-                LDFLAGS="$LDFLAGS -RELEASE"
-            fi
+        LDFLAGS="$LDFLAGS -LARGEADDRESSAWARE -NXCOMPAT"
+        if test -z "$DEVELOPER_OPTIONS"; then
+            LDFLAGS="$LDFLAGS -RELEASE"
         fi
         dnl For profile-guided optimization
         PROFILE_GEN_CFLAGS="-GL"
@@ -1808,13 +1805,9 @@ ia64*-hpux*)
     AC_DEFINE(HW_THREADS)
     AC_DEFINE(STDC_HEADERS)
     AC_DEFINE(WIN32_LEAN_AND_MEAN)
-    TARGET_MD_ARCH=win32
     _PLATFORM_DEFAULT_TOOLKIT='cairo-windows'
     BIN_SUFFIX='.exe'
     MOZ_USER_DIR="Mozilla"
-
-    dnl Hardcode to win95 for now - cls
-    TARGET_NSPR_MDCPUCFG='\"md/_win95.cfg\"'
 
     dnl set NO_X11 defines here as the general check is skipped on win32
     no_x=yes
@@ -1838,11 +1831,7 @@ ia64*-hpux*)
             LDFLAGS="$LDFLAGS -Wl,--large-address-aware"
         else
             DSO_LDOPTS="$DSO_LDOPTS -MACHINE:X86"
-            # Disable this flag on clang-cl since it doesn't ignore unknown arguments by default, and
-            # autoconf insists on passing $LDFLAGS to the compiler.
-            if test -z "$CLANG_CL"; then
-                LDFLAGS="$LDFLAGS -SAFESEH"
-            fi
+            LDFLAGS="$LDFLAGS -SAFESEH"
         fi
 
     	AC_DEFINE(_X86_)
@@ -1893,7 +1882,6 @@ ia64*-hpux*)
 
 *-solaris*)
     AC_DEFINE(SOLARIS)
-    TARGET_NSPR_MDCPUCFG='\"md/_solaris.cfg\"'
     if test -z "$CROSS_COMPILE" && pkginfo -q SUNWpr && pkginfo -q SUNWprd; then
        NO_NSPR_CONFIG_SYSTEM_LDFLAGS="-L/usr/lib/mps -R/usr/lib/mps -lnspr4"
        NO_NSPR_CONFIG_SYSTEM_CFLAGS="-I/usr/include/mps"
@@ -2894,24 +2882,6 @@ elif test "$GNU_CC"; then
 fi
 
 dnl ========================================================
-dnl = Enable DMD
-dnl ========================================================
-
-MOZ_ARG_ENABLE_BOOL(dmd,
-[  --enable-dmd            Enable DMD; also enables jemalloc and replace-malloc],
-    MOZ_DMD=1,
-    MOZ_DMD= )
-
-if test "$MOZ_DMD"; then
-    AC_DEFINE(MOZ_DMD)
-
-    if test "${CPU_ARCH}" = "arm"; then
-        CFLAGS="$CFLAGS -funwind-tables"
-        CXXFLAGS="$CXXFLAGS -funwind-tables"
-    fi
-fi
-
-dnl ========================================================
 dnl = Enable jemalloc
 dnl ========================================================
 
@@ -3722,8 +3692,6 @@ AC_SUBST(HOST_OS_ARCH)
 AC_SUBST(TARGET_CPU)
 AC_SUBST(TARGET_VENDOR)
 AC_SUBST(TARGET_OS)
-AC_SUBST(TARGET_NSPR_MDCPUCFG)
-AC_SUBST(TARGET_MD_ARCH)
 AC_SUBST(TARGET_XPCOM_ABI)
 AC_SUBST(OS_TARGET)
 AC_SUBST(OS_ARCH)
@@ -3842,9 +3810,6 @@ AC_SUBST(JS_LIBRARY_NAME)
 AC_SUBST(JS_CONFIG_MOZ_JS_LIBS)
 AC_SUBST(JS_CONFIG_LIBS)
 
-if test -n "$MOZ_BUILD_NSPR"; then
-    MOZ_SUBCONFIGURE_NSPR()
-fi
 MOZ_SUBCONFIGURE_FFI()
 MOZ_SUBCONFIGURE_JEMALLOC()
 

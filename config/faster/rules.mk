@@ -24,8 +24,6 @@
 # python/mozbuild/mozbuild/backend/fastermake.py is the following:
 # - TOPSRCDIR/TOPOBJDIR, respectively the top source directory and the top
 #   object directory
-# - BACKEND, the path to the file the backend will always update when running
-#   mach build-backend
 # - PYTHON, the path to the python executable
 # - ACDEFINES, which contains a set of -Dvar=name to be used during
 #   preprocessing
@@ -49,13 +47,18 @@ ifndef NO_XPIDL
 default: $(TOPOBJDIR)/config/makefiles/xpidl/xpidl
 endif
 
-ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
 # Mac builds require to copy things in dist/bin/*.app
 # TODO: remove the MOZ_WIDGET_TOOLKIT and MOZ_BUILD_APP variables from
 # faster/Makefile and python/mozbuild/mozbuild/test/backend/test_build.py
 # when this is not required anymore.
+# We however don't need to do this when using the hybrid
+# FasterMake/RecursiveMake backend (FASTER_RECURSIVE_MAKE is set when
+# recursing from the RecursiveMake backend)
+ifndef FASTER_RECURSIVE_MAKE
+ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
 default:
 	$(MAKE) -C $(TOPOBJDIR)/$(MOZ_BUILD_APP)/app repackage
+endif
 endif
 
 .PHONY: FORCE
@@ -65,17 +68,9 @@ endif
 # toolkit/content/buildconfig.html and browser/locales/jar.mn.
 ACDEFINES += -DBUILD_FASTER
 
-# Generic rule to fall back to the recursive make backend
-$(TOPOBJDIR)/%: FORCE
-	$(MAKE) -C $(dir $@) $(notdir $@)
-
 # Files under the faster/ sub-directory, however, are not meant to use the
 # fallback
 $(TOPOBJDIR)/faster/%: ;
-
-# Files under the python virtualenv, which are dependencies of the BACKEND
-# file, are not meant to use the fallback either.
-$(TOPOBJDIR)/_virtualenv/%: ;
 
 # And files under dist/ are meant to be copied from their first dependency
 # if there is no other rule.
@@ -84,11 +79,12 @@ $(TOPOBJDIR)/dist/%:
 	mkdir -p $(@D)
 	cp $< $@
 
-# Refresh backend
-$(BACKEND):
-	cd $(TOPOBJDIR) && $(PYTHON) config.status --backend FasterMake
-
-$(MAKEFILE_LIST): $(BACKEND)
+# Generic rule to fall back to the recursive make backend.
+# This needs to stay after other $(TOPOBJDIR)/* rules because GNU Make
+# <3.82 apply pattern rules in definition order, not stem length like
+# modern GNU Make.
+$(TOPOBJDIR)/%: FORCE
+	$(MAKE) -C $(dir $@) $(notdir $@)
 
 # Install files using install manifests
 #
@@ -121,5 +117,12 @@ $(TOPOBJDIR)/dist/bin/platform.ini: $(TOPOBJDIR)/toolkit/xre/platform.ini
 $(TOPOBJDIR)/toolkit/xre/platform.ini: $(TOPOBJDIR)/config/buildid
 
 # The xpidl target in config/makefiles/xpidl requires the install manifest for
-# dist/idl to have been processed.
+# dist/idl to have been processed. When using the hybrid
+# FasterMake/RecursiveMake backend, this dependency is handled in the top-level
+# Makefile.
+ifndef FASTER_RECURSIVE_MAKE
 $(TOPOBJDIR)/config/makefiles/xpidl/xpidl: $(TOPOBJDIR)/install-dist_idl
+endif
+# It also requires all the install manifests for dist/bin to have been processed
+# because it adds interfaces.manifest references with buildlist.py.
+$(TOPOBJDIR)/config/makefiles/xpidl/xpidl: $(addprefix install-,$(filter dist/bin%,$(INSTALL_MANIFESTS)))

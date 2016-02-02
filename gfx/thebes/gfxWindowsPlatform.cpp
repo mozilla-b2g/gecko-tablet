@@ -21,6 +21,7 @@
 #include "nsServiceManagerUtils.h"
 #include "nsTArray.h"
 #include "mozilla/Telemetry.h"
+#include "GeckoProfiler.h"
 
 #include "nsIWindowsRegKey.h"
 #include "nsIFile.h"
@@ -425,12 +426,6 @@ gfxWindowsPlatform::~gfxWindowsPlatform()
     CoUninitialize();
 }
 
-double
-gfxWindowsPlatform::GetDPIScale()
-{
-  return WinUtils::LogToPhysFactor();
-}
-
 bool
 gfxWindowsPlatform::CanUseHardwareVideoDecoding()
 {
@@ -624,7 +619,7 @@ gfxWindowsPlatform::CreateDevice(RefPtr<IDXGIAdapter1> &adapter1,
 void
 gfxWindowsPlatform::VerifyD2DDevice(bool aAttemptForce)
 {
-  if (!Factory::SupportsD2D1() && !gfxPrefs::Direct2DAllow1_0()) {
+  if ((!Factory::SupportsD2D1() || !gfxPrefs::Direct2DUse1_1()) && !gfxPrefs::Direct2DAllow1_0()) {
     return;
   }
 
@@ -1211,6 +1206,8 @@ InvalidateWindowForDeviceReset(HWND aWnd, LPARAM aMsg)
 bool
 gfxWindowsPlatform::UpdateForDeviceReset()
 {
+  PROFILER_LABEL_FUNC(js::ProfileEntry::Category::GRAPHICS);
+
   if (!DidRenderingDeviceReset()) {
     return false;
   }

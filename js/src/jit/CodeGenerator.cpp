@@ -9,7 +9,10 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/EnumeratedArray.h"
+#include "mozilla/EnumeratedRange.h"
 #include "mozilla/MathAlgorithms.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/SizePrintfMacros.h"
 
 #include "jslibmath.h"
@@ -54,7 +57,6 @@ using mozilla::FloatingPoint;
 using mozilla::Maybe;
 using mozilla::NegativeInfinity;
 using mozilla::PositiveInfinity;
-using mozilla::UniquePtr;
 using JS::GenericNaN;
 
 namespace js {
@@ -1123,7 +1125,7 @@ PrepareAndExecuteRegExp(JSContext* cx, MacroAssembler& masm, Register regexp, Re
         masm.branch32(Assembler::Above, temp3, Imm32(unicode::LeadSurrogateMax), &done);
 
         // Move lastIndex to lead surrogate.
-        masm.subPtr(Imm32(2), lastIndex);
+        masm.subPtr(Imm32(1), lastIndex);
 
         masm.bind(&done);
     }
@@ -1264,13 +1266,44 @@ static void
 CopyStringChars(MacroAssembler& masm, Register to, Register from, Register len,
                 Register byteOpScratch, size_t fromWidth, size_t toWidth);
 
-static void
-CreateDependentString(MacroAssembler& masm, const JSAtomState& names,
-                      bool latin1, Register string,
-                      Register base, Register temp1, Register temp2,
-                      BaseIndex startIndexAddress, BaseIndex limitIndexAddress,
-                      Label* failure)
+class CreateDependentString
 {
+    Register string_;
+    Register temp_;
+    Label* failure_;
+    enum class FallbackKind : uint8_t {
+        InlineString,
+        FatInlineString,
+        NotInlineString,
+        Count
+    };
+    mozilla::EnumeratedArray<FallbackKind, FallbackKind::Count, Label> fallbacks_, joins_;
+
+public:
+    // Generate code that creates DependentString.
+    // Caller should call generateFallback after masm.ret(), to generate
+    // fallback path.
+    void generate(MacroAssembler& masm, const JSAtomState& names,
+                  bool latin1, Register string,
+                  Register base, Register temp1, Register temp2,
+                  BaseIndex startIndexAddress, BaseIndex limitIndexAddress,
+                  Label* failure);
+
+    // Generate fallback path for creating DependentString.
+    void generateFallback(MacroAssembler& masm, LiveRegisterSet regsToSave);
+};
+
+void
+CreateDependentString::generate(MacroAssembler& masm, const JSAtomState& names,
+                                bool latin1, Register string,
+                                Register base, Register temp1, Register temp2,
+                                BaseIndex startIndexAddress, BaseIndex limitIndexAddress,
+                                Label* failure)
+{
+    string_ = string;
+    temp_ = temp2;
+    failure_ = failure;
+
     // Compute the string length.
     masm.load32(startIndexAddress, temp2);
     masm.load32(limitIndexAddress, temp1);
@@ -1302,14 +1335,16 @@ CreateDependentString(MacroAssembler& masm, const JSAtomState& names,
         masm.branch32(Assembler::Above, temp1, Imm32(maxThinInlineLength), &fatInline);
 
         int32_t thinFlags = (latin1 ? JSString::LATIN1_CHARS_BIT : 0) | JSString::INIT_THIN_INLINE_FLAGS;
-        masm.newGCString(string, temp2, failure);
+        masm.newGCString(string, temp2, &fallbacks_[FallbackKind::InlineString]);
+        masm.bind(&joins_[FallbackKind::InlineString]);
         masm.store32(Imm32(thinFlags), Address(string, JSString::offsetOfFlags()));
         masm.jump(&stringAllocated);
 
         masm.bind(&fatInline);
 
         int32_t fatFlags = (latin1 ? JSString::LATIN1_CHARS_BIT : 0) | JSString::INIT_FAT_INLINE_FLAGS;
-        masm.newGCFatInlineString(string, temp2, failure);
+        masm.newGCFatInlineString(string, temp2, &fallbacks_[FallbackKind::FatInlineString]);
+        masm.bind(&joins_[FallbackKind::FatInlineString]);
         masm.store32(Imm32(fatFlags), Address(string, JSString::offsetOfFlags()));
 
         masm.bind(&stringAllocated);
@@ -1353,7 +1388,8 @@ CreateDependentString(MacroAssembler& masm, const JSAtomState& names,
         // Make a dependent string.
         int32_t flags = (latin1 ? JSString::LATIN1_CHARS_BIT : 0) | JSString::DEPENDENT_FLAGS;
 
-        masm.newGCString(string, temp2, failure);
+        masm.newGCString(string, temp2, &fallbacks_[FallbackKind::NotInlineString]);
+        masm.bind(&joins_[FallbackKind::NotInlineString]);
         masm.store32(Imm32(flags), Address(string, JSString::offsetOfFlags()));
         masm.store32(temp1, Address(string, JSString::offsetOfLength()));
 
@@ -1380,6 +1416,80 @@ CreateDependentString(MacroAssembler& masm, const JSAtomState& names,
     }
 
     masm.bind(&done);
+}
+
+static void*
+AllocateString(JSContext* cx)
+{
+    return js::Allocate<JSString, NoGC>(cx);
+}
+
+static void*
+AllocateFatInlineString(JSContext* cx)
+{
+    return js::Allocate<JSFatInlineString, NoGC>(cx);
+}
+
+void
+CreateDependentString::generateFallback(MacroAssembler& masm, LiveRegisterSet regsToSave)
+{
+    regsToSave.take(string_);
+    regsToSave.take(temp_);
+    for (FallbackKind kind : mozilla::MakeEnumeratedRange(FallbackKind::Count)) {
+        masm.bind(&fallbacks_[kind]);
+
+        masm.PushRegsInMask(regsToSave);
+
+        masm.setupUnalignedABICall(string_);
+        masm.loadJSContext(string_);
+        masm.passABIArg(string_);
+        masm.callWithABI(kind == FallbackKind::FatInlineString
+                         ? JS_FUNC_TO_DATA_PTR(void*, AllocateFatInlineString)
+                         : JS_FUNC_TO_DATA_PTR(void*, AllocateString));
+        masm.storeCallResult(string_);
+
+        masm.PopRegsInMask(regsToSave);
+
+        masm.branchPtr(Assembler::Equal, string_, ImmWord(0), failure_);
+
+        masm.jump(&joins_[kind]);
+    }
+}
+
+static void*
+CreateMatchResultFallbackFunc(JSContext* cx, gc::AllocKind kind, size_t nDynamicSlots)
+{
+    return js::Allocate<JSObject, NoGC>(cx, kind, nDynamicSlots, gc::DefaultHeap,
+                                        &ArrayObject::class_);
+}
+
+static void
+CreateMatchResultFallback(MacroAssembler& masm, LiveRegisterSet regsToSave,
+                          Register object, Register temp2, Register temp5, ArrayObject* templateObj, Label* fail)
+{
+    MOZ_ASSERT(templateObj->group()->clasp() == &ArrayObject::class_);
+
+    regsToSave.take(object);
+    regsToSave.take(temp2);
+    regsToSave.take(temp5);
+    masm.PushRegsInMask(regsToSave);
+
+    masm.setupUnalignedABICall(object);
+
+    masm.loadJSContext(object);
+    masm.passABIArg(object);
+    masm.move32(Imm32(int32_t(templateObj->asTenured().getAllocKind())), temp2);
+    masm.passABIArg(temp2);
+    masm.move32(Imm32(int32_t(templateObj->as<NativeObject>().numDynamicSlots())), temp5);
+    masm.passABIArg(temp5);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, CreateMatchResultFallbackFunc));
+    masm.storeCallResult(object);
+
+    masm.PopRegsInMask(regsToSave);
+
+    masm.branchPtr(Assembler::Equal, object, ImmWord(0), fail);
+
+    masm.initGCThing(object, temp2, templateObj, true, false);
 }
 
 JitCode*
@@ -1445,7 +1555,9 @@ JitCompartment::generateRegExpMatcherStub(JSContext* cx)
 
     // Construct the result.
     Register object = temp1;
-    masm.createGCObject(object, temp2, templateObject, gc::DefaultHeap, &oolEntry);
+    Label matchResultFallback, matchResultJoin;
+    masm.createGCObject(object, temp2, templateObject, gc::DefaultHeap, &matchResultFallback);
+    masm.bind(&matchResultJoin);
 
     size_t elementsOffset = NativeObject::offsetOfFixedElements();
 
@@ -1487,6 +1599,7 @@ JitCompartment::generateRegExpMatcherStub(JSContext* cx)
 
     // Loop to construct the match strings. There are two different loops,
     // depending on whether the input is latin1.
+    CreateDependentString depStr[2];
     {
         Label isLatin1, done;
         masm.branchLatin1String(input, &isLatin1);
@@ -1514,8 +1627,9 @@ JitCompartment::generateRegExpMatcherStub(JSContext* cx)
             Label isUndefined, storeDone;
             masm.branch32(Assembler::LessThan, stringIndexAddress, Imm32(0), &isUndefined);
 
-            CreateDependentString(masm, cx->names(), isLatin, temp3, input, temp4, temp5,
-                                  stringIndexAddress, stringLimitAddress, failure);
+            depStr[isLatin].generate(masm, cx->names(), isLatin, temp3, input, temp4, temp5,
+                                     stringIndexAddress, stringLimitAddress, failure);
+
             masm.storeValue(JSVAL_TYPE_STRING, temp3, stringAddress);
 
             masm.jump(&storeDone);
@@ -1574,6 +1688,28 @@ JitCompartment::generateRegExpMatcherStub(JSContext* cx)
     masm.bind(&notFound);
     masm.moveValue(NullValue(), result);
     masm.ret();
+
+    // Fallback paths for CreateDependentString and createGCObject.
+    // Need to save all registers in use when they were called.
+    LiveRegisterSet regsToSave(RegisterSet::Volatile());
+    regsToSave.addUnchecked(regexp);
+    regsToSave.addUnchecked(input);
+    regsToSave.addUnchecked(lastIndex);
+    regsToSave.addUnchecked(sticky);
+    regsToSave.addUnchecked(temp1);
+    regsToSave.addUnchecked(temp2);
+    if (maybeTemp3 != InvalidReg)
+        regsToSave.addUnchecked(maybeTemp3);
+    if (maybeTemp4 != InvalidReg)
+        regsToSave.addUnchecked(maybeTemp4);
+    regsToSave.addUnchecked(temp5);
+
+    for (int isLatin = 0; isLatin <= 1; isLatin++)
+        depStr[isLatin].generateFallback(masm, regsToSave);
+
+    masm.bind(&matchResultFallback);
+    CreateMatchResultFallback(masm, regsToSave, object, temp2, temp5, templateObject, &oolEntry);
+    masm.jump(&matchResultJoin);
 
     // Use an undefined value to signal to the caller that the OOL stub needs to be called.
     masm.bind(&oolEntry);
@@ -1644,6 +1780,8 @@ CodeGenerator::visitOutOfLineRegExpMatcher(OutOfLineRegExpMatcher* ool)
     pushArg(input);
     pushArg(regexp);
 
+    // We are not using oolCallVM because we are in a Call, and that live
+    // registers are already saved by the the register allocator.
     callVM(RegExpMatcherRawInfo, lir);
 
     masm.jump(ool->rejoin());
@@ -1795,6 +1933,8 @@ CodeGenerator::visitOutOfLineRegExpTester(OutOfLineRegExpTester* ool)
     pushArg(input);
     pushArg(regexp);
 
+    // We are not using oolCallVM because we are in a Call, and that live
+    // registers are already saved by the the register allocator.
     callVM(RegExpTesterRawInfo, lir);
 
     masm.jump(ool->rejoin());
@@ -1984,7 +2124,7 @@ CodeGenerator::visitLambda(LLambda* lir)
     emitLambdaInit(output, scopeChain, info);
 
     if (info.flags & JSFunction::EXTENDED) {
-        MOZ_ASSERT(info.fun->allowSuperProperty());
+        MOZ_ASSERT(info.fun->allowSuperProperty() || info.fun->isSelfHostedBuiltin());
         static_assert(FunctionExtended::NUM_EXTENDED_SLOTS == 2, "All slots must be initialized");
         masm.storeValue(UndefinedValue(), Address(output, FunctionExtended::offsetOfExtendedSlot(0)));
         masm.storeValue(UndefinedValue(), Address(output, FunctionExtended::offsetOfExtendedSlot(1)));
@@ -4947,7 +5087,7 @@ CodeGenerator::captureSimdTemplate(JSContext* cx)
     while (simdRefreshTemplatesDuringLink_) {
         uint32_t typeIndex = mozilla::CountTrailingZeroes32(simdRefreshTemplatesDuringLink_);
         simdRefreshTemplatesDuringLink_ ^= 1 << typeIndex;
-        SimdTypeDescr::Type type = SimdTypeDescr::Type(typeIndex);
+        SimdType type = SimdType(typeIndex);
 
         // Note: the weak-reference on the template object should not have been
         // garbage collected. It is either registered by IonBuilder, or verified
@@ -4987,21 +5127,7 @@ CodeGenerator::visitSimdUnbox(LSimdUnbox* lir)
       "MOZ_ASSERT(obj->type()->typeDescr()->getReservedSlot(JS_DESCR_SLOT_KIND).isInt32())");
     masm.branch32(Assembler::NotEqual, masm.ToPayload(typeDescrKind), Imm32(js::type::Simd), &bail);
 
-    // Convert the SIMD MIRType to a SimdTypeDescr::Type.
-    js::SimdTypeDescr::Type type;
-    switch (lir->mir()->type()) {
-      case MIRType_Bool32x4:
-        type = js::SimdTypeDescr::Bool32x4;
-        break;
-      case MIRType_Int32x4:
-        type = js::SimdTypeDescr::Int32x4;
-        break;
-      case MIRType_Float32x4:
-        type = js::SimdTypeDescr::Float32x4;
-        break;
-      default:
-        MOZ_CRASH("Unexpected SIMD Type.");
-    }
+    SimdType type = MIRTypeToSimdType(lir->mir()->type());
 
     // Check if the SimdTypeDescr /Type/ match the specialization of this
     // MSimdUnbox instruction.
@@ -5009,7 +5135,7 @@ CodeGenerator::visitSimdUnbox(LSimdUnbox* lir)
     Address typeDescrType(temp, NativeObject::getFixedSlotOffset(JS_DESCR_SLOT_TYPE));
     masm.assertTestInt32(Assembler::Equal, typeDescrType,
       "MOZ_ASSERT(obj->type()->typeDescr()->getReservedSlot(JS_DESCR_SLOT_TYPE).isInt32())");
-    masm.branch32(Assembler::NotEqual, masm.ToPayload(typeDescrType), Imm32(type), &bail);
+    masm.branch32(Assembler::NotEqual, masm.ToPayload(typeDescrType), Imm32(int32_t(type)), &bail);
 
     // Load the value from the data of the InlineTypedObject.
     Address objectData(object, InlineTypedObject::offsetOfDataStart());
@@ -7049,7 +7175,7 @@ CodeGenerator::visitStoreElementT(LStoreElementT* store)
     const LAllocation* index = store->index();
 
     if (store->mir()->needsBarrier())
-        emitPreBarrier(elements, index);
+        emitPreBarrier(elements, index, store->mir()->offsetAdjustment());
 
     if (store->mir()->needsHoleCheck())
         emitStoreHoleCheck(elements, index, store->mir()->offsetAdjustment(), store->snapshot());
@@ -7067,7 +7193,7 @@ CodeGenerator::visitStoreElementV(LStoreElementV* lir)
     const LAllocation* index = lir->index();
 
     if (lir->mir()->needsBarrier())
-        emitPreBarrier(elements, index);
+        emitPreBarrier(elements, index, lir->mir()->offsetAdjustment());
 
     if (lir->mir()->needsHoleCheck())
         emitStoreHoleCheck(elements, index, lir->mir()->offsetAdjustment(), lir->snapshot());
@@ -7099,7 +7225,7 @@ CodeGenerator::visitStoreElementHoleT(LStoreElementHoleT* lir)
         masm.branchKey(Assembler::BelowOrEqual, initLength, ToInt32Key(index), ool->entry());
 
         if (lir->mir()->needsBarrier())
-            emitPreBarrier(elements, index);
+            emitPreBarrier(elements, index, 0);
 
         masm.bind(ool->rejoinStore());
         emitStoreElementTyped(lir->value(), lir->mir()->value()->type(), lir->mir()->elementType(),
@@ -7149,7 +7275,7 @@ CodeGenerator::visitStoreElementHoleV(LStoreElementHoleV* lir)
         masm.branchKey(Assembler::BelowOrEqual, initLength, ToInt32Key(index), ool->entry());
 
         if (lir->mir()->needsBarrier())
-            emitPreBarrier(elements, index);
+            emitPreBarrier(elements, index, 0);
 
         masm.bind(ool->rejoinStore());
         if (index->isConstant())
@@ -8212,33 +8338,6 @@ CodeGenerator::generate()
     return !masm.oom();
 }
 
-struct AutoDiscardIonCode
-{
-    JSContext* cx;
-    RecompileInfo* recompileInfo;
-    IonScript* ionScript;
-    bool keep;
-
-    AutoDiscardIonCode(JSContext* cx, RecompileInfo* recompileInfo)
-      : cx(cx), recompileInfo(recompileInfo), ionScript(nullptr), keep(false) {}
-
-    ~AutoDiscardIonCode() {
-        if (keep)
-            return;
-
-        // Use js_free instead of IonScript::Destroy: the cache list and
-        // backedge list are still uninitialized.
-        if (ionScript)
-            js_free(ionScript);
-
-        recompileInfo->compilerOutput(cx->zone()->types)->invalidate();
-    }
-
-    void keepIonCode() {
-        keep = true;
-    }
-};
-
 bool
 CodeGenerator::linkSharedStubs(JSContext* cx)
 {
@@ -8296,8 +8395,7 @@ CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints)
         MOZ_ASSERT(script->ionScript()->isRecompiling());
         // Do a normal invalidate, except don't cancel offThread compilations,
         // since that will cancel this compilation too.
-        if (!Invalidate(cx, script, /* resetUses */ false, /* cancelOffThread*/ false))
-            return false;
+        Invalidate(cx, script, /* resetUses */ false, /* cancelOffThread*/ false);
     }
 
     if (scriptCounts_ && !script->hasScriptCounts() && !script->initScriptCounts(cx))
@@ -8309,13 +8407,20 @@ CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints)
     // Check to make sure we didn't have a mid-build invalidation. If so, we
     // will trickle to jit::Compile() and return Method_Skipped.
     uint32_t warmUpCount = script->getWarmUpCount();
-    RecompileInfo recompileInfo;
-    bool isValid;
-    if (!FinishCompilation(cx, script, constraints, &recompileInfo, &isValid))
-        return false;
 
-    if (!isValid)
+    // Record constraints. If an error occured, returns false and potentially
+    // prevent future compilations. Otherwise, if an invalidation occured, then
+    // skip the current compilation.
+    RecompileInfo recompileInfo;
+    bool validRecompiledInfo = false;
+    if (!FinishCompilation(cx, script, constraints, &recompileInfo, &validRecompiledInfo))
+        return false;
+    if (!validRecompiledInfo)
         return true;
+    auto guardRecordedConstraints = mozilla::MakeScopeExit([&] {
+        // In case of error, invalidate the current recompileInfo.
+        recompileInfo.compilerOutput(cx->zone()->types)->invalidate();
+    });
 
     // IonMonkey could have inferred better type information during
     // compilation. Since adding the new information to the actual type
@@ -8333,20 +8438,22 @@ CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints)
     if (!encodeSafepoints())
         return false;
 
-    AutoDiscardIonCode discardIonCode(cx, &recompileInfo);
-
     IonScript* ionScript =
-      IonScript::New(cx, recompileInfo,
-                     graph.totalSlotCount(), argumentSlots, scriptFrameSize,
-                     snapshots_.listSize(), snapshots_.RVATableSize(),
-                     recovers_.size(), bailouts_.length(), graph.numConstants(),
-                     safepointIndices_.length(), osiIndices_.length(),
-                     cacheList_.length(), runtimeData_.length(),
-                     safepoints_.size(), patchableBackedges_.length(),
-                     sharedStubs_.length(), optimizationLevel);
+        IonScript::New(cx, recompileInfo,
+                       graph.totalSlotCount(), argumentSlots, scriptFrameSize,
+                       snapshots_.listSize(), snapshots_.RVATableSize(),
+                       recovers_.size(), bailouts_.length(), graph.numConstants(),
+                       safepointIndices_.length(), osiIndices_.length(),
+                       cacheList_.length(), runtimeData_.length(),
+                       safepoints_.size(), patchableBackedges_.length(),
+                       sharedStubs_.length(), optimizationLevel);
     if (!ionScript)
         return false;
-    discardIonCode.ionScript = ionScript;
+    auto guardIonScript = mozilla::MakeScopeExit([&ionScript] {
+        // Use js_free instead of IonScript::Destroy: the cache list and
+        // backedge list are still uninitialized.
+        js_free(ionScript);
+    });
 
     // Also, note that creating the code here during an incremental GC will
     // trace the code and mark all GC things it refers to. This captures any
@@ -8549,9 +8656,8 @@ CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints)
     if (IonScriptCounts* counts = extractScriptCounts())
         script->addIonCounts(counts);
 
-    // Make sure that AutoDiscardIonCode does not free the relevant info.
-    discardIonCode.keepIonCode();
-
+    guardIonScript.release();
+    guardRecordedConstraints.release();
     return true;
 }
 

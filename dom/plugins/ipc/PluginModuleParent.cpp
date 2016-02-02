@@ -33,6 +33,7 @@
 #include "nsCRT.h"
 #include "nsIFile.h"
 #include "nsIObserverService.h"
+#include "nsIXULRuntime.h"
 #include "nsNPAPIPlugin.h"
 #include "nsPrintfCString.h"
 #include "prsystem.h"
@@ -109,6 +110,7 @@ mozilla::plugins::SetupBridge(uint32_t aPluginId,
                               nsresult* rv,
                               uint32_t* runID)
 {
+    PROFILER_LABEL_FUNC(js::ProfileEntry::Category::OTHER);
     if (NS_WARN_IF(!rv) || NS_WARN_IF(!runID)) {
         return false;
     }
@@ -679,7 +681,8 @@ PluginModuleParent::PluginModuleParent(bool aIsChrome, bool aAllowAsyncInit)
 {
 #if defined(XP_WIN) || defined(XP_MACOSX) || defined(MOZ_WIDGET_GTK)
     mIsStartingAsync = aAllowAsyncInit &&
-                       Preferences::GetBool(kAsyncInitPref, false);
+                       Preferences::GetBool(kAsyncInitPref, false) &&
+                       !BrowserTabsRemoteAutostart();
 #if defined(MOZ_CRASHREPORTER)
     CrashReporter::AnnotateCrashReport(NS_LITERAL_CSTRING("AsyncPluginInit"),
                                        mIsStartingAsync ?

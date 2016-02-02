@@ -8,12 +8,19 @@
 #define OmxDataDecoder_h_
 
 #include "mozilla/Monitor.h"
-#include "PlatformDecoderModule.h"
-#include "OmxPromiseLayer.h"
-#include "MediaInfo.h"
+
 #include "AudioCompactor.h"
+#include "ImageContainer.h"
+#include "MediaInfo.h"
+#include "PlatformDecoderModule.h"
+
+#include "OMX_Component.h"
+
+#include "OmxPromiseLayer.h"
 
 namespace mozilla {
+
+class MediaDataHelper;
 
 typedef OmxPromiseLayer::OmxCommandPromise OmxCommandPromise;
 typedef OmxPromiseLayer::OmxBufferPromise OmxBufferPromise;
@@ -27,7 +34,7 @@ typedef OmxPromiseLayer::BUFFERLIST BUFFERLIST;
  *   2. Keeping the buffers between client and component.
  *   3. Manage the OMX state.
  *
- * From the definiton in OpenMax spec. "2.2.1", there are 3 major roles in
+ * From the definition in OpenMax spec. "2.2.1", there are 3 major roles in
  * OpenMax IL.
  *
  * IL client:
@@ -54,7 +61,8 @@ protected:
 
 public:
   OmxDataDecoder(const TrackInfo& aTrackInfo,
-                 MediaDataDecoderCallback* aCallback);
+                 MediaDataDecoderCallback* aCallback,
+                 layers::ImageContainer* aImageContainer);
 
   RefPtr<InitPromise> Init() override;
 
@@ -65,6 +73,11 @@ public:
   nsresult Drain() override;
 
   nsresult Shutdown() override;
+
+  const char* GetDescriptionName() const override
+  {
+    return "omx decoder";
+  }
 
   // Return true if event is handled.
   bool Event(OMX_EVENTTYPE aEvent, OMX_U32 aData1, OMX_U32 aData2);
@@ -90,10 +103,10 @@ protected:
 
   void NotifyError(OMX_ERRORTYPE aError, const char* aLine);
 
-  // Config audio codec.
+  // Configure audio/video codec.
   // Some codec may just ignore this and rely on codec specific data in
   // FillCodecConfigDataToOmx().
-  void ConfigAudioCodec();
+  void ConfigCodec();
 
   // Sending codec specific data to OMX component. OMX component could send a
   // OMX_EventPortSettingsChanged back to client. And then client needs to
@@ -108,12 +121,7 @@ protected:
   // the port format is changed due to different codec specific.
   void PortSettingsChanged();
 
-  void OutputAudio(BufferData* aBufferData);
-
-  // Notify InputExhausted when:
-  //   1. all input buffers are not held by component.
-  //   2. all output buffers are waiting for filling complete.
-  void CheckIfInputExhausted();
+  void Output(BufferData* aData);
 
   // Buffer can be released if its status is not OMX_COMPONENT or
   // OMX_CLIENT_OUTPUT.
@@ -137,8 +145,6 @@ protected:
 
   BufferData* FindAvailableBuffer(OMX_DIRTYPE aType);
 
-  template<class T> void InitOmxParameter(T* aParam);
-
   // aType could be OMX_DirMax for all types.
   RefPtr<OmxPromiseLayer::OmxBufferPromise::AllPromiseType>
   CollectBufferPromises(OMX_DIRTYPE aType);
@@ -149,6 +155,8 @@ protected:
   RefPtr<TaskQueue> mOmxTaskQueue;
 
   RefPtr<TaskQueue> mReaderTaskQueue;
+
+  RefPtr<layers::ImageContainer> mImageContainer;
 
   WatchManager<OmxDataDecoder> mWatchManager;
 
@@ -182,22 +190,28 @@ protected:
   // It is access in Omx TaskQueue.
   nsTArray<RefPtr<MediaRawData>> mMediaRawDatas;
 
-  // It is access in Omx TaskQueue. The latest input MediaRawData.
-  RefPtr<MediaRawData> mLatestInputRawData;
-
   BUFFERLIST mInPortBuffers;
 
   BUFFERLIST mOutPortBuffers;
 
-  // For audio output.
-  // TODO: because this class is for both video and audio decoding, so there
-  // should be some kind of abstract things to these members.
-  MediaQueue<AudioData> mAudioQueue;
-
-  AudioCompactor mAudioCompactor;
+  RefPtr<MediaDataHelper> mMediaDataHelper;
 
   MediaDataDecoderCallback* mCallback;
 };
+
+template<class T>
+void InitOmxParameter(T* aParam)
+{
+  PodZero(aParam);
+  aParam->nSize = sizeof(T);
+  aParam->nVersion.s.nVersionMajor = 1;
+}
+
+// There should be 2 ports and port number start from 0.
+void GetOmxPortIndex(nsTArray<uint32_t>& aPortIndex) {
+  aPortIndex.AppendElement(0);
+  aPortIndex.AppendElement(1);
+}
 
 }
 

@@ -11,6 +11,7 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Casting.h"
+#include "mozilla/HashFunctions.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/Move.h"
 #include "mozilla/PodOperations.h"
@@ -498,11 +499,16 @@ class HashSet
         return false;
     }
 
-    // Infallibly rekey one entry with a new key that is equivalent.
-    void rekeyInPlace(Ptr p, const T& new_value)
-    {
+    // Infallibly replace the current key at |p| with an equivalent key.
+    // Specifically, both HashPolicy::hash and HashPolicy::match must return
+    // identical results for the new and old key when applied against all
+    // possible matching values.
+    void replaceKey(Ptr p, const T& new_value) {
+        MOZ_ASSERT(p.found());
+        MOZ_ASSERT(*p != new_value);
+        MOZ_ASSERT(HashPolicy::hash(*p) == HashPolicy::hash(new_value));
         MOZ_ASSERT(HashPolicy::match(*p, new_value));
-        impl.rekeyInPlace(p, new_value);
+        const_cast<T&>(*p) = new_value;
     }
 
     // HashSet is movable
@@ -601,21 +607,21 @@ template <class T>
 struct DefaultHasher<T*> : PointerHasher<T*, mozilla::tl::FloorLog2<sizeof(void*)>::value>
 {};
 
-// Specialize hashing policy for mozilla::UniquePtr<T> to proxy the UniquePtr's
+// Specialize hashing policy for mozilla::UniquePtr to proxy the UniquePtr's
 // raw pointer to PointerHasher.
-template <class T>
-struct DefaultHasher<mozilla::UniquePtr<T>>
+template <class T, class D>
+struct DefaultHasher<mozilla::UniquePtr<T, D>>
 {
-    using Lookup = mozilla::UniquePtr<T>;
+    using Lookup = mozilla::UniquePtr<T, D>;
     using PtrHasher = PointerHasher<T*, mozilla::tl::FloorLog2<sizeof(void*)>::value>;
 
     static HashNumber hash(const Lookup& l) {
         return PtrHasher::hash(l.get());
     }
-    static bool match(const mozilla::UniquePtr<T>& k, const Lookup& l) {
+    static bool match(const mozilla::UniquePtr<T, D>& k, const Lookup& l) {
         return PtrHasher::match(k.get(), l.get());
     }
-    static void rekey(mozilla::UniquePtr<T>& k, mozilla::UniquePtr<T>&& newKey) {
+    static void rekey(mozilla::UniquePtr<T, D>& k, mozilla::UniquePtr<T, D>&& newKey) {
         k = mozilla::Move(newKey);
     }
 };
@@ -647,6 +653,18 @@ struct DefaultHasher<float>
     }
     static bool match(float lhs, float rhs) {
         return mozilla::BitwiseCast<uint32_t>(lhs) == mozilla::BitwiseCast<uint32_t>(rhs);
+    }
+};
+
+// A hash policy that compares C strings.
+struct CStringHasher
+{
+    typedef const char* Lookup;
+    static js::HashNumber hash(Lookup l) {
+        return mozilla::HashString(l);
+    }
+    static bool match(const char* key, Lookup lookup) {
+        return strcmp(key, lookup) == 0;
     }
 };
 
@@ -1657,7 +1675,7 @@ class HashTable : private AllocPolicy
             RebuildStatus status = checkOverloaded();
             if (status == RehashFailed)
                 return false;
-            if (!this->checkSimulatedOOM())
+            if (status == NotOverloaded && !this->checkSimulatedOOM())
                 return false;
             if (status == Rehashed)
                 p.entry_ = &findFreeEntry(p.keyHash);
@@ -1753,14 +1771,6 @@ class HashTable : private AllocPolicy
     {
         rekeyWithoutRehash(p, l, k);
         checkOverRemoved();
-    }
-
-    void rekeyInPlace(Ptr p, const Key& k)
-    {
-        MOZ_ASSERT(table);
-        mozilla::ReentrancyGuard g(*this);
-        MOZ_ASSERT(p.found());
-        HashPolicy::rekey(const_cast<Key&>(*p), const_cast<Key&>(k));
     }
 
 #undef METER

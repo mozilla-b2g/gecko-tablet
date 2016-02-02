@@ -54,7 +54,6 @@ using mozilla::CeilingLog2;
 using mozilla::CheckedInt;
 using mozilla::DebugOnly;
 using mozilla::IsNaN;
-using mozilla::UniquePtr;
 
 using JS::AutoCheckCannotGC;
 using JS::IsArrayAnswer;
@@ -821,7 +820,7 @@ ObjectMayHaveExtraIndexedOwnProperties(JSObject* obj)
 {
     return (!obj->isNative() && !obj->is<UnboxedArrayObject>()) ||
            obj->isIndexed() ||
-           IsAnyTypedArray(obj) ||
+           obj->is<TypedArrayObject>() ||
            ClassMayResolveId(*obj->runtimeFromAnyThread()->commonNames,
                              obj->getClass(), INT_TO_JSID(0), obj);
 }
@@ -1741,7 +1740,7 @@ SortLexicographically(JSContext* cx, AutoValueVector* vec, size_t len)
     Vector<StringifiedElement, 0, TempAllocPolicy> strElements(cx);
 
     /* MergeSort uses the upper half as scratch space. */
-    if (!strElements.reserve(2 * len))
+    if (!strElements.resize(2 * len))
         return false;
 
     /* Convert Values to strings. */
@@ -1753,13 +1752,9 @@ SortLexicographically(JSContext* cx, AutoValueVector* vec, size_t len)
         if (!ValueToStringBuffer(cx, (*vec)[i], sb))
             return false;
 
-        StringifiedElement el = { cursor, sb.length(), i };
-        strElements.infallibleAppend(el);
+        strElements[i] = { cursor, sb.length(), i };
         cursor = sb.length();
     }
-
-    /* Resize strElements so we can perform MergeSort. */
-    JS_ALWAYS_TRUE(strElements.resize(2 * len));
 
     /* Sort Values in vec alphabetically. */
     return MergeSortByKey(strElements.begin(), len, strElements.begin() + len,
@@ -1780,7 +1775,7 @@ SortNumerically(JSContext* cx, AutoValueVector* vec, size_t len, ComparatorMatch
     Vector<NumericElement, 0, TempAllocPolicy> numElements(cx);
 
     /* MergeSort uses the upper half as scratch space. */
-    if (!numElements.reserve(2 * len))
+    if (!numElements.resize(2 * len))
         return false;
 
     /* Convert Values to numerics. */
@@ -1792,12 +1787,8 @@ SortNumerically(JSContext* cx, AutoValueVector* vec, size_t len, ComparatorMatch
         if (!ToNumber(cx, (*vec)[i], &dv))
             return false;
 
-        NumericElement el = { dv, i };
-        numElements.infallibleAppend(el);
+        numElements[i] = { dv, i };
     }
-
-    /* Resize strElements so we can perform MergeSort. */
-    JS_ALWAYS_TRUE(numElements.resize(2 * len));
 
     /* Sort Values in vec numerically. */
     return MergeSortByKey(numElements.begin(), len, numElements.begin() + len,
@@ -1825,6 +1816,43 @@ js::array_sort(JSContext* cx, unsigned argc, Value* vp)
     RootedObject obj(cx, ToObject(cx, args.thisv()));
     if (!obj)
         return false;
+
+    ComparatorMatchResult comp = MatchNumericComparator(cx, fval);
+    if (comp == Match_Failure)
+        return false;
+
+    if (!fval.isNull() && comp == Match_None) {
+        /*
+         * Non-optimized user supplied comparators perform much better when
+         * called from within a self-hosted sorting function.
+         */
+        RootedAtom selfHostedSortAtom(cx, Atomize(cx, "ArraySort", 9));
+        RootedPropertyName selfHostedSortName(cx, selfHostedSortAtom->asPropertyName());
+        RootedValue selfHostedSortValue(cx);
+
+        if (!GlobalObject::getIntrinsicValue(cx, cx->global(), selfHostedSortName,
+            &selfHostedSortValue)) {
+            return false;
+        }
+
+        MOZ_ASSERT(selfHostedSortValue.isObject());
+        MOZ_ASSERT(selfHostedSortValue.toObject().is<JSFunction>());
+
+        InvokeArgs iargs(cx);
+
+        if (!iargs.init(1))
+            return false;
+
+        iargs.setCallee(selfHostedSortValue);
+        iargs.setThis(args.thisv());
+        iargs[0].set(fval);
+
+        if (!Invoke(cx, iargs))
+            return false;
+
+        args.rval().set(iargs.rval());
+        return true;
+    }
 
     uint32_t len;
     if (!GetLengthProperty(cx, obj, &len))
@@ -1926,27 +1954,13 @@ js::array_sort(JSContext* cx, unsigned argc, Value* vp)
                     return false;
             }
         } else {
-            ComparatorMatchResult comp = MatchNumericComparator(cx, fval);
-            if (comp == Match_Failure)
-                return false;
-
-            if (comp != Match_None) {
-                if (allInts) {
-                    JS_ALWAYS_TRUE(vec.resize(n * 2));
-                    if (!MergeSort(vec.begin(), n, vec.begin() + n, SortComparatorInt32s[comp]))
-                        return false;
-                } else {
-                    if (!SortNumerically(cx, &vec, n, comp))
-                        return false;
-                }
-            } else {
-                FastInvokeGuard fig(cx, fval);
+            if (allInts) {
                 JS_ALWAYS_TRUE(vec.resize(n * 2));
-                if (!MergeSort(vec.begin(), n, vec.begin() + n,
-                               SortComparatorFunction(cx, fval, fig)))
-                {
+                if (!MergeSort(vec.begin(), n, vec.begin() + n, SortComparatorInt32s[comp]))
                     return false;
-                }
+            } else {
+                if (!SortNumerically(cx, &vec, n, comp))
+                    return false;
             }
         }
 
@@ -2779,8 +2793,8 @@ GetIndexedPropertiesInRange(JSContext* cx, HandleObject obj, uint32_t begin, uin
         }
 
         // Append typed array elements.
-        if (IsAnyTypedArray(pobj)) {
-            uint32_t len = AnyTypedArrayLength(pobj);
+        if (pobj->is<TypedArrayObject>()) {
+            uint32_t len = pobj->as<TypedArrayObject>().length();
             for (uint32_t i = begin; i < len && i < end; i++) {
                 if (!indexes.append(i))
                     return false;
@@ -3081,11 +3095,8 @@ array_of(JSContext* cx, unsigned argc, Value* vp)
             return false;
         cargs[0].setNumber(args.length());
 
-        RootedValue v(cx);
-        if (!Construct(cx, args.thisv(), cargs, args.thisv(), &v))
+        if (!Construct(cx, args.thisv(), cargs, args.thisv(), &obj))
             return false;
-
-        obj = &v.toObject();
     }
 
     // Step 8.
@@ -3664,8 +3675,7 @@ js::ArrayInfo(JSContext* cx, unsigned argc, Value* vp)
     for (unsigned i = 0; i < args.length(); i++) {
         RootedValue arg(cx, args[i]);
 
-        UniquePtr<char[], JS::FreePolicy> bytes =
-            DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, arg, nullptr);
+        UniqueChars bytes = DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, arg, nullptr);
         if (!bytes)
             return false;
         if (arg.isPrimitive() ||

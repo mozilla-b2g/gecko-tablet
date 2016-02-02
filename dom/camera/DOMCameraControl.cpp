@@ -249,7 +249,7 @@ nsDOMCameraControl::DiscardCachedCameraInstance(nsITimer* aTimer, void* aClosure
 nsDOMCameraControl::nsDOMCameraControl(uint32_t aCameraId,
                                        const CameraConfiguration& aInitialConfig,
                                        Promise* aPromise,
-                                       nsPIDOMWindow* aWindow)
+                                       nsPIDOMWindowInner* aWindow)
   : DOMMediaStream()
   , mCameraControl(nullptr)
   , mAudioChannelAgent(nullptr)
@@ -529,7 +529,7 @@ nsDOMCameraControl::TrackCreated(TrackID aTrackID) {
   // This track is not connected through a port.
   MediaInputPort* inputPort = nullptr;
   dom::VideoStreamTrack* track =
-    new dom::VideoStreamTrack(this, aTrackID);
+    new dom::VideoStreamTrack(this, aTrackID, nsString());
   RefPtr<TrackPort> port =
     new TrackPort(inputPort, track,
                   TrackPort::InputPortOwnership::OWNED);

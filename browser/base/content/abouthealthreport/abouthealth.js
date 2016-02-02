@@ -12,21 +12,13 @@ Cu.import("resource://gre/modules/Services.jsm");
 const prefs = new Preferences("datareporting.healthreport.");
 
 const PREF_UNIFIED = "toolkit.telemetry.unified";
-const PREF_UNIFIED_OPTIN = "toolkit.telemetry.unifiedIsOptIn";
-
-// Whether v4 behavior is enabled, i.e. unified Telemetry features are on by default.
-const IS_V4 = Preferences.get(PREF_UNIFIED, false) &&
-              !Preferences.get(PREF_UNIFIED_OPTIN, false);
+const PREF_REPORTING_URL = "datareporting.healthreport.about.reportUrl";
 
 var healthReportWrapper = {
   init: function () {
     let iframe = document.getElementById("remote-report");
     iframe.addEventListener("load", healthReportWrapper.initRemotePage, false);
     iframe.src = this._getReportURI().spec;
-    iframe.onload = () => {
-      MozSelfSupport.getHealthReportPayload().then(this.updatePayload,
-                                                   this.handleInitFailure);
-    };
     prefs.observe("uploadEnabled", this.updatePrefState, healthReportWrapper);
   },
 
@@ -35,9 +27,7 @@ var healthReportWrapper = {
   },
 
   _getReportURI: function () {
-    const pref = IS_V4 ? "datareporting.healthreport.about.reportUrl"
-                       : "datareporting.healthreport.about.reportUrlUnified";
-    let url = Services.urlFormatter.formatURLPref(pref);
+    let url = Services.urlFormatter.formatURLPref(PREF_REPORTING_URL);
     return Services.io.newURI(url, null, null);
   },
 
@@ -103,15 +93,6 @@ var healthReportWrapper = {
     });
   },
 
-  refreshPayload: function () {
-    MozSelfSupport.getHealthReportPayload().then(this.updatePayload,
-                                                 this.handlePayloadFailure);
-  },
-
-  updatePayload: function (payload) {
-    healthReportWrapper.injectData("payload", JSON.stringify(payload));
-  },
-
   injectData: function (type, content) {
     let report = this._getReportURI();
 
@@ -138,9 +119,6 @@ var healthReportWrapper = {
         break;
       case "RequestCurrentPrefs":
         this.updatePrefState();
-        break;
-      case "RequestCurrentPayload":
-        this.refreshPayload();
         break;
       case "RequestTelemetryPingList":
         this.sendTelemetryPingList();

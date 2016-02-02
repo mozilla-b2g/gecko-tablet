@@ -35,20 +35,17 @@ static const unsigned COMPILATION_LIFO_DEFAULT_CHUNK_SIZE = 64 * 1024;
 
 ModuleGenerator::ModuleGenerator(ExclusiveContext* cx)
   : cx_(cx),
-    args_(cx),
-    globalBytes_(InitialGlobalDataBytes),
-    slowFuncs_(cx),
-    lifo_(GENERATOR_LIFO_DEFAULT_CHUNK_SIZE),
     jcx_(CompileRuntime::get(cx->compartment()->runtimeFromAnyThread())),
+    slowFuncs_(cx),
+    numSigs_(0),
+    lifo_(GENERATOR_LIFO_DEFAULT_CHUNK_SIZE),
     alloc_(&lifo_),
     masm_(MacroAssembler::AsmJSToken(), alloc_),
-    sigs_(cx),
+    funcIndexToExport_(cx),
     parallel_(false),
     outstanding_(0),
     tasks_(cx),
     freeTasks_(cx),
-    funcBytes_(0),
-    funcEntryOffsets_(cx),
     activeFunc_(nullptr),
     finishedFuncs_(false)
 {
@@ -106,58 +103,43 @@ ParallelCompilationEnabled(ExclusiveContext* cx)
 }
 
 bool
-ModuleGenerator::init()
+ModuleGenerator::init(UniqueModuleGeneratorData shared, UniqueChars filename, ModuleKind kind)
 {
-    staticLinkData_ = cx_->make_unique<StaticLinkData>();
-    if (!staticLinkData_)
+    if (!funcIndexToExport_.init())
         return false;
 
-    if (!sigs_.init())
+    module_ = MakeUnique<ModuleData>();
+    if (!module_)
         return false;
 
-    uint32_t numTasks;
-    if (ParallelCompilationEnabled(cx_) &&
-        HelperThreadState().wasmCompilationInProgress.compareExchange(false, true))
-    {
-#ifdef DEBUG
-        {
-            AutoLockHelperThreadState lock;
-            MOZ_ASSERT(!HelperThreadState().wasmFailed());
-            MOZ_ASSERT(HelperThreadState().wasmWorklist().empty());
-            MOZ_ASSERT(HelperThreadState().wasmFinishedList().empty());
+    module_->globalBytes = InitialGlobalDataBytes;
+    module_->compileArgs = CompileArgs(cx_);
+    module_->kind = kind;
+    module_->heapUsage = HeapUsage::None;
+    module_->filename = Move(filename);
+
+    link_ = MakeUnique<StaticLinkData>();
+    if (!link_)
+        return false;
+
+    // For asm.js, the Vectors in ModuleGeneratorData are max-sized reservations
+    // and will be initialized in a linear order via init* functions as the
+    // module is generated. For wasm, the Vectors are correctly-sized and
+    // already initialized.
+    shared_ = Move(shared);
+    if (kind == ModuleKind::Wasm) {
+        numSigs_ = shared_->sigs.length();
+        module_->numFuncs = shared_->funcSigs.length();
+        module_->globalBytes = AlignBytes(module_->globalBytes, sizeof(void*));
+        for (ModuleImportGeneratorData& import : shared_->imports) {
+            MOZ_ASSERT(!import.globalDataOffset);
+            import.globalDataOffset = module_->globalBytes;
+            module_->globalBytes += Module::SizeOfImportExit;
+            if (!addImport(*import.sig, import.globalDataOffset))
+                return false;
         }
-#endif
-
-        parallel_ = true;
-        numTasks = HelperThreadState().maxWasmCompilationThreads();
-    } else {
-        numTasks = 1;
     }
 
-    if (!tasks_.initCapacity(numTasks))
-        return false;
-    JSRuntime* runtime = cx_->compartment()->runtimeFromAnyThread();
-    for (size_t i = 0; i < numTasks; i++)
-        tasks_.infallibleEmplaceBack(runtime, args_, COMPILATION_LIFO_DEFAULT_CHUNK_SIZE);
-
-    if (!freeTasks_.reserve(numTasks))
-        return false;
-    for (size_t i = 0; i < numTasks; i++)
-        freeTasks_.infallibleAppend(&tasks_[i]);
-
-    return true;
-}
-
-bool
-ModuleGenerator::allocateGlobalBytes(uint32_t bytes, uint32_t align, uint32_t* globalDataOffset)
-{
-    uint32_t pad = ComputeByteAlignment(globalBytes_, align);
-    if (UINT32_MAX - globalBytes_ < pad + bytes)
-        return false;
-
-    globalBytes_ += pad;
-    *globalDataOffset = globalBytes_;
-    globalBytes_ += bytes;
     return true;
 }
 
@@ -191,7 +173,7 @@ ModuleGenerator::finishOutstandingTask()
 bool
 ModuleGenerator::finishTask(IonCompileTask* task)
 {
-    const FuncIR& func = task->func();
+    const FuncBytecode& func = task->func();
     FuncCompileResults& results = task->results();
 
     // Offset the recorded FuncOffsets by the offset of the function in the
@@ -200,10 +182,12 @@ ModuleGenerator::finishTask(IonCompileTask* task)
     results.offsets().offsetBy(offsetInWhole);
 
     // Record the non-profiling entry for whole-module linking later.
+    // Cannot simply append because funcIndex order is nonlinear.
     if (func.index() >= funcEntryOffsets_.length()) {
         if (!funcEntryOffsets_.resize(func.index() + 1))
             return false;
     }
+    MOZ_ASSERT(funcEntryOffsets_[func.index()] == 0);
     funcEntryOffsets_[func.index()] = results.offsets().nonProfilingEntry;
 
     // Merge the compiled results into the whole-module masm.
@@ -213,139 +197,261 @@ ModuleGenerator::finishTask(IonCompileTask* task)
     MOZ_ASSERT(masm_.size() == offsetInWhole + results.masm().size());
 
     // Add the CodeRange for this function.
-    CacheableChars funcName = StringToNewUTF8CharsZ(cx_, *func.name());
-    if (!funcName)
-        return false;
-    uint32_t nameIndex = funcNames_.length();
-    if (!funcNames_.emplaceBack(Move(funcName)))
-        return false;
-    if (!codeRanges_.emplaceBack(nameIndex, func.line(), results.offsets()))
+    if (!module_->codeRanges.emplaceBack(func.index(), func.lineOrBytecode(), results.offsets()))
         return false;
 
     // Keep a record of slow functions for printing in the final console message.
     unsigned totalTime = func.generateTime() + results.compileTime();
     if (totalTime >= SlowFunction::msThreshold) {
-        if (!slowFuncs_.emplaceBack(func.name(), totalTime, func.line(), func.column()))
+        if (!slowFuncs_.emplaceBack(func.index(), totalTime, func.lineOrBytecode()))
             return false;
     }
 
-    task->reset();
     freeTasks_.infallibleAppend(task);
     return true;
 }
 
-const LifoSig*
-ModuleGenerator::newLifoSig(const MallocSig& sig)
+bool
+ModuleGenerator::addImport(const Sig& sig, uint32_t globalDataOffset)
 {
-    SigSet::AddPtr p = sigs_.lookupForAdd(sig);
-    if (p)
-        return *p;
+    Sig copy;
+    if (!copy.clone(sig))
+        return false;
 
-    LifoSig* lifoSig = LifoSig::new_(lifo_, sig);
-    if (!lifoSig || !sigs_.add(p, lifoSig))
-        return nullptr;
-
-    return lifoSig;
+    return module_->imports.emplaceBack(Move(copy), globalDataOffset);
 }
 
 bool
-ModuleGenerator::allocateGlobalVar(ValType type, uint32_t* globalDataOffset)
+ModuleGenerator::allocateGlobalBytes(uint32_t bytes, uint32_t align, uint32_t* globalDataOffset)
 {
+    uint32_t globalBytes = module_->globalBytes;
+
+    uint32_t pad = ComputeByteAlignment(globalBytes, align);
+    if (UINT32_MAX - globalBytes < pad + bytes)
+        return false;
+
+    globalBytes += pad;
+    *globalDataOffset = globalBytes;
+    globalBytes += bytes;
+
+    module_->globalBytes = globalBytes;
+    return true;
+}
+
+bool
+ModuleGenerator::allocateGlobalVar(ValType type, bool isConst, uint32_t* index)
+{
+    MOZ_ASSERT(!startedFuncDefs());
     unsigned width = 0;
     switch (type) {
-      case wasm::ValType::I32:
-      case wasm::ValType::F32:
+      case ValType::I32:
+      case ValType::F32:
         width = 4;
         break;
-      case wasm::ValType::I64:
-      case wasm::ValType::F64:
+      case ValType::I64:
+      case ValType::F64:
         width = 8;
         break;
-      case wasm::ValType::I32x4:
-      case wasm::ValType::F32x4:
-      case wasm::ValType::B32x4:
+      case ValType::I32x4:
+      case ValType::F32x4:
+      case ValType::B32x4:
         width = 16;
         break;
+      case ValType::Limit:
+        MOZ_CRASH("Limit");
+        break;
     }
-    return allocateGlobalBytes(width, width, globalDataOffset);
+
+    uint32_t offset;
+    if (!allocateGlobalBytes(width, width, &offset))
+        return false;
+
+    *index = shared_->globals.length();
+    return shared_->globals.append(AsmJSGlobalVariable(ToExprType(type), offset, isConst));
+}
+
+void
+ModuleGenerator::initHeapUsage(HeapUsage heapUsage)
+{
+    MOZ_ASSERT(module_->heapUsage == HeapUsage::None);
+    module_->heapUsage = heapUsage;
+}
+
+void
+ModuleGenerator::initSig(uint32_t sigIndex, Sig&& sig)
+{
+    MOZ_ASSERT(isAsmJS());
+    MOZ_ASSERT(sigIndex == numSigs_);
+    numSigs_++;
+
+    MOZ_ASSERT(shared_->sigs[sigIndex] == Sig());
+    shared_->sigs[sigIndex] = Move(sig);
+}
+
+const DeclaredSig&
+ModuleGenerator::sig(uint32_t index) const
+{
+    MOZ_ASSERT(index < numSigs_);
+    return shared_->sigs[index];
 }
 
 bool
-ModuleGenerator::declareImport(MallocSig&& sig, unsigned* index)
+ModuleGenerator::initFuncSig(uint32_t funcIndex, uint32_t sigIndex)
 {
-    static_assert(Module::SizeOfImportExit % sizeof(void*) == 0, "word aligned");
+    MOZ_ASSERT(isAsmJS());
+    MOZ_ASSERT(funcIndex == module_->numFuncs);
+    MOZ_ASSERT(!shared_->funcSigs[funcIndex]);
 
+    module_->numFuncs++;
+    shared_->funcSigs[funcIndex] = &shared_->sigs[sigIndex];
+    return true;
+}
+
+const DeclaredSig&
+ModuleGenerator::funcSig(uint32_t funcIndex) const
+{
+    MOZ_ASSERT(shared_->funcSigs[funcIndex]);
+    return *shared_->funcSigs[funcIndex];
+}
+
+bool
+ModuleGenerator::initImport(uint32_t importIndex, uint32_t sigIndex)
+{
     uint32_t globalDataOffset;
     if (!allocateGlobalBytes(Module::SizeOfImportExit, sizeof(void*), &globalDataOffset))
         return false;
 
-    *index = unsigned(imports_.length());
-    return imports_.emplaceBack(Move(sig), globalDataOffset);
+    MOZ_ASSERT(isAsmJS());
+    MOZ_ASSERT(importIndex == module_->imports.length());
+    if (!addImport(sig(sigIndex), globalDataOffset))
+        return false;
+
+    ModuleImportGeneratorData& import = shared_->imports[importIndex];
+    MOZ_ASSERT(!import.sig);
+    import.sig = &shared_->sigs[sigIndex];
+    import.globalDataOffset = globalDataOffset;
+    return true;
 }
 
 uint32_t
-ModuleGenerator::numDeclaredImports() const
+ModuleGenerator::numImports() const
 {
-    return imports_.length();
+    return module_->imports.length();
 }
 
-uint32_t
-ModuleGenerator::importExitGlobalDataOffset(uint32_t index) const
+const ModuleImportGeneratorData&
+ModuleGenerator::import(uint32_t index) const
 {
-    return imports_[index].exitGlobalDataOffset();
-}
-
-const MallocSig&
-ModuleGenerator::importSig(uint32_t index) const
-{
-    return imports_[index].sig();
+    MOZ_ASSERT(shared_->imports[index].sig);
+    return shared_->imports[index];
 }
 
 bool
 ModuleGenerator::defineImport(uint32_t index, ProfilingOffsets interpExit, ProfilingOffsets jitExit)
 {
-    Import& import = imports_[index];
+    Import& import = module_->imports[index];
     import.initInterpExitOffset(interpExit.begin);
     import.initJitExitOffset(jitExit.begin);
-    return codeRanges_.emplaceBack(CodeRange::ImportInterpExit, interpExit) &&
-           codeRanges_.emplaceBack(CodeRange::ImportJitExit, jitExit);
+    return module_->codeRanges.emplaceBack(CodeRange::ImportInterpExit, interpExit) &&
+           module_->codeRanges.emplaceBack(CodeRange::ImportJitExit, jitExit);
 }
 
 bool
-ModuleGenerator::declareExport(MallocSig&& sig, uint32_t funcIndex)
+ModuleGenerator::declareExport(uint32_t funcIndex, uint32_t* exportIndex)
 {
-    return exports_.emplaceBack(Move(sig), funcIndex);
+    FuncIndexMap::AddPtr p = funcIndexToExport_.lookupForAdd(funcIndex);
+    if (p) {
+        *exportIndex = p->value();
+        return true;
+    }
+
+    Sig copy;
+    if (!copy.clone(funcSig(funcIndex)))
+        return false;
+
+    *exportIndex = module_->exports.length();
+    return funcIndexToExport_.add(p, funcIndex, *exportIndex) &&
+           module_->exports.append(Move(copy)) &&
+           exportFuncIndices_.append(funcIndex);
 }
 
 uint32_t
 ModuleGenerator::exportFuncIndex(uint32_t index) const
 {
-    return exports_[index].funcIndex();
-}
-
-const MallocSig&
-ModuleGenerator::exportSig(uint32_t index) const
-{
-    return exports_[index].sig();
+    return exportFuncIndices_[index];
 }
 
 uint32_t
-ModuleGenerator::numDeclaredExports() const
+ModuleGenerator::exportEntryOffset(uint32_t index) const
 {
-    return exports_.length();
+    return funcEntryOffsets_[exportFuncIndices_[index]];
+}
+
+const Sig&
+ModuleGenerator::exportSig(uint32_t index) const
+{
+    return module_->exports[index].sig();
+}
+
+uint32_t
+ModuleGenerator::numExports() const
+{
+    return module_->exports.length();
 }
 
 bool
 ModuleGenerator::defineExport(uint32_t index, Offsets offsets)
 {
-    exports_[index].initStubOffset(offsets.begin);
-    return codeRanges_.emplaceBack(CodeRange::Entry, offsets);
+    module_->exports[index].initStubOffset(offsets.begin);
+    return module_->codeRanges.emplaceBack(CodeRange::Entry, offsets);
 }
 
 bool
-ModuleGenerator::startFunc(PropertyName* name, unsigned line, unsigned column,
-                           FunctionGenerator* fg)
+ModuleGenerator::startFuncDefs()
 {
+    MOZ_ASSERT(!startedFuncDefs());
+    threadView_ = MakeUnique<ModuleGeneratorThreadView>(*shared_);
+    if (!threadView_)
+        return false;
+
+    uint32_t numTasks;
+    if (ParallelCompilationEnabled(cx_) &&
+        HelperThreadState().wasmCompilationInProgress.compareExchange(false, true))
+    {
+#ifdef DEBUG
+        {
+            AutoLockHelperThreadState lock;
+            MOZ_ASSERT(!HelperThreadState().wasmFailed());
+            MOZ_ASSERT(HelperThreadState().wasmWorklist().empty());
+            MOZ_ASSERT(HelperThreadState().wasmFinishedList().empty());
+        }
+#endif
+
+        parallel_ = true;
+        numTasks = HelperThreadState().maxWasmCompilationThreads();
+    } else {
+        numTasks = 1;
+    }
+
+    if (!tasks_.initCapacity(numTasks))
+        return false;
+    JSRuntime* rt = cx_->compartment()->runtimeFromAnyThread();
+    for (size_t i = 0; i < numTasks; i++)
+        tasks_.infallibleEmplaceBack(rt, args(), *threadView_, COMPILATION_LIFO_DEFAULT_CHUNK_SIZE);
+
+    if (!freeTasks_.reserve(numTasks))
+        return false;
+    for (size_t i = 0; i < numTasks; i++)
+        freeTasks_.infallibleAppend(&tasks_[i]);
+
+    MOZ_ASSERT(startedFuncDefs());
+    return true;
+}
+
+bool
+ModuleGenerator::startFuncDef(uint32_t lineOrBytecode, FunctionGenerator* fg)
+{
+    MOZ_ASSERT(startedFuncDefs());
     MOZ_ASSERT(!activeFunc_);
     MOZ_ASSERT(!finishedFuncs_);
 
@@ -353,25 +459,40 @@ ModuleGenerator::startFunc(PropertyName* name, unsigned line, unsigned column,
         return false;
 
     IonCompileTask* task = freeTasks_.popCopy();
-    FuncIR* func = task->lifo().new_<FuncIR>(task->lifo(), name, line, column);
-    if (!func)
-        return false;
 
-    task->init(*func);
+    task->reset(&fg->bytecode_);
+    if (fg->bytecode_) {
+        fg->bytecode_->clear();
+    } else {
+        fg->bytecode_ = MakeUnique<Bytecode>();
+        if (!fg->bytecode_)
+            return false;
+    }
+
+    fg->lineOrBytecode_ = lineOrBytecode;
     fg->m_ = this;
     fg->task_ = task;
-    fg->func_ = func;
     activeFunc_ = fg;
     return true;
 }
 
 bool
-ModuleGenerator::finishFunc(uint32_t funcIndex, const LifoSig& sig, unsigned generateTime,
-                            FunctionGenerator* fg)
+ModuleGenerator::finishFuncDef(uint32_t funcIndex, unsigned generateTime, FunctionGenerator* fg)
 {
     MOZ_ASSERT(activeFunc_ == fg);
 
-    fg->func_->finish(funcIndex, sig, generateTime);
+    UniqueFuncBytecode func =
+        js::MakeUnique<FuncBytecode>(funcIndex,
+                                     funcSig(funcIndex),
+                                     Move(fg->bytecode_),
+                                     Move(fg->locals_),
+                                     fg->lineOrBytecode_,
+                                     Move(fg->callSiteLineNums_),
+                                     generateTime);
+    if (!func)
+        return false;
+
+    fg->task_->init(Move(func));
 
     if (parallel_) {
         if (!StartOffThreadWasmCompile(cx_, fg->task_))
@@ -386,14 +507,14 @@ ModuleGenerator::finishFunc(uint32_t funcIndex, const LifoSig& sig, unsigned gen
 
     fg->m_ = nullptr;
     fg->task_ = nullptr;
-    fg->func_ = nullptr;
     activeFunc_ = nullptr;
     return true;
 }
 
 bool
-ModuleGenerator::finishFuncs()
+ModuleGenerator::finishFuncDefs()
 {
+    MOZ_ASSERT(startedFuncDefs());
     MOZ_ASSERT(!activeFunc_);
     MOZ_ASSERT(!finishedFuncs_);
 
@@ -417,7 +538,7 @@ ModuleGenerator::finishFuncs()
         masm_.patchCall(callerOffset, calleeOffset);
     }
 
-    funcBytes_ = masm_.size();
+    module_->functionBytes = masm_.size();
     finishedFuncs_ = true;
     return true;
 }
@@ -437,7 +558,7 @@ ModuleGenerator::declareFuncPtrTable(uint32_t numElems, uint32_t* index)
     if (!allocateGlobalBytes(numElems * sizeof(void*), sizeof(void*), &globalDataOffset))
         return false;
 
-    StaticLinkData::FuncPtrTableVector& tables = staticLinkData_->funcPtrTables;
+    StaticLinkData::FuncPtrTableVector& tables = link_->funcPtrTables;
 
     *index = tables.length();
     if (!tables.emplaceBack(globalDataOffset))
@@ -452,7 +573,7 @@ ModuleGenerator::declareFuncPtrTable(uint32_t numElems, uint32_t* index)
 uint32_t
 ModuleGenerator::funcPtrTableGlobalDataOffset(uint32_t index) const
 {
-    return staticLinkData_->funcPtrTables[index].globalDataOffset;
+    return link_->funcPtrTables[index].globalDataOffset;
 }
 
 void
@@ -460,7 +581,7 @@ ModuleGenerator::defineFuncPtrTable(uint32_t index, const Vector<uint32_t>& elem
 {
     MOZ_ASSERT(finishedFuncs_);
 
-    StaticLinkData::FuncPtrTable& table = staticLinkData_->funcPtrTables[index];
+    StaticLinkData::FuncPtrTable& table = link_->funcPtrTables[index];
     MOZ_ASSERT(table.elemOffsets.length() == elemFuncIndices.length());
 
     for (size_t i = 0; i < elemFuncIndices.length(); i++)
@@ -471,69 +592,69 @@ bool
 ModuleGenerator::defineInlineStub(Offsets offsets)
 {
     MOZ_ASSERT(finishedFuncs_);
-    return codeRanges_.emplaceBack(CodeRange::Inline, offsets);
+    return module_->codeRanges.emplaceBack(CodeRange::Inline, offsets);
 }
 
 bool
 ModuleGenerator::defineSyncInterruptStub(ProfilingOffsets offsets)
 {
     MOZ_ASSERT(finishedFuncs_);
-    return codeRanges_.emplaceBack(CodeRange::Interrupt, offsets);
+    return module_->codeRanges.emplaceBack(CodeRange::Interrupt, offsets);
 }
 
 bool
 ModuleGenerator::defineAsyncInterruptStub(Offsets offsets)
 {
     MOZ_ASSERT(finishedFuncs_);
-    staticLinkData_->pod.interruptOffset = offsets.begin;
-    return codeRanges_.emplaceBack(CodeRange::Inline, offsets);
+    link_->pod.interruptOffset = offsets.begin;
+    return module_->codeRanges.emplaceBack(CodeRange::Inline, offsets);
 }
 
 bool
 ModuleGenerator::defineOutOfBoundsStub(Offsets offsets)
 {
     MOZ_ASSERT(finishedFuncs_);
-    staticLinkData_->pod.outOfBoundsOffset = offsets.begin;
-    return codeRanges_.emplaceBack(CodeRange::Inline, offsets);
+    link_->pod.outOfBoundsOffset = offsets.begin;
+    return module_->codeRanges.emplaceBack(CodeRange::Inline, offsets);
 }
 
-Module*
-ModuleGenerator::finish(HeapUsage heapUsage,
-                        Module::MutedBool mutedErrors,
-                        CacheableChars filename,
-                        CacheableTwoByteChars displayURL,
-                        UniqueStaticLinkData* staticLinkData,
+bool
+ModuleGenerator::finish(CacheableCharsVector&& prettyFuncNames,
+                        UniqueModuleData* module,
+                        UniqueStaticLinkData* linkData,
                         SlowFunctionVector* slowFuncs)
 {
     MOZ_ASSERT(!activeFunc_);
     MOZ_ASSERT(finishedFuncs_);
 
-    if (!GenerateStubs(*this, UsesHeap(heapUsage)))
-        return nullptr;
+    module_->prettyFuncNames = Move(prettyFuncNames);
+
+    if (!GenerateStubs(*this, UsesHeap(module_->heapUsage)))
+        return false;
 
     masm_.finish();
     if (masm_.oom())
-        return nullptr;
+        return false;
 
     // Start global data on a new page so JIT code may be given independent
     // protection flags. Note assumption that global data starts right after
     // code below.
-    uint32_t codeBytes = AlignBytes(masm_.bytesNeeded(), AsmJSPageSize);
+    module_->codeBytes = AlignBytes(masm_.bytesNeeded(), AsmJSPageSize);
 
     // Inflate the global bytes up to page size so that the total bytes are a
     // page size (as required by the allocator functions).
-    globalBytes_ = AlignBytes(globalBytes_, AsmJSPageSize);
-    uint32_t totalBytes = codeBytes + globalBytes_;
+    module_->globalBytes = AlignBytes(module_->globalBytes, AsmJSPageSize);
 
     // Allocate the code (guarded by a UniquePtr until it is given to the Module).
-    UniqueCodePtr code = AllocateCode(cx_, totalBytes);
-    if (!code)
-        return nullptr;
+    module_->code = AllocateCode(cx_, module_->totalBytes());
+    if (!module_->code)
+        return false;
 
     // Delay flushing until Module::dynamicallyLink. The flush-inhibited range
     // is set by executableCopy.
     AutoFlushICache afc("ModuleGenerator::finish", /* inhibit = */ true);
-    masm_.executableCopy(code.get());
+    uint8_t* code = module_->code.get();
+    masm_.executableCopy(code);
 
     // c.f. JitCode::copyFrom
     MOZ_ASSERT(masm_.jumpRelocationTableBytes() == 0);
@@ -543,16 +664,18 @@ ModuleGenerator::finish(HeapUsage heapUsage,
 
     // Convert the CallSiteAndTargetVector (needed during generation) to a
     // CallSiteVector (what is stored in the Module).
-    CallSiteVector callSites;
-    if (!callSites.appendAll(masm_.callSites()))
-        return nullptr;
+    if (!module_->callSites.appendAll(masm_.callSites()))
+        return false;
+
+    // The MacroAssembler has accumulated all the heap accesses during codegen.
+    module_->heapAccesses = masm_.extractHeapAccesses();
 
     // Add links to absolute addresses identified symbolically.
-    StaticLinkData::SymbolicLinkArray& symbolicLinks = staticLinkData_->symbolicLinks;
+    StaticLinkData::SymbolicLinkArray& symbolicLinks = link_->symbolicLinks;
     for (size_t i = 0; i < masm_.numAsmJSAbsoluteAddresses(); i++) {
         AsmJSAbsoluteAddress src = masm_.asmJSAbsoluteAddress(i);
         if (!symbolicLinks[src.target].append(src.patchAt.offset()))
-            return nullptr;
+            return false;
     }
 
     // Relative link metadata: absolute addresses that refer to another point within
@@ -565,8 +688,8 @@ ModuleGenerator::finish(HeapUsage heapUsage,
         StaticLinkData::InternalLink link(StaticLinkData::InternalLink::CodeLabel);
         link.patchAtOffset = masm_.labelToPatchOffset(*cl.patchAt());
         link.targetOffset = cl.target()->offset();
-        if (!staticLinkData_->internalLinks.append(link))
-            return nullptr;
+        if (!link_->internalLinks.append(link))
+            return false;
     }
 
 #if defined(JS_CODEGEN_X86)
@@ -577,9 +700,9 @@ ModuleGenerator::finish(HeapUsage heapUsage,
         AsmJSGlobalAccess a = masm_.asmJSGlobalAccess(i);
         StaticLinkData::InternalLink link(StaticLinkData::InternalLink::RawPointer);
         link.patchAtOffset = masm_.labelToPatchOffset(a.patchAt);
-        link.targetOffset = codeBytes + a.globalDataOffset;
-        if (!staticLinkData_->internalLinks.append(link))
-            return nullptr;
+        link.targetOffset = module_->codeBytes + a.globalDataOffset;
+        if (!link_->internalLinks.append(link))
+            return false;
     }
 #endif
 
@@ -591,38 +714,24 @@ ModuleGenerator::finish(HeapUsage heapUsage,
         size_t off = masm_.longJump(i);
         StaticLinkData::InternalLink link(StaticLinkData::InternalLink::InstructionImmediate);
         link.patchAtOffset = off;
-        link.targetOffset = Assembler::ExtractInstructionImmediate(code.get() + off) -
-                            uintptr_t(code.get());
-        if (!staticLinkData_->internalLinks.append(link))
-            return nullptr;
+        link.targetOffset = Assembler::ExtractInstructionImmediate(code + off) - uintptr_t(code);
+        if (!link_->internalLinks.append(link))
+            return false;
     }
 #endif
 
 #if defined(JS_CODEGEN_X64)
     // Global data accesses on x64 use rip-relative addressing and thus do
     // not need patching after deserialization.
-    uint8_t* globalData = code.get() + codeBytes;
+    uint8_t* globalData = code + module_->codeBytes;
     for (size_t i = 0; i < masm_.numAsmJSGlobalAccesses(); i++) {
         AsmJSGlobalAccess a = masm_.asmJSGlobalAccess(i);
-        masm_.patchAsmJSGlobalAccess(a.patchAt, code.get(), globalData, a.globalDataOffset);
+        masm_.patchAsmJSGlobalAccess(a.patchAt, code, globalData, a.globalDataOffset);
     }
 #endif
 
-    *staticLinkData = Move(staticLinkData_);
+    *module = Move(module_);
+    *linkData = Move(link_);
     *slowFuncs = Move(slowFuncs_);
-    return cx_->new_<Module>(args_,
-                             funcBytes_,
-                             codeBytes,
-                             globalBytes_,
-                             heapUsage,
-                             mutedErrors,
-                             Move(code),
-                             Move(imports_),
-                             Move(exports_),
-                             masm_.extractHeapAccesses(),
-                             Move(codeRanges_),
-                             Move(callSites),
-                             Move(funcNames_),
-                             Move(filename),
-                             Move(displayURL));
+    return true;
 }

@@ -30,6 +30,7 @@
 #include "mozilla/ToString.h"
 #include "nsHTMLReflowMetrics.h"
 #include "ImageContainer.h"
+#include "gfx2DGlue.h"
 
 #include <limits>
 #include <algorithm>
@@ -53,7 +54,7 @@ class nsIFrame;
 class nsStyleCoord;
 class nsStyleCorners;
 class gfxContext;
-class nsPIDOMWindow;
+class nsPIDOMWindowOuter;
 class imgIRequest;
 class nsIDocument;
 struct gfxPoint;
@@ -146,6 +147,7 @@ public:
   typedef mozilla::CSSPoint CSSPoint;
   typedef mozilla::CSSSize CSSSize;
   typedef mozilla::CSSIntSize CSSIntSize;
+  typedef mozilla::CSSRect CSSRect;
   typedef mozilla::ScreenMargin ScreenMargin;
   typedef mozilla::LayoutDeviceIntSize LayoutDeviceIntSize;
 
@@ -1399,40 +1401,6 @@ public:
   static nscoord ComputeCBDependentValue(nscoord aPercentBasis,
                                          const nsStyleCoord& aCoord);
 
-  /*
-   * Convert nsStyleCoord to nscoord when percentages depend on the
-   * containing block width, and enumerated values are for width,
-   * min-width, or max-width.  Returns the content-box width value based
-   * on aContentEdgeToBoxSizing and aBoxSizingToMarginEdge (which are
-   * also used for the enumerated values for width.  This function does
-   * not handle 'auto'.  It ensures that the result is nonnegative.
-   *
-   * @param aRenderingContext Rendering context for font measurement/metrics.
-   * @param aFrame Frame whose (min-/max-/)width is being computed.
-   * @param aContainingBlockWidth Width of aFrame's containing block.
-   * @param aContentEdgeToBoxSizing The sum of any left/right padding and
-   *          border that goes inside the rect chosen by box-sizing.
-   * @param aBoxSizingToMarginEdge The sum of any left/right padding, border,
-   *          and margin that goes outside the rect chosen by box-sizing.
-   * @param aCoord The width value to compute.
-   */
-  // XXX to be removed
-  static nscoord ComputeWidthValue(
-                   nsRenderingContext* aRenderingContext,
-                   nsIFrame*            aFrame,
-                   nscoord              aContainingBlockWidth,
-                   nscoord              aContentEdgeToBoxSizing,
-                   nscoord              aBoxSizingToMarginEdge,
-                   const nsStyleCoord&  aCoord)
-  {
-    return ComputeISizeValue(aRenderingContext,
-                             aFrame,
-                             aContainingBlockWidth,
-                             aContentEdgeToBoxSizing,
-                             aBoxSizingToMarginEdge,
-                             aCoord);
-  }
-
   static nscoord ComputeISizeValue(
                    nsRenderingContext* aRenderingContext,
                    nsIFrame*           aFrame,
@@ -1441,34 +1409,9 @@ public:
                    nscoord             aBoxSizingToMarginEdge,
                    const nsStyleCoord& aCoord);
 
-  /*
-   * Convert nsStyleCoord to nscoord when percentages depend on the
-   * containing block height.
-   */
-  // XXX to be removed
-  static nscoord ComputeHeightDependentValue(
-                   nscoord              aContainingBlockHeight,
-                   const nsStyleCoord&  aCoord)
-  {
-    return ComputeBSizeDependentValue(aContainingBlockHeight, aCoord);
-  }
-
   static nscoord ComputeBSizeDependentValue(
                    nscoord              aContainingBlockBSize,
                    const nsStyleCoord&  aCoord);
-
-  /*
-   * Likewise, but for 'height', 'min-height', or 'max-height'.
-   */
-  // XXX to be removed
-  static nscoord ComputeHeightValue(nscoord aContainingBlockHeight,
-                                    nscoord aContentEdgeToBoxSizingBoxEdge,
-                                    const nsStyleCoord& aCoord)
-  {
-    return ComputeBSizeValue(aContainingBlockHeight,
-                             aContentEdgeToBoxSizingBoxEdge,
-                             aCoord);
-  }
 
   static nscoord ComputeBSizeValue(nscoord aContainingBlockBSize,
                                     nscoord aContentEdgeToBoxSizingBoxEdge,
@@ -2029,7 +1972,7 @@ public:
    * complicated than it ought to be in multi-monitor situations.
    */
   static nsDeviceContext*
-  GetDeviceContextForScreenInfo(nsPIDOMWindow* aWindow);
+  GetDeviceContextForScreenInfo(nsPIDOMWindowOuter* aWindow);
 
   /**
    * Some frames with 'position: fixed' (nsStylePosition::mDisplay ==
@@ -2661,6 +2604,12 @@ public:
   static bool AsyncPanZoomEnabled(nsIFrame* aFrame);
 
   /**
+   * Returns the current APZ Resolution Scale. When Java Pan/Zoom is
+   * enabled in Fennec it will always return 1.0.
+   */
+  static float GetCurrentAPZResolutionScale(nsIPresShell* aShell);
+
+  /**
    * Log a key/value pair for APZ testing during a paint.
    * @param aManager   The data will be written to the APZTestData associated
    *                   with this layer manager.
@@ -2821,6 +2770,19 @@ public:
    * Returns true if the given frame is a scrollframe and it has snap points.
    */
   static bool IsScrollFrameWithSnapping(nsIFrame* aFrame);
+  /**
+   * Calculate the bounding rect of |aContent|, relative to the origin
+   * of the scrolled content of |aRootScrollFrame|.
+   * Where the element is contained inside a scrollable subframe, the
+   * bounding rect is clipped to the bounds of the subframe.
+   */
+  static CSSRect GetBoundingContentRect(const nsIContent* aContent,
+                                        const nsIScrollableFrame* aRootScrollFrame);
+
+  /**
+   * Returns the first ancestor who is a float containing block.
+   */
+  static nsBlockFrame* GetFloatContainingBlock(nsIFrame* aFrame);
 
 private:
   static uint32_t sFontSizeInflationEmPerLine;

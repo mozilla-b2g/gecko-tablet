@@ -22,10 +22,12 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/HashFunctions.h"
 #include "mozilla/Move.h"
-#include "mozilla/UniquePtr.h"
+
+#include "NamespaceImports.h"
 
 #include "ds/LifoAlloc.h"
 #include "jit/IonTypes.h"
+#include "js/UniquePtr.h"
 #include "js/Utility.h"
 #include "js/Vector.h"
 
@@ -37,13 +39,12 @@ namespace wasm {
 
 using mozilla::Move;
 using mozilla::DebugOnly;
-using mozilla::UniquePtr;
 using mozilla::MallocSizeOf;
 
 // The ValType enum represents the WebAssembly "value type", which are used to
 // specify the type of locals and parameters.
 
-// FIXME: uint8_t would make more sense for the underlying storage class, but
+// FIXME: uint16_t would make more sense for the underlying storage class, but
 // causes miscompilations in GCC (fixed in 4.8.5 and 4.9.3).
 enum class ValType
 {
@@ -53,19 +54,17 @@ enum class ValType
     F64,
     I32x4,
     F32x4,
-    B32x4
+    B32x4,
+
+    Limit
 };
+
+typedef Vector<ValType, 8, SystemAllocPolicy> ValTypeVector;
 
 static inline bool
 IsSimdType(ValType vt)
 {
     return vt == ValType::I32x4 || vt == ValType::F32x4 || vt == ValType::B32x4;
-}
-
-static inline bool
-IsSimdBoolType(ValType vt)
-{
-    return vt == ValType::B32x4;
 }
 
 static inline jit::MIRType
@@ -79,6 +78,7 @@ ToMIRType(ValType vt)
       case ValType::I32x4: return jit::MIRType_Int32x4;
       case ValType::F32x4: return jit::MIRType_Float32x4;
       case ValType::B32x4: return jit::MIRType_Bool32x4;
+      case ValType::Limit: break;
     }
     MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("bad type");
 }
@@ -141,7 +141,7 @@ class Val
 // void represented by the empty list). For now it's easier to have a flat enum
 // and be explicit about conversions to/from value types.
 
-enum class ExprType : uint8_t
+enum class ExprType : uint16_t
 {
     I32 = uint8_t(ValType::I32),
     I64 = uint8_t(ValType::I64),
@@ -150,7 +150,9 @@ enum class ExprType : uint8_t
     I32x4 = uint8_t(ValType::I32x4),
     F32x4 = uint8_t(ValType::F32x4),
     B32x4 = uint8_t(ValType::B32x4),
-    Void
+    Void,
+
+    Limit
 };
 
 static inline bool
@@ -178,6 +180,12 @@ IsSimdType(ExprType et)
     return IsVoid(et) ? false : IsSimdType(ValType(et));
 }
 
+static inline bool
+IsSimdBoolType(ExprType vt)
+{
+    return vt == ExprType::B32x4;
+}
+
 static inline jit::MIRType
 ToMIRType(ExprType et)
 {
@@ -194,84 +202,61 @@ ToMIRType(ExprType et)
 // duration of module validation+compilation). Thus, long-lived objects like
 // WasmModule must use malloced allocation.
 
-template <class AllocPolicy>
 class Sig
 {
-  public:
-    typedef Vector<ValType, 4, AllocPolicy> ArgVector;
-
-  private:
-    ArgVector args_;
+    ValTypeVector args_;
     ExprType ret_;
 
-  protected:
-    explicit Sig(AllocPolicy alloc = AllocPolicy()) : args_(alloc) {}
-    Sig(Sig&& rhs) : args_(Move(rhs.args_)), ret_(rhs.ret_) {}
-    Sig(ArgVector&& args, ExprType ret) : args_(Move(args)), ret_(ret) {}
+    Sig(const Sig&) = delete;
+    Sig& operator=(const Sig&) = delete;
 
   public:
-    void init(ArgVector&& args, ExprType ret) {
+    Sig() : args_(), ret_(ExprType::Void) {}
+    Sig(Sig&& rhs) : args_(Move(rhs.args_)), ret_(rhs.ret_) {}
+    Sig(ValTypeVector&& args, ExprType ret) : args_(Move(args)), ret_(ret) {}
+
+    bool clone(const Sig& rhs) {
+        ret_ = rhs.ret_;
         MOZ_ASSERT(args_.empty());
-        args_ = Move(args);
-        ret_ = ret;
+        return args_.appendAll(rhs.args_);
+    }
+    Sig& operator=(Sig&& rhs) {
+        ret_ = rhs.ret_;
+        args_ = Move(rhs.args_);
+        return *this;
     }
 
     ValType arg(unsigned i) const { return args_[i]; }
-    const ArgVector& args() const { return args_; }
+    const ValTypeVector& args() const { return args_; }
     const ExprType& ret() const { return ret_; }
 
     HashNumber hash() const {
-        HashNumber hn = HashNumber(ret_);
-        for (unsigned i = 0; i < args_.length(); i++)
-            hn = mozilla::AddToHash(hn, HashNumber(args_[i]));
-        return hn;
+        return AddContainerToHash(args_, HashNumber(ret_));
     }
-
-    template <class AllocPolicy2>
-    bool operator==(const Sig<AllocPolicy2>& rhs) const {
-        if (ret() != rhs.ret())
-            return false;
-        if (args().length() != rhs.args().length())
-            return false;
-        for (unsigned i = 0; i < args().length(); i++) {
-            if (arg(i) != rhs.arg(i))
-                return false;
-        }
-        return true;
+    bool operator==(const Sig& rhs) const {
+        return ret() == rhs.ret() && EqualContainers(args(), rhs.args());
     }
-
-    template <class AllocPolicy2>
-    bool operator!=(const Sig<AllocPolicy2>& rhs) const {
+    bool operator!=(const Sig& rhs) const {
         return !(*this == rhs);
     }
 };
 
-class MallocSig : public Sig<SystemAllocPolicy>
-{
-    typedef Sig<SystemAllocPolicy> BaseSig;
+// A "declared" signature is a Sig object that is created and owned by the
+// ModuleGenerator. These signature objects are read-only and have the same
+// lifetime as the ModuleGenerator. This type is useful since some uses of Sig
+// need this extended lifetime and want to statically distinguish from the
+// common stack-allocated Sig objects that get passed around.
 
-  public:
-    MallocSig() = default;
-    MallocSig(MallocSig&& rhs) : BaseSig(Move(rhs)) {}
-    MallocSig(ArgVector&& args, ExprType ret) : BaseSig(Move(args), ret) {}
+struct DeclaredSig : Sig
+{
+    DeclaredSig() = default;
+    DeclaredSig(DeclaredSig&& rhs) : Sig(Move(rhs)) {}
+    explicit DeclaredSig(Sig&& sig) : Sig(Move(sig)) {}
+    void operator=(Sig&& rhs) { Sig& base = *this; base = Move(rhs); }
 };
 
-class LifoSig : public Sig<LifoAllocPolicy<Fallible>>
-{
-    typedef Sig<LifoAllocPolicy<Fallible>> BaseSig;
-    LifoSig(ArgVector&& args, ExprType ret) : BaseSig(Move(args), ret) {}
-
-  public:
-    static LifoSig* new_(LifoAlloc& lifo, const MallocSig& src) {
-        void* mem = lifo.alloc(sizeof(LifoSig));
-        if (!mem)
-            return nullptr;
-        ArgVector args(lifo);
-        if (!args.appendAll(src.args()))
-            return nullptr;
-        return new (mem) LifoSig(Move(args), src.ret());
-    }
-};
+typedef Vector<DeclaredSig, 0, SystemAllocPolicy> DeclaredSigVector;
+typedef Vector<const DeclaredSig*, 0, SystemAllocPolicy> DeclaredSigPtrVector;
 
 // The (,Profiling,Func)Offsets classes are used to record the offsets of
 // different key points in a CodeRange during compilation.
@@ -351,8 +336,7 @@ struct FuncOffsets : ProfilingOffsets
 
 class CallSiteDesc
 {
-    uint32_t line_;
-    uint32_t column_ : 31;
+    uint32_t lineOrBytecode_ : 31;
     uint32_t kind_ : 1;
   public:
     enum Kind {
@@ -361,15 +345,14 @@ class CallSiteDesc
     };
     CallSiteDesc() {}
     explicit CallSiteDesc(Kind kind)
-      : line_(0), column_(0), kind_(kind)
+      : lineOrBytecode_(0), kind_(kind)
     {}
-    CallSiteDesc(uint32_t line, uint32_t column, Kind kind)
-      : line_(line), column_(column), kind_(kind)
+    CallSiteDesc(uint32_t lineOrBytecode, Kind kind)
+      : lineOrBytecode_(lineOrBytecode), kind_(kind)
     {
-        MOZ_ASSERT(column_ == column, "column must fit in 31 bits");
+        MOZ_ASSERT(lineOrBytecode_ == lineOrBytecode, "must fit in 31 bits");
     }
-    uint32_t line() const { return line_; }
-    uint32_t column() const { return column_; }
+    uint32_t lineOrBytecode() const { return lineOrBytecode_; }
     Kind kind() const { return Kind(kind_); }
 };
 

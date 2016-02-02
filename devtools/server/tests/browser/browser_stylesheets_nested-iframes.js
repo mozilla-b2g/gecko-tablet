@@ -10,7 +10,8 @@
 const {StyleSheetsFront} = require("devtools/server/actors/stylesheets");
 
 add_task(function*() {
-  let doc = yield addTab(MAIN_DOMAIN + "stylesheets-nested-iframes.html");
+  let browser = yield addTab(MAIN_DOMAIN + "stylesheets-nested-iframes.html");
+  let doc = browser.contentDocument;
 
   info("Initialising the debugger server and client.");
   initDebuggerServer();
@@ -18,9 +19,7 @@ add_task(function*() {
   let form = yield connectDebuggerClient(client);
 
   info("Attaching to the active tab.");
-  yield new Promise(resolve => {
-    client.attachTab(form.actor, resolve);
-  });
+  yield client.attachTab(form.actor);
 
   let front = StyleSheetsFront(client, form);
   ok(front, "The StyleSheetsFront was created.");

@@ -248,7 +248,7 @@ private:
       wp = wp->GetParent();
     }
 
-    nsPIDOMWindow* window = wp->GetWindow();
+    nsPIDOMWindowInner* window = wp->GetWindow();
     if (!window) {
       RunWindowless();
     } else {
@@ -297,18 +297,18 @@ private:
   }
 
   void
-  RunWithWindow(nsPIDOMWindow* aWindow)
+  RunWithWindow(nsPIDOMWindowInner* aWindow)
   {
     AutoJSAPI jsapi;
     MOZ_ASSERT(aWindow);
 
-    RefPtr<nsGlobalWindow> win = static_cast<nsGlobalWindow*>(aWindow);
+    RefPtr<nsGlobalWindow> win = nsGlobalWindow::Cast(aWindow);
     if (NS_WARN_IF(!jsapi.Init(win))) {
       return;
     }
 
     MOZ_ASSERT(aWindow->IsInnerWindow());
-    nsPIDOMWindow* outerWindow = aWindow->GetOuterWindow();
+    nsPIDOMWindowOuter* outerWindow = aWindow->GetOuterWindow();
     if (NS_WARN_IF(!outerWindow)) {
       return;
     }
@@ -347,8 +347,8 @@ protected:
   PreDispatch(JSContext* aCx) = 0;
 
   virtual void
-  RunConsole(JSContext* aCx, nsPIDOMWindow* aOuterWindow,
-             nsPIDOMWindow* aInnerWindow) = 0;
+  RunConsole(JSContext* aCx, nsPIDOMWindowOuter* aOuterWindow,
+             nsPIDOMWindowInner* aInnerWindow) = 0;
 
   virtual JSObject* CustomReadHandler(JSContext* aCx,
                                       JSStructuredCloneReader* aReader,
@@ -484,8 +484,8 @@ private:
   }
 
   void
-  RunConsole(JSContext* aCx, nsPIDOMWindow* aOuterWindow,
-             nsPIDOMWindow* aInnerWindow) override
+  RunConsole(JSContext* aCx, nsPIDOMWindowOuter* aOuterWindow,
+             nsPIDOMWindowInner* aInnerWindow) override
   {
     MOZ_ASSERT(NS_IsMainThread());
 
@@ -614,8 +614,8 @@ private:
   }
 
   void
-  RunConsole(JSContext* aCx, nsPIDOMWindow* aOuterWindow,
-             nsPIDOMWindow* aInnerWindow) override
+  RunConsole(JSContext* aCx, nsPIDOMWindowOuter* aOuterWindow,
+             nsPIDOMWindowInner* aInnerWindow) override
   {
     ClearException ce(aCx);
 
@@ -685,10 +685,11 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE(Console)
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(Console)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
   NS_INTERFACE_MAP_ENTRY(nsIObserver)
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIObserver)
+  NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
 NS_INTERFACE_MAP_END
 
-Console::Console(nsPIDOMWindow* aWindow)
+Console::Console(nsPIDOMWindowInner* aWindow)
   : mWindow(aWindow)
   , mOuterID(0)
   , mInnerID(0)
@@ -700,7 +701,7 @@ Console::Console(nsPIDOMWindow* aWindow)
     // Without outerwindow any console message coming from this object will not
     // shown in the devtools webconsole. But this should be fine because
     // probably we are shutting down, or the window is CCed/GCed.
-    nsPIDOMWindow* outerWindow = mWindow->GetOuterWindow();
+    nsPIDOMWindowOuter* outerWindow = mWindow->GetOuterWindow();
     if (outerWindow) {
       mOuterID = outerWindow->WindowID();
     }
@@ -709,7 +710,7 @@ Console::Console(nsPIDOMWindow* aWindow)
   if (NS_IsMainThread()) {
     nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
     if (obs) {
-      obs->AddObserver(this, "inner-window-destroyed", false);
+      obs->AddObserver(this, "inner-window-destroyed", true);
     }
   }
 
@@ -1065,7 +1066,7 @@ Console::Method(JSContext* aCx, MethodName aMethodName,
       aMethodName == MethodTimeEnd ||
       aMethodName == MethodTimeStamp) {
     if (mWindow) {
-      nsGlobalWindow *win = static_cast<nsGlobalWindow*>(mWindow.get());
+      nsGlobalWindow *win = nsGlobalWindow::Cast(mWindow);
       MOZ_ASSERT(win);
 
       RefPtr<nsPerformance> performance = win->GetPerformance();
@@ -1594,9 +1595,14 @@ Console::ProcessArguments(JSContext* aCx,
             return false;
           }
 
-          nsCString format;
-          MakeFormatString(format, integer, mantissa, 'f');
-          output.AppendPrintf(format.get(), v);
+          // nspr returns "nan", but we want to expose it as "NaN"
+          if (std::isnan(v)) {
+            output.AppendFloat(v);
+          } else {
+            nsCString format;
+            MakeFormatString(format, integer, mantissa, 'f');
+            output.AppendPrintf(format.get(), v);
+          }
         }
         break;
 

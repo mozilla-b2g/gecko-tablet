@@ -602,7 +602,7 @@ nsHTMLScrollFrame::GuessVScrollbarNeeded(const ScrollReflowState& aState)
     return false;
 
   if (mHelper.mIsRoot) {
-    nsIFrame *f = mHelper.mScrolledFrame->GetFirstPrincipalChild();
+    nsIFrame *f = mHelper.mScrolledFrame->PrincipalChildList().FirstChild();
     if (f && f->GetType() == nsGkAtoms::svgOuterSVGFrame &&
         static_cast<nsSVGOuterSVGFrame*>(f)->VerticalScrollbarNotNeeded()) {
       // Common SVG case - avoid a bad guess.
@@ -807,8 +807,7 @@ GetBrowserRoot(nsIContent* aContent)
 {
   if (aContent) {
     nsIDocument* doc = aContent->GetCurrentDoc();
-    nsPIDOMWindow* win = doc->GetWindow();
-    if (win) {
+    if (nsPIDOMWindowOuter* win = doc->GetWindow()) {
       nsCOMPtr<Element> frameElement = win->GetFrameElementInternal();
       if (frameElement &&
           frameElement->NodeInfo()->Equals(nsGkAtoms::browser, kNameSpaceID_XUL))
@@ -1313,7 +1312,9 @@ nsXULScrollFrame::SetInitialChildList(ChildListID     aListID,
                                       nsFrameList&    aChildList)
 {
   nsBoxFrame::SetInitialChildList(aListID, aChildList);
-  mHelper.ReloadChildFrames();
+  if (aListID == kPrincipalList) {
+    mHelper.ReloadChildFrames();
+  }
 }
 
 
@@ -1839,6 +1840,8 @@ ScrollFrameHelper::ScrollFrameHelper(nsContainerFrame* aOuter,
   , mLastPos(-1, -1)
   , mScrollPosForLayerPixelAlignment(-1, -1)
   , mLastUpdateImagesPos(-1, -1)
+  , mHadDisplayPortAtLastImageUpdate(false)
+  , mDisplayPortAtLastImageUpdate()
   , mNeverHasVerticalScrollbar(false)
   , mNeverHasHorizontalScrollbar(false)
   , mHasVerticalScrollbar(false)
@@ -1989,8 +1992,12 @@ ScrollFrameHelper::CompleteAsyncScroll(const nsRect &aRange, nsIAtom* aOrigin)
 }
 
 #if defined(XP_WIN) || defined(MOZ_WIDGET_GTK)
+struct PluginSearchCtx {
+  nsIFrame* outer;
+  bool begin;
+};
 static void
-NotifyPluginFramesCallback(nsISupports* aSupports, void* aFlag)
+NotifyPluginFramesCallback(nsISupports* aSupports, void* aCtx)
 {
   nsCOMPtr<nsIContent> content = do_QueryInterface(aSupports);
   if (content) {
@@ -1998,16 +2005,22 @@ NotifyPluginFramesCallback(nsISupports* aSupports, void* aFlag)
     if (frame) {
       nsPluginFrame* plugin = do_QueryFrame(frame);
       if (plugin) {
-        plugin->SetScrollVisibility(aFlag != nullptr);
+        PluginSearchCtx* pCtx = static_cast<PluginSearchCtx*>(aCtx);
+        // Check to be sure this plugin is contained within a subframe of
+        // the nsGfxScrollFrame that initiated this callback.
+        if (nsLayoutUtils::IsAncestorFrameCrossDoc(pCtx->outer, plugin, nullptr)) {
+          plugin->SetScrollVisibility(pCtx->begin);
+        }
       }
     }
   }
 }
+
 static bool
-NotifyPluginSubframesCallback(nsIDocument* aDocument, void* aFlag)
+NotifyPluginSubframesCallback(nsIDocument* aDocument, void* aCtx)
 {
   aDocument->EnumerateActivityObservers(NotifyPluginFramesCallback,
-                                        aFlag);
+                                        aCtx);
   return true;
 }
 #endif
@@ -2020,17 +2033,13 @@ ScrollFrameHelper::NotifyPluginFrames(AsyncScrollEventType aEvent)
     return;
   }
   if (XRE_IsContentProcess()) {
-    // Ignore 'inner' dom events triggered by apz transformations
-    if (mAsyncScrollEvent == BEGIN_APZ && aEvent != END_APZ) {
-      return;
-    }
     if (aEvent != mAsyncScrollEvent) {
       nsPresContext* presContext = mOuter->PresContext();
-      bool begin = (aEvent == BEGIN_APZ || aEvent == BEGIN_DOM);
+      PluginSearchCtx ctx = { mOuter, (aEvent == BEGIN_DOM) };
       presContext->Document()->EnumerateActivityObservers(NotifyPluginFramesCallback,
-                                                          (void*)begin);
+                                                          (void*)&ctx);
       presContext->Document()->EnumerateSubDocuments(NotifyPluginSubframesCallback,
-                                                     (void*)begin);
+                                                     (void*)&ctx);
 
       mAsyncScrollEvent = aEvent;
     }
@@ -2479,6 +2488,23 @@ ScrollFrameHelper::ScheduleSyntheticMouseMove()
 }
 
 void
+ScrollFrameHelper::NotifyImageVisibilityUpdate()
+{
+  mLastUpdateImagesPos = GetScrollPosition();
+  mHadDisplayPortAtLastImageUpdate =
+    nsLayoutUtils::GetDisplayPort(mOuter->GetContent(), &mDisplayPortAtLastImageUpdate);
+}
+
+bool
+ScrollFrameHelper::GetDisplayPortAtLastImageVisibilityUpdate(nsRect* aDisplayPort)
+{
+  if (mHadDisplayPortAtLastImageUpdate) {
+    *aDisplayPort = mDisplayPortAtLastImageUpdate;
+  }
+  return mHadDisplayPortAtLastImageUpdate;
+}
+
+void
 ScrollFrameHelper::ScrollToImpl(nsPoint aPt, const nsRect& aRange, nsIAtom* aOrigin)
 {
   if (aOrigin == nullptr) {
@@ -2530,10 +2556,6 @@ ScrollFrameHelper::ScrollToImpl(nsPoint aPt, const nsRect& aRange, nsIAtom* aOri
     needImageVisibilityUpdate = true;
   }
 
-  if (needImageVisibilityUpdate) {
-    presContext->PresShell()->ScheduleImageVisibilityUpdate();
-  }
-
   // notify the listeners.
   for (uint32_t i = 0; i < mListeners.Length(); i++) {
     mListeners[i]->ScrollPositionWillChange(pt.x, pt.y);
@@ -2564,9 +2586,17 @@ ScrollFrameHelper::ScrollToImpl(nsPoint aPt, const nsRect& aRange, nsIAtom* aOri
 
     if (!displayPort.IsEqualEdges(oldDisplayPort)) {
       mOuter->SchedulePaint();
+
+      if (needImageVisibilityUpdate) {
+        presContext->PresShell()->ScheduleImageVisibilityUpdate();
+      }
     }
   } else {
     mOuter->SchedulePaint();
+
+    if (needImageVisibilityUpdate) {
+      presContext->PresShell()->ScheduleImageVisibilityUpdate();
+    }
   }
 
   if (mOuter->ChildrenHavePerspective()) {
@@ -2677,11 +2707,10 @@ struct HoveredStateComparator
 
 void
 ScrollFrameHelper::AppendScrollPartsTo(nsDisplayListBuilder*   aBuilder,
-                                           const nsRect&           aDirtyRect,
-                                           const nsDisplayListSet& aLists,
-                                           bool                    aUsingDisplayPort,
-                                           bool                    aCreateLayer,
-                                           bool                    aPositioned)
+                                       const nsRect&           aDirtyRect,
+                                       const nsDisplayListSet& aLists,
+                                       bool                    aCreateLayer,
+                                       bool                    aPositioned)
 {
   nsITheme* theme = mOuter->PresContext()->GetTheme();
   if (theme &&
@@ -2735,9 +2764,12 @@ ScrollFrameHelper::AppendScrollPartsTo(nsDisplayListBuilder*   aBuilder,
     }
 
     // The display port doesn't necessarily include the scrollbars, so just
-    // include all of the scrollbars if we have a display port.
-    nsRect dirty = aUsingDisplayPort ?
-      scrollParts[i]->GetVisualOverflowRectRelativeToParent() : aDirtyRect;
+    // include all of the scrollbars if we are in a RCD-RSF. We only do
+    // this for the root scrollframe of the root content document, which is
+    // zoomable, and where the scrollbar sizes are bounded by the widget.
+    nsRect dirty = mIsRoot && mOuter->PresContext()->IsRootContentDocument()
+                   ? scrollParts[i]->GetVisualOverflowRectRelativeToParent()
+                   : aDirtyRect;
     nsDisplayListBuilder::AutoBuildingDisplayList
       buildingForChild(aBuilder, scrollParts[i],
                        dirty + mOuter->GetOffsetTo(scrollParts[i]), true);
@@ -2894,7 +2926,7 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                     const nsDisplayListSet& aLists)
 {
   if (aBuilder->IsForImageVisibility()) {
-    mLastUpdateImagesPos = GetScrollPosition();
+    NotifyImageVisibilityUpdate();
   }
 
   mOuter->DisplayBorderBackgroundOutline(aBuilder, aLists);
@@ -2913,6 +2945,39 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     }
   }
 
+  // It's safe to get this value before the DecideScrollableLayer call below
+  // because that call cannot create a displayport for root scroll frames,
+  // and hence it cannot create an ignore scroll frame.
+  bool ignoringThisScrollFrame =
+    aBuilder->GetIgnoreScrollFrame() == mOuter || IsIgnoringViewportClipping();
+
+  // Overflow clipping can never clip frames outside our subtree, so there
+  // is no need to worry about whether we are a moving frame that might clip
+  // non-moving frames.
+  // Not all our descendants will be clipped by overflow clipping, but all
+  // the ones that aren't clipped will be out of flow frames that have already
+  // had dirty rects saved for them by their parent frames calling
+  // MarkOutOfFlowChildrenForDisplayList, so it's safe to restrict our
+  // dirty rect here.
+  nsRect dirtyRect = aDirtyRect;
+  if (!ignoringThisScrollFrame) {
+    dirtyRect = dirtyRect.Intersect(mScrollPort);
+  }
+
+  Unused << DecideScrollableLayer(aBuilder, &dirtyRect,
+              /* aAllowCreateDisplayPort = */ !mIsRoot);
+
+  bool usingDisplayPort = aBuilder->IsPaintingToWindow() &&
+    nsLayoutUtils::HasDisplayPort(mOuter->GetContent());
+
+  if (aBuilder->IsForImageVisibility()) {
+    // We expand the dirty rect to catch images just outside of the scroll port.
+    // We use the dirty rect instead of the whole scroll port to prevent
+    // too much expansion in the presence of very large (bigger than the
+    // viewport) scroll ports.
+    dirtyRect = ExpandRectToNearlyVisible(dirtyRect);
+  }
+
   // We put non-overlay scrollbars in their own layers when this is the root
   // scroll frame and we are a toplevel content document. In this situation,
   // the scrollbar(s) would normally be assigned their own layer anyway, since
@@ -2924,10 +2989,7 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   bool createLayersForScrollbars = mIsRoot &&
     mOuter->PresContext()->IsRootContentDocument();
 
-  if (aBuilder->GetIgnoreScrollFrame() == mOuter || IsIgnoringViewportClipping()) {
-    bool usingDisplayPort = aBuilder->IsPaintingToWindow() &&
-      nsLayoutUtils::HasDisplayPort(mOuter->GetContent());
-
+  if (ignoringThisScrollFrame) {
     // Root scrollframes have FrameMetrics and clipping on their container
     // layers, so don't apply clipping again.
     mAddClipRectToLayer = false;
@@ -2939,7 +3001,7 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 
     if (addScrollBars) {
       // Add classic scrollbars.
-      AppendScrollPartsTo(aBuilder, aDirtyRect, aLists, usingDisplayPort,
+      AppendScrollPartsTo(aBuilder, aDirtyRect, aLists,
                           createLayersForScrollbars, false);
     }
 
@@ -2947,11 +3009,11 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     // The scrolled frame shouldn't have its own background/border, so we
     // can just pass aLists directly.
     mOuter->BuildDisplayListForChild(aBuilder, mScrolledFrame,
-                                     aDirtyRect, aLists);
+                                     dirtyRect, aLists);
 
     if (addScrollBars) {
       // Add overlay scrollbars.
-      AppendScrollPartsTo(aBuilder, aDirtyRect, aLists, usingDisplayPort,
+      AppendScrollPartsTo(aBuilder, aDirtyRect, aLists,
                           createLayersForScrollbars, true);
     }
 
@@ -2962,22 +3024,6 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   // layers, so don't apply clipping again.
   mAddClipRectToLayer =
     !(mIsRoot && mOuter->PresContext()->PresShell()->GetIsViewportOverridden());
-
-  // Overflow clipping can never clip frames outside our subtree, so there
-  // is no need to worry about whether we are a moving frame that might clip
-  // non-moving frames.
-  // Not all our descendants will be clipped by overflow clipping, but all
-  // the ones that aren't clipped will be out of flow frames that have already
-  // had dirty rects saved for them by their parent frames calling
-  // MarkOutOfFlowChildrenForDisplayList, so it's safe to restrict our
-  // dirty rect here.
-  nsRect dirtyRect = aDirtyRect.Intersect(mScrollPort);
-
-  Unused << DecideScrollableLayer(aBuilder, &dirtyRect,
-              /* aAllowCreateDisplayPort = */ !mIsRoot);
-
-  bool usingDisplayPort = aBuilder->IsPaintingToWindow() &&
-    nsLayoutUtils::HasDisplayPort(mOuter->GetContent());
 
   // Whether we might want to build a scrollable layer for this scroll frame
   // at some point in the future. This controls whether we add the information
@@ -3006,16 +3052,8 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   // Note that this does not apply for overlay scrollbars; those are drawn
   // in the positioned-elements layer on top of everything else by the call
   // to AppendScrollPartsTo(..., true) further down.
-  AppendScrollPartsTo(aBuilder, aDirtyRect, aLists, usingDisplayPort,
+  AppendScrollPartsTo(aBuilder, aDirtyRect, aLists,
                       createLayersForScrollbars, false);
-
-  if (aBuilder->IsForImageVisibility()) {
-    // We expand the dirty rect to catch images just outside of the scroll port.
-    // We use the dirty rect instead of the whole scroll port to prevent
-    // too much expansion in the presence of very large (bigger than the
-    // viewport) scroll ports.
-    dirtyRect = ExpandRectToNearlyVisible(dirtyRect);
-  }
 
   const nsStyleDisplay* disp = mOuter->StyleDisplay();
   if (disp && (disp->mWillChangeBitField & NS_STYLE_WILL_CHANGE_SCROLL)) {
@@ -3099,7 +3137,7 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       }
 
       DisplayListClipState::AutoSaveRestore clipStateForScrollClip(aBuilder);
-      if (usingDisplayPort) {
+      if (mWillBuildScrollableLayer) {
         if (mClipAllDescendants) {
           clipStateForScrollClip.TurnClipIntoScrollClipForContentDescendants(aBuilder, sf);
         } else {
@@ -3128,7 +3166,7 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       }
 
       DisplayListClipState::AutoSaveRestore clipStateForScrollClip(aBuilder);
-      if (usingDisplayPort) {
+      if (mWillBuildScrollableLayer) {
         if (mClipAllDescendants) {
           clipStateForScrollClip.TurnClipIntoScrollClipForContentDescendants(aBuilder, sf);
         } else {
@@ -3207,7 +3245,7 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     }
   }
   // Now display overlay scrollbars and the resizer, if we have one.
-  AppendScrollPartsTo(aBuilder, aDirtyRect, scrolledContent, usingDisplayPort,
+  AppendScrollPartsTo(aBuilder, aDirtyRect, scrolledContent,
                       createLayersForScrollbars, true);
   scrolledContent.MoveTo(aLists);
 }
@@ -3252,9 +3290,16 @@ ScrollFrameHelper::DecideScrollableLayer(nsDisplayListBuilder* aBuilder,
     usingDisplayPort =
       nsLayoutUtils::GetDisplayPort(content, &displayPort, RelativeTo::ScrollFrame);
 
-    // Override the dirty rectangle if the displayport has been set.
     if (usingDisplayPort) {
+      // Override the dirty rectangle if the displayport has been set.
       *aDirtyRect = displayPort;
+    } else if (mIsRoot) {
+      // The displayPort getter takes care of adjusting for resolution. So if
+      // we have resolution but no displayPort then we need to adjust for
+      // resolution here.
+      nsIPresShell* presShell = mOuter->PresContext()->PresShell();
+      *aDirtyRect = aDirtyRect->RemoveResolution(
+        presShell->ScaleToResolution() ? presShell->GetResolution () : 1.0f);
     }
   }
 
@@ -3877,8 +3922,7 @@ ScrollFrameHelper::ReloadChildFrames()
   mScrollCornerBox = nullptr;
   mResizerBox = nullptr;
 
-  nsIFrame* frame = mOuter->GetFirstPrincipalChild();
-  while (frame) {
+  for (nsIFrame* frame : mOuter->PrincipalChildList()) {
     nsIContent* content = frame->GetContent();
     if (content == mOuter->GetContent()) {
       NS_ASSERTION(!mScrolledFrame, "Already found the scrolled frame");
@@ -3904,8 +3948,6 @@ ScrollFrameHelper::ReloadChildFrames()
         mScrollCornerBox = frame;
       }
     }
-
-    frame = frame->GetNextSibling();
   }
 }
 
@@ -5301,7 +5343,7 @@ ScrollFrameHelper::GetScrolledRectInternal(const nsRect& aScrolledFrameOverflowA
   // direction set by the text content overrides the direction of the frame
   if (mScrolledFrame->StyleTextReset()->mUnicodeBidi &
       NS_STYLE_UNICODE_BIDI_PLAINTEXT) {
-    nsIFrame* childFrame = mScrolledFrame->GetFirstPrincipalChild();
+    nsIFrame* childFrame = mScrolledFrame->PrincipalChildList().FirstChild();
     if (childFrame) {
       frameDir =
         (nsBidiPresUtils::ParagraphDirection(childFrame) == NSBIDI_LTR)
@@ -5733,7 +5775,7 @@ ScrollSnapHelper(SnappingEdgeCallback& aCallback, nsIFrame* aFrame,
         nsPoint offset = f->GetOffsetTo(aScrolledFrame);
         nsRect edgesRect = nsRect(offset, frameRect.Size());
         for (size_t coordNum = 0; coordNum < coordCount; coordNum++) {
-          const nsStyleBackground::Position &coordPosition =
+          const nsStyleImageLayers::Position &coordPosition =
             f->StyleDisplay()->mScrollSnapCoordinate[coordNum];
           nsPoint coordPoint = edgesRect.TopLeft() - aScrollSnapDestination;
           coordPoint += nsPoint(coordPosition.mXPosition.mLength,

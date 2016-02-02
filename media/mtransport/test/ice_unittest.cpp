@@ -2098,7 +2098,7 @@ TEST_F(IceGatherTest, TestFakeStunServerNoNatDefaultRouteOnly) {
 
 TEST_F(IceGatherTest, TestStunTcpServerTrickle) {
   UseFakeStunTcpServerWithResponse("192.0.3.1", 3333);
-  TestStunServer::GetInstance(AF_INET)->SetDelay(500);
+  TestStunTcpServer::GetInstance(AF_INET)->SetDelay(500);
   Gather(0);
   ASSERT_FALSE(StreamHasMatchingCandidate(0, " 192.0.3.1 ", " tcptype "));
   WaitForGather();
@@ -2917,11 +2917,11 @@ TEST_F(IceConnectTest, TestPollCandPairsBeforeConnect) {
   std::vector<NrIceCandidatePair> pairs;
   nsresult res = p1_->GetCandidatePairs(0, &pairs);
   // There should be no candidate pairs prior to calling Connect()
-  ASSERT_TRUE(NS_FAILED(res));
+  ASSERT_EQ(NS_OK, res);
   ASSERT_EQ(0U, pairs.size());
 
   res = p2_->GetCandidatePairs(0, &pairs);
-  ASSERT_TRUE(NS_FAILED(res));
+  ASSERT_EQ(NS_OK, res);
   ASSERT_EQ(0U, pairs.size());
 }
 

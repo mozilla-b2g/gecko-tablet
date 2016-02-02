@@ -14,10 +14,13 @@
 #include "nsIDocument.h"
 #include "nsIDOMDocument.h"
 #include "nsIFrameLoader.h"
+#include "nsIInterfaceRequestorUtils.h"
 #include "nsISupportsImpl.h"
 #include "nsISupportsUtils.h"
 #include "nsContentUtils.h"
 #include "nsGlobalWindow.h"
+
+using namespace mozilla::dom;
 
 namespace mozilla {
 
@@ -35,7 +38,6 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
   , mInternalContentPolicyType(aContentPolicyType)
   , mTainting(LoadTainting::Basic)
   , mUpgradeInsecureRequests(false)
-  , mUpgradeInsecurePreloads(false)
   , mInnerWindowID(0)
   , mOuterWindowID(0)
   , mParentOuterWindowID(0)
@@ -59,7 +61,7 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
   }
 
   if (aLoadingContext) {
-    nsCOMPtr<nsPIDOMWindow> outerWindow;
+    nsCOMPtr<nsPIDOMWindowOuter> outerWindow;
 
     // When the element being loaded is a frame, we choose the frame's window
     // for the window ID and the frame element's window as the parent
@@ -76,18 +78,23 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
     }
 
     if (outerWindow) {
-      nsCOMPtr<nsPIDOMWindow> inner = outerWindow->GetCurrentInnerWindow();
+      nsCOMPtr<nsPIDOMWindowInner> inner = outerWindow->GetCurrentInnerWindow();
       mInnerWindowID = inner ? inner->WindowID() : 0;
       mOuterWindowID = outerWindow->WindowID();
 
-      nsCOMPtr<nsPIDOMWindow> parent = outerWindow->GetScriptableParent();
+      nsCOMPtr<nsPIDOMWindowOuter> parent = outerWindow->GetScriptableParent();
       mParentOuterWindowID = parent->WindowID();
 
       ComputeIsThirdPartyContext(outerWindow);
     }
 
-    mUpgradeInsecureRequests = aLoadingContext->OwnerDoc()->GetUpgradeInsecureRequests();
-    mUpgradeInsecurePreloads = aLoadingContext->OwnerDoc()->GetUpgradeInsecurePreloads();
+    // if the document forces all requests to be upgraded from http to https, then
+    // we should do that for all requests. If it only forces preloads to be upgraded
+    // then we should enforce upgrade insecure requests only for preloads.
+    mUpgradeInsecureRequests =
+      aLoadingContext->OwnerDoc()->GetUpgradeInsecureRequests(false) ||
+      (nsContentUtils::IsPreloadType(mInternalContentPolicyType) &&
+       aLoadingContext->OwnerDoc()->GetUpgradeInsecureRequests(true));
   }
 
   const PrincipalOriginAttributes attrs = BasePrincipal::Cast(mLoadingPrincipal)->OriginAttributesRef();
@@ -102,7 +109,6 @@ LoadInfo::LoadInfo(const LoadInfo& rhs)
   , mInternalContentPolicyType(rhs.mInternalContentPolicyType)
   , mTainting(rhs.mTainting)
   , mUpgradeInsecureRequests(rhs.mUpgradeInsecureRequests)
-  , mUpgradeInsecurePreloads(rhs.mUpgradeInsecurePreloads)
   , mInnerWindowID(rhs.mInnerWindowID)
   , mOuterWindowID(rhs.mOuterWindowID)
   , mParentOuterWindowID(rhs.mParentOuterWindowID)
@@ -125,7 +131,6 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
                    nsContentPolicyType aContentPolicyType,
                    LoadTainting aTainting,
                    bool aUpgradeInsecureRequests,
-                   bool aUpgradeInsecurePreloads,
                    uint64_t aInnerWindowID,
                    uint64_t aOuterWindowID,
                    uint64_t aParentOuterWindowID,
@@ -144,7 +149,6 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
   , mInternalContentPolicyType(aContentPolicyType)
   , mTainting(aTainting)
   , mUpgradeInsecureRequests(aUpgradeInsecureRequests)
-  , mUpgradeInsecurePreloads(aUpgradeInsecurePreloads)
   , mInnerWindowID(aInnerWindowID)
   , mOuterWindowID(aOuterWindowID)
   , mParentOuterWindowID(aParentOuterWindowID)
@@ -170,7 +174,7 @@ LoadInfo::~LoadInfo()
 }
 
 void
-LoadInfo::ComputeIsThirdPartyContext(nsPIDOMWindow* aOuterWindow)
+LoadInfo::ComputeIsThirdPartyContext(nsPIDOMWindowOuter* aOuterWindow)
 {
   nsContentPolicyType type =
     nsContentUtils::InternalContentPolicyTypeToExternal(mInternalContentPolicyType);
@@ -180,7 +184,7 @@ LoadInfo::ComputeIsThirdPartyContext(nsPIDOMWindow* aOuterWindow)
     return;
   }
 
-  nsPIDOMWindow* win = aOuterWindow;
+  nsPIDOMWindowOuter* win = aOuterWindow;
   if (type == nsIContentPolicy::TYPE_SUBDOCUMENT) {
     // If we're loading a subdocument, aOuterWindow points to the new window.
     // Check if its parent is third-party (and then we can do the same check for
@@ -374,13 +378,6 @@ NS_IMETHODIMP
 LoadInfo::GetUpgradeInsecureRequests(bool* aResult)
 {
   *aResult = mUpgradeInsecureRequests;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-LoadInfo::GetUpgradeInsecurePreloads(bool* aResult)
-{
-  *aResult = mUpgradeInsecurePreloads;
   return NS_OK;
 }
 

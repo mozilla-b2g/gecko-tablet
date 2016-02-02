@@ -44,12 +44,8 @@ protected:
 public:
   inline void TraceSelf(JSTracer* trc)
   {
-    if (mTypedObj) {
-      JS_CallUnbarrieredObjectTracer(trc, &mTypedObj, "TypedArray.mTypedObj");
-    }
-    if (mWrappedObj) {
-      JS_CallUnbarrieredObjectTracer(trc, &mTypedObj, "TypedArray.mWrappedObj");
-    }
+    JS::UnsafeTraceRoot(trc, &mTypedObj, "TypedArray.mTypedObj");
+    JS::UnsafeTraceRoot(trc, &mTypedObj, "TypedArray.mWrappedObj");
   }
 
 private:
@@ -416,8 +412,8 @@ private:
 
 // Class for easily setting up a rooted typed array object on the stack
 template<typename ArrayType>
-class MOZ_RAII RootedTypedArray : public ArrayType,
-                                  private TypedArrayRooter<ArrayType>
+class MOZ_RAII RootedTypedArray final : public ArrayType,
+                                        private TypedArrayRooter<ArrayType>
 {
 public:
   explicit RootedTypedArray(JSContext* cx MOZ_GUARD_OBJECT_NOTIFIER_PARAM) :

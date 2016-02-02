@@ -76,7 +76,7 @@ nsIGeolocationUpdate *gLocationCallback = nullptr;
 nsAutoPtr<mozilla::AndroidGeckoEvent> gLastSizeChange;
 
 nsAppShell* nsAppShell::sAppShell;
-StaticMutex nsAppShell::sAppShellLock;
+StaticAutoPtr<Mutex> nsAppShell::sAppShellLock;
 
 NS_IMPL_ISUPPORTS_INHERITED(nsAppShell, nsBaseAppShell, nsIObserver)
 
@@ -88,7 +88,7 @@ public:
 
     virtual nsresult Run() {
         const auto& buffer = jni::Object::Ref::From(mBuffer->GetObject());
-        nsCOMPtr<nsIDOMWindow> domWindow;
+        nsCOMPtr<mozIDOMWindowProxy> domWindow;
         nsCOMPtr<nsIBrowserTab> tab;
         mBrowserApp->GetBrowserTab(mTabId, getter_AddRefs(tab));
         if (!tab) {
@@ -185,11 +185,12 @@ public:
 };
 
 nsAppShell::nsAppShell()
-    : mSyncRunMonitor("nsAppShell.SyncRun")
+    : mSyncRunFinished(*(sAppShellLock = new Mutex("nsAppShell")),
+                       "nsAppShell.SyncRun")
     , mSyncRunQuit(false)
 {
     {
-        StaticMutexAutoLock lock(sAppShellLock);
+        MutexAutoLock lock(*sAppShellLock);
         sAppShell = this;
     }
 
@@ -220,7 +221,7 @@ nsAppShell::nsAppShell()
 nsAppShell::~nsAppShell()
 {
     {
-        StaticMutexAutoLock lock(sAppShellLock);
+        MutexAutoLock lock(*sAppShellLock);
         sAppShell = nullptr;
     }
 
@@ -264,6 +265,7 @@ nsAppShell::Init()
     if (obsServ) {
         obsServ->AddObserver(this, "browser-delayed-startup-finished", false);
         obsServ->AddObserver(this, "profile-after-change", false);
+        obsServ->AddObserver(this, "chrome-document-loaded", false);
         obsServ->AddObserver(this, "quit-application-granted", false);
         obsServ->AddObserver(this, "xpcom-shutdown", false);
     }
@@ -286,9 +288,9 @@ nsAppShell::Observe(nsISupports* aSubject,
     if (!strcmp(aTopic, "xpcom-shutdown")) {
         {
             // Release any thread waiting for a sync call to finish.
-            MonitorAutoLock runLock(mSyncRunMonitor);
+            mozilla::MutexAutoLock shellLock(*sAppShellLock);
             mSyncRunQuit = true;
-            runLock.NotifyAll();
+            mSyncRunFinished.NotifyAll();
         }
         // We need to ensure no observers stick around after XPCOM shuts down
         // or we'll see crashes, as the app shell outlives XPConnect.
@@ -328,8 +330,20 @@ nsAppShell::Observe(nsISupports* aSubject,
         }
         removeObserver = true;
 
+    } else if (!strcmp(aTopic, "chrome-document-loaded")) {
+        if (jni::IsAvailable()) {
+            // Our first window has loaded, assume any JS initialization has run.
+            widget::GeckoThread::CheckAndSetState(
+                    widget::GeckoThread::State::PROFILE_READY(),
+                    widget::GeckoThread::State::RUNNING());
+        }
+        removeObserver = true;
+
     } else if (!strcmp(aTopic, "quit-application-granted")) {
         if (jni::IsAvailable()) {
+            widget::GeckoThread::SetState(
+                    widget::GeckoThread::State::EXITING());
+
             // We are told explicitly to quit, perhaps due to
             // nsIAppStartup::Quit being called. We should release our hold on
             // nsIAppStartup and let it continue to quit.
@@ -340,6 +354,11 @@ nsAppShell::Observe(nsISupports* aSubject,
             }
         }
         removeObserver = true;
+
+    } else if (!strcmp(aTopic, "nsPref:changed")) {
+        if (jni::IsAvailable()) {
+            mozilla::PrefsHelper::OnPrefChange(aData);
+        }
     }
 
     if (removeObserver) {
@@ -401,8 +420,9 @@ nsAppShell::SyncRunEvent(Event&& event,
     // on the monitor on the current thread.
     MOZ_ASSERT(!NS_IsMainThread());
 
-    // This is the lock to check that app shell is still alive.
-    mozilla::StaticMutexAutoLock shellLock(sAppShellLock);
+    // This is the lock to check that app shell is still alive,
+    // and to wait on for the sync call to complete.
+    mozilla::MutexAutoLock shellLock(*sAppShellLock);
     nsAppShell* const appShell = sAppShell;
 
     if (MOZ_UNLIKELY(!appShell)) {
@@ -410,19 +430,16 @@ nsAppShell::SyncRunEvent(Event&& event,
         return;
     }
 
-    // This is the monitor that we will wait on for the call to complete.
-    mozilla::MonitorAutoLock runLock(appShell->mSyncRunMonitor);
-
     bool finished = false;
     auto runAndNotify = [&event, &finished] {
+        mozilla::MutexAutoLock shellLock(*sAppShellLock);
         nsAppShell* const appShell = sAppShell;
         if (MOZ_UNLIKELY(!appShell || appShell->mSyncRunQuit)) {
             return;
         }
         event.Run();
-        mozilla::MonitorAutoLock runLock(appShell->mSyncRunMonitor);
         finished = true;
-        runLock.NotifyAll();
+        appShell->mSyncRunFinished.NotifyAll();
     };
 
     UniquePtr<Event> runAndNotifyEvent = mozilla::MakeUnique<
@@ -434,8 +451,8 @@ nsAppShell::SyncRunEvent(Event&& event,
 
     appShell->mEventQueue.Post(mozilla::Move(runAndNotifyEvent));
 
-    while (!finished && MOZ_LIKELY(!appShell->mSyncRunQuit)) {
-        runLock.Wait();
+    while (!finished && MOZ_LIKELY(sAppShell && !sAppShell->mSyncRunQuit)) {
+        appShell->mSyncRunFinished.Wait();
     }
 }
 
@@ -459,7 +476,7 @@ public:
 void
 nsAppShell::PostEvent(AndroidGeckoEvent* event)
 {
-    mozilla::StaticMutexAutoLock lock(sAppShellLock);
+    mozilla::MutexAutoLock lock(*sAppShellLock);
     if (!sAppShell) {
         return;
     }
@@ -604,7 +621,7 @@ nsAppShell::LegacyGeckoEvent::Run()
         RefPtr<RefCountedJavaObject> javaBuffer = curEvent->ByteBuffer();
         const auto& mBuffer = jni::Object::Ref::From(javaBuffer->GetObject());
 
-        nsCOMPtr<nsIDOMWindow> domWindow;
+        nsCOMPtr<mozIDOMWindowProxy> domWindow;
         nsCOMPtr<nsIBrowserTab> tab;
         nsAppShell::Get()->mBrowserApp->GetBrowserTab(tabId, getter_AddRefs(tab));
         if (!tab) {
@@ -715,15 +732,6 @@ nsAppShell::LegacyGeckoEvent::Run()
         free(uri);
         if (flag)
             free(flag);
-        break;
-    }
-
-    case AndroidGeckoEvent::SIZE_CHANGED: {
-        // store the last resize event to dispatch it to new windows with a FORCED_RESIZE event
-        if (curEvent.get() != gLastSizeChange) {
-            gLastSizeChange = AndroidGeckoEvent::CopyResizeEvent(curEvent.get());
-        }
-        nsWindow::OnGlobalAndroidEvent(curEvent.get());
         break;
     }
 
@@ -933,13 +941,6 @@ nsAppShell::LegacyGeckoEvent::PostTo(mozilla::LinkedList<Event>& queue)
             queue.insertBack(this);
             break;
         }
-    }
-}
-
-void
-nsAppShell::ResendLastResizeEvent(nsWindow* aDest) {
-    if (gLastSizeChange) {
-        nsWindow::OnGlobalAndroidEvent(gLastSizeChange);
     }
 }
 

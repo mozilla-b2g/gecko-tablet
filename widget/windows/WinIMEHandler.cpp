@@ -152,6 +152,13 @@ IMEHandler::ProcessMessage(nsWindow* aWindow, UINT aMessage,
                            WPARAM& aWParam, LPARAM& aLParam,
                            MSGResult& aResult)
 {
+  if (aMessage == MOZ_WM_DISMISS_ONSCREEN_KEYBOARD) {
+    if (!sFocusedWindow) {
+      DismissOnScreenKeyboard();
+    }
+    return true;
+  }
+
 #ifdef NS_ENABLE_TSF
   if (IsTSFAvailable()) {
     TSFTextStore::ProcessMessage(aWindow, aMessage, aWParam, aLParam, aResult);
@@ -253,7 +260,7 @@ IMEHandler::NotifyIME(nsWindow* aWindow,
       }
       case NOTIFY_IME_OF_BLUR:
         sFocusedWindow = nullptr;
-        IMEHandler::MaybeDismissOnScreenKeyboard();
+        IMEHandler::MaybeDismissOnScreenKeyboard(aWindow);
         IMMHandler::OnFocusChange(false, aWindow);
         return TSFTextStore::OnFocusChange(false, aWindow,
                                            aWindow->GetInputContext());
@@ -302,11 +309,13 @@ IMEHandler::NotifyIME(nsWindow* aWindow,
     case NOTIFY_IME_OF_MOUSE_BUTTON_EVENT:
       return IMMHandler::OnMouseButtonEvent(aWindow, aIMENotification);
     case NOTIFY_IME_OF_FOCUS:
+      sFocusedWindow = aWindow;
       IMMHandler::OnFocusChange(true, aWindow);
       IMEHandler::MaybeShowOnScreenKeyboard();
       return NS_OK;
     case NOTIFY_IME_OF_BLUR:
-      IMEHandler::MaybeDismissOnScreenKeyboard();
+      sFocusedWindow = nullptr;
+      IMEHandler::MaybeDismissOnScreenKeyboard(aWindow);
       IMMHandler::OnFocusChange(false, aWindow);
 #ifdef NS_ENABLE_TSF
       // If a plugin gets focus while TSF has focus, we need to notify TSF of
@@ -597,14 +606,15 @@ IMEHandler::MaybeShowOnScreenKeyboard()
 
 // static
 void
-IMEHandler::MaybeDismissOnScreenKeyboard()
+IMEHandler::MaybeDismissOnScreenKeyboard(nsWindow* aWindow)
 {
   if (sPluginHasFocus ||
       !IsWin8OrLater()) {
     return;
   }
 
-  IMEHandler::DismissOnScreenKeyboard();
+  ::PostMessage(aWindow->GetWindowHandle(), MOZ_WM_DISMISS_ONSCREEN_KEYBOARD,
+                0, 0);
 }
 
 // static
@@ -670,7 +680,7 @@ IMEHandler::IsKeyboardPresentOnSlate()
   //    that the OSK is displayed.
 
   // 3. If step 1 and 2 fail then we check attached keyboards and return true
-  //    if we find ACPI\* or HID\VID* keyboards.
+  //    if we find ACPI\*, HID\VID* or bluetooth keyboards.
 
   typedef BOOL (WINAPI* GetAutoRotationState)(PAR_STATE state);
   GetAutoRotationState get_rotation_state =
@@ -763,12 +773,18 @@ IMEHandler::IsKeyboardPresentOnSlate()
                                           MAX_DEVICE_ID_LEN,
                                           0);
     if (status == CR_SUCCESS) {
+      static const std::wstring BT_HID_DEVICE = L"HID\\{00001124";
+      static const std::wstring BT_HOGP_DEVICE = L"HID\\{00001812";
       // To reduce the scope of the hack we only look for ACPI and HID\\VID
       // prefixes in the keyboard device ids.
       if (IMEHandler::WStringStartsWithCaseInsensitive(device_id,
                                                        L"ACPI") ||
           IMEHandler::WStringStartsWithCaseInsensitive(device_id,
-                                                       L"HID\\VID")) {
+                                                       L"HID\\VID") ||
+          IMEHandler::WStringStartsWithCaseInsensitive(device_id,
+                                                       BT_HID_DEVICE) ||
+          IMEHandler::WStringStartsWithCaseInsensitive(device_id,
+                                                       BT_HOGP_DEVICE)) {
         // The heuristic we are using is to check the count of keyboards and
         // return true if the API's report one or more keyboards. Please note
         // that this will break for non keyboard devices which expose a

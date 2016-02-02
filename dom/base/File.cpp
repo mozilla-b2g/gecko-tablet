@@ -213,7 +213,7 @@ Blob::Blob(nsISupports* aParent, BlobImpl* aImpl)
 
 #ifdef DEBUG
   {
-    nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(aParent);
+    nsCOMPtr<nsPIDOMWindowInner> win = do_QueryInterface(aParent);
     if (win) {
       MOZ_ASSERT(win->IsInnerWindow());
     }
@@ -602,7 +602,7 @@ File::Constructor(const GlobalObject& aGlobal,
     return nullptr;
   }
 
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.GetAsSupports());
+  nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(aGlobal.GetAsSupports());
 
   RefPtr<MultipartBlobImpl> impl = new MultipartBlobImpl(EmptyString());
   impl->InitializeChromeFile(window, aData, aBag, true, aRv);
@@ -630,7 +630,7 @@ File::Constructor(const GlobalObject& aGlobal,
     return nullptr;
   }
 
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.GetAsSupports());
+  nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(aGlobal.GetAsSupports());
 
   RefPtr<MultipartBlobImpl> impl = new MultipartBlobImpl(EmptyString());
   impl->InitializeChromeFile(window, aData, aBag, aRv);
@@ -955,6 +955,32 @@ BlobImplFile::LookupAndCacheIsDirectory()
   bool isDir;
   mFile->IsDirectory(&isDir);
   mDirState = isDir ? BlobDirState::eIsDir : BlobDirState::eIsNotDir;
+}
+
+////////////////////////////////////////////////////////////////////////////
+// EmptyBlobImpl implementation
+
+NS_IMPL_ISUPPORTS_INHERITED0(EmptyBlobImpl, BlobImpl)
+
+already_AddRefed<BlobImpl>
+EmptyBlobImpl::CreateSlice(uint64_t aStart, uint64_t aLength,
+                           const nsAString& aContentType,
+                           ErrorResult& aRv)
+{
+  MOZ_ASSERT(!aStart && !aLength);
+  RefPtr<BlobImpl> impl = new EmptyBlobImpl(aContentType);
+  return impl.forget();
+}
+
+void
+EmptyBlobImpl::GetInternalStream(nsIInputStream** aStream,
+                                 ErrorResult& aRv)
+{
+  nsresult rv = NS_NewCStringInputStream(aStream, EmptyCString());
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    aRv.Throw(rv);
+    return;
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////

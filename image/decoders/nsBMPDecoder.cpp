@@ -233,14 +233,16 @@ nsBMPDecoder::FinishInternal()
   if (!IsMetadataDecode() && HasSize()) {
 
     // If it was truncated, fill in the missing pixels as black.
-    while (mCurrentRow > 0) {
-      uint32_t* dst = RowBuffer();
-      while (mCurrentPos < mH.mWidth) {
-        SetPixel(dst, 0, 0, 0);
-        mCurrentPos++;
+    if (mImageData) {
+      while (mCurrentRow > 0) {
+        uint32_t* dst = RowBuffer();
+        while (mCurrentPos < mH.mWidth) {
+          SetPixel(dst, 0, 0, 0);
+          mCurrentPos++;
+        }
+        mCurrentPos = 0;
+        FinishRow();
       }
-      mCurrentPos = 0;
-      FinishRow();
     }
 
     // Invalidate.
@@ -554,6 +556,11 @@ nsBMPDecoder::ReadInfoHeaderRest(const char* aData, size_t aLength)
     (mH.mCompression == Compression::RLE8 && mH.mBpp == 8) ||
     (mH.mCompression == Compression::RLE4 && mH.mBpp == 4) ||
     (mH.mCompression == Compression::BITFIELDS &&
+      // For BITFIELDS compression we require an exact match for one of the
+      // WinBMP BIH sizes; this clearly isn't an OS2 BMP.
+      (mH.mBIHSize == InfoHeaderLength::WIN_V3 ||
+       mH.mBIHSize == InfoHeaderLength::WIN_V4 ||
+       mH.mBIHSize == InfoHeaderLength::WIN_V5) &&
       (mH.mBpp == 16 || mH.mBpp == 32));
   if (!bppCompressionOk) {
     PostDataError();
@@ -710,6 +717,18 @@ nsBMPDecoder::ReadColorTable(const char* aData, size_t aLength)
 LexerTransition<nsBMPDecoder::State>
 nsBMPDecoder::SkipGap()
 {
+  // If there are no pixels we can stop.
+  //
+  // XXX: normally, if there are no pixels we will have stopped decoding before
+  // now, outside of this decoder. However, if the BMP is within an ICO file,
+  // it's possible that the ICO claimed the image had a non-zero size while the
+  // BMP claims otherwise. This test is to catch that awkward case. If we ever
+  // come up with a more general solution to this ICO-and-BMP-disagree-on-size
+  // problem, this test can be removed.
+  if (mH.mWidth == 0 || mH.mHeight == 0) {
+    return Transition::TerminateSuccess();
+  }
+
   bool hasRLE = mH.mCompression == Compression::RLE8 ||
                 mH.mCompression == Compression::RLE4;
   return hasRLE
@@ -720,6 +739,7 @@ nsBMPDecoder::SkipGap()
 LexerTransition<nsBMPDecoder::State>
 nsBMPDecoder::ReadPixelRow(const char* aData)
 {
+  MOZ_ASSERT(mCurrentRow > 0);
   MOZ_ASSERT(mCurrentPos == 0);
 
   const uint8_t* src = reinterpret_cast<const uint8_t*>(aData);

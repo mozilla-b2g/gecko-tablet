@@ -96,13 +96,6 @@ const int64_t AMPLE_AUDIO_USECS = 1000000;
 
 } // namespace detail
 
-// When we're only playing audio and we don't have a video stream, we divide
-// AMPLE_AUDIO_USECS and LOW_AUDIO_USECS by the following value. This reduces
-// the amount of decoded audio we buffer, reducing our memory usage. We only
-// need to decode far ahead when we're decoding video using software decoding,
-// as otherwise a long video decode could cause an audio underrun.
-const int64_t NO_VIDEO_AMPLE_AUDIO_DIVISOR = 8;
-
 // If we have fewer than LOW_VIDEO_FRAMES decoded frames, and
 // we're not "prerolling video", we'll skip the video up to the next keyframe
 // which is at or after the current playback position.
@@ -122,6 +115,11 @@ static const int AUDIO_DURATION_USECS = 40000;
 // us to be more likely to increase our low audio threshold, and to
 // increase it by more.
 static const int THRESHOLD_FACTOR = 2;
+
+// When the continuous silent data is over this threshold, means the a/v does
+// not produce any sound. This time is decided by UX suggestion, see
+// https://bugzilla.mozilla.org/show_bug.cgi?id=1235612#c18
+static const uint32_t SILENT_DATA_THRESHOLD_USECS = 10000000;
 
 namespace detail {
 
@@ -215,15 +213,15 @@ MediaDecoderStateMachine::MediaDecoderStateMachine(MediaDecoder* aDecoder,
   mObservedDuration(TimeUnit(), "MediaDecoderStateMachine::mObservedDuration"),
   mFragmentEndTime(-1),
   mReader(aReader),
-  mDecodedAudioEndTime(-1),
-  mDecodedVideoEndTime(-1),
+  mDecodedAudioEndTime(0),
+  mDecodedVideoEndTime(0),
   mPlaybackRate(1.0),
   mLowAudioThresholdUsecs(detail::LOW_AUDIO_USECS),
   mAmpleAudioThresholdUsecs(detail::AMPLE_AUDIO_USECS),
   mQuickBufferingLowDataThresholdUsecs(detail::QUICK_BUFFERING_LOW_DATA_USECS),
   mIsAudioPrerolling(false),
   mIsVideoPrerolling(false),
-  mAudioCaptured(false, "MediaDecoderStateMachine::mAudioCaptured"),
+  mAudioCaptured(false),
   mAudioCompleted(false, "MediaDecoderStateMachine::mAudioCompleted"),
   mVideoCompleted(false, "MediaDecoderStateMachine::mVideoCompleted"),
   mNotifyMetadataBeforeFirstFrame(false),
@@ -238,11 +236,12 @@ MediaDecoderStateMachine::MediaDecoderStateMachine(MediaDecoder* aDecoder,
   mCorruptFrames(60),
   mDecodingFirstFrame(true),
   mSentLoadedMetadataEvent(false),
-  mSentFirstFrameLoadedEvent(false, "MediaDecoderStateMachine::mSentFirstFrameLoadedEvent"),
+  mSentFirstFrameLoadedEvent(false),
   mSentPlaybackEndedEvent(false),
   mOutputStreamManager(new OutputStreamManager()),
   mResource(aDecoder->GetResource()),
   mAudioOffloading(false),
+  mSilentDataDuration(0),
   mBuffered(mTaskQueue, TimeIntervals(),
             "MediaDecoderStateMachine::mBuffered (Mirror)"),
   mEstimatedDuration(mTaskQueue, NullableTimeUnit(),
@@ -279,7 +278,9 @@ MediaDecoderStateMachine::MediaDecoderStateMachine(MediaDecoder* aDecoder,
   mCurrentPosition(mTaskQueue, 0,
                    "MediaDecoderStateMachine::mCurrentPosition (Canonical)"),
   mPlaybackOffset(mTaskQueue, 0,
-                  "MediaDecoderStateMachine::mPlaybackOffset (Canonical)")
+                  "MediaDecoderStateMachine::mPlaybackOffset (Canonical)"),
+  mIsAudioDataAudible(mTaskQueue, false,
+                     "MediaDecoderStateMachine::mIsAudioDataAudible (Canonical)")
 {
   MOZ_COUNT_CTOR(MediaDecoderStateMachine);
   NS_ASSERTION(NS_IsMainThread(), "Should be on main thread.");
@@ -337,9 +338,6 @@ MediaDecoderStateMachine::InitializationTask(MediaDecoder* aDecoder)
 {
   MOZ_ASSERT(OnTaskQueue());
 
-  mStreamSink = new DecodedStream(mTaskQueue, mAudioQueue, mVideoQueue,
-                                  mOutputStreamManager, mSameOriginMedia.Ref());
-
   // Connect mirrors.
   mBuffered.Connect(mReader->CanonicalBuffered());
   mEstimatedDuration.Connect(aDecoder->CanonicalEstimatedDuration());
@@ -369,8 +367,6 @@ MediaDecoderStateMachine::InitializationTask(MediaDecoder* aDecoder)
   mWatchManager.Watch(mObservedDuration, &MediaDecoderStateMachine::RecomputeDuration);
   mWatchManager.Watch(mPlayState, &MediaDecoderStateMachine::PlayStateChanged);
   mWatchManager.Watch(mLogicallySeeking, &MediaDecoderStateMachine::LogicallySeekingChanged);
-  mWatchManager.Watch(mSentFirstFrameLoadedEvent, &MediaDecoderStateMachine::AdjustAudioThresholds);
-  mWatchManager.Watch(mAudioCaptured, &MediaDecoderStateMachine::AdjustAudioThresholds);
 }
 
 media::MediaSink*
@@ -389,11 +385,10 @@ MediaDecoderStateMachine::CreateAudioSink()
 already_AddRefed<media::MediaSink>
 MediaDecoderStateMachine::CreateMediaSink(bool aAudioCaptured)
 {
-  // TODO: We can't really create a new DecodedStream until OutputStreamManager
-  //       is extracted. It is tricky that the implementation of DecodedStream
-  //       happens to allow reuse after shutdown without creating a new one.
-  RefPtr<media::MediaSink> audioSink = aAudioCaptured ?
-    mStreamSink : CreateAudioSink();
+  RefPtr<media::MediaSink> audioSink = aAudioCaptured
+    ? new DecodedStream(mTaskQueue, mAudioQueue, mVideoQueue,
+                        mOutputStreamManager, mSameOriginMedia.Ref())
+    : CreateAudioSink();
 
   RefPtr<media::MediaSink> mediaSink =
     new VideoSink(mTaskQueue, audioSink, mVideoQueue,
@@ -429,9 +424,10 @@ MediaDecoderStateMachine::GetDecodedAudioDuration()
 {
   MOZ_ASSERT(OnTaskQueue());
   if (mMediaSink->IsStarted()) {
-    // |mDecodedAudioEndTime == -1| means no decoded audio at all so the
-    // returned duration is 0.
-    return mDecodedAudioEndTime != -1 ? mDecodedAudioEndTime - GetClock() : 0;
+    // mDecodedAudioEndTime might be smaller than GetClock() when there is
+    // overlap between 2 adjacent audio samples or when we are playing
+    // a chained ogg file.
+    return std::max<int64_t>(mDecodedAudioEndTime - GetClock(), 0);
   }
   // MediaSink not started. All audio samples are in the queue.
   return AudioQueue().Duration();
@@ -611,7 +607,9 @@ MediaDecoderStateMachine::OnAudioDecoded(MediaData* aAudioSample)
   MOZ_ASSERT(audio);
   mAudioDataRequest.Complete();
   aAudioSample->AdjustForStartTime(StartTime());
-  mDecodedAudioEndTime = audio->GetEndTime();
+
+  // audio->GetEndTime() is not always mono-increasing in chained ogg.
+  mDecodedAudioEndTime = std::max(audio->GetEndTime(), mDecodedAudioEndTime);
 
   SAMPLE_LOG("OnAudioDecoded [%lld,%lld] disc=%d",
              (audio ? audio->mTime : -1),
@@ -723,13 +721,35 @@ MediaDecoderStateMachine::PushFront(MediaData* aSample, MediaData::Type aSampleT
 }
 
 void
+MediaDecoderStateMachine::CheckIsAudible(const MediaData* aSample)
+{
+  MOZ_ASSERT(OnTaskQueue());
+  MOZ_ASSERT(aSample->mType == MediaData::AUDIO_DATA);
+
+  const AudioData* data = aSample->As<AudioData>();
+  bool isAudible = data->IsAudible();
+  if (isAudible && !mIsAudioDataAudible) {
+    mIsAudioDataAudible = true;
+    mSilentDataDuration = 0;
+  } else if (isAudible && mIsAudioDataAudible) {
+    mSilentDataDuration += data->mDuration;
+    if (mSilentDataDuration > SILENT_DATA_THRESHOLD_USECS) {
+      mIsAudioDataAudible = false;
+      mSilentDataDuration = 0;
+    }
+  }
+}
+
+void
 MediaDecoderStateMachine::OnAudioPopped(const RefPtr<MediaData>& aSample)
 {
   MOZ_ASSERT(OnTaskQueue());
+
   mPlaybackOffset = std::max(mPlaybackOffset.Ref(), aSample->mOffset);
   UpdateNextFrameStatus();
   DispatchAudioDecodeTaskIfNeeded();
   MaybeStartBuffering();
+  CheckIsAudible(aSample);
 }
 
 void
@@ -881,7 +901,9 @@ MediaDecoderStateMachine::OnVideoDecoded(MediaData* aVideoSample)
   MOZ_ASSERT(video);
   mVideoDataRequest.Complete();
   aVideoSample->AdjustForStartTime(StartTime());
-  mDecodedVideoEndTime = video ? video->GetEndTime() : mDecodedVideoEndTime;
+
+  // Handle abnormal or negative timestamps.
+  mDecodedVideoEndTime = std::max(mDecodedVideoEndTime, video->GetEndTime());
 
   SAMPLE_LOG("OnVideoDecoded [%lld,%lld] disc=%d",
              (video ? video->mTime : -1),
@@ -1396,8 +1418,8 @@ void MediaDecoderStateMachine::StartDecoding()
   }
 
   // Reset other state to pristine values before starting decode.
-  mIsAudioPrerolling = !DonePrerollingAudio();
-  mIsVideoPrerolling = !DonePrerollingVideo();
+  mIsAudioPrerolling = !DonePrerollingAudio() && !mAudioWaitRequest.Exists();
+  mIsVideoPrerolling = !DonePrerollingVideo() && !mVideoWaitRequest.Exists();
 
   // Ensure that we've got tasks enqueued to decode data if we need to.
   DispatchDecodeTasksIfNeeded();
@@ -1621,7 +1643,7 @@ MediaDecoderStateMachine::InitiateSeek()
   // Do the seek.
   RefPtr<MediaDecoderStateMachine> self = this;
   mSeekRequest.Begin(InvokeAsync(DecodeTaskQueue(), mReader.get(), __func__,
-                                 &MediaDecoderReader::Seek, mCurrentSeek.mTarget.mTime,
+                                 &MediaDecoderReader::Seek, mCurrentSeek.mTarget.mTime + StartTime(),
                                  Duration().ToMicroseconds())
     ->Then(OwnerThread(), __func__,
            [self] (int64_t) -> void {
@@ -1855,17 +1877,17 @@ bool MediaDecoderStateMachine::HasLowUndecodedData(int64_t aUsecs)
     return false;
   }
 
-  int64_t endOfDecodedVideoData = INT64_MAX;
-  if (HasVideo() && !VideoQueue().AtEndOfStream()) {
-    endOfDecodedVideoData = VideoQueue().Peek() ? VideoQueue().Peek()->GetEndTime() : VideoEndTime();
-  }
-  int64_t endOfDecodedAudioData = INT64_MAX;
-  if (HasAudio() && !AudioQueue().AtEndOfStream()) {
-    // mDecodedAudioEndTime could be -1 when no audio samples are decoded.
-    // But that is fine since we consider ourself as low in decoded data when
-    // we don't have any decoded audio samples at all.
-    endOfDecodedAudioData = mDecodedAudioEndTime;
-  }
+  // We are never low in decoded data when we don't have audio/video or have
+  // decoded all audio/video samples.
+  int64_t endOfDecodedVideoData =
+    (HasVideo() && !VideoQueue().IsFinished())
+      ? mDecodedVideoEndTime
+      : INT64_MAX;
+  int64_t endOfDecodedAudioData =
+    (HasAudio() && !AudioQueue().IsFinished())
+      ? mDecodedAudioEndTime
+      : INT64_MAX;
+
   int64_t endOfDecodedData = std::min(endOfDecodedVideoData, endOfDecodedAudioData);
   if (Duration().ToMicroseconds() < endOfDecodedData) {
     // Our duration is not up to date. No point buffering.
@@ -2019,32 +2041,6 @@ bool
 MediaDecoderStateMachine::IsDecodingFirstFrame()
 {
   return mState == DECODER_STATE_DECODING && mDecodingFirstFrame;
-}
-
-void
-MediaDecoderStateMachine::AdjustAudioThresholds()
-{
-  MOZ_ASSERT(OnTaskQueue());
-
-  // Experiments show that we need to buffer more if audio is captured to avoid
-  // audio glitch. See bug 1188643 comment 16 for the details.
-  int64_t divisor = mAudioCaptured ? NO_VIDEO_AMPLE_AUDIO_DIVISOR / 2
-                                   : NO_VIDEO_AMPLE_AUDIO_DIVISOR;
-
-  // We're playing audio only. We don't need to worry about slow video
-  // decodes causing audio underruns, so don't buffer so much audio in
-  // order to reduce memory usage.
-  if (HasAudio() && !HasVideo() && mSentFirstFrameLoadedEvent) {
-    mAmpleAudioThresholdUsecs = detail::AMPLE_AUDIO_USECS / divisor;
-    mLowAudioThresholdUsecs = detail::LOW_AUDIO_USECS / divisor;
-    mQuickBufferingLowDataThresholdUsecs =
-      detail::QUICK_BUFFERING_LOW_DATA_USECS / divisor;
-
-    // Check if we need to stop audio prerolling for thresholds changed.
-    if (mIsAudioPrerolling && DonePrerollingAudio()) {
-      StopPrerollingAudio();
-    }
-  }
 }
 
 void
@@ -2207,6 +2203,7 @@ MediaDecoderStateMachine::FinishShutdown()
   mNextFrameStatus.DisconnectAll();
   mCurrentPosition.DisconnectAll();
   mPlaybackOffset.DisconnectAll();
+  mIsAudioDataAudible.DisconnectAll();
 
   // Shut down the watch manager before shutting down our task queue.
   mWatchManager.Shutdown();
@@ -2397,8 +2394,8 @@ MediaDecoderStateMachine::Reset()
   // crash for no samples to be popped.
   StopMediaSink();
 
-  mDecodedVideoEndTime = -1;
-  mDecodedAudioEndTime = -1;
+  mDecodedVideoEndTime = 0;
+  mDecodedAudioEndTime = 0;
   mAudioCompleted = false;
   mVideoCompleted = false;
   AudioQueue().Reset();
@@ -2683,6 +2680,10 @@ void MediaDecoderStateMachine::StartBuffering()
     return;
   }
 
+  // Update playback position again before entering BUFFERING so the currentTime
+  // of the media element is more accurate during buffering.
+  UpdatePlaybackPositionPeriodically();
+
   if (IsPlaying()) {
     StopPlayback();
   }
@@ -2771,6 +2772,13 @@ MediaDecoderStateMachine::LogicalPlaybackRateChanged()
 
   mPlaybackRate = mLogicalPlaybackRate;
   mMediaSink->SetPlaybackRate(mPlaybackRate);
+
+  if (mIsAudioPrerolling && DonePrerollingAudio()) {
+    StopPrerollingAudio();
+  }
+  if (mIsVideoPrerolling && DonePrerollingVideo()) {
+    StopPrerollingVideo();
+  }
 
   ScheduleStateMachine();
 }
@@ -2895,6 +2903,12 @@ MediaDecoderStateMachine::SetAudioCaptured(bool aCaptured)
   if (aCaptured == mAudioCaptured) {
     return;
   }
+
+  // Rest these flags so they are consistent with the status of the sink.
+  // TODO: Move these flags into MediaSink to improve cohesion so we don't need
+  // to reset these flags when switching MediaSinks.
+  mAudioCompleted = false;
+  mVideoCompleted = false;
 
   // Backup current playback parameters.
   MediaSink::PlaybackParams params = mMediaSink->GetPlaybackParams();

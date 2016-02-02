@@ -582,9 +582,11 @@ function stripHttpAndTrim(spec) {
  * @return String representation of the built moz-action: URL
  */
 function makeActionURL(action, params) {
-  let url = "moz-action:" + action + "," + JSON.stringify(params);
-  // Make a nsIURI out of this to ensure it's encoded properly.
-  return NetUtil.newURI(url).spec;
+  let encodedParams = {};
+  for (let key in params) {
+    encodedParams[key] = encodeURIComponent(params[key]);
+  }
+  return "moz-action:" + action + "," + JSON.stringify(encodedParams);
 }
 
 /**
@@ -1247,6 +1249,9 @@ Search.prototype = {
             icon = favicon.spec;
           }
         } catch (ex) {} // no favicon for this URL.
+      } else {
+        icon = PlacesUtils.favicons
+                          .getFaviconLinkForIcon(NetUtil.newURI(icon)).spec;
       }
 
       let match = {
@@ -1304,14 +1309,22 @@ Search.prototype = {
       return false;
     }
 
+    // getFixupURIInfo() escaped the URI, so it may not be pretty.  Embed the
+    // escaped URL in the action URI since that URL should be "canonical".  But
+    // pass the pretty, unescaped URL as the match comment, since it's likely
+    // to be displayed to the user, and in any case the front-end should not
+    // rely on it being canonical.
+    let escapedURL = uri.spec;
+    let displayURL = textURIService.unEscapeURIForUI("UTF-8", uri.spec);
+
     let value = makeActionURL("visiturl", {
-      url: uri.spec,
+      url: escapedURL,
       input: this._originalSearchString,
     });
 
     let match = {
       value: value,
-      comment: uri.spec,
+      comment: displayURL,
       style: "action visiturl",
       frecency: 0,
     };
@@ -1329,7 +1342,9 @@ Search.prototype = {
   },
 
   _onResultRow: function (row) {
-    TelemetryStopwatch.finish(TELEMETRY_1ST_RESULT, this);
+    if (this._localMatchesCount == 0) {
+      TelemetryStopwatch.finish(TELEMETRY_1ST_RESULT, this);
+    }
     let queryType = row.getResultByIndex(QUERYINDEX_QUERYTYPE);
     let match;
     switch (queryType) {
@@ -1466,7 +1481,10 @@ Search.prototype = {
     // Remove the trailing slash.
     match.comment = stripHttpAndTrim(trimmedHost);
     match.finalCompleteValue = untrimmedHost;
-    match.icon = faviconUrl;
+    if (faviconUrl) {
+      match.icon = PlacesUtils.favicons
+                              .getFaviconLinkForIcon(NetUtil.newURI(faviconUrl)).spec;
+    }
     // Although this has a frecency, this query is executed before any other
     // queries that would result in frecency matches.
     match.frecency = frecency;
@@ -1505,7 +1523,10 @@ Search.prototype = {
     match.value = this._strippedPrefix + url;
     match.comment = url;
     match.finalCompleteValue = untrimmedURL;
-    match.icon = faviconUrl;
+    if (faviconUrl) {
+      match.icon = PlacesUtils.favicons
+                              .getFaviconLinkForIcon(NetUtil.newURI(faviconUrl)).spec;
+    }
     // Although this has a frecency, this query is executed before any other
     // queries that would result in frecency matches.
     match.frecency = frecency;

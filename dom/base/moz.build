@@ -7,6 +7,7 @@
 TEST_DIRS += ['test']
 
 XPIDL_SOURCES += [
+    'mozIDOMWindow.idl',
     'nsIConsoleAPIStorage.idl',
     'nsIContentPolicy.idl',
     'nsIContentPolicyBase.idl',
@@ -114,6 +115,7 @@ EXPORTS += [
     'nsNodeUtils.h',
     'nsPerformance.h',
     'nsPIDOMWindow.h',
+    'nsPIDOMWindowInlines.h',
     'nsPIWindowRoot.h',
     'nsPropertyTable.h',
     'nsRange.h',
@@ -150,6 +152,7 @@ EXPORTS.mozilla += [
 ]
 
 EXPORTS.mozilla.dom += [
+    '!UseCounterList.h',
     'AnonymousContent.h',
     'Attr.h',
     'BarProps.h',
@@ -212,6 +215,7 @@ EXPORTS.mozilla.dom += [
     'TreeWalker.h',
     'URL.h',
     'URLSearchParams.h',
+    'WebKitCSSMatrix.h',
     'WebSocket.h',
     'WindowOrientationObserver.h',
 ]
@@ -359,6 +363,7 @@ UNIFIED_SOURCES += [
     'TreeWalker.cpp',
     'URL.cpp',
     'URLSearchParams.cpp',
+    'WebKitCSSMatrix.cpp',
     'WebSocket.cpp',
     'WindowNamedPropertiesHandler.cpp',
     'WindowOrientationObserver.cpp',

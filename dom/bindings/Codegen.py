@@ -1036,10 +1036,7 @@ class CGHeaders(CGWrapper):
                 headerSet.add("mozilla/dom/Nullable.h")
             unrolled = t.unroll()
             if unrolled.isUnion():
-                if len(config.filenamesPerUnion[unrolled.name]) > 1:
-                    headerSet.add("mozilla/dom/UnionTypes.h")
-                else:
-                    headerSet.add(self.getDeclarationFilename(unrolled))
+                headerSet.add(self.getUnionDeclarationFilename(config, unrolled))
                 bindingHeaders.add("mozilla/dom/UnionConversions.h")
             elif unrolled.isDate():
                 if dictionary or jsImplementedDescriptors:
@@ -1195,6 +1192,20 @@ class CGHeaders(CGWrapper):
         basename = os.path.basename(decl.filename())
         return basename.replace('.webidl', 'Binding.h')
 
+    @staticmethod
+    def getUnionDeclarationFilename(config, unionType):
+        assert unionType.isUnion()
+        assert unionType.unroll() == unionType
+        # If a union is "defined" in multiple files, it goes in UnionTypes.h.
+        if len(config.filenamesPerUnion[unionType.name]) > 1:
+            return "mozilla/dom/UnionTypes.h"
+        # If a union is defined by a built-in typedef, it also goes in
+        # UnionTypes.h.
+        assert len(config.filenamesPerUnion[unionType.name]) == 1
+        if "<unknown>" in config.filenamesPerUnion[unionType.name]:
+            return "mozilla/dom/UnionTypes.h"
+        return CGHeaders.getDeclarationFilename(unionType)
+
 
 def SortedDictValues(d):
     """
@@ -1290,10 +1301,7 @@ def UnionTypes(unionTypes, config):
                     # And add headers for the type we're parametrized over
                     addHeadersForType(f.inner)
 
-            if len(config.filenamesPerUnion[t.name]) > 1:
-                implheaders.add("mozilla/dom/UnionTypes.h")
-            else:
-                implheaders.add(CGHeaders.getDeclarationFilename(t))
+            implheaders.add(CGHeaders.getUnionDeclarationFilename(config, t))
             for f in t.flatMemberTypes:
                 assert not f.nullable()
                 addHeadersForType(f)
@@ -1356,8 +1364,9 @@ def UnionConversions(unionTypes, config):
                     # And the internal type of the MozMap
                     addHeadersForType(f.inner, providers)
 
-            if len(config.filenamesPerUnion[t.name]) == 1:
-                headers.add(CGHeaders.getDeclarationFilename(t))
+            # We plan to include UnionTypes.h no matter what, so it's
+            # OK if we throw it into the set here.
+            headers.add(CGHeaders.getUnionDeclarationFilename(config, t))
 
             for f in t.flatMemberTypes:
                 addHeadersForType(f, providers)
@@ -3240,7 +3249,7 @@ class CGConstructorEnabled(CGAbstractMethod):
         conditions = []
         iface = self.descriptor.interface
 
-        if not iface.isExposedInWindow():
+        if not iface.isExposedOnMainThread():
             exposedInWindowCheck = dedent(
                 """
                 MOZ_ASSERT(!NS_IsMainThread(), "Why did we even get called?");
@@ -3259,7 +3268,7 @@ class CGConstructorEnabled(CGAbstractMethod):
                 }
                 """, workerCondition=workerCondition.define())
             exposedInWorkerCheck = CGGeneric(exposedInWorkerCheck)
-            if iface.isExposedInWindow():
+            if iface.isExposedOnMainThread():
                 exposedInWorkerCheck = CGIfWrapper(exposedInWorkerCheck,
                                                    "!NS_IsMainThread()")
             body.append(exposedInWorkerCheck)
@@ -5036,11 +5045,6 @@ def getJSToNativeConversionInfo(type, descriptorProvider, failureCode=None,
                                           failureCode)
             return JSToNativeConversionInfo(template, declType=declType,
                                             dealWithOptional=isOptional)
-
-        if descriptor.interface.identifier.name == "AbortablePromise":
-            raise TypeError("Need to figure out what argument conversion "
-                            "should look like for AbortablePromise: %s" %
-                            sourceDescription)
 
         # This is an interface that we implement as a concrete class
         # or an XPCOM interface.
@@ -7149,8 +7153,7 @@ class CGPerSignatureCall(CGThing):
 
         # Hack for making Promise.prototype.then work well over Xrays.
         if (not static and
-            (descriptor.name == "Promise" or
-             descriptor.name == "MozAbortablePromise") and
+            descriptor.name == "Promise" and
             idlNode.isMethod() and
             idlNode.identifier.name == "then"):
             cgThings.append(CGGeneric(dedent(
@@ -7162,7 +7165,7 @@ class CGPerSignatureCall(CGThing):
         needsUnwrap = False
         argsPost = []
         if isConstructor:
-            if descriptor.name == "Promise" or descriptor.name == "MozAbortablePromise":
+            if descriptor.name == "Promise":
                 # Hack for Promise for now: pass in our desired proto so the
                 # implementation can create the reflector with the right proto.
                 argsPost.append("desiredProto")
@@ -8305,7 +8308,7 @@ class CGResolveHook(CGAbstractClassHook):
 
     def generate_code(self):
         return dedent("""
-            JS::Rooted<JSPropertyDescriptor> desc(cx);
+            JS::Rooted<JS::PropertyDescriptor> desc(cx);
             if (!self->DoResolve(cx, obj, id, &desc)) {
               return false;
             }
@@ -8772,7 +8775,7 @@ class CGMemberJITInfo(CGThing):
                 {
                   { ${opName} },
                   { prototypes::id::${name} },
-                  PrototypeTraits<prototypes::id::${name}>::Depth,
+                  { PrototypeTraits<prototypes::id::${name}>::Depth },
                   JSJitInfo::${opType},
                   JSJitInfo::${aliasSet}, /* aliasSet.  Not relevant for setters. */
                   ${returnType},  /* returnType.  Not relevant for setters. */
@@ -9152,7 +9155,7 @@ class CGStaticMethodJitinfo(CGGeneric):
             "\n"
             "static const JSJitInfo %s_methodinfo = {\n"
             "  { (JSJitGetterOp)%s },\n"
-            "  { prototypes::id::_ID_Count }, 0, JSJitInfo::StaticMethod,\n"
+            "  { prototypes::id::_ID_Count }, { 0 }, JSJitInfo::StaticMethod,\n"
             "  JSJitInfo::AliasEverything, JSVAL_TYPE_MISSING, false, false,\n"
             "  false, false, 0\n"
             "};\n" %
@@ -9620,7 +9623,7 @@ class CGUnionStruct(CGThing):
                 if t.isObject():
                     traceCases.append(
                         CGCase("e" + vars["name"],
-                               CGGeneric('JS_CallUnbarrieredObjectTracer(trc, %s, "%s");\n' %
+                               CGGeneric('JS::UnsafeTraceRoot(trc, %s, "%s");\n' %
                                          ("&mValue.m" + vars["name"] + ".Value()",
                                           "mValue.m" + vars["name"]))))
                 elif t.isDictionary():
@@ -10371,7 +10374,7 @@ class CGResolveOwnProperty(CGAbstractStaticMethod):
                 Argument('JS::Handle<JSObject*>', 'wrapper'),
                 Argument('JS::Handle<JSObject*>', 'obj'),
                 Argument('JS::Handle<jsid>', 'id'),
-                Argument('JS::MutableHandle<JSPropertyDescriptor>', 'desc'),
+                Argument('JS::MutableHandle<JS::PropertyDescriptor>', 'desc'),
                 ]
         CGAbstractStaticMethod.__init__(self, descriptor, "ResolveOwnProperty",
                                         "bool", args)
@@ -10390,7 +10393,7 @@ class CGResolveOwnPropertyViaResolve(CGAbstractBindingMethod):
                 Argument('JS::Handle<JSObject*>', 'wrapper'),
                 Argument('JS::Handle<JSObject*>', 'obj'),
                 Argument('JS::Handle<jsid>', 'id'),
-                Argument('JS::MutableHandle<JSPropertyDescriptor>', 'desc')]
+                Argument('JS::MutableHandle<JS::PropertyDescriptor>', 'desc')]
         CGAbstractBindingMethod.__init__(self, descriptor,
                                          "ResolveOwnPropertyViaResolve",
                                          args, getThisObj="",
@@ -10406,7 +10409,7 @@ class CGResolveOwnPropertyViaResolve(CGAbstractBindingMethod):
               // to avoid re-resolving the properties if someone deletes
               // them.
               JSAutoCompartment ac(cx, obj);
-              JS::Rooted<JSPropertyDescriptor> objDesc(cx);
+              JS::Rooted<JS::PropertyDescriptor> objDesc(cx);
               if (!self->DoResolve(cx, obj, id, &objDesc)) {
                 return false;
               }
@@ -10842,7 +10845,7 @@ class CGDOMJSProxyHandler_getOwnPropDescriptor(ClassMethod):
                 Argument('JS::Handle<JSObject*>', 'proxy'),
                 Argument('JS::Handle<jsid>', 'id'),
                 Argument('bool', 'ignoreNamedProps'),
-                Argument('JS::MutableHandle<JSPropertyDescriptor>', 'desc')]
+                Argument('JS::MutableHandle<JS::PropertyDescriptor>', 'desc')]
         ClassMethod.__init__(self, "getOwnPropDescriptor", "bool", args,
                              virtual=True, override=True, const=True)
         self.descriptor = descriptor
@@ -10958,7 +10961,7 @@ class CGDOMJSProxyHandler_defineProperty(ClassMethod):
         args = [Argument('JSContext*', 'cx'),
                 Argument('JS::Handle<JSObject*>', 'proxy'),
                 Argument('JS::Handle<jsid>', 'id'),
-                Argument('JS::Handle<JSPropertyDescriptor>', 'desc'),
+                Argument('JS::Handle<JS::PropertyDescriptor>', 'desc'),
                 Argument('JS::ObjectOpResult&', 'opresult'),
                 Argument('bool*', 'defined')]
         ClassMethod.__init__(self, "defineProperty", "bool", args, virtual=True, override=True, const=True)
@@ -12603,12 +12606,12 @@ class CGDictionary(CGThing):
                                 memberLoc)
 
         if type.isObject():
-            trace = CGGeneric('JS_CallUnbarrieredObjectTracer(trc, %s, "%s");\n' %
+            trace = CGGeneric('JS::UnsafeTraceRoot(trc, %s, "%s");\n' %
                               ("&"+memberData, memberName))
             if type.nullable():
                 trace = CGIfWrapper(trace, memberData)
         elif type.isAny():
-            trace = CGGeneric('JS_CallUnbarrieredValueTracer(trc, %s, "%s");\n' %
+            trace = CGGeneric('JS::UnsafeTraceRoot(trc, %s, "%s");\n' %
                               ("&"+memberData, memberName))
         elif (type.isSequence() or type.isDictionary() or
               type.isSpiderMonkeyInterface() or type.isUnion()):

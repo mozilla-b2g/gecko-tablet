@@ -18,6 +18,7 @@
 #include "nsWeakReference.h"
 #include "nsCOMArray.h"
 #include "nsRect.h"
+#include "Units.h"
 
 // Interfaces needed
 #include "nsIBaseWindow.h"
@@ -89,6 +90,9 @@ protected:
    NS_IMETHOD EnsurePrompter();
    NS_IMETHOD EnsureAuthPrompter();
 
+   mozilla::DesktopToLayoutDeviceScale
+   GetScaleForDestinationPosition(int32_t aX, int32_t aY);
+
    void OnChromeLoaded();
    void StaggerPosition(int32_t &aRequestedX, int32_t &aRequestedY,
                         int32_t aSpecWidth, int32_t aSpecHeight);
@@ -98,7 +102,7 @@ protected:
    void       SyncAttributesToWidget();
    NS_IMETHOD SavePersistentAttributes();
 
-   NS_IMETHOD GetWindowDOMWindow(nsIDOMWindow** aDOMWindow);
+   NS_IMETHOD GetWindowDOMWindow(mozIDOMWindowProxy** aDOMWindow);
    mozilla::dom::Element* GetWindowDOMElement() const;
 
    // See nsIDocShellTreeOwner for docs on next two methods
@@ -126,7 +130,7 @@ protected:
    nsContentTreeOwner*     mPrimaryContentTreeOwner;
    nsCOMPtr<nsIWidget>     mWindow;
    nsCOMPtr<nsIDocShell>   mDocShell;
-   nsCOMPtr<nsIDOMWindow>  mDOMWindow;
+   nsCOMPtr<nsPIDOMWindowOuter>  mDOMWindow;
    nsCOMPtr<nsIWeakReference> mParentWindow;
    nsCOMPtr<nsIPrompt>     mPrompter;
    nsCOMPtr<nsIAuthPrompt> mAuthPrompter;

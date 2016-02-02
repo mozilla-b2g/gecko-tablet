@@ -207,12 +207,103 @@ const TLS_ERROR_REPORT_TELEMETRY_EXPANDED = 1;
 const TLS_ERROR_REPORT_TELEMETRY_SUCCESS  = 6;
 const TLS_ERROR_REPORT_TELEMETRY_FAILURE  = 7;
 
+var AboutCertErrorListener = {
+  init(chromeGlobal) {
+    addMessageListener("AboutCertErrorDetails", this);
+    chromeGlobal.addEventListener("AboutCertErrorLoad", this, false, true);
+    chromeGlobal.addEventListener("AboutCertErrorSetAutomatic", this, false, true);
+  },
+
+  get isAboutCertError() {
+    return content.document.documentURI.startsWith("about:certerror");
+  },
+
+  handleEvent(event) {
+    if (!this.isAboutCertError) {
+      return;
+    }
+
+    switch (event.type) {
+      case "AboutCertErrorLoad":
+        this.onLoad(event);
+        break;
+      case "AboutCertErrorSetAutomatic":
+        this.onSetAutomatic(event);
+        break;
+    }
+  },
+
+  receiveMessage(msg) {
+    if (!this.isAboutCertError) {
+      return;
+    }
+
+    switch (msg.name) {
+      case "AboutCertErrorDetails":
+        this.onDetails(msg);
+        break;
+    }
+  },
+
+  onLoad(event) {
+    let originalTarget = event.originalTarget;
+    let ownerDoc = originalTarget.ownerDocument;
+    ClickEventHandler.onAboutCertError(originalTarget, ownerDoc);
+
+    // Set up the TLS Error Reporting UI - reports are sent automatically
+    // (from nsHttpChannel::OnStopRequest) if the user has previously enabled
+    // automatic sending of reports. The UI ensures that a report is sent
+    // for the certificate error currently displayed if the user enables it
+    // here.
+    let automatic = Services.prefs.getBoolPref("security.ssl.errorReporting.automatic");
+    content.dispatchEvent(new content.CustomEvent("AboutCertErrorOptions", {
+      detail: JSON.stringify({
+        enabled: Services.prefs.getBoolPref("security.ssl.errorReporting.enabled"),
+        automatic,
+      })
+    }));
+  },
+
+  onDetails(msg) {
+    let div = content.document.getElementById("certificateErrorText");
+    div.textContent = msg.data.info;
+  },
+
+  onSetAutomatic(event) {
+    sendAsyncMessage("Browser:SetSSLErrorReportAuto", {
+      automatic: event.detail
+    });
+
+    // if we're enabling reports, send a report for this failure
+    if (event.detail) {
+      let doc = content.document;
+      let location = doc.location.href;
+
+      let serhelper = Cc["@mozilla.org/network/serialization-helper;1"]
+          .getService(Ci.nsISerializationHelper);
+
+      let serializable =  docShell.failedChannel.securityInfo
+          .QueryInterface(Ci.nsITransportSecurityInfo)
+          .QueryInterface(Ci.nsISerializable);
+
+      let serializedSecurityInfo = serhelper.serializeToString(serializable);
+
+      sendAsyncMessage("Browser:SendSSLErrorReport", {
+        documentURI: doc.documentURI,
+        location: {hostname: doc.location.hostname, port: doc.location.port},
+        securityInfo: serializedSecurityInfo
+      });
+    }
+  },
+};
+
+AboutCertErrorListener.init(this);
+
+
 var AboutNetErrorListener = {
   init: function(chromeGlobal) {
     chromeGlobal.addEventListener('AboutNetErrorLoad', this, false, true);
     chromeGlobal.addEventListener('AboutNetErrorSetAutomatic', this, false, true);
-    chromeGlobal.addEventListener('AboutNetErrorSendReport', this, false, true);
-    chromeGlobal.addEventListener('AboutNetErrorUIExpanded', this, false, true);
     chromeGlobal.addEventListener('AboutNetErrorOverride', this, false, true);
   },
 
@@ -232,13 +323,6 @@ var AboutNetErrorListener = {
     case "AboutNetErrorSetAutomatic":
       this.onSetAutomatic(aEvent);
       break;
-    case "AboutNetErrorSendReport":
-      this.onSendReport(aEvent);
-      break;
-    case "AboutNetErrorUIExpanded":
-      sendAsyncMessage("Browser:SSLErrorReportTelemetry",
-                       {reportStatus: TLS_ERROR_REPORT_TELEMETRY_EXPANDED});
-      break;
     case "AboutNetErrorOverride":
       this.onOverride(aEvent);
       break;
@@ -248,91 +332,46 @@ var AboutNetErrorListener = {
   onPageLoad: function(evt) {
     let automatic = Services.prefs.getBoolPref("security.ssl.errorReporting.automatic");
     content.dispatchEvent(new content.CustomEvent("AboutNetErrorOptions", {
-            detail: JSON.stringify({
-              enabled: Services.prefs.getBoolPref("security.ssl.errorReporting.enabled"),
-            automatic: automatic
-            })
-          }
-    ));
+      detail: JSON.stringify({
+        enabled: Services.prefs.getBoolPref("security.ssl.errorReporting.enabled"),
+        automatic: automatic
+      })
+    }));
 
     sendAsyncMessage("Browser:SSLErrorReportTelemetry",
                      {reportStatus: TLS_ERROR_REPORT_TELEMETRY_UI_SHOWN});
-
-    if (automatic) {
-      this.onSendReport(evt);
-    }
-    // hide parts of the UI we don't need yet
-    let contentDoc = content.document;
-
-    let reportSendingMsg = contentDoc.getElementById("reportSendingMessage");
-    let reportSentMsg = contentDoc.getElementById("reportSentMessage");
-    let retryBtn = contentDoc.getElementById("reportCertificateErrorRetry");
-    reportSendingMsg.style.display = "none";
-    reportSentMsg.style.display = "none";
-    retryBtn.style.display = "none";
   },
 
   onSetAutomatic: function(evt) {
     sendAsyncMessage("Browser:SetSSLErrorReportAuto", {
-        automatic: evt.detail
-      });
-  },
-
-  onSendReport: function(evt) {
-    let contentDoc = content.document;
-
-    let reportSendingMsg = contentDoc.getElementById("reportSendingMessage");
-    let reportSentMsg = contentDoc.getElementById("reportSentMessage");
-    let reportBtn = contentDoc.getElementById("reportCertificateError");
-    let retryBtn = contentDoc.getElementById("reportCertificateErrorRetry");
-
-    addMessageListener("Browser:SSLErrorReportStatus", function(message) {
-      // show and hide bits - but only if this is a message for the right
-      // document - we'll compare on document URI
-      if (contentDoc.documentURI === message.data.documentURI) {
-        switch(message.data.reportStatus) {
-        case "activity":
-          // Hide the button that was just clicked
-          reportBtn.style.display = "none";
-          retryBtn.style.display = "none";
-          reportSentMsg.style.display = "none";
-          reportSendingMsg.style.removeProperty("display");
-          break;
-        case "error":
-          // show the retry button
-          retryBtn.style.removeProperty("display");
-          reportSendingMsg.style.display = "none";
-          sendAsyncMessage("Browser:SSLErrorReportTelemetry",
-                           {reportStatus: TLS_ERROR_REPORT_TELEMETRY_FAILURE});
-          break;
-        case "complete":
-          // Show a success indicator
-          reportSentMsg.style.removeProperty("display");
-          reportSendingMsg.style.display = "none";
-          sendAsyncMessage("Browser:SSLErrorReportTelemetry",
-                           {reportStatus: TLS_ERROR_REPORT_TELEMETRY_SUCCESS});
-          break;
-        }
-      }
+      automatic: evt.detail
     });
 
-    let location = contentDoc.location.href;
+    // if we're enabling reports, send a report for this failure
+    if (evt.detail) {
+      let contentDoc = content.document;
 
-    let serhelper = Cc["@mozilla.org/network/serialization-helper;1"]
-                     .getService(Ci.nsISerializationHelper);
+      let location = contentDoc.location.href;
 
-    let serializable =  docShell.failedChannel.securityInfo
-                                .QueryInterface(Ci.nsITransportSecurityInfo)
-                                .QueryInterface(Ci.nsISerializable);
+      let serhelper = Cc["@mozilla.org/network/serialization-helper;1"]
+                        .getService(Ci.nsISerializationHelper);
 
-    let serializedSecurityInfo = serhelper.serializeToString(serializable);
+      let serializable = docShell.failedChannel.securityInfo
+          .QueryInterface(Ci.nsITransportSecurityInfo)
+          .QueryInterface(Ci.nsISerializable);
 
-    sendAsyncMessage("Browser:SendSSLErrorReport", {
-        elementId: evt.target.id,
+      let serializedSecurityInfo = serhelper.serializeToString(serializable);
+
+      sendAsyncMessage("Browser:SendSSLErrorReport", {
         documentURI: contentDoc.documentURI,
-        location: {hostname: contentDoc.location.hostname, port: contentDoc.location.port},
+        location: {
+          hostname: contentDoc.location.hostname,
+          port: contentDoc.location.port
+        },
         securityInfo: serializedSecurityInfo
       });
+
+    }
   },
 
   onOverride: function(evt) {
@@ -553,17 +592,6 @@ addEventListener("DOMServiceWorkerFocusClient", function(event) {
   sendAsyncMessage("DOMServiceWorkerFocusClient", {});
 }, false);
 
-addEventListener("AboutCertErrorLoad", function(event) {
-  let originalTarget = event.originalTarget;
-  let ownerDoc = originalTarget.ownerDocument;
-  ClickEventHandler.onAboutCertError(originalTarget, ownerDoc);
-}, false, true);
-
-addMessageListener("AboutCertErrorDetails", function(message) {
-  let div = content.document.getElementById("certificateErrorText");
-  div.textContent = message.data.info;
-});
-
 ContentWebRTC.init();
 addMessageListener("rtcpeer:Allow", ContentWebRTC);
 addMessageListener("rtcpeer:Deny", ContentWebRTC);
@@ -589,20 +617,20 @@ addEventListener("pageshow", function(event) {
 var PageMetadataMessenger = {
   init() {
     addMessageListener("PageMetadata:GetPageData", this);
-    addMessageListener("PageMetadata:GetMicrodata", this);
+    addMessageListener("PageMetadata:GetMicroformats", this);
   },
   receiveMessage(message) {
     switch(message.name) {
       case "PageMetadata:GetPageData": {
-        let result = PageMetadata.getData(content.document);
+        let target = message.objects.target;
+        let result = PageMetadata.getData(content.document, target);
         sendAsyncMessage("PageMetadata:PageDataResult", result);
         break;
       }
-
-      case "PageMetadata:GetMicrodata": {
+      case "PageMetadata:GetMicroformats": {
         let target = message.objects.target;
-        let result = PageMetadata.getMicrodata(content.document, target);
-        sendAsyncMessage("PageMetadata:MicrodataResult", result);
+        let result = PageMetadata.getMicroformats(content.document, target);
+        sendAsyncMessage("PageMetadata:MicroformatsResult", result);
         break;
       }
     }
@@ -920,14 +948,31 @@ var PageInfoListener = {
       document = content.document;
     }
 
+    let imageElement = message.objects.imageElement;
+
     let pageInfoData = {metaViewRows: this.getMetaInfo(document),
                         docInfo: this.getDocumentInfo(document),
                         feeds: this.getFeedsInfo(document, strings),
-                        windowInfo: this.getWindowInfo(window)};
+                        windowInfo: this.getWindowInfo(window),
+                        imageInfo: this.getImageInfo(imageElement)};
+
     sendAsyncMessage("PageInfo:data", pageInfoData);
 
     // Separate step so page info dialog isn't blank while waiting for this to finish.
     this.getMediaInfo(document, window, strings);
+  },
+
+  getImageInfo: function(imageElement) {
+    let imageInfo = null;
+    if (imageElement) {
+      imageInfo = {
+        currentSrc: imageElement.currentSrc,
+        width: imageElement.width,
+        height: imageElement.height,
+        imageText: imageElement.title || imageElement.alt
+      };
+    }
+    return imageInfo;
   },
 
   getMetaInfo: function(document) {

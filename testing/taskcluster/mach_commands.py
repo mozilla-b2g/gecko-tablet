@@ -10,6 +10,7 @@ from collections import defaultdict
 import os
 import json
 import copy
+import re
 import sys
 import time
 from collections import namedtuple
@@ -132,14 +133,13 @@ def remove_caches_from_task(task):
     :param task: task definition.
     """
     whitelist = [
-        "tc-vcs",
-        "tc-vcs-public-sources",
-        "tooltool-cache",
+        re.compile("^level-[123]-.*-tc-vcs(-public-sources)?$"),
+        re.compile("^tooltool-cache$"),
     ]
     try:
         caches = task["task"]["payload"]["cache"]
         for cache in caches.keys():
-            if cache not in whitelist:
+            if not any(pat.match(cache) for pat in whitelist):
                 caches.pop(cache)
     except KeyError:
         pass
@@ -260,6 +260,9 @@ class Graph(object):
     @CommandArgument('--owner',
         required=True,
         help='email address of who owns this graph')
+    @CommandArgument('--level',
+        default="1",
+        help='SCM level of this repository')
     @CommandArgument('--extend-graph',
         action="store_true", dest="ci", help='Omit create graph arguments')
     @CommandArgument('--interactive',
@@ -317,7 +320,7 @@ class Graph(object):
 
         jobs = templates.load(job_path, {})
 
-        job_graph = parse_commit(message, jobs)
+        job_graph, trigger_tests = parse_commit(message, jobs)
 
         cmdline_interactive = params.get('interactive', False)
 
@@ -346,6 +349,7 @@ class Graph(object):
             'month': pushdate[4:6],
             'day': pushdate[6:8],
             'owner': params['owner'],
+            'level': params['level'],
             'from_now': json_time_from_now,
             'now': current_json_time(),
             'revision_hash': params['revision_hash']
@@ -376,7 +380,7 @@ class Graph(object):
                 graph['scopes'].add(route)
 
         graph['metadata'] = {
-            'source': 'http://todo.com/what/goes/here',
+            'source': '{repo}file/{rev}/testing/taskcluster/mach_commands.py'.format(repo=params['head_repository'], rev=params['head_rev']),
             'owner': params['owner'],
             # TODO: Add full mach commands to this example?
             'description': 'Task graph generated via ./mach taskcluster-graph',
@@ -389,6 +393,7 @@ class Graph(object):
             interactive = cmdline_interactive or build["interactive"]
             build_parameters = merge_dicts(parameters, build['additional-parameters']);
             build_parameters['build_slugid'] = slugid()
+            build_parameters['source'] = '{repo}file/{rev}/testing/taskcluster/{file}'.format(repo=params['head_repository'], rev=params['head_rev'], file=build['task'])
             build_task = templates.load(build['task'], build_parameters)
 
             # Copy build_* attributes to expose them to post-build tasks
@@ -533,7 +538,12 @@ class Graph(object):
                             treeherder_route
                         )
 
-                    graph['tasks'].append(test_task)
+                    # This will schedule test jobs N times
+                    for i in range(0, trigger_tests):
+                        graph['tasks'].append(test_task)
+                        # If we're scheduling more tasks each have to be unique
+                        test_task = copy.deepcopy(test_task)
+                        test_task['taskId'] = slugid()
 
                     define_task = DEFINE_TASK.format(
                         test_task['task']['workerType']
@@ -589,6 +599,9 @@ class CIBuild(object):
     @CommandArgument('--owner',
         default='foobar@mozilla.com',
         help='email address of who owns this graph')
+    @CommandArgument('--level',
+        default="1",
+        help='SCM level of this repository')
     @CommandArgument('build_task',
         help='path to build task definition')
     @CommandArgument('--interactive',
@@ -627,6 +640,7 @@ class CIBuild(object):
         build_parameters = dict(gaia_info().items() + {
             'docker_image': docker_image,
             'owner': params['owner'],
+            'level': params['level'],
             'from_now': json_time_from_now,
             'now': current_json_time(),
             'base_repository': params['base_repository'] or head_repository,

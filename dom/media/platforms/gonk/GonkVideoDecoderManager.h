@@ -13,7 +13,6 @@
 #include "I420ColorConverterHelper.h"
 #include "MediaCodecProxy.h"
 #include "GonkNativeWindow.h"
-#include "GonkNativeWindowClient.h"
 #include "mozilla/layers/FenceUtils.h"
 #include "mozilla/UniquePtr.h"
 #include <ui/Fence.h>
@@ -49,6 +48,11 @@ public:
                           RefPtr<MediaData>& aOutput) override;
 
   nsresult Shutdown() override;
+
+  const char* GetDescriptionName() const override
+  {
+    return "gonk video decoder";
+  }
 
   static void RecycleCallback(TextureClient* aClient, void* aClosure);
 

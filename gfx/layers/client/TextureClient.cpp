@@ -183,7 +183,6 @@ private:
 static void DestroyTextureData(TextureData* aTextureData, ISurfaceAllocator* aAllocator,
                                bool aDeallocate, bool aMainThreadOnly)
 {
-  MOZ_ASSERT(aTextureData);
   if (!aTextureData) {
     return;
   }
@@ -207,6 +206,7 @@ static void DestroyTextureData(TextureData* aTextureData, ISurfaceAllocator* aAl
 void
 TextureChild::ActorDestroy(ActorDestroyReason why)
 {
+  PROFILER_LABEL_FUNC(js::ProfileEntry::Category::GRAPHICS);
   mWaitForRecycle = nullptr;
 
   if (mTextureData) {
@@ -231,6 +231,11 @@ void DeallocateTextureClientSyncProxy(TextureDeallocParams params,
 void
 DeallocateTextureClient(TextureDeallocParams params)
 {
+  if (!params.actor && !params.data) {
+    // Nothing to do
+    return;
+  }
+
   TextureChild* actor = params.actor;
   MessageLoop* ipdlMsgLoop = nullptr;
 
@@ -641,7 +646,9 @@ TextureClient::RecycleTexture(TextureFlags aFlags)
 void
 TextureClient::WaitForCompositorRecycle()
 {
-  mActor->WaitForCompositorRecycle();
+  if (IsSharedWithCompositor()) {
+    mActor->WaitForCompositorRecycle();
+  }
 }
 
 void
@@ -660,7 +667,7 @@ TextureClient::TextureClientRecycleCallback(TextureClient* aClient, void* aClosu
 }
 
 void
-TextureClient::SetRecycleAllocator(TextureClientRecycleAllocator* aAllocator)
+TextureClient::SetRecycleAllocator(ITextureClientRecycleAllocator* aAllocator)
 {
   mRecycleAllocator = aAllocator;
   if (aAllocator) {

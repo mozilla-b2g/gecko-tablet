@@ -45,6 +45,7 @@
 #include "nsIDOMKeyEvent.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMNodeList.h"
+#include "nsIDOMEvent.h"
 #include "nsGenericHTMLElement.h"
 #include "nsRange.h"
 #include "mozilla/dom/Selection.h"
@@ -133,7 +134,17 @@ mozInlineSpellStatus::InitForEditorChange(
                                 getter_AddRefs(mAnchorRange));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (aAction == EditAction::deleteSelection) {
+  nsCOMPtr<nsINode> prevNode = do_QueryInterface(aPreviousNode);
+  NS_ENSURE_STATE(prevNode);
+
+  bool deleted = aAction == EditAction::deleteSelection;
+  if (aAction == EditAction::insertIMEText) {
+    // IME may remove the previous node if it cancels composition when
+    // there is no text around the composition.
+    deleted = !prevNode->IsInComposedDoc();
+  }
+
+  if (deleted) {
     // Deletes are easy, the range is just the current anchor. We set the range
     // to check to be empty, FinishInitOnEvent will fill in the range to be
     // the current word.
@@ -145,9 +156,6 @@ mozInlineSpellStatus::InitForEditorChange(
   mOp = eOpChange;
 
   // range to check
-  nsCOMPtr<nsINode> prevNode = do_QueryInterface(aPreviousNode);
-  NS_ENSURE_STATE(prevNode);
-
   mRange = new nsRange(prevNode);
 
   // ...we need to put the start and end in the correct order

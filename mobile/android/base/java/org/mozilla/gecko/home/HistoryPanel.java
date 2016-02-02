@@ -310,7 +310,11 @@ public class HistoryPanel extends HomeFragment {
             emptyIcon.setImageResource(R.drawable.icon_most_recent_empty);
 
             final TextView emptyText = (TextView) mEmptyView.findViewById(R.id.home_empty_text);
-            emptyText.setText(R.string.home_most_recent_empty);
+            if (selected == null || mRangeAdapter == null || mRangeList == null) {
+                emptyText.setText(R.string.home_most_recent_empty);
+            } else {
+                emptyText.setText(R.string.home_selected_empty);
+            }
 
             final TextView emptyHint = (TextView) mEmptyView.findViewById(R.id.home_empty_hint);
             final String hintText = getResources().getString(R.string.home_most_recent_emptyhint);
@@ -331,7 +335,7 @@ public class HistoryPanel extends HomeFragment {
     }
 
     /**
-     * Make Span that is clickable, italicized, and underlined
+     * Make Span that is clickable, and underlined
      * between the string markers <code>FORMAT_S1</code> and
      * <code>FORMAT_S2</code>.
      *
@@ -350,9 +354,6 @@ public class HistoryPanel extends HomeFragment {
         }
 
         final SpannableStringBuilder ssb = new SpannableStringBuilder(text);
-
-        // Set italicization.
-        ssb.setSpan(new StyleSpan(Typeface.ITALIC), 0, ssb.length(), 0);
 
         // Set clickable text.
         final ClickableSpan clickableSpan = new ClickableSpan() {

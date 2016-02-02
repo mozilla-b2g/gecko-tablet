@@ -10,6 +10,7 @@
 #include "mozilla/LoadContext.h"
 #include "mozilla/LoadInfo.h"
 #include "mozilla/BasePrincipal.h"
+#include "mozilla/Telemetry.h"
 #include "nsNetUtil.h"
 #include "nsNetUtil.inl"
 #include "mozIApplicationClearPrivateDataParams.h"
@@ -72,6 +73,9 @@
 #endif
 
 #include <limits>
+
+using namespace mozilla;
+using namespace mozilla::net;
 
 nsresult /*NS_NewChannelWithNodeAndTriggeringPrincipal */
 NS_NewChannelWithTriggeringPrincipal(nsIChannel           **outChannel,
@@ -1642,9 +1646,10 @@ NS_SecurityHashURI(nsIURI *aURI)
     if (scheme.EqualsLiteral("file"))
         return schemeHash; // sad face
 
-    if (scheme.EqualsLiteral("imap") ||
-        scheme.EqualsLiteral("mailbox") ||
-        scheme.EqualsLiteral("news"))
+    bool hasFlag;
+    if (NS_FAILED(NS_URIChainHasFlags(baseURI,
+        nsIProtocolHandler::ORIGIN_IS_FULL_SPEC, &hasFlag)) ||
+        hasFlag)
     {
         nsAutoCString spec;
         uint32_t specHash;
@@ -1741,13 +1746,13 @@ NS_SecurityCompareURIs(nsIURI *aSourceURI,
         return NS_SUCCEEDED(rv) && filesAreEqual;
     }
 
-    // Special handling for mailnews schemes
-    if (targetScheme.EqualsLiteral("imap") ||
-        targetScheme.EqualsLiteral("mailbox") ||
-        targetScheme.EqualsLiteral("news"))
+    bool hasFlag;
+    if (NS_FAILED(NS_URIChainHasFlags(targetBaseURI,
+        nsIProtocolHandler::ORIGIN_IS_FULL_SPEC, &hasFlag)) ||
+        hasFlag)
     {
-        // Each message is a distinct trust domain; use the
-        // whole spec for comparison
+        // URIs with this flag have the whole spec as a distinct trust
+        // domain; use the whole spec for comparison
         nsAutoCString targetSpec;
         nsAutoCString sourceSpec;
         return ( NS_SUCCEEDED( targetBaseURI->GetSpec(targetSpec) ) &&
@@ -2254,11 +2259,6 @@ NS_ShouldSecureUpgrade(nsIURI* aURI,
     // the promise to CSP and mixed content blocking to upgrade the channel
     // from http to https.
     if (aLoadInfo) {
-      bool isPreload = nsContentUtils::IsPreloadType(aLoadInfo->InternalContentPolicyType());
-      bool upgradeRequests =
-        ((isPreload && aLoadInfo->GetUpgradeInsecurePreloads()) ||
-         (aLoadInfo->GetUpgradeInsecureRequests()));
-
       // Please note that cross origin top level navigations are not subject
       // to upgrade-insecure-requests, see:
       // http://www.w3.org/TR/upgrade-insecure-requests/#examples
@@ -2266,7 +2266,7 @@ NS_ShouldSecureUpgrade(nsIURI* aURI,
         (aLoadInfo->GetExternalContentPolicyType() == nsIContentPolicy::TYPE_DOCUMENT) &&
         (!aChannelResultPrincipal->Equals(aLoadInfo->LoadingPrincipal()));
 
-      if (upgradeRequests && !crossOriginNavigation) {
+      if (aLoadInfo->GetUpgradeInsecureRequests() && !crossOriginNavigation) {
         // let's log a message to the console that we are upgrading a request
         nsAutoCString spec, scheme;
         aURI->GetSpec(spec);

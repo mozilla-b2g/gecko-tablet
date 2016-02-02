@@ -251,7 +251,6 @@ protected:
   void* mImplData;
   int32_t mSerial;
   ImageFormat mFormat;
-  bool mSent;
 
   static mozilla::Atomic<int32_t> sSerialCounter;
 };
@@ -858,17 +857,19 @@ public:
   {
     mOverlayId = aData.mOverlayId;
     mSize = aData.mSize;
+    mSidebandStream = GonkNativeHandle();
   }
 
   void SetData(const SidebandStreamData& aData)
   {
     mSidebandStream = aData.mStream;
     mSize = aData.mSize;
+    mOverlayId = INVALID_OVERLAY;
   }
 
   already_AddRefed<gfx::SourceSurface> GetAsSourceSurface() { return nullptr; } ;
   int32_t GetOverlayId() { return mOverlayId; }
-  const GonkNativeHandle& GetSidebandStream() { return mSidebandStream; }
+  GonkNativeHandle& GetSidebandStream() { return mSidebandStream; }
 
   gfx::IntSize GetSize() { return mSize; }
 

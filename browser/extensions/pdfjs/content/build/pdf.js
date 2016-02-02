@@ -28,8 +28,8 @@ factory((root.pdfjsDistBuildPdf = {}));
   // Use strict in our context only - users might not want it
   'use strict';
 
-var pdfjsVersion = '1.3.161';
-var pdfjsBuild = '4a215f0';
+var pdfjsVersion = '1.3.231';
+var pdfjsBuild = '58329f7';
 
   var pdfjsFilePath =
     typeof document !== 'undefined' && document.currentScript ?
@@ -413,29 +413,7 @@ function combineUrl(baseUrl, url) {
   if (!url) {
     return baseUrl;
   }
-  if (/^[a-z][a-z0-9+\-.]*:/i.test(url)) {
-    return url;
-  }
-  var i;
-  if (url.charAt(0) === '/') {
-    // absolute path
-    i = baseUrl.indexOf('://');
-    if (url.charAt(1) === '/') {
-      ++i;
-    } else {
-      i = baseUrl.indexOf('/', i + 3);
-    }
-    return baseUrl.substring(0, i) + url;
-  } else {
-    // relative path
-    var pathLength = baseUrl.length;
-    i = baseUrl.lastIndexOf('#');
-    pathLength = i >= 0 ? i : pathLength;
-    i = baseUrl.lastIndexOf('?', pathLength);
-    pathLength = i >= 0 ? i : pathLength;
-    var prefixLength = baseUrl.lastIndexOf('/', pathLength);
-    return baseUrl.substring(0, prefixLength + 1) + url;
-  }
+  return new URL(url, baseUrl).href;
 }
 
 // Validates if URL is safe and allowed, e.g. to avoid XSS.
@@ -462,6 +440,26 @@ function isValidUrl(url, allowRelative) {
   }
 }
 PDFJS.isValidUrl = isValidUrl;
+
+/**
+ * Adds various attributes (href, title, target, rel) to hyperlinks.
+ * @param {HTMLLinkElement} link - The link element.
+ * @param {Object} params - An object with the properties:
+ * @param {string} params.url - An absolute URL.
+ */
+function addLinkAttributes(link, params) {
+  var url = params && params.url;
+  link.href = link.title = (url ? removeNullCharacters(url) : '');
+
+  if (url) {
+    if (isExternalLinkTargetSet()) {
+      link.target = LinkTargetStringMap[PDFJS.externalLinkTarget];
+    }
+    // Strip referrer from the URL.
+    link.rel = PDFJS.externalLinkRel;
+  }
+}
+PDFJS.addLinkAttributes = addLinkAttributes;
 
 function shadow(obj, prop, value) {
   Object.defineProperty(obj, prop, { value: value,
@@ -860,6 +858,42 @@ var Util = PDFJS.Util = (function UtilClosure() {
 
   Util.sign = function Util_sign(num) {
     return num < 0 ? -1 : 1;
+  };
+
+  var ROMAN_NUMBER_MAP = [
+    '', 'C', 'CC', 'CCC', 'CD', 'D', 'DC', 'DCC', 'DCCC', 'CM',
+    '', 'X', 'XX', 'XXX', 'XL', 'L', 'LX', 'LXX', 'LXXX', 'XC',
+    '', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX'
+  ];
+  /**
+   * Converts positive integers to (upper case) Roman numerals.
+   * @param {integer} number - The number that should be converted.
+   * @param {boolean} lowerCase - Indicates if the result should be converted
+   *   to lower case letters. The default is false.
+   * @return {string} The resulting Roman number.
+   */
+  Util.toRoman = function Util_toRoman(number, lowerCase) {
+    assert(isInt(number) && number > 0,
+           'The number should be a positive integer.');
+    var pos, romanBuf = [];
+    // Thousands
+    while (number >= 1000) {
+      number -= 1000;
+      romanBuf.push('M');
+    }
+    // Hundreds
+    pos = (number / 100) | 0;
+    number %= 100;
+    romanBuf.push(ROMAN_NUMBER_MAP[pos]);
+    // Tens
+    pos = (number / 10) | 0;
+    number %= 10;
+    romanBuf.push(ROMAN_NUMBER_MAP[10 + pos]);
+    // Ones
+    romanBuf.push(ROMAN_NUMBER_MAP[20 + number]);
+
+    var romanStr = romanBuf.join('');
+    return (lowerCase ? romanStr.toLowerCase() : romanStr);
   };
 
   Util.appendToArray = function Util_appendToArray(arr1, arr2) {
@@ -1444,6 +1478,7 @@ function loadJpegStream(id, imageUrl, objs) {
   img.src = imageUrl;
 }
 
+
 exports.FONT_IDENTITY_MATRIX = FONT_IDENTITY_MATRIX;
 exports.IDENTITY_MATRIX = IDENTITY_MATRIX;
 exports.OPS = OPS;
@@ -1485,6 +1520,7 @@ exports.isInt = isInt;
 exports.isNum = isNum;
 exports.isString = isString;
 exports.isValidUrl = isValidUrl;
+exports.addLinkAttributes = addLinkAttributes;
 exports.loadJpegStream = loadJpegStream;
 exports.log2 = log2;
 exports.readInt8 = readInt8;
@@ -1511,9 +1547,7 @@ exports.warn = warn;
 var AnnotationBorderStyleType = sharedUtil.AnnotationBorderStyleType;
 var AnnotationType = sharedUtil.AnnotationType;
 var Util = sharedUtil.Util;
-var isExternalLinkTargetSet = sharedUtil.isExternalLinkTargetSet;
-var LinkTargetStringMap = sharedUtil.LinkTargetStringMap;
-var removeNullCharacters = sharedUtil.removeNullCharacters;
+var addLinkAttributes = sharedUtil.addLinkAttributes;
 var warn = sharedUtil.warn;
 var CustomStyle = displayDOMUtils.CustomStyle;
 
@@ -1713,17 +1747,7 @@ var LinkAnnotationElement = (function LinkAnnotationElementClosure() {
       this.container.className = 'linkAnnotation';
 
       var link = document.createElement('a');
-      link.href = link.title = (this.data.url ?
-                                removeNullCharacters(this.data.url) : '');
-
-      if (this.data.url && isExternalLinkTargetSet()) {
-        link.target = LinkTargetStringMap[PDFJS.externalLinkTarget];
-      }
-
-      // Strip referrer from the URL.
-      if (this.data.url) {
-        link.rel = PDFJS.externalLinkRel;
-      }
+      addLinkAttributes(link, { url: this.data.url });
 
       if (!this.data.url) {
         if (this.data.action) {
@@ -5011,6 +5035,12 @@ var CanvasGraphics = (function CanvasGraphicsClosure() {
       ctx.transform.apply(ctx, current.textMatrix);
       ctx.translate(current.x, current.y + current.textRise);
 
+      if (current.patternFill) {
+        // TODO: Some shading patterns are not applied correctly to text,
+        //       e.g. issues 3988 and 5432, and ShowText-ShadingPattern.pdf.
+        ctx.fillStyle = current.fillColor.getPattern(ctx, this);
+      }
+
       if (fontDirection > 0) {
         ctx.scale(textHScale, -1);
       } else {
@@ -6476,6 +6506,16 @@ var PDFDocumentProxy = (function PDFDocumentProxyClosure() {
       return this.transport.getDestination(id);
     },
     /**
+     * @return {Promise} A promise that is resolved with: an Array containing
+     *   the pageLabels that correspond to the pageIndexes; or null, when no
+     *   pageLabels are present in the PDF file.
+     *   NOTE: If the pageLabels are all identical to standard page numbering,
+     *         i.e. [1, 2, 3, ...], the promise is resolved with an empty Array.
+     */
+    getPageLabels: function PDFDocumentProxy_getPageLabels() {
+      return this.transport.getPageLabels();
+    },
+    /**
      * @return {Promise} A promise that is resolved with a lookup table for
      * mapping named attachments to their content.
      */
@@ -6499,6 +6539,7 @@ var PDFDocumentProxy = (function PDFDocumentProxyClosure() {
      *   italic: boolean,
      *   color: rgb array,
      *   dest: dest obj,
+     *   url: string,
      *   items: array of more items like this
      *  },
      *  ...
@@ -7553,6 +7594,10 @@ var WorkerTransport = (function WorkerTransportClosure() {
 
     getDestination: function WorkerTransport_getDestination(id) {
       return this.messageHandler.sendWithPromise('GetDestination', { id: id });
+    },
+
+    getPageLabels: function WorkerTransport_getPageLabels() {
+      return this.messageHandler.sendWithPromise('GetPageLabels', null);
     },
 
     getAttachments: function WorkerTransport_getAttachments() {

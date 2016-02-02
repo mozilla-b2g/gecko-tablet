@@ -85,38 +85,6 @@ PRLogModuleInfo *gOfflineCacheUpdateLog;
 #undef LOG_ENABLED
 #define LOG_ENABLED() MOZ_LOG_TEST(gOfflineCacheUpdateLog, mozilla::LogLevel::Debug)
 
-namespace {
-
-nsresult
-GetAppIDAndInBrowserFromWindow(nsIDOMWindow *aWindow,
-                               uint32_t *aAppId,
-                               bool *aInBrowser)
-{
-    *aAppId = NECKO_NO_APP_ID;
-    *aInBrowser = false;
-
-    if (!aWindow) {
-        return NS_OK;
-    }
-
-    nsCOMPtr<nsILoadContext> loadContext = do_GetInterface(aWindow);
-    if (!loadContext) {
-        return NS_OK;
-    }
-
-    nsresult rv;
-
-    rv = loadContext->GetAppId(aAppId);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = loadContext->GetIsInBrowserElement(aInBrowser);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    return NS_OK;
-}
-
-} // namespace
-
 //-----------------------------------------------------------------------------
 // nsOfflineCachePendingUpdate
 //-----------------------------------------------------------------------------
@@ -197,14 +165,14 @@ nsOfflineCachePendingUpdate::OnStateChange(nsIWebProgress* aWebProgress,
         return NS_OK;
     }
 
-    nsCOMPtr<nsIDOMWindow> window;
-    aWebProgress->GetDOMWindow(getter_AddRefs(window));
-    if (!window) return NS_OK;
+    nsCOMPtr<mozIDOMWindowProxy> windowProxy;
+    aWebProgress->GetDOMWindow(getter_AddRefs(windowProxy));
+    if (!windowProxy) return NS_OK;
 
-    nsCOMPtr<nsPIDOMWindow> piWindow = do_QueryInterface(window);
-    MOZ_ASSERT(piWindow);
+    auto* outerWindow = nsPIDOMWindowOuter::From(windowProxy);
+    nsPIDOMWindowInner* innerWindow = outerWindow->GetCurrentInnerWindow();
 
-    nsCOMPtr<nsIDocument> progressDoc = piWindow->GetDoc();
+    nsCOMPtr<nsIDocument> progressDoc = outerWindow->GetDoc();
     if (!progressDoc) return NS_OK;
 
     if (!SameCOMIdentity(progressDoc, updateDoc)) {
@@ -216,15 +184,9 @@ nsOfflineCachePendingUpdate::OnStateChange(nsIWebProgress* aWebProgress,
 
     // Only schedule the update if the document loaded successfully
     if (NS_SUCCEEDED(aStatus)) {
-        // Get extended origin attributes
-        uint32_t appId;
-        bool isInBrowserElement;
-        nsresult rv = GetAppIDAndInBrowserFromWindow(window, &appId, &isInBrowserElement);
-        NS_ENSURE_SUCCESS(rv, rv);
-
         nsCOMPtr<nsIOfflineCacheUpdate> update;
-        mService->Schedule(mManifestURI, mDocumentURI, mLoadingPrincipal, updateDoc, window,
-                           nullptr, appId, isInBrowserElement, getter_AddRefs(update));
+        mService->Schedule(mManifestURI, mDocumentURI, mLoadingPrincipal, updateDoc, innerWindow,
+                           nullptr, getter_AddRefs(update));
         if (mDidReleaseThis) {
             return NS_OK;
         }
@@ -483,8 +445,7 @@ nsOfflineCacheUpdateService::GetUpdate(uint32_t aIndex,
 
 nsresult
 nsOfflineCacheUpdateService::FindUpdate(nsIURI *aManifestURI,
-                                        uint32_t aAppID,
-                                        bool aInBrowser,
+                                        nsACString const &aOriginSuffix,
                                         nsIFile *aCustomProfileDir,
                                         nsOfflineCacheUpdate **aUpdate)
 {
@@ -495,9 +456,7 @@ nsOfflineCacheUpdateService::FindUpdate(nsIURI *aManifestURI,
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsAutoCString groupID;
-    rv = cacheService->BuildGroupIDForApp(aManifestURI,
-                                          aAppID, aInBrowser,
-                                          groupID);
+    rv = cacheService->BuildGroupIDForSuffix(aManifestURI, aOriginSuffix, groupID);
     NS_ENSURE_SUCCESS(rv, rv);
 
     RefPtr<nsOfflineCacheUpdate> update;
@@ -527,10 +486,8 @@ nsOfflineCacheUpdateService::Schedule(nsIURI *aManifestURI,
                                       nsIURI *aDocumentURI,
                                       nsIPrincipal* aLoadingPrincipal,
                                       nsIDOMDocument *aDocument,
-                                      nsIDOMWindow* aWindow,
+                                      nsPIDOMWindowInner* aWindow,
                                       nsIFile* aCustomProfileDir,
-                                      uint32_t aAppID,
-                                      bool aInBrowser,
                                       nsIOfflineCacheUpdate **aUpdate)
 {
     nsCOMPtr<nsIOfflineCacheUpdate> update;
@@ -543,16 +500,16 @@ nsOfflineCacheUpdateService::Schedule(nsIURI *aManifestURI,
 
     nsresult rv;
 
-    if (nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aWindow)) {
+    if (aWindow) {
       // Ensure there is window.applicationCache object that is
       // responsible for association of the new applicationCache
       // with the corresponding document.  Just ignore the result.
       nsCOMPtr<nsIDOMOfflineResourceList> appCacheWindowObject =
-          window->GetApplicationCache();
+          aWindow->GetApplicationCache();
     }
 
     rv = update->Init(aManifestURI, aDocumentURI, aLoadingPrincipal, aDocument,
-                      aCustomProfileDir, aAppID, aInBrowser);
+                      aCustomProfileDir);
     NS_ENSURE_SUCCESS(rv, rv);
 
     rv = update->Schedule();
@@ -567,35 +524,26 @@ NS_IMETHODIMP
 nsOfflineCacheUpdateService::ScheduleUpdate(nsIURI *aManifestURI,
                                             nsIURI *aDocumentURI,
                                             nsIPrincipal* aLoadingPrincipal,
-                                            nsIDOMWindow *aWindow,
+                                            mozIDOMWindow* aWindow,
                                             nsIOfflineCacheUpdate **aUpdate)
 {
-    // Get extended origin attributes
-    uint32_t appId;
-    bool isInBrowser;
-    nsresult rv = GetAppIDAndInBrowserFromWindow(aWindow, &appId, &isInBrowser);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    return Schedule(aManifestURI, aDocumentURI, aLoadingPrincipal, nullptr, aWindow,
-                    nullptr, appId, isInBrowser, aUpdate);
+    return Schedule(aManifestURI, aDocumentURI, aLoadingPrincipal, nullptr,
+                    nsPIDOMWindowInner::From(aWindow), nullptr, aUpdate);
 }
 
 NS_IMETHODIMP
 nsOfflineCacheUpdateService::ScheduleAppUpdate(nsIURI *aManifestURI,
                                                nsIURI *aDocumentURI,
                                                nsIPrincipal* aLoadingPrincipal,
-                                               uint32_t aAppID, bool aInBrowser,
                                                nsIFile *aProfileDir,
                                                nsIOfflineCacheUpdate **aUpdate)
 {
     return Schedule(aManifestURI, aDocumentURI, aLoadingPrincipal, nullptr, nullptr,
-                    aProfileDir, aAppID, aInBrowser, aUpdate);
+                    aProfileDir, aUpdate);
 }
 
 NS_IMETHODIMP nsOfflineCacheUpdateService::CheckForUpdate(nsIURI *aManifestURI,
                                                           nsIPrincipal* aLoadingPrincipal,
-                                                          uint32_t aAppID,
-                                                          bool aInBrowser,
                                                           nsIObserver *aObserver)
 {
     if (GeckoProcessType_Default != XRE_GetProcessType()) {
@@ -607,7 +555,7 @@ NS_IMETHODIMP nsOfflineCacheUpdateService::CheckForUpdate(nsIURI *aManifestURI,
 
     nsresult rv;
 
-    rv = update->InitForUpdateCheck(aManifestURI, aLoadingPrincipal, aAppID, aInBrowser, aObserver);
+    rv = update->InitForUpdateCheck(aManifestURI, aLoadingPrincipal, aObserver);
     NS_ENSURE_SUCCESS(rv, rv);
 
     rv = update->Schedule();
@@ -744,8 +692,7 @@ nsOfflineCacheUpdateService::OfflineAppPinnedForURI(nsIURI *aDocumentURI,
 }
 
 NS_IMETHODIMP
-nsOfflineCacheUpdateService::AllowOfflineApp(nsIDOMWindow *aWindow,
-                                             nsIPrincipal *aPrincipal)
+nsOfflineCacheUpdateService::AllowOfflineApp(nsIPrincipal *aPrincipal)
 {
     nsresult rv;
 

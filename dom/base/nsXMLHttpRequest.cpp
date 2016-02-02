@@ -44,7 +44,6 @@
 #include "nsXPCOM.h"
 #include "nsIDOMEventListener.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsIDOMWindow.h"
 #include "nsIVariant.h"
 #include "nsVariant.h"
 #include "nsIScriptError.h"
@@ -155,7 +154,7 @@ NS_IMPL_ISUPPORTS(nsXHRParseEndListener, nsIDOMEventListener)
 class nsResumeTimeoutsEvent : public nsRunnable
 {
 public:
-  explicit nsResumeTimeoutsEvent(nsPIDOMWindow* aWindow) : mWindow(aWindow) {}
+  explicit nsResumeTimeoutsEvent(nsPIDOMWindowInner* aWindow) : mWindow(aWindow) {}
 
   NS_IMETHOD Run()
   {
@@ -164,7 +163,7 @@ public:
   }
 
 private:
-  nsCOMPtr<nsPIDOMWindow> mWindow;
+  nsCOMPtr<nsPIDOMWindowInner> mWindow;
 };
 
 
@@ -176,72 +175,6 @@ static void AddLoadFlags(nsIRequest *request, nsLoadFlags newFlags)
   request->GetLoadFlags(&flags);
   flags |= newFlags;
   request->SetLoadFlags(flags);
-}
-
-//-----------------------------------------------------------------------------
-// XMLHttpRequestAuthPrompt
-//-----------------------------------------------------------------------------
-
-class XMLHttpRequestAuthPrompt : public nsIAuthPrompt
-{
-public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIAUTHPROMPT
-
-  XMLHttpRequestAuthPrompt();
-
-protected:
-  virtual ~XMLHttpRequestAuthPrompt();
-};
-
-NS_IMPL_ISUPPORTS(XMLHttpRequestAuthPrompt, nsIAuthPrompt)
-
-XMLHttpRequestAuthPrompt::XMLHttpRequestAuthPrompt()
-{
-  MOZ_COUNT_CTOR(XMLHttpRequestAuthPrompt);
-}
-
-XMLHttpRequestAuthPrompt::~XMLHttpRequestAuthPrompt()
-{
-  MOZ_COUNT_DTOR(XMLHttpRequestAuthPrompt);
-}
-
-NS_IMETHODIMP
-XMLHttpRequestAuthPrompt::Prompt(const char16_t* aDialogTitle,
-                                 const char16_t* aText,
-                                 const char16_t* aPasswordRealm,
-                                 uint32_t aSavePassword,
-                                 const char16_t* aDefaultText,
-                                 char16_t** aResult,
-                                 bool* aRetval)
-{
-  *aRetval = false;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-XMLHttpRequestAuthPrompt::PromptUsernameAndPassword(const char16_t* aDialogTitle,
-                                                    const char16_t* aDialogText,
-                                                    const char16_t* aPasswordRealm,
-                                                    uint32_t aSavePassword,
-                                                    char16_t** aUser,
-                                                    char16_t** aPwd,
-                                                    bool* aRetval)
-{
-  *aRetval = false;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-XMLHttpRequestAuthPrompt::PromptPassword(const char16_t* aDialogTitle,
-                                         const char16_t* aText,
-                                         const char16_t* aPasswordRealm,
-                                         uint32_t aSavePassword,
-                                         char16_t** aPwd,
-                                         bool* aRetval)
-{
-  *aRetval = false;
-  return NS_OK;
 }
 
 /////////////////////////////////////////////
@@ -373,16 +306,6 @@ nsXMLHttpRequest::Init(nsIPrincipal* aPrincipal,
                        nsILoadGroup* aLoadGroup)
 {
   NS_ENSURE_ARG_POINTER(aPrincipal);
-
-  if (nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(aGlobalObject)) {
-    if (win->IsOuterWindow()) {
-      // Must be bound to inner window, innerize if necessary.
-      nsCOMPtr<nsIGlobalObject> inner = do_QueryInterface(
-        win->GetCurrentInnerWindow());
-      aGlobalObject = inner.get();
-    }
-  }
-
   Construct(aPrincipal, aGlobalObject, aBaseURI, aLoadGroup);
   return NS_OK;
 }
@@ -584,7 +507,7 @@ nsXMLHttpRequest::GetChannel(nsIChannel **aChannel)
   return NS_OK;
 }
 
-static void LogMessage(const char* aWarning, nsPIDOMWindow* aWindow)
+static void LogMessage(const char* aWarning, nsPIDOMWindowInner* aWindow)
 {
   nsCOMPtr<nsIDocument> doc;
   if (aWindow) {
@@ -2639,7 +2562,7 @@ nsXMLHttpRequest::Send(nsIVariant* aVariant, const Nullable<RequestBody>& aBody)
     httpChannel->GetRequestMethod(method); // If GET, method name will be uppercase
 
     if (!IsSystemXHR()) {
-      nsCOMPtr<nsPIDOMWindow> owner = GetOwner();
+      nsCOMPtr<nsPIDOMWindowInner> owner = GetOwner();
       nsCOMPtr<nsIDocument> doc = owner ? owner->GetExtantDoc() : nullptr;
       nsContentUtils::SetFetchReferrerURIWithPolicy(mPrincipal, doc,
                                                     httpChannel);
@@ -2901,6 +2824,10 @@ nsXMLHttpRequest::Send(nsIVariant* aVariant, const Nullable<RequestBody>& aBody)
   mChannel->GetNotificationCallbacks(getter_AddRefs(mNotificationCallbacks));
   mChannel->SetNotificationCallbacks(this);
 
+  if (internalHttpChannel) {
+    internalHttpChannel->SetBlockAuthPrompt(ShouldBlockAuthPrompt());
+  }
+
   // Start reading from the channel
   // Because of bug 682305, we can't let listener be the XHR object itself
   // because JS wouldn't be able to use it. So create a listener around 'this'.
@@ -2927,15 +2854,14 @@ nsXMLHttpRequest::Send(nsIVariant* aVariant, const Nullable<RequestBody>& aBody)
     nsCOMPtr<nsIDocument> suspendedDoc;
     nsCOMPtr<nsIRunnable> resumeTimeoutRunnable;
     if (GetOwner()) {
-      if (nsCOMPtr<nsPIDOMWindow> topWindow = GetOwner()->GetOuterWindow()->GetTop()) {
-        if (topWindow &&
-            (topWindow = topWindow->GetCurrentInnerWindow())) {
+      if (nsCOMPtr<nsPIDOMWindowOuter> topWindow = GetOwner()->GetOuterWindow()->GetTop()) {
+        if (nsCOMPtr<nsPIDOMWindowInner> topInner = topWindow->GetCurrentInnerWindow()) {
           suspendedDoc = topWindow->GetExtantDoc();
           if (suspendedDoc) {
             suspendedDoc->SuppressEventHandling(nsIDocument::eEvents);
           }
           topWindow->SuspendTimeouts(1, false);
-          resumeTimeoutRunnable = new nsResumeTimeoutsEvent(topWindow);
+          resumeTimeoutRunnable = new nsResumeTimeoutsEvent(topInner);
         }
       }
     }
@@ -3521,59 +3447,6 @@ nsXMLHttpRequest::GetInterface(const nsIID & aIID, void **aResult)
   }
   else if (aIID.Equals(NS_GET_IID(nsIAuthPrompt)) ||
            aIID.Equals(NS_GET_IID(nsIAuthPrompt2))) {
-
-    nsCOMPtr<nsIURI> uri;
-    rv = mChannel->GetURI(getter_AddRefs(uri));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    // Verify that it's ok to prompt for credentials here, per spec
-    // http://xhr.spec.whatwg.org/#the-send%28%29-method
-    bool showPrompt = true;
-
-    // If authentication fails, XMLHttpRequest origin and
-    // the request URL are same origin, ...
-    /* Disabled - bug: 799540
-    if (IsCrossSiteCORSRequest()) {
-      showPrompt = false;
-    }
-    */
-
-    // ... Authorization is not in the list of author request headers, ...
-    if (showPrompt) {
-      for (uint32_t i = 0, len = mModifiedRequestHeaders.Length(); i < len; ++i) {
-        if (mModifiedRequestHeaders[i].header.
-              LowerCaseEqualsLiteral("authorization")) {
-          showPrompt = false;
-          break;
-        }
-      }
-    }
-
-    // ... request username is null, and request password is null,
-    if (showPrompt) {
-
-      nsCString username;
-      rv = uri->GetUsername(username);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      nsCString password;
-      rv = uri->GetPassword(password);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      if (!username.IsEmpty() || !password.IsEmpty()) {
-        showPrompt = false;
-      }
-    }
-
-    // ... user agents should prompt the end user for their username and password.
-    if (!showPrompt) {
-      RefPtr<XMLHttpRequestAuthPrompt> prompt = new XMLHttpRequestAuthPrompt();
-      if (!prompt)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-      return prompt->QueryInterface(aIID, aResult);
-    }
-
     nsCOMPtr<nsIPromptFactory> wwatch =
       do_GetService(NS_WINDOWWATCHER_CONTRACTID, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -3581,7 +3454,7 @@ nsXMLHttpRequest::GetInterface(const nsIID & aIID, void **aResult)
     // Get the an auth prompter for our window so that the parenting
     // of the dialogs works as it should when using tabs.
 
-    nsCOMPtr<nsIDOMWindow> window;
+    nsCOMPtr<nsPIDOMWindowOuter> window;
     if (GetOwner()) {
       window = GetOwner()->GetOuterWindow();
     }
@@ -3719,6 +3592,45 @@ nsXMLHttpRequest::EnsureXPCOMifier()
   }
   RefPtr<nsXMLHttpRequestXPCOMifier> newRef(mXPCOMifier);
   return newRef.forget();
+}
+
+bool
+nsXMLHttpRequest::ShouldBlockAuthPrompt()
+{
+  // Verify that it's ok to prompt for credentials here, per spec
+  // http://xhr.spec.whatwg.org/#the-send%28%29-method
+
+  for (uint32_t i = 0, len = mModifiedRequestHeaders.Length(); i < len; ++i) {
+    if (mModifiedRequestHeaders[i].header.
+          LowerCaseEqualsLiteral("authorization")) {
+      return true;
+    }
+  }
+
+  nsCOMPtr<nsIURI> uri;
+  nsresult rv = mChannel->GetURI(getter_AddRefs(uri));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return false;
+  }
+
+  // Also skip if a username and/or password is provided in the URI.
+  nsCString username;
+  rv = uri->GetUsername(username);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return false;
+  }
+
+  nsCString password;
+  rv = uri->GetPassword(password);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return false;
+  }
+
+  if (!username.IsEmpty() || !password.IsEmpty()) {
+    return true;
+  }
+
+  return false;
 }
 
 NS_IMPL_ISUPPORTS(nsXMLHttpRequest::nsHeaderVisitor, nsIHttpHeaderVisitor)
@@ -3891,8 +3803,8 @@ ArrayBufferBuilder::getArrayBuffer(JSContext* aCx)
     }
     mMapPtr = nullptr;
 
-    // The memory-mapped contents will be released when obj been finalized(GCed
-    // or neutered).
+    // The memory-mapped contents will be released when the ArrayBuffer becomes
+    // detached or is GC'd.
     return obj;
   }
 

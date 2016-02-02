@@ -386,7 +386,8 @@ HTMLInputElement::nsFilePickerShownCallback::Done(int16_t aResult)
   nsTArray<RefPtr<File>> newFiles;
   if (mode == static_cast<int16_t>(nsIFilePicker::modeOpenMultiple)) {
     nsCOMPtr<nsISimpleEnumerator> iter;
-    nsresult rv = mFilePicker->GetDomfiles(getter_AddRefs(iter));
+    nsresult rv =
+      mFilePicker->GetDomFileOrDirectoryEnumerator(getter_AddRefs(iter));
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (!iter) {
@@ -409,7 +410,7 @@ HTMLInputElement::nsFilePickerShownCallback::Done(int16_t aResult)
     MOZ_ASSERT(mode == static_cast<int16_t>(nsIFilePicker::modeOpen) ||
                mode == static_cast<int16_t>(nsIFilePicker::modeGetFolder));
     nsCOMPtr<nsISupports> tmp;
-    nsresult rv = mFilePicker->GetDomfile(getter_AddRefs(tmp));
+    nsresult rv = mFilePicker->GetDomFileOrDirectory(getter_AddRefs(tmp));
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<nsIDOMBlob> blob = do_QueryInterface(tmp);
@@ -549,7 +550,7 @@ NS_IMPL_ISUPPORTS(nsColorPickerShownCallback, nsIColorPickerShownCallback)
 bool
 HTMLInputElement::IsPopupBlocked() const
 {
-  nsCOMPtr<nsPIDOMWindow> win = OwnerDoc()->GetWindow();
+  nsCOMPtr<nsPIDOMWindowOuter> win = OwnerDoc()->GetWindow();
   MOZ_ASSERT(win, "window should not be null");
   if (!win) {
     return true;
@@ -580,7 +581,7 @@ HTMLInputElement::InitColorPicker()
 
   nsCOMPtr<nsIDocument> doc = OwnerDoc();
 
-  nsCOMPtr<nsPIDOMWindow> win = doc->GetWindow();
+  nsCOMPtr<nsPIDOMWindowOuter> win = doc->GetWindow();
   if (!win) {
     return NS_ERROR_FAILURE;
   }
@@ -627,7 +628,7 @@ HTMLInputElement::InitFilePicker(FilePickerType aType)
   // Get parent nsPIDOMWindow object.
   nsCOMPtr<nsIDocument> doc = OwnerDoc();
 
-  nsCOMPtr<nsPIDOMWindow> win = doc->GetWindow();
+  nsCOMPtr<nsPIDOMWindowOuter> win = doc->GetWindow();
   if (!win) {
     return NS_ERROR_FAILURE;
   }
@@ -1162,7 +1163,6 @@ HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
       UpdateTypeMismatchValidityState();
     } else if (aName == nsGkAtoms::max) {
       UpdateHasRange();
-      UpdateRangeOverflowValidityState();
       if (mType == NS_FORM_INPUT_RANGE) {
         // The value may need to change when @max changes since the value may
         // have been invalid and can now change to a valid value, or vice
@@ -1180,25 +1180,34 @@ HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
         nsresult rv =
           SetValueInternal(value, nsTextEditorState::eSetValue_Internal);
         NS_ENSURE_SUCCESS(rv, rv);
-        MOZ_ASSERT(!GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW),
-                   "HTML5 spec does not allow this");
       }
+      // Validity state must be updated *after* the SetValueInternal call above
+      // or else the following assert will not be valid.
+      // We don't assert the state of underflow during parsing since
+      // DoneCreatingElement sanitizes.
+      UpdateRangeOverflowValidityState();
+      MOZ_ASSERT(mParserCreating ||
+                 mType != NS_FORM_INPUT_RANGE ||
+                 !GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW),
+                 "HTML5 spec does not allow underflow for type=range");
     } else if (aName == nsGkAtoms::min) {
       UpdateHasRange();
+      if (mType == NS_FORM_INPUT_RANGE) {
+        // See @max comment
+        nsAutoString value;
+        GetValue(value);
+        nsresult rv =
+          SetValueInternal(value, nsTextEditorState::eSetValue_Internal);
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+      // See corresponding @max comment
       UpdateRangeUnderflowValidityState();
       UpdateStepMismatchValidityState();
-      if (mType == NS_FORM_INPUT_RANGE) {
-        // See @max comment
-        nsAutoString value;
-        GetValue(value);
-        nsresult rv =
-          SetValueInternal(value, nsTextEditorState::eSetValue_Internal);
-        NS_ENSURE_SUCCESS(rv, rv);
-        MOZ_ASSERT(!GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW),
-                   "HTML5 spec does not allow this");
-      }
+      MOZ_ASSERT(mParserCreating ||
+                 mType != NS_FORM_INPUT_RANGE ||
+                 !GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW),
+                 "HTML5 spec does not allow underflow for type=range");
     } else if (aName == nsGkAtoms::step) {
-      UpdateStepMismatchValidityState();
       if (mType == NS_FORM_INPUT_RANGE) {
         // See @max comment
         nsAutoString value;
@@ -1206,9 +1215,13 @@ HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
         nsresult rv =
           SetValueInternal(value, nsTextEditorState::eSetValue_Internal);
         NS_ENSURE_SUCCESS(rv, rv);
-        MOZ_ASSERT(!GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW),
-                   "HTML5 spec does not allow this");
       }
+      // See corresponding @max comment
+      UpdateStepMismatchValidityState();
+      MOZ_ASSERT(mParserCreating ||
+                 mType != NS_FORM_INPUT_RANGE ||
+                 !GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW),
+                 "HTML5 spec does not allow underflow for type=range");
     } else if (aName == nsGkAtoms::dir &&
                aValue && aValue->Equals(nsGkAtoms::_auto, eIgnoreCase)) {
       SetDirectionIfAuto(true, aNotify);
@@ -2486,7 +2499,8 @@ HTMLInputElement::GetFiles()
     return nullptr;
   }
 
-  if (HasAttr(kNameSpaceID_None, nsGkAtoms::directory)) {
+  if (Preferences::GetBool("dom.input.dirpicker", false) &&
+      HasAttr(kNameSpaceID_None, nsGkAtoms::directory)) {
     return nullptr;
   }
 
@@ -2903,9 +2917,7 @@ HTMLInputElement::Focus(ErrorResult& aError)
   // tab to the next one.
   nsIFrame* frame = GetPrimaryFrame();
   if (frame) {
-    for (nsIFrame* childFrame = frame->GetFirstPrincipalChild();
-         childFrame;
-         childFrame = childFrame->GetNextSibling()) {
+    for (nsIFrame* childFrame : frame->PrincipalChildList()) {
       // See if the child is a button control.
       nsCOMPtr<nsIFormControl> formCtrl =
         do_QueryInterface(childFrame->GetContent());
@@ -3804,6 +3816,7 @@ HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
                   break;  // If we are submitting, do not send click event
                 }
                 // else fall through and treat Space like click...
+                MOZ_FALLTHROUGH;
               }
               case NS_FORM_INPUT_BUTTON:
               case NS_FORM_INPUT_RESET:
@@ -3832,7 +3845,7 @@ HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
               case NS_VK_UP:
               case NS_VK_LEFT:
                 isMovingBack = true;
-                // FALLTHROUGH
+                MOZ_FALLTHROUGH;
               case NS_VK_DOWN:
               case NS_VK_RIGHT:
               // Arrow key pressed, focus+select prev/next radio button
@@ -4871,27 +4884,6 @@ HTMLInputElement::ChooseDirectory(ErrorResult& aRv)
                  );
 }
 
-static already_AddRefed<OSFileSystem>
-MakeOrReuseFileSystem(const nsAString& aNewLocalRootPath,
-                      OSFileSystem* aFS,
-                      nsPIDOMWindow* aWindow)
-{
-  MOZ_ASSERT(aWindow);
-
-  RefPtr<OSFileSystem> fs;
-  if (aFS) {
-    const nsAString& prevLocalRootPath = aFS->GetLocalRootPath();
-    if (aNewLocalRootPath == prevLocalRootPath) {
-      fs = aFS;
-    }
-  }
-  if (!fs) {
-    fs = new OSFileSystem(aNewLocalRootPath);
-    fs->Init(aWindow);
-  }
-  return fs.forget();
-}
-
 already_AddRefed<Promise>
 HTMLInputElement::GetFilesAndDirectories(ErrorResult& aRv)
 {
@@ -4924,8 +4916,6 @@ HTMLInputElement::GetFilesAndDirectories(ErrorResult& aRv)
     return p.forget();
   }
 
-  nsPIDOMWindow* window = OwnerDoc()->GetInnerWindow();
-  RefPtr<OSFileSystem> fs;
   for (uint32_t i = 0; i < filesAndDirs.Length(); ++i) {
     if (filesAndDirs[i]->IsDirectory()) {
 #if defined(ANDROID) || defined(MOZ_B2G)
@@ -4941,7 +4931,10 @@ HTMLInputElement::GetFilesAndDirectories(ErrorResult& aRv)
       }
       int32_t leafSeparatorIndex = path.RFind(FILE_PATH_SEPARATOR);
       nsDependentSubstring dirname = Substring(path, 0, leafSeparatorIndex);
-      fs = MakeOrReuseFileSystem(dirname, fs, window);
+
+      RefPtr<OSFileSystem> fs = new OSFileSystem(dirname);
+      fs->Init(OwnerDoc()->GetInnerWindow());
+
       nsAutoString dompath(NS_LITERAL_STRING(FILESYSTEM_DOM_PATH_SEPARATOR));
       dompath.Append(Substring(path, leafSeparatorIndex + 1));
       RefPtr<Directory> directory = new Directory(fs, dompath);
@@ -5589,13 +5582,14 @@ HTMLInputElement::SubmitNamesValues(nsFormSubmission* aFormSubmission)
     const nsTArray<RefPtr<File>>& files = GetFilesInternal();
 
     for (uint32_t i = 0; i < files.Length(); ++i) {
-      aFormSubmission->AddNameFilePair(name, files[i]);
+      aFormSubmission->AddNameBlobPair(name, files[i]);
     }
 
     if (files.IsEmpty()) {
-      // If no file was selected, pretend we had an empty file with an
-      // empty filename.
-      aFormSubmission->AddNameFilePair(name, nullptr);
+      RefPtr<BlobImpl> blobImpl =
+        new EmptyBlobImpl(NS_LITERAL_STRING("application/octet-stream"));
+      RefPtr<Blob> blob = Blob::Create(OwnerDoc()->GetInnerWindow(), blobImpl);
+      aFormSubmission->AddNameBlobPair(name, blob);
     }
 
     return NS_OK;

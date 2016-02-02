@@ -21,6 +21,7 @@
 #include "nsIContentInlines.h"
 #include "mozilla/dom/NodeInfo.h"
 #include "nsIDocumentInlines.h"
+#include "mozilla/dom/DocumentTimeline.h"
 #include "nsIDOMNodeList.h"
 #include "nsIDOMDocument.h"
 #include "nsIContentIterator.h"
@@ -51,6 +52,7 @@
 #include "nsDOMString.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIDOMMutationEvent.h"
+#include "mozilla/dom/AnimatableBinding.h"
 #include "mozilla/AnimationComparator.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/ContentEvents.h"
@@ -1780,8 +1782,7 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
   // We need to delete the properties while we're still in document
   // (if we were in document).
   // FIXME (Bug 522599): Need a test for this.
-  //XXXsmaug this looks slow.
-  if (HasFlag(NODE_HAS_PROPERTIES)) {
+  if (MayHaveAnimations()) {
     DeleteProperty(nsGkAtoms::transitionsOfBeforeProperty);
     DeleteProperty(nsGkAtoms::transitionsOfAfterProperty);
     DeleteProperty(nsGkAtoms::transitionsProperty);
@@ -2017,11 +2018,11 @@ Element::ShouldBlur(nsIContent *aContent)
   if (!document)
     return false;
 
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(document->GetWindow());
+  nsCOMPtr<nsPIDOMWindowOuter> window = document->GetWindow();
   if (!window)
     return false;
 
-  nsCOMPtr<nsPIDOMWindow> focusedFrame;
+  nsCOMPtr<nsPIDOMWindowOuter> focusedFrame;
   nsIContent* contentToBlur =
     nsFocusManager::GetFocusedDescendant(window, false, getter_AddRefs(focusedFrame));
   if (contentToBlur == aContent)
@@ -2916,7 +2917,7 @@ Element::PreHandleEventForLinks(EventChainPreVisitor& aVisitor)
   // Set the status bar similarly for mouseover and focus
   case eMouseOver:
     aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
-    // FALL THROUGH
+    MOZ_FALLTHROUGH;
   case eFocus: {
     InternalFocusEvent* focusEvent = aVisitor.mEvent->AsFocusEvent();
     if (!focusEvent || !focusEvent->isRefocus) {
@@ -2931,7 +2932,7 @@ Element::PreHandleEventForLinks(EventChainPreVisitor& aVisitor)
   }
   case eMouseOut:
     aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
-    // FALL THROUGH
+    MOZ_FALLTHROUGH;
   case eBlur:
     rv = LeaveLink(aVisitor.mPresContext);
     if (NS_SUCCEEDED(rv)) {
@@ -3232,7 +3233,6 @@ Element::AttrValueToCORSMode(const nsAttrValue* aValue)
 static const char*
 GetFullScreenError(nsIDocument* aDoc)
 {
-  nsCOMPtr<nsPIDOMWindow> win = aDoc->GetWindow();
   if (aDoc->NodePrincipal()->GetAppStatus() >= nsIPrincipal::APP_STATUS_INSTALLED) {
     // Request is in a web app and in the same origin as the web app.
     // Don't enforce as strict security checks for web apps, the user
@@ -3308,6 +3308,58 @@ void
 Element::MozRequestPointerLock()
 {
   OwnerDoc()->RequestPointerLock(this);
+}
+
+already_AddRefed<Animation>
+Element::Animate(JSContext* aContext,
+                 JS::Handle<JSObject*> aFrames,
+                 const UnrestrictedDoubleOrKeyframeAnimationOptions& aOptions,
+                 ErrorResult& aError)
+{
+  nsCOMPtr<nsIGlobalObject> ownerGlobal = GetOwnerGlobal();
+  if (!ownerGlobal) {
+    aError.Throw(NS_ERROR_FAILURE);
+    return nullptr;
+  }
+  GlobalObject global(aContext, ownerGlobal->GetGlobalJSObject());
+  MOZ_ASSERT(!global.Failed());
+
+  // Wrap the aFrames object for the cross-compartment case.
+  JS::Rooted<JSObject*> frames(aContext);
+  frames = aFrames;
+  Maybe<JSAutoCompartment> ac;
+  if (js::GetContextCompartment(aContext) !=
+      js::GetObjectCompartment(ownerGlobal->GetGlobalJSObject())) {
+    ac.emplace(aContext, ownerGlobal->GetGlobalJSObject());
+    if (!JS_WrapObject(aContext, &frames)) {
+      return nullptr;
+    }
+  }
+
+  // Bug 1211783: Use KeyframeEffect here (instead of KeyframeEffectReadOnly)
+  RefPtr<KeyframeEffectReadOnly> effect =
+    KeyframeEffectReadOnly::Constructor(global, this, frames,
+      TimingParams::FromOptionsUnion(aOptions, this), aError);
+  if (aError.Failed()) {
+    return nullptr;
+  }
+
+  RefPtr<Animation> animation =
+    Animation::Constructor(global, effect, OwnerDoc()->Timeline(), aError);
+  if (aError.Failed()) {
+    return nullptr;
+  }
+
+  if (aOptions.IsKeyframeAnimationOptions()) {
+    animation->SetId(aOptions.GetAsKeyframeAnimationOptions().mId);
+  }
+
+  animation->Play(aError, Animation::LimitBehavior::AutoRewind);
+  if (aError.Failed()) {
+    return nullptr;
+  }
+
+  return animation.forget();
 }
 
 void

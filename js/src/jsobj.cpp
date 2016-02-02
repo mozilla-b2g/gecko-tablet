@@ -15,7 +15,6 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/SizePrintfMacros.h"
 #include "mozilla/TemplateLib.h"
-#include "mozilla/UniquePtr.h"
 
 #include <string.h>
 
@@ -38,16 +37,18 @@
 #include "jswin.h"
 #include "jswrapper.h"
 
-#include "asmjs/AsmJS.h"
+#include "asmjs/WasmModule.h"
 #include "builtin/Eval.h"
 #include "builtin/Object.h"
 #include "builtin/SymbolObject.h"
 #include "frontend/BytecodeCompiler.h"
 #include "gc/Marking.h"
+#include "gc/Policy.h"
 #include "jit/BaselineJIT.h"
 #include "js/MemoryMetrics.h"
 #include "js/Proxy.h"
 #include "js/UbiNode.h"
+#include "js/UniquePtr.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/Interpreter.h"
 #include "vm/ProxyObject.h"
@@ -74,7 +75,6 @@ using namespace js::gc;
 
 using mozilla::DebugOnly;
 using mozilla::Maybe;
-using mozilla::UniquePtr;
 
 void
 js::ReportNotObject(JSContext* cx, const Value& v)
@@ -82,8 +82,7 @@ js::ReportNotObject(JSContext* cx, const Value& v)
     MOZ_ASSERT(!v.isObject());
 
     RootedValue value(cx, v);
-    UniquePtr<char[], JS::FreePolicy> bytes =
-        DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, value, nullptr);
+    UniqueChars bytes = DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, value, nullptr);
     if (bytes)
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_NOT_NONNULL_OBJECT, bytes.get());
 }
@@ -196,8 +195,7 @@ js::GetFirstArgumentAsObject(JSContext* cx, const CallArgs& args, const char* me
 
     HandleValue v = args[0];
     if (!v.isObject()) {
-        UniquePtr<char[], JS::FreePolicy> bytes =
-            DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, v, nullptr);
+        UniqueChars bytes = DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, v, nullptr);
         if (!bytes)
             return false;
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_UNEXPECTED_TYPE,
@@ -488,7 +486,9 @@ js::SetIntegrityLevel(JSContext* cx, HandleObject obj, IntegrityLevel level)
     MOZ_ASSERT_IF(obj->isNative(), obj->as<NativeObject>().getDenseCapacity() == 0);
 
     // Steps 8-9, loosely interpreted.
-    if (obj->isNative() && !obj->as<NativeObject>().inDictionaryMode() && !IsAnyTypedArray(obj)) {
+    if (obj->isNative() && !obj->as<NativeObject>().inDictionaryMode() &&
+        !obj->is<TypedArrayObject>())
+    {
         HandleNativeObject nobj = obj.as<NativeObject>();
 
         // Seal/freeze non-dictionary objects by constructing a new shape
@@ -1062,7 +1062,7 @@ JS_CopyPropertyFrom(JSContext* cx, HandleId id, HandleObject target,
 {
     // |obj| and |cx| are generally not same-compartment with |target| here.
     assertSameCompartment(cx, obj, id);
-    Rooted<JSPropertyDescriptor> desc(cx);
+    Rooted<PropertyDescriptor> desc(cx);
 
     if (!GetOwnPropertyDescriptor(cx, obj, id, &desc))
         return false;
@@ -1923,6 +1923,9 @@ js::SetClassAndProto(JSContext* cx, HandleObject obj,
     RootedObject oldproto(cx, obj);
     while (oldproto && oldproto->isNative()) {
         if (oldproto->isSingleton()) {
+            // We always generate a new shape if the object is a singleton,
+            // regardless of the uncacheable-proto flag. ICs may rely on
+            // this.
             if (!oldproto->as<NativeObject>().generateOwnShape(cx))
                 return false;
         } else {
@@ -2282,10 +2285,10 @@ js::LookupPropertyPure(ExclusiveContext* cx, JSObject* obj, jsid id, JSObject** 
                 return true;
             }
 
-            if (IsAnyTypedArray(obj)) {
+            if (obj->is<TypedArrayObject>()) {
                 uint64_t index;
                 if (IsTypedArrayIndex(id, &index)) {
-                    if (index < AnyTypedArrayLength(obj)) {
+                    if (index < obj->as<TypedArrayObject>().length()) {
                         *objp = obj;
                         MarkDenseOrTypedArrayElementFound<NoGC>(propp);
                     } else {
@@ -2809,7 +2812,7 @@ js::WatchProperty(JSContext* cx, HandleObject obj, HandleId id, HandleObject cal
     if (WatchOp op = obj->getOps()->watch)
         return op(cx, obj, id, callable);
 
-    if (!obj->isNative() || IsAnyTypedArray(obj)) {
+    if (!obj->isNative() || obj->is<TypedArrayObject>()) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_CANT_WATCH,
                              obj->getClass()->name);
         return false;
@@ -3603,7 +3606,7 @@ js::DumpInterpreterFrame(JSContext* cx, InterpreterFrame* start)
             v.setObject(*fun);
             dumpValue(v);
         } else {
-            fprintf(stderr, "global frame, no callee");
+            fprintf(stderr, "global or eval frame, no callee");
         }
         fputc('\n', stderr);
 
@@ -3615,7 +3618,7 @@ js::DumpInterpreterFrame(JSContext* cx, InterpreterFrame* start)
             fprintf(stderr, "  current op: %s\n", CodeName[*pc]);
             MaybeDumpObject("staticScope", i.script()->getStaticBlockScope(pc));
         }
-        if (i.isNonEvalFunctionFrame())
+        if (i.isFunctionFrame())
             MaybeDumpValue("this", i.thisArgument(cx));
         if (!i.isJit()) {
             fprintf(stderr, "  rval: ");
@@ -3791,9 +3794,9 @@ JSObject::addSizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::ClassIn
         ArrayBufferObject::addSizeOfExcludingThis(this, mallocSizeOf, info);
     } else if (is<SharedArrayBufferObject>()) {
         SharedArrayBufferObject::addSizeOfExcludingThis(this, mallocSizeOf, info);
-    } else if (is<AsmJSModuleObject>()) {
-        as<AsmJSModuleObject>().addSizeOfMisc(mallocSizeOf, &info->objectsNonHeapCodeAsmJS,
-                                              &info->objectsMallocHeapMisc);
+    } else if (is<WasmModuleObject>()) {
+        as<WasmModuleObject>().addSizeOfMisc(mallocSizeOf, &info->objectsNonHeapCodeAsmJS,
+                                             &info->objectsMallocHeapMisc);
 #ifdef JS_HAS_CTYPES
     } else {
         // This must be the last case.

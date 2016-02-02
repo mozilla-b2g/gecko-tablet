@@ -18,7 +18,6 @@
 #include "nsServiceManagerUtils.h"
 #include "nsNotifyAddrListener_Linux.h"
 #include "nsString.h"
-#include "nsAutoPtr.h"
 #include "mozilla/Logging.h"
 
 #include "mozilla/Services.h"
@@ -149,7 +148,6 @@ void nsNotifyAddrListener::checkLink(void)
 void nsNotifyAddrListener::OnNetlinkMessage(int aNetlinkSocket)
 {
     struct  nlmsghdr *nlh;
-    struct  rtmsg *route_entry;
 
     // The buffer size below, (4095) was chosen partly based on testing and
     // partly on existing sample source code using this size. It needs to be
@@ -157,7 +155,8 @@ void nsNotifyAddrListener::OnNetlinkMessage(int aNetlinkSocket)
     char buffer[4095];
     struct rtattr *attr;
     int attr_len;
-    bool link_local;
+    const struct ifaddrmsg* newifam;
+
 
     ssize_t rc = EINTR_RETRY(recv(aNetlinkSocket, buffer, sizeof(buffer), 0));
     if (rc < 0) {
@@ -171,59 +170,80 @@ void nsNotifyAddrListener::OnNetlinkMessage(int aNetlinkSocket)
 
     for (; NLMSG_OK(nlh, netlink_bytes);
          nlh = NLMSG_NEXT(nlh, netlink_bytes)) {
+        char prefixaddr[INET6_ADDRSTRLEN];
+        char localaddr[INET6_ADDRSTRLEN];
+        char* addr = nullptr;
+        prefixaddr[0] = localaddr[0] = '\0';
 
         if (NLMSG_DONE == nlh->nlmsg_type) {
             break;
         }
 
-        switch(nlh->nlmsg_type) {
-        case RTM_DELROUTE:
-        case RTM_NEWROUTE:
-            // Get the route data
-            route_entry = static_cast<struct rtmsg *>(NLMSG_DATA(nlh));
+        LOG(("nsNotifyAddrListener::OnNetlinkMessage: new/deleted address\n"));
+        newifam = reinterpret_cast<struct ifaddrmsg*>(NLMSG_DATA(nlh));
 
-            // We are just intrested in main routing table
-            if (route_entry->rtm_table != RT_TABLE_MAIN)
-                continue;
+        if ((newifam->ifa_family != AF_INET) &&
+            (newifam->ifa_family != AF_INET6)) {
+            continue;
+        }
 
-            if ((route_entry->rtm_family != AF_INET) &&
-                (route_entry->rtm_family != AF_INET6)) {
-                continue;
-            }
-
-            attr = (struct rtattr *) RTM_RTA(route_entry);
-            attr_len =  RTM_PAYLOAD(nlh);
-            link_local = false;
-
-            /* Loop through all attributes */
-            for ( ; RTA_OK(attr, attr_len); attr = RTA_NEXT(attr, attr_len)) {
-                if (attr->rta_type == RTA_GATEWAY) {
-                    if (route_entry->rtm_family == AF_INET6) {
-                        unsigned char *g = (unsigned char *)
-                            RTA_DATA(attr);
-                        if ((g[0] == 0xFE) && ((g[1] & 0xc0) == 0x80)) {
-                            link_local = true;
-                            break;
-                        }
-                    }
+        attr = IFA_RTA (newifam);
+        attr_len = IFA_PAYLOAD (nlh);
+        for (;attr_len && RTA_OK (attr, attr_len);
+             attr = RTA_NEXT (attr, attr_len)) {
+            if (attr->rta_type == IFA_ADDRESS) {
+                if (newifam->ifa_family == AF_INET) {
+                    struct in_addr* in = (struct in_addr*)RTA_DATA(attr);
+                    inet_ntop(AF_INET, in, prefixaddr, INET_ADDRSTRLEN);
+                } else {
+                    struct in6_addr* in = (struct in6_addr*)RTA_DATA(attr);
+                    inet_ntop(AF_INET6, in, prefixaddr, INET6_ADDRSTRLEN);
+                }
+            } else if (attr->rta_type == IFA_LOCAL) {
+                if (newifam->ifa_family == AF_INET) {
+                    struct in_addr* in = (struct in_addr*)RTA_DATA(attr);
+                    inet_ntop(AF_INET, in, localaddr, INET_ADDRSTRLEN);
+                } else {
+                    struct in6_addr* in = (struct in6_addr*)RTA_DATA(attr);
+                    inet_ntop(AF_INET6, in, localaddr, INET6_ADDRSTRLEN);
                 }
             }
-
-            if (!link_local) {
-                LOG(("OnNetlinkMessage: route update\n"));
-                networkChange = true;
-            } else {
-                LOG(("OnNetlinkMessage: ignored link-local route update\n"));
-            }
-            break;
-
-        case RTM_NEWADDR:
-            LOG(("OnNetlinkMessage: new address\n"));
-            networkChange = true;
-            break;
-
-        default:
+        }
+        if (localaddr[0]) {
+            addr = localaddr;
+        } else if (prefixaddr[0]) {
+            addr = prefixaddr;
+        } else {
             continue;
+        }
+        if (nlh->nlmsg_type == RTM_NEWADDR) {
+            LOG(("nsNotifyAddrListener::OnNetlinkMessage: a new address "
+                 "- %s.", addr));
+            struct ifaddrmsg* ifam;
+            nsCString addrStr;
+            addrStr.Assign(addr);
+            if (mAddressInfo.Get(addrStr, &ifam)) {
+                LOG(("nsNotifyAddrListener::OnNetlinkMessage: the address "
+                     "already known."));
+                if (memcmp(ifam, newifam, sizeof(struct ifaddrmsg))) {
+                    LOG(("nsNotifyAddrListener::OnNetlinkMessage: but "
+                         "the address info has been changed."));
+                    networkChange = true;
+                    memcpy(ifam, newifam, sizeof(struct ifaddrmsg));
+                }
+            } else {
+                networkChange = true;
+                ifam = (struct ifaddrmsg*)malloc(sizeof(struct ifaddrmsg));
+                memcpy(ifam, newifam, sizeof(struct ifaddrmsg));
+                mAddressInfo.Put(addrStr,ifam);
+            }
+        } else {
+            LOG(("nsNotifyAddrListener::OnNetlinkMessage: an address "
+                 "has been deleted - %s.", addr));
+            networkChange = true;
+            nsCString addrStr;
+            addrStr.Assign(addr);
+            mAddressInfo.Remove(addrStr);
         }
     }
 
@@ -248,8 +268,7 @@ nsNotifyAddrListener::Run()
     memset(&addr, 0, sizeof(addr));   // clear addr
 
     addr.nl_family = AF_NETLINK;
-    addr.nl_groups = RTMGRP_IPV4_ROUTE | RTMGRP_IPV4_IFADDR |
-        RTMGRP_IPV6_IFADDR | RTMGRP_IPV6_ROUTE;
+    addr.nl_groups = RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR;
 
     if (bind(netlinkSocket, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         // failure!

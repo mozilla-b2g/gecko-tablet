@@ -162,7 +162,7 @@ var pktUI = (function() {
             {
                 variant = pktApi.getSignupAB();
             }
-            var panelId = showPanel("chrome://pocket/content/panels/signup.html?pockethost=" + Services.prefs.getCharPref("extensions.pocket.site") + "&fxasignedin=" + fxasignedin + "&variant=" + variant + '&inoverflowmenu=' + inOverflowMenu + "&locale=" + getUILocale(), {
+            var panelId = showPanel("about:pocket-signup?pockethost=" + Services.prefs.getCharPref("extensions.pocket.site") + "&fxasignedin=" + fxasignedin + "&variant=" + variant + '&inoverflowmenu=' + inOverflowMenu + "&locale=" + getUILocale(), {
             		onShow: function() {
                     },
         			onHide: panelDidHide,
@@ -190,7 +190,7 @@ var pktUI = (function() {
         	startheight = overflowMenuHeight;
         }
 
-    	var panelId = showPanel("chrome://pocket/content/panels/saved.html?pockethost=" + Services.prefs.getCharPref("extensions.pocket.site") + "&premiumStatus=" + (pktApi.isPremiumUser() ? '1' : '0') + '&inoverflowmenu='+inOverflowMenu + "&locale=" + getUILocale(), {
+    	var panelId = showPanel("about:pocket-saved?pockethost=" + Services.prefs.getCharPref("extensions.pocket.site") + "&premiumStatus=" + (pktApi.isPremiumUser() ? '1' : '0') + '&inoverflowmenu='+inOverflowMenu + "&locale=" + getUILocale(), {
     		onShow: function() {
                 var saveLinkMessageId = 'saveLink';
 
@@ -308,7 +308,7 @@ var pktUI = (function() {
         if (subview) {
           // Use the subview's size
           iframe.style.width = "100%";
-          iframe.style.height = subview.clientHeight + "px";
+          iframe.style.height = subview.parentNode.clientHeight + "px";
         } else {
           // Set an explicit size, panel will adapt.
           iframe.style.width  = options.width  + "px";
@@ -535,12 +535,7 @@ var pktUI = (function() {
     }
 
     function getSubview() {
-        var frame = getPanelFrame();
-        var view = frame;
-        while (view && view.localName != "panelview") {
-            view = view.parentNode;
-        }
-
+        var view = document.getElementById("PanelUI-pocketView");
         if (view && view.getAttribute("current") == "true")
             return view;
         return null;

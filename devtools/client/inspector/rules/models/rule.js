@@ -8,11 +8,11 @@
 
 const {Cc, Ci, Cu} = require("chrome");
 const promise = require("promise");
-const {CssLogic} = require("devtools/shared/styleinspector/css-logic");
+const {CssLogic} = require("devtools/shared/inspector/css-logic");
 const {ELEMENT_STYLE} = require("devtools/server/actors/styles");
 const {TextProperty} =
       require("devtools/client/inspector/rules/models/text-property");
-const {promiseWarn} = require("devtools/client/styleinspector/utils");
+const {promiseWarn} = require("devtools/client/inspector/shared/utils");
 const {parseDeclarations} = require("devtools/client/shared/css-parsing-utils");
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
@@ -26,7 +26,10 @@ XPCOMUtils.defineLazyGetter(this, "domUtils", function() {
 });
 
 /**
- * A single style rule or declaration.
+ * Rule is responsible for the following:
+ *   Manages a single style declaration or rule.
+ *   Applies changes to the properties in a rule.
+ *   Maintains a list of TextProperty objects.
  *
  * @param {ElementStyle} elementStyle
  *        The ElementStyle to which this rule belongs.
@@ -36,6 +39,8 @@ XPCOMUtils.defineLazyGetter(this, "domUtils", function() {
  *          inherited: An element this rule was inherited from.  If omitted,
  *            the rule applies directly to the current element.
  *          isSystem: Is this a user agent style?
+ *          isUnmatched: True if the rule does not match the current selected
+ *            element, otherwise, false.
  */
 function Rule(elementStyle, options) {
   this.elementStyle = elementStyle;
@@ -45,6 +50,7 @@ function Rule(elementStyle, options) {
   this.pseudoElement = options.pseudoElement || "";
 
   this.isSystem = options.isSystem;
+  this.isUnmatched = options.isUnmatched || false;
   this.inherited = options.inherited || null;
   this.keyframes = options.keyframes || null;
   this._modificationDepth = 0;

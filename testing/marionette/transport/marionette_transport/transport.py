@@ -116,6 +116,10 @@ class TcpTransport(object):
     connection_lost_msg = "Connection to Marionette server is lost. Check gecko.log (desktop firefox) or logcat (b2g) for errors."
 
     def __init__(self, addr, port, socket_timeout=360.0):
+        """If `socket_timeout` is `0` or `0.0`, non-blocking socket mode
+        will be used.  Setting it to `1` or `None` disables timeouts on
+        socket operations altogether.
+        """
         self.addr = addr
         self.port = port
         self.socket_timeout = socket_timeout
@@ -164,7 +168,7 @@ class TcpTransport(object):
         data = ""
         bytes_to_recv = 10
 
-        while time.time() - now < self.socket_timeout:
+        while self.socket_timeout is None or (time.time() - now < self.socket_timeout):
             try:
                 chunk = self.sock.recv(bytes_to_recv)
                 data += chunk
@@ -237,16 +241,21 @@ class TcpTransport(object):
             data = json.dumps(obj)
         payload = "%s:%s" % (len(data), data)
 
-        for packet in [payload[i:i + self.max_packet_length] for i in
-                       range(0, len(payload), self.max_packet_length)]:
+        totalsent = 0
+        while totalsent < len(payload):
             try:
-                self.sock.send(packet)
+                sent = self.sock.send(payload[totalsent:])
+                if sent == 0:
+                    raise IOError("socket error after sending %d of %d bytes" % \
+                            (totalsent, len(payload)))
+                else:
+                    totalsent += sent
+
             except IOError as e:
                 if e.errno == errno.EPIPE:
                     raise IOError("%s: %s" % (str(e), self.connection_lost_msg))
                 else:
                     raise e
-
     def respond(self, obj):
         """Send a response to a command.  This can be an arbitrary JSON
         serialisable object or an ``Exception``.
@@ -280,22 +289,23 @@ class TcpTransport(object):
 
 
 def wait_for_port(host, port, timeout=60):
-    """ Wait for the specified host/port to be available."""
+    """Wait for the specified host/port to become available."""
     starttime = datetime.datetime.now()
     poll_interval = 0.1
     while datetime.datetime.now() - starttime < datetime.timedelta(seconds=timeout):
         sock = None
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.5)
             sock.connect((host, port))
             data = sock.recv(16)
             sock.close()
-            if ':' in data:
+            if ":" in data:
                 return True
         except socket.error:
             pass
         finally:
-            if sock:
+            if sock is not None:
                 sock.close()
         time.sleep(poll_interval)
     return False

@@ -12,12 +12,14 @@ var loader = Cc["@mozilla.org/moz/jssubscript-loader;1"]
 
 loader.loadSubScript("chrome://marionette/content/simpletest.js");
 loader.loadSubScript("chrome://marionette/content/common.js");
-loader.loadSubScript("chrome://marionette/content/actions.js");
+
+Cu.import("chrome://marionette/content/actions.js");
 Cu.import("chrome://marionette/content/capture.js");
 Cu.import("chrome://marionette/content/cookies.js");
 Cu.import("chrome://marionette/content/elements.js");
 Cu.import("chrome://marionette/content/error.js");
 Cu.import("chrome://marionette/content/proxy.js");
+Cu.import("chrome://marionette/content/interactions.js");
 
 Cu.import("resource://gre/modules/FileUtils.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
@@ -43,8 +45,12 @@ var curContainer = { frame: content, shadowRoot: null };
 var isRemoteBrowser = () => curContainer.frame.contentWindow !== null;
 var previousContainer = null;
 var elementManager = new ElementManager([]);
-var accessibility = new Accessibility();
-var actions = new ActionChain(utils, checkForInterrupted);
+
+// Holds session capabilities.
+var capabilities = {};
+var interactions = new Interactions(utils, () => capabilities);
+
+var actions = new actions.Chain(utils, checkForInterrupted);
 var importedScripts = null;
 
 // Contains the last file input element that was the target of
@@ -85,7 +91,7 @@ var cookies = new Cookies(() => curContainer.frame.document, chrome);
 
 Cu.import("resource://gre/modules/Log.jsm");
 var logger = Log.repository.getLogger("Marionette");
-logger.info("loaded listener.js");
+logger.debug("loaded listener.js");
 var modalHandler = function() {
   // This gets called on the system app only since it receives the mozbrowserprompt event
   sendSyncMessage("Marionette:switchedToFrame", { frameValue: null, storePrevious: true });
@@ -108,9 +114,8 @@ function registerSelf() {
 
   if (register[0]) {
     let {id, remotenessChange} = register[0][0];
-    let {B2G, raisesAccessibilityExceptions} = register[0][2];
-    isB2G = B2G;
-    accessibility.strict = raisesAccessibilityExceptions;
+    capabilities = register[0][2];
+    isB2G = capabilities.B2G;
     listenerId = id;
     if (typeof id != "undefined") {
       // check if we're the main process
@@ -179,7 +184,7 @@ function dispatch(fn) {
       if (typeof rv == "undefined") {
         sendOk(id);
       } else {
-        sendResponse({value: rv}, id);
+        sendResponse(rv, id);
       }
     };
 
@@ -299,8 +304,8 @@ function waitForReady() {
  * current environment, and resets all values
  */
 function newSession(msg) {
-  isB2G = msg.json.B2G;
-  accessibility.strict = msg.json.raisesAccessibilityExceptions;
+  capabilities = msg.json;
+  isB2G = capabilities.B2G;
   resetValues();
   if (isB2G) {
     readyStateTimer.initWithCallback(waitForReady, 100, Ci.nsITimer.TYPE_ONE_SHOT);
@@ -393,35 +398,56 @@ function deleteSession(msg) {
   actions.touchIds = {};
 }
 
-/*
- * Helper methods
- */
-
 /**
- * Generic method to send a message to the server
+ * Send asynchronous reply to chrome.
+ *
+ * @param {UUID} uuid
+ *     Unique identifier of the request.
+ * @param {AsyncContentSender.ResponseType} type
+ *     Type of response.
+ * @param {?=} data
+ *     JSON serialisable object to accompany the message.  Defaults to
+ *     an empty dictionary.
  */
-function sendToServer(name, data, objs, id) {
-  if (!data) {
-    data = {}
-  }
-  if (id) {
-    data.command_id = id;
-  }
-  sendAsyncMessage(name, data, objs);
+function sendToServer(uuid, data = undefined) {
+  let channel = new proxy.AsyncMessageChannel(
+      () => this,
+      sendAsyncMessage.bind(this));
+  channel.reply(uuid, data);
 }
 
 /**
- * Send response back to server
+ * Send asynchronous reply with value to chrome.
+ *
+ * @param {?} obj
+ *     JSON serialisable object of arbitrary type and complexity.
+ * @param {UUID} uuid
+ *     Unique identifier of the request.
  */
-function sendResponse(value, command_id) {
-  sendToServer("Marionette:done", value, null, command_id);
+function sendResponse(obj, id) {
+  sendToServer(id, obj);
 }
 
 /**
- * Send ack back to server
+ * Send asynchronous reply to chrome.
+ *
+ * @param {UUID} uuid
+ *     Unique identifier of the request.
  */
-function sendOk(command_id) {
-  sendToServer("Marionette:ok", null, null, command_id);
+function sendOk(uuid) {
+  sendToServer(uuid);
+}
+
+/**
+ * Send asynchronous error reply to chrome.
+ *
+ * @param {Error} err
+ *     Error to notify chrome of.
+ * @param {UUID} uuid
+ *     Unique identifier of the request.
+ */
+function sendError(err, uuid) {
+  sendToServer(uuid, err);
 }
 
 /**
@@ -429,13 +455,6 @@ function sendOk(command_id) {
  */
 function sendLog(msg) {
   sendToServer("Marionette:log", {message: msg});
-}
-
-/**
- * Send error message to server
- */
-function sendError(err, cmdId) {
-  sendToServer("Marionette:error", null, {error: err}, cmdId);
 }
 
 /**
@@ -544,7 +563,7 @@ function createExecuteContentSandbox(win, timeout) {
           _emu_cbs = {};
           sendError(new WebDriverError("Emulator callback still pending when finish() called"), id);
         } else {
-          sendResponse({value: elementManager.wrapValue(obj)}, id);
+          sendResponse(elementManager.wrapValue(obj), id);
         }
       }
 
@@ -626,7 +645,7 @@ function executeScript(msg, directInject) {
         sendError(new JavaScriptError("Marionette.finish() not called"), asyncTestCommandId);
       }
       else {
-        sendResponse({value: elementManager.wrapValue(res)}, asyncTestCommandId);
+        sendResponse(elementManager.wrapValue(res), asyncTestCommandId);
       }
     }
     else {
@@ -652,7 +671,7 @@ function executeScript(msg, directInject) {
       sendSyncMessage("Marionette:shareData",
                       {log: elementManager.wrapValue(marionetteLogObj.getLogs())});
       marionetteLogObj.clearLogs();
-      sendResponse({value: elementManager.wrapValue(res)}, asyncTestCommandId);
+      sendResponse(elementManager.wrapValue(res), asyncTestCommandId);
     }
   } catch (e) {
     let err = new JavaScriptError(
@@ -938,9 +957,9 @@ function singleTap(id, corx, cory) {
   if (!visible) {
     throw new ElementNotVisibleError("Element is not currently visible and may not be manipulated");
   }
-  return accessibility.getAccessibleObject(el, true).then(acc => {
-    checkVisibleAccessibility(acc, el, visible);
-    checkActionableAccessibility(acc, el);
+  return interactions.accessibility.getAccessibleObject(el, true).then(acc => {
+    interactions.accessibility.checkVisible(acc, el, visible);
+    interactions.accessibility.checkActionable(acc, el);
     if (!curContainer.frame.document.createTouch) {
       actions.mouseEventsOnly = true;
     }
@@ -954,108 +973,6 @@ function singleTap(id, corx, cory) {
     actions.mouseTap(el.ownerDocument, c.x, c.y);
   });
 }
-
-/**
- * Check if the element's unavailable accessibility state matches the enabled
- * state
- * @param nsIAccessible object
- * @param WebElement corresponding to nsIAccessible object
- * @param Boolean enabled element's enabled state
- */
-function checkEnabledAccessibility(accesible, element, enabled) {
-  if (!accesible) {
-    return;
-  }
-  let disabledAccessibility = accessibility.matchState(
-    accesible, 'STATE_UNAVAILABLE');
-  let explorable = curContainer.frame.document.defaultView.getComputedStyle(
-    element, null).getPropertyValue('pointer-events') !== 'none';
-  let message;
-
-  if (!explorable && !disabledAccessibility) {
-    message = 'Element is enabled but is not explorable via the ' +
-      'accessibility API';
-  } else if (enabled && disabledAccessibility) {
-    message = 'Element is enabled but disabled via the accessibility API';
-  } else if (!enabled && !disabledAccessibility) {
-    message = 'Element is disabled but enabled via the accessibility API';
-  }
-  accessibility.handleErrorMessage(message, element);
-}
-
-/**
- * Check if the element's visible state corresponds to its accessibility API
- * visibility
- * @param nsIAccessible object
- * @param WebElement corresponding to nsIAccessible object
- * @param Boolean visible element's visibility state
- */
-function checkVisibleAccessibility(accesible, element, visible) {
-  if (!accesible) {
-    return;
-  }
-  let hiddenAccessibility = accessibility.isHidden(accesible);
-  let message;
-  if (visible && hiddenAccessibility) {
-    message = 'Element is not currently visible via the accessibility API ' +
-      'and may not be manipulated by it';
-  } else if (!visible && !hiddenAccessibility) {
-    message = 'Element is currently only visible via the accessibility API ' +
-      'and can be manipulated by it';
-  }
-  accessibility.handleErrorMessage(message, element);
-}
-
-/**
- * Check if it is possible to activate an element with the accessibility API
- * @param nsIAccessible object
- * @param WebElement corresponding to nsIAccessible object
- */
-function checkActionableAccessibility(accesible, element) {
-  if (!accesible) {
-    return;
-  }
-  let message;
-  if (!accessibility.hasActionCount(accesible)) {
-    message = 'Element does not support any accessible actions';
-  } else if (!accessibility.isActionableRole(accesible)) {
-    message = 'Element does not have a correct accessibility role ' +
-      'and may not be manipulated via the accessibility API';
-  } else if (!accessibility.hasValidName(accesible)) {
-    message = 'Element is missing an accesible name';
-  } else if (!accessibility.matchState(accesible, 'STATE_FOCUSABLE')) {
-    message = 'Element is not focusable via the accessibility API';
-  }
-  accessibility.handleErrorMessage(message, element);
-}
-
-/**
- * Check if element's selected state corresponds to its accessibility API
- * selected state.
- * @param nsIAccessible object
- * @param WebElement corresponding to nsIAccessible object
- * @param Boolean selected element's selected state
- */
-function checkSelectedAccessibility(accessible, element, selected) {
-  if (!accessible) {
-    return;
-  }
-  if (!accessibility.matchState(accessible, 'STATE_SELECTABLE')) {
-    // Element is not selectable via the accessibility API
-    return;
-  }
-
-  let selectedAccessibility = accessibility.matchState(
-    accessible, 'STATE_SELECTED');
-  let message;
-  if (selected && !selectedAccessibility) {
-    message = 'Element is selected but not selected via the accessibility API';
-  } else if (!selected && selectedAccessibility) {
-    message = 'Element is not selected but selected via the accessibility API';
-  }
-  accessibility.handleErrorMessage(message, element);
-}
-
 
 /**
  * Function to create a touch based on the element
@@ -1460,21 +1377,7 @@ function getActiveElement() {
  *     Reference to the web element to click.
  */
 function clickElement(id) {
-  let el = elementManager.getKnownElement(id, curContainer);
-  let visible = checkVisible(el);
-  if (!visible) {
-    throw new ElementNotVisibleError("Element is not visible");
-  }
-  return accessibility.getAccessibleObject(el, true).then(acc => {
-    checkVisibleAccessibility(acc, el, visible);
-    if (utils.isElementEnabled(el)) {
-      checkEnabledAccessibility(acc, el, true);
-      checkActionableAccessibility(acc, el);
-      utils.synthesizeMouseAtCenter(el, {}, el.ownerDocument.defaultView);
-    } else {
-      throw new InvalidElementStateError("Element is not Enabled");
-    }
-  });
+  return interactions.clickElement(curContainer, elementManager, id);
 }
 
 /**
@@ -1528,12 +1431,7 @@ function getElementTagName(id) {
  * capability.
  */
 function isElementDisplayed(id) {
-  let el = elementManager.getKnownElement(id, curContainer);
-  let displayed = utils.isElementDisplayed(el);
-  return accessibility.getAccessibleObject(el).then(acc => {
-    checkVisibleAccessibility(acc, el, displayed);
-    return displayed;
-  });
+  return interactions.isElementDisplayed(curContainer, elementManager, id);
 }
 
 /**
@@ -1584,12 +1482,7 @@ function getElementRect(id) {
  *     True if enabled, false otherwise.
  */
 function isElementEnabled(id) {
-  let el = elementManager.getKnownElement(id, curContainer);
-  let enabled = utils.isElementEnabled(el);
-  return accessibility.getAccessibleObject(el).then(acc => {
-    checkEnabledAccessibility(acc, el, enabled);
-    return enabled;
-  });
+  return interactions.isElementEnabled(curContainer, elementManager, id);
 }
 
 /**
@@ -1599,12 +1492,7 @@ function isElementEnabled(id) {
  * and Radio Button states, or option elements.
  */
 function isElementSelected(id) {
-  let el = elementManager.getKnownElement(id, curContainer);
-  let selected = utils.isElementSelected(el);
-  return accessibility.getAccessibleObject(el).then(acc => {
-    checkSelectedAccessibility(acc, el, selected);
-    return selected;
-  });
+  return interactions.isElementSelected(curContainer, elementManager, id);
 }
 
 /**
@@ -1613,28 +1501,22 @@ function isElementSelected(id) {
 function sendKeysToElement(msg) {
   let command_id = msg.json.command_id;
   let val = msg.json.value;
-  let el;
+  let id = msg.json.id;
+  let el = elementManager.getKnownElement(id, curContainer);
 
-  return Promise.resolve(elementManager.getKnownElement(msg.json.id, curContainer))
-    .then(knownEl => {
-      el = knownEl;
-      // Element should be actionable from the accessibility standpoint to be able
-      // to send keys to it.
-      return accessibility.getAccessibleObject(el, true)
-    }).then(acc => {
-      checkActionableAccessibility(acc, el);
-      if (el.type == "file") {
-        let p = val.join("");
+  if (el.type == "file") {
+    let p = val.join("");
         fileInputElement = el;
         // In e10s, we can only construct File objects in the parent process,
         // so pass the filename to driver.js, which in turn passes them back
         // to this frame script in receiveFiles.
         sendSyncMessage("Marionette:getFiles",
                         {value: p, command_id: command_id});
-      } else {
-        utils.sendKeysToElement(curContainer.frame, el, val, sendOk, sendError, command_id);
-      }
-    }).catch(e => sendError(e, command_id));
+  } else {
+    interactions.sendKeysToElement(curContainer, elementManager, id, val)
+      .then(() => sendOk(command_id))
+      .catch(e => sendError(e, command_id));
+  }
 }
 
 /**
@@ -1845,7 +1727,7 @@ function switchToFrame(msg) {
     checkTimer.initWithCallback(checkLoad, 100, Ci.nsITimer.TYPE_ONE_SHOT);
   }
 
-  sendResponse({value: rv}, command_id);
+  sendResponse(rv, command_id);
 }
 
 function addCookie(cookie) {
@@ -1898,8 +1780,8 @@ function deleteAllCookies() {
 }
 
 function getAppCacheStatus(msg) {
-  sendResponse({ value: curContainer.frame.applicationCache.status },
-               msg.json.command_id);
+  sendResponse(
+      curContainer.frame.applicationCache.status, msg.json.command_id);
 }
 
 // emulator callbacks
@@ -1907,7 +1789,6 @@ var _emu_cb_id = 0;
 var _emu_cbs = {};
 
 function runEmulatorCmd(cmd, callback) {
-  logger.info("listener runEmulatorCmd cmd=" + cmd);
   if (callback) {
     _emu_cbs[_emu_cb_id] = callback;
   }

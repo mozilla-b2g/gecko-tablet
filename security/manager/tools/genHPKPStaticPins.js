@@ -53,17 +53,13 @@ const DOMAINHEADER = "/* Domainlist */\n" +
   "  const bool mTestMode;\n" +
   "  const bool mIsMoz;\n" +
   "  const int32_t mId;\n" +
-  "  const StaticPinset* pinset;\n" +
+  "  const StaticFingerprints* pinset;\n" +
   "};\n\n";
 
 const PINSETDEF = "/* Pinsets are each an ordered list by the actual value of the fingerprint */\n" +
   "struct StaticFingerprints {\n" +
   "  const size_t size;\n" +
   "  const char* const* data;\n" +
-  "};\n\n" +
-  "struct StaticPinset {\n" +
-  "  const StaticFingerprints* sha1;\n" +
-  "  const StaticFingerprints* sha256;\n" +
   "};\n\n";
 
 // Command-line arguments
@@ -130,8 +126,7 @@ function download(filename) {
   }
 
   if (req.status != 200) {
-    throw("ERROR: problem downloading '" + filename + "': status " +
-          req.status);
+    throw `ERROR: problem downloading '${filename}': status ${req.status}`;
   }
 
   let resultDecoded;
@@ -340,7 +335,7 @@ function downloadAndParseChromePins(filename,
         // We should have already added hashes for all of these when we
         // imported the certificate file.
         if (!certNameToSKD[name]) {
-          throw("No hash for name: " + name);
+          throw "No hash for name: " + name;
         }
       } else if (name in chromeNameToMozName) {
         pinset.sha256_hashes.push(chromeNameToMozName[name]);
@@ -431,7 +426,7 @@ function parseJson(filename) {
 function nameToAlias(certName) {
   // change the name to a string valid as a c identifier
   // remove  non-ascii characters
-  certName = certName.replace( /[^[:ascii:]]/g, "_");
+  certName = certName.replace(/[^[:ascii:]]/g, "_");
   // replace non word characters
   certName = certName.replace(/[^A-Za-z0-9]/g ,"_");
 
@@ -458,12 +453,10 @@ function writeFullPinset(certNameToSKD, certSKDToName, pinset) {
   }
   writeFingerprints(certNameToSKD, certSKDToName, pinset.name,
                     pinset.sha256_hashes);
-  writeString("static const StaticPinset " + prefix + " = {\n" +
-              "  nullptr,\n  &" + prefix + "_sha256\n};\n\n");
 }
 
 function writeFingerprints(certNameToSKD, certSKDToName, name, hashes) {
-  let varPrefix = "kPinset_" + name + "_sha256";
+  let varPrefix = "kPinset_" + name;
   writeString("static const char* " + varPrefix + "_Data[] = {\n");
   let SKDList = [];
   for (let certName of hashes) {
@@ -510,7 +503,7 @@ function writeEntry(entry) {
   }
   if ("id" in entry) {
     if (entry.id >= 256) {
-      throw("Not enough buckets in histogram");
+      throw "Not enough buckets in histogram";
     }
     if (entry.id >= 0) {
       printVal += entry.id + ", ";

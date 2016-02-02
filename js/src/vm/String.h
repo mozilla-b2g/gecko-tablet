@@ -492,7 +492,7 @@ class JSString : public js::gc::TenuredCell
         return offsetof(JSString, d.s.u2.nonInlineCharsTwoByte);
     }
 
-    static inline js::ThingRootKind rootKind() { return js::THING_ROOT_STRING; }
+    static const JS::TraceKind TraceKind = JS::TraceKind::String;
 
 #ifdef DEBUG
     void dump();
@@ -1136,7 +1136,7 @@ NameToId(PropertyName* name)
     return NON_INTEGER_ATOM_TO_JSID(name);
 }
 
-using PropertyNameVector = js::TraceableVector<PropertyName*>;
+using PropertyNameVector = js::GCVector<PropertyName*>;
 
 template <typename CharT>
 void

@@ -16,17 +16,13 @@ XPCOMUtils.defineLazyGetter(this, "domUtils", function() {
 });
 
 /**
- * TextProperty:
+ * TextProperty is responsible for the following:
  *   Manages a single property from the authoredText attribute of the
  *     relevant declaration.
  *   Maintains a list of computed properties that come from this
  *     property declaration.
  *   Changes to the TextProperty are sent to its related Rule for
  *     application.
- */
-
-/**
- * A single property in a rule's authoredText.
  *
  * @param {Rule} rule
  *        The rule this TextProperty came from.
@@ -77,7 +73,7 @@ TextProperty.prototype = {
     // This is a bit funky.  To get the list of computed properties
     // for this text property, we'll set the property on a dummy element
     // and see what the computed style looks like.
-    let dummyElement = this.rule.elementStyle.dummyElement;
+    let dummyElement = this.rule.elementStyle.ruleView.dummyElement;
     let dummyStyle = dummyElement.style;
     dummyStyle.cssText = "";
     dummyStyle.setProperty(this.name, this.value, this.priority);

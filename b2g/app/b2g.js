@@ -354,6 +354,7 @@ pref("browser.safebrowsing.malware.enabled", true);
 pref("browser.safebrowsing.downloads.enabled", true);
 pref("browser.safebrowsing.downloads.remote.enabled", true);
 pref("browser.safebrowsing.downloads.remote.timeout_ms", 10000);
+pref("browser.safebrowsing.downloads.remote.url", "https://sb-ssl.google.com/safebrowsing/clientreport/download?key=%GOOGLE_API_KEY%");
 pref("browser.safebrowsing.debug", false);
 
 pref("browser.safebrowsing.provider.google.lists", "goog-badbinurl-shavar,goog-downloadwhite-digest256,goog-phish-shavar,goog-malware-shavar,goog-unwanted-shavar");
@@ -364,7 +365,6 @@ pref("browser.safebrowsing.provider.google.reportURL", "https://safebrowsing.goo
 pref("browser.safebrowsing.reportPhishMistakeURL", "https://%LOCALE%.phish-error.mozilla.com/?hl=%LOCALE%&url=");
 pref("browser.safebrowsing.reportPhishURL", "https://%LOCALE%.phish-report.mozilla.com/?hl=%LOCALE%&url=");
 pref("browser.safebrowsing.reportMalwareMistakeURL", "https://%LOCALE%.malware-error.mozilla.com/?hl=%LOCALE%&url=");
-pref("browser.safebrowsing.appRepURL", "https://sb-ssl.google.com/safebrowsing/clientreport/download?key=%GOOGLE_API_KEY%");
 
 pref("browser.safebrowsing.id", "Firefox");
 
@@ -1064,6 +1064,9 @@ pref("services.mobileid.server.uri", "https://msisdn.services.mozilla.com");
 pref("identity.fxaccounts.remote.oauth.uri", "https://oauth.accounts.firefox.com/v1");
 pref("identity.fxaccounts.remote.profile.uri", "https://profile.accounts.firefox.com/v1");
 
+// Disable Firefox Accounts device registration until bug 1238895 is fixed.
+pref("identity.fxaccounts.skipDeviceRegistration", true);
+
 // Enable mapped array buffer.
 #ifndef XP_WIN
 pref("dom.mapped_arraybuffer.enabled", true);
@@ -1120,6 +1123,9 @@ pref("dom.audiochannel.mutedByDefault", true);
 // The app origin of bluetooth app, which is responsible for listening pairing
 // requests.
 pref("dom.bluetooth.app-origin", "app://bluetooth.gaiamobile.org");
+
+// Enable W3C WebBluetooth API and disable B2G only GATT client API.
+pref("dom.bluetooth.webbluetooth.enabled", false);
 
 // Default device name for Presentation API
 pref("dom.presentation.device.name", "Firefox OS");

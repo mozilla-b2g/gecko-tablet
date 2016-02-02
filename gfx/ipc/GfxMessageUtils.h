@@ -230,14 +230,6 @@ struct ParamTraits<mozilla::layers::ScaleMode>
 {};
 
 template <>
-struct ParamTraits<gfxImageFormat>
-  : public ContiguousEnumSerializer<
-             gfxImageFormat,
-             gfxImageFormat::ARGB32,
-             gfxImageFormat::Unknown>
-{};
-
-template <>
 struct ParamTraits<mozilla::gfx::AttributeName>
   : public ContiguousEnumSerializer<
              mozilla::gfx::AttributeName,
@@ -287,8 +279,8 @@ struct ParamTraits<mozilla::layers::DiagnosticTypes>
 template <>
 struct ParamTraits<mozilla::PixelFormat>
   : public EnumSerializer<mozilla::PixelFormat,
-                          gfxImageFormat::ARGB32,
-                          gfxImageFormat::Unknown>
+                          SurfaceFormat::A8R8G8B8_UINT32,
+                          SurfaceFormat::UNKNOWN>
 {};
 */
 
@@ -375,10 +367,10 @@ struct RegionParamTraits
 
   static void Write(Message* msg, const paramType& param)
   {
-    Iter it(param);
-    while (const Rect* r = it.Next()) {
-      MOZ_RELEASE_ASSERT(!r->IsEmpty());
-      WriteParam(msg, *r);
+    for (auto iter = param.RectIter(); !iter.Done(); iter.Next()) {
+      const Rect& r = iter.Get();
+      MOZ_RELEASE_ASSERT(!r.IsEmpty());
+      WriteParam(msg, r);
     }
     // empty rects are sentinel values because nsRegions will never
     // contain them
@@ -674,7 +666,7 @@ struct ParamTraits<nsRect>
 
 template<>
 struct ParamTraits<nsRegion>
-  : RegionParamTraits<nsRegion, nsRect, nsRegionRectIterator>
+  : RegionParamTraits<nsRegion, nsRect, nsRegion::RectIterator>
 {};
 
 template <>
@@ -708,6 +700,7 @@ struct ParamTraits<mozilla::layers::FrameMetrics>
     WriteParam(aMsg, aParam.mPageScrollAmount);
     WriteParam(aMsg, aParam.mClipRect);
     WriteParam(aMsg, aParam.mMaskLayerIndex);
+    WriteParam(aMsg, aParam.mPaintRequestTime);
     WriteParam(aMsg, aParam.mIsRootContent);
     WriteParam(aMsg, aParam.mHasScrollgrab);
     WriteParam(aMsg, aParam.mUpdateScrollOffset);
@@ -769,6 +762,7 @@ struct ParamTraits<mozilla::layers::FrameMetrics>
             ReadParam(aMsg, aIter, &aResult->mPageScrollAmount) &&
             ReadParam(aMsg, aIter, &aResult->mClipRect) &&
             ReadParam(aMsg, aIter, &aResult->mMaskLayerIndex) &&
+            ReadParam(aMsg, aIter, &aResult->mPaintRequestTime) &&
             ReadBoolForBitfield(aMsg, aIter, aResult, &paramType::SetIsRootContent) &&
             ReadBoolForBitfield(aMsg, aIter, aResult, &paramType::SetHasScrollgrab) &&
             ReadBoolForBitfield(aMsg, aIter, aResult, &paramType::SetUpdateScrollOffset) &&

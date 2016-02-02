@@ -229,6 +229,8 @@ var AboutPrivateBrowsingListener = {
                                   false, true);
     chromeGlobal.addEventListener("AboutPrivateBrowsingToggleTrackingProtection", this,
                                   false, true);
+    chromeGlobal.addEventListener("AboutPrivateBrowsingDontShowIntroPanelAgain", this,
+                                  false, true);
   },
 
   get isAboutPrivateBrowsing() {
@@ -245,6 +247,9 @@ var AboutPrivateBrowsingListener = {
         break;
       case "AboutPrivateBrowsingToggleTrackingProtection":
         sendAsyncMessage("AboutPrivateBrowsing:ToggleTrackingProtection");
+        break;
+      case "AboutPrivateBrowsingDontShowIntroPanelAgain":
+        sendAsyncMessage("AboutPrivateBrowsing:DontShowIntroPanelAgain");
         break;
     }
   },
@@ -616,6 +621,9 @@ var DOMFullscreenHandler = {
   },
 
   get _windowUtils() {
+    if (!content) {
+      return null;
+    }
     return content.QueryInterface(Ci.nsIInterfaceRequestor)
                   .getInterface(Ci.nsIDOMWindowUtils);
   },
@@ -633,7 +641,9 @@ var DOMFullscreenHandler = {
         break;
       }
       case "DOMFullscreen:CleanUp": {
-        this._windowUtils.exitFullscreen();
+        if (this._windowUtils) {
+          this._windowUtils.exitFullscreen();
+        }
         this._fullscreenDoc = null;
         break;
       }

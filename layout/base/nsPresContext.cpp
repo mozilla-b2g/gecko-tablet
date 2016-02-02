@@ -41,6 +41,7 @@
 #include "gfxPlatform.h"
 #include "nsCSSRules.h"
 #include "nsFontFaceLoader.h"
+#include "mozilla/EffectCompositor.h"
 #include "mozilla/EventListenerManager.h"
 #include "prenv.h"
 #include "nsPluginFrame.h"
@@ -150,7 +151,7 @@ nsPresContext::IsDOMPaintEventPending()
   if (mFireAfterPaintEvents) {
     return true;
   }
-  nsRootPresContext* drpc = GetDisplayRootPresContext();
+  nsRootPresContext* drpc = GetRootPresContext();
   if (drpc && drpc->mRefreshDriver->ViewManagerFlushIsPending()) {
     // Since we're promising that there will be a MozAfterPaint event
     // fired, we record an empty invalidation in case display list
@@ -366,6 +367,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsPresContext)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAnimationManager);
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocument);
   // NS_IMPL_CYCLE_COLLECTION_TRAVERSE_RAWPTR(mDeviceContext); // not xpcom
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEffectCompositor);
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEventManager);
   // NS_IMPL_CYCLE_COLLECTION_TRAVERSE_RAWPTR(mLanguage); // an atom
 
@@ -379,6 +381,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsPresContext)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mAnimationManager);
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocument);
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDeviceContext); // worth bothering?
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mEffectCompositor);
   // NS_RELEASE(tmp->mLanguage); // an atom
   // NS_IMPL_CYCLE_COLLECTION_UNLINK(mTheme); // a service
   // NS_IMPL_CYCLE_COLLECTION_UNLINK(mLangService); // a service
@@ -1001,8 +1004,8 @@ nsPresContext::Init(nsDeviceContext* aDeviceContext)
 
   mEventManager = new mozilla::EventStateManager();
 
+  mEffectCompositor = new mozilla::EffectCompositor(this);
   mTransitionManager = new nsTransitionManager(this);
-
   mAnimationManager = new nsAnimationManager(this);
 
   if (mDocument->GetDisplayDocument()) {
@@ -1046,9 +1049,6 @@ nsPresContext::Init(nsDeviceContext* aDeviceContext)
       mRefreshDriver = new nsRefreshDriver(this);
     }
   }
-
-  // Initialise refresh tick counters for OMTA
-  mLastStyleUpdateForAllAnimations = mRefreshDriver->MostRecentRefresh();
 
   // Initialize restyle manager after initializing the refresh driver.
   // Since RestyleManager is also the name of a method of nsPresContext,
@@ -1180,6 +1180,10 @@ nsPresContext::SetShell(nsIPresShell* aShell)
       }
     }
   } else {
+    if (mEffectCompositor) {
+      mEffectCompositor->Disconnect();
+      mEffectCompositor = nullptr;
+    }
     if (mTransitionManager) {
       mTransitionManager->Disconnect();
       mTransitionManager = nullptr;
@@ -1323,33 +1327,6 @@ nsPresContext::GetRootPresContext()
   for (;;) {
     nsPresContext* parent = pc->GetParentPresContext();
     if (!parent)
-      break;
-    pc = parent;
-  }
-  return pc->IsRoot() ? static_cast<nsRootPresContext*>(pc) : nullptr;
-}
-
-nsRootPresContext*
-nsPresContext::GetDisplayRootPresContext()
-{
-  nsPresContext* pc = this;
-  for (;;) {
-    nsPresContext* parent = pc->GetParentPresContext();
-    if (!parent) {
-      // Not sure if this is always strictly the parent, but it works for GetRootPresContext
-      // where the current pres context has no frames.
-      nsIDocument *doc = pc->Document();
-      if (doc) {
-        doc = doc->GetParentDocument();
-        if (doc) {
-          nsIPresShell* shell = doc->GetShell();
-          if (shell) {
-            parent = shell->GetPresContext();
-          }
-        }
-      }
-    }
-    if (!parent || parent == pc)
       break;
     pc = parent;
   }
@@ -1756,24 +1733,6 @@ nsPresContext::Detach()
 }
 
 bool
-nsPresContext::StyleUpdateForAllAnimationsIsUpToDate() const
-{
-  return mLastStyleUpdateForAllAnimations == mRefreshDriver->MostRecentRefresh();
-}
-
-void
-nsPresContext::TickLastStyleUpdateForAllAnimations()
-{
-  mLastStyleUpdateForAllAnimations = mRefreshDriver->MostRecentRefresh();
-}
-
-void
-nsPresContext::ClearLastStyleUpdateForAllAnimations()
-{
-  mLastStyleUpdateForAllAnimations = TimeStamp();
-}
-
-bool
 nsPresContext::BidiEnabledExternal() const
 {
   return BidiEnabledInternal();
@@ -1851,7 +1810,7 @@ nsPresContext::IsTopLevelWindowInactive()
     return false;
   }
 
-  nsCOMPtr<nsPIDOMWindow> domWindow = rootItem->GetWindow();
+  nsCOMPtr<nsPIDOMWindowOuter> domWindow = rootItem->GetWindow();
 
   return domWindow && !domWindow->IsActive();
 }
@@ -2004,13 +1963,9 @@ NotifyTabUIResolutionChanged(TabParent* aTab, void *aArg)
 }
 
 static void
-NotifyChildrenUIResolutionChanged(nsIDOMWindow* aWindow)
+NotifyChildrenUIResolutionChanged(nsPIDOMWindowOuter* aWindow)
 {
-  nsCOMPtr<nsPIDOMWindow> piWin = do_QueryInterface(aWindow);
-  if (!piWin) {
-    return;
-  }
-  nsCOMPtr<nsIDocument> doc = piWin->GetExtantDoc();
+  nsCOMPtr<nsIDocument> doc = aWindow->GetExtantDoc();
   RefPtr<nsPIWindowRoot> topLevelWin = nsContentUtils::GetWindowRoot(doc);
   if (!topLevelWin) {
     return;
@@ -2029,7 +1984,9 @@ nsPresContext::UIResolutionChangedInternal()
   }
 
   // Recursively notify all remote leaf descendants of the change.
-  NotifyChildrenUIResolutionChanged(mDocument->GetWindow());
+  if (nsPIDOMWindowOuter* window = mDocument->GetWindow()) {
+    NotifyChildrenUIResolutionChanged(window);
+  }
 
   mDocument->EnumerateSubDocuments(UIResolutionChangedSubdocumentCallback,
                                    nullptr);
@@ -2369,7 +2326,7 @@ nsPresContext::EnsureSafeToHandOutCSSRules()
 void
 nsPresContext::FireDOMPaintEvent(nsInvalidateRequestList* aList)
 {
-  nsPIDOMWindow* ourWindow = mDocument->GetWindow();
+  nsPIDOMWindowInner* ourWindow = mDocument->GetInnerWindow();
   if (!ourWindow)
     return;
 
@@ -2422,7 +2379,7 @@ MayHavePaintEventListenerSubdocumentCallback(nsIDocument* aDocument, void* aData
 }
 
 static bool
-MayHavePaintEventListener(nsPIDOMWindow* aInnerWindow)
+MayHavePaintEventListener(nsPIDOMWindowInner* aInnerWindow)
 {
   if (!aInnerWindow)
     return false;
@@ -2454,7 +2411,7 @@ MayHavePaintEventListener(nsPIDOMWindow* aInnerWindow)
   if (node)
     return MayHavePaintEventListener(node->OwnerDoc()->GetInnerWindow());
 
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(parentTarget);
+  nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(parentTarget);
   if (window)
     return MayHavePaintEventListener(window);
 
@@ -2552,9 +2509,8 @@ nsPresContext::NotifySubDocInvalidation(ContainerLayer* aContainer,
 
   nsIntPoint topLeft = aContainer->GetVisibleRegion().ToUnknownRegion().GetBounds().TopLeft();
 
-  nsIntRegionRectIterator iter(aRegion);
-  while (const nsIntRect* r = iter.Next()) {
-    nsIntRect rect = *r;
+  for (auto iter = aRegion.RectIter(); !iter.Done(); iter.Next()) {
+    nsIntRect rect(iter.Get());
     //PresContext coordinate space is relative to the start of our visible
     // region. Is this really true? This feels like the wrong way to get the right
     // answer.

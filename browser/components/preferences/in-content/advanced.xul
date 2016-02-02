@@ -22,6 +22,11 @@
   <preference id="accessibility.blockautorefresh"
               name="accessibility.blockautorefresh"
               type="bool"/>
+#ifdef XP_WIN
+  <preference id="ui.osk.enabled"
+              name="ui.osk.enabled"
+              type="bool"/>
+#endif
 
   <preference id="general.autoScroll"
               name="general.autoScroll"
@@ -147,6 +152,13 @@
       <groupbox id="accessibilityGroup" align="start">
         <caption><label>&accessibility.label;</label></caption>
 
+#ifdef XP_WIN
+        <checkbox id="useOnScreenKeyboard"
+                  hidden="true"
+                  label="&useOnScreenKeyboard.label;"
+                  accesskey="&useOnScreenKeyboard.accesskey;"
+                  preference="ui.osk.enabled"/>
+#endif
         <checkbox id="useCursorNavigation"
                   label="&useCursorNavigation.label;"
                   accesskey="&useCursorNavigation.accesskey;"
@@ -187,7 +199,7 @@
 #ifdef MOZ_DATA_REPORTING
     <!-- Data Choices -->
     <tabpanel id="dataChoicesPanel" orient="vertical">
-#ifdef MOZ_SERVICES_HEALTHREPORT
+#ifdef MOZ_TELEMETRY_REPORTING
       <groupbox>
         <caption>
           <checkbox id="submitHealthReportBox" label="&enableHealthReport.label;"
@@ -200,7 +212,6 @@
             <label id="FHRLearnMore"
                    class="text-link">&healthReportLearnMore.label;</label>
           </hbox>
-#ifdef MOZ_TELEMETRY_REPORTING
           <hbox class="indent">
             <groupbox flex="1">
               <caption>
@@ -216,7 +227,6 @@
               </hbox>
             </groupbox>
           </hbox>
-#endif
         </vbox>
       </groupbox>
 #endif

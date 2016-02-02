@@ -66,6 +66,7 @@
 #include "nsIDOMWindow.h"
 #include "mozilla/ModuleUtils.h"
 #include "nsIIOService2.h"
+#include "nsILocaleService.h"
 #include "nsIObserverService.h"
 #include "nsINativeAppSupport.h"
 #include "nsIProcess.h"
@@ -687,51 +688,6 @@ SetUpSandboxEnvironment()
   }
 }
 
-#if defined(NIGHTLY_BUILD)
-static void
-CleanUpOldSandboxEnvironment()
-{
-  // Temporary code to clean up the old low integrity temp directories.
-  // The removal of this is tracked by bug 1165818.
-  nsCOMPtr<nsIFile> lowIntegrityMozilla;
-  nsresult rv = NS_GetSpecialDirectory(NS_WIN_LOW_INTEGRITY_TEMP_BASE,
-                              getter_AddRefs(lowIntegrityMozilla));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return;
-  }
-
-  nsCOMPtr<nsISimpleEnumerator> iter;
-  rv = lowIntegrityMozilla->GetDirectoryEntries(getter_AddRefs(iter));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return;
-  }
-
-  bool more;
-  nsCOMPtr<nsISupports> elem;
-  while (NS_SUCCEEDED(iter->HasMoreElements(&more)) && more) {
-    rv = iter->GetNext(getter_AddRefs(elem));
-    if (NS_FAILED(rv)) {
-      break;
-    }
-
-    nsCOMPtr<nsIFile> file = do_QueryInterface(elem);
-    if (!file) {
-      continue;
-    }
-
-    nsAutoString leafName;
-    rv = file->GetLeafName(leafName);
-    if (NS_FAILED(rv)) {
-      continue;
-    }
-
-    if (leafName.Find(NS_LITERAL_STRING("MozTemp-{")) == 0) {
-      file->Remove(/* aRecursive */ true);
-    }
-  }
-}
-#endif
-
 static void
 CleanUpSandboxEnvironment()
 {
@@ -739,10 +695,6 @@ CleanUpSandboxEnvironment()
   if (!IsVistaOrLater()) {
     return;
   }
-
-#if defined(NIGHTLY_BUILD)
-  CleanUpOldSandboxEnvironment();
-#endif
 
   // Get temp directory suffix pref.
   nsAdoptingString tempDirSuffix =
@@ -994,17 +946,17 @@ nsXULAppInfo::GetProcessID(uint32_t* aResult)
 }
 
 static bool gBrowserTabsRemoteAutostart = false;
-static nsString gBrowserTabsRemoteDisabledReason;
+static uint64_t gBrowserTabsRemoteStatus = 0;
 static bool gBrowserTabsRemoteAutostartInitialized = false;
 
 NS_IMETHODIMP
 nsXULAppInfo::Observe(nsISupports *aSubject, const char *aTopic, const char16_t *aData) {
   if (!nsCRT::strcmp(aTopic, "getE10SBlocked")) {
-    nsCOMPtr<nsISupportsString> ret = do_QueryInterface(aSubject);
+    nsCOMPtr<nsISupportsPRUint64> ret = do_QueryInterface(aSubject);
     if (!ret)
       return NS_ERROR_FAILURE;
 
-    ret->SetData(gBrowserTabsRemoteDisabledReason);
+    ret->SetData(gBrowserTabsRemoteStatus);
 
     return NS_OK;
   }
@@ -2167,7 +2119,7 @@ ShowProfileManager(nsIToolkitProfileService* aProfileSvc,
         (do_GetService(NS_APPSTARTUP_CONTRACTID));
       NS_ENSURE_TRUE(appStartup, NS_ERROR_FAILURE);
 
-      nsCOMPtr<nsIDOMWindow> newWindow;
+      nsCOMPtr<mozIDOMWindowProxy> newWindow;
       rv = windowWatcher->OpenWindow(nullptr,
                                      kProfileManagerURL,
                                      "_blank",
@@ -2958,7 +2910,42 @@ static void MOZ_gdk_display_close(GdkDisplay *display)
   (void) display;
 #endif
 }
-#endif // MOZ_WIDGET_GTK2
+
+static const char* detectDisplay(void)
+{
+  bool tryX11 = false;
+  bool tryWayland = false;
+  bool tryBroadway = false;
+
+  // Honor user backend selection
+  const char *backend = PR_GetEnv("GDK_BACKEND");
+  if (!backend || strstr(backend, "*")) {
+    // Try all backends
+    tryX11 = true;
+    tryWayland = true;
+    tryBroadway = true;
+  } else if (backend) {
+    if (strstr(backend, "x11"))
+      tryX11 = true;
+    if (strstr(backend, "wayland"))
+      tryWayland = true;
+    if (strstr(backend, "broadway"))
+      tryBroadway = true;
+  }
+
+  const char *display_name;
+  if (tryX11 && (display_name = PR_GetEnv("DISPLAY"))) {
+    return display_name;
+  } else if (tryWayland && (display_name = PR_GetEnv("WAYLAND_DISPLAY"))) {
+    return display_name;
+  } else if (tryBroadway && (display_name = PR_GetEnv("BROADWAY_DISPLAY"))) {
+    return display_name;
+  }
+
+  PR_fprintf(PR_STDERR, "Error: GDK_BACKEND does not match available displays\n");
+  return nullptr;
+}
+#endif // MOZ_WIDGET_GTK
 
 /** 
  * NSPR will search for the "nspr_use_zone_allocator" symbol throughout
@@ -3715,12 +3702,12 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
 #if defined(MOZ_WIDGET_GTK)
   // display_name is owned by gdk.
   const char *display_name = gdk_get_display_arg_name();
+  bool saveDisplayArg = false;
   if (display_name) {
-    SaveWordToEnv("DISPLAY", nsDependentCString(display_name));
+    saveDisplayArg = true;
   } else {
-    display_name = PR_GetEnv("DISPLAY");
+    display_name = detectDisplay();
     if (!display_name) {
-      PR_fprintf(PR_STDERR, "Error: no display specified\n");
       return 1;
     }
   }
@@ -3731,16 +3718,19 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
   XInitThreads();
 #endif
 #if defined(MOZ_WIDGET_GTK)
-  {
-    mGdkDisplay = gdk_display_open(display_name);
-    if (!mGdkDisplay) {
-      PR_fprintf(PR_STDERR, "Error: cannot open display: %s\n", display_name);
-      return 1;
+  mGdkDisplay = gdk_display_open(display_name);
+  if (!mGdkDisplay) {
+    PR_fprintf(PR_STDERR, "Error: cannot open display: %s\n", display_name);
+    return 1;
+  }
+  gdk_display_manager_set_default_display (gdk_display_manager_get(),
+                                           mGdkDisplay);
+  if (GDK_IS_X11_DISPLAY(mGdkDisplay)) {
+    if (saveDisplayArg) {
+      SaveWordToEnv("DISPLAY", nsDependentCString(display_name));
     }
-    gdk_display_manager_set_default_display (gdk_display_manager_get(),
-                                             mGdkDisplay);
-    if (!GDK_IS_X11_DISPLAY(mGdkDisplay))
-      mDisableRemote = true;
+  } else {
+    mDisableRemote = true;
   }
 #endif
 #ifdef MOZ_ENABLE_XREMOTE
@@ -4592,19 +4582,7 @@ XRE_IsContentProcess()
   return XRE_GetProcessType() == GeckoProcessType_Content;
 }
 
-static void
-LogE10sBlockedReason(const char *reason) {
-  gBrowserTabsRemoteDisabledReason.Assign(NS_ConvertASCIItoUTF16(reason));
-
-  nsAutoString msg(NS_LITERAL_STRING("==================\nE10s has been blocked from running because:\n"));
-  msg.Append(gBrowserTabsRemoteDisabledReason);
-  msg.AppendLiteral("\n==================\n");
-  nsCOMPtr<nsIConsoleService> console(do_GetService("@mozilla.org/consoleservice;1"));
-  if (console) {
-    console->LogStringMessage(msg.get());
-  }
-}
-
+// If you add anything to this enum, please update about:support to reflect it
 enum {
   kE10sEnabledByUser = 0,
   kE10sEnabledByDefault = 1,
@@ -4612,6 +4590,8 @@ enum {
   // kE10sDisabledInSafeMode = 3, was removed in bug 1172491.
   kE10sDisabledForAccessibility = 4,
   kE10sDisabledForMacGfx = 5,
+  kE10sDisabledForBidi = 6,
+  kE10sDisabledForAddons = 7,
 };
 
 #ifdef XP_WIN
@@ -4667,6 +4647,37 @@ mozilla::BrowserTabsRemoteAutostart()
   }
 #endif // XP_WIN
 
+  /**
+   * Avoids enabling e10s for certain locales that require bidi selection,
+   * which currently doesn't work well with e10s.
+   */
+  bool disabledForBidi = false;
+  do { // to allow 'break' to abort this block if a call fails
+    nsresult rv;
+    nsCOMPtr<nsILocaleService> ls =
+      do_GetService(NS_LOCALESERVICE_CONTRACTID, &rv);
+    if (NS_FAILED(rv))
+      break;
+
+    nsCOMPtr<nsILocale> appLocale;
+    rv = ls->GetApplicationLocale(getter_AddRefs(appLocale));
+    if (NS_FAILED(rv))
+      break;
+
+    nsString localeStr;
+    rv = appLocale->
+      GetCategory(NS_LITERAL_STRING(NSILOCALE_MESSAGE), localeStr);
+    if (NS_FAILED(rv))
+      break;
+
+    if (localeStr.EqualsLiteral("ar") ||
+        localeStr.EqualsLiteral("fa") ||
+        localeStr.EqualsLiteral("he") ||
+        localeStr.EqualsLiteral("ur")) {
+      disabledForBidi = true;
+    }
+  } while (0);
+
   bool optInPref = Preferences::GetBool("browser.tabs.remote.autostart", false);
   bool trialPref = Preferences::GetBool("browser.tabs.remote.autostart.2", false);
   bool prefEnabled = optInPref || trialPref;
@@ -4685,14 +4696,26 @@ mozilla::BrowserTabsRemoteAutostart()
   // When running tests with 'layers.offmainthreadcomposition.testing.enabled', e10s must be
   // allowed because these tests must be allowed to run remotely.
   // We are also allowing e10s to be enabled on Beta (which doesn't have E10S_TESTING_ONLY defined.
-  bool e10sAllowed = Preferences::GetDefaultCString("app.update.channel").EqualsLiteral("beta") ||
+  bool e10sAllowed = !Preferences::GetDefaultCString("app.update.channel").EqualsLiteral("release") ||
                      gfxPrefs::GetSingleton().LayersOffMainThreadCompositionTestingEnabled();
+#endif
+
+  bool addonsCanDisable = Preferences::GetBool("extensions.e10sBlocksEnabling", false);
+  bool disabledByAddons = Preferences::GetBool("extensions.e10sBlockedByAddons", false);
+
+#ifdef MOZ_CRASHREPORTER
+  CrashReporter::AnnotateCrashReport(NS_LITERAL_CSTRING("AddonsShouldHaveBlockedE10s"),
+                                     disabledByAddons ? NS_LITERAL_CSTRING("1")
+                                                      : NS_LITERAL_CSTRING("0"));
 #endif
 
   if (e10sAllowed && prefEnabled) {
     if (disabledForA11y) {
       status = kE10sDisabledForAccessibility;
-      LogE10sBlockedReason("An accessibility tool is or was active. See bug 1198459.");
+    } else if (disabledForBidi) {
+      status = kE10sDisabledForBidi;
+    } else if (addonsCanDisable && disabledByAddons) {
+      status = kE10sDisabledForAddons;
     } else {
       gBrowserTabsRemoteAutostart = true;
     }
@@ -4730,9 +4753,7 @@ mozilla::BrowserTabsRemoteAutostart()
 
     if (accelDisabled) {
       gBrowserTabsRemoteAutostart = false;
-
       status = kE10sDisabledForMacGfx;
-      LogE10sBlockedReason("Hardware acceleration is disabled");
     }
   }
 #endif // defined(XP_MACOSX)
@@ -4744,8 +4765,9 @@ mozilla::BrowserTabsRemoteAutostart()
     status = kE10sEnabledByUser;
   }
 
-  mozilla::Telemetry::Accumulate(mozilla::Telemetry::E10S_AUTOSTART, gBrowserTabsRemoteAutostart);
-  mozilla::Telemetry::Accumulate(mozilla::Telemetry::E10S_AUTOSTART_STATUS, status);
+  gBrowserTabsRemoteStatus = status;
+
+  mozilla::Telemetry::Accumulate(mozilla::Telemetry::E10S_STATUS, status);
   if (Preferences::GetBool("browser.enabledE10SFromPrompt", false)) {
     mozilla::Telemetry::Accumulate(mozilla::Telemetry::E10S_STILL_ACCEPTED_FROM_PROMPT,
                                     gBrowserTabsRemoteAutostart);

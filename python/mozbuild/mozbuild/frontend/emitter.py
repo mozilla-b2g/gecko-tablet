@@ -538,7 +538,7 @@ class TreeMetadataEmitter(LoggingMixin):
                         'action', 'generate_symbols_file.py')
                     yield GeneratedFile(context, script,
                         'generate_symbols_file', lib.symbols_file,
-                        [symbols_file.full_path])
+                        [symbols_file.full_path], lib.defines.get_defines())
             if static_lib:
                 lib = StaticLibrary(context, libname, **static_args)
                 self._libs[libname].append(lib)
@@ -595,6 +595,7 @@ class TreeMetadataEmitter(LoggingMixin):
             'LD_VERSION_SCRIPT',
             'USE_EXTENSION_MANIFEST',
             'NO_JS_MANIFEST',
+            'HAS_MISC_RULE',
         ]
         for v in varlist:
             if v in context and context[v]:
@@ -1033,7 +1034,6 @@ class TreeMetadataEmitter(LoggingMixin):
                     else 'USE_LIBS'))
 
     def _process_test_manifests(self, context):
-
         for prefix, info in TEST_MANIFESTS.items():
             for path in context.get('%s_MANIFESTS' % prefix, []):
                 for obj in self._process_test_manifest(context, info, path):
@@ -1063,7 +1063,7 @@ class TreeMetadataEmitter(LoggingMixin):
             m = manifestparser.TestManifest(manifests=[path], strict=True,
                                             rootdir=context.config.topsrcdir)
             defaults = m.manifest_defaults[os.path.normpath(path)]
-            if not m.tests and not 'support-files' in defaults:
+            if not m.tests:
                 raise SandboxValidationError('Empty test manifest: %s'
                     % path, context)
 
@@ -1161,10 +1161,6 @@ class TreeMetadataEmitter(LoggingMixin):
                         ((mozpath.join(out_dir, manifest_relpath)), True)
 
                 process_support_files(test)
-
-            if not filtered:
-                # If there are no tests, look for support-files under DEFAULT.
-                process_support_files(defaults)
 
             # We also copy manifests into the output directory,
             # including manifests from [include:foo] directives.
@@ -1308,7 +1304,6 @@ class TreeMetadataEmitter(LoggingMixin):
     def _emit_directory_traversal_from_context(self, context):
         o = DirectoryTraversal(context)
         o.dirs = context.get('DIRS', [])
-        o.affected_tiers = context.get_affected_tiers()
 
         # Some paths have a subconfigure, yet also have a moz.build. Those
         # shouldn't end up in self._external_paths.

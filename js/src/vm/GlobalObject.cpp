@@ -24,7 +24,7 @@
 #include "builtin/ModuleObject.h"
 #include "builtin/Object.h"
 #include "builtin/RegExp.h"
-#include "builtin/SIMD.h"
+#include "builtin/SelfHostingDefines.h"
 #include "builtin/SymbolObject.h"
 #include "builtin/TypedObject.h"
 #include "builtin/WeakMapObject.h"
@@ -91,6 +91,23 @@ js::GlobalObject::getTypedObjectModule() const {
 }
 
 /* static */ bool
+GlobalObject::skipDeselectedConstructor(JSContext* cx, JSProtoKey key)
+{
+#ifdef ENABLE_SHARED_ARRAY_BUFFER
+    // Return true if the given constructor has been disabled at run-time.
+    switch (key) {
+      case JSProto_Atomics:
+      case JSProto_SharedArrayBuffer:
+        return !cx->compartment()->creationOptions().getSharedMemoryAndAtomicsEnabled();
+      default:
+        return false;
+    }
+#else
+    return false;
+#endif
+}
+
+/* static */ bool
 GlobalObject::ensureConstructor(JSContext* cx, Handle<GlobalObject*> global, JSProtoKey key)
 {
     if (global->isStandardClassResolved(key))
@@ -114,6 +131,9 @@ GlobalObject::resolveConstructor(JSContext* cx, Handle<GlobalObject*> global, JS
     const Class* clasp = ProtoKeyToClass(key);
     if (!init && !clasp)
         return true;  // JSProto_Null or a compile-time-disabled feature.
+
+    if (skipDeselectedConstructor(cx, key))
+        return true;
 
     // Some classes have no init routine, which means that they're disabled at
     // compile-time. We could try to enforce that callers never pass such keys

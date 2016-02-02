@@ -331,12 +331,10 @@ LineHasNonEmptyContentWorker(nsIFrame* aFrame)
   // Look for non-empty frames, but ignore inline and br frames.
   // For inline frames, descend into the children, if any.
   if (aFrame->GetType() == nsGkAtoms::inlineFrame) {
-    nsIFrame* child = aFrame->GetFirstPrincipalChild();
-    while (child) {
+    for (nsIFrame* child : aFrame->PrincipalChildList()) {
       if (LineHasNonEmptyContentWorker(child)) {
         return true;
       }
-      child = child->GetNextSibling();
     }
   } else {
     if (aFrame->GetType() != nsGkAtoms::brFrame &&
@@ -1100,6 +1098,9 @@ nsDocumentEncoder::EncodeToStringWithMaxLength(uint32_t aMaxLength,
   static const size_t bufferSize = 2048;
   if (!mCachedBuffer) {
     mCachedBuffer = nsStringBuffer::Alloc(bufferSize).take();
+    if (NS_WARN_IF(!mCachedBuffer)) {
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
   }
   NS_ASSERTION(!mCachedBuffer->IsReadonly(),
                "DocumentEncoder shouldn't keep reference to non-readonly buffer!");

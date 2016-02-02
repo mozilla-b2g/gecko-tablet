@@ -12,6 +12,7 @@
 #include "gfx2DGlue.h"
 #include "gfxUtils.h"
 #include "mozilla/gfx/2D.h"
+#include "GeckoProfiler.h"
 
 using namespace mozilla::gfx;
 
@@ -112,7 +113,6 @@ CompositingRenderTargetD3D9::CompositingRenderTargetD3D9(IDirect3DTexture9* aTex
                                                          const gfx::IntRect& aRect)
   : CompositingRenderTarget(aRect.TopLeft())
   , mInitMode(aInit)
-  , mInitialized(false)
 {
   MOZ_COUNT_CTOR(CompositingRenderTargetD3D9);
   MOZ_ASSERT(aTexture);
@@ -121,6 +121,10 @@ CompositingRenderTargetD3D9::CompositingRenderTargetD3D9(IDirect3DTexture9* aTex
   mTexture->GetSurfaceLevel(0, getter_AddRefs(mSurface));
   NS_ASSERTION(mSurface, "Couldn't create surface for texture");
   TextureSourceD3D9::SetSize(aRect.Size());
+
+  if (aInit == INIT_MODE_CLEAR) {
+    ClearOnBind();
+  }
 }
 
 CompositingRenderTargetD3D9::CompositingRenderTargetD3D9(IDirect3DSurface9* aSurface,
@@ -129,11 +133,14 @@ CompositingRenderTargetD3D9::CompositingRenderTargetD3D9(IDirect3DSurface9* aSur
   : CompositingRenderTarget(aRect.TopLeft())
   , mSurface(aSurface)
   , mInitMode(aInit)
-  , mInitialized(false)
 {
   MOZ_COUNT_CTOR(CompositingRenderTargetD3D9);
   MOZ_ASSERT(mSurface);
   TextureSourceD3D9::SetSize(aRect.Size());
+
+  if (aInit == INIT_MODE_CLEAR) {
+    ClearOnBind();
+  }
 }
 
 CompositingRenderTargetD3D9::~CompositingRenderTargetD3D9()
@@ -145,10 +152,9 @@ void
 CompositingRenderTargetD3D9::BindRenderTarget(IDirect3DDevice9* aDevice)
 {
   aDevice->SetRenderTarget(0, mSurface);
-  if (!mInitialized &&
-      mInitMode == INIT_MODE_CLEAR) {
-    mInitialized = true;
+  if (mClearOnBind) {
     aDevice->Clear(0, 0, D3DCLEAR_TARGET, D3DCOLOR_RGBA(0, 0, 0, 0), 0, 0);
+    mClearOnBind = false;
   }
 }
 
@@ -227,6 +233,7 @@ TextureSourceD3D9::DataToTexture(DeviceManagerD3D9* aDeviceManager,
                                  _D3DFORMAT aFormat,
                                  uint32_t aBPP)
 {
+  PROFILER_LABEL_FUNC(js::ProfileEntry::Category::GRAPHICS);
   RefPtr<IDirect3DSurface9> surface;
   D3DLOCKED_RECT lockedRect;
   RefPtr<IDirect3DTexture9> texture = InitTextures(aDeviceManager, aSize, aFormat,
@@ -322,6 +329,7 @@ DataTextureSourceD3D9::Update(gfx::DataSourceSurface* aSurface,
                               nsIntRegion* aDestRegion,
                               gfx::IntPoint* aSrcOffset)
 {
+  PROFILER_LABEL_FUNC(js::ProfileEntry::Category::GRAPHICS);
   // Right now we only support full surface update. If aDestRegion is provided,
   // It will be ignored. Incremental update with a source offset is only used
   // on Mac so it is not clear that we ever will need to support it for D3D.
@@ -636,6 +644,7 @@ DXGID3D9TextureData::Create(gfx::IntSize aSize, gfx::SurfaceFormat aFormat,
                             TextureFlags aFlags,
                             IDirect3DDevice9* aDevice)
 {
+  PROFILER_LABEL_FUNC(js::ProfileEntry::Category::GRAPHICS);
   MOZ_ASSERT(aFormat == gfx::SurfaceFormat::B8G8R8X8);
   if (aFormat != gfx::SurfaceFormat::B8G8R8X8) {
     return nullptr;
@@ -707,6 +716,7 @@ bool
 DataTextureSourceD3D9::UpdateFromTexture(IDirect3DTexture9* aTexture,
                                          const nsIntRegion* aRegion)
 {
+  PROFILER_LABEL_FUNC(js::ProfileEntry::Category::GRAPHICS);
   MOZ_ASSERT(aTexture);
 
   D3DSURFACE_DESC desc;
@@ -749,18 +759,17 @@ DataTextureSourceD3D9::UpdateFromTexture(IDirect3DTexture9* aTexture,
   }
 
   if (aRegion) {
-    nsIntRegionRectIterator iter(*aRegion);
-    const IntRect *iterRect;
-    while ((iterRect = iter.Next())) {
+    for (auto iter = aRegion->RectIter(); !iter.Done(); iter.Next()) {
+      const IntRect& iterRect = iter.Get();
       RECT rect;
-      rect.left = iterRect->x;
-      rect.top = iterRect->y;
-      rect.right = iterRect->XMost();
-      rect.bottom = iterRect->YMost();
+      rect.left = iterRect.x;
+      rect.top = iterRect.y;
+      rect.right = iterRect.XMost();
+      rect.bottom = iterRect.YMost();
 
       POINT point;
-      point.x = iterRect->x;
-      point.y = iterRect->y;
+      point.x = iterRect.x;
+      point.y = iterRect.y;
       hr = dm->device()->UpdateSurface(srcSurface, &rect, dstSurface, &point);
       if (FAILED(hr)) {
         NS_WARNING("Failed Update the surface");

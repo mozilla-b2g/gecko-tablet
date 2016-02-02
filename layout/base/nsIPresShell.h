@@ -77,7 +77,7 @@ class gfxContext;
 class nsIDOMEvent;
 class nsDisplayList;
 class nsDisplayListBuilder;
-class nsPIDOMWindow;
+class nsPIDOMWindowOuter;
 struct nsPoint;
 class nsINode;
 struct nsRect;
@@ -137,10 +137,10 @@ typedef struct CapturingContentInfo {
   mozilla::StaticRefPtr<nsIContent> mContent;
 } CapturingContentInfo;
 
-// 268f336d-efb4-41b7-b61b-ac7f3926cf68
+// f17842ee-f1f0-4193-814f-70d706b67060
 #define NS_IPRESSHELL_IID \
-{ 0x268f336d, 0xefb4, 0x41b7, \
-  { 0xb6, 0x1b, 0xac, 0x7f, 0x39, 0x26, 0xcf, 0x68 } }
+{ 0xf17842ee, 0xf1f0, 0x4193, \
+  { 0x81, 0x4f, 0x70, 0xd7, 0x06, 0xb6, 0x70, 0x60 } }
 
 // debug VerifyReflow flags
 #define VERIFY_REFLOW_ON                    0x01
@@ -909,6 +909,20 @@ public:
   bool IsPaintingSuppressed() const { return mPaintingSuppressed; }
 
   /**
+   * Pause painting by freezing the refresh driver of this and all parent
+   * presentations. This may not have the desired effect if this pres shell
+   * has its own refresh driver.
+   */
+  virtual void PausePainting() = 0;
+
+  /**
+   * Resume painting by thawing the refresh driver of this and all parent
+   * presentations. This may not have the desired effect if this pres shell
+   * has its own refresh driver.
+   */
+  virtual void ResumePainting() = 0;
+
+  /**
    * Unsuppress painting.
    */
   virtual void UnsuppressPainting() = 0;
@@ -1353,7 +1367,7 @@ public:
   /**
    * Get the root DOM window of this presShell.
    */
-  virtual already_AddRefed<nsPIDOMWindow> GetRootWindow() = 0;
+  virtual already_AddRefed<nsPIDOMWindowOuter> GetRootWindow() = 0;
 
   /**
    * Get the layer manager for the widget of the root view, if it has
@@ -1660,6 +1674,10 @@ public:
 
   void SyncWindowProperties(nsView* aView);
 
+#ifdef ANDROID
+  virtual nsIDocument* GetTouchEventTargetDocument() = 0;
+#endif
+
 protected:
   friend class nsRefreshDriver;
 
@@ -1777,6 +1795,7 @@ protected:
   bool mFontSizeInflationForceEnabled;
   bool mFontSizeInflationDisabledInMasterProcess;
   bool mFontSizeInflationEnabled;
+  bool mPaintingIsFrozen;
 
   // Dirty bit indicating that mFontSizeInflationEnabled needs to be recomputed.
   bool mFontSizeInflationEnabledIsDirty;

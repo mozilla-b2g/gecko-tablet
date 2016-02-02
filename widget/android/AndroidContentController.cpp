@@ -16,37 +16,30 @@ using mozilla::layers::APZCTreeManager;
 
 namespace mozilla {
 namespace widget {
-namespace android {
 
-NativePanZoomController::GlobalRef AndroidContentController::sNativePanZoomController = nullptr;
-
-NativePanZoomController::LocalRef
-AndroidContentController::SetNativePanZoomController(NativePanZoomController::Param obj)
+void
+AndroidContentController::Destroy()
 {
-    NativePanZoomController::LocalRef old = sNativePanZoomController;
-    sNativePanZoomController = obj;
-    return old;
+    mAndroidWindow = nullptr;
+    ChromeProcessController::Destroy();
 }
 
 void
-AndroidContentController::NotifyDefaultPrevented(uint64_t aInputBlockId,
+AndroidContentController::NotifyDefaultPrevented(APZCTreeManager* aManager,
+                                                 uint64_t aInputBlockId,
                                                  bool aDefaultPrevented)
 {
     if (!AndroidBridge::IsJavaUiThread()) {
         // The notification must reach the APZ on the Java UI thread (aka the
         // APZ "controller" thread) but we get it from the Gecko thread, so we
         // have to throw it onto the other thread.
-        AndroidBridge::Bridge()->PostTaskToUiThread(NewRunnableFunction(
-            &AndroidContentController::NotifyDefaultPrevented,
+        AndroidBridge::Bridge()->PostTaskToUiThread(NewRunnableMethod(
+            aManager, &APZCTreeManager::ContentReceivedInputBlock,
             aInputBlockId, aDefaultPrevented), 0);
         return;
     }
 
-    MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
-    APZCTreeManager* controller = nsWindow::GetAPZCTreeManager();
-    if (controller) {
-        controller->ContentReceivedInputBlock(aInputBlockId, aDefaultPrevented);
-    }
+    aManager->ContentReceivedInputBlock(aInputBlockId, aDefaultPrevented);
 }
 
 void
@@ -89,7 +82,21 @@ AndroidContentController::PostDelayedTask(Task* aTask, int aDelayMs)
 {
     AndroidBridge::Bridge()->PostTaskToUiThread(aTask, aDelayMs);
 }
+void
+AndroidContentController::UpdateOverscrollVelocity(const float aX, const float aY)
+{
+  if (mAndroidWindow) {
+    mAndroidWindow->UpdateOverscrollVelocity(aX, aY);
+  }
+}
 
-} // namespace android
+void
+AndroidContentController::UpdateOverscrollOffset(const float aX,const  float aY)
+{
+  if (mAndroidWindow) {
+    mAndroidWindow->UpdateOverscrollOffset(aX, aY);
+  }
+}
+
 } // namespace widget
 } // namespace mozilla

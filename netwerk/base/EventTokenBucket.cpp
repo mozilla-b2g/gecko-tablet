@@ -7,9 +7,11 @@
 #include "EventTokenBucket.h"
 
 #include "nsICancelable.h"
+#include "nsIIOService.h"
 #include "nsNetCID.h"
+#include "nsNetUtil.h"
+#include "nsServiceManagerUtils.h"
 #include "nsSocketTransportService2.h"
-
 #ifdef DEBUG
 #include "MainThreadUtils.h"
 #endif
@@ -109,23 +111,33 @@ EventTokenBucket::~EventTokenBucket()
   SOCKET_LOG(("EventTokenBucket::dtor %p events=%d\n",
               this, mEvents.GetSize()));
 
-  if (mTimer && mTimerArmed)
-    mTimer->Cancel();
-
-#ifdef XP_WIN
-  NormalTimers();
-  if (mFineGrainResetTimerArmed) {
-    mFineGrainResetTimerArmed = false;
-    mFineGrainResetTimer->Cancel();
-  }
-#endif
+  CleanupTimers();
 
   // Complete any queued events to prevent hangs
   while (mEvents.GetSize()) {
-    RefPtr<TokenBucketCancelable> cancelable = 
+    RefPtr<TokenBucketCancelable> cancelable =
       dont_AddRef(static_cast<TokenBucketCancelable *>(mEvents.PopFront()));
     cancelable->Fire();
   }
+}
+
+void
+EventTokenBucket::CleanupTimers()
+{
+  if (mTimer && mTimerArmed) {
+    mTimer->Cancel();
+  }
+  mTimer = nullptr;
+  mTimerArmed = false;
+
+#ifdef XP_WIN
+  NormalTimers();
+  if (mFineGrainResetTimer && mFineGrainResetTimerArmed) {
+    mFineGrainResetTimer->Cancel();
+  }
+  mFineGrainResetTimer = nullptr;
+  mFineGrainResetTimerArmed = false;
+#endif
 }
 
 void
@@ -211,9 +223,13 @@ EventTokenBucket::Stop()
   MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
   SOCKET_LOG(("EventTokenBucket::Stop %p armed=%d\n", this, mTimerArmed));
   mStopped = true;
-  if (mTimerArmed) {
-    mTimer->Cancel();
-    mTimerArmed = false;
+  CleanupTimers();
+
+  // Complete any queued events to prevent hangs
+  while (mEvents.GetSize()) {
+    RefPtr<TokenBucketCancelable> cancelable =
+      dont_AddRef(static_cast<TokenBucketCancelable *>(mEvents.PopFront()));
+    cancelable->Fire();
   }
 }
 

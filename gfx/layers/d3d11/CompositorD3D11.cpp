@@ -1037,7 +1037,7 @@ CompositorD3D11::BeginFrame(const nsIntRegion& aInvalidRegion,
     return;
   }
 
-  IntSize oldSize = mSize;
+  LayoutDeviceIntSize oldSize = mSize;
 
   // Failed to create a render target or the view.
   if (!UpdateRenderTarget() || !mDefaultRT || !mDefaultRT->mRTView ||
@@ -1053,7 +1053,7 @@ CompositorD3D11::BeginFrame(const nsIntRegion& aInvalidRegion,
   UINT offset = 0;
   mContext->IASetVertexBuffers(0, 1, &buffer, &size, &offset);
 
-  IntRect intRect = IntRect(IntPoint(0, 0), mSize);
+  IntRect intRect = IntRect(IntPoint(0, 0), mSize.ToUnknownSize());
   // Sometimes the invalid region is larger than we want to draw.
   nsIntRegion invalidRegionSafe;
 
@@ -1108,7 +1108,7 @@ CompositorD3D11::EndFrame()
     return;
   }
 
-  IntSize oldSize = mSize;
+  LayoutDeviceIntSize oldSize = mSize;
   EnsureSize();
   if (mSize.width <= 0 || mSize.height <= 0) {
     return;
@@ -1138,14 +1138,13 @@ CompositorD3D11::EndFrame()
       params.DirtyRectsCount = mInvalidRegion.GetNumRects();
       StackArray<RECT, 4> rects(params.DirtyRectsCount);
 
-      nsIntRegionRectIterator iter(mInvalidRegion);
-      const IntRect* r;
       uint32_t i = 0;
-      while ((r = iter.Next()) != nullptr) {
-        rects[i].left = r->x;
-        rects[i].top = r->y;
-        rects[i].bottom = r->YMost();
-        rects[i].right = r->XMost();
+      for (auto iter = mInvalidRegion.RectIter(); !iter.Done(); iter.Next()) {
+        const IntRect& r = iter.Get();
+        rects[i].left = r.x;
+        rects[i].top = r.y;
+        rects[i].bottom = r.YMost();
+        rects[i].right = r.XMost();
         i++;
       }
 
@@ -1206,7 +1205,7 @@ CompositorD3D11::EnsureSize()
   LayoutDeviceIntRect rect;
   mWidget->GetClientBounds(rect);
 
-  mSize = rect.Size().ToUnknownSize();
+  mSize = rect.Size();
 }
 
 bool
@@ -1234,6 +1233,7 @@ CompositorD3D11::VerifyBufferSize()
 
   if (mDefaultRT) {
     RefPtr<ID3D11RenderTargetView> rtView = mDefaultRT->mRTView;
+    RefPtr<ID3D11ShaderResourceView> srView = mDefaultRT->mSRV;
 
     // Make sure the texture, which belongs to the swapchain, is destroyed
     // before resizing the swapchain.
@@ -1249,13 +1249,21 @@ CompositorD3D11::VerifyBufferSize()
     ULONG newRefCnt = rtView.forget().take()->Release();
 
     if (newRefCnt > 0) {
-      gfxCriticalError() << "mRTView not destroyed on final release!";
+      gfxCriticalError() << "mRTView not destroyed on final release! RefCnt: " << newRefCnt;
+    }
+
+    if (srView) {
+      newRefCnt = srView.forget().take()->Release();
+
+      if (newRefCnt > 0) {
+        gfxCriticalError() << "mSRV not destroyed on final release! RefCnt: " << newRefCnt;
+      }
     }
 
     newRefCnt = resource.forget().take()->Release();
 
     if (newRefCnt > 0) {
-      gfxCriticalError() << "Unexpecting lingering references to backbuffer!";
+      gfxCriticalError() << "Unexpecting lingering references to backbuffer! RefCnt: " << newRefCnt;
     }
 
     hr = mSwapChain->ResizeBuffers(1, mSize.width, mSize.height,
@@ -1313,7 +1321,7 @@ CompositorD3D11::UpdateRenderTarget()
   }
 
   mDefaultRT = new CompositingRenderTargetD3D11(backBuf, IntPoint(0, 0));
-  mDefaultRT->SetSize(mSize);
+  mDefaultRT->SetSize(mSize.ToUnknownSize());
 
   return true;
 }

@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/* vim: set sw=4 ts=8 et tw=80 : */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -1122,7 +1122,7 @@ static nsIDocShell* GetOpenerDocShellHelper(Element* aFrameElement)
   // docshell to the remote docshell, via the chrome flags.
   nsCOMPtr<Element> frameElement = do_QueryInterface(aFrameElement);
   MOZ_ASSERT(frameElement);
-  nsPIDOMWindow* win = frameElement->OwnerDoc()->GetWindow();
+  nsPIDOMWindowOuter* win = frameElement->OwnerDoc()->GetWindow();
   if (!win) {
     NS_WARNING("Remote frame has no window");
     return nullptr;
@@ -1237,6 +1237,8 @@ ContentParent::CreateBrowserOrApp(const TabContext& aContext,
                                   Element* aFrameElement,
                                   ContentParent* aOpenerContentParent)
 {
+  PROFILER_LABEL_FUNC(js::ProfileEntry::Category::OTHER);
+
   if (!sCanLaunchSubprocesses) {
     return nullptr;
   }
@@ -2381,11 +2383,14 @@ ContentParent::InitializeMembers()
   mShutdownPending = false;
   mIPCOpen = true;
   mHangMonitorActor = nullptr;
+  mHasGamepadListener = false;
 }
 
 bool
 ContentParent::LaunchSubprocess(ProcessPriority aInitialPriority /* = PROCESS_PRIORITY_FOREGROUND */)
 {
+  PROFILER_LABEL_FUNC(js::ProfileEntry::Category::OTHER);
+
   std::vector<std::string> extraArgs;
   if (mIsNuwaProcess) {
     extraArgs.push_back("-nuwa");
@@ -2422,7 +2427,6 @@ ContentParent::ContentParent(mozIApplication* aApp,
   , mOpener(aOpener)
   , mIsForBrowser(aIsForBrowser)
   , mIsNuwaProcess(aIsNuwaProcess)
-  , mHasGamepadListener(false)
 {
   InitializeMembers();  // Perform common initialization.
 
@@ -3642,6 +3646,8 @@ ContentParent::ForceKillTimerCallback(nsITimer* aTimer, void* aClosure)
 void
 ContentParent::KillHard(const char* aReason)
 {
+  PROFILER_LABEL_FUNC(js::ProfileEntry::Category::OTHER);
+
   // On Windows, calling KillHard multiple times causes problems - the
   // process handle becomes invalid on the first call, causing a second call
   // to crash our process - more details in bug 890840.
@@ -5240,17 +5246,10 @@ mozilla::docshell::POfflineCacheUpdateParent*
 ContentParent::AllocPOfflineCacheUpdateParent(const URIParams& aManifestURI,
                                               const URIParams& aDocumentURI,
                                               const PrincipalInfo& aLoadingPrincipalInfo,
-                                              const bool& aStickDocument,
-                                              const TabId& aTabId)
+                                              const bool& aStickDocument)
 {
-  TabContext tabContext;
-  if (!ContentProcessManager::GetSingleton()->
-    GetTabContextByProcessAndTabId(this->ChildID(), aTabId, &tabContext)) {
-    return nullptr;
-  }
   RefPtr<mozilla::docshell::OfflineCacheUpdateParent> update =
-    new mozilla::docshell::OfflineCacheUpdateParent(
-      tabContext.OriginAttributesRef());
+        new mozilla::docshell::OfflineCacheUpdateParent();
   // Use this reference as the IPDL reference.
   return update.forget().take();
 }
@@ -5260,8 +5259,7 @@ ContentParent::RecvPOfflineCacheUpdateConstructor(POfflineCacheUpdateParent* aAc
                                                   const URIParams& aManifestURI,
                                                   const URIParams& aDocumentURI,
                                                   const PrincipalInfo& aLoadingPrincipal,
-                                                  const bool& aStickDocument,
-                                                  const TabId& aTabId)
+                                                  const bool& aStickDocument)
 {
   MOZ_ASSERT(aActor);
 
@@ -5311,7 +5309,7 @@ bool
 ContentParent::RecvSetOfflinePermission(const Principal& aPrincipal)
 {
   nsIPrincipal* principal = aPrincipal;
-  nsContentUtils::MaybeAllowOfflineAppByDefault(principal, nullptr);
+  nsContentUtils::MaybeAllowOfflineAppByDefault(principal);
   return true;
 }
 
@@ -5433,10 +5431,14 @@ ContentParent::RecvCreateWindow(PBrowserParent* aThisTab,
 
   // The content process should never be in charge of computing whether or
   // not a window should be private or remote - the parent will do that.
-  MOZ_ASSERT(!(aChromeFlags & nsIWebBrowserChrome::CHROME_PRIVATE_WINDOW));
-  MOZ_ASSERT(!(aChromeFlags & nsIWebBrowserChrome::CHROME_NON_PRIVATE_WINDOW));
-  MOZ_ASSERT(!(aChromeFlags & nsIWebBrowserChrome::CHROME_PRIVATE_LIFETIME));
-  MOZ_ASSERT(!(aChromeFlags & nsIWebBrowserChrome::CHROME_REMOTE_WINDOW));
+  const uint32_t badFlags =
+        nsIWebBrowserChrome::CHROME_PRIVATE_WINDOW
+      | nsIWebBrowserChrome::CHROME_NON_PRIVATE_WINDOW
+      | nsIWebBrowserChrome::CHROME_PRIVATE_LIFETIME
+      | nsIWebBrowserChrome::CHROME_REMOTE_WINDOW;
+  if (!!(aChromeFlags & badFlags)) {
+      return false;
+  }
 
   TabParent* thisTabParent = nullptr;
   if (aThisTab) {
@@ -5466,7 +5468,7 @@ ContentParent::RecvCreateWindow(PBrowserParent* aThisTab,
     frame = do_QueryInterface(thisTabParent->GetOwnerElement());
   }
 
-  nsCOMPtr<nsPIDOMWindow> parent;
+  nsCOMPtr<nsPIDOMWindowOuter> parent;
   if (frame) {
     parent = frame->OwnerDoc()->GetWindow();
 
@@ -5561,7 +5563,7 @@ ContentParent::RecvCreateWindow(PBrowserParent* aThisTab,
     finalURI->GetSpec(finalURIString);
   }
 
-  nsCOMPtr<nsIDOMWindow> window;
+  nsCOMPtr<mozIDOMWindowProxy> window;
 
   TabParent::AutoUseNewTab aunt(newTab, aWindowIsNew, aURLToLoad);
 
@@ -5577,17 +5579,12 @@ ContentParent::RecvCreateWindow(PBrowserParent* aThisTab,
                                   false, false, thisTabParent, nullptr,
                                   getter_AddRefs(window));
 
-  if (NS_WARN_IF(NS_FAILED(*aResult))) {
+  if (NS_WARN_IF(!window)) {
     return true;
   }
 
   *aResult = NS_ERROR_FAILURE;
-
-  nsCOMPtr<nsPIDOMWindow> pwindow = do_QueryInterface(window);
-  if (NS_WARN_IF(!pwindow)) {
-    return true;
-  }
-
+  auto* pwindow = nsPIDOMWindowOuter::From(window);
   nsCOMPtr<nsIDocShell> windowDocShell = pwindow->GetDocShell();
   if (NS_WARN_IF(!windowDocShell)) {
     return true;

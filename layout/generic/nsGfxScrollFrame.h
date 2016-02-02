@@ -78,7 +78,6 @@ public:
   void AppendScrollPartsTo(nsDisplayListBuilder*   aBuilder,
                            const nsRect&           aDirtyRect,
                            const nsDisplayListSet& aLists,
-                           bool                    aUsingDisplayPort,
                            bool                    aCreateLayer,
                            bool                    aPositioned);
 
@@ -357,8 +356,6 @@ public:
       // because we have special behaviour for it when APZ scrolling is active.
       mOuter->SchedulePaint();
     }
-    // Update windowed plugin visibility in response to apz scrolling events.
-    NotifyPluginFrames(aTransforming ? BEGIN_APZ : END_APZ);
   }
   bool IsTransformingByAPZ() const {
     return mTransformingByAPZ;
@@ -370,6 +367,8 @@ public:
   bool DecideScrollableLayer(nsDisplayListBuilder* aBuilder,
                              nsRect* aDirtyRect,
                              bool aAllowCreateDisplayPort);
+  void NotifyImageVisibilityUpdate();
+  bool GetDisplayPortAtLastImageVisibilityUpdate(nsRect* aDisplayPort);
 
   void ScheduleSyntheticMouseMove();
   static void ScrollActivityCallback(nsITimer *aTimer, void* anInstance);
@@ -462,6 +461,8 @@ public:
 
   // The scroll position where we last updated image visibility.
   nsPoint mLastUpdateImagesPos;
+  bool mHadDisplayPortAtLastImageUpdate;
+  nsRect mDisplayPortAtLastImageUpdate;
 
   nsRect mPrevScrolledRect;
 
@@ -550,7 +551,7 @@ protected:
    * Helper that notifies plugins about async smooth scroll operations managed
    * by nsGfxScrollFrame.
    */
-  enum AsyncScrollEventType { BEGIN_DOM, BEGIN_APZ, END_DOM, END_APZ };
+  enum AsyncScrollEventType { BEGIN_DOM, END_DOM };
   void NotifyPluginFrames(AsyncScrollEventType aEvent);
   AsyncScrollEventType mAsyncScrollEvent;
 
@@ -851,6 +852,12 @@ public:
                                      nsRect* aDirtyRect,
                                      bool aAllowCreateDisplayPort) override {
     return mHelper.DecideScrollableLayer(aBuilder, aDirtyRect, aAllowCreateDisplayPort);
+  }
+  virtual void NotifyImageVisibilityUpdate() override {
+    mHelper.NotifyImageVisibilityUpdate();
+  }
+  virtual bool GetDisplayPortAtLastImageVisibilityUpdate(nsRect* aDisplayPort) override {
+    return mHelper.GetDisplayPortAtLastImageVisibilityUpdate(aDisplayPort);
   }
 
   // nsIStatefulFrame
@@ -1319,7 +1326,12 @@ public:
                                      bool aAllowCreateDisplayPort) override {
     return mHelper.DecideScrollableLayer(aBuilder, aDirtyRect, aAllowCreateDisplayPort);
   }
-
+  virtual void NotifyImageVisibilityUpdate() override {
+    mHelper.NotifyImageVisibilityUpdate();
+  }
+  virtual bool GetDisplayPortAtLastImageVisibilityUpdate(nsRect* aDisplayPort) override {
+    return mHelper.GetDisplayPortAtLastImageVisibilityUpdate(aDisplayPort);
+  }
 
 #ifdef DEBUG_FRAME_DUMP
   virtual nsresult GetFrameName(nsAString& aResult) const override;

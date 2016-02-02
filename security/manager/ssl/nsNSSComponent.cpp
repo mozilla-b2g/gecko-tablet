@@ -862,8 +862,14 @@ void nsNSSComponent::setValidationOptions(bool isInitialSetting,
   CertVerifier::SHA1Mode sha1Mode = static_cast<CertVerifier::SHA1Mode>
       (Preferences::GetInt("security.pki.sha1_enforcement_level",
                            static_cast<int32_t>(CertVerifier::SHA1Mode::Allowed)));
-  if (sha1Mode > CertVerifier::SHA1Mode::OnlyBefore2016) {
-    sha1Mode = CertVerifier::SHA1Mode::Allowed;
+  switch (sha1Mode) {
+    case CertVerifier::SHA1Mode::Allowed:
+    case CertVerifier::SHA1Mode::Forbidden:
+    case CertVerifier::SHA1Mode::Before2016:
+    case CertVerifier::SHA1Mode::ImportedRoot:
+      break;
+    default:
+      sha1Mode = CertVerifier::SHA1Mode::Allowed;
   }
 
   CertVerifier::OcspDownloadConfig odc;
@@ -1111,6 +1117,9 @@ nsNSSComponent::InitializeNSS()
     return NS_ERROR_FAILURE;
   }
 
+  if (PK11_IsFIPS()) {
+    Telemetry::Accumulate(Telemetry::FIPS_ENABLED, true);
+  }
 
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("NSS Initialization done\n"));
   return NS_OK;

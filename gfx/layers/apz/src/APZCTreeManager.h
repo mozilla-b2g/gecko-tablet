@@ -41,6 +41,12 @@ enum AllowedTouchBehavior {
   UNKNOWN =            1 << 4
 };
 
+enum ZoomToRectBehavior : uint32_t {
+  DEFAULT_BEHAVIOR =   0,
+  DISABLE_ZOOM_OUT =   1 << 0,
+  PAN_INTO_VIEW_ONLY = 1 << 1
+};
+
 class Layer;
 class AsyncDragMetrics;
 class AsyncPanZoomController;
@@ -205,9 +211,11 @@ public:
    * Kicks an animation to zoom to a rect. This may be either a zoom out or zoom
    * in. The actual animation is done on the compositor thread after being set
    * up. |aRect| must be given in CSS pixels, relative to the document.
+   * |aFlags| is a combination of the ZoomToRectBehavior enum values.
    */
   void ZoomToRect(const ScrollableLayerGuid& aGuid,
-                  const CSSRect& aRect);
+                  const CSSRect& aRect,
+                  const uint32_t aFlags = DEFAULT_BEHAVIOR);
 
   /**
    * If we have touch listeners, this should always be called when we know
@@ -252,6 +260,14 @@ public:
    * animation's responsibility to check this before advancing.
    */
   void CancelAnimation(const ScrollableLayerGuid &aGuid);
+
+  /**
+   * Adjusts the root APZC to compensate for a shift in the surface. See the
+   * documentation on AsyncPanZoomController::AdjustScrollForSurfaceShift for
+   * some more details. This is only currently needed due to surface shifts
+   * caused by the dynamic toolbar on Android.
+   */
+  void AdjustScrollForSurfaceShift(const ScreenPoint& aShift);
 
   /**
    * Calls Destroy() on all APZC instances attached to the tree, and resets the
@@ -442,6 +458,7 @@ private:
                                          HitTestResult* aOutHitResult);
   AsyncPanZoomController* FindRootApzcForLayersId(uint64_t aLayersId) const;
   AsyncPanZoomController* FindRootContentApzcForLayersId(uint64_t aLayersId) const;
+  AsyncPanZoomController* FindRootContentOrRootApzc() const;
   already_AddRefed<AsyncPanZoomController> GetMultitouchTarget(AsyncPanZoomController* aApzc1, AsyncPanZoomController* aApzc2) const;
   already_AddRefed<AsyncPanZoomController> CommonAncestor(AsyncPanZoomController* aApzc1, AsyncPanZoomController* aApzc2) const;
   already_AddRefed<AsyncPanZoomController> GetTouchInputBlockAPZC(const MultiTouchInput& aEvent,

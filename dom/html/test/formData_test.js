@@ -77,15 +77,10 @@ function testSet() {
   is(f.getAll("other")[0], "value4", "set() should replace existing entries.");
 }
 
-function testIterate() {
-  todo(false, "Implement this in Bug 1085284.");
-}
-
 function testFilename() {
   var f = new FormData();
-  // Spec says if a Blob (which is not a File) is added, the name parameter is set to "blob".
   f.append("blob", new Blob(["hi"]));
-  is(f.get("blob").name, "blob", "Blob's filename should be blob.");
+  ok(f.get("blob") instanceof Blob, "We should have a blob back.");
 
   // If a filename is passed, that should replace the original.
   f.append("blob2", new Blob(["hi"]), "blob2.txt");
@@ -167,7 +162,7 @@ function testSend(doneCb) {
     }
 
     is(response[0].headers['Content-Disposition'],
-        'form-data; name="empty"; filename="blob"');
+        'form-data; name="empty"; filename=""');
 
     is(response[1].headers['Content-Disposition'],
         'form-data; name="explicit"; filename="explicit-file-name"');
@@ -209,7 +204,6 @@ function runTest(doneCb) {
   testGetAll();
   testDelete();
   testSet();
-  testIterate();
   testFilename();
   testIterable();
   // Finally, send an XHR and verify the response matches.

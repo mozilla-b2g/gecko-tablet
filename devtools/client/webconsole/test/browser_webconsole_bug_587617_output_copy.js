@@ -1,12 +1,7 @@
-/* ***** BEGIN LICENSE BLOCK *****
- * Any copyright is dedicated to the Public Domain.
- * http://creativecommons.org/publicdomain/zero/1.0/
- *
- * Contributor(s):
- *  Mihai Șucan <mihai.sucan@gmail.com>
- *  Patrick Walton <pcwalton@mozilla.com>
- *
- * ***** END LICENSE BLOCK ***** */
+/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
+/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
+/* Any copyright is dedicated to the Public Domain.
+ * http://creativecommons.org/publicdomain/zero/1.0/ */
 
 "use strict";
 
@@ -80,7 +75,7 @@ function consoleOpened(aHud) {
 function testContextMenuCopy() {
   let deferred = promise.defer();
 
-  let contextMenuId = outputNode.parentNode.getAttribute("context");
+  let contextMenuId = HUD.ui.outputWrapper.getAttribute("context");
   let contextMenu = HUD.ui.document.getElementById(contextMenuId);
   ok(contextMenu, "the output node has a context menu");
 

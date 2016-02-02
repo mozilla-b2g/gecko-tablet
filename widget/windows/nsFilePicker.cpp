@@ -25,6 +25,7 @@
 #include "nsToolkit.h"
 #include "WinUtils.h"
 #include "nsPIDOMWindow.h"
+#include "GeckoProfiler.h"
 
 using mozilla::IsVistaOrLater;
 using mozilla::MakeUnique;
@@ -190,9 +191,9 @@ nsFilePicker::~nsFilePicker()
 
 NS_IMPL_ISUPPORTS(nsFilePicker, nsIFilePicker)
 
-NS_IMETHODIMP nsFilePicker::Init(nsIDOMWindow *aParent, const nsAString& aTitle, int16_t aMode)
+NS_IMETHODIMP nsFilePicker::Init(mozIDOMWindowProxy *aParent, const nsAString& aTitle, int16_t aMode)
 {
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aParent);
+  nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryInterface(aParent);
   nsIDocShell* docShell = window ? window->GetDocShell() : nullptr;  
   mLoadContext = do_QueryInterface(docShell);
   
@@ -868,6 +869,7 @@ nsFilePicker::ShowXPFilePicker(const nsString& aInitialDir)
 bool
 nsFilePicker::ShowFilePicker(const nsString& aInitialDir, bool &aWasInitError)
 {
+  PROFILER_LABEL_FUNC(js::ProfileEntry::Category::OTHER);
   RefPtr<IFileDialog> dialog;
   if (mMode != modeSave) {
     if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC,

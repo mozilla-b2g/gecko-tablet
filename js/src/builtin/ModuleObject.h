@@ -12,7 +12,7 @@
 
 #include "gc/Zone.h"
 
-#include "js/TraceableVector.h"
+#include "js/GCVector.h"
 
 #include "vm/NativeObject.h"
 #include "vm/ProxyObject.h"
@@ -152,9 +152,9 @@ class ModuleNamespaceObject : public ProxyObject
         JS::Value getEnumerateFunction(HandleObject proxy) const;
 
         bool getOwnPropertyDescriptor(JSContext* cx, HandleObject proxy, HandleId id,
-                                      MutableHandle<JSPropertyDescriptor> desc) const override;
+                                      MutableHandle<PropertyDescriptor> desc) const override;
         bool defineProperty(JSContext* cx, HandleObject proxy, HandleId id,
-                            Handle<JSPropertyDescriptor> desc,
+                            Handle<PropertyDescriptor> desc,
                             ObjectOpResult& result) const override;
         bool ownPropertyKeys(JSContext* cx, HandleObject proxy,
                              AutoIdVector& props) const override;
@@ -196,7 +196,7 @@ struct FunctionDeclaration
     RelocatablePtrFunction fun;
 };
 
-using FunctionDeclarationVector = TraceableVector<FunctionDeclaration, 0, ZoneAllocPolicy>;
+using FunctionDeclarationVector = GCVector<FunctionDeclaration, 0, ZoneAllocPolicy>;
 
 class ModuleObject : public NativeObject
 {
@@ -282,7 +282,7 @@ class MOZ_STACK_CLASS ModuleBuilder
 
     bool hasExportedName(JSAtom* name) const;
 
-    using ExportEntryVector = TraceableVector<ExportEntryObject*>;
+    using ExportEntryVector = GCVector<ExportEntryObject*>;
     const ExportEntryVector& localExportEntries() const {
         return localExportEntries_;
     }
@@ -291,9 +291,9 @@ class MOZ_STACK_CLASS ModuleBuilder
     bool initModule();
 
   private:
-    using AtomVector = TraceableVector<JSAtom*>;
+    using AtomVector = GCVector<JSAtom*>;
     using RootedAtomVector = JS::Rooted<AtomVector>;
-    using ImportEntryVector = TraceableVector<ImportEntryObject*>;
+    using ImportEntryVector = GCVector<ImportEntryObject*>;
     using RootedImportEntryVector = JS::Rooted<ImportEntryVector>;
     using RootedExportEntryVector = JS::Rooted<ExportEntryVector>;
 
@@ -316,7 +316,7 @@ class MOZ_STACK_CLASS ModuleBuilder
     bool maybeAppendRequestedModule(HandleAtom module);
 
     template <typename T>
-    ArrayObject* createArray(const TraceableVector<T>& vector);
+    ArrayObject* createArray(const GCVector<T>& vector);
 };
 
 bool InitModuleClasses(JSContext* cx, HandleObject obj);

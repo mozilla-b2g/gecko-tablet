@@ -7,7 +7,7 @@
 // Test that markup view event bubbles show the correct event info for DOM
 // events.
 
-const TEST_URL = TEST_URL_ROOT + "doc_markup_events.html";
+const TEST_URL = URL_ROOT + "doc_markup_events.html";
 
 loadHelperScript("helper_events_test_runner.js");
 
@@ -151,6 +151,42 @@ const TEST_DATA = [
                  '}'
       }
     ]
+  },
+  // #noevents tests check that dynamically added events are properly displayed
+  // in the markupview
+  {
+    selector: "#noevents",
+    expected: []
+  },
+  {
+    selector: "#noevents",
+    beforeTest: function* (inspector, testActor) {
+      let nodeMutated = inspector.once("markupmutation");
+      yield testActor.eval("window.wrappedJSObject.addNoeventsClickHandler();");
+      yield nodeMutated;
+    },
+    expected: [
+      {
+        type: "click",
+        filename: TEST_URL + ":106",
+        attributes: [
+          "Bubbling",
+          "DOM2"
+        ],
+        handler: 'function noeventsClickHandler(event) {\n' +
+                 '  alert("noevents has an event listener");\n' +
+                 '}'
+      }
+    ]
+  },
+  {
+    selector: "#noevents",
+    beforeTest: function* (inspector, testActor) {
+      let nodeMutated = inspector.once("markupmutation");
+      yield testActor.eval("window.wrappedJSObject.removeNoeventsClickHandler();");
+      yield nodeMutated;
+    },
+    expected: []
   },
 ];
 

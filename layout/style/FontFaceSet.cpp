@@ -93,7 +93,7 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(FontFaceSet)
   NS_INTERFACE_MAP_ENTRY(nsICSSLoaderObserver)
 NS_INTERFACE_MAP_END_INHERITING(DOMEventTargetHelper)
 
-FontFaceSet::FontFaceSet(nsPIDOMWindow* aWindow, nsIDocument* aDocument)
+FontFaceSet::FontFaceSet(nsPIDOMWindowInner* aWindow, nsIDocument* aDocument)
   : DOMEventTargetHelper(aWindow)
   , mDocument(aDocument)
   , mStatus(FontFaceSetLoadStatus::Loaded)
@@ -793,10 +793,10 @@ FontFaceSet::UpdateRules(const nsTArray<nsFontFaceRuleContainer>& aRules)
   mUserFontSet->mLocalRulesUsed = false;
 
   if (LOG_ENABLED() && !mRuleFaces.IsEmpty()) {
-    LOG(("userfonts (%p) userfont rules update (%s) rule count: %" PRIuSIZE,
+    LOG(("userfonts (%p) userfont rules update (%s) rule count: %d",
          mUserFontSet.get(),
          (modified ? "modified" : "not modified"),
-         mRuleFaces.Length()));
+         (int)(mRuleFaces.Length())));
   }
 
   return modified;

@@ -681,7 +681,7 @@ TabChild::Observe(nsISupports *aSubject,
 
     // We must have a window in order to compare the windowID contained into the
     // wrapper.
-    nsCOMPtr<nsPIDOMWindow> window = do_GetInterface(WebNavigation());
+    nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(WebNavigation());
     if (!window) {
       return NS_OK;
     }
@@ -800,7 +800,7 @@ TabChild::Init()
   // can all listen to the same chrome event handler.
   // XXX: ideally, we would set a chrome event handler earlier,
   // and all windows, even the root one, will use the docshell one.
-  nsCOMPtr<nsPIDOMWindow> window = do_GetInterface(WebNavigation());
+  nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(WebNavigation());
   NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
   nsCOMPtr<EventTarget> chromeHandler =
     do_QueryInterface(window->GetChromeEventHandler());
@@ -835,7 +835,10 @@ TabChild::NotifyTabContextUpdated()
         } else {
           docShell->SetIsApp(OwnAppId());
         }
-        docShell->SetIsSignedPackage(OriginAttributesRef().mSignedPkg);
+
+        OriginAttributes attrs = OriginAttributesRef();
+        docShell->SetIsSignedPackage(attrs.mSignedPkg);
+        docShell->SetUserContextId(attrs.mUserContextId);
     }
 }
 
@@ -867,7 +870,7 @@ TabChild::SetStatus(uint32_t aStatusType, const char16_t* aStatus)
 NS_IMETHODIMP
 TabChild::GetWebBrowser(nsIWebBrowser** aWebBrowser)
 {
-  NS_NOTREACHED("TabChild::GetWebBrowser not supported in TabChild");
+  NS_WARNING("TabChild::GetWebBrowser not supported in TabChild");
 
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -875,7 +878,7 @@ TabChild::GetWebBrowser(nsIWebBrowser** aWebBrowser)
 NS_IMETHODIMP
 TabChild::SetWebBrowser(nsIWebBrowser* aWebBrowser)
 {
-  NS_NOTREACHED("TabChild::SetWebBrowser not supported in TabChild");
+  NS_WARNING("TabChild::SetWebBrowser not supported in TabChild");
 
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -890,7 +893,7 @@ TabChild::GetChromeFlags(uint32_t* aChromeFlags)
 NS_IMETHODIMP
 TabChild::SetChromeFlags(uint32_t aChromeFlags)
 {
-  NS_NOTREACHED("trying to SetChromeFlags from content process?");
+  NS_WARNING("trying to SetChromeFlags from content process?");
 
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -898,7 +901,7 @@ TabChild::SetChromeFlags(uint32_t aChromeFlags)
 NS_IMETHODIMP
 TabChild::DestroyBrowserWindow()
 {
-  NS_NOTREACHED("TabChild::DestroyBrowserWindow not supported in TabChild");
+  NS_WARNING("TabChild::DestroyBrowserWindow not supported in TabChild");
 
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -906,7 +909,7 @@ TabChild::DestroyBrowserWindow()
 NS_IMETHODIMP
 TabChild::SizeBrowserTo(int32_t aCX, int32_t aCY)
 {
-  NS_NOTREACHED("TabChild::SizeBrowserTo not supported in TabChild");
+  NS_WARNING("TabChild::SizeBrowserTo not supported in TabChild");
 
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -914,7 +917,7 @@ TabChild::SizeBrowserTo(int32_t aCX, int32_t aCY)
 NS_IMETHODIMP
 TabChild::ShowAsModal()
 {
-  NS_NOTREACHED("TabChild::ShowAsModal not supported in TabChild");
+  NS_WARNING("TabChild::ShowAsModal not supported in TabChild");
 
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -929,7 +932,7 @@ TabChild::IsWindowModal(bool* aRetVal)
 NS_IMETHODIMP
 TabChild::ExitModalEventLoop(nsresult aStatus)
 {
-  NS_NOTREACHED("TabChild::ExitModalEventLoop not supported in TabChild");
+  NS_WARNING("TabChild::ExitModalEventLoop not supported in TabChild");
 
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -1001,7 +1004,7 @@ TabChild::SetVisibility(bool aVisibility)
 NS_IMETHODIMP
 TabChild::GetTitle(char16_t** aTitle)
 {
-  NS_NOTREACHED("TabChild::GetTitle not supported in TabChild");
+  NS_WARNING("TabChild::GetTitle not supported in TabChild");
 
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -1017,7 +1020,7 @@ TabChild::SetTitle(const char16_t* aTitle)
 NS_IMETHODIMP
 TabChild::GetSiteWindow(void** aSiteWindow)
 {
-  NS_NOTREACHED("TabChild::GetSiteWindow not supported in TabChild");
+  NS_WARNING("TabChild::GetSiteWindow not supported in TabChild");
 
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -1058,12 +1061,13 @@ TabChild::GetInterface(const nsIID & aIID, void **aSink)
 }
 
 NS_IMETHODIMP
-TabChild::ProvideWindow(nsIDOMWindow* aParent, uint32_t aChromeFlags,
+TabChild::ProvideWindow(mozIDOMWindowProxy* aParent,
+                        uint32_t aChromeFlags,
                         bool aCalledFromJS,
                         bool aPositionSpecified, bool aSizeSpecified,
                         nsIURI* aURI, const nsAString& aName,
                         const nsACString& aFeatures, bool* aWindowIsNew,
-                        nsIDOMWindow** aReturn)
+                        mozIDOMWindowProxy** aReturn)
 {
     *aReturn = nullptr;
 
@@ -1078,7 +1082,8 @@ TabChild::ProvideWindow(nsIDOMWindow* aParent, uint32_t aChromeFlags,
 
     if (!iframeMoz) {
       int32_t openLocation =
-        nsWindowWatcher::GetWindowOpenLocation(aParent, aChromeFlags, aCalledFromJS,
+        nsWindowWatcher::GetWindowOpenLocation(nsPIDOMWindowOuter::From(aParent),
+                                               aChromeFlags, aCalledFromJS,
                                                aPositionSpecified, aSizeSpecified);
 
       // If it turns out we're opening in the current browser, just hand over the
@@ -1688,7 +1693,7 @@ TabChild::RecvHandleDoubleTap(const CSSPoint& aPoint, const Modifiers& aModifier
     ViewID viewId;
     if (APZCCallbackHelper::GetOrCreateScrollIdentifiers(
         document->GetDocumentElement(), &presShellId, &viewId)) {
-      SendZoomToRect(presShellId, viewId, zoomToRect);
+      SendZoomToRect(presShellId, viewId, zoomToRect, DEFAULT_BEHAVIOR);
     }
 
     return true;
@@ -1758,7 +1763,7 @@ bool TabChild::RecvParentActivated(const bool& aActivated)
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   NS_ENSURE_TRUE(fm, true);
 
-  nsCOMPtr<nsIDOMWindow> window = do_GetInterface(WebNavigation());
+  nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(WebNavigation());
   fm->ParentActivated(window, aActivated);
   return true;
 }
@@ -2105,7 +2110,7 @@ TabChild::RecvPDocumentRendererConstructor(PDocumentRendererChild* actor,
     nsCOMPtr<nsIWebBrowser> browser = do_QueryInterface(WebNavigation());
     if (!browser)
         return true; // silently ignore
-    nsCOMPtr<nsIDOMWindow> window;
+    nsCOMPtr<mozIDOMWindowProxy> window;
     if (NS_FAILED(browser->GetContentDOMWindow(getter_AddRefs(window))) ||
         !window)
     {
@@ -2113,7 +2118,7 @@ TabChild::RecvPDocumentRendererConstructor(PDocumentRendererChild* actor,
     }
 
     nsCString data;
-    bool ret = render->RenderDocument(window,
+    bool ret = render->RenderDocument(nsPIDOMWindowOuter::From(window),
                                       documentRect, transform,
                                       bgcolor,
                                       renderFlags, flushLayout,
@@ -2174,7 +2179,7 @@ TabChild::DeallocPIndexedDBPermissionRequestChild(
 bool
 TabChild::RecvActivateFrameEvent(const nsString& aType, const bool& capture)
 {
-  nsCOMPtr<nsPIDOMWindow> window = do_GetInterface(WebNavigation());
+  nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(WebNavigation());
   NS_ENSURE_TRUE(window, true);
   nsCOMPtr<EventTarget> chromeHandler =
     do_QueryInterface(window->GetChromeEventHandler());
@@ -2235,7 +2240,7 @@ TabChild::RecvSwappedWithOtherRemoteLoader()
     return true;
   }
 
-  nsCOMPtr<nsPIDOMWindow> ourWindow = ourDocShell->GetWindow();
+  nsCOMPtr<nsPIDOMWindowOuter> ourWindow = ourDocShell->GetWindow();
   if (NS_WARN_IF(!ourWindow)) {
     return true;
   }
@@ -2277,7 +2282,7 @@ TabChild::RecvAudioChannelChangeNotification(const uint32_t& aAudioChannel,
                                              const float& aVolume,
                                              const bool& aMuted)
 {
-  nsCOMPtr<nsPIDOMWindow> window = do_GetInterface(WebNavigation());
+  nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(WebNavigation());
   if (window) {
     RefPtr<AudioChannelService> service = AudioChannelService::GetOrCreate();
     MOZ_ASSERT(service);
@@ -2389,7 +2394,7 @@ TabChild::RecvNavigateByKey(const bool& aForward, const bool& aForDocumentNaviga
   nsIFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm) {
     nsCOMPtr<nsIDOMElement> result;
-    nsCOMPtr<nsPIDOMWindow> window = do_GetInterface(WebNavigation());
+    nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(WebNavigation());
 
     // Move to the first or last document.
     uint32_t type = aForward ?
@@ -2429,7 +2434,7 @@ bool
 TabChild::InitTabChildGlobal(FrameScriptLoading aScriptLoading)
 {
   if (!mGlobal && !mTabChildGlobal) {
-    nsCOMPtr<nsPIDOMWindow> window = do_GetInterface(WebNavigation());
+    nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(WebNavigation());
     NS_ENSURE_TRUE(window, false);
     nsCOMPtr<EventTarget> chromeHandler =
       do_QueryInterface(window->GetChromeEventHandler());
@@ -2995,13 +3000,13 @@ TabChildGlobal::MarkForCC()
 }
 
 NS_IMETHODIMP
-TabChildGlobal::GetContent(nsIDOMWindow** aContent)
+TabChildGlobal::GetContent(mozIDOMWindowProxy** aContent)
 {
   *aContent = nullptr;
   if (!mTabChild)
     return NS_ERROR_NULL_POINTER;
-  nsCOMPtr<nsIDOMWindow> window = do_GetInterface(mTabChild->WebNavigation());
-  window.swap(*aContent);
+  nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(mTabChild->WebNavigation());
+  window.forget(aContent);
   return NS_OK;
 }
 

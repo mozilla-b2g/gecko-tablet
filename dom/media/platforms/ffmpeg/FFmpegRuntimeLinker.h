@@ -8,9 +8,6 @@
 #define __FFmpegRuntimeLinker_h__
 
 #include "PlatformDecoderModule.h"
-#include <stdint.h>
-
-struct PRLibrary;
 
 namespace mozilla
 {
@@ -18,18 +15,10 @@ namespace mozilla
 class FFmpegRuntimeLinker
 {
 public:
-  static bool Link();
-  static void Unlink();
+  static bool Init();
   static already_AddRefed<PlatformDecoderModule> CreateDecoderModule();
-  static bool GetVersion(uint32_t& aMajor, uint32_t& aMinor);
 
 private:
-  static PRLibrary* sLinkedLib;
-  static PRLibrary* sLinkedUtilLib;
-  static const char* sLib;
-
-  static bool Bind(const char* aLibName);
-
   static enum LinkStatus {
     LinkStatus_INIT = 0,
     LinkStatus_FAILED,

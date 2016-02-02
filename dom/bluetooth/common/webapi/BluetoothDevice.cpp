@@ -93,7 +93,7 @@ private:
   RefPtr<BluetoothDevice> mDevice;
 };
 
-BluetoothDevice::BluetoothDevice(nsPIDOMWindow* aWindow,
+BluetoothDevice::BluetoothDevice(nsPIDOMWindowInner* aWindow,
                                  const BluetoothValue& aValue)
   : DOMEventTargetHelper(aWindow)
   , mPaired(false)
@@ -148,7 +148,11 @@ BluetoothDevice::SetPropertyByValue(const BluetoothNamedValue& aValue)
   if (name.EqualsLiteral("Name")) {
     RemoteNameToString(value.get_BluetoothRemoteName(), mName);
   } else if (name.EqualsLiteral("Address")) {
-    AddressToString(value.get_BluetoothAddress(), mAddress);
+    if (value.get_BluetoothAddress().IsCleared()) {
+      mAddress.Truncate(); // Reset to empty string
+    } else {
+      AddressToString(value.get_BluetoothAddress(), mAddress);
+    }
   } else if (name.EqualsLiteral("Cod")) {
     mCod->Update(value.get_uint32_t());
   } else if (name.EqualsLiteral("Paired")) {
@@ -210,7 +214,7 @@ BluetoothDevice::FetchUuids(ErrorResult& aRv)
 
 // static
 already_AddRefed<BluetoothDevice>
-BluetoothDevice::Create(nsPIDOMWindow* aWindow,
+BluetoothDevice::Create(nsPIDOMWindowInner* aWindow,
                         const BluetoothValue& aValue)
 {
   MOZ_ASSERT(NS_IsMainThread());

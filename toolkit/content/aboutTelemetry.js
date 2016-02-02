@@ -556,9 +556,6 @@ var EnvironmentData = {
       }
 
       let table = document.createElement("table");
-      let caption = document.createElement("caption");
-      caption.appendChild(document.createTextNode(section + "\n"));
-      table.appendChild(caption);
       this.appendHeading(table);
 
       for (let [path, value] of sectionData) {
@@ -568,20 +565,54 @@ var EnvironmentData = {
         table.appendChild(row);
       }
 
-      dataDiv.appendChild(table);
+      let hasData = sectionData.size > 0;
+      this.createSubsection(section, hasData, table, dataDiv);
     }
 
     // We use specialized rendering here to make the addon and plugin listings
     // more readable.
-    let addonSection = this.createAddonSection(dataDiv);
-    let addons = ping.environment.addons;
+    this.createAddonSection(dataDiv, ping);
+  },
 
-    this.renderAddonsObject(addons.activeAddons, addonSection, "activeAddons");
-    this.renderActivePlugins(addons.activePlugins, addonSection, "activePlugins");
-    this.renderKeyValueObject(addons.theme, addonSection, "theme");
-    this.renderKeyValueObject(addons.activeExperiment, addonSection, "activeExperiment");
-    this.renderAddonsObject(addons.activeGMPlugins, addonSection, "activeGMPlugins");
-    this.renderPersona(addons, addonSection, "persona");
+  createSubsection: function(title, hasSubdata, subSectionData, dataDiv) {
+    let dataSection = document.createElement("section");
+    dataSection.classList.add("data-subsection");
+
+    if (hasSubdata) {
+      dataSection.classList.add("has-subdata");
+    }
+
+    // Create section heading
+    let sectionName = document.createElement("h2");
+    sectionName.setAttribute("class", "section-name");
+    sectionName.appendChild(document.createTextNode(title));
+    sectionName.addEventListener("click", toggleSection, false);
+
+    // Create caption for toggling the subsection visibility.
+    let toggleCaption = document.createElement("span");
+    toggleCaption.setAttribute("class", "toggle-caption");
+    let toggleText = bundle.GetStringFromName("environmentDataSubsectionToggle");
+    toggleCaption.appendChild(document.createTextNode(" " + toggleText));
+    toggleCaption.addEventListener("click", toggleSection, false);
+
+    // Create caption for empty subsections.
+    let emptyCaption = document.createElement("span");
+    emptyCaption.setAttribute("class", "empty-caption");
+    let emptyText = bundle.GetStringFromName("environmentDataSubsectionEmpty");
+    emptyCaption.appendChild(document.createTextNode(" " + emptyText));
+
+    // Create data container
+    let data = document.createElement("div");
+    data.setAttribute("class", "subsection-data subdata");
+    data.appendChild(subSectionData);
+
+    // Append elements
+    dataSection.appendChild(sectionName);
+    dataSection.appendChild(toggleCaption);
+    dataSection.appendChild(emptyCaption);
+    dataSection.appendChild(data);
+
+    dataDiv.appendChild(dataSection);
   },
 
   renderPersona: function(addonObj, addonSection, sectionTitle) {
@@ -668,14 +699,18 @@ var EnvironmentData = {
     table.appendChild(caption);
   },
 
-  createAddonSection: function(dataDiv) {
-    let divAddon = document.createElement("div");
-    divAddon.setAttribute("id", "addons-data");
-    let caption = document.createElement("caption");
-    caption.appendChild(document.createTextNode("addons"));
-    divAddon.appendChild(caption);
-    dataDiv.appendChild(divAddon);
-    return divAddon;
+  createAddonSection: function(dataDiv, ping) {
+    let addonSection = document.createElement("div");
+    let addons = ping.environment.addons;
+    this.renderAddonsObject(addons.activeAddons, addonSection, "activeAddons");
+    this.renderActivePlugins(addons.activePlugins, addonSection, "activePlugins");
+    this.renderKeyValueObject(addons.theme, addonSection, "theme");
+    this.renderKeyValueObject(addons.activeExperiment, addonSection, "activeExperiment");
+    this.renderAddonsObject(addons.activeGMPlugins, addonSection, "activeGMPlugins");
+    this.renderPersona(addons, addonSection, "persona");
+
+    let hasAddonData = Object.keys(ping.environment.addons).length > 0;
+    this.createSubsection("addons", hasAddonData, addonSection, dataDiv);
   },
 
   appendRow: function(table, id, value){
@@ -1091,11 +1126,11 @@ var ThreadHangStats = {
     // Don't localize the histogram name, because the
     // name is also used as the div element's ID
     Histogram.render(div, aThread.name + "-Activity",
-                     aThread.activity, {exponential: true});
+                     aThread.activity, {exponential: true}, true);
     aThread.hangs.forEach((hang, index) => {
       let hangName = aThread.name + "-Hang-" + (index + 1);
       let hangDiv = Histogram.render(
-        div, hangName, hang.histogram, {exponential: true});
+        div, hangName, hang.histogram, {exponential: true}, true);
       let stackDiv = document.createElement("div");
       let stack = hang.nativeStack || hang.stack;
       stack.forEach((frame) => {
@@ -1128,10 +1163,11 @@ var Histogram = {
    * @param aHgram Histogram information
    * @param aOptions Object with render options
    *                 * exponential: bars follow logarithmic scale
+   * @param aIsBHR whether or not requires fixing the labels for TimeHistogram
    */
-  render: function Histogram_render(aParent, aName, aHgram, aOptions) {
+  render: function Histogram_render(aParent, aName, aHgram, aOptions, aIsBHR) {
     let options = aOptions || {};
-    let hgram = this.processHistogram(aHgram, aName);
+    let hgram = this.processHistogram(aHgram, aName, aIsBHR);
 
     let outerDiv = document.createElement("div");
     outerDiv.className = "histogram";
@@ -1172,7 +1208,7 @@ var Histogram = {
     return outerDiv;
   },
 
-  processHistogram: function(aHgram, aName) {
+  processHistogram: function(aHgram, aName, aIsBHR) {
     const values = Object.keys(aHgram.values).map(k => aHgram.values[k]);
     if (!values.length) {
       // If we have no values collected for this histogram, just return
@@ -1190,7 +1226,27 @@ var Histogram = {
     const average = Math.round(aHgram.sum * 10 / sample_count) / 10;
     const max_value = Math.max(...values);
 
-    const labelledValues = Object.keys(aHgram.values).map(k => [Number(k), aHgram.values[k]]);
+    function labelFunc(k) {
+      // - BHR histograms are TimeHistograms: Exactly power-of-two buckets (from 0)
+      //   (buckets: [0..1], [2..3], [4..7], [8..15], ... note the 0..1 anomaly - same bucket)
+      // - TimeHistogram's JS representation adds a dummy (empty) "0" bucket, and
+      //   the rest of the buckets have the label as the upper value of the
+      //   bucket (non TimeHistograms have the lower value of the bucket as label).
+      //   So JS TimeHistograms bucket labels are: 0 (dummy), 1, 3, 7, 15, ...
+      // - see toolkit/components/telemetry/Telemetry.cpp
+      //   (CreateJSTimeHistogram, CreateJSThreadHangStats, CreateJSHangHistogram)
+      // - see toolkit/components/telemetry/ThreadHangStats.h
+      // Fix BHR labels to the "standard" format for about:telemetry as follows:
+      //   - The dummy 0 label+bucket will be filtered before arriving here
+      //   - If it's 1 -> manually correct it to 0 (the 0..1 anomaly)
+      //   - For the rest, set the label as the bottom value instead of the upper.
+      //   --> so we'll end with the following (non dummy) labels: 0, 2, 4, 8, 16, ...
+      return !aIsBHR ? k : k == 1 ? 0 : (k + 1) / 2;
+    }
+
+    const labelledValues = Object.keys(aHgram.values)
+                           .filter(label => !aIsBHR || Number(label) != 0) // remove dummy 0 label for BHR
+                           .map(k => [labelFunc(Number(k)), aHgram.values[k]]);
 
     let result = {
       values: labelledValues,
@@ -1496,7 +1552,8 @@ function setHasData(aSectionID, aHasData) {
  */
 function toggleSection(aEvent) {
   let parentElement = aEvent.target.parentElement;
-  if (!parentElement.classList.contains("has-data")) {
+  if (!parentElement.classList.contains("has-data") &&
+      !parentElement.classList.contains("has-subdata")) {
     return; // nothing to toggle
   }
 
@@ -1504,7 +1561,9 @@ function toggleSection(aEvent) {
 
   // Store section opened/closed state in a hidden checkbox (which is then used on reload)
   let statebox = parentElement.getElementsByClassName("statebox")[0];
-  statebox.checked = parentElement.classList.contains("expanded");
+  if (statebox) {
+    statebox.checked = parentElement.classList.contains("expanded");
+  }
 }
 
 /**

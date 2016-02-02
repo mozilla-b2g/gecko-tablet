@@ -2106,6 +2106,7 @@ WebSocketChannel::PrimeNewOutgoingMessage()
       msgType = kMsgTypeBinaryString;
 
       // no break: fall down into binary string case
+      MOZ_FALLTHROUGH;
 
     case kMsgTypeBinaryString:
       mOutHeader[0] = kFinalFragBit | nsIWebSocketFrame::OPCODE_BINARY;
@@ -2663,7 +2664,8 @@ WebSocketChannel::SetupRequest()
 
   rv = mHttpChannel->SetLoadFlags(nsIRequest::LOAD_BACKGROUND |
                                   nsIRequest::INHIBIT_CACHING |
-                                  nsIRequest::LOAD_BYPASS_CACHE);
+                                  nsIRequest::LOAD_BYPASS_CACHE |
+                                  nsIChannel::LOAD_BYPASS_SERVICE_WORKER);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // we never let websockets be blocked by head CSS/JS loads to avoid

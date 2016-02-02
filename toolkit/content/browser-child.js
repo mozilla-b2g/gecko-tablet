@@ -223,19 +223,6 @@ var WebNavigation =  {
     addMessageListener("WebNavigation:LoadURI", this);
     addMessageListener("WebNavigation:Reload", this);
     addMessageListener("WebNavigation:Stop", this);
-
-    // Send a CPOW for the sessionHistory object. We need to make sure
-    // it stays alive as long as the content script since CPOWs are
-    // weakly held.
-    let history = this.webNavigation.sessionHistory;
-    this._sessionHistory = history;
-    sendAsyncMessage("WebNavigation:setHistory", {}, {history: history});
-
-    addEventListener("unload", this.uninit);
-  },
-
-  uninit: function() {
-    this._sessionHistory = null;
   },
 
   get webNavigation() {
@@ -467,10 +454,18 @@ addMessageListener("UpdateCharacterSet", function (aMessage) {
  * Remote thumbnail request handler for PageThumbs thumbnails.
  */
 addMessageListener("Browser:Thumbnail:Request", function (aMessage) {
-  let snapshotWidth = aMessage.data.canvasWidth;
-  let snapshotHeight = aMessage.data.canvasHeight;
-  let canvas = PageThumbUtils.createCanvas(content, snapshotWidth, snapshotHeight);
-  let snapshot = PageThumbUtils.createSnapshotThumbnail(content, canvas);
+  let snapshot;
+  let args = aMessage.data.additionalArgs;
+  let fullScale = args ? args.fullScale : false;
+  if (fullScale) {
+    snapshot = PageThumbUtils.createSnapshotThumbnail(content, null, args);
+  } else {
+    let snapshotWidth = aMessage.data.canvasWidth;
+    let snapshotHeight = aMessage.data.canvasHeight;
+    snapshot =
+      PageThumbUtils.createCanvas(content, snapshotWidth, snapshotHeight);
+    PageThumbUtils.createSnapshotThumbnail(content, snapshot, args);
+  }
 
   snapshot.toBlob(function (aBlob) {
     sendAsyncMessage("Browser:Thumbnail:Response", {

@@ -9,13 +9,14 @@ task:
     name: '[TC] Linux64 mochitest-plain {{chunk}}'
     description: Mochitest plain run {{chunk}}
   payload:
+    maxRunTime: 5400
     capabilities:
       devices:
         loopbackVideo: true
         loopbackAudio: true
   extra:
     chunks:
-      total: 5
+      total: 10
     suite:
       name: mochitest
       flavor: plain-chunked

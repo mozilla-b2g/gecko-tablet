@@ -22,22 +22,15 @@ import android.content.DialogInterface;
 import android.content.DialogInterface.OnCancelListener;
 import android.content.DialogInterface.OnClickListener;
 import android.content.res.Resources;
-import android.graphics.Bitmap;
-import android.graphics.drawable.BitmapDrawable;
-import android.graphics.drawable.Drawable;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
-import android.widget.ArrayAdapter;
-import android.widget.CheckedTextView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ScrollView;
-import android.widget.TextView;
 
 import java.util.ArrayList;
 
@@ -249,7 +242,9 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
         try {
             if (mInputs != null) {
                 for (int i = 0; i < mInputs.length; i++) {
-                    result.put(mInputs[i].getId(), mInputs[i].getValue());
+                    if (mInputs[i] != null) {
+                        result.put(mInputs[i].getId(), mInputs[i].getValue());
+                    }
                 }
             }
         } catch(JSONException ex) { }
@@ -489,7 +484,7 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
     /* Called any time we're closing the dialog to cleanup and notify listeners that the dialog
      * is closing.
      */
-    private void notifyClosing(JSONObject aReturn) {
+    private void notifyClosing(final JSONObject aReturn) {
         try {
             aReturn.put("guid", mGuid);
         } catch(JSONException ex) { }
@@ -502,7 +497,12 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
         GeckoAppShell.sendEventToGecko(GeckoEvent.createNoOpEvent());
 
         if (mCallback != null) {
-            mCallback.onPromptFinished(aReturn.toString());
+            ThreadUtils.postToBackgroundThread(new Runnable() {
+                @Override
+                public void run() {
+                    mCallback.onPromptFinished(aReturn.toString());
+                }
+            });
         }
     }
 

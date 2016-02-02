@@ -340,7 +340,7 @@ public:
     return mSTSThread;
   }
 
-  nsPIDOMWindow* GetWindow() const {
+  nsPIDOMWindowInner* GetWindow() const {
     PC_AUTO_ENTER_API_CALL_NO_CHECK();
     return mWindow;
   }
@@ -467,6 +467,13 @@ public:
   nsresult
   GetParameters(dom::MediaStreamTrack& aTrack,
                 std::vector<JsepTrack::JsConstraints>* aOutConstraints);
+
+  NS_IMETHODIMP_TO_ERRORRESULT(SelectSsrc, ErrorResult &rv,
+                               dom::MediaStreamTrack& aRecvTrack,
+                               unsigned short aSsrcIndex)
+  {
+    rv = SelectSsrc(aRecvTrack, aSsrcIndex);
+  }
 
   nsresult GetPeerIdentity(nsAString& peerIdentity)
   {
@@ -752,7 +759,7 @@ private:
   // TODO: Remove if we ever properly wire PeerConnection for cycle-collection.
   nsWeakPtr mPCObserver;
 
-  nsCOMPtr<nsPIDOMWindow> mWindow;
+  nsCOMPtr<nsPIDOMWindowInner> mWindow;
 
   // The SDP sent in from JS - here for debugging.
   std::string mLocalRequestedSDP;
@@ -825,6 +832,8 @@ private:
   bool mTrickle;
 
   bool mNegotiationNeeded;
+
+  bool mPrivateWindow;
 
   // storage for Telemetry data
   uint16_t mMaxReceiving[SdpMediaSection::kMediaTypes];

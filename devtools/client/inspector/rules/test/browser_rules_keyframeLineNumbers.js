@@ -7,7 +7,7 @@
 // Test that editing a rule will update the line numbers of subsequent
 // rules in the rule view.
 
-const TESTCASE_URI = TEST_URL_ROOT + "doc_keyframeLineNumbers.html";
+const TESTCASE_URI = URL_ROOT + "doc_keyframeLineNumbers.html";
 
 add_task(function*() {
   yield addTab(TESTCASE_URI);
@@ -16,11 +16,11 @@ add_task(function*() {
 
   // Insert a new property, which will affect the line numbers.
   let elementRuleEditor = getRuleViewRuleEditor(view, 1);
+  let onRuleViewChanged = view.once("ruleview-changed");
   yield createNewRuleViewProperty(elementRuleEditor, "font-size: 72px");
+  yield onRuleViewChanged;
 
-  let onRefresh = view.once("ruleview-refreshed");
   yield selectNode("#inner", inspector);
-  yield onRefresh;
 
   let value = getRuleViewLinkTextByIndex(view, 3);
   // Note that this is relative to the <style>.

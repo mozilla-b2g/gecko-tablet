@@ -84,7 +84,7 @@ CheckFrame(InterpreterFrame* fp)
         return false;
     }
 
-    if (fp->isNonEvalFunctionFrame() && fp->numActualArgs() > BASELINE_MAX_ARGS_LENGTH) {
+    if (fp->isFunctionFrame() && fp->numActualArgs() > BASELINE_MAX_ARGS_LENGTH) {
         // Fall back to the interpreter to avoid running out of stack space.
         JitSpew(JitSpew_BaselineAbort, "Too many arguments (%u)", fp->numActualArgs());
         return false;
@@ -105,6 +105,15 @@ EnterBaseline(JSContext* cx, EnterJitData& data)
     } else {
         JS_CHECK_RECURSION(cx, return JitExec_Aborted);
     }
+
+#ifdef DEBUG
+    // Assert we don't GC before entering JIT code. A GC could discard JIT code
+    // or move the function stored in the CalleeToken (it won't be traced at
+    // this point). We use Maybe<> here so we can call reset() to call the
+    // AutoAssertOnGC destructor before we enter JIT code.
+    mozilla::Maybe<JS::AutoAssertOnGC> nogc;
+    nogc.emplace(cx->runtime());
+#endif
 
     MOZ_ASSERT(jit::IsBaselineEnabled(cx));
     MOZ_ASSERT_IF(data.osrFrame, CheckFrame(data.osrFrame));
@@ -130,6 +139,9 @@ EnterBaseline(JSContext* cx, EnterJitData& data)
         if (data.osrFrame)
             data.osrFrame->setRunningInJit();
 
+#ifdef DEBUG
+        nogc.reset();
+#endif
         // Single transition point from Interpreter to Baseline.
         CALL_GENERATED_CODE(enter, data.jitcode, data.maxArgc, data.maxArgv, data.osrFrame, data.calleeToken,
                             data.scopeChain.get(), data.osrNumStackValues, data.result.address());
@@ -201,7 +213,7 @@ jit::EnterBaselineAtBranch(JSContext* cx, InterpreterFrame* fp, jsbytecode* pc)
     AutoValueVector vals(cx);
     RootedValue thisv(cx);
 
-    if (fp->isNonEvalFunctionFrame()) {
+    if (fp->isFunctionFrame()) {
         data.constructing = fp->isConstructing();
         data.numActualArgs = fp->numActualArgs();
         data.maxArgc = Max(fp->numActualArgs(), fp->numFormalArgs()) + 1; // +1 = include |this|
@@ -216,11 +228,7 @@ jit::EnterBaselineAtBranch(JSContext* cx, InterpreterFrame* fp, jsbytecode* pc)
         data.maxArgv = thisv.address();
         data.scopeChain = fp->scopeChain();
 
-        // For eval function frames, set the callee token to the enclosing function.
-        if (fp->isFunctionFrame())
-            data.calleeToken = CalleeToToken(&fp->callee(), /* constructing = */ false);
-        else
-            data.calleeToken = CalleeToToken(fp->script());
+        data.calleeToken = CalleeToToken(fp->script());
 
         if (fp->isEvalFrame()) {
             if (!vals.reserve(2))
@@ -228,7 +236,7 @@ jit::EnterBaselineAtBranch(JSContext* cx, InterpreterFrame* fp, jsbytecode* pc)
 
             vals.infallibleAppend(thisv);
 
-            if (fp->isFunctionFrame())
+            if (fp->script()->isDirectEvalInFunction())
                 vals.infallibleAppend(fp->newTarget());
             else
                 vals.infallibleAppend(NullValue());
@@ -371,9 +379,7 @@ jit::CanEnterBaselineMethod(JSContext* cx, RunState& state)
             return Method_Error;
         }
     } else {
-        MOZ_ASSERT(state.isExecute());
-        ExecuteType type = state.asExecute()->type();
-        if (type == EXECUTE_DEBUG) {
+        if (state.asExecute()->isDebuggerEval()) {
             JitSpew(JitSpew_BaselineAbort, "debugger frame");
             return Method_CantCompile;
         }
@@ -689,6 +695,18 @@ BaselineScript::stackCheckICEntry(bool earlyCheck)
             return icEntry(i);
     }
     MOZ_CRASH("No stack check ICEntry found.");
+}
+
+ICEntry&
+BaselineScript::warmupCountICEntry()
+{
+    // The stack check will be at a very low offset, so just do a linear search
+    // from the beginning.
+    for (size_t i = 0; i < numICEntries() && icEntry(i).pcOffset() == 0; i++) {
+        if (icEntry(i).kind() == ICEntry::Kind_WarmupCounter)
+            return icEntry(i);
+    }
+    MOZ_CRASH("No warmup count ICEntry found.");
 }
 
 ICEntry&

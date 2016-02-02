@@ -174,6 +174,9 @@ class JitFrameIterator
     bool isIonStubMaybeUnwound() const {
         return type_ == JitFrame_IonStub || type_ == JitFrame_Unwound_IonStub;
     }
+    bool isIonAccessorICMaybeUnwound() const {
+        return type_ == JitFrame_IonAccessorIC || type_ == JitFrame_Unwound_IonAccessorIC;
+    }
     bool isBailoutJS() const {
         return type_ == JitFrame_Bailout;
     }
@@ -320,7 +323,7 @@ class RInstructionResults
 {
     // Vector of results of recover instructions.
     typedef mozilla::Vector<RelocatableValue, 1, SystemAllocPolicy> Values;
-    mozilla::UniquePtr<Values, JS::DeletePolicy<Values> > results_;
+    UniquePtr<Values> results_;
 
     // The frame pointer is used as a key to check if the current frame already
     // bailed out.

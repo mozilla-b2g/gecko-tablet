@@ -48,6 +48,7 @@ const PREF_PENDING_OPERATIONS         = "extensions.pendingOperations";
 const PREF_EM_ENABLED_ADDONS          = "extensions.enabledAddons";
 const PREF_EM_DSS_ENABLED             = "extensions.dss.enabled";
 const PREF_EM_AUTO_DISABLED_SCOPES    = "extensions.autoDisableScopes";
+const PREF_E10S_BLOCKED_BY_ADDONS     = "extensions.e10sBlockedByAddons";
 
 const KEY_APP_PROFILE                 = "app-profile";
 const KEY_APP_SYSTEM_ADDONS           = "app-system-addons";
@@ -77,7 +78,8 @@ const PROP_JSON_FIELDS = ["id", "syncGUID", "location", "version", "type",
                           "skinnable", "size", "sourceURI", "releaseNotesURI",
                           "softDisabled", "foreignInstall", "hasBinaryComponents",
                           "strictCompatibility", "locales", "targetApplications",
-                          "targetPlatforms", "multiprocessCompatible", "signedState"];
+                          "targetPlatforms", "multiprocessCompatible", "signedState",
+                          "seen"];
 
 // Properties that should be migrated where possible from an old database. These
 // shouldn't include properties that can be read directly from install.rdf files
@@ -280,7 +282,8 @@ function copyProperties(aObject, aProperties, aTarget) {
   if (!aTarget)
     aTarget = {};
   aProperties.forEach(function(aProp) {
-    aTarget[aProp] = aObject[aProp];
+    if (aProp in aObject)
+      aTarget[aProp] = aObject[aProp];
   });
   return aTarget;
 }
@@ -460,6 +463,7 @@ this.XPIDatabase = {
                                             ASYNC_SAVE_DELAY_MS);
     }
 
+    this.updateAddonsBlockingE10s();
     let promise = this._deferredSave.saveChanges();
     if (!this._schemaVersionSet) {
       this._schemaVersionSet = true;
@@ -1300,6 +1304,7 @@ this.XPIDatabase = {
     aNewAddon.installDate = aOldAddon.installDate;
     aNewAddon.applyBackgroundUpdates = aOldAddon.applyBackgroundUpdates;
     aNewAddon.foreignInstall = aOldAddon.foreignInstall;
+    aNewAddon.seen = aOldAddon.seen;
     aNewAddon.active = (aNewAddon.visible && !aNewAddon.disabled && !aNewAddon.pendingUninstall);
 
     // addAddonMetadata does a saveChanges()
@@ -1387,6 +1392,17 @@ this.XPIDatabase = {
 
     aAddon.active = aActive;
     this.saveChanges();
+  },
+
+  updateAddonsBlockingE10s: function() {
+    let blockE10s = false;
+    for (let [, addon] of this.addonDB) {
+      let active = (addon.visible && !addon.disabled && !addon.pendingUninstall);
+
+      if (active && XPIProvider.isBlockingE10s(addon))
+        blockE10s = true;
+    }
+    Preferences.set(PREF_E10S_BLOCKED_BY_ADDONS, blockE10s);
   },
 
   /**
@@ -1693,6 +1709,7 @@ this.XPIDatabaseReconcile = {
         logger.warn("Disabling foreign installed add-on " + aNewAddon.id + " in "
             + aInstallLocation.name);
         aNewAddon.userDisabled = true;
+        aNewAddon.seen = false;
       }
     }
 

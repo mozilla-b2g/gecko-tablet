@@ -57,7 +57,9 @@ VideoCodecVP9 VideoEncoder::GetDefaultVp9Settings() {
   vp9_settings.frameDroppingOn = true;
   vp9_settings.keyFrameInterval = 3000;
   vp9_settings.adaptiveQpMode = true;
-
+  vp9_settings.automaticResizeOn = true;
+  vp9_settings.numberOfSpatialLayers = 1;
+  vp9_settings.flexibleMode = false;
   return vp9_settings;
 }
 
@@ -612,7 +614,8 @@ bool VCMCodecDataBase::SupportsRenderScheduling() const {
   const VCMExtDecoderMapItem* ext_item = FindExternalDecoderItem(
       receive_codec_.plType);
   if (ext_item == nullptr) {
-    LOG(LS_ERROR) << "Unknown payload type: " << receive_codec_.plType;
+    // Assume the receive_codec_ is internal and as an internal codec
+    // by definition it supports scheduling.
     return true;
   }
   return ext_item->internal_render_timing;

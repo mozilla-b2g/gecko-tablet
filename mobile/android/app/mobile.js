@@ -33,11 +33,7 @@ pref("browser.tabs.expireTime", 900);
 
 // Control whether tab content should try to load from disk cache when network
 // is offline.
-#ifdef NIGHTLY_BUILD
 pref("browser.tabs.useCache", true);
-#else
-pref("browser.tabs.useCache", false);
-#endif
 
 // From libpref/src/init/all.js, extended to allow a slightly wider zoom range.
 pref("zoom.minPercent", 20);
@@ -471,8 +467,13 @@ pref("plugin.default.state", 1);
 // The breakpad report server to link to in about:crashes
 pref("breakpad.reportURL", "https://crash-stats.mozilla.com/report/index/");
 pref("app.support.baseURL", "http://support.mozilla.org/1/mobile/%VERSION%/%OS%/%LOCALE%/");
+
 // Used to submit data to input from about:feedback
 pref("app.feedback.postURL", "https://input.mozilla.org/api/v1/feedback/");
+
+// URL for feedback page
+pref("app.feedbackURL", "about:feedback");
+
 pref("app.privacyURL", "https://www.mozilla.org/privacy/firefox/");
 pref("app.creditsURL", "http://www.mozilla.org/credits/");
 pref("app.channelURL", "http://www.mozilla.org/%LOCALE%/firefox/channel/");
@@ -497,6 +498,8 @@ pref("security.mixed_content.block_active_content", true);
 // Enable pinning
 pref("security.cert_pinning.enforcement_level", 1);
 
+// NB: Changes to this pref affect CERT_CHAIN_SHA1_POLICY_STATUS telemetry.
+// See the comment in CertVerifier.cpp.
 // Allow SHA-1 certificates
 pref("security.pki.sha1_enforcement_level", 0);
 
@@ -569,8 +572,10 @@ pref("layers.async-video.enabled", true);
 pref("layers.async-pan-zoom.enabled", true);
 // APZ prefs that are different from B2G
 pref("apz.allow_immediate_handoff", false);
-// APZ physics settings, copied from B2G
-pref("apz.axis_lock.mode", 2); // Use "sticky" axis locking
+pref("apz.touch_start_tolerance", "0.06");
+pref("apz.axis_lock.breakout_angle", "0.7853982");    // PI / 4 (45 degrees)
+// APZ physics settings reviewed by UX
+pref("apz.axis_lock.mode", 1); // Use "strict" axis locking
 pref("apz.fling_curve_function_x1", "0.41");
 pref("apz.fling_curve_function_y1", "0.0");
 pref("apz.fling_curve_function_x2", "0.80");
@@ -579,6 +584,8 @@ pref("apz.fling_curve_threshold_inches_per_ms", "0.01");
 pref("apz.fling_friction", "0.004");
 pref("apz.fling_stopped_threshold", "0.1");
 pref("apz.max_velocity_inches_per_ms", "0.07");
+pref("apz.fling_accel_interval_ms", 750);
+pref("apz.overscroll.enabled", true);
 #endif
 
 pref("layers.progressive-paint", true);
@@ -628,21 +635,20 @@ pref("image.downscale-during-decode.enabled", true);
 #ifdef MOZ_SAFE_BROWSING
 pref("browser.safebrowsing.enabled", true);
 pref("browser.safebrowsing.malware.enabled", true);
-pref("browser.safebrowsing.downloads.enabled", false);
-pref("browser.safebrowsing.downloads.remote.enabled", false);
+pref("browser.safebrowsing.downloads.enabled", true);
+pref("browser.safebrowsing.downloads.remote.enabled", true);
 pref("browser.safebrowsing.downloads.remote.timeout_ms", 10000);
+pref("browser.safebrowsing.downloads.remote.url", "https://sb-ssl.google.com/safebrowsing/clientreport/download?key=%GOOGLE_API_KEY%");
 pref("browser.safebrowsing.debug", false);
 
 pref("browser.safebrowsing.provider.google.lists", "goog-badbinurl-shavar,goog-downloadwhite-digest256,goog-phish-shavar,goog-malware-shavar,goog-unwanted-shavar");
 pref("browser.safebrowsing.provider.google.updateURL", "https://safebrowsing.google.com/safebrowsing/downloads?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2&key=%GOOGLE_API_KEY%");
 pref("browser.safebrowsing.provider.google.gethashURL", "https://safebrowsing.google.com/safebrowsing/gethash?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
 pref("browser.safebrowsing.provider.google.reportURL", "https://safebrowsing.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
-pref("browser.safebrowsing.provider.google.appRepURL", "https://sb-ssl.google.com/safebrowsing/clientreport/download?key=%GOOGLE_API_KEY%");
 
 pref("browser.safebrowsing.reportPhishMistakeURL", "https://%LOCALE%.phish-error.mozilla.com/?hl=%LOCALE%&url=");
 pref("browser.safebrowsing.reportPhishURL", "https://%LOCALE%.phish-report.mozilla.com/?hl=%LOCALE%&url=");
 pref("browser.safebrowsing.reportMalwareMistakeURL", "https://%LOCALE%.malware-error.mozilla.com/?hl=%LOCALE%&url=");
-pref("browser.safebrowsing.appRepURL", "https://sb-ssl.google.com/safebrowsing/clientreport/download?key=%GOOGLE_API_KEY%");
 
 pref("browser.safebrowsing.id", @MOZ_APP_UA_NAME@);
 
@@ -660,6 +666,9 @@ pref("urlclassifier.gethash.timeout_ms", 5000);
 // a gethash request will be forced to check that the result is still in
 // the database.
 pref("urlclassifier.max-complete-age", 2700);
+
+// Tables for application reputation.
+pref("urlclassifier.downloadBlockTable", "goog-badbinurl-shavar");
 #endif
 
 // True if this is the first time we are showing about:firstrun
@@ -916,10 +925,14 @@ pref("layout.accessiblecaret.enabled", false);
 // Android generates long tap (mouse) events.
 pref("layout.accessiblecaret.use_long_tap_injector", false);
 
-// Android tries to maintain extended visibility of the AccessibleCarets
-// during Selection change notifications generated by Javascript,
-// or misc internal events.
+// AccessibleCarets behaviour is extended to support Android specific
+// requirements during caret-drag, tapping into empty inputs, and to
+// hide carets while maintaining ActionBar visiblity during page scroll.
 pref("layout.accessiblecaret.extendedvisibility", true);
+
+// Selection change notifications generated by Javascript changes
+// update active AccessibleCarets / UI interactions.
+pref("layout.accessiblecaret.allow_script_change_updates", true);
 
 // Optionally provide haptic feedback on longPress selection events.
 pref("layout.accessiblecaret.hapticfeedback", true);

@@ -38,7 +38,7 @@ public:
                                            DOMEventTargetHelper)
 public:
   MediaKeySession(JSContext* aCx,
-                  nsPIDOMWindow* aParent,
+                  nsPIDOMWindowInner* aParent,
                   MediaKeys* aKeys,
                   const nsAString& aKeySystem,
                   const nsAString& aCDMVersion,
@@ -47,7 +47,7 @@ public:
 
   void SetSessionId(const nsAString& aSessionId);
 
-  virtual JSObject* WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto) override;
+  JSObject* WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto) override;
 
   // Mark this as resultNotAddRefed to return raw pointers
   MediaKeyError* GetError() const;

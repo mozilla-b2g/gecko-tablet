@@ -163,7 +163,7 @@ Response::Constructor(const GlobalObject& aGlobal,
   // interception.
   if (NS_IsMainThread()) {
     ChannelInfo info;
-    nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(global);
+    nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(global);
     if (window) {
       nsIDocument* doc = window->GetExtantDoc();
       MOZ_ASSERT(doc);
@@ -236,6 +236,20 @@ Response::Clone(ErrorResult& aRv) const
   RefPtr<InternalResponse> ir = mInternalResponse->Clone();
   RefPtr<Response> response = new Response(mOwner, ir);
   return response.forget();
+}
+
+already_AddRefed<Response>
+Response::CloneUnfiltered(ErrorResult& aRv) const
+{
+  if (BodyUsed()) {
+    aRv.ThrowTypeError<MSG_FETCH_BODY_CONSUMED_ERROR>();
+    return nullptr;
+  }
+
+  RefPtr<InternalResponse> clone = mInternalResponse->Clone();
+  RefPtr<InternalResponse> ir = clone->Unfiltered();
+  RefPtr<Response> ref = new Response(mOwner, ir);
+  return ref.forget();
 }
 
 void

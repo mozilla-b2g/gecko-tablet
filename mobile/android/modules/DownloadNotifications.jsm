@@ -16,6 +16,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "Notifications", "resource://gre/modules
 XPCOMUtils.defineLazyModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Services", "resource://gre/modules/Services.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Snackbars", "resource://gre/modules/Snackbars.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "UITelemetry", "resource://gre/modules/UITelemetry.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(this, "ParentalControls",
   "@mozilla.org/parental-controls-service;1", "nsIParentalControlsService");
@@ -81,12 +82,30 @@ var DownloadNotifications = {
 
   onDownloadChanged: function (download) {
     let notification = notifications.get(download);
-    if (!notification) {
-      Cu.reportError("Download doesn't have a notification.");
-      return;
+
+    if (download.succeeded) {
+      let file = new FileUtils.File(download.target.path);
+
+      Snackbars.show(strings.formatStringFromName("alertDownloadSucceeded", [file.leafName], 1), Snackbars.LENGTH_LONG, {
+        action: {
+          label: strings.GetStringFromName("helperapps.open"),
+          callback: () => {
+            UITelemetry.addEvent("launch.1", "toast", null, "downloads");
+            try {
+              file.launch();
+            } catch (ex) {
+              this.showInAboutDownloads(download);
+            }
+            if (notification) {
+              notification.hide();
+            }
+          }
+        }});
     }
 
-    notification.showOrUpdate();
+    if (notification) {
+      notification.showOrUpdate();
+    }
   },
 
   onDownloadRemoved: function (download) {
@@ -255,8 +274,8 @@ DownloadNotification.prototype = {
 var ConfirmCancelPrompt = {
   show: function (download) {
     // Open a prompt that offers a choice to cancel the download
-    let title = strings.GetStringFromName("downloadCancelPromptTitle");
-    let message = strings.GetStringFromName("downloadCancelPromptMessage");
+    let title = strings.GetStringFromName("downloadCancelPromptTitle1");
+    let message = strings.GetStringFromName("downloadCancelPromptMessage1");
 
     if (Services.prompt.confirm(null, title, message)) {
       download.cancel().catch(Cu.reportError);

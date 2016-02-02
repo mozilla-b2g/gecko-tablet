@@ -10,6 +10,7 @@ if CONFIG['MOZ_ENABLE_XREMOTE']:
 
 DIRS += [
     'aboutcache',
+    'aboutcheckerboard',
     'aboutmemory',
     'addoncompat',
     'alerts',
@@ -45,7 +46,9 @@ DIRS += [
     'prompts',
     'protobuf',
     'reader',
+    'remotebrowserutils',
     'reflect',
+    'securityreporter',
     'sqlite',
     'startup',
     'statusfilter',

@@ -12,7 +12,6 @@
 #include "mozilla/Atomics.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/PodOperations.h"
-#include "mozilla/UniquePtr.h"
 
 #include "jsatom.h"
 #include "jslock.h"
@@ -23,6 +22,7 @@
 #include "gc/Rooting.h"
 #include "jit/IonCode.h"
 #include "js/UbiNode.h"
+#include "js/UniquePtr.h"
 #include "vm/NativeObject.h"
 #include "vm/Shape.h"
 
@@ -48,7 +48,8 @@ class BindingIter;
 class Debugger;
 class LazyScript;
 class ModuleObject;
-class NestedScopeObject;
+class NestedStaticScope;
+class StaticScope;
 class RegExpObject;
 struct SourceCompressionTask;
 class Shape;
@@ -114,7 +115,7 @@ namespace js {
 struct BlockScopeNote {
     static const uint32_t NoBlockScopeIndex = UINT32_MAX;
 
-    uint32_t        index;      // Index of NestedScopeObject in the object
+    uint32_t        index;      // Index of NestedStaticScope in the object
                                 // array, or NoBlockScopeIndex if there is no
                                 // block scope in this range.
     uint32_t        start;      // Bytecode offset at which this scope starts,
@@ -512,7 +513,7 @@ class ScriptCounts
 // the calls to the JSScript::finalize function which are used to aggregate code
 // coverage results on the compartment.
 typedef HashMap<JSScript*,
-                ScriptCounts,
+                ScriptCounts*,
                 DefaultHasher<JSScript*>,
                 SystemAllocPolicy> ScriptCountsMap;
 
@@ -630,10 +631,10 @@ class ScriptSource
     uint32_t length_;
 
     // The filename of this script.
-    mozilla::UniquePtr<char[], JS::FreePolicy> filename_;
+    UniqueChars filename_;
 
-    mozilla::UniquePtr<char16_t[], JS::FreePolicy> displayURL_;
-    mozilla::UniquePtr<char16_t[], JS::FreePolicy> sourceMapURL_;
+    UniqueTwoByteChars displayURL_;
+    UniqueTwoByteChars sourceMapURL_;
     bool mutedErrors_;
 
     // bytecode offset in caller script that generated this code.
@@ -651,7 +652,7 @@ class ScriptSource
     //
     // In the case described above, this field will be non-null and will be the
     // original raw filename from above.  Otherwise this field will be null.
-    mozilla::UniquePtr<char[], JS::FreePolicy> introducerFilename_;
+    UniqueChars introducerFilename_;
 
     // A string indicating how this source code was introduced into the system.
     // This accessor returns one of the following values:
@@ -816,6 +817,9 @@ class ScriptSourceHolder
 {
     ScriptSource* ss;
   public:
+    ScriptSourceHolder()
+      : ss(nullptr)
+    {}
     explicit ScriptSourceHolder(ScriptSource* ss)
       : ss(ss)
     {
@@ -823,7 +827,14 @@ class ScriptSourceHolder
     }
     ~ScriptSourceHolder()
     {
-        ss->decref();
+        if (ss)
+            ss->decref();
+    }
+    void reset(ScriptSource* newss) {
+        if (ss)
+            ss->decref();
+        ss = newss;
+        ss->incref();
     }
     ScriptSource* get() const {
         return ss;
@@ -1284,20 +1295,20 @@ class JSScript : public js::gc::TenuredCell
     // The fixed part of a stack frame is comprised of vars (in function and
     // module code) and block-scoped locals (in all kinds of code).
     size_t nfixed() const {
-        return isGlobalCode() ? bindings.numBlockScoped() : bindings.numFixedLocals();
+        return isGlobalOrEvalCode() ? bindings.numBlockScoped() : bindings.numFixedLocals();
     }
 
     // Number of fixed slots reserved for vars.  Only nonzero for function
     // or module code.
     size_t nfixedvars() const {
-        return isGlobalCode() ? 0 : bindings.numUnaliasedVars();
+        return isGlobalOrEvalCode() ? 0 : bindings.numUnaliasedVars();
     }
 
     // Number of fixed slots reserved for body-level lexicals and vars. This
     // value minus nfixedvars() is the number of body-level lexicals. Only
     // nonzero for function or module code.
     size_t nbodyfixed() const {
-        return isGlobalCode() ? 0 : bindings.numUnaliasedBodyLevelLocals();
+        return isGlobalOrEvalCode() ? 0 : bindings.numUnaliasedBodyLevelLocals();
     }
 
     // Calculate the number of fixed slots that are live at a particular bytecode.
@@ -1632,8 +1643,11 @@ class JSScript : public js::gc::TenuredCell
     }
     inline void setModule(js::ModuleObject* module);
 
-    bool isGlobalCode() const {
+    bool isGlobalOrEvalCode() const {
         return !function_ && !module_;
+    }
+    bool isGlobalCode() const {
+        return isGlobalOrEvalCode() && !isForEval();
     }
 
     // Returns true if the script may read formal arguments on the stack
@@ -1658,7 +1672,10 @@ class JSScript : public js::gc::TenuredCell
   public:
 
     /* Return whether this script was compiled for 'eval' */
-    bool isForEval() { return isCachedEval() || isActiveEval(); }
+    bool isForEval() const { return isCachedEval() || isActiveEval(); }
+
+    /* Return whether this is a 'direct eval' script in a function scope. */
+    bool isDirectEvalInFunction() const { return isForEval() && savedCallerFun(); }
 
     /*
      * Return whether this script is a top-level script.
@@ -1852,7 +1869,7 @@ class JSScript : public js::gc::TenuredCell
     // The following 4 functions find the static scope just before the
     // execution of the instruction pointed to by pc.
 
-    js::NestedScopeObject* getStaticBlockScope(jsbytecode* pc);
+    js::NestedStaticScope* getStaticBlockScope(jsbytecode* pc);
 
     // Returns the innermost static scope at pc if it falls within the extent
     // of the script. Returns nullptr otherwise.
@@ -1930,7 +1947,7 @@ class JSScript : public js::gc::TenuredCell
     void finalize(js::FreeOp* fop);
     void fixupAfterMovingGC() {}
 
-    static inline js::ThingRootKind rootKind() { return js::THING_ROOT_SCRIPT; }
+    static const JS::TraceKind TraceKind = JS::TraceKind::Script;
 
     void traceChildren(JSTracer* trc);
 
@@ -2372,7 +2389,7 @@ class LazyScript : public gc::TenuredCell
     void finalize(js::FreeOp* fop);
     void fixupAfterMovingGC() {}
 
-    static inline js::ThingRootKind rootKind() { return js::THING_ROOT_LAZY_SCRIPT; }
+    static const JS::TraceKind TraceKind = JS::TraceKind::LazyScript;
 
     size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf)
     {
@@ -2517,7 +2534,7 @@ CloneScriptIntoFunction(JSContext* cx, HandleObject enclosingScope, HandleFuncti
                         HandleScript src);
 
 JSScript*
-CloneGlobalScript(JSContext* cx, Handle<ScopeObject*> enclosingScope, HandleScript src);
+CloneGlobalScript(JSContext* cx, Handle<StaticScope*> enclosingScope, HandleScript src);
 
 } /* namespace js */
 

@@ -13,6 +13,7 @@
 #include "mozilla/dom/bluetooth/BluetoothManager.h"
 #include "mozilla/dom/bluetooth/BluetoothTypes.h"
 #include "mozilla/dom/BluetoothManagerBinding.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
 #include "nsContentUtils.h"
 #include "nsDOMClassInfo.h"
@@ -106,7 +107,7 @@ private:
   RefPtr<BluetoothManager> mManager;
 };
 
-BluetoothManager::BluetoothManager(nsPIDOMWindow *aWindow)
+BluetoothManager::BluetoothManager(nsPIDOMWindowInner *aWindow)
   : DOMEventTargetHelper(aWindow)
   , mDefaultAdapterIndex(-1)
 {
@@ -171,7 +172,7 @@ BluetoothManager::GetAdapters(nsTArray<RefPtr<BluetoothAdapter> >& aAdapters)
 
 // static
 already_AddRefed<BluetoothManager>
-BluetoothManager::Create(nsPIDOMWindow* aWindow)
+BluetoothManager::Create(nsPIDOMWindowInner* aWindow)
 {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(aWindow);
@@ -283,4 +284,11 @@ JSObject*
 BluetoothManager::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
   return BluetoothManagerBinding::Wrap(aCx, this, aGivenProto);
+}
+
+// static
+bool
+BluetoothManager::B2GGattClientEnabled(JSContext* cx, JSObject* aGlobal)
+{
+  return !Preferences::GetBool("dom.bluetooth.webbluetooth.enabled");
 }

@@ -10,6 +10,8 @@ var Cc = Components.classes;
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/NotificationDB.jsm");
 Cu.import("resource:///modules/RecentWindow.jsm");
+Cu.import("resource:///modules/UserContextUI.jsm");
+
 
 XPCOMUtils.defineLazyModuleGetter(this, "Preferences",
                                   "resource://gre/modules/Preferences.jsm");
@@ -53,7 +55,9 @@ XPCOMUtils.defineLazyServiceGetter(this, "WindowsUIUtils",
                                    "@mozilla.org/windows-ui-utils;1", "nsIWindowsUIUtils");
 XPCOMUtils.defineLazyModuleGetter(this, "LightweightThemeManager",
                                   "resource://gre/modules/LightweightThemeManager.jsm");
-
+XPCOMUtils.defineLazyServiceGetter(this, "gAboutNewTabService",
+                                   "@mozilla.org/browser/aboutnewtab-service;1",
+                                   "nsIAboutNewTabService");
 XPCOMUtils.defineLazyGetter(this, "gBrowserBundle", function() {
   return Services.strings.createBundle('chrome://browser/locale/browser.properties');
 });
@@ -237,10 +241,6 @@ var gInitialPages = [
 
 XPCOMUtils.defineLazyGetter(this, "Win7Features", function () {
   if (AppConstants.platform != "win")
-    return null;
-
-  // Bug 666808 - AeroPeek support for e10s
-  if (gMultiProcessBrowser)
     return null;
 
   const WINTASKBAR_CONTRACTID = "@mozilla.org/windows-taskbar;1";
@@ -853,14 +853,19 @@ function _loadURIWithFlags(browser, uri, params) {
       });
     }
   } catch (e) {
-    // If anything goes wrong just switch remoteness manually and load the URI.
+    // If anything goes wrong when switching remoteness, just switch remoteness
+    // manually and load the URI.
     // We might lose history that way but at least the browser loaded a page.
     // This might be necessary if SessionStore wasn't initialized yet i.e.
     // when the homepage is a non-remote page.
-    Cu.reportError(e);
-    gBrowser.updateBrowserRemotenessByURL(browser, uri);
-    browser.webNavigation.loadURIWithOptions(uri, flags, referrer, referrerPolicy,
-                                             postData, null, null);
+    if (mustChangeProcess) {
+      Cu.reportError(e);
+      gBrowser.updateBrowserRemotenessByURL(browser, uri);
+      browser.webNavigation.loadURIWithOptions(uri, flags, referrer, referrerPolicy,
+                                               postData, null, null);
+    } else {
+      throw e;
+    }
   } finally {
     if (browser.userTypedClear) {
       browser.userTypedClear--;
@@ -2275,16 +2280,22 @@ function BrowserViewSource(browser) {
   });
 }
 
-// doc - document to use for source, or null for this window's document
+// documentURL - URL of the document to view, or null for this window's document
 // initialTab - name of the initial tab to display, or null for the first tab
 // imageElement - image to load in the Media Tab of the Page Info window; can be null/omitted
 // frameOuterWindowID - the id of the frame that the context menu opened in; can be null/omitted
-function BrowserPageInfo(doc, initialTab, imageElement, frameOuterWindowID) {
-  var args = {doc: doc, initialTab: initialTab, imageElement: imageElement,
-              frameOuterWindowID: frameOuterWindowID};
+function BrowserPageInfo(documentURL, initialTab, imageElement, frameOuterWindowID) {
+  if (documentURL instanceof HTMLDocument) {
+    Deprecated.warning("Please pass the location URL instead of the document " +
+                       "to BrowserPageInfo() as the first argument.",
+                       "https://bugzilla.mozilla.org/show_bug.cgi?id=1238180");
+    documentURL = documentURL.location;
+  }
+
+  let args = { initialTab, imageElement, frameOuterWindowID };
   var windows = Services.wm.getEnumerator("Browser:page-info");
 
-  var documentURL = doc ? doc.location : window.gBrowser.selectedBrowser.currentURI.spec;
+  documentURL = documentURL || window.gBrowser.selectedBrowser.currentURI.spec;
 
   // Check for windows matching the url
   while (windows.hasMoreElements()) {
@@ -2316,8 +2327,11 @@ function URLBarSetURI(aURI) {
     } catch (e) {}
 
     // Replace initial page URIs with an empty string
-    // only if there's no opener (bug 370555).
-    if (gInitialPages.indexOf(uri.spec) != -1)
+    // 1. only if there's no opener (bug 370555).
+    // 2. if remote newtab is enabled and it's the default remote newtab page
+    let defaultRemoteURL = gAboutNewTabService.remoteEnabled &&
+                           uri.spec === gAboutNewTabService.newTabURL;
+    if (gInitialPages.includes(uri.spec) || defaultRemoteURL)
       value = gBrowser.selectedBrowser.hasContentOpener ? uri.spec : "";
     else
       value = losslessDecodeURI(uri);
@@ -2670,7 +2684,7 @@ var BrowserOnClick = {
         }
       break;
       case "Browser:SendSSLErrorReport":
-        this.onSSLErrorReport(msg.target, msg.data.elementId,
+        this.onSSLErrorReport(msg.target,
                               msg.data.documentURI,
                               msg.data.location,
                               msg.data.securityInfo);
@@ -2701,101 +2715,24 @@ var BrowserOnClick = {
     }
   },
 
-  onSSLErrorReport: function(browser, elementId, documentURI, location, securityInfo) {
-    function showReportStatus(reportStatus) {
-      gBrowser.selectedBrowser
-          .messageManager
-          .sendAsyncMessage("Browser:SSLErrorReportStatus",
-                            {
-                              reportStatus: reportStatus,
-                              documentURI: documentURI
-                            });
-    }
-
+  onSSLErrorReport: function(browser, documentURI, location, securityInfo) {
     if (!Services.prefs.getBoolPref("security.ssl.errorReporting.enabled")) {
-      showReportStatus("error");
       Cu.reportError("User requested certificate error report sending, but certificate error reporting is disabled");
       return;
     }
-
-    let bin = TLS_ERROR_REPORT_TELEMETRY_MANUAL_SEND;
-    if (Services.prefs.getBoolPref("security.ssl.errorReporting.automatic")) {
-      bin = TLS_ERROR_REPORT_TELEMETRY_AUTO_SEND;
-    }
-    Services.telemetry.getHistogramById("TLS_ERROR_REPORT_UI").add(bin);
 
     let serhelper = Cc["@mozilla.org/network/serialization-helper;1"]
                            .getService(Ci.nsISerializationHelper);
     let transportSecurityInfo = serhelper.deserializeObject(securityInfo);
     transportSecurityInfo.QueryInterface(Ci.nsITransportSecurityInfo)
 
-    showReportStatus("activity");
-
-    /*
-     * Requested info for the report:
-     * - Domain of bad connection
-     * - Error type (e.g. Pinning, domain mismatch, etc)
-     * - Cert chain (at minimum, same data to distrust each cert in the
-     *   chain)
-     * - Request data (e.g. User Agent, IP, Timestamp)
-     *
-     * The request data should be added to the report by the receiving server.
-     */
-
-    // Convert the nsIX509CertList into a format that can be parsed into
-    // JSON
-    let asciiCertChain = [];
-
-    if (transportSecurityInfo.failedCertChain) {
-      let certs = transportSecurityInfo.failedCertChain.getEnumerator();
-      while (certs.hasMoreElements()) {
-        let cert = certs.getNext();
-        cert.QueryInterface(Ci.nsIX509Cert);
-        asciiCertChain.push(btoa(getDERString(cert)));
-      }
-    }
-
-    let report = {
-      hostname: location.hostname,
-      port: location.port,
-      timestamp: Math.round(Date.now() / 1000),
-      errorCode: transportSecurityInfo.errorCode,
-      failedCertChain: asciiCertChain,
-      userAgent: window.navigator.userAgent,
-      version: 1,
-      build: gAppInfo.appBuildID,
-      product: gAppInfo.name,
-      channel: UpdateUtils.UpdateChannel
-    }
-
-    let reportURL = Services.prefs.getCharPref("security.ssl.errorReporting.url");
-
-    let xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"]
-        .createInstance(Ci.nsIXMLHttpRequest);
-    try {
-      xhr.open("POST", reportURL);
-    } catch (e) {
-      Cu.reportError("xhr.open exception", e);
-      showReportStatus("error");
-    }
-
-    xhr.onerror = function (e) {
-      // error making request to reportURL
-      Cu.reportError("xhr onerror", e);
-      showReportStatus("error");
-    };
-
-    xhr.onload = function (event) {
-      if (xhr.status !== 201 && xhr.status !== 0) {
-        // request returned non-success status
-        Cu.reportError("xhr returned failure code", xhr.status);
-        showReportStatus("error");
-      } else {
-        showReportStatus("complete");
-      }
-    };
-
-    xhr.send(JSON.stringify(report));
+    let errorReporter = Cc["@mozilla.org/securityreporter;1"]
+                          .getService(Ci.nsISecurityReporter);
+    // if location.port is the empty string, set to -1 (for consistency with
+    // port values from nsIURI)
+    let port = location.port === "" ? -1 : location.port;
+    errorReporter.reportTLSError(transportSecurityInfo,
+                                 location.hostname, port);
   },
 
   onAboutCertError: function (browser, elementId, isTopFrame, location, securityInfoAsString) {
@@ -2909,6 +2846,12 @@ var BrowserOnClick = {
           }
           this.ignoreWarningButton(reason);
         }
+        break;
+
+      case "whyForbiddenButton":
+        // This is the "Why is this site blocked" button for family friendly browsing
+        // for Fennec. There's no desktop focused support page yet.
+        gBrowser.loadURI("https://support.mozilla.org/kb/controlledaccess");
         break;
     }
   },
@@ -3524,8 +3467,9 @@ const BrowserSearch = {
       if (!aSearchBar || document.activeElement != aSearchBar.textbox.inputField) {
         let url = gBrowser.currentURI.spec.toLowerCase();
         let mm = gBrowser.selectedBrowser.messageManager;
-        if (url === "about:home" ||
-            (url === "about:newtab" && NewTabUtils.allPages.enabled)) {
+        let newTabRemoted = Services.prefs.getBoolPref("browser.newtabpage.remote");
+        let localNewTabEnabled = url === "about:newtab" && !newTabRemoted && NewTabUtils.allPages.enabled;
+        if (url === "about:home" || localNewTabEnabled) {
           ContentSearch.focusInput(mm);
         } else {
           openUILinkIn("about:home", "current");
@@ -3633,7 +3577,7 @@ const BrowserSearch = {
   loadSearchFromContext: function (terms) {
     let engine = BrowserSearch._loadSearch(terms, true, "contextmenu");
     if (engine) {
-      BrowserSearch.recordSearchInHealthReport(engine, "contextmenu");
+      BrowserSearch.recordSearchInTelemetry(engine, "contextmenu");
     }
   },
 
@@ -3657,10 +3601,26 @@ const BrowserSearch = {
     openUILinkIn(searchEnginesURL, where);
   },
 
+  _getSearchEngineId: function (engine) {
+    if (!engine) {
+      return "other";
+    }
+
+    if (engine.identifier) {
+      return engine.identifier;
+    }
+
+    if (!("name" in engine) || engine.name === undefined) {
+      return "other";
+    }
+
+    return "other-" + engine.name;
+  },
+
   /**
-   * Helper to record a search with Firefox Health Report.
+   * Helper to record a search with Telemetry.
    *
-   * FHR records only search counts and nothing pertaining to the search itself.
+   * Telemetry records only search counts and nothing pertaining to the search itself.
    *
    * @param engine
    *        (nsISearchEngine) The engine handling the search.
@@ -3672,45 +3632,7 @@ const BrowserSearch = {
    *        the search was a suggested search, this indicates where the
    *        item was in the suggestion list and how the user selected it.
    */
-  recordSearchInHealthReport: function (engine, source, selection) {
-    BrowserUITelemetry.countSearchEvent(source, null, selection);
-    this.recordSearchInTelemetry(engine, source);
-
-    let reporter = AppConstants.MOZ_SERVICES_HEALTHREPORT
-                   ? Cc["@mozilla.org/datareporting/service;1"]
-                     .getService()
-                     .wrappedJSObject
-                     .healthReporter
-                   : null;
-
-    // This can happen if the FHR component of the data reporting service is
-    // disabled. This is controlled by a pref that most will never use.
-    if (!reporter) {
-      return;
-    }
-
-    reporter.onInit().then(function record() {
-      try {
-        reporter.getProvider("org.mozilla.searches").recordSearch(engine, source);
-      } catch (ex) {
-        Cu.reportError(ex);
-      }
-    });
-  },
-
-  _getSearchEngineId: function (engine) {
-    if (!engine) {
-      return "other";
-    }
-
-    if (engine.identifier) {
-      return engine.identifier;
-    }
-
-    return "other-" + engine.name;
-  },
-
-  recordSearchInTelemetry: function (engine, source) {
+  recordSearchInTelemetry: function (engine, source, selection) {
     const SOURCES = [
       "abouthome",
       "contextmenu",
@@ -3718,6 +3640,8 @@ const BrowserSearch = {
       "searchbar",
       "urlbar",
     ];
+
+    BrowserUITelemetry.countSearchEvent(source, null, selection);
 
     if (SOURCES.indexOf(source) == -1) {
       Cu.reportError("Unknown source for search: " + source);
@@ -4076,24 +4000,7 @@ function updateUserContextUIIndicator(browser)
   let label = document.getElementById("userContext-label");
   let userContextId = browser.getAttribute("usercontextid");
   hbox.setAttribute("usercontextid", userContextId);
-  switch (userContextId) {
-    case "1":
-      label.value = gBrowserBundle.GetStringFromName("usercontext.personal.label");
-      break;
-    case "2":
-      label.value = gBrowserBundle.GetStringFromName("usercontext.work.label");
-      break;
-    case "3":
-      label.value = gBrowserBundle.GetStringFromName("usercontext.banking.label");
-      break;
-    case "4":
-      label.value = gBrowserBundle.GetStringFromName("usercontext.shopping.label");
-      break;
-    // Display the context IDs for values outside the pre-defined range.
-    // Used for debugging, no localization necessary.
-    default:
-      label.value = "Context " + userContextId;
-  }
+  label.value = UserContextUI.getUserContextLabel(userContextId);
 }
 
 /**
@@ -6519,7 +6426,11 @@ function isTabEmpty(aTab) {
 }
 
 function BrowserOpenSyncTabs() {
-  gSyncUI.openSyncedTabsPanel();
+  if (Services.prefs.getBoolPref("services.sync.syncedTabsUIRefresh")) {
+    gSyncUI.openSyncedTabsPanel();
+  } else {
+    switchToTabHavingURI("about:sync-tabs", true);
+  }
 }
 
 /**
@@ -7902,6 +7813,11 @@ var AboutPrivateBrowsingListener = {
       msg => {
         const PREF = "privacy.trackingprotection.pbmode.enabled";
         Services.prefs.setBoolPref(PREF, !Services.prefs.getBoolPref(PREF));
+    });
+    window.messageManager.addMessageListener(
+      "AboutPrivateBrowsing:DontShowIntroPanelAgain",
+      msg => {
+        TrackingProtection.dontShowIntroPanelAgain();
     });
   }
 };

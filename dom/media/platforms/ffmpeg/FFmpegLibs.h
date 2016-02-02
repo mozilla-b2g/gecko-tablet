@@ -7,15 +7,13 @@
 #ifndef __FFmpegLibs_h__
 #define __FFmpegLibs_h__
 
-#include "mozilla/Types.h"
-
 extern "C" {
 #ifdef __GNUC__
 #pragma GCC visibility push(default)
 #endif
 #include "libavcodec/avcodec.h"
-#include "libavformat/avformat.h"
-#include "libavutil/imgutils.h"
+#include "libavutil/avutil.h"
+#include "libavutil/mem.h"
 #ifdef __GNUC__
 #pragma GCC visibility pop
 #endif
@@ -31,14 +29,10 @@ extern "C" {
 typedef CodecID AVCodecID;
 #endif
 
-enum { LIBAV_VER = LIBAVFORMAT_VERSION_MAJOR };
-
-namespace mozilla {
-
-#define AV_FUNC(func, ver) extern decltype(func)* func;
-#include "FFmpegFunctionList.h"
-#undef AV_FUNC
-
-}
+#ifdef FFVPX_VERSION
+enum { LIBAV_VER = FFVPX_VERSION };
+#else
+enum { LIBAV_VER = LIBAVCODEC_VERSION_MAJOR };
+#endif
 
 #endif // __FFmpegLibs_h__

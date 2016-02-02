@@ -123,6 +123,20 @@ SpewRange(MDefinition* def)
 #endif
 }
 
+static inline void
+SpewTruncate(MDefinition* def, MDefinition::TruncateKind kind, bool shouldClone)
+{
+#ifdef JS_JITSPEW
+    if (JitSpewEnabled(JitSpew_Range)) {
+        JitSpewHeader(JitSpew_Range);
+        Fprinter& out = JitSpewPrinter();
+        out.printf("truncating ");
+        def->printName(out);
+        out.printf(" (kind: %s, clone: %d)\n", MDefinition::TruncateKindString(kind), shouldClone);
+    }
+#endif
+}
+
 TempAllocator&
 RangeAnalysis::alloc() const
 {
@@ -260,6 +274,7 @@ RangeAnalysis::addBetaNodes()
             if (!compare->isNumericComparison())
                 continue;
             // Otherwise fall through to handle JSOP_STRICTEQ the same as JSOP_EQ.
+            MOZ_FALLTHROUGH;
           case JSOP_EQ:
             comp.setDouble(bound, bound);
             break;
@@ -268,6 +283,7 @@ RangeAnalysis::addBetaNodes()
             if (!compare->isNumericComparison())
                 continue;
             // Otherwise fall through to handle JSOP_STRICTNE the same as JSOP_NE.
+            MOZ_FALLTHROUGH;
           case JSOP_NE:
             // Negative zero is not not-equal to zero.
             if (bound == 0) {
@@ -1717,9 +1733,9 @@ MLoadTypedArrayElementStatic::computeRange(TempAllocator& alloc)
 {
     // We don't currently use MLoadTypedArrayElementStatic for uint32, so we
     // don't have to worry about it returning a value outside our type.
-    MOZ_ASSERT(AnyTypedArrayType(someTypedArray_) != Scalar::Uint32);
+    MOZ_ASSERT(someTypedArray_->as<TypedArrayObject>().type() != Scalar::Uint32);
 
-    setRange(GetTypedArrayRange(alloc, AnyTypedArrayType(someTypedArray_)));
+    setRange(GetTypedArrayRange(alloc, someTypedArray_->as<TypedArrayObject>().type()));
 }
 
 void
@@ -2071,7 +2087,7 @@ RangeAnalysis::analyzeLoopPhi(MBasicBlock* header, LoopIterationBound* loopBound
         return;
 
     if (!phi->range())
-        phi->setRange(new(alloc()) Range());
+        phi->setRange(new(alloc()) Range(phi));
 
     LinearSum initialSum(alloc());
     if (!initialSum.add(initial, 1))
@@ -3006,6 +3022,7 @@ RangeAnalysis::truncate()
               case MDefinition::Op_Ursh:
                 if (!bitops.append(static_cast<MBinaryBitwiseInstruction*>(*iter)))
                     return false;
+                break;
               default:;
             }
 
@@ -3030,6 +3047,8 @@ RangeAnalysis::truncate()
             if (!iter->needTruncation(kind))
                 continue;
 
+            SpewTruncate(*iter, kind, shouldClone);
+
             // If needed, clone the current instruction for keeping it for the
             // bailout path.  This give us the ability to truncate instructions
             // even after the removal of branches.
@@ -3053,6 +3072,9 @@ RangeAnalysis::truncate()
             // Truncate this phi if possible.
             if (shouldClone || !iter->needTruncation(kind))
                 continue;
+
+            SpewTruncate(*iter, kind, shouldClone);
+
             iter->truncate();
 
             // Delay updates of inputs/outputs to avoid creating node which
