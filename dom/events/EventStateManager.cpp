@@ -731,7 +731,7 @@ EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
       if (modifierMask &&
           (modifierMask == Prefs::ChromeAccessModifierMask() ||
            modifierMask == Prefs::ContentAccessModifierMask())) {
-        nsAutoTArray<uint32_t, 10> accessCharCodes;
+        AutoTArray<uint32_t, 10> accessCharCodes;
         nsContentUtils::GetAccessKeyCandidates(keyEvent, accessCharCodes);
 
         if (HandleAccessKey(aPresContext, accessCharCodes,
@@ -1291,7 +1291,7 @@ EventStateManager::HandleCrossProcessEvent(WidgetEvent* aEvent,
   // event to.
   //
   // NB: the elements of |targets| must be unique, for correctness.
-  nsAutoTArray<nsCOMPtr<nsIContent>, 1> targets;
+  AutoTArray<nsCOMPtr<nsIContent>, 1> targets;
   if (aEvent->mClass != eTouchEventClass || aEvent->mMessage == eTouchStart) {
     // If this event only has one target, and it's remote, add it to
     // the array.
@@ -4682,7 +4682,8 @@ EventStateManager::CheckForAndDispatchClick(WidgetMouseEvent* aEvent,
       nsWeakFrame currentTarget = mCurrentTarget;
       ret = presShell->HandleEventWithTarget(&event, currentTarget,
                                              mouseContent, aStatus);
-      if (NS_SUCCEEDED(ret) && aEvent->clickCount == 2) {
+      if (NS_SUCCEEDED(ret) && aEvent->clickCount == 2 &&
+          mouseContent && mouseContent->IsInComposedDoc()) {
         //fire double click
         WidgetMouseEvent event2(aEvent->mFlags.mIsTrusted, eMouseDoubleClick,
                                 aEvent->widget, WidgetMouseEvent::eReal);

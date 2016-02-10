@@ -243,6 +243,11 @@ public:
   static bool HasCriticalDisplayPort(nsIContent* aContent);
 
   /**
+   * Remove the displayport for the given element.
+   */
+  static void RemoveDisplayPort(nsIContent* aContent);
+
+  /**
    * Use heuristics to figure out the child list that
    * aChildFrame is currently in.
    */
@@ -326,6 +331,10 @@ public:
    * return the frame that has the non-psuedoelement style context for
    * the content.
    * This is aPrimaryFrame itself except for tableOuter frames.
+   *
+   * Given a non-null input, this will return null if and only if its
+   * argument is a table outer frame that is mid-destruction (and its
+   * table frame has been destroyed).
    */
   static nsIFrame* GetStyleFrame(nsIFrame* aPrimaryFrame);
 
@@ -1082,7 +1091,9 @@ public:
 
   class BoxCallback {
   public:
+    BoxCallback() : mIncludeCaptionBoxForTable(true) {}
     virtual void AddBox(nsIFrame* aFrame) = 0;
+    bool mIncludeCaptionBoxForTable;
   };
   /**
    * Collect all CSS boxes associated with aFrame and its
@@ -2686,6 +2697,12 @@ public:
    */
   static void SetZeroMarginDisplayPortOnAsyncScrollableAncestors(nsIFrame* aFrame,
                                                                  RepaintMode aRepaintMode);
+  /**
+   * Finds the closest ancestor async scrollable frame from aFrame that has a
+   * displayport and attempts to trigger the displayport expiry on that
+   * ancestor.
+   */
+  static void ExpireDisplayPortOnAsyncScrollableAncestor(nsIFrame* aFrame);
 
   static bool IsOutlineStyleAutoEnabled();
 

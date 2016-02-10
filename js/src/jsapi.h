@@ -1110,7 +1110,12 @@ class JS_PUBLIC_API(RuntimeOptions) {
         asyncStack_(true),
         werror_(false),
         strictMode_(false),
-        extraWarnings_(false)
+        extraWarnings_(false),
+#ifdef RELEASE_BUILD
+        matchFlagArgument_(true)
+#else
+        matchFlagArgument_(false)
+#endif
     {
     }
 
@@ -1202,6 +1207,12 @@ class JS_PUBLIC_API(RuntimeOptions) {
         return *this;
     }
 
+    bool matchFlagArgument() const { return matchFlagArgument_; }
+    RuntimeOptions& setMatchFlagArgument(bool flag) {
+        matchFlagArgument_ = flag;
+        return *this;
+    }
+
   private:
     bool baseline_ : 1;
     bool ion_ : 1;
@@ -1213,6 +1224,7 @@ class JS_PUBLIC_API(RuntimeOptions) {
     bool werror_ : 1;
     bool strictMode_ : 1;
     bool extraWarnings_ : 1;
+    bool matchFlagArgument_ : 1;
 };
 
 JS_PUBLIC_API(RuntimeOptions&)
@@ -2513,7 +2525,7 @@ JS_FreezeObject(JSContext* cx, JS::Handle<JSObject*> obj);
 
 namespace JS {
 
-struct PropertyDescriptor : public Traceable {
+struct PropertyDescriptor {
     JSObject* obj;
     unsigned attrs;
     JSGetterOp getter;
@@ -5239,7 +5251,7 @@ JS_NewObjectForConstructor(JSContext* cx, const JSClass* clasp, const JS::CallAr
 #define JS_DEFAULT_ZEAL_FREQ 100
 
 extern JS_PUBLIC_API(void)
-JS_GetGCZeal(JSContext* cx, uint8_t* zeal, uint32_t* frequency, uint32_t* nextScheduled);
+JS_GetGCZealBits(JSContext* cx, uint32_t* zealBits, uint32_t* frequency, uint32_t* nextScheduled);
 
 extern JS_PUBLIC_API(void)
 JS_SetGCZeal(JSContext* cx, uint8_t zeal, uint32_t frequency);

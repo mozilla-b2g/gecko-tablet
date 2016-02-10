@@ -301,6 +301,29 @@ intrinsic_AssertionFailed(JSContext* cx, unsigned argc, Value* vp)
     return false;
 }
 
+/**
+ * Dumps a message to stderr, after stringifying it. Doesn't append a newline.
+ */
+static bool
+intrinsic_DumpMessage(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+#ifdef DEBUG
+    if (args.length() > 0) {
+        // try to dump the informative string
+        JSString* str = ToString<CanGC>(cx, args[0]);
+        if (str) {
+            str->dumpCharsNoNewline();
+            fputc('\n', stderr);
+        } else {
+            cx->recoverFromOutOfMemory();
+        }
+    }
+#endif
+    args.rval().setUndefined();
+    return true;
+}
+
 static bool
 intrinsic_MakeConstructible(JSContext* cx, unsigned argc, Value* vp)
 {
@@ -363,9 +386,11 @@ intrinsic_FinishBoundFunctionInit(JSContext* cx, unsigned argc, Value* vp)
     if (targetObj->isConstructor())
         bound->setIsConstructor();
 
-    // 9.4.1.3 BoundFunctionCreate, steps 2-3,8.
+    // 9.4.1.3 BoundFunctionCreate, Steps 2-3., 8.
     RootedObject proto(cx);
-    GetPrototype(cx, targetObj, &proto);
+    if (!GetPrototype(cx, targetObj, &proto))
+        return false;
+
     if (bound->getProto() != proto) {
         if (!SetPrototype(cx, bound, proto))
             return false;
@@ -373,6 +398,8 @@ intrinsic_FinishBoundFunctionInit(JSContext* cx, unsigned argc, Value* vp)
 
     bound->setExtendedSlot(BOUND_FUN_LENGTH_SLOT, args[2]);
     MOZ_ASSERT(!bound->hasGuessedAtom());
+
+    // 9.2.11 SetFunctionName, Step 6.
     RootedAtom name(cx, AtomizeString(cx, args[3].toString()));
     if (!name)
         return false;
@@ -1711,6 +1738,7 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ThrowTypeError",          intrinsic_ThrowTypeError,          4,0),
     JS_FN("ThrowSyntaxError",        intrinsic_ThrowSyntaxError,        4,0),
     JS_FN("AssertionFailed",         intrinsic_AssertionFailed,         1,0),
+    JS_FN("DumpMessage",             intrinsic_DumpMessage,             1,0),
     JS_FN("OwnPropertyKeys",         intrinsic_OwnPropertyKeys,         1,0),
     JS_FN("MakeDefaultConstructor",  intrinsic_MakeDefaultConstructor,  2,0),
     JS_FN("_ConstructorForTypedArray", intrinsic_ConstructorForTypedArray, 1,0),
@@ -2029,9 +2057,7 @@ JSRuntime::initSelfHosting(JSContext* cx)
 
     char* filename = getenv("MOZ_SELFHOSTEDJS");
     if (filename) {
-        RootedScript script(cx);
-        if (Compile(cx, options, filename, &script))
-            ok = Execute(cx, script, *shg.get(), rv.address());
+        ok = ok && Evaluate(cx, options, filename, &rv);
     } else {
         uint32_t srcLen = GetRawScriptsSize();
 
@@ -2223,9 +2249,10 @@ CloneObject(JSContext* cx, HandleNativeObject selfHostedObject)
                                  : selfHostedFunction->getAllocKind();
         MOZ_ASSERT(!CanReuseScriptForClone(cx->compartment(), selfHostedFunction, cx->global()));
         Rooted<ClonedBlockObject*> globalLexical(cx, &cx->global()->lexicalScope());
-        RootedObject staticGlobalLexical(cx, &globalLexical->staticBlock());
+        Rooted<StaticScope*> staticGlobalLexical(cx, &globalLexical->staticBlock());
         clone = CloneFunctionAndScript(cx, selfHostedFunction, globalLexical,
                                        staticGlobalLexical, kind);
+
         // To be able to re-lazify the cloned function, its name in the
         // self-hosting compartment has to be stored on the clone.
         if (clone && hasName) {

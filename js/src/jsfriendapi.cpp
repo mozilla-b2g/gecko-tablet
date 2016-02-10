@@ -405,9 +405,9 @@ js::GetOutermostEnclosingFunctionOfScriptedCaller(JSContext* cx)
         return nullptr;
 
     RootedFunction curr(cx, iter.callee(cx));
-    for (StaticScopeIter<NoGC> i(curr); !i.done(); i++) {
+    for (StaticScopeIter<NoGC> i(curr->nonLazyScript()->staticScope()); !i.done(); i++) {
         if (i.type() == StaticScopeIter<NoGC>::Function)
-            curr = &i.fun();
+            curr = &i.fun().function();
     }
     return curr;
 }
@@ -759,13 +759,13 @@ FormatFrame(JSContext* cx, const ScriptFrameIter& iter, char* buf, int num,
                         break;
                     }
                 }
-            } else if (script->argsObjAliasesFormals() && iter.hasArgsObj()) {
-                arg = iter.argsObj().arg(i);
-            } else {
-                if (iter.hasUsableAbstractFramePtr())
-                    arg = iter.unaliasedActual(i, DONT_CHECK_ALIASING);
+            } else if (iter.hasUsableAbstractFramePtr()) {
+                if (script->argsObjAliasesFormals() && iter.hasArgsObj())
+                    arg = iter.argsObj().arg(i);
                 else
-                    arg = MagicValue(JS_OPTIMIZED_OUT);
+                    arg = iter.unaliasedActual(i, DONT_CHECK_ALIASING);
+            } else {
+                arg = MagicValue(JS_OPTIMIZED_OUT);
             }
 
             JSAutoByteString valueBytes;

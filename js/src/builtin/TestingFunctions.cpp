@@ -588,6 +588,11 @@ GCZeal(JSContext* cx, unsigned argc, Value* vp)
     if (!ToUint32(cx, args.get(0), &zeal))
         return false;
 
+    if (zeal > uint32_t(gc::ZealMode::Limit)) {
+        JS_ReportError(cx, "gczeal argument out of range");
+        return false;
+    }
+
     uint32_t frequency = JS_DEFAULT_ZEAL_FREQ;
     if (args.length() >= 2) {
         if (!ToUint32(cx, args.get(1), &frequency))
@@ -624,10 +629,10 @@ ScheduleGC(JSContext* cx, unsigned argc, Value* vp)
         PrepareZoneForGC(args[0].toString()->zone());
     }
 
-    uint8_t zeal;
+    uint32_t zealBits;
     uint32_t freq;
     uint32_t next;
-    JS_GetGCZeal(cx, &zeal, &freq, &next);
+    JS_GetGCZealBits(cx, &zealBits, &freq, &next);
     args.rval().setInt32(next);
     return true;
 }
@@ -3171,6 +3176,15 @@ GetModuleEnvironmentValue(JSContext* cx, unsigned argc, Value* vp)
     return GetProperty(cx, env, env, id, args.rval());
 }
 
+static bool
+EnableMatchFlagArgument(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    cx->runtime()->options().setMatchFlagArgument(true);
+    args.rval().setUndefined();
+    return true;
+}
+
 static const JSFunctionSpecWithHelp TestingFunctions[] = {
     JS_FN_HELP("gc", ::GC, 0, 0,
 "gc([obj] | 'compartment' [, 'shrinking'])",
@@ -3655,6 +3669,11 @@ gc::ZealModeHelpText),
     JS_FN_HELP("getModuleEnvironmentValue", GetModuleEnvironmentValue, 2, 0,
 "getModuleEnvironmentValue(module, name)",
 "  Get the value of a bound name in a module environment.\n"),
+
+    JS_FN_HELP("enableMatchFlagArgument", EnableMatchFlagArgument, 0, 0,
+"enableMatchFlagArgument()",
+"  Enables the deprecated, non-standard flag argument of\n"
+"  String.prototype.{match,search,replace}.\n"),
 
     JS_FS_HELP_END
 };

@@ -5,8 +5,8 @@
  * MIT Licensed
  */
 
-var used = []
-  , exports = module.exports = {};
+var used = [];
+exports = module.exports = {};
 
 /*!
  * Chai version
@@ -198,8 +198,8 @@ module.exports = function (_chai, util) {
     if (true !== config.showDiff) showDiff = false;
 
     if (!ok) {
-      var msg = util.getMessage(this, arguments)
-        , actual = util.getActual(this, arguments);
+      msg = util.getMessage(this, arguments)
+      var actual = util.getActual(this, arguments);
       throw new AssertionError(msg, {
           actual: actual
         , expected: expected
@@ -497,7 +497,7 @@ module.exports = function (chai, _) {
         return;
       }
       var subset = {};
-      for (var k in val) subset[k] = obj[k];
+      for (k in val) subset[k] = obj[k];
       expected = _.eql(subset, val);
     } else {
       expected = obj && ~obj.indexOf(val);
@@ -1036,7 +1036,7 @@ module.exports = function (chai, _) {
       , 'expected #{this} to be an instance of ' + name
       , 'expected #{this} to not be an instance of ' + name
     );
-  };
+  }
 
   Assertion.addMethod('instanceof', assertInstanceOf);
   Assertion.addMethod('instanceOf', assertInstanceOf);
@@ -1593,12 +1593,13 @@ module.exports = function (chai, _) {
       }
     }
 
-    var actuallyGot = ''
-      , expectedThrown = name !== null
-        ? name
-        : desiredError
-          ? '#{exp}' //_.inspect(desiredError)
-          : 'an error';
+    var actuallyGot = '';
+    var expectedThrown = 'an error';
+    if (name !== null) {
+      expectedThrown = name;
+    } else if (desiredError) {
+      expectedThrown = '#{exp}'; //_.inspect(desiredError)
+    }
 
     if (thrown) {
       actuallyGot = ' but #{act} was thrown'
@@ -1613,7 +1614,7 @@ module.exports = function (chai, _) {
     );
 
     flag(this, 'object', thrownError);
-  };
+  }
 
   Assertion.addMethod('throw', assertThrows);
   Assertion.addMethod('throws', assertThrows);
@@ -3155,7 +3156,7 @@ module.exports = function (chai, util) {
    * ### .ifError(object)
    *
    * Asserts if value is not a false value, and throws if it is a true value.
-   * This is added to allow for chai to be a drop-in replacement for Node's 
+   * This is added to allow for chai to be a drop-in replacement for Node's
    * assert class.
    *
    *     var err = new Error('I am a custom error');
@@ -3179,9 +3180,7 @@ module.exports = function (chai, util) {
   (function alias(name, as){
     assert[as] = assert[name];
     return alias;
-  })
-  ('Throw', 'throw')
-  ('Throw', 'throws');
+  })('Throw', 'throw')('Throw', 'throws');
 };
 
 },{}],6:[function(require,module,exports){
@@ -3313,7 +3312,7 @@ module.exports = function (chai, util) {
     should.not['throw'] = should.not['Throw'];
 
     return should;
-  };
+  }
 
   chai.should = loadShould;
   chai.Should = loadShould;
@@ -3828,7 +3827,7 @@ var getPathInfo = require('./getPathInfo');
 module.exports = function(path, obj) {
   var info = getPathInfo(path, obj);
   return info.value;
-}; 
+};
 
 },{"./getPathInfo":16}],18:[function(require,module,exports){
 /*!
@@ -3896,7 +3895,7 @@ var type = require('type-detect');
  *     hasProperty('str', obj);  // true
  *     hasProperty('constructor', obj);  // true
  *     hasProperty('bar', obj);  // false
- *     
+ *
  *     hasProperty('length', obj.str); // true
  *     hasProperty(1, obj.str);  // true
  *     hasProperty(5, obj.str);  // false
@@ -3943,7 +3942,7 @@ module.exports = function hasProperty(name, obj) {
  * Main exports
  */
 
-var exports = module.exports = {};
+exports = module.exports = {};
 
 /*!
  * test utility
@@ -4193,8 +4192,8 @@ function formatValue(ctx, value, recurseTimes) {
 
   // Make functions say that they are functions
   if (typeof value === 'function') {
-    var name = getName(value);
-    var nameSuffix = name ? ': ' + name : '';
+    name = getName(value);
+    nameSuffix = name ? ': ' + name : '';
     base = ' [Function' + nameSuffix + ']';
   }
 
@@ -4720,7 +4719,7 @@ function exclude () {
 
     return res;
   };
-};
+}
 
 /*!
  * Primary Exports
@@ -4873,7 +4872,7 @@ function deepEqual(a, b, m) {
 
 function sameValue(a, b) {
   if (a === b) return a !== 0 || 1 / a === 1 / b;
-  return a !== a && b !== b;
+  return isNaN(a) && isNaN(b);
 }
 
 /*!
@@ -5074,7 +5073,7 @@ module.exports = require('./lib/type');
  * Primary Exports
  */
 
-var exports = module.exports = getType;
+exports = module.exports = getType;
 
 /*!
  * Detectable javascript natives
@@ -5220,7 +5219,7 @@ arguments[4][31][0].apply(exports,arguments)
  * Primary Exports
  */
 
-var exports = module.exports = getType;
+exports = module.exports = getType;
 
 /**
  * ### typeOf (obj)

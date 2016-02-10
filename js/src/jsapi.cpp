@@ -3062,7 +3062,7 @@ DefineSelfHostedProperty(JSContext* cx, HandleObject obj, HandleId id,
             return false;
         }
         MOZ_ASSERT(setterValue.isObject() && setterValue.toObject().is<JSFunction>());
-        setterFunc = &getterValue.toObject().as<JSFunction>();
+        setterFunc = &setterValue.toObject().as<JSFunction>();
     }
     JSNative setterOp = JS_DATA_TO_FUNC_PTR(JSNative, setterFunc.get());
 
@@ -3456,8 +3456,9 @@ CreateNonSyntacticScopeChain(JSContext* cx, AutoObjectVector& scopeChain,
 
     staticScopeObj.set(&globalLexical->staticBlock());
     if (!scopeChain.empty()) {
-        staticScopeObj.set(StaticNonSyntacticScope::create(cx, staticScopeObj));
-        if (!staticScopeObj)
+        Rooted<StaticNonSyntacticScope*> scope(cx,
+            StaticNonSyntacticScope::create(cx, staticScopeObj));
+        if (!scope)
             return false;
 
         // The XPConnect subscript loader, which may pass in its own dynamic
@@ -3478,10 +3479,11 @@ CreateNonSyntacticScopeChain(JSContext* cx, AutoObjectVector& scopeChain,
         // TODOshu: disallow the subscript loader from using non-distinguished
         // objects as dynamic scopes.
         dynamicScopeObj.set(
-            cx->compartment()->getOrCreateNonSyntacticLexicalScope(cx, staticScopeObj,
-                                                                   dynamicScopeObj));
+            cx->compartment()->getOrCreateNonSyntacticLexicalScope(cx, scope, dynamicScopeObj));
         if (!dynamicScopeObj)
             return false;
+
+        staticScopeObj.set(scope);
     }
 
     return true;
@@ -3495,7 +3497,7 @@ IsFunctionCloneable(HandleFunction fun)
 
     // If a function was compiled to be lexically nested inside some other
     // script, we cannot clone it without breaking the compiler's assumptions.
-    if (JSObject* scope = fun->nonLazyScript()->enclosingStaticScope()) {
+    if (StaticScope* scope = fun->nonLazyScript()->enclosingStaticScope()) {
         // If the script is directly under the global scope, we can clone it.
         if (IsStaticGlobalLexicalScope(scope))
             return true;
@@ -3512,7 +3514,7 @@ IsFunctionCloneable(HandleFunction fun)
             if (block.needsClone())
                 return false;
 
-            JSObject* enclosing = block.enclosingStaticScope();
+            StaticScope* enclosing = block.enclosingScope();
 
             // If the script is an indirect eval that is immediately scoped
             // under the global, we can clone it.
@@ -5751,9 +5753,9 @@ JS_AbortIfWrongThread(JSRuntime* rt)
 
 #ifdef JS_GC_ZEAL
 JS_PUBLIC_API(void)
-JS_GetGCZeal(JSContext* cx, uint8_t* zeal, uint32_t* frequency, uint32_t* nextScheduled)
+JS_GetGCZealBits(JSContext* cx, uint32_t* zealBits, uint32_t* frequency, uint32_t* nextScheduled)
 {
-    cx->runtime()->gc.getZeal(zeal, frequency, nextScheduled);
+    cx->runtime()->gc.getZealBits(zealBits, frequency, nextScheduled);
 }
 
 JS_PUBLIC_API(void)

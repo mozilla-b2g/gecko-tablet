@@ -20,6 +20,7 @@
 #define wasm_types_h
 
 #include "mozilla/DebugOnly.h"
+#include "mozilla/EnumeratedArray.h"
 #include "mozilla/HashFunctions.h"
 #include "mozilla/Move.h"
 
@@ -40,6 +41,8 @@ namespace wasm {
 using mozilla::Move;
 using mozilla::DebugOnly;
 using mozilla::MallocSizeOf;
+
+typedef Vector<uint32_t, 0, SystemAllocPolicy> Uint32Vector;
 
 // The ValType enum represents the WebAssembly "value type", which are used to
 // specify the type of locals and parameters.
@@ -554,6 +557,22 @@ enum class SymbolicAddress
 void*
 AddressOf(SymbolicAddress imm, ExclusiveContext* cx);
 
+// A wasm::JumpTarget represents one of a special set of stubs that can be
+// jumped to from any function. Because wasm modules can be larger than the
+// range of a plain jump, these potentially out-of-range jumps must be recorded
+// and patched specially by the MacroAssembler and ModuleGenerator.
+
+enum class JumpTarget
+{
+    StackOverflow,
+    OutOfBounds,
+    ConversionError,
+    Throw,
+    Limit
+};
+
+typedef mozilla::EnumeratedArray<JumpTarget, JumpTarget::Limit, Uint32Vector> JumpSiteArray;
+
 // The CompileArgs struct captures global parameters that affect all wasm code
 // generation. It also currently is the single source of truth for whether or
 // not to use signal handlers for different purposes.
@@ -567,6 +586,14 @@ struct CompileArgs
     explicit CompileArgs(ExclusiveContext* cx);
     bool operator==(CompileArgs rhs) const;
     bool operator!=(CompileArgs rhs) const { return !(*this == rhs); }
+};
+
+// A Module can either be asm.js or wasm.
+
+enum ModuleKind
+{
+    Wasm,
+    AsmJS
 };
 
 // Constants:

@@ -503,6 +503,7 @@ var BrowserApp = {
     Distribution.init();
     Tabs.init();
     SearchEngines.init();
+    Experiments.init();
 
     if ("arguments" in window) {
       if (window.arguments[0])
@@ -590,6 +591,7 @@ var BrowserApp = {
 
       InitLater(() => Cu.import("resource://gre/modules/NotificationDB.jsm"));
       InitLater(() => Cu.import("resource://gre/modules/Payment.jsm"));
+      InitLater(() => Cu.import("resource://gre/modules/PresentationDeviceInfoManager.jsm"));
 
       InitLater(() => Services.obs.notifyObservers(window, "browser-delayed-startup-finished", ""));
       InitLater(() => Messaging.sendRequest({ type: "Gecko:DelayedStartup" }));
@@ -4123,7 +4125,8 @@ Tab.prototype = {
         let list = this.sanitizeRelString(target.rel);
         if (list.indexOf("[icon]") != -1) {
           jsonMessage = this.makeFaviconMessage(target);
-        } else if (list.indexOf("[apple-touch-icon]") != -1) {
+        } else if (list.indexOf("[apple-touch-icon]") != -1 ||
+            list.indexOf("[apple-touch-icon-precomposed]") != -1) {
           let message = this.makeFaviconMessage(target);
           this.addMetadata("touchIconList", message.href, message.size);
         } else if (list.indexOf("[alternate]") != -1 && aEvent.type == "DOMLinkAdded") {
@@ -4427,7 +4430,7 @@ Tab.prototype = {
     if (appOrigin) {
       let originHost = "";
       try {
-        let originHost = Services.io.newURI(appOrigin, null, null).host;
+        originHost = Services.io.newURI(appOrigin, null, null).host;
       } catch (e if (e.result == Cr.NS_ERROR_FAILURE)) {
         // NS_ERROR_FAILURE can be thrown by nsIURI.host if the URI scheme does not possess a host - in this case
         // we just act as if we have an empty host.
@@ -6819,6 +6822,33 @@ var Telemetry = {
     let histogram = Services.telemetry.getHistogramById(aHistogramId);
     histogram.add(aValue);
   },
+};
+
+var Experiments = {
+
+  // Enable malware download protection (bug 936041)
+  MALWARE_DOWNLOAD_PROTECTION: "malware-download-protection",
+
+  init() {
+    Messaging.sendRequestForResult({
+      type: "Experiments:GetActive"
+    }).then(experiments => {
+      let names = JSON.parse(experiments);
+      for (let name of names) {
+        switch (name) {
+          case this.MALWARE_DOWNLOAD_PROTECTION: {
+            // Apply experiment preferences on the default branch. This allows
+            // us to avoid migrating user prefs when experiments are enabled/disabled,
+            // and it also allows users to override these prefs in about:config.
+            let defaults = Services.prefs.getDefaultBranch(null);
+            defaults.setBoolPref("browser.safebrowsing.downloads.enabled", true);
+            defaults.setBoolPref("browser.safebrowsing.downloads.remote.enabled", true);
+            continue;
+          }
+        }
+      }
+    });
+  }
 };
 
 var ExternalApps = {

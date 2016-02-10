@@ -997,7 +997,11 @@ GetPropertyValuesPairs(JSContext* aCx,
       nsCSSProps::LookupPropertyByIDLName(propName,
                                           nsCSSProps::eEnabledForAllContent);
     if (property != eCSSProperty_UNKNOWN &&
-        nsCSSProps::kAnimTypeTable[property] != eStyleAnimType_None) {
+        (nsCSSProps::IsShorthand(property) ||
+         nsCSSProps::kAnimTypeTable[property] != eStyleAnimType_None)) {
+      // Only need to check for longhands being animatable, as the
+      // StyleAnimationValue::ComputeValues calls later on will check for
+      // a shorthand's components being animatable.
       AdditionalProperty* p = properties.AppendElement();
       p->mProperty = property;
       p->mJsidIndex = i;
@@ -1355,7 +1359,7 @@ BuildAnimationPropertyListFromKeyframeSequence(
 {
   // Convert the object in aIterator to sequence<Keyframe>, producing
   // an array of OffsetIndexedKeyframe objects.
-  nsAutoTArray<OffsetIndexedKeyframe,4> keyframes;
+  AutoTArray<OffsetIndexedKeyframe,4> keyframes;
   if (!ConvertKeyframeSequence(aCx, aIterator, keyframes)) {
     aRv.Throw(NS_ERROR_FAILURE);
     return;
@@ -1629,6 +1633,12 @@ KeyframeEffectReadOnly::Constructor(
   if (!aTarget) {
     // We don't support null targets yet.
     aRv.Throw(NS_ERROR_DOM_ANIM_NO_TARGET_ERR);
+    return nullptr;
+  }
+
+  if (!aTarget->GetCurrentDoc()) {
+    // Bug 1245748: We don't support targets that are not in a document yet.
+    aRv.Throw(NS_ERROR_DOM_ANIM_TARGET_NOT_IN_DOC_ERR);
     return nullptr;
   }
 
@@ -1946,8 +1956,11 @@ KeyframeEffectReadOnly::CanAnimateTransformOnCompositor(
   const nsIFrame* aFrame,
   const nsIContent* aContent)
 {
+  // Disallow OMTA for preserve-3d transform. Note that we check the style property
+  // rather than Extend3DContext() since that can recurse back into this function
+  // via HasOpacity().
   if (aFrame->Combines3DTransformWithAncestors() ||
-      aFrame->Extend3DContext()) {
+      aFrame->StyleDisplay()->mTransformStyle == NS_STYLE_TRANSFORM_STYLE_PRESERVE_3D) {
     if (aContent) {
       nsCString message;
       message.AppendLiteral("Gecko bug: Async animation of 'preserve-3d' "

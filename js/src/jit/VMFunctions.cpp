@@ -6,6 +6,8 @@
 
 #include "jit/VMFunctions.h"
 
+#include "jsgc.h"
+
 #include "builtin/TypedObject.h"
 #include "frontend/BytecodeCompiler.h"
 #include "jit/arm/Simulator-arm.h"
@@ -614,6 +616,25 @@ PostWriteBarrier(JSRuntime* rt, JSObject* obj)
     rt->gc.storeBuffer.putWholeCell(obj);
 }
 
+static const size_t MAX_WHOLE_CELL_BUFFER_SIZE = 4096;
+
+void
+PostWriteElementBarrier(JSRuntime* rt, JSObject* obj, size_t index)
+{
+    MOZ_ASSERT(!IsInsideNursery(obj));
+    if (obj->is<NativeObject>() &&
+        (obj->as<NativeObject>().getDenseInitializedLength() > MAX_WHOLE_CELL_BUFFER_SIZE
+#ifdef JS_GC_ZEAL
+         || rt->hasZealMode(gc::ZealMode::ElementsBarrier)
+#endif
+            ))
+    {
+        rt->gc.storeBuffer.putSlot(&obj->as<NativeObject>(), HeapSlot::Element, index, 1);
+    } else {
+        rt->gc.storeBuffer.putWholeCell(obj);
+    }
+}
+
 void
 PostGlobalWriteBarrier(JSRuntime* rt, JSObject* obj)
 {
@@ -710,8 +731,7 @@ DebugEpilogue(JSContext* cx, BaselineFrame* frame, jsbytecode* pc, bool ok)
         // code will start at the previous frame.
 
         JitFrameLayout* prefix = frame->framePrefix();
-        EnsureExitFrame(prefix);
-        cx->runtime()->jitTop = (uint8_t*)prefix;
+        EnsureBareExitFrame(cx, prefix);
         return false;
     }
 

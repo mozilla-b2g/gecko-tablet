@@ -4030,7 +4030,7 @@
       <method name="receiveMessage">
         <parameter name="aMessage"/>
         <body><![CDATA[
-          let json = aMessage.json;
+          let data = aMessage.data;
           let browser = aMessage.target;
 
           switch (aMessage.name) {
@@ -4062,32 +4062,32 @@
               break;
             }
             case "contextmenu": {
-              let spellInfo = aMessage.data.spellInfo;
+              let spellInfo = data.spellInfo;
               if (spellInfo)
                 spellInfo.target = aMessage.target.messageManager;
-              let documentURIObject = makeURI(aMessage.data.docLocation,
-                                              aMessage.data.charSet,
-                                              makeURI(aMessage.data.baseURI));
+              let documentURIObject = makeURI(data.docLocation,
+                                              data.charSet,
+                                              makeURI(data.baseURI));
               gContextMenuContentData = { isRemote: true,
                                           event: aMessage.objects.event,
                                           popupNode: aMessage.objects.popupNode,
                                           browser: browser,
-                                          editFlags: aMessage.data.editFlags,
+                                          editFlags: data.editFlags,
                                           spellInfo: spellInfo,
-                                          principal: aMessage.data.principal,
-                                          customMenuItems: aMessage.data.customMenuItems,
-                                          addonInfo: aMessage.data.addonInfo,
+                                          principal: data.principal,
+                                          customMenuItems: data.customMenuItems,
+                                          addonInfo: data.addonInfo,
                                           documentURIObject: documentURIObject,
-                                          docLocation: aMessage.data.docLocation,
-                                          charSet: aMessage.data.charSet,
-                                          referrer: aMessage.data.referrer,
-                                          referrerPolicy: aMessage.data.referrerPolicy,
-                                          contentType: aMessage.data.contentType,
-                                          contentDisposition: aMessage.data.contentDisposition,
-                                          frameOuterWindowID: aMessage.data.frameOuterWindowID,
-                                          selectionInfo: aMessage.data.selectionInfo,
-                                          disableSetDesktopBackground: aMessage.data.disableSetDesktopBg,
-                                          loginFillInfo: aMessage.data.loginFillInfo,
+                                          docLocation: data.docLocation,
+                                          charSet: data.charSet,
+                                          referrer: data.referrer,
+                                          referrerPolicy: data.referrerPolicy,
+                                          contentType: data.contentType,
+                                          contentDisposition: data.contentDisposition,
+                                          frameOuterWindowID: data.frameOuterWindowID,
+                                          selectionInfo: data.selectionInfo,
+                                          disableSetDesktopBackground: data.disableSetDesktopBg,
+                                          loginFillInfo: data.loginFillInfo,
                                         };
               let popup = browser.ownerDocument.getElementById("contentAreaContextMenu");
               let event = gContextMenuContentData.event;
@@ -4118,13 +4118,13 @@
               // it if there's a possibility FindAsYouType will be used.
               // There's no point in doing it for most random keypresses.
               if (!this.isFindBarInitialized(tab) &&
-                aMessage.data.shouldFastFind) {
+                data.shouldFastFind) {
                 let shouldFastFind = this._findAsYouType;
                 if (!shouldFastFind) {
                   // Please keep in sync with toolkit/content/widgets/findbar.xml
                   const FAYT_LINKS_KEY = "'";
                   const FAYT_TEXT_KEY = "/";
-                  let charCode = aMessage.data.fakeEvent.charCode;
+                  let charCode = data.fakeEvent.charCode;
                   let key = charCode ? String.fromCharCode(charCode) : null;
                   shouldFastFind = key == FAYT_LINKS_KEY || key == FAYT_TEXT_KEY;
                 }
@@ -4133,6 +4133,17 @@
                   return this.getFindBar(tab).receiveMessage(aMessage);
                 }
               }
+              break;
+            }
+            case "RefreshBlocker:Blocked": {
+              let event = new CustomEvent("RefreshBlocked", {
+                bubbles: true,
+                cancelable: false,
+                detail: data,
+              });
+
+              browser.dispatchEvent(event);
+
               break;
             }
 
@@ -4244,6 +4255,7 @@
           }
           messageManager.addMessageListener("DOMWebNotificationClicked", this);
           messageManager.addMessageListener("DOMServiceWorkerFocusClient", this);
+          messageManager.addMessageListener("RefreshBlocker:Blocked", this);
 
           // To correctly handle keypresses for potential FindAsYouType, while
           // the tab's find bar is not yet initialized.
@@ -5380,7 +5392,7 @@
             let averageInterval = 0;
             for (let i = 1; i < frameCount; i++) {
               averageInterval += intervals[i];
-            };
+            }
             averageInterval = averageInterval / (frameCount - 1);
 
             Services.telemetry.getHistogramById("FX_TAB_ANIM_ANY_FRAME_INTERVAL_MS").add(averageInterval);
@@ -5503,7 +5515,25 @@
         if (event.target.localName == "tab") {
           this.tabbrowser.removeTab(event.target, {animate: true, byMouse: true});
         } else if (event.originalTarget.localName == "box") {
-          BrowserOpenTab();
+          // The user middleclicked an open space on the tabstrip. This could
+          // be because they intend to open a new tab, but it could also be
+          // because they just removed a tab and they now middleclicked on the
+          // resulting space while that tab is closing. In that case, we don't
+          // want to open a tab. So if we're removing one or more tabs, and
+          // the tab click is before the end of the last visible tab, we do
+          // nothing.
+          if (this.tabbrowser._removingTabs.length) {
+            let visibleTabs = this.tabbrowser.visibleTabs;
+            let ltr = (window.getComputedStyle(this, null).direction == "ltr");
+            let lastTab = visibleTabs[visibleTabs.length - 1];
+            let endOfTab = lastTab.getBoundingClientRect()[ltr ? "right" : "left"];
+            if ((ltr && event.clientX > endOfTab) ||
+                (!ltr && event.clientX < endOfTab)) {
+              BrowserOpenTab();
+            }
+          } else {
+            BrowserOpenTab();
+          }
         } else {
           return;
         }

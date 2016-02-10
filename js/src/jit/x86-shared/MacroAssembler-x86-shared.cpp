@@ -78,7 +78,8 @@ MacroAssembler::restoreFrameAlignmentForICArguments(AfterICSaveLive& aic)
 bool
 MacroAssemblerX86Shared::buildOOLFakeExitFrame(void* fakeReturnAddr)
 {
-    uint32_t descriptor = MakeFrameDescriptor(asMasm().framePushed(), JitFrame_IonJS);
+    uint32_t descriptor = MakeFrameDescriptor(asMasm().framePushed(), JitFrame_IonJS,
+                                              ExitFrameLayout::Size());
     asMasm().Push(Imm32(descriptor));
     asMasm().Push(ImmPtr(fakeReturnAddr));
     return true;
@@ -541,6 +542,18 @@ void
 MacroAssembler::patchCall(uint32_t callerOffset, uint32_t calleeOffset)
 {
     Assembler::patchCall(callerOffset, calleeOffset);
+}
+
+CodeOffset
+MacroAssembler::thunkWithPatch()
+{
+    return Assembler::thunkWithPatch();
+}
+
+void
+MacroAssembler::patchThunk(uint32_t jumpOffset, uint32_t targetOffset)
+{
+    Assembler::patchThunk(jumpOffset, targetOffset);
 }
 
 void

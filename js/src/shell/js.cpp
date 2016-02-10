@@ -139,11 +139,12 @@ static const double MAX_TIMEOUT_INTERVAL = 1800.0;
 // Per-runtime shell state.
 struct ShellRuntime
 {
-    ShellRuntime();
+    explicit ShellRuntime(JSRuntime* rt);
 
     bool isWorker;
     double timeoutInterval;
     Atomic<bool> serviceInterrupt;
+    Atomic<bool> haveInterruptFunc;
     JS::PersistentRootedValue interruptFunc;
     bool lastWarningEnabled;
     JS::PersistentRootedValue lastWarning;
@@ -286,11 +287,14 @@ extern JS_EXPORT_API(void)   add_history(char* line);
 } // extern "C"
 #endif
 
-ShellRuntime::ShellRuntime()
+ShellRuntime::ShellRuntime(JSRuntime* rt)
   : isWorker(false),
     timeoutInterval(-1.0),
     serviceInterrupt(false),
+    haveInterruptFunc(false),
+    interruptFunc(rt, NullValue()),
     lastWarningEnabled(false),
+    lastWarning(rt, NullValue()),
     watchdogLock(nullptr),
     watchdogWakeup(nullptr),
     watchdogThread(nullptr),
@@ -430,12 +434,11 @@ ShellInterruptCallback(JSContext* cx)
     sr->serviceInterrupt = false;
 
     bool result;
-    RootedValue interruptFunc(cx, sr->interruptFunc);
-    if (!interruptFunc.isNull()) {
+    if (sr->haveInterruptFunc) {
         JS::AutoSaveExceptionState savedExc(cx);
-        JSAutoCompartment ac(cx, &interruptFunc.toObject());
+        JSAutoCompartment ac(cx, &sr->interruptFunc.toObject());
         RootedValue rval(cx);
-        if (!JS_CallFunctionValue(cx, nullptr, interruptFunc,
+        if (!JS_CallFunctionValue(cx, nullptr, sr->interruptFunc,
                                   JS::HandleValueArray::empty(), &rval))
         {
             return false;
@@ -2770,7 +2773,7 @@ WorkerMain(void* arg)
         return;
     }
 
-    UniquePtr<ShellRuntime> sr = MakeUnique<ShellRuntime>();
+    UniquePtr<ShellRuntime> sr = MakeUnique<ShellRuntime>(rt);
     if (!sr) {
         JS_DestroyRuntime(rt);
         js_delete(input);
@@ -2824,6 +2827,9 @@ WorkerMain(void* arg)
     JS::SetLargeAllocationFailureCallback(rt, nullptr, nullptr);
 
     DestroyContext(cx, false);
+
+    KillWatchdog(rt);
+
     JS_DestroyRuntime(rt);
 
     js_delete(input);
@@ -3126,7 +3132,7 @@ CancelExecution(JSRuntime* rt)
     sr->serviceInterrupt = true;
     JS_RequestInterruptCallback(rt);
 
-    if (!sr->interruptFunc.isNull()) {
+    if (sr->haveInterruptFunc) {
         static const char msg[] = "Script runs for too long, terminating.\n";
         fputs(msg, stderr);
     }
@@ -3175,6 +3181,7 @@ Timeout(JSContext* cx, unsigned argc, Value* vp)
             return false;
         }
         sr->interruptFunc = value;
+        sr->haveInterruptFunc = true;
     }
 
     args.rval().setUndefined();
@@ -3246,6 +3253,7 @@ SetInterruptCallback(JSContext* cx, unsigned argc, Value* vp)
         return false;
     }
     GetShellRuntime(cx)->interruptFunc = value;
+    GetShellRuntime(cx)->haveInterruptFunc = true;
 
     args.rval().setUndefined();
     return true;
@@ -4666,6 +4674,8 @@ DumpStaticScopeChain(JSContext* cx, unsigned argc, Value* vp)
             return false;
         }
         script = fun->getOrCreateScript(cx);
+        if (!script)
+            return false;
     } else {
         script = obj->as<ModuleObject>().script();
     }
@@ -6989,7 +6999,7 @@ main(int argc, char** argv, char** envp)
     if (!rt)
         return 1;
 
-    UniquePtr<ShellRuntime> sr = MakeUnique<ShellRuntime>();
+    UniquePtr<ShellRuntime> sr = MakeUnique<ShellRuntime>(rt);
     if (!sr)
         return 1;
 
@@ -7000,9 +7010,6 @@ main(int argc, char** argv, char** envp)
     JS::SetOutOfMemoryCallback(rt, my_OOMCallback, nullptr);
     if (!SetRuntimeOptions(rt, op))
         return 1;
-
-    sr->interruptFunc.init(rt, NullValue());
-    sr->lastWarning.init(rt, NullValue());
 
     JS_SetGCParameter(rt, JSGC_MAX_BYTES, 0xffffffff);
 

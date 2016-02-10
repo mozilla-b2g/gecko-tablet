@@ -131,7 +131,7 @@ pref("devtools.performance.ui.show-idle-blocks", true);
 pref("devtools.performance.ui.enable-memory", false);
 pref("devtools.performance.ui.enable-allocations", false);
 pref("devtools.performance.ui.enable-framerate", true);
-pref("devtools.performance.ui.enable-jit-optimizations", false);
+pref("devtools.performance.ui.show-jit-optimizations", false);
 pref("devtools.performance.ui.show-triggers-for-gc-types",
   "TOO_MUCH_MALLOC ALLOC_TRIGGER LAST_DITCH EAGER_ALLOC_TRIGGER");
 
@@ -215,6 +215,9 @@ pref("devtools.canvasdebugger.enabled", false);
 // Enable the Web Audio Editor
 pref("devtools.webaudioeditor.enabled", false);
 
+// Enable Scratchpad
+pref("devtools.scratchpad.enabled", false);
+
 // Web Audio Editor Inspector Width should be a preference
 pref("devtools.webaudioeditor.inspectorWidth", 300);
 
@@ -291,6 +294,10 @@ pref("devtools.webconsole.persistlog", false);
 // any timestamps.
 pref("devtools.webconsole.timestampMessages", false);
 
+// Web Console automatic multiline mode: |true| if you want incomplete statements
+// to automatically trigger multiline editing (equivalent to shift + enter).
+pref("devtools.webconsole.autoMultiline", true);
+
 // The number of lines that are displayed in the web console for the Net,
 // CSS, JS and Web Developer categories. These defaults should be kept in sync
 // with DEFAULT_LOG_LIMIT in the webconsole frontend.
@@ -325,11 +332,12 @@ pref("devtools.fontinspector.enabled", true);
 // version for each user.
 pref("devtools.telemetry.tools.opened.version", "{}");
 
-// Enable the JSON View tool (an inspector for application/json documents)
-#ifdef MOZ_DEV_EDITION
-  pref("devtools.jsonview.enabled", true);
+// Enable the JSON View tool (an inspector for application/json documents) on
+// Nightly and Dev. Edition.
+#ifdef RELEASE_BUILD
+pref("devtools.jsonview.enabled", false);
 #else
-  pref("devtools.jsonview.enabled", false);
+pref("devtools.jsonview.enabled", true);
 #endif
 
 // Disable the HTML responsive design tool by default.  Currently disabled until

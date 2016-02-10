@@ -561,24 +561,3 @@ exports.formatPercent = function(percent, showSign = false) {
   return exports.L10N.getFormatStr("tree-item.percent",
                            exports.formatNumber(percent, showSign));
 };
-
-/**
- * Creates a hash map mapping node IDs to its parent node.
- *
- * @param {CensusTreeNode} node
- * @param {Object<number, TreeNode>} aggregator
- *
- * @return {Object<number, TreeNode>}
- */
-const createParentMap = exports.createParentMap = function (node,
-                                                            getId = node => node.id,
-                                                            aggregator = Object.create(null)) {
-  if (node.children) {
-    for (let child of node.children) {
-      aggregator[getId(child)] = node;
-      createParentMap(child, getId, aggregator);
-    }
-  }
-
-  return aggregator;
-};

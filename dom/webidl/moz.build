@@ -29,7 +29,6 @@ WEBIDL_FILES = [
     'AnonymousContent.webidl',
     'AppInfo.webidl',
     'AppNotificationServiceOptions.webidl',
-    'Apps.webidl',
     'APZTestData.webidl',
     'ArchiveReader.webidl',
     'ArchiveRequest.webidl',
@@ -187,6 +186,7 @@ WEBIDL_FILES = [
     'HTMLContentElement.webidl',
     'HTMLDataElement.webidl',
     'HTMLDataListElement.webidl',
+    'HTMLDetailsElement.webidl',
     'HTMLDirectoryElement.webidl',
     'HTMLDivElement.webidl',
     'HTMLDListElement.webidl',
@@ -672,7 +672,6 @@ WEBIDL_FILES += [
     'DeviceStorageChangeEvent.webidl',
     'DOMTransactionEvent.webidl',
     'HashChangeEvent.webidl',
-    'MozApplicationEvent.webidl',
     'MozSettingsEvent.webidl',
     'PageTransitionEvent.webidl',
     'PopStateEvent.webidl',
@@ -795,7 +794,6 @@ GENERATED_EVENTS_WEBIDL_FILES = [
     'IccChangeEvent.webidl',
     'ImageCaptureErrorEvent.webidl',
     'MediaStreamEvent.webidl',
-    'MozApplicationEvent.webidl',
     'MozCellBroadcastEvent.webidl',
     'MozClirModeEvent.webidl',
     'MozContactChangeEvent.webidl',
@@ -919,5 +917,10 @@ if CONFIG['MOZ_PAY']:
 
 if CONFIG['MOZ_B2G']:
     WEBIDL_FILES += [
-        'Identity.webidl'
+        'Apps.webidl',
+        'Identity.webidl',
+        'MozApplicationEvent.webidl'
+    ]
+    GENERATED_EVENTS_WEBIDL_FILES += [
+        'MozApplicationEvent.webidl'
     ]

@@ -116,6 +116,9 @@ pref("network.predictor.enabled", true);
 pref("network.predictor.max-db-size", 2097152); // bytes
 pref("network.predictor.preserve", 50); // percentage of predictor data to keep when cleaning up
 
+// Use JS mDNS as a fallback
+pref("network.mdns.use_js_fallback", true);
+
 /* history max results display */
 pref("browser.display.history.maxresults", 100);
 
@@ -188,7 +191,7 @@ pref("xpinstall.whitelist.fileRequest", false);
 pref("xpinstall.whitelist.add", "https://addons.mozilla.org");
 pref("xpinstall.whitelist.add.180", "https://marketplace.firefox.com");
 
-pref("xpinstall.signatures.required", false);
+pref("xpinstall.signatures.required", true);
 
 pref("extensions.enabledScopes", 1);
 pref("extensions.autoupdate.enabled", true);
@@ -576,10 +579,10 @@ pref("apz.touch_start_tolerance", "0.06");
 pref("apz.axis_lock.breakout_angle", "0.7853982");    // PI / 4 (45 degrees)
 // APZ physics settings reviewed by UX
 pref("apz.axis_lock.mode", 1); // Use "strict" axis locking
-pref("apz.fling_curve_function_x1", "0.41");
-pref("apz.fling_curve_function_y1", "0.0");
-pref("apz.fling_curve_function_x2", "0.80");
-pref("apz.fling_curve_function_y2", "1.0");
+pref("apz.fling_curve_function_x1", "0.59");
+pref("apz.fling_curve_function_y1", "0.46");
+pref("apz.fling_curve_function_x2", "0.05");
+pref("apz.fling_curve_function_y2", "1.00");
 pref("apz.fling_curve_threshold_inches_per_ms", "0.01");
 pref("apz.fling_friction", "0.004");
 pref("apz.fling_stopped_threshold", "0.1");
@@ -635,10 +638,14 @@ pref("image.downscale-during-decode.enabled", true);
 #ifdef MOZ_SAFE_BROWSING
 pref("browser.safebrowsing.enabled", true);
 pref("browser.safebrowsing.malware.enabled", true);
-pref("browser.safebrowsing.downloads.enabled", true);
-pref("browser.safebrowsing.downloads.remote.enabled", true);
+pref("browser.safebrowsing.downloads.enabled", false);
+pref("browser.safebrowsing.downloads.remote.enabled", false);
 pref("browser.safebrowsing.downloads.remote.timeout_ms", 10000);
 pref("browser.safebrowsing.downloads.remote.url", "https://sb-ssl.google.com/safebrowsing/clientreport/download?key=%GOOGLE_API_KEY%");
+pref("browser.safebrowsing.downloads.remote.block_dangerous",            true);
+pref("browser.safebrowsing.downloads.remote.block_dangerous_host",       true);
+pref("browser.safebrowsing.downloads.remote.block_potentially_unwanted", false);
+pref("browser.safebrowsing.downloads.remote.block_uncommon",             false);
 pref("browser.safebrowsing.debug", false);
 
 pref("browser.safebrowsing.provider.google.lists", "goog-badbinurl-shavar,goog-downloadwhite-digest256,goog-phish-shavar,goog-malware-shavar,goog-unwanted-shavar");
@@ -922,6 +929,13 @@ pref("layout.accessiblecaret.enabled", true);
 #else
 pref("layout.accessiblecaret.enabled", false);
 #endif
+
+// Android needs to show the caret when long tapping on an empty content.
+pref("layout.accessiblecaret.caret_shown_when_long_tapping_on_empty_content", true);
+
+// Android needs persistent carets and actionbar. Turn off the caret timeout.
+pref("layout.accessiblecaret.timeout_ms", 0);
+
 // Android generates long tap (mouse) events.
 pref("layout.accessiblecaret.use_long_tap_injector", false);
 
@@ -968,3 +982,7 @@ pref("identity.fxaccounts.remote.oauth.uri", "https://oauth.accounts.firefox.com
 
 // Token server used by Firefox Account-authenticated Sync.
 pref("identity.sync.tokenserver.uri", "https://token.services.mozilla.com/1.0/sync/1.5");
+
+// Enable Presentation API
+pref("dom.presentation.enabled", true);
+pref("dom.presentation.discovery.enabled", true);

@@ -39,7 +39,6 @@ parser/**
 probes/**
 python/**
 rdf/**
-services/**
 startupcache/**
 testing/**
 tools/**
@@ -83,7 +82,6 @@ browser/extensions/loop/**
 
 # devtools/ exclusions
 devtools/*.js
-devtools/client/aboutdebugging/**
 devtools/client/animationinspector/**
 devtools/client/canvasdebugger/**
 devtools/client/commandline/**
@@ -94,7 +92,6 @@ devtools/client/framework/**
 # included in the ignore list.
 devtools/client/inspector/computed/**
 devtools/client/inspector/fonts/**
-devtools/client/inspector/layout/**
 devtools/client/inspector/markup/test/**
 devtools/client/inspector/rules/**
 devtools/client/inspector/shared/test/**
@@ -169,6 +166,11 @@ mobile/android/components/Snippets.js
 
 # Bug 1178739: Ignore this file as a quick fix for "Illegal yield expression"
 mobile/android/modules/HomeProvider.jsm
+
+# services/ exclusions
+
+# Uses `#filter substitution`
+services/sync/modules/constants.js
 
 # toolkit/ exclusions
 

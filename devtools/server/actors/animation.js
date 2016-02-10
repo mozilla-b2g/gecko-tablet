@@ -41,6 +41,7 @@ const ANIMATION_TYPES = {
   CSS_TRANSITION: "csstransition",
   UNKNOWN: "unknown"
 };
+exports.ANIMATION_TYPES = ANIMATION_TYPES;
 
 /**
  * The AnimationPlayerActor provides information about a given animation: its
@@ -71,16 +72,12 @@ var AnimationPlayerActor = ActorClass({
     this.onAnimationMutation = this.onAnimationMutation.bind(this);
 
     this.walker = animationsActor.walker;
-    this.tabActor = animationsActor.tabActor;
     this.player = player;
     this.node = player.effect.target;
 
-    let win = this.node.ownerDocument.defaultView;
-    this.styles = win.getComputedStyle(this.node);
-
     // Listen to animation mutations on the node to alert the front when the
     // current animation changes.
-    this.observer = new win.MutationObserver(this.onAnimationMutation);
+    this.observer = new this.window.MutationObserver(this.onAnimationMutation);
     this.observer.observe(this.node, {animations: true});
   },
 
@@ -90,10 +87,13 @@ var AnimationPlayerActor = ActorClass({
     if (this.observer && !Cu.isDeadWrapper(this.observer)) {
       this.observer.disconnect();
     }
-    this.tabActor = this.player = this.node = this.styles = null;
-    this.observer = this.walker = null;
+    this.player = this.node = this.observer = this.walker = null;
 
     Actor.prototype.destroy.call(this);
+  },
+
+  get window() {
+    return this.node.ownerDocument.defaultView;
   },
 
   /**
@@ -119,12 +119,12 @@ var AnimationPlayerActor = ActorClass({
     return data;
   },
 
-  isAnimation: function(player=this.player) {
-    return player instanceof this.tabActor.window.CSSAnimation;
+  isAnimation: function(player = this.player) {
+    return player instanceof this.window.CSSAnimation;
   },
 
-  isTransition: function(player=this.player) {
-    return player instanceof this.tabActor.window.CSSTransition;
+  isTransition: function(player = this.player) {
+    return player instanceof this.window.CSSTransition;
   },
 
   getType: function() {
@@ -138,13 +138,15 @@ var AnimationPlayerActor = ActorClass({
   },
 
   /**
-   * Get the name associated with the player. This is used to match
-   * up the player with values in the computed animation-name or
-   * transition-property property.
+   * Get the name of this animation. This can be either the animation.id
+   * property if it was set, or the keyframe rule name or the transition
+   * property.
    * @return {String}
    */
   getName: function() {
-    if (this.isAnimation()) {
+    if (this.player.id) {
+      return this.player.id;
+    } else if (this.isAnimation()) {
       return this.player.animationName;
     } else if (this.isTransition()) {
       return this.player.transitionProperty;
@@ -369,6 +371,8 @@ var AnimationPlayerActor = ActorClass({
     }
   })
 });
+
+exports.AnimationPlayerActor = AnimationPlayerActor;
 
 var AnimationPlayerFront = FrontClass(AnimationPlayerActor, {
   initialize: function(conn, form, detail, ctx) {

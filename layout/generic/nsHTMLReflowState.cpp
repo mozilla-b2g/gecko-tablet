@@ -598,7 +598,7 @@ nsHTMLReflowState::InitResizeFlags(nsPresContext* aPresContext, nsIAtom* aFrameT
       // frame tree geometry (the width on an ancestor) rather than
       // style.
 
-      nsAutoTArray<nsIFrame*, 32> stack;
+      AutoTArray<nsIFrame*, 32> stack;
       stack.AppendElement(frame);
 
       do {
@@ -1799,15 +1799,10 @@ nsHTMLReflowState::InitAbsoluteConstraints(nsPresContext* aPresContext,
 
     if (marginBStartIsAuto) {
       if (marginBEndIsAuto) {
-        if (availMarginSpace < 0) {
-          // FIXME: Note that the spec doesn't actually say we should do this!
-          margin.BEnd(cbwm) = availMarginSpace;
-        } else {
-          // Both margin-block-start and -end are 'auto', so they get
-          // equal values
-          margin.BStart(cbwm) = availMarginSpace / 2;
-          margin.BEnd(cbwm) = availMarginSpace - margin.BStart(cbwm);
-        }
+        // Both 'margin-top' and 'margin-bottom' are 'auto', so they get
+        // equal values
+        margin.BStart(cbwm) = availMarginSpace / 2;
+        margin.BEnd(cbwm) = availMarginSpace - margin.BStart(cbwm);
       } else {
         // Just margin-block-start is 'auto'
         margin.BStart(cbwm) = availMarginSpace;
@@ -2925,9 +2920,14 @@ void
 nsHTMLReflowState::SetTruncated(const nsHTMLReflowMetrics& aMetrics,
                                 nsReflowStatus* aStatus) const
 {
-  if (AvailableHeight() != NS_UNCONSTRAINEDSIZE &&
-      AvailableHeight() < aMetrics.Height() &&
-      !mFlags.mIsTopOfPage) {
+  const WritingMode containerWM = aMetrics.GetWritingMode();
+  if (GetWritingMode().IsOrthogonalTo(containerWM)) {
+    // Orthogonal flows are always reflowed with an unconstrained dimension,
+    // so should never end up truncated (see nsHTMLReflowState::Init()).
+    *aStatus &= ~NS_FRAME_TRUNCATED;
+  } else if (AvailableBSize() != NS_UNCONSTRAINEDSIZE &&
+             AvailableBSize() < aMetrics.BSize(containerWM) &&
+             !mFlags.mIsTopOfPage) {
     *aStatus |= NS_FRAME_TRUNCATED;
   } else {
     *aStatus &= ~NS_FRAME_TRUNCATED;

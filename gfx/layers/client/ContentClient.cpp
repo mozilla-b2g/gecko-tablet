@@ -352,7 +352,7 @@ ContentClientRemoteBuffer::GetUpdatedRegion(const nsIntRegion& aRegionToDraw,
     // changes and some changed buffer content isn't reflected in the
     // draw or invalidate region (on purpose!).  When this happens, we
     // need to read back the entire buffer too.
-    updatedRegion = aVisibleRegion;
+    updatedRegion = aVisibleRegion.GetBounds();
     mIsNewBuffer = false;
   } else {
     updatedRegion = aRegionToDraw;
@@ -379,7 +379,7 @@ ContentClientRemoteBuffer::Updated(const nsIntRegion& aRegionToDraw,
     mForwarder->UseComponentAlphaTextures(this, mTextureClient,
                                           mTextureClientOnWhite);
   } else {
-    nsAutoTArray<CompositableForwarder::TimedTextureClient,1> textures;
+    AutoTArray<CompositableForwarder::TimedTextureClient,1> textures;
     CompositableForwarder::TimedTextureClient* t = textures.AppendElement();
     t->mTextureClient = mTextureClient;
     IntSize size = mTextureClient->GetSize();

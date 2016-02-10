@@ -1,4 +1,4 @@
-;(function(){
+(function(){
 
 // CommonJS require()
 
@@ -155,7 +155,7 @@ var JsDiff = (function() {
               this.pushComponent(basePath.components, newString[basePath.newPos], true, undefined);
             }
 
-            var oldPos = this.extractCommon(basePath, newString, oldString, diagonalPath);
+            oldPos = this.extractCommon(basePath, newString, oldString, diagonalPath);
 
             if (basePath.newPos+1 >= newLen && oldPos+1 >= oldLen) {
               return basePath.components;
@@ -369,7 +369,7 @@ var JsDiff = (function() {
       }
 
       var str = oldStr.split('\n');
-      for (var i = diff.length - 1; i >= 0; i--) {
+      for (i = diff.length - 1; i >= 0; i--) {
         var d = diff[i];
         for (var j = 0; j < d.oldlength; j++) {
           if(str[d.start-1+j] !== d.oldlines[j]) {
@@ -415,7 +415,13 @@ var JsDiff = (function() {
       var ret = [], change;
       for ( var i = 0; i < changes.length; i++) {
         change = changes[i];
-        ret.push([(change.added ? 1 : change.removed ? -1 : 0), change.value]);
+        var order = 0;
+        if (change.added) {
+          order = 1;
+        } else if (change.removed) {
+          order = -1;
+        }
+        ret.push([order, change.value]);
       }
       return ret;
     }
@@ -464,7 +470,7 @@ function isArray(obj) {
  * @api public
  */
 
-function EventEmitter(){};
+function EventEmitter(){}
 
 /**
  * Adds a listener.
@@ -502,7 +508,7 @@ EventEmitter.prototype.once = function (name, fn) {
   function on () {
     self.removeListener(name, on);
     fn.apply(this, arguments);
-  };
+  }
 
   on.listener = fn;
   this.on(name, on);
@@ -872,8 +878,8 @@ Context.prototype.skip = function(){
 
 Context.prototype.inspect = function(){
   return JSON.stringify(this, function(key, val){
-    if ('_runnable' == key) return;
-    if ('test' == key) return;
+    if ('_runnable' == key) return undefined;
+    if ('test' == key) return undefined;
     return val;
   }, 2);
 };
@@ -910,7 +916,7 @@ function Hook(title, fn) {
  * Inherit from `Runnable.prototype`.
  */
 
-function F(){};
+function F(){}
 F.prototype = Runnable.prototype;
 Hook.prototype = new F;
 Hook.prototype.constructor = Hook;
@@ -926,7 +932,7 @@ Hook.prototype.constructor = Hook;
 
 Hook.prototype.error = function(err){
   if (0 == arguments.length) {
-    var err = this._error;
+    err = this._error;
     this._error = null;
     return err;
   }
@@ -1891,7 +1897,7 @@ module.exports = function(val, options){
 
 function parse(str) {
   var match = /^((?:\d+)?\.?\d+) *(ms|seconds?|s|minutes?|m|hours?|h|days?|d|years?|y)?$/i.exec(str);
-  if (!match) return;
+  if (!match) return undefined;
   var n = parseFloat(match[1]);
   var type = (match[2] || 'ms').toLowerCase();
   switch (type) {
@@ -1957,7 +1963,7 @@ function longFormat(ms) {
  */
 
 function plural(ms, n, name) {
-  if (ms < n) return;
+  if (ms < n) return undefined;
   if (ms < n * 1.5) return Math.floor(ms / n) + ' ' + name;
   return Math.ceil(ms / n) + ' ' + name + 's';
 }
@@ -2097,12 +2103,13 @@ var color = exports.color = function(type, str) {
  */
 
 exports.window = {
-  width: isatty
-    ? process.stdout.getWindowSize
-      ? process.stdout.getWindowSize(1)[0]
-      : tty.getWindowSize()[1]
-    : 75
+  width: 75
 };
+if (isatty) {
+  exports.window.width = process.stdout.getWindowSize
+                       ? process.stdout.getWindowSize(1)[0]
+                       : tty.getWindowSize()[1];
+}
 
 /**
  * Expose some basic cursor interactions
@@ -2240,11 +2247,13 @@ function Base(runner) {
     stats.passes = stats.passes || 0;
 
     var medium = test.slow() / 2;
-    test.speed = test.duration > test.slow()
-      ? 'slow'
-      : test.duration > medium
-        ? 'medium'
-        : 'fast';
+    if (test.duration > test.slow()) {
+      test.speed = 'slow';
+    } else if (test.duration > medium) {
+      test.speed = 'medium';
+    } else {
+      test.speed = 'fast';
+    }
 
     stats.passes++;
   });
@@ -2582,7 +2591,7 @@ function Dot(runner) {
  * Inherit from `Base.prototype`.
  */
 
-function F(){};
+function F(){}
 F.prototype = Base.prototype;
 Dot.prototype = new F;
 Dot.prototype.constructor = Dot;
@@ -2780,9 +2789,9 @@ function HTML(runner) {
       var url = self.testURL(test);
       var el = fragment('<li class="test pass %e"><h2>%e<span class="duration">%ems</span> <a href="%s" class="replay">‣</a></h2></li>', test.speed, test.title, test.duration, url);
     } else if (test.pending) {
-      var el = fragment('<li class="test pass pending"><h2>%e</h2></li>', test.title);
+      el = fragment('<li class="test pass pending"><h2>%e</h2></li>', test.title);
     } else {
-      var el = fragment('<li class="test fail"><h2>%e <a href="%e" class="replay">‣</a></h2></li>', test.title, self.testURL(test));
+      el = fragment('<li class="test fail"><h2>%e <a href="%e" class="replay">‣</a></h2></li>', test.title, self.testURL(test));
       var str = test.err.stack || test.err.toString();
 
       // FF / Opera do not add the message
@@ -2978,8 +2987,8 @@ exports = module.exports = JSONCov;
  */
 
 function JSONCov(runner, output) {
-  var self = this
-    , output = 1 == arguments.length ? true : output;
+  var self = this;
+  output = 1 == arguments.length ? true : output;
 
   Base.call(this, runner);
 
@@ -3370,7 +3379,7 @@ function Landing(runner) {
  * Inherit from `Base.prototype`.
  */
 
-function F(){};
+function F(){}
 F.prototype = Base.prototype;
 Landing.prototype = new F;
 Landing.prototype.constructor = Landing;
@@ -3441,7 +3450,7 @@ function List(runner) {
  * Inherit from `Base.prototype`.
  */
 
-function F(){};
+function F(){}
 F.prototype = Base.prototype;
 List.prototype = new F;
 List.prototype.constructor = List;
@@ -3590,7 +3599,7 @@ function Min(runner) {
  * Inherit from `Base.prototype`.
  */
 
-function F(){};
+function F(){}
 F.prototype = Base.prototype;
 Min.prototype = new F;
 Min.prototype.constructor = Min;
@@ -3858,7 +3867,7 @@ function write(string) {
  * Inherit from `Base.prototype`.
  */
 
-function F(){};
+function F(){}
 F.prototype = Base.prototype;
 NyanCat.prototype = new F;
 NyanCat.prototype.constructor = NyanCat;
@@ -3898,8 +3907,8 @@ Base.colors.progress = 90;
 function Progress(runner, options) {
   Base.call(this, runner);
 
+  options = options || {}
   var self = this
-    , options = options || {}
     , stats = this.stats
     , width = Base.window.width * .50 | 0
     , total = runner.total
@@ -3958,7 +3967,7 @@ function Progress(runner, options) {
  * Inherit from `Base.prototype`.
  */
 
-function F(){};
+function F(){}
 F.prototype = Base.prototype;
 Progress.prototype = new F;
 Progress.prototype.constructor = Progress;
@@ -4027,7 +4036,7 @@ function Spec(runner) {
       cursor.CR();
       console.log(fmt, test.title);
     } else {
-      var fmt = indent()
+      fmt = indent()
         + color('checkmark', '  ' + Base.symbols.ok)
         + color('pass', ' %s')
         + color(test.speed, ' (%dms)');
@@ -4048,7 +4057,7 @@ function Spec(runner) {
  * Inherit from `Base.prototype`.
  */
 
-function F(){};
+function F(){}
 F.prototype = Base.prototype;
 Spec.prototype = new F;
 Spec.prototype.constructor = Spec;
@@ -4223,7 +4232,7 @@ XUnit.prototype.done = function(failures, fn) {
  * Inherit from `Base.prototype`.
  */
 
-function F(){};
+function F(){}
 F.prototype = Base.prototype;
 XUnit.prototype = new F;
 XUnit.prototype.constructor = XUnit;
@@ -4346,7 +4355,7 @@ function Runnable(title, fn) {
  * Inherit from `EventEmitter.prototype`.
  */
 
-function F(){};
+function F(){}
 F.prototype = EventEmitter.prototype;
 Runnable.prototype = new F;
 Runnable.prototype.constructor = Runnable;
@@ -4442,7 +4451,7 @@ Runnable.prototype.clearTimeout = function(){
 
 Runnable.prototype.inspect = function(){
   return JSON.stringify(this, function(key, val){
-    if ('_' == key[0]) return;
+    if ('_' == key[0]) return undefined;
     if ('parent' == key) return '#<Suite>';
     if ('ctx' == key) return '#<Context>';
     return val;
@@ -4505,11 +4514,11 @@ Runnable.prototype.run = function(fn){
   // finished
   function done(err) {
     var ms = self.timeout();
-    if (self.timedOut) return;
+    if (self.timedOut) return undefined;
     if (finished) return multiple(err || self._trace);
 
     // Discard the resolution if this test has already failed asynchronously
-    if (self.state) return;
+    if (self.state) return undefined;
 
     self.clearTimeout();
     self.duration = new Date - start;
@@ -4540,7 +4549,7 @@ Runnable.prototype.run = function(fn){
     } catch (err) {
       done(utils.getError(err));
     }
-    return;
+    return undefined;
   }
 
   if (this.asyncOnly) {
@@ -4664,7 +4673,7 @@ Runner.immediately = global.setImmediate || process.nextTick;
  * Inherit from `EventEmitter.prototype`.
  */
 
-function F(){};
+function F(){}
 F.prototype = EventEmitter.prototype;
 Runner.prototype = new F;
 Runner.prototype.constructor = Runner;
@@ -5373,7 +5382,7 @@ function Suite(title, parentContext) {
  * Inherit from `EventEmitter.prototype`.
  */
 
-function F(){};
+function F(){}
 F.prototype = EventEmitter.prototype;
 Suite.prototype = new F;
 Suite.prototype.constructor = Suite;
@@ -5695,7 +5704,7 @@ function Test(title, fn) {
  * Inherit from `Runnable.prototype`.
  */
 
-function F(){};
+function F(){}
 F.prototype = Runnable.prototype;
 Test.prototype = new F;
 Test.prototype.constructor = Test;
@@ -6290,7 +6299,7 @@ exports.lookupFiles = function lookupFiles(path, extensions, recursive) {
     if (stat.isFile()) return path;
   }
   catch (ignored) {
-    return;
+    return undefined;
   }
 
   fs.readdirSync(path).forEach(function(file) {

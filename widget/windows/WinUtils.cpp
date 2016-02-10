@@ -1379,9 +1379,8 @@ NS_IMETHODIMP AsyncEncodeAndWriteIcon::Run()
   fclose(file);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Cleanup
   if (mURLShortcut) {
-    SendMessage(HWND_BROADCAST, WM_SETTINGCHANGE, SPI_SETNONCLIENTMETRICS, 0);
+    SendNotifyMessage(HWND_BROADCAST, WM_SETTINGCHANGE, SPI_SETNONCLIENTMETRICS, 0);
   }
   return rv;
 }
@@ -1693,7 +1692,7 @@ WinUtils::ConvertHRGNToRegion(HRGN aRgn)
   nsIntRegion rgn;
 
   DWORD size = ::GetRegionData(aRgn, 0, nullptr);
-  nsAutoTArray<uint8_t,100> buffer;
+  AutoTArray<uint8_t,100> buffer;
   buffer.SetLength(size);
 
   RGNDATA* data = reinterpret_cast<RGNDATA*>(buffer.Elements());

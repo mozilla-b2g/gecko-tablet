@@ -2027,7 +2027,8 @@ CodeGenerator::emitSharedStub(ICStub::Kind kind, LInstruction* lir)
 #endif
 
     // Create descriptor signifying end of Ion frame.
-    uint32_t descriptor = MakeFrameDescriptor(masm.framePushed(), JitFrame_IonJS);
+    uint32_t descriptor = MakeFrameDescriptor(masm.framePushed(), JitFrame_IonJS,
+                                              JitStubFrameLayout::Size());
     masm.Push(Imm32(descriptor));
 
     // Call into the stubcode.
@@ -2605,6 +2606,8 @@ CodeGenerator::visitMoveGroup(LMoveGroup* group)
     }
 
     masm.propagateOOM(resolver.resolve());
+    if (masm.oom())
+        return;
 
     MoveEmitter emitter(masm);
 
@@ -3130,16 +3133,16 @@ CodeGenerator::visitOutOfLineCallPostWriteBarrier(OutOfLineCallPostWriteBarrier*
     masm.jump(ool->rejoin());
 }
 
+template <class LPostBarrierType>
 void
-CodeGenerator::visitPostWriteBarrierO(LPostWriteBarrierO* lir)
+CodeGenerator::visitPostWriteBarrierCommonO(LPostBarrierType* lir, OutOfLineCode* ool)
 {
-    OutOfLineCallPostWriteBarrier* ool = new(alloc()) OutOfLineCallPostWriteBarrier(lir, lir->object());
     addOutOfLineCode(ool, lir->mir());
 
     Register temp = ToTempRegisterOrInvalid(lir->temp());
 
     if (lir->object()->isConstant()) {
-        // Constant nursery objects cannot appear here, see LIRGenerator::visitPostWriteBarrier.
+        // Constant nursery objects cannot appear here, see LIRGenerator::visitPostWriteElementBarrier.
         MOZ_ASSERT(!IsInsideNursery(&lir->object()->toConstant()->toObject()));
     } else {
         masm.branchPtrInNurseryRange(Assembler::Equal, ToRegister(lir->object()), temp,
@@ -3151,26 +3154,120 @@ CodeGenerator::visitPostWriteBarrierO(LPostWriteBarrierO* lir)
     masm.bind(ool->rejoin());
 }
 
+template <class LPostBarrierType>
 void
-CodeGenerator::visitPostWriteBarrierV(LPostWriteBarrierV* lir)
+CodeGenerator::visitPostWriteBarrierCommonV(LPostBarrierType* lir, OutOfLineCode* ool)
 {
-    OutOfLineCallPostWriteBarrier* ool = new(alloc()) OutOfLineCallPostWriteBarrier(lir, lir->object());
     addOutOfLineCode(ool, lir->mir());
 
     Register temp = ToTempRegisterOrInvalid(lir->temp());
 
     if (lir->object()->isConstant()) {
-        // Constant nursery objects cannot appear here, see LIRGenerator::visitPostWriteBarrier.
+        // Constant nursery objects cannot appear here, see LIRGenerator::visitPostWriteElementBarrier.
         MOZ_ASSERT(!IsInsideNursery(&lir->object()->toConstant()->toObject()));
     } else {
         masm.branchPtrInNurseryRange(Assembler::Equal, ToRegister(lir->object()), temp,
                                      ool->rejoin());
     }
 
-    ValueOperand value = ToValue(lir, LPostWriteBarrierV::Input);
+    ValueOperand value = ToValue(lir, LPostBarrierType::Input);
     masm.branchValueIsNurseryObject(Assembler::Equal, value, temp, ool->entry());
 
     masm.bind(ool->rejoin());
+}
+
+void
+CodeGenerator::visitPostWriteBarrierO(LPostWriteBarrierO* lir)
+{
+    auto ool = new(alloc()) OutOfLineCallPostWriteBarrier(lir, lir->object());
+    visitPostWriteBarrierCommonO(lir, ool);
+}
+
+void
+CodeGenerator::visitPostWriteBarrierV(LPostWriteBarrierV* lir)
+{
+    auto ool = new(alloc()) OutOfLineCallPostWriteBarrier(lir, lir->object());
+    visitPostWriteBarrierCommonV(lir, ool);
+}
+
+// Out-of-line path to update the store buffer.
+class OutOfLineCallPostWriteElementBarrier : public OutOfLineCodeBase<CodeGenerator>
+{
+    LInstruction* lir_;
+    const LAllocation* object_;
+    const LAllocation* index_;
+
+  public:
+    OutOfLineCallPostWriteElementBarrier(LInstruction* lir, const LAllocation* object,
+                                         const LAllocation* index)
+      : lir_(lir),
+        object_(object),
+        index_(index)
+    { }
+
+    void accept(CodeGenerator* codegen) {
+        codegen->visitOutOfLineCallPostWriteElementBarrier(this);
+    }
+
+    LInstruction* lir() const {
+        return lir_;
+    }
+
+    const LAllocation* object() const {
+        return object_;
+    }
+
+    const LAllocation* index() const {
+        return index_;
+    }
+};
+
+void
+CodeGenerator::visitOutOfLineCallPostWriteElementBarrier(OutOfLineCallPostWriteElementBarrier* ool)
+{
+    saveLiveVolatile(ool->lir());
+
+    const LAllocation* obj = ool->object();
+    const LAllocation* index = ool->index();
+
+    Register objreg = obj->isConstant() ? InvalidReg : ToRegister(obj);
+    Register indexreg = ToRegister(index);
+
+    AllocatableGeneralRegisterSet regs(GeneralRegisterSet::Volatile());
+    regs.takeUnchecked(indexreg);
+
+    if (obj->isConstant()) {
+        objreg = regs.takeAny();
+        masm.movePtr(ImmGCPtr(&obj->toConstant()->toObject()), objreg);
+    } else {
+        regs.takeUnchecked(objreg);
+    }
+
+    Register runtimereg = regs.takeAny();
+    masm.setupUnalignedABICall(runtimereg);
+    masm.mov(ImmPtr(GetJitContext()->runtime), runtimereg);
+    masm.passABIArg(runtimereg);
+    masm.passABIArg(objreg);
+    masm.passABIArg(indexreg);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, PostWriteElementBarrier));
+
+    restoreLiveVolatile(ool->lir());
+
+    masm.jump(ool->rejoin());
+}
+
+void
+CodeGenerator::visitPostWriteElementBarrierO(LPostWriteElementBarrierO* lir)
+{
+    auto ool = new(alloc()) OutOfLineCallPostWriteElementBarrier(lir, lir->object(), lir->index());
+    visitPostWriteBarrierCommonO(lir, ool);
+}
+
+void
+CodeGenerator::visitPostWriteElementBarrierV(LPostWriteElementBarrierV* lir)
+{
+    auto ool = new(alloc()) OutOfLineCallPostWriteElementBarrier(lir, lir->object(), lir->index());
+    visitPostWriteBarrierCommonV(lir, ool);
 }
 
 void
@@ -3442,7 +3539,8 @@ CodeGenerator::visitCallGeneric(LCallGeneric* call)
     masm.freeStack(unusedStack);
 
     // Construct the IonFramePrefix.
-    uint32_t descriptor = MakeFrameDescriptor(masm.framePushed(), JitFrame_IonJS);
+    uint32_t descriptor = MakeFrameDescriptor(masm.framePushed(), JitFrame_IonJS,
+                                              JitFrameLayout::Size());
     masm.Push(Imm32(call->numActualArgs()));
     masm.PushCalleeToken(calleereg, call->mir()->isConstructing());
     masm.Push(Imm32(descriptor));
@@ -3556,7 +3654,8 @@ CodeGenerator::visitCallKnown(LCallKnown* call)
     masm.freeStack(unusedStack);
 
     // Construct the IonFramePrefix.
-    uint32_t descriptor = MakeFrameDescriptor(masm.framePushed(), JitFrame_IonJS);
+    uint32_t descriptor = MakeFrameDescriptor(masm.framePushed(), JitFrame_IonJS,
+                                              JitFrameLayout::Size());
     masm.Push(Imm32(call->numActualArgs()));
     masm.PushCalleeToken(calleereg, call->mir()->isConstructing());
     masm.Push(Imm32(descriptor));
@@ -3854,7 +3953,7 @@ CodeGenerator::emitApplyGeneric(T* apply)
         unsigned pushed = masm.framePushed();
         Register stackSpace = extraStackSpace;
         masm.addPtr(Imm32(pushed), stackSpace);
-        masm.makeFrameDescriptor(stackSpace, JitFrame_IonJS);
+        masm.makeFrameDescriptor(stackSpace, JitFrame_IonJS, JitFrameLayout::Size());
 
         masm.Push(argcreg);
         masm.Push(calleereg);
@@ -6754,13 +6853,6 @@ JitRuntime::generateLazyLinkStub(JSContext* cx)
     AllocatableGeneralRegisterSet regs(GeneralRegisterSet::Volatile());
     Register temp0 = regs.takeAny();
 
-    // The caller did not push an exit frame on the stack, it pushed a
-    // JitFrameLayout.  We modify the descriptor to be a valid exit frame and
-    // restore it once the lazy link is complete.
-    Address descriptor(masm.getStackPointer(), CommonFrameLayout::offsetOfDescriptor());
-    size_t convertToExitFrame = JitFrameLayout::Size() - ExitFrameLayout::Size();
-    masm.addPtr(Imm32(convertToExitFrame << FRAMESIZE_SHIFT), descriptor);
-
     masm.enterFakeExitFrame(LazyLinkExitFrameLayoutToken);
     masm.PushStubCode();
 
@@ -6770,8 +6862,6 @@ JitRuntime::generateLazyLinkStub(JSContext* cx)
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, LazyLinkTopActivation));
 
     masm.leaveExitFrame(/* stub code */ sizeof(JitCode*));
-
-    masm.addPtr(Imm32(- (convertToExitFrame << FRAMESIZE_SHIFT)), descriptor);
 
 #ifdef JS_USE_LINK_REGISTER
     // Restore the return address such that the emitPrologue function of the
@@ -8198,12 +8288,10 @@ CodeGenerator::generateAsmJS(wasm::FuncOffsets* offsets)
     // pushing framePushed to catch cases with really large frames.
     Label onOverflow;
     if (!omitOverRecursedCheck()) {
-        // See comment below.
-        Label* target = frameSize() > 0 ? &onOverflow : masm.asmStackOverflowLabel();
         masm.branchPtr(Assembler::AboveOrEqual,
                        wasm::SymbolicAddress::StackLimit,
                        masm.getStackPointer(),
-                       target);
+                       &onOverflow);
     }
 
     if (!generateBody())
@@ -8212,13 +8300,17 @@ CodeGenerator::generateAsmJS(wasm::FuncOffsets* offsets)
     masm.bind(&returnLabel_);
     wasm::GenerateFunctionEpilogue(masm, frameSize(), offsets);
 
-    if (onOverflow.used()) {
-        // The stack overflow stub assumes that only sizeof(AsmJSFrame) bytes have
-        // been pushed. The overflow check occurs after incrementing by
+    if (!omitOverRecursedCheck()) {
+        // The stack overflow stub assumes that only sizeof(AsmJSFrame) bytes
+        // have been pushed. The overflow check occurs after incrementing by
         // framePushed, so pop that before jumping to the overflow exit.
-        masm.bind(&onOverflow);
-        masm.addToStackPtr(Imm32(frameSize()));
-        masm.jump(masm.asmStackOverflowLabel());
+        if (frameSize() > 0) {
+            masm.bind(&onOverflow);
+            masm.addToStackPtr(Imm32(frameSize()));
+            masm.jump(wasm::JumpTarget::StackOverflow);
+        } else {
+            masm.bindLater(&onOverflow, wasm::JumpTarget::StackOverflow);
+        }
     }
 
 #if defined(JS_ION_PERF)
@@ -10520,13 +10612,11 @@ CodeGenerator::visitAsmJSInterruptCheck(LAsmJSInterruptCheck* lir)
                   wasm::SymbolicAddress::RuntimeInterruptUint32,
                   Imm32(0),
                   &rejoin);
-    {
-        uint32_t stackFixup = ComputeByteAlignment(masm.framePushed() + sizeof(AsmJSFrame),
-                                                   ABIStackAlignment);
-        masm.reserveStack(stackFixup);
-        masm.call(lir->funcDesc(), lir->interruptExit());
-        masm.freeStack(stackFixup);
-    }
+
+    MOZ_ASSERT((sizeof(AsmJSFrame) + masm.framePushed()) % ABIStackAlignment == 0);
+    masm.call(wasm::SymbolicAddress::HandleExecutionInterrupt);
+    masm.branchIfFalseBool(ReturnReg, wasm::JumpTarget::Throw);
+
     masm.bind(&rejoin);
 }
 

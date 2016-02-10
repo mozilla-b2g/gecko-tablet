@@ -169,15 +169,8 @@
     DEFINED_ON_EXPAND_ARCH_RESULTS(                     \
       (MOZ_FOR_EACH(DEFINED_ON_FWDARCH, (), ArchList)))
 
-// clang-cl doesn't exactly follow MSVC's custom rules for handling
-// __VA_ARGS__ in macros (see LLVM PR 25875), so avoid using this macro
-// there.
-#if defined(_MSC_VER) && defined(__clang__)
-# define DEFINED_ON(...) /* nothing */
-#else
 # define DEFINED_ON(...)                                \
     DEFINED_ON_MAP_ON_ARCHS((none, __VA_ARGS__))
-#endif
 
 # define PER_ARCH DEFINED_ON(ALL_ARCH)
 # define PER_SHARED_ARCH DEFINED_ON(ALL_SHARED_ARCH)
@@ -346,12 +339,6 @@ class MacroAssembler : public MacroAssemblerSpecific
     // Labels for handling exceptions and failures.
     NonAssertingLabel failureLabel_;
 
-    // Asm failure labels
-    NonAssertingLabel asmStackOverflowLabel_;
-    NonAssertingLabel asmSyncInterruptLabel_;
-    NonAssertingLabel asmOnConversionErrorLabel_;
-    NonAssertingLabel asmOnOutOfBoundsLabel_;
-
   public:
     MacroAssembler()
       : framePushed_(0),
@@ -517,6 +504,12 @@ class MacroAssembler : public MacroAssemblerSpecific
     CodeOffset callWithPatch() PER_SHARED_ARCH;
     void patchCall(uint32_t callerOffset, uint32_t calleeOffset) PER_SHARED_ARCH;
 
+    // Thunks provide the ability to jump to any uint32_t offset from any other
+    // uint32_t offset without using a constant pool (thus returning a simple
+    // CodeOffset instead of a CodeOffsetJump).
+    CodeOffset thunkWithPatch() PER_SHARED_ARCH;
+    void patchThunk(uint32_t thunkOffset, uint32_t targetOffset) PER_SHARED_ARCH;
+
     // Push the return address and make a call. On platforms where this function
     // is not defined, push the link register (pushReturnAddress) at the entry
     // point of the callee.
@@ -619,10 +612,10 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     // The frame descriptor is the second field of all Jit frames, pushed before
     // calling the Jit function.  It is a composite value defined in JitFrames.h
-    inline void makeFrameDescriptor(Register frameSizeReg, FrameType type);
+    inline void makeFrameDescriptor(Register frameSizeReg, FrameType type, uint32_t headerSize);
 
     // Push the frame descriptor, based on the statically known framePushed.
-    inline void pushStaticFrameDescriptor(FrameType type);
+    inline void pushStaticFrameDescriptor(FrameType type, uint32_t headerSize);
 
     // Push the callee token of a JSFunction which pointer is stored in the
     // |callee| register. The callee token is packed with a |constructing| flag
@@ -877,7 +870,8 @@ class MacroAssembler : public MacroAssemblerSpecific
     }
 
     // Branches to |label| if |reg| is false. |reg| should be a C++ bool.
-    void branchIfFalseBool(Register reg, Label* label) {
+    template <class L>
+    void branchIfFalseBool(Register reg, L label) {
         // Note that C++ bool is only 1 byte, so ignore the higher-order bits.
         branchTest32(Assembler::Zero, reg, Imm32(0xFF), label);
     }
@@ -1416,32 +1410,6 @@ class MacroAssembler : public MacroAssemblerSpecific
         return &failureLabel_;
     }
 
-    Label* asmSyncInterruptLabel() {
-        return &asmSyncInterruptLabel_;
-    }
-    const Label* asmSyncInterruptLabel() const {
-        return &asmSyncInterruptLabel_;
-    }
-    Label* asmStackOverflowLabel() {
-        return &asmStackOverflowLabel_;
-    }
-    const Label* asmStackOverflowLabel() const {
-        return &asmStackOverflowLabel_;
-    }
-    Label* asmOnOutOfBoundsLabel() {
-        return &asmOnOutOfBoundsLabel_;
-    }
-    const Label* asmOnOutOfBoundsLabel() const {
-        return &asmOnOutOfBoundsLabel_;
-    }
-    Label* asmOnConversionErrorLabel() {
-        return &asmOnConversionErrorLabel_;
-    }
-    const Label* asmOnConversionErrorLabel() const {
-        return &asmOnConversionErrorLabel_;
-    }
-
-    bool asmMergeWith(MacroAssembler& masm);
     void finish();
     void link(JitCode* code);
 

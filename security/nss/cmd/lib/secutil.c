@@ -416,7 +416,7 @@ SECU_DefaultSSLDir(void)
     char *dir;
     static char sslDir[1000];
 
-    dir = PR_GetEnv("SSL_DIR");
+    dir = PR_GetEnvSecure("SSL_DIR");
     if (!dir)
 	return NULL;
 
@@ -455,7 +455,7 @@ SECU_ConfigDirectory(const char* base)
     
 
     if (base == NULL || *base == 0) {
-	home = PR_GetEnv("HOME");
+	home = PR_GetEnvSecure("HOME");
 	if (!home) home = "";
 
 	if (*home && home[strlen(home) - 1] == '/')
@@ -3717,6 +3717,12 @@ SECU_GetSSLVersionFromName(const char *buf, size_t bufLen, PRUint16 *version)
         *version = SSL_LIBRARY_VERSION_TLS_1_2;
         return SECSuccess;
     }
+
+    if (!PL_strncasecmp(buf, "tls1.3", bufLen)) {
+        *version = SSL_LIBRARY_VERSION_TLS_1_3;
+        return SECSuccess;
+    }
+
     PORT_SetError(SEC_ERROR_INVALID_ARGS);
     return SECFailure;
 }

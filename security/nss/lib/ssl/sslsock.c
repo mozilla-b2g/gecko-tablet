@@ -238,6 +238,7 @@ ssl_DupSocket(sslSocket *os)
                     sizeof(ss->ssl3.signatureAlgorithms[0]) *
                     os->ssl3.signatureAlgorithmCount);
         ss->ssl3.signatureAlgorithmCount = os->ssl3.signatureAlgorithmCount;
+        ss->ssl3.downgradeCheckVersion = os->ssl3.downgradeCheckVersion;
 
         ss->ssl3.dheWeakGroupEnabled = os->ssl3.dheWeakGroupEnabled;
         ss->ssl3.numDHEGroups = os->ssl3.numDHEGroups;
@@ -1967,6 +1968,7 @@ SSL_ReconfigFD(PRFileDesc *model, PRFileDesc *fd)
                 sizeof(ss->ssl3.signatureAlgorithms[0]) *
                 sm->ssl3.signatureAlgorithmCount);
     ss->ssl3.signatureAlgorithmCount = sm->ssl3.signatureAlgorithmCount;
+    ss->ssl3.downgradeCheckVersion = sm->ssl3.downgradeCheckVersion;
 
     if (!ss->opt.useSecurity) {
         PORT_SetError(SEC_ERROR_INVALID_ARGS);
@@ -2279,7 +2281,7 @@ SSL_VersionRangeGet(PRFileDesc *fd, SSLVersionRange *vrange)
     sslSocket *ss = ssl_FindSocket(fd);
 
     if (!ss) {
-        SSL_DBG(("%d: SSL[%d]: bad socket in SSL3_VersionRangeGet",
+        SSL_DBG(("%d: SSL[%d]: bad socket in SSL_VersionRangeGet",
                 SSL_GETPID(), fd));
         return SECFailure;
     }
@@ -2306,7 +2308,7 @@ SSL_VersionRangeSet(PRFileDesc *fd, const SSLVersionRange *vrange)
     sslSocket *ss = ssl_FindSocket(fd);
 
     if (!ss) {
-        SSL_DBG(("%d: SSL[%d]: bad socket in SSL3_VersionRangeSet",
+        SSL_DBG(("%d: SSL[%d]: bad socket in SSL_VersionRangeSet",
                 SSL_GETPID(), fd));
         return SECFailure;
     }
@@ -2319,12 +2321,54 @@ SSL_VersionRangeSet(PRFileDesc *fd, const SSLVersionRange *vrange)
     ssl_Get1stHandshakeLock(ss);
     ssl_GetSSL3HandshakeLock(ss);
 
+    if (ss->ssl3.downgradeCheckVersion &&
+        ss->vrange.max > ss->ssl3.downgradeCheckVersion) {
+        PORT_SetError(SSL_ERROR_INVALID_VERSION_RANGE);
+        ssl_ReleaseSSL3HandshakeLock(ss);
+        ssl_Release1stHandshakeLock(ss);
+        return SECFailure;
+    }
+
     ss->vrange = *vrange;
 
     ssl_ReleaseSSL3HandshakeLock(ss);
     ssl_Release1stHandshakeLock(ss);
 
     return SECSuccess;
+}
+
+SECStatus
+SSL_SetDowngradeCheckVersion(PRFileDesc *fd, PRUint16 version)
+{
+    sslSocket *ss = ssl_FindSocket(fd);
+    SECStatus rv = SECFailure;
+
+    if (!ss) {
+        SSL_DBG(("%d: SSL[%d]: bad socket in SSL_SetDowngradeCheckVersion",
+                SSL_GETPID(), fd));
+        return SECFailure;
+    }
+
+    if (version && !ssl3_VersionIsSupported(ss->protocolVariant, version)) {
+        PORT_SetError(SEC_ERROR_INVALID_ARGS);
+        return SECFailure;
+    }
+
+    ssl_Get1stHandshakeLock(ss);
+    ssl_GetSSL3HandshakeLock(ss);
+
+    if (version && version < ss->vrange.max) {
+        PORT_SetError(SEC_ERROR_INVALID_ARGS);
+        goto loser;
+    }
+    ss->ssl3.downgradeCheckVersion = version;
+    rv = SECSuccess;
+
+loser:
+    ssl_ReleaseSSL3HandshakeLock(ss);
+    ssl_Release1stHandshakeLock(ss);
+
+    return rv;
 }
 
 const SECItemArray *
@@ -3332,7 +3376,7 @@ ssl_SetDefaultsFromEnvironment(void)
         char * ev;
         firsttime = 0;
 #ifdef DEBUG
-        ev = getenv("SSLDEBUGFILE");
+        ev = PR_GetEnvSecure("SSLDEBUGFILE");
         if (ev && ev[0]) {
             ssl_trace_iob = fopen(ev, "w");
         }
@@ -3340,19 +3384,19 @@ ssl_SetDefaultsFromEnvironment(void)
             ssl_trace_iob = stderr;
         }
 #ifdef TRACE
-        ev = getenv("SSLTRACE");
+        ev = PR_GetEnvSecure("SSLTRACE");
         if (ev && ev[0]) {
             ssl_trace = atoi(ev);
             SSL_TRACE(("SSL: tracing set to %d", ssl_trace));
         }
 #endif /* TRACE */
-        ev = getenv("SSLDEBUG");
+        ev = PR_GetEnvSecure("SSLDEBUG");
         if (ev && ev[0]) {
             ssl_debug = atoi(ev);
             SSL_TRACE(("SSL: debugging set to %d", ssl_debug));
         }
 #endif /* DEBUG */
-        ev = getenv("SSLKEYLOGFILE");
+        ev = PR_GetEnvSecure("SSLKEYLOGFILE");
         if (ev && ev[0]) {
             ssl_keylog_iob = fopen(ev, "a");
             if (!ssl_keylog_iob) {
@@ -3366,21 +3410,21 @@ ssl_SetDefaultsFromEnvironment(void)
             }
         }
 #ifndef NO_PKCS11_BYPASS
-        ev = getenv("SSLBYPASS");
+        ev = PR_GetEnvSecure("SSLBYPASS");
         if (ev && ev[0]) {
             ssl_defaults.bypassPKCS11 = (ev[0] == '1');
             SSL_TRACE(("SSL: bypass default set to %d", \
                       ssl_defaults.bypassPKCS11));
         }
 #endif /* NO_PKCS11_BYPASS */
-        ev = getenv("SSLFORCELOCKS");
+        ev = PR_GetEnvSecure("SSLFORCELOCKS");
         if (ev && ev[0] == '1') {
             ssl_force_locks = PR_TRUE;
             ssl_defaults.noLocks = 0;
             strcpy(lockStatus + LOCKSTATUS_OFFSET, "FORCED.  ");
             SSL_TRACE(("SSL: force_locks set to %d", ssl_force_locks));
         }
-        ev = getenv("NSS_SSL_ENABLE_RENEGOTIATION");
+        ev = PR_GetEnvSecure("NSS_SSL_ENABLE_RENEGOTIATION");
         if (ev) {
             if (ev[0] == '1' || LOWER(ev[0]) == 'u')
                 ssl_defaults.enableRenegotiation = SSL_RENEGOTIATE_UNRESTRICTED;
@@ -3393,13 +3437,13 @@ ssl_SetDefaultsFromEnvironment(void)
             SSL_TRACE(("SSL: enableRenegotiation set to %d",
                        ssl_defaults.enableRenegotiation));
         }
-        ev = getenv("NSS_SSL_REQUIRE_SAFE_NEGOTIATION");
+        ev = PR_GetEnvSecure("NSS_SSL_REQUIRE_SAFE_NEGOTIATION");
         if (ev && ev[0] == '1') {
             ssl_defaults.requireSafeNegotiation = PR_TRUE;
             SSL_TRACE(("SSL: requireSafeNegotiation set to %d",
                         PR_TRUE));
         }
-        ev = getenv("NSS_SSL_CBC_RANDOM_IV");
+        ev = PR_GetEnvSecure("NSS_SSL_CBC_RANDOM_IV");
         if (ev && ev[0] == '0') {
             ssl_defaults.cbcRandomIV = PR_FALSE;
             SSL_TRACE(("SSL: cbcRandomIV set to 0"));
@@ -3475,6 +3519,7 @@ ssl_NewSocket(PRBool makeLocks, SSLProtocolVariant protocolVariant)
         ssl2_InitSocketPolicy(ss);
         ssl3_InitSocketPolicy(ss);
         PR_INIT_CLIST(&ss->ssl3.hs.lastMessageFlight);
+        PR_INIT_CLIST(&ss->ssl3.hs.remoteKeyShares);
 
         if (makeLocks) {
             status = ssl_MakeLocks(ss);

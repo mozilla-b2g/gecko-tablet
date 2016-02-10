@@ -213,13 +213,13 @@ FrameLayerBuilder::DisplayItemData::BeginUpdate(Layer* aLayer, LayerState aState
 
   // We avoid adding or removing element unnecessarily
   // since we have to modify userdata each time
-  nsAutoTArray<nsIFrame*, 4> copy(mFrameList);
+  AutoTArray<nsIFrame*, 4> copy(mFrameList);
   if (!copy.RemoveElement(aItem->Frame())) {
     AddFrame(aItem->Frame());
     mFrameListChanges.AppendElement(aItem->Frame());
   }
 
-  nsAutoTArray<nsIFrame*,4> mergedFrames;
+  AutoTArray<nsIFrame*,4> mergedFrames;
   aItem->GetMergedFrames(&mergedFrames);
   for (uint32_t i = 0; i < mergedFrames.Length(); ++i) {
     if (!copy.RemoveElement(mergedFrames[i])) {
@@ -1382,7 +1382,7 @@ protected:
    * It's essential that this array is only appended to, since PaintedLayerData
    * records the index of its PaintedLayer in this array.
    */
-  typedef nsAutoTArray<NewLayerEntry,1> AutoLayersArray;
+  typedef AutoTArray<NewLayerEntry,1> AutoLayersArray;
   AutoLayersArray                  mNewChildLayers;
   nsTHashtable<nsRefPtrHashKey<PaintedLayer>> mPaintedLayersAvailableForRecycling;
   nscoord                          mAppUnitsPerDevPixel;
@@ -4292,7 +4292,11 @@ FrameLayerBuilder::ComputeGeometryChangeForItem(DisplayItemData* aData)
     // AddOffsetAndComputeDifference is the only thing that will invalidate we skip the
     // NotifyRenderingChanged call (ComputeInvalidationRegion for background images also calls
     // NotifyRenderingChanged if anything changes).
-    if (!combined.IsEmpty()) {
+    // Only allocate a new geometry object if something actually changed, otherwise the existing
+    // one should be fine. We always reallocate for inactive layers, since these types don't
+    // implement ComputeInvalidateRegion (and rely on the ComputeDifferences call in
+    // AddPaintedDisplayItem instead).
+    if (!combined.IsEmpty() || aData->mLayerState == LAYER_INACTIVE) {
       geometry = item->AllocateGeometry(mDisplayListBuilder);
     } else if (aData->mClip == clip && invalid.IsEmpty() && changedFrames.Length() == 0) {
       notifyRenderingChanged = false;
@@ -4667,7 +4671,7 @@ ContainerState::SetupScrollingMetadata(NewLayerEntry* aEntry)
     return;
   }
 
-  nsAutoTArray<FrameMetrics,2> metricsArray;
+  AutoTArray<FrameMetrics,2> metricsArray;
   if (aEntry->mBaseFrameMetrics) {
     metricsArray.AppendElement(*aEntry->mBaseFrameMetrics);
 
@@ -4768,7 +4772,7 @@ GetStationaryClipInContainer(Layer* aLayer)
 void
 ContainerState::PostprocessRetainedLayers(nsIntRegion* aOpaqueRegionForContainer)
 {
-  nsAutoTArray<OpaqueRegionEntry,4> opaqueRegions;
+  AutoTArray<OpaqueRegionEntry,4> opaqueRegions;
   bool hideAll = false;
   int32_t opaqueRegionForContainer = -1;
 

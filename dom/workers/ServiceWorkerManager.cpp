@@ -1242,11 +1242,6 @@ public:
     swm->InvalidateServiceWorkerRegistrationWorker(mRegistration,
                                                    WhichServiceWorker::INSTALLING_WORKER | WhichServiceWorker::WAITING_WORKER);
 
-    // "If registration's waiting worker's skip waiting flag is set"
-    if (mRegistration->mWaitingWorker->SkipWaitingFlag()) {
-      mRegistration->PurgeActiveWorker();
-    }
-
     Done(NS_OK);
     // Activate() is invoked out of band of atomic.
     mRegistration->TryToActivate();
@@ -2636,7 +2631,7 @@ ServiceWorkerManager::ReportToAllClients(const nsCString& aScope,
     return;
   }
 
-  nsAutoTArray<uint64_t, 16> windows;
+  AutoTArray<uint64_t, 16> windows;
 
   // Report errors to every controlled document.
   for (auto iter = mControlledDocuments.Iter(); !iter.Done(); iter.Next()) {
@@ -5125,7 +5120,7 @@ public:
   }
 
 private:
-  nsAutoTArray<RefPtr<ServiceWorker>, 1> mInstances;
+  AutoTArray<RefPtr<ServiceWorker>, 1> mInstances;
   ServiceWorkerState mState;
 };
 

@@ -129,9 +129,6 @@ pref("dom.indexedDB.logging.profiler-marks", false);
 // Whether or not File Handle is enabled.
 pref("dom.fileHandle.enabled", true);
 
-// Whether or not the Permissions API is enabled.
-pref("dom.permissions.enabled", true);
-
 // Whether or not selection events are enabled
 #ifdef NIGHTLY_BUILD
 pref("dom.select_events.enabled", true);
@@ -570,6 +567,16 @@ pref("apz.content_response_timeout", 300);
 pref("apz.drag.enabled", false);
 pref("apz.danger_zone_x", 50);
 pref("apz.danger_zone_y", 100);
+
+// See bug 1246676, we're experimenting to see what's best
+#if defined(XP_WIN)
+pref("apz.displayport_expiry_ms", 0);
+#elif defined(XP_MACOSX)
+pref("apz.displayport_expiry_ms", 30000);
+#else
+pref("apz.displayport_expiry_ms", 15000);
+#endif
+
 pref("apz.enlarge_displayport_when_clipped", false);
 pref("apz.fling_accel_base_mult", "1.0");
 pref("apz.fling_accel_interval_ms", 500);
@@ -580,7 +587,6 @@ pref("apz.fling_curve_function_x2", "1.0");
 pref("apz.fling_curve_function_y2", "1.0");
 pref("apz.fling_curve_threshold_inches_per_ms", "-1.0");
 pref("apz.fling_friction", "0.002");
-pref("apz.fling_repaint_interval", 16);
 pref("apz.fling_stop_on_tap_threshold", "0.05");
 pref("apz.fling_stopped_threshold", "0.01");
 pref("apz.highlight_checkerboarded_areas", false);
@@ -595,7 +601,6 @@ pref("apz.overscroll.spring_stiffness", "0.0018");
 pref("apz.overscroll.stop_distance_threshold", "5.0");
 pref("apz.overscroll.stop_velocity_threshold", "0.01");
 pref("apz.overscroll.stretch_factor", "0.35");
-pref("apz.pan_repaint_interval", 16);
 
 // Whether to print the APZC tree for debugging
 pref("apz.printtree", false);
@@ -605,7 +610,6 @@ pref("apz.record_checkerboarding", true);
 #else
 pref("apz.record_checkerboarding", false);
 #endif
-pref("apz.smooth_scroll_repaint_interval", 16);
 pref("apz.test.logging_enabled", false);
 pref("apz.touch_start_tolerance", "0.1");
 pref("apz.touch_move_tolerance", "0.03");
@@ -623,8 +627,6 @@ pref("apz.zoom_animation_duration_ms", 250);
 // Mobile prefs
 pref("apz.allow_zooming", true);
 pref("apz.enlarge_displayport_when_clipped", true);
-pref("apz.fling_repaint_interval", 75);
-pref("apz.smooth_scroll_repaint_interval", 75);
 pref("apz.x_skate_size_multiplier", "1.25");
 pref("apz.y_skate_size_multiplier", "1.5");
 pref("apz.x_stationary_size_multiplier", "1.5");
@@ -927,9 +929,8 @@ pref("devtools.commands.dir", "");
 // Allows setting the performance marks for which telemetry metrics will be recorded.
 pref("devtools.telemetry.supported_performance_marks", "contentInteractive,navigationInteractive,navigationLoaded,visuallyLoaded,fullyLoaded,mediaEnumerated,scanEnd");
 
-// Deprecation warnings after DevTools file migration.  Bug 1204127 tracks
-// enabling this.
-pref("devtools.migration.warnings", false);
+// Deprecation warnings after DevTools file migration.
+pref("devtools.migration.warnings", true);
 
 // view source
 pref("view_source.syntax_highlight", true);
@@ -1888,6 +1889,9 @@ pref("network.proxy.autoconfig_retry_interval_max", 300);  // 5 minutes
 // Use the HSTS preload list by default
 pref("network.stricttransportsecurity.preloadlist", true);
 
+// Use JS mDNS as a fallback
+pref("network.mdns.use_js_fallback", false);
+
 pref("converter.html2txt.structs",          true); // Output structured phrases (strong, em, code, sub, sup, b, i, u)
 pref("converter.html2txt.header_strategy",  1); // 0 = no indention; 1 = indention, increased with header level; 2 = numbering and slight indention
 // Whether we include ruby annotation in the text despite whether it
@@ -2642,8 +2646,13 @@ pref("dom.ipc.plugins.unloadTimeoutSecs", 30);
 // Asynchronous plugin initialization is on hold.
 pref("dom.ipc.plugins.asyncInit.enabled", false);
 
+#ifdef RELEASE_BUILD
+// Allow the AsyncDrawing mode to be used for plugins.
+pref("dom.ipc.plugins.asyncdrawing.enabled", false);
+#else
 // Allow the AsyncDrawing mode to be used for plugins.
 pref("dom.ipc.plugins.asyncdrawing.enabled", true);
+#endif
 
 pref("dom.ipc.processCount", 1);
 
@@ -4406,10 +4415,6 @@ pref("layers.tiled-drawtarget.enabled", true);
 pref("layers.tiles.edge-padding", true);
 #endif
 
-// same effect as layers.offmainthreadcomposition.enabled, but specifically for
-// use with tests.
-pref("layers.offmainthreadcomposition.testing.enabled", false);
-
 // Whether to animate simple opacity and transforms on the compositor
 pref("layers.offmainthreadcomposition.async-animations", true);
 
@@ -4950,6 +4955,9 @@ pref("layout.accessiblecaret.bar.width", "2.0");
 // Show the selection bars at the two ends of the selection highlight.
 pref("layout.accessiblecaret.bar.enabled", true);
 
+// Show the caret when long tapping on an empty content.
+pref("layout.accessiblecaret.caret_shown_when_long_tapping_on_empty_content", false);
+
 // Timeout in milliseconds to hide the accessiblecaret under cursor mode while
 // no one touches it. Set the value to 0 to disable this feature.
 pref("layout.accessiblecaret.timeout_ms", 3000);
@@ -5155,6 +5163,9 @@ pref("media.gmp.insecure.allow", false);
 
 pref("dom.audiochannel.mutedByDefault", false);
 
+// Enable <details> and <summary> tags.
+pref("dom.details_element.enabled", false);
+
 // Secure Element API
 #ifdef MOZ_SECUREELEMENT
 pref("dom.secureelement.enabled", false);
@@ -5199,4 +5210,3 @@ pref("dom.input.fallbackUploadDir", "");
 
 // Turn rewriting of youtube embeds on/off
 pref("plugins.rewrite_youtube_embeds", true);
-

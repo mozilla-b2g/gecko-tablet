@@ -18,6 +18,7 @@
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/PatternHelpers.h"
 #include "mozilla/Preferences.h"
+#include "nsCSSClipPathInstance.h"
 #include "nsCSSFrameConstructor.h"
 #include "nsDisplayList.h"
 #include "nsFilterInstance.h"
@@ -725,8 +726,13 @@ nsSVGUtils::HitTestClip(nsIFrame *aFrame, const gfxPoint &aPoint)
 {
   nsSVGEffects::EffectProperties props =
     nsSVGEffects::GetEffectProperties(aFrame);
-  if (!props.mClipPath)
+  if (!props.mClipPath) {
+    const nsStyleSVGReset *style = aFrame->StyleSVGReset();
+    if (style->HasClipPath()) {
+      return nsCSSClipPathInstance::HitTestBasicShapeClip(aFrame, aPoint);
+    }
     return true;
+  }
 
   bool isOK = true;
   nsSVGClipPathFrame *clipPathFrame = props.GetClipPathFrame(&isOK);
@@ -1472,7 +1478,7 @@ nsSVGUtils::GetStrokeWidth(nsIFrame* aFrame, gfxTextContextPaint *aContextPaint)
 
 static bool
 GetStrokeDashData(nsIFrame* aFrame,
-                  FallibleTArray<gfxFloat>& aDashes,
+                  nsTArray<gfxFloat>& aDashes,
                   gfxFloat* aDashOffset,
                   gfxTextContextPaint *aContextPaint)
 {
@@ -1576,7 +1582,7 @@ nsSVGUtils::SetupCairoStrokeGeometry(nsIFrame* aFrame,
     break;
   }
 
-  AutoFallibleTArray<gfxFloat, 10> dashes;
+  AutoTArray<gfxFloat, 10> dashes;
   gfxFloat dashOffset;
   if (GetStrokeDashData(aFrame, dashes, &dashOffset, aContextPaint)) {
     aContext->SetDash(dashes.Elements(), dashes.Length(), dashOffset);

@@ -589,8 +589,15 @@ class FunctionCompiler
         if (inDeadCode())
             return;
 
+        // WasmHandleExecutionInterrupt takes 0 arguments and the stack is
+        // always ABIStackAlignment-aligned, but don't forget to account for
+        // ShadowStackSpace and any other ABI warts.
+        ABIArgGenerator abi;
+        if (abi.stackBytesConsumedSoFar() > mirGen_.maxAsmJSStackArgBytes())
+            mirGen_.setAsmJSMaxStackArgBytes(abi.stackBytesConsumedSoFar());
+
         CallSiteDesc callDesc(0, CallSiteDesc::Relative);
-        curBlock_->add(MAsmJSInterruptCheck::New(alloc(), masm().asmSyncInterruptLabel(), callDesc));
+        curBlock_->add(MAsmJSInterruptCheck::New(alloc()));
     }
 
     MDefinition* extractSimdElement(SimdLane lane, MDefinition* base, MIRType type)
@@ -885,11 +892,16 @@ class FunctionCompiler
         return true;
     }
 
+    bool usesPhiSlot()
+    {
+        return curBlock_->stackDepth() == info().firstStackSlot() + 1;
+    }
+
     void pushPhiInput(MDefinition* def)
     {
         if (inDeadCode())
             return;
-        MOZ_ASSERT(curBlock_->stackDepth() == info().firstStackSlot());
+        MOZ_ASSERT(!usesPhiSlot());
         curBlock_->push(def);
     }
 
@@ -897,7 +909,7 @@ class FunctionCompiler
     {
         if (inDeadCode())
             return nullptr;
-        MOZ_ASSERT(curBlock_->stackDepth() == info().firstStackSlot() + 1);
+        MOZ_ASSERT(usesPhiSlot());
         return curBlock_->pop();
     }
 
@@ -1339,7 +1351,7 @@ EmitGetLocal(FunctionCompiler& f, ExprType type, MDefinition** def)
 {
     uint32_t slot = f.readVarU32();
     *def = f.getLocalDef(slot);
-    MOZ_ASSERT_IF(type != ExprType::Limit, f.localType(slot) == type);
+    MOZ_ASSERT_IF(type != ExprType::Void, f.localType(slot) == type);
     return true;
 }
 
@@ -1349,7 +1361,7 @@ EmitLoadGlobal(FunctionCompiler& f, ExprType type, MDefinition** def)
     uint32_t index = f.readVarU32();
     const AsmJSGlobalVariable& global = f.mg().globalVar(index);
     *def = f.loadGlobalVar(global.globalDataOffset, global.isConst, ToMIRType(global.type));
-    MOZ_ASSERT_IF(type != ExprType::Limit, global.type == type);
+    MOZ_ASSERT_IF(type != ExprType::Void, global.type == type);
     return true;
 }
 
@@ -1434,7 +1446,7 @@ EmitSetLocal(FunctionCompiler& f, ExprType expected, MDefinition** def)
     uint32_t slot = f.readVarU32();
     MDefinition* expr;
     ExprType actual = f.localType(slot);
-    MOZ_ASSERT_IF(expected != ExprType::Limit, actual == expected);
+    MOZ_ASSERT_IF(expected != ExprType::Void, actual == expected);
     if (!EmitExpr(f, actual, &expr))
         return false;
     f.assign(slot, expr);
@@ -1447,7 +1459,7 @@ EmitStoreGlobal(FunctionCompiler& f, ExprType type, MDefinition**def)
 {
     uint32_t index = f.readVarU32();
     const AsmJSGlobalVariable& global = f.mg().globalVar(index);
-    MOZ_ASSERT_IF(type != ExprType::Limit, global.type == type);
+    MOZ_ASSERT_IF(type != ExprType::Void, global.type == type);
     MDefinition* expr;
     if (!EmitExpr(f, global.type, &expr))
         return false;
@@ -1461,19 +1473,14 @@ typedef bool IsMax;
 static bool
 EmitMathMinMax(FunctionCompiler& f, ExprType type, bool isMax, MDefinition** def)
 {
-    size_t numArgs = f.readU8();
-    MOZ_ASSERT(numArgs >= 2);
-    MDefinition* lastDef;
-    if (!EmitExpr(f, type, &lastDef))
+    MDefinition* lhs;
+    if (!EmitExpr(f, type, &lhs))
+        return false;
+    MDefinition* rhs;
+    if (!EmitExpr(f, type, &rhs))
         return false;
     MIRType mirType = ToMIRType(type);
-    for (size_t i = 1; i < numArgs; i++) {
-        MDefinition* next;
-        if (!EmitExpr(f, type, &next))
-            return false;
-        lastDef = f.minMax(lastDef, next, mirType, isMax);
-    }
-    *def = lastDef;
+    *def = f.minMax(lhs, rhs, mirType, isMax);
     return true;
 }
 
@@ -1576,7 +1583,7 @@ EmitCall(FunctionCompiler& f, ExprType ret, MDefinition** def)
     uint32_t funcIndex = f.readU32();
 
     const Sig& sig = f.mg().funcSig(funcIndex);
-    MOZ_ASSERT_IF(!IsVoid(sig.ret()) && ret != ExprType::Limit, sig.ret() == ret);
+    MOZ_ASSERT_IF(!IsVoid(sig.ret()) && ret != ExprType::Void, sig.ret() == ret);
 
     FunctionCompiler::Call call(f, lineOrBytecode);
     if (!EmitCallArgs(f, sig, &call))
@@ -1594,7 +1601,7 @@ EmitFuncPtrCall(FunctionCompiler& f, ExprType ret, MDefinition** def)
     uint32_t sigIndex = f.readU32();
 
     const Sig& sig = f.mg().sig(sigIndex);
-    MOZ_ASSERT_IF(!IsVoid(sig.ret()) && ret != ExprType::Limit, sig.ret() == ret);
+    MOZ_ASSERT_IF(!IsVoid(sig.ret()) && ret != ExprType::Void, sig.ret() == ret);
 
     MDefinition *index;
     if (!EmitExpr(f, ExprType::I32, &index))
@@ -1615,7 +1622,7 @@ EmitCallImport(FunctionCompiler& f, ExprType ret, MDefinition** def)
 
     const ModuleImportGeneratorData& import = f.mg().import(importIndex);
     const Sig& sig = *import.sig;
-    MOZ_ASSERT_IF(!IsVoid(sig.ret()) && ret != ExprType::Limit, sig.ret() == ret);
+    MOZ_ASSERT_IF(!IsVoid(sig.ret()) && ret != ExprType::Void, sig.ret() == ret);
 
     FunctionCompiler::Call call(f, lineOrBytecode);
     if (!EmitCallArgs(f, sig, &call))
@@ -2059,45 +2066,6 @@ EmitUnaryMir(FunctionCompiler& f, ExprType type, MDefinition** def)
 }
 
 static bool
-EmitTernary(FunctionCompiler& f, ExprType type, MDefinition** def)
-{
-    MDefinition* cond;
-    if (!EmitExpr(f, ExprType::I32, &cond))
-        return false;
-
-    MBasicBlock* thenBlock = nullptr;
-    MBasicBlock* elseBlock = nullptr;
-    if (!f.branchAndStartThen(cond, &thenBlock, &elseBlock))
-        return false;
-
-    MDefinition* ifTrue;
-    if (!EmitExpr(f, type, &ifTrue))
-        return false;
-
-    BlockVector thenBlocks;
-    if (!f.appendThenBlock(&thenBlocks))
-        return false;
-
-    f.pushPhiInput(ifTrue);
-
-    f.switchToElse(elseBlock);
-
-    MDefinition* ifFalse;
-    if (!EmitExpr(f, type, &ifFalse))
-        return false;
-
-    f.pushPhiInput(ifFalse);
-
-    if (!f.joinIfElse(thenBlocks))
-        return false;
-
-    MOZ_ASSERT_IF(ifTrue && ifFalse, ifTrue->type() == ifFalse->type());
-
-    *def = f.popPhiOutput();
-    return true;
-}
-
-static bool
 EmitMultiply(FunctionCompiler& f, ExprType type, MDefinition** def)
 {
     MDefinition* lhs;
@@ -2498,7 +2466,7 @@ EmitLabel(FunctionCompiler& f, LabelVector* maybeLabels)
 typedef bool HasElseBlock;
 
 static bool
-EmitIfElse(FunctionCompiler& f, bool hasElse)
+EmitIfElse(FunctionCompiler& f, bool hasElse, ExprType expected, MDefinition** def)
 {
     // Handle if/else-if chains using iteration instead of recursion. This
     // avoids blowing the C stack quota for long if/else-if chains and also
@@ -2506,7 +2474,11 @@ EmitIfElse(FunctionCompiler& f, bool hasElse)
     // for the entire if/else-if chain).
     BlockVector thenBlocks;
 
+    *def = nullptr;
+
   recurse:
+    MOZ_ASSERT_IF(!hasElse, expected == ExprType::Void);
+
     MDefinition* condition;
     if (!EmitExpr(f, ExprType::I32, &condition))
         return false;
@@ -2516,31 +2488,46 @@ EmitIfElse(FunctionCompiler& f, bool hasElse)
     if (!f.branchAndStartThen(condition, &thenBlock, &elseOrJoinBlock))
         return false;
 
-    MDefinition* _;
-    if (!EmitExprStmt(f, &_))
+    // From this point, then block.
+    MDefinition* ifExpr;
+    if (!EmitExpr(f, expected, &ifExpr))
         return false;
+
+    if (expected != ExprType::Void)
+        f.pushPhiInput(ifExpr);
 
     if (!f.appendThenBlock(&thenBlocks))
         return false;
 
-    if (hasElse) {
-        f.switchToElse(elseOrJoinBlock);
-
-        Expr nextStmt = f.peekOpcode();
-        if (nextStmt == Expr::If || nextStmt == Expr::IfElse) {
-            hasElse = nextStmt == Expr::IfElse;
-            JS_ALWAYS_TRUE(f.readOpcode() == nextStmt);
-            goto recurse;
-        }
-
-        MDefinition* _;
-        if (!EmitExprStmt(f, &_))
-            return false;
-
-        return f.joinIfElse(thenBlocks);
-    } else {
+    if (!hasElse)
         return f.joinIf(thenBlocks, elseOrJoinBlock);
+
+    f.switchToElse(elseOrJoinBlock);
+
+    Expr nextStmt = f.peekOpcode();
+    if (nextStmt == Expr::If || nextStmt == Expr::IfElse) {
+        hasElse = nextStmt == Expr::IfElse;
+        JS_ALWAYS_TRUE(f.readOpcode() == nextStmt);
+        goto recurse;
     }
+
+    // From this point, else block.
+    MDefinition* elseExpr;
+    if (!EmitExpr(f, expected, &elseExpr))
+        return false;
+
+    if (expected != ExprType::Void)
+        f.pushPhiInput(elseExpr);
+
+    if (!f.joinIfElse(thenBlocks))
+        return false;
+
+    // Now we're on the join block.
+    if (expected != ExprType::Void)
+        *def = f.popPhiOutput();
+
+    MOZ_ASSERT_IF(!f.inDeadCode(), (expected != ExprType::Void) == !!*def);
+    return true;
 }
 
 static bool
@@ -2599,7 +2586,7 @@ EmitRet(FunctionCompiler& f)
         return true;
     }
 
-    MDefinition *def = nullptr;
+    MDefinition* def;
     if (!EmitExpr(f, ret, &def))
         return false;
     f.returnExpr(def);
@@ -2655,11 +2642,9 @@ EmitExpr(FunctionCompiler& f, ExprType type, MDefinition** def, LabelVector* may
         return EmitBlock(f, type, def);
       case Expr::If:
       case Expr::IfElse:
-        return EmitIfElse(f, HasElseBlock(op == Expr::IfElse));
+        return EmitIfElse(f, HasElseBlock(op == Expr::IfElse), type, def);
       case Expr::TableSwitch:
         return EmitTableSwitch(f);
-      case Expr::Ternary:
-        return EmitTernary(f, type, def);
       case Expr::While:
         return EmitWhile(f, maybeLabels);
       case Expr::DoWhile:
@@ -2726,9 +2711,11 @@ EmitExpr(FunctionCompiler& f, ExprType type, MDefinition** def, LabelVector* may
         return EmitMathMinMax(f, ExprType::I32, IsMax(true), def);
       case Expr::I32Not:
         return EmitUnary<MNot>(f, ExprType::I32, def);
-      case Expr::I32SConvertF32:
+      case Expr::I32TruncSF32:
+      case Expr::I32TruncUF32:
         return EmitUnary<MTruncateToInt32>(f, ExprType::F32, def);
-      case Expr::I32SConvertF64:
+      case Expr::I32TruncSF64:
+      case Expr::I32TruncUF64:
         return EmitUnary<MTruncateToInt32>(f, ExprType::F64, def);
       case Expr::I32Clz:
         return EmitUnary<MClz>(f, ExprType::I32, def);
@@ -2823,11 +2810,11 @@ EmitExpr(FunctionCompiler& f, ExprType type, MDefinition** def, LabelVector* may
       case Expr::F32Ceil:
       case Expr::F32Floor:
         return EmitF32MathBuiltinCall(f, op, def);
-      case Expr::F32FromF64:
+      case Expr::F32DemoteF64:
         return EmitUnary<MToFloat32>(f, ExprType::F64, def);
-      case Expr::F32FromS32:
+      case Expr::F32ConvertSI32:
         return EmitUnary<MToFloat32>(f, ExprType::I32, def);
-      case Expr::F32FromU32:
+      case Expr::F32ConvertUI32:
         return EmitUnary<MAsmJSUnsignedToFloat32>(f, ExprType::I32, def);
       case Expr::F32LoadMem:
         return EmitLoadArray(f, Scalar::Float32, def);
@@ -2871,11 +2858,11 @@ EmitExpr(FunctionCompiler& f, ExprType type, MDefinition** def, LabelVector* may
       case Expr::F64Pow:
       case Expr::F64Atan2:
         return EmitF64MathBuiltinCall(f, op, def);
-      case Expr::F64FromF32:
+      case Expr::F64PromoteF32:
         return EmitUnary<MToDouble>(f, ExprType::F32, def);
-      case Expr::F64FromS32:
+      case Expr::F64ConvertSI32:
         return EmitUnary<MToDouble>(f, ExprType::I32, def);
-      case Expr::F64FromU32:
+      case Expr::F64ConvertUI32:
         return EmitUnary<MAsmJSUnsignedToDouble>(f, ExprType::I32, def);
       case Expr::F64LoadMem:
         return EmitLoadArray(f, Scalar::Float64, def);
@@ -2911,25 +2898,30 @@ EmitExpr(FunctionCompiler& f, ExprType type, MDefinition** def, LabelVector* may
       case Expr::Select:
       case Expr::Br:
       case Expr::BrIf:
-      case Expr::I8Const:
       case Expr::I32Ctz:
       case Expr::I32Popcnt:
       case Expr::F32CopySign:
       case Expr::F32Trunc:
-      case Expr::F32NearestInt:
+      case Expr::F32Nearest:
       case Expr::F64CopySign:
-      case Expr::F64NearestInt:
+      case Expr::F64Nearest:
       case Expr::F64Trunc:
-      case Expr::I32UConvertF32:
-      case Expr::I32UConvertF64:
-      case Expr::I32ConvertI64:
+      case Expr::I32WrapI64:
       case Expr::I64Const:
-      case Expr::I64SConvertI32:
-      case Expr::I64UConvertI32:
-      case Expr::I64SConvertF32:
-      case Expr::I64SConvertF64:
-      case Expr::I64UConvertF32:
-      case Expr::I64UConvertF64:
+      case Expr::I64ExtendSI32:
+      case Expr::I64ExtendUI32:
+      case Expr::I64TruncSF32:
+      case Expr::I64TruncSF64:
+      case Expr::I64TruncUF32:
+      case Expr::I64TruncUF64:
+      case Expr::F32ConvertSI64:
+      case Expr::F32ConvertUI64:
+      case Expr::F64ConvertSI64:
+      case Expr::F64ConvertUI64:
+      case Expr::I64ReinterpretF64:
+      case Expr::F64ReinterpretI64:
+      case Expr::I32ReinterpretF32:
+      case Expr::F32ReinterpretI32:
       case Expr::I64LoadMem8S:
       case Expr::I64LoadMem16S:
       case Expr::I64LoadMem32S:
@@ -2941,6 +2933,32 @@ EmitExpr(FunctionCompiler& f, ExprType type, MDefinition** def, LabelVector* may
       case Expr::I64StoreMem16:
       case Expr::I64StoreMem32:
       case Expr::I64StoreMem:
+      case Expr::I64Clz:
+      case Expr::I64Ctz:
+      case Expr::I64Popcnt:
+      case Expr::I64Add:
+      case Expr::I64Sub:
+      case Expr::I64Mul:
+      case Expr::I64DivS:
+      case Expr::I64DivU:
+      case Expr::I64RemS:
+      case Expr::I64RemU:
+      case Expr::I64Or:
+      case Expr::I64And:
+      case Expr::I64Xor:
+      case Expr::I64Shl:
+      case Expr::I64ShrU:
+      case Expr::I64ShrS:
+      case Expr::I64Eq:
+      case Expr::I64Ne:
+      case Expr::I64LtS:
+      case Expr::I64LeS:
+      case Expr::I64LtU:
+      case Expr::I64LeU:
+      case Expr::I64GtS:
+      case Expr::I64GeS:
+      case Expr::I64GtU:
+      case Expr::I64GeU:
         MOZ_CRASH("NYI");
       case Expr::Unreachable:
         break;
@@ -2954,7 +2972,7 @@ EmitExpr(FunctionCompiler& f, ExprType type, MDefinition** def, LabelVector* may
 static bool
 EmitExprStmt(FunctionCompiler& f, MDefinition** def, LabelVector* maybeLabels)
 {
-    return EmitExpr(f, ExprType::Limit, def, maybeLabels);
+    return EmitExpr(f, ExprType::Void, def, maybeLabels);
 }
 
 bool
@@ -2981,12 +2999,20 @@ wasm::IonCompileFunction(IonCompileTask* task)
             return false;
 
         MDefinition* last = nullptr;
-        while (!f.done()) {
-            if (!EmitExprStmt(f, &last))
+        if (func.isAsmJS()) {
+            while (!f.done()) {
+                if (!EmitExprStmt(f, &last))
+                    return false;
+            }
+        } else {
+            if (!EmitExpr(f, f.sig().ret(), &last))
                 return false;
+            MOZ_ASSERT(f.done());
         }
 
-        if (IsVoid(f.sig().ret()) || !last)
+        MOZ_ASSERT(IsVoid(f.sig().ret()) || f.inDeadCode() || last);
+
+        if (IsVoid(f.sig().ret()))
             f.returnVoid();
         else
             f.returnExpr(last);

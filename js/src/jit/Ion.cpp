@@ -552,27 +552,6 @@ FinishAllOffThreadCompilations(JSCompartment* comp)
     }
 }
 
-class MOZ_RAII AutoLazyLinkExitFrame
-{
-    JitActivation* jitActivation_;
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-
-  public:
-    explicit AutoLazyLinkExitFrame(JitActivation* jitActivation
-                                   MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-      : jitActivation_(jitActivation)
-    {
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-        MOZ_ASSERT(!jitActivation_->isLazyLinkExitFrame(),
-                   "Cannot stack multiple lazy-link frames.");
-        jitActivation_->setLazyLinkExitFrame(true);
-    }
-
-    ~AutoLazyLinkExitFrame() {
-        jitActivation_->setLazyLinkExitFrame(false);
-    }
-};
-
 static bool
 LinkCodeGen(JSContext* cx, IonBuilder* builder, CodeGenerator *codegen,
             MutableHandle<ScriptVector> scripts, OnIonCompilationInfo* info)
@@ -654,11 +633,8 @@ jit::LazyLink(JSContext* cx, HandleScript calleeScript)
 uint8_t*
 jit::LazyLinkTopActivation(JSContext* cx)
 {
-    JitActivationIterator iter(cx->runtime());
-    AutoLazyLinkExitFrame lazyLinkExitFrame(iter->asJit());
-
     // First frame should be an exit frame.
-    JitFrameIterator it(iter);
+    JitFrameIterator it(cx);
     LazyLinkExitFrameLayout* ll = it.exitFrame()->as<LazyLinkExitFrameLayout>();
     RootedScript calleeScript(cx, ScriptFromCalleeToken(ll->jsFrame()->calleeToken()));
 
@@ -771,6 +747,15 @@ JitCompartment::toggleBarriers(bool enabled)
         JitCode* code = *e.front().value().unsafeGet();
         code->togglePreBarriers(enabled, Reprotect);
     }
+}
+
+size_t
+JitCompartment::sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const
+{
+    size_t n = mallocSizeOf(this);
+    if (stubCodes_)
+        n += stubCodes_->sizeOfIncludingThis(mallocSizeOf);
+    return n;
 }
 
 JitCode*
@@ -2968,7 +2953,6 @@ InvalidateActivation(FreeOp* fop, const JitActivationIterator& activations, bool
 #ifdef JS_JITSPEW
         switch (it.type()) {
           case JitFrame_Exit:
-          case JitFrame_LazyLink:
             JitSpew(JitSpew_IonInvalidate, "#%d exit frame @ %p", frameno, it.fp());
             break;
           case JitFrame_BaselineJS:
@@ -2998,15 +2982,6 @@ InvalidateActivation(FreeOp* fop, const JitActivationIterator& activations, bool
             break;
           case JitFrame_Rectifier:
             JitSpew(JitSpew_IonInvalidate, "#%d rectifier frame @ %p", frameno, it.fp());
-            break;
-          case JitFrame_Unwound_IonJS:
-          case JitFrame_Unwound_IonStub:
-          case JitFrame_Unwound_BaselineJS:
-          case JitFrame_Unwound_BaselineStub:
-          case JitFrame_Unwound_IonAccessorIC:
-            MOZ_CRASH("invalid");
-          case JitFrame_Unwound_Rectifier:
-            JitSpew(JitSpew_IonInvalidate, "#%d unwound rectifier frame @ %p", frameno, it.fp());
             break;
           case JitFrame_IonAccessorIC:
             JitSpew(JitSpew_IonInvalidate, "#%d ion IC getter/setter frame @ %p", frameno, it.fp());

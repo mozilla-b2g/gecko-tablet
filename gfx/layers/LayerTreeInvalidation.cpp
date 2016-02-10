@@ -21,7 +21,7 @@
 #include "nsHashKeys.h"                 // for nsPtrHashKey
 #include "nsISupportsImpl.h"            // for Layer::AddRef, etc
 #include "nsRect.h"                     // for IntRect
-#include "nsTArray.h"                   // for nsAutoTArray, nsTArray_Impl
+#include "nsTArray.h"                   // for AutoTArray, nsTArray_Impl
 #include "mozilla/layers/ImageHost.h"
 #include "mozilla/layers/LayerManagerComposite.h"
 
@@ -131,7 +131,7 @@ struct LayerPropertiesBase : public LayerProperties
   explicit LayerPropertiesBase(Layer* aLayer)
     : mLayer(aLayer)
     , mMaskLayer(nullptr)
-    , mVisibleRegion(aLayer->GetVisibleRegion().ToUnknownRegion())
+    , mVisibleRegion(mLayer->GetEffectiveVisibleRegion().ToUnknownRegion())
     , mInvalidRegion(aLayer->GetInvalidRegion())
     , mPostXScale(aLayer->GetPostXScale())
     , mPostYScale(aLayer->GetPostYScale())
@@ -383,7 +383,7 @@ struct ContainerLayerProperties : public LayerPropertiesBase
   }
 
   // The old list of children:
-  nsAutoTArray<UniquePtr<LayerPropertiesBase>,1> mChildren;
+  AutoTArray<UniquePtr<LayerPropertiesBase>,1> mChildren;
   float mPreXScale;
   float mPreYScale;
 };
