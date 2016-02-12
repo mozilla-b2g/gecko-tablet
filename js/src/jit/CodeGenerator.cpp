@@ -1751,7 +1751,7 @@ class OutOfLineRegExpMatcher : public OutOfLineCodeBase<CodeGenerator>
 };
 
 typedef bool (*RegExpMatcherRawFn)(JSContext* cx, HandleObject regexp, HandleString input,
-                                   int32_t lastIndex, bool sticky,
+                                   uint32_t lastIndex, bool sticky,
                                    MatchPairs* pairs, MutableHandleValue output);
 static const VMFunction RegExpMatcherRawInfo = FunctionInfo<RegExpMatcherRawFn>(RegExpMatcherRaw);
 
@@ -1916,7 +1916,7 @@ class OutOfLineRegExpTester : public OutOfLineCodeBase<CodeGenerator>
 };
 
 typedef bool (*RegExpTesterRawFn)(JSContext* cx, HandleObject regexp, HandleString input,
-                                  int32_t lastIndex, bool sticky, int32_t* result);
+                                  uint32_t lastIndex, bool sticky, int32_t* result);
 static const VMFunction RegExpTesterRawInfo = FunctionInfo<RegExpTesterRawFn>(RegExpTesterRaw);
 
 void
@@ -5147,10 +5147,10 @@ CodeGenerator::visitSimdBox(LSimdBox* lir)
     InlineTypedObject* templateObject = lir->mir()->templateObject();
     gc::InitialHeap initialHeap = lir->mir()->initialHeap();
     MIRType type = lir->mir()->input()->type();
-    registerSimdTemplate(templateObject);
 
-    MOZ_ASSERT(lir->safepoint()->liveRegs().has(in),
-               "Save the input register across the oolCallVM");
+    registerSimdTemplate(lir->mir()->simdType());
+
+    MOZ_ASSERT(lir->safepoint()->liveRegs().has(in), "Save the input register across oolCallVM");
     OutOfLineCode* ool = oolCallVM(NewTypedObjectInfo, lir,
                                    ArgList(ImmGCPtr(templateObject), Imm32(initialHeap)),
                                    StoreRegisterTo(object));
@@ -5173,10 +5173,9 @@ CodeGenerator::visitSimdBox(LSimdBox* lir)
 }
 
 void
-CodeGenerator::registerSimdTemplate(InlineTypedObject* templateObject)
+CodeGenerator::registerSimdTemplate(SimdType simdType)
 {
-    simdRefreshTemplatesDuringLink_ |=
-        1 << uint32_t(templateObject->typeDescr().as<SimdTypeDescr>().type());
+    simdRefreshTemplatesDuringLink_ |= 1 << uint32_t(simdType);
 }
 
 void
@@ -5226,7 +5225,7 @@ CodeGenerator::visitSimdUnbox(LSimdUnbox* lir)
       "MOZ_ASSERT(obj->type()->typeDescr()->getReservedSlot(JS_DESCR_SLOT_KIND).isInt32())");
     masm.branch32(Assembler::NotEqual, masm.ToPayload(typeDescrKind), Imm32(js::type::Simd), &bail);
 
-    SimdType type = MIRTypeToSimdType(lir->mir()->type());
+    SimdType type = lir->mir()->simdType();
 
     // Check if the SimdTypeDescr /Type/ match the specialization of this
     // MSimdUnbox instruction.
@@ -9818,19 +9817,14 @@ CodeGenerator::visitAtomicIsLockFree(LAtomicIsLockFree* lir)
     Register value = ToRegister(lir->value());
     Register output = ToRegister(lir->output());
 
-    // Keep this in sync with isLockfree() in jit/AtomicOperations-inl.h.
+    // Keep this in sync with isLockfree() in jit/AtomicOperations.h.
+    MOZ_ASSERT(!AtomicOperations::isLockfree(8));
 
     Label Ldone, Lfailed;
     masm.move32(Imm32(1), output);
-    if (AtomicOperations::isLockfree8())
-        masm.branch32(Assembler::Equal, value, Imm32(8), &Ldone);
-    else
-        masm.branch32(Assembler::Equal, value, Imm32(8), &Lfailed);
     masm.branch32(Assembler::Equal, value, Imm32(4), &Ldone);
     masm.branch32(Assembler::Equal, value, Imm32(2), &Ldone);
     masm.branch32(Assembler::Equal, value, Imm32(1), &Ldone);
-    if (!AtomicOperations::isLockfree8())
-        masm.bind(&Lfailed);
     masm.move32(Imm32(0), output);
     masm.bind(&Ldone);
 }

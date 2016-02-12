@@ -52,6 +52,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "AppConstants",
                                   "resource://gre/modules/AppConstants.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "MessageChannel",
                                   "resource://gre/modules/MessageChannel.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "AddonManager",
+                                  "resource://gre/modules/AddonManager.jsm");
 
 Cu.import("resource://gre/modules/ExtensionManagement.jsm");
 
@@ -80,6 +82,8 @@ ExtensionManagement.registerSchema("chrome://extensions/content/schemas/extensio
 ExtensionManagement.registerSchema("chrome://extensions/content/schemas/i18n.json");
 ExtensionManagement.registerSchema("chrome://extensions/content/schemas/idle.json");
 ExtensionManagement.registerSchema("chrome://extensions/content/schemas/runtime.json");
+ExtensionManagement.registerSchema("chrome://extensions/content/schemas/storage.json");
+ExtensionManagement.registerSchema("chrome://extensions/content/schemas/test.json");
 ExtensionManagement.registerSchema("chrome://extensions/content/schemas/web_navigation.json");
 ExtensionManagement.registerSchema("chrome://extensions/content/schemas/web_request.json");
 
@@ -311,6 +315,21 @@ ExtensionPage = class extends BaseContext {
   }
 };
 
+// For extensions that have called setUninstallURL(), send an event
+// so the browser can display the URL.
+let UninstallObserver = {
+  init: function() {
+    AddonManager.addAddonListener(this);
+  },
+
+  onUninstalling: function(addon) {
+    let extension = GlobalManager.extensionMap.get(addon.id);
+    if (extension) {
+      Management.emit("uninstall", extension);
+    }
+  },
+};
+
 // Responsible for loading extension APIs into the right globals.
 GlobalManager = {
   // Number of extensions currently enabled.
@@ -326,6 +345,7 @@ GlobalManager = {
   init(extension) {
     if (this.count == 0) {
       Services.obs.addObserver(this, "content-document-global-created", false);
+      UninstallObserver.init();
     }
     this.count++;
 
@@ -364,12 +384,23 @@ GlobalManager = {
         injectAPI(api, browserObj);
 
         let schemaApi = Management.generateAPIs(extension, context, Management.schemaApis);
+        function findPath(path) {
+          let obj = schemaApi;
+          for (let elt of path) {
+            obj = obj[elt];
+          }
+          return obj;
+        }
         let schemaWrapper = {
-          callFunction(ns, name, args) {
-            return schemaApi[ns][name](...args);
+          get cloneScope() {
+            return context.cloneScope;
           },
 
-          callAsyncFunction(ns, name, args, callback) {
+          callFunction(path, name, args) {
+            return findPath(path)[name](...args);
+          },
+
+          callAsyncFunction(path, name, args, callback) {
             // We pass an empty stub function as a default callback for
             // the `chrome` API, so promise objects are not returned,
             // and lastError values are reported immediately.
@@ -379,40 +410,35 @@ GlobalManager = {
 
             let promise;
             try {
-              // TODO: Stop passing the callback once all APIs return
-              // promises.
-              promise = schemaApi[ns][name](...args, callback);
+              promise = findPath(path)[name](...args);
             } catch (e) {
-              promise = Promise.reject(e);
-              // TODO: Certain tests are still expecting API methods to
-              // throw errors.
-              throw e;
+              if (e instanceof context.cloneScope.Error) {
+                promise = Promise.reject(e);
+              } else {
+                Cu.reportError(e);
+                promise = Promise.reject({ message: "An unexpected error occurred" });
+              }
             }
 
-            // TODO: This check should no longer be necessary
-            // once all async methods return promises.
-            if (promise) {
-              return context.wrapPromise(promise, callback);
-            }
-            return undefined;
+            return context.wrapPromise(promise || Promise.resolve(), callback);
           },
 
-          getProperty(ns, name) {
-            return schemaApi[ns][name];
+          getProperty(path, name) {
+            return findPath(path)[name];
           },
 
-          setProperty(ns, name, value) {
-            schemaApi[ns][name] = value;
+          setProperty(path, name, value) {
+            findPath(path)[name] = value;
           },
 
-          addListener(ns, name, listener, args) {
-            return schemaApi[ns][name].addListener.call(null, listener, ...args);
+          addListener(path, name, listener, args) {
+            return findPath(path)[name].addListener.call(null, listener, ...args);
           },
-          removeListener(ns, name, listener) {
-            return schemaApi[ns][name].removeListener.call(null, listener);
+          removeListener(path, name, listener) {
+            return findPath(path)[name].removeListener.call(null, listener);
           },
-          hasListener(ns, name, listener) {
-            return schemaApi[ns][name].hasListener.call(null, listener);
+          hasListener(path, name, listener) {
+            return findPath(path)[name].hasListener.call(null, listener);
           },
         };
         Schemas.inject(browserObj, schemaWrapper);
@@ -605,6 +631,10 @@ ExtensionData.prototype = {
         url: this.baseURI && this.baseURI.spec,
 
         principal: this.principal,
+
+        logError: error => {
+          this.logger.warn(`Loading extension '${this.id}': Reading manifest: ${error}`);
+        },
       };
 
       let normalized = Schemas.normalize(manifest, "manifest.WebExtensionManifest", context);
@@ -805,6 +835,8 @@ this.Extension = function(addonData) {
 
   this.hasShutdown = false;
   this.onShutdown = new Set();
+
+  this.uninstallURL = null;
 
   this.permissions = new Set();
   this.whiteListedHosts = null;

@@ -2991,6 +2991,7 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
         if self.descriptor.name == "Promise":
             speciesSetup = CGGeneric(fill(
                 """
+                #ifndef SPIDERMONKEY_PROMISE
                 JS::Rooted<JSObject*> promiseConstructor(aCx, *interfaceCache);
                 JS::Rooted<jsid> species(aCx,
                   SYMBOL_TO_JSID(JS::GetWellKnownSymbol(aCx, JS::SymbolCode::species)));
@@ -2998,6 +2999,7 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
                                            JSPROP_SHARED, Promise::PromiseSpecies, nullptr)) {
                   $*{failureCode}
                 }
+                #endif // SPIDERMONKEY_PROMISE
                 """,
                 failureCode=failureCode))
         else:
@@ -5189,7 +5191,26 @@ def getJSToNativeConversionInfo(type, descriptorProvider, failureCode=None,
                   if (promiseGlobal.Failed()) {
                     $*{exceptionCode}
                   }
+
+                  JS::Rooted<JS::Value> valueToResolve(cx, $${val});
+                  if (!JS_WrapValue(cx, &valueToResolve)) {
+                    $*{exceptionCode}
+                  }
                   ErrorResult promiseRv;
+                #ifdef SPIDERMONKEY_PROMISE
+                  nsCOMPtr<nsIGlobalObject> global =
+                    do_QueryInterface(promiseGlobal.GetAsSupports());
+                  if (!global) {
+                    promiseRv.Throw(NS_ERROR_UNEXPECTED);
+                    promiseRv.MaybeSetPendingException(cx);
+                    $*{exceptionCode}
+                  }
+                  $${declName} = Promise::Resolve(global, cx, valueToResolve,
+                                                  promiseRv);
+                  if (promiseRv.MaybeSetPendingException(cx)) {
+                    $*{exceptionCode}
+                  }
+                #else
                   JS::Handle<JSObject*> promiseCtor =
                     PromiseBinding::GetConstructorObjectHandle(cx, globalObj);
                   if (!promiseCtor) {
@@ -5197,10 +5218,6 @@ def getJSToNativeConversionInfo(type, descriptorProvider, failureCode=None,
                   }
                   JS::Rooted<JS::Value> resolveThisv(cx, JS::ObjectValue(*promiseCtor));
                   JS::Rooted<JS::Value> resolveResult(cx);
-                  JS::Rooted<JS::Value> valueToResolve(cx, $${val});
-                  if (!JS_WrapValue(cx, &valueToResolve)) {
-                    $*{exceptionCode}
-                  }
                   Promise::Resolve(promiseGlobal, resolveThisv, valueToResolve,
                                    &resolveResult, promiseRv);
                   if (promiseRv.MaybeSetPendingException(cx)) {
@@ -5212,6 +5229,7 @@ def getJSToNativeConversionInfo(type, descriptorProvider, failureCode=None,
                     promiseRv.MaybeSetPendingException(cx);
                     $*{exceptionCode}
                   }
+                #endif // SPIDERMONKEY_PROMISE
                 }
                 """,
                 getPromiseGlobal=getPromiseGlobal,
@@ -6332,7 +6350,13 @@ def getWrapTemplateForType(type, descriptorProvider, result, successCode,
                 wrapMethod = "GetOrCreateDOMReflector"
                 wrapArgs = "cx, %s, ${jsvalHandle}" % result
             else:
-                if not returnsNewObject:
+                # Hack: the "Promise" interface is OK to return from
+                # non-newobject things even when it's not wrappercached; that
+                # happens when using SpiderMonkey promises, and the WrapObject()
+                # method will just return the existing reflector, which is just
+                # not stored in a wrappercache.
+                if (not returnsNewObject and
+                    descriptor.interface.identifier.name != "Promise"):
                     raise MethodNotNewObjectError(descriptor.interface.identifier.name)
                 wrapMethod = "WrapNewBindingNonWrapperCachedObject"
                 wrapArgs = "cx, ${obj}, %s, ${jsvalHandle}" % result
@@ -12233,13 +12257,21 @@ class CGDictionary(CGThing):
             "ToJSON", "bool",
             [Argument('nsAString&', 'aJSON')],
             body=dedent("""
-                MOZ_ASSERT(NS_IsMainThread());
                 AutoJSAPI jsapi;
                 jsapi.Init();
                 JSContext *cx = jsapi.cx();
-                JSAutoCompartment ac(cx, xpc::UnprivilegedJunkScope()); // Usage approved by bholley
-                JS::Rooted<JS::Value> obj(cx);
-                return ToObjectInternal(cx, &obj) && StringifyToJSON(cx, &obj, aJSON);
+                // It's safe to use UnprivilegedJunkScopeOrWorkerGlobal here
+                // because we'll only be creating objects, in ways that have no
+                // side-effects, followed by a call to JS::ToJSONMaybeSafely,
+                // which likewise guarantees no side-effects for the sorts of
+                // things we will pass it.
+                JSAutoCompartment ac(cx, binding_detail::UnprivilegedJunkScopeOrWorkerGlobal());
+                JS::Rooted<JS::Value> val(cx);
+                if (!ToObjectInternal(cx, &val)) {
+                  return false;
+                }
+                JS::Rooted<JSObject*> obj(cx, &val.toObject());
+                return StringifyToJSON(cx, obj, aJSON);
             """), const=True)
 
     def toObjectInternalMethod(self):
@@ -12379,7 +12411,8 @@ class CGDictionary(CGThing):
         methods.append(self.initFromJSONMethod())
         try:
             methods.append(self.toObjectInternalMethod())
-            methods.append(self.toJSONMethod())
+            if self.dictionarySafeToJSONify(self.dictionary):
+                methods.append(self.toJSONMethod())
         except MethodNotNewObjectError:
             # If we can't have a ToObjectInternal() because one of our members
             # can only be returned from [NewObject] methods, then just skip
@@ -12685,6 +12718,52 @@ class CGDictionary(CGThing):
             not CGDictionary.isDictionaryCopyConstructible(dictionary.parent)):
             return False
         return all(isTypeCopyConstructible(m.type) for m in dictionary.members)
+
+    @staticmethod
+    def typeSafeToJSONify(type):
+        """
+        Determine whether the given type is safe to convert to JSON.  The
+        restriction is that this needs to be safe while in a global controlled
+        by an adversary, and "safe" means no side-effects when the JS
+        representation of this type is converted to JSON.  That means that we
+        have to be pretty restrictive about what things we can allow.  For
+        example, "object" is out, because it may have accessor properties on it.
+        """
+        if type.nullable():
+            # Converting null to JSON is always OK.
+            return CGDictionary.typeSafeToJSONify(type.inner)
+
+        if type.isSequence():
+            # Sequences are arrays we create ourselves, with no holes.  They
+            # should be safe if their contents are safe, as long as we suppress
+            # invocation of .toJSON on objects.
+            return CGDictionary.typeSafeToJSONify(type.inner)
+
+        if type.isUnion():
+            # OK if everything in it is ok.
+            return all(CGDictionary.typeSafeToJSONify(t)
+                       for t in type.flatMemberTypes)
+
+        if type.isDictionary():
+            # OK if the dictionary is OK
+            return CGDictionary.dictionarySafeToJSONify(type.inner)
+
+        if type.isString() or type.isEnum():
+            # Strings are always OK.
+            return True
+
+        if type.isPrimitive():
+            # Primitives (numbers and booleans) are ok, as long as
+            # they're not unrestricted float/double.
+            return not type.isFloat() or not type.isUnrestricted()
+
+        return False
+
+    @staticmethod
+    def dictionarySafeToJSONify(dictionary):
+        # The dictionary itself is OK, so we're good if all our types are.
+        return all(CGDictionary.typeSafeToJSONify(m.type)
+                   for m in dictionary.members)
 
 
 class CGRegisterWorkerBindings(CGAbstractMethod):
@@ -13167,7 +13246,6 @@ class CGBindingRoot(CGThing):
         bindingHeaders["WrapperFactory.h"] = descriptors
         bindingHeaders["mozilla/dom/DOMJSClass.h"] = descriptors
         bindingHeaders["mozilla/dom/ScriptSettings.h"] = dictionaries  # AutoJSAPI
-        bindingHeaders["xpcpublic.h"] = dictionaries  # xpc::UnprivilegedJunkScope
         # Ensure we see our enums in the generated .cpp file, for the ToJSValue
         # method body.  Also ensure that we see jsapi.h.
         if enums:
@@ -15613,7 +15691,10 @@ class CGMaplikeOrSetlikeHelperFunctionGenerator(CallbackMember):
             jsapi.Init();
             jsapi.TakeOwnershipOfErrorReporting();
             JSContext* cx = jsapi.cx();
-            JSAutoCompartment tempCompartment(cx, xpc::UnprivilegedJunkScope());
+            // It's safe to use UnprivilegedJunkScopeOrWorkerGlobal here because
+            // all we want is to wrap into _some_ scope and then unwrap to find
+            // the reflector, and wrapping has no side-effects.
+            JSAutoCompartment tempCompartment(cx, binding_detail::UnprivilegedJunkScopeOrWorkerGlobal());
             JS::Rooted<JS::Value> v(cx);
             if(!ToJSValue(cx, self, &v)) {
               aRv.Throw(NS_ERROR_UNEXPECTED);

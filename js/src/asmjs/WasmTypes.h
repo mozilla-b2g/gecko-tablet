@@ -38,6 +38,7 @@ class PropertyName;
 
 namespace wasm {
 
+using mozilla::EnumeratedArray;
 using mozilla::Move;
 using mozilla::DebugOnly;
 using mozilla::MallocSizeOf;
@@ -244,6 +245,13 @@ class Sig
     }
 };
 
+struct SigHashPolicy
+{
+    typedef const Sig& Lookup;
+    static HashNumber hash(Lookup sig) { return sig.hash(); }
+    static bool match(const Sig* lhs, Lookup rhs) { return *lhs == rhs; }
+};
+
 // A "declared" signature is a Sig object that is created and owned by the
 // ModuleGenerator. These signature objects are read-only and have the same
 // lifetime as the ModuleGenerator. This type is useful since some uses of Sig
@@ -266,7 +274,7 @@ typedef Vector<const DeclaredSig*, 0, SystemAllocPolicy> DeclaredSigPtrVector;
 
 struct Offsets
 {
-    MOZ_IMPLICIT Offsets(uint32_t begin = 0, uint32_t end = 0)
+    explicit Offsets(uint32_t begin = 0, uint32_t end = 0)
       : begin(begin), end(end)
     {}
 
@@ -571,7 +579,7 @@ enum class JumpTarget
     Limit
 };
 
-typedef mozilla::EnumeratedArray<JumpTarget, JumpTarget::Limit, Uint32Vector> JumpSiteArray;
+typedef EnumeratedArray<JumpTarget, JumpTarget::Limit, Uint32Vector> JumpSiteArray;
 
 // The CompileArgs struct captures global parameters that affect all wasm code
 // generation. It also currently is the single source of truth for whether or

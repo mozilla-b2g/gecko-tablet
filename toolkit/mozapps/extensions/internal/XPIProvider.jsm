@@ -404,10 +404,18 @@ SafeInstallOperation.prototype = {
     let oldFile = aCopy ? null : aFile.clone();
     let newFile = aFile.clone();
     try {
-      if (aCopy)
+      if (aCopy) {
         newFile.copyTo(aTargetDirectory, null);
-      else
+        // copyTo does not update the nsIFile with the new.
+        newFile = aTargetDirectory.clone();
+        newFile.append(aFile.leafName);
+        // Windows roaming profiles won't properly sync directories if a new file
+        // has an older lastModifiedTime than a previous file, so update.
+        newFile.lastModifiedTime = Date.now();
+      }
+      else {
         newFile.moveTo(aTargetDirectory, null);
+      }
     }
     catch (e) {
       logger.error("Failed to " + (aCopy ? "copy" : "move") + " file " + aFile.path +
@@ -1619,6 +1627,9 @@ function shouldVerifySignedState(aAddon) {
   return ADDON_SIGNING && SIGNED_TYPES.has(aAddon.type);
 }
 
+let gCertDB = Cc["@mozilla.org/security/x509certdb;1"]
+              .getService(Ci.nsIX509CertDB);
+
 /**
  * Verifies that a zip file's contents are all correctly signed by an
  * AMO-issued certificate
@@ -1633,19 +1644,23 @@ function verifyZipSignedState(aFile, aAddon) {
   if (!shouldVerifySignedState(aAddon))
     return Promise.resolve(AddonManager.SIGNEDSTATE_NOT_REQUIRED);
 
-  let certDB = Cc["@mozilla.org/security/x509certdb;1"]
-               .getService(Ci.nsIX509CertDB);
-
   let root = Ci.nsIX509CertDB.AddonsPublicRoot;
   if (!REQUIRE_SIGNING && Preferences.get(PREF_XPI_SIGNATURES_DEV_ROOT, false))
     root = Ci.nsIX509CertDB.AddonsStageRoot;
 
   return new Promise(resolve => {
-    certDB.openSignedAppFileAsync(root, aFile, (aRv, aZipReader, aCert) => {
-      if (aZipReader)
-        aZipReader.close();
-      resolve(getSignedStatus(aRv, aCert, aAddon.id));
-    });
+    let callback = {
+      openSignedAppFileFinished: function(aRv, aZipReader, aCert) {
+        if (aZipReader)
+          aZipReader.close();
+        resolve(getSignedStatus(aRv, aCert, aAddon.id));
+      }
+    };
+    // This allows the certificate DB to get the raw JS callback object so the
+    // test code can pass through objects that XPConnect would reject.
+    callback.wrappedJSObject = callback;
+
+    gCertDB.openSignedAppFileAsync(root, aFile, callback);
   });
 }
 
@@ -1663,17 +1678,21 @@ function verifyDirSignedState(aDir, aAddon) {
   if (!shouldVerifySignedState(aAddon))
     return Promise.resolve(AddonManager.SIGNEDSTATE_NOT_REQUIRED);
 
-  let certDB = Cc["@mozilla.org/security/x509certdb;1"]
-               .getService(Ci.nsIX509CertDB);
-
   let root = Ci.nsIX509CertDB.AddonsPublicRoot;
   if (!REQUIRE_SIGNING && Preferences.get(PREF_XPI_SIGNATURES_DEV_ROOT, false))
     root = Ci.nsIX509CertDB.AddonsStageRoot;
 
   return new Promise(resolve => {
-    certDB.verifySignedDirectoryAsync(root, aDir, (aRv, aCert) => {
-      resolve(getSignedStatus(aRv, aCert, aAddon.id));
-    });
+    let callback = {
+      verifySignedDirectoryFinished: function(aRv, aCert) {
+        resolve(getSignedStatus(aRv, aCert, aAddon.id));
+      }
+    };
+    // This allows the certificate DB to get the raw JS callback object so the
+    // test code can pass through objects that XPConnect would reject.
+    callback.wrappedJSObject = callback;
+
+    gCertDB.verifySignedDirectoryAsync(root, aDir, callback);
   });
 }
 
@@ -4194,13 +4213,19 @@ this.XPIProvider = {
    * @return true if enabling the add-on should block e10s
    */
   isBlockingE10s: function(aAddon) {
-    // Only extensions change behaviour
-    if (aAddon.type != "extension")
+    if (aAddon.type != "extension" &&
+        aAddon.type != "webextension" &&
+        aAddon.type != "theme")
       return false;
 
     // The hotfix is exempt
     let hotfixID = Preferences.get(PREF_EM_HOTFIX_ID, undefined);
     if (hotfixID && hotfixID == aAddon.id)
+      return false;
+
+    // The default theme is exempt
+    if (aAddon.type == "theme" &&
+        aAddon.internalName == XPIProvider.defaultSkin)
       return false;
 
     // System add-ons are exempt
@@ -5432,8 +5457,13 @@ AddonInstall.prototype = {
     }
 
     // No valid add-on was found, delete all the temporary files
-    for (let { file } of files)
-      file.remove(true);
+    for (let { file } of files) {
+      try {
+        file.remove(true);
+      } catch (e) {
+        this.logger.warn("Could not remove temp file " + file.path);
+      }
+    }
 
     return Promise.reject([AddonManager.ERROR_CORRUPT_FILE,
                            "Multi-package XPI does not contain any valid packages to install"]);

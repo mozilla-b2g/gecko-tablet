@@ -557,7 +557,7 @@ public class BrowserApp extends GeckoApp
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        if (!isSupportedSystem()) {
+        if (!HardwareUtils.isSupportedSystem()) {
             // This build does not support the Android version of the device; Exit early.
             super.onCreate(savedInstanceState);
             return;
@@ -1345,7 +1345,7 @@ public class BrowserApp extends GeckoApp
 
     @Override
     public void onDestroy() {
-        if (!isSupportedSystem()) {
+        if (!HardwareUtils.isSupportedSystem()) {
             // This build does not support the Android version of the device; Exit early.
             super.onDestroy();
             return;
@@ -3300,8 +3300,14 @@ public class BrowserApp extends GeckoApp
                             File outFile = new File(cacheDir, "thumbnail.png");
 
                             try {
-                                java.io.FileOutputStream out = new java.io.FileOutputStream(outFile);
-                                thumbnail.compress(Bitmap.CompressFormat.PNG, 90, out);
+                                final java.io.FileOutputStream out = new java.io.FileOutputStream(outFile);
+                                try {
+                                    thumbnail.compress(Bitmap.CompressFormat.PNG, 90, out);
+                                } finally {
+                                    try {
+                                        out.close();
+                                    } catch (final IOException e) { /* Nothing to do here. */ }
+                                }
                             } catch (FileNotFoundException e) {
                                 Log.e(LOGTAG, "File not found", e);
                             }

@@ -983,6 +983,20 @@
     "kind": "boolean",
     "description": "WebGL canvas used"
   },
+  "CANVAS_WEBGL_SUCCESS": {
+    "alert_emails": ["jmuizelaar@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "description": "WebGL1 creation success",
+    "bug_numbers": [1247327]
+  },
+  "CANVAS_WEBGL2_SUCCESS": {
+    "alert_emails": ["jmuizelaar@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "description": "WebGL2 creation success",
+    "bug_numbers": [1247327]
+  },
   "TOTAL_CONTENT_PAGE_LOAD_TIME": {
     "alert_emails": ["perf-telemetry-alerts@mozilla.com"],
     "expires_in_version": "never",
@@ -3230,6 +3244,22 @@
     "expires_in_version": "default",
     "kind": "boolean",
     "description": "Did UrlClassifier fail to construct the PrefixSet?"
+  },
+  "URLCLASSIFIER_UPDATE_REMOTE_STATUS": {
+    "alert_emails": ["gcp@mozilla.com", "francois@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 16,
+    "bug_numbers": [1150921],
+    "description": "Server HTTP status code from SafeBrowsing database updates. (0=1xx, 1=200, 2=2xx, 3=204, 4=3xx, 5=400, 6=4xx, 7=403, 8=404, 9=408, 10=413, 11=5xx, 12=502|504|511, 13=503, 14=505, 15=Other)"
+  },
+  "URLCLASSIFIER_COMPLETE_REMOTE_STATUS": {
+    "alert_emails": ["gcp@mozilla.com", "francois@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 16,
+    "bug_numbers": [1150921],
+    "description": "Server HTTP status code from remote SafeBrowsing gethash lookups. (0=1xx, 1=200, 2=2xx, 3=204, 4=3xx, 5=400, 6=4xx, 7=403, 8=404, 9=408, 10=413, 11=5xx, 12=502|504|511, 13=503, 14=505, 15=Other)"
   },
   "PLACES_PAGES_COUNT": {
     "expires_in_version": "never",
@@ -8333,14 +8363,6 @@
     "releaseChannelCollection": "opt-out",
     "description": "Connection length for bi-directionally connected media (0=SHORTER_THAN_10S, 1=BETWEEN_10S_AND_30S, 2=BETWEEN_30S_AND_5M, 3=MORE_THAN_5M)"
   },
-  "LOOP_SHARING_STATE_CHANGE_1": {
-    "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "48",
-    "kind": "enumerated",
-    "n_values": 8,
-    "releaseChannelCollection": "opt-out",
-    "description": "Number of times the sharing feature has been enabled and disabled (0=WINDOW_ENABLED, 1=WINDOW_DISABLED, 2=BROWSER_ENABLED, 3=BROWSER_DISABLED)"
-  },
   "LOOP_SHARING_ROOM_URL": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
     "expires_in_version": "50",
@@ -8364,21 +8386,6 @@
     "n_values": 4,
     "releaseChannelCollection": "opt-out",
     "description": "Number of times a room delete action is performed (0=DELETE_SUCCESS, 2=DELETE_FAIL)"
-  },
-  "LOOP_ROOM_CONTEXT_ADD": {
-    "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "48",
-    "kind": "enumerated",
-    "n_values": 8,
-    "releaseChannelCollection": "opt-out",
-    "description": "Number of times a room context action is performed (0=ADD_FROM_PANEL, 1=ADD_FROM_CONVERSATION)"
-  },
-  "LOOP_ROOM_CONTEXT_CLICK": {
-    "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
-    "expires_in_version": "48",
-    "kind": "count",
-    "releaseChannelCollection": "opt-out",
-    "description": "Number times room context is clicked to visit the attached URL"
   },
   "LOOP_ROOM_SESSION_WITHCHAT": {
     "alert_emails": ["firefox-dev@mozilla.org", "mdeboer@mozilla.com"],
@@ -10155,5 +10162,20 @@
     "bug_numbers": [1241278],
     "kind": "boolean",
     "description": "Usage of the deprecated Notification.requestPermission() callback argument"
+  },
+  "VIDEO_FASTSEEK_USED": {
+    "alert_emails": ["lchristie@mozilla.com", "cpearce@mozilla.com"],
+    "expires_in_version": "55",
+    "bug_numbers": [1245982],
+    "kind": "count",
+    "description": "Uses of HTMLMediaElement.fastSeek"
+  },
+  "TAB_SWITCH_CACHE_POSITION": {
+    "expires_in_version": "55",
+    "bug_numbers": [1242013],
+    "kind": "linear",
+    "high": 100,
+    "n_buckets": 50,
+    "description": "Position in (theoretical) tab cache of tab being switched to"
   }
 }

@@ -569,14 +569,7 @@ See https://developer.mozilla.org/en/Windows_Build_Prerequisites.])
         AC_SUBST(MSVC_C_RUNTIME_DLL)
         AC_SUBST(MSVC_CXX_RUNTIME_DLL)
 
-        # Disable SEH on clang-cl because it doesn't implement them yet.
-        if test -z "$CLANG_CL"; then
-            AC_DEFINE(HAVE_SEH_EXCEPTIONS)
-        else
-            # Send our CFLAGS to NSS
-            MOZ_CFLAGS_NSS=1
-            AC_DEFINE_UNQUOTED(GTEST_HAS_SEH, 0)
-        fi
+        AC_DEFINE(HAVE_SEH_EXCEPTIONS)
 
         if test -n "$WIN32_REDIST_DIR"; then
           if test ! -d "$WIN32_REDIST_DIR"; then
@@ -1846,11 +1839,6 @@ case "$host" in
     HOST_CFLAGS="$HOST_CFLAGS -DXP_WIN32 -DXP_WIN -DWIN32 -D_WIN32 -DNO_X11 -D_CRT_SECURE_NO_WARNINGS"
     HOST_OPTIMIZE_FLAGS="${HOST_OPTIMIZE_FLAGS=-O2}"
     HOST_BIN_SUFFIX=.exe
-    case "$host" in
-    *mingw*)
-        PERL="/bin/sh ${_topsrcdir}/build/msys-perl-wrapper"
-        ;;
-    esac
 
     case "${host_cpu}" in
     i*86)
@@ -4660,6 +4648,7 @@ dnl ========================================================
 
 MOZ_ANDROID_GOOGLE_PLAY_SERVICES
 MOZ_ANDROID_GOOGLE_CLOUD_MESSAGING
+MOZ_ANDROID_INSTALL_TRACKING
 
 
 dnl ========================================================
@@ -8735,15 +8724,8 @@ fi
 
 # External builds (specifically Ubuntu) may drop the hg repo information, so we allow to
 # explicitly set the repository and changeset information in.
-if test "$MOZILLA_OFFICIAL"; then
-    if test -z "$MOZ_SOURCE_REPO" && test -z "$MOZ_SOURCE_CHANGESET" && test -d ${_topsrcdir}/.hg; then
-        MOZ_SOURCE_CHANGESET=`cd $_topsrcdir && hg parent --template='{node}'`
-        MOZ_SOURCE_REPO=`cd $_topsrcdir && hg showconfig paths.default | sed -e 's|^ssh://|http://|' -e 's|/$||'`
-    fi
-    SOURCE_REV_URL=$MOZ_SOURCE_REPO/rev/$MOZ_SOURCE_CHANGESET
-fi
-AC_SUBST(SOURCE_REV_URL)
-
+AC_SUBST(MOZ_SOURCE_REPO)
+AC_SUBST(MOZ_SOURCE_CHANGESET)
 AC_SUBST(MOZ_INCLUDE_SOURCE_INFO)
 
 if test "$MOZ_TELEMETRY_REPORTING"; then

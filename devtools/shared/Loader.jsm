@@ -254,6 +254,7 @@ this.DevToolsLoader = function DevToolsLoader() {
   this.lazyImporter = XPCOMUtils.defineLazyModuleGetter.bind(XPCOMUtils);
   this.lazyServiceGetter = XPCOMUtils.defineLazyServiceGetter.bind(XPCOMUtils);
   this.lazyRequireGetter = this.lazyRequireGetter.bind(this);
+  this.main = this.main.bind(this);
 };
 
 DevToolsLoader.prototype = {
@@ -390,7 +391,8 @@ DevToolsLoader.prototype = {
         lazyImporter: this.lazyImporter,
         lazyServiceGetter: this.lazyServiceGetter,
         lazyRequireGetter: this.lazyRequireGetter,
-        id: this.id
+        id: this.id,
+        main: this.main
       },
     };
     // Lazy define console in order to load Console.jsm only when it is used
@@ -442,7 +444,7 @@ DevToolsLoader.prototype = {
       setTimeout(() => {
         let { gBrowser } = window;
         let target = this.TargetFactory.forTab(gBrowser.selectedTab);
-        const { gDevTools } = this.require("resource://devtools/client/framework/gDevTools.jsm");
+        const { gDevTools } = require("devtools/client/framework/devtools");
         gDevTools.showToolbox(target);
       }, 1000);
     } else if (location.includes("/webide.xul")) {

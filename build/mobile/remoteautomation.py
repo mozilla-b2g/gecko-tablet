@@ -7,13 +7,14 @@ import glob
 import time
 import re
 import os
+import posixpath
 import tempfile
 import shutil
 import subprocess
 import sys
 
 from automation import Automation
-from devicemanager import DMError, DeviceManager
+from mozdevice import DMError, DeviceManager
 from mozlog import get_default_logger
 import mozcrash
 
@@ -214,7 +215,7 @@ class RemoteAutomation(Automation):
 
         try:
             dumpDir = tempfile.mkdtemp()
-            remoteCrashDir = self._remoteProfile + '/minidumps/'
+            remoteCrashDir = posixpath.join(self._remoteProfile, 'minidumps')
             if not self._devicemanager.dirExists(remoteCrashDir):
                 # If crash reporting is enabled (MOZ_CRASHREPORTER=1), the
                 # minidumps directory is automatically created when Fennec

@@ -687,6 +687,10 @@ struct JSWrapObjectCallbacks
 typedef void
 (* JSDestroyCompartmentCallback)(JSFreeOp* fop, JSCompartment* compartment);
 
+typedef size_t
+(* JSSizeOfIncludingThisCompartmentCallback)(mozilla::MallocSizeOf mallocSizeOf,
+                                             JSCompartment* compartment);
+
 typedef void
 (* JSZoneCallback)(JS::Zone* zone);
 
@@ -1314,6 +1318,10 @@ JS_GetImplementationVersion(void);
 
 extern JS_PUBLIC_API(void)
 JS_SetDestroyCompartmentCallback(JSRuntime* rt, JSDestroyCompartmentCallback callback);
+
+extern JS_PUBLIC_API(void)
+JS_SetSizeOfIncludingThisCompartmentCallback(JSRuntime* rt,
+                                             JSSizeOfIncludingThisCompartmentCallback callback);
 
 extern JS_PUBLIC_API(void)
 JS_SetDestroyZoneCallback(JSRuntime* rt, JSZoneCallback callback);
@@ -4746,6 +4754,31 @@ JS_PUBLIC_API(bool)
 JS_Stringify(JSContext* cx, JS::MutableHandleValue value, JS::HandleObject replacer,
              JS::HandleValue space, JSONWriteCallback callback, void* data);
 
+namespace JS {
+
+/**
+ * An API akin to JS_Stringify but with the goal of not having observable
+ * side-effects when the stringification is performed.  This means it does not
+ * allow a replacer or a custom space, and has the following constraints on its
+ * input:
+ *
+ * 1) The input must be a plain object or array, not an abitrary value.
+ * 2) Every value in the graph reached by the algorithm starting with this
+ *    object must be one of the following: null, undefined, a string (NOT a
+ *    string object!), a boolean, a finite number (i.e. no NaN or Infinity or
+ *    -Infinity), a plain object with no accessor properties, or an Array with
+ *    no holes.
+ *
+ * The actual behavior differs from JS_Stringify only in asserting the above and
+ * NOT attempting to get the "toJSON" property from things, since that could
+ * clearly have side-effects.
+ */
+JS_PUBLIC_API(bool)
+ToJSONMaybeSafely(JSContext* cx, JS::HandleObject input,
+                  JSONWriteCallback callback, void* data);
+
+} /* namespace JS */
+
 /**
  * JSON.parse as specified by ES5.
  */
@@ -5274,7 +5307,8 @@ JS_SetOffthreadIonCompilationEnabled(JSRuntime* rt, bool enabled);
     Register(ION_ENABLE, "ion.enable")                                     \
     Register(BASELINE_ENABLE, "baseline.enable")                           \
     Register(OFFTHREAD_COMPILATION_ENABLE, "offthread-compilation.enable") \
-    Register(SIGNALS_ENABLE, "signals.enable")
+    Register(SIGNALS_ENABLE, "signals.enable")                             \
+    Register(JUMP_THRESHOLD, "jump-threshold")
 
 typedef enum JSJitCompilerOption {
 #define JIT_COMPILER_DECLARE(key, str) \

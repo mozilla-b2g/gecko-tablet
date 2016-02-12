@@ -406,7 +406,7 @@ function checkPartnerSection(data, isInitial) {
   if (isInitial) {
     Assert.equal(data.partner.partnerNames.length, 0);
   } else {
-    Assert.ok(data.partner.partnerNames.indexOf(PARTNER_NAME) >= 0);
+    Assert.ok(data.partner.partnerNames.includes(PARTNER_NAME));
   }
 }
 
@@ -1015,7 +1015,7 @@ add_task(function* test_addonsAndPlugins() {
     hasBinaryComponents: false,
     installDay: ADDON_INSTALL_DATE,
     updateDay: ADDON_INSTALL_DATE,
-    signedState: mozinfo.addon_signing ? AddonManager.SIGNEDSTATE_MISSING : AddonManager.SIGNEDSTATE_NOT_REQUIRED,
+    signedState: mozinfo.addon_signing ? AddonManager.SIGNEDSTATE_SIGNED : AddonManager.SIGNEDSTATE_NOT_REQUIRED,
   };
 
   const EXPECTED_PLUGIN_DATA = {
